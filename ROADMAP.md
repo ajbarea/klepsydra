@@ -9,14 +9,18 @@ The gauge must never show a confident wrong number. Every path that cannot
 establish a live reading dims the panel instead of drawing a stale bar.
 
 ## Next
-- Exercise the tray menu, including the click-through toggle.
-- Settle a real screen position, then wire autostart.
+- Exercise the tray menu.
 
 ## Later
 - Optional: flash or notify when crossing a threshold.
 - Optional: compact mode that drops the label and countdown to a bare bar.
 
 ## Completed
+- 2026-09-16 — Added a drag handle, autostart and position persistence. Windows
+  has no per-region hit testing for click-through windows, so a pointer-watching
+  thread makes the window interactive only over the handle. Installed via the
+  NSIS bundle; registering autostart from the build directory would have broken
+  on the next rebuild.
 - 2026-09-16 — Built and ran on Windows. Transparency, click-through,
   always-on-top, taskbar suppression and window auto-sizing all confirmed
   against the live window rather than inferred; the rendered reading matched

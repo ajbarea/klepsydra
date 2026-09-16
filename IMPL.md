@@ -15,12 +15,20 @@ Current slice: first working overlay.
   `set_height` sizing the window to the measured panel (64 configured -> 56 actual).
 - Live end-to-end: overlay reading matched the account file exactly (86%, 2 hr 14 min).
 
+- Grab handle with pointer-watched hit testing, autostart, and persisted window
+  position. Hit testing verified by moving the cursor and watching
+  WS_EX_TRANSPARENT flip: interactive over the handle, click-through elsewhere.
+- Installed to `%LOCALAPPDATA%\klepsydra` via the NSIS bundle, so the autostart
+  entry points at a stable path rather than the scratch build directory.
+
 ## Open
-- Window x/y (1480,12) overlap the browser tab strip; needs a real position.
 - The tray menu is untested: it builds without panicking, but no item has been
-  clicked, so the interactive/click-through toggle is unexercised.
+  clicked, so the autostart toggle is unexercised. Its handler is the only path
+  that calls `disable()`.
 - Tray icon lands in the notification-area overflow by default.
-- Autostart not wired.
+- Default position (1280,1022) assumes 1920x1080; the window-state plugin
+  overrides it once the handle is dragged.
+
 
 ## Verify
     bash statusline/test_statusline.sh

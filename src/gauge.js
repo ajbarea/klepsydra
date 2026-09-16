@@ -129,7 +129,14 @@ export function toRows(payloads, nowMs = Date.now()) {
 
   const fresh = list.filter((p) => {
     const at = Number(p.written_at) * 1000;
-    return Number.isFinite(at) && nowMs - at <= DROP_AFTER_MS;
+    if (!Number.isFinite(at) || nowMs - at > DROP_AFTER_MS) return false;
+    // After a login switch the previous account stops publishing, but its
+    // window keeps burning down and still counts against you -- so keep it
+    // until every one of its windows has actually reset.
+    if (nowMs - at <= STALE_AFTER_MS) return true;
+    return WINDOW_ORDER.some(
+      (k) => p.windows[k] && formatCountdown(Number(p.windows[k].resets_at), nowMs) !== null,
+    );
   });
 
   // Stable order: by label, then account id, so rows never jump around.

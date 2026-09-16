@@ -170,3 +170,20 @@ test("multi-day countdowns read in days, not tens of hours", () => {
   // The 24-hour boundary must not regress the hour formatting below it.
   assert.equal(formatCountdown(secs(NOW + 23 * 3600e3 + 59 * 60e3), NOW), "Resets in 23 hr 59 min");
 });
+
+test("a switched-away account stays while its window is still burning", () => {
+  const rows = toRows({
+    now: acct("now", "Personal", { five_hour: win(10) }),
+    was: acct("was", "RIT-CS-DQL", { five_hour: win(70) }, 40 * 60e3), // stale, window live
+  }, NOW);
+  assert.deepEqual(rows.map((r) => r.label), ["Personal · session", "RIT-CS-DQL · session"]);
+  assert.equal(rows[1].state, "stale");
+});
+
+test("a switched-away account disappears once its window resets", () => {
+  const rows = toRows({
+    now: acct("now", "Personal", { five_hour: win(10) }),
+    was: acct("was", "RIT-CS-DQL", { five_hour: win(70, -60e3) }, 40 * 60e3),
+  }, NOW);
+  assert.deepEqual(rows.map((r) => r.label), ["Current session"]);
+});

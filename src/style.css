@@ -26,6 +26,10 @@
   --size-sub: 11px;
 
   --stale-opacity: 0.38;
+
+  --grip-width: 12px;
+  --grip-dot: #6f6f6f;
+  --grip-dot-hover: #d0d0d0;
 }
 /* ─────────────────────────────────────────────────────────────────────────── */
 
@@ -50,8 +54,9 @@ html, body {
 
 #panel {
   display: flex;
-  flex-direction: column;
-  gap: 5px;
+  flex-direction: row;
+  align-items: stretch;
+  gap: 10px;
   /* Full width so each track can stretch; the window's width sets the size. */
   width: var(--panel-width, 100%);
   padding: var(--panel-pad);
@@ -108,6 +113,30 @@ html, body {
   color: var(--text-dim);
   font-variant-numeric: tabular-nums;
 }
+
+#content {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+/* The only part of the window that accepts the mouse. Everything else stays
+   click-through, so the gauge never swallows a click meant for what is under it. */
+#grip {
+  flex: 0 0 var(--grip-width);
+  width: var(--grip-width);
+  border-radius: 4px;
+  cursor: grab;
+  background-image: radial-gradient(var(--grip-dot) 1.2px, transparent 1.3px);
+  background-size: 5px 5px;
+  background-position: center;
+  transition: background-color 140ms ease;
+}
+#grip:hover { background-color: rgba(255, 255, 255, 0.09); }
+#grip:hover { background-image: radial-gradient(var(--grip-dot-hover) 1.2px, transparent 1.3px); }
+#grip:active { cursor: grabbing; }
 
 #rows { display: flex; flex-direction: column; gap: 7px; }
 

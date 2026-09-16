@@ -102,9 +102,45 @@ bash scripts/build-windows.sh
 
 ## Using it
 
-The bar is click-through, so it never intercepts a click meant for the window
-underneath. The tray icon switches between the 5-hour and 7-day windows, shows
-both at once, toggles interactivity so you can drag the panel, and quits.
+Grab the dotted handle on the left edge to drag the gauge anywhere; it
+remembers where you put it. Everything except that handle is click-through, so
+the gauge never intercepts a click meant for the window underneath.
+
+Windows offers no per-region hit testing for a click-through window -- ignoring
+cursor events is all or nothing. So a background thread watches the pointer and
+makes the window interactive only while it is over the handle. The frontend
+reports the handle's rectangle rather than the backend hard-coding it, so
+restyling cannot desync the two.
+
+The tray icon toggles "Start with Windows" and quits. Autostart is on by
+default; its icon may start in the notification-area overflow.
+
+## How often it refreshes
+
+The status line is event-driven: Claude Code runs it as you work, and the hook
+publishes on every render. `refreshInterval` adds a periodic re-run so the
+reading stays fresh in an idle terminal:
+
+```json
+"statusLine": {
+  "type": "command",
+  "command": "~/.claude/klepsydra-statusline.sh",
+  "refreshInterval": 30
+}
+```
+
+That refreshes the timestamp, not the number. The percentage only moves when a
+new API response arrives, which is correct -- usage does not grow while you are
+idle. The overlay re-reads the files every 5 seconds, and the countdown ticks
+every 15 seconds off `resets_at`, so it stays right even when nothing is
+publishing.
+
+## Switching accounts
+
+Signing into a different account is picked up on the next render, and publishes
+under the new account's file. The previous account keeps its row, because its
+5-hour window carries on burning down whether or not you are signed into it.
+That row drops once the window actually resets.
 
 ## Restyling
 

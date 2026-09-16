@@ -76,6 +76,19 @@ function syncHeight() {
   window.__TAURI__.core.invoke("set_height", { height: h }).catch(() => {});
 }
 
+/**
+ * Report where the grab handle sits. The backend cannot know the layout, and
+ * hard-coding it here would silently desync the moment the CSS changes.
+ */
+function syncGrip() {
+  if (!inTauri) return;
+  const r = document.getElementById("grip").getBoundingClientRect();
+  if (r.width < 1 || r.height < 1) return;
+  window.__TAURI__.core
+    .invoke("set_grip", { x: r.left, y: r.top, w: r.width, h: r.height })
+    .catch(() => {});
+}
+
 function render() {
   const rows = toRows(lastPayload, Date.now());
 
@@ -106,6 +119,7 @@ function render() {
 
   document.title = rows.length ? `klepsydra ${formatPct(rows[0].pct)}` : "klepsydra";
   syncHeight();
+  syncGrip();
 }
 
 async function poll() {
