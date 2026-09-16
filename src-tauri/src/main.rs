@@ -25,38 +25,40 @@ fn klepsydra_dir() -> Option<PathBuf> {
     Some(PathBuf::from(std::env::var("LOCALAPPDATA").ok()?).join("Klepsydra"))
 }
 
-/// Every signed-in account's latest reading, keyed by account id.
+/// Every published reading, one per Claude Code session.
 ///
-/// One file per account means terminals on different logins never contend for
-/// the same file. Parsing and validation stay in the frontend, which already
-/// treats every field as untrusted.
+/// A file per session (under a directory per account) means neither separate
+/// logins nor several terminals on one login ever contend for a file. Sessions
+/// of the same account disagree routinely -- each holds whatever the last API
+/// response it saw reported -- so reconciling them is the frontend's job.
 #[tauri::command]
 fn read_usage() -> serde_json::Value {
-    let mut out = serde_json::Map::new();
+    let mut out: Vec<serde_json::Value> = Vec::new();
     let Some(dir) = klepsydra_dir() else {
-        return serde_json::Value::Object(out);
+        return serde_json::Value::Array(out);
     };
-    let Ok(entries) = std::fs::read_dir(dir.join("accounts")) else {
-        return serde_json::Value::Object(out);
+    let Ok(accounts) = std::fs::read_dir(dir.join("accounts")) else {
+        return serde_json::Value::Array(out);
     };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.extension().and_then(|e| e.to_str()) != Some("json") {
-            continue;
+    for account in accounts.flatten() {
+        let Ok(sessions) = std::fs::read_dir(account.path()) else {
+            continue; // a stale pre-per-session file, not a directory
+        };
+        for session in sessions.flatten() {
+            let path = session.path();
+            if path.extension().and_then(|e| e.to_str()) != Some("json") {
+                continue;
+            }
+            let Ok(text) = std::fs::read_to_string(&path) else {
+                continue;
+            };
+            let Ok(value) = serde_json::from_str::<serde_json::Value>(&text) else {
+                continue;
+            };
+            out.push(value);
         }
-        let Ok(text) = std::fs::read_to_string(&path) else {
-            continue;
-        };
-        let Ok(value) = serde_json::from_str::<serde_json::Value>(&text) else {
-            continue;
-        };
-        let key = path
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .unwrap_or("unknown");
-        out.insert(key.to_string(), value);
     }
-    serde_json::Value::Object(out)
+    serde_json::Value::Array(out)
 }
 
 /// The panel grows a row per account window, so the frontend reports the height
@@ -140,6 +142,59 @@ fn reset_position(window: tauri::WebviewWindow) -> Result<(), String> {
     window
         .set_position(tauri::LogicalPosition::new(x.max(0.0), y.max(0.0)))
         .map_err(|e| e.to_string())
+}
+
+/// Draw the tray icon as a miniature of the bar: a capsule track with the fill
+/// running to `pct`, in the colour the frontend resolved from the CSS ramp.
+///
+/// 32px rather than 16px so Windows downscales rather than us guessing which
+/// tray size is in use.
+fn gauge_icon(pct: f64, rgb: (u8, u8, u8)) -> tauri::image::Image<'static> {
+    const N: usize = 32;
+    const H: usize = 14; // bar height
+    const M: usize = 3; // side margin
+
+    let mut buf = vec![0u8; N * N * 4];
+    let y0 = (N - H) / 2;
+    let w = N - 2 * M;
+    let r = (H / 2) as i32;
+    let pct = pct.clamp(0.0, 100.0);
+    let fill_w = ((w as f64) * pct / 100.0).round() as usize;
+    // A nonzero reading keeps at least a round dot, matching the overlay.
+    let fill_w = if pct > 0.0 { fill_w.max(H) } else { 0 };
+
+    for y in y0..y0 + H {
+        for x in M..M + w {
+            // Capsule: circular at the two ends, square through the middle.
+            let cx = if x < M + H / 2 {
+                (M + H / 2) as i32
+            } else if x >= M + w - H / 2 {
+                (M + w - H / 2) as i32
+            } else {
+                x as i32
+            };
+            let (dx, dy) = (x as i32 - cx, y as i32 - (y0 + H / 2) as i32);
+            if dx * dx + dy * dy > r * r {
+                continue;
+            }
+            let (cr, cg, cb) = if x < M + fill_w { rgb } else { (70, 70, 70) };
+            let i = (y * N + x) * 4;
+            buf[i] = cr;
+            buf[i + 1] = cg;
+            buf[i + 2] = cb;
+            buf[i + 3] = 255;
+        }
+    }
+    tauri::image::Image::new_owned(buf, N as u32, N as u32)
+}
+
+/// Mirror the primary reading onto the tray icon, so the level stays readable
+/// when the overlay is covered or a fullscreen app is in front.
+#[tauri::command]
+fn set_tray_level(app: tauri::AppHandle, pct: f64, r: u8, g: u8, b: u8) {
+    if let Some(tray) = app.tray_by_id("main") {
+        let _ = tray.set_icon(Some(gauge_icon(pct, (r, g, b))));
+    }
 }
 
 /// Is the left mouse button down right now?
@@ -256,7 +311,8 @@ fn main() {
             read_usage,
             set_height,
             set_grip,
-            reset_position
+            reset_position,
+            set_tray_level
         ])
         .setup(|app| {
             let window = app.get_webview_window("main").expect("main window");
@@ -302,7 +358,7 @@ fn main() {
             )?;
 
             let toggle = start_item.clone();
-            TrayIconBuilder::new()
+            TrayIconBuilder::with_id("main")
                 .icon(app.default_window_icon().expect("bundled icon").clone())
                 .tooltip("klepsydra")
                 .menu(&menu)

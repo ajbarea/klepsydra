@@ -25,10 +25,14 @@ Current slice: first working overlay, installed and running.
 - Reading on screen matched the published file exactly.
 - Autostart registry entry points at the installed path.
 
+- Sessions reconciled per account and window: newer `resets_at` wins, then the
+  highest reading. Caught in the wild -- four sessions of one account
+  publishing 3/74/75/76% simultaneously; the overlay settled on 76%.
+- Tray icon is a live miniature of the bar; confirmed rendering at 76% yellow.
+- Tray menu exercised by the user: all three items render, "Start with Windows"
+  reflects the enabled state.
+
 ## Open
-- Tray menu is unexercised: it builds and the registry side checks out, but no
-  item has been clicked, so the autostart toggle and "Reset position" have
-  never run.
 - Tray icon lands in the notification-area overflow by default.
 - Default position (1280,1022) assumes 1920x1080; window-state overrides it
   once the handle is dragged.

@@ -52,6 +52,7 @@ const tpl = document.getElementById("row-tpl");
 
 let lastPayload = null;
 let lastHeight = 0;
+let lastTray = "";
 
 function paint(entry, row) {
   entry.querySelector(".label").textContent = row.label;
@@ -74,6 +75,30 @@ function syncHeight() {
   if (h === lastHeight || h < 1) return;
   lastHeight = h;
   window.__TAURI__.core.invoke("set_height", { height: h }).catch(() => {});
+}
+
+/**
+ * Mirror the primary reading onto the tray icon, so the level is readable when
+ * the overlay is covered or a fullscreen app is in front.
+ *
+ * The ramp lives in CSS, so rather than reimplement it, read back the colour
+ * the browser actually computed -- that resolves `color-mix` for free.
+ */
+function syncTray(rows) {
+  if (!inTauri) return;
+  const pct = rows[0]?.pct ?? 0;
+  let rgb = [110, 110, 110];
+  const probe = rowsEl.querySelector(".fill");
+  if (probe) {
+    const m = getComputedStyle(probe).backgroundColor.match(/\d+/g);
+    if (m && m.length >= 3) rgb = m.slice(0, 3).map(Number);
+  }
+  const signature = `${Math.round(pct)}|${rgb.join(",")}`;
+  if (signature === lastTray) return; // redraw only when it would look different
+  lastTray = signature;
+  window.__TAURI__.core
+    .invoke("set_tray_level", { pct, r: rgb[0], g: rgb[1], b: rgb[2] })
+    .catch(() => {});
 }
 
 /**
@@ -118,6 +143,7 @@ function render() {
   });
 
   document.title = rows.length ? `klepsydra ${formatPct(rows[0].pct)}` : "klepsydra";
+  syncTray(rows);
   syncHeight();
   syncGrip();
 }

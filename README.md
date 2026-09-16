@@ -38,13 +38,23 @@ terminal, and publishes the figures to a small JSON file. The overlay polls
 those files. No API calls, no credentials, no second background process.
 
 ```
-Claude Code (any terminal)
+Claude Code (every session)
   │ statusLine JSON on stdin
   ▼
-klepsydra-statusline.sh ──► %LOCALAPPDATA%\Klepsydra\accounts\<id>.json ──► klepsydra.exe
-  │
-  └─► "Opus 5 · ctx 21% · 5h 73% · 7d 12%"
+klepsydra-statusline.sh ──► %LOCALAPPDATA%\Klepsydra\accounts\<account>\<session>.json
+  │                                                    │
+  └─► "Opus 5 · ctx 21% · 5h 73% · 7d 12%"             └──► klepsydra.exe
 ```
+
+### Reconciling several terminals
+
+Each session reports whatever *its own* last API response said, so an idle
+terminal keeps publishing a stale, lower number forever -- and with several
+terminals sharing one file the reading flips between them. So every session
+writes its own file and the overlay reconciles them per account and window:
+
+- a later `resets_at` means a newer window, and wins outright;
+- within one window usage only ever grows, so the highest reading is current.
 
 ## Two accounts at once
 
@@ -118,7 +128,9 @@ makes the window interactive only while it is over the handle. The frontend
 reports the handle's rectangle rather than the backend hard-coding it, so
 restyling cannot desync the two.
 
-The tray icon offers "Reset position" (for when the gauge has been dragged
+The tray icon is itself a miniature of the bar, redrawn as the reading changes,
+so the level stays readable when the overlay is covered or a fullscreen app is
+in front. It offers "Reset position" (for when the gauge has been dragged
 off-screen or onto a monitor that is no longer attached), toggles "Start with
 Windows", and quits. Autostart is on by default; the icon may start in the
 notification-area overflow.
@@ -147,7 +159,9 @@ reading stays fresh in an idle terminal:
 }
 ```
 
-That refreshes the timestamp, not the number. The percentage only moves when a
+Idle sessions republishing stale numbers are harmless, because reconciliation
+takes the highest reading rather than the latest writer. That refreshes the
+timestamp, not the number. The percentage only moves when a
 new API response arrives, which is correct -- usage does not grow while you are
 idle. The overlay re-reads the files every 5 seconds, and the countdown ticks
 every 15 seconds off `resets_at`, so it stays right even when nothing is

@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { rampColor, rampPosition, formatCountdown, evaluate, formatPct, toRows, STALE_AFTER_MS, DROP_AFTER_MS } from "./gauge.js";
+import { rampColor, rampPosition, formatCountdown, evaluate, formatPct, toRows, pickWindow, STALE_AFTER_MS, DROP_AFTER_MS } from "./gauge.js";
 
 const STOPS = { low: "#3b82f6", mid: "#eab308", high: "#ef4444", midAt: 60, highAt: 85 };
 const NOW = 1_800_000_000_000; // fixed clock
@@ -186,4 +186,72 @@ test("a switched-away account disappears once its window resets", () => {
     was: acct("was", "RIT-CS-DQL", { five_hour: win(70, -60e3) }, 40 * 60e3),
   }, NOW);
   assert.deepEqual(rows.map((r) => r.label), ["Current session"]);
+});
+
+// ── reconciling several sessions of one account ─────────────────────────────
+const sess = (id, pct, resetsInMs = 2 * 3600e3, writtenAgoMs = 0, label = "Personal") => ({
+  account: "acct", label, session: id,
+  written_at: secs(NOW - writtenAgoMs),
+  windows: { five_hour: { used_percentage: pct, resets_at: secs(NOW + resetsInMs) } },
+});
+
+test("idle sessions holding stale numbers do not drag the reading down", () => {
+  // The reported bug: three terminals on one login publishing 62/3/35 and the
+  // bar flipping between them. Usage only grows inside a window, so 62 is current.
+  const rows = toRows([sess("a", 62), sess("b", 3), sess("c", 35)], NOW);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].pct, 62);
+});
+
+test("order of sessions does not change the reading", () => {
+  const a = toRows([sess("a", 62), sess("b", 3), sess("c", 35)], NOW)[0].pct;
+  const b = toRows([sess("c", 35), sess("a", 62), sess("b", 3)], NOW)[0].pct;
+  assert.equal(a, b);
+});
+
+test("a newer window wins even though its number is lower", () => {
+  // After a reset the fresh session reports ~0 against a later resets_at; the
+  // stale session still reports the old window's 95.
+  const rows = toRows([
+    sess("stale", 95, -60e3, 30 * 60e3),
+    sess("fresh", 2, 5 * 3600e3),
+  ], NOW);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].pct, 2);
+});
+
+test("sessions timestamping one window seconds apart are not treated as two", () => {
+  const rows = toRows([
+    sess("a", 62, 2 * 3600e3),
+    sess("b", 20, 2 * 3600e3 + 45e3), // 45s later, same window
+  ], NOW);
+  assert.equal(rows[0].pct, 62);
+});
+
+test("a genuinely later window is still preferred over a near miss", () => {
+  const rows = toRows([
+    sess("old", 90, 2 * 3600e3),
+    sess("new", 5, 2 * 3600e3 + 120e3), // beyond the match tolerance
+  ], NOW);
+  assert.equal(rows[0].pct, 5);
+});
+
+test("reconciliation is per account, never across them", () => {
+  const rows = toRows([
+    { ...sess("x", 90), account: "team", label: "RIT-CS-DQL" },
+    { ...sess("y", 10), account: "pers", label: "Personal" },
+  ], NOW);
+  assert.deepEqual(rows.map((r) => [r.label, r.pct]), [
+    ["Personal · session", 10],
+    ["RIT-CS-DQL · session", 90],
+  ]);
+});
+
+test("an account whose freshest session is recent counts as live", () => {
+  const rows = toRows([
+    sess("old", 40, 2 * 3600e3, 40 * 60e3),
+    sess("new", 61, 2 * 3600e3, 10e3),
+  ], NOW);
+  assert.equal(rows[0].state, "live");
+  assert.equal(rows[0].pct, 61);
 });

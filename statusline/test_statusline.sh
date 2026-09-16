@@ -34,7 +34,8 @@ mkdir -p "$work/empty"   # config dir with no .claude.json at all
 run() { # fixture, config-dir
   CLAUDE_CONFIG_DIR="$work/$2" KLEPSYDRA_DIR="$work/out" bash "$script" <"$fixtures/$1"
 }
-acct() { echo "$work/out/accounts/$1.json"; }
+# account dir / session file, mirroring the layout the overlay reads.
+acct() { echo "$work/out/accounts/$1/${2:-abc-123}.json"; }
 
 echo "statusLine producer"
 
@@ -53,17 +54,29 @@ check "team: account id"          "$(jq -r '.account' "$(acct uuid-team)")" "uui
 
 rm -rf "$work/out"
 run five-hour-only.json personal >/dev/null
-check "personal: label"    "$(jq -r '.label' "$(acct uuid-pers)")" "Personal"
-check "personal: account"  "$(jq -r '.account' "$(acct uuid-pers)")" "uuid-pers"
+check "personal: label"    "$(jq -r '.label' "$(acct uuid-pers abc-124)")" "Personal"
+check "personal: account"  "$(jq -r '.account' "$(acct uuid-pers abc-124)")" "uuid-pers"
 
 # --- two accounts must not overwrite each other ---------------------------
 rm -rf "$work/out"
 run full.json team >/dev/null
 run five-hour-only.json personal >/dev/null
-check "two accounts: both files exist" \
-  "$(cd "$work/out/accounts" && printf '%s ' *.json)" "uuid-pers.json uuid-team.json "
+check "two accounts: both dirs exist" \
+  "$(cd "$work/out/accounts" && printf '%s ' */)" "uuid-pers/ uuid-team/ "
 check "two accounts: team intact" "$(jq -r '.windows.five_hour.used_percentage' "$(acct uuid-team)")" "73.2"
-check "two accounts: personal intact" "$(jq -r '.windows.five_hour.used_percentage' "$(acct uuid-pers)")" "1"
+check "two accounts: personal intact" "$(jq -r '.windows.five_hour.used_percentage' "$(acct uuid-pers abc-124)")" "1"
+
+# --- two sessions of ONE account each keep their own file ------------------
+# Sharing a file let an idle terminal overwrite an active one with a stale
+# number, which showed up as the reading flipping between values.
+rm -rf "$work/out"
+run full.json team >/dev/null            # session abc-123, 73.2%
+run five-hour-only.json team >/dev/null  # session abc-124, 1%
+check "two sessions: both files kept" \
+  "$(cd "$work/out/accounts/uuid-team" && printf '%s ' *.json)" "abc-123.json abc-124.json "
+check "two sessions: first intact"  "$(jq -r '.windows.five_hour.used_percentage' "$(acct uuid-team abc-123)")" "73.2"
+check "two sessions: second intact" "$(jq -r '.windows.five_hour.used_percentage' "$(acct uuid-team abc-124)")" "1"
+check "session id recorded"         "$(jq -r '.session' "$(acct uuid-team abc-124)")" "abc-124"
 
 # --- missing config falls back rather than failing ------------------------
 rm -rf "$work/out"
@@ -76,16 +89,16 @@ check "no config: label"        "$(jq -r '.label' "$(acct unknown)")" "Claude"
 rm -rf "$work/out"
 display=$(run zero-pct.json team)
 check "zero pct: terminal line" "$display" "Opus 5 · ctx 0% · 5h 0%"
-check "zero pct: published"     "$(jq -r '.windows.five_hour.used_percentage' "$(acct uuid-team)")" "0"
+check "zero pct: published"     "$(jq -r '.windows.five_hour.used_percentage' "$(acct uuid-team abc-127)")" "0"
 
 # --- gateway spend limit --------------------------------------------------
 rm -rf "$work/out"
 display=$(run spend-limit.json team)
 check "spend limit: terminal line" "$display" "Opus 5 · ctx 50% · spend 100%"
-check "spend limit: published"     "$(jq -r '.windows.spend_limit.used_percentage' "$(acct uuid-team)")" "100"
+check "spend limit: published"     "$(jq -r '.windows.spend_limit.used_percentage' "$(acct uuid-team abc-126)")" "100"
 
 # --- absent rate_limits must NOT clobber a good file ----------------------
-rm -rf "$work/out"; mkdir -p "$work/out/accounts"
+rm -rf "$work/out"; mkdir -p "$work/out/accounts/uuid-team"
 printf '{"account":"uuid-team","written_at":1,"windows":{"five_hour":{"used_percentage":99,"resets_at":2}}}\n' >"$(acct uuid-team)"
 display=$(run no-rate-limits.json team)
 check "no limits: terminal line"  "$display" "Opus 5"

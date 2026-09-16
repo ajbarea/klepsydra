@@ -36,7 +36,8 @@ parsed=$(printf '%s' "$input" | jq -r \
   | ( $root.rate_limits // {} ) | with_entries(select(.value.used_percentage != null)) as $w
   |
   ( if ($w | length) == 0 then "SKIP"
-    else { account: $acct.id, label: $acct.label, written_at: $now, windows: $w } | tojson
+    else { account: $acct.id, label: $acct.label, session: ($root.session_id // "unknown"),
+           written_at: $now, windows: $w } | tojson
     end ),
   ( [ ( $w.five_hour   | if . then "5h \(pct)%"    else empty end ),
       ( $w.seven_day   | if . then "7d \(pct)%"    else empty end ),
@@ -57,9 +58,13 @@ extra=$(printf '%s' "$parsed" | sed -n 3p)
 # Leave the last good file alone -- another terminal may hold fresher data.
 if [[ "$payload" != "SKIP" ]]; then
   id=$(printf '%s' "$account" | jq -r '.id')
-  out_dir="$KLEPSYDRA_DIR/accounts"
+  # A file per session: several terminals on one login each hold whatever their
+  # own last API response reported, so sharing a file made them overwrite each
+  # other with stale numbers. The overlay reconciles them.
+  session=$(printf '%s' "$payload" | jq -r '.session')
+  out_dir="$KLEPSYDRA_DIR/accounts/$id"
   if mkdir -p "$out_dir" 2>/dev/null; then
-    out="$out_dir/$id.json"
+    out="$out_dir/$session.json"
     # tmp-then-rename so a concurrent reader never sees a half-written file.
     tmp="$out.$$.tmp"
     if printf '%s\n' "$payload" >"$tmp" 2>/dev/null; then
