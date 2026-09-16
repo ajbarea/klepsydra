@@ -44,9 +44,16 @@ fn read_usage() -> serde_json::Value {
         if path.extension().and_then(|e| e.to_str()) != Some("json") {
             continue;
         }
-        let Ok(text) = std::fs::read_to_string(&path) else { continue };
-        let Ok(value) = serde_json::from_str::<serde_json::Value>(&text) else { continue };
-        let key = path.file_stem().and_then(|s| s.to_str()).unwrap_or("unknown");
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(&text) else {
+            continue;
+        };
+        let key = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("unknown");
         out.insert(key.to_string(), value);
     }
     serde_json::Value::Object(out)
@@ -171,8 +178,12 @@ fn watch_grip(app: tauri::AppHandle) {
         loop {
             std::thread::sleep(Duration::from_millis(16));
             ticks = ticks.wrapping_add(1);
-            let Some(window) = app.get_webview_window("main") else { continue };
-            let Some(rect) = app.state::<Grip>().0.lock().ok().and_then(|g| *g) else { continue };
+            let Some(window) = app.get_webview_window("main") else {
+                continue;
+            };
+            let Some(rect) = app.state::<Grip>().0.lock().ok().and_then(|g| *g) else {
+                continue;
+            };
             let (Ok(cursor), Ok(origin), Ok(scale)) = (
                 app.cursor_position(),
                 window.outer_position(),
@@ -190,7 +201,8 @@ fn watch_grip(app: tauri::AppHandle) {
             let right = left + rect[2] * scale + margin * 2.0;
             let bottom = top + rect[3] * scale + margin * 2.0;
 
-            let inside = cursor.x >= left && cursor.x <= right && cursor.y >= top && cursor.y <= bottom;
+            let inside =
+                cursor.x >= left && cursor.x <= right && cursor.y >= top && cursor.y <= bottom;
 
             let pressed = left_button_down();
             // Only a press that *starts* on the handle begins a drag, so
@@ -219,7 +231,7 @@ fn watch_grip(app: tauri::AppHandle) {
             // Twice a second. Measured: after the taskbar takes foreground the
             // gauge is buried until the next re-assert, so this interval is the
             // worst case it stays hidden.
-            if ticks % 30 == 0 {
+            if ticks.is_multiple_of(30) {
                 raise_above_taskbar(&window);
             }
         }
@@ -240,7 +252,12 @@ fn main() {
                 .build(),
         )
         .manage(Grip::default())
-        .invoke_handler(tauri::generate_handler![read_usage, set_height, set_grip, reset_position])
+        .invoke_handler(tauri::generate_handler![
+            read_usage,
+            set_height,
+            set_grip,
+            reset_position
+        ])
         .setup(|app| {
             let window = app.get_webview_window("main").expect("main window");
             window.set_ignore_cursor_events(true)?;

@@ -1,0 +1,57 @@
+name: CI Pipeline
+'on':
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Gauge logic + statusLine hook
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22'
+      - name: Unit tests (ramp, countdown, staleness, multi-account rows)
+        run: node --test src/*.test.js
+      # The hook is the only path that publishes usage, so its fixtures cover
+      # the shapes that would otherwise fail silently: absent rate_limits, a
+      # second account, malformed stdin, an unwritable destination.
+      - name: statusLine hook tests
+        run: bash statusline/test_statusline.sh
+      - name: Shell lint
+        run: shellcheck statusline/*.sh scripts/*.sh
+
+  rust:
+    name: Rust (fmt + clippy)
+    # Windows: the overlay is a Windows app, and the win32 calls behind the
+    # drag handle and the topmost re-assert only compile for that target.
+    runs-on: windows-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Add toolchain components
+        run: rustup component add clippy rustfmt
+      - name: cargo fmt
+        working-directory: src-tauri
+        run: cargo fmt --check
+      - name: cargo clippy
+        working-directory: src-tauri
+        run: cargo clippy --all-targets -- -D warnings

@@ -61,7 +61,7 @@ rm -rf "$work/out"
 run full.json team >/dev/null
 run five-hour-only.json personal >/dev/null
 check "two accounts: both files exist" \
-  "$(ls "$work/out/accounts" | sort | tr '\n' ' ')" "uuid-pers.json uuid-team.json "
+  "$(cd "$work/out/accounts" && printf '%s ' *.json)" "uuid-pers.json uuid-team.json "
 check "two accounts: team intact" "$(jq -r '.windows.five_hour.used_percentage' "$(acct uuid-team)")" "73.2"
 check "two accounts: personal intact" "$(jq -r '.windows.five_hour.used_percentage' "$(acct uuid-pers)")" "1"
 

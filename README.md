@@ -1,15 +1,20 @@
-# klepsydra
+<p align="center">
+  <img src="assets/hero.png" alt="klepsydra sitting over the Windows taskbar, showing 3% of the five-hour window used" width="520">
+</p>
+
+<h1 align="center">klepsydra</h1>
+
+<p align="center">Your Claude Code usage limit, always on screen.</p>
+
+<p align="center">
+  <a href="https://github.com/ajbarea/klepsydra/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/ajbarea/klepsydra/ci.yml?branch=main&label=CI" alt="CI"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="License: MIT"></a>
+  <img src="https://img.shields.io/badge/platform-Windows-0078D4" alt="Platform: Windows">
+</p>
 
 A thin always-on-top bar showing how much of your Claude Code limit you have
 used, so you can see it without running `/usage` in whichever terminal happens
-to be in front.
-
-```
-Current session   ●──────────────────────   1% used
-Resets in 4 hr 58 min
-```
-
-The bar fills blue to yellow to red as the window is consumed.
+to be in front. The bar fills blue to yellow to red as the window is consumed.
 
 ## Why "klepsydra"
 
@@ -54,14 +59,9 @@ claude                                         # the other
 Each account publishes to its own file, so terminals on different logins never
 overwrite each other, and the overlay draws a labelled row for each:
 
-```
-Personal · session     ████░░░░░░░░░░░░   21% used
-Resets in 3 hr 53 min
-Personal · week        ████████░░░░░░░░   63% used
-Resets in 3 days 11 hr
-RIT-CS-DQL · session   ██████████████░░   88% used
-Resets in 49 min
-```
+<p align="center">
+  <img src="assets/two-accounts.png" alt="Three rows: a personal session and week window, and a team session window, each separately labelled" width="450">
+</p>
 
 With one account the rows drop the prefix and read "Current session" and "This
 week". A separate config dir is a separate *everything* though, so the second

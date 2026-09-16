@@ -18,6 +18,7 @@ rsync -a --delete \
 
 # WSL builds its Windows PATH at startup, so tools installed since then are
 # missing from any powershell.exe we spawn. Put them back explicitly.
+# shellcheck disable=SC2016  # PowerShell source: $env: must reach pwsh unexpanded.
 tools='$env:Path = "C:\\Program Files\\nodejs;$env:USERPROFILE\\.cargo\\bin;" + $env:Path'
 
 echo "==> installing frontend tooling"
@@ -29,7 +30,7 @@ powershell.exe -NoProfile -Command "$tools; cd '$stage_win'; npx --yes tauri bui
 exe="$stage/src-tauri/target/release/klepsydra.exe"
 if [[ -f "$exe" ]]; then
   echo
-  echo "built: $stage_win\\src-tauri\\target\\release\\klepsydra.exe"
+  printf 'built: %s\\src-tauri\\target\\release\\klepsydra.exe\n' "$stage_win"
   ls -la "$exe"
 else
   echo "build did not produce klepsydra.exe" >&2
