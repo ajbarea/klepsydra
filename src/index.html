@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>klepsydra</title>
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div id="panel" data-state="waiting" data-tauri-drag-region>
+    <div class="row">
+      <span class="label" id="p-label">Current session</span>
+      <span class="track"><span class="fill" id="p-fill"></span></span>
+      <span class="pct" id="p-pct">--</span>
+    </div>
+    <span class="sub" id="p-sub">waiting for Claude Code</span>
+
+    <div id="secondary" hidden>
+      <div class="row">
+        <span class="label" id="s-label">This week</span>
+        <span class="track"><span class="fill" id="s-fill"></span></span>
+        <span class="pct" id="s-pct">--</span>
+      </div>
+      <span class="sub" id="s-sub"></span>
+    </div>
+  </div>
+  <script type="module" src="main.js"></script>
+</body>
+</html>

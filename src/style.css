@@ -1,0 +1,111 @@
+/* ─── Restyling surface ────────────────────────────────────────────────────
+   Everything you'd want to change lives in this block. Edit, rebuild, done. */
+:root {
+  --bar-width: 100%;
+  --bar-height: 6px;
+  --bar-radius: 999px;
+
+  /* Fill ramp: the colour at 0%, at the midpoint, and at 100%. */
+  --ramp-low: #3b82f6;   /* blue   */
+  --ramp-mid: #eab308;   /* yellow */
+  --ramp-high: #ef4444;  /* red    */
+  --ramp-mid-at: 60;     /* blend: where --ramp-mid sits; bands: yellow starts */
+  --ramp-high-at: 85;    /* bands only: where red takes over */
+  --ramp-mode: blend;    /* blend | bands */
+
+  --track: #2f2f2f;
+  --panel-bg: rgba(20, 20, 20, 0.82);
+  --panel-radius: 10px;
+  --panel-pad: 10px 14px;
+
+  --text: #ededed;
+  --text-dim: #8a8a8a;
+  --font: ui-sans-serif, "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif;
+  --size-label: 13px;
+  --size-pct: 13px;
+  --size-sub: 11px;
+
+  --stale-opacity: 0.38;
+}
+/* ─────────────────────────────────────────────────────────────────────────── */
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+/* Screenshot harness: settle instantly so captures are deterministic. */
+html[data-still] *, html[data-still] *::before, html[data-still] *::after {
+  transition: none !important;
+  animation: none !important;
+}
+
+html, body {
+  height: 100%;
+  background: transparent;   /* the Tauri window is transparent; this is the hole */
+  overflow: hidden;
+  font-family: var(--font);
+  color: var(--text);
+  -webkit-user-select: none;
+  user-select: none;
+  cursor: default;
+}
+
+#panel {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: var(--panel-pad);
+  background: var(--panel-bg);
+  border-radius: var(--panel-radius);
+  backdrop-filter: blur(12px);
+  transition: opacity 240ms ease;
+}
+
+/* Stale or unknown data dims the whole panel rather than showing a confident lie. */
+#panel[data-state="stale"],
+#panel[data-state="waiting"] { opacity: var(--stale-opacity); }
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.label {
+  font-size: var(--size-label);
+  white-space: nowrap;
+}
+
+.track {
+  flex: 1;
+  min-width: 60px;
+  height: var(--bar-height);
+  background: var(--track);
+  border-radius: var(--bar-radius);
+  overflow: hidden;
+}
+
+.fill {
+  display: block;   /* a span is inline, where width/height are ignored entirely */
+  height: 100%;
+  width: 0%;
+  border-radius: var(--bar-radius);
+  background: var(--ramp-low);
+  transition: width 420ms ease, background-color 420ms ease;
+}
+
+.pct {
+  font-size: var(--size-pct);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  min-width: 62px;
+  text-align: right;
+}
+
+.sub {
+  font-size: var(--size-sub);
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Second window (7d / spend), hidden unless enabled from the tray. */
+#secondary[hidden] { display: none; }
+#secondary { margin-top: 2px; }

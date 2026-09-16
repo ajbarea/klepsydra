@@ -1,0 +1,4 @@
+{"session_id":"abc-123","cwd":"/home/ajbar/ajsoftworks","model":{"id":"claude-opus-5","display_name":"Opus 5"},
+ "context_window":{"total_input_tokens":42000,"context_window_size":200000,"used_percentage":21.4,"remaining_percentage":78.6},
+ "rate_limits":{"five_hour":{"used_percentage":73.2,"resets_at":1789000000},
+                "seven_day":{"used_percentage":12.9,"resets_at":1789400000}}}
