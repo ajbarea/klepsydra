@@ -22,9 +22,14 @@ Current slice: first working overlay.
   entry points at a stable path rather than the scratch build directory.
 
 ## Open
+- Stays in front of the taskbar: `SetWindowPos(HWND_TOPMOST)` twice a second.
+  Verified by reproducing the bury (taskbar takes foreground -> gauge hidden at
+  120ms) and confirming recovery (visible again at 700ms).
+- Tray "Reset position" recovers a gauge dragged out of reach.
+
+## Open
 - The tray menu is untested: it builds without panicking, but no item has been
-  clicked, so the autostart toggle is unexercised. Its handler is the only path
-  that calls `disable()`.
+  clicked, so the autostart toggle and "Reset position" are unexercised.
 - Tray icon lands in the notification-area overflow by default.
 - Default position (1280,1022) assumes 1920x1080; the window-state plugin
   overrides it once the handle is dragged.

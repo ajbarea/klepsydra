@@ -112,8 +112,20 @@ makes the window interactive only while it is over the handle. The frontend
 reports the handle's rectangle rather than the backend hard-coding it, so
 restyling cannot desync the two.
 
-The tray icon toggles "Start with Windows" and quits. Autostart is on by
-default; its icon may start in the notification-area overflow.
+The tray icon offers "Reset position" (for when the gauge has been dragged
+off-screen or onto a monitor that is no longer attached), toggles "Start with
+Windows", and quits. Autostart is on by default; the icon may start in the
+notification-area overflow.
+
+### Staying in front of the taskbar
+
+The taskbar is itself a topmost window, and within that band z-order goes to
+whichever window was raised last -- so clicking the taskbar buries a gauge
+sitting over it, and takes the drag handle out of reach. Tauri's
+`set_always_on_top` diffs against the flag it already holds and does nothing,
+so klepsydra calls `SetWindowPos` with `HWND_TOPMOST` twice a second instead.
+`NOMOVE`/`NOSIZE` preserve your position and `NOACTIVATE` keeps focus where it
+was.
 
 ## How often it refreshes
 

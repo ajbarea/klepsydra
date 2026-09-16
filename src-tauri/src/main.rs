@@ -69,6 +69,71 @@ fn set_grip(grip: tauri::State<'_, Grip>, x: f64, y: f64, w: f64, h: f64) {
     }
 }
 
+/// Re-assert topmost above every other topmost window, the taskbar included.
+///
+/// The taskbar is itself WS_EX_TOPMOST, and within that band z-order goes to
+/// whoever was raised last -- so clicking the taskbar buries a gauge sitting
+/// over it, taking the drag handle out of reach with it. Tauri's
+/// `set_always_on_top` diffs against the flag it already holds and does
+/// nothing, so re-inserting at the top of the band means calling SetWindowPos
+/// directly. NOMOVE/NOSIZE keep the user's position, NOACTIVATE keeps focus
+/// where it was.
+#[cfg(windows)]
+fn raise_above_taskbar(window: &tauri::WebviewWindow) {
+    const HWND_TOPMOST: isize = -1;
+    const SWP_NOSIZE: u32 = 0x0001;
+    const SWP_NOMOVE: u32 = 0x0002;
+    const SWP_NOACTIVATE: u32 = 0x0010;
+
+    #[link(name = "user32")]
+    unsafe extern "system" {
+        fn SetWindowPos(
+            hwnd: isize,
+            insert_after: isize,
+            x: i32,
+            y: i32,
+            cx: i32,
+            cy: i32,
+            flags: u32,
+        ) -> i32;
+    }
+
+    if let Ok(hwnd) = window.hwnd() {
+        unsafe {
+            SetWindowPos(
+                hwnd.0 as isize,
+                HWND_TOPMOST,
+                0,
+                0,
+                0,
+                0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+            );
+        }
+    }
+}
+
+#[cfg(not(windows))]
+fn raise_above_taskbar(_window: &tauri::WebviewWindow) {}
+
+/// Put the gauge back somewhere reachable, for when it has been dragged
+/// off-screen or onto a monitor that is no longer attached.
+#[tauri::command]
+fn reset_position(window: tauri::WebviewWindow) -> Result<(), String> {
+    let monitor = window
+        .primary_monitor()
+        .map_err(|e| e.to_string())?
+        .ok_or("no primary monitor")?;
+    let scale = monitor.scale_factor();
+    let screen = monitor.size();
+    let size = window.outer_size().map_err(|e| e.to_string())?;
+    let x = (screen.width as f64 - size.width as f64) / scale - 220.0;
+    let y = (screen.height as f64 - size.height as f64) / scale;
+    window
+        .set_position(tauri::LogicalPosition::new(x.max(0.0), y.max(0.0)))
+        .map_err(|e| e.to_string())
+}
+
 /// Windows has no per-region hit testing for a click-through window: ignoring
 /// cursor events is all-or-nothing. So we watch the pointer and switch the
 /// whole window interactive only while it is over the grab handle. Everywhere
@@ -76,8 +141,10 @@ fn set_grip(grip: tauri::State<'_, Grip>, x: f64, y: f64, w: f64, h: f64) {
 fn watch_grip(app: tauri::AppHandle) {
     std::thread::spawn(move || {
         let mut interactive = false;
+        let mut ticks: u32 = 0;
         loop {
             std::thread::sleep(Duration::from_millis(16));
+            ticks = ticks.wrapping_add(1);
             let Some(window) = app.get_webview_window("main") else { continue };
             let Some(rect) = app.state::<Grip>().0.lock().ok().and_then(|g| *g) else { continue };
             let (Ok(cursor), Ok(origin), Ok(scale)) = (
@@ -102,6 +169,13 @@ fn watch_grip(app: tauri::AppHandle) {
                 interactive = inside;
                 let _ = window.set_ignore_cursor_events(!inside);
             }
+
+            // Twice a second. Measured: after the taskbar takes foreground the
+            // gauge is buried until the next re-assert, so this interval is the
+            // worst case it stays hidden.
+            if ticks % 30 == 0 {
+                raise_above_taskbar(&window);
+            }
         }
     });
 }
@@ -120,7 +194,7 @@ fn main() {
                 .build(),
         )
         .manage(Grip::default())
-        .invoke_handler(tauri::generate_handler![read_usage, set_height, set_grip])
+        .invoke_handler(tauri::generate_handler![read_usage, set_height, set_grip, reset_position])
         .setup(|app| {
             let window = app.get_webview_window("main").expect("main window");
             window.set_ignore_cursor_events(true)?;
@@ -151,10 +225,17 @@ fn main() {
                 autostart.is_enabled().unwrap_or(false),
                 None::<&str>,
             )?;
+            let reset = MenuItem::with_id(app, "reset", "Reset position", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
             let menu = Menu::with_items(
                 app,
-                &[&start_item, &PredefinedMenuItem::separator(app)?, &quit],
+                &[
+                    &reset,
+                    &PredefinedMenuItem::separator(app)?,
+                    &start_item,
+                    &PredefinedMenuItem::separator(app)?,
+                    &quit,
+                ],
             )?;
 
             let toggle = start_item.clone();
@@ -171,11 +252,18 @@ fn main() {
                         let _ = if want { mgr.enable() } else { mgr.disable() };
                         let _ = toggle.set_checked(mgr.is_enabled().unwrap_or(want));
                     }
+                    "reset" => {
+                        if let Some(w) = app.get_webview_window("main") {
+                            let _ = reset_position(w.clone());
+                            raise_above_taskbar(&w);
+                        }
+                    }
                     "quit" => app.exit(0),
                     _ => {}
                 })
                 .build(app)?;
 
+            raise_above_taskbar(&window);
             watch_grip(app.handle().clone());
             Ok(())
         })
