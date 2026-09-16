@@ -9,13 +9,17 @@ The gauge must never show a confident wrong number. Every path that cannot
 establish a live reading dims the panel instead of drawing a stale bar.
 
 ## Next
-- Exercise the tray menu.
+- Exercise the tray menu ("Reset position", autostart toggle).
 
 ## Later
 - Optional: flash or notify when crossing a threshold.
 - Optional: compact mode that drops the label and countdown to a bare bar.
 
 ## Completed
+- 2026-09-16 — Kept the gauge in front of the taskbar. Both are topmost, so the
+  last one raised wins; clicking the taskbar buried the gauge and took its drag
+  handle with it. Re-asserting HWND_TOPMOST twice a second fixes it, and a tray
+  "Reset position" covers the cases z-order cannot fix.
 - 2026-09-16 — Added a drag handle, autostart and position persistence. Windows
   has no per-region hit testing for click-through windows, so a pointer-watching
   thread makes the window interactive only over the handle. Installed via the
