@@ -30,19 +30,42 @@ That blob carries the same rate-limit figures `/usage` displays:
 
 So the status line does double duty: it prints a compact readout to your
 terminal, and publishes the figures to a small JSON file. The overlay polls
-that file. No API calls, no credentials, no second background process.
+those files. No API calls, no credentials, no second background process.
 
 ```
 Claude Code (any terminal)
   │ statusLine JSON on stdin
   ▼
-klepsydra-statusline.sh ──► %LOCALAPPDATA%\Klepsydra\usage.json ──► klepsydra.exe
+klepsydra-statusline.sh ──► %LOCALAPPDATA%\Klepsydra\accounts\<id>.json ──► klepsydra.exe
   │
   └─► "Opus 5 · ctx 21% · 5h 73% · 7d 12%"
 ```
 
-Run several terminals and they all publish to the same file. The limits are
-account-wide, so the most recent writer is the correct one.
+## Two accounts at once
+
+The statusLine payload carries no account identity, so the hook reads it from
+the global config, which `CLAUDE_CONFIG_DIR` relocates per login:
+
+```bash
+CLAUDE_CONFIG_DIR=~/.claude-personal claude   # one account
+claude                                         # the other
+```
+
+Each account publishes to its own file, so terminals on different logins never
+overwrite each other, and the overlay draws a labelled row for each:
+
+```
+Personal · session     ████░░░░░░░░░░░░   21% used
+Resets in 3 hr 53 min
+Personal · week        ████████░░░░░░░░   63% used
+Resets in 3 days 11 hr
+RIT-CS-DQL · session   ██████████████░░   88% used
+Resets in 49 min
+```
+
+With one account the rows drop the prefix and read "Current session" and "This
+week". A separate config dir is a separate *everything* though, so the second
+profile starts without your settings, plugins or skills until you copy them.
 
 ## Install
 

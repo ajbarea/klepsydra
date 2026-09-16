@@ -1,11 +1,23 @@
 // Pure rendering logic, kept free of Tauri and DOM so it can be unit tested.
 
 export const STALE_AFTER_MS = 15 * 60 * 1000;
+// An account nobody has used in this long is gone, not stale. Dropping it stops
+// a signed-out account leaving a dead row on screen forever.
+export const DROP_AFTER_MS = 12 * 60 * 60 * 1000;
+
+// Fixed display order, so rows never reshuffle between polls.
+export const WINDOW_ORDER = ["five_hour", "seven_day", "spend_limit"];
 
 const WINDOW_LABELS = {
   five_hour: "Current session",
   seven_day: "This week",
   spend_limit: "Spend limit",
+};
+// Shorter forms, used once an account name is already carrying context.
+const WINDOW_SHORT = {
+  five_hour: "session",
+  seven_day: "week",
+  spend_limit: "spend",
 };
 
 export function windowLabel(key) {
@@ -56,6 +68,13 @@ export function formatCountdown(resetsAtSec, nowMs = Date.now()) {
   if (mins < 1) return "Resets in under a minute";
   const h = Math.floor(mins / 60);
   const m = mins % 60;
+  // A weekly window is tens of hours out; "83 hr 19 min" is not readable.
+  if (h >= 24) {
+    const d = Math.floor(h / 24);
+    const rh = h % 24;
+    const days = `${d} day${d === 1 ? "" : "s"}`;
+    return rh === 0 ? `Resets in ${days}` : `Resets in ${days} ${rh} hr`;
+  }
   if (h === 0) return `Resets in ${m} min`;
   if (m === 0) return `Resets in ${h} hr`;
   return `Resets in ${h} hr ${m} min`;
@@ -93,4 +112,45 @@ export function evaluate(payload, key, nowMs = Date.now()) {
 export function formatPct(pct) {
   if (pct === null) return "--";
   return `${Math.floor(pct)}% used`;
+}
+
+/**
+ * Flatten every account's payload into the rows to draw, one per live window.
+ * `payloads` is whatever the backend handed over, keyed by account id.
+ *
+ * With a single account the rows read like the desktop app ("Current
+ * session"); with more than one, each row is prefixed by its account so two
+ * unrelated numbers are never mistaken for each other.
+ */
+export function toRows(payloads, nowMs = Date.now()) {
+  const list = Object.values(payloads ?? {}).filter(
+    (p) => p && typeof p === "object" && p.windows && typeof p.windows === "object",
+  );
+
+  const fresh = list.filter((p) => {
+    const at = Number(p.written_at) * 1000;
+    return Number.isFinite(at) && nowMs - at <= DROP_AFTER_MS;
+  });
+
+  // Stable order: by label, then account id, so rows never jump around.
+  fresh.sort((a, b) =>
+    String(a.label ?? "").localeCompare(String(b.label ?? "")) ||
+    String(a.account ?? "").localeCompare(String(b.account ?? "")),
+  );
+
+  const multi = fresh.length > 1;
+  const rows = [];
+  for (const p of fresh) {
+    for (const key of WINDOW_ORDER) {
+      if (!p.windows[key]) continue;
+      const r = evaluate(p, key, nowMs);
+      if (r.state === "waiting") continue;
+      rows.push({
+        ...r,
+        key: `${p.account ?? "?"}:${key}`,
+        label: multi ? `${p.label ?? "Claude"} · ${WINDOW_SHORT[key] ?? key}` : r.label,
+      });
+    }
+  }
+  return rows;
 }

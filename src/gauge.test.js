@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { rampColor, rampPosition, formatCountdown, evaluate, formatPct, STALE_AFTER_MS } from "./gauge.js";
+import { rampColor, rampPosition, formatCountdown, evaluate, formatPct, toRows, STALE_AFTER_MS, DROP_AFTER_MS } from "./gauge.js";
 
 const STOPS = { low: "#3b82f6", mid: "#eab308", high: "#ef4444", midAt: 60, highAt: 85 };
 const NOW = 1_800_000_000_000; // fixed clock
@@ -105,4 +105,68 @@ test("missing, empty and malformed payloads all degrade to waiting", () => {
 
 test("asking for a window the file does not carry is waiting, not a crash", () => {
   assert.equal(evaluate(live(50), "seven_day", NOW).state, "waiting");
+});
+
+// ── multi-account rows ──────────────────────────────────────────────────────
+const acct = (id, label, windows, writtenAgoMs = 0) => ({
+  account: id, label, written_at: secs(NOW - writtenAgoMs), windows,
+});
+const win = (pct, resetsInMs = 2 * 3600e3) => ({
+  used_percentage: pct, resets_at: secs(NOW + resetsInMs),
+});
+
+test("a single account reads like the desktop app", () => {
+  const rows = toRows({ a: acct("a", "Personal", { five_hour: win(30), seven_day: win(10) }) }, NOW);
+  assert.deepEqual(rows.map((r) => r.label), ["Current session", "This week"]);
+});
+
+test("two accounts are each labelled so their numbers cannot be confused", () => {
+  const rows = toRows({
+    t: acct("t", "RIT-CS-DQL", { five_hour: win(80) }),
+    p: acct("p", "Personal", { five_hour: win(20), seven_day: win(5) }),
+  }, NOW);
+  assert.deepEqual(rows.map((r) => r.label), [
+    "Personal · session", "Personal · week", "RIT-CS-DQL · session",
+  ]);
+  assert.deepEqual(rows.map((r) => r.pct), [20, 5, 80]);
+});
+
+test("row order is stable regardless of object key order", () => {
+  const a = { t: acct("t", "RIT-CS-DQL", { five_hour: win(80) }), p: acct("p", "Personal", { five_hour: win(20) }) };
+  const b = { p: a.p, t: a.t };
+  assert.deepEqual(toRows(a, NOW).map((r) => r.key), toRows(b, NOW).map((r) => r.key));
+});
+
+test("windows always appear in a fixed order", () => {
+  const rows = toRows({ a: acct("a", "P", { spend_limit: win(3), seven_day: win(2), five_hour: win(1) }) }, NOW);
+  assert.deepEqual(rows.map((r) => r.pct), [1, 2, 3]);
+});
+
+test("a long-unused account is dropped rather than left dim forever", () => {
+  const rows = toRows({
+    live: acct("live", "Personal", { five_hour: win(20) }),
+    gone: acct("gone", "Old", { five_hour: win(90) }, DROP_AFTER_MS + 1000),
+  }, NOW);
+  assert.deepEqual(rows.map((r) => r.label), ["Current session"]);
+});
+
+test("an expired window still shows while the account is active", () => {
+  const rows = toRows({ a: acct("a", "P", { five_hour: win(73, -1000) }) }, NOW);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].sub, "window reset");
+  assert.equal(rows[0].pct, null);
+});
+
+test("junk in the file produces no rows instead of throwing", () => {
+  for (const bad of [null, undefined, {}, { a: null }, { a: "x" }, { a: { windows: "no" } }]) {
+    assert.deepEqual(toRows(bad, NOW), []);
+  }
+});
+
+test("multi-day countdowns read in days, not tens of hours", () => {
+  assert.equal(formatCountdown(secs(NOW + 83 * 3600e3 + 19 * 60e3), NOW), "Resets in 3 days 11 hr");
+  assert.equal(formatCountdown(secs(NOW + 25 * 3600e3), NOW), "Resets in 1 day 1 hr");
+  assert.equal(formatCountdown(secs(NOW + 48 * 3600e3), NOW), "Resets in 2 days");
+  // The 24-hour boundary must not regress the hour formatting below it.
+  assert.equal(formatCountdown(secs(NOW + 23 * 3600e3 + 59 * 60e3), NOW), "Resets in 23 hr 59 min");
 });

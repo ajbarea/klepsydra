@@ -1,12 +1,19 @@
-import { rampColor, evaluate, formatPct, windowLabel } from "./gauge.js";
+import { rampColor, toRows, formatPct } from "./gauge.js";
 
-const POLL_MS = 5_000;   // how often we re-read usage.json
+const POLL_MS = 5_000;   // how often we re-read the account files
 const TICK_MS = 15_000;  // how often the countdown re-renders between reads
 
 const inTauri = Boolean(window.__TAURI_INTERNALS__ ?? window.__TAURI__);
 
 if (new URLSearchParams(location.search).has("still")) {
   document.documentElement.dataset.still = "";
+}
+
+// Harness only: pin the panel width so captures do not depend on how the
+// headless browser interprets --window-size.
+const forcedWidth = new URLSearchParams(location.search).get("w");
+if (forcedWidth) {
+  document.documentElement.style.setProperty("--panel-width", `${parseInt(forcedWidth, 10)}px`);
 }
 
 function stops() {
@@ -26,15 +33,11 @@ function rampMode() {
   return getComputedStyle(document.documentElement).getPropertyValue("--ramp-mode").trim();
 }
 
-/** Reading the file is the only thing that differs between app and browser. */
+/** Reading the files is the only thing that differs between app and browser. */
 async function readUsage() {
   try {
-    if (inTauri) {
-      const { invoke } = window.__TAURI__.core;
-      const text = await invoke("read_usage");
-      return text ? JSON.parse(text) : null;
-    }
-    // Browser dev: serve src/ and drop a dev-fixture.json beside it.
+    if (inTauri) return await window.__TAURI__.core.invoke("read_usage");
+    // Browser dev: serve src/ with a dev-fixture.json holding the same shape.
     const res = await fetch("./dev-fixture.json", { cache: "no-store" });
     return res.ok ? await res.json() : null;
   } catch {
@@ -42,44 +45,67 @@ async function readUsage() {
   }
 }
 
-const el = (id) => document.getElementById(id);
-const panel = el("panel");
+const panel = document.getElementById("panel");
+const rowsEl = document.getElementById("rows");
+const emptyEl = document.getElementById("empty");
+const tpl = document.getElementById("row-tpl");
 
-function paint(prefix, reading) {
-  el(`${prefix}-label`).textContent = reading.label;
-  el(`${prefix}-pct`).textContent = formatPct(reading.pct);
-  el(`${prefix}-sub`).textContent = reading.sub;
-  const fill = el(`${prefix}-fill`);
-  const pct = reading.pct ?? 0;
-  const clamped = Math.max(0, Math.min(100, pct));
+let lastPayload = null;
+let lastHeight = 0;
+
+function paint(entry, row) {
+  entry.querySelector(".label").textContent = row.label;
+  entry.querySelector(".pct").textContent = formatPct(row.pct);
+  entry.querySelector(".sub").textContent = row.sub;
+  entry.dataset.state = row.state;
+
+  const fill = entry.querySelector(".fill");
+  const clamped = Math.max(0, Math.min(100, row.pct ?? 0));
   fill.style.width = `${clamped}%`;
   // A nonzero reading stays visible as a dot instead of collapsing sub-pixel.
   fill.style.minWidth = clamped > 0 ? "var(--bar-height)" : "0";
-  fill.style.backgroundColor = rampColor(pct, stops(), rampMode());
+  fill.style.backgroundColor = rampColor(row.pct ?? 0, stops(), rampMode());
 }
 
-let lastPayload = null;
+/** Tell the window how tall the panel actually is, so it never clips or gaps. */
+function syncHeight() {
+  if (!inTauri) return;
+  const h = Math.ceil(panel.getBoundingClientRect().height);
+  if (h === lastHeight || h < 1) return;
+  lastHeight = h;
+  window.__TAURI__.core.invoke("set_height", { height: h }).catch(() => {});
+}
 
 function render() {
-  const now = Date.now();
-  // Query params override storage so the visual-check harness can drive layouts.
-  const q = new URLSearchParams(location.search);
-  const primaryKey = q.get("primary") ?? localStorage.getItem("klepsydra.primary") ?? "five_hour";
-  const secondaryKey = q.get("secondary") ?? localStorage.getItem("klepsydra.secondary"); // null = hidden
+  const rows = toRows(lastPayload, Date.now());
 
-  const primary = evaluate(lastPayload, primaryKey, now);
-  paint("p", primary);
-  panel.dataset.state = primary.state;
+  emptyEl.hidden = rows.length > 0;
+  panel.dataset.state = rows.length === 0
+    ? "waiting"
+    : rows.every((r) => r.state === "stale") ? "stale" : "live";
 
-  const secondary = el("secondary");
-  if (secondaryKey) {
-    secondary.hidden = false;
-    paint("s", evaluate(lastPayload, secondaryKey, now));
-  } else {
-    secondary.hidden = true;
+  // Reuse entries by key so an unchanged row keeps its transition state.
+  const existing = new Map(
+    [...rowsEl.children].map((el) => [el.dataset.key, el]),
+  );
+  const wanted = [];
+  for (const row of rows) {
+    let entry = existing.get(row.key);
+    if (entry) existing.delete(row.key);
+    else {
+      entry = tpl.content.firstElementChild.cloneNode(true);
+      entry.dataset.key = row.key;
+    }
+    paint(entry, row);
+    wanted.push(entry);
   }
+  for (const dead of existing.values()) dead.remove();
+  wanted.forEach((el, i) => {
+    if (rowsEl.children[i] !== el) rowsEl.insertBefore(el, rowsEl.children[i] ?? null);
+  });
 
-  document.title = `klepsydra ${formatPct(primary.pct)}`;
+  document.title = rows.length ? `klepsydra ${formatPct(rows[0].pct)}` : "klepsydra";
+  syncHeight();
 }
 
 async function poll() {
@@ -87,21 +113,8 @@ async function poll() {
   render();
 }
 
-// Tray commands arrive as plain events so the menu stays in Rust.
-if (inTauri) {
-  window.__TAURI__.event.listen("window-changed", ({ payload }) => {
-    localStorage.setItem("klepsydra.primary", payload.primary);
-    if (payload.secondary) localStorage.setItem("klepsydra.secondary", payload.secondary);
-    else localStorage.removeItem("klepsydra.secondary");
-    render();
-  });
-}
-
-// Exposed so the visual-check harness can drive states without a live file.
-window.__klepsydra = {
-  set(payload) { lastPayload = payload; render(); },
-  windowLabel,
-};
+// Exposed so the visual-check harness can drive states without live files.
+window.__klepsydra = { set(p) { lastPayload = p; render(); } };
 
 poll();
 setInterval(poll, POLL_MS);

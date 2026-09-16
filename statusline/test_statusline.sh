@@ -19,56 +19,90 @@ check() {
   fi
 }
 
-run() { KLEPSYDRA_OUT="$work/usage.json" bash "$script" <"$fixtures/$1"; }
+# A config dir per account, mirroring what CLAUDE_CONFIG_DIR gives each login.
+mkconfig() { # dir, accountUuid, organizationType, organizationName
+  mkdir -p "$work/$1"
+  cat >"$work/$1/.claude.json" <<EOF
+{"oauthAccount":{"accountUuid":"$2","organizationType":"$3","organizationName":"$4",
+                 "emailAddress":"someone@example.edu"}}
+EOF
+}
+mkconfig team     "uuid-team" "claude_team" "RIT-CS-DQL"
+mkconfig personal "uuid-pers" "claude_pro"  "Personal Org"
+mkdir -p "$work/empty"   # config dir with no .claude.json at all
+
+run() { # fixture, config-dir
+  CLAUDE_CONFIG_DIR="$work/$2" KLEPSYDRA_DIR="$work/out" bash "$script" <"$fixtures/$1"
+}
+acct() { echo "$work/out/accounts/$1.json"; }
 
 echo "statusLine producer"
 
 # --- both windows present -------------------------------------------------
-rm -f "$work/usage.json"
-display=$(run full.json)
+rm -rf "$work/out"
+display=$(run full.json team)
 check "full: terminal line" "$display" "Opus 5 · ctx 21% · 5h 73% · 7d 12%"
-check "full: five_hour pct"  "$(jq -r '.windows.five_hour.used_percentage' "$work/usage.json")" "73.2"
-check "full: five_hour reset" "$(jq -r '.windows.five_hour.resets_at' "$work/usage.json")" "1789000000"
-check "full: seven_day pct"  "$(jq -r '.windows.seven_day.used_percentage' "$work/usage.json")" "12.9"
-check "full: written_at set" "$(jq -r '.written_at | if . > 1700000000 then "yes" else "no" end' "$work/usage.json")" "yes"
+check "full: five_hour pct"   "$(jq -r '.windows.five_hour.used_percentage' "$(acct uuid-team)")" "73.2"
+check "full: five_hour reset" "$(jq -r '.windows.five_hour.resets_at' "$(acct uuid-team)")" "1789000000"
+check "full: seven_day pct"   "$(jq -r '.windows.seven_day.used_percentage' "$(acct uuid-team)")" "12.9"
+check "full: written_at set"  "$(jq -r '.written_at | if . > 1700000000 then "yes" else "no" end' "$(acct uuid-team)")" "yes"
 
-# --- only one window ------------------------------------------------------
-rm -f "$work/usage.json"
-display=$(run five-hour-only.json)
-check "one window: terminal line" "$display" "Opus 5 · ctx 5% · 5h 1%"
-check "one window: no seven_day" "$(jq -r '.windows | has("seven_day")' "$work/usage.json")" "false"
+# --- account identity ------------------------------------------------------
+check "team: label from org name" "$(jq -r '.label' "$(acct uuid-team)")" "RIT-CS-DQL"
+check "team: account id"          "$(jq -r '.account' "$(acct uuid-team)")" "uuid-team"
+
+rm -rf "$work/out"
+run five-hour-only.json personal >/dev/null
+check "personal: label"    "$(jq -r '.label' "$(acct uuid-pers)")" "Personal"
+check "personal: account"  "$(jq -r '.account' "$(acct uuid-pers)")" "uuid-pers"
+
+# --- two accounts must not overwrite each other ---------------------------
+rm -rf "$work/out"
+run full.json team >/dev/null
+run five-hour-only.json personal >/dev/null
+check "two accounts: both files exist" \
+  "$(ls "$work/out/accounts" | sort | tr '\n' ' ')" "uuid-pers.json uuid-team.json "
+check "two accounts: team intact" "$(jq -r '.windows.five_hour.used_percentage' "$(acct uuid-team)")" "73.2"
+check "two accounts: personal intact" "$(jq -r '.windows.five_hour.used_percentage' "$(acct uuid-pers)")" "1"
+
+# --- missing config falls back rather than failing ------------------------
+rm -rf "$work/out"
+display=$(run full.json empty)
+check "no config: still echoes" "$display" "Opus 5 · ctx 21% · 5h 73% · 7d 12%"
+check "no config: unknown id"   "$(jq -r '.account' "$(acct unknown)")" "unknown"
+check "no config: label"        "$(jq -r '.label' "$(acct unknown)")" "Claude"
 
 # --- 0% must publish, not vanish -----------------------------------------
-rm -f "$work/usage.json"
-display=$(run zero-pct.json)
+rm -rf "$work/out"
+display=$(run zero-pct.json team)
 check "zero pct: terminal line" "$display" "Opus 5 · ctx 0% · 5h 0%"
-check "zero pct: published"     "$(jq -r '.windows.five_hour.used_percentage' "$work/usage.json")" "0"
+check "zero pct: published"     "$(jq -r '.windows.five_hour.used_percentage' "$(acct uuid-team)")" "0"
 
 # --- gateway spend limit --------------------------------------------------
-rm -f "$work/usage.json"
-display=$(run spend-limit.json)
+rm -rf "$work/out"
+display=$(run spend-limit.json team)
 check "spend limit: terminal line" "$display" "Opus 5 · ctx 50% · spend 100%"
-check "spend limit: published"     "$(jq -r '.windows.spend_limit.used_percentage' "$work/usage.json")" "100"
+check "spend limit: published"     "$(jq -r '.windows.spend_limit.used_percentage' "$(acct uuid-team)")" "100"
 
 # --- absent rate_limits must NOT clobber a good file ----------------------
-printf '{"written_at":1,"windows":{"five_hour":{"used_percentage":99,"resets_at":2}}}\n' >"$work/usage.json"
-display=$(run no-rate-limits.json)
+rm -rf "$work/out"; mkdir -p "$work/out/accounts"
+printf '{"account":"uuid-team","written_at":1,"windows":{"five_hour":{"used_percentage":99,"resets_at":2}}}\n' >"$(acct uuid-team)"
+display=$(run no-rate-limits.json team)
 check "no limits: terminal line"  "$display" "Opus 5"
-check "no limits: file preserved" "$(jq -r '.windows.five_hour.used_percentage' "$work/usage.json")" "99"
+check "no limits: file preserved" "$(jq -r '.windows.five_hour.used_percentage' "$(acct uuid-team)")" "99"
 
 # --- malformed stdin must not clobber, must not error ---------------------
-printf '{"written_at":1,"windows":{"five_hour":{"used_percentage":99,"resets_at":2}}}\n' >"$work/usage.json"
-display=$(run malformed.json); rc=$?
+display=$(run malformed.json team); rc=$?
 check "malformed: exit 0"         "$rc" "0"
 check "malformed: silent"         "$display" ""
-check "malformed: file preserved" "$(jq -r '.windows.five_hour.used_percentage' "$work/usage.json")" "99"
+check "malformed: file preserved" "$(jq -r '.windows.five_hour.used_percentage' "$(acct uuid-team)")" "99"
 
 # --- no stray temp files left behind --------------------------------------
-check "no tmp litter" "$(find "$work" -name '*.tmp' | wc -l)" "0"
+check "no tmp litter" "$(find "$work/out" -name '*.tmp' | wc -l)" "0"
 
 # --- unwritable destination must not kill the status line -----------------
-display=$(KLEPSYDRA_OUT="/proc/nonexistent/usage.json" bash "$script" <"$fixtures/full.json"); rc=$?
-check "unwritable dest: exit 0"    "$rc" "0"
+display=$(CLAUDE_CONFIG_DIR="$work/team" KLEPSYDRA_DIR="/proc/nonexistent" bash "$script" <"$fixtures/full.json"); rc=$?
+check "unwritable dest: exit 0"       "$rc" "0"
 check "unwritable dest: still echoes" "$display" "Opus 5 · ctx 21% · 5h 73% · 7d 12%"
 
 printf '\n%d passed, %d failed\n' "$pass" "$fail"

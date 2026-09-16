@@ -52,6 +52,8 @@ html, body {
   display: flex;
   flex-direction: column;
   gap: 5px;
+  /* Full width so each track can stretch; the window's width sets the size. */
+  width: var(--panel-width, 100%);
   padding: var(--panel-pad);
   background: var(--panel-bg);
   border-radius: var(--panel-radius);
@@ -60,7 +62,6 @@ html, body {
 }
 
 /* Stale or unknown data dims the whole panel rather than showing a confident lie. */
-#panel[data-state="stale"],
 #panel[data-state="waiting"] { opacity: var(--stale-opacity); }
 
 .row {
@@ -72,11 +73,12 @@ html, body {
 .label {
   font-size: var(--size-label);
   white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .track {
-  flex: 1;
-  min-width: 60px;
+  flex: 1 1 auto;
+  min-width: 40px;   /* lets the track absorb the squeeze, never the text */
   height: var(--bar-height);
   background: var(--track);
   border-radius: var(--bar-radius);
@@ -96,7 +98,8 @@ html, body {
   font-size: var(--size-pct);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
-  min-width: 62px;
+  flex-shrink: 0;
+  min-width: 72px;
   text-align: right;
 }
 
@@ -106,6 +109,12 @@ html, body {
   font-variant-numeric: tabular-nums;
 }
 
-/* Second window (7d / spend), hidden unless enabled from the tray. */
-#secondary[hidden] { display: none; }
-#secondary { margin-top: 2px; }
+#rows { display: flex; flex-direction: column; gap: 7px; }
+
+.entry { display: flex; flex-direction: column; gap: 4px; }
+
+/* A row that cannot establish a live reading dims on its own, so one stale
+   account never drags down the others. */
+.entry[data-state="stale"] { opacity: var(--stale-opacity); }
+
+#empty[hidden] { display: none; }

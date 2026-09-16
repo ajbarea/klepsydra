@@ -18,6 +18,11 @@ establish a live reading dims the panel instead of drawing a stale bar.
 - Optional: compact mode that drops the label and countdown to a bare bar.
 
 ## Completed
+- 2026-09-16 — Made the gauge account-aware. A team seat and a personal account
+  report different windows and are used from different terminals, so a single
+  shared file would have let two unrelated numbers overwrite each other. The
+  hook now takes account identity from the global config (which
+  `CLAUDE_CONFIG_DIR` relocates per login) and writes one file per account.
 - 2026-09-16 — Established the data source: Claude Code's statusLine JSON input
   carries `rate_limits.five_hour` / `seven_day` / `spend_limit`, each with
   `used_percentage` and `resets_at`. This is the same number `/usage` shows.

@@ -20,10 +20,12 @@ if ! curl -sf -o /dev/null "http://127.0.0.1:$port/index.html"; then
 fi
 
 now=$(date +%s)
+
 shot() { # name, query, window-size
-  local name=$1 query=${2:-} size=${3:-420,90}
+  local name=$1 query=${2:-} size=${3:-450,120}
   # Deterministic capture: no transitions, and enough budget to finish the fetch.
-  if [[ "$query" == *"?"* ]]; then query="$query&still=1"; else query="?still=1"; fi
+  # Pin the panel width; Chrome's --window-size is not the viewport width.
+  if [[ "$query" == *"?"* ]]; then query="$query&still=1&w=430"; else query="?still=1&w=430"; fi
   "$chrome" --headless=new --disable-gpu --hide-scrollbars \
     --default-background-color=6E6E6E \
     --window-size="$size" \
@@ -33,31 +35,49 @@ shot() { # name, query, window-size
   printf '  %s\n' "$name.png"
 }
 
-write_fixture() { # used_percentage, resets_in_sec, written_ago_sec
-  cat >"$fixture" <<EOF
-{"written_at": $((now - $3)),
- "windows": {"five_hour": {"used_percentage": $1, "resets_at": $((now + $2))},
-             "seven_day": {"used_percentage": 12.4, "resets_at": $((now + 400000))}}}
-EOF
+entry() { # id, label, written_ago_sec, windows-json
+  printf '"%s":{"account":"%s","label":"%s","written_at":%s,"windows":%s}' \
+    "$1" "$1" "$2" "$((now - $3))" "$4"
 }
+w() { printf '{"used_percentage":%s,"resets_at":%s}' "$1" "$((now + $2))"; }
+fixture_write() { printf '{%s}\n' "$1" >"$fixture"; }
 
 echo "rendering states ->"
-write_fixture 1    17880 0 ; shot 01-fresh
-write_fixture 45   9000  0 ; shot 02-mid
-write_fixture 73.2 8040  0 ; shot 03-high
-write_fixture 95   600   0 ; shot 04-critical
-write_fixture 100  120   0 ; shot 05-full
-write_fixture 60   7200  0 ; shot 06-two-windows "?secondary=seven_day" 420,130
-write_fixture 50   7200  1800 ; shot 07-stale
-write_fixture 73   -60   0 ; shot 08-window-reset
-rm -f "$fixture"           ; shot 09-waiting
 
-echo "-> $win_out"
+# One account, session only -- the shape a team seat reports.
+fixture_write "$(entry team RIT-CS-DQL 0 "{\"five_hour\":$(w 32 16000)}")"
+shot 01-team-only
 
-# Ramp comparison: same percentages, blend vs bands.
+# One account reporting both windows.
+fixture_write "$(entry pers Personal 0 "{\"five_hour\":$(w 46 9000),\"seven_day\":$(w 12 400000)}")"
+shot 02-personal-both
+
+# Both accounts at once: the reason rows are labelled.
+fixture_write "$(entry team RIT-CS-DQL 0 "{\"five_hour\":$(w 88 3000)}"),$(entry pers Personal 0 "{\"five_hour\":$(w 21 14000),\"seven_day\":$(w 63 300000)}")"
+shot 03-both-accounts "" 450,160
+
+# Critical, and a gateway spend limit past 100.
+fixture_write "$(entry team RIT-CS-DQL 0 "{\"five_hour\":$(w 97 600)}")"
+shot 04-critical
+fixture_write "$(entry gw Gateway 0 "{\"spend_limit\":$(w 118 3600)}")"
+shot 05-over-limit
+
+# Degraded readings.
+fixture_write "$(entry team RIT-CS-DQL 1800 "{\"five_hour\":$(w 55 7200)}")"
+shot 06-stale
+fixture_write "$(entry team RIT-CS-DQL 0 "{\"five_hour\":$(w 73 -60)}")"
+shot 07-window-reset
+fixture_write "$(entry live Personal 0 "{\"five_hour\":$(w 40 7200)}"),$(entry old Abandoned 60000 "{\"five_hour\":$(w 90 7200)}")"
+shot 08-abandoned-dropped
+rm -f "$fixture"
+shot 09-waiting
+
 echo "ramp comparison ->"
 for p in 20 45 60 73 90 100; do
-  write_fixture $p 7200 0
-  shot "ramp-blend-$p" "?mode=blend"
-  shot "ramp-bands-$p" "?mode=bands"
+  fixture_write "$(entry team RIT-CS-DQL 0 "{\"five_hour\":$(w "$p" 7200)}")"
+  shot "ramp-blend-$p" "?mode=blend" 450,90
+  shot "ramp-bands-$p" "?mode=bands" 450,90
 done
+rm -f "$fixture"
+
+echo "-> $win_out"

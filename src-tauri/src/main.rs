@@ -5,36 +5,62 @@ use std::path::PathBuf;
 use tauri::{
     menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem},
     tray::TrayIconBuilder,
-    Emitter, Manager,
+    LogicalSize, Manager,
 };
 
-/// `%LOCALAPPDATA%\Klepsydra\usage.json` -- the file the statusLine hook publishes.
-fn usage_path() -> Option<PathBuf> {
-    if let Ok(explicit) = std::env::var("KLEPSYDRA_FILE") {
+/// `%LOCALAPPDATA%\Klepsydra` -- where the statusLine hook publishes.
+fn klepsydra_dir() -> Option<PathBuf> {
+    if let Ok(explicit) = std::env::var("KLEPSYDRA_DIR") {
         return Some(PathBuf::from(explicit));
     }
-    let base = std::env::var("LOCALAPPDATA").ok()?;
-    Some(PathBuf::from(base).join("Klepsydra").join("usage.json"))
+    Some(PathBuf::from(std::env::var("LOCALAPPDATA").ok()?).join("Klepsydra"))
 }
 
-/// Raw file contents, or None when it is missing or unreadable. Parsing and
-/// validation belong to the frontend, which already handles malformed input.
+/// Every signed-in account's latest reading, keyed by account id.
+///
+/// One file per account means terminals on different logins never contend for
+/// the same file. Parsing and validation stay in the frontend, which already
+/// treats every field as untrusted.
 #[tauri::command]
-fn read_usage() -> Option<String> {
-    std::fs::read_to_string(usage_path()?).ok()
+fn read_usage() -> serde_json::Value {
+    let mut out = serde_json::Map::new();
+    let Some(dir) = klepsydra_dir() else {
+        return serde_json::Value::Object(out);
+    };
+    let Ok(entries) = std::fs::read_dir(dir.join("accounts")) else {
+        return serde_json::Value::Object(out);
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) != Some("json") {
+            continue;
+        }
+        let Ok(text) = std::fs::read_to_string(&path) else { continue };
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(&text) else { continue };
+        let key = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("unknown")
+            .to_string();
+        out.insert(key, value);
+    }
+    serde_json::Value::Object(out)
 }
 
-/// Tray selections are pushed to the frontend, which owns all rendering state.
-fn emit_windows(app: &tauri::AppHandle, primary: &str, secondary: Option<&str>) {
-    let _ = app.emit(
-        "window-changed",
-        serde_json::json!({ "primary": primary, "secondary": secondary }),
-    );
+/// The panel grows a row per account window, so the frontend reports the height
+/// it needs rather than the window guessing.
+#[tauri::command]
+fn set_height(window: tauri::Window, height: f64) -> Result<(), String> {
+    let width = window.outer_size().map_err(|e| e.to_string())?.width as f64
+        / window.scale_factor().map_err(|e| e.to_string())?;
+    window
+        .set_size(LogicalSize::new(width, height.max(1.0)))
+        .map_err(|e| e.to_string())
 }
 
 fn main() {
     tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![read_usage])
+        .invoke_handler(tauri::generate_handler![read_usage, set_height])
         .setup(|app| {
             let window = app.get_webview_window("main").expect("main window");
 
@@ -42,9 +68,6 @@ fn main() {
             // The tray toggles it off when you want to drag the panel.
             window.set_ignore_cursor_events(true)?;
 
-            let show_5h = MenuItem::with_id(app, "w:five_hour", "Session (5h)", true, None::<&str>)?;
-            let show_7d = MenuItem::with_id(app, "w:seven_day", "Week (7d)", true, None::<&str>)?;
-            let show_both = MenuItem::with_id(app, "w:both", "Both", true, None::<&str>)?;
             let interactive = CheckMenuItem::with_id(
                 app,
                 "interactive",
@@ -54,18 +77,9 @@ fn main() {
                 None::<&str>,
             )?;
             let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
-
             let menu = Menu::with_items(
                 app,
-                &[
-                    &show_5h,
-                    &show_7d,
-                    &show_both,
-                    &PredefinedMenuItem::separator(app)?,
-                    &interactive,
-                    &PredefinedMenuItem::separator(app)?,
-                    &quit,
-                ],
+                &[&interactive, &PredefinedMenuItem::separator(app)?, &quit],
             )?;
 
             let toggle = interactive.clone();
@@ -75,9 +89,6 @@ fn main() {
                 .menu(&menu)
                 .show_menu_on_left_click(true)
                 .on_menu_event(move |app, event| match event.id.as_ref() {
-                    "w:five_hour" => emit_windows(app, "five_hour", None),
-                    "w:seven_day" => emit_windows(app, "seven_day", None),
-                    "w:both" => emit_windows(app, "five_hour", Some("seven_day")),
                     "interactive" => {
                         if let Some(w) = app.get_webview_window("main") {
                             // The checkbox has already flipped; mirror it onto the window.

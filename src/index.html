@@ -7,22 +7,21 @@
 </head>
 <body>
   <div id="panel" data-state="waiting" data-tauri-drag-region>
-    <div class="row">
-      <span class="label" id="p-label">Current session</span>
-      <span class="track"><span class="fill" id="p-fill"></span></span>
-      <span class="pct" id="p-pct">--</span>
-    </div>
-    <span class="sub" id="p-sub">waiting for Claude Code</span>
-
-    <div id="secondary" hidden>
-      <div class="row">
-        <span class="label" id="s-label">This week</span>
-        <span class="track"><span class="fill" id="s-fill"></span></span>
-        <span class="pct" id="s-pct">--</span>
-      </div>
-      <span class="sub" id="s-sub"></span>
-    </div>
+    <div id="rows"></div>
+    <span class="sub" id="empty">waiting for Claude Code</span>
   </div>
+
+  <template id="row-tpl">
+    <div class="entry">
+      <div class="row">
+        <span class="label"></span>
+        <span class="track"><span class="fill"></span></span>
+        <span class="pct"></span>
+      </div>
+      <span class="sub"></span>
+    </div>
+  </template>
+
   <script type="module" src="main.js"></script>
 </body>
 </html>
