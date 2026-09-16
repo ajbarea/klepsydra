@@ -17,6 +17,9 @@ Current slice: first working overlay, installed and running.
 - `set_height` sized the window to the measured panel (64 configured -> 56 actual).
 - Grip hit testing: cursor over the handle flips click-through off, everywhere
   else leaves it on.
+- Dragging, driven by a synthesised press-move-release: moved exactly the
+  commanded delta, a press starting off the handle moved nothing, and the
+  position survived a restart.
 - Taskbar burial reproduced (gauge hidden 120ms after the taskbar takes
   foreground) and recovery confirmed (visible again at 700ms).
 - Reading on screen matched the published file exactly.

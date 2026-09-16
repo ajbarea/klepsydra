@@ -106,6 +106,12 @@ Grab the dotted handle on the left edge to drag the gauge anywhere; it
 remembers where you put it. Everything except that handle is click-through, so
 the gauge never intercepts a click meant for the window underneath.
 
+Dragging is handled in the backend rather than by `data-tauri-drag-region`,
+which needs a focused window -- this one is deliberately unfocused and
+click-through, so webview drag events never arrive. The pointer watcher reads
+the mouse button straight from the OS instead, and a drag only begins on a
+press that starts on the handle.
+
 Windows offers no per-region hit testing for a click-through window -- ignoring
 cursor events is all or nothing. So a background thread watches the pointer and
 makes the window interactive only while it is over the handle. The frontend

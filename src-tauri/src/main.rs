@@ -7,9 +7,10 @@ use std::time::Duration;
 use tauri::{
     menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem},
     tray::TrayIconBuilder,
-    LogicalSize, Manager,
+    LogicalSize, Manager, PhysicalPosition,
 };
 use tauri_plugin_autostart::ManagerExt;
+use tauri_plugin_window_state::AppHandleExt;
 
 /// The grab handle, in CSS pixels relative to the window's top-left. The
 /// frontend owns the layout and reports it, so restyling cannot desync this.
@@ -134,14 +135,39 @@ fn reset_position(window: tauri::WebviewWindow) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
+/// Is the left mouse button down right now?
+///
+/// Read from the OS rather than the webview: `data-tauri-drag-region` needs a
+/// focused window, and this one is deliberately unfocused and click-through,
+/// so webview drag never fires. Polling the button here sidesteps that.
+#[cfg(windows)]
+fn left_button_down() -> bool {
+    #[link(name = "user32")]
+    unsafe extern "system" {
+        fn GetAsyncKeyState(key: i32) -> i16;
+    }
+    const VK_LBUTTON: i32 = 0x01;
+    unsafe { (GetAsyncKeyState(VK_LBUTTON) as u16 & 0x8000) != 0 }
+}
+
+#[cfg(not(windows))]
+fn left_button_down() -> bool {
+    false
+}
+
 /// Windows has no per-region hit testing for a click-through window: ignoring
 /// cursor events is all-or-nothing. So we watch the pointer and switch the
 /// whole window interactive only while it is over the grab handle. Everywhere
 /// else the gauge stays click-through and never eats a click.
+///
+/// The same loop owns dragging, for the reason described on `left_button_down`.
 fn watch_grip(app: tauri::AppHandle) {
     std::thread::spawn(move || {
         let mut interactive = false;
         let mut ticks: u32 = 0;
+        let mut was_pressed = false;
+        // Cursor offset from the window origin, set when a drag begins.
+        let mut drag_offset: Option<(f64, f64)> = None;
         loop {
             std::thread::sleep(Duration::from_millis(16));
             ticks = ticks.wrapping_add(1);
@@ -165,6 +191,26 @@ fn watch_grip(app: tauri::AppHandle) {
             let bottom = top + rect[3] * scale + margin * 2.0;
 
             let inside = cursor.x >= left && cursor.x <= right && cursor.y >= top && cursor.y <= bottom;
+
+            let pressed = left_button_down();
+            // Only a press that *starts* on the handle begins a drag, so
+            // dragging something else across the gauge cannot grab it.
+            if pressed && !was_pressed && inside {
+                drag_offset = Some((cursor.x - origin.x as f64, cursor.y - origin.y as f64));
+            } else if !pressed && drag_offset.is_some() {
+                drag_offset = None;
+                let _ = app.save_window_state(tauri_plugin_window_state::StateFlags::POSITION);
+            }
+            was_pressed = pressed;
+
+            if let Some((ox, oy)) = drag_offset {
+                let _ = window.set_position(PhysicalPosition::new(
+                    (cursor.x - ox).round() as i32,
+                    (cursor.y - oy).round() as i32,
+                ));
+                continue; // hold interactivity and skip the re-assert mid-drag
+            }
+
             if inside != interactive {
                 interactive = inside;
                 let _ = window.set_ignore_cursor_events(!inside);
