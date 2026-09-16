@@ -16,11 +16,15 @@ rsync -a --delete \
   --exclude 'src/dev-fixture.json' \
   "$repo"/ "$stage"/
 
+# WSL builds its Windows PATH at startup, so tools installed since then are
+# missing from any powershell.exe we spawn. Put them back explicitly.
+tools='$env:Path = "C:\\Program Files\\nodejs;$env:USERPROFILE\\.cargo\\bin;" + $env:Path'
+
 echo "==> installing frontend tooling"
-powershell.exe -NoProfile -Command "cd '$stage_win'; npm install --silent" 2>&1 | tail -3
+powershell.exe -NoProfile -Command "$tools; cd '$stage_win'; npm install --no-fund --no-audit" 2>&1 | tail -5
 
 echo "==> cargo tauri build"
-powershell.exe -NoProfile -Command "cd '$stage_win'; npx --yes tauri build" 2>&1 | tail -40
+powershell.exe -NoProfile -Command "$tools; cd '$stage_win'; npx --yes tauri build" 2>&1 | tail -60
 
 exe="$stage/src-tauri/target/release/klepsydra.exe"
 if [[ -f "$exe" ]]; then

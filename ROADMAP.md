@@ -9,15 +9,18 @@ The gauge must never show a confident wrong number. Every path that cannot
 establish a live reading dims the panel instead of drawing a stale bar.
 
 ## Next
-- Build and run on Windows; confirm transparency, click-through and tray.
-- Settle the colour ramp against real usage.
-- Position and autostart.
+- Exercise the tray menu, including the click-through toggle.
+- Settle a real screen position, then wire autostart.
 
 ## Later
 - Optional: flash or notify when crossing a threshold.
 - Optional: compact mode that drops the label and countdown to a bare bar.
 
 ## Completed
+- 2026-09-16 — Built and ran on Windows. Transparency, click-through,
+  always-on-top, taskbar suppression and window auto-sizing all confirmed
+  against the live window rather than inferred; the rendered reading matched
+  the published file exactly.
 - 2026-09-16 — Made the gauge account-aware. A team seat and a personal account
   report different windows and are used from different terminals, so a single
   shared file would have let two unrelated numbers overwrite each other. The
