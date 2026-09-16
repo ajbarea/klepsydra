@@ -11,7 +11,7 @@
   --ramp-high: #ef4444;  /* red    */
   --ramp-mid-at: 60;     /* blend: where --ramp-mid sits; bands: yellow starts */
   --ramp-high-at: 85;    /* bands only: where red takes over */
-  --ramp-mode: blend;    /* blend | bands */
+  --ramp-mode: bands;    /* blend | bands */
 
   --track: #2f2f2f;
   --panel-bg: rgba(20, 20, 20, 0.82);
