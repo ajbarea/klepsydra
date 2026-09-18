@@ -131,6 +131,16 @@ test("two accounts are each labelled so their numbers cannot be confused", () =>
   assert.deepEqual(rows.map((r) => r.pct), [20, 5, 80]);
 });
 
+test("the account in use now sits above the one signed out of", () => {
+  const rows = toRows({
+    p: acct("p", "Personal", { five_hour: win(100), seven_day: win(66) }, 3 * 3600e3),
+    t: acct("t", "RIT-CS-DQL", { five_hour: win(20) }),
+  }, NOW);
+  assert.deepEqual(rows.map((r) => r.label), [
+    "RIT-CS-DQL \u00b7 session", "Personal \u00b7 session", "Personal \u00b7 week",
+  ]);
+});
+
 test("row order is stable regardless of object key order", () => {
   const a = { t: acct("t", "RIT-CS-DQL", { five_hour: win(80) }), p: acct("p", "Personal", { five_hour: win(20) }) };
   const b = { p: a.p, t: a.t };

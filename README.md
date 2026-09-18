@@ -174,6 +174,10 @@ under the new account's file. The previous account keeps its row, because its
 5-hour window carries on burning down whether or not you are signed into it.
 That row drops once the window actually resets.
 
+Rows are ordered by when each account last published, so the account you are
+signed into now leads and the one you switched away from sits under it. The
+tray icon follows the same order, and so tracks the account you are on.
+
 ## Restyling
 
 Every visual token lives at the top of `src/style.css`: bar height and radius,

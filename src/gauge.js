@@ -195,9 +195,13 @@ export function toRows(payload, nowMs = Date.now()) {
     );
   });
 
-  // Stable order: by label, then account id, so rows never jump around.
+  // Most recently used account first. Only one account can be signed in at a
+  // time, so this is the one you are on now; the one you switched away from
+  // sits below it while its windows burn down. Label then id break ties, so
+  // rows never jump around.
   fresh.sort(
     (a, b) =>
+      Number(b.written_at) - Number(a.written_at) ||
       String(a.label).localeCompare(String(b.label)) ||
       String(a.account).localeCompare(String(b.account)),
   );
