@@ -122,6 +122,7 @@ check "unwritable dest: still echoes" "$display" "Opus 5 · ctx 21% · 5h 73% ·
 # Producer and consumer agree on the path by convention alone, so a rename of
 # one side is otherwise silent: the gauge simply never sees a reading.
 identifier=$(jq -r '.identifier' "$here/../src-tauri/tauri.conf.json")
+# shellcheck disable=SC2016  # sed pattern: the default must stay unexpanded.
 default=$(sed -n 's/^: "${KLEPSYDRA_DIR:=\(.*\)}"$/\1/p' "$script")
 check "default dir matches identifier" "${default##*/}" "$identifier"
 
