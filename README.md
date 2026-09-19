@@ -41,9 +41,9 @@ those files. No API calls, no credentials, no second background process.
 Claude Code (every session)
   │ statusLine JSON on stdin
   ▼
-klepsydra-statusline.sh ──► %LOCALAPPDATA%\Klepsydra\accounts\<account>\<session>.json
-  │                                                    │
-  └─► "Opus 5 · ctx 21% · 5h 73% · 7d 12%"             └──► klepsydra.exe
+klepsydra-statusline.sh ──► %LOCALAPPDATA%\dev.ajsoftworks.klepsydra\accounts\<account>\<session>.json
+  │                                                                    │
+  └─► "Opus 5 · ctx 21% · 5h 73% · 7d 12%"                             └──► klepsydra.exe
 ```
 
 ### Reconciling several terminals
@@ -92,7 +92,7 @@ Then in `~/.claude/settings.json`:
 "statusLine": { "type": "command", "command": "~/.claude/klepsydra-statusline.sh" }
 ```
 
-Set `KLEPSYDRA_OUT` if your Windows user differs from your WSL user.
+Set `KLEPSYDRA_DIR` if your Windows user differs from your WSL user.
 
 **2. Build the overlay.** Requires Rust (MSVC toolchain), Node, and the
 Microsoft C++ Build Tools:
@@ -109,6 +109,11 @@ bash scripts/build-windows.sh
 
 **3. Start it with Windows.** Put a shortcut to `klepsydra.exe` in
 `shell:startup`.
+
+Published readings live in `%LOCALAPPDATA%\dev.ajsoftworks.klepsydra`, so
+uninstalling with *Delete application data* ticked takes them with it. Leaving
+it unticked keeps them for a reinstall; they are rewritten within seconds of
+the next Claude Code render either way.
 
 ## Using it
 

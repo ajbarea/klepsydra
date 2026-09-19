@@ -118,5 +118,12 @@ display=$(CLAUDE_CONFIG_DIR="$work/team" KLEPSYDRA_DIR="/proc/nonexistent" bash 
 check "unwritable dest: exit 0"       "$rc" "0"
 check "unwritable dest: still echoes" "$display" "Opus 5 · ctx 21% · 5h 73% · 7d 12%"
 
+# --- default destination must track the overlay's bundle identifier -------
+# Producer and consumer agree on the path by convention alone, so a rename of
+# one side is otherwise silent: the gauge simply never sees a reading.
+identifier=$(jq -r '.identifier' "$here/../src-tauri/tauri.conf.json")
+default=$(sed -n 's/^: "${KLEPSYDRA_DIR:=\(.*\)}"$/\1/p' "$script")
+check "default dir matches identifier" "${default##*/}" "$identifier"
+
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [[ $fail -eq 0 ]]

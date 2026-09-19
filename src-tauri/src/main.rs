@@ -17,11 +17,21 @@ use tauri_plugin_window_state::AppHandleExt;
 #[derive(Default)]
 struct Grip(Mutex<Option<[f64; 4]>>);
 
-/// `%LOCALAPPDATA%\Klepsydra` -- where the statusLine hook publishes.
-fn klepsydra_dir() -> Option<PathBuf> {
+/// `%LOCALAPPDATA%\dev.ajsoftworks.klepsydra` -- where the statusLine hook
+/// publishes. Tauri's app-local-data dir rather than the install dir: a
+/// per-machine install puts the latter under Program Files, where the hook
+/// cannot write, and the uninstaller's "delete app data" only reaches this one.
+fn klepsydra_dir(app: &tauri::AppHandle) -> Option<PathBuf> {
     if let Ok(explicit) = std::env::var("KLEPSYDRA_DIR") {
         return Some(PathBuf::from(explicit));
     }
+    app.path().app_local_data_dir().ok()
+}
+
+/// Where readings and the autostart marker lived before they moved out of the
+/// install directory. Only the marker is still read from here, so that an
+/// upgrade does not mistake an existing install for a first run.
+fn legacy_dir() -> Option<PathBuf> {
     Some(PathBuf::from(std::env::var("LOCALAPPDATA").ok()?).join("Klepsydra"))
 }
 
@@ -32,9 +42,9 @@ fn klepsydra_dir() -> Option<PathBuf> {
 /// of the same account disagree routinely -- each holds whatever the last API
 /// response it saw reported -- so reconciling them is the frontend's job.
 #[tauri::command]
-fn read_usage() -> serde_json::Value {
+fn read_usage(app: tauri::AppHandle) -> serde_json::Value {
     let mut out: Vec<serde_json::Value> = Vec::new();
-    let Some(dir) = klepsydra_dir() else {
+    let Some(dir) = klepsydra_dir(&app) else {
         return serde_json::Value::Array(out);
     };
     let Ok(accounts) = std::fs::read_dir(dir.join("accounts")) else {
@@ -323,8 +333,10 @@ fn main() {
             // is already on, re-register anyway so the recorded path follows the
             // executable if it moves.
             let autostart = app.autolaunch();
-            let marker = klepsydra_dir().map(|d| d.join("autostart-initialised"));
-            let first_run = marker.as_ref().map(|m| !m.exists()).unwrap_or(false);
+            let marker = klepsydra_dir(app.handle()).map(|d| d.join("autostart-initialised"));
+            let legacy = legacy_dir().map(|d| d.join("autostart-initialised"));
+            let initialised = |m: &Option<PathBuf>| m.as_ref().map(|m| m.exists()).unwrap_or(false);
+            let first_run = marker.is_some() && !initialised(&marker) && !initialised(&legacy);
             if first_run {
                 let _ = autostart.enable();
                 if let Some(m) = &marker {
