@@ -92,7 +92,10 @@ Then in `~/.claude/settings.json`:
 "statusLine": { "type": "command", "command": "~/.claude/klepsydra-statusline.sh" }
 ```
 
-Set `KLEPSYDRA_DIR` if your Windows user differs from your WSL user.
+Set `KLEPSYDRA_DIR` if your Windows user differs from your WSL user. It
+configures the hook, which wants a WSL path (`/mnt/c/...`); the overlay
+reads the same setting as a Windows path (`C:\...`), so exporting one value
+to both sides gives the overlay a path it cannot resolve.
 
 **2. Build the overlay.** Requires Rust (MSVC toolchain), Node, and the
 Microsoft C++ Build Tools:
@@ -113,7 +116,13 @@ bash scripts/build-windows.sh
 Published readings live in `%LOCALAPPDATA%\dev.ajsoftworks.klepsydra`, so
 uninstalling with *Delete application data* ticked takes them with it. Leaving
 it unticked keeps them for a reinstall; they are rewritten within seconds of
-the next Claude Code render either way.
+the next Claude Code render by any terminal signed into that account.
+
+**Upgrading from a build older than this one:** step 1 again. The hook is a
+copy in your `~/.claude`, so an upgraded overlay meets a hook still publishing
+to the previous location, `%LOCALAPPDATA%\klepsydra`. The overlay reads both, so
+the gauge keeps working either way; once the hook is re-copied, that folder
+holds nothing current and can be deleted.
 
 ## Using it
 

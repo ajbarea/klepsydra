@@ -40,8 +40,22 @@ jobs:
       # a perMachine build puts it under Program Files. Readings and harness
       # output go to the app data dir and to temp respectively.
       - name: Nothing writes into the install dir
+        # Line-granular by nature: it reads one line at a time, and the
+        # exemptions are the app data dir and the harness's temp folder, both of
+        # which legitimately sit under LocalAppData.
         run: |
-          if git grep -nE 'AppData[/\\]+Local[/\\]+Klepsydra' -- '*.sh' '*.js' '*.rs'; then
+          set +e
+          hits=$(git grep -niE '(AppData[/\\]+Local[/\\]+|LOCALAPPDATA|local_data_dir).{0,40}klepsydra' \
+            -- . ':!*.md' ':!.github/workflows/ci.yml')
+          rc=$?
+          set -e
+          if [ "$rc" -gt 1 ]; then
+            echo "::error::the install-directory guard could not run"
+            exit 1
+          fi
+          hits=$(printf '%s' "$hits" | grep -viE 'dev\.ajsoftworks\.klepsydra|Local[/\\]+Temp[/\\]' || true)
+          if [ -n "$hits" ]; then
+            printf '%s\n' "$hits"
             echo "::error::write a path under the install directory somewhere else"
             exit 1
           fi

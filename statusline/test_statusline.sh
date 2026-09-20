@@ -124,7 +124,16 @@ check "unwritable dest: still echoes" "$display" "Opus 5 · ctx 21% · 5h 73% ·
 identifier=$(jq -r '.identifier' "$here/../src-tauri/tauri.conf.json")
 # shellcheck disable=SC2016  # sed pattern: the default must stay unexpanded.
 default=$(sed -n 's/^: "${KLEPSYDRA_DIR:=\(.*\)}"$/\1/p' "$script")
-check "default dir matches identifier" "${default##*/}" "$identifier"
+# Both halves read out of a file, so both can come back empty -- and two empty
+# strings compare equal, which would pass this test by reading nothing at all.
+check "identifier is readable"  "$([[ -n "$identifier" ]] && echo yes)" "yes"
+check "hook default is readable" "$([[ -n "$default" ]] && echo yes)"   "yes"
+# The whole path, not just its last component: Roaming instead of Local, or the
+# install dir with the identifier appended, both end in the right name.
+# $USER is compared unexpanded: the hook resolves it at run time, per user.
+# shellcheck disable=SC2016  # that is the point: the literal, not this user's.
+check "default dir is the app data dir" "$default" \
+  '/mnt/c/Users/$USER/AppData/Local/'"$identifier"
 
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [[ $fail -eq 0 ]]

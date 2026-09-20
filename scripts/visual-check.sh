@@ -21,16 +21,31 @@ rm -f "$win_out"/*.png
 # out. Left running it holds the port, and as a child of this script it keeps
 # the script from exiting at all when a caller pipes its output.
 if ! curl -sf -o /dev/null "http://127.0.0.1:$port/index.html"; then
-  (cd "$here/src" && exec python3 -m http.server "$port" >/dev/null 2>&1) &
+  (cd "$here/src" && exec python3 -m http.server --bind 127.0.0.1 "$port" >/dev/null 2>&1) &
   server=$!
-  trap 'kill "$server" 2>/dev/null' EXIT
-  sleep 1
+  # `|| true` because under `set -e` a kill of an already-dead server would
+  # become the script's exit status; INT/TERM/HUP because bash runs no EXIT trap
+  # when a signal is delivered straight to it.
+  trap 'kill "$server" 2>/dev/null || true' EXIT INT TERM HUP
+  # Poll rather than sleep: chrome shot against a server that is not up yet
+  # writes nothing, and every chrome failure below is deliberately swallowed.
+  for _ in $(seq 40); do
+    curl -sf -o /dev/null "http://127.0.0.1:$port/index.html" && break
+    sleep 0.25
+  done
+fi
+
+if ! curl -sf -o /dev/null "http://127.0.0.1:$port/index.html"; then
+  echo "nothing serving $here/src on port $port" >&2
+  exit 1
 fi
 
 now=$(date +%s)
 
+wanted=0
 shot() { # name, query, window-size
   local name=$1 query=${2:-} size=${3:-450,120}
+  wanted=$((wanted + 1))
   # Deterministic capture: no transitions, and enough budget to finish the fetch.
   # Pin the panel width; Chrome's --window-size is not the viewport width.
   if [[ "$query" == *"?"* ]]; then query="$query&still=1&w=430"; else query="?still=1&w=430"; fi
@@ -89,3 +104,11 @@ done
 rm -f "$fixture"
 
 echo "-> $win_out"
+
+# Every chrome call is swallowed so one bad state cannot abort the run, which
+# means a silent total failure otherwise reports as a clean sweep.
+got=$(find "$win_out" -name '*.png' | wc -l)
+if [ "$got" -ne "$wanted" ]; then
+  echo "only $got of $wanted screenshots were written" >&2
+  exit 1
+fi
