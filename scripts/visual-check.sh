@@ -8,14 +8,22 @@ set -euo pipefail
 here=$(cd "$(dirname "$0")/.." && pwd)
 port=${PORT:-8731}
 chrome="/mnt/c/Program Files/Google/Chrome/Application/chrome.exe"
-win_out="/mnt/c/Users/$USER/AppData/Local/Klepsydra/shots"
+# Windows temp, not the install dir: Chrome needs a native path, and the
+# gauge's own directories are for the gauge's data, not harness output.
+win_out="/mnt/c/Users/$USER/AppData/Local/Temp/klepsydra-shots"
+win_out_native=$(wslpath -w "$win_out")
 fixture="$here/src/dev-fixture.json"
 
 mkdir -p "$win_out"
 rm -f "$win_out"/*.png
 
+# Serve src/ only if nothing already is, and take that server down on the way
+# out. Left running it holds the port, and as a child of this script it keeps
+# the script from exiting at all when a caller pipes its output.
 if ! curl -sf -o /dev/null "http://127.0.0.1:$port/index.html"; then
-  (cd "$here/src" && python3 -m http.server "$port" >/dev/null 2>&1 &)
+  (cd "$here/src" && exec python3 -m http.server "$port" >/dev/null 2>&1) &
+  server=$!
+  trap 'kill "$server" 2>/dev/null' EXIT
   sleep 1
 fi
 
@@ -30,7 +38,7 @@ shot() { # name, query, window-size
     --default-background-color=6E6E6E \
     --window-size="$size" \
     --virtual-time-budget=4000 \
-    --screenshot="C:\\Users\\$USER\\AppData\\Local\\Klepsydra\\shots\\$name.png" \
+    --screenshot="$win_out_native\\$name.png" \
     "http://127.0.0.1:$port/index.html$query" >/dev/null 2>&1 || true
   printf '  %s\n' "$name.png"
 }

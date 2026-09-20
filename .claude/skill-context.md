@@ -72,8 +72,8 @@ belong here.
 - `Rust (fmt + clippy)` runs on `windows-latest`, for the reason in `## repo`.
   Clippy is `-D warnings`, so a warning is a failure.
 - required checks on `main`: both job names above.
-- The install-directory guard greps the tree for a path under
-  `AppData\Local\Klepsydra` and fails if one appears. Readings belong in the app
+- The install-directory guard greps the shell, JS and Rust sources for a path
+  under `AppData\Local\Klepsydra` and fails if one appears; prose may name it. Readings belong in the app
   data dir and harness output in temp; the install directory is writable only by
   accident of the installer's mode, and a per-machine build would put it under
   Program Files where the write fails at runtime rather than in CI.

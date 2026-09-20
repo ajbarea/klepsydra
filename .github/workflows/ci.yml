@@ -36,6 +36,15 @@ jobs:
         run: bash statusline/test_statusline.sh
       - name: Shell lint
         run: shellcheck statusline/*.sh scripts/*.sh
+      # The install dir is writable only because the NSIS mode is currentUser;
+      # a perMachine build puts it under Program Files. Readings and harness
+      # output go to the app data dir and to temp respectively.
+      - name: Nothing writes into the install dir
+        run: |
+          if git grep -nE 'AppData[/\\]+Local[/\\]+Klepsydra' -- '*.sh' '*.js' '*.rs'; then
+            echo "::error::write a path under the install directory somewhere else"
+            exit 1
+          fi
 
   rust:
     name: Rust (fmt + clippy)
