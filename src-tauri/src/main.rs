@@ -22,17 +22,26 @@ struct Grip(Mutex<Option<[f64; 4]>>);
 /// per-machine install puts the latter under Program Files, where the hook
 /// cannot write, and the uninstaller's "delete app data" only reaches this one.
 fn klepsydra_dir(app: &tauri::AppHandle) -> Option<PathBuf> {
-    if let Ok(explicit) = std::env::var("KLEPSYDRA_DIR") {
-        return Some(PathBuf::from(explicit));
+    // An override that is empty or relative would put `accounts` under whatever
+    // the working directory happens to be -- for a Run-key launch, the install
+    // directory again.
+    match std::env::var("KLEPSYDRA_DIR").map(PathBuf::from) {
+        Ok(explicit) if explicit.is_absolute() => return Some(explicit),
+        _ => {}
     }
     app.path().app_local_data_dir().ok()
 }
 
 /// Where readings and the autostart marker lived before they moved out of the
-/// install directory. Only the marker is still read from here, so that an
-/// upgrade does not mistake an existing install for a first run.
-fn legacy_dir() -> Option<PathBuf> {
-    Some(PathBuf::from(std::env::var("LOCALAPPDATA").ok()?).join("Klepsydra"))
+/// install directory. Read, never written.
+///
+/// Resolved through the same call as the new location rather than through
+/// `%LOCALAPPDATA%`: Windows answers the known-folder query and the environment
+/// variable separately, and under folder redirection they disagree -- which
+/// here would read as a fresh install.
+fn legacy_dir(app: &tauri::AppHandle) -> Option<PathBuf> {
+    let root = app.path().local_data_dir().ok()?;
+    root.is_absolute().then(|| root.join("klepsydra"))
 }
 
 /// Every published reading, one per Claude Code session.
@@ -44,11 +53,21 @@ fn legacy_dir() -> Option<PathBuf> {
 #[tauri::command]
 fn read_usage(app: tauri::AppHandle) -> serde_json::Value {
     let mut out: Vec<serde_json::Value> = Vec::new();
-    let Some(dir) = klepsydra_dir(&app) else {
-        return serde_json::Value::Array(out);
-    };
+    // The old location too: the hook is a copy in the user's ~/.claude, so an
+    // upgraded overlay meets a hook still publishing where it always did. A
+    // session appearing in both is what the frontend already reconciles.
+    for dir in [klepsydra_dir(&app), legacy_dir(&app)]
+        .into_iter()
+        .flatten()
+    {
+        collect_readings(&dir, &mut out);
+    }
+    serde_json::Value::Array(out)
+}
+
+fn collect_readings(dir: &std::path::Path, out: &mut Vec<serde_json::Value>) {
     let Ok(accounts) = std::fs::read_dir(dir.join("accounts")) else {
-        return serde_json::Value::Array(out);
+        return;
     };
     for account in accounts.flatten() {
         let Ok(sessions) = std::fs::read_dir(account.path()) else {
@@ -68,7 +87,6 @@ fn read_usage(app: tauri::AppHandle) -> serde_json::Value {
             out.push(value);
         }
     }
-    serde_json::Value::Array(out)
 }
 
 /// The panel grows a row per account window, so the frontend reports the height
@@ -333,20 +351,23 @@ fn main() {
             // is already on, re-register anyway so the recorded path follows the
             // executable if it moves.
             let autostart = app.autolaunch();
-            let marker = klepsydra_dir(app.handle()).map(|d| d.join("autostart-initialised"));
-            let legacy = legacy_dir().map(|d| d.join("autostart-initialised"));
-            let initialised = |m: &Option<PathBuf>| m.as_ref().map(|m| m.exists()).unwrap_or(false);
-            let first_run = marker.is_some() && !initialised(&marker) && !initialised(&legacy);
-            if first_run {
+            let dir = klepsydra_dir(app.handle());
+            let marker = dir.as_ref().map(|d| d.join("autostart-initialised"));
+            let legacy = legacy_dir(app.handle()).map(|d| d.join("autostart-initialised"));
+            let exists = |m: &Option<PathBuf>| m.as_ref().map(|m| m.exists()).unwrap_or(false);
+            let first_run = marker.is_some() && !exists(&marker) && !exists(&legacy);
+            if first_run || autostart.is_enabled().unwrap_or(false) {
                 let _ = autostart.enable();
-                if let Some(m) = &marker {
-                    if let Some(parent) = m.parent() {
-                        let _ = std::fs::create_dir_all(parent);
-                    }
-                    let _ = std::fs::write(m, "");
+            }
+            // Write the marker whenever it is missing, not only on a first run:
+            // left unwritten, an upgraded install answers "have we been here
+            // before?" out of the old directory forever, and tidying that
+            // directory away silently re-enables autostart the user turned off.
+            if let Some(m) = marker.as_ref().filter(|m| !m.exists()) {
+                if let Some(parent) = m.parent() {
+                    let _ = std::fs::create_dir_all(parent);
                 }
-            } else if autostart.is_enabled().unwrap_or(false) {
-                let _ = autostart.enable();
+                let _ = std::fs::write(m, "");
             }
             let start_item = CheckMenuItem::with_id(
                 app,
