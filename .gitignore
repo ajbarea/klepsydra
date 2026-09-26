@@ -2,3 +2,6 @@ node_modules/
 src-tauri/target/
 src/dev-fixture.json
 COMMITS.md
+
+# per-session git worktrees
+.claude/worktrees/
