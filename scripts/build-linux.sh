@@ -24,7 +24,7 @@ trap 'rm -f "$stamp"' EXIT
 echo "==> cargo tauri build"
 npx --yes tauri build --bundles deb 2>&1 | tail -30
 
-deb=$(find src-tauri/target/release/bundle/deb -maxdepth 1 -name '*.deb' -newer "$stamp" 2>/dev/null | head -1)
+deb=$(find src-tauri/target/release/bundle/deb -maxdepth 1 -name '*.deb' -newer "$stamp" 2>/dev/null | head -1 || true)
 if [[ -z "$deb" ]]; then
   echo "build did not produce a .deb" >&2
   exit 1

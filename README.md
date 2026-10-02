@@ -47,7 +47,8 @@ klepsydra-statusline.sh ──► <app data dir>/accounts/<account>/<session>.js
 ```
 
 The app data dir is `%LOCALAPPDATA%\dev.ajsoftworks.klepsydra` on Windows and
-`${XDG_DATA_HOME:-~/.local/share}/dev.ajsoftworks.klepsydra` on Linux.
+`$XDG_DATA_HOME/dev.ajsoftworks.klepsydra` on Linux (`~/.local/share` when
+`XDG_DATA_HOME` is unset or relative).
 
 ### Reconciling several terminals
 
@@ -149,8 +150,8 @@ and with it Quit, is unreachable: `pkill klepsydra` stops it.
 Tauri's X11 click-through leaves one input pixel at the window's top-left
 corner, which sits in the panel's transparent rounded corner.
 
-The gauge needs an X11 session. Under native Wayland, Tauri cannot read the
-global pointer position, so the drag handle never responds.
+The gauge needs an X11 session. A Wayland compositor shows clients no global
+pointer, so under Wayland the drag handle stays inert.
 
 `sudo apt remove klepsydra` leaves the published readings in the data dir; they
 are small, and rewritten on the next render.
