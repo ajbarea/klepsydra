@@ -353,13 +353,16 @@ fn geometry(window: &tauri::WebviewWindow) -> Option<Geometry> {
 
 /// An undecorated resizable window gets tao's edge-resize band on Linux: a press
 /// within it starts a window-manager resize. Stop the grip short of the band, so
-/// a press there passes through instead.
-#[cfg(target_os = "linux")]
+/// a press there passes through instead. Windows is not resizable, so it has
+/// no band.
 fn clear_of_resize_band(
     g: Geometry,
     (left, top, right, bottom): (f64, f64, f64, f64),
 ) -> (f64, f64, f64, f64) {
     const TAO_RESIZE_BORDER: f64 = 5.0; // tao's linux/event_loop.rs
+    if !cfg!(target_os = "linux") {
+        return (left, top, right, bottom);
+    }
     let inset = (TAO_RESIZE_BORDER + 1.0) * g.scale;
     (
         left.max(g.x + inset),
@@ -367,12 +370,6 @@ fn clear_of_resize_band(
         right.min(g.x + g.w - inset),
         bottom.min(g.y + g.h - inset),
     )
-}
-
-/// Windows is not resizable, so it has no such band.
-#[cfg(not(target_os = "linux"))]
-fn clear_of_resize_band(_g: Geometry, rect: (f64, f64, f64, f64)) -> (f64, f64, f64, f64) {
-    rect
 }
 
 /// Neither Windows nor Tauri's X11 backend offers per-region hit testing for a
