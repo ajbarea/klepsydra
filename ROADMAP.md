@@ -16,6 +16,11 @@ establish a live reading dims the panel instead of drawing a stale bar.
 - Optional: compact mode that drops the label and countdown to a bare bar.
 
 ## Completed
+- 2026-10-02 — Ported to Linux (X11), so the gauge also runs on the Debian/XFCE
+  workstation. The hook writes to the XDG data dir, the drag handle reads the
+  pointer button from the X server, and CI lints the shell on both platforms.
+  GTK's 200x200 floor for non-resizable windows was the one Linux-only fix;
+  the WebKitGTK/NVIDIA blank-window bug did not reproduce.
 - 2026-09-16 — Kept the gauge in front of the taskbar. Both are topmost, so the
   last one raised wins; clicking the taskbar buried the gauge and took its drag
   handle with it. Re-asserting HWND_TOPMOST twice a second fixes it, and a tray

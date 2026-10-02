@@ -122,18 +122,40 @@ check "unwritable dest: still echoes" "$display" "Opus 5 · ctx 21% · 5h 73% ·
 # Producer and consumer agree on the path by convention alone, so a rename of
 # one side is otherwise silent: the gauge simply never sees a reading.
 identifier=$(jq -r '.identifier' "$here/../src-tauri/tauri.conf.json")
-# shellcheck disable=SC2016  # sed pattern: the default must stay unexpanded.
-default=$(sed -n 's/^: "${KLEPSYDRA_DIR:=\(.*\)}"$/\1/p' "$script")
+# One default per platform, each an assignment of a quoted literal.
+# shellcheck disable=SC2016  # sed pattern: the defaults must stay unexpanded.
+defaults=$(sed -n 's/^ *KLEPSYDRA_DIR="\(.*\)"$/\1/p' "$script")
+wsl_default=$(printf '%s\n' "$defaults" | sed -n 1p)
+linux_default=$(printf '%s\n' "$defaults" | sed -n 2p)
 # Both halves read out of a file, so both can come back empty -- and two empty
 # strings compare equal, which would pass this test by reading nothing at all.
-check "identifier is readable"  "$([[ -n "$identifier" ]] && echo yes)" "yes"
-check "hook default is readable" "$([[ -n "$default" ]] && echo yes)"   "yes"
+check "identifier is readable"   "$([[ -n "$identifier" ]] && echo yes)"    "yes"
+check "two hook defaults"        "$(printf '%s\n' "$defaults" | grep -c .)" "2"
 # The whole path, not just its last component: Roaming instead of Local, or the
 # install dir with the identifier appended, both end in the right name.
-# $USER is compared unexpanded: the hook resolves it at run time, per user.
+# $USER and $HOME are compared unexpanded: the hook resolves them at run time.
 # shellcheck disable=SC2016  # that is the point: the literal, not this user's.
-check "default dir is the app data dir" "$default" \
+check "WSL default is the Windows app data dir" "$wsl_default" \
   '/mnt/c/Users/$USER/AppData/Local/'"$identifier"
+# Tauri's app_local_data_dir on Linux: $XDG_DATA_HOME, else ~/.local/share.
+# shellcheck disable=SC2016
+check "Linux default is the XDG data dir" "$linux_default" \
+  '${XDG_DATA_HOME:-$HOME/.local/share}/'"$identifier"
+
+# --- the Linux default, exercised rather than read -------------------------
+# Skipped under WSL, where the default deliberately points at the Windows side.
+if grep -qi microsoft /proc/sys/kernel/osrelease 2>/dev/null; then
+  echo "  skip default-dir runs (WSL)"
+else
+  CLAUDE_CONFIG_DIR="$work/team" XDG_DATA_HOME="$work/xdg" \
+    env -u KLEPSYDRA_DIR bash "$script" <"$fixtures/full.json" >/dev/null
+  check "Linux: XDG_DATA_HOME honoured" \
+    "$(jq -r '.account' "$work/xdg/$identifier/accounts/uuid-team/abc-123.json" 2>/dev/null)" "uuid-team"
+  CLAUDE_CONFIG_DIR="$work/team" HOME="$work/home" \
+    env -u KLEPSYDRA_DIR -u XDG_DATA_HOME bash "$script" <"$fixtures/full.json" >/dev/null
+  check "Linux: falls back to ~/.local/share" \
+    "$(jq -r '.account' "$work/home/.local/share/$identifier/accounts/uuid-team/abc-123.json" 2>/dev/null)" "uuid-team"
+fi
 
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [[ $fail -eq 0 ]]

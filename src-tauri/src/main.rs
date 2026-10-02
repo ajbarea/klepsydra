@@ -33,13 +33,16 @@ fn klepsydra_dir(app: &tauri::AppHandle) -> Option<PathBuf> {
 }
 
 /// Where readings and the autostart marker lived before they moved out of the
-/// install directory. Read, never written.
+/// install directory. Read, never written. Only Windows builds ever wrote there.
 ///
 /// Resolved through the same call as the new location rather than through
 /// `%LOCALAPPDATA%`: Windows answers the known-folder query and the environment
 /// variable separately, and under folder redirection they disagree -- which
 /// here would read as a fresh install.
 fn legacy_dir(app: &tauri::AppHandle) -> Option<PathBuf> {
+    if !cfg!(windows) {
+        return None;
+    }
     let root = app.path().local_data_dir().ok()?;
     root.is_absolute().then(|| root.join("klepsydra"))
 }
@@ -240,13 +243,43 @@ fn left_button_down() -> bool {
     unsafe { (GetAsyncKeyState(VK_LBUTTON) as u16 & 0x8000) != 0 }
 }
 
-#[cfg(not(windows))]
+/// X11 equivalent: the button mask from XQueryPointer on the root window. Its
+/// own connection, opened once for the watcher thread, so it never touches the
+/// GTK main loop. None under Wayland without XWayland, where nothing global
+/// can answer; the handle then simply never drags.
+#[cfg(target_os = "linux")]
+fn left_button_down() -> bool {
+    use x11rb::connection::Connection;
+    use x11rb::protocol::xproto::{ConnectionExt, KeyButMask, Window};
+    use x11rb::rust_connection::RustConnection;
+
+    thread_local! {
+        static X: Option<(RustConnection, Window)> = x11rb::connect(None)
+            .ok()
+            .map(|(conn, screen)| {
+                let root = conn.setup().roots[screen].root;
+                (conn, root)
+            });
+    }
+    X.with(|x| {
+        let Some((conn, root)) = x else {
+            return false;
+        };
+        conn.query_pointer(*root)
+            .ok()
+            .and_then(|cookie| cookie.reply().ok())
+            .map(|reply| reply.mask.contains(KeyButMask::BUTTON1))
+            .unwrap_or(false)
+    })
+}
+
+#[cfg(not(any(windows, target_os = "linux")))]
 fn left_button_down() -> bool {
     false
 }
 
-/// Windows has no per-region hit testing for a click-through window: ignoring
-/// cursor events is all-or-nothing. So we watch the pointer and switch the
+/// Neither Windows nor Tauri's X11 backend offers per-region hit testing for a
+/// click-through window: ignoring cursor events is all-or-nothing. So we watch the pointer and switch the
 /// whole window interactive only while it is over the grab handle. Everywhere
 /// else the gauge stays click-through and never eats a click.
 ///
@@ -345,6 +378,11 @@ fn main() {
         .setup(|app| {
             let window = app.get_webview_window("main").expect("main window");
             window.set_ignore_cursor_events(true)?;
+            // GTK floors a non-resizable window at 200x200, which leaves a
+            // one-row panel in a window three times its height. Undecorated and
+            // click-through, it offers nothing to resize by anyway.
+            #[cfg(target_os = "linux")]
+            window.set_resizable(true)?;
 
             // Enable autostart once, on first run. Re-enabling unconditionally
             // would quietly undo the user turning it off from the tray. When it
@@ -372,7 +410,11 @@ fn main() {
             let start_item = CheckMenuItem::with_id(
                 app,
                 "autostart",
-                "Start with Windows",
+                if cfg!(windows) {
+                    "Start with Windows"
+                } else {
+                    "Start at login"
+                },
                 true,
                 autostart.is_enabled().unwrap_or(false),
                 None::<&str>,

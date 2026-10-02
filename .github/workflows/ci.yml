@@ -61,15 +61,26 @@ jobs:
           fi
 
   rust:
-    name: Rust (fmt + clippy)
-    # Windows: the overlay is a Windows app, and the win32 calls behind the
-    # drag handle and the topmost re-assert only compile for that target.
-    runs-on: windows-latest
+    name: Rust (fmt + clippy, ${{ matrix.os }})
+    # Both targets: the win32 calls behind the drag handle and the topmost
+    # re-assert compile only for Windows, and the X11 button query only for
+    # Linux, so each half is checked on its own platform.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Install WebKitGTK and tray headers
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libxdo-dev libssl-dev \
+            libayatana-appindicator3-dev librsvg2-dev
       - name: Add toolchain components
         run: rustup component add clippy rustfmt
       - name: cargo fmt

@@ -14,7 +14,14 @@ set -uo pipefail
 # The overlay's app-local-data dir, named for the bundle identifier in
 # src-tauri/tauri.conf.json. Not the install dir: the uninstaller's "delete app
 # data" reaches only this one, and a per-machine install cannot be written to.
-: "${KLEPSYDRA_DIR:=/mnt/c/Users/$USER/AppData/Local/dev.ajsoftworks.klepsydra}"
+# Under WSL the overlay is a Windows app, so the hook writes across to it.
+if [[ -z "${KLEPSYDRA_DIR:-}" ]]; then
+  if grep -qi microsoft /proc/sys/kernel/osrelease 2>/dev/null; then
+    KLEPSYDRA_DIR="/mnt/c/Users/$USER/AppData/Local/dev.ajsoftworks.klepsydra"
+  else
+    KLEPSYDRA_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/dev.ajsoftworks.klepsydra"
+  fi
+fi
 
 input=$(cat)
 
