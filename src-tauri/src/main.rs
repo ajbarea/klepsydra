@@ -17,8 +17,9 @@ use tauri_plugin_window_state::AppHandleExt;
 #[derive(Default)]
 struct Grip(Mutex<Option<[f64; 4]>>);
 
-/// `%LOCALAPPDATA%\dev.ajsoftworks.klepsydra` -- where the statusLine hook
-/// publishes. Tauri's app-local-data dir rather than the install dir: a
+/// Where the statusLine hook publishes: `%LOCALAPPDATA%\dev.ajsoftworks.klepsydra`
+/// on Windows, `$XDG_DATA_HOME/dev.ajsoftworks.klepsydra` (else under
+/// `~/.local/share`) on Linux. Tauri's app-local-data dir rather than the install dir: a
 /// per-machine install puts the latter under Program Files, where the hook
 /// cannot write, and the uninstaller's "delete app data" only reaches this one.
 fn klepsydra_dir(app: &tauri::AppHandle) -> Option<PathBuf> {
@@ -33,13 +34,16 @@ fn klepsydra_dir(app: &tauri::AppHandle) -> Option<PathBuf> {
 }
 
 /// Where readings and the autostart marker lived before they moved out of the
-/// install directory. Read, never written.
+/// install directory. Read, never written. Only Windows builds ever wrote there.
 ///
 /// Resolved through the same call as the new location rather than through
 /// `%LOCALAPPDATA%`: Windows answers the known-folder query and the environment
 /// variable separately, and under folder redirection they disagree -- which
 /// here would read as a fresh install.
 fn legacy_dir(app: &tauri::AppHandle) -> Option<PathBuf> {
+    if !cfg!(windows) {
+        return None;
+    }
     let root = app.path().local_data_dir().ok()?;
     root.is_absolute().then(|| root.join("klepsydra"))
 }
@@ -225,32 +229,157 @@ fn set_tray_level(app: tauri::AppHandle, pct: f64, r: u8, g: u8, b: u8) {
     }
 }
 
-/// Is the left mouse button down right now?
+/// The pointer in physical desktop pixels, and whether the left button is down.
 ///
 /// Read from the OS rather than the webview: `data-tauri-drag-region` needs a
 /// focused window, and this one is deliberately unfocused and click-through,
 /// so webview drag never fires. Polling the button here sidesteps that.
+struct Pointer {
+    x: f64,
+    y: f64,
+    pressed: bool,
+}
+
 #[cfg(windows)]
-fn left_button_down() -> bool {
+fn pointer(app: &tauri::AppHandle) -> Option<Pointer> {
     #[link(name = "user32")]
     unsafe extern "system" {
         fn GetAsyncKeyState(key: i32) -> i16;
     }
     const VK_LBUTTON: i32 = 0x01;
-    unsafe { (GetAsyncKeyState(VK_LBUTTON) as u16 & 0x8000) != 0 }
+    let cursor = app.cursor_position().ok()?;
+    let pressed = unsafe { (GetAsyncKeyState(VK_LBUTTON) as u16 & 0x8000) != 0 };
+    Some(Pointer {
+        x: cursor.x,
+        y: cursor.y,
+        pressed,
+    })
 }
 
-#[cfg(not(windows))]
-fn left_button_down() -> bool {
-    false
-}
-
-/// Windows has no per-region hit testing for a click-through window: ignoring
-/// cursor events is all-or-nothing. So we watch the pointer and switch the
-/// whole window interactive only while it is over the grab handle. Everywhere
-/// else the gauge stays click-through and never eats a click.
+/// X11: one XQueryPointer on the root window answers both, over the watcher
+/// thread's own connection, so polling queues nothing on the GTK main loop. A
+/// failed or dropped connection is retried, so an X server that was not ready
+/// at login costs dragging only until the next attempt.
 ///
-/// The same loop owns dragging, for the reason described on `left_button_down`.
+/// Off X11 it answers nothing. A Wayland compositor shows clients no global
+/// pointer, and XWayland sees only presses over X11 windows, so the handle
+/// stays inert rather than reacting to another window's clicks.
+#[cfg(target_os = "linux")]
+fn pointer(_app: &tauri::AppHandle) -> Option<Pointer> {
+    use std::cell::RefCell;
+    use std::sync::OnceLock;
+    use std::time::Instant;
+    use x11rb::connection::Connection;
+    use x11rb::protocol::xproto::{ConnectionExt, KeyButMask, Window};
+    use x11rb::rust_connection::RustConnection;
+
+    const RETRY: Duration = Duration::from_secs(2);
+    type Link = Option<(RustConnection, Window)>;
+    thread_local! {
+        static X: RefCell<(Link, Option<Instant>)> = const { RefCell::new((None, None)) };
+    }
+    // GDK's choice: Wayland whenever a compositor is reachable, unless forced.
+    static ON_X11: OnceLock<bool> = OnceLock::new();
+    let on_x11 = *ON_X11.get_or_init(|| match std::env::var("GDK_BACKEND") {
+        Ok(backend) if backend.starts_with("x11") => true,
+        _ => std::env::var_os("WAYLAND_DISPLAY").is_none(),
+    });
+    if !on_x11 {
+        return None;
+    }
+
+    X.with_borrow_mut(|(link, last_try)| {
+        if link.is_none() {
+            if last_try.is_some_and(|t| t.elapsed() < RETRY) {
+                return None;
+            }
+            *last_try = Some(Instant::now());
+            *link = x11rb::connect(None).ok().map(|(conn, screen)| {
+                let root = conn.setup().roots[screen].root;
+                (conn, root)
+            });
+        }
+        let (conn, root) = link.as_ref()?;
+        let reply = conn
+            .query_pointer(*root)
+            .ok()
+            .and_then(|cookie| cookie.reply().ok());
+        if reply.is_none() {
+            *link = None;
+        }
+        reply.map(|r| Pointer {
+            x: r.root_x as f64,
+            y: r.root_y as f64,
+            pressed: r.mask.contains(KeyButMask::BUTTON1),
+        })
+    })
+}
+
+#[cfg(not(any(windows, target_os = "linux")))]
+fn pointer(app: &tauri::AppHandle) -> Option<Pointer> {
+    let cursor = app.cursor_position().ok()?;
+    Some(Pointer {
+        x: cursor.x,
+        y: cursor.y,
+        pressed: false,
+    })
+}
+
+/// The window's placement in physical desktop pixels.
+#[derive(Clone, Copy)]
+struct Geometry {
+    x: f64,
+    y: f64,
+    w: f64,
+    h: f64,
+    scale: f64,
+}
+
+fn geometry(window: &tauri::WebviewWindow) -> Option<Geometry> {
+    let (Ok(origin), Ok(size), Ok(scale)) = (
+        window.outer_position(),
+        window.outer_size(),
+        window.scale_factor(),
+    ) else {
+        return None;
+    };
+    Some(Geometry {
+        x: origin.x as f64,
+        y: origin.y as f64,
+        w: size.width as f64,
+        h: size.height as f64,
+        scale,
+    })
+}
+
+/// An undecorated resizable window gets tao's edge-resize band on Linux: a press
+/// within it starts a window-manager resize. Stop the grip short of the band, so
+/// a press there passes through instead. Windows is not resizable, so it has
+/// no band.
+fn clear_of_resize_band(
+    g: Geometry,
+    (left, top, right, bottom): (f64, f64, f64, f64),
+) -> (f64, f64, f64, f64) {
+    const TAO_RESIZE_BORDER: f64 = 5.0; // tao's linux/event_loop.rs
+    if !cfg!(target_os = "linux") {
+        return (left, top, right, bottom);
+    }
+    let inset = (TAO_RESIZE_BORDER + 1.0) * g.scale;
+    (
+        left.max(g.x + inset),
+        top.max(g.y + inset),
+        right.min(g.x + g.w - inset),
+        bottom.min(g.y + g.h - inset),
+    )
+}
+
+/// Neither Windows nor Tauri's X11 backend offers per-region hit testing for a
+/// click-through window: ignoring cursor events is all-or-nothing. So we watch
+/// the pointer and switch the whole window interactive only while it is over
+/// the grab handle. Everywhere else the gauge stays click-through and never
+/// eats a click.
+///
+/// The same loop owns dragging, for the reason described on `Pointer`.
 fn watch_grip(app: tauri::AppHandle) {
     std::thread::spawn(move || {
         let mut interactive = false;
@@ -258,6 +387,10 @@ fn watch_grip(app: tauri::AppHandle) {
         let mut was_pressed = false;
         // Cursor offset from the window origin, set when a drag begins.
         let mut drag_offset: Option<(f64, f64)> = None;
+        // Every window getter is a round trip to the main thread, so the
+        // placement is cached and refreshed twice a second. Only this loop's
+        // drag moves the window quickly, and it updates the cache itself.
+        let mut geo: Option<Geometry> = None;
         loop {
             std::thread::sleep(Duration::from_millis(16));
             ticks = ticks.wrapping_add(1);
@@ -267,11 +400,10 @@ fn watch_grip(app: tauri::AppHandle) {
             let Some(rect) = app.state::<Grip>().0.lock().ok().and_then(|g| *g) else {
                 continue;
             };
-            let (Ok(cursor), Ok(origin), Ok(scale)) = (
-                app.cursor_position(),
-                window.outer_position(),
-                window.scale_factor(),
-            ) else {
+            if geo.is_none() || (drag_offset.is_none() && ticks.is_multiple_of(30)) {
+                geo = geometry(&window);
+            }
+            let (Some(g), Some(cursor)) = (geo.as_mut(), pointer(&app)) else {
                 continue;
             };
 
@@ -279,30 +411,34 @@ fn watch_grip(app: tauri::AppHandle) {
             // interactive the region is grown slightly, so a drag that outruns
             // the window by a pixel does not drop the mouse mid-move.
             let margin = if interactive { 8.0 } else { 0.0 };
-            let left = origin.x as f64 + rect[0] * scale - margin;
-            let top = origin.y as f64 + rect[1] * scale - margin;
-            let right = left + rect[2] * scale + margin * 2.0;
-            let bottom = top + rect[3] * scale + margin * 2.0;
+            let left = g.x + rect[0] * g.scale - margin;
+            let top = g.y + rect[1] * g.scale - margin;
+            let (left, top, right, bottom) = clear_of_resize_band(
+                *g,
+                (
+                    left,
+                    top,
+                    left + rect[2] * g.scale + margin * 2.0,
+                    top + rect[3] * g.scale + margin * 2.0,
+                ),
+            );
 
             let inside =
                 cursor.x >= left && cursor.x <= right && cursor.y >= top && cursor.y <= bottom;
 
-            let pressed = left_button_down();
             // Only a press that *starts* on the handle begins a drag, so
             // dragging something else across the gauge cannot grab it.
-            if pressed && !was_pressed && inside {
-                drag_offset = Some((cursor.x - origin.x as f64, cursor.y - origin.y as f64));
-            } else if !pressed && drag_offset.is_some() {
+            if cursor.pressed && !was_pressed && inside {
+                drag_offset = Some((cursor.x - g.x, cursor.y - g.y));
+            } else if !cursor.pressed && drag_offset.is_some() {
                 drag_offset = None;
                 let _ = app.save_window_state(tauri_plugin_window_state::StateFlags::POSITION);
             }
-            was_pressed = pressed;
+            was_pressed = cursor.pressed;
 
             if let Some((ox, oy)) = drag_offset {
-                let _ = window.set_position(PhysicalPosition::new(
-                    (cursor.x - ox).round() as i32,
-                    (cursor.y - oy).round() as i32,
-                ));
+                (g.x, g.y) = ((cursor.x - ox).round(), (cursor.y - oy).round());
+                let _ = window.set_position(PhysicalPosition::new(g.x as i32, g.y as i32));
                 continue; // hold interactivity and skip the re-assert mid-drag
             }
 
@@ -345,6 +481,12 @@ fn main() {
         .setup(|app| {
             let window = app.get_webview_window("main").expect("main window");
             window.set_ignore_cursor_events(true)?;
+            // GTK never sizes a non-resizable window below its content's
+            // natural size, 200px for WebKit, so set_height could not shrink
+            // it. Resizable arms tao's edge-resize band; watch_grip keeps the
+            // grip out of it.
+            #[cfg(target_os = "linux")]
+            window.set_resizable(true)?;
 
             // Enable autostart once, on first run. Re-enabling unconditionally
             // would quietly undo the user turning it off from the tray. When it
@@ -372,7 +514,11 @@ fn main() {
             let start_item = CheckMenuItem::with_id(
                 app,
                 "autostart",
-                "Start with Windows",
+                if cfg!(windows) {
+                    "Start with Windows"
+                } else {
+                    "Start at login"
+                },
                 true,
                 autostart.is_enabled().unwrap_or(false),
                 None::<&str>,

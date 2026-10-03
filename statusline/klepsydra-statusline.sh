@@ -14,7 +14,20 @@ set -uo pipefail
 # The overlay's app-local-data dir, named for the bundle identifier in
 # src-tauri/tauri.conf.json. Not the install dir: the uninstaller's "delete app
 # data" reaches only this one, and a per-machine install cannot be written to.
-: "${KLEPSYDRA_DIR:=/mnt/c/Users/$USER/AppData/Local/dev.ajsoftworks.klepsydra}"
+# Under WSL the overlay is a Windows app, so the hook writes across to it. On
+# Linux, Tauri honours XDG_DATA_HOME only when it is absolute, and so must we,
+# or the readings land under whatever directory Claude Code is running in.
+if [[ -z "${KLEPSYDRA_DIR:-}" ]]; then
+  osrelease=""
+  { read -r osrelease </proc/sys/kernel/osrelease; } 2>/dev/null  # builtin: runs every render
+  if [[ "$osrelease" == *[Mm]icrosoft* ]]; then
+    KLEPSYDRA_DIR="/mnt/c/Users/$USER/AppData/Local/dev.ajsoftworks.klepsydra"
+  else
+    data_home="$HOME/.local/share"
+    [[ "${XDG_DATA_HOME:-}" == /* ]] && data_home="$XDG_DATA_HOME"
+    KLEPSYDRA_DIR="$data_home/dev.ajsoftworks.klepsydra"
+  fi
+fi
 
 input=$(cat)
 

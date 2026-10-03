@@ -9,7 +9,7 @@
 <p align="center">
   <a href="https://github.com/ajbarea/klepsydra/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/ajbarea/klepsydra/ci.yml?branch=main&label=CI" alt="CI"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="License: MIT"></a>
-  <img src="https://img.shields.io/badge/platform-Windows-0078D4" alt="Platform: Windows">
+  <img src="https://img.shields.io/badge/platform-Windows%20%7C%20Linux-0078D4" alt="Platform: Windows | Linux">
 </p>
 
 A thin always-on-top bar showing how much of your Claude Code limit you have
@@ -41,10 +41,14 @@ those files. No API calls, no credentials, no second background process.
 Claude Code (every session)
   │ statusLine JSON on stdin
   ▼
-klepsydra-statusline.sh ──► %LOCALAPPDATA%\dev.ajsoftworks.klepsydra\accounts\<account>\<session>.json
-  │                                                                    │
-  └─► "Opus 5 · ctx 21% · 5h 73% · 7d 12%"                             └──► klepsydra.exe
+klepsydra-statusline.sh ──► <app data dir>/accounts/<account>/<session>.json
+  │                                          │
+  └─► "Opus 5 · ctx 21% · 5h 73% · 7d 12%"   └──► klepsydra overlay
 ```
+
+The app data dir is `%LOCALAPPDATA%\dev.ajsoftworks.klepsydra` on Windows and
+`$XDG_DATA_HOME/dev.ajsoftworks.klepsydra` on Linux (`~/.local/share` when
+`XDG_DATA_HOME` is unset or relative).
 
 ### Reconciling several terminals
 
@@ -92,12 +96,17 @@ Then in `~/.claude/settings.json`:
 "statusLine": { "type": "command", "command": "~/.claude/klepsydra-statusline.sh" }
 ```
 
+The hook picks the overlay's data dir for the platform it runs on: on Linux,
+the XDG data dir; under WSL, the Windows side, since the overlay there is a
+Windows app.
+
 Set `KLEPSYDRA_DIR` if your Windows user differs from your WSL user. It
 configures the hook, which wants a WSL path (`/mnt/c/...`); the overlay
 reads the same setting as a Windows path (`C:\...`), so exporting one value
 to both sides gives the overlay a path it cannot resolve.
 
-**2. Build the overlay.** Requires Rust (MSVC toolchain), Node, and the
+**2. Build the overlay.** Windows and Linux differ here; see the Linux
+section below. On Windows it requires Rust (MSVC toolchain), Node, and the
 Microsoft C++ Build Tools:
 
 ```powershell
@@ -118,6 +127,35 @@ uninstalling with *Delete application data* ticked takes them with it. Leaving
 it unticked keeps them for a reinstall; they are rewritten within seconds of
 the next Claude Code render by any terminal signed into that account.
 
+### Linux
+
+Tested on Debian 13 with XFCE on X11. Install Rust with
+[rustup](https://rustup.rs), then the WebKitGTK, tray and build packages:
+
+```bash
+sudo apt install libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev \
+  libssl-dev libayatana-appindicator3-dev librsvg2-dev nodejs npm
+bash scripts/build-linux.sh
+sudo apt install ./src-tauri/target/release/bundle/deb/klepsydra_0.1.0_amd64.deb
+```
+
+Run `klepsydra` once. It registers itself in `~/.config/autostart`, so it starts
+with every later login.
+
+The tray icon needs a StatusNotifierItem host. On XFCE that is the Status Tray
+panel plugin (`xfce4-panel --add=systray`). Stock GNOME has none and needs an
+AppIndicator extension. Without a host the gauge still runs, but the tray menu,
+and with it Quit, is unreachable: `pkill klepsydra` stops it.
+
+Tauri's X11 click-through leaves one input pixel at the window's top-left
+corner, which sits in the panel's transparent rounded corner.
+
+The gauge needs an X11 session. A Wayland compositor shows clients no global
+pointer, so under Wayland the drag handle stays inert.
+
+`sudo apt remove klepsydra` leaves the published readings in the data dir; they
+are small, and rewritten on the next render.
+
 **Upgrading from a build older than this one:** step 1 again. The hook is a
 copy in your `~/.claude`, so an upgraded overlay meets a hook still publishing
 to the previous location, `%LOCALAPPDATA%\klepsydra`. The overlay reads both, so
@@ -136,9 +174,10 @@ click-through, so webview drag events never arrive. The pointer watcher reads
 the mouse button straight from the OS instead, and a drag only begins on a
 press that starts on the handle.
 
-Windows offers no per-region hit testing for a click-through window -- ignoring
-cursor events is all or nothing. So a background thread watches the pointer and
-makes the window interactive only while it is over the handle. The frontend
+Neither Windows nor Tauri's X11 backend offers per-region hit testing for a
+click-through window -- ignoring cursor events is all or nothing. So a
+background thread watches the pointer and makes the window interactive only
+while it is over the handle. The frontend
 reports the handle's rectangle rather than the backend hard-coding it, so
 restyling cannot desync the two.
 
@@ -146,7 +185,7 @@ The tray icon is itself a miniature of the bar, redrawn as the reading changes,
 so the level stays readable when the overlay is covered or a fullscreen app is
 in front. It offers "Reset position" (for when the gauge has been dragged
 off-screen or onto a monitor that is no longer attached), toggles "Start with
-Windows", and quits. Autostart is on by default; the icon may start in the
+Windows" ("Start at login" on Linux), and quits. Autostart is on by default; the icon may start in the
 notification-area overflow.
 
 ### Staying in front of the taskbar
@@ -158,6 +197,10 @@ sitting over it, and takes the drag handle out of reach. Tauri's
 so klepsydra calls `SetWindowPos` with `HWND_TOPMOST` twice a second instead.
 `NOMOVE`/`NOSIZE` preserve your position and `NOACTIVATE` keeps focus where it
 was.
+
+On Linux the gauge sets `_NET_WM_STATE_ABOVE` and the window manager keeps it
+there, so no re-assert runs. On XFCE it stays above the panel when the panel
+is revealed.
 
 ## How often it refreshes
 

@@ -2,7 +2,7 @@ cff-version: 1.2.0
 message: If you use klepsydra, please cite it as below.
 title: "klepsydra: your Claude Code usage limit, always on screen"
 abstract: >-
-  A thin always-on-top Windows overlay that shows how much of the Claude Code
+  A thin always-on-top overlay for Windows and Linux that shows how much of the Claude Code
   usage limit has been used, fed by Claude Code's statusLine hook.
 type: software
 authors:

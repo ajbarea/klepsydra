@@ -123,17 +123,41 @@ check "unwritable dest: still echoes" "$display" "Opus 5 · ctx 21% · 5h 73% ·
 # one side is otherwise silent: the gauge simply never sees a reading.
 identifier=$(jq -r '.identifier' "$here/../src-tauri/tauri.conf.json")
 # shellcheck disable=SC2016  # sed pattern: the default must stay unexpanded.
-default=$(sed -n 's/^: "${KLEPSYDRA_DIR:=\(.*\)}"$/\1/p' "$script")
+wsl_default=$(sed -n 's/^ *KLEPSYDRA_DIR="\(\/mnt\/c\/.*\)"$/\1/p' "$script")
 # Both halves read out of a file, so both can come back empty -- and two empty
 # strings compare equal, which would pass this test by reading nothing at all.
-check "identifier is readable"  "$([[ -n "$identifier" ]] && echo yes)" "yes"
-check "hook default is readable" "$([[ -n "$default" ]] && echo yes)"   "yes"
+check "identifier is readable"  "$([[ -n "$identifier" ]] && echo yes)"  "yes"
+check "WSL default is readable" "$([[ -n "$wsl_default" ]] && echo yes)" "yes"
 # The whole path, not just its last component: Roaming instead of Local, or the
 # install dir with the identifier appended, both end in the right name.
 # $USER is compared unexpanded: the hook resolves it at run time, per user.
 # shellcheck disable=SC2016  # that is the point: the literal, not this user's.
-check "default dir is the app data dir" "$default" \
+check "WSL default is the Windows app data dir" "$wsl_default" \
   '/mnt/c/Users/$USER/AppData/Local/'"$identifier"
+
+# --- the Linux default, exercised rather than read -------------------------
+# Tauri's app_local_data_dir: $XDG_DATA_HOME when absolute, else ~/.local/share.
+# Skipped under WSL, where the default deliberately points at the Windows side.
+osrelease=""
+{ read -r osrelease </proc/sys/kernel/osrelease; } 2>/dev/null
+if [[ "$osrelease" == *[Mm]icrosoft* ]]; then
+  echo "  skip default-dir runs (WSL)"
+else
+  linux_run() { # extra env assignments...
+    (cd "$work" && env -u KLEPSYDRA_DIR -u XDG_DATA_HOME CLAUDE_CONFIG_DIR="$work/team" \
+      HOME="$work/home" "$@" bash "$script" <"$fixtures/full.json" >/dev/null)
+  }
+  landed() { jq -r '.account' "$1/$identifier/accounts/uuid-team/abc-123.json" 2>/dev/null; }
+
+  linux_run XDG_DATA_HOME="$work/xdg"
+  check "Linux: absolute XDG_DATA_HOME honoured" "$(landed "$work/xdg")" "uuid-team"
+  linux_run
+  check "Linux: unset falls back to ~/.local/share" "$(landed "$work/home/.local/share")" "uuid-team"
+  rm -rf "${work:?}/home"
+  linux_run XDG_DATA_HOME=rel
+  check "Linux: relative XDG_DATA_HOME ignored" "$(landed "$work/home/.local/share")" "uuid-team"
+  check "Linux: nothing under the working dir" "$([[ -e "$work/rel" ]] && echo leaked || echo clean)" "clean"
+fi
 
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [[ $fail -eq 0 ]]

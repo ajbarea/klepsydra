@@ -17,9 +17,9 @@ belong here.
   gauge logic, shellcheck for the scripts. No bundler, no framework, no
   `package.json` dependency beyond `@tauri-apps/cli`.
 - package_root: `src/` (frontend), `src-tauri/src/main.rs` (single Rust file)
-- platform: Windows only. The overlay is a Windows app, and the win32 calls
-  behind the drag handle and the topmost re-assert compile for no other target.
-  Development happens in WSL; `scripts/build-windows.sh` stages to native NTFS
+- platform: Windows and Linux (X11). The win32 calls behind the drag handle
+  and the topmost re-assert compile only for Windows; the X11 button query
+  (`x11rb`) only for Linux. Windows development happens in WSL; `scripts/build-windows.sh` stages to native NTFS
   because Cargo on a `\\wsl$` UNC path is slow and prone to link failures.
 - runner: none. There is no `make`, no task runner, and no `logs/dev-<ts>-*.log`
   archive convention, so the audit's log-reconciliation phase is N/A.
@@ -55,10 +55,11 @@ belong here.
   unwritable destination. `statusline/fixtures/*.json` supply the input blobs;
   the multi-account and unwritable cases are built in the script itself.
 
-### do_not_run (interactive / long-running / Windows-only)
+### do_not_run (interactive / long-running / platform-bound)
 
 - `scripts/build-windows.sh` — rsyncs to `C:\Users\<user>\klepsydra-build` and
   drives `powershell.exe`; produces an NSIS installer and takes minutes.
+- `scripts/build-linux.sh` — full release build plus a `.deb`; takes minutes.
 - `scripts/visual-check.sh` — spawns headless `chrome.exe` against a local
   server and writes screenshots to the Windows temp directory.
 - `npm run tauri dev` — opens the overlay window and does not return.
@@ -69,9 +70,12 @@ belong here.
   `.github/workflows/dependabot-auto-merge.yml`.
 - `Gauge logic + statusLine hook` runs on `ubuntu-latest` with Node 22: unit
   tests, hook tests, shellcheck, and the install-directory guard.
-- `Rust (fmt + clippy)` runs on `windows-latest`, for the reason in `## repo`.
-  Clippy is `-D warnings`, so a warning is a failure.
-- required checks on `main`: both job names above.
+- `Rust (fmt + clippy, <os>)` is a matrix over `windows-latest` and
+  `ubuntu-latest`, for the reason in `## repo`; the Linux leg installs the
+  WebKitGTK and tray headers first. Clippy is `-D warnings`, so a warning is a
+  failure.
+- required checks on `main`: `Gauge logic + statusLine hook` and both matrix
+  legs of the Rust job.
 - The install-directory guard greps the shell, JS and Rust sources for a path
   under `AppData\Local\Klepsydra` and fails if one appears; prose may name it. Readings belong in the app
   data dir and harness output in temp; the install directory is writable only by
