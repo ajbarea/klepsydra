@@ -17,8 +17,9 @@ use tauri_plugin_window_state::AppHandleExt;
 #[derive(Default)]
 struct Grip(Mutex<Option<[f64; 4]>>);
 
-/// `%LOCALAPPDATA%\dev.ajsoftworks.klepsydra` -- where the statusLine hook
-/// publishes. Tauri's app-local-data dir rather than the install dir: a
+/// Where the statusLine hook publishes: `%LOCALAPPDATA%\dev.ajsoftworks.klepsydra`
+/// on Windows, `$XDG_DATA_HOME/dev.ajsoftworks.klepsydra` (else under
+/// `~/.local/share`) on Linux. Tauri's app-local-data dir rather than the install dir: a
 /// per-machine install puts the latter under Program Files, where the hook
 /// cannot write, and the uninstaller's "delete app data" only reaches this one.
 fn klepsydra_dir(app: &tauri::AppHandle) -> Option<PathBuf> {

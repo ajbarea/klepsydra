@@ -139,8 +139,8 @@ check "WSL default is the Windows app data dir" "$wsl_default" \
 # Tauri's app_local_data_dir: $XDG_DATA_HOME when absolute, else ~/.local/share.
 # Skipped under WSL, where the default deliberately points at the Windows side.
 osrelease=""
-read -r osrelease </proc/sys/kernel/osrelease 2>/dev/null
-if [[ "${osrelease,,}" == *microsoft* ]]; then
+{ read -r osrelease </proc/sys/kernel/osrelease; } 2>/dev/null
+if [[ "$osrelease" == *[Mm]icrosoft* ]]; then
   echo "  skip default-dir runs (WSL)"
 else
   linux_run() { # extra env assignments...

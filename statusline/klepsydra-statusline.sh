@@ -19,8 +19,8 @@ set -uo pipefail
 # or the readings land under whatever directory Claude Code is running in.
 if [[ -z "${KLEPSYDRA_DIR:-}" ]]; then
   osrelease=""
-  read -r osrelease </proc/sys/kernel/osrelease 2>/dev/null  # builtin: runs every render
-  if [[ "${osrelease,,}" == *microsoft* ]]; then
+  { read -r osrelease </proc/sys/kernel/osrelease; } 2>/dev/null  # builtin: runs every render
+  if [[ "$osrelease" == *[Mm]icrosoft* ]]; then
     KLEPSYDRA_DIR="/mnt/c/Users/$USER/AppData/Local/dev.ajsoftworks.klepsydra"
   else
     data_home="$HOME/.local/share"
