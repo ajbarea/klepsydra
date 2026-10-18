@@ -1,6 +1,6 @@
 # Fleet visualizer: design
 
-Date: 2026-10-18. Status: approved in conversation, awaiting spec review.
+Date: 2026-10-18. Status: approved by AJ 2026-10-18; spike results added the same day.
 
 ## Goal
 
@@ -19,10 +19,9 @@ each was doing. While nothing changes, it must cost close to nothing.
 ## Constraints
 
 - It never shows a confident wrong status. Every status carries its age.
-- Nothing on the Windows side starts a process to learn state, and nothing
-  crosses into WSL to ask for it. State arrives as files, as the usage gauge's
-  readings do now. The one process the visualizer may start is the Jump to
-  terminal action (spike S1), and only when AJ clicks it.
+- Nothing on the Windows side starts a process, and nothing crosses into WSL
+  to ask for state. State arrives as files, as the usage gauge's readings do
+  now. Jump to terminal uses Windows UI Automation, an in-process API.
 - It adds one window at most beyond the gauge, and that window exists only
   after the first click.
 - AJ keeps his workflow: ordinary Windows Terminal tabs, one `claude` each.
@@ -36,7 +35,7 @@ before any feature code exists.
 
 | Idea | Why it was dropped | Guard |
 | --- | --- | --- |
-| Poll `claude agents --json` for state | Measured 2026-10-18 over three runs: 0.38 to 0.57 s wall, 82 to 86% of a core and about 170 MB peak RSS per call. Polling every few seconds would make the visualizer the heaviest process on the box. | A test fails if the fleet reader or the strip and wall code contains a process spawn (`Command::new`, `std::process`, shell plugins). The Jump to terminal action lives in its own function, which the test exempts by name and which may start only `wt.exe`, with arguments passed as a list, never through a shell. |
+| Poll `claude agents --json` for state | Measured 2026-10-18 over three runs: 0.38 to 0.57 s wall, 82 to 86% of a core and about 170 MB peak RSS per call. Polling every few seconds would make the visualizer the heaviest process on the box. | A test fails if any fleet source (Rust or JS) contains a process spawn (`Command::new`, `std::process`, shell plugins). No exemptions. |
 | Windows app calls `wsl.exe` for state | Every interop call opens new host channels, the cause of the 0x8007274c tab failures (microsoft/WSL #41901). | The same no-spawn test, plus a grep test for `wsl` in the fleet sources. |
 | Identity per repo | A session that starts in one repo and works in others would change face mid-life. | A test replays a session that moves across three repos and asserts its identity is unchanged while its "where" follows. |
 | Photo faces (randomuser.me, 100k-faces, thispersondoesnotexist) | randomuser.me's photos defer to UI Faces' terms; 100k-faces serves Generated Photos images, whose terms bar storing them as standalone files; thispersondoesnotexist cannot reproduce a face from a seed and publishes no terms. | CI fails if any file under `src/fleet/faces/` lacks an entry in `faces/LICENSES.json` naming its source and license. |
@@ -56,9 +55,12 @@ Five units, each testable alone.
 
 1. **Fleet hook** (`hooks/klepsydra-fleet.sh`, bash and jq, WSL side). Claude
    Code runs it on session events. It writes one JSON file per session.
-2. **Heartbeat** (existing `statusline/klepsydra-statusline.sh`). It touches a
-   per-session beat file on each render, and `statusLine.refreshInterval`
-   makes it render every 30 s.
+2. **Heartbeat** (existing `statusline/klepsydra-statusline.sh`). On each
+   render it writes the session's `session_name` (the custom name or the
+   AI-generated title, which is also the terminal tab's title) to a per-session
+   beat file, at most once per 10 s unless the name changed.
+   `statusLine.refreshInterval: 30` makes it render at least every 30 s, idle
+   or not.
 3. **Fleet reader** (Rust, `src-tauri/src/fleet.rs`, Windows side). It watches
    the fleet directory, parses the files, and hands the webview a list of
    sessions.
@@ -76,9 +78,9 @@ Registered in `~/.claude/settings.json` with `async: true` on these events:
 | Event | Effect |
 | --- | --- |
 | `SessionStart` | Creates the file: session id, display name, start time, launch directory, Claude Code pid and its start time. State `new`, shown as "not started". Prunes dead files (see Lifecycle). |
-| `UserPromptSubmit` | Stores the prompt (first 300 characters) and its time. State `working`. Automated prompts (`/loop` iterations, scheduled tasks, subagent reports) do not replace the last prompt; the field that marks them is confirmed in spike S2. |
+| `UserPromptSubmit` | State `working`. Stores the prompt (first 300 characters) and its time, except for a background subagent's report, whose text starts with `<task-notification>`: that sets `working` but keeps the last prompt. |
 | `PermissionRequest` | State `needs_you`, reason `approve <tool_name>`. The hook prints nothing, so it never decides the permission. |
-| `PreToolUse` on the question tool | State `needs_you`, reason `question`. Which event fires for a question is confirmed in spike S2. |
+| `PreToolUse` on `AskUserQuestion` and `ExitPlanMode` | State `needs_you`, reason `question` or `approve plan`. |
 | `Notification` `elicitation_dialog` | State `needs_you`, reason `question` (an MCP server's request for input). |
 | `PostToolUse` | Clears `needs_you` back to `working`. For `Edit`, `Write` and `NotebookEdit` it also updates "where" from `tool_input.file_path`. |
 | `Stop` | Stores `last_assistant_message` (first 300 characters) and its time. State `done`. |
@@ -131,8 +133,9 @@ voice, the voice is null.
 }
 ```
 
-The beat file `<session_id>.beat` holds nothing; its modification time is the
-heartbeat.
+The beat file `<session_id>.beat` holds one line: the session name, a tab, and
+the 10 s bucket it was written in. Its modification time is the heartbeat; the
+reader takes the name from it for the card title and for Jump to terminal.
 
 ### Fleet reader
 
@@ -175,8 +178,12 @@ Each card shows:
 - where now: `repo · worktree · branch`, then chips for touched repos
 - status line: badge, label, reason and age, e.g. `needs you · approve Bash · 2m`
 - `>` the last prompt, `<` the last reply, two lines each, full text on hover
-- the action **Jump to terminal** (spike S1 decides how; until then the card
-  shows the launch directory and session name so the tab can be found)
+- the action **Jump to terminal**: UI Automation finds the Windows Terminal
+  tab whose title contains the session name, selects it, and brings its window
+  to the front. If Windows refuses the foreground change, the window's taskbar
+  button flashes instead. With no match, or more than one, the action says so
+  and does nothing else. A session with no name yet shows the action disabled,
+  with the reason.
 
 ### Identity: faces and names
 
@@ -235,23 +242,33 @@ no significant gain in perceived control (p=.414) or intervention success
 - If the hook fails, Claude Code is unaffected: the hook is async and always
   exits 0.
 
-## Spikes before feature code
+## Spike results (2026-10-18)
 
-Each spike ends with a written answer in `IMPL.md`. A spike that fails falls
-back as stated, and the spec is updated before building.
+The three unknowns were settled before planning. The design above already
+reflects each answer.
 
-- **S1, jump to terminal.** Can klepsydra bring the Windows Terminal tab that
-  runs a given session to the front? Candidates in order: `wt.exe` focus by
-  window and tab, using `WT_SESSION` recorded by the hook; activating the
-  Windows Terminal window alone. Fallback: the card shows the launch directory
-  and the session name, and the action copies `claude --resume <id>`.
-- **S2, question and automated prompts.** Which hook event fires when Claude
-  asks AJ a question, and which `UserPromptSubmit` field marks `/loop`,
-  scheduled and subagent prompts. Fallback for the question: `Notification`
-  `idle_prompt`, labelled "waiting on you".
-- **S3, background sessions.** Do these hooks fire in agent view background
-  sessions, and does the statusline (the heartbeat) render there? Fallback:
-  background sessions show their last event's age and never `silent`.
+- **S1, jump to terminal.** Claude Code sets the terminal tab title to the
+  session's custom name or its AI-generated title (`terminalTitleFromRename`,
+  settings reference), and the statusline input carries that same value as
+  `session_name` (statusline docs). UI Automation listed AJ's Windows Terminal
+  windows and their tab titles ("FedAgents", "Klepsydra") with
+  `CASCADIA_HOSTING_WINDOW_CLASS` and `TabItem`. Not yet verified: that
+  klepsydra may take the foreground after AJ's click; the live check covers it,
+  and the taskbar flash is the fallback.
+- **S2, question and automated prompts.** `PreToolUse` matches
+  `AskUserQuestion` and `ExitPlanMode` (hooks docs). `UserPromptSubmit` also
+  fires for scheduled tasks, `/loop` iterations, background subagent reports
+  and cross-session messages, with no field that marks them (hooks docs). In
+  this session's transcript, 8 of 32 user messages were subagent reports, each
+  starting with `<task-notification>`; that prefix is the one rule. Pasted text
+  arrives inside `<pasted_content>` and must not match it.
+- **S3, background sessions.** A probe background session (`claude --bg`, its
+  own `--settings`, Haiku) fired `SessionStart` (`startup`),
+  `UserPromptSubmit`, `Stop` with `last_assistant_message` "ok", and on
+  `claude stop`, `SessionEnd` with reason `other`. Its statusline with
+  `refreshInterval: 2` rendered while idle (4 beats, then 9 ten seconds later)
+  and stopped after the stop (15 then 15). The `silent` rule therefore holds
+  for background sessions too.
 
 ## Testing
 
@@ -277,7 +294,7 @@ CPU and RAM, and product packaging.
 
 ## Sources
 
-- `# research(2026-10)` Claude Code hooks and statusline: https://code.claude.com/docs/en/hooks, https://code.claude.com/docs/en/statusline
+- `# research(2026-10)` Claude Code hooks, statusline and terminal title: https://code.claude.com/docs/en/hooks, https://code.claude.com/docs/en/statusline, https://code.claude.com/docs/en/settings-reference#terminaltitlefromrename
 - `# research(2026-10)` agent view and `claude agents --json`: https://code.claude.com/docs/en/agent-view
 - `# research(2026-10)` Tauri 2 config and window builder: https://v2.tauri.app/reference/config/, https://docs.rs/tauri/latest/tauri/webview/struct.WebviewWindowBuilder.html
 - `# research(2026-10)` WebView2 process model and performance: https://learn.microsoft.com/en-us/microsoft-edge/webview2/concepts/process-model, https://learn.microsoft.com/en-us/microsoft-edge/webview2/concepts/performance
