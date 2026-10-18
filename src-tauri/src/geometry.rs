@@ -106,6 +106,25 @@ fn find_display<'a>(home: &Home, displays: &'a [Display]) -> Option<&'a Display>
         })
 }
 
+/// Keep an edge that sat flush with the monitor's flush after a resize, so a
+/// gauge docked on the screen edge over the taskbar stays docked through a
+/// zoom around the pointer.
+pub fn keep_docked(from: Rect, to: Rect, monitor: Rect) -> Rect {
+    let flush = |a: i32, b: i32| (a - b).abs() <= 1;
+    let mut r = to;
+    if flush(from.x + from.w, monitor.x + monitor.w) {
+        r.x = monitor.x + monitor.w - r.w;
+    } else if flush(from.x, monitor.x) {
+        r.x = monitor.x;
+    }
+    if flush(from.y + from.h, monitor.y + monitor.h) {
+        r.y = monitor.y + monitor.h - r.h;
+    } else if flush(from.y, monitor.y) {
+        r.y = monitor.y;
+    }
+    r
+}
+
 /// Where home is now, for a window of `w` x `h` CSS pixels. Home keeps its
 /// corner nearest the screen edges, as `grow_from_edges` does, so one parked
 /// on the taskbar stays on it whatever the gauge's size; that corner's offset
@@ -232,6 +251,32 @@ mod tests {
         assert_eq!(new, Rect::new(998, 897, 462, 110));
         // The grip point is 22px in and 33px down at the new size: still under the pointer.
         assert_eq!((1020 - new.x, 930 - new.y), (22, 33));
+    }
+
+    #[test]
+    fn an_edge_flush_with_the_monitor_stays_flush() {
+        // Bottom on the screen edge, over the taskbar; zooming out around the
+        // pointer would lift it.
+        let from = Rect::new(1280, 980, 420, 100);
+        let zoomed = grow_from_point(from, 382, 91, 1290, 1050, 1.0 / 1.1);
+        assert_ne!(zoomed.y + zoomed.h, 1080);
+        let kept = keep_docked(from, zoomed, SCREEN);
+        assert_eq!((kept.x, kept.y + kept.h), (zoomed.x, 1080));
+    }
+
+    #[test]
+    fn a_right_edge_flush_with_the_monitor_stays_flush() {
+        let from = Rect::new(1500, 400, 420, 100);
+        let zoomed = grow_from_point(from, 462, 110, 1510, 450, 1.1);
+        let kept = keep_docked(from, zoomed, SCREEN);
+        assert_eq!(kept.x + kept.w, 1920);
+    }
+
+    #[test]
+    fn a_floating_gauge_is_left_where_the_zoom_put_it() {
+        let from = Rect::new(600, 400, 420, 100);
+        let zoomed = grow_from_point(from, 462, 110, 610, 450, 1.1);
+        assert_eq!(keep_docked(from, zoomed, SCREEN), zoomed);
     }
 
     #[test]

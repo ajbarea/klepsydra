@@ -57,6 +57,7 @@ const zoomEl = document.getElementById("zoom");
 
 let lastPayload = null;
 let lastSize = "";
+let lastGrip = "";
 let lastTray = "";
 let zoomLevel = 0;
 let wheel = null;
@@ -97,9 +98,13 @@ function syncSize(pin = false) {
   const size = `${w}x${h}`;
   if (w < 1 || h < 1 || (size === lastSize && !pin)) return;
   lastSize = size;
+  const g = gripRect();
+  lastGrip = g.join(",");
   window.__TAURI__.core
-    .invoke("set_size", { width: w, height: h, pin, grip: gripRect() })
-    .catch(() => {});
+    .invoke("set_size", { width: w, height: h, pin, grip: g })
+    .catch(() => {
+      lastSize = ""; // not applied; the next render tries again
+    });
 }
 
 /**
@@ -133,8 +138,12 @@ function syncTray(rows) {
 function syncGrip() {
   if (!inTauri) return;
   const [x, y, w, h] = gripRect();
-  if (w < 1 || h < 1) return;
-  window.__TAURI__.core.invoke("set_grip", { x, y, w, h }).catch(() => {});
+  const key = [x, y, w, h].join(",");
+  if (w < 1 || h < 1 || key === lastGrip) return;
+  lastGrip = key;
+  window.__TAURI__.core.invoke("set_grip", { x, y, w, h }).catch(() => {
+    lastGrip = "";
+  });
 }
 
 function render(pin = false) {

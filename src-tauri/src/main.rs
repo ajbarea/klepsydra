@@ -27,10 +27,18 @@ struct Grip(Mutex<Option<[f64; 4]>>);
 #[derive(Default)]
 struct Moved(AtomicBool);
 
-/// Whether the window has been sized since launch. The first sizing keeps the
-/// restored top-left; later ones move it so it grows away from screen edges.
+/// Whether the window has been sized since launch. The first sizing restores
+/// the last placement by the edges it sat on; later ones grow away from them.
 #[derive(Default)]
 struct Sized(AtomicBool);
+
+/// The placement last requested, and when. X11 applies moves and resizes
+/// asynchronously, so for a moment the window still reports its old rect;
+/// sizing and the grip watcher use this one until it has had time to land.
+#[derive(Default)]
+struct Requested(Mutex<Option<(Rect, Instant)>>);
+
+const SETTLE: Duration = Duration::from_millis(500);
 
 /// Where the statusLine hook publishes: `%LOCALAPPDATA%\dev.ajsoftworks.klepsydra`
 /// on Windows, `$XDG_DATA_HOME/dev.ajsoftworks.klepsydra` (else under
@@ -108,25 +116,30 @@ fn collect_readings(dir: &std::path::Path, out: &mut Vec<serde_json::Value>) {
     }
 }
 
-/// Small settings the user changes from the gauge itself: the zoom level and
-/// the saved home position. Unreadable or missing reads as empty.
+/// Small settings the gauge keeps for itself: the zoom level, the saved home,
+/// and where the window last sat.
 fn prefs_path(app: &tauri::AppHandle) -> Option<PathBuf> {
     klepsydra_dir(app).map(|d| d.join("prefs.json"))
 }
 
-fn read_prefs(app: &tauri::AppHandle) -> serde_json::Map<String, serde_json::Value> {
-    prefs_path(app)
-        .and_then(|p| std::fs::read_to_string(p).ok())
-        .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
-        .and_then(|v| v.as_object().cloned())
-        .unwrap_or_default()
+/// The prefs, empty when there is no file yet. `None` when one exists but
+/// cannot be read or parsed, so a write never replaces it with less.
+fn read_prefs(app: &tauri::AppHandle) -> Option<serde_json::Map<String, serde_json::Value>> {
+    let path = prefs_path(app)?;
+    match std::fs::read_to_string(&path) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Some(Default::default()),
+        Err(_) => None,
+        Ok(text) => serde_json::from_str::<serde_json::Value>(&text)
+            .ok()?
+            .as_object()
+            .cloned(),
+    }
 }
 
 fn write_pref(app: &tauri::AppHandle, key: &str, value: serde_json::Value) {
-    let Some(path) = prefs_path(app) else {
+    let (Some(path), Some(mut prefs)) = (prefs_path(app), read_prefs(app)) else {
         return;
     };
-    let mut prefs = read_prefs(app);
     prefs.insert(key.into(), value);
     if let Some(parent) = path.parent() {
         let _ = std::fs::create_dir_all(parent);
@@ -142,14 +155,32 @@ fn write_pref(app: &tauri::AppHandle, key: &str, value: serde_json::Value) {
 #[tauri::command]
 fn get_zoom(app: tauri::AppHandle) -> i64 {
     read_prefs(&app)
-        .get("zoom")
-        .and_then(|z| z.as_i64())
+        .and_then(|p| p.get("zoom")?.as_i64())
         .unwrap_or(0)
+}
+
+fn rect_json(r: Rect) -> serde_json::Value {
+    serde_json::json!({ "x": r.x, "y": r.y, "w": r.w, "h": r.h })
+}
+
+fn json_rect(v: &serde_json::Value) -> Option<Rect> {
+    let int = |k: &str| -> Option<i32> { Some(v.get(k)?.as_i64()? as i32) };
+    Some(Rect::new(int("x")?, int("y")?, int("w")?, int("h")?))
 }
 
 #[tauri::command]
 fn set_zoom(app: tauri::AppHandle, level: i64) {
     write_pref(&app, "zoom", serde_json::json!(level));
+}
+
+/// Where the window is: the rect last requested while it may still be landing,
+/// else what the window reports.
+fn current(window: &tauri::WebviewWindow) -> Option<Rect> {
+    let requested = window.state::<Requested>().0.lock().ok().and_then(|r| *r);
+    requested
+        .filter(|(_, at)| at.elapsed() < SETTLE)
+        .map(|(r, _)| r)
+        .or_else(|| placement(window))
 }
 
 fn placement(window: &tauri::WebviewWindow) -> Option<Rect> {
@@ -185,6 +216,9 @@ fn display_of(m: &tauri::Monitor) -> Display {
 fn place(window: &tauri::WebviewWindow, from: Rect, to: Rect) -> Result<(), String> {
     if to == from {
         return Ok(());
+    }
+    if let Ok(mut r) = window.state::<Requested>().0.lock() {
+        *r = Some((to, Instant::now()));
     }
     move_resize(window, to)?;
     window.state::<Moved>().0.store(true, Ordering::Relaxed);
@@ -233,7 +267,7 @@ fn set_size(
         *slot = Some(g);
     }
     let scale = window.scale_factor().map_err(|e| e.to_string())?;
-    let from = placement(&window).ok_or("window placement unavailable")?;
+    let from = current(&window).ok_or("window placement unavailable")?;
     let w = (width.max(1.0) * scale).round() as i32;
     let h = (height.max(1.0) * scale).round() as i32;
     let first = !window.state::<Sized>().0.swap(true, Ordering::Relaxed);
@@ -248,16 +282,28 @@ fn set_size(
     } else {
         None
     };
-    let mut to = match (first, cursor, monitor) {
-        (true, _, _) => Rect { w, h, ..from },
-        (false, Some(p), _) => {
+    // The window-state plugin restores only the top-left corner. If it is
+    // where the window last sat, restore that rect by its edges instead, so a
+    // gauge docked on the taskbar stays docked whatever its rows are now.
+    let last = if first {
+        read_prefs(window.app_handle())
+            .and_then(|p| json_rect(p.get("last")?))
+            .filter(|r| (r.x, r.y) == (from.x, from.y))
+    } else {
+        None
+    };
+    let mut to = match (first, last, cursor, monitor) {
+        (true, Some(last), _, Some(m)) => geometry::grow_from_edges(last, w, h, m),
+        (true, ..) => Rect { w, h, ..from },
+        (false, _, Some(p), _) => {
             // Everything scales with the width, so its ratio is the zoom's.
             let ratio = w as f64 / from.w.max(1) as f64;
             let (px, py) = (p.x.round() as i32, p.y.round() as i32);
-            geometry::grow_from_point(from, w, h, px, py, ratio)
+            let zoomed = geometry::grow_from_point(from, w, h, px, py, ratio);
+            monitor.map_or(zoomed, |m| geometry::keep_docked(from, zoomed, m))
         }
-        (false, None, Some(m)) => geometry::grow_from_edges(from, w, h, m),
-        (false, None, None) => Rect { w, h, ..from },
+        (false, _, None, Some(m)) => geometry::grow_from_edges(from, w, h, m),
+        (false, _, None, None) => Rect { w, h, ..from },
     };
     if let Some(m) = monitor {
         to = geometry::clamp_into(to, m);
@@ -333,53 +379,51 @@ fn displays(window: &tauri::WebviewWindow) -> Vec<Display> {
 
 /// Remember where the gauge sits now, at its size, and on which monitor.
 fn set_home(window: &tauri::WebviewWindow) {
-    let (Some(at), Ok(Some(monitor))) = (placement(window), window.current_monitor()) else {
+    let (Some(at), Ok(Some(monitor))) = (current(window), window.current_monitor()) else {
         return;
     };
     let d = display_of(&monitor);
     let home = serde_json::json!({
-        "rect": { "x": at.x, "y": at.y, "w": at.w, "h": at.h },
-        "monitor": {
-            "name": d.name,
-            "x": d.bounds.x, "y": d.bounds.y, "w": d.bounds.w, "h": d.bounds.h,
-            "scale": d.scale,
-        },
+        "rect": rect_json(at),
+        "monitor": { "name": d.name, "bounds": rect_json(d.bounds), "scale": d.scale },
     });
     write_pref(window.app_handle(), "home", home);
 }
 
 fn saved_home(app: &tauri::AppHandle) -> Option<Home> {
-    let prefs = read_prefs(app);
+    let prefs = read_prefs(app)?;
     let home = prefs.get("home")?;
-    let int = |v: &serde_json::Value, k: &str| v.get(k)?.as_i64().map(|n| n as i32);
-    let rect = |v: &serde_json::Value| {
-        Some(Rect::new(
-            int(v, "x")?,
-            int(v, "y")?,
-            int(v, "w")?,
-            int(v, "h")?,
-        ))
-    };
     let m = home.get("monitor")?;
     Some(Home {
-        rect: rect(home.get("rect")?)?,
+        rect: json_rect(home.get("rect")?)?,
         display: Display {
             name: m.get("name").and_then(|n| n.as_str()).map(String::from),
-            bounds: rect(m)?,
+            bounds: json_rect(m.get("bounds")?)?,
             scale: m.get("scale").and_then(|s| s.as_f64()).unwrap_or(1.0),
         },
     })
+}
+
+/// Save where the window is, for the next launch: the plugin keeps its
+/// corner, and the full rect lets the first sizing keep the edge it sat on.
+fn remember(app: &tauri::AppHandle, window: &tauri::WebviewWindow) {
+    let _ = app.save_window_state(tauri_plugin_window_state::StateFlags::POSITION);
+    if let Some(r) = current(window) {
+        write_pref(app, "last", rect_json(r));
+    }
 }
 
 /// Put the gauge back where "Set home here" saved it, adjusted to the monitors
 /// attached now. With no home, the default spot: over the primary monitor's
 /// taskbar, 220px in from the right. Either way, wholly on screen.
 ///
-/// The size is worked out at the destination monitor's scale, since Windows
-/// resizes the window when it lands on a monitor with a different one.
+/// The spot is worked out for the size the gauge will have at the destination
+/// monitor's scale. The move itself keeps the current size: Windows rescales
+/// the window as it lands on a monitor with a different scale, and sizing it
+/// ahead of that would scale it twice.
 #[tauri::command]
 fn reset_position(window: tauri::WebviewWindow) -> Result<(), String> {
-    let from = placement(&window).ok_or("window placement unavailable")?;
+    let from = current(&window).ok_or("window placement unavailable")?;
     let scale = window.scale_factor().map_err(|e| e.to_string())?;
     let (w, h) = (from.w as f64 / scale, from.h as f64 / scale);
     let home = saved_home(window.app_handle())
@@ -394,7 +438,15 @@ fn reset_position(window: tauri::WebviewWindow) -> Result<(), String> {
             geometry::default_rect(&display_of(&primary), w, h)
         }
     };
-    place(&window, from, to)
+    place(
+        &window,
+        from,
+        Rect {
+            x: to.x,
+            y: to.y,
+            ..from
+        },
+    )
 }
 
 /// Draw the tray icon as a miniature of the bar: a capsule track with the fill
@@ -557,7 +609,7 @@ struct Placed {
 }
 
 fn placed(window: &tauri::WebviewWindow) -> Option<Placed> {
-    let r = placement(window)?;
+    let r = current(window)?;
     Some(Placed {
         x: r.x as f64,
         y: r.y as f64,
@@ -627,7 +679,7 @@ fn watch_grip(app: tauri::AppHandle) {
             }
             if drag_offset.is_none() && save_at.is_some_and(|t| Instant::now() >= t) {
                 save_at = None;
-                let _ = app.save_window_state(tauri_plugin_window_state::StateFlags::POSITION);
+                remember(&app, &window);
             }
             let (Some(g), Some(cursor)) = (geo.as_mut(), pointer(&app)) else {
                 continue;
@@ -656,9 +708,13 @@ fn watch_grip(app: tauri::AppHandle) {
             // dragging something else across the gauge cannot grab it.
             if cursor.pressed && !was_pressed && inside {
                 drag_offset = Some((cursor.x - g.x, cursor.y - g.y));
+                // The drag owns placement now; a pending request is stale.
+                if let Ok(mut r) = app.state::<Requested>().0.lock() {
+                    *r = None;
+                }
             } else if !cursor.pressed && drag_offset.is_some() {
                 drag_offset = None;
-                let _ = app.save_window_state(tauri_plugin_window_state::StateFlags::POSITION);
+                remember(&app, &window);
             }
             was_pressed = cursor.pressed;
 
@@ -699,6 +755,7 @@ fn main() {
         .manage(Grip::default())
         .manage(Moved::default())
         .manage(Sized::default())
+        .manage(Requested::default())
         .invoke_handler(tauri::generate_handler![
             read_usage,
             set_size,
