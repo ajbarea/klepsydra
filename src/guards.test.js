@@ -50,8 +50,16 @@ const SPAWN = [
   /["']shell:/,
   /["']opener:/,
   /tauri[-_]plugin[-_]opener/,
-  /"plugins"\s*:\s*\{[^}]*"(shell|opener)"/,
 ];
+
+/** Shell or opener plugins configured in a Tauri config; [] for text that is not JSON. */
+export function processPlugins(text) {
+  try {
+    return Object.keys(JSON.parse(text).plugins ?? {}).filter((k) => /^(shell|opener)$/.test(k));
+  } catch {
+    return [];
+  }
+}
 export const spawns = (text) => SPAWN.filter((re) => re.test(text)).map(String);
 
 export const mentionsWsl = (text) => /wsl/i.test(text);
@@ -75,7 +83,7 @@ export const makesNativeSound = (text) => NATIVE_SOUND.filter((re) => re.test(te
 
 export const loopsForever = (css) => /\binfinite\b|iterations\s*:\s*Infinity/.test(stripCssComments(css));
 
-const REDUCE = /@media[^{]*\(\s*prefers-reduced-motion\s*:\s*reduce\s*\)[^{]*\{/g;
+const REDUCE = /@media(?![^{]*\bnot\b)[^{]*\(\s*prefers-reduced-motion\s*:\s*reduce\s*\)[^{]*\{/g;
 
 /** Splits css into the bodies of its reduced-motion blocks and the rest. */
 function splitReduce(css) {
@@ -94,7 +102,9 @@ function splitReduce(css) {
   return { bodies, rest: rest + css.slice(at) };
 }
 
-const rules = (css) => [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)].map((m) => ({ sel: m[1].trim(), decl: m[2] }));
+// A selector starts after the last character that ends non-CSS text or a previous rule.
+const rules = (css) =>
+  [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)].map((m) => ({ sel: m[1].split(/[;>`'"]/).pop().trim(), decl: m[2] }));
 const ANIMATES = /animation(-name)?\s*:\s*(?!none\b)[\w-]/;
 const DISABLES = /animation(-name)?\s*:\s*none\b|animation-duration\s*:\s*0s\b|animation\s*:[^;}]*\b0s\b/;
 
@@ -126,10 +136,11 @@ export function unlicensed(dir) {
 /** Labels of every window beyond "main": config entries, Rust builders and JS constructors ("?" when not literal). */
 export function extraWindows({ conf = {}, rust = [], js = [] }) {
   const labels = (conf.app?.windows ?? []).map((w) => w.label).filter((l) => l !== "main");
+  const site = "(?:WebviewWindowBuilder::(?:new|from_config)|WebviewWindow::builder|\\bWindowBuilder::new)\\b";
   for (const t of rust) {
-    labels.push(...[...t.matchAll(/WebviewWindowBuilder::new\(\s*[^,]+,\s*"([^"]+)"/g)].map((m) => m[1]));
-    const literal = (t.match(/WebviewWindowBuilder::new\(\s*[^,]+,\s*"/g) ?? []).length;
-    const sites = (t.match(/WebviewWindowBuilder::(new|from_config)\b/g) ?? []).length;
+    labels.push(...[...t.matchAll(new RegExp(site + '\\(\\s*[^,]+,\\s*"([^"]+)"', "g"))].map((m) => m[1]));
+    const sites = (t.match(new RegExp(site, "g")) ?? []).length;
+    const literal = (t.match(new RegExp(site + '\\(\\s*[^,]+,\\s*"', "g")) ?? []).length;
     labels.push(...Array(sites - literal).fill("?"));
   }
   for (const t of js) {
@@ -150,7 +161,10 @@ export const tooManyWindows = (inputs) => {
 /** Calls or config that put a window other than the configured "main" always on top. */
 export function alwaysOnTopOutsideMain({ conf = {}, code = [] }) {
   const hits = (conf.app?.windows ?? []).filter((w) => w.label !== "main" && w.alwaysOnTop === true).map((w) => w.label);
-  for (const t of code) hits.push(...(t.match(/(setAlwaysOnTop|always_on_top)\(\s*true\s*\)/g) ?? []));
+  for (const t of code) {
+    hits.push(...(t.match(/(set_)?always_on_top\(\s*true\s*\)/g) ?? []));
+    hits.push(...(t.match(/setAlwaysOnTop\(\s*(?!false\s*\))[^)]*\)/g) ?? []));
+  }
   return hits;
 }
 
@@ -172,7 +186,6 @@ test("the spawn check catches each way of starting one", () => {
     "window.__TAURI__.shell.open(url)",
     'import { exec } from "node:child_process";',
     '{ "permissions": ["shell:allow-open"] }',
-    '{ "plugins": { "shell": {} } }',
     'tauri-plugin-opener = "2"',
   ]) {
     assert.notDeepEqual(spawns(planted), [], planted);
@@ -182,6 +195,13 @@ test("the spawn check catches each way of starting one", () => {
 test("nothing names wsl", () => {
   for (const f of [...RUST, ...FRONTEND, ...CONFIG]) assert.equal(mentionsWsl(read(f)), false, f);
   assert.equal(mentionsWsl('let x = "C:\\\\Windows\\\\System32\\\\wsl.exe";'), true);
+});
+
+test("no shell or opener plugin is configured", () => {
+  for (const f of CONFIG.filter((c) => c.endsWith("tauri.conf.json"))) assert.deepEqual(processPlugins(read(f)), [], f);
+  assert.deepEqual(processPlugins('{"plugins":{"x":{"a":1},"shell":{}}}'), ["shell"]);
+  assert.deepEqual(processPlugins('{"plugins":{"opener":null}}'), ["opener"]);
+  assert.deepEqual(processPlugins('{"plugins":{"window-state":{}}}'), []);
 });
 
 test("the app makes no sound", () => {
@@ -223,6 +243,10 @@ test("no animation runs forever, and every animation stops under reduced motion"
   assert.equal(animatesWithoutReducedMotion(`.x { animation: pulse 1s 1; } @media (prefers-reduced-motion: reduce) { .y { animation: none; } }`), true);
   assert.equal(animatesWithoutReducedMotion(`@keyframes p { to { opacity: 0; } } ${off}`), false);
   assert.equal(animatesWithoutReducedMotion(`<style>.x { animation: pulse 1s 1; }</style>`), true);
+  assert.equal(animatesWithoutReducedMotion(`<html><head><style>.x{animation:p 1s 1} @media (prefers-reduced-motion: reduce){.x{animation:none}}</style>`), false);
+  assert.equal(animatesWithoutReducedMotion("const css = `.x{animation:p 1s 1} @media (prefers-reduced-motion: reduce){.x{animation:none}}`;"), false);
+  assert.equal(animatesWithoutReducedMotion(`@media (prefers-reduced-motion: reduce){.x{animation:none}} .x{animation:p 1s 1}`), false);
+  assert.equal(animatesWithoutReducedMotion(`.x{animation:p 1s 1} @media (not (prefers-reduced-motion: reduce)){.x{animation:none}}`), true);
 });
 
 test("every face has a license entry, and every entry a face", () => {
@@ -261,6 +285,10 @@ test("at most one extra window exists, and it is the wall", () => {
   assert.equal(tooManyWindows({ conf: confWith({ label: "second" }) }), true);
   assert.equal(tooManyWindows({ conf: confWith(), rust: ["WebviewWindowBuilder::from_config(&app, cfg)"] }), true);
   assert.equal(tooManyWindows({ conf: confWith(), js: ["new WebviewWindow(label, {})"] }), true);
+  assert.equal(tooManyWindows({ conf: confWith(), rust: ['WebviewWindow::builder(&app, "wall", url)'] }), false);
+  assert.equal(tooManyWindows({ conf: confWith(), rust: ['WebviewWindow::builder(&app, "other", url)'] }), true);
+  assert.equal(tooManyWindows({ conf: confWith(), rust: ['WindowBuilder::new(&app, "other")'] }), true);
+  assert.equal(tooManyWindows({ conf: confWith(), rust: [wall, 'WindowBuilder::new(&app, "wall")'] }), true);
   assert.equal(tooManyWindows({ conf: confWith(), js: ['new WebviewWindow("x", {})'] }), true);
 });
 
@@ -271,6 +299,7 @@ test("nothing but the configured main window is always on top", () => {
   for (const code of [
     "w.setAlwaysOnTop(true)",
     "w.setAlwaysOnTop( true )",
+    "w.setAlwaysOnTop(flag)",
     "b.always_on_top(true)",
     "w.set_always_on_top( true )",
     'WebviewWindowBuilder::new(&app, "wall", url)\n  .always_on_top(true)',
