@@ -78,6 +78,60 @@ check "two sessions: first intact"  "$(jq -r '.windows.five_hour.used_percentage
 check "two sessions: second intact" "$(jq -r '.windows.five_hour.used_percentage' "$(acct uuid-team abc-124)")" "1"
 check "session id recorded"         "$(jq -r '.session' "$(acct uuid-team abc-124)")" "abc-124"
 
+# --- a re-render is not a new reading --------------------------------------
+# Claude Code re-runs the hook on refreshInterval, at a window's reset time and
+# on mode toggles, each time with the session's last API response. Publishing
+# those stamped every idle terminal with a fresh time and with whichever login
+# was current, so an old reading outlived a mid-window reset and landed under
+# the account signed in after it.
+run_json() { # json, config-dir
+  CLAUDE_CONFIG_DIR="$work/$2" KLEPSYDRA_DIR="$work/out" bash "$script" <<<"$1"
+}
+full=$(cat "$fixtures/full.json")
+stamp() { jq -r '.written_at' "$1"; }
+backdate() { jq -c '.written_at = 1' "$1" >"$1.new" && mv "$1.new" "$1"; }
+
+rm -rf "$work/out"
+run full.json team >/dev/null
+backdate "$(acct uuid-team)"
+display=$(run full.json team)
+check "re-render: still echoes"      "$display" "Opus 5 · ctx 21% · 5h 73% · 7d 12%"
+check "re-render: publishes nothing" "$(stamp "$(acct uuid-team)")" "1"
+
+# The window Claude Code drops at its reset time is still the same response.
+run_json "$(jq -c 'del(.rate_limits.five_hour)' <<<"$full")" team >/dev/null
+check "dropped window: publishes nothing" "$(stamp "$(acct uuid-team)")" "1"
+check "dropped window: keeps both windows" \
+  "$(jq -r '.windows | keys | join(",")' "$(acct uuid-team)")" "five_hour,seven_day"
+
+# Signing into another account must not carry this session's reading over.
+run full.json personal >/dev/null
+check "login switch: nothing under the new account" \
+  "$([[ -e "$(acct uuid-pers)" ]] && echo leaked || echo clean)" "clean"
+check "login switch: original account intact" "$(stamp "$(acct uuid-team)")" "1"
+
+# The next real response comes from the new login, and belongs to it.
+newer=$(jq -c '.rate_limits.five_hour.used_percentage = 4 | .rate_limits.five_hour.resets_at = 1789009000' <<<"$full")
+run_json "$newer" personal >/dev/null
+check "new response: published under the new account" \
+  "$(jq -r '.windows.five_hour.used_percentage' "$(acct uuid-pers)")" "4"
+check "new response: old account untouched" "$(stamp "$(acct uuid-team)")" "1"
+
+# A change in any window is a new reading, a drop within one included.
+rm -rf "$work/out"
+run full.json team >/dev/null
+backdate "$(acct uuid-team)"
+run_json "$(jq -c '.rate_limits.seven_day.used_percentage = 3' <<<"$full")" team >/dev/null
+check "mid-window drop: republished" "$(jq -r '.windows.seven_day.used_percentage' "$(acct uuid-team)")" "3"
+check "mid-window drop: restamped" \
+  "$(jq -r '.written_at | if . > 1700000000 then "yes" else "no" end' "$(acct uuid-team)")" "yes"
+
+# An unreadable earlier file must not stop a good reading publishing.
+rm -rf "$work/out"; mkdir -p "$work/out/accounts/uuid-team"
+printf 'not json' >"$(acct uuid-team)"
+run full.json team >/dev/null
+check "corrupt previous: replaced" "$(jq -r '.windows.five_hour.used_percentage' "$(acct uuid-team)")" "73.2"
+
 # --- missing config falls back rather than failing ------------------------
 rm -rf "$work/out"
 display=$(run full.json empty)

@@ -78,6 +78,21 @@ if [[ "$payload" != "SKIP" ]]; then
   # own last API response reported, so sharing a file made them overwrite each
   # other with stale numbers. The overlay reconciles them.
   session=$(printf '%s' "$payload" | jq -r '.session')
+  # Claude Code also re-runs this on refreshInterval, at a window's reset time
+  # and on mode toggles, passing the session's last API response again. Only a
+  # changed reading is news: republishing the same one would stamp it as fresh
+  # and file it under whichever login is current, which after a switch is not
+  # the account that served it. A window dropped at its reset is no change.
+  earlier=("$KLEPSYDRA_DIR"/accounts/*/"$session".json)
+  if [[ -e "${earlier[0]}" ]] && jq -en --argjson now "$payload" '
+       [inputs] | max_by(.written_at) | .windows as $was
+       | $now.windows | all(to_entries[]; $was[.key] == .value)
+     ' "${earlier[@]}" >/dev/null 2>&1; then
+    payload="SKIP"
+  fi
+fi
+
+if [[ "$payload" != "SKIP" ]]; then
   out_dir="$KLEPSYDRA_DIR/accounts/$id"
   if mkdir -p "$out_dir" 2>/dev/null; then
     out="$out_dir/$session.json"
