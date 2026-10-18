@@ -5,17 +5,29 @@ a glance instead of by running `/usage` in whichever terminal is in front.
 
 ## Design constraint
 
-The gauge must never show a confident wrong number. Every path that cannot
-establish a live reading dims the panel instead of drawing a stale bar.
+The gauge must never show a confident wrong number. A reading more than 15
+minutes old says how old it is, an ended window says when it reset, and the
+panel dims only while it has nothing to show. Dimming was dropped because
+the account you are not on is always hours old, and it has to stay legible.
 
 ## Next
+- Scroll on the grip to resize the whole gauge; a tray "Set home here" that
+  "Reset position" returns to; thicker bars.
 - Exercise the tray menu ("Reset position", autostart toggle).
+- Prune session files nobody needs (every window ended, account dropped).
 
 ## Later
 - Optional: flash or notify when crossing a threshold.
 - Optional: compact mode that drops the label and countdown to a bare bar.
 
 ## Completed
+- 2026-10-18: Made readings trustworthy across two accounts. Re-renders were
+  republishing a session's last reading as fresh and under whichever login was
+  current, which filed Personal's weekly under the RIT seat; highest-wins kept
+  a weekly at 100% after a mid-week reset dropped it to 1%; and the other
+  account vanished once its window reset, the moment it was worth switching
+  to. The hook now publishes only changed readings, the newest one wins, and
+  the other account stays with its age shown.
 - 2026-10-02: Ported to Linux (X11), so the gauge also runs on the Debian/XFCE
   workstation. The hook writes to the XDG data dir, the drag handle reads the
   pointer from the X server, and CI lints the Rust shell on both platforms.

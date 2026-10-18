@@ -25,7 +25,7 @@
   --size-pct: 13px;
   --size-sub: 11px;
 
-  --stale-opacity: 0.38;
+  --waiting-opacity: 0.38;
 
   --grip-width: 12px;
   --grip-dot: #6f6f6f;
@@ -66,8 +66,8 @@ html, body {
   transition: opacity 240ms ease;
 }
 
-/* Stale or unknown data dims the whole panel rather than showing a confident lie. */
-#panel[data-state="waiting"] { opacity: var(--stale-opacity); }
+/* With nothing to show yet, the panel dims rather than look like a reading. */
+#panel[data-state="waiting"] { opacity: var(--waiting-opacity); }
 
 .row {
   display: flex;
@@ -141,9 +141,5 @@ html, body {
 #rows { display: flex; flex-direction: column; gap: 7px; }
 
 .entry { display: flex; flex-direction: column; gap: 4px; }
-
-/* A row that cannot establish a live reading dims on its own, so one stale
-   account never drags down the others. */
-.entry[data-state="stale"] { opacity: var(--stale-opacity); }
 
 #empty[hidden] { display: none; }

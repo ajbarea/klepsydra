@@ -1,50 +1,52 @@
 # IMPL
 
-Current slice: Linux (X11) port, built and running on Debian 13 / XFCE.
+Current slice: readings you can trust across two accounts.
 
 ## Done
-- Hook picks the overlay's data dir per platform: the XDG data dir on Linux,
-  the Windows side under WSL. Both defaults asserted against the bundle
-  identifier, and the Linux one exercised end to end. 37 hook tests.
-- Shell: drag reads pointer and button with one XQueryPointer (`x11rb`, on
-  the watcher thread's own connection, reconnecting after a failure); window
-  geometry cached, refreshed twice a second. Inert off X11. Visible on all
-  workspaces. Tray item reads "Start at login" off Windows. Legacy-dir
-  fallback limited to Windows, the only build that ever wrote there.
-- Linux window made resizable at startup: GTK floors a non-resizable window
-  at 200x200 (tauri#6125), which left the 52px panel in a 200px window. The
-  grip stops short of tao's 5px edge-resize band that this arms.
-- `scripts/build-linux.sh` builds the `.deb`; refuses if the harness fixture
-  is present, mirroring the Windows staging exclusion.
-- CI: Rust fmt + clippy as a Windows/Ubuntu matrix.
+- Hook publishes a session's reading only for a new API response: its
+  `cost.total_api_duration_ms` grew, or its windows changed. A re-render
+  (refreshInterval, a window's reset time, mode toggles) no longer restamps
+  the reading or moves it to whichever login is current; a window Claude Code
+  drops at its reset is no change. Files carry `observed_at` and `api_ms`. A
+  config that reads but does not parse (mid-write) publishes nothing rather
+  than file under "unknown". 55 hook tests.
+- Overlay takes the newest observed reading per account and window; ties fall
+  back to the later window, then the higher number. Older hook files are
+  ignored once observed readings overtake them. Highest-wins remains while an
+  account has no observed reading, or an old hook is still writing, since
+  those times say only which terminal redrew last.
+- The account you are not on stays: an ended window reads 0% with when it
+  reset, and an account drops only after 30 days without a reading. An ended
+  window the account's latest reading no longer carries is left out, so a
+  misfiled one does not linger.
+- Old readings say their age ("updated 2 hr ago") instead of dimming, so the
+  other account stays legible. Only the empty panel dims. 42 gauge tests.
 
-## Verified against the running window on XFCE/X11, not inferred
-- 32-bit ARGB window; `_NET_WM_STATE` = ABOVE, STICKY, SKIP_TASKBAR,
-  SKIP_PAGER; on all desktops.
-- No WebKitGTK 2.54 + NVIDIA blank window (RTX 5060 Ti, driver 615.71), so
-  no DMABUF workaround shipped.
-- Height followed `set_height` (52px) once resizable.
-- Click-through: the bar passes the pointer to the window below; the grip
-  takes it. One input pixel remains at the top-left corner (tao's 1x1 region).
-- Drag by synthesised press-move-release moved exactly (-100,-50); a press
-  starting off the handle moved nothing; presses in the top and left edge
-  bands beside the grip neither dragged nor resized.
-- Idle CPU 0.93% of a core over 30s, down from 3.0% when every tick asked
-  the main thread for cursor, position, size and scale.
-- Stayed top of `_NET_CLIENT_LIST_STACKING` after another window was raised,
-  and above the XFCE panel when the panel was revealed.
-- Tray: registered with the StatusNotifierWatcher, icon drawn as the bar,
-  menu renders all three items, "Reset position" landed at (1280,1028).
-- Reading on screen matched the higher of two live sessions (0% and 1%).
-
-- Installed `.deb`: first launch wrote `~/.config/autostart/klepsydra.desktop`
-  with `Exec=/usr/bin/klepsydra`.
+## Verified against real data, not inferred
+- Replayed every published reading (197 files, two accounts): the shipped
+  overlay shows Personal week 100%. This branch shows the same figure,
+  labelled `updated 1 day ago`, until the new hook's first reading, then 34%.
+  RIT session shows `0% used · Reset 6 hr ago` instead of vanishing.
+- Transcripts' `credential_org` entries show running sessions changing login
+  mid-session, and the misfiled "RIT week" rows carry Personal's weekly values
+  verbatim: re-renders after a login switch, as diagnosed.
+- The RIT seat never reported a `seven_day` window of its own.
+- Screenshots: old reading, ended window, switched-away account, dropped
+  account (`scripts/visual-check.sh`).
 
 ## Open
-- Wayland unsupported: no global pointer, so the handle stays inert.
+- Right after the upgrade, a session whose numbers never move (pinned at 100%)
+  stays on highest-wins until they do: its old file carries no API time to
+  tell a response from a re-render, and restamping on equality would bring
+  back the re-render bug.
+- An "unknown" account an old hook filed from a torn config would show for up
+  to 30 days. None exists on either station; the new hook cannot create one.
+- Readings are per machine; usage on the other station shows only after a
+  request from this one.
+- Session files are never pruned (197 after four weeks, plus 17 orphaned
+  `.tmp` files from renders cancelled mid-write).
 
 ## Verify
     bash statusline/test_statusline.sh
     node --test src/*.test.js
-    (cd src-tauri && cargo clippy --all-targets -- -D warnings)
-    bash scripts/build-linux.sh
+    bash scripts/visual-check.sh

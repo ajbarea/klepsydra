@@ -52,13 +52,27 @@ The app data dir is `%LOCALAPPDATA%\dev.ajsoftworks.klepsydra` on Windows and
 
 ### Reconciling several terminals
 
-Each session reports whatever *its own* last API response said, so an idle
-terminal keeps publishing a stale, lower number forever -- and with several
-terminals sharing one file the reading flips between them. So every session
-writes its own file and the overlay reconciles them per account and window:
+Each session holds whatever *its own* last API response said, and Claude Code
+re-runs the status line with that same response on `refreshInterval`, at a
+window's reset time and on mode changes. So the hook publishes a session's
+reading only for a new response (the session's API time grew, or its windows
+changed), each session to its own file, stamped `observed_at`. The overlay
+reconciles them per account and window:
 
-- a later `resets_at` means a newer window, and wins outright;
-- within one window usage only ever grows, so the highest reading is current.
+- the reading observed last is current, because it came from the latest API
+  response;
+- readings observed in the same second fall back to the later `resets_at`,
+  then the higher number.
+
+Files without `observed_at` come from an older hook, which restamped every
+session on every re-render. Observed readings newer than all of them make
+them obsolete, and they are ignored. Until then, or while one is newer than
+every observed reading (an old hook still writing), the overlay takes the
+newest window and its highest reading, as before. Upgrade the hook with the
+overlay.
+
+Taking the highest reading is not safe even within one window: a reset granted
+mid-week or a plan upgrade lowers usage under the same `resets_at`.
 
 ## Two accounts at once
 
@@ -205,31 +219,21 @@ is revealed.
 ## How often it refreshes
 
 The status line is event-driven: Claude Code runs it as you work, and the hook
-publishes on every render. `refreshInterval` adds a periodic re-run so the
-reading stays fresh in an idle terminal:
-
-```json
-"statusLine": {
-  "type": "command",
-  "command": "~/.claude/klepsydra-statusline.sh",
-  "refreshInterval": 30
-}
-```
-
-Idle sessions republishing stale numbers are harmless, because reconciliation
-takes the highest reading rather than the latest writer. That refreshes the
-timestamp, not the number. The percentage only moves when a
-new API response arrives, which is correct -- usage does not grow while you are
-idle. The overlay re-reads the files every 5 seconds, and the countdown ticks
-every 15 seconds off `resets_at`, so it stays right even when nothing is
-publishing.
+publishes whenever a render carries a new reading. The overlay needs no
+`refreshInterval`: a periodic re-run repeats the session's last API response,
+and the hook publishes nothing for it. The overlay re-reads the files every 5
+seconds, and the countdown ticks every 15 seconds off `resets_at`, so it stays
+right even when nothing is publishing.
 
 ## Switching accounts
 
-Signing into a different account is picked up on the next render, and publishes
-under the new account's file. The previous account keeps its row, because its
-5-hour window carries on burning down whether or not you are signed into it.
-That row drops once the window actually resets.
+A running session moves to a new login at its next request, so its next reading
+publishes under the new account. A re-render before then repeats the old
+account's reading, which stays filed under the old account.
+
+The account you switched away from keeps its rows, since they tell you whether
+switching back would help. A window that has reset reads `0% used` with when it
+reset. An account's rows go only after 30 days without a reading.
 
 Rows are ordered by when each account last published, so the account you are
 signed into now leads and the one you switched away from sits under it. The
@@ -246,14 +250,17 @@ rebuild, done.
 ## When it does not know
 
 A gauge showing a confident wrong number is worse than one admitting
-ignorance, so the panel dims whenever it cannot establish a live reading:
+ignorance, so every reading says how old it is once that matters:
 
 | Condition | Shown |
 |---|---|
-| No file yet | `waiting for Claude Code` |
-| File older than 15 minutes | number kept, panel dimmed |
-| The window's own reset time has passed | `window reset`, no number |
-| Unreadable or malformed file | last good reading, dimmed |
+| No file yet | `waiting for Claude Code`, panel dimmed |
+| Reading older than 15 minutes | number kept, `updated 2 hr ago` after the countdown |
+| The window's own reset time has passed | `0% used`, `Reset 2 hr ago` |
+| Unreadable or malformed file | skipped; the account's other sessions still count |
+
+Readings are per machine. Usage on another machine, or since a window reset,
+shows up here only once a terminal on this machine makes a request.
 
 `rate_limits` is absent before the first API response of a session and when no
 window is active. The hook treats that as "nothing to say" and leaves the
@@ -263,6 +270,6 @@ previous file alone rather than overwriting it with blanks.
 
 ```bash
 bash statusline/test_statusline.sh   # hook, against recorded payload shapes
-node --test src/*.test.js            # ramp, countdown, staleness rules
+node --test src/*.test.js            # ramp, countdown, reading age, reconciliation
 bash scripts/visual-check.sh         # screenshots every state
 ```
