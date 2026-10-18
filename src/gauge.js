@@ -1,7 +1,7 @@
 // Pure rendering logic, kept free of Tauri and DOM so it can be unit tested.
 
 // Past this age a reading says how old it is.
-export const STALE_AFTER_MS = 15 * 60 * 1000;
+export const SHOW_AGE_AFTER_MS = 15 * 60 * 1000;
 // An account unused this long is gone. Short of that it stays, because the
 // account you are not on is the one you may want to switch to.
 export const DROP_AFTER_MS = 30 * 24 * 60 * 60 * 1000;
@@ -63,7 +63,7 @@ export function rampColor(pct, stops, mode = "blend") {
 
 /**
  * "Resets in 4 hr 58 min". Returns null once the window has already reset,
- * which the caller treats as "no live data" rather than "0% used".
+ * or when there is no reset time to count down to.
  */
 export function formatCountdown(resetsAtSec, nowMs = Date.now()) {
   if (!Number.isFinite(resetsAtSec)) return null;
@@ -116,11 +116,10 @@ export function evaluate(payload, key, nowMs = Date.now()) {
     return { state: "reset", label: windowLabel(key), pct: 0, sub };
   }
 
-  const observedAtMs = Number(win.observed_at ?? payload.written_at) * 1000;
-  const age = Number.isFinite(observedAtMs) ? nowMs - observedAtMs : Infinity;
-  const sub = age > STALE_AFTER_MS && Number.isFinite(age)
-    ? `${countdown} \u00b7 updated ${formatAge(age)}`
-    : countdown;
+  const age = nowMs - Number(win.observed_at ?? payload.observed_at ?? payload.written_at) * 1000;
+  let sub = countdown;
+  if (!Number.isFinite(age)) sub += " \u00b7 age unknown";
+  else if (age > SHOW_AGE_AFTER_MS) sub += ` \u00b7 updated ${formatAge(age)}`;
 
   return {
     state: "live",
@@ -135,25 +134,42 @@ export function formatPct(pct) {
   return `${Math.floor(pct)}% used`;
 }
 
+/** Whether a file came from a hook that publishes only new API responses. */
+const isObserved = (s) => s?.observed_at != null && Number.isFinite(Number(s.observed_at));
+
+/** When a session's reading arrived, or for an older hook's file, when it was last written. */
+const stampOf = (s) => Number(isObserved(s) ? s.observed_at : s?.written_at) || 0;
+
 /**
- * Reconcile one window across every session of an account.
+ * The sessions whose times can be trusted. Before `observed_at`, the hook
+ * restamped every session on every re-render, so its times say when a
+ * terminal last redrew. Once any observed reading exists, those files are
+ * ignored: a real response carries every window, so they hold nothing newer.
+ */
+function trusted(sessions) {
+  const observed = sessions.filter(isObserved);
+  return observed.length > 0 ? observed : sessions;
+}
+
+/**
+ * Reconcile one window across sessions of an account, as `trusted` returns them.
  *
- * Each session's file holds its own last API response, published when it
- * changed, so the one written last is current. Highest-wins is not safe: a
+ * Observed readings: the newest is current. Highest-wins is not safe there: a
  * mid-window reset or a plan change lowers usage under the same `resets_at`.
- * Readings from one second fall back to the newer window, then the higher one.
- * The winner carries `observed_at`, its session's `written_at`.
+ * An older hook's files: the newest window, then the highest reading, since
+ * their times only say which terminal redrew last. Ties fall back the same way.
+ * The winner carries `observed_at`, its session's time.
  */
 export function pickWindow(sessions, key) {
   const all = sessions.flatMap((s) => {
     const w = s?.windows?.[key];
     const ok = w && Number.isFinite(Number(w.used_percentage)) && Number.isFinite(Number(w.resets_at));
-    return ok ? [{ ...w, observed_at: Number(s.written_at) || 0 }] : [];
+    return ok ? [{ ...w, observed_at: stampOf(s), observed: isObserved(s) }] : [];
   });
   if (all.length === 0) return null;
 
   const latest = Math.max(...all.map((w) => w.observed_at));
-  const cands = all.filter((w) => w.observed_at === latest);
+  const cands = all.every((w) => w.observed) ? all.filter((w) => w.observed_at === latest) : all;
   const newest = Math.max(...cands.map((w) => Number(w.resets_at)));
   const current = cands.filter(
     (w) => newest - Number(w.resets_at) <= WINDOW_MATCH_SECONDS,
@@ -184,13 +200,15 @@ export function toRows(payload, nowMs = Date.now()) {
   }
 
   const accounts = [];
-  for (const [id, sessions] of byAccount) {
-    const writtenAt = Math.max(...sessions.map((s) => Number(s.written_at) || 0));
+  for (const [id, all] of byAccount) {
+    const sessions = trusted(all);
+    const writtenAt = Math.max(...sessions.map(stampOf));
     // The windows the account reports now. An ended window outside them is
-    // one it no longer has, or one filed under it by mistake.
+    // one it no longer has, or one filed under it by mistake. A live one is
+    // kept until it ends, since hiding a real window costs more.
     const current = new Set(
       sessions
-        .filter((s) => (Number(s.written_at) || 0) === writtenAt)
+        .filter((s) => stampOf(s) === writtenAt)
         .flatMap((s) => Object.keys(s.windows)),
     );
     const windows = {};

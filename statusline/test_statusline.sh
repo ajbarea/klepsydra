@@ -126,6 +126,28 @@ check "mid-window drop: republished" "$(jq -r '.windows.seven_day.used_percentag
 check "mid-window drop: restamped" \
   "$(jq -r '.written_at | if . > 1700000000 then "yes" else "no" end' "$(acct uuid-team)")" "yes"
 
+# Claude Code's API time only grows on a response, so it tells a new response
+# that repeats the numbers apart from a re-render, and the file is restamped.
+timed() { jq -c --argjson ms "$1" '.cost.total_api_duration_ms = $ms' <<<"$full"; }
+rm -rf "$work/out"
+run_json "$(timed 5000)" team >/dev/null
+check "observed_at recorded" "$(jq -r '.observed_at == .written_at' "$(acct uuid-team)")" "true"
+check "api time recorded"    "$(jq -r '.api_ms' "$(acct uuid-team)")" "5000"
+backdate "$(acct uuid-team)"
+run_json "$(timed 5000)" team >/dev/null
+check "same api time: publishes nothing" "$(stamp "$(acct uuid-team)")" "1"
+run_json "$(timed 7400)" team >/dev/null
+check "new response, same numbers: restamped" \
+  "$(jq -r '.written_at | if . > 1700000000 then "yes" else "no" end' "$(acct uuid-team)")" "yes"
+check "new response, same numbers: api time moves" "$(jq -r '.api_ms' "$(acct uuid-team)")" "7400"
+
+# A config caught mid-write must not file the reading under "unknown".
+mkdir -p "$work/torn" && printf '{"oauthAccount":{"accountUu' >"$work/torn/.claude.json"
+rm -rf "$work/out"
+display=$(run full.json torn)
+check "torn config: still echoes"     "$display" "Opus 5 · ctx 21% · 5h 73% · 7d 12%"
+check "torn config: publishes nothing" "$([[ -e "$work/out/accounts" ]] && echo leaked || echo clean)" "clean"
+
 # An unreadable earlier file must not stop a good reading publishing.
 rm -rf "$work/out"; mkdir -p "$work/out/accounts/uuid-team"
 printf 'not json' >"$(acct uuid-team)"

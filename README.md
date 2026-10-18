@@ -55,13 +55,19 @@ The app data dir is `%LOCALAPPDATA%\dev.ajsoftworks.klepsydra` on Windows and
 Each session holds whatever *its own* last API response said, and Claude Code
 re-runs the status line with that same response on `refreshInterval`, at a
 window's reset time and on mode changes. So the hook publishes a session's
-reading only when it changes, each session to its own file, and the overlay
+reading only for a new response (the session's API time grew, or its windows
+changed), each session to its own file, stamped `observed_at`. The overlay
 reconciles them per account and window:
 
-- the reading published last is current, because it came from the latest API
+- the reading observed last is current, because it came from the latest API
   response;
-- readings published in the same second fall back to the later `resets_at`,
+- readings observed in the same second fall back to the later `resets_at`,
   then the higher number.
+
+Files without `observed_at` come from an older hook, which restamped every
+session on every re-render. They are ignored once the account has an observed
+reading; until then the overlay takes the newest window and its highest
+reading, as before. Upgrade the hook with the overlay.
 
 Taking the highest reading is not safe even within one window: a reset granted
 mid-week or a plan upgrade lowers usage under the same `resets_at`.

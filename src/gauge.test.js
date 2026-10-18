@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { rampColor, rampPosition, formatCountdown, formatAge, evaluate, formatPct, toRows, STALE_AFTER_MS, DROP_AFTER_MS } from "./gauge.js";
+import { rampColor, rampPosition, formatCountdown, formatAge, evaluate, formatPct, toRows, SHOW_AGE_AFTER_MS, DROP_AFTER_MS } from "./gauge.js";
 
 const STOPS = { low: "#3b82f6", mid: "#eab308", high: "#ef4444", midAt: 60, highAt: 85 };
 const NOW = 1_800_000_000_000; // fixed clock
@@ -80,9 +80,9 @@ test("0% is a real reading, not a missing one", () => {
 });
 
 test("an old reading says how old it is instead of dimming", () => {
-  const fresh = evaluate(live(50, 2 * 3600e3, STALE_AFTER_MS - 1000), "five_hour", NOW);
+  const fresh = evaluate(live(50, 2 * 3600e3, SHOW_AGE_AFTER_MS - 1000), "five_hour", NOW);
   assert.equal(fresh.sub, "Resets in 2 hr");
-  const old = evaluate(live(50, 2 * 3600e3, STALE_AFTER_MS + 1000), "five_hour", NOW);
+  const old = evaluate(live(50, 2 * 3600e3, SHOW_AGE_AFTER_MS + 1000), "five_hour", NOW);
   assert.equal(old.state, "live");
   assert.equal(old.pct, 50);
   assert.equal(old.sub, "Resets in 2 hr \u00b7 updated 15 min ago");
@@ -113,13 +113,19 @@ test("missing, empty and malformed payloads all degrade to waiting", () => {
   }
 });
 
+test("a reading with no usable time says so rather than passing as fresh", () => {
+  const r = evaluate({ windows: { five_hour: { used_percentage: 50, resets_at: secs(NOW + 2 * 3600e3) } } }, "five_hour", NOW);
+  assert.equal(r.pct, 50);
+  assert.equal(r.sub, "Resets in 2 hr \u00b7 age unknown");
+});
+
 test("asking for a window the file does not carry is waiting, not a crash", () => {
   assert.equal(evaluate(live(50), "seven_day", NOW).state, "waiting");
 });
 
 // ── multi-account rows ──────────────────────────────────────────────────────
 const acct = (id, label, windows, writtenAgoMs = 0) => ({
-  account: id, label, written_at: secs(NOW - writtenAgoMs), windows,
+  account: id, label, written_at: secs(NOW - writtenAgoMs), observed_at: secs(NOW - writtenAgoMs), windows,
 });
 const win = (pct, resetsInMs = 2 * 3600e3) => ({
   used_percentage: pct, resets_at: secs(NOW + resetsInMs),
@@ -224,7 +230,7 @@ test("an account unused for days keeps its rows", () => {
 // ── reconciling several sessions of one account ─────────────────────────────
 const sess = (id, pct, resetsInMs = 2 * 3600e3, writtenAgoMs = 0, label = "Personal") => ({
   account: "acct", label, session: id,
-  written_at: secs(NOW - writtenAgoMs),
+  written_at: secs(NOW - writtenAgoMs), observed_at: secs(NOW - writtenAgoMs),
   windows: { five_hour: { used_percentage: pct, resets_at: secs(NOW + resetsInMs) } },
 });
 
@@ -323,4 +329,39 @@ test("a live window stays even when the latest reading omits it", () => {
     { ...sess("newer", 45), windows: { five_hour: win(45) } },
   ], NOW);
   assert.deepEqual(rows.map((r) => r.pct), [45, 20]);
+});
+
+// ── an old hook still installed ─────────────────────────────────────────────
+// Before `observed_at`, the hook restamped every session on every re-render,
+// so `written_at` says when a terminal last redrew, not when its reading came.
+const legacy = (id, pct, writtenAgoMs, resetsInMs = 2 * 3600e3) => {
+  const { observed_at, ...s } = sess(id, pct, resetsInMs, writtenAgoMs);
+  return s;
+};
+const observed = (id, pct, agoMs, resetsInMs = 2 * 3600e3) => sess(id, pct, resetsInMs, agoMs);
+
+test("files from an old hook keep the highest reading rather than flapping", () => {
+  // An old hook with refreshInterval restamps idle sessions every 30s, so the
+  // newest stamp is whichever terminal redrew last.
+  for (const order of [["a", "b", "c"], ["b", "c", "a"], ["c", "a", "b"]]) {
+    const pcts = { a: 62, b: 3, c: 35 };
+    const rows = toRows(order.map((id, i) => legacy(id, pcts[id], i * 1000)), NOW);
+    assert.equal(rows[0].pct, 62, `newest stamp on ${order[0]}`);
+  }
+});
+
+test("an observed reading outranks any file from an old hook", () => {
+  const rows = toRows([
+    legacy("idle", 100, 0, 30 * 3600e3),
+    observed("active", 29, 60e3, 30 * 3600e3),
+  ], NOW);
+  assert.equal(rows[0].pct, 29);
+});
+
+test("observed readings take the newest, not the highest", () => {
+  const rows = toRows([
+    observed("before", 94, 3 * 86400e3, 30 * 3600e3),
+    observed("after", 29, 60e3, 30 * 3600e3),
+  ], NOW);
+  assert.equal(rows[0].pct, 29);
 });
