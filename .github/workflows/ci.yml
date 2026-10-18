@@ -34,8 +34,12 @@ jobs:
       # second account, malformed stdin, an unwritable destination.
       - name: statusLine hook tests
         run: bash statusline/test_statusline.sh
+      # The fleet hook is the only writer of a session's state, so its fixtures
+      # cover the shapes that would otherwise show a wrong status.
+      - name: Fleet hook tests
+        run: bash hooks/test_fleet.sh
       - name: Shell lint
-        run: shellcheck statusline/*.sh scripts/*.sh
+        run: shellcheck hooks/*.sh statusline/*.sh scripts/*.sh
       # The install dir is writable only because the NSIS mode is currentUser;
       # a perMachine build puts it under Program Files. Readings and harness
       # output go to the app data dir and to temp respectively.

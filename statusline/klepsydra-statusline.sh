@@ -11,6 +11,7 @@
 
 set -uo pipefail
 
+# --- klepsydra dir: identical in hooks/klepsydra-fleet.sh and statusline/klepsydra-statusline.sh ---
 # The overlay's app-local-data dir, named for the bundle identifier in
 # src-tauri/tauri.conf.json. Not the install dir: the uninstaller's "delete app
 # data" reaches only this one, and a per-machine install cannot be written to.
@@ -19,15 +20,18 @@ set -uo pipefail
 # or the readings land under whatever directory Claude Code is running in.
 if [[ -z "${KLEPSYDRA_DIR:-}" ]]; then
   osrelease=""
-  { read -r osrelease </proc/sys/kernel/osrelease; } 2>/dev/null  # builtin: runs every render
+  { read -r osrelease </proc/sys/kernel/osrelease; } 2>/dev/null  # builtin: no process per run
   if [[ "$osrelease" == *[Mm]icrosoft* ]]; then
-    KLEPSYDRA_DIR="/mnt/c/Users/$USER/AppData/Local/dev.ajsoftworks.klepsydra"
+    if [[ -n "${USER:-}" ]]; then
+      KLEPSYDRA_DIR="/mnt/c/Users/$USER/AppData/Local/dev.ajsoftworks.klepsydra"
+    fi
   else
-    data_home="$HOME/.local/share"
+    data_home="${HOME:-}/.local/share"
     [[ "${XDG_DATA_HOME:-}" == /* ]] && data_home="$XDG_DATA_HOME"
-    KLEPSYDRA_DIR="$data_home/dev.ajsoftworks.klepsydra"
+    [[ "$data_home" == /* ]] && KLEPSYDRA_DIR="$data_home/dev.ajsoftworks.klepsydra"
   fi
 fi
+# --- end klepsydra dir ---
 
 input=$(cat)
 
