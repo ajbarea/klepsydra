@@ -1,0 +1,1 @@
+{"session_id":"11111111-2222-4333-8444-555555555555","transcript_path":"HOOK_FIXTURES/lagging-transcript.jsonl","cwd":"/home/aj/repo","permission_mode":"default","hook_event_name":"Stop","stop_hook_active":false,"last_assistant_message":"That works with no model calls: the hook writes one file per session and the overlay reads them.","background_tasks":[],"session_crons":[]}

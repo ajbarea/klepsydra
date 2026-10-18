@@ -4,6 +4,7 @@ set -uo pipefail
 
 here=$(cd "$(dirname "$0")" && pwd)
 hook="$here/klepsydra-fleet.sh"
+fixtures="$here/fixtures"
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 
@@ -109,6 +110,196 @@ out=$(env -u HOME -u XDG_CACHE_HOME -u KERYX_VOICES KLEPSYDRA_PROC="$work/proc" 
   bash -uc 'source "$1"; v=$(holder_voice 500 8717628); claude_ancestor 600; printf "[%s][%s:%s]" "$v" "$found_pid" "$found_start"' _ "$hook" 2>&1); rc=$?
 check "unset HOME: identity exit 0" "$rc" "0"
 check "unset HOME: empty voice, no output" "$out" "[][500:8717628]"
+
+echo "session file"
+
+S=11111111-2222-4333-8444-555555555555
+dir="$work/dev.ajsoftworks.klepsydra"
+file="$dir/fleet/$S.json"
+now=1792353000
+wt="$repos/klepsydra/.claude/worktrees/fleet"
+
+# Fire one fixture event at the hook, edited by an optional jq filter, as
+# Claude Code would from the terminal held by pid 500.
+fire() { # fixture [filter] [VAR=value...]
+  local fixture=$1 filter=${2:-.}
+  shift; (( $# )) && shift
+  jq -c --arg cwd "$wt" "if .cwd then .cwd = \$cwd else . end | $filter" "$fixtures/$fixture" |
+    env KLEPSYDRA_DIR="$dir" KLEPSYDRA_NOW="$now" KLEPSYDRA_PROC="$work/proc" KLEPSYDRA_PID=600 \
+      KERYX_VOICES="$work/voices.json" XDG_RUNTIME_DIR="$work" "$@" bash "$hook"
+}
+field() { jq -c "$1" "$file"; }
+mtime() { stat -c %Y "$file"; }
+
+out=$(fire session-start.json); rc=$?
+check "start: exit 0" "$rc" "0"
+check "start: prints nothing" "$out" ""
+check "start: not started" "$(field '[.v, .state, .reason, .state_at, .started_at]')" "[1,\"new\",null,$now,$now]"
+check "start: launch dir" "$(field .launch_dir)" "\"$wt\""
+check "start: claude" "$(field .claude)" '{"pid":500,"start":8717628}'
+check "start: voice" "$(field .voice)" '"am_michael"'
+check "start: where" "$(field '.where | [.repo, .worktree, .branch, .by, .at]')" \
+  "[\"klepsydra\",\"fleet\",\"feat/fleet-visualizer\",\"cwd\",$now]"
+check "start: nothing asked yet" "$(field '[.prompt, .reply, .needs, .error, .ended]')" "[null,null,null,null,null]"
+
+touch -d @1 "$file"
+now=1792353005 fire notification-permission.json
+check "permission_prompt notification: no write" "$(mtime)" "1"
+now=1792353005 fire post-tool-bash.json
+check "a tool in the same place: no write" "$(mtime)" "1"
+
+now=1792353010
+fire user-prompt.json
+check "prompt: working" "$(field '[.state, .state_at]')" "[\"working\",$now]"
+check "prompt: stored" "$(field .prompt)" \
+  "{\"text\":\"i just want to be able to VIZ them, one glance at the screen\",\"at\":$now}"
+
+now=1792353020
+fire task-notification.json
+check "subagent report: still working" "$(field .state)" '"working"'
+check "subagent report: keeps AJ's prompt" "$(field .prompt.at)" "1792353010"
+fire pasted-content.json
+check "pasted text quoting a report is AJ's prompt" "$(field '.prompt.text | startswith("why did this fire?")')" "true"
+
+long=$(printf 'x%.0s' {1..290})$(printf '🙂%.0s' {1..20})
+fire user-prompt.json ".prompt = \"$long\""
+check "prompt: first 300 characters" "$(field '.prompt.text | length')" "300"
+check "prompt: cut on a character, not a byte" "$(field '.prompt.text | endswith("🙂")')" "true"
+
+now=1792353030
+fire permission-request.json
+check "permission request: needs you" "$(field '[.state, .reason, .state_at]')" "[\"needs_you\",\"approve Bash\",$now]"
+check "permission request: prints nothing, so decides nothing" "$(fire permission-request.json)" ""
+check "tool input never recorded" "$(grep -c SECRET "$file")" "0"
+
+now=1792353040
+fire post-tool-bash.json '.tool_name = "Read"'
+check "another tool finishing leaves it waiting" "$(field .state)" '"needs_you"'
+fire post-tool-bash.json '.agent_id = "agent-7" | .agent_type = "Explore"'
+check "a subagent's tool finishing leaves it waiting" "$(field .state)" '"needs_you"'
+fire post-tool-bash.json
+check "its own tool finishing clears it" "$(field '[.state, .reason, .needs]')" '["working",null,null]'
+check "tool output never recorded" "$(grep -c SECRET "$file")" "0"
+
+fire pre-tool-question.json
+check "question" "$(field '[.state, .reason]')" '["needs_you","question"]'
+fire post-tool-bash.json '.tool_name = "AskUserQuestion"'
+check "answered" "$(field .state)" '"working"'
+fire pre-tool-plan.json
+check "plan" "$(field '[.state, .reason]')" '["needs_you","approve plan"]'
+fire post-tool-bash.json '.tool_name = "ExitPlanMode"'
+check "plan approved" "$(field .state)" '"working"'
+fire notification-elicitation.json
+check "MCP elicitation" "$(field '[.state, .reason]')" '["needs_you","question"]'
+fire post-tool-bash.json '.tool_name = "mcp__memory__store"'
+check "elicitation answered" "$(field .state)" '"working"'
+fire permission-request.json '.agent_id = "agent-7"'
+check "a subagent can need you" "$(field '[.state, .needs]')" '["needs_you",{"by":"agent-7","tool":"Bash"}]'
+fire post-tool-bash.json
+check "the main thread's tool does not clear a subagent's request" "$(field .state)" '"needs_you"'
+fire post-tool-bash.json '.agent_id = "agent-7"'
+check "the subagent's own tool does" "$(field .state)" '"working"'
+
+now=1792353050
+fire stop.json ".transcript_path = \"$fixtures/lagging-transcript.jsonl\""
+check "stop: done" "$(field '[.state, .state_at]')" "[\"done\",$now]"
+check "stop: the reply from last_assistant_message" "$(field .reply.text)" \
+  '"That works with no model calls: the hook writes one file per session and the overlay reads them."'
+check "stop: never the lagging transcript" "$(grep -c STALE "$file")" "0"
+check "the hook never opens the transcript" "$(grep -c transcript_path "$hook")" "0"
+fire stop.json '.last_assistant_message = ""'
+check "stop with no text keeps the last reply" "$(field '.reply.at')" "$now"
+
+now=1792353060
+fire stop-failure.json
+check "failure: error" "$(field '[.state, .reason, .error]')" '["error","rate limit","API Error: Rate limit reached"]'
+fire user-prompt.json
+check "the next prompt clears the error" "$(field '[.state, .error]')" '["working",null]'
+
+echo "where moves, identity stays"
+now=1792353100
+fire post-tool-edit.json ".tool_input.file_path = \"$repos/ideas/README.md\""
+check "an edit moves where" "$(field '.where | [.repo, .by, .at]')" "[\"ideas\",\"edit\",$now]"
+check "the old place is touched" "$(field '.touched')" "[{\"repo\":\"klepsydra\",\"at\":$now}]"
+now=1792353110
+fire post-tool-notebook.json ".tool_input.notebook_path = \"$repos/loose/notes/nb.ipynb\""
+check "a notebook edit moves where" "$(field '.where.repo')" '"notes"'
+fire user-prompt.json ".cwd = \"$repos/subsrc\""
+check "after an edit, cwd does not move where" "$(field '.where.repo')" '"notes"'
+check "identity unchanged across three repos" "$(field '[.voice, .claude.pid]')" '["am_michael",500]'
+check "touched, newest first" "$(field '[.touched[].repo]')" '["ideas","klepsydra"]'
+for i in 1 2 3 4 5 6 7; do
+  mkdir -p "$repos/r$i/.git"
+  now=$((1792353200 + i)) fire post-tool-edit.json ".tool_input.file_path = \"$repos/r$i/f\""
+done
+check "touched keeps six" "$(field '[.touched[].repo]')" '["r6","r5","r4","r3","r2","r1"]'
+# shellcheck disable=SC2016  # a jq variable
+check "where is not touched" "$(field '.where.repo as $w | [.touched[].repo] | index($w)')" "null"
+
+printf '{"holders":{"500:8717628":{"voice":"bf_emma","seen":2}}}\n' >"$work/voices.json"
+fire post-tool-bash.json
+check "a voice keryx changes is copied" "$(field .voice)" '"bf_emma"'
+rm "$work/voices.json"
+fire user-prompt.json
+check "keryx gone keeps the voice" "$(field .voice)" '"bf_emma"'
+
+echo "lifecycle"
+now=1792353300
+fire session-end.json
+check "end" "$(field '[.state, .reason, .ended]')" "[\"ended\",\"exited\",{\"reason\":\"prompt_input_exit\",\"at\":$now}]"
+touch -d @1 "$file"
+fire post-tool-bash.json '.tool_name = "Read"'
+check "a late event cannot revive it" "$(mtime)" "1"
+now=1792353400 fire session-start.json '.source = "resume"'
+check "resumed: done, since it has a prompt" "$(field '[.state, .ended]')" '["done",null]'
+fire user-prompt.json
+now=1792353410 fire session-start.json '.source = "compact"'
+check "compaction keeps the state" "$(field .state)" '"working"'
+
+rm -f "$file"
+now=1792353500 fire user-prompt.json
+check "installed mid-session: created from any event" "$(field '[.state, .started_at, .prompt.at]')" \
+  '["working",1792353500,1792353500]'
+rm -f "$file"
+fire session-end.json
+check "an end for an unknown session writes nothing" "$([[ -e $file ]] && echo written || echo none)" "none"
+
+fire session-start.json '.session_title = "fleet-plan"'
+check "a custom title names it" "$(field .name)" '"fleet-plan"'
+
+echo "bad input"
+out=$(KLEPSYDRA_DIR="$dir" XDG_RUNTIME_DIR="$work" bash "$hook" <"$fixtures/malformed.json"); rc=$?
+check "malformed: exit 0" "$rc" "0"
+check "malformed: silent" "$out" ""
+fire user-prompt.json '.session_id = "../../evil"'
+check "a session id that is not a uuid writes nothing" "$(find "$work" -name 'evil*' | wc -l)" "0"
+out=$(fire user-prompt.json '.' KLEPSYDRA_DIR=/proc/nonexistent); rc=$?
+check "unwritable dir: exit 0" "$rc" "0"
+check "no tmp litter" "$(find "$dir" -name '*.tmp' | wc -l)" "0"
+
+echo "concurrency"
+rm -f "$file"
+now=1792354000 fire session-start.json
+for i in $(seq 1 12); do mkdir -p "$repos/c$i/.git"; done
+for i in $(seq 1 12); do
+  now=$((1792354000 + i)) fire post-tool-edit.json ".tool_input.file_path = \"$repos/c$i/f\"" &
+done
+wait
+check "parallel events: the file parses" "$(jq -e .v "$file" >/dev/null && echo ok)" "ok"
+check "parallel events: no update lost" "$(field '.touched | length')" "6"
+check "parallel events: where and touched are seven repos" \
+  "$(field '[.where.repo] + [.touched[].repo] | unique | length')" "7"
+
+
+echo "partial voices.json"
+printf '{"holders":{"500:8717628":{"voice":"am_' >"$work/voices.json"
+rm -f "$file"
+now=1792354100
+out=$(fire session-start.json); rc=$?
+check "truncated voices.json: exit 0" "$rc" "0"
+check "truncated voices.json: silent" "$out" ""
+check "truncated voices.json: no voice" "$(field .voice)" "null"
+check "truncated voices.json: file still written" "$(field .state)" '"new"'
 
 block() { sed -n '/^# --- klepsydra dir/,/^# --- end klepsydra dir ---$/p' "$1"; }
 check "dir block present" "$([[ -n "$(block "$hook")" ]] && echo yes)" "yes"
