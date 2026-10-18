@@ -98,6 +98,13 @@ shot 09-abandoned-dropped
 rm -f "$fixture"
 shot 10-waiting
 
+echo "zoom ->"
+fixture_write "$(entry pers Personal 0 "{\"five_hour\":$(w 59 14700),\"seven_day\":$(w 31 116000)}"),$(entry team RIT-CS-DQL 30000 "{\"five_hour\":$(w 100 -21600)}")"
+for z in -3 0 4 9; do
+  shot "zoom-$z" "?zoom=$z" 1100,420
+done
+rm -f "$fixture"
+
 echo "ramp comparison ->"
 for p in 20 45 60 73 90 100; do
   fixture_write "$(entry team RIT-CS-DQL 0 "{\"five_hour\":$(w "$p" 7200)}")"

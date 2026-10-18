@@ -1,13 +1,17 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod geometry;
+
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use std::time::Duration;
 
+use geometry::{Display, Home, Rect};
 use tauri::{
     menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem},
     tray::TrayIconBuilder,
-    LogicalSize, Manager, PhysicalPosition,
+    Manager, PhysicalPosition, PhysicalSize,
 };
 use tauri_plugin_autostart::ManagerExt;
 use tauri_plugin_window_state::AppHandleExt;
@@ -16,6 +20,17 @@ use tauri_plugin_window_state::AppHandleExt;
 /// frontend owns the layout and reports it, so restyling cannot desync this.
 #[derive(Default)]
 struct Grip(Mutex<Option<[f64; 4]>>);
+
+/// Set when the window moves or resizes other than by dragging, so the grip
+/// watcher re-reads its cached placement at once rather than up to half a
+/// second later, when a wheel notch could already have missed the grip.
+#[derive(Default)]
+struct Moved(AtomicBool);
+
+/// Whether the window has been sized since launch. The first sizing keeps the
+/// restored top-left; later ones move it so it grows away from screen edges.
+#[derive(Default)]
+struct Sized(AtomicBool);
 
 /// Where the statusLine hook publishes: `%LOCALAPPDATA%\dev.ajsoftworks.klepsydra`
 /// on Windows, `$XDG_DATA_HOME/dev.ajsoftworks.klepsydra` (else under
@@ -93,15 +108,128 @@ fn collect_readings(dir: &std::path::Path, out: &mut Vec<serde_json::Value>) {
     }
 }
 
-/// The panel grows a row per account window, so the frontend reports the height
-/// it needs rather than the window guessing.
+/// Small settings the user changes from the gauge itself: the zoom level and
+/// the saved home position. Unreadable or missing reads as empty.
+fn prefs_path(app: &tauri::AppHandle) -> Option<PathBuf> {
+    klepsydra_dir(app).map(|d| d.join("prefs.json"))
+}
+
+fn read_prefs(app: &tauri::AppHandle) -> serde_json::Map<String, serde_json::Value> {
+    prefs_path(app)
+        .and_then(|p| std::fs::read_to_string(p).ok())
+        .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
+        .and_then(|v| v.as_object().cloned())
+        .unwrap_or_default()
+}
+
+fn write_pref(app: &tauri::AppHandle, key: &str, value: serde_json::Value) {
+    let Some(path) = prefs_path(app) else {
+        return;
+    };
+    let mut prefs = read_prefs(app);
+    prefs.insert(key.into(), value);
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    // tmp-then-rename, so a crash mid-write leaves the old file whole.
+    let tmp = path.with_extension("json.tmp");
+    let text = serde_json::Value::Object(prefs).to_string();
+    if std::fs::write(&tmp, text).is_ok() {
+        let _ = std::fs::rename(&tmp, &path);
+    }
+}
+
 #[tauri::command]
-fn set_height(window: tauri::Window, height: f64) -> Result<(), String> {
+fn get_zoom(app: tauri::AppHandle) -> i64 {
+    read_prefs(&app)
+        .get("zoom")
+        .and_then(|z| z.as_i64())
+        .unwrap_or(0)
+}
+
+#[tauri::command]
+fn set_zoom(app: tauri::AppHandle, level: i64) {
+    write_pref(&app, "zoom", serde_json::json!(level));
+}
+
+fn placement(window: &tauri::WebviewWindow) -> Option<Rect> {
+    let pos = window.outer_position().ok()?;
+    let size = window.outer_size().ok()?;
+    Some(Rect::new(
+        pos.x,
+        pos.y,
+        size.width as i32,
+        size.height as i32,
+    ))
+}
+
+fn monitor_rect(m: &tauri::Monitor) -> Rect {
+    Rect::new(
+        m.position().x,
+        m.position().y,
+        m.size().width as i32,
+        m.size().height as i32,
+    )
+}
+
+/// Move and resize to `to`, telling the grip watcher, and remember the spot.
+fn place(window: &tauri::WebviewWindow, from: Rect, to: Rect) -> Result<(), String> {
+    if (to.w, to.h) != (from.w, from.h) {
+        window
+            .set_size(PhysicalSize::new(to.w as u32, to.h as u32))
+            .map_err(|e| e.to_string())?;
+    }
+    if (to.x, to.y) != (from.x, from.y) {
+        window
+            .set_position(PhysicalPosition::new(to.x, to.y))
+            .map_err(|e| e.to_string())?;
+        let _ = window
+            .app_handle()
+            .save_window_state(tauri_plugin_window_state::StateFlags::POSITION);
+    }
+    window.state::<Moved>().0.store(true, Ordering::Relaxed);
+    Ok(())
+}
+
+/// The frontend reports the size its panel needs (CSS pixels): a row per
+/// account window, times the zoom. A zoom also passes `pin`, the pointer's
+/// CSS position before it and the size ratio, so the grip stays under the
+/// pointer. Otherwise the window grows away from the screen edges it sits
+/// nearest, and it is always kept wholly on its monitor.
+#[tauri::command]
+fn set_size(
+    window: tauri::WebviewWindow,
+    width: f64,
+    height: f64,
+    pin: Option<[f64; 3]>,
+) -> Result<(), String> {
     let scale = window.scale_factor().map_err(|e| e.to_string())?;
-    let width = window.outer_size().map_err(|e| e.to_string())?.width as f64 / scale;
-    window
-        .set_size(LogicalSize::new(width, height.max(1.0)))
-        .map_err(|e| e.to_string())
+    let from = placement(&window).ok_or("window placement unavailable")?;
+    let w = (width.max(1.0) * scale).round() as i32;
+    let h = (height.max(1.0) * scale).round() as i32;
+    let first = !window.state::<Sized>().0.swap(true, Ordering::Relaxed);
+    let monitor = window
+        .current_monitor()
+        .ok()
+        .flatten()
+        .map(|m| monitor_rect(&m));
+
+    let mut to = match (first, pin, monitor) {
+        (false, Some([cx, cy, ratio]), _) if ratio.is_finite() && ratio > 0.0 => {
+            let px = from.x + (cx * scale).round() as i32;
+            let py = from.y + (cy * scale).round() as i32;
+            geometry::grow_from_point(from, w, h, px, py, ratio)
+        }
+        (false, _, Some(m)) => geometry::grow_from_edges(from, w, h, m),
+        _ => Rect { w, h, ..from },
+    };
+    if let Some(m) = monitor {
+        to = geometry::clamp_into(to, m);
+    }
+    if to == from {
+        return Ok(());
+    }
+    place(&window, from, to)
 }
 
 #[tauri::command]
@@ -158,22 +286,76 @@ fn raise_above_taskbar(window: &tauri::WebviewWindow) {
 #[cfg(not(windows))]
 fn raise_above_taskbar(_window: &tauri::WebviewWindow) {}
 
-/// Put the gauge back somewhere reachable, for when it has been dragged
-/// off-screen or onto a monitor that is no longer attached.
+fn displays(window: &tauri::WebviewWindow) -> Vec<Display> {
+    window
+        .available_monitors()
+        .unwrap_or_default()
+        .iter()
+        .map(|m| Display {
+            name: m.name().cloned(),
+            bounds: monitor_rect(m),
+        })
+        .collect()
+}
+
+/// Remember where the gauge sits now, and on which monitor, as home.
+fn set_home(window: &tauri::WebviewWindow) {
+    let (Some(at), Ok(Some(monitor))) = (placement(window), window.current_monitor()) else {
+        return;
+    };
+    let bounds = monitor_rect(&monitor);
+    let home = serde_json::json!({
+        "x": at.x, "y": at.y,
+        "monitor": {
+            "name": monitor.name(),
+            "x": bounds.x, "y": bounds.y, "w": bounds.w, "h": bounds.h,
+        },
+    });
+    write_pref(window.app_handle(), "home", home);
+}
+
+fn saved_home(app: &tauri::AppHandle) -> Option<Home> {
+    let prefs = read_prefs(app);
+    let home = prefs.get("home")?;
+    let int = |v: &serde_json::Value, k: &str| v.get(k)?.as_i64().map(|n| n as i32);
+    let m = home.get("monitor")?;
+    Some(Home {
+        x: int(home, "x")?,
+        y: int(home, "y")?,
+        display: Display {
+            name: m.get("name").and_then(|n| n.as_str()).map(String::from),
+            bounds: Rect::new(int(m, "x")?, int(m, "y")?, int(m, "w")?, int(m, "h")?),
+        },
+    })
+}
+
+/// Put the gauge back where "Set home here" saved it, adjusted to the monitors
+/// attached now. With no home, the default spot: over the primary monitor's
+/// taskbar, 220px in from the right. Either way, wholly on screen.
 #[tauri::command]
 fn reset_position(window: tauri::WebviewWindow) -> Result<(), String> {
-    let monitor = window
-        .primary_monitor()
-        .map_err(|e| e.to_string())?
-        .ok_or("no primary monitor")?;
-    let scale = monitor.scale_factor();
-    let screen = monitor.size();
-    let size = window.outer_size().map_err(|e| e.to_string())?;
-    let x = (screen.width as f64 - size.width as f64) / scale - 220.0;
-    let y = (screen.height as f64 - size.height as f64) / scale;
-    window
-        .set_position(tauri::LogicalPosition::new(x.max(0.0), y.max(0.0)))
-        .map_err(|e| e.to_string())
+    let from = placement(&window).ok_or("window placement unavailable")?;
+    let home = saved_home(window.app_handle())
+        .and_then(|h| geometry::home_rect(&h, from.w, from.h, &displays(&window)));
+    let to = match home {
+        Some(to) => to,
+        None => {
+            let monitor = window
+                .primary_monitor()
+                .map_err(|e| e.to_string())?
+                .ok_or("no primary monitor")?;
+            let m = monitor_rect(&monitor);
+            let inset = (220.0 * monitor.scale_factor()).round() as i32;
+            let spot = Rect::new(
+                m.x + m.w - from.w - inset,
+                m.y + m.h - from.h,
+                from.w,
+                from.h,
+            );
+            geometry::clamp_into(spot, m)
+        }
+    };
+    place(&window, from, to)
 }
 
 /// Draw the tray icon as a miniature of the bar: a capsule track with the fill
@@ -400,7 +582,8 @@ fn watch_grip(app: tauri::AppHandle) {
             let Some(rect) = app.state::<Grip>().0.lock().ok().and_then(|g| *g) else {
                 continue;
             };
-            if geo.is_none() || (drag_offset.is_none() && ticks.is_multiple_of(30)) {
+            let moved = app.state::<Moved>().0.swap(false, Ordering::Relaxed);
+            if geo.is_none() || moved || (drag_offset.is_none() && ticks.is_multiple_of(30)) {
                 geo = geometry(&window);
             }
             let (Some(g), Some(cursor)) = (geo.as_mut(), pointer(&app)) else {
@@ -465,15 +648,19 @@ fn main() {
         ))
         .plugin(
             tauri_plugin_window_state::Builder::default()
-                // Position only: the window sizes itself to its rows, so a
-                // restored height would fight set_height on every launch.
+                // Position only: the window sizes itself to its rows and zoom,
+                // so a restored size would fight set_size on every launch.
                 .with_state_flags(tauri_plugin_window_state::StateFlags::POSITION)
                 .build(),
         )
         .manage(Grip::default())
+        .manage(Moved::default())
+        .manage(Sized::default())
         .invoke_handler(tauri::generate_handler![
             read_usage,
-            set_height,
+            set_size,
+            get_zoom,
+            set_zoom,
             set_grip,
             reset_position,
             set_tray_level
@@ -482,7 +669,7 @@ fn main() {
             let window = app.get_webview_window("main").expect("main window");
             window.set_ignore_cursor_events(true)?;
             // GTK never sizes a non-resizable window below its content's
-            // natural size, 200px for WebKit, so set_height could not shrink
+            // natural size, 200px for WebKit, so set_size could not shrink
             // it. Resizable arms tao's edge-resize band; watch_grip keeps the
             // grip out of it.
             #[cfg(target_os = "linux")]
@@ -524,11 +711,13 @@ fn main() {
                 None::<&str>,
             )?;
             let reset = MenuItem::with_id(app, "reset", "Reset position", true, None::<&str>)?;
+            let home = MenuItem::with_id(app, "home", "Set home here", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
             let menu = Menu::with_items(
                 app,
                 &[
                     &reset,
+                    &home,
                     &PredefinedMenuItem::separator(app)?,
                     &start_item,
                     &PredefinedMenuItem::separator(app)?,
@@ -554,6 +743,11 @@ fn main() {
                         if let Some(w) = app.get_webview_window("main") {
                             let _ = reset_position(w.clone());
                             raise_above_taskbar(&w);
+                        }
+                    }
+                    "home" => {
+                        if let Some(w) = app.get_webview_window("main") {
+                            set_home(&w);
                         }
                     }
                     "quit" => app.exit(0),

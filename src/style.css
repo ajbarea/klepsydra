@@ -2,7 +2,7 @@
    Everything you'd want to change lives in this block. Edit, rebuild, done. */
 :root {
   --bar-width: 100%;
-  --bar-height: 6px;
+  --bar-height: 10px;   /* thick enough to read from across a desk */
   --bar-radius: 999px;
 
   /* Fill ramp: the colour at 0%, at the midpoint, and at 100%. */
@@ -16,7 +16,9 @@
   --track: #2f2f2f;
   --panel-bg: rgba(20, 20, 20, 0.82);
   --panel-radius: 10px;
-  --panel-pad: 10px 14px;
+  --panel-pad-y: 10px;
+  --panel-pad-x: 14px;
+  --panel-width-base: 420px;
 
   --text: #ededed;
   --text-dim: #8a8a8a;
@@ -32,6 +34,9 @@
   --grip-dot-hover: #d0d0d0;
 }
 /* ─────────────────────────────────────────────────────────────────────────── */
+
+/* Scrolling on the grip sets --scale; every size below is multiplied by it. */
+:root { --scale: 1; }
 
 * { margin: 0; padding: 0; box-sizing: border-box; }
 
@@ -56,12 +61,13 @@ html, body {
   display: flex;
   flex-direction: row;
   align-items: stretch;
-  gap: 10px;
-  /* Full width so each track can stretch; the window's width sets the size. */
-  width: var(--panel-width, 100%);
-  padding: var(--panel-pad);
+  gap: calc(10px * var(--scale));
+  /* The panel sets its own width, and the window follows it, as for height. */
+  width: calc(var(--panel-width-base) * var(--scale));
+  padding: calc(var(--panel-pad-y) * var(--scale)) calc(var(--panel-pad-x) * var(--scale));
   background: var(--panel-bg);
-  border-radius: var(--panel-radius);
+  border-radius: calc(var(--panel-radius) * var(--scale));
+  position: relative;
   backdrop-filter: blur(12px);
   transition: opacity 240ms ease;
 }
@@ -72,19 +78,19 @@ html, body {
 .row {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: calc(12px * var(--scale));
 }
 
 .label {
-  font-size: var(--size-label);
+  font-size: calc(var(--size-label) * var(--scale));
   white-space: nowrap;
   flex-shrink: 0;
 }
 
 .track {
   flex: 1 1 auto;
-  min-width: 40px;   /* lets the track absorb the squeeze, never the text */
-  height: var(--bar-height);
+  min-width: calc(40px * var(--scale));   /* lets the track absorb the squeeze, never the text */
+  height: calc(var(--bar-height) * var(--scale));
   background: var(--track);
   border-radius: var(--bar-radius);
   overflow: hidden;
@@ -100,16 +106,16 @@ html, body {
 }
 
 .pct {
-  font-size: var(--size-pct);
+  font-size: calc(var(--size-pct) * var(--scale));
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
   flex-shrink: 0;
-  min-width: 72px;
+  min-width: calc(72px * var(--scale));
   text-align: right;
 }
 
 .sub {
-  font-size: var(--size-sub);
+  font-size: calc(var(--size-sub) * var(--scale));
   color: var(--text-dim);
   font-variant-numeric: tabular-nums;
 }
@@ -119,27 +125,46 @@ html, body {
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 5px;
+  gap: calc(5px * var(--scale));
 }
 
 /* The only part of the window that accepts the mouse. Everything else stays
    click-through, so the gauge never swallows a click meant for what is under it. */
 #grip {
-  flex: 0 0 var(--grip-width);
-  width: var(--grip-width);
-  border-radius: 4px;
+  --dot: calc(1.2px * var(--scale));
+  --dot-edge: calc(1.3px * var(--scale));
+  flex: 0 0 calc(var(--grip-width) * var(--scale));
+  width: calc(var(--grip-width) * var(--scale));
+  border-radius: calc(4px * var(--scale));
   cursor: grab;
-  background-image: radial-gradient(var(--grip-dot) 1.2px, transparent 1.3px);
-  background-size: 5px 5px;
+  background-image: radial-gradient(var(--grip-dot) var(--dot), transparent var(--dot-edge));
+  background-size: calc(5px * var(--scale)) calc(5px * var(--scale));
   background-position: center;
   transition: background-color 140ms ease;
 }
 #grip:hover { background-color: rgba(255, 255, 255, 0.09); }
-#grip:hover { background-image: radial-gradient(var(--grip-dot-hover) 1.2px, transparent 1.3px); }
+#grip:hover { background-image: radial-gradient(var(--grip-dot-hover) var(--dot), transparent var(--dot-edge)); }
 #grip:active { cursor: grabbing; }
 
-#rows { display: flex; flex-direction: column; gap: 7px; }
+#rows { display: flex; flex-direction: column; gap: calc(7px * var(--scale)); }
 
-.entry { display: flex; flex-direction: column; gap: 4px; }
+.entry { display: flex; flex-direction: column; gap: calc(4px * var(--scale)); }
+
+/* The new size, shown briefly while scrolling on the grip. */
+#zoom {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  padding: calc(2px * var(--scale)) calc(10px * var(--scale));
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.78);
+  font-size: calc(var(--size-pct) * var(--scale));
+  font-variant-numeric: tabular-nums;
+  opacity: 0;
+  transition: opacity 240ms ease;
+  pointer-events: none;
+}
+#zoom.on { opacity: 1; transition: none; }
 
 #empty[hidden] { display: none; }
