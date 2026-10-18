@@ -85,15 +85,18 @@ shot 04-critical
 fixture_write "$(entry gw Gateway 0 "{\"spend_limit\":$(w 118 3600)}")"
 shot 05-over-limit
 
-# Degraded readings.
+# Old and ended readings.
 fixture_write "$(entry team RIT-CS-DQL 1800 "{\"five_hour\":$(w 55 7200)}")"
-shot 06-stale
+shot 06-old-reading
 fixture_write "$(entry team RIT-CS-DQL 0 "{\"five_hour\":$(w 73 -60)}")"
 shot 07-window-reset
-fixture_write "$(entry live Personal 0 "{\"five_hour\":$(w 40 7200)}"),$(entry old Abandoned 60000 "{\"five_hour\":$(w 90 7200)}")"
-shot 08-abandoned-dropped
+# The account you switched away from, its window since emptied.
+fixture_write "$(entry pers Personal 0 "{\"five_hour\":$(w 59 14700),\"seven_day\":$(w 31 116000)}"),$(entry team RIT-CS-DQL 30000 "{\"five_hour\":$(w 100 -21600)}")"
+shot 08-switched-away-reset "" 450,160
+fixture_write "$(entry live Personal 0 "{\"five_hour\":$(w 40 7200)}"),$(entry old Abandoned 2700000 "{\"five_hour\":$(w 90 7200)}")"
+shot 09-abandoned-dropped
 rm -f "$fixture"
-shot 09-waiting
+shot 10-waiting
 
 echo "ramp comparison ->"
 for p in 20 45 60 73 90 100; do

@@ -1,9 +1,10 @@
 // Pure rendering logic, kept free of Tauri and DOM so it can be unit tested.
 
+// Past this age a reading says how old it is.
 export const STALE_AFTER_MS = 15 * 60 * 1000;
-// An account nobody has used in this long is gone, not stale. Dropping it stops
-// a signed-out account leaving a dead row on screen forever.
-export const DROP_AFTER_MS = 12 * 60 * 60 * 1000;
+// An account unused this long is gone. Short of that it stays, because the
+// account you are not on is the one you may want to switch to.
+export const DROP_AFTER_MS = 30 * 24 * 60 * 60 * 1000;
 
 // Two sessions can timestamp the same window a moment apart; within this many
 // seconds they are the same window, not a newer one.
@@ -84,6 +85,17 @@ export function formatCountdown(resetsAtSec, nowMs = Date.now()) {
   return `Resets in ${h} hr ${m} min`;
 }
 
+/** "3 hr ago": the largest whole unit, so a glance reads it. */
+export function formatAge(ms) {
+  const mins = Math.floor(Math.max(0, ms) / 60000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins} min ago`;
+  const h = Math.floor(mins / 60);
+  if (h < 24) return `${h} hr ago`;
+  const d = Math.floor(h / 24);
+  return `${d} day${d === 1 ? "" : "s"} ago`;
+}
+
 /**
  * Decide what to draw from a parsed usage.json (or null when it is missing
  * or unreadable). Never throws; an unusable payload degrades to "waiting".
@@ -95,21 +107,26 @@ export function evaluate(payload, key, nowMs = Date.now()) {
   const win = payload.windows?.[key];
   if (!win || !Number.isFinite(Number(win.used_percentage))) return waiting;
 
-  const countdown = formatCountdown(Number(win.resets_at), nowMs);
-  // The window's own reset time has passed, so the number on disk describes a
-  // window that no longer exists.
+  const resetsAt = Number(win.resets_at);
+  const countdown = formatCountdown(resetsAt, nowMs);
+  // The window that number described has ended, and the next one has not
+  // started; usage elsewhere since then would not have reached this machine.
   if (countdown === null) {
-    return { state: "stale", label: windowLabel(key), pct: null, sub: "window reset" };
+    const sub = Number.isFinite(resetsAt) ? `Reset ${formatAge(nowMs - resetsAt * 1000)}` : "window reset";
+    return { state: "reset", label: windowLabel(key), pct: 0, sub };
   }
 
-  const writtenAtMs = Number(payload.written_at) * 1000;
-  const stale = !Number.isFinite(writtenAtMs) || nowMs - writtenAtMs > STALE_AFTER_MS;
+  const observedAtMs = Number(win.observed_at ?? payload.written_at) * 1000;
+  const age = Number.isFinite(observedAtMs) ? nowMs - observedAtMs : Infinity;
+  const sub = age > STALE_AFTER_MS && Number.isFinite(age)
+    ? `${countdown} \u00b7 updated ${formatAge(age)}`
+    : countdown;
 
   return {
-    state: stale ? "stale" : "live",
+    state: "live",
     label: windowLabel(key),
     pct: Number(win.used_percentage),
-    sub: countdown,
+    sub,
   };
 }
 
@@ -121,22 +138,22 @@ export function formatPct(pct) {
 /**
  * Reconcile one window across every session of an account.
  *
- * Each session reports whatever its own last API response said, so an idle
- * terminal keeps publishing a stale, lower number indefinitely. Two rules
- * settle it: a later `resets_at` means a newer window and wins outright, and
- * within one window usage only ever grows, so the highest reading is current.
+ * Each session's file holds its own last API response, published when it
+ * changed, so the one written last is current. Highest-wins is not safe: a
+ * mid-window reset or a plan change lowers usage under the same `resets_at`.
+ * Readings from one second fall back to the newer window, then the higher one.
+ * The winner carries `observed_at`, its session's `written_at`.
  */
 export function pickWindow(sessions, key) {
-  const cands = sessions
-    .map((s) => s?.windows?.[key])
-    .filter(
-      (w) =>
-        w &&
-        Number.isFinite(Number(w.used_percentage)) &&
-        Number.isFinite(Number(w.resets_at)),
-    );
-  if (cands.length === 0) return null;
+  const all = sessions.flatMap((s) => {
+    const w = s?.windows?.[key];
+    const ok = w && Number.isFinite(Number(w.used_percentage)) && Number.isFinite(Number(w.resets_at));
+    return ok ? [{ ...w, observed_at: Number(s.written_at) || 0 }] : [];
+  });
+  if (all.length === 0) return null;
 
+  const latest = Math.max(...all.map((w) => w.observed_at));
+  const cands = all.filter((w) => w.observed_at === latest);
   const newest = Math.max(...cands.map((w) => Number(w.resets_at)));
   const current = cands.filter(
     (w) => newest - Number(w.resets_at) <= WINDOW_MATCH_SECONDS,
@@ -169,10 +186,19 @@ export function toRows(payload, nowMs = Date.now()) {
   const accounts = [];
   for (const [id, sessions] of byAccount) {
     const writtenAt = Math.max(...sessions.map((s) => Number(s.written_at) || 0));
+    // The windows the account reports now. An ended window outside them is
+    // one it no longer has, or one filed under it by mistake.
+    const current = new Set(
+      sessions
+        .filter((s) => (Number(s.written_at) || 0) === writtenAt)
+        .flatMap((s) => Object.keys(s.windows)),
+    );
     const windows = {};
     for (const key of WINDOW_ORDER) {
       const win = pickWindow(sessions, key);
-      if (win) windows[key] = win;
+      if (!win) continue;
+      if (!current.has(key) && formatCountdown(Number(win.resets_at), nowMs) === null) continue;
+      windows[key] = win;
     }
     if (Object.keys(windows).length === 0) continue;
     accounts.push({
@@ -185,14 +211,7 @@ export function toRows(payload, nowMs = Date.now()) {
 
   const fresh = accounts.filter((p) => {
     const at = Number(p.written_at) * 1000;
-    if (!Number.isFinite(at) || nowMs - at > DROP_AFTER_MS) return false;
-    // After a login switch the previous account stops publishing, but its
-    // window keeps burning down and still counts against you -- so keep it
-    // until every one of its windows has actually reset.
-    if (nowMs - at <= STALE_AFTER_MS) return true;
-    return WINDOW_ORDER.some(
-      (k) => p.windows[k] && formatCountdown(Number(p.windows[k].resets_at), nowMs) !== null,
-    );
+    return Number.isFinite(at) && nowMs - at <= DROP_AFTER_MS;
   });
 
   // Most recently used account first. Only one account can be signed in at a

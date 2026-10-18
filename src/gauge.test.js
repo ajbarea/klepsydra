@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { rampColor, rampPosition, formatCountdown, evaluate, formatPct, toRows, pickWindow, STALE_AFTER_MS, DROP_AFTER_MS } from "./gauge.js";
+import { rampColor, rampPosition, formatCountdown, formatAge, evaluate, formatPct, toRows, STALE_AFTER_MS, DROP_AFTER_MS } from "./gauge.js";
 
 const STOPS = { low: "#3b82f6", mid: "#eab308", high: "#ef4444", midAt: 60, highAt: 85 };
 const NOW = 1_800_000_000_000; // fixed clock
@@ -79,20 +79,30 @@ test("0% is a real reading, not a missing one", () => {
   assert.equal(formatPct(r.pct), "0% used");
 });
 
-test("an old file goes stale rather than showing a confident number", () => {
+test("an old reading says how old it is instead of dimming", () => {
   const fresh = evaluate(live(50, 2 * 3600e3, STALE_AFTER_MS - 1000), "five_hour", NOW);
-  assert.equal(fresh.state, "live");
+  assert.equal(fresh.sub, "Resets in 2 hr");
   const old = evaluate(live(50, 2 * 3600e3, STALE_AFTER_MS + 1000), "five_hour", NOW);
-  assert.equal(old.state, "stale");
-  assert.equal(old.pct, 50); // number kept, panel dimmed
+  assert.equal(old.state, "live");
+  assert.equal(old.pct, 50);
+  assert.equal(old.sub, "Resets in 2 hr \u00b7 updated 15 min ago");
 });
 
-test("a window whose reset has passed reports no number at all", () => {
+test("a window whose reset has passed reads as an empty window", () => {
   const r = evaluate(live(73, -1000), "five_hour", NOW);
-  assert.equal(r.state, "stale");
-  assert.equal(r.pct, null);
-  assert.equal(r.sub, "window reset");
-  assert.equal(formatPct(r.pct), "-- ".trim());
+  assert.equal(r.state, "reset");
+  assert.equal(r.pct, 0);
+  assert.equal(r.sub, "Reset just now");
+  assert.equal(formatPct(r.pct), "0% used");
+  assert.equal(evaluate(live(73, -2 * 3600e3), "five_hour", NOW).sub, "Reset 2 hr ago");
+});
+
+test("ages read in the largest whole unit", () => {
+  assert.equal(formatAge(30e3), "just now");
+  assert.equal(formatAge(59 * 60e3), "59 min ago");
+  assert.equal(formatAge(3 * 3600e3 + 59 * 60e3), "3 hr ago");
+  assert.equal(formatAge(25 * 3600e3), "1 day ago");
+  assert.equal(formatAge(3 * 86400e3), "3 days ago");
 });
 
 test("missing, empty and malformed payloads all degrade to waiting", () => {
@@ -163,8 +173,8 @@ test("a long-unused account is dropped rather than left dim forever", () => {
 test("an expired window still shows while the account is active", () => {
   const rows = toRows({ a: acct("a", "P", { five_hour: win(73, -1000) }) }, NOW);
   assert.equal(rows.length, 1);
-  assert.equal(rows[0].sub, "window reset");
-  assert.equal(rows[0].pct, null);
+  assert.equal(rows[0].sub, "Reset just now");
+  assert.equal(rows[0].pct, 0);
 });
 
 test("junk in the file produces no rows instead of throwing", () => {
@@ -184,18 +194,31 @@ test("multi-day countdowns read in days, not tens of hours", () => {
 test("a switched-away account stays while its window is still burning", () => {
   const rows = toRows({
     now: acct("now", "Personal", { five_hour: win(10) }),
-    was: acct("was", "RIT-CS-DQL", { five_hour: win(70) }, 40 * 60e3), // stale, window live
+    was: acct("was", "RIT-CS-DQL", { five_hour: win(70) }, 40 * 60e3), // old reading, window live
   }, NOW);
   assert.deepEqual(rows.map((r) => r.label), ["Personal · session", "RIT-CS-DQL · session"]);
-  assert.equal(rows[1].state, "stale");
+  assert.equal(rows[1].sub, "Resets in 2 hr \u00b7 updated 40 min ago");
 });
 
-test("a switched-away account disappears once its window resets", () => {
+test("a switched-away account stays once its window resets", () => {
+  // An emptied window is the reason to switch back, so it is the last thing
+  // to hide.
   const rows = toRows({
     now: acct("now", "Personal", { five_hour: win(10) }),
     was: acct("was", "RIT-CS-DQL", { five_hour: win(70, -60e3) }, 40 * 60e3),
   }, NOW);
-  assert.deepEqual(rows.map((r) => r.label), ["Current session"]);
+  assert.deepEqual(rows.map((r) => [r.label, r.pct, r.sub]), [
+    ["Personal · session", 10, "Resets in 2 hr"],
+    ["RIT-CS-DQL · session", 0, "Reset 1 min ago"],
+  ]);
+});
+
+test("an account unused for days keeps its rows", () => {
+  const rows = toRows({
+    now: acct("now", "Personal", { five_hour: win(10) }),
+    was: acct("was", "RIT-CS-DQL", { five_hour: win(70, -2 * 86400e3) }, 3 * 86400e3),
+  }, NOW);
+  assert.deepEqual(rows.map((r) => r.label), ["Personal · session", "RIT-CS-DQL · session"]);
 });
 
 // ── reconciling several sessions of one account ─────────────────────────────
@@ -206,9 +229,10 @@ const sess = (id, pct, resetsInMs = 2 * 3600e3, writtenAgoMs = 0, label = "Perso
 });
 
 test("idle sessions holding stale numbers do not drag the reading down", () => {
-  // The reported bug: three terminals on one login publishing 62/3/35 and the
-  // bar flipping between them. Usage only grows inside a window, so 62 is current.
-  const rows = toRows([sess("a", 62), sess("b", 3), sess("c", 35)], NOW);
+  // Three terminals on one login publishing 62/3/35 and the bar flipping
+  // between them. The hook publishes only new readings, so the terminal heard
+  // from last is current.
+  const rows = toRows([sess("a", 62, 2 * 3600e3, 10e3), sess("b", 3, 2 * 3600e3, 3 * 3600e3), sess("c", 35, 2 * 3600e3, 3600e3)], NOW);
   assert.equal(rows.length, 1);
   assert.equal(rows[0].pct, 62);
 });
@@ -228,6 +252,17 @@ test("a newer window wins even though its number is lower", () => {
   ], NOW);
   assert.equal(rows.length, 1);
   assert.equal(rows[0].pct, 2);
+});
+
+test("a reset inside a window is believed, not overruled by older readings", () => {
+  // Seen twice in a fortnight: the weekly fell from 94 to 29, and from 100 to 1
+  // after a plan upgrade, with resets_at unchanged. Idle sessions kept the old
+  // number, and taking the highest showed it for days.
+  const rows = toRows([
+    sess("before", 94, 30 * 3600e3, 3 * 86400e3),
+    sess("after", 29, 30 * 3600e3, 60e3),
+  ], NOW);
+  assert.equal(rows[0].pct, 29);
 });
 
 test("sessions timestamping one window seconds apart are not treated as two", () => {
@@ -264,4 +299,28 @@ test("an account whose freshest session is recent counts as live", () => {
   ], NOW);
   assert.equal(rows[0].state, "live");
   assert.equal(rows[0].pct, 61);
+});
+
+test("a reset window the account no longer reports is left out", () => {
+  // A team seat reports no weekly window. One misfiled under it before the
+  // hook stopped republishing re-renders must not linger as an empty row.
+  const rows = toRows([
+    { account: "t", label: "RIT-CS-DQL", session: "misfiled", written_at: secs(NOW - 5 * 86400e3),
+      windows: { seven_day: win(92, -5 * 86400e3) } },
+    { account: "t", label: "RIT-CS-DQL", session: "real", written_at: secs(NOW - 6 * 3600e3),
+      windows: { five_hour: win(100, -3600e3) } },
+    { account: "p", label: "Personal", session: "now", written_at: secs(NOW),
+      windows: { five_hour: win(10), seven_day: win(31, 30 * 3600e3) } },
+  ], NOW);
+  assert.deepEqual(rows.map((r) => r.label), [
+    "Personal \u00b7 session", "Personal \u00b7 week", "RIT-CS-DQL \u00b7 session",
+  ]);
+});
+
+test("a live window stays even when the latest reading omits it", () => {
+  const rows = toRows([
+    { ...sess("older", 40), windows: { five_hour: win(40), seven_day: win(20, 86400e3) }, written_at: secs(NOW - 600e3) },
+    { ...sess("newer", 45), windows: { five_hour: win(45) } },
+  ], NOW);
+  assert.deepEqual(rows.map((r) => r.pct), [45, 20]);
 });

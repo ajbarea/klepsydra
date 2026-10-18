@@ -118,9 +118,7 @@ function render() {
   const rows = toRows(lastPayload, Date.now());
 
   emptyEl.hidden = rows.length > 0;
-  panel.dataset.state = rows.length === 0
-    ? "waiting"
-    : rows.every((r) => r.state === "stale") ? "stale" : "live";
+  panel.dataset.state = rows.length === 0 ? "waiting" : "live";
 
   // Reuse entries by key so an unchanged row keeps its transition state.
   const existing = new Map(
