@@ -58,9 +58,9 @@ shot() { # name, query, window-size
   printf '  %s\n' "$name.png"
 }
 
-entry() { # id, label, written_ago_sec, windows-json
-  printf '"%s":{"account":"%s","label":"%s","written_at":%s,"windows":%s}' \
-    "$1" "$1" "$2" "$((now - $3))" "$4"
+entry() { # id, label, observed_ago_sec, windows-json
+  printf '"%s":{"account":"%s","label":"%s","written_at":%s,"observed_at":%s,"windows":%s}' \
+    "$1" "$1" "$2" "$((now - $3))" "$((now - $3))" "$4"
 }
 w() { printf '{"used_percentage":%s,"resets_at":%s}' "$1" "$((now + $2))"; }
 fixture_write() { printf '{%s}\n' "$1" >"$fixture"; }

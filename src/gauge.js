@@ -137,39 +137,49 @@ export function formatPct(pct) {
 /** Whether a file came from a hook that publishes only new API responses. */
 const isObserved = (s) => s?.observed_at != null && Number.isFinite(Number(s.observed_at));
 
-/** When a session's reading arrived, or for an older hook's file, when it was last written. */
-const stampOf = (s) => Number(isObserved(s) ? s.observed_at : s?.written_at) || 0;
-
 /**
- * The sessions whose times can be trusted. Before `observed_at`, the hook
- * restamped every session on every re-render, so its times say when a
- * terminal last redrew. Once any observed reading exists, those files are
- * ignored: a real response carries every window, so they hold nothing newer.
+ * When a session's reading arrived, or for an older hook's file, when it was
+ * last written. NaN when the file carries neither.
  */
-function trusted(sessions) {
-  const observed = sessions.filter(isObserved);
-  return observed.length > 0 ? observed : sessions;
+function stampOf(s) {
+  const raw = isObserved(s) ? s.observed_at : s?.written_at;
+  return raw == null ? Number.NaN : Number(raw);
 }
 
 /**
- * Reconcile one window across sessions of an account, as `trusted` returns them.
+ * Which of an account's sessions to reconcile, and whether their times can be
+ * trusted. Before `observed_at`, the hook restamped every session on every
+ * re-render, so its times say only when a terminal last redrew. Older files
+ * that observed readings have overtaken are ignored: a real response carries
+ * every window, so they hold nothing newer. One newer than every observed
+ * reading means an old hook is still writing, so no time is trusted.
+ */
+function reconcilable(sessions) {
+  const observed = sessions.filter(isObserved);
+  if (observed.length === 0) return { sessions, byTime: false };
+  const newest = Math.max(...observed.map(stampOf));
+  const oldHookWriting = sessions.some((s) => !isObserved(s) && stampOf(s) > newest);
+  return oldHookWriting ? { sessions, byTime: false } : { sessions: observed, byTime: true };
+}
+
+/**
+ * Reconcile one window across an account's sessions.
  *
- * Observed readings: the newest is current. Highest-wins is not safe there: a
+ * `byTime`: the newest reading is current. Highest-wins is not safe there: a
  * mid-window reset or a plan change lowers usage under the same `resets_at`.
- * An older hook's files: the newest window, then the highest reading, since
- * their times only say which terminal redrew last. Ties fall back the same way.
+ * Otherwise, and for ties, the newest window wins, then the highest reading.
  * The winner carries `observed_at`, its session's time.
  */
-export function pickWindow(sessions, key) {
+export function pickWindow(sessions, key, byTime) {
   const all = sessions.flatMap((s) => {
     const w = s?.windows?.[key];
     const ok = w && Number.isFinite(Number(w.used_percentage)) && Number.isFinite(Number(w.resets_at));
-    return ok ? [{ ...w, observed_at: stampOf(s), observed: isObserved(s) }] : [];
+    return ok ? [{ ...w, observed_at: stampOf(s) }] : [];
   });
   if (all.length === 0) return null;
 
-  const latest = Math.max(...all.map((w) => w.observed_at));
-  const cands = all.every((w) => w.observed) ? all.filter((w) => w.observed_at === latest) : all;
+  const latest = Math.max(...all.map((w) => w.observed_at).filter(Number.isFinite));
+  const cands = byTime ? all.filter((w) => w.observed_at === latest) : all;
   const newest = Math.max(...cands.map((w) => Number(w.resets_at)));
   const current = cands.filter(
     (w) => newest - Number(w.resets_at) <= WINDOW_MATCH_SECONDS,
@@ -201,8 +211,9 @@ export function toRows(payload, nowMs = Date.now()) {
 
   const accounts = [];
   for (const [id, all] of byAccount) {
-    const sessions = trusted(all);
-    const writtenAt = Math.max(...sessions.map(stampOf));
+    const { sessions, byTime } = reconcilable(all);
+    const stamps = sessions.map(stampOf).filter(Number.isFinite);
+    const writtenAt = stamps.length > 0 ? Math.max(...stamps) : Number.NaN;
     // The windows the account reports now. An ended window outside them is
     // one it no longer has, or one filed under it by mistake. A live one is
     // kept until it ends, since hiding a real window costs more.
@@ -213,7 +224,7 @@ export function toRows(payload, nowMs = Date.now()) {
     );
     const windows = {};
     for (const key of WINDOW_ORDER) {
-      const win = pickWindow(sessions, key);
+      const win = pickWindow(sessions, key, byTime);
       if (!win) continue;
       if (!current.has(key) && formatCountdown(Number(win.resets_at), nowMs) === null) continue;
       windows[key] = win;

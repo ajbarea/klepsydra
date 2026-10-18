@@ -8,18 +8,19 @@ Current slice: readings you can trust across two accounts.
   (refreshInterval, a window's reset time, mode toggles) no longer restamps
   the reading or moves it to whichever login is current; a window Claude Code
   drops at its reset is no change. Files carry `observed_at` and `api_ms`. A
-  config caught mid-write publishes nothing rather than file under "unknown".
-  52 hook tests.
+  config that reads but does not parse (mid-write) publishes nothing rather
+  than file under "unknown". 55 hook tests.
 - Overlay takes the newest observed reading per account and window; ties fall
-  back to the later window, then the higher number. Highest-wins remains only
-  for accounts whose files all predate `observed_at`, where the times say
-  which terminal redrew last; newest-wins there would flap between sessions.
+  back to the later window, then the higher number. Older hook files are
+  ignored once observed readings overtake them. Highest-wins remains while an
+  account has no observed reading, or an old hook is still writing, since
+  those times say only which terminal redrew last.
 - The account you are not on stays: an ended window reads 0% with when it
   reset, and an account drops only after 30 days without a reading. An ended
   window the account's latest reading no longer carries is left out, so a
   misfiled one does not linger.
 - Old readings say their age ("updated 2 hr ago") instead of dimming, so the
-  other account stays legible. Only the empty panel dims. 40 gauge tests.
+  other account stays legible. Only the empty panel dims. 42 gauge tests.
 
 ## Verified against real data, not inferred
 - Replayed every published reading (197 files, two accounts): the shipped
@@ -34,6 +35,12 @@ Current slice: readings you can trust across two accounts.
   account (`scripts/visual-check.sh`).
 
 ## Open
+- Right after the upgrade, a session whose numbers never move (pinned at 100%)
+  stays on highest-wins until they do: its old file carries no API time to
+  tell a response from a re-render, and restamping on equality would bring
+  back the re-render bug.
+- An "unknown" account an old hook filed from a torn config would show for up
+  to 30 days. None exists on either station; the new hook cannot create one.
 - Readings are per machine; usage on the other station shows only after a
   request from this one.
 - Session files are never pruned (197 after four weeks, plus 17 orphaned

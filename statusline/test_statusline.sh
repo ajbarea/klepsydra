@@ -141,12 +141,33 @@ check "new response, same numbers: restamped" \
   "$(jq -r '.written_at | if . > 1700000000 then "yes" else "no" end' "$(acct uuid-team)")" "yes"
 check "new response, same numbers: api time moves" "$(jq -r '.api_ms' "$(acct uuid-team)")" "7400"
 
+# API time can restart lower under the same session id; any change is a response.
+backdate "$(acct uuid-team)"
+run_json "$(timed 300)" team >/dev/null
+check "api time went down: restamped" \
+  "$(jq -r '.written_at | if . > 1700000000 then "yes" else "no" end' "$(acct uuid-team)")" "yes"
+
+# A config that parses but holds an odd oauthAccount still publishes.
+mkdir -p "$work/odd" && printf '{"oauthAccount":"signed-out"}' >"$work/odd/.claude.json"
+rm -rf "$work/out"
+run full.json odd >/dev/null
+check "odd oauthAccount: published as unknown" "$(jq -r '.account' "$(acct unknown)")" "unknown"
+
 # A config caught mid-write must not file the reading under "unknown".
 mkdir -p "$work/torn" && printf '{"oauthAccount":{"accountUu' >"$work/torn/.claude.json"
 rm -rf "$work/out"
 display=$(run full.json torn)
 check "torn config: still echoes"     "$display" "Opus 5 · ctx 21% · 5h 73% · 7d 12%"
 check "torn config: publishes nothing" "$([[ -e "$work/out/accounts" ]] && echo leaked || echo clean)" "clean"
+
+# One that cannot be read at all is not mid-write; publish as before.
+if [[ $EUID -ne 0 ]]; then
+  mkdir -p "$work/locked" && printf '{}' >"$work/locked/.claude.json" && chmod 000 "$work/locked/.claude.json"
+  rm -rf "$work/out"
+  run full.json locked >/dev/null
+  check "unreadable config: published as unknown" "$(jq -r '.label' "$(acct unknown)")" "Claude"
+  chmod 600 "$work/locked/.claude.json"
+fi
 
 # An unreadable earlier file must not stop a good reading publishing.
 rm -rf "$work/out"; mkdir -p "$work/out/accounts/uuid-team"

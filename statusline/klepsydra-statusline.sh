@@ -36,17 +36,17 @@ input=$(cat)
 # its own file.
 config="${CLAUDE_CONFIG_DIR:-$HOME}/.claude.json"
 account=$(jq -c '
-  .oauthAccount // {}
+  (.oauthAccount | objects) // {}
   | { id:    (.accountUuid // "unknown"),
       label: (if .organizationType == "claude_team"
               then (.organizationName // "Team")
               else "Personal" end) }
 ' "$config" 2>/dev/null) || account=""
-# A config that exists but does not parse is one Claude Code is rewriting; a
+# A config that reads but does not parse is one Claude Code is rewriting; a
 # reading published now would be filed under "unknown".
 torn=false
 if [[ -z "$account" ]]; then
-  [[ -e "$config" ]] && torn=true
+  [[ -r "$config" ]] && torn=true
   account='{"id":"unknown","label":"Claude"}'
 fi
 
@@ -78,25 +78,28 @@ parsed=$(printf '%s' "$input" | jq -r \
 # errors here would spam every render.
 [[ -z "$parsed" ]] && exit 0
 
-payload=$(printf '%s' "$parsed" | sed -n 1p)
-limits=$(printf '%s' "$parsed" | sed -n 2p)
-extra=$(printf '%s' "$parsed" | sed -n 3p)
-id=$(printf '%s' "$parsed" | sed -n 4p)
-session=$(printf '%s' "$parsed" | sed -n 5p)
+{
+  IFS= read -r payload
+  IFS= read -r limits
+  IFS= read -r extra
+  IFS= read -r id
+  IFS= read -r session
+} <<<"$parsed"
 
 # Claude Code also re-runs this on refreshInterval, at a window's reset time
 # and on mode toggles, passing the session's last API response again. Only a
 # new response is news: republishing an old one would stamp it as fresh and
 # file it under whichever login is current, which after a switch is not the
-# account that served it. A new response adds API time; without that, only
-# changed windows count, and a window dropped at its reset is no change.
+# account that served it. A new response changes the session's API time (which
+# can restart lower on resume); without that, only changed windows count, and
+# a window dropped at its reset is no change.
 repeats_last_reading() {
   local earlier=("$KLEPSYDRA_DIR"/accounts/*/"$session".json)
   [[ -e "${earlier[0]}" ]] || return 1
   jq -en --argjson now "$payload" '
     [inputs] | max_by(.written_at) as $was
     | ( ($now.api_ms | type) == "number" and ($was.api_ms | type) == "number"
-        and $now.api_ms > $was.api_ms ) as $responded
+        and $now.api_ms != $was.api_ms ) as $responded
     | ($responded | not)
       and ($now.windows | all(to_entries[]; $was.windows[.key] == .value))
   ' "${earlier[@]}" >/dev/null 2>&1

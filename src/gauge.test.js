@@ -350,14 +350,6 @@ test("files from an old hook keep the highest reading rather than flapping", () 
   }
 });
 
-test("an observed reading outranks any file from an old hook", () => {
-  const rows = toRows([
-    legacy("idle", 100, 0, 30 * 3600e3),
-    observed("active", 29, 60e3, 30 * 3600e3),
-  ], NOW);
-  assert.equal(rows[0].pct, 29);
-});
-
 test("observed readings take the newest, not the highest", () => {
   const rows = toRows([
     observed("before", 94, 3 * 86400e3, 30 * 3600e3),
@@ -365,3 +357,29 @@ test("observed readings take the newest, not the highest", () => {
   ], NOW);
   assert.equal(rows[0].pct, 29);
 });
+
+test("an old hook still writing beside the new one makes the times untrusted", () => {
+  // A new reading from weeks ago, and an old hook restamping a live session
+  // now: the newer file wins its windows rather than being thrown away.
+  const rows = toRows([
+    { ...observed("old", 90, 20 * 86400e3, -13 * 86400e3), windows: { seven_day: win(90, -13 * 86400e3) } },
+    { ...legacy("live", 40, 0), windows: { five_hour: win(40), seven_day: win(30, 30 * 3600e3) } },
+  ], NOW);
+  assert.deepEqual(rows.map((r) => [r.label, r.pct]), [["Current session", 40], ["This week", 30]]);
+});
+
+test("old files the new hook has since overtaken are ignored", () => {
+  const rows = toRows([
+    legacy("frozen", 100, 3600e3, 30 * 3600e3),
+    observed("fresh", 29, 60e3, 30 * 3600e3),
+  ], NOW);
+  assert.equal(rows[0].pct, 29);
+});
+
+test("a session with no usable time reads as age unknown, not decades old", () => {
+  const { written_at, ...undated } = legacy("undated", 50, 0);
+  const rows = toRows([legacy("dated", 10, 0), undated], NOW);
+  assert.equal(rows[0].pct, 50);
+  assert.equal(rows[0].sub, "Resets in 2 hr \u00b7 age unknown");
+});
+

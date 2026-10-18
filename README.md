@@ -65,9 +65,11 @@ reconciles them per account and window:
   then the higher number.
 
 Files without `observed_at` come from an older hook, which restamped every
-session on every re-render. They are ignored once the account has an observed
-reading; until then the overlay takes the newest window and its highest
-reading, as before. Upgrade the hook with the overlay.
+session on every re-render. Observed readings newer than all of them make
+them obsolete, and they are ignored. Until then, or while one is newer than
+every observed reading (an old hook still writing), the overlay takes the
+newest window and its highest reading, as before. Upgrade the hook with the
+overlay.
 
 Taking the highest reading is not safe even within one window: a reset granted
 mid-week or a plan upgrade lowers usage under the same `resets_at`.
