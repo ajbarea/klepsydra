@@ -6,7 +6,7 @@ abstract: >-
   usage limit has been used, fed by Claude Code's statusLine hook.
 type: software
 authors:
-  - given-names: Arnaldo
+  - given-names: AJ
     family-names: Barea
     orcid: "https://orcid.org/0009-0001-7938-2376"
 repository-code: "https://github.com/ajbarea/klepsydra"
