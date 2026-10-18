@@ -11,8 +11,6 @@ panel dims only while it has nothing to show. Dimming was dropped because
 the account you are not on is always hours old, and it has to stay legible.
 
 ## Next
-- Scroll on the grip to resize the whole gauge; a tray "Set home here" that
-  "Reset position" returns to; thicker bars.
 - Exercise the tray menu ("Reset position", autostart toggle).
 - Prune session files nobody needs (every window ended, account dropped).
 
@@ -21,6 +19,12 @@ the account you are not on is always hours old, and it has to stay legible.
 - Optional: compact mode that drops the label and countdown to a bare bar.
 
 ## Completed
+- 2026-10-18: Made the gauge resizable and homeable. Scrolling on the grip
+  zooms everything around the pointer, so the grip stays under it; a probe
+  confirmed the click-through window receives the wheel there and passes it
+  through elsewhere. Rows coming or going grow the window away from the
+  nearest screen edges. A tray "Set home here" gives "Reset position" a
+  target that survives monitor changes. Bars went from 6px to 10px.
 - 2026-10-18: Made readings trustworthy across two accounts. Re-renders were
   republishing a session's last reading as fresh and under whichever login was
   current, which filed Personal's weekly under the RIT seat; highest-wins kept

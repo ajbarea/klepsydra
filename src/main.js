@@ -1,7 +1,10 @@
 import { rampColor, toRows, formatPct } from "./gauge.js";
+import { wheelPixels, wheelStep, clampLevel, scaleAt } from "./zoom.js";
 
 const POLL_MS = 5_000;   // how often we re-read the account files
 const TICK_MS = 15_000;  // how often the countdown re-renders between reads
+const ZOOM_SHOWN_MS = 800;   // how long the new size stays on screen
+const ZOOM_SAVE_MS = 400;    // settle time before the size is written to disk
 
 const inTauri = Boolean(window.__TAURI_INTERNALS__ ?? window.__TAURI__);
 
@@ -13,7 +16,7 @@ if (new URLSearchParams(location.search).has("still")) {
 // headless browser interprets --window-size.
 const forcedWidth = new URLSearchParams(location.search).get("w");
 if (forcedWidth) {
-  document.documentElement.style.setProperty("--panel-width", `${parseInt(forcedWidth, 10)}px`);
+  document.documentElement.style.setProperty("--panel-width-base", `${parseInt(forcedWidth, 10)}px`);
 }
 
 function stops() {
@@ -49,10 +52,17 @@ const panel = document.getElementById("panel");
 const rowsEl = document.getElementById("rows");
 const emptyEl = document.getElementById("empty");
 const tpl = document.getElementById("row-tpl");
+const grip = document.getElementById("grip");
+const zoomEl = document.getElementById("zoom");
 
 let lastPayload = null;
-let lastHeight = 0;
+let lastSize = "";
+let lastGrip = "";
 let lastTray = "";
+let zoomLevel = 0;
+let wheel = null;
+let zoomShown = 0;
+let zoomSave = 0;
 
 function paint(entry, row) {
   entry.querySelector(".label").textContent = row.label;
@@ -64,17 +74,37 @@ function paint(entry, row) {
   const clamped = Math.max(0, Math.min(100, row.pct ?? 0));
   fill.style.width = `${clamped}%`;
   // A nonzero reading stays visible as a dot instead of collapsing sub-pixel.
-  fill.style.minWidth = clamped > 0 ? "var(--bar-height)" : "0";
+  fill.style.minWidth = clamped > 0 ? "calc(var(--bar-height) * var(--scale))" : "0";
   fill.style.backgroundColor = rampColor(row.pct ?? 0, stops(), rampMode());
 }
 
-/** Tell the window how tall the panel actually is, so it never clips or gaps. */
-function syncHeight() {
+/** The grab handle's rectangle, in CSS pixels from the window's top-left. */
+function gripRect() {
+  const r = grip.getBoundingClientRect();
+  return [r.left, r.top, r.width, r.height];
+}
+
+/**
+ * Tell the window how big the panel is, so it never clips or gaps. `pin` marks
+ * a zoom, which keeps the point under the pointer still. The grip's new
+ * rectangle travels with the size, so the pointer watcher never pairs a new
+ * position with an old grip.
+ */
+function syncSize(pin = false) {
   if (!inTauri) return;
-  const h = Math.ceil(panel.getBoundingClientRect().height);
-  if (h === lastHeight || h < 1) return;
-  lastHeight = h;
-  window.__TAURI__.core.invoke("set_height", { height: h }).catch(() => {});
+  const r = panel.getBoundingClientRect();
+  const w = Math.ceil(r.width);
+  const h = Math.ceil(r.height);
+  const size = `${w}x${h}`;
+  if (w < 1 || h < 1 || (size === lastSize && !pin)) return;
+  lastSize = size;
+  const g = gripRect();
+  lastGrip = g.join(",");
+  window.__TAURI__.core
+    .invoke("set_size", { width: w, height: h, pin, grip: g })
+    .catch(() => {
+      lastSize = ""; // not applied; the next render tries again
+    });
 }
 
 /**
@@ -107,14 +137,16 @@ function syncTray(rows) {
  */
 function syncGrip() {
   if (!inTauri) return;
-  const r = document.getElementById("grip").getBoundingClientRect();
-  if (r.width < 1 || r.height < 1) return;
-  window.__TAURI__.core
-    .invoke("set_grip", { x: r.left, y: r.top, w: r.width, h: r.height })
-    .catch(() => {});
+  const [x, y, w, h] = gripRect();
+  const key = [x, y, w, h].join(",");
+  if (w < 1 || h < 1 || key === lastGrip) return;
+  lastGrip = key;
+  window.__TAURI__.core.invoke("set_grip", { x, y, w, h }).catch(() => {
+    lastGrip = "";
+  });
 }
 
-function render() {
+function render(pin = false) {
   const rows = toRows(lastPayload, Date.now());
 
   emptyEl.hidden = rows.length > 0;
@@ -142,9 +174,53 @@ function render() {
 
   document.title = rows.length ? `klepsydra ${formatPct(rows[0].pct)}` : "klepsydra";
   syncTray(rows);
-  syncHeight();
+  syncSize(pin);
   syncGrip();
 }
+
+function applyZoom() {
+  document.documentElement.style.setProperty("--scale", String(scaleAt(zoomLevel)));
+}
+
+/** The harness pins a level with ?zoom=; the app keeps the last one on disk. */
+async function savedZoom() {
+  const q = new URLSearchParams(location.search).get("zoom");
+  if (q !== null) return clampLevel(Number(q));
+  if (!inTauri) return 0;
+  try {
+    return clampLevel(await window.__TAURI__.core.invoke("get_zoom"));
+  } catch {
+    return 0;
+  }
+}
+
+function showZoom() {
+  zoomEl.textContent = `${Math.round(scaleAt(zoomLevel) * 100)}%`;
+  zoomEl.classList.add("on");
+  clearTimeout(zoomShown);
+  zoomShown = setTimeout(() => zoomEl.classList.remove("on"), ZOOM_SHOWN_MS);
+}
+
+// Scrolling on the grip resizes the whole gauge. The grip is the one part of
+// the window that takes the mouse, so the wheel elsewhere still reaches
+// whatever is underneath.
+grip.addEventListener("wheel", (e) => {
+  e.preventDefault();
+  const r = wheelStep(wheel, wheelPixels(e.deltaY, e.deltaMode), performance.now());
+  wheel = r.state;
+  const next = clampLevel(zoomLevel + r.steps);
+  if (next === zoomLevel) return;
+  zoomLevel = next;
+  applyZoom();
+  showZoom();
+  render(true);
+  if (inTauri) {
+    clearTimeout(zoomSave);
+    zoomSave = setTimeout(() => {
+      window.__TAURI__.core.invoke("set_zoom", { level: zoomLevel }).catch(() => {});
+    }, ZOOM_SAVE_MS);
+  }
+}, { passive: false });
 
 async function poll() {
   lastPayload = await readUsage();
@@ -154,6 +230,8 @@ async function poll() {
 // Exposed so the visual-check harness can drive states without live files.
 window.__klepsydra = { set(p) { lastPayload = p; render(); } };
 
+zoomLevel = await savedZoom();
+applyZoom();
 poll();
 setInterval(poll, POLL_MS);
 setInterval(render, TICK_MS);

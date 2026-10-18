@@ -182,6 +182,14 @@ Grab the dotted handle on the left edge to drag the gauge anywhere; it
 remembers where you put it. Everything except that handle is click-through, so
 the gauge never intercepts a click meant for the window underneath.
 
+Scroll on the handle to resize the whole gauge, text and bars together, from
+75% to 236% in 10% steps; the new size shows briefly and is remembered. The
+point under the pointer stays put, so the handle stays under it. When rows
+come or go, the gauge grows away from the screen edges it sits nearest: parked
+over the taskbar, it grows upward. Either way it stays wholly on its monitor.
+Scrolling relies on Windows' "Scroll inactive windows when I hover over them",
+which is on by default.
+
 Dragging is handled in the backend rather than by `data-tauri-drag-region`,
 which needs a focused window -- this one is deliberately unfocused and
 click-through, so webview drag events never arrive. The pointer watcher reads
@@ -197,9 +205,13 @@ restyling cannot desync the two.
 
 The tray icon is itself a miniature of the bar, redrawn as the reading changes,
 so the level stays readable when the overlay is covered or a fullscreen app is
-in front. It offers "Reset position" (for when the gauge has been dragged
-off-screen or onto a monitor that is no longer attached), toggles "Start with
-Windows" ("Start at login" on Linux), and quits. Autostart is on by default; the icon may start in the
+in front. "Set home here" saves where the gauge sits now, and "Reset position"
+returns it there, keeping the corner nearest the screen edges: a gauge homed
+on the taskbar returns to the taskbar at any size. Its monitor is found by
+position, then by name, then by nearness, and a changed resolution moves
+home to the same relative spot. With no home saved, it goes over the primary
+monitor's taskbar, 220px in from the right. The menu
+also toggles "Start with Windows" ("Start at login" on Linux) and quits. Autostart is on by default; the icon may start in the
 notification-area overflow.
 
 ### Staying in front of the taskbar
@@ -241,9 +253,10 @@ tray icon follows the same order, and so tracks the account you are on.
 
 ## Restyling
 
-Every visual token lives at the top of `src/style.css`: bar height and radius,
-the three ramp colours and their thresholds, panel background and padding,
-fonts and sizes. `--ramp-mode` picks between `blend` (continuous
+Every visual token lives at the top of `src/style.css`: bar height (10px, read
+from across a desk) and radius, the three ramp colours and their thresholds,
+panel background, padding and width, fonts and sizes. Each size is multiplied
+by the zoom set from the handle. `--ramp-mode` picks between `blend` (continuous
 interpolation) and `bands` (flat colours that switch at thresholds). Edit,
 rebuild, done.
 
