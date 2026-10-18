@@ -30,6 +30,12 @@ fi
 # --- end klepsydra dir ---
 
 UUID_RE='^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+PROC_ROOT=${KLEPSYDRA_PROC:-/proc} # tests point these at a fake /proc and voices.json
+VOICES=${KERYX_VOICES:-}
+if [[ -z $VOICES ]]; then
+  if [[ -n ${XDG_CACHE_HOME:-} ]]; then VOICES=$XDG_CACHE_HOME/keryx/voices.json
+  elif [[ -n ${HOME:-} ]]; then VOICES=$HOME/.cache/keryx/voices.json; fi
+fi
 
 # Sets where_repo, where_worktree and where_branch for `path` (empty when
 # none), reading .git directly as keryx's source_name does, so no git process
@@ -85,6 +91,58 @@ branch_of() { # gitdir
     "ref: "*) where_branch=${head#ref: } ;;
     *) where_branch=${head:0:7} ;;
   esac
+}
+
+# Fields of /proc/<pid>/stat after the command name, into `stat`: [0] is the
+# state, [1] the parent pid, [19] the start time. The name sits in parentheses
+# and may itself contain spaces or ")".
+proc_stat() { # pid
+  local raw=""
+  { IFS= read -r raw <"$PROC_ROOT/$1/stat"; } 2>/dev/null
+  [[ $raw == *") "* ]] || return 1
+  read -r -a stat <<<"${raw##*") "}"
+  (( ${#stat[@]} > 19 ))
+}
+
+# Whether `pid` is Claude Code: by name, or an npm install's
+# `node .../@anthropic-ai/claude-code/cli.js`, as keryx decides.
+is_claude() { # pid
+  local comm="" arg part
+  local -a argv=() parts=()
+  { IFS= read -r comm <"$PROC_ROOT/$1/comm"; } 2>/dev/null
+  [[ $comm == claude || $comm == claude-code ]] && return 0
+  { mapfile -d '' -t -n 2 argv <"$PROC_ROOT/$1/cmdline"; } 2>/dev/null || return 1
+  for arg in "${argv[@]}"; do
+    IFS=/ read -r -a parts <<<"$arg"
+    for part in "${parts[@]}"; do
+      [[ $part == claude || $part == claude-code ]] && return 0
+    done
+  done
+  return 1
+}
+
+# Sets found_pid and found_start to the nearest Claude Code process at or
+# above `pid`: keryx's key for a terminal (pid:starttime in voices.json).
+claude_ancestor() { # pid
+  local pid=$1 i
+  local -a stat=()
+  found_pid="" found_start=""
+  for ((i = 0; i < 32; i++)); do
+    proc_stat "$pid" || return 1
+    if is_claude "$pid"; then
+      found_pid=$pid found_start=${stat[19]}
+      return 0
+    fi
+    pid=${stat[1]}
+    (( pid >= 1 )) || return 1
+  done
+  return 1
+}
+
+# The voice keryx holds for a terminal, or nothing without keryx or a hold.
+holder_voice() { # pid start
+  [[ -n $VOICES && -r $VOICES ]] || return 0
+  jq -r --arg h "$1:$2" '.holders[$h].voice // empty | strings' "$VOICES" 2>/dev/null
 }
 
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
