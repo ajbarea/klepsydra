@@ -5,13 +5,13 @@ mod geometry;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use geometry::{Display, Home, Rect};
 use tauri::{
     menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem},
     tray::TrayIconBuilder,
-    Manager, PhysicalPosition, PhysicalSize,
+    Manager, PhysicalPosition,
 };
 use tauri_plugin_autostart::ManagerExt;
 use tauri_plugin_window_state::AppHandleExt;
@@ -172,37 +172,66 @@ fn monitor_rect(m: &tauri::Monitor) -> Rect {
     )
 }
 
-/// Move and resize to `to`, telling the grip watcher, and remember the spot.
+fn display_of(m: &tauri::Monitor) -> Display {
+    Display {
+        name: m.name().cloned(),
+        bounds: monitor_rect(m),
+        scale: m.scale_factor(),
+    }
+}
+
+/// Move and resize to `to`, and tell the grip watcher, which also saves the
+/// spot once the moves settle.
 fn place(window: &tauri::WebviewWindow, from: Rect, to: Rect) -> Result<(), String> {
-    if (to.w, to.h) != (from.w, from.h) {
-        window
-            .set_size(PhysicalSize::new(to.w as u32, to.h as u32))
-            .map_err(|e| e.to_string())?;
+    if to == from {
+        return Ok(());
     }
-    if (to.x, to.y) != (from.x, from.y) {
-        window
-            .set_position(PhysicalPosition::new(to.x, to.y))
-            .map_err(|e| e.to_string())?;
-        let _ = window
-            .app_handle()
-            .save_window_state(tauri_plugin_window_state::StateFlags::POSITION);
-    }
+    move_resize(window, to)?;
     window.state::<Moved>().0.store(true, Ordering::Relaxed);
     Ok(())
 }
 
+/// One SetWindowPos, so no frame shows the new size at the old spot, which
+/// could cross onto another monitor and set off a DPI change mid-move.
+#[cfg(windows)]
+fn move_resize(window: &tauri::WebviewWindow, r: Rect) -> Result<(), String> {
+    const SWP_NOZORDER: u32 = 0x0004;
+    const SWP_NOACTIVATE: u32 = 0x0010;
+    let hwnd = window.hwnd().map_err(|e| e.to_string())?;
+    let flags = SWP_NOZORDER | SWP_NOACTIVATE;
+    match unsafe { win32::SetWindowPos(hwnd.0 as isize, 0, r.x, r.y, r.w, r.h, flags) } {
+        0 => Err("SetWindowPos failed".into()),
+        _ => Ok(()),
+    }
+}
+
+#[cfg(not(windows))]
+fn move_resize(window: &tauri::WebviewWindow, r: Rect) -> Result<(), String> {
+    window
+        .set_position(PhysicalPosition::new(r.x, r.y))
+        .map_err(|e| e.to_string())?;
+    window
+        .set_size(tauri::PhysicalSize::new(r.w as u32, r.h as u32))
+        .map_err(|e| e.to_string())
+}
+
 /// The frontend reports the size its panel needs (CSS pixels): a row per
-/// account window, times the zoom. A zoom also passes `pin`, the pointer's
-/// CSS position before it and the size ratio, so the grip stays under the
-/// pointer. Otherwise the window grows away from the screen edges it sits
-/// nearest, and it is always kept wholly on its monitor.
+/// account window, times the zoom, with the grip's new rectangle. `pin` marks
+/// a zoom: the content under the pointer, read now rather than when the wheel
+/// event fired, stays under it, so the grip does too. Otherwise the window
+/// grows away from the screen edges it sits nearest. Either way it is kept
+/// wholly on its monitor.
 #[tauri::command]
 fn set_size(
     window: tauri::WebviewWindow,
     width: f64,
     height: f64,
-    pin: Option<[f64; 3]>,
+    pin: bool,
+    grip: Option<[f64; 4]>,
 ) -> Result<(), String> {
+    if let (Some(g), Ok(mut slot)) = (grip, window.state::<Grip>().0.lock()) {
+        *slot = Some(g);
+    }
     let scale = window.scale_factor().map_err(|e| e.to_string())?;
     let from = placement(&window).ok_or("window placement unavailable")?;
     let w = (width.max(1.0) * scale).round() as i32;
@@ -214,20 +243,24 @@ fn set_size(
         .flatten()
         .map(|m| monitor_rect(&m));
 
-    let mut to = match (first, pin, monitor) {
-        (false, Some([cx, cy, ratio]), _) if ratio.is_finite() && ratio > 0.0 => {
-            let px = from.x + (cx * scale).round() as i32;
-            let py = from.y + (cy * scale).round() as i32;
+    let cursor = if pin && !first {
+        pointer(window.app_handle())
+    } else {
+        None
+    };
+    let mut to = match (first, cursor, monitor) {
+        (true, _, _) => Rect { w, h, ..from },
+        (false, Some(p), _) => {
+            // Everything scales with the width, so its ratio is the zoom's.
+            let ratio = w as f64 / from.w.max(1) as f64;
+            let (px, py) = (p.x.round() as i32, p.y.round() as i32);
             geometry::grow_from_point(from, w, h, px, py, ratio)
         }
-        (false, _, Some(m)) => geometry::grow_from_edges(from, w, h, m),
-        _ => Rect { w, h, ..from },
+        (false, None, Some(m)) => geometry::grow_from_edges(from, w, h, m),
+        (false, None, None) => Rect { w, h, ..from },
     };
     if let Some(m) = monitor {
         to = geometry::clamp_into(to, m);
-    }
-    if to == from {
-        return Ok(());
     }
     place(&window, from, to)
 }
@@ -255,22 +288,9 @@ fn raise_above_taskbar(window: &tauri::WebviewWindow) {
     const SWP_NOMOVE: u32 = 0x0002;
     const SWP_NOACTIVATE: u32 = 0x0010;
 
-    #[link(name = "user32")]
-    unsafe extern "system" {
-        fn SetWindowPos(
-            hwnd: isize,
-            insert_after: isize,
-            x: i32,
-            y: i32,
-            cx: i32,
-            cy: i32,
-            flags: u32,
-        ) -> i32;
-    }
-
     if let Ok(hwnd) = window.hwnd() {
         unsafe {
-            SetWindowPos(
+            win32::SetWindowPos(
                 hwnd.0 as isize,
                 HWND_TOPMOST,
                 0,
@@ -286,29 +306,43 @@ fn raise_above_taskbar(window: &tauri::WebviewWindow) {
 #[cfg(not(windows))]
 fn raise_above_taskbar(_window: &tauri::WebviewWindow) {}
 
+#[cfg(windows)]
+mod win32 {
+    #[link(name = "user32")]
+    unsafe extern "system" {
+        pub fn SetWindowPos(
+            hwnd: isize,
+            insert_after: isize,
+            x: i32,
+            y: i32,
+            cx: i32,
+            cy: i32,
+            flags: u32,
+        ) -> i32;
+    }
+}
+
 fn displays(window: &tauri::WebviewWindow) -> Vec<Display> {
     window
         .available_monitors()
         .unwrap_or_default()
         .iter()
-        .map(|m| Display {
-            name: m.name().cloned(),
-            bounds: monitor_rect(m),
-        })
+        .map(display_of)
         .collect()
 }
 
-/// Remember where the gauge sits now, and on which monitor, as home.
+/// Remember where the gauge sits now, at its size, and on which monitor.
 fn set_home(window: &tauri::WebviewWindow) {
     let (Some(at), Ok(Some(monitor))) = (placement(window), window.current_monitor()) else {
         return;
     };
-    let bounds = monitor_rect(&monitor);
+    let d = display_of(&monitor);
     let home = serde_json::json!({
-        "x": at.x, "y": at.y,
+        "rect": { "x": at.x, "y": at.y, "w": at.w, "h": at.h },
         "monitor": {
-            "name": monitor.name(),
-            "x": bounds.x, "y": bounds.y, "w": bounds.w, "h": bounds.h,
+            "name": d.name,
+            "x": d.bounds.x, "y": d.bounds.y, "w": d.bounds.w, "h": d.bounds.h,
+            "scale": d.scale,
         },
     });
     write_pref(window.app_handle(), "home", home);
@@ -318,13 +352,21 @@ fn saved_home(app: &tauri::AppHandle) -> Option<Home> {
     let prefs = read_prefs(app);
     let home = prefs.get("home")?;
     let int = |v: &serde_json::Value, k: &str| v.get(k)?.as_i64().map(|n| n as i32);
+    let rect = |v: &serde_json::Value| {
+        Some(Rect::new(
+            int(v, "x")?,
+            int(v, "y")?,
+            int(v, "w")?,
+            int(v, "h")?,
+        ))
+    };
     let m = home.get("monitor")?;
     Some(Home {
-        x: int(home, "x")?,
-        y: int(home, "y")?,
+        rect: rect(home.get("rect")?)?,
         display: Display {
             name: m.get("name").and_then(|n| n.as_str()).map(String::from),
-            bounds: Rect::new(int(m, "x")?, int(m, "y")?, int(m, "w")?, int(m, "h")?),
+            bounds: rect(m)?,
+            scale: m.get("scale").and_then(|s| s.as_f64()).unwrap_or(1.0),
         },
     })
 }
@@ -332,27 +374,24 @@ fn saved_home(app: &tauri::AppHandle) -> Option<Home> {
 /// Put the gauge back where "Set home here" saved it, adjusted to the monitors
 /// attached now. With no home, the default spot: over the primary monitor's
 /// taskbar, 220px in from the right. Either way, wholly on screen.
+///
+/// The size is worked out at the destination monitor's scale, since Windows
+/// resizes the window when it lands on a monitor with a different one.
 #[tauri::command]
 fn reset_position(window: tauri::WebviewWindow) -> Result<(), String> {
     let from = placement(&window).ok_or("window placement unavailable")?;
+    let scale = window.scale_factor().map_err(|e| e.to_string())?;
+    let (w, h) = (from.w as f64 / scale, from.h as f64 / scale);
     let home = saved_home(window.app_handle())
-        .and_then(|h| geometry::home_rect(&h, from.w, from.h, &displays(&window)));
+        .and_then(|home| geometry::home_rect(&home, w, h, &displays(&window)));
     let to = match home {
         Some(to) => to,
         None => {
-            let monitor = window
+            let primary = window
                 .primary_monitor()
                 .map_err(|e| e.to_string())?
                 .ok_or("no primary monitor")?;
-            let m = monitor_rect(&monitor);
-            let inset = (220.0 * monitor.scale_factor()).round() as i32;
-            let spot = Rect::new(
-                m.x + m.w - from.w - inset,
-                m.y + m.h - from.h,
-                from.w,
-                from.h,
-            );
-            geometry::clamp_into(spot, m)
+            geometry::default_rect(&display_of(&primary), w, h)
         }
     };
     place(&window, from, to)
@@ -450,7 +489,6 @@ fn pointer(app: &tauri::AppHandle) -> Option<Pointer> {
 fn pointer(_app: &tauri::AppHandle) -> Option<Pointer> {
     use std::cell::RefCell;
     use std::sync::OnceLock;
-    use std::time::Instant;
     use x11rb::connection::Connection;
     use x11rb::protocol::xproto::{ConnectionExt, KeyButMask, Window};
     use x11rb::rust_connection::RustConnection;
@@ -507,9 +545,10 @@ fn pointer(app: &tauri::AppHandle) -> Option<Pointer> {
     })
 }
 
-/// The window's placement in physical desktop pixels.
+/// The window's placement in physical desktop pixels, with its display scale,
+/// as the pointer watcher caches it.
 #[derive(Clone, Copy)]
-struct Geometry {
+struct Placed {
     x: f64,
     y: f64,
     w: f64,
@@ -517,20 +556,14 @@ struct Geometry {
     scale: f64,
 }
 
-fn geometry(window: &tauri::WebviewWindow) -> Option<Geometry> {
-    let (Ok(origin), Ok(size), Ok(scale)) = (
-        window.outer_position(),
-        window.outer_size(),
-        window.scale_factor(),
-    ) else {
-        return None;
-    };
-    Some(Geometry {
-        x: origin.x as f64,
-        y: origin.y as f64,
-        w: size.width as f64,
-        h: size.height as f64,
-        scale,
+fn placed(window: &tauri::WebviewWindow) -> Option<Placed> {
+    let r = placement(window)?;
+    Some(Placed {
+        x: r.x as f64,
+        y: r.y as f64,
+        w: r.w as f64,
+        h: r.h as f64,
+        scale: window.scale_factor().ok()?,
     })
 }
 
@@ -539,7 +572,7 @@ fn geometry(window: &tauri::WebviewWindow) -> Option<Geometry> {
 /// a press there passes through instead. Windows is not resizable, so it has
 /// no band.
 fn clear_of_resize_band(
-    g: Geometry,
+    g: Placed,
     (left, top, right, bottom): (f64, f64, f64, f64),
 ) -> (f64, f64, f64, f64) {
     const TAO_RESIZE_BORDER: f64 = 5.0; // tao's linux/event_loop.rs
@@ -572,7 +605,10 @@ fn watch_grip(app: tauri::AppHandle) {
         // Every window getter is a round trip to the main thread, so the
         // placement is cached and refreshed twice a second. Only this loop's
         // drag moves the window quickly, and it updates the cache itself.
-        let mut geo: Option<Geometry> = None;
+        let mut geo: Option<Placed> = None;
+        // When to save the position after a resize or reset moved the window:
+        // once the moves settle, not on every wheel notch.
+        let mut save_at: Option<Instant> = None;
         loop {
             std::thread::sleep(Duration::from_millis(16));
             ticks = ticks.wrapping_add(1);
@@ -583,8 +619,15 @@ fn watch_grip(app: tauri::AppHandle) {
                 continue;
             };
             let moved = app.state::<Moved>().0.swap(false, Ordering::Relaxed);
+            if moved {
+                save_at = Some(Instant::now() + Duration::from_millis(600));
+            }
             if geo.is_none() || moved || (drag_offset.is_none() && ticks.is_multiple_of(30)) {
-                geo = geometry(&window);
+                geo = placed(&window);
+            }
+            if drag_offset.is_none() && save_at.is_some_and(|t| Instant::now() >= t) {
+                save_at = None;
+                let _ = app.save_window_state(tauri_plugin_window_state::StateFlags::POSITION);
             }
             let (Some(g), Some(cursor)) = (geo.as_mut(), pointer(&app)) else {
                 continue;

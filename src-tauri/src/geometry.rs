@@ -32,18 +32,29 @@ impl Rect {
     }
 }
 
-/// A monitor as it was seen, enough to recognise it again.
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// A monitor as it was seen, enough to recognise it again, with its display
+/// scale so a window's physical size there can be known before it moves.
+#[derive(Clone, Debug, PartialEq)]
 pub struct Display {
     pub name: Option<String>,
     pub bounds: Rect,
+    pub scale: f64,
 }
 
-/// The position "Set home here" saved, with the monitor it was on.
-#[derive(Clone, Debug, PartialEq, Eq)]
+impl Display {
+    /// A window of `w` x `h` CSS pixels, in this monitor's physical pixels.
+    fn physical(&self, w: f64, h: f64) -> (i32, i32) {
+        (
+            (w * self.scale).round() as i32,
+            (h * self.scale).round() as i32,
+        )
+    }
+}
+
+/// The window "Set home here" saved, with the monitor it was on.
+#[derive(Clone, Debug, PartialEq)]
 pub struct Home {
-    pub x: i32,
-    pub y: i32,
+    pub rect: Rect,
     pub display: Display,
 }
 
@@ -73,34 +84,63 @@ pub fn grow_from_point(old: Rect, w: i32, h: i32, px: i32, py: i32, ratio: f64) 
     Rect { x, y, w, h }
 }
 
-/// Where home is now. The saved monitor is matched by name, or failing that the
-/// monitor nearest where home was; the offset within it is rescaled if its
-/// resolution changed, and the window is kept wholly on it. `None` with no
-/// monitors at all.
-pub fn home_rect(home: &Home, w: i32, h: i32, displays: &[Display]) -> Option<Rect> {
-    let saved = home.display.bounds;
-    let was = Rect::new(home.x, home.y, w, h);
-    let target = home
-        .display
-        .name
-        .as_ref()
-        .and_then(|n| displays.iter().find(|d| d.name.as_ref() == Some(n)))
+/// The monitor home was saved on, as attached now: the one at the same bounds
+/// (names like `\\.\DISPLAY1` are reassigned on re-plugging), else the one
+/// with the same name, else the one nearest where home was.
+fn find_display<'a>(home: &Home, displays: &'a [Display]) -> Option<&'a Display> {
+    let saved = &home.display;
+    displays
+        .iter()
+        .find(|d| d.bounds == saved.bounds)
         .or_else(|| {
-            displays
-                .iter()
-                .max_by_key(|d| (d.bounds.overlap(&was), -d.bounds.centre_distance(&was)))
-        })?
-        .bounds;
-    let scaled = |offset: i32, now: i32, then: i32| {
-        if then > 0 {
-            (offset as f64 * now as f64 / then as f64).round() as i32
+            let name = saved.name.as_ref()?;
+            displays.iter().find(|d| d.name.as_ref() == Some(name))
+        })
+        .or_else(|| {
+            displays.iter().max_by_key(|d| {
+                (
+                    d.bounds.overlap(&home.rect),
+                    -d.bounds.centre_distance(&home.rect),
+                )
+            })
+        })
+}
+
+/// Where home is now, for a window of `w` x `h` CSS pixels. Home keeps its
+/// corner nearest the screen edges, as `grow_from_edges` does, so one parked
+/// on the taskbar stays on it whatever the gauge's size; that corner's offset
+/// is rescaled if the monitor's resolution changed, and the window is sized
+/// at the monitor's own scale and kept wholly on it. `None` with no monitors.
+pub fn home_rect(home: &Home, w: f64, h: f64, displays: &[Display]) -> Option<Rect> {
+    let target = find_display(home, displays)?;
+    let (saved, now) = (home.display.bounds, target.bounds);
+    let was = home.rect;
+    let right = 2 * was.x + was.w > 2 * saved.x + saved.w;
+    let lower = 2 * was.y + was.h > 2 * saved.y + saved.h;
+    let scaled = |offset: i32, to: i32, from: i32| {
+        if from > 0 {
+            (offset as f64 * to as f64 / from as f64).round() as i32
         } else {
             offset
         }
     };
-    let x = target.x + scaled(home.x - saved.x, target.w, saved.w);
-    let y = target.y + scaled(home.y - saved.y, target.h, saved.h);
-    Some(clamp_into(Rect::new(x, y, w, h), target))
+    let ax = if right { was.x + was.w } else { was.x };
+    let ay = if lower { was.y + was.h } else { was.y };
+    let ax = now.x + scaled(ax - saved.x, now.w, saved.w);
+    let ay = now.y + scaled(ay - saved.y, now.h, saved.h);
+    let (w, h) = target.physical(w, h);
+    let x = if right { ax - w } else { ax };
+    let y = if lower { ay - h } else { ay };
+    Some(clamp_into(Rect::new(x, y, w, h), now))
+}
+
+/// The spot with no home saved: over the taskbar of `primary`, 220 CSS pixels
+/// in from its right edge, sized at its scale.
+pub fn default_rect(primary: &Display, w: f64, h: f64) -> Rect {
+    let m = primary.bounds;
+    let (w, h) = primary.physical(w, h);
+    let inset = (220.0 * primary.scale).round() as i32;
+    clamp_into(Rect::new(m.x + m.w - w - inset, m.y + m.h - h, w, h), m)
 }
 
 #[cfg(test)]
@@ -118,7 +158,12 @@ mod tests {
         Display {
             name: Some(name.into()),
             bounds,
+            scale: 1.0,
         }
+    }
+
+    fn home(rect: Rect, display: Display) -> Home {
+        Home { rect, display }
     }
 
     #[test]
@@ -199,113 +244,134 @@ mod tests {
 
     #[test]
     fn home_returns_exactly_where_it_was_saved() {
-        let home = Home {
-            x: 1280,
-            y: 1022,
-            display: display("\\\\.\\DISPLAY1", SCREEN),
-        };
-        let now = [display("\\\\.\\DISPLAY1", SCREEN)];
+        let h = home(Rect::new(1280, 1022, 420, 58), display("DP-1", SCREEN));
+        let now = [display("DP-1", SCREEN)];
         assert_eq!(
-            home_rect(&home, 420, 58, &now),
+            home_rect(&h, 420.0, 58.0, &now),
             Some(Rect::new(1280, 1022, 420, 58))
+        );
+    }
+
+    #[test]
+    fn home_on_the_taskbar_stays_on_it_at_another_size() {
+        // Saved zoomed in with two rows, bottom on the screen edge.
+        let h = home(Rect::new(900, 880, 960, 200), display("DP-1", SCREEN));
+        let now = [display("DP-1", SCREEN)];
+        assert_eq!(
+            home_rect(&h, 420.0, 58.0, &now),
+            Some(Rect::new(1440, 1022, 420, 58))
         );
     }
 
     #[test]
     fn home_on_a_second_monitor_follows_it_by_name() {
         let second = Rect::new(1920, 0, 2560, 1440);
-        let home = Home {
-            x: 2100,
-            y: 1300,
-            display: display("DP-2", second),
-        };
+        let h = home(Rect::new(2100, 1300, 420, 58), display("DP-2", second));
         // The second monitor now sits to the left of the first.
         let moved = Rect::new(-2560, 0, 2560, 1440);
         let now = [display("DP-1", SCREEN), display("DP-2", moved)];
         assert_eq!(
-            home_rect(&home, 420, 58, &now),
+            home_rect(&h, 420.0, 58.0, &now),
             Some(Rect::new(-2380, 1300, 420, 58))
+        );
+    }
+
+    #[test]
+    fn a_reassigned_name_does_not_beat_matching_bounds() {
+        // Saved on the laptop panel as DISPLAY1; after docking, the external
+        // monitor took that name and the panel became DISPLAY2.
+        let h = home(Rect::new(100, 100, 420, 58), display("DISPLAY1", SCREEN));
+        let now = [
+            display("DISPLAY1", Rect::new(1920, 0, 2560, 1440)),
+            display("DISPLAY2", SCREEN),
+        ];
+        assert_eq!(
+            home_rect(&h, 420.0, 58.0, &now),
+            Some(Rect::new(100, 100, 420, 58))
         );
     }
 
     #[test]
     fn home_on_an_unplugged_monitor_falls_to_the_nearest() {
         let second = Rect::new(1920, 0, 1920, 1080);
-        let home = Home {
-            x: 3000,
-            y: 1000,
-            display: display("DP-2", second),
-        };
+        let h = home(Rect::new(3000, 1000, 420, 58), display("DP-2", second));
         let now = [display("DP-1", SCREEN)];
-        // Same offset on the remaining monitor, which is the same size.
+        // Same corner offset on the remaining monitor, which is the same size.
         assert_eq!(
-            home_rect(&home, 420, 58, &now),
+            home_rect(&h, 420.0, 58.0, &now),
             Some(Rect::new(1080, 1000, 420, 58))
         );
     }
 
     #[test]
     fn home_rescales_when_the_resolution_changes() {
-        let home = Home {
-            x: 1280,
-            y: 1022,
-            display: display("DP-1", SCREEN),
-        };
+        let h = home(Rect::new(1280, 1022, 420, 58), display("DP-1", SCREEN));
         let now = [display("DP-1", Rect::new(0, 0, 2560, 1440))];
-        // 1280/1920 of the way across and 1022/1080 down, then kept on screen.
+        // The bottom-right corner keeps its relative place: still on the bottom edge.
         assert_eq!(
-            home_rect(&home, 420, 58, &now),
-            Some(Rect::new(1707, 1363, 420, 58))
+            home_rect(&h, 420.0, 58.0, &now),
+            Some(Rect::new(1847, 1382, 420, 58))
+        );
+    }
+
+    #[test]
+    fn home_is_sized_at_the_target_monitors_scale() {
+        let h = home(Rect::new(1280, 1022, 420, 58), display("DP-1", SCREEN));
+        let hidpi = Display {
+            scale: 1.5,
+            ..display("DP-1", SCREEN)
+        };
+        // 420x58 CSS pixels are 630x87 there, and the bottom stays on the edge.
+        assert_eq!(
+            home_rect(&h, 420.0, 58.0, &[hidpi]),
+            Some(Rect::new(1070, 993, 630, 87))
         );
     }
 
     #[test]
     fn home_is_kept_wholly_on_a_smaller_monitor() {
-        let home = Home {
-            x: 1700,
-            y: 1050,
-            display: display("DP-1", SCREEN),
-        };
+        let h = home(Rect::new(1700, 1050, 420, 58), display("DP-1", SCREEN));
         let now = [display("DP-1", SCREEN)];
         assert_eq!(
-            home_rect(&home, 420, 58, &now),
+            home_rect(&h, 420.0, 58.0, &now),
             Some(Rect::new(1500, 1022, 420, 58))
         );
     }
 
     #[test]
     fn an_unnamed_monitor_is_matched_by_where_home_was() {
-        let home = Home {
-            x: 100,
-            y: 100,
-            display: Display {
-                name: None,
-                bounds: SCREEN,
-            },
+        let unnamed = |bounds| Display {
+            name: None,
+            bounds,
+            scale: 1.0,
         };
-        let now = [
-            Display {
-                name: None,
-                bounds: Rect::new(1920, 0, 1920, 1080),
-            },
-            Display {
-                name: None,
-                bounds: SCREEN,
-            },
-        ];
+        let h = home(Rect::new(100, 100, 420, 58), unnamed(SCREEN));
+        let now = [unnamed(Rect::new(1920, 0, 1920, 1080)), unnamed(SCREEN)];
         assert_eq!(
-            home_rect(&home, 420, 58, &now),
+            home_rect(&h, 420.0, 58.0, &now),
             Some(Rect::new(100, 100, 420, 58))
         );
     }
 
     #[test]
-    fn no_monitors_means_no_home() {
-        let home = Home {
-            x: 0,
-            y: 0,
-            display: display("DP-1", SCREEN),
+    fn the_default_spot_sits_on_the_primary_taskbar_at_its_scale() {
+        assert_eq!(
+            default_rect(&display("DP-1", SCREEN), 420.0, 58.0),
+            Rect::new(1280, 1022, 420, 58)
+        );
+        let hidpi = Display {
+            scale: 1.5,
+            ..display("DP-1", SCREEN)
         };
-        assert_eq!(home_rect(&home, 420, 58, &[]), None);
+        assert_eq!(
+            default_rect(&hidpi, 420.0, 58.0),
+            Rect::new(960, 993, 630, 87)
+        );
+    }
+
+    #[test]
+    fn no_monitors_means_no_home() {
+        let h = home(Rect::new(0, 0, 420, 58), display("DP-1", SCREEN));
+        assert_eq!(home_rect(&h, 420.0, 58.0, &[]), None);
     }
 }

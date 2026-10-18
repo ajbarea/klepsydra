@@ -28,16 +28,25 @@ export function wheelPixels(deltaY, deltaMode) {
   return deltaY;
 }
 
+// At most one step this often, so a touchpad fling cannot sweep the range.
+export const STEP_GAP_MS = 80;
+// A pause this long ends a gesture and drops what it had accumulated.
+const IDLE_MS = 400;
+
 /**
- * Fold one wheel delta into the running remainder. Returns the whole steps to
- * apply, positive to grow (wheel up), and what is left over.
+ * Fold one wheel event into the gesture so far. Returns the steps to apply
+ * (positive grows: wheel up), at most one, and the state for the next event.
+ * A notch-sized delta steps at once; smaller ones (touchpads) accumulate to a
+ * notch, and the remainder never banks more than one step.
  */
-export function wheelSteps(rest, dyPx) {
-  if (Math.abs(dyPx) >= MIN_NOTCH_PX) {
-    const notches = Math.max(1, Math.round(Math.abs(dyPx) / NOTCH_PX));
-    return { steps: dyPx < 0 ? notches : -notches, rest: 0 };
-  }
-  const total = rest + dyPx;
-  const whole = Math.trunc(total / NOTCH_PX);
-  return { steps: whole === 0 ? 0 : -whole, rest: total - whole * NOTCH_PX };
+export function wheelStep(state, dyPx, nowMs) {
+  const prev = state ?? { rest: 0, last: -Infinity, lastStep: -Infinity };
+  const fresh = nowMs - prev.last > IDLE_MS;
+  const ready = nowMs - prev.lastStep >= STEP_GAP_MS;
+  let rest = Math.max(-NOTCH_PX, Math.min(NOTCH_PX, (fresh ? 0 : prev.rest) + dyPx));
+  let steps = 0;
+  if (ready && Math.abs(dyPx) >= MIN_NOTCH_PX) steps = dyPx < 0 ? 1 : -1;
+  else if (ready && Math.abs(rest) >= NOTCH_PX) steps = rest < 0 ? 1 : -1;
+  if (steps !== 0) rest = 0;
+  return { steps, state: { rest, last: nowMs, lastStep: steps !== 0 ? nowMs : prev.lastStep } };
 }

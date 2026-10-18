@@ -206,9 +206,11 @@ restyling cannot desync the two.
 The tray icon is itself a miniature of the bar, redrawn as the reading changes,
 so the level stays readable when the overlay is covered or a fullscreen app is
 in front. "Set home here" saves where the gauge sits now, and "Reset position"
-returns it there. If that monitor is gone or its resolution changed, home
-moves to the same relative spot on the nearest monitor; with no home saved,
-it goes over the primary monitor's taskbar, 220px in from the right. The menu
+returns it there, keeping the corner nearest the screen edges: a gauge homed
+on the taskbar returns to the taskbar at any size. Its monitor is found by
+position, then by name, then by nearness, and a changed resolution moves
+home to the same relative spot. With no home saved, it goes over the primary
+monitor's taskbar, 220px in from the right. The menu
 also toggles "Start with Windows" ("Start at login" on Linux) and quits. Autostart is on by default; the icon may start in the
 notification-area overflow.
 

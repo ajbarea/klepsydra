@@ -1,9 +1,8 @@
 import { rampColor, toRows, formatPct } from "./gauge.js";
-import { wheelPixels, wheelSteps, clampLevel, scaleAt } from "./zoom.js";
+import { wheelPixels, wheelStep, clampLevel, scaleAt } from "./zoom.js";
 
 const POLL_MS = 5_000;   // how often we re-read the account files
 const TICK_MS = 15_000;  // how often the countdown re-renders between reads
-const WHEEL_IDLE_MS = 400;   // a pause this long starts a fresh scroll gesture
 const ZOOM_SHOWN_MS = 800;   // how long the new size stays on screen
 const ZOOM_SAVE_MS = 400;    // settle time before the size is written to disk
 
@@ -60,8 +59,7 @@ let lastPayload = null;
 let lastSize = "";
 let lastTray = "";
 let zoomLevel = 0;
-let wheelRest = 0;
-let lastWheel = 0;
+let wheel = null;
 let zoomShown = 0;
 let zoomSave = 0;
 
@@ -79,12 +77,19 @@ function paint(entry, row) {
   fill.style.backgroundColor = rampColor(row.pct ?? 0, stops(), rampMode());
 }
 
+/** The grab handle's rectangle, in CSS pixels from the window's top-left. */
+function gripRect() {
+  const r = grip.getBoundingClientRect();
+  return [r.left, r.top, r.width, r.height];
+}
+
 /**
- * Tell the window how big the panel is, so it never clips or gaps. A zoom also
- * passes `pin`: the pointer's position before it and the size ratio, so the
- * point under the pointer stays put and the grip stays under it.
+ * Tell the window how big the panel is, so it never clips or gaps. `pin` marks
+ * a zoom, which keeps the point under the pointer still. The grip's new
+ * rectangle travels with the size, so the pointer watcher never pairs a new
+ * position with an old grip.
  */
-function syncSize(pin = null) {
+function syncSize(pin = false) {
   if (!inTauri) return;
   const r = panel.getBoundingClientRect();
   const w = Math.ceil(r.width);
@@ -92,7 +97,9 @@ function syncSize(pin = null) {
   const size = `${w}x${h}`;
   if (w < 1 || h < 1 || (size === lastSize && !pin)) return;
   lastSize = size;
-  window.__TAURI__.core.invoke("set_size", { width: w, height: h, pin }).catch(() => {});
+  window.__TAURI__.core
+    .invoke("set_size", { width: w, height: h, pin, grip: gripRect() })
+    .catch(() => {});
 }
 
 /**
@@ -125,14 +132,12 @@ function syncTray(rows) {
  */
 function syncGrip() {
   if (!inTauri) return;
-  const r = grip.getBoundingClientRect();
-  if (r.width < 1 || r.height < 1) return;
-  window.__TAURI__.core
-    .invoke("set_grip", { x: r.left, y: r.top, w: r.width, h: r.height })
-    .catch(() => {});
+  const [x, y, w, h] = gripRect();
+  if (w < 1 || h < 1) return;
+  window.__TAURI__.core.invoke("set_grip", { x, y, w, h }).catch(() => {});
 }
 
-function render(pin = null) {
+function render(pin = false) {
   const rows = toRows(lastPayload, Date.now());
 
   emptyEl.hidden = rows.length > 0;
@@ -192,18 +197,14 @@ function showZoom() {
 // whatever is underneath.
 grip.addEventListener("wheel", (e) => {
   e.preventDefault();
-  const now = performance.now();
-  if (now - lastWheel > WHEEL_IDLE_MS) wheelRest = 0;
-  lastWheel = now;
-  const { steps, rest } = wheelSteps(wheelRest, wheelPixels(e.deltaY, e.deltaMode));
-  wheelRest = rest;
-  const next = clampLevel(zoomLevel + steps);
+  const r = wheelStep(wheel, wheelPixels(e.deltaY, e.deltaMode), performance.now());
+  wheel = r.state;
+  const next = clampLevel(zoomLevel + r.steps);
   if (next === zoomLevel) return;
-  const ratio = scaleAt(next) / scaleAt(zoomLevel);
   zoomLevel = next;
   applyZoom();
   showZoom();
-  render([e.clientX, e.clientY, ratio]);
+  render(true);
   if (inTauri) {
     clearTimeout(zoomSave);
     zoomSave = setTimeout(() => {
