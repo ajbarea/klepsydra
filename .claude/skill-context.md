@@ -46,13 +46,15 @@ belong here.
 
 ### Phase 4 — Test
 
-- `node --test src/*.test.js` — ramp, countdown, staleness, multi-account rows
+- `node --test src/*.test.js` — ramp, countdown, reading age, reconciliation
+  (newest reading wins), multi-account rows
 - `bash statusline/test_statusline.sh` — the hook is the only path that publishes
   usage, so the cases cover what would otherwise fail silently: account
   identity, two accounts not overwriting each other, two sessions of one account
   keeping separate files (a shared file let an idle terminal overwrite an active
-  one with a stale reading), gateway spend limit, malformed stdin, and an
-  unwritable destination. `statusline/fixtures/*.json` supply the input blobs;
+  one with a stale reading), a re-render publishing nothing (it would file
+  the last reading under whichever login is current), gateway spend limit,
+  malformed stdin, and an unwritable destination. `statusline/fixtures/*.json` supply the input blobs;
   the multi-account and unwritable cases are built in the script itself.
 
 ### do_not_run (interactive / long-running / platform-bound)
