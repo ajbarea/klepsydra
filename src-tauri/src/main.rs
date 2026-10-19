@@ -768,6 +768,7 @@ fn main() {
             reset_position,
             set_tray_level,
             fleet::fleet_subscribe,
+            fleet::open_wall,
             jump::jump_to_terminal
         ])
         .setup(|app| {

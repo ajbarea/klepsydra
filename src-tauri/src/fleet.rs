@@ -1,5 +1,5 @@
-//! The fleet strip's Tauri side: runs the reader on its own thread and hands
-//! each new snapshot to every webview that subscribed.
+//! The fleet strip's Tauri side: runs the reader on its own thread, hands each
+//! new snapshot to every webview that subscribed, and opens the card wall.
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -10,7 +10,11 @@ use klepsydra_fleet::scan::Problem;
 use klepsydra_fleet::watch::{unix_now, Reader, POLL};
 use serde_json::Value;
 use tauri::ipc::Channel;
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
+
+/// The card wall's window label.
+// The window guard reads the builder's label as a literal, so it repeats this.
+pub const WALL: &str = "wall";
 
 /// A webview's end of the fleet.
 pub struct Webview(Channel<Value>);
@@ -69,4 +73,32 @@ pub fn start(app: &AppHandle, dir: Option<PathBuf>) {
             wait = POLL;
         }
     });
+}
+
+/// Show the card wall with session `focus`'s card in view. The wall is made
+/// on the first call, from an async command since a window made in a sync one
+/// deadlocks on Windows, and after that only hidden and shown, never closed.
+#[tauri::command]
+pub async fn open_wall(app: AppHandle, focus: String) -> Result<(), String> {
+    app.state::<Fleet>().focus(WALL, &focus);
+    if let Some(wall) = app.get_webview_window(WALL) {
+        wall.show().map_err(|e| e.to_string())?;
+        let _ = wall.unminimize();
+        let _ = wall.set_focus();
+        return Ok(());
+    }
+    let wall = WebviewWindowBuilder::new(&app, "wall", WebviewUrl::App("wall.html".into()))
+        .title("klepsydra fleet")
+        .inner_size(1280.0, 800.0)
+        .min_inner_size(420.0, 320.0)
+        .build()
+        .map_err(|e| e.to_string())?;
+    let handle = wall.clone();
+    wall.on_window_event(move |event| {
+        if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+            api.prevent_close();
+            let _ = handle.hide();
+        }
+    });
+    Ok(())
 }

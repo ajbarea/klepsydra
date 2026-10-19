@@ -1,0 +1,91 @@
+/* The card wall: a normal, resizable window, so plain pixels rather than the
+   gauge's zoom. Three columns at 1920 px wide; fewer below that. */
+:root {
+  --card-min: 560px;
+  --card-gap: 16px;
+  --wall-pad: 24px;
+  --wall-face: 64px;
+  --wall-bg: #141414;
+  --card-bg: #1f1f1f;
+  --card-focus: #e69f00;
+  --text: #ededed;
+  --text-dim: #9a9a9a;
+  --font: ui-sans-serif, "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+html, body { background: var(--wall-bg); color: var(--text); font: 14px/1.4 var(--font); }
+
+#wall {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(var(--card-min), 1fr));
+  gap: var(--card-gap);
+  padding: var(--wall-pad);
+}
+
+#empty { padding: var(--wall-pad); color: var(--text-dim); }
+#empty[hidden] { display: none; }
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  padding: 16px;
+  border-radius: 10px;
+  background: var(--card-bg);
+  outline: 2px solid transparent;
+}
+.card:focus { outline-color: var(--card-focus); }
+
+.card header { display: flex; align-items: center; gap: 12px; }
+.portrait { position: relative; flex: 0 0 auto; width: var(--wall-face); height: var(--wall-face); }
+.portrait .badge { position: absolute; right: -4px; bottom: -4px; width: 22px; height: 22px; }
+.who { min-width: 0; }
+.name { font-size: 18px; font-weight: 600; }
+.small, .updated, .note { font-size: 12px; color: var(--text-dim); }
+
+.where { font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.touched { display: flex; flex-wrap: wrap; gap: 6px; list-style: none; }
+.touched:empty { display: none; }
+.touched li { padding: 2px 8px; border-radius: 999px; background: #2a2a2a; font-size: 12px; color: var(--text-dim); }
+
+.status { display: flex; align-items: center; gap: 8px; font-weight: 600; }
+.status .badge { width: 18px; height: 18px; }
+.error { color: var(--badge-error); overflow-wrap: anywhere; }
+.error[hidden], .updated[hidden] { display: none; }
+
+.said { display: flex; gap: 8px; color: var(--text-dim); }
+.said .sign { flex: 0 0 auto; font-family: ui-monospace, "Cascadia Mono", monospace; }
+.said .text {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+.said:has(.text:empty) { display: none; }
+
+.actions { display: flex; align-items: center; gap: 12px; margin-top: 4px; }
+.jump {
+  padding: 6px 12px;
+  border: 1px solid #3a3a3a;
+  border-radius: 6px;
+  background: #2a2a2a;
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+}
+.jump:hover:not(:disabled) { background: #333; }
+.jump:focus-visible { outline: 2px solid var(--card-focus); outline-offset: 2px; }
+.jump:disabled { color: var(--text-dim); cursor: default; }

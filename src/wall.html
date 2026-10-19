@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>klepsydra fleet</title>
+<link rel="stylesheet" href="fleet/badge.css" />
+<link rel="stylesheet" href="fleet/wall.css" />
+</head>
+<body>
+  <main id="wall" aria-label="Claude Code sessions"></main>
+  <p id="empty" hidden>No Claude Code sessions are running.</p>
+  <p id="live" class="visually-hidden" aria-live="polite"></p>
+
+  <template id="card-tpl">
+    <article class="card" tabindex="-1">
+      <header>
+        <span class="portrait"><img class="face" alt="" /><span class="corner"></span></span>
+        <div class="who">
+          <h2 class="name"></h2>
+          <p class="small"></p>
+        </div>
+      </header>
+      <p class="where"></p>
+      <ul class="touched"></ul>
+      <p class="status"><span class="mark"></span><span class="line"></span></p>
+      <p class="error" hidden></p>
+      <p class="said prompt"><span class="sign" aria-hidden="true">&gt;</span><span class="text"></span></p>
+      <p class="said reply"><span class="sign" aria-hidden="true">&lt;</span><span class="text"></span></p>
+      <p class="updated" hidden></p>
+      <div class="actions">
+        <button type="button" class="jump">Jump to terminal</button>
+        <span class="note" role="status"></span>
+      </div>
+    </article>
+  </template>
+
+  <script type="module" src="fleet/wall.js"></script>
+</body>
+</html>

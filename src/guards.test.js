@@ -271,7 +271,7 @@ const confWith = (...extra) => ({ app: { windows: [MAIN, ...extra] } });
 test("at most one extra window exists, and it is the wall", () => {
   const conf = JSON.parse(read("src-tauri/tauri.conf.json"));
   const inputs = { conf, rust: RUST.map(read), js: FRONTEND.map(read) };
-  assert.deepEqual(extraWindows(inputs), []);
+  assert.deepEqual(extraWindows(inputs), ["wall"]);
   assert.equal(tooManyWindows(inputs), false);
 
   const wall = 'WebviewWindowBuilder::new(&app, "wall", url)';
