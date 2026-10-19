@@ -25,6 +25,12 @@ impl Sink for Webview {
     }
 }
 
+/// The fleet strip's rectangle in CSS pixels from the gauge window's top-left,
+/// as the grip's is; None while it is hidden. The pointer watcher makes the
+/// window interactive over it too.
+#[derive(Default)]
+pub struct Strip(pub std::sync::Mutex<Option<[f64; 4]>>);
+
 /// Who follows the fleet, managed as app state.
 pub type Fleet = Hub<Webview>;
 
