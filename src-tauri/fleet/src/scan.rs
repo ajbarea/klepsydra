@@ -25,22 +25,30 @@ pub struct Listing {
 
 /// The text of an open file and its mtime in seconds, both from this one
 /// handle, so a rename over the path mid-read cannot pair old time with new text.
-fn stamped(mut file: File) -> Option<(String, i64)> {
+fn stamped(mut file: File) -> std::io::Result<(String, i64)> {
     let mut text = String::new();
-    file.read_to_string(&mut text).ok()?;
-    let meta = file.metadata().ok().filter(|m| m.is_file())?;
-    let t = meta.modified().ok()?.duration_since(UNIX_EPOCH).ok()?;
-    Some((text, i64::try_from(t.as_secs()).ok()?))
+    file.read_to_string(&mut text)?;
+    let t = file
+        .metadata()?
+        .modified()?
+        .duration_since(UNIX_EPOCH)
+        .map_err(std::io::Error::other)?;
+    let secs = i64::try_from(t.as_secs()).map_err(std::io::Error::other)?;
+    Ok((text, secs))
 }
 
 /// A regular file's text and mtime. The type is checked from the directory
 /// entry before opening, so a FIFO named like a session file is never opened
-/// (an open would block); symlinks are not followed.
-fn read_regular(item: &std::fs::DirEntry) -> Option<(String, i64)> {
+/// (an open would block); symlinks are not followed. `None` is a file that is
+/// not one or has vanished, passed over silently; an error is a real failure.
+fn read_regular(item: &std::fs::DirEntry) -> Option<std::io::Result<(String, i64)>> {
     if !item.file_type().ok()?.is_file() {
         return None;
     }
-    stamped(File::open(item.path()).ok()?)
+    match File::open(item.path()).and_then(stamped) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+        r => Some(r),
+    }
 }
 
 /// Every `<uuid>.json` in `fleet` with its `<uuid>.beat`. Anything else there
@@ -61,8 +69,18 @@ pub fn scan(fleet: &Path) -> Listing {
         if !is_session_id(stem) || !matches!(ext, "json" | "beat") {
             continue;
         }
-        let Some((text, mtime)) = read_regular(&item) else {
-            continue;
+        let (text, mtime) = match read_regular(&item) {
+            None => continue,
+            Some(Ok(read)) => read,
+            Some(Err(e)) => {
+                if ext == "json" {
+                    out.problems.push(Problem {
+                        file: name,
+                        what: format!("unreadable: {e}"),
+                    });
+                }
+                continue;
+            }
         };
         if ext == "beat" {
             beats.insert(stem.to_string(), (mtime, beat_name(&text)));
@@ -233,9 +251,9 @@ pub(crate) mod tests {
             .set_modified(new)
             .unwrap();
         std::fs::rename(&tmp, &path).unwrap();
-        assert_eq!(stamped(handle), Some(("old".into(), 1_700_000_000)));
+        assert_eq!(stamped(handle).ok(), Some(("old".into(), 1_700_000_000)));
         assert_eq!(
-            stamped(File::open(&path).unwrap()),
+            stamped(File::open(&path).unwrap()).ok(),
             Some(("new".into(), 1_800_000_000))
         );
     }
@@ -285,5 +303,16 @@ pub(crate) mod tests {
         std::os::unix::fs::symlink(dir.0.join("target"), dir.0.join(format!("{A}.json"))).unwrap();
         let l = scan(&dir.0);
         assert!(l.entries.is_empty() && l.problems.is_empty());
+    }
+
+    #[test]
+    fn a_file_that_is_not_text_is_a_problem_not_silence() {
+        let dir = Scratch::new("utf8");
+        std::fs::write(dir.0.join(format!("{A}.json")), [0xff, 0xfe, 0x00]).unwrap();
+        let l = scan(&dir.0);
+        assert!(l.entries.is_empty());
+        assert_eq!(l.problems.len(), 1);
+        assert_eq!(l.problems[0].file, format!("{A}.json"));
+        assert!(l.problems[0].what.starts_with("unreadable: "));
     }
 }

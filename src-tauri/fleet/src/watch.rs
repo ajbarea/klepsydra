@@ -2,10 +2,10 @@
 //! re-read every `POLL` as a safety net and to let ages pass into silence.
 
 use std::path::{Path, PathBuf};
-use std::sync::mpsc::{channel, Receiver, RecvTimeoutError, Sender};
-use std::time::Duration;
+use std::sync::mpsc::{channel, Receiver, Sender};
+use std::time::{Duration, Instant};
 
-use notify::{RecommendedWatcher, RecursiveMode, Watcher};
+use notify::{EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 
 use crate::scan::{scan, Problem, Reporter};
 use crate::view::{snapshot, Snapshot};
@@ -13,20 +13,60 @@ use crate::view::{snapshot, Snapshot};
 /// The safety-net re-read, matching the gauge's POLL_MS.
 pub const POLL: Duration = Duration::from_secs(5);
 
-/// Whether a change to `path` can change the fleet. Temp files are written
-/// then renamed over a session file, and the rename is what counts.
-fn counts(path: &Path) -> bool {
-    matches!(
-        path.extension().and_then(|e| e.to_str()),
-        Some("json" | "beat")
-    )
+/// How long to keep gathering events after the first, so one burst of writes
+/// is one re-read.
+const COALESCE: Duration = Duration::from_millis(75);
+
+/// What a watcher event asks of the reader.
+enum Wake {
+    /// A session or beat file may have changed.
+    Change,
+    /// The fleet directory itself changed; the watch may be dead.
+    Rewatch,
+}
+
+/// Temp files are written then renamed over a session file, and the rename is
+/// what counts. Opens and closes are the reader's own reads, so they never do.
+fn wake(fleet: &Path, res: notify::Result<notify::Event>) -> Option<Wake> {
+    let Ok(event) = res else {
+        return Some(Wake::Change);
+    };
+    if matches!(event.kind, EventKind::Access(_)) {
+        return None;
+    }
+    if event.paths.iter().any(|p| p == fleet) {
+        return Some(Wake::Rewatch);
+    }
+    let session = |p: &PathBuf| {
+        matches!(
+            p.extension().and_then(|e| e.to_str()),
+            Some("json" | "beat")
+        )
+    };
+    event.paths.iter().any(session).then_some(Wake::Change)
+}
+
+/// Identifies one incarnation of the directory where the platform's watcher
+/// does not report its removal (Windows); elsewhere the removal event does.
+fn incarnation(dir: &Path) -> Option<u64> {
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        std::fs::metadata(dir).ok().map(|m| m.creation_time())
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = dir;
+        None
+    }
 }
 
 pub struct Reader {
     fleet: PathBuf,
-    tx: Sender<()>,
-    rx: Receiver<()>,
+    tx: Sender<Wake>,
+    rx: Receiver<Wake>,
     watcher: Option<RecommendedWatcher>,
+    watched: Option<u64>,
     reporter: Reporter,
     last: Option<Snapshot>,
 }
@@ -40,31 +80,45 @@ impl Reader {
             tx,
             rx,
             watcher: None,
+            watched: None,
             reporter: Reporter::default(),
             last: None,
         }
     }
 
     /// Watch the directory once it exists; drop the watch if it goes away, so
-    /// a recreated directory is watched afresh.
-    fn attach(&mut self) {
+    /// a recreated directory is watched afresh. A watcher that cannot start is
+    /// a problem; the re-read every `POLL` still covers it.
+    fn attach(&mut self) -> Option<Problem> {
         if !self.fleet.is_dir() {
             self.watcher = None;
-            return;
+            return None;
         }
-        if self.watcher.is_some() {
-            return;
+        if self.watcher.is_some() && self.watched == incarnation(&self.fleet) {
+            return None;
         }
+        self.watched = incarnation(&self.fleet);
         let tx = self.tx.clone();
-        let made = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
-            if res.is_ok_and(|e| e.paths.iter().any(|p| counts(p))) {
-                let _ = tx.send(());
+        let fleet = self.fleet.clone();
+        let started = notify::recommended_watcher(move |res| {
+            if let Some(w) = wake(&fleet, res) {
+                let _ = tx.send(w);
             }
+        })
+        .and_then(|mut w| {
+            w.watch(&self.fleet, RecursiveMode::NonRecursive)?;
+            Ok(w)
         });
-        self.watcher = made.ok().and_then(|mut w| {
-            w.watch(&self.fleet, RecursiveMode::NonRecursive).ok()?;
-            Some(w)
-        });
+        match started {
+            Ok(w) => {
+                self.watcher = Some(w);
+                None
+            }
+            Err(e) => Some(Problem {
+                file: "fleet".into(),
+                what: format!("watcher unavailable: {e}"),
+            }),
+        }
     }
 
     /// Wait up to `timeout` for a change, then re-read. Returns the snapshot
@@ -75,13 +129,25 @@ impl Reader {
         timeout: Duration,
         now: impl Fn() -> i64,
     ) -> (Option<Snapshot>, Vec<Problem>) {
-        self.attach();
-        if let Err(RecvTimeoutError::Disconnected) = self.rx.recv_timeout(timeout) {
-            self.watcher = None;
+        let mut broken = Vec::new();
+        broken.extend(self.attach());
+        if let Ok(first) = self.rx.recv_timeout(timeout) {
+            let mut rewatch = matches!(first, Wake::Rewatch);
+            let deadline = Instant::now() + COALESCE;
+            while let Some(left) = deadline.checked_duration_since(Instant::now()) {
+                match self.rx.recv_timeout(left) {
+                    Ok(w) => rewatch |= matches!(w, Wake::Rewatch),
+                    Err(_) => break,
+                }
+            }
+            if rewatch {
+                self.watcher = None;
+                broken.extend(self.attach());
+            }
         }
-        while self.rx.try_recv().is_ok() {}
         let listing = scan(&self.fleet);
-        let problems = self.reporter.fresh(&listing.problems);
+        broken.extend(listing.problems);
+        let problems = self.reporter.fresh(&broken);
         let snap = snapshot(&listing.entries, now());
         if self.last.as_ref() == Some(&snap) {
             return (None, problems);
@@ -95,7 +161,7 @@ impl Reader {
 pub fn unix_now() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |d| d.as_secs() as i64)
+        .map_or(0, |d| i64::try_from(d.as_secs()).unwrap_or(i64::MAX))
 }
 
 #[cfg(test)]
@@ -103,7 +169,6 @@ mod tests {
     use super::*;
     use crate::scan::tests::{session, Scratch, A};
     use crate::view::Status;
-    use std::time::Instant;
 
     fn reader(name: &str) -> (Scratch, Reader) {
         let root = Scratch::new(name);
@@ -183,5 +248,47 @@ mod tests {
         root.write(&format!("fleet/{A}.json"), r#"{"v":3}"#);
         assert_eq!(r.step(Duration::ZERO, unix_now).1.len(), 1);
         assert_eq!(r.step(Duration::ZERO, unix_now).1.len(), 0);
+    }
+
+    #[test]
+    fn an_idle_reader_does_not_spin_on_its_own_reads() {
+        let (root, mut r) = reader("idle");
+        root.write(&format!("fleet/{A}.json"), &session(A, "done"));
+        r.step(Duration::ZERO, unix_now);
+        let started = Instant::now();
+        let mut steps = 0;
+        while started.elapsed() < Duration::from_millis(1500) {
+            r.step(Duration::from_millis(300), unix_now);
+            steps += 1;
+        }
+        assert!(steps <= 8, "{steps} re-reads in 1.5 s of nothing changing");
+    }
+
+    #[test]
+    fn a_fleet_dir_recreated_within_one_wait_is_watched_afresh() {
+        let (root, mut r) = reader("recreate");
+        r.step(Duration::ZERO, unix_now);
+        let fleet = root.0.join("fleet");
+        let writer = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(200));
+            std::fs::remove_dir_all(&fleet).unwrap();
+            std::fs::create_dir_all(&fleet).unwrap();
+            std::thread::sleep(Duration::from_millis(300));
+        });
+        r.step(Duration::from_secs(2), unix_now);
+        writer.join().unwrap();
+        let fleet = root.0.join("fleet");
+        let writer = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(200));
+            std::fs::write(fleet.join(format!("{A}.json")), session(A, "new")).unwrap();
+        });
+        let started = Instant::now();
+        let (snap, _) = r.step(POLL, unix_now);
+        writer.join().unwrap();
+        assert!(
+            started.elapsed() < Duration::from_secs(3),
+            "woke by the watcher"
+        );
+        assert_eq!(snap.unwrap().sessions.len(), 1);
     }
 }
