@@ -23,10 +23,13 @@ const isQuiet = (s) => s.status === "working" && s.quiet_since != null;
 export const SHOW_UPDATED_AFTER_MS = 5 * 60 * 1000;
 
 const FACES = "fleet/faces";
-const ageMs = (atSec, nowMs) => nowMs - Number(atSec) * 1000;
+// NaN for a missing or unusable time, which the age formatters print as "unknown".
+const ageMs = (atSec, nowMs) =>
+  typeof atSec === "number" && Number.isFinite(atSec) ? nowMs - atSec * 1000 : NaN;
 
-/** "2m", "1h", "3d"; "<1m" under a minute. A time ahead of the clock is now. */
+/** "2m", "1h", "3d"; "<1m" under a minute; "unknown" without a time. A time ahead of the clock is now. */
 export function shortAge(ms) {
+  if (!Number.isFinite(ms)) return "unknown";
   const mins = Math.floor(Math.max(0, ms) / 60000);
   if (mins < 1) return "<1m";
   if (mins < 60) return `${mins}m`;
@@ -37,6 +40,7 @@ export function shortAge(ms) {
 
 /** The same age in words, for accessible names: "2 minutes". */
 export function longAge(ms) {
+  if (!Number.isFinite(ms)) return "unknown";
   const mins = Math.floor(Math.max(0, ms) / 60000);
   const unit = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
   if (mins < 1) return "under a minute";
@@ -107,8 +111,9 @@ export function identity(s, cast) {
 export const accessibleName = (s, cast, nowMs) =>
   [identity(s, cast).name, ...statusParts(s, nowMs, longAge)].join(", ");
 
-/** Each session's status by id, to compare the next snapshot against. */
-export const statuses = (sessions) => new Map(sessions.map((s) => [s.session_id, s.status]));
+/** Each session's status by id (a quiet working session keyed "working?"), to compare the next snapshot against. */
+export const statuses = (sessions) =>
+  new Map(sessions.map((s) => [s.session_id, isQuiet(s) ? "working?" : s.status]));
 
 /** Sessions that started needing AJ since `before`; none on the first look. */
 export function startedNeeding(before, sessions) {
@@ -121,13 +126,17 @@ export function startedNeeding(before, sessions) {
 }
 
 /** What the wall's live region says about changes since `before`; nothing on the first look. */
-export function announcements(before, sessions, cast) {
+export function announcements(before, sessions, cast, nowMs = Date.now()) {
   if (!before) return [];
+  const key = statuses(sessions);
   return sessions
-    .filter((s) => before.get(s.session_id) !== s.status)
-    .map((s) => [identity(s, cast).name, statusOf(s.status).label, s.status === "silent" ? null : s.reason]
-      .filter(Boolean)
-      .join(", "));
+    .filter((s) => before.get(s.session_id) !== key.get(s.session_id))
+    .map((s) => {
+      if (isQuiet(s)) return accessibleName(s, cast, nowMs);
+      return [identity(s, cast).name, statusOf(s.status).label, s.status === "silent" ? null : s.reason]
+        .filter(Boolean)
+        .join(", ");
+    });
 }
 
 /** "klepsydra \u00b7 fleet \u00b7 feat/fleet-visualizer" */
@@ -136,6 +145,7 @@ export const whereText = (w) => (w ? [w.repo, w.worktree, w.branch].filter(Boole
 /** "updated 7m ago" once the newest field is over five minutes old. */
 export function updatedText(s, nowMs) {
   const age = ageMs(s.updated_at, nowMs);
+  if (Number.isNaN(age)) return "updated unknown";
   return age > SHOW_UPDATED_AFTER_MS ? `updated ${shortAge(age)} ago` : null;
 }
 
@@ -162,6 +172,7 @@ export function stripItems(sessions, cast, nowMs, before) {
       id: s.session_id,
       status: s.status,
       quiet: isQuiet(s),
+      badge: badgeSvg(s.status, isQuiet(s)),
       label: accessibleName(s, cast, nowMs),
       face: who.face,
       face2x: who.face2x,
@@ -189,6 +200,7 @@ export function card(s, cast, nowMs) {
     face2x: who.face2x,
     status: s.status,
     quiet: isQuiet(s),
+    badge: badgeSvg(s.status, isQuiet(s)),
     statusLine: statusLine(s, nowMs),
     where: whereText(s.where),
     touched: (s.touched ?? []).map((t) => `${t.repo} \u00b7 ${shortAge(ageMs(t.at, nowMs))}`),

@@ -44,7 +44,7 @@ test("ages read at a glance, and a clock ahead reads as now", () => {
 test("every status line carries its age", () => {
   for (const status of Object.keys(STATUS)) {
     const line = statusLine(session({ status, reason: null, status_at: ago(180) }), NOW);
-    assert.match(line, /3m/, status);
+    assert.equal(line, `${STATUS[status].label} \u00b7 3m`.replace("silent \u00b7 3m", "silent \u00b7 no word for 3m"), status);
   }
   assert.equal(statusLine(session(), NOW), "needs you \u00b7 approve Bash \u00b7 2m");
 });
@@ -111,6 +111,51 @@ test("the strip item and card of a quiet session say so", () => {
   assert.equal(c.quiet, true);
   assert.equal(c.statusLine, "working? \u00b7 no activity for 12m");
   assert.equal(c.label, "Hephaestus, working?, no activity for 12 minutes");
+});
+
+test("a missing time reads unknown, never NaN and never 1970", () => {
+  assert.equal(shortAge(NaN), "unknown");
+  assert.equal(longAge(NaN), "unknown");
+  for (const bad of [undefined, null, NaN, "x"]) {
+    const s = session({ status: "working", reason: null, status_at: bad, updated_at: bad, touched: [{ repo: "ideas", at: bad }] });
+    assert.equal(statusLine(s, NOW), "working \u00b7 unknown");
+    assert.equal(accessibleName(s, CAST, NOW), "Hephaestus, working, unknown");
+    assert.equal(updatedText(s, NOW), "updated unknown");
+    assert.deepEqual(card(s, CAST, NOW).touched, ["ideas \u00b7 unknown"]);
+    const q = quiet({ quiet_since: bad ?? NaN, status_at: bad });
+    assert.equal(statusLine(q, NOW), "working? \u00b7 no activity for unknown");
+    assert.equal(accessibleName(q, CAST, NOW), "Hephaestus, working?, no activity for unknown");
+    const silent = session({ status: "silent", status_at: bad });
+    assert.equal(statusLine(silent, NOW), "silent \u00b7 no word for unknown");
+    for (const text of [card(s, CAST, NOW).statusLine, card(q, CAST, NOW).statusLine, stripItems([s], CAST, NOW)[0].label]) {
+      assert.doesNotMatch(text, /NaN|\d{4,}d/);
+    }
+  }
+});
+
+test("strip items and cards carry the badge, quiet mark included", () => {
+  assert.equal(stripItems([quiet()], CAST, NOW)[0].badge, badgeSvg("working", true));
+  assert.equal(card(quiet(), CAST, NOW).badge, badgeSvg("working", true));
+  assert.equal(stripItems([session()], CAST, NOW)[0].badge, badgeSvg("needs_you"));
+  assert.equal(card(session({ status: "working", quiet_since: null }), CAST, NOW).badge, badgeSvg("working"));
+});
+
+test("working to quiet working is announced; a new session is announced; no change is not", () => {
+  const working = session({ status: "working", reason: null, status_at: ago(900), quiet_since: null });
+  const q = quiet();
+  assert.deepEqual(announcements(statuses([working]), [q], CAST, NOW), ["Hephaestus, working?, no activity for 12 minutes"]);
+  assert.deepEqual(announcements(statuses([q]), [q], CAST, NOW), []);
+  assert.deepEqual(announcements(statuses([]), [session()], CAST, NOW), ["Hephaestus, needs you, approve Bash"]);
+  assert.equal(startedNeeding(statuses([q]), [session()]).size, 1, "quiet working then needs you still pulses");
+  assert.equal(startedNeeding(statuses([session()]), [session()]).size, 0);
+});
+
+test("prompt, reply and error pass through card() as plain text", () => {
+  const c = card(session({ status: "error", prompt: { text: "<img onerror=x>", at: 1 }, reply: { text: "</text><b>", at: 1 }, error: "<script>" }), CAST, NOW);
+  assert.equal(c.prompt, "<img onerror=x>");
+  assert.equal(c.reply, "</text><b>");
+  assert.equal(c.error, "<script>");
+  assert.doesNotMatch(c.badge, /onerror|<script|<b>/);
 });
 
 test("accessible names say who, what and how long", () => {
