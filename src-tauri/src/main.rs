@@ -1,5 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod fleet;
 mod geometry;
 
 use std::path::PathBuf;
@@ -753,6 +754,7 @@ fn main() {
                 .build(),
         )
         .manage(Grip::default())
+        .manage(fleet::Fleet::default())
         .manage(Moved::default())
         .manage(Sized::default())
         .manage(Requested::default())
@@ -763,7 +765,8 @@ fn main() {
             set_zoom,
             set_grip,
             reset_position,
-            set_tray_level
+            set_tray_level,
+            fleet::fleet_subscribe
         ])
         .setup(|app| {
             let window = app.get_webview_window("main").expect("main window");
@@ -857,6 +860,7 @@ fn main() {
 
             raise_above_taskbar(&window);
             watch_grip(app.handle().clone());
+            fleet::start(app.handle(), klepsydra_dir(app.handle()));
             Ok(())
         })
         .run(tauri::generate_context!())
