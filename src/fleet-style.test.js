@@ -79,3 +79,14 @@ test("the wall fits three columns at 1920 px and reflows below", () => {
   assert.equal(columnsAt(1280 - SCROLLBAR, tokens), 2);
   assert.equal(columnsAt(800 - SCROLLBAR, tokens), 1);
 });
+
+test("a portrait is 28 px at 100%, and the strip's rules are in the zoomed stylesheet", () => {
+  const css = read("./style.css");
+  assert.equal(token(css, "--face-size"), "28px");
+  for (const rule of ["#frame {", "#strip {", ".face {", ".face .badge {"]) assert.ok(css.includes(rule), rule);
+});
+
+test("the strip starts hidden, so the gauge looks as before until a fleet arrives", () => {
+  assert.match(read("./index.html"), /<div id="strip"[^>]*\shidden>/);
+  assert.match(read("./main.js"), /try \{\s*const \{ mountStrip \} = await import\("\.\/fleet\/strip\.js"\);/);
+});

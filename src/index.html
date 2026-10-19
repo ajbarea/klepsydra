@@ -4,8 +4,10 @@
 <meta charset="UTF-8" />
 <title>klepsydra</title>
 <link rel="stylesheet" href="style.css" />
+<link rel="stylesheet" href="fleet/badge.css" />
 </head>
 <body>
+  <div id="frame">
   <div id="panel" data-state="waiting">
     <div id="grip" title="Drag to move, scroll to resize"></div>
     <div id="content">
@@ -13,6 +15,8 @@
       <span class="sub" id="empty">waiting for Claude Code</span>
     </div>
     <span id="zoom" aria-live="polite"></span>
+  </div>
+  <div id="strip" role="group" aria-label="Claude Code sessions" hidden></div>
   </div>
 
   <template id="row-tpl">
