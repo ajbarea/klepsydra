@@ -171,7 +171,7 @@ def ended_as: {clear: "cleared", resume: "resumed elsewhere", logout: "logged ou
   ($was // {v: 1, session_id: $ev.session_id, name: null, started_at: $now,
             launch_dir: ($ev.cwd | text), claude: null, voice: null,
             state: (if $event == "PreToolUse" or $event == "PostToolUse" then "working" else "new" end),
-            reason: null, needs: null, state_at: $now, active_at: $now,
+            reason: null, needs: null, state_at: $now,
             where: null, touched: [], prompt: null, reply: null, error: null,
             ended: null, written_at: $now}) as $s
   | $s
@@ -202,23 +202,21 @@ def ended_as: {clear: "cleared", resume: "resumed elsewhere", logout: "logged ou
      elif $event == "UserPromptSubmit" then {state: "working", reason: null}
      elif $event == "PermissionRequest" then
        {state: "needs_you", reason: need_reason($ev.tool_name), needs: {by: $agent, tool: $ev.tool_name}}
-     elif $event == "PreToolUse" and $ev.tool_name == "AskUserQuestion" then
-       {state: "needs_you", reason: "question", needs: {by: $agent, tool: "AskUserQuestion"}}
-     elif $event == "PreToolUse" and $ev.tool_name == "ExitPlanMode" then
-       {state: "needs_you", reason: "approve plan", needs: {by: $agent, tool: "ExitPlanMode"}}
+     elif $event == "PreToolUse" and ($ev.tool_name | IN("AskUserQuestion", "ExitPlanMode")) then
+       {state: "needs_you", reason: need_reason($ev.tool_name), needs: {by: $agent, tool: $ev.tool_name}}
      elif $event == "Notification" and $ev.notification_type == "elicitation_dialog" then
        {state: "needs_you", reason: "question", needs: {by: $agent, tool: null}}
      elif $event == "PostToolUse" and .state == "needs_you" and (.needs.by // "") == $agent
           and (.needs.tool == null or .needs.tool == $ev.tool_name) then
        {state: "working", reason: null}
      elif $event == "Notification" and $ev.notification_type == "idle_prompt"
-          and (.state == "working" or .state == "needs_you") then
+          and (.state == "working" or .state == "needs_you") and $now - .state_at >= 30 then
        {state: "done", reason: null}
      elif $event == "Stop" then {state: "done", reason: null}
      elif $event == "StopFailure" then {state: "error", reason: (($ev.error // "unknown") | gsub("_"; " "))}
      elif $event == "SessionEnd" then {state: "ended", reason: (($ev.reason // "other") | ended_as)}
      else {state: .state, reason: .reason} end) as $t
-  | (if $t.state != .state or $t.reason != .reason then .state_at = $now else . end)
+  | (if $t.state != .state or $t.reason != .reason or $event == "UserPromptSubmit" then .state_at = $now else . end)
   | .needs = (if $t.state != "needs_you" then null else ($t.needs // .needs) end)
   | .state = $t.state
   | .reason = $t.reason
@@ -237,11 +235,9 @@ def ended_as: {clear: "cleared", resume: "resumed elsewhere", logout: "logged ou
     elif $event == "SessionStart" and $ev.source != "compact" then .ended = null | .error = null
     else . end
 
-  # active_at moves on every event but is written at most once a minute.
-  | if $was != null and (del(.written_at, .active_at) == ($was | del(.written_at, .active_at))) then
-      if $now - ($was.active_at // $was.written_at) < 60 then empty
-      else .active_at = $now | .written_at = $now end
-    else .active_at = $now | .written_at = $now end
+  # An event that changes nothing still refreshes written_at, once a minute.
+  | if $was != null and (del(.written_at) == ($was | del(.written_at))) and $now - $was.written_at < 60 then empty
+    else .written_at = $now end
   end
 JQ
 

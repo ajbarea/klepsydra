@@ -308,20 +308,28 @@ echo "self-heal and heartbeat"
 rm -f "$file"
 now=1792355000
 fire post-tool-bash.json
-check "created from a tool event: working" "$(field '[.state, .state_at, .active_at]')" "[\"working\",$now,$now]"
+check "created from a tool event: working" "$(field '[.state, .state_at, .written_at]')" "[\"working\",$now,$now]"
 check "tool output never recorded (created mid-turn)" "$(grep -c SECRET "$file")" "0"
 touch -d @1 "$file"
 now=1792355030
 fire post-tool-bash.json
-check "two events 30 s apart: one write" "$(mtime):$(field .active_at)" "1:1792355000"
+check "two events 30 s apart: one write" "$(mtime):$(field .written_at)" "1:1792355000"
 now=1792355061
 fire post-tool-bash.json
-check "61 s apart: active_at moves" "$(field '[.active_at, .written_at, .state_at]')" "[1792355061,1792355061,1792355000]"
-now=1792355070
+check "61 s apart: written_at moves" "$(field '[.written_at, .state_at]')" "[1792355061,1792355000]"
+now=1792355062
+fire user-prompt.json
+now=1792355063
+fire notification-idle.json
+check "idle prompt right after a prompt: still working" "$(field .state)" '"working"'
+now=1792355123
 fire notification-idle.json
 check "idle prompt: working becomes done" "$(field '[.state, .reason, .state_at]')" "[\"done\",null,$now]"
 fire permission-request.json
-now=1792355080
+now=1792355130
+fire notification-idle.json
+check "idle prompt right after a request: still needs_you" "$(field .state)" '"needs_you"'
+now=1792355200
 fire notification-idle.json
 check "idle prompt: needs_you becomes done" "$(field '[.state, .reason, .state_at]')" "[\"done\",null,$now]"
 now=1792355090
