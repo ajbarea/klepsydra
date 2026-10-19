@@ -40,7 +40,7 @@ fi
 LOCK=${XDG_RUNTIME_DIR:-/tmp}/klepsydra-fleet-$UID.lock
 PROMPT_CHARS=300
 # The events README.md registers this hook on; any other is ignored.
-EVENTS="SessionStart UserPromptSubmit PermissionRequest PreToolUse Notification PostToolUse Stop StopFailure SessionEnd"
+EVENTS="SessionStart UserPromptSubmit PermissionRequest PreToolUse Notification PostToolUse PostToolUseFailure Stop StopFailure SessionEnd"
 
 # Sets where_repo, where_worktree and where_branch for `path` (empty when
 # none), reading .git directly as keryx's source_name does, so no git process
@@ -274,7 +274,7 @@ def ended_as: {clear: "cleared", resume: "resumed elsewhere", logout: "logged ou
   else
   ($was // {v: 1, session_id: $ev.session_id, name: null, started_at: $now,
             launch_dir: ($ev.cwd | text), claude: null, voice: null,
-            state: (if $event == "PreToolUse" or $event == "PostToolUse" then "working" else "new" end),
+            state: (if $event == "PreToolUse" or $event == "PostToolUse" or $event == "PostToolUseFailure" then "working" else "new" end),
             reason: null, needs: null, state_at: $now,
             where: null, touched: [], prompt: null, reply: null, error: null,
             ended: null, written_at: $now}) as $s
@@ -308,9 +308,9 @@ def ended_as: {clear: "cleared", resume: "resumed elsewhere", logout: "logged ou
        {state: "needs_you", reason: need_reason($ev.tool_name), needs: {by: $agent, tool: $ev.tool_name}}
      elif $event == "PreToolUse" and ($ev.tool_name | IN("AskUserQuestion", "ExitPlanMode")) then
        {state: "needs_you", reason: need_reason($ev.tool_name), needs: {by: $agent, tool: $ev.tool_name}}
-     elif $event == "Notification" and $ev.notification_type == "elicitation_dialog" then
+     elif $event == "Notification" and ($ev.notification_type | IN("elicitation_dialog", "elicitation_url_dialog")) then
        {state: "needs_you", reason: "question", needs: {by: $agent, tool: null}}
-     elif $event == "PostToolUse" and .state == "needs_you" and (.needs.by // "") == $agent
+     elif ($event | IN("PostToolUse", "PostToolUseFailure")) and .state == "needs_you" and (.needs.by // "") == $agent
           and (.needs.tool == null or .needs.tool == $ev.tool_name) then
        {state: "working", reason: null}
      elif $event == "Notification" and $ev.notification_type == "idle_prompt"

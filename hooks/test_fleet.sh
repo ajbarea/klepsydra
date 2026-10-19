@@ -181,6 +181,19 @@ fire post-tool-bash.json
 check "its own tool finishing clears it" "$(field '[.state, .reason, .needs]')" '["working",null,null]'
 check "tool output never recorded" "$(grep -c SECRET "$file")" "0"
 
+fire permission-request.json
+fire post-tool-bash.json '.hook_event_name = "PostToolUseFailure"'
+check "a failed tool call ends the wait it was approved from" "$(field '[.state, .reason, .needs]')" '["working",null,null]'
+fire permission-request.json
+fire post-tool-bash.json '.hook_event_name = "PostToolUseFailure" | .tool_name = "Read"'
+check "another tool failing leaves it waiting" "$(field .state)" '"needs_you"'
+fire post-tool-bash.json '.hook_event_name = "PostToolUseFailure" | .agent_id = "agent-7"'
+check "a subagent's failing tool leaves it waiting" "$(field .state)" '"needs_you"'
+fire post-tool-bash.json '.hook_event_name = "PostToolUseFailure"'
+check "its own failure clears it" "$(field .state)" '"working"'
+fire post-tool-edit.json '.hook_event_name = "PostToolUseFailure" | .tool_input.file_path = "'"$repos"'/ideas/x"'
+check "a failed edit moves nothing" "$(field '.where.repo')" '"klepsydra"'
+
 fire pre-tool-question.json
 check "question" "$(field '[.state, .reason]')" '["needs_you","question"]'
 fire post-tool-bash.json '.tool_name = "AskUserQuestion"'
@@ -556,12 +569,13 @@ check "settings: parses" "$(jq -r 'type' <<<"$settings" 2>/dev/null)" "object"
 check "settings: heartbeat every 30 s" "$(jq '.statusLine.refreshInterval' <<<"$settings")" "30"
 check "settings: statusline command kept" "$(jq -r '.statusLine.command | ltrimstr("~")' <<<"$settings")" "/.claude/klepsydra-statusline.sh"
 check "settings: the events" "$(jq -c '.hooks | keys' <<<"$settings")" \
-  '["Notification","PermissionRequest","PostToolUse","PreToolUse","SessionEnd","SessionStart","Stop","StopFailure","UserPromptSubmit"]'
+  '["Notification","PermissionRequest","PostToolUse","PostToolUseFailure","PreToolUse","SessionEnd","SessionStart","Stop","StopFailure","UserPromptSubmit"]'
 check "settings: every fleet hook is async" \
   "$(jq '[.hooks[][].hooks[]] | length > 0 and all(.async == true and (.command | endswith("/klepsydra-fleet.sh")))' <<<"$settings")" "true"
 check "settings: questions and plans only" "$(jq -r '.hooks.PreToolUse[0].matcher' <<<"$settings")" "AskUserQuestion|ExitPlanMode"
-check "settings: input requests and the idle self-heal" "$(jq -r '.hooks.Notification[0].matcher' <<<"$settings")" "elicitation_dialog|idle_prompt"
+check "settings: input requests and the idle self-heal" "$(jq -r '.hooks.Notification[0].matcher' <<<"$settings")" "elicitation_dialog|elicitation_url_dialog|idle_prompt"
 check "settings: every tool after use" "$(jq -r '.hooks.PostToolUse[0].matcher // "*"' <<<"$settings")" "*"
+check "settings: every tool after failure" "$(jq -r '.hooks.PostToolUseFailure[0].matcher // "*"' <<<"$settings")" "*"
 check "the hook handles exactly the events registered" \
   "$(tr ' ' '\n' <<<"$EVENTS" | LC_ALL=C sort | paste -sd, -)" "$(jq -r '.hooks | keys | join(",")' <<<"$settings")"
 

@@ -310,7 +310,7 @@ CPU and RAM, and product packaging.
 
 The text above is unchanged. Each line below changed or sharpened it, with the reason.
 
-- Idle self-heal: a `Notification` of type `idle_prompt` sets a `working` or `needs_you` session to `done` once its state is 30 s old. Stop does not run after an interrupt, so a session could stay "working" forever. The install block's Notification matcher is `elicitation_dialog|idle_prompt`, since the heal never fires otherwise.
+- Idle self-heal: a `Notification` of type `idle_prompt` sets a `working` or `needs_you` session to `done` once its state is 30 s old. Stop does not run after an interrupt, so a session could stay "working" forever. The install block's Notification matcher is `elicitation_dialog|elicitation_url_dialog|idle_prompt`, since the heal never fires otherwise.
 - `written_at` is the activity stamp. The hook refreshes it at most once per 60 s, and it drives pruning and the "working?" rule. It also carries clock skew between the hook and the reader.
 - Session files add `needs`, `where.by`, `ended`, `written_at` and `error`. The asker rule and the skew correction need them.
 - `quiet_since` and "working?": a working session with no activity for over 10 minutes keeps the working colour, shows a `?` badge and reads "working? · no activity for <age>". A confident "working" would be wrong for an interrupted session.
@@ -320,7 +320,7 @@ The text above is unchanged. Each line below changed or sharpened it, with the r
 - Jump refuses with a message when Windows Terminal hides its tabs (full screen or focus mode), and never falls back to a window-title guess.
 - Jump creates CUIAutomation8 first (CUIAutomation when that is missing) and sets the UI Automation connection timeout to 1000 ms and the transaction timeout to 3000 ms through IUIAutomation2, so a hung terminal cannot hang the click.
 - Bad files are logged once to `fleet.log` in the app data dir (truncated at 64 KiB), since release builds have no console.
-- A need is cleared only by the tool that raised it, on the same thread. Clearing on any PostToolUse would drop the badge while a parallel or subagent tool finishes.
+- A need is cleared only by the tool that raised it, on the same thread, finishing or failing (`PostToolUse` or `PostToolUseFailure`). Clearing on any PostToolUse would drop the badge while a parallel or subagent tool finishes; without the failure event, an approved command that exits non-zero would keep "needs you" for the rest of the turn.
 - NotebookEdit's path comes from `tool_input.notebook_path`. The spec named `file_path`, which that tool does not carry.
 - A prompt starting `<task-notification>` is a background subagent's report: it sets `working` and keeps the last prompt. Pasted text arrives inside `<pasted_content>` and does not match.
 - A session is silent only when both its beat and its session file are over 90 s old. Judging by the beat alone could leave a dying session at "working".
