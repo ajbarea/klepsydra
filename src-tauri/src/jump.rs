@@ -24,15 +24,18 @@ fn jump(name: &str) -> Result<String, String> {
 #[cfg(windows)]
 mod uia {
     use klepsydra_fleet::tabs::{many_tabs, match_tab, no_tab, TabMatch};
+    use windows::core::{Interface, BSTR};
+    use windows::Win32::Foundation::HWND;
     use windows::Win32::System::Com::{
         CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_INPROC_SERVER,
         COINIT_MULTITHREADED,
     };
-    use windows::Win32::System::Variant::{VARIANT, VT_I4};
+    use windows::Win32::System::Variant::VARIANT;
     use windows::Win32::UI::Accessibility::{
-        CUIAutomation, IUIAutomation, IUIAutomationElement, IUIAutomationSelectionItemPattern,
-        TreeScope_Children, TreeScope_Descendants, UIA_ControlTypePropertyId,
-        UIA_SelectionItemPatternId, UIA_TabItemControlTypeId,
+        CUIAutomation, IUIAutomation, IUIAutomation2, IUIAutomationElement,
+        IUIAutomationSelectionItemPattern, TreeScope_Children, TreeScope_Descendants,
+        UIA_ClassNamePropertyId, UIA_ControlTypePropertyId, UIA_SelectionItemPatternId,
+        UIA_TabItemControlTypeId,
     };
     use windows::Win32::UI::WindowsAndMessaging::{
         FlashWindowEx, IsIconic, SetForegroundWindow, ShowWindow, FLASHWINFO, FLASHW_ALL,
@@ -41,6 +44,9 @@ mod uia {
 
     /// Windows Terminal's top-level window class.
     const TERMINAL_CLASS: &str = "CASCADIA_HOSTING_WINDOW_CLASS";
+    /// UI Automation waits this long (ms) to reach a provider and to finish a call.
+    const CONNECTION_TIMEOUT_MS: u32 = 2000;
+    const TRANSACTION_TIMEOUT_MS: u32 = 3000;
 
     /// Balances a CoInitializeEx that succeeded on this thread.
     struct Com;
@@ -51,43 +57,47 @@ mod uia {
         }
     }
 
+    /// A candidate title: a tab to select, or a window whose tab row is hidden.
     struct Tab {
         window: IUIAutomationElement,
-        item: IUIAutomationElement,
+        item: Option<IUIAutomationElement>,
         title: String,
     }
 
-    fn i4(value: i32) -> VARIANT {
-        let mut v = VARIANT::default();
-        unsafe {
-            (*v.Anonymous.Anonymous).vt = VT_I4;
-            (*v.Anonymous.Anonymous).Anonymous.lVal = value;
-        }
-        v
-    }
-
-    /// Every tab of every Windows Terminal window, with its title.
+    /// Every Windows Terminal tab, with its title; a window showing no tab row
+    /// stands for its single session under its own title.
     fn tabs(uia: &IUIAutomation) -> windows::core::Result<Vec<Tab>> {
         let mut out = Vec::new();
         unsafe {
-            let any = uia.CreateTrueCondition()?;
+            let terminal = uia.CreatePropertyCondition(
+                UIA_ClassNamePropertyId,
+                &VARIANT::from(BSTR::from(TERMINAL_CLASS)),
+            )?;
             let tab_item = uia.CreatePropertyCondition(
                 UIA_ControlTypePropertyId,
-                &i4(UIA_TabItemControlTypeId.0),
+                &VARIANT::from(UIA_TabItemControlTypeId.0),
             )?;
-            let windows = uia.GetRootElement()?.FindAll(TreeScope_Children, &any)?;
+            let windows = uia
+                .GetRootElement()?
+                .FindAll(TreeScope_Children, &terminal)?;
             for i in 0..windows.Length()? {
                 let window = windows.GetElement(i)?;
-                if window.CurrentClassName()? != TERMINAL_CLASS {
+                let items = window.FindAll(TreeScope_Descendants, &tab_item)?;
+                if items.Length()? == 0 {
+                    let title = window.CurrentName()?.to_string();
+                    out.push(Tab {
+                        window,
+                        item: None,
+                        title,
+                    });
                     continue;
                 }
-                let items = window.FindAll(TreeScope_Descendants, &tab_item)?;
                 for j in 0..items.Length()? {
                     let item = items.GetElement(j)?;
                     let title = item.CurrentName()?.to_string();
                     out.push(Tab {
                         window: window.clone(),
-                        item,
+                        item: Some(item),
                         title,
                     });
                 }
@@ -96,35 +106,13 @@ mod uia {
         Ok(out)
     }
 
-    pub fn jump(name: &str) -> Result<String, String> {
-        let _com = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) }
-            .is_ok()
-            .then_some(Com);
-        let uia: IUIAutomation =
-            unsafe { CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER) }
-                .map_err(|e| e.to_string())?;
-        let tabs = tabs(&uia).map_err(|e| e.to_string())?;
-        let titles: Vec<String> = tabs.iter().map(|t| t.title.clone()).collect();
-        let tab = match match_tab(name, &titles) {
-            TabMatch::None => return Err(no_tab(name)),
-            TabMatch::Many(n) => return Err(many_tabs(name, n)),
-            TabMatch::One(i) => &tabs[i],
-        };
+    fn forward(hwnd: HWND, title: &str) -> String {
         unsafe {
-            let select: IUIAutomationSelectionItemPattern = tab
-                .item
-                .GetCurrentPatternAs(UIA_SelectionItemPatternId)
-                .map_err(|e| e.to_string())?;
-            select.Select().map_err(|e| e.to_string())?;
-            let hwnd = tab
-                .window
-                .CurrentNativeWindowHandle()
-                .map_err(|e| e.to_string())?;
             if IsIconic(hwnd).as_bool() {
                 let _ = ShowWindow(hwnd, SW_RESTORE);
             }
             if SetForegroundWindow(hwnd).as_bool() {
-                return Ok(format!("Jumped to \u{201c}{}\u{201d}.", tab.title));
+                return format!("Jumped to \u{201c}{title}\u{201d}.");
             }
             let flash = FLASHWINFO {
                 cbSize: std::mem::size_of::<FLASHWINFO>() as u32,
@@ -135,6 +123,46 @@ mod uia {
             };
             let _ = FlashWindowEx(&flash);
         }
-        Ok("Windows kept the focus, so the terminal\u{2019}s taskbar button is flashing.".into())
+        "Windows kept the focus, so the terminal\u{2019}s taskbar button is flashing.".into()
+    }
+
+    pub fn jump(name: &str) -> Result<String, String> {
+        let name = name.trim();
+        if name.is_empty() {
+            return Err("This session has no name yet.".into());
+        }
+        let _com = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) }
+            .is_ok()
+            .then_some(Com);
+        let uia: IUIAutomation =
+            unsafe { CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER) }
+                .map_err(|e| format!("Could not start UI Automation: {e}"))?;
+        if let Ok(uia2) = uia.cast::<IUIAutomation2>() {
+            unsafe {
+                let _ = uia2.SetConnectionTimeout(CONNECTION_TIMEOUT_MS);
+                let _ = uia2.SetTransactionTimeout(TRANSACTION_TIMEOUT_MS);
+            }
+        }
+        let tabs =
+            tabs(&uia).map_err(|e| format!("Could not list Windows Terminal windows: {e}"))?;
+        let titles: Vec<String> = tabs.iter().map(|t| t.title.clone()).collect();
+        let tab = match match_tab(name, &titles) {
+            TabMatch::None => return Err(no_tab(name)),
+            TabMatch::Many(n) => return Err(many_tabs(name, n)),
+            TabMatch::One(i) => &tabs[i],
+        };
+        let hwnd = unsafe { tab.window.CurrentNativeWindowHandle() }
+            .map_err(|e| format!("Could not find the terminal window: {e}"))?;
+        if let Some(item) = &tab.item {
+            unsafe {
+                let select: IUIAutomationSelectionItemPattern = item
+                    .GetCurrentPatternAs(UIA_SelectionItemPatternId)
+                    .map_err(|e| format!("Could not select the tab: {e}"))?;
+                select
+                    .Select()
+                    .map_err(|e| format!("Could not select the tab: {e}"))?;
+            }
+        }
+        Ok(forward(hwnd, &tab.title))
     }
 }

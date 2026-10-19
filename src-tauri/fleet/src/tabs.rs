@@ -1,6 +1,7 @@
 //! Which Windows Terminal tab is a session's. Claude Code titles the tab with
-//! the session's name, after a status glyph, so a tab is the session's when
-//! its title contains the name; anything but exactly one such tab is refused.
+//! the session's name after a status glyph, so a tab is the session's when its
+//! title equals the name after the glyph; anything but exactly one such tab is
+//! refused.
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum TabMatch {
@@ -9,14 +10,21 @@ pub enum TabMatch {
     Many(usize),
 }
 
-/// The tab, among `titles`, whose title contains `name`.
+/// Drops a leading run of non-alphanumerics (the status glyph and its space)
+/// and trailing whitespace.
+fn bare(text: &str) -> &str {
+    text.trim_start_matches(|c: char| !c.is_alphanumeric())
+        .trim_end()
+}
+
+/// The tab, among `titles`, whose title equals `name` after its glyph.
 pub fn match_tab(name: &str, titles: &[String]) -> TabMatch {
-    let name = name.trim();
+    let name = bare(name.trim());
     if name.is_empty() {
         return TabMatch::None;
     }
     let hits: Vec<usize> = (0..titles.len())
-        .filter(|&i| titles[i].contains(name))
+        .filter(|&i| bare(&titles[i]) == name)
         .collect();
     match hits.as_slice() {
         [] => TabMatch::None,
@@ -53,10 +61,27 @@ mod tests {
 
     #[test]
     fn a_name_inside_two_titles_is_refused_not_guessed() {
-        let t = titles(&["\u{2733} klepsydra", "\u{2733} klepsydra-e2"]);
+        let t = titles(&["\u{2733} klepsydra", "klepsydra"]);
         assert_eq!(match_tab("klepsydra", &t), TabMatch::Many(2));
-        let t = titles(&["Fix tests", "Fix tests in CI"]);
-        assert_eq!(match_tab("Fix tests", &t), TabMatch::Many(2));
+    }
+
+    #[test]
+    fn a_longer_title_is_another_session_not_a_match() {
+        let t = titles(&["klepsydra", "klepsydra-e2"]);
+        assert_eq!(match_tab("klepsydra", &t), TabMatch::One(0));
+        let t = titles(&["Fix tests in CI"]);
+        assert_eq!(
+            match_tab("Fix tests", &t),
+            TabMatch::None,
+            "a renamed tab whose neighbour merely contains the name is never taken"
+        );
+    }
+
+    #[test]
+    fn the_name_is_trimmed_and_blank_matches_nothing() {
+        let t = titles(&["\u{2733} Plan"]);
+        assert_eq!(match_tab(" Plan ", &t), TabMatch::One(0));
+        assert_eq!(match_tab("  ", &titles(&["a  b"])), TabMatch::None);
     }
 
     #[test]
