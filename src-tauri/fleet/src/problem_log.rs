@@ -10,13 +10,11 @@ pub const CAP: u64 = 64 * 1024;
 /// Append `line` to `path`, emptying the file first when it is over `cap`
 /// bytes. Failures are ignored: logging must never disturb the reader.
 pub fn append_capped(path: &Path, line: &str, cap: u64) {
-    let over = std::fs::metadata(path).is_ok_and(|m| m.len() > cap);
-    let mut open = OpenOptions::new();
-    open.create(true).append(true);
-    if over {
+    if std::fs::metadata(path).is_ok_and(|m| m.len() > cap) {
         let _ = std::fs::write(path, b"");
     }
-    if let Ok(mut f) = open.open(path) {
+    let open = OpenOptions::new().create(true).append(true).open(path);
+    if let Ok(mut f) = open {
         let _ = writeln!(f, "{line}");
     }
 }
@@ -48,5 +46,16 @@ mod tests {
     fn an_unwritable_path_is_ignored() {
         let dir = Scratch::new("log-missing");
         append_capped(&dir.0.join("no/such/dir/fleet.log"), "x", 50);
+    }
+
+    #[test]
+    fn exactly_the_cap_is_kept_and_one_over_is_emptied() {
+        let dir = Scratch::new("log-boundary");
+        let path = dir.0.join("fleet.log");
+        std::fs::write(&path, "x".repeat(CAP as usize)).unwrap();
+        append_capped(&path, "a", CAP);
+        assert_eq!(std::fs::metadata(&path).unwrap().len(), CAP + 2);
+        append_capped(&path, "b", CAP);
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "b\n");
     }
 }

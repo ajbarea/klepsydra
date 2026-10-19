@@ -1,7 +1,8 @@
 //! Who follows the fleet: one sink per webview window, the latest snapshot for
 //! a window that subscribes late, and the card the wall should show next.
 
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Mutex, MutexGuard};
 
 use serde_json::{json, Value};
 
@@ -27,47 +28,69 @@ impl<S> Default for Hub<S> {
     }
 }
 
+/// Lock `m`; a poisoned lock disables the hub, so say so once.
+fn lock<T>(m: &Mutex<T>) -> Option<MutexGuard<'_, T>> {
+    static SAID: AtomicBool = AtomicBool::new(false);
+    let guard = m.lock().ok();
+    if guard.is_none() && !SAID.swap(true, Ordering::Relaxed) {
+        eprintln!("klepsydra: fleet hub lock poisoned; the fleet will stop updating");
+    }
+    guard
+}
+
+// Lock order: `subs`, then `last` or `pending`. Publish and subscribe each
+// hold `subs` throughout, so a new window sees every snapshot exactly once
+// and in order.
 impl<S: Sink> Hub<S> {
     /// Send a new snapshot to every window, dropping the ones that are gone.
     pub fn publish(&self, snapshot: Value) {
-        if let Ok(mut last) = self.last.lock() {
+        let Some(mut subs) = lock(&self.subs) else {
+            return;
+        };
+        if let Some(mut last) = lock(&self.last) {
             *last = Some(snapshot.clone());
         }
-        if let Ok(mut subs) = self.subs.lock() {
-            subs.retain(|(_, s)| s.send(snapshot.clone()));
-        }
+        subs.retain(|(_, s)| s.send(snapshot.clone()));
     }
 
     /// Window `label` follows the fleet from now on, starting with the latest
     /// snapshot and any card waiting to be shown there. A window that
     /// subscribes again (a reload) replaces its old sink.
     pub fn subscribe(&self, label: &str, sink: S) {
-        if let Some(snapshot) = self.last.lock().ok().and_then(|l| l.clone()) {
+        let Some(mut subs) = lock(&self.subs) else {
+            return;
+        };
+        if let Some(snapshot) = lock(&self.last).and_then(|l| l.clone()) {
             sink.send(snapshot);
         }
-        let card = self.pending.lock().ok().and_then(|mut p| {
+        let card = lock(&self.pending).and_then(|mut p| {
             p.take_if(|(for_label, _)| for_label == label)
                 .map(|(_, id)| id)
         });
         if let Some(id) = card {
             sink.send(json!({ "focus": id }));
         }
-        if let Ok(mut subs) = self.subs.lock() {
-            subs.retain(|(l, _)| l != label);
-            subs.push((label.to_string(), sink));
-        }
+        subs.retain(|(l, _)| l != label);
+        subs.push((label.to_string(), sink));
     }
 
     /// Show session `id`'s card in window `label`: now if it is following,
     /// else as soon as it subscribes.
     pub fn focus(&self, label: &str, id: &str) {
-        let sent = self.subs.lock().is_ok_and(|subs| {
-            subs.iter()
-                .find(|(l, _)| l == label)
-                .is_some_and(|(_, s)| s.send(json!({ "focus": id })))
-        });
+        let Some(mut subs) = lock(&self.subs) else {
+            return;
+        };
+        let message = json!({ "focus": id });
+        let sent = match subs.iter().position(|(l, _)| l == label) {
+            Some(i) if subs[i].1.send(message) => true,
+            Some(i) => {
+                subs.remove(i);
+                false
+            }
+            None => false,
+        };
         if !sent {
-            if let Ok(mut p) = self.pending.lock() {
+            if let Some(mut p) = lock(&self.pending) {
                 *p = Some((label.to_string(), id.to_string()));
             }
         }
@@ -170,5 +193,38 @@ mod tests {
         hub.subscribe("wall", wall.clone());
         hub.focus("wall", "abc");
         assert_eq!(wall.got(), vec![json!({ "focus": "abc" })]);
+    }
+
+    #[test]
+    fn a_window_subscribing_mid_publish_sees_snapshots_in_order() {
+        const N: u64 = 2000;
+        let hub: Arc<Hub<Probe>> = Arc::new(Hub::default());
+        let publisher = {
+            let hub = Arc::clone(&hub);
+            std::thread::spawn(move || (1..=N).for_each(|n| hub.publish(snap(n))))
+        };
+        let probes: Vec<Probe> = (0..20).map(|_| Probe::default()).collect();
+        for (i, p) in probes.iter().enumerate() {
+            hub.subscribe(&format!("w{i}"), p.clone());
+            std::thread::yield_now();
+        }
+        publisher.join().unwrap();
+        for p in probes {
+            let ns: Vec<u64> = p.got().iter().map(|v| v["n"].as_u64().unwrap()).collect();
+            assert!(ns.windows(2).all(|w| w[0] < w[1]), "out of order: {ns:?}");
+            assert_eq!(ns.last(), Some(&N), "missed the newest snapshot");
+        }
+    }
+
+    #[test]
+    fn a_failed_focus_drops_the_closed_window() {
+        let hub: Hub<Probe> = Hub::default();
+        let gone = Probe::default();
+        hub.subscribe("wall", gone.clone());
+        *gone.closed.lock().unwrap() = true;
+        hub.focus("wall", "abc");
+        *gone.closed.lock().unwrap() = false;
+        hub.publish(snap(1));
+        assert!(gone.got().is_empty());
     }
 }

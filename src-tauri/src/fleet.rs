@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use klepsydra_fleet::hub::{Hub, Sink};
-use klepsydra_fleet::log::{append_capped, CAP};
+use klepsydra_fleet::problem_log::{append_capped, CAP};
 use klepsydra_fleet::scan::Problem;
 use klepsydra_fleet::watch::{unix_now, Reader, POLL};
 use serde_json::Value;
@@ -37,8 +37,14 @@ pub fn fleet_subscribe(
 /// A skipped file goes to stderr for dev runs and to `<dir>/fleet.log`, which
 /// release builds have instead of a console.
 fn log_problem(dir: &Path, p: &Problem) {
-    eprintln!("klepsydra: skipped fleet/{}: {}", p.file, p.what);
-    let line = format!("{} fleet/{}: {}", unix_now(), p.file, p.what);
+    // "fleet" names the directory itself, not a file inside it.
+    let at = if p.file == "fleet" {
+        "fleet".to_string()
+    } else {
+        format!("fleet/{}", p.file)
+    };
+    eprintln!("klepsydra: skipped {at}: {}", p.what);
+    let line = format!("{} {at}: {}", unix_now(), p.what);
     append_capped(&dir.join("fleet.log"), &line, CAP);
 }
 
