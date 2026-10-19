@@ -270,9 +270,10 @@ shape, symbol and colour, from the Okabe-Ito palette:
 | vermillion square `×` | error | the last turn ended on an API error |
 | blue circle `…` | working | a prompt is being answered |
 | blue circle `?` | working? | working, but nothing has happened for 10 minutes; the turn may have been interrupted |
+| orange diamond `?` | needs you? | waiting on you with no word for 30 minutes; the session may be gone |
 | green circle `✓` | done | the last turn finished |
 | grey ring `○` | not started | no prompt yet |
-| grey ring `?` | silent | no heartbeat and no event for 90 seconds; the session may be gone |
+| grey ring `?` | silent | no heartbeat and no event for 90 seconds; the session may be gone (never shown for a session waiting on you, since an open prompt hides the status line and stops the heartbeat) |
 | grey ring `–` | ended | the session ended; it leaves after 10 minutes |
 
 Sessions that need you come first, the longest wait leading, then errors,

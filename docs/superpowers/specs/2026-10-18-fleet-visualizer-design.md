@@ -324,10 +324,11 @@ The text above is unchanged. Each line below changed or sharpened it, with the r
 - NotebookEdit's path comes from `tool_input.notebook_path`. The spec named `file_path`, which that tool does not carry.
 - A prompt starting `<task-notification>` is a background subagent's report: it sets `working` and keeps the last prompt. Pasted text arrives inside `<pasted_content>` and does not match.
 - A session is silent only when both its beat and its session file are over 90 s old. Judging by the beat alone could leave a dying session at "working".
+- A session waiting on AJ is never silent: Claude Code hides the status line while a permission prompt or dialog is open, so no beat arrives (measured on 2.1.301: none for 30 s at a Bash prompt, none for 37 s at an AskUserQuestion). It keeps `needs_you` and its age. With no beat and no event for 30 minutes it reads "needs you? · no word for <age>", keeps the needs-you order, and shows a `?` badge on the diamond.
 - Cast: Puck is `am_puck`, Mneme `bf_isabella`, Dokimasia `af_aoede`, Cupid `af_heart`, and the rest follow kourai's `tts_backend.py`, because kourai's voices are outside keryx's pool. A blend voice gets a hash fallback face and a joined name.
 - Badge contrast is measured against a panel-coloured ring around each badge, since `#0072B2` is 2.1:1 on a white desktop without it. Every portrait carries its badge, and only needs-you pulses.
 - Strip state and the resize-band maths live in `src-tauri/src/fleet.rs` and `geometry.rs`, so `main.rs` gains only wiring.
-- The strip shows a status's age in the tooltip and the accessible name, since a 28 px portrait has no room for text; the wall shows it visibly. The silent rule swaps the badge, so a strip badge is never stale-wrong.
+- The strip shows a status's age in the tooltip and the accessible name, since a 28 px portrait has no room for text; the wall shows it visibly. The silent rule swaps the badge, and a needs-you badge turns to `?` after 30 minutes without a word, so a strip badge is never stale-wrong.
 - The wall's window label is `wall`, it is not always on top, and it does not pulse; the strip owns the one pulse.
 - Order: the needs-you group comes first, longest wait first inside it. A session that starts needing AJ joins that group.
 - A card's name comes from the beat's session name, then the file's `session_title`, then the launch folder. The default display name reaches no hook.

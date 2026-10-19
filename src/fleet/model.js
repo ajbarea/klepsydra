@@ -13,11 +13,14 @@ export const STATUS = {
   ended: { label: "ended", shape: "ring", symbol: "\u2013", tone: "quiet" },
 };
 const UNKNOWN = { label: "unknown", shape: "ring", symbol: "?", tone: "quiet" };
-// A working session with no hook activity for a while: an interrupt runs no Stop hook.
-const QUIET_WORKING = { ...STATUS.working, label: "working?", symbol: "?" };
-export const statusOf = (status, quiet = false) =>
-  quiet && status === "working" ? QUIET_WORKING : (STATUS[status] ?? UNKNOWN);
-const isQuiet = (s) => s.status === "working" && s.quiet_since != null;
+// A working session with no hook activity for a while (an interrupt runs no
+// Stop hook), or one waiting on AJ with no word for half an hour: same badge, "?" symbol.
+const QUIET = {
+  working: { ...STATUS.working, label: "working?", symbol: "?" },
+  needs_you: { ...STATUS.needs_you, label: "needs you?", symbol: "?" },
+};
+export const statusOf = (status, quiet = false) => (quiet && QUIET[status]) || STATUS[status] || UNKNOWN;
+const isQuiet = (s) => s.status in QUIET && s.quiet_since != null;
 
 // A card says when it last changed once that is older than this.
 export const SHOW_UPDATED_AFTER_MS = 5 * 60 * 1000;
@@ -50,11 +53,14 @@ export function longAge(ms) {
   return unit(Math.floor(h / 24), "day");
 }
 
-/** Label, reason and age. A silent session says how long since any word; a quiet one, since any activity. */
+/** Label, reason and age. A silent or quiet needs-you session says how long since any word; a quiet working one, since any activity. */
 export function statusParts(s, nowMs, age = shortAge) {
   const a = age(ageMs(s.status_at, nowMs));
   if (s.status === "silent") return [statusOf(s.status).label, `no word for ${a}`];
-  if (isQuiet(s)) return [statusOf(s.status, true).label, `no activity for ${age(ageMs(s.quiet_since, nowMs))}`];
+  if (isQuiet(s)) {
+    const since = age(ageMs(s.quiet_since, nowMs));
+    return [statusOf(s.status, true).label, s.status === "working" ? `no activity for ${since}` : `no word for ${since}`];
+  }
   return [statusOf(s.status).label, s.reason, a].filter(Boolean);
 }
 
@@ -111,16 +117,16 @@ export function identity(s, cast) {
 export const accessibleName = (s, cast, nowMs) =>
   [identity(s, cast).name, ...statusParts(s, nowMs, longAge)].join(", ");
 
-/** Each session's status by id (a quiet working session keyed "working?"), to compare the next snapshot against. */
+/** Each session's status by id (a quiet session keyed "working?" or "needs_you?"), to compare the next snapshot against. */
 export const statuses = (sessions) =>
-  new Map(sessions.map((s) => [s.session_id, isQuiet(s) ? "working?" : s.status]));
+  new Map(sessions.map((s) => [s.session_id, isQuiet(s) ? `${s.status}?` : s.status]));
 
 /** Sessions that started needing AJ since `before`; none on the first look. */
 export function startedNeeding(before, sessions) {
   if (!before) return new Set();
   return new Set(
     sessions
-      .filter((s) => s.status === "needs_you" && before.get(s.session_id) !== "needs_you")
+      .filter((s) => s.status === "needs_you" && !String(before.get(s.session_id)).startsWith("needs_you"))
       .map((s) => s.session_id),
   );
 }

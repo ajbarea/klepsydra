@@ -16,6 +16,9 @@ const SKEW_SLACK: i64 = 2;
 /// A working turn with no hook event for this long is quiet: a user interrupt
 /// leaves one behind, because Stop does not run on an interrupt.
 pub const QUIET_AFTER: i64 = 600;
+/// A session waiting on AJ shows no heartbeat while its prompt is open, so it
+/// is not silent; with no word of any kind for this long it is in doubt.
+pub const WAITING_DOUBT_AFTER: i64 = 1800;
 
 #[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -64,7 +67,8 @@ pub struct View {
     pub error: Option<String>,
     pub updated_at: i64,
     /// Last hook activity, when the session is working and has had none for
-    /// `QUIET_AFTER`.
+    /// `QUIET_AFTER`; the last word of any kind, when it needs AJ and has had
+    /// none for `WAITING_DOUBT_AFTER`.
     pub quiet_since: Option<i64>,
 }
 
@@ -107,7 +111,9 @@ pub fn view(entry: &Entry, now: i64) -> Option<View> {
         .beat
         .as_ref()
         .map_or(entry.modified, |b| b.0.max(entry.modified));
-    let silent = f.state != State::Ended && now.saturating_sub(last_word) > SILENT_AFTER;
+    // A prompt hides the status line, so a waiting session sends no beats.
+    let silent = !matches!(f.state, State::Ended | State::NeedsYou)
+        && now.saturating_sub(last_word) > SILENT_AFTER;
     let (status, reason, status_at) = if silent {
         (Status::Silent, None, last_word)
     } else {
@@ -150,9 +156,13 @@ pub fn view(entry: &Entry, now: i64) -> Option<View> {
     .max()
     .unwrap_or(state_at);
     // The file's own time: its skew-corrected written_at equals it within 2 s.
-    let quiet_since = (status == Status::Working
-        && now.saturating_sub(entry.modified) > QUIET_AFTER)
-        .then_some(entry.modified);
+    let quiet_since = match status {
+        Status::Working => Some(entry.modified).filter(|m| now.saturating_sub(*m) > QUIET_AFTER),
+        Status::NeedsYou => {
+            Some(last_word).filter(|w| now.saturating_sub(*w) > WAITING_DOUBT_AFTER)
+        }
+        _ => None,
+    };
     let beat_name = entry.beat.as_ref().and_then(|b| b.1.clone());
     Some(View {
         session_id: f.session_id.clone(),
@@ -257,9 +267,47 @@ mod tests {
         let mut e = entry("a", State::NeedsYou, NOW - 20, 0);
         e.beat = None;
         assert_eq!(view(&e, NOW).unwrap().status, Status::NeedsYou);
+        let mut e = entry("a", State::Done, NOW - 20, 0);
+        e.beat = None;
+        assert_eq!(view(&e, NOW).unwrap().status, Status::Done);
         e.file.state_at = NOW - 200;
         e.modified = NOW - 200;
         assert_eq!(view(&e, NOW).unwrap().status, Status::Silent);
+    }
+
+    #[test]
+    fn a_session_waiting_on_a_prompt_stays_needs_you_while_its_status_line_is_hidden() {
+        // The prompt hides the status line, so no beat comes while it waits.
+        let mut e = entry("a", State::NeedsYou, NOW - 91, NOW - 91);
+        e.file.reason = Some("approve Bash".into());
+        let v = view(&e, NOW).unwrap();
+        assert_eq!(
+            (v.status, v.status_at, v.quiet_since),
+            (Status::NeedsYou, NOW - 91, None)
+        );
+        assert_eq!(v.reason.as_deref(), Some("approve Bash"));
+        let v = view(&entry("a", State::NeedsYou, NOW - 1800, NOW - 1800), NOW).unwrap();
+        assert_eq!(v.quiet_since, None, "30 minutes exactly is not yet quiet");
+        let v = view(
+            &entry("a", State::NeedsYou, NOW - 31 * 60, NOW - 31 * 60),
+            NOW,
+        )
+        .unwrap();
+        assert_eq!((v.status, v.status_at), (Status::NeedsYou, NOW - 31 * 60));
+        assert_eq!(v.quiet_since, Some(NOW - 31 * 60));
+    }
+
+    #[test]
+    fn needs_you_order_is_unchanged_by_silence() {
+        let entries = vec![
+            entry("done", State::Done, NOW - 10, NOW - 5),
+            entry("needs-new", State::NeedsYou, NOW - 100, NOW - 100),
+            entry("needs-old", State::NeedsYou, NOW - 31 * 60, NOW - 31 * 60),
+        ];
+        assert_eq!(
+            ids(&snapshot(&entries, NOW)),
+            vec!["needs-old", "needs-new", "done"]
+        );
     }
 
     #[test]
@@ -406,7 +454,7 @@ mod tests {
 
     #[test]
     fn only_a_working_session_is_ever_quiet() {
-        for state in [State::Done, State::NeedsYou, State::New, State::Error] {
+        for state in [State::Done, State::New, State::Error] {
             assert_eq!(quiet(state, NOW - 700, NOW - 700), None, "{state:?}");
         }
         let silent = entry("a", State::Working, NOW - 700, NOW - 700);

@@ -95,10 +95,25 @@ test("a working session with no quiet_since is unchanged", () => {
   assert.equal(card(s, CAST, NOW).quiet, false);
 });
 
-test("quiet_since means nothing unless the session is working", () => {
-  const s = session({ quiet_since: ago(720) });
-  assert.equal(statusLine(s, NOW), "needs you \u00b7 approve Bash \u00b7 2m");
+test("quiet_since means nothing unless the session is working or needs you", () => {
+  const s = session({ status: "done", reason: null, quiet_since: ago(720) });
+  assert.equal(statusLine(s, NOW), "done \u00b7 2m");
   assert.equal(card(s, CAST, NOW).quiet, false);
+});
+
+test("a needs-you session with no word for half an hour reads needs you?, still the diamond", () => {
+  const s = session({ quiet_since: ago(31 * 60), status_at: ago(35 * 60) });
+  assert.equal(statusLine(s, NOW), "needs you? \u00b7 no word for 31m");
+  assert.equal(accessibleName(s, CAST, NOW), "Hephaestus, needs you?, no word for 31 minutes");
+  const svg = badgeSvg("needs_you", true);
+  assert.match(svg, /tone-needs shape-diamond/);
+  assert.match(svg, />\?<\/text>/);
+  assert.notEqual(svg, badgeSvg("needs_you"));
+  assert.equal(stripItems([s], CAST, NOW)[0].badge, svg);
+  assert.equal(card(s, CAST, NOW).statusLine, "needs you? \u00b7 no word for 31m");
+  const fresh = session();
+  assert.equal(startedNeeding(statuses([fresh]), [s]).size, 0, "going quiet is not a new need");
+  assert.deepEqual(announcements(statuses([fresh]), [s], CAST, NOW), ["Hephaestus, needs you?, no word for 31 minutes"]);
 });
 
 test("the strip item and card of a quiet session say so", () => {
