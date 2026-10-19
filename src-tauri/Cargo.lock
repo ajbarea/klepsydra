@@ -1699,12 +1699,21 @@ dependencies = [
 name = "klepsydra"
 version = "0.1.0"
 dependencies = [
+ "klepsydra-fleet",
  "serde_json",
  "tauri",
  "tauri-build",
  "tauri-plugin-autostart",
  "tauri-plugin-window-state",
  "x11rb",
+]
+
+[[package]]
+name = "klepsydra-fleet"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
