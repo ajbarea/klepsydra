@@ -215,6 +215,49 @@ display=$(CLAUDE_CONFIG_DIR="$work/team" KLEPSYDRA_DIR="/proc/nonexistent" bash 
 check "unwritable dest: exit 0"       "$rc" "0"
 check "unwritable dest: still echoes" "$display" "Opus 5 · ctx 21% · 5h 73% · 7d 12%"
 
+# --- the fleet heartbeat ----------------------------------------------------
+# One line per session: its name (the terminal tab title) and the 10 s bucket
+# it was written in. A render in the same bucket with the same name writes
+# nothing; refreshInterval re-renders every 30 s, so a live session beats.
+B=cb9fa591-1514-44d1-a31c-eba4a7cb41ed
+beat="$work/out/fleet/$B.beat"
+named=$(cat "$fixtures/named-session.json")
+beat_run() { # epoch-seconds [json]
+  CLAUDE_CONFIG_DIR="$work/team" KLEPSYDRA_DIR="$work/out" KLEPSYDRA_NOW="$1" bash "$script" <<<"${2:-$named}"
+}
+tab=$'\t'
+rm -rf "$work/out"
+display=$(beat_run 1792353001)
+check "beat: still echoes"        "$display" "Opus 5 · ctx 21% · 5h 73% · 7d 12%"
+check "beat: name and bucket"     "$(cat "$beat")" "Plan the fleet visualizer${tab}179235300"
+touch -d @1 "$beat"
+beat_run 1792353009 >/dev/null
+check "beat: same bucket, no write" "$(stat -c %Y "$beat")" "1"
+beat_run 1792353010 >/dev/null
+check "beat: next bucket, rewritten" "$(cat "$beat")" "Plan the fleet visualizer${tab}179235301"
+touch -d @1 "$beat"
+beat_run 1792353011 "$(jq -c '.session_name = "fleet-plan"' <<<"$named")" >/dev/null
+check "beat: a rename writes at once" "$(cat "$beat")" "fleet-plan${tab}179235301"
+beat_run 1792353020 "$(jq -c 'del(.session_name)' <<<"$named")" >/dev/null
+check "beat: no name yet"          "$(cat "$beat")" "${tab}179235302"
+beat_run 1792353030 "$(jq -c '.session_name = "a\tb\nc"' <<<"$named")" >/dev/null
+check "beat: tabs and newlines flattened" "$(cat "$beat")" "a b c${tab}179235303"
+rm -rf "$work/out"
+beat_run 1792353040 "$(jq -c 'del(.rate_limits)' <<<"$named")" >/dev/null
+check "beat: written without rate limits" "$([[ -f $beat ]] && echo yes)" "yes"
+rm -rf "$work/out"
+run full.json team >/dev/null
+check "beat: none for a session id that is not a uuid" "$(find "$work/out" -name '*.beat' | wc -l)" "0"
+check "beat: no tmp litter" "$(find "$work/out" -name '*.tmp' | wc -l)" "0"
+
+# --- no HOME, no USER: still echoes, publishes nothing ----------------------
+rm -rf "$work/out"
+display=$(env -u HOME -u USER -u CLAUDE_CONFIG_DIR -u KLEPSYDRA_DIR -u XDG_DATA_HOME \
+  bash "$script" <"$fixtures/named-session.json" 2>"$work/err"); rc=$?
+check "no HOME/USER: exit 0"       "$rc" "0"
+check "no HOME/USER: still echoes" "$display" "Opus 5 · ctx 21% · 5h 73% · 7d 12%"
+check "no HOME/USER: silent stderr" "$(cat "$work/err")" ""
+
 # --- default destination must track the overlay's bundle identifier -------
 # Producer and consumer agree on the path by convention alone, so a rename of
 # one side is otherwise silent: the gauge simply never sees a reading.

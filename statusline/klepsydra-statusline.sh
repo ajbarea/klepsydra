@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
 # Claude Code statusLine command. Reads the session JSON on stdin, publishes the
-# rate-limit windows to a file the klepsydra overlay polls, and echoes a compact
-# readout back to the terminal.
+# rate-limit windows to a file the klepsydra overlay polls, writes the session's
+# heartbeat for the fleet strip, and echoes a compact readout back to the
+# terminal.
 #
-# Wire it up in ~/.claude/settings.json:
-#   "statusLine": { "type": "command", "command": "~/.claude/klepsydra-statusline.sh" }
+# Wire it up in ~/.claude/settings.json (README.md has the whole block):
+#   "statusLine": { "type": "command", "command": "~/.claude/klepsydra-statusline.sh",
+#                   "refreshInterval": 30 }
 #
 # Each logged-in account publishes to its own file, so terminals signed into
 # different accounts never overwrite each other.
@@ -33,12 +35,16 @@ if [[ -z "${KLEPSYDRA_DIR:-}" ]]; then
 fi
 # --- end klepsydra dir ---
 
+KLEPSYDRA_DIR="${KLEPSYDRA_DIR:-}"  # unresolvable: publish nothing, still echo
+
 input=$(cat)
+now=${KLEPSYDRA_NOW:-}
+[[ $now =~ ^[0-9]+$ ]] || printf -v now '%(%s)T' -1
 
 # The statusLine payload carries no account identity, so take it from the global
 # config -- which CLAUDE_CONFIG_DIR relocates, giving each simultaneous login
 # its own file.
-config="${CLAUDE_CONFIG_DIR:-$HOME}/.claude.json"
+config="${CLAUDE_CONFIG_DIR:-${HOME:-}}/.claude.json"
 account=$(jq -c '
   (.oauthAccount | objects) // {}
   | { id:    (.accountUuid // "unknown"),
@@ -55,9 +61,9 @@ if [[ -z "$account" ]]; then
 fi
 
 # Lines out: the file to publish (or SKIP), the windows readout, the model and
-# context readout, the account id, the session id.
+# context readout, the account id, the session id, the session name.
 parsed=$(printf '%s' "$input" | jq -r \
-  --argjson now "$(date +%s)" --argjson acct "$account" '
+  --argjson now "$now" --argjson acct "$account" '
   def pct: (.used_percentage // empty) | floor;
 
   . as $root
@@ -75,7 +81,8 @@ parsed=$(printf '%s' "$input" | jq -r \
   ( [ ( $root.model.display_name // empty ),
       ( $root.context_window.used_percentage | if . then "ctx \(floor)%" else empty end ) ] | join(" · ") ),
   $acct.id,
-  $session
+  $session,
+  ( $root.session_name // "" | tostring | gsub("[\t\r\n]"; " ") )
 ' 2>/dev/null) || parsed=""
 
 # Malformed stdin: say nothing, write nothing, exit clean. A statusLine that
@@ -88,7 +95,27 @@ parsed=$(printf '%s' "$input" | jq -r \
   IFS= read -r extra
   IFS= read -r id
   IFS= read -r session
+  IFS= read -r name
 } <<<"$parsed"
+
+# The fleet strip's heartbeat: the session's name (its terminal tab title) and
+# the 10 s bucket it was written in. Rewritten only when either changes, so a
+# render costs a read and at most one write per 10 s.
+if [[ -n "$KLEPSYDRA_DIR" ]] &&
+  [[ $session =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]]; then
+  beat="$KLEPSYDRA_DIR/fleet/$session.beat"
+  beat_line="$name"$'\t'"$((now / 10))"
+  was=""
+  { IFS= read -r was <"$beat"; } 2>/dev/null
+  if [[ "$was" != "$beat_line" ]] && mkdir -p "${beat%/*}" 2>/dev/null; then
+    tmp="$beat.$$.tmp"
+    if printf '%s\n' "$beat_line" >"$tmp" 2>/dev/null; then
+      mv -f "$tmp" "$beat" 2>/dev/null || rm -f "$tmp"
+    else
+      rm -f "$tmp" 2>/dev/null
+    fi
+  fi
+fi
 
 # Claude Code also re-runs this on refreshInterval, at a window's reset time
 # and on mode toggles, passing the session's last API response again. Only a
@@ -114,7 +141,7 @@ repeats_last_reading() {
 # data. A file per session: several terminals on one login each hold whatever
 # their own last API response reported, so sharing a file made them overwrite
 # each other with stale numbers. The overlay reconciles them.
-if [[ "$payload" != "SKIP" ]] && ! $torn && ! repeats_last_reading; then
+if [[ "$payload" != "SKIP" && -n "$KLEPSYDRA_DIR" ]] && ! $torn && ! repeats_last_reading; then
   out_dir="$KLEPSYDRA_DIR/accounts/$id"
   if mkdir -p "$out_dir" 2>/dev/null; then
     out="$out_dir/$session.json"
