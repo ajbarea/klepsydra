@@ -162,6 +162,45 @@ pub fn default_rect(primary: &Display, w: f64, h: f64) -> Rect {
     clamp_into(Rect::new(m.x + m.w - w - inset, m.y + m.h - h, w, h), m)
 }
 
+/// A rectangle the frontend reported, in CSS pixels from the window's
+/// top-left, as physical desktop edges (left, top, right, bottom) for a window
+/// at `origin` of `size` and display `scale`: grown by `margin` each way, then,
+/// when `band` is given, kept that far inside the window's own edges.
+pub fn hit_area(
+    css: [f64; 4],
+    origin: (f64, f64),
+    size: (f64, f64),
+    scale: f64,
+    margin: f64,
+    band: Option<f64>,
+) -> (f64, f64, f64, f64) {
+    let left = origin.0 + css[0] * scale - margin;
+    let top = origin.1 + css[1] * scale - margin;
+    let right = left + css[2] * scale + margin * 2.0;
+    let bottom = top + css[3] * scale + margin * 2.0;
+    match band {
+        None => (left, top, right, bottom),
+        Some(b) => (
+            left.max(origin.0 + b),
+            top.max(origin.1 + b),
+            right.min(origin.0 + size.0 - b),
+            bottom.min(origin.1 + size.1 - b),
+        ),
+    }
+}
+
+/// Whether (`x`, `y`) lies within edges from `hit_area`, edges included.
+pub fn contains((left, top, right, bottom): (f64, f64, f64, f64), x: f64, y: f64) -> bool {
+    x >= left && x <= right && y >= top && y <= bottom
+}
+
+/// How far inside the window's edges tao's Linux resize band reaches, in
+/// physical pixels at display `scale`.
+pub fn resize_inset(scale: f64) -> f64 {
+    const TAO_RESIZE_BORDER: f64 = 5.0; // tao's linux/event_loop.rs
+    (TAO_RESIZE_BORDER + 1.0) * scale
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -418,5 +457,68 @@ mod tests {
     fn no_monitors_means_no_home() {
         let h = home(Rect::new(0, 0, 420, 58), display("DP-1", SCREEN));
         assert_eq!(home_rect(&h, 420.0, 58.0, &[]), None);
+    }
+
+    #[test]
+    fn a_hit_area_is_placed_and_scaled_with_the_window() {
+        let a = hit_area(
+            [14.0, 10.0, 12.0, 30.0],
+            (100.0, 200.0),
+            (630.0, 96.0),
+            1.5,
+            0.0,
+            None,
+        );
+        assert_eq!(a, (121.0, 215.0, 139.0, 260.0));
+        assert!(contains(a, 121.0, 260.0));
+        assert!(!contains(a, 120.9, 230.0));
+    }
+
+    #[test]
+    fn a_margin_grows_the_area_each_way() {
+        let a = hit_area(
+            [14.0, 10.0, 12.0, 30.0],
+            (0.0, 0.0),
+            (630.0, 64.0),
+            1.0,
+            8.0,
+            None,
+        );
+        assert_eq!(a, (6.0, 2.0, 34.0, 48.0));
+    }
+
+    #[test]
+    fn a_band_keeps_the_strip_off_the_window_edges() {
+        // The strip runs to the window's right edge; a press in the resize
+        // band there must pass through, as for the grip.
+        let a = hit_area(
+            [430.0, 0.0, 200.0, 64.0],
+            (0.0, 0.0),
+            (630.0, 64.0),
+            1.0,
+            0.0,
+            Some(6.0),
+        );
+        assert_eq!(a, (430.0, 6.0, 624.0, 58.0));
+        assert!(!contains(a, 627.0, 30.0));
+        assert!(contains(a, 624.0, 6.0));
+        assert!(contains(a, 430.0, 58.0));
+        assert!(!contains(a, 624.1, 30.0));
+        assert!(!contains(a, 500.0, 5.9));
+    }
+
+    #[test]
+    fn a_band_clamps_all_four_edges_off_origin() {
+        let (ox, oy) = (-1920.0, 100.0);
+        let size = (945.0, 144.0);
+        let b = 9.0;
+        let a = hit_area([0.0, 0.0, 630.0, 96.0], (ox, oy), size, 1.5, 0.0, Some(b));
+        assert_eq!(a, (ox + b, oy + b, ox + size.0 - b, oy + size.1 - b));
+    }
+
+    #[test]
+    fn the_resize_band_is_tao_border_plus_one_scaled() {
+        assert_eq!(resize_inset(1.0), 6.0);
+        assert_eq!(resize_inset(1.5), 9.0);
     }
 }

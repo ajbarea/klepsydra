@@ -1,0 +1,25 @@
+{
+  "v": 1,
+  "characters": {
+    "af_heart": { "name": "Cupid", "face": "cupid", "gender": "f" },
+    "am_michael": { "name": "Hephaestus", "face": "hephaestus", "gender": "m" },
+    "bf_emma": { "name": "Techne", "face": "techne", "gender": "f" },
+    "af_bella": { "name": "Kallos", "face": "kallos", "gender": "f" },
+    "bf_isabella": { "name": "Mneme", "face": "mneme", "gender": "f" },
+    "am_puck": { "name": "Puck", "face": "puck", "gender": "m" },
+    "af_aoede": { "name": "Dokimasia", "face": "dokimasia", "gender": "f" },
+    "af_kore": { "name": "Aidos", "face": "aidos", "gender": "f" },
+    "af_sarah": { "name": "Metis", "face": "metis", "gender": "f" },
+    "af_nova": { "name": "Aletheia", "face": "aletheia", "gender": "f" }
+  },
+  "lorelei": [
+    "af_alloy", "af_aoede", "af_bella", "af_heart", "af_jessica", "af_kore", "af_nicole", "af_nova",
+    "af_river", "af_sarah", "af_sky", "am_adam", "am_echo", "am_eric", "am_fenrir", "am_liam",
+    "am_michael", "am_onyx", "am_puck", "am_santa", "bf_alice", "bf_emma", "bf_isabella", "bf_lily",
+    "bm_daniel", "bm_fable", "bm_george", "bm_lewis", "ef_dora", "em_alex", "em_santa", "ff_siwis",
+    "hf_alpha", "hf_beta", "hm_omega", "hm_psi", "if_sara", "im_nicola", "jf_alpha", "jf_gongitsune",
+    "jf_nezumi", "jf_tebukuro", "jm_kumo", "pf_dora", "pm_alex", "pm_santa", "zf_xiaobei", "zf_xiaoni",
+    "zf_xiaoxiao", "zf_xiaoyi", "zm_yunjian", "zm_yunxi", "zm_yunxia", "zm_yunyang"
+  ],
+  "fallbacks": 24
+}

@@ -2,6 +2,7 @@ node_modules/
 src-tauri/target/
 src-tauri/gen/
 src/dev-fixture.json
+src/dev-fleet.json
 COMMITS.md
 
 # per-session git worktrees

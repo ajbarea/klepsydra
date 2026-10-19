@@ -32,6 +32,12 @@
   --grip-width: 12px;
   --grip-dot: #6f6f6f;
   --grip-dot-hover: #d0d0d0;
+
+  /* Fleet strip: a portrait per Claude Code session, right of the gauge. */
+  --strip-gap: 8px;     /* between the gauge and the strip */
+  --face-size: 28px;
+  --face-gap: 6px;
+  --badge-size: 13px;
 }
 /* ─────────────────────────────────────────────────────────────────────────── */
 
@@ -168,3 +174,45 @@ html, body {
 #zoom.on { opacity: 1; transition: none; }
 
 #empty[hidden] { display: none; }
+
+/* The gauge and the fleet strip side by side; the window takes this size. */
+#frame {
+  display: flex;
+  align-items: stretch;
+  gap: calc(var(--strip-gap) * var(--scale));
+  width: max-content;
+}
+
+#strip {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--face-gap) * var(--scale));
+  padding: calc(var(--panel-pad-y) * var(--scale)) calc(var(--panel-pad-x) * var(--scale));
+  background: var(--panel-bg);
+  border-radius: calc(var(--panel-radius) * var(--scale));
+  backdrop-filter: blur(12px);
+}
+#strip[hidden] { display: none; }
+
+.face {
+  position: relative;
+  flex: 0 0 auto;
+  width: calc(var(--face-size) * var(--scale));
+  height: calc(var(--face-size) * var(--scale));
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: var(--track);
+  cursor: pointer;
+}
+.face:focus-visible {
+  outline: calc(2px * var(--scale)) solid var(--text);
+  outline-offset: calc(2px * var(--scale));
+}
+.face .badge {
+  position: absolute;
+  right: calc(-3px * var(--scale));
+  bottom: calc(-3px * var(--scale));
+  width: calc(var(--badge-size) * var(--scale));
+  height: calc(var(--badge-size) * var(--scale));
+}

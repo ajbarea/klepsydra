@@ -34,8 +34,14 @@ jobs:
       # second account, malformed stdin, an unwritable destination.
       - name: statusLine hook tests
         run: bash statusline/test_statusline.sh
+      # The fleet hook is the only writer of a session's state, so its fixtures
+      # cover the shapes that would otherwise show a wrong status.
+      - name: Fleet hook tests
+        run: bash hooks/test_fleet.sh
+      - name: Release memory check tests
+        run: bash scripts/test_measure_memory.sh
       - name: Shell lint
-        run: shellcheck statusline/*.sh scripts/*.sh
+        run: shellcheck hooks/*.sh statusline/*.sh scripts/*.sh
       # The install dir is writable only because the NSIS mode is currentUser;
       # a perMachine build puts it under Program Files. Readings and harness
       # output go to the app data dir and to temp respectively.
@@ -85,11 +91,11 @@ jobs:
         run: rustup component add clippy rustfmt
       - name: cargo fmt
         working-directory: src-tauri
-        run: cargo fmt --check
+        run: cargo fmt --all --check
       - name: cargo clippy
         working-directory: src-tauri
-        run: cargo clippy --all-targets -- -D warnings
+        run: cargo clippy --workspace --all-targets -- -D warnings
       # The job keeps its name: branch protection requires it by that name.
       - name: cargo test
         working-directory: src-tauri
-        run: cargo test
+        run: cargo test --workspace

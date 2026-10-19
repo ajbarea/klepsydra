@@ -1,6 +1,8 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod fleet;
 mod geometry;
+mod jump;
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -250,11 +252,11 @@ fn move_resize(window: &tauri::WebviewWindow, r: Rect) -> Result<(), String> {
 }
 
 /// The frontend reports the size its panel needs (CSS pixels): a row per
-/// account window, times the zoom, with the grip's new rectangle. `pin` marks
-/// a zoom: the content under the pointer, read now rather than when the wheel
-/// event fired, stays under it, so the grip does too. Otherwise the window
-/// grows away from the screen edges it sits nearest. Either way it is kept
-/// wholly on its monitor.
+/// account window, times the zoom, and the fleet strip beside it, with the
+/// grip's and the strip's new rectangles. `pin` marks a zoom: the content
+/// under the pointer, read now rather than when the wheel event fired, stays
+/// under it, so the grip does too. Otherwise the window grows away from the
+/// screen edges it sits nearest. Either way it is kept wholly on its monitor.
 #[tauri::command]
 fn set_size(
     window: tauri::WebviewWindow,
@@ -262,9 +264,13 @@ fn set_size(
     height: f64,
     pin: bool,
     grip: Option<[f64; 4]>,
+    strip: Option<[f64; 4]>,
 ) -> Result<(), String> {
     if let (Some(g), Ok(mut slot)) = (grip, window.state::<Grip>().0.lock()) {
         *slot = Some(g);
+    }
+    if let Ok(mut slot) = window.state::<fleet::Strip>().0.lock() {
+        *slot = strip;
     }
     let scale = window.scale_factor().map_err(|e| e.to_string())?;
     let from = current(&window).ok_or("window placement unavailable")?;
@@ -312,9 +318,20 @@ fn set_size(
 }
 
 #[tauri::command]
-fn set_grip(grip: tauri::State<'_, Grip>, x: f64, y: f64, w: f64, h: f64) {
+fn set_grip(
+    grip: tauri::State<'_, Grip>,
+    strip_state: tauri::State<'_, fleet::Strip>,
+    x: f64,
+    y: f64,
+    w: f64,
+    h: f64,
+    strip: Option<[f64; 4]>,
+) {
     if let Ok(mut g) = grip.0.lock() {
         *g = Some([x, y, w, h]);
+    }
+    if let Ok(mut s) = strip_state.0.lock() {
+        *s = strip;
     }
 }
 
@@ -620,31 +637,18 @@ fn placed(window: &tauri::WebviewWindow) -> Option<Placed> {
 }
 
 /// An undecorated resizable window gets tao's edge-resize band on Linux: a press
-/// within it starts a window-manager resize. Stop the grip short of the band, so
-/// a press there passes through instead. Windows is not resizable, so it has
-/// no band.
-fn clear_of_resize_band(
-    g: Placed,
-    (left, top, right, bottom): (f64, f64, f64, f64),
-) -> (f64, f64, f64, f64) {
-    const TAO_RESIZE_BORDER: f64 = 5.0; // tao's linux/event_loop.rs
-    if !cfg!(target_os = "linux") {
-        return (left, top, right, bottom);
-    }
-    let inset = (TAO_RESIZE_BORDER + 1.0) * g.scale;
-    (
-        left.max(g.x + inset),
-        top.max(g.y + inset),
-        right.min(g.x + g.w - inset),
-        bottom.min(g.y + g.h - inset),
-    )
+/// within it starts a window-manager resize. Hit areas stop short of the band,
+/// so a press there passes through instead. Windows is not resizable, so it
+/// has no band.
+fn resize_band(g: Placed) -> Option<f64> {
+    cfg!(target_os = "linux").then(|| geometry::resize_inset(g.scale))
 }
 
 /// Neither Windows nor Tauri's X11 backend offers per-region hit testing for a
 /// click-through window: ignoring cursor events is all-or-nothing. So we watch
 /// the pointer and switch the whole window interactive only while it is over
-/// the grab handle. Everywhere else the gauge stays click-through and never
-/// eats a click.
+/// the grab handle or the fleet strip. Everywhere else the gauge stays
+/// click-through and never eats a click.
 ///
 /// The same loop owns dragging, for the reason described on `Pointer`.
 fn watch_grip(app: tauri::AppHandle) {
@@ -685,28 +689,22 @@ fn watch_grip(app: tauri::AppHandle) {
                 continue;
             };
 
-            // Grip rect in physical desktop coordinates. While already
-            // interactive the region is grown slightly, so a drag that outruns
-            // the window by a pixel does not drop the mouse mid-move.
+            // Hit areas in physical desktop coordinates. While already
+            // interactive they are grown slightly, so a drag that outruns the
+            // window by a pixel does not drop the mouse mid-move.
             let margin = if interactive { 8.0 } else { 0.0 };
-            let left = g.x + rect[0] * g.scale - margin;
-            let top = g.y + rect[1] * g.scale - margin;
-            let (left, top, right, bottom) = clear_of_resize_band(
-                *g,
-                (
-                    left,
-                    top,
-                    left + rect[2] * g.scale + margin * 2.0,
-                    top + rect[3] * g.scale + margin * 2.0,
-                ),
-            );
-
-            let inside =
-                cursor.x >= left && cursor.x <= right && cursor.y >= top && cursor.y <= bottom;
+            let band = resize_band(*g);
+            let strip = app.state::<fleet::Strip>().0.lock().ok().and_then(|s| *s);
+            let area = |css: [f64; 4]| {
+                geometry::hit_area(css, (g.x, g.y), (g.w, g.h), g.scale, margin, band)
+            };
+            let on_grip = geometry::contains(area(rect), cursor.x, cursor.y);
+            let on_strip = strip.is_some_and(|s| geometry::contains(area(s), cursor.x, cursor.y));
+            let inside = on_grip || on_strip;
 
             // Only a press that *starts* on the handle begins a drag, so
             // dragging something else across the gauge cannot grab it.
-            if cursor.pressed && !was_pressed && inside {
+            if cursor.pressed && !was_pressed && on_grip {
                 drag_offset = Some((cursor.x - g.x, cursor.y - g.y));
                 // The drag owns placement now; a pending request is stale.
                 if let Ok(mut r) = app.state::<Requested>().0.lock() {
@@ -753,6 +751,8 @@ fn main() {
                 .build(),
         )
         .manage(Grip::default())
+        .manage(fleet::Strip::default())
+        .manage(fleet::Fleet::default())
         .manage(Moved::default())
         .manage(Sized::default())
         .manage(Requested::default())
@@ -763,7 +763,10 @@ fn main() {
             set_zoom,
             set_grip,
             reset_position,
-            set_tray_level
+            set_tray_level,
+            fleet::fleet_subscribe,
+            fleet::open_wall,
+            jump::jump_to_terminal
         ])
         .setup(|app| {
             let window = app.get_webview_window("main").expect("main window");
@@ -857,6 +860,7 @@ fn main() {
 
             raise_above_taskbar(&window);
             watch_grip(app.handle().clone());
+            fleet::start(app.handle(), klepsydra_dir(app.handle()));
             Ok(())
         })
         .run(tauri::generate_context!())

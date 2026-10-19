@@ -1,0 +1,1 @@
+{"session_id":"11111111-2222-4333-8444-555555555555","transcript_path":"/home/aj/.claude/projects/-home-aj-repo/11111111-2222-4333-8444-555555555555.jsonl","cwd":"/home/aj/repo","permission_mode":"plan","hook_event_name":"PreToolUse","tool_name":"ExitPlanMode","tool_input":{"plan":"1. Write the guards"},"tool_use_id":"toolu_01PLAN"}

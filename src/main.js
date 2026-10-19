@@ -48,7 +48,9 @@ async function readUsage() {
   }
 }
 
+const frame = document.getElementById("frame");
 const panel = document.getElementById("panel");
+const stripEl = document.getElementById("strip");
 const rowsEl = document.getElementById("rows");
 const emptyEl = document.getElementById("empty");
 const tpl = document.getElementById("row-tpl");
@@ -63,6 +65,9 @@ let zoomLevel = 0;
 let wheel = null;
 let zoomShown = 0;
 let zoomSave = 0;
+let fleetSessions = [];
+let drawStrip = null;
+let fleetFresh = false; // a snapshot the strip has not drawn yet
 
 function paint(entry, row) {
   entry.querySelector(".label").textContent = row.label;
@@ -78,30 +83,34 @@ function paint(entry, row) {
   fill.style.backgroundColor = rampColor(row.pct ?? 0, stops(), rampMode());
 }
 
-/** The grab handle's rectangle, in CSS pixels from the window's top-left. */
-function gripRect() {
-  const r = grip.getBoundingClientRect();
+const rectOf = (el) => {
+  const r = el.getBoundingClientRect();
   return [r.left, r.top, r.width, r.height];
-}
+};
+/** The grab handle's rectangle, in CSS pixels from the window's top-left. */
+const gripRect = () => rectOf(grip);
+/** The fleet strip's rectangle, or null while it is hidden. */
+const stripRect = () => (stripEl.hidden ? null : rectOf(stripEl));
 
 /**
- * Tell the window how big the panel is, so it never clips or gaps. `pin` marks
- * a zoom, which keeps the point under the pointer still. The grip's new
- * rectangle travels with the size, so the pointer watcher never pairs a new
- * position with an old grip.
+ * Tell the window how big the gauge and strip are, so it never clips or gaps.
+ * `pin` marks a zoom, which keeps the point under the pointer still. The
+ * grip's and strip's new rectangles travel with the size, so the pointer
+ * watcher never pairs a new position with an old hit area.
  */
 function syncSize(pin = false) {
   if (!inTauri) return;
-  const r = panel.getBoundingClientRect();
+  const r = frame.getBoundingClientRect();
   const w = Math.ceil(r.width);
   const h = Math.ceil(r.height);
   const size = `${w}x${h}`;
   if (w < 1 || h < 1 || (size === lastSize && !pin)) return;
   lastSize = size;
   const g = gripRect();
-  lastGrip = g.join(",");
+  const strip = stripRect();
+  lastGrip = `${g.join(",")}|${strip ?? ""}`;
   window.__TAURI__.core
-    .invoke("set_size", { width: w, height: h, pin, grip: g })
+    .invoke("set_size", { width: w, height: h, pin, grip: g, strip })
     .catch(() => {
       lastSize = ""; // not applied; the next render tries again
     });
@@ -132,16 +141,18 @@ function syncTray(rows) {
 }
 
 /**
- * Report where the grab handle sits. The backend cannot know the layout, and
- * hard-coding it here would silently desync the moment the CSS changes.
+ * Report where the grab handle and the strip sit. The backend cannot know the
+ * layout, and hard-coding it here would silently desync the moment the CSS
+ * changes.
  */
 function syncGrip() {
   if (!inTauri) return;
   const [x, y, w, h] = gripRect();
-  const key = [x, y, w, h].join(",");
+  const strip = stripRect();
+  const key = `${[x, y, w, h].join(",")}|${strip ?? ""}`;
   if (w < 1 || h < 1 || key === lastGrip) return;
   lastGrip = key;
-  window.__TAURI__.core.invoke("set_grip", { x, y, w, h }).catch(() => {
+  window.__TAURI__.core.invoke("set_grip", { x, y, w, h, strip }).catch(() => {
     lastGrip = "";
   });
 }
@@ -173,6 +184,13 @@ function render(pin = false) {
   });
 
   document.title = rows.length ? `klepsydra ${formatPct(rows[0].pct)}` : "klepsydra";
+  try {
+    drawStrip?.(fleetSessions, Date.now(), fleetFresh);
+  } catch {
+    drawStrip = null; // the gauge carries on without the strip
+    stripEl.hidden = true;
+  }
+  fleetFresh = false;
   syncTray(rows);
   syncSize(pin);
   syncGrip();
@@ -227,11 +245,41 @@ async function poll() {
   render();
 }
 
+/** A snapshot from the fleet reader; it alone sets the strip's pulse baseline. */
+function receiveFleet(message) {
+  if (!Array.isArray(message?.sessions)) return;
+  fleetSessions = message.sessions;
+  fleetFresh = true;
+  render();
+}
+
+/**
+ * Load the strip and follow the fleet. The strip is a module of its own, so a
+ * failure there leaves the gauge as it was.
+ */
+async function startFleet() {
+  try {
+    const { mountStrip } = await import("./fleet/strip.js");
+    const { subscribe } = await import("./fleet/feed.js");
+    drawStrip = mountStrip(stripEl, {
+      open: (id) => inTauri && window.__TAURI__.core.invoke("open_wall", { focus: id }).catch(() => {}),
+    });
+    subscribe(receiveFleet);
+  } catch {
+    drawStrip = null;
+    stripEl.hidden = true;
+  }
+}
+
 // Exposed so the visual-check harness can drive states without live files.
-window.__klepsydra = { set(p) { lastPayload = p; render(); } };
+window.__klepsydra = {
+  set(p) { lastPayload = p; render(); },
+  fleet: receiveFleet,
+};
 
 zoomLevel = await savedZoom();
 applyZoom();
+startFleet();
 poll();
 setInterval(poll, POLL_MS);
 setInterval(render, TICK_MS);

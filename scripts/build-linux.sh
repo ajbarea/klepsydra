@@ -6,12 +6,14 @@ set -euo pipefail
 repo=$(cd "$(dirname "$0")/.." && pwd)
 cd "$repo"
 
-# The Windows build excludes this harness input when staging; here the bundle
+# The Windows build excludes the harness input when staging; here the bundle
 # would embed src/ as-is, so refuse rather than ship it.
-if [[ -e src/dev-fixture.json ]]; then
-  echo "src/dev-fixture.json is harness input; delete it before building" >&2
-  exit 1
-fi
+for harness in src/dev-fixture.json src/dev-fleet.json; do
+  if [[ -e $harness ]]; then
+    echo "$harness is harness input; delete it before building" >&2
+    exit 1
+  fi
+done
 
 echo "==> installing frontend tooling"
 npm install --no-fund --no-audit --no-package-lock 2>&1 | tail -5

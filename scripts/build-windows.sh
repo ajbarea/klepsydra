@@ -2,7 +2,8 @@
 # Builds the Windows binary. Source of truth stays in the WSL repo; Cargo runs
 # against a native NTFS staging copy, because building on a \\wsl$ UNC path is
 # slow and prone to link failures. The staging target/ dir persists, so repeat
-# builds are incremental.
+# builds are incremental. With --check it runs clippy and the tests there
+# instead, for the code that compiles only on Windows.
 set -euo pipefail
 
 repo=$(cd "$(dirname "$0")/.." && pwd)
@@ -13,13 +14,19 @@ mkdir -p "$stage"
 # Everything except build output and VCS; target/ and node_modules/ stay put.
 rsync -a --delete \
   --exclude 'src-tauri/target/' --exclude 'node_modules/' --exclude '.git/' \
-  --exclude 'src/dev-fixture.json' \
+  --exclude 'src/dev-fixture.json' --exclude 'src/dev-fleet.json' \
   "$repo"/ "$stage"/
 
 # WSL builds its Windows PATH at startup, so tools installed since then are
 # missing from any powershell.exe we spawn. Put them back explicitly.
 # shellcheck disable=SC2016  # PowerShell source: $env: must reach pwsh unexpanded.
 tools='$env:Path = "C:\\Program Files\\nodejs;$env:USERPROFILE\\.cargo\\bin;" + $env:Path'
+
+if [[ ${1:-} == --check ]]; then
+  echo "==> cargo clippy and cargo test, on Windows"
+  powershell.exe -NoProfile -Command "$tools; cd '$stage_win\\src-tauri'; cargo clippy --workspace --all-targets -- -D warnings; if (\$LASTEXITCODE) { exit \$LASTEXITCODE }; cargo test --workspace; exit \$LASTEXITCODE"
+  exit $?
+fi
 
 echo "==> installing frontend tooling"
 powershell.exe -NoProfile -Command "$tools; cd '$stage_win'; npm install --no-fund --no-audit" 2>&1 | tail -5

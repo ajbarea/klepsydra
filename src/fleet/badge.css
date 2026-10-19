@@ -1,0 +1,47 @@
+/* Fleet status badges, shared by the strip and the wall. Okabe-Ito tones, each
+   inside a ring of the panel colour, so a badge keeps its contrast on any
+   backdrop. Sizes come from the element that holds the badge. */
+:root {
+  --badge-ring: #141414;
+  --badge-needs: #e69f00;
+  --badge-error: #d55e00;
+  --badge-working: #0072b2;
+  --badge-done: #009e73;
+  --badge-quiet: #9a9a9a;
+  --badge-ink-dark: #000000;
+  --badge-ink-light: #ffffff;
+}
+
+/* A round portrait fills the element that holds it. */
+img.face, .face img { display: block; width: 100%; height: 100%; border-radius: 50%; object-fit: cover; }
+
+.badge { display: block; overflow: visible; }
+.badge .shape { stroke: var(--badge-ring); stroke-width: 1.6; }
+.badge .ink {
+  font-family: ui-sans-serif, "Segoe UI", system-ui, sans-serif;
+  font-weight: 700;
+  text-anchor: middle;
+  dominant-baseline: central;
+}
+
+.tone-needs .shape { fill: var(--badge-needs); }
+.tone-needs .ink { fill: var(--badge-ink-dark); }
+.tone-error .shape { fill: var(--badge-error); }
+.tone-error .ink { fill: var(--badge-ink-dark); }
+.tone-working .shape { fill: var(--badge-working); }
+.tone-working .ink { fill: var(--badge-ink-light); }
+.tone-done .shape { fill: var(--badge-done); }
+.tone-done .ink { fill: var(--badge-ink-dark); }
+.tone-quiet .shape { fill: var(--badge-ring); stroke: var(--badge-quiet); }
+.tone-quiet .ink { fill: var(--badge-quiet); }
+
+/* One pulse when a session starts needing AJ, then the badge holds still. */
+@keyframes badge-pulse {
+  0% { transform: scale(1); }
+  40% { transform: scale(1.45); }
+  100% { transform: scale(1); }
+}
+.pulse .badge { animation: badge-pulse 900ms ease-out 1; transform-origin: center; }
+@media (prefers-reduced-motion: reduce) {
+  .pulse .badge { animation: none; }
+}
