@@ -240,9 +240,14 @@ check "an edit moves where" "$(field '.where | [.repo, .by, .at]')" "[\"ideas\",
 check "the old place is touched" "$(field '.touched')" "[{\"repo\":\"klepsydra\",\"at\":$now}]"
 now=1792353110
 fire post-tool-notebook.json ".tool_input.notebook_path = \"$repos/loose/notes/nb.ipynb\""
-check "a notebook edit moves where" "$(field '.where.repo')" '"notes"'
-fire user-prompt.json ".cwd = \"$repos/subsrc\""
-check "after an edit, cwd does not move where" "$(field '.where.repo')" '"notes"'
+check "an edit outside any repo leaves where alone" "$(field '.where | [.repo, .at]')" "[\"ideas\",1792353100]"
+fire post-tool-edit.json '.tool_input.file_path = "/tmp/x.rs"'
+check "a file directly under /tmp leaves where alone" "$(field '.where.repo')" '"ideas"'
+check "and touched" "$(field '[.touched[].repo]')" '["klepsydra"]'
+fire post-tool-notebook.json ".tool_input.notebook_path = \"$repos/subsrc/nb.ipynb\""
+check "a notebook edit in a repo moves where" "$(field '.where.repo')" '"subsrc"'
+fire user-prompt.json ".cwd = \"$repos/klepsydra\""
+check "after an edit, cwd does not move where" "$(field '.where.repo')" '"subsrc"'
 check "identity unchanged across three repos" "$(field '[.voice, .claude.pid]')" '["am_michael",500]'
 check "touched, newest first" "$(field '[.touched[].repo]')" '["ideas","klepsydra"]'
 for i in 1 2 3 4 5 6 7; do

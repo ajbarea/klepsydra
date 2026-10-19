@@ -43,14 +43,14 @@ PROMPT_CHARS=300
 EVENTS="SessionStart UserPromptSubmit PermissionRequest PreToolUse Notification PostToolUse PostToolUseFailure Stop StopFailure SessionEnd"
 
 # Sets where_repo, where_worktree and where_branch for `path` (empty when
-# none), reading .git directly as keryx's source_name does, so no git process
+# none), and where_bare=1 when no repo holds it, reading .git directly as keryx's source_name does, so no git process
 # runs. A worktree is named by its main checkout, a submodule by its own folder,
 # and a path outside any repo by its own name.
 git_where() { # path
   local here=${1%/} folder dotgit link gitdir common main
-  where_repo="" where_worktree="" where_branch=""
+  where_repo="" where_worktree="" where_branch="" where_bare=0
   [[ -n $here ]] || here=/
-  if [[ $here != /* ]]; then where_repo=${here##*/}; return; fi
+  if [[ $here != /* ]]; then where_repo=${here##*/} where_bare=1; return; fi
   folder=$here
   while :; do
     dotgit=$folder/.git
@@ -83,7 +83,7 @@ git_where() { # path
     folder=${folder%/*}
     [[ -n $folder ]] || folder=/
   done
-  where_repo=${here##*/}
+  where_repo=${here##*/} where_bare=1
 }
 
 # Sets where_branch from a git dir's HEAD: the branch, else a detached commit's
@@ -373,6 +373,8 @@ main() {
   if [[ -n $edited ]]; then
     by=edit
     git_where "${edited%/*}"
+    # A memory or plan file outside every repo says nothing about where work is.
+    (( where_bare )) && where_repo=""
   else
     git_where "$cwd"
   fi
