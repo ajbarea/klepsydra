@@ -13,7 +13,7 @@
 }
 
 /* A round portrait fills the element that holds it. */
-img.face { display: block; width: 100%; height: 100%; border-radius: 50%; object-fit: cover; }
+img.face, .face img { display: block; width: 100%; height: 100%; border-radius: 50%; object-fit: cover; }
 
 .badge { display: block; overflow: visible; }
 .badge .shape { stroke: var(--badge-ring); stroke-width: 1.6; }

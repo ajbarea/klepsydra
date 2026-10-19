@@ -108,3 +108,20 @@ test("a portrait is reused across renders and removed with its session", () => {
   assert.equal(el.children[0], a);
   assert.match(a.attrs["aria-label"], /done/);
 });
+
+test("a session going quiet changes its badge without changing status", () => {
+  const { el, render } = setup();
+  render([session("a", "working")], NOW);
+  const before = el.children[0].lastChild.innerHTML;
+  render([session("a", "working", { quiet_since: 900 })], NOW);
+  assert.notEqual(el.children[0].lastChild.innerHTML, before);
+});
+
+test("leaving needs_you clears the pulse", () => {
+  const { render, pulsing } = setup();
+  render([session("a", "working")], NOW);
+  render([session("a", "needs_you")], NOW);
+  assert.deepEqual(pulsing(), ["a"]);
+  render([session("a", "done")], NOW);
+  assert.deepEqual(pulsing(), []);
+});

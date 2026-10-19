@@ -205,7 +205,10 @@ html, body {
   background: var(--track);
   cursor: pointer;
 }
-.face img { display: block; width: 100%; height: 100%; border-radius: 50%; }
+.face:focus-visible {
+  outline: calc(2px * var(--scale)) solid var(--text);
+  outline-offset: calc(2px * var(--scale));
+}
 .face .badge {
   position: absolute;
   right: calc(-3px * var(--scale));

@@ -88,5 +88,12 @@ test("a portrait is 28 px at 100%, and the strip's rules are in the zoomed style
 
 test("the strip starts hidden, so the gauge looks as before until a fleet arrives", () => {
   assert.match(read("./index.html"), /<div id="strip"[^>]*\shidden>/);
-  assert.match(read("./main.js"), /try \{\s*const \{ mountStrip \} = await import\("\.\/fleet\/strip\.js"\);/);
+  assert.match(read("./main.js"), /try\s*\{[^}]*import\(\s*["']\.\/fleet\/strip\.js["']\s*\)/);
+  assert.match(read("./index.html"), /href="fleet\/badge\.css"/);
+});
+
+test("every set_size and set_grip call carries the strip", () => {
+  const calls = [...read("./main.js").matchAll(/invoke\(\s*"(set_size|set_grip)"\s*,\s*\{([^}]*)\}/g)];
+  assert.equal(calls.length, 2);
+  for (const [, name, args] of calls) assert.match(args, /\bstrip\b/, name);
 });
