@@ -88,7 +88,7 @@ test("a portrait is 28 px at 100%, and the strip's rules are in the zoomed style
 
 test("the strip starts hidden, so the gauge looks as before until a fleet arrives", () => {
   assert.match(read("./index.html"), /<div id="strip"[^>]*\shidden>/);
-  assert.match(read("./main.js"), /try\s*\{[^}]*import\(\s*["']\.\/fleet\/strip\.js["']\s*\)/);
+  assert.match(read("./main.js"), /try\s*\{[\s\S]{0,80}?import\(\s*["']\.\/fleet\/strip\.js["']\s*\)/);
   assert.match(read("./index.html"), /href="fleet\/badge\.css"/);
 });
 
