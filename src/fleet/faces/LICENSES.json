@@ -1,1 +1,394 @@
-{}
+{
+  "fallback/00.svg": {
+    "source": "DiceBear Lorelei by Lisa Wischofsky (https://www.figma.com/community/file/1198749693280469639), rendered with @dicebear/core@9.4.2 and @dicebear/lorelei@9.4.2 from seed \"klepsydra-fallback-00\"",
+    "license": "CC0-1.0"
+  },
+  "fallback/01.svg": {
+    "source": "DiceBear Lorelei by Lisa Wischofsky (https://www.figma.com/community/file/1198749693280469639), rendered with @dicebear/core@9.4.2 and @dicebear/lorelei@9.4.2 from seed \"klepsydra-fallback-01\"",
+    "license": "CC0-1.0"
+  },
+  "fallback/02.svg": {
+    "source": "DiceBear Lorelei by Lisa Wischofsky (https://www.figma.com/community/file/1198749693280469639), rendered with @dicebear/core@9.4.2 and @dicebear/lorelei@9.4.2 from seed \"klepsydra-fallback-02\"",
+    "license": "CC0-1.0"
+  },
+  "fallback/03.svg": {
+    "source": "DiceBear Lorelei by Lisa Wischofsky (https://www.figma.com/community/file/1198749693280469639), rendered with @dicebear/core@9.4.2 and @dicebear/lorelei@9.4.2 from seed \"klepsydra-fallback-03\"",
+    "license": "CC0-1.0"
+  },
+  "fallback/04.svg": {
+    "source": "DiceBear Lorelei by Lisa Wischofsky (https://www.figma.com/community/file/1198749693280469639), rendered with @dicebear/core@9.4.2 and @dicebear/lorelei@9.4.2 from seed \"klepsydra-fallback-04\"",
+    "license": "CC0-1.0"
+  },
+  "fallback/05.svg": {
+    "source": "DiceBear Lorelei by Lisa Wischofsky (https://www.figma.com/community/file/1198749693280469639), rendered with @dicebear/core@9.4.2 and @dicebear/lorelei@9.4.2 from seed \"klepsydra-fallback-05\"",
+    "license": "CC0-1.0"
+  },
+  "fallback/06.svg": {
+    "source": "DiceBear Lorelei by Lisa Wischofsky (https://www.figma.com/community/file/1198749693280469639), rendered with @dicebear/core@9.4.2 and @dicebear/lorelei@9.4.2 from seed \"klepsydra-fallback-06\"",
+    "license": "CC0-1.0"
+  },
+  "fallback/07.svg": {
+    "source": "DiceBear Lorelei by Lisa Wischofsky (https://www.figma.com/community/file/1198749693280469639), rendered with @dicebear/core@9.4.2 and @dicebear/lorelei@9.4.2 from seed \"klepsydra-fallback-07\"",
+    "license": "CC0-1.0"
+  },
+  "fallback/08.svg": {
+    "source": "DiceBear Lorelei by Lisa Wischofsky (https://www.figma.com/community/file/1198749693280469639), rendered with @dicebear/core@9.4.2 and @dicebear/lorelei@9.4.2 from seed \"klepsydra-fallback-08\"",
+    "license": "CC0-1.0"
+  },
+  "fallback/09.svg": {
+    "source": "DiceBear Lorelei by Lisa Wischofsky (https://www.figma.com/community/file/1198749693280469639), rendered with @dicebear/core@9.4.2 and @dicebear/lorelei@9.4.2 from seed \"klepsydra-fallback-09\"",
+    "license": "CC0-1.0"
+  },
+  "fallback/10.svg": {
+    "source": "DiceBear Lorelei by Lisa Wischofsky (https://www.figma.com/community/file/1198749693280469639), rendered with @dicebear/core@9.4.2 and @dicebear/lorelei@9.4.2 from seed \"klepsydra-fallback-10\"",
+    "license": "CC0-1.0"
+  },
+  "fallback/11.svg": {
+    "source": "DiceBear Lorelei by Lisa Wischofsky (https://www.figma.com/community/file/1198749693280469639), rendered with @dicebear/core@9.4.2 and @dicebear/lorelei@9.4.2 from seed \"klepsydra-fallback-11\"",
+    "license": "CC0-1.0"
+  },
+  "fallback/12.svg": {
+    "source": "DiceBear Lorelei by Lisa Wischofsky (https://www.figma.com/community/file/1198749693280469639), rendered with @dicebear/core@9.4.2 and @dicebear/lorelei@9.4.2 from seed \"klepsydra-fallback-12\"",
+    "license": "CC0-1.0"
+  },
+  "fallback/13.svg": {
+    "source": "DiceBear Lorelei by Lisa Wischofsky (https://www.figma.com/community/file/1198749693280469639), rendered with @dicebear/core@9.4.2 and @dicebear/lorelei@9.4.2 from seed \"klepsydra-fallback-13\"",
+    "license": "CC0-1.0"
+  },
+  "fallback/14.svg": {
+    "source": "DiceBear Lorelei by Lisa Wischofsky (https://www.figma.com/community/file/1198749693280469639), rendered with @dicebear/core@9.4.2 and @dicebear/lorelei@9.4.2 from seed \"klepsydra-fallback-14\"",
+    "license": "CC0-1.0"
+  },
+  "fallback/15.svg": {
+    "source": "DiceBear Lorelei by Lisa Wischofsky (https://www.figma.com/community/file/1198749693280469639), rendered with @dicebear/core@9.4.2 and @dicebear/lorelei@9.4.2 from seed \"klepsydra-fallback-15\"",
+    "license": "CC0-1.0"
+  },
+  "fallback/16.svg": {
+    "source": "DiceBear Lorelei by Lisa Wischofsky (https://www.figma.com/community/file/1198749693280469639), rendered with @dicebear/core@9.4.2 and @dicebear/lorelei@9.4.2 from seed \"klepsydra-fallback-16\"",
+    "license": "CC0-1.0"
+  },
+  "fallback/17.svg": {
+    "source": "DiceBear Lorelei by Lisa Wischofsky (https://www.figma.com/community/file/1198749693280469639), rendered with @dicebear/core@9.4.2 and @dicebear/lorelei@9.4.2 from seed \"klepsydra-fallback-17\"",
+    "license": "CC0-1.0"
+  },
+  "fallback/18.svg": {
+    "source": "DiceBear Lorelei by Lisa Wischofsky (https://www.figma.com/community/file/1198749693280469639), rendered with @dicebear/core@9.4.2 and @dicebear/lorelei@9.4.2 from seed \"klepsydra-fallback-18\"",
+    "license": "CC0-1.0"
+  },
+  "fallback/19.svg": {
+    "source": "DiceBear Lorelei by Lisa Wischofsky (https://www.figma.com/community/file/1198749693280469639), rendered with @dicebear/core@9.4.2 and @dicebear/lorelei@9.4.2 from seed \"klepsydra-fallback-19\"",
+    "license": "CC0-1.0"
+  },
+  "fallback/20.svg": {
+    "source": "DiceBear Lorelei by Lisa Wischofsky (https://www.figma.com/community/file/1198749693280469639), rendered with @dicebear/core@9.4.2 and @dicebear/lorelei@9.4.2 from seed \"klepsydra-fallback-20\"",
+    "license": "CC0-1.0"
+  },
+  "fallback/21.svg": {
+    "source": "DiceBear Lorelei by Lisa Wischofsky (https://www.figma.com/community/file/1198749693280469639), rendered with @dicebear/core@9.4.2 and @dicebear/lorelei@9.4.2 from seed \"klepsydra-fallback-21\"",
+    "license": "CC0-1.0"
+  },
+  "fallback/22.svg": {
+    "source": "DiceBear Lorelei by Lisa Wischofsky (https://www.figma.com/community/file/1198749693280469639), rendered with @dicebear/core@9.4.2 and @dicebear/lorelei@9.4.2 from seed \"klepsydra-fallback-22\"",
+    "license": "CC0-1.0"
+  },
+  "fallback/23.svg": {
+    "source": "DiceBear Lorelei by Lisa Wischofsky (https://www.figma.com/community/file/1198749693280469639), rendered with @dicebear/core@9.4.2 and @dicebear/lorelei@9.4.2 from seed \"klepsydra-fallback-23\"",
+    "license": "CC0-1.0"
+  },
+  "kourai/aidos-192.webp": {
+    "source": "kourai-khryseai assets/avatars/vn/aidos_neutral.png (https://github.com/ajbarea/kourai-khryseai), head cropped and scaled to 192 px",
+    "license": "MIT (kourai-khryseai LICENSE, Copyright (c) 2026 AJ Barea)"
+  },
+  "kourai/aidos-96.webp": {
+    "source": "kourai-khryseai assets/avatars/vn/aidos_neutral.png (https://github.com/ajbarea/kourai-khryseai), head cropped and scaled to 96 px",
+    "license": "MIT (kourai-khryseai LICENSE, Copyright (c) 2026 AJ Barea)"
+  },
+  "kourai/aletheia-192.webp": {
+    "source": "kourai-khryseai assets/avatars/vn/aletheia_neutral.png (https://github.com/ajbarea/kourai-khryseai), head cropped and scaled to 192 px",
+    "license": "MIT (kourai-khryseai LICENSE, Copyright (c) 2026 AJ Barea)"
+  },
+  "kourai/aletheia-96.webp": {
+    "source": "kourai-khryseai assets/avatars/vn/aletheia_neutral.png (https://github.com/ajbarea/kourai-khryseai), head cropped and scaled to 96 px",
+    "license": "MIT (kourai-khryseai LICENSE, Copyright (c) 2026 AJ Barea)"
+  },
+  "kourai/cupid-192.webp": {
+    "source": "kourai-khryseai assets/avatars/vn/cupid_neutral.png (https://github.com/ajbarea/kourai-khryseai), head cropped and scaled to 192 px",
+    "license": "MIT (kourai-khryseai LICENSE, Copyright (c) 2026 AJ Barea)"
+  },
+  "kourai/cupid-96.webp": {
+    "source": "kourai-khryseai assets/avatars/vn/cupid_neutral.png (https://github.com/ajbarea/kourai-khryseai), head cropped and scaled to 96 px",
+    "license": "MIT (kourai-khryseai LICENSE, Copyright (c) 2026 AJ Barea)"
+  },
+  "kourai/dokimasia-192.webp": {
+    "source": "kourai-khryseai assets/avatars/vn/dokimasia_neutral.png (https://github.com/ajbarea/kourai-khryseai), head cropped and scaled to 192 px",
+    "license": "MIT (kourai-khryseai LICENSE, Copyright (c) 2026 AJ Barea)"
+  },
+  "kourai/dokimasia-96.webp": {
+    "source": "kourai-khryseai assets/avatars/vn/dokimasia_neutral.png (https://github.com/ajbarea/kourai-khryseai), head cropped and scaled to 96 px",
+    "license": "MIT (kourai-khryseai LICENSE, Copyright (c) 2026 AJ Barea)"
+  },
+  "kourai/hephaestus-192.webp": {
+    "source": "kourai-khryseai assets/avatars/vn/hephaestus_neutral.png (https://github.com/ajbarea/kourai-khryseai), head cropped and scaled to 192 px",
+    "license": "MIT (kourai-khryseai LICENSE, Copyright (c) 2026 AJ Barea)"
+  },
+  "kourai/hephaestus-96.webp": {
+    "source": "kourai-khryseai assets/avatars/vn/hephaestus_neutral.png (https://github.com/ajbarea/kourai-khryseai), head cropped and scaled to 96 px",
+    "license": "MIT (kourai-khryseai LICENSE, Copyright (c) 2026 AJ Barea)"
+  },
+  "kourai/kallos-192.webp": {
+    "source": "kourai-khryseai assets/avatars/vn/kallos_neutral.png (https://github.com/ajbarea/kourai-khryseai), head cropped and scaled to 192 px",
+    "license": "MIT (kourai-khryseai LICENSE, Copyright (c) 2026 AJ Barea)"
+  },
+  "kourai/kallos-96.webp": {
+    "source": "kourai-khryseai assets/avatars/vn/kallos_neutral.png (https://github.com/ajbarea/kourai-khryseai), head cropped and scaled to 96 px",
+    "license": "MIT (kourai-khryseai LICENSE, Copyright (c) 2026 AJ Barea)"
+  },
+  "kourai/metis-192.webp": {
+    "source": "kourai-khryseai assets/avatars/vn/metis_neutral.png (https://github.com/ajbarea/kourai-khryseai), head cropped and scaled to 192 px",
+    "license": "MIT (kourai-khryseai LICENSE, Copyright (c) 2026 AJ Barea)"
+  },
+  "kourai/metis-96.webp": {
+    "source": "kourai-khryseai assets/avatars/vn/metis_neutral.png (https://github.com/ajbarea/kourai-khryseai), head cropped and scaled to 96 px",
+    "license": "MIT (kourai-khryseai LICENSE, Copyright (c) 2026 AJ Barea)"
+  },
+  "kourai/mneme-192.webp": {
+    "source": "kourai-khryseai assets/avatars/vn/mneme_neutral.png (https://github.com/ajbarea/kourai-khryseai), head cropped and scaled to 192 px",
+    "license": "MIT (kourai-khryseai LICENSE, Copyright (c) 2026 AJ Barea)"
+  },
+  "kourai/mneme-96.webp": {
+    "source": "kourai-khryseai assets/avatars/vn/mneme_neutral.png (https://github.com/ajbarea/kourai-khryseai), head cropped and scaled to 96 px",
+    "license": "MIT (kourai-khryseai LICENSE, Copyright (c) 2026 AJ Barea)"
+  },
+  "kourai/puck-192.webp": {
+    "source": "kourai-khryseai assets/avatars/vn/puck_neutral.png (https://github.com/ajbarea/kourai-khryseai), head cropped and scaled to 192 px",
+    "license": "MIT (kourai-khryseai LICENSE, Copyright (c) 2026 AJ Barea)"
+  },
+  "kourai/puck-96.webp": {
+    "source": "kourai-khryseai assets/avatars/vn/puck_neutral.png (https://github.com/ajbarea/kourai-khryseai), head cropped and scaled to 96 px",
+    "license": "MIT (kourai-khryseai LICENSE, Copyright (c) 2026 AJ Barea)"
+  },
+  "kourai/techne-192.webp": {
+    "source": "kourai-khryseai assets/avatars/vn/techne_neutral.png (https://github.com/ajbarea/kourai-khryseai), head cropped and scaled to 192 px",
+    "license": "MIT (kourai-khryseai LICENSE, Copyright (c) 2026 AJ Barea)"
+  },
+  "kourai/techne-96.webp": {
+    "source": "kourai-khryseai assets/avatars/vn/techne_neutral.png (https://github.com/ajbarea/kourai-khryseai), head cropped and scaled to 96 px",
+    "license": "MIT (kourai-khryseai LICENSE, Copyright (c) 2026 AJ Barea)"
+  },
+  "lorelei/af_alloy.svg": {
+    "source": "DiceBear Lorelei by Lisa Wischofsky (https://www.figma.com/community/file/1198749693280469639), rendered with @dicebear/core@9.4.2 and @dicebear/lorelei@9.4.2 from seed \"af_alloy\"",
+    "license": "CC0-1.0"
+  },
+  "lorelei/af_aoede.svg": {
+    "source": "DiceBear Lorelei by Lisa Wischofsky (https://www.figma.com/community/file/1198749693280469639), rendered with @dicebear/core@9.4.2 and @dicebear/lorelei@9.4.2 from seed \"af_aoede\"",
+    "license": "CC0-1.0"
+  },
+  "lorelei/af_bella.svg": {
+    "source": "DiceBear Lorelei by Lisa Wischofsky (https://www.figma.com/community/file/1198749693280469639), rendered with @dicebear/core@9.4.2 and @dicebear/lorelei@9.4.2 from seed \"af_bella\"",
+    "license": "CC0-1.0"
+  },
+  "lorelei/af_heart.svg": {
+    "source": "DiceBear Lorelei by Lisa Wischofsky (https://www.figma.com/community/file/1198749693280469639), rendered with @dicebear/core@9.4.2 and @dicebear/lorelei@9.4.2 from seed \"af_heart\"",
+    "license": "CC0-1.0"
+  },
+  "lorelei/af_jessica.svg": {
+    "source": "DiceBear Lorelei by Lisa Wischofsky (https://www.figma.com/community/file/1198749693280469639), rendered with @dicebear/core@9.4.2 and @dicebear/lorelei@9.4.2 from seed \"af_jessica\"",
+    "license": "CC0-1.0"
+  },
+  "lorelei/af_kore.svg": {
+    "source": "DiceBear Lorelei by Lisa Wischofsky (https://www.figma.com/community/file/1198749693280469639), rendered with @dicebear/core@9.4.2 and @dicebear/lorelei@9.4.2 from seed \"af_kore\"",
+    "license": "CC0-1.0"
+  },
+  "lorelei/af_nicole.svg": {
+    "source": "DiceBear Lorelei by Lisa Wischofsky (https://www.figma.com/community/file/1198749693280469639), rendered with @dicebear/core@9.4.2 and @dicebear/lorelei@9.4.2 from seed \"af_nicole\"",
+    "license": "CC0-1.0"
+  },
+  "lorelei/af_nova.svg": {
+    "source": "DiceBear Lorelei by Lisa Wischofsky (https://www.figma.com/community/file/1198749693280469639), rendered with @dicebear/core@9.4.2 and @dicebear/lorelei@9.4.2 from seed \"af_nova\"",
+    "license": "CC0-1.0"
+  },
+  "lorelei/af_river.svg": {
+    "source": "DiceBear Lorelei by Lisa Wischofsky (https://www.figma.com/community/file/1198749693280469639), rendered with @dicebear/core@9.4.2 and @dicebear/lorelei@9.4.2 from seed \"af_river\"",
+    "license": "CC0-1.0"
+  },
+  "lorelei/af_sarah.svg": {
+    "source": "DiceBear Lorelei by Lisa Wischofsky (https://www.figma.com/community/file/1198749693280469639), rendered with @dicebear/core@9.4.2 and @dicebear/lorelei@9.4.2 from seed \"af_sarah\"",
+    "license": "CC0-1.0"
+  },
+  "lorelei/af_sky.svg": {
+    "source": "DiceBear Lorelei by Lisa Wischofsky (https://www.figma.com/community/file/1198749693280469639), rendered with @dicebear/core@9.4.2 and @dicebear/lorelei@9.4.2 from seed \"af_sky\"",
+    "license": "CC0-1.0"
+  },
+  "lorelei/am_adam.svg": {
+    "source": "DiceBear Lorelei by Lisa Wischofsky (https://www.figma.com/community/file/1198749693280469639), rendered with @dicebear/core@9.4.2 and @dicebear/lorelei@9.4.2 from seed \"am_adam\"",
+    "license": "CC0-1.0"
+  },
+  "lorelei/am_echo.svg": {
+    "source": "DiceBear Lorelei by Lisa Wischofsky (https://www.figma.com/community/file/1198749693280469639), rendered with @dicebear/core@9.4.2 and @dicebear/lorelei@9.4.2 from seed \"am_echo\"",
+    "license": "CC0-1.0"
+  },
+  "lorelei/am_eric.svg": {
+    "source": "DiceBear Lorelei by Lisa Wischofsky (https://www.figma.com/community/file/1198749693280469639), rendered with @dicebear/core@9.4.2 and @dicebear/lorelei@9.4.2 from seed \"am_eric\"",
+    "license": "CC0-1.0"
+  },
+  "lorelei/am_fenrir.svg": {
+    "source": "DiceBear Lorelei by Lisa Wischofsky (https://www.figma.com/community/file/1198749693280469639), rendered with @dicebear/core@9.4.2 and @dicebear/lorelei@9.4.2 from seed \"am_fenrir\"",
+    "license": "CC0-1.0"
+  },
+  "lorelei/am_liam.svg": {
+    "source": "DiceBear Lorelei by Lisa Wischofsky (https://www.figma.com/community/file/1198749693280469639), rendered with @dicebear/core@9.4.2 and @dicebear/lorelei@9.4.2 from seed \"am_liam\"",
+    "license": "CC0-1.0"
+  },
+  "lorelei/am_michael.svg": {
+    "source": "DiceBear Lorelei by Lisa Wischofsky (https://www.figma.com/community/file/1198749693280469639), rendered with @dicebear/core@9.4.2 and @dicebear/lorelei@9.4.2 from seed \"am_michael\"",
+    "license": "CC0-1.0"
+  },
+  "lorelei/am_onyx.svg": {
+    "source": "DiceBear Lorelei by Lisa Wischofsky (https://www.figma.com/community/file/1198749693280469639), rendered with @dicebear/core@9.4.2 and @dicebear/lorelei@9.4.2 from seed \"am_onyx\"",
+    "license": "CC0-1.0"
+  },
+  "lorelei/am_puck.svg": {
+    "source": "DiceBear Lorelei by Lisa Wischofsky (https://www.figma.com/community/file/1198749693280469639), rendered with @dicebear/core@9.4.2 and @dicebear/lorelei@9.4.2 from seed \"am_puck\"",
+    "license": "CC0-1.0"
+  },
+  "lorelei/am_santa.svg": {
+    "source": "DiceBear Lorelei by Lisa Wischofsky (https://www.figma.com/community/file/1198749693280469639), rendered with @dicebear/core@9.4.2 and @dicebear/lorelei@9.4.2 from seed \"am_santa\"",
+    "license": "CC0-1.0"
+  },
+  "lorelei/bf_alice.svg": {
+    "source": "DiceBear Lorelei by Lisa Wischofsky (https://www.figma.com/community/file/1198749693280469639), rendered with @dicebear/core@9.4.2 and @dicebear/lorelei@9.4.2 from seed \"bf_alice\"",
+    "license": "CC0-1.0"
+  },
+  "lorelei/bf_emma.svg": {
+    "source": "DiceBear Lorelei by Lisa Wischofsky (https://www.figma.com/community/file/1198749693280469639), rendered with @dicebear/core@9.4.2 and @dicebear/lorelei@9.4.2 from seed \"bf_emma\"",
+    "license": "CC0-1.0"
+  },
+  "lorelei/bf_isabella.svg": {
+    "source": "DiceBear Lorelei by Lisa Wischofsky (https://www.figma.com/community/file/1198749693280469639), rendered with @dicebear/core@9.4.2 and @dicebear/lorelei@9.4.2 from seed \"bf_isabella\"",
+    "license": "CC0-1.0"
+  },
+  "lorelei/bf_lily.svg": {
+    "source": "DiceBear Lorelei by Lisa Wischofsky (https://www.figma.com/community/file/1198749693280469639), rendered with @dicebear/core@9.4.2 and @dicebear/lorelei@9.4.2 from seed \"bf_lily\"",
+    "license": "CC0-1.0"
+  },
+  "lorelei/bm_daniel.svg": {
+    "source": "DiceBear Lorelei by Lisa Wischofsky (https://www.figma.com/community/file/1198749693280469639), rendered with @dicebear/core@9.4.2 and @dicebear/lorelei@9.4.2 from seed \"bm_daniel\"",
+    "license": "CC0-1.0"
+  },
+  "lorelei/bm_fable.svg": {
+    "source": "DiceBear Lorelei by Lisa Wischofsky (https://www.figma.com/community/file/1198749693280469639), rendered with @dicebear/core@9.4.2 and @dicebear/lorelei@9.4.2 from seed \"bm_fable\"",
+    "license": "CC0-1.0"
+  },
+  "lorelei/bm_george.svg": {
+    "source": "DiceBear Lorelei by Lisa Wischofsky (https://www.figma.com/community/file/1198749693280469639), rendered with @dicebear/core@9.4.2 and @dicebear/lorelei@9.4.2 from seed \"bm_george\"",
+    "license": "CC0-1.0"
+  },
+  "lorelei/bm_lewis.svg": {
+    "source": "DiceBear Lorelei by Lisa Wischofsky (https://www.figma.com/community/file/1198749693280469639), rendered with @dicebear/core@9.4.2 and @dicebear/lorelei@9.4.2 from seed \"bm_lewis\"",
+    "license": "CC0-1.0"
+  },
+  "lorelei/ef_dora.svg": {
+    "source": "DiceBear Lorelei by Lisa Wischofsky (https://www.figma.com/community/file/1198749693280469639), rendered with @dicebear/core@9.4.2 and @dicebear/lorelei@9.4.2 from seed \"ef_dora\"",
+    "license": "CC0-1.0"
+  },
+  "lorelei/em_alex.svg": {
+    "source": "DiceBear Lorelei by Lisa Wischofsky (https://www.figma.com/community/file/1198749693280469639), rendered with @dicebear/core@9.4.2 and @dicebear/lorelei@9.4.2 from seed \"em_alex\"",
+    "license": "CC0-1.0"
+  },
+  "lorelei/em_santa.svg": {
+    "source": "DiceBear Lorelei by Lisa Wischofsky (https://www.figma.com/community/file/1198749693280469639), rendered with @dicebear/core@9.4.2 and @dicebear/lorelei@9.4.2 from seed \"em_santa\"",
+    "license": "CC0-1.0"
+  },
+  "lorelei/ff_siwis.svg": {
+    "source": "DiceBear Lorelei by Lisa Wischofsky (https://www.figma.com/community/file/1198749693280469639), rendered with @dicebear/core@9.4.2 and @dicebear/lorelei@9.4.2 from seed \"ff_siwis\"",
+    "license": "CC0-1.0"
+  },
+  "lorelei/hf_alpha.svg": {
+    "source": "DiceBear Lorelei by Lisa Wischofsky (https://www.figma.com/community/file/1198749693280469639), rendered with @dicebear/core@9.4.2 and @dicebear/lorelei@9.4.2 from seed \"hf_alpha\"",
+    "license": "CC0-1.0"
+  },
+  "lorelei/hf_beta.svg": {
+    "source": "DiceBear Lorelei by Lisa Wischofsky (https://www.figma.com/community/file/1198749693280469639), rendered with @dicebear/core@9.4.2 and @dicebear/lorelei@9.4.2 from seed \"hf_beta\"",
+    "license": "CC0-1.0"
+  },
+  "lorelei/hm_omega.svg": {
+    "source": "DiceBear Lorelei by Lisa Wischofsky (https://www.figma.com/community/file/1198749693280469639), rendered with @dicebear/core@9.4.2 and @dicebear/lorelei@9.4.2 from seed \"hm_omega\"",
+    "license": "CC0-1.0"
+  },
+  "lorelei/hm_psi.svg": {
+    "source": "DiceBear Lorelei by Lisa Wischofsky (https://www.figma.com/community/file/1198749693280469639), rendered with @dicebear/core@9.4.2 and @dicebear/lorelei@9.4.2 from seed \"hm_psi\"",
+    "license": "CC0-1.0"
+  },
+  "lorelei/if_sara.svg": {
+    "source": "DiceBear Lorelei by Lisa Wischofsky (https://www.figma.com/community/file/1198749693280469639), rendered with @dicebear/core@9.4.2 and @dicebear/lorelei@9.4.2 from seed \"if_sara\"",
+    "license": "CC0-1.0"
+  },
+  "lorelei/im_nicola.svg": {
+    "source": "DiceBear Lorelei by Lisa Wischofsky (https://www.figma.com/community/file/1198749693280469639), rendered with @dicebear/core@9.4.2 and @dicebear/lorelei@9.4.2 from seed \"im_nicola\"",
+    "license": "CC0-1.0"
+  },
+  "lorelei/jf_alpha.svg": {
+    "source": "DiceBear Lorelei by Lisa Wischofsky (https://www.figma.com/community/file/1198749693280469639), rendered with @dicebear/core@9.4.2 and @dicebear/lorelei@9.4.2 from seed \"jf_alpha\"",
+    "license": "CC0-1.0"
+  },
+  "lorelei/jf_gongitsune.svg": {
+    "source": "DiceBear Lorelei by Lisa Wischofsky (https://www.figma.com/community/file/1198749693280469639), rendered with @dicebear/core@9.4.2 and @dicebear/lorelei@9.4.2 from seed \"jf_gongitsune\"",
+    "license": "CC0-1.0"
+  },
+  "lorelei/jf_nezumi.svg": {
+    "source": "DiceBear Lorelei by Lisa Wischofsky (https://www.figma.com/community/file/1198749693280469639), rendered with @dicebear/core@9.4.2 and @dicebear/lorelei@9.4.2 from seed \"jf_nezumi\"",
+    "license": "CC0-1.0"
+  },
+  "lorelei/jf_tebukuro.svg": {
+    "source": "DiceBear Lorelei by Lisa Wischofsky (https://www.figma.com/community/file/1198749693280469639), rendered with @dicebear/core@9.4.2 and @dicebear/lorelei@9.4.2 from seed \"jf_tebukuro\"",
+    "license": "CC0-1.0"
+  },
+  "lorelei/jm_kumo.svg": {
+    "source": "DiceBear Lorelei by Lisa Wischofsky (https://www.figma.com/community/file/1198749693280469639), rendered with @dicebear/core@9.4.2 and @dicebear/lorelei@9.4.2 from seed \"jm_kumo\"",
+    "license": "CC0-1.0"
+  },
+  "lorelei/pf_dora.svg": {
+    "source": "DiceBear Lorelei by Lisa Wischofsky (https://www.figma.com/community/file/1198749693280469639), rendered with @dicebear/core@9.4.2 and @dicebear/lorelei@9.4.2 from seed \"pf_dora\"",
+    "license": "CC0-1.0"
+  },
+  "lorelei/pm_alex.svg": {
+    "source": "DiceBear Lorelei by Lisa Wischofsky (https://www.figma.com/community/file/1198749693280469639), rendered with @dicebear/core@9.4.2 and @dicebear/lorelei@9.4.2 from seed \"pm_alex\"",
+    "license": "CC0-1.0"
+  },
+  "lorelei/pm_santa.svg": {
+    "source": "DiceBear Lorelei by Lisa Wischofsky (https://www.figma.com/community/file/1198749693280469639), rendered with @dicebear/core@9.4.2 and @dicebear/lorelei@9.4.2 from seed \"pm_santa\"",
+    "license": "CC0-1.0"
+  },
+  "lorelei/zf_xiaobei.svg": {
+    "source": "DiceBear Lorelei by Lisa Wischofsky (https://www.figma.com/community/file/1198749693280469639), rendered with @dicebear/core@9.4.2 and @dicebear/lorelei@9.4.2 from seed \"zf_xiaobei\"",
+    "license": "CC0-1.0"
+  },
+  "lorelei/zf_xiaoni.svg": {
+    "source": "DiceBear Lorelei by Lisa Wischofsky (https://www.figma.com/community/file/1198749693280469639), rendered with @dicebear/core@9.4.2 and @dicebear/lorelei@9.4.2 from seed \"zf_xiaoni\"",
+    "license": "CC0-1.0"
+  },
+  "lorelei/zf_xiaoxiao.svg": {
+    "source": "DiceBear Lorelei by Lisa Wischofsky (https://www.figma.com/community/file/1198749693280469639), rendered with @dicebear/core@9.4.2 and @dicebear/lorelei@9.4.2 from seed \"zf_xiaoxiao\"",
+    "license": "CC0-1.0"
+  },
+  "lorelei/zf_xiaoyi.svg": {
+    "source": "DiceBear Lorelei by Lisa Wischofsky (https://www.figma.com/community/file/1198749693280469639), rendered with @dicebear/core@9.4.2 and @dicebear/lorelei@9.4.2 from seed \"zf_xiaoyi\"",
+    "license": "CC0-1.0"
+  },
+  "lorelei/zm_yunjian.svg": {
+    "source": "DiceBear Lorelei by Lisa Wischofsky (https://www.figma.com/community/file/1198749693280469639), rendered with @dicebear/core@9.4.2 and @dicebear/lorelei@9.4.2 from seed \"zm_yunjian\"",
+    "license": "CC0-1.0"
+  },
+  "lorelei/zm_yunxi.svg": {
+    "source": "DiceBear Lorelei by Lisa Wischofsky (https://www.figma.com/community/file/1198749693280469639), rendered with @dicebear/core@9.4.2 and @dicebear/lorelei@9.4.2 from seed \"zm_yunxi\"",
+    "license": "CC0-1.0"
+  },
+  "lorelei/zm_yunxia.svg": {
+    "source": "DiceBear Lorelei by Lisa Wischofsky (https://www.figma.com/community/file/1198749693280469639), rendered with @dicebear/core@9.4.2 and @dicebear/lorelei@9.4.2 from seed \"zm_yunxia\"",
+    "license": "CC0-1.0"
+  },
+  "lorelei/zm_yunyang.svg": {
+    "source": "DiceBear Lorelei by Lisa Wischofsky (https://www.figma.com/community/file/1198749693280469639), rendered with @dicebear/core@9.4.2 and @dicebear/lorelei@9.4.2 from seed \"zm_yunyang\"",
+    "license": "CC0-1.0"
+  }
+}
