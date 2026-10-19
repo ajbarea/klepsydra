@@ -292,34 +292,46 @@ bash scripts/visual-check.sh         # screenshots every state
 A release ships only when all three hold:
 
 1. Every command under Tests passes, and CI is green on both platforms.
-2. The live check. With the new build running, open eight Claude Code sessions
-   in Windows Terminal tabs, each with the fleet hooks installed, and bring
-   each to one state. For each, the strip and the card wall must show what
-   `bash scripts/fleet-status.sh` prints for its file:
-   - **not started:** start `claude` and type nothing.
-   - **working:** ask for something long, such as running `sleep 300` in Bash.
-   - **needs you, approve Bash:** in the default permission mode, ask for a
-     command that prompts, and leave the prompt open.
-   - **needs you, question:** ask Claude to ask you a multiple-choice question,
-     and leave it open.
-   - **done:** a prompt that finishes, such as "say hi".
-   - **error:** a turn that ends on an API error, such as a prompt in a session
-     started with `--model` naming a model the account cannot use.
-   - **silent:** `kill -STOP <pid>` on one session's Claude Code process (the
-     `claude.pid` in its session file). After 90 seconds it shows silent with
-     its age; `kill -CONT <pid>` brings it back.
-   - **ended:** `/exit` in one session. It shows ended, and leaves after 10
-     minutes.
-
-   Then click each portrait: the wall opens on that session's card. Press
-   **Jump to terminal** on the approve-Bash card: its tab comes to the front,
-   or its taskbar button flashes. Rename a session to another session's name
-   and press Jump again: it says two tabs match and does nothing. Move the
-   wall, quit klepsydra from the tray, start it again and open the wall: it
-   opens where you left it.
+2. The live check, in order:
+   1. Back up your Claude Code settings:
+      `cp ~/.claude/settings.json ~/.claude/settings.json.bak-fleet`
+   2. Merge the fleet settings block from Install, the JSON between the
+      `<!-- fleet-settings:start -->` and `<!-- fleet-settings:end -->`
+      markers, into `~/.claude/settings.json`. It registers the fleet hooks
+      with `async: true` and sets `statusLine.refreshInterval` to 30.
+   3. With the new build running, open eight Claude Code sessions in Windows
+      Terminal tabs and bring each to one state:
+      - **not started:** start `claude` and type nothing.
+      - **working:** ask for something long, such as running `sleep 300` in
+        Bash.
+      - **needs you, approve Bash:** in the default permission mode, ask for a
+        command that prompts, and leave the prompt open.
+      - **needs you, question:** ask Claude to ask you a multiple-choice
+        question, and leave it open.
+      - **done:** a prompt that finishes, such as "say hi".
+      - **error:** a turn that ends on an API error, such as a prompt in a
+        session started with `--model` naming a model the account cannot use.
+      - **silent:** `kill -STOP <pid>` on one session's Claude Code process
+        (the `claude.pid` in its session file). `kill -CONT <pid>` brings it
+        back.
+      - **ended:** `/exit` in one session. It leaves after 10 minutes.
+   4. Read `bash scripts/fleet-status.sh` against the strip and the wall, one
+      line per session. Its `state` column is the portrait's badge and the
+      card's status; `reason` is the card's text under it (the tool for
+      approve Bash, the question for a question); `beat age` over 90 seconds
+      is silent, which the card shows with its age.
+   5. Click each portrait: the wall opens on that session's card. Press
+      **Jump to terminal** on the approve-Bash card: its tab comes to the
+      front, or its taskbar button flashes. Rename a session to another
+      session's name and press Jump again: it says two tabs match and does
+      nothing. Move the wall, quit klepsydra from the tray, start it again and
+      open the wall: it opens where you left it.
+   6. Restore your settings:
+      `mv ~/.claude/settings.json.bak-fleet ~/.claude/settings.json`
 3. Memory. Right after starting klepsydra, run
    `bash scripts/measure-memory.sh run /tmp/klepsydra-memory.log` in a WSL
    terminal and leave both running for 8 hours with the fleet in use. It
-   samples klepsydra's working set, WebView2 processes included, at 5 minutes
-   and at 8 hours. The release is blocked if the second reading is more than
-   10% above the first. Record both readings in the release's ROADMAP entry.
+   samples klepsydra's working set in MiB, WebView2 processes included, at 5
+   minutes and at 8 hours. It refuses to run with more than one klepsydra.exe,
+   and the check fails if klepsydra restarted between the readings. The release
+   is blocked if the second reading is more than 10% above the first. Record both readings in the release's ROADMAP entry.
