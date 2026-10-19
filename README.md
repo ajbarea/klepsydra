@@ -306,9 +306,11 @@ the session works, the first 300 characters of your last prompt and of the
 last reply, and the error text of a failed turn. It records no tool input
 beyond the tool's name and an edited file's path. The status line adds
 `<session>.beat`, the session's name, at most once per 10 seconds. At a
-session start, at most once an hour, the hook deletes the files of sessions
-whose Claude Code process is gone and whose last activity is more than a day
-old.
+session start, at most once an hour, the hook deletes a session's file when
+its Claude Code process is gone and its newest time field (including
+`written_at`) is more than a day old, along with the session's beat file. A
+beat file with no session file, and leftover temp files, go when their own
+modification time is more than a day old.
 
 The overlay starts no process and asks WSL for nothing: it watches the folder
 and re-reads it every 5 seconds. A file it cannot read is skipped and logged

@@ -327,17 +327,81 @@ test("the hooks make no sound", () => {
   for (const f of SHELL) assert.doesNotMatch(read(f), /\b(paplay|aplay|afplay|espeak|ffplay|mpv|speaker-test|beep)\b/, f);
 });
 
-test("the guards reach every fleet source", () => {
-  const fleet = [
-    ...filesUnder("src-tauri/fleet/src", [".rs"]),
-    ...["src-tauri/src/fleet.rs", "src-tauri/src/jump.rs"].filter((f) => existsSync(join(ROOT, f))),
-    ...filesUnder("src/fleet", [".js", ".css"]),
-    ...filesUnder("src", [".html"]).filter((f) => /fleet\//.test(read(f))),
-    ...SHELL,
+/** Files the guards need not read, each with its reason; a prefix ending in "/" covers a folder. */
+const NOT_SCANNED = {
+  "hooks/fixtures/": "recorded hook payloads, data",
+  "statusline/fixtures/": "recorded status line payloads, data",
+  "src/fleet/faces/": "generated portraits and their license table, data",
+  "src/fleet/cast.json": "voice to portrait table, data",
+  "src-tauri/fleet/Cargo.toml": "scanned as a manifest",
+};
+
+/** Every file (any extension) a fleet change can add, found without the guards' own walks. */
+function fleetFiles(root) {
+  const all = (dir, skip = []) => {
+    const abs = join(root, dir);
+    if (!existsSync(abs)) return [];
+    return readdirSync(abs, { recursive: true })
+      .map((f) => f.split(sep).join("/"))
+      .filter((f) => !skip.some((d) => f === d || f.startsWith(`${d}/`)))
+      .filter((f) => statSync(join(abs, f)).isFile())
+      .map((f) => `${dir}/${f}`);
+  };
+  const named = ["src-tauri/src/fleet.rs", "src-tauri/src/jump.rs"].filter((f) => existsSync(join(root, f)));
+  const pages = all("src").filter((f) => /^src\/[^/]+\.html$/.test(f));
+  return [
+    ...all("src-tauri/fleet", ["target"]),
+    ...all("src/fleet"),
+    ...all("hooks"),
+    ...all("statusline"),
+    ...named,
+    ...pages,
   ];
-  const scanned = new Set([...RUST, ...FRONTEND, ...CSS, ...SHELL]);
-  assert.deepEqual(fleet.filter((f) => !scanned.has(f)), []);
+}
+
+/** Fleet files outside `scanned` that no rule or allowlist entry excuses. */
+export function unreached(root, scanned) {
+  const seen = new Set(scanned);
+  return fleetFiles(root).filter(
+    (f) =>
+      !seen.has(f) &&
+      !f.endsWith(".test.js") &&
+      !Object.keys(NOT_SCANNED).some((k) => (k.endsWith("/") ? f.startsWith(k) : f === k)),
+  );
+}
+
+test("the guards reach every fleet source", () => {
+  assert.deepEqual(unreached(ROOT, [...RUST, ...FRONTEND, ...CSS, ...SHELL, ...CARGO]), []);
+  const files = fleetFiles(ROOT);
   for (const f of ["src-tauri/fleet/src/hub.rs", "src-tauri/src/fleet.rs", "src-tauri/src/jump.rs", "src/fleet/strip.js", "src/wall.html", "hooks/klepsydra-fleet.sh"]) {
-    assert.ok(fleet.includes(f), `${f} is not enumerated`);
+    assert.ok(files.includes(f), `${f} is not enumerated`);
   }
+});
+
+test("the reach check reports a planted unscanned file and excuses a test file", () => {
+  const root = mkdtempSync(join(tmpdir(), "reach-"));
+  const put = (f) => {
+    mkdirSync(join(root, f, ".."), { recursive: true });
+    writeFileSync(join(root, f), "x\n");
+  };
+  const scanned = () =>
+    [
+      ...filesUnder("src-tauri/src", [".rs"], root),
+      ...filesUnder("src-tauri/fleet/src", [".rs"], root),
+      ...filesUnder("src", [".js", ".mjs", ".html"], root).filter((f) => !f.endsWith(".test.js")),
+      ...filesUnder("src", [".css"], root),
+      ...filesUnder("hooks", [".sh"], root),
+      ...filesUnder("statusline", [".sh"], root),
+    ];
+  put("src-tauri/fleet/src/ok.rs");
+  put("src/fleet/zz.test.js");
+  put("src-tauri/fleet/target/debug/junk.rs");
+  put("hooks/fixtures/a.json");
+  assert.deepEqual(unreached(root, scanned()), []);
+  for (const f of ["src-tauri/fleet/src/zz.rs", "src/fleet/zz.mjs", "src/zz.html", "src/fleet/zz.ts", "hooks/zz.bash", "src-tauri/fleet/build.rs"]) put(f);
+  assert.deepEqual(unreached(root, scanned()).sort(), ["hooks/zz.bash", "src-tauri/fleet/build.rs", "src/fleet/zz.ts"]);
+  // Nothing scanned: every planted file is reported, the test file and fixtures are not.
+  const none = unreached(root, []);
+  for (const f of ["src-tauri/fleet/src/zz.rs", "src/fleet/zz.mjs", "src/zz.html", "src-tauri/fleet/src/ok.rs"]) assert.ok(none.includes(f), f);
+  assert.ok(!none.some((f) => f.endsWith(".test.js") || f.includes("/target/") || f.includes("fixtures/")));
 });

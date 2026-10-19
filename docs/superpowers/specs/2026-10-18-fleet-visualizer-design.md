@@ -318,7 +318,7 @@ The text above is unchanged. Each line below changed or sharpened it, with the r
 - Pruning runs at most once an hour. It deletes only names from its own `fleet/<uuid>.json` glob, never a path read from file content, and refuses a data dir that is not an absolute `dev.ajsoftworks.klepsydra` path. A deletion outside `fleet/` was reproduced in review. It also removes `.tmp` litter older than a day.
 - Jump matches the one tab whose title, after a leading status glyph and with padding trimmed, equals the session's name. The spec said "contains", which could select a wrong tab (`klepsydra` against `klepsydra-e2`).
 - Jump refuses with a message when Windows Terminal hides its tabs (full screen or focus mode), and never falls back to a window-title guess.
-- Jump creates CUIAutomation8 first and sets UI Automation timeouts below the defaults, so a hung terminal cannot hang the click.
+- Jump creates CUIAutomation8 first (CUIAutomation when that is missing) and sets the UI Automation connection timeout to 1000 ms and the transaction timeout to 3000 ms through IUIAutomation2, so a hung terminal cannot hang the click.
 - Bad files are logged once to `fleet.log` in the app data dir (truncated at 64 KiB), since release builds have no console.
 - A need is cleared only by the tool that raised it, on the same thread. Clearing on any PostToolUse would drop the badge while a parallel or subagent tool finishes.
 - NotebookEdit's path comes from `tool_input.notebook_path`. The spec named `file_path`, which that tool does not carry.
@@ -327,6 +327,7 @@ The text above is unchanged. Each line below changed or sharpened it, with the r
 - Cast: Puck is `am_puck`, Mneme `bf_isabella`, Dokimasia `af_aoede`, Cupid `af_heart`, and the rest follow kourai's `tts_backend.py`, because kourai's voices are outside keryx's pool. A blend voice gets a hash fallback face and a joined name.
 - Badge contrast is measured against a panel-coloured ring around each badge, since `#0072B2` is 2.1:1 on a white desktop without it. Every portrait carries its badge, and only needs-you pulses.
 - Strip state and the resize-band maths live in `src-tauri/src/fleet.rs` and `geometry.rs`, so `main.rs` gains only wiring.
+- The strip shows a status's age in the tooltip and the accessible name, since a 28 px portrait has no room for text; the wall shows it visibly. The silent rule swaps the badge, so a strip badge is never stale-wrong.
 - The wall's window label is `wall`, it is not always on top, and it does not pulse; the strip owns the one pulse.
 - Order: the needs-you group comes first, longest wait first inside it. A session that starts needing AJ joins that group.
 - A card's name comes from the beat's session name, then the file's `session_title`, then the launch folder. The default display name reaches no hook.
