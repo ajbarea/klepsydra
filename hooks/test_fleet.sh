@@ -499,6 +499,32 @@ printf x >"$pd/fleet/$(id 25).beat.55.tmp"; touch -d "@$((pnow - 2 * day))" "$pd
 prune_fleet "$pd" "$pnow"
 check "old beat tmp removed" "$([[ -e $pd/fleet/$(id 25).beat.55.tmp ]] && echo kept || echo deleted)" "deleted"
 
+# A forged session file cannot name what gets deleted.
+reset_prune
+mkdir -p "$work/outside" && printf v >"$work/outside/victim" && printf v >"$work/outside/victim.beat"
+jq -nc --arg p "0
+$work/outside/victim	999	1	5
+" '{v:1,claude:{pid:$p,start:1},started_at:1}' >"$pd/fleet/$(id 27).json"
+jq -nc --arg p "0
+$pd/fleet/$(id 2).json	999	1	5
+" '{v:1,claude:{pid:$p,start:1},started_at:1}' >"$pd/fleet/$(id 28).json"
+jq -nc --arg p "0
+$(id 2).json	999	1	5
+" '{v:1,claude:{pid:$p,start:"x"},started_at:1}' >"$pd/fleet/$(id 29).json"
+out=$(prune_fleet "$pd" "$pnow" 2>&1); rc=$?
+check "forged pid text: rc 0, no output" "$rc|$out" "0|"
+check "forged paths delete nothing outside the glob" \
+  "$(names "$work/outside")|$([[ -e $pd/fleet/$(id 2).json ]] && echo kept)" "victim victim.beat |kept"
+
+# Zero-byte beats and litter are files too.
+reset_prune
+: >"$pd/fleet/$(id 1).beat"; touch -d "@$((pnow - 2 * day))" "$pd/fleet/$(id 1).beat"
+: >"$pd/fleet/$(id 30).beat"; touch -d "@$((pnow - 2 * day))" "$pd/fleet/$(id 30).beat"
+: >"$pd/fleet/$(id 31).json.7.tmp"; touch -d "@$((pnow - 2 * day))" "$pd/fleet/$(id 31).json.7.tmp"
+prune_fleet "$pd" "$pnow"
+check "empty beat of a dead old session, empty orphan beat and empty tmp are pruned" \
+  "$(for n in $(id 1).json $(id 1).beat $(id 30).beat $(id 31).json.7.tmp; do [[ -e $pd/fleet/$n ]] && printf kept || printf gone; done)" "gonegonegonegone"
+
 stamp="$work/klepsydra-fleet-$UID.pruned"
 reset_prune; rm -f "$stamp"
 out=$(fire session-start.json ".session_id = \"$(id 12)\"" KLEPSYDRA_DIR="$pd" KLEPSYDRA_NOW="$pnow"); rc=$?

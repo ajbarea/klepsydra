@@ -189,25 +189,27 @@ prune_fleet() { # dir now
 # here and parsed by one jq.
 prune_here() { # now
   local now=$1 f name id pid start last line
-  local -A type=() mt=()
+  local -A type=() mt=() listed=()
   local -a sessions=()
   while IFS= read -r line; do
     [[ $line =~ ^([^|]+)\|([0-9]+)\|(.+)$ ]] || continue
     type[${BASH_REMATCH[3]}]=${BASH_REMATCH[1]}
     mt[${BASH_REMATCH[3]}]=${BASH_REMATCH[2]}
   done < <(stat -c '%F|%Y|%n' -- *.json *.beat *.tmp 2>/dev/null)
-  plain() { [[ ${type[$1]:-} == "regular file" ]]; } # name
+  plain() { [[ ${type[$1]:-} == "regular file" || ${type[$1]:-} == "regular empty file" ]]; } # name
   old() { plain "$1" && (( now - mt[$1] > PRUNE_AFTER )); } # name
 
   for name in *.json; do
-    [[ ${name%.json} =~ $UUID_RE ]] && plain "$name" && sessions+=("$name")
+    [[ ${name%.json} =~ $UUID_RE ]] && plain "$name" && { sessions+=("$name"); listed[$name]=1; }
   done
   if (( ${#sessions[@]} )); then
     # A file without a final newline cannot run into the next one this way; a
     # line that does not parse as a v1 object yields nothing.
     while IFS=$'\t' read -r f pid start last; do
+      # Only a name this function globbed is ever deleted, whatever jq printed.
+      [[ -n ${listed[$f]:-} && $f =~ ^[^/]+\.json$ ]] || continue
       id=${f%.json}
-      [[ $last =~ ^[1-9][0-9]*$ ]] || continue
+      [[ $pid =~ ^[0-9]+$ && $start =~ ^[0-9]+$ && $last =~ ^[1-9][0-9]*$ ]] || continue
       (( now - last > PRUNE_AFTER )) || continue
       if [[ -n ${type[$id.beat]:-} ]]; then
         old "$id.beat" || continue
@@ -222,11 +224,11 @@ prune_here() { # now
         printf '%s\t%s\n' "$f" "$line"
       done | jq -Rr '(index("\t")) as $i | .[:$i] as $f
         | (try (.[$i + 1:] | fromjson) catch empty) | select(type == "object" and .v == 1)
-        | try [$f, (.claude.pid // 0), (.claude.start // 0),
+        | try [$f, ((.claude.pid | numbers) // 0 | floor), ((.claude.start | numbers) // 0 | floor),
             ([.started_at, .state_at, .where.at, .prompt.at, .reply.at, .ended.at, .written_at]
-              | map(numbers) | max // 0)]
+              | map(numbers) | max // 0 | floor)]
           catch empty
-        | map(if type == "number" then floor | tostring else . end) | join("\t")' 2>/dev/null)
+        | @tsv' 2>/dev/null)
   fi
 
   for name in *.beat; do
