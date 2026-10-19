@@ -501,6 +501,19 @@ mod tests {
         );
         assert_eq!(a, (430.0, 6.0, 624.0, 58.0));
         assert!(!contains(a, 627.0, 30.0));
+        assert!(contains(a, 624.0, 6.0));
+        assert!(contains(a, 430.0, 58.0));
+        assert!(!contains(a, 624.1, 30.0));
+        assert!(!contains(a, 500.0, 5.9));
+    }
+
+    #[test]
+    fn a_band_clamps_all_four_edges_off_origin() {
+        let (ox, oy) = (-1920.0, 100.0);
+        let size = (945.0, 144.0);
+        let b = 9.0;
+        let a = hit_area([0.0, 0.0, 630.0, 96.0], (ox, oy), size, 1.5, 0.0, Some(b));
+        assert_eq!(a, (ox + b, oy + b, ox + size.0 - b, oy + size.1 - b));
     }
 
     #[test]

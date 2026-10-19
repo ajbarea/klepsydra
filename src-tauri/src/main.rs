@@ -693,16 +693,10 @@ fn watch_grip(app: tauri::AppHandle) {
             // interactive they are grown slightly, so a drag that outruns the
             // window by a pixel does not drop the mouse mid-move.
             let margin = if interactive { 8.0 } else { 0.0 };
+            let band = resize_band(*g);
             let strip = app.state::<fleet::Strip>().0.lock().ok().and_then(|s| *s);
             let area = |css: [f64; 4]| {
-                geometry::hit_area(
-                    css,
-                    (g.x, g.y),
-                    (g.w, g.h),
-                    g.scale,
-                    margin,
-                    resize_band(*g),
-                )
+                geometry::hit_area(css, (g.x, g.y), (g.w, g.h), g.scale, margin, band)
             };
             let on_grip = geometry::contains(area(rect), cursor.x, cursor.y);
             let on_strip = strip.is_some_and(|s| geometry::contains(area(s), cursor.x, cursor.y));
