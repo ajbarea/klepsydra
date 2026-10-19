@@ -151,61 +151,104 @@ holder_voice() { # pid start
 }
 
 # Whether the Claude Code process recorded as `pid start` still runs. A zombie
-# has exited, and a pid with another start time is someone else's.
+# has exited, and a pid with another start time or another program is someone
+# else's.
 claude_alive() { # pid start
   local -a stat=()
   [[ $1 =~ ^[0-9]+$ && $2 =~ ^[0-9]+$ ]] || return 1
   proc_stat "$1" || return 1
-  [[ ${stat[0]} != Z && ${stat[19]} == "$2" ]]
+  [[ ${stat[0]} != Z && ${stat[19]} == "$2" ]] && is_claude "$1"
 }
 
 # Delete the files of sessions whose Claude Code process is gone and whose
 # last activity is more than a day old, heartbeats a day old with no session
 # file, and write litter a day old. Only <uuid>.json, <uuid>.beat and
-# <uuid>.json.<digits>.tmp directly inside <dir>/fleet, never a symlink, and
-# only when `dir` is the overlay's own absolute data dir.
+# <uuid>.{json,beat}.<digits>.tmp directly inside <dir>/fleet, never a
+# symlink, and only when `dir` is the overlay's own absolute data dir. Runs
+# under the fleet lock in a few processes however many files there are.
 PRUNE_AFTER=86400
+PRUNE_EVERY=3600
+PRUNE_STAMP=${LOCK%.lock}.pruned
 prune_fleet() { # dir now
-  local dir=${1%/} now=$2 fleet f name id pid start last m
+  local dir=$1 now=$2
+  while [[ $dir == */ ]]; do dir=${dir%/}; done
   [[ -n $dir ]] || return 1
   [[ $dir == /* ]] || return 1
+  [[ $dir == */../* || $dir == */.. ]] && return 1
   [[ ${dir##*/} == dev.ajsoftworks.klepsydra ]] || return 1
   [[ $now =~ ^[0-9]+$ ]] || return 1
-  fleet=$dir/fleet
-  [[ -L $fleet ]] && return 1
-  [[ -d $fleet ]] || return 0
-  for f in "$fleet"/*.json; do
-    name=${f##*/}
-    id=${name%.json}
-    [[ $id =~ $UUID_RE && -f $f && ! -L $f ]] || continue
-    IFS=$'\t' read -r pid start last < <(jq -r '[(.claude.pid // 0), (.claude.start // 0),
-      ([.started_at, .state_at, .where.at, .prompt.at, .reply.at, .ended.at, .written_at] | map(numbers) | max // 0)]
-      | map(floor | tostring) | join("\t")' "$f" 2>/dev/null) || continue
-    [[ $last =~ ^[0-9]+$ ]] || continue
-    (( now - last > PRUNE_AFTER )) || continue
-    if [[ -f $fleet/$id.beat && ! -L $fleet/$id.beat ]]; then
-      m=$(stat -c %Y -- "$fleet/$id.beat" 2>/dev/null) || continue
-      (( now - m > PRUNE_AFTER )) || continue
-    fi
-    claude_alive "$pid" "$start" && continue
-    rm -f -- "$f"
-    [[ -L $fleet/$id.beat ]] || rm -f -- "$fleet/$id.beat"
+  [[ -L $dir ]] && return 1
+  [[ -L $dir/fleet ]] && return 1
+  [[ -d $dir/fleet ]] || return 0
+  # From inside the folder every name is short, which matters on /mnt/c.
+  ( cd -- "$dir/fleet" 2>/dev/null && prune_here "$now" )
+}
+
+# prune_fleet's work, in the fleet folder. Types and mtimes of every candidate
+# come from one stat (which does not follow links); the session files are read
+# here and parsed by one jq.
+prune_here() { # now
+  local now=$1 f name id pid start last line
+  local -A type=() mt=()
+  local -a sessions=()
+  while IFS= read -r line; do
+    [[ $line =~ ^([^|]+)\|([0-9]+)\|(.+)$ ]] || continue
+    type[${BASH_REMATCH[3]}]=${BASH_REMATCH[1]}
+    mt[${BASH_REMATCH[3]}]=${BASH_REMATCH[2]}
+  done < <(stat -c '%F|%Y|%n' -- *.json *.beat *.tmp 2>/dev/null)
+  plain() { [[ ${type[$1]:-} == "regular file" ]]; } # name
+  old() { plain "$1" && (( now - mt[$1] > PRUNE_AFTER )); } # name
+
+  for name in *.json; do
+    [[ ${name%.json} =~ $UUID_RE ]] && plain "$name" && sessions+=("$name")
   done
-  for f in "$fleet"/*.beat; do
-    name=${f##*/}
+  if (( ${#sessions[@]} )); then
+    # A file without a final newline cannot run into the next one this way; a
+    # line that does not parse as a v1 object yields nothing.
+    while IFS=$'\t' read -r f pid start last; do
+      id=${f%.json}
+      [[ $last =~ ^[1-9][0-9]*$ ]] || continue
+      (( now - last > PRUNE_AFTER )) || continue
+      if [[ -n ${type[$id.beat]:-} ]]; then
+        old "$id.beat" || continue
+      fi
+      claude_alive "$pid" "$start" && continue
+      rm -f -- "$f"
+      [[ ${type[$id.beat]:-} == "symbolic link" ]] || rm -f -- "$id.beat"
+    done < <(
+      for f in "${sessions[@]}"; do
+        line=""
+        { IFS= read -r line <"$f"; } 2>/dev/null
+        printf '%s\t%s\n' "$f" "$line"
+      done | jq -Rr '(index("\t")) as $i | .[:$i] as $f
+        | (try (.[$i + 1:] | fromjson) catch empty) | select(type == "object" and .v == 1)
+        | try [$f, (.claude.pid // 0), (.claude.start // 0),
+            ([.started_at, .state_at, .where.at, .prompt.at, .reply.at, .ended.at, .written_at]
+              | map(numbers) | max // 0)]
+          catch empty
+        | map(if type == "number" then floor | tostring else . end) | join("\t")' 2>/dev/null)
+  fi
+
+  for name in *.beat; do
     id=${name%.beat}
-    [[ $id =~ $UUID_RE && -f $f && ! -L $f && ! -e $fleet/$id.json ]] || continue
-    m=$(stat -c %Y -- "$f" 2>/dev/null) || continue
-    (( now - m > PRUNE_AFTER )) && rm -f -- "$f"
+    [[ $id =~ $UUID_RE && -z ${type[$id.json]:-} ]] || continue
+    old "$name" && rm -f -- "$name"
   done
-  for f in "$fleet"/*.tmp; do
-    name=${f##*/}
-    [[ $name =~ ^(.{36})\.json\.[0-9]+\.tmp$ ]] || continue
-    id=${BASH_REMATCH[1]}
-    [[ $id =~ $UUID_RE && -f $f && ! -L $f ]] || continue
-    m=$(stat -c %Y -- "$f" 2>/dev/null) || continue
-    (( now - m > PRUNE_AFTER )) && rm -f -- "$f"
+  for name in *.tmp; do
+    [[ $name =~ ^(.{36})\.(json|beat)\.[0-9]+\.tmp$ ]] || continue
+    [[ ${BASH_REMATCH[1]} =~ $UUID_RE ]] || continue
+    old "$name" && rm -f -- "$name"
   done
+  return 0
+}
+
+# prune_fleet at most once an hour, stamped next to the lock (the stamp holds
+# the time of the last run).
+prune_hourly() { # dir now
+  local last=""
+  { IFS= read -r last <"$PRUNE_STAMP"; } 2>/dev/null
+  [[ $last =~ ^[0-9]+$ ]] && (( $2 - last < PRUNE_EVERY && $2 >= last )) && return 0
+  prune_fleet "$1" "$2" && { printf '%s\n' "$2" >"$PRUNE_STAMP"; } 2>/dev/null
   return 0
 }
 
@@ -350,7 +393,7 @@ main() {
     --arg voice "$voice" --arg pid "$found_pid" --arg start "$found_start" \
     "$APPLY" 2>/dev/null) || new=""
   [[ -n $new ]] && write_atomic "$file" "$new"
-  [[ $event == SessionStart ]] && prune_fleet "$KLEPSYDRA_DIR" "$now"
+  [[ $event == SessionStart ]] && prune_hourly "$KLEPSYDRA_DIR" "$now"
   return 0
 }
 

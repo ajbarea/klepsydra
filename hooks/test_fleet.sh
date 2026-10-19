@@ -458,13 +458,68 @@ check "old tmp removed" "$([[ -e $pd/fleet/$(id 20).json.123.tmp ]] && echo kept
 check "fresh tmp, other names and a linked tmp stay" "$(names "$pd/fleet" | tr ' ' '\n' | grep -c 'tmp')" "7"
 check "the linked tmp's target survives" "$(jq -r .session_id "$pd/fleet/$(id 2).json")" "$(id 2)"
 
+# More refusals and skips.
 reset_prune
-fire session-start.json ".session_id = \"$(id 12)\"" KLEPSYDRA_DIR="$pd" KLEPSYDRA_NOW="$pnow"
+before=$(listing)
+for bad in / // "$pd/../dev.ajsoftworks.klepsydra" "$pd/.." "$work/prune/x/../dev.ajsoftworks.klepsydra"; do
+  prune_fleet "$bad" "$pnow"; rc=$?
+  check "refused dir $bad" "$rc|$(listing)" "1|$before"
+done
+mkdir -p "$work/linked" && ln -s "$pd" "$work/linked/dev.ajsoftworks.klepsydra"
+prune_fleet "$work/linked/dev.ajsoftworks.klepsydra" "$pnow"; rc=$?
+check "a linked data dir: refused" "$rc|$(listing)" "1|$before"
+prune_fleet "$pd//" "$pnow"; rc=$?
+check "trailing slashes on the real name: pruned" "$rc|$([[ -e $pd/fleet/$(id 1).json ]] && echo kept || echo deleted)" "0|deleted"
+rm -rf "$work/empty" && mkdir -p "$work/empty/dev.ajsoftworks.klepsydra/fleet"
+prune_fleet "$work/empty/dev.ajsoftworks.klepsydra" "$pnow"; rc=$?
+check "an empty fleet dir: nothing to do" "$rc" "0"
+rm -rf "$work/empty/dev.ajsoftworks.klepsydra/fleet" && printf x >"$work/empty/dev.ajsoftworks.klepsydra/fleet"
+prune_fleet "$work/empty/dev.ajsoftworks.klepsydra" "$pnow"; rc=$?
+check "fleet as a regular file: left alone" "$rc|$(cat "$work/empty/dev.ajsoftworks.klepsydra/fleet")" "0|x"
+
+reset_prune
+printf '{"v":2,"claude":{"pid":999,"start":1},"started_at":1,"state_at":1}\n' >"$pd/fleet/$(id 16).json"
+printf '{"v":1,"claude":{"pid":999,"start":1}}\n' >"$pd/fleet/$(id 17).json"
+printf '{"v":1,"claude":{"pid":999,"start":1},"started_at":1}' >"$pd/fleet/$(id 18).json"  # no final newline
+printf '{"v":1,"claude":{"pid":999,"start":1},"started_at":1}\n' >"$pd/fleet/$(id 19).json"
+prune_fleet "$pd" "$pnow"
+check "unknown v and no timestamps kept; a missing final newline does not hide the next file" \
+  "$(for n in 16 17 18 19; do [[ -e $pd/fleet/$(id $n).json ]] && printf kept || printf gone; done)" "keptkeptgonegone"
+
+# A process that is not Claude Code is not Claude Code, whatever its pid and start.
+mkproc 502 1 vim 7777 S vim
+reset_prune
+mksession "$(id 24)" 502 7777 $((pnow - 2 * day))
+prune_fleet "$pd" "$pnow"
+check "a reused pid running another program is gone" "$([[ -e $pd/fleet/$(id 24).json ]] && echo kept || echo deleted)" "deleted"
+
+# Heartbeat write litter.
+reset_prune
+printf x >"$pd/fleet/$(id 25).beat.55.tmp"; touch -d "@$((pnow - 2 * day))" "$pd/fleet/$(id 25).beat.55.tmp"
+prune_fleet "$pd" "$pnow"
+check "old beat tmp removed" "$([[ -e $pd/fleet/$(id 25).beat.55.tmp ]] && echo kept || echo deleted)" "deleted"
+
+stamp="$work/klepsydra-fleet-$UID.pruned"
+reset_prune; rm -f "$stamp"
+out=$(fire session-start.json ".session_id = \"$(id 12)\"" KLEPSYDRA_DIR="$pd" KLEPSYDRA_NOW="$pnow"); rc=$?
 check "session start prunes" "$([[ -e $pd/fleet/$(id 1).json ]] && echo kept || echo deleted)" "deleted"
-check "session start writes its own file first" "$(jq -r .state "$pd/fleet/$(id 12).json")" "new"
+check "the prune path prints nothing and exits 0" "$rc|$out" "0|"
+check "session start writes its own file" "$(jq -r .state "$pd/fleet/$(id 12).json")" "new"
 reset_prune
+fire session-start.json ".session_id = \"$(id 12)\"" KLEPSYDRA_DIR="$pd" KLEPSYDRA_NOW="$((pnow + 60))"
+check "no second prune within the hour" "$([[ -e $pd/fleet/$(id 1).json ]] && echo kept || echo deleted)" "kept"
+fire session-start.json ".session_id = \"$(id 12)\"" KLEPSYDRA_DIR="$pd" KLEPSYDRA_NOW="$((pnow + 3600))"
+check "prunes again after an hour" "$([[ -e $pd/fleet/$(id 1).json ]] && echo kept || echo deleted)" "deleted"
+reset_prune; rm -f "$stamp"
 fire user-prompt.json ".session_id = \"$(id 12)\"" KLEPSYDRA_DIR="$pd" KLEPSYDRA_NOW="$pnow"
 check "other events do not prune" "$([[ -e $pd/fleet/$(id 1).json ]] && echo kept || echo deleted)" "kept"
+
+# A resumed session (dead, over a day idle) is written before the prune looks.
+reset_prune; rm -f "$stamp"
+printf '{"v":1,"session_id":"%s","claude":{"pid":999,"start":1},"started_at":%s,"state_at":%s,"state":"done"}\n' \
+  "$(id 26)" $((pnow - 5 * day)) $((pnow - 5 * day)) >"$pd/fleet/$(id 26).json"
+fire session-start.json ".session_id = \"$(id 26)\"" KLEPSYDRA_DIR="$pd" KLEPSYDRA_NOW="$pnow"
+check "a resumed old session keeps its history" "$(jq -r .started_at "$pd/fleet/$(id 26).json" 2>&1)" "$((pnow - 5 * day))"
 
 block() { sed -n '/^# --- klepsydra dir/,/^# --- end klepsydra dir ---$/p' "$1"; }
 check "dir block present" "$([[ -n "$(block "$hook")" ]] && echo yes)" "yes"
