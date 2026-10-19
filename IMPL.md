@@ -1,53 +1,50 @@
 # IMPL
 
-Current slice: a gauge you can size, park and read from across a desk.
+Current slice: the fleet strip and card wall, so one glance shows how many
+Claude Code sessions are up, where each works, which need AJ and why, and what
+each was last asked and said.
 
 ## Done
-- Scroll on the grip zooms the whole gauge in 10% integer levels, 75% to
-  236%, kept in `prefs.json` in the app data dir; a badge shows the size for
-  800ms. Wheel maths in `src/zoom.js`: at most one step per event and per
-  80ms, a notch-sized delta steps at once, smaller ones (touchpads)
-  accumulate, and a fling cannot bank more than one step. 9 tests.
-- Every CSS size is multiplied by `--scale`, and a test fails on any px size,
-  or px token, outside the tokens that is not. The panel sets its own width and the window
-  follows, as it already did for height. Bars 6px to 10px.
-- `set_size` replaces `set_height`. A zoom pins the content under the live
-  cursor (read when the resize runs, not when the wheel event fired), and an
-  edge flush with the monitor stays flush; other size changes grow away from
-  the nearest monitor edges; the first sizing after launch restores the last
-  rect by its edges, so a gauge docked on the taskbar stays docked whatever
-  its rows; the result is clamped to the monitor's full bounds. Move and
-  resize are one SetWindowPos on Windows. On X11, where both land
-  asynchronously, the rect last requested stands in for 500ms.
-- Tray "Set home here" saves the window rect and its monitor (name, bounds,
-  scale). "Reset position" finds that monitor by bounds, then name, then
-  nearness; keeps home's corner nearest the edges, rescaled if the resolution
-  changed; positions for the size the gauge will have at the destination's
-  scale; and clamps. The move keeps the current size, since Windows rescales
-  on arrival. A prefs file that exists but cannot be read is never
-  overwritten. Placement maths in `src-tauri/src/geometry.rs`, std only. 21
-  tests, run in CI.
-- The grip rectangle travels with each resize, and the watcher re-reads its
-  cached placement at once, so the next wheel notch still lands on the grip.
-  It saves the position once moves settle, not per notch.
+- ✅ `hooks/klepsydra-fleet.sh`, async on nine events: one file per session,
+  written only on change through a same-directory temp file, under one lock.
+  A need is cleared only by the asker's own tool; a `Notification` of type
+  `idle_prompt` corrects a session still marked working or needing AJ.
+- ✅ Pruning at session start, at most once an hour, deleting only names from
+  its own `fleet/<uuid>.json` glob inside the absolute app data dir.
+- ✅ Heartbeat from the status line, at most once per 10 s, and
+  `refreshInterval: 30`.
+- ✅ `src-tauri/fleet`, a crate free of Tauri: v1 parsing with time bounds
+  2020 to 2100, silent after 90 s with no word, clock skew corrected from
+  `written_at`, `quiet_since` for "working?", ordering, a notify watcher with
+  a 5 s re-read, bad files logged once to `fleet.log`, the hub.
+- ✅ Strip in the gauge window, card wall made on the first click, Jump to
+  terminal through UI Automation by exact tab title.
+- ✅ Ten kourai portraits cast to keryx voices; Lorelei faces for 54 Kokoro
+  voices and 24 fallbacks, each licensed in `LICENSES.json`.
+- ✅ A guard for every rejected idea in the spec, one that the guards scan
+  every fleet source, and one that the README settings block matches the
+  hook's event list. The spec's addendum records each ruling made on the way.
 
 ## Verified, not inferred
-- Windows probe (synthetic wheel through the OS input stack, cursor parked
-  over a throwaway build): every notch on the grip arrived (deltaY +-100,
-  pixel mode); three on the bar passed through to the window beneath; 30-unit
-  deltas arrived as 25px; Ctrl+wheel did not trigger WebView2's page zoom.
-  Grip armed in 8-30ms (20 of 20), disarmed in 2-33ms.
-- Geometry and zoom suites pass locally (`rustc --test`, `node --test`).
+- ✅ Hook, statusline, memory-check, node and fleet-crate suites pass in WSL.
+- 📋 Live check with eight real sessions (README, Releasing).
+- 📋 Working set at 5 minutes and at 8 hours, growth within 10%.
+- 📋 Jump to terminal takes the foreground after a click in the wall.
+- 📋 A click on a portrait reaches the webview of the click-through window.
+- 📋 Payload shapes come from the hooks docs; the live check confirms them.
+- 📋 The app crate and clippy run only through `scripts/build-windows.sh
+  --check` and CI, since WSL has no WebKitGTK.
 
 ## Open
-- Mixed-DPI monitors not exercised: a reset across scales relies on Windows
-  rescaling the window on arrival.
-- Not yet run on X11; scroll there is expected to work (wheel goes to the
-  window under the pointer) but unverified.
-- Depends on Windows' "Scroll inactive windows" setting (on by default).
-- Track #2f2f2f against the panel is 1.3:1; the fill carries the contrast.
+- The default display name (`my-app-3f`) reaches no hook and no status line,
+  so a session with no voice and no name is named by its launch folder.
+- A denied permission dismissed with Esc keeps "needs you" until the next
+  prompt, its age showing.
 
 ## Verify
     node --test src/*.test.js
-    (cd src-tauri && cargo test && cargo clippy --all-targets -- -D warnings)
+    bash statusline/test_statusline.sh && bash hooks/test_fleet.sh
+    bash scripts/test_measure_memory.sh
+    (cd src-tauri && cargo test -p klepsydra-fleet && cargo clippy -p klepsydra-fleet --all-targets -- -D warnings)
+    bash scripts/build-windows.sh --check
     bash scripts/visual-check.sh

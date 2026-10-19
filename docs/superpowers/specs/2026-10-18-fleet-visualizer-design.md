@@ -305,3 +305,28 @@ CPU and RAM, and product packaging.
 - `# research(2026-10)` Generated Photos API terms: https://generated.photos/api
 - `# research(2026-10)` WCAG 2.2: https://www.w3.org/WAI/WCAG22/understanding/
 - Dashboard review sweep, 2026-10-18: Cursor forum 157226 and 158856, VS Code #300191 and #317380, Claude Code #101806, #101614 and #102671.
+
+## Addendum 2026-10-19: rulings made during implementation
+
+The text above is unchanged. Each line below changed or sharpened it, with the reason.
+
+- Idle self-heal: a `Notification` of type `idle_prompt` sets a `working` or `needs_you` session to `done` once its state is 30 s old. Stop does not run after an interrupt, so a session could stay "working" forever. The install block's Notification matcher is `elicitation_dialog|idle_prompt`, since the heal never fires otherwise.
+- `written_at` is the activity stamp. The hook refreshes it at most once per 60 s, and it drives pruning and the "working?" rule. It also carries clock skew between the hook and the reader.
+- Session files add `needs`, `where.by`, `ended`, `written_at` and `error`. The asker rule and the skew correction need them.
+- `quiet_since` and "working?": a working session with no activity for over 10 minutes keeps the working colour, shows a `?` badge and reads "working? · no activity for <age>". A confident "working" would be wrong for an interrupted session.
+- Time bounds: the reader skips a file with any time outside 2020-01-01 to 2100-01-01 as malformed. A wildly wrong clock must not produce a 1970 age or a hidden session.
+- Pruning runs at most once an hour. It deletes only names from its own `fleet/<uuid>.json` glob, never a path read from file content, and refuses a data dir that is not an absolute `dev.ajsoftworks.klepsydra` path. A deletion outside `fleet/` was reproduced in review. It also removes `.tmp` litter older than a day.
+- Jump matches the one tab whose title, after a leading status glyph and with padding trimmed, equals the session's name. The spec said "contains", which could select a wrong tab (`klepsydra` against `klepsydra-e2`).
+- Jump refuses with a message when Windows Terminal hides its tabs (full screen or focus mode), and never falls back to a window-title guess.
+- Jump creates CUIAutomation8 first and sets UI Automation timeouts below the defaults, so a hung terminal cannot hang the click.
+- Bad files are logged once to `fleet.log` in the app data dir (truncated at 64 KiB), since release builds have no console.
+- A need is cleared only by the tool that raised it, on the same thread. Clearing on any PostToolUse would drop the badge while a parallel or subagent tool finishes.
+- NotebookEdit's path comes from `tool_input.notebook_path`. The spec named `file_path`, which that tool does not carry.
+- A prompt starting `<task-notification>` is a background subagent's report: it sets `working` and keeps the last prompt. Pasted text arrives inside `<pasted_content>` and does not match.
+- A session is silent only when both its beat and its session file are over 90 s old. Judging by the beat alone could leave a dying session at "working".
+- Cast: Puck is `am_puck`, Mneme `bf_isabella`, Dokimasia `af_aoede`, Cupid `af_heart`, and the rest follow kourai's `tts_backend.py`, because kourai's voices are outside keryx's pool. A blend voice gets a hash fallback face and a joined name.
+- Badge contrast is measured against a panel-coloured ring around each badge, since `#0072B2` is 2.1:1 on a white desktop without it. Every portrait carries its badge, and only needs-you pulses.
+- Strip state and the resize-band maths live in `src-tauri/src/fleet.rs` and `geometry.rs`, so `main.rs` gains only wiring.
+- The wall's window label is `wall`, it is not always on top, and it does not pulse; the strip owns the one pulse.
+- Order: the needs-you group comes first, longest wait first inside it. A session that starts needing AJ joins that group.
+- A card's name comes from the beat's session name, then the file's `session_title`, then the launch folder. The default display name reaches no hook.

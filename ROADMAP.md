@@ -9,16 +9,28 @@ The gauge must never show a confident wrong number. A reading more than 15
 minutes old says how old it is, an ended window says when it reset, and the
 panel dims only while it has nothing to show. Dimming was dropped because
 the account you are not on is always hours old, and it has to stay legible.
+The fleet strip holds to the same rule: every status shows its age, and a
+session that stops answering reads as silent, never as working.
 
 ## Next
 - Exercise the tray menu ("Reset position", autostart toggle).
 - Prune session files nobody needs (every window ended, account dropped).
+- Run the fleet strip's live check with eight sessions and take its 8-hour
+  memory reading (README, Releasing).
 
 ## Later
 - Optional: flash or notify when crossing a threshold.
 - Optional: compact mode that drops the label and countdown to a bare bar.
+- A product version of the fleet strip (heuresis verdict `later`, 2026-10-18).
 
 ## Completed
+- 2026-10-19: Added the fleet strip and card wall. A hook writes one file per
+  Claude Code session and the status line adds a heartbeat; the overlay
+  shows a portrait per session beside the gauge, whoever needs AJ first,
+  with a card wall a click away and a jump back to the session's terminal.
+  Every status shows its age, and a session that stops answering reads as
+  silent. Polling `claude agents --json` was ruled out: 0.38 to 0.57 s and
+  about 170 MB per call (measured 2026-10-18).
 - 2026-10-18: Made the gauge resizable and homeable. Scrolling on the grip
   zooms everything around the pointer, so the grip stays under it; a probe
   confirmed the click-through window receives the wheel there and passes it

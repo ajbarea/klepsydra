@@ -547,6 +547,24 @@ printf '{"v":1,"session_id":"%s","claude":{"pid":999,"start":1},"started_at":%s,
 fire session-start.json ".session_id = \"$(id 26)\"" KLEPSYDRA_DIR="$pd" KLEPSYDRA_NOW="$pnow"
 check "a resumed old session keeps its history" "$(jq -r .started_at "$pd/fleet/$(id 26).json" 2>&1)" "$((pnow - 5 * day))"
 
+echo "install block"
+# README.md's settings block is what users paste; it must register every
+# event the hook handles, each async, with the statusline's 30 s heartbeat.
+settings=$(sed -n '/^<!-- fleet-settings:start -->$/,/^<!-- fleet-settings:end -->$/p' "$here/../README.md" |
+  grep -v -e '^<!--' -e '^```')
+check "settings: parses" "$(jq -r 'type' <<<"$settings" 2>/dev/null)" "object"
+check "settings: heartbeat every 30 s" "$(jq '.statusLine.refreshInterval' <<<"$settings")" "30"
+check "settings: statusline command kept" "$(jq -r '.statusLine.command | ltrimstr("~")' <<<"$settings")" "/.claude/klepsydra-statusline.sh"
+check "settings: the events" "$(jq -c '.hooks | keys' <<<"$settings")" \
+  '["Notification","PermissionRequest","PostToolUse","PreToolUse","SessionEnd","SessionStart","Stop","StopFailure","UserPromptSubmit"]'
+check "settings: every fleet hook is async" \
+  "$(jq '[.hooks[][].hooks[]] | length > 0 and all(.async == true and (.command | endswith("/klepsydra-fleet.sh")))' <<<"$settings")" "true"
+check "settings: questions and plans only" "$(jq -r '.hooks.PreToolUse[0].matcher' <<<"$settings")" "AskUserQuestion|ExitPlanMode"
+check "settings: input requests and the idle self-heal" "$(jq -r '.hooks.Notification[0].matcher' <<<"$settings")" "elicitation_dialog|idle_prompt"
+check "settings: every tool after use" "$(jq -r '.hooks.PostToolUse[0].matcher // "*"' <<<"$settings")" "*"
+check "the hook handles exactly the events registered" \
+  "$(tr ' ' '\n' <<<"$EVENTS" | LC_ALL=C sort | paste -sd, -)" "$(jq -r '.hooks | keys | join(",")' <<<"$settings")"
+
 block() { sed -n '/^# --- klepsydra dir/,/^# --- end klepsydra dir ---$/p' "$1"; }
 check "dir block present" "$([[ -n "$(block "$hook")" ]] && echo yes)" "yes"
 check "sourceable from a set -e script" \

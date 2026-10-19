@@ -25,6 +25,7 @@ const stripCssComments = (css) => css.replace(/\/\*[\s\S]*?\*\//g, "");
 const RUST = [...filesUnder("src-tauri/src", [".rs"]), ...filesUnder("src-tauri/fleet/src", [".rs"])];
 const FRONTEND = filesUnder("src", [".js", ".mjs", ".html"]).filter((f) => !f.endsWith(".test.js"));
 const CSS = filesUnder("src", [".css"]);
+const SHELL = [...filesUnder("hooks", [".sh"]), ...filesUnder("statusline", [".sh"])];
 const MANIFESTS = ["src-tauri/Cargo.toml", "src-tauri/fleet/Cargo.toml", "package.json"].filter((f) =>
   existsSync(join(ROOT, f)),
 );
@@ -319,5 +320,24 @@ test("harness input never ships", () => {
     assert.match(gitignore, new RegExp(`^${f}$`, "m"), `.gitignore: ${f}`);
     assert.ok(windows.includes(`--exclude '${f}'`), `build-windows.sh: ${f}`);
     assert.ok(linux.includes(f), `build-linux.sh: ${f}`);
+  }
+});
+
+test("the hooks make no sound", () => {
+  for (const f of SHELL) assert.doesNotMatch(read(f), /\b(paplay|aplay|afplay|espeak|ffplay|mpv|speaker-test|beep)\b/, f);
+});
+
+test("the guards reach every fleet source", () => {
+  const fleet = [
+    ...filesUnder("src-tauri/fleet/src", [".rs"]),
+    ...["src-tauri/src/fleet.rs", "src-tauri/src/jump.rs"].filter((f) => existsSync(join(ROOT, f))),
+    ...filesUnder("src/fleet", [".js", ".css"]),
+    ...filesUnder("src", [".html"]).filter((f) => /fleet\//.test(read(f))),
+    ...SHELL,
+  ];
+  const scanned = new Set([...RUST, ...FRONTEND, ...CSS, ...SHELL]);
+  assert.deepEqual(fleet.filter((f) => !scanned.has(f)), []);
+  for (const f of ["src-tauri/fleet/src/hub.rs", "src-tauri/src/fleet.rs", "src-tauri/src/jump.rs", "src/fleet/strip.js", "src/wall.html", "hooks/klepsydra-fleet.sh"]) {
+    assert.ok(fleet.includes(f), `${f} is not enumerated`);
   }
 });
