@@ -187,6 +187,9 @@ fire post-tool-bash.json '.tool_name = "AskUserQuestion"'
 check "answered" "$(field .state)" '"working"'
 fire pre-tool-plan.json
 check "plan" "$(field '[.state, .reason]')" '["needs_you","approve plan"]'
+plan_at=$(field .state_at)
+now=$((now + 1)) fire permission-request.json '.tool_name = "ExitPlanMode"'
+check "plan permission request keeps reason and state_at" "$(field '[.reason, .state_at]')" "[\"approve plan\",$plan_at]"
 fire post-tool-bash.json '.tool_name = "ExitPlanMode"'
 check "plan approved" "$(field .state)" '"working"'
 fire notification-elicitation.json
@@ -207,8 +210,9 @@ check "stop: the reply from last_assistant_message" "$(field .reply.text)" \
   '"That works with no model calls: the hook writes one file per session and the overlay reads them."'
 check "stop: never the lagging transcript" "$(grep -c STALE "$file")" "0"
 check "the hook never opens the transcript" "$(grep -c transcript_path "$hook")" "0"
-fire stop.json '.last_assistant_message = ""'
-check "stop with no text keeps the last reply" "$(field '.reply.at')" "$now"
+now=$((now + 5)) fire stop.json '.last_assistant_message = ""'
+check "stop with no text keeps the last reply" "$(field '[.reply.text, .reply.at]')" \
+  '["That works with no model calls: the hook writes one file per session and the overlay reads them.",1792353050]'
 
 now=1792353060
 fire stop-failure.json
@@ -248,13 +252,18 @@ now=1792353300
 fire session-end.json
 check "end" "$(field '[.state, .reason, .ended]')" "[\"ended\",\"exited\",{\"reason\":\"prompt_input_exit\",\"at\":$now}]"
 touch -d @1 "$file"
-fire post-tool-bash.json '.tool_name = "Read"'
-check "a late event cannot revive it" "$(mtime)" "1"
+fire stop.json
+fire permission-request.json
+fire user-prompt.json
+check "a late stop, request or prompt cannot revive it" "$(mtime):$(field .state)" '1:"ended"'
 now=1792353400 fire session-start.json '.source = "resume"'
 check "resumed: done, since it has a prompt" "$(field '[.state, .ended]')" '["done",null]'
+now=1792353405 fire session-start.json '.source = "resume"' KLEPSYDRA_PID=710
+check "resumed in another terminal: the new claude" "$(field .claude)" '{"pid":700,"start":9000000}'
 fire user-prompt.json
 now=1792353410 fire session-start.json '.source = "compact"'
 check "compaction keeps the state" "$(field .state)" '"working"'
+check "compaction keeps the claude" "$(field .claude.pid)" "700"
 
 rm -f "$file"
 now=1792353500 fire user-prompt.json
@@ -276,6 +285,10 @@ check "a session id that is not a uuid writes nothing" "$(find "$work" -name 'ev
 out=$(fire user-prompt.json '.' KLEPSYDRA_DIR=/proc/nonexistent); rc=$?
 check "unwritable dir: exit 0" "$rc" "0"
 check "no tmp litter" "$(find "$dir" -name '*.tmp' | wc -l)" "0"
+mkdir -p "$work/full"
+# shellcheck disable=SC1090
+( source "$hook"; trap '' XFSZ; ulimit -f 0; write_atomic "$work/full/x.json" '{}' ) 2>/dev/null
+check "a failed write leaves no tmp file" "$(find "$work/full" -type f | wc -l)" "0"
 
 echo "concurrency"
 rm -f "$file"
@@ -290,6 +303,50 @@ check "parallel events: no update lost" "$(field '.touched | length')" "6"
 check "parallel events: where and touched are seven repos" \
   "$(field '[.where.repo] + [.touched[].repo] | unique | length')" "7"
 
+
+echo "self-heal and heartbeat"
+rm -f "$file"
+now=1792355000
+fire post-tool-bash.json
+check "created from a tool event: working" "$(field '[.state, .state_at, .active_at]')" "[\"working\",$now,$now]"
+check "tool output never recorded (created mid-turn)" "$(grep -c SECRET "$file")" "0"
+touch -d @1 "$file"
+now=1792355030
+fire post-tool-bash.json
+check "two events 30 s apart: one write" "$(mtime):$(field .active_at)" "1:1792355000"
+now=1792355061
+fire post-tool-bash.json
+check "61 s apart: active_at moves" "$(field '[.active_at, .written_at, .state_at]')" "[1792355061,1792355061,1792355000]"
+now=1792355070
+fire notification-idle.json
+check "idle prompt: working becomes done" "$(field '[.state, .reason, .state_at]')" "[\"done\",null,$now]"
+fire permission-request.json
+now=1792355080
+fire notification-idle.json
+check "idle prompt: needs_you becomes done" "$(field '[.state, .reason, .state_at]')" "[\"done\",null,$now]"
+now=1792355090
+fire stop-failure.json
+now=1792355095
+fire notification-idle.json
+check "idle prompt leaves an error alone" "$(field .state)" '"error"'
+fire session-end.json
+now=1792355100
+fire notification-idle.json
+check "idle prompt leaves ended alone" "$(field .state)" '"ended"'
+
+rm -f "$file"
+now=1792355200
+fire stop-failure.json '.last_assistant_message = ""'
+check "failure with no text falls back to error_details" "$(field .error)" '"429 Too Many Requests"'
+fire session-start.json '.source = "resume"'
+check "resume clears the error" "$(field '[.state, .error]')" '["new",null]'
+
+rm -f "$file"
+fire post-tool-edit.json
+check "edit input never recorded" "$(grep -c SECRET "$file")" "0"
+rm -f "$file"
+fire post-tool-notebook.json
+check "notebook input never recorded" "$(grep -c SECRET "$file")" "0"
 
 echo "partial voices.json"
 printf '{"holders":{"500:8717628":{"voice":"am_' >"$work/voices.json"

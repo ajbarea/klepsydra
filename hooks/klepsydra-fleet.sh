@@ -155,6 +155,8 @@ holder_voice() { # pid start
 read -r -d '' APPLY <<'JQ' || true  # read returns 1 at the end of input
 def clip: if type == "string" and length > 0 then .[0:$chars] else null end;
 def text: if type == "string" and length > 0 then . else null end;
+def need_reason($tool): if $tool == "AskUserQuestion" then "question"
+  elif $tool == "ExitPlanMode" then "approve plan" else "approve \($tool // "a tool")" end;
 def ended_as: {clear: "cleared", resume: "resumed elsewhere", logout: "logged out",
                prompt_input_exit: "exited", other: "stopped"}[.] // gsub("_"; " ");
 
@@ -168,12 +170,14 @@ def ended_as: {clear: "cleared", resume: "resumed elsewhere", logout: "logged ou
   else
   ($was // {v: 1, session_id: $ev.session_id, name: null, started_at: $now,
             launch_dir: ($ev.cwd | text), claude: null, voice: null,
-            state: "new", reason: null, needs: null, state_at: $now,
+            state: (if $event == "PreToolUse" or $event == "PostToolUse" then "working" else "new" end),
+            reason: null, needs: null, state_at: $now, active_at: $now,
             where: null, touched: [], prompt: null, reply: null, error: null,
             ended: null, written_at: $now}) as $s
   | $s
   | .name = (($ev.session_title | text) // .name)
-  | .claude = (.claude // (if $pid != "" then {pid: ($pid | tonumber), start: ($start | tonumber)} else null end))
+  | (if $pid != "" then {pid: ($pid | tonumber), start: ($start | tonumber)} else null end) as $me
+  | .claude = (if $me != null and $event == "SessionStart" and $ev.source != "compact" then $me else (.claude // $me) end)
   | .voice = (($voice | text) // .voice)
 
   # Where: the last edit's repo, or the cwd's until something is edited.
@@ -197,7 +201,7 @@ def ended_as: {clear: "cleared", resume: "resumed elsewhere", logout: "logged ou
        else {state: (if .prompt then "done" else "new" end), reason: null} end
      elif $event == "UserPromptSubmit" then {state: "working", reason: null}
      elif $event == "PermissionRequest" then
-       {state: "needs_you", reason: "approve \($ev.tool_name // "a tool")", needs: {by: $agent, tool: $ev.tool_name}}
+       {state: "needs_you", reason: need_reason($ev.tool_name), needs: {by: $agent, tool: $ev.tool_name}}
      elif $event == "PreToolUse" and $ev.tool_name == "AskUserQuestion" then
        {state: "needs_you", reason: "question", needs: {by: $agent, tool: "AskUserQuestion"}}
      elif $event == "PreToolUse" and $ev.tool_name == "ExitPlanMode" then
@@ -207,6 +211,9 @@ def ended_as: {clear: "cleared", resume: "resumed elsewhere", logout: "logged ou
      elif $event == "PostToolUse" and .state == "needs_you" and (.needs.by // "") == $agent
           and (.needs.tool == null or .needs.tool == $ev.tool_name) then
        {state: "working", reason: null}
+     elif $event == "Notification" and $ev.notification_type == "idle_prompt"
+          and (.state == "working" or .state == "needs_you") then
+       {state: "done", reason: null}
      elif $event == "Stop" then {state: "done", reason: null}
      elif $event == "StopFailure" then {state: "error", reason: (($ev.error // "unknown") | gsub("_"; " "))}
      elif $event == "SessionEnd" then {state: "ended", reason: (($ev.reason // "other") | ended_as)}
@@ -225,13 +232,16 @@ def ended_as: {clear: "cleared", resume: "resumed elsewhere", logout: "logged ou
     elif $event == "Stop" then
       (($ev.last_assistant_message | clip) as $r | if $r then .reply = {text: $r, at: $now} else . end)
     elif $event == "StopFailure" then
-      .error = (($ev.last_assistant_message // $ev.error_details // $ev.error) | clip)
+      .error = ([$ev.last_assistant_message, $ev.error_details, $ev.error] | map(clip | select(. != null)) | .[0])
     elif $event == "SessionEnd" then .ended = {reason: ($ev.reason // "other"), at: $now}
-    elif $event == "SessionStart" and $ev.source != "compact" then .ended = null
+    elif $event == "SessionStart" and $ev.source != "compact" then .ended = null | .error = null
     else . end
 
-  | if $was != null and (del(.written_at) == ($was | del(.written_at))) then empty
-    else .written_at = $now end
+  # active_at moves on every event but is written at most once a minute.
+  | if $was != null and (del(.written_at, .active_at) == ($was | del(.written_at, .active_at))) then
+      if $now - ($was.active_at // $was.written_at) < 60 then empty
+      else .active_at = $now | .written_at = $now end
+    else .active_at = $now | .written_at = $now end
   end
 JQ
 
@@ -249,12 +259,12 @@ write_atomic() { # file text
 main() {
   local input fields session event cwd edited now file old new lock voice="" by=cwd
   input=$(cat)
-  fields=$(jq -r '
+  fields=$(printf '%s' "$input" | jq -r '
     def s: if type == "string" then gsub("[\u001f\n]"; " ") else "" end;
     [ (.session_id | s), (.hook_event_name | s), (.cwd | s),
       (if .hook_event_name == "PostToolUse" and (.tool_name | IN("Edit", "Write", "NotebookEdit"))
        then ((.tool_input.file_path // .tool_input.notebook_path) | s) else "" end)
-    ] | join("\u001f")' <<<"$input" 2>/dev/null) || return 0
+    ] | join("\u001f")' 2>/dev/null) || return 0
   IFS=$'\x1f' read -r session event cwd edited <<<"$fields"
   [[ $session =~ $UUID_RE && " $EVENTS " == *" $event "* ]] || return 0
 
@@ -279,11 +289,11 @@ main() {
   file=$fleet/$session.json
   old=""
   [[ -f $file ]] && { old=$(<"$file"); } 2>/dev/null
-  new=$(jq -c --arg old "$old" --argjson now "$now" --argjson chars "$PROMPT_CHARS" \
+  new=$(printf '%s' "$input" | jq -c --arg old "$old" --argjson now "$now" --argjson chars "$PROMPT_CHARS" \
     --arg repo "$where_repo" --arg worktree "$where_worktree" --arg branch "$where_branch" \
     --arg by "$by" \
     --arg voice "$voice" --arg pid "$found_pid" --arg start "$found_start" \
-    "$APPLY" <<<"$input" 2>/dev/null) || new=""
+    "$APPLY" 2>/dev/null) || new=""
   [[ -n $new ]] && write_atomic "$file" "$new"
   return 0
 }
