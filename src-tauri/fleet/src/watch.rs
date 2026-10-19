@@ -256,12 +256,19 @@ mod tests {
         root.write(&format!("fleet/{A}.json"), &session(A, "done"));
         r.step(Duration::ZERO, unix_now);
         let started = Instant::now();
-        let mut steps = 0;
+        let (mut steps, mut early) = (0, 0);
         while started.elapsed() < Duration::from_millis(1500) {
+            let began = Instant::now();
             r.step(Duration::from_millis(300), unix_now);
+            // A step cut short was woken by something: its own read, if it spins.
+            early += usize::from(began.elapsed() < Duration::from_millis(250));
             steps += 1;
         }
-        assert!(steps <= 8, "{steps} re-reads in 1.5 s of nothing changing");
+        assert_eq!(
+            early, 0,
+            "{early} of {steps} waits cut short with nothing changing"
+        );
+        assert!(steps <= 6, "{steps} re-reads in 1.5 s of nothing changing");
     }
 
     #[test]

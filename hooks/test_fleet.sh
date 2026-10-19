@@ -534,6 +534,16 @@ check "forged pid text: rc 0, no output" "$rc|$out" "0|"
 check "forged paths delete nothing outside the glob" \
   "$(names "$work/outside")|$([[ -e $pd/fleet/$(id 2).json ]] && echo kept)" "victim victim.beat |kept"
 
+# A file named like a stat line cannot turn a FIFO into a regular file, which
+# the prune would then block on with the lock held.
+reset_prune
+mkfifo "$pd/fleet/$(id 40).json"
+: >"$pd/fleet/zz.json"$'\n'"regular file|1|$(id 40).json"
+# shellcheck disable=SC2016  # expanded by the inner shell
+timeout 10 bash -c 'source "$1"; prune_fleet "$2" "$3"' _ "$hook" "$pd" "$pnow"; rc=$?
+check "a stat line planted in a file name does not hang the prune" "$rc" "0"
+check "the FIFO is left alone" "$([[ -p $pd/fleet/$(id 40).json ]] && echo kept)" "kept"
+
 # Zero-byte beats and litter are files too.
 reset_prune
 : >"$pd/fleet/$(id 1).beat"; touch -d "@$((pnow - 2 * day))" "$pd/fleet/$(id 1).beat"

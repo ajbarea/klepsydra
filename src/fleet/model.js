@@ -215,6 +215,7 @@ export function card(s, cast, nowMs) {
     error: s.status === "error" ? s.error ?? null : null,
     updated: updatedText(s, nowMs),
     jump: jumpable(s),
+    jumpLabel: `Jump to terminal, ${who.name}`,
     label: accessibleName(s, cast, nowMs),
   };
 }

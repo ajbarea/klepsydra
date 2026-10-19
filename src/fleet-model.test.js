@@ -255,6 +255,9 @@ test("a card holds what the wall shows", () => {
   assert.equal(c.prompt, "i just want to be able to VIZ them");
   assert.equal(c.reply, "That works with no model calls");
   assert.deepEqual(c.jump, { enabled: true, why: null });
+  assert.equal(c.jumpLabel, "Jump to terminal, Hephaestus");
+  const other = card(session({ voice: "af_bella" }), CAST, NOW);
+  assert.notEqual(other.jumpLabel, c.jumpLabel, "each Jump button is named for its session");
   assert.deepEqual(card(session({ name: null }), CAST, NOW).jump, { enabled: false, why: "no session name yet" });
   assert.deepEqual(card(session({ status: "ended" }), CAST, NOW).jump, { enabled: false, why: "session ended" });
   assert.equal(card(session({ status: "error", error: "API Error: Rate limit reached" }), CAST, NOW).error,

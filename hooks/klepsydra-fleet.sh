@@ -191,11 +191,11 @@ prune_here() { # now
   local now=$1 f name id pid start last line
   local -A type=() mt=() listed=()
   local -a sessions=()
-  while IFS= read -r line; do
+  while IFS= read -r -d '' line; do
     [[ $line =~ ^([^|]+)\|([0-9]+)\|(.+)$ ]] || continue
     type[${BASH_REMATCH[3]}]=${BASH_REMATCH[1]}
     mt[${BASH_REMATCH[3]}]=${BASH_REMATCH[2]}
-  done < <(stat -c '%F|%Y|%n' -- *.json *.beat *.tmp 2>/dev/null)
+  done < <(LC_ALL=C stat --printf '%F|%Y|%n\0' -- *.json *.beat *.tmp 2>/dev/null)
   plain() { [[ ${type[$1]:-} == "regular file" || ${type[$1]:-} == "regular empty file" ]]; } # name
   old() { plain "$1" && (( now - mt[$1] > PRUNE_AFTER )); } # name
 

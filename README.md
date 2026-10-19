@@ -311,6 +311,7 @@ beyond the tool's name and an edited file's path. The status line adds
 session start, at most once an hour, the hook deletes a session's file when
 its Claude Code process is gone and its newest time field (including
 `written_at`) is more than a day old, along with the session's beat file. A
+session with a fresh heartbeat survives, whatever its file says. A
 beat file with no session file, and leftover temp files, go when their own
 modification time is more than a day old.
 

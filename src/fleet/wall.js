@@ -54,6 +54,7 @@ function paint(el, c) {
   const jump = el.querySelector(".jump");
   const note = el.querySelector(".note");
   jump.dataset.name = c.session ?? "";
+  jump.setAttribute("aria-label", c.jumpLabel);
   if (jump.dataset.busy) return;
   jump.disabled = !c.jump.enabled;
   if (!c.jump.enabled) {
