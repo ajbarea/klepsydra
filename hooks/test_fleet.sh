@@ -366,6 +366,106 @@ check "truncated voices.json: silent" "$out" ""
 check "truncated voices.json: no voice" "$(field .voice)" "null"
 check "truncated voices.json: file still written" "$(field .state)" '"new"'
 
+echo "pruning"
+# Sessions in a scratch data dir, each a pid:start, a last event, and a beat age.
+pd="$work/prune/dev.ajsoftworks.klepsydra"
+pnow=1792400000
+day=86400
+mksession() { # id pid start last-event [beat-mtime]
+  printf '{"v":1,"session_id":"%s","claude":{"pid":%s,"start":%s},"started_at":%s,"state_at":%s}\n' \
+    "$1" "$2" "$3" "$4" "$4" >"$pd/fleet/$1.json"
+  if [[ -n ${5:-} ]]; then printf 'name\t1\n' >"$pd/fleet/$1.beat"; touch -d "@$5" "$pd/fleet/$1.beat"; fi
+}
+id() { printf '%08d-0000-4000-8000-000000000000' "$1"; }
+reset_prune() {
+  rm -rf "$work/prune"
+  mkdir -p "$pd/fleet"
+  mksession "$(id 1)" 999 1 $((pnow - 2 * day))                  # gone, old: deleted
+  mksession "$(id 2)" 500 8717628 $((pnow - 3 * day))            # live claude: kept
+  mksession "$(id 3)" 500 1234 $((pnow - 3 * day))               # pid reused: deleted
+  mksession "$(id 4)" 999 1 $((pnow - 3600))                     # gone, recent: kept
+  mksession "$(id 5)" 999 1 $((pnow - 2 * day)) $((pnow - 60))   # beat still fresh: kept
+  mksession "$(id 6)" 999 1 $((pnow - 2 * day)) $((pnow - 2 * day))  # gone, old, old beat: both deleted
+  printf 'n\t1\n' >"$pd/fleet/$(id 7).beat"; touch -d "@$((pnow - 2 * day))" "$pd/fleet/$(id 7).beat"  # orphan, old
+  printf 'n\t1\n' >"$pd/fleet/$(id 8).beat"                       # orphan, fresh
+  touch -d "@$pnow" "$pd/fleet/$(id 8).beat"
+  printf '{"v":1}' >"$pd/fleet/notes.json"; touch -d @1 "$pd/fleet/notes.json"  # not a session
+  printf 'x' >"$pd/fleet/abc.beat"; touch -d @1 "$pd/fleet/abc.beat"
+  printf 'not json' >"$pd/fleet/$(id 9).json"; touch -d @1 "$pd/fleet/$(id 9).json"  # unreadable
+  ln -s "$pd/fleet/$(id 2).json" "$pd/fleet/$(id 10).json"           # a link
+}
+names() { find "$1" -mindepth 1 -maxdepth 1 -printf '%f\n' | LC_ALL=C sort | tr '\n' ' '; }
+listing() { names "$pd/fleet"; }
+mkproc 501 1 claude 4321 Z claude
+reset_prune
+before=$(listing)
+
+# Refusals first: none of these may delete anything.
+prune_fleet "" "$pnow"; rc=$?
+check "unset dir: refused" "$rc|$(listing)" "1|$before"
+prune_fleet "prune/dev.ajsoftworks.klepsydra" "$pnow"; rc=$?
+check "relative dir: refused" "$rc|$(listing)" "1|$before"
+mkdir -p "$work/other/fleet" && cp "$pd/fleet/$(id 1).json" "$work/other/fleet/"
+prune_fleet "$work/other" "$pnow"; rc=$?
+check "wrong name: refused" "$rc|$(names "$work/other/fleet")" "1|$(id 1).json "
+mv "$pd/fleet" "$work/real-fleet" && ln -s "$work/real-fleet" "$pd/fleet"
+prune_fleet "$pd" "$pnow"; rc=$?
+check "linked fleet dir: refused" "$rc|$(names "$work/real-fleet")" "1|$before"
+rm "$pd/fleet" && mv "$work/real-fleet" "$pd/fleet"
+prune_fleet "$pd" "not-a-time"; rc=$?
+check "no clock: refused" "$rc|$(listing)" "1|$before"
+
+prune_fleet "$pd/" "$pnow"; rc=$?
+check "prune ran" "$rc" "0"
+check "kept: live, recent, fresh beat, non-sessions, unreadable, link" "$(listing)" \
+  "$(id 2).json $(id 4).json $(id 5).beat $(id 5).json $(id 8).beat $(id 9).json $(id 10).json abc.beat notes.json "
+check "the linked file's target survives" "$(jq -r .session_id "$pd/fleet/$(id 2).json")" "$(id 2)"
+
+reset_prune
+mksession "$(id 11)" 501 4321 $((pnow - 2 * day))
+prune_fleet "$pd" "$pnow"
+check "a zombie is gone" "$([[ -e $pd/fleet/$(id 11).json ]] && echo kept || echo deleted)" "deleted"
+
+# A link to a dead, old session is neither followed nor deleted.
+reset_prune
+printf '{"v":1,"claude":{"pid":999,"start":1},"started_at":1,"state_at":1}\n' >"$work/outside.json"
+ln -s "$work/outside.json" "$pd/fleet/$(id 14).json"
+printf x >"$work/outside.beat"; touch -d @1 "$work/outside.beat"
+ln -s "$work/outside.beat" "$pd/fleet/$(id 15).beat"
+prune_fleet "$pd" "$pnow"
+check "linked session and beat files stay, targets untouched" \
+  "$([[ -L $pd/fleet/$(id 14).json && -L $pd/fleet/$(id 15).beat && -e $work/outside.json && -e $work/outside.beat ]] && echo kept || echo gone)" "kept"
+
+# written_at is last activity too.
+reset_prune
+printf '{"v":1,"claude":{"pid":999,"start":1},"started_at":%s,"state_at":%s,"written_at":%s}\n' \
+  $((pnow - 3 * day)) $((pnow - 3 * day)) $((pnow - 60)) >"$pd/fleet/$(id 13).json"
+prune_fleet "$pd" "$pnow"
+check "a recent written_at keeps a dead session" "$([[ -e $pd/fleet/$(id 13).json ]] && echo kept || echo deleted)" "kept"
+
+# Write litter: <uuid>.json.<digits>.tmp older than a day.
+reset_prune
+old=$((pnow - 2 * day))
+printf x >"$pd/fleet/$(id 20).json.123.tmp"; touch -d "@$old" "$pd/fleet/$(id 20).json.123.tmp"
+printf x >"$pd/fleet/$(id 21).json.123.tmp"; touch -d "@$((pnow - 60))" "$pd/fleet/$(id 21).json.123.tmp"
+for n in notes.tmp "$(id 22).json.tmp" "$(id 22).json.12.tmp.bak" "$(id 22).json.1x.tmp" "x$(id 22).json.12.tmp"; do
+  printf x >"$pd/fleet/$n"; touch -d "@$old" "$pd/fleet/$n"
+done
+ln -s "$pd/fleet/$(id 2).json" "$pd/fleet/$(id 23).json.9.tmp"
+touch -h -d "@$old" "$pd/fleet/$(id 23).json.9.tmp"
+prune_fleet "$pd" "$pnow"
+check "old tmp removed" "$([[ -e $pd/fleet/$(id 20).json.123.tmp ]] && echo kept || echo deleted)" "deleted"
+check "fresh tmp, other names and a linked tmp stay" "$(names "$pd/fleet" | tr ' ' '\n' | grep -c 'tmp')" "7"
+check "the linked tmp's target survives" "$(jq -r .session_id "$pd/fleet/$(id 2).json")" "$(id 2)"
+
+reset_prune
+fire session-start.json ".session_id = \"$(id 12)\"" KLEPSYDRA_DIR="$pd" KLEPSYDRA_NOW="$pnow"
+check "session start prunes" "$([[ -e $pd/fleet/$(id 1).json ]] && echo kept || echo deleted)" "deleted"
+check "session start writes its own file first" "$(jq -r .state "$pd/fleet/$(id 12).json")" "new"
+reset_prune
+fire user-prompt.json ".session_id = \"$(id 12)\"" KLEPSYDRA_DIR="$pd" KLEPSYDRA_NOW="$pnow"
+check "other events do not prune" "$([[ -e $pd/fleet/$(id 1).json ]] && echo kept || echo deleted)" "kept"
+
 block() { sed -n '/^# --- klepsydra dir/,/^# --- end klepsydra dir ---$/p' "$1"; }
 check "dir block present" "$([[ -n "$(block "$hook")" ]] && echo yes)" "yes"
 check "sourceable from a set -e script" \

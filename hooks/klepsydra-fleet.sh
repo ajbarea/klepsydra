@@ -150,6 +150,65 @@ holder_voice() { # pid start
   jq -r --arg h "$1:$2" '.holders[$h].voice // empty | strings' "$VOICES" 2>/dev/null
 }
 
+# Whether the Claude Code process recorded as `pid start` still runs. A zombie
+# has exited, and a pid with another start time is someone else's.
+claude_alive() { # pid start
+  local -a stat=()
+  [[ $1 =~ ^[0-9]+$ && $2 =~ ^[0-9]+$ ]] || return 1
+  proc_stat "$1" || return 1
+  [[ ${stat[0]} != Z && ${stat[19]} == "$2" ]]
+}
+
+# Delete the files of sessions whose Claude Code process is gone and whose
+# last activity is more than a day old, heartbeats a day old with no session
+# file, and write litter a day old. Only <uuid>.json, <uuid>.beat and
+# <uuid>.json.<digits>.tmp directly inside <dir>/fleet, never a symlink, and
+# only when `dir` is the overlay's own absolute data dir.
+PRUNE_AFTER=86400
+prune_fleet() { # dir now
+  local dir=${1%/} now=$2 fleet f name id pid start last m
+  [[ -n $dir ]] || return 1
+  [[ $dir == /* ]] || return 1
+  [[ ${dir##*/} == dev.ajsoftworks.klepsydra ]] || return 1
+  [[ $now =~ ^[0-9]+$ ]] || return 1
+  fleet=$dir/fleet
+  [[ -L $fleet ]] && return 1
+  [[ -d $fleet ]] || return 0
+  for f in "$fleet"/*.json; do
+    name=${f##*/}
+    id=${name%.json}
+    [[ $id =~ $UUID_RE && -f $f && ! -L $f ]] || continue
+    IFS=$'\t' read -r pid start last < <(jq -r '[(.claude.pid // 0), (.claude.start // 0),
+      ([.started_at, .state_at, .where.at, .prompt.at, .reply.at, .ended.at, .written_at] | map(numbers) | max // 0)]
+      | map(floor | tostring) | join("\t")' "$f" 2>/dev/null) || continue
+    [[ $last =~ ^[0-9]+$ ]] || continue
+    (( now - last > PRUNE_AFTER )) || continue
+    if [[ -f $fleet/$id.beat && ! -L $fleet/$id.beat ]]; then
+      m=$(stat -c %Y -- "$fleet/$id.beat" 2>/dev/null) || continue
+      (( now - m > PRUNE_AFTER )) || continue
+    fi
+    claude_alive "$pid" "$start" && continue
+    rm -f -- "$f"
+    [[ -L $fleet/$id.beat ]] || rm -f -- "$fleet/$id.beat"
+  done
+  for f in "$fleet"/*.beat; do
+    name=${f##*/}
+    id=${name%.beat}
+    [[ $id =~ $UUID_RE && -f $f && ! -L $f && ! -e $fleet/$id.json ]] || continue
+    m=$(stat -c %Y -- "$f" 2>/dev/null) || continue
+    (( now - m > PRUNE_AFTER )) && rm -f -- "$f"
+  done
+  for f in "$fleet"/*.tmp; do
+    name=${f##*/}
+    [[ $name =~ ^(.{36})\.json\.[0-9]+\.tmp$ ]] || continue
+    id=${BASH_REMATCH[1]}
+    [[ $id =~ $UUID_RE && -f $f && ! -L $f ]] || continue
+    m=$(stat -c %Y -- "$f" 2>/dev/null) || continue
+    (( now - m > PRUNE_AFTER )) && rm -f -- "$f"
+  done
+  return 0
+}
+
 # The session file after one event, as compact JSON, or nothing when no field
 # changed. `$old` is the current file's text (empty for none).
 read -r -d '' APPLY <<'JQ' || true  # read returns 1 at the end of input
@@ -291,6 +350,7 @@ main() {
     --arg voice "$voice" --arg pid "$found_pid" --arg start "$found_start" \
     "$APPLY" 2>/dev/null) || new=""
   [[ -n $new ]] && write_atomic "$file" "$new"
+  [[ $event == SessionStart ]] && prune_fleet "$KLEPSYDRA_DIR" "$now"
   return 0
 }
 
