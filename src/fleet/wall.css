@@ -10,6 +10,7 @@
   --card-focus: #e69f00;
   --text: #ededed;
   --text-dim: #9a9a9a;
+  --text-error: #e8743b;
   --font: ui-sans-serif, "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
 }
 
@@ -62,7 +63,7 @@ html, body { background: var(--wall-bg); color: var(--text); font: 14px/1.4 var(
 
 .status { display: flex; align-items: center; gap: 8px; font-weight: 600; }
 .status .badge { width: 18px; height: 18px; }
-.error { color: var(--badge-error); overflow-wrap: anywhere; }
+.error { color: var(--text-error); overflow-wrap: anywhere; }
 .error[hidden], .updated[hidden] { display: none; }
 
 .said { display: flex; gap: 8px; color: var(--text-dim); }

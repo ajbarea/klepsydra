@@ -311,10 +311,10 @@ CPU and RAM, and product packaging.
 The text above is unchanged. Each line below changed or sharpened it, with the reason.
 
 - Idle self-heal: a `Notification` of type `idle_prompt` sets a `working` or `needs_you` session to `done` once its state is 30 s old. Stop does not run after an interrupt, so a session could stay "working" forever. The install block's Notification matcher is `elicitation_dialog|elicitation_url_dialog|idle_prompt`, since the heal never fires otherwise.
-- `written_at` is the activity stamp. The hook refreshes it at most once per 60 s, and it drives pruning and the "working?" rule. It also carries clock skew between the hook and the reader.
+- `written_at` is the activity stamp. The hook refreshes it at most once per 60 s, and it drives pruning and carries clock skew between the hook and the reader. The "working?" rule uses the file's own modification time, on the reader's clock.
 - Session files add `needs`, `where.by`, `ended`, `written_at` and `error`. The asker rule and the skew correction need them.
 - `quiet_since` and "working?": a working session with no activity for over 10 minutes keeps the working colour, shows a `?` badge and reads "working? · no activity for <age>". A confident "working" would be wrong for an interrupted session.
-- Time bounds: the reader skips a file with any time outside 2020-01-01 to 2100-01-01 as malformed. A wildly wrong clock must not produce a 1970 age or a hidden session.
+- Time bounds: the reader puts the writer's clock right first (skew from `written_at` against the file time), then skips a file with any corrected time outside 2020-01-01 to 2100-01-01 as malformed. A wildly wrong but consistent clock must not produce a 1970 age or a hidden session.
 - Pruning runs at most once an hour. It deletes only names from its own `fleet/<uuid>.json` glob, never a path read from file content, and refuses a data dir that is not an absolute `dev.ajsoftworks.klepsydra` path. A deletion outside `fleet/` was reproduced in review. It also removes `.tmp` litter older than a day.
 - Jump matches the one tab whose title, after a leading status glyph and with padding trimmed, equals the session's name. The spec said "contains", which could select a wrong tab (`klepsydra` against `klepsydra-e2`).
 - Jump refuses with a message when Windows Terminal hides its tabs (full screen or focus mode), and never falls back to a window-title guess.

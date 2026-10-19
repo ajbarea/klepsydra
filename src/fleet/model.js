@@ -219,8 +219,3 @@ export function card(s, cast, nowMs) {
     label: accessibleName(s, cast, nowMs),
   };
 }
-
-/** Columns that `repeat(auto-fill, minmax(min, 1fr))` makes in a viewport `width` wide. */
-export function columnsAt(width, { min, gap, pad }) {
-  return Math.max(1, Math.floor((width - 2 * pad + gap) / (min + gap)));
-}

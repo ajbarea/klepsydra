@@ -10,9 +10,6 @@ use crate::session::{Place, Said, SessionFile, State, Touched};
 pub const SILENT_AFTER: i64 = 90;
 /// How long an ended session stays on the strip and the wall.
 pub const ENDED_FOR: i64 = 600;
-/// Clocks closer than this are taken to agree; the hook stamps a file a
-/// moment before it lands.
-const SKEW_SLACK: i64 = 2;
 /// A working turn with no hook event for this long is quiet: a user interrupt
 /// leaves one behind, because Stop does not run on an interrupt.
 pub const QUIET_AFTER: i64 = 600;
@@ -77,28 +74,10 @@ pub struct Snapshot {
     pub sessions: Vec<View>,
 }
 
-/// Seconds to add to the hook's times to put them on this machine's clock.
-/// The hook stamps `written_at` just before it writes, and the filesystem
-/// stamps the write by this machine's clock, so the difference is how far the
-/// two clocks disagree (a Linux guest's drifts after the host sleeps).
-fn skew(entry: &Entry) -> i64 {
-    match entry.file.written_at {
-        Some(w) => {
-            let d = entry.modified.saturating_sub(w);
-            if d.saturating_abs() > SKEW_SLACK {
-                d
-            } else {
-                0
-            }
-        }
-        None => 0,
-    }
-}
-
 /// What to show for one session at `now`, or None once it has ended long enough ago.
 pub fn view(entry: &Entry, now: i64) -> Option<View> {
     let f = &entry.file;
-    let shift = skew(entry);
+    let shift = f.skew(entry.modified);
     let at = |t: i64| t.saturating_add(shift);
     let state_at = at(f.state_at);
     // An ended session's time is when it ended, for its status and its expiry.
@@ -437,9 +416,11 @@ mod tests {
         assert_eq!(s["name"], "tab a");
     }
 
-    fn quiet(state: State, written_at: i64, modified: i64) -> Option<i64> {
+    /// `quiet_since` of a session whose file last changed at `modified`, the
+    /// writer's clock agreeing with ours.
+    fn quiet_for(state: State, modified: i64) -> Option<i64> {
         let mut e = entry("a", state, NOW - 5, NOW - 5);
-        e.file.written_at = Some(written_at);
+        e.file.written_at = Some(modified);
         e.modified = modified;
         view(&e, NOW).unwrap().quiet_since
     }
@@ -449,13 +430,13 @@ mod tests {
         let mut e = entry("a", State::Working, NOW - 601, NOW - 5);
         e.modified = NOW - 601;
         assert_eq!(view(&e, NOW).unwrap().quiet_since, Some(NOW - 601));
-        assert_eq!(quiet(State::Working, NOW - 599, NOW - 599), None);
+        assert_eq!(quiet_for(State::Working, NOW - 599), None);
     }
 
     #[test]
-    fn only_a_working_session_is_ever_quiet() {
+    fn only_a_working_or_waiting_session_is_ever_quiet() {
         for state in [State::Done, State::New, State::Error] {
-            assert_eq!(quiet(state, NOW - 700, NOW - 700), None, "{state:?}");
+            assert_eq!(quiet_for(state, NOW - 700), None, "{state:?}");
         }
         let silent = entry("a", State::Working, NOW - 700, NOW - 700);
         let v = view(&silent, NOW).unwrap();
@@ -473,7 +454,7 @@ mod tests {
     }
 
     #[test]
-    fn quiet_falls_back_to_the_file_time_without_written_at() {
+    fn quiet_is_judged_by_the_file_time_when_there_is_no_written_at() {
         let mut e = entry("a", State::Working, NOW - 650, NOW - 5);
         e.file.written_at = None;
         e.modified = NOW - 650;
@@ -490,17 +471,14 @@ mod tests {
         // Ended: shown through 600 s after ended.at, gone after.
         let ended = |age: i64| {
             let mut e = entry("a", State::Ended, NOW - 5, NOW - 5);
-            e.file.ended = Some(Ended {
-                reason: "exit".into(),
-                at: NOW - age,
-            });
+            e.file.ended = Some(Ended { at: NOW - age });
             view(&e, NOW)
         };
         assert!(ended(600).is_some());
         assert_eq!(ended(601), None);
         // Quiet: more than 600 s since the file changed.
-        assert_eq!(quiet(State::Working, NOW - 600, NOW - 600), None);
-        assert_eq!(quiet(State::Working, NOW - 601, NOW - 601), Some(NOW - 601));
+        assert_eq!(quiet_for(State::Working, NOW - 600), None);
+        assert_eq!(quiet_for(State::Working, NOW - 601), Some(NOW - 601));
     }
 
     #[test]
@@ -508,10 +486,7 @@ mod tests {
         let mut e = entry("a", State::Ended, NOW - 900, NOW - 5);
         e.modified = NOW - 5;
         e.file.written_at = Some(NOW - 5);
-        e.file.ended = Some(Ended {
-            reason: "exit".into(),
-            at: NOW - 100,
-        });
+        e.file.ended = Some(Ended { at: NOW - 100 });
         let v = view(&e, NOW).unwrap();
         assert_eq!((v.status, v.status_at), (Status::Ended, NOW - 100));
         assert_eq!(v.updated_at, NOW - 100);
@@ -545,7 +520,6 @@ mod tests {
         assert_eq!(v.updated_at, NOW - 300, "place is the newest");
         e.file.state = State::Ended;
         e.file.ended = Some(Ended {
-            reason: "exit".into(),
             at: NOW - 200 + 600,
         });
         let v = view(&e, NOW).unwrap();
@@ -559,10 +533,7 @@ mod tests {
                 let mut e = entry("a", state, t, t);
                 e.modified = t;
                 e.file.written_at = Some(t);
-                e.file.ended = Some(Ended {
-                    reason: "x".into(),
-                    at: t,
-                });
+                e.file.ended = Some(Ended { at: t });
                 e.file.place = Some(Place {
                     repo: "r".into(),
                     worktree: None,

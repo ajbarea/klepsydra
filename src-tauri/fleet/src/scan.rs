@@ -89,7 +89,7 @@ pub fn scan(fleet: &Path) -> Listing {
         }
     }
     for (stem, name, mtime, text) in files {
-        match parse(&text, &stem) {
+        match parse(&text, &stem, mtime) {
             Ok(file) => out.entries.push(Entry {
                 file,
                 modified: mtime,
@@ -156,6 +156,20 @@ pub(crate) mod tests {
 
     pub fn session(id: &str, state: &str) -> String {
         format!(r#"{{"v":1,"session_id":"{id}","state":"{state}","state_at":1700000000}}"#)
+    }
+
+    #[test]
+    fn a_session_from_a_wildly_wrong_clock_still_shows() {
+        let dir = Scratch::new("wrong-clock");
+        dir.write(
+            &format!("{A}.json"),
+            &format!(
+                r#"{{"v":1,"session_id":"{A}","state":"working","state_at":1000,"written_at":1000}}"#
+            ),
+        );
+        let l = scan(&dir.0);
+        assert_eq!(l.entries.len(), 1);
+        assert!(l.problems.is_empty());
     }
 
     #[test]

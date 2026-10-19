@@ -3,9 +3,13 @@
 use serde::{Deserialize, Serialize};
 
 /// No Claude Code session predates 2020-01-01Z or outlives 2100-01-01Z, so a
-/// time outside these bounds is a corrupt file, not a clock to correct.
+/// time outside these bounds, once the writer's clock is put right, is a
+/// corrupt file.
 pub const MIN_TIME: i64 = 1_577_836_800;
 pub const MAX_TIME: i64 = 4_102_444_800;
+/// Clocks closer than this are taken to agree; the hook stamps a file a
+/// moment before it lands.
+const SKEW_SLACK: i64 = 2;
 
 /// The only session-file version this reader understands.
 pub const VERSION: u64 = 1;
@@ -46,7 +50,6 @@ pub struct Said {
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
 pub struct Ended {
-    pub reason: String,
     pub at: i64,
 }
 
@@ -98,9 +101,10 @@ impl std::fmt::Display for Rejected {
     }
 }
 
-/// Parse `<stem>.json`. Any `v` but 1 is rejected before the fields are read,
-/// so a newer hook's file never half-renders.
-pub fn parse(text: &str, stem: &str) -> Result<SessionFile, Rejected> {
+/// Parse `<stem>.json`, last changed at `modified` by this machine's clock.
+/// Any `v` but 1 is rejected before the fields are read, so a newer hook's
+/// file never half-renders.
+pub fn parse(text: &str, stem: &str, modified: i64) -> Result<SessionFile, Rejected> {
     let value: serde_json::Value =
         serde_json::from_str(text).map_err(|e| Rejected::Malformed(e.to_string()))?;
     match value.get("v") {
@@ -113,12 +117,33 @@ pub fn parse(text: &str, stem: &str) -> Result<SessionFile, Rejected> {
     if file.session_id != stem {
         return Err(Rejected::WrongId);
     }
-    file.check_times()?;
+    file.check_times(modified)?;
     Ok(file)
 }
 
 impl SessionFile {
-    fn check_times(&self) -> Result<(), Rejected> {
+    /// Seconds to add to the hook's times to put them on this machine's clock.
+    /// The hook stamps `written_at` just before it writes, and the filesystem
+    /// stamps the write by this machine's clock, so the difference is how far
+    /// the two clocks disagree (a Linux guest's drifts after the host sleeps).
+    pub fn skew(&self, modified: i64) -> i64 {
+        match self.written_at {
+            Some(w) => {
+                let d = modified.saturating_sub(w);
+                if d.saturating_abs() > SKEW_SLACK {
+                    d
+                } else {
+                    0
+                }
+            }
+            None => 0,
+        }
+    }
+
+    /// A consistently wrong writer clock is what the skew corrects; only a
+    /// time still out of range once corrected marks the file as corrupt.
+    fn check_times(&self, modified: i64) -> Result<(), Rejected> {
+        let shift = self.skew(modified);
         let times = [
             ("state_at", Some(self.state_at)),
             ("written_at", self.written_at),
@@ -130,7 +155,8 @@ impl SessionFile {
         .into_iter()
         .chain(self.touched.iter().map(|t| ("touched.at", Some(t.at))));
         for (field, t) in times {
-            if let Some(t) = t.filter(|t| !(MIN_TIME..=MAX_TIME).contains(t)) {
+            if let Some(t) = t.filter(|t| !(MIN_TIME..=MAX_TIME).contains(&t.saturating_add(shift)))
+            {
                 return Err(Rejected::Malformed(format!("{field} {t} is out of range")));
             }
         }
@@ -160,6 +186,12 @@ mod tests {
     use super::*;
 
     const ID: &str = "cb9fa591-1514-44d1-a31c-eba4a7cb41ed";
+    /// When the test files last changed, by the reader's clock.
+    const MODIFIED: i64 = 1_800_000_110;
+
+    fn parse(text: &str, stem: &str) -> Result<SessionFile, Rejected> {
+        super::parse(text, stem, MODIFIED)
+    }
 
     fn file(extra: &str) -> String {
         format!(r#"{{"v":1,"session_id":"{ID}","state":"working","state_at":1800000100{extra}}}"#)
@@ -219,12 +251,11 @@ mod tests {
     fn impossible_times_are_rejected() {
         for bad in [i64::MIN, i64::MAX, 0, MIN_TIME - 1, MAX_TIME + 1] {
             for field in [
-                format!(r#","written_at":{bad}"#),
                 format!(r#","where":{{"repo":"r","at":{bad}}}"#),
                 format!(r#","touched":[{{"repo":"r","at":{bad}}}]"#),
                 format!(r#","prompt":{{"text":"p","at":{bad}}}"#),
                 format!(r#","reply":{{"text":"p","at":{bad}}}"#),
-                format!(r#","ended":{{"reason":"x","at":{bad}}}"#),
+                format!(r#","ended":{{"at":{bad}}}"#),
             ] {
                 assert!(
                     matches!(parse(&file(&field), ID), Err(Rejected::Malformed(_))),
@@ -235,10 +266,43 @@ mod tests {
                 format!(r#"{{"v":1,"session_id":"{ID}","state":"working","state_at":{bad}}}"#);
             assert!(matches!(parse(&text, ID), Err(Rejected::Malformed(_))));
         }
-        let ok = file(&format!(r#","written_at":{MIN_TIME}"#));
+        let ok = file(&format!(r#","prompt":{{"text":"p","at":{MIN_TIME}}}"#));
         assert!(parse(&ok, ID).is_ok());
-        let ok = file(&format!(r#","written_at":{MAX_TIME}"#));
+        let ok = file(&format!(r#","prompt":{{"text":"p","at":{MAX_TIME}}}"#));
         assert!(parse(&ok, ID).is_ok());
+    }
+
+    #[test]
+    fn a_wrong_writer_clock_is_corrected_not_rejected() {
+        // The writer's clock reads 1000 s into 1970; the reader's is right.
+        let text = format!(
+            r#"{{"v":1,"session_id":"{ID}","state":"working","state_at":1000,"written_at":1000,"prompt":{{"text":"p","at":990}}}}"#
+        );
+        assert!(super::parse(&text, ID, MODIFIED).is_ok());
+        // Wrong by years the other way.
+        let text = text
+            .replace("1000", "4000000000")
+            .replace("990", "3999999990");
+        assert!(super::parse(&text, ID, MODIFIED).is_ok());
+    }
+
+    #[test]
+    fn a_time_still_impossible_once_corrected_is_rejected() {
+        for w in [i64::MIN, i64::MAX] {
+            let text = file(&format!(r#","written_at":{w}"#));
+            assert!(
+                matches!(parse(&text, ID), Err(Rejected::Malformed(_))),
+                "{w}"
+            );
+        }
+        // A field far from written_at is far from now, whatever the clock.
+        let text = format!(
+            r#"{{"v":1,"session_id":"{ID}","state":"working","state_at":1000,"written_at":1000,"reply":{{"text":"r","at":-3000000000}}}}"#
+        );
+        assert!(matches!(
+            super::parse(&text, ID, MODIFIED),
+            Err(Rejected::Malformed(_))
+        ));
     }
 
     #[test]

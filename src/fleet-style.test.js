@@ -1,7 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { columnsAt } from "./fleet/model.js";
 
 const read = (f) => readFileSync(new URL(f, import.meta.url), "utf8");
 const badgeCss = read("./fleet/badge.css");
@@ -18,6 +17,9 @@ export function contrast(a, b) {
   const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x);
   return (hi + 0.05) / (lo + 0.05);
 }
+
+/** Columns that `repeat(auto-fill, minmax(min, 1fr))` makes in a viewport `width` wide. */
+const columnsAt = (width, { min, gap, pad }) => Math.max(1, Math.floor((width - 2 * pad + gap) / (min + gap)));
 
 /** `rgba(r, g, b, a)` laid over an opaque "#rrggbb", as "#rrggbb". */
 function over(rgba, hex) {
@@ -78,6 +80,13 @@ test("the wall fits three columns at 1920 px and reflows below", () => {
   assert.equal(columnsAt(1920, tokens), 3);
   assert.equal(columnsAt(1280 - SCROLLBAR, tokens), 2);
   assert.equal(columnsAt(800 - SCROLLBAR, tokens), 1);
+});
+
+test("the wall's error text is readable on its card at 14 px", () => {
+  const wallCss = read("./fleet/wall.css");
+  const ratio = contrast(token(wallCss, "--text-error"), token(wallCss, "--card-bg"));
+  assert.ok(ratio >= 4.5, `error text on the card: ${ratio.toFixed(2)}`);
+  assert.match(wallCss, /\.error \{ color: var\(--text-error\)/);
 });
 
 test("a portrait is 28 px at 100%, and the strip's rules are in the zoomed stylesheet", () => {

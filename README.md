@@ -136,8 +136,10 @@ Then merge this into `~/.claude/settings.json` (into each config dir's
 
 Every fleet hook is `async`, so Claude Code never waits for it, and none
 prints anything, so the permission hook never answers a prompt. The
-`Notification` matcher catches an MCP server's request for input and the idle
-notice that corrects a session still marked as working after its turn ended.
+`Notification` matcher catches an MCP server's request for input (a dialog or
+a URL) and the idle notice that corrects a session still marked as working
+after its turn ended. `PostToolUseFailure` ends a wait whose approved command
+then failed.
 For the gauge alone, keep `statusLine` and leave out `hooks`.
 
 The hook picks the overlay's data dir for the platform it runs on: on Linux,
@@ -145,9 +147,11 @@ the XDG data dir; under WSL, the Windows side, since the overlay there is a
 Windows app.
 
 Set `KLEPSYDRA_DIR` if your Windows user differs from your WSL user. It
-configures the hook, which wants a WSL path (`/mnt/c/...`); the overlay
+configures both hook scripts, which want a WSL path (`/mnt/c/...`); the overlay
 reads the same setting as a Windows path (`C:\...`), so exporting one value
-to both sides gives the overlay a path it cannot resolve.
+to both sides gives the overlay a path it cannot resolve. The hook prunes old
+session files only when the last folder of that path is
+`dev.ajsoftworks.klepsydra`; any other name leaves them in place.
 
 **2. Build the overlay.** Windows and Linux differ here; see the Linux
 section below. On Windows it requires Rust (MSVC toolchain), Node, and the
