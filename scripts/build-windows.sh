@@ -14,7 +14,7 @@ mkdir -p "$stage"
 # Everything except build output and VCS; target/ and node_modules/ stay put.
 rsync -a --delete \
   --exclude 'src-tauri/target/' --exclude 'node_modules/' --exclude '.git/' \
-  --exclude 'src/dev-fixture.json' \
+  --exclude 'src/dev-fixture.json' --exclude 'src/dev-fleet.json' \
   "$repo"/ "$stage"/
 
 # WSL builds its Windows PATH at startup, so tools installed since then are

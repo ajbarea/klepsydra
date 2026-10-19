@@ -13,6 +13,7 @@ chrome="/mnt/c/Program Files/Google/Chrome/Application/chrome.exe"
 win_out="/mnt/c/Users/$USER/AppData/Local/Temp/klepsydra-shots"
 win_out_native=$(wslpath -w "$win_out")
 fixture="$here/src/dev-fixture.json"
+fleet_fixture="$here/src/dev-fleet.json"
 
 mkdir -p "$win_out"
 rm -f "$win_out"/*.png
@@ -43,8 +44,8 @@ fi
 now=$(date +%s)
 
 wanted=0
-shot() { # name, query, window-size
-  local name=$1 query=${2:-} size=${3:-450,120}
+shot() { # name, query, window-size, page
+  local name=$1 query=${2:-} size=${3:-450,120} page=${4:-index.html}
   wanted=$((wanted + 1))
   # Deterministic capture: no transitions, and enough budget to finish the fetch.
   # Pin the panel width; Chrome's --window-size is not the viewport width.
@@ -54,7 +55,7 @@ shot() { # name, query, window-size
     --window-size="$size" \
     --virtual-time-budget=4000 \
     --screenshot="$win_out_native\\$name.png" \
-    "http://127.0.0.1:$port/index.html$query" >/dev/null 2>&1 || true
+    "http://127.0.0.1:$port/$page$query" >/dev/null 2>&1 || true
   printf '  %s\n' "$name.png"
 }
 
@@ -112,6 +113,40 @@ for p in 20 45 60 73 90 100; do
   shot "ramp-bands-$p" "?mode=bands" 450,90
 done
 rm -f "$fixture"
+
+echo "fleet ->"
+# A snapshot as the reader hands it over: one session per status, the cast,
+# Lorelei and fallback faces among them.
+fleet_session() { # id, voice, status, reason, age_sec, name, quiet_age_sec
+  jq -nc --arg id "$1" --arg voice "$2" --arg status "$3" --arg reason "$4" --argjson at "$((now - $5))" \
+    --arg name "$6" --argjson quiet "${7:-null}" 'def opt: if . == "" then null else . end;
+    {session_id: $id, name: ($name | opt), launch_dir: "/home/aj/ajsoftworks",
+      voice: ($voice | opt), status: $status, reason: ($reason | opt), status_at: $at,
+      where: {repo: "klepsydra", worktree: "fleet", branch: "feat/fleet-visualizer", at: $at},
+      touched: [{repo: "ideas", at: ($at - 3600)}, {repo: "keryx", at: ($at - 9000)}],
+      prompt: (if $status == "new" then null
+               else {text: "i just want to be able to VIZ them, one glance at the screen and I know who needs me", at: ($at - 60)} end),
+      reply: (if $status == "new" then null
+              else {text: "That works with no model calls: the hook writes one file per session and the overlay reads them.", at: ($at - 30)} end),
+      quiet_since: (if $quiet == null then null else $at - $quiet end),
+      error: (if $status == "error" then "API Error: Rate limit reached" else null end), updated_at: $at}'
+}
+jq -s '{sessions: .}' \
+  <(fleet_session 11111111-0000-4000-8000-000000000001 am_michael needs_you "approve Bash" 130 "Plan the fleet visualizer") \
+  <(fleet_session 11111111-0000-4000-8000-000000000002 af_bella error "rate limit" 400 "Rebuild the deck") \
+  <(fleet_session 11111111-0000-4000-8000-000000000003 bf_emma working "" 45 "Port the hook") \
+  <(fleet_session 11111111-0000-4000-8000-000000000008 am_adam working "" 700 "Sweep the logs" 600) \
+  <(fleet_session 11111111-0000-4000-8000-000000000004 am_fenrir "done" "" 900 "Fix the CI pins") \
+  <(fleet_session 11111111-0000-4000-8000-000000000005 "" new "" 20 "") \
+  <(fleet_session 11111111-0000-4000-8000-000000000006 af_heart silent "" 300 "Draft the email") \
+  <(fleet_session 11111111-0000-4000-8000-000000000007 am_puck ended "exited" 120 "Tidy worktrees") \
+  >"$fleet_fixture"
+fixture_write "$(entry pers Personal 0 "{\"five_hour\":$(w 46 9000),\"seven_day\":$(w 12 400000)}")"
+shot 11-fleet-strip "" 1100,140
+shot 12-fleet-strip-zoom "?zoom=4" 1500,260
+shot 13-fleet-wall-1920 "" 1920,1100 wall.html
+shot 14-fleet-wall-1280 "" 1280,1000 wall.html
+rm -f "$fixture" "$fleet_fixture"
 
 echo "-> $win_out"
 

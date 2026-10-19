@@ -310,3 +310,14 @@ test("nothing but the configured main window is always on top", () => {
   assert.deepEqual(alwaysOnTopOutsideMain({ conf: confWith(), code: ["w.setAlwaysOnTop(false)"] }), []);
   assert.deepEqual(JSON.parse(read("src-tauri/tauri.conf.json")).app.windows.map((w) => w.label), ["main"]);
 });
+
+test("harness input never ships", () => {
+  const gitignore = read(".gitignore");
+  const windows = read("scripts/build-windows.sh");
+  const linux = read("scripts/build-linux.sh");
+  for (const f of ["src/dev-fixture.json", "src/dev-fleet.json"]) {
+    assert.match(gitignore, new RegExp(`^${f}$`, "m"), `.gitignore: ${f}`);
+    assert.ok(windows.includes(`--exclude '${f}'`), `build-windows.sh: ${f}`);
+    assert.ok(linux.includes(f), `build-linux.sh: ${f}`);
+  }
+});
