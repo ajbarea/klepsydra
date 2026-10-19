@@ -277,11 +277,10 @@ pub(crate) mod tests {
     fn a_fifo_named_like_a_session_never_blocks_the_scan() {
         let dir = Scratch::new("fifo");
         let fifo = dir.0.join(format!("{A}.json"));
-        let made = std::process::Command::new("mkfifo")
-            .arg(&fifo)
-            .status()
-            .unwrap();
-        assert!(made.success());
+        let path = std::ffi::CString::new(fifo.to_str().unwrap()).unwrap();
+        // SAFETY: `path` is a valid NUL-terminated string that outlives the call.
+        let made = unsafe { libc::mkfifo(path.as_ptr(), 0o600) };
+        assert_eq!(made, 0);
         dir.write(&format!("{B}.json"), &session(B, "done"));
         let (tx, rx) = std::sync::mpsc::channel();
         let path = dir.0.clone();
