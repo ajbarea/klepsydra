@@ -53,13 +53,14 @@ export function longAge(ms) {
   return unit(Math.floor(h / 24), "day");
 }
 
-/** Label, reason and age. A silent or quiet needs-you session says how long since any word; a quiet working one, since any activity. */
+/** Label, reason and age. A silent session says how long since any word, a quiet needs-you one keeps its reason too, and a quiet working one says how long since any activity. */
 export function statusParts(s, nowMs, age = shortAge) {
   const a = age(ageMs(s.status_at, nowMs));
   if (s.status === "silent") return [statusOf(s.status).label, `no word for ${a}`];
   if (isQuiet(s)) {
     const since = age(ageMs(s.quiet_since, nowMs));
-    return [statusOf(s.status, true).label, s.status === "working" ? `no activity for ${since}` : `no word for ${since}`];
+    if (s.status === "working") return [statusOf(s.status, true).label, `no activity for ${since}`];
+    return [statusOf(s.status, true).label, s.reason, `no word for ${since}`].filter(Boolean);
   }
   return [statusOf(s.status).label, s.reason, a].filter(Boolean);
 }

@@ -209,6 +209,10 @@ fire notification-elicitation.json
 check "MCP elicitation" "$(field '[.state, .reason]')" '["needs_you","question"]'
 fire post-tool-bash.json '.tool_name = "mcp__memory__store"'
 check "elicitation answered" "$(field .state)" '"working"'
+fire notification-elicitation.json '.notification_type = "elicitation_url_dialog"'
+check "MCP URL elicitation" "$(field '[.state, .reason]')" '["needs_you","question"]'
+fire post-tool-bash.json '.tool_name = "mcp__memory__store"'
+check "URL elicitation answered" "$(field .state)" '"working"'
 fire permission-request.json '.agent_id = "agent-7"'
 check "a subagent can need you" "$(field '[.state, .needs]')" '["needs_you",{"by":"agent-7","tool":"Bash"}]'
 fire post-tool-bash.json

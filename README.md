@@ -440,7 +440,9 @@ A release ships only when all three hold:
       line per session. Its `state` column is the portrait's badge and the
       card's status; `reason` is the card's text under it (the tool for
       approve Bash, the question for a question); `beat age` over 90 seconds
-      is silent, which the card shows with its age.
+      is silent, which the card shows with its age, except for a session that
+      needs you: it keeps needing you while its prompt is open (step 4) and
+      reads "needs you?" after 30 minutes with no word.
    6. Click each portrait: the wall opens on that session's card. Press
       **Jump to terminal** on the approve-Bash card: its tab comes to the
       front, or its taskbar button flashes. Rename a session to another

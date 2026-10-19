@@ -133,6 +133,7 @@ fleet_session() { # id, voice, status, reason, age_sec, name, quiet_age_sec
 }
 jq -s '{sessions: .}' \
   <(fleet_session 11111111-0000-4000-8000-000000000001 am_michael needs_you "approve Bash" 130 "Plan the fleet visualizer") \
+  <(fleet_session 11111111-0000-4000-8000-000000000009 bm_george needs_you "question" 1900 "Choose the release date" 0) \
   <(fleet_session 11111111-0000-4000-8000-000000000002 af_bella error "rate limit" 400 "Rebuild the deck") \
   <(fleet_session 11111111-0000-4000-8000-000000000003 bf_emma working "" 45 "Port the hook") \
   <(fleet_session 11111111-0000-4000-8000-000000000008 am_adam working "" 700 "Sweep the logs" 600) \
