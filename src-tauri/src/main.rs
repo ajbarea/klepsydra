@@ -2,6 +2,7 @@
 
 mod fleet;
 mod geometry;
+mod jump;
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -766,7 +767,8 @@ fn main() {
             set_grip,
             reset_position,
             set_tray_level,
-            fleet::fleet_subscribe
+            fleet::fleet_subscribe,
+            jump::jump_to_terminal
         ])
         .setup(|app| {
             let window = app.get_webview_window("main").expect("main window");

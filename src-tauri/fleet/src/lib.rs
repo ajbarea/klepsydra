@@ -5,5 +5,6 @@ pub mod hub;
 pub mod problem_log;
 pub mod scan;
 pub mod session;
+pub mod tabs;
 pub mod view;
 pub mod watch;
