@@ -79,8 +79,15 @@ pub struct Snapshot {
 /// two clocks disagree (a Linux guest's drifts after the host sleeps).
 fn skew(entry: &Entry) -> i64 {
     match entry.file.written_at {
-        Some(w) if (entry.modified - w).abs() > SKEW_SLACK => entry.modified - w,
-        _ => 0,
+        Some(w) => {
+            let d = entry.modified.saturating_sub(w);
+            if d.saturating_abs() > SKEW_SLACK {
+                d
+            } else {
+                0
+            }
+        }
+        None => 0,
     }
 }
 
@@ -88,20 +95,19 @@ fn skew(entry: &Entry) -> i64 {
 pub fn view(entry: &Entry, now: i64) -> Option<View> {
     let f = &entry.file;
     let shift = skew(entry);
-    let at = |t: i64| t + shift;
+    let at = |t: i64| t.saturating_add(shift);
     let state_at = at(f.state_at);
-    if f.state == State::Ended {
-        let ended = f.ended.as_ref().map_or(state_at, |e| at(e.at));
-        if now - ended > ENDED_FOR {
-            return None;
-        }
+    // An ended session's time is when it ended, for its status and its expiry.
+    let ended_at = f.ended.as_ref().map_or(state_at, |e| at(e.at));
+    if f.state == State::Ended && now.saturating_sub(ended_at) > ENDED_FOR {
+        return None;
     }
     // The last word of any kind: a heartbeat, or a change to the file.
     let last_word = entry
         .beat
         .as_ref()
         .map_or(entry.modified, |b| b.0.max(entry.modified));
-    let silent = f.state != State::Ended && now - last_word > SILENT_AFTER;
+    let silent = f.state != State::Ended && now.saturating_sub(last_word) > SILENT_AFTER;
     let (status, reason, status_at) = if silent {
         (Status::Silent, None, last_word)
     } else {
@@ -113,7 +119,12 @@ pub fn view(entry: &Entry, now: i64) -> Option<View> {
             State::Error => Status::Error,
             State::Ended => Status::Ended,
         };
-        (status, f.reason.clone(), state_at)
+        let status_at = if status == Status::Ended {
+            ended_at
+        } else {
+            state_at
+        };
+        (status, f.reason.clone(), status_at)
     };
     let shift_said = |s: &Option<Said>| {
         s.as_ref().map(|s| Said {
@@ -138,9 +149,10 @@ pub fn view(entry: &Entry, now: i64) -> Option<View> {
     .flatten()
     .max()
     .unwrap_or(state_at);
-    let last_activity = f.written_at.map_or(entry.modified, at);
-    let quiet_since =
-        (status == Status::Working && now - last_activity > QUIET_AFTER).then_some(last_activity);
+    // The file's own time: its skew-corrected written_at equals it within 2 s.
+    let quiet_since = (status == Status::Working
+        && now.saturating_sub(entry.modified) > QUIET_AFTER)
+        .then_some(entry.modified);
     let beat_name = entry.beat.as_ref().and_then(|b| b.1.clone());
     Some(View {
         session_id: f.session_id.clone(),
@@ -188,6 +200,7 @@ pub fn snapshot(entries: &[Entry], now: i64) -> Snapshot {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::session::Ended;
 
     const NOW: i64 = 1_792_353_000;
 
@@ -417,5 +430,107 @@ mod tests {
         e.file.written_at = None;
         e.modified = NOW - 650;
         assert_eq!(view(&e, NOW).unwrap().quiet_since, Some(NOW - 650));
+    }
+
+    #[test]
+    fn exact_boundaries_are_pinned() {
+        // Silent: more than 90 s since the last word.
+        let e = entry("a", State::Working, NOW - 90, NOW - 90);
+        assert_eq!(view(&e, NOW).unwrap().status, Status::Working);
+        let e = entry("a", State::Working, NOW - 91, NOW - 91);
+        assert_eq!(view(&e, NOW).unwrap().status, Status::Silent);
+        // Ended: shown through 600 s after ended.at, gone after.
+        let ended = |age: i64| {
+            let mut e = entry("a", State::Ended, NOW - 5, NOW - 5);
+            e.file.ended = Some(Ended {
+                reason: "exit".into(),
+                at: NOW - age,
+            });
+            view(&e, NOW)
+        };
+        assert!(ended(600).is_some());
+        assert_eq!(ended(601), None);
+        // Quiet: more than 600 s since the file changed.
+        assert_eq!(quiet(State::Working, NOW - 600, NOW - 600), None);
+        assert_eq!(quiet(State::Working, NOW - 601, NOW - 601), Some(NOW - 601));
+    }
+
+    #[test]
+    fn an_ended_session_shows_and_expires_by_ended_at() {
+        let mut e = entry("a", State::Ended, NOW - 900, NOW - 5);
+        e.modified = NOW - 5;
+        e.file.written_at = Some(NOW - 5);
+        e.file.ended = Some(Ended {
+            reason: "exit".into(),
+            at: NOW - 100,
+        });
+        let v = view(&e, NOW).unwrap();
+        assert_eq!((v.status, v.status_at), (Status::Ended, NOW - 100));
+        assert_eq!(v.updated_at, NOW - 100);
+    }
+
+    #[test]
+    fn every_shifted_field_is_put_back_and_counts_toward_updated() {
+        // Writer clock 600 s ahead.
+        let mut e = entry("a", State::Done, NOW - 400 + 600, NOW - 5);
+        e.modified = NOW - 5;
+        e.file.written_at = Some(NOW - 5 + 600);
+        e.file.place = Some(Place {
+            repo: "r".into(),
+            worktree: None,
+            branch: None,
+            at: NOW - 300 + 600,
+        });
+        e.file.touched = vec![Touched {
+            repo: "t".into(),
+            at: NOW - 350 + 600,
+        }];
+        e.file.reply = Some(Said {
+            text: "r".into(),
+            at: NOW - 360 + 600,
+        });
+        let v = view(&e, NOW).unwrap();
+        assert_eq!(v.status_at, NOW - 400);
+        assert_eq!(v.place.as_ref().unwrap().at, NOW - 300);
+        assert_eq!(v.touched[0].at, NOW - 350);
+        assert_eq!(v.reply.as_ref().unwrap().at, NOW - 360);
+        assert_eq!(v.updated_at, NOW - 300, "place is the newest");
+        e.file.state = State::Ended;
+        e.file.ended = Some(Ended {
+            reason: "exit".into(),
+            at: NOW - 200 + 600,
+        });
+        let v = view(&e, NOW).unwrap();
+        assert_eq!((v.status_at, v.updated_at), (NOW - 200, NOW - 200));
+    }
+
+    #[test]
+    fn extreme_times_never_panic() {
+        for t in [i64::MIN, i64::MAX, 0] {
+            for state in [State::Working, State::Ended, State::Done] {
+                let mut e = entry("a", state, t, t);
+                e.modified = t;
+                e.file.written_at = Some(t);
+                e.file.ended = Some(Ended {
+                    reason: "x".into(),
+                    at: t,
+                });
+                e.file.place = Some(Place {
+                    repo: "r".into(),
+                    worktree: None,
+                    branch: None,
+                    at: t,
+                });
+                e.beat = Some((t, None));
+                let _ = view(&e, NOW);
+                let _ = view(&e, i64::MIN);
+                let _ = view(&e, i64::MAX);
+                e.modified = NOW;
+                let _ = view(&e, NOW);
+                e.modified = t;
+                e.file.written_at = Some(NOW);
+                let _ = view(&e, NOW);
+            }
+        }
     }
 }

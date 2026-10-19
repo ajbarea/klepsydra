@@ -2,6 +2,11 @@
 
 use serde::{Deserialize, Serialize};
 
+/// No Claude Code session predates 2020-01-01Z or outlives 2100-01-01Z, so a
+/// time outside these bounds is a corrupt file, not a clock to correct.
+pub const MIN_TIME: i64 = 1_577_836_800;
+pub const MAX_TIME: i64 = 4_102_444_800;
+
 /// The only session-file version this reader understands.
 pub const VERSION: u64 = 1;
 
@@ -108,7 +113,29 @@ pub fn parse(text: &str, stem: &str) -> Result<SessionFile, Rejected> {
     if file.session_id != stem {
         return Err(Rejected::WrongId);
     }
+    file.check_times()?;
     Ok(file)
+}
+
+impl SessionFile {
+    fn check_times(&self) -> Result<(), Rejected> {
+        let times = [
+            ("state_at", Some(self.state_at)),
+            ("written_at", self.written_at),
+            ("where.at", self.place.as_ref().map(|p| p.at)),
+            ("prompt.at", self.prompt.as_ref().map(|s| s.at)),
+            ("reply.at", self.reply.as_ref().map(|s| s.at)),
+            ("ended.at", self.ended.as_ref().map(|e| e.at)),
+        ]
+        .into_iter()
+        .chain(self.touched.iter().map(|t| ("touched.at", Some(t.at))));
+        for (field, t) in times {
+            if let Some(t) = t.filter(|t| !(MIN_TIME..=MAX_TIME).contains(t)) {
+                return Err(Rejected::Malformed(format!("{field} {t} is out of range")));
+            }
+        }
+        Ok(())
+    }
 }
 
 /// The name in a `<session_id>.beat` line: the terminal tab's title, which the
@@ -135,18 +162,18 @@ mod tests {
     const ID: &str = "cb9fa591-1514-44d1-a31c-eba4a7cb41ed";
 
     fn file(extra: &str) -> String {
-        format!(r#"{{"v":1,"session_id":"{ID}","state":"working","state_at":100{extra}}}"#)
+        format!(r#"{{"v":1,"session_id":"{ID}","state":"working","state_at":1800000100{extra}}}"#)
     }
 
     #[test]
     fn a_file_the_hook_writes_parses() {
         let text = r#"{"v":1,"session_id":"cb9fa591-1514-44d1-a31c-eba4a7cb41ed","name":null,
-          "started_at":90,"launch_dir":"/home/aj/ajsoftworks","claude":{"pid":2231,"start":8717628},
+          "started_at":1800000090,"launch_dir":"/home/aj/ajsoftworks","claude":{"pid":2231,"start":8717628},
           "voice":"am_michael","state":"needs_you","reason":"approve Bash",
-          "needs":{"by":"","tool":"Bash"},"state_at":106,
-          "where":{"repo":"klepsydra","worktree":"fleet","branch":"feat/fleet-visualizer","by":"edit","at":105},
-          "touched":[{"repo":"ideas","at":95}],"prompt":{"text":"viz them","at":100},
-          "reply":{"text":"That works","at":99},"error":null,"ended":null,"written_at":106}"#;
+          "needs":{"by":"","tool":"Bash"},"state_at":1800000106,
+          "where":{"repo":"klepsydra","worktree":"fleet","branch":"feat/fleet-visualizer","by":"edit","at":1800000105},
+          "touched":[{"repo":"ideas","at":1800000095}],"prompt":{"text":"viz them","at":1800000100},
+          "reply":{"text":"That works","at":1800000099},"error":null,"ended":null,"written_at":1800000106}"#;
         let f = parse(text, ID).unwrap();
         assert_eq!(f.state, State::NeedsYou);
         assert_eq!(f.reason.as_deref(), Some("approve Bash"));
@@ -155,10 +182,10 @@ mod tests {
             f.touched,
             vec![Touched {
                 repo: "ideas".into(),
-                at: 95
+                at: 1_800_000_095
             }]
         );
-        assert_eq!(f.written_at, Some(106));
+        assert_eq!(f.written_at, Some(1_800_000_106));
     }
 
     #[test]
@@ -186,6 +213,32 @@ mod tests {
             ),
             Err(Rejected::Malformed(_))
         ));
+    }
+
+    #[test]
+    fn impossible_times_are_rejected() {
+        for bad in [i64::MIN, i64::MAX, 0, MIN_TIME - 1, MAX_TIME + 1] {
+            for field in [
+                format!(r#","written_at":{bad}"#),
+                format!(r#","where":{{"repo":"r","at":{bad}}}"#),
+                format!(r#","touched":[{{"repo":"r","at":{bad}}}]"#),
+                format!(r#","prompt":{{"text":"p","at":{bad}}}"#),
+                format!(r#","reply":{{"text":"p","at":{bad}}}"#),
+                format!(r#","ended":{{"reason":"x","at":{bad}}}"#),
+            ] {
+                assert!(
+                    matches!(parse(&file(&field), ID), Err(Rejected::Malformed(_))),
+                    "{field}"
+                );
+            }
+            let text =
+                format!(r#"{{"v":1,"session_id":"{ID}","state":"working","state_at":{bad}}}"#);
+            assert!(matches!(parse(&text, ID), Err(Rejected::Malformed(_))));
+        }
+        let ok = file(&format!(r#","written_at":{MIN_TIME}"#));
+        assert!(parse(&ok, ID).is_ok());
+        let ok = file(&format!(r#","written_at":{MAX_TIME}"#));
+        assert!(parse(&ok, ID).is_ok());
     }
 
     #[test]
