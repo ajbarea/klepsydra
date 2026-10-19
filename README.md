@@ -423,18 +423,31 @@ A release ships only when all three hold:
         (the `claude.pid` in its session file). `kill -CONT <pid>` brings it
         back.
       - **ended:** `/exit` in one session. It leaves after 10 minutes.
-   4. Read `bash scripts/fleet-status.sh` against the strip and the wall, one
+   4. Exercise what the status rests on:
+      - **Held prompts:** leave a permission prompt and a multiple-choice
+        question open for 3 minutes each. Each stays needs you with its age
+        growing, never silent and never done (the status line hides while a
+        dialog is open, so no heartbeat arrives, and `idle_prompt` must not
+        fire).
+      - **Failed command:** approve a command that fails, such as
+        `grep nomatch /etc/hostname`. The need clears, back to working then
+        done.
+      - **Subagent ask:** have a subagent ask for a permission and answer it.
+        The need clears after the answer.
+      - **Exits:** close one tab with its X and `/exit` another. Both read
+        ended within 10 minutes, not silent.
+   5. Read `bash scripts/fleet-status.sh` against the strip and the wall, one
       line per session. Its `state` column is the portrait's badge and the
       card's status; `reason` is the card's text under it (the tool for
       approve Bash, the question for a question); `beat age` over 90 seconds
       is silent, which the card shows with its age.
-   5. Click each portrait: the wall opens on that session's card. Press
+   6. Click each portrait: the wall opens on that session's card. Press
       **Jump to terminal** on the approve-Bash card: its tab comes to the
       front, or its taskbar button flashes. Rename a session to another
       session's name and press Jump again: it says two tabs match and does
       nothing. Move the wall, quit klepsydra from the tray, start it again and
       open the wall: it opens where you left it.
-   6. Restore your settings:
+   7. Restore your settings:
       `mv ~/.claude/settings.json.bak-fleet ~/.claude/settings.json`
 3. Memory. Right after starting klepsydra, run
    `bash scripts/measure-memory.sh run /tmp/klepsydra-memory.log` in a WSL

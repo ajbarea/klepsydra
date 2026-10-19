@@ -5,9 +5,9 @@ Claude Code sessions are up, where each works, which need AJ and why, and what
 each was last asked and said.
 
 ## Done
-- ✅ `hooks/klepsydra-fleet.sh`, async on nine events: one file per session,
+- ✅ `hooks/klepsydra-fleet.sh`, async on ten events: one file per session,
   written only on change through a same-directory temp file, under one lock.
-  A need is cleared only by the asker's own tool; a `Notification` of type
+  A need is cleared only by the asker's own tool, finishing or failing, and a waiting session is never silent; a `Notification` of type
   `idle_prompt` corrects a session still marked working or needing AJ.
 - ✅ Pruning at session start, at most once an hour, deleting only names from
   its own `fleet/<uuid>.json` glob inside the absolute app data dir.
@@ -27,11 +27,17 @@ each was last asked and said.
 
 ## Verified, not inferred
 - ✅ Hook, statusline, memory-check, node and fleet-crate suites pass in WSL.
-- 📋 Live check with eight real sessions (README, Releasing).
+- 📋 Live check with eight real sessions (README, Releasing). Still owed,
+  including held dialogs, a failed command, a subagent's permission ask and
+  tab exits, which the status truth rests on.
 - 📋 Working set at 5 minutes and at 8 hours, growth within 10%.
 - 📋 Jump to terminal takes the foreground after a click in the wall.
 - 📋 A click on a portrait reaches the webview of the click-through window.
 - 📋 Payload shapes come from the hooks docs; the live check confirms them.
+- 📋 CI does not run `scripts/visual-check.sh`, keryx parity (it skips
+  without the keryx source), ruff on `scripts/cut-portraits.py`, or the
+  behaviour of `scripts/fleet-status.sh` (lint only). The Linux app crate
+  first compiles in CI.
 - 📋 The app crate and clippy run only through `scripts/build-windows.sh
   --check` and CI, since WSL has no WebKitGTK.
 
