@@ -33,6 +33,22 @@ pub fn match_tab(name: &str, titles: &[String]) -> TabMatch {
     }
 }
 
+/// The index of the one tab to jump to, or the sentence saying why not.
+/// `tabs_hidden` is set when a Windows Terminal window exposed no tabs (full
+/// screen or focus mode), so a missing match may be a hidden tab.
+pub fn pick_tab(name: &str, titles: &[String], tabs_hidden: bool) -> Result<usize, String> {
+    let name = name.trim();
+    match match_tab(name, titles) {
+        TabMatch::One(i) => Ok(i),
+        TabMatch::Many(n) => Err(many_tabs(name, n)),
+        TabMatch::None if tabs_hidden => Err(HIDDEN_TABS.into()),
+        TabMatch::None => Err(no_tab(name)),
+    }
+}
+
+pub const HIDDEN_TABS: &str =
+    "Windows Terminal is hiding its tabs (full screen or focus mode). Show the tabs to jump.";
+
 pub fn no_tab(name: &str) -> String {
     format!("No Windows Terminal tab is titled \u{201c}{name}\u{201d}.")
 }
@@ -60,7 +76,7 @@ mod tests {
     }
 
     #[test]
-    fn a_name_inside_two_titles_is_refused_not_guessed() {
+    fn the_same_name_with_and_without_the_glyph_is_refused() {
         let t = titles(&["\u{2733} klepsydra", "klepsydra"]);
         assert_eq!(match_tab("klepsydra", &t), TabMatch::Many(2));
     }
@@ -113,5 +129,16 @@ mod tests {
             many_tabs("Plan", 2),
             "2 Windows Terminal tabs are titled \u{201c}Plan\u{201d}. Rename the session to jump to it."
         );
+    }
+
+    #[test]
+    fn pick_tab_says_why_it_will_not_jump() {
+        let t = titles(&["Klepsydra"]);
+        assert_eq!(pick_tab(" Klepsydra ", &t, true), Ok(0));
+        assert_eq!(pick_tab("Plan", &t, false), Err(no_tab("Plan")));
+        assert_eq!(pick_tab("Plan", &t, true), Err(HIDDEN_TABS.to_string()));
+        assert_eq!(pick_tab("Plan", &[], true), Err(HIDDEN_TABS.to_string()));
+        let t = titles(&["Plan", "\u{2733} Plan"]);
+        assert_eq!(pick_tab("Plan", &t, true), Err(many_tabs("Plan", 2)));
     }
 }
