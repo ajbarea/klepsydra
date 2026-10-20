@@ -49,8 +49,12 @@ pub fn pick_tab(name: &str, titles: &[String], tabs_hidden: bool) -> Result<usiz
 pub const HIDDEN_TABS: &str =
     "Windows Terminal is hiding its tabs (full screen or focus mode). Show the tabs to jump.";
 
+/// Claude Code titles a tab with the session's name, but a tab renamed in
+/// Windows Terminal keeps the name it was given, so say what to do instead.
 pub fn no_tab(name: &str) -> String {
-    format!("No Windows Terminal tab is titled \u{201c}{name}\u{201d}.")
+    format!(
+        "No Windows Terminal tab is titled \u{201c}{name}\u{201d}. A tab renamed in Windows Terminal keeps that name; name the session with /rename instead."
+    )
 }
 
 pub fn many_tabs(name: &str, n: usize) -> String {
@@ -123,7 +127,7 @@ mod tests {
     fn the_messages_name_the_session() {
         assert_eq!(
             no_tab("Plan"),
-            "No Windows Terminal tab is titled \u{201c}Plan\u{201d}."
+            "No Windows Terminal tab is titled \u{201c}Plan\u{201d}. A tab renamed in Windows Terminal keeps that name; name the session with /rename instead."
         );
         assert_eq!(
             many_tabs("Plan", 2),
