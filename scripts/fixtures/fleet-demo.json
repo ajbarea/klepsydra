@@ -271,6 +271,96 @@
    "quiet_since": null,
    "tmux": null,
    "distro": "Ubuntu"
+  },
+  {
+   "session_id": "demo-10-bm_george",
+   "name": "Usage ramp timing",
+   "launch_dir": "/home/aj/ajsoftworks",
+   "voice": "bm_george",
+   "status": "working",
+   "reason": null,
+   "status_at": 1792499850,
+   "active_at": 1792499900,
+   "where": {
+    "repo": "klepsydra",
+    "worktree": null,
+    "branch": "main",
+    "at": 1792497000
+   },
+   "touched": [],
+   "prompt": {
+    "text": "check the reset countdown at the window edge",
+    "at": 1792499870
+   },
+   "reply": {
+    "text": "Reading src/countdown.js.",
+    "at": 1792499900
+   },
+   "error": null,
+   "updated_at": 1792499900,
+   "quiet_since": null,
+   "tmux": null,
+   "distro": "Ubuntu"
+  },
+  {
+   "session_id": "demo-11-am_fenrir",
+   "name": "Fleet hook audit",
+   "launch_dir": "/home/aj/ajsoftworks",
+   "voice": "am_fenrir",
+   "status": "needs_you",
+   "reason": "approve Bash",
+   "status_at": 1792499850,
+   "active_at": 1792499900,
+   "where": {
+    "repo": "klepsydra",
+    "worktree": "hook-audit",
+    "branch": "chore/hook-audit",
+    "at": 1792497000
+   },
+   "touched": [],
+   "prompt": {
+    "text": "audit the fleet hook for unquoted paths",
+    "at": 1792499870
+   },
+   "reply": {
+    "text": "Running shellcheck over hooks/*.sh.",
+    "at": 1792499900
+   },
+   "error": null,
+   "updated_at": 1792499900,
+   "quiet_since": null,
+   "tmux": null,
+   "distro": "Ubuntu"
+  },
+  {
+   "session_id": "demo-12-af_alloy",
+   "name": "README pass",
+   "launch_dir": "/home/aj/ajsoftworks",
+   "voice": "af_alloy",
+   "status": "done",
+   "reason": null,
+   "status_at": 1792499850,
+   "active_at": 1792499900,
+   "where": {
+    "repo": "klepsydra",
+    "worktree": null,
+    "branch": "main",
+    "at": 1792497000
+   },
+   "touched": [],
+   "prompt": {
+    "text": "tighten the colours section",
+    "at": 1792499870
+   },
+   "reply": {
+    "text": "Trimmed the colours section by 12 lines.",
+    "at": 1792499900
+   },
+   "error": null,
+   "updated_at": 1792499900,
+   "quiet_since": null,
+   "tmux": null,
+   "distro": "Ubuntu"
   }
  ]
 }

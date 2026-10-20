@@ -345,7 +345,7 @@ test("a kourai card carries its accent; any other card has none", () => {
   const cast = JSON.parse(readFileSync(new URL("./fleet/cast.json", import.meta.url), "utf8"));
   assert.equal(card(session(), cast, NOW).accent, "#DA8C20");
   assert.equal(card(session({ voice: "aletheia" }), CAST, NOW).accent, null, "no character, no accent");
-  for (const voice of ["bm_fable", null, "af_heart(0.5)+af_bella(0.5)"]) {
+  for (const voice of ["bm_lewis", null, "af_heart(0.5)+af_bella(0.5)"]) {
     assert.equal(card(session({ voice }), cast, NOW).accent, null, String(voice));
   }
   const bad = { characters: { am_michael: { name: "H", face: "hephaestus", accent: "red; x" } } };
@@ -363,8 +363,8 @@ test("the Open terminal button: fill only for needs-you, a marker for a characte
   assert.deepEqual(style({ status: "working", voice: "af_nova" }), ["accent", { color: "#0072B2", width: 6 }], "a dim accent is wider");
   assert.deepEqual(style({ status: "needs_you" }), ["needs", null], "no marker on the filled button");
   assert.deepEqual(style({ status: "needs_you", quiet_since: NOW - 1000 })[0], "needs", "needs you? is filled too");
-  assert.deepEqual(style({ status: "working", voice: "bm_fable" }), ["plain", null], "a medallion has no marker");
-  assert.deepEqual(style({ status: "needs_you", voice: "bm_fable" }), ["needs", null]);
+  assert.deepEqual(style({ status: "working", voice: "bm_lewis" }), ["plain", null], "a medallion has no marker");
+  assert.deepEqual(style({ status: "needs_you", voice: "bm_lewis" }), ["needs", null]);
   assert.deepEqual(style({ status: "ended" }), ["off", null], "disabled: no marker, no fill");
   assert.deepEqual(style({ status: "needs_you", name: null }), ["off", null], "disabled needs-you stays quiet");
 });

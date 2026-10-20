@@ -231,7 +231,8 @@ to the previous location, `%LOCALAPPDATA%\klepsydra`. The overlay reads both, so
 the gauge keeps working either way; once the hook is re-copied, that folder
 holds nothing current and can be deleted. Re-copy `klepsydra-cast.json` too: a
 cast from before the character colours has no accents, so the buttons would
-lack markers while their tmux windows stay plain.
+lack markers while their tmux windows stay plain. The same holds whenever the cast
+grows: a voice missing from the installed copy gets no window colour.
 
 ## Using it
 
@@ -428,8 +429,9 @@ To see the wall without sessions, serve the repo root (for example
 `python3 -m http.server`) and open `/src/wall.html?demo`.
 
 A session's face follows its keryx voice, so it stays the same while the
-session moves between repos. Ten voices are cast as the kourai-khryseai
-characters and show their portraits. Any other voice shows the voice's name
+session moves between repos. Fourteen voices, every one in keryx's rotation pool,
+are cast as characters and show their portraits: ten from kourai-khryseai and four
+(Chronos, Argos, Hermes, Elpis) painted for this app. Any other voice shows the voice's name
 and a forge medallion: a laurel ring on a dark disc around the name's
 initial, struck in one of six kourai metals (gold, bronze, copper, rose gold,
 pale gold, verdigris) picked by the voice, so two voices with one initial
@@ -448,7 +450,8 @@ changes with the status only once, when its session ends beside a running one
 with the same voice (after `/clear`, the new session keeps the portrait).
 
 The portraits are files in `src/fleet/faces`, each listed in `LICENSES.json`,
-and `scripts/cut-portraits.py` cuts them from kourai-khryseai. The medallion is
+and `scripts/cut-portraits.py` cuts them: ten from kourai-khryseai, four from
+`assets/portraits/`. The medallion is
 an SVG drawn in `src/fleet/medallion.js`. The overlay loads no library and
 fetches nothing.
 

@@ -1,17 +1,20 @@
 # IMPL
 
-Current slice: Open terminal button marker, branch fix/button-marker (part of
-#34). The button is neutral with a 4 px left marker in the character's accent
-(6 px where the accent is under 3:1 on the button). Only a needs_you card
-(quiet "needs you?" too) has a filled button: the needs amber, black ink, no
-marker. Medallion cards get the plain button; disabled has no fill or marker.
+Current slice: four new characters, branch feat/four-characters. Chronos
+(bm_george), Argos (am_fenrir), Hermes (bm_fable) and Elpis (af_alloy) join the
+cast, so all 14 keryx pool voices have a portrait.
 
 ## Done
-- `jumpStyle()` in `src/fleet/model.js` -> `jumpKind` (off/needs/accent/plain)
-  and `jumpMark`; `markerWidth()` in `src/fleet/contrast.js`.
-- wall.js sets `data-kind`, `--accent`, `--mark-w`; wall.css draws them.
-- Tests: model cases, per-accent marker contrast, needs-fill ink.
-- README colours section; #34 constraints updated.
+- `assets/portraits/<name>.jpg` (1024 px) are the sources; `scripts/cut-portraits.py`
+  now holds a source and crop box per character. The ten kourai webp files re-cut
+  byte-identical.
+- 8 new webp files and LICENSES entries; 4 `cast.json` entries.
+- Hermes's accent is `#E07B39`, not the brief's `#E69F00` (the needs amber).
+- Tests: 14 characters covering the pool, new accents, no new accent equals a
+  status tone, marker widths unchanged (no new accent is under 3:1).
+- Demo fixture gains Chronos, Argos (needs you) and Elpis; Hermes was already there.
+- README faces section; briefs doc marked done.
 
 ## Next
 - Review and merge.
+- Cupid, Aidos, Puck and Aletheia canon accents equal a status tone; left as is.
