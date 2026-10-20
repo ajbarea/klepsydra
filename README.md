@@ -257,6 +257,10 @@ beside its percentage and countdown over its label, all in one row with the
 fleet strip beside it. Countdowns shorten ("4h 58m", "3d 11h"), and a
 reading more than 15 minutes old still says how old it is ("2h · 20m old").
 
+<p align="center">
+  <img src="assets/compact-taskbar.png" alt="The compact gauge inside the Windows taskbar: three rings with 12% and 4h 37m for the personal session, 20% and 6d 15h for the personal week, an empty ring with 0% and reset 2h ago for the team session, and five session portraits beside them" width="614">
+</p>
+
 Each layout keeps its own size from the handle, since compact is sized to the
 taskbar and the bars to the desk. Compact opens at 100%, where three windows
 stand 42px tall against 142px for the bars, and it fits inside a 48px taskbar
