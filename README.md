@@ -231,7 +231,8 @@ to the previous location, `%LOCALAPPDATA%\klepsydra`. The overlay reads both, so
 the gauge keeps working either way; once the hook is re-copied, that folder
 holds nothing current and can be deleted. Re-copy `klepsydra-cast.json` too: a
 cast from before the character colours has no accents, so the buttons would
-lack markers while their tmux windows stay plain.
+lack markers while their tmux windows stay plain. The same holds whenever the cast
+grows: a voice missing from the installed copy gets no window colour.
 
 ## Using it
 
