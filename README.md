@@ -218,12 +218,12 @@ strip is click-through, so the gauge never intercepts a click meant for the
 window underneath.
 
 Scroll on the handle to resize the whole gauge, text and bars together, from
-75% to 236% in 10% steps; the new size shows briefly and is remembered. The
-point under the pointer stays put, so the handle stays under it. When rows
-come or go, the gauge grows away from the screen edges it sits nearest: parked
-over the taskbar, it grows upward. Either way it stays wholly on its monitor.
-Scrolling relies on Windows' "Scroll inactive windows when I hover over them",
-which is on by default.
+75% to 236% in 10% steps; the new size shows briefly and is remembered,
+for each layout apart. The point under the pointer stays put, so the handle
+stays under it. When rows come or go, the gauge grows away from the screen
+edges it sits nearest: parked over the taskbar, it grows upward. Either way it
+stays wholly on its monitor. Scrolling relies on Windows' "Scroll inactive
+windows when I hover over them", which is on by default.
 
 Dragging is handled in the backend rather than by `data-tauri-drag-region`,
 which needs a focused window -- this one is deliberately unfocused and
@@ -246,8 +246,26 @@ on the taskbar returns to the taskbar at any size. Its monitor is found by
 position, then by name, then by nearness, and a changed resolution moves
 home to the same relative spot. With no home saved, it goes over the primary
 monitor's taskbar, 220px in from the right. The menu
-also toggles "Start with Windows" ("Start at login" on Linux) and quits. Autostart is on by default; the icon may start in the
+also toggles "Compact" (below) and "Start with Windows" ("Start at login" on Linux) and quits. Autostart is on by default; the icon may start in the
 notification-area overflow.
+
+### Compact
+
+"Compact" in the tray menu redraws the gauge to fit inside the taskbar. Each
+window becomes a ring, filled clockwise from 12 o'clock in the bar's colours,
+beside its percentage and countdown over its label, all in one row with the
+fleet strip beside it. Countdowns shorten ("4h 58m", "3d 11h"), and a
+reading more than 15 minutes old still says how old it is ("2h · 20m old").
+
+<p align="center">
+  <img src="assets/compact-taskbar.png" alt="The compact gauge inside the Windows taskbar: three rings with 12% and 4h 37m for the personal session, 20% and 6d 15h for the personal week, an empty ring with 0% and reset 2h ago for the team session, and five session portraits beside them" width="614">
+</p>
+
+Each layout keeps its own size from the handle, since compact is sized to the
+taskbar and the bars to the desk. Compact opens at 100%, where three windows
+stand 42px tall against 142px for the bars, and it fits inside a 48px taskbar
+up to 110%. The choice is remembered, and switching keeps the gauge on the
+screen edges it sits nearest, so a gauge on the taskbar stays there.
 
 ### Staying in front of the taskbar
 
@@ -364,7 +382,8 @@ by the zoom set from the handle. `--ramp-mode` picks between `blend` (continuous
 interpolation) and `bands` (flat colours that switch at thresholds). Edit,
 rebuild, done.
 
-The fleet strip's sizes sit in the same block. Its badge colours are in
+The fleet strip's sizes and the compact layout's ring sit in the same block,
+followed by the few tokens the compact layout changes. The strip's badge colours are in
 `src/fleet/badge.css`, where a test holds each to 3:1 contrast, and the card
 wall's tokens open `src/fleet/wall.css`.
 

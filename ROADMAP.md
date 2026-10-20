@@ -15,15 +15,23 @@ session that stops answering reads as silent, never as working.
 ## Next
 - Exercise the tray menu ("Reset position", autostart toggle).
 - Prune session files nobody needs (every window ended, account dropped).
-- Run the fleet strip's live check with eight sessions and take its 8-hour
-  memory reading (README, Releasing).
+- Take the fleet's 8-hour memory reading (README, Releasing).
+- Jump to terminal for tabs renamed in Windows Terminal (#20), then interrupt
+  and exit buttons on a card (#22), which need Jump's tab match.
 
 ## Later
 - Optional: flash or notify when crossing a threshold.
-- Optional: compact mode that drops the label and countdown to a bare bar.
 - A product version of the fleet strip (heuresis verdict `later`, 2026-10-18).
 
 ## Completed
+- 2026-10-19: Added the compact layout ("Compact" in the tray, #21): a ring
+  per window in one row, 42px tall with three windows where the bars stand
+  142px, so the gauge fits inside a 48px taskbar up to 110%. Each layout
+  keeps its own zoom, and short countdowns keep the age of an old reading.
+- 2026-10-19: Ran the fleet live check against the installed Windows build;
+  every README step held over two runs (#17). Opening eleven sessions at once
+  jammed WSL's NAT to Anthropic's API for every session, so later checks
+  start sessions a few at a time.
 - 2026-10-19: Added the fleet strip and card wall. A hook writes one file per
   Claude Code session and the status line adds a heartbeat; the overlay
   shows a portrait per session beside the gauge, whoever needs AJ first,

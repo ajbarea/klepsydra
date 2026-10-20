@@ -50,12 +50,16 @@ shot() { # name, query, window-size, page
   # Deterministic capture: no transitions, and enough budget to finish the fetch.
   # Pin the panel width; Chrome's --window-size is not the viewport width.
   if [[ "$query" == *"?"* ]]; then query="$query&still=1&w=430"; else query="?still=1&w=430"; fi
-  "$chrome" --headless=new --disable-gpu --hide-scrollbars \
-    --default-background-color=6E6E6E \
-    --window-size="$size" \
-    --virtual-time-budget=4000 \
-    --screenshot="$win_out_native\\$name.png" \
-    "http://127.0.0.1:$port/$page$query" >/dev/null 2>&1 || true
+  # A cold Chrome start can exit without writing the file; one more try.
+  for _ in 1 2; do
+    "$chrome" --headless=new --disable-gpu --hide-scrollbars \
+      --default-background-color=6E6E6E \
+      --window-size="$size" \
+      --virtual-time-budget=4000 \
+      --screenshot="$win_out_native\\$name.png" \
+      "http://127.0.0.1:$port/$page$query" >/dev/null 2>&1 || true
+    [[ -f "$win_out/$name.png" ]] && break
+  done
   printf '  %s\n' "$name.png"
 }
 
@@ -96,8 +100,31 @@ fixture_write "$(entry pers Personal 0 "{\"five_hour\":$(w 59 14700),\"seven_day
 shot 08-switched-away-reset "" 450,160
 fixture_write "$(entry live Personal 0 "{\"five_hour\":$(w 40 7200)}"),$(entry old Abandoned 2700000 "{\"five_hour\":$(w 90 7200)}")"
 shot 09-abandoned-dropped
+echo "compact ->"
+# The taskbar layout: the same states as rings in one row, 48px tall or less.
+fixture_write "$(entry team RIT-CS-DQL 0 "{\"five_hour\":$(w 88 3000)}"),$(entry pers Personal 0 "{\"five_hour\":$(w 21 14000),\"seven_day\":$(w 63 300000)}")"
+shot c03-both-accounts "?layout=compact" 900,80
+fixture_write "$(entry team RIT-CS-DQL 0 "{\"five_hour\":$(w 97 600)}")"
+shot c04-critical "?layout=compact" 450,80
+fixture_write "$(entry gw Gateway 0 "{\"spend_limit\":$(w 118 3600)}")"
+shot c05-over-limit "?layout=compact" 450,80
+fixture_write "$(entry team RIT-CS-DQL 0 "{\"five_hour\":$(w 73 -60)}")"
+shot c07-window-reset "?layout=compact" 450,80
+# Width holds across the percent's digits: these three come out equally wide.
+for pct in 9 10 97; do
+  fixture_write "$(entry team RIT-CS-DQL 0 "{\"five_hour\":$(w $pct 3000)}")"
+  shot "c-width-$pct" "?layout=compact" 450,80
+done
+fixture_write "$(entry team RIT-CS-DQL 1800 "{\"five_hour\":$(w 55 7200)}")"
+shot c06-old-reading "?layout=compact" 450,80
+fixture_write "$(entry pers Personal 0 "{\"five_hour\":$(w 59 14700),\"seven_day\":$(w 31 116000)}"),$(entry team RIT-CS-DQL 30000 "{\"five_hour\":$(w 100 -21600)}")"
+shot c08-switched-away-reset "?layout=compact" 900,80
+for z in -3 1 2 4; do
+  shot "c-zoom-$z" "?layout=compact&zoom=$z" 1400,140
+done
 rm -f "$fixture"
 shot 10-waiting
+shot c10-waiting "?layout=compact" 450,80
 
 echo "zoom ->"
 fixture_write "$(entry pers Personal 0 "{\"five_hour\":$(w 59 14700),\"seven_day\":$(w 31 116000)}"),$(entry team RIT-CS-DQL 30000 "{\"five_hour\":$(w 100 -21600)}")"
@@ -145,6 +172,7 @@ jq -s '{sessions: .}' \
 fixture_write "$(entry pers Personal 0 "{\"five_hour\":$(w 46 9000),\"seven_day\":$(w 12 400000)}")"
 shot 11-fleet-strip "" 1100,140
 shot 12-fleet-strip-zoom "?zoom=4" 1500,260
+shot c11-fleet-strip "?layout=compact" 1100,80
 shot 13-fleet-wall-1920 "" 1920,1100 wall.html
 shot 14-fleet-wall-1280 "" 1280,1000 wall.html
 rm -f "$fixture" "$fleet_fixture"

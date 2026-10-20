@@ -1,10 +1,12 @@
-import { rampColor, toRows, formatPct } from "./gauge.js";
+import { rampColor, toRows, formatPct, formatPctShort, ringDash } from "./gauge.js";
+import { follow } from "./ipc.js";
 import { wheelPixels, wheelStep, clampLevel, scaleAt } from "./zoom.js";
 
 const POLL_MS = 5_000;   // how often we re-read the account files
 const TICK_MS = 15_000;  // how often the countdown re-renders between reads
 const ZOOM_SHOWN_MS = 800;   // how long the new size stays on screen
 const ZOOM_SAVE_MS = 400;    // settle time before the size is written to disk
+const LAYOUT_WAIT_MS = 500;  // longest the first draw waits for the saved layout
 
 const inTauri = Boolean(window.__TAURI_INTERNALS__ ?? window.__TAURI__);
 
@@ -65,22 +67,79 @@ let zoomLevel = 0;
 let wheel = null;
 let zoomShown = 0;
 let zoomSave = 0;
+let pendingZoom = null; // {level, layout} waiting out ZOOM_SAVE_MS
 let fleetSessions = [];
 let drawStrip = null;
 let fleetFresh = false; // a snapshot the strip has not drawn yet
+let layout = null; // "compact" or "full" once known
+let layoutSeq = 0; // the latest layout change; an older one still loading gives way
+let started = false; // the first draw waits for the layout
+
+const compact = () => layout === "compact";
+
+/** The round caps' length along the ring's 100-long path. */
+function ringCap(ring) {
+  const stroke = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--ring-stroke"));
+  return (stroke / (2 * Math.PI * ring.r.baseVal.value)) * 100;
+}
 
 function paint(entry, row) {
+  const short = compact();
   entry.querySelector(".label").textContent = row.label;
-  entry.querySelector(".pct").textContent = formatPct(row.pct);
-  entry.querySelector(".sub").textContent = row.sub;
+  entry.querySelector(".pct").textContent = short ? formatPctShort(row.pct) : formatPct(row.pct);
+  entry.querySelector(".sub").textContent = short ? row.short : row.sub;
   entry.dataset.state = row.state;
 
+  const colour = rampColor(row.pct ?? 0, stops(), rampMode());
   const fill = entry.querySelector(".fill");
   const clamped = Math.max(0, Math.min(100, row.pct ?? 0));
   fill.style.width = `${clamped}%`;
   // A nonzero reading stays visible as a dot instead of collapsing sub-pixel.
   fill.style.minWidth = clamped > 0 ? "calc(var(--bar-height) * var(--scale))" : "0";
-  fill.style.backgroundColor = rampColor(row.pct ?? 0, stops(), rampMode());
+  fill.style.backgroundColor = colour;
+
+  // The ring's circle has pathLength 100, so the dash is the percentage less
+  // its caps. A nonzero reading stays visible as a dot, as for the bar; at
+  // zero the caps would draw that dot too, so the fill goes.
+  // Half a cap forward, so the drawn arc starts at 12 o'clock.
+  const ring = entry.querySelector(".ring-fill");
+  const cap = ringCap(ring);
+  ring.style.strokeDasharray = `${ringDash(row.pct, cap)} 100`;
+  ring.style.strokeDashoffset = `${-cap / 2}`;
+  ring.style.visibility = clamped > 0 ? "visible" : "hidden";
+  ring.style.stroke = colour;
+}
+
+/**
+ * "compact" draws rings in one row; anything else is the full layout. Each
+ * layout keeps its own zoom, read before the switch so it draws once.
+ */
+async function applyLayout(next) {
+  const want = next === "compact" ? "compact" : "full";
+  const seq = ++layoutSeq;
+  if (want === layout) return;
+  saveZoomNow();
+  const level = await savedZoom(want);
+  if (seq !== layoutSeq) return;
+  layout = want;
+  document.documentElement.dataset.layout = want;
+  zoomLevel = level;
+  applyZoom();
+  if (started) render();
+}
+
+/**
+ * The harness pins a layout with ?layout=; the app follows the tray. Resolves
+ * once the first layout is in, or after LAYOUT_WAIT_MS, so a compact gauge
+ * does not open tall for a moment.
+ */
+function followLayout() {
+  const q = new URLSearchParams(location.search).get("layout");
+  if (q !== null || !inTauri) return applyLayout(q);
+  return new Promise((resolve) => {
+    follow("layout_subscribe", (next) => applyLayout(next).then(resolve)).catch(resolve);
+    setTimeout(resolve, LAYOUT_WAIT_MS);
+  });
 }
 
 const rectOf = (el) => {
@@ -200,13 +259,13 @@ function applyZoom() {
   document.documentElement.style.setProperty("--scale", String(scaleAt(zoomLevel)));
 }
 
-/** The harness pins a level with ?zoom=; the app keeps the last one on disk. */
-async function savedZoom() {
+/** The harness pins a level with ?zoom=; the app keeps each layout's on disk. */
+async function savedZoom(forLayout) {
   const q = new URLSearchParams(location.search).get("zoom");
   if (q !== null) return clampLevel(Number(q));
   if (!inTauri) return 0;
   try {
-    return clampLevel(await window.__TAURI__.core.invoke("get_zoom"));
+    return clampLevel(await window.__TAURI__.core.invoke("get_zoom", { layout: forLayout }));
   } catch {
     return 0;
   }
@@ -222,8 +281,18 @@ function showZoom() {
 // Scrolling on the grip resizes the whole gauge. The grip is the one part of
 // the window that takes the mouse, so the wheel elsewhere still reaches
 // whatever is underneath.
+/** Write a zoom still waiting out its settle time, before anything reads it. */
+function saveZoomNow() {
+  clearTimeout(zoomSave);
+  if (pendingZoom && inTauri) {
+    window.__TAURI__.core.invoke("set_zoom", pendingZoom).catch(() => {});
+  }
+  pendingZoom = null;
+}
+
 grip.addEventListener("wheel", (e) => {
   e.preventDefault();
+  if (layout === null) return; // a zoom is saved per layout, so wait for it
   const r = wheelStep(wheel, wheelPixels(e.deltaY, e.deltaMode), performance.now());
   wheel = r.state;
   const next = clampLevel(zoomLevel + r.steps);
@@ -232,12 +301,10 @@ grip.addEventListener("wheel", (e) => {
   applyZoom();
   showZoom();
   render(true);
-  if (inTauri) {
-    clearTimeout(zoomSave);
-    zoomSave = setTimeout(() => {
-      window.__TAURI__.core.invoke("set_zoom", { level: zoomLevel }).catch(() => {});
-    }, ZOOM_SAVE_MS);
-  }
+  // Saved under the layout it was set in; a layout switch saves it at once.
+  pendingZoom = { level: zoomLevel, layout };
+  clearTimeout(zoomSave);
+  zoomSave = setTimeout(saveZoomNow, ZOOM_SAVE_MS);
 }, { passive: false });
 
 async function poll() {
@@ -277,8 +344,10 @@ window.__klepsydra = {
   fleet: receiveFleet,
 };
 
-zoomLevel = await savedZoom();
-applyZoom();
+await followLayout();
+// No word from the app in time: draw the full layout; a late word still applies.
+if (layoutSeq === 0) await applyLayout("full");
+started = true;
 startFleet();
 poll();
 setInterval(poll, POLL_MS);

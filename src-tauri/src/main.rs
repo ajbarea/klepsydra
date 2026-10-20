@@ -11,6 +11,7 @@ use std::time::{Duration, Instant};
 
 use geometry::{Display, Home, Rect};
 use tauri::{
+    ipc::Channel,
     menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem},
     tray::TrayIconBuilder,
     Manager, PhysicalPosition,
@@ -154,10 +155,20 @@ fn write_pref(app: &tauri::AppHandle, key: &str, value: serde_json::Value) {
     }
 }
 
+/// Each layout keeps its own zoom: compact is sized to the taskbar, the full
+/// layout to the desk.
+fn zoom_key(layout: Option<&str>) -> &'static str {
+    if layout == Some("compact") {
+        "zoom_compact"
+    } else {
+        "zoom"
+    }
+}
+
 #[tauri::command]
-fn get_zoom(app: tauri::AppHandle) -> i64 {
+fn get_zoom(app: tauri::AppHandle, layout: Option<String>) -> i64 {
     read_prefs(&app)
-        .and_then(|p| p.get("zoom")?.as_i64())
+        .and_then(|p| p.get(zoom_key(layout.as_deref()))?.as_i64())
         .unwrap_or(0)
 }
 
@@ -171,8 +182,45 @@ fn json_rect(v: &serde_json::Value) -> Option<Rect> {
 }
 
 #[tauri::command]
-fn set_zoom(app: tauri::AppHandle, level: i64) {
-    write_pref(&app, "zoom", serde_json::json!(level));
+fn set_zoom(app: tauri::AppHandle, level: i64, layout: Option<String>) {
+    write_pref(&app, zoom_key(layout.as_deref()), serde_json::json!(level));
+}
+
+/// The gauge's layout: "compact" (a ring per window in one row, low enough to
+/// sit inside the taskbar) or "full" (a bar per window).
+fn layout_of(app: &tauri::AppHandle) -> &'static str {
+    match read_prefs(app).and_then(|p| p.get("layout")?.as_str().map(str::to_owned)) {
+        Some(l) if l == "compact" => "compact",
+        _ => "full",
+    }
+}
+
+/// Who follows the layout: the gauge, sent the saved layout when it subscribes
+/// and again after each change from the tray. A type of its own, not an alias:
+/// the fleet's hub is managed state of the same shape.
+#[derive(Default)]
+struct Layouts(klepsydra_fleet::hub::Hub<fleet::Webview>);
+
+#[tauri::command]
+fn layout_subscribe(
+    window: tauri::WebviewWindow,
+    layouts: tauri::State<'_, Layouts>,
+    on_message: Channel<serde_json::Value>,
+) {
+    layouts
+        .0
+        .subscribe(window.label(), fleet::Webview(on_message));
+}
+
+/// Save a layout chosen in the tray and send the gauge the layout now saved,
+/// so the gauge, the menu and the next start agree even if the save failed.
+/// True when that layout is compact.
+fn set_layout(app: &tauri::AppHandle, compact: bool) -> bool {
+    let want = if compact { "compact" } else { "full" };
+    write_pref(app, "layout", serde_json::json!(want));
+    let saved = layout_of(app);
+    app.state::<Layouts>().0.publish(serde_json::json!(saved));
+    saved == "compact"
 }
 
 /// Where the window is: the rect last requested while it may still be landing,
@@ -737,8 +785,21 @@ fn watch_grip(app: tauri::AppHandle) {
     });
 }
 
+/// The app's managed state. Tauri keys state by type and panics at startup on
+/// a type managed twice, so each needs a type of its own; a test builds this.
+fn with_state<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> {
+    builder
+        .manage(Grip::default())
+        .manage(fleet::Strip::default())
+        .manage(fleet::Fleet::default())
+        .manage(Moved::default())
+        .manage(Sized::default())
+        .manage(Requested::default())
+        .manage(Layouts::default())
+}
+
 fn main() {
-    tauri::Builder::default()
+    let builder = tauri::Builder::default()
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             None,
@@ -749,18 +810,14 @@ fn main() {
                 // so a restored size would fight set_size on every launch.
                 .with_state_flags(tauri_plugin_window_state::StateFlags::POSITION)
                 .build(),
-        )
-        .manage(Grip::default())
-        .manage(fleet::Strip::default())
-        .manage(fleet::Fleet::default())
-        .manage(Moved::default())
-        .manage(Sized::default())
-        .manage(Requested::default())
+        );
+    with_state(builder)
         .invoke_handler(tauri::generate_handler![
             read_usage,
             set_size,
             get_zoom,
             set_zoom,
+            layout_subscribe,
             set_grip,
             reset_position,
             set_tray_level,
@@ -815,6 +872,16 @@ fn main() {
             )?;
             let reset = MenuItem::with_id(app, "reset", "Reset position", true, None::<&str>)?;
             let home = MenuItem::with_id(app, "home", "Set home here", true, None::<&str>)?;
+            let layout = layout_of(app.handle());
+            app.state::<Layouts>().0.publish(serde_json::json!(layout));
+            let compact_item = CheckMenuItem::with_id(
+                app,
+                "compact",
+                "Compact",
+                true,
+                layout == "compact",
+                None::<&str>,
+            )?;
             let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
             let menu = Menu::with_items(
                 app,
@@ -822,6 +889,7 @@ fn main() {
                     &reset,
                     &home,
                     &PredefinedMenuItem::separator(app)?,
+                    &compact_item,
                     &start_item,
                     &PredefinedMenuItem::separator(app)?,
                     &quit,
@@ -829,6 +897,7 @@ fn main() {
             )?;
 
             let toggle = start_item.clone();
+            let compact = compact_item.clone();
             TrayIconBuilder::with_id("main")
                 .icon(app.default_window_icon().expect("bundled icon").clone())
                 .tooltip("klepsydra")
@@ -841,6 +910,10 @@ fn main() {
                         let mgr = app.autolaunch();
                         let _ = if want { mgr.enable() } else { mgr.disable() };
                         let _ = toggle.set_checked(mgr.is_enabled().unwrap_or(want));
+                    }
+                    "compact" => {
+                        let on = set_layout(app, compact.is_checked().unwrap_or(false));
+                        let _ = compact.set_checked(on);
                     }
                     "reset" => {
                         if let Some(w) = app.get_webview_window("main") {
@@ -865,4 +938,13 @@ fn main() {
         })
         .run(tauri::generate_context!())
         .expect("error while running klepsydra");
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn every_managed_state_has_a_type_of_its_own() {
+        // Builder::manage asserts that no type is managed twice.
+        let _ = super::with_state(tauri::Builder::<tauri::Wry>::default());
+    }
 }
