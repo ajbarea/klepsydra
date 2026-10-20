@@ -40,8 +40,6 @@ so every account fits there instead of one row with the rest below the edge.
 
 ## Open
 - The tray icon still draws a bar in either layout.
-- The visual check's first shot can miss on a cold Chrome start; a rerun
-  writes all of them.
 - The default display name (`my-app-3f`) reaches no hook and no status line,
   so a session with no voice and no name is named by its launch folder.
 - A denied permission dismissed with Esc keeps "needs you" until the next

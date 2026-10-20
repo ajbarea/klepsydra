@@ -50,12 +50,16 @@ shot() { # name, query, window-size, page
   # Deterministic capture: no transitions, and enough budget to finish the fetch.
   # Pin the panel width; Chrome's --window-size is not the viewport width.
   if [[ "$query" == *"?"* ]]; then query="$query&still=1&w=430"; else query="?still=1&w=430"; fi
-  "$chrome" --headless=new --disable-gpu --hide-scrollbars \
-    --default-background-color=6E6E6E \
-    --window-size="$size" \
-    --virtual-time-budget=4000 \
-    --screenshot="$win_out_native\\$name.png" \
-    "http://127.0.0.1:$port/$page$query" >/dev/null 2>&1 || true
+  # A cold Chrome start can exit without writing the file; one more try.
+  for _ in 1 2; do
+    "$chrome" --headless=new --disable-gpu --hide-scrollbars \
+      --default-background-color=6E6E6E \
+      --window-size="$size" \
+      --virtual-time-budget=4000 \
+      --screenshot="$win_out_native\\$name.png" \
+      "http://127.0.0.1:$port/$page$query" >/dev/null 2>&1 || true
+    [[ -f "$win_out/$name.png" ]] && break
+  done
   printf '  %s\n' "$name.png"
 }
 
