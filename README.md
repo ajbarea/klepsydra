@@ -411,7 +411,7 @@ process: `wsl.exe`, from a click, one call at a time.
 
 Each kourai character's canon colour marks its session twice: its window in
 the tmux status bar and a 4 px left marker on its card's **Open terminal**
-button (6 px for the three accents that fall under 3:1 on the button), so the
+button (6 px for the two accents, Aletheia and Dokimasia, that fall under 3:1 on the button at rest or on hover), so the
 gold marker leads to the gold window. The fleet hook sets the window's colours
 (`window-status-style`, and `window-status-current-style` with black or white
 text, whichever reads better) at the session's start and whenever its keryx
