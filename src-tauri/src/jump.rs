@@ -7,7 +7,7 @@ use klepsydra_fleet::tabs::{Lookup, TabError};
 
 /// Why the tab step did nothing: no tab could be chosen, or UI Automation
 /// itself failed.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 enum JumpError {
     Tab(TabError),
     Failed(String),
@@ -31,7 +31,8 @@ impl std::fmt::Display for JumpError {
 /// The outcome in a sentence for the card: Ok when the session's window or
 /// tab was selected, Err when nothing was done. A session in tmux has its
 /// window selected first, then the fleet tab, titled `FLEET_TAB`, is brought up
-/// when the session is on the launcher's tmux server, else the session's own tab.
+/// when the session is on the launcher's tmux server, else the session's own
+/// tab. `dispatch` decides which.
 #[tauri::command]
 pub async fn jump_to_terminal(
     app: tauri::AppHandle,
@@ -43,22 +44,51 @@ pub async fn jump_to_terminal(
         .state::<crate::fleet::Fleet>()
         .latest()
         .and_then(|v| crate::launch::target(&v, &id));
-    tauri::async_runtime::spawn_blocking(move || match target {
-        Some(t) if crate::launch::tmux_jump(&app, &t).is_ok() => {
-            settle(true, jump(tab_lookup(&t, &name)))
-        }
-        _ => jump(Lookup::Session(&name)).map_err(|e| e.to_string()),
+    tauri::async_runtime::spawn_blocking(move || {
+        let tmux = match target {
+            Some(t) => Tmux::of(&t, crate::launch::tmux_jump(&app, &t)),
+            None => Tmux::None,
+        };
+        dispatch(tmux, &name, jump)
     })
     .await
     .map_err(|e| format!("Could not run the jump: {e}"))?
 }
 
-/// The tab that shows `t`'s session.
-fn tab_lookup<'a>(t: &crate::launch::Target, name: &'a str) -> Lookup<'a> {
-    if crate::launch::is_fleet(t) {
-        Lookup::Exact(crate::launch::FLEET_TAB)
-    } else {
-        Lookup::Session(name)
+/// The tmux jump's result, by the server the session runs on.
+#[derive(Debug, PartialEq, Eq)]
+enum Tmux {
+    /// The session is in no tmux the snapshot knows of.
+    None,
+    /// The launcher's own server, whose tab is titled `FLEET_TAB`.
+    Fleet(Result<String, String>),
+    /// A tmux started by hand.
+    Other(Result<String, String>),
+}
+
+impl Tmux {
+    fn of(t: &crate::launch::Target, result: Result<String, String>) -> Self {
+        if crate::launch::is_fleet(t) {
+            Tmux::Fleet(result)
+        } else {
+            Tmux::Other(result)
+        }
+    }
+}
+
+/// The card's result. A failed jump on the fleet's server says why (the
+/// launcher's own line) and searches no tab; on any other server, or with no
+/// tmux, the session's own tab is looked up by its name.
+fn dispatch<'a>(
+    tmux: Tmux,
+    name: &'a str,
+    tab: impl FnOnce(Lookup<'a>) -> Result<String, JumpError>,
+) -> Result<String, String> {
+    match tmux {
+        Tmux::Fleet(Err(why)) => Err(why),
+        Tmux::Fleet(Ok(_)) => settle(true, tab(Lookup::Exact(crate::launch::FLEET_TAB))),
+        Tmux::Other(Ok(_)) => settle(true, tab(Lookup::Session(name))),
+        Tmux::Other(Err(_)) | Tmux::None => settle(false, tab(Lookup::Session(name))),
     }
 }
 
@@ -236,28 +266,9 @@ mod uia {
 
 #[cfg(test)]
 mod tests {
-    use super::{fleet_tab, settle, tab_lookup, JumpError};
+    use super::{dispatch, fleet_tab, settle, JumpError, Tmux};
     use crate::launch::{Target, FLEET_TAB};
     use klepsydra_fleet::tabs::{many_tabs, no_tab, Lookup, TabError, HIDDEN_TABS};
-
-    #[test]
-    fn a_hand_started_tmux_is_found_by_the_session_name() {
-        let t = |socket: &str| Target {
-            socket: socket.into(),
-            pane: "%1".into(),
-            distro: "Ubuntu".into(),
-            pid: 1,
-            start: 1,
-        };
-        assert_eq!(
-            tab_lookup(&t("/tmp/tmux-1/klepsydra"), "my session"),
-            Lookup::Exact(FLEET_TAB)
-        );
-        assert_eq!(
-            tab_lookup(&t("/tmp/tmux-1/default"), "my session"),
-            Lookup::Session("my session")
-        );
-    }
 
     #[test]
     fn only_the_exact_fleet_title_matches() {
@@ -316,6 +327,95 @@ mod tests {
         assert_eq!(
             settle(false, Err(TabError::NoName.into())),
             Err("This session has no name yet.".into())
+        );
+    }
+
+    /// The card's result for a tmux outcome and a fixed tab-step result, and
+    /// the lookup the tab step was asked for, if it ran.
+    fn run(
+        tmux: Tmux,
+        tab: Result<String, JumpError>,
+    ) -> (Result<String, String>, Option<Lookup<'static>>) {
+        let mut asked = None;
+        let out = dispatch(tmux, "my session", |l| {
+            asked = Some(l);
+            tab
+        });
+        (out, asked)
+    }
+
+    #[test]
+    fn a_failed_fleet_jump_says_why_and_searches_no_tab() {
+        for why in [
+            "That session's tmux pane now belongs to another session.",
+            "A launch is already running.",
+        ] {
+            let (out, asked) = run(Tmux::Fleet(Err(why.into())), Ok("Jumped.".into()));
+            assert_eq!(out, Err(why.into()));
+            assert_eq!(asked, None);
+        }
+    }
+
+    #[test]
+    fn a_fleet_jump_brings_up_the_fleet_tab_by_its_exact_title() {
+        let (out, asked) = run(Tmux::Fleet(Ok("x".into())), Ok("Jumped.".into()));
+        assert_eq!(
+            (out, asked),
+            (Ok("Jumped.".into()), Some(Lookup::Exact(FLEET_TAB)))
+        );
+        let (out, _) = run(
+            Tmux::Fleet(Ok("x".into())),
+            Err(TabError::NoMatch(FLEET_TAB.into()).into()),
+        );
+        assert_eq!(out, Ok("Selected the session's tmux window.".into()));
+        let (out, _) = run(Tmux::Fleet(Ok("x".into())), Err(TabError::Hidden.into()));
+        assert_eq!(out, Err(HIDDEN_TABS.into()));
+    }
+
+    #[test]
+    fn another_socket_falls_back_to_the_session_title() {
+        let none = Err(TabError::NoMatch("my session".into()).into());
+        let (out, asked) = run(Tmux::Other(Ok("x".into())), none.clone());
+        assert_eq!(
+            (out, asked),
+            (
+                Ok("Selected the session's tmux window.".into()),
+                Some(Lookup::Session("my session"))
+            )
+        );
+        let (out, asked) = run(Tmux::Other(Err("tmux failed".into())), none.clone());
+        assert_eq!(
+            (out, asked),
+            (
+                Err(no_tab("my session")),
+                Some(Lookup::Session("my session"))
+            )
+        );
+        let (out, asked) = run(Tmux::None, Ok("Jumped.".into()));
+        assert_eq!(
+            (out, asked),
+            (Ok("Jumped.".into()), Some(Lookup::Session("my session")))
+        );
+        let (out, _) = run(Tmux::None, none);
+        assert_eq!(out, Err(no_tab("my session")));
+    }
+
+    #[test]
+    fn the_socket_decides_the_kind() {
+        let t = |socket: &str| Target {
+            socket: socket.into(),
+            pane: "%1".into(),
+            distro: "Ubuntu".into(),
+            pid: 1,
+            start: 1,
+        };
+        assert_eq!(
+            Tmux::of(&t("/tmp/tmux-1/klepsydra"), Ok("x".into())),
+            Tmux::Fleet(Ok("x".into()))
+        );
+        assert_eq!(
+            Tmux::of(&t("/tmp/tmux-1/default"), Err("y".into())),
+            Tmux::Other(Err("y".into()))
         );
     }
 }
