@@ -23,7 +23,7 @@ NAMES = tuple(sorted(KOURAI + NEW))
 HEAD = (
     {name: (180, 20, 460, 300) for name in KOURAI}
     | {"hephaestus": (250, 20, 530, 300)}
-    | {"chronos": (330, 20, 970, 660), "argos": (350, 20, 850, 520), "hermes": (330, 30, 850, 550), "elpis": (300, 20, 780, 500)}
+    | {"chronos": (330, 20, 970, 660), "argos": (200, 20, 700, 520), "hermes": (330, 30, 850, 550), "elpis": (300, 20, 780, 500)}
 )
 SIZES = (96, 192)
 SOURCE = (
