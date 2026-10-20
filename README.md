@@ -566,6 +566,10 @@ separately.
 - **Local only.** The receiver listens on `127.0.0.1:4318` and nowhere else.
   Under WSL with mirrored networking, WSL's `127.0.0.1` is the Windows host,
   so sessions in WSL reach the Windows overlay. Nothing leaves the machine.
+  It answers only requests addressed to `127.0.0.1:4318` or `localhost:4318`
+  that carry no `Origin` header, so a web page cannot post to it by
+  rebinding a domain name to `127.0.0.1`. Claude Code's exporter sends no
+  `Origin`.
 - **Content stays redacted.** Claude Code replaces prompt and response text
   with `<REDACTED>` unless `OTEL_LOG_USER_PROMPTS` is set, and sends no tool
   arguments unless `OTEL_LOG_TOOL_DETAILS` is set. The exports still carry
@@ -574,13 +578,14 @@ separately.
 - **Cost is an estimate.** Claude Code's `cost.usage` is what the tokens would
   cost at API prices. On a Pro or Max plan it is not money spent, so the
   ledger stores it as `cost_usd_estimate_micros`.
-- **Where it is kept.** One file per UTC day in `ledger/` under the app data
-  dir, such as `ledger/2026-10-20.json`, written whole each time. Files older
-  than 30 days are deleted. `ledger/state.json` holds each session's running
+- **Where it is kept.** One file per local calendar day in `ledger/` under
+  the app data dir, such as `ledger/2026-10-20.json`, written whole each time.
+  Files more than 30 local days old are deleted. `ledger/state.json` holds each session's running
   totals and what stops a retried export from counting twice.
 - **When the overlay is off.** Claude Code's exports fail quietly and the
   session carries on; that stretch is not counted. If something else holds
-  port 4318, klepsydra logs it to `fleet.log` and runs without the ledger.
+  port 4318, klepsydra logs it to `fleet.log`, reports it to the wall, runs
+  without the ledger, and tries the port again every 30 seconds.
 
 ## How often it refreshes
 

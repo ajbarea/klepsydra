@@ -16,12 +16,22 @@ line, guardrail chip and ledger drawer) waits for #55.
   (resource attrs, scope, metric, attribute set, start, end), kept
   `DEDUPE_WINDOW` (1 h); older points are stale. Cumulative: difference from
   the series' last point; new start time or a drop = reset. Events deduped on
-  (resource, scope, name, session, sequence, time). Day file per UTC day plus
+  (resource, scope, name, session, sequence, time). Keys expire by when they
+  were counted; points over `MAX_AHEAD` (5 min) ahead are dropped. Day file
+  per local day (jiff, `TimeZone::system()`) plus
   `state.json` (lifetime totals, keys, baselines), atomic writes, unreadable
   files set aside as `.bad`, `RETENTION_DAYS` = 30 prune by exact name only.
 - `fleet/src/receiver.rs`: hyper 1 http1 server on a current-thread tokio
   runtime, `127.0.0.1:4318`, `MAX_BODY` 4 MiB (Content-Length and streamed),
-  404/405/415/413/400. Bind failure returns an error; the app logs it.
+  403 for a foreign Host or any Origin (DNS rebinding), 404/405/415/413/400,
+  408 past `LIMITS.body`; `LIMITS` 10 s header, 10 s body, 32 connections.
+  socket2 bind: SO_EXCLUSIVEADDRUSE plus a dropped exclusive wildcard probe
+  on Windows (a loopback bind beside a same-user wildcard listener otherwise
+  succeeds, per Microsoft's bind table); SO_REUSEADDR kept on Unix (Linux
+  refuses a second listener anyway; it only allows TIME_WAIT rebinds).
+- Caps: `MAX_SESSIONS` 512 per map (least recently updated goes),
+  `MAX_ATTR_CHARS` 256; `Day.no_session` counts points with no session.
+- `Snapshot.receiver` reports a taken port; the app retries every 30 s.
 - `View.ledger: Option<Totals>` (omitted when None); `Reader::with_ledger`.
 - App: `src/fleet.rs` opens `<dir>/ledger`, spawns the receiver, logs to
   `fleet.log`. main.rs untouched.
@@ -34,5 +44,5 @@ line, guardrail chip and ledger drawer) waits for #55.
 
 ## Next
 - PR "Part of #56"; review; merge after #55 if they touch the same lines.
-- Slice 2 on the wall. Open question: days are UTC, so "today" in the drawer
-  needs the local offset or two files.
+- Slice 2 on the wall: receipt line, guardrail chip, ledger drawer,
+  `receiver` state.
