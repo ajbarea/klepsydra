@@ -3,7 +3,30 @@
 //! session's name, or exactly `FLEET_TAB` for a session in the launcher's
 //! tmux. Which tab is decided by `klepsydra_fleet::tabs`, tested everywhere.
 
-use klepsydra_fleet::tabs::Lookup;
+use klepsydra_fleet::tabs::{Lookup, TabError};
+
+/// Why the tab step did nothing: no tab could be chosen, or UI Automation
+/// itself failed.
+#[derive(Debug, PartialEq, Eq)]
+enum JumpError {
+    Tab(TabError),
+    Failed(String),
+}
+
+impl From<TabError> for JumpError {
+    fn from(e: TabError) -> Self {
+        JumpError::Tab(e)
+    }
+}
+
+impl std::fmt::Display for JumpError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            JumpError::Tab(e) => e.fmt(f),
+            JumpError::Failed(why) => f.write_str(why),
+        }
+    }
+}
 
 /// The outcome in a sentence for the card: Ok when the session's window or
 /// tab was selected, Err when nothing was done. A session in tmux has its
@@ -24,7 +47,7 @@ pub async fn jump_to_terminal(
         Some(t) if crate::launch::tmux_jump(&app, &t).is_ok() => {
             settle(true, jump(tab_lookup(&t, &name)))
         }
-        _ => jump(Lookup::Session(&name)),
+        _ => jump(Lookup::Session(&name)).map_err(|e| e.to_string()),
     })
     .await
     .map_err(|e| format!("Could not run the jump: {e}"))?
@@ -41,32 +64,39 @@ fn tab_lookup<'a>(t: &crate::launch::Target, name: &'a str) -> Lookup<'a> {
 
 /// Whether the one tab among `titles` is the fleet's, by `FLEET_TAB`.
 #[cfg(test)]
-fn fleet_tab(titles: &[&str]) -> Result<usize, String> {
+fn fleet_tab(titles: &[&str]) -> Result<usize, TabError> {
     let t: Vec<String> = titles.iter().map(|s| s.to_string()).collect();
     klepsydra_fleet::tabs::pick(Lookup::Exact(crate::launch::FLEET_TAB), &t, false)
 }
 
-/// A selected tmux window is a success even when no tab title matches: a
-/// hand-renamed tab keeps its frozen title with the right window active inside.
-fn settle(tmux_ok: bool, title_result: Result<String, String>) -> Result<String, String> {
+/// A selected tmux window is a success when no tab matched: a hand-renamed
+/// tab keeps its frozen title with the right window active inside. Hidden
+/// tabs, two matching tabs and a UI Automation failure still reach the card.
+fn settle(tmux_ok: bool, title_result: Result<String, JumpError>) -> Result<String, String> {
     match title_result {
-        Err(_) if tmux_ok => Ok("Selected the session's tmux window.".into()),
-        other => other,
+        Ok(said) => Ok(said),
+        Err(JumpError::Tab(TabError::NoMatch(_) | TabError::NoName)) if tmux_ok => {
+            Ok("Selected the session's tmux window.".into())
+        }
+        Err(e) => Err(e.to_string()),
     }
 }
 
 #[cfg(not(windows))]
-fn jump(_lookup: Lookup<'_>) -> Result<String, String> {
-    Err("Jump to terminal works on Windows only.".into())
+fn jump(_lookup: Lookup<'_>) -> Result<String, JumpError> {
+    Err(JumpError::Failed(
+        "Jump to terminal works on Windows only.".into(),
+    ))
 }
 
 #[cfg(windows)]
-fn jump(lookup: Lookup<'_>) -> Result<String, String> {
+fn jump(lookup: Lookup<'_>) -> Result<String, JumpError> {
     uia::jump(lookup)
 }
 
 #[cfg(windows)]
 mod uia {
+    use super::JumpError;
     use klepsydra_fleet::tabs::{pick, Lookup};
     use windows::core::{Interface, BSTR};
     use windows::Win32::Foundation::HWND;
@@ -163,11 +193,13 @@ mod uia {
         "Windows kept the focus, so the terminal\u{2019}s taskbar button is flashing.".into()
     }
 
-    pub fn jump(lookup: Lookup<'_>) -> Result<String, String> {
-        let (Lookup::Session(name) | Lookup::Exact(name)) = lookup;
-        if name.trim().is_empty() {
-            return Err("This session has no name yet.".into());
-        }
+    /// A UI Automation call's failure, said with what was being done.
+    fn failed(doing: &'static str) -> impl FnOnce(windows::core::Error) -> JumpError {
+        move |e| JumpError::Failed(format!("{doing}: {e}"))
+    }
+
+    pub fn jump(lookup: Lookup<'_>) -> Result<String, JumpError> {
+        lookup.check()?;
         let _com = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) }
             .is_ok()
             .then_some(Com);
@@ -176,7 +208,7 @@ mod uia {
                 .or_else(|_| unsafe {
                     CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER)
                 })
-                .map_err(|e| format!("Could not start UI Automation: {e}"))?;
+                .map_err(failed("Could not start UI Automation"))?;
         if let Ok(uia2) = uia.cast::<IUIAutomation2>() {
             unsafe {
                 let _ = uia2.SetConnectionTimeout(CONNECTION_TIMEOUT_MS);
@@ -184,19 +216,19 @@ mod uia {
             }
         }
         let (tabs, hidden) =
-            tabs(&uia).map_err(|e| format!("Could not list Windows Terminal windows: {e}"))?;
+            tabs(&uia).map_err(failed("Could not list Windows Terminal windows"))?;
         let titles: Vec<String> = tabs.iter().map(|t| t.title.clone()).collect();
         let tab = &tabs[pick(lookup, &titles, hidden)?];
         let hwnd = unsafe { tab.window.CurrentNativeWindowHandle() }
-            .map_err(|e| format!("Could not find the terminal window: {e}"))?;
+            .map_err(failed("Could not find the terminal window"))?;
         unsafe {
             let select: IUIAutomationSelectionItemPattern = tab
                 .item
                 .GetCurrentPatternAs(UIA_SelectionItemPatternId)
-                .map_err(|e| format!("Could not select the tab: {e}"))?;
+                .map_err(failed("Could not select the tab"))?;
             select
                 .Select()
-                .map_err(|e| format!("Could not select the tab: {e}"))?;
+                .map_err(failed("Could not select the tab"))?;
         }
         Ok(forward(hwnd, &tab.title))
     }
@@ -204,9 +236,9 @@ mod uia {
 
 #[cfg(test)]
 mod tests {
-    use super::{fleet_tab, settle, tab_lookup};
+    use super::{fleet_tab, settle, tab_lookup, JumpError};
     use crate::launch::{Target, FLEET_TAB};
-    use klepsydra_fleet::tabs::Lookup;
+    use klepsydra_fleet::tabs::{many_tabs, no_tab, Lookup, TabError, HIDDEN_TABS};
 
     #[test]
     fn a_hand_started_tmux_is_found_by_the_session_name() {
@@ -250,14 +282,40 @@ mod tests {
 
     #[test]
     fn a_selected_window_without_a_matching_tab_is_a_success() {
+        let selected = Ok("Selected the session's tmux window.".into());
         assert_eq!(
-            settle(true, Err("No tab.".into())),
-            Ok("Selected the session's tmux window.".into())
+            settle(true, Err(TabError::NoMatch("x".into()).into())),
+            selected
+        );
+        assert_eq!(settle(true, Err(TabError::NoName.into())), selected);
+    }
+
+    #[test]
+    fn a_real_failure_after_tmux_still_reaches_the_card() {
+        assert_eq!(
+            settle(true, Err(TabError::Hidden.into())),
+            Err(HIDDEN_TABS.into())
+        );
+        assert_eq!(
+            settle(true, Err(TabError::Many("x".into(), 2).into())),
+            Err(many_tabs("x", 2))
+        );
+        let uia = "Could not start UI Automation: x";
+        assert_eq!(
+            settle(true, Err(JumpError::Failed(uia.into()))),
+            Err(uia.into())
         );
     }
 
     #[test]
     fn without_tmux_the_title_error_stands() {
-        assert_eq!(settle(false, Err("No tab.".into())), Err("No tab.".into()));
+        assert_eq!(
+            settle(false, Err(TabError::NoMatch("x".into()).into())),
+            Err(no_tab("x"))
+        );
+        assert_eq!(
+            settle(false, Err(TabError::NoName.into())),
+            Err("This session has no name yet.".into())
+        );
     }
 }

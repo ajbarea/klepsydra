@@ -24,19 +24,16 @@ pub fn match_tab(name: &str, titles: &[String]) -> TabMatch {
     if name.is_empty() {
         return TabMatch::None;
     }
-    let hits: Vec<usize> = (0..titles.len())
-        .filter(|&i| bare(&titles[i]) == name)
-        .collect();
-    match hits.as_slice() {
-        [] => TabMatch::None,
-        [one] => TabMatch::One(*one),
-        many => TabMatch::Many(many.len()),
-    }
+    one_of(titles, |t| bare(t) == name)
 }
 
 /// The tab whose title is exactly `title`.
 pub fn match_exact(title: &str, titles: &[String]) -> TabMatch {
-    let hits: Vec<usize> = (0..titles.len()).filter(|&i| titles[i] == title).collect();
+    one_of(titles, |t| t == title)
+}
+
+fn one_of(titles: &[String], hit: impl Fn(&str) -> bool) -> TabMatch {
+    let hits: Vec<usize> = (0..titles.len()).filter(|&i| hit(&titles[i])).collect();
     match hits.as_slice() {
         [] => TabMatch::None,
         [one] => TabMatch::One(*one),
@@ -54,19 +51,55 @@ pub enum Lookup<'a> {
     Exact(&'a str),
 }
 
-/// The index of the one tab to jump to, or the sentence saying why not.
-/// `tabs_hidden` is set when a Windows Terminal window exposed no tabs (full
-/// screen or focus mode), so a missing match may be a hidden tab.
-pub fn pick(lookup: Lookup<'_>, titles: &[String], tabs_hidden: bool) -> Result<usize, String> {
+impl Lookup<'_> {
+    /// Refused before any tab is listed: a session with no name.
+    pub fn check(self) -> Result<(), TabError> {
+        match self {
+            Lookup::Session(name) if name.trim().is_empty() => Err(TabError::NoName),
+            _ => Ok(()),
+        }
+    }
+}
+
+/// Why no tab was picked. `NoName` and `NoMatch` mean no tab matched; the
+/// others mean one may exist but cannot be chosen.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum TabError {
+    /// The session has no name to look for.
+    NoName,
+    /// No tab has the title.
+    NoMatch(String),
+    /// More than one tab has it.
+    Many(String, usize),
+    /// A Windows Terminal window hides its tabs, so a match may be among them.
+    Hidden,
+}
+
+impl std::fmt::Display for TabError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TabError::NoName => f.write_str("This session has no name yet."),
+            TabError::NoMatch(name) => f.write_str(&no_tab(name)),
+            TabError::Many(name, n) => f.write_str(&many_tabs(name, *n)),
+            TabError::Hidden => f.write_str(HIDDEN_TABS),
+        }
+    }
+}
+
+/// The index of the one tab to jump to, or why not. `tabs_hidden` is set
+/// when a Windows Terminal window exposed no tabs (full screen or focus mode),
+/// so a missing match may be a hidden tab.
+pub fn pick(lookup: Lookup<'_>, titles: &[String], tabs_hidden: bool) -> Result<usize, TabError> {
+    lookup.check()?;
     let (name, found) = match lookup {
         Lookup::Session(name) => (name.trim(), match_tab(name, titles)),
         Lookup::Exact(title) => (title, match_exact(title, titles)),
     };
     match found {
         TabMatch::One(i) => Ok(i),
-        TabMatch::Many(n) => Err(many_tabs(name, n)),
-        TabMatch::None if tabs_hidden => Err(HIDDEN_TABS.into()),
-        TabMatch::None => Err(no_tab(name)),
+        TabMatch::Many(n) => Err(TabError::Many(name.into(), n)),
+        TabMatch::None if tabs_hidden => Err(TabError::Hidden),
+        TabMatch::None => Err(TabError::NoMatch(name.into())),
     }
 }
 
@@ -185,23 +218,33 @@ mod tests {
     #[test]
     fn pick_says_why_it_will_not_jump() {
         let t = titles(&["Klepsydra"]);
+        let plan = Lookup::Session("Plan");
         assert_eq!(pick(Lookup::Session(" Klepsydra "), &t, true), Ok(0));
-        assert_eq!(
-            pick(Lookup::Session("Plan"), &t, false),
-            Err(no_tab("Plan"))
-        );
-        assert_eq!(
-            pick(Lookup::Session("Plan"), &t, true),
-            Err(HIDDEN_TABS.to_string())
-        );
-        assert_eq!(
-            pick(Lookup::Session("Plan"), &[], true),
-            Err(HIDDEN_TABS.to_string())
-        );
+        assert_eq!(pick(plan, &t, false), Err(TabError::NoMatch("Plan".into())));
+        assert_eq!(pick(plan, &t, true), Err(TabError::Hidden));
+        assert_eq!(pick(plan, &[], true), Err(TabError::Hidden));
         let t = titles(&["Plan", "\u{2733} Plan"]);
+        assert_eq!(pick(plan, &t, true), Err(TabError::Many("Plan".into(), 2)));
+        assert_eq!(pick(Lookup::Session("  "), &t, true), Err(TabError::NoName));
         assert_eq!(
-            pick(Lookup::Session("Plan"), &t, true),
-            Err(many_tabs("Plan", 2))
+            pick(Lookup::Exact("x"), &t, false),
+            Err(TabError::NoMatch("x".into()))
         );
+    }
+
+    #[test]
+    fn each_error_reads_as_a_sentence() {
+        assert_eq!(TabError::NoMatch("Plan".into()).to_string(), no_tab("Plan"));
+        assert_eq!(
+            TabError::Many("Plan".into(), 2).to_string(),
+            many_tabs("Plan", 2)
+        );
+        assert_eq!(TabError::Hidden.to_string(), HIDDEN_TABS);
+        assert_eq!(
+            TabError::NoName.to_string(),
+            "This session has no name yet."
+        );
+        assert_eq!(Lookup::Session(" ").check(), Err(TabError::NoName));
+        assert_eq!(Lookup::Exact("klepsydra fleet").check(), Ok(()));
     }
 }
