@@ -356,11 +356,15 @@ window, made on the first click and only hidden after that. A summary bar
 counts the sessions that need you, work, are done, and are idle or ended, with
 an error count only when one exists. Each card shows:
 
-- the session's face in a ring showing its background crew: one segment per
-  subagent (solid, in the character's colour, or gold for a medallion) or
-  background shell or other background task (thinner and dashed), with a gap at 12 o'clock even for
-  one, at most eight with "+N" beside the ring for the rest, and a plain ring
-  with none out;
+- the session's face in a ring showing its background crew: one solid arc per
+  piece of work, agents first, clockwise from 12 o'clock, in the character's
+  colour (gold for a medallion). A subagent's arc is thick and a background
+  shell's or other task's thin, so the kind rests on width, not colour. Arcs
+  are kept apart by a fixed 14 px gap (11 px on a compact card), a lone arc
+  keeps its gap at 12 o'clock, at most five show with "+N" beside the ring for
+  the rest (a shell keeps at least one), and the ring is plain with none out.
+  While any card has work out, a key beside the tally draws the two arcs,
+  "agent" and "shell"; on a narrow wall it takes a second line under the tally;
 - a status pill, top right, with the badge, label and age, and the reason on
   an ended or error card;
 - under where it works, what is out ("2 agents, 1 shell, 1 task") and, once the turn
@@ -430,8 +434,8 @@ for the other repos it touched (hover it for their names); and the exchange,
 the prompt on one line and the reply on two. "updated 7m ago" joins the
 pill's time ("30m · 7m ago"), Clear sits beside Open terminal and takes its
 place when it is off, and a button's note floats over the card's corner.
-Eight compact cards fit a 960x1000 window, half a 1920x1080 screen, and
-sixteen fit the whole screen.
+Eight compact cards fit the wall snapped to half a 1920x1080 screen (about
+945x1000 of content) and sixteen fit it maximised (about 1920x1000).
 
 Auto turns compact as soon as the comfortable cards would scroll, measured on
 an unseen comfortable copy of the wall when a card arrives or leaves and when

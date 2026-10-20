@@ -29,14 +29,27 @@ comfortable cards already scrolled; eight should fit.
   bottom at 893 px; 1920x1080 Auto = compact, 16 cards in 4x4, no scroll.
   Comfortable is pixel-identical to main below the bar (reduced motion,
   16 cards, 960 and 1920).
-- Gates: the whole audit list, build-windows --check.
+- Ring, option C (round 2): one solid arc per item, agents first from 12
+  o'clock; agent thick, shell thin, one colour (`RINGS` in model.js:
+  comfortable 7/3 px, compact 5.5/2.5 px, gaps 14/11 px of arc, so 22/25
+  degrees); at most RING_MAX (5) arcs plus "+N", a shell keeps one. The model
+  returns `rings` per density; wall.js repaints rings on a density change.
+  The face insets 9 px (compact 7) so a hairline of card shows inside the arc.
+- Ring key (`.ring-key` beside the tally in `.lead`): two neutral arcs at the
+  comfortable widths, shown while any card has work (`showsRingKey`); wraps
+  to a second line at 945. Screen readers get one sentence; arcs aria-hidden.
+- Fit at the real content sizes (work area 1920x1048, so about 1920x1000
+  maximised and 945x1000 snapped): `scripts/test_wall_fit.py` checks 16 cards
+  at 1920x1000 and 8 at 945x1000 in Auto, compact, no scrollbar, key in view
+  (bottom 895 and 916 px).
+- Gates: the whole audit list, build-windows --check, the fit test.
 
 ## Next
-- Independent review, then AJ merges.
+- Fold in the PR #55 review findings, then AJ merges.
 - Live check through UIA on the installed build: switch densities, resize
   across the boundary, confirm the pref survives a restart.
 
 ## Verify
 - `node --test src/*.test.js`; `cd src-tauri && cargo test -p klepsydra-fleet`.
 - Serve the repo root, open `/src/wall.html?demo=8` at 960x1000 and
-  `/src/wall.html?demo` at 1920x1080.
+  `/src/wall.html?demo` at 1920x1000; or run `scripts/test_wall_fit.py`.
