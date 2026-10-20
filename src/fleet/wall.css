@@ -9,7 +9,7 @@
   --card-bg: #1a2029;
   --card-quiet: #161b22;
   --card-line: #2a323e;
-  --card-focus: #e69f00;
+  --card-focus: #e9edf2; /* neutral: amber means needs you */
   --text: #e9edf2;
   --text-dim: #98a2b0;
   --text-quiet: #7f8896;
@@ -202,6 +202,18 @@ button:focus-visible { outline: 2px solid var(--card-focus); outline-offset: 2px
 .actions .note { color: var(--text-dim); font-size: 12.5px; margin-right: auto; overflow-wrap: anywhere; }
 .actions .why { color: var(--text-dim); font-size: 12.5px; }
 
+/* One pulse when a card starts needing AJ: an amber ring leaves the edge and fades. */
+@media (prefers-reduced-motion: no-preference) {
+  @keyframes card-pulse {
+    from { box-shadow: 0 0 0 0 color-mix(in oklab, var(--tone-needs) 70%, transparent); }
+    to { box-shadow: 0 0 0 14px transparent; }
+  }
+  .card.pulse { animation: card-pulse 1200ms ease-out 1; }
+}
+/* Reordered cards slide to their new places. */
+::view-transition-group(*) { animation-duration: 300ms; animation-timing-function: ease-out; }
+
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; animation: none !important; }
+  ::view-transition-group(*) { animation-duration: 0s; }
 }

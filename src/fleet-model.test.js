@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import {
   STATUS, shortAge, longAge, statusParts, voiceName, hash, identity, accessibleName,
-  statuses, startedNeeding, announcements, updatedText, badgeSvg, stripItems, card,
+  statuses, startedNeeding, orderChanged, announcements, updatedText, badgeSvg, stripItems, card,
   askText, arcFraction, tally, WORKING_FULL_S, WAITING_FULL_S,
 } from "./fleet/model.js";
 
@@ -383,4 +383,21 @@ test("a busy session's arc follows its last activity, not when it started workin
   assert.equal(arcFraction(session({ status: "working", status_at: ago(10), active_at: ago(300) }), NOW), 0.5);
   assert.equal(arcFraction(session({ status: "needs_you", status_at: ago(900), active_at: ago(5) }), NOW), 0.5,
     "a needs-you arc keeps the time since it asked");
+});
+
+test("only a session that newly needs you pulses, and never on the first look", () => {
+  const working = session({ session_id: "w", status: "working", reason: null });
+  const needs = session({ session_id: "n", status: "needs_you" });
+  const was = statuses([working, needs]);
+  assert.equal(startedNeeding(undefined, [needs]).size, 0, "first render");
+  assert.deepEqual([...startedNeeding(was, [{ ...working, status: "needs_you" }, needs])], ["w"]);
+  assert.equal(startedNeeding(was, [working, needs]).size, 0, "already needing");
+});
+
+test("only a change in membership or order counts as a reorder", () => {
+  assert.equal(orderChanged(["a", "b"], ["a", "b"]), false, "a time-only tick");
+  assert.equal(orderChanged(["a", "b"], ["b", "a"]), true);
+  assert.equal(orderChanged(["a"], ["a", "b"]), true);
+  assert.equal(orderChanged(["a", "b"], ["a"]), true);
+  assert.equal(orderChanged([], []), false);
 });

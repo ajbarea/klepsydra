@@ -129,6 +129,10 @@ export function startedNeeding(before, sessions) {
   );
 }
 
+/** True when `after` is not the same ids in the same order as `before`. */
+export const orderChanged = (before, after) =>
+  before.length !== after.length || before.some((id, i) => id !== after[i]);
+
 /** What the wall's live region says about changes since `before`; nothing on the first look. */
 export function announcements(before, sessions, cast, nowMs = Date.now()) {
   if (!before) return [];

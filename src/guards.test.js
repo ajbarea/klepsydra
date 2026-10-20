@@ -502,3 +502,13 @@ test("Open terminal's disabled reason shows as text in the footer, apart from th
   assert.match(paint, /jump\.title = c\.jump\.why \?\? ""/, "the title stays");
   assert.match(read("src/fleet/wall.css"), /\.actions \.why \{[^}]*font-size/);
 });
+
+test("the wall slides a reorder inside a feature-detected view transition, else updates directly", () => {
+  const src = read("src/fleet/wall.js");
+  assert.match(src, /matchMedia\("\(prefers-reduced-motion: reduce\)"\)\.matches/);
+  assert.match(src, /typeof document\.startViewTransition === "function"/);
+  assert.match(src, /document\.startViewTransition\(\(\) => sync\(\)\)/);
+  assert.match(src, /orderChanged\(/);
+  assert.match(src, /style\.viewTransitionName = `card-\$\{/);
+  assert.match(src, /startedNeeding\(/);
+});

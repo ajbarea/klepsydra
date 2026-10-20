@@ -1,7 +1,7 @@
 // The card wall: a card per Claude Code session, in the reader's order, with
 // a way back to its terminal.
 import cast from "./cast.json" with { type: "json" };
-import { announcements, card, statuses, tally } from "./model.js";
+import { announcements, card, orderChanged, startedNeeding, statuses, tally } from "./model.js";
 import { press, setOff, syncChildren } from "./dom.js";
 import { inTauri, subscribe } from "./feed.js";
 import { showFace } from "./face.js";
@@ -45,7 +45,9 @@ const show = (el, text) => {
 };
 
 function paint(el, c) {
-  el.className = `card ${c.dim ? "dim" : ""} tone-${c.tone}`;
+  const pulsing = el.classList.contains("pulse"); // a repaint must not cut the pulse short
+  el.className = `card ${c.dim ? "dim" : ""} tone-${c.tone}${pulsing ? " pulse" : ""}`;
+  el.style.viewTransitionName = `card-${c.id}`; // the id is a validated uuid
   el.setAttribute("aria-label", c.label);
   el.querySelector(".portrait").title = c.voiceTitle ?? "";
   const fill = el.querySelector(".arc .fill");
@@ -109,13 +111,28 @@ function paintTally() {
   );
 }
 
-function render() {
+// The slide needs the browser's view transitions and a reader who allows motion.
+const canSlide = () =>
+  typeof document.startViewTransition === "function" && !matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+// A snapshot (`snapshot` = ids that started needing) may slide and pulse; the 15 s tick passes nothing and does neither.
+function render(snapshot) {
+  const started = snapshot ?? new Set();
   const now = Date.now();
   empty.hidden = sessions.length > 0;
   paintTally();
   const cards = sessions.map((s) => card(s, cast, now));
-  syncChildren(wall, cards, (c) => c.id, () => tpl.content.firstElementChild.cloneNode(true), paint);
+  const sync = () => {
+    syncChildren(wall, cards, (c) => c.id, () => tpl.content.firstElementChild.cloneNode(true), paint);
+    for (const el of wall.children) if (started.has(el.dataset.key)) el.classList.add("pulse");
+  };
+  const reordered = orderChanged([...wall.children].map((el) => el.dataset.key), cards.map((c) => c.id));
+  if (snapshot && reordered && canSlide()) document.startViewTransition(() => sync());
+  else sync();
 }
+
+// The pulse plays once; a later repaint must not replay it.
+wall.addEventListener("animationend", (e) => e.target.classList?.remove("pulse"));
 
 function focusCard(id) {
   const el = [...wall.children].find((c) => c.dataset.key === id);
@@ -132,9 +149,10 @@ function receive(message) {
   if (Array.isArray(message?.sessions)) {
     const said = announcements(before, message.sessions, cast, Date.now());
     if (said.length) live.textContent = said.join(". ");
+    const started = startedNeeding(before, message.sessions);
     before = statuses(message.sessions);
     sessions = message.sessions;
-    render();
+    render(started);
     if (pending) focusCard(pending);
   }
   if (typeof message?.focus === "string") focusCard(message.focus);
@@ -150,4 +168,4 @@ wall.addEventListener("click", (e) => {
 });
 
 subscribe(receive);
-setInterval(render, TICK_MS);
+setInterval(() => render(), TICK_MS);

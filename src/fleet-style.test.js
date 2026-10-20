@@ -129,3 +129,27 @@ test("every set_size and set_grip call carries the strip", () => {
   assert.equal(calls.length, 2);
   for (const [, name, args] of calls) assert.match(args, /\bstrip\b/, name);
 });
+
+test("the focus ring is neutral, not the needs tone, and meets 3:1 on the wall and the card", () => {
+  const css = read("./fleet/wall.css");
+  const ring = token(css, "--card-focus");
+  assert.match(ring, /^#[0-9a-f]{6}$/i);
+  assert.notEqual(ring.toLowerCase(), token(badgeCss, "--badge-needs").toLowerCase(), "amber means needs you");
+  assert.ok(contrast(ring, token(css, "--wall-bg")) >= 3);
+  assert.ok(contrast(ring, token(css, "--card-bg")) >= 3);
+  assert.match(css, /button:focus-visible \{ outline: 2px solid var\(--card-focus\); outline-offset: 2px; \}/);
+});
+
+test("the needs pulse plays only where motion is allowed, once", () => {
+  const css = read("./fleet/wall.css");
+  const block = css.match(/@media \(prefers-reduced-motion: no-preference\) \{([\s\S]*?)\n\}/)?.[1] ?? "";
+  assert.match(block, /@keyframes card-pulse/);
+  assert.match(block, /\.card\.pulse \{[^}]*animation: card-pulse 1200ms ease-out 1;/);
+  assert.ok(!/@keyframes card-pulse/.test(css.replace(block, "")), "keyframes only inside no-preference");
+  assert.match(css, /prefers-reduced-motion: reduce\) \{[^}]*animation: none/);
+});
+
+test("the reorder slide is bounded, and cards keep their own transition names", () => {
+  const css = read("./fleet/wall.css");
+  assert.match(css, /::view-transition-group\(\*\)\s*\{[^}]*animation-duration:\s*\d+ms/);
+});
