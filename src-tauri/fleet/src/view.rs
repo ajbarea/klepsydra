@@ -58,6 +58,9 @@ pub struct View {
     pub status: Status,
     pub reason: Option<String>,
     pub status_at: i64,
+    /// When the file last changed: the last hook activity, which moves while
+    /// the state stays working.
+    pub active_at: i64,
     #[serde(rename = "where")]
     pub place: Option<Place>,
     pub touched: Vec<Touched>,
@@ -140,8 +143,9 @@ pub fn view(entry: &Entry, now: i64) -> Option<View> {
     .max()
     .unwrap_or(state_at);
     // The file's own time: its skew-corrected written_at equals it within 2 s.
+    let active_at = entry.modified;
     let quiet_since = match status {
-        Status::Working => Some(entry.modified).filter(|m| now.saturating_sub(*m) > QUIET_AFTER),
+        Status::Working => Some(active_at).filter(|m| now.saturating_sub(*m) > QUIET_AFTER),
         Status::NeedsYou => {
             Some(last_word).filter(|w| now.saturating_sub(*w) > WAITING_DOUBT_AFTER)
         }
@@ -156,6 +160,7 @@ pub fn view(entry: &Entry, now: i64) -> Option<View> {
         status,
         reason,
         status_at,
+        active_at,
         place,
         touched: f
             .touched
@@ -513,6 +518,24 @@ mod tests {
         e.file.written_at = Some(modified);
         e.modified = modified;
         view(&e, NOW).unwrap().quiet_since
+    }
+
+    #[test]
+    fn active_at_is_the_files_own_time_and_is_sent() {
+        // Writer clock an hour ahead and the state unchanged for 20 minutes:
+        // the last activity is the file's own time, by this machine's clock.
+        let mut e = entry("a", State::Working, NOW + 3600 - 1200, NOW - 5);
+        e.file.written_at = Some(NOW + 3600 - 30);
+        e.modified = NOW - 30;
+        let v = view(&e, NOW).unwrap();
+        assert_eq!(v.active_at, NOW - 30);
+        assert_eq!(
+            v.status_at,
+            NOW - 1200,
+            "status_at stays when the state began"
+        );
+        let json = serde_json::to_value(snapshot(&[e], NOW)).unwrap();
+        assert_eq!(json["sessions"][0]["active_at"], NOW - 30);
     }
 
     #[test]

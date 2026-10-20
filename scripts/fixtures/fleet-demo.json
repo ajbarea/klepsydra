@@ -9,6 +9,7 @@
    "status": "needs_you",
    "reason": "approve Bash",
    "status_at": 1792499880,
+   "active_at": 1792499880,
    "where": {
     "repo": "klepsydra",
     "worktree": "fleet-launch",
@@ -43,6 +44,7 @@
    "status": "working",
    "reason": null,
    "status_at": 1792499760,
+   "active_at": 1792499940,
    "where": {
     "repo": "papers",
     "worktree": "scads-report",
@@ -72,6 +74,7 @@
    "status": "working",
    "reason": null,
    "status_at": 1792499160,
+   "active_at": 1792499280,
    "where": {
     "repo": "ideas",
     "worktree": null,
@@ -101,6 +104,7 @@
    "status": "working",
    "reason": null,
    "status_at": 1792499940,
+   "active_at": 1792499980,
    "where": {
     "repo": "keryx",
     "worktree": "kourai-first",
@@ -130,6 +134,7 @@
    "status": "done",
    "reason": null,
    "status_at": 1792499940,
+   "active_at": 1792499940,
    "where": {
     "repo": "claude-prefs",
     "worktree": null,
@@ -159,6 +164,7 @@
    "status": "error",
    "reason": "overloaded",
    "status_at": 1792499820,
+   "active_at": 1792499820,
    "where": {
     "repo": "papers",
     "worktree": null,
@@ -185,6 +191,7 @@
    "status": "new",
    "reason": null,
    "status_at": 1792499980,
+   "active_at": 1792499980,
    "where": {
     "repo": "ajsoftworks",
     "worktree": null,
@@ -208,6 +215,7 @@
    "status": "ended",
    "reason": "closed",
    "status_at": 1792499640,
+   "active_at": 1792499640,
    "where": {
     "repo": "talks",
     "worktree": null,

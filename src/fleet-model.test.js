@@ -23,6 +23,7 @@ const session = (over = {}) => ({
   status: "needs_you",
   reason: "approve Bash",
   status_at: ago(120),
+  active_at: ago(120),
   where: { repo: "klepsydra", worktree: "fleet", branch: "feat/fleet-visualizer", at: ago(130) },
   touched: [{ repo: "ideas", at: ago(7200) }],
   prompt: { text: "i just want to be able to VIZ them", at: ago(200) },
@@ -294,20 +295,20 @@ test("the arc fills over the reader's own thresholds", () => {
 });
 
 test("arc: working by 600 s, needs you by 1800 s, quiet working full, others empty", () => {
-  assert.equal(arcFraction(session({ status: "working", status_at: ago(300) }), NOW), 0.5);
-  assert.equal(arcFraction(session({ status: "working", status_at: ago(900) }), NOW), 1);
-  assert.equal(arcFraction(session({ status: "working", status_at: ago(900), quiet_since: ago(700) }), NOW), 1);
+  assert.equal(arcFraction(session({ status: "working", active_at: ago(300) }), NOW), 0.5);
+  assert.equal(arcFraction(session({ status: "working", active_at: ago(900) }), NOW), 1);
+  assert.equal(arcFraction(session({ status: "working", active_at: ago(900), quiet_since: ago(700) }), NOW), 1);
   assert.equal(arcFraction(session({ status: "needs_you", status_at: ago(900) }), NOW), 0.5);
   for (const status of ["done", "error", "new", "silent", "ended"]) {
     assert.equal(arcFraction(session({ status, status_at: ago(900) }), NOW), 0, status);
   }
-  assert.equal(arcFraction(session({ status: "working", status_at: undefined }), NOW), 0);
+  assert.equal(arcFraction(session({ status: "working", active_at: undefined }), NOW), 0);
 });
 
 test("arc: a time ahead of the clock is empty, and NaN never leaks", () => {
   for (const status of ["working", "needs_you"]) {
-    assert.equal(arcFraction(session({ status, status_at: ago(-300) }), NOW), 0, `${status} in the future`);
-    assert.equal(arcFraction(session({ status, status_at: NaN }), NOW), 0, `${status} NaN`);
+    assert.equal(arcFraction(session({ status, status_at: ago(-300), active_at: ago(-300) }), NOW), 0, `${status} in the future`);
+    assert.equal(arcFraction(session({ status, status_at: NaN, active_at: NaN }), NOW), 0, `${status} NaN`);
   }
 });
 
@@ -376,3 +377,10 @@ test("an ended or error pill names its reason", () => {
     "a needs-you reason is the ask line's");
 });
 
+test("a busy session's arc follows its last activity, not when it started working", () => {
+  const busy = session({ status: "working", status_at: ago(3600), active_at: ago(5) });
+  assert.ok(arcFraction(busy, NOW) < 0.02, `near empty, got ${arcFraction(busy, NOW)}`);
+  assert.equal(arcFraction(session({ status: "working", status_at: ago(10), active_at: ago(300) }), NOW), 0.5);
+  assert.equal(arcFraction(session({ status: "needs_you", status_at: ago(900), active_at: ago(5) }), NOW), 0.5,
+    "a needs-you arc keeps the time since it asked");
+});

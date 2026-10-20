@@ -193,11 +193,11 @@ function jumpable(s) {
 export const WORKING_FULL_S = 600;
 export const WAITING_FULL_S = 1800;
 
-/** How full a card's arc is, 0..1: the time in the current state against its threshold. */
+/** How full a card's arc is, 0..1: a working session's time since its last activity, or a waiting one's since it asked, against the reader's threshold. */
 export function arcFraction(s, nowMs) {
   if (s.status === "working" && isQuiet(s)) return 1;
   const full = { working: WORKING_FULL_S, needs_you: WAITING_FULL_S }[s.status];
-  const age = ageMs(s.status_at, nowMs);
+  const age = ageMs(s.status === "working" ? s.active_at : s.status_at, nowMs);
   if (!full || !Number.isFinite(age)) return 0;
   return Math.min(1, Math.max(0, age / 1000 / full));
 }

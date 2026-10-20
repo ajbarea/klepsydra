@@ -149,6 +149,7 @@ fleet_session() { # id, voice, status, reason, age_sec, name, quiet_age_sec
     --arg name "$6" --argjson quiet "${7:-null}" 'def opt: if . == "" then null else . end;
     {session_id: $id, name: ($name | opt), launch_dir: "/home/aj/ajsoftworks",
       voice: ($voice | opt), status: $status, reason: ($reason | opt), status_at: $at,
+      active_at: (if $quiet == null then $at else $at - $quiet end),
       where: {repo: "klepsydra", worktree: "fleet", branch: "feat/fleet-visualizer", at: $at},
       touched: [{repo: "ideas", at: ($at - 3600)}, {repo: "keryx", at: ($at - 9000)}],
       prompt: (if $status == "new" then null

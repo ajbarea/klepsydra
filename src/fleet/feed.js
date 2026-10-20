@@ -14,7 +14,7 @@ export function devSnapshotUrl(app, search) {
 }
 
 // The sample's times are as of its `at`; shift them so its ages read as written.
-const TIMES = new Set(["status_at", "updated_at", "quiet_since", "at"]);
+const TIMES = new Set(["status_at", "active_at", "updated_at", "quiet_since", "at"]);
 function shifted(value, by) {
   if (Array.isArray(value)) return value.map((v) => shifted(v, by));
   if (!value || typeof value !== "object") return value;
