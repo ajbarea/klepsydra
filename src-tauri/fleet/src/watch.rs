@@ -165,6 +165,7 @@ impl Reader {
             for v in &mut snap.sessions {
                 v.ledger = l.session(&v.session_id).cloned();
             }
+            snap.receiver = l.receiver().cloned();
         }
         let shown = self.last.as_ref().and_then(|s| s.speaking.as_ref());
         snap.speaking = speaking(&read_speaking(&self.fleet), shown, &snap.sessions, t);
@@ -453,5 +454,30 @@ mod tests {
         assert_eq!(next.sessions[0].ledger.as_ref().unwrap().commits, 2);
         let json = serde_json::to_value(&next).unwrap();
         assert_eq!(json["sessions"][0]["ledger"]["commits"], 2);
+    }
+
+    #[test]
+    fn a_taken_port_reaches_the_snapshot() {
+        use crate::ledger::{Ledger, Receiver};
+        use std::sync::{Arc, Mutex};
+        let root = Scratch::new("ledger-receiver");
+        std::fs::create_dir_all(root.0.join("fleet")).unwrap();
+        let t = unix_now();
+        let ledger = Arc::new(Mutex::new(Ledger::in_memory(t)));
+        let mut r = Reader::new(&root.0).with_ledger(ledger.clone());
+        let first = r.step(Duration::ZERO, || t).0.unwrap();
+        assert!(serde_json::to_value(&first)
+            .unwrap()
+            .get("receiver")
+            .is_none());
+        ledger.lock().unwrap().set_receiver(Receiver {
+            addr: "127.0.0.1:4318".into(),
+            listening: false,
+            error: Some("address in use".into()),
+        });
+        let next = r.step(Duration::ZERO, || t).0.expect("a new snapshot");
+        let json = serde_json::to_value(&next).unwrap();
+        assert_eq!(json["receiver"]["listening"], false);
+        assert_eq!(json["receiver"]["error"], "address in use");
     }
 }

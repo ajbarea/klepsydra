@@ -2,22 +2,30 @@
 //! API-equivalent cost estimate, lines, commits and PRs, active time, edit
 //! decisions, tool results, API errors and refusals, and the tool calls a
 //! hook or a config rule turned down. Kept in memory for the fleet view and
-//! on disk as one ledger file per UTC day.
+//! on disk as one ledger file per local calendar day.
 
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
+use jiff::tz::TimeZone;
+use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 
 use crate::otel::{Event, Point, Temporality};
 
 /// Day files older than this many days are deleted.
 pub const RETENTION_DAYS: i64 = 30;
-/// How long a counted point's key is remembered, so a retried export is not
-/// counted twice. A point whose window ended longer ago than this can no
-/// longer be told from one already counted, so it is dropped as stale.
+/// How long a counted point's key is remembered after it was counted, so a
+/// retried export is not counted twice. A point whose window ended longer ago
+/// than this can no longer be told from one already counted, so it is dropped
+/// as stale.
 pub const DEDUPE_WINDOW: i64 = 3600;
+/// How far ahead of this machine's clock a point or event may be dated. The
+/// exporter runs on the same machine, so anything further is nonsense.
+pub const MAX_AHEAD: i64 = 300;
+/// Most sessions one map keeps; past it the least recently updated goes.
+pub const MAX_SESSIONS: usize = 512;
 /// Most guardrail entries one day file keeps.
 pub const GUARDRAIL_CAP: usize = 10_000;
 /// The file format's version.
@@ -96,15 +104,17 @@ pub struct Guardrail {
     pub source: String,
 }
 
-/// One UTC day's file.
+/// One local day's file.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
 pub struct Day {
     pub version: u32,
-    /// `YYYY-MM-DD`, UTC.
+    /// `YYYY-MM-DD`, in the machine's time zone.
     pub day: String,
     pub sessions: BTreeMap<String, Totals>,
     pub guardrails: Vec<Guardrail>,
+    /// Counted metric points that carried no `session.id`, and so no total.
+    pub no_session: u64,
 }
 
 /// A cumulative series' last point, to take the next one's difference from.
@@ -123,7 +133,7 @@ struct State {
     version: u32,
     /// Since the session's first export, across days, for the fleet view.
     sessions: BTreeMap<String, Totals>,
-    /// Counted keys and their window's end, in epoch seconds.
+    /// Counted keys and when they were counted, in epoch seconds.
     seen: HashMap<u64, i64>,
     series: HashMap<u64, Baseline>,
 }
@@ -134,7 +144,11 @@ pub struct Tally {
     pub counted: usize,
     pub duplicate: usize,
     pub stale: usize,
-    /// Names the ledger does not count, or a point with no session.
+    /// Dated more than `MAX_AHEAD` ahead of the clock.
+    pub future: usize,
+    /// Points the ledger would count but for a missing `session.id`.
+    pub no_session: usize,
+    /// Names the ledger does not count, and values that are not numbers.
     pub ignored: usize,
 }
 
@@ -247,9 +261,25 @@ fn days_from(y: i64, m: u32, d: u32) -> i64 {
     era * 146_097 + doe - 719_468
 }
 
-/// The UTC day of `now` as `YYYY-MM-DD`.
-pub fn day_name(now: i64) -> String {
-    let (y, m, d) = civil(now.div_euclid(DAY));
+/// The calendar date of `now` in `tz`; the UTC date for an instant jiff
+/// cannot represent.
+fn local_date(now: i64, tz: &TimeZone) -> (i64, u32, u32) {
+    match Timestamp::from_second(now) {
+        Ok(t) => {
+            let d = t.to_zoned(tz.clone()).date();
+            (
+                i64::from(d.year()),
+                u32::try_from(d.month()).unwrap_or(1),
+                u32::try_from(d.day()).unwrap_or(1),
+            )
+        }
+        Err(_) => civil(now.div_euclid(DAY)),
+    }
+}
+
+/// The day of `now` in `tz` as `YYYY-MM-DD`.
+pub fn day_name(now: i64, tz: &TimeZone) -> String {
+    let (y, m, d) = local_date(now, tz);
     format!("{y:04}-{m:02}-{d:02}")
 }
 
@@ -278,10 +308,11 @@ fn file_day(name: &str) -> Option<i64> {
     (civil(days) == (y, m, d)).then_some(days)
 }
 
-/// Delete day files more than `RETENTION_DAYS` days before `now`'s day.
-/// Returns the names removed.
-pub fn prune(dir: &Path, now: i64) -> Vec<String> {
-    let today = now.div_euclid(DAY);
+/// Delete day files more than `RETENTION_DAYS` days before `now`'s day in
+/// `tz`. Returns the names removed.
+pub fn prune(dir: &Path, now: i64, tz: &TimeZone) -> Vec<String> {
+    let (y, m, d) = local_date(now, tz);
+    let today = days_from(y, m, d);
     let mut removed = Vec::new();
     let Ok(entries) = std::fs::read_dir(dir) else {
         return removed;
@@ -345,8 +376,35 @@ fn load<T: Default + for<'de> Deserialize<'de>>(path: &Path, problems: &mut Vec<
 /// export from counting twice.
 pub struct Ledger {
     dir: Option<PathBuf>,
+    tz: TimeZone,
     day: Day,
     state: State,
+    receiver: Option<Receiver>,
+}
+
+/// Whether the OTLP receiver is listening, for the wall to show.
+#[derive(Clone, Debug, Default, Serialize, PartialEq, Eq)]
+pub struct Receiver {
+    pub addr: String,
+    pub listening: bool,
+    /// Why it is not listening, such as the port being taken.
+    pub error: Option<String>,
+}
+
+/// Drop the least recently updated sessions past `MAX_SESSIONS`, never
+/// `keep`, the one just updated.
+fn cap_sessions(map: &mut BTreeMap<String, Totals>, keep: &str) {
+    while map.len() > MAX_SESSIONS {
+        let oldest = map
+            .iter()
+            .filter(|(id, _)| id.as_str() != keep)
+            .min_by_key(|(id, t)| (t.updated_at, id.as_str()))
+            .map(|(id, _)| id.clone());
+        match oldest {
+            Some(id) => map.remove(&id),
+            None => break,
+        };
+    }
 }
 
 /// The ledger as the receiver and the fleet reader share it.
@@ -359,25 +417,32 @@ pub fn lock(shared: &Shared) -> std::sync::MutexGuard<'_, Ledger> {
 }
 
 impl Ledger {
-    /// A ledger that never touches the disk.
+    /// A ledger that never touches the disk, its days in UTC.
     pub fn in_memory(now: i64) -> Self {
         Ledger {
             dir: None,
+            tz: TimeZone::UTC,
             day: Day {
                 version: VERSION,
-                day: day_name(now),
+                day: day_name(now, &TimeZone::UTC),
                 ..Day::default()
             },
             state: State {
                 version: VERSION,
                 ..State::default()
             },
+            receiver: None,
         }
     }
 
-    /// The ledger kept in `dir`: today's file and the state file loaded,
-    /// old day files pruned. Returns what could not be read.
-    pub fn open(dir: PathBuf, now: i64) -> (Self, Vec<String>) {
+    /// The ledger kept in `dir`, its days in this machine's time zone.
+    pub fn open_local(dir: PathBuf, now: i64) -> (Self, Vec<String>) {
+        Self::open(dir, now, TimeZone::system())
+    }
+
+    /// The ledger kept in `dir`, its days in `tz`: today's file and the state
+    /// file loaded, old day files pruned. Returns what could not be read.
+    pub fn open(dir: PathBuf, now: i64, tz: TimeZone) -> (Self, Vec<String>) {
         let mut problems = Vec::new();
         if let Err(e) = std::fs::create_dir_all(&dir) {
             problems.push(format!("{}: {e}", dir.display()));
@@ -386,15 +451,17 @@ impl Ledger {
         state.version = VERSION;
         let mut ledger = Ledger {
             dir: Some(dir),
+            tz,
             day: Day::default(),
             state,
+            receiver: None,
         };
         ledger.start_day(now, &mut problems);
         (ledger, problems)
     }
 
     fn start_day(&mut self, now: i64, problems: &mut Vec<String>) {
-        let name = day_name(now);
+        let name = day_name(now, &self.tz);
         self.day = match &self.dir {
             Some(dir) => load(&dir.join(format!("{name}.json")), problems),
             None => Day::default(),
@@ -402,7 +469,7 @@ impl Ledger {
         self.day.version = VERSION;
         self.day.day = name;
         if let Some(dir) = &self.dir {
-            prune(dir, now);
+            prune(dir, now, &self.tz);
         }
         let horizon = now - RETENTION_DAYS * DAY;
         self.state.sessions.retain(|_, t| t.updated_at >= horizon);
@@ -411,11 +478,23 @@ impl Ledger {
 
     /// Move to `now`'s day when it is a new one.
     fn roll(&mut self, now: i64) {
-        if self.day.day != day_name(now) {
+        if self.day.day != day_name(now, &self.tz) {
             self.start_day(now, &mut Vec::new());
         }
-        let cutoff = now - DEDUPE_WINDOW;
-        self.state.seen.retain(|_, &mut end| end >= cutoff);
+        // A point may be dated up to MAX_AHEAD ahead and still count, so its
+        // key must outlive the stale cutoff by as much.
+        let cutoff = now - DEDUPE_WINDOW - MAX_AHEAD;
+        self.state.seen.retain(|_, &mut counted| counted >= cutoff);
+    }
+
+    /// Record whether the receiver is listening.
+    pub fn set_receiver(&mut self, r: Receiver) {
+        self.receiver = Some(r);
+    }
+
+    /// The receiver's state, once it has tried to listen.
+    pub fn receiver(&self) -> Option<&Receiver> {
+        self.receiver.as_ref()
     }
 
     /// Today's file as it stands.
@@ -429,20 +508,25 @@ impl Ledger {
     }
 
     fn add(&mut self, session: &str, f: Field, n: u64, now: i64) {
-        for map in [&mut self.day.sessions, &mut self.state.sessions] {
-            let t = map.entry(session.to_string()).or_default();
+        self.update(session, now, |t| {
             let slot = t.slot(f);
             *slot = slot.saturating_add(n);
-            t.updated_at = now;
-        }
+        });
     }
 
     fn bump(&mut self, session: &str, now: i64, f: impl Fn(&mut Totals) -> &mut u64) {
-        for map in [&mut self.day.sessions, &mut self.state.sessions] {
-            let t = map.entry(session.to_string()).or_default();
+        self.update(session, now, |t| {
             let slot = f(t);
             *slot = slot.saturating_add(1);
+        });
+    }
+
+    fn update(&mut self, session: &str, now: i64, f: impl Fn(&mut Totals)) {
+        for map in [&mut self.day.sessions, &mut self.state.sessions] {
+            let t = map.entry(session.to_string()).or_default();
+            f(t);
             t.updated_at = now;
+            cap_sessions(map, session);
         }
     }
 
@@ -451,11 +535,19 @@ impl Ledger {
         self.roll(now);
         let mut tally = Tally::default();
         for p in points {
-            let (Some((field, scale)), Some(session)) = (classify(p), p.attrs.get("session.id"))
-            else {
+            let Some((field, scale)) = classify(p) else {
                 tally.ignored += 1;
                 continue;
             };
+            let Some(session) = p.attrs.get("session.id") else {
+                tally.no_session += 1;
+                self.day.no_session = self.day.no_session.saturating_add(1);
+                continue;
+            };
+            if secs(p.end_ns) > now.saturating_add(MAX_AHEAD) {
+                tally.future += 1;
+                continue;
+            }
             let Some(value) = scaled(p.value, scale) else {
                 tally.ignored += 1;
                 continue;
@@ -467,7 +559,7 @@ impl Ledger {
                         tally.stale += 1;
                         continue;
                     }
-                    if self.state.seen.insert(p.key, end).is_some() {
+                    if self.state.seen.insert(p.key, now).is_some() {
                         tally.duplicate += 1;
                         continue;
                     }
@@ -533,6 +625,10 @@ impl Ledger {
                 tally.stale += 1;
                 continue;
             }
+            if at > now.saturating_add(MAX_AHEAD) {
+                tally.future += 1;
+                continue;
+            }
             let get = |k: &str| e.attrs.get(k).map_or("", String::as_str);
             let kind = match e.name.as_str() {
                 "tool_decision" if get("decision") == "reject" => match get("source") {
@@ -547,7 +643,7 @@ impl Ledger {
                 tally.ignored += 1;
                 continue;
             }
-            if self.state.seen.insert(e.key, at).is_some() {
+            if self.state.seen.insert(e.key, now).is_some() {
                 tally.duplicate += 1;
                 continue;
             }
@@ -682,11 +778,11 @@ mod tests {
     #[test]
     fn the_dedupe_keys_survive_a_restart() {
         let dir = Scratch::new("ledger-restart");
-        let (mut l, problems) = Ledger::open(dir.0.clone(), NOW);
+        let (mut l, problems) = Ledger::open(dir.0.clone(), NOW, TimeZone::UTC);
         assert!(problems.is_empty(), "{problems:?}");
         replay(&mut l, "delta", NOW);
         l.save().unwrap();
-        let (mut l, _) = Ledger::open(dir.0.clone(), NOW + 5);
+        let (mut l, _) = Ledger::open(dir.0.clone(), NOW + 5, TimeZone::UTC);
         assert_eq!(replay(&mut l, "delta", NOW + 5).counted, 0);
         assert_eq!(l.session(SESSION).unwrap().tokens.output, 706);
     }
@@ -818,10 +914,10 @@ mod tests {
 
     #[test]
     fn days_round_trip_and_name_utc_dates() {
-        assert_eq!(day_name(0), "1970-01-01");
-        assert_eq!(day_name(NOW), "2026-10-20");
-        assert_eq!(day_name(951_782_400), "2000-02-29");
-        assert_eq!(day_name(-1), "1969-12-31");
+        assert_eq!(day_name(0, &TimeZone::UTC), "1970-01-01");
+        assert_eq!(day_name(NOW, &TimeZone::UTC), "2026-10-20");
+        assert_eq!(day_name(951_782_400, &TimeZone::UTC), "2000-02-29");
+        assert_eq!(day_name(-1, &TimeZone::UTC), "1969-12-31");
         for d in [-1, 0, 11_016, 20_746, 50_000] {
             let (y, m, dd) = civil(d);
             assert_eq!(days_from(y, m, dd), d);
@@ -855,7 +951,7 @@ mod tests {
         dir.write(STATE_FILE, "{}");
         dir.write("notes.txt", "keep");
         std::fs::create_dir(dir.0.join(named(500))).unwrap();
-        let removed = prune(&dir.0, NOW);
+        let removed = prune(&dir.0, NOW, &TimeZone::UTC);
         let mut want = vec![
             named(RETENTION_DAYS + 1),
             format!("{}.bad", named(RETENTION_DAYS + 2)),
@@ -878,7 +974,7 @@ mod tests {
     #[test]
     fn the_day_file_is_written_whole_and_reloaded() {
         let dir = Scratch::new("ledger-save");
-        let (mut l, _) = Ledger::open(dir.0.clone(), NOW);
+        let (mut l, _) = Ledger::open(dir.0.clone(), NOW, TimeZone::UTC);
         replay(&mut l, "delta", NOW);
         l.save().unwrap();
         let names: Vec<String> = std::fs::read_dir(&dir.0)
@@ -889,14 +985,14 @@ mod tests {
         let text = std::fs::read_to_string(dir.0.join("2026-10-20.json")).unwrap();
         let day: Day = serde_json::from_str(&text).unwrap();
         assert_eq!(day.sessions[SESSION], recorded_totals());
-        let (l, _) = Ledger::open(dir.0.clone(), NOW + 10);
+        let (l, _) = Ledger::open(dir.0.clone(), NOW + 10, TimeZone::UTC);
         assert_eq!(l.day().sessions[SESSION], recorded_totals());
     }
 
     #[test]
     fn a_new_day_starts_a_new_file_and_keeps_lifetime_totals() {
         let dir = Scratch::new("ledger-roll");
-        let (mut l, _) = Ledger::open(dir.0.clone(), NOW);
+        let (mut l, _) = Ledger::open(dir.0.clone(), NOW, TimeZone::UTC);
         replay(&mut l, "delta", NOW);
         l.save().unwrap();
         let tomorrow = (NOW / DAY + 1) * DAY + 10;
@@ -921,7 +1017,7 @@ mod tests {
             "2026-10-20.json",
             r#"{"day":"2026-10-20","sessions":{"s1":{"tokens":{"output":5}}}}"#,
         );
-        let (l, problems) = Ledger::open(dir.0.clone(), NOW);
+        let (l, problems) = Ledger::open(dir.0.clone(), NOW, TimeZone::UTC);
         assert!(problems.is_empty(), "{problems:?}");
         let t = &l.day().sessions["s1"];
         assert_eq!(t.tokens.output, 5);
@@ -933,7 +1029,7 @@ mod tests {
     fn an_unreadable_day_file_is_set_aside_not_overwritten() {
         let dir = Scratch::new("ledger-bad");
         dir.write("2026-10-20.json", "{half");
-        let (l, problems) = Ledger::open(dir.0.clone(), NOW);
+        let (l, problems) = Ledger::open(dir.0.clone(), NOW, TimeZone::UTC);
         assert_eq!(problems.len(), 1);
         l.save().unwrap();
         assert_eq!(
@@ -952,5 +1048,86 @@ mod tests {
         }
         // 1e300 saturates rather than wrapping; the rest are not counted.
         assert_eq!(l.session("s1").map(|t| t.commits), Some(i64::MAX as u64));
+    }
+
+    fn point_at(session: &str, end_secs: u64) -> Value {
+        let end = (end_secs * 1_000_000_000).to_string();
+        json!({"resourceMetrics":[{"scopeMetrics":[{"metrics":[{"name":"claude_code.commit.count","sum":{"aggregationTemporality":1,"dataPoints":[{"attributes":[{"key":"session.id","value":{"stringValue":session}}],"startTimeUnixNano":end,"timeUnixNano":end,"asDouble":1}]}}]}]}]})
+    }
+
+    #[test]
+    fn a_far_future_point_or_event_is_dropped_and_leaves_no_key() {
+        // 2255-01-01
+        let future = 8_993_548_800u64;
+        let mut l = Ledger::in_memory(NOW);
+        let t = l.record_metrics(&metrics(&point_at("s1", future)), NOW);
+        assert_eq!(t.counted, 0);
+        let mut e = event("api_error", &[], 1);
+        let ns = (future * 1_000_000_000).to_string();
+        e["resourceLogs"][0]["scopeLogs"][0]["logRecords"][0]["timeUnixNano"] = json!(ns);
+        assert_eq!(l.record_events(&logs(&e), NOW).counted, 0);
+        assert_eq!(l.session("s1"), None);
+        l.record_metrics(&[], NOW + DEDUPE_WINDOW + 1);
+        assert!(l.state.seen.is_empty(), "{:?}", l.state.seen);
+    }
+
+    #[test]
+    fn a_point_a_little_ahead_counts_once() {
+        let mut l = Ledger::in_memory(NOW);
+        let p = metrics(&point_at("s1", NOW as u64 + 120));
+        assert_eq!(l.record_metrics(&p, NOW).counted, 1);
+        assert_eq!(l.record_metrics(&p, NOW + 60).duplicate, 1);
+    }
+
+    #[test]
+    fn the_session_maps_are_capped_keeping_the_latest() {
+        let mut l = Ledger::in_memory(NOW);
+        for n in 0..600u64 {
+            l.record_metrics(
+                &metrics(&point_at(&format!("s{n}"), NOW as u64)),
+                NOW + n as i64,
+            );
+        }
+        assert!(l.day().sessions.len() <= 512, "{}", l.day().sessions.len());
+        assert!(l.state.sessions.len() <= 512);
+        assert!(l.session("s599").is_some());
+        assert!(l.session("s0").is_none());
+    }
+
+    #[test]
+    fn points_without_a_session_are_counted_as_such() {
+        let mut l = Ledger::in_memory(NOW);
+        let mut v = point_at("x", NOW as u64);
+        v["resourceMetrics"][0]["scopeMetrics"][0]["metrics"][0]["sum"]["dataPoints"][0]
+            ["attributes"] = json!([]);
+        l.record_metrics(&metrics(&v), NOW);
+        let day = serde_json::to_value(l.day()).unwrap();
+        assert_eq!(day["no_session"], 1);
+    }
+
+    #[test]
+    fn days_and_retention_follow_the_local_calendar() {
+        // New York: 2026-10-20 22:35 UTC is 18:35 EDT the same day, and
+        // 2026-10-21 02:00 UTC is still 2026-10-20 there.
+        let ny = TimeZone::posix("EST5EDT,M3.2.0,M11.1.0").unwrap();
+        let late = 1_792_548_000; // 2026-10-21T02:00:00Z
+        assert_eq!(day_name(late, &TimeZone::UTC), "2026-10-21");
+        assert_eq!(day_name(late, &ny), "2026-10-20");
+        let tokyo = TimeZone::fixed(jiff::tz::offset(9));
+        assert_eq!(day_name(NOW, &tokyo), "2026-10-21");
+
+        let dir = Scratch::new("ledger-local");
+        let (mut l, _) = Ledger::open(dir.0.clone(), late, ny.clone());
+        l.record_metrics(&metrics(&point_at("s1", late as u64)), late);
+        l.save().unwrap();
+        assert!(dir.0.join("2026-10-20.json").exists());
+        assert!(!dir.0.join("2026-10-21.json").exists());
+
+        // 30 local days before 2026-10-20 is kept; 31 is not, though in UTC
+        // `late` is already a day further on.
+        dir.write("2026-09-20.json", "{}");
+        dir.write("2026-09-19.json", "{}");
+        assert_eq!(prune(&dir.0, late, &ny), ["2026-09-19.json"]);
+        assert!(dir.0.join("2026-09-20.json").exists());
     }
 }

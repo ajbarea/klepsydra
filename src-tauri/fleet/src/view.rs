@@ -5,7 +5,7 @@ use std::collections::HashMap;
 
 use serde::Serialize;
 
-use crate::ledger::Totals;
+use crate::ledger::{Receiver, Totals};
 use crate::session::{Claude, Kind, Place, Said, SessionFile, State, Tmux, Touched};
 use crate::speaking::Speaking;
 
@@ -122,6 +122,10 @@ pub struct Snapshot {
     /// The line keryx is playing and whose card it belongs to; none while
     /// nothing is.
     pub speaking: Option<Speaking>,
+    /// Whether the OTLP receiver is listening, once it has tried; left out
+    /// of the JSON before then.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub receiver: Option<Receiver>,
 }
 
 /// What to show for one session at `now`, or None once it has ended long enough ago.
@@ -324,6 +328,7 @@ pub fn snapshot(entries: &[Entry], now: i64) -> Snapshot {
     Snapshot {
         sessions,
         speaking: None,
+        receiver: None,
     }
 }
 

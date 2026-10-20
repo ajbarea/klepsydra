@@ -18,7 +18,7 @@ fn main() {
         return;
     };
     let port: u16 = args.next().and_then(|p| p.parse().ok()).unwrap_or(0);
-    let (ledger, problems) = Ledger::open(dir.into(), unix_now());
+    let (ledger, problems) = Ledger::open_local(dir.into(), unix_now());
     for p in problems {
         eprintln!("ledger: {p}");
     }

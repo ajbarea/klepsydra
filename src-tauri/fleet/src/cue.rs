@@ -186,6 +186,7 @@ mod tests {
                 .map(|(id, s, t, e)| view(id, *s, *t, *e, shift))
                 .collect(),
             speaking: None,
+            receiver: None,
         }
     }
 

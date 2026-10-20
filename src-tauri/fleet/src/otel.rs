@@ -84,13 +84,23 @@ fn any_value(v: &Value) -> Option<String> {
     }
 }
 
+/// Longest attribute value kept, in characters; longer ones are cut, and
+/// longer keys dropped.
+pub const MAX_ATTR_CHARS: usize = 256;
+
 /// A KeyValue list as a sorted map of the values that are text or numbers.
 fn attributes(v: Option<&Value>) -> BTreeMap<String, String> {
     let mut out = BTreeMap::new();
     for kv in v.and_then(Value::as_array).into_iter().flatten() {
-        let key = kv.get("key").and_then(Value::as_str);
+        let key = kv
+            .get("key")
+            .and_then(Value::as_str)
+            .filter(|k| k.chars().count() <= MAX_ATTR_CHARS);
         let value = kv.get("value").and_then(any_value);
-        if let (Some(k), Some(v)) = (key, value) {
+        if let (Some(k), Some(mut v)) = (key, value) {
+            if let Some((cut, _)) = v.char_indices().nth(MAX_ATTR_CHARS) {
+                v.truncate(cut);
+            }
             out.insert(k.to_string(), v);
         }
     }
@@ -383,5 +393,13 @@ pub(crate) mod tests {
         let p = &metrics(&v)[0];
         assert_eq!(p.temporality, Temporality::Cumulative);
         assert_eq!((p.end_ns, p.value), (5, 42.0));
+    }
+
+    #[test]
+    fn long_attribute_values_are_cut_to_the_cap() {
+        let long = "é".repeat(1000);
+        let v = serde_json::json!({"resourceLogs":[{"scopeLogs":[{"logRecords":[{"timeUnixNano":"1","attributes":[{"key":"event.name","value":{"stringValue":"tool_result"}},{"key":"tool_name","value":{"stringValue":long}}]}]}]}]});
+        let e = &logs(&v)[0];
+        assert_eq!(e.attrs["tool_name"].chars().count(), 256);
     }
 }

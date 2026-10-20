@@ -1752,11 +1752,14 @@ dependencies = [
  "http-body-util",
  "hyper",
  "hyper-util",
+ "jiff",
  "libc",
  "notify",
  "serde",
  "serde_json",
+ "socket2",
  "tokio",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

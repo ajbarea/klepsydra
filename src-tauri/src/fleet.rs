@@ -9,7 +9,7 @@ use std::time::Instant;
 #[cfg(windows)]
 use klepsydra_fleet::cue::Cues;
 use klepsydra_fleet::hub::{Hub, Sink};
-use klepsydra_fleet::ledger::{Ledger, Shared};
+use klepsydra_fleet::ledger::{Ledger, Receiver, Shared};
 use klepsydra_fleet::problem_log::{append_capped, CAP};
 use klepsydra_fleet::receiver;
 use klepsydra_fleet::scan::Problem;
@@ -80,22 +80,56 @@ fn log_problem(dir: &Path, p: &Problem) {
     log_line(dir, &format!("skipped {at}: {}", p.what));
 }
 
-/// Open the ledger in `<dir>/ledger` and start the OTLP receiver. A port
-/// already in use is logged and the overlay runs on without telemetry.
+/// How often a receiver that could not bind its port tries again: the port
+/// may be held by a program that exits, or by the last run's connections.
+const RETRY: Duration = Duration::from_secs(30);
+
+/// Open the ledger in `<dir>/ledger` and start the OTLP receiver. While the
+/// port is taken the overlay runs on without telemetry, says so on the
+/// snapshot and in `fleet.log`, and tries again every `RETRY`.
 fn start_ledger(dir: &Path) -> Shared {
-    let (ledger, problems) = Ledger::open(dir.join("ledger"), unix_now());
+    let (ledger, problems) = Ledger::open_local(dir.join("ledger"), unix_now());
     for p in &problems {
         log_line(dir, &format!("ledger: {p}"));
     }
     let ledger: Shared = std::sync::Arc::new(std::sync::Mutex::new(ledger));
-    let log_dir = dir.to_path_buf();
-    let log: receiver::Log = std::sync::Arc::new(move |l: String| log_line(&log_dir, &l));
-    if let Err(e) = receiver::spawn(receiver::ADDR, ledger.clone(), log) {
-        log_line(
-            dir,
-            &format!("otel: no receiver on {}: {e}", receiver::ADDR),
-        );
-    }
+    let shared = ledger.clone();
+    let dir = dir.to_path_buf();
+    std::thread::spawn(move || {
+        let log_dir = dir.clone();
+        let log: receiver::Log = std::sync::Arc::new(move |l: String| log_line(&log_dir, &l));
+        let mut logged = false;
+        loop {
+            let (listening, error) =
+                match receiver::spawn(receiver::ADDR, shared.clone(), log.clone()) {
+                    Ok(_) => (true, None),
+                    Err(e) => (false, Some(e.to_string())),
+                };
+            if let Some(e) = &error {
+                if !logged {
+                    log_line(
+                        &dir,
+                        &format!("otel: no receiver on {}: {e}", receiver::ADDR),
+                    );
+                    logged = true;
+                }
+            } else if logged {
+                log_line(
+                    &dir,
+                    &format!("otel: receiver listening on {}", receiver::ADDR),
+                );
+            }
+            klepsydra_fleet::ledger::lock(&shared).set_receiver(Receiver {
+                addr: receiver::ADDR.to_string(),
+                listening,
+                error,
+            });
+            if listening {
+                return;
+            }
+            std::thread::sleep(RETRY);
+        }
+    });
     ledger
 }
 
