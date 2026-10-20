@@ -498,7 +498,7 @@ colour_window() { # voice
     def lin: ./255 | if . <= 0.04045 then . / 12.92 else pow((. + 0.055) / 1.055; 2.4) end;
     (.characters | objects | .[$v]) as $ch
     | if ($ch | type) != "object" then "unset"
-      else ($ch.accent | strings | select(test("^#[0-9A-Fa-f]{6}$"))) as $h
+      else ($ch.accent | strings | select(test("^#[0-9A-Fa-f]{6}\\z"))) as $h
         | ([1, 3, 5] | map(($h | ascii_downcase)[.:.+2] | explode | map(if . > 96 then . - 87 else . - 48 end) | .[0] * 16 + .[1] | lin)) as $c
         | (0.2126 * $c[0] + 0.7152 * $c[1] + 0.0722 * $c[2]) as $l
         | "\($h) \(if ($l + 0.05) / 0.05 >= 1.05 / ($l + 0.05) then "#000000" else "#ffffff" end)"
@@ -568,11 +568,14 @@ main() {
     "$APPLY" 2>/dev/null) || new=""
   [[ -n $new ]] && write_atomic "$file" "$new"
   # Only a start, or a changed voice, touches the window.
-  local was_voice now_voice
+  local was_voice now_voice recolour=0
   was_voice=$(file_voice "$old") now_voice=$(file_voice "${new:-$old}")
-  if [[ $event == SessionStart || $was_voice != "$now_voice" ]]; then colour_window "$now_voice"; fi
+  if [[ $event == SessionStart || $was_voice != "$now_voice" ]]; then recolour=1; fi
   [[ $event == SessionStart ]] && mark_gone "$KLEPSYDRA_DIR" "$now" "$session"
   [[ $event == SessionStart ]] && prune_hourly "$PRUNE_STAMP" prune_fleet "$KLEPSYDRA_DIR" "$now"
+  # tmux can hang for its timeout; no other hook waits on it, so drop the lock first.
+  { exec {lock}>&-; } 2>/dev/null
+  (( recolour )) && colour_window "$now_voice"
   return 0
 }
 

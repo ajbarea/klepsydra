@@ -11,7 +11,9 @@ trap 'rm -rf "$work"' EXIT
 # Every test runs with a tmux that only logs its calls, so no run can touch a real server.
 stub="$work/stubbin"
 mkdir -p "$stub"
-printf '#!/bin/sh\necho "$*" >>"%s/tmux.log"\n' "$work" >"$stub/tmux"
+# $work/tmux.mode: "fail" exits 1, "hang" sleeps past the hook's timeout; else it succeeds.
+# shellcheck disable=SC2016 # the stub script expands its own variables
+printf '#!/bin/sh\necho "$*" >>"%s/tmux.log"\ncase $(cat "%s/tmux.mode" 2>/dev/null) in fail) exit 1;; hang) exec sleep 30;; esac\n' "$work" "$work" >"$stub/tmux"
 chmod +x "$stub/tmux"
 export PATH="$stub:$PATH"
 tlog="$work/tmux.log"
@@ -27,6 +29,7 @@ check() {
   fi
 }
 
+cp "$here/../src/fleet/cast.json" "$work/test-cast.json"
 # shellcheck source=hooks/klepsydra-fleet.sh
 source "$hook"
 
@@ -142,7 +145,7 @@ fire() { # fixture [filter] [VAR=value...]
   shift; (( $# )) && shift
   jq -c --arg cwd "$wt" "if .cwd then .cwd = \$cwd else . end | $filter" "$fixtures/$fixture" |
     env KLEPSYDRA_DIR="$dir" KLEPSYDRA_NOW="$now" KLEPSYDRA_PROC="$work/proc" KLEPSYDRA_PID=600 \
-      KERYX_VOICES="$work/voices.json" XDG_RUNTIME_DIR="$work" \
+      KERYX_VOICES="$work/voices.json" XDG_RUNTIME_DIR="$work" KLEPSYDRA_CAST="$work/test-cast.json" \
       KLEPSYDRA_BOOT_ID="$boot_file" TMUX= TMUX_PANE= WSL_DISTRO_NAME= "$@" bash "$hook"
 }
 field() { jq -c "$1" "$file"; }
@@ -675,9 +678,9 @@ check "unset USER and HOME: no output" "$out" ""
 
 echo "tmux and host"
 rm -f "$file"
-fire session-start.json . TMUX=/tmp/tmux-1001/klepsydra,4242,0 TMUX_PANE=%3 \
+fire session-start.json . "TMUX=$work/sock/klepsydra,4242,0" TMUX_PANE=%3 \
   WSL_DISTRO_NAME=Ubuntu KLEPSYDRA_BOOT_ID="$boot_file" >/dev/null
-check "tmux recorded" "$(field .tmux)" '{"socket":"/tmp/tmux-1001/klepsydra","pane":"%3"}'
+check "tmux recorded" "$(field .tmux)" "{\"socket\":\"$work/sock/klepsydra\",\"pane\":\"%3\"}"
 check "host recorded" "$(field .host)" '{"boot":"0b6e1c5a-1111-4222-8333-444455556666","distro":"Ubuntu"}'
 rm -f "$file"
 fire session-start.json . TMUX= TMUX_PANE= WSL_DISTRO_NAME= KLEPSYDRA_BOOT_ID="$boot_file" >/dev/null
@@ -851,7 +854,7 @@ echo "window colours"
 
 printf '{"holders":{"500:8717628":{"voice":"am_michael","seen":1},"700:9000000":{"voice":"af_heart(0.5)+af_bella(0.5)","seen":1}}}\n' >"$work/win-voices.json"
 cast_src="$here/../src/fleet/cast.json"
-fsock=/tmp/kl-test-sock/klepsydra
+fsock=$work/sock/klepsydra
 C1=aaaaaaaa-2222-4333-8444-555555555551
 C2=aaaaaaaa-2222-4333-8444-555555555552
 C3=aaaaaaaa-2222-4333-8444-555555555553
@@ -885,28 +888,57 @@ check "a changed voice recolours" "$(cat "$tlog")" \
   "-S $fsock set-option -w -u -t %3 window-status-style
 -S $fsock set-option -w -u -t %3 window-status-current-style"
 
-jq '.characters.am_michael.accent = "#DA8C20; run-shell x"' "$cast_src" >"$work/bad-cast.json"
-cfire session-start.json $C4 KLEPSYDRA_CAST="$work/bad-cast.json"
-check "a bad accent: no tmux call" "$(cat "$tlog")" ""
+for bad in "#DA8C20; run-shell x" $'#DA8C20\n' "red" "#DA8C2" 5; do
+  jq --arg a "$bad" '.characters.am_michael.accent = $a' "$cast_src" >"$work/bad-cast.json"
+  cfire session-start.json $C4 KLEPSYDRA_CAST="$work/bad-cast.json"
+  check "a bad accent ($(printf %q "$bad")): no tmux call" "$(cat "$tlog")" ""
+done
 cfire session-start.json $C4 KLEPSYDRA_CAST="$work/no-such-cast.json"
 check "no cast: no tmux call" "$(cat "$tlog")" ""
 
-# The hook's ink is contrast.js's, for every character.
+# A tmux that fails changes nothing the hook says or does.
+echo fail >"$work/tmux.mode"
+out=$(cfire session-start.json $C4); rc=$?
+check "a failing tmux: exit 0" "$rc" "0"
+check "a failing tmux: prints nothing" "$out" ""
+check "a failing tmux: the session file is written" "$(jq -r .session_id "$dir/fleet/$C4.json")" "$C4"
+
+# A tmux that hangs holds neither the hook for long nor the fleet lock: another
+# session's start still writes its file while the first is stuck in tmux.
+echo hang >"$work/tmux.mode"
+C5=aaaaaaaa-2222-4333-8444-555555555555
+C6=aaaaaaaa-2222-4333-8444-555555555556
+( cfire session-start.json $C5 >/dev/null ) &
+hung=$!
+until [[ -s $tlog ]]; do read -r -t 0.05 <> <(:) || true; done # the first hook is inside tmux
+t0=$SECONDS
+fire session-start.json ".session_id = \"$C6\"" >/dev/null
+check "a hung tmux does not hold the lock: another session is written at once" \
+  "$(jq -r .session_id "$dir/fleet/$C6.json" 2>/dev/null) $(( SECONDS - t0 < 2 ))" "$C6 1"
+wait "$hung"; rc=$?
+check "a hung tmux: the hook still exits 0" "$rc" "0"
+check "a hung tmux: its own file is written" "$(jq -r .session_id "$dir/fleet/$C5.json")" "$C5"
+rm -f "$work/tmux.mode"
+
+# The hook's ink is contrast.js's, for every character and for two colours
+# either side of the black/white switch (relative luminance about 0.179).
+jq '.characters += {zz_dark: {name: "Dark", face: "x", accent: "#747474", gender: "f"},
+                    zz_light: {name: "Light", face: "x", accent: "#777777", gender: "f"}}' "$cast_src" >"$work/parity-cast.json"
 # shellcheck disable=SC2016 # the script is for node, not the shell
 want=$(node --input-type=module -e '
 import { inkOn } from "./src/fleet/contrast.js";
 import { readFileSync } from "node:fs";
 const cast = JSON.parse(readFileSync(process.argv[1], "utf8"));
-for (const [v, c] of Object.entries(cast.characters)) console.log(`${v} ${c.accent} ${inkOn(c.accent)}`);' "$cast_src" 2>/dev/null || true)
+for (const [v, c] of Object.entries(cast.characters)) console.log(`${v} ${c.accent} ${inkOn(c.accent)}`);' "$work/parity-cast.json" 2>/dev/null || true)
 got=""
 while read -r v acc ink; do
   : >"$tlog"
   printf '{"holders":{"500:8717628":{"voice":"%s","seen":1}}}\n' "$v" >"$work/ink-voices.json"
-  fire session-start.json ".session_id = \"$C4\"" KLEPSYDRA_CAST="$cast_src" TMUX="$fsock,1,0" TMUX_PANE=%3 KERYX_VOICES="$work/ink-voices.json" >/dev/null
+  fire session-start.json ".session_id = \"$C4\"" KLEPSYDRA_CAST="$work/parity-cast.json" TMUX="$fsock,1,0" TMUX_PANE=%3 KERYX_VOICES="$work/ink-voices.json" >/dev/null
   got+="$v $acc $(sed -n 's/.*current-style bg=#[0-9A-Fa-f]*,fg=\(#[0-9a-f]*\),bold/\1/p' "$tlog")"$'\n'
 done <<<"$want"
-check "the hook's ink matches contrast.js for all ten" "$got" "$(awk '{print $1, $2, $3}' <<<"$want")"$'\n'
-check "all ten were compared" "$(wc -l <<<"$want")" "10"
+check "the hook's ink matches contrast.js for all twelve" "$got" "$want"$'\n'
+check "all twelve were compared" "$(wc -l <<<"$want")" "12"
 
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [[ $fail -eq 0 ]]
