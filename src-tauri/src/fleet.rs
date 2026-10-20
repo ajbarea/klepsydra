@@ -44,6 +44,18 @@ pub fn fleet_subscribe(
     fleet.subscribe(window.label(), Webview(on_message));
 }
 
+/// Remove an ended or silent session's card. A session still running brings
+/// its file back at its next hook event.
+#[tauri::command]
+pub fn clear_session(app: AppHandle, id: String) -> Result<(), String> {
+    use klepsydra_fleet::clear::{check_clearable, remove_session};
+    app.state::<Fleet>()
+        .with_latest(|v| check_clearable(Some(v), &id))
+        .unwrap_or_else(|| check_clearable(None, &id))?;
+    let dir = crate::klepsydra_dir(&app).ok_or("klepsydra has no data folder.")?;
+    remove_session(&dir.join("fleet"), &id)
+}
+
 /// A skipped file goes to stderr for dev runs and to `<dir>/fleet.log`, which
 /// release builds have instead of a console.
 fn log_problem(dir: &Path, p: &Problem) {

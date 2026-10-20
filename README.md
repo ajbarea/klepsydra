@@ -113,12 +113,14 @@ profile starts without your settings, plugins or skills until you copy them.
 
 ## Install
 
-**1. Publish the numbers and the sessions.** Copy both hooks and point Claude
-Code at them:
+**1. Publish the numbers and the sessions.** Copy the hooks, the launcher and
+its tmux settings, and point Claude Code at the hooks. Starting sessions from
+the wall needs tmux 3.3 or later (`remain-on-exit failed`); Ubuntu 24.04's 3.4
+is the tested version.
 
 ```bash
-cp statusline/klepsydra-statusline.sh hooks/klepsydra-fleet.sh ~/.claude/
-chmod +x ~/.claude/klepsydra-statusline.sh ~/.claude/klepsydra-fleet.sh
+cp statusline/klepsydra-statusline.sh hooks/klepsydra-fleet.sh hooks/klepsydra-launch.sh hooks/klepsydra-tmux.conf ~/.claude/
+chmod +x ~/.claude/klepsydra-statusline.sh ~/.claude/klepsydra-fleet.sh ~/.claude/klepsydra-launch.sh
 ```
 
 Then merge this into `~/.claude/settings.json` (into each config dir's
@@ -180,6 +182,9 @@ winget install Microsoft.VisualStudio.2022.BuildTools --override `
 ```bash
 bash scripts/build-windows.sh
 ```
+
+`KLEPSYDRA_STAGE=klepsydra-build-<name>` builds in a staging folder of its own,
+so a branch can build beside the main one.
 
 **3. Start it with Windows.** Put a shortcut to `klepsydra.exe` in
 `shell:startup`.
@@ -317,6 +322,10 @@ shape, symbol and colour, from the Okabe-Ito palette:
 | grey ring `○` | not started | no prompt yet |
 | grey ring `?` | silent | no heartbeat and no event for 90 seconds; the session may be gone (never shown for a session waiting on you, since an open prompt hides the status line and stops the heartbeat) |
 | grey ring `–` | ended | the session ended; it leaves after 10 minutes |
+| grey ring `–` | ended · gone | the session's Claude process is gone (a reboot or `wsl --shutdown`); it leaves after 10 minutes |
+
+On a card, an ended or error pill names its reason: "ended · exited",
+"ended · gone", "error · rate limit".
 
 Sessions that need you come first, the longest wait leading, then errors,
 work in progress, finished work, and the rest. A session that starts needing
@@ -325,19 +334,79 @@ shows its age, in the portrait's tooltip and on its card. A ring around each
 badge keeps it at 3:1 contrast against the strip's backdrop.
 
 Click a portrait to open the card wall at that session. It is an ordinary
-window, made on the first click and only hidden after that. Each card shows
-the session's face and name, where it works now (repo, worktree, branch) and
-the other repos it touched, its status with the reason and age, and the last
-prompt (`>`) and reply (`<`), two lines each with the full text on hover.
+window, made on the first click and only hidden after that. A summary bar
+counts the sessions that need you, work, are done, and are idle or ended, with
+an error count only when one exists. Each card shows:
 
-**Jump to terminal** selects the Windows Terminal tab whose title, after its
-status glyph, is exactly the session's name, and brings its window to the
-front. If Windows keeps the focus, the tab's taskbar button flashes instead.
-With no such tab, or more than one, it says so and does nothing. When Windows
-Terminal hides its tabs (full screen or focus mode), it says that instead.
-A tab renamed in Windows Terminal (Rename tab) keeps that name and ignores
-Claude Code's title, so Jump cannot find it. Name the session with `/rename`
-inside Claude Code instead: the tab and the card both take that name.
+- the session's face in a ring that fills, while it works, with the time since
+  its last activity (its file's last change) over 600 seconds, and while it
+  needs you with the time since it asked over 1800 seconds: the same limits
+  that turn a card to "working?" and "needs you?";
+- a status pill, top right, with the badge, label and age, and the reason on
+  an ended or error card;
+- the session's name, where it works now (repo, worktree, branch chip) and the
+  other repos it touched;
+- for a session that needs you, a line saying what it waits for;
+- the last prompt in a quoted block and the full reply under it.
+
+A left edge in the status tone marks each card, and a needs-you card adds an
+amber border. Ended, silent and not-started cards are dimmer. The grid uses
+columns at least 420 px wide: four at 1920 px, two at 1280, one at 800.
+
+**Open terminal** (Jump) brings the session's terminal to the front. For a
+session started with **+ New session**, it finds the session's tmux window by
+pane id and checks the Claude process is still in that pane, selects the
+window, then selects the Windows Terminal tab titled exactly "klepsydra
+sessions", the fixed title of the fleet tab; a hand-opened session of that name,
+whose title starts with a status glyph, is not it. If the pane now holds
+another session, or a launch is already running, the card says so and no tab
+is selected. If no tab matches, the window is still selected and the card
+says "Selected the session's tmux window."; hidden tabs, two matching tabs and
+a UI Automation failure are reported as they are. If Windows keeps the focus,
+the tab's taskbar button flashes instead. A session in tmux opens this way
+before it has a name.
+
+When Open terminal is off, its reason ("session ended", "no session name
+yet") shows as small text beside it.
+
+For a tab opened by hand, Jump selects the tab whose title, after its status
+glyph, is exactly the session's name. With no such tab, or more than one, it
+says so and does nothing. When Windows Terminal hides its tabs (full screen or
+focus mode), it says that instead. A tab renamed in Windows Terminal (Rename
+tab) keeps that name and ignores Claude Code's title, so Jump cannot find it.
+Rename the tab by hand to exactly the session's name (right-click the tab,
+Rename tab), or start the session from **+ New session**, which needs no tab
+title.
+
+**Clear** on an ended or silent card removes it now. A session that is still
+running brings its card back at its next event, without its start time or the
+repos it touched.
+
+### Starting sessions
+
+**+ New session**, in the wall's summary bar, starts `claude` in `launch_dir`
+as a window of the tmux session `fleet` on the socket `klepsydra`. The first
+click opens a Windows Terminal window named `fleet` with one tab. Each later
+click adds a tmux window to that tab. Closing the tab leaves the sessions
+running, and the next **+** or Jump reattaches. The tab attaches to the tmux
+server by its socket path.
+
+On a cold WSL the tab can take longer than the 5 seconds the launcher waits
+for it. The note then says "Started a session in DIR. The terminal tab has not
+attached yet.", and for 30 seconds another **+** or Jump opens no second tab.
+A click waits up to 45 seconds for WSL. Past that the note says "WSL did not
+answer within 45 seconds. The session may still be starting; check the
+terminal before clicking again."
+
+`launch_dir` and `launch_distro` are keys in `prefs.json`, in the app data dir.
+`launch_dir` defaults to `~`. `launch_distro` defaults to WSL's default
+distro. tmux loads `~/.tmux.conf` first, then `~/.claude/klepsydra-tmux.conf`,
+which names each window after its Claude session and keeps a window open when
+`claude` exits with an error. This is the one place the overlay starts a
+process: `wsl.exe`, from a click, one call at a time.
+
+To see the wall without sessions, serve the repo root (for example
+`python3 -m http.server`) and open `/src/wall.html?demo`.
 
 A session's face follows its keryx voice, so it stays the same while the
 session moves between repos. Ten voices are cast as the kourai-khryseai
@@ -437,7 +506,8 @@ previous file alone rather than overwriting it with blanks.
 
 ```bash
 bash statusline/test_statusline.sh       # usage hook and heartbeat, against recorded payloads
-bash hooks/test_fleet.sh                 # fleet hook: states, where, identity, pruning, settings
+bash hooks/test_fleet.sh                 # fleet hook: states, where, identity, pruning, gone, settings
+bash hooks/test_launch.sh                # launcher: new, jump, tab reuse, against a private tmux socket
 bash scripts/test_measure_memory.sh      # the release memory check
 node --test src/*.test.js                # ramp, countdown, reconciliation, fleet model, faces, guards
 (cd src-tauri && cargo test -p klepsydra-fleet)   # fleet reader
@@ -497,12 +567,20 @@ A release ships only when all three hold:
       needs you: it keeps needing you while its prompt is open (step 4) and
       reads "needs you?" after 30 minutes with no word.
    6. Click each portrait: the wall opens on that session's card. Press
-      **Jump to terminal** on the approve-Bash card: its tab comes to the
-      front, or its taskbar button flashes. Rename a session to another
-      session's name and press Jump again: it says two tabs match and does
-      nothing. Move the wall, quit klepsydra from the tray, start it again and
+      **Open terminal** on the approve-Bash card: its tab comes to the
+      front, or its taskbar button flashes. Rename a hand-opened session to
+      another session's name and press Jump again: it says two tabs match and
+      does nothing. Move the wall, quit klepsydra from the tray, start it again and
       open the wall: it opens where you left it.
-   7. Restore your settings:
+   7. Starting sessions, with `klepsydra-launch.sh` and `klepsydra-tmux.conf`
+      in `~/.claude/`:
+      - Press **+ New session** three times: one tab, three windows.
+      - Press **Open terminal** on each card: each hops to its own window.
+      - Close the tab, then press **+**: the tab reattaches and adds a window.
+      - Press **Clear** on an ended card: it goes.
+      - Run `wsl --shutdown` and start klepsydra and a session again: the old
+        cards read "ended · gone".
+   8. Restore your settings:
       `mv ~/.claude/settings.json.bak-fleet ~/.claude/settings.json`
 3. Memory. Right after starting klepsydra, run
    `bash scripts/measure-memory.sh run /tmp/klepsydra-memory.log` in a WSL

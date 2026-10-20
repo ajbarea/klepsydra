@@ -65,9 +65,6 @@ export function statusParts(s, nowMs, age = shortAge) {
   return [statusOf(s.status).label, s.reason, a].filter(Boolean);
 }
 
-/** "needs you \u00b7 approve Bash \u00b7 2m" */
-export const statusLine = (s, nowMs) => statusParts(s, nowMs).join(" \u00b7 ");
-
 /** "am_fenrir" is "Fenrir"; a blend "af_bella(0.7)+af_heart(0.3)" is "Bella and Heart". */
 export function voiceName(voice) {
   return String(voice)
@@ -132,6 +129,16 @@ export function startedNeeding(before, sessions) {
   );
 }
 
+/** True when `after` is not the same ids in the same order as `before`. */
+export const orderChanged = (before, after) =>
+  before.length !== after.length || before.some((id, i) => id !== after[i]);
+
+/** Slide only a snapshot that reorders cards already on the wall; never the first paint or a tick. */
+export const shouldSlide = (was, next, snapshot) => Boolean(snapshot) && was.length > 0 && orderChanged(was, next);
+
+/** The card's view-transition name, or "" unless the id is uuid-shaped. */
+export const transitionName = (id) => (/^[0-9a-f-]{36}$/i.test(id) ? `card-${id}` : "");
+
 /** What the wall's live region says about changes since `before`; nothing on the first look. */
 export function announcements(before, sessions, cast, nowMs = Date.now()) {
   if (!before) return [];
@@ -145,9 +152,6 @@ export function announcements(before, sessions, cast, nowMs = Date.now()) {
         .join(", ");
     });
 }
-
-/** "klepsydra \u00b7 fleet \u00b7 feat/fleet-visualizer" */
-export const whereText = (w) => (w ? [w.repo, w.worktree, w.branch].filter(Boolean).join(" \u00b7 ") : "");
 
 /** "updated 7m ago" once the newest field is over five minutes old. */
 export function updatedText(s, nowMs) {
@@ -188,35 +192,82 @@ export function stripItems(sessions, cast, nowMs, before) {
   });
 }
 
-/** Whether the card can jump to the session's terminal, and why not. */
+/** Whether the card can jump to the session's terminal, and why not: by its name, or by its tmux pane and Claude process. */
 function jumpable(s) {
   if (s.status === "ended") return { enabled: false, why: "session ended" };
-  if (!s.name) return { enabled: false, why: "no session name yet" };
+  if (!s.name && !(s.tmux && s.claude && s.distro)) return { enabled: false, why: "no session name yet" };
   return { enabled: true, why: null };
+}
+
+// The arc fills over the reader's thresholds (view.rs QUIET_AFTER, WAITING_DOUBT_AFTER).
+export const WORKING_FULL_S = 600;
+export const WAITING_FULL_S = 1800;
+
+/** How full a card's arc is, 0..1: a working session's time since its last activity, or a waiting one's since it asked, against the reader's threshold. */
+export function arcFraction(s, nowMs) {
+  if (s.status === "working" && isQuiet(s)) return 1;
+  const full = { working: WORKING_FULL_S, needs_you: WAITING_FULL_S }[s.status];
+  const age = ageMs(s.status === "working" ? s.active_at : s.status_at, nowMs);
+  if (!full || !Number.isFinite(age)) return 0;
+  return Math.min(1, Math.max(0, age / 1000 / full));
+}
+
+/** The needs-you line: what the session waits for. */
+export function askText(reason) {
+  if (reason === "question") return "Waiting for your answer";
+  if (reason === "approve plan") return "Waiting for you to approve the plan";
+  return reason ? `Waiting for you to ${reason}` : "Waiting for you";
+}
+
+const DIM = new Set(["new", "silent", "ended"]);
+// A pill that names its reason: "ended · gone", "error · rate limit".
+const PILL_REASON = new Set(["ended", "error"]);
+
+/** Counts for the summary bar. */
+export function tally(sessions) {
+  const t = { needs: 0, working: 0, done: 0, error: 0, idle: 0 };
+  for (const s of sessions) {
+    if (s.status === "needs_you") t.needs++;
+    else if (s.status === "working") t.working++;
+    else if (s.status === "done") t.done++;
+    else if (s.status === "error") t.error++;
+    else t.idle++;
+  }
+  return t;
 }
 
 /** One card on the wall. */
 export function card(s, cast, nowMs) {
   const who = identity(s, cast);
+  const st = statusOf(s.status, isQuiet(s));
   return {
     id: s.session_id,
+    task: s.name || "No session name yet",
+    tone: st.tone,
+    pill: {
+      label: PILL_REASON.has(s.status) && s.reason ? `${st.label} \u00b7 ${s.reason}` : st.label,
+      age: statusParts(s, nowMs).at(-1),
+    },
+    ask: s.status === "needs_you" ? askText(s.reason) : null,
+    arc: arcFraction(s, nowMs),
+    dim: DIM.has(s.status),
+    place: s.where ? { repo: s.where.repo, worktree: s.where.worktree ?? null, branch: s.where.branch ?? null } : null,
+    also: [...new Set((s.touched ?? []).map((t) => t.repo))].filter((r) => r && r !== s.where?.repo).map((r) => `also in ${r}`),
+    voiceTitle: who.voice ? `Voice: ${who.voice}` : null,
     name: who.name,
-    voice: who.voice,
     session: s.name ?? null,
     face: who.face,
     face2x: who.face2x,
     status: s.status,
     quiet: isQuiet(s),
     badge: badgeSvg(s.status, isQuiet(s)),
-    statusLine: statusLine(s, nowMs),
-    where: whereText(s.where),
-    touched: (s.touched ?? []).map((t) => `${t.repo} \u00b7 ${shortAge(ageMs(t.at, nowMs))}`),
     prompt: s.prompt?.text ?? null,
     reply: s.reply?.text ?? null,
     error: s.status === "error" ? s.error ?? null : null,
-    updated: updatedText(s, nowMs),
+    updated: s.status === "ended" ? null : updatedText(s, nowMs), // the pill's age says it
     jump: jumpable(s),
-    jumpLabel: `Jump to terminal, ${who.name}`,
+    clear: s.status === "ended" || s.status === "silent",
+    jumpLabel: `Open terminal, ${who.name}`,
     label: accessibleName(s, cast, nowMs),
   };
 }

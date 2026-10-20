@@ -5,7 +5,7 @@ use std::collections::HashMap;
 
 use serde::Serialize;
 
-use crate::session::{Place, Said, SessionFile, State, Touched};
+use crate::session::{Claude, Place, Said, SessionFile, State, Tmux, Touched};
 
 /// No heartbeat and no event for this long, and a session is silent: three
 /// missed 30 s statusline refreshes.
@@ -58,6 +58,9 @@ pub struct View {
     pub status: Status,
     pub reason: Option<String>,
     pub status_at: i64,
+    /// When the file last changed: the last hook activity, which moves while
+    /// the state stays working.
+    pub active_at: i64,
     #[serde(rename = "where")]
     pub place: Option<Place>,
     pub touched: Vec<Touched>,
@@ -69,6 +72,9 @@ pub struct View {
     /// `QUIET_AFTER`; the last word of any kind, when it needs AJ and has had
     /// none for `WAITING_DOUBT_AFTER`.
     pub quiet_since: Option<i64>,
+    pub tmux: Option<Tmux>,
+    pub distro: Option<String>,
+    pub claude: Option<Claude>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, PartialEq, Eq)]
@@ -137,8 +143,9 @@ pub fn view(entry: &Entry, now: i64) -> Option<View> {
     .max()
     .unwrap_or(state_at);
     // The file's own time: its skew-corrected written_at equals it within 2 s.
+    let active_at = entry.modified;
     let quiet_since = match status {
-        Status::Working => Some(entry.modified).filter(|m| now.saturating_sub(*m) > QUIET_AFTER),
+        Status::Working => Some(active_at).filter(|m| now.saturating_sub(*m) > QUIET_AFTER),
         Status::NeedsYou => {
             Some(last_word).filter(|w| now.saturating_sub(*w) > WAITING_DOUBT_AFTER)
         }
@@ -153,6 +160,7 @@ pub fn view(entry: &Entry, now: i64) -> Option<View> {
         status,
         reason,
         status_at,
+        active_at,
         place,
         touched: f
             .touched
@@ -167,6 +175,9 @@ pub fn view(entry: &Entry, now: i64) -> Option<View> {
         error: f.error.clone(),
         updated_at,
         quiet_since,
+        tmux: f.tmux.clone(),
+        distro: f.host.as_ref().and_then(|h| h.distro.clone()),
+        claude: f.claude.clone(),
     })
 }
 
@@ -239,7 +250,7 @@ pub fn snapshot(entries: &[Entry], now: i64) -> Snapshot {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::session::Ended;
+    use crate::session::{Ended, Host};
 
     const NOW: i64 = 1_792_353_000;
 
@@ -261,6 +272,9 @@ mod tests {
             error: None,
             ended: None,
             written_at: Some(state_at),
+            tmux: None,
+            host: None,
+            claude: None,
         }
     }
 
@@ -275,6 +289,35 @@ mod tests {
 
     fn ids(s: &Snapshot) -> Vec<&str> {
         s.sessions.iter().map(|v| v.session_id.as_str()).collect()
+    }
+
+    #[test]
+    fn a_view_carries_its_tmux_pane_and_distro() {
+        let mut e = entry("a", State::Working, NOW - 5, NOW - 5);
+        e.file.tmux = Some(Tmux {
+            socket: "/tmp/tmux-1001/klepsydra".into(),
+            pane: "%3".into(),
+        });
+        e.file.host = Some(Host {
+            boot: "b".into(),
+            distro: Some("Ubuntu".into()),
+        });
+        let v = view(&e, NOW).unwrap();
+        assert_eq!(v.tmux.as_ref().map(|t| t.pane.as_str()), Some("%3"));
+        assert_eq!(v.distro.as_deref(), Some("Ubuntu"));
+        assert_eq!(v.claude, None);
+        e.file.claude = Some(Claude {
+            pid: 2231,
+            start: 8_717_628,
+        });
+        let v = view(&e, NOW).unwrap();
+        assert_eq!(v.claude.map(|c| (c.pid, c.start)), Some((2231, 8_717_628)));
+    }
+
+    #[test]
+    fn a_view_without_tmux_has_none() {
+        let v = view(&entry("a", State::Working, NOW - 5, NOW - 5), NOW).unwrap();
+        assert_eq!((v.tmux, v.distro), (None, None));
     }
 
     #[test]
@@ -475,6 +518,24 @@ mod tests {
         e.file.written_at = Some(modified);
         e.modified = modified;
         view(&e, NOW).unwrap().quiet_since
+    }
+
+    #[test]
+    fn active_at_is_the_files_own_time_and_is_sent() {
+        // Writer clock an hour ahead and the state unchanged for 20 minutes:
+        // the last activity is the file's own time, by this machine's clock.
+        let mut e = entry("a", State::Working, NOW + 3600 - 1200, NOW - 5);
+        e.file.written_at = Some(NOW + 3600 - 30);
+        e.modified = NOW - 30;
+        let v = view(&e, NOW).unwrap();
+        assert_eq!(v.active_at, NOW - 30);
+        assert_eq!(
+            v.status_at,
+            NOW - 1200,
+            "status_at stays when the state began"
+        );
+        let json = serde_json::to_value(snapshot(&[e], NOW)).unwrap();
+        assert_eq!(json["sessions"][0]["active_at"], NOW - 30);
     }
 
     #[test]

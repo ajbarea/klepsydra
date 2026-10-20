@@ -1,0 +1,241 @@
+{
+ "at": 1792500000,
+ "sessions": [
+  {
+   "session_id": "demo-1-am_michael",
+   "name": "Fleet terminal visibility",
+   "launch_dir": "/home/aj/ajsoftworks",
+   "voice": "am_michael",
+   "status": "needs_you",
+   "reason": "approve Bash",
+   "status_at": 1792499880,
+   "active_at": 1792499880,
+   "where": {
+    "repo": "klepsydra",
+    "worktree": "fleet-launch",
+    "branch": "feat/fleet-launch",
+    "at": 1792497000
+   },
+   "touched": [
+    {
+     "repo": "ajsoftworks",
+     "at": 1792496400
+    }
+   ],
+   "prompt": {
+    "text": "it helps too because i have issues with my open terminals renaming them where as if YOU launch the terminal within the tool it can name the tab and keep it",
+    "at": 1792499820
+   },
+   "reply": {
+    "text": "Tasks 1 and 2 are done. Sending both to an independent reviewer with that concern attached.",
+    "at": 1792499850
+   },
+   "error": null,
+   "updated_at": 1792499880,
+   "quiet_since": null,
+   "tmux": null,
+   "distro": "Ubuntu"
+  },
+  {
+   "session_id": "demo-2-af_bella",
+   "name": "SCADS tech report figures",
+   "launch_dir": "/home/aj/ajsoftworks",
+   "voice": "af_bella",
+   "status": "working",
+   "reason": null,
+   "status_at": 1792499760,
+   "active_at": 1792499940,
+   "where": {
+    "repo": "papers",
+    "worktree": "scads-report",
+    "branch": "docs/scads-2026",
+    "at": 1792497000
+   },
+   "touched": [],
+   "prompt": {
+    "text": "regenerate figure 3 with the median and range",
+    "at": 1792499910
+   },
+   "reply": {
+    "text": "Re-running the sweep over 5 seeds before redrawing the bars.",
+    "at": 1792499940
+   },
+   "error": null,
+   "updated_at": 1792499940,
+   "quiet_since": null,
+   "tmux": null,
+   "distro": "Ubuntu"
+  },
+  {
+   "session_id": "demo-3-af_sarah",
+   "name": "RQ review brief",
+   "launch_dir": "/home/aj/ajsoftworks",
+   "voice": "af_sarah",
+   "status": "working",
+   "reason": null,
+   "status_at": 1792499160,
+   "active_at": 1792499280,
+   "where": {
+    "repo": "ideas",
+    "worktree": null,
+    "branch": "main",
+    "at": 1792497000
+   },
+   "touched": [],
+   "prompt": {
+    "text": "read the FA deck and list the open research questions",
+    "at": 1792499730
+   },
+   "reply": {
+    "text": "Reading slides 4 to 11.",
+    "at": 1792499760
+   },
+   "error": null,
+   "updated_at": 1792499760,
+   "quiet_since": 1792499280,
+   "tmux": null,
+   "distro": "Ubuntu"
+  },
+  {
+   "session_id": "demo-4-bf_emma",
+   "name": "keryx voice pool",
+   "launch_dir": "/home/aj/ajsoftworks",
+   "voice": "bf_emma",
+   "status": "working",
+   "reason": null,
+   "status_at": 1792499940,
+   "active_at": 1792499980,
+   "where": {
+    "repo": "keryx",
+    "worktree": "kourai-first",
+    "branch": "feat/kourai-first",
+    "at": 1792497000
+   },
+   "touched": [],
+   "prompt": {
+    "text": "put the ten kourai voices first in the pool",
+    "at": 1792499950
+   },
+   "reply": {
+    "text": "Editing src/keryx/voices.py.",
+    "at": 1792499980
+   },
+   "error": null,
+   "updated_at": 1792499980,
+   "quiet_since": null,
+   "tmux": null,
+   "distro": "Ubuntu"
+  },
+  {
+   "session_id": "demo-5-bf_isabella",
+   "name": "Memory hygiene pass",
+   "launch_dir": "/home/aj/ajsoftworks",
+   "voice": "bf_isabella",
+   "status": "done",
+   "reason": null,
+   "status_at": 1792499940,
+   "active_at": 1792499940,
+   "where": {
+    "repo": "claude-prefs",
+    "worktree": null,
+    "branch": "main",
+    "at": 1792497000
+   },
+   "touched": [],
+   "prompt": {
+    "text": "sync memories to the repo",
+    "at": 1792499910
+   },
+   "reply": {
+    "text": "Synced 6 memories; the secret scan found 0 matches. Pushed a3f19c2.",
+    "at": 1792499940
+   },
+   "error": null,
+   "updated_at": 1792499940,
+   "quiet_since": null,
+   "tmux": null,
+   "distro": "Ubuntu"
+  },
+  {
+   "session_id": "demo-6-af_nova",
+   "name": "Citation check",
+   "launch_dir": "/home/aj/ajsoftworks",
+   "voice": "af_nova",
+   "status": "error",
+   "reason": "overloaded",
+   "status_at": 1792499820,
+   "active_at": 1792499820,
+   "where": {
+    "repo": "papers",
+    "worktree": null,
+    "branch": "main",
+    "at": 1792497000
+   },
+   "touched": [],
+   "prompt": {
+    "text": "verify every bib entry in the FA paper",
+    "at": 1792499770
+   },
+   "reply": null,
+   "error": "API error: overloaded (529). The turn stopped.",
+   "updated_at": 1792499820,
+   "quiet_since": null,
+   "tmux": null,
+   "distro": "Ubuntu"
+  },
+  {
+   "session_id": "demo-7-af_aoede",
+   "name": null,
+   "launch_dir": "/home/aj/ajsoftworks",
+   "voice": "af_aoede",
+   "status": "new",
+   "reason": null,
+   "status_at": 1792499980,
+   "active_at": 1792499980,
+   "where": {
+    "repo": "ajsoftworks",
+    "worktree": null,
+    "branch": null,
+    "at": 1792499980
+   },
+   "touched": [],
+   "prompt": null,
+   "reply": null,
+   "error": null,
+   "updated_at": 1792499980,
+   "quiet_since": null,
+   "tmux": null,
+   "distro": "Ubuntu"
+  },
+  {
+   "session_id": "demo-8-am_puck",
+   "name": "Deck refresh",
+   "launch_dir": "/home/aj/ajsoftworks",
+   "voice": "am_puck",
+   "status": "ended",
+   "reason": "closed",
+   "status_at": 1792499640,
+   "active_at": 1792499640,
+   "where": {
+    "repo": "talks",
+    "worktree": null,
+    "branch": "main",
+    "at": 1792497000
+   },
+   "touched": [],
+   "prompt": {
+    "text": "rebuild the FA deck",
+    "at": 1792499570
+   },
+   "reply": {
+    "text": "Deck rebuilt and published.",
+    "at": 1792499600
+   },
+   "error": null,
+   "updated_at": 1792499640,
+   "quiet_since": null,
+   "tmux": null,
+   "distro": "Ubuntu"
+  }
+ ]
+}

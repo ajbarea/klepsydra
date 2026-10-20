@@ -53,6 +53,12 @@ impl<S: Sink> Hub<S> {
         subs.retain(|(_, s)| s.send(snapshot.clone()));
     }
 
+    /// `f` of the last snapshot published, if any, read in place under the
+    /// lock, so a click clones only what it needs.
+    pub fn with_latest<R>(&self, f: impl FnOnce(&Value) -> R) -> Option<R> {
+        lock(&self.last).and_then(|l| l.as_ref().map(f))
+    }
+
     /// Window `label` follows the fleet from now on, starting with the latest
     /// snapshot and any card waiting to be shown there. A window that
     /// subscribes again (a reload) replaces its old sink.
@@ -127,6 +133,16 @@ mod tests {
 
     fn snap(n: u64) -> Value {
         json!({ "sessions": [], "n": n })
+    }
+
+    #[test]
+    fn with_latest_reads_the_last_published_snapshot() {
+        let hub: Hub<Probe> = Hub::default();
+        assert_eq!(hub.with_latest(|v| v["n"].as_u64()), None);
+        hub.publish(snap(1));
+        hub.publish(snap(2));
+        assert_eq!(hub.with_latest(|v| v["n"].as_u64()), Some(Some(2)));
+        assert_eq!(hub.with_latest(|v| v.clone()), Some(snap(2)));
     }
 
     #[test]

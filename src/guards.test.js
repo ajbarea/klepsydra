@@ -25,7 +25,7 @@ const stripCssComments = (css) => css.replace(/\/\*[\s\S]*?\*\//g, "");
 const RUST = [...filesUnder("src-tauri/src", [".rs"]), ...filesUnder("src-tauri/fleet/src", [".rs"])];
 const FRONTEND = filesUnder("src", [".js", ".mjs", ".html"]).filter((f) => !f.endsWith(".test.js"));
 const CSS = filesUnder("src", [".css"]);
-const SHELL = [...filesUnder("hooks", [".sh"]), ...filesUnder("statusline", [".sh"])];
+const SHELL = [...filesUnder("hooks", [".sh", ".conf"]), ...filesUnder("statusline", [".sh"])];
 const MANIFESTS = ["src-tauri/Cargo.toml", "src-tauri/fleet/Cargo.toml", "package.json"].filter((f) =>
   existsSync(join(ROOT, f)),
 );
@@ -175,8 +175,47 @@ test("the guards read real sources", () => {
   assert.ok(CSS.includes("src/style.css"), "CSS not found");
 });
 
-test("nothing starts a process", () => {
-  for (const f of [...RUST, ...FRONTEND, ...MANIFESTS, ...CONFIG]) assert.deepEqual(spawns(read(f)), [], f);
+// The launcher is the one file allowed to start a process and name wsl.
+const LAUNCHER = "src-tauri/src/launch.rs";
+
+/** Ways the launcher could hand wsl.exe a shell, or hide which program it starts. */
+const launcherHazards = (text) =>
+  [/"--"/, /"-c"/, /^\s*use\b[^;]*\bas\s+\w+\s*;/m].filter((re) => re.test(text)).map(String);
+
+test("only the launcher starts a process", () => {
+  assert.ok(RUST.includes(LAUNCHER), `${LAUNCHER} not found`);
+  for (const f of [...RUST, ...FRONTEND, ...MANIFESTS, ...CONFIG].filter((f) => f !== LAUNCHER)) {
+    assert.deepEqual(spawns(read(f)), [], f);
+  }
+});
+
+test("the launcher starts only wsl.exe, from its fixed path, without a window", () => {
+  const src = read(LAUNCHER);
+  assert.deepEqual([...src.matchAll(/Command::new\(([^)]*)\)/g)].map((m) => m[1].trim()), ["WSL_EXE"]);
+  assert.match(src, /pub const WSL_EXE: &str = r"C:\\Windows\\System32\\wsl\.exe";/);
+  assert.match(src, /creation_flags\(CREATE_NO_WINDOW\)/);
+  assert.deepEqual(launcherHazards(src), []);
+});
+
+test("the script and the app name the fleet tab alike", () => {
+  const rust = read(LAUNCHER).match(/pub const FLEET_TAB: &str = "([^"]+)";/);
+  const sh = read("hooks/klepsydra-launch.sh").match(/^TAB_TITLE="([^"]+)"/m);
+  assert.ok(rust && sh, "tab title constants not found");
+  assert.equal(rust[1], sh[1]);
+});
+
+test("the script and the app name the fleet socket alike", () => {
+  const rust = read(LAUNCHER).match(/pub const FLEET_SOCKET: &str = "([^"]+)";/);
+  const sh = read("hooks/klepsydra-launch.sh").match(/^SOCKET_NAME=\$\{KLEPSYDRA_TMUX_SOCKET:-([^}]+)\}/m);
+  assert.ok(rust && sh, "socket name constants not found");
+  assert.equal(rust[1], sh[1]);
+});
+
+test("the launcher check catches a shell hop or an aliased Command", () => {
+  for (const planted of ['.args(["-c", cmd])', "use std::process::Command as C;", 'a = ["--", "sh"];']) {
+    assert.notDeepEqual(launcherHazards(planted), [], planted);
+  }
+  assert.deepEqual(launcherHazards('a = ["-e", "bash"]; use std::process::Command;'), []);
 });
 
 test("the spawn check catches each way of starting one", () => {
@@ -193,8 +232,10 @@ test("the spawn check catches each way of starting one", () => {
   }
 });
 
-test("nothing names wsl", () => {
-  for (const f of [...RUST, ...FRONTEND, ...CONFIG]) assert.equal(mentionsWsl(read(f)), false, f);
+test("nothing but the launcher names wsl", () => {
+  for (const f of [...RUST, ...FRONTEND, ...CONFIG].filter((f) => f !== LAUNCHER)) {
+    assert.equal(mentionsWsl(read(f)), false, f);
+  }
   assert.equal(mentionsWsl('let x = "C:\\\\Windows\\\\System32\\\\wsl.exe";'), true);
 });
 
@@ -312,7 +353,7 @@ test("nothing but the configured main window is always on top", () => {
   assert.deepEqual(JSON.parse(read("src-tauri/tauri.conf.json")).app.windows.map((w) => w.label), ["main"]);
 });
 
-test("harness input never ships", () => {
+test("harness input never ships", async () => {
   const gitignore = read(".gitignore");
   const windows = read("scripts/build-windows.sh");
   const linux = read("scripts/build-linux.sh");
@@ -321,6 +362,14 @@ test("harness input never ships", () => {
     assert.ok(windows.includes(`--exclude '${f}'`), `build-windows.sh: ${f}`);
     assert.ok(linux.includes(f), `build-linux.sh: ${f}`);
   }
+  // The ?demo sample lives outside frontendDist, so neither build can bundle it.
+  globalThis.window ??= {};
+  const dist = join(ROOT, "src-tauri", JSON.parse(read("src-tauri/tauri.conf.json")).build.frontendDist);
+  const demo = (await import("./fleet/feed.js")).devSnapshotUrl(false, "?demo");
+  const onDisk = join(ROOT, "src", demo);
+  assert.ok(existsSync(onDisk), `${demo} exists`);
+  assert.ok(relative(dist, onDisk).startsWith(".."), `${demo} is outside ${dist}`);
+  assert.deepEqual(filesUnder("src", [".json"]).filter((f) => /demo/.test(f)), [], "no demo snapshot under src/");
 });
 
 test("the hooks make no sound", () => {
@@ -390,7 +439,7 @@ test("the reach check reports a planted unscanned file and excuses a test file",
       ...filesUnder("src-tauri/fleet/src", [".rs"], root),
       ...filesUnder("src", [".js", ".mjs", ".html"], root).filter((f) => !f.endsWith(".test.js")),
       ...filesUnder("src", [".css"], root),
-      ...filesUnder("hooks", [".sh"], root),
+      ...filesUnder("hooks", [".sh", ".conf"], root),
       ...filesUnder("statusline", [".sh"], root),
     ];
   put("src-tauri/fleet/src/ok.rs");
@@ -404,4 +453,63 @@ test("the reach check reports a planted unscanned file and excuses a test file",
   const none = unreached(root, []);
   for (const f of ["src-tauri/fleet/src/zz.rs", "src/fleet/zz.mjs", "src/zz.html", "src-tauri/fleet/src/ok.rs"]) assert.ok(none.includes(f), f);
   assert.ok(!none.some((f) => f.endsWith(".test.js") || f.includes("/target/") || f.includes("fixtures/")));
+});
+
+test("the wall's Jump passes the session id along with its name", () => {
+  const src = read("src/fleet/wall.js");
+  assert.match(src, /invoke\("jump_to_terminal", \{ id: button\.dataset\.id, name: button\.dataset\.name \}\)/);
+});
+
+test("the wall has a New session button that calls the launcher", () => {
+  assert.match(read("src/wall.html"), /<button type="button" id="new-session">\+ New session<\/button>/);
+  assert.match(read("src/wall.html"), /<span id="new-note" role="status"><\/span>/);
+  assert.match(read("src/fleet/wall.js"), /invoke\("launch_session"\)/);
+  assert.match(read("src/fleet/wall.js"), /newButton\.hidden = !inTauri/);
+  const html = read("src/wall.html");
+  assert.ok(html.indexOf("</div>", html.indexOf('class="bar"')) < html.indexOf('<main id="wall"'));
+
+  assert.match(html, /<div class="tally" role="group" aria-label="Session counts">/);
+  assert.match(html, />Open terminal</);
+});
+
+test("the demo feed is never reachable inside the app", async () => {
+  globalThis.window ??= {};
+  const { devSnapshotUrl } = await import("./fleet/feed.js");
+  for (const search of ["?demo", "?demo=1&focus=x", ""]) assert.equal(devSnapshotUrl(true, search), null, search);
+  assert.equal(devSnapshotUrl(false, "?demo"), "../scripts/fixtures/fleet-demo.json");
+  assert.equal(devSnapshotUrl(false, "?focus=x"), "./dev-fleet.json");
+  const feed = read("src/fleet/feed.js");
+  assert.equal(feed.match(/fleet-demo\.json/g).length, 1, "one way to the demo");
+  assert.match(feed, /devSnapshotUrl\(inTauri, location\.search\)/);
+});
+
+test("wall buttons disable by aria-disabled, never by the disabled property, and paint leaves the note alone", () => {
+  const src = read("src/fleet/wall.js");
+  assert.doesNotMatch(src, /\.disabled\s*=/);
+  const paint = src.slice(src.indexOf("function paint("), src.indexOf("\nfunction render("));
+  assert.ok(paint.length > 100, "paint found");
+  assert.doesNotMatch(paint, /note/);
+});
+
+test("Open terminal's disabled reason shows as text in the footer, apart from the note", () => {
+  const html = read("src/wall.html");
+  const footer = html.slice(html.indexOf('<footer class="actions">'), html.indexOf("</footer>"));
+  assert.match(footer, /<span class="why"( [^>]*)?><\/span>/, "a footer element of its own");
+  assert.doesNotMatch(footer, /class="note why"|class="why note"/);
+  const src = read("src/fleet/wall.js");
+  const paint = src.slice(src.indexOf("function paint("), src.indexOf("\nfunction render("));
+  assert.match(paint, /show\(el\.querySelector\("\.why"\), c\.jump\.why\)/, "painted as text from the card");
+  assert.match(paint, /jump\.title = c\.jump\.why \?\? ""/, "the title stays");
+  assert.match(read("src/fleet/wall.css"), /\.actions \.why \{[^}]*font-size/);
+});
+
+test("the wall slides a reorder inside a feature-detected view transition, else updates directly", () => {
+  const src = read("src/fleet/wall.js");
+  assert.match(src, /matchMedia\("\(prefers-reduced-motion: reduce\)"\)\.matches/);
+  assert.match(src, /typeof document\.startViewTransition === "function"/);
+  assert.match(src, /document\.startViewTransition\(\(\) => sync\(\)\)/);
+  assert.match(src, /shouldSlide\(was,/);
+  assert.match(src, /style\.viewTransitionName = transitionName\(c\.id\)/);
+  assert.match(src, /started\.has\(el\.dataset\.key\) && !reducedMotion\(\)/, "no pulse class under reduced motion");
+  assert.match(src, /startedNeeding\(/);
 });

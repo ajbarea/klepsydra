@@ -38,8 +38,14 @@ jobs:
       # cover the shapes that would otherwise show a wrong status.
       - name: Fleet hook tests
         run: bash hooks/test_fleet.sh
+      - name: Launcher tests
+        run: |
+          command -v tmux >/dev/null || { sudo apt-get update && sudo apt-get install -y tmux; }
+          bash hooks/test_launch.sh
       - name: Release memory check tests
         run: bash scripts/test_measure_memory.sh
+      - name: Windows build stage check tests
+        run: bash scripts/test_build_windows.sh
       - name: Shell lint
         run: shellcheck hooks/*.sh statusline/*.sh scripts/*.sh
       # The install dir is writable only because the NSIS mode is currentUser;

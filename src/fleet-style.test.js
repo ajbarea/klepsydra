@@ -71,15 +71,38 @@ test("badges take their size from where they sit", () => {
   assert.doesNotMatch(badgeCss.replace(/\/\*[\s\S]*?\*\//g, ""), /\d+(\.\d+)?px/);
 });
 
-test("the wall fits three columns at 1920 px and reflows below", () => {
+test("the wall fits four columns at 1920 px and reflows below", () => {
   const wallCss = read("./fleet/wall.css");
   const px = (name) => parseFloat(token(wallCss, name));
   const tokens = { min: px("--card-min"), gap: px("--card-gap"), pad: px("--wall-pad") };
   const SCROLLBAR = 17;
-  assert.equal(columnsAt(1920 - SCROLLBAR, tokens), 3);
-  assert.equal(columnsAt(1920, tokens), 3);
+  assert.equal(columnsAt(1920 - SCROLLBAR, tokens), 4);
   assert.equal(columnsAt(1280 - SCROLLBAR, tokens), 2);
   assert.equal(columnsAt(800 - SCROLLBAR, tokens), 1);
+});
+
+test("the wall's text meets 4.5:1 on live and quiet cards", () => {
+  const css = read("./fleet/wall.css");
+  for (const bg of ["--card-bg", "--card-quiet"]) {
+    for (const fg of ["--text", "--text-dim", "--text-error", "--text-quiet"]) {
+      const r = contrast(token(css, fg), token(css, bg));
+      assert.ok(r >= 4.5, `${fg} on ${bg}: ${r.toFixed(2)}`);
+    }
+  }
+  assert.ok(contrast(token(css, "--tone-working"), token(css, "--card-bg")) >= 3, "working arc and edge");
+  assert.doesNotMatch(css.replace(/\/\*[\s\S]*?\*\//g, ""), /opacity:/, "dimming is by colour, so dimmed text keeps its contrast");
+});
+
+test("the arc and the dimming respect reduced motion and keep the face visible", () => {
+  const css = read("./fleet/wall.css");
+  assert.match(css, /@media \(prefers-reduced-motion: reduce\)/);
+  assert.match(css, /\.card\.dim \.face \{[^}]*filter:/);
+});
+
+test("a badge on the wall is ringed in its card's colour", () => {
+  const css = read("./fleet/wall.css");
+  assert.match(css, /\.card \{[^}]*--badge-ring: var\(--card-bg\)/);
+  assert.match(css, /\.card\.dim \{[^}]*--badge-ring: var\(--card-quiet\)/);
 });
 
 test("the wall's error text is readable on its card at 14 px", () => {
@@ -105,4 +128,38 @@ test("every set_size and set_grip call carries the strip", () => {
   const calls = [...read("./main.js").matchAll(/invoke\(\s*"(set_size|set_grip)"\s*,\s*\{([^}]*)\}/g)];
   assert.equal(calls.length, 2);
   for (const [, name, args] of calls) assert.match(args, /\bstrip\b/, name);
+});
+
+test("the focus ring is neutral, not the needs tone, and meets 3:1 on the wall and the card", () => {
+  const css = read("./fleet/wall.css");
+  const ring = token(css, "--card-focus");
+  assert.match(ring, /^#[0-9a-f]{6}$/i);
+  assert.notEqual(ring.toLowerCase(), token(badgeCss, "--badge-needs").toLowerCase(), "amber means needs you");
+  assert.ok(contrast(ring, token(css, "--wall-bg")) >= 3);
+  assert.ok(contrast(ring, token(css, "--card-bg")) >= 3);
+  assert.match(css, /button:focus-visible \{ outline: 2px solid var\(--card-focus\); outline-offset: 2px; \}/);
+});
+
+test("the needs pulse plays only where motion is allowed, once", () => {
+  const css = read("./fleet/wall.css");
+  const block = css.match(/@media \(prefers-reduced-motion: no-preference\) \{([\s\S]*?)\n\}/)?.[1] ?? "";
+  assert.match(block, /@keyframes card-pulse/);
+  assert.match(block, /\.card\.pulse \{[^}]*animation: card-pulse 1200ms ease-out 1;/);
+  assert.ok(!/@keyframes card-pulse/.test(css.replace(block, "")), "keyframes only inside no-preference");
+  assert.match(css, /prefers-reduced-motion: reduce\) \{[^}]*animation: none/);
+});
+
+test("the reorder slide is bounded, and cards keep their own transition names", () => {
+  const css = read("./fleet/wall.css");
+  assert.match(css, /::view-transition-group\(\*\)\s*\{[^}]*animation-duration:\s*\d+ms/);
+});
+
+test("a disabled button reads as off: no fill, a quieter border, a label still at 4.5:1", () => {
+  const css = read("./fleet/wall.css");
+  const rule = css.match(/button\[aria-disabled="true"\], #new-session\[aria-disabled="true"\] \{([^}]*)\}/)?.[1] ?? "";
+  // #new-session (1 id) outranks button[...] (1 type, 1 attr): the id form must be listed and come last.
+  assert.ok(css.indexOf('#new-session[aria-disabled="true"]') > css.indexOf("#new-session {"));
+  assert.match(rule, /background: transparent/);
+  assert.match(rule, /border-color: var\(--card-line\)/);
+  assert.ok(contrast(token(css, "--text-dim"), token(css, "--card-bg")) >= 4.5);
 });

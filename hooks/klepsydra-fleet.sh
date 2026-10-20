@@ -101,9 +101,10 @@ branch_of() { # gitdir
   esac
 }
 
-# Fields of /proc/<pid>/stat after the command name, into `stat`: [0] is the
-# state, [1] the parent pid, [19] the start time. The name sits in parentheses
-# and may itself contain spaces or ")".
+# --- proc stat: identical in hooks/klepsydra-fleet.sh and hooks/klepsydra-launch.sh ---
+# Fields of $PROC_ROOT/<pid>/stat after the command name, into the caller's
+# `stat`: [0] is the state, [1] the parent pid, [19] the start time (field 22).
+# The name sits in parentheses and may itself contain spaces or ")".
 proc_stat() { # pid
   local raw=""
   { IFS= read -r raw <"$PROC_ROOT/$1/stat"; } 2>/dev/null
@@ -111,6 +112,15 @@ proc_stat() { # pid
   read -r -a stat <<<"${raw##*") "}"
   (( ${#stat[@]} > 19 ))
 }
+
+# Whether `pid` runs with start time `start`: a zombie has exited, and a pid
+# with another start time is a later process.
+proc_is() { # pid start
+  local -a stat=()
+  [[ $1 =~ ^[0-9]+$ && $2 =~ ^[0-9]+$ ]] || return 1
+  proc_stat "$1" && [[ ${stat[0]} != Z && ${stat[19]} == "$2" ]]
+}
+# --- end proc stat ---
 
 # Whether `pid` is Claude Code: by name, or an npm install's
 # `node .../@anthropic-ai/claude-code/cli.js`, as keryx decides.
@@ -169,10 +179,52 @@ home_voice() { # source now
 # has exited, and a pid with another start time or another program is someone
 # else's.
 claude_alive() { # pid start
-  local -a stat=()
-  [[ $1 =~ ^[0-9]+$ && $2 =~ ^[0-9]+$ ]] || return 1
-  proc_stat "$1" || return 1
-  [[ ${stat[0]} != Z && ${stat[19]} == "$2" ]] && is_claude "$1"
+  proc_is "$1" "$2" && is_claude "$1"
+}
+
+# Sets host_boot (this kernel boot) and host_distro (this WSL distro), each
+# empty when unknown or malformed.
+BOOT_ID=${KLEPSYDRA_BOOT_ID:-/proc/sys/kernel/random/boot_id}
+host_facts() {
+  host_boot="" host_distro=${WSL_DISTRO_NAME:-}
+  { IFS= read -r host_boot <"$BOOT_ID"; } 2>/dev/null
+  [[ $host_boot =~ ^[0-9a-f-]{36}$ ]] || host_boot=""
+  [[ $host_distro =~ ^[A-Za-z0-9._-]{1,64}$ ]] || host_distro=""
+}
+
+# Sets tmux_socket and tmux_pane from the session's tmux, both empty outside
+# tmux or when either is malformed.
+tmux_facts() {
+  tmux_socket=${TMUX:-}
+  tmux_socket=${tmux_socket%%,*}
+  tmux_pane=${TMUX_PANE:-}
+  if ! [[ ${TMUX:-} == *,* && $tmux_socket =~ ^/[A-Za-z0-9._/-]{1,255}$ && $tmux_pane =~ ^%[0-9]{1,9}$ ]]; then
+    tmux_socket="" tmux_pane=""
+  fi
+}
+
+# One tab-separated row per named session file whose first line is a v1
+# object: its name, then what the jq array `fields` picks from the object
+# (`last_active` is its newest time field, `or_q` a string or "?"). One jq
+# reads every file; a file without a final newline cannot run into the next,
+# and a line that does not parse yields nothing. Callers pass only names they
+# checked, from inside the fleet folder.
+session_rows() { # fields file...
+  local fields=$1 f line
+  shift
+  (( $# )) || return 0
+  for f in "$@"; do
+    line=""
+    { IFS= read -r line <"$f"; } 2>/dev/null
+    printf '%s\t%s\n' "$f" "$line"
+  done | jq -Rr '
+    def last_active: [.started_at, .state_at, .where.at, .prompt.at, .reply.at, .ended.at, .written_at]
+      | map(numbers) | max // 0 | floor;
+    def or_q: if type == "string" and length > 0 then . else "?" end;
+    (index("\t")) as $i | .[:$i] as $f
+    | (try (.[$i + 1:] | fromjson) catch empty) | select(type == "object" and .v == 1)
+    | try ([$f] + ('"$fields"')) catch empty
+    | @tsv' 2>/dev/null
 }
 
 # Delete the files of sessions whose Claude Code process is gone and whose
@@ -196,7 +248,7 @@ prune_fleet() { # dir now
 
 # prune_fleet's work, in the fleet folder. Types and mtimes of every candidate
 # come from one stat (which does not follow links); the session files are read
-# here and parsed by one jq.
+# by session_rows.
 prune_here() { # now
   local now=$1 f name id pid start last line
   local -A type=() mt=() listed=()
@@ -227,18 +279,8 @@ prune_here() { # now
       claude_alive "$pid" "$start" && continue
       rm -f -- "$f"
       [[ ${type[$id.beat]:-} == "symbolic link" ]] || rm -f -- "$id.beat"
-    done < <(
-      for f in "${sessions[@]}"; do
-        line=""
-        { IFS= read -r line <"$f"; } 2>/dev/null
-        printf '%s\t%s\n' "$f" "$line"
-      done | jq -Rr '(index("\t")) as $i | .[:$i] as $f
-        | (try (.[$i + 1:] | fromjson) catch empty) | select(type == "object" and .v == 1)
-        | try [$f, ((.claude.pid | numbers) // 0 | floor), ((.claude.start | numbers) // 0 | floor),
-            ([.started_at, .state_at, .where.at, .prompt.at, .reply.at, .ended.at, .written_at]
-              | map(numbers) | max // 0 | floor)]
-          catch empty
-        | @tsv' 2>/dev/null)
+    done < <(session_rows '[((.claude.pid | numbers) // 0 | floor), ((.claude.start | numbers) // 0 | floor), last_active]' \
+      "${sessions[@]}")
   fi
 
   for name in *.beat; do
@@ -252,6 +294,43 @@ prune_here() { # now
     old "$name" && rm -f -- "$name"
   done
   return 0
+}
+
+# Mark ended, reason "gone", every session in <dir>/fleet that has not ended
+# and whose Claude Code process cannot be running: it started on another boot,
+# or on this boot and distro under a pid that is no longer it. Sessions from
+# another distro on this boot are left alone (their pids are not visible here);
+# with no distro on either side, the pid decides. A session idle past
+# PRUNE_AFTER is left to the prune, which would otherwise see a fresh clock.
+# A field jq finds empty is printed as "?", which no boot or distro can be, so
+# read does not collapse the tabs around it. A session with no known pid is
+# gone only from an earlier boot, and `self`'s own file is never touched. One
+# jq lists every file (session_rows); only a session it marks costs another.
+mark_gone() { # dir now self
+  local dir=$1 now=$2 self=$3 f state boot distro pid start last new
+  [[ -n $host_boot ]] && own_data_dir "$dir" || return 0
+  [[ -d $dir/fleet && ! -L $dir/fleet ]] || return 0
+  while IFS=$'\t' read -r f state boot distro pid start last; do
+    [[ ${f%.json} =~ $UUID_RE && $state != ended && $boot != "?" && $f != "$self.json" ]] || continue
+    if [[ $boot == "$host_boot" ]]; then
+      [[ $distro == "?" ]] && distro=""
+      [[ $distro == "$host_distro" ]] || continue
+      [[ $pid =~ ^[1-9][0-9]*$ ]] || continue
+      claude_alive "$pid" "$start" && continue
+    fi
+    [[ $last =~ ^[0-9]+$ ]] || continue
+    (( now - last > PRUNE_AFTER )) && continue
+    new=$(jq -c --argjson now "$now" \
+      '.state = "ended" | .reason = "gone" | .needs = null | .ended = {reason: "gone", at: $now} | .state_at = $now | .written_at = $now' \
+      "$dir/fleet/$f" 2>/dev/null) || continue
+    [[ -n $new ]] && write_atomic "$dir/fleet/$f" "$new"
+  done < <(cd -- "$dir/fleet" 2>/dev/null || exit 0
+    names=()
+    for f in *.json; do
+      [[ ${f%.json} =~ $UUID_RE && -f $f && ! -L $f ]] && names+=("$f")
+    done
+    session_rows '[(.state | or_q), (.host.boot | or_q), (.host.distro | or_q),
+      ((.claude.pid | numbers) // 0 | floor), ((.claude.start | numbers) // 0 | floor), last_active]' "${names[@]}")
 }
 
 # --- prune helpers: identical in hooks/klepsydra-fleet.sh and statusline/klepsydra-statusline.sh ---
@@ -303,7 +382,7 @@ def ended_as: {clear: "cleared", resume: "resumed elsewhere", logout: "logged ou
   elif $was.state == "ended" and $event != "SessionStart" then empty
   else
   ($was // {v: 1, session_id: $ev.session_id, name: null, started_at: $now,
-            launch_dir: ($ev.cwd | text), claude: null, voice: null, voice_from: null,
+            launch_dir: ($ev.cwd | text), claude: null, tmux: null, host: null, voice: null, voice_from: null,
             state: (if $event == "PreToolUse" or $event == "PostToolUse" or $event == "PostToolUseFailure" then "working" else "new" end),
             reason: null, needs: null, state_at: $now,
             where: null, touched: [], prompt: null, reply: null, error: null,
@@ -311,7 +390,14 @@ def ended_as: {clear: "cleared", resume: "resumed elsewhere", logout: "logged ou
   | $s
   | .name = (($ev.session_title | text) // .name)
   | (if $pid != "" then {pid: ($pid | tonumber), start: ($start | tonumber)} else null end) as $me
-  | .claude = (if $me != null and $event == "SessionStart" and $ev.source != "compact" then $me else (.claude // $me) end)
+  # A new process (any start but a compaction) replaces what the file knew of
+  # the old one: its pid, pane and host, unknowns included.
+  | ($event == "SessionStart" and $ev.source != "compact") as $fresh
+  | (if $tmux_pane != "" then {socket: $tmux_socket, pane: $tmux_pane} else null end) as $pane
+  | (if $boot != "" then {boot: $boot, distro: ($distro | text)} else null end) as $host
+  | .claude = (if $fresh then $me else (.claude // $me) end)
+  | .tmux = (if $fresh then $pane else ($pane // .tmux) end)
+  | .host = (if $fresh then $host else ($host // .host) end)
   # A hold always applies; a repo's home voice only to a session with no voice
   # yet, so a face never follows the cwd. Files from before voice_from held.
   | .voice_from = (.voice_from // (if .voice != null then "hold" else null end))
@@ -422,6 +508,8 @@ main() {
     if [[ -n $voice ]]; then voice_from=home; fi
   fi
 
+  host_facts
+  tmux_facts
   [[ -n ${KLEPSYDRA_DIR:-} ]] || return 0
   local fleet=$KLEPSYDRA_DIR/fleet
   mkdir -p "$fleet" 2>/dev/null || return 0
@@ -434,9 +522,11 @@ main() {
   new=$(printf '%s' "$input" | jq -c --arg old "$old" --argjson now "$now" --argjson chars "$PROMPT_CHARS" \
     --arg repo "$where_repo" --arg worktree "$where_worktree" --arg branch "$where_branch" \
     --arg by "$by" \
+    --arg tmux_socket "$tmux_socket" --arg tmux_pane "$tmux_pane" --arg boot "$host_boot" --arg distro "$host_distro" \
     --arg voice "$voice" --arg voice_from "$voice_from" --arg pid "$found_pid" --arg start "$found_start" \
     "$APPLY" 2>/dev/null) || new=""
   [[ -n $new ]] && write_atomic "$file" "$new"
+  [[ $event == SessionStart ]] && mark_gone "$KLEPSYDRA_DIR" "$now" "$session"
   [[ $event == SessionStart ]] && prune_hourly "$PRUNE_STAMP" prune_fleet "$KLEPSYDRA_DIR" "$now"
   return 0
 }

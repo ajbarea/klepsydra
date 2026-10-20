@@ -1,0 +1,225 @@
+<!-- budget: 1500 words -->
+# Fleet launch, tmux jump, clear and gone: design
+
+Date: 2026-10-20. Status: approved by AJ 2026-10-20 ("I trust your web-research-backed recommendations").
+
+## Goal
+
+AJ opens a new Windows Terminal tab, and so a new `wsl.exe`, for every Claude
+session. He wants one terminal instead: klepsydra opens it, and every further
+session is a tmux window inside it. The wall then hops between those windows.
+
+Three smaller changes ship with it:
+
+- **Clear**: a button on an ended or silent card removes it now.
+- **Gone**: a session whose Claude process died without a `SessionEnd`, as on
+  a reboot, becomes ended instead of staying silent for a day.
+- **claude-prefs**: `~/claude-prefs` is in `additionalDirectories` in both
+  settings files (done 2026-10-20, outside this repo).
+
+It succeeds when AJ presses **+** on the wall and gets a new `claude` in
+`~/ajsoftworks` inside the one `fleet` terminal, and Jump on any card brings
+that session's tmux window to the front.
+
+## What a tab costs, measured
+
+`tasklist.exe` and `ps` on 2026-10-20 with one terminal tab open:
+
+| Process | Side | Memory |
+| --- | --- | --- |
+| `vmmemWSL` (the one VM, shared by every tab) | Windows | 9914 MB |
+| `wsl.exe` x2, `OpenConsole.exe`, `wslhost.exe` x4 | Windows | 83 MB |
+| `Relay`, `SessionLeader`, `init` per tab | Linux | about 4 MB |
+| `claude` | Linux | 439 MB |
+
+A tab starts no new VM or Ubuntu. A tmux window saves the per-tab Windows
+helpers and their interop channels, the source of the `0x8007274c` tab
+failures (microsoft/WSL #41901). Claude costs the same either way.
+
+## Changed constraints
+
+The 2026-10-18 spec says nothing on the Windows side starts a process or names
+`wsl`. AJ's request needs both, so the rule becomes:
+
+- One file, `src-tauri/src/launch.rs`, starts a process. It starts only
+  `C:\Windows\System32\wsl.exe`, with `CREATE_NO_WINDOW`.
+- It runs only from a click (**+** or Jump), one call at a time; nothing polls.
+- Every other file keeps both guards. `src/guards.test.js` asserts the
+  exemption list is exactly `launch.rs`.
+- The overlay deletes files for the first time (Clear), only
+  `fleet/<uuid>.json` and `fleet/<uuid>.beat`.
+
+## Parts
+
+### `hooks/klepsydra-launch.sh` (new, installed to `~/.claude/`)
+
+It holds every tmux and `wt.exe` command, so Rust builds one fixed command
+line and the tmux logic is tested in bash.
+
+`new DIR`:
+
+1. Take a `flock` on `$XDG_RUNTIME_DIR/klepsydra-launch.lock`.
+2. If tmux socket `klepsydra` has no session `fleet`, create it detached:
+   `tmux -L klepsydra -f ~/.claude/klepsydra-tmux.conf new-session -d -s fleet -c DIR claude`.
+   Otherwise `tmux -L klepsydra new-window -t =fleet: -c DIR claude`.
+3. If no client is attached to `fleet`, open one tab:
+   `wt.exe -w fleet new-tab [--title "klepsydra sessions" --suppressApplicationTitle] wsl.exe -d <distro> -e tmux -S <socket> attach -t =fleet`.
+   The title arguments are for the fleet socket only (see the addendum).
+   `<socket>` is the server's `#{socket_path}`; a path `wt.exe` could split
+   (at `;`) starts nothing.
+4. Wait 5 s for the client. On a cold WSL `new` still succeeds and adds "The
+   terminal tab has not attached yet." A stamp,
+   `$XDG_RUNTIME_DIR/klepsydra-tab-pending-$UID`, kept until the client
+   attaches, stops a second tab for 30 s.
+
+Creating the session detached, before any tab exists, means two quick clicks
+make two windows, never two sessions. A closed tab leaves the sessions running
+detached, and the next **+** or Jump reattaches.
+
+`jump SOCKET PANE PID START`: checks `PANE` is `%<digits>`, `SOCKET` an
+absolute path, and `PID` and `START` digits; refuses unless process `PID` is
+alive (not a zombie) with start time `START` and the pane's `#{pane_pid}` is
+`PID` or an ancestor of it (see the addendum). It then runs `select-window -t
+PANE` and `select-pane -t PANE`, and reattaches as in step 3 if no client is
+attached; the tab it opens is titled only when `SOCKET` is the fleet's. It
+exits non-zero when tmux has no such pane.
+
+A missing `claude`, `tmux` or `wt.exe` exits non-zero with one line naming
+it, which the wall shows.
+
+### `hooks/klepsydra-tmux.conf` (new, installed to `~/.claude/`)
+
+```
+source-file -q ~/.tmux.conf
+set -g automatic-rename on
+set -g automatic-rename-format "#{pane_title}"
+set -g remain-on-exit failed
+```
+
+AJ's own settings load first. The
+`automatic-rename` lines name each window after its pane's Claude title; the
+tab keeps the fixed title the launcher gives it (see the addendum). A window whose `claude` exits non-zero stays open, so a start-up error
+can be read.
+
+### `hooks/klepsydra-fleet.sh` (changed)
+
+- Records `tmux: {socket, pane}` from `$TMUX` (its first field) and
+  `$TMUX_PANE`, when both are set and well formed.
+- Records `host: {boot, distro}` from `/proc/sys/kernel/random/boot_id` and
+  `$WSL_DISTRO_NAME`.
+- At every `SessionStart`, under the fleet lock, marks a session that has not
+  ended as ended with reason `gone` when:
+  - its `host.boot` differs from this boot (a reboot or `wsl --shutdown`), or
+  - its `host.distro` is this distro and `claude_alive` fails for its pid.
+
+  A file from another distro on the same boot is left alone, since that
+  distro's pids are not visible here. A file with no `host` is left to the
+  24-hour prune.
+
+A gone card shows "ended · gone" and leaves 10 minutes later, like any ended
+card.
+
+### `src-tauri/src/launch.rs` (new)
+
+- `launch_session()`: `wsl.exe [-d DISTRO] --cd ~ -e bash -l .claude/klepsydra-launch.sh new DIR`.
+- `tmux_jump(target)`: `wsl.exe -d DISTRO --cd ~ -e bash .claude/klepsydra-launch.sh jump SOCKET PANE PID START`.
+- Arguments are validated, then passed as separate argv entries, never as a
+  shell string.
+- One `Mutex<bool>` in managed state holds the one-call-at-a-time rule.
+- `wsl.exe` gets 45 s, then the card says the session may still be starting.
+  Its output is read for at most 2 s after it exits.
+
+Prefs: `launch_dir` (default `~`; AJ's is `~/ajsoftworks`) and
+`launch_distro` (default: WSL's default distro).
+
+### Jump (changed)
+
+When a card has `tmux`, `claude` and `host.distro`, Jump first calls
+`tmux_jump`, then makes one title match: exactly `klepsydra sessions` when the
+pane's socket is the launcher's `klepsydra`, else the session's name after its
+status glyph. Such a card can jump before it has a name. A failed `tmux_jump`
+on the fleet socket shows the launcher's line; on another socket Jump falls
+back to the name match. After a good `tmux_jump`, only "no tab matched" reads
+as success. A card without `tmux` works as today.
+
+### Clear (new)
+
+A Clear button on ended and silent cards calls `clear_session(id)`. The
+command:
+
+- checks `id` against the UUID pattern;
+- refuses unless the hub's latest snapshot shows the session ended or silent;
+- deletes `<id>.json` and `<id>.beat` only when `symlink_metadata` says each
+  is a regular file inside the overlay's own `fleet` folder.
+
+A silent session that is still alive gets its file back at its next hook
+event. It loses its start time and touched list. The button's tooltip says so.
+
+### Wall
+
+- The summary bar holds a **+ New session** button and a note. While a
+  launch runs, the button is disabled; the note shows the script's line.
+- The face strip and tray are left alone.
+
+## Rejected ideas and their guards
+
+| Idea | Why it was dropped | Guard |
+| --- | --- | --- |
+| A tab per session (the 2026-10-19 live-check layout) | Starts a `wsl.exe` and opens interop channels per session (measured above). | `new` never calls `wt.exe` while a client is attached: bash test. |
+| Agent view (`claude --bg`) or a tmux dashboard (recon, ccmonitor, ccmgr) | Agent view runs sessions out of sight; the dashboards duplicate the wall. | None needed. |
+| A resident WSL daemon that takes launch requests | Always running for a once-a-minute action. | The guards test still forbids a spawn in every file but `launch.rs`. |
+| `destroy-unattached on` | Closing the tab would kill every session in it. | Bash test: a session survives losing its client. |
+| `CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD` for claude-prefs | `~/claude-prefs/CLAUDE.md` is identical to the global one and would load twice. | Not applicable; settings only. |
+| Marking gone by pid alone | Another distro's live session would be marked gone. | Bash test: a file with another distro on this boot keeps its state. |
+
+## Testing
+
+- Bash (`hooks/test_launch.sh`): `new` and `jump` against a private tmux
+  socket and a stub `wt.exe`: one tab for first, second, concurrent and
+  cold-start clicks, a closed tab reattaching, and every refusal.
+- Bash (`test_fleet.sh`): the `tmux` and `host` fields and each gone case.
+- Rust: the command line, argument checks, the in-flight gate, the jump
+  dispatch, exact fleet-tab matching, and Clear's refusals.
+- JS: the **+** button, Clear on ended and silent cards only, and the guards
+  (only `launch.rs` starts a process or names `wsl`).
+- Live on Windows: README, Releasing, step 2.7.
+
+## Out of scope
+
+- #22 (interrupt and exit from a card); the recorded `tmux.pane` makes it a
+  `send-keys` to a known pane.
+- Choosing a folder or account per launch.
+- An optional split mode (#32).
+
+## Sources
+
+- Windows Terminal command-line arguments (`-w`, `new-tab`): learn.microsoft.com/windows/terminal/command-line-arguments
+- tmux(1): `TMUX_PANE`, pane ids, `new-window`, `automatic-rename-format`, `remain-on-exit`
+- Claude Code memory docs, additional directories: code.claude.com/docs/en/memory
+- anthropics/claude-code #38033 (settings `additionalDirectories` do not load CLAUDE.md)
+- Agent view: claude.com/blog/agent-view-in-claude-code
+- recon, ccmonitor, ccmgr: tmux-based session dashboards (prior art)
+
+## Addendum 2026-10-20: a stable jump
+
+AJ asked for a fully stable system. Two links in the jump chain were still weak:
+
+- **A pane id can be reused.** tmux pane ids are unique only for the life of
+  the server, so after a server restart a stored `%3` can name another
+  session's pane. The hook already records the Claude process's pid and start
+  time. `jump` now takes both and refuses unless that process is alive with
+  that start time and the pane's `#{pane_pid}` is one of its ancestors:
+  "That session's tmux pane now belongs to another session."
+- **Session titles are not tab identity.** Windows Terminal has no API to
+  focus a tab by id (microsoft/terminal #19783, closed not planned), and a tab
+  renamed by hand freezes its title. `wt -w fleet focus-tab` would create the
+  window when none exists. So the launcher opens the fleet tab with an
+  app-owned title, `--title "klepsydra sessions" --suppressApplicationTitle`, and
+  Jump finds that exact title after tmux selects the pane. The tab no longer
+  shows the active session's title. tmux names each window after its pane
+  title (`automatic-rename-format "#{pane_title}"`), so the status bar lists
+  sessions by name. If the tab is renamed anyway, the earlier ruling still
+  reports "Selected the session's tmux window."
+
+Sessions in tabs opened by hand keep the title match. Renaming the tab by hand
+to exactly the session's name is the stable fix there.
