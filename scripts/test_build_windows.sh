@@ -5,7 +5,7 @@ set -uo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
-# shellcheck source=build-windows.sh
+# shellcheck source=scripts/build-windows.sh
 source "$here/build-windows.sh"
 pass=0 fail=0
 
