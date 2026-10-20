@@ -272,15 +272,15 @@ mod tests {
 
     #[test]
     fn only_the_exact_fleet_title_matches() {
-        assert_eq!(fleet_tab(&["pwsh", "klepsydra fleet", "x"]), Ok(1));
-        assert!(fleet_tab(&["klepsydra fleets", "klepsydra", "fleet"]).is_err());
-        assert!(fleet_tab(&["klepsydra fleet", "klepsydra fleet"]).is_err());
+        assert_eq!(fleet_tab(&["pwsh", "klepsydra sessions", "x"]), Ok(1));
+        assert!(fleet_tab(&["klepsydra session", "klepsydra", "sessions"]).is_err());
+        assert!(fleet_tab(&["klepsydra sessions", "klepsydra sessions"]).is_err());
         assert!(
-            fleet_tab(&["\u{2733} klepsydra fleet"]).is_err(),
-            "a hand-opened session named klepsydra fleet is not the fleet tab"
+            fleet_tab(&["\u{2733} klepsydra sessions"]).is_err(),
+            "a hand-opened session named klepsydra sessions is not the fleet tab"
         );
         assert_eq!(
-            fleet_tab(&["\u{2733} klepsydra fleet", "klepsydra fleet"]),
+            fleet_tab(&["\u{2733} klepsydra sessions", "klepsydra sessions"]),
             Ok(1)
         );
     }

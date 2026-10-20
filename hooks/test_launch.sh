@@ -83,7 +83,7 @@ check "first: says where" "$out" "Started a session in $work/repos."
 check "first: one window" "$(windows)" "1"
 check "first: one tab" "$(tabs)" "1"
 check "first: the tab attaches by the socket's path" "$(head -1 "$WT_LOG")" \
-  "-w fleet new-tab --title klepsydra fleet --suppressApplicationTitle wsl.exe -d Test -e tmux -S $(t display -p '#{socket_path}') attach -t =fleet"
+  "-w fleet new-tab --title klepsydra sessions --suppressApplicationTitle wsl.exe -d Test -e tmux -S $(t display -p '#{socket_path}') attach -t =fleet"
 check "first: an attached tab leaves no pending stamp" "$([[ -e $work/klepsydra-tab-pending-$UID ]] && echo left)" ""
 check "first: conf loaded" "$(t show -gv automatic-rename-format)" "#{pane_title}"
 attach
@@ -182,7 +182,7 @@ detach_all
 jmp "$first" "$fpid" "$fstart" >/dev/null 2>&1
 check "jump without a client: one tab" "$(tabs)" "1"
 check "jump's tab names the socket" "$(head -1 "$WT_LOG")" \
-  "-w fleet new-tab --title klepsydra fleet --suppressApplicationTitle wsl.exe -d Test -e tmux -S $socket attach -t =fleet"
+  "-w fleet new-tab --title klepsydra sessions --suppressApplicationTitle wsl.exe -d Test -e tmux -S $socket attach -t =fleet"
 # A hand-started tmux on another socket gets a plain tab.
 tmux -L "$sock2" -f /dev/null new-session -d -s hand "sleep 600"
 socket2=$(tmux -L "$sock2" display -p '#{socket_path}')
@@ -196,7 +196,7 @@ check "other socket: a plain tab" "$(head -1 "$WT_LOG")" \
 tmux -L "$sock2" kill-server 2>/dev/null
 detach_all; : >"$WT_LOG"
 bash "$launch" jump "$socket" "$first" "$fpid" "$fstart" >/dev/null 2>&1
-check "fleet socket: titled tab" "$(head -1 "$WT_LOG" | grep -c -- "^-w fleet new-tab --title klepsydra fleet --suppressApplicationTitle wsl.exe")" "1"
+check "fleet socket: titled tab" "$(head -1 "$WT_LOG" | grep -c -- "^-w fleet new-tab --title klepsydra sessions --suppressApplicationTitle wsl.exe")" "1"
 out=$(bash "$launch" bogus 2>&1); rc=$?
 check "unknown command: exit 1" "$rc" "1"
 check "unknown command: says so" "$out" "usage: klepsydra-launch.sh new DIR | jump SOCKET PANE PID START"

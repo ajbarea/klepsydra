@@ -119,7 +119,7 @@ pub const HIDDEN_TABS: &str =
 /// Windows Terminal keeps the name it was given, so say what to do instead.
 pub fn no_tab(name: &str) -> String {
     format!(
-        "No Windows Terminal tab is titled \u{201c}{name}\u{201d}. A tab renamed in Windows Terminal keeps that name; name the session with /rename instead."
+        "No Windows Terminal tab is titled \u{201c}{name}\u{201d}. A tab renamed in Windows Terminal keeps that name; rename the tab to exactly the session's name, or start the session from + New session."
     )
 }
 
@@ -193,7 +193,7 @@ mod tests {
     fn the_messages_name_the_session() {
         assert_eq!(
             no_tab("Plan"),
-            "No Windows Terminal tab is titled \u{201c}Plan\u{201d}. A tab renamed in Windows Terminal keeps that name; name the session with /rename instead."
+            "No Windows Terminal tab is titled \u{201c}Plan\u{201d}. A tab renamed in Windows Terminal keeps that name; rename the tab to exactly the session's name, or start the session from + New session."
         );
         assert_eq!(
             many_tabs("Plan", 2),
@@ -203,22 +203,22 @@ mod tests {
 
     #[test]
     fn the_fleet_tab_is_found_by_its_exact_title_alone() {
-        let fleet = Lookup::Exact("klepsydra fleet");
-        assert_eq!(pick(fleet, &titles(&["klepsydra fleet"]), false), Ok(0));
-        assert!(pick(fleet, &titles(&["\u{2733} klepsydra fleet"]), false).is_err());
-        assert!(pick(fleet, &titles(&["klepsydra fleet "]), false).is_err());
+        let fleet = Lookup::Exact("klepsydra sessions");
+        assert_eq!(pick(fleet, &titles(&["klepsydra sessions"]), false), Ok(0));
+        assert!(pick(fleet, &titles(&["\u{2733} klepsydra sessions"]), false).is_err());
+        assert!(pick(fleet, &titles(&["klepsydra sessions "]), false).is_err());
         assert_eq!(
             pick(
                 fleet,
-                &titles(&["\u{2733} klepsydra fleet", "klepsydra fleet"]),
+                &titles(&["\u{2733} klepsydra sessions", "klepsydra sessions"]),
                 false
             ),
             Ok(1)
         );
         assert_eq!(
             match_exact(
-                "klepsydra fleet",
-                &titles(&["klepsydra fleet", "klepsydra fleet"])
+                "klepsydra sessions",
+                &titles(&["klepsydra sessions", "klepsydra sessions"])
             ),
             TabMatch::Many(2)
         );
@@ -243,11 +243,11 @@ mod tests {
 
     #[test]
     fn two_fleet_tabs_say_close_all_but_one() {
-        let t = titles(&["klepsydra fleet", "pwsh", "klepsydra fleet"]);
-        let e = pick(Lookup::Exact("klepsydra fleet"), &t, false).unwrap_err();
+        let t = titles(&["klepsydra sessions", "pwsh", "klepsydra sessions"]);
+        let e = pick(Lookup::Exact("klepsydra sessions"), &t, false).unwrap_err();
         assert_eq!(
             e.to_string(),
-            "2 Windows Terminal tabs are titled \u{201c}klepsydra fleet\u{201d}. Close all but one."
+            "2 Windows Terminal tabs are titled \u{201c}klepsydra sessions\u{201d}. Close all but one."
         );
     }
 
@@ -264,6 +264,6 @@ mod tests {
             "This session has no name yet."
         );
         assert_eq!(Lookup::Session(" ").check(), Err(TabError::NoName));
-        assert_eq!(Lookup::Exact("klepsydra fleet").check(), Ok(()));
+        assert_eq!(Lookup::Exact("klepsydra sessions").check(), Ok(()));
     }
 }

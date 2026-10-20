@@ -12,7 +12,7 @@ set -uo pipefail
 
 SOCKET_NAME=${KLEPSYDRA_TMUX_SOCKET:-klepsydra} # default is FLEET_SOCKET in launch.rs
 SESSION=fleet
-TAB_TITLE="klepsydra fleet" # also FLEET_TAB in src-tauri/src/launch.rs
+TAB_TITLE="klepsydra sessions" # also FLEET_TAB in src-tauri/src/launch.rs
 CONF=${KLEPSYDRA_TMUX_CONF:-$HOME/.claude/klepsydra-tmux.conf}
 CLAUDE=${KLEPSYDRA_CLAUDE:-claude}
 WT=${KLEPSYDRA_WT:-wt.exe}

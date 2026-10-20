@@ -28,7 +28,7 @@ pub struct InFlight(pub Mutex<bool>);
 
 /// The title of the Windows Terminal tab the launcher opens; the script's
 /// `TAB_TITLE` is the same text, which a guard test asserts.
-pub const FLEET_TAB: &str = "klepsydra fleet";
+pub const FLEET_TAB: &str = "klepsydra sessions";
 
 /// The launcher's tmux socket name; the script's default is the same text,
 /// which a guard test asserts.
