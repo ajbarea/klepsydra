@@ -41,9 +41,18 @@ so every account fits there instead of one row with the rest below the edge.
 ## Open
 - The tray icon still draws a bar in either layout.
 - The default display name (`my-app-3f`) reaches no hook and no status line,
-  so a session with no voice and no name is named by its launch folder.
-- A denied permission dismissed with Esc keeps "needs you" until the next
-  prompt, its age showing.
+  so a session with no voice and no name is named by its launch folder. The
+  hooks docs confirm it: `session_title` carries only a name set with
+  `--name`, `/rename` or a hook, never a generated title.
+- Some turns end with no hook at all, so the card keeps its last state until
+  the next prompt: a need dismissed with Esc keeps "needs you", its age
+  showing, and an interrupted turn reads "working" until "working?" at 10
+  minutes. The hooks docs say Stop skips user interrupts and
+  `PermissionDenied` fires only in auto mode. In a probe (2026-10-19, Claude
+  Code 2.1.301), a turn stopped by the safety classifier and then interrupted
+  with Esc left the session file "working" for 130 s, with no `idle_prompt`
+  to correct it. The transcript records such ends, but in internal record
+  types, so the card waits for a hook rather than guess.
 
 ## Verify
     node --test src/*.test.js
