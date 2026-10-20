@@ -62,38 +62,63 @@ export function rampColor(pct, stops, mode = "blend") {
 }
 
 /**
- * "Resets in 4 hr 58 min". Returns null once the window has already reset,
- * or when there is no reset time to count down to.
+ * The time left before a reset as {d, h, m}, with minutes dropped a day or
+ * more out ("83 hr 19 min" is not readable). `{}` under a minute; null once
+ * the window has reset, or when there is no reset time.
  */
-export function formatCountdown(resetsAtSec, nowMs = Date.now()) {
+function countdownParts(resetsAtSec, nowMs) {
   if (!Number.isFinite(resetsAtSec)) return null;
   const ms = resetsAtSec * 1000 - nowMs;
   if (ms <= 0) return null;
   const mins = Math.floor(ms / 60000);
-  if (mins < 1) return "Resets in under a minute";
+  if (mins < 1) return {};
   const h = Math.floor(mins / 60);
-  const m = mins % 60;
-  // A weekly window is tens of hours out; "83 hr 19 min" is not readable.
-  if (h >= 24) {
-    const d = Math.floor(h / 24);
-    const rh = h % 24;
-    const days = `${d} day${d === 1 ? "" : "s"}`;
-    return rh === 0 ? `Resets in ${days}` : `Resets in ${days} ${rh} hr`;
-  }
-  if (h === 0) return `Resets in ${m} min`;
-  if (m === 0) return `Resets in ${h} hr`;
-  return `Resets in ${h} hr ${m} min`;
+  if (h >= 24) return { d: Math.floor(h / 24), h: h % 24 };
+  return { h, m: mins % 60 };
+}
+
+/** "Resets in 4 hr 58 min", or null as for countdownParts. */
+export function formatCountdown(resetsAtSec, nowMs = Date.now()) {
+  const p = countdownParts(resetsAtSec, nowMs);
+  if (p === null) return null;
+  const parts = [
+    p.d && `${p.d} day${p.d === 1 ? "" : "s"}`,
+    p.h && `${p.h} hr`,
+    p.m && `${p.m} min`,
+  ].filter(Boolean);
+  return `Resets in ${parts.length ? parts.join(" ") : "under a minute"}`;
+}
+
+/** "4h 58m", the compact layout's countdown, or null as for countdownParts. */
+export function formatCountdownShort(resetsAtSec, nowMs = Date.now()) {
+  const p = countdownParts(resetsAtSec, nowMs);
+  if (p === null) return null;
+  const parts = [p.d && `${p.d}d`, p.h && `${p.h}h`, p.m && `${p.m}m`].filter(Boolean);
+  return parts.length ? parts.join(" ") : "<1m";
+}
+
+/** An age in its largest whole unit, as [count, unit], or null under a minute. */
+function ageUnit(ms) {
+  const mins = Math.floor(Math.max(0, ms) / 60000);
+  if (mins < 1) return null;
+  if (mins < 60) return [mins, "min"];
+  const h = Math.floor(mins / 60);
+  if (h < 24) return [h, "hr"];
+  return [Math.floor(h / 24), "day"];
 }
 
 /** "3 hr ago": the largest whole unit, so a glance reads it. */
 export function formatAge(ms) {
-  const mins = Math.floor(Math.max(0, ms) / 60000);
-  if (mins < 1) return "just now";
-  if (mins < 60) return `${mins} min ago`;
-  const h = Math.floor(mins / 60);
-  if (h < 24) return `${h} hr ago`;
-  const d = Math.floor(h / 24);
-  return `${d} day${d === 1 ? "" : "s"} ago`;
+  const a = ageUnit(ms);
+  if (a === null) return "just now";
+  const [n, unit] = a;
+  return `${n} ${unit}${unit === "day" && n !== 1 ? "s" : ""} ago`;
+}
+
+/** "3h": formatAge for the compact layout, "now" under a minute. */
+export function formatAgeShort(ms) {
+  const a = ageUnit(ms);
+  return a === null ? "now" : `${a[0]}${a[1][0]}`;
 }
 
 /**
@@ -101,7 +126,7 @@ export function formatAge(ms) {
  * or unreadable). Never throws; an unusable payload degrades to "waiting".
  */
 export function evaluate(payload, key, nowMs = Date.now()) {
-  const waiting = { state: "waiting", label: windowLabel(key), pct: null, sub: "waiting for Claude Code" };
+  const waiting = { state: "waiting", label: windowLabel(key), pct: null, sub: "waiting for Claude Code", short: "waiting" };
   if (!payload || typeof payload !== "object") return waiting;
 
   const win = payload.windows?.[key];
@@ -112,26 +137,42 @@ export function evaluate(payload, key, nowMs = Date.now()) {
   // The window that number described has ended, and the next one has not
   // started; usage elsewhere since then would not have reached this machine.
   if (countdown === null) {
-    const sub = Number.isFinite(resetsAt) ? `Reset ${formatAge(nowMs - resetsAt * 1000)}` : "window reset";
-    return { state: "reset", label: windowLabel(key), pct: 0, sub };
+    const since = nowMs - resetsAt * 1000;
+    const sub = Number.isFinite(resetsAt) ? `Reset ${formatAge(since)}` : "window reset";
+    const recent = !Number.isFinite(resetsAt) || formatAgeShort(since) === "now";
+    const short = recent ? "just reset" : `reset ${formatAgeShort(since)} ago`;
+    return { state: "reset", label: windowLabel(key), pct: 0, sub, short };
   }
 
   const age = nowMs - Number(win.observed_at ?? payload.observed_at ?? payload.written_at) * 1000;
   let sub = countdown;
-  if (!Number.isFinite(age)) sub += " \u00b7 age unknown";
-  else if (age > SHOW_AGE_AFTER_MS) sub += ` \u00b7 updated ${formatAge(age)}`;
+  let short = formatCountdownShort(resetsAt, nowMs);
+  if (!Number.isFinite(age)) {
+    sub += " \u00b7 age unknown";
+    short += " \u00b7 age unknown";
+  } else if (age > SHOW_AGE_AFTER_MS) {
+    sub += ` \u00b7 updated ${formatAge(age)}`;
+    short += ` \u00b7 ${formatAgeShort(age)} old`;
+  }
 
   return {
     state: "live",
     label: windowLabel(key),
     pct: Number(win.used_percentage),
     sub,
+    short,
   };
 }
 
 export function formatPct(pct) {
   if (pct === null) return "--";
   return `${Math.floor(pct)}% used`;
+}
+
+/** "73%": formatPct for the compact layout, where the ring says "used". */
+export function formatPctShort(pct) {
+  if (pct === null) return "--";
+  return `${Math.floor(pct)}%`;
 }
 
 /** Whether a file came from a hook that publishes only new API responses. */

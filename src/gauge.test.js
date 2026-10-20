@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { rampColor, rampPosition, formatCountdown, formatAge, evaluate, formatPct, toRows, SHOW_AGE_AFTER_MS, DROP_AFTER_MS } from "./gauge.js";
+import { rampColor, rampPosition, formatCountdown, formatCountdownShort, formatAge, formatAgeShort, evaluate, formatPct, formatPctShort, toRows, SHOW_AGE_AFTER_MS, DROP_AFTER_MS } from "./gauge.js";
 
 const STOPS = { low: "#3b82f6", mid: "#eab308", high: "#ef4444", midAt: 60, highAt: 85 };
 const NOW = 1_800_000_000_000; // fixed clock
@@ -53,6 +53,38 @@ test("countdown formatting", () => {
   assert.equal(formatCountdown(secs(NOW + 30e3), NOW), "Resets in under a minute");
 });
 
+test("short countdown formatting, for the compact layout", () => {
+  assert.equal(formatCountdownShort(secs(NOW + 4 * 3600e3 + 58 * 60e3), NOW), "4h 58m");
+  assert.equal(formatCountdownShort(secs(NOW + 58 * 60e3), NOW), "58m");
+  assert.equal(formatCountdownShort(secs(NOW + 2 * 3600e3), NOW), "2h");
+  assert.equal(formatCountdownShort(secs(NOW + 30e3), NOW), "<1m");
+  assert.equal(formatCountdownShort(secs(NOW + 3 * 86400e3 + 4 * 3600e3 + 5 * 60e3), NOW), "3d 4h");
+  assert.equal(formatCountdownShort(secs(NOW + 2 * 86400e3 + 30 * 60e3), NOW), "2d");
+  assert.equal(formatCountdownShort(secs(NOW - 1), NOW), null);
+  assert.equal(formatCountdownShort(undefined, NOW), null);
+});
+
+test("long and short countdowns agree on every unit boundary", () => {
+  for (const mins of [0, 1, 59, 60, 61, 119, 120, 1439, 1440, 1441, 1500, 2880, 10079]) {
+    const at = secs(NOW + mins * 60e3 + 30e3);
+    const long = formatCountdown(at, NOW).replace("Resets in ", "");
+    const short = formatCountdownShort(at, NOW);
+    const expand = short
+      .replace("<1m", "under a minute")
+      .replace(/(\d+)d/, (_, d) => `${d} day${d === "1" ? "" : "s"}`)
+      .replace(/(\d+)h/, "$1 hr")
+      .replace(/(\d+)m$/, "$1 min");
+    assert.equal(expand, long, `${mins} min`);
+  }
+});
+
+test("short ages read in the largest whole unit", () => {
+  assert.equal(formatAgeShort(30e3), "now");
+  assert.equal(formatAgeShort(59 * 60e3), "59m");
+  assert.equal(formatAgeShort(3 * 3600e3 + 59 * 60e3), "3h");
+  assert.equal(formatAgeShort(25 * 3600e3), "1d");
+});
+
 test("countdown returns null once the window has passed", () => {
   assert.equal(formatCountdown(secs(NOW - 1), NOW), null);
   assert.equal(formatCountdown(secs(NOW), NOW), null);
@@ -95,6 +127,20 @@ test("a window whose reset has passed reads as an empty window", () => {
   assert.equal(r.sub, "Reset just now");
   assert.equal(formatPct(r.pct), "0% used");
   assert.equal(evaluate(live(73, -2 * 3600e3), "five_hour", NOW).sub, "Reset 2 hr ago");
+});
+
+test("every reading carries a short form that keeps its warnings", () => {
+  const fresh = evaluate(live(73.2), "five_hour", NOW);
+  assert.equal(fresh.short, "2h");
+  assert.equal(formatPctShort(fresh.pct), "73%");
+  const old = evaluate(live(50, 2 * 3600e3, SHOW_AGE_AFTER_MS + 1000), "five_hour", NOW);
+  assert.equal(old.short, "2h · 15m old");
+  const unknown = evaluate({ windows: { five_hour: { used_percentage: 5, resets_at: secs(NOW + 3600e3) } } }, "five_hour", NOW);
+  assert.equal(unknown.short, "1h · age unknown");
+  assert.equal(evaluate(live(73, -1000), "five_hour", NOW).short, "just reset");
+  assert.equal(evaluate(live(73, -2 * 3600e3), "five_hour", NOW).short, "reset 2h ago");
+  assert.equal(formatPctShort(null), "--");
+  assert.equal(formatPctShort(118.7), "118%");
 });
 
 test("ages read in the largest whole unit", () => {

@@ -246,8 +246,20 @@ on the taskbar returns to the taskbar at any size. Its monitor is found by
 position, then by name, then by nearness, and a changed resolution moves
 home to the same relative spot. With no home saved, it goes over the primary
 monitor's taskbar, 220px in from the right. The menu
-also toggles "Start with Windows" ("Start at login" on Linux) and quits. Autostart is on by default; the icon may start in the
+also toggles "Compact" (below) and "Start with Windows" ("Start at login" on Linux) and quits. Autostart is on by default; the icon may start in the
 notification-area overflow.
+
+### Compact
+
+"Compact" in the tray menu redraws the gauge to fit inside the taskbar. Each
+window becomes a ring, filled clockwise from 12 o'clock in the bar's colours,
+beside its percentage and countdown over its label, all in one row with the
+fleet strip beside it. With three windows it stands 42px tall where the full
+layout stands 142px, so parked over a 48px taskbar it sits inside it.
+Countdowns shorten ("4h 58m", "3d 11h"), and a reading more than 15 minutes
+old still says how old it is ("2h · 20m old"). The choice is remembered, and
+switching keeps the gauge on the screen edges it sits nearest, so a gauge on
+the taskbar stays there.
 
 ### Staying in front of the taskbar
 
@@ -364,7 +376,8 @@ by the zoom set from the handle. `--ramp-mode` picks between `blend` (continuous
 interpolation) and `bands` (flat colours that switch at thresholds). Edit,
 rebuild, done.
 
-The fleet strip's sizes sit in the same block. Its badge colours are in
+The fleet strip's sizes and the compact layout's ring sit in the same block,
+followed by the few tokens the compact layout changes. The strip's badge colours are in
 `src/fleet/badge.css`, where a test holds each to 3:1 contrast, and the card
 wall's tokens open `src/fleet/wall.css`.
 

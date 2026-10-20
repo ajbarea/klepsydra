@@ -1,10 +1,11 @@
-import { rampColor, toRows, formatPct } from "./gauge.js";
+import { rampColor, toRows, formatPct, formatPctShort } from "./gauge.js";
 import { wheelPixels, wheelStep, clampLevel, scaleAt } from "./zoom.js";
 
 const POLL_MS = 5_000;   // how often we re-read the account files
 const TICK_MS = 15_000;  // how often the countdown re-renders between reads
 const ZOOM_SHOWN_MS = 800;   // how long the new size stays on screen
 const ZOOM_SAVE_MS = 400;    // settle time before the size is written to disk
+const LAYOUT_WAIT_MS = 500;  // longest the first draw waits for the saved layout
 
 const inTauri = Boolean(window.__TAURI_INTERNALS__ ?? window.__TAURI__);
 
@@ -69,18 +70,62 @@ let fleetSessions = [];
 let drawStrip = null;
 let fleetFresh = false; // a snapshot the strip has not drawn yet
 
+const compact = () => document.documentElement.dataset.layout === "compact";
+
 function paint(entry, row) {
+  const short = compact();
   entry.querySelector(".label").textContent = row.label;
-  entry.querySelector(".pct").textContent = formatPct(row.pct);
-  entry.querySelector(".sub").textContent = row.sub;
+  entry.querySelector(".pct").textContent = short ? formatPctShort(row.pct) : formatPct(row.pct);
+  entry.querySelector(".sub").textContent = short ? row.short : row.sub;
   entry.dataset.state = row.state;
 
+  const colour = rampColor(row.pct ?? 0, stops(), rampMode());
   const fill = entry.querySelector(".fill");
   const clamped = Math.max(0, Math.min(100, row.pct ?? 0));
   fill.style.width = `${clamped}%`;
   // A nonzero reading stays visible as a dot instead of collapsing sub-pixel.
   fill.style.minWidth = clamped > 0 ? "calc(var(--bar-height) * var(--scale))" : "0";
-  fill.style.backgroundColor = rampColor(row.pct ?? 0, stops(), rampMode());
+  fill.style.backgroundColor = colour;
+
+  // The ring's circle has pathLength 100, so the dash is the percentage. Its
+  // round cap keeps a nonzero reading visible as a dot, as for the bar; at
+  // zero the cap would draw that dot too, so the fill goes.
+  const ring = entry.querySelector(".ring-fill");
+  ring.style.strokeDasharray = `${clamped} 100`;
+  ring.style.visibility = clamped > 0 ? "visible" : "hidden";
+  ring.style.stroke = colour;
+}
+
+/** "compact" draws rings in one row; anything else is the full layout. */
+function applyLayout(layout) {
+  const want = layout === "compact" ? "compact" : "";
+  if ((document.documentElement.dataset.layout ?? "") === want) return;
+  if (want) document.documentElement.dataset.layout = want;
+  else delete document.documentElement.dataset.layout;
+  render();
+}
+
+/**
+ * The harness pins a layout with ?layout=; the app follows the tray. Resolves
+ * once the first layout is in, or after LAYOUT_WAIT_MS, so a compact gauge
+ * does not open tall for a moment.
+ */
+function followLayout() {
+  const q = new URLSearchParams(location.search).get("layout");
+  if (q !== null || !inTauri) {
+    applyLayout(q);
+    return Promise.resolve();
+  }
+  return new Promise((resolve) => {
+    const { Channel, invoke } = window.__TAURI__.core;
+    const channel = new Channel();
+    channel.onmessage = (layout) => {
+      applyLayout(layout);
+      resolve();
+    };
+    invoke("layout_subscribe", { onMessage: channel }).catch(resolve);
+    setTimeout(resolve, LAYOUT_WAIT_MS);
+  });
 }
 
 const rectOf = (el) => {
@@ -279,6 +324,7 @@ window.__klepsydra = {
 
 zoomLevel = await savedZoom();
 applyZoom();
+await followLayout();
 startFleet();
 poll();
 setInterval(poll, POLL_MS);

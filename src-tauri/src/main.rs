@@ -11,6 +11,7 @@ use std::time::{Duration, Instant};
 
 use geometry::{Display, Home, Rect};
 use tauri::{
+    ipc::Channel,
     menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem},
     tray::TrayIconBuilder,
     Manager, PhysicalPosition,
@@ -173,6 +174,44 @@ fn json_rect(v: &serde_json::Value) -> Option<Rect> {
 #[tauri::command]
 fn set_zoom(app: tauri::AppHandle, level: i64) {
     write_pref(&app, "zoom", serde_json::json!(level));
+}
+
+/// The gauge's layout: "compact" (a ring per window in one row, low enough to
+/// sit inside the taskbar) or "full" (a bar per window).
+fn layout_of(app: &tauri::AppHandle) -> &'static str {
+    match read_prefs(app).and_then(|p| p.get("layout")?.as_str().map(str::to_owned)) {
+        Some(l) if l == "compact" => "compact",
+        _ => "full",
+    }
+}
+
+/// The gauge's channel for layout changes, once it has subscribed.
+#[derive(Default)]
+struct LayoutFeed(Mutex<Option<Channel<String>>>);
+
+/// The gauge asks for its layout: the current one at once, then each change
+/// made from the tray.
+#[tauri::command]
+fn layout_subscribe(
+    app: tauri::AppHandle,
+    feed: tauri::State<'_, LayoutFeed>,
+    on_message: Channel<String>,
+) {
+    let _ = on_message.send(layout_of(&app).into());
+    if let Ok(mut slot) = feed.0.lock() {
+        *slot = Some(on_message);
+    }
+}
+
+/// Save a layout chosen in the tray and hand it to the gauge.
+fn set_layout(app: &tauri::AppHandle, compact: bool) {
+    let layout = if compact { "compact" } else { "full" };
+    write_pref(app, "layout", serde_json::json!(layout));
+    let feed = app.state::<LayoutFeed>();
+    let channel = feed.0.lock().ok().and_then(|slot| slot.clone());
+    if let Some(channel) = channel {
+        let _ = channel.send(layout.into());
+    }
 }
 
 /// Where the window is: the rect last requested while it may still be landing,
@@ -756,11 +795,13 @@ fn main() {
         .manage(Moved::default())
         .manage(Sized::default())
         .manage(Requested::default())
+        .manage(LayoutFeed::default())
         .invoke_handler(tauri::generate_handler![
             read_usage,
             set_size,
             get_zoom,
             set_zoom,
+            layout_subscribe,
             set_grip,
             reset_position,
             set_tray_level,
@@ -815,6 +856,14 @@ fn main() {
             )?;
             let reset = MenuItem::with_id(app, "reset", "Reset position", true, None::<&str>)?;
             let home = MenuItem::with_id(app, "home", "Set home here", true, None::<&str>)?;
+            let compact_item = CheckMenuItem::with_id(
+                app,
+                "compact",
+                "Compact",
+                true,
+                layout_of(app.handle()) == "compact",
+                None::<&str>,
+            )?;
             let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
             let menu = Menu::with_items(
                 app,
@@ -822,6 +871,7 @@ fn main() {
                     &reset,
                     &home,
                     &PredefinedMenuItem::separator(app)?,
+                    &compact_item,
                     &start_item,
                     &PredefinedMenuItem::separator(app)?,
                     &quit,
@@ -829,6 +879,7 @@ fn main() {
             )?;
 
             let toggle = start_item.clone();
+            let compact = compact_item.clone();
             TrayIconBuilder::with_id("main")
                 .icon(app.default_window_icon().expect("bundled icon").clone())
                 .tooltip("klepsydra")
@@ -842,6 +893,7 @@ fn main() {
                         let _ = if want { mgr.enable() } else { mgr.disable() };
                         let _ = toggle.set_checked(mgr.is_enabled().unwrap_or(want));
                     }
+                    "compact" => set_layout(app, compact.is_checked().unwrap_or(false)),
                     "reset" => {
                         if let Some(w) = app.get_webview_window("main") {
                             let _ = reset_position(w.clone());

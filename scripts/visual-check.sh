@@ -96,6 +96,19 @@ fixture_write "$(entry pers Personal 0 "{\"five_hour\":$(w 59 14700),\"seven_day
 shot 08-switched-away-reset "" 450,160
 fixture_write "$(entry live Personal 0 "{\"five_hour\":$(w 40 7200)}"),$(entry old Abandoned 2700000 "{\"five_hour\":$(w 90 7200)}")"
 shot 09-abandoned-dropped
+echo "compact ->"
+# The taskbar layout: the same states as rings in one row, 48px tall or less.
+fixture_write "$(entry team RIT-CS-DQL 0 "{\"five_hour\":$(w 88 3000)}"),$(entry pers Personal 0 "{\"five_hour\":$(w 21 14000),\"seven_day\":$(w 63 300000)}")"
+shot c03-both-accounts "?layout=compact" 900,80
+fixture_write "$(entry team RIT-CS-DQL 0 "{\"five_hour\":$(w 97 600)}")"
+shot c04-critical "?layout=compact" 450,80
+fixture_write "$(entry team RIT-CS-DQL 1800 "{\"five_hour\":$(w 55 7200)}")"
+shot c06-old-reading "?layout=compact" 450,80
+fixture_write "$(entry pers Personal 0 "{\"five_hour\":$(w 59 14700),\"seven_day\":$(w 31 116000)}"),$(entry team RIT-CS-DQL 30000 "{\"five_hour\":$(w 100 -21600)}")"
+shot c08-switched-away-reset "?layout=compact" 900,80
+for z in -3 4; do
+  shot "c-zoom-$z" "?layout=compact&zoom=$z" 1400,140
+done
 rm -f "$fixture"
 shot 10-waiting
 
@@ -145,6 +158,7 @@ jq -s '{sessions: .}' \
 fixture_write "$(entry pers Personal 0 "{\"five_hour\":$(w 46 9000),\"seven_day\":$(w 12 400000)}")"
 shot 11-fleet-strip "" 1100,140
 shot 12-fleet-strip-zoom "?zoom=4" 1500,260
+shot c11-fleet-strip "?layout=compact" 1100,80
 shot 13-fleet-wall-1920 "" 1920,1100 wall.html
 shot 14-fleet-wall-1280 "" 1280,1000 wall.html
 rm -f "$fixture" "$fleet_fixture"

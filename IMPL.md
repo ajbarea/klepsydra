@@ -1,56 +1,33 @@
 # IMPL
 
-Current slice: the fleet strip and card wall, so one glance shows how many
-Claude Code sessions are up, where each works, which need AJ and why, and what
-each was last asked and said.
+Current slice: the compact layout (#21). "Compact" in the tray redraws the
+gauge as a ring per window in one row, low enough to sit inside the taskbar,
+so every account fits there instead of one row with the rest below the edge.
 
 ## Done
-- ✅ `hooks/klepsydra-fleet.sh`, async on ten events: one file per session,
-  written only on change through a same-directory temp file, under one lock.
-  A need is cleared only by the asker's own tool, finishing or failing, and a waiting session is never silent; a `Notification` of type
-  `idle_prompt` corrects a session still marked working or needing AJ.
-- ✅ Pruning at session start, at most once an hour, deleting only names from
-  its own `fleet/<uuid>.json` glob inside the absolute app data dir.
-- ✅ Heartbeat from the status line, at most once per 10 s, and
-  `refreshInterval: 30`.
-- ✅ `src-tauri/fleet`, a crate free of Tauri: v1 parsing with time bounds
-  2020 to 2100, silent after 90 s with no word, clock skew corrected from
-  `written_at`, `quiet_since` for "working?", ordering, a notify watcher with
-  a 5 s re-read, bad files logged once to `fleet.log`, the hub.
-- ✅ Strip in the gauge window, card wall made on the first click, Jump to
-  terminal through UI Automation by exact tab title.
-- ✅ Ten kourai portraits cast to keryx voices; Lorelei faces for 54 Kokoro
-  voices and 24 fallbacks, each licensed in `LICENSES.json`.
-- ✅ A guard for every rejected idea in the spec, one that the guards scan
-  every fleet source, and one that the README settings block matches the
-  hook's event list. The spec's addendum records each ruling made on the way.
+- ✅ `gauge.js`: short countdowns ("4h 58m", "3d 11h", "<1m") and ages ("15m")
+  from the same parts as the long ones, so the two cannot drift; each reading
+  carries `short`, which keeps "· 15m old" and "· age unknown".
+- ✅ `index.html` and `style.css`: one row template for both layouts. The
+  ring (an SVG circle with `pathLength` 100, so the dash is the percentage)
+  is hidden in the full layout; in compact a grid places the same label,
+  percent and countdown, and the bar is hidden. Compact tokens sit in the
+  restyling block, and every size still follows the zoom.
+- ✅ `main.js`: `applyLayout`, a layout channel from the backend, and a first
+  draw that waits up to 500 ms for the saved layout so a compact gauge does
+  not open tall.
+- ✅ `main.rs`: `layout` in `prefs.json`, `layout_subscribe`, and a "Compact"
+  check item in the tray menu.
+- ✅ README (Compact, Restyling) and compact shots in `scripts/visual-check.sh`.
 
 ## Verified, not inferred
-- ✅ Hook, statusline, memory-check, node and fleet-crate suites pass in WSL.
-- 📋 Live check with eight real sessions (README, Releasing). Still owed,
-  including held dialogs, a failed command, a subagent's permission ask and
-  tab exits, which the status truth rests on.
-- 📋 Working set at 5 minutes and at 8 hours, growth within 10%.
-- 📋 Jump to terminal takes the foreground after a click in the wall.
-- 📋 A click on a portrait reaches the webview of the click-through window.
-- 📋 Payload shapes come from the hooks docs; the live check confirms them.
-- 📋 CI does not run `scripts/visual-check.sh`, keryx parity (it skips
-  without the keryx source), ruff on `scripts/cut-portraits.py`, or the
-  behaviour of `scripts/fleet-status.sh` (lint only). The Linux app crate
-  first compiles in CI.
-- 📋 The app crate and clippy run only through `scripts/build-windows.sh
-  --check` and CI, since WSL has no WebKitGTK.
+- ✅ 118 node tests pass, including long and short countdowns agreeing at
+  every unit boundary.
+- ✅ Rendered in Chrome headless: 42px tall with three windows, against 142px
+  for the bars.
+- ✅ Clippy clean and 96 Rust tests pass on Windows (`build-windows.sh --check`).
+- 📋 Installed build: toggle from the tray, the gauge stays on the taskbar
+  edge, the layout survives a restart.
 
 ## Open
-- The default display name (`my-app-3f`) reaches no hook and no status line,
-  so a session with no voice and no name is named by its launch folder.
-- A denied permission dismissed with Esc keeps "needs you" until the next
-  prompt, its age showing.
-
-## Verify
-    node --test src/*.test.js
-    bash statusline/test_statusline.sh && bash hooks/test_fleet.sh
-    bash scripts/test_measure_memory.sh
-    (cd src-tauri && cargo test -p klepsydra-fleet && cargo clippy -p klepsydra-fleet --all-targets -- -D warnings)
-    bash scripts/build-windows.sh --check
-    bash scripts/visual-check.sh
+- The tray icon still draws a bar in either layout.
