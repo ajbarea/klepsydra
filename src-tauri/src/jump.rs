@@ -1,7 +1,9 @@
 //! Jump to terminal: select a Windows Terminal tab and bring its window to the
 //! front, through UI Automation, an in-process API. The tab is titled with the
-//! session's name, or `FLEET_TAB` for a session in the launcher's tmux. Which
-//! tab is decided by `klepsydra_fleet::tabs`, tested everywhere.
+//! session's name, or exactly `FLEET_TAB` for a session in the launcher's
+//! tmux. Which tab is decided by `klepsydra_fleet::tabs`, tested everywhere.
+
+use klepsydra_fleet::tabs::Lookup;
 
 /// The outcome in a sentence for the card: Ok when the session's window or
 /// tab was selected, Err when nothing was done. A session in tmux has its
@@ -20,20 +22,20 @@ pub async fn jump_to_terminal(
         .and_then(|v| crate::launch::target(&v, &id));
     tauri::async_runtime::spawn_blocking(move || match target {
         Some(t) if crate::launch::tmux_jump(&app, &t).is_ok() => {
-            settle(true, jump(tab_title(&t, &name)))
+            settle(true, jump(tab_lookup(&t, &name)))
         }
-        _ => jump(&name),
+        _ => jump(Lookup::Session(&name)),
     })
     .await
     .map_err(|e| format!("Could not run the jump: {e}"))?
 }
 
-/// The title of the tab that shows `t`'s session.
-fn tab_title<'a>(t: &crate::launch::Target, name: &'a str) -> &'a str {
+/// The tab that shows `t`'s session.
+fn tab_lookup<'a>(t: &crate::launch::Target, name: &'a str) -> Lookup<'a> {
     if crate::launch::is_fleet(t) {
-        crate::launch::FLEET_TAB
+        Lookup::Exact(crate::launch::FLEET_TAB)
     } else {
-        name
+        Lookup::Session(name)
     }
 }
 
@@ -41,7 +43,7 @@ fn tab_title<'a>(t: &crate::launch::Target, name: &'a str) -> &'a str {
 #[cfg(test)]
 fn fleet_tab(titles: &[&str]) -> Result<usize, String> {
     let t: Vec<String> = titles.iter().map(|s| s.to_string()).collect();
-    klepsydra_fleet::tabs::pick_tab(crate::launch::FLEET_TAB, &t, false)
+    klepsydra_fleet::tabs::pick(Lookup::Exact(crate::launch::FLEET_TAB), &t, false)
 }
 
 /// A selected tmux window is a success even when no tab title matches: a
@@ -54,18 +56,18 @@ fn settle(tmux_ok: bool, title_result: Result<String, String>) -> Result<String,
 }
 
 #[cfg(not(windows))]
-fn jump(_name: &str) -> Result<String, String> {
+fn jump(_lookup: Lookup<'_>) -> Result<String, String> {
     Err("Jump to terminal works on Windows only.".into())
 }
 
 #[cfg(windows)]
-fn jump(name: &str) -> Result<String, String> {
-    uia::jump(name)
+fn jump(lookup: Lookup<'_>) -> Result<String, String> {
+    uia::jump(lookup)
 }
 
 #[cfg(windows)]
 mod uia {
-    use klepsydra_fleet::tabs::pick_tab;
+    use klepsydra_fleet::tabs::{pick, Lookup};
     use windows::core::{Interface, BSTR};
     use windows::Win32::Foundation::HWND;
     use windows::Win32::System::Com::{
@@ -161,9 +163,9 @@ mod uia {
         "Windows kept the focus, so the terminal\u{2019}s taskbar button is flashing.".into()
     }
 
-    pub fn jump(name: &str) -> Result<String, String> {
-        let name = name.trim();
-        if name.is_empty() {
+    pub fn jump(lookup: Lookup<'_>) -> Result<String, String> {
+        let (Lookup::Session(name) | Lookup::Exact(name)) = lookup;
+        if name.trim().is_empty() {
             return Err("This session has no name yet.".into());
         }
         let _com = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) }
@@ -184,7 +186,7 @@ mod uia {
         let (tabs, hidden) =
             tabs(&uia).map_err(|e| format!("Could not list Windows Terminal windows: {e}"))?;
         let titles: Vec<String> = tabs.iter().map(|t| t.title.clone()).collect();
-        let tab = &tabs[pick_tab(name, &titles, hidden)?];
+        let tab = &tabs[pick(lookup, &titles, hidden)?];
         let hwnd = unsafe { tab.window.CurrentNativeWindowHandle() }
             .map_err(|e| format!("Could not find the terminal window: {e}"))?;
         unsafe {
@@ -202,8 +204,9 @@ mod uia {
 
 #[cfg(test)]
 mod tests {
-    use super::{fleet_tab, settle, tab_title};
+    use super::{fleet_tab, settle, tab_lookup};
     use crate::launch::{Target, FLEET_TAB};
+    use klepsydra_fleet::tabs::Lookup;
 
     #[test]
     fn a_hand_started_tmux_is_found_by_the_session_name() {
@@ -215,12 +218,12 @@ mod tests {
             start: 1,
         };
         assert_eq!(
-            tab_title(&t("/tmp/tmux-1/klepsydra"), "my session"),
-            FLEET_TAB
+            tab_lookup(&t("/tmp/tmux-1/klepsydra"), "my session"),
+            Lookup::Exact(FLEET_TAB)
         );
         assert_eq!(
-            tab_title(&t("/tmp/tmux-1/default"), "my session"),
-            "my session"
+            tab_lookup(&t("/tmp/tmux-1/default"), "my session"),
+            Lookup::Session("my session")
         );
     }
 
@@ -229,6 +232,14 @@ mod tests {
         assert_eq!(fleet_tab(&["pwsh", "klepsydra fleet", "x"]), Ok(1));
         assert!(fleet_tab(&["klepsydra fleets", "klepsydra", "fleet"]).is_err());
         assert!(fleet_tab(&["klepsydra fleet", "klepsydra fleet"]).is_err());
+        assert!(
+            fleet_tab(&["\u{2733} klepsydra fleet"]).is_err(),
+            "a hand-opened session named klepsydra fleet is not the fleet tab"
+        );
+        assert_eq!(
+            fleet_tab(&["\u{2733} klepsydra fleet", "klepsydra fleet"]),
+            Ok(1)
+        );
     }
 
     #[test]
