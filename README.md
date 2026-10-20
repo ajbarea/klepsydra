@@ -302,6 +302,9 @@ status glyph, is exactly the session's name, and brings its window to the
 front. If Windows keeps the focus, the tab's taskbar button flashes instead.
 With no such tab, or more than one, it says so and does nothing. When Windows
 Terminal hides its tabs (full screen or focus mode), it says that instead.
+A tab renamed in Windows Terminal (Rename tab) keeps that name and ignores
+Claude Code's title, so Jump cannot find it. Name the session with `/rename`
+inside Claude Code instead: the tab and the card both take that name.
 
 A session's face follows its keryx voice, so it stays the same while the
 session moves between repos. Ten voices are cast as the kourai-khryseai
