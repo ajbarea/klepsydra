@@ -1,6 +1,8 @@
 //! What the strip and the wall show for each session: its status with that
 //! status's time, in the order AJ reads them.
 
+use std::collections::HashMap;
+
 use serde::Serialize;
 
 use crate::session::{Place, Said, SessionFile, State, Touched};
@@ -168,11 +170,57 @@ pub fn view(entry: &Entry, now: i64) -> Option<View> {
     })
 }
 
+/// A face follows a voice, so no two sessions may show one through a repo's
+/// home voice: where a held voice and a home voice meet, the hold keeps it,
+/// and between homes the session that started first. The others drop the
+/// voice and show their fallback face. Two holds of one voice are keryx's
+/// own choice and stay.
+fn keep_faces_distinct(shown: &mut [(&SessionFile, View)]) {
+    let from_home = |f: &SessionFile| f.voice_from.as_deref() == Some("home");
+    // The strongest claim on each voice: a hold before a home, then the
+    // earlier start, then the session id, so the choice never flickers.
+    let claim = |f: &SessionFile| {
+        (
+            from_home(f),
+            f.started_at.unwrap_or(i64::MAX),
+            f.session_id.clone(),
+        )
+    };
+    let mut keeper: HashMap<String, (bool, i64, String)> = HashMap::new();
+    for (f, v) in shown.iter() {
+        if let Some(voice) = &v.voice {
+            let c = claim(f);
+            keeper
+                .entry(voice.clone())
+                .and_modify(|k| {
+                    if c < *k {
+                        *k = c.clone();
+                    }
+                })
+                .or_insert(c);
+        }
+    }
+    for (f, v) in shown.iter_mut() {
+        let lost = match &v.voice {
+            Some(voice) => from_home(f) && keeper[voice].2 != f.session_id,
+            None => false,
+        };
+        if lost {
+            v.voice = None;
+        }
+    }
+}
+
 /// Every session to show, needing AJ first, the longest wait leading; then
 /// errors, work in progress, finished work newest first, not started,
 /// silent and ended.
 pub fn snapshot(entries: &[Entry], now: i64) -> Snapshot {
-    let mut sessions: Vec<View> = entries.iter().filter_map(|e| view(e, now)).collect();
+    let mut shown: Vec<(&SessionFile, View)> = entries
+        .iter()
+        .filter_map(|e| view(e, now).map(|v| (&e.file, v)))
+        .collect();
+    keep_faces_distinct(&mut shown);
+    let mut sessions: Vec<View> = shown.into_iter().map(|(_, v)| v).collect();
     sessions.sort_by(|a, b| {
         a.status
             .rank()
@@ -198,7 +246,9 @@ mod tests {
             session_id: id.into(),
             name: None,
             launch_dir: Some("/home/aj/ajsoftworks".into()),
+            started_at: Some(state_at),
             voice: Some("am_michael".into()),
+            voice_from: None,
             state,
             reason: None,
             state_at,
@@ -551,5 +601,91 @@ mod tests {
                 let _ = view(&e, NOW);
             }
         }
+    }
+    /// A session started at `started` with `voice`, held or from a home.
+    fn voiced(id: &str, started: i64, voice: &str, from: &str) -> Entry {
+        let mut e = entry(id, State::Working, NOW - 10, NOW - 5);
+        e.file.started_at = Some(started);
+        e.file.voice = Some(voice.into());
+        e.file.voice_from = Some(from.into());
+        e
+    }
+
+    fn voice_of<'a>(s: &'a Snapshot, id: &str) -> Option<&'a str> {
+        let v = s.sessions.iter().find(|v| v.session_id == id).unwrap();
+        v.voice.as_deref()
+    }
+
+    #[test]
+    fn two_homes_of_one_voice_the_first_started_keeps_it() {
+        let s = snapshot(
+            &[
+                voiced("b", NOW - 100, "bf_emma", "home"),
+                voiced("a", NOW - 200, "bf_emma", "home"),
+            ],
+            NOW,
+        );
+        assert_eq!(voice_of(&s, "a"), Some("bf_emma"));
+        assert_eq!(
+            voice_of(&s, "b"),
+            None,
+            "the later one shows its fallback face"
+        );
+    }
+
+    #[test]
+    fn a_hold_beats_a_home_however_late_it_started() {
+        let s = snapshot(
+            &[
+                voiced("home", NOW - 900, "bf_emma", "home"),
+                voiced("held", NOW - 100, "bf_emma", "hold"),
+            ],
+            NOW,
+        );
+        assert_eq!(voice_of(&s, "held"), Some("bf_emma"));
+        assert_eq!(voice_of(&s, "home"), None);
+    }
+
+    #[test]
+    fn two_holds_of_one_voice_both_stay() {
+        let s = snapshot(
+            &[
+                voiced("a", NOW - 200, "am_michael", "hold"),
+                voiced("b", NOW - 100, "am_michael", "hold"),
+            ],
+            NOW,
+        );
+        assert_eq!(voice_of(&s, "a"), Some("am_michael"));
+        assert_eq!(
+            voice_of(&s, "b"),
+            Some("am_michael"),
+            "keryx repeats a voice once all are in use"
+        );
+    }
+
+    #[test]
+    fn homes_of_different_voices_both_stay() {
+        let s = snapshot(
+            &[
+                voiced("a", NOW - 200, "bf_emma", "home"),
+                voiced("b", NOW - 100, "am_adam", "home"),
+            ],
+            NOW,
+        );
+        assert_eq!(voice_of(&s, "a"), Some("bf_emma"));
+        assert_eq!(voice_of(&s, "b"), Some("am_adam"));
+    }
+
+    #[test]
+    fn a_tie_on_start_goes_to_the_lower_session_id() {
+        let s = snapshot(
+            &[
+                voiced("b", NOW - 100, "bf_emma", "home"),
+                voiced("a", NOW - 100, "bf_emma", "home"),
+            ],
+            NOW,
+        );
+        assert_eq!(voice_of(&s, "a"), Some("bf_emma"));
+        assert_eq!(voice_of(&s, "b"), None);
     }
 }

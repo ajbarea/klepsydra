@@ -150,6 +150,17 @@ holder_voice() { # pid start
   jq -r --arg h "$1:$2" '.holders[$h].voice // empty | strings' "$VOICES" 2>/dev/null
 }
 
+# The voice keryx remembers for repo `source`, if keryx heard the repo within
+# HOME_SECONDS of `now` (keryx's own window), else nothing. A muted keryx
+# holds no new terminal, so a session takes its repo's voice from here.
+HOME_SECONDS=$((14 * 24 * 3600))
+home_voice() { # source now
+  [[ -n $1 && -n $VOICES && -r $VOICES ]] || return 0
+  jq -r --arg s "$1" --argjson now "$2" --argjson within "$HOME_SECONDS" '
+    .homes[$s] | select(type == "object" and (.seen | type) == "number" and $now - .seen <= $within)
+    | .voice // empty | strings' "$VOICES" 2>/dev/null
+}
+
 # Whether the Claude Code process recorded as `pid start` still runs. A zombie
 # has exited, and a pid with another start time or another program is someone
 # else's.
@@ -273,7 +284,7 @@ def ended_as: {clear: "cleared", resume: "resumed elsewhere", logout: "logged ou
   elif $was.state == "ended" and $event != "SessionStart" then empty
   else
   ($was // {v: 1, session_id: $ev.session_id, name: null, started_at: $now,
-            launch_dir: ($ev.cwd | text), claude: null, voice: null,
+            launch_dir: ($ev.cwd | text), claude: null, voice: null, voice_from: null,
             state: (if $event == "PreToolUse" or $event == "PostToolUse" or $event == "PostToolUseFailure" then "working" else "new" end),
             reason: null, needs: null, state_at: $now,
             where: null, touched: [], prompt: null, reply: null, error: null,
@@ -282,7 +293,10 @@ def ended_as: {clear: "cleared", resume: "resumed elsewhere", logout: "logged ou
   | .name = (($ev.session_title | text) // .name)
   | (if $pid != "" then {pid: ($pid | tonumber), start: ($start | tonumber)} else null end) as $me
   | .claude = (if $me != null and $event == "SessionStart" and $ev.source != "compact" then $me else (.claude // $me) end)
-  | .voice = (($voice | text) // .voice)
+  # A held voice beats a repo's home voice; files from before voice_from held.
+  | .voice_from = (.voice_from // (if .voice != null then "hold" else null end))
+  | if ($voice | text) == null or ($voice_from == "home" and .voice_from == "hold") then .
+    else .voice = $voice | .voice_from = $voice_from end
 
   # Where: the last edit's repo, or the cwd's until something is edited.
   | (if $repo != "" and ($by == "edit" or .where == null or .where.by == "cwd")
@@ -357,7 +371,7 @@ write_atomic() { # file text
 }
 
 main() {
-  local input fields session event cwd edited now file old new lock voice="" by=cwd
+  local input fields session event cwd edited now file old new lock voice="" voice_from="" cwd_repo by=cwd
   input=$(cat)
   fields=$(printf '%s' "$input" | jq -r '
     def s: if type == "string" then gsub("[\u001f\n]"; " ") else "" end;
@@ -370,16 +384,22 @@ main() {
 
   now=${KLEPSYDRA_NOW:-}
   [[ $now =~ ^[0-9]+$ ]] || printf -v now '%(%s)T' -1
+  git_where "$cwd"
+  cwd_repo=$where_repo # keryx names a session's repo by its cwd
   if [[ -n $edited ]]; then
     by=edit
     git_where "${edited%/*}"
     # A memory or plan file outside every repo says nothing about where work is.
     (( where_bare )) && where_repo=""
-  else
-    git_where "$cwd"
   fi
   if claude_ancestor "${KLEPSYDRA_PID:-$$}"; then
     voice=$(holder_voice "$found_pid" "$found_start") || voice=""
+  fi
+  if [[ -n $voice ]]; then
+    voice_from=hold
+  else
+    voice=$(home_voice "$cwd_repo" "$now") || voice=""
+    if [[ -n $voice ]]; then voice_from=home; fi
   fi
 
   [[ -n ${KLEPSYDRA_DIR:-} ]] || return 0
@@ -394,7 +414,7 @@ main() {
   new=$(printf '%s' "$input" | jq -c --arg old "$old" --argjson now "$now" --argjson chars "$PROMPT_CHARS" \
     --arg repo "$where_repo" --arg worktree "$where_worktree" --arg branch "$where_branch" \
     --arg by "$by" \
-    --arg voice "$voice" --arg pid "$found_pid" --arg start "$found_start" \
+    --arg voice "$voice" --arg voice_from "$voice_from" --arg pid "$found_pid" --arg start "$found_start" \
     "$APPLY" 2>/dev/null) || new=""
   [[ -n $new ]] && write_atomic "$file" "$new"
   [[ $event == SessionStart ]] && prune_hourly "$KLEPSYDRA_DIR" "$now"

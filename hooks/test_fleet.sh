@@ -269,6 +269,43 @@ rm "$work/voices.json"
 fire user-prompt.json
 check "keryx gone keeps the voice" "$(field .voice)" '"bf_emma"'
 
+echo "home voice"
+# While keryx is muted no terminal is held, so a session takes the voice keryx
+# remembers for its repo; a held voice always beats it.
+H=22222222-3333-4444-8555-666666666666
+hfile="$dir/fleet/$H.json"
+hfield() { jq -c "$1" "$hfile"; }
+day=$((24 * 3600))
+printf '{"homes":{"klepsydra":{"voice":"bf_emma","seen":%s}}}\n' $((now - 60)) >"$work/voices.json"
+fire session-start.json ".session_id = \"$H\""
+check "muted keryx: the repo's home voice" "$(hfield '[.voice, .voice_from]')" '["bf_emma","home"]'
+printf '{"homes":{"klepsydra":{"voice":"bf_emma","seen":%s}},"holders":{"500:8717628":{"voice":"am_adam","seen":1}}}\n' $((now - 60)) >"$work/voices.json"
+fire user-prompt.json ".session_id = \"$H\""
+check "a later hold replaces a home voice" "$(hfield '[.voice, .voice_from]')" '["am_adam","hold"]'
+printf '{"homes":{"klepsydra":{"voice":"bf_emma","seen":%s}}}\n' $((now - 60)) >"$work/voices.json"
+fire post-tool-bash.json ".session_id = \"$H\""
+check "a home voice never replaces a hold" "$(hfield '[.voice, .voice_from]')" '["am_adam","hold"]'
+rm -f "$hfile"
+printf '{"homes":{"klepsydra":{"voice":"bf_emma","seen":%s}}}\n' $((now - 14 * day - 1)) >"$work/voices.json"
+fire session-start.json ".session_id = \"$H\""
+check "a home keryx has not heard for 14 days is ignored" "$(hfield '[.voice, .voice_from]')" '[null,null]'
+printf '{"homes":{"klepsydra":{"voice":"bf_emma","seen":%s}}}\n' $((now - 14 * day)) >"$work/voices.json"
+fire user-prompt.json ".session_id = \"$H\""
+check "14 days exactly still counts" "$(hfield '[.voice, .voice_from]')" '["bf_emma","home"]'
+rm -f "$hfile"
+printf '{"homes":{"klepsydra":{"voice":"bf_emma","seen":%s}},"holders":{"500:8717628":{"voice":"am_adam","seen":1}}}\n' $((now - 60)) >"$work/voices.json"
+fire session-start.json ".session_id = \"$H\""
+check "a live hold beside a home: the hold" "$(hfield '[.voice, .voice_from]')" '["am_adam","hold"]'
+rm -f "$hfile"
+printf '{"homes":{"loose":{"voice":"bf_emma","seen":%s}}}\n' $((now - 60)) >"$work/voices.json"
+fire session-start.json ".session_id = \"$H\""
+check "another repo's home is not this one's" "$(hfield .voice)" "null"
+printf '{"v":1,"session_id":"%s","started_at":%s,"voice":"am_michael","state":"new","state_at":%s,"written_at":%s}\n' "$H" "$now" "$now" "$now" >"$hfile"
+printf '{"homes":{"klepsydra":{"voice":"bf_emma","seen":%s}}}\n' $((now - 60)) >"$work/voices.json"
+fire user-prompt.json ".session_id = \"$H\""
+check "a voice from before voice_from counts as held" "$(hfield '[.voice, .voice_from]')" '["am_michael","hold"]'
+rm -f "$hfile" "$work/voices.json"
+
 echo "lifecycle"
 now=1792353300
 fire session-end.json

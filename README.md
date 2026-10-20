@@ -328,9 +328,17 @@ A session's face follows its keryx voice, so it stays the same while the
 session moves between repos. Ten voices are cast as the kourai-khryseai
 characters and show their portraits. Any other voice shows a DiceBear Lorelei
 face and the voice's name, and a session without keryx gets one of 24 Lorelei
-faces picked by its session id. A face never changes with the status. The
-faces are files in `src/fleet/faces`, each listed in `LICENSES.json`, and the
-overlay loads no library and fetches nothing.
+faces picked by its session id. A face never changes with the status.
+
+While keryx is muted (`/keryx off`) it holds no new terminal, so a new session
+takes the voice keryx remembers for its repo, if keryx heard that repo in the
+last 14 days, and the cast stays on screen. No two sessions show one face this
+way: a held voice beats a repo's voice, and of two sessions in one repo the
+first started keeps it while the other shows its fallback face until the first
+one leaves.
+
+The faces are files in `src/fleet/faces`, each listed in `LICENSES.json`, and
+the overlay loads no library and fetches nothing.
 
 The fleet hook writes `<app data dir>/fleet/<session>.json`: the state, where
 the session works, the first 300 characters of your last prompt and of the

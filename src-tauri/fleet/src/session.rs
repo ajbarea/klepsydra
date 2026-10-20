@@ -62,7 +62,13 @@ pub struct SessionFile {
     #[serde(default)]
     pub launch_dir: Option<String>,
     #[serde(default)]
+    pub started_at: Option<i64>,
+    #[serde(default)]
     pub voice: Option<String>,
+    /// "hold" when keryx held the voice for the session's terminal, "home"
+    /// when it is the voice keryx remembers for the repo (keryx was muted).
+    #[serde(default)]
+    pub voice_from: Option<String>,
     pub state: State,
     #[serde(default)]
     pub reason: Option<String>,
@@ -201,13 +207,15 @@ mod tests {
     fn a_file_the_hook_writes_parses() {
         let text = r#"{"v":1,"session_id":"cb9fa591-1514-44d1-a31c-eba4a7cb41ed","name":null,
           "started_at":1800000090,"launch_dir":"/home/aj/ajsoftworks","claude":{"pid":2231,"start":8717628},
-          "voice":"am_michael","state":"needs_you","reason":"approve Bash",
+          "voice":"am_michael","voice_from":"home","state":"needs_you","reason":"approve Bash",
           "needs":{"by":"","tool":"Bash"},"state_at":1800000106,
           "where":{"repo":"klepsydra","worktree":"fleet","branch":"feat/fleet-visualizer","by":"edit","at":1800000105},
           "touched":[{"repo":"ideas","at":1800000095}],"prompt":{"text":"viz them","at":1800000100},
           "reply":{"text":"That works","at":1800000099},"error":null,"ended":null,"written_at":1800000106}"#;
         let f = parse(text, ID).unwrap();
         assert_eq!(f.state, State::NeedsYou);
+        assert_eq!(f.started_at, Some(1_800_000_090));
+        assert_eq!(f.voice_from.as_deref(), Some("home"));
         assert_eq!(f.reason.as_deref(), Some("approve Bash"));
         assert_eq!(f.place.unwrap().worktree.as_deref(), Some("fleet"));
         assert_eq!(
