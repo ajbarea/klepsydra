@@ -175,8 +175,22 @@ test("the guards read real sources", () => {
   assert.ok(CSS.includes("src/style.css"), "CSS not found");
 });
 
-test("nothing starts a process", () => {
-  for (const f of [...RUST, ...FRONTEND, ...MANIFESTS, ...CONFIG]) assert.deepEqual(spawns(read(f)), [], f);
+// The launcher is the one file allowed to start a process and name wsl.
+const LAUNCHER = "src-tauri/src/launch.rs";
+
+test("only the launcher starts a process", () => {
+  assert.ok(RUST.includes(LAUNCHER), `${LAUNCHER} not found`);
+  for (const f of [...RUST, ...FRONTEND, ...MANIFESTS, ...CONFIG].filter((f) => f !== LAUNCHER)) {
+    assert.deepEqual(spawns(read(f)), [], f);
+  }
+});
+
+test("the launcher starts only wsl.exe, from its fixed path, without a window", () => {
+  const src = read(LAUNCHER);
+  assert.deepEqual([...src.matchAll(/Command::new\(([^)]*)\)/g)].map((m) => m[1].trim()), ["WSL_EXE"]);
+  assert.match(src, /pub const WSL_EXE: &str = r"C:\\Windows\\System32\\wsl\.exe";/);
+  assert.match(src, /creation_flags\(CREATE_NO_WINDOW\)/);
+  assert.doesNotMatch(src, /"--"/, "wsl.exe -- runs a shell; use -e");
 });
 
 test("the spawn check catches each way of starting one", () => {
@@ -193,8 +207,10 @@ test("the spawn check catches each way of starting one", () => {
   }
 });
 
-test("nothing names wsl", () => {
-  for (const f of [...RUST, ...FRONTEND, ...CONFIG]) assert.equal(mentionsWsl(read(f)), false, f);
+test("nothing but the launcher names wsl", () => {
+  for (const f of [...RUST, ...FRONTEND, ...CONFIG].filter((f) => f !== LAUNCHER)) {
+    assert.equal(mentionsWsl(read(f)), false, f);
+  }
   assert.equal(mentionsWsl('let x = "C:\\\\Windows\\\\System32\\\\wsl.exe";'), true);
 });
 

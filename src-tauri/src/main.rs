@@ -3,6 +3,7 @@
 mod fleet;
 mod geometry;
 mod jump;
+mod launch;
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -796,6 +797,7 @@ fn with_state<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R
         .manage(Sized::default())
         .manage(Requested::default())
         .manage(Layouts::default())
+        .manage(launch::InFlight::default())
 }
 
 fn main() {
@@ -823,7 +825,8 @@ fn main() {
             set_tray_level,
             fleet::fleet_subscribe,
             fleet::open_wall,
-            jump::jump_to_terminal
+            jump::jump_to_terminal,
+            launch::launch_session
         ])
         .setup(|app| {
             let window = app.get_webview_window("main").expect("main window");
