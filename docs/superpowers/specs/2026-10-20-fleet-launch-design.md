@@ -66,7 +66,8 @@ line and the tmux logic is tested in bash.
    `tmux -L klepsydra -f ~/.claude/klepsydra-tmux.conf new-session -d -s fleet -c DIR claude`.
    Otherwise `tmux -L klepsydra new-window -t =fleet: -c DIR claude`.
 3. If no client is attached to `fleet`, open one tab:
-   `wt.exe -w fleet new-tab wsl.exe -d $WSL_DISTRO_NAME -- tmux -L klepsydra attach -t =fleet`.
+   `wt.exe -w fleet new-tab [--title "klepsydra fleet" --suppressApplicationTitle] wsl.exe -d <distro> -e tmux -S <socket> attach -t =fleet`.
+   The title arguments are for the fleet socket only (see the addendum).
 
 Creating the session detached, before any tab exists, means two quick clicks
 make two windows, never two sessions. A closed tab leaves the sessions running
@@ -117,8 +118,8 @@ card.
 
 ### `src-tauri/src/launch.rs` (new)
 
-- `launch_session()`: `wsl.exe [-d DISTRO] --cd ~ -- bash -l .claude/klepsydra-launch.sh new DIR`.
-- `tmux_jump(target)`: `wsl.exe -d DISTRO --cd ~ -- bash .claude/klepsydra-launch.sh jump SOCKET PANE PID START`.
+- `launch_session()`: `wsl.exe [-d DISTRO] --cd ~ -e bash -l .claude/klepsydra-launch.sh new DIR`.
+- `tmux_jump(target)`: `wsl.exe -d DISTRO --cd ~ -e bash .claude/klepsydra-launch.sh jump SOCKET PANE PID START`.
 - The command line comes from a pure function with unit tests. Arguments are
   validated before use and passed as separate argv entries, never through a
   shell string on the Windows side.
@@ -150,7 +151,7 @@ touched list. The button's tooltip says so.
 
 ### Wall
 
-- A bar above the cards holds a **+ New session** button and a note. While a
+- The summary bar holds a **+ New session** button and a note. While a
   launch runs, the button is disabled; the note shows the script's line.
 - The face strip and tray are left alone. #30 is reworking the strip.
 
@@ -190,6 +191,7 @@ touched list. The button's tooltip says so.
   `send-keys` to a known pane, so the wrong-tab risk in #22 goes away. It stays
   its own issue.
 - Choosing a folder or account per launch.
+- An optional split mode (#32).
 
 ## Sources
 

@@ -29,7 +29,7 @@ idle work steps back.
   greyed portrait, and dimmed name, place and transcript.
 - **Summary bar.** Counts for needs you, working, done and idle or ended,
   with error shown only when one exists. The **+ New session** button
-  (launch Task 8) sits at its right.
+  (see the launch design) sits at its right.
 - **Card text.** The session name is the subtitle ("No session name yet"
   until it has one). The voice name moves to the portrait's tooltip. Place
   reads `repo / worktree` with the branch in a chip and a git icon. Touched
@@ -37,10 +37,10 @@ idle work steps back.
   reply follows in full text.
 - **Actions.** "Jump to terminal" becomes **Open terminal**, the same command.
   A disabled button gives its reason as a tooltip. A result or error shows
-  under the buttons for 8 s, then clears. Clear (launch Task 7) is a quiet
+  under the buttons for 8 s, then clears. Clear (see the launch design) is a quiet
   text button beside it.
-- **Grid.** Columns of at least 420 px: four at 1920, three at 1280 wide or
-  more, one at 800.
+- **Grid.** Columns of at least 420 px: four at 1920, two at 1280, one at 800;
+  three start near 1365 px.
 
 ## Tokens
 
