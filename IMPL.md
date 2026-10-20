@@ -39,17 +39,25 @@ comfortable cards already scrolled; eight should fit.
   comfortable widths, shown while any card has work (`showsRingKey`); wraps
   to a second line at 945. Screen readers get one sentence; arcs aria-hidden.
 - Fit at the real content sizes (work area 1920x1048, so about 1920x1000
-  maximised and 945x1000 snapped): `scripts/test_wall_fit.py` checks 16 cards
+  maximised and 945x1000 snapped): `scripts/test_wall_browser.py` checks 16 cards
   at 1920x1000 and 8 at 945x1000 in Auto, compact, no scrollbar, key in view
   (bottom 895 and 916 px).
 - Gates: the whole audit list, build-windows --check, the fit test.
 
+- Review round (PR #55), each with a check that failed first: a
+  ResizeObserver on the wall re-runs Auto once a frame when a card grows; the
+  probe copies the bar as comfortable and rounds up (and the visually hidden
+  live region no longer adds a pixel under the wall); compact keeps a one-line
+  slot at the card's foot for the note or the off reason (note title = full
+  text); an off Open terminal's name ends "unavailable: <reason>". Compact
+  cards are 205.6 px; fit bottoms 931 (1920x1000) and 952 (945x1000).
+
 ## Next
-- Fold in the PR #55 review findings, then AJ merges.
+- AJ merges.
 - Live check through UIA on the installed build: switch densities, resize
   across the boundary, confirm the pref survives a restart.
 
 ## Verify
 - `node --test src/*.test.js`; `cd src-tauri && cargo test -p klepsydra-fleet`.
 - Serve the repo root, open `/src/wall.html?demo=8` at 960x1000 and
-  `/src/wall.html?demo` at 1920x1000; or run `scripts/test_wall_fit.py`.
+  `/src/wall.html?demo` at 1920x1000; or run `scripts/test_wall_browser.py`.

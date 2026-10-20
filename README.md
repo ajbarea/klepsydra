@@ -432,14 +432,17 @@ and speaking waves included), the name and session name, the pill and a
 smaller **Open terminal**; one line for where it works, the crew and a "+N" chip
 for the other repos it touched (hover it for their names); and the exchange,
 the prompt on one line and the reply on two. "updated 7m ago" joins the
-pill's time ("30m · 7m ago"), Clear sits beside Open terminal and takes its
-place when it is off, and a button's note floats over the card's corner.
+pill's time ("30m · 7m ago"), and Clear sits beside Open terminal and takes
+its place when it is off. A line at the foot of each compact card is kept for
+a button's note, or the reason Open terminal is off, so neither covers the
+card's text; a note cut short shows in full on hover. An off button's name
+carries its reason for screen readers too.
 Eight compact cards fit the wall snapped to half a 1920x1080 screen (about
 945x1000 of content) and sixteen fit it maximised (about 1920x1000).
 
 Auto turns compact as soon as the comfortable cards would scroll, measured on
-an unseen comfortable copy of the wall when a card arrives or leaves and when
-the window is resized. It turns back only once the comfortable cards would
+an unseen comfortable copy of the wall and its bar whenever the wall changes
+size (a card arriving, leaving or growing) and when the window is resized. It turns back only once the comfortable cards would
 still fit with one more card, so a session ending and another starting at the
 boundary leaves the wall as it is. The choice is saved as `wall_density` in
 `prefs.json`.
