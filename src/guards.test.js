@@ -442,4 +442,7 @@ test("the wall has a New session button that calls the launcher", () => {
   assert.match(read("src/wall.html"), /<button type="button" id="new-session">\+ New session<\/button>/);
   assert.match(read("src/wall.html"), /<span id="new-note" role="status"><\/span>/);
   assert.match(read("src/fleet/wall.js"), /invoke\("launch_session"\)/);
+  assert.match(read("src/fleet/wall.js"), /querySelector\("\.bar"\)\.hidden = !inTauri/);
+  const html = read("src/wall.html");
+  assert.ok(html.indexOf("</div>", html.indexOf('class="bar"')) < html.indexOf('<main id="wall"'));
 });

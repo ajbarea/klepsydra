@@ -98,5 +98,6 @@ html, body { background: var(--wall-bg); color: var(--text); font: 14px/1.4 var(
 .jump:disabled,
 .clear:disabled,
 #new-session:disabled { color: var(--text-dim); cursor: default; }
-.bar { display: flex; align-items: center; gap: var(--card-gap); margin-bottom: var(--card-gap); }
+.bar { display: flex; align-items: center; gap: var(--card-gap); padding: var(--wall-pad) var(--wall-pad) 0; }
+.bar[hidden] { display: none; }
 #new-note { color: var(--text-dim); }

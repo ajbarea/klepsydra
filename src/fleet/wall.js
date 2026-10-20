@@ -15,7 +15,7 @@ const live = document.getElementById("live");
 const tpl = document.getElementById("card-tpl");
 const newButton = document.getElementById("new-session");
 const newNote = document.getElementById("new-note");
-newButton.hidden = !inTauri;
+document.querySelector(".bar").hidden = !inTauri;
 newButton.addEventListener("click", async () => {
   if (newButton.disabled) return;
   newButton.disabled = true;
