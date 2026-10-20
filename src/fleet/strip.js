@@ -6,10 +6,11 @@ import { showFace } from "./face.js";
 import { syncChildren } from "./dom.js";
 
 /**
- * Draw into `el`; returns render(sessions, nowMs, fromReader). `open(id)` opens
+ * Draw into `el`; returns render(sessions, nowMs, fromReader, speaking). `open(id)` opens
  * the wall. Only a snapshot from the reader (`fromReader`, the default) sets
  * the baseline a pulse is judged against; a redraw of the same sessions, or of
- * none before the first snapshot, never does.
+ * none before the first snapshot, never does. `speaking` is the snapshot's
+ * line: its portrait wears a gold ring.
  */
 export function mountStrip(el, { open }) {
   let before;
@@ -28,8 +29,8 @@ export function mountStrip(el, { open }) {
     return b;
   };
 
-  return function render(sessions, nowMs, fromReader = true) {
-    const items = stripItems(sessions, cast, nowMs, fromReader ? before : statuses(sessions));
+  return function render(sessions, nowMs, fromReader = true, speaking = null) {
+    const items = stripItems(sessions, cast, nowMs, fromReader ? before : statuses(sessions), speaking);
     if (fromReader) before = statuses(sessions);
     el.hidden = items.length === 0;
     const root = getComputedStyle(document.documentElement);
@@ -46,6 +47,8 @@ export function mountStrip(el, { open }) {
         if (item.status !== "needs_you") b.classList.remove("pulse");
       }
       if (item.pulse) b.classList.add("pulse");
+      if (item.speaking) b.classList.add("speaking");
+      else b.classList.remove("speaking");
     });
   };
 }

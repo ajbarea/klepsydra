@@ -1,10 +1,11 @@
 // The card wall: a card per Claude Code session, in the reader's order, with
 // a way back to its terminal.
 import cast from "./cast.json" with { type: "json" };
-import { announcements, card, shouldSlide, startedNeeding, transitionName, statuses, tally } from "./model.js";
-import { press, setOff, syncChildren } from "./dom.js";
+import { announcements, card, identity, shouldSlide, startedNeeding, transitionName, statuses, tally } from "./model.js";
+import { announcer, press, setOff, syncChildren } from "./dom.js";
 import { inTauri, subscribe } from "./feed.js";
 import { showFace } from "./face.js";
+import { GOLD, SPEAK_FADE_MS, STILL, Speaker, WAVE, waves } from "./speaking.js";
 
 const TICK_MS = 15_000; // ages re-render between snapshots, as on the gauge
 const FACE_PX = 66; // --wall-face less the ring's inset
@@ -23,6 +24,7 @@ const TALLY = [
 const wall = document.getElementById("wall");
 const empty = document.getElementById("empty");
 const live = document.getElementById("live");
+const announce = announcer(live);
 const tpl = document.getElementById("card-tpl");
 const counts = document.querySelector(".tally");
 const newButton = document.getElementById("new-session");
@@ -35,6 +37,10 @@ newButton.addEventListener("click", () =>
 let sessions = [];
 let before;
 let pending = null; // a card to show once it exists
+const speaker = new Speaker();
+let speakingEl = null; // the card whose portrait shows the waves
+let frameId = 0;
+let stillTimer = 0;
 
 // Everything session-derived goes in as text; the badge and branch icon are
 // markup built from constants.
@@ -190,14 +196,67 @@ function focusCard(id) {
   el.focus({ preventScroll: true });
 }
 
+
+const circles = (svg, cls, n) => {
+  if (svg.childElementCount !== n || !svg.firstElementChild?.classList.contains(cls)) {
+    svg.replaceChildren(...Array.from({ length: n }, () => {
+      const c = document.createElementNS(SVG_NS, "circle");
+      c.classList.add(cls);
+      c.setAttribute("cx", WAVE.cx);
+      c.setAttribute("cy", WAVE.cy);
+      return c;
+    }));
+  }
+  return [...svg.children];
+};
+
+// Gold waves outside the crew ring of the card that is speaking, paced by the
+// line's loudness. Frames run only while someone speaks; under reduced motion
+// a still ring shows instead, and a timer takes it down.
+function drawSpeaking() {
+  frameId = 0;
+  clearTimeout(stillTimer);
+  const now = Date.now();
+  const f = speaker.frame(now);
+  const el = f ? [...wall.children].find((c) => c.dataset.key === f.id) ?? null : null;
+  if (el !== speakingEl) {
+    speakingEl?.querySelector(".waves")?.replaceChildren();
+    speakingEl = el;
+  }
+  if (!f) return;
+  const svg = el?.querySelector(".waves");
+  if (svg && reducedMotion()) {
+    const [ring] = circles(svg, "still", 1);
+    ring.setAttribute("r", STILL.r);
+    ring.setAttribute("stroke", GOLD);
+    ring.setAttribute("stroke-width", STILL.width);
+    stillTimer = setTimeout(drawSpeaking, Math.max(0, speaker.endMs + SPEAK_FADE_MS - now) + 1);
+    return;
+  }
+  if (svg) {
+    waves(f.level, f.alpha, now).forEach((w, i) => {
+      const c = circles(svg, "wave", WAVE.rings)[i];
+      c.setAttribute("r", w.r);
+      c.setAttribute("stroke", w.color);
+      c.setAttribute("stroke-width", w.width);
+      c.setAttribute("stroke-opacity", w.opacity);
+    });
+  }
+  frameId = requestAnimationFrame(drawSpeaking);
+}
+
 function receive(message) {
   if (Array.isArray(message?.sessions)) {
     const said = announcements(before, message.sessions, cast, Date.now());
-    if (said.length) live.textContent = said.join(". ");
+    const speaking = speaker.update(message.speaking ?? null, Date.now());
+    const who = speaking && message.sessions.find((s) => s.session_id === speaking);
+    if (who) said.push(`${identity(who, cast).name} speaking`);
+    if (said.length) announce(said.join(". "));
     const started = startedNeeding(before, message.sessions);
     before = statuses(message.sessions);
     sessions = message.sessions;
     render(started);
+    if (!frameId) drawSpeaking();
     if (pending) focusCard(pending);
   }
   if (typeof message?.focus === "string") focusCard(message.focus);

@@ -8,6 +8,7 @@ use std::time::{Duration, Instant};
 use notify::{EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 
 use crate::scan::{scan, Problem, Reporter};
+use crate::speaking::{read as read_speaking, speaking};
 use crate::view::{snapshot, Snapshot};
 
 /// The safety-net re-read, matching the gauge's POLL_MS.
@@ -148,7 +149,10 @@ impl Reader {
         let listing = scan(&self.fleet);
         broken.extend(listing.problems);
         let problems = self.reporter.fresh(&broken);
-        let snap = snapshot(&listing.entries, now());
+        let t = now();
+        let mut snap = snapshot(&listing.entries, t);
+        let shown = self.last.as_ref().and_then(|s| s.speaking.as_ref());
+        snap.speaking = speaking(&read_speaking(&self.fleet), shown, &snap.sessions, t);
         if self.last.as_ref() == Some(&snap) {
             return (None, problems);
         }
@@ -269,6 +273,117 @@ mod tests {
             "{early} of {steps} waits cut short with nothing changing"
         );
         assert!(steps <= 6, "{steps} re-reads in 1.5 s of nothing changing");
+    }
+
+    fn claude_session(id: &str, pid: u32, start: u64) -> String {
+        format!(
+            r#"{{"v":1,"session_id":"{id}","state":"working","state_at":1700000000,"claude":{{"pid":{pid},"start":{start}}}}}"#
+        )
+    }
+
+    fn line(pid: u32, start: u64, from: f64, to: f64) -> String {
+        format!(
+            r#"{{"v":1,"voice":"af_heart","terminal":"{pid}:{start}","claude_pid":{pid},"claude_start":{start},"started_at":{from},"ends_at":{to},"envelope":[0.2,1.0,0.4]}}"#
+        )
+    }
+
+    #[test]
+    fn a_line_being_spoken_rides_on_the_snapshot_and_goes_with_its_file() {
+        let (root, mut r) = reader("speak");
+        root.write(&format!("fleet/{A}.json"), &claude_session(A, 4242, 99));
+        let t = unix_now();
+        let now = t as f64;
+        root.write("fleet/speaking.json", &line(4242, 99, now, now + 3.0));
+        let snap = r.step(Duration::ZERO, || t).0.unwrap();
+        assert_eq!(snap.sessions.len(), 1, "speaking.json is not a session");
+        let s = snap.speaking.unwrap();
+        assert_eq!((s.session_id.as_str(), s.envelope.len()), (A, 3));
+        // The next sentence replaces the file: a new snapshot, at once.
+        let fleet = root.0.join("fleet");
+        let writer = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(200));
+            let tmp = fleet.join("speaking.json.7.tmp");
+            std::fs::write(&tmp, line(4242, 99, now + 3.2, now + 5.0)).unwrap();
+            std::fs::rename(&tmp, fleet.join("speaking.json")).unwrap();
+        });
+        let started = Instant::now();
+        let snap = r.step(POLL, || t).0.unwrap();
+        writer.join().unwrap();
+        assert!(
+            started.elapsed() < Duration::from_secs(3),
+            "woke by the watcher"
+        );
+        assert_eq!(snap.speaking.unwrap().started_at, now + 3.2);
+        // A cut-off removes the file.
+        std::fs::remove_file(root.0.join("fleet/speaking.json")).unwrap();
+        assert_eq!(r.step(Duration::ZERO, || t).0.unwrap().speaking, None);
+    }
+
+    #[test]
+    fn a_line_left_behind_by_a_crash_goes_once_it_has_ended() {
+        let (root, mut r) = reader("speak-stale");
+        root.write(&format!("fleet/{A}.json"), &claude_session(A, 4242, 99));
+        let t = unix_now();
+        let now = t as f64;
+        root.write("fleet/speaking.json", &line(4242, 99, now, now + 2.0));
+        assert!(r.step(Duration::ZERO, || t).0.unwrap().speaking.is_some());
+        let later = r.step(Duration::ZERO, || t + 3).0.unwrap();
+        assert_eq!(later.speaking, None);
+        assert_eq!(later.sessions.len(), 1);
+    }
+
+    #[test]
+    fn a_line_starting_well_after_now_is_not_speaking() {
+        let (root, mut r) = reader("speak-ahead");
+        root.write(&format!("fleet/{A}.json"), &claude_session(A, 4242, 99));
+        let t = unix_now();
+        let now = t as f64;
+        root.write(
+            "fleet/speaking.json",
+            &line(4242, 99, now + 10.0, now + 12.0),
+        );
+        assert_eq!(r.step(Duration::ZERO, || t).0.unwrap().speaking, None);
+        root.write("fleet/speaking.json", &line(4242, 99, now + 4.0, now + 6.0));
+        assert!(
+            r.step(Duration::ZERO, || t).0.unwrap().speaking.is_some(),
+            "a little ahead is clock slack"
+        );
+    }
+
+    #[test]
+    fn a_half_written_file_keeps_the_line_but_a_removed_one_ends_it() {
+        let (root, mut r) = reader("speak-partial");
+        root.write(&format!("fleet/{A}.json"), &claude_session(A, 4242, 99));
+        let t = unix_now();
+        let now = t as f64;
+        let whole = line(4242, 99, now, now + 3.0);
+        root.write("fleet/speaking.json", &whole);
+        let first = r.step(Duration::ZERO, || t).0.unwrap().speaking;
+        assert!(first.is_some());
+        // Windows' replace is best effort: a read can catch half a file.
+        root.write("fleet/speaking.json", &whole[..whole.len() / 2]);
+        assert_eq!(
+            r.step(Duration::ZERO, || t).0,
+            None,
+            "nothing changed: the line goes on"
+        );
+        // Past its end and the hold, a kept line goes.
+        assert_eq!(r.step(Duration::ZERO, || t + 4).0.unwrap().speaking, None);
+        root.write("fleet/speaking.json", &whole);
+        assert!(r.step(Duration::ZERO, || t).0.unwrap().speaking.is_some());
+        std::fs::remove_file(root.0.join("fleet/speaking.json")).unwrap();
+        assert_eq!(r.step(Duration::ZERO, || t).0.unwrap().speaking, None);
+    }
+
+    #[test]
+    fn a_broken_speaking_file_is_silence_not_a_problem() {
+        let (root, mut r) = reader("speak-bad");
+        root.write(&format!("fleet/{A}.json"), &claude_session(A, 4242, 99));
+        root.write("fleet/speaking.json", "{half");
+        let (snap, problems) = r.step(Duration::ZERO, unix_now);
+        let snap = snap.unwrap();
+        assert_eq!((snap.speaking, snap.sessions.len()), (None, 1));
+        assert!(problems.is_empty());
     }
 
     #[test]

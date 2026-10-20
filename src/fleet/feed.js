@@ -2,8 +2,10 @@
 // browser a dev-fleet.json snapshot (serve src/ and add ?focus=<id> to focus),
 // or with ?demo a sample fleet, its times moved up to now (serve the repo root
 // and open /src/wall.html?demo: the sample sits outside the bundled src/).
-// `onMessage` gets `{sessions}` snapshots and `{focus: id}` requests.
+// `onMessage` gets `{sessions, speaking}` snapshots and `{focus: id}` requests.
+// In a browser a snapshot's speaking line replays, a sentence at a time.
 import { follow } from "../ipc.js";
+import { RATE } from "./speaking.js";
 
 export const inTauri = Boolean(window.__TAURI_INTERNALS__ ?? window.__TAURI__);
 
@@ -14,13 +16,24 @@ export function devSnapshotUrl(app, search) {
 }
 
 // The sample's times are as of its `at`; shift them so its ages read as written.
-const TIMES = new Set(["status_at", "active_at", "updated_at", "quiet_since", "at"]);
+const TIMES = new Set(["status_at", "active_at", "updated_at", "quiet_since", "at", "started_at", "ends_at"]);
 function shifted(value, by) {
   if (Array.isArray(value)) return value.map((v) => shifted(v, by));
   if (!value || typeof value !== "object") return value;
   return Object.fromEntries(
     Object.entries(value).map(([k, v]) => [k, TIMES.has(k) && typeof v === "number" ? v + by : shifted(v, by)]),
   );
+}
+
+// The gap between replayed sentences: under the wall's hold, so they read as one line.
+const REPLAY_GAP_MS = 400;
+
+/** Play the snapshot's line again each time it ends, as keryx's next sentence would. */
+function replaySpeaking(snapshot, onMessage) {
+  const line = snapshot?.speaking;
+  if (!Array.isArray(line?.envelope) || line.envelope.length === 0) return;
+  const every = (line.envelope.length / RATE) * 1000 + REPLAY_GAP_MS;
+  setInterval(() => onMessage({ ...snapshot, speaking: { ...line, started_at: Date.now() / 1000 } }), every);
 }
 
 export function subscribe(onMessage) {
@@ -33,7 +46,9 @@ export function subscribe(onMessage) {
     .then((snapshot) => {
       if (!snapshot) return;
       const { at, ...rest } = snapshot;
-      onMessage(typeof at === "number" ? shifted(rest, Math.floor(Date.now() / 1000) - at) : snapshot);
+      const current = typeof at === "number" ? shifted(rest, Math.floor(Date.now() / 1000) - at) : snapshot;
+      onMessage(current);
+      replaySpeaking(current, onMessage);
       const focus = new URLSearchParams(location.search).get("focus");
       if (focus) onMessage({ focus });
     })

@@ -6,6 +6,7 @@ use std::collections::HashMap;
 use serde::Serialize;
 
 use crate::session::{Claude, Kind, Place, Said, SessionFile, State, Tmux, Touched};
+use crate::speaking::Speaking;
 
 /// No heartbeat and no event for this long, and a session is silent: three
 /// missed 30 s statusline refreshes.
@@ -99,9 +100,12 @@ pub struct Crew {
     pub tasks: u32,
 }
 
-#[derive(Clone, Debug, Default, Serialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, Serialize, PartialEq)]
 pub struct Snapshot {
     pub sessions: Vec<View>,
+    /// The line keryx is playing and whose card it belongs to; none while
+    /// nothing is.
+    pub speaking: Option<Speaking>,
 }
 
 /// What to show for one session at `now`, or None once it has ended long enough ago.
@@ -296,7 +300,10 @@ pub fn snapshot(entries: &[Entry], now: i64) -> Snapshot {
             })
             .then_with(|| a.session_id.cmp(&b.session_id))
     });
-    Snapshot { sessions }
+    Snapshot {
+        sessions,
+        speaking: None,
+    }
 }
 
 #[cfg(test)]

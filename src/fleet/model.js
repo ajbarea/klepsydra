@@ -3,6 +3,7 @@
 
 import { markerWidth } from "./contrast.js";
 import { medallion } from "./medallion.js";
+import { speakingNow } from "./speaking.js";
 
 // Each status's badge: shape, symbol and tone carry it together with the
 // label, so no one of them is needed alone.
@@ -178,20 +179,27 @@ export function badgeSvg(status, quiet = false) {
     + `${SHAPES[st.shape]}<text class="ink" x="8" y="8.5" font-size="10">${st.symbol}</text></svg>`;
 }
 
-/** The strip's portraits, in the reader's order. `before` comes from `statuses` of the last render. */
-export function stripItems(sessions, cast, nowMs, before) {
+/**
+ * The strip's portraits, in the reader's order. `before` comes from `statuses`
+ * of the last render; `speaking` is the snapshot's line, whose session's
+ * portrait is marked while it plays.
+ */
+export function stripItems(sessions, cast, nowMs, before, speaking = null) {
   const pulse = startedNeeding(before, sessions);
+  const speaker = speakingNow(speaking, nowMs) ? speaking.session_id : null;
   return sessions.map((s) => {
     const who = identity(s, cast);
+    const talking = s.session_id === speaker;
     return {
       id: s.session_id,
       status: s.status,
       quiet: isQuiet(s),
       badge: badgeSvg(s.status, isQuiet(s)),
-      label: accessibleName(s, cast, nowMs),
+      label: accessibleName(s, cast, nowMs) + (talking ? ", speaking" : ""),
       face: who.face,
       face2x: who.face2x,
       pulse: pulse.has(s.session_id),
+      speaking: talking,
     };
   });
 }

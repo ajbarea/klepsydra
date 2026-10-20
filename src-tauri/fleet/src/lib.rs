@@ -7,6 +7,7 @@ pub mod lookup;
 pub mod problem_log;
 pub mod scan;
 pub mod session;
+pub mod speaking;
 pub mod tabs;
 pub mod view;
 pub mod watch;

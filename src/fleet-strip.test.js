@@ -125,3 +125,17 @@ test("leaving needs_you clears the pulse", () => {
   render([session("a", "done")], NOW);
   assert.deepEqual(pulsing(), []);
 });
+
+test("the speaking session's portrait wears the gold ring and says so", () => {
+  const { el, render } = setup();
+  const speaking = { session_id: "b", started_at: 999, ends_at: 1001, envelope: [0.5] };
+  render([session("a", "working"), session("b", "working")], NOW, true, speaking);
+  const ring = () => el.children.map((b) => b.classes.has("speaking"));
+  assert.deepEqual(ring(), [false, true]);
+  assert.match(el.children[1].attrs["aria-label"], /, speaking$/);
+  render([session("a", "working"), session("b", "working")], NOW, true, null);
+  assert.deepEqual(ring(), [false, false]);
+  assert.doesNotMatch(el.children[1].attrs["aria-label"], /speaking/);
+  render([session("a", "working"), session("b", "working")], 1_002_000, true, speaking);
+  assert.deepEqual(ring(), [false, false], "a line long over marks no one");
+});
