@@ -1,6 +1,7 @@
 // What the fleet strip and wall show for each session, kept free of the DOM
 // so it can be unit tested. Sessions arrive from the reader already ordered.
 
+import { inkOn } from "./contrast.js";
 import { medallion } from "./medallion.js";
 
 // Each status's badge: shape, symbol and tone carry it together with the
@@ -92,11 +93,19 @@ export function identity(s, cast) {
   const character = voice && Object.hasOwn(cast.characters, voice) ? cast.characters[voice] : null;
   if (character) {
     const base = `${FACES}/kourai/${character.face}`;
-    return { name: character.name, voice: voiceName(voice), face: `${base}-96.webp`, face2x: `${base}-192.webp` };
+    const accent = /^#[0-9a-f]{6}$/i.test(character.accent) ? character.accent : null;
+    return {
+      name: character.name,
+      voice: voiceName(voice),
+      face: `${base}-96.webp`,
+      face2x: `${base}-192.webp`,
+      accent,
+      accentInk: accent && inkOn(accent),
+    };
   }
   const name = voice ? voiceName(voice) : s.name || basename(s.launch_dir) || s.session_id.slice(0, 8);
   const face = medallion(name, voice ?? s.session_id);
-  return { name, voice: null, face, face2x: face };
+  return { name, voice: null, face, face2x: face, accent: null, accentInk: null };
 }
 
 /** "Hephaestus, needs you, approve Bash, 2 minutes" */
@@ -246,6 +255,8 @@ export function card(s, cast, nowMs) {
     session: s.name ?? null,
     face: who.face,
     face2x: who.face2x,
+    accent: who.accent,
+    accentInk: who.accentInk,
     status: s.status,
     quiet: isQuiet(s),
     badge: badgeSvg(s.status, isQuiet(s)),

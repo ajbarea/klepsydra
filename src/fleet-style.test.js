@@ -2,22 +2,11 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { TONES, medallionSvg } from "./fleet/medallion.js";
+import { contrast } from "./fleet/contrast.js";
 
 const read = (f) => readFileSync(new URL(f, import.meta.url), "utf8");
 const badgeCss = read("./fleet/badge.css");
 const token = (css, name) => css.match(new RegExp(`${name}:\\s*([^;]+);`))?.[1].trim();
-
-/** WCAG 2.2 relative luminance of "#rrggbb". */
-function luminance(hex) {
-  const [r, g, b] = [1, 3, 5]
-    .map((i) => parseInt(hex.slice(i, i + 2), 16) / 255)
-    .map((c) => (c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4));
-  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
-}
-export function contrast(a, b) {
-  const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x);
-  return (hi + 0.05) / (lo + 0.05);
-}
 
 /** Columns that `repeat(auto-fill, minmax(min, 1fr))` makes in a viewport `width` wide. */
 const columnsAt = (width, { min, gap, pad }) => Math.max(1, Math.floor((width - 2 * pad + gap) / (min + gap)));
@@ -182,4 +171,15 @@ test("each medallion metal's initial meets 4.5:1 against every colour of its dis
       for (const bg of disc) assert.ok(contrast(fg, bg) >= 4.5, `${TONES[t].name}: ${fg} on ${bg}: ${contrast(fg, bg).toFixed(2)}`);
     }
   }
+});
+
+test("the accent shows on an enabled Open terminal only, and the focus ring never sits on it", () => {
+  const css = read("./fleet/wall.css");
+  const rules = [...css.matchAll(/(\.jump\[data-accent\][^{]*)\{/g)].map((m) => m[1]);
+  assert.ok(rules.length >= 1);
+  for (const r of rules) assert.match(r, /:not\(\[aria-disabled="true"\]\)/, r);
+  // The ring is offset 2px, on the card's colour, so it need not contrast with an accent;
+  // it does contrast with the card.
+  assert.match(css, /button:focus-visible \{[^}]*outline-offset: 2px/);
+  assert.ok(contrast(token(css, "--card-focus"), token(css, "--card-bg")) >= 3);
 });

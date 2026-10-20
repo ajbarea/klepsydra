@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
+import { contrast, inkOn } from "./fleet/contrast.js";
 
 const cast = JSON.parse(readFileSync(new URL("./fleet/cast.json", import.meta.url), "utf8"));
 const faces = new URL("./fleet/faces/", import.meta.url);
@@ -33,5 +34,26 @@ test("every character has both portrait files, and the cast holds nothing else",
   assert.deepEqual(Object.keys(cast).sort(), ["characters", "v"]);
   for (const c of Object.values(cast.characters)) {
     for (const size of [96, 192]) assert.ok(exists(`kourai/${c.face}-${size}.webp`), `${c.face} ${size}`);
+  }
+});
+
+// kourai-khryseai shared/src/kourai_common/agents.py `hex_color`.
+const CANON = {
+  hephaestus: "#DA8C20", metis: "#C8B464", techne: "#FFC832", dokimasia: "#DA5032", kallos: "#FFDCA0",
+  mneme: "#B496DC", puck: "#009E73", cupid: "#D55E00", aidos: "#56B4E9", aletheia: "#0072B2",
+};
+
+test("every character has its canon accent, and nothing else is in an entry", () => {
+  for (const c of Object.values(cast.characters)) {
+    assert.match(c.accent, /^#[0-9A-Fa-f]{6}$/, `${c.name} accent`);
+    assert.equal(c.accent, CANON[c.face], `${c.name} canon colour`);
+    assert.deepEqual(Object.keys(c).sort(), ["accent", "face", "gender", "name"]);
+  }
+});
+
+test("each accent carries 4.5:1 text in its ink", () => {
+  for (const c of Object.values(cast.characters)) {
+    const ink = inkOn(c.accent);
+    assert.ok(contrast(ink, c.accent) >= 4.5, `${c.name} ${ink} on ${c.accent}: ${contrast(ink, c.accent).toFixed(2)}`);
   }
 });
