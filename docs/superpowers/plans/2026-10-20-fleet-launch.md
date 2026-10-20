@@ -1617,3 +1617,26 @@ Execution order now: Tasks 1-8, 11, 12, **13**, then 9, then 10. Spec: the launc
 - [ ] **Step 4: Gates.** The whole audit list in `.claude/skill-context.md` (Phase 3 and 4), plus `KLEPSYDRA_STAGE=klepsydra-build-launch bash scripts/build-windows.sh --check </dev/null`. Two `test_launch.sh` runs.
 
 - [ ] **Step 5: Commit** `feat(fleet): Jump checks the pane's process and finds the fleet tab by its own title`.
+
+## The card that needs you comes to you (AJ, 2026-10-20)
+
+Execution: after the final-review fix wave, before Task 10.
+
+### Task 14: Pulse, slide and a neutral focus ring
+
+**Files:** `src/fleet/wall.js`, `src/fleet/wall.css`, `src/fleet/model.js` (only if a helper is needed), tests in `src/fleet-model.test.js`, `src/fleet-style.test.js`, `src/guards.test.js`.
+
+**Behavior:**
+- **One pulse.** When a card starts needing AJ, it pulses once: an amber ring expands from the card edge and fades, about 1.2 s, once. A card qualifies when `startedNeeding(before, sessions)` contains its id; `model.js` already exports it, and the strip uses it. The first render never pulses (`before` is undefined). Under `@media (prefers-reduced-motion: reduce)` there is no pulse: the card keeps its static amber glow.
+- **Slide.** When a snapshot changes card order, the reorder runs inside `document.startViewTransition(() => syncChildren(...))`, with each card given `view-transition-name: card-<id>`. The name is set through `style.viewTransitionName` from the session id, which is a validated uuid. Feature-detect `document.startViewTransition`: without it, or under reduced motion (check `matchMedia("(prefers-reduced-motion: reduce)")` explicitly), update directly. Only a change in order or membership triggers a transition; a time-only re-render (the 15 s tick) does not.
+- **Neutral focus ring.** Card and button focus rings change from the needs-amber `--card-focus #e69f00` to a neutral light ring (for example `#e9edf2`, 2 px, offset 2 px). Amber then means "needs you" only. The ring must meet 3:1 against `--wall-bg` and `--card-bg`.
+
+**Tests:**
+- A model or pure helper test that only newly-needing ids pulse, never on the first render.
+- A guard that wall.js wraps the reorder in a feature-detected `startViewTransition`, with a reduced-motion check and a direct-update fallback.
+- A style test that the focus ring colour is not the needs tone and meets 3:1 against the wall and the card.
+- A style test that the pulse keyframes sit behind `prefers-reduced-motion: no-preference`, or are cancelled under `reduce`.
+
+**Render check:** in the `?demo` page, flip one demo session to `needs_you` through the console, and screenshot the moment after (the ring visible) and the settled order. Save both to the sdd folder.
+
+**Gates:** the whole audit list. Commit `feat(fleet): the card that needs you pulses once and slides to the top`.
