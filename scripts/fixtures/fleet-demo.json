@@ -361,6 +361,36 @@
    "quiet_since": null,
    "tmux": null,
    "distro": "Ubuntu"
+  },
+  {
+   "session_id": "demo-13-af_nicole",
+   "name": "Quiet hours check",
+   "launch_dir": "/home/aj/ajsoftworks",
+   "voice": "af_nicole",
+   "status": "working",
+   "reason": null,
+   "status_at": 1792499850,
+   "active_at": 1792499900,
+   "where": {
+    "repo": "klepsydra",
+    "worktree": null,
+    "branch": "main",
+    "at": 1792497000
+   },
+   "touched": [],
+   "prompt": {
+    "text": "list the sessions that have gone quiet",
+    "at": 1792499870
+   },
+   "reply": {
+    "text": "Reading the fleet files.",
+    "at": 1792499900
+   },
+   "error": null,
+   "updated_at": 1792499900,
+   "quiet_since": null,
+   "tmux": null,
+   "distro": "Ubuntu"
   }
  ]
 }

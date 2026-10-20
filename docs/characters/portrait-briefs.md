@@ -1,23 +1,22 @@
 <!-- budget: 1300 words -->
-# Four new kourai portraits: generation briefs
+# Five new kourai portraits: generation briefs
 
-**Done.** The art exists as `assets/portraits/{chronos,argos,hermes,elpis}.jpg`
+**Done.** The art exists as `assets/portraits/{chronos,argos,hermes,elpis,hesychia}.jpg`
 (1024 px), `scripts/cut-portraits.py` cuts the faces, and `cast.json` holds all
-fourteen characters. Hermes's accent is the burnt orange `#E07B39`, not the
+fifteen characters. Hermes's accent is the burnt orange `#E07B39`, not the
 `#E69F00` below, which is the needs-you amber. The briefs are kept as the record.
 
-These four characters give the four keryx voices that have no portrait a
-face of their own. Each brief is one shared style block plus one character
+These five characters give the four keryx pool voices that had no portrait,
+and the pin-only `af_nicole`, a face of their own. Each brief is one shared style block plus one character
 block. Paste both into the image generator, attach the reference portraits
 listed under each character, and iterate the way you did for the first ten.
 
 ## How many characters
 
-Fourteen: one per voice in keryx's rotation pool. The ten kourai characters
-cover the first ten voices; these four cover the rest. A fifteenth is
-optional, for `af_nicole`, which keryx never hands out unless you pin it
-(see Hesychia below).
-Sessions past the fourteenth get blended voices and show a medallion.
+Fifteen: one per voice in keryx's rotation pool (fourteen), plus Hesychia. The ten
+kourai characters cover the first ten voices; these four cover the rest. Hesychia
+is for `af_nicole`, which keryx never hands out unless you pin it (see Hesychia
+below). Sessions past the fifteenth get blended voices and show a medallion.
 
 ## Reference portraits
 
@@ -133,7 +132,7 @@ one the same way.
 
 - **Avoid:** a box (the jar is a pithos), sadness, a halo.
 
-## Hesychia, Keeper of Quiet (optional)
+## Hesychia, Keeper of Quiet
 
 - **Upload with the prompt:** `hephaestus_neutral.png` (framing), `aletheia_neutral.png` (serene), `kallos_neutral.png` (soft glow)
 - **Voice:** `af_nicole` (soft, near-whisper; keryx hands it out only when pinned)

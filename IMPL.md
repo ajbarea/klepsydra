@@ -1,20 +1,18 @@
 # IMPL
 
-Current slice: four new characters, branch feat/four-characters. Chronos
-(bm_george), Argos (am_fenrir), Hermes (bm_fable) and Elpis (af_alloy) join the
-cast, so all 14 keryx pool voices have a portrait.
+Current slice: a fifteenth character, branch feat/hesychia. Hesychia (af_nicole,
+keryx's pin-only voice) joins the cast, so all 14 pool voices and the pinned one
+have a portrait.
 
 ## Done
-- `assets/portraits/<name>.jpg` (1024 px) are the sources; `scripts/cut-portraits.py`
-  now holds a source and crop box per character. The ten kourai webp files re-cut
-  byte-identical.
-- 8 new webp files and LICENSES entries; 4 `cast.json` entries.
-- Hermes's accent is `#E07B39`, not the brief's `#E69F00` (the needs amber).
-- Tests: 14 characters covering the pool, new accents, no new accent equals a
-  status tone, marker widths unchanged (no new accent is under 3:1).
-- Demo fixture gains Chronos, Argos (needs you) and Elpis; Hermes was already there.
-- README faces section; briefs doc marked done.
+- `assets/portraits/hesychia.jpg` (1024 px) and a crop box in `scripts/cut-portraits.py`
+  (250, 40, 810, 600): head upper middle, the brooch shoulder in the circle. The 28
+  existing webp files re-cut byte-identical.
+- 2 new webp files, 2 LICENSES entries, one `cast.json` entry (accent `#A9B8D0`: 6.91:1 and
+  5.91:1 on the button, so the 4 px marker; not a status tone).
+- Tests: 15 characters; the cast is every pool voice plus af_nicole; hook ink parity
+  covers 17 (15 + 2 threshold colours).
+- Demo fixture gains an af_nicole session. README faces section; briefs doc marked done.
 
 ## Next
 - Review and merge.
-- Cupid, Aidos, Puck and Aletheia canon accents equal a status tone; left as is.

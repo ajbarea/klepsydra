@@ -14,6 +14,7 @@
     "bm_george": { "name": "Chronos", "face": "chronos", "accent": "#F0E442", "gender": "m" },
     "am_fenrir": { "name": "Argos", "face": "argos", "accent": "#CC79A7", "gender": "m" },
     "bm_fable": { "name": "Hermes", "face": "hermes", "accent": "#E07B39", "gender": "m" },
-    "af_alloy": { "name": "Elpis", "face": "elpis", "accent": "#F1D2A1", "gender": "f" }
+    "af_alloy": { "name": "Elpis", "face": "elpis", "accent": "#F1D2A1", "gender": "f" },
+    "af_nicole": { "name": "Hesychia", "face": "hesychia", "accent": "#A9B8D0", "gender": "f" }
   }
 }
