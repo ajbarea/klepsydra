@@ -265,6 +265,10 @@ is revealed.
 
 ## The fleet strip
 
+<p align="center">
+  <img src="assets/fleet-strip.png" alt="The gauge's three account rows, and beside them fifteen session portraits: three with orange needs-you diamonds first, then a vermillion error square, three blue working circles, four green done checks, and grey rings for sessions not started or ended" width="670">
+</p>
+
 With several Claude Code sessions open, klepsydra shows a portrait for each to
 the right of the gauge, with a badge for its status. Each badge has its own
 shape, symbol and colour, from the Okabe-Ito palette:
