@@ -65,9 +65,6 @@ export function statusParts(s, nowMs, age = shortAge) {
   return [statusOf(s.status).label, s.reason, a].filter(Boolean);
 }
 
-/** "needs you \u00b7 approve Bash \u00b7 2m" */
-export const statusLine = (s, nowMs) => statusParts(s, nowMs).join(" \u00b7 ");
-
 /** "am_fenrir" is "Fenrir"; a blend "af_bella(0.7)+af_heart(0.3)" is "Bella and Heart". */
 export function voiceName(voice) {
   return String(voice)
@@ -145,9 +142,6 @@ export function announcements(before, sessions, cast, nowMs = Date.now()) {
         .join(", ");
     });
 }
-
-/** "klepsydra \u00b7 fleet \u00b7 feat/fleet-visualizer" */
-export const whereText = (w) => (w ? [w.repo, w.worktree, w.branch].filter(Boolean).join(" \u00b7 ") : "");
 
 /** "updated 7m ago" once the newest field is over five minutes old. */
 export function updatedText(s, nowMs) {
@@ -243,26 +237,22 @@ export function card(s, cast, nowMs) {
     arc: arcFraction(s, nowMs),
     dim: DIM.has(s.status),
     place: s.where ? { repo: s.where.repo, worktree: s.where.worktree ?? null, branch: s.where.branch ?? null } : null,
-    also: [...new Set((s.touched ?? []).map((t) => `also in ${t.repo}`))],
+    also: [...new Set((s.touched ?? []).map((t) => t.repo))].filter((r) => r && r !== s.where?.repo).map((r) => `also in ${r}`),
     voiceTitle: who.voice ? `Voice: ${who.voice}` : null,
     name: who.name,
-    voice: who.voice,
     session: s.name ?? null,
     face: who.face,
     face2x: who.face2x,
     status: s.status,
     quiet: isQuiet(s),
     badge: badgeSvg(s.status, isQuiet(s)),
-    statusLine: statusLine(s, nowMs), // wall.js until Task 12
-    where: whereText(s.where),
-    touched: (s.touched ?? []).map((t) => `${t.repo} \u00b7 ${shortAge(ageMs(t.at, nowMs))}`),
     prompt: s.prompt?.text ?? null,
     reply: s.reply?.text ?? null,
     error: s.status === "error" ? s.error ?? null : null,
     updated: updatedText(s, nowMs),
     jump: jumpable(s),
     clear: s.status === "ended" || s.status === "silent",
-    jumpLabel: `Jump to terminal, ${who.name}`,
+    jumpLabel: `Open terminal, ${who.name}`,
     label: accessibleName(s, cast, nowMs),
   };
 }

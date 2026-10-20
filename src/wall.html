@@ -8,6 +8,7 @@
 </head>
 <body>
   <div class="bar">
+    <div class="tally" aria-label="Session counts"></div>
     <button type="button" id="new-session">+ New session</button>
     <span id="new-note" role="status"></span>
   </div>
@@ -18,25 +19,29 @@
   <template id="card-tpl">
     <article class="card" tabindex="-1">
       <header>
-        <span class="portrait"><img class="face" alt="" /><span class="corner"></span></span>
-        <div class="who">
-          <h2 class="name"></h2>
-          <p class="small"></p>
-        </div>
+        <span class="portrait">
+          <svg class="arc" viewBox="0 0 80 80" aria-hidden="true">
+            <circle class="track" cx="40" cy="40" r="37"/><circle class="fill" cx="40" cy="40" r="37" pathLength="1"/>
+          </svg>
+          <img class="face" alt="" />
+        </span>
+        <div class="who"><h2 class="name"></h2><p class="task"></p></div>
+        <p class="pill"><span class="mark"></span><span class="label"></span> <span class="age"></span></p>
       </header>
-      <p class="where"></p>
-      <ul class="touched"></ul>
-      <p class="status"><span class="mark"></span><span class="line"></span></p>
-      <p class="error" hidden></p>
-      <p class="said prompt"><span class="sign" aria-hidden="true">&gt;</span><span class="text"></span></p>
-      <p class="said reply"><span class="sign" aria-hidden="true">&lt;</span><span class="text"></span></p>
-      <p class="updated" hidden></p>
-      <div class="actions">
-        <button type="button" class="jump">Jump to terminal</button>
-        <button type="button" class="clear" hidden
-          title="Removes this card. A session that is still running brings it back at its next event, without its start time or the repos it touched.">Clear</button>
-        <span class="note" role="status"></span>
+      <p class="where"><span class="repo"></span><span class="branch" hidden></span></p>
+      <ul class="also"></ul>
+      <p class="ask" hidden><span class="mark"></span><span class="text"></span></p>
+      <div class="said">
+        <p class="prompt"></p>
+        <p class="reply"></p>
+        <p class="error" hidden></p>
       </div>
+      <p class="updated" hidden></p>
+      <footer class="actions">
+        <span class="note" role="status"></span>
+        <button type="button" class="clear" hidden title="Removes this card. A session that is still running brings it back at its next event, without its start time or the repos it touched.">Clear</button>
+        <button type="button" class="jump">Open terminal</button>
+      </footer>
     </article>
   </template>
 

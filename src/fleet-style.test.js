@@ -71,7 +71,7 @@ test("badges take their size from where they sit", () => {
   assert.doesNotMatch(badgeCss.replace(/\/\*[\s\S]*?\*\//g, ""), /\d+(\.\d+)?px/);
 });
 
-test.todo("the wall fits four columns at 1920 px and reflows below (Task 12)", () => {
+test("the wall fits four columns at 1920 px and reflows below", () => {
   const wallCss = read("./fleet/wall.css");
   const px = (name) => parseFloat(token(wallCss, name));
   const tokens = { min: px("--card-min"), gap: px("--card-gap"), pad: px("--wall-pad") };
@@ -79,6 +79,30 @@ test.todo("the wall fits four columns at 1920 px and reflows below (Task 12)", (
   assert.equal(columnsAt(1920 - SCROLLBAR, tokens), 4);
   assert.equal(columnsAt(1280 - SCROLLBAR, tokens), 2);
   assert.equal(columnsAt(800 - SCROLLBAR, tokens), 1);
+});
+
+test("the wall's text meets 4.5:1 on live and quiet cards", () => {
+  const css = read("./fleet/wall.css");
+  for (const bg of ["--card-bg", "--card-quiet"]) {
+    for (const fg of ["--text", "--text-dim", "--text-error", "--text-quiet"]) {
+      const r = contrast(token(css, fg), token(css, bg));
+      assert.ok(r >= 4.5, `${fg} on ${bg}: ${r.toFixed(2)}`);
+    }
+  }
+  assert.ok(contrast(token(css, "--tone-working"), token(css, "--card-bg")) >= 3, "working arc and edge");
+  assert.doesNotMatch(css.replace(/\/\*[\s\S]*?\*\//g, ""), /opacity:/, "dimming is by colour, so dimmed text keeps its contrast");
+});
+
+test("the arc and the dimming respect reduced motion and keep the face visible", () => {
+  const css = read("./fleet/wall.css");
+  assert.match(css, /@media \(prefers-reduced-motion: reduce\)/);
+  assert.match(css, /\.card\.dim \.face \{[^}]*filter:/);
+});
+
+test("a badge on the wall is ringed in its card's colour", () => {
+  const css = read("./fleet/wall.css");
+  assert.match(css, /\.card \{[^}]*--badge-ring: var\(--card-bg\)/);
+  assert.match(css, /\.card\.dim \{[^}]*--badge-ring: var\(--card-quiet\)/);
 });
 
 test("the wall's error text is readable on its card at 14 px", () => {

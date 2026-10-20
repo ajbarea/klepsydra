@@ -360,6 +360,7 @@ const NOT_SCANNED = {
   "statusline/fixtures/": "recorded status line payloads, data",
   "src/fleet/faces/": "generated portraits and their license table, data",
   "src/fleet/cast.json": "voice to portrait table, data",
+  "src/fleet/demo.json": "the browser-only sample fleet, data",
   "src-tauri/fleet/Cargo.toml": "scanned as a manifest",
 };
 
@@ -442,7 +443,29 @@ test("the wall has a New session button that calls the launcher", () => {
   assert.match(read("src/wall.html"), /<button type="button" id="new-session">\+ New session<\/button>/);
   assert.match(read("src/wall.html"), /<span id="new-note" role="status"><\/span>/);
   assert.match(read("src/fleet/wall.js"), /invoke\("launch_session"\)/);
-  assert.match(read("src/fleet/wall.js"), /querySelector\("\.bar"\)\.hidden = !inTauri/);
+  assert.match(read("src/fleet/wall.js"), /newButton\.hidden = !inTauri/);
   const html = read("src/wall.html");
   assert.ok(html.indexOf("</div>", html.indexOf('class="bar"')) < html.indexOf('<main id="wall"'));
+
+  assert.match(html, /<div class="tally"/);
+  assert.match(html, />Open terminal</);
+});
+
+test("the demo feed is never reachable inside the app", async () => {
+  globalThis.window ??= {};
+  const { devSnapshotUrl } = await import("./fleet/feed.js");
+  for (const search of ["?demo", "?demo=1&focus=x", ""]) assert.equal(devSnapshotUrl(true, search), null, search);
+  assert.equal(devSnapshotUrl(false, "?demo"), "./fleet/demo.json");
+  assert.equal(devSnapshotUrl(false, "?focus=x"), "./dev-fleet.json");
+  const feed = read("src/fleet/feed.js");
+  assert.equal(feed.match(/demo\.json/g).length, 1, "one way to the demo");
+  assert.match(feed, /devSnapshotUrl\(inTauri, location\.search\)/);
+});
+
+test("wall buttons disable by aria-disabled, never by the disabled property, and paint leaves the note alone", () => {
+  const src = read("src/fleet/wall.js");
+  assert.doesNotMatch(src, /\.disabled\s*=/);
+  const paint = src.slice(src.indexOf("function paint("), src.indexOf("\nfunction render("));
+  assert.ok(paint.length > 100, "paint found");
+  assert.doesNotMatch(paint, /note/);
 });

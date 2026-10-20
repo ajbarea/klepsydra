@@ -2,13 +2,14 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import {
-  STATUS, shortAge, longAge, statusLine, voiceName, hash, identity, accessibleName,
-  statuses, startedNeeding, announcements, whereText, updatedText, badgeSvg, stripItems, card,
+  STATUS, shortAge, longAge, statusParts, voiceName, hash, identity, accessibleName,
+  statuses, startedNeeding, announcements, updatedText, badgeSvg, stripItems, card,
   askText, arcFraction, tally, WORKING_FULL_S, WAITING_FULL_S,
 } from "./fleet/model.js";
 
 const NOW = 1_792_353_000_000; // fixed clock, ms
 const ago = (s) => NOW / 1000 - s;
+const statusLine = (s, nowMs) => statusParts(s, nowMs).join(" \u00b7 ");
 const CAST = {
   characters: { am_michael: { name: "Hephaestus", face: "hephaestus" } },
   lorelei: ["am_fenrir", "am_michael"],
@@ -111,7 +112,7 @@ test("a needs-you session with no word for half an hour reads needs you?, still 
   assert.match(svg, />\?<\/text>/);
   assert.notEqual(svg, badgeSvg("needs_you"));
   assert.equal(stripItems([s], CAST, NOW)[0].badge, svg);
-  assert.equal(card(s, CAST, NOW).statusLine, "needs you? \u00b7 approve Bash \u00b7 no word for 31m");
+  assert.deepEqual(card(s, CAST, NOW).pill, { label: "needs you?", age: "no word for 31m" });
   const fresh = session();
   assert.equal(startedNeeding(statuses([fresh]), [s]).size, 0, "going quiet is not a new need");
   assert.equal(startedNeeding(statuses([s]), [s]).size, 0, "staying quiet never pulses again");
@@ -127,7 +128,7 @@ test("the strip item and card of a quiet session say so", () => {
   const c = card(quiet(), CAST, NOW);
   assert.equal(c.status, "working");
   assert.equal(c.quiet, true);
-  assert.equal(c.statusLine, "working? \u00b7 no activity for 12m");
+  assert.deepEqual(c.pill, { label: "working?", age: "no activity for 12m" });
   assert.equal(c.label, "Hephaestus, working?, no activity for 12 minutes");
 });
 
@@ -139,13 +140,13 @@ test("a missing time reads unknown, never NaN and never 1970", () => {
     assert.equal(statusLine(s, NOW), "working \u00b7 unknown");
     assert.equal(accessibleName(s, CAST, NOW), "Hephaestus, working, unknown");
     assert.equal(updatedText(s, NOW), "updated unknown");
-    assert.deepEqual(card(s, CAST, NOW).touched, ["ideas \u00b7 unknown"]);
+    assert.deepEqual(card(s, CAST, NOW).also, ["also in ideas"]);
     const q = quiet({ quiet_since: bad ?? NaN, status_at: bad });
     assert.equal(statusLine(q, NOW), "working? \u00b7 no activity for unknown");
     assert.equal(accessibleName(q, CAST, NOW), "Hephaestus, working?, no activity for unknown");
     const silent = session({ status: "silent", status_at: bad });
     assert.equal(statusLine(silent, NOW), "silent \u00b7 no word for unknown");
-    for (const text of [card(s, CAST, NOW).statusLine, card(q, CAST, NOW).statusLine, stripItems([s], CAST, NOW)[0].label]) {
+    for (const text of [card(s, CAST, NOW).pill.age, card(q, CAST, NOW).pill.age, stripItems([s], CAST, NOW)[0].label]) {
       assert.doesNotMatch(text, /NaN|\d{4,}d/);
     }
   }
@@ -240,10 +241,7 @@ test("the wall announces changes, not the first look", () => {
   assert.deepEqual(announcements(statuses([session()]), [session()], CAST), []);
 });
 
-test("where, touched and updated", () => {
-  assert.equal(whereText(session().where), "klepsydra \u00b7 fleet \u00b7 feat/fleet-visualizer");
-  assert.equal(whereText({ repo: "notes", worktree: null, branch: null, at: 1 }), "notes");
-  assert.equal(whereText(null), "");
+test("updated shows once the newest field is over five minutes old", () => {
   assert.equal(updatedText(session({ updated_at: ago(299) }), NOW), null);
   assert.equal(updatedText(session({ updated_at: ago(420) }), NOW), "updated 7m ago");
 });
@@ -251,14 +249,12 @@ test("where, touched and updated", () => {
 test("a card holds what the wall shows", () => {
   const c = card(session(), CAST, NOW);
   assert.equal(c.name, "Hephaestus");
-  assert.equal(c.voice, "Michael");
   assert.equal(c.session, "Plan the fleet visualizer");
-  assert.equal(c.statusLine, "needs you \u00b7 approve Bash \u00b7 2m");
-  assert.deepEqual(c.touched, ["ideas \u00b7 2h"]);
+  for (const gone of ["statusLine", "where", "voice", "touched"]) assert.ok(!(gone in c), `card.${gone} is gone`);
   assert.equal(c.prompt, "i just want to be able to VIZ them");
   assert.equal(c.reply, "That works with no model calls");
   assert.deepEqual(c.jump, { enabled: true, why: null });
-  assert.equal(c.jumpLabel, "Jump to terminal, Hephaestus");
+  assert.equal(c.jumpLabel, "Open terminal, Hephaestus");
   const other = card(session({ voice: "af_bella" }), CAST, NOW);
   assert.notEqual(other.jumpLabel, c.jumpLabel, "each Jump button is named for its session");
   assert.deepEqual(card(session({ name: null }), CAST, NOW).jump, { enabled: false, why: "no session name yet" });
@@ -298,6 +294,13 @@ test("arc: working by 600 s, needs you by 1800 s, quiet working full, others emp
   assert.equal(arcFraction(session({ status: "working", status_at: undefined }), NOW), 0);
 });
 
+test("arc: a time ahead of the clock is empty, and NaN never leaks", () => {
+  for (const status of ["working", "needs_you"]) {
+    assert.equal(arcFraction(session({ status, status_at: ago(-300) }), NOW), 0, `${status} in the future`);
+    assert.equal(arcFraction(session({ status, status_at: NaN }), NOW), 0, `${status} NaN`);
+  }
+});
+
 test("the ask line says what a session waits for", () => {
   assert.equal(askText("approve Bash"), "Waiting for you to approve Bash");
   assert.equal(askText("approve plan"), "Waiting for you to approve the plan");
@@ -322,6 +325,22 @@ test("a card carries pill, ask, tone, dim, place and its voice as a tooltip", ()
   assert.equal(quiet.task, "No session name yet");
   const idle = card(session({ status: "working", status_at: ago(900), quiet_since: ago(720) }), CAST, NOW);
   assert.deepEqual(idle.pill, { label: "working?", age: "no activity for 12m" });
+});
+
+test("the pill's age: ended, error and a quiet needs-you card", () => {
+  assert.deepEqual(card(session({ status: "ended", reason: "closed", status_at: ago(360) }), CAST, NOW).pill,
+    { label: "ended", age: "6m" });
+  assert.deepEqual(card(session({ status: "error", reason: "rate limit", status_at: ago(180) }), CAST, NOW).pill,
+    { label: "error", age: "3m" });
+  assert.deepEqual(card(session({ quiet_since: ago(31 * 60), status_at: ago(35 * 60) }), CAST, NOW).pill,
+    { label: "needs you?", age: "no word for 31m" });
+});
+
+test("also lists each other repo once, never the current one", () => {
+  for (const touched of [[], undefined, null]) assert.deepEqual(card(session({ touched }), CAST, NOW).also, [], String(touched));
+  const touched = [{ repo: "ideas", at: ago(60) }, { repo: "ideas", at: ago(30) }, { repo: "klepsydra", at: ago(10) }, { repo: "talks", at: 1 }];
+  assert.deepEqual(card(session({ touched }), CAST, NOW).also, ["also in ideas", "also in talks"]);
+  assert.deepEqual(card(session({ touched, where: null }), CAST, NOW).also, ["also in ideas", "also in klepsydra", "also in talks"]);
 });
 
 test("the tally counts what the bar shows", () => {

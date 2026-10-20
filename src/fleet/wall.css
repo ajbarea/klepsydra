@@ -1,32 +1,36 @@
 /* The card wall: a normal, resizable window, so plain pixels rather than the
-   gauge's zoom. Three columns at 1920 px wide; fewer below that. */
+   gauge's zoom. Four columns at 1920 px wide; fewer below that. */
 :root {
-  --card-min: 560px;
+  --card-min: 420px;
   --card-gap: 16px;
-  --wall-pad: 24px;
-  --wall-face: 64px;
-  --wall-bg: #141414;
-  --card-bg: #1f1f1f;
+  --wall-pad: 28px;
+  --wall-face: 80px;
+  --wall-bg: #11151b;
+  --card-bg: #1a2029;
+  --card-quiet: #161b22;
+  --card-line: #2a323e;
   --card-focus: #e69f00;
-  --text: #ededed;
-  --text-dim: #9a9a9a;
+  --text: #e9edf2;
+  --text-dim: #98a2b0;
+  --text-quiet: #7f8896;
+  --text-faint: #6b7584;
   --text-error: #e8743b;
-  --font: ui-sans-serif, "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+  --tone-needs: var(--badge-needs);
+  --tone-error: var(--badge-error);
+  --tone-working: #56b4e9;
+  --tone-done: var(--badge-done);
+  --tone-quiet: #8a93a0;
+  --arc-track: #263040;
+  --button-bg: #252d39;
+  --button-line: #344052;
+  --font: "Segoe UI Variable Text", "Segoe UI", "Inter", system-ui, sans-serif;
+  --display: "Segoe UI Variable Display", "Segoe UI", "Inter Display", "Inter", system-ui, sans-serif;
 }
 
 * { margin: 0; padding: 0; box-sizing: border-box; }
+[hidden] { display: none !important; }
 
-html, body { background: var(--wall-bg); color: var(--text); font: 14px/1.4 var(--font); }
-
-#wall {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(var(--card-min), 1fr));
-  gap: var(--card-gap);
-  padding: var(--wall-pad);
-}
-
-#empty { padding: var(--wall-pad); color: var(--text-dim); }
-#empty[hidden] { display: none; }
+html, body { background: var(--wall-bg); color: var(--text); font: 14px/1.45 var(--font); }
 
 .visually-hidden {
   position: absolute;
@@ -37,67 +41,166 @@ html, body { background: var(--wall-bg); color: var(--text); font: 14px/1.4 var(
   white-space: nowrap;
 }
 
+/* Summary bar: who needs AJ, and how many are up. */
+.bar { display: flex; align-items: center; gap: 28px; padding: 20px var(--wall-pad) 8px; }
+.tally { display: flex; flex-wrap: wrap; gap: 8px 22px; align-items: baseline; margin-right: auto; color: var(--text-dim); }
+.tally b { font: 600 28px/1 var(--display); font-variant-numeric: tabular-nums; margin-right: 2px; color: var(--text-faint); }
+.tally .t-needs b { color: var(--tone-needs); }
+.tally .t-working b { color: var(--tone-working); }
+.tally .t-done b { color: var(--tone-done); }
+.tally .t-error b { color: var(--tone-error); }
+#new-note { order: 1; color: var(--text-dim); font-size: 12.5px; }
+#new-note:empty { display: none; }
+#new-session { order: 2; }
+
+button {
+  font: 600 13px/1 var(--font);
+  color: var(--text);
+  background: var(--button-bg);
+  border: 1px solid var(--button-line);
+  border-radius: 8px;
+  padding: 9px 14px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+button:hover:not([aria-disabled="true"]) { background: #2e3846; }
+#new-session { background: var(--text); color: var(--wall-bg); border-color: var(--text); }
+#new-session:hover:not([aria-disabled="true"]) { background: #ffffff; }
+button.clear { background: transparent; border-color: transparent; color: var(--text-dim); }
+button.clear:hover:not([aria-disabled="true"]) { background: var(--button-bg); color: var(--text); }
+button[aria-disabled="true"] { color: var(--text-dim); cursor: default; }
+button:focus-visible { outline: 2px solid var(--card-focus); outline-offset: 2px; }
+
+#wall {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(var(--card-min), 1fr));
+  gap: var(--card-gap);
+  padding: var(--card-gap) var(--wall-pad) var(--wall-pad);
+}
+
+#empty { padding: var(--wall-pad); color: var(--text-dim); }
+
 .card {
+  --tone: var(--tone-quiet);
+  --badge-ring: var(--card-bg);
+  position: relative;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 12px;
   min-width: 0;
-  padding: 16px;
-  border-radius: 10px;
+  padding: 18px 18px 14px;
+  border-radius: 14px;
   background: var(--card-bg);
+  border: 1px solid var(--card-line);
+  overflow: hidden;
   outline: 2px solid transparent;
+  outline-offset: 2px;
 }
 .card:focus { outline-color: var(--card-focus); }
+/* Live state rides on the card's edge; quiet states step back. */
+.card::before { content: ""; position: absolute; inset: 0 auto 0 0; width: 3px; background: var(--tone); }
+.card.tone-needs {
+  --tone: var(--tone-needs);
+  border-color: color-mix(in oklab, var(--tone-needs) 45%, var(--card-line));
+  box-shadow: 0 0 0 1px color-mix(in oklab, var(--tone-needs) 25%, transparent),
+    0 8px 28px -12px color-mix(in oklab, var(--tone-needs) 55%, transparent);
+}
+.card.tone-error { --tone: var(--tone-error); }
+.card.tone-working { --tone: var(--tone-working); }
+.card.tone-done { --tone: var(--tone-done); }
+.card.dim { --badge-ring: var(--card-quiet); background: var(--card-quiet); }
+.card.dim::before { background: transparent; }
+.card.dim .face { filter: grayscale(0.85) brightness(0.8); }
+.card.dim .name, .card.dim .where, .card.dim .reply { color: var(--text-dim); }
+.card.dim .prompt, .card.dim .repo .wt, .card.dim .branch { color: var(--text-quiet); }
 
-.card header { display: flex; align-items: center; gap: 12px; }
-.portrait { position: relative; flex: 0 0 auto; width: var(--wall-face); height: var(--wall-face); }
-.portrait .badge { position: absolute; right: -4px; bottom: -4px; width: 22px; height: 22px; }
-.who { min-width: 0; }
-.name { font-size: 18px; font-weight: 600; }
-.small, .updated, .note { font-size: 12px; color: var(--text-dim); }
+/* The task runs under the pill, so a long pill never cuts it short. */
+.card header {
+  display: grid;
+  grid-template-columns: var(--wall-face) minmax(0, 1fr) auto;
+  grid-template-areas: "face name pill" "face task task";
+  column-gap: 14px;
+}
 
-.where { font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
-.touched { display: flex; flex-wrap: wrap; gap: 6px; list-style: none; }
-.touched:empty { display: none; }
-.touched li { padding: 2px 8px; border-radius: 999px; background: #2a2a2a; font-size: 12px; color: var(--text-dim); }
+/* The klepsydra arc: how long this state has lasted, filling like water. */
+.portrait { grid-area: face; position: relative; width: var(--wall-face); height: var(--wall-face); }
+.portrait .face { position: absolute; inset: 7px; width: calc(100% - 14px); height: calc(100% - 14px); }
+.portrait .arc { position: absolute; inset: 0; width: 100%; height: 100%; transform: rotate(-90deg); }
+.arc circle { fill: none; stroke-width: 4; }
+.arc .track { stroke: var(--arc-track); }
+.arc .fill { stroke: var(--tone); stroke-linecap: round; transition: stroke-dasharray 600ms ease-out; }
 
-.status { display: flex; align-items: center; gap: 8px; font-weight: 600; }
-.status .badge { width: 18px; height: 18px; }
+.who { display: contents; }
+.name { grid-area: name; align-self: end; min-width: 0; font: 650 20px/1.15 var(--display); letter-spacing: -0.01em; overflow-wrap: anywhere; }
+.task { grid-area: task; align-self: start; min-width: 0; color: var(--text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 2px; }
+
+.pill {
+  grid-area: pill;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  align-self: start;
+  padding: 5px 10px 5px 8px;
+  border-radius: 999px;
+  font-weight: 600;
+  font-size: 12.5px;
+  line-height: 1.2;
+  background: color-mix(in oklab, var(--tone) 16%, transparent);
+  color: color-mix(in oklab, var(--tone) 70%, white);
+  white-space: nowrap;
+}
+.pill .age { color: var(--text-dim); font-weight: 500; font-variant-numeric: tabular-nums; }
+.mark { display: inline-flex; flex: none; }
+.pill .badge { width: 16px; height: 16px; }
+
+.where { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; overflow-wrap: anywhere; }
+.repo { font-weight: 600; }
+.repo .wt { color: var(--text-dim); font-weight: 500; }
+.branch {
+  display: inline-flex;
+  gap: 5px;
+  align-items: center;
+  color: var(--text-dim);
+  font-size: 12.5px;
+  padding: 2px 8px;
+  border: 1px solid var(--card-line);
+  border-radius: 6px;
+}
+.branch svg { width: 12px; height: 12px; flex: none; }
+.also { display: flex; flex-wrap: wrap; gap: 4px 10px; list-style: none; margin-top: -6px; color: var(--text-quiet); font-size: 12.5px; }
+.also:empty { display: none; }
+
+.ask {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 8px 10px;
+  border-radius: 8px;
+  font-weight: 600;
+  background: color-mix(in oklab, var(--tone-needs) 14%, transparent);
+  color: color-mix(in oklab, var(--tone-needs) 75%, white);
+}
+.ask .badge { width: 18px; height: 18px; }
+
 .error { color: var(--text-error); overflow-wrap: anywhere; }
-.error[hidden], .updated[hidden] { display: none; }
 
-.said { display: flex; gap: 8px; color: var(--text-dim); }
-.said .sign { flex: 0 0 auto; font-family: ui-monospace, "Cascadia Mono", monospace; }
-.said .text {
+.said { flex: 1; display: grid; gap: 6px; align-content: start; }
+.said p:not(.error) {
   display: -webkit-box;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
   overflow: hidden;
   overflow-wrap: anywhere;
 }
-.said:has(.text:empty) { display: none; }
+.said p:empty { display: none; }
+.said .prompt { color: var(--text-dim); padding-left: 10px; border-left: 2px solid var(--card-line); }
+.said .reply { color: var(--text); }
 
-.actions { display: flex; align-items: center; gap: 12px; margin-top: 4px; }
-.jump,
-.clear,
-#new-session {
-  padding: 6px 12px;
-  border: 1px solid #3a3a3a;
-  border-radius: 6px;
-  background: #2a2a2a;
-  color: var(--text);
-  font: inherit;
-  cursor: pointer;
+.updated { color: var(--text-quiet); font-size: 12.5px; }
+
+.actions { display: flex; align-items: center; gap: 8px; border-top: 1px solid var(--card-line); padding-top: 12px; }
+.actions .note { color: var(--text-dim); font-size: 12.5px; margin-right: auto; overflow-wrap: anywhere; }
+
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; animation: none !important; }
 }
-.jump:hover:not(:disabled),
-.clear:hover:not(:disabled),
-#new-session:hover:not(:disabled) { background: #333; }
-.jump:focus-visible,
-.clear:focus-visible,
-#new-session:focus-visible { outline: 2px solid var(--card-focus); outline-offset: 2px; }
-.jump:disabled,
-.clear:disabled,
-#new-session:disabled { color: var(--text-dim); cursor: default; }
-.bar { display: flex; align-items: center; gap: var(--card-gap); padding: var(--wall-pad) var(--wall-pad) 0; }
-.bar[hidden] { display: none; }
-#new-note { color: var(--text-dim); }

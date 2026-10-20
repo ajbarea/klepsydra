@@ -1,98 +1,122 @@
 // The card wall: a card per Claude Code session, in the reader's order, with
 // a way back to its terminal.
 import cast from "./cast.json" with { type: "json" };
-import { announcements, card, statuses } from "./model.js";
-import { syncChildren } from "./dom.js";
+import { announcements, card, statuses, tally } from "./model.js";
+import { press, setOff, syncChildren } from "./dom.js";
 import { inTauri, subscribe } from "./feed.js";
 import { showFace } from "./face.js";
 
 const TICK_MS = 15_000; // ages re-render between snapshots, as on the gauge
-const FACE_PX = 64; // --wall-face
+const FACE_PX = 66; // --wall-face less the arc's inset
+const BRANCH_ICON =
+  '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="4" cy="3.5" r="1.8"/><circle cx="4" cy="12.5" r="1.8"/><circle cx="12" cy="5" r="1.8"/><path d="M4 5.3v5.4M12 6.8c0 3-3.5 3-8 4.2"/></svg><span></span>';
+const TALLY = [
+  ["needs", "needs you"],
+  ["working", "working"],
+  ["done", "done"],
+  ["error", "error"],
+  ["idle", "idle or ended"],
+];
 
 const wall = document.getElementById("wall");
 const empty = document.getElementById("empty");
 const live = document.getElementById("live");
 const tpl = document.getElementById("card-tpl");
+const counts = document.querySelector(".tally");
 const newButton = document.getElementById("new-session");
 const newNote = document.getElementById("new-note");
-document.querySelector(".bar").hidden = !inTauri;
-newButton.addEventListener("click", async () => {
-  if (newButton.disabled) return;
-  newButton.disabled = true;
-  newNote.textContent = "Starting\u2026";
-  try {
-    newNote.textContent = await window.__TAURI__.core.invoke("launch_session");
-  } catch (err) {
-    newNote.textContent = String(err);
-  } finally {
-    newButton.disabled = false;
-  }
-});
+newButton.hidden = !inTauri;
+newButton.addEventListener("click", () =>
+  press(newButton, newNote, () => window.__TAURI__.core.invoke("launch_session"), "Starting…"),
+);
 
 let sessions = [];
 let before;
 let pending = null; // a card to show once it exists
 
-// Everything session-derived goes in as text; the badge is markup the model
-// built from constants.
+// Everything session-derived goes in as text; the badge and branch icon are
+// markup built from constants.
 const setText = (el, text) => {
   el.textContent = text ?? "";
 };
+const show = (el, text) => {
+  el.hidden = !text;
+  setText(el, text);
+};
 
 function paint(el, c) {
+  el.className = `card ${c.dim ? "dim" : ""} tone-${c.tone}`;
   el.setAttribute("aria-label", c.label);
+  el.querySelector(".portrait").title = c.voiceTitle ?? "";
+  const fill = el.querySelector(".arc .fill");
+  fill.style.display = c.arc > 0 ? "" : "none";
+  fill.style.strokeDasharray = `${c.arc} 1`;
   showFace(el.querySelector(".face"), c.face, c.face2x, FACE_PX);
   setText(el.querySelector(".name"), c.name);
-  setText(el.querySelector(".small"), [c.voice, c.session].filter(Boolean).join(" · "));
-  setText(el.querySelector(".where"), c.where);
-  el.querySelector(".touched").replaceChildren(
-    ...c.touched.map((t) => Object.assign(document.createElement("li"), { textContent: t })),
-  );
+  setText(el.querySelector(".task"), c.task);
+
   const badgeKey = `${c.status}${c.quiet}`;
   if (el.dataset.badge !== badgeKey) {
     el.dataset.badge = badgeKey;
-    el.querySelector(".corner").innerHTML = c.badge;
-    el.querySelector(".mark").innerHTML = c.badge;
+    for (const mark of el.querySelectorAll(".mark")) mark.innerHTML = c.badge;
   }
-  setText(el.querySelector(".status .line"), c.statusLine);
-  const error = el.querySelector(".error");
-  error.hidden = !c.error;
-  setText(error, c.error);
+  setText(el.querySelector(".pill .label"), c.pill.label);
+  setText(el.querySelector(".pill .age"), c.pill.age);
+  const ask = el.querySelector(".ask");
+  ask.hidden = !c.ask;
+  setText(ask.querySelector(".text"), c.ask);
+
+  const repo = el.querySelector(".repo");
+  const worktree = c.place?.worktree ? [Object.assign(document.createElement("span"), { className: "wt", textContent: ` / ${c.place.worktree}` })] : [];
+  repo.replaceChildren(c.place?.repo ?? "", ...worktree);
+  const branch = el.querySelector(".branch");
+  branch.hidden = !c.place?.branch;
+  if (!branch.firstChild) branch.innerHTML = BRANCH_ICON;
+  setText(branch.lastChild, c.place?.branch);
+  el.querySelector(".also").replaceChildren(
+    ...c.also.map((t) => Object.assign(document.createElement("li"), { textContent: t })),
+  );
+
+  show(el.querySelector(".error"), c.error);
   for (const [cls, text] of [["prompt", c.prompt], ["reply", c.reply]]) {
-    const said = el.querySelector(`.${cls} .text`);
+    const said = el.querySelector(`.said .${cls}`);
     setText(said, text);
     said.title = text ?? "";
   }
-  const updated = el.querySelector(".updated");
-  updated.hidden = !c.updated;
-  setText(updated, c.updated);
+  show(el.querySelector(".updated"), c.updated);
+
   const jump = el.querySelector(".jump");
-  const note = el.querySelector(".note");
   jump.dataset.name = c.session ?? "";
   jump.dataset.id = c.id;
   jump.setAttribute("aria-label", c.jumpLabel);
+  jump.title = c.jump.why ?? "";
+  setOff(jump, !c.jump.enabled);
   const clear = el.querySelector(".clear");
   clear.hidden = !c.clear;
   clear.dataset.id = c.id;
-  if (jump.dataset.busy) return;
-  jump.disabled = !c.jump.enabled;
-  if (!c.jump.enabled) {
-    setText(note, c.jump.why);
-    note.dataset.why = "";
-  } else if ("why" in note.dataset) {
-    setText(note, "");
-    delete note.dataset.why;
-  }
+  setOff(clear, false);
+}
+
+function paintTally() {
+  const t = tally(sessions);
+  counts.replaceChildren(
+    ...TALLY.filter(([key]) => key !== "error" || t.error > 0).map(([key, label]) => {
+      const span = Object.assign(document.createElement("span"), { className: `t-${key}` });
+      span.append(Object.assign(document.createElement("b"), { textContent: String(t[key]) }), ` ${label}`);
+      return span;
+    }),
+  );
 }
 
 function render() {
   const now = Date.now();
   empty.hidden = sessions.length > 0;
+  paintTally();
   const cards = sessions.map((s) => card(s, cast, now));
   syncChildren(wall, cards, (c) => c.id, () => tpl.content.firstElementChild.cloneNode(true), paint);
 }
 
-function show(id) {
+function focusCard(id) {
   const el = [...wall.children].find((c) => c.dataset.key === id);
   if (!el) {
     pending = id;
@@ -110,39 +134,18 @@ function receive(message) {
     before = statuses(message.sessions);
     sessions = message.sessions;
     render();
-    if (pending) show(pending);
+    if (pending) focusCard(pending);
   }
-  if (typeof message?.focus === "string") show(message.focus);
+  if (typeof message?.focus === "string") focusCard(message.focus);
 }
 
-wall.addEventListener("click", async (e) => {
-  const clearButton = e.target.closest(".clear");
-  if (clearButton && !clearButton.disabled && inTauri) {
-    const note = clearButton.parentElement.querySelector(".note");
-    clearButton.disabled = true;
-    try {
-      await window.__TAURI__.core.invoke("clear_session", { id: clearButton.dataset.id });
-    } catch (err) {
-      note.textContent = String(err);
-      clearButton.disabled = false;
-    }
-    return;
-  }
-  const button = e.target.closest(".jump");
-  if (!button || button.disabled || !inTauri) return;
-  const note = button.parentElement.querySelector(".note");
-  button.disabled = true;
-  button.dataset.busy = "1";
-  note.textContent = "";
-  try {
-    note.textContent = await window.__TAURI__.core.invoke("jump_to_terminal", { id: button.dataset.id, name: button.dataset.name });
-  } catch (err) {
-    note.textContent = String(err);
-  } finally {
-    button.disabled = false;
-    delete button.dataset.busy;
-    delete note.dataset.why;
-  }
+wall.addEventListener("click", (e) => {
+  const button = e.target.closest(".jump, .clear");
+  if (!button || !inTauri) return;
+  const note = button.closest(".card").querySelector(".note");
+  const { invoke } = window.__TAURI__.core;
+  if (button.classList.contains("clear")) press(button, note, () => invoke("clear_session", { id: button.dataset.id }));
+  else press(button, note, () => invoke("jump_to_terminal", { id: button.dataset.id, name: button.dataset.name }));
 });
 
 subscribe(receive);
