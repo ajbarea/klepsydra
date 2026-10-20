@@ -153,3 +153,11 @@ test("the reorder slide is bounded, and cards keep their own transition names", 
   const css = read("./fleet/wall.css");
   assert.match(css, /::view-transition-group\(\*\)\s*\{[^}]*animation-duration:\s*\d+ms/);
 });
+
+test("a disabled button reads as off: no fill, a quieter border, a label still at 4.5:1", () => {
+  const css = read("./fleet/wall.css");
+  const rule = css.match(/button\[aria-disabled="true"\] \{([^}]*)\}/)?.[1] ?? "";
+  assert.match(rule, /background: transparent/);
+  assert.match(rule, /border-color: var\(--card-line\)/);
+  assert.ok(contrast(token(css, "--text-dim"), token(css, "--card-bg")) >= 4.5);
+});

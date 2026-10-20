@@ -509,6 +509,8 @@ test("the wall slides a reorder inside a feature-detected view transition, else 
   assert.match(src, /typeof document\.startViewTransition === "function"/);
   assert.match(src, /document\.startViewTransition\(\(\) => sync\(\)\)/);
   assert.match(src, /orderChanged\(/);
-  assert.match(src, /style\.viewTransitionName = `card-\$\{/);
+  assert.match(src, /UUID\.test\(c\.id\)\) el\.style\.viewTransitionName = `card-\$\{/);
+  assert.match(src, /const reordered = was\.length > 0 && orderChanged\(/, "a first render never slides");
+  assert.match(src, /started\.has\(el\.dataset\.key\) && !reducedMotion\(\)/, "no pulse class under reduced motion");
   assert.match(src, /startedNeeding\(/);
 });

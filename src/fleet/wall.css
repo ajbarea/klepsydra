@@ -68,7 +68,8 @@ button:hover:not([aria-disabled="true"]) { background: #2e3846; }
 #new-session:hover:not([aria-disabled="true"]) { background: #ffffff; }
 button.clear { background: transparent; border-color: transparent; color: var(--text-dim); }
 button.clear:hover:not([aria-disabled="true"]) { background: var(--button-bg); color: var(--text); }
-button[aria-disabled="true"] { color: var(--text-dim); cursor: default; }
+/* Off reads as off: no fill, a faint border, a dim label (still 4.5:1 on the card). */
+button[aria-disabled="true"] { color: var(--text-dim); background: transparent; border-color: var(--card-line); cursor: default; }
 button:focus-visible { outline: 2px solid var(--card-focus); outline-offset: 2px; }
 
 #wall {

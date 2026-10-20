@@ -47,7 +47,8 @@ const show = (el, text) => {
 function paint(el, c) {
   const pulsing = el.classList.contains("pulse"); // a repaint must not cut the pulse short
   el.className = `card ${c.dim ? "dim" : ""} tone-${c.tone}${pulsing ? " pulse" : ""}`;
-  el.style.viewTransitionName = `card-${c.id}`; // the id is a validated uuid
+  if (UUID.test(c.id)) el.style.viewTransitionName = `card-${c.id}`;
+  else el.style.viewTransitionName = "";
   el.setAttribute("aria-label", c.label);
   el.querySelector(".portrait").title = c.voiceTitle ?? "";
   const fill = el.querySelector(".arc .fill");
@@ -111,9 +112,12 @@ function paintTally() {
   );
 }
 
+const UUID = /^[0-9a-f-]{36}$/i;
+const reducedMotion = () => matchMedia("(prefers-reduced-motion: reduce)").matches;
+
 // The slide needs the browser's view transitions and a reader who allows motion.
 const canSlide = () =>
-  typeof document.startViewTransition === "function" && !matchMedia("(prefers-reduced-motion: reduce)").matches;
+  typeof document.startViewTransition === "function" && !reducedMotion();
 
 // A snapshot (`snapshot` = ids that started needing) may slide and pulse; the 15 s tick passes nothing and does neither.
 function render(snapshot) {
@@ -124,9 +128,11 @@ function render(snapshot) {
   const cards = sessions.map((s) => card(s, cast, now));
   const sync = () => {
     syncChildren(wall, cards, (c) => c.id, () => tpl.content.firstElementChild.cloneNode(true), paint);
-    for (const el of wall.children) if (started.has(el.dataset.key)) el.classList.add("pulse");
+    for (const el of wall.children) if (started.has(el.dataset.key) && !reducedMotion()) el.classList.add("pulse");
   };
-  const reordered = orderChanged([...wall.children].map((el) => el.dataset.key), cards.map((c) => c.id));
+  const was = [...wall.children].map((el) => el.dataset.key);
+  // The first paint, and a reload, has nothing to slide from.
+  const reordered = was.length > 0 && orderChanged(was, cards.map((c) => c.id));
   if (snapshot && reordered && canSlide()) document.startViewTransition(() => sync());
   else sync();
 }
