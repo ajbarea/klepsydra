@@ -243,7 +243,7 @@ check "the subagent's own tool does" "$(field .state)" '"working"'
 now=1792353050
 fire stop.json ".transcript_path = \"$fixtures/lagging-transcript.jsonl\""
 check "stop: done" "$(field '[.state, .state_at]')" "[\"done\",$now]"
-check "stop: the turn's end" "$(field .turn_end)" "$now"
+check "stop: one turn ended" "$(field .turns)" "1"
 check "stop: the reply from last_assistant_message" "$(field .reply.text)" \
   '"That works with no model calls: the hook writes one file per session and the overlay reads them."'
 check "stop: never the lagging transcript" "$(grep -c STALE "$file")" "0"
@@ -251,7 +251,7 @@ check "the hook never opens the transcript" "$(grep -c transcript_path "$hook")"
 now=$((now + 5)) fire stop.json '.last_assistant_message = ""'
 check "stop with no text keeps the last reply" "$(field '[.reply.text, .reply.at]')" \
   '["That works with no model calls: the hook writes one file per session and the overlay reads them.",1792353050]'
-check "stop with no text still ends the turn" "$(field .turn_end)" "1792353055"
+check "stop with no text still ends a turn" "$(field .turns)" "2"
 
 now=1792353060
 fire stop-failure.json
@@ -340,9 +340,10 @@ fire stop.json
 fire permission-request.json
 fire user-prompt.json
 check "a late stop, request or prompt cannot revive it" "$(mtime):$(field .state)" '1:"ended"'
+turns_before_resume=$(field .turns)
 now=1792353400 fire session-start.json '.source = "resume"'
 check "resumed: done, since it has a prompt" "$(field '[.state, .ended]')" '["done",null]'
-check "resumed: no turn ended" "$(field '.turn_end < 1792353400')" "true"
+check "resumed: no turn ended" "$(field .turns)" "$turns_before_resume"
 now=1792353405 fire session-start.json '.source = "resume"' KLEPSYDRA_PID=710
 check "resumed in another terminal: the new claude" "$(field .claude)" '{"pid":700,"start":9000000}'
 fire user-prompt.json
@@ -407,10 +408,11 @@ fire user-prompt.json
 now=1792355063
 fire notification-idle.json
 check "idle prompt right after a prompt: still working" "$(field .state)" '"working"'
+turns_before_idle=$(field .turns)
 now=1792355123
 fire notification-idle.json
 check "idle prompt: working becomes done" "$(field '[.state, .reason, .state_at]')" "[\"done\",null,$now]"
-check "idle prompt: done, but no turn ended" "$(field '(.turn_end // 0) < '"$now")" "true"
+check "idle prompt: done, but no turn ended" "$(field .turns)" "$turns_before_idle"
 fire permission-request.json
 now=1792355130
 fire notification-idle.json
@@ -837,6 +839,7 @@ rm -f "$file"
 printf '{"v":1,"session_id":"%s","name":null,"started_at":1792356000,"launch_dir":null,"claude":null,"tmux":null,"host":null,"voice":null,"voice_from":null,"state":"working","reason":null,"needs":null,"state_at":1792356000,"where":null,"touched":[],"prompt":null,"reply":null,"error":null,"ended":null,"written_at":1792356000}\n' "$S" >"$file"
 now=1792356700 fire stop.json
 check "an old file: stop gives done" "$(field '[.state, has("background")]')" '["done",false]'
+check "an old file: it starts counting turns" "$(field .turns)" "1"
 
 echo "install block"
 # README.md's settings block is what users paste; it must register every

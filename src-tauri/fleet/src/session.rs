@@ -101,6 +101,14 @@ fn lenient_background<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Vec<Back
     })
 }
 
+/// `turns`, present in every file a counting hook wrote; a value of the wrong
+/// shape counts as none ended rather than costing the file.
+fn lenient_turns<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<u64>, D::Error> {
+    Ok(Some(
+        serde_json::Value::deserialize(d)?.as_u64().unwrap_or(0),
+    ))
+}
+
 /// The kernel boot and distro a session runs on.
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
 pub struct Host {
@@ -152,9 +160,9 @@ pub struct SessionFile {
     /// Subagents and background shells still running; none when absent.
     #[serde(default, deserialize_with = "lenient_background")]
     pub background: Vec<Background>,
-    /// When a turn last ended (Stop), by the writer's clock.
-    #[serde(default)]
-    pub turn_end: Option<i64>,
+    /// How many turns have ended (Stops); None from a hook that never counted.
+    #[serde(default, deserialize_with = "lenient_turns")]
+    pub turns: Option<u64>,
 }
 
 /// Why a session file was skipped.
@@ -300,6 +308,26 @@ mod tests {
         );
         assert_eq!(parse(&base(r#","claude":null"#), ID).unwrap().claude, None);
         assert_eq!(parse(&base(""), ID).unwrap().claude, None);
+    }
+
+    #[test]
+    fn turns_is_none_only_from_a_hook_that_never_counted() {
+        let with = |extra: &str| {
+            let text = format!(
+                r#"{{"v":1,"session_id":"{ID}","state":"done","state_at":1800000100{extra}}}"#
+            );
+            parse(&text, ID).unwrap().turns
+        };
+        assert_eq!(with(""), None);
+        assert_eq!(with(r#","turns":3"#), Some(3));
+        for odd in [
+            r#","turns":null"#,
+            r#","turns":1.5"#,
+            r#","turns":"x""#,
+            r#","turns":-1"#,
+        ] {
+            assert_eq!(with(odd), Some(0), "{odd}");
+        }
     }
 
     #[test]

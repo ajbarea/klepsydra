@@ -236,7 +236,8 @@ the gauge keeps working either way; once the hook is re-copied, that folder
 holds nothing current and can be deleted. Re-copy `klepsydra-cast.json` too: a
 cast from before the character colours has no accents, so the buttons would
 lack markers while their tmux windows stay plain. The same holds whenever the cast
-grows: a voice missing from the installed copy gets no window colour.
+grows: a voice missing from the installed copy gets no window colour. A fleet hook from before Ping counts no turns, so its sessions get the done
+chime by an older rule that can also chime when a session is resumed.
 
 ## Using it
 
@@ -491,7 +492,7 @@ fetches nothing.
 
 The fleet hook writes `<app data dir>/fleet/<session>.json`: the state, where
 the session works, the first 300 characters of your last prompt and of the
-last reply, when the last turn ended, and the error text of a failed turn. It
+last reply, how many turns have ended, and the error text of a failed turn. It
 records no tool input beyond the tool's name and an edited file's path. The status line adds
 `<session>.beat`, the session's name, at most once per 10 seconds. At a
 session start, at most once an hour, the hook deletes a session's file when
@@ -516,9 +517,9 @@ Several sessions changing together make one chime, needs-you first. Within 2
 seconds of a chime only a needs-you after a done plays, so a burst makes one
 sound and a prompt still gets its own. A chime answers a hook event, as the
 hook wrote it: nothing plays for what was already on the strip when
-klepsydra started, a session coming back from silence, or a resume. The done
-chime needs the fleet hook from the same release, which records when each
-turn ends; copy it again after updating.
+klepsydra started, a session coming back from silence, or a resume. Done
+plays at each Stop, so a turn that another Stop hook sends back to work
+chimes at each of its Stops.
 
 The chime stays silent while Do Not Disturb or a Focus session is on, or
 while a full-screen app, a game or presentation mode is in front. Windows

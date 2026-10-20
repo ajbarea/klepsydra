@@ -2,7 +2,7 @@
 //! whose turn just ended. The shell plays it; this decides it.
 //!
 //! A cue answers a hook event, never the clock or a rewrite. Needs-you takes a
-//! state time the session has not shown before, and done takes a turn end it
+//! state time the session has not shown before, and done takes a turn count it
 //! has not shown before, both as the hook wrote them. Going silent and back,
 //! a stale background crew, a missed read or a resume moves neither.
 
@@ -27,7 +27,8 @@ pub enum Cue {
     Done,
 }
 
-/// The last non-silent view of a session, and when it was read.
+/// The last view of a session, silent only if it was never seen otherwise,
+/// and when it was read.
 #[derive(Clone, Copy)]
 struct Seen {
     status: Status,
@@ -39,21 +40,31 @@ fn wants_you(s: Status) -> bool {
     matches!(s, Status::NeedsYou | Status::Error)
 }
 
+/// Whether a turn ended between `b` and `now`. A hook that never counted
+/// turns (an older install) falls back to working becoming done at a new
+/// state time.
+fn turn_ended(b: Seen, now: Marks) -> bool {
+    match (b.marks.turns, now.turns) {
+        (Some(was), Some(is)) => is != was,
+        (None, Some(is)) => is > 0 && b.status == Status::Working,
+        (_, None) => b.status == Status::Working && now.state_at != b.marks.state_at,
+    }
+}
+
 /// What a session now showing `now` with `marks` asks for, given what was
 /// last seen of it. `since` is the app's start, by the reader's clock, and
 /// `at` is the view's status time by the same clock.
 fn cue_for(before: Option<Seen>, since: i64, now: Status, marks: Marks, at: i64) -> Option<Cue> {
     if wants_you(now) {
         let new = match before {
+            // Silent at first sight: only a new state time is news.
+            Some(b) if b.status == Status::Silent => marks.state_at != b.marks.state_at,
             Some(b) => !wants_you(b.status) || marks.state_at != b.marks.state_at,
             None => at > since,
         };
         return new.then_some(Cue::NeedsYou);
     }
-    let ended = match before {
-        Some(b) => marks.turn_end.is_some() && marks.turn_end != b.marks.turn_end,
-        None => false,
-    };
+    let ended = before.is_some_and(|b| turn_ended(b, marks));
     (now == Status::Done && ended).then_some(Cue::Done)
 }
 
@@ -83,8 +94,16 @@ impl Cues {
     pub fn next(&mut self, snap: &Snapshot, now: Instant, now_s: i64) -> Option<Cue> {
         let mut cue: Option<Cue> = None;
         for v in &snap.sessions {
-            // A silent view's time is its last word, not a hook event.
+            let seen = Seen {
+                status: v.status,
+                marks: v.marks,
+                read_at: now_s,
+            };
+            // A silent view's time is its last word, not a hook event: it
+            // asks for nothing, and replaces only a record of nothing.
             if v.status == Status::Silent {
+                let s = self.seen.entry(v.session_id.clone()).or_insert(seen);
+                s.read_at = now_s;
                 continue;
             }
             let before = self.seen.get(&v.session_id).copied();
@@ -95,14 +114,7 @@ impl Cues {
                     (a, b) => a.or(b),
                 };
             }
-            self.seen.insert(
-                v.session_id.clone(),
-                Seen {
-                    status: v.status,
-                    marks: v.marks,
-                    read_at: now_s,
-                },
-            );
+            self.seen.insert(v.session_id.clone(), seen);
         }
         self.started = true;
         let shown: Vec<&str> = snap
@@ -130,10 +142,9 @@ mod tests {
     const START: i64 = 1_792_500_000;
 
     /// A view at `at` seconds after START, written at that time by the hook,
-    /// with the turn last ended at `end` seconds after START. `shift` is the
-    /// skew correction the reader added, so the display time moves while
-    /// what the hook wrote does not.
-    fn view(id: &str, status: Status, at: i64, end: Option<i64>, shift: i64) -> View {
+    /// with `turns` turns ended. `shift` is the skew correction the reader
+    /// added, so the display time moves while what the hook wrote does not.
+    fn view(id: &str, status: Status, at: i64, turns: Option<u64>, shift: i64) -> View {
         View {
             session_id: id.into(),
             name: None,
@@ -156,12 +167,12 @@ mod tests {
             background: Default::default(),
             marks: Marks {
                 state_at: START + at,
-                turn_end: end.map(|e| START + e),
+                turns,
             },
         }
     }
 
-    type S = (&'static str, Status, i64, Option<i64>);
+    type S = (&'static str, Status, i64, Option<u64>);
 
     fn snap(sessions: &[S]) -> Snapshot {
         shifted(sessions, 0)
@@ -199,7 +210,7 @@ mod tests {
 
     #[test]
     fn an_empty_first_read_then_old_sessions_asks_for_nothing() {
-        let old = snap(&[("a", NeedsYou, -600, None), ("b", Done, -60, Some(-60))]);
+        let old = snap(&[("a", NeedsYou, -600, None), ("b", Done, -60, Some(4))]);
         assert_eq!(run(&[snap(&[]), old]), vec![None, None]);
     }
 
@@ -229,7 +240,7 @@ mod tests {
     }
 
     #[test]
-    fn done_without_a_new_turn_end_asks_for_nothing() {
+    fn done_without_a_new_turn_asks_for_nothing() {
         // A resume after a kill mid-turn, the idle prompt after Esc, an answer
         // after the turn ended, or a stale crew: done, with no new Stop.
         for before in [Working, NeedsYou, Error, New, Ended, Done] {
@@ -241,6 +252,50 @@ mod tests {
         }
         let unseen = run(&[snap(&[]), snap(&[("a", Done, 20, Some(20))])]);
         assert_eq!(unseen[1], None);
+    }
+
+    #[test]
+    fn two_turns_ending_in_one_second_still_count() {
+        let got = run(&[
+            snap(&[("a", Working, 10, Some(1))]),
+            snap(&[("a", Working, 10, Some(2))]),
+            snap(&[("a", Done, 10, Some(3))]),
+        ]);
+        assert_eq!(got, vec![None, None, Some(Cue::Done)]);
+    }
+
+    #[test]
+    fn an_older_hook_that_never_counted_still_chimes_done_after_work() {
+        let got = run(&[
+            snap(&[("a", Working, 10, None)]),
+            snap(&[("a", Done, 20, None)]),
+            snap(&[("a", Done, 20, None)]),
+            snap(&[("a", NeedsYou, 30, None)]),
+            snap(&[("a", Done, 40, None)]),
+        ]);
+        assert_eq!(
+            got,
+            vec![None, Some(Cue::Done), None, Some(Cue::NeedsYou), None]
+        );
+    }
+
+    #[test]
+    fn a_session_first_seen_silent_chimes_when_its_turn_ends() {
+        let got = run(&[
+            snap(&[("a", Silent, 10, Some(3)), ("b", Silent, -10, Some(1))]),
+            snap(&[("a", Done, 300, Some(4)), ("b", Silent, -10, Some(1))]),
+        ]);
+        assert_eq!(got, vec![None, Some(Cue::Done)]);
+    }
+
+    #[test]
+    fn an_error_first_seen_silent_does_not_chime_when_its_beats_return() {
+        let got = run(&[
+            snap(&[("b", Silent, -10, Some(1))]),
+            snap(&[("b", Error, -10, Some(1))]),
+            snap(&[("b", Error, 50, Some(1))]),
+        ]);
+        assert_eq!(got, vec![None, None, Some(Cue::NeedsYou)]);
     }
 
     #[test]

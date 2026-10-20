@@ -410,7 +410,7 @@ def notified: if type == "string" then [scan("<task-notification>[\\s\\S]*?</tas
             state: (if $event | IN("PreToolUse", "PostToolUse", "PostToolUseFailure", "SubagentStart", "SubagentStop") then "working" else "new" end),
             reason: null, needs: null, state_at: $now,
             where: null, touched: [], prompt: null, reply: null, error: null,
-            ended: null, written_at: $now}) as $s
+            ended: null, turns: 0, written_at: $now}) as $s
   | $s
   | .name = (($ev.session_title | text) // .name)
   | (if $pid != "" then {pid: ($pid | tonumber), start: ($start | tonumber)} else null end) as $me
@@ -516,6 +516,9 @@ def notified: if type == "string" then [scan("<task-notification>[\\s\\S]*?</tas
   | .state = $t.state
   | .reason = $t.reason
 
+  # Always present, so the reader can tell this hook from one that never counted.
+  | .turns = (if (.turns | type) == "number" then .turns else 0 end)
+
   # What AJ asked and what came back. A background subagent's report arrives
   # as a prompt starting <task-notification>; it is not AJ's.
   | if $event == "UserPromptSubmit" then
@@ -524,8 +527,8 @@ def notified: if type == "string" then [scan("<task-notification>[\\s\\S]*?</tas
         else .prompt = (($ev.prompt | clip) as $p | if $p then {text: $p, at: $now} else .prompt end) end
     elif $event == "Stop" then
       (($ev.last_assistant_message | clip) as $r | if $r then .reply = {text: $r, at: $now} else . end)
-      # When a turn last ended; the only event that ends one.
-      | .turn_end = $now
+      # Turns ended so far; Stop is the only event that ends one.
+      | .turns += 1
     elif $event == "StopFailure" then
       .error = ([$ev.last_assistant_message, $ev.error_details, $ev.error] | map(clip | select(. != null)) | .[0])
     elif $event == "SessionEnd" then .ended = {reason: ($ev.reason // "other"), at: $now}
