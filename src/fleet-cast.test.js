@@ -14,12 +14,15 @@ const POOL = [
   "af_heart", "am_michael", "bf_emma", "bm_george", "af_bella", "am_fenrir", "bf_isabella",
   "bm_fable", "am_puck", "af_aoede", "af_kore", "af_sarah", "af_alloy", "af_nova",
 ];
-const PORTRAITS = ["aidos", "aletheia", "cupid", "dokimasia", "hephaestus", "kallos", "metis", "mneme", "puck", "techne"];
+const KOURAI = ["aidos", "aletheia", "cupid", "dokimasia", "hephaestus", "kallos", "metis", "mneme", "puck", "techne"];
+const NEW = ["argos", "chronos", "elpis", "hermes"];
+const PORTRAITS = [...KOURAI, ...NEW].sort();
 
-test("the ten kourai characters each have one pool voice of their gender", () => {
+test("the fourteen characters each have one pool voice of their gender, and the pool is covered", () => {
   const entries = Object.entries(cast.characters);
   assert.deepEqual(entries.map(([, c]) => c.face).sort(), PORTRAITS);
-  assert.equal(new Set(entries.map(([, c]) => c.name)).size, 10);
+  assert.equal(new Set(entries.map(([, c]) => c.name)).size, 14);
+  assert.deepEqual(Object.keys(cast.characters).sort(), [...POOL].sort(), "one character per pool voice");
   for (const [voice, c] of entries) {
     assert.ok(POOL.includes(voice), `${voice} is not in keryx's pool`);
     assert.equal(voice[1], c.gender, `${c.name} cast against gender`);
@@ -38,18 +41,44 @@ test("every character has both portrait files, and the cast holds nothing else",
   }
 });
 
-// kourai-khryseai shared/src/kourai_common/agents.py `hex_color`.
+// The ten kourai accents: kourai-khryseai shared/src/kourai_common/agents.py `hex_color`.
 const CANON = {
   hephaestus: "#DA8C20", metis: "#C8B464", techne: "#FFC832", dokimasia: "#DA5032", kallos: "#FFDCA0",
   mneme: "#B496DC", puck: "#009E73", cupid: "#D55E00", aidos: "#56B4E9", aletheia: "#0072B2",
 };
 
-test("every character has its canon accent, and nothing else is in an entry", () => {
+// The four new accents: Okabe-Ito yellow and reddish purple, kourai cream-gold, and a
+// burnt orange sampled from Hermes's cloak edge (portrait-briefs.md named #E69F00,
+// which is the needs-you amber).
+const ADDED = { chronos: "#F0E442", argos: "#CC79A7", hermes: "#E07B39", elpis: "#F1D2A1" };
+
+test("every character has its accent, and nothing else is in an entry", () => {
   for (const c of Object.values(cast.characters)) {
     assert.match(c.accent, /^#[0-9A-Fa-f]{6}$/, `${c.name} accent`);
-    assert.equal(c.accent, CANON[c.face], `${c.name} canon colour`);
+    assert.equal(c.accent, CANON[c.face] ?? ADDED[c.face], `${c.name} accent`);
     assert.deepEqual(Object.keys(c).sort(), ["accent", "face", "gender", "name"]);
   }
+});
+
+test("no new character's accent is a status tone, and Hermes's is clear of the needs amber", () => {
+  const badge = readFileSync(new URL("./fleet/badge.css", import.meta.url), "utf8");
+  const wall = readFileSync(new URL("./fleet/wall.css", import.meta.url), "utf8");
+  const tones = [...(badge + wall).matchAll(/--(?:badge|tone)-(?:needs|error|working|done):\s*(#[0-9a-f]{6})/gi)].map((m) => m[1].toLowerCase());
+  assert.deepEqual([...new Set(tones)].sort(), ["#0072b2", "#009e73", "#56b4e9", "#d55e00", "#e69f00"]);
+  for (const face of NEW) {
+    const c = Object.values(cast.characters).find((x) => x.face === face);
+    assert.ok(!tones.includes(c.accent.toLowerCase()), `${c.name} accent is a status tone`);
+  }
+  // Amber means "needs you": a character's orange must differ from it by more than a shade.
+  const hue = (hex) => {
+    const [r, g, b] = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255);
+    const max = Math.max(r, g, b), d = max - Math.min(r, g, b);
+    const h = max === r ? ((g - b) / d) % 6 : max === g ? (b - r) / d + 2 : (r - g) / d + 4;
+    return ((h * 60) + 360) % 360;
+  };
+  const hermes = cast.characters.bm_fable.accent;
+  assert.ok(Math.abs(hue(hermes) - hue("#e69f00")) >= 15, "hue 15 degrees from amber");
+  assert.ok(contrast(hermes, "#e69f00") < 1.5 && Math.abs(hue(hermes) - hue("#e69f00")) > 0);
 });
 
 test("each accent's left marker is 3:1 on the button, or widened to 6 px where it is not", () => {

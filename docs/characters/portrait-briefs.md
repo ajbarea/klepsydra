@@ -1,6 +1,11 @@
 <!-- budget: 1300 words -->
 # Four new kourai portraits: generation briefs
 
+**Done.** The art exists as `assets/portraits/{chronos,argos,hermes,elpis}.jpg`
+(1024 px), `scripts/cut-portraits.py` cuts the faces, and `cast.json` holds all
+fourteen characters. Hermes's accent is the burnt orange `#E07B39`, not the
+`#E69F00` below, which is the needs-you amber. The briefs are kept as the record.
+
 These four characters give the four keryx voices that have no portrait a
 face of their own. Each brief is one shared style block plus one character
 block. Paste both into the image generator, attach the reference portraits
@@ -10,7 +15,8 @@ listed under each character, and iterate the way you did for the first ten.
 
 Fourteen: one per voice in keryx's rotation pool. The ten kourai characters
 cover the first ten voices; these four cover the rest. A fifteenth is
-optional, for `af_nicole`, which keryx never hands out unless you pin it.
+optional, for `af_nicole`, which keryx never hands out unless you pin it
+(see Hesychia below).
 Sessions past the fourteenth get blended voices and show a medallion.
 
 ## Reference portraits
@@ -127,13 +133,17 @@ one the same way.
 
 - **Avoid:** a box (the jar is a pithos), sadness, a halo.
 
-## After the art exists
+## Hesychia, Keeper of Quiet (optional)
 
-1. You drop the eight PNGs (neutral + transparent) somewhere I can read.
-2. I crop them to faces with `scripts/cut-portraits.py`, add the four
-   characters to `cast.json` with their voices and canon accents, and the
-   wall shows a kourai face for all 14 voices. keryx 0.9.1 already hands out
-   the ten existing ones first.
+- **Upload with the prompt:** `hephaestus_neutral.png` (framing), `aletheia_neutral.png` (serene), `kallos_neutral.png` (soft glow)
+- **Voice:** `af_nicole` (soft, near-whisper; keryx hands it out only when pinned)
+- **Accent:** moonlit silver-blue `#A9B8D0`
+- **Role:** the spirit of stillness and rest. In Pindar (Pythian 8) she is Dike's daughter and holds the keys of counsel and war.
+- **Character block:**
+
+> A woman of quiet, settled calm, with dark hair loosely bound low at the nape, eyes half-lowered, and a faint, closed-lipped smile, as if she has just heard a room fall silent. She wears a deep night-blue peplos edged in pale silver, with a fine silver-and-gold clasp at one shoulder. In one hand she holds a ring of two old golden keys on a dark cord, resting against her palm (the keys of counsel and war). Cool moonlit rim light on one side meets the warm gold glow behind her shoulders. Silver-blue accent (#A9B8D0) in the fabric's edge and the light on the keys. Still, attentive, unhurried.
+
+- **Avoid:** a finger to the lips ("shh"), sleepiness, a halo, dark or gloomy styling.
 
 ## Sources
 
@@ -141,4 +151,5 @@ one the same way.
 - Argos Panoptes, eyes in vase painting, Hera's peacock: theoi.com/Gigante/GiganteArgosPanoptes.html
 - Hermes's kerykeion, petasos and talaria: web.uvic.ca/lancenrd/classical_myth/gods/hermes_i.html
 - Elpis and Pandora's jar: theoi.com/Daimon/Elpis.html
+- Hesychia: theoi.com/Daimon/Hesykhia.html (Pindar, Pythian 8)
 - Kourai style: deleted `docs/art-direction.md` (`git show 0fe8f44a^:docs/art-direction.md`) and `assets/setting/setting-concepts.md`
