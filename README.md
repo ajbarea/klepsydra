@@ -76,6 +76,20 @@ overlay.
 Taking the highest reading is not safe even within one window: a reset granted
 mid-week or a plan upgrade lowers usage under the same `resets_at`.
 
+### Old readings
+
+A reading whose every window has ended is never published, since a real
+response always reports the window it counts against. Once an hour, in the
+background, the hook deletes readings the overlay can never draw again: a
+session's file whose every window ended over a day ago, unless it is its
+account's newest, and that one too once the overlay drops the account after
+30 days without a reading. An account with an older hook's files keeps every
+reading until it is dropped, since the overlay weighs all of them there.
+Anything it cannot read stays. A reading rewritten while the prune decides
+stays too, and one rewritten in the instant before the delete comes back on
+its session's next render. An account takes its name from its newest
+reading.
+
 ## Two accounts at once
 
 The statusLine payload carries no account identity, so the hook reads it from
@@ -149,8 +163,8 @@ Windows app.
 Set `KLEPSYDRA_DIR` if your Windows user differs from your WSL user. It
 configures both hook scripts, which want a WSL path (`/mnt/c/...`); the overlay
 reads the same setting as a Windows path (`C:\...`), so exporting one value
-to both sides gives the overlay a path it cannot resolve. The hook prunes old
-session files only when the last folder of that path is
+to both sides gives the overlay a path it cannot resolve. The hooks prune
+their old files only when the last folder of that path is
 `dev.ajsoftworks.klepsydra`; any other name leaves them in place.
 
 **2. Build the overlay.** Windows and Linux differ here; see the Linux

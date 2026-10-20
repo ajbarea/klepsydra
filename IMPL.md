@@ -1,56 +1,53 @@
 # IMPL
 
-Current slice: keep the kourai cast while keryx is muted (#19). A muted keryx
-holds no new terminal, so every new session fell back to a Lorelei face just
-when keryx was off.
+Current slice: prune the readings the overlay can never draw again (265 files
+on the WSL station, 128 over a week old, all read on every refresh).
 
 ## Done
-- ✅ `hooks/klepsydra-fleet.sh`: with no hold, the session takes its repo's
-  voice from `homes` in keryx's `voices.json` (read only) while keryx still
-  remembers it (90 days, as keryx's `assign` hands it out), and records
-  `voice_from` ("hold" or "home"). A home applies only to a session with no
-  voice yet; a file from before `voice_from` counts as held. The repo is
-  named from the cwd as keryx's `source_name` does, now including a `.git`
-  file saved with CRLF.
-- ✅ `src-tauri/fleet`: `SessionFile` reads `started_at` and `voice_from`;
-  `snapshot` shows a shared voice's face by claim: not ended before ended,
-  then hold before home, then the earlier start, then the lower session id;
-  the others fall back, except a hold that has not ended. Silence never
-  counts, so a face changes at most once (spec addendum, "Shared voices").
-- ✅ README (faces), the spec's addendum (the ruling), ROADMAP.
+- ✅ A reading whose every window has ended is never published, so a pruned
+  idle session cannot republish its last response as new.
+- ✅ Hourly prune, detached under a `flock` (the docs: a slow status line
+  blocks updates, and a new update cancels it). It follows `toRows` and
+  `reconcilable`: a reading whose windows all ended over a day ago goes
+  unless it is its account's newest, and that once the account is dropped
+  (30 days); an account whose times the gauge does not trust keeps all until
+  dropped. Unparseable, unstamped, unseen or just-rewritten (new inode)
+  files stay. The parent forks only for the overlay's own dir.
+- ✅ `src/gauge.js`: an account's label comes from its newest reading.
+- ✅ "prune helpers" (data-dir guard, hourly runner) is one block in both
+  hooks, checked identical, so the fleet's guard tests cover this prune.
 
 ## Verified, not inferred
-- ✅ Hook suite 186 (11 new: home, a forgotten home at 90 days and one
-  second, a hold beside a home, hold then home, home then hold, home then
-  home, another repo, a file from before `voice_from`, a CRLF `.git` file
-  named as keryx names it).
-- ✅ Fleet crate 81 (9 new, among them `/clear` with an ended predecessor and
-  silence never moving a face) with clippy clean; node 119.
-- ✅ Independent review, round 1: two bugs (ended or silent sessions out-
-  claimed live ones; a home replaced a home, so a face followed the cwd), a
-  wrong window (14 days, where keryx forgets at 90) and a CRLF parity gap,
-  all fixed here. Round 2: dropping silent sessions let a face flip with
-  status, against the spec; now only ending counts, and the spec says so.
-- ✅ Live (hook only, keryx muted): a new session in `ajsoftworks` got
-  `am_michael` from its home and showed Hephaestus. A done session held the
-  same voice, so the installed reader showed two; the new reader drops the
-  home one (deploy after the 8-hour memory reading).
+- ✅ statusline 129 (47 new, on a fixed clock now), node 120, fleet 186,
+  shellcheck clean.
+- ✅ `toRows` agrees before and after, in the suite (old-hook and mixed
+  accounts too) and on a copy of the station's readings (265 to 74 files).
+- ✅ Dropping any guard fails the suite; the folder-name check also keeps a
+  folder named `-rf` from reaching jq as an option. Only the "jq printed a
+  globbed name" check is unreachable, as defence in depth.
+- ✅ A render returns in about 20 ms while a prune runs (1.6 s first, 0.35 s
+  after, on /mnt/c).
+- ✅ Live: a real render ran the first prune (23:59:57 to 23:59:59, 265 to
+  74 files) and the gauge drew the same rows. Readings backed up first.
+- ✅ Review round 1: no data loss; fixed a delete racing a writer, untrusted
+  accounts, unseen files counting as newest, a fork per render for a
+  foreign dir, an octal stamp, six surviving mutants.
+- ✅ Review round 2 (final): no data loss for files the hook writes; a
+  1500-case fuzz of toRows found no change. Fixed ext4 handing a rewrite the
+  old inode (now inode and mtime to the nanosecond), an empty team name
+  (now "Team", as for a missing one), and jq reading floats, NaN, far-future
+  stamps or non-string ids unlike the overlay (account left alone).
+- 📋 Known edges, both needing readings the hook never writes: a misfiled
+  reading with a later reset can surface once a newer one goes, and an old
+  hook still writing the pre-move legacy folder is not mirrored.
 
 ## Open
 - The tray icon still draws a bar in either layout.
-- The default display name (`my-app-3f`) reaches no hook and no status line,
-  so a session with no voice and no name is named by its launch folder. The
-  hooks docs confirm it: `session_title` carries only a name set with
-  `--name`, `/rename` or a hook, never a generated title.
-- Some turns end with no hook at all, so the card keeps its last state until
-  the next prompt: a need dismissed with Esc keeps "needs you", its age
-  showing, and an interrupted turn reads "working" until "working?" at 10
-  minutes. The hooks docs say Stop skips user interrupts and
-  `PermissionDenied` fires only in auto mode. In a probe (2026-10-19, Claude
-  Code 2.1.301), a turn stopped by the safety classifier and then interrupted
-  with Esc left the session file "working" for 130 s, with no `idle_prompt`
-  to correct it. The transcript records such ends, but in internal record
-  types, so the card waits for a hook rather than guess.
+- The default display name (`my-app-3f`) reaches no hook (`session_title`
+  carries only a set name), so such a session is named by its folder.
+- Some turns end with no hook (Esc on a need, an interrupt): the card keeps
+  its state until the next prompt, or "working?" at 10 minutes. Probe
+  2026-10-19 (2.1.301); the transcript's internal records are not parsed.
 
 ## Verify
     node --test src/*.test.js

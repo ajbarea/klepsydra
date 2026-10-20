@@ -14,10 +14,8 @@ session that stops answering reads as silent, never as working.
 
 ## Next
 - Exercise the tray menu ("Reset position", autostart toggle).
-- Prune session files nobody needs (every window ended, account dropped).
 - Take the fleet's 8-hour memory reading (README, Releasing).
-- Jump to terminal for tabs renamed in Windows Terminal (#20), then interrupt
-  and exit buttons on a card (#22), which need Jump's tab match.
+- Interrupt and exit buttons on a card (#22), which need Jump's tab match.
 
 ## Later
 - Optional: flash or notify when crossing a threshold.
@@ -26,6 +24,10 @@ session that stops answering reads as silent, never as working.
   for it (IMPL, Open).
 
 ## Completed
+- 2026-10-20: The statusline hook prunes readings the overlay can never draw
+  again, hourly and in the background, and never publishes a reading whose
+  every window has ended. On a copy of the WSL station's readings it removed
+  191 of 265 files and the gauge drew the same rows.
 - 2026-10-19: Kept the kourai cast on screen while keryx is muted (#19). A
   session with no keryx hold takes the voice keryx remembers for its repo,
   and the reader keeps any two sessions from sharing a face.
