@@ -1,42 +1,40 @@
 # IMPL
 
-Current slice: the compact layout (#21). "Compact" in the tray redraws the
-gauge as a ring per window in one row, low enough to sit inside the taskbar,
-so every account fits there instead of one row with the rest below the edge.
+Current slice: keep the kourai cast while keryx is muted (#19). A muted keryx
+holds no new terminal, so every new session fell back to a Lorelei face just
+when keryx was off.
 
 ## Done
-- ✅ `gauge.js`: short countdowns ("4h 58m", "3d 11h", "<1m") and ages ("15m")
-  from the same parts as the long ones, so the two cannot drift; each reading
-  carries `short`, which keeps "· 15m old" and "· age unknown". `ringDash`
-  leaves the round caps out of the dash, so 97% reads short of a full ring.
-- ✅ `index.html` and `style.css`: one row template for both layouts. The
-  ring (an SVG circle with `pathLength` 100) is hidden in the full layout; in
-  compact a grid places the same label, percent and countdown. Floors under
-  the percent and countdown, measured in the gauge's font, hold the width.
-- ✅ `main.js`: each layout keeps its own zoom (`zoom`, `zoom_compact`), read
-  before the switch so it draws once; a later layout message cancels one
-  still loading; the first draw waits up to 500 ms for the saved layout.
-- ✅ `main.rs`: the layout has a `Hub` of its own (the fleet's type, its own
-  state), which holds its lock across publish and subscribe, so no tray
-  change is lost at startup. A test builds the managed state, since a type
-  managed twice panics at launch. The tray sends
-  the layout read back from `prefs.json` and sets its check from it.
-- ✅ `ipc.js`: one channel helper for the fleet feed and the layout.
-- ✅ README (Compact, resizing, Restyling) and compact shots in
-  `scripts/visual-check.sh`, including over 100%, a reset, waiting, three
-  widths and zooms -3, +1, +2 and +4.
+- ✅ `hooks/klepsydra-fleet.sh`: with no hold, the session takes its repo's
+  voice from `homes` in keryx's `voices.json` (read only) while keryx still
+  remembers it (90 days, as keryx's `assign` hands it out), and records
+  `voice_from` ("hold" or "home"). A home applies only to a session with no
+  voice yet; a file from before `voice_from` counts as held. The repo is
+  named from the cwd as keryx's `source_name` does, now including a `.git`
+  file saved with CRLF.
+- ✅ `src-tauri/fleet`: `SessionFile` reads `started_at` and `voice_from`;
+  `snapshot` shows a shared voice's face by claim: not ended before ended,
+  then hold before home, then the earlier start, then the lower session id;
+  the others fall back, except a hold that has not ended. Silence never
+  counts, so a face changes at most once (spec addendum, "Shared voices").
+- ✅ README (faces), the spec's addendum (the ruling), ROADMAP.
 
 ## Verified, not inferred
-- ✅ Node, statusline, hook and fleet-crate suites pass in WSL; fleet clippy
-  is clean.
-- ✅ Chrome headless: 42px tall at 100%, 46px at 110%, 50px at 121%; one
-  window is 149px wide at 9%, 10%, 97% and 118%.
-- ✅ Independent review, two rounds. Round 2 found the launch crash (fixed,
-  with its test) and three timing risks: two fixed, and a first layout whose
-  zoom read outlasts 500 ms still draws the bars once.
-- ✅ Clippy clean and 97 Rust tests pass on Windows (`build-windows.sh --check`),
-  after the managed-state test tripped on the alias that crashed launch.
-- 📋 Installed build: tray toggle both ways, each layout's zoom, restart.
+- ✅ Hook suite 186 (11 new: home, a forgotten home at 90 days and one
+  second, a hold beside a home, hold then home, home then hold, home then
+  home, another repo, a file from before `voice_from`, a CRLF `.git` file
+  named as keryx names it).
+- ✅ Fleet crate 81 (9 new, among them `/clear` with an ended predecessor and
+  silence never moving a face) with clippy clean; node 119.
+- ✅ Independent review, round 1: two bugs (ended or silent sessions out-
+  claimed live ones; a home replaced a home, so a face followed the cwd), a
+  wrong window (14 days, where keryx forgets at 90) and a CRLF parity gap,
+  all fixed here. Round 2: dropping silent sessions let a face flip with
+  status, against the spec; now only ending counts, and the spec says so.
+- ✅ Live (hook only, keryx muted): a new session in `ajsoftworks` got
+  `am_michael` from its home and showed Hephaestus. A done session held the
+  same voice, so the installed reader showed two; the new reader drops the
+  home one (deploy after the 8-hour memory reading).
 
 ## Open
 - The tray icon still draws a bar in either layout.

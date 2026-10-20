@@ -37,6 +37,9 @@ g -C "$repos/klepsydra" worktree add -q -b feat/fleet-visualizer "$repos/klepsyd
 mkdir -p "$repos/klepsydra/src/deep" "$repos/klepsydra/.claude/worktrees/fleet/src"
 g -C "$repos/ideas" submodule add -q "$repos/subsrc" vendor/subsrc >/dev/null 2>&1
 g -C "$repos/subsrc" checkout -q --detach
+# A .git file saved with CRLF still leads to its main checkout.
+mkdir -p "$repos/crlf"
+printf 'gitdir: %s\r\n' "$repos/klepsydra/.git/worktrees/fleet" >"$repos/crlf/.git"
 
 where() { git_where "$1"; printf '%s|%s|%s' "$where_repo" "$where_worktree" "$where_branch"; }
 # The branch as git reports it, or a detached commit's first 7 characters.
@@ -55,11 +58,12 @@ check "submodule" "$(where "$repos/ideas/vendor/subsrc")" \
 check "detached HEAD" "$(where "$repos/subsrc")" "subsrc||$(git_branch "$repos/subsrc")"
 check "outside any repo" "$(where "$repos/loose/notes")" "notes||"
 check "filesystem root" "$(where /)" "||"
+check "a CRLF .git file" "$(where "$repos/crlf")" "klepsydra|crlf|feat/fleet-visualizer"
 
 # keryx names the same repos; when its source is here, ask it directly.
 keryx_src=${KERYX_SRC:-$HOME/ajsoftworks/keryx/src}
 if [[ -f "$keryx_src/keryx/hook.py" ]]; then
-  for p in klepsydra klepsydra/src/deep klepsydra/.claude/worktrees/fleet ideas/vendor/subsrc subsrc loose/notes; do
+  for p in klepsydra klepsydra/src/deep klepsydra/.claude/worktrees/fleet ideas/vendor/subsrc subsrc loose/notes crlf; do
     got=$(python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); from keryx.hook import source_name; print(source_name(sys.argv[2]))' \
       "$keryx_src" "$repos/$p")
     git_where "$repos/$p"
@@ -268,6 +272,46 @@ check "a voice keryx changes is copied" "$(field .voice)" '"bf_emma"'
 rm "$work/voices.json"
 fire user-prompt.json
 check "keryx gone keeps the voice" "$(field .voice)" '"bf_emma"'
+
+echo "home voice"
+# While keryx is muted no terminal is held, so a session takes the voice keryx
+# remembers for its repo; a held voice always beats it.
+H=22222222-3333-4444-8555-666666666666
+hfile="$dir/fleet/$H.json"
+hfield() { jq -c "$1" "$hfile"; }
+day=$((24 * 3600))
+printf '{"homes":{"klepsydra":{"voice":"bf_emma","seen":%s}}}\n' $((now - 60)) >"$work/voices.json"
+fire session-start.json ".session_id = \"$H\""
+check "muted keryx: the repo's home voice" "$(hfield '[.voice, .voice_from]')" '["bf_emma","home"]'
+printf '{"homes":{"klepsydra":{"voice":"bf_emma","seen":%s}},"holders":{"500:8717628":{"voice":"am_adam","seen":1}}}\n' $((now - 60)) >"$work/voices.json"
+fire user-prompt.json ".session_id = \"$H\""
+check "a later hold replaces a home voice" "$(hfield '[.voice, .voice_from]')" '["am_adam","hold"]'
+printf '{"homes":{"klepsydra":{"voice":"bf_emma","seen":%s}}}\n' $((now - 60)) >"$work/voices.json"
+fire post-tool-bash.json ".session_id = \"$H\""
+check "a home voice never replaces a hold" "$(hfield '[.voice, .voice_from]')" '["am_adam","hold"]'
+rm -f "$hfile"
+printf '{"homes":{"klepsydra":{"voice":"bf_emma","seen":%s}}}\n' $((now - 90 * day - 1)) >"$work/voices.json"
+fire session-start.json ".session_id = \"$H\""
+check "a home keryx has forgotten (90 days) is ignored" "$(hfield '[.voice, .voice_from]')" '[null,null]'
+printf '{"homes":{"klepsydra":{"voice":"bf_emma","seen":%s}}}\n' $((now - 90 * day)) >"$work/voices.json"
+fire user-prompt.json ".session_id = \"$H\""
+check "90 days exactly still counts" "$(hfield '[.voice, .voice_from]')" '["bf_emma","home"]'
+printf '{"homes":{"klepsydra":{"voice":"am_adam","seen":%s}}}\n' $((now - 60)) >"$work/voices.json"
+fire post-tool-bash.json ".session_id = \"$H\""
+check "a home voice never replaces a home voice" "$(hfield '[.voice, .voice_from]')" '["bf_emma","home"]'
+rm -f "$hfile"
+printf '{"homes":{"klepsydra":{"voice":"bf_emma","seen":%s}},"holders":{"500:8717628":{"voice":"am_adam","seen":1}}}\n' $((now - 60)) >"$work/voices.json"
+fire session-start.json ".session_id = \"$H\""
+check "a live hold beside a home: the hold" "$(hfield '[.voice, .voice_from]')" '["am_adam","hold"]'
+rm -f "$hfile"
+printf '{"homes":{"loose":{"voice":"bf_emma","seen":%s}}}\n' $((now - 60)) >"$work/voices.json"
+fire session-start.json ".session_id = \"$H\""
+check "another repo's home is not this one's" "$(hfield .voice)" "null"
+printf '{"v":1,"session_id":"%s","started_at":%s,"voice":"am_michael","state":"new","state_at":%s,"written_at":%s}\n' "$H" "$now" "$now" "$now" >"$hfile"
+printf '{"homes":{"klepsydra":{"voice":"bf_emma","seen":%s}}}\n' $((now - 60)) >"$work/voices.json"
+fire user-prompt.json ".session_id = \"$H\""
+check "a voice from before voice_from counts as held" "$(hfield '[.voice, .voice_from]')" '["am_michael","hold"]'
+rm -f "$hfile" "$work/voices.json"
 
 echo "lifecycle"
 now=1792353300

@@ -26,6 +26,9 @@ session that stops answering reads as silent, never as working.
   for it (IMPL, Open).
 
 ## Completed
+- 2026-10-19: Kept the kourai cast on screen while keryx is muted (#19). A
+  session with no keryx hold takes the voice keryx remembers for its repo,
+  and the reader keeps any two sessions from sharing a face.
 - 2026-10-19: Added the compact layout ("Compact" in the tray, #21): a ring
   per window in one row, 42px tall with three windows where the bars stand
   142px, so the gauge fits inside a 48px taskbar up to 110%. Each layout

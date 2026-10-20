@@ -1,6 +1,8 @@
 //! What the strip and the wall show for each session: its status with that
 //! status's time, in the order AJ reads them.
 
+use std::collections::HashMap;
+
 use serde::Serialize;
 
 use crate::session::{Place, Said, SessionFile, State, Touched};
@@ -168,11 +170,59 @@ pub fn view(entry: &Entry, now: i64) -> Option<View> {
     })
 }
 
+/// A face follows a voice, so sessions sharing one keep it by claim: a session
+/// that has not ended before one that has, then a hold before a repo's home
+/// voice, then the earlier start, then the lower session id. The keeper shows
+/// the face; the others show their fallback face, except a hold that has not
+/// ended, since two holds of one voice are keryx's own choice once every voice
+/// is in use. Only ending counts, never silence, so a face changes with its
+/// session's status at most once and never flips back.
+fn keep_faces_distinct(shown: &mut [(&SessionFile, View)]) {
+    let live = |v: &View| v.status != Status::Ended;
+    let held = |f: &SessionFile| f.voice_from.as_deref() != Some("home");
+    let claim = |f: &SessionFile, v: &View| {
+        (
+            !live(v),
+            !held(f),
+            f.started_at.unwrap_or(i64::MAX),
+            f.session_id.clone(),
+        )
+    };
+    let mut keeper: HashMap<String, (bool, bool, i64, String)> = HashMap::new();
+    for (f, v) in shown.iter() {
+        if let Some(voice) = &v.voice {
+            let c = claim(f, v);
+            keeper
+                .entry(voice.clone())
+                .and_modify(|k| {
+                    if c < *k {
+                        *k = c.clone();
+                    }
+                })
+                .or_insert(c);
+        }
+    }
+    for (f, v) in shown.iter_mut() {
+        let keeps = match &v.voice {
+            Some(voice) => keeper[voice].3 == f.session_id || (live(v) && held(f)),
+            None => true,
+        };
+        if !keeps {
+            v.voice = None;
+        }
+    }
+}
+
 /// Every session to show, needing AJ first, the longest wait leading; then
 /// errors, work in progress, finished work newest first, not started,
 /// silent and ended.
 pub fn snapshot(entries: &[Entry], now: i64) -> Snapshot {
-    let mut sessions: Vec<View> = entries.iter().filter_map(|e| view(e, now)).collect();
+    let mut shown: Vec<(&SessionFile, View)> = entries
+        .iter()
+        .filter_map(|e| view(e, now).map(|v| (&e.file, v)))
+        .collect();
+    keep_faces_distinct(&mut shown);
+    let mut sessions: Vec<View> = shown.into_iter().map(|(_, v)| v).collect();
     sessions.sort_by(|a, b| {
         a.status
             .rank()
@@ -198,7 +248,9 @@ mod tests {
             session_id: id.into(),
             name: None,
             launch_dir: Some("/home/aj/ajsoftworks".into()),
+            started_at: Some(state_at),
             voice: Some("am_michael".into()),
+            voice_from: None,
             state,
             reason: None,
             state_at,
@@ -551,5 +603,170 @@ mod tests {
                 let _ = view(&e, NOW);
             }
         }
+    }
+    /// A session started at `started` with `voice`, held or from a home.
+    fn voiced(id: &str, started: i64, voice: &str, from: &str) -> Entry {
+        let mut e = entry(id, State::Working, NOW - 10, NOW - 5);
+        e.file.started_at = Some(started);
+        e.file.voice = Some(voice.into());
+        e.file.voice_from = Some(from.into());
+        e
+    }
+
+    fn voice_of<'a>(s: &'a Snapshot, id: &str) -> Option<&'a str> {
+        let v = s.sessions.iter().find(|v| v.session_id == id).unwrap();
+        v.voice.as_deref()
+    }
+
+    #[test]
+    fn two_homes_of_one_voice_the_first_started_keeps_it() {
+        let s = snapshot(
+            &[
+                voiced("b", NOW - 100, "bf_emma", "home"),
+                voiced("a", NOW - 200, "bf_emma", "home"),
+            ],
+            NOW,
+        );
+        assert_eq!(voice_of(&s, "a"), Some("bf_emma"));
+        assert_eq!(
+            voice_of(&s, "b"),
+            None,
+            "the later one shows its fallback face"
+        );
+    }
+
+    #[test]
+    fn a_hold_beats_a_home_however_late_it_started() {
+        let s = snapshot(
+            &[
+                voiced("home", NOW - 900, "bf_emma", "home"),
+                voiced("held", NOW - 100, "bf_emma", "hold"),
+            ],
+            NOW,
+        );
+        assert_eq!(voice_of(&s, "held"), Some("bf_emma"));
+        assert_eq!(voice_of(&s, "home"), None);
+    }
+
+    /// `voiced`, ended or gone silent: a file and a beat both long past.
+    fn gone(id: &str, started: i64, voice: &str, from: &str, ended: bool) -> Entry {
+        let mut e = voiced(id, started, voice, from);
+        if ended {
+            e.file.state = State::Ended;
+            e.file.ended = Some(Ended { at: NOW - 60 });
+        } else {
+            e.modified = NOW - 3600;
+            e.file.state_at = NOW - 3600;
+            e.file.written_at = Some(NOW - 3600);
+            e.beat = Some((NOW - 3600, None));
+        }
+        e
+    }
+
+    #[test]
+    fn after_clear_the_live_session_keeps_the_face_not_the_ended_one() {
+        let s = snapshot(
+            &[
+                gone("old", NOW - 900, "bf_emma", "home", true),
+                voiced("new", NOW - 30, "bf_emma", "home"),
+            ],
+            NOW,
+        );
+        assert_eq!(voice_of(&s, "new"), Some("bf_emma"));
+        assert_eq!(voice_of(&s, "old"), None);
+    }
+
+    #[test]
+    fn silence_never_moves_a_face() {
+        // The first started keeps the face whether it is live or silent, so a
+        // session missing beats does not swap faces back and forth.
+        for quiet in [false, true] {
+            let first = if quiet {
+                gone("a", NOW - 900, "bf_emma", "home", false)
+            } else {
+                voiced("a", NOW - 900, "bf_emma", "home")
+            };
+            let s = snapshot(&[first, voiced("b", NOW - 30, "bf_emma", "home")], NOW);
+            let a = s.sessions.iter().find(|v| v.session_id == "a").unwrap();
+            assert_eq!(
+                a.status,
+                if quiet {
+                    Status::Silent
+                } else {
+                    Status::Working
+                }
+            );
+            assert_eq!(voice_of(&s, "a"), Some("bf_emma"), "silent: {quiet}");
+            assert_eq!(voice_of(&s, "b"), None, "silent: {quiet}");
+        }
+    }
+
+    #[test]
+    fn a_silent_hold_keeps_its_face_beside_a_live_hold() {
+        let s = snapshot(
+            &[
+                gone("quiet", NOW - 900, "am_michael", "hold", false),
+                voiced("busy", NOW - 30, "am_michael", "hold"),
+            ],
+            NOW,
+        );
+        assert_eq!(voice_of(&s, "quiet"), Some("am_michael"));
+        assert_eq!(voice_of(&s, "busy"), Some("am_michael"));
+    }
+
+    #[test]
+    fn an_ended_hold_gives_way_to_the_live_hold_of_its_terminal() {
+        let s = snapshot(
+            &[
+                gone("old", NOW - 900, "am_michael", "hold", true),
+                voiced("new", NOW - 30, "am_michael", "hold"),
+            ],
+            NOW,
+        );
+        assert_eq!(voice_of(&s, "new"), Some("am_michael"));
+        assert_eq!(voice_of(&s, "old"), None);
+    }
+
+    #[test]
+    fn two_holds_of_one_voice_both_stay() {
+        let s = snapshot(
+            &[
+                voiced("a", NOW - 200, "am_michael", "hold"),
+                voiced("b", NOW - 100, "am_michael", "hold"),
+            ],
+            NOW,
+        );
+        assert_eq!(voice_of(&s, "a"), Some("am_michael"));
+        assert_eq!(
+            voice_of(&s, "b"),
+            Some("am_michael"),
+            "keryx repeats a voice once all are in use"
+        );
+    }
+
+    #[test]
+    fn homes_of_different_voices_both_stay() {
+        let s = snapshot(
+            &[
+                voiced("a", NOW - 200, "bf_emma", "home"),
+                voiced("b", NOW - 100, "am_adam", "home"),
+            ],
+            NOW,
+        );
+        assert_eq!(voice_of(&s, "a"), Some("bf_emma"));
+        assert_eq!(voice_of(&s, "b"), Some("am_adam"));
+    }
+
+    #[test]
+    fn a_tie_on_start_goes_to_the_lower_session_id() {
+        let s = snapshot(
+            &[
+                voiced("b", NOW - 100, "bf_emma", "home"),
+                voiced("a", NOW - 100, "bf_emma", "home"),
+            ],
+            NOW,
+        );
+        assert_eq!(voice_of(&s, "a"), Some("bf_emma"));
+        assert_eq!(voice_of(&s, "b"), None);
     }
 }
