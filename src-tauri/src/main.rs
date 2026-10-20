@@ -196,8 +196,10 @@ fn layout_of(app: &tauri::AppHandle) -> &'static str {
 }
 
 /// Who follows the layout: the gauge, sent the saved layout when it subscribes
-/// and again after each change from the tray.
-type Layouts = klepsydra_fleet::hub::Hub<fleet::Webview>;
+/// and again after each change from the tray. A type of its own, not an alias:
+/// the fleet's hub is managed state of the same shape.
+#[derive(Default)]
+struct Layouts(klepsydra_fleet::hub::Hub<fleet::Webview>);
 
 #[tauri::command]
 fn layout_subscribe(
@@ -205,7 +207,9 @@ fn layout_subscribe(
     layouts: tauri::State<'_, Layouts>,
     on_message: Channel<serde_json::Value>,
 ) {
-    layouts.subscribe(window.label(), fleet::Webview(on_message));
+    layouts
+        .0
+        .subscribe(window.label(), fleet::Webview(on_message));
 }
 
 /// Save a layout chosen in the tray and send the gauge the layout now saved,
@@ -215,7 +219,7 @@ fn set_layout(app: &tauri::AppHandle, compact: bool) -> bool {
     let want = if compact { "compact" } else { "full" };
     write_pref(app, "layout", serde_json::json!(want));
     let saved = layout_of(app);
-    app.state::<Layouts>().publish(serde_json::json!(saved));
+    app.state::<Layouts>().0.publish(serde_json::json!(saved));
     saved == "compact"
 }
 
@@ -781,8 +785,21 @@ fn watch_grip(app: tauri::AppHandle) {
     });
 }
 
+/// The app's managed state. Tauri keys state by type and panics at startup on
+/// a type managed twice, so each needs a type of its own; a test builds this.
+fn with_state<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> {
+    builder
+        .manage(Grip::default())
+        .manage(fleet::Strip::default())
+        .manage(fleet::Fleet::default())
+        .manage(Moved::default())
+        .manage(Sized::default())
+        .manage(Requested::default())
+        .manage(Layouts::default())
+}
+
 fn main() {
-    tauri::Builder::default()
+    let builder = tauri::Builder::default()
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             None,
@@ -793,14 +810,8 @@ fn main() {
                 // so a restored size would fight set_size on every launch.
                 .with_state_flags(tauri_plugin_window_state::StateFlags::POSITION)
                 .build(),
-        )
-        .manage(Grip::default())
-        .manage(fleet::Strip::default())
-        .manage(fleet::Fleet::default())
-        .manage(Moved::default())
-        .manage(Sized::default())
-        .manage(Requested::default())
-        .manage(Layouts::default())
+        );
+    with_state(builder)
         .invoke_handler(tauri::generate_handler![
             read_usage,
             set_size,
@@ -862,7 +873,7 @@ fn main() {
             let reset = MenuItem::with_id(app, "reset", "Reset position", true, None::<&str>)?;
             let home = MenuItem::with_id(app, "home", "Set home here", true, None::<&str>)?;
             let layout = layout_of(app.handle());
-            app.state::<Layouts>().publish(serde_json::json!(layout));
+            app.state::<Layouts>().0.publish(serde_json::json!(layout));
             let compact_item = CheckMenuItem::with_id(
                 app,
                 "compact",
@@ -927,4 +938,13 @@ fn main() {
         })
         .run(tauri::generate_context!())
         .expect("error while running klepsydra");
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn every_managed_state_has_a_type_of_its_own() {
+        // Builder::manage asserts that no type is managed twice.
+        let _ = super::with_state(tauri::Builder::<tauri::Wry>::default());
+    }
 }
