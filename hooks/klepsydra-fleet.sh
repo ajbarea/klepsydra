@@ -280,15 +280,17 @@ prune_here() { # now
 # or on this boot and distro under a pid that is no longer it. Sessions from
 # another distro on this boot are left alone (their pids are not visible here).
 # A field jq finds empty is printed as "?", which no boot or distro can be, so
-# read does not collapse the tabs around it.
-mark_gone() { # dir now
-  local dir=$1 now=$2 f state boot distro pid start new
+# read does not collapse the tabs around it. A session with no known pid is
+# gone only from an earlier boot, and `self`'s own file is never touched.
+mark_gone() { # dir now self
+  local dir=$1 now=$2 self=$3 f state boot distro pid start new
   [[ -n $host_boot ]] && own_data_dir "$dir" || return 0
   [[ -d $dir/fleet && ! -L $dir/fleet ]] || return 0
   while IFS=$'\t' read -r f state boot distro pid start; do
-    [[ ${f%.json} =~ $UUID_RE && $state != ended && $boot != "?" ]] || continue
+    [[ ${f%.json} =~ $UUID_RE && $state != ended && $boot != "?" && $f != "$self.json" ]] || continue
     if [[ $boot == "$host_boot" ]]; then
       [[ -n $host_distro && $distro == "$host_distro" ]] || continue
+      [[ $pid =~ ^[1-9][0-9]*$ ]] || continue
       claude_alive "$pid" "$start" && continue
     fi
     new=$(jq -c --argjson now "$now" \
@@ -493,7 +495,7 @@ main() {
     --arg voice "$voice" --arg voice_from "$voice_from" --arg pid "$found_pid" --arg start "$found_start" \
     "$APPLY" 2>/dev/null) || new=""
   [[ -n $new ]] && write_atomic "$file" "$new"
-  [[ $event == SessionStart ]] && mark_gone "$KLEPSYDRA_DIR" "$now"
+  [[ $event == SessionStart ]] && mark_gone "$KLEPSYDRA_DIR" "$now" "$session"
   [[ $event == SessionStart ]] && prune_hourly "$PRUNE_STAMP" prune_fleet "$KLEPSYDRA_DIR" "$now"
   return 0
 }

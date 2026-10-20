@@ -693,6 +693,8 @@ A5=aaaaaaaa-0000-4000-8000-000000000005 # this boot and distro, pid reused by an
 A6=aaaaaaaa-0000-4000-8000-000000000006 # already ended, an earlier boot
 A7=aaaaaaaa-0000-4000-8000-000000000007 # no distro, an earlier boot
 A8=aaaaaaaa-0000-4000-8000-000000000008 # no distro, this boot, pid dead
+A9=aaaaaaaa-0000-4000-8000-000000000009 # this boot and distro, claude unknown
+A10=aaaaaaaa-0000-4000-8000-000000000010 # an earlier boot, claude unknown
 put $A1 working $OLD Ubuntu 500 8717628
 put $A2 'done' $B Ubuntu 4999 1
 put $A3 working $B Ubuntu 500 8717628
@@ -701,6 +703,9 @@ put $A5 working $B Ubuntu 500 1
 put $A6 ended $OLD Ubuntu 500 8717628
 put $A7 working $OLD "" 4999 1
 put $A8 working $B "" 4999 1
+put $A9 working $B Ubuntu 4999 1
+put $A10 working $OLD Ubuntu 4999 1
+for n in $A9 $A10; do jq -c '.claude = null' "$dir/fleet/$n.json" >"$work/n" && mv "$work/n" "$dir/fleet/$n.json"; done
 jq -c '.reason = "exited"' "$dir/fleet/$A6.json" >"$work/a6" && mv "$work/a6" "$dir/fleet/$A6.json"
 rm -f "$file"
 fire session-start.json . WSL_DISTRO_NAME=Ubuntu KLEPSYDRA_BOOT_ID="$boot_file" >/dev/null
@@ -712,8 +717,15 @@ check "same distro, pid reused: gone" "$(state_of $A5)" "ended/gone"
 check "already ended: unchanged" "$(state_of $A6)" "ended/exited"
 check "no distro, earlier boot: gone" "$(state_of $A7)" "ended/gone"
 check "no distro, this boot: unchanged" "$(state_of $A8)" "working/-"
+check "this boot, claude unknown: unchanged" "$(state_of $A9)" "working/-"
+check "earlier boot, claude unknown: gone" "$(state_of $A10)" "ended/gone"
 check "gone stamps when" "$(jq -c '[.ended.at, .state_at]' "$dir/fleet/$A1.json")" "[$now,$now]"
 rm -f "$dir"/fleet/aaaaaaaa-*.json
+# The firing session's own file is never marked, even with a dead pid on record
+# and no Claude process found above the hook.
+put $S working $B Ubuntu 4999 1
+fire session-start.json . KLEPSYDRA_PID=999 WSL_DISTRO_NAME=Ubuntu KLEPSYDRA_BOOT_ID="$boot_file" >/dev/null
+check "the firing session is not marked gone" "$(field '.state')" '"new"'
 
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [[ $fail -eq 0 ]]
