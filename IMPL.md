@@ -6,20 +6,29 @@ when keryx was off.
 
 ## Done
 - ✅ `hooks/klepsydra-fleet.sh`: with no hold, the session takes its repo's
-  voice from `homes` in keryx's `voices.json` (read only), if keryx heard the
-  repo within its 14 days, and records `voice_from` ("hold" or "home"). A
-  home never replaces a hold; a file from before `voice_from` counts as held.
-  The repo is named from the cwd, as keryx's `source_name` does.
+  voice from `homes` in keryx's `voices.json` (read only) while keryx still
+  remembers it (90 days, as keryx's `assign` hands it out), and records
+  `voice_from` ("hold" or "home"). A home applies only to a session with no
+  voice yet; a file from before `voice_from` counts as held. The repo is
+  named from the cwd as keryx's `source_name` does, now including a `.git`
+  file saved with CRLF.
 - ✅ `src-tauri/fleet`: `SessionFile` reads `started_at` and `voice_from`;
-  `snapshot` keeps faces distinct (a hold beats a home, then the earlier
-  start, then the lower session id).
+  `snapshot` shows a shared voice's face by claim: live before ended or
+  silent, then hold before home, then the earlier start, then the lower
+  session id; the others fall back, except a live hold.
 - ✅ README (faces), the spec's addendum (the ruling), ROADMAP.
 
 ## Verified, not inferred
-- ✅ Hook suite 183 (8 new: home, stale home at 14 days and one second, a
-  hold beside a home, hold then home, home then hold, another repo, a file
-  from before `voice_from`).
-- ✅ Fleet crate 77 (5 new) with clippy clean; node 119.
+- ✅ Hook suite 186 (11 new: home, a forgotten home at 90 days and one
+  second, a hold beside a home, hold then home, home then hold, home then
+  home, another repo, a file from before `voice_from`, a CRLF `.git` file
+  named as keryx names it).
+- ✅ Fleet crate 80 (8 new, among them `/clear` with an ended predecessor and
+  a silent hold beside a live home) with clippy clean; node 119.
+- ✅ Independent review, round 1: two bugs (ended or silent sessions out-
+  claimed live ones; a home replaced a home, so a face followed the cwd), a
+  wrong window (14 days, where keryx forgets at 90) and a CRLF parity gap,
+  all fixed here.
 - ✅ Live (hook only, keryx muted): a new session in `ajsoftworks` got
   `am_michael` from its home and showed Hephaestus. A done session held the
   same voice, so the installed reader showed two; the new reader drops the

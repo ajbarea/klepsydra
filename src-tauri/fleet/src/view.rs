@@ -170,26 +170,27 @@ pub fn view(entry: &Entry, now: i64) -> Option<View> {
     })
 }
 
-/// A face follows a voice, so no two sessions may show one through a repo's
-/// home voice: where a held voice and a home voice meet, the hold keeps it,
-/// and between homes the session that started first. The others drop the
-/// voice and show their fallback face. Two holds of one voice are keryx's
-/// own choice and stay.
+/// A face follows a voice, so sessions sharing one keep it by claim: a live
+/// session before an ended or silent one, then a hold before a repo's home
+/// voice, then the earlier start, then the lower session id. The keeper shows
+/// the face; the others show their fallback face, except a live hold, since
+/// two live holds of one voice are keryx's own choice once every voice is in
+/// use.
 fn keep_faces_distinct(shown: &mut [(&SessionFile, View)]) {
-    let from_home = |f: &SessionFile| f.voice_from.as_deref() == Some("home");
-    // The strongest claim on each voice: a hold before a home, then the
-    // earlier start, then the session id, so the choice never flickers.
-    let claim = |f: &SessionFile| {
+    let live = |v: &View| !matches!(v.status, Status::Ended | Status::Silent);
+    let held = |f: &SessionFile| f.voice_from.as_deref() != Some("home");
+    let claim = |f: &SessionFile, v: &View| {
         (
-            from_home(f),
+            !live(v),
+            !held(f),
             f.started_at.unwrap_or(i64::MAX),
             f.session_id.clone(),
         )
     };
-    let mut keeper: HashMap<String, (bool, i64, String)> = HashMap::new();
+    let mut keeper: HashMap<String, (bool, bool, i64, String)> = HashMap::new();
     for (f, v) in shown.iter() {
         if let Some(voice) = &v.voice {
-            let c = claim(f);
+            let c = claim(f, v);
             keeper
                 .entry(voice.clone())
                 .and_modify(|k| {
@@ -201,11 +202,11 @@ fn keep_faces_distinct(shown: &mut [(&SessionFile, View)]) {
         }
     }
     for (f, v) in shown.iter_mut() {
-        let lost = match &v.voice {
-            Some(voice) => from_home(f) && keeper[voice].2 != f.session_id,
-            None => false,
+        let keeps = match &v.voice {
+            Some(voice) => keeper[voice].3 == f.session_id || (live(v) && held(f)),
+            None => true,
         };
-        if lost {
+        if !keeps {
             v.voice = None;
         }
     }
@@ -644,6 +645,68 @@ mod tests {
         );
         assert_eq!(voice_of(&s, "held"), Some("bf_emma"));
         assert_eq!(voice_of(&s, "home"), None);
+    }
+
+    /// `voiced`, ended or gone silent: a file and a beat both long past.
+    fn gone(id: &str, started: i64, voice: &str, from: &str, ended: bool) -> Entry {
+        let mut e = voiced(id, started, voice, from);
+        if ended {
+            e.file.state = State::Ended;
+            e.file.ended = Some(Ended { at: NOW - 60 });
+        } else {
+            e.modified = NOW - 3600;
+            e.file.state_at = NOW - 3600;
+            e.file.written_at = Some(NOW - 3600);
+            e.beat = Some((NOW - 3600, None));
+        }
+        e
+    }
+
+    #[test]
+    fn after_clear_the_live_session_keeps_the_face_not_the_ended_one() {
+        let s = snapshot(
+            &[
+                gone("old", NOW - 900, "bf_emma", "home", true),
+                voiced("new", NOW - 30, "bf_emma", "home"),
+            ],
+            NOW,
+        );
+        assert_eq!(voice_of(&s, "new"), Some("bf_emma"));
+        assert_eq!(voice_of(&s, "old"), None);
+    }
+
+    #[test]
+    fn a_live_home_beats_a_silent_hold_which_shows_its_fallback() {
+        let s = snapshot(
+            &[
+                gone("dead", NOW - 9000, "bf_emma", "hold", false),
+                voiced("live", NOW - 30, "bf_emma", "home"),
+            ],
+            NOW,
+        );
+        assert_eq!(
+            s.sessions
+                .iter()
+                .find(|v| v.session_id == "dead")
+                .unwrap()
+                .status,
+            Status::Silent
+        );
+        assert_eq!(voice_of(&s, "live"), Some("bf_emma"));
+        assert_eq!(voice_of(&s, "dead"), None);
+    }
+
+    #[test]
+    fn an_ended_hold_gives_way_to_the_live_hold_of_its_terminal() {
+        let s = snapshot(
+            &[
+                gone("old", NOW - 900, "am_michael", "hold", true),
+                voiced("new", NOW - 30, "am_michael", "hold"),
+            ],
+            NOW,
+        );
+        assert_eq!(voice_of(&s, "new"), Some("am_michael"));
+        assert_eq!(voice_of(&s, "old"), None);
     }
 
     #[test]

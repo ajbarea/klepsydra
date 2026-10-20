@@ -65,10 +65,12 @@ git_where() { # path
       [[ $link == gitdir:* ]] || return
       gitdir=${link#gitdir:}
       gitdir=${gitdir#"${gitdir%%[![:space:]]*}"}
+      gitdir=${gitdir%"${gitdir##*[![:space:]]}"} # a CRLF file, as keryx strips it
       [[ $gitdir == /* ]] || gitdir=$folder/$gitdir
       if [[ -f $gitdir/commondir ]]; then
         common=""
         { IFS= read -r common <"$gitdir/commondir"; } 2>/dev/null
+        common=${common%"${common##*[![:space:]]}"}
         [[ $common == /* ]] || common=$gitdir/$common
         if main=$(cd "$common" 2>/dev/null && pwd -P); then
           main=${main%/*}
@@ -150,13 +152,14 @@ holder_voice() { # pid start
   jq -r --arg h "$1:$2" '.holders[$h].voice // empty | strings' "$VOICES" 2>/dev/null
 }
 
-# The voice keryx remembers for repo `source`, if keryx heard the repo within
-# HOME_SECONDS of `now` (keryx's own window), else nothing. A muted keryx
-# holds no new terminal, so a session takes its repo's voice from here.
-HOME_SECONDS=$((14 * 24 * 3600))
+# The voice keryx remembers for repo `source`, the one keryx hands a new
+# terminal there, until it forgets a repo unheard for FORGET_SECONDS (keryx's
+# own constant); else nothing. A muted keryx holds no new terminal, so a
+# session takes its repo's voice from here.
+FORGET_SECONDS=$((90 * 24 * 3600))
 home_voice() { # source now
   [[ -n $1 && -n $VOICES && -r $VOICES ]] || return 0
-  jq -r --arg s "$1" --argjson now "$2" --argjson within "$HOME_SECONDS" '
+  jq -r --arg s "$1" --argjson now "$2" --argjson within "$FORGET_SECONDS" '
     .homes[$s] | select(type == "object" and (.seen | type) == "number" and $now - .seen <= $within)
     | .voice // empty | strings' "$VOICES" 2>/dev/null
 }
@@ -293,9 +296,10 @@ def ended_as: {clear: "cleared", resume: "resumed elsewhere", logout: "logged ou
   | .name = (($ev.session_title | text) // .name)
   | (if $pid != "" then {pid: ($pid | tonumber), start: ($start | tonumber)} else null end) as $me
   | .claude = (if $me != null and $event == "SessionStart" and $ev.source != "compact" then $me else (.claude // $me) end)
-  # A held voice beats a repo's home voice; files from before voice_from held.
+  # A hold always applies; a repo's home voice only to a session with no voice
+  # yet, so a face never follows the cwd. Files from before voice_from held.
   | .voice_from = (.voice_from // (if .voice != null then "hold" else null end))
-  | if ($voice | text) == null or ($voice_from == "home" and .voice_from == "hold") then .
+  | if ($voice | text) == null or ($voice_from == "home" and .voice != null) then .
     else .voice = $voice | .voice_from = $voice_from end
 
   # Where: the last edit's repo, or the cwd's until something is edited.

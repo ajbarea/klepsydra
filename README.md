@@ -331,11 +331,12 @@ face and the voice's name, and a session without keryx gets one of 24 Lorelei
 faces picked by its session id. A face never changes with the status.
 
 While keryx is muted (`/keryx off`) it holds no new terminal, so a new session
-takes the voice keryx remembers for its repo, if keryx heard that repo in the
-last 14 days, and the cast stays on screen. No two sessions show one face this
-way: a held voice beats a repo's voice, and of two sessions in one repo the
-first started keeps it while the other shows its fallback face until the first
-one leaves.
+takes the voice keryx remembers for its repo, the one keryx would hand it, and
+the cast stays on screen. The session keeps that voice as it moves between
+repos. Sessions sharing a voice show its face by claim: a live session before
+an ended or silent one, then a voice keryx held before a repo's, then the
+first started. The others show their fallback face and name until the keeper
+leaves; two live sessions that keryx itself gave one voice both keep it.
 
 The faces are files in `src/fleet/faces`, each listed in `LICENSES.json`, and
 the overlay loads no library and fetches nothing.
