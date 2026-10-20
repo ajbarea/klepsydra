@@ -6,11 +6,14 @@ set -uo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
 launch="$here/klepsydra-launch.sh"
 work=$(mktemp -d)
-sock="kl-test-$$"
+sock="kl-test-$$" sock2="kl-test2-$$"
+sockdir="${TMUX_TMPDIR:-/tmp}/tmux-$(id -u)" # where tmux puts a -L socket
 clients=()
 cleanup() {
   for p in "${clients[@]}" $(cat "$work/stub-pids" 2>/dev/null); do kill "$p" 2>/dev/null; done
   tmux -L "$sock" kill-server 2>/dev/null
+  tmux -L "$sock2" kill-server 2>/dev/null
+  rm -f -- "$sockdir/$sock" "$sockdir/$sock2"
   rm -rf "$work"
 }
 trap cleanup EXIT
@@ -171,7 +174,6 @@ check "jump without a client: one tab" "$(tabs)" "1"
 check "jump's tab names the socket" "$(head -1 "$WT_LOG")" \
   "-w fleet new-tab --title klepsydra fleet --suppressApplicationTitle wsl.exe -d Test -e tmux -S $socket attach -t =fleet"
 # A hand-started tmux on another socket gets a plain tab.
-sock2="kl-test2-$$"
 tmux -L "$sock2" -f /dev/null new-session -d -s hand "sleep 600"
 socket2=$(tmux -L "$sock2" display -p '#{socket_path}')
 pane2=$(tmux -L "$sock2" display -p '#{pane_id}')
@@ -232,6 +234,10 @@ out=$(WSL_DISTRO_NAME='a;b' bash "$launch" new "$work/repos" 2>&1); rc=$?
 check "bad distro name: exit 1" "$rc" "1"
 check "bad distro name: says so" "$out" "WSL_DISTRO_NAME is missing or not usable, so no tab could be opened."
 check "bad distro name: nothing running" "$(t list-sessions 2>/dev/null | wc -l)" "0"
+
+echo "cleanup"
+cleanup; trap - EXIT
+check "no socket files left" "$(find "$sockdir" -maxdepth 1 \( -name "$sock" -o -name "$sock2" \) 2>/dev/null)" ""
 
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [[ $fail -eq 0 ]]
