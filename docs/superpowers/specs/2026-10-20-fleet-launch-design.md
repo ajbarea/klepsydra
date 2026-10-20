@@ -65,8 +65,8 @@ line and the tmux logic is tested in bash.
 3. If no client is attached to `fleet`, open one tab:
    `wt.exe -w fleet new-tab [--title "klepsydra fleet" --suppressApplicationTitle] wsl.exe -d <distro> -e tmux -S <socket> attach -t =fleet`.
    The title arguments are for the fleet socket only (see the addendum).
-   `<socket>` is the server's `#{socket_path}`; one `wt.exe` could split
-   starts nothing.
+   `<socket>` is the server's `#{socket_path}`; a path `wt.exe` could split
+   (at `;`) starts nothing.
 4. Wait 5 s for the client. On a cold WSL `new` still succeeds and adds "The
    terminal tab has not attached yet." A stamp,
    `$XDG_RUNTIME_DIR/klepsydra-tab-pending-$UID`, kept until the client
