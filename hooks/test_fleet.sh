@@ -8,6 +8,14 @@ fixtures="$here/fixtures"
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 
+# Every test runs with a tmux that only logs its calls, so no run can touch a real server.
+stub="$work/stubbin"
+mkdir -p "$stub"
+printf '#!/bin/sh\necho "$*" >>"%s/tmux.log"\n' "$work" >"$stub/tmux"
+chmod +x "$stub/tmux"
+export PATH="$stub:$PATH"
+tlog="$work/tmux.log"
+
 pass=0 fail=0
 
 check() {
@@ -838,6 +846,67 @@ jq -c '.v = 2' "$g5/fleet/${A1%1}2.json" >"$work/n" && mv "$work/n" "$g5/fleet/$
 old_session "$g5/fleet/notes.json" notes
 untouched "malformed, non-v1 and non-uuid files are left alone" "$g5"
 check "all three kept their bytes" "$(cat "$g5/fleet/$A1.json"; jq -c .v "$g5/fleet/${A1%1}2.json"; jq -r .state "$g5/fleet/notes.json")" $'not json\n2\nworking'
+
+echo "window colours"
+
+printf '{"holders":{"500:8717628":{"voice":"am_michael","seen":1},"700:9000000":{"voice":"af_heart(0.5)+af_bella(0.5)","seen":1}}}\n' >"$work/win-voices.json"
+cast_src="$here/../src/fleet/cast.json"
+fsock=/tmp/kl-test-sock/klepsydra
+C1=aaaaaaaa-2222-4333-8444-555555555551
+C2=aaaaaaaa-2222-4333-8444-555555555552
+C3=aaaaaaaa-2222-4333-8444-555555555553
+C4=aaaaaaaa-2222-4333-8444-555555555554
+cfire() { # fixture session [VAR=value...]; a pane on the fleet socket unless TMUX is overridden
+  local fx=$1 id=$2
+  shift 2
+  : >"$tlog"
+  fire "$fx" ".session_id = \"$id\"" KLEPSYDRA_CAST="$cast_src" KERYX_VOICES="$work/win-voices.json" TMUX="$fsock,1,0" TMUX_PANE=%3 "$@"
+}
+
+cfire session-start.json $C1
+check "a kourai voice sets both options" "$(cat "$tlog")" \
+  "-S $fsock set-option -w -t %3 window-status-style fg=#DA8C20
+-S $fsock set-option -w -t %3 window-status-current-style bg=#DA8C20,fg=#000000,bold"
+
+cfire user-prompt.json $C1
+check "an unchanged voice on a later event: no tmux call" "$(cat "$tlog")" ""
+
+cfire session-start.json $C2 TMUX=/tmp/tmux-1000/default,1,0
+check "a foreign socket: no tmux call" "$(cat "$tlog")" ""
+
+cfire session-start.json $C3 KLEPSYDRA_PID=710
+check "a blend unsets both options" "$(cat "$tlog")" \
+  "-S $fsock set-option -w -u -t %3 window-status-style
+-S $fsock set-option -w -u -t %3 window-status-current-style"
+
+# The voice recorded in the file changes mid-session: the window follows.
+cfire user-prompt.json $C1 KLEPSYDRA_PID=710
+check "a changed voice recolours" "$(cat "$tlog")" \
+  "-S $fsock set-option -w -u -t %3 window-status-style
+-S $fsock set-option -w -u -t %3 window-status-current-style"
+
+jq '.characters.am_michael.accent = "#DA8C20; run-shell x"' "$cast_src" >"$work/bad-cast.json"
+cfire session-start.json $C4 KLEPSYDRA_CAST="$work/bad-cast.json"
+check "a bad accent: no tmux call" "$(cat "$tlog")" ""
+cfire session-start.json $C4 KLEPSYDRA_CAST="$work/no-such-cast.json"
+check "no cast: no tmux call" "$(cat "$tlog")" ""
+
+# The hook's ink is contrast.js's, for every character.
+# shellcheck disable=SC2016 # the script is for node, not the shell
+want=$(node --input-type=module -e '
+import { inkOn } from "./src/fleet/contrast.js";
+import { readFileSync } from "node:fs";
+const cast = JSON.parse(readFileSync(process.argv[1], "utf8"));
+for (const [v, c] of Object.entries(cast.characters)) console.log(`${v} ${c.accent} ${inkOn(c.accent)}`);' "$cast_src" 2>/dev/null || true)
+got=""
+while read -r v acc ink; do
+  : >"$tlog"
+  printf '{"holders":{"500:8717628":{"voice":"%s","seen":1}}}\n' "$v" >"$work/ink-voices.json"
+  fire session-start.json ".session_id = \"$C4\"" KLEPSYDRA_CAST="$cast_src" TMUX="$fsock,1,0" TMUX_PANE=%3 KERYX_VOICES="$work/ink-voices.json" >/dev/null
+  got+="$v $acc $(sed -n 's/.*current-style bg=#[0-9A-Fa-f]*,fg=\(#[0-9a-f]*\),bold/\1/p' "$tlog")"$'\n'
+done <<<"$want"
+check "the hook's ink matches contrast.js for all ten" "$got" "$(awk '{print $1, $2, $3}' <<<"$want")"$'\n'
+check "all ten were compared" "$(wc -l <<<"$want")" "10"
 
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [[ $fail -eq 0 ]]
