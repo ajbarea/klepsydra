@@ -490,3 +490,15 @@ test("wall buttons disable by aria-disabled, never by the disabled property, and
   assert.ok(paint.length > 100, "paint found");
   assert.doesNotMatch(paint, /note/);
 });
+
+test("Open terminal's disabled reason shows as text in the footer, apart from the note", () => {
+  const html = read("src/wall.html");
+  const footer = html.slice(html.indexOf('<footer class="actions">'), html.indexOf("</footer>"));
+  assert.match(footer, /<span class="why"( [^>]*)?><\/span>/, "a footer element of its own");
+  assert.doesNotMatch(footer, /class="note why"|class="why note"/);
+  const src = read("src/fleet/wall.js");
+  const paint = src.slice(src.indexOf("function paint("), src.indexOf("\nfunction render("));
+  assert.match(paint, /show\(el\.querySelector\("\.why"\), c\.jump\.why\)/, "painted as text from the card");
+  assert.match(paint, /jump\.title = c\.jump\.why \?\? ""/, "the title stays");
+  assert.match(read("src/fleet/wall.css"), /\.actions \.why \{[^}]*font-size/);
+});

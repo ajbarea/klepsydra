@@ -90,6 +90,7 @@ function paint(el, c) {
   jump.dataset.id = c.id;
   jump.setAttribute("aria-label", c.jumpLabel);
   jump.title = c.jump.why ?? "";
+  show(el.querySelector(".why"), c.jump.why);
   setOff(jump, !c.jump.enabled);
   const clear = el.querySelector(".clear");
   clear.hidden = !c.clear;
