@@ -196,6 +196,30 @@ tmux_facts() {
   fi
 }
 
+# One tab-separated row per named session file whose first line is a v1
+# object: its name, then what the jq array `fields` picks from the object
+# (`last_active` is its newest time field, `or_q` a string or "?"). One jq
+# reads every file; a file without a final newline cannot run into the next,
+# and a line that does not parse yields nothing. Callers pass only names they
+# checked, from inside the fleet folder.
+session_rows() { # fields file...
+  local fields=$1 f line
+  shift
+  (( $# )) || return 0
+  for f in "$@"; do
+    line=""
+    { IFS= read -r line <"$f"; } 2>/dev/null
+    printf '%s\t%s\n' "$f" "$line"
+  done | jq -Rr '
+    def last_active: [.started_at, .state_at, .where.at, .prompt.at, .reply.at, .ended.at, .written_at]
+      | map(numbers) | max // 0 | floor;
+    def or_q: if type == "string" and length > 0 then . else "?" end;
+    (index("\t")) as $i | .[:$i] as $f
+    | (try (.[$i + 1:] | fromjson) catch empty) | select(type == "object" and .v == 1)
+    | try ([$f] + ('"$fields"')) catch empty
+    | @tsv' 2>/dev/null
+}
+
 # Delete the files of sessions whose Claude Code process is gone and whose
 # last activity is more than a day old, heartbeats a day old with no session
 # file, and write litter a day old. Only <uuid>.json, <uuid>.beat and
@@ -217,7 +241,7 @@ prune_fleet() { # dir now
 
 # prune_fleet's work, in the fleet folder. Types and mtimes of every candidate
 # come from one stat (which does not follow links); the session files are read
-# here and parsed by one jq.
+# by session_rows.
 prune_here() { # now
   local now=$1 f name id pid start last line
   local -A type=() mt=() listed=()
@@ -248,18 +272,8 @@ prune_here() { # now
       claude_alive "$pid" "$start" && continue
       rm -f -- "$f"
       [[ ${type[$id.beat]:-} == "symbolic link" ]] || rm -f -- "$id.beat"
-    done < <(
-      for f in "${sessions[@]}"; do
-        line=""
-        { IFS= read -r line <"$f"; } 2>/dev/null
-        printf '%s\t%s\n' "$f" "$line"
-      done | jq -Rr '(index("\t")) as $i | .[:$i] as $f
-        | (try (.[$i + 1:] | fromjson) catch empty) | select(type == "object" and .v == 1)
-        | try [$f, ((.claude.pid | numbers) // 0 | floor), ((.claude.start | numbers) // 0 | floor),
-            ([.started_at, .state_at, .where.at, .prompt.at, .reply.at, .ended.at, .written_at]
-              | map(numbers) | max // 0 | floor)]
-          catch empty
-        | @tsv' 2>/dev/null)
+    done < <(session_rows '[((.claude.pid | numbers) // 0 | floor), ((.claude.start | numbers) // 0 | floor), last_active]' \
+      "${sessions[@]}")
   fi
 
   for name in *.beat; do
@@ -283,7 +297,8 @@ prune_here() { # now
 # PRUNE_AFTER is left to the prune, which would otherwise see a fresh clock.
 # A field jq finds empty is printed as "?", which no boot or distro can be, so
 # read does not collapse the tabs around it. A session with no known pid is
-# gone only from an earlier boot, and `self`'s own file is never touched.
+# gone only from an earlier boot, and `self`'s own file is never touched. One
+# jq lists every file (session_rows); only a session it marks costs another.
 mark_gone() { # dir now self
   local dir=$1 now=$2 self=$3 f state boot distro pid start last new
   [[ -n $host_boot ]] && own_data_dir "$dir" || return 0
@@ -302,16 +317,13 @@ mark_gone() { # dir now self
       '.state = "ended" | .reason = "gone" | .needs = null | .ended = {reason: "gone", at: $now} | .state_at = $now | .written_at = $now' \
       "$dir/fleet/$f" 2>/dev/null) || continue
     [[ -n $new ]] && write_atomic "$dir/fleet/$f" "$new"
-  done < <(cd -- "$dir/fleet" 2>/dev/null && for f in *.json; do
-      [[ -f $f && ! -L $f ]] || continue
-      jq -r --arg f "$f" 'def fld: if type == "string" and length > 0 then . else "?" end;
-        select(type == "object" and .v == 1)
-        | [$f, (.state | fld), (.host.boot | fld), (.host.distro | fld),
-           ((.claude.pid | numbers) // 0 | floor | tostring), ((.claude.start | numbers) // 0 | floor | tostring),
-           ([.started_at, .state_at, .where.at, .prompt.at, .reply.at, .ended.at, .written_at]
-             | map(numbers) | max // 0 | floor | tostring)]
-        | @tsv' "$f" 2>/dev/null
-    done)
+  done < <(cd -- "$dir/fleet" 2>/dev/null || exit 0
+    names=()
+    for f in *.json; do
+      [[ ${f%.json} =~ $UUID_RE && -f $f && ! -L $f ]] && names+=("$f")
+    done
+    session_rows '[(.state | or_q), (.host.boot | or_q), (.host.distro | or_q),
+      ((.claude.pid | numbers) // 0 | floor), ((.claude.start | numbers) // 0 | floor), last_active]' "${names[@]}")
 }
 
 # --- prune helpers: identical in hooks/klepsydra-fleet.sh and statusline/klepsydra-statusline.sh ---

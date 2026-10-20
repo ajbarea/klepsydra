@@ -758,6 +758,29 @@ check "no distro either side, alive: unchanged" "$(state_of $A2)" "working/-"
 check "a distro the host lacks: unchanged" "$(state_of $A3)" "working/-"
 rm -f "$dir"/fleet/aaaaaaaa-*.json
 
+# The listing reads every file with one jq, however many there are; only a
+# session it marks costs another.
+gd="$work/many/dev.ajsoftworks.klepsydra"
+mkdir -p "$gd/fleet" "$work/jqshim"
+# shellcheck disable=SC2016 # the shim expands these when it runs
+printf '#!/usr/bin/env bash\nprintf x >>"$JQ_CALLS"\nexec %q "$@"\n' "$(command -v jq)" >"$work/jqshim/jq"
+chmod +x "$work/jqshim/jq"
+for i in $(seq 10 29); do
+  jq -nc --arg id "aaaaaaaa-0000-4000-8000-0000000000$i" --arg b "$B" --argjson now "$now" \
+    '{v:1, session_id:$id, state:"working", state_at:($now-100), written_at:($now-100),
+      claude:{pid:500, start:8717628}, host:{boot:$b, distro:"Ubuntu"}}' >"$gd/fleet/aaaaaaaa-0000-4000-8000-0000000000$i.json"
+done
+for i in 30 31; do
+  jq -nc --arg id "aaaaaaaa-0000-4000-8000-0000000000$i" --arg b "$OLD" --argjson now "$now" \
+    '{v:1, session_id:$id, state:"working", state_at:($now-100), written_at:($now-100),
+      claude:{pid:500, start:8717628}, host:{boot:$b, distro:"Ubuntu"}}' >"$gd/fleet/aaaaaaaa-0000-4000-8000-0000000000$i.json"
+done
+: >"$work/jq_calls"
+( host_boot=$B host_distro=Ubuntu JQ_CALLS="$work/jq_calls" PATH="$work/jqshim:$PATH" mark_gone "$gd" "$now" "$S" )
+check "mark_gone: one jq lists 22 files, one more per gone session" "$(wc -c <"$work/jq_calls")" "3"
+check "mark_gone: the two of an earlier boot are gone, the 20 alive are not" \
+  "$(cat "$gd"/fleet/*.json | jq -r .state | sort | uniq -c | awk '{printf "%s:%s ", $2, $1}')" "ended:2 working:20 "
+
 # What mark_gone must leave alone. Each case holds a session of an earlier boot
 # that would otherwise be marked gone.
 old_session() { # file id: a v1 file on an earlier boot with a dead pid
