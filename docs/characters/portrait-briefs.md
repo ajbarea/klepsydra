@@ -1,13 +1,13 @@
 <!-- budget: 1300 words -->
-# Four new kourai portraits: generation briefs
+# Five new kourai portraits: generation briefs
 
 **Done.** The art exists as `assets/portraits/{chronos,argos,hermes,elpis,hesychia}.jpg`
 (1024 px), `scripts/cut-portraits.py` cuts the faces, and `cast.json` holds all
 fifteen characters. Hermes's accent is the burnt orange `#E07B39`, not the
 `#E69F00` below, which is the needs-you amber. The briefs are kept as the record.
 
-These four characters give the four keryx voices that have no portrait a
-face of their own. Each brief is one shared style block plus one character
+These five characters give the four keryx pool voices that had no portrait,
+and the pin-only `af_nicole`, a face of their own. Each brief is one shared style block plus one character
 block. Paste both into the image generator, attach the reference portraits
 listed under each character, and iterate the way you did for the first ten.
 
