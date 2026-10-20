@@ -175,6 +175,27 @@ claude_alive() { # pid start
   [[ ${stat[0]} != Z && ${stat[19]} == "$2" ]] && is_claude "$1"
 }
 
+# Sets host_boot (this kernel boot) and host_distro (this WSL distro), each
+# empty when unknown or malformed.
+BOOT_ID=${KLEPSYDRA_BOOT_ID:-/proc/sys/kernel/random/boot_id}
+host_facts() {
+  host_boot="" host_distro=${WSL_DISTRO_NAME:-}
+  { IFS= read -r host_boot <"$BOOT_ID"; } 2>/dev/null
+  [[ $host_boot =~ ^[0-9a-f-]{36}$ ]] || host_boot=""
+  [[ $host_distro =~ ^[A-Za-z0-9._-]{1,64}$ ]] || host_distro=""
+}
+
+# Sets tmux_socket and tmux_pane from the session's tmux, both empty outside
+# tmux or when either is malformed.
+tmux_facts() {
+  tmux_socket=${TMUX:-}
+  tmux_socket=${tmux_socket%%,*}
+  tmux_pane=${TMUX_PANE:-}
+  if ! [[ ${TMUX:-} == *,* && $tmux_socket =~ ^/[A-Za-z0-9._/-]{1,255}$ && $tmux_pane =~ ^%[0-9]{1,9}$ ]]; then
+    tmux_socket="" tmux_pane=""
+  fi
+}
+
 # Delete the files of sessions whose Claude Code process is gone and whose
 # last activity is more than a day old, heartbeats a day old with no session
 # file, and write litter a day old. Only <uuid>.json, <uuid>.beat and
@@ -303,7 +324,7 @@ def ended_as: {clear: "cleared", resume: "resumed elsewhere", logout: "logged ou
   elif $was.state == "ended" and $event != "SessionStart" then empty
   else
   ($was // {v: 1, session_id: $ev.session_id, name: null, started_at: $now,
-            launch_dir: ($ev.cwd | text), claude: null, voice: null, voice_from: null,
+            launch_dir: ($ev.cwd | text), claude: null, tmux: null, host: null, voice: null, voice_from: null,
             state: (if $event == "PreToolUse" or $event == "PostToolUse" or $event == "PostToolUseFailure" then "working" else "new" end),
             reason: null, needs: null, state_at: $now,
             where: null, touched: [], prompt: null, reply: null, error: null,
@@ -312,6 +333,8 @@ def ended_as: {clear: "cleared", resume: "resumed elsewhere", logout: "logged ou
   | .name = (($ev.session_title | text) // .name)
   | (if $pid != "" then {pid: ($pid | tonumber), start: ($start | tonumber)} else null end) as $me
   | .claude = (if $me != null and $event == "SessionStart" and $ev.source != "compact" then $me else (.claude // $me) end)
+  | (if $tmux_pane != "" then .tmux = {socket: $tmux_socket, pane: $tmux_pane} else . end)
+  | (if $boot != "" then .host = {boot: $boot, distro: ($distro | text)} else . end)
   # A hold always applies; a repo's home voice only to a session with no voice
   # yet, so a face never follows the cwd. Files from before voice_from held.
   | .voice_from = (.voice_from // (if .voice != null then "hold" else null end))
@@ -422,6 +445,8 @@ main() {
     if [[ -n $voice ]]; then voice_from=home; fi
   fi
 
+  host_facts
+  tmux_facts
   [[ -n ${KLEPSYDRA_DIR:-} ]] || return 0
   local fleet=$KLEPSYDRA_DIR/fleet
   mkdir -p "$fleet" 2>/dev/null || return 0
@@ -434,6 +459,7 @@ main() {
   new=$(printf '%s' "$input" | jq -c --arg old "$old" --argjson now "$now" --argjson chars "$PROMPT_CHARS" \
     --arg repo "$where_repo" --arg worktree "$where_worktree" --arg branch "$where_branch" \
     --arg by "$by" \
+    --arg tmux_socket "$tmux_socket" --arg tmux_pane "$tmux_pane" --arg boot "$host_boot" --arg distro "$host_distro" \
     --arg voice "$voice" --arg voice_from "$voice_from" --arg pid "$found_pid" --arg start "$found_start" \
     "$APPLY" 2>/dev/null) || new=""
   [[ -n $new ]] && write_atomic "$file" "$new"

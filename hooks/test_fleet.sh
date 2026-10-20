@@ -654,5 +654,27 @@ out=$(env -u USER -u HOME bash "$hook" </dev/null 2>&1); rc=$?
 check "unset USER and HOME: exit 0" "$rc" "0"
 check "unset USER and HOME: no output" "$out" ""
 
+echo "tmux and host"
+boot_file="$work/boot_id"
+printf '%s\n' 0b6e1c5a-1111-4222-8333-444455556666 >"$boot_file"
+rm -f "$file"
+fire session-start.json . TMUX=/tmp/tmux-1001/klepsydra,4242,0 TMUX_PANE=%3 \
+  WSL_DISTRO_NAME=Ubuntu KLEPSYDRA_BOOT_ID="$boot_file" >/dev/null
+check "tmux recorded" "$(field .tmux)" '{"socket":"/tmp/tmux-1001/klepsydra","pane":"%3"}'
+check "host recorded" "$(field .host)" '{"boot":"0b6e1c5a-1111-4222-8333-444455556666","distro":"Ubuntu"}'
+rm -f "$file"
+fire session-start.json . TMUX= TMUX_PANE= WSL_DISTRO_NAME= KLEPSYDRA_BOOT_ID="$boot_file" >/dev/null
+check "outside tmux: no tmux" "$(field .tmux)" "null"
+check "no distro: null distro" "$(field .host.distro)" "null"
+rm -f "$file"
+fire session-start.json . 'TMUX=/tmp/x,1,0' 'TMUX_PANE=%3;rm -rf' KLEPSYDRA_BOOT_ID="$boot_file" >/dev/null
+check "a malformed pane is not recorded" "$(field .tmux)" "null"
+rm -f "$file"
+fire session-start.json . 'TMUX=rel/sock,1,0' TMUX_PANE=%3 KLEPSYDRA_BOOT_ID="$boot_file" >/dev/null
+check "a relative socket is not recorded" "$(field .tmux)" "null"
+rm -f "$file"
+fire session-start.json . KLEPSYDRA_BOOT_ID="$work/no-such-file" >/dev/null
+check "no boot id: no host" "$(field .host)" "null"
+
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [[ $fail -eq 0 ]]
