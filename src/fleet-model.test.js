@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import {
   STATUS, shortAge, longAge, statusParts, voiceName, identity, accessibleName,
   statuses, startedNeeding, orderChanged, shouldSlide, transitionName, announcements, updatedText, badgeSvg, stripItems, card,
-  askText, plainText, tally, crewOf, crewText, crewRing, RING, alsoChip, pillWhen,
+  askText, plainText, tally, crewOf, crewText, crewRing, crewRings, RINGS, RING_MAX, showsRingKey, alsoChip, pillWhen,
 } from "./fleet/model.js";
 import { TONES, hash, initialOf, medallion, medallionSvg, toneOf } from "./fleet/medallion.js";
 
@@ -399,40 +399,78 @@ test("another background task reads as a task and draws shell-style", () => {
 
 const kinds = (crew) => crewRing(crew).segments.map((s) => s.kind[0]).join("");
 
-test("the ring draws a segment per piece of work, agents first, at most eight", () => {
+test("the ring draws an arc per piece of work, agents first, at most five", () => {
   assert.deepEqual(crewRing({ agents: 0, shells: 0 }), { segments: [], more: 0 });
   assert.equal(kinds({ agents: 2, shells: 1 }), "aas");
+  assert.equal(kinds({ agents: 1, shells: 2 }), "ass", "agents first, then shells, clockwise");
   assert.equal(crewRing({ agents: 2, shells: 1 }).more, 0);
-  assert.equal(kinds({ agents: 10, shells: 0 }), "aaaaaaaa");
-  assert.equal(crewRing({ agents: 10, shells: 0 }).more, 2);
-  assert.equal(kinds({ agents: 9, shells: 3 }), "aaaaaaas", "past eight, a shell keeps one segment");
-  assert.equal(crewRing({ agents: 9, shells: 3 }).more, 4);
-  assert.equal(kinds({ agents: 1, shells: 12 }), "assssss" + "s");
-  assert.equal(RING.max, 8);
+  assert.equal(kinds({ agents: 5, shells: 0 }), "aaaaa");
+  assert.equal(crewRing({ agents: 5, shells: 0 }).more, 0, "five fit");
+  assert.equal(kinds({ agents: 10, shells: 0 }), "aaaaa");
+  assert.equal(crewRing({ agents: 10, shells: 0 }).more, 5);
+  assert.equal(kinds({ agents: 7, shells: 3 }), "aaaas", "past five, a shell keeps one arc");
+  assert.equal(crewRing({ agents: 7, shells: 3 }).more, 5);
+  assert.equal(kinds({ agents: 1, shells: 12 }), "assss");
+  assert.equal(crewRing({ agents: 1, shells: 12 }).more, 8);
+  assert.equal(RING_MAX, 5);
+  for (const g of Object.values(RINGS)) assert.deepEqual(crewRing({ agents: 7, shells: 3 }, g).segments.length, 5);
 });
 
-test("segments sit on the ring with even gaps, a lone one too", () => {
-  const ends = (d) => {
-    const m = d.match(/^M ([\d.]+) ([\d.]+) A 37 37 0 0 1 ([\d.]+) ([\d.]+)$/);
-    assert.ok(m, d);
-    return [[Number(m[1]), Number(m[2])], [Number(m[3]), Number(m[4])]];
-  };
-  for (const n of [2, 3, 8]) {
-    const { segments } = crewRing({ agents: n, shells: 0 });
-    for (const { d } of segments) {
-      for (const [x, y] of ends(d)) {
-        assert.ok(Math.abs(Math.hypot(x - RING.cx, y - RING.cy) - RING.r) < 0.01, `${n}: ${x},${y} on the ring`);
-      }
-    }
-    // The first starts half a gap after 12 o'clock.
-    const [[x0]] = ends(segments[0].d);
-    const want = RING.cx + RING.r * Math.cos(((-90 + RING.gapDeg / 2) * Math.PI) / 180);
-    assert.ok(Math.abs(x0 - want) < 0.01, `${n}: starts at ${x0}`);
+test("an agent's arc is thick and a shell's thin, in screen px for each portrait", () => {
+  const px = (density, kind) => (RINGS[density][kind] * { comfortable: 80, compact: 56 }[density]) / 80;
+  assert.deepEqual([px("comfortable", "agent"), px("comfortable", "shell")], [7, 3]);
+  assert.deepEqual([px("compact", "agent"), px("compact", "shell")].map((v) => Number(v.toFixed(6))), [5.5, 2.5]);
+  for (const [density, g] of Object.entries(RINGS)) {
+    const { segments } = crewRing({ agents: 1, shells: 2 }, g);
+    assert.deepEqual(segments.map((s) => s.width), [g.agent, g.shell, g.shell].map((v) => Number(v.toFixed(2))), density);
+    assert.equal(g.r + g.agent / 2, 40, `${density}: the thick arc's outer edge is the portrait's`);
   }
-  // A lone item keeps the gap at 12 o'clock: one long arc, never a closed ring.
-  const [one] = crewRing({ agents: 0, shells: 1 }).segments;
-  assert.equal(one.d, "M 45.79 3.46 A 37 37 0 1 1 34.21 3.46");
-  assert.ok(RING.gapDeg >= 18);
+});
+
+test("arcs sit on the ring with even gaps of a fixed length on the page, a lone one too", () => {
+  const ends = (d, g) => {
+    const r = Number(g.r.toFixed(2));
+    const m = d.match(new RegExp(`^M ([\\d.]+) ([\\d.]+) A ${r} ${r} 0 ([01]) 1 ([\\d.]+) ([\\d.]+)$`));
+    assert.ok(m, d);
+    return [[Number(m[1]), Number(m[2])], [Number(m[4]), Number(m[5])]];
+  };
+  const angle = ([x, y], g) => (Math.atan2(y - g.cy, x - g.cx) * 180) / Math.PI;
+  for (const [density, g] of Object.entries(RINGS)) {
+    const facePx = { comfortable: 80, compact: 56 }[density];
+    // The gap is gapPx along the ring on the page: 14 px comfortable, 11 px compact.
+    const gapOnPage = ((g.gapDeg * Math.PI) / 180) * g.r * (facePx / 80);
+    assert.ok(Math.abs(gapOnPage - { comfortable: 14, compact: 11 }[density]) < 1e-9, `${density}: ${gapOnPage}`);
+    assert.ok(g.gapDeg >= 20, `${density}: ${g.gapDeg} degrees reads as a gap`);
+    for (const n of [2, 3, 5]) {
+      const { segments } = crewRing({ agents: n, shells: 0 }, g);
+      assert.equal(segments.length, n);
+      for (const { d } of segments) {
+        for (const p of ends(d, g)) assert.ok(Math.abs(Math.hypot(p[0] - g.cx, p[1] - g.cy) - g.r) < 0.01, `${density} ${n}: on the ring`);
+      }
+      // Each gap between neighbours is gapDeg wide, the one at 12 o'clock too.
+      for (let i = 0; i < n; i++) {
+        const end = angle(ends(segments[i].d, g)[1], g);
+        const next = angle(ends(segments[(i + 1) % n].d, g)[0], g);
+        const gap = (((next - end) % 360) + 360) % 360;
+        assert.ok(Math.abs(gap - g.gapDeg) < 0.1, `${density} ${n}: gap ${i} is ${gap}`);
+      }
+      assert.ok(Math.abs(angle(ends(segments[0].d, g)[0], g) - (-90 + g.gapDeg / 2)) < 0.1, `${density} ${n}: starts half a gap after 12`);
+    }
+    // A lone item keeps its one gap at 12 o'clock: one long arc, never a closed ring.
+    const [one] = crewRing({ agents: 0, shells: 1 }, g).segments;
+    const [a, b] = ends(one.d, g);
+    assert.ok(Math.abs(a[0] - g.cx - (g.cx - b[0])) < 0.02 && Math.abs(a[1] - b[1]) < 0.02 && a[1] < g.cy, `${density}: symmetric about 12`);
+    assert.match(one.d, / 0 1 1 /, "the long way round");
+  }
+});
+
+test("the ring key shows while any card has background work, and only then", () => {
+  const withCrew = (background) => card(session({ background }), CAST, NOW);
+  assert.equal(showsRingKey([]), false, "an empty wall");
+  assert.equal(showsRingKey([withCrew({ agents: 0, shells: 0 }), withCrew(undefined)]), false, "a quiet wall stays clean");
+  assert.equal(showsRingKey([withCrew({ agents: 0, shells: 0 }), withCrew({ agents: 0, shells: 1 })]), true);
+  assert.equal(showsRingKey([withCrew({ agents: 0, shells: 0, tasks: 1 })]), true, "another task draws a thin arc");
+  assert.deepEqual(Object.keys(crewRings({ agents: 1, shells: 0 })), ["comfortable", "compact"]);
 });
 
 test("the pill stays the plain status; the crew line says what is out", () => {
@@ -441,20 +479,20 @@ test("the pill stays the plain status; the crew line says what is out", () => {
     const c = card(session({ status: "working", reason, background }), CAST, NOW);
     assert.deepEqual(c.pill, { label: "working", age: "2m", when: "2m" }, String(reason));
     assert.equal(c.crew, "2 agents, 1 shell");
-    assert.equal(c.ring.segments.length, 3);
+    assert.equal(c.rings.comfortable.segments.length, 3);
     assert.equal(c.tone, "working");
   }
   const none = card(session({ status: "working", reason: null }), CAST, NOW);
-  assert.deepEqual([none.pill.label, none.crew, none.promptFree, none.ring.segments.length], ["working", null, false, 0]);
+  assert.deepEqual([none.pill.label, none.crew, none.promptFree, none.rings.comfortable.segments.length], ["working", null, false, 0]);
   const needs = card(session({ background }), CAST, NOW);
   assert.equal(needs.pill.label, "needs you");
-  assert.equal(needs.ring.segments.length, 3, "its ring still shows the crew");
+  assert.equal(needs.rings.comfortable.segments.length, 3, "its ring still shows the crew");
 });
 
 test("prompt free shows only once the turn ended with work out, never for a subagent mid-turn", () => {
   // A foreground subagent inside a turn: the hook leaves the reason null until Stop.
   const mid = card(session({ status: "working", reason: null, background: { agents: 1, shells: 0 } }), CAST, NOW);
-  assert.deepEqual([mid.crew, mid.promptFree, mid.ring.segments.length], ["1 agent", false, 1]);
+  assert.deepEqual([mid.crew, mid.promptFree, mid.rings.comfortable.segments.length], ["1 agent", false, 1]);
   assert.doesNotMatch(mid.label, /prompt free/);
   const after = card(session({ status: "working", reason: "background", background: { agents: 1, shells: 0 } }), CAST, NOW);
   assert.equal(after.promptFree, true);

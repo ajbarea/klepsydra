@@ -8,7 +8,14 @@
 </head>
 <body>
   <div class="bar">
-    <div class="tally" role="group" aria-label="Session counts"></div>
+    <div class="lead">
+      <div class="tally" role="group" aria-label="Session counts"></div>
+      <p class="ring-key" hidden>
+        <span class="visually-hidden">Ring key: thick arc, subagent; thin arc, background shell.</span>
+        <span class="key" aria-hidden="true"><svg viewBox="0 0 32 18"><path class="agent" d="M 4.5 16 A 11.5 11.5 0 0 1 27.5 16"/></svg>agent</span>
+        <span class="key" aria-hidden="true"><svg viewBox="0 0 32 18"><path class="shell" d="M 4.5 16 A 11.5 11.5 0 0 1 27.5 16"/></svg>shell</span>
+      </p>
+    </div>
     <button type="button" id="new-session">+ New session</button>
     <span id="new-note" role="status"></span>
     <fieldset class="density">
@@ -28,8 +35,8 @@
         <span class="portrait">
           <svg class="waves" viewBox="-12 -12 104 104" aria-hidden="true"></svg>
           <svg class="ring" viewBox="0 0 80 80" aria-hidden="true">
-            <title>Background work: one segment per subagent (solid) or shell or other task (dashed)</title>
-            <circle class="track" cx="40" cy="40" r="37"/><g class="crew"></g>
+            <title>Background work: one arc per subagent (thick) or shell (thin)</title>
+            <circle class="track" cx="40" cy="40" r="36.5"/><g class="crew"></g>
           </svg>
           <img class="face" alt="" />
           <span class="more" aria-hidden="true" hidden></span>

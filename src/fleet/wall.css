@@ -19,6 +19,7 @@
   --card-rows: var(--space-5); /* between a card's rows; with --head-gap, the room the speaking waves need */
   --head-gap: var(--space-6);
   --wall-face: 80px;
+  --face-inset: 9px; /* inside the thick arc (7 px at the edge), with a hairline of card between */
   --wall-bg: #11151b;
   --card-bg: #1a2029;
   --card-quiet: #161b22;
@@ -53,6 +54,7 @@
   --card-rows: var(--space-4);
   --head-gap: var(--space-5);
   --wall-face: 56px;
+  --face-inset: 7px; /* inside the 5.5 px thick arc */
 }
 
 * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -71,7 +73,16 @@ html, body { background: var(--wall-bg); color: var(--text); font: 14px/1.45 var
 
 /* Summary bar: who needs AJ, and how many are up. */
 .bar { display: flex; align-items: center; gap: 28px; padding: 20px var(--wall-pad) 8px; }
-.tally { display: flex; flex-wrap: wrap; gap: 8px 22px; align-items: baseline; margin-right: auto; color: var(--text-dim); }
+/* The tally, and the ring key beside it, or on a quieter line under it when the bar is narrow. */
+.lead { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 28px; margin-right: auto; min-width: 0; }
+.tally { display: flex; flex-wrap: wrap; gap: 8px 22px; align-items: baseline; color: var(--text-dim); }
+.ring-key { display: flex; gap: 16px; align-items: center; color: var(--text-dim); font-size: 12.5px; }
+.ring-key .key { display: inline-flex; align-items: center; gap: 6px; }
+.ring-key svg { width: 32px; height: 18px; overflow: visible; } /* 1:1, so the widths are the real ring's px */
+/* The real ring's comfortable widths (model.js RINGS), in the neutral text colour: a ring's colour is its character's. */
+.ring-key path { fill: none; stroke: var(--text-dim); stroke-linecap: butt; }
+.ring-key path.agent { stroke-width: 7px; }
+.ring-key path.shell { stroke-width: 3px; }
 .tally b { font: 600 28px/1 var(--display); font-variant-numeric: tabular-nums; margin-right: 2px; color: var(--text-faint); }
 .tally .t-needs b { color: var(--tone-needs); }
 .tally .t-working b { color: var(--tone-working); }
@@ -179,20 +190,19 @@ button:focus-visible { outline: 2px solid var(--card-focus); outline-offset: 2px
 /* The ring: the session's background crew, one segment per subagent (solid)
    or background shell (thinner, dashed), so the kind never rests on colour. */
 .portrait { grid-area: face; position: relative; width: var(--wall-face); height: var(--wall-face); }
-.portrait .face { --inset: calc(var(--wall-face) * 7 / 80); position: absolute; inset: var(--inset); width: calc(100% - 2 * var(--inset)); height: calc(100% - 2 * var(--inset)); }
-.portrait .ring { position: absolute; inset: 0; width: 100%; height: 100%; }
+.portrait .face { position: absolute; inset: var(--face-inset); width: calc(100% - 2 * var(--face-inset)); height: calc(100% - 2 * var(--face-inset)); }
+.portrait .ring { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
 /* Speaking: gold waves outside the crew ring, drawn by wall.js from keryx's
    loudness; a still gold ring under reduced motion. They reach 12 of the
    portrait's 80 units past it, which --head-gap and --card-rows leave free in
    either density (speaking.js WAVE). */
 .portrait .waves { --reach: calc(var(--wall-face) * 12 / 80); position: absolute; inset: calc(-1 * var(--reach)); width: calc(100% + 2 * var(--reach)); height: calc(100% + 2 * var(--reach)); z-index: -1; overflow: visible; pointer-events: none; }
 .waves circle { fill: none; }
-.ring .track { fill: none; stroke: var(--ring-track); stroke-width: 4; }
+.ring .track { fill: none; stroke: var(--ring-track); }
 .ring.busy .track { stroke: transparent; } /* segments stand on the card, gaps and all */
 .ring .crew { --crew: var(--crew-gold); }
+/* Solid arcs; the model sets each one's width (thick agent, thin shell). */
 .ring .seg { fill: none; stroke: var(--crew); stroke-linecap: butt; transition: stroke 200ms ease-out; }
-.ring .seg.agent { stroke-width: 6; }
-.ring .seg.shell { stroke-width: 3.5; stroke-dasharray: 3 3; }
 .ring .seg.leave { stroke: transparent; }
 @keyframes seg-in { from { stroke: transparent; } }
 .ring .seg.enter { animation: seg-in 200ms ease-out; }

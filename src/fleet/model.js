@@ -265,37 +265,61 @@ const crewWords = ({ agents, shells, tasks = 0 }, join) =>
 /** "2 agents, 1 shell, 1 task"; null with none out. */
 export const crewText = (crew) => crewWords(crew, ", ") || null;
 
-// The ring: one segment per piece of background work, from 12 o'clock
-// clockwise, agents first. Geometry is in the portrait's 80-unit viewBox.
-export const RING = { cx: 40, cy: 40, r: 37, gapDeg: 18, max: 8 };
-
-const point = (deg) => {
-  const rad = (deg * Math.PI) / 180;
-  const f = (v) => Number(v.toFixed(2));
-  return `${f(RING.cx + RING.r * Math.cos(rad))} ${f(RING.cy + RING.r * Math.sin(rad))}`;
+// The ring: one solid arc per piece of background work, from 12 o'clock
+// clockwise, agents first. An agent's arc is thick and a shell's thin, in the
+// same colour, so the kind rests on width alone. Widths and the gap between
+// arcs are set in screen pixels for each density's portrait and drawn in the
+// portrait's 80-unit viewBox, so a gap is the same length on the page at
+// either size. The thick arc's outer edge is the portrait's edge.
+const ringFor = (facePx, agentPx, shellPx, gapPx) => {
+  const unit = 80 / facePx;
+  const agent = agentPx * unit;
+  const r = 40 - agent / 2;
+  return { cx: 40, cy: 40, r, agent, shell: shellPx * unit, gapDeg: ((gapPx * unit) / r) * (180 / Math.PI), gapPx };
 };
-const arc = (from, to) => `M ${point(from)} A ${RING.r} ${RING.r} 0 ${to - from > 180 ? 1 : 0} 1 ${point(to)}`;
+export const RINGS = {
+  comfortable: ringFor(80, 7, 3, 14),
+  compact: ringFor(56, 5.5, 2.5, 11),
+};
+// Five at most: a glance counts about four without counting, and more arcs
+// stop reading apart; "+N" says the rest, and the crew line the exact counts.
+export const RING_MAX = 5;
+
+const round2 = (v) => Number(v.toFixed(2));
+const point = (g, deg) => {
+  const rad = (deg * Math.PI) / 180;
+  return `${round2(g.cx + g.r * Math.cos(rad))} ${round2(g.cy + g.r * Math.sin(rad))}`;
+};
+const arc = (g, from, to) =>
+  `M ${point(g, from)} A ${round2(g.r)} ${round2(g.r)} 0 ${to - from > 180 ? 1 : 0} 1 ${point(g, to)}`;
 
 /**
- * The ring's segments, each {kind, d}, and how many more are out than drawn.
- * Other tasks draw as shells (dashed); the crew line names them. Past
- * RING.max, the dashed kind keeps at least one segment, so it is never hidden.
+ * The ring's arcs for one density's geometry, each {kind, d, width}, and how
+ * many more are out than drawn. Other tasks draw as shells (thin); the crew
+ * line names them. Past RING_MAX, the thin kind keeps at least one arc, so it
+ * is never hidden.
  */
-export function crewRing(crew) {
+export function crewRing(crew, g = RINGS.comfortable) {
   const total = crewSize(crew);
-  const dashed = (crew.shells ?? 0) + (crew.tasks ?? 0);
-  const shells = dashed && Math.min(dashed, Math.max(1, RING.max - crew.agents));
-  const agents = Math.min(crew.agents, RING.max - shells);
+  const thin = (crew.shells ?? 0) + (crew.tasks ?? 0);
+  const shells = thin && Math.min(thin, Math.max(1, RING_MAX - crew.agents));
+  const agents = Math.min(crew.agents, RING_MAX - shells);
   const kinds = [...Array(agents).fill("agent"), ...Array(shells).fill("shell")];
-  const n = kinds.length;
-  const step = 360 / Math.max(n, 1);
-  // Every count keeps its gaps, a lone item too, so a segment never reads as a closed ring.
+  const step = 360 / Math.max(kinds.length, 1);
+  // Every count keeps its gaps, a lone item too, so an arc never reads as a closed ring.
   const segments = kinds.map((kind, i) => {
-    const from = -90 + i * step + RING.gapDeg / 2;
-    return { kind, d: arc(from, from + step - RING.gapDeg) };
+    const from = -90 + i * step + g.gapDeg / 2;
+    return { kind, d: arc(g, from, from + step - g.gapDeg), width: round2(g[kind]) };
   });
-  return { segments, more: total - n };
+  return { segments, more: total - kinds.length };
 }
+
+/** The ring in each density. */
+export const crewRings = (crew) =>
+  Object.fromEntries(Object.entries(RINGS).map(([density, g]) => [density, crewRing(crew, g)]));
+
+/** Whether the wall's ring key shows: while any card has background work out. */
+export const showsRingKey = (cards) => cards.some((c) => c.rings.comfortable.segments.length > 0);
 
 /** The needs-you line: what the session waits for. */
 export function askText(reason) {
@@ -371,7 +395,7 @@ export function card(s, cast, nowMs) {
       when: pillWhen(s, nowMs),
     },
     ask: s.status === "needs_you" ? askText(s.reason) : null,
-    ring: crewRing(crew),
+    rings: crewRings(crew),
     // An agent's segment wears the character's colour; a medallion's, the wall's gold.
     ringColor: who.accent,
     crew: crewText(crew),

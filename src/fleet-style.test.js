@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { TONES, medallionSvg } from "./fleet/medallion.js";
 import { contrast } from "./fleet/contrast.js";
+import { RINGS } from "./fleet/model.js";
 
 const read = (f) => readFileSync(new URL(f, import.meta.url), "utf8");
 const badgeCss = read("./fleet/badge.css");
@@ -90,7 +91,7 @@ test("both densities step on one spacing scale, and compact is the 12 px grid th
   assert.ok(scale.length >= 6 && scale.every((v, i) => i === 0 || v > scale[i - 1]), "an ascending scale");
   const compact = css.match(/\n\[data-density="compact"\] \{([^}]*)\}/)[1];
   for (const [, name, value] of compact.matchAll(/(--[\w-]+):\s*([^;]+);/g)) {
-    if (name === "--wall-face") continue;
+    if (name === "--wall-face" || name === "--face-inset") continue; // portrait geometry, not spacing
     assert.match(value, /^(var\(--space-\d+\)\s*)+$/, `${name} steps on the scale`);
   }
   const comfortable = densityPx(css, "comfortable");
@@ -133,14 +134,17 @@ test("the ring's fades and the dimming respect reduced motion and keep the face 
   assert.match(read("./fleet/wall.js"), /if \(reducedMotion\(\)\) path\.remove\(\)/, "a leaving segment goes at once");
 });
 
-test("a shell's segment differs from an agent's by dash and width, never by colour alone", () => {
+test("an agent's arc differs from a shell's by width alone: solid, one colour, no dash", () => {
   const css = read("./fleet/wall.css");
   const rule = (sel) => css.match(new RegExp(`${sel.replace(/\./g, "\\.")} \\{([^}]*)\\}`))?.[1] ?? "";
-  assert.match(rule(".ring .seg.shell"), /stroke-dasharray:/);
-  assert.doesNotMatch(rule(".ring .seg.agent"), /stroke-dasharray|stroke:/);
-  assert.doesNotMatch(rule(".ring .seg.shell"), /stroke:/);
-  const width = (sel) => parseFloat(rule(sel).match(/stroke-width: ([\d.]+)/)[1]);
-  assert.ok(width(".ring .seg.shell") < width(".ring .seg.agent"));
+  assert.doesNotMatch(css, /stroke-dasharray/, "no dashes anywhere on the wall");
+  assert.match(rule(".ring .seg"), /stroke: var\(--crew\)/, "one colour for both kinds");
+  assert.doesNotMatch(css, /\.ring \.seg\.(agent|shell)/, "no rule tells the kinds apart but their width");
+  // The key draws the same two widths as the comfortable ring.
+  const px = (sel) => parseFloat(rule(sel).match(/stroke-width: ([\d.]+)px/)[1]);
+  assert.deepEqual([px(".ring-key path.agent"), px(".ring-key path.shell")], [RINGS.comfortable.agent, RINGS.comfortable.shell]);
+  assert.match(css, /\.ring-key svg \{ width: 32px; height: 18px;/, "drawn 1:1 with its 32x18 viewBox");
+  assert.match(read("./wall.html"), /<svg viewBox="0 0 32 18"><path class="agent"/);
 });
 
 test("an agent with no character is gold, not the needs-you amber, and reads on the card", () => {

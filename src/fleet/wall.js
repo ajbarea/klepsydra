@@ -1,7 +1,7 @@
 // The card wall: a card per Claude Code session, in the reader's order, with
 // a way back to its terminal.
 import cast from "./cast.json" with { type: "json" };
-import { announcements, card, identity, shouldSlide, startedNeeding, transitionName, statuses, tally } from "./model.js";
+import { RINGS, announcements, card, identity, shouldSlide, showsRingKey, startedNeeding, transitionName, statuses, tally } from "./model.js";
 import { announcer, press, setOff, syncChildren } from "./dom.js";
 import { inTauri, subscribe } from "./feed.js";
 import { showFace } from "./face.js";
@@ -9,7 +9,7 @@ import { GOLD, SPEAK_FADE_MS, STILL, Speaker, WAVE, waves } from "./speaking.js"
 import { parseDensity, resolveDensity } from "./density.js";
 
 const TICK_MS = 15_000; // ages re-render between snapshots, as on the gauge
-const FACE_PX = 66; // --wall-face less the ring's inset
+const FACE_PX = 62; // the comfortable --wall-face less twice its --face-inset
 const SVG_NS = "http://www.w3.org/2000/svg";
 const SEGMENT_FADE_MS = 200; // wall.css .seg.leave
 const RESIZE_SETTLE_MS = 100; // Auto measures once a drag pauses, not every frame of it
@@ -33,6 +33,7 @@ const newButton = document.getElementById("new-session");
 const newNote = document.getElementById("new-note");
 const bar = document.querySelector(".bar");
 const densityPicker = document.querySelector(".density");
+const ringKey = document.querySelector(".ring-key");
 newButton.hidden = !inTauri;
 newButton.addEventListener("click", () =>
   press(newButton, newNote, () => window.__TAURI__.core.invoke("launch_session"), "Starting…"),
@@ -129,16 +130,22 @@ function paint(el, c) {
   setOff(clear, false);
 }
 
-// One segment per piece of background work. Segments past the new count fade
-// out; new ones fade in; the rest take their new place at once.
+// One arc per piece of background work, drawn for the density on screen.
+// Arcs past the new count fade out; new ones fade in; the rest take their new
+// place at once.
 function paintRing(el, c) {
+  const ring = c.rings[shown] ?? c.rings.comfortable;
+  const g = RINGS[shown] ?? RINGS.comfortable;
   const crew = el.querySelector(".ring .crew");
-  el.querySelector(".ring").classList.toggle("busy", c.ring.segments.length > 0);
+  const track = el.querySelector(".ring .track");
+  track.setAttribute("r", g.r);
+  track.setAttribute("stroke-width", g.shell);
+  el.querySelector(".ring").classList.toggle("busy", ring.segments.length > 0);
   if (c.ringColor) crew.style.setProperty("--crew", c.ringColor);
   else crew.style.removeProperty("--crew");
-  const shown = [...crew.children].filter((p) => !p.classList.contains("leave"));
-  c.ring.segments.forEach((seg, i) => {
-    let path = shown[i];
+  const drawn = [...crew.children].filter((p) => !p.classList.contains("leave"));
+  ring.segments.forEach((seg, i) => {
+    let path = drawn[i];
     if (!path) {
       path = document.createElementNS(SVG_NS, "path");
       path.classList.add("seg", "enter");
@@ -148,15 +155,16 @@ function paintRing(el, c) {
     path.classList.toggle("agent", seg.kind === "agent");
     path.classList.toggle("shell", seg.kind === "shell");
     path.setAttribute("d", seg.d);
+    path.setAttribute("stroke-width", seg.width);
   });
-  for (const path of shown.slice(c.ring.segments.length)) {
+  for (const path of drawn.slice(ring.segments.length)) {
     if (reducedMotion()) path.remove();
     else {
       path.classList.add("leave");
       setTimeout(() => path.remove(), SEGMENT_FADE_MS);
     }
   }
-  show(el.querySelector(".more"), c.ring.more > 0 ? `+${c.ring.more}` : null);
+  show(el.querySelector(".more"), ring.more > 0 ? `+${ring.more}` : null);
 }
 
 function paintTally() {
@@ -183,6 +191,8 @@ function render(snapshot) {
   empty.hidden = sessions.length > 0;
   paintTally();
   const cards = sessions.map((s) => card(s, cast, now));
+  cardOf = new Map(cards.map((c) => [c.id, c]));
+  ringKey.hidden = !showsRingKey(cards);
   const sync = () => {
     syncChildren(wall, cards, (c) => c.id, () => tpl.content.firstElementChild.cloneNode(true), paint);
     for (const el of wall.children) if (started.has(el.dataset.key) && !reducedMotion()) el.classList.add("pulse");
@@ -292,6 +302,7 @@ wall.addEventListener("click", (e) => {
 let choice = "auto";
 let shown = "comfortable";
 let lastIds = "";
+let cardOf = new Map(); // the last painted card by id, to redraw rings for a new density
 
 /** Whether the comfortable grid, with `extra` more cards as tall as its tallest, fits the window without scrolling. */
 function comfortableFits(extra) {
@@ -314,7 +325,9 @@ function comfortableFits(extra) {
 }
 
 function showDensity() {
+  const was = shown;
   shown = resolveDensity(choice, shown, comfortableFits);
+  if (shown !== was) for (const el of wall.children) if (cardOf.has(el.dataset.key)) paintRing(el, cardOf.get(el.dataset.key));
   wall.dataset.density = shown;
   bar.dataset.density = shown;
   densityPicker.querySelector('label:has([value="auto"])').title =

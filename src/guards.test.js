@@ -542,3 +542,14 @@ test("the density control is a labelled radio group, Auto checked until the save
   const css = read("src/fleet/wall.css");
   assert.match(css, /\.density label:has\(input:focus-visible\) \{ outline: 2px solid var\(--card-focus\)/, "a keyboard user sees where they are");
 });
+
+test("the ring key draws aria-hidden arcs and gives screen readers one sentence", () => {
+  const html = read("src/wall.html");
+  const key = html.slice(html.indexOf('<p class="ring-key" hidden>'), html.indexOf("</p>", html.indexOf('<p class="ring-key"')));
+  assert.match(key, /<span class="visually-hidden">Ring key: thick arc, subagent; thin arc, background shell\.<\/span>/);
+  const keys = [...key.matchAll(/<span class="key" aria-hidden="true"><svg[^>]*><path class="(\w+)"[^>]*\/><\/svg>(\w+)<\/span>/g)].map((m) => `${m[1]}:${m[2]}`);
+  assert.deepEqual(keys, ["agent:agent", "shell:shell"]);
+  assert.ok(html.indexOf('class="tally"') < html.indexOf('class="ring-key"'), "beside the tally");
+  assert.match(read("src/fleet/wall.js"), /ringKey\.hidden = !showsRingKey\(cards\)/);
+  assert.match(html, /<title>Background work: one arc per subagent \(thick\) or shell \(thin\)<\/title>/);
+});
