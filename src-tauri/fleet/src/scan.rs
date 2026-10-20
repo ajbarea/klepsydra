@@ -8,6 +8,7 @@ use std::path::Path;
 use std::time::UNIX_EPOCH;
 
 use crate::session::{beat_name, is_session_id, parse};
+use crate::speaking::FILE as SPEAKING;
 use crate::view::Entry;
 
 /// A file skipped, and why.
@@ -63,6 +64,9 @@ pub fn scan(fleet: &Path) -> Listing {
     let mut beats: HashMap<String, (i64, Option<String>)> = HashMap::new();
     for item in dir.flatten() {
         let name = item.file_name().to_string_lossy().into_owned();
+        if name == SPEAKING {
+            continue; // keryx's, read on its own by `speaking::read`
+        }
         let Some((stem, ext)) = name.rsplit_once('.') else {
             continue;
         };
@@ -201,6 +205,26 @@ pub(crate) mod tests {
         std::fs::create_dir(dir.0.join(format!("{B}.json"))).unwrap();
         let l = scan(&dir.0);
         assert!(l.entries.is_empty());
+        assert!(l.problems.is_empty());
+    }
+
+    #[test]
+    fn keryx_speaking_file_is_never_read_as_a_session() {
+        let dir = Scratch::new("speaking");
+        dir.write(
+            SPEAKING,
+            r#"{"v":1,"voice":"af_heart","started_at":1792520221.2,"ends_at":1792520223.7,"envelope":[1.0]}"#,
+        );
+        dir.write(&format!("{A}.json"), &session(A, "working"));
+        let l = scan(&dir.0);
+        assert_eq!(l.entries.len(), 1);
+        assert!(l.problems.is_empty(), "{:?}", l.problems);
+        // Even a session-shaped body under that name is keryx's, not a session.
+        dir.write(SPEAKING, &session(A, "done"));
+        dir.write(&format!("{A}.json"), &session(A, "working"));
+        let l = scan(&dir.0);
+        assert_eq!(l.entries.len(), 1);
+        assert_eq!(l.entries[0].file.state, crate::session::State::Working);
         assert!(l.problems.is_empty());
     }
 
