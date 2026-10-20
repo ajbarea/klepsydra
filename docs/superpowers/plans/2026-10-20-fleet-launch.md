@@ -1358,7 +1358,7 @@ git commit -m "docs: starting sessions from the wall, Clear and gone"
 - [ ] **Step 1:** Copy the hooks: `cp hooks/klepsydra-fleet.sh hooks/klepsydra-launch.sh hooks/klepsydra-tmux.conf ~/.claude/ && chmod +x ~/.claude/klepsydra-fleet.sh ~/.claude/klepsydra-launch.sh` (back up `~/.claude/klepsydra-fleet.sh` to `.bak-launch` first).
 - [ ] **Step 2:** Set AJ's pref: `jq '.launch_dir = "~/ajsoftworks"'` on `/mnt/c/Users/ajbar/AppData/Local/dev.ajsoftworks.klepsydra/prefs.json` (write via temp file, backup `.bak-launch`).
 - [ ] **Step 3:** Build and install per `project_klepsydra` memory: `bash scripts/build-windows.sh </dev/null`, stop the running exe, run the installer with `/S`, start it, screenshot the live window rect.
-- [ ] **Step 4:** Drive it: open the wall, invoke **+ New session** three times through UI Automation (button name "+ New session"). Check `tmux -L klepsydra list-windows -t =fleet` shows 3 windows, `tasklist.exe` shows one more `wsl.exe` for the tab only, and the wall shows three cards. Send `/rename` to two of them via `tmux -L klepsydra send-keys`, then Jump between them and confirm with `tmux -L klepsydra display -p '#{pane_id}'` and a screenshot that the tab title changed.
+- [ ] **Step 4:** Drive it: open the wall, invoke **+ New session** three times through UI Automation (button name "+ New session"). Check `tmux -L klepsydra list-windows -t =fleet` shows 3 windows, `tasklist.exe` shows one more `wsl.exe` for the tab only, and the wall shows three cards. Jump between them and confirm with `tmux -L klepsydra display -p '#{pane_id}'` and a screenshot that the tab title changed.
 - [ ] **Step 5:** Close the tab (kill its client: `tmux -L klepsydra detach-client -s fleet`), press **+**, confirm one new tab attaches with 4 windows.
 - [ ] **Step 6:** Clear an ended card (exit one session with `/exit` via send-keys), confirm the card disappears and its two files are gone.
 - [ ] **Step 7:** Gone: write a fake non-ended session file with `host.boot` of another boot, start a session, confirm the card reads "ended · gone".
@@ -1583,13 +1583,13 @@ Execution order now: Tasks 1-8, 11, 12, **13**, then 9, then 10. Spec: the launc
 **Files:**
 - Modify: `hooks/klepsydra-launch.sh` (`jump` takes `PID START`; `show`/`open_tab` pass `--title` and `--suppressApplicationTitle`), `hooks/klepsydra-tmux.conf`, `hooks/test_launch.sh`
 - Modify: `src-tauri/fleet/src/session.rs` and `view.rs` (the session file's `claude: {pid, start}` reaches the View as `claude`)
-- Modify: `src-tauri/src/launch.rs` (`Target` gains `pid: u32, start: u64`; `jump_args` passes them; `target()` reads `claude.pid`/`claude.start`), `src-tauri/src/jump.rs` (the tmux path matches the fixed title `FLEET_TAB = "klepsydra fleet"`, single attempt, then `settle`)
+- Modify: `src-tauri/src/launch.rs` (`Target` gains `pid: u32, start: u64`; `jump_args` passes them; `target()` reads `claude.pid`/`claude.start`), `src-tauri/src/jump.rs` (the tmux path matches the fixed title `FLEET_TAB = "klepsydra sessions"`, single attempt, then `settle`)
 - Test: the files above plus `src/guards.test.js` if a guard needs updating
 
 **Interfaces:**
 - Script: `klepsydra-launch.sh jump SOCKET PANE PID START`. PID and START are digits; START is field 22 of `/proc/PID/stat`, clock ticks since boot, which is what the hook records as `claude.start`.
 - View JSON: `claude: {pid: number, start: number} | null`.
-- Rust: `pub struct Target { socket, pane, distro, pid: u32, start: u64 }`. `pub const FLEET_TAB: &str = "klepsydra fleet";` lives in `launch.rs` and is used by the script call and jump.rs. The script takes the title from one constant too, `TAB_TITLE="klepsydra fleet"`, and a guard test asserts the two are equal.
+- Rust: `pub struct Target { socket, pane, distro, pid: u32, start: u64 }`. `pub const FLEET_TAB: &str = "klepsydra sessions";` lives in `launch.rs` and is used by the script call and jump.rs. The script takes the title from one constant too, `TAB_TITLE="klepsydra sessions"`, and a guard test asserts the two are equal.
 
 - [ ] **Step 1: Failing tests.**
   - `hooks/test_launch.sh`:
@@ -1598,7 +1598,7 @@ Execution order now: Tasks 1-8, 11, 12, **13**, then 9, then 10. Spec: the launc
     - (c) A dead PID: refused with the same message.
     - (d) The right PID with a wrong START (pid reused): refused.
     - (e) Malformed PID or START (`12a`, empty): refused with "Not a process id: …".
-    - (f) The tab command now contains `--title klepsydra fleet --suppressApplicationTitle` before `wsl.exe` (update the expected `wt.log` lines).
+    - (f) The tab command now contains `--title klepsydra sessions --suppressApplicationTitle` before `wsl.exe` (update the expected `wt.log` lines).
     - (g) `show -gv automatic-rename-format` is `#{pane_title}` on the fleet server.
   - Rust: `jump_args` includes pid and start and refuses `pid == 0`; `target()` needs `claude` too; the View test reads `claude`; `SessionFile` parses `claude: null` and a missing `claude`.
   - jump.rs: a pure helper `fleet_tab_titles_match(title) -> bool`, or reuse `tabs::pick_tab(FLEET_TAB, …)`, with a unit test that only the exact title matches.

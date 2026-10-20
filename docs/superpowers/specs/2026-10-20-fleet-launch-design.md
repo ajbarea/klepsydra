@@ -63,7 +63,7 @@ line and the tmux logic is tested in bash.
    `tmux -L klepsydra -f ~/.claude/klepsydra-tmux.conf new-session -d -s fleet -c DIR claude`.
    Otherwise `tmux -L klepsydra new-window -t =fleet: -c DIR claude`.
 3. If no client is attached to `fleet`, open one tab:
-   `wt.exe -w fleet new-tab [--title "klepsydra fleet" --suppressApplicationTitle] wsl.exe -d <distro> -e tmux -S <socket> attach -t =fleet`.
+   `wt.exe -w fleet new-tab [--title "klepsydra sessions" --suppressApplicationTitle] wsl.exe -d <distro> -e tmux -S <socket> attach -t =fleet`.
    The title arguments are for the fleet socket only (see the addendum).
    `<socket>` is the server's `#{socket_path}`; a path `wt.exe` could split
    (at `;`) starts nothing.
@@ -135,7 +135,7 @@ Prefs: `launch_dir` (default `~`; AJ's is `~/ajsoftworks`) and
 ### Jump (changed)
 
 When a card has `tmux`, `claude` and `host.distro`, Jump first calls
-`tmux_jump`, then makes one title match: exactly `klepsydra fleet` when the
+`tmux_jump`, then makes one title match: exactly `klepsydra sessions` when the
 pane's socket is the launcher's `klepsydra`, else the session's name after its
 status glyph. Such a card can jump before it has a name. A failed `tmux_jump`
 on the fleet socket shows the launcher's line; on another socket Jump falls
@@ -214,12 +214,12 @@ AJ asked for a fully stable system. Two links in the jump chain were still weak:
   focus a tab by id (microsoft/terminal #19783, closed not planned), and a tab
   renamed by hand freezes its title. `wt -w fleet focus-tab` would create the
   window when none exists. So the launcher opens the fleet tab with an
-  app-owned title, `--title "klepsydra fleet" --suppressApplicationTitle`, and
+  app-owned title, `--title "klepsydra sessions" --suppressApplicationTitle`, and
   Jump finds that exact title after tmux selects the pane. The tab no longer
   shows the active session's title. tmux names each window after its pane
   title (`automatic-rename-format "#{pane_title}"`), so the status bar lists
   sessions by name. If the tab is renamed anyway, the earlier ruling still
   reports "Selected the session's tmux window."
 
-Sessions in tabs opened by hand keep the title match. `/rename` is the stable
-fix there.
+Sessions in tabs opened by hand keep the title match. Renaming the tab by hand
+to exactly the session's name is the stable fix there.

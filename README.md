@@ -357,7 +357,7 @@ columns at least 420 px wide: four at 1920 px, two at 1280, one at 800.
 session started with **+ New session**, it finds the session's tmux window by
 pane id and checks the Claude process is still in that pane, selects the
 window, then selects the Windows Terminal tab titled exactly "klepsydra
-fleet", the fixed title of the fleet tab; a hand-opened session of that name,
+sessions", the fixed title of the fleet tab; a hand-opened session of that name,
 whose title starts with a status glyph, is not it. If the pane now holds
 another session, or a launch is already running, the card says so and no tab
 is selected. If no tab matches, the window is still selected and the card
@@ -374,8 +374,9 @@ glyph, is exactly the session's name. With no such tab, or more than one, it
 says so and does nothing. When Windows Terminal hides its tabs (full screen or
 focus mode), it says that instead. A tab renamed in Windows Terminal (Rename
 tab) keeps that name and ignores Claude Code's title, so Jump cannot find it.
-Name the session with `/rename` inside Claude Code instead: the tab and the
-card both take that name.
+Rename the tab by hand to exactly the session's name (right-click the tab,
+Rename tab), or start the session from **+ New session**, which needs no tab
+title.
 
 **Clear** on an ended or silent card removes it now. A session that is still
 running brings its card back at its next event, without its start time or the

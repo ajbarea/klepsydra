@@ -2,8 +2,7 @@
 
 Current slice: start sessions from the wall as tmux windows in one terminal
 tab, with Clear, gone and the redesigned card wall (branch feat/fleet-launch).
-Design: `docs/superpowers/specs/2026-10-20-fleet-launch-design.md` and
-`2026-10-20-fleet-wall-redesign.md`.
+Design: `docs/superpowers/specs/2026-10-20-fleet-launch-design.md`, `…-fleet-wall-redesign.md`.
 
 ## Done
 - ✅ `hooks/klepsydra-launch.sh`: `new` adds a `claude` window to tmux session
@@ -12,7 +11,7 @@ Design: `docs/superpowers/specs/2026-10-20-fleet-launch-design.md` and
   stamp). `jump` checks the pane still holds the Claude process first.
 - ✅ `src-tauri/src/launch.rs`: the one file that starts a process (`wsl.exe`,
   from a click, one call at a time, 45 s, output read 2 s past exit).
-- ✅ Jump: tmux, then exactly "klepsydra fleet" for the fleet socket, else the
+- ✅ Jump: tmux, then exactly "klepsydra sessions" for the fleet socket, else the
   session title. A failed fleet jump shows the launcher's line; only "no tab
   matched" after tmux reads as success.
 - ✅ Clear, ended or silent cards only; gone after a reboot or a dead pid.
@@ -22,12 +21,13 @@ Design: `docs/superpowers/specs/2026-10-20-fleet-launch-design.md` and
 - ✅ README: install, Starting sessions, Clear, gone, the wall, the live check.
 
 ## Verified
-- ✅ node 148, `hooks/test_fleet.sh` 226, `hooks/test_launch.sh` 101,
-  `cargo test -p klepsydra-fleet` 98, all passing.
-- ✅ `build-windows.sh --check`: clippy and `cargo test --workspace` on Windows.
-- 📋 Live check on Windows (README, Releasing, step 2.7), pending the Windows
-  run: **+** three times, Jump between windows, close the tab and **+**,
-  Clear, gone after `wsl --shutdown`.
+- ✅ node, `hooks/test_fleet.sh` 226, `hooks/test_launch.sh` 101, `cargo test
+  -p klepsydra-fleet` 98, and `build-windows.sh --check` on Windows all pass.
+- ✅ Live check on Windows, 2026-10-20, build 69e581d: **+** three times gave
+  3 tmux windows and one fleet tab; Open terminal on three unnamed cards
+  selected %2, %1, %0; closing the tab then **+** reattached one tab; /exit
+  then Clear removed both files; the deployed hook marked an earlier-boot
+  session "ended · gone" on the wall.
 
 ## Next
 - 📋 #32: an optional split mode for the fleet tab.
