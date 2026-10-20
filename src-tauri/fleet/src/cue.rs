@@ -1,21 +1,21 @@
 //! Which sound a new snapshot asks for: a session that now needs AJ, or one
 //! whose turn just ended. The shell plays it; this decides it.
 //!
-//! A cue answers a hook event, never the clock: only a status time that moved
-//! past the last one seen can ask for one. A session going silent and coming
-//! back, or a stale background crew turning a session done, moves no status
-//! time, so neither sounds.
+//! A cue answers a hook event, never the clock or a rewrite. Needs-you takes a
+//! state time the session has not shown before, and done takes a turn end it
+//! has not shown before, both as the hook wrote them. Going silent and back,
+//! a stale background crew, a missed read or a resume moves neither.
 
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
-use crate::view::{Snapshot, Status};
+use crate::view::{Marks, Snapshot, Status};
 
 /// After a cue, one of the same or lower rank this soon is dropped, so a
 /// burst of sessions changing over a few reads makes one sound.
 pub const GAP: Duration = Duration::from_secs(2);
 
-/// A session's last word older than this, and absent from the strip, is forgotten.
+/// A session absent from the strip and unseen this long is forgotten.
 const FORGET_AFTER: i64 = 86_400;
 
 /// In rank order: needs-you outranks done.
@@ -27,73 +27,69 @@ pub enum Cue {
     Done,
 }
 
-/// What the last non-silent view of a session said.
+/// The last non-silent view of a session, and when it was read.
 #[derive(Clone, Copy)]
 struct Seen {
     status: Status,
-    at: i64,
+    marks: Marks,
+    read_at: i64,
 }
 
 fn wants_you(s: Status) -> bool {
     matches!(s, Status::NeedsYou | Status::Error)
 }
 
-/// What one session's move from `before` to `now`, at a later status time,
-/// asks for. A turn ends after work, or after an earlier turn whose start
-/// fell between two reads; done after anything else is a start or a resume.
-fn cue_for(before: Option<Status>, now: Status) -> Option<Cue> {
-    match now {
-        s if wants_you(s) => Some(Cue::NeedsYou),
-        Status::Done if matches!(before, Some(Status::Working | Status::Done)) => Some(Cue::Done),
-        _ => None,
+/// What a session now showing `now` with `marks` asks for, given what was
+/// last seen of it. `since` is the app's start, by the reader's clock, and
+/// `at` is the view's status time by the same clock.
+fn cue_for(before: Option<Seen>, since: i64, now: Status, marks: Marks, at: i64) -> Option<Cue> {
+    if wants_you(now) {
+        let new = match before {
+            Some(b) => !wants_you(b.status) || marks.state_at != b.marks.state_at,
+            None => at > since,
+        };
+        return new.then_some(Cue::NeedsYou);
     }
+    let ended = match before {
+        Some(b) => marks.turn_end.is_some() && marks.turn_end != b.marks.turn_end,
+        None => false,
+    };
+    (now == Status::Done && ended).then_some(Cue::Done)
 }
 
-/// Whether `now`, at `at`, is a hook event `before` has not seen. Times are
-/// whole seconds, so a prompt in the second its turn began is one too; done
-/// never is, since a stale crew reads done at the turn's own time.
-fn is_new(before: Option<Seen>, since: i64, now: Status, at: i64) -> bool {
-    let last = before.map_or(since, |s| s.at.max(since));
-    at > last
-        || (at == last
-            && at > since
-            && wants_you(now)
-            && before.is_some_and(|s| !wants_you(s.status)))
-}
-
-/// Follows each session's status time from one snapshot to the next.
+/// Follows each session from one snapshot to the next.
 pub struct Cues {
-    /// Status times up to this are older than the app: what was on the strip
-    /// when it started.
     since: i64,
+    /// The first snapshot is what was on the strip at start: it asks for nothing.
+    started: bool,
     seen: HashMap<String, Seen>,
     played: Option<(Cue, Instant)>,
 }
 
 impl Cues {
-    /// `since` is the app's start, by the same clock as the views' times.
+    /// `since` is the app's start, by the reader's clock.
     pub fn new(since: i64) -> Self {
         Cues {
             since,
+            started: false,
             seen: HashMap::new(),
             played: None,
         }
     }
 
-    /// The cue `snap` asks for: the highest rank among its sessions, and
-    /// within `GAP` of the last cue only one that outranks it.
-    pub fn next(&mut self, snap: &Snapshot, now: Instant) -> Option<Cue> {
+    /// The cue `snap`, read at `now` (`now_s` by the reader's clock), asks
+    /// for: the highest rank among its sessions, and within `GAP` of the
+    /// last cue only one that outranks it.
+    pub fn next(&mut self, snap: &Snapshot, now: Instant, now_s: i64) -> Option<Cue> {
         let mut cue: Option<Cue> = None;
-        let mut newest = self.since;
         for v in &snap.sessions {
             // A silent view's time is its last word, not a hook event.
             if v.status == Status::Silent {
                 continue;
             }
-            newest = newest.max(v.status_at);
             let before = self.seen.get(&v.session_id).copied();
-            if is_new(before, self.since, v.status, v.status_at) {
-                let c = cue_for(before.map(|s| s.status), v.status);
+            if self.started {
+                let c = cue_for(before, self.since, v.status, v.marks, v.status_at);
                 cue = match (cue, c) {
                     (Some(a), Some(b)) => Some(a.min(b)),
                     (a, b) => a.or(b),
@@ -103,17 +99,19 @@ impl Cues {
                 v.session_id.clone(),
                 Seen {
                     status: v.status,
-                    at: v.status_at,
+                    marks: v.marks,
+                    read_at: now_s,
                 },
             );
         }
+        self.started = true;
         let shown: Vec<&str> = snap
             .sessions
             .iter()
             .map(|v| v.session_id.as_str())
             .collect();
         self.seen
-            .retain(|id, s| shown.contains(&id.as_str()) || newest - s.at < FORGET_AFTER);
+            .retain(|id, s| shown.contains(&id.as_str()) || now_s - s.read_at < FORGET_AFTER);
         let cue = cue.filter(|c| match self.played {
             Some((last, at)) if now.saturating_duration_since(at) < GAP => *c < last,
             _ => true,
@@ -131,7 +129,11 @@ mod tests {
 
     const START: i64 = 1_792_500_000;
 
-    fn view(id: &str, status: Status, at: i64) -> View {
+    /// A view at `at` seconds after START, written at that time by the hook,
+    /// with the turn last ended at `end` seconds after START. `shift` is the
+    /// skew correction the reader added, so the display time moves while
+    /// what the hook wrote does not.
+    fn view(id: &str, status: Status, at: i64, end: Option<i64>, shift: i64) -> View {
         View {
             session_id: id.into(),
             name: None,
@@ -139,28 +141,37 @@ mod tests {
             voice: None,
             status,
             reason: None,
-            status_at: at,
-            active_at: at,
+            status_at: START + at + shift,
+            active_at: START + at + shift,
             place: None,
             touched: vec![],
             prompt: None,
             reply: None,
             error: None,
-            updated_at: at,
+            updated_at: START + at + shift,
             quiet_since: None,
             tmux: None,
             distro: None,
             claude: None,
             background: Default::default(),
+            marks: Marks {
+                state_at: START + at,
+                turn_end: end.map(|e| START + e),
+            },
         }
     }
 
-    /// A snapshot of `(id, status, seconds after START)`.
-    fn snap(sessions: &[(&str, Status, i64)]) -> Snapshot {
+    type S = (&'static str, Status, i64, Option<i64>);
+
+    fn snap(sessions: &[S]) -> Snapshot {
+        shifted(sessions, 0)
+    }
+
+    fn shifted(sessions: &[S], shift: i64) -> Snapshot {
         Snapshot {
             sessions: sessions
                 .iter()
-                .map(|(id, s, t)| view(id, *s, START + t))
+                .map(|(id, s, t, e)| view(id, *s, *t, *e, shift))
                 .collect(),
         }
     }
@@ -172,92 +183,117 @@ mod tests {
         snaps
             .iter()
             .enumerate()
-            .map(|(i, s)| cues.next(s, t0 + GAP * i as u32))
+            .map(|(i, s)| cues.next(s, t0 + GAP * i as u32, START + 2 * i as i64))
             .collect()
     }
 
     #[test]
-    fn what_was_on_the_strip_at_start_asks_for_nothing() {
-        let before_start = snap(&[("a", NeedsYou, -60), ("b", Done, -5), ("c", Error, 0)]);
-        assert_eq!(run(&[before_start.clone(), before_start]), vec![None, None]);
+    fn the_first_read_asks_for_nothing() {
+        let first = snap(&[
+            ("a", NeedsYou, 5, None),
+            ("b", Done, 5, Some(5)),
+            ("c", Error, 5, None),
+        ]);
+        assert_eq!(run(&[first.clone(), first]), vec![None, None]);
     }
 
     #[test]
     fn an_empty_first_read_then_old_sessions_asks_for_nothing() {
-        let got = run(&[snap(&[]), snap(&[("a", NeedsYou, -600), ("b", Done, -60)])]);
-        assert_eq!(got, vec![None, None]);
-    }
-
-    #[test]
-    fn each_move_asks_for_its_cue() {
-        let all = [NeedsYou, Error, Working, Done, New, Silent, Ended];
-        for before in all.iter().map(|s| Some(*s)).chain([None]) {
-            for now in all {
-                let want = match (before, now) {
-                    (_, NeedsYou | Error) => Some(Cue::NeedsYou),
-                    (Some(Working | Done), Done) => Some(Cue::Done),
-                    _ => None,
-                };
-                assert_eq!(cue_for(before, now), want, "{before:?} -> {now:?}");
-            }
-        }
+        let old = snap(&[("a", NeedsYou, -600, None), ("b", Done, -60, Some(-60))]);
+        assert_eq!(run(&[snap(&[]), old]), vec![None, None]);
     }
 
     #[test]
     fn a_session_started_after_the_app_that_needs_you_asks() {
-        let got = run(&[snap(&[]), snap(&[("a", NeedsYou, 20)])]);
+        let got = run(&[snap(&[]), snap(&[("a", NeedsYou, 20, None)])]);
         assert_eq!(got, vec![None, Some(Cue::NeedsYou)]);
     }
 
     #[test]
     fn a_turn_ending_asks_for_done_once() {
         let got = run(&[
-            snap(&[("a", Working, 10)]),
-            snap(&[("a", Done, 20)]),
-            snap(&[("a", Done, 20)]),
+            snap(&[("a", Working, 10, None)]),
+            snap(&[("a", Done, 20, Some(20))]),
+            snap(&[("a", Done, 20, Some(20))]),
         ]);
         assert_eq!(got, vec![None, Some(Cue::Done), None]);
     }
 
     #[test]
     fn a_whole_turn_between_two_reads_still_asks_for_done() {
-        let got = run(&[snap(&[("a", Done, 10)]), snap(&[("a", Done, 30)])]);
+        let got = run(&[
+            snap(&[("a", Done, 10, Some(10))]),
+            snap(&[("a", Done, 30, Some(30))]),
+        ]);
         assert_eq!(got, vec![None, Some(Cue::Done)]);
     }
 
     #[test]
-    fn a_resume_or_a_start_is_not_a_turn_ending() {
-        for before in [New, Ended, NeedsYou, Error] {
-            let got = run(&[snap(&[("a", before, 10)]), snap(&[("a", Done, 20)])]);
+    fn done_without_a_new_turn_end_asks_for_nothing() {
+        // A resume after a kill mid-turn, the idle prompt after Esc, an answer
+        // after the turn ended, or a stale crew: done, with no new Stop.
+        for before in [Working, NeedsYou, Error, New, Ended, Done] {
+            let got = run(&[
+                snap(&[("a", before, 10, Some(5))]),
+                snap(&[("a", Done, 20, Some(5))]),
+            ]);
             assert_eq!(got[1], None, "{before:?} -> done");
         }
-        assert_eq!(run(&[snap(&[]), snap(&[("a", Done, 20)])])[1], None);
+        let unseen = run(&[snap(&[]), snap(&[("a", Done, 20, Some(20))])]);
+        assert_eq!(unseen[1], None);
+    }
+
+    #[test]
+    fn a_turn_that_ended_with_work_out_does_not_chime_when_the_work_goes_stale() {
+        let got = run(&[
+            snap(&[("a", Working, 10, None)]),
+            snap(&[("a", Working, 20, Some(20))]),
+            snap(&[("a", Done, 20, Some(20))]),
+        ]);
+        assert_eq!(got, vec![None, None, None]);
     }
 
     #[test]
     fn a_new_prompt_asks_each_time_even_from_needs_you() {
         let got = run(&[
-            snap(&[("a", Working, 10)]),
-            snap(&[("a", NeedsYou, 20)]),
-            snap(&[("a", NeedsYou, 30)]),
+            snap(&[("a", Working, 10, None)]),
+            snap(&[("a", NeedsYou, 20, None)]),
+            snap(&[("a", NeedsYou, 30, None)]),
         ]);
         assert_eq!(got, vec![None, Some(Cue::NeedsYou), Some(Cue::NeedsYou)]);
     }
 
     #[test]
     fn a_prompt_in_the_second_its_turn_began_asks() {
-        let got = run(&[snap(&[("a", Working, 10)]), snap(&[("a", NeedsYou, 10)])]);
+        let got = run(&[
+            snap(&[("a", Working, 10, None)]),
+            snap(&[("a", NeedsYou, 10, None)]),
+        ]);
         assert_eq!(got, vec![None, Some(Cue::NeedsYou)]);
     }
 
     #[test]
-    fn coming_back_from_silence_asks_for_nothing() {
-        // The PC slept: an idle session read silent, then its beats came back.
+    fn a_rewrite_whose_skew_correction_moved_asks_for_nothing() {
+        // The writer's clock drifts, or the hook waited on the lock: the
+        // reader's correction moves the display time between two writes.
+        let after = [("a", Done, 20, Some(20)), ("b", NeedsYou, 20, None)];
         let got = run(&[
-            snap(&[("a", Working, 10), ("b", Error, -10)]),
-            snap(&[("a", Done, 20), ("b", Error, -10)]),
-            snap(&[("a", Silent, 400), ("b", Silent, 400)]),
-            snap(&[("a", Done, 20), ("b", Error, -10)]),
+            snap(&[("a", Working, 10, None), ("b", Working, 10, None)]),
+            snap(&after),
+            shifted(&after, 3),
+            shifted(&after, -3),
+        ]);
+        assert_eq!(got, vec![None, Some(Cue::NeedsYou), None, None]);
+    }
+
+    #[test]
+    fn coming_back_from_silence_asks_for_nothing() {
+        // The PC slept: idle sessions read silent, then their beats came back.
+        let got = run(&[
+            snap(&[("a", Working, 10, None), ("b", Error, -10, None)]),
+            snap(&[("a", Done, 20, Some(20)), ("b", Error, -10, None)]),
+            snap(&[("a", Silent, 400, Some(20)), ("b", Silent, 400, None)]),
+            snap(&[("a", Done, 20, Some(20)), ("b", Error, -10, None)]),
         ]);
         assert_eq!(got, vec![None, Some(Cue::Done), None, None]);
     }
@@ -265,27 +301,20 @@ mod tests {
     #[test]
     fn a_long_tool_call_read_silent_still_ends_in_done() {
         let got = run(&[
-            snap(&[("a", Working, 10)]),
-            snap(&[("a", Silent, 200)]),
-            snap(&[("a", Done, 300)]),
+            snap(&[("a", Working, 10, None)]),
+            snap(&[("a", Silent, 200, None)]),
+            snap(&[("a", Done, 300, Some(300))]),
         ]);
         assert_eq!(got, vec![None, None, Some(Cue::Done)]);
     }
 
     #[test]
-    fn a_stale_crew_turning_a_session_done_asks_for_nothing() {
-        // Stop with a shell out keeps the status time; staleness alone reads done.
-        let got = run(&[snap(&[("a", Working, 10)]), snap(&[("a", Done, 10)])]);
-        assert_eq!(got, vec![None, None]);
-    }
-
-    #[test]
     fn a_session_missing_from_one_read_does_not_ask_again() {
         let got = run(&[
-            snap(&[("a", Working, 10)]),
-            snap(&[("a", NeedsYou, 20)]),
+            snap(&[("a", Working, 10, None)]),
+            snap(&[("a", NeedsYou, 20, None)]),
             snap(&[]),
-            snap(&[("a", NeedsYou, 20)]),
+            snap(&[("a", NeedsYou, 20, None)]),
         ]);
         assert_eq!(got, vec![None, Some(Cue::NeedsYou), None, None]);
     }
@@ -293,8 +322,8 @@ mod tests {
     #[test]
     fn needs_you_outranks_done_in_one_read() {
         let got = run(&[
-            snap(&[("a", Working, 10), ("b", Working, 10)]),
-            snap(&[("a", Done, 20), ("b", NeedsYou, 20)]),
+            snap(&[("a", Working, 10, None), ("b", Working, 10, None)]),
+            snap(&[("a", Done, 20, Some(20)), ("b", NeedsYou, 20, None)]),
         ]);
         assert_eq!(got, vec![None, Some(Cue::NeedsYou)]);
     }
@@ -304,46 +333,57 @@ mod tests {
         let mut cues = Cues::new(START);
         let t0 = Instant::now();
         let soon = t0 + GAP - Duration::from_millis(1);
-        let w = |id| (id, Working, 10);
-        cues.next(&snap(&[w("a"), w("b"), w("c")]), t0);
-        let a_done = snap(&[("a", Done, 20), w("b"), w("c")]);
-        assert_eq!(cues.next(&a_done, t0), Some(Cue::Done));
-        let b_done = snap(&[("a", Done, 20), ("b", Done, 21), w("c")]);
-        assert_eq!(cues.next(&b_done, soon), None);
-        let c_needs = snap(&[("a", Done, 20), ("b", Done, 21), ("c", NeedsYou, 21)]);
-        assert_eq!(cues.next(&c_needs, soon), Some(Cue::NeedsYou));
-        let a_needs = snap(&[("a", NeedsYou, 22), ("b", Done, 21), ("c", NeedsYou, 21)]);
-        assert_eq!(cues.next(&a_needs, soon), None);
-        let b_needs = snap(&[
-            ("a", NeedsYou, 22),
-            ("b", NeedsYou, 23),
-            ("c", NeedsYou, 21),
+        let w = |id| (id, Working, 10, None);
+        let a_done = ("a", Done, 20, Some(20));
+        let b_done = ("b", Done, 21, Some(21));
+        let c_needs = ("c", NeedsYou, 21, None);
+        cues.next(&snap(&[w("a"), w("b"), w("c")]), t0, START);
+        assert_eq!(
+            cues.next(&snap(&[a_done, w("b"), w("c")]), t0, START),
+            Some(Cue::Done)
+        );
+        assert_eq!(
+            cues.next(&snap(&[a_done, b_done, w("c")]), soon, START),
+            None
+        );
+        let c_asks = snap(&[a_done, b_done, c_needs]);
+        assert_eq!(cues.next(&c_asks, soon, START), Some(Cue::NeedsYou));
+        let a_asks = snap(&[("a", NeedsYou, 22, Some(20)), b_done, c_needs]);
+        assert_eq!(cues.next(&a_asks, soon, START), None);
+        let b_asks = snap(&[
+            ("a", NeedsYou, 22, Some(20)),
+            ("b", NeedsYou, 23, Some(21)),
+            c_needs,
         ]);
-        assert_eq!(cues.next(&b_needs, soon + GAP), Some(Cue::NeedsYou));
+        assert_eq!(cues.next(&b_asks, soon + GAP, START), Some(Cue::NeedsYou));
     }
 
     #[test]
     fn a_dropped_cue_is_not_replayed_later() {
         let mut cues = Cues::new(START);
         let t0 = Instant::now();
-        cues.next(&snap(&[("a", Working, 10), ("b", Working, 10)]), t0);
-        cues.next(&snap(&[("a", Done, 20), ("b", Working, 10)]), t0);
-        let both = snap(&[("a", Done, 20), ("b", Done, 21)]);
-        assert_eq!(cues.next(&both, t0), None);
-        assert_eq!(cues.next(&both, t0 + GAP * 2), None);
+        let w = |id| (id, Working, 10, None);
+        cues.next(&snap(&[w("a"), w("b")]), t0, START);
+        cues.next(&snap(&[("a", Done, 20, Some(20)), w("b")]), t0, START);
+        let both = snap(&[("a", Done, 20, Some(20)), ("b", Done, 21, Some(21))]);
+        assert_eq!(cues.next(&both, t0, START), None);
+        assert_eq!(cues.next(&both, t0 + GAP * 2, START), None);
     }
 
     #[test]
-    fn a_long_gone_session_is_forgotten_and_a_present_one_kept() {
+    fn an_absent_session_is_forgotten_after_a_day_by_the_reader_clock() {
         let mut cues = Cues::new(START);
         let t0 = Instant::now();
-        cues.next(&snap(&[("old", Done, 10), ("here", Done, 10)]), t0);
-        let later = FORGET_AFTER + 20;
-        cues.next(
-            &snap(&[("here", Done, 10), ("new", Working, later)]),
-            t0 + GAP,
+        let here = ("here", Done, 10, Some(10));
+        cues.next(&snap(&[("gone", Done, 10, Some(10)), here]), t0, START);
+        let far = snap(&[here, ("new", Working, 999_999, None)]);
+        cues.next(&far, t0, START + 60);
+        assert!(
+            cues.seen.contains_key("gone"),
+            "a far-future view time forgets nothing"
         );
-        assert!(!cues.seen.contains_key("old"));
+        cues.next(&snap(&[here]), t0, START + FORGET_AFTER);
+        assert!(!cues.seen.contains_key("gone"));
         assert!(cues.seen.contains_key("here"));
     }
 }

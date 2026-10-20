@@ -89,6 +89,8 @@ pub struct View {
     /// The background work still counted: none once the session stopped
     /// working, and none for entries stale past `BACKGROUND_STALE_AFTER`.
     pub background: Crew,
+    #[serde(skip)]
+    pub marks: Marks,
 }
 
 /// How many subagents, background shells and other background tasks a
@@ -100,7 +102,16 @@ pub struct Crew {
     pub tasks: u32,
 }
 
-#[derive(Clone, Debug, Default, Serialize, PartialEq)]
+/// The file's `state_at` and `turn_end` as written, without the skew
+/// correction, which can move between writes with no new event. For telling
+/// one hook event from the next, never for display.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Marks {
+    pub state_at: i64,
+    pub turn_end: Option<i64>,
+}
+
+#[derive(Clone, Debug, Default, Serialize, PartialEq, Eq)]
 pub struct Snapshot {
     pub sessions: Vec<View>,
     /// The line keryx is playing and whose card it belongs to; none while
@@ -234,6 +245,10 @@ pub fn view(entry: &Entry, now: i64) -> Option<View> {
         } else {
             Crew::default()
         },
+        marks: Marks {
+            state_at: f.state_at,
+            turn_end: f.turn_end,
+        },
     })
 }
 
@@ -335,6 +350,7 @@ mod tests {
             host: None,
             claude: None,
             background: vec![],
+            turn_end: None,
         }
     }
 

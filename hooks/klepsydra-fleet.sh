@@ -524,6 +524,8 @@ def notified: if type == "string" then [scan("<task-notification>[\\s\\S]*?</tas
         else .prompt = (($ev.prompt | clip) as $p | if $p then {text: $p, at: $now} else .prompt end) end
     elif $event == "Stop" then
       (($ev.last_assistant_message | clip) as $r | if $r then .reply = {text: $r, at: $now} else . end)
+      # When a turn last ended; the only event that ends one.
+      | .turn_end = $now
     elif $event == "StopFailure" then
       .error = ([$ev.last_assistant_message, $ev.error_details, $ev.error] | map(clip | select(. != null)) | .[0])
     elif $event == "SessionEnd" then .ended = {reason: ($ev.reason // "other"), at: $now}

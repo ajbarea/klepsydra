@@ -152,6 +152,9 @@ pub struct SessionFile {
     /// Subagents and background shells still running; none when absent.
     #[serde(default, deserialize_with = "lenient_background")]
     pub background: Vec<Background>,
+    /// When a turn last ended (Stop), by the writer's clock.
+    #[serde(default)]
+    pub turn_end: Option<i64>,
 }
 
 /// Why a session file was skipped.

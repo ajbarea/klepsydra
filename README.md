@@ -491,8 +491,8 @@ fetches nothing.
 
 The fleet hook writes `<app data dir>/fleet/<session>.json`: the state, where
 the session works, the first 300 characters of your last prompt and of the
-last reply, and the error text of a failed turn. It records no tool input
-beyond the tool's name and an edited file's path. The status line adds
+last reply, when the last turn ended, and the error text of a failed turn. It
+records no tool input beyond the tool's name and an edited file's path. The status line adds
 `<session>.beat`, the session's name, at most once per 10 seconds. At a
 session start, at most once an hour, the hook deletes a session's file when
 its Claude Code process is gone and its newest time field (including
@@ -514,9 +514,11 @@ you (a prompt, a question or an error), two rising notes when a turn ends.
 Ping is off until you tick it, and ticking it plays the needs-you chime once.
 Several sessions changing together make one chime, needs-you first. Within 2
 seconds of a chime only a needs-you after a done plays, so a burst makes one
-sound and a prompt still gets its own. A chime answers a hook event: nothing
-plays for what was already on the strip when klepsydra started, or for a
-session coming back from silence.
+sound and a prompt still gets its own. A chime answers a hook event, as the
+hook wrote it: nothing plays for what was already on the strip when
+klepsydra started, a session coming back from silence, or a resume. The done
+chime needs the fleet hook from the same release, which records when each
+turn ends; copy it again after updating.
 
 The chime stays silent while Do Not Disturb or a Focus session is on, or
 while a full-screen app, a game or presentation mode is in front. Windows

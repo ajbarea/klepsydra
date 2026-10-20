@@ -95,7 +95,7 @@ pub fn start(app: &AppHandle, dir: Option<PathBuf>) {
                 // Every snapshot moves the baseline, so turning Ping on never
                 // replays what changed while it was off.
                 #[cfg(windows)]
-                if let Some(c) = cues.next(&snapshot, Instant::now()) {
+                if let Some(c) = cues.next(&snapshot, Instant::now(), unix_now()) {
                     crate::ping::cue(c);
                 }
                 if let Ok(v) = serde_json::to_value(snapshot) {
