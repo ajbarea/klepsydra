@@ -1,7 +1,8 @@
 // Where fleet messages come from: the app's fleet_subscribe channel, or in a
 // browser a dev-fleet.json snapshot (serve src/ and add ?focus=<id> to focus),
 // or with ?demo a sample fleet, its times moved up to now (serve the repo root
-// and open /src/wall.html?demo: the sample sits outside the bundled src/).
+// and open /src/wall.html?demo: the sample sits outside the bundled src/);
+// ?demo=8 shows its first eight sessions.
 // `onMessage` gets `{sessions, speaking}` snapshots and `{focus: id}` requests.
 // In a browser a snapshot's speaking line replays, a sentence at a time.
 import { follow } from "../ipc.js";
@@ -36,6 +37,12 @@ function replaySpeaking(snapshot, onMessage) {
   setInterval(() => onMessage({ ...snapshot, speaking: { ...line, started_at: Date.now() / 1000 } }), every);
 }
 
+/** How many demo sessions ?demo=N asks for; all of them for a bare ?demo or anything not a positive count. */
+export function demoCount(search) {
+  const n = Number(new URLSearchParams(search).get("demo"));
+  return Number.isInteger(n) && n > 0 ? n : Infinity;
+}
+
 export function subscribe(onMessage) {
   if (inTauri) {
     follow("fleet_subscribe", onMessage).catch(() => {});
@@ -46,6 +53,7 @@ export function subscribe(onMessage) {
     .then((snapshot) => {
       if (!snapshot) return;
       const { at, ...rest } = snapshot;
+      if (Array.isArray(rest.sessions)) rest.sessions = rest.sessions.slice(0, demoCount(location.search));
       const current = typeof at === "number" ? shifted(rest, Math.floor(Date.now() / 1000) - at) : snapshot;
       onMessage(current);
       replaySpeaking(current, onMessage);

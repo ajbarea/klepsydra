@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import {
   STATUS, shortAge, longAge, statusParts, voiceName, identity, accessibleName,
   statuses, startedNeeding, orderChanged, shouldSlide, transitionName, announcements, updatedText, badgeSvg, stripItems, card,
-  askText, plainText, tally, crewOf, crewText, crewRing, RING,
+  askText, plainText, tally, crewOf, crewText, crewRing, RING, alsoChip, pillWhen,
 } from "./fleet/model.js";
 import { TONES, hash, initialOf, medallion, medallionSvg, toneOf } from "./fleet/medallion.js";
 
@@ -112,7 +112,7 @@ test("a needs-you session with no word for half an hour reads needs you?, still 
   assert.match(svg, />\?<\/text>/);
   assert.notEqual(svg, badgeSvg("needs_you"));
   assert.equal(stripItems([s], CAST, NOW)[0].badge, svg);
-  assert.deepEqual(card(s, CAST, NOW).pill, { label: "needs you?", age: "no word for 31m" });
+  assert.deepEqual(card(s, CAST, NOW).pill, { label: "needs you?", age: "no word for 31m", when: "31m quiet" });
   const fresh = session();
   assert.equal(startedNeeding(statuses([fresh]), [s]).size, 0, "going quiet is not a new need");
   assert.equal(startedNeeding(statuses([s]), [s]).size, 0, "staying quiet never pulses again");
@@ -128,7 +128,7 @@ test("the strip item and card of a quiet session say so", () => {
   const c = card(quiet(), CAST, NOW);
   assert.equal(c.status, "working");
   assert.equal(c.quiet, true);
-  assert.deepEqual(c.pill, { label: "working?", age: "no activity for 12m" });
+  assert.deepEqual(c.pill, { label: "working?", age: "no activity for 12m", when: "12m quiet" });
   assert.equal(c.label, "Hephaestus, working?, no activity for 12 minutes");
 });
 
@@ -439,7 +439,7 @@ test("the pill stays the plain status; the crew line says what is out", () => {
   const background = { agents: 2, shells: 1 };
   for (const reason of [null, "background"]) {
     const c = card(session({ status: "working", reason, background }), CAST, NOW);
-    assert.deepEqual(c.pill, { label: "working", age: "2m" }, String(reason));
+    assert.deepEqual(c.pill, { label: "working", age: "2m", when: "2m" }, String(reason));
     assert.equal(c.crew, "2 agents, 1 shell");
     assert.equal(c.ring.segments.length, 3);
     assert.equal(c.tone, "working");
@@ -487,7 +487,7 @@ test("the ask line says what a session waits for", () => {
 
 test("a card carries pill, ask, tone, dim, place and its voice as a tooltip", () => {
   const c = card(session(), CAST, NOW);
-  assert.deepEqual(c.pill, { label: "needs you", age: "2m" });
+  assert.deepEqual(c.pill, { label: "needs you", age: "2m", when: "2m" });
   assert.equal(c.ask, "Waiting for you to approve Bash");
   assert.equal(c.tone, "needs");
   assert.equal(c.dim, false);
@@ -496,21 +496,21 @@ test("a card carries pill, ask, tone, dim, place and its voice as a tooltip", ()
   assert.deepEqual(c.also, ["also in ideas"]);
   assert.equal(c.voiceTitle, "Voice: Michael");
   const quiet = card(session({ status: "silent", status_at: ago(360), name: null }), CAST, NOW);
-  assert.deepEqual(quiet.pill, { label: "silent", age: "no word for 6m" });
+  assert.deepEqual(quiet.pill, { label: "silent", age: "no word for 6m", when: "6m" });
   assert.equal(quiet.dim, true);
   assert.equal(quiet.ask, null);
   assert.equal(quiet.task, "No session name yet");
   const idle = card(session({ status: "working", status_at: ago(900), quiet_since: ago(720) }), CAST, NOW);
-  assert.deepEqual(idle.pill, { label: "working?", age: "no activity for 12m" });
+  assert.deepEqual(idle.pill, { label: "working?", age: "no activity for 12m", when: "12m quiet" });
 });
 
 test("the pill's age: ended, error and a quiet needs-you card", () => {
   assert.deepEqual(card(session({ status: "ended", reason: "closed", status_at: ago(360) }), CAST, NOW).pill,
-    { label: "ended \u00b7 closed", age: "6m" });
+    { label: "ended \u00b7 closed", age: "6m", when: "6m" });
   assert.deepEqual(card(session({ status: "error", reason: "rate limit", status_at: ago(180) }), CAST, NOW).pill,
-    { label: "error \u00b7 rate limit", age: "3m" });
+    { label: "error \u00b7 rate limit", age: "3m", when: "3m" });
   assert.deepEqual(card(session({ quiet_since: ago(31 * 60), status_at: ago(35 * 60) }), CAST, NOW).pill,
-    { label: "needs you?", age: "no word for 31m" });
+    { label: "needs you?", age: "no word for 31m", when: "31m quiet" });
 });
 
 test("also lists each other repo once, never the current one", () => {
@@ -611,4 +611,39 @@ test("card: prompt and reply are plain text", () => {
   const c = card({ session_id: "x", status: "idle", prompt: { text: "**hi** `x`" }, reply: { text: "- [a](u)" } }, {}, NOW);
   assert.equal(c.prompt, "hi x");
   assert.equal(c.reply, "a");
+});
+
+test("the compact card folds the also-in list into a +N chip that names every repo", () => {
+  assert.equal(alsoChip([]), null);
+  assert.deepEqual(alsoChip(["ideas"]), { text: "+1", label: "Also in ideas" });
+  assert.deepEqual(alsoChip(["ideas", "talks"]), { text: "+2", label: "Also in ideas and talks" });
+  assert.deepEqual(alsoChip(["ideas", "talks", "papers"]), { text: "+3", label: "Also in ideas, talks and papers" });
+  const touched = [{ repo: "ideas", at: ago(60) }, { repo: "klepsydra", at: ago(60) }, { repo: "ideas", at: ago(30) }, { repo: "talks", at: ago(9) }];
+  const c = card(session({ touched }), CAST, NOW);
+  assert.deepEqual(c.alsoChip, { text: "+2", label: "Also in ideas and talks" }, "each other repo once, never the current one");
+  assert.equal(c.also.length, 2, "the chip counts what the full card lists");
+  assert.equal(card(session({ touched: [] }), CAST, NOW).alsoChip, null);
+});
+
+test("the compact pill's time takes in updated, which has no line of its own there", () => {
+  const working = (over) => session({ status: "working", reason: null, ...over });
+  // Fresh: the status age alone, as on the full card.
+  assert.equal(pillWhen(working({ status_at: ago(120), updated_at: ago(60) }), NOW), "2m");
+  // Over five minutes since anything, and the same age: said once.
+  const stale = working({ status_at: ago(420), updated_at: ago(420) });
+  assert.equal(card(stale, CAST, NOW).updated, "updated 7m ago");
+  assert.equal(pillWhen(stale, NOW), "7m");
+  // In this state 30m, updated 7m ago: both, the status age first.
+  const both = working({ status_at: ago(1800), updated_at: ago(420) });
+  assert.equal(card(both, CAST, NOW).pill.age, "30m", "the full card keeps its pill");
+  assert.equal(card(both, CAST, NOW).pill.when, "30m \u00b7 7m ago");
+  // The boundary is updated's own: at five minutes it is not shown, so the pill holds the status age.
+  assert.equal(pillWhen(working({ status_at: ago(1800), updated_at: ago(300) }), NOW), "30m");
+  // An ended card's pill already says how long; an unknown time is not folded in.
+  assert.equal(pillWhen(session({ status: "ended", reason: "closed", status_at: ago(1800), updated_at: ago(420) }), NOW), "30m");
+  assert.equal(pillWhen(working({ status_at: ago(1800), updated_at: "x" }), NOW), "30m");
+  // Quiet and silent cards shorten the full card's phrase.
+  assert.equal(pillWhen(working({ status_at: ago(1800), updated_at: ago(900), quiet_since: ago(720) }), NOW), "12m quiet");
+  assert.equal(statusParts(working({ quiet_since: ago(720) }), NOW).at(-1), "no activity for 12m");
+  assert.equal(pillWhen(session({ status: "silent", reason: null, status_at: ago(7200), updated_at: ago(7200) }), NOW), "2h");
 });

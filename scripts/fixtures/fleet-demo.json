@@ -76,7 +76,7 @@
   },
   {
    "session_id": "demo-3-af_sarah",
-   "name": "RQ review brief",
+   "name": "RQ review brief: read the FA deck and list every open research question with its evidence",
    "launch_dir": "/home/aj/ajsoftworks",
    "voice": "af_sarah",
    "status": "working",
@@ -477,12 +477,154 @@
     "agents": 0,
     "shells": 1
    }
+  },
+  {
+   "session_id": "demo-15-am_onyx",
+   "name": "Sphragis label rules: refine the house-style classifier thresholds across all three corpora",
+   "launch_dir": "/home/aj/ajsoftworks",
+   "voice": "am_onyx",
+   "status": "needs_you",
+   "reason": "question",
+   "status_at": 1792499760,
+   "active_at": 1792499760,
+   "where": {
+    "repo": "sphragis",
+    "worktree": "label-rules",
+    "branch": "feat/label-rules-refine-only",
+    "at": 1792497000
+   },
+   "touched": [
+    {
+     "repo": "papers",
+     "at": 1792498000
+    },
+    {
+     "repo": "ariadne",
+     "at": 1792498500
+    }
+   ],
+   "prompt": {
+    "text": "tighten the label rules so they only ever refine, and rerun the agreement table",
+    "at": 1792499400
+   },
+   "reply": {
+    "text": "Two rules would widen a label rather than refine it. Should I drop them, or keep them behind a flag until the agreement table is rerun?",
+    "at": 1792499760
+   },
+   "error": null,
+   "updated_at": 1792499760,
+   "quiet_since": null,
+   "tmux": null,
+   "distro": "Ubuntu",
+   "background": {
+    "agents": 0,
+    "shells": 0
+   }
+  },
+  {
+   "session_id": "demo-16-af_kore",
+   "name": "Pharos results sweep",
+   "launch_dir": "/home/aj/ajsoftworks",
+   "voice": "af_kore",
+   "status": "working",
+   "reason": null,
+   "status_at": 1792498200,
+   "active_at": 1792499940,
+   "where": {
+    "repo": "pharos",
+    "worktree": null,
+    "branch": "main",
+    "at": 1792497000
+   },
+   "touched": [],
+   "prompt": {
+    "text": "sweep the five seeds and write the medians to results/",
+    "at": 1792498200
+   },
+   "reply": {
+    "text": "Seed 3 of 5 is running; the first two medians are in results/sweep.csv.",
+    "at": 1792499580
+   },
+   "error": null,
+   "updated_at": 1792499580,
+   "quiet_since": null,
+   "tmux": null,
+   "distro": "Ubuntu",
+   "background": {
+    "agents": 0,
+    "shells": 1
+   }
   }
  ],
  "speaking": {
   "session_id": "demo-9-bm_fable",
   "started_at": 1792500000,
   "ends_at": 1792600000,
-  "envelope": [0.04, 0.57, 0.32, 0.0, 0.23, 0.62, 0.58, 0.21, 0.0, 0.23, 0.64, 0.76, 0.4, 0.02, 0.21, 0.76, 0.74, 0.15, 0.11, 0.75, 0.83, 0.21, 0.05, 0.6, 0.97, 0.66, 0.13, 0.04, 0.49, 0.14, 0.13, 0.04, 0.0, 0.08, 1.0, 0.56, 0.0, 0.42, 0.98, 0.61, 0.03, 0.22, 0.8, 0.9, 0.45, 0.03, 0.13, 0.6, 0.87, 0.57, 0.07, 0.12, 0.65, 0.71, 0.17, 0.06, 0.55, 0.66, 0.22, 0.01, 0.3, 0.6, 0.5, 0.02]
+  "envelope": [
+   0.04,
+   0.57,
+   0.32,
+   0.0,
+   0.23,
+   0.62,
+   0.58,
+   0.21,
+   0.0,
+   0.23,
+   0.64,
+   0.76,
+   0.4,
+   0.02,
+   0.21,
+   0.76,
+   0.74,
+   0.15,
+   0.11,
+   0.75,
+   0.83,
+   0.21,
+   0.05,
+   0.6,
+   0.97,
+   0.66,
+   0.13,
+   0.04,
+   0.49,
+   0.14,
+   0.13,
+   0.04,
+   0.0,
+   0.08,
+   1.0,
+   0.56,
+   0.0,
+   0.42,
+   0.98,
+   0.61,
+   0.03,
+   0.22,
+   0.8,
+   0.9,
+   0.45,
+   0.03,
+   0.13,
+   0.6,
+   0.87,
+   0.57,
+   0.07,
+   0.12,
+   0.65,
+   0.71,
+   0.17,
+   0.06,
+   0.55,
+   0.66,
+   0.22,
+   0.01,
+   0.3,
+   0.6,
+   0.5,
+   0.02
+  ]
  }
 }

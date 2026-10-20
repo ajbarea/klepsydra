@@ -158,6 +158,31 @@ export function announcements(before, sessions, cast, nowMs = Date.now()) {
     });
 }
 
+/** "a", "a and b", "a, b and c". */
+const listWords = (xs) => (xs.length < 2 ? xs.join("") : `${xs.slice(0, -1).join(", ")} and ${xs.at(-1)}`);
+
+/** The compact card's "+2" for the repos a session touched besides its own, named in full for hover and its accessible name; null with none. */
+export function alsoChip(repos) {
+  if (!repos.length) return null;
+  return { text: `+${repos.length}`, label: `Also in ${listWords(repos)}` };
+}
+
+/**
+ * The compact card's pill time, which takes in "updated Nm ago" since that card
+ * has no line for it: the status age alone, or "30m · 7m ago" when the newest
+ * field is newer than the status and over five minutes old. An ended card's
+ * pill already says how long; a quiet one's says "12m quiet", short for the
+ * full card's "no activity for 12m".
+ */
+export function pillWhen(s, nowMs) {
+  if (isQuiet(s)) return `${shortAge(ageMs(s.quiet_since, nowMs))} quiet`; // the full card's "no activity for 12m"
+  if (s.status === "silent") return shortAge(ageMs(s.status_at, nowMs)); // "silent 2h": the full card's "no word for 2h"
+  const age = statusParts(s, nowMs).at(-1);
+  if (s.status === "ended" || !updatedText(s, nowMs)) return age;
+  const since = shortAge(ageMs(s.updated_at, nowMs));
+  return since === "unknown" || since === age ? age : `${age} \u00b7 ${since} ago`;
+}
+
 /** "updated 7m ago" once the newest field is over five minutes old. */
 export function updatedText(s, nowMs) {
   const age = ageMs(s.updated_at, nowMs);
@@ -335,6 +360,7 @@ export function card(s, cast, nowMs) {
   const who = identity(s, cast);
   const st = statusOf(s.status, isQuiet(s));
   const crew = crewOf(s);
+  const also = [...new Set((s.touched ?? []).map((t) => t.repo))].filter((r) => r && r !== s.where?.repo);
   return {
     id: s.session_id,
     task: s.name || "No session name yet",
@@ -342,6 +368,7 @@ export function card(s, cast, nowMs) {
     pill: {
       label: PILL_REASON.has(s.status) && s.reason ? `${st.label} \u00b7 ${s.reason}` : st.label,
       age: statusParts(s, nowMs).at(-1),
+      when: pillWhen(s, nowMs),
     },
     ask: s.status === "needs_you" ? askText(s.reason) : null,
     ring: crewRing(crew),
@@ -352,7 +379,8 @@ export function card(s, cast, nowMs) {
     promptFree: reasonText(s) === PROMPT_FREE && crewSize(crew) > 0,
     dim: DIM.has(s.status),
     place: s.where ? { repo: s.where.repo, worktree: s.where.worktree ?? null, branch: s.where.branch ?? null } : null,
-    also: [...new Set((s.touched ?? []).map((t) => t.repo))].filter((r) => r && r !== s.where?.repo).map((r) => `also in ${r}`),
+    also: also.map((r) => `also in ${r}`),
+    alsoChip: alsoChip(also),
     voiceTitle: who.voice ? `Voice: ${who.voice}` : null,
     name: who.name,
     session: s.name ?? null,

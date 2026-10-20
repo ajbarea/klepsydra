@@ -1,9 +1,23 @@
 /* The card wall: a normal, resizable window, so plain pixels rather than the
    gauge's zoom. Four columns at 1920 px wide; fewer below that. */
 :root {
+  /* One spacing scale for both densities; each density picks its steps. */
+  --space-1: 4px;
+  --space-2: 6px;
+  --space-3: 8px;
+  --space-4: 10px;
+  --space-5: 12px;
+  --space-6: 14px;
+  --space-7: 16px;
+  --space-8: 18px;
+  --space-9: 28px;
   --card-min: 420px;
-  --card-gap: 16px;
-  --wall-pad: 28px;
+  /* Comfortable: the full card. */
+  --card-gap: var(--space-7);
+  --wall-pad: var(--space-9);
+  --card-pad: var(--space-8) var(--space-8) var(--space-6);
+  --card-rows: var(--space-5); /* between a card's rows; with --head-gap, the room the speaking waves need */
+  --head-gap: var(--space-6);
   --wall-face: 80px;
   --wall-bg: #11151b;
   --card-bg: #1a2029;
@@ -28,6 +42,17 @@
   --needs-ink: #000000; /* on --tone-needs */
   --font: "Segoe UI Variable Text", "Segoe UI", "Inter", system-ui, sans-serif;
   --display: "Segoe UI Variable Display", "Segoe UI", "Inter Display", "Inter", system-ui, sans-serif;
+}
+/* Compact: three short rows and no footer, so eight cards fit half a
+   1920x1080 screen. Set on the bar and the wall, never on :root, so the
+   unseen comfortable copy that Auto measures keeps the comfortable steps. */
+[data-density="compact"] {
+  --card-gap: var(--space-5);
+  --wall-pad: var(--space-5);
+  --card-pad: var(--space-5) var(--space-6);
+  --card-rows: var(--space-4);
+  --head-gap: var(--space-5);
+  --wall-face: 56px;
 }
 
 * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -54,7 +79,24 @@ html, body { background: var(--wall-bg); color: var(--text); font: 14px/1.45 var
 .tally .t-error b { color: var(--tone-error); }
 #new-note { order: 1; color: var(--text-dim); font-size: 12.5px; }
 #new-note:empty { display: none; }
-#new-session { order: 2; }
+#new-session { order: 3; }
+
+/* Density: a quiet segmented control beside + New session. */
+.density { order: 2; display: inline-flex; gap: 2px; padding: 1px; border: 1px solid var(--card-line); border-radius: 8px; }
+.density label {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px; /* the 24x24 minimum target (WCAG 2.2, 2.5.8); every label is wider */
+  padding: 0 var(--space-4);
+  border-radius: 6px;
+  font: 600 12.5px/1 var(--font);
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.density label:hover { color: var(--text); }
+.density label:has(input:checked) { background: var(--button-bg); color: var(--text); }
+.density label:has(input:focus-visible) { outline: 2px solid var(--card-focus); outline-offset: 2px; }
+.density input { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 
 button {
   font: 600 13px/1 var(--font);
@@ -82,7 +124,7 @@ button[aria-disabled="true"], #new-session[aria-disabled="true"] { color: var(--
 /* The ring sits 2px off the button, on the card's own colour, so it never touches an accent. */
 button:focus-visible { outline: 2px solid var(--card-focus); outline-offset: 2px; }
 
-#wall {
+.wall {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(var(--card-min), 1fr));
   gap: var(--card-gap);
@@ -98,9 +140,9 @@ button:focus-visible { outline: 2px solid var(--card-focus); outline-offset: 2px
   isolation: isolate; /* the waves sit behind the card's text, above its fill */
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: var(--card-rows);
   min-width: 0;
-  padding: 18px 18px 14px;
+  padding: var(--card-pad);
   border-radius: 14px;
   background: var(--card-bg);
   border: 1px solid var(--card-line);
@@ -131,18 +173,19 @@ button:focus-visible { outline: 2px solid var(--card-focus); outline-offset: 2px
   display: grid;
   grid-template-columns: var(--wall-face) minmax(0, 1fr) auto;
   grid-template-areas: "face name pill" "face task task";
-  column-gap: 14px;
+  column-gap: var(--head-gap);
 }
 
 /* The ring: the session's background crew, one segment per subagent (solid)
    or background shell (thinner, dashed), so the kind never rests on colour. */
 .portrait { grid-area: face; position: relative; width: var(--wall-face); height: var(--wall-face); }
-.portrait .face { position: absolute; inset: 7px; width: calc(100% - 14px); height: calc(100% - 14px); }
+.portrait .face { --inset: calc(var(--wall-face) * 7 / 80); position: absolute; inset: var(--inset); width: calc(100% - 2 * var(--inset)); height: calc(100% - 2 * var(--inset)); }
 .portrait .ring { position: absolute; inset: 0; width: 100%; height: 100%; }
 /* Speaking: gold waves outside the crew ring, drawn by wall.js from keryx's
-   loudness; a still gold ring under reduced motion. 12px is the room before the
-   next row (speaking.js WAVE). */
-.portrait .waves { position: absolute; inset: -12px; width: calc(100% + 24px); height: calc(100% + 24px); z-index: -1; overflow: visible; pointer-events: none; }
+   loudness; a still gold ring under reduced motion. They reach 12 of the
+   portrait's 80 units past it, which --head-gap and --card-rows leave free in
+   either density (speaking.js WAVE). */
+.portrait .waves { --reach: calc(var(--wall-face) * 12 / 80); position: absolute; inset: calc(-1 * var(--reach)); width: calc(100% + 2 * var(--reach)); height: calc(100% + 2 * var(--reach)); z-index: -1; overflow: visible; pointer-events: none; }
 .waves circle { fill: none; }
 .ring .track { fill: none; stroke: var(--ring-track); stroke-width: 4; }
 .ring.busy .track { stroke: transparent; } /* segments stand on the card, gaps and all */
@@ -185,7 +228,8 @@ button:focus-visible { outline: 2px solid var(--card-focus); outline-offset: 2px
   color: color-mix(in oklab, var(--tone) 70%, white);
   white-space: nowrap;
 }
-.pill .age { color: var(--text-dim); font-weight: 500; font-variant-numeric: tabular-nums; }
+.pill .age, .pill .when { color: var(--text-dim); font-weight: 500; font-variant-numeric: tabular-nums; }
+.pill .when { display: none; } /* the compact card's merged time */
 .mark { display: inline-flex; flex: none; }
 .pill .badge { width: 16px; height: 16px; }
 
@@ -205,6 +249,18 @@ button:focus-visible { outline: 2px solid var(--card-focus); outline-offset: 2px
 .branch svg { width: 12px; height: 12px; flex: none; }
 .also { display: flex; flex-wrap: wrap; gap: 4px 10px; list-style: none; margin-top: -6px; color: var(--text-quiet); font-size: 12.5px; }
 .also:empty { display: none; }
+.meta, .foot { display: contents; } /* rows of their own only on the compact card */
+.also-more {
+  display: none;
+  flex: none;
+  padding: 1px 6px;
+  border: 1px solid var(--card-line);
+  border-radius: 999px;
+  color: var(--text-dim);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  cursor: default;
+}
 .crew-line { display: flex; flex-wrap: wrap; gap: 4px 10px; margin-top: -6px; color: var(--text-dim); font-size: 12.5px; }
 .crew-line .free { color: var(--text-quiet); }
 .crew-line .free::before { content: "\00b7"; margin-right: 10px; }
@@ -240,6 +296,94 @@ button:focus-visible { outline: 2px solid var(--card-focus); outline-offset: 2px
 .actions { display: flex; align-items: center; gap: 8px; border-top: 1px solid var(--card-line); padding-top: 12px; }
 .actions .note { color: var(--text-dim); font-size: 12.5px; margin-right: auto; overflow-wrap: anywhere; }
 .actions .why { color: var(--text-dim); font-size: 12.5px; }
+
+/* The compact card: one grid of three short rows (header, meta, exchange)
+   and no footer. Open terminal moves up beside the pill, Clear joins it, and
+   a note floats over the card's corner, so no card ever grows a row. Every
+   row is as tall as the tallest card, for an even wall. Gaps are margins, so
+   a hidden Clear leaves none. */
+.wall[data-density="compact"] { grid-auto-rows: 1fr; }
+.wall[data-density="compact"] .card {
+  display: grid;
+  grid-template-columns: var(--wall-face) minmax(0, 1fr) auto auto auto;
+  grid-template-areas:
+    "face name pill clear jump"
+    "face task task task task"
+    "meta meta meta meta meta"
+    "ask ask ask ask ask"
+    "said said said said said";
+  gap: 0;
+  align-content: start;
+}
+[data-density="compact"] .card header,
+[data-density="compact"] .card .actions,
+[data-density="compact"] .card .foot { display: contents; }
+[data-density="compact"] .name { margin-left: var(--head-gap); font-size: 16px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+[data-density="compact"] .task { margin: 0 0 0 var(--head-gap); font-size: 13px; }
+[data-density="compact"] .pill { align-self: center; margin-left: var(--space-3); gap: 6px; padding: 3px 8px 3px 6px; font-size: 12px; }
+[data-density="compact"] .pill .badge { width: 14px; height: 14px; }
+[data-density="compact"] .pill .age { display: none; }
+[data-density="compact"] .pill .when { display: inline; }
+[data-density="compact"] .jump,
+[data-density="compact"] .clear {
+  grid-area: jump;
+  align-self: center;
+  min-width: 24px;
+  min-height: 28px; /* over the 24x24 minimum (WCAG 2.2, 2.5.8) */
+  margin-left: var(--space-3);
+  padding: 0 var(--space-4);
+  font-size: 12px;
+}
+[data-density="compact"] .clear { grid-area: clear; }
+/* An ended card's Open terminal is off and its pill says why: Clear takes its place. */
+[data-density="compact"] .card:has(.clear:not([hidden])) .jump[aria-disabled="true"] { display: none; }
+[data-density="compact"] .why { display: none; } /* the button's title, and the pill, say it */
+[data-density="compact"] .note:not(:empty) {
+  position: absolute;
+  right: var(--space-6);
+  bottom: var(--space-4);
+  max-width: calc(100% - 2 * var(--space-6));
+  padding: 3px var(--space-3);
+  border: 1px solid var(--button-line);
+  border-radius: 6px;
+  background: var(--button-bg);
+  color: var(--text);
+  font-size: 12px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+[data-density="compact"] .meta {
+  grid-area: meta;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+  margin-top: var(--card-rows);
+  white-space: nowrap;
+  font-size: 13px;
+}
+[data-density="compact"] .where { flex: 0 1 auto; flex-wrap: nowrap; gap: var(--space-3); min-width: 0; overflow: hidden; }
+[data-density="compact"] .repo { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+[data-density="compact"] .branch { flex: 0 1 auto; min-width: 0; padding: 1px 6px; font-size: 12px; }
+[data-density="compact"] .branch span { overflow: hidden; text-overflow: ellipsis; }
+[data-density="compact"] .also { display: none; }
+[data-density="compact"] .also-more:not([hidden]) { display: inline-block; }
+[data-density="compact"] .crew-line { flex: none; margin-top: 0; font-size: 12px; }
+[data-density="compact"] .crew-line .free { display: none; } /* the full card says it */
+[data-density="compact"] .ask { grid-area: ask; margin-top: var(--card-rows); padding: 3px var(--space-3); gap: var(--space-2); font-size: 13px; }
+[data-density="compact"] .ask .badge { width: 14px; height: 14px; }
+[data-density="compact"] .ask .text { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+[data-density="compact"] .said { grid-area: said; gap: 2px; margin-top: var(--card-rows); font-size: 13px; line-height: 1.4; }
+[data-density="compact"] .said .prompt,
+[data-density="compact"] .card.asking .said .reply { -webkit-line-clamp: 1; }
+[data-density="compact"] .said .error {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+}
+[data-density="compact"] .updated { display: none; }
 
 /* One pulse when a card starts needing AJ: an amber ring leaves the edge and fades. */
 @media (prefers-reduced-motion: no-preference) {

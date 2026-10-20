@@ -61,14 +61,57 @@ test("badges take their size from where they sit", () => {
   assert.doesNotMatch(badgeCss.replace(/\/\*[\s\S]*?\*\//g, ""), /\d+(\.\d+)?px/);
 });
 
-test("the wall fits four columns at 1920 px and reflows below", () => {
+/** wall.css's tokens for a density, var() references resolved to px. */
+function densityPx(css, density) {
+  const block = (sel) => css.match(new RegExp(`(?:^|\\n)${sel.replace(/[[\]"=]/g, "\\$&")} \\{([^}]*)\\}`))?.[1] ?? "";
+  const tokens = (b) => Object.fromEntries([...b.matchAll(/(--[\w-]+):\s*([^;]+);/g)].map((m) => [m[1], m[2].trim()]));
+  const set = { ...tokens(block(":root")), ...(density === "compact" ? tokens(block('[data-density="compact"]')) : {}) };
+  const px = (v) => v.replace(/var\((--[\w-]+)\)/g, (_, n) => px(set[n])).trim();
+  return (name) => px(set[name]).split(/\s+/).map(parseFloat);
+}
+
+test("the wall fits four columns at 1920 px and reflows below, in either density", () => {
   const wallCss = read("./fleet/wall.css");
-  const px = (name) => parseFloat(token(wallCss, name));
-  const tokens = { min: px("--card-min"), gap: px("--card-gap"), pad: px("--wall-pad") };
   const SCROLLBAR = 17;
-  assert.equal(columnsAt(1920 - SCROLLBAR, tokens), 4);
-  assert.equal(columnsAt(1280 - SCROLLBAR, tokens), 2);
-  assert.equal(columnsAt(800 - SCROLLBAR, tokens), 1);
+  for (const density of ["comfortable", "compact"]) {
+    const px = densityPx(wallCss, density);
+    const tokens = { min: px("--card-min")[0], gap: px("--card-gap")[0], pad: px("--wall-pad")[0] };
+    assert.equal(columnsAt(1920 - SCROLLBAR, tokens), 4, density);
+    assert.equal(columnsAt(1920, tokens), 4, `${density}, no scrollbar`);
+    assert.equal(columnsAt(960, tokens), 2, `${density}, half the screen`);
+    assert.equal(columnsAt(800 - SCROLLBAR, tokens), 1, density);
+  }
+  assert.equal(columnsAt(1280 - SCROLLBAR, { min: 420, gap: 16, pad: 28 }), 2);
+});
+
+test("both densities step on one spacing scale, and compact is the 12 px grid the issue asks for", () => {
+  const css = read("./fleet/wall.css");
+  const scale = [...css.matchAll(/--space-\d+:\s*([\d.]+)px;/g)].map((m) => Number(m[1]));
+  assert.ok(scale.length >= 6 && scale.every((v, i) => i === 0 || v > scale[i - 1]), "an ascending scale");
+  const compact = css.match(/\n\[data-density="compact"\] \{([^}]*)\}/)[1];
+  for (const [, name, value] of compact.matchAll(/(--[\w-]+):\s*([^;]+);/g)) {
+    if (name === "--wall-face") continue;
+    assert.match(value, /^(var\(--space-\d+\)\s*)+$/, `${name} steps on the scale`);
+  }
+  const comfortable = densityPx(css, "comfortable");
+  const tight = densityPx(css, "compact");
+  assert.deepEqual([comfortable("--card-gap")[0], comfortable("--wall-pad")[0]], [16, 28], "comfortable is unchanged");
+  assert.deepEqual([tight("--card-gap")[0], tight("--wall-pad")[0]], [12, 12]);
+  assert.deepEqual(comfortable("--card-pad"), [18, 18, 14], "comfortable is unchanged");
+  assert.equal(comfortable("--wall-face")[0], 80);
+  assert.equal(tight("--wall-face")[0], 56);
+});
+
+test("compact keeps Open terminal, Clear and the density choices at 24x24 px or more", () => {
+  const css = read("./fleet/wall.css");
+  const rule = (sel) => css.match(new RegExp(`${sel.replace(/[.[\]"=]/g, "\\$&")} \\{([^}]*)\\}`))?.[1] ?? "";
+  const px = (decl, prop) => parseFloat(decl.match(new RegExp(`(?:^|[\\s;])${prop}:\\s*([\\d.]+)px`))?.[1] ?? "NaN");
+  const buttons = rule('[data-density="compact"] .jump,\n[data-density="compact"] .clear');
+  assert.ok(px(buttons, "min-height") >= 24 && px(buttons, "min-width") >= 24, "Open terminal and Clear");
+  assert.ok(px(rule(".density label"), "min-height") >= 24, "a density choice");
+  // The needs fill and the accent marker are the base rules', untouched by compact.
+  assert.doesNotMatch(buttons, /background|box-shadow|border/);
+  assert.doesNotMatch(css, /\[data-density="compact"\][^{]*\.jump\[data-kind/);
 });
 
 test("the wall's text meets 4.5:1 on live and quiet cards", () => {

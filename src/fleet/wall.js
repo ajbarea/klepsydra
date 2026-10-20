@@ -6,11 +6,13 @@ import { announcer, press, setOff, syncChildren } from "./dom.js";
 import { inTauri, subscribe } from "./feed.js";
 import { showFace } from "./face.js";
 import { GOLD, SPEAK_FADE_MS, STILL, Speaker, WAVE, waves } from "./speaking.js";
+import { parseDensity, resolveDensity } from "./density.js";
 
 const TICK_MS = 15_000; // ages re-render between snapshots, as on the gauge
 const FACE_PX = 66; // --wall-face less the ring's inset
 const SVG_NS = "http://www.w3.org/2000/svg";
 const SEGMENT_FADE_MS = 200; // wall.css .seg.leave
+const RESIZE_SETTLE_MS = 100; // Auto measures once a drag pauses, not every frame of it
 const BRANCH_ICON =
   '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="4" cy="3.5" r="1.8"/><circle cx="4" cy="12.5" r="1.8"/><circle cx="12" cy="5" r="1.8"/><path d="M4 5.3v5.4M12 6.8c0 3-3.5 3-8 4.2"/></svg><span></span>';
 const TALLY = [
@@ -29,6 +31,8 @@ const tpl = document.getElementById("card-tpl");
 const counts = document.querySelector(".tally");
 const newButton = document.getElementById("new-session");
 const newNote = document.getElementById("new-note");
+const bar = document.querySelector(".bar");
+const densityPicker = document.querySelector(".density");
 newButton.hidden = !inTauri;
 newButton.addEventListener("click", () =>
   press(newButton, newNote, () => window.__TAURI__.core.invoke("launch_session"), "Starting…"),
@@ -54,7 +58,7 @@ const show = (el, text) => {
 
 function paint(el, c) {
   const pulsing = el.classList.contains("pulse"); // a repaint must not cut the pulse short
-  el.className = `card ${c.dim ? "dim" : ""} tone-${c.tone}${pulsing ? " pulse" : ""}`;
+  el.className = `card ${c.dim ? "dim" : ""} tone-${c.tone}${c.ask ? " asking" : ""}${pulsing ? " pulse" : ""}`;
   el.style.viewTransitionName = transitionName(c.id);
   el.setAttribute("aria-label", c.label);
   el.querySelector(".portrait").title = c.voiceTitle ?? "";
@@ -70,6 +74,7 @@ function paint(el, c) {
   }
   setText(el.querySelector(".pill .label"), c.pill.label);
   setText(el.querySelector(".pill .age"), c.pill.age);
+  setText(el.querySelector(".pill .when"), c.pill.when);
   const crewLine = el.querySelector(".crew-line");
   crewLine.hidden = !c.crew;
   setText(crewLine.querySelector(".count"), c.crew);
@@ -88,6 +93,11 @@ function paint(el, c) {
   el.querySelector(".also").replaceChildren(
     ...c.also.map((t) => Object.assign(document.createElement("li"), { textContent: t })),
   );
+  const more = el.querySelector(".also-more");
+  show(more, c.alsoChip?.text);
+  more.title = c.alsoChip?.label ?? "";
+  if (c.alsoChip) more.setAttribute("aria-label", c.alsoChip.label);
+  else more.removeAttribute("aria-label");
 
   show(el.querySelector(".error"), c.error);
   for (const [cls, text] of [["prompt", c.prompt], ["reply", c.reply]]) {
@@ -176,6 +186,12 @@ function render(snapshot) {
   const sync = () => {
     syncChildren(wall, cards, (c) => c.id, () => tpl.content.firstElementChild.cloneNode(true), paint);
     for (const el of wall.children) if (started.has(el.dataset.key) && !reducedMotion()) el.classList.add("pulse");
+    // Auto looks again when a card arrives or leaves, not when one's text changes.
+    const ids = cards.map((c) => c.id).join(" ");
+    if (ids !== lastIds) {
+      lastIds = ids;
+      showDensity();
+    }
   };
   const was = [...wall.children].map((el) => el.dataset.key);
   if (shouldSlide(was, cards.map((c) => c.id), snapshot) && canSlide()) document.startViewTransition(() => sync());
@@ -270,6 +286,57 @@ wall.addEventListener("click", (e) => {
   if (button.classList.contains("clear")) press(button, note, () => invoke("clear_session", { id: button.dataset.id }));
   else press(button, note, () => invoke("jump_to_terminal", { id: button.dataset.id, name: button.dataset.name }));
 });
+
+// Density: the saved choice, and what is on screen. Auto measures an unseen
+// comfortable copy of the wall, so its switch rests on the real render.
+let choice = "auto";
+let shown = "comfortable";
+let lastIds = "";
+
+/** Whether the comfortable grid, with `extra` more cards as tall as its tallest, fits the window without scrolling. */
+function comfortableFits(extra) {
+  const probe = wall.cloneNode(true);
+  probe.removeAttribute("id");
+  probe.removeAttribute("aria-label");
+  probe.dataset.density = "comfortable";
+  probe.inert = true;
+  probe.setAttribute("aria-hidden", "true");
+  // The window's whole width: a grid that fits shows no scrollbar to take any of it.
+  Object.assign(probe.style, { position: "absolute", top: "0", left: "0", width: `${innerWidth}px`, visibility: "hidden" });
+  const cards = [...probe.children];
+  for (const c of cards) c.style.viewTransitionName = "";
+  document.body.append(probe);
+  const tallest = cards.reduce((a, b) => (b.offsetHeight > (a?.offsetHeight ?? -1) ? b : a), null);
+  for (let i = 0; i < extra && tallest; i++) probe.append(tallest.cloneNode(true));
+  const fits = wall.offsetTop + probe.offsetHeight <= innerHeight;
+  probe.remove();
+  return fits;
+}
+
+function showDensity() {
+  shown = resolveDensity(choice, shown, comfortableFits);
+  wall.dataset.density = shown;
+  bar.dataset.density = shown;
+  densityPicker.querySelector('label:has([value="auto"])').title =
+    `Compact while the comfortable cards would scroll; ${shown} now`;
+}
+
+function choose(value) {
+  choice = parseDensity(value);
+  for (const input of densityPicker.querySelectorAll("input")) input.checked = input.value === choice;
+  showDensity();
+}
+
+densityPicker.addEventListener("change", (e) => {
+  choose(e.target.value);
+  if (inTauri) window.__TAURI__.core.invoke("set_wall_density", { density: choice }).catch(() => {});
+});
+let resizeTimer = 0;
+addEventListener("resize", () => {
+  clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(showDensity, RESIZE_SETTLE_MS);
+});
+if (inTauri) window.__TAURI__.core.invoke("get_wall_density").then(choose, () => {});
 
 subscribe(receive);
 setInterval(() => render(), TICK_MS);
