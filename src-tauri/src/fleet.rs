@@ -84,7 +84,7 @@ pub fn start(app: &AppHandle, dir: Option<PathBuf>) {
     std::thread::spawn(move || {
         let mut reader = Reader::new(&dir);
         #[cfg(windows)]
-        let mut cues = Cues::default();
+        let mut cues = Cues::new(unix_now());
         let mut wait = Duration::ZERO;
         loop {
             let (snapshot, problems) = reader.step(wait, unix_now);

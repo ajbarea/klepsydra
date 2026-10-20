@@ -11,6 +11,8 @@ const NOTE_S = 0.18;
 const GAP_S = 0.04;
 const ATTACK_S = 0.005;
 const DECAY_S = 0.1;
+/** The last stretch of each note fades to zero, so it ends without a click. */
+const RELEASE_S = 0.01;
 
 /** Equal-tempered pitch of a MIDI note, A4 = 69 = 440 Hz. */
 const hz = (midi) => 440 * 2 ** ((midi - 69) / 12);
@@ -22,16 +24,18 @@ export const CUES = {
   done: [E5, A5],
 };
 
-/** 16-bit mono PCM samples: each note a sine with a fast attack and an exponential decay. */
+/** 16-bit mono PCM samples: each note a sine with a fast attack, an exponential decay and a release to zero. */
 export function samples(notes) {
   const note = Math.round(NOTE_S * RATE);
   const gap = Math.round(GAP_S * RATE);
+  const release = Math.round(RELEASE_S * RATE);
   const out = new Int16Array(notes.length * note + (notes.length - 1) * gap);
   notes.forEach((midi, n) => {
     const start = n * (note + gap);
     for (let i = 0; i < note; i++) {
       const t = i / RATE;
-      const env = Math.min(1, t / ATTACK_S) * Math.exp(-t / DECAY_S);
+      const tail = Math.min(1, (note - 1 - i) / release);
+      const env = Math.min(1, t / ATTACK_S) * Math.exp(-t / DECAY_S) * tail;
       out[start + i] = Math.round(PEAK * env * Math.sin(2 * Math.PI * hz(midi) * t) * 32767);
     }
   });

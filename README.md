@@ -512,9 +512,11 @@ With "Ping" ticked in the tray menu, klepsydra plays a short chime when a
 session needs you or finishes its turn: two notes at one pitch when it needs
 you (a prompt, a question or an error), two rising notes when a turn ends.
 Ping is off until you tick it, and ticking it plays the needs-you chime once.
-Several sessions changing together make one chime, needs-you first, and a
-chime within 2 seconds of the last is skipped. Nothing plays for what was
-already on the strip when klepsydra started.
+Several sessions changing together make one chime, needs-you first. Within 2
+seconds of a chime only a needs-you after a done plays, so a burst makes one
+sound and a prompt still gets its own. A chime answers a hook event: nothing
+plays for what was already on the strip when klepsydra started, or for a
+session coming back from silence.
 
 The chime stays silent while Do Not Disturb or a Focus session is on, or
 while a full-screen app, a game or presentation mode is in front. Windows

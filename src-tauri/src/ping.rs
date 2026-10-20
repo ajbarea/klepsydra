@@ -19,7 +19,7 @@ fn wav(cue: Cue) -> &'static [u8] {
 /// Whether Ping is on, as the tray last set it.
 static ON: AtomicBool = AtomicBool::new(false);
 
-pub fn on() -> bool {
+fn on() -> bool {
     ON.load(Ordering::Relaxed)
 }
 
@@ -48,7 +48,7 @@ mod win {
     use windows::core::PCWSTR;
     use windows::Win32::Media::Audio::{PlaySoundW, SND_ASYNC, SND_MEMORY, SND_NODEFAULT};
     use windows::Win32::UI::Shell::{
-        SHQueryUserNotificationState, QUNS_APP, QUNS_BUSY, QUNS_PRESENTATION_MODE,
+        SHQueryUserNotificationState, QUNS_BUSY, QUNS_PRESENTATION_MODE,
         QUNS_RUNNING_D3D_FULL_SCREEN,
     };
 
@@ -94,7 +94,7 @@ mod win {
         let state = unsafe { SHQueryUserNotificationState() };
         matches!(
             state,
-            Ok(QUNS_BUSY | QUNS_RUNNING_D3D_FULL_SCREEN | QUNS_PRESENTATION_MODE | QUNS_APP)
+            Ok(QUNS_BUSY | QUNS_RUNNING_D3D_FULL_SCREEN | QUNS_PRESENTATION_MODE)
         )
     }
 

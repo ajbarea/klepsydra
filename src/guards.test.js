@@ -79,7 +79,7 @@ const SOUND = [
 export const makesSound = (text) => SOUND.filter((re) => re.test(text)).map(String);
 
 // Native audio from Rust sources and Cargo manifests.
-const NATIVE_SOUND = [/\b(rodio|cpal|PlaySound|MessageBeep|Beep)\b/];
+const NATIVE_SOUND = [/\b(rodio|cpal|(snd)?PlaySound[AW]?|MessageBeep|Beep)\b/];
 export const makesNativeSound = (text) => NATIVE_SOUND.filter((re) => re.test(text)).map(String);
 
 export const loopsForever = (css) => /\binfinite\b|iterations\s*:\s*Infinity/.test(stripCssComments(css));
@@ -246,9 +246,13 @@ test("no shell or opener plugin is configured", () => {
   assert.deepEqual(processPlugins('{"plugins":{"window-state":{}}}'), []);
 });
 
-test("the app makes no sound", () => {
+// Ping is the one sound, and it plays only the chimes built into the binary.
+const PING = "src-tauri/src/ping.rs";
+
+test("only Ping makes a sound", () => {
+  assert.ok(RUST.includes(PING), `${PING} not found`);
   for (const f of FRONTEND) assert.deepEqual(makesSound(read(f)), [], f);
-  for (const f of [...RUST, ...CARGO]) assert.deepEqual(makesNativeSound(read(f)), [], f);
+  for (const f of [...RUST, ...CARGO].filter((f) => f !== PING)) assert.deepEqual(makesNativeSound(read(f)), [], f);
   for (const planted of [
     "new Audio(src)",
     "speechSynthesis.speak(u)",
@@ -264,9 +268,20 @@ test("the app makes no sound", () => {
   ]) {
     assert.notDeepEqual(makesSound(planted), [], planted);
   }
-  for (const planted of ['rodio = "0.19"', "use cpal::traits::*;", "PlaySound(p, 0, 0)", "MessageBeep(0)", "Beep(440, 100)"]) {
+  for (const planted of ['rodio = "0.19"', "use cpal::traits::*;", "PlaySound(p, 0, 0)", "PlaySoundW(p, None, f)", "sndPlaySoundA(p, 0)", "MessageBeep(0)", "Beep(440, 100)"]) {
     assert.notDeepEqual(makesNativeSound(planted), [], planted);
   }
+});
+
+test("Ping plays only its embedded chimes", () => {
+  const src = read(PING);
+  assert.deepEqual([...src.matchAll(/\bPlaySoundW\(/g)].length, 1);
+  assert.match(src, /SND_MEMORY \| SND_ASYNC \| SND_NODEFAULT/);
+  assert.doesNotMatch(src, /SND_FILENAME|SND_ALIAS|SND_LOOP|\b(rodio|cpal|MessageBeep|Beep)\b/);
+  assert.deepEqual([...src.matchAll(/include_bytes!\("([^"]+)"\)/g)].map((m) => m[1]), [
+    "../sounds/needs-you.wav",
+    "../sounds/done.wav",
+  ]);
 });
 
 test("no animation runs forever, and every animation stops under reduced motion", () => {
