@@ -42,7 +42,12 @@ CAST=${KLEPSYDRA_CAST:-}
 LOCK=${XDG_RUNTIME_DIR:-/tmp}/klepsydra-fleet-$UID.lock
 PROMPT_CHARS=300
 # The events README.md registers this hook on; any other is ignored.
-EVENTS="SessionStart UserPromptSubmit PermissionRequest PreToolUse Notification PostToolUse PostToolUseFailure Stop StopFailure SessionEnd"
+EVENTS="SessionStart UserPromptSubmit PermissionRequest PreToolUse Notification PostToolUse PostToolUseFailure SubagentStart SubagentStop Stop StopFailure SessionEnd"
+# At most this many background entries are kept; past it the oldest go.
+BACKGROUND_MAX=64
+# Async hooks can land out of order: a subagent's stop seen before its start is
+# remembered this long, so the late start adds no phantom.
+STOPPED_TTL=60
 
 # Sets where_repo, where_worktree and where_branch for `path` (empty when
 # none), and where_bare=1 when no repo holds it, reading .git directly as keryx's source_name does, so no git process
@@ -374,6 +379,23 @@ def need_reason($tool): if $tool == "AskUserQuestion" then "question"
   elif $tool == "ExitPlanMode" then "approve plan" else "approve \($tool // "a tool")" end;
 def ended_as: {clear: "cleared", resume: "resumed elsewhere", logout: "logged out",
                prompt_input_exit: "exited", other: "stopped"}[.] // gsub("_"; " ");
+# The background set, by id: add keeps an entry's first time, drop takes ids (non-strings ignored).
+def bg_add($id; $kind): if ($id | text) == null then . elif any(.[]; .id == $id) then .
+  else . + [{id: $id, kind: $kind, at: $now}] end;
+# A Stop list's task as an entry: subagents are agents, shells shells, any other type a task.
+def bg_kind: {subagent: "agent", shell: "shell"}[.type | strings] // "task";
+# A status that means the task is over; any other, or none, still runs.
+def finished: IN("completed", "finished", "failed", "killed", "stopped", "cancelled", "canceled");
+# The session's turn is over: Stop ran (or the prompt sat idle) with work still out.
+def turn_over: .reason == "background" or (.needs.turn_over // false) == true;
+# Needs you, asked by a subagent still out: nothing but its answer ends that.
+# Who asks AJ and for what; a request made once the turn is over remembers that.
+def asked($by; $tool): {by: $by, tool: $tool} + (if turn_over then {turn_over: true} else {} end);
+def crew_asks: .state == "needs_you" and (.needs.by // "") != "" and (.needs.by as $by | any(.background[]; .id == $by));
+def bg_drop($ids): ($ids | map(text | select(. != null))) as $gone | map(select(.id | IN($gone[]) | not));
+# The task and tool-use ids of every <task-notification> block in a prompt.
+def notified: if type == "string" then [scan("<task-notification>[\\s\\S]*?</task-notification>")
+  | scan("<(?:task-id|tool-use-id)>\\s*([^<\\s]+)\\s*</(?:task-id|tool-use-id)>") | .[0]] else [] end;
 
 . as $ev
 | $ev.hook_event_name as $event
@@ -385,7 +407,7 @@ def ended_as: {clear: "cleared", resume: "resumed elsewhere", logout: "logged ou
   else
   ($was // {v: 1, session_id: $ev.session_id, name: null, started_at: $now,
             launch_dir: ($ev.cwd | text), claude: null, tmux: null, host: null, voice: null, voice_from: null,
-            state: (if $event == "PreToolUse" or $event == "PostToolUse" or $event == "PostToolUseFailure" then "working" else "new" end),
+            state: (if $event | IN("PreToolUse", "PostToolUse", "PostToolUseFailure", "SubagentStart", "SubagentStop") then "working" else "new" end),
             reason: null, needs: null, state_at: $now,
             where: null, touched: [], prompt: null, reply: null, error: null,
             ended: null, written_at: $now}) as $s
@@ -420,6 +442,46 @@ def ended_as: {clear: "cleared", resume: "resumed elsewhere", logout: "logged ou
       | .where = $w + {by: $by, at: $now}
     end
 
+  # Background work: one entry per subagent or background shell still running,
+  # so a turn that ends with work out stays working. An absent field is none.
+  | ($ev.tool_input // {}) as $in
+  | ($ev.tool_response // {}) as $out
+  | (.background | if type == "array" then map(select(type == "object" and (.id | text) != null
+       and (.kind | IN("agent", "shell", "task")) and (.at | type) == "number")) else [] end) as $bg
+  # Stops seen before their start, until STOPPED_TTL passes.
+  | ((.background_stopped | if type == "array" then . else [] end)
+     | map(select(type == "object" and (.id | text) != null and (.at | type) == "number" and $now - .at < $stopped_ttl))) as $tomb
+  | ([$tomb[].id]) as $dead
+  | .background_stopped = (if $event == "SubagentStop" and ($agent | text) != null and (any($bg[]; .id == $agent) | not)
+      then $tomb + [{id: $agent, at: $now}] else $tomb end)
+  | .background = (
+      if $event == "SessionEnd" or $fresh then []
+      elif $event == "SubagentStart" and ($agent | IN($dead[]) | not) then $bg | bg_add($agent; "agent")
+      elif $event == "SubagentStop" then $bg | bg_drop([$agent])
+      elif $event == "PostToolUse" and $ev.tool_name == "Bash" and $in.run_in_background == true then
+        $bg | bg_add(($out | objects | .backgroundTaskId | text) // ($ev.tool_use_id | text); "shell")
+      # Only an async launch says an agent outlives the turn; SubagentStart cannot tell.
+      elif $event == "PostToolUse" and $ev.tool_name == "Agent" and ($out | objects | .isAsync) == true
+           and ($out.agentId | IN($dead[]) | not) then
+        $bg | bg_add($out.agentId; "agent") | map(if .id == $out.agentId then .async = true else . end)
+      # An idle prompt with no Stop is an interrupted turn: a subagent never seen to
+      # launch async was in the foreground and died with it (Esc runs neither Stop
+      # nor SubagentStop). A launched agent or a shell runs on.
+      elif $event == "Notification" and $ev.notification_type == "idle_prompt" then
+        $bg | map(select(.kind != "agent" or .async == true))
+      elif $event == "PostToolUse" and ($ev.tool_name | IN("TaskStop", "KillShell")) then
+        $bg | bg_drop([$in.task_id, $in.shell_id, ($out | objects | .task_id)])
+      elif $event == "UserPromptSubmit" then $bg | bg_drop($ev.prompt | notified)
+      # Stop lists what still runs; it is the truth when a dropped event left the set wrong.
+      elif $event == "Stop" and ($ev.background_tasks | type) == "array" then
+        [$ev.background_tasks[] | objects | select((.id | text) != null and (.status | finished | not))
+         | .id as $id | {id: $id, kind: bg_kind, at: ([$bg[] | select(.id == $id) | .at][0] // $now)}
+         | if .kind == "agent" then .async = true else . end]
+      else $bg end
+      # A subagent's own events show it still runs.
+      | map(if .id == $agent and $now - .at >= 60 then .at = $now else . end)
+      | .[-$bg_max:])
+
   # State, with what it needs from AJ and who asked.
   | (if $event == "SessionStart" then
        if $was == null then {state: "new", reason: null}
@@ -427,18 +489,25 @@ def ended_as: {clear: "cleared", resume: "resumed elsewhere", logout: "logged ou
        else {state: (if .prompt then "done" else "new" end), reason: null} end
      elif $event == "UserPromptSubmit" then {state: "working", reason: null}
      elif $event == "PermissionRequest" then
-       {state: "needs_you", reason: need_reason($ev.tool_name), needs: {by: $agent, tool: $ev.tool_name}}
+       {state: "needs_you", reason: need_reason($ev.tool_name), needs: asked($agent; $ev.tool_name)}
      elif $event == "PreToolUse" and ($ev.tool_name | IN("AskUserQuestion", "ExitPlanMode")) then
-       {state: "needs_you", reason: need_reason($ev.tool_name), needs: {by: $agent, tool: $ev.tool_name}}
+       {state: "needs_you", reason: need_reason($ev.tool_name), needs: asked($agent; $ev.tool_name)}
      elif $event == "Notification" and ($ev.notification_type | IN("elicitation_dialog", "elicitation_url_dialog")) then
-       {state: "needs_you", reason: "question", needs: {by: $agent, tool: null}}
+       {state: "needs_you", reason: "question", needs: asked($agent; null)}
      elif ($event | IN("PostToolUse", "PostToolUseFailure")) and .state == "needs_you" and (.needs.by // "") == $agent
           and (.needs.tool == null or .needs.tool == $ev.tool_name) then
-       {state: "working", reason: null}
+       # Answered after the turn ended: back to working in background, or done.
+       if turn_over | not then {state: "working", reason: null}
+       elif .background != [] then {state: "working", reason: "background"} else {state: "done", reason: null} end
+     # A subagent still waiting on AJ outranks the turn's end, by Stop or by the idle prompt.
+     elif ($event == "Stop" or ($event == "Notification" and $ev.notification_type == "idle_prompt")) and crew_asks then
+       {state: .state, reason: .reason, needs: (.needs + {turn_over: true})}
      elif $event == "Notification" and $ev.notification_type == "idle_prompt"
           and (.state == "working" or .state == "needs_you") and $now - .state_at >= 30 then
-       {state: "done", reason: null}
-     elif $event == "Stop" then {state: "done", reason: null}
+       # The prompt is free; work still out keeps the session working.
+       if .background != [] then {state: "working", reason: "background"} else {state: "done", reason: null} end
+     elif $event == "Stop" then
+       if .background != [] then {state: "working", reason: "background"} else {state: "done", reason: null} end
      elif $event == "StopFailure" then {state: "error", reason: (($ev.error // "unknown") | gsub("_"; " "))}
      elif $event == "SessionEnd" then {state: "ended", reason: (($ev.reason // "other") | ended_as)}
      else {state: .state, reason: .reason} end) as $t
@@ -460,6 +529,9 @@ def ended_as: {clear: "cleared", resume: "resumed elsewhere", logout: "logged ou
     elif $event == "SessionEnd" then .ended = {reason: ($ev.reason // "other"), at: $now}
     elif $event == "SessionStart" and $ev.source != "compact" then .ended = null | .error = null
     else . end
+
+  | if .background == [] then del(.background) else . end
+  | if .background_stopped == [] then del(.background_stopped) else . end
 
   # An event that changes nothing still refreshes written_at, once a minute.
   | if $was != null and (del(.written_at) == ($was | del(.written_at))) and $now - $was.written_at < 60 then empty
@@ -560,7 +632,7 @@ main() {
   file=$fleet/$session.json
   old=""
   [[ -f $file ]] && { old=$(<"$file"); } 2>/dev/null
-  new=$(printf '%s' "$input" | jq -c --arg old "$old" --argjson now "$now" --argjson chars "$PROMPT_CHARS" \
+  new=$(printf '%s' "$input" | jq -c --arg old "$old" --argjson now "$now" --argjson chars "$PROMPT_CHARS" --argjson bg_max "$BACKGROUND_MAX" --argjson stopped_ttl "$STOPPED_TTL" \
     --arg repo "$where_repo" --arg worktree "$where_worktree" --arg branch "$where_branch" \
     --arg by "$by" \
     --arg tmux_socket "$tmux_socket" --arg tmux_pane "$tmux_pane" --arg boot "$host_boot" --arg distro "$host_distro" \

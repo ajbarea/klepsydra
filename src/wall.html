@@ -20,16 +20,19 @@
     <article class="card" tabindex="-1">
       <header>
         <span class="portrait">
-          <svg class="arc" viewBox="0 0 80 80" aria-hidden="true">
-            <circle class="track" cx="40" cy="40" r="37"/><circle class="fill" cx="40" cy="40" r="37" pathLength="1"/>
+          <svg class="ring" viewBox="0 0 80 80" aria-hidden="true">
+            <title>Background work: one segment per subagent (solid) or shell or other task (dashed)</title>
+            <circle class="track" cx="40" cy="40" r="37"/><g class="crew"></g>
           </svg>
           <img class="face" alt="" />
+          <span class="more" aria-hidden="true" hidden></span>
         </span>
         <div class="who"><h2 class="name"></h2><p class="task"></p></div>
         <p class="pill"><span class="mark"></span><span class="label"></span> <span class="age"></span></p>
       </header>
       <p class="where"><span class="repo"></span><span class="branch" hidden></span></p>
       <ul class="also"></ul>
+      <p class="crew-line" hidden><span class="count"></span><span class="free" hidden>prompt free</span></p>
       <p class="ask" hidden><span class="mark"></span><span class="text"></span></p>
       <div class="said">
         <p class="prompt"></p>

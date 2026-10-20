@@ -34,7 +34,11 @@
    "updated_at": 1792499880,
    "quiet_since": null,
    "tmux": null,
-   "distro": "Ubuntu"
+   "distro": "Ubuntu",
+   "background": {
+    "agents": 0,
+    "shells": 0
+   }
   },
   {
    "session_id": "demo-2-af_bella",
@@ -64,7 +68,11 @@
    "updated_at": 1792499940,
    "quiet_since": null,
    "tmux": null,
-   "distro": "Ubuntu"
+   "distro": "Ubuntu",
+   "background": {
+    "agents": 0,
+    "shells": 0
+   }
   },
   {
    "session_id": "demo-3-af_sarah",
@@ -94,7 +102,11 @@
    "updated_at": 1792499760,
    "quiet_since": 1792499280,
    "tmux": null,
-   "distro": "Ubuntu"
+   "distro": "Ubuntu",
+   "background": {
+    "agents": 0,
+    "shells": 0
+   }
   },
   {
    "session_id": "demo-4-bf_emma",
@@ -124,7 +136,11 @@
    "updated_at": 1792499980,
    "quiet_since": null,
    "tmux": null,
-   "distro": "Ubuntu"
+   "distro": "Ubuntu",
+   "background": {
+    "agents": 1,
+    "shells": 0
+   }
   },
   {
    "session_id": "demo-9-bm_fable",
@@ -132,7 +148,7 @@
    "launch_dir": "/home/aj/ajsoftworks",
    "voice": "bm_fable",
    "status": "working",
-   "reason": null,
+   "reason": "background",
    "status_at": 1792499820,
    "active_at": 1792499960,
    "where": {
@@ -152,14 +168,18 @@
     "at": 1792499820
    },
    "reply": {
-    "text": "Drawing the laurel ring and the initial as one SVG template.",
+    "text": "Two agents are drawing the laurel ring and the initial; the contrast sweep runs in a shell. I'll pick it up when they report.",
     "at": 1792499960
    },
    "error": null,
    "updated_at": 1792499960,
    "quiet_since": null,
    "tmux": null,
-   "distro": "Ubuntu"
+   "distro": "Ubuntu",
+   "background": {
+    "agents": 2,
+    "shells": 1
+   }
   },
   {
    "session_id": "demo-5-bf_isabella",
@@ -189,7 +209,11 @@
    "updated_at": 1792499940,
    "quiet_since": null,
    "tmux": null,
-   "distro": "Ubuntu"
+   "distro": "Ubuntu",
+   "background": {
+    "agents": 0,
+    "shells": 0
+   }
   },
   {
    "session_id": "demo-6-af_nova",
@@ -216,7 +240,11 @@
    "updated_at": 1792499820,
    "quiet_since": null,
    "tmux": null,
-   "distro": "Ubuntu"
+   "distro": "Ubuntu",
+   "background": {
+    "agents": 0,
+    "shells": 0
+   }
   },
   {
    "session_id": "demo-7-af_aoede",
@@ -240,7 +268,11 @@
    "updated_at": 1792499980,
    "quiet_since": null,
    "tmux": null,
-   "distro": "Ubuntu"
+   "distro": "Ubuntu",
+   "background": {
+    "agents": 0,
+    "shells": 0
+   }
   },
   {
    "session_id": "demo-8-am_puck",
@@ -270,7 +302,11 @@
    "updated_at": 1792499640,
    "quiet_since": null,
    "tmux": null,
-   "distro": "Ubuntu"
+   "distro": "Ubuntu",
+   "background": {
+    "agents": 0,
+    "shells": 0
+   }
   },
   {
    "session_id": "demo-10-bm_george",
@@ -300,7 +336,11 @@
    "updated_at": 1792499900,
    "quiet_since": null,
    "tmux": null,
-   "distro": "Ubuntu"
+   "distro": "Ubuntu",
+   "background": {
+    "agents": 1,
+    "shells": 1
+   }
   },
   {
    "session_id": "demo-11-am_fenrir",
@@ -330,7 +370,11 @@
    "updated_at": 1792499900,
    "quiet_since": null,
    "tmux": null,
-   "distro": "Ubuntu"
+   "distro": "Ubuntu",
+   "background": {
+    "agents": 0,
+    "shells": 0
+   }
   },
   {
    "session_id": "demo-12-af_alloy",
@@ -360,7 +404,11 @@
    "updated_at": 1792499900,
    "quiet_since": null,
    "tmux": null,
-   "distro": "Ubuntu"
+   "distro": "Ubuntu",
+   "background": {
+    "agents": 0,
+    "shells": 0
+   }
   },
   {
    "session_id": "demo-13-af_nicole",
@@ -368,7 +416,7 @@
    "launch_dir": "/home/aj/ajsoftworks",
    "voice": "af_nicole",
    "status": "working",
-   "reason": null,
+   "reason": "background",
    "status_at": 1792499850,
    "active_at": 1792499900,
    "where": {
@@ -390,7 +438,45 @@
    "updated_at": 1792499900,
    "quiet_since": null,
    "tmux": null,
-   "distro": "Ubuntu"
+   "distro": "Ubuntu",
+   "background": {
+    "agents": 7,
+    "shells": 3
+   }
+  },
+  {
+   "session_id": "demo-14-medallion",
+   "name": "Nightly corpus rebuild",
+   "launch_dir": "/home/aj/ajsoftworks",
+   "voice": null,
+   "status": "working",
+   "reason": "background",
+   "status_at": 1792499720,
+   "active_at": 1792499720,
+   "where": {
+    "repo": "ariadne",
+    "worktree": null,
+    "branch": "main",
+    "at": 1792499700
+   },
+   "touched": [],
+   "prompt": {
+    "text": "rebuild the papers index in the background and tell me when it lands",
+    "at": 1792499700
+   },
+   "reply": {
+    "text": "Started the rebuild as a background shell; it reports when it lands.",
+    "at": 1792499720
+   },
+   "error": null,
+   "updated_at": 1792499720,
+   "quiet_since": null,
+   "tmux": null,
+   "distro": "Ubuntu",
+   "background": {
+    "agents": 0,
+    "shells": 1
+   }
   }
  ]
 }

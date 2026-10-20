@@ -56,6 +56,10 @@ export function longAge(ms) {
   return unit(Math.floor(h / 24), "day");
 }
 
+// A turn that ended with background work out: the prompt is free while it runs.
+const PROMPT_FREE = "prompt free";
+const reasonText = (s) => (s.status === "working" && s.reason === "background" ? PROMPT_FREE : s.reason);
+
 /** Label, reason and age. A silent session says how long since any word, a quiet needs-you one keeps its reason too, and a quiet working one says how long since any activity. */
 export function statusParts(s, nowMs, age = shortAge) {
   const a = age(ageMs(s.status_at, nowMs));
@@ -65,7 +69,7 @@ export function statusParts(s, nowMs, age = shortAge) {
     if (s.status === "working") return [statusOf(s.status, true).label, `no activity for ${since}`];
     return [statusOf(s.status, true).label, s.reason, `no word for ${since}`].filter(Boolean);
   }
-  return [statusOf(s.status).label, s.reason, a].filter(Boolean);
+  return [statusOf(s.status).label, reasonText(s), a].filter(Boolean);
 }
 
 /** "am_fenrir" is "Fenrir"; a blend "af_bella(0.7)+af_heart(0.3)" is "Bella and Heart". */
@@ -107,9 +111,13 @@ export function identity(s, cast) {
   return { name, voice: null, face, face2x: face, accent: null };
 }
 
-/** "Hephaestus, needs you, approve Bash, 2 minutes" */
-export const accessibleName = (s, cast, nowMs) =>
-  [identity(s, cast).name, ...statusParts(s, nowMs, longAge)].join(", ");
+/** "Hermes, 2 agents and 1 shell running in background, working, prompt free, 2 minutes" */
+export function accessibleName(s, cast, nowMs) {
+  const crew = crewWords(crewOf(s), " and ");
+  return [identity(s, cast).name, crew && `${crew} running in background`, ...statusParts(s, nowMs, longAge)]
+    .filter(Boolean)
+    .join(", ");
+}
 
 /** Each session's status by id (a quiet session keyed "working?" or "needs_you?"), to compare the next snapshot against. */
 export const statuses = (sessions) =>
@@ -143,7 +151,7 @@ export function announcements(before, sessions, cast, nowMs = Date.now()) {
     .filter((s) => before.get(s.session_id) !== key.get(s.session_id))
     .map((s) => {
       if (isQuiet(s)) return accessibleName(s, cast, nowMs);
-      return [identity(s, cast).name, statusOf(s.status).label, s.status === "silent" ? null : s.reason]
+      return [identity(s, cast).name, statusOf(s.status).label, s.status === "silent" ? null : reasonText(s)]
         .filter(Boolean)
         .join(", ");
     });
@@ -208,17 +216,52 @@ function jumpStyle(s, accent) {
   return { jumpKind: kind, jumpMark: kind === "accent" ? { color: accent, width: markerWidth(accent, BUTTON_BGS) } : null };
 }
 
-// The arc fills over the reader's thresholds (view.rs QUIET_AFTER, WAITING_DOUBT_AFTER).
-export const WORKING_FULL_S = 600;
-export const WAITING_FULL_S = 1800;
+/** A session's background crew: its subagents, background shells and other background tasks still running, as the reader counts them. */
+export function crewOf(s) {
+  const n = (v) => (Number.isInteger(v) && v > 0 ? v : 0);
+  return { agents: n(s.background?.agents), shells: n(s.background?.shells), tasks: n(s.background?.tasks) };
+}
+const crewSize = ({ agents = 0, shells = 0, tasks = 0 }) => agents + shells + tasks;
 
-/** How full a card's arc is, 0..1: a working session's time since its last activity, or a waiting one's since it asked, against the reader's threshold. */
-export function arcFraction(s, nowMs) {
-  if (s.status === "working" && isQuiet(s)) return 1;
-  const full = { working: WORKING_FULL_S, needs_you: WAITING_FULL_S }[s.status];
-  const age = ageMs(s.status === "working" ? s.active_at : s.status_at, nowMs);
-  if (!full || !Number.isFinite(age)) return 0;
-  return Math.min(1, Math.max(0, age / 1000 / full));
+const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
+const crewWords = ({ agents, shells, tasks = 0 }, join) =>
+  [agents && plural(agents, "agent"), shells && plural(shells, "shell"), tasks && plural(tasks, "task")]
+    .filter(Boolean)
+    .join(join);
+
+/** "2 agents, 1 shell, 1 task"; null with none out. */
+export const crewText = (crew) => crewWords(crew, ", ") || null;
+
+// The ring: one segment per piece of background work, from 12 o'clock
+// clockwise, agents first. Geometry is in the portrait's 80-unit viewBox.
+export const RING = { cx: 40, cy: 40, r: 37, gapDeg: 18, max: 8 };
+
+const point = (deg) => {
+  const rad = (deg * Math.PI) / 180;
+  const f = (v) => Number(v.toFixed(2));
+  return `${f(RING.cx + RING.r * Math.cos(rad))} ${f(RING.cy + RING.r * Math.sin(rad))}`;
+};
+const arc = (from, to) => `M ${point(from)} A ${RING.r} ${RING.r} 0 ${to - from > 180 ? 1 : 0} 1 ${point(to)}`;
+
+/**
+ * The ring's segments, each {kind, d}, and how many more are out than drawn.
+ * Other tasks draw as shells (dashed); the crew line names them. Past
+ * RING.max, the dashed kind keeps at least one segment, so it is never hidden.
+ */
+export function crewRing(crew) {
+  const total = crewSize(crew);
+  const dashed = (crew.shells ?? 0) + (crew.tasks ?? 0);
+  const shells = dashed && Math.min(dashed, Math.max(1, RING.max - crew.agents));
+  const agents = Math.min(crew.agents, RING.max - shells);
+  const kinds = [...Array(agents).fill("agent"), ...Array(shells).fill("shell")];
+  const n = kinds.length;
+  const step = 360 / Math.max(n, 1);
+  // Every count keeps its gaps, a lone item too, so a segment never reads as a closed ring.
+  const segments = kinds.map((kind, i) => {
+    const from = -90 + i * step + RING.gapDeg / 2;
+    return { kind, d: arc(from, from + step - RING.gapDeg) };
+  });
+  return { segments, more: total - n };
 }
 
 /** The needs-you line: what the session waits for. */
@@ -283,6 +326,7 @@ export function plainText(md) {
 export function card(s, cast, nowMs) {
   const who = identity(s, cast);
   const st = statusOf(s.status, isQuiet(s));
+  const crew = crewOf(s);
   return {
     id: s.session_id,
     task: s.name || "No session name yet",
@@ -292,7 +336,12 @@ export function card(s, cast, nowMs) {
       age: statusParts(s, nowMs).at(-1),
     },
     ask: s.status === "needs_you" ? askText(s.reason) : null,
-    arc: arcFraction(s, nowMs),
+    ring: crewRing(crew),
+    // An agent's segment wears the character's colour; a medallion's, the wall's gold.
+    ringColor: who.accent,
+    crew: crewText(crew),
+    // Only once Stop fired with work out (the hook's reason "background"), never mid-turn.
+    promptFree: reasonText(s) === PROMPT_FREE && crewSize(crew) > 0,
     dim: DIM.has(s.status),
     place: s.where ? { repo: s.where.repo, worktree: s.where.worktree ?? null, branch: s.where.branch ?? null } : null,
     also: [...new Set((s.touched ?? []).map((t) => t.repo))].filter((r) => r && r !== s.where?.repo).map((r) => `also in ${r}`),

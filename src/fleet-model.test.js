@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import {
   STATUS, shortAge, longAge, statusParts, voiceName, identity, accessibleName,
   statuses, startedNeeding, orderChanged, shouldSlide, transitionName, announcements, updatedText, badgeSvg, stripItems, card,
-  askText, arcFraction, plainText, tally, WORKING_FULL_S, WAITING_FULL_S,
+  askText, plainText, tally, crewOf, crewText, crewRing, RING,
 } from "./fleet/model.js";
 import { TONES, hash, initialOf, medallion, medallionSvg, toneOf } from "./fleet/medallion.js";
 
@@ -376,29 +376,106 @@ test("only an ended or silent card offers Clear", () => {
   }
 });
 
-test("the arc fills over the reader's own thresholds", () => {
-  const view = readFileSync(new URL("../src-tauri/fleet/src/view.rs", import.meta.url), "utf8");
-  const rs = (name) => Number(view.match(new RegExp(`pub const ${name}: i64 = (\\d+);`))[1]);
-  assert.equal(WORKING_FULL_S, rs("QUIET_AFTER"));
-  assert.equal(WAITING_FULL_S, rs("WAITING_DOUBT_AFTER"));
+test("the crew reads only whole positive counts, and none from an old snapshot", () => {
+  assert.deepEqual(crewOf(session({ background: { agents: 2, shells: 1 } })), { agents: 2, shells: 1, tasks: 0 });
+  for (const background of [undefined, null, "3", { agents: -1, shells: 1.5 }, { agents: "2", shells: NaN }]) {
+    assert.deepEqual(crewOf(session({ background })), { agents: 0, shells: 0, tasks: 0 }, JSON.stringify(background));
+  }
+  assert.equal(crewText({ agents: 2, shells: 1 }), "2 agents, 1 shell");
+  assert.equal(crewText({ agents: 1, shells: 0 }), "1 agent");
+  assert.equal(crewText({ agents: 0, shells: 3 }), "3 shells");
+  assert.equal(crewText({ agents: 0, shells: 0 }), null);
 });
 
-test("arc: working by 600 s, needs you by 1800 s, quiet working full, others empty", () => {
-  assert.equal(arcFraction(session({ status: "working", active_at: ago(300) }), NOW), 0.5);
-  assert.equal(arcFraction(session({ status: "working", active_at: ago(900) }), NOW), 1);
-  assert.equal(arcFraction(session({ status: "working", active_at: ago(900), quiet_since: ago(700) }), NOW), 1);
-  assert.equal(arcFraction(session({ status: "needs_you", status_at: ago(900) }), NOW), 0.5);
-  for (const status of ["done", "error", "new", "silent", "ended"]) {
-    assert.equal(arcFraction(session({ status, status_at: ago(900) }), NOW), 0, status);
-  }
-  assert.equal(arcFraction(session({ status: "working", active_at: undefined }), NOW), 0);
+test("another background task reads as a task and draws shell-style", () => {
+  const crew = crewOf(session({ background: { agents: 1, shells: 1, tasks: 2 } }));
+  assert.deepEqual(crew, { agents: 1, shells: 1, tasks: 2 });
+  assert.equal(crewText(crew), "1 agent, 1 shell, 2 tasks");
+  assert.deepEqual(crewRing(crew).segments.map((s) => s.kind), ["agent", "shell", "shell", "shell"]);
+  const s = session({ status: "working", reason: "background", background: { agents: 0, shells: 0, tasks: 1 } });
+  assert.match(accessibleName(s, CAST, NOW), /^Hephaestus, 1 task running in background, working, prompt free/);
+  assert.equal(card(s, CAST, NOW).promptFree, true);
 });
 
-test("arc: a time ahead of the clock is empty, and NaN never leaks", () => {
-  for (const status of ["working", "needs_you"]) {
-    assert.equal(arcFraction(session({ status, status_at: ago(-300), active_at: ago(-300) }), NOW), 0, `${status} in the future`);
-    assert.equal(arcFraction(session({ status, status_at: NaN, active_at: NaN }), NOW), 0, `${status} NaN`);
+const kinds = (crew) => crewRing(crew).segments.map((s) => s.kind[0]).join("");
+
+test("the ring draws a segment per piece of work, agents first, at most eight", () => {
+  assert.deepEqual(crewRing({ agents: 0, shells: 0 }), { segments: [], more: 0 });
+  assert.equal(kinds({ agents: 2, shells: 1 }), "aas");
+  assert.equal(crewRing({ agents: 2, shells: 1 }).more, 0);
+  assert.equal(kinds({ agents: 10, shells: 0 }), "aaaaaaaa");
+  assert.equal(crewRing({ agents: 10, shells: 0 }).more, 2);
+  assert.equal(kinds({ agents: 9, shells: 3 }), "aaaaaaas", "past eight, a shell keeps one segment");
+  assert.equal(crewRing({ agents: 9, shells: 3 }).more, 4);
+  assert.equal(kinds({ agents: 1, shells: 12 }), "assssss" + "s");
+  assert.equal(RING.max, 8);
+});
+
+test("segments sit on the ring with even gaps, a lone one too", () => {
+  const ends = (d) => {
+    const m = d.match(/^M ([\d.]+) ([\d.]+) A 37 37 0 0 1 ([\d.]+) ([\d.]+)$/);
+    assert.ok(m, d);
+    return [[Number(m[1]), Number(m[2])], [Number(m[3]), Number(m[4])]];
+  };
+  for (const n of [2, 3, 8]) {
+    const { segments } = crewRing({ agents: n, shells: 0 });
+    for (const { d } of segments) {
+      for (const [x, y] of ends(d)) {
+        assert.ok(Math.abs(Math.hypot(x - RING.cx, y - RING.cy) - RING.r) < 0.01, `${n}: ${x},${y} on the ring`);
+      }
+    }
+    // The first starts half a gap after 12 o'clock.
+    const [[x0]] = ends(segments[0].d);
+    const want = RING.cx + RING.r * Math.cos(((-90 + RING.gapDeg / 2) * Math.PI) / 180);
+    assert.ok(Math.abs(x0 - want) < 0.01, `${n}: starts at ${x0}`);
   }
+  // A lone item keeps the gap at 12 o'clock: one long arc, never a closed ring.
+  const [one] = crewRing({ agents: 0, shells: 1 }).segments;
+  assert.equal(one.d, "M 45.79 3.46 A 37 37 0 1 1 34.21 3.46");
+  assert.ok(RING.gapDeg >= 18);
+});
+
+test("the pill stays the plain status; the crew line says what is out", () => {
+  const background = { agents: 2, shells: 1 };
+  for (const reason of [null, "background"]) {
+    const c = card(session({ status: "working", reason, background }), CAST, NOW);
+    assert.deepEqual(c.pill, { label: "working", age: "2m" }, String(reason));
+    assert.equal(c.crew, "2 agents, 1 shell");
+    assert.equal(c.ring.segments.length, 3);
+    assert.equal(c.tone, "working");
+  }
+  const none = card(session({ status: "working", reason: null }), CAST, NOW);
+  assert.deepEqual([none.pill.label, none.crew, none.promptFree, none.ring.segments.length], ["working", null, false, 0]);
+  const needs = card(session({ background }), CAST, NOW);
+  assert.equal(needs.pill.label, "needs you");
+  assert.equal(needs.ring.segments.length, 3, "its ring still shows the crew");
+});
+
+test("prompt free shows only once the turn ended with work out, never for a subagent mid-turn", () => {
+  // A foreground subagent inside a turn: the hook leaves the reason null until Stop.
+  const mid = card(session({ status: "working", reason: null, background: { agents: 1, shells: 0 } }), CAST, NOW);
+  assert.deepEqual([mid.crew, mid.promptFree, mid.ring.segments.length], ["1 agent", false, 1]);
+  assert.doesNotMatch(mid.label, /prompt free/);
+  const after = card(session({ status: "working", reason: "background", background: { agents: 1, shells: 0 } }), CAST, NOW);
+  assert.equal(after.promptFree, true);
+  assert.match(after.label, /prompt free/);
+  const stale = card(session({ status: "working", reason: "background", background: { agents: 0, shells: 0 } }), CAST, NOW);
+  assert.equal(stale.promptFree, false, "no hint with nothing out");
+});
+
+test("the crew is in the accessible name, and the ring takes the character's colour or none", () => {
+  const cast = { characters: { am_michael: { name: "Hermes", face: "hermes", accent: "#3a7bd5" } } };
+  const s = session({ status: "working", reason: "background", status_at: ago(120), background: { agents: 2, shells: 1 } });
+  assert.equal(accessibleName(s, cast, NOW), "Hermes, 2 agents and 1 shell running in background, working, prompt free, 2 minutes");
+  assert.equal(card(s, cast, NOW).label, accessibleName(s, cast, NOW));
+  assert.equal(card(s, cast, NOW).ringColor, "#3a7bd5");
+  assert.equal(card(session({ voice: null }), CAST, NOW).ringColor, null, "a medallion's agents are gold (wall.css)");
+  assert.equal(accessibleName(session({ status: "done", reason: null, status_at: ago(60) }), CAST, NOW), "Hephaestus, done, 1 minute");
+});
+
+test("the tally counts a session working in background as working", () => {
+  const t = tally([session({ status: "working", reason: "background", background: { agents: 1, shells: 0 } })]);
+  assert.equal(t.working, 1);
 });
 
 test("the ask line says what a session waits for", () => {
@@ -464,14 +541,6 @@ test("an ended or error pill names its reason", () => {
   }
   assert.equal(card(session({ status: "needs_you", reason: "approve Bash" }), CAST, NOW).pill.label, "needs you",
     "a needs-you reason is the ask line's");
-});
-
-test("a busy session's arc follows its last activity, not when it started working", () => {
-  const busy = session({ status: "working", status_at: ago(3600), active_at: ago(5) });
-  assert.ok(arcFraction(busy, NOW) < 0.02, `near empty, got ${arcFraction(busy, NOW)}`);
-  assert.equal(arcFraction(session({ status: "working", status_at: ago(10), active_at: ago(300) }), NOW), 0.5);
-  assert.equal(arcFraction(session({ status: "needs_you", status_at: ago(900), active_at: ago(5) }), NOW), 0.5,
-    "a needs-you arc keeps the time since it asked");
 });
 
 test("only a session that newly needs you pulses, and never on the first look", () => {

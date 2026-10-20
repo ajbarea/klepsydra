@@ -68,6 +68,39 @@ pub struct Claude {
     pub start: u64,
 }
 
+/// What a piece of background work is: a subagent, a background shell, or
+/// another kind of background task (a monitor, a workflow).
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum Kind {
+    Agent,
+    Shell,
+    Task,
+}
+
+/// One subagent or background shell still running, and when the hook last
+/// heard of it (a shell: when it started; a subagent: its last event).
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+pub struct Background {
+    pub id: String,
+    pub kind: Kind,
+    pub at: i64,
+}
+
+/// The well-formed entries of `background`: a file from before the field, or
+/// an entry a newer hook shaped differently, costs only that entry.
+fn lenient_background<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Vec<Background>, D::Error> {
+    let value = serde_json::Value::deserialize(d)?;
+    Ok(match value {
+        serde_json::Value::Array(items) => items
+            .into_iter()
+            .filter_map(|v| serde_json::from_value::<Background>(v).ok())
+            .filter(|b| !b.id.is_empty())
+            .collect(),
+        _ => Vec::new(),
+    })
+}
+
 /// The kernel boot and distro a session runs on.
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
 pub struct Host {
@@ -116,6 +149,9 @@ pub struct SessionFile {
     pub host: Option<Host>,
     #[serde(default)]
     pub claude: Option<Claude>,
+    /// Subagents and background shells still running; none when absent.
+    #[serde(default, deserialize_with = "lenient_background")]
+    pub background: Vec<Background>,
 }
 
 /// Why a session file was skipped.
@@ -371,6 +407,73 @@ mod tests {
             super::parse(&text, ID, MODIFIED),
             Err(Rejected::Malformed(_))
         ));
+    }
+
+    #[test]
+    fn background_parses_and_an_old_file_has_none() {
+        let f = parse(
+            &file(r#","background":[{"id":"abd38d40cac785715","kind":"agent","at":1800000101},{"id":"biwpk3ab6","kind":"shell","at":1800000102}]"#),
+            ID,
+        )
+        .unwrap();
+        assert_eq!(
+            f.background,
+            vec![
+                Background {
+                    id: "abd38d40cac785715".into(),
+                    kind: Kind::Agent,
+                    at: 1_800_000_101
+                },
+                Background {
+                    id: "biwpk3ab6".into(),
+                    kind: Kind::Shell,
+                    at: 1_800_000_102
+                },
+            ]
+        );
+        assert_eq!(parse(&file(""), ID).unwrap().background, vec![]);
+    }
+
+    #[test]
+    fn a_task_of_another_type_is_kept_as_a_task() {
+        let f = parse(
+            &file(r#","background":[{"id":"m1","kind":"task","at":1800000101}]"#),
+            ID,
+        )
+        .unwrap();
+        assert_eq!(
+            f.background.iter().map(|b| b.kind).collect::<Vec<_>>(),
+            vec![Kind::Task]
+        );
+    }
+
+    #[test]
+    fn a_malformed_background_entry_costs_only_itself() {
+        let f = parse(
+            &file(r#","background":[{"id":"ok","kind":"shell","at":1800000101},"junk",null,
+                {"id":"","kind":"agent","at":1800000101},{"id":"x","kind":"cron","at":1800000101},
+                {"id":"y","kind":"agent","at":"soon"},{"id":7,"kind":"agent","at":1800000101},{"kind":"agent","at":1}]"#),
+            ID,
+        )
+        .unwrap();
+        assert_eq!(
+            f.background
+                .iter()
+                .map(|b| b.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["ok"]
+        );
+        for other in [
+            r#","background":null"#,
+            r#","background":"none""#,
+            r#","background":{"id":"a"}"#,
+        ] {
+            assert_eq!(
+                parse(&file(other), ID).unwrap().background,
+                vec![],
+                "{other}"
+            );
+        }
     }
 
     #[test]
