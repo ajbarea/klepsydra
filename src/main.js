@@ -67,6 +67,7 @@ let zoomLevel = 0;
 let wheel = null;
 let zoomShown = 0;
 let zoomSave = 0;
+let pendingZoom = null; // {level, layout} waiting out ZOOM_SAVE_MS
 let fleetSessions = [];
 let drawStrip = null;
 let fleetFresh = false; // a snapshot the strip has not drawn yet
@@ -100,8 +101,11 @@ function paint(entry, row) {
   // The ring's circle has pathLength 100, so the dash is the percentage less
   // its caps. A nonzero reading stays visible as a dot, as for the bar; at
   // zero the caps would draw that dot too, so the fill goes.
+  // Half a cap forward, so the drawn arc starts at 12 o'clock.
   const ring = entry.querySelector(".ring-fill");
-  ring.style.strokeDasharray = `${ringDash(row.pct, ringCap(ring))} 100`;
+  const cap = ringCap(ring);
+  ring.style.strokeDasharray = `${ringDash(row.pct, cap)} 100`;
+  ring.style.strokeDashoffset = `${-cap / 2}`;
   ring.style.visibility = clamped > 0 ? "visible" : "hidden";
   ring.style.stroke = colour;
 }
@@ -114,6 +118,7 @@ async function applyLayout(next) {
   const want = next === "compact" ? "compact" : "full";
   const seq = ++layoutSeq;
   if (want === layout) return;
+  saveZoomNow();
   const level = await savedZoom(want);
   if (seq !== layoutSeq) return;
   layout = want;
@@ -276,8 +281,18 @@ function showZoom() {
 // Scrolling on the grip resizes the whole gauge. The grip is the one part of
 // the window that takes the mouse, so the wheel elsewhere still reaches
 // whatever is underneath.
+/** Write a zoom still waiting out its settle time, before anything reads it. */
+function saveZoomNow() {
+  clearTimeout(zoomSave);
+  if (pendingZoom && inTauri) {
+    window.__TAURI__.core.invoke("set_zoom", pendingZoom).catch(() => {});
+  }
+  pendingZoom = null;
+}
+
 grip.addEventListener("wheel", (e) => {
   e.preventDefault();
+  if (layout === null) return; // a zoom is saved per layout, so wait for it
   const r = wheelStep(wheel, wheelPixels(e.deltaY, e.deltaMode), performance.now());
   wheel = r.state;
   const next = clampLevel(zoomLevel + r.steps);
@@ -286,14 +301,10 @@ grip.addEventListener("wheel", (e) => {
   applyZoom();
   showZoom();
   render(true);
-  if (inTauri) {
-    // Saved under the layout it was set in, even if the layout changes first.
-    const save = { level: zoomLevel, layout };
-    clearTimeout(zoomSave);
-    zoomSave = setTimeout(() => {
-      window.__TAURI__.core.invoke("set_zoom", save).catch(() => {});
-    }, ZOOM_SAVE_MS);
-  }
+  // Saved under the layout it was set in; a layout switch saves it at once.
+  pendingZoom = { level: zoomLevel, layout };
+  clearTimeout(zoomSave);
+  zoomSave = setTimeout(saveZoomNow, ZOOM_SAVE_MS);
 }, { passive: false });
 
 async function poll() {

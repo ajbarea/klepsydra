@@ -16,8 +16,10 @@ so every account fits there instead of one row with the rest below the edge.
 - ✅ `main.js`: each layout keeps its own zoom (`zoom`, `zoom_compact`), read
   before the switch so it draws once; a later layout message cancels one
   still loading; the first draw waits up to 500 ms for the saved layout.
-- ✅ `main.rs`: the layout rides the fleet's `Hub`, which holds its lock across
-  publish and subscribe, so no tray change is lost at startup. The tray sends
+- ✅ `main.rs`: the layout has a `Hub` of its own (the fleet's type, its own
+  state), which holds its lock across publish and subscribe, so no tray
+  change is lost at startup. A test builds the managed state, since a type
+  managed twice panics at launch. The tray sends
   the layout read back from `prefs.json` and sets its check from it.
 - ✅ `ipc.js`: one channel helper for the fleet feed and the layout.
 - ✅ README (Compact, resizing, Restyling) and compact shots in
@@ -28,9 +30,12 @@ so every account fits there instead of one row with the rest below the edge.
 - ✅ Node, statusline, hook and fleet-crate suites pass in WSL; fleet clippy
   is clean.
 - ✅ Chrome headless: 42px tall at 100%, 46px at 110%, 50px at 121%; one
-  window is 148px wide at 9%, 10%, 97% and 118%.
-- ✅ Independent review, round 1: no bugs; every finding fixed here.
-- ✅ Clippy clean and 96 Rust tests pass on Windows (`build-windows.sh --check`).
+  window is 149px wide at 9%, 10%, 97% and 118%.
+- ✅ Independent review, two rounds. Round 2 found the launch crash (fixed,
+  with its test) and three timing risks: two fixed, and a first layout whose
+  zoom read outlasts 500 ms still draws the bars once.
+- ✅ Clippy clean and 97 Rust tests pass on Windows (`build-windows.sh --check`),
+  after the managed-state test tripped on the alias that crashed launch.
 - 📋 Installed build: tray toggle both ways, each layout's zoom, restart.
 
 ## Open
