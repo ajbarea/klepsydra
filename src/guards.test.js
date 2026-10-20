@@ -390,7 +390,7 @@ test("the reach check reports a planted unscanned file and excuses a test file",
       ...filesUnder("src-tauri/fleet/src", [".rs"], root),
       ...filesUnder("src", [".js", ".mjs", ".html"], root).filter((f) => !f.endsWith(".test.js")),
       ...filesUnder("src", [".css"], root),
-      ...filesUnder("hooks", [".sh"], root),
+      ...filesUnder("hooks", [".sh", ".conf"], root),
       ...filesUnder("statusline", [".sh"], root),
     ];
   put("src-tauri/fleet/src/ok.rs");
