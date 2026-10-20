@@ -36,7 +36,14 @@ stays silent under Windows Do Not Disturb, Focus and full-screen apps.
   with DND off.
 
 ## Next
-- A fourth review of the turn-counter commit (5e6848a) was still running when the session stopped: re-run it.
+- Fourth review (of 5e6848a) found, to fix before merge:
+  1. An older hook writing a file the new hook already counted keeps `turns` unchanged, so done never
+     chimes again for that session. Fix: the hook writes `turns_at = written_at`; the reader trusts
+     `turns` only when they match, else the fallback. Not "fallback when unchanged" (that brings back
+     the chime on resume).
+  2. README:239 note: the older rule also chimes on an Esc-interrupted turn; rewrap that sentence.
+  3. cue.rs tests mostly hit the (None, Some) fallback: start them at Some(0) and step by 1; keep one
+     deliberate None -> Some test.
 - Live check with AJ, keryx off. Run the test copy as `C:\Users\ajbar\pingcheck\pingcheck.exe` with
   `KLEPSYDRA_DIR=C:\Users\ajbar\klepsydra-ping-test` (Ping off in prefs). Run a throwaway claude with
   `--setting-sources project --settings <branch-hook settings>`, built from the README block with each
