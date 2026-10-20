@@ -1,10 +1,12 @@
-//! Jump to terminal: select the Windows Terminal tab titled with a session's
-//! name and bring its window to the front, through UI Automation, an
-//! in-process API. Which tab is decided by `klepsydra_fleet::tabs`, tested everywhere.
+//! Jump to terminal: select a Windows Terminal tab and bring its window to the
+//! front, through UI Automation, an in-process API. The tab is titled with the
+//! session's name, or `FLEET_TAB` for a session in the launcher's tmux. Which
+//! tab is decided by `klepsydra_fleet::tabs`, tested everywhere.
 
 /// The outcome in a sentence for the card: Ok when the session's window or
 /// tab was selected, Err when nothing was done. A session in tmux has its
-/// window selected first, then the fleet tab, titled `FLEET_TAB`, is brought up.
+/// window selected first, then the fleet tab, titled `FLEET_TAB`, is brought up
+/// when the session is on the launcher's tmux server, else the session's own tab.
 #[tauri::command]
 pub async fn jump_to_terminal(
     app: tauri::AppHandle,
@@ -18,12 +20,21 @@ pub async fn jump_to_terminal(
         .and_then(|v| crate::launch::target(&v, &id));
     tauri::async_runtime::spawn_blocking(move || match target {
         Some(t) if crate::launch::tmux_jump(&app, &t).is_ok() => {
-            settle(true, jump(crate::launch::FLEET_TAB))
+            settle(true, jump(tab_title(&t, &name)))
         }
         _ => jump(&name),
     })
     .await
     .map_err(|e| format!("Could not run the jump: {e}"))?
+}
+
+/// The title of the tab that shows `t`'s session.
+fn tab_title<'a>(t: &crate::launch::Target, name: &'a str) -> &'a str {
+    if crate::launch::is_fleet(t) {
+        crate::launch::FLEET_TAB
+    } else {
+        name
+    }
 }
 
 /// Whether the one tab among `titles` is the fleet's, by `FLEET_TAB`.
@@ -191,7 +202,27 @@ mod uia {
 
 #[cfg(test)]
 mod tests {
-    use super::{fleet_tab, settle};
+    use super::{fleet_tab, settle, tab_title};
+    use crate::launch::{Target, FLEET_TAB};
+
+    #[test]
+    fn a_hand_started_tmux_is_found_by_the_session_name() {
+        let t = |socket: &str| Target {
+            socket: socket.into(),
+            pane: "%1".into(),
+            distro: "Ubuntu".into(),
+            pid: 1,
+            start: 1,
+        };
+        assert_eq!(
+            tab_title(&t("/tmp/tmux-1/klepsydra"), "my session"),
+            FLEET_TAB
+        );
+        assert_eq!(
+            tab_title(&t("/tmp/tmux-1/default"), "my session"),
+            "my session"
+        );
+    }
 
     #[test]
     fn only_the_exact_fleet_title_matches() {

@@ -24,6 +24,10 @@ pub struct InFlight(pub Mutex<bool>);
 /// `TAB_TITLE` is the same text, which a guard test asserts.
 pub const FLEET_TAB: &str = "klepsydra fleet";
 
+/// The launcher's tmux socket name; the script's default is the same text,
+/// which a guard test asserts.
+pub const FLEET_SOCKET: &str = "klepsydra";
+
 /// A session's tmux pane, the Claude process that must still be in it, and the
 /// distro they run in. `start` is `/proc/<pid>/stat` field 22.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -86,6 +90,12 @@ pub fn jump_args(t: &Target) -> Result<Vec<String>, String> {
     ]
     .map(String::from)
     .to_vec())
+}
+
+/// Whether `t` runs on the launcher's own tmux server, the only one whose tab
+/// carries `FLEET_TAB`.
+pub fn is_fleet(t: &Target) -> bool {
+    t.socket.rsplit('/').next() == Some(FLEET_SOCKET)
 }
 
 /// Session `id`'s tmux pane, Claude process and distro from a published snapshot.
@@ -335,6 +345,21 @@ mod tests {
         ] {
             assert!(jump_args(&bad).is_err(), "{bad:?}");
         }
+    }
+
+    #[test]
+    fn only_the_launchers_socket_is_the_fleet() {
+        let t = |socket: &str| Target {
+            socket: socket.into(),
+            pane: "%1".into(),
+            distro: "Ubuntu".into(),
+            pid: 1,
+            start: 1,
+        };
+        assert!(is_fleet(&t("/tmp/tmux-1001/klepsydra")));
+        assert!(!is_fleet(&t("/tmp/tmux-1001/default")));
+        assert!(!is_fleet(&t("/tmp/klepsydra/default")));
+        assert!(!is_fleet(&t("/tmp/tmux-1001/klepsydra2")));
     }
 
     #[test]

@@ -72,10 +72,13 @@ Creating the session detached, before any tab exists, means two quick clicks
 make two windows, never two sessions. A closed tab leaves the sessions running
 detached, and the next **+** or Jump reattaches.
 
-`jump SOCKET PANE`: checks `PANE` is `%<digits>` and `SOCKET` is an absolute
-path, runs `select-window -t PANE` and `select-pane -t PANE`, then reattaches
-as in step 3 if no client is attached. It exits non-zero when tmux has no such
-pane.
+`jump SOCKET PANE PID START`: checks `PANE` is `%<digits>`, `SOCKET` an
+absolute path, and `PID` and `START` digits; refuses unless process `PID` is
+alive (not a zombie) with start time `START` and the pane's `#{pane_pid}` is
+`PID` or an ancestor of it (see the addendum). It then runs `select-window -t
+PANE` and `select-pane -t PANE`, and reattaches as in step 3 if no client is
+attached; the tab it opens is titled only when `SOCKET` is the fleet's. It
+exits non-zero when tmux has no such pane.
 
 A missing `claude`, `tmux` or `wt.exe` exits non-zero with one line naming
 it, which the wall shows.
@@ -84,15 +87,14 @@ it, which the wall shows.
 
 ```
 source-file -q ~/.tmux.conf
-set -g set-titles on
-set -g set-titles-string "#{pane_title}"
+set -g automatic-rename on
+set -g automatic-rename-format "#{pane_title}"
 set -g remain-on-exit failed
 ```
 
 AJ's own settings load first (passthrough, extended keys, mouse). The
-`set-titles` lines pass the active window's Claude title to the tab, so
-title-matching Jump still works. The 2026-10-19 live check ran sessions this
-way. A window whose `claude` exits non-zero stays open, so a start-up error
+`automatic-rename` lines name each window after its pane's Claude title; the
+tab keeps the fixed title the launcher gives it (see the addendum). A window whose `claude` exits non-zero stays open, so a start-up error
 can be read.
 
 ### `hooks/klepsydra-fleet.sh` (changed)
@@ -116,7 +118,7 @@ card.
 ### `src-tauri/src/launch.rs` (new)
 
 - `launch_session()`: `wsl.exe [-d DISTRO] --cd ~ -- bash -l .claude/klepsydra-launch.sh new DIR`.
-- `tmux_jump(socket, pane, distro)`: `wsl.exe -d DISTRO --cd ~ -- bash .claude/klepsydra-launch.sh jump SOCKET PANE`.
+- `tmux_jump(target)`: `wsl.exe -d DISTRO --cd ~ -- bash .claude/klepsydra-launch.sh jump SOCKET PANE PID START`.
 - The command line comes from a pure function with unit tests. Arguments are
   validated before use and passed as separate argv entries, never through a
   shell string on the Windows side.
@@ -127,10 +129,10 @@ Prefs: `launch_dir` (default `~`; AJ's is `~/ajsoftworks`) and
 
 ### Jump (changed)
 
-When a card has `tmux` and `host.distro`, Jump first calls `tmux_jump`, then
-runs today's title match. It retries the match for up to 1.5 s while Windows
-Terminal picks up the new title. If `tmux_jump` fails, Jump falls back to the
-title match alone. A card without `tmux` works as today.
+When a card has `tmux`, `claude` and `host.distro`, Jump first calls
+`tmux_jump`, then makes one title match: the fixed `klepsydra fleet` title when
+the pane's socket is the launcher's `klepsydra`, else the session's name. If
+`tmux_jump` fails, Jump falls back to the session-name match alone. A card without `tmux` works as today.
 
 ### Clear (new)
 
@@ -192,7 +194,7 @@ touched list. The button's tooltip says so.
 ## Sources
 
 - Windows Terminal command-line arguments (`-w`, `new-tab`): learn.microsoft.com/windows/terminal/command-line-arguments
-- tmux(1): `TMUX_PANE`, pane ids, `new-window`, `set-titles`, `remain-on-exit`
+- tmux(1): `TMUX_PANE`, pane ids, `new-window`, `automatic-rename-format`, `remain-on-exit`
 - Claude Code memory docs, additional directories: code.claude.com/docs/en/memory
 - anthropics/claude-code #38033 (settings `additionalDirectories` do not load CLAUDE.md)
 - Agent view: claude.com/blog/agent-view-in-claude-code

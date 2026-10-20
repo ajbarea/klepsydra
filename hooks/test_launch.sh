@@ -131,9 +131,28 @@ for bad in 12a "" 0 01; do
 done
 for bad in 12a ""; do
   out=$(jmp "$first" "$fpid" "$bad" 2>&1); rc=$?
-  check "bad start '$bad': says so" "$out" "Not a process id: $bad"
+  check "bad start '$bad': says so" "$out" "Not a process start time: $bad"
 done
 check "refusals: window unchanged" "$(t display -p -t =fleet: '#{pane_id}')" "$second"
+# The walk: claude is a descendant of pane_pid, not pane_pid itself.
+leaf() { local p=$1 c _; for _ in 1 2 3 4 5 6 7 8; do c=$(pgrep -P "$p" | head -1); [[ -n $c ]] || break; p=$c; done; echo "$p"; }
+deep=$(t new-window -d -P -F '#{pane_id}' -t =fleet: "bash -c 'sleep 600; true'")
+sleep 0.3
+dleaf=$(leaf "$(pane_pid "$deep")"); dstart=$(pstart "$dleaf")
+check "descendant: leaf is not the pane pid" "$([[ $dleaf != "$(pane_pid "$deep")" ]] && echo yes)" "yes"
+out=$(jmp "$deep" "$dleaf" "$dstart" 2>&1); rc=$?
+check "descendant: exit 0" "$rc" "0"
+check "descendant: active pane" "$(t display -p -t =fleet: '#{pane_id}')" "$deep"
+out=$(jmp "$first" "$dleaf" "$dstart" 2>&1); rc=$?
+check "descendant against another pane: refused" "$out" "That session's tmux pane now belongs to another session."
+# A zombie child is not Claude.
+zp=$(t new-window -d -P -F '#{pane_id}' -t =fleet: "bash -c 'sleep 0.2 & exec sleep 600'")
+sleep 0.8
+zleaf=$(leaf "$(pane_pid "$zp")")
+check "zombie: made" "$(awk '{print $3}' "/proc/$zleaf/stat")" "Z"
+out=$(jmp "$zp" "$zleaf" "$(pstart "$zleaf")" 2>&1); rc=$?
+check "zombie: refused" "$out" "That session's tmux pane now belongs to another session."
+t select-window -t "$second"
 out=$(bash "$launch" jump "$socket" "$first" "$fpid" 2>&1); rc=$?
 check "missing start: exit 1" "$rc" "1"
 out=$(jmp '%3;x' "$fpid" "$fstart" 2>&1); rc=$?
@@ -151,6 +170,21 @@ jmp "$first" "$fpid" "$fstart" >/dev/null 2>&1
 check "jump without a client: one tab" "$(tabs)" "1"
 check "jump's tab names the socket" "$(head -1 "$WT_LOG")" \
   "-w fleet new-tab --title klepsydra fleet --suppressApplicationTitle wsl.exe -d Test -e tmux -S $socket attach -t =fleet"
+# A hand-started tmux on another socket gets a plain tab.
+sock2="kl-test2-$$"
+tmux -L "$sock2" -f /dev/null new-session -d -s hand "sleep 600"
+socket2=$(tmux -L "$sock2" display -p '#{socket_path}')
+pane2=$(tmux -L "$sock2" display -p '#{pane_id}')
+p2=$(tmux -L "$sock2" display -p '#{pane_pid}')
+: >"$WT_LOG"
+out=$(bash "$launch" jump "$socket2" "$pane2" "$p2" "$(pstart "$p2")" 2>&1); rc=$?
+check "other socket: exit 0" "$rc" "0"
+check "other socket: a plain tab" "$(head -1 "$WT_LOG")" \
+  "-w fleet new-tab wsl.exe -d Test -e tmux -S $socket2 attach -t =hand"
+tmux -L "$sock2" kill-server 2>/dev/null
+detach_all; : >"$WT_LOG"
+bash "$launch" jump "$socket" "$first" "$fpid" "$fstart" >/dev/null 2>&1
+check "fleet socket: titled tab" "$(head -1 "$WT_LOG" | grep -c -- "^-w fleet new-tab --title klepsydra fleet --suppressApplicationTitle wsl.exe")" "1"
 out=$(bash "$launch" bogus 2>&1); rc=$?
 check "unknown command: exit 1" "$rc" "1"
 check "unknown command: says so" "$out" "usage: klepsydra-launch.sh new DIR | jump SOCKET PANE PID START"

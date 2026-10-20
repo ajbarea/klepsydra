@@ -9,7 +9,7 @@
 # client shows the session. One line out: stdout on success, stderr on failure.
 set -uo pipefail
 
-SOCKET_NAME=${KLEPSYDRA_TMUX_SOCKET:-klepsydra}
+SOCKET_NAME=${KLEPSYDRA_TMUX_SOCKET:-klepsydra} # default is FLEET_SOCKET in launch.rs
 SESSION=fleet
 TAB_TITLE="klepsydra fleet" # also FLEET_TAB in src-tauri/src/launch.rs
 CONF=${KLEPSYDRA_TMUX_CONF:-$HOME/.claude/klepsydra-tmux.conf}
@@ -36,12 +36,15 @@ tab_preflight() {
     fail "WSL_DISTRO_NAME is missing or not usable, so no tab could be opened."
 }
 
+# Set for the fleet's own tab: its title is fixed, so Jump can find it.
+TITLE_ARGS=()
+
 # Open a tab attached to `target`, then wait for its client so the next launch
 # sees it. If wt.exe fails, run the cleanup command in "${UNDO[@]}".
 open_tab() { # target tmux-socket-args...
   local target=$1; shift
   # The lock fd is closed for wt.exe so a tab never outlives the lock.
-  "$WT" -w fleet new-tab --title "$TAB_TITLE" --suppressApplicationTitle wsl.exe -d "$WSL_DISTRO_NAME" -e tmux "$@" attach -t "$target" \
+  "$WT" -w fleet new-tab "${TITLE_ARGS[@]}" wsl.exe -d "$WSL_DISTRO_NAME" -e tmux "$@" attach -t "$target" \
     >/dev/null 2>&1 {LOCKFD}>&- || {
     (( ${#UNDO[@]} )) && "${UNDO[@]}" >/dev/null 2>&1
     fail "Windows Terminal did not open a tab."
@@ -77,6 +80,7 @@ new() { # dir
       fail "tmux could not start the fleet session."
     UNDO=(tmux "${t[@]}" kill-session -t "$target")
   fi
+  TITLE_ARGS=(--title "$TAB_TITLE" --suppressApplicationTitle)
   (( shown )) || open_tab "$target" "${t[@]}"
   printf 'Started a session in %s.\n' "$dir"
 }
@@ -88,7 +92,7 @@ owns_process() { # ancestor pid start
   { IFS= read -r raw <"/proc/$p/stat"; } 2>/dev/null
   [[ $raw == *") "* ]] || return 1
   read -r -a stat <<<"${raw##*") "}"
-  (( ${#stat[@]} > 19 )) && [[ ${stat[19]} == "$3" ]] || return 1
+  (( ${#stat[@]} > 19 )) && [[ ${stat[0]} != Z && ${stat[19]} == "$3" ]] || return 1
   for _ in $(seq 64); do
     [[ $p == "$1" ]] && return 0
     { IFS= read -r raw <"/proc/$p/stat"; } 2>/dev/null
@@ -105,7 +109,7 @@ jump() { # socket pane pid start
   [[ $socket =~ ^/[A-Za-z0-9._/-]{1,255}$ ]] || fail "Not a tmux socket path: $socket"
   [[ $pane =~ ^%[0-9]{1,9}$ ]] || fail "Not a tmux pane: $pane"
   [[ $pid =~ ^[1-9][0-9]{0,9}$ ]] || fail "Not a process id: $pid"
-  [[ $start =~ ^[0-9]{1,20}$ ]] || fail "Not a process id: $start"
+  [[ $start =~ ^[0-9]{1,20}$ ]] || fail "Not a process start time: $start"
   need tmux "tmux is not installed in this distro."
   local -a t=(-S "$socket")
   # tmux 3.4 exits 0 with empty output for an unknown pane.
@@ -122,6 +126,8 @@ jump() { # socket pane pid start
   take_lock
   if ! has_client "=$session" "${t[@]}"; then
     tab_preflight
+    # Only the fleet's own server gets the fixed title; another stays a plain tab.
+    [[ ${socket##*/} == "$SOCKET_NAME" ]] && TITLE_ARGS=(--title "$TAB_TITLE" --suppressApplicationTitle)
     open_tab "=$session" "${t[@]}"
   fi
   printf "Selected the session's tmux window.\n"

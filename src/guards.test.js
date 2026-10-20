@@ -204,6 +204,13 @@ test("the script and the app name the fleet tab alike", () => {
   assert.equal(rust[1], sh[1]);
 });
 
+test("the script and the app name the fleet socket alike", () => {
+  const rust = read(LAUNCHER).match(/pub const FLEET_SOCKET: &str = "([^"]+)";/);
+  const sh = read("hooks/klepsydra-launch.sh").match(/^SOCKET_NAME=\$\{KLEPSYDRA_TMUX_SOCKET:-([^}]+)\}/m);
+  assert.ok(rust && sh, "socket name constants not found");
+  assert.equal(rust[1], sh[1]);
+});
+
 test("the launcher check catches a shell hop or an aliased Command", () => {
   for (const planted of ['.args(["-c", cmd])', "use std::process::Command as C;", 'a = ["--", "sh"];']) {
     assert.notDeepEqual(launcherHazards(planted), [], planted);
