@@ -937,8 +937,8 @@ while read -r v acc ink; do
   fire session-start.json ".session_id = \"$C4\"" KLEPSYDRA_CAST="$work/parity-cast.json" TMUX="$fsock,1,0" TMUX_PANE=%3 KERYX_VOICES="$work/ink-voices.json" >/dev/null
   got+="$v $acc $(sed -n 's/.*current-style bg=#[0-9A-Fa-f]*,fg=\(#[0-9a-f]*\),bold/\1/p' "$tlog")"$'\n'
 done <<<"$want"
-check "the hook's ink matches contrast.js for all sixteen" "$got" "$want"$'\n'
-check "all sixteen were compared" "$(wc -l <<<"$want")" "16"
+check "the hook's ink matches contrast.js for all seventeen" "$got" "$want"$'\n'
+check "all seventeen were compared" "$(wc -l <<<"$want")" "17"
 
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [[ $fail -eq 0 ]]

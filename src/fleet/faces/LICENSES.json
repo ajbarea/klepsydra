@@ -71,6 +71,14 @@
     "source": "AJ Barea, generated from the briefs in docs/characters/portrait-briefs.md (assets/portraits/hermes.jpg), head cropped and scaled to 96 px",
     "license": "MIT (Copyright (c) 2026 AJ Barea)"
   },
+  "kourai/hesychia-192.webp": {
+    "source": "AJ Barea, generated from the briefs in docs/characters/portrait-briefs.md (assets/portraits/hesychia.jpg), head cropped and scaled to 192 px",
+    "license": "MIT (Copyright (c) 2026 AJ Barea)"
+  },
+  "kourai/hesychia-96.webp": {
+    "source": "AJ Barea, generated from the briefs in docs/characters/portrait-briefs.md (assets/portraits/hesychia.jpg), head cropped and scaled to 96 px",
+    "license": "MIT (Copyright (c) 2026 AJ Barea)"
+  },
   "kourai/kallos-192.webp": {
     "source": "kourai-khryseai assets/avatars/vn/kallos_neutral.png (https://github.com/ajbarea/kourai-khryseai), head cropped and scaled to 192 px",
     "license": "MIT (kourai-khryseai LICENSE, Copyright (c) 2026 AJ Barea)"

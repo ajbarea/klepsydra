@@ -429,9 +429,10 @@ To see the wall without sessions, serve the repo root (for example
 `python3 -m http.server`) and open `/src/wall.html?demo`.
 
 A session's face follows its keryx voice, so it stays the same while the
-session moves between repos. Fourteen voices, every one in keryx's rotation pool,
-are cast as characters and show their portraits: ten from kourai-khryseai and four
-(Chronos, Argos, Hermes, Elpis) painted for this app. Any other voice shows the voice's name
+session moves between repos. Fifteen voices, all fourteen in keryx's rotation pool
+and `af_nicole` (keryx hands it out only when pinned), are cast as characters and
+show their portraits: ten from kourai-khryseai and five (Chronos, Argos, Hermes,
+Elpis, Hesychia) painted for this app. Any other voice shows the voice's name
 and a forge medallion: a laurel ring on a dark disc around the name's
 initial, struck in one of six kourai metals (gold, bronze, copper, rose gold,
 pale gold, verdigris) picked by the voice, so two voices with one initial
@@ -450,7 +451,7 @@ changes with the status only once, when its session ends beside a running one
 with the same voice (after `/clear`, the new session keeps the portrait).
 
 The portraits are files in `src/fleet/faces`, each listed in `LICENSES.json`,
-and `scripts/cut-portraits.py` cuts them: ten from kourai-khryseai, four from
+and `scripts/cut-portraits.py` cuts them: ten from kourai-khryseai, five from
 `assets/portraits/`. The medallion is
 an SVG drawn in `src/fleet/medallion.js`. The overlay loads no library and
 fetches nothing.

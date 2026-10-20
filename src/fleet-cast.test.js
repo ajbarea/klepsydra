@@ -15,16 +15,18 @@ const POOL = [
   "bm_fable", "am_puck", "af_aoede", "af_kore", "af_sarah", "af_alloy", "af_nova",
 ];
 const KOURAI = ["aidos", "aletheia", "cupid", "dokimasia", "hephaestus", "kallos", "metis", "mneme", "puck", "techne"];
-const NEW = ["argos", "chronos", "elpis", "hermes"];
+const NEW = ["argos", "chronos", "elpis", "hermes", "hesychia"];
+// keryx hands af_nicole out only when the user pins it, so it is cast but not in the pool.
+const PINNED = "af_nicole";
 const PORTRAITS = [...KOURAI, ...NEW].sort();
 
-test("the fourteen characters each have one pool voice of their gender, and the pool is covered", () => {
+test("the fifteen characters each have one voice of their gender: every pool voice, and af_nicole", () => {
   const entries = Object.entries(cast.characters);
   assert.deepEqual(entries.map(([, c]) => c.face).sort(), PORTRAITS);
-  assert.equal(new Set(entries.map(([, c]) => c.name)).size, 14);
-  assert.deepEqual(Object.keys(cast.characters).sort(), [...POOL].sort(), "one character per pool voice");
+  assert.equal(new Set(entries.map(([, c]) => c.name)).size, 15);
+  assert.deepEqual(Object.keys(cast.characters).sort(), [...POOL, PINNED].sort(), "every pool voice has a character, and af_nicole is cast too");
   for (const [voice, c] of entries) {
-    assert.ok(POOL.includes(voice), `${voice} is not in keryx's pool`);
+    assert.ok(POOL.includes(voice) || voice === PINNED, `${voice} is neither in keryx's pool nor the pinned voice`);
     assert.equal(voice[1], c.gender, `${c.name} cast against gender`);
   }
 });
@@ -47,10 +49,10 @@ const CANON = {
   mneme: "#B496DC", puck: "#009E73", cupid: "#D55E00", aidos: "#56B4E9", aletheia: "#0072B2",
 };
 
-// The four new accents: Okabe-Ito yellow and reddish purple, kourai cream-gold, and a
-// burnt orange sampled from Hermes's cloak edge (portrait-briefs.md named #E69F00,
+// The five new accents: Okabe-Ito yellow and reddish purple, kourai cream-gold, moonlit silver-blue
+// (Hesychia, from her brief), and a burnt orange sampled from Hermes's cloak edge (portrait-briefs.md named #E69F00,
 // which is the needs-you amber).
-const ADDED = { chronos: "#F0E442", argos: "#CC79A7", hermes: "#E07B39", elpis: "#F1D2A1" };
+const ADDED = { chronos: "#F0E442", argos: "#CC79A7", hermes: "#E07B39", elpis: "#F1D2A1", hesychia: "#A9B8D0" };
 
 test("every character has its accent, and nothing else is in an entry", () => {
   for (const c of Object.values(cast.characters)) {
