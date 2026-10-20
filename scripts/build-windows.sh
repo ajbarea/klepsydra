@@ -2,13 +2,15 @@
 # Builds the Windows binary. Source of truth stays in the WSL repo; Cargo runs
 # against a native NTFS staging copy, because building on a \\wsl$ UNC path is
 # slow and prone to link failures. The staging target/ dir persists, so repeat
-# builds are incremental. With --check it runs clippy and the tests there
-# instead, for the code that compiles only on Windows.
+# builds are incremental. KLEPSYDRA_STAGE names the staging folder (default
+# klepsydra-build), so a branch can build in a folder of its own. With --check
+# it runs clippy and the tests there instead, for the code that compiles only
+# on Windows.
 set -euo pipefail
 
 repo=$(cd "$(dirname "$0")/.." && pwd)
-stage_win="C:\\Users\\$USER\\klepsydra-build"
-stage="/mnt/c/Users/$USER/klepsydra-build"
+stage_win="C:\\Users\\$USER\\${KLEPSYDRA_STAGE:-klepsydra-build}"
+stage="/mnt/c/Users/$USER/${KLEPSYDRA_STAGE:-klepsydra-build}"
 
 mkdir -p "$stage"
 # Everything except build output and VCS; target/ and node_modules/ stay put.
