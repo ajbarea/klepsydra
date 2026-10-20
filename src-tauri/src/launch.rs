@@ -3,12 +3,14 @@
 //! bring a session's tmux window forward.
 
 use std::sync::Mutex;
+#[cfg(windows)]
 use std::time::Duration;
 
 use serde_json::Value;
 use tauri::Manager;
 
 /// The only program klepsydra starts.
+#[cfg_attr(not(windows), allow(dead_code))]
 pub const WSL_EXE: &str = r"C:\Windows\System32\wsl.exe";
 /// The launcher, relative to the WSL home (`--cd ~`).
 const SCRIPT: &str = ".claude/klepsydra-launch.sh";
@@ -136,6 +138,7 @@ pub fn gated<T>(flight: &InFlight, f: impl FnOnce() -> Result<T, String>) -> Res
 }
 
 /// wsl.exe writes its own messages as UTF-16LE and the Linux side's as UTF-8.
+#[cfg(any(windows, test))]
 fn decode(b: &[u8]) -> String {
     let utf16 =
         b.len() >= 2 && b.len().is_multiple_of(2) && b.iter().skip(1).step_by(2).all(|&x| x == 0);
@@ -153,6 +156,7 @@ fn decode(b: &[u8]) -> String {
 }
 
 /// The last non-blank line, at most 200 characters.
+#[cfg(any(windows, test))]
 fn last_line(text: &str) -> String {
     let line = text
         .lines()
