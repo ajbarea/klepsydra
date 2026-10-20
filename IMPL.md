@@ -36,4 +36,10 @@ stays silent under Windows Do Not Disturb, Focus and full-screen apps.
   with DND off.
 
 ## Next
-- Review and merge.
+- A fourth review of the turn-counter commit (5e6848a) was still running when the session stopped: re-run it.
+- Live check with AJ, keryx off. Run the test copy as `C:\Users\ajbar\pingcheck\pingcheck.exe` with
+  `KLEPSYDRA_DIR=C:\Users\ajbar\klepsydra-ping-test` (Ping off in prefs). Run a throwaway claude with
+  `--setting-sources project --settings <branch-hook settings>`, built from the README block with each
+  command set to this worktree's hook. Then: tick Ping in the tray (the preview plays and survives a
+  restart), one done, one needs-you.
+- Then merge; clean up the stage `klepsydra-build-ping`, `pingcheck`, `klepsydra-ping-test`.
