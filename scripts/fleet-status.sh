@@ -24,7 +24,10 @@ fi
     beat=${f%.json}.beat
     name="-" age="-"
     if [[ -f $beat ]]; then
-      IFS=$'\t' read -r name _ <"$beat" || true
+      # Tab is IFS whitespace, so `read` would skip an empty name's field and
+      # take the time; cut the first field instead.
+      IFS= read -r line <"$beat" || true
+      name=${line%%$'\t'*}
       age="$(( now - $(stat -c %Y "$beat") ))s"
     fi
     jq -r --argjson now "$now" --arg name "${name:--}" --arg age "$age" '
