@@ -79,7 +79,11 @@ const SOUND = [
 export const makesSound = (text) => SOUND.filter((re) => re.test(text)).map(String);
 
 // Native audio from Rust sources and Cargo manifests.
-const NATIVE_SOUND = [/\b(rodio|cpal|PlaySound|MessageBeep|Beep)\b/];
+const NATIVE_SOUND = [
+  /\b(rodio|cpal|kira|(snd)?PlaySound[AW]?|MessageBeep|Beep)\b/,
+  /\b(waveOut\w*|mciSendString\w*|XAudio2\w*|IAudioClient\w*|IXAudio2\w*)\b/,
+  /Media::(Audio|Playback|Core)\b|Win32_Media_Audio\b/,
+];
 export const makesNativeSound = (text) => NATIVE_SOUND.filter((re) => re.test(text)).map(String);
 
 export const loopsForever = (css) => /\binfinite\b|iterations\s*:\s*Infinity/.test(stripCssComments(css));
@@ -246,9 +250,18 @@ test("no shell or opener plugin is configured", () => {
   assert.deepEqual(processPlugins('{"plugins":{"window-state":{}}}'), []);
 });
 
-test("the app makes no sound", () => {
+// Ping is the one sound, and it plays only the chimes built into the binary.
+const PING = "src-tauri/src/ping.rs";
+
+test("only Ping makes a sound", () => {
+  assert.ok(RUST.includes(PING), `${PING} not found`);
   for (const f of FRONTEND) assert.deepEqual(makesSound(read(f)), [], f);
-  for (const f of [...RUST, ...CARGO]) assert.deepEqual(makesNativeSound(read(f)), [], f);
+  for (const f of RUST.filter((f) => f !== PING)) assert.deepEqual(makesNativeSound(read(f)), [], f);
+  // The one audio feature Ping needs, and no audio crate.
+  for (const f of CARGO) {
+    const text = read(f).replace(/^\s*"Win32_Media_Audio",\s*$/m, "");
+    assert.deepEqual(makesNativeSound(text), [], f);
+  }
   for (const planted of [
     "new Audio(src)",
     "speechSynthesis.speak(u)",
@@ -264,9 +277,31 @@ test("the app makes no sound", () => {
   ]) {
     assert.notDeepEqual(makesSound(planted), [], planted);
   }
-  for (const planted of ['rodio = "0.19"', "use cpal::traits::*;", "PlaySound(p, 0, 0)", "MessageBeep(0)", "Beep(440, 100)"]) {
+  for (const planted of ['rodio = "0.19"', "use cpal::traits::*;", "PlaySound(p, 0, 0)", "PlaySoundW(p, None, f)", "sndPlaySoundA(p, 0)", "MessageBeep(0)", "Beep(440, 100)",
+    "waveOutOpen(&mut h)", "mciSendStringW(c)", "XAudio2Create(&mut x)", "use windows::Win32::Media::Audio::*;",
+    "use windows::Media::Playback::MediaPlayer;", '"Win32_Media_Audio",']) {
     assert.notDeepEqual(makesNativeSound(planted), [], planted);
   }
+});
+
+/** Rust source with its comments removed, so a comment cannot satisfy a guard. */
+const stripRustComments = (src) => src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
+
+test("Ping plays only its embedded chimes, and only the tray previews past the quiet check", () => {
+  const code = stripRustComments(read(PING)).replace(/\s+/g, "");
+  const calls = code.match(/(snd)?PlaySound[AW]?\(/g) ?? [];
+  assert.deepEqual(calls, ["PlaySoundW("]);
+  assert.ok(code.includes("PlaySoundW(PCWSTR(wav.as_ptr().cast()),None,SND_MEMORY|SND_ASYNC|SND_NODEFAULT,)"));
+  assert.doesNotMatch(code, /SND_(FILENAME|ALIAS|RESOURCE|SYSTEM|LOOP|APPLICATION)|SND_FLAGS\(/);
+  // Past that one call and its import, no other sound API.
+  const rest = stripRustComments(read(PING)).replace(/\bPlaySoundW\b/g, "").replace(/Media::Audio\b/g, "");
+  assert.deepEqual(makesNativeSound(rest), []);
+  assert.deepEqual([...code.matchAll(/include_bytes!\("([^"]+)"\)/g)].map((m) => m[1]), [
+    "../sounds/needs-you.wav",
+    "../sounds/done.wav",
+  ]);
+  const previews = RUST.flatMap((f) => (stripRustComments(read(f)).match(/\bping::preview\(/g) ?? []).map(() => f));
+  assert.deepEqual(previews, ["src-tauri/src/main.rs"]);
 });
 
 test("no animation runs forever, and every animation stops under reduced motion", () => {

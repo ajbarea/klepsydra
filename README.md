@@ -236,7 +236,10 @@ the gauge keeps working either way; once the hook is re-copied, that folder
 holds nothing current and can be deleted. Re-copy `klepsydra-cast.json` too: a
 cast from before the character colours has no accents, so the buttons would
 lack markers while their tmux windows stay plain. The same holds whenever the cast
-grows: a voice missing from the installed copy gets no window colour.
+grows: a voice missing from the installed copy gets no window colour. A fleet
+hook from before Ping counts no turns, so its sessions get the done chime by
+an older rule that can also chime when a session is resumed or a turn is
+interrupted.
 
 ## Using it
 
@@ -274,7 +277,8 @@ on the taskbar returns to the taskbar at any size. Its monitor is found by
 position, then by name, then by nearness, and a changed resolution moves
 home to the same relative spot. With no home saved, it goes over the primary
 monitor's taskbar, 220px in from the right. The menu also toggles "Compact"
-(below) and "Start with Windows" ("Start at login" on Linux), and quits.
+(below), "Ping" (Windows only; see the fleet strip) and "Start with Windows"
+("Start at login" on Linux), and quits.
 Autostart is on by default; the icon may start in the notification-area
 overflow.
 
@@ -490,8 +494,8 @@ fetches nothing.
 
 The fleet hook writes `<app data dir>/fleet/<session>.json`: the state, where
 the session works, the first 300 characters of your last prompt and of the
-last reply, and the error text of a failed turn. It records no tool input
-beyond the tool's name and an edited file's path. The status line adds
+last reply, how many turns have ended, and the error text of a failed turn. It
+records no tool input beyond the tool's name and an edited file's path. The status line adds
 `<session>.beat`, the session's name, at most once per 10 seconds. At a
 session start, at most once an hour, the hook deletes a session's file when
 its Claude Code process is gone and its newest time field (including
@@ -503,7 +507,30 @@ modification time is more than a day old.
 The overlay starts no process and asks WSL for nothing: it watches the folder
 and re-reads it every 5 seconds. A file it cannot read is skipped and logged
 once to `fleet.log` in the app data dir, and the rest of the fleet still
-shows. keryx does the speaking; the strip makes no sound.
+shows.
+
+### Ping
+
+With "Ping" ticked in the tray menu, klepsydra plays a short chime when a
+session needs you or finishes its turn: two notes at one pitch when it needs
+you (a prompt, a question or an error), two rising notes when a turn ends.
+Ping is off until you tick it, and ticking it plays the needs-you chime once.
+Several sessions changing together make one chime, needs-you first. Within 2
+seconds of a chime only a needs-you after a done plays, so a burst makes one
+sound and a prompt still gets its own. A chime answers a hook event, as the
+hook wrote it: nothing plays for what was already on the strip when
+klepsydra started, a session coming back from silence, or a resume. Done
+plays at each Stop, so a turn that another Stop hook sends back to work
+chimes at each of its Stops.
+
+The chime stays silent while Do Not Disturb or a Focus session is on, or
+while a full-screen app, a game or presentation mode is in front. Windows
+reports Do Not Disturb only through an undocumented setting, so if klepsydra
+cannot read it, the chime plays. Ping is Windows only; the Linux tray menu
+has no "Ping".
+
+The chimes are built by `scripts/make-sounds.mjs`, which writes
+`src-tauri/sounds/`; the tests fail if the files and the script disagree.
 
 ## How often it refreshes
 

@@ -3,7 +3,11 @@
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
+#[cfg(windows)]
+use std::time::Instant;
 
+#[cfg(windows)]
+use klepsydra_fleet::cue::Cues;
 use klepsydra_fleet::hub::{Hub, Sink};
 use klepsydra_fleet::problem_log::{append_capped, CAP};
 use klepsydra_fleet::scan::Problem;
@@ -79,14 +83,24 @@ pub fn start(app: &AppHandle, dir: Option<PathBuf>) {
     let app = app.clone();
     std::thread::spawn(move || {
         let mut reader = Reader::new(&dir);
+        #[cfg(windows)]
+        let mut cues = Cues::new(unix_now());
         let mut wait = Duration::ZERO;
         loop {
             let (snapshot, problems) = reader.step(wait, unix_now);
             for p in &problems {
                 log_problem(&dir, p);
             }
-            if let Some(v) = snapshot.and_then(|s| serde_json::to_value(s).ok()) {
-                app.state::<Fleet>().publish(v);
+            if let Some(snapshot) = snapshot {
+                // Every snapshot moves the baseline, so turning Ping on never
+                // replays what changed while it was off.
+                #[cfg(windows)]
+                if let Some(c) = cues.next(&snapshot, Instant::now(), unix_now()) {
+                    crate::ping::cue(c);
+                }
+                if let Ok(v) = serde_json::to_value(snapshot) {
+                    app.state::<Fleet>().publish(v);
+                }
             }
             wait = POLL;
         }

@@ -1,45 +1,44 @@
 # IMPL
 
-Current slice: speaking avatar, the klepsydra side (#33), branch
-feat/speaking-ripple. keryx 0.9.2 (keryx #39) writes `speaking.json` into the
-fleet folder per sentence; the wall shows gold waves around the speaking
-card's portrait. Contract: keryx `docs/speaking-signal.md`.
+Current slice: Ping (#48), branch feat/ping. A tray checkbox, off by default,
+that plays a short chime when a session needs you or finishes its turn, and
+stays silent under Windows Do Not Disturb, Focus and full-screen apps.
 
 ## Done
-- Reader (`src-tauri/fleet/src/speaking.rs`): the scan passes `speaking.json`
-  over by name (test); `read` takes only a regular file under 256 KiB;
-  `read` returns Absent / Failed / Text; `parse` returns Line / Partial (not
-  JSON, cut short) / Invalid (v != 1, wrong shape, out-of-range times, a
-  negative or over-600 s span, negative levels); levels over 1 are held to 1.
-  Failed or Partial keeps the last line shown through its end + HOLD_SECS
-  (0.6, guarded equal to SPEAK_HOLD_MS); only Absent is a cut-off. A line
-  starting more than START_AHEAD_SECS (5) ahead is ignored.
-  `owner` matches pid+start, then session_id, then the one live card wearing
-  the voice (two such cards: none). A line whose `ends_at` is before the
-  reader's second is dropped. Rides on the snapshot as `speaking`
-  {session_id, envelope, started_at, ends_at}; a malformed file is silence,
-  not a fleet.log problem.
-- Wall (`src/fleet/speaking.js`, `wall.js`): `Speaker` tracks the line;
-  SPEAK_HOLD_MS = 600 holds through sentence gaps, a null mid-clip is a
-  cut-off (fade now), SPEAK_FADE_MS = 300. Waves: a steady gold ring at
-  r 42.5 that swells with the level, plus two ripples r 46 to 50.5 that
-  start #F1D2A1 and darken to #C9944A; every edge stays within 52, the
-  12 px the card leaves before the name column and the next row (tested
-  against wall.css). rAF only while a line shows; reduced
-  motion: one still ring, taken down by a timer. Live region "<Name>
-  speaking" once per utterance (`announcer` in dom.js: same words twice are
-  cleared and re-set; a newer announcement cancels a pending re-set).
-- Strip: the speaking face gets `.speaking` (gold box-shadow ring) and
-  ", speaking" in its label, through the hold.
-- Demo: `scripts/fixtures/fleet-demo.json` has a 3.2 s line for Hermes with
-  `ends_at` far ahead; in a browser `feed.js` replays it every sentence plus
-  400 ms.
-- Gates: the whole audit list, build-windows --check.
+- Hook: every file carries `turns` (0 at creation, +1 at each Stop, the only
+  event that ends a turn) and `turns_at`, the write's own time; a count whose
+  stamp is not the file's `written_at` was carried along by an older hook. `SessionFile.turns` is None only from an older
+  hook (lenient parse); `View.marks` carries `turns` and the raw `state_at`
+  (serde skip), since the skew correction moves between writes.
+- `fleet/src/cue.rs`: the first snapshot asks for nothing. Needs-you or error
+  cues when the raw `state_at` changed or the status just became needs-you
+  (an unseen session: when its time is past the app's start). Done cues when
+  `turns` changed on a session already seen; an older hook falls back to
+  working -> done at a new state time. A session first seen silent is
+  recorded so its turn's end still cues. Within `GAP` (2 s) only a higher
+  rank plays. Absent sessions are forgotten a day after their last read.
+- Known: a Stop that another Stop hook blocks chimes; the continuation's Stop
+  chimes again. Nothing can know at Stop time that it will be blocked.
+- `src/ping.rs` (Windows only): plays the embedded WAV with `PlaySoundW`
+  (`SND_MEMORY | SND_ASYNC`). Quiet check: WNF quiet-hours profile (DND and
+  Focus) and `SHQueryUserNotificationState` busy, D3D full screen,
+  presentation (not `QUNS_APP`, which is any Store app). Ticking the box previews needs-you, past the check.
+  Linux has no Ping: playing there means starting `pw-play`, and only the
+  launcher may start a process (guard). A Linux chime needs an audio crate (#6).
+- `fleet.rs`: on Windows the reader loop runs every snapshot through `Cues`, Ping on or off.
+- `scripts/make-sounds.mjs` + `src/sounds.test.js`: the WAVs match the script;
+  under 0.5 s; peak -3 dBFS (AJ picked the level by ear); a 10 ms release, so no click.
+- README Ping section.
+
+## Measured
+- `SHQueryUserNotificationState` reads 5 with DND off, DND on and Focus on;
+  the WNF profile reads 0, 1 and 1.
+- Live on Windows, keryx off: done heard; silent with DND on; needs-you heard
+  with DND off.
+
+## Live, final build (keryx off, branch hook, user settings excluded)
+- Ticking Ping in the tray played needs-you and saved `"ping": true`; a restart kept it.
+- Done heard at a turn's end (turns 0 -> 1); needs-you heard on a question.
 
 ## Next
-- Review findings 1-4 fixed, each with a fail-first test; merge is AJ's call.
-- Live check: install the build, run keryx 0.9.2, and watch a real line.
-
-## Verify
-- `node --test src/*.test.js`; `cd src-tauri && cargo test -p klepsydra-fleet`.
-- Serve the repo root, open `/src/wall.html?demo` at 1920 wide.
+- Merge on green CI; then delete the stage `C:\Users\ajbar\klepsydra-build-ping`.
