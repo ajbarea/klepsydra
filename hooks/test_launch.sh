@@ -73,8 +73,9 @@ check "first: exit 0" "$rc" "0"
 check "first: says where" "$out" "Started a session in $work/repos."
 check "first: one window" "$(windows)" "1"
 check "first: one tab" "$(tabs)" "1"
-check "first: the tab attaches with exec" "$(head -1 "$WT_LOG")" \
-  "-w fleet new-tab --title klepsydra fleet --suppressApplicationTitle wsl.exe -d Test -e tmux -L $sock attach -t =fleet"
+check "first: the tab attaches by the socket's path" "$(head -1 "$WT_LOG")" \
+  "-w fleet new-tab --title klepsydra fleet --suppressApplicationTitle wsl.exe -d Test -e tmux -S $(t display -p '#{socket_path}') attach -t =fleet"
+check "first: an attached tab leaves no pending stamp" "$([[ -e $work/klepsydra-tab-pending-$UID ]] && echo left)" ""
 check "first: conf loaded" "$(t show -gv automatic-rename-format)" "#{pane_title}"
 attach
 bash "$launch" new "$work/repos" >/dev/null 2>&1
@@ -215,6 +216,36 @@ jmp "$first" "$fpid" "$fstart" >/dev/null 2>&1
 check "slow tab, new then jump: one tab" "$(tabs)" "1"
 unset WT_DELAY
 
+echo "a tab that has not attached yet"
+t kill-server 2>/dev/null; detach_all; : >"$WT_LOG"
+pending="$work/klepsydra-tab-pending-$UID"
+export WT_DELAY=6 # a cold WSL: the tab attaches after the launcher stops waiting
+out=$(bash "$launch" new "$work/repos" 2>&1); rc=$?
+check "cold tab: exit 0" "$rc" "0"
+check "cold tab: says the tab has not attached" "$out" \
+  "Started a session in $work/repos. The terminal tab has not attached yet."
+check "cold tab: a pending stamp" "$(read -r at key <"$pending"; echo "$key")" "-S $(t display -p '#{socket_path}') =fleet"
+out=$(bash "$launch" new "$work/repos" 2>&1); rc=$?
+check "cold tab, second new: exit 0" "$rc" "0"
+check "cold tab, second new: one tab, not two" "$(tabs)" "1"
+check "cold tab, second new: two windows" "$(windows)" "2"
+check "cold tab, second new: says so" "$out" "Started a session in $work/repos. The terminal tab has not attached yet."
+socket=$(t display -p '#{socket_path}')
+first=$(t list-panes -s -t =fleet -F '#{pane_id}' | head -1)
+fpid=$(pane_pid "$first"); fstart=$(pstart "$fpid")
+jmp "$first" "$fpid" "$fstart" >/dev/null 2>&1
+check "cold tab, then jump: one tab" "$(tabs)" "1"
+detach_all; : >"$WT_LOG"
+read -r at key <"$pending"; printf '%s %s\n' "$((at - 31))" "$key" >"$pending"
+bash "$launch" new "$work/repos" >/dev/null 2>&1
+check "a stamp over 30 s old: a new tab" "$(tabs)" "1"
+detach_all; : >"$WT_LOG"
+read -r at key <"$pending"; printf '%s %s\n' "$at" "-S /tmp/elsewhere =fleet" >"$pending"
+bash "$launch" new "$work/repos" >/dev/null 2>&1
+check "another server's stamp: a new tab" "$(tabs)" "1"
+unset WT_DELAY
+detach_all; rm -f "$pending"
+
 echo "failed tab"
 t kill-server 2>/dev/null; detach_all; : >"$WT_LOG"
 out=$(KLEPSYDRA_WT=false bash "$launch" new "$work/repos" 2>&1); rc=$?
@@ -234,6 +265,13 @@ out=$(WSL_DISTRO_NAME='a;b' bash "$launch" new "$work/repos" 2>&1); rc=$?
 check "bad distro name: exit 1" "$rc" "1"
 check "bad distro name: says so" "$out" "WSL_DISTRO_NAME is missing or not usable, so no tab could be opened."
 check "bad distro name: nothing running" "$(t list-sessions 2>/dev/null | wc -l)" "0"
+odd="$work/a;b"; mkdir -p "$odd"; : >"$WT_LOG"
+out=$(TMUX_TMPDIR="$odd" bash "$launch" new "$work/repos" 2>&1); rc=$?
+check "a socket path wt.exe would split: exit 1" "$rc" "1"
+check "a socket path wt.exe would split: says so" "$out" \
+  "The tmux socket path cannot be passed to a tab: $odd/tmux-$(id -u)/$sock"
+check "a socket path wt.exe would split: nothing running, no tab" \
+  "$(TMUX_TMPDIR="$odd" tmux -L "$sock" list-sessions 2>/dev/null | wc -l)|$(tabs)" "0|0"
 
 echo "cleanup"
 cleanup; trap - EXIT

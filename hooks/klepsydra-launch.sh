@@ -6,7 +6,8 @@
 # "klepsydra"); `jump` brings PANE's window to the front of its session, once
 # PANE still hosts Claude process PID (START = /proc/PID/stat field 22). Both
 # open a Windows Terminal tab (window "fleet", titled TAB_TITLE) only when no
-# client shows the session. One line out: stdout on success, stderr on failure.
+# client shows the session and no tab opened in the last PENDING_FOR seconds is
+# still starting. One line out: stdout on success, stderr on failure.
 set -uo pipefail
 
 SOCKET_NAME=${KLEPSYDRA_TMUX_SOCKET:-klepsydra} # default is FLEET_SOCKET in launch.rs
@@ -18,8 +19,15 @@ WT=${KLEPSYDRA_WT:-wt.exe}
 UNDO=()
 LOCK=${XDG_RUNTIME_DIR:-/tmp}/klepsydra-launch-$UID.lock
 PROC_ROOT=/proc
+# A tab opened but not yet attached: "EPOCH KEY", KEY its socket args and target.
+PENDING=${XDG_RUNTIME_DIR:-/tmp}/klepsydra-tab-pending-$UID
+PENDING_FOR=30
+# A socket path safe to hand wt.exe, which splits its arguments at ";".
+SOCKET_RE='^/[A-Za-z0-9._/-]{1,255}$'
+ATTACHED=1 # cleared by open_tab until the tab's client shows up
 
 fail() { printf '%s\n' "$*" >&2; exit 1; }
+undo() { (( ${#UNDO[@]} )) && "${UNDO[@]}" >/dev/null 2>&1; } # what a failed launch created
 need() { command -v "$1" >/dev/null 2>&1 || fail "$2"; }
 
 has_client() { [[ -n $(tmux "${@:2}" list-clients -t "$1" -F x 2>/dev/null) ]]; } # target socket-args...
@@ -40,18 +48,39 @@ tab_preflight() {
 # Set for the fleet's own tab: its title is fixed, so Jump can find it.
 TITLE_ARGS=()
 
-# Open a tab attached to `target`, then wait for its client so the next launch
-# sees it. If wt.exe fails, run the cleanup command in "${UNDO[@]}".
+# Whether a tab for `key` opened under PENDING_FOR seconds ago and has not
+# attached yet: on a cold WSL a tab takes longer than open_tab waits.
+tab_pending() { # key
+  local at="" key="" now
+  { IFS=' ' read -r at key <"$PENDING"; } 2>/dev/null
+  printf -v now '%(%s)T' -1
+  [[ $at =~ ^[0-9]+$ && $key == "$1" ]] && (( now >= at && now - at < PENDING_FOR ))
+}
+
+# Open a tab attached to `target`, unless one is still starting, then wait for
+# its client so the next launch sees it; ATTACHED says whether it came. If
+# wt.exe fails, run undo.
 open_tab() { # target tmux-socket-args...
-  local target=$1; shift
+  local target=$1 key; shift
+  key="$* $target"
+  ATTACHED=0
+  tab_pending "$key" && return 0
   # The lock fd is closed for wt.exe so a tab never outlives the lock.
   "$WT" -w fleet new-tab "${TITLE_ARGS[@]}" wsl.exe -d "$WSL_DISTRO_NAME" -e tmux "$@" attach -t "$target" \
     >/dev/null 2>&1 {LOCKFD}>&- || {
-    (( ${#UNDO[@]} )) && "${UNDO[@]}" >/dev/null 2>&1
+    undo
     fail "Windows Terminal did not open a tab."
   }
+  { printf '%(%s)T %s\n' -1 "$key" >"$PENDING"; } 2>/dev/null
   local _
-  for _ in $(seq 50); do has_client "$target" "$@" && return 0; sleep 0.1; done
+  for _ in $(seq 50); do
+    if has_client "$target" "$@"; then
+      ATTACHED=1
+      rm -f -- "$PENDING"
+      return 0
+    fi
+    sleep 0.1
+  done
 }
 
 new() { # dir
@@ -67,7 +96,7 @@ new() { # dir
   take_lock
   local -a t=(-L "$SOCKET_NAME") conf=()
   [[ -r $CONF ]] && conf=(-f "$CONF")
-  local target="=$SESSION" exists=0 shown=0 win
+  local target="=$SESSION" exists=0 shown=0 win path
   tmux "${t[@]}" has-session -t "$target" 2>/dev/null && exists=1
   (( exists )) && has_client "$target" "${t[@]}" && shown=1
   (( shown )) || tab_preflight
@@ -81,9 +110,18 @@ new() { # dir
       fail "tmux could not start the fleet session."
     UNDO=(tmux "${t[@]}" kill-session -t "$target")
   fi
-  TITLE_ARGS=(--title "$TAB_TITLE" --suppressApplicationTitle)
-  (( shown )) || open_tab "$target" "${t[@]}"
-  printf 'Started a session in %s.\n' "$dir"
+  if (( ! shown )); then
+    # The tab attaches by the server's own path, whatever TMUX_TMPDIR it sees.
+    path=$(tmux "${t[@]}" display-message -p -t "$target:" '#{socket_path}' 2>/dev/null)
+    [[ $path =~ $SOCKET_RE ]] || { undo; fail "The tmux socket path cannot be passed to a tab: $path"; }
+    TITLE_ARGS=(--title "$TAB_TITLE" --suppressApplicationTitle)
+    open_tab "$target" -S "$path"
+  fi
+  if (( ATTACHED )); then
+    printf 'Started a session in %s.\n' "$dir"
+  else
+    printf 'Started a session in %s. The terminal tab has not attached yet.\n' "$dir"
+  fi
 }
 
 # --- proc stat: identical in hooks/klepsydra-fleet.sh and hooks/klepsydra-launch.sh ---
@@ -123,7 +161,7 @@ owns_process() { # ancestor pid start
 
 jump() { # socket pane pid start
   local socket=$1 pane=$2 pid=$3 start=$4 session pane_pid
-  [[ $socket =~ ^/[A-Za-z0-9._/-]{1,255}$ ]] || fail "Not a tmux socket path: $socket"
+  [[ $socket =~ $SOCKET_RE ]] || fail "Not a tmux socket path: $socket"
   [[ $pane =~ ^%[0-9]{1,9}$ ]] || fail "Not a tmux pane: $pane"
   [[ $pid =~ ^[1-9][0-9]{0,9}$ ]] || fail "Not a process id: $pid"
   [[ $start =~ ^[0-9]{1,20}$ ]] || fail "Not a process start time: $start"
