@@ -127,6 +127,41 @@
    "distro": "Ubuntu"
   },
   {
+   "session_id": "demo-9-bm_fable",
+   "name": "Medallion faces",
+   "launch_dir": "/home/aj/ajsoftworks",
+   "voice": "bm_fable",
+   "status": "working",
+   "reason": null,
+   "status_at": 1792499820,
+   "active_at": 1792499960,
+   "where": {
+    "repo": "klepsydra",
+    "worktree": "kourai-faces",
+    "branch": "feat/kourai-faces",
+    "at": 1792499800
+   },
+   "touched": [
+    {
+     "repo": "kourai-khryseai",
+     "at": 1792499700
+    }
+   ],
+   "prompt": {
+    "text": "replace the DiceBear faces with a kourai-style medallion",
+    "at": 1792499820
+   },
+   "reply": {
+    "text": "Drawing the laurel ring and the initial as one SVG template.",
+    "at": 1792499960
+   },
+   "error": null,
+   "updated_at": 1792499960,
+   "quiet_since": null,
+   "tmux": null,
+   "distro": "Ubuntu"
+  },
+  {
    "session_id": "demo-5-bf_isabella",
    "name": "Memory hygiene pass",
    "launch_dir": "/home/aj/ajsoftworks",

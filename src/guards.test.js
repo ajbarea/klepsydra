@@ -472,6 +472,14 @@ test("the wall has a New session button that calls the launcher", () => {
   assert.match(html, />Open terminal</);
 });
 
+test("the CSP lets images, and nothing else, come from a data URL", () => {
+  const csp = JSON.parse(read("src-tauri/tauri.conf.json")).app.security.csp;
+  const directives = Object.fromEntries(csp.split(";").map((d) => d.trim().split(/\s+/)).map(([k, ...v]) => [k, v]));
+  assert.deepEqual(directives["default-src"], ["'self'"]);
+  assert.deepEqual(directives["img-src"], ["'self'", "data:"], "the medallion faces are data URLs");
+  for (const [k, v] of Object.entries(directives)) if (k !== "img-src") assert.ok(!v.includes("data:"), k);
+});
+
 test("the demo feed is never reachable inside the app", async () => {
   globalThis.window ??= {};
   const { devSnapshotUrl } = await import("./fleet/feed.js");

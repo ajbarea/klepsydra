@@ -410,9 +410,10 @@ To see the wall without sessions, serve the repo root (for example
 
 A session's face follows its keryx voice, so it stays the same while the
 session moves between repos. Ten voices are cast as the kourai-khryseai
-characters and show their portraits. Any other voice shows a DiceBear Lorelei
-face and the voice's name, and a session without keryx gets one of 24 Lorelei
-faces picked by its session id.
+characters and show their portraits. Any other voice shows the voice's name
+and a forge medallion: a gold laurel ring on a dark bronze disc around the
+name's initial. A session without keryx is named by its session, else its
+folder, and shows the medallion with that initial.
 
 While keryx is muted (`/keryx off`) it holds no new terminal, so a new session
 takes the voice keryx remembers for its repo and the cast stays on screen. The
@@ -420,13 +421,15 @@ session keeps that voice as it moves between repos.
 
 Sessions sharing a voice show its face by claim: a session that has not ended
 before one that has, then a voice keryx held before a repo's, then the first
-started. The others show their fallback face and name until the keeper leaves;
+started. The others show a medallion and their own name until the keeper leaves;
 two running sessions that keryx itself gave one voice both keep it. So a face
 changes with the status only once, when its session ends beside a running one
 with the same voice (after `/clear`, the new session keeps the portrait).
 
-The faces are files in `src/fleet/faces`, each listed in `LICENSES.json`, and
-the overlay loads no library and fetches nothing.
+The portraits are files in `src/fleet/faces`, each listed in `LICENSES.json`,
+and `scripts/cut-portraits.py` cuts them from kourai-khryseai. The medallion is
+an SVG drawn in `src/fleet/medallion.js`. The overlay loads no library and
+fetches nothing.
 
 The fleet hook writes `<app data dir>/fleet/<session>.json`: the state, where
 the session works, the first 300 characters of your last prompt and of the

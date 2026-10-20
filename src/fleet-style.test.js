@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { medallionSvg } from "./fleet/medallion.js";
 
 const read = (f) => readFileSync(new URL(f, import.meta.url), "utf8");
 const badgeCss = read("./fleet/badge.css");
@@ -162,4 +163,21 @@ test("a disabled button reads as off: no fill, a quieter border, a label still a
   assert.match(rule, /background: transparent/);
   assert.match(rule, /border-color: var\(--card-line\)/);
   assert.ok(contrast(token(css, "--text-dim"), token(css, "--card-bg")) >= 4.5);
+});
+
+test("the medallion's initial meets 4.5:1 against every colour of the disc under it", () => {
+  const svg = medallionSvg("W");
+  const stops = (id) =>
+    [...(svg.match(new RegExp(`<(?:radial|linear)Gradient id="${id}"[^>]*>(.*?)</(?:radial|linear)Gradient>`))?.[1] ?? "")
+      .matchAll(/stop-color="(#[0-9a-f]{6}|#000)"/g)].map((m) => m[1]);
+  const disc = stops("disc");
+  const ink = stops("ink");
+  assert.equal(disc.length, 3);
+  assert.equal(ink.length, 2);
+  assert.match(svg, /<text[^>]*fill="url\(#ink\)"[^>]*>W<\/text>/, "the letter is painted with the ink gradient");
+  // The one layer over the disc is a black vignette, which only darkens it.
+  assert.deepEqual(stops("glow"), ["#000", "#000"]);
+  for (const fg of ink) {
+    for (const bg of disc) assert.ok(contrast(fg, bg) >= 4.5, `${fg} on ${bg}: ${contrast(fg, bg).toFixed(2)}`);
+  }
 });

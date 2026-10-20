@@ -1,6 +1,8 @@
 // What the fleet strip and wall show for each session, kept free of the DOM
 // so it can be unit tested. Sessions arrive from the reader already ordered.
 
+import { medallion } from "./medallion.js";
+
 // Each status's badge: shape, symbol and tone carry it together with the
 // label, so no one of them is needed alone.
 export const STATUS = {
@@ -77,37 +79,22 @@ export function voiceName(voice) {
     .join(" and ");
 }
 
-/** FNV-1a over UTF-16 code units: a stable hash for picking a fallback face. */
-export function hash(text) {
-  let h = 0x811c9dc5;
-  for (let i = 0; i < text.length; i++) {
-    h ^= text.charCodeAt(i);
-    h = Math.imul(h, 0x01000193) >>> 0;
-  }
-  return h;
-}
-
 const basename = (path) => (typeof path === "string" ? path.replace(/\/+$/, "").split("/").pop() : "");
 
 /**
  * Who a session is, from its identity alone, never its state: the kourai
- * character cast for its keryx voice; else a Lorelei face for the voice; else
- * a fallback face picked by a hash of the voice (a blend) or of the session.
+ * character cast for its keryx voice; else a medallion bearing the initial of
+ * the voice's name, or of the session's name or folder when it has no voice.
  */
 export function identity(s, cast) {
   const voice = typeof s.voice === "string" && s.voice ? s.voice : null;
-  const character = voice ? cast.characters[voice] : null;
+  const character = voice && Object.hasOwn(cast.characters, voice) ? cast.characters[voice] : null;
   if (character) {
     const base = `${FACES}/kourai/${character.face}`;
     return { name: character.name, voice: voiceName(voice), face: `${base}-96.webp`, face2x: `${base}-192.webp` };
   }
-  if (voice && cast.lorelei.includes(voice)) {
-    const face = `${FACES}/lorelei/${voice}.svg`;
-    return { name: voiceName(voice), voice: null, face, face2x: face };
-  }
-  const n = hash(voice ?? s.session_id) % cast.fallbacks;
-  const face = `${FACES}/fallback/${String(n).padStart(2, "0")}.svg`;
   const name = voice ? voiceName(voice) : s.name || basename(s.launch_dir) || s.session_id.slice(0, 8);
+  const face = medallion(name);
   return { name, voice: null, face, face2x: face };
 }
 
