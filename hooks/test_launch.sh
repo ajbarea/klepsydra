@@ -53,7 +53,7 @@ attach() { # a real client on a pty, like the tab would be
   for _ in $(seq 50); do [[ -n $(t list-clients -t =fleet 2>/dev/null) ]] && return; sleep 0.1; done
 }
 pane_pid() { t display -p -t "$1" '#{pane_pid}'; }
-pstart() { # pid: /proc/PID/stat field 22
+pstart() { # pid: /proc/PID/stat field 22, as proc_stat in the launcher's proc stat block reads it
   local raw; raw=$(cat "/proc/$1/stat" 2>/dev/null) || return 1
   read -r -a st <<<"${raw##*") "}"; echo "${st[19]}"
 }

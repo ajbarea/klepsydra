@@ -653,6 +653,12 @@ check "sourceable from a set -e script" \
   "$(KLEPSYDRA_DIR=/x/dev.ajsoftworks.klepsydra bash -ec 'source "$1"; echo "$KLEPSYDRA_DIR"' _ "$hook")" \
   "/x/dev.ajsoftworks.klepsydra"
 check "dir block identical in the statusline" "$(block "$hook")" "$(block "$here/../statusline/klepsydra-statusline.sh")"
+pblock() { sed -n '/^# --- proc stat/,/^# --- end proc stat ---$/p' "$1"; }
+check "proc stat block present" "$([[ -n "$(pblock "$hook")" ]] && echo yes)" "yes"
+check "proc stat block identical in the launcher" "$(pblock "$hook")" "$(pblock "$here/klepsydra-launch.sh")"
+# shellcheck disable=SC2016 # a literal $PROC_ROOT, as the scripts spell it
+check "the launcher parses /proc only in the block" \
+  "$(sed '/^# --- proc stat/,/^# --- end proc stat ---$/d' "$here/klepsydra-launch.sh" | grep -cE 'read -r -a stat|<"?(/proc|\$PROC_ROOT)/')" "0"
 
 # A hook must stay silent and exit 0 even when its environment is bare.
 out=$(env -u USER -u HOME bash "$hook" </dev/null 2>&1); rc=$?

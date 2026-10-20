@@ -17,6 +17,7 @@ CLAUDE=${KLEPSYDRA_CLAUDE:-claude}
 WT=${KLEPSYDRA_WT:-wt.exe}
 UNDO=()
 LOCK=${XDG_RUNTIME_DIR:-/tmp}/klepsydra-launch-$UID.lock
+PROC_ROOT=/proc
 
 fail() { printf '%s\n' "$*" >&2; exit 1; }
 need() { command -v "$1" >/dev/null 2>&1 || fail "$2"; }
@@ -85,20 +86,36 @@ new() { # dir
   printf 'Started a session in %s.\n' "$dir"
 }
 
-# Whether PID is alive with start time START and `ancestor` is PID or its ancestor.
-owns_process() { # ancestor pid start
-  local raw="" p=$2
-  local -a stat=()
-  { IFS= read -r raw <"/proc/$p/stat"; } 2>/dev/null
+# --- proc stat: identical in hooks/klepsydra-fleet.sh and hooks/klepsydra-launch.sh ---
+# Fields of $PROC_ROOT/<pid>/stat after the command name, into the caller's
+# `stat`: [0] is the state, [1] the parent pid, [19] the start time (field 22).
+# The name sits in parentheses and may itself contain spaces or ")".
+proc_stat() { # pid
+  local raw=""
+  { IFS= read -r raw <"$PROC_ROOT/$1/stat"; } 2>/dev/null
   [[ $raw == *") "* ]] || return 1
   read -r -a stat <<<"${raw##*") "}"
-  (( ${#stat[@]} > 19 )) && [[ ${stat[0]} != Z && ${stat[19]} == "$3" ]] || return 1
+  (( ${#stat[@]} > 19 ))
+}
+
+# Whether `pid` runs with start time `start`: a zombie has exited, and a pid
+# with another start time is a later process.
+proc_is() { # pid start
+  local -a stat=()
+  [[ $1 =~ ^[0-9]+$ && $2 =~ ^[0-9]+$ ]] || return 1
+  proc_stat "$1" && [[ ${stat[0]} != Z && ${stat[19]} == "$2" ]]
+}
+# --- end proc stat ---
+
+# Whether PID is alive with start time START and `ancestor` is PID or its ancestor.
+owns_process() { # ancestor pid start
+  local p=$2 _
+  local -a stat=()
+  proc_is "$p" "$3" || return 1
   for _ in $(seq 64); do
     [[ $p == "$1" ]] && return 0
-    { IFS= read -r raw <"/proc/$p/stat"; } 2>/dev/null
-    [[ $raw == *") "* ]] || return 1
-    read -r -a stat <<<"${raw##*") "}"
-    p=${stat[1]:-0}
+    proc_stat "$p" || return 1
+    p=${stat[1]}
     [[ $p =~ ^[1-9][0-9]*$ ]] || return 1
   done
   return 1

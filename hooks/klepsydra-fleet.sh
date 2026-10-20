@@ -101,9 +101,10 @@ branch_of() { # gitdir
   esac
 }
 
-# Fields of /proc/<pid>/stat after the command name, into `stat`: [0] is the
-# state, [1] the parent pid, [19] the start time. The name sits in parentheses
-# and may itself contain spaces or ")".
+# --- proc stat: identical in hooks/klepsydra-fleet.sh and hooks/klepsydra-launch.sh ---
+# Fields of $PROC_ROOT/<pid>/stat after the command name, into the caller's
+# `stat`: [0] is the state, [1] the parent pid, [19] the start time (field 22).
+# The name sits in parentheses and may itself contain spaces or ")".
 proc_stat() { # pid
   local raw=""
   { IFS= read -r raw <"$PROC_ROOT/$1/stat"; } 2>/dev/null
@@ -111,6 +112,15 @@ proc_stat() { # pid
   read -r -a stat <<<"${raw##*") "}"
   (( ${#stat[@]} > 19 ))
 }
+
+# Whether `pid` runs with start time `start`: a zombie has exited, and a pid
+# with another start time is a later process.
+proc_is() { # pid start
+  local -a stat=()
+  [[ $1 =~ ^[0-9]+$ && $2 =~ ^[0-9]+$ ]] || return 1
+  proc_stat "$1" && [[ ${stat[0]} != Z && ${stat[19]} == "$2" ]]
+}
+# --- end proc stat ---
 
 # Whether `pid` is Claude Code: by name, or an npm install's
 # `node .../@anthropic-ai/claude-code/cli.js`, as keryx decides.
@@ -169,10 +179,7 @@ home_voice() { # source now
 # has exited, and a pid with another start time or another program is someone
 # else's.
 claude_alive() { # pid start
-  local -a stat=()
-  [[ $1 =~ ^[0-9]+$ && $2 =~ ^[0-9]+$ ]] || return 1
-  proc_stat "$1" || return 1
-  [[ ${stat[0]} != Z && ${stat[19]} == "$2" ]] && is_claude "$1"
+  proc_is "$1" "$2" && is_claude "$1"
 }
 
 # Sets host_boot (this kernel boot) and host_distro (this WSL distro), each
