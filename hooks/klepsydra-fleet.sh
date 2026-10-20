@@ -275,6 +275,36 @@ prune_here() { # now
   return 0
 }
 
+# Mark ended, reason "gone", every session in <dir>/fleet that has not ended
+# and whose Claude Code process cannot be running: it started on another boot,
+# or on this boot and distro under a pid that is no longer it. Sessions from
+# another distro on this boot are left alone (their pids are not visible here).
+# A field jq finds empty is printed as "?", which no boot or distro can be, so
+# read does not collapse the tabs around it.
+mark_gone() { # dir now
+  local dir=$1 now=$2 f state boot distro pid start new
+  [[ -n $host_boot ]] && own_data_dir "$dir" || return 0
+  [[ -d $dir/fleet && ! -L $dir/fleet ]] || return 0
+  while IFS=$'\t' read -r f state boot distro pid start; do
+    [[ ${f%.json} =~ $UUID_RE && $state != ended && $boot != "?" ]] || continue
+    if [[ $boot == "$host_boot" ]]; then
+      [[ -n $host_distro && $distro == "$host_distro" ]] || continue
+      claude_alive "$pid" "$start" && continue
+    fi
+    new=$(jq -c --argjson now "$now" \
+      '.state = "ended" | .reason = "gone" | .ended = {reason: "gone", at: $now} | .state_at = $now | .written_at = $now' \
+      "$dir/fleet/$f" 2>/dev/null) || continue
+    [[ -n $new ]] && write_atomic "$dir/fleet/$f" "$new"
+  done < <(cd -- "$dir/fleet" 2>/dev/null && for f in *.json; do
+      [[ -f $f && ! -L $f ]] || continue
+      jq -r --arg f "$f" 'def fld: if type == "string" and length > 0 then . else "?" end;
+        select(type == "object" and .v == 1)
+        | [$f, (.state | fld), (.host.boot | fld), (.host.distro | fld),
+           ((.claude.pid | numbers) // 0 | floor | tostring), ((.claude.start | numbers) // 0 | floor | tostring)]
+        | @tsv' "$f" 2>/dev/null
+    done)
+}
+
 # --- prune helpers: identical in hooks/klepsydra-fleet.sh and statusline/klepsydra-statusline.sh ---
 # Whether `dir` is the overlay's own data dir, the only place a prune deletes
 # from: absolute, without "..", named for the bundle identifier, and not a
@@ -463,6 +493,7 @@ main() {
     --arg voice "$voice" --arg voice_from "$voice_from" --arg pid "$found_pid" --arg start "$found_start" \
     "$APPLY" 2>/dev/null) || new=""
   [[ -n $new ]] && write_atomic "$file" "$new"
+  [[ $event == SessionStart ]] && mark_gone "$KLEPSYDRA_DIR" "$now"
   [[ $event == SessionStart ]] && prune_hourly "$PRUNE_STAMP" prune_fleet "$KLEPSYDRA_DIR" "$now"
   return 0
 }

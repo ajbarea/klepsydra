@@ -676,5 +676,44 @@ rm -f "$file"
 fire session-start.json . KLEPSYDRA_BOOT_ID="$work/no-such-file" >/dev/null
 check "no boot id: no host" "$(field .host)" "null"
 
+echo "gone"
+put() { # id state boot distro pid start
+  jq -nc --arg id "$1" --arg st "$2" --arg b "$3" --arg d "$4" --argjson p "$5" --argjson s "$6" --argjson now "$now" \
+    '{v:1, session_id:$id, state:$st, state_at:($now-100), written_at:($now-100),
+      claude:{pid:$p, start:$s}, host:{boot:$b, distro:(if $d == "" then null else $d end)}}' \
+    >"$dir/fleet/$1.json"
+}
+state_of() { jq -r '[.state, (.reason // "-")] | join("/")' "$dir/fleet/$1.json"; }
+B=0b6e1c5a-1111-4222-8333-444455556666; OLD=99999999-1111-4222-8333-444455556666
+A1=aaaaaaaa-0000-4000-8000-000000000001 # an earlier boot
+A2=aaaaaaaa-0000-4000-8000-000000000002 # this boot and distro, pid dead
+A3=aaaaaaaa-0000-4000-8000-000000000003 # this boot and distro, alive (pid 500)
+A4=aaaaaaaa-0000-4000-8000-000000000004 # this boot, another distro, pid dead here
+A5=aaaaaaaa-0000-4000-8000-000000000005 # this boot and distro, pid reused by another program
+A6=aaaaaaaa-0000-4000-8000-000000000006 # already ended, an earlier boot
+A7=aaaaaaaa-0000-4000-8000-000000000007 # no distro, an earlier boot
+A8=aaaaaaaa-0000-4000-8000-000000000008 # no distro, this boot, pid dead
+put $A1 working $OLD Ubuntu 500 8717628
+put $A2 'done' $B Ubuntu 4999 1
+put $A3 working $B Ubuntu 500 8717628
+put $A4 working $B Debian 4999 1
+put $A5 working $B Ubuntu 500 1
+put $A6 ended $OLD Ubuntu 500 8717628
+put $A7 working $OLD "" 4999 1
+put $A8 working $B "" 4999 1
+jq -c '.reason = "exited"' "$dir/fleet/$A6.json" >"$work/a6" && mv "$work/a6" "$dir/fleet/$A6.json"
+rm -f "$file"
+fire session-start.json . WSL_DISTRO_NAME=Ubuntu KLEPSYDRA_BOOT_ID="$boot_file" >/dev/null
+check "an earlier boot is gone" "$(state_of $A1)" "ended/gone"
+check "same distro, pid dead: gone" "$(state_of $A2)" "ended/gone"
+check "same distro, alive: unchanged" "$(state_of $A3)" "working/-"
+check "another distro: unchanged" "$(state_of $A4)" "working/-"
+check "same distro, pid reused: gone" "$(state_of $A5)" "ended/gone"
+check "already ended: unchanged" "$(state_of $A6)" "ended/exited"
+check "no distro, earlier boot: gone" "$(state_of $A7)" "ended/gone"
+check "no distro, this boot: unchanged" "$(state_of $A8)" "working/-"
+check "gone stamps when" "$(jq -c '[.ended.at, .state_at]' "$dir/fleet/$A1.json")" "[$now,$now]"
+rm -f "$dir"/fleet/aaaaaaaa-*.json
+
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [[ $fail -eq 0 ]]
