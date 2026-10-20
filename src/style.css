@@ -38,6 +38,7 @@
   --face-size: 28px;
   --face-gap: 6px;
   --badge-size: 13px;
+  --speak-gold: #c9944a; /* the speaking portrait's ring (kourai forge gold) */
 
   /* Compact layout's ring: its diameter, and its stroke in the ring's 24-unit box. */
   --ring-size: 22px;
@@ -217,6 +218,10 @@ html, body {
   border-radius: 50%;
   background: var(--track);
   cursor: pointer;
+}
+/* The session keryx is speaking for: a gold ring, a panel-coloured gap inside it. */
+.face.speaking {
+  box-shadow: 0 0 0 calc(1.5px * var(--scale)) var(--panel-bg), 0 0 0 calc(3.5px * var(--scale)) var(--speak-gold);
 }
 .face:focus-visible {
   outline: calc(2px * var(--scale)) solid var(--text);

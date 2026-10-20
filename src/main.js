@@ -69,6 +69,7 @@ let zoomShown = 0;
 let zoomSave = 0;
 let pendingZoom = null; // {level, layout} waiting out ZOOM_SAVE_MS
 let fleetSessions = [];
+let fleetSpeaking = null; // keryx's line, from the same snapshot
 let drawStrip = null;
 let fleetFresh = false; // a snapshot the strip has not drawn yet
 let layout = null; // "compact" or "full" once known
@@ -244,7 +245,7 @@ function render(pin = false) {
 
   document.title = rows.length ? `klepsydra ${formatPct(rows[0].pct)}` : "klepsydra";
   try {
-    drawStrip?.(fleetSessions, Date.now(), fleetFresh);
+    drawStrip?.(fleetSessions, Date.now(), fleetFresh, fleetSpeaking);
   } catch {
     drawStrip = null; // the gauge carries on without the strip
     stripEl.hidden = true;
@@ -316,6 +317,7 @@ async function poll() {
 function receiveFleet(message) {
   if (!Array.isArray(message?.sessions)) return;
   fleetSessions = message.sessions;
+  fleetSpeaking = message.speaking ?? null;
   fleetFresh = true;
   render();
 }
