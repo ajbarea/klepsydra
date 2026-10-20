@@ -49,6 +49,14 @@ export KLEPSYDRA_CLAUDE="sleep 600" KLEPSYDRA_WT="$work/bin/wt.exe"
 : >"$WT_LOG"
 
 t() { tmux -L "$sock" "$@"; }
+# kill-server returns before the server exits; a launch that reached the dying
+# server would lose its session with it, so wait until the process is gone.
+stop_server() {
+  local pid _
+  pid=$(t display -p '#{pid}' 2>/dev/null) || return 0
+  t kill-server 2>/dev/null
+  for _ in $(seq 50); do kill -0 "$pid" 2>/dev/null || return 0; sleep 0.1; done
+}
 windows() { t list-windows -t =fleet 2>/dev/null | wc -l; }
 tabs() { wc -l <"$WT_LOG"; }
 attach() { # a real client on a pty, like the tab would be
@@ -98,7 +106,7 @@ out=$(KLEPSYDRA_CLAUDE=no-such-claude bash "$launch" new "$work/repos" 2>&1); rc
 check "no claude: exit 1" "$rc" "1"
 check "no claude: says so" "$out" "claude was not found on PATH."
 
-t kill-server 2>/dev/null; : >"$WT_LOG"
+stop_server; : >"$WT_LOG"
 bash "$launch" new "$work/repos" >/dev/null 2>&1 &
 bash "$launch" new "$work/repos" >/dev/null 2>&1 &
 wait
@@ -195,13 +203,13 @@ check "unknown command: says so" "$out" "usage: klepsydra-launch.sh new DIR | ju
 check "unknown command: no tab" "$(tabs)" "1"
 
 echo "one tab per fleet"
-t kill-server 2>/dev/null; detach_all; : >"$WT_LOG"
+stop_server; detach_all; : >"$WT_LOG"
 export WT_DELAY=0.5
 bash "$launch" new "$work/repos" >/dev/null 2>&1
 bash "$launch" new "$work/repos" >/dev/null 2>&1
 check "slow tab, two new: one tab" "$(tabs)" "1"
 check "slow tab, two new: two windows" "$(windows)" "2"
-t kill-server 2>/dev/null; detach_all; : >"$WT_LOG"
+stop_server; detach_all; : >"$WT_LOG"
 bash "$launch" new "$work/repos" >/dev/null 2>&1 &
 bash "$launch" new "$work/repos" >/dev/null 2>&1 &
 wait
@@ -218,7 +226,7 @@ check "slow tab, new then jump: one tab" "$(tabs)" "1"
 unset WT_DELAY
 
 echo "a tab that has not attached yet"
-t kill-server 2>/dev/null; detach_all; : >"$WT_LOG"
+stop_server; detach_all; : >"$WT_LOG"
 pending="$work/klepsydra-tab-pending-$UID"
 export WT_DELAY=6 # a cold WSL: the tab attaches after the launcher stops waiting
 out=$(bash "$launch" new "$work/repos" 2>&1); rc=$?
@@ -266,7 +274,7 @@ check "a symlinked stamp: the link removed" "$([[ -L $pending ]] && echo link)" 
 detach_all; rm -f "$pending"
 
 echo "failed tab"
-t kill-server 2>/dev/null; detach_all; : >"$WT_LOG"
+stop_server; detach_all; : >"$WT_LOG"
 out=$(KLEPSYDRA_WT=false bash "$launch" new "$work/repos" 2>&1); rc=$?
 check "wt fails, no session: exit 1" "$rc" "1"
 check "wt fails, no session: says so" "$out" "Windows Terminal did not open a tab."
@@ -275,7 +283,7 @@ bash "$launch" new "$work/repos" >/dev/null 2>&1; detach_all
 out=$(KLEPSYDRA_WT=false bash "$launch" new "$work/repos" 2>&1); rc=$?
 check "wt fails, session: exit 1" "$rc" "1"
 check "wt fails, session: window count unchanged" "$(windows)" "1"
-t kill-server 2>/dev/null
+stop_server
 out=$(KLEPSYDRA_WT=no-such-wt bash "$launch" new "$work/repos" 2>&1); rc=$?
 check "no wt.exe: exit 1" "$rc" "1"
 check "no wt.exe: says so" "$out" "wt.exe was not found, so no terminal tab could be opened."
