@@ -42,8 +42,8 @@ pub async fn jump_to_terminal(
     use tauri::Manager;
     let target = app
         .state::<crate::fleet::Fleet>()
-        .latest()
-        .and_then(|v| crate::launch::target(&v, &id));
+        .with_latest(|v| crate::launch::target(v, &id))
+        .flatten();
     tauri::async_runtime::spawn_blocking(move || {
         let tmux = match target {
             Some(t) => Tmux::of(&t, crate::launch::tmux_jump(&app, &t)),

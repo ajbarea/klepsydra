@@ -49,7 +49,9 @@ pub fn fleet_subscribe(
 #[tauri::command]
 pub fn clear_session(app: AppHandle, id: String) -> Result<(), String> {
     use klepsydra_fleet::clear::{check_clearable, remove_session};
-    check_clearable(app.state::<Fleet>().latest().as_ref(), &id)?;
+    app.state::<Fleet>()
+        .with_latest(|v| check_clearable(Some(v), &id))
+        .unwrap_or_else(|| check_clearable(None, &id))?;
     let dir = crate::klepsydra_dir(&app).ok_or("klepsydra has no data folder.")?;
     remove_session(&dir.join("fleet"), &id)
 }

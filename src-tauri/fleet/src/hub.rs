@@ -53,9 +53,10 @@ impl<S: Sink> Hub<S> {
         subs.retain(|(_, s)| s.send(snapshot.clone()));
     }
 
-    /// The last snapshot published, if any.
-    pub fn latest(&self) -> Option<Value> {
-        lock(&self.last).and_then(|l| l.clone())
+    /// `f` of the last snapshot published, if any, read in place under the
+    /// lock, so a click clones only what it needs.
+    pub fn with_latest<R>(&self, f: impl FnOnce(&Value) -> R) -> Option<R> {
+        lock(&self.last).and_then(|l| l.as_ref().map(f))
     }
 
     /// Window `label` follows the fleet from now on, starting with the latest
@@ -135,12 +136,13 @@ mod tests {
     }
 
     #[test]
-    fn latest_is_the_last_published_snapshot() {
+    fn with_latest_reads_the_last_published_snapshot() {
         let hub: Hub<Probe> = Hub::default();
-        assert_eq!(hub.latest(), None);
+        assert_eq!(hub.with_latest(|v| v["n"].as_u64()), None);
         hub.publish(snap(1));
         hub.publish(snap(2));
-        assert_eq!(hub.latest(), Some(snap(2)));
+        assert_eq!(hub.with_latest(|v| v["n"].as_u64()), Some(Some(2)));
+        assert_eq!(hub.with_latest(|v| v.clone()), Some(snap(2)));
     }
 
     #[test]
