@@ -1,6 +1,6 @@
 import { test, mock } from "node:test";
 import assert from "node:assert/strict";
-import { NOTE_MS, press, say, setOff } from "./fleet/dom.js";
+import { NOTE_MS, announcer, press, say, setOff } from "./fleet/dom.js";
 
 // A button and a note: just the attributes, dataset and text the helpers touch.
 const button = () => ({
@@ -79,4 +79,24 @@ test("a pending note shows during the call, then its result", async () => {
   await press(b, note, async () => { seen = note.textContent; return "Started"; }, "Starting…");
   assert.equal(seen, "Starting…");
   assert.equal(note.textContent, "Started");
+});
+
+test("a different announcement soon after a repeated one is the one left", () => {
+  mock.timers.enable({ apis: ["setTimeout"] });
+  try {
+    const live = { textContent: "" };
+    const announce = announcer(live);
+    announce("Ada speaking");
+    announce("Ada speaking"); // repeated: cleared, then set again
+    mock.timers.tick(50);
+    announce("Bo needs you");
+    mock.timers.tick(500);
+    assert.equal(live.textContent, "Bo needs you");
+    announce("Bo needs you");
+    assert.equal(live.textContent, "", "a repeat clears first");
+    mock.timers.tick(100);
+    assert.equal(live.textContent, "Bo needs you", "then says it again");
+  } finally {
+    mock.timers.reset();
+  }
 });

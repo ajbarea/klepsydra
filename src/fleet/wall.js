@@ -2,7 +2,7 @@
 // a way back to its terminal.
 import cast from "./cast.json" with { type: "json" };
 import { announcements, card, identity, shouldSlide, startedNeeding, transitionName, statuses, tally } from "./model.js";
-import { press, setOff, syncChildren } from "./dom.js";
+import { announcer, press, setOff, syncChildren } from "./dom.js";
 import { inTauri, subscribe } from "./feed.js";
 import { showFace } from "./face.js";
 import { GOLD, SPEAK_FADE_MS, STILL, Speaker, WAVE, waves } from "./speaking.js";
@@ -24,6 +24,7 @@ const TALLY = [
 const wall = document.getElementById("wall");
 const empty = document.getElementById("empty");
 const live = document.getElementById("live");
+const announce = announcer(live);
 const tpl = document.getElementById("card-tpl");
 const counts = document.querySelector(".tally");
 const newButton = document.getElementById("new-session");
@@ -195,14 +196,6 @@ function focusCard(id) {
   el.focus({ preventScroll: true });
 }
 
-// The same words twice in a row are announced again: cleared, then set.
-function announce(text) {
-  if (live.textContent !== text) live.textContent = text;
-  else {
-    live.textContent = "";
-    setTimeout(() => { live.textContent = text; }, 100);
-  }
-}
 
 const circles = (svg, cls, n) => {
   if (svg.childElementCount !== n || !svg.firstElementChild?.classList.contains(cls)) {

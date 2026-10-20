@@ -56,3 +56,16 @@ export async function press(button, note, call, pending) {
     refresh(button);
   }
 }
+
+/** A live region's announcer. The same words twice in a row are announced again: cleared, then set. */
+export function announcer(live) {
+  let again = 0; // a repeat waiting to be set; a newer announcement cancels it
+  return function announce(text) {
+    clearTimeout(again);
+    if (live.textContent !== text) live.textContent = text;
+    else {
+      live.textContent = "";
+      again = setTimeout(() => { live.textContent = text; }, 100);
+    }
+  };
+}
