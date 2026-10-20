@@ -66,6 +66,7 @@ belong here.
 - `bash hooks/test_fleet.sh`: the fleet hook's states, where, identity,
   pruning (every refusal first) and the README settings block.
 - `bash scripts/test_measure_memory.sh`: the release memory rule.
+- `bash scripts/test_build_windows.sh`: the Windows build's stage-name check.
 - `cd src-tauri && cargo test -p klepsydra-fleet`: the fleet reader.
 
 ### do_not_run (interactive / long-running / platform-bound)
@@ -75,6 +76,7 @@ belong here.
 - `scripts/measure-memory.sh run`: takes 8 hours.
 - `scripts/build-windows.sh` — rsyncs to `C:\Users\<user>\klepsydra-build` and
   drives `powershell.exe`; produces an NSIS installer and takes minutes.
+  `KLEPSYDRA_STAGE=klepsydra-build-<name>` stages a branch in its own folder.
 - `scripts/build-linux.sh` — full release build plus a `.deb`; takes minutes.
 - `scripts/visual-check.sh` — spawns headless `chrome.exe` against a local
   server and writes screenshots to the Windows temp directory.

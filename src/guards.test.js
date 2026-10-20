@@ -178,6 +178,10 @@ test("the guards read real sources", () => {
 // The launcher is the one file allowed to start a process and name wsl.
 const LAUNCHER = "src-tauri/src/launch.rs";
 
+/** Ways the launcher could hand wsl.exe a shell, or hide which program it starts. */
+const launcherHazards = (text) =>
+  [/"--"/, /"-c"/, /^\s*use\b[^;]*\bas\s+\w+\s*;/m].filter((re) => re.test(text)).map(String);
+
 test("only the launcher starts a process", () => {
   assert.ok(RUST.includes(LAUNCHER), `${LAUNCHER} not found`);
   for (const f of [...RUST, ...FRONTEND, ...MANIFESTS, ...CONFIG].filter((f) => f !== LAUNCHER)) {
@@ -190,7 +194,14 @@ test("the launcher starts only wsl.exe, from its fixed path, without a window", 
   assert.deepEqual([...src.matchAll(/Command::new\(([^)]*)\)/g)].map((m) => m[1].trim()), ["WSL_EXE"]);
   assert.match(src, /pub const WSL_EXE: &str = r"C:\\Windows\\System32\\wsl\.exe";/);
   assert.match(src, /creation_flags\(CREATE_NO_WINDOW\)/);
-  assert.doesNotMatch(src, /"--"/, "wsl.exe -- runs a shell; use -e");
+  assert.deepEqual(launcherHazards(src), []);
+});
+
+test("the launcher check catches a shell hop or an aliased Command", () => {
+  for (const planted of ['.args(["-c", cmd])', "use std::process::Command as C;", 'a = ["--", "sh"];']) {
+    assert.notDeepEqual(launcherHazards(planted), [], planted);
+  }
+  assert.deepEqual(launcherHazards('a = ["-e", "bash"]; use std::process::Command;'), []);
 });
 
 test("the spawn check catches each way of starting one", () => {

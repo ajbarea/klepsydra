@@ -95,23 +95,27 @@ pub fn target(snapshot: &Value, id: &str) -> Option<Target> {
     })
 }
 
+/// Reopens the gate when dropped, even while unwinding.
+struct Reopen<'a>(&'a InFlight);
+
+impl Drop for Reopen<'_> {
+    fn drop(&mut self) {
+        let mut busy = self.0 .0.lock().unwrap_or_else(|e| e.into_inner());
+        *busy = false;
+    }
+}
+
 /// Run `f` unless another call is running.
 pub fn gated<T>(flight: &InFlight, f: impl FnOnce() -> Result<T, String>) -> Result<T, String> {
     {
-        let mut busy = flight
-            .0
-            .lock()
-            .map_err(|_| "The launcher's lock was poisoned.")?;
+        let mut busy = flight.0.lock().unwrap_or_else(|e| e.into_inner());
         if *busy {
             return Err("A launch is already running.".into());
         }
         *busy = true;
     }
-    let r = f();
-    if let Ok(mut busy) = flight.0.lock() {
-        *busy = false;
-    }
-    r
+    let _reopen = Reopen(flight);
+    f()
 }
 
 /// wsl.exe writes its own messages as UTF-16LE and the Linux side's as UTF-8.
@@ -141,6 +145,29 @@ fn last_line(text: &str) -> String {
     line.chars().take(200).collect()
 }
 
+/// Most output kept from each stream.
+#[cfg(any(windows, test))]
+const KEEP: usize = 64 * 1024;
+
+/// Read `r` to its end on a thread, keeping the last `KEEP` bytes, so a full
+/// pipe never stalls the child.
+#[cfg(any(windows, test))]
+fn drain<R: std::io::Read + Send + 'static>(mut r: R) -> std::thread::JoinHandle<Vec<u8>> {
+    std::thread::spawn(move || {
+        let (mut kept, mut chunk) = (Vec::new(), [0u8; 4096]);
+        while let Ok(n) = r.read(&mut chunk) {
+            if n == 0 {
+                break;
+            }
+            kept.extend_from_slice(&chunk[..n]);
+            if kept.len() > KEEP {
+                kept.drain(..kept.len() - KEEP);
+            }
+        }
+        kept
+    })
+}
+
 #[cfg(windows)]
 fn run(args: &[String]) -> Result<String, String> {
     use std::os::windows::process::CommandExt;
@@ -149,34 +176,38 @@ fn run(args: &[String]) -> Result<String, String> {
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
     let mut child = Command::new(WSL_EXE)
         .args(args)
+        .env("WSL_UTF8", "1")
         .creation_flags(CREATE_NO_WINDOW)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
         .map_err(|e| format!("Could not start {WSL_EXE}: {e}"))?;
+    let out = drain(child.stdout.take().ok_or("wsl.exe gave no stdout.")?);
+    let err = drain(child.stderr.take().ok_or("wsl.exe gave no stderr.")?);
     let deadline = Instant::now() + TIMEOUT;
-    loop {
+    let status = loop {
         match child.try_wait() {
-            Ok(Some(_)) => break,
+            Ok(Some(status)) => break status,
             Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(50)),
             Ok(None) => {
                 let _ = child.kill();
-                return Err("WSL did not answer within 20 seconds.".into());
+                return Err(format!(
+                    "WSL did not answer within {} seconds.",
+                    TIMEOUT.as_secs()
+                ));
             }
             Err(e) => return Err(e.to_string()),
         }
-    }
-    let out = child.wait_with_output().map_err(|e| e.to_string())?;
-    let (stdout, stderr) = (
-        last_line(&decode(&out.stdout)),
-        last_line(&decode(&out.stderr)),
-    );
-    if out.status.success() {
+    };
+    let text =
+        |h: std::thread::JoinHandle<Vec<u8>>| last_line(&decode(&h.join().unwrap_or_default()));
+    let (stdout, stderr) = (text(out), text(err));
+    if status.success() {
         Ok(stdout)
     } else if stderr.is_empty() {
         Err(if stdout.is_empty() {
-            format!("wsl.exe exited with {}.", out.status)
+            format!("wsl.exe exited with {status}.")
         } else {
             stdout
         })
@@ -200,7 +231,8 @@ pub fn tmux_jump(app: &tauri::AppHandle, t: &Target) -> Result<String, String> {
 /// Start `claude` in the `launch_dir` pref as a window of the fleet session.
 #[tauri::command]
 pub async fn launch_session(app: tauri::AppHandle) -> Result<String, String> {
-    let prefs = crate::read_prefs(&app).unwrap_or_default();
+    let prefs = crate::read_prefs(&app)
+        .ok_or("prefs.json could not be read, so the launch folder is unknown.")?;
     let dir = prefs
         .get("launch_dir")
         .and_then(Value::as_str)
@@ -320,5 +352,24 @@ mod tests {
         assert_eq!(last_line(&decode(&utf16)), "Error: no distro");
         assert_eq!(last_line("a\n\n  b  \n\n"), "b");
         assert_eq!(last_line(&"x".repeat(300)).len(), 200);
+    }
+
+    #[test]
+    fn a_panic_in_the_call_leaves_the_gate_open() {
+        let flight = InFlight::default();
+        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _ = gated::<()>(&flight, || panic!("boom"));
+        }));
+        assert!(r.is_err());
+        assert!(gated(&flight, || Ok(())).is_ok());
+    }
+
+    #[test]
+    fn drain_keeps_the_tail_of_a_long_stream() {
+        let mut data = vec![b'a'; KEEP * 2];
+        data.extend_from_slice(b"\nlast\n");
+        let kept = drain(std::io::Cursor::new(data)).join().unwrap();
+        assert_eq!(kept.len(), KEEP);
+        assert_eq!(last_line(&decode(&kept)), "last");
     }
 }

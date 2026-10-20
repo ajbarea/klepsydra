@@ -8,9 +8,27 @@
 # on Windows.
 set -euo pipefail
 
+# Refuses a stage name or folder that rsync --delete must never touch.
+check_stage() {
+  local name=$1 dir=$2
+  if [[ ! $name =~ ^klepsydra-build(-[A-Za-z0-9._]+)?$ ]]; then
+    echo "KLEPSYDRA_STAGE must be klepsydra-build or klepsydra-build-<name>: $name" >&2
+    return 2
+  fi
+  if [[ -d $dir && -n $(ls -A "$dir") && ! -f $dir/src-tauri/Cargo.toml ]]; then
+    echo "$dir is not empty and is not a klepsydra stage; refusing to mirror into it." >&2
+    return 2
+  fi
+}
+
+# Sourced by scripts/test_build_windows.sh for the check alone.
+[[ ${BASH_SOURCE[0]} != "$0" ]] && return 0
+
 repo=$(cd "$(dirname "$0")/.." && pwd)
-stage_win="C:\\Users\\$USER\\${KLEPSYDRA_STAGE:-klepsydra-build}"
-stage="/mnt/c/Users/$USER/${KLEPSYDRA_STAGE:-klepsydra-build}"
+stage_name=${KLEPSYDRA_STAGE:-klepsydra-build}
+stage_win="C:\\Users\\$USER\\$stage_name"
+stage="/mnt/c/Users/$USER/$stage_name"
+check_stage "$stage_name" "$stage" || exit 2
 
 mkdir -p "$stage"
 # Everything except build output and VCS; target/ and node_modules/ stay put.

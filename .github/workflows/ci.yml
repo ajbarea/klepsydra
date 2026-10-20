@@ -44,6 +44,8 @@ jobs:
           bash hooks/test_launch.sh
       - name: Release memory check tests
         run: bash scripts/test_measure_memory.sh
+      - name: Windows build stage check tests
+        run: bash scripts/test_build_windows.sh
       - name: Shell lint
         run: shellcheck hooks/*.sh statusline/*.sh scripts/*.sh
       # The install dir is writable only because the NSIS mode is currentUser;
