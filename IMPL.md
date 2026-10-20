@@ -22,8 +22,8 @@ Design: `docs/superpowers/specs/2026-10-20-fleet-launch-design.md` and
 - ✅ README: install, Starting sessions, Clear, gone, the wall, the live check.
 
 ## Verified
-- ✅ node 148, `hooks/test_fleet.sh` 226, `hooks/test_launch.sh` 94,
-  `cargo test -p klepsydra-fleet` 97, all passing.
+- ✅ node 148, `hooks/test_fleet.sh` 226, `hooks/test_launch.sh` 101,
+  `cargo test -p klepsydra-fleet` 98, all passing.
 - ✅ `build-windows.sh --check`: clippy and `cargo test --workspace` on Windows.
 - 📋 Live check on Windows (README, Releasing, step 2.7), pending the Windows
   run: **+** three times, Jump between windows, close the tab and **+**,
