@@ -259,9 +259,10 @@ returns it there, keeping the corner nearest the screen edges: a gauge homed
 on the taskbar returns to the taskbar at any size. Its monitor is found by
 position, then by name, then by nearness, and a changed resolution moves
 home to the same relative spot. With no home saved, it goes over the primary
-monitor's taskbar, 220px in from the right. The menu
-also toggles "Compact" (below) and "Start with Windows" ("Start at login" on Linux) and quits. Autostart is on by default; the icon may start in the
-notification-area overflow.
+monitor's taskbar, 220px in from the right. The menu also toggles "Compact"
+(below) and "Start with Windows" ("Start at login" on Linux), and quits.
+Autostart is on by default; the icon may start in the notification-area
+overflow.
 
 ### Compact
 
