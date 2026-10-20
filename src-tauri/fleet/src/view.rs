@@ -111,7 +111,7 @@ pub struct Marks {
     pub turns: Option<u64>,
 }
 
-#[derive(Clone, Debug, Default, Serialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, Serialize, PartialEq)]
 pub struct Snapshot {
     pub sessions: Vec<View>,
     /// The line keryx is playing and whose card it belongs to; none while
