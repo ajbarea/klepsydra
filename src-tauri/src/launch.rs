@@ -21,7 +21,6 @@ const TIMEOUT: Duration = Duration::from_secs(20);
 pub struct InFlight(pub Mutex<bool>);
 
 /// A session's tmux pane and the distro it runs in.
-#[allow(dead_code)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Target {
     pub socket: String,
@@ -41,7 +40,6 @@ fn dir_ok(d: &str) -> bool {
         && !d.chars().any(char::is_control)
 }
 
-#[allow(dead_code)]
 fn socket_ok(s: &str) -> bool {
     s.starts_with('/')
         && s.len() <= 256
@@ -49,7 +47,6 @@ fn socket_ok(s: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || "._/-".contains(c))
 }
 
-#[allow(dead_code)]
 fn pane_ok(p: &str) -> bool {
     (2..=10).contains(&p.len()) && p.starts_with('%') && p[1..].chars().all(|c| c.is_ascii_digit())
 }
@@ -71,7 +68,6 @@ pub fn new_args(dir: &str, distro: Option<&str>) -> Result<Vec<String>, String> 
 }
 
 /// wsl.exe's arguments to bring `t`'s tmux window forward.
-#[allow(dead_code)]
 pub fn jump_args(t: &Target) -> Result<Vec<String>, String> {
     if !(distro_ok(&t.distro) && socket_ok(&t.socket) && pane_ok(&t.pane)) {
         return Err("This session's tmux pane cannot be named safely.".into());
@@ -84,7 +80,6 @@ pub fn jump_args(t: &Target) -> Result<Vec<String>, String> {
 }
 
 /// Session `id`'s tmux pane and distro from a published snapshot.
-#[allow(dead_code)]
 pub fn target(snapshot: &Value, id: &str) -> Option<Target> {
     let s = klepsydra_fleet::lookup::session(snapshot, id)?;
     let tmux = s.get("tmux")?;
@@ -222,7 +217,6 @@ fn run(_args: &[String]) -> Result<String, String> {
 }
 
 /// Bring `t`'s tmux window to the front of its session.
-#[allow(dead_code)]
 pub fn tmux_jump(app: &tauri::AppHandle, t: &Target) -> Result<String, String> {
     let args = jump_args(t)?;
     gated(&app.state::<InFlight>(), || run(&args))

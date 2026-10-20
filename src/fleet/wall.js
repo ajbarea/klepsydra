@@ -54,6 +54,7 @@ function paint(el, c) {
   const jump = el.querySelector(".jump");
   const note = el.querySelector(".note");
   jump.dataset.name = c.session ?? "";
+  jump.dataset.id = c.id;
   jump.setAttribute("aria-label", c.jumpLabel);
   if (jump.dataset.busy) return;
   jump.disabled = !c.jump.enabled;
@@ -104,7 +105,7 @@ wall.addEventListener("click", async (e) => {
   button.dataset.busy = "1";
   note.textContent = "";
   try {
-    note.textContent = await window.__TAURI__.core.invoke("jump_to_terminal", { name: button.dataset.name });
+    note.textContent = await window.__TAURI__.core.invoke("jump_to_terminal", { id: button.dataset.id, name: button.dataset.name });
   } catch (err) {
     note.textContent = String(err);
   } finally {

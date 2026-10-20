@@ -2,13 +2,49 @@
 //! name and bring its window to the front, through UI Automation, an
 //! in-process API. Which tab is decided by `klepsydra_fleet::tabs`, tested everywhere.
 
-/// The outcome in a sentence for the card: Ok when the tab was selected,
-/// Err when nothing was done.
+/// The outcome in a sentence for the card: Ok when the session's window or
+/// tab was selected, Err when nothing was done. A session in tmux has its
+/// window selected first, so its tab shows that session's title.
 #[tauri::command]
-pub async fn jump_to_terminal(name: String) -> Result<String, String> {
-    tauri::async_runtime::spawn_blocking(move || jump(&name))
-        .await
-        .map_err(|e| format!("Could not run the jump: {e}"))?
+pub async fn jump_to_terminal(
+    app: tauri::AppHandle,
+    id: String,
+    name: String,
+) -> Result<String, String> {
+    use tauri::Manager;
+    let target = app
+        .state::<crate::fleet::Fleet>()
+        .latest()
+        .and_then(|v| crate::launch::target(&v, &id));
+    tauri::async_runtime::spawn_blocking(move || match target {
+        Some(t) if crate::launch::tmux_jump(&app, &t).is_ok() => settle(true, jump_settled(&name)),
+        _ => jump(&name),
+    })
+    .await
+    .map_err(|e| format!("Could not run the jump: {e}"))?
+}
+
+/// Jump by title, retrying for up to 1.5 s while the tab takes the title of
+/// the tmux window just selected.
+fn jump_settled(name: &str) -> Result<String, String> {
+    let mut last = jump(name);
+    for _ in 0..6 {
+        if last.is_ok() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(250));
+        last = jump(name);
+    }
+    last
+}
+
+/// A selected tmux window is a success even when no tab title matches: a
+/// hand-renamed tab keeps its frozen title with the right window active inside.
+fn settle(tmux_ok: bool, title_result: Result<String, String>) -> Result<String, String> {
+    match title_result {
+        Err(_) if tmux_ok => Ok("Selected the session's tmux window.".into()),
+        other => other,
+    }
 }
 
 #[cfg(not(windows))]
@@ -155,5 +191,29 @@ mod uia {
                 .map_err(|e| format!("Could not select the tab: {e}"))?;
         }
         Ok(forward(hwnd, &tab.title))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::settle;
+
+    #[test]
+    fn a_matched_tab_keeps_its_message() {
+        assert_eq!(settle(true, Ok("Jumped.".into())), Ok("Jumped.".into()));
+        assert_eq!(settle(false, Ok("Jumped.".into())), Ok("Jumped.".into()));
+    }
+
+    #[test]
+    fn a_selected_window_without_a_matching_tab_is_a_success() {
+        assert_eq!(
+            settle(true, Err("No tab.".into())),
+            Ok("Selected the session's tmux window.".into())
+        );
+    }
+
+    #[test]
+    fn without_tmux_the_title_error_stands() {
+        assert_eq!(settle(false, Err("No tab.".into())), Err("No tab.".into()));
     }
 }

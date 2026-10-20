@@ -432,3 +432,8 @@ test("the reach check reports a planted unscanned file and excuses a test file",
   for (const f of ["src-tauri/fleet/src/zz.rs", "src/fleet/zz.mjs", "src/zz.html", "src-tauri/fleet/src/ok.rs"]) assert.ok(none.includes(f), f);
   assert.ok(!none.some((f) => f.endsWith(".test.js") || f.includes("/target/") || f.includes("fixtures/")));
 });
+
+test("the wall's Jump passes the session id along with its name", () => {
+  const src = read("src/fleet/wall.js");
+  assert.match(src, /invoke\("jump_to_terminal", \{ id: button\.dataset\.id, name: button\.dataset\.name \}\)/);
+});
