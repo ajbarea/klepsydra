@@ -53,7 +53,9 @@ comfortable cards already scrolled; eight should fit.
   cards are 205.6 px; fit bottoms 931 (1920x1000) and 952 (945x1000).
 
 ## Next
-- AJ merges.
+- AJ merges. #56 Slice 2 (the wall's receipt line, guardrail chip and ledger
+  drawer) builds on this branch's wall once it lands; main has #57's receiver
+  and ledger merged in (fba8801).
 - Live check through UIA on the installed build: switch densities, resize
   across the boundary, confirm the pref survives a restart.
 

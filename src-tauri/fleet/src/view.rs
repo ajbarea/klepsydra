@@ -5,6 +5,7 @@ use std::collections::HashMap;
 
 use serde::Serialize;
 
+use crate::ledger::{Receiver, Totals};
 use crate::session::{Claude, Kind, Place, Said, SessionFile, State, Tmux, Touched};
 use crate::speaking::Speaking;
 
@@ -89,6 +90,12 @@ pub struct View {
     /// The background work still counted: none once the session stopped
     /// working, and none for entries stale past `BACKGROUND_STALE_AFTER`.
     pub background: Crew,
+    /// What the session's telemetry adds up to, when the receiver has heard
+    /// from it; left out of the JSON otherwise.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ledger: Option<Totals>,
+    #[serde(skip)]
+    pub marks: Marks,
 }
 
 /// How many subagents, background shells and other background tasks a
@@ -100,12 +107,25 @@ pub struct Crew {
     pub tasks: u32,
 }
 
+/// The file's `state_at` as written, without the skew correction, which can
+/// move between writes with no new event, and its count of ended turns. For
+/// telling one hook event from the next, never for display.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Marks {
+    pub state_at: i64,
+    pub turns: Option<u64>,
+}
+
 #[derive(Clone, Debug, Default, Serialize, PartialEq)]
 pub struct Snapshot {
     pub sessions: Vec<View>,
     /// The line keryx is playing and whose card it belongs to; none while
     /// nothing is.
     pub speaking: Option<Speaking>,
+    /// Whether the OTLP receiver is listening, once it has tried; left out
+    /// of the JSON before then.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub receiver: Option<Receiver>,
 }
 
 /// What to show for one session at `now`, or None once it has ended long enough ago.
@@ -234,6 +254,11 @@ pub fn view(entry: &Entry, now: i64) -> Option<View> {
         } else {
             Crew::default()
         },
+        ledger: None,
+        marks: Marks {
+            state_at: f.state_at,
+            turns: f.counted_turns(),
+        },
     })
 }
 
@@ -303,6 +328,7 @@ pub fn snapshot(entries: &[Entry], now: i64) -> Snapshot {
     Snapshot {
         sessions,
         speaking: None,
+        receiver: None,
     }
 }
 
@@ -335,6 +361,8 @@ mod tests {
             host: None,
             claude: None,
             background: vec![],
+            turns: None,
+            turns_at: None,
         }
     }
 
@@ -781,6 +809,19 @@ mod tests {
         assert_eq!(s["status_at"], NOW - 120);
         assert_eq!(s["where"], serde_json::Value::Null);
         assert_eq!(s["name"], "tab a");
+        for hidden in ["marks", "turns", "state_at"] {
+            assert!(s.get(hidden).is_none(), "{hidden} reached the webview");
+        }
+    }
+
+    #[test]
+    fn a_change_only_in_the_marks_is_a_change() {
+        // The reader passes on only a snapshot that differs from the last.
+        let e = entry("a", State::Done, NOW - 10, NOW - 5);
+        let mut counted = e.clone();
+        counted.file.turns = Some(1);
+        counted.file.turns_at = counted.file.written_at;
+        assert_ne!(snapshot(&[e], NOW), snapshot(&[counted], NOW));
     }
 
     /// `quiet_since` of a session whose file last changed at `modified`, the

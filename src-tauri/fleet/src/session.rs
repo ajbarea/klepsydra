@@ -101,6 +101,14 @@ fn lenient_background<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Vec<Back
     })
 }
 
+/// `turns`, present in every file a counting hook wrote; a value of the wrong
+/// shape counts as none ended rather than costing the file.
+fn lenient_turns<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<u64>, D::Error> {
+    Ok(Some(
+        serde_json::Value::deserialize(d)?.as_u64().unwrap_or(0),
+    ))
+}
+
 /// The kernel boot and distro a session runs on.
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
 pub struct Host {
@@ -152,6 +160,13 @@ pub struct SessionFile {
     /// Subagents and background shells still running; none when absent.
     #[serde(default, deserialize_with = "lenient_background")]
     pub background: Vec<Background>,
+    /// How many turns have ended (Stops); None from a hook that never counted.
+    #[serde(default, deserialize_with = "lenient_turns")]
+    pub turns: Option<u64>,
+    /// The `written_at` of the write that kept `turns`. An older hook carries
+    /// both along unchanged while it moves `written_at`.
+    #[serde(default)]
+    pub turns_at: Option<i64>,
 }
 
 /// Why a session file was skipped.
@@ -209,6 +224,13 @@ impl SessionFile {
             }
             None => 0,
         }
+    }
+
+    /// `turns`, if the last write kept it: a counting hook stamps it with the
+    /// write's time; an older hook's write leaves the stamp behind.
+    pub fn counted_turns(&self) -> Option<u64> {
+        self.turns
+            .filter(|_| self.turns_at.is_some() && self.turns_at == self.written_at)
     }
 
     /// A consistently wrong writer clock is what the skew corrects; only a
@@ -297,6 +319,40 @@ mod tests {
         );
         assert_eq!(parse(&base(r#","claude":null"#), ID).unwrap().claude, None);
         assert_eq!(parse(&base(""), ID).unwrap().claude, None);
+    }
+
+    #[test]
+    fn turns_is_none_only_from_a_hook_that_never_counted() {
+        let with = |extra: &str| {
+            let text = format!(
+                r#"{{"v":1,"session_id":"{ID}","state":"done","state_at":1800000100{extra}}}"#
+            );
+            parse(&text, ID).unwrap().turns
+        };
+        assert_eq!(with(""), None);
+        assert_eq!(with(r#","turns":3"#), Some(3));
+        for odd in [
+            r#","turns":null"#,
+            r#","turns":1.5"#,
+            r#","turns":"x""#,
+            r#","turns":-1"#,
+        ] {
+            assert_eq!(with(odd), Some(0), "{odd}");
+        }
+    }
+
+    #[test]
+    fn a_count_an_older_hook_carried_along_is_not_trusted() {
+        let with = |extra: &str| {
+            let text = format!(
+                r#"{{"v":1,"session_id":"{ID}","state":"done","state_at":1800000100,"written_at":1800000100{extra}}}"#
+            );
+            parse(&text, ID).unwrap().counted_turns()
+        };
+        assert_eq!(with(r#","turns":3,"turns_at":1800000100"#), Some(3));
+        assert_eq!(with(r#","turns":3,"turns_at":1800000050"#), None);
+        assert_eq!(with(r#","turns":3"#), None);
+        assert_eq!(with(""), None);
     }
 
     #[test]

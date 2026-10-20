@@ -164,6 +164,26 @@ seen at `PostToolUse`, keep each session's background work: a turn that ends
 with subagents or background shells still running stays working.
 For the gauge alone, keep `statusLine` and leave out `hooks`.
 
+For the ledger (see [The ledger](#the-ledger)), also merge this `env` block
+into the user-scope `~/.claude/settings.json`. Claude Code reads these
+settings only from user scope, not from a repository's settings:
+
+```json
+{
+  "env": {
+    "CLAUDE_CODE_ENABLE_TELEMETRY": "1",
+    "OTEL_METRICS_EXPORTER": "otlp",
+    "OTEL_LOGS_EXPORTER": "otlp",
+    "OTEL_EXPORTER_OTLP_PROTOCOL": "http/json",
+    "OTEL_EXPORTER_OTLP_ENDPOINT": "http://127.0.0.1:4318",
+    "OTEL_METRIC_EXPORT_INTERVAL": "15000"
+  }
+}
+```
+
+Leave `OTEL_LOG_USER_PROMPTS` and `OTEL_LOG_TOOL_DETAILS` unset, so prompts and
+tool arguments stay redacted.
+
 The hook picks the overlay's data dir for the platform it runs on: on Linux,
 the XDG data dir; under WSL, the Windows side, since the overlay there is a
 Windows app.
@@ -236,7 +256,10 @@ the gauge keeps working either way; once the hook is re-copied, that folder
 holds nothing current and can be deleted. Re-copy `klepsydra-cast.json` too: a
 cast from before the character colours has no accents, so the buttons would
 lack markers while their tmux windows stay plain. The same holds whenever the cast
-grows: a voice missing from the installed copy gets no window colour.
+grows: a voice missing from the installed copy gets no window colour. A fleet
+hook from before Ping counts no turns, so its sessions get the done chime by
+an older rule that can also chime when a session is resumed or a turn is
+interrupted.
 
 ## Using it
 
@@ -274,7 +297,8 @@ on the taskbar returns to the taskbar at any size. Its monitor is found by
 position, then by name, then by nearness, and a changed resolution moves
 home to the same relative spot. With no home saved, it goes over the primary
 monitor's taskbar, 220px in from the right. The menu also toggles "Compact"
-(below) and "Start with Windows" ("Start at login" on Linux), and quits.
+(below), "Ping" (Windows only; see the fleet strip) and "Start with Windows"
+("Start at login" on Linux), and quits.
 Autostart is on by default; the icon may start in the notification-area
 overflow.
 
@@ -519,8 +543,8 @@ fetches nothing.
 
 The fleet hook writes `<app data dir>/fleet/<session>.json`: the state, where
 the session works, the first 300 characters of your last prompt and of the
-last reply, and the error text of a failed turn. It records no tool input
-beyond the tool's name and an edited file's path. The status line adds
+last reply, how many turns have ended, and the error text of a failed turn. It
+records no tool input beyond the tool's name and an edited file's path. The status line adds
 `<session>.beat`, the session's name, at most once per 10 seconds. At a
 session start, at most once an hour, the hook deletes a session's file when
 its Claude Code process is gone and its newest time field (including
@@ -532,7 +556,66 @@ modification time is more than a day old.
 The overlay starts no process and asks WSL for nothing: it watches the folder
 and re-reads it every 5 seconds. A file it cannot read is skipped and logged
 once to `fleet.log` in the app data dir, and the rest of the fleet still
-shows. keryx does the speaking; the strip makes no sound.
+shows.
+
+### Ping
+
+With "Ping" ticked in the tray menu, klepsydra plays a short chime when a
+session needs you or finishes its turn: two notes at one pitch when it needs
+you (a prompt, a question or an error), two rising notes when a turn ends.
+Ping is off until you tick it, and ticking it plays the needs-you chime once.
+Several sessions changing together make one chime, needs-you first. Within 2
+seconds of a chime only a needs-you after a done plays, so a burst makes one
+sound and a prompt still gets its own. A chime answers a hook event, as the
+hook wrote it: nothing plays for what was already on the strip when
+klepsydra started, a session coming back from silence, or a resume. Done
+plays at each Stop, so a turn that another Stop hook sends back to work
+chimes at each of its Stops.
+
+The chime stays silent while Do Not Disturb or a Focus session is on, or
+while a full-screen app, a game or presentation mode is in front. Windows
+reports Do Not Disturb only through an undocumented setting, so if klepsydra
+cannot read it, the chime plays. Ping is Windows only; the Linux tray menu
+has no "Ping".
+
+The chimes are built by `scripts/make-sounds.mjs`, which writes
+`src-tauri/sounds/`; the tests fail if the files and the script disagree.
+
+### The ledger
+
+With the `env` block above, every Claude Code session sends its
+OpenTelemetry metrics and events to klepsydra, which counts them per session:
+tokens by type, lines added and removed, commits and pull requests, active
+time (yours and the CLI's), edit accepts and rejects, tool results and
+failures, API errors and refusals, and the tool calls a hook or a permission
+rule turned down. Each of those turn-downs is also logged with its time,
+session, tool and source. Rejections you make yourself are counted
+separately.
+
+- **Local only.** The receiver listens on `127.0.0.1:4318` and nowhere else.
+  Under WSL with mirrored networking, WSL's `127.0.0.1` is the Windows host,
+  so sessions in WSL reach the Windows overlay. Nothing leaves the machine.
+  It answers only requests addressed to `127.0.0.1:4318` or `localhost:4318`
+  that carry no `Origin` header, so a web page cannot post to it by
+  rebinding a domain name to `127.0.0.1`. Claude Code's exporter sends no
+  `Origin`.
+- **Content stays redacted.** Claude Code replaces prompt and response text
+  with `<REDACTED>` unless `OTEL_LOG_USER_PROMPTS` is set, and sends no tool
+  arguments unless `OTEL_LOG_TOOL_DETAILS` is set. The exports still carry
+  your account email and organization ID as attributes; klepsydra does not
+  store them.
+- **Cost is an estimate.** Claude Code's `cost.usage` is what the tokens would
+  cost at API prices. On a Pro or Max plan it is not money spent, so the
+  ledger stores it as `cost_usd_estimate_micros`.
+- **Where it is kept.** One file per local calendar day in `ledger/` under
+  the app data dir, such as `ledger/2026-10-20.json`, written whole each time.
+  Files more than 30 local days old are deleted. `ledger/state.json` holds each session's running
+  totals and what stops a retried export from counting twice.
+- **When the overlay is off.** Claude Code's exports fail quietly and the
+  session carries on; that stretch is not counted. If something else holds
+  port 4318, klepsydra logs it to `fleet.log` and exposes it in the fleet
+  view as `receiver`, for the wall to show (not yet shown). It runs without
+  the ledger and tries the port again every 30 seconds.
 
 ## How often it refreshes
 
@@ -599,7 +682,7 @@ bash hooks/test_fleet.sh                 # fleet hook: states, where, identity, 
 bash hooks/test_launch.sh                # launcher: new, jump, tab reuse, against a private tmux socket
 bash scripts/test_measure_memory.sh      # the release memory check
 node --test src/*.test.js                # ramp, countdown, reconciliation, fleet model, faces, guards
-(cd src-tauri && cargo test -p klepsydra-fleet)   # fleet reader
+(cd src-tauri && cargo test -p klepsydra-fleet)   # fleet reader, OTLP receiver and ledger
 bash scripts/build-windows.sh --check    # clippy and every Rust test, on Windows
 bash scripts/visual-check.sh             # screenshots every state, the strip and wall included
 ```

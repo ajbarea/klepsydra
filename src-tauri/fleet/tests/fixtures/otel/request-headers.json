@@ -1,0 +1,26 @@
+{
+ "path": "/v1/metrics",
+ "version": "HTTP/1.1",
+ "headers": [
+  [
+   "Content-Type",
+   "application/json"
+  ],
+  [
+   "User-Agent",
+   "OTel-OTLP-Exporter-JavaScript/0.208.0"
+  ],
+  [
+   "Host",
+   "127.0.0.1:44703"
+  ],
+  [
+   "Content-Length",
+   "1440"
+  ],
+  [
+   "Connection",
+   "keep-alive"
+  ]
+ ]
+}

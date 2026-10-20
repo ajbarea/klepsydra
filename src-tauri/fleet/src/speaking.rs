@@ -223,6 +223,8 @@ mod tests {
             distro: None,
             claude: claude.map(|(pid, start)| Claude { pid, start }),
             background: Crew::default(),
+            ledger: None,
+            marks: Default::default(),
         }
     }
 

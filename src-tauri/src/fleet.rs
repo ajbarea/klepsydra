@@ -3,9 +3,15 @@
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
+#[cfg(windows)]
+use std::time::Instant;
 
+#[cfg(windows)]
+use klepsydra_fleet::cue::Cues;
 use klepsydra_fleet::hub::{Hub, Sink};
+use klepsydra_fleet::ledger::{Ledger, Receiver, Shared};
 use klepsydra_fleet::problem_log::{append_capped, CAP};
+use klepsydra_fleet::receiver;
 use klepsydra_fleet::scan::Problem;
 use klepsydra_fleet::watch::{unix_now, Reader, POLL};
 use serde_json::Value;
@@ -56,8 +62,14 @@ pub fn clear_session(app: AppHandle, id: String) -> Result<(), String> {
     remove_session(&dir.join("fleet"), &id)
 }
 
-/// A skipped file goes to stderr for dev runs and to `<dir>/fleet.log`, which
-/// release builds have instead of a console.
+/// A line for stderr, for dev runs, and for `<dir>/fleet.log`, which release
+/// builds have instead of a console.
+fn log_line(dir: &Path, what: &str) {
+    eprintln!("klepsydra: {what}");
+    let line = format!("{} {what}", unix_now());
+    append_capped(&dir.join("fleet.log"), &line, CAP);
+}
+
 fn log_problem(dir: &Path, p: &Problem) {
     // "fleet" names the directory itself, not a file inside it.
     let at = if p.file == "fleet" {
@@ -65,9 +77,60 @@ fn log_problem(dir: &Path, p: &Problem) {
     } else {
         format!("fleet/{}", p.file)
     };
-    eprintln!("klepsydra: skipped {at}: {}", p.what);
-    let line = format!("{} {at}: {}", unix_now(), p.what);
-    append_capped(&dir.join("fleet.log"), &line, CAP);
+    log_line(dir, &format!("skipped {at}: {}", p.what));
+}
+
+/// How often a receiver that could not bind its port tries again: the port
+/// may be held by a program that exits, or by the last run's connections.
+const RETRY: Duration = Duration::from_secs(30);
+
+/// Open the ledger in `<dir>/ledger` and start the OTLP receiver. While the
+/// port is taken the overlay runs on without telemetry, says so on the
+/// snapshot and in `fleet.log`, and tries again every `RETRY`.
+fn start_ledger(dir: &Path) -> Shared {
+    let (ledger, problems) = Ledger::open_local(dir.join("ledger"), unix_now());
+    for p in &problems {
+        log_line(dir, &format!("ledger: {p}"));
+    }
+    let ledger: Shared = std::sync::Arc::new(std::sync::Mutex::new(ledger));
+    let shared = ledger.clone();
+    let dir = dir.to_path_buf();
+    std::thread::spawn(move || {
+        let log_dir = dir.clone();
+        let log: receiver::Log = std::sync::Arc::new(move |l: String| log_line(&log_dir, &l));
+        let mut logged = false;
+        loop {
+            let (listening, error) =
+                match receiver::spawn(receiver::ADDR, shared.clone(), log.clone()) {
+                    Ok(_) => (true, None),
+                    Err(e) => (false, Some(e.to_string())),
+                };
+            if let Some(e) = &error {
+                if !logged {
+                    log_line(
+                        &dir,
+                        &format!("otel: no receiver on {}: {e}", receiver::ADDR),
+                    );
+                    logged = true;
+                }
+            } else if logged {
+                log_line(
+                    &dir,
+                    &format!("otel: receiver listening on {}", receiver::ADDR),
+                );
+            }
+            klepsydra_fleet::ledger::lock(&shared).set_receiver(Receiver {
+                addr: receiver::ADDR.to_string(),
+                listening,
+                error,
+            });
+            if listening {
+                return;
+            }
+            std::thread::sleep(RETRY);
+        }
+    });
+    ledger
 }
 
 /// Follow `<dir>/fleet` for as long as the app runs. Each skipped file is
@@ -77,16 +140,27 @@ pub fn start(app: &AppHandle, dir: Option<PathBuf>) {
         return;
     };
     let app = app.clone();
+    let ledger = start_ledger(&dir);
     std::thread::spawn(move || {
-        let mut reader = Reader::new(&dir);
+        let mut reader = Reader::new(&dir).with_ledger(ledger);
+        #[cfg(windows)]
+        let mut cues = Cues::new(unix_now());
         let mut wait = Duration::ZERO;
         loop {
             let (snapshot, problems) = reader.step(wait, unix_now);
             for p in &problems {
                 log_problem(&dir, p);
             }
-            if let Some(v) = snapshot.and_then(|s| serde_json::to_value(s).ok()) {
-                app.state::<Fleet>().publish(v);
+            if let Some(snapshot) = snapshot {
+                // Every snapshot moves the baseline, so turning Ping on never
+                // replays what changed while it was off.
+                #[cfg(windows)]
+                if let Some(c) = cues.next(&snapshot, Instant::now(), unix_now()) {
+                    crate::ping::cue(c);
+                }
+                if let Ok(v) = serde_json::to_value(snapshot) {
+                    app.state::<Fleet>().publish(v);
+                }
             }
             wait = POLL;
         }
