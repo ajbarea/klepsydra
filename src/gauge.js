@@ -272,11 +272,8 @@ export function toRows(payload, nowMs = Date.now()) {
     // The windows the account reports now. An ended window outside them is
     // one it no longer has, or one filed under it by mistake. A live one is
     // kept until it ends, since hiding a real window costs more.
-    const current = new Set(
-      sessions
-        .filter((s) => stampOf(s) === writtenAt)
-        .flatMap((s) => Object.keys(s.windows)),
-    );
+    const newest = sessions.filter((s) => stampOf(s) === writtenAt);
+    const current = new Set(newest.flatMap((s) => Object.keys(s.windows)));
     const windows = {};
     for (const key of WINDOW_ORDER) {
       const win = pickWindow(sessions, key, byTime);
@@ -287,7 +284,9 @@ export function toRows(payload, nowMs = Date.now()) {
     if (Object.keys(windows).length === 0) continue;
     accounts.push({
       account: id,
-      label: sessions.find((s) => s.label)?.label ?? "Claude",
+      // The newest reading names the account: an organisation renamed shows
+      // its new name, and dropping older readings never changes it.
+      label: (newest.find((s) => s.label) ?? sessions.find((s) => s.label))?.label ?? "Claude",
       written_at: writtenAt,
       windows,
     });

@@ -51,25 +51,28 @@ own_data_dir() { # dir
   [[ ! -L $dir ]]
 }
 
-# A prune runs at most once an hour; `stamp` holds the time of the last run,
-# and a clock that went back runs it again.
+# A prune runs at most once an hour, refused or not; `stamp` holds the time of
+# the last run, and a clock that went back runs it again.
 PRUNE_EVERY=3600
 prune_due() { # stamp now
   local last=""
   { IFS= read -r last <"$1"; } 2>/dev/null
-  ! [[ $last =~ ^[0-9]+$ ]] || (( $2 - last >= PRUNE_EVERY || $2 < last ))
+  [[ $2 =~ ^[0-9]+$ ]] || return 1
+  ! [[ $last =~ ^[0-9]+$ ]] || (( 10#$2 - 10#$last >= PRUNE_EVERY || 10#$2 < 10#$last ))
 }
 prune_hourly() { # stamp prune dir now
   prune_due "$1" "$4" || return 0
-  "$2" "$3" "$4" && { printf '%s\n' "$4" >"$1"; } 2>/dev/null
+  "$2" "$3" "$4"
+  { printf '%s\n' "$4" >"$1"; } 2>/dev/null
   return 0
 }
 # --- end prune helpers ---
 
 # Readings the gauge can never draw again: a session's file whose every window
 # ended over a day ago, unless it is its account's newest, which goes too once
-# the gauge drops the account (DROP_AFTER_MS in src/gauge.js). Write litter
-# goes at a day old. Only <account>/<uuid>.json and
+# the gauge drops the account (DROP_AFTER_MS in src/gauge.js). An account the
+# gauge reconciles without trusting its times (an old hook's files) keeps
+# every reading until it is dropped. Write litter goes at a day old. Only <account>/<uuid>.json and
 # <account>/<uuid>.json.<digits>.tmp inside <dir>/accounts, never through a
 # symlink, and only in the overlay's own data dir.
 PRUNE_ENDED_FOR=86400
@@ -92,13 +95,14 @@ prune_readings() { # dir now
 # stat (which does not follow links) and the readings are parsed by one jq.
 prune_readings_here() { # now
   local now=$1 line name f acct sess
-  local -A type=() mt=() listed=() emptied=()
-  local -a readings=()
+  local -A type=() mt=() ino=() listed=() emptied=()
+  local -a readings=() doomed=()
   while IFS= read -r -d '' line; do
-    [[ $line =~ ^([^|]+)\|([0-9]+)\|(.+)$ ]] || continue
-    type[${BASH_REMATCH[3]}]=${BASH_REMATCH[1]}
-    mt[${BASH_REMATCH[3]}]=${BASH_REMATCH[2]}
-  done < <(LC_ALL=C stat --printf '%F|%Y|%n\0' -- * */*.json */*.tmp 2>/dev/null)
+    [[ $line =~ ^([^|]+)\|([0-9]+)\|([0-9]+)\|(.+)$ ]] || continue
+    type[${BASH_REMATCH[4]}]=${BASH_REMATCH[1]}
+    mt[${BASH_REMATCH[4]}]=${BASH_REMATCH[2]}
+    ino[${BASH_REMATCH[4]}]=${BASH_REMATCH[3]}
+  done < <(LC_ALL=C stat --printf '%F|%Y|%i|%n\0' -- * */*.json */*.tmp 2>/dev/null)
   plain() { [[ ${type[$1]:-} == "regular file" || ${type[$1]:-} == "regular empty file" ]]; } # name
   # An account folder, not a link to one; its name never starts with a dash.
   owned() { [[ $1 =~ ^[0-9A-Za-z][0-9A-Za-z-]*$ && ${type[$1]:-} == directory ]]; } # account
@@ -113,26 +117,41 @@ prune_readings_here() { # now
   if (( ${#readings[@]} )); then
     # A file of more than one line, or one that does not parse, is kept; one
     # without a final newline runs into the next and both fail to parse. The
-    # newest stamp and the account are read as src/gauge.js reads them.
+    # rest follows src/gauge.js: which readings it sees (toRows), how it groups
+    # and stamps them, and when it trusts their times (reconcilable). An
+    # account with a stamp that is not a number is left alone.
     while IFS= read -r f; do
       # Only a name this function globbed is ever deleted, whatever jq printed.
-      [[ -n ${listed[$f]:-} ]] || continue
-      rm -f -- "$f" && emptied[${f%%/*}]=1
+      [[ -n ${listed[$f]:-} ]] && doomed+=("$f")
     done < <(jq -nRr --argjson now "$now" --argjson ended_for "$PRUNE_ENDED_FOR" \
       --argjson drop "$PRUNE_DROP_AFTER" '
       [inputs | {f: input_filename, r: (try fromjson catch null)}]
-      | group_by(.f) | map(select(length == 1) | .[0] | select(.r | type == "object")
-        | .r as $r
-        | (if $r.observed_at != null then $r.observed_at else $r.written_at end) as $s
-        | { f, account: ($r.account // "?" | tostring),
-            stamp: (if ($s | type) == "number" then $s else null end),
+      | group_by(.f) | map(select(length == 1) | .[0].r as $r | select($r | type == "object")
+        | select($r.windows | type == "object" or type == "array")
+        | { f: .[0].f, account: ($r.account // "?" | tostring),
+            observed: ($r.observed_at != null),
+            odd: ([$r.observed_at, $r.written_at] | any(. != null and type != "number")),
+            stamp: (if $r.observed_at != null then $r.observed_at else $r.written_at end),
             ended: ($r.windows | type == "object" and length > 0
               and all(.[]; type == "object" and (.resets_at | type) == "number"
                 and .resets_at < $now - $ended_for)) })
-      | group_by(.account)[]
-      | (map(.stamp | numbers) | max) as $newest
-      | .[] | select(.ended and .stamp != null and (.stamp != $newest or .stamp < $now - $drop))
+      | group_by(.account)[] | select(any(.odd) | not)
+      | (map(select(.observed) | .stamp) | max) as $seen
+      | ($seen != null and all(.[]; .observed or .stamp == null or .stamp <= $seen)) as $by_time
+      | (if $by_time then $seen else map(.stamp | numbers) | max end) as $written
+      | .[] | select(.ended and .stamp != null)
+      | select(($written | not) or $written < $now - $drop or ($by_time and .stamp != $seen))
       | .f' "${readings[@]}" 2>/dev/null)
+  fi
+  if (( ${#doomed[@]} )); then
+    # A writer may have renamed a new reading into place since the stat; a
+    # rename brings a new inode, so only a file still on its old one goes.
+    while IFS= read -r -d '' line; do
+      [[ $line =~ ^([0-9]+)\|(.+)$ ]] || continue
+      f=${BASH_REMATCH[2]}
+      [[ -n ${listed[$f]:-} && ${BASH_REMATCH[1]} == "${ino[$f]}" ]] || continue
+      rm -f -- "$f" && emptied[${f%%/*}]=1
+    done < <(LC_ALL=C stat --printf '%i|%n\0' -- "${doomed[@]}" 2>/dev/null)
   fi
   # A folder left empty goes; one a writer has just made again stays.
   for acct in "${!emptied[@]}"; do rmdir -- "$acct" 2>/dev/null; done
@@ -272,7 +291,7 @@ fi
 
 # A due prune runs detached, holding a lock taken here, so a render never waits
 # on it and two terminals never prune at once.
-if [[ -n "$KLEPSYDRA_DIR" ]] && prune_due "$PRUNE_STAMP" "$now" &&
+if [[ -n "$KLEPSYDRA_DIR" ]] && own_data_dir "$KLEPSYDRA_DIR" && prune_due "$PRUNE_STAMP" "$now" &&
   { exec {plock}>>"$PRUNE_LOCK"; } 2>/dev/null; then
   if flock -n "$plock" 2>/dev/null; then
     prune_hourly "$PRUNE_STAMP" prune_readings "$KLEPSYDRA_DIR" "$now" </dev/null >/dev/null 2>&1 &

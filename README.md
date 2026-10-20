@@ -83,7 +83,10 @@ response always reports the window it counts against. Once an hour, in the
 background, the hook deletes readings the overlay can never draw again: a
 session's file whose every window ended over a day ago, unless it is its
 account's newest, and that one too once the overlay drops the account after
-30 days without a reading. Anything it cannot read stays.
+30 days without a reading. An account with an older hook's files keeps every
+reading until it is dropped, since the overlay weighs all of them there.
+Anything it cannot read stays, and so does a reading rewritten while the
+prune runs. An account takes its name from its newest reading.
 
 ## Two accounts at once
 

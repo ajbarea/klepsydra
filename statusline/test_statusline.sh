@@ -367,6 +367,33 @@ layout() {
   : >"$pa/uuid-team/$(u 2).json.123.tmp"; touch -d @$((P - 2 * day)) "$pa/uuid-team/$(u 2).json.123.tmp"
   : >"$pa/uuid-team/$(u 2).json.456.tmp"; touch -d @$((P - 3600)) "$pa/uuid-team/$(u 2).json.456.tmp"
   printf '{}\n' >"$pa/old-flat.json"                                # a pre-per-session file
+  reading -rf 1 $((P - 3 * day)) $((P - 2 * day))                    # a folder named like a flag
+  reading -rf 2 $((P - 5 * day)) $((P - 4 * day))
+  mkdir -p "$pa/empty"                                              # a folder with nothing in it
+  : >"$pa/uuid-team/abc.json.123.tmp"; touch -d @$((P - 2 * day)) "$pa/uuid-team/abc.json.123.tmp"
+  # An old hook's account: no observed_at, so the gauge trusts no time.
+  reading oldhook 1 $((P - 3 * day)) $((P - 2 * day))
+  reading oldhook 2 $((P - 5 * day)) $((P - 4 * day)) $((P - 3 * day))
+  for n in 1 2; do
+    jq -c 'del(.observed_at)' "$pa/oldhook/$(u $n).json" >"$work/x" && mv "$work/x" "$pa/oldhook/$(u $n).json"
+  done
+  # Observed readings, and an old hook still writing after them.
+  reading mixed 1 $((P - 3 * day)) $((P - 2 * day))
+  reading mixed 2 $((P - 5 * day)) $((P - 4 * day))
+  reading mixed 3 $((P - 2 * day)) $((P - day - 3600))
+  jq -c 'del(.observed_at)' "$pa/mixed/$(u 3).json" >"$work/x" && mv "$work/x" "$pa/mixed/$(u 3).json"
+  # The gauge stamps an observed reading by observed_at, not written_at.
+  reading obs 1 $((P - 3 * day)) $((P - 2 * day))
+  reading obs 2 $((P - 5 * day)) $((P - 4 * day))
+  jq -c --argjson w $((P - day)) '.written_at = $w' "$pa/obs/$(u 2).json" >"$work/x" && mv "$work/x" "$pa/obs/$(u 2).json"
+  # A newer file the gauge does not see (no windows object) is not the newest.
+  reading unseen 1 $((P - 3 * day)) $((P - 2 * day))
+  jq -nc --argjson at $((P - day)) '{account: "unseen", session: "s", written_at: $at, observed_at: $at, windows: "none"}' \
+    >"$pa/unseen/$(u 2).json"
+  # A stamp that is not a number leaves its account alone.
+  reading odd 1 $((P - 3 * day)) $((P - 2 * day))
+  reading odd 2 $((P - 5 * day)) $((P - 4 * day))
+  jq -c '.written_at = "soon"' "$pa/odd/$(u 1).json" >"$work/x" && mv "$work/x" "$pa/odd/$(u 1).json"
 }
 # What the gauge draws, at the prune's clock, from the readings the overlay
 # reads: each <account>/*.json that parses as one value, links followed.
@@ -404,6 +431,15 @@ check "prune: and so does its target" "$([[ -e $pa/uuid-team/$(u 9).json ]] && e
 check "prune: write litter a day old goes" "$(there "uuid-team/$(u 2).json.123.tmp")" "gone"
 check "prune: fresh write litter stays" "$(there "uuid-team/$(u 2).json.456.tmp")" "kept"
 check "prune: a pre-per-session file stays" "$(there old-flat.json)" "kept"
+check "prune: a folder named like a flag is no account" "$(there "-rf/$(u 2).json")" "kept"
+check "prune: a folder it did not empty stays" "$(there empty)" "kept"
+check "prune: write litter not named for a session stays" "$(there "uuid-team/abc.json.123.tmp")" "kept"
+check "prune: an old hook's account keeps its older reading" "$(there "oldhook/$(u 2).json")" "kept"
+check "prune: so does one with an old hook writing after it" "$(there "mixed/$(u 2).json")" "kept"
+check "prune: an observed reading is stamped by observed_at" "$(there "obs/$(u 2).json")" "gone"
+check "prune: and the newest by observed_at stays" "$(there "obs/$(u 1).json")" "kept"
+check "prune: a file the gauge does not see is not the newest" "$(there "unseen/$(u 1).json")" "kept"
+check "prune: a stamp that is not a number leaves the account alone" "$(there "odd/$(u 2).json")" "kept"
 if command -v node >/dev/null; then
   after=$(rows)
   check "prune: the gauge draws the same rows" "$after" "$before"
@@ -428,13 +464,57 @@ prune_run $((P + 3600)) >/dev/null
 check "prune: again an hour on" "$(there "uuid-team/$(u 2).json")" "gone"
 check "prune: a newer reading retires the ended newest" "$(there "uuid-team/$(u 1).json")" "gone"
 
+# Not through an accounts folder that is a link.
+layout
+mv "$pa" "$pd/accounts-real"
+ln -s accounts-real "$pa"
+prune_run $P >/dev/null
+check "prune: nothing through a linked accounts folder" "$([[ -e $pd/accounts-real/uuid-team/$(u 2).json ]] && echo kept || echo gone)" "kept"
+check "prune: and an hour passes before it looks again" "$(find "$XDG_RUNTIME_DIR" -name '*.pruned' | wc -l)" "1"
+
+# A slow prune keeps no render waiting, and a reading a writer renames into
+# place while the prune decides is not the one deleted. The shim stands in for
+# the prune's jq only.
+mkdir -p "$work/shim"
+cat >"$work/shim/jq" <<'SHIM'
+#!/usr/bin/env bash
+[[ " $* " == *" ended_for "* ]] || exec "$REAL_JQ" "$@"
+sleep "${SHIM_SLEEP:-0}"
+out=$("$REAL_JQ" "$@")
+if [[ -n ${SHIM_REWRITE:-} ]]; then cp "$SHIM_REWRITE" "$SHIM_REWRITE.new" && mv "$SHIM_REWRITE.new" "$SHIM_REWRITE"; fi
+printf '%s\n' "$out"
+SHIM
+chmod +x "$work/shim/jq"
+shim_run() { # env assignments...
+  env "$@" REAL_JQ="$(command -v jq)" PATH="$work/shim:$PATH" CLAUDE_CONFIG_DIR="$work/team" \
+    KLEPSYDRA_DIR="$pd" KLEPSYDRA_NOW=$P bash "$script" <<<"$live" >/dev/null
+}
+layout
+start=$(date +%s%N)
+shim_run SHIM_SLEEP=2
+took=$(( ($(date +%s%N) - start) / 1000000 ))
+check "prune: a render does not wait for a slow prune ($took ms)" "$(( took < 1500 ))" "1"
+settle
+check "prune: which finishes on its own" "$(there "uuid-team/$(u 2).json")" "gone"
+layout
+shim_run SHIM_REWRITE="$pa/uuid-team/$(u 2).json"
+settle
+check "prune: a reading rewritten while it decides stays" "$(there "uuid-team/$(u 2).json")" "kept"
+check "prune: the others still go" "$(there "uuid-held/$(u 2).json")" "gone"
+
+# A stamp with a leading zero is still a time.
+layout
+printf '089\n' >"$XDG_RUNTIME_DIR/klepsydra-readings-$UID.pruned"
+prune_run $P >/dev/null
+check "prune: a stamp with a leading zero does not stop it" "$(there "uuid-team/$(u 2).json")" "gone"
+
 # Only in the overlay's own data dir.
 layout
 mv "$work/p/dev.ajsoftworks.klepsydra" "$work/p/klepsydra-copy"
 CLAUDE_CONFIG_DIR="$work/team" KLEPSYDRA_DIR="$work/p/klepsydra-copy" KLEPSYDRA_NOW=$P bash "$script" <<<"$live" >/dev/null
-settle
 check "prune: nothing in another folder" "$([[ -e $work/p/klepsydra-copy/accounts/uuid-gone ]] && echo kept || echo gone)" "kept"
 check "prune: and no stamp for it" "$(find "$XDG_RUNTIME_DIR" -name '*.pruned' | wc -l)" "0"
+check "prune: nor a lock, so a render starts nothing" "$(find "$XDG_RUNTIME_DIR" -name '*.lock' | wc -l)" "0"
 
 # A render does not wait for the prune, and a prune already running is left to
 # finish alone.

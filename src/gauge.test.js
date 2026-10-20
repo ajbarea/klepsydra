@@ -193,6 +193,15 @@ test("two accounts are each labelled so their numbers cannot be confused", () =>
   assert.deepEqual(rows.map((r) => r.pct), [20, 5, 80]);
 });
 
+test("an account is named by its newest reading, whichever comes first", () => {
+  const older = acct("t", "Old Org", { five_hour: win(10) }, 3600e3);
+  const newer = acct("t", "New Org", { five_hour: win(20) });
+  for (const list of [[older, newer], [newer, older]]) {
+    const rows = toRows([...list, acct("p", "Personal", { five_hour: win(5) }, 7200e3)], NOW);
+    assert.equal(rows[0].label, "New Org · session");
+  }
+});
+
 test("the account in use now sits above the one signed out of", () => {
   const rows = toRows({
     p: acct("p", "Personal", { five_hour: win(100), seven_day: win(66) }, 3 * 3600e3),
