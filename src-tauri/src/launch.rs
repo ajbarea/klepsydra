@@ -3,8 +3,8 @@
 //! bring a session's tmux window forward.
 
 use std::sync::Mutex;
-#[cfg(windows)]
-use std::time::Duration;
+#[cfg(any(windows, test))]
+use std::time::{Duration, Instant};
 
 use serde_json::Value;
 use tauri::Manager;
@@ -14,9 +14,13 @@ use tauri::Manager;
 pub const WSL_EXE: &str = r"C:\Windows\System32\wsl.exe";
 /// The launcher, relative to the WSL home (`--cd ~`).
 const SCRIPT: &str = ".claude/klepsydra-launch.sh";
-/// Longest wait for wsl.exe to finish.
+/// Longest wait for wsl.exe to finish: a cold WSL start alone can take 20 s.
+#[cfg(any(windows, test))]
+const TIMEOUT: Duration = Duration::from_secs(45);
+/// How long the output is still read once wsl.exe exits; a process it left
+/// behind holding the pipe open cannot keep the call running past this.
 #[cfg(windows)]
-const TIMEOUT: Duration = Duration::from_secs(20);
+const DRAIN_GRACE: Duration = Duration::from_secs(2);
 
 /// Set while a call runs; a click meanwhile is refused.
 #[derive(Default)]
@@ -170,30 +174,64 @@ fn last_line(text: &str) -> String {
 #[cfg(any(windows, test))]
 const KEEP: usize = 64 * 1024;
 
+/// A stream being read on its own thread.
+#[cfg(any(windows, test))]
+struct Drain {
+    kept: std::sync::Arc<Mutex<Vec<u8>>>,
+    done: std::sync::mpsc::Receiver<()>,
+}
+
+#[cfg(any(windows, test))]
+impl Drain {
+    /// What was read, once the stream ends or at `deadline`, whichever is
+    /// first; a stream still open then is left to its thread.
+    fn wait(self, deadline: Instant) -> Vec<u8> {
+        let _ = self
+            .done
+            .recv_timeout(deadline.saturating_duration_since(Instant::now()));
+        let kept = self.kept.lock().unwrap_or_else(|e| e.into_inner());
+        kept.clone()
+    }
+}
+
 /// Read `r` to its end on a thread, keeping the last `KEEP` bytes, so a full
 /// pipe never stalls the child.
 #[cfg(any(windows, test))]
-fn drain<R: std::io::Read + Send + 'static>(mut r: R) -> std::thread::JoinHandle<Vec<u8>> {
+fn drain<R: std::io::Read + Send + 'static>(mut r: R) -> Drain {
+    let kept = std::sync::Arc::new(Mutex::new(Vec::new()));
+    let (tx, done) = std::sync::mpsc::channel();
+    let shared = std::sync::Arc::clone(&kept);
     std::thread::spawn(move || {
-        let (mut kept, mut chunk) = (Vec::new(), [0u8; 4096]);
+        let mut chunk = [0u8; 4096];
         while let Ok(n) = r.read(&mut chunk) {
             if n == 0 {
                 break;
             }
+            let mut kept = shared.lock().unwrap_or_else(|e| e.into_inner());
             kept.extend_from_slice(&chunk[..n]);
             if kept.len() > KEEP {
-                kept.drain(..kept.len() - KEEP);
+                let extra = kept.len() - KEEP;
+                kept.drain(..extra);
             }
         }
-        kept
-    })
+        let _ = tx.send(());
+    });
+    Drain { kept, done }
+}
+
+/// The card's line when wsl.exe does not finish within `TIMEOUT`.
+#[cfg(any(windows, test))]
+fn timed_out() -> String {
+    format!(
+        "WSL did not answer within {} seconds. The session may still be starting; check the terminal before clicking again.",
+        TIMEOUT.as_secs()
+    )
 }
 
 #[cfg(windows)]
 fn run(args: &[String]) -> Result<String, String> {
     use std::os::windows::process::CommandExt;
     use std::process::{Command, Stdio};
-    use std::time::Instant;
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
     let mut child = Command::new(WSL_EXE)
         .args(args)
@@ -213,17 +251,16 @@ fn run(args: &[String]) -> Result<String, String> {
             Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(50)),
             Ok(None) => {
                 let _ = child.kill();
-                return Err(format!(
-                    "WSL did not answer within {} seconds.",
-                    TIMEOUT.as_secs()
-                ));
+                return Err(timed_out());
             }
             Err(e) => return Err(e.to_string()),
         }
     };
-    let text =
-        |h: std::thread::JoinHandle<Vec<u8>>| last_line(&decode(&h.join().unwrap_or_default()));
-    let (stdout, stderr) = (text(out), text(err));
+    let until = Instant::now() + DRAIN_GRACE;
+    let (stdout, stderr) = (
+        last_line(&decode(&out.wait(until))),
+        last_line(&decode(&err.wait(until))),
+    );
     if status.success() {
         Ok(stdout)
     } else if stderr.is_empty() {
@@ -272,6 +309,7 @@ pub async fn launch_session(app: tauri::AppHandle) -> Result<String, String> {
 mod tests {
     use super::*;
     use serde_json::json;
+    use std::time::Instant;
 
     #[test]
     fn new_args_pass_the_folder_as_one_argument() {
@@ -421,8 +459,45 @@ mod tests {
     fn drain_keeps_the_tail_of_a_long_stream() {
         let mut data = vec![b'a'; KEEP * 2];
         data.extend_from_slice(b"\nlast\n");
-        let kept = drain(std::io::Cursor::new(data)).join().unwrap();
+        let kept = drain(std::io::Cursor::new(data)).wait(Instant::now() + Duration::from_secs(5));
         assert_eq!(kept.len(), KEEP);
         assert_eq!(last_line(&decode(&kept)), "last");
+    }
+
+    /// A pipe a grandchild still holds open: some output, then no EOF.
+    struct Held(Option<&'static [u8]>);
+
+    impl std::io::Read for Held {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            match self.0.take() {
+                Some(b) => {
+                    buf[..b.len()].copy_from_slice(b);
+                    Ok(b.len())
+                }
+                None => loop {
+                    std::thread::park();
+                },
+            }
+        }
+    }
+
+    #[test]
+    fn a_stream_without_eof_is_given_up_on_at_the_deadline() {
+        let started = Instant::now();
+        let kept = drain(Held(Some(b"Started a session in /x.\n")))
+            .wait(Instant::now() + Duration::from_millis(300));
+        let waited = started.elapsed();
+        assert!(waited >= Duration::from_millis(250), "{waited:?}");
+        assert!(waited < Duration::from_secs(2), "{waited:?}");
+        assert_eq!(last_line(&decode(&kept)), "Started a session in /x.");
+    }
+
+    #[test]
+    fn a_timeout_waits_45_seconds_and_says_the_session_may_be_starting() {
+        assert_eq!(TIMEOUT, Duration::from_secs(45));
+        assert_eq!(
+            timed_out(),
+            "WSL did not answer within 45 seconds. The session may still be starting; check the terminal before clicking again."
+        );
     }
 }
