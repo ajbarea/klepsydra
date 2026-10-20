@@ -182,10 +182,10 @@ export function stripItems(sessions, cast, nowMs, before) {
   });
 }
 
-/** Whether the card can jump to the session's terminal, and why not. */
+/** Whether the card can jump to the session's terminal, and why not: by its name, or by its tmux pane and Claude process. */
 function jumpable(s) {
   if (s.status === "ended") return { enabled: false, why: "session ended" };
-  if (!s.name) return { enabled: false, why: "no session name yet" };
+  if (!s.name && !(s.tmux && s.claude && s.distro)) return { enabled: false, why: "no session name yet" };
   return { enabled: true, why: null };
 }
 
@@ -210,6 +210,8 @@ export function askText(reason) {
 }
 
 const DIM = new Set(["new", "silent", "ended"]);
+// A pill that names its reason: "ended · gone", "error · rate limit".
+const PILL_REASON = new Set(["ended", "error"]);
 
 /** Counts for the summary bar. */
 export function tally(sessions) {
@@ -232,7 +234,10 @@ export function card(s, cast, nowMs) {
     id: s.session_id,
     task: s.name || "No session name yet",
     tone: st.tone,
-    pill: { label: st.label, age: statusParts(s, nowMs).at(-1) },
+    pill: {
+      label: PILL_REASON.has(s.status) && s.reason ? `${st.label} \u00b7 ${s.reason}` : st.label,
+      age: statusParts(s, nowMs).at(-1),
+    },
     ask: s.status === "needs_you" ? askText(s.reason) : null,
     arc: arcFraction(s, nowMs),
     dim: DIM.has(s.status),

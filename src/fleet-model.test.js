@@ -261,6 +261,13 @@ test("a card holds what the wall shows", () => {
   const other = card(session({ voice: "af_bella" }), CAST, NOW);
   assert.notEqual(other.jumpLabel, c.jumpLabel, "each Jump button is named for its session");
   assert.deepEqual(card(session({ name: null }), CAST, NOW).jump, { enabled: false, why: "no session name yet" });
+  const inTmux = { name: null, tmux: { socket: "/tmp/tmux-1001/klepsydra", pane: "%3" }, claude: { pid: 2231, start: 8717628 }, distro: "Ubuntu" };
+  assert.deepEqual(card(session(inTmux), CAST, NOW).jump, { enabled: true, why: null }, "tmux finds an unnamed session by its pane");
+  for (const missing of ["tmux", "claude", "distro"]) {
+    assert.deepEqual(card(session({ ...inTmux, [missing]: null }), CAST, NOW).jump,
+      { enabled: false, why: "no session name yet" }, `without ${missing}`);
+  }
+  assert.deepEqual(card(session({ ...inTmux, status: "ended" }), CAST, NOW).jump, { enabled: false, why: "session ended" });
   assert.deepEqual(card(session({ status: "ended" }), CAST, NOW).jump, { enabled: false, why: "session ended" });
   assert.equal(card(session({ status: "error", error: "API Error: Rate limit reached" }), CAST, NOW).error,
     "API Error: Rate limit reached");
@@ -332,9 +339,9 @@ test("a card carries pill, ask, tone, dim, place and its voice as a tooltip", ()
 
 test("the pill's age: ended, error and a quiet needs-you card", () => {
   assert.deepEqual(card(session({ status: "ended", reason: "closed", status_at: ago(360) }), CAST, NOW).pill,
-    { label: "ended", age: "6m" });
+    { label: "ended \u00b7 closed", age: "6m" });
   assert.deepEqual(card(session({ status: "error", reason: "rate limit", status_at: ago(180) }), CAST, NOW).pill,
-    { label: "error", age: "3m" });
+    { label: "error \u00b7 rate limit", age: "3m" });
   assert.deepEqual(card(session({ quiet_since: ago(31 * 60), status_at: ago(35 * 60) }), CAST, NOW).pill,
     { label: "needs you?", age: "no word for 31m" });
 });
@@ -354,3 +361,18 @@ test("the tally counts what the bar shows", () => {
   ]);
   assert.deepEqual(t, { needs: 1, working: 2, done: 1, error: 1, idle: 3 });
 });
+
+test("an ended or error pill names its reason", () => {
+  for (const [status, reason, label] of [
+    ["ended", "gone", "ended \u00b7 gone"],
+    ["ended", "exited", "ended \u00b7 exited"],
+    ["error", "rate limit", "error \u00b7 rate limit"],
+    ["ended", null, "ended"],
+    ["error", null, "error"],
+  ]) {
+    assert.equal(card(session({ status, reason }), CAST, NOW).pill.label, label, `${status} ${reason}`);
+  }
+  assert.equal(card(session({ status: "needs_you", reason: "approve Bash" }), CAST, NOW).pill.label, "needs you",
+    "a needs-you reason is the ask line's");
+});
+
