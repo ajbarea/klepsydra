@@ -13,7 +13,6 @@ The fleet strip holds to the same rule: every status shows its age, and a
 session that stops answering reads as silent, never as working.
 
 ## Next
-- Exercise the tray menu ("Reset position", autostart toggle).
 - Take the fleet's 8-hour memory reading (README, Releasing).
 - Interrupt and exit buttons on a card (#22), which need Jump's tab match.
 
@@ -24,6 +23,10 @@ session that stops answering reads as silent, never as working.
   for it (IMPL, Open).
 
 ## Completed
+- 2026-10-20: Exercised every tray item live on Windows, by real mouse
+  clicks: "Set home here" saved the docked rect, "Reset position" brought
+  the gauge back to it from mid-screen, and "Start with Windows" removed and
+  restored the Run key, its check mark following.
 - 2026-10-20: The statusline hook prunes readings the overlay can never draw
   again, hourly and in the background, and never publishes a reading whose
   every window has ended. On a copy of the WSL station's readings it removed
