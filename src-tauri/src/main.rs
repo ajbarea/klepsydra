@@ -155,10 +155,20 @@ fn write_pref(app: &tauri::AppHandle, key: &str, value: serde_json::Value) {
     }
 }
 
+/// Each layout keeps its own zoom: compact is sized to the taskbar, the full
+/// layout to the desk.
+fn zoom_key(layout: Option<&str>) -> &'static str {
+    if layout == Some("compact") {
+        "zoom_compact"
+    } else {
+        "zoom"
+    }
+}
+
 #[tauri::command]
-fn get_zoom(app: tauri::AppHandle) -> i64 {
+fn get_zoom(app: tauri::AppHandle, layout: Option<String>) -> i64 {
     read_prefs(&app)
-        .and_then(|p| p.get("zoom")?.as_i64())
+        .and_then(|p| p.get(zoom_key(layout.as_deref()))?.as_i64())
         .unwrap_or(0)
 }
 
@@ -172,8 +182,8 @@ fn json_rect(v: &serde_json::Value) -> Option<Rect> {
 }
 
 #[tauri::command]
-fn set_zoom(app: tauri::AppHandle, level: i64) {
-    write_pref(&app, "zoom", serde_json::json!(level));
+fn set_zoom(app: tauri::AppHandle, level: i64, layout: Option<String>) {
+    write_pref(&app, zoom_key(layout.as_deref()), serde_json::json!(level));
 }
 
 /// The gauge's layout: "compact" (a ring per window in one row, low enough to
@@ -185,33 +195,28 @@ fn layout_of(app: &tauri::AppHandle) -> &'static str {
     }
 }
 
-/// The gauge's channel for layout changes, once it has subscribed.
-#[derive(Default)]
-struct LayoutFeed(Mutex<Option<Channel<String>>>);
+/// Who follows the layout: the gauge, sent the saved layout when it subscribes
+/// and again after each change from the tray.
+type Layouts = klepsydra_fleet::hub::Hub<fleet::Webview>;
 
-/// The gauge asks for its layout: the current one at once, then each change
-/// made from the tray.
 #[tauri::command]
 fn layout_subscribe(
-    app: tauri::AppHandle,
-    feed: tauri::State<'_, LayoutFeed>,
-    on_message: Channel<String>,
+    window: tauri::WebviewWindow,
+    layouts: tauri::State<'_, Layouts>,
+    on_message: Channel<serde_json::Value>,
 ) {
-    let _ = on_message.send(layout_of(&app).into());
-    if let Ok(mut slot) = feed.0.lock() {
-        *slot = Some(on_message);
-    }
+    layouts.subscribe(window.label(), fleet::Webview(on_message));
 }
 
-/// Save a layout chosen in the tray and hand it to the gauge.
-fn set_layout(app: &tauri::AppHandle, compact: bool) {
-    let layout = if compact { "compact" } else { "full" };
-    write_pref(app, "layout", serde_json::json!(layout));
-    let feed = app.state::<LayoutFeed>();
-    let channel = feed.0.lock().ok().and_then(|slot| slot.clone());
-    if let Some(channel) = channel {
-        let _ = channel.send(layout.into());
-    }
+/// Save a layout chosen in the tray and send the gauge the layout now saved,
+/// so the gauge, the menu and the next start agree even if the save failed.
+/// True when that layout is compact.
+fn set_layout(app: &tauri::AppHandle, compact: bool) -> bool {
+    let want = if compact { "compact" } else { "full" };
+    write_pref(app, "layout", serde_json::json!(want));
+    let saved = layout_of(app);
+    app.state::<Layouts>().publish(serde_json::json!(saved));
+    saved == "compact"
 }
 
 /// Where the window is: the rect last requested while it may still be landing,
@@ -795,7 +800,7 @@ fn main() {
         .manage(Moved::default())
         .manage(Sized::default())
         .manage(Requested::default())
-        .manage(LayoutFeed::default())
+        .manage(Layouts::default())
         .invoke_handler(tauri::generate_handler![
             read_usage,
             set_size,
@@ -856,12 +861,14 @@ fn main() {
             )?;
             let reset = MenuItem::with_id(app, "reset", "Reset position", true, None::<&str>)?;
             let home = MenuItem::with_id(app, "home", "Set home here", true, None::<&str>)?;
+            let layout = layout_of(app.handle());
+            app.state::<Layouts>().publish(serde_json::json!(layout));
             let compact_item = CheckMenuItem::with_id(
                 app,
                 "compact",
                 "Compact",
                 true,
-                layout_of(app.handle()) == "compact",
+                layout == "compact",
                 None::<&str>,
             )?;
             let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
@@ -893,7 +900,10 @@ fn main() {
                         let _ = if want { mgr.enable() } else { mgr.disable() };
                         let _ = toggle.set_checked(mgr.is_enabled().unwrap_or(want));
                     }
-                    "compact" => set_layout(app, compact.is_checked().unwrap_or(false)),
+                    "compact" => {
+                        let on = set_layout(app, compact.is_checked().unwrap_or(false));
+                        let _ = compact.set_checked(on);
+                    }
                     "reset" => {
                         if let Some(w) = app.get_webview_window("main") {
                             let _ = reset_position(w.clone());

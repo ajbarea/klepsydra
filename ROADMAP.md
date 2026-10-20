@@ -26,8 +26,8 @@ session that stops answering reads as silent, never as working.
 ## Completed
 - 2026-10-19: Added the compact layout ("Compact" in the tray, #21): a ring
   per window in one row, 42px tall with three windows where the bars stand
-  142px, so the gauge fits inside a 48px taskbar. Short countdowns keep the
-  age of an old reading.
+  142px, so the gauge fits inside a 48px taskbar up to 110%. Each layout
+  keeps its own zoom, and short countdowns keep the age of an old reading.
 - 2026-10-19: Ran the fleet live check against the installed Windows build;
   every README step held over two runs (#17). Opening eleven sessions at once
   jammed WSL's NAT to Anthropic's API for every session, so later checks

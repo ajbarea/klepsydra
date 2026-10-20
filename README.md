@@ -218,12 +218,12 @@ strip is click-through, so the gauge never intercepts a click meant for the
 window underneath.
 
 Scroll on the handle to resize the whole gauge, text and bars together, from
-75% to 236% in 10% steps; the new size shows briefly and is remembered. The
-point under the pointer stays put, so the handle stays under it. When rows
-come or go, the gauge grows away from the screen edges it sits nearest: parked
-over the taskbar, it grows upward. Either way it stays wholly on its monitor.
-Scrolling relies on Windows' "Scroll inactive windows when I hover over them",
-which is on by default.
+75% to 236% in 10% steps; the new size shows briefly and is remembered,
+for each layout apart. The point under the pointer stays put, so the handle
+stays under it. When rows come or go, the gauge grows away from the screen
+edges it sits nearest: parked over the taskbar, it grows upward. Either way it
+stays wholly on its monitor. Scrolling relies on Windows' "Scroll inactive
+windows when I hover over them", which is on by default.
 
 Dragging is handled in the backend rather than by `data-tauri-drag-region`,
 which needs a focused window -- this one is deliberately unfocused and
@@ -254,12 +254,14 @@ notification-area overflow.
 "Compact" in the tray menu redraws the gauge to fit inside the taskbar. Each
 window becomes a ring, filled clockwise from 12 o'clock in the bar's colours,
 beside its percentage and countdown over its label, all in one row with the
-fleet strip beside it. With three windows it stands 42px tall where the full
-layout stands 142px, so parked over a 48px taskbar it sits inside it.
-Countdowns shorten ("4h 58m", "3d 11h"), and a reading more than 15 minutes
-old still says how old it is ("2h · 20m old"). The choice is remembered, and
-switching keeps the gauge on the screen edges it sits nearest, so a gauge on
-the taskbar stays there.
+fleet strip beside it. Countdowns shorten ("4h 58m", "3d 11h"), and a
+reading more than 15 minutes old still says how old it is ("2h · 20m old").
+
+Each layout keeps its own size from the handle, since compact is sized to the
+taskbar and the bars to the desk. Compact opens at 100%, where three windows
+stand 42px tall against 142px for the bars, and it fits inside a 48px taskbar
+up to 110%. The choice is remembered, and switching keeps the gauge on the
+screen edges it sits nearest, so a gauge on the taskbar stays there.
 
 ### Staying in front of the taskbar
 

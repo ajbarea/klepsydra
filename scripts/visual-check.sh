@@ -102,15 +102,25 @@ fixture_write "$(entry team RIT-CS-DQL 0 "{\"five_hour\":$(w 88 3000)}"),$(entry
 shot c03-both-accounts "?layout=compact" 900,80
 fixture_write "$(entry team RIT-CS-DQL 0 "{\"five_hour\":$(w 97 600)}")"
 shot c04-critical "?layout=compact" 450,80
+fixture_write "$(entry gw Gateway 0 "{\"spend_limit\":$(w 118 3600)}")"
+shot c05-over-limit "?layout=compact" 450,80
+fixture_write "$(entry team RIT-CS-DQL 0 "{\"five_hour\":$(w 73 -60)}")"
+shot c07-window-reset "?layout=compact" 450,80
+# Width holds across the percent's digits: these three come out equally wide.
+for pct in 9 10 97; do
+  fixture_write "$(entry team RIT-CS-DQL 0 "{\"five_hour\":$(w $pct 3000)}")"
+  shot "c-width-$pct" "?layout=compact" 450,80
+done
 fixture_write "$(entry team RIT-CS-DQL 1800 "{\"five_hour\":$(w 55 7200)}")"
 shot c06-old-reading "?layout=compact" 450,80
 fixture_write "$(entry pers Personal 0 "{\"five_hour\":$(w 59 14700),\"seven_day\":$(w 31 116000)}"),$(entry team RIT-CS-DQL 30000 "{\"five_hour\":$(w 100 -21600)}")"
 shot c08-switched-away-reset "?layout=compact" 900,80
-for z in -3 4; do
+for z in -3 1 2 4; do
   shot "c-zoom-$z" "?layout=compact&zoom=$z" 1400,140
 done
 rm -f "$fixture"
 shot 10-waiting
+shot c10-waiting "?layout=compact" 450,80
 
 echo "zoom ->"
 fixture_write "$(entry pers Personal 0 "{\"five_hour\":$(w 59 14700),\"seven_day\":$(w 31 116000)}"),$(entry team RIT-CS-DQL 30000 "{\"five_hour\":$(w 100 -21600)}")"

@@ -175,6 +175,20 @@ export function formatPctShort(pct) {
   return `${Math.floor(pct)}%`;
 }
 
+/**
+ * The ring's dash for `pct`, on a circle whose path is 100 long. A round cap
+ * adds half the stroke at each end, `cap` along the path in all, so the dash
+ * leaves it out and the drawn arc is `pct`. Under `cap` it is a dot; a full
+ * window closes the ring.
+ */
+export function ringDash(pct, cap) {
+  const p = Math.max(0, Math.min(100, pct ?? 0));
+  if (p === 0 || p === 100) return p;
+  return Math.max(MIN_DASH, p - cap);
+}
+// A zero-length dash may draw no cap at all, so the dot keeps a hair of length.
+const MIN_DASH = 0.01;
+
 /** Whether a file came from a hook that publishes only new API responses. */
 const isObserved = (s) => s?.observed_at != null && Number.isFinite(Number(s.observed_at));
 

@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { rampColor, rampPosition, formatCountdown, formatCountdownShort, formatAge, formatAgeShort, evaluate, formatPct, formatPctShort, toRows, SHOW_AGE_AFTER_MS, DROP_AFTER_MS } from "./gauge.js";
+import { rampColor, rampPosition, formatCountdown, formatCountdownShort, formatAge, formatAgeShort, evaluate, formatPct, formatPctShort, ringDash, toRows, SHOW_AGE_AFTER_MS, DROP_AFTER_MS } from "./gauge.js";
 
 const STOPS = { low: "#3b82f6", mid: "#eab308", high: "#ef4444", midAt: 60, highAt: 85 };
 const NOW = 1_800_000_000_000; // fixed clock
@@ -429,3 +429,14 @@ test("a session with no usable time reads as age unknown, not decades old", () =
   assert.equal(rows[0].sub, "Resets in 2 hr \u00b7 age unknown");
 });
 
+
+test("the ring's drawn arc, caps included, is the percentage", () => {
+  const cap = 5;
+  assert.equal(ringDash(97, cap) + cap, 97, "97% leaves a gap, not a closed ring");
+  assert.equal(ringDash(50, cap) + cap, 50);
+  assert.equal(ringDash(100, cap), 100, "a full window closes the ring");
+  assert.equal(ringDash(118, cap), 100, "over the limit is still one full ring");
+  assert.equal(ringDash(0, cap), 0);
+  assert.equal(ringDash(null, cap), 0);
+  assert.ok(ringDash(1, cap) > 0 && ringDash(1, cap) < 0.1, "1% is a dot, the caps alone");
+});

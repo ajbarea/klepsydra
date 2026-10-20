@@ -17,7 +17,7 @@ use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
 pub const WALL: &str = "wall";
 
 /// A webview's end of the fleet.
-pub struct Webview(Channel<Value>);
+pub struct Webview(pub Channel<Value>);
 
 impl Sink for Webview {
     fn send(&self, message: Value) -> bool {

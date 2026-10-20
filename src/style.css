@@ -50,8 +50,6 @@
   --panel-pad-y: 5px;
   --panel-pad-x: 10px;
   --size-label: 11px;
-  --size-pct: 13px;
-  --size-sub: 11px;
   --face-size: 26px;
 }
 /* ─────────────────────────────────────────────────────────────────────────── */
@@ -240,7 +238,8 @@ html, body {
   stroke: var(--ramp-low);
   stroke-linecap: round;
   stroke-dasharray: 0 100;
-  transition: stroke-dasharray 420ms ease, stroke 420ms ease;
+  /* visibility holds until the dash has run down, so a reset animates out. */
+  transition: stroke-dasharray 420ms ease, stroke 420ms ease, visibility 420ms;
 }
 
 /* Compact: the rows sit side by side, each a ring beside two lines of text,
@@ -273,17 +272,18 @@ html, body {
   height: calc(var(--ring-size) * var(--scale));
   transform: rotate(-90deg);
 }
+/* Floors under the percent and the countdown, measured in the gauge's font,
+   so the gauge keeps its width from "9%" to "100%" and from "23h 59m" down
+   to "<1m". */
 :root[data-layout="compact"] .pct {
   grid-area: pct;
-  min-width: 0;
+  min-width: 2.5em;
   text-align: left;
   font-weight: 600;
 }
-/* A floor under the countdown, so the gauge does not change width as
-   "4h 58m" ticks down to "58m". */
 :root[data-layout="compact"] .sub {
   grid-area: sub;
-  min-width: calc(42px * var(--scale));
+  min-width: 3.8em;
   white-space: nowrap;
 }
 :root[data-layout="compact"] .label {
