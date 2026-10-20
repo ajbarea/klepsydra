@@ -584,8 +584,9 @@ separately.
   totals and what stops a retried export from counting twice.
 - **When the overlay is off.** Claude Code's exports fail quietly and the
   session carries on; that stretch is not counted. If something else holds
-  port 4318, klepsydra logs it to `fleet.log`, reports it to the wall, runs
-  without the ledger, and tries the port again every 30 seconds.
+  port 4318, klepsydra logs it to `fleet.log` and exposes it in the fleet
+  view as `receiver`, for the wall to show (not yet shown). It runs without
+  the ledger and tries the port again every 30 seconds.
 
 ## How often it refreshes
 

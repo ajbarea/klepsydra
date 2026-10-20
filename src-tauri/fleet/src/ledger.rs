@@ -544,7 +544,8 @@ impl Ledger {
                 self.day.no_session = self.day.no_session.saturating_add(1);
                 continue;
             };
-            if secs(p.end_ns) > now.saturating_add(MAX_AHEAD) {
+            // Both ends are in the dedupe key and the cumulative baseline.
+            if secs(p.start_ns.max(p.end_ns)) > now.saturating_add(MAX_AHEAD) {
                 tally.future += 1;
                 continue;
             }
@@ -1129,5 +1130,28 @@ mod tests {
         dir.write("2026-09-19.json", "{}");
         assert_eq!(prune(&dir.0, late, &ny), ["2026-09-19.json"]);
         assert!(dir.0.join("2026-09-20.json").exists());
+    }
+
+    #[test]
+    fn a_point_starting_in_the_future_is_dropped_and_keeps_no_baseline() {
+        let s = |n: u64| n * 1_000_000_000;
+        let future = 8_993_548_800u64; // 2255-01-01
+        let mut l = Ledger::in_memory(NOW);
+        let t = l.record_metrics(&metrics(&cumulative(s(future), s(NOW as u64), 7.0)), NOW);
+        assert_eq!((t.counted, t.future), (0, 1));
+        assert!(l.state.series.is_empty());
+        assert_eq!(l.session("s1"), None);
+        // The series still counts once a sane run starts.
+        let t = l.record_metrics(
+            &metrics(&cumulative(s(NOW as u64 - 60), s(NOW as u64), 3.0)),
+            NOW,
+        );
+        assert_eq!(t.counted, 1);
+        assert_eq!(l.session("s1").unwrap().lines_added, 3);
+        // A delta point too, since its start is in its dedupe key.
+        let mut d = point_at("s2", NOW as u64);
+        d["resourceMetrics"][0]["scopeMetrics"][0]["metrics"][0]["sum"]["dataPoints"][0]
+            ["startTimeUnixNano"] = json!(s(future).to_string());
+        assert_eq!(l.record_metrics(&metrics(&d), NOW).future, 1);
     }
 }
