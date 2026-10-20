@@ -1,8 +1,7 @@
-//! The tray's Ping: a short cue when a session needs AJ or finishes, played
-//! here rather than in a webview so it sounds with the wall closed and no
-//! autoplay gate applies.
+//! The tray's Ping, Windows only: a short cue when a session needs AJ or
+//! finishes, played here rather than in a webview so it sounds with the wall
+//! closed and no autoplay gate applies.
 
-use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use klepsydra_fleet::cue::Cue;
@@ -18,76 +17,31 @@ fn wav(cue: Cue) -> &'static [u8] {
 }
 
 /// Whether Ping is on, as the tray last set it.
-#[derive(Default)]
-pub struct Ping(pub AtomicBool);
+static ON: AtomicBool = AtomicBool::new(false);
 
-impl Ping {
-    pub fn on(&self) -> bool {
-        self.0.load(Ordering::Relaxed)
-    }
-    pub fn set(&self, on: bool) {
-        self.0.store(on, Ordering::Relaxed);
-    }
+pub fn on() -> bool {
+    ON.load(Ordering::Relaxed)
 }
 
-/// Play `cue` unless the desktop is quiet. `dir` is the app data dir, where
-/// Linux players read the file from.
-pub fn cue(cue: Cue, dir: Option<&Path>) {
-    if !quiet() {
-        play(cue, dir);
+pub fn set(on: bool) {
+    ON.store(on, Ordering::Relaxed);
+}
+
+/// Play `cue` if Ping is on and the desktop is not quiet.
+pub fn cue(cue: Cue) {
+    if !on() {
+        return;
+    }
+    if !win::do_not_disturb() && !win::full_screen() {
+        win::play(wav(cue));
     }
 }
 
 /// Play `cue` whatever the desktop says: AJ just asked to hear it.
-pub fn preview(cue: Cue, dir: Option<&Path>) {
-    play(cue, dir);
-}
-
-#[cfg(windows)]
-fn quiet() -> bool {
-    win::do_not_disturb() || win::full_screen()
-}
-
-#[cfg(not(windows))]
-fn quiet() -> bool {
-    false
-}
-
-#[cfg(windows)]
-fn play(cue: Cue, _dir: Option<&Path>) {
+pub fn preview(cue: Cue) {
     win::play(wav(cue));
 }
 
-#[cfg(not(windows))]
-fn play(cue: Cue, dir: Option<&Path>) {
-    use std::process::{Command, Stdio};
-    let Some(dir) = dir else {
-        return;
-    };
-    let path = dir.join("sounds").join(format!("{}.wav", cue.name()));
-    if std::fs::read(&path).ok().as_deref() != Some(wav(cue)) {
-        let _ = std::fs::create_dir_all(dir.join("sounds"));
-        if std::fs::write(&path, wav(cue)).is_err() {
-            return;
-        }
-    }
-    std::thread::spawn(move || {
-        for player in ["pw-play", "paplay"] {
-            let run = Command::new(player)
-                .arg(&path)
-                .stdin(Stdio::null())
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .status();
-            match run {
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
-                _ => return,
-            }
-        }
-    });
-}
-
-#[cfg(windows)]
 mod win {
     use std::ffi::c_void;
 

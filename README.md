@@ -274,7 +274,8 @@ on the taskbar returns to the taskbar at any size. Its monitor is found by
 position, then by name, then by nearness, and a changed resolution moves
 home to the same relative spot. With no home saved, it goes over the primary
 monitor's taskbar, 220px in from the right. The menu also toggles "Compact"
-(below) and "Start with Windows" ("Start at login" on Linux), and quits.
+(below), "Ping" (Windows only; see the fleet strip) and "Start with Windows"
+("Start at login" on Linux), and quits.
 Autostart is on by default; the icon may start in the notification-area
 overflow.
 
@@ -503,7 +504,26 @@ modification time is more than a day old.
 The overlay starts no process and asks WSL for nothing: it watches the folder
 and re-reads it every 5 seconds. A file it cannot read is skipped and logged
 once to `fleet.log` in the app data dir, and the rest of the fleet still
-shows. keryx does the speaking; the strip makes no sound.
+shows.
+
+### Ping
+
+With "Ping" ticked in the tray menu, klepsydra plays a short chime when a
+session needs you or finishes its turn: two notes at one pitch when it needs
+you (a prompt, a question or an error), two rising notes when a turn ends.
+Ping is off until you tick it, and ticking it plays the needs-you chime once.
+Several sessions changing together make one chime, needs-you first, and a
+chime within 2 seconds of the last is skipped. Nothing plays for what was
+already on the strip when klepsydra started.
+
+The chime stays silent while Do Not Disturb or a Focus session is on, or
+while a full-screen app, a game or presentation mode is in front. Windows
+reports Do Not Disturb only through an undocumented setting, so if klepsydra
+cannot read it, the chime plays. Ping is Windows only; the Linux tray menu
+has no "Ping".
+
+The chimes are built by `scripts/make-sounds.mjs`, which writes
+`src-tauri/sounds/`; the tests fail if the files and the script disagree.
 
 ## How often it refreshes
 

@@ -96,6 +96,7 @@ mod tests {
             tmux: None,
             distro: None,
             claude: None,
+            background: Default::default(),
         }
     }
 

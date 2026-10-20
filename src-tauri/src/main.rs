@@ -4,6 +4,7 @@ mod fleet;
 mod geometry;
 mod jump;
 mod launch;
+#[cfg(windows)]
 mod ping;
 
 use std::path::PathBuf;
@@ -799,7 +800,6 @@ fn with_state<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R
         .manage(Requested::default())
         .manage(Layouts::default())
         .manage(launch::InFlight::default())
-        .manage(ping::Ping::default())
 }
 
 fn main() {
@@ -888,12 +888,14 @@ fn main() {
                 layout == "compact",
                 None::<&str>,
             )?;
-            let ping_on = read_prefs(app.handle())
-                .and_then(|p| p.get("ping")?.as_bool())
-                .unwrap_or(false);
-            app.state::<ping::Ping>().set(ping_on);
-            let ping_item =
-                CheckMenuItem::with_id(app, "ping", "Ping", true, ping_on, None::<&str>)?;
+            #[cfg(windows)]
+            let ping_item = {
+                let on = read_prefs(app.handle())
+                    .and_then(|p| p.get("ping")?.as_bool())
+                    .unwrap_or(false);
+                ping::set(on);
+                CheckMenuItem::with_id(app, "ping", "Ping", true, on, None::<&str>)?
+            };
             let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
             let menu = Menu::with_items(
                 app,
@@ -902,15 +904,18 @@ fn main() {
                     &home,
                     &PredefinedMenuItem::separator(app)?,
                     &compact_item,
-                    &ping_item,
                     &start_item,
                     &PredefinedMenuItem::separator(app)?,
                     &quit,
                 ],
             )?;
+            // After "Compact": reset, home, separator, compact.
+            #[cfg(windows)]
+            menu.insert(&ping_item, 4)?;
 
             let toggle = start_item.clone();
             let compact = compact_item.clone();
+            #[cfg(windows)]
             let ping_box = ping_item.clone();
             TrayIconBuilder::with_id("main")
                 .icon(app.default_window_icon().expect("bundled icon").clone())
@@ -929,13 +934,13 @@ fn main() {
                         let on = set_layout(app, compact.is_checked().unwrap_or(false));
                         let _ = compact.set_checked(on);
                     }
+                    #[cfg(windows)]
                     "ping" => {
                         let on = ping_box.is_checked().unwrap_or(false);
                         write_pref(app, "ping", serde_json::json!(on));
-                        app.state::<ping::Ping>().set(on);
+                        ping::set(on);
                         if on {
-                            let dir = klepsydra_dir(app);
-                            ping::preview(klepsydra_fleet::cue::Cue::NeedsYou, dir.as_deref());
+                            ping::preview(klepsydra_fleet::cue::Cue::NeedsYou);
                         }
                     }
                     "reset" => {
