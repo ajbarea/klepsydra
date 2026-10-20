@@ -31,13 +31,14 @@ check() {
 mkdir -p "$work/bin" "$work/home" "$work/repos/my repos"
 cat >"$work/bin/wt.exe" <<'EOF'
 #!/usr/bin/env bash
-# Logs its argv, then attaches like the real tab: WT_DELAY seconds after returning.
+# Logs its argv, then attaches like the real tab: WT_DELAY seconds after returning,
+# with Windows Terminal's TERM, whatever the runner has (CI sets none).
 printf '%s\n' "$*" >>"$WT_LOG"
 args=("$@")
 for i in "${!args[@]}"; do [[ ${args[i]} == -e ]] && { cmd=("${args[@]:i+1}"); break; }; done
 (
   sleep "${WT_DELAY:-0}"
-  exec script -qfc "$(printf '%q ' "${cmd[@]}")" /dev/null
+  TERM=xterm-256color exec script -qfc "$(printf '%q ' "${cmd[@]}")" /dev/null
 ) >/dev/null 2>&1 </dev/null &
 echo $! >>"$WT_PIDS"
 EOF
@@ -51,7 +52,7 @@ t() { tmux -L "$sock" "$@"; }
 windows() { t list-windows -t =fleet 2>/dev/null | wc -l; }
 tabs() { wc -l <"$WT_LOG"; }
 attach() { # a real client on a pty, like the tab would be
-  script -qfc "tmux -L $sock attach -t =fleet" /dev/null >/dev/null 2>&1 </dev/null &
+  TERM=xterm-256color script -qfc "tmux -L $sock attach -t =fleet" /dev/null >/dev/null 2>&1 </dev/null &
   clients+=($!)
   for _ in $(seq 50); do [[ -n $(t list-clients -t =fleet 2>/dev/null) ]] && return; sleep 0.1; done
 }
