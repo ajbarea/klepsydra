@@ -44,8 +44,7 @@ The 2026-10-18 spec says nothing on the Windows side starts a process or names
 - Exactly one source file, `src-tauri/src/launch.rs`, starts a process. It
   starts only `C:\Windows\System32\wsl.exe`, from a fixed path, with
   `CREATE_NO_WINDOW`.
-- It runs only from a click (**+**, the tray's "New Claude session", or Jump),
-  one call at a time. A click while one runs is refused. Nothing polls.
+- It runs only from a click (**+** or Jump), one call at a time. A click while one runs is refused. Nothing polls.
 - Every other file keeps both guards. `src/guards.test.js` asserts the
   exemption list is exactly `launch.rs`.
 - The overlay deletes files for the first time (Clear), only
@@ -139,7 +138,7 @@ A Clear button on ended and silent cards calls `clear_session(id)`. The
 command:
 
 - checks `id` against the UUID pattern;
-- recomputes the view and refuses unless the status is ended or silent;
+- refuses unless the hub's latest snapshot shows the session ended or silent;
 - deletes `<id>.json` and `<id>.beat` only when `symlink_metadata` says each
   is a regular file inside the overlay's own `fleet` folder.
 
@@ -147,12 +146,11 @@ A silent session that is still alive gets its file back at its next hook event
 (verified in `APPLY`: a missing file is rebuilt). It loses its start time and
 touched list. The button's tooltip says so.
 
-### Wall and tray
+### Wall
 
-- The wall ends with a **+** tile, "New session". While a launch runs, the
-  tile is disabled. If the launch fails, the tile shows the script's line.
-- The tray menu gains "New Claude session".
-- The face strip is left alone. #30 is reworking it.
+- A bar above the cards holds a **+ New session** button and a note. While a
+  launch runs, the button is disabled; the note shows the script's line.
+- The face strip and tray are left alone. #30 is reworking the strip.
 
 ## Rejected ideas and their guards
 
@@ -177,7 +175,7 @@ touched list. The button's tooltip says so.
   the other-boot, same-distro dead, same-distro alive and other-distro cases.
 - Rust: command-line builder, argument validation, the in-flight refusal,
   Clear's refusals (bad id, live status, symlink, path outside the folder).
-- JS: the **+** tile's states, Clear on ended and silent cards only, and the
+- JS: the **+** button's states, Clear on ended and silent cards only, and the
   narrowed guards (exemption list is exactly `launch.rs`, which names only the
   fixed `wsl.exe` path).
 - Live on Windows: **+** three times gives one tab and three windows; Jump
