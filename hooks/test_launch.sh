@@ -247,6 +247,24 @@ check "another server's stamp: a new tab" "$(tabs)" "1"
 unset WT_DELAY
 detach_all; rm -f "$pending"
 
+echo "a stamp that is not our own file"
+socket=$(t display -p '#{socket_path}')
+mkfifo "$pending"; : >"$WT_LOG"
+timeout 5 bash "$launch" new "$work/repos" >/dev/null 2>&1; rc=$?
+check "a FIFO stamp: no block, exit 0" "$rc" "0"
+check "a FIFO stamp: ignored, a tab" "$(tabs)" "1"
+check "a FIFO stamp: removed" "$([[ -p $pending ]] && echo fifo)" ""
+detach_all; rm -f "$pending"; : >"$WT_LOG"
+printf -v now '%(%s)T' -1
+printf '%s %s\n' "$now" "-S $socket =fleet" >"$work/planted"
+ln -s "$work/planted" "$pending"
+timeout 5 bash "$launch" new "$work/repos" >/dev/null 2>&1; rc=$?
+check "a symlinked stamp: exit 0" "$rc" "0"
+check "a symlinked stamp: not followed, a tab" "$(tabs)" "1"
+check "a symlinked stamp: its target untouched" "$(cat "$work/planted")" "$now -S $socket =fleet"
+check "a symlinked stamp: the link removed" "$([[ -L $pending ]] && echo link)" ""
+detach_all; rm -f "$pending"
+
 echo "failed tab"
 t kill-server 2>/dev/null; detach_all; : >"$WT_LOG"
 out=$(KLEPSYDRA_WT=false bash "$launch" new "$work/repos" 2>&1); rc=$?

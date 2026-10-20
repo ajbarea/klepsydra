@@ -48,10 +48,20 @@ tab_preflight() {
 # Set for the fleet's own tab: its title is fixed, so Jump can find it.
 TITLE_ARGS=()
 
+# Whether the stamp is ours to use: only our own regular file counts, since in
+# the /tmp fallback another user could plant one, or a FIFO that would block
+# its read under the lock. Anything else there is removed when it is ours.
+stamp_usable() {
+  [[ -f $PENDING && -O $PENDING && ! -L $PENDING ]] && return 0
+  [[ -e $PENDING || -L $PENDING ]] && rm -f -- "$PENDING" 2>/dev/null
+  return 1
+}
+
 # Whether a tab for `key` opened under PENDING_FOR seconds ago and has not
 # attached yet: on a cold WSL a tab takes longer than open_tab waits.
 tab_pending() { # key
   local at="" key="" now
+  stamp_usable || return 1
   { IFS=' ' read -r at key <"$PENDING"; } 2>/dev/null
   printf -v now '%(%s)T' -1
   [[ $at =~ ^[0-9]+$ && $key == "$1" ]] && (( now >= at && now - at < PENDING_FOR ))
@@ -71,7 +81,9 @@ open_tab() { # target tmux-socket-args...
     undo
     fail "Windows Terminal did not open a tab."
   }
-  { printf '%(%s)T %s\n' -1 "$key" >"$PENDING"; } 2>/dev/null
+  if [[ ! -e $PENDING && ! -L $PENDING ]] || stamp_usable; then
+    { printf '%(%s)T %s\n' -1 "$key" >"$PENDING"; } 2>/dev/null
+  fi
   local _
   for _ in $(seq 50); do
     if has_client "$target" "$@"; then
