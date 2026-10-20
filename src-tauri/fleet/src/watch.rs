@@ -7,6 +7,7 @@ use std::time::{Duration, Instant};
 
 use notify::{EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 
+use crate::ledger::{lock, Shared};
 use crate::scan::{scan, Problem, Reporter};
 use crate::speaking::{read as read_speaking, speaking};
 use crate::view::{snapshot, Snapshot};
@@ -70,6 +71,7 @@ pub struct Reader {
     watched: Option<u64>,
     reporter: Reporter,
     last: Option<Snapshot>,
+    ledger: Option<Shared>,
 }
 
 impl Reader {
@@ -84,7 +86,14 @@ impl Reader {
             watched: None,
             reporter: Reporter::default(),
             last: None,
+            ledger: None,
         }
+    }
+
+    /// Attach each session's telemetry totals from `ledger` to its view.
+    pub fn with_ledger(mut self, ledger: Shared) -> Self {
+        self.ledger = Some(ledger);
+        self
     }
 
     /// Watch the directory once it exists; drop the watch if it goes away, so
@@ -151,6 +160,12 @@ impl Reader {
         let problems = self.reporter.fresh(&broken);
         let t = now();
         let mut snap = snapshot(&listing.entries, t);
+        if let Some(ledger) = &self.ledger {
+            let l = lock(ledger);
+            for v in &mut snap.sessions {
+                v.ledger = l.session(&v.session_id).cloned();
+            }
+        }
         let shown = self.last.as_ref().and_then(|s| s.speaking.as_ref());
         snap.speaking = speaking(&read_speaking(&self.fleet), shown, &snap.sessions, t);
         if self.last.as_ref() == Some(&snap) {
@@ -412,5 +427,31 @@ mod tests {
             "woke by the watcher"
         );
         assert_eq!(snap.unwrap().sessions.len(), 1);
+    }
+    #[test]
+    fn a_session_gets_its_telemetry_totals_and_a_change_republishes() {
+        use crate::ledger::Ledger;
+        use std::sync::{Arc, Mutex};
+        let root = Scratch::new("ledger-view");
+        std::fs::create_dir_all(root.0.join("fleet")).unwrap();
+        root.write(&format!("fleet/{A}.json"), &session(A, "working"));
+        let t = unix_now();
+        let ledger = Arc::new(Mutex::new(Ledger::in_memory(t)));
+        let mut r = Reader::new(&root.0).with_ledger(ledger.clone());
+        let first = r.step(Duration::ZERO, || t).0.unwrap();
+        // No telemetry yet: the field is absent, as the wall has always seen it.
+        assert_eq!(first.sessions[0].ledger, None);
+        let json = serde_json::to_value(&first).unwrap();
+        assert!(json["sessions"][0].get("ledger").is_none());
+        let ns = (t as u64 * 1_000_000_000).to_string();
+        let export = serde_json::json!({"resourceMetrics":[{"scopeMetrics":[{"metrics":[{"name":"claude_code.commit.count","sum":{"aggregationTemporality":1,"dataPoints":[{"attributes":[{"key":"session.id","value":{"stringValue":A}}],"timeUnixNano":ns,"asDouble":2}]}}]}]}]});
+        ledger
+            .lock()
+            .unwrap()
+            .record_metrics(&crate::otel::metrics(&export), t);
+        let next = r.step(Duration::ZERO, || t).0.expect("a new snapshot");
+        assert_eq!(next.sessions[0].ledger.as_ref().unwrap().commits, 2);
+        let json = serde_json::to_value(&next).unwrap();
+        assert_eq!(json["sessions"][0]["ledger"]["commits"], 2);
     }
 }

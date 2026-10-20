@@ -4,8 +4,11 @@
 pub mod clear;
 pub mod cue;
 pub mod hub;
+pub mod ledger;
 pub mod lookup;
+pub mod otel;
 pub mod problem_log;
+pub mod receiver;
 pub mod scan;
 pub mod session;
 pub mod speaking;
