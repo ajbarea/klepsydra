@@ -143,7 +143,7 @@ rm -f "$fixture"
 
 echo "fleet ->"
 # A snapshot as the reader hands it over: one session per status, the cast,
-# Lorelei and fallback faces among them.
+# medallions for an uncast voice and for a session without one among them.
 fleet_session() { # id, voice, status, reason, age_sec, name, quiet_age_sec
   jq -nc --arg id "$1" --arg voice "$2" --arg status "$3" --arg reason "$4" --argjson at "$((now - $5))" \
     --arg name "$6" --argjson quiet "${7:-null}" 'def opt: if . == "" then null else . end;

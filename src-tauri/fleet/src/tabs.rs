@@ -124,7 +124,7 @@ pub fn no_tab(name: &str) -> String {
 }
 
 pub fn many_tabs(name: &str, n: usize) -> String {
-    format!("{n} Windows Terminal tabs are titled \u{201c}{name}\u{201d}. Rename the session to jump to it.")
+    format!("{n} Windows Terminal tabs are titled \u{201c}{name}\u{201d}. Rename a tab so only one is titled that.")
 }
 
 #[cfg(test)]
@@ -197,7 +197,7 @@ mod tests {
         );
         assert_eq!(
             many_tabs("Plan", 2),
-            "2 Windows Terminal tabs are titled \u{201c}Plan\u{201d}. Rename the session to jump to it."
+            "2 Windows Terminal tabs are titled \u{201c}Plan\u{201d}. Rename a tab so only one is titled that."
         );
     }
 

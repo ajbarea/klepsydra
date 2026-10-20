@@ -187,6 +187,8 @@ Each card shows:
 
 ### Identity: faces and names
 
+Superseded 2026-10-20 (#37): voices without a kourai character show a kourai medallion; the DiceBear faces were removed.
+
 `src/fleet/cast.json` maps keryx voices to the ten kourai-khryseai characters
 (Hephaestus, Metis, Techne, Dokimasia, Kallos, Mneme, Aidos, Aletheia, Cupid,
 Puck). Each character gets one voice from keryx's rotation pool, matched by

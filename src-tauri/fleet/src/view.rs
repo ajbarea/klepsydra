@@ -184,7 +184,7 @@ pub fn view(entry: &Entry, now: i64) -> Option<View> {
 /// A face follows a voice, so sessions sharing one keep it by claim: a session
 /// that has not ended before one that has, then a hold before a repo's home
 /// voice, then the earlier start, then the lower session id. The keeper shows
-/// the face; the others show their fallback face, except a hold that has not
+/// the face; the others show a medallion, except a hold that has not
 /// ended, since two holds of one voice are keryx's own choice once every voice
 /// is in use. Only ending counts, never silence, so a face changes with its
 /// session's status at most once and never flips back.
@@ -689,11 +689,7 @@ mod tests {
             NOW,
         );
         assert_eq!(voice_of(&s, "a"), Some("bf_emma"));
-        assert_eq!(
-            voice_of(&s, "b"),
-            None,
-            "the later one shows its fallback face"
-        );
+        assert_eq!(voice_of(&s, "b"), None, "the later one shows a medallion");
     }
 
     #[test]

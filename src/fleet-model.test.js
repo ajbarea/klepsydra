@@ -2,18 +2,17 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import {
-  STATUS, shortAge, longAge, statusParts, voiceName, hash, identity, accessibleName,
+  STATUS, shortAge, longAge, statusParts, voiceName, identity, accessibleName,
   statuses, startedNeeding, orderChanged, shouldSlide, transitionName, announcements, updatedText, badgeSvg, stripItems, card,
   askText, arcFraction, tally, WORKING_FULL_S, WAITING_FULL_S,
 } from "./fleet/model.js";
+import { TONES, hash, initialOf, medallion, medallionSvg, toneOf } from "./fleet/medallion.js";
 
 const NOW = 1_792_353_000_000; // fixed clock, ms
 const ago = (s) => NOW / 1000 - s;
 const statusLine = (s, nowMs) => statusParts(s, nowMs).join(" \u00b7 ");
 const CAST = {
   characters: { am_michael: { name: "Hephaestus", face: "hephaestus" } },
-  lorelei: ["am_fenrir", "am_michael"],
-  fallbacks: 24,
 };
 const session = (over = {}) => ({
   session_id: "cb9fa591-1514-44d1-a31c-eba4a7cb41ed",
@@ -191,31 +190,92 @@ test("identity: a cast voice is its character", () => {
   });
 });
 
-test("identity: another voice is its Lorelei face and capitalised name", () => {
-  const who = identity(session({ voice: "am_fenrir" }), CAST);
-  assert.deepEqual([who.name, who.face], ["Fenrir", "fleet/faces/lorelei/am_fenrir.svg"]);
-});
+/** The SVG inside a medallion's data URL. */
+const svgOf = (url) => {
+  assert.match(url, /^data:image\/svg\+xml,/);
+  return decodeURIComponent(url.slice(url.indexOf(",") + 1));
+};
+const letterOn = (url) => svgOf(url).match(/<text[^>]*>([^<]*)<\/text>/)?.[1] ?? null;
 
-test("identity: a blend or an unrendered voice falls back by a hash of the voice", () => {
-  const blend = "af_bella(0.7)+af_heart(0.3)";
-  const who = identity(session({ voice: blend }), CAST);
-  assert.equal(who.name, "Bella and Heart");
-  assert.equal(who.face, `fleet/faces/fallback/${String(hash(blend) % 24).padStart(2, "0")}.svg`);
-  assert.equal(identity(session({ voice: blend, session_id: "x" }), CAST).face, who.face, "same voice, same face");
+test("identity: another voice is a medallion with its initial and its capitalised name", () => {
+  const who = identity(session({ voice: "bm_fable" }), CAST);
+  assert.deepEqual([who.name, who.voice], ["Fable", null]);
+  assert.equal(who.face2x, who.face, "one drawing at every size");
+  assert.equal(letterOn(who.face), "F");
   assert.equal(voiceName("am_fenrir"), "Fenrir");
 });
 
-test("identity: no voice falls back by a hash of the session, named by the session", () => {
+test("identity: a blend is named by its voices, and the same voice keeps one face", () => {
+  const blend = "af_bella(0.7)+af_heart(0.3)";
+  const who = identity(session({ voice: blend }), CAST);
+  assert.equal(who.name, "Bella and Heart");
+  assert.equal(letterOn(who.face), "B");
+  assert.equal(identity(session({ voice: blend, session_id: "x" }), CAST).face, who.face, "same voice, same face");
+});
+
+test("identity: no voice is named by the session, else its folder, else its id", () => {
   const a = identity(session({ voice: null }), CAST);
-  assert.equal(a.name, "Plan the fleet visualizer");
-  assert.match(a.face, /^fleet\/faces\/fallback\/\d\d\.svg$/);
-  assert.equal(identity(session({ voice: null, name: null }), CAST).name, "ajsoftworks");
-  const faces = new Set(Array.from({ length: 500 }, (_, i) => identity(session({ voice: null, session_id: `s${i}` }), CAST).face));
-  assert.equal(faces.size, 24, "every fallback face is reachable");
+  assert.deepEqual([a.name, letterOn(a.face)], ["Plan the fleet visualizer", "P"]);
+  const b = identity(session({ voice: null, name: null }), CAST);
+  assert.deepEqual([b.name, letterOn(b.face)], ["ajsoftworks", "A"]);
+  const c = identity(session({ voice: null, name: null, launch_dir: null }), CAST);
+  assert.deepEqual([c.name, letterOn(c.face)], ["cb9fa591", "C"]);
+});
+
+test("identity: a voice named like an Object property is still a medallion", () => {
+  const who = identity(session({ voice: "constructor" }), CAST);
+  assert.deepEqual([who.name, letterOn(who.face)], ["Constructor", "C"]);
+});
+
+test("the medallion shows only A-Z or 0-9, and the laurel alone for anything else", () => {
+  for (const [name, letter] of [["fable", "F"], ["9lives", "9"], ["Zeta", "Z"]]) assert.equal(initialOf(name), letter, name);
+  for (const name of ["", "<script>", "\"x", "&amp;", "\u00e9lan", "\u00df", "\u{1F525}fire", " lead", null, undefined, 7]) {
+    assert.equal(initialOf(name), "", String(name));
+    assert.equal(letterOn(medallion(name)), null, String(name));
+  }
+  const svg = svgOf(medallion("<b onload=alert(1)>"));
+  assert.doesNotMatch(svg, /onload|alert|<b\b/);
+});
+
+test("the medallion is one template: a tone changes only colours, a name only the letter", () => {
+  const colourless = (svg) => svg.replace(/#[0-9a-f]{6}\b/g, "#");
+  const bare = medallionSvg("", 0);
+  for (let t = 0; t < TONES.length; t++) {
+    assert.equal(colourless(medallionSvg("", t)), colourless(bare), TONES[t].name);
+    for (const name of ["Fable", "ajsoftworks", "0"]) {
+      assert.equal(medallionSvg(name, t).replace(/<text[^>]*>[A-Z0-9]<\/text>/, ""), medallionSvg("", t), `${name} ${t}`);
+    }
+  }
+  assert.equal(new Set(TONES.map((_, t) => medallionSvg("A", t))).size, TONES.length, "every tone is its own drawing");
+  assert.match(bare, /^<svg xmlns="http:\/\/www\.w3\.org\/2000\/svg" viewBox="0 0 96 96">/);
+  assert.doesNotMatch(bare.slice(0, bare.indexOf(">")), /\b(width|height)=/, "no fixed size, so the img's box sizes it");
+  assert.doesNotMatch(bare, /\b(href|src)=|url\((?!#)|var\(/, "loads nothing and needs no CSS");
+});
+
+test("two uncast voices with one initial differ by their metal", () => {
+  assert.deepEqual([hash(""), hash("a")], [0x811c9dc5, 0xe40c292c], "FNV-1a's published 32-bit vectors");
+  assert.deepEqual([toneOf("bm_fable"), toneOf("am_fenrir")], [3, 2], "rose gold and copper");
+  const fable = identity(session({ voice: "bm_fable" }), CAST);
+  const fenrir = identity(session({ voice: "am_fenrir" }), CAST);
+  assert.deepEqual([letterOn(fable.face), letterOn(fenrir.face)], ["F", "F"]);
+  assert.notEqual(toneOf("bm_fable"), toneOf("am_fenrir"));
+  assert.notEqual(fable.face, fenrir.face);
+});
+
+test("a session keeps its metal: the voice picks it, else the session id", () => {
+  const a = identity(session({ voice: "bm_fable", session_id: "one" }), CAST);
+  const b = identity(session({ voice: "bm_fable", session_id: "two", name: "Other" }), CAST);
+  assert.equal(a.face, b.face, "same voice, same face, whatever the session");
+  const plain = (id) => identity(session({ voice: null, name: null, session_id: id }), CAST).face;
+  assert.equal(plain("s1"), plain("s1"));
+  const metals = new Set(Array.from({ length: 200 }, (_, i) => toneOf(`s${i}`)));
+  assert.equal(metals.size, TONES.length, "every metal is reachable");
+  const faces = new Set(Array.from({ length: 200 }, (_, i) => plain(`s${i}`)));
+  assert.equal(faces.size, TONES.length, "unnamed ajsoftworks sessions spread over the metals, one drawing each");
 });
 
 test("the portrait never changes with state", () => {
-  for (const voice of ["am_michael", "am_fenrir", "af_bella(0.5)+af_heart(0.5)", null]) {
+  for (const voice of ["am_michael", "bm_fable", "af_bella(0.5)+af_heart(0.5)", null]) {
     const faces = new Set(Object.keys(STATUS).map((status) => identity(session({ voice, status }), CAST).face));
     assert.equal(faces.size, 1, String(voice));
   }
