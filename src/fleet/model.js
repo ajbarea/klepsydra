@@ -195,11 +195,56 @@ function jumpable(s) {
   return { enabled: true, why: null };
 }
 
+// The arc fills over the reader's thresholds (view.rs QUIET_AFTER, WAITING_DOUBT_AFTER).
+export const WORKING_FULL_S = 600;
+export const WAITING_FULL_S = 1800;
+
+/** How full a card's arc is, 0..1: the time in the current state against its threshold. */
+export function arcFraction(s, nowMs) {
+  if (s.status === "working" && isQuiet(s)) return 1;
+  const full = { working: WORKING_FULL_S, needs_you: WAITING_FULL_S }[s.status];
+  const age = ageMs(s.status_at, nowMs);
+  if (!full || !Number.isFinite(age)) return 0;
+  return Math.min(1, Math.max(0, age / 1000 / full));
+}
+
+/** The needs-you line: what the session waits for. */
+export function askText(reason) {
+  if (reason === "question") return "Waiting for your answer";
+  if (reason === "approve plan") return "Waiting for you to approve the plan";
+  return reason ? `Waiting for you to ${reason}` : "Waiting for you";
+}
+
+const DIM = new Set(["new", "silent", "ended"]);
+
+/** Counts for the summary bar. */
+export function tally(sessions) {
+  const t = { needs: 0, working: 0, done: 0, error: 0, idle: 0 };
+  for (const s of sessions) {
+    if (s.status === "needs_you") t.needs++;
+    else if (s.status === "working") t.working++;
+    else if (s.status === "done") t.done++;
+    else if (s.status === "error") t.error++;
+    else t.idle++;
+  }
+  return t;
+}
+
 /** One card on the wall. */
 export function card(s, cast, nowMs) {
   const who = identity(s, cast);
+  const st = statusOf(s.status, isQuiet(s));
   return {
     id: s.session_id,
+    task: s.name || "No session name yet",
+    tone: st.tone,
+    pill: { label: st.label, age: statusParts(s, nowMs).at(-1) },
+    ask: s.status === "needs_you" ? askText(s.reason) : null,
+    arc: arcFraction(s, nowMs),
+    dim: DIM.has(s.status),
+    place: s.where ? { repo: s.where.repo, worktree: s.where.worktree ?? null, branch: s.where.branch ?? null } : null,
+    also: [...new Set((s.touched ?? []).map((t) => `also in ${t.repo}`))],
+    voiceTitle: who.voice ? `Voice: ${who.voice}` : null,
     name: who.name,
     voice: who.voice,
     session: s.name ?? null,
@@ -208,7 +253,7 @@ export function card(s, cast, nowMs) {
     status: s.status,
     quiet: isQuiet(s),
     badge: badgeSvg(s.status, isQuiet(s)),
-    statusLine: statusLine(s, nowMs),
+    statusLine: statusLine(s, nowMs), // wall.js until Task 12
     where: whereText(s.where),
     touched: (s.touched ?? []).map((t) => `${t.repo} \u00b7 ${shortAge(ageMs(t.at, nowMs))}`),
     prompt: s.prompt?.text ?? null,

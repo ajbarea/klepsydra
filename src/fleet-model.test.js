@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 import {
   STATUS, shortAge, longAge, statusLine, voiceName, hash, identity, accessibleName,
   statuses, startedNeeding, announcements, whereText, updatedText, badgeSvg, stripItems, card,
+  askText, arcFraction, tally, WORKING_FULL_S, WAITING_FULL_S,
 } from "./fleet/model.js";
 
 const NOW = 1_792_353_000_000; // fixed clock, ms
@@ -277,4 +278,57 @@ test("only an ended or silent card offers Clear", () => {
   for (const status of ["working", "needs_you", "done", "new", "error"]) {
     assert.equal(card(session({ status }), CAST, NOW).clear, false, status);
   }
+});
+
+test("the arc fills over the reader's own thresholds", () => {
+  const view = readFileSync(new URL("../src-tauri/fleet/src/view.rs", import.meta.url), "utf8");
+  const rs = (name) => Number(view.match(new RegExp(`pub const ${name}: i64 = (\\d+);`))[1]);
+  assert.equal(WORKING_FULL_S, rs("QUIET_AFTER"));
+  assert.equal(WAITING_FULL_S, rs("WAITING_DOUBT_AFTER"));
+});
+
+test("arc: working by 600 s, needs you by 1800 s, quiet working full, others empty", () => {
+  assert.equal(arcFraction(session({ status: "working", status_at: ago(300) }), NOW), 0.5);
+  assert.equal(arcFraction(session({ status: "working", status_at: ago(900) }), NOW), 1);
+  assert.equal(arcFraction(session({ status: "working", status_at: ago(900), quiet_since: ago(700) }), NOW), 1);
+  assert.equal(arcFraction(session({ status: "needs_you", status_at: ago(900) }), NOW), 0.5);
+  for (const status of ["done", "error", "new", "silent", "ended"]) {
+    assert.equal(arcFraction(session({ status, status_at: ago(900) }), NOW), 0, status);
+  }
+  assert.equal(arcFraction(session({ status: "working", status_at: undefined }), NOW), 0);
+});
+
+test("the ask line says what a session waits for", () => {
+  assert.equal(askText("approve Bash"), "Waiting for you to approve Bash");
+  assert.equal(askText("approve plan"), "Waiting for you to approve the plan");
+  assert.equal(askText("question"), "Waiting for your answer");
+  assert.equal(askText(null), "Waiting for you");
+});
+
+test("a card carries pill, ask, tone, dim, place and its voice as a tooltip", () => {
+  const c = card(session(), CAST, NOW);
+  assert.deepEqual(c.pill, { label: "needs you", age: "2m" });
+  assert.equal(c.ask, "Waiting for you to approve Bash");
+  assert.equal(c.tone, "needs");
+  assert.equal(c.dim, false);
+  assert.equal(c.task, "Plan the fleet visualizer");
+  assert.deepEqual(c.place, { repo: "klepsydra", worktree: "fleet", branch: "feat/fleet-visualizer" });
+  assert.deepEqual(c.also, ["also in ideas"]);
+  assert.equal(c.voiceTitle, "Voice: Michael");
+  const quiet = card(session({ status: "silent", status_at: ago(360), name: null }), CAST, NOW);
+  assert.deepEqual(quiet.pill, { label: "silent", age: "no word for 6m" });
+  assert.equal(quiet.dim, true);
+  assert.equal(quiet.ask, null);
+  assert.equal(quiet.task, "No session name yet");
+  const idle = card(session({ status: "working", status_at: ago(900), quiet_since: ago(720) }), CAST, NOW);
+  assert.deepEqual(idle.pill, { label: "working?", age: "no activity for 12m" });
+});
+
+test("the tally counts what the bar shows", () => {
+  const t = tally([
+    session({ status: "needs_you" }), session({ status: "working" }), session({ status: "working" }),
+    session({ status: "done" }), session({ status: "error" }), session({ status: "new" }),
+    session({ status: "silent" }), session({ status: "ended" }),
+  ]);
+  assert.deepEqual(t, { needs: 1, working: 2, done: 1, error: 1, idle: 3 });
 });

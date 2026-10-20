@@ -71,13 +71,12 @@ test("badges take their size from where they sit", () => {
   assert.doesNotMatch(badgeCss.replace(/\/\*[\s\S]*?\*\//g, ""), /\d+(\.\d+)?px/);
 });
 
-test("the wall fits three columns at 1920 px and reflows below", () => {
+test.todo("the wall fits four columns at 1920 px and reflows below (Task 12)", () => {
   const wallCss = read("./fleet/wall.css");
   const px = (name) => parseFloat(token(wallCss, name));
   const tokens = { min: px("--card-min"), gap: px("--card-gap"), pad: px("--wall-pad") };
   const SCROLLBAR = 17;
-  assert.equal(columnsAt(1920 - SCROLLBAR, tokens), 3);
-  assert.equal(columnsAt(1920, tokens), 3);
+  assert.equal(columnsAt(1920 - SCROLLBAR, tokens), 4);
   assert.equal(columnsAt(1280 - SCROLLBAR, tokens), 2);
   assert.equal(columnsAt(800 - SCROLLBAR, tokens), 1);
 });
