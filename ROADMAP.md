@@ -19,8 +19,11 @@ session that stops answering reads as silent, never as working.
 ## Later
 - Optional: flash or notify when crossing a threshold.
 - A product version of the fleet strip (heuresis verdict `later`, 2026-10-18).
-- Clear a card's state on an interrupted turn once Claude Code fires a hook
-  for it (IMPL, Open).
+- Clear a card's state on an interrupted turn (Esc on a need, an interrupt)
+  once Claude Code fires a hook for it; until then the card keeps its state
+  until the next prompt, or reads "working?" at 10 minutes.
+- Name a session that keeps Claude Code's default display name (`my-app-3f`),
+  which reaches no hook; it is named by its folder for now.
 
 ## Completed
 - 2026-10-20: Launch sessions as tmux windows from the wall, stable jump,
