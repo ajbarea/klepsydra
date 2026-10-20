@@ -95,14 +95,14 @@ prune_readings() { # dir now
 # stat (which does not follow links) and the readings are parsed by one jq.
 prune_readings_here() { # now
   local now=$1 line name f acct sess
-  local -A type=() mt=() ino=() listed=() emptied=()
+  local -A type=() mt=() id=() listed=() emptied=()
   local -a readings=() doomed=()
   while IFS= read -r -d '' line; do
-    [[ $line =~ ^([^|]+)\|([0-9]+)\|([0-9]+)\|(.+)$ ]] || continue
+    [[ $line =~ ^([^|]+)\|([0-9]+)\|([^|]+)\|(.+)$ ]] || continue
     type[${BASH_REMATCH[4]}]=${BASH_REMATCH[1]}
     mt[${BASH_REMATCH[4]}]=${BASH_REMATCH[2]}
-    ino[${BASH_REMATCH[4]}]=${BASH_REMATCH[3]}
-  done < <(LC_ALL=C stat --printf '%F|%Y|%i|%n\0' -- * */*.json */*.tmp 2>/dev/null)
+    id[${BASH_REMATCH[4]}]=${BASH_REMATCH[3]}
+  done < <(LC_ALL=C stat --printf '%F|%Y|%i %y|%n\0' -- * */*.json */*.tmp 2>/dev/null)
   plain() { [[ ${type[$1]:-} == "regular file" || ${type[$1]:-} == "regular empty file" ]]; } # name
   # An account folder, not a link to one; its name never starts with a dash.
   owned() { [[ $1 =~ ^[0-9A-Za-z][0-9A-Za-z-]*$ && ${type[$1]:-} == directory ]]; } # account
@@ -119,7 +119,10 @@ prune_readings_here() { # now
     # without a final newline runs into the next and both fail to parse. The
     # rest follows src/gauge.js: which readings it sees (toRows), how it groups
     # and stamps them, and when it trusts their times (reconcilable). An
-    # account with a stamp that is not a number is left alone.
+    # account is left alone if any reading has an account id that is not a
+    # string or a stamp that is not a whole second between 1970 and 2100 (NaN
+    # fails the whole-second test), since jq reads those differently from the
+    # overlay.
     while IFS= read -r f; do
       # Only a name this function globbed is ever deleted, whatever jq printed.
       [[ -n ${listed[$f]:-} ]] && doomed+=("$f")
@@ -130,7 +133,9 @@ prune_readings_here() { # now
         | select($r.windows | type == "object" or type == "array")
         | { f: .[0].f, account: ($r.account // "?" | tostring),
             observed: ($r.observed_at != null),
-            odd: ([$r.observed_at, $r.written_at] | any(. != null and type != "number")),
+            odd: (($r.account | . != null and type != "string")
+              or ([$r.observed_at, $r.written_at] | any(. != null and (type != "number"
+                or . != floor or . < 0 or . > 4102444800)))),
             stamp: (if $r.observed_at != null then $r.observed_at else $r.written_at end),
             ended: ($r.windows | type == "object" and length > 0
               and all(.[]; type == "object" and (.resets_at | type) == "number"
@@ -140,18 +145,20 @@ prune_readings_here() { # now
       | ($seen != null and all(.[]; .observed or .stamp == null or .stamp <= $seen)) as $by_time
       | (if $by_time then $seen else map(.stamp | numbers) | max end) as $written
       | .[] | select(.ended and .stamp != null)
-      | select(($written | not) or $written < $now - $drop or ($by_time and .stamp != $seen))
+      | select($written < $now - $drop or ($by_time and .stamp != $seen))
       | .f' "${readings[@]}" 2>/dev/null)
   fi
   if (( ${#doomed[@]} )); then
-    # A writer may have renamed a new reading into place since the stat; a
-    # rename brings a new inode, so only a file still on its old one goes.
+    # A writer may have renamed a new reading into place since the stat, and
+    # ext4 can hand the new file the old inode, so only a file with the same
+    # inode and the same mtime to the nanosecond goes. One renamed in between
+    # this check and the rm comes back on its session's next render.
     while IFS= read -r -d '' line; do
-      [[ $line =~ ^([0-9]+)\|(.+)$ ]] || continue
+      [[ $line =~ ^([^|]+)\|(.+)$ ]] || continue
       f=${BASH_REMATCH[2]}
-      [[ -n ${listed[$f]:-} && ${BASH_REMATCH[1]} == "${ino[$f]}" ]] || continue
+      [[ -n ${listed[$f]:-} && ${BASH_REMATCH[1]} == "${id[$f]}" ]] || continue
       rm -f -- "$f" && emptied[${f%%/*}]=1
-    done < <(LC_ALL=C stat --printf '%i|%n\0' -- "${doomed[@]}" 2>/dev/null)
+    done < <(LC_ALL=C stat --printf '%i %y|%n\0' -- "${doomed[@]}" 2>/dev/null)
   fi
   # A folder left empty goes; one a writer has just made again stays.
   for acct in "${!emptied[@]}"; do rmdir -- "$acct" 2>/dev/null; done
@@ -179,7 +186,7 @@ account=$(jq -c '
   (.oauthAccount | objects) // {}
   | { id:    (.accountUuid // "unknown"),
       label: (if .organizationType == "claude_team"
-              then (.organizationName // "Team")
+              then ((.organizationName | strings | select(length > 0)) // "Team")
               else "Personal" end) }
 ' "$config" 2>/dev/null) || account=""
 # A config that reads but does not parse is one Claude Code is rewriting; a

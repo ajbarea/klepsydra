@@ -34,6 +34,7 @@ EOF
 }
 mkconfig team     "uuid-team" "claude_team" "RIT-CS-DQL"
 mkconfig personal "uuid-pers" "claude_pro"  "Personal Org"
+mkconfig noname   "uuid-anon" "claude_team" ""
 mkdir -p "$work/empty"   # config dir with no .claude.json at all
 
 run() { # fixture, config-dir
@@ -61,6 +62,10 @@ rm -rf "$work/out"
 run five-hour-only.json personal >/dev/null
 check "personal: label"    "$(jq -r '.label' "$(acct uuid-pers abc-124)")" "Personal"
 check "personal: account"  "$(jq -r '.account' "$(acct uuid-pers abc-124)")" "uuid-pers"
+
+rm -rf "$work/out"
+run five-hour-only.json noname >/dev/null
+check "team with an empty name: labelled Team" "$(jq -r '.label' "$(acct uuid-anon abc-124)")" "Team"
 
 # --- two accounts must not overwrite each other ---------------------------
 rm -rf "$work/out"
@@ -390,10 +395,21 @@ layout() {
   reading unseen 1 $((P - 3 * day)) $((P - 2 * day))
   jq -nc --argjson at $((P - day)) '{account: "unseen", session: "s", written_at: $at, observed_at: $at, windows: "none"}' \
     >"$pa/unseen/$(u 2).json"
-  # A stamp that is not a number leaves its account alone.
-  reading odd 1 $((P - 3 * day)) $((P - 2 * day))
-  reading odd 2 $((P - 5 * day)) $((P - 4 * day))
-  jq -c '.written_at = "soon"' "$pa/odd/$(u 1).json" >"$work/x" && mv "$work/x" "$pa/odd/$(u 1).json"
+  # A stamp or account id jq reads differently from the overlay leaves its
+  # account alone: a string, a fraction, NaN, a year past 2100, a boolean id.
+  local n=0 bad
+  for bad in '.written_at = "soon"' '.observed_at += 0.5' NaN \
+    '.observed_at = 9999999999' '.account = false'; do
+    n=$((n + 1))
+    reading "odd$n" 1 $((P - 3 * day)) $((P - 2 * day))
+    reading "odd$n" 2 $((P - 5 * day)) $((P - 4 * day))
+    if [[ $bad == NaN ]]; then # jq writes nan as null, so by hand
+      sed -i 's/"observed_at":[0-9]*/"observed_at":NaN/' "$pa/odd$n/$(u 1).json"
+    else
+      jq -c "$bad" "$pa/odd$n/$(u 1).json" >"$work/x" && mv "$work/x" "$pa/odd$n/$(u 1).json"
+    fi
+    [[ $bad == *account* ]] && { jq -c "$bad" "$pa/odd$n/$(u 2).json" >"$work/x" && mv "$work/x" "$pa/odd$n/$(u 2).json"; }
+  done
 }
 # What the gauge draws, at the prune's clock, from the readings the overlay
 # reads: each <account>/*.json that parses as one value, links followed.
@@ -439,7 +455,9 @@ check "prune: so does one with an old hook writing after it" "$(there "mixed/$(u
 check "prune: an observed reading is stamped by observed_at" "$(there "obs/$(u 2).json")" "gone"
 check "prune: and the newest by observed_at stays" "$(there "obs/$(u 1).json")" "kept"
 check "prune: a file the gauge does not see is not the newest" "$(there "unseen/$(u 1).json")" "kept"
-check "prune: a stamp that is not a number leaves the account alone" "$(there "odd/$(u 2).json")" "kept"
+for n in 1 2 3 4 5; do
+  check "prune: an odd stamp or id leaves the account alone ($n)" "$(there "odd$n/$(u 2).json")" "kept"
+done
 if command -v node >/dev/null; then
   after=$(rows)
   check "prune: the gauge draws the same rows" "$after" "$before"
@@ -481,7 +499,9 @@ cat >"$work/shim/jq" <<'SHIM'
 [[ " $* " == *" ended_for "* ]] || exec "$REAL_JQ" "$@"
 sleep "${SHIM_SLEEP:-0}"
 out=$("$REAL_JQ" "$@")
-if [[ -n ${SHIM_REWRITE:-} ]]; then cp "$SHIM_REWRITE" "$SHIM_REWRITE.new" && mv "$SHIM_REWRITE.new" "$SHIM_REWRITE"; fi
+for ((k = 0; k < ${SHIM_REWRITES:-1}; k++)); do
+  [[ -n ${SHIM_REWRITE:-} ]] && cp "$SHIM_REWRITE" "$SHIM_REWRITE.new" && mv "$SHIM_REWRITE.new" "$SHIM_REWRITE"
+done
 printf '%s\n' "$out"
 SHIM
 chmod +x "$work/shim/jq"
@@ -501,6 +521,11 @@ shim_run SHIM_REWRITE="$pa/uuid-team/$(u 2).json"
 settle
 check "prune: a reading rewritten while it decides stays" "$(there "uuid-team/$(u 2).json")" "kept"
 check "prune: the others still go" "$(there "uuid-held/$(u 2).json")" "gone"
+# Twice: ext4 can give the second rewrite the first one's inode back.
+layout
+shim_run SHIM_REWRITE="$pa/uuid-team/$(u 2).json" SHIM_REWRITES=2
+settle
+check "prune: a reading rewritten twice while it decides stays" "$(there "uuid-team/$(u 2).json")" "kept"
 
 # A stamp with a leading zero is still a time.
 layout

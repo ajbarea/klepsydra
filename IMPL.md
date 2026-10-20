@@ -18,7 +18,7 @@ on the WSL station, 128 over a week old, all read on every refresh).
   hooks, checked identical, so the fleet's guard tests cover this prune.
 
 ## Verified, not inferred
-- ✅ statusline 123 (41 new, on a fixed clock now), node 120, fleet 186,
+- ✅ statusline 129 (47 new, on a fixed clock now), node 120, fleet 186,
   shellcheck clean.
 - ✅ `toRows` agrees before and after, in the suite (old-hook and mixed
   accounts too) and on a copy of the station's readings (265 to 74 files).
@@ -32,6 +32,14 @@ on the WSL station, 128 over a week old, all read on every refresh).
 - ✅ Review round 1: no data loss; fixed a delete racing a writer, untrusted
   accounts, unseen files counting as newest, a fork per render for a
   foreign dir, an octal stamp, six surviving mutants.
+- ✅ Review round 2 (final): no data loss for files the hook writes; a
+  1500-case fuzz of toRows found no change. Fixed ext4 handing a rewrite the
+  old inode (now inode and mtime to the nanosecond), an empty team name
+  (now "Team", as for a missing one), and jq reading floats, NaN, far-future
+  stamps or non-string ids unlike the overlay (account left alone).
+- 📋 Known edges, both needing readings the hook never writes: a misfiled
+  reading with a later reset can surface once a newer one goes, and an old
+  hook still writing the pre-move legacy folder is not mirrored.
 
 ## Open
 - The tray icon still draws a bar in either layout.
