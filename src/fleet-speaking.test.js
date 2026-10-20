@@ -90,13 +90,13 @@ test("the waves sit outside the crew ring, inside the card's padding, and follow
     assert.equal(rings.length, WAVE.rings);
     for (const w of rings) {
       assert.ok(w.r - w.width / 2 >= 40, `inner edge ${w.r - w.width / 2} clears the crew ring`);
-      assert.ok(w.r + w.width / 2 <= 58, `outer edge ${w.r + w.width / 2} inside the card padding`);
+      assert.ok(w.r + w.width / 2 <= 52, `outer edge ${w.r + w.width / 2} inside the avatar's room`);
     }
   }
   const sum = (rings, k) => rings.reduce((s, w) => s + w[k], 0);
   for (const k of ["r", "width", "opacity"]) assert.ok(sum(at(1), k) > sum(at(0.1), k), `${k} grows with level`);
   assert.equal(sum(at(1, 0), "opacity"), 0, "a finished fade is invisible");
-  assert.ok(at(0).every((w) => w.width >= 1), "thick enough to read");
+  assert.ok(at(0).every((w) => w.width >= 0.8), "thick enough to read");
   assert.ok(at(0)[0].width >= 2.5 && at(0)[0].opacity === 1, "the steady ring reads even in a gap");
   const ripple = (t) => waves(1, 1, t)[1];
   assert.equal(ripple(0).color.toLowerCase(), GOLD_LIGHT.toLowerCase(), "a ripple leaves the portrait light");
@@ -135,4 +135,23 @@ test("frames run only while someone speaks, and reduced motion gets a still ring
   assert.match(draw, /reducedMotion\(\)[\s\S]*circles\(svg, "still", 1\)[\s\S]*return;/);
   assert.match(src, /said\.push\(`\$\{identity\(who, cast\)\.name\} speaking`\)/);
   assert.match(readFileSync(new URL("./wall.html", import.meta.url), "utf8"), /<svg class="waves"[^>]*aria-hidden="true">/);
+});
+
+test("the waves stay in the avatar's column and row: never under the name or into the next row", () => {
+  const css = readFileSync(new URL("./fleet/wall.css", import.meta.url), "utf8");
+  const rule = (sel) => css.match(new RegExp(`${sel.replace(/\./g, "\\.")} \\{([^}]*)\\}`))?.[1] ?? "";
+  const px = (decl, prop) => parseFloat(decl.match(new RegExp(`(?:^|[\\s;])${prop}:\\s*([\\d.]+)px`))[1]);
+  // The portrait is 80 units of an 80 px box, centred at 40.
+  const room = Math.min(px(rule(".card header"), "column-gap"), px(rule(".card"), "gap"));
+  assert.equal(room, 12);
+  for (const level of [0, 0.5, 1]) {
+    for (let t = 0; t < WAVE.periodMs; t += 10) {
+      for (const w of waves(level, 1, t)) assert.ok(w.r + w.width / 2 <= 40 + room, `level ${level} at ${t} ms: ${w.r + w.width / 2}`);
+    }
+  }
+});
+
+test("the reader keeps a half-read line as long as the wall holds a gap", () => {
+  const rs = readFileSync(new URL("../src-tauri/fleet/src/speaking.rs", import.meta.url), "utf8");
+  assert.equal(Number(rs.match(/pub const HOLD_SECS: f64 = ([\d.]+);/)[1]) * 1000, SPEAK_HOLD_MS);
 });

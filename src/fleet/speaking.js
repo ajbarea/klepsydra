@@ -11,10 +11,11 @@ export const SPEAK_FADE_MS = 300;
 // The kourai forge golds: green means done on the wall.
 export const GOLD = "#C9944A";
 export const GOLD_LIGHT = "#F1D2A1";
-// In the portrait's 80-unit viewBox: the crew ring's outer edge is at 40, the
-// card's padding allows 58. A steady ring hugs the crew ring and swells with
-// the voice; `ripples` rings leave it and fade.
-export const WAVE = { cx: 40, cy: 40, rings: 3, ripples: 2, periodMs: 1300, steadyR: 43.5, r0: 46.5, r1: 56 };
+// In the portrait's 80-unit viewBox: the crew ring's outer edge is at 40, and
+// the card leaves 12 px around the portrait before the name column (14) and
+// the next row (12), so nothing reaches past 52. A steady ring hugs the crew
+// ring and swells with the voice; `ripples` rings leave it and fade.
+export const WAVE = { cx: 40, cy: 40, rings: 3, ripples: 2, periodMs: 1300, steadyR: 42.5, r0: 46, r1: 50.5 };
 /** The still ring shown instead of waves under reduced motion. */
 export const STILL = { r: WAVE.steadyR, width: 4 };
 
@@ -104,7 +105,7 @@ export function waves(level, alpha, nowMs) {
     const phase = (((nowMs / WAVE.periodMs + k / WAVE.ripples) % 1) + 1) % 1;
     return {
       r: round(WAVE.r0 + reach * phase),
-      width: round((2.5 + 2 * loud) * (1 - 0.6 * phase)),
+      width: round((2 + 1.5 * loud) * (1 - 0.6 * phase)),
       // Full strength for most of the way, so the gold stays gold on the dark card.
       opacity: round(a * Math.min(1, 2.5 * (1 - phase)) * (0.6 + 0.4 * loud), 3),
       color: mix(GOLD_LIGHT, GOLD, phase),
