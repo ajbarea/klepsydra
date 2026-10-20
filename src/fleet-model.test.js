@@ -271,3 +271,10 @@ test("the model reads the cast the app ships", () => {
   const cast = JSON.parse(readFileSync(new URL("./fleet/cast.json", import.meta.url), "utf8"));
   assert.equal(identity(session(), cast).name, "Hephaestus");
 });
+
+test("only an ended or silent card offers Clear", () => {
+  for (const status of ["ended", "silent"]) assert.equal(card(session({ status }), CAST, NOW).clear, true, status);
+  for (const status of ["working", "needs_you", "done", "new", "error"]) {
+    assert.equal(card(session({ status }), CAST, NOW).clear, false, status);
+  }
+});

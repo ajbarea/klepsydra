@@ -825,6 +825,7 @@ fn main() {
             set_tray_level,
             fleet::fleet_subscribe,
             fleet::open_wall,
+            fleet::clear_session,
             jump::jump_to_terminal,
             launch::launch_session
         ])

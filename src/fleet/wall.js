@@ -56,6 +56,9 @@ function paint(el, c) {
   jump.dataset.name = c.session ?? "";
   jump.dataset.id = c.id;
   jump.setAttribute("aria-label", c.jumpLabel);
+  const clear = el.querySelector(".clear");
+  clear.hidden = !c.clear;
+  clear.dataset.id = c.id;
   if (jump.dataset.busy) return;
   jump.disabled = !c.jump.enabled;
   if (!c.jump.enabled) {
@@ -98,6 +101,18 @@ function receive(message) {
 }
 
 wall.addEventListener("click", async (e) => {
+  const clearButton = e.target.closest(".clear");
+  if (clearButton && !clearButton.disabled && inTauri) {
+    const note = clearButton.parentElement.querySelector(".note");
+    clearButton.disabled = true;
+    try {
+      await window.__TAURI__.core.invoke("clear_session", { id: clearButton.dataset.id });
+    } catch (err) {
+      note.textContent = String(err);
+      clearButton.disabled = false;
+    }
+    return;
+  }
   const button = e.target.closest(".jump");
   if (!button || button.disabled || !inTauri) return;
   const note = button.parentElement.querySelector(".note");

@@ -78,7 +78,8 @@ html, body { background: var(--wall-bg); color: var(--text); font: 14px/1.4 var(
 .said:has(.text:empty) { display: none; }
 
 .actions { display: flex; align-items: center; gap: 12px; margin-top: 4px; }
-.jump {
+.jump,
+.clear {
   padding: 6px 12px;
   border: 1px solid #3a3a3a;
   border-radius: 6px;
@@ -87,6 +88,9 @@ html, body { background: var(--wall-bg); color: var(--text); font: 14px/1.4 var(
   font: inherit;
   cursor: pointer;
 }
-.jump:hover:not(:disabled) { background: #333; }
-.jump:focus-visible { outline: 2px solid var(--card-focus); outline-offset: 2px; }
-.jump:disabled { color: var(--text-dim); cursor: default; }
+.jump:hover:not(:disabled),
+.clear:hover:not(:disabled) { background: #333; }
+.jump:focus-visible,
+.clear:focus-visible { outline: 2px solid var(--card-focus); outline-offset: 2px; }
+.jump:disabled,
+.clear:disabled { color: var(--text-dim); cursor: default; }
