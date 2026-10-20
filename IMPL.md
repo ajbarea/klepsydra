@@ -27,8 +27,9 @@ station, 128 over a week old), and the overlay reads them all every refresh.
   mutants of the rule and one of the link guards each fail the suite.
 - ✅ A render that starts a prune returns in 22 ms; on /mnt/c the first prune
   took 1.6 s and a later one 0.35 s, all in the background.
-- 📋 Live: deploy the hook and watch the status line render while the first
-  prune runs.
+- ✅ Live on the WSL station: a real render at 23:59:57 started the first
+  prune, done at 23:59:59 (265 files to 74, as on the copy); the gauge drew
+  the same three rows before and after. Backup of the readings kept.
 
 ## Open
 - The tray icon still draws a bar in either layout.
