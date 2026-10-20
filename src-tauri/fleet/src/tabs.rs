@@ -69,8 +69,10 @@ pub enum TabError {
     NoName,
     /// No tab has the title.
     NoMatch(String),
-    /// More than one tab has it.
+    /// More than one session tab has it.
     Many(String, usize),
+    /// More than one tab has the fixed title; none of them can be renamed away.
+    ManyFixed(String, usize),
     /// A Windows Terminal window hides its tabs, so a match may be among them.
     Hidden,
 }
@@ -81,6 +83,10 @@ impl std::fmt::Display for TabError {
             TabError::NoName => f.write_str("This session has no name yet."),
             TabError::NoMatch(name) => f.write_str(&no_tab(name)),
             TabError::Many(name, n) => f.write_str(&many_tabs(name, *n)),
+            TabError::ManyFixed(title, n) => write!(
+                f,
+                "{n} Windows Terminal tabs are titled \u{201c}{title}\u{201d}. Close all but one."
+            ),
             TabError::Hidden => f.write_str(HIDDEN_TABS),
         }
     }
@@ -97,6 +103,9 @@ pub fn pick(lookup: Lookup<'_>, titles: &[String], tabs_hidden: bool) -> Result<
     };
     match found {
         TabMatch::One(i) => Ok(i),
+        TabMatch::Many(n) if matches!(lookup, Lookup::Exact(_)) => {
+            Err(TabError::ManyFixed(name.into(), n))
+        }
         TabMatch::Many(n) => Err(TabError::Many(name.into(), n)),
         TabMatch::None if tabs_hidden => Err(TabError::Hidden),
         TabMatch::None => Err(TabError::NoMatch(name.into())),
@@ -229,6 +238,16 @@ mod tests {
         assert_eq!(
             pick(Lookup::Exact("x"), &t, false),
             Err(TabError::NoMatch("x".into()))
+        );
+    }
+
+    #[test]
+    fn two_fleet_tabs_say_close_all_but_one() {
+        let t = titles(&["klepsydra fleet", "pwsh", "klepsydra fleet"]);
+        let e = pick(Lookup::Exact("klepsydra fleet"), &t, false).unwrap_err();
+        assert_eq!(
+            e.to_string(),
+            "2 Windows Terminal tabs are titled \u{201c}klepsydra fleet\u{201d}. Close all but one."
         );
     }
 
