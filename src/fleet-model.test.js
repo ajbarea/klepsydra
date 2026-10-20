@@ -377,14 +377,24 @@ test("only an ended or silent card offers Clear", () => {
 });
 
 test("the crew reads only whole positive counts, and none from an old snapshot", () => {
-  assert.deepEqual(crewOf(session({ background: { agents: 2, shells: 1 } })), { agents: 2, shells: 1 });
+  assert.deepEqual(crewOf(session({ background: { agents: 2, shells: 1 } })), { agents: 2, shells: 1, tasks: 0 });
   for (const background of [undefined, null, "3", { agents: -1, shells: 1.5 }, { agents: "2", shells: NaN }]) {
-    assert.deepEqual(crewOf(session({ background })), { agents: 0, shells: 0 }, JSON.stringify(background));
+    assert.deepEqual(crewOf(session({ background })), { agents: 0, shells: 0, tasks: 0 }, JSON.stringify(background));
   }
   assert.equal(crewText({ agents: 2, shells: 1 }), "2 agents, 1 shell");
   assert.equal(crewText({ agents: 1, shells: 0 }), "1 agent");
   assert.equal(crewText({ agents: 0, shells: 3 }), "3 shells");
   assert.equal(crewText({ agents: 0, shells: 0 }), null);
+});
+
+test("another background task reads as a task and draws shell-style", () => {
+  const crew = crewOf(session({ background: { agents: 1, shells: 1, tasks: 2 } }));
+  assert.deepEqual(crew, { agents: 1, shells: 1, tasks: 2 });
+  assert.equal(crewText(crew), "1 agent, 1 shell, 2 tasks");
+  assert.deepEqual(crewRing(crew).segments.map((s) => s.kind), ["agent", "shell", "shell", "shell"]);
+  const s = session({ status: "working", reason: "background", background: { agents: 0, shells: 0, tasks: 1 } });
+  assert.match(accessibleName(s, CAST, NOW), /^Hephaestus, 1 task running in background, working, prompt free/);
+  assert.equal(card(s, CAST, NOW).promptFree, true);
 });
 
 const kinds = (crew) => crewRing(crew).segments.map((s) => s.kind[0]).join("");

@@ -341,6 +341,9 @@ for an hour: each tool call a subagent makes renews it, while a background
 shell's only word is its start. A session whose turn ended with nothing but
 such stale work out reads done, so a forgotten dev server cannot keep a card
 working forever.
+A subagent that runs in the foreground dies with an interrupted turn, which
+runs neither Stop nor SubagentStop; the idle notice that follows drops every
+subagent not seen to launch in the background, so such a turn still reads done.
 
 Sessions that need you come first, the longest wait leading, then errors,
 work in progress, finished work, and the rest. A session that starts needing
@@ -355,12 +358,12 @@ an error count only when one exists. Each card shows:
 
 - the session's face in a ring showing its background crew: one segment per
   subagent (solid, in the character's colour, or gold for a medallion) or
-  background shell (thinner and dashed), with a gap at 12 o'clock even for
+  background shell or other background task (thinner and dashed), with a gap at 12 o'clock even for
   one, at most eight with "+N" beside the ring for the rest, and a plain ring
   with none out;
 - a status pill, top right, with the badge, label and age, and the reason on
   an ended or error card;
-- under where it works, what is out ("2 agents, 1 shell") and, once the turn
+- under where it works, what is out ("2 agents, 1 shell, 1 task") and, once the turn
   has ended with that work still running, "prompt free": the session takes a
   new prompt meanwhile;
 - the session's name, where it works now (repo, worktree, branch chip) and the

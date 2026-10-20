@@ -90,11 +90,13 @@ pub struct View {
     pub background: Crew,
 }
 
-/// How many subagents and background shells a session has out.
+/// How many subagents, background shells and other background tasks a
+/// session has out.
 #[derive(Clone, Copy, Debug, Default, Serialize, PartialEq, Eq)]
 pub struct Crew {
     pub agents: u32,
     pub shells: u32,
+    pub tasks: u32,
 }
 
 #[derive(Clone, Debug, Default, Serialize, PartialEq, Eq)]
@@ -129,13 +131,14 @@ pub fn view(entry: &Entry, now: i64) -> Option<View> {
                 match b.kind {
                     Kind::Agent => crew.agents += 1,
                     Kind::Shell => crew.shells += 1,
+                    Kind::Task => crew.tasks += 1,
                 }
             }
         }
     }
     // A turn that ended with work out: once all of it is stale, it is done.
     let after_turn = f.state == State::Working && f.reason.as_deref() == Some("background");
-    let crew_out = crew.agents + crew.shells > 0;
+    let crew_out = crew.agents + crew.shells + crew.tasks > 0;
     let (status, reason, status_at) = if silent {
         (Status::Silent, None, last_word)
     } else {
@@ -395,7 +398,8 @@ mod tests {
             v.background,
             Crew {
                 agents: 2,
-                shells: 1
+                shells: 1,
+                tasks: 0
             }
         );
     }
@@ -427,6 +431,24 @@ mod tests {
     }
 
     #[test]
+    fn a_task_alone_keeps_the_turn_working() {
+        let mut e = after_turn(NOW - 60);
+        e.file.background = vec![crew_entry("m1", Kind::Task, NOW - 60)];
+        let v = view(&e, NOW).unwrap();
+        assert_eq!(
+            (v.status, v.background),
+            (
+                Status::Working,
+                Crew {
+                    agents: 0,
+                    shells: 0,
+                    tasks: 1
+                }
+            )
+        );
+    }
+
+    #[test]
     fn only_the_stale_entries_drop() {
         let mut e = after_turn(NOW - 60);
         e.file.background[2].at = NOW - BACKGROUND_STALE_AFTER - 1;
@@ -434,7 +456,8 @@ mod tests {
             view(&e, NOW).unwrap().background,
             Crew {
                 agents: 2,
-                shells: 0
+                shells: 0,
+                tasks: 0
             }
         );
     }
@@ -448,7 +471,8 @@ mod tests {
             view(&e, NOW).unwrap().background,
             Crew {
                 agents: 1,
-                shells: 1
+                shells: 1,
+                tasks: 0
             }
         );
     }
@@ -463,7 +487,8 @@ mod tests {
             view(&e, NOW).unwrap().background,
             Crew {
                 agents: 2,
-                shells: 1
+                shells: 1,
+                tasks: 0
             }
         );
     }
@@ -479,7 +504,8 @@ mod tests {
                 Status::Working,
                 Crew {
                     agents: 2,
-                    shells: 1
+                    shells: 1,
+                    tasks: 0
                 }
             )
         );
@@ -507,7 +533,8 @@ mod tests {
                 Status::NeedsYou,
                 Crew {
                     agents: 2,
-                    shells: 1
+                    shells: 1,
+                    tasks: 0
                 }
             )
         );
@@ -548,7 +575,7 @@ mod tests {
         let json = serde_json::to_value(&v).unwrap();
         assert_eq!(
             json["background"],
-            serde_json::json!({"agents": 0, "shells": 0})
+            serde_json::json!({"agents": 0, "shells": 0, "tasks": 0})
         );
     }
 

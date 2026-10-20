@@ -216,17 +216,20 @@ function jumpStyle(s, accent) {
   return { jumpKind: kind, jumpMark: kind === "accent" ? { color: accent, width: markerWidth(accent, BUTTON_BGS) } : null };
 }
 
-/** A session's background crew: its subagents and background shells still running, as the reader counts them. */
+/** A session's background crew: its subagents, background shells and other background tasks still running, as the reader counts them. */
 export function crewOf(s) {
   const n = (v) => (Number.isInteger(v) && v > 0 ? v : 0);
-  return { agents: n(s.background?.agents), shells: n(s.background?.shells) };
+  return { agents: n(s.background?.agents), shells: n(s.background?.shells), tasks: n(s.background?.tasks) };
 }
+const crewSize = ({ agents = 0, shells = 0, tasks = 0 }) => agents + shells + tasks;
 
 const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
-const crewWords = ({ agents, shells }, join) =>
-  [agents && plural(agents, "agent"), shells && plural(shells, "shell")].filter(Boolean).join(join);
+const crewWords = ({ agents, shells, tasks = 0 }, join) =>
+  [agents && plural(agents, "agent"), shells && plural(shells, "shell"), tasks && plural(tasks, "task")]
+    .filter(Boolean)
+    .join(join);
 
-/** "2 agents, 1 shell"; null with none out. */
+/** "2 agents, 1 shell, 1 task"; null with none out. */
 export const crewText = (crew) => crewWords(crew, ", ") || null;
 
 // The ring: one segment per piece of background work, from 12 o'clock
@@ -242,11 +245,13 @@ const arc = (from, to) => `M ${point(from)} A ${RING.r} ${RING.r} 0 ${to - from 
 
 /**
  * The ring's segments, each {kind, d}, and how many more are out than drawn.
- * Past RING.max, shells keep at least one segment, so a kind out is never hidden.
+ * Other tasks draw as shells (dashed); the crew line names them. Past
+ * RING.max, the dashed kind keeps at least one segment, so it is never hidden.
  */
 export function crewRing(crew) {
-  const total = crew.agents + crew.shells;
-  const shells = crew.shells && Math.min(crew.shells, Math.max(1, RING.max - crew.agents));
+  const total = crewSize(crew);
+  const dashed = (crew.shells ?? 0) + (crew.tasks ?? 0);
+  const shells = dashed && Math.min(dashed, Math.max(1, RING.max - crew.agents));
   const agents = Math.min(crew.agents, RING.max - shells);
   const kinds = [...Array(agents).fill("agent"), ...Array(shells).fill("shell")];
   const n = kinds.length;
@@ -336,7 +341,7 @@ export function card(s, cast, nowMs) {
     ringColor: who.accent,
     crew: crewText(crew),
     // Only once Stop fired with work out (the hook's reason "background"), never mid-turn.
-    promptFree: reasonText(s) === PROMPT_FREE && crew.agents + crew.shells > 0,
+    promptFree: reasonText(s) === PROMPT_FREE && crewSize(crew) > 0,
     dim: DIM.has(s.status),
     place: s.where ? { repo: s.where.repo, worktree: s.where.worktree ?? null, branch: s.where.branch ?? null } : null,
     also: [...new Set((s.touched ?? []).map((t) => t.repo))].filter((r) => r && r !== s.where?.repo).map((r) => `also in ${r}`),

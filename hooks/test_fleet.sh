@@ -765,6 +765,69 @@ check "the main thread's request ends with its turn, as before" "$(field '[.stat
 fire permission-request.json
 check "a request outranks background work" "$(field .state)" '"needs_you"'
 
+# Review fixes: each pins a path the first version got wrong.
+rm -f "$file"
+now=1792357000 fire session-start.json
+now=1792357001 fire user-prompt.json
+now=1792357002 fire subagent-start.json
+now=1792357002 fire post-tool-agent-background.json
+now=1792357003 fire permission-request.json ".agent_id = \"$A\""
+now=1792357100 fire notification-idle.json
+check "idle prompt leaves a subagent's open request, as Stop does" "$(field '[.state, .reason]')" '["needs_you","approve Bash"]'
+rm -f "$file"
+now=1792357104 fire session-start.json
+now=1792357105 fire user-prompt.json
+now=1792357106 fire subagent-start.json
+now=1792357107 fire permission-request.json ".agent_id = \"$A\""
+now=1792357110 fire stop.json '.background_tasks = null'
+check "the held stop keeps needs you" "$(field '[.state, .reason]')" '["needs_you","approve Bash"]'
+now=1792357120 fire post-tool-bash.json ".agent_id = \"$A\""
+check "answering it after the turn ended restores prompt free" "$(field '[.state, .reason]')" '["working","background"]'
+fire subagent-stop.json
+fire user-prompt.json
+now=1792357200 fire permission-request.json
+now=1792357210 fire post-tool-bash.json
+check "answering the main thread mid-turn stays an open turn" "$(field '[.state, .reason]')" '["working",null]'
+
+# Esc during a foreground subagent: no Stop, no SubagentStop; the idle prompt ends it.
+rm -f "$file"
+now=1792357300 fire session-start.json
+now=1792357301 fire user-prompt.json
+now=1792357302 fire subagent-start.json
+now=1792357400 fire notification-idle.json
+check "an interrupted foreground subagent: idle prompt gives done" "$(field '[.state, .reason, has("background")]')" '["done",null,false]'
+now=1792357401 fire user-prompt.json
+now=1792357402 fire subagent-start.json
+now=1792357402 fire post-tool-agent-background.json
+now=1792357403 fire post-tool-bash-background.json
+now=1792357500 fire notification-idle.json
+check "a launched background agent and a shell survive the idle prompt" "$(bg)" "\"agent:$A,shell:$B\""
+check "and keep it working" "$(field '[.state, .reason]')" '["working","background"]'
+now=1792357501 fire user-prompt.json
+now=1792357502 fire post-tool-agent-background.json
+now=1792357502 fire subagent-start.json
+now=1792357600 fire notification-idle.json
+check "the launch confirmed before its start still counts" "$(field "[.background[] | select(.id == \"$A\") | .kind][0]")" '"agent"'
+
+# Other task types count as tasks; only a finished status drops one.
+rm -f "$file"
+now=1792357700 fire session-start.json
+now=1792357701 fire user-prompt.json
+now=1792357702 fire stop-background.json '.background_tasks += [{"id": "m1", "type": "monitor", "status": "running"}, {"id": "w1", "type": "workflow", "status": "backgrounded"}, {"id": "n1", "type": "shell"}, {"id": "f1", "type": "shell", "status": "finished"}, {"id": "x1", "type": "shell", "status": "failed"}, {"id": "k1", "type": "shell", "status": "killed"}]'
+check "monitor and workflow are tasks; backgrounded and no status stay" "$(bg)" "\"shell:$B,agent:$A,task:m1,task:w1,shell:n1\""
+
+# A SubagentStop handled before its SubagentStart leaves no phantom.
+rm -f "$file"
+now=1792357800 fire session-start.json
+now=1792357801 fire user-prompt.json
+now=1792357802 fire subagent-stop.json
+now=1792357802 fire subagent-start.json
+now=1792357802 fire post-tool-agent-background.json
+check "a start after its own stop adds nothing" "$(field 'has("background")')" "false"
+now=$((1792357802 + 61)) fire subagent-start.json
+check "past the tombstone's minute, a start counts again" "$(bg)" "\"agent:$A\""
+check "the tombstone is gone once expired" "$(field 'has("background_stopped")')" "false"
+
 # An old file, written before the field existed, reads and updates.
 rm -f "$file"
 printf '{"v":1,"session_id":"%s","name":null,"started_at":1792356000,"launch_dir":null,"claude":null,"tmux":null,"host":null,"voice":null,"voice_from":null,"state":"working","reason":null,"needs":null,"state_at":1792356000,"where":null,"touched":[],"prompt":null,"reply":null,"error":null,"ended":null,"written_at":1792356000}\n' "$S" >"$file"

@@ -68,12 +68,14 @@ pub struct Claude {
     pub start: u64,
 }
 
-/// What a piece of background work is: a subagent or a background shell.
+/// What a piece of background work is: a subagent, a background shell, or
+/// another kind of background task (a monitor, a workflow).
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum Kind {
     Agent,
     Shell,
+    Task,
 }
 
 /// One subagent or background shell still running, and when the hook last
@@ -430,6 +432,19 @@ mod tests {
             ]
         );
         assert_eq!(parse(&file(""), ID).unwrap().background, vec![]);
+    }
+
+    #[test]
+    fn a_task_of_another_type_is_kept_as_a_task() {
+        let f = parse(
+            &file(r#","background":[{"id":"m1","kind":"task","at":1800000101}]"#),
+            ID,
+        )
+        .unwrap();
+        assert_eq!(
+            f.background.iter().map(|b| b.kind).collect::<Vec<_>>(),
+            vec![Kind::Task]
+        );
     }
 
     #[test]
