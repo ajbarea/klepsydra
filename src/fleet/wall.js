@@ -13,6 +13,21 @@ const wall = document.getElementById("wall");
 const empty = document.getElementById("empty");
 const live = document.getElementById("live");
 const tpl = document.getElementById("card-tpl");
+const newButton = document.getElementById("new-session");
+const newNote = document.getElementById("new-note");
+newButton.hidden = !inTauri;
+newButton.addEventListener("click", async () => {
+  if (newButton.disabled) return;
+  newButton.disabled = true;
+  newNote.textContent = "Starting\u2026";
+  try {
+    newNote.textContent = await window.__TAURI__.core.invoke("launch_session");
+  } catch (err) {
+    newNote.textContent = String(err);
+  } finally {
+    newButton.disabled = false;
+  }
+});
 
 let sessions = [];
 let before;

@@ -437,3 +437,9 @@ test("the wall's Jump passes the session id along with its name", () => {
   const src = read("src/fleet/wall.js");
   assert.match(src, /invoke\("jump_to_terminal", \{ id: button\.dataset\.id, name: button\.dataset\.name \}\)/);
 });
+
+test("the wall has a New session button that calls the launcher", () => {
+  assert.match(read("src/wall.html"), /<button type="button" id="new-session">\+ New session<\/button>/);
+  assert.match(read("src/wall.html"), /<span id="new-note" role="status"><\/span>/);
+  assert.match(read("src/fleet/wall.js"), /invoke\("launch_session"\)/);
+});
