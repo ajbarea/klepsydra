@@ -156,7 +156,9 @@ test("the reorder slide is bounded, and cards keep their own transition names", 
 
 test("a disabled button reads as off: no fill, a quieter border, a label still at 4.5:1", () => {
   const css = read("./fleet/wall.css");
-  const rule = css.match(/button\[aria-disabled="true"\] \{([^}]*)\}/)?.[1] ?? "";
+  const rule = css.match(/button\[aria-disabled="true"\], #new-session\[aria-disabled="true"\] \{([^}]*)\}/)?.[1] ?? "";
+  // #new-session (1 id) outranks button[...] (1 type, 1 attr): the id form must be listed and come last.
+  assert.ok(css.indexOf('#new-session[aria-disabled="true"]') > css.indexOf("#new-session {"));
   assert.match(rule, /background: transparent/);
   assert.match(rule, /border-color: var\(--card-line\)/);
   assert.ok(contrast(token(css, "--text-dim"), token(css, "--card-bg")) >= 4.5);

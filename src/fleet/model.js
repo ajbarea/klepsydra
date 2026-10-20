@@ -133,6 +133,12 @@ export function startedNeeding(before, sessions) {
 export const orderChanged = (before, after) =>
   before.length !== after.length || before.some((id, i) => id !== after[i]);
 
+/** Slide only a snapshot that reorders cards already on the wall; never the first paint or a tick. */
+export const shouldSlide = (was, next, snapshot) => Boolean(snapshot) && was.length > 0 && orderChanged(was, next);
+
+/** The card's view-transition name, or "" unless the id is uuid-shaped. */
+export const transitionName = (id) => (/^[0-9a-f-]{36}$/i.test(id) ? `card-${id}` : "");
+
 /** What the wall's live region says about changes since `before`; nothing on the first look. */
 export function announcements(before, sessions, cast, nowMs = Date.now()) {
   if (!before) return [];

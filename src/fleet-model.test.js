@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import {
   STATUS, shortAge, longAge, statusParts, voiceName, hash, identity, accessibleName,
-  statuses, startedNeeding, orderChanged, announcements, updatedText, badgeSvg, stripItems, card,
+  statuses, startedNeeding, orderChanged, shouldSlide, transitionName, announcements, updatedText, badgeSvg, stripItems, card,
   askText, arcFraction, tally, WORKING_FULL_S, WAITING_FULL_S,
 } from "./fleet/model.js";
 
@@ -400,4 +400,17 @@ test("only a change in membership or order counts as a reorder", () => {
   assert.equal(orderChanged(["a"], ["a", "b"]), true);
   assert.equal(orderChanged(["a", "b"], ["a"]), true);
   assert.equal(orderChanged([], []), false);
+});
+
+test("a first render, a reload and a tick never slide; a reorder on a live wall does", () => {
+  assert.equal(shouldSlide([], ["a", "b"], new Set()), false, "empty wall");
+  assert.equal(shouldSlide(["a", "b"], ["b", "a"], undefined), false, "a tick has no snapshot");
+  assert.equal(shouldSlide(["a", "b"], ["a", "b"], new Set()), false, "same order");
+  assert.equal(shouldSlide(["a", "b"], ["b", "a"], new Set()), true);
+});
+
+test("only a uuid-shaped id becomes a view-transition name", () => {
+  const id = "123e4567-e89b-12d3-a456-426614174000";
+  assert.equal(transitionName(id), `card-${id}`);
+  for (const bad of ["demo-1-am_michael", "x; color: red", "", `${id}0`]) assert.equal(transitionName(bad), "");
 });

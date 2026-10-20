@@ -1,7 +1,7 @@
 // The card wall: a card per Claude Code session, in the reader's order, with
 // a way back to its terminal.
 import cast from "./cast.json" with { type: "json" };
-import { announcements, card, orderChanged, startedNeeding, statuses, tally } from "./model.js";
+import { announcements, card, shouldSlide, startedNeeding, transitionName, statuses, tally } from "./model.js";
 import { press, setOff, syncChildren } from "./dom.js";
 import { inTauri, subscribe } from "./feed.js";
 import { showFace } from "./face.js";
@@ -47,8 +47,7 @@ const show = (el, text) => {
 function paint(el, c) {
   const pulsing = el.classList.contains("pulse"); // a repaint must not cut the pulse short
   el.className = `card ${c.dim ? "dim" : ""} tone-${c.tone}${pulsing ? " pulse" : ""}`;
-  if (UUID.test(c.id)) el.style.viewTransitionName = `card-${c.id}`;
-  else el.style.viewTransitionName = "";
+  el.style.viewTransitionName = transitionName(c.id);
   el.setAttribute("aria-label", c.label);
   el.querySelector(".portrait").title = c.voiceTitle ?? "";
   const fill = el.querySelector(".arc .fill");
@@ -112,7 +111,6 @@ function paintTally() {
   );
 }
 
-const UUID = /^[0-9a-f-]{36}$/i;
 const reducedMotion = () => matchMedia("(prefers-reduced-motion: reduce)").matches;
 
 // The slide needs the browser's view transitions and a reader who allows motion.
@@ -131,9 +129,7 @@ function render(snapshot) {
     for (const el of wall.children) if (started.has(el.dataset.key) && !reducedMotion()) el.classList.add("pulse");
   };
   const was = [...wall.children].map((el) => el.dataset.key);
-  // The first paint, and a reload, has nothing to slide from.
-  const reordered = was.length > 0 && orderChanged(was, cards.map((c) => c.id));
-  if (snapshot && reordered && canSlide()) document.startViewTransition(() => sync());
+  if (shouldSlide(was, cards.map((c) => c.id), snapshot) && canSlide()) document.startViewTransition(() => sync());
   else sync();
 }
 
