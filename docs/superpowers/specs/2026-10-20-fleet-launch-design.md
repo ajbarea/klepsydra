@@ -197,3 +197,27 @@ touched list. The button's tooltip says so.
 - anthropics/claude-code #38033 (settings `additionalDirectories` do not load CLAUDE.md)
 - Agent view: claude.com/blog/agent-view-in-claude-code
 - recon, ccmonitor, ccmgr: tmux-based session dashboards (prior art)
+
+## Addendum 2026-10-20: a stable jump
+
+AJ asked for a fully stable system. Two links in the jump chain were still weak:
+
+- **A pane id can be reused.** tmux pane ids are unique only for the life of
+  the server, so after a server restart a stored `%3` can name another
+  session's pane. The hook already records the Claude process's pid and start
+  time. `jump` now takes both and refuses unless that process is alive with
+  that start time and the pane's `#{pane_pid}` is one of its ancestors:
+  "That session's tmux pane now belongs to another session."
+- **Session titles are not tab identity.** Windows Terminal has no API to
+  focus a tab by id (microsoft/terminal #19783, closed not planned), and a tab
+  renamed by hand freezes its title. `wt -w fleet focus-tab` would create the
+  window when none exists. So the launcher opens the fleet tab with an
+  app-owned title, `--title "klepsydra fleet" --suppressApplicationTitle`, and
+  Jump finds that exact title after tmux selects the pane. The tab no longer
+  shows the active session's title. tmux names each window after its pane
+  title (`automatic-rename-format "#{pane_title}"`), so the status bar lists
+  sessions by name. If the tab is renamed anyway, the earlier ruling still
+  reports "Selected the session's tmux window."
+
+Sessions in tabs opened by hand keep the title match. `/rename` is the stable
+fix there.

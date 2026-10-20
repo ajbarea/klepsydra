@@ -1573,3 +1573,47 @@ The branch chip's git icon is inline SVG set once in `paint` from a constant (co
 - [ ] **Step 7: Render and compare.** Serve `src/` with `python3 -m http.server -d src 8765` in the background, and open `wall.html` at 1920x1080 with Playwright (Chromium at `~/.cache/ms-playwright/chromium-1243/chrome-linux64/chrome`). Outside Tauri the feed is empty, so inject the eight sample sessions from the mockup via `page.evaluate` into the same `receive` path (export nothing new; add a `?demo` query that `feed.js` honours only when `!inTauri`, reading `fleet/demo.json`, and add `src/fleet/demo.json` with the mockup's eight sessions in reader-snapshot shape). Screenshot to `.superpowers/sdd/2026-10-20-fleet-launch/wall-built.png` and compare against `docs/superpowers/specs/2026-10-20-fleet-wall-mockup.png`. Fix any difference in layout, hierarchy or colour before committing. Kill the server.
 
 - [ ] **Step 8: Commit** `git commit -m "feat(fleet): redesign the wall: water-clock arc, status first, quiet cards step back"`.
+
+## A stable jump (approved by AJ 2026-10-20: "a fully stable system")
+
+Execution order now: Tasks 1-8, 11, 12, **13**, then 9, then 10. Spec: the launch design's "Addendum 2026-10-20: a stable jump".
+
+### Task 13: Jump verifies the pane's process and finds the fleet tab by its own title
+
+**Files:**
+- Modify: `hooks/klepsydra-launch.sh` (`jump` takes `PID START`; `show`/`open_tab` pass `--title` and `--suppressApplicationTitle`), `hooks/klepsydra-tmux.conf`, `hooks/test_launch.sh`
+- Modify: `src-tauri/fleet/src/session.rs` and `view.rs` (the session file's `claude: {pid, start}` reaches the View as `claude`)
+- Modify: `src-tauri/src/launch.rs` (`Target` gains `pid: u32, start: u64`; `jump_args` passes them; `target()` reads `claude.pid`/`claude.start`), `src-tauri/src/jump.rs` (the tmux path matches the fixed title `FLEET_TAB = "klepsydra fleet"`, single attempt, then `settle`)
+- Test: the files above plus `src/guards.test.js` if a guard needs updating
+
+**Interfaces:**
+- Script: `klepsydra-launch.sh jump SOCKET PANE PID START`. PID and START are digits; START is field 22 of `/proc/PID/stat`, clock ticks since boot, which is what the hook records as `claude.start`.
+- View JSON: `claude: {pid: number, start: number} | null`.
+- Rust: `pub struct Target { socket, pane, distro, pid: u32, start: u64 }`. `pub const FLEET_TAB: &str = "klepsydra fleet";` lives in `launch.rs` and is used by the script call and jump.rs. The script takes the title from one constant too, `TAB_TITLE="klepsydra fleet"`, and a guard test asserts the two are equal.
+
+- [ ] **Step 1: Failing tests.**
+  - `hooks/test_launch.sh`:
+    - (a) `jump` with the pane's real Claude: use the test's `sleep 600` process; its pid comes from `#{pane_pid}` and its start from `/proc/<pid>/stat` field 22. It succeeds, because the pane process is its own ancestor (the walk includes the pid itself).
+    - (b) The right pane, but the PID of another pane's process: refused with "That session's tmux pane now belongs to another session." and no window change.
+    - (c) A dead PID: refused with the same message.
+    - (d) The right PID with a wrong START (pid reused): refused.
+    - (e) Malformed PID or START (`12a`, empty): refused with "Not a process id: …".
+    - (f) The tab command now contains `--title klepsydra fleet --suppressApplicationTitle` before `wsl.exe` (update the expected `wt.log` lines).
+    - (g) `show -gv automatic-rename-format` is `#{pane_title}` on the fleet server.
+  - Rust: `jump_args` includes pid and start and refuses `pid == 0`; `target()` needs `claude` too; the View test reads `claude`; `SessionFile` parses `claude: null` and a missing `claude`.
+  - jump.rs: a pure helper `fleet_tab_titles_match(title) -> bool`, or reuse `tabs::pick_tab(FLEET_TAB, …)`, with a unit test that only the exact title matches.
+
+- [ ] **Step 2: Run them; see them fail.**
+
+- [ ] **Step 3: Implement.** In the script's `jump`:
+  - Validate PID `^[1-9][0-9]{0,9}$` and START `^[0-9]{1,20}$`.
+  - Read `pane_pid` with `display-message -p -t "$pane" '#{pane_pid}'`; empty means "That session's tmux pane is gone."
+  - Check `/proc/$pid/stat` exists, and that its field 22 equals START. Parse after the last `)`, because the comm field can contain spaces and parens; the hook's `proc_stat` shows how.
+  - Walk parents from PID through `/proc/<p>/stat` field 4, at most 64 steps, until `pane_pid` is reached; not reached means refuse.
+  - Do all of this before `select-window`.
+
+  Everywhere the script opens a tab, add `--title "$TAB_TITLE" --suppressApplicationTitle` right after `new-tab`. In `klepsydra-tmux.conf`, drop the two `set-titles` lines and add `set -g automatic-rename on` and `set -g automatic-rename-format "#{pane_title}"`, keeping `source-file -q ~/.tmux.conf` first and `remain-on-exit failed`. In jump.rs, when `tmux_jump` succeeds, run one `jump(FLEET_TAB)` attempt and `settle(true, …)`; drop `jump_settled`'s retry loop, since the title no longer changes.
+
+- [ ] **Step 4: Gates.** The whole audit list in `.claude/skill-context.md` (Phase 3 and 4), plus `KLEPSYDRA_STAGE=klepsydra-build-launch bash scripts/build-windows.sh --check </dev/null`. Two `test_launch.sh` runs.
+
+- [ ] **Step 5: Commit** `feat(fleet): Jump checks the pane's process and finds the fleet tab by its own title`.
