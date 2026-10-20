@@ -2,8 +2,9 @@
 //! new snapshot to every webview that subscribed, and opens the card wall.
 
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
+use klepsydra_fleet::cue::Cues;
 use klepsydra_fleet::hub::{Hub, Sink};
 use klepsydra_fleet::problem_log::{append_capped, CAP};
 use klepsydra_fleet::scan::Problem;
@@ -79,14 +80,23 @@ pub fn start(app: &AppHandle, dir: Option<PathBuf>) {
     let app = app.clone();
     std::thread::spawn(move || {
         let mut reader = Reader::new(&dir);
+        let mut cues = Cues::default();
         let mut wait = Duration::ZERO;
         loop {
             let (snapshot, problems) = reader.step(wait, unix_now);
             for p in &problems {
                 log_problem(&dir, p);
             }
-            if let Some(v) = snapshot.and_then(|s| serde_json::to_value(s).ok()) {
-                app.state::<Fleet>().publish(v);
+            if let Some(snapshot) = snapshot {
+                // Every snapshot moves the baseline, so turning Ping on never
+                // replays what changed while it was off.
+                let cue = cues.next(&snapshot, Instant::now());
+                if let Some(c) = cue.filter(|_| app.state::<crate::ping::Ping>().on()) {
+                    crate::ping::cue(c, Some(&dir));
+                }
+                if let Ok(v) = serde_json::to_value(snapshot) {
+                    app.state::<Fleet>().publish(v);
+                }
             }
             wait = POLL;
         }

@@ -1,0 +1,159 @@
+//! The tray's Ping: a short cue when a session needs AJ or finishes, played
+//! here rather than in a webview so it sounds with the wall closed and no
+//! autoplay gate applies.
+
+use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
+
+use klepsydra_fleet::cue::Cue;
+
+const NEEDS_YOU: &[u8] = include_bytes!("../sounds/needs-you.wav");
+const DONE: &[u8] = include_bytes!("../sounds/done.wav");
+
+fn wav(cue: Cue) -> &'static [u8] {
+    match cue {
+        Cue::NeedsYou => NEEDS_YOU,
+        Cue::Done => DONE,
+    }
+}
+
+/// Whether Ping is on, as the tray last set it.
+#[derive(Default)]
+pub struct Ping(pub AtomicBool);
+
+impl Ping {
+    pub fn on(&self) -> bool {
+        self.0.load(Ordering::Relaxed)
+    }
+    pub fn set(&self, on: bool) {
+        self.0.store(on, Ordering::Relaxed);
+    }
+}
+
+/// Play `cue` unless the desktop is quiet. `dir` is the app data dir, where
+/// Linux players read the file from.
+pub fn cue(cue: Cue, dir: Option<&Path>) {
+    if !quiet() {
+        play(cue, dir);
+    }
+}
+
+/// Play `cue` whatever the desktop says: AJ just asked to hear it.
+pub fn preview(cue: Cue, dir: Option<&Path>) {
+    play(cue, dir);
+}
+
+#[cfg(windows)]
+fn quiet() -> bool {
+    win::do_not_disturb() || win::full_screen()
+}
+
+#[cfg(not(windows))]
+fn quiet() -> bool {
+    false
+}
+
+#[cfg(windows)]
+fn play(cue: Cue, _dir: Option<&Path>) {
+    win::play(wav(cue));
+}
+
+#[cfg(not(windows))]
+fn play(cue: Cue, dir: Option<&Path>) {
+    use std::process::{Command, Stdio};
+    let Some(dir) = dir else {
+        return;
+    };
+    let path = dir.join("sounds").join(format!("{}.wav", cue.name()));
+    if std::fs::read(&path).ok().as_deref() != Some(wav(cue)) {
+        let _ = std::fs::create_dir_all(dir.join("sounds"));
+        if std::fs::write(&path, wav(cue)).is_err() {
+            return;
+        }
+    }
+    std::thread::spawn(move || {
+        for player in ["pw-play", "paplay"] {
+            let run = Command::new(player)
+                .arg(&path)
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status();
+            match run {
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+                _ => return,
+            }
+        }
+    });
+}
+
+#[cfg(windows)]
+mod win {
+    use std::ffi::c_void;
+
+    use windows::core::PCWSTR;
+    use windows::Win32::Media::Audio::{PlaySoundW, SND_ASYNC, SND_MEMORY, SND_NODEFAULT};
+    use windows::Win32::UI::Shell::{
+        SHQueryUserNotificationState, QUNS_APP, QUNS_BUSY, QUNS_PRESENTATION_MODE,
+        QUNS_RUNNING_D3D_FULL_SCREEN,
+    };
+
+    /// `WNF_SHEL_QUIETHOURS_ACTIVE_PROFILE_CHANGED`: 0 when Do Not Disturb is
+    /// off, nonzero while it or a Focus session is on. Undocumented, so a read
+    /// that fails counts as off.
+    const QUIET_HOURS: u64 = 0x0D83_063E_A3BF_1C75;
+
+    #[link(name = "ntdll")]
+    extern "system" {
+        fn NtQueryWnfStateData(
+            state_name: *const u64,
+            type_id: *const c_void,
+            explicit_scope: *const c_void,
+            change_stamp: *mut u32,
+            buffer: *mut c_void,
+            buffer_size: *mut u32,
+        ) -> i32;
+    }
+
+    pub fn do_not_disturb() -> bool {
+        let mut profile = 0u32;
+        let mut size = std::mem::size_of::<u32>() as u32;
+        let mut stamp = 0u32;
+        // SAFETY: every pointer is to a live local; `size` bounds the write.
+        let status = unsafe {
+            NtQueryWnfStateData(
+                &QUIET_HOURS,
+                std::ptr::null(),
+                std::ptr::null(),
+                &mut stamp,
+                (&mut profile as *mut u32).cast(),
+                &mut size,
+            )
+        };
+        status == 0 && size == 4 && profile != 0
+    }
+
+    /// A full-screen app, a game or presentation mode is in front. The first
+    /// hour after login (`QUNS_QUIET_TIME`) does not count.
+    pub fn full_screen() -> bool {
+        // SAFETY: no arguments; the state is returned by value.
+        let state = unsafe { SHQueryUserNotificationState() };
+        matches!(
+            state,
+            Ok(QUNS_BUSY | QUNS_RUNNING_D3D_FULL_SCREEN | QUNS_PRESENTATION_MODE | QUNS_APP)
+        )
+    }
+
+    /// Start `wav` and return; a cue already playing is cut off.
+    pub fn play(wav: &'static [u8]) {
+        // SAFETY: SND_MEMORY reads the WAV from the pointer, which is 'static,
+        // so it outlives the asynchronous playback.
+        unsafe {
+            let _ = PlaySoundW(
+                PCWSTR(wav.as_ptr().cast()),
+                None,
+                SND_MEMORY | SND_ASYNC | SND_NODEFAULT,
+            );
+        }
+    }
+}
