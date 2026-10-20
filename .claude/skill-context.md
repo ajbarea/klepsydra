@@ -74,6 +74,11 @@ files belong to: the JS guards scan hooks and scripts too.
   and a stub `wt.exe` (one tab per fleet, a failed launch starts nothing).
 - `bash scripts/test_build_windows.sh`: the Windows build's stage-name check.
 - `cd src-tauri && cargo test -p klepsydra-fleet`: the fleet reader.
+- `uv run -q --no-project --with playwright python -I scripts/test_wall_fit.py`:
+  the wall's fit in a real browser, 16 demo cards at 1920x1000 and 8 at
+  945x1000 in Auto, compact, no scrollbar, ring key in view. Needs
+  Playwright's Chromium, or a Chrome at `$KLEPSYDRA_CHROME`; local only, not
+  in CI.
 
 ### do_not_run (interactive / long-running / platform-bound)
 
