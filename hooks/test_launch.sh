@@ -9,7 +9,7 @@ work=$(mktemp -d)
 sock="kl-test-$$"
 clients=()
 cleanup() {
-  for p in "${clients[@]}"; do kill "$p" 2>/dev/null; done
+  for p in "${clients[@]}" $(cat "$work/stub-pids" 2>/dev/null); do kill "$p" 2>/dev/null; done
   tmux -L "$sock" kill-server 2>/dev/null
   rm -rf "$work"
 }
@@ -28,10 +28,18 @@ check() {
 mkdir -p "$work/bin" "$work/home" "$work/repos/my repos"
 cat >"$work/bin/wt.exe" <<'EOF'
 #!/usr/bin/env bash
+# Logs its argv, then attaches like the real tab: WT_DELAY seconds after returning.
 printf '%s\n' "$*" >>"$WT_LOG"
+args=("$@")
+for i in "${!args[@]}"; do [[ ${args[i]} == -e ]] && { cmd=("${args[@]:i+1}"); break; }; done
+(
+  sleep "${WT_DELAY:-0}"
+  exec script -qfc "$(printf '%q ' "${cmd[@]}")" /dev/null
+) >/dev/null 2>&1 </dev/null &
+echo $! >>"$WT_PIDS"
 EOF
 chmod +x "$work/bin/wt.exe"
-export WT_LOG="$work/wt.log" HOME="$work/home" XDG_RUNTIME_DIR="$work" WSL_DISTRO_NAME=Test
+export WT_LOG="$work/wt.log" WT_PIDS="$work/stub-pids" HOME="$work/home" XDG_RUNTIME_DIR="$work" WSL_DISTRO_NAME=Test
 export KLEPSYDRA_TMUX_SOCKET="$sock" KLEPSYDRA_TMUX_CONF="$here/klepsydra-tmux.conf"
 export KLEPSYDRA_CLAUDE="sleep 600" KLEPSYDRA_WT="$work/bin/wt.exe"
 : >"$WT_LOG"
@@ -45,8 +53,8 @@ attach() { # a real client on a pty, like the tab would be
   for _ in $(seq 50); do [[ -n $(t list-clients -t =fleet 2>/dev/null) ]] && return; sleep 0.1; done
 }
 detach_all() {
-  for p in "${clients[@]}"; do kill "$p" 2>/dev/null; done
-  clients=()
+  for p in "${clients[@]}" $(cat "$WT_PIDS" 2>/dev/null); do kill "$p" 2>/dev/null; done
+  clients=(); : >"$WT_PIDS"
   for _ in $(seq 50); do [[ -z $(t list-clients -t =fleet 2>/dev/null) ]] && return; sleep 0.1; done
 }
 
@@ -85,6 +93,7 @@ bash "$launch" new "$work/repos" >/dev/null 2>&1 &
 wait
 check "concurrent: one session" "$(t list-sessions | wc -l)" "1"
 check "concurrent: two windows" "$(windows)" "2"
+check "concurrent: one tab" "$(tabs)" "1"
 
 echo "jump"
 first=$(t list-panes -s -t =fleet -F '#{pane_id}' | head -1)
@@ -97,8 +106,11 @@ check "jump: active pane" "$(t display -p -t =fleet: '#{pane_id}')" "$first"
 check "jump with a client: no tab" "$(tabs)" "0"
 out=$(bash "$launch" jump "$socket" '%3;x' 2>&1); rc=$?
 check "bad pane: exit 1" "$rc" "1"
+check "bad pane: says so" "$out" "Not a tmux pane: %3;x"
 out=$(bash "$launch" jump "rel/sock" "$first" 2>&1); rc=$?
 check "relative socket: exit 1" "$rc" "1"
+check "relative socket: says so" "$out" "Not a tmux socket path: rel/sock"
+check "bad arguments: no tab" "$(tabs)" "0"
 out=$(bash "$launch" jump "$socket" '%99999' 2>&1); rc=$?
 check "unknown pane: exit 1" "$rc" "1"
 check "unknown pane: says so" "$out" "That session's tmux pane is gone."
@@ -109,6 +121,50 @@ check "jump's tab names the socket" "$(head -1 "$WT_LOG")" \
   "-w fleet new-tab wsl.exe -d Test -e tmux -S $socket attach -t =fleet"
 out=$(bash "$launch" bogus 2>&1); rc=$?
 check "unknown command: exit 1" "$rc" "1"
+check "unknown command: says so" "$out" "usage: klepsydra-launch.sh new DIR | jump SOCKET PANE"
+check "unknown command: no tab" "$(tabs)" "1"
+
+echo "one tab per fleet"
+t kill-server 2>/dev/null; detach_all; : >"$WT_LOG"
+export WT_DELAY=0.5
+bash "$launch" new "$work/repos" >/dev/null 2>&1
+bash "$launch" new "$work/repos" >/dev/null 2>&1
+check "slow tab, two new: one tab" "$(tabs)" "1"
+check "slow tab, two new: two windows" "$(windows)" "2"
+t kill-server 2>/dev/null; detach_all; : >"$WT_LOG"
+bash "$launch" new "$work/repos" >/dev/null 2>&1 &
+bash "$launch" new "$work/repos" >/dev/null 2>&1 &
+wait
+check "slow tab, concurrent new: one tab" "$(tabs)" "1"
+detach_all; : >"$WT_LOG"
+bash "$launch" new "$work/repos" >/dev/null 2>&1
+socket=$(t display -p '#{socket_path}')
+first=$(t list-panes -s -t =fleet -F '#{pane_id}' | head -1)
+detach_all; : >"$WT_LOG"
+bash "$launch" new "$work/repos" >/dev/null 2>&1
+bash "$launch" jump "$socket" "$first" >/dev/null 2>&1
+check "slow tab, new then jump: one tab" "$(tabs)" "1"
+unset WT_DELAY
+
+echo "failed tab"
+t kill-server 2>/dev/null; detach_all; : >"$WT_LOG"
+out=$(KLEPSYDRA_WT=false bash "$launch" new "$work/repos" 2>&1); rc=$?
+check "wt fails, no session: exit 1" "$rc" "1"
+check "wt fails, no session: says so" "$out" "Windows Terminal did not open a tab."
+check "wt fails, no session: nothing running" "$(t list-sessions 2>/dev/null | wc -l)" "0"
+bash "$launch" new "$work/repos" >/dev/null 2>&1; detach_all
+out=$(KLEPSYDRA_WT=false bash "$launch" new "$work/repos" 2>&1); rc=$?
+check "wt fails, session: exit 1" "$rc" "1"
+check "wt fails, session: window count unchanged" "$(windows)" "1"
+t kill-server 2>/dev/null
+out=$(KLEPSYDRA_WT=no-such-wt bash "$launch" new "$work/repos" 2>&1); rc=$?
+check "no wt.exe: exit 1" "$rc" "1"
+check "no wt.exe: says so" "$out" "wt.exe was not found, so no terminal tab could be opened."
+check "no wt.exe: nothing running" "$(t list-sessions 2>/dev/null | wc -l)" "0"
+out=$(WSL_DISTRO_NAME='a;b' bash "$launch" new "$work/repos" 2>&1); rc=$?
+check "bad distro name: exit 1" "$rc" "1"
+check "bad distro name: says so" "$out" "WSL_DISTRO_NAME is missing or not usable, so no tab could be opened."
+check "bad distro name: nothing running" "$(t list-sessions 2>/dev/null | wc -l)" "0"
 
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [[ $fail -eq 0 ]]

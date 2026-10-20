@@ -13,23 +13,43 @@ SESSION=fleet
 CONF=${KLEPSYDRA_TMUX_CONF:-$HOME/.claude/klepsydra-tmux.conf}
 CLAUDE=${KLEPSYDRA_CLAUDE:-claude}
 WT=${KLEPSYDRA_WT:-wt.exe}
+UNDO=()
 LOCK=${XDG_RUNTIME_DIR:-/tmp}/klepsydra-launch-$UID.lock
 
 fail() { printf '%s\n' "$*" >&2; exit 1; }
 need() { command -v "$1" >/dev/null 2>&1 || fail "$2"; }
 
-# Open a tab attached to session `target` unless a client already shows it.
-show() { # target tmux-socket-args...
-  local target=$1; shift
-  [[ -n $(tmux "$@" list-clients -t "$target" -F x 2>/dev/null) ]] && return 0
+has_client() { [[ -n $(tmux "${@:2}" list-clients -t "$1" -F x 2>/dev/null) ]]; } # target socket-args...
+
+# Serialise launches: one tab per fleet even for back-to-back clicks.
+take_lock() {
+  { exec {LOCKFD}>>"$LOCK"; } 2>/dev/null || fail "Could not open $LOCK."
+  flock -w 10 "$LOCKFD" || fail "Another launch is still running."
+}
+
+# Check a tab can be opened, before anything is created.
+tab_preflight() {
   need "$WT" "wt.exe was not found, so no terminal tab could be opened."
-  [[ -n ${WSL_DISTRO_NAME:-} ]] || fail "WSL_DISTRO_NAME is not set, so no tab could be opened."
-  "$WT" -w fleet new-tab wsl.exe -d "$WSL_DISTRO_NAME" -e tmux "$@" attach -t "$target" >/dev/null 2>&1 ||
+  [[ ${WSL_DISTRO_NAME:-} =~ ^[A-Za-z0-9._-]{1,64}$ ]] ||
+    fail "WSL_DISTRO_NAME is missing or not usable, so no tab could be opened."
+}
+
+# Open a tab attached to `target`, then wait for its client so the next launch
+# sees it. If wt.exe fails, run the cleanup command in "${UNDO[@]}".
+open_tab() { # target tmux-socket-args...
+  local target=$1; shift
+  # The lock fd is closed for wt.exe so a tab never outlives the lock.
+  "$WT" -w fleet new-tab wsl.exe -d "$WSL_DISTRO_NAME" -e tmux "$@" attach -t "$target" \
+    >/dev/null 2>&1 {LOCKFD}>&- || {
+    (( ${#UNDO[@]} )) && "${UNDO[@]}" >/dev/null 2>&1
     fail "Windows Terminal did not open a tab."
+  }
+  local _
+  for _ in $(seq 50); do has_client "$target" "$@" && return 0; sleep 0.1; done
 }
 
 new() { # dir
-  local dir=$1 lock
+  local dir=$1
   # shellcheck disable=SC2088 # a literal ~/ from the overlay
   case $dir in
     "~") dir=$HOME ;;
@@ -38,19 +58,24 @@ new() { # dir
   [[ -d $dir ]] || fail "The folder $dir does not exist."
   need tmux "tmux is not installed in this distro."
   need "${CLAUDE%% *}" "claude was not found on PATH."
-  exec {lock}>>"$LOCK" || fail "Could not open $LOCK."
-  flock -w 10 "$lock" || fail "Another launch is still running."
+  take_lock
   local -a t=(-L "$SOCKET_NAME") conf=()
-  # The tmux server must not inherit the lock fd, or it holds the lock for good.
   [[ -r $CONF ]] && conf=(-f "$CONF")
-  if tmux "${t[@]}" has-session -t "=$SESSION" 2>/dev/null; then
-    tmux "${t[@]}" new-window -t "=$SESSION:" -c "$dir" "$CLAUDE" {lock}>&- ||
+  local target="=$SESSION" exists=0 shown=0 win
+  tmux "${t[@]}" has-session -t "$target" 2>/dev/null && exists=1
+  (( exists )) && has_client "$target" "${t[@]}" && shown=1
+  (( shown )) || tab_preflight
+  # The tmux server must not inherit the lock fd, or it holds the lock for good.
+  if (( exists )); then
+    win=$(tmux "${t[@]}" new-window -P -F '#{window_id}' -t "$target:" -c "$dir" "$CLAUDE" {LOCKFD}>&- 2>/dev/null) ||
       fail "tmux could not open a window."
+    UNDO=(tmux "${t[@]}" kill-window -t "$win")
   else
-    tmux "${t[@]}" "${conf[@]}" new-session -d -s "$SESSION" -c "$dir" "$CLAUDE" {lock}>&- ||
+    tmux "${t[@]}" "${conf[@]}" new-session -d -s "$SESSION" -c "$dir" "$CLAUDE" {LOCKFD}>&- 2>/dev/null ||
       fail "tmux could not start the fleet session."
+    UNDO=(tmux "${t[@]}" kill-session -t "$target")
   fi
-  show "=$SESSION" "${t[@]}"
+  (( shown )) || open_tab "$target" "${t[@]}"
   printf 'Started a session in %s.\n' "$dir"
 }
 
@@ -66,7 +91,11 @@ jump() { # socket pane
   [[ $session =~ ^[A-Za-z0-9._-]{1,64}$ ]] || fail "The tmux session's name cannot be passed to a tab."
   { tmux "${t[@]}" select-window -t "$pane" && tmux "${t[@]}" select-pane -t "$pane"; } 2>/dev/null ||
     fail "tmux could not select the window."
-  show "=$session" "${t[@]}"
+  take_lock
+  if ! has_client "=$session" "${t[@]}"; then
+    tab_preflight
+    open_tab "=$session" "${t[@]}"
+  fi
   printf "Selected the session's tmux window.\n"
 }
 
