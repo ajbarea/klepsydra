@@ -1,45 +1,62 @@
 # IMPL
 
-Current slice: prune the readings the overlay can never draw again (265 files
-on the WSL station, 128 over a week old, all read on every refresh).
+Current slice (#30, branch feat/faces-place): place the faces strip around the
+usage panel (right, left, above, below) or hide it, from a tray "Faces"
+submenu, while the usage panel stays where the user docked it. AJ docks the
+compact gauge in the taskbar and wants the faces wherever his overlays go.
 
-## Done
-- ✅ A reading whose every window has ended is never published, so a pruned
-  idle session cannot republish its last response as new.
-- ✅ Hourly prune, detached under a `flock` (the docs: a slow status line
-  blocks updates, and a new update cancels it). It follows `toRows` and
-  `reconcilable`: a reading whose windows all ended over a day ago goes
-  unless it is its account's newest, and that once the account is dropped
-  (30 days); an account whose times the gauge does not trust keeps all until
-  dropped. Unparseable, unstamped, unseen or just-rewritten (new inode)
-  files stay. The parent forks only for the overlay's own dir.
-- ✅ `src/gauge.js`: an account's label comes from its newest reading.
-- ✅ "prune helpers" (data-dir guard, hourly runner) is one block in both
-  hooks, checked identical, so the fleet's guard tests cover this prune.
+Decisions (research in #30 and the 10-20 session): one radio group of 5 in a
+"Faces" submenu (Microsoft: 2 to 7 mutually exclusive options suit a radio
+group; one submenu level); no settings window until a setting needs more than
+a choice (a second webview costs memory). One `faces` pref for both layouts.
+The layout hub becomes a "look" hub carrying {layout, faces}, so the first
+draw already knows the side (no jump). Sizing anchors on the panel, which also
+stops the bar drifting left when a session starts on a right-anchored gauge.
 
-## Verified, not inferred
-- ✅ statusline 129 (47 new, on a fixed clock now), node 120, fleet 186,
-  shellcheck clean.
-- ✅ `toRows` agrees before and after, in the suite (old-hook and mixed
-  accounts too) and on a copy of the station's readings (265 to 74 files).
-- ✅ Dropping any guard fails the suite; the folder-name check also keeps a
-  folder named `-rf` from reaching jq as an option. Only the "jq printed a
-  globbed name" check is unreachable, as defence in depth.
-- ✅ A render returns in about 20 ms while a prune runs (1.6 s first, 0.35 s
-  after, on /mnt/c).
-- ✅ Live: a real render ran the first prune (23:59:57 to 23:59:59, 265 to
-  74 files) and the gauge drew the same rows. Readings backed up first.
-- ✅ Review round 1: no data loss; fixed a delete racing a writer, untrusted
-  accounts, unseen files counting as newest, a fork per render for a
-  foreign dir, an octal stamp, six surviving mutants.
-- ✅ Review round 2 (final): no data loss for files the hook writes; a
-  1500-case fuzz of toRows found no change. Fixed ext4 handing a rewrite the
-  old inode (now inode and mtime to the nanosecond), an empty team name
-  (now "Team", as for a missing one), and jq reading floats, NaN, far-future
-  stamps or non-string ids unlike the overlay (account left alone).
-- 📋 Known edges, both needing readings the hook never writes: a misfiled
-  reading with a later reset can surface once a newer one goes, and an old
-  hook still writing the pre-move legacy folder is not mirrored.
+## Done (WIP commit, Rust side only, NOT yet compiled)
+- 📋→✅ `src-tauri/src/geometry.rs`: `grow_around_panel` (panel keeps its edges
+  nearest the monitor's, the window hangs off it) + 6 tests.
+- ✅ written, 📋 uncompiled `src-tauri/src/main.rs`: `pref_choice` + `LAYOUTS`
+  / `FACES` consts, `layout_of`/`faces_of`/`look_of`; `Layouts` hub renamed
+  `Look`, `layout_subscribe` -> `look_subscribe` publishing {layout, faces};
+  `set_look(app, key, want)`; `Panel` managed state (in `with_state`);
+  `set_size` takes `panel: Option<[f64;4]>` and uses `grow_around_panel` for
+  non-zoom, non-first sizing; tray "Faces" Submenu of 5 CheckMenuItems
+  (`faces:<side>`, Hidden after a separator), one checked from the saved
+  value; test `a_saved_choice_is_read_only_from_its_list`.
+
+## Next
+1. Frontend `src/main.js`: `followLayout` -> follow `look_subscribe`, apply
+   `look.layout` (existing async path) and `look.faces` (set
+   `document.documentElement.dataset.faces`, render); harness `?faces=`;
+   `stripRect()` null when faces hidden; send `panel` (rect of `#panel`) in the
+   `set_size` invoke.
+2. `src/style.css`: `:root[data-faces="left"] #frame {flex-direction:
+   row-reverse}`, `above` column-reverse + align-items flex-start, `below`
+   column + flex-start, `hidden` `#strip {display:none}`.
+3. Node tests (style/guards) for the four data-faces rules and the look
+   channel; `scripts/visual-check.sh` shots for each side in both layouts.
+4. Compile + test on Windows: `bash scripts/build-windows.sh --check` (fix
+   compile errors in the WIP Rust first). Only when host RAM is calm.
+5. README (fleet strip + tray paragraph), spec addendum ruling, ROADMAP.
+6. PR (label enhancement, assignee ajbarea, Closes #30), independent review,
+   CI, merge; rebuild + install; live: click each Faces item, panel rect
+   unchanged (`C:\Windows\Temp\kshot.ps1`), faces on the chosen side.
+
+## Notes for the next session
+- Tray menu item offsets (menu 134px tall before this change): Reset 14, Set
+  home 36, Compact 66, Start with Windows 88, Quit 119. The Faces submenu
+  shifts everything below Compact; re-measure with
+  `C:\Windows\Temp\tray-menu-shot.ps1` before clicking (a miss on Quit
+  kills the app).
+- WSL interop dies when order-7 pages run out (`grep Normal
+  /proc/buddyinfo`); fix from Windows PowerShell: `wsl -u root -- sh -c
+  "sync; echo 3 > /proc/sys/vm/drop_caches; echo 1 >
+  /proc/sys/vm/compact_memory"`.
+- The 8-hour memory reading (sampler pid 1499879, log
+  `/tmp/klepsydra-memory-2.log`) was taken under heavy host memory pressure;
+  treat its verdict as unreliable (working set can be trimmed) and retake it
+  on a calm machine, ideally recording private bytes too.
 
 ## Open
 - The tray icon still draws a bar in either layout.

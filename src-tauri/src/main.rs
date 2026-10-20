@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 use geometry::{Display, Home, Rect};
 use tauri::{
     ipc::Channel,
-    menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem},
+    menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu},
     tray::TrayIconBuilder,
     Manager, PhysicalPosition,
 };
@@ -23,6 +23,11 @@ use tauri_plugin_window_state::AppHandleExt;
 /// frontend owns the layout and reports it, so restyling cannot desync this.
 #[derive(Default)]
 struct Grip(Mutex<Option<[f64; 4]>>);
+
+/// The usage panel, in CSS pixels relative to the window's top-left, as last
+/// sized. Sizing keeps it still on screen while the faces move around it.
+#[derive(Default)]
+struct Panel(Mutex<Option<[f64; 4]>>);
 
 /// Set when the window moves or resizes other than by dragging, so the grip
 /// watcher re-reads its cached placement at once rather than up to half a
@@ -186,41 +191,66 @@ fn set_zoom(app: tauri::AppHandle, level: i64, layout: Option<String>) {
     write_pref(&app, zoom_key(layout.as_deref()), serde_json::json!(level));
 }
 
-/// The gauge's layout: "compact" (a ring per window in one row, low enough to
-/// sit inside the taskbar) or "full" (a bar per window).
-fn layout_of(app: &tauri::AppHandle) -> &'static str {
-    match read_prefs(app).and_then(|p| p.get("layout")?.as_str().map(str::to_owned)) {
-        Some(l) if l == "compact" => "compact",
-        _ => "full",
-    }
+/// A saved choice among `allowed`, the first when it is missing or unknown.
+fn pref_choice(
+    prefs: Option<&serde_json::Map<String, serde_json::Value>>,
+    key: &str,
+    allowed: &[&'static str],
+) -> &'static str {
+    let saved = prefs.and_then(|p| p.get(key)?.as_str());
+    allowed
+        .iter()
+        .copied()
+        .find(|a| Some(*a) == saved)
+        .unwrap_or(allowed[0])
 }
 
-/// Who follows the layout: the gauge, sent the saved layout when it subscribes
-/// and again after each change from the tray. A type of its own, not an alias:
-/// the fleet's hub is managed state of the same shape.
+/// The gauge's layout: "full" (a bar per window) or "compact" (a ring per
+/// window in one row, low enough to sit inside the taskbar).
+const LAYOUTS: [&str; 2] = ["full", "compact"];
+
+/// Where the faces sit around the usage panel, in the tray's order.
+const FACES: [&str; 5] = ["right", "left", "above", "below", "hidden"];
+
+fn layout_of(app: &tauri::AppHandle) -> &'static str {
+    pref_choice(read_prefs(app).as_ref(), "layout", &LAYOUTS)
+}
+
+fn faces_of(app: &tauri::AppHandle) -> &'static str {
+    pref_choice(read_prefs(app).as_ref(), "faces", &FACES)
+}
+
+/// How the gauge looks: its layout and where the faces sit.
+fn look_of(app: &tauri::AppHandle) -> serde_json::Value {
+    serde_json::json!({ "layout": layout_of(app), "faces": faces_of(app) })
+}
+
+/// Who follows the look: the gauge, sent the saved look when it subscribes and
+/// again after each change from the tray. A type of its own, not an alias: the
+/// fleet's hub is managed state of the same shape.
 #[derive(Default)]
-struct Layouts(klepsydra_fleet::hub::Hub<fleet::Webview>);
+struct Look(klepsydra_fleet::hub::Hub<fleet::Webview>);
 
 #[tauri::command]
-fn layout_subscribe(
+fn look_subscribe(
     window: tauri::WebviewWindow,
-    layouts: tauri::State<'_, Layouts>,
+    look: tauri::State<'_, Look>,
     on_message: Channel<serde_json::Value>,
 ) {
-    layouts
-        .0
-        .subscribe(window.label(), fleet::Webview(on_message));
+    look.0.subscribe(window.label(), fleet::Webview(on_message));
 }
 
-/// Save a layout chosen in the tray and send the gauge the layout now saved,
-/// so the gauge, the menu and the next start agree even if the save failed.
-/// True when that layout is compact.
-fn set_layout(app: &tauri::AppHandle, compact: bool) -> bool {
-    let want = if compact { "compact" } else { "full" };
-    write_pref(app, "layout", serde_json::json!(want));
-    let saved = layout_of(app);
-    app.state::<Layouts>().0.publish(serde_json::json!(saved));
-    saved == "compact"
+/// Save a choice made in the tray and send the gauge the look now saved, so
+/// the gauge, the menu and the next start agree even if the save failed.
+/// Returns the saved value.
+fn set_look(app: &tauri::AppHandle, key: &str, want: &str) -> &'static str {
+    write_pref(app, key, serde_json::json!(want));
+    app.state::<Look>().0.publish(look_of(app));
+    if key == "faces" {
+        faces_of(app)
+    } else {
+        layout_of(app)
+    }
 }
 
 /// Where the window is: the rect last requested while it may still be landing,
@@ -313,10 +343,21 @@ fn set_size(
     pin: bool,
     grip: Option<[f64; 4]>,
     strip: Option<[f64; 4]>,
+    panel: Option<[f64; 4]>,
 ) -> Result<(), String> {
     if let (Some(g), Ok(mut slot)) = (grip, window.state::<Grip>().0.lock()) {
         *slot = Some(g);
     }
+    let old_panel = match window.state::<Panel>().0.lock() {
+        Ok(mut slot) => {
+            let before = *slot;
+            if panel.is_some() {
+                *slot = panel;
+            }
+            before
+        }
+        Err(_) => None,
+    };
     if let Ok(mut slot) = window.state::<fleet::Strip>().0.lock() {
         *slot = strip;
     }
@@ -356,7 +397,16 @@ fn set_size(
             let zoomed = geometry::grow_from_point(from, w, h, px, py, ratio);
             monitor.map_or(zoomed, |m| geometry::keep_docked(from, zoomed, m))
         }
-        (false, _, None, Some(m)) => geometry::grow_from_edges(from, w, h, m),
+        (false, _, None, Some(m)) => match (old_panel, panel) {
+            (Some(old), Some(new)) => {
+                let phys = |[x, y, w, h]: [f64; 4]| {
+                    let px = |v: f64| (v * scale).round() as i32;
+                    Rect::new(px(x), px(y), px(w), px(h))
+                };
+                geometry::grow_around_panel(from, phys(old), phys(new), w, h, m)
+            }
+            _ => geometry::grow_from_edges(from, w, h, m),
+        },
         (false, _, None, None) => Rect { w, h, ..from },
     };
     if let Some(m) = monitor {
@@ -795,7 +845,8 @@ fn with_state<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R
         .manage(Moved::default())
         .manage(Sized::default())
         .manage(Requested::default())
-        .manage(Layouts::default())
+        .manage(Look::default())
+        .manage(Panel::default())
 }
 
 fn main() {
@@ -817,7 +868,7 @@ fn main() {
             set_size,
             get_zoom,
             set_zoom,
-            layout_subscribe,
+            look_subscribe,
             set_grip,
             reset_position,
             set_tray_level,
@@ -872,15 +923,49 @@ fn main() {
             )?;
             let reset = MenuItem::with_id(app, "reset", "Reset position", true, None::<&str>)?;
             let home = MenuItem::with_id(app, "home", "Set home here", true, None::<&str>)?;
-            let layout = layout_of(app.handle());
-            app.state::<Layouts>().0.publish(serde_json::json!(layout));
+            app.state::<Look>().0.publish(look_of(app.handle()));
             let compact_item = CheckMenuItem::with_id(
                 app,
                 "compact",
                 "Compact",
                 true,
-                layout == "compact",
+                layout_of(app.handle()) == "compact",
                 None::<&str>,
+            )?;
+            // One radio group: the side the faces sit on, or none.
+            let faces_now = faces_of(app.handle());
+            let face_items = FACES
+                .iter()
+                .map(|f| {
+                    let label = match *f {
+                        "right" => "Right",
+                        "left" => "Left",
+                        "above" => "Above",
+                        "below" => "Below",
+                        _ => "Hidden",
+                    };
+                    CheckMenuItem::with_id(
+                        app,
+                        format!("faces:{f}"),
+                        label,
+                        true,
+                        *f == faces_now,
+                        None::<&str>,
+                    )
+                })
+                .collect::<tauri::Result<Vec<_>>>()?;
+            let faces_menu = Submenu::with_items(
+                app,
+                "Faces",
+                true,
+                &[
+                    &face_items[0],
+                    &face_items[1],
+                    &face_items[2],
+                    &face_items[3],
+                    &PredefinedMenuItem::separator(app)?,
+                    &face_items[4],
+                ],
             )?;
             let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
             let menu = Menu::with_items(
@@ -890,6 +975,8 @@ fn main() {
                     &home,
                     &PredefinedMenuItem::separator(app)?,
                     &compact_item,
+                    &faces_menu,
+                    &PredefinedMenuItem::separator(app)?,
                     &start_item,
                     &PredefinedMenuItem::separator(app)?,
                     &quit,
@@ -898,6 +985,7 @@ fn main() {
 
             let toggle = start_item.clone();
             let compact = compact_item.clone();
+            let faces = face_items.clone();
             TrayIconBuilder::with_id("main")
                 .icon(app.default_window_icon().expect("bundled icon").clone())
                 .tooltip("klepsydra")
@@ -912,8 +1000,20 @@ fn main() {
                         let _ = toggle.set_checked(mgr.is_enabled().unwrap_or(want));
                     }
                     "compact" => {
-                        let on = set_layout(app, compact.is_checked().unwrap_or(false));
-                        let _ = compact.set_checked(on);
+                        let want = if compact.is_checked().unwrap_or(false) {
+                            "compact"
+                        } else {
+                            "full"
+                        };
+                        let _ = compact.set_checked(set_look(app, "layout", want) == "compact");
+                    }
+                    id if id.starts_with("faces:") => {
+                        // A check item flips itself; the saved side decides
+                        // which one shows checked, so exactly one does.
+                        let saved = set_look(app, "faces", &id["faces:".len()..]);
+                        for (item, f) in faces.iter().zip(FACES) {
+                            let _ = item.set_checked(f == saved);
+                        }
                     }
                     "reset" => {
                         if let Some(w) = app.get_webview_window("main") {
@@ -942,6 +1042,32 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_saved_choice_is_read_only_from_its_list() {
+        let prefs = |v: serde_json::Value| v.as_object().cloned();
+        let p = prefs(serde_json::json!({ "faces": "above", "layout": "compact" }));
+        assert_eq!(
+            super::pref_choice(p.as_ref(), "faces", &super::FACES),
+            "above"
+        );
+        assert_eq!(
+            super::pref_choice(p.as_ref(), "layout", &super::LAYOUTS),
+            "compact"
+        );
+        for odd in [
+            serde_json::json!("sideways"),
+            serde_json::json!(3),
+            serde_json::json!(null),
+        ] {
+            let p = prefs(serde_json::json!({ "faces": odd }));
+            assert_eq!(
+                super::pref_choice(p.as_ref(), "faces", &super::FACES),
+                "right"
+            );
+        }
+        assert_eq!(super::pref_choice(None, "layout", &super::LAYOUTS), "full");
+    }
+
     #[test]
     fn every_managed_state_has_a_type_of_its_own() {
         // Builder::manage asserts that no type is managed twice.

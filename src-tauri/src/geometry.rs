@@ -76,6 +76,33 @@ pub fn grow_from_edges(old: Rect, w: i32, h: i32, monitor: Rect) -> Rect {
     Rect { x, y, w, h }
 }
 
+/// Resize a window whose usage panel sat at `old_panel` and will sit at
+/// `new_panel`, both relative to the window: the panel keeps the edges nearest
+/// the monitor's, as `grow_from_edges` keeps the window's, and the rest of the
+/// window (the faces, on whichever side they are placed) hangs off it. So
+/// moving the faces, or a face coming or going, leaves the panel where it was.
+pub fn grow_around_panel(
+    from: Rect,
+    old_panel: Rect,
+    new_panel: Rect,
+    w: i32,
+    h: i32,
+    monitor: Rect,
+) -> Rect {
+    let on_screen = Rect {
+        x: from.x + old_panel.x,
+        y: from.y + old_panel.y,
+        ..old_panel
+    };
+    let panel = grow_from_edges(on_screen, new_panel.w, new_panel.h, monitor);
+    Rect {
+        x: panel.x - new_panel.x,
+        y: panel.y - new_panel.y,
+        w,
+        h,
+    }
+}
+
 /// Resize around a point: the content under (`px`, `py`) stays under it when
 /// everything grows by `ratio`, as a map zooms around the pointer.
 pub fn grow_from_point(old: Rect, w: i32, h: i32, px: i32, py: i32, ratio: f64) -> Rect {
@@ -222,6 +249,77 @@ mod tests {
 
     fn home(rect: Rect, display: Display) -> Home {
         Home { rect, display }
+    }
+
+    // A compact gauge docked on the taskbar's right half: panel 605x42 at
+    // (1137, 1038), faces 230 wide to its right with an 8px gap.
+    const DOCK: Rect = Rect {
+        x: 1137,
+        y: 1038,
+        w: 843,
+        h: 42,
+    };
+    const PANEL: Rect = Rect {
+        x: 0,
+        y: 0,
+        w: 605,
+        h: 42,
+    };
+
+    /// Where the panel lands on screen.
+    fn panel_at(window: Rect, panel: Rect) -> (i32, i32) {
+        (window.x + panel.x, window.y + panel.y)
+    }
+
+    #[test]
+    fn faces_moved_left_leave_the_panel_where_it_was() {
+        let left = Rect::new(238, 0, 605, 42);
+        let to = grow_around_panel(DOCK, PANEL, left, 843, 42, SCREEN);
+        assert_eq!(panel_at(to, left), (1137, 1038));
+        assert_eq!(to, Rect::new(899, 1038, 843, 42));
+    }
+
+    #[test]
+    fn faces_moved_above_grow_the_window_upward_from_the_panel() {
+        let below_faces = Rect::new(0, 50, 605, 42);
+        let to = grow_around_panel(DOCK, PANEL, below_faces, 605, 92, SCREEN);
+        assert_eq!(panel_at(to, below_faces), (1137, 1038));
+        assert_eq!(to, Rect::new(1137, 988, 605, 92));
+    }
+
+    #[test]
+    fn faces_below_a_panel_on_the_screen_edge_push_it_up_once_clamped() {
+        let to = grow_around_panel(DOCK, PANEL, PANEL, 605, 92, SCREEN);
+        assert_eq!(clamp_into(to, SCREEN), Rect::new(1137, 988, 605, 92));
+    }
+
+    #[test]
+    fn hiding_the_faces_keeps_the_panel_and_drops_their_width() {
+        let left = Rect::new(238, 0, 605, 42);
+        let from = Rect::new(899, 1038, 843, 42);
+        let to = grow_around_panel(from, left, PANEL, 605, 42, SCREEN);
+        assert_eq!(to, Rect::new(1137, 1038, 605, 42));
+    }
+
+    #[test]
+    fn a_face_more_on_the_right_leaves_a_right_half_panel_still() {
+        // The window grew by a face; grow_from_edges alone would have moved
+        // the whole window, panel included, 46px to the left.
+        let to = grow_around_panel(DOCK, PANEL, PANEL, 889, 42, SCREEN);
+        assert_eq!(panel_at(to, PANEL), (1137, 1038));
+        assert_ne!(grow_from_edges(DOCK, 889, 42, SCREEN).x, 1137);
+    }
+
+    #[test]
+    fn a_taller_panel_keeps_its_edge_nearest_the_screen_edge() {
+        // Lower half: the panel keeps its bottom, as the window did before.
+        let tall = Rect::new(0, 0, 605, 60);
+        let to = grow_around_panel(DOCK, PANEL, tall, 843, 60, SCREEN);
+        assert_eq!(panel_at(to, tall), (1137, 1020));
+        // Upper left: it keeps its top-left corner.
+        let top = Rect::new(20, 20, 843, 42);
+        let to = grow_around_panel(top, PANEL, tall, 843, 60, SCREEN);
+        assert_eq!(panel_at(to, tall), (20, 20));
     }
 
     #[test]
