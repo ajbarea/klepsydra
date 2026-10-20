@@ -2,9 +2,9 @@
 
 Current slice: background work keeps a session working (#45), branch
 feat/background-work. A turn that ends with subagents or background shells
-still running stays **working**, with the count on the pill and "prompt free"
-on the card, and the portrait ring now shows that crew, one segment per piece
-of work. The water-clock arc is retired.
+still running stays **working**; the card says "2 agents, 1 shell · prompt
+free" (the hint only once Stop fired with work out), and the portrait ring
+shows that crew, one segment per piece of work. The pill stays the plain status. The water-clock arc is retired.
 
 ## Done
 - Probe (throwaway haiku sessions, `--setting-sources local`): SubagentStart and
@@ -23,10 +23,10 @@ of work. The water-clock arc is retired.
 - Reader: lenient `background` (bad entries cost themselves), `Crew {agents,
   shells}` on every view, `BACKGROUND_STALE_AFTER = 3600`; working-after-turn
   is never quiet and falls back to done once every entry is stale.
-- Wall: segmented ring (gap 18 deg; agent 6 solid, shell 3.5 dashed 3 3;
-  accent or Okabe-Ito yellow), "+N" past 8, fades off under reduced motion,
-  crew line, header lets a long pill wrap under the name. Demo fixture: 0, 1,
-  3, 10 and a medallion with one shell.
+- Wall: segmented ring (an 18 deg gap at every N, a lone item included; agent
+  6 solid, shell 3.5 dashed 3 3; accent or Okabe-Ito yellow), "+N" past 8,
+  fades off under reduced motion, crew line. Demo fixture: 0, 1, 2, 3, 10 and
+  a medallion with one shell.
 - Gates: the whole audit list, build-windows --check.
 
 ## Next

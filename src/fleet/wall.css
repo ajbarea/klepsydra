@@ -125,15 +125,13 @@ button:focus-visible { outline: 2px solid var(--card-focus); outline-offset: 2px
 .card.dim .name, .card.dim .where, .card.dim .reply { color: var(--text-dim); }
 .card.dim .prompt, .card.dim .repo .wt, .card.dim .branch { color: var(--text-quiet); }
 
-/* The task runs under the pill, so a long pill never cuts it short; a pill
-   too long to sit beside the name wraps under it rather than break the name. */
+/* The task runs under the pill, so a long pill never cuts it short. */
 .card header {
   display: grid;
-  grid-template-columns: var(--wall-face) minmax(0, 1fr);
-  grid-template-areas: "face top" "face task";
+  grid-template-columns: var(--wall-face) minmax(0, 1fr) auto;
+  grid-template-areas: "face name pill" "face task task";
   column-gap: 14px;
 }
-.top { grid-area: top; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 4px 10px; align-self: end; min-width: 0; }
 
 /* The ring: the session's background crew, one segment per subagent (solid)
    or background shell (thinner, dashed), so the kind never rests on colour. */
@@ -162,13 +160,16 @@ button:focus-visible { outline: 2px solid var(--card-focus); outline-offset: 2px
   border: 1px solid var(--card-line);
 }
 
-.name { min-width: 0; font: 650 20px/1.15 var(--display); letter-spacing: -0.01em; overflow-wrap: anywhere; }
+.who { display: contents; }
+.name { grid-area: name; align-self: end; min-width: 0; font: 650 20px/1.15 var(--display); letter-spacing: -0.01em; overflow-wrap: anywhere; }
 .task { grid-area: task; align-self: start; min-width: 0; color: var(--text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 2px; }
 
 .pill {
+  grid-area: pill;
   display: inline-flex;
   align-items: center;
   gap: 7px;
+  align-self: start;
   padding: 5px 10px 5px 8px;
   border-radius: 999px;
   font-weight: 600;

@@ -338,8 +338,8 @@
    "tmux": null,
    "distro": "Ubuntu",
    "background": {
-    "agents": 0,
-    "shells": 0
+    "agents": 1,
+    "shells": 1
    }
   },
   {

@@ -401,7 +401,7 @@ test("the ring draws a segment per piece of work, agents first, at most eight", 
   assert.equal(RING.max, 8);
 });
 
-test("segments sit on the ring with even gaps, and one is the whole ring", () => {
+test("segments sit on the ring with even gaps, a lone one too", () => {
   const ends = (d) => {
     const m = d.match(/^M ([\d.]+) ([\d.]+) A 37 37 0 0 1 ([\d.]+) ([\d.]+)$/);
     assert.ok(m, d);
@@ -419,26 +419,38 @@ test("segments sit on the ring with even gaps, and one is the whole ring", () =>
     const want = RING.cx + RING.r * Math.cos(((-90 + RING.gapDeg / 2) * Math.PI) / 180);
     assert.ok(Math.abs(x0 - want) < 0.01, `${n}: starts at ${x0}`);
   }
+  // A lone item keeps the gap at 12 o'clock: one long arc, never a closed ring.
   const [one] = crewRing({ agents: 0, shells: 1 }).segments;
-  assert.equal(one.d, "M 40 3 A 37 37 0 0 1 40 77 A 37 37 0 0 1 40 3");
+  assert.equal(one.d, "M 45.79 3.46 A 37 37 0 1 1 34.21 3.46");
+  assert.ok(RING.gapDeg >= 18);
 });
 
-test("a working card with work out says so, and the hint shows only once the turn ended", () => {
+test("the pill stays the plain status; the crew line says what is out", () => {
   const background = { agents: 2, shells: 1 };
-  const during = card(session({ status: "working", reason: null, background }), CAST, NOW);
-  assert.deepEqual(during.pill, { label: "working \u00b7 3 in background", age: "2m" });
-  assert.equal(during.crew, "2 agents, 1 shell");
-  assert.equal(during.promptFree, false);
-  assert.equal(during.ring.segments.length, 3);
-  const after = card(session({ status: "working", reason: "background", background }), CAST, NOW);
-  assert.deepEqual(after.pill, { label: "working \u00b7 3 in background", age: "2m" });
-  assert.equal(after.promptFree, true);
-  assert.equal(after.tone, "working");
+  for (const reason of [null, "background"]) {
+    const c = card(session({ status: "working", reason, background }), CAST, NOW);
+    assert.deepEqual(c.pill, { label: "working", age: "2m" }, String(reason));
+    assert.equal(c.crew, "2 agents, 1 shell");
+    assert.equal(c.ring.segments.length, 3);
+    assert.equal(c.tone, "working");
+  }
   const none = card(session({ status: "working", reason: null }), CAST, NOW);
   assert.deepEqual([none.pill.label, none.crew, none.promptFree, none.ring.segments.length], ["working", null, false, 0]);
   const needs = card(session({ background }), CAST, NOW);
-  assert.equal(needs.pill.label, "needs you", "needs you outranks the crew on the pill");
+  assert.equal(needs.pill.label, "needs you");
   assert.equal(needs.ring.segments.length, 3, "its ring still shows the crew");
+});
+
+test("prompt free shows only once the turn ended with work out, never for a subagent mid-turn", () => {
+  // A foreground subagent inside a turn: the hook leaves the reason null until Stop.
+  const mid = card(session({ status: "working", reason: null, background: { agents: 1, shells: 0 } }), CAST, NOW);
+  assert.deepEqual([mid.crew, mid.promptFree, mid.ring.segments.length], ["1 agent", false, 1]);
+  assert.doesNotMatch(mid.label, /prompt free/);
+  const after = card(session({ status: "working", reason: "background", background: { agents: 1, shells: 0 } }), CAST, NOW);
+  assert.equal(after.promptFree, true);
+  assert.match(after.label, /prompt free/);
+  const stale = card(session({ status: "working", reason: "background", background: { agents: 0, shells: 0 } }), CAST, NOW);
+  assert.equal(stale.promptFree, false, "no hint with nothing out");
 });
 
 test("the crew is in the accessible name, and the ring takes the character's colour or none", () => {

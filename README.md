@@ -355,14 +355,14 @@ an error count only when one exists. Each card shows:
 
 - the session's face in a ring showing its background crew: one segment per
   subagent (solid, in the character's colour, or gold for a medallion) or
-  background shell (thinner and dashed), at most eight with "+N" beside the
-  ring for the rest, and a plain ring with none out;
-- a status pill, top right, with the badge, label and age, the reason on an
-  ended or error card, and the count of background work on a working one
-  ("working · 3 in background");
+  background shell (thinner and dashed), with a gap at 12 o'clock even for
+  one, at most eight with "+N" beside the ring for the rest, and a plain ring
+  with none out;
+- a status pill, top right, with the badge, label and age, and the reason on
+  an ended or error card;
 - under where it works, what is out ("2 agents, 1 shell") and, once the turn
-  has ended, "prompt free": the session takes a new prompt while that work
-  runs;
+  has ended with that work still running, "prompt free": the session takes a
+  new prompt meanwhile;
 - the session's name, where it works now (repo, worktree, branch chip) and the
   other repos it touched;
 - for a session that needs you, a line saying what it waits for;

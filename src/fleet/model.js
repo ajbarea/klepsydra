@@ -238,7 +238,7 @@ const point = (deg) => {
   const f = (v) => Number(v.toFixed(2));
   return `${f(RING.cx + RING.r * Math.cos(rad))} ${f(RING.cy + RING.r * Math.sin(rad))}`;
 };
-const arcTo = (to, large) => `A ${RING.r} ${RING.r} 0 ${large ? 1 : 0} 1 ${point(to)}`;
+const arc = (from, to) => `M ${point(from)} A ${RING.r} ${RING.r} 0 ${to - from > 180 ? 1 : 0} 1 ${point(to)}`;
 
 /**
  * The ring's segments, each {kind, d}, and how many more are out than drawn.
@@ -251,12 +251,10 @@ export function crewRing(crew) {
   const kinds = [...Array(agents).fill("agent"), ...Array(shells).fill("shell")];
   const n = kinds.length;
   const step = 360 / Math.max(n, 1);
-  const gap = n > 1 ? RING.gapDeg : 0;
+  // Every count keeps its gaps, a lone item too, so a segment never reads as a closed ring.
   const segments = kinds.map((kind, i) => {
-    const from = -90 + i * step + gap / 2;
-    // One segment is the whole ring, drawn as two halves (an arc cannot close on itself).
-    const d = n === 1 ? `M ${point(-90)} ${arcTo(90, false)} ${arcTo(270, false)}` : `M ${point(from)} ${arcTo(from + step - gap, false)}`;
-    return { kind, d };
+    const from = -90 + i * step + RING.gapDeg / 2;
+    return { kind, d: arc(from, from + step - RING.gapDeg) };
   });
   return { segments, more: total - n };
 }
@@ -324,20 +322,21 @@ export function card(s, cast, nowMs) {
   const who = identity(s, cast);
   const st = statusOf(s.status, isQuiet(s));
   const crew = crewOf(s);
-  const out = crew.agents + crew.shells;
-  const label = PILL_REASON.has(s.status) && s.reason ? `${st.label} \u00b7 ${s.reason}`
-    : s.status === "working" && out ? `${st.label} \u00b7 ${out} in background` : st.label;
   return {
     id: s.session_id,
     task: s.name || "No session name yet",
     tone: st.tone,
-    pill: { label, age: statusParts(s, nowMs).at(-1) },
+    pill: {
+      label: PILL_REASON.has(s.status) && s.reason ? `${st.label} \u00b7 ${s.reason}` : st.label,
+      age: statusParts(s, nowMs).at(-1),
+    },
     ask: s.status === "needs_you" ? askText(s.reason) : null,
     ring: crewRing(crew),
     // An agent's segment wears the character's colour; a medallion's, the wall's gold.
     ringColor: who.accent,
     crew: crewText(crew),
-    promptFree: reasonText(s) === PROMPT_FREE && out > 0,
+    // Only once Stop fired with work out (the hook's reason "background"), never mid-turn.
+    promptFree: reasonText(s) === PROMPT_FREE && crew.agents + crew.shells > 0,
     dim: DIM.has(s.status),
     place: s.where ? { repo: s.where.repo, worktree: s.where.worktree ?? null, branch: s.where.branch ?? null } : null,
     also: [...new Set((s.touched ?? []).map((t) => t.repo))].filter((r) => r && r !== s.where?.repo).map((r) => `also in ${r}`),
