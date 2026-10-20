@@ -13,9 +13,10 @@ when keryx was off.
   named from the cwd as keryx's `source_name` does, now including a `.git`
   file saved with CRLF.
 - ✅ `src-tauri/fleet`: `SessionFile` reads `started_at` and `voice_from`;
-  `snapshot` shows a shared voice's face by claim: live before ended or
-  silent, then hold before home, then the earlier start, then the lower
-  session id; the others fall back, except a live hold.
+  `snapshot` shows a shared voice's face by claim: not ended before ended,
+  then hold before home, then the earlier start, then the lower session id;
+  the others fall back, except a hold that has not ended. Silence never
+  counts, so a face changes at most once (spec addendum, "Shared voices").
 - ✅ README (faces), the spec's addendum (the ruling), ROADMAP.
 
 ## Verified, not inferred
@@ -23,12 +24,13 @@ when keryx was off.
   second, a hold beside a home, hold then home, home then hold, home then
   home, another repo, a file from before `voice_from`, a CRLF `.git` file
   named as keryx names it).
-- ✅ Fleet crate 80 (8 new, among them `/clear` with an ended predecessor and
-  a silent hold beside a live home) with clippy clean; node 119.
+- ✅ Fleet crate 81 (9 new, among them `/clear` with an ended predecessor and
+  silence never moving a face) with clippy clean; node 119.
 - ✅ Independent review, round 1: two bugs (ended or silent sessions out-
   claimed live ones; a home replaced a home, so a face followed the cwd), a
   wrong window (14 days, where keryx forgets at 90) and a CRLF parity gap,
-  all fixed here.
+  all fixed here. Round 2: dropping silent sessions let a face flip with
+  status, against the spec; now only ending counts, and the spec says so.
 - ✅ Live (hook only, keryx muted): a new session in `ajsoftworks` got
   `am_michael` from its home and showed Hephaestus. A done session held the
   same voice, so the installed reader showed two; the new reader drops the

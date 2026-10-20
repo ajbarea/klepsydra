@@ -170,14 +170,15 @@ pub fn view(entry: &Entry, now: i64) -> Option<View> {
     })
 }
 
-/// A face follows a voice, so sessions sharing one keep it by claim: a live
-/// session before an ended or silent one, then a hold before a repo's home
+/// A face follows a voice, so sessions sharing one keep it by claim: a session
+/// that has not ended before one that has, then a hold before a repo's home
 /// voice, then the earlier start, then the lower session id. The keeper shows
-/// the face; the others show their fallback face, except a live hold, since
-/// two live holds of one voice are keryx's own choice once every voice is in
-/// use.
+/// the face; the others show their fallback face, except a hold that has not
+/// ended, since two holds of one voice are keryx's own choice once every voice
+/// is in use. Only ending counts, never silence, so a face changes with its
+/// session's status at most once and never flips back.
 fn keep_faces_distinct(shown: &mut [(&SessionFile, View)]) {
-    let live = |v: &View| !matches!(v.status, Status::Ended | Status::Silent);
+    let live = |v: &View| v.status != Status::Ended;
     let held = |f: &SessionFile| f.voice_from.as_deref() != Some("home");
     let claim = |f: &SessionFile, v: &View| {
         (
@@ -676,24 +677,41 @@ mod tests {
     }
 
     #[test]
-    fn a_live_home_beats_a_silent_hold_which_shows_its_fallback() {
+    fn silence_never_moves_a_face() {
+        // The first started keeps the face whether it is live or silent, so a
+        // session missing beats does not swap faces back and forth.
+        for quiet in [false, true] {
+            let first = if quiet {
+                gone("a", NOW - 900, "bf_emma", "home", false)
+            } else {
+                voiced("a", NOW - 900, "bf_emma", "home")
+            };
+            let s = snapshot(&[first, voiced("b", NOW - 30, "bf_emma", "home")], NOW);
+            let a = s.sessions.iter().find(|v| v.session_id == "a").unwrap();
+            assert_eq!(
+                a.status,
+                if quiet {
+                    Status::Silent
+                } else {
+                    Status::Working
+                }
+            );
+            assert_eq!(voice_of(&s, "a"), Some("bf_emma"), "silent: {quiet}");
+            assert_eq!(voice_of(&s, "b"), None, "silent: {quiet}");
+        }
+    }
+
+    #[test]
+    fn a_silent_hold_keeps_its_face_beside_a_live_hold() {
         let s = snapshot(
             &[
-                gone("dead", NOW - 9000, "bf_emma", "hold", false),
-                voiced("live", NOW - 30, "bf_emma", "home"),
+                gone("quiet", NOW - 900, "am_michael", "hold", false),
+                voiced("busy", NOW - 30, "am_michael", "hold"),
             ],
             NOW,
         );
-        assert_eq!(
-            s.sessions
-                .iter()
-                .find(|v| v.session_id == "dead")
-                .unwrap()
-                .status,
-            Status::Silent
-        );
-        assert_eq!(voice_of(&s, "live"), Some("bf_emma"));
-        assert_eq!(voice_of(&s, "dead"), None);
+        assert_eq!(voice_of(&s, "quiet"), Some("am_michael"));
+        assert_eq!(voice_of(&s, "busy"), Some("am_michael"));
     }
 
     #[test]

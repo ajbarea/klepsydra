@@ -70,6 +70,7 @@ git_where() { # path
       if [[ -f $gitdir/commondir ]]; then
         common=""
         { IFS= read -r common <"$gitdir/commondir"; } 2>/dev/null
+        common=${common#"${common%%[![:space:]]*}"}
         common=${common%"${common##*[![:space:]]}"}
         [[ $common == /* ]] || common=$gitdir/$common
         if main=$(cd "$common" 2>/dev/null && pwd -P); then
