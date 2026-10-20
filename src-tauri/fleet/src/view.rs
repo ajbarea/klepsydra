@@ -5,6 +5,7 @@ use std::collections::HashMap;
 
 use serde::Serialize;
 
+use crate::ledger::{Receiver, Totals};
 use crate::session::{Claude, Kind, Place, Said, SessionFile, State, Tmux, Touched};
 use crate::speaking::Speaking;
 
@@ -89,6 +90,10 @@ pub struct View {
     /// The background work still counted: none once the session stopped
     /// working, and none for entries stale past `BACKGROUND_STALE_AFTER`.
     pub background: Crew,
+    /// What the session's telemetry adds up to, when the receiver has heard
+    /// from it; left out of the JSON otherwise.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ledger: Option<Totals>,
     #[serde(skip)]
     pub marks: Marks,
 }
@@ -117,6 +122,10 @@ pub struct Snapshot {
     /// The line keryx is playing and whose card it belongs to; none while
     /// nothing is.
     pub speaking: Option<Speaking>,
+    /// Whether the OTLP receiver is listening, once it has tried; left out
+    /// of the JSON before then.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub receiver: Option<Receiver>,
 }
 
 /// What to show for one session at `now`, or None once it has ended long enough ago.
@@ -245,6 +254,7 @@ pub fn view(entry: &Entry, now: i64) -> Option<View> {
         } else {
             Crew::default()
         },
+        ledger: None,
         marks: Marks {
             state_at: f.state_at,
             turns: f.counted_turns(),
@@ -318,6 +328,7 @@ pub fn snapshot(entries: &[Entry], now: i64) -> Snapshot {
     Snapshot {
         sessions,
         speaking: None,
+        receiver: None,
     }
 }
 

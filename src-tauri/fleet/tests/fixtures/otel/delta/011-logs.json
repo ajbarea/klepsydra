@@ -1,0 +1,1933 @@
+{
+ "resourceLogs": [
+  {
+   "resource": {
+    "attributes": [
+     {
+      "key": "host.arch",
+      "value": {
+       "stringValue": "amd64"
+      }
+     },
+     {
+      "key": "os.type",
+      "value": {
+       "stringValue": "linux"
+      }
+     },
+     {
+      "key": "os.version",
+      "value": {
+       "stringValue": "6.18.54.1-microsoft-standard-WSL2"
+      }
+     },
+     {
+      "key": "service.name",
+      "value": {
+       "stringValue": "claude-code"
+      }
+     },
+     {
+      "key": "service.version",
+      "value": {
+       "stringValue": "2.1.301"
+      }
+     },
+     {
+      "key": "wsl.version",
+      "value": {
+       "stringValue": "2"
+      }
+     }
+    ],
+    "droppedAttributesCount": 0
+   },
+   "scopeLogs": [
+    {
+     "scope": {
+      "name": "com.anthropic.claude_code.events",
+      "version": "2.1.301"
+     },
+     "logRecords": [
+      {
+       "timeUnixNano": "1792535745554000000",
+       "observedTimeUnixNano": "1792535745554000000",
+       "body": {
+        "stringValue": "claude_code.api_request"
+       },
+       "attributes": [
+        {
+         "key": "user.id",
+         "value": {
+          "stringValue": "0000000000000000000000000000000000000000000000000000000000000000"
+         }
+        },
+        {
+         "key": "session.id",
+         "value": {
+          "stringValue": "4ce1be96-f12f-4c66-87eb-4ab36e451dc5"
+         }
+        },
+        {
+         "key": "organization.id",
+         "value": {
+          "stringValue": "00000000-0000-4000-8000-000000000002"
+         }
+        },
+        {
+         "key": "user.email",
+         "value": {
+          "stringValue": "user@example.invalid"
+         }
+        },
+        {
+         "key": "user.account_uuid",
+         "value": {
+          "stringValue": "00000000-0000-4000-8000-000000000001"
+         }
+        },
+        {
+         "key": "user.account_id",
+         "value": {
+          "stringValue": "user_00000000000000000000000000"
+         }
+        },
+        {
+         "key": "terminal.type",
+         "value": {
+          "stringValue": "windows-terminal"
+         }
+        },
+        {
+         "key": "event.name",
+         "value": {
+          "stringValue": "api_request"
+         }
+        },
+        {
+         "key": "event.timestamp",
+         "value": {
+          "stringValue": "2026-10-20T22:35:45.554Z"
+         }
+        },
+        {
+         "key": "event.sequence",
+         "value": {
+          "intValue": 83
+         }
+        },
+        {
+         "key": "prompt.id",
+         "value": {
+          "stringValue": "9d8e2304-1f8a-4ec7-926c-8d0fd5ea1f7f"
+         }
+        },
+        {
+         "key": "model",
+         "value": {
+          "stringValue": "claude-haiku-5-5"
+         }
+        },
+        {
+         "key": "input_tokens",
+         "value": {
+          "intValue": 2
+         }
+        },
+        {
+         "key": "output_tokens",
+         "value": {
+          "intValue": 131
+         }
+        },
+        {
+         "key": "cache_read_tokens",
+         "value": {
+          "intValue": 50684
+         }
+        },
+        {
+         "key": "cache_creation_tokens",
+         "value": {
+          "intValue": 263
+         }
+        },
+        {
+         "key": "cache_creation_5m_tokens",
+         "value": {
+          "intValue": 0
+         }
+        },
+        {
+         "key": "cache_creation_1h_tokens",
+         "value": {
+          "intValue": 263
+         }
+        },
+        {
+         "key": "cost_usd",
+         "value": {
+          "doubleValue": 0.00062514
+         }
+        },
+        {
+         "key": "cost_usd_micros",
+         "value": {
+          "intValue": 625
+         }
+        },
+        {
+         "key": "duration_ms",
+         "value": {
+          "intValue": 3863
+         }
+        },
+        {
+         "key": "ttft_ms",
+         "value": {
+          "intValue": 3386
+         }
+        },
+        {
+         "key": "request_id",
+         "value": {
+          "stringValue": "req_011CgEHdZqTXRoVqHVVMuxZc"
+         }
+        },
+        {
+         "key": "client_request_id",
+         "value": {
+          "stringValue": "d1ea1023-d73b-4448-abde-657b3f825892"
+         }
+        },
+        {
+         "key": "speed",
+         "value": {
+          "stringValue": "normal"
+         }
+        },
+        {
+         "key": "query_source",
+         "value": {
+          "stringValue": "sdk"
+         }
+        },
+        {
+         "key": "effort",
+         "value": {
+          "stringValue": "medium"
+         }
+        }
+       ],
+       "droppedAttributesCount": 0
+      },
+      {
+       "timeUnixNano": "1792535745554000000",
+       "observedTimeUnixNano": "1792535745554000000",
+       "body": {
+        "stringValue": "claude_code.assistant_response"
+       },
+       "attributes": [
+        {
+         "key": "user.id",
+         "value": {
+          "stringValue": "0000000000000000000000000000000000000000000000000000000000000000"
+         }
+        },
+        {
+         "key": "session.id",
+         "value": {
+          "stringValue": "4ce1be96-f12f-4c66-87eb-4ab36e451dc5"
+         }
+        },
+        {
+         "key": "organization.id",
+         "value": {
+          "stringValue": "00000000-0000-4000-8000-000000000002"
+         }
+        },
+        {
+         "key": "user.email",
+         "value": {
+          "stringValue": "user@example.invalid"
+         }
+        },
+        {
+         "key": "user.account_uuid",
+         "value": {
+          "stringValue": "00000000-0000-4000-8000-000000000001"
+         }
+        },
+        {
+         "key": "user.account_id",
+         "value": {
+          "stringValue": "user_00000000000000000000000000"
+         }
+        },
+        {
+         "key": "terminal.type",
+         "value": {
+          "stringValue": "windows-terminal"
+         }
+        },
+        {
+         "key": "event.name",
+         "value": {
+          "stringValue": "assistant_response"
+         }
+        },
+        {
+         "key": "event.timestamp",
+         "value": {
+          "stringValue": "2026-10-20T22:35:45.554Z"
+         }
+        },
+        {
+         "key": "event.sequence",
+         "value": {
+          "intValue": 84
+         }
+        },
+        {
+         "key": "prompt.id",
+         "value": {
+          "stringValue": "9d8e2304-1f8a-4ec7-926c-8d0fd5ea1f7f"
+         }
+        },
+        {
+         "key": "response_length",
+         "value": {
+          "intValue": 302
+         }
+        },
+        {
+         "key": "response",
+         "value": {
+          "stringValue": "<REDACTED>"
+         }
+        },
+        {
+         "key": "request_id",
+         "value": {
+          "stringValue": "req_011CgEHdZqTXRoVqHVVMuxZc"
+         }
+        },
+        {
+         "key": "message.uuid",
+         "value": {
+          "stringValue": "94f7fa6d-a68b-4571-be9c-8f65a1e96c2c"
+         }
+        },
+        {
+         "key": "model",
+         "value": {
+          "stringValue": "claude-haiku-5-5"
+         }
+        },
+        {
+         "key": "query_source",
+         "value": {
+          "stringValue": "sdk"
+         }
+        }
+       ],
+       "droppedAttributesCount": 0
+      },
+      {
+       "timeUnixNano": "1792535745560000000",
+       "observedTimeUnixNano": "1792535745560000000",
+       "body": {
+        "stringValue": "claude_code.hook_execution_start"
+       },
+       "attributes": [
+        {
+         "key": "user.id",
+         "value": {
+          "stringValue": "0000000000000000000000000000000000000000000000000000000000000000"
+         }
+        },
+        {
+         "key": "session.id",
+         "value": {
+          "stringValue": "4ce1be96-f12f-4c66-87eb-4ab36e451dc5"
+         }
+        },
+        {
+         "key": "organization.id",
+         "value": {
+          "stringValue": "00000000-0000-4000-8000-000000000002"
+         }
+        },
+        {
+         "key": "user.email",
+         "value": {
+          "stringValue": "user@example.invalid"
+         }
+        },
+        {
+         "key": "user.account_uuid",
+         "value": {
+          "stringValue": "00000000-0000-4000-8000-000000000001"
+         }
+        },
+        {
+         "key": "user.account_id",
+         "value": {
+          "stringValue": "user_00000000000000000000000000"
+         }
+        },
+        {
+         "key": "terminal.type",
+         "value": {
+          "stringValue": "windows-terminal"
+         }
+        },
+        {
+         "key": "event.name",
+         "value": {
+          "stringValue": "hook_execution_start"
+         }
+        },
+        {
+         "key": "event.timestamp",
+         "value": {
+          "stringValue": "2026-10-20T22:35:45.560Z"
+         }
+        },
+        {
+         "key": "event.sequence",
+         "value": {
+          "intValue": 85
+         }
+        },
+        {
+         "key": "prompt.id",
+         "value": {
+          "stringValue": "9d8e2304-1f8a-4ec7-926c-8d0fd5ea1f7f"
+         }
+        },
+        {
+         "key": "hook_event",
+         "value": {
+          "stringValue": "Stop"
+         }
+        },
+        {
+         "key": "hook_name",
+         "value": {
+          "stringValue": "Stop"
+         }
+        },
+        {
+         "key": "num_hooks",
+         "value": {
+          "stringValue": "3"
+         }
+        },
+        {
+         "key": "managed_only",
+         "value": {
+          "stringValue": "false"
+         }
+        },
+        {
+         "key": "hook_source",
+         "value": {
+          "stringValue": "merged"
+         }
+        },
+        {
+         "key": "safe_mode",
+         "value": {
+          "stringValue": "false"
+         }
+        }
+       ],
+       "droppedAttributesCount": 0
+      },
+      {
+       "timeUnixNano": "1792535745648000000",
+       "observedTimeUnixNano": "1792535745648000000",
+       "body": {
+        "stringValue": "claude_code.hook_execution_complete"
+       },
+       "attributes": [
+        {
+         "key": "user.id",
+         "value": {
+          "stringValue": "0000000000000000000000000000000000000000000000000000000000000000"
+         }
+        },
+        {
+         "key": "session.id",
+         "value": {
+          "stringValue": "4ce1be96-f12f-4c66-87eb-4ab36e451dc5"
+         }
+        },
+        {
+         "key": "organization.id",
+         "value": {
+          "stringValue": "00000000-0000-4000-8000-000000000002"
+         }
+        },
+        {
+         "key": "user.email",
+         "value": {
+          "stringValue": "user@example.invalid"
+         }
+        },
+        {
+         "key": "user.account_uuid",
+         "value": {
+          "stringValue": "00000000-0000-4000-8000-000000000001"
+         }
+        },
+        {
+         "key": "user.account_id",
+         "value": {
+          "stringValue": "user_00000000000000000000000000"
+         }
+        },
+        {
+         "key": "terminal.type",
+         "value": {
+          "stringValue": "windows-terminal"
+         }
+        },
+        {
+         "key": "event.name",
+         "value": {
+          "stringValue": "hook_execution_complete"
+         }
+        },
+        {
+         "key": "event.timestamp",
+         "value": {
+          "stringValue": "2026-10-20T22:35:45.648Z"
+         }
+        },
+        {
+         "key": "event.sequence",
+         "value": {
+          "intValue": 86
+         }
+        },
+        {
+         "key": "prompt.id",
+         "value": {
+          "stringValue": "9d8e2304-1f8a-4ec7-926c-8d0fd5ea1f7f"
+         }
+        },
+        {
+         "key": "hook_event",
+         "value": {
+          "stringValue": "Stop"
+         }
+        },
+        {
+         "key": "hook_name",
+         "value": {
+          "stringValue": "Stop"
+         }
+        },
+        {
+         "key": "num_hooks",
+         "value": {
+          "stringValue": "3"
+         }
+        },
+        {
+         "key": "num_success",
+         "value": {
+          "stringValue": "3"
+         }
+        },
+        {
+         "key": "num_blocking",
+         "value": {
+          "stringValue": "0"
+         }
+        },
+        {
+         "key": "num_non_blocking_error",
+         "value": {
+          "stringValue": "0"
+         }
+        },
+        {
+         "key": "num_cancelled",
+         "value": {
+          "stringValue": "0"
+         }
+        },
+        {
+         "key": "total_duration_ms",
+         "value": {
+          "stringValue": "85"
+         }
+        },
+        {
+         "key": "stdout_chars",
+         "value": {
+          "stringValue": "0"
+         }
+        },
+        {
+         "key": "additional_context_chars",
+         "value": {
+          "stringValue": "0"
+         }
+        },
+        {
+         "key": "system_message_chars",
+         "value": {
+          "stringValue": "0"
+         }
+        },
+        {
+         "key": "initial_user_message_chars",
+         "value": {
+          "stringValue": "0"
+         }
+        },
+        {
+         "key": "num_outputs_persisted",
+         "value": {
+          "stringValue": "0"
+         }
+        },
+        {
+         "key": "managed_only",
+         "value": {
+          "stringValue": "false"
+         }
+        },
+        {
+         "key": "hook_source",
+         "value": {
+          "stringValue": "merged"
+         }
+        },
+        {
+         "key": "safe_mode",
+         "value": {
+          "stringValue": "false"
+         }
+        }
+       ],
+       "droppedAttributesCount": 0
+      },
+      {
+       "timeUnixNano": "1792535745680000000",
+       "observedTimeUnixNano": "1792535745680000000",
+       "body": {
+        "stringValue": "claude_code.mcp_server_connection"
+       },
+       "attributes": [
+        {
+         "key": "user.id",
+         "value": {
+          "stringValue": "0000000000000000000000000000000000000000000000000000000000000000"
+         }
+        },
+        {
+         "key": "session.id",
+         "value": {
+          "stringValue": "4ce1be96-f12f-4c66-87eb-4ab36e451dc5"
+         }
+        },
+        {
+         "key": "organization.id",
+         "value": {
+          "stringValue": "00000000-0000-4000-8000-000000000002"
+         }
+        },
+        {
+         "key": "user.email",
+         "value": {
+          "stringValue": "user@example.invalid"
+         }
+        },
+        {
+         "key": "user.account_uuid",
+         "value": {
+          "stringValue": "00000000-0000-4000-8000-000000000001"
+         }
+        },
+        {
+         "key": "user.account_id",
+         "value": {
+          "stringValue": "user_00000000000000000000000000"
+         }
+        },
+        {
+         "key": "terminal.type",
+         "value": {
+          "stringValue": "windows-terminal"
+         }
+        },
+        {
+         "key": "event.name",
+         "value": {
+          "stringValue": "mcp_server_connection"
+         }
+        },
+        {
+         "key": "event.timestamp",
+         "value": {
+          "stringValue": "2026-10-20T22:35:45.680Z"
+         }
+        },
+        {
+         "key": "event.sequence",
+         "value": {
+          "intValue": 87
+         }
+        },
+        {
+         "key": "prompt.id",
+         "value": {
+          "stringValue": "9d8e2304-1f8a-4ec7-926c-8d0fd5ea1f7f"
+         }
+        },
+        {
+         "key": "status",
+         "value": {
+          "stringValue": "disconnected"
+         }
+        },
+        {
+         "key": "transport_type",
+         "value": {
+          "stringValue": "http"
+         }
+        },
+        {
+         "key": "server_scope",
+         "value": {
+          "stringValue": "dynamic"
+         }
+        },
+        {
+         "key": "duration_ms",
+         "value": {
+          "stringValue": "18984"
+         }
+        },
+        {
+         "key": "is_plugin",
+         "value": {
+          "boolValue": true
+         }
+        },
+        {
+         "key": "plugin_id_hash",
+         "value": {
+          "stringValue": "9ee534ccaa90b18c"
+         }
+        },
+        {
+         "key": "plugin.name",
+         "value": {
+          "stringValue": "context7"
+         }
+        }
+       ],
+       "droppedAttributesCount": 0
+      },
+      {
+       "timeUnixNano": "1792535745688000000",
+       "observedTimeUnixNano": "1792535745688000000",
+       "body": {
+        "stringValue": "claude_code.mcp_server_connection"
+       },
+       "attributes": [
+        {
+         "key": "user.id",
+         "value": {
+          "stringValue": "0000000000000000000000000000000000000000000000000000000000000000"
+         }
+        },
+        {
+         "key": "session.id",
+         "value": {
+          "stringValue": "4ce1be96-f12f-4c66-87eb-4ab36e451dc5"
+         }
+        },
+        {
+         "key": "organization.id",
+         "value": {
+          "stringValue": "00000000-0000-4000-8000-000000000002"
+         }
+        },
+        {
+         "key": "user.email",
+         "value": {
+          "stringValue": "user@example.invalid"
+         }
+        },
+        {
+         "key": "user.account_uuid",
+         "value": {
+          "stringValue": "00000000-0000-4000-8000-000000000001"
+         }
+        },
+        {
+         "key": "user.account_id",
+         "value": {
+          "stringValue": "user_00000000000000000000000000"
+         }
+        },
+        {
+         "key": "terminal.type",
+         "value": {
+          "stringValue": "windows-terminal"
+         }
+        },
+        {
+         "key": "event.name",
+         "value": {
+          "stringValue": "mcp_server_connection"
+         }
+        },
+        {
+         "key": "event.timestamp",
+         "value": {
+          "stringValue": "2026-10-20T22:35:45.688Z"
+         }
+        },
+        {
+         "key": "event.sequence",
+         "value": {
+          "intValue": 88
+         }
+        },
+        {
+         "key": "prompt.id",
+         "value": {
+          "stringValue": "9d8e2304-1f8a-4ec7-926c-8d0fd5ea1f7f"
+         }
+        },
+        {
+         "key": "status",
+         "value": {
+          "stringValue": "disconnected"
+         }
+        },
+        {
+         "key": "transport_type",
+         "value": {
+          "stringValue": "claudeai-proxy"
+         }
+        },
+        {
+         "key": "server_scope",
+         "value": {
+          "stringValue": "claudeai"
+         }
+        },
+        {
+         "key": "duration_ms",
+         "value": {
+          "stringValue": "18891"
+         }
+        },
+        {
+         "key": "is_plugin",
+         "value": {
+          "boolValue": false
+         }
+        }
+       ],
+       "droppedAttributesCount": 0
+      },
+      {
+       "timeUnixNano": "1792535745689000000",
+       "observedTimeUnixNano": "1792535745689000000",
+       "body": {
+        "stringValue": "claude_code.mcp_server_connection"
+       },
+       "attributes": [
+        {
+         "key": "user.id",
+         "value": {
+          "stringValue": "0000000000000000000000000000000000000000000000000000000000000000"
+         }
+        },
+        {
+         "key": "session.id",
+         "value": {
+          "stringValue": "4ce1be96-f12f-4c66-87eb-4ab36e451dc5"
+         }
+        },
+        {
+         "key": "organization.id",
+         "value": {
+          "stringValue": "00000000-0000-4000-8000-000000000002"
+         }
+        },
+        {
+         "key": "user.email",
+         "value": {
+          "stringValue": "user@example.invalid"
+         }
+        },
+        {
+         "key": "user.account_uuid",
+         "value": {
+          "stringValue": "00000000-0000-4000-8000-000000000001"
+         }
+        },
+        {
+         "key": "user.account_id",
+         "value": {
+          "stringValue": "user_00000000000000000000000000"
+         }
+        },
+        {
+         "key": "terminal.type",
+         "value": {
+          "stringValue": "windows-terminal"
+         }
+        },
+        {
+         "key": "event.name",
+         "value": {
+          "stringValue": "mcp_server_connection"
+         }
+        },
+        {
+         "key": "event.timestamp",
+         "value": {
+          "stringValue": "2026-10-20T22:35:45.689Z"
+         }
+        },
+        {
+         "key": "event.sequence",
+         "value": {
+          "intValue": 89
+         }
+        },
+        {
+         "key": "prompt.id",
+         "value": {
+          "stringValue": "9d8e2304-1f8a-4ec7-926c-8d0fd5ea1f7f"
+         }
+        },
+        {
+         "key": "status",
+         "value": {
+          "stringValue": "disconnected"
+         }
+        },
+        {
+         "key": "transport_type",
+         "value": {
+          "stringValue": "claudeai-proxy"
+         }
+        },
+        {
+         "key": "server_scope",
+         "value": {
+          "stringValue": "claudeai"
+         }
+        },
+        {
+         "key": "duration_ms",
+         "value": {
+          "stringValue": "18314"
+         }
+        },
+        {
+         "key": "is_plugin",
+         "value": {
+          "boolValue": false
+         }
+        }
+       ],
+       "droppedAttributesCount": 0
+      },
+      {
+       "timeUnixNano": "1792535745694000000",
+       "observedTimeUnixNano": "1792535745694000000",
+       "body": {
+        "stringValue": "claude_code.mcp_server_connection"
+       },
+       "attributes": [
+        {
+         "key": "user.id",
+         "value": {
+          "stringValue": "0000000000000000000000000000000000000000000000000000000000000000"
+         }
+        },
+        {
+         "key": "session.id",
+         "value": {
+          "stringValue": "4ce1be96-f12f-4c66-87eb-4ab36e451dc5"
+         }
+        },
+        {
+         "key": "organization.id",
+         "value": {
+          "stringValue": "00000000-0000-4000-8000-000000000002"
+         }
+        },
+        {
+         "key": "user.email",
+         "value": {
+          "stringValue": "user@example.invalid"
+         }
+        },
+        {
+         "key": "user.account_uuid",
+         "value": {
+          "stringValue": "00000000-0000-4000-8000-000000000001"
+         }
+        },
+        {
+         "key": "user.account_id",
+         "value": {
+          "stringValue": "user_00000000000000000000000000"
+         }
+        },
+        {
+         "key": "terminal.type",
+         "value": {
+          "stringValue": "windows-terminal"
+         }
+        },
+        {
+         "key": "event.name",
+         "value": {
+          "stringValue": "mcp_server_connection"
+         }
+        },
+        {
+         "key": "event.timestamp",
+         "value": {
+          "stringValue": "2026-10-20T22:35:45.694Z"
+         }
+        },
+        {
+         "key": "event.sequence",
+         "value": {
+          "intValue": 90
+         }
+        },
+        {
+         "key": "prompt.id",
+         "value": {
+          "stringValue": "9d8e2304-1f8a-4ec7-926c-8d0fd5ea1f7f"
+         }
+        },
+        {
+         "key": "status",
+         "value": {
+          "stringValue": "disconnected"
+         }
+        },
+        {
+         "key": "transport_type",
+         "value": {
+          "stringValue": "claudeai-proxy"
+         }
+        },
+        {
+         "key": "server_scope",
+         "value": {
+          "stringValue": "claudeai"
+         }
+        },
+        {
+         "key": "duration_ms",
+         "value": {
+          "stringValue": "17812"
+         }
+        },
+        {
+         "key": "is_plugin",
+         "value": {
+          "boolValue": false
+         }
+        }
+       ],
+       "droppedAttributesCount": 0
+      },
+      {
+       "timeUnixNano": "1792535745695000000",
+       "observedTimeUnixNano": "1792535745695000000",
+       "body": {
+        "stringValue": "claude_code.mcp_server_connection"
+       },
+       "attributes": [
+        {
+         "key": "user.id",
+         "value": {
+          "stringValue": "0000000000000000000000000000000000000000000000000000000000000000"
+         }
+        },
+        {
+         "key": "session.id",
+         "value": {
+          "stringValue": "4ce1be96-f12f-4c66-87eb-4ab36e451dc5"
+         }
+        },
+        {
+         "key": "organization.id",
+         "value": {
+          "stringValue": "00000000-0000-4000-8000-000000000002"
+         }
+        },
+        {
+         "key": "user.email",
+         "value": {
+          "stringValue": "user@example.invalid"
+         }
+        },
+        {
+         "key": "user.account_uuid",
+         "value": {
+          "stringValue": "00000000-0000-4000-8000-000000000001"
+         }
+        },
+        {
+         "key": "user.account_id",
+         "value": {
+          "stringValue": "user_00000000000000000000000000"
+         }
+        },
+        {
+         "key": "terminal.type",
+         "value": {
+          "stringValue": "windows-terminal"
+         }
+        },
+        {
+         "key": "event.name",
+         "value": {
+          "stringValue": "mcp_server_connection"
+         }
+        },
+        {
+         "key": "event.timestamp",
+         "value": {
+          "stringValue": "2026-10-20T22:35:45.695Z"
+         }
+        },
+        {
+         "key": "event.sequence",
+         "value": {
+          "intValue": 91
+         }
+        },
+        {
+         "key": "prompt.id",
+         "value": {
+          "stringValue": "9d8e2304-1f8a-4ec7-926c-8d0fd5ea1f7f"
+         }
+        },
+        {
+         "key": "status",
+         "value": {
+          "stringValue": "disconnected"
+         }
+        },
+        {
+         "key": "transport_type",
+         "value": {
+          "stringValue": "claudeai-proxy"
+         }
+        },
+        {
+         "key": "server_scope",
+         "value": {
+          "stringValue": "claudeai"
+         }
+        },
+        {
+         "key": "duration_ms",
+         "value": {
+          "stringValue": "18226"
+         }
+        },
+        {
+         "key": "is_plugin",
+         "value": {
+          "boolValue": false
+         }
+        }
+       ],
+       "droppedAttributesCount": 0
+      },
+      {
+       "timeUnixNano": "1792535745695000000",
+       "observedTimeUnixNano": "1792535745695000000",
+       "body": {
+        "stringValue": "claude_code.mcp_server_connection"
+       },
+       "attributes": [
+        {
+         "key": "user.id",
+         "value": {
+          "stringValue": "0000000000000000000000000000000000000000000000000000000000000000"
+         }
+        },
+        {
+         "key": "session.id",
+         "value": {
+          "stringValue": "4ce1be96-f12f-4c66-87eb-4ab36e451dc5"
+         }
+        },
+        {
+         "key": "organization.id",
+         "value": {
+          "stringValue": "00000000-0000-4000-8000-000000000002"
+         }
+        },
+        {
+         "key": "user.email",
+         "value": {
+          "stringValue": "user@example.invalid"
+         }
+        },
+        {
+         "key": "user.account_uuid",
+         "value": {
+          "stringValue": "00000000-0000-4000-8000-000000000001"
+         }
+        },
+        {
+         "key": "user.account_id",
+         "value": {
+          "stringValue": "user_00000000000000000000000000"
+         }
+        },
+        {
+         "key": "terminal.type",
+         "value": {
+          "stringValue": "windows-terminal"
+         }
+        },
+        {
+         "key": "event.name",
+         "value": {
+          "stringValue": "mcp_server_connection"
+         }
+        },
+        {
+         "key": "event.timestamp",
+         "value": {
+          "stringValue": "2026-10-20T22:35:45.695Z"
+         }
+        },
+        {
+         "key": "event.sequence",
+         "value": {
+          "intValue": 92
+         }
+        },
+        {
+         "key": "prompt.id",
+         "value": {
+          "stringValue": "9d8e2304-1f8a-4ec7-926c-8d0fd5ea1f7f"
+         }
+        },
+        {
+         "key": "status",
+         "value": {
+          "stringValue": "disconnected"
+         }
+        },
+        {
+         "key": "transport_type",
+         "value": {
+          "stringValue": "claudeai-proxy"
+         }
+        },
+        {
+         "key": "server_scope",
+         "value": {
+          "stringValue": "claudeai"
+         }
+        },
+        {
+         "key": "duration_ms",
+         "value": {
+          "stringValue": "18818"
+         }
+        },
+        {
+         "key": "is_plugin",
+         "value": {
+          "boolValue": false
+         }
+        }
+       ],
+       "droppedAttributesCount": 0
+      },
+      {
+       "timeUnixNano": "1792535745696000000",
+       "observedTimeUnixNano": "1792535745696000000",
+       "body": {
+        "stringValue": "claude_code.mcp_server_connection"
+       },
+       "attributes": [
+        {
+         "key": "user.id",
+         "value": {
+          "stringValue": "0000000000000000000000000000000000000000000000000000000000000000"
+         }
+        },
+        {
+         "key": "session.id",
+         "value": {
+          "stringValue": "4ce1be96-f12f-4c66-87eb-4ab36e451dc5"
+         }
+        },
+        {
+         "key": "organization.id",
+         "value": {
+          "stringValue": "00000000-0000-4000-8000-000000000002"
+         }
+        },
+        {
+         "key": "user.email",
+         "value": {
+          "stringValue": "user@example.invalid"
+         }
+        },
+        {
+         "key": "user.account_uuid",
+         "value": {
+          "stringValue": "00000000-0000-4000-8000-000000000001"
+         }
+        },
+        {
+         "key": "user.account_id",
+         "value": {
+          "stringValue": "user_00000000000000000000000000"
+         }
+        },
+        {
+         "key": "terminal.type",
+         "value": {
+          "stringValue": "windows-terminal"
+         }
+        },
+        {
+         "key": "event.name",
+         "value": {
+          "stringValue": "mcp_server_connection"
+         }
+        },
+        {
+         "key": "event.timestamp",
+         "value": {
+          "stringValue": "2026-10-20T22:35:45.696Z"
+         }
+        },
+        {
+         "key": "event.sequence",
+         "value": {
+          "intValue": 93
+         }
+        },
+        {
+         "key": "prompt.id",
+         "value": {
+          "stringValue": "9d8e2304-1f8a-4ec7-926c-8d0fd5ea1f7f"
+         }
+        },
+        {
+         "key": "status",
+         "value": {
+          "stringValue": "disconnected"
+         }
+        },
+        {
+         "key": "transport_type",
+         "value": {
+          "stringValue": "claudeai-proxy"
+         }
+        },
+        {
+         "key": "server_scope",
+         "value": {
+          "stringValue": "claudeai"
+         }
+        },
+        {
+         "key": "duration_ms",
+         "value": {
+          "stringValue": "18685"
+         }
+        },
+        {
+         "key": "is_plugin",
+         "value": {
+          "boolValue": false
+         }
+        }
+       ],
+       "droppedAttributesCount": 0
+      },
+      {
+       "timeUnixNano": "1792535745696000000",
+       "observedTimeUnixNano": "1792535745696000000",
+       "body": {
+        "stringValue": "claude_code.mcp_server_connection"
+       },
+       "attributes": [
+        {
+         "key": "user.id",
+         "value": {
+          "stringValue": "0000000000000000000000000000000000000000000000000000000000000000"
+         }
+        },
+        {
+         "key": "session.id",
+         "value": {
+          "stringValue": "4ce1be96-f12f-4c66-87eb-4ab36e451dc5"
+         }
+        },
+        {
+         "key": "organization.id",
+         "value": {
+          "stringValue": "00000000-0000-4000-8000-000000000002"
+         }
+        },
+        {
+         "key": "user.email",
+         "value": {
+          "stringValue": "user@example.invalid"
+         }
+        },
+        {
+         "key": "user.account_uuid",
+         "value": {
+          "stringValue": "00000000-0000-4000-8000-000000000001"
+         }
+        },
+        {
+         "key": "user.account_id",
+         "value": {
+          "stringValue": "user_00000000000000000000000000"
+         }
+        },
+        {
+         "key": "terminal.type",
+         "value": {
+          "stringValue": "windows-terminal"
+         }
+        },
+        {
+         "key": "event.name",
+         "value": {
+          "stringValue": "mcp_server_connection"
+         }
+        },
+        {
+         "key": "event.timestamp",
+         "value": {
+          "stringValue": "2026-10-20T22:35:45.696Z"
+         }
+        },
+        {
+         "key": "event.sequence",
+         "value": {
+          "intValue": 94
+         }
+        },
+        {
+         "key": "prompt.id",
+         "value": {
+          "stringValue": "9d8e2304-1f8a-4ec7-926c-8d0fd5ea1f7f"
+         }
+        },
+        {
+         "key": "status",
+         "value": {
+          "stringValue": "disconnected"
+         }
+        },
+        {
+         "key": "transport_type",
+         "value": {
+          "stringValue": "claudeai-proxy"
+         }
+        },
+        {
+         "key": "server_scope",
+         "value": {
+          "stringValue": "claudeai"
+         }
+        },
+        {
+         "key": "duration_ms",
+         "value": {
+          "stringValue": "19168"
+         }
+        },
+        {
+         "key": "is_plugin",
+         "value": {
+          "boolValue": false
+         }
+        }
+       ],
+       "droppedAttributesCount": 0
+      },
+      {
+       "timeUnixNano": "1792535745696000000",
+       "observedTimeUnixNano": "1792535745696000000",
+       "body": {
+        "stringValue": "claude_code.mcp_server_connection"
+       },
+       "attributes": [
+        {
+         "key": "user.id",
+         "value": {
+          "stringValue": "0000000000000000000000000000000000000000000000000000000000000000"
+         }
+        },
+        {
+         "key": "session.id",
+         "value": {
+          "stringValue": "4ce1be96-f12f-4c66-87eb-4ab36e451dc5"
+         }
+        },
+        {
+         "key": "organization.id",
+         "value": {
+          "stringValue": "00000000-0000-4000-8000-000000000002"
+         }
+        },
+        {
+         "key": "user.email",
+         "value": {
+          "stringValue": "user@example.invalid"
+         }
+        },
+        {
+         "key": "user.account_uuid",
+         "value": {
+          "stringValue": "00000000-0000-4000-8000-000000000001"
+         }
+        },
+        {
+         "key": "user.account_id",
+         "value": {
+          "stringValue": "user_00000000000000000000000000"
+         }
+        },
+        {
+         "key": "terminal.type",
+         "value": {
+          "stringValue": "windows-terminal"
+         }
+        },
+        {
+         "key": "event.name",
+         "value": {
+          "stringValue": "mcp_server_connection"
+         }
+        },
+        {
+         "key": "event.timestamp",
+         "value": {
+          "stringValue": "2026-10-20T22:35:45.696Z"
+         }
+        },
+        {
+         "key": "event.sequence",
+         "value": {
+          "intValue": 95
+         }
+        },
+        {
+         "key": "prompt.id",
+         "value": {
+          "stringValue": "9d8e2304-1f8a-4ec7-926c-8d0fd5ea1f7f"
+         }
+        },
+        {
+         "key": "status",
+         "value": {
+          "stringValue": "disconnected"
+         }
+        },
+        {
+         "key": "transport_type",
+         "value": {
+          "stringValue": "claudeai-proxy"
+         }
+        },
+        {
+         "key": "server_scope",
+         "value": {
+          "stringValue": "claudeai"
+         }
+        },
+        {
+         "key": "duration_ms",
+         "value": {
+          "stringValue": "19164"
+         }
+        },
+        {
+         "key": "is_plugin",
+         "value": {
+          "boolValue": false
+         }
+        }
+       ],
+       "droppedAttributesCount": 0
+      },
+      {
+       "timeUnixNano": "1792535745696000000",
+       "observedTimeUnixNano": "1792535745696000000",
+       "body": {
+        "stringValue": "claude_code.mcp_server_connection"
+       },
+       "attributes": [
+        {
+         "key": "user.id",
+         "value": {
+          "stringValue": "0000000000000000000000000000000000000000000000000000000000000000"
+         }
+        },
+        {
+         "key": "session.id",
+         "value": {
+          "stringValue": "4ce1be96-f12f-4c66-87eb-4ab36e451dc5"
+         }
+        },
+        {
+         "key": "organization.id",
+         "value": {
+          "stringValue": "00000000-0000-4000-8000-000000000002"
+         }
+        },
+        {
+         "key": "user.email",
+         "value": {
+          "stringValue": "user@example.invalid"
+         }
+        },
+        {
+         "key": "user.account_uuid",
+         "value": {
+          "stringValue": "00000000-0000-4000-8000-000000000001"
+         }
+        },
+        {
+         "key": "user.account_id",
+         "value": {
+          "stringValue": "user_00000000000000000000000000"
+         }
+        },
+        {
+         "key": "terminal.type",
+         "value": {
+          "stringValue": "windows-terminal"
+         }
+        },
+        {
+         "key": "event.name",
+         "value": {
+          "stringValue": "mcp_server_connection"
+         }
+        },
+        {
+         "key": "event.timestamp",
+         "value": {
+          "stringValue": "2026-10-20T22:35:45.696Z"
+         }
+        },
+        {
+         "key": "event.sequence",
+         "value": {
+          "intValue": 96
+         }
+        },
+        {
+         "key": "prompt.id",
+         "value": {
+          "stringValue": "9d8e2304-1f8a-4ec7-926c-8d0fd5ea1f7f"
+         }
+        },
+        {
+         "key": "status",
+         "value": {
+          "stringValue": "disconnected"
+         }
+        },
+        {
+         "key": "transport_type",
+         "value": {
+          "stringValue": "claudeai-proxy"
+         }
+        },
+        {
+         "key": "server_scope",
+         "value": {
+          "stringValue": "claudeai"
+         }
+        },
+        {
+         "key": "duration_ms",
+         "value": {
+          "stringValue": "19163"
+         }
+        },
+        {
+         "key": "is_plugin",
+         "value": {
+          "boolValue": false
+         }
+        }
+       ],
+       "droppedAttributesCount": 0
+      },
+      {
+       "timeUnixNano": "1792535745846000000",
+       "observedTimeUnixNano": "1792535745846000000",
+       "body": {
+        "stringValue": "claude_code.mcp_server_connection"
+       },
+       "attributes": [
+        {
+         "key": "user.id",
+         "value": {
+          "stringValue": "0000000000000000000000000000000000000000000000000000000000000000"
+         }
+        },
+        {
+         "key": "session.id",
+         "value": {
+          "stringValue": "4ce1be96-f12f-4c66-87eb-4ab36e451dc5"
+         }
+        },
+        {
+         "key": "organization.id",
+         "value": {
+          "stringValue": "00000000-0000-4000-8000-000000000002"
+         }
+        },
+        {
+         "key": "user.email",
+         "value": {
+          "stringValue": "user@example.invalid"
+         }
+        },
+        {
+         "key": "user.account_uuid",
+         "value": {
+          "stringValue": "00000000-0000-4000-8000-000000000001"
+         }
+        },
+        {
+         "key": "user.account_id",
+         "value": {
+          "stringValue": "user_00000000000000000000000000"
+         }
+        },
+        {
+         "key": "terminal.type",
+         "value": {
+          "stringValue": "windows-terminal"
+         }
+        },
+        {
+         "key": "event.name",
+         "value": {
+          "stringValue": "mcp_server_connection"
+         }
+        },
+        {
+         "key": "event.timestamp",
+         "value": {
+          "stringValue": "2026-10-20T22:35:45.846Z"
+         }
+        },
+        {
+         "key": "event.sequence",
+         "value": {
+          "intValue": 97
+         }
+        },
+        {
+         "key": "prompt.id",
+         "value": {
+          "stringValue": "9d8e2304-1f8a-4ec7-926c-8d0fd5ea1f7f"
+         }
+        },
+        {
+         "key": "status",
+         "value": {
+          "stringValue": "disconnected"
+         }
+        },
+        {
+         "key": "transport_type",
+         "value": {
+          "stringValue": "stdio"
+         }
+        },
+        {
+         "key": "server_scope",
+         "value": {
+          "stringValue": "dynamic"
+         }
+        },
+        {
+         "key": "duration_ms",
+         "value": {
+          "stringValue": "13824"
+         }
+        },
+        {
+         "key": "is_plugin",
+         "value": {
+          "boolValue": true
+         }
+        },
+        {
+         "key": "plugin_id_hash",
+         "value": {
+          "stringValue": "160500767c297863"
+         }
+        },
+        {
+         "key": "plugin.name",
+         "value": {
+          "stringValue": "chrome-devtools-mcp"
+         }
+        }
+       ],
+       "droppedAttributesCount": 0
+      },
+      {
+       "timeUnixNano": "1792535745930000000",
+       "observedTimeUnixNano": "1792535745930000000",
+       "body": {
+        "stringValue": "claude_code.mcp_server_connection"
+       },
+       "attributes": [
+        {
+         "key": "user.id",
+         "value": {
+          "stringValue": "0000000000000000000000000000000000000000000000000000000000000000"
+         }
+        },
+        {
+         "key": "session.id",
+         "value": {
+          "stringValue": "4ce1be96-f12f-4c66-87eb-4ab36e451dc5"
+         }
+        },
+        {
+         "key": "organization.id",
+         "value": {
+          "stringValue": "00000000-0000-4000-8000-000000000002"
+         }
+        },
+        {
+         "key": "user.email",
+         "value": {
+          "stringValue": "user@example.invalid"
+         }
+        },
+        {
+         "key": "user.account_uuid",
+         "value": {
+          "stringValue": "00000000-0000-4000-8000-000000000001"
+         }
+        },
+        {
+         "key": "user.account_id",
+         "value": {
+          "stringValue": "user_00000000000000000000000000"
+         }
+        },
+        {
+         "key": "terminal.type",
+         "value": {
+          "stringValue": "windows-terminal"
+         }
+        },
+        {
+         "key": "event.name",
+         "value": {
+          "stringValue": "mcp_server_connection"
+         }
+        },
+        {
+         "key": "event.timestamp",
+         "value": {
+          "stringValue": "2026-10-20T22:35:45.930Z"
+         }
+        },
+        {
+         "key": "event.sequence",
+         "value": {
+          "intValue": 98
+         }
+        },
+        {
+         "key": "prompt.id",
+         "value": {
+          "stringValue": "9d8e2304-1f8a-4ec7-926c-8d0fd5ea1f7f"
+         }
+        },
+        {
+         "key": "status",
+         "value": {
+          "stringValue": "disconnected"
+         }
+        },
+        {
+         "key": "transport_type",
+         "value": {
+          "stringValue": "stdio"
+         }
+        },
+        {
+         "key": "server_scope",
+         "value": {
+          "stringValue": "dynamic"
+         }
+        },
+        {
+         "key": "duration_ms",
+         "value": {
+          "stringValue": "15458"
+         }
+        },
+        {
+         "key": "is_plugin",
+         "value": {
+          "boolValue": true
+         }
+        },
+        {
+         "key": "plugin_id_hash",
+         "value": {
+          "stringValue": "508cb4da0c0e882b"
+         }
+        },
+        {
+         "key": "plugin.name",
+         "value": {
+          "stringValue": "third-party"
+         }
+        }
+       ],
+       "droppedAttributesCount": 0
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}

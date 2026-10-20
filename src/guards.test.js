@@ -22,7 +22,11 @@ export function filesUnder(dir, exts, root = ROOT) {
 const read = (f) => readFileSync(join(ROOT, f), "utf8");
 const stripCssComments = (css) => css.replace(/\/\*[\s\S]*?\*\//g, "");
 
-const RUST = [...filesUnder("src-tauri/src", [".rs"]), ...filesUnder("src-tauri/fleet/src", [".rs"])];
+const RUST = [
+  ...filesUnder("src-tauri/src", [".rs"]),
+  ...filesUnder("src-tauri/fleet/src", [".rs"]),
+  ...filesUnder("src-tauri/fleet/examples", [".rs"]),
+];
 const FRONTEND = filesUnder("src", [".js", ".mjs", ".html"]).filter((f) => !f.endsWith(".test.js"));
 const CSS = filesUnder("src", [".css"]);
 const SHELL = [...filesUnder("hooks", [".sh", ".conf"]), ...filesUnder("statusline", [".sh"])];
@@ -415,6 +419,7 @@ test("the hooks make no sound", () => {
 const NOT_SCANNED = {
   "hooks/fixtures/": "recorded hook payloads, data",
   "statusline/fixtures/": "recorded status line payloads, data",
+  "src-tauri/fleet/tests/fixtures/": "recorded OTLP exports, data",
   "src/fleet/faces/": "generated portraits and their license table, data",
   "src/fleet/cast.json": "voice to portrait table, data",
   "src-tauri/fleet/Cargo.toml": "scanned as a manifest",

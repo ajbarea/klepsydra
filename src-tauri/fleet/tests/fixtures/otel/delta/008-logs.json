@@ -1,0 +1,1701 @@
+{
+ "resourceLogs": [
+  {
+   "resource": {
+    "attributes": [
+     {
+      "key": "host.arch",
+      "value": {
+       "stringValue": "amd64"
+      }
+     },
+     {
+      "key": "os.type",
+      "value": {
+       "stringValue": "linux"
+      }
+     },
+     {
+      "key": "os.version",
+      "value": {
+       "stringValue": "6.18.54.1-microsoft-standard-WSL2"
+      }
+     },
+     {
+      "key": "service.name",
+      "value": {
+       "stringValue": "claude-code"
+      }
+     },
+     {
+      "key": "service.version",
+      "value": {
+       "stringValue": "2.1.301"
+      }
+     },
+     {
+      "key": "wsl.version",
+      "value": {
+       "stringValue": "2"
+      }
+     }
+    ],
+    "droppedAttributesCount": 0
+   },
+   "scopeLogs": [
+    {
+     "scope": {
+      "name": "com.anthropic.claude_code.events",
+      "version": "2.1.301"
+     },
+     "logRecords": [
+      {
+       "timeUnixNano": "1792535735458000000",
+       "observedTimeUnixNano": "1792535735458000000",
+       "body": {
+        "stringValue": "claude_code.api_request"
+       },
+       "attributes": [
+        {
+         "key": "user.id",
+         "value": {
+          "stringValue": "0000000000000000000000000000000000000000000000000000000000000000"
+         }
+        },
+        {
+         "key": "session.id",
+         "value": {
+          "stringValue": "4ce1be96-f12f-4c66-87eb-4ab36e451dc5"
+         }
+        },
+        {
+         "key": "organization.id",
+         "value": {
+          "stringValue": "00000000-0000-4000-8000-000000000002"
+         }
+        },
+        {
+         "key": "user.email",
+         "value": {
+          "stringValue": "user@example.invalid"
+         }
+        },
+        {
+         "key": "user.account_uuid",
+         "value": {
+          "stringValue": "00000000-0000-4000-8000-000000000001"
+         }
+        },
+        {
+         "key": "user.account_id",
+         "value": {
+          "stringValue": "user_00000000000000000000000000"
+         }
+        },
+        {
+         "key": "terminal.type",
+         "value": {
+          "stringValue": "windows-terminal"
+         }
+        },
+        {
+         "key": "event.name",
+         "value": {
+          "stringValue": "api_request"
+         }
+        },
+        {
+         "key": "event.timestamp",
+         "value": {
+          "stringValue": "2026-10-20T22:35:35.458Z"
+         }
+        },
+        {
+         "key": "event.sequence",
+         "value": {
+          "intValue": 67
+         }
+        },
+        {
+         "key": "prompt.id",
+         "value": {
+          "stringValue": "9d8e2304-1f8a-4ec7-926c-8d0fd5ea1f7f"
+         }
+        },
+        {
+         "key": "model",
+         "value": {
+          "stringValue": "claude-haiku-5-5"
+         }
+        },
+        {
+         "key": "input_tokens",
+         "value": {
+          "intValue": 2
+         }
+        },
+        {
+         "key": "output_tokens",
+         "value": {
+          "intValue": 269
+         }
+        },
+        {
+         "key": "cache_read_tokens",
+         "value": {
+          "intValue": 11091
+         }
+        },
+        {
+         "key": "cache_creation_tokens",
+         "value": {
+          "intValue": 37641
+         }
+        },
+        {
+         "key": "cache_creation_5m_tokens",
+         "value": {
+          "intValue": 0
+         }
+        },
+        {
+         "key": "cache_creation_1h_tokens",
+         "value": {
+          "intValue": 37641
+         }
+        },
+        {
+         "key": "cost_usd",
+         "value": {
+          "doubleValue": 0.007773810000000001
+         }
+        },
+        {
+         "key": "cost_usd_micros",
+         "value": {
+          "intValue": 7774
+         }
+        },
+        {
+         "key": "duration_ms",
+         "value": {
+          "intValue": 3455
+         }
+        },
+        {
+         "key": "ttft_ms",
+         "value": {
+          "intValue": 2212
+         }
+        },
+        {
+         "key": "request_id",
+         "value": {
+          "stringValue": "req_011CgEHd19SwcZPUkzUFc8Gi"
+         }
+        },
+        {
+         "key": "client_request_id",
+         "value": {
+          "stringValue": "17193986-d49f-44ff-aa0c-090393fcaadf"
+         }
+        },
+        {
+         "key": "speed",
+         "value": {
+          "stringValue": "normal"
+         }
+        },
+        {
+         "key": "query_source",
+         "value": {
+          "stringValue": "sdk"
+         }
+        },
+        {
+         "key": "effort",
+         "value": {
+          "stringValue": "medium"
+         }
+        }
+       ],
+       "droppedAttributesCount": 0
+      },
+      {
+       "timeUnixNano": "1792535735467000000",
+       "observedTimeUnixNano": "1792535735467000000",
+       "body": {
+        "stringValue": "claude_code.hook_execution_start"
+       },
+       "attributes": [
+        {
+         "key": "user.id",
+         "value": {
+          "stringValue": "0000000000000000000000000000000000000000000000000000000000000000"
+         }
+        },
+        {
+         "key": "session.id",
+         "value": {
+          "stringValue": "4ce1be96-f12f-4c66-87eb-4ab36e451dc5"
+         }
+        },
+        {
+         "key": "organization.id",
+         "value": {
+          "stringValue": "00000000-0000-4000-8000-000000000002"
+         }
+        },
+        {
+         "key": "user.email",
+         "value": {
+          "stringValue": "user@example.invalid"
+         }
+        },
+        {
+         "key": "user.account_uuid",
+         "value": {
+          "stringValue": "00000000-0000-4000-8000-000000000001"
+         }
+        },
+        {
+         "key": "user.account_id",
+         "value": {
+          "stringValue": "user_00000000000000000000000000"
+         }
+        },
+        {
+         "key": "terminal.type",
+         "value": {
+          "stringValue": "windows-terminal"
+         }
+        },
+        {
+         "key": "event.name",
+         "value": {
+          "stringValue": "hook_execution_start"
+         }
+        },
+        {
+         "key": "event.timestamp",
+         "value": {
+          "stringValue": "2026-10-20T22:35:35.467Z"
+         }
+        },
+        {
+         "key": "event.sequence",
+         "value": {
+          "intValue": 68
+         }
+        },
+        {
+         "key": "prompt.id",
+         "value": {
+          "stringValue": "9d8e2304-1f8a-4ec7-926c-8d0fd5ea1f7f"
+         }
+        },
+        {
+         "key": "hook_event",
+         "value": {
+          "stringValue": "PreToolUse"
+         }
+        },
+        {
+         "key": "hook_name",
+         "value": {
+          "stringValue": "PreToolUse:Bash"
+         }
+        },
+        {
+         "key": "num_hooks",
+         "value": {
+          "stringValue": "2"
+         }
+        },
+        {
+         "key": "managed_only",
+         "value": {
+          "stringValue": "false"
+         }
+        },
+        {
+         "key": "hook_source",
+         "value": {
+          "stringValue": "merged"
+         }
+        },
+        {
+         "key": "safe_mode",
+         "value": {
+          "stringValue": "false"
+         }
+        }
+       ],
+       "droppedAttributesCount": 0
+      },
+      {
+       "timeUnixNano": "1792535735537000000",
+       "observedTimeUnixNano": "1792535735537000000",
+       "body": {
+        "stringValue": "claude_code.hook_execution_complete"
+       },
+       "attributes": [
+        {
+         "key": "user.id",
+         "value": {
+          "stringValue": "0000000000000000000000000000000000000000000000000000000000000000"
+         }
+        },
+        {
+         "key": "session.id",
+         "value": {
+          "stringValue": "4ce1be96-f12f-4c66-87eb-4ab36e451dc5"
+         }
+        },
+        {
+         "key": "organization.id",
+         "value": {
+          "stringValue": "00000000-0000-4000-8000-000000000002"
+         }
+        },
+        {
+         "key": "user.email",
+         "value": {
+          "stringValue": "user@example.invalid"
+         }
+        },
+        {
+         "key": "user.account_uuid",
+         "value": {
+          "stringValue": "00000000-0000-4000-8000-000000000001"
+         }
+        },
+        {
+         "key": "user.account_id",
+         "value": {
+          "stringValue": "user_00000000000000000000000000"
+         }
+        },
+        {
+         "key": "terminal.type",
+         "value": {
+          "stringValue": "windows-terminal"
+         }
+        },
+        {
+         "key": "event.name",
+         "value": {
+          "stringValue": "hook_execution_complete"
+         }
+        },
+        {
+         "key": "event.timestamp",
+         "value": {
+          "stringValue": "2026-10-20T22:35:35.537Z"
+         }
+        },
+        {
+         "key": "event.sequence",
+         "value": {
+          "intValue": 69
+         }
+        },
+        {
+         "key": "prompt.id",
+         "value": {
+          "stringValue": "9d8e2304-1f8a-4ec7-926c-8d0fd5ea1f7f"
+         }
+        },
+        {
+         "key": "hook_event",
+         "value": {
+          "stringValue": "PreToolUse"
+         }
+        },
+        {
+         "key": "hook_name",
+         "value": {
+          "stringValue": "PreToolUse:Bash"
+         }
+        },
+        {
+         "key": "num_hooks",
+         "value": {
+          "stringValue": "2"
+         }
+        },
+        {
+         "key": "num_success",
+         "value": {
+          "stringValue": "2"
+         }
+        },
+        {
+         "key": "num_blocking",
+         "value": {
+          "stringValue": "0"
+         }
+        },
+        {
+         "key": "num_non_blocking_error",
+         "value": {
+          "stringValue": "0"
+         }
+        },
+        {
+         "key": "num_cancelled",
+         "value": {
+          "stringValue": "0"
+         }
+        },
+        {
+         "key": "total_duration_ms",
+         "value": {
+          "stringValue": "65"
+         }
+        },
+        {
+         "key": "stdout_chars",
+         "value": {
+          "stringValue": "0"
+         }
+        },
+        {
+         "key": "additional_context_chars",
+         "value": {
+          "stringValue": "0"
+         }
+        },
+        {
+         "key": "system_message_chars",
+         "value": {
+          "stringValue": "0"
+         }
+        },
+        {
+         "key": "initial_user_message_chars",
+         "value": {
+          "stringValue": "0"
+         }
+        },
+        {
+         "key": "num_outputs_persisted",
+         "value": {
+          "stringValue": "0"
+         }
+        },
+        {
+         "key": "managed_only",
+         "value": {
+          "stringValue": "false"
+         }
+        },
+        {
+         "key": "hook_source",
+         "value": {
+          "stringValue": "merged"
+         }
+        },
+        {
+         "key": "safe_mode",
+         "value": {
+          "stringValue": "false"
+         }
+        }
+       ],
+       "droppedAttributesCount": 0
+      },
+      {
+       "timeUnixNano": "1792535735548000000",
+       "observedTimeUnixNano": "1792535735548000000",
+       "body": {
+        "stringValue": "claude_code.tool_decision"
+       },
+       "attributes": [
+        {
+         "key": "user.id",
+         "value": {
+          "stringValue": "0000000000000000000000000000000000000000000000000000000000000000"
+         }
+        },
+        {
+         "key": "session.id",
+         "value": {
+          "stringValue": "4ce1be96-f12f-4c66-87eb-4ab36e451dc5"
+         }
+        },
+        {
+         "key": "organization.id",
+         "value": {
+          "stringValue": "00000000-0000-4000-8000-000000000002"
+         }
+        },
+        {
+         "key": "user.email",
+         "value": {
+          "stringValue": "user@example.invalid"
+         }
+        },
+        {
+         "key": "user.account_uuid",
+         "value": {
+          "stringValue": "00000000-0000-4000-8000-000000000001"
+         }
+        },
+        {
+         "key": "user.account_id",
+         "value": {
+          "stringValue": "user_00000000000000000000000000"
+         }
+        },
+        {
+         "key": "terminal.type",
+         "value": {
+          "stringValue": "windows-terminal"
+         }
+        },
+        {
+         "key": "event.name",
+         "value": {
+          "stringValue": "tool_decision"
+         }
+        },
+        {
+         "key": "event.timestamp",
+         "value": {
+          "stringValue": "2026-10-20T22:35:35.548Z"
+         }
+        },
+        {
+         "key": "event.sequence",
+         "value": {
+          "intValue": 70
+         }
+        },
+        {
+         "key": "prompt.id",
+         "value": {
+          "stringValue": "9d8e2304-1f8a-4ec7-926c-8d0fd5ea1f7f"
+         }
+        },
+        {
+         "key": "decision",
+         "value": {
+          "stringValue": "accept"
+         }
+        },
+        {
+         "key": "source",
+         "value": {
+          "stringValue": "config"
+         }
+        },
+        {
+         "key": "permission_mode",
+         "value": {
+          "stringValue": "acceptEdits"
+         }
+        },
+        {
+         "key": "tool_name",
+         "value": {
+          "stringValue": "Bash"
+         }
+        },
+        {
+         "key": "tool_use_id",
+         "value": {
+          "stringValue": "toolu_01JrahfcakkfsoDynWRyv3GT"
+         }
+        },
+        {
+         "key": "tool_source",
+         "value": {
+          "stringValue": "builtin"
+         }
+        }
+       ],
+       "droppedAttributesCount": 0
+      },
+      {
+       "timeUnixNano": "1792535735667000000",
+       "observedTimeUnixNano": "1792535735667000000",
+       "body": {
+        "stringValue": "claude_code.tool_result"
+       },
+       "attributes": [
+        {
+         "key": "user.id",
+         "value": {
+          "stringValue": "0000000000000000000000000000000000000000000000000000000000000000"
+         }
+        },
+        {
+         "key": "session.id",
+         "value": {
+          "stringValue": "4ce1be96-f12f-4c66-87eb-4ab36e451dc5"
+         }
+        },
+        {
+         "key": "organization.id",
+         "value": {
+          "stringValue": "00000000-0000-4000-8000-000000000002"
+         }
+        },
+        {
+         "key": "user.email",
+         "value": {
+          "stringValue": "user@example.invalid"
+         }
+        },
+        {
+         "key": "user.account_uuid",
+         "value": {
+          "stringValue": "00000000-0000-4000-8000-000000000001"
+         }
+        },
+        {
+         "key": "user.account_id",
+         "value": {
+          "stringValue": "user_00000000000000000000000000"
+         }
+        },
+        {
+         "key": "terminal.type",
+         "value": {
+          "stringValue": "windows-terminal"
+         }
+        },
+        {
+         "key": "event.name",
+         "value": {
+          "stringValue": "tool_result"
+         }
+        },
+        {
+         "key": "event.timestamp",
+         "value": {
+          "stringValue": "2026-10-20T22:35:35.667Z"
+         }
+        },
+        {
+         "key": "event.sequence",
+         "value": {
+          "intValue": 71
+         }
+        },
+        {
+         "key": "prompt.id",
+         "value": {
+          "stringValue": "9d8e2304-1f8a-4ec7-926c-8d0fd5ea1f7f"
+         }
+        },
+        {
+         "key": "tool_name",
+         "value": {
+          "stringValue": "Bash"
+         }
+        },
+        {
+         "key": "tool_use_id",
+         "value": {
+          "stringValue": "toolu_01JrahfcakkfsoDynWRyv3GT"
+         }
+        },
+        {
+         "key": "success",
+         "value": {
+          "stringValue": "true"
+         }
+        },
+        {
+         "key": "duration_ms",
+         "value": {
+          "stringValue": "115"
+         }
+        },
+        {
+         "key": "tool_input_size_bytes",
+         "value": {
+          "stringValue": "157"
+         }
+        },
+        {
+         "key": "tool_result_size_bytes",
+         "value": {
+          "stringValue": "5"
+         }
+        }
+       ],
+       "droppedAttributesCount": 0
+      },
+      {
+       "timeUnixNano": "1792535735671000000",
+       "observedTimeUnixNano": "1792535735671000000",
+       "body": {
+        "stringValue": "claude_code.hook_execution_start"
+       },
+       "attributes": [
+        {
+         "key": "user.id",
+         "value": {
+          "stringValue": "0000000000000000000000000000000000000000000000000000000000000000"
+         }
+        },
+        {
+         "key": "session.id",
+         "value": {
+          "stringValue": "4ce1be96-f12f-4c66-87eb-4ab36e451dc5"
+         }
+        },
+        {
+         "key": "organization.id",
+         "value": {
+          "stringValue": "00000000-0000-4000-8000-000000000002"
+         }
+        },
+        {
+         "key": "user.email",
+         "value": {
+          "stringValue": "user@example.invalid"
+         }
+        },
+        {
+         "key": "user.account_uuid",
+         "value": {
+          "stringValue": "00000000-0000-4000-8000-000000000001"
+         }
+        },
+        {
+         "key": "user.account_id",
+         "value": {
+          "stringValue": "user_00000000000000000000000000"
+         }
+        },
+        {
+         "key": "terminal.type",
+         "value": {
+          "stringValue": "windows-terminal"
+         }
+        },
+        {
+         "key": "event.name",
+         "value": {
+          "stringValue": "hook_execution_start"
+         }
+        },
+        {
+         "key": "event.timestamp",
+         "value": {
+          "stringValue": "2026-10-20T22:35:35.671Z"
+         }
+        },
+        {
+         "key": "event.sequence",
+         "value": {
+          "intValue": 72
+         }
+        },
+        {
+         "key": "prompt.id",
+         "value": {
+          "stringValue": "9d8e2304-1f8a-4ec7-926c-8d0fd5ea1f7f"
+         }
+        },
+        {
+         "key": "hook_event",
+         "value": {
+          "stringValue": "PostToolUse"
+         }
+        },
+        {
+         "key": "hook_name",
+         "value": {
+          "stringValue": "PostToolUse:Bash"
+         }
+        },
+        {
+         "key": "num_hooks",
+         "value": {
+          "stringValue": "3"
+         }
+        },
+        {
+         "key": "managed_only",
+         "value": {
+          "stringValue": "false"
+         }
+        },
+        {
+         "key": "hook_source",
+         "value": {
+          "stringValue": "merged"
+         }
+        },
+        {
+         "key": "safe_mode",
+         "value": {
+          "stringValue": "false"
+         }
+        }
+       ],
+       "droppedAttributesCount": 0
+      },
+      {
+       "timeUnixNano": "1792535735676000000",
+       "observedTimeUnixNano": "1792535735676000000",
+       "body": {
+        "stringValue": "claude_code.hook_execution_complete"
+       },
+       "attributes": [
+        {
+         "key": "user.id",
+         "value": {
+          "stringValue": "0000000000000000000000000000000000000000000000000000000000000000"
+         }
+        },
+        {
+         "key": "session.id",
+         "value": {
+          "stringValue": "4ce1be96-f12f-4c66-87eb-4ab36e451dc5"
+         }
+        },
+        {
+         "key": "organization.id",
+         "value": {
+          "stringValue": "00000000-0000-4000-8000-000000000002"
+         }
+        },
+        {
+         "key": "user.email",
+         "value": {
+          "stringValue": "user@example.invalid"
+         }
+        },
+        {
+         "key": "user.account_uuid",
+         "value": {
+          "stringValue": "00000000-0000-4000-8000-000000000001"
+         }
+        },
+        {
+         "key": "user.account_id",
+         "value": {
+          "stringValue": "user_00000000000000000000000000"
+         }
+        },
+        {
+         "key": "terminal.type",
+         "value": {
+          "stringValue": "windows-terminal"
+         }
+        },
+        {
+         "key": "event.name",
+         "value": {
+          "stringValue": "hook_execution_complete"
+         }
+        },
+        {
+         "key": "event.timestamp",
+         "value": {
+          "stringValue": "2026-10-20T22:35:35.676Z"
+         }
+        },
+        {
+         "key": "event.sequence",
+         "value": {
+          "intValue": 73
+         }
+        },
+        {
+         "key": "prompt.id",
+         "value": {
+          "stringValue": "9d8e2304-1f8a-4ec7-926c-8d0fd5ea1f7f"
+         }
+        },
+        {
+         "key": "hook_event",
+         "value": {
+          "stringValue": "PostToolUse"
+         }
+        },
+        {
+         "key": "hook_name",
+         "value": {
+          "stringValue": "PostToolUse:Bash"
+         }
+        },
+        {
+         "key": "num_hooks",
+         "value": {
+          "stringValue": "3"
+         }
+        },
+        {
+         "key": "num_success",
+         "value": {
+          "stringValue": "3"
+         }
+        },
+        {
+         "key": "num_blocking",
+         "value": {
+          "stringValue": "0"
+         }
+        },
+        {
+         "key": "num_non_blocking_error",
+         "value": {
+          "stringValue": "0"
+         }
+        },
+        {
+         "key": "num_cancelled",
+         "value": {
+          "stringValue": "0"
+         }
+        },
+        {
+         "key": "total_duration_ms",
+         "value": {
+          "stringValue": "4"
+         }
+        },
+        {
+         "key": "stdout_chars",
+         "value": {
+          "stringValue": "0"
+         }
+        },
+        {
+         "key": "additional_context_chars",
+         "value": {
+          "stringValue": "0"
+         }
+        },
+        {
+         "key": "system_message_chars",
+         "value": {
+          "stringValue": "0"
+         }
+        },
+        {
+         "key": "initial_user_message_chars",
+         "value": {
+          "stringValue": "0"
+         }
+        },
+        {
+         "key": "num_outputs_persisted",
+         "value": {
+          "stringValue": "0"
+         }
+        },
+        {
+         "key": "managed_only",
+         "value": {
+          "stringValue": "false"
+         }
+        },
+        {
+         "key": "hook_source",
+         "value": {
+          "stringValue": "merged"
+         }
+        },
+        {
+         "key": "safe_mode",
+         "value": {
+          "stringValue": "false"
+         }
+        }
+       ],
+       "droppedAttributesCount": 0
+      },
+      {
+       "timeUnixNano": "1792535737332000000",
+       "observedTimeUnixNano": "1792535737332000000",
+       "body": {
+        "stringValue": "claude_code.tool_decision"
+       },
+       "attributes": [
+        {
+         "key": "user.id",
+         "value": {
+          "stringValue": "0000000000000000000000000000000000000000000000000000000000000000"
+         }
+        },
+        {
+         "key": "session.id",
+         "value": {
+          "stringValue": "4ce1be96-f12f-4c66-87eb-4ab36e451dc5"
+         }
+        },
+        {
+         "key": "organization.id",
+         "value": {
+          "stringValue": "00000000-0000-4000-8000-000000000002"
+         }
+        },
+        {
+         "key": "user.email",
+         "value": {
+          "stringValue": "user@example.invalid"
+         }
+        },
+        {
+         "key": "user.account_uuid",
+         "value": {
+          "stringValue": "00000000-0000-4000-8000-000000000001"
+         }
+        },
+        {
+         "key": "user.account_id",
+         "value": {
+          "stringValue": "user_00000000000000000000000000"
+         }
+        },
+        {
+         "key": "terminal.type",
+         "value": {
+          "stringValue": "windows-terminal"
+         }
+        },
+        {
+         "key": "event.name",
+         "value": {
+          "stringValue": "tool_decision"
+         }
+        },
+        {
+         "key": "event.timestamp",
+         "value": {
+          "stringValue": "2026-10-20T22:35:37.332Z"
+         }
+        },
+        {
+         "key": "event.sequence",
+         "value": {
+          "intValue": 74
+         }
+        },
+        {
+         "key": "prompt.id",
+         "value": {
+          "stringValue": "9d8e2304-1f8a-4ec7-926c-8d0fd5ea1f7f"
+         }
+        },
+        {
+         "key": "decision",
+         "value": {
+          "stringValue": "accept"
+         }
+        },
+        {
+         "key": "source",
+         "value": {
+          "stringValue": "config"
+         }
+        },
+        {
+         "key": "permission_mode",
+         "value": {
+          "stringValue": "acceptEdits"
+         }
+        },
+        {
+         "key": "tool_name",
+         "value": {
+          "stringValue": "Edit"
+         }
+        },
+        {
+         "key": "tool_use_id",
+         "value": {
+          "stringValue": "toolu_01Y9kPaoUuH5smi4j8nGPLbh"
+         }
+        },
+        {
+         "key": "tool_source",
+         "value": {
+          "stringValue": "builtin"
+         }
+        }
+       ],
+       "droppedAttributesCount": 0
+      },
+      {
+       "timeUnixNano": "1792535737342000000",
+       "observedTimeUnixNano": "1792535737342000000",
+       "body": {
+        "stringValue": "claude_code.api_request"
+       },
+       "attributes": [
+        {
+         "key": "user.id",
+         "value": {
+          "stringValue": "0000000000000000000000000000000000000000000000000000000000000000"
+         }
+        },
+        {
+         "key": "session.id",
+         "value": {
+          "stringValue": "4ce1be96-f12f-4c66-87eb-4ab36e451dc5"
+         }
+        },
+        {
+         "key": "organization.id",
+         "value": {
+          "stringValue": "00000000-0000-4000-8000-000000000002"
+         }
+        },
+        {
+         "key": "user.email",
+         "value": {
+          "stringValue": "user@example.invalid"
+         }
+        },
+        {
+         "key": "user.account_uuid",
+         "value": {
+          "stringValue": "00000000-0000-4000-8000-000000000001"
+         }
+        },
+        {
+         "key": "user.account_id",
+         "value": {
+          "stringValue": "user_00000000000000000000000000"
+         }
+        },
+        {
+         "key": "terminal.type",
+         "value": {
+          "stringValue": "windows-terminal"
+         }
+        },
+        {
+         "key": "event.name",
+         "value": {
+          "stringValue": "api_request"
+         }
+        },
+        {
+         "key": "event.timestamp",
+         "value": {
+          "stringValue": "2026-10-20T22:35:37.342Z"
+         }
+        },
+        {
+         "key": "event.sequence",
+         "value": {
+          "intValue": 75
+         }
+        },
+        {
+         "key": "prompt.id",
+         "value": {
+          "stringValue": "9d8e2304-1f8a-4ec7-926c-8d0fd5ea1f7f"
+         }
+        },
+        {
+         "key": "model",
+         "value": {
+          "stringValue": "claude-haiku-5-5"
+         }
+        },
+        {
+         "key": "input_tokens",
+         "value": {
+          "intValue": 2
+         }
+        },
+        {
+         "key": "output_tokens",
+         "value": {
+          "intValue": 158
+         }
+        },
+        {
+         "key": "cache_read_tokens",
+         "value": {
+          "intValue": 48732
+         }
+        },
+        {
+         "key": "cache_creation_tokens",
+         "value": {
+          "intValue": 1675
+         }
+        },
+        {
+         "key": "cache_creation_5m_tokens",
+         "value": {
+          "intValue": 0
+         }
+        },
+        {
+         "key": "cache_creation_1h_tokens",
+         "value": {
+          "intValue": 1675
+         }
+        },
+        {
+         "key": "cost_usd",
+         "value": {
+          "doubleValue": 0.00090152
+         }
+        },
+        {
+         "key": "cost_usd_micros",
+         "value": {
+          "intValue": 902
+         }
+        },
+        {
+         "key": "duration_ms",
+         "value": {
+          "intValue": 1608
+         }
+        },
+        {
+         "key": "ttft_ms",
+         "value": {
+          "intValue": 1160
+         }
+        },
+        {
+         "key": "request_id",
+         "value": {
+          "stringValue": "req_011CgEHdHwVYVB8qe5eriHZU"
+         }
+        },
+        {
+         "key": "client_request_id",
+         "value": {
+          "stringValue": "75db8687-7f5f-4b71-9fc0-9be4f61ed71c"
+         }
+        },
+        {
+         "key": "speed",
+         "value": {
+          "stringValue": "normal"
+         }
+        },
+        {
+         "key": "query_source",
+         "value": {
+          "stringValue": "sdk"
+         }
+        },
+        {
+         "key": "effort",
+         "value": {
+          "stringValue": "medium"
+         }
+        }
+       ],
+       "droppedAttributesCount": 0
+      },
+      {
+       "timeUnixNano": "1792535737358000000",
+       "observedTimeUnixNano": "1792535737358000000",
+       "body": {
+        "stringValue": "claude_code.tool_result"
+       },
+       "attributes": [
+        {
+         "key": "user.id",
+         "value": {
+          "stringValue": "0000000000000000000000000000000000000000000000000000000000000000"
+         }
+        },
+        {
+         "key": "session.id",
+         "value": {
+          "stringValue": "4ce1be96-f12f-4c66-87eb-4ab36e451dc5"
+         }
+        },
+        {
+         "key": "organization.id",
+         "value": {
+          "stringValue": "00000000-0000-4000-8000-000000000002"
+         }
+        },
+        {
+         "key": "user.email",
+         "value": {
+          "stringValue": "user@example.invalid"
+         }
+        },
+        {
+         "key": "user.account_uuid",
+         "value": {
+          "stringValue": "00000000-0000-4000-8000-000000000001"
+         }
+        },
+        {
+         "key": "user.account_id",
+         "value": {
+          "stringValue": "user_00000000000000000000000000"
+         }
+        },
+        {
+         "key": "terminal.type",
+         "value": {
+          "stringValue": "windows-terminal"
+         }
+        },
+        {
+         "key": "event.name",
+         "value": {
+          "stringValue": "tool_result"
+         }
+        },
+        {
+         "key": "event.timestamp",
+         "value": {
+          "stringValue": "2026-10-20T22:35:37.358Z"
+         }
+        },
+        {
+         "key": "event.sequence",
+         "value": {
+          "intValue": 76
+         }
+        },
+        {
+         "key": "prompt.id",
+         "value": {
+          "stringValue": "9d8e2304-1f8a-4ec7-926c-8d0fd5ea1f7f"
+         }
+        },
+        {
+         "key": "tool_name",
+         "value": {
+          "stringValue": "Edit"
+         }
+        },
+        {
+         "key": "tool_use_id",
+         "value": {
+          "stringValue": "toolu_01Y9kPaoUuH5smi4j8nGPLbh"
+         }
+        },
+        {
+         "key": "success",
+         "value": {
+          "stringValue": "true"
+         }
+        },
+        {
+         "key": "duration_ms",
+         "value": {
+          "stringValue": "25"
+         }
+        },
+        {
+         "key": "tool_input_size_bytes",
+         "value": {
+          "stringValue": "177"
+         }
+        },
+        {
+         "key": "tool_result_size_bytes",
+         "value": {
+          "stringValue": "205"
+         }
+        }
+       ],
+       "droppedAttributesCount": 0
+      },
+      {
+       "timeUnixNano": "1792535737359000000",
+       "observedTimeUnixNano": "1792535737359000000",
+       "body": {
+        "stringValue": "claude_code.hook_execution_start"
+       },
+       "attributes": [
+        {
+         "key": "user.id",
+         "value": {
+          "stringValue": "0000000000000000000000000000000000000000000000000000000000000000"
+         }
+        },
+        {
+         "key": "session.id",
+         "value": {
+          "stringValue": "4ce1be96-f12f-4c66-87eb-4ab36e451dc5"
+         }
+        },
+        {
+         "key": "organization.id",
+         "value": {
+          "stringValue": "00000000-0000-4000-8000-000000000002"
+         }
+        },
+        {
+         "key": "user.email",
+         "value": {
+          "stringValue": "user@example.invalid"
+         }
+        },
+        {
+         "key": "user.account_uuid",
+         "value": {
+          "stringValue": "00000000-0000-4000-8000-000000000001"
+         }
+        },
+        {
+         "key": "user.account_id",
+         "value": {
+          "stringValue": "user_00000000000000000000000000"
+         }
+        },
+        {
+         "key": "terminal.type",
+         "value": {
+          "stringValue": "windows-terminal"
+         }
+        },
+        {
+         "key": "event.name",
+         "value": {
+          "stringValue": "hook_execution_start"
+         }
+        },
+        {
+         "key": "event.timestamp",
+         "value": {
+          "stringValue": "2026-10-20T22:35:37.359Z"
+         }
+        },
+        {
+         "key": "event.sequence",
+         "value": {
+          "intValue": 77
+         }
+        },
+        {
+         "key": "prompt.id",
+         "value": {
+          "stringValue": "9d8e2304-1f8a-4ec7-926c-8d0fd5ea1f7f"
+         }
+        },
+        {
+         "key": "hook_event",
+         "value": {
+          "stringValue": "PostToolUse"
+         }
+        },
+        {
+         "key": "hook_name",
+         "value": {
+          "stringValue": "PostToolUse:Edit"
+         }
+        },
+        {
+         "key": "num_hooks",
+         "value": {
+          "stringValue": "2"
+         }
+        },
+        {
+         "key": "managed_only",
+         "value": {
+          "stringValue": "false"
+         }
+        },
+        {
+         "key": "hook_source",
+         "value": {
+          "stringValue": "merged"
+         }
+        },
+        {
+         "key": "safe_mode",
+         "value": {
+          "stringValue": "false"
+         }
+        }
+       ],
+       "droppedAttributesCount": 0
+      },
+      {
+       "timeUnixNano": "1792535737364000000",
+       "observedTimeUnixNano": "1792535737364000000",
+       "body": {
+        "stringValue": "claude_code.hook_execution_complete"
+       },
+       "attributes": [
+        {
+         "key": "user.id",
+         "value": {
+          "stringValue": "0000000000000000000000000000000000000000000000000000000000000000"
+         }
+        },
+        {
+         "key": "session.id",
+         "value": {
+          "stringValue": "4ce1be96-f12f-4c66-87eb-4ab36e451dc5"
+         }
+        },
+        {
+         "key": "organization.id",
+         "value": {
+          "stringValue": "00000000-0000-4000-8000-000000000002"
+         }
+        },
+        {
+         "key": "user.email",
+         "value": {
+          "stringValue": "user@example.invalid"
+         }
+        },
+        {
+         "key": "user.account_uuid",
+         "value": {
+          "stringValue": "00000000-0000-4000-8000-000000000001"
+         }
+        },
+        {
+         "key": "user.account_id",
+         "value": {
+          "stringValue": "user_00000000000000000000000000"
+         }
+        },
+        {
+         "key": "terminal.type",
+         "value": {
+          "stringValue": "windows-terminal"
+         }
+        },
+        {
+         "key": "event.name",
+         "value": {
+          "stringValue": "hook_execution_complete"
+         }
+        },
+        {
+         "key": "event.timestamp",
+         "value": {
+          "stringValue": "2026-10-20T22:35:37.364Z"
+         }
+        },
+        {
+         "key": "event.sequence",
+         "value": {
+          "intValue": 78
+         }
+        },
+        {
+         "key": "prompt.id",
+         "value": {
+          "stringValue": "9d8e2304-1f8a-4ec7-926c-8d0fd5ea1f7f"
+         }
+        },
+        {
+         "key": "hook_event",
+         "value": {
+          "stringValue": "PostToolUse"
+         }
+        },
+        {
+         "key": "hook_name",
+         "value": {
+          "stringValue": "PostToolUse:Edit"
+         }
+        },
+        {
+         "key": "num_hooks",
+         "value": {
+          "stringValue": "2"
+         }
+        },
+        {
+         "key": "num_success",
+         "value": {
+          "stringValue": "2"
+         }
+        },
+        {
+         "key": "num_blocking",
+         "value": {
+          "stringValue": "0"
+         }
+        },
+        {
+         "key": "num_non_blocking_error",
+         "value": {
+          "stringValue": "0"
+         }
+        },
+        {
+         "key": "num_cancelled",
+         "value": {
+          "stringValue": "0"
+         }
+        },
+        {
+         "key": "total_duration_ms",
+         "value": {
+          "stringValue": "3"
+         }
+        },
+        {
+         "key": "stdout_chars",
+         "value": {
+          "stringValue": "0"
+         }
+        },
+        {
+         "key": "additional_context_chars",
+         "value": {
+          "stringValue": "0"
+         }
+        },
+        {
+         "key": "system_message_chars",
+         "value": {
+          "stringValue": "0"
+         }
+        },
+        {
+         "key": "initial_user_message_chars",
+         "value": {
+          "stringValue": "0"
+         }
+        },
+        {
+         "key": "num_outputs_persisted",
+         "value": {
+          "stringValue": "0"
+         }
+        },
+        {
+         "key": "managed_only",
+         "value": {
+          "stringValue": "false"
+         }
+        },
+        {
+         "key": "hook_source",
+         "value": {
+          "stringValue": "merged"
+         }
+        },
+        {
+         "key": "safe_mode",
+         "value": {
+          "stringValue": "false"
+         }
+        }
+       ],
+       "droppedAttributesCount": 0
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}

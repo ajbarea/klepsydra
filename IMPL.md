@@ -1,44 +1,48 @@
 # IMPL
 
-Current slice: Ping (#48), branch feat/ping. A tray checkbox, off by default,
-that plays a short chime when a session needs you or finishes its turn, and
-stays silent under Windows Do Not Disturb, Focus and full-screen apps.
+Current slice: #56 Slice 1, branch feat/otel-ledger. A local OTLP/HTTP JSON
+receiver and a ledger store in the fleet crate. Slice 2 (the wall's receipt
+line, guardrail chip and ledger drawer) waits for #55.
 
 ## Done
-- Hook: every file carries `turns` (0 at creation, +1 at each Stop, the only
-  event that ends a turn) and `turns_at`, the write's own time; a count whose
-  stamp is not the file's `written_at` was carried along by an older hook. `SessionFile.turns` is None only from an older
-  hook (lenient parse); `View.marks` carries `turns` and the raw `state_at`
-  (serde skip), since the skew correction moves between writes.
-- `fleet/src/cue.rs`: the first snapshot asks for nothing. Needs-you or error
-  cues when the raw `state_at` changed or the status just became needs-you
-  (an unseen session: when its time is past the app's start). Done cues when
-  `turns` changed on a session already seen; an older hook falls back to
-  working -> done at a new state time. A session first seen silent is
-  recorded so its turn's end still cues. Within `GAP` (2 s) only a higher
-  rank plays. Absent sessions are forgotten a day after their last read.
-- Known: a Stop that another Stop hook blocks chimes; the continuation's Stop
-  chimes again. Nothing can know at Stop time that it will be blocked.
-- `src/ping.rs` (Windows only): plays the embedded WAV with `PlaySoundW`
-  (`SND_MEMORY | SND_ASYNC`). Quiet check: WNF quiet-hours profile (DND and
-  Focus) and `SHQueryUserNotificationState` busy, D3D full screen,
-  presentation (not `QUNS_APP`, which is any Store app). Ticking the box previews needs-you, past the check.
-  Linux has no Ping: playing there means starting `pw-play`, and only the
-  launcher may start a process (guard). A Linux chime needs an audio crate (#6).
-- `fleet.rs`: on Windows the reader loop runs every snapshot through `Cues`, Ping on or off.
-- `scripts/make-sounds.mjs` + `src/sounds.test.js`: the WAVs match the script;
-  under 0.5 s; peak -3 dBFS (AJ picked the level by ear); a 10 ms release, so no click.
-- README Ping section.
+- Recorded real exports first (`claude -p --model haiku`, delta and
+  cumulative), redacted into `src-tauri/fleet/tests/fixtures/otel/`.
+- `fleet/src/otel.rs`: parses sums (delta or cumulative, numeric or enum
+  temporality, `asDouble`/`asInt`, string or number int64) and named log
+  records. Unknown fields skipped; malformed parts dropped, never a panic.
+  Series and dedupe keys are FNV-1a (stable across rebuilds).
+- `fleet/src/ledger.rs`: per-session `Totals` (all `serde(default)`),
+  integer units (`cost_usd_estimate_micros`, `active.*_ms`). Delta dedupe on
+  (resource attrs, scope, metric, attribute set, start, end), kept
+  `DEDUPE_WINDOW` (1 h); older points are stale. Cumulative: difference from
+  the series' last point; new start time or a drop = reset. Events deduped on
+  (resource, scope, name, session, sequence, time). Keys expire by when they
+  were counted; points over `MAX_AHEAD` (5 min) ahead are dropped. Day file
+  per local day (jiff, `TimeZone::system()`) plus
+  `state.json` (lifetime totals, keys, baselines), atomic writes, unreadable
+  files set aside as `.bad`, `RETENTION_DAYS` = 30 prune by exact name only.
+- `fleet/src/receiver.rs`: hyper 1 http1 server on a current-thread tokio
+  runtime, `127.0.0.1:4318`, `MAX_BODY` 4 MiB (Content-Length and streamed),
+  403 for a foreign Host or any Origin (DNS rebinding), 404/405/415/413/400,
+  408 past `LIMITS.body`; `LIMITS` 10 s header, 10 s body, 32 connections.
+  socket2 bind: SO_EXCLUSIVEADDRUSE plus a dropped exclusive wildcard probe
+  on Windows (a loopback bind beside a same-user wildcard listener otherwise
+  succeeds, per Microsoft's bind table); SO_REUSEADDR kept on Unix (Linux
+  refuses a second listener anyway; it only allows TIME_WAIT rebinds).
+- Caps: `MAX_SESSIONS` 512 per map (least recently updated goes),
+  `MAX_ATTR_CHARS` 256; `Day.no_session` counts points with no session.
+- `Snapshot.receiver` reports a taken port; the app retries every 30 s.
+- `View.ledger: Option<Totals>` (omitted when None); `Reader::with_ledger`.
+- App: `src/fleet.rs` opens `<dir>/ledger`, spawns the receiver, logs to
+  `fleet.log`. main.rs untouched.
+- `examples/receiver.rs` for live checks; README settings `env` + ledger section.
 
 ## Measured
-- `SHQueryUserNotificationState` reads 5 with DND off, DND on and Focus on;
-  the WNF profile reads 0, 1 and 1.
-- Live on Windows, keryx off: done heard; silent with DND on; needs-you heard
-  with DND off.
-
-## Live, final build (keryx off, branch hook, user settings excluded)
-- Ticking Ping in the tray played needs-you and saved `"ping": true`; a restart kept it.
-- Done heard at a turn's end (turns 0 -> 1); needs-you heard on a question.
+- Live haiku session through the example receiver: ledger tokens (10 in,
+  918 out, 213366 cache read, 36895 cache creation) equal the transcript's
+  summed `usage`; +2 -1 lines; 1 guardrail (Bash, config).
 
 ## Next
-- Merge on green CI; then delete the stage `C:\Users\ajbar\klepsydra-build-ping`.
+- PR "Part of #56"; review; merge after #55 if they touch the same lines.
+- Slice 2 on the wall: receipt line, guardrail chip, ledger drawer,
+  `receiver` state.

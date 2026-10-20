@@ -73,7 +73,8 @@ files belong to: the JS guards scan hooks and scripts too.
 - `bash hooks/test_launch.sh`: the tmux launcher against a private tmux server
   and a stub `wt.exe` (one tab per fleet, a failed launch starts nothing).
 - `bash scripts/test_build_windows.sh`: the Windows build's stage-name check.
-- `cd src-tauri && cargo test -p klepsydra-fleet`: the fleet reader.
+- `cd src-tauri && cargo test -p klepsydra-fleet`: the fleet reader, the OTLP
+  receiver (spawned on a free loopback port) and the ledger.
 
 ### do_not_run (interactive / long-running / platform-bound)
 
@@ -118,6 +119,11 @@ files belong to: the JS guards scan hooks and scripts too.
   happened; neither is restating the code.
 - `statusline/fixtures/*.json` are regression fixtures, each standing for a
   real input shape the hook must survive. Adding a shape means adding a fixture.
+- `src-tauri/fleet/tests/fixtures/otel/{delta,cumulative}/*.json` are OTLP/HTTP
+  JSON exports recorded from live `claude -p` sessions (Claude Code 2.1.301),
+  with `user.email`, `user.account_uuid`, `user.account_id`, `user.id` and
+  `organization.id` replaced by fixed placeholders. Re-record rather than
+  hand-edit when Claude Code's export shape changes.
 
 ## scan_scope
 

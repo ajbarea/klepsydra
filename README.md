@@ -164,6 +164,26 @@ seen at `PostToolUse`, keep each session's background work: a turn that ends
 with subagents or background shells still running stays working.
 For the gauge alone, keep `statusLine` and leave out `hooks`.
 
+For the ledger (see [The ledger](#the-ledger)), also merge this `env` block
+into the user-scope `~/.claude/settings.json`. Claude Code reads these
+settings only from user scope, not from a repository's settings:
+
+```json
+{
+  "env": {
+    "CLAUDE_CODE_ENABLE_TELEMETRY": "1",
+    "OTEL_METRICS_EXPORTER": "otlp",
+    "OTEL_LOGS_EXPORTER": "otlp",
+    "OTEL_EXPORTER_OTLP_PROTOCOL": "http/json",
+    "OTEL_EXPORTER_OTLP_ENDPOINT": "http://127.0.0.1:4318",
+    "OTEL_METRIC_EXPORT_INTERVAL": "15000"
+  }
+}
+```
+
+Leave `OTEL_LOG_USER_PROMPTS` and `OTEL_LOG_TOOL_DETAILS` unset, so prompts and
+tool arguments stay redacted.
+
 The hook picks the overlay's data dir for the platform it runs on: on Linux,
 the XDG data dir; under WSL, the Windows side, since the overlay there is a
 Windows app.
@@ -532,6 +552,42 @@ has no "Ping".
 The chimes are built by `scripts/make-sounds.mjs`, which writes
 `src-tauri/sounds/`; the tests fail if the files and the script disagree.
 
+### The ledger
+
+With the `env` block above, every Claude Code session sends its
+OpenTelemetry metrics and events to klepsydra, which counts them per session:
+tokens by type, lines added and removed, commits and pull requests, active
+time (yours and the CLI's), edit accepts and rejects, tool results and
+failures, API errors and refusals, and the tool calls a hook or a permission
+rule turned down. Each of those turn-downs is also logged with its time,
+session, tool and source. Rejections you make yourself are counted
+separately.
+
+- **Local only.** The receiver listens on `127.0.0.1:4318` and nowhere else.
+  Under WSL with mirrored networking, WSL's `127.0.0.1` is the Windows host,
+  so sessions in WSL reach the Windows overlay. Nothing leaves the machine.
+  It answers only requests addressed to `127.0.0.1:4318` or `localhost:4318`
+  that carry no `Origin` header, so a web page cannot post to it by
+  rebinding a domain name to `127.0.0.1`. Claude Code's exporter sends no
+  `Origin`.
+- **Content stays redacted.** Claude Code replaces prompt and response text
+  with `<REDACTED>` unless `OTEL_LOG_USER_PROMPTS` is set, and sends no tool
+  arguments unless `OTEL_LOG_TOOL_DETAILS` is set. The exports still carry
+  your account email and organization ID as attributes; klepsydra does not
+  store them.
+- **Cost is an estimate.** Claude Code's `cost.usage` is what the tokens would
+  cost at API prices. On a Pro or Max plan it is not money spent, so the
+  ledger stores it as `cost_usd_estimate_micros`.
+- **Where it is kept.** One file per local calendar day in `ledger/` under
+  the app data dir, such as `ledger/2026-10-20.json`, written whole each time.
+  Files more than 30 local days old are deleted. `ledger/state.json` holds each session's running
+  totals and what stops a retried export from counting twice.
+- **When the overlay is off.** Claude Code's exports fail quietly and the
+  session carries on; that stretch is not counted. If something else holds
+  port 4318, klepsydra logs it to `fleet.log` and exposes it in the fleet
+  view as `receiver`, for the wall to show (not yet shown). It runs without
+  the ledger and tries the port again every 30 seconds.
+
 ## How often it refreshes
 
 The status line is event-driven: Claude Code runs it as you work, and the hook
@@ -597,7 +653,7 @@ bash hooks/test_fleet.sh                 # fleet hook: states, where, identity, 
 bash hooks/test_launch.sh                # launcher: new, jump, tab reuse, against a private tmux socket
 bash scripts/test_measure_memory.sh      # the release memory check
 node --test src/*.test.js                # ramp, countdown, reconciliation, fleet model, faces, guards
-(cd src-tauri && cargo test -p klepsydra-fleet)   # fleet reader
+(cd src-tauri && cargo test -p klepsydra-fleet)   # fleet reader, OTLP receiver and ledger
 bash scripts/build-windows.sh --check    # clippy and every Rust test, on Windows
 bash scripts/visual-check.sh             # screenshots every state, the strip and wall included
 ```
