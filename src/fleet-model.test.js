@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import {
   STATUS, shortAge, longAge, statusParts, voiceName, identity, accessibleName,
   statuses, startedNeeding, orderChanged, shouldSlide, transitionName, announcements, updatedText, badgeSvg, stripItems, card,
-  askText, arcFraction, tally, WORKING_FULL_S, WAITING_FULL_S,
+  askText, arcFraction, plainText, tally, WORKING_FULL_S, WAITING_FULL_S,
 } from "./fleet/model.js";
 import { TONES, hash, initialOf, medallion, medallionSvg, toneOf } from "./fleet/medallion.js";
 
@@ -490,4 +490,44 @@ test("only a uuid-shaped id becomes a view-transition name", () => {
   const id = "123e4567-e89b-12d3-a456-426614174000";
   assert.equal(transitionName(id), `card-${id}`);
   for (const bad of ["demo-1-am_michael", "x; color: red", "", `${id}0`]) assert.equal(transitionName(bad), "");
+});
+
+test("plainText: AJ's real strings", () => {
+  // "Status: - item" is a list item flattened onto one line; the dash goes.
+  assert.equal(
+    plainText("Filed as **techne #182**. Status: - \u2705 **#34 colours are live:** your fleet windows"),
+    "Filed as techne #182. Status: \u2705 #34 colours are live: your fleet windows",
+  );
+  assert.equal(plainText("Welcome back. ** \u2705 Done while you were out**"), "Welcome back. \u2705 Done while you were out");
+});
+
+test("plainText: inline markup", () => {
+  assert.equal(plainText("__a__ *b* _c_ ~~d~~ ***e*** **f *g* h**"), "a b c d e f g h");
+  assert.equal(plainText("run `npm test` now"), "run npm test now");
+  assert.equal(plainText("`**not bold**`"), "**not bold**");
+  assert.equal(plainText("see [the docs](https://x.io/a_b) and <https://y.io>"), "see the docs and https://y.io");
+});
+
+test("plainText: block markup", () => {
+  assert.equal(plainText("# Title\n> quoted\n- one\n* two\n+ three\n1. four\n---\ntail"), "Title quoted one two three four tail");
+  assert.equal(plainText("before\n```js\nconst a_b = 2 * 3;\n```\nafter"), "before const a_b = 2 * 3; after");
+  assert.equal(plainText("a\n\n\n  b   c"), "a b c");
+});
+
+test("plainText: text that merely looks like markup survives", () => {
+  for (const s of ["snake_case_name", "a*b", "2 * 3", "2*3*4", "src/fleet/model.js", "a - b", "keep \u2705 and \ud83d\udccb"]) {
+    assert.equal(plainText(s), s);
+  }
+});
+
+test("plainText: null and empty", () => {
+  assert.equal(plainText(null), null);
+  assert.equal(plainText(undefined), undefined);
+  assert.equal(plainText(""), "");
+});
+
+test("card: prompt and reply are plain text", () => {
+  const c = card({ session_id: "x", status: "idle", prompt: { text: "**hi** `x`" }, reply: { text: "- [a](u)" } }, {}, NOW);
+  assert.equal(c.prompt, "hi x");
+  assert.equal(c.reply, "a");
 });

@@ -233,6 +233,40 @@ export function tally(sessions) {
   return t;
 }
 
+// Markdown to clean one-line text for a preview. The wall sets it with
+// textContent, so this only removes markers; it never produces markup.
+// Emphasis needs a word boundary outside (snake_case, a*b, 2 * 3 stay); a
+// double marker is stripped even with a space inside, as `** x**` is still noise
+// in a preview. A "- " after "label: " is a list item the agent's reply had
+// flattened onto one line, so it goes too; a spaced dash elsewhere is prose.
+export function plainText(md) {
+  if (md == null) return md;
+  const codes = [];
+  const hold = (t) => `\u0000${codes.push(t) - 1}\u0000`;
+  let fenced = false;
+  const lines = [];
+  for (const raw of String(md).split(/\r?\n/)) {
+    if (/^\s*(```|~~~)/.test(raw)) { fenced = !fenced; continue; }
+    if (fenced) { lines.push(hold(raw)); continue; }
+    if (/^\s*([-*_])(\s*\1){2,}\s*$/.test(raw)) continue;
+    lines.push(
+      raw.replace(/^\s*(>\s?)+/, "").replace(/^\s*#{1,6}\s+/, "").replace(/^\s*(?:[-*+]|\d+[.)])\s+/, ""),
+    );
+  }
+  let t = lines.join(" ")
+    .replace(/`+([^`]+?)`+/g, (_, c) => hold(c))
+    .replace(/!?\[([^\]]*)\]\([^)\s]*\)/g, "$1")
+    .replace(/<(https?:\/\/[^>\s]+)>/g, "$1")
+    .replace(/(?<=[:;.!?] )[-*+] (?=\S)/g, "")
+    .replace(/(\*\*\*|___)(?=\S)(.+?)\1/g, "$2")
+    .replace(/\*\*(.+?)\*\*/g, "$1")
+    .replace(/(?<![\w_])__(?=\S)(.+?)(?<=\S)__(?![\w_])/g, "$1")
+    .replace(/~~(.+?)~~/g, "$1")
+    .replace(/(?<![\w*])\*(?=[^\s*])(.+?)(?<=[^\s*])\*(?![\w*])/g, "$1")
+    .replace(/(?<![\w_])_(?=[^\s_])(.+?)(?<=[^\s_])_(?![\w_])/g, "$1");
+  return t.replace(/\u0000(\d+)\u0000/g, (_, i) => codes[i]).replace(/\s+/g, " ").trim();
+}
+
 /** One card on the wall. */
 export function card(s, cast, nowMs) {
   const who = identity(s, cast);
@@ -260,8 +294,8 @@ export function card(s, cast, nowMs) {
     status: s.status,
     quiet: isQuiet(s),
     badge: badgeSvg(s.status, isQuiet(s)),
-    prompt: s.prompt?.text ?? null,
-    reply: s.reply?.text ?? null,
+    prompt: plainText(s.prompt?.text ?? null),
+    reply: plainText(s.reply?.text ?? null),
     error: s.status === "error" ? s.error ?? null : null,
     updated: s.status === "ended" ? null : updatedText(s, nowMs), // the pill's age says it
     jump: jumpable(s),
