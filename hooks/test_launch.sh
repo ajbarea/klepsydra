@@ -52,6 +52,12 @@ attach() { # a real client on a pty, like the tab would be
   clients+=($!)
   for _ in $(seq 50); do [[ -n $(t list-clients -t =fleet 2>/dev/null) ]] && return; sleep 0.1; done
 }
+pane_pid() { t display -p -t "$1" '#{pane_pid}'; }
+pstart() { # pid: /proc/PID/stat field 22
+  local raw; raw=$(cat "/proc/$1/stat" 2>/dev/null) || return 1
+  read -r -a st <<<"${raw##*") "}"; echo "${st[19]}"
+}
+jmp() { bash "$launch" jump "$socket" "$1" "$2" "$3"; } # pane pid start
 detach_all() {
   for p in "${clients[@]}" $(cat "$WT_PIDS" 2>/dev/null); do kill "$p" 2>/dev/null; done
   clients=(); : >"$WT_PIDS"
@@ -65,8 +71,8 @@ check "first: says where" "$out" "Started a session in $work/repos."
 check "first: one window" "$(windows)" "1"
 check "first: one tab" "$(tabs)" "1"
 check "first: the tab attaches with exec" "$(head -1 "$WT_LOG")" \
-  "-w fleet new-tab wsl.exe -d Test -e tmux -L $sock attach -t =fleet"
-check "first: conf loaded" "$(t show -gv set-titles)" "on"
+  "-w fleet new-tab --title klepsydra fleet --suppressApplicationTitle wsl.exe -d Test -e tmux -L $sock attach -t =fleet"
+check "first: conf loaded" "$(t show -gv automatic-rename-format)" "#{pane_title}"
 attach
 bash "$launch" new "$work/repos" >/dev/null 2>&1
 check "second: two windows" "$(windows)" "2"
@@ -98,30 +104,56 @@ check "concurrent: one tab" "$(tabs)" "1"
 echo "jump"
 first=$(t list-panes -s -t =fleet -F '#{pane_id}' | head -1)
 socket=$(t display -p '#{socket_path}')
+second=$(t list-panes -s -t =fleet -F '#{pane_id}' | sed -n 2p)
+fpid=$(pane_pid "$first"); fstart=$(pstart "$fpid")
+spid=$(pane_pid "$second"); sstart=$(pstart "$spid")
 attach; : >"$WT_LOG"
-out=$(bash "$launch" jump "$socket" "$first" 2>&1); rc=$?
+out=$(jmp "$first" "$fpid" "$fstart" 2>&1); rc=$?
 check "jump: exit 0" "$rc" "0"
 check "jump: says so" "$out" "Selected the session's tmux window."
 check "jump: active pane" "$(t display -p -t =fleet: '#{pane_id}')" "$first"
 check "jump with a client: no tab" "$(tabs)" "0"
-out=$(bash "$launch" jump "$socket" '%3;x' 2>&1); rc=$?
+t select-window -t "$second"
+out=$(jmp "$first" "$spid" "$sstart" 2>&1); rc=$?
+check "another pane's process: exit 1" "$rc" "1"
+check "another pane's process: says so" "$out" "That session's tmux pane now belongs to another session."
+check "another pane's process: no window change" "$(t display -p -t =fleet: '#{pane_id}')" "$second"
+out=$(jmp "$first" 2999999 "$fstart" 2>&1); rc=$?
+check "dead pid: exit 1" "$rc" "1"
+check "dead pid: says so" "$out" "That session's tmux pane now belongs to another session."
+out=$(jmp "$first" "$fpid" "$((fstart + 1))" 2>&1); rc=$?
+check "reused pid: exit 1" "$rc" "1"
+check "reused pid: says so" "$out" "That session's tmux pane now belongs to another session."
+for bad in 12a "" 0 01; do
+  out=$(jmp "$first" "$bad" "$fstart" 2>&1); rc=$?
+  check "bad pid '$bad': exit 1" "$rc" "1"
+  check "bad pid '$bad': says so" "$out" "Not a process id: $bad"
+done
+for bad in 12a ""; do
+  out=$(jmp "$first" "$fpid" "$bad" 2>&1); rc=$?
+  check "bad start '$bad': says so" "$out" "Not a process id: $bad"
+done
+check "refusals: window unchanged" "$(t display -p -t =fleet: '#{pane_id}')" "$second"
+out=$(bash "$launch" jump "$socket" "$first" "$fpid" 2>&1); rc=$?
+check "missing start: exit 1" "$rc" "1"
+out=$(jmp '%3;x' "$fpid" "$fstart" 2>&1); rc=$?
 check "bad pane: exit 1" "$rc" "1"
 check "bad pane: says so" "$out" "Not a tmux pane: %3;x"
-out=$(bash "$launch" jump "rel/sock" "$first" 2>&1); rc=$?
+out=$(bash "$launch" jump "rel/sock" "$first" "$fpid" "$fstart" 2>&1); rc=$?
 check "relative socket: exit 1" "$rc" "1"
 check "relative socket: says so" "$out" "Not a tmux socket path: rel/sock"
 check "bad arguments: no tab" "$(tabs)" "0"
-out=$(bash "$launch" jump "$socket" '%99999' 2>&1); rc=$?
+out=$(jmp '%99999' "$fpid" "$fstart" 2>&1); rc=$?
 check "unknown pane: exit 1" "$rc" "1"
 check "unknown pane: says so" "$out" "That session's tmux pane is gone."
 detach_all
-bash "$launch" jump "$socket" "$first" >/dev/null 2>&1
+jmp "$first" "$fpid" "$fstart" >/dev/null 2>&1
 check "jump without a client: one tab" "$(tabs)" "1"
 check "jump's tab names the socket" "$(head -1 "$WT_LOG")" \
-  "-w fleet new-tab wsl.exe -d Test -e tmux -S $socket attach -t =fleet"
+  "-w fleet new-tab --title klepsydra fleet --suppressApplicationTitle wsl.exe -d Test -e tmux -S $socket attach -t =fleet"
 out=$(bash "$launch" bogus 2>&1); rc=$?
 check "unknown command: exit 1" "$rc" "1"
-check "unknown command: says so" "$out" "usage: klepsydra-launch.sh new DIR | jump SOCKET PANE"
+check "unknown command: says so" "$out" "usage: klepsydra-launch.sh new DIR | jump SOCKET PANE PID START"
 check "unknown command: no tab" "$(tabs)" "1"
 
 echo "one tab per fleet"
@@ -140,9 +172,10 @@ detach_all; : >"$WT_LOG"
 bash "$launch" new "$work/repos" >/dev/null 2>&1
 socket=$(t display -p '#{socket_path}')
 first=$(t list-panes -s -t =fleet -F '#{pane_id}' | head -1)
+fpid=$(pane_pid "$first"); fstart=$(pstart "$fpid")
 detach_all; : >"$WT_LOG"
 bash "$launch" new "$work/repos" >/dev/null 2>&1
-bash "$launch" jump "$socket" "$first" >/dev/null 2>&1
+jmp "$first" "$fpid" "$fstart" >/dev/null 2>&1
 check "slow tab, new then jump: one tab" "$(tabs)" "1"
 unset WT_DELAY
 

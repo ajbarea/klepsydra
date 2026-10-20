@@ -197,6 +197,13 @@ test("the launcher starts only wsl.exe, from its fixed path, without a window", 
   assert.deepEqual(launcherHazards(src), []);
 });
 
+test("the script and the app name the fleet tab alike", () => {
+  const rust = read(LAUNCHER).match(/pub const FLEET_TAB: &str = "([^"]+)";/);
+  const sh = read("hooks/klepsydra-launch.sh").match(/^TAB_TITLE="([^"]+)"/m);
+  assert.ok(rust && sh, "tab title constants not found");
+  assert.equal(rust[1], sh[1]);
+});
+
 test("the launcher check catches a shell hop or an aliased Command", () => {
   for (const planted of ['.args(["-c", cmd])', "use std::process::Command as C;", 'a = ["--", "sh"];']) {
     assert.notDeepEqual(launcherHazards(planted), [], planted);

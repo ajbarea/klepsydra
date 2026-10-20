@@ -60,6 +60,14 @@ pub struct Tmux {
     pub pane: String,
 }
 
+/// The Claude process a session runs as: its pid and start time (clock ticks
+/// since boot, `/proc/<pid>/stat` field 22).
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub struct Claude {
+    pub pid: u32,
+    pub start: u64,
+}
+
 /// The kernel boot and distro a session runs on.
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
 pub struct Host {
@@ -106,6 +114,8 @@ pub struct SessionFile {
     pub tmux: Option<Tmux>,
     #[serde(default)]
     pub host: Option<Host>,
+    #[serde(default)]
+    pub claude: Option<Claude>,
 }
 
 /// Why a session file was skipped.
@@ -232,6 +242,25 @@ mod tests {
         let without = r#"{"v":1,"session_id":"11111111-2222-4333-8444-555555555555","state":"working","state_at":1800000000}"#;
         let f: SessionFile = serde_json::from_str(without).unwrap();
         assert_eq!((f.tmux, f.host), (None, None));
+    }
+
+    #[test]
+    fn claude_parses_and_null_or_missing_is_none() {
+        let base = |extra: &str| {
+            format!(
+                r#"{{"v":1,"session_id":"{ID}","state":"working","state_at":1800000100{extra}}}"#
+            )
+        };
+        let f = parse(&base(r#","claude":{"pid":2231,"start":8717628}"#), ID).unwrap();
+        assert_eq!(
+            f.claude,
+            Some(Claude {
+                pid: 2231,
+                start: 8_717_628
+            })
+        );
+        assert_eq!(parse(&base(r#","claude":null"#), ID).unwrap().claude, None);
+        assert_eq!(parse(&base(""), ID).unwrap().claude, None);
     }
 
     #[test]

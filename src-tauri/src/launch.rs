@@ -20,12 +20,19 @@ const TIMEOUT: Duration = Duration::from_secs(20);
 #[derive(Default)]
 pub struct InFlight(pub Mutex<bool>);
 
-/// A session's tmux pane and the distro it runs in.
+/// The title of the Windows Terminal tab the launcher opens; the script's
+/// `TAB_TITLE` is the same text, which a guard test asserts.
+pub const FLEET_TAB: &str = "klepsydra fleet";
+
+/// A session's tmux pane, the Claude process that must still be in it, and the
+/// distro they run in. `start` is `/proc/<pid>/stat` field 22.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Target {
     pub socket: String,
     pub pane: String,
     pub distro: String,
+    pub pid: u32,
+    pub start: u64,
 }
 
 fn distro_ok(d: &str) -> bool {
@@ -69,24 +76,29 @@ pub fn new_args(dir: &str, distro: Option<&str>) -> Result<Vec<String>, String> 
 
 /// wsl.exe's arguments to bring `t`'s tmux window forward.
 pub fn jump_args(t: &Target) -> Result<Vec<String>, String> {
-    if !(distro_ok(&t.distro) && socket_ok(&t.socket) && pane_ok(&t.pane)) {
+    if !(distro_ok(&t.distro) && socket_ok(&t.socket) && pane_ok(&t.pane) && t.pid != 0) {
         return Err("This session's tmux pane cannot be named safely.".into());
     }
+    let (pid, start) = (t.pid.to_string(), t.start.to_string());
     Ok([
-        "-d", &t.distro, "--cd", "~", "-e", "bash", SCRIPT, "jump", &t.socket, &t.pane,
+        "-d", &t.distro, "--cd", "~", "-e", "bash", SCRIPT, "jump", &t.socket, &t.pane, &pid,
+        &start,
     ]
     .map(String::from)
     .to_vec())
 }
 
-/// Session `id`'s tmux pane and distro from a published snapshot.
+/// Session `id`'s tmux pane, Claude process and distro from a published snapshot.
 pub fn target(snapshot: &Value, id: &str) -> Option<Target> {
     let s = klepsydra_fleet::lookup::session(snapshot, id)?;
     let tmux = s.get("tmux")?;
+    let claude = s.get("claude")?;
     Some(Target {
         socket: tmux.get("socket")?.as_str()?.into(),
         pane: tmux.get("pane")?.as_str()?.into(),
         distro: s.get("distro")?.as_str()?.into(),
+        pid: u32::try_from(claude.get("pid")?.as_u64()?).ok()?,
+        start: claude.get("start")?.as_u64()?,
     })
 }
 
@@ -281,10 +293,19 @@ mod tests {
             socket: "/tmp/tmux-1001/klepsydra".into(),
             pane: "%3".into(),
             distro: "Ubuntu".into(),
+            pid: 2231,
+            start: 8_717_628,
         };
         assert_eq!(
             jump_args(&ok).unwrap()[6..],
-            [SCRIPT, "jump", "/tmp/tmux-1001/klepsydra", "%3"]
+            [
+                SCRIPT,
+                "jump",
+                "/tmp/tmux-1001/klepsydra",
+                "%3",
+                "2231",
+                "8717628"
+            ]
         );
         for bad in [
             Target {
@@ -307,20 +328,29 @@ mod tests {
                 distro: "a;b".into(),
                 ..ok.clone()
             },
+            Target {
+                pid: 0,
+                ..ok.clone()
+            },
         ] {
             assert!(jump_args(&bad).is_err(), "{bad:?}");
         }
     }
 
     #[test]
-    fn target_needs_both_tmux_and_distro() {
+    fn target_needs_tmux_distro_and_claude() {
+        let c = json!({"pid": 7, "start": 99});
         let s = json!({"sessions": [
-            {"session_id": "a", "tmux": {"socket": "/s", "pane": "%1"}, "distro": "Ubuntu"},
-            {"session_id": "b", "tmux": {"socket": "/s", "pane": "%1"}, "distro": null},
-            {"session_id": "c", "tmux": null, "distro": "Ubuntu"}]});
-        assert_eq!(target(&s, "a").unwrap().pane, "%1");
-        assert!(target(&s, "b").is_none());
-        assert!(target(&s, "c").is_none());
+            {"session_id": "a", "tmux": {"socket": "/s", "pane": "%1"}, "distro": "Ubuntu", "claude": c},
+            {"session_id": "b", "tmux": {"socket": "/s", "pane": "%1"}, "distro": null, "claude": c},
+            {"session_id": "c", "tmux": null, "distro": "Ubuntu", "claude": c},
+            {"session_id": "d", "tmux": {"socket": "/s", "pane": "%1"}, "distro": "Ubuntu", "claude": null},
+            {"session_id": "e", "tmux": {"socket": "/s", "pane": "%1"}, "distro": "Ubuntu"}]});
+        let t = target(&s, "a").unwrap();
+        assert_eq!((t.pane.as_str(), t.pid, t.start), ("%1", 7, 99));
+        for id in ["b", "c", "d", "e"] {
+            assert!(target(&s, id).is_none(), "{id}");
+        }
     }
 
     #[test]

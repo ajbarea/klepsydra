@@ -4,7 +4,7 @@
 
 /// The outcome in a sentence for the card: Ok when the session's window or
 /// tab was selected, Err when nothing was done. A session in tmux has its
-/// window selected first, so its tab shows that session's title.
+/// window selected first, then the fleet tab, titled `FLEET_TAB`, is brought up.
 #[tauri::command]
 pub async fn jump_to_terminal(
     app: tauri::AppHandle,
@@ -17,25 +17,20 @@ pub async fn jump_to_terminal(
         .latest()
         .and_then(|v| crate::launch::target(&v, &id));
     tauri::async_runtime::spawn_blocking(move || match target {
-        Some(t) if crate::launch::tmux_jump(&app, &t).is_ok() => settle(true, jump_settled(&name)),
+        Some(t) if crate::launch::tmux_jump(&app, &t).is_ok() => {
+            settle(true, jump(crate::launch::FLEET_TAB))
+        }
         _ => jump(&name),
     })
     .await
     .map_err(|e| format!("Could not run the jump: {e}"))?
 }
 
-/// Jump by title, retrying for up to 1.5 s while the tab takes the title of
-/// the tmux window just selected.
-fn jump_settled(name: &str) -> Result<String, String> {
-    let mut last = jump(name);
-    for _ in 0..6 {
-        if last.is_ok() {
-            break;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(250));
-        last = jump(name);
-    }
-    last
+/// Whether the one tab among `titles` is the fleet's, by `FLEET_TAB`.
+#[cfg(test)]
+fn fleet_tab(titles: &[&str]) -> Result<usize, String> {
+    let t: Vec<String> = titles.iter().map(|s| s.to_string()).collect();
+    klepsydra_fleet::tabs::pick_tab(crate::launch::FLEET_TAB, &t, false)
 }
 
 /// A selected tmux window is a success even when no tab title matches: a
@@ -196,7 +191,14 @@ mod uia {
 
 #[cfg(test)]
 mod tests {
-    use super::settle;
+    use super::{fleet_tab, settle};
+
+    #[test]
+    fn only_the_exact_fleet_title_matches() {
+        assert_eq!(fleet_tab(&["pwsh", "klepsydra fleet", "x"]), Ok(1));
+        assert!(fleet_tab(&["klepsydra fleets", "klepsydra", "fleet"]).is_err());
+        assert!(fleet_tab(&["klepsydra fleet", "klepsydra fleet"]).is_err());
+    }
 
     #[test]
     fn a_matched_tab_keeps_its_message() {

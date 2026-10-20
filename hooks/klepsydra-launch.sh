@@ -1,15 +1,17 @@
 #!/usr/bin/env bash
 # klepsydra's launcher, run by the overlay as
 #   wsl.exe -e bash -l .claude/klepsydra-launch.sh new DIR
-#   wsl.exe -e bash .claude/klepsydra-launch.sh jump SOCKET PANE
+#   wsl.exe -e bash .claude/klepsydra-launch.sh jump SOCKET PANE PID START
 # `new` starts claude in DIR as a window of tmux session "fleet" (socket
-# "klepsydra"); `jump` brings PANE's window to the front of its session. Both
-# open a Windows Terminal tab (window "fleet") only when no client shows the
-# session. One line out: stdout on success, stderr on failure.
+# "klepsydra"); `jump` brings PANE's window to the front of its session, once
+# PANE still hosts Claude process PID (START = /proc/PID/stat field 22). Both
+# open a Windows Terminal tab (window "fleet", titled TAB_TITLE) only when no
+# client shows the session. One line out: stdout on success, stderr on failure.
 set -uo pipefail
 
 SOCKET_NAME=${KLEPSYDRA_TMUX_SOCKET:-klepsydra}
 SESSION=fleet
+TAB_TITLE="klepsydra fleet" # also FLEET_TAB in src-tauri/src/launch.rs
 CONF=${KLEPSYDRA_TMUX_CONF:-$HOME/.claude/klepsydra-tmux.conf}
 CLAUDE=${KLEPSYDRA_CLAUDE:-claude}
 WT=${KLEPSYDRA_WT:-wt.exe}
@@ -39,7 +41,7 @@ tab_preflight() {
 open_tab() { # target tmux-socket-args...
   local target=$1; shift
   # The lock fd is closed for wt.exe so a tab never outlives the lock.
-  "$WT" -w fleet new-tab wsl.exe -d "$WSL_DISTRO_NAME" -e tmux "$@" attach -t "$target" \
+  "$WT" -w fleet new-tab --title "$TAB_TITLE" --suppressApplicationTitle wsl.exe -d "$WSL_DISTRO_NAME" -e tmux "$@" attach -t "$target" \
     >/dev/null 2>&1 {LOCKFD}>&- || {
     (( ${#UNDO[@]} )) && "${UNDO[@]}" >/dev/null 2>&1
     fail "Windows Terminal did not open a tab."
@@ -79,16 +81,42 @@ new() { # dir
   printf 'Started a session in %s.\n' "$dir"
 }
 
-jump() { # socket pane
-  local socket=$1 pane=$2 session
+# Whether PID is alive with start time START and `ancestor` is PID or its ancestor.
+owns_process() { # ancestor pid start
+  local raw="" p=$2
+  local -a stat=()
+  { IFS= read -r raw <"/proc/$p/stat"; } 2>/dev/null
+  [[ $raw == *") "* ]] || return 1
+  read -r -a stat <<<"${raw##*") "}"
+  (( ${#stat[@]} > 19 )) && [[ ${stat[19]} == "$3" ]] || return 1
+  for _ in $(seq 64); do
+    [[ $p == "$1" ]] && return 0
+    { IFS= read -r raw <"/proc/$p/stat"; } 2>/dev/null
+    [[ $raw == *") "* ]] || return 1
+    read -r -a stat <<<"${raw##*") "}"
+    p=${stat[1]:-0}
+    [[ $p =~ ^[1-9][0-9]*$ ]] || return 1
+  done
+  return 1
+}
+
+jump() { # socket pane pid start
+  local socket=$1 pane=$2 pid=$3 start=$4 session pane_pid
   [[ $socket =~ ^/[A-Za-z0-9._/-]{1,255}$ ]] || fail "Not a tmux socket path: $socket"
   [[ $pane =~ ^%[0-9]{1,9}$ ]] || fail "Not a tmux pane: $pane"
+  [[ $pid =~ ^[1-9][0-9]{0,9}$ ]] || fail "Not a process id: $pid"
+  [[ $start =~ ^[0-9]{1,20}$ ]] || fail "Not a process id: $start"
   need tmux "tmux is not installed in this distro."
   local -a t=(-S "$socket")
+  # tmux 3.4 exits 0 with empty output for an unknown pane.
   session=$(tmux "${t[@]}" display-message -p -t "$pane" '#{session_name}' 2>/dev/null) ||
     fail "That session's tmux pane is gone."
   [[ -n $session ]] || fail "That session's tmux pane is gone."
   [[ $session =~ ^[A-Za-z0-9._-]{1,64}$ ]] || fail "The tmux session's name cannot be passed to a tab."
+  pane_pid=$(tmux "${t[@]}" display-message -p -t "$pane" '#{pane_pid}' 2>/dev/null)
+  [[ $pane_pid =~ ^[1-9][0-9]*$ ]] || fail "That session's tmux pane is gone."
+  owns_process "$pane_pid" "$pid" "$start" ||
+    fail "That session's tmux pane now belongs to another session."
   { tmux "${t[@]}" select-window -t "$pane" && tmux "${t[@]}" select-pane -t "$pane"; } 2>/dev/null ||
     fail "tmux could not select the window."
   take_lock
@@ -101,6 +129,6 @@ jump() { # socket pane
 
 case ${1:-} in
   new) (( $# == 2 )) || fail "usage: klepsydra-launch.sh new DIR"; new "$2" ;;
-  jump) (( $# == 3 )) || fail "usage: klepsydra-launch.sh jump SOCKET PANE"; jump "$2" "$3" ;;
-  *) fail "usage: klepsydra-launch.sh new DIR | jump SOCKET PANE" ;;
+  jump) (( $# == 5 )) || fail "usage: klepsydra-launch.sh jump SOCKET PANE PID START"; jump "$2" "$3" "$4" "$5" ;;
+  *) fail "usage: klepsydra-launch.sh new DIR | jump SOCKET PANE PID START" ;;
 esac

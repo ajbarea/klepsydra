@@ -5,7 +5,7 @@ use std::collections::HashMap;
 
 use serde::Serialize;
 
-use crate::session::{Place, Said, SessionFile, State, Tmux, Touched};
+use crate::session::{Claude, Place, Said, SessionFile, State, Tmux, Touched};
 
 /// No heartbeat and no event for this long, and a session is silent: three
 /// missed 30 s statusline refreshes.
@@ -71,6 +71,7 @@ pub struct View {
     pub quiet_since: Option<i64>,
     pub tmux: Option<Tmux>,
     pub distro: Option<String>,
+    pub claude: Option<Claude>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, PartialEq, Eq)]
@@ -171,6 +172,7 @@ pub fn view(entry: &Entry, now: i64) -> Option<View> {
         quiet_since,
         tmux: f.tmux.clone(),
         distro: f.host.as_ref().and_then(|h| h.distro.clone()),
+        claude: f.claude.clone(),
     })
 }
 
@@ -267,6 +269,7 @@ mod tests {
             written_at: Some(state_at),
             tmux: None,
             host: None,
+            claude: None,
         }
     }
 
@@ -297,6 +300,13 @@ mod tests {
         let v = view(&e, NOW).unwrap();
         assert_eq!(v.tmux.as_ref().map(|t| t.pane.as_str()), Some("%3"));
         assert_eq!(v.distro.as_deref(), Some("Ubuntu"));
+        assert_eq!(v.claude, None);
+        e.file.claude = Some(Claude {
+            pid: 2231,
+            start: 8_717_628,
+        });
+        let v = view(&e, NOW).unwrap();
+        assert_eq!(v.claude.map(|c| (c.pid, c.start)), Some((2231, 8_717_628)));
     }
 
     #[test]
