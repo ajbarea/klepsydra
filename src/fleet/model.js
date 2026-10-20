@@ -84,7 +84,8 @@ const basename = (path) => (typeof path === "string" ? path.replace(/\/+$/, "").
 /**
  * Who a session is, from its identity alone, never its state: the kourai
  * character cast for its keryx voice; else a medallion bearing the initial of
- * the voice's name, or of the session's name or folder when it has no voice.
+ * the voice's name, or of the session's name or folder when it has no voice,
+ * in a metal picked by the voice, or by the session id when it has none.
  */
 export function identity(s, cast) {
   const voice = typeof s.voice === "string" && s.voice ? s.voice : null;
@@ -94,7 +95,7 @@ export function identity(s, cast) {
     return { name: character.name, voice: voiceName(voice), face: `${base}-96.webp`, face2x: `${base}-192.webp` };
   }
   const name = voice ? voiceName(voice) : s.name || basename(s.launch_dir) || s.session_id.slice(0, 8);
-  const face = medallion(name);
+  const face = medallion(name, voice ?? s.session_id);
   return { name, voice: null, face, face2x: face };
 }
 

@@ -411,9 +411,11 @@ To see the wall without sessions, serve the repo root (for example
 A session's face follows its keryx voice, so it stays the same while the
 session moves between repos. Ten voices are cast as the kourai-khryseai
 characters and show their portraits. Any other voice shows the voice's name
-and a forge medallion: a gold laurel ring on a dark bronze disc around the
-name's initial. A session without keryx is named by its session, else its
-folder, and shows the medallion with that initial.
+and a forge medallion: a laurel ring on a dark disc around the name's
+initial, struck in one of six kourai metals (gold, bronze, copper, rose gold,
+pale gold, verdigris) picked by the voice, so two voices with one initial
+usually differ. A session without keryx is named by its session, else its
+folder, and its metal is picked by its session id.
 
 While keryx is muted (`/keryx off`) it holds no new terminal, so a new session
 takes the voice keryx remembers for its repo and the cast stays on screen. The
