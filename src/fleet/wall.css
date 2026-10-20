@@ -23,6 +23,8 @@
   --arc-track: #263040;
   --button-bg: #252d39;
   --button-line: #344052;
+  --button-hover: #2e3846;
+  --needs-ink: #000000; /* on --tone-needs */
   --font: "Segoe UI Variable Text", "Segoe UI", "Inter", system-ui, sans-serif;
   --display: "Segoe UI Variable Display", "Segoe UI", "Inter Display", "Inter", system-ui, sans-serif;
 }
@@ -63,17 +65,19 @@ button {
   cursor: pointer;
   white-space: nowrap;
 }
-button:hover:not([aria-disabled="true"]) { background: #2e3846; }
+button:hover:not([aria-disabled="true"]) { background: var(--button-hover); }
 #new-session { background: var(--text); color: var(--wall-bg); border-color: var(--text); }
 #new-session:hover:not([aria-disabled="true"]) { background: #ffffff; }
 button.clear { background: transparent; border-color: transparent; color: var(--text-dim); }
 button.clear:hover:not([aria-disabled="true"]) { background: var(--button-bg); color: var(--text); }
 /* Off reads as off: no fill, a faint border, a dim label (still 4.5:1 on the card). */
 button[aria-disabled="true"], #new-session[aria-disabled="true"] { color: var(--text-dim); background: transparent; border-color: var(--card-line); cursor: default; }
-/* The kourai character's colour: the same one marks its tmux window. Only an enabled button wears it. */
-.jump[data-accent]:not([aria-disabled="true"]) { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 600; }
-/* Hover keeps the fill, so the 4.5:1 ink holds; an inset ring in the ink marks it. */
-.jump[data-accent]:hover:not([aria-disabled="true"]) { box-shadow: inset 0 0 0 2px var(--accent-ink); }
+/* Open terminal. A character's colour is a left marker on the neutral button (it matches the tmux window); the label names the action. */
+.jump[data-kind="accent"] { box-shadow: inset var(--mark-w) 0 0 var(--accent); }
+/* The one filled button: the card needs you. Amber means needs you only, so no marker there. */
+.jump[data-kind="needs"] { background: var(--tone-needs); color: var(--needs-ink); border-color: var(--tone-needs); }
+/* Hover keeps the fill (the base hover rule would otherwise grey it), so the 4.5:1 ink holds. */
+.jump[data-kind="needs"]:hover:not([aria-disabled="true"]) { background: var(--tone-needs); box-shadow: inset 0 0 0 2px var(--needs-ink); }
 /* The ring sits 2px off the button, on the card's own colour, so it never touches an accent. */
 button:focus-visible { outline: 2px solid var(--card-focus); outline-offset: 2px; }
 

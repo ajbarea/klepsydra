@@ -1,7 +1,7 @@
 // What the fleet strip and wall show for each session, kept free of the DOM
 // so it can be unit tested. Sessions arrive from the reader already ordered.
 
-import { inkOn } from "./contrast.js";
+import { markerWidth } from "./contrast.js";
 import { medallion } from "./medallion.js";
 
 // Each status's badge: shape, symbol and tone carry it together with the
@@ -100,12 +100,11 @@ export function identity(s, cast) {
       face: `${base}-96.webp`,
       face2x: `${base}-192.webp`,
       accent,
-      accentInk: accent && inkOn(accent),
     };
   }
   const name = voice ? voiceName(voice) : s.name || basename(s.launch_dir) || s.session_id.slice(0, 8);
   const face = medallion(name, voice ?? s.session_id);
-  return { name, voice: null, face, face2x: face, accent: null, accentInk: null };
+  return { name, voice: null, face, face2x: face, accent: null };
 }
 
 /** "Hephaestus, needs you, approve Bash, 2 minutes" */
@@ -194,6 +193,19 @@ function jumpable(s) {
   if (s.status === "ended") return { enabled: false, why: "session ended" };
   if (!s.name && !(s.tmux && s.claude && s.distro)) return { enabled: false, why: "no session name yet" };
   return { enabled: true, why: null };
+}
+
+/** The Open terminal button's resting and hover backgrounds (wall.css --button-bg, --button-hover); a style test keeps them equal. */
+export const BUTTON_BGS = ["#252d39", "#2e3846"];
+
+/**
+ * How the Open terminal button is styled. "off" (disabled): quiet, nothing else.
+ * "needs": the only filled button, on a needs_you card (quiet or not), no marker.
+ * "accent": neutral with a left marker in the character's colour. "plain": neutral, no marker.
+ */
+function jumpStyle(s, accent) {
+  const kind = !jumpable(s).enabled ? "off" : s.status === "needs_you" ? "needs" : accent ? "accent" : "plain";
+  return { jumpKind: kind, jumpMark: kind === "accent" ? { color: accent, width: markerWidth(accent, BUTTON_BGS) } : null };
 }
 
 // The arc fills over the reader's thresholds (view.rs QUIET_AFTER, WAITING_DOUBT_AFTER).
@@ -290,7 +302,7 @@ export function card(s, cast, nowMs) {
     face: who.face,
     face2x: who.face2x,
     accent: who.accent,
-    accentInk: who.accentInk,
+    ...jumpStyle(s, who.accent),
     status: s.status,
     quiet: isQuiet(s),
     badge: badgeSvg(s.status, isQuiet(s)),
