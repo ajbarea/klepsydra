@@ -41,16 +41,13 @@ failures (microsoft/WSL #41901). Claude costs the same either way.
 The 2026-10-18 spec says nothing on the Windows side starts a process or names
 `wsl`. AJ's request needs both, so the rule becomes:
 
-- Exactly one source file, `src-tauri/src/launch.rs`, starts a process. It
-  starts only `C:\Windows\System32\wsl.exe`, from a fixed path, with
-  `CREATE_NO_WINDOW`.
-- It runs only from a click (**+** or Jump), one call at a time. A click while one runs is refused. Nothing polls.
+- One file, `src-tauri/src/launch.rs`, starts a process. It starts only
+  `C:\Windows\System32\wsl.exe`, with `CREATE_NO_WINDOW`.
+- It runs only from a click (**+** or Jump), one call at a time; nothing polls.
 - Every other file keeps both guards. `src/guards.test.js` asserts the
   exemption list is exactly `launch.rs`.
 - The overlay deletes files for the first time (Clear), only
   `fleet/<uuid>.json` and `fleet/<uuid>.beat`.
-
-Sessions started by hand keep working, and Jump still matches their tab titles.
 
 ## Parts
 
@@ -68,6 +65,12 @@ line and the tmux logic is tested in bash.
 3. If no client is attached to `fleet`, open one tab:
    `wt.exe -w fleet new-tab [--title "klepsydra fleet" --suppressApplicationTitle] wsl.exe -d <distro> -e tmux -S <socket> attach -t =fleet`.
    The title arguments are for the fleet socket only (see the addendum).
+   `<socket>` is the server's `#{socket_path}`; one `wt.exe` could split
+   starts nothing.
+4. Wait 5 s for the client. On a cold WSL `new` still succeeds and adds "The
+   terminal tab has not attached yet." A stamp,
+   `$XDG_RUNTIME_DIR/klepsydra-tab-pending-$UID`, kept until the client
+   attaches, stops a second tab for 30 s.
 
 Creating the session detached, before any tab exists, means two quick clicks
 make two windows, never two sessions. A closed tab leaves the sessions running
@@ -93,7 +96,7 @@ set -g automatic-rename-format "#{pane_title}"
 set -g remain-on-exit failed
 ```
 
-AJ's own settings load first (passthrough, extended keys, mouse). The
+AJ's own settings load first. The
 `automatic-rename` lines name each window after its pane's Claude title; the
 tab keeps the fixed title the launcher gives it (see the addendum). A window whose `claude` exits non-zero stays open, so a start-up error
 can be read.
@@ -120,10 +123,11 @@ card.
 
 - `launch_session()`: `wsl.exe [-d DISTRO] --cd ~ -e bash -l .claude/klepsydra-launch.sh new DIR`.
 - `tmux_jump(target)`: `wsl.exe -d DISTRO --cd ~ -e bash .claude/klepsydra-launch.sh jump SOCKET PANE PID START`.
-- The command line comes from a pure function with unit tests. Arguments are
-  validated before use and passed as separate argv entries, never through a
-  shell string on the Windows side.
+- Arguments are validated, then passed as separate argv entries, never as a
+  shell string.
 - One `Mutex<bool>` in managed state holds the one-call-at-a-time rule.
+- `wsl.exe` gets 45 s, then the card says the session may still be starting.
+  Its output is read for at most 2 s after it exits.
 
 Prefs: `launch_dir` (default `~`; AJ's is `~/ajsoftworks`) and
 `launch_distro` (default: WSL's default distro).
@@ -131,9 +135,12 @@ Prefs: `launch_dir` (default `~`; AJ's is `~/ajsoftworks`) and
 ### Jump (changed)
 
 When a card has `tmux`, `claude` and `host.distro`, Jump first calls
-`tmux_jump`, then makes one title match: the fixed `klepsydra fleet` title when
-the pane's socket is the launcher's `klepsydra`, else the session's name. If
-`tmux_jump` fails, Jump falls back to the session-name match alone. A card without `tmux` works as today.
+`tmux_jump`, then makes one title match: exactly `klepsydra fleet` when the
+pane's socket is the launcher's `klepsydra`, else the session's name after its
+status glyph. Such a card can jump before it has a name. A failed `tmux_jump`
+on the fleet socket shows the launcher's line; on another socket Jump falls
+back to the name match. After a good `tmux_jump`, only "no tab matched" reads
+as success. A card without `tmux` works as today.
 
 ### Clear (new)
 
@@ -145,15 +152,14 @@ command:
 - deletes `<id>.json` and `<id>.beat` only when `symlink_metadata` says each
   is a regular file inside the overlay's own `fleet` folder.
 
-A silent session that is still alive gets its file back at its next hook event
-(verified in `APPLY`: a missing file is rebuilt). It loses its start time and
-touched list. The button's tooltip says so.
+A silent session that is still alive gets its file back at its next hook
+event. It loses its start time and touched list. The button's tooltip says so.
 
 ### Wall
 
 - The summary bar holds a **+ New session** button and a note. While a
   launch runs, the button is disabled; the note shows the script's line.
-- The face strip and tray are left alone. #30 is reworking the strip.
+- The face strip and tray are left alone.
 
 ## Rejected ideas and their guards
 
@@ -168,28 +174,20 @@ touched list. The button's tooltip says so.
 
 ## Testing
 
-- Bash (`hooks/test_launch.sh`, new): `new` against a private tmux socket and
-  a stub `wt.exe` on `PATH`. Covers the first click (session, then one tab),
-  a second click (window, no tab), two concurrent clicks (two windows, one
-  session), and a closed tab (window, then one tab). `jump` gets bad pane and
-  socket strings refused, an unknown pane exits non-zero, and a known pane is
-  selected.
-- Bash (`test_fleet.sh`): the `tmux` and `host` fields, and gone marking for
-  the other-boot, same-distro dead, same-distro alive and other-distro cases.
-- Rust: command-line builder, argument validation, the in-flight refusal,
-  Clear's refusals (bad id, live status, symlink, path outside the folder).
-- JS: the **+** button's states, Clear on ended and silent cards only, and the
-  narrowed guards (exemption list is exactly `launch.rs`, which names only the
-  fixed `wsl.exe` path).
-- Live on Windows: **+** three times gives one tab and three windows; Jump
-  hops between them; after closing the tab, **+** reattaches; after
-  `wsl --shutdown`, old cards read "ended · gone".
+- Bash (`hooks/test_launch.sh`): `new` and `jump` against a private tmux
+  socket and a stub `wt.exe`: one tab for first, second, concurrent and
+  cold-start clicks, a closed tab reattaching, and every refusal.
+- Bash (`test_fleet.sh`): the `tmux` and `host` fields and each gone case.
+- Rust: the command line, argument checks, the in-flight gate, the jump
+  dispatch, exact fleet-tab matching, and Clear's refusals.
+- JS: the **+** button, Clear on ended and silent cards only, and the guards
+  (only `launch.rs` starts a process or names `wsl`).
+- Live on Windows: README, Releasing, step 2.7.
 
 ## Out of scope
 
-- #22 (interrupt and exit from a card). The recorded `tmux.pane` makes it a
-  `send-keys` to a known pane, so the wrong-tab risk in #22 goes away. It stays
-  its own issue.
+- #22 (interrupt and exit from a card); the recorded `tmux.pane` makes it a
+  `send-keys` to a known pane.
 - Choosing a folder or account per launch.
 - An optional split mode (#32).
 

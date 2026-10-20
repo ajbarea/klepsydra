@@ -14,11 +14,14 @@ idle work steps back.
 ## The changes
 
 - **Water-clock arc.** Each portrait sits in a ring that fills with the time
-  spent in the current state. Working fills over 600 s (the reader's
-  `QUIET_AFTER`, when a card turns "working?"). Needs-you fills over 1800 s
-  (`WAITING_DOUBT_AFTER`). Every other status shows an empty track. A test
-  reads both constants from `view.rs`, so the arc and the reader agree.
-- **Status pill, top right.** It holds the badge, the label and the age.
+  that turns its card "working?" or "needs you?". Working fills over 600 s
+  (the reader's `QUIET_AFTER`) from `active_at`, the file's last change, which
+  moves on every hook event. Needs-you fills over 1800 s
+  (`WAITING_DOUBT_AFTER`) from `status_at`, when it asked. Every other
+  status shows an empty track. A test reads both constants from `view.rs`,
+  so the arc and the reader agree.
+- **Status pill, top right.** It holds the badge, the label and the age. An
+  ended or error pill names its reason: "ended · gone", "error · rate limit".
   Silent and quiet cards keep their "no word for" or "no activity for" age.
 - **Ask line.** A needs-you card adds a tinted line saying what it waits for:
   "Waiting for you to approve Bash", "Waiting for your answer", "Waiting for
@@ -36,9 +39,10 @@ idle work steps back.
   repos follow as "also in ...". Your prompt sits in a quoted block, and the
   reply follows in full text.
 - **Actions.** "Jump to terminal" becomes **Open terminal**, the same command.
-  A disabled button gives its reason as a tooltip. A result or error shows
-  under the buttons for 8 s, then clears. Clear (see the launch design) is a quiet
-  text button beside it.
+  A disabled button gives its reason as a tooltip and as small text beside
+  it, apart from the result note. A result or error shows under the buttons
+  for 8 s, then clears. Clear (see the launch design) is a quiet text button
+  beside it.
 - **Grid.** Columns of at least 420 px: four at 1920, two at 1280, one at 800;
   three start near 1365 px.
 

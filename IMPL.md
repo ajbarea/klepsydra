@@ -6,32 +6,28 @@ Design: `docs/superpowers/specs/2026-10-20-fleet-launch-design.md` and
 `2026-10-20-fleet-wall-redesign.md`.
 
 ## Done
-- ✅ `hooks/klepsydra-launch.sh`: `new` starts `claude` as a window of tmux
-  session `fleet` (socket `klepsydra`) under a `flock`, and opens one
-  Windows Terminal tab only when no client is attached. `jump` selects a
-  pane's window after checking the Claude process (pid and start time) is
-  still in it.
+- ✅ `hooks/klepsydra-launch.sh`: `new` adds a `claude` window to tmux session
+  `fleet` (socket `klepsydra`) under a `flock`, and opens one tab, by socket
+  path, only when no client shows it and no tab is still starting (30 s
+  stamp). `jump` checks the pane still holds the Claude process first.
 - ✅ `src-tauri/src/launch.rs`: the one file that starts a process (`wsl.exe`,
-  fixed path, from a click, one call at a time). `src/guards.test.js` asserts
-  that exemption.
-- ✅ Jump: tmux first, then the fixed "klepsydra fleet" tab title for the
-  fleet socket; hand-opened tabs keep the session-title match.
-- ✅ Clear (`clear_session`): ended or silent cards only, regular files inside
-  `fleet/` only.
-- ✅ Gone: the hook records `tmux` and `host` and marks a session ended with
-  reason `gone` at the next `SessionStart` after a reboot or a dead pid.
-- ✅ Wall redesign: water-clock arc, status pill, ask line, tone edge, summary
-  bar with **+ New session**, Open terminal, grid of 420 px columns.
-- ✅ `KLEPSYDRA_STAGE` names the Windows build folder; `?demo` loads
-  `scripts/fixtures/fleet-demo.json`.
+  from a click, one call at a time, 45 s, output read 2 s past exit).
+- ✅ Jump: tmux, then exactly "klepsydra fleet" for the fleet socket, else the
+  session title. A failed fleet jump shows the launcher's line; only "no tab
+  matched" after tmux reads as success.
+- ✅ Clear, ended or silent cards only; gone after a reboot or a dead pid.
+- ✅ Wall: arc (working from `active_at`), pill with the reason on ended and
+  error cards, ask line, tone edge, summary bar with **+ New session**, Open
+  terminal with its off reason shown, 420 px columns.
 - ✅ README: install, Starting sessions, Clear, gone, the wall, the live check.
 
 ## Verified
-- ✅ node 145, `hooks/test_fleet.sh` 221, `hooks/test_launch.sh` 79,
-  `cargo test -p klepsydra-fleet` 94, all passing.
-- 📋 Live check on Windows (README, Releasing, step 2.7): **+** three times,
-  Jump between windows, close the tab and **+**, Clear, gone after
-  `wsl --shutdown`. `build-windows.sh --check` runs in CI and on Windows only.
+- ✅ node 148, `hooks/test_fleet.sh` 226, `hooks/test_launch.sh` 94,
+  `cargo test -p klepsydra-fleet` 97, all passing.
+- ✅ `build-windows.sh --check`: clippy and `cargo test --workspace` on Windows.
+- 📋 Live check on Windows (README, Releasing, step 2.7), pending the Windows
+  run: **+** three times, Jump between windows, close the tab and **+**,
+  Clear, gone after `wsl --shutdown`.
 
 ## Next
 - 📋 #32: an optional split mode for the fleet tab.

@@ -324,6 +324,9 @@ shape, symbol and colour, from the Okabe-Ito palette:
 | grey ring `–` | ended | the session ended; it leaves after 10 minutes |
 | grey ring `–` | ended · gone | the session's Claude process is gone (a reboot or `wsl --shutdown`); it leaves after 10 minutes |
 
+On a card, an ended or error pill names its reason: "ended · exited",
+"ended · gone", "error · rate limit".
+
 Sessions that need you come first, the longest wait leading, then errors,
 work in progress, finished work, and the rest. A session that starts needing
 you pulses once, unless the system asks for reduced motion. Every status
@@ -335,10 +338,12 @@ window, made on the first click and only hidden after that. A summary bar
 counts the sessions that need you, work, are done, and are idle or ended, with
 an error count only when one exists. Each card shows:
 
-- the session's face in a ring that fills with the time spent in its state:
-  600 seconds for working, 1800 for needs you, the same limits that turn a card
-  to "working?" and "needs you?";
-- a status pill, top right, with the badge, label and age;
+- the session's face in a ring that fills, while it works, with the time since
+  its last activity (its file's last change) over 600 seconds, and while it
+  needs you with the time since it asked over 1800 seconds: the same limits
+  that turn a card to "working?" and "needs you?";
+- a status pill, top right, with the badge, label and age, and the reason on
+  an ended or error card;
 - the session's name, where it works now (repo, worktree, branch chip) and the
   other repos it touched;
 - for a session that needs you, a line saying what it waits for;
@@ -351,9 +356,18 @@ columns at least 420 px wide: four at 1920 px, two at 1280, one at 800.
 **Open terminal** (Jump) brings the session's terminal to the front. For a
 session started with **+ New session**, it finds the session's tmux window by
 pane id and checks the Claude process is still in that pane, selects the
-window, then selects the Windows Terminal tab titled "klepsydra fleet", the
-fixed title of the fleet tab. If Windows keeps the focus, the tab's taskbar
-button flashes instead.
+window, then selects the Windows Terminal tab titled exactly "klepsydra
+fleet", the fixed title of the fleet tab; a hand-opened session of that name,
+whose title starts with a status glyph, is not it. If the pane now holds
+another session, or a launch is already running, the card says so and no tab
+is selected. If no tab matches, the window is still selected and the card
+says "Selected the session's tmux window."; hidden tabs, two matching tabs and
+a UI Automation failure are reported as they are. If Windows keeps the focus,
+the tab's taskbar button flashes instead. A session in tmux opens this way
+before it has a name.
+
+When Open terminal is off, its reason ("session ended", "no session name
+yet") shows as small text beside it.
 
 For a tab opened by hand, Jump selects the tab whose title, after its status
 glyph, is exactly the session's name. With no such tab, or more than one, it
@@ -373,7 +387,15 @@ repos it touched.
 as a window of the tmux session `fleet` on the socket `klepsydra`. The first
 click opens a Windows Terminal window named `fleet` with one tab. Each later
 click adds a tmux window to that tab. Closing the tab leaves the sessions
-running, and the next **+** or Jump reattaches.
+running, and the next **+** or Jump reattaches. The tab attaches to the tmux
+server by its socket path.
+
+On a cold WSL the tab can take longer than the 5 seconds the launcher waits
+for it. The note then says "Started a session in DIR. The terminal tab has not
+attached yet.", and for 30 seconds another **+** or Jump opens no second tab.
+A click waits up to 45 seconds for WSL. Past that the note says "WSL did not
+answer within 45 seconds. The session may still be starting; check the
+terminal before clicking again."
 
 `launch_dir` and `launch_distro` are keys in `prefs.json`, in the app data dir.
 `launch_dir` defaults to `~`. `launch_distro` defaults to WSL's default
