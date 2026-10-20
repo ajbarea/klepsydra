@@ -5,7 +5,7 @@ use std::collections::HashMap;
 
 use serde::Serialize;
 
-use crate::session::{Place, Said, SessionFile, State, Touched};
+use crate::session::{Place, Said, SessionFile, State, Tmux, Touched};
 
 /// No heartbeat and no event for this long, and a session is silent: three
 /// missed 30 s statusline refreshes.
@@ -69,6 +69,8 @@ pub struct View {
     /// `QUIET_AFTER`; the last word of any kind, when it needs AJ and has had
     /// none for `WAITING_DOUBT_AFTER`.
     pub quiet_since: Option<i64>,
+    pub tmux: Option<Tmux>,
+    pub distro: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, PartialEq, Eq)]
@@ -167,6 +169,8 @@ pub fn view(entry: &Entry, now: i64) -> Option<View> {
         error: f.error.clone(),
         updated_at,
         quiet_since,
+        tmux: f.tmux.clone(),
+        distro: f.host.as_ref().and_then(|h| h.distro.clone()),
     })
 }
 
@@ -239,7 +243,7 @@ pub fn snapshot(entries: &[Entry], now: i64) -> Snapshot {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::session::Ended;
+    use crate::session::{Ended, Host};
 
     const NOW: i64 = 1_792_353_000;
 
@@ -261,6 +265,8 @@ mod tests {
             error: None,
             ended: None,
             written_at: Some(state_at),
+            tmux: None,
+            host: None,
         }
     }
 
@@ -275,6 +281,28 @@ mod tests {
 
     fn ids(s: &Snapshot) -> Vec<&str> {
         s.sessions.iter().map(|v| v.session_id.as_str()).collect()
+    }
+
+    #[test]
+    fn a_view_carries_its_tmux_pane_and_distro() {
+        let mut e = entry("a", State::Working, NOW - 5, NOW - 5);
+        e.file.tmux = Some(Tmux {
+            socket: "/tmp/tmux-1001/klepsydra".into(),
+            pane: "%3".into(),
+        });
+        e.file.host = Some(Host {
+            boot: "b".into(),
+            distro: Some("Ubuntu".into()),
+        });
+        let v = view(&e, NOW).unwrap();
+        assert_eq!(v.tmux.as_ref().map(|t| t.pane.as_str()), Some("%3"));
+        assert_eq!(v.distro.as_deref(), Some("Ubuntu"));
+    }
+
+    #[test]
+    fn a_view_without_tmux_has_none() {
+        let v = view(&entry("a", State::Working, NOW - 5, NOW - 5), NOW).unwrap();
+        assert_eq!((v.tmux, v.distro), (None, None));
     }
 
     #[test]
