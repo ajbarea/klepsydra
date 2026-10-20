@@ -21,7 +21,21 @@ card's Open terminal button.
   malformed accent or a missing cast makes no call. The hook's ink equals
   `inkOn` for all ten (tested).
 - ✅ `test_fleet.sh` runs with a stub `tmux` on PATH for every case.
-- ✅ README: install copies the cast; the colours are documented.
+- ✅ README: install copies the cast; the colours are documented; the upgrade
+  note says to re-copy it.
+- ✅ Review round 1: the hook drops the fleet lock before it calls tmux; the
+  hover is an inset ring in the ink (no filter), so the 4.5:1 holds; the accent
+  check anchors with `\z`; `fire` uses a private cast and private socket paths.
+
+## Verified
+- ✅ Tests: all ten accents hold 4.5:1 with their ink and on hover; the hook's
+  ink equals `inkOn` for the ten plus two colours at the black/white switch;
+  a failing tmux leaves the hook silent, exit 0, file written; a hanging tmux
+  does not keep another session's file from being written (fails if the lock
+  is held across tmux).
+- ✅ `?demo` wall at 1920 in Chromium: kourai buttons coloured, a medallion
+  card neutral, disabled buttons quiet. A private tmux server showed both
+  window styles set as the hook sets them.
 
 ## Next
 - 📋 #34 second part: DECAC colouring for hand-opened Windows Terminal tabs.

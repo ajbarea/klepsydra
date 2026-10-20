@@ -229,7 +229,9 @@ are small, and rewritten on the next render.
 copy in your `~/.claude`, so an upgraded overlay meets a hook still publishing
 to the previous location, `%LOCALAPPDATA%\klepsydra`. The overlay reads both, so
 the gauge keeps working either way; once the hook is re-copied, that folder
-holds nothing current and can be deleted.
+holds nothing current and can be deleted. Re-copy `klepsydra-cast.json` too: a
+cast from before the character colours has no accents, so the buttons would be
+coloured while their tmux windows stay plain.
 
 ## Using it
 
@@ -524,7 +526,7 @@ previous file alone rather than overwriting it with blanks.
 
 ```bash
 bash statusline/test_statusline.sh       # usage hook and heartbeat, against recorded payloads
-bash hooks/test_fleet.sh                 # fleet hook: states, where, identity, pruning, gone, settings
+bash hooks/test_fleet.sh                 # fleet hook: states, where, identity, pruning, gone, settings, window colours
 bash hooks/test_launch.sh                # launcher: new, jump, tab reuse, against a private tmux socket
 bash scripts/test_measure_memory.sh      # the release memory check
 node --test src/*.test.js                # ramp, countdown, reconciliation, fleet model, faces, guards
