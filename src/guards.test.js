@@ -339,7 +339,7 @@ test("nothing but the configured main window is always on top", () => {
   assert.deepEqual(JSON.parse(read("src-tauri/tauri.conf.json")).app.windows.map((w) => w.label), ["main"]);
 });
 
-test("harness input never ships", () => {
+test("harness input never ships", async () => {
   const gitignore = read(".gitignore");
   const windows = read("scripts/build-windows.sh");
   const linux = read("scripts/build-linux.sh");
@@ -348,6 +348,14 @@ test("harness input never ships", () => {
     assert.ok(windows.includes(`--exclude '${f}'`), `build-windows.sh: ${f}`);
     assert.ok(linux.includes(f), `build-linux.sh: ${f}`);
   }
+  // The ?demo sample lives outside frontendDist, so neither build can bundle it.
+  globalThis.window ??= {};
+  const dist = join(ROOT, "src-tauri", JSON.parse(read("src-tauri/tauri.conf.json")).build.frontendDist);
+  const demo = (await import("./fleet/feed.js")).devSnapshotUrl(false, "?demo");
+  const onDisk = join(ROOT, "src", demo);
+  assert.ok(existsSync(onDisk), `${demo} exists`);
+  assert.ok(relative(dist, onDisk).startsWith(".."), `${demo} is outside ${dist}`);
+  assert.deepEqual(filesUnder("src", [".json"]).filter((f) => /demo/.test(f)), [], "no demo snapshot under src/");
 });
 
 test("the hooks make no sound", () => {
@@ -360,7 +368,6 @@ const NOT_SCANNED = {
   "statusline/fixtures/": "recorded status line payloads, data",
   "src/fleet/faces/": "generated portraits and their license table, data",
   "src/fleet/cast.json": "voice to portrait table, data",
-  "src/fleet/demo.json": "the browser-only sample fleet, data",
   "src-tauri/fleet/Cargo.toml": "scanned as a manifest",
 };
 
@@ -447,7 +454,7 @@ test("the wall has a New session button that calls the launcher", () => {
   const html = read("src/wall.html");
   assert.ok(html.indexOf("</div>", html.indexOf('class="bar"')) < html.indexOf('<main id="wall"'));
 
-  assert.match(html, /<div class="tally"/);
+  assert.match(html, /<div class="tally" role="group" aria-label="Session counts">/);
   assert.match(html, />Open terminal</);
 });
 
@@ -455,10 +462,10 @@ test("the demo feed is never reachable inside the app", async () => {
   globalThis.window ??= {};
   const { devSnapshotUrl } = await import("./fleet/feed.js");
   for (const search of ["?demo", "?demo=1&focus=x", ""]) assert.equal(devSnapshotUrl(true, search), null, search);
-  assert.equal(devSnapshotUrl(false, "?demo"), "./fleet/demo.json");
+  assert.equal(devSnapshotUrl(false, "?demo"), "../scripts/fixtures/fleet-demo.json");
   assert.equal(devSnapshotUrl(false, "?focus=x"), "./dev-fleet.json");
   const feed = read("src/fleet/feed.js");
-  assert.equal(feed.match(/demo\.json/g).length, 1, "one way to the demo");
+  assert.equal(feed.match(/fleet-demo\.json/g).length, 1, "one way to the demo");
   assert.match(feed, /devSnapshotUrl\(inTauri, location\.search\)/);
 });
 

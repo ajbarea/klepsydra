@@ -1,6 +1,7 @@
 // Where fleet messages come from: the app's fleet_subscribe channel, or in a
 // browser a dev-fleet.json snapshot (serve src/ and add ?focus=<id> to focus),
-// or with ?demo a sample fleet, its times moved up to now.
+// or with ?demo a sample fleet, its times moved up to now (serve the repo root
+// and open /src/wall.html?demo: the sample sits outside the bundled src/).
 // `onMessage` gets `{sessions}` snapshots and `{focus: id}` requests.
 import { follow } from "../ipc.js";
 
@@ -9,7 +10,7 @@ export const inTauri = Boolean(window.__TAURI_INTERNALS__ ?? window.__TAURI__);
 /** The browser's snapshot file; none inside the app. */
 export function devSnapshotUrl(app, search) {
   if (app) return null;
-  return new URLSearchParams(search).has("demo") ? "./fleet/demo.json" : "./dev-fleet.json";
+  return new URLSearchParams(search).has("demo") ? "../scripts/fixtures/fleet-demo.json" : "./dev-fleet.json";
 }
 
 // The sample's times are as of its `at`; shift them so its ages read as written.

@@ -249,7 +249,7 @@ export function card(s, cast, nowMs) {
     prompt: s.prompt?.text ?? null,
     reply: s.reply?.text ?? null,
     error: s.status === "error" ? s.error ?? null : null,
-    updated: updatedText(s, nowMs),
+    updated: s.status === "ended" ? null : updatedText(s, nowMs), // the pill's age says it
     jump: jumpable(s),
     clear: s.status === "ended" || s.status === "silent",
     jumpLabel: `Open terminal, ${who.name}`,

@@ -244,6 +244,9 @@ test("the wall announces changes, not the first look", () => {
 test("updated shows once the newest field is over five minutes old", () => {
   assert.equal(updatedText(session({ updated_at: ago(299) }), NOW), null);
   assert.equal(updatedText(session({ updated_at: ago(420) }), NOW), "updated 7m ago");
+  const ended = session({ status: "ended", status_at: ago(360), updated_at: ago(360) });
+  assert.equal(card(ended, CAST, NOW).updated, null, "an ended card's pill already says how long");
+  assert.equal(card({ ...ended, status: "done" }, CAST, NOW).updated, "updated 6m ago");
 });
 
 test("a card holds what the wall shows", () => {
