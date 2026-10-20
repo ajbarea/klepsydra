@@ -42,7 +42,9 @@ CAST=${KLEPSYDRA_CAST:-}
 LOCK=${XDG_RUNTIME_DIR:-/tmp}/klepsydra-fleet-$UID.lock
 PROMPT_CHARS=300
 # The events README.md registers this hook on; any other is ignored.
-EVENTS="SessionStart UserPromptSubmit PermissionRequest PreToolUse Notification PostToolUse PostToolUseFailure Stop StopFailure SessionEnd"
+EVENTS="SessionStart UserPromptSubmit PermissionRequest PreToolUse Notification PostToolUse PostToolUseFailure SubagentStart SubagentStop Stop StopFailure SessionEnd"
+# At most this many background entries are kept; past it the oldest go.
+BACKGROUND_MAX=64
 
 # Sets where_repo, where_worktree and where_branch for `path` (empty when
 # none), and where_bare=1 when no repo holds it, reading .git directly as keryx's source_name does, so no git process
@@ -374,6 +376,13 @@ def need_reason($tool): if $tool == "AskUserQuestion" then "question"
   elif $tool == "ExitPlanMode" then "approve plan" else "approve \($tool // "a tool")" end;
 def ended_as: {clear: "cleared", resume: "resumed elsewhere", logout: "logged out",
                prompt_input_exit: "exited", other: "stopped"}[.] // gsub("_"; " ");
+# The background set, by id: add keeps an entry's first time, drop takes ids (non-strings ignored).
+def bg_add($id; $kind): if ($id | text) == null then . elif any(.[]; .id == $id) then .
+  else . + [{id: $id, kind: $kind, at: $now}] end;
+def bg_drop($ids): ($ids | map(text | select(. != null))) as $gone | map(select(.id | IN($gone[]) | not));
+# The task and tool-use ids of every <task-notification> block in a prompt.
+def notified: if type == "string" then [scan("<task-notification>[\\s\\S]*?</task-notification>")
+  | scan("<(?:task-id|tool-use-id)>\\s*([^<\\s]+)\\s*</(?:task-id|tool-use-id)>") | .[0]] else [] end;
 
 . as $ev
 | $ev.hook_event_name as $event
@@ -385,7 +394,7 @@ def ended_as: {clear: "cleared", resume: "resumed elsewhere", logout: "logged ou
   else
   ($was // {v: 1, session_id: $ev.session_id, name: null, started_at: $now,
             launch_dir: ($ev.cwd | text), claude: null, tmux: null, host: null, voice: null, voice_from: null,
-            state: (if $event == "PreToolUse" or $event == "PostToolUse" or $event == "PostToolUseFailure" then "working" else "new" end),
+            state: (if $event | IN("PreToolUse", "PostToolUse", "PostToolUseFailure", "SubagentStart", "SubagentStop") then "working" else "new" end),
             reason: null, needs: null, state_at: $now,
             where: null, touched: [], prompt: null, reply: null, error: null,
             ended: null, written_at: $now}) as $s
@@ -420,6 +429,33 @@ def ended_as: {clear: "cleared", resume: "resumed elsewhere", logout: "logged ou
       | .where = $w + {by: $by, at: $now}
     end
 
+  # Background work: one entry per subagent or background shell still running,
+  # so a turn that ends with work out stays working. An absent field is none.
+  | ($ev.tool_input // {}) as $in
+  | ($ev.tool_response // {}) as $out
+  | (.background | if type == "array" then map(select(type == "object" and (.id | text) != null
+       and (.kind | IN("agent", "shell")) and (.at | type) == "number")) else [] end) as $bg
+  | .background = (
+      if $event == "SessionEnd" or $fresh then []
+      elif $event == "SubagentStart" then $bg | bg_add($agent; "agent")
+      elif $event == "SubagentStop" then $bg | bg_drop([$agent])
+      elif $event == "PostToolUse" and $ev.tool_name == "Bash" and $in.run_in_background == true then
+        $bg | bg_add(($out | objects | .backgroundTaskId | text) // ($ev.tool_use_id | text); "shell")
+      elif $event == "PostToolUse" and $ev.tool_name == "Agent" and ($out | objects | .isAsync) == true then
+        $bg | bg_add($out.agentId; "agent")
+      elif $event == "PostToolUse" and ($ev.tool_name | IN("TaskStop", "KillShell")) then
+        $bg | bg_drop([$in.task_id, $in.shell_id, ($out | objects | .task_id)])
+      elif $event == "UserPromptSubmit" then $bg | bg_drop($ev.prompt | notified)
+      # Stop lists what still runs; it is the truth when a dropped event left the set wrong.
+      elif $event == "Stop" and ($ev.background_tasks | type) == "array" then
+        [$ev.background_tasks[] | objects | select((.id | text) != null and (.status | IN("running", "pending")))
+         | .id as $id | {id: $id, kind: (if .type == "subagent" then "agent" else "shell" end),
+                         at: ([$bg[] | select(.id == $id) | .at][0] // $now)}]
+      else $bg end
+      # A subagent's own events show it still runs.
+      | map(if .id == $agent and $now - .at >= 60 then .at = $now else . end)
+      | .[-$bg_max:])
+
   # State, with what it needs from AJ and who asked.
   | (if $event == "SessionStart" then
        if $was == null then {state: "new", reason: null}
@@ -437,8 +473,14 @@ def ended_as: {clear: "cleared", resume: "resumed elsewhere", logout: "logged ou
        {state: "working", reason: null}
      elif $event == "Notification" and $ev.notification_type == "idle_prompt"
           and (.state == "working" or .state == "needs_you") and $now - .state_at >= 30 then
-       {state: "done", reason: null}
-     elif $event == "Stop" then {state: "done", reason: null}
+       # The prompt is free; work still out keeps the session working.
+       if .background != [] then {state: "working", reason: "background"} else {state: "done", reason: null} end
+     # A subagent still waiting on AJ outranks the turn's end.
+     elif $event == "Stop" and .state == "needs_you" and (.needs.by // "") != ""
+          and any(.background[]; .id == $s.needs.by) then
+       {state: .state, reason: .reason}
+     elif $event == "Stop" then
+       if .background != [] then {state: "working", reason: "background"} else {state: "done", reason: null} end
      elif $event == "StopFailure" then {state: "error", reason: (($ev.error // "unknown") | gsub("_"; " "))}
      elif $event == "SessionEnd" then {state: "ended", reason: (($ev.reason // "other") | ended_as)}
      else {state: .state, reason: .reason} end) as $t
@@ -460,6 +502,8 @@ def ended_as: {clear: "cleared", resume: "resumed elsewhere", logout: "logged ou
     elif $event == "SessionEnd" then .ended = {reason: ($ev.reason // "other"), at: $now}
     elif $event == "SessionStart" and $ev.source != "compact" then .ended = null | .error = null
     else . end
+
+  | if .background == [] then del(.background) else . end
 
   # An event that changes nothing still refreshes written_at, once a minute.
   | if $was != null and (del(.written_at) == ($was | del(.written_at))) and $now - $was.written_at < 60 then empty
@@ -560,7 +604,7 @@ main() {
   file=$fleet/$session.json
   old=""
   [[ -f $file ]] && { old=$(<"$file"); } 2>/dev/null
-  new=$(printf '%s' "$input" | jq -c --arg old "$old" --argjson now "$now" --argjson chars "$PROMPT_CHARS" \
+  new=$(printf '%s' "$input" | jq -c --arg old "$old" --argjson now "$now" --argjson chars "$PROMPT_CHARS" --argjson bg_max "$BACKGROUND_MAX" \
     --arg repo "$where_repo" --arg worktree "$where_worktree" --arg branch "$where_branch" \
     --arg by "$by" \
     --arg tmux_socket "$tmux_socket" --arg tmux_pane "$tmux_pane" --arg boot "$host_boot" --arg distro "$host_distro" \

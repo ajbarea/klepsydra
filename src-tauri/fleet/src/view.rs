@@ -5,7 +5,7 @@ use std::collections::HashMap;
 
 use serde::Serialize;
 
-use crate::session::{Claude, Place, Said, SessionFile, State, Tmux, Touched};
+use crate::session::{Claude, Kind, Place, Said, SessionFile, State, Tmux, Touched};
 
 /// No heartbeat and no event for this long, and a session is silent: three
 /// missed 30 s statusline refreshes.
@@ -18,6 +18,16 @@ pub const QUIET_AFTER: i64 = 600;
 /// A session waiting on AJ shows no heartbeat while its prompt is open, so it
 /// is not silent; with no word of any kind for this long it is in doubt.
 pub const WAITING_DOUBT_AFTER: i64 = 1800;
+/// A background entry the hook has not heard of for this long no longer
+/// counts. A subagent's every tool call refreshes its entry, but a shell's
+/// never does, so this bounds how long a forgotten shell (a dev server) keeps
+/// a finished session working: twice the 30-minute deadline of the longest
+/// bounded waits Claude runs in the background, so such a wait is still shown
+/// when it ends.
+pub const BACKGROUND_STALE_AFTER: i64 = 3600;
+/// An entry stamped this far ahead of the reader's clock still counts: the
+/// hook stamps a moment before the file lands.
+const BACKGROUND_AHEAD: i64 = 60;
 
 #[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -75,6 +85,16 @@ pub struct View {
     pub tmux: Option<Tmux>,
     pub distro: Option<String>,
     pub claude: Option<Claude>,
+    /// The background work still counted: none once the session stopped
+    /// working, and none for entries stale past `BACKGROUND_STALE_AFTER`.
+    pub background: Crew,
+}
+
+/// How many subagents and background shells a session has out.
+#[derive(Clone, Copy, Debug, Default, Serialize, PartialEq, Eq)]
+pub struct Crew {
+    pub agents: u32,
+    pub shells: u32,
 }
 
 #[derive(Clone, Debug, Default, Serialize, PartialEq, Eq)]
@@ -101,11 +121,27 @@ pub fn view(entry: &Entry, now: i64) -> Option<View> {
     // A prompt hides the status line, so a waiting session sends no beats.
     let silent = !matches!(f.state, State::Ended | State::NeedsYou)
         && now.saturating_sub(last_word) > SILENT_AFTER;
+    let mut crew = Crew::default();
+    if matches!(f.state, State::Working | State::NeedsYou) {
+        for b in &f.background {
+            if (-BACKGROUND_AHEAD..=BACKGROUND_STALE_AFTER).contains(&now.saturating_sub(at(b.at)))
+            {
+                match b.kind {
+                    Kind::Agent => crew.agents += 1,
+                    Kind::Shell => crew.shells += 1,
+                }
+            }
+        }
+    }
+    // A turn that ended with work out: once all of it is stale, it is done.
+    let after_turn = f.state == State::Working && f.reason.as_deref() == Some("background");
+    let crew_out = crew.agents + crew.shells > 0;
     let (status, reason, status_at) = if silent {
         (Status::Silent, None, last_word)
     } else {
         let status = match f.state {
             State::New => Status::New,
+            State::Working if after_turn && !crew_out => Status::Done,
             State::Working => Status::Working,
             State::NeedsYou => Status::NeedsYou,
             State::Done => Status::Done,
@@ -117,7 +153,12 @@ pub fn view(entry: &Entry, now: i64) -> Option<View> {
         } else {
             state_at
         };
-        (status, f.reason.clone(), status_at)
+        let reason = if status == Status::Done {
+            None
+        } else {
+            f.reason.clone()
+        };
+        (status, reason, status_at)
     };
     let shift_said = |s: &Option<Said>| {
         s.as_ref().map(|s| Said {
@@ -145,6 +186,9 @@ pub fn view(entry: &Entry, now: i64) -> Option<View> {
     // The file's own time: its skew-corrected written_at equals it within 2 s.
     let active_at = entry.modified;
     let quiet_since = match status {
+        // A shell sends no events while it runs, so a turn that ended with
+        // work out is never quiet; its staleness is the entries' own.
+        Status::Working if after_turn => None,
         Status::Working => Some(active_at).filter(|m| now.saturating_sub(*m) > QUIET_AFTER),
         Status::NeedsYou => {
             Some(last_word).filter(|w| now.saturating_sub(*w) > WAITING_DOUBT_AFTER)
@@ -178,6 +222,11 @@ pub fn view(entry: &Entry, now: i64) -> Option<View> {
         tmux: f.tmux.clone(),
         distro: f.host.as_ref().and_then(|h| h.distro.clone()),
         claude: f.claude.clone(),
+        background: if matches!(status, Status::Working | Status::NeedsYou) {
+            crew
+        } else {
+            Crew::default()
+        },
     })
 }
 
@@ -250,7 +299,7 @@ pub fn snapshot(entries: &[Entry], now: i64) -> Snapshot {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::session::{Ended, Host};
+    use crate::session::{Background, Ended, Host};
 
     const NOW: i64 = 1_792_353_000;
 
@@ -275,6 +324,7 @@ mod tests {
             tmux: None,
             host: None,
             claude: None,
+            background: vec![],
         }
     }
 
@@ -312,6 +362,194 @@ mod tests {
         });
         let v = view(&e, NOW).unwrap();
         assert_eq!(v.claude.map(|c| (c.pid, c.start)), Some((2231, 8_717_628)));
+    }
+
+    fn crew_entry(id: &str, kind: Kind, at: i64) -> Background {
+        Background {
+            id: id.into(),
+            kind,
+            at,
+        }
+    }
+
+    /// A session whose turn ended at `NOW - 30` with two agents and a shell out.
+    fn after_turn(at: i64) -> Entry {
+        let mut e = entry("a", State::Working, NOW - 30, NOW - 5);
+        e.file.reason = Some("background".into());
+        e.file.background = vec![
+            crew_entry("a1", Kind::Agent, at),
+            crew_entry("a2", Kind::Agent, at),
+            crew_entry("s1", Kind::Shell, at),
+        ];
+        e
+    }
+
+    #[test]
+    fn a_turn_that_ended_with_work_out_stays_working_with_its_crew() {
+        let v = view(&after_turn(NOW - 60), NOW).unwrap();
+        assert_eq!(
+            (v.status, v.reason.as_deref()),
+            (Status::Working, Some("background"))
+        );
+        assert_eq!(
+            v.background,
+            Crew {
+                agents: 2,
+                shells: 1
+            }
+        );
+    }
+
+    #[test]
+    fn work_out_is_never_quiet_however_long_a_shell_runs() {
+        let mut e = after_turn(NOW - 3000);
+        e.modified = NOW - 3000;
+        e.file.state_at = NOW - 3000;
+        e.file.written_at = Some(NOW - 3000);
+        let v = view(&e, NOW).unwrap();
+        assert_eq!((v.status, v.quiet_since), (Status::Working, None));
+    }
+
+    #[test]
+    fn stale_work_falls_back_to_done() {
+        let v = view(&after_turn(NOW - BACKGROUND_STALE_AFTER), NOW).unwrap();
+        assert_eq!(
+            v.background.agents + v.background.shells,
+            3,
+            "exactly the bound still counts"
+        );
+        let v = view(&after_turn(NOW - BACKGROUND_STALE_AFTER - 1), NOW).unwrap();
+        assert_eq!(
+            (v.status, v.reason, v.background),
+            (Status::Done, None, Crew::default())
+        );
+        assert_eq!(v.status_at, NOW - 30, "done since the turn ended");
+    }
+
+    #[test]
+    fn only_the_stale_entries_drop() {
+        let mut e = after_turn(NOW - 60);
+        e.file.background[2].at = NOW - BACKGROUND_STALE_AFTER - 1;
+        assert_eq!(
+            view(&e, NOW).unwrap().background,
+            Crew {
+                agents: 2,
+                shells: 0
+            }
+        );
+    }
+
+    #[test]
+    fn an_entry_from_the_future_does_not_count() {
+        let mut e = after_turn(NOW - 60);
+        e.file.background[0].at = NOW + BACKGROUND_AHEAD;
+        e.file.background[1].at = NOW + BACKGROUND_AHEAD + 1;
+        assert_eq!(
+            view(&e, NOW).unwrap().background,
+            Crew {
+                agents: 1,
+                shells: 1
+            }
+        );
+    }
+
+    #[test]
+    fn entry_times_follow_the_writer_clock_correction() {
+        // The hook's clock runs 600 s ahead: its fresh entries read 600 s late.
+        let mut e = after_turn(NOW - 60 + 600);
+        e.file.written_at = Some(NOW - 5 + 600);
+        e.modified = NOW - 5;
+        assert_eq!(
+            view(&e, NOW).unwrap().background,
+            Crew {
+                agents: 2,
+                shells: 1
+            }
+        );
+    }
+
+    #[test]
+    fn a_working_turn_counts_its_crew_and_still_goes_quiet() {
+        let mut e = after_turn(NOW - 60);
+        e.file.reason = None;
+        let v = view(&e, NOW).unwrap();
+        assert_eq!(
+            (v.status, v.background),
+            (
+                Status::Working,
+                Crew {
+                    agents: 2,
+                    shells: 1
+                }
+            )
+        );
+        e.modified = NOW - QUIET_AFTER - 1;
+        assert_eq!(
+            view(&e, NOW).unwrap().quiet_since,
+            Some(NOW - QUIET_AFTER - 1)
+        );
+        // With all of it stale, a turn still in progress stays working.
+        let mut e = after_turn(NOW - BACKGROUND_STALE_AFTER - 1);
+        e.file.reason = None;
+        let v = view(&e, NOW).unwrap();
+        assert_eq!((v.status, v.background), (Status::Working, Crew::default()));
+    }
+
+    #[test]
+    fn needs_you_keeps_its_crew_and_outranks_it() {
+        let mut e = after_turn(NOW - 60);
+        e.file.state = State::NeedsYou;
+        e.file.reason = Some("approve Bash".into());
+        let v = view(&e, NOW).unwrap();
+        assert_eq!(
+            (v.status, v.background),
+            (
+                Status::NeedsYou,
+                Crew {
+                    agents: 2,
+                    shells: 1
+                }
+            )
+        );
+    }
+
+    #[test]
+    fn a_finished_or_silent_session_shows_no_crew() {
+        let mut e = after_turn(NOW - 60);
+        e.file.state = State::Done;
+        e.file.reason = None;
+        assert_eq!(view(&e, NOW).unwrap().background, Crew::default());
+        let mut e = after_turn(NOW - 60);
+        e.beat = Some((NOW - SILENT_AFTER - 1, None));
+        e.modified = NOW - SILENT_AFTER - 1;
+        let v = view(&e, NOW).unwrap();
+        assert_eq!((v.status, v.background), (Status::Silent, Crew::default()));
+    }
+
+    #[test]
+    fn an_old_file_reads_as_before_and_the_crew_is_always_sent() {
+        let text = format!(
+            r#"{{"v":1,"session_id":"cb9fa591-1514-44d1-a31c-eba4a7cb41ed","state":"working","state_at":{},"written_at":{}}}"#,
+            NOW - 10,
+            NOW - 10
+        );
+        let file =
+            crate::session::parse(&text, "cb9fa591-1514-44d1-a31c-eba4a7cb41ed", NOW - 10).unwrap();
+        let v = view(
+            &Entry {
+                file,
+                modified: NOW - 10,
+                beat: None,
+            },
+            NOW,
+        )
+        .unwrap();
+        assert_eq!((v.status, v.background), (Status::Working, Crew::default()));
+        let json = serde_json::to_value(&v).unwrap();
+        assert_eq!(
+            json["background"],
+            serde_json::json!({"agents": 0, "shells": 0})
+        );
     }
 
     #[test]

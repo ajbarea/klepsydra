@@ -79,14 +79,33 @@ test("the wall's text meets 4.5:1 on live and quiet cards", () => {
       assert.ok(r >= 4.5, `${fg} on ${bg}: ${r.toFixed(2)}`);
     }
   }
-  assert.ok(contrast(token(css, "--tone-working"), token(css, "--card-bg")) >= 3, "working arc and edge");
+  assert.ok(contrast(token(css, "--tone-working"), token(css, "--card-bg")) >= 3, "working edge");
   assert.doesNotMatch(css.replace(/\/\*[\s\S]*?\*\//g, ""), /opacity:/, "dimming is by colour, so dimmed text keeps its contrast");
 });
 
-test("the arc and the dimming respect reduced motion and keep the face visible", () => {
+test("the ring's fades and the dimming respect reduced motion and keep the face visible", () => {
   const css = read("./fleet/wall.css");
-  assert.match(css, /@media \(prefers-reduced-motion: reduce\)/);
+  assert.match(css, /@media \(prefers-reduced-motion: reduce\) \{\s*\* \{ transition: none !important; animation: none !important; \}/);
   assert.match(css, /\.card\.dim \.face \{[^}]*filter:/);
+  assert.match(read("./fleet/wall.js"), /if \(reducedMotion\(\)\) path\.remove\(\)/, "a leaving segment goes at once");
+});
+
+test("a shell's segment differs from an agent's by dash and width, never by colour alone", () => {
+  const css = read("./fleet/wall.css");
+  const rule = (sel) => css.match(new RegExp(`${sel.replace(/\./g, "\\.")} \\{([^}]*)\\}`))?.[1] ?? "";
+  assert.match(rule(".ring .seg.shell"), /stroke-dasharray:/);
+  assert.doesNotMatch(rule(".ring .seg.agent"), /stroke-dasharray|stroke:/);
+  assert.doesNotMatch(rule(".ring .seg.shell"), /stroke:/);
+  const width = (sel) => parseFloat(rule(sel).match(/stroke-width: ([\d.]+)/)[1]);
+  assert.ok(width(".ring .seg.shell") < width(".ring .seg.agent"));
+});
+
+test("an agent with no character is gold, not the needs-you amber, and reads on the card", () => {
+  const css = read("./fleet/wall.css");
+  const gold = token(css, "--crew-gold");
+  assert.notEqual(gold.toLowerCase(), token(badgeCss, "--badge-needs").toLowerCase(), "amber means needs you");
+  assert.ok(contrast(gold, token(css, "--card-bg")) >= 3);
+  assert.ok(contrast(token(css, "--ring-track"), token(css, "--card-bg")) < 1.5, "an empty ring stays quiet");
 });
 
 test("a badge on the wall is ringed in its card's colour", () => {

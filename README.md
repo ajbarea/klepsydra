@@ -144,6 +144,8 @@ Then merge this into `~/.claude/settings.json` (into each config dir's
     "Notification": [{ "matcher": "elicitation_dialog|elicitation_url_dialog|idle_prompt", "hooks": [{ "type": "command", "command": "~/.claude/klepsydra-fleet.sh", "async": true }] }],
     "PostToolUse": [{ "hooks": [{ "type": "command", "command": "~/.claude/klepsydra-fleet.sh", "async": true }] }],
     "PostToolUseFailure": [{ "hooks": [{ "type": "command", "command": "~/.claude/klepsydra-fleet.sh", "async": true }] }],
+    "SubagentStart": [{ "hooks": [{ "type": "command", "command": "~/.claude/klepsydra-fleet.sh", "async": true }] }],
+    "SubagentStop": [{ "hooks": [{ "type": "command", "command": "~/.claude/klepsydra-fleet.sh", "async": true }] }],
     "Stop": [{ "hooks": [{ "type": "command", "command": "~/.claude/klepsydra-fleet.sh", "async": true }] }],
     "StopFailure": [{ "hooks": [{ "type": "command", "command": "~/.claude/klepsydra-fleet.sh", "async": true }] }],
     "SessionEnd": [{ "hooks": [{ "type": "command", "command": "~/.claude/klepsydra-fleet.sh", "async": true }] }]
@@ -157,7 +159,9 @@ prints anything, so the permission hook never answers a prompt. The
 `Notification` matcher catches an MCP server's request for input (a dialog or
 a URL) and the idle notice that corrects a session still marked as working
 after its turn ended. `PostToolUseFailure` ends a wait whose approved command
-then failed.
+then failed. `SubagentStart` and `SubagentStop`, with background `Bash` calls
+seen at `PostToolUse`, keep each session's background work: a turn that ends
+with subagents or background shells still running stays working.
 For the gauge alone, keep `statusLine` and leave out `hooks`.
 
 The hook picks the overlay's data dir for the platform it runs on: on Linux,
@@ -320,7 +324,7 @@ shape, symbol and colour, from the Okabe-Ito palette:
 |---|---|---|
 | orange diamond `!` | needs you | a permission, a question, a plan or an MCP server's request is waiting |
 | vermillion square `×` | error | the last turn ended on an API error |
-| blue circle `…` | working | a prompt is being answered |
+| blue circle `…` | working | a prompt is being answered, or the turn ended with subagents or background shells still running (the prompt is free meanwhile) |
 | blue circle `?` | working? | working, but nothing has happened for 10 minutes; the turn may have been interrupted |
 | orange diamond `?` | needs you? | waiting on you with no word for 30 minutes; the session may be gone |
 | green circle `✓` | done | the last turn finished |
@@ -331,6 +335,12 @@ shape, symbol and colour, from the Okabe-Ito palette:
 
 On a card, an ended or error pill names its reason: "ended · exited",
 "ended · gone", "error · rate limit".
+
+A piece of background work stops counting once the hook has not heard of it
+for an hour: each tool call a subagent makes renews it, while a background
+shell's only word is its start. A session whose turn ended with nothing but
+such stale work out reads done, so a forgotten dev server cannot keep a card
+working forever.
 
 Sessions that need you come first, the longest wait leading, then errors,
 work in progress, finished work, and the rest. A session that starts needing
@@ -343,12 +353,16 @@ window, made on the first click and only hidden after that. A summary bar
 counts the sessions that need you, work, are done, and are idle or ended, with
 an error count only when one exists. Each card shows:
 
-- the session's face in a ring that fills, while it works, with the time since
-  its last activity (its file's last change) over 600 seconds, and while it
-  needs you with the time since it asked over 1800 seconds: the same limits
-  that turn a card to "working?" and "needs you?";
-- a status pill, top right, with the badge, label and age, and the reason on
-  an ended or error card;
+- the session's face in a ring showing its background crew: one segment per
+  subagent (solid, in the character's colour, or gold for a medallion) or
+  background shell (thinner and dashed), at most eight with "+N" beside the
+  ring for the rest, and a plain ring with none out;
+- a status pill, top right, with the badge, label and age, the reason on an
+  ended or error card, and the count of background work on a working one
+  ("working · 3 in background");
+- under where it works, what is out ("2 agents, 1 shell") and, once the turn
+  has ended, "prompt free": the session takes a new prompt while that work
+  runs;
 - the session's name, where it works now (repo, worktree, branch chip) and the
   other repos it touched;
 - for a session that needs you, a line saying what it waits for;

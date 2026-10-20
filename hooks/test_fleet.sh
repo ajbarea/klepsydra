@@ -639,6 +639,138 @@ printf '{"v":1,"session_id":"%s","claude":{"pid":999,"start":1},"started_at":%s,
 fire session-start.json ".session_id = \"$(id 26)\"" KLEPSYDRA_DIR="$pd" KLEPSYDRA_NOW="$pnow"
 check "a resumed old session keeps its history" "$(jq -r .started_at "$pd/fleet/$(id 26).json" 2>&1)" "$((pnow - 5 * day))"
 
+echo "background work"
+A=abd38d40cac785715 B=biwpk3ab6
+bg() { field '[(.background // [])[] | "\(.kind):\(.id)"] | join(",")'; }
+rm -f "$file"
+now=1792356000
+fire session-start.json
+fire user-prompt.json
+check "no background work: no field" "$(field 'has("background")')" "false"
+now=1792356001 fire post-tool-bash-background.json
+check "a background shell is added by its task id" "$(bg)" "\"shell:$B\""
+check "added at its time" "$(field '.background[0].at')" "1792356001"
+now=1792356002 fire subagent-start.json
+check "a subagent start adds the agent" "$(bg)" "\"shell:$B,agent:$A\""
+now=1792356003 fire post-tool-agent-background.json
+check "the async launch of a known agent adds nothing" "$(bg)" "\"shell:$B,agent:$A\""
+now=1792356004 fire post-tool-bash.json
+check "a foreground shell adds nothing" "$(bg)" "\"shell:$B,agent:$A\""
+check "working during the turn, no reason" "$(field '[.state, .reason]')" '["working",null]'
+now=1792356005 fire stop.json '.background_tasks = null'
+check "stop with work out: working in background" "$(field '[.state, .reason, .state_at]')" '["working","background",1792356005]'
+check "stop with work out: the reply is kept" "$(field .reply.at)" "1792356005"
+now=1792356010 fire notification-idle.json
+now=1792356100 fire notification-idle.json
+check "idle prompt with work out: still working" "$(field '[.state, .reason]')" '["working","background"]'
+now=1792356200 fire post-tool-bash.json ".agent_id = \"$A\""
+check "the subagent's own event refreshes its time" "$(field "[.background[] | select(.id == \"$A\") | .at][0]")" "1792356200"
+check "a shell's time never moves" "$(field "[.background[] | select(.id == \"$B\") | .at][0]")" "1792356001"
+now=1792356230 fire post-tool-bash.json ".agent_id = \"$A\""
+check "refreshed at most once a minute" "$(field "[.background[] | select(.id == \"$A\") | .at][0]")" "1792356200"
+now=1792356300 fire subagent-stop.json
+check "a subagent stop removes it" "$(bg)" "\"shell:$B\""
+check "a subagent's reply is not the session's" "$(grep -c SUBAGENT-REPLY "$file")" "0"
+check "still working in background" "$(field '[.state, .reason]')" '["working","background"]'
+now=1792356310 fire task-notification-background.json
+check "its notification starts a turn" "$(field '[.state, .reason]')" '["working",null]'
+check "and keeps AJ's prompt" "$(field .prompt.text | grep -c task-notification)" "0"
+now=1792356320 fire stop.json '.background_tasks = null'
+check "the shell still out keeps it working" "$(field '[.state, .reason]')" '["working","background"]'
+now=1792356330 fire user-prompt.json ".prompt = \"<task-notification>\n<task-id>$B</task-id>\n<status>completed</status>\n</task-notification>\""
+check "a shell's notification removes it" "$(field 'has("background")')" "false"
+now=1792356340 fire stop.json '.background_tasks = null'
+check "stop with nothing out: done" "$(field '[.state, .reason]')" '["done",null]'
+
+# Every removal path, one entry at a time.
+now=1792356400 fire user-prompt.json
+fire post-tool-bash-background.json
+now=1792356401 fire post-tool-task-stop.json
+check "TaskStop removes the shell" "$(bg)" '""'
+fire post-tool-bash-background.json
+fire post-tool-task-stop.json '.tool_name = "KillShell" | .tool_input = {shell_id: "biwpk3ab6"} | .tool_response = "Killed"'
+check "KillShell removes it by shell_id" "$(bg)" '""'
+fire post-tool-bash-background.json '.tool_response.backgroundTaskId = null'
+check "no task id: the tool use id stands in" "$(bg)" '"shell:toolu_01G3isFBmhUydH4YMNewPyaP"'
+fire user-prompt.json '.prompt = "<task-notification>\n<tool-use-id>toolu_01G3isFBmhUydH4YMNewPyaP</tool-use-id>\n<status>completed</status>\n</task-notification>"'
+check "and its notification's tool use id removes it" "$(bg)" '""'
+fire post-tool-bash-background.json
+fire subagent-start.json
+fire user-prompt.json ".prompt = \"<task-notification><task-id>$A</task-id></task-notification>\n<task-notification><task-id>$B</task-id></task-notification>\""
+check "several notifications in one prompt remove each" "$(bg)" '""'
+fire post-tool-bash-background.json
+fire user-prompt.json ".prompt = \"why did <task-id>$B</task-id> fire?\""
+check "a task id outside a notification removes nothing" "$(bg)" "\"shell:$B\""
+fire subagent-start.json
+now=1792356410 fire session-start.json '.source = "compact"'
+check "compaction keeps the work out" "$(bg)" "\"shell:$B,agent:$A\""
+now=1792356420 fire session-end.json
+check "session end clears it" "$(field '[has("background"), .state]')" '[false,"ended"]'
+now=1792356430 fire session-start.json '.source = "resume"'
+fire user-prompt.json
+fire post-tool-bash-background.json
+now=1792356440 fire session-start.json '.source = "resume"'
+check "a new process starts with none" "$(field 'has("background")')" "false"
+
+# Stop's own list of running tasks is the truth.
+fire user-prompt.json
+now=1792356450 fire subagent-start.json
+now=1792356500 fire stop-background.json
+check "stop's list adds a shell the hook missed" "$(bg)" "\"shell:$B,agent:$A\""
+check "and keeps a known entry's time" "$(field "[.background[] | select(.id == \"$A\") | .at][0]")" "1792356450"
+check "a missed one is added at the stop" "$(field "[.background[] | select(.id == \"$B\") | .at][0]")" "1792356500"
+check "stop's list: working in background" "$(field '[.state, .reason]')" '["working","background"]'
+fire user-prompt.json
+now=1792356510 fire stop.json
+check "an empty list clears a missed stop: done" "$(field '[has("background"), .state]')" '[false,"done"]'
+fire user-prompt.json
+fire stop-background.json '.background_tasks[0].status = "completed" | .background_tasks[1].status = "killed"'
+check "finished tasks in the list do not count" "$(field '[has("background"), .state]')" '[false,"done"]'
+
+# Malformed and absent fields change nothing and never abort.
+fire user-prompt.json
+fire subagent-start.json '.agent_id = null'
+fire subagent-start.json '.agent_id = 42'
+fire subagent-start.json 'del(.agent_id)'
+fire post-tool-bash-background.json '.tool_response = "text" | .tool_use_id = null'
+fire post-tool-bash-background.json '.tool_input.run_in_background = "true" | .tool_response.backgroundTaskId = "x1"'
+fire post-tool-agent-background.json '.tool_response.agentId = ["x"]'
+fire stop-background.json '.background_tasks = [42, null, {"status": "running"}, {"id": 7, "status": "running"}]'
+check "malformed adds: nothing added, done" "$(field '[has("background"), .state]')" '[false,"done"]'
+fire user-prompt.json
+fire subagent-start.json
+fire subagent-stop.json '.agent_id = null'
+fire post-tool-task-stop.json '.tool_input = "x" | .tool_response = null'
+fire user-prompt.json '.prompt = 42'
+fire stop.json '.background_tasks = "none"'
+check "malformed removes: the agent stays" "$(field '[.background[].id, .state, .reason]')" "[\"$A\",\"working\",\"background\"]"
+jq -c '.background = [{"id":"k","kind":"agent","at":1}, "junk", {"id":"x","kind":"cron","at":1}, {"id":"y","kind":"shell","at":"soon"}]' "$file" >"$file.new" && mv "$file.new" "$file"
+fire user-prompt.json
+check "a hand-broken set keeps only well-formed entries" "$(bg)" '"agent:k"'
+for i in $(seq 1 70); do printf '{"id":"s%s","kind":"shell","at":1}\n' "$i"; done | jq -s '.' >"$work/many.json"
+jq -c --slurpfile m "$work/many.json" '.background = $m[0]' "$file" >"$file.new" && mv "$file.new" "$file"
+fire user-prompt.json
+check "the set keeps at most 64, newest last" "$(field '[(.background | length), .background[0].id, .background[-1].id]')" '[64,"s7","s70"]'
+
+# needs_you outranks everything.
+fire user-prompt.json
+jq -c 'del(.background)' "$file" >"$file.new" && mv "$file.new" "$file"
+fire subagent-start.json
+fire permission-request.json ".agent_id = \"$A\""
+now=1792356600 fire stop.json '.background_tasks = null'
+check "stop leaves a subagent's open request" "$(field '[.state, .reason]')" '["needs_you","approve Bash"]'
+fire permission-request.json
+now=1792356610 fire stop.json '.background_tasks = null'
+check "the main thread's request ends with its turn, as before" "$(field '[.state, .reason]')" '["working","background"]'
+fire permission-request.json
+check "a request outranks background work" "$(field .state)" '"needs_you"'
+
+# An old file, written before the field existed, reads and updates.
+rm -f "$file"
+printf '{"v":1,"session_id":"%s","name":null,"started_at":1792356000,"launch_dir":null,"claude":null,"tmux":null,"host":null,"voice":null,"voice_from":null,"state":"working","reason":null,"needs":null,"state_at":1792356000,"where":null,"touched":[],"prompt":null,"reply":null,"error":null,"ended":null,"written_at":1792356000}\n' "$S" >"$file"
+now=1792356700 fire stop.json
+check "an old file: stop gives done" "$(field '[.state, has("background")]')" '["done",false]'
+
 echo "install block"
 # README.md's settings block is what users paste; it must register every
 # event the hook handles, each async, with the statusline's 30 s heartbeat.
@@ -648,7 +780,7 @@ check "settings: parses" "$(jq -r 'type' <<<"$settings" 2>/dev/null)" "object"
 check "settings: heartbeat every 30 s" "$(jq '.statusLine.refreshInterval' <<<"$settings")" "30"
 check "settings: statusline command kept" "$(jq -r '.statusLine.command | ltrimstr("~")' <<<"$settings")" "/.claude/klepsydra-statusline.sh"
 check "settings: the events" "$(jq -c '.hooks | keys' <<<"$settings")" \
-  '["Notification","PermissionRequest","PostToolUse","PostToolUseFailure","PreToolUse","SessionEnd","SessionStart","Stop","StopFailure","UserPromptSubmit"]'
+  '["Notification","PermissionRequest","PostToolUse","PostToolUseFailure","PreToolUse","SessionEnd","SessionStart","Stop","StopFailure","SubagentStart","SubagentStop","UserPromptSubmit"]'
 check "settings: every fleet hook is async" \
   "$(jq '[.hooks[][].hooks[]] | length > 0 and all(.async == true and (.command | endswith("/klepsydra-fleet.sh")))' <<<"$settings")" "true"
 check "settings: questions and plans only" "$(jq -r '.hooks.PreToolUse[0].matcher' <<<"$settings")" "AskUserQuestion|ExitPlanMode"

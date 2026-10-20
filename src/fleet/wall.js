@@ -7,7 +7,9 @@ import { inTauri, subscribe } from "./feed.js";
 import { showFace } from "./face.js";
 
 const TICK_MS = 15_000; // ages re-render between snapshots, as on the gauge
-const FACE_PX = 66; // --wall-face less the arc's inset
+const FACE_PX = 66; // --wall-face less the ring's inset
+const SVG_NS = "http://www.w3.org/2000/svg";
+const SEGMENT_FADE_MS = 200; // wall.css .seg.leave
 const BRANCH_ICON =
   '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="4" cy="3.5" r="1.8"/><circle cx="4" cy="12.5" r="1.8"/><circle cx="12" cy="5" r="1.8"/><path d="M4 5.3v5.4M12 6.8c0 3-3.5 3-8 4.2"/></svg><span></span>';
 const TALLY = [
@@ -50,9 +52,7 @@ function paint(el, c) {
   el.style.viewTransitionName = transitionName(c.id);
   el.setAttribute("aria-label", c.label);
   el.querySelector(".portrait").title = c.voiceTitle ?? "";
-  const fill = el.querySelector(".arc .fill");
-  fill.style.display = c.arc > 0 ? "" : "none";
-  fill.style.strokeDasharray = `${c.arc} 1`;
+  paintRing(el, c);
   showFace(el.querySelector(".face"), c.face, c.face2x, FACE_PX);
   setText(el.querySelector(".name"), c.name);
   setText(el.querySelector(".task"), c.task);
@@ -64,6 +64,10 @@ function paint(el, c) {
   }
   setText(el.querySelector(".pill .label"), c.pill.label);
   setText(el.querySelector(".pill .age"), c.pill.age);
+  const crewLine = el.querySelector(".crew-line");
+  crewLine.hidden = !c.crew;
+  setText(crewLine.querySelector(".count"), c.crew);
+  crewLine.querySelector(".free").hidden = !c.promptFree;
   const ask = el.querySelector(".ask");
   ask.hidden = !c.ask;
   setText(ask.querySelector(".text"), c.ask);
@@ -107,6 +111,36 @@ function paint(el, c) {
   clear.hidden = !c.clear;
   clear.dataset.id = c.id;
   setOff(clear, false);
+}
+
+// One segment per piece of background work. Segments past the new count fade
+// out; new ones fade in; the rest take their new place at once.
+function paintRing(el, c) {
+  const crew = el.querySelector(".ring .crew");
+  el.querySelector(".ring").classList.toggle("busy", c.ring.segments.length > 0);
+  if (c.ringColor) crew.style.setProperty("--crew", c.ringColor);
+  else crew.style.removeProperty("--crew");
+  const shown = [...crew.children].filter((p) => !p.classList.contains("leave"));
+  c.ring.segments.forEach((seg, i) => {
+    let path = shown[i];
+    if (!path) {
+      path = document.createElementNS(SVG_NS, "path");
+      path.classList.add("seg", "enter");
+      path.addEventListener("animationend", () => path.classList.remove("enter"), { once: true });
+      crew.append(path);
+    }
+    path.classList.toggle("agent", seg.kind === "agent");
+    path.classList.toggle("shell", seg.kind === "shell");
+    path.setAttribute("d", seg.d);
+  });
+  for (const path of shown.slice(c.ring.segments.length)) {
+    if (reducedMotion()) path.remove();
+    else {
+      path.classList.add("leave");
+      setTimeout(() => path.remove(), SEGMENT_FADE_MS);
+    }
+  }
+  show(el.querySelector(".more"), c.ring.more > 0 ? `+${c.ring.more}` : null);
 }
 
 function paintTally() {
