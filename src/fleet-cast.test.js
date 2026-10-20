@@ -57,3 +57,13 @@ test("each accent carries 4.5:1 text in its ink", () => {
     assert.ok(contrast(ink, c.accent) >= 4.5, `${c.name} ${ink} on ${c.accent}: ${contrast(ink, c.accent).toFixed(2)}`);
   }
 });
+
+test("the hover state keeps each accent's fill, so its ink holds 4.5:1", () => {
+  const css = readFileSync(new URL("./fleet/wall.css", import.meta.url), "utf8");
+  const rules = [...css.matchAll(/\.jump\[data-accent\]:hover[^{]*\{([^}]*)\}/g)].map((m) => m[1]);
+  assert.equal(rules.length, 1);
+  assert.doesNotMatch(rules[0], /filter|opacity|background|color\s*:/, "hover changes no colour under the text");
+  for (const c of Object.values(cast.characters)) {
+    assert.ok(contrast(inkOn(c.accent), c.accent) >= 4.5, `${c.name} on hover`);
+  }
+});
