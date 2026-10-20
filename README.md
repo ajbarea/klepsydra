@@ -385,8 +385,10 @@ A gap between sentences shorter than 600 ms keeps them up, and a line cut off
 stops them at once. The wall's live region says "Hermes speaking" once per
 line, not per sentence; under reduced motion a still gold ring shows instead,
 and on the strip the portrait wears a gold ring. A file whose line has ended,
-whose version is not 1, or that does not parse shows nothing, so a crashed
-keryx leaves no waves behind.
+whose version is not 1, or that starts more than 5 seconds ahead shows
+nothing, so a crashed keryx leaves no waves behind. A read that fails or
+catches a half-written file keeps the line it replaces until that line's end
+and the 600 ms hold; only a removed file stops the waves early.
 
 **Open terminal** (Jump) brings the session's terminal to the front. For a
 session started with **+ New session**, it finds the session's tmux window by

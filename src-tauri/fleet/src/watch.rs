@@ -151,7 +151,8 @@ impl Reader {
         let problems = self.reporter.fresh(&broken);
         let t = now();
         let mut snap = snapshot(&listing.entries, t);
-        snap.speaking = speaking(read_speaking(&self.fleet).as_deref(), &snap.sessions, t);
+        let shown = self.last.as_ref().and_then(|s| s.speaking.as_ref());
+        snap.speaking = speaking(&read_speaking(&self.fleet), shown, &snap.sessions, t);
         if self.last.as_ref() == Some(&snap) {
             return (None, problems);
         }
@@ -329,6 +330,49 @@ mod tests {
         let later = r.step(Duration::ZERO, || t + 3).0.unwrap();
         assert_eq!(later.speaking, None);
         assert_eq!(later.sessions.len(), 1);
+    }
+
+    #[test]
+    fn a_line_starting_well_after_now_is_not_speaking() {
+        let (root, mut r) = reader("speak-ahead");
+        root.write(&format!("fleet/{A}.json"), &claude_session(A, 4242, 99));
+        let t = unix_now();
+        let now = t as f64;
+        root.write(
+            "fleet/speaking.json",
+            &line(4242, 99, now + 10.0, now + 12.0),
+        );
+        assert_eq!(r.step(Duration::ZERO, || t).0.unwrap().speaking, None);
+        root.write("fleet/speaking.json", &line(4242, 99, now + 4.0, now + 6.0));
+        assert!(
+            r.step(Duration::ZERO, || t).0.unwrap().speaking.is_some(),
+            "a little ahead is clock slack"
+        );
+    }
+
+    #[test]
+    fn a_half_written_file_keeps_the_line_but_a_removed_one_ends_it() {
+        let (root, mut r) = reader("speak-partial");
+        root.write(&format!("fleet/{A}.json"), &claude_session(A, 4242, 99));
+        let t = unix_now();
+        let now = t as f64;
+        let whole = line(4242, 99, now, now + 3.0);
+        root.write("fleet/speaking.json", &whole);
+        let first = r.step(Duration::ZERO, || t).0.unwrap().speaking;
+        assert!(first.is_some());
+        // Windows' replace is best effort: a read can catch half a file.
+        root.write("fleet/speaking.json", &whole[..whole.len() / 2]);
+        assert_eq!(
+            r.step(Duration::ZERO, || t).0,
+            None,
+            "nothing changed: the line goes on"
+        );
+        // Past its end and the hold, a kept line goes.
+        assert_eq!(r.step(Duration::ZERO, || t + 4).0.unwrap().speaking, None);
+        root.write("fleet/speaking.json", &whole);
+        assert!(r.step(Duration::ZERO, || t).0.unwrap().speaking.is_some());
+        std::fs::remove_file(root.0.join("fleet/speaking.json")).unwrap();
+        assert_eq!(r.step(Duration::ZERO, || t).0.unwrap().speaking, None);
     }
 
     #[test]

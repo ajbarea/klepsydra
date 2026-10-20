@@ -21,6 +21,12 @@ pub const RATE: f64 = 20.0;
 const MAX_CLIP_SECS: f64 = 600.0;
 /// More than this is no `speaking.json` keryx would write.
 const MAX_BYTES: u64 = 256 * 1024;
+/// A line starting more than this after the reader's clock is a skewed clock
+/// or a leftover file, not a line being played.
+pub const START_AHEAD_SECS: f64 = 5.0;
+/// How long after its end a line survives a read that failed: the wall's
+/// sentence-gap hold (`SPEAK_HOLD_MS` in `src/fleet/speaking.js`).
+pub const HOLD_SECS: f64 = 0.6;
 
 /// The file as keryx writes it (`docs/speaking-signal.md` in keryx).
 #[derive(Clone, Debug, Deserialize, PartialEq)]
@@ -49,35 +55,70 @@ pub struct Speaking {
     pub ends_at: f64,
 }
 
-/// `speaking.json` in `fleet`, if it is a regular file that reads. Absent,
-/// unreadable, a symlink or a FIFO are all "no file": keryx's replace is best
-/// effort on Windows, and the next change re-reads it.
-pub fn read(fleet: &Path) -> Option<String> {
-    let path = fleet.join(FILE);
-    let meta = std::fs::symlink_metadata(&path).ok()?;
-    if !meta.is_file() || meta.len() > MAX_BYTES {
-        return None;
-    }
-    let mut text = String::new();
-    File::open(&path)
-        .ok()?
-        .take(MAX_BYTES)
-        .read_to_string(&mut text)
-        .ok()?;
-    Some(text)
+/// What is at `speaking.json` in the fleet folder.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Found {
+    /// No file: keryx removed it (a cut-off or the end of a line), or what is
+    /// there is not a regular file keryx would write (a symlink, a FIFO, a
+    /// folder, one too big).
+    Absent,
+    /// A file that would not read: keryx's replace is best effort on Windows,
+    /// and the next change re-reads it.
+    Failed,
+    Text(String),
 }
 
-/// The signal in `text`, or None for any version but 1, a malformed file, or
-/// times and levels no clip has.
-pub fn parse(text: &str) -> Option<Signal> {
-    let s: Signal = serde_json::from_str(text).ok()?;
+/// `speaking.json` in `fleet`. The type is checked before opening, so a FIFO
+/// is never opened and a symlink never followed.
+pub fn read(fleet: &Path) -> Found {
+    let path = fleet.join(FILE);
+    let gone = |e: &std::io::Error| e.kind() == std::io::ErrorKind::NotFound;
+    let meta = match std::fs::symlink_metadata(&path) {
+        Ok(m) => m,
+        Err(e) if gone(&e) => return Found::Absent,
+        Err(_) => return Found::Failed,
+    };
+    if !meta.is_file() || meta.len() > MAX_BYTES {
+        return Found::Absent;
+    }
+    let mut text = String::new();
+    match File::open(&path).and_then(|f| f.take(MAX_BYTES).read_to_string(&mut text)) {
+        Ok(_) => Found::Text(text),
+        Err(e) if gone(&e) => Found::Absent,
+        Err(_) => Found::Failed,
+    }
+}
+
+/// What a `speaking.json` text holds.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Parsed {
+    Line(Signal),
+    /// Not JSON, or cut short: a read that caught half a write.
+    Partial,
+    /// Whole JSON but not a line this reader can use: another version, a
+    /// missing or mistyped field, or times and levels no clip has.
+    Invalid,
+}
+
+pub fn parse(text: &str) -> Parsed {
+    let value: serde_json::Value = match serde_json::from_str(text) {
+        Ok(v) => v,
+        Err(_) => return Parsed::Partial,
+    };
+    let Ok(s) = serde_json::from_value::<Signal>(value) else {
+        return Parsed::Invalid;
+    };
     let span = s.ends_at - s.started_at;
     let sane = s.v == VERSION
         && (MIN_TIME as f64..=MAX_TIME as f64).contains(&s.started_at)
         && (0.0..=MAX_CLIP_SECS).contains(&span)
         && s.envelope.len() as f64 <= (MAX_CLIP_SECS * RATE).ceil()
         && s.envelope.iter().all(|x| x.is_finite() && *x >= 0.0);
-    sane.then_some(s)
+    if sane {
+        Parsed::Line(s)
+    } else {
+        Parsed::Invalid
+    }
 }
 
 /// The card `s` belongs to: the one whose Claude process is keryx's (pid and
@@ -114,11 +155,33 @@ pub fn owner<'a>(s: &Signal, sessions: &'a [View]) -> Option<&'a View> {
 }
 
 /// What the wall shows as speaking at `now` (seconds, this machine's clock),
-/// from the file's text: nothing once the clip has ended, or when no card
-/// owns it.
-pub fn speaking(text: Option<&str>, sessions: &[View], now: i64) -> Option<Speaking> {
-    let s = parse(text?)?;
-    if s.ends_at < now as f64 {
+/// from what was `found` and the `last` line shown: nothing once the clip has
+/// ended, when it starts more than `START_AHEAD_SECS` ahead, or when no card
+/// owns it. A file that failed to read, or read half-written, keeps the last
+/// line through its end and `HOLD_SECS`; only an absent file is a cut-off.
+pub fn speaking(
+    found: &Found,
+    last: Option<&Speaking>,
+    sessions: &[View],
+    now: i64,
+) -> Option<Speaking> {
+    let now = now as f64;
+    let keep = || {
+        last.filter(|l| {
+            l.ends_at + HOLD_SECS >= now && sessions.iter().any(|v| v.session_id == l.session_id)
+        })
+        .cloned()
+    };
+    let s = match found {
+        Found::Absent => return None,
+        Found::Failed => return keep(),
+        Found::Text(text) => match parse(text) {
+            Parsed::Line(s) => s,
+            Parsed::Partial => return keep(),
+            Parsed::Invalid => return None,
+        },
+    };
+    if s.ends_at < now || s.started_at > now + START_AHEAD_SECS {
         return None;
     }
     let card = owner(&s, sessions)?;
@@ -188,12 +251,12 @@ mod tests {
     }
 
     fn who(text: &str, sessions: &[View]) -> Option<String> {
-        speaking(Some(text), sessions, NOW).map(|s| s.session_id)
+        speaking(&Found::Text(text.into()), None, sessions, NOW).map(|s| s.session_id)
     }
 
     #[test]
     fn the_contract_example_reads_whole() {
-        let s = speaking(Some(&example()), &fleet(), NOW).unwrap();
+        let s = speaking(&Found::Text(example()), None, &fleet(), NOW).unwrap();
         assert_eq!(
             s,
             Speaking {
@@ -346,32 +409,130 @@ mod tests {
             with(|v| v["claude_pid"] = (-1).into()),
         ];
         for text in cases {
-            assert_eq!(speaking(Some(&text), &fleet(), NOW), None, "{text}");
+            assert_eq!(
+                speaking(&Found::Text(text.clone()), None, &fleet(), NOW),
+                None,
+                "{text}"
+            );
         }
+    }
+
+    #[test]
+    fn a_line_starting_more_than_five_seconds_ahead_is_ignored() {
+        let at = |ahead: f64| {
+            with(|v| {
+                v["started_at"] = (NOW as f64 + ahead).into();
+                v["ends_at"] = (NOW as f64 + ahead + 2.0).into();
+            })
+        };
+        assert!(
+            who(&at(START_AHEAD_SECS), &fleet()).is_some(),
+            "exactly the slack"
+        );
+        assert_eq!(who(&at(START_AHEAD_SECS + 0.1), &fleet()), None);
+        assert_eq!(who(&at(3600.0), &fleet()), None);
+    }
+
+    fn shown() -> Speaking {
+        speaking(&Found::Text(example()), None, &fleet(), NOW).unwrap()
+    }
+
+    #[test]
+    fn a_failed_or_half_read_keeps_the_last_line_through_the_hold() {
+        let last = shown();
+        let end = last.ends_at.ceil() as i64; // the reader's whole seconds
+        for found in [Found::Failed, Found::Text(example()[..40].into())] {
+            assert_eq!(
+                speaking(&found, Some(&last), &fleet(), NOW),
+                Some(last.clone()),
+                "{found:?}"
+            );
+            assert_eq!(
+                speaking(&found, None, &fleet(), NOW),
+                None,
+                "nothing to keep"
+            );
+            let held = (last.ends_at + HOLD_SECS).floor() as i64;
+            assert!(
+                speaking(&found, Some(&last), &fleet(), held).is_some(),
+                "within the hold"
+            );
+            assert_eq!(
+                speaking(&found, Some(&last), &fleet(), end + 1),
+                None,
+                "past the hold"
+            );
+            let gone: Vec<View> = fleet()
+                .into_iter()
+                .filter(|v| v.session_id != last.session_id)
+                .collect();
+            assert_eq!(
+                speaking(&found, Some(&last), &gone, NOW),
+                None,
+                "its card is gone"
+            );
+        }
+    }
+
+    #[test]
+    fn an_absent_or_invalid_file_ends_the_line_at_once() {
+        let last = shown();
+        assert_eq!(speaking(&Found::Absent, Some(&last), &fleet(), NOW), None);
+        let v2 = with(|v| v["v"] = 2.into());
+        assert_eq!(speaking(&Found::Text(v2), Some(&last), &fleet(), NOW), None);
+    }
+
+    #[test]
+    fn half_a_file_is_partial_and_a_wrong_shape_invalid() {
+        let whole = example();
+        for cut in [0, 1, 20, whole.len() - 1] {
+            assert_eq!(parse(&whole[..cut]), Parsed::Partial, "cut at {cut}");
+        }
+        assert!(matches!(parse(&whole), Parsed::Line(_)));
+        for text in ["[]", r#"{"v":1}"#, &with(|v| v["v"] = 2.into())] {
+            assert_eq!(parse(text), Parsed::Invalid, "{text}");
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_file_that_will_not_open_is_a_failed_read() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = Scratch::new("speaking-locked");
+        dir.write(FILE, &example());
+        let path = dir.0.join(FILE);
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o000)).unwrap();
+        if File::open(&path).is_ok() {
+            return; // root reads it anyway
+        }
+        assert_eq!(read(&dir.0), Found::Failed);
     }
 
     #[test]
     fn levels_above_the_loudest_are_held_to_it() {
         let text = with(|v| v["envelope"] = serde_json::json!([0.5, 1.2]));
-        let s = speaking(Some(&text), &fleet(), NOW).unwrap();
+        let s = speaking(&Found::Text(text.clone()), None, &fleet(), NOW).unwrap();
         assert_eq!(s.envelope, vec![0.5, 1.0]);
     }
 
     #[test]
     fn no_file_is_no_speaker() {
-        assert_eq!(speaking(None, &fleet(), NOW), None);
+        assert_eq!(speaking(&Found::Absent, None, &fleet(), NOW), None);
         let dir = Scratch::new("speaking-absent");
-        assert_eq!(read(&dir.0), None);
-        assert_eq!(read(Path::new("/nonexistent/klepsydra/fleet")), None);
+        assert_eq!(read(&dir.0), Found::Absent);
+        assert_eq!(
+            read(Path::new("/nonexistent/klepsydra/fleet")),
+            Found::Absent
+        );
     }
 
     #[test]
     fn the_file_reads_from_the_fleet_folder() {
         let dir = Scratch::new("speaking-read");
         dir.write(FILE, &example());
-        assert_eq!(read(&dir.0), Some(example()));
+        assert_eq!(read(&dir.0), Found::Text(example()));
         dir.write(FILE, &" ".repeat(MAX_BYTES as usize + 1));
-        assert_eq!(read(&dir.0), None, "too big to be keryx's");
+        assert_eq!(read(&dir.0), Found::Absent, "too big to be keryx's");
     }
 
     #[cfg(unix)]
@@ -380,9 +541,9 @@ mod tests {
         let dir = Scratch::new("speaking-link");
         dir.write("elsewhere", &example());
         std::os::unix::fs::symlink(dir.0.join("elsewhere"), dir.0.join(FILE)).unwrap();
-        assert_eq!(read(&dir.0), None);
+        assert_eq!(read(&dir.0), Found::Absent);
         let dir = Scratch::new("speaking-dir");
         std::fs::create_dir(dir.0.join(FILE)).unwrap();
-        assert_eq!(read(&dir.0), None);
+        assert_eq!(read(&dir.0), Found::Absent);
     }
 }
