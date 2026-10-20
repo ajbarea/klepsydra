@@ -201,31 +201,31 @@ mod tests {
     #[test]
     fn the_first_read_asks_for_nothing() {
         let first = snap(&[
-            ("a", NeedsYou, 5, None),
-            ("b", Done, 5, Some(5)),
-            ("c", Error, 5, None),
+            ("a", NeedsYou, 5, Some(0)),
+            ("b", Done, 5, Some(1)),
+            ("c", Error, 5, Some(0)),
         ]);
         assert_eq!(run(&[first.clone(), first]), vec![None, None]);
     }
 
     #[test]
     fn an_empty_first_read_then_old_sessions_asks_for_nothing() {
-        let old = snap(&[("a", NeedsYou, -600, None), ("b", Done, -60, Some(4))]);
+        let old = snap(&[("a", NeedsYou, -600, Some(0)), ("b", Done, -60, Some(4))]);
         assert_eq!(run(&[snap(&[]), old]), vec![None, None]);
     }
 
     #[test]
     fn a_session_started_after_the_app_that_needs_you_asks() {
-        let got = run(&[snap(&[]), snap(&[("a", NeedsYou, 20, None)])]);
+        let got = run(&[snap(&[]), snap(&[("a", NeedsYou, 20, Some(0))])]);
         assert_eq!(got, vec![None, Some(Cue::NeedsYou)]);
     }
 
     #[test]
     fn a_turn_ending_asks_for_done_once() {
         let got = run(&[
-            snap(&[("a", Working, 10, None)]),
-            snap(&[("a", Done, 20, Some(20))]),
-            snap(&[("a", Done, 20, Some(20))]),
+            snap(&[("a", Working, 10, Some(0))]),
+            snap(&[("a", Done, 20, Some(1))]),
+            snap(&[("a", Done, 20, Some(1))]),
         ]);
         assert_eq!(got, vec![None, Some(Cue::Done), None]);
     }
@@ -233,8 +233,8 @@ mod tests {
     #[test]
     fn a_whole_turn_between_two_reads_still_asks_for_done() {
         let got = run(&[
-            snap(&[("a", Done, 10, Some(10))]),
-            snap(&[("a", Done, 30, Some(30))]),
+            snap(&[("a", Done, 10, Some(1))]),
+            snap(&[("a", Done, 30, Some(2))]),
         ]);
         assert_eq!(got, vec![None, Some(Cue::Done)]);
     }
@@ -245,12 +245,12 @@ mod tests {
         // after the turn ended, or a stale crew: done, with no new Stop.
         for before in [Working, NeedsYou, Error, New, Ended, Done] {
             let got = run(&[
-                snap(&[("a", before, 10, Some(5))]),
-                snap(&[("a", Done, 20, Some(5))]),
+                snap(&[("a", before, 10, Some(1))]),
+                snap(&[("a", Done, 20, Some(1))]),
             ]);
             assert_eq!(got[1], None, "{before:?} -> done");
         }
-        let unseen = run(&[snap(&[]), snap(&[("a", Done, 20, Some(20))])]);
+        let unseen = run(&[snap(&[]), snap(&[("a", Done, 20, Some(1))])]);
         assert_eq!(unseen[1], None);
     }
 
@@ -280,6 +280,21 @@ mod tests {
     }
 
     #[test]
+    fn an_upgrade_mid_session_counts_from_the_first_stop() {
+        // The old hook wrote the file; the new one's first write adds the count.
+        let stop = run(&[
+            snap(&[("a", Working, 10, None)]),
+            snap(&[("a", Done, 20, Some(1))]),
+        ]);
+        assert_eq!(stop[1], Some(Cue::Done));
+        let idle = run(&[
+            snap(&[("a", Working, 10, None)]),
+            snap(&[("a", Done, 20, Some(0))]),
+        ]);
+        assert_eq!(idle[1], None, "the idle prompt after Esc ends no turn");
+    }
+
+    #[test]
     fn a_session_first_seen_silent_chimes_when_its_turn_ends() {
         let got = run(&[
             snap(&[("a", Silent, 10, Some(3)), ("b", Silent, -10, Some(1))]),
@@ -301,9 +316,9 @@ mod tests {
     #[test]
     fn a_turn_that_ended_with_work_out_does_not_chime_when_the_work_goes_stale() {
         let got = run(&[
-            snap(&[("a", Working, 10, None)]),
-            snap(&[("a", Working, 20, Some(20))]),
-            snap(&[("a", Done, 20, Some(20))]),
+            snap(&[("a", Working, 10, Some(0))]),
+            snap(&[("a", Working, 20, Some(1))]),
+            snap(&[("a", Done, 20, Some(1))]),
         ]);
         assert_eq!(got, vec![None, None, None]);
     }
@@ -311,9 +326,9 @@ mod tests {
     #[test]
     fn a_new_prompt_asks_each_time_even_from_needs_you() {
         let got = run(&[
-            snap(&[("a", Working, 10, None)]),
-            snap(&[("a", NeedsYou, 20, None)]),
-            snap(&[("a", NeedsYou, 30, None)]),
+            snap(&[("a", Working, 10, Some(0))]),
+            snap(&[("a", NeedsYou, 20, Some(0))]),
+            snap(&[("a", NeedsYou, 30, Some(0))]),
         ]);
         assert_eq!(got, vec![None, Some(Cue::NeedsYou), Some(Cue::NeedsYou)]);
     }
@@ -321,8 +336,8 @@ mod tests {
     #[test]
     fn a_prompt_in_the_second_its_turn_began_asks() {
         let got = run(&[
-            snap(&[("a", Working, 10, None)]),
-            snap(&[("a", NeedsYou, 10, None)]),
+            snap(&[("a", Working, 10, Some(0))]),
+            snap(&[("a", NeedsYou, 10, Some(0))]),
         ]);
         assert_eq!(got, vec![None, Some(Cue::NeedsYou)]);
     }
@@ -331,9 +346,9 @@ mod tests {
     fn a_rewrite_whose_skew_correction_moved_asks_for_nothing() {
         // The writer's clock drifts, or the hook waited on the lock: the
         // reader's correction moves the display time between two writes.
-        let after = [("a", Done, 20, Some(20)), ("b", NeedsYou, 20, None)];
+        let after = [("a", Done, 20, Some(1)), ("b", NeedsYou, 20, Some(0))];
         let got = run(&[
-            snap(&[("a", Working, 10, None), ("b", Working, 10, None)]),
+            snap(&[("a", Working, 10, Some(0)), ("b", Working, 10, Some(0))]),
             snap(&after),
             shifted(&after, 3),
             shifted(&after, -3),
@@ -345,10 +360,10 @@ mod tests {
     fn coming_back_from_silence_asks_for_nothing() {
         // The PC slept: idle sessions read silent, then their beats came back.
         let got = run(&[
-            snap(&[("a", Working, 10, None), ("b", Error, -10, None)]),
-            snap(&[("a", Done, 20, Some(20)), ("b", Error, -10, None)]),
-            snap(&[("a", Silent, 400, Some(20)), ("b", Silent, 400, None)]),
-            snap(&[("a", Done, 20, Some(20)), ("b", Error, -10, None)]),
+            snap(&[("a", Working, 10, Some(0)), ("b", Error, -10, Some(0))]),
+            snap(&[("a", Done, 20, Some(1)), ("b", Error, -10, Some(0))]),
+            snap(&[("a", Silent, 400, Some(1)), ("b", Silent, 400, Some(0))]),
+            snap(&[("a", Done, 20, Some(1)), ("b", Error, -10, Some(0))]),
         ]);
         assert_eq!(got, vec![None, Some(Cue::Done), None, None]);
     }
@@ -356,9 +371,9 @@ mod tests {
     #[test]
     fn a_long_tool_call_read_silent_still_ends_in_done() {
         let got = run(&[
-            snap(&[("a", Working, 10, None)]),
-            snap(&[("a", Silent, 200, None)]),
-            snap(&[("a", Done, 300, Some(300))]),
+            snap(&[("a", Working, 10, Some(0))]),
+            snap(&[("a", Silent, 200, Some(0))]),
+            snap(&[("a", Done, 300, Some(1))]),
         ]);
         assert_eq!(got, vec![None, None, Some(Cue::Done)]);
     }
@@ -366,10 +381,10 @@ mod tests {
     #[test]
     fn a_session_missing_from_one_read_does_not_ask_again() {
         let got = run(&[
-            snap(&[("a", Working, 10, None)]),
-            snap(&[("a", NeedsYou, 20, None)]),
+            snap(&[("a", Working, 10, Some(0))]),
+            snap(&[("a", NeedsYou, 20, Some(0))]),
             snap(&[]),
-            snap(&[("a", NeedsYou, 20, None)]),
+            snap(&[("a", NeedsYou, 20, Some(0))]),
         ]);
         assert_eq!(got, vec![None, Some(Cue::NeedsYou), None, None]);
     }
@@ -377,8 +392,8 @@ mod tests {
     #[test]
     fn needs_you_outranks_done_in_one_read() {
         let got = run(&[
-            snap(&[("a", Working, 10, None), ("b", Working, 10, None)]),
-            snap(&[("a", Done, 20, Some(20)), ("b", NeedsYou, 20, None)]),
+            snap(&[("a", Working, 10, Some(0)), ("b", Working, 10, Some(0))]),
+            snap(&[("a", Done, 20, Some(1)), ("b", NeedsYou, 20, Some(0))]),
         ]);
         assert_eq!(got, vec![None, Some(Cue::NeedsYou)]);
     }
@@ -388,10 +403,10 @@ mod tests {
         let mut cues = Cues::new(START);
         let t0 = Instant::now();
         let soon = t0 + GAP - Duration::from_millis(1);
-        let w = |id| (id, Working, 10, None);
-        let a_done = ("a", Done, 20, Some(20));
-        let b_done = ("b", Done, 21, Some(21));
-        let c_needs = ("c", NeedsYou, 21, None);
+        let w = |id| (id, Working, 10, Some(0));
+        let a_done = ("a", Done, 20, Some(1));
+        let b_done = ("b", Done, 21, Some(1));
+        let c_needs = ("c", NeedsYou, 21, Some(0));
         cues.next(&snap(&[w("a"), w("b"), w("c")]), t0, START);
         assert_eq!(
             cues.next(&snap(&[a_done, w("b"), w("c")]), t0, START),
@@ -403,11 +418,11 @@ mod tests {
         );
         let c_asks = snap(&[a_done, b_done, c_needs]);
         assert_eq!(cues.next(&c_asks, soon, START), Some(Cue::NeedsYou));
-        let a_asks = snap(&[("a", NeedsYou, 22, Some(20)), b_done, c_needs]);
+        let a_asks = snap(&[("a", NeedsYou, 22, Some(1)), b_done, c_needs]);
         assert_eq!(cues.next(&a_asks, soon, START), None);
         let b_asks = snap(&[
-            ("a", NeedsYou, 22, Some(20)),
-            ("b", NeedsYou, 23, Some(21)),
+            ("a", NeedsYou, 22, Some(1)),
+            ("b", NeedsYou, 23, Some(1)),
             c_needs,
         ]);
         assert_eq!(cues.next(&b_asks, soon + GAP, START), Some(Cue::NeedsYou));
@@ -417,10 +432,10 @@ mod tests {
     fn a_dropped_cue_is_not_replayed_later() {
         let mut cues = Cues::new(START);
         let t0 = Instant::now();
-        let w = |id| (id, Working, 10, None);
+        let w = |id| (id, Working, 10, Some(0));
         cues.next(&snap(&[w("a"), w("b")]), t0, START);
-        cues.next(&snap(&[("a", Done, 20, Some(20)), w("b")]), t0, START);
-        let both = snap(&[("a", Done, 20, Some(20)), ("b", Done, 21, Some(21))]);
+        cues.next(&snap(&[("a", Done, 20, Some(1)), w("b")]), t0, START);
+        let both = snap(&[("a", Done, 20, Some(1)), ("b", Done, 21, Some(1))]);
         assert_eq!(cues.next(&both, t0, START), None);
         assert_eq!(cues.next(&both, t0 + GAP * 2, START), None);
     }
@@ -429,9 +444,9 @@ mod tests {
     fn an_absent_session_is_forgotten_after_a_day_by_the_reader_clock() {
         let mut cues = Cues::new(START);
         let t0 = Instant::now();
-        let here = ("here", Done, 10, Some(10));
-        cues.next(&snap(&[("gone", Done, 10, Some(10)), here]), t0, START);
-        let far = snap(&[here, ("new", Working, 999_999, None)]);
+        let here = ("here", Done, 10, Some(1));
+        cues.next(&snap(&[("gone", Done, 10, Some(1)), here]), t0, START);
+        let far = snap(&[here, ("new", Working, 999_999, Some(0))]);
         cues.next(&far, t0, START + 60);
         assert!(
             cues.seen.contains_key("gone"),

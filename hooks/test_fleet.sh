@@ -840,6 +840,7 @@ printf '{"v":1,"session_id":"%s","name":null,"started_at":1792356000,"launch_dir
 now=1792356700 fire stop.json
 check "an old file: stop gives done" "$(field '[.state, has("background")]')" '["done",false]'
 check "an old file: it starts counting turns" "$(field .turns)" "1"
+check "the count is stamped with the write" "$(field '.turns_at == .written_at')" "true"
 
 echo "install block"
 # README.md's settings block is what users paste; it must register every

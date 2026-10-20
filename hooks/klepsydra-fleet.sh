@@ -539,8 +539,11 @@ def notified: if type == "string" then [scan("<task-notification>[\\s\\S]*?</tas
   | if .background_stopped == [] then del(.background_stopped) else . end
 
   # An event that changes nothing still refreshes written_at, once a minute.
-  | if $was != null and (del(.written_at) == ($was | del(.written_at))) and $now - $was.written_at < 60 then empty
-    else .written_at = $now end
+  # turns_at stamps the count with the write, so a reader can tell a count an
+  # older hook carried along unchanged from one this hook kept.
+  | if $was != null and (del(.written_at, .turns_at) == ($was | del(.written_at, .turns_at)))
+       and $now - $was.written_at < 60 then empty
+    else .written_at = $now | .turns_at = $now end
   end
 JQ
 

@@ -163,6 +163,10 @@ pub struct SessionFile {
     /// How many turns have ended (Stops); None from a hook that never counted.
     #[serde(default, deserialize_with = "lenient_turns")]
     pub turns: Option<u64>,
+    /// The `written_at` of the write that kept `turns`. An older hook carries
+    /// both along unchanged while it moves `written_at`.
+    #[serde(default)]
+    pub turns_at: Option<i64>,
 }
 
 /// Why a session file was skipped.
@@ -220,6 +224,13 @@ impl SessionFile {
             }
             None => 0,
         }
+    }
+
+    /// `turns`, if the last write kept it: a counting hook stamps it with the
+    /// write's time; an older hook's write leaves the stamp behind.
+    pub fn counted_turns(&self) -> Option<u64> {
+        self.turns
+            .filter(|_| self.turns_at.is_some() && self.turns_at == self.written_at)
     }
 
     /// A consistently wrong writer clock is what the skew corrects; only a
@@ -328,6 +339,20 @@ mod tests {
         ] {
             assert_eq!(with(odd), Some(0), "{odd}");
         }
+    }
+
+    #[test]
+    fn a_count_an_older_hook_carried_along_is_not_trusted() {
+        let with = |extra: &str| {
+            let text = format!(
+                r#"{{"v":1,"session_id":"{ID}","state":"done","state_at":1800000100,"written_at":1800000100{extra}}}"#
+            );
+            parse(&text, ID).unwrap().counted_turns()
+        };
+        assert_eq!(with(r#","turns":3,"turns_at":1800000100"#), Some(3));
+        assert_eq!(with(r#","turns":3,"turns_at":1800000050"#), None);
+        assert_eq!(with(r#","turns":3"#), None);
+        assert_eq!(with(""), None);
     }
 
     #[test]

@@ -247,7 +247,7 @@ pub fn view(entry: &Entry, now: i64) -> Option<View> {
         },
         marks: Marks {
             state_at: f.state_at,
-            turns: f.turns,
+            turns: f.counted_turns(),
         },
     })
 }
@@ -351,6 +351,7 @@ mod tests {
             claude: None,
             background: vec![],
             turns: None,
+            turns_at: None,
         }
     }
 
@@ -808,6 +809,7 @@ mod tests {
         let e = entry("a", State::Done, NOW - 10, NOW - 5);
         let mut counted = e.clone();
         counted.file.turns = Some(1);
+        counted.file.turns_at = counted.file.written_at;
         assert_ne!(snapshot(&[e], NOW), snapshot(&[counted], NOW));
     }
 

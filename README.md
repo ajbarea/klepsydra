@@ -236,8 +236,10 @@ the gauge keeps working either way; once the hook is re-copied, that folder
 holds nothing current and can be deleted. Re-copy `klepsydra-cast.json` too: a
 cast from before the character colours has no accents, so the buttons would
 lack markers while their tmux windows stay plain. The same holds whenever the cast
-grows: a voice missing from the installed copy gets no window colour. A fleet hook from before Ping counts no turns, so its sessions get the done
-chime by an older rule that can also chime when a session is resumed.
+grows: a voice missing from the installed copy gets no window colour. A fleet
+hook from before Ping counts no turns, so its sessions get the done chime by
+an older rule that can also chime when a session is resumed or a turn is
+interrupted.
 
 ## Using it
 
