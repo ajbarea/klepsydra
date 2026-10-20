@@ -36,6 +36,117 @@ fi
 # --- end klepsydra dir ---
 
 KLEPSYDRA_DIR="${KLEPSYDRA_DIR:-}"  # unresolvable: publish nothing, still echo
+UUID_RE='^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+
+# --- prune helpers: identical in hooks/klepsydra-fleet.sh and statusline/klepsydra-statusline.sh ---
+# Whether `dir` is the overlay's own data dir, the only place a prune deletes
+# from: absolute, without "..", named for the bundle identifier, and not a
+# symlink. Trailing slashes do not count.
+own_data_dir() { # dir
+  local dir=$1
+  while [[ $dir == */ ]]; do dir=${dir%/}; done
+  [[ -n $dir && $dir == /* ]] || return 1
+  [[ $dir == */../* || $dir == */.. ]] && return 1
+  [[ ${dir##*/} == dev.ajsoftworks.klepsydra ]] || return 1
+  [[ ! -L $dir ]]
+}
+
+# A prune runs at most once an hour; `stamp` holds the time of the last run,
+# and a clock that went back runs it again.
+PRUNE_EVERY=3600
+prune_due() { # stamp now
+  local last=""
+  { IFS= read -r last <"$1"; } 2>/dev/null
+  ! [[ $last =~ ^[0-9]+$ ]] || (( $2 - last >= PRUNE_EVERY || $2 < last ))
+}
+prune_hourly() { # stamp prune dir now
+  prune_due "$1" "$4" || return 0
+  "$2" "$3" "$4" && { printf '%s\n' "$4" >"$1"; } 2>/dev/null
+  return 0
+}
+# --- end prune helpers ---
+
+# Readings the gauge can never draw again: a session's file whose every window
+# ended over a day ago, unless it is its account's newest, which goes too once
+# the gauge drops the account (DROP_AFTER_MS in src/gauge.js). Write litter
+# goes at a day old. Only <account>/<uuid>.json and
+# <account>/<uuid>.json.<digits>.tmp inside <dir>/accounts, never through a
+# symlink, and only in the overlay's own data dir.
+PRUNE_ENDED_FOR=86400
+PRUNE_DROP_AFTER=$((30 * 86400))
+PRUNE_LITTER_AFTER=86400
+PRUNE_STAMP=${XDG_RUNTIME_DIR:-/tmp}/klepsydra-readings-$UID.pruned
+PRUNE_LOCK=${PRUNE_STAMP%.pruned}.lock
+prune_readings() { # dir now
+  local dir=$1 now=$2
+  own_data_dir "$dir" || return 1
+  while [[ $dir == */ ]]; do dir=${dir%/}; done
+  [[ $now =~ ^[0-9]+$ ]] || return 1
+  [[ -L $dir/accounts ]] && return 1
+  [[ -d $dir/accounts ]] || return 0
+  # From inside the folder every name is short, which matters on /mnt/c.
+  ( cd -- "$dir/accounts" 2>/dev/null && prune_readings_here "$now" )
+}
+
+# prune_readings' work, in the accounts folder. Types and mtimes come from one
+# stat (which does not follow links) and the readings are parsed by one jq.
+prune_readings_here() { # now
+  local now=$1 line name f acct sess
+  local -A type=() mt=() listed=() emptied=()
+  local -a readings=()
+  while IFS= read -r -d '' line; do
+    [[ $line =~ ^([^|]+)\|([0-9]+)\|(.+)$ ]] || continue
+    type[${BASH_REMATCH[3]}]=${BASH_REMATCH[1]}
+    mt[${BASH_REMATCH[3]}]=${BASH_REMATCH[2]}
+  done < <(LC_ALL=C stat --printf '%F|%Y|%n\0' -- * */*.json */*.tmp 2>/dev/null)
+  plain() { [[ ${type[$1]:-} == "regular file" || ${type[$1]:-} == "regular empty file" ]]; } # name
+  # An account folder, not a link to one; its name never starts with a dash.
+  owned() { [[ $1 =~ ^[0-9A-Za-z][0-9A-Za-z-]*$ && ${type[$1]:-} == directory ]]; } # account
+
+  for name in */*.json; do
+    [[ $name =~ ^([^/]+)/([^/]+)\.json$ ]] || continue
+    acct=${BASH_REMATCH[1]} sess=${BASH_REMATCH[2]}
+    if owned "$acct" && [[ $sess =~ $UUID_RE ]] && plain "$name"; then
+      readings+=("$name"); listed[$name]=1
+    fi
+  done
+  if (( ${#readings[@]} )); then
+    # A file of more than one line, or one that does not parse, is kept; one
+    # without a final newline runs into the next and both fail to parse. The
+    # newest stamp and the account are read as src/gauge.js reads them.
+    while IFS= read -r f; do
+      # Only a name this function globbed is ever deleted, whatever jq printed.
+      [[ -n ${listed[$f]:-} ]] || continue
+      rm -f -- "$f" && emptied[${f%%/*}]=1
+    done < <(jq -nRr --argjson now "$now" --argjson ended_for "$PRUNE_ENDED_FOR" \
+      --argjson drop "$PRUNE_DROP_AFTER" '
+      [inputs | {f: input_filename, r: (try fromjson catch null)}]
+      | group_by(.f) | map(select(length == 1) | .[0] | select(.r | type == "object")
+        | .r as $r
+        | (if $r.observed_at != null then $r.observed_at else $r.written_at end) as $s
+        | { f, account: ($r.account // "?" | tostring),
+            stamp: (if ($s | type) == "number" then $s else null end),
+            ended: ($r.windows | type == "object" and length > 0
+              and all(.[]; type == "object" and (.resets_at | type) == "number"
+                and .resets_at < $now - $ended_for)) })
+      | group_by(.account)[]
+      | (map(.stamp | numbers) | max) as $newest
+      | .[] | select(.ended and .stamp != null and (.stamp != $newest or .stamp < $now - $drop))
+      | .f' "${readings[@]}" 2>/dev/null)
+  fi
+  # A folder left empty goes; one a writer has just made again stays.
+  for acct in "${!emptied[@]}"; do rmdir -- "$acct" 2>/dev/null; done
+
+  for name in */*.tmp; do
+    [[ $name =~ ^([^/]+)/([^/]+)\.json\.[0-9]+\.tmp$ ]] || continue
+    acct=${BASH_REMATCH[1]} sess=${BASH_REMATCH[2]}
+    if owned "$acct" && [[ $sess =~ $UUID_RE ]] && plain "$name" &&
+      (( now - mt[$name] > PRUNE_LITTER_AFTER )); then
+      rm -f -- "$name"
+    fi
+  done
+  return 0
+}
 
 input=$(cat)
 now=${KLEPSYDRA_NOW:-}
@@ -70,7 +181,11 @@ parsed=$(printf '%s' "$input" | jq -r \
   | ( $root.session_id // "unknown" ) as $session
   | ( $root.rate_limits // {} ) | with_entries(select(.value.used_percentage != null)) as $w
   |
+  # A reading with no live window says nothing about now; a real response
+  # always reports the window it counts against. Skipping it also keeps a
+  # session whose file was pruned from republishing its last response as new.
   ( if ($w | length) == 0 then "SKIP"
+    elif ($w | all(.[]; (.resets_at | type) == "number" and .resets_at <= $now)) then "SKIP"
     else { account: $acct.id, label: $acct.label, session: $session,
            written_at: $now, observed_at: $now,
            api_ms: ($root.cost.total_api_duration_ms // null), windows: $w } | tojson
@@ -102,7 +217,7 @@ parsed=$(printf '%s' "$input" | jq -r \
 # the 10 s bucket it was written in. Rewritten only when either changes, so a
 # render costs a read and at most one write per 10 s.
 if [[ -n "$KLEPSYDRA_DIR" ]] &&
-  [[ $session =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]]; then
+  [[ $session =~ $UUID_RE ]]; then
   beat="$KLEPSYDRA_DIR/fleet/$session.beat"
   beat_line="$name"$'\t'"$((now / 10))"
   was=""
@@ -153,6 +268,16 @@ if [[ "$payload" != "SKIP" && -n "$KLEPSYDRA_DIR" ]] && ! $torn && ! repeats_las
       rm -f "$tmp" 2>/dev/null
     fi
   fi
+fi
+
+# A due prune runs detached, holding a lock taken here, so a render never waits
+# on it and two terminals never prune at once.
+if [[ -n "$KLEPSYDRA_DIR" ]] && prune_due "$PRUNE_STAMP" "$now" &&
+  { exec {plock}>>"$PRUNE_LOCK"; } 2>/dev/null; then
+  if flock -n "$plock" 2>/dev/null; then
+    prune_hourly "$PRUNE_STAMP" prune_readings "$KLEPSYDRA_DIR" "$now" </dev/null >/dev/null 2>&1 &
+  fi
+  exec {plock}>&-
 fi
 
 line="$extra"

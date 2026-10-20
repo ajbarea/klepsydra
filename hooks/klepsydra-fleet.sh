@@ -182,17 +182,12 @@ claude_alive() { # pid start
 # symlink, and only when `dir` is the overlay's own absolute data dir. Runs
 # under the fleet lock in a few processes however many files there are.
 PRUNE_AFTER=86400
-PRUNE_EVERY=3600
 PRUNE_STAMP=${LOCK%.lock}.pruned
 prune_fleet() { # dir now
   local dir=$1 now=$2
+  own_data_dir "$dir" || return 1
   while [[ $dir == */ ]]; do dir=${dir%/}; done
-  [[ -n $dir ]] || return 1
-  [[ $dir == /* ]] || return 1
-  [[ $dir == */../* || $dir == */.. ]] && return 1
-  [[ ${dir##*/} == dev.ajsoftworks.klepsydra ]] || return 1
   [[ $now =~ ^[0-9]+$ ]] || return 1
-  [[ -L $dir ]] && return 1
   [[ -L $dir/fleet ]] && return 1
   [[ -d $dir/fleet ]] || return 0
   # From inside the folder every name is short, which matters on /mnt/c.
@@ -259,15 +254,33 @@ prune_here() { # now
   return 0
 }
 
-# prune_fleet at most once an hour, stamped next to the lock (the stamp holds
-# the time of the last run).
-prune_hourly() { # dir now
+# --- prune helpers: identical in hooks/klepsydra-fleet.sh and statusline/klepsydra-statusline.sh ---
+# Whether `dir` is the overlay's own data dir, the only place a prune deletes
+# from: absolute, without "..", named for the bundle identifier, and not a
+# symlink. Trailing slashes do not count.
+own_data_dir() { # dir
+  local dir=$1
+  while [[ $dir == */ ]]; do dir=${dir%/}; done
+  [[ -n $dir && $dir == /* ]] || return 1
+  [[ $dir == */../* || $dir == */.. ]] && return 1
+  [[ ${dir##*/} == dev.ajsoftworks.klepsydra ]] || return 1
+  [[ ! -L $dir ]]
+}
+
+# A prune runs at most once an hour; `stamp` holds the time of the last run,
+# and a clock that went back runs it again.
+PRUNE_EVERY=3600
+prune_due() { # stamp now
   local last=""
-  { IFS= read -r last <"$PRUNE_STAMP"; } 2>/dev/null
-  [[ $last =~ ^[0-9]+$ ]] && (( $2 - last < PRUNE_EVERY && $2 >= last )) && return 0
-  prune_fleet "$1" "$2" && { printf '%s\n' "$2" >"$PRUNE_STAMP"; } 2>/dev/null
+  { IFS= read -r last <"$1"; } 2>/dev/null
+  ! [[ $last =~ ^[0-9]+$ ]] || (( $2 - last >= PRUNE_EVERY || $2 < last ))
+}
+prune_hourly() { # stamp prune dir now
+  prune_due "$1" "$4" || return 0
+  "$2" "$3" "$4" && { printf '%s\n' "$4" >"$1"; } 2>/dev/null
   return 0
 }
+# --- end prune helpers ---
 
 # The session file after one event, as compact JSON, or nothing when no field
 # changed. `$old` is the current file's text (empty for none).
@@ -422,7 +435,7 @@ main() {
     --arg voice "$voice" --arg voice_from "$voice_from" --arg pid "$found_pid" --arg start "$found_start" \
     "$APPLY" 2>/dev/null) || new=""
   [[ -n $new ]] && write_atomic "$file" "$new"
-  [[ $event == SessionStart ]] && prune_hourly "$KLEPSYDRA_DIR" "$now"
+  [[ $event == SessionStart ]] && prune_hourly "$PRUNE_STAMP" prune_fleet "$KLEPSYDRA_DIR" "$now"
   return 0
 }
 

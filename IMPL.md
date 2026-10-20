@@ -1,40 +1,34 @@
 # IMPL
 
-Current slice: keep the kourai cast while keryx is muted (#19). A muted keryx
-holds no new terminal, so every new session fell back to a Lorelei face just
-when keryx was off.
+Current slice: prune the readings the overlay can never draw again. The
+statusline hook kept every session's reading forever (265 files on the WSL
+station, 128 over a week old), and the overlay reads them all every refresh.
 
 ## Done
-- ✅ `hooks/klepsydra-fleet.sh`: with no hold, the session takes its repo's
-  voice from `homes` in keryx's `voices.json` (read only) while keryx still
-  remembers it (90 days, as keryx's `assign` hands it out), and records
-  `voice_from` ("hold" or "home"). A home applies only to a session with no
-  voice yet; a file from before `voice_from` counts as held. The repo is
-  named from the cwd as keryx's `source_name` does, now including a `.git`
-  file saved with CRLF.
-- ✅ `src-tauri/fleet`: `SessionFile` reads `started_at` and `voice_from`;
-  `snapshot` shows a shared voice's face by claim: not ended before ended,
-  then hold before home, then the earlier start, then the lower session id;
-  the others fall back, except a hold that has not ended. Silence never
-  counts, so a face changes at most once (spec addendum, "Shared voices").
-- ✅ README (faces), the spec's addendum (the ruling), ROADMAP.
+- ✅ Publish guard: a reading whose every window has ended is never
+  published. Without it, an idle session whose file was pruned would
+  republish its last response as new on its next render.
+- ✅ Prune (`statusline/klepsydra-statusline.sh`): hourly, detached under a
+  `flock` so a render never waits (the docs: a slow status line blocks
+  updates, and a new update cancels the script in flight). It deletes a
+  reading whose every window ended over a day ago unless it is its account's
+  newest by the gauge's stamp; the newest goes once its stamp is past the
+  gauge's 30-day drop. A file that does not parse as one object, holds a
+  window with no numeric reset, or has no numeric stamp stays.
+- ✅ The data-dir guard and the hourly runner are one block in both hooks
+  ("prune helpers"), checked identical by both suites; the fleet's guard
+  tests now cover the statusline prune.
 
 ## Verified, not inferred
-- ✅ Hook suite 186 (11 new: home, a forgotten home at 90 days and one
-  second, a hold beside a home, hold then home, home then hold, home then
-  home, another repo, a file from before `voice_from`, a CRLF `.git` file
-  named as keryx names it).
-- ✅ Fleet crate 81 (9 new, among them `/clear` with an ended predecessor and
-  silence never moving a face) with clippy clean; node 119.
-- ✅ Independent review, round 1: two bugs (ended or silent sessions out-
-  claimed live ones; a home replaced a home, so a face followed the cwd), a
-  wrong window (14 days, where keryx forgets at 90) and a CRLF parity gap,
-  all fixed here. Round 2: dropping silent sessions let a face flip with
-  status, against the spec; now only ending counts, and the spec says so.
-- ✅ Live (hook only, keryx muted): a new session in `ajsoftworks` got
-  `am_michael` from its home and showed Hephaestus. A done session held the
-  same voice, so the installed reader showed two; the new reader drops the
-  home one (deploy after the 8-hour memory reading).
+- ✅ statusline suite 106 (24 new), fleet 186, shellcheck clean. The suite
+  runs on a fixed clock now; the fixtures' resets are in the past.
+- ✅ `toRows` before and after a prune agree, in the suite and on a copy of
+  the WSL station's readings (265 files to 74, three rows unchanged). Two
+  mutants of the rule and one of the link guards each fail the suite.
+- ✅ A render that starts a prune returns in 22 ms; on /mnt/c the first prune
+  took 1.6 s and a later one 0.35 s, all in the background.
+- 📋 Live: deploy the hook and watch the status line render while the first
+  prune runs.
 
 ## Open
 - The tray icon still draws a bar in either layout.
