@@ -1,45 +1,42 @@
 # IMPL
 
-Current slice: speaking avatar, the klepsydra side (#33), branch
-feat/speaking-ripple. keryx 0.9.2 (keryx #39) writes `speaking.json` into the
-fleet folder per sentence; the wall shows gold waves around the speaking
-card's portrait. Contract: keryx `docs/speaking-signal.md`.
+Current slice: compact card density (#50), branch feat/compact-cards. AJ runs
+the wall on half of a 1920x1080 screen (about 960x1000), where five
+comfortable cards already scrolled; eight should fit.
 
 ## Done
-- Reader (`src-tauri/fleet/src/speaking.rs`): the scan passes `speaking.json`
-  over by name (test); `read` takes only a regular file under 256 KiB;
-  `read` returns Absent / Failed / Text; `parse` returns Line / Partial (not
-  JSON, cut short) / Invalid (v != 1, wrong shape, out-of-range times, a
-  negative or over-600 s span, negative levels); levels over 1 are held to 1.
-  Failed or Partial keeps the last line shown through its end + HOLD_SECS
-  (0.6, guarded equal to SPEAK_HOLD_MS); only Absent is a cut-off. A line
-  starting more than START_AHEAD_SECS (5) ahead is ignored.
-  `owner` matches pid+start, then session_id, then the one live card wearing
-  the voice (two such cards: none). A line whose `ends_at` is before the
-  reader's second is dropped. Rides on the snapshot as `speaking`
-  {session_id, envelope, started_at, ends_at}; a malformed file is silence,
-  not a fleet.log problem.
-- Wall (`src/fleet/speaking.js`, `wall.js`): `Speaker` tracks the line;
-  SPEAK_HOLD_MS = 600 holds through sentence gaps, a null mid-clip is a
-  cut-off (fade now), SPEAK_FADE_MS = 300. Waves: a steady gold ring at
-  r 42.5 that swells with the level, plus two ripples r 46 to 50.5 that
-  start #F1D2A1 and darken to #C9944A; every edge stays within 52, the
-  12 px the card leaves before the name column and the next row (tested
-  against wall.css). rAF only while a line shows; reduced
-  motion: one still ring, taken down by a timer. Live region "<Name>
-  speaking" once per utterance (`announcer` in dom.js: same words twice are
-  cleared and re-set; a newer announcement cancels a pending re-set).
-- Strip: the speaking face gets `.speaking` (gold box-shadow ring) and
-  ", speaking" in its label, through the hold.
-- Demo: `scripts/fixtures/fleet-demo.json` has a 3.2 s line for Hermes with
-  `ends_at` far ahead; in a browser `feed.js` replays it every sentence plus
-  400 ms.
+- Density (`src/fleet/density.js`): Auto (default), Comfortable, Compact.
+  Auto turns compact when the comfortable grid would scroll and back only
+  when it would fit RETURN_SPARE_CARDS (1) more card, so a card leaving and
+  arriving at the boundary does not flip the wall. `wall.js` measures an
+  unseen comfortable clone of the wall (with that extra card, as tall as the
+  tallest) on a card arriving or leaving and on resize (100 ms settle).
+- Compact (`wall.css`, tokens on `[data-density="compact"]` set on the bar
+  and the wall): the card is one grid, header (56 px portrait with ring and
+  waves, name, task, pill, Clear, Open terminal 28 px tall), meta (repo,
+  branch, "+N" chip with role img + aria-label + title, crew), ask, then
+  prompt 1 line and reply 2 (1 when asking). `grid-auto-rows: 1fr`, so every
+  card is 196.6 px. A button note floats over the card corner; `.why` and
+  "prompt free" are hidden; `.updated` folds into the pill (`pillWhen`).
+- One spacing scale (`--space-1..9`); comfortable values unchanged, compact
+  picks 12 px gap and padding. Waves scale with `--wall-face`.
+- Pref: `wall_density` in prefs.json via `get_wall_density` /
+  `set_wall_density` (`src-tauri/src/fleet.rs`, unknown values read as auto).
+- Control: radio fieldset beside + New session, 24 px labels.
+- Demo: `?demo=N` takes the first N sessions; two new fixture sessions
+  (long names, +2 chip, stale updated) and a long task name on Metis.
+- Measured (Playwright, demo): 960x1000 Auto = compact, 8 cards, no scroll,
+  bottom at 893 px; 1920x1080 Auto = compact, 16 cards in 4x4, no scroll.
+  Comfortable is pixel-identical to main below the bar (reduced motion,
+  16 cards, 960 and 1920).
 - Gates: the whole audit list, build-windows --check.
 
 ## Next
-- Review findings 1-4 fixed, each with a fail-first test; merge is AJ's call.
-- Live check: install the build, run keryx 0.9.2, and watch a real line.
+- Independent review, then AJ merges.
+- Live check through UIA on the installed build: switch densities, resize
+  across the boundary, confirm the pref survives a restart.
 
 ## Verify
 - `node --test src/*.test.js`; `cd src-tauri && cargo test -p klepsydra-fleet`.
-- Serve the repo root, open `/src/wall.html?demo` at 1920 wide.
+- Serve the repo root, open `/src/wall.html?demo=8` at 960x1000 and
+  `/src/wall.html?demo` at 1920x1080.

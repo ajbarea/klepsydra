@@ -419,6 +419,27 @@ title.
 running brings its card back at its next event, without its start time or the
 repos it touched.
 
+### Card density
+
+The control beside **+ New session** picks the card density: **Auto** (the
+default), **Comfortable** or **Compact**. Comfortable is the card above.
+Compact keeps three short rows: the header, with a 56 px portrait (crew ring
+and speaking waves included), the name and session name, the pill and a
+smaller **Open terminal**; one line for where it works, the crew and a "+N" chip
+for the other repos it touched (hover it for their names); and the exchange,
+the prompt on one line and the reply on two. "updated 7m ago" joins the
+pill's time ("30m · 7m ago"), Clear sits beside Open terminal and takes its
+place when it is off, and a button's note floats over the card's corner.
+Eight compact cards fit a 960x1000 window, half a 1920x1080 screen, and
+sixteen fit the whole screen.
+
+Auto turns compact as soon as the comfortable cards would scroll, measured on
+an unseen comfortable copy of the wall when a card arrives or leaves and when
+the window is resized. It turns back only once the comfortable cards would
+still fit with one more card, so a session ending and another starting at the
+boundary leaves the wall as it is. The choice is saved as `wall_density` in
+`prefs.json`.
+
 ### Starting sessions
 
 **+ New session**, in the wall's summary bar, starts `claude` in `launch_dir`
@@ -458,7 +479,8 @@ nor marker. The status tones (card edge, pill, badges) stay status-only.
 Windows Terminal tabs opened by hand are not coloured.
 
 To see the wall without sessions, serve the repo root (for example
-`python3 -m http.server`) and open `/src/wall.html?demo`.
+`python3 -m http.server`) and open `/src/wall.html?demo`; `?demo=8` shows
+its first eight sessions.
 
 A session's face follows its keryx voice, so it stays the same while the
 session moves between repos. Fifteen voices, all fourteen in keryx's rotation pool
