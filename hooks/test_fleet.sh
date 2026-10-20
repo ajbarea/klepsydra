@@ -123,6 +123,10 @@ file="$dir/fleet/$S.json"
 now=1792353000
 wt="$repos/klepsydra/.claude/worktrees/fleet"
 
+# The boot and host the hook sees unless a test says otherwise, whatever runs it.
+boot_file="$work/boot_id"
+printf '%s\n' 0b6e1c5a-1111-4222-8333-444455556666 >"$boot_file"
+
 # Fire one fixture event at the hook, edited by an optional jq filter, as
 # Claude Code would from the terminal held by pid 500.
 fire() { # fixture [filter] [VAR=value...]
@@ -130,7 +134,8 @@ fire() { # fixture [filter] [VAR=value...]
   shift; (( $# )) && shift
   jq -c --arg cwd "$wt" "if .cwd then .cwd = \$cwd else . end | $filter" "$fixtures/$fixture" |
     env KLEPSYDRA_DIR="$dir" KLEPSYDRA_NOW="$now" KLEPSYDRA_PROC="$work/proc" KLEPSYDRA_PID=600 \
-      KERYX_VOICES="$work/voices.json" XDG_RUNTIME_DIR="$work" "$@" bash "$hook"
+      KERYX_VOICES="$work/voices.json" XDG_RUNTIME_DIR="$work" \
+      KLEPSYDRA_BOOT_ID="$boot_file" TMUX= TMUX_PANE= WSL_DISTRO_NAME= "$@" bash "$hook"
 }
 field() { jq -c "$1" "$file"; }
 mtime() { stat -c %Y "$file"; }
@@ -655,8 +660,6 @@ check "unset USER and HOME: exit 0" "$rc" "0"
 check "unset USER and HOME: no output" "$out" ""
 
 echo "tmux and host"
-boot_file="$work/boot_id"
-printf '%s\n' 0b6e1c5a-1111-4222-8333-444455556666 >"$boot_file"
 rm -f "$file"
 fire session-start.json . TMUX=/tmp/tmux-1001/klepsydra,4242,0 TMUX_PANE=%3 \
   WSL_DISTRO_NAME=Ubuntu KLEPSYDRA_BOOT_ID="$boot_file" >/dev/null
@@ -689,12 +692,13 @@ A1=aaaaaaaa-0000-4000-8000-000000000001 # an earlier boot
 A2=aaaaaaaa-0000-4000-8000-000000000002 # this boot and distro, pid dead
 A3=aaaaaaaa-0000-4000-8000-000000000003 # this boot and distro, alive (pid 500)
 A4=aaaaaaaa-0000-4000-8000-000000000004 # this boot, another distro, pid dead here
-A5=aaaaaaaa-0000-4000-8000-000000000005 # this boot and distro, pid reused by another program
+A5=aaaaaaaa-0000-4000-8000-000000000005 # this boot and distro, pid reused by a later process
 A6=aaaaaaaa-0000-4000-8000-000000000006 # already ended, an earlier boot
 A7=aaaaaaaa-0000-4000-8000-000000000007 # no distro, an earlier boot
 A8=aaaaaaaa-0000-4000-8000-000000000008 # no distro, this boot, pid dead
 A9=aaaaaaaa-0000-4000-8000-000000000009 # this boot and distro, claude unknown
 A10=aaaaaaaa-0000-4000-8000-000000000010 # an earlier boot, claude unknown
+A11=aaaaaaaa-0000-4000-8000-000000000011 # an earlier boot, idle over a day: left to the prune
 put $A1 working $OLD Ubuntu 500 8717628
 put $A2 'done' $B Ubuntu 4999 1
 put $A3 working $B Ubuntu 500 8717628
@@ -705,10 +709,14 @@ put $A7 working $OLD "" 4999 1
 put $A8 working $B "" 4999 1
 put $A9 working $B Ubuntu 4999 1
 put $A10 working $OLD Ubuntu 4999 1
+put $A11 working $OLD Ubuntu 4999 1
+jq -c --argjson t $((now - 2 * 86400)) '.state_at = $t | .written_at = $t' "$dir/fleet/$A11.json" >"$work/n" && mv "$work/n" "$dir/fleet/$A11.json"
+jq -c '.needs = {by: "", tool: "Bash"}' "$dir/fleet/$A1.json" >"$work/n" && mv "$work/n" "$dir/fleet/$A1.json"
 for n in $A9 $A10; do jq -c '.claude = null' "$dir/fleet/$n.json" >"$work/n" && mv "$work/n" "$dir/fleet/$n.json"; done
 jq -c '.reason = "exited"' "$dir/fleet/$A6.json" >"$work/a6" && mv "$work/a6" "$dir/fleet/$A6.json"
 rm -f "$file"
-fire session-start.json . WSL_DISTRO_NAME=Ubuntu KLEPSYDRA_BOOT_ID="$boot_file" >/dev/null
+printf '%s\n' "$now" >"$stamp" # no prune in this section
+fire session-start.json . WSL_DISTRO_NAME=Ubuntu >/dev/null
 check "an earlier boot is gone" "$(state_of $A1)" "ended/gone"
 check "same distro, pid dead: gone" "$(state_of $A2)" "ended/gone"
 check "same distro, alive: unchanged" "$(state_of $A3)" "working/-"
@@ -719,13 +727,88 @@ check "no distro, earlier boot: gone" "$(state_of $A7)" "ended/gone"
 check "no distro, this boot: unchanged" "$(state_of $A8)" "working/-"
 check "this boot, claude unknown: unchanged" "$(state_of $A9)" "working/-"
 check "earlier boot, claude unknown: gone" "$(state_of $A10)" "ended/gone"
+check "idle over a day: left to the prune" "$(state_of $A11)|$(jq -c .written_at "$dir/fleet/$A11.json")" "working/-|$((now - 2 * 86400))"
+check "gone clears needs" "$(jq -c .needs "$dir/fleet/$A1.json")" "null"
 check "gone stamps when" "$(jq -c '[.ended.at, .state_at]' "$dir/fleet/$A1.json")" "[$now,$now]"
 rm -f "$dir"/fleet/aaaaaaaa-*.json
 # The firing session's own file is never marked, even with a dead pid on record
 # and no Claude process found above the hook.
 put $S working $B Ubuntu 4999 1
-fire session-start.json . KLEPSYDRA_PID=999 WSL_DISTRO_NAME=Ubuntu KLEPSYDRA_BOOT_ID="$boot_file" >/dev/null
-check "the firing session is not marked gone" "$(field '.state')" '"new"'
+fire session-start.json '.source = "compact"' WSL_DISTRO_NAME=Ubuntu >/dev/null
+check "the firing session is not marked gone" "$(field '[.state, .claude.pid]')" '["working",4999]'
+
+# A resumed session whose Claude process is not found loses its stale pid, so
+# another session's start does not mark it gone.
+put $S working $B Ubuntu 4999 1
+jq -c '.tmux = {socket: "/tmp/old", pane: "%9"}' "$file" >"$work/n" && mv "$work/n" "$file"
+fire session-start.json . KLEPSYDRA_PID=999 WSL_DISTRO_NAME=Ubuntu >/dev/null
+check "resumed, no claude found: pid, pane cleared" "$(field '[.claude, .tmux, .host.boot]')" '[null,null,"0b6e1c5a-1111-4222-8333-444455556666"]'
+fire session-start.json ".session_id = \"$A1\"" WSL_DISTRO_NAME=Ubuntu >/dev/null
+check "resumed, no claude found: not marked gone" "$(field .state)" '"new"'
+rm -f "$dir/fleet/$A1.json"
+
+# Native Linux: no distro on either side, so the pid decides.
+put $A1 working $B "" 4999 1
+put $A2 working $B "" 500 8717628
+put $A3 working $B Ubuntu 4999 1
+rm -f "$file"
+fire session-start.json . >/dev/null
+check "no distro either side, pid dead: gone" "$(state_of $A1)" "ended/gone"
+check "no distro either side, alive: unchanged" "$(state_of $A2)" "working/-"
+check "a distro the host lacks: unchanged" "$(state_of $A3)" "working/-"
+rm -f "$dir"/fleet/aaaaaaaa-*.json
+
+# What mark_gone must leave alone. Each case holds a session of an earlier boot
+# that would otherwise be marked gone.
+old_session() { # file id: a v1 file on an earlier boot with a dead pid
+  jq -nc --arg id "$2" --arg b "$OLD" --argjson now "$now" \
+    '{v:1, session_id:$id, state:"working", state_at:($now-100), written_at:($now-100),
+      claude:{pid:4999, start:1}, host:{boot:$b, distro:"Ubuntu"}}' >"$1"
+}
+untouched() { # name dir-with-fleet [fire args...]: fire a start, compare the fleet folder's files
+  local name=$1 d=$2 before after; shift 2
+  before=$(cd -- "$d/fleet" && for f in *; do [[ $f == "$S.json" ]] || printf '%s:%s\n' "$(stat -c %F "$f")" "$(md5sum <"$f")"; done)
+  fire session-start.json . KLEPSYDRA_DIR="$d" WSL_DISTRO_NAME=Ubuntu "$@" >/dev/null
+  after=$(cd -- "$d/fleet" && for f in *; do [[ $f == "$S.json" ]] || printf '%s:%s\n' "$(stat -c %F "$f")" "$(md5sum <"$f")"; done)
+  check "$name" "$([[ -n $before && $before == "$after" ]] && echo untouched || printf 'changed\n%s\n--\n%s' "$before" "$after")" "untouched"
+}
+g1="$work/guard/dev.ajsoftworks.klepsydra"
+mkdir -p "$g1/fleet" "$work/guard/target"
+old_session "$work/guard/target/t.json" $A1
+ln -s "$work/guard/target/t.json" "$g1/fleet/$A1.json"
+untouched "a symlinked session file is left alone" "$g1"
+check "the symlink's target is unchanged" "$(jq -r .state "$work/guard/target/t.json")" "working"
+
+g2="$work/guard2/dev.ajsoftworks.klepsydra"
+mkdir -p "$g2" "$work/guard2/real"
+old_session "$work/guard2/real/$A1.json" $A1
+ln -s "$work/guard2/real" "$g2/fleet"
+before=$(md5sum <"$work/guard2/real/$A1.json")
+fire session-start.json . KLEPSYDRA_DIR="$g2" WSL_DISTRO_NAME=Ubuntu >/dev/null
+check "a symlinked fleet folder is left alone" "$(md5sum <"$work/guard2/real/$A1.json")" "$before"
+
+g3="$work/guard3/not-the-overlay"
+mkdir -p "$g3/fleet"
+old_session "$g3/fleet/$A1.json" $A1
+untouched "a data dir that is not the overlay's is left alone" "$g3"
+
+g4="$work/guard4/dev.ajsoftworks.klepsydra"
+mkdir -p "$g4/fleet"
+old_session "$g4/fleet/$A1.json" $A1
+: >"$work/empty_boot"
+untouched "an empty boot id marks nothing" "$g4" KLEPSYDRA_BOOT_ID="$work/empty_boot"
+untouched "a missing boot id marks nothing" "$g4" KLEPSYDRA_BOOT_ID="$work/no-such-file"
+printf 'not-a-boot-id\n' >"$work/bad_boot"
+untouched "a malformed boot id marks nothing" "$g4" KLEPSYDRA_BOOT_ID="$work/bad_boot"
+
+g5="$work/guard5/dev.ajsoftworks.klepsydra"
+mkdir -p "$g5/fleet"
+printf 'not json\n' >"$g5/fleet/$A1.json"
+old_session "$g5/fleet/${A1%1}2.json" ${A1%1}2
+jq -c '.v = 2' "$g5/fleet/${A1%1}2.json" >"$work/n" && mv "$work/n" "$g5/fleet/${A1%1}2.json"
+old_session "$g5/fleet/notes.json" notes
+untouched "malformed, non-v1 and non-uuid files are left alone" "$g5"
+check "all three kept their bytes" "$(cat "$g5/fleet/$A1.json"; jq -c .v "$g5/fleet/${A1%1}2.json"; jq -r .state "$g5/fleet/notes.json")" $'not json\n2\nworking'
 
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [[ $fail -eq 0 ]]

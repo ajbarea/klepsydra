@@ -278,23 +278,28 @@ prune_here() { # now
 # Mark ended, reason "gone", every session in <dir>/fleet that has not ended
 # and whose Claude Code process cannot be running: it started on another boot,
 # or on this boot and distro under a pid that is no longer it. Sessions from
-# another distro on this boot are left alone (their pids are not visible here).
+# another distro on this boot are left alone (their pids are not visible here);
+# with no distro on either side, the pid decides. A session idle past
+# PRUNE_AFTER is left to the prune, which would otherwise see a fresh clock.
 # A field jq finds empty is printed as "?", which no boot or distro can be, so
 # read does not collapse the tabs around it. A session with no known pid is
 # gone only from an earlier boot, and `self`'s own file is never touched.
 mark_gone() { # dir now self
-  local dir=$1 now=$2 self=$3 f state boot distro pid start new
+  local dir=$1 now=$2 self=$3 f state boot distro pid start last new
   [[ -n $host_boot ]] && own_data_dir "$dir" || return 0
   [[ -d $dir/fleet && ! -L $dir/fleet ]] || return 0
-  while IFS=$'\t' read -r f state boot distro pid start; do
+  while IFS=$'\t' read -r f state boot distro pid start last; do
     [[ ${f%.json} =~ $UUID_RE && $state != ended && $boot != "?" && $f != "$self.json" ]] || continue
     if [[ $boot == "$host_boot" ]]; then
-      [[ -n $host_distro && $distro == "$host_distro" ]] || continue
+      [[ $distro == "?" ]] && distro=""
+      [[ $distro == "$host_distro" ]] || continue
       [[ $pid =~ ^[1-9][0-9]*$ ]] || continue
       claude_alive "$pid" "$start" && continue
     fi
+    [[ $last =~ ^[0-9]+$ ]] || continue
+    (( now - last > PRUNE_AFTER )) && continue
     new=$(jq -c --argjson now "$now" \
-      '.state = "ended" | .reason = "gone" | .ended = {reason: "gone", at: $now} | .state_at = $now | .written_at = $now' \
+      '.state = "ended" | .reason = "gone" | .needs = null | .ended = {reason: "gone", at: $now} | .state_at = $now | .written_at = $now' \
       "$dir/fleet/$f" 2>/dev/null) || continue
     [[ -n $new ]] && write_atomic "$dir/fleet/$f" "$new"
   done < <(cd -- "$dir/fleet" 2>/dev/null && for f in *.json; do
@@ -302,7 +307,9 @@ mark_gone() { # dir now self
       jq -r --arg f "$f" 'def fld: if type == "string" and length > 0 then . else "?" end;
         select(type == "object" and .v == 1)
         | [$f, (.state | fld), (.host.boot | fld), (.host.distro | fld),
-           ((.claude.pid | numbers) // 0 | floor | tostring), ((.claude.start | numbers) // 0 | floor | tostring)]
+           ((.claude.pid | numbers) // 0 | floor | tostring), ((.claude.start | numbers) // 0 | floor | tostring),
+           ([.started_at, .state_at, .where.at, .prompt.at, .reply.at, .ended.at, .written_at]
+             | map(numbers) | max // 0 | floor | tostring)]
         | @tsv' "$f" 2>/dev/null
     done)
 }
@@ -364,9 +371,14 @@ def ended_as: {clear: "cleared", resume: "resumed elsewhere", logout: "logged ou
   | $s
   | .name = (($ev.session_title | text) // .name)
   | (if $pid != "" then {pid: ($pid | tonumber), start: ($start | tonumber)} else null end) as $me
-  | .claude = (if $me != null and $event == "SessionStart" and $ev.source != "compact" then $me else (.claude // $me) end)
-  | (if $tmux_pane != "" then .tmux = {socket: $tmux_socket, pane: $tmux_pane} else . end)
-  | (if $boot != "" then .host = {boot: $boot, distro: ($distro | text)} else . end)
+  # A new process (any start but a compaction) replaces what the file knew of
+  # the old one: its pid, pane and host, unknowns included.
+  | ($event == "SessionStart" and $ev.source != "compact") as $fresh
+  | (if $tmux_pane != "" then {socket: $tmux_socket, pane: $tmux_pane} else null end) as $pane
+  | (if $boot != "" then {boot: $boot, distro: ($distro | text)} else null end) as $host
+  | .claude = (if $fresh then $me else (.claude // $me) end)
+  | .tmux = (if $fresh then $pane else ($pane // .tmux) end)
+  | .host = (if $fresh then $host else ($host // .host) end)
   # A hold always applies; a repo's home voice only to a session with no voice
   # yet, so a face never follows the cwd. Files from before voice_from held.
   | .voice_from = (.voice_from // (if .voice != null then "hold" else null end))
