@@ -188,7 +188,6 @@ test("identity: a cast voice is its character", () => {
     face: "fleet/faces/kourai/hephaestus-96.webp",
     face2x: "fleet/faces/kourai/hephaestus-192.webp",
     accent: null, // CAST here has no accent
-    accentInk: null,
   });
 });
 
@@ -342,19 +341,32 @@ test("the model reads the cast the app ships", () => {
   assert.equal(identity(session(), cast).name, "Hephaestus");
 });
 
-test("a kourai card carries its accent and ink; any other card has none", () => {
+test("a kourai card carries its accent; any other card has none", () => {
   const cast = JSON.parse(readFileSync(new URL("./fleet/cast.json", import.meta.url), "utf8"));
-  const c = card(session(), cast, NOW);
-  assert.deepEqual([c.accent, c.accentInk], ["#DA8C20", "#000000"]);
-  assert.deepEqual([card(session({ voice: "aletheia" }), CAST, NOW).accent], [null], "no character, no accent");
-  assert.equal(card(session({ voice: "af_aoede" }), cast, NOW).accentInk, "#000000");
-  assert.equal(card(session({ voice: "af_nova" }), cast, NOW).accentInk, "#ffffff");
+  assert.equal(card(session(), cast, NOW).accent, "#DA8C20");
+  assert.equal(card(session({ voice: "aletheia" }), CAST, NOW).accent, null, "no character, no accent");
   for (const voice of ["bm_fable", null, "af_heart(0.5)+af_bella(0.5)"]) {
-    const o = card(session({ voice }), cast, NOW);
-    assert.deepEqual([o.accent, o.accentInk], [null, null], String(voice));
+    assert.equal(card(session({ voice }), cast, NOW).accent, null, String(voice));
   }
   const bad = { characters: { am_michael: { name: "H", face: "hephaestus", accent: "red; x" } } };
   assert.equal(identity(session(), bad).accent, null, "a malformed accent is dropped");
+});
+
+test("the Open terminal button: fill only for needs-you, a marker for a character, plain for a medallion, nothing when off", () => {
+  const cast = JSON.parse(readFileSync(new URL("./fleet/cast.json", import.meta.url), "utf8"));
+  const style = (o, c = cast) => {
+    const k = card(session(o), c, NOW);
+    return [k.jumpKind, k.jumpMark];
+  };
+  assert.deepEqual(style({ status: "working" }), ["accent", { color: "#DA8C20", width: 4 }]);
+  assert.deepEqual(style({ status: "done" })[0], "accent");
+  assert.deepEqual(style({ status: "working", voice: "af_nova" }), ["accent", { color: "#0072B2", width: 6 }], "a dim accent is wider");
+  assert.deepEqual(style({ status: "needs_you" }), ["needs", null], "no marker on the filled button");
+  assert.deepEqual(style({ status: "needs_you", quiet_since: NOW - 1000 })[0], "needs", "needs you? is filled too");
+  assert.deepEqual(style({ status: "working", voice: "bm_fable" }), ["plain", null], "a medallion has no marker");
+  assert.deepEqual(style({ status: "needs_you", voice: "bm_fable" }), ["needs", null]);
+  assert.deepEqual(style({ status: "ended" }), ["off", null], "disabled: no marker, no fill");
+  assert.deepEqual(style({ status: "needs_you", name: null }), ["off", null], "disabled needs-you stays quiet");
 });
 
 test("only an ended or silent card offers Clear", () => {

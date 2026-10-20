@@ -1,4 +1,4 @@
-// WCAG 2.2 contrast, shared by the card's accent ink and the style tests.
+// WCAG 2.2 contrast, shared by the card's button marker and the style tests.
 
 /** Relative luminance of "#rrggbb". */
 export function luminance(hex) {
@@ -15,3 +15,11 @@ export function contrast(a, b) {
 
 /** "#000000" or "#ffffff", whichever reads better on `hex`. The hook computes the same choice in jq. */
 export const inkOn = (hex) => (contrast(hex, "#000000") >= contrast(hex, "#ffffff") ? "#000000" : "#ffffff");
+
+/** Marker widths in px: the usual one, and the wider one for an accent under 3:1 (WCAG 1.4.11) on a button background. */
+export const MARKER_PX = 4;
+export const MARKER_WIDE_PX = 6;
+
+/** The marker's width on `accent`: wide when any of `backgrounds` leaves it under 3:1. */
+export const markerWidth = (accent, backgrounds) =>
+  backgrounds.some((bg) => contrast(accent, bg) < 3) ? MARKER_WIDE_PX : MARKER_PX;

@@ -173,13 +173,15 @@ test("each medallion metal's initial meets 4.5:1 against every colour of its dis
   }
 });
 
-test("the accent shows on an enabled Open terminal only, and the focus ring never sits on it", () => {
+test("the focus ring never sits on the marker or the needs fill", () => {
   const css = read("./fleet/wall.css");
-  const rules = [...css.matchAll(/(\.jump\[data-accent\][^{]*)\{/g)].map((m) => m[1]);
-  assert.ok(rules.length >= 1);
-  for (const r of rules) assert.match(r, /:not\(\[aria-disabled="true"\]\)/, r);
-  // The ring is offset 2px, on the card's colour, so it need not contrast with an accent;
-  // it does contrast with the card.
+  // The ring is offset 2px, on the card's colour, so it need not contrast with either; it does contrast with the card.
   assert.match(css, /button:focus-visible \{[^}]*outline-offset: 2px/);
   assert.ok(contrast(token(css, "--card-focus"), token(css, "--card-bg")) >= 3);
+});
+
+test("hover keeps 4.5:1 text on the neutral button", () => {
+  const css = read("./fleet/wall.css");
+  assert.ok(contrast(token(css, "--text"), token(css, "--button-hover")) >= 4.5);
+  assert.ok(contrast(token(css, "--text"), token(css, "--button-bg")) >= 4.5);
 });

@@ -230,8 +230,8 @@ copy in your `~/.claude`, so an upgraded overlay meets a hook still publishing
 to the previous location, `%LOCALAPPDATA%\klepsydra`. The overlay reads both, so
 the gauge keeps working either way; once the hook is re-copied, that folder
 holds nothing current and can be deleted. Re-copy `klepsydra-cast.json` too: a
-cast from before the character colours has no accents, so the buttons would be
-coloured while their tmux windows stay plain.
+cast from before the character colours has no accents, so the buttons would
+lack markers while their tmux windows stay plain.
 
 ## Using it
 
@@ -410,15 +410,19 @@ which names each window after its Claude session and keeps a window open when
 process: `wsl.exe`, from a click, one call at a time.
 
 Each kourai character's canon colour marks its session twice: its window in
-the tmux status bar and its card's **Open terminal** button, so the gold
-button leads to the gold window. The fleet hook sets the window's colours
+the tmux status bar and a 4 px left marker on its card's **Open terminal**
+button (6 px for the two accents, Aletheia and Dokimasia, that fall under 3:1 on the button at rest or on hover), so the
+gold marker leads to the gold window. The fleet hook sets the window's colours
 (`window-status-style`, and `window-status-current-style` with black or white
 text, whichever reads better) at the session's start and whenever its keryx
 voice changes, only on the `klepsydra` socket and only from
-`~/.claude/klepsydra-cast.json`. A session whose voice is no character keeps
-the neutral button and tmux's default colour. The status tones (card edge,
-pill, badges) stay status-only. Windows Terminal tabs opened by hand are not
-coloured.
+`~/.claude/klepsydra-cast.json`. The button is neutral by default, so emphasis
+follows urgency and not whichever character a session got. The one filled
+button is on a card that needs you (also the quiet "needs you?"): amber, black
+text at 9:1, no marker. A session whose voice is no character gets the plain
+neutral button and tmux's default colour; a disabled button has neither fill
+nor marker. The status tones (card edge, pill, badges) stay status-only.
+Windows Terminal tabs opened by hand are not coloured.
 
 To see the wall without sessions, serve the repo root (for example
 `python3 -m http.server`) and open `/src/wall.html?demo`.

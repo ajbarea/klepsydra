@@ -94,12 +94,15 @@ function paint(el, c) {
   jump.title = c.jump.why ?? "";
   show(el.querySelector(".why"), c.jump.why);
   setOff(jump, !c.jump.enabled);
-  // The character's colour, on the button only; an off button stays quiet (wall.css).
-  for (const [prop, value] of [["--accent", c.accent], ["--accent-ink", c.accentInk]]) {
-    if (value) jump.style.setProperty(prop, value);
-    else jump.style.removeProperty(prop);
+  // Fill for needs-you, a left marker for a character, neither when off (wall.css).
+  jump.dataset.kind = c.jumpKind;
+  if (c.jumpMark) {
+    jump.style.setProperty("--accent", c.jumpMark.color);
+    jump.style.setProperty("--mark-w", `${c.jumpMark.width}px`);
+  } else {
+    jump.style.removeProperty("--accent");
+    jump.style.removeProperty("--mark-w");
   }
-  jump.toggleAttribute("data-accent", Boolean(c.accent));
   const clear = el.querySelector(".clear");
   clear.hidden = !c.clear;
   clear.dataset.id = c.id;

@@ -1,7 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
-import { contrast, inkOn } from "./fleet/contrast.js";
+import { contrast, inkOn, markerWidth, MARKER_PX, MARKER_WIDE_PX } from "./fleet/contrast.js";
+import { BUTTON_BGS } from "./fleet/model.js";
 
 const cast = JSON.parse(readFileSync(new URL("./fleet/cast.json", import.meta.url), "utf8"));
 const faces = new URL("./fleet/faces/", import.meta.url);
@@ -51,19 +52,44 @@ test("every character has its canon accent, and nothing else is in an entry", ()
   }
 });
 
-test("each accent carries 4.5:1 text in its ink", () => {
+test("each accent's left marker is 3:1 on the button, or widened to 6 px where it is not", () => {
+  const css = readFileSync(new URL("./fleet/wall.css", import.meta.url), "utf8");
+  const token = (name) => css.match(new RegExp(`${name}:\\s*(#[0-9a-f]{6})`, "i"))[1];
+  const bgs = [token("--button-bg"), token("--button-hover")];
+  assert.deepEqual(bgs, BUTTON_BGS, "the model's button backgrounds are the stylesheet's");
+  const widened = [];
   for (const c of Object.values(cast.characters)) {
-    const ink = inkOn(c.accent);
-    assert.ok(contrast(ink, c.accent) >= 4.5, `${c.name} ${ink} on ${c.accent}: ${contrast(ink, c.accent).toFixed(2)}`);
+    const low = Math.min(...bgs.map((bg) => contrast(c.accent, bg)));
+    const w = markerWidth(c.accent, bgs);
+    assert.equal(w, low >= 3 ? MARKER_PX : MARKER_WIDE_PX, `${c.name} ${low.toFixed(2)}:1`);
+    if (low < 3) widened.push(c.name);
+  }
+  assert.deepEqual(widened.sort(), ["Aletheia", "Dokimasia"], "accents under 3:1 on rest or hover");
+  for (const c of Object.values(cast.characters)) {
+    assert.ok(contrast(c.accent, bgs[0]) >= 2.5, `${c.name} stays visible at rest`);
   }
 });
 
-test("the hover state keeps each accent's fill, so its ink holds 4.5:1", () => {
+test("the needs fill carries 4.5:1 ink, at rest and on hover", () => {
   const css = readFileSync(new URL("./fleet/wall.css", import.meta.url), "utf8");
-  const rules = [...css.matchAll(/\.jump\[data-accent\]:hover[^{]*\{([^}]*)\}/g)].map((m) => m[1]);
-  assert.equal(rules.length, 1);
-  assert.doesNotMatch(rules[0], /filter|opacity|background|color\s*:/, "hover changes no colour under the text");
-  for (const c of Object.values(cast.characters)) {
-    assert.ok(contrast(inkOn(c.accent), c.accent) >= 4.5, `${c.name} on hover`);
-  }
+  const badge = readFileSync(new URL("./fleet/badge.css", import.meta.url), "utf8");
+  const needs = badge.match(/--badge-needs:\s*(#[0-9a-f]{6})/i)[1];
+  const ink = css.match(/--needs-ink:\s*(#[0-9a-f]{6})/i)[1];
+  assert.match(css, /--tone-needs: var\(--badge-needs\)/, "the fill is the needs pill's token");
+  assert.equal(ink.toLowerCase(), inkOn(needs));
+  assert.ok(contrast(ink, needs) >= 4.5, contrast(ink, needs).toFixed(2));
+  const rest = css.match(/\.jump\[data-kind="needs"\] \{([^}]*)\}/)[1];
+  const hover = css.match(/\.jump\[data-kind="needs"\]:hover[^{]*\{([^}]*)\}/)[1];
+  assert.match(rest, /background: var\(--tone-needs\); color: var\(--needs-ink\)/);
+  assert.match(hover, /background: var\(--tone-needs\)/, "hover keeps the fill");
+  assert.doesNotMatch(hover, /\bcolor\s*:/);
+});
+
+test("only an enabled needs button is filled; the marker rule sets a shadow and no fill", () => {
+  const css = readFileSync(new URL("./fleet/wall.css", import.meta.url), "utf8");
+  const fills = [...css.matchAll(/(\.jump[^{]*)\{([^}]*background:[^}]*)\}/g)].map((m) => m[1].trim());
+  assert.deepEqual(fills, ['.jump[data-kind="needs"]', '.jump[data-kind="needs"]:hover:not([aria-disabled="true"])']);
+  const mark = css.match(/\.jump\[data-kind="accent"\] \{([^}]*)\}/)[1];
+  assert.match(mark, /box-shadow: inset var\(--mark-w\) 0 0 var\(--accent\)/);
+  assert.doesNotMatch(mark, /background|border/);
 });
