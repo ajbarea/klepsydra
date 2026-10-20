@@ -685,3 +685,12 @@ test("the compact pill's time takes in updated, which has no line of its own the
   assert.equal(statusParts(working({ quiet_since: ago(720) }), NOW).at(-1), "no activity for 12m");
   assert.equal(pillWhen(session({ status: "silent", reason: null, status_at: ago(7200), updated_at: ago(7200) }), NOW), "2h");
 });
+
+test("Open terminal's accessible name carries the reason it is off", () => {
+  assert.equal(card(session({ status: "working" }), CAST, NOW).jumpLabel, "Open terminal, Hephaestus");
+  const unnamed = card(session({ name: null, tmux: null }), CAST, NOW);
+  assert.equal(unnamed.jump.enabled, false);
+  assert.equal(unnamed.jumpLabel, "Open terminal, Hephaestus, unavailable: no session name yet");
+  const ended = card(session({ status: "ended", reason: "closed" }), CAST, NOW);
+  assert.equal(ended.jumpLabel, "Open terminal, Hephaestus, unavailable: session ended");
+});

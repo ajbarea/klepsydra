@@ -304,22 +304,34 @@ let shown = "comfortable";
 let lastIds = "";
 let cardOf = new Map(); // the last painted card by id, to redraw rings for a new density
 
-/** Whether the comfortable grid, with `extra` more cards as tall as its tallest, fits the window without scrolling. */
+/**
+ * Whether the comfortable wall, with `extra` more cards as tall as its
+ * tallest, fits the window without scrolling. The copy carries the bar too,
+ * as comfortable, since the compact bar can be a line shorter.
+ */
 function comfortableFits(extra) {
-  const probe = wall.cloneNode(true);
-  probe.removeAttribute("id");
-  probe.removeAttribute("aria-label");
-  probe.dataset.density = "comfortable";
+  const probe = document.createElement("div");
   probe.inert = true;
   probe.setAttribute("aria-hidden", "true");
-  // The window's whole width: a grid that fits shows no scrollbar to take any of it.
+  // The window's whole width: a wall that fits shows no scrollbar to take any of it.
   Object.assign(probe.style, { position: "absolute", top: "0", left: "0", width: `${innerWidth}px`, visibility: "hidden" });
-  const cards = [...probe.children];
-  for (const c of cards) c.style.viewTransitionName = "";
+  const copy = (el) => {
+    const c = el.cloneNode(true);
+    c.dataset.density = "comfortable";
+    // A copied radio would join the real control's group and take its check.
+    for (const input of c.querySelectorAll("input[name]")) input.removeAttribute("name");
+    for (const card of c.querySelectorAll(".card")) card.style.viewTransitionName = "";
+    return c;
+  };
+  const grid = copy(wall);
+  grid.removeAttribute("id");
+  probe.append(copy(bar), grid);
   document.body.append(probe);
+  const cards = [...grid.children];
   const tallest = cards.reduce((a, b) => (b.offsetHeight > (a?.offsetHeight ?? -1) ? b : a), null);
-  for (let i = 0; i < extra && tallest; i++) probe.append(tallest.cloneNode(true));
-  const fits = wall.offsetTop + probe.offsetHeight <= innerHeight;
+  for (let i = 0; i < extra && tallest; i++) grid.append(tallest.cloneNode(true));
+  // Fractional heights round up: a wall 0.4 px over still scrolls.
+  const fits = Math.ceil(probe.getBoundingClientRect().height) <= innerHeight;
   probe.remove();
   return fits;
 }
@@ -349,6 +361,14 @@ addEventListener("resize", () => {
   clearTimeout(resizeTimer);
   resizeTimer = setTimeout(showDensity, RESIZE_SETTLE_MS);
 });
+// A card that grows or shrinks (a needs-you line, a longer error) changes the
+// wall's height without a card arriving: Auto looks again, once a frame. A
+// switch it makes changes the height too, and the hysteresis holds it there.
+let densityFrame = 0;
+new ResizeObserver(() => {
+  cancelAnimationFrame(densityFrame);
+  densityFrame = requestAnimationFrame(showDensity);
+}).observe(wall);
 if (inTauri) window.__TAURI__.core.invoke("get_wall_density").then(choose, () => {});
 
 subscribe(receive);

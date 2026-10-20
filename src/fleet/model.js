@@ -385,6 +385,7 @@ export function card(s, cast, nowMs) {
   const st = statusOf(s.status, isQuiet(s));
   const crew = crewOf(s);
   const also = [...new Set((s.touched ?? []).map((t) => t.repo))].filter((r) => r && r !== s.where?.repo);
+  const jump = jumpable(s);
   return {
     id: s.session_id,
     task: s.name || "No session name yet",
@@ -419,9 +420,10 @@ export function card(s, cast, nowMs) {
     reply: plainText(s.reply?.text ?? null),
     error: s.status === "error" ? s.error ?? null : null,
     updated: s.status === "ended" ? null : updatedText(s, nowMs), // the pill's age says it
-    jump: jumpable(s),
+    jump,
     clear: s.status === "ended" || s.status === "silent",
-    jumpLabel: `Open terminal, ${who.name}`,
+    // An off button says why in its name too, not only in its tooltip.
+    jumpLabel: `Open terminal, ${who.name}${jump.why ? `, unavailable: ${jump.why}` : ""}`,
     label: accessibleName(s, cast, nowMs),
   };
 }
