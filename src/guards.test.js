@@ -25,7 +25,7 @@ const stripCssComments = (css) => css.replace(/\/\*[\s\S]*?\*\//g, "");
 const RUST = [...filesUnder("src-tauri/src", [".rs"]), ...filesUnder("src-tauri/fleet/src", [".rs"])];
 const FRONTEND = filesUnder("src", [".js", ".mjs", ".html"]).filter((f) => !f.endsWith(".test.js"));
 const CSS = filesUnder("src", [".css"]);
-const SHELL = [...filesUnder("hooks", [".sh"]), ...filesUnder("statusline", [".sh"])];
+const SHELL = [...filesUnder("hooks", [".sh", ".conf"]), ...filesUnder("statusline", [".sh"])];
 const MANIFESTS = ["src-tauri/Cargo.toml", "src-tauri/fleet/Cargo.toml", "package.json"].filter((f) =>
   existsSync(join(ROOT, f)),
 );
