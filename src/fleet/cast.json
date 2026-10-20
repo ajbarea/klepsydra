@@ -1,15 +1,15 @@
 {
   "v": 1,
   "characters": {
-    "af_heart": { "name": "Cupid", "face": "cupid", "gender": "f" },
-    "am_michael": { "name": "Hephaestus", "face": "hephaestus", "gender": "m" },
-    "bf_emma": { "name": "Techne", "face": "techne", "gender": "f" },
-    "af_bella": { "name": "Kallos", "face": "kallos", "gender": "f" },
-    "bf_isabella": { "name": "Mneme", "face": "mneme", "gender": "f" },
-    "am_puck": { "name": "Puck", "face": "puck", "gender": "m" },
-    "af_aoede": { "name": "Dokimasia", "face": "dokimasia", "gender": "f" },
-    "af_kore": { "name": "Aidos", "face": "aidos", "gender": "f" },
-    "af_sarah": { "name": "Metis", "face": "metis", "gender": "f" },
-    "af_nova": { "name": "Aletheia", "face": "aletheia", "gender": "f" }
+    "af_heart": { "name": "Cupid", "face": "cupid", "accent": "#D55E00", "gender": "f" },
+    "am_michael": { "name": "Hephaestus", "face": "hephaestus", "accent": "#DA8C20", "gender": "m" },
+    "bf_emma": { "name": "Techne", "face": "techne", "accent": "#FFC832", "gender": "f" },
+    "af_bella": { "name": "Kallos", "face": "kallos", "accent": "#FFDCA0", "gender": "f" },
+    "bf_isabella": { "name": "Mneme", "face": "mneme", "accent": "#B496DC", "gender": "f" },
+    "am_puck": { "name": "Puck", "face": "puck", "accent": "#009E73", "gender": "m" },
+    "af_aoede": { "name": "Dokimasia", "face": "dokimasia", "accent": "#DA5032", "gender": "f" },
+    "af_kore": { "name": "Aidos", "face": "aidos", "accent": "#56B4E9", "gender": "f" },
+    "af_sarah": { "name": "Metis", "face": "metis", "accent": "#C8B464", "gender": "f" },
+    "af_nova": { "name": "Aletheia", "face": "aletheia", "accent": "#0072B2", "gender": "f" }
   }
 }

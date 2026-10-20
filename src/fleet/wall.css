@@ -70,6 +70,11 @@ button.clear { background: transparent; border-color: transparent; color: var(--
 button.clear:hover:not([aria-disabled="true"]) { background: var(--button-bg); color: var(--text); }
 /* Off reads as off: no fill, a faint border, a dim label (still 4.5:1 on the card). */
 button[aria-disabled="true"], #new-session[aria-disabled="true"] { color: var(--text-dim); background: transparent; border-color: var(--card-line); cursor: default; }
+/* The kourai character's colour: the same one marks its tmux window. Only an enabled button wears it. */
+.jump[data-accent]:not([aria-disabled="true"]) { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 600; }
+/* Hover keeps the fill, so the 4.5:1 ink holds; an inset ring in the ink marks it. */
+.jump[data-accent]:hover:not([aria-disabled="true"]) { box-shadow: inset 0 0 0 2px var(--accent-ink); }
+/* The ring sits 2px off the button, on the card's own colour, so it never touches an accent. */
 button:focus-visible { outline: 2px solid var(--card-focus); outline-offset: 2px; }
 
 #wall {

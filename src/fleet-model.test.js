@@ -187,6 +187,8 @@ test("identity: a cast voice is its character", () => {
     voice: "Michael",
     face: "fleet/faces/kourai/hephaestus-96.webp",
     face2x: "fleet/faces/kourai/hephaestus-192.webp",
+    accent: null, // CAST here has no accent
+    accentInk: null,
   });
 });
 
@@ -338,6 +340,21 @@ test("a card holds what the wall shows", () => {
 test("the model reads the cast the app ships", () => {
   const cast = JSON.parse(readFileSync(new URL("./fleet/cast.json", import.meta.url), "utf8"));
   assert.equal(identity(session(), cast).name, "Hephaestus");
+});
+
+test("a kourai card carries its accent and ink; any other card has none", () => {
+  const cast = JSON.parse(readFileSync(new URL("./fleet/cast.json", import.meta.url), "utf8"));
+  const c = card(session(), cast, NOW);
+  assert.deepEqual([c.accent, c.accentInk], ["#DA8C20", "#000000"]);
+  assert.deepEqual([card(session({ voice: "aletheia" }), CAST, NOW).accent], [null], "no character, no accent");
+  assert.equal(card(session({ voice: "af_aoede" }), cast, NOW).accentInk, "#000000");
+  assert.equal(card(session({ voice: "af_nova" }), cast, NOW).accentInk, "#ffffff");
+  for (const voice of ["bm_fable", null, "af_heart(0.5)+af_bella(0.5)"]) {
+    const o = card(session({ voice }), cast, NOW);
+    assert.deepEqual([o.accent, o.accentInk], [null, null], String(voice));
+  }
+  const bad = { characters: { am_michael: { name: "H", face: "hephaestus", accent: "red; x" } } };
+  assert.equal(identity(session(), bad).accent, null, "a malformed accent is dropped");
 });
 
 test("only an ended or silent card offers Clear", () => {

@@ -114,12 +114,14 @@ profile starts without your settings, plugins or skills until you copy them.
 ## Install
 
 **1. Publish the numbers and the sessions.** Copy the hooks, the launcher and
-its tmux settings, and point Claude Code at the hooks. Starting sessions from
+its tmux settings, the cast (the voice-to-colour table the hook reads), and
+point Claude Code at the hooks. Starting sessions from
 the wall needs tmux 3.3 or later (`remain-on-exit failed`); Ubuntu 24.04's 3.4
 is the tested version.
 
 ```bash
 cp statusline/klepsydra-statusline.sh hooks/klepsydra-fleet.sh hooks/klepsydra-launch.sh hooks/klepsydra-tmux.conf ~/.claude/
+cp src/fleet/cast.json ~/.claude/klepsydra-cast.json
 chmod +x ~/.claude/klepsydra-statusline.sh ~/.claude/klepsydra-fleet.sh ~/.claude/klepsydra-launch.sh
 ```
 
@@ -227,7 +229,9 @@ are small, and rewritten on the next render.
 copy in your `~/.claude`, so an upgraded overlay meets a hook still publishing
 to the previous location, `%LOCALAPPDATA%\klepsydra`. The overlay reads both, so
 the gauge keeps working either way; once the hook is re-copied, that folder
-holds nothing current and can be deleted.
+holds nothing current and can be deleted. Re-copy `klepsydra-cast.json` too: a
+cast from before the character colours has no accents, so the buttons would be
+coloured while their tmux windows stay plain.
 
 ## Using it
 
@@ -405,6 +409,17 @@ which names each window after its Claude session and keeps a window open when
 `claude` exits with an error. This is the one place the overlay starts a
 process: `wsl.exe`, from a click, one call at a time.
 
+Each kourai character's canon colour marks its session twice: its window in
+the tmux status bar and its card's **Open terminal** button, so the gold
+button leads to the gold window. The fleet hook sets the window's colours
+(`window-status-style`, and `window-status-current-style` with black or white
+text, whichever reads better) at the session's start and whenever its keryx
+voice changes, only on the `klepsydra` socket and only from
+`~/.claude/klepsydra-cast.json`. A session whose voice is no character keeps
+the neutral button and tmux's default colour. The status tones (card edge,
+pill, badges) stay status-only. Windows Terminal tabs opened by hand are not
+coloured.
+
 To see the wall without sessions, serve the repo root (for example
 `python3 -m http.server`) and open `/src/wall.html?demo`.
 
@@ -511,7 +526,7 @@ previous file alone rather than overwriting it with blanks.
 
 ```bash
 bash statusline/test_statusline.sh       # usage hook and heartbeat, against recorded payloads
-bash hooks/test_fleet.sh                 # fleet hook: states, where, identity, pruning, gone, settings
+bash hooks/test_fleet.sh                 # fleet hook: states, where, identity, pruning, gone, settings, window colours
 bash hooks/test_launch.sh                # launcher: new, jump, tab reuse, against a private tmux socket
 bash scripts/test_measure_memory.sh      # the release memory check
 node --test src/*.test.js                # ramp, countdown, reconciliation, fleet model, faces, guards

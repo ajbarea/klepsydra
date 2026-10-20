@@ -36,6 +36,8 @@ if [[ -z $VOICES ]]; then
   if [[ -n ${XDG_CACHE_HOME:-} ]]; then VOICES=$XDG_CACHE_HOME/keryx/voices.json
   elif [[ -n ${HOME:-} ]]; then VOICES=$HOME/.cache/keryx/voices.json; fi
 fi
+CAST=${KLEPSYDRA_CAST:-}
+[[ -n $CAST || -z ${HOME:-} ]] || CAST=$HOME/.claude/klepsydra-cast.json
 # Every session's hooks run as separate processes, so writes take one lock.
 LOCK=${XDG_RUNTIME_DIR:-/tmp}/klepsydra-fleet-$UID.lock
 PROMPT_CHARS=300
@@ -476,6 +478,45 @@ write_atomic() { # file text
   fi
 }
 
+# The voice a session file records, or nothing: a text scan, no process.
+file_voice() { # text
+  [[ $1 =~ \"voice\":\"([^\"]*)\" ]] && printf '%s' "${BASH_REMATCH[1]}"
+  return 0
+}
+
+# Marks the session's tmux window with its character's colour, on the
+# launcher's own socket only, and clears it for a voice with no character.
+# The accent and its ink come from the cast (cast.json `accent`; the ink is
+# black or white, whichever has more WCAG contrast, as contrast.js picks).
+WINDOW_STYLES=(window-status-style window-status-current-style)
+colour_window() { # voice
+  local accent="" ink="" row="" opt
+  [[ ${tmux_socket##*/} == klepsydra && -n $tmux_pane && -n $1 && -r $CAST ]] || return 0
+  # "unset" for a voice with no character; "accent ink" for one with a valid
+  # accent; nothing (no tmux call) for a character whose accent is malformed.
+  row=$(jq -r --arg v "$1" '
+    def lin: ./255 | if . <= 0.04045 then . / 12.92 else pow((. + 0.055) / 1.055; 2.4) end;
+    (.characters | objects | .[$v]) as $ch
+    | if ($ch | type) != "object" then "unset"
+      else ($ch.accent | strings | select(test("^#[0-9A-Fa-f]{6}\\z"))) as $h
+        | ([1, 3, 5] | map(($h | ascii_downcase)[.:.+2] | explode | map(if . > 96 then . - 87 else . - 48 end) | .[0] * 16 + .[1] | lin)) as $c
+        | (0.2126 * $c[0] + 0.7152 * $c[1] + 0.0722 * $c[2]) as $l
+        | "\($h) \(if ($l + 0.05) / 0.05 >= 1.05 / ($l + 0.05) then "#000000" else "#ffffff" end)"
+      end' "$CAST" 2>/dev/null) || return 0
+  if [[ $row == unset ]]; then
+    for opt in "${WINDOW_STYLES[@]}"; do
+      timeout 2 tmux -S "$tmux_socket" set-option -w -u -t "$tmux_pane" "$opt" 2>/dev/null
+    done
+    return 0
+  fi
+  read -r accent ink <<<"$row"
+  if [[ $accent =~ ^#[0-9A-Fa-f]{6}$ && $ink =~ ^#(000000|ffffff)$ ]]; then
+    timeout 2 tmux -S "$tmux_socket" set-option -w -t "$tmux_pane" window-status-style "fg=$accent" 2>/dev/null
+    timeout 2 tmux -S "$tmux_socket" set-option -w -t "$tmux_pane" window-status-current-style "bg=$accent,fg=$ink,bold" 2>/dev/null
+  fi
+  return 0
+}
+
 main() {
   local input fields session event cwd edited now file old new lock voice="" voice_from="" cwd_repo by=cwd
   input=$(cat)
@@ -526,8 +567,15 @@ main() {
     --arg voice "$voice" --arg voice_from "$voice_from" --arg pid "$found_pid" --arg start "$found_start" \
     "$APPLY" 2>/dev/null) || new=""
   [[ -n $new ]] && write_atomic "$file" "$new"
+  # Only a start, or a changed voice, touches the window.
+  local was_voice now_voice recolour=0
+  was_voice=$(file_voice "$old") now_voice=$(file_voice "${new:-$old}")
+  if [[ $event == SessionStart || $was_voice != "$now_voice" ]]; then recolour=1; fi
   [[ $event == SessionStart ]] && mark_gone "$KLEPSYDRA_DIR" "$now" "$session"
   [[ $event == SessionStart ]] && prune_hourly "$PRUNE_STAMP" prune_fleet "$KLEPSYDRA_DIR" "$now"
+  # tmux can hang for its timeout; no other hook waits on it, so drop the lock first.
+  { exec {lock}>&-; } 2>/dev/null
+  (( recolour )) && colour_window "$now_voice"
   return 0
 }
 
