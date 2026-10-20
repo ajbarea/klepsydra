@@ -23,6 +23,8 @@ session that stops answering reads as silent, never as working.
   for it (IMPL, Open).
 
 ## Completed
+- 2026-10-20: Launch sessions as tmux windows from the wall, stable jump,
+  Clear, gone, redesigned wall (#31, merged as #35).
 - 2026-10-20: Exercised every tray item live on Windows, by real mouse
   clicks: "Set home here" saved the docked rect, "Reset position" brought
   the gauge back to it from mid-screen, and "Start with Windows" removed and

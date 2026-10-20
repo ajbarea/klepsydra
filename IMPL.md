@@ -1,33 +1,33 @@
 # IMPL
 
-Current slice: start sessions from the wall as tmux windows in one terminal
-tab, with Clear, gone and the redesigned card wall (branch feat/fleet-launch).
-Design: `docs/superpowers/specs/2026-10-20-fleet-launch-design.md`, `…-fleet-wall-redesign.md`.
+Current slice: a kourai forge medallion for every session without a kourai
+portrait, replacing the DiceBear faces (branch feat/kourai-faces).
 
 ## Done
-- ✅ `hooks/klepsydra-launch.sh`: `new` adds a `claude` window to tmux session
-  `fleet` (socket `klepsydra`) under a `flock`, and opens one tab, by socket
-  path, only when no client shows it and no tab is still starting (30 s
-  stamp). `jump` checks the pane still holds the Claude process first.
-- ✅ `src-tauri/src/launch.rs`: the one file that starts a process (`wsl.exe`,
-  from a click, one call at a time, 45 s, output read 2 s past exit).
-- ✅ Jump: tmux, then exactly "klepsydra sessions" for the fleet socket, else the
-  session title. A failed fleet jump shows the launcher's line; only "no tab
-  matched" after tmux reads as success.
-- ✅ Clear, ended or silent cards only; gone after a reboot or a dead pid.
-- ✅ Wall: arc (working from `active_at`), pill with the reason on ended and
-  error cards, ask line, tone edge, summary bar with **+ New session**, Open
-  terminal with its off reason shown, 420 px columns.
-- ✅ README: install, Starting sessions, Clear, gone, the wall, the live check.
+- ✅ `src/fleet/medallion.js`: one SVG template in a 96-unit viewBox, a
+  charcoal-to-bronze disc lit from the upper left, a gold laurel ring in
+  kourai's gold (#C9944A, #F1D2A1, #AA771C) and one serif initial. Built
+  once per initial and returned as a `data:image/svg+xml` URL.
+- ✅ The initial is the display name's first letter, upper-cased, only when it
+  is A-Z or 0-9; anything else gets the laurel alone. No name text reaches
+  the markup.
+- ✅ `identity()`: a cast voice keeps its portrait; any other voice, a blend
+  or no voice gets the medallion as `face` and `face2x`, named as before.
+  A voice named like an Object property no longer matches the cast.
+- ✅ Removed the Lorelei and fallback faces, their LICENSES.json entries,
+  `cast.json`'s `lorelei` and `fallbacks`, `hash()`, and the DiceBear render
+  scripts. `scripts/cut-portraits.py` stays for the portraits.
+- ✅ CSP: `img-src 'self' data:`, so the app shows the data URL; a guard keeps
+  `data:` out of every other directive.
+- ✅ `many_tabs` now says "Rename a tab so only one is titled that."
+- ✅ The `?demo` wall has a `bm_fable` session, shown as a medallion.
 
 ## Verified
-- ✅ node, `hooks/test_fleet.sh` 226, `hooks/test_launch.sh` 101, `cargo test
-  -p klepsydra-fleet` 98, and `build-windows.sh --check` on Windows all pass.
-- ✅ Live check on Windows, 2026-10-20, build 69e581d: **+** three times gave
-  3 tmux windows and one fleet tab; Open terminal on three unnamed cards
-  selected %2, %1, %0; closing the tab then **+** reattached one tab; /exit
-  then Clear removed both files; the deployed hook marked an earlier-boot
-  session "ended · gone" on the wall.
+- ✅ Tests: the initial meets 4.5:1 against every disc stop; only the letter
+  differs between medallions; unsafe names draw no letter.
+- ✅ The `?demo` wall at 1920x1080 and strip in Chromium (Playwright): the
+  medallion loads, `alt=""`, 66 px inside the 80 px portrait and 28 px in
+  the strip, the same circle as the portraits beside it.
 
 ## Next
 - 📋 #32: an optional split mode for the fleet tab.
@@ -35,11 +35,9 @@ Design: `docs/superpowers/specs/2026-10-20-fleet-launch-design.md`, `…-fleet-w
   `send-keys` to a known pane.
 
 ## Open
+- The initial uses a system serif (Palatino Linotype on Windows, P052 or
+  DejaVu Serif on Linux), so the letter's shape differs by platform.
 - The tray icon still draws a bar in either layout.
-- The default display name (`my-app-3f`) reaches no hook, so such a session
-  is named by its folder.
-- Some turns end with no hook (Esc on a need, an interrupt): the card keeps
-  its state until the next prompt, or "working?" at 10 minutes.
 
 ## Verify
     node --test src/*.test.js
@@ -47,4 +45,3 @@ Design: `docs/superpowers/specs/2026-10-20-fleet-launch-design.md`, `…-fleet-w
     bash scripts/test_measure_memory.sh
     (cd src-tauri && cargo test -p klepsydra-fleet && cargo clippy -p klepsydra-fleet --all-targets -- -D warnings)
     bash scripts/build-windows.sh --check
-    bash scripts/visual-check.sh
