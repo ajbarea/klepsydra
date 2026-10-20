@@ -22,6 +22,8 @@ session that stops answering reads as silent, never as working.
 ## Later
 - Optional: flash or notify when crossing a threshold.
 - A product version of the fleet strip (heuresis verdict `later`, 2026-10-18).
+- Clear a card's state on an interrupted turn once Claude Code fires a hook
+  for it (IMPL, Open).
 
 ## Completed
 - 2026-10-19: Added the compact layout ("Compact" in the tray, #21): a ring
