@@ -1362,3 +1362,214 @@ git commit -m "docs: starting sessions from the wall, Clear and gone"
 - [ ] **Step 5:** Close the tab (kill its client: `tmux -L klepsydra detach-client -s fleet`), press **+**, confirm one new tab attaches with 4 windows.
 - [ ] **Step 6:** Clear an ended card (exit one session with `/exit` via send-keys), confirm the card disappears and its two files are gone.
 - [ ] **Step 7:** Gone: write a fake non-ended session file with `host.boot` of another boot, start a session, confirm the card reads "ended · gone".
+
+## Wall redesign (approved 2026-10-20)
+
+**Spec:** `docs/superpowers/specs/2026-10-20-fleet-wall-redesign.md`, with its mockup PNG. Execution order: Tasks 1-8, then 11, 12, then 9 (docs cover both), then 10. The mockup's HTML and CSS are at `.superpowers/sdd/2026-10-20-fleet-launch/mockup-wall.html` (git-ignored; its image paths are local). Port its CSS, not its markup-building script.
+
+### Task 11: The card model for the redesign
+
+**Files:**
+- Modify: `src/fleet/model.js`
+- Test: `src/fleet-model.test.js`, `src/fleet-style.test.js`
+
+**Interfaces:**
+- Produces, on each `card()`: `task: string`, `tone: "needs"|"error"|"working"|"done"|"quiet"`, `pill: {label: string, age: string}`, `ask: string|null`, `arc: number` (0..1), `dim: boolean`, `place: {repo, worktree, branch}|null`, `also: string[]`, `voiceTitle: string|null`, `jump: {enabled, why}` (unchanged), `clear` (Task 7). Removes `statusLine` and `where` from the card. New exports `WORKING_FULL_S = 600`, `WAITING_FULL_S = 1800`, `askText(reason)`, `arcFraction(s, nowMs)`, `tally(sessions)`.
+
+- [ ] **Step 1: Write the failing tests** in `src/fleet-model.test.js` (use the file's `session`, `CAST`, `NOW`, `ago`):
+
+```js
+import { askText, arcFraction, tally, WORKING_FULL_S, WAITING_FULL_S } from "./fleet/model.js";
+
+test("the arc fills over the reader's own thresholds", () => {
+  const view = readFileSync(new URL("../src-tauri/fleet/src/view.rs", import.meta.url), "utf8");
+  const rs = (name) => Number(view.match(new RegExp(`pub const ${name}: i64 = (\\d+);`))[1]);
+  assert.equal(WORKING_FULL_S, rs("QUIET_AFTER"));
+  assert.equal(WAITING_FULL_S, rs("WAITING_DOUBT_AFTER"));
+});
+
+test("arc: working by 600 s, needs you by 1800 s, quiet working full, others empty", () => {
+  assert.equal(arcFraction(session({ status: "working", status_at: ago(300) }), NOW), 0.5);
+  assert.equal(arcFraction(session({ status: "working", status_at: ago(900) }), NOW), 1);
+  assert.equal(arcFraction(session({ status: "working", status_at: ago(900), quiet_since: ago(700) }), NOW), 1);
+  assert.equal(arcFraction(session({ status: "needs_you", status_at: ago(900) }), NOW), 0.5);
+  for (const status of ["done", "error", "new", "silent", "ended"]) {
+    assert.equal(arcFraction(session({ status, status_at: ago(900) }), NOW), 0, status);
+  }
+  assert.equal(arcFraction(session({ status: "working", status_at: undefined }), NOW), 0);
+});
+
+test("the ask line says what a session waits for", () => {
+  assert.equal(askText("approve Bash"), "Waiting for you to approve Bash");
+  assert.equal(askText("approve plan"), "Waiting for you to approve the plan");
+  assert.equal(askText("question"), "Waiting for your answer");
+  assert.equal(askText(null), "Waiting for you");
+});
+
+test("a card carries pill, ask, tone, dim, place and its voice as a tooltip", () => {
+  const c = card(session(), CAST, NOW);
+  assert.deepEqual(c.pill, { label: "needs you", age: "2m" });
+  assert.equal(c.ask, "Waiting for you to approve Bash");
+  assert.equal(c.tone, "needs");
+  assert.equal(c.dim, false);
+  assert.equal(c.task, "Plan the fleet visualizer");
+  assert.deepEqual(c.place, { repo: "klepsydra", worktree: "fleet", branch: "feat/fleet-visualizer" });
+  assert.deepEqual(c.also, ["also in ideas"]);
+  assert.equal(c.voiceTitle, "Voice: Michael");
+  const quiet = card(session({ status: "silent", status_at: ago(360), name: null }), CAST, NOW);
+  assert.deepEqual(quiet.pill, { label: "silent", age: "no word for 6m" });
+  assert.equal(quiet.dim, true);
+  assert.equal(quiet.ask, null);
+  assert.equal(quiet.task, "No session name yet");
+  const idle = card(session({ status: "working", status_at: ago(900), quiet_since: ago(720) }), CAST, NOW);
+  assert.deepEqual(idle.pill, { label: "working?", age: "no activity for 12m" });
+});
+
+test("the tally counts what the bar shows", () => {
+  const t = tally([
+    session({ status: "needs_you" }), session({ status: "working" }), session({ status: "working" }),
+    session({ status: "done" }), session({ status: "error" }), session({ status: "new" }),
+    session({ status: "silent" }), session({ status: "ended" }),
+  ]);
+  assert.deepEqual(t, { needs: 1, working: 2, done: 1, error: 1, idle: 3 });
+});
+```
+
+`also` lists touched repos as "also in <repo>" (one entry per repo, the file's order); an empty `touched` gives `[]`. In `src/fleet-style.test.js`, change the columns test to the new layout:
+
+```js
+test("the wall fits four columns at 1920 px and reflows below", () => {
+  const wallCss = read("./fleet/wall.css");
+  const px = (name) => parseFloat(token(wallCss, name));
+  const tokens = { min: px("--card-min"), gap: px("--card-gap"), pad: px("--wall-pad") };
+  const SCROLLBAR = 17;
+  assert.equal(columnsAt(1920 - SCROLLBAR, tokens), 4);
+  assert.equal(columnsAt(1280 - SCROLLBAR, tokens), 2);
+  assert.equal(columnsAt(800 - SCROLLBAR, tokens), 1);
+});
+```
+
+(Task 12 sets `--card-min: 420px; --card-gap: 16px; --wall-pad: 28px`; this test fails until then, which is expected and stays failing only until Task 12. Commit Task 11 with that one test marked `test.todo` and flip it in Task 12.)
+
+- [ ] **Step 2: Run to see them fail**: `node --test src/fleet-model.test.js 2>&1 | grep -E "^not ok"`.
+
+- [ ] **Step 3: Implement** in `src/fleet/model.js`:
+
+```js
+// The arc fills over the reader's thresholds (view.rs QUIET_AFTER, WAITING_DOUBT_AFTER).
+export const WORKING_FULL_S = 600;
+export const WAITING_FULL_S = 1800;
+
+/** How full a card's arc is, 0..1: the time in the current state against its threshold. */
+export function arcFraction(s, nowMs) {
+  if (s.status === "working" && isQuiet(s)) return 1;
+  const full = { working: WORKING_FULL_S, needs_you: WAITING_FULL_S }[s.status];
+  const age = ageMs(s.status_at, nowMs);
+  if (!full || !Number.isFinite(age)) return 0;
+  return Math.min(1, Math.max(0, age / 1000 / full));
+}
+
+/** The needs-you line: what the session waits for. */
+export function askText(reason) {
+  if (reason === "question") return "Waiting for your answer";
+  if (reason === "approve plan") return "Waiting for you to approve the plan";
+  return reason ? `Waiting for you to ${reason}` : "Waiting for you";
+}
+
+const DIM = new Set(["new", "silent", "ended"]);
+
+/** Counts for the summary bar. */
+export function tally(sessions) {
+  const t = { needs: 0, working: 0, done: 0, error: 0, idle: 0 };
+  for (const s of sessions) {
+    if (s.status === "needs_you") t.needs++;
+    else if (s.status === "working") t.working++;
+    else if (s.status === "done") t.done++;
+    else if (s.status === "error") t.error++;
+    else t.idle++;
+  }
+  return t;
+}
+```
+
+`pill.age` is the last part of `statusParts(s, nowMs)` when the status is silent or quiet (the "no word for" / "no activity for" text), else the short age; `pill.label` is `statusOf(s.status, isQuiet(s)).label`. In `card()`, add `task: s.name || "No session name yet"`, `tone: statusOf(s.status, isQuiet(s)).tone`, `pill`, `ask: s.status === "needs_you" ? askText(s.reason) : null`, `arc: arcFraction(s, nowMs)`, `dim: DIM.has(s.status)`, `place: s.where ? { repo: s.where.repo, worktree: s.where.worktree ?? null, branch: s.where.branch ?? null } : null`, `also`, `voiceTitle: who.voice ? \`Voice: ${who.voice}\` : null`; drop `statusLine`, `where` and `voice` from the card object. Keep `statusLine`, `whereText` exported only if something else still imports them; otherwise delete them and their tests (DRY).
+
+- [ ] **Step 4: Run** `node --test src/*.test.js` → all pass except the `test.todo`.
+- [ ] **Step 5: Commit** `git commit -m "feat(fleet): the card model for the redesigned wall"`.
+
+### Task 12: The redesigned wall
+
+**Files:**
+- Modify: `src/wall.html`, `src/fleet/wall.js`, `src/fleet/wall.css`
+- Test: `src/fleet-style.test.js`, `src/guards.test.js`
+
+**Interfaces:**
+- Consumes: Task 11's card fields and `tally`; Task 7's `.clear` button; Task 8's bar.
+
+- [ ] **Step 1: Write the failing tests** in `src/fleet-style.test.js`: flip the four-column test from `test.todo` to `test`, and add:
+
+```js
+test("the wall's text meets 4.5:1 on live and quiet cards", () => {
+  const css = read("./fleet/wall.css");
+  for (const bg of ["--card-bg", "--card-quiet"]) {
+    for (const fg of ["--text", "--text-dim", "--text-error"]) {
+      const r = contrast(token(css, fg), token(css, bg));
+      assert.ok(r >= 4.5, `${fg} on ${bg}: ${r.toFixed(2)}`);
+    }
+  }
+  assert.ok(contrast(token(css, "--tone-working"), token(css, "--card-bg")) >= 3, "working arc and edge");
+});
+
+test("the arc and the dimming respect reduced motion and keep the face visible", () => {
+  const css = read("./fleet/wall.css");
+  assert.match(css, /@media \(prefers-reduced-motion: reduce\)/);
+  assert.match(css, /\.card\.dim \.face \{[^}]*filter:/);
+});
+```
+
+and in `src/guards.test.js`, extend Task 8's bar test: `assert.match(read("src/wall.html"), /<div class="tally"/);` and `assert.match(read("src/wall.html"), />Open terminal</);`.
+
+- [ ] **Step 2: Run to see them fail.**
+
+- [ ] **Step 3: Markup.** In `src/wall.html`: the bar gets `<div class="tally" aria-label="Session counts"></div>` before the New session button. The card template becomes (keep `tabindex="-1"` and the live region):
+
+```html
+    <article class="card" tabindex="-1">
+      <header>
+        <span class="portrait">
+          <svg class="arc" viewBox="0 0 80 80" aria-hidden="true">
+            <circle class="track" cx="40" cy="40" r="37"/><circle class="fill" cx="40" cy="40" r="37" pathLength="1"/>
+          </svg>
+          <img class="face" alt="" />
+        </span>
+        <div class="who"><h2 class="name"></h2><p class="task"></p></div>
+        <p class="pill"><span class="mark"></span><span class="label"></span> <span class="age"></span></p>
+      </header>
+      <p class="where"><span class="repo"></span><span class="branch" hidden></span></p>
+      <ul class="also"></ul>
+      <p class="ask" hidden><span class="mark"></span><span class="text"></span></p>
+      <p class="error" hidden></p>
+      <div class="said">
+        <p class="prompt"></p>
+        <p class="reply"></p>
+      </div>
+      <p class="updated" hidden></p>
+      <footer class="actions">
+        <span class="note" role="status"></span>
+        <button type="button" class="clear" hidden title="Removes this card. A session that is still running brings it back at its next event, without its start time or the repos it touched.">Clear</button>
+        <button type="button" class="jump">Open terminal</button>
+      </footer>
+    </article>
+```
+
+The branch chip's git icon is inline SVG set once in `paint` from a constant (copy the mockup's `branchIcon`). The arc uses `pathLength="1"`, so `stroke-dasharray: ${arc} 1` draws the fraction; when `arc` is 0, hide `.fill`.
+
+- [ ] **Step 4: Paint.** In `src/fleet/wall.js` `paint(el, c)`: set `el.className = \`card ${c.dim ? "dim" : ""} tone-${c.tone}\``; the portrait's `title` to `c.voiceTitle ?? ""`; `.task` text; pill badge (`c.badge`), `.label` = `c.pill.label`, `.age` = `c.pill.age`; ask line shown when `c.ask`, its mark = `c.badge`; `.repo` text = `c.place ? [c.place.repo, c.place.worktree].filter(Boolean).join(" / ") : ""`; branch chip shown when `c.place?.branch`; `.also` items from `c.also`; prompt/reply text with `title` set to the full text; a disabled Open terminal button carries `c.jump.why` in its `title` (no note). Results of Open terminal and Clear go to `.note` and clear after 8 s (`setTimeout`, cancelled when a new result arrives). In `render()`, fill `.tally` from `tally(sessions)`: one `<span class="t-needs">` etc. per non-zero count except needs, working, done, idle always shown (error only when > 0), each `<b>N</b> label` built with `textContent`, labels "needs you", "working", "done", "error", "idle or ended".
+
+- [ ] **Step 5: Style.** Rewrite `src/fleet/wall.css` from the mockup's `<style>`: tokens per the spec's table plus `--card-min: 420px; --card-gap: 16px; --wall-pad: 28px; --wall-face: 80px; --text-error` (keep its value if it passes the 4.5:1 test, else lighten to the first value that does); `--badge-ring: var(--card-bg)` inside `.card`; selectors renamed to the template above (`.card.dim` for the mockup's `.card.quiet`, `.tone-needs` etc. setting `--tone`). Add `@media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }`. Keep `.visually-hidden`, `#empty`, focus outlines (`.card:focus`, `button:focus-visible`).
+
+- [ ] **Step 6: Run all gates** (Task 5 Step 5 command) → pass.
+
+- [ ] **Step 7: Render and compare.** Serve `src/` with `python3 -m http.server -d src 8765` in the background, and open `wall.html` at 1920x1080 with Playwright (Chromium at `~/.cache/ms-playwright/chromium-1243/chrome-linux64/chrome`). Outside Tauri the feed is empty, so inject the eight sample sessions from the mockup via `page.evaluate` into the same `receive` path (export nothing new; add a `?demo` query that `feed.js` honours only when `!inTauri`, reading `fleet/demo.json`, and add `src/fleet/demo.json` with the mockup's eight sessions in reader-snapshot shape). Screenshot to `.superpowers/sdd/2026-10-20-fleet-launch/wall-built.png` and compare against `docs/superpowers/specs/2026-10-20-fleet-wall-mockup.png`. Fix any difference in layout, hierarchy or colour before committing. Kill the server.
+
+- [ ] **Step 8: Commit** `git commit -m "feat(fleet): redesign the wall: water-clock arc, status first, quiet cards step back"`.
