@@ -24,8 +24,9 @@ const timers = new WeakMap();
 /** Show `text` in `note` for `ms`, or until replaced when `ms` is 0; a newer text restarts the clock. */
 export function say(note, text, ms = NOTE_MS) {
   clearTimeout(timers.get(note));
-  note.textContent = text ?? "";
-  if (text && ms) timers.set(note, setTimeout(() => { note.textContent = ""; }, ms));
+  // The title holds the whole text where a narrow card cuts it short.
+  note.textContent = note.title = text ?? "";
+  if (text && ms) timers.set(note, setTimeout(() => { note.textContent = note.title = ""; }, ms));
 }
 
 // Off is aria-disabled, never the disabled property, so a focused button keeps focus.

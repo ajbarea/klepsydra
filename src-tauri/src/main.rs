@@ -123,7 +123,7 @@ fn collect_readings(dir: &std::path::Path, out: &mut Vec<serde_json::Value>) {
 }
 
 /// Small settings the gauge keeps for itself: the zoom level, the saved home,
-/// and where the window last sat.
+/// where the window last sat, and the wall's card density.
 fn prefs_path(app: &tauri::AppHandle) -> Option<PathBuf> {
     klepsydra_dir(app).map(|d| d.join("prefs.json"))
 }
@@ -828,6 +828,8 @@ fn main() {
             fleet::fleet_subscribe,
             fleet::open_wall,
             fleet::clear_session,
+            fleet::get_wall_density,
+            fleet::set_wall_density,
             jump::jump_to_terminal,
             launch::launch_session
         ])

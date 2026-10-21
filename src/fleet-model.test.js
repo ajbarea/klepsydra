@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import {
   STATUS, shortAge, longAge, statusParts, voiceName, identity, accessibleName,
   statuses, startedNeeding, orderChanged, shouldSlide, transitionName, announcements, updatedText, badgeSvg, stripItems, card,
-  askText, plainText, tally, crewOf, crewText, crewRing, RING,
+  askText, plainText, tally, crewOf, crewText, crewRing, crewRings, RINGS, RING_MAX, showsRingKey, alsoChip, pillWhen,
 } from "./fleet/model.js";
 import { TONES, hash, initialOf, medallion, medallionSvg, toneOf } from "./fleet/medallion.js";
 
@@ -112,7 +112,7 @@ test("a needs-you session with no word for half an hour reads needs you?, still 
   assert.match(svg, />\?<\/text>/);
   assert.notEqual(svg, badgeSvg("needs_you"));
   assert.equal(stripItems([s], CAST, NOW)[0].badge, svg);
-  assert.deepEqual(card(s, CAST, NOW).pill, { label: "needs you?", age: "no word for 31m" });
+  assert.deepEqual(card(s, CAST, NOW).pill, { label: "needs you?", age: "no word for 31m", when: "31m quiet" });
   const fresh = session();
   assert.equal(startedNeeding(statuses([fresh]), [s]).size, 0, "going quiet is not a new need");
   assert.equal(startedNeeding(statuses([s]), [s]).size, 0, "staying quiet never pulses again");
@@ -128,7 +128,7 @@ test("the strip item and card of a quiet session say so", () => {
   const c = card(quiet(), CAST, NOW);
   assert.equal(c.status, "working");
   assert.equal(c.quiet, true);
-  assert.deepEqual(c.pill, { label: "working?", age: "no activity for 12m" });
+  assert.deepEqual(c.pill, { label: "working?", age: "no activity for 12m", when: "12m quiet" });
   assert.equal(c.label, "Hephaestus, working?, no activity for 12 minutes");
 });
 
@@ -399,62 +399,100 @@ test("another background task reads as a task and draws shell-style", () => {
 
 const kinds = (crew) => crewRing(crew).segments.map((s) => s.kind[0]).join("");
 
-test("the ring draws a segment per piece of work, agents first, at most eight", () => {
+test("the ring draws an arc per piece of work, agents first, at most five", () => {
   assert.deepEqual(crewRing({ agents: 0, shells: 0 }), { segments: [], more: 0 });
   assert.equal(kinds({ agents: 2, shells: 1 }), "aas");
+  assert.equal(kinds({ agents: 1, shells: 2 }), "ass", "agents first, then shells, clockwise");
   assert.equal(crewRing({ agents: 2, shells: 1 }).more, 0);
-  assert.equal(kinds({ agents: 10, shells: 0 }), "aaaaaaaa");
-  assert.equal(crewRing({ agents: 10, shells: 0 }).more, 2);
-  assert.equal(kinds({ agents: 9, shells: 3 }), "aaaaaaas", "past eight, a shell keeps one segment");
-  assert.equal(crewRing({ agents: 9, shells: 3 }).more, 4);
-  assert.equal(kinds({ agents: 1, shells: 12 }), "assssss" + "s");
-  assert.equal(RING.max, 8);
+  assert.equal(kinds({ agents: 5, shells: 0 }), "aaaaa");
+  assert.equal(crewRing({ agents: 5, shells: 0 }).more, 0, "five fit");
+  assert.equal(kinds({ agents: 10, shells: 0 }), "aaaaa");
+  assert.equal(crewRing({ agents: 10, shells: 0 }).more, 5);
+  assert.equal(kinds({ agents: 7, shells: 3 }), "aaaas", "past five, a shell keeps one arc");
+  assert.equal(crewRing({ agents: 7, shells: 3 }).more, 5);
+  assert.equal(kinds({ agents: 1, shells: 12 }), "assss");
+  assert.equal(crewRing({ agents: 1, shells: 12 }).more, 8);
+  assert.equal(RING_MAX, 5);
+  for (const g of Object.values(RINGS)) assert.deepEqual(crewRing({ agents: 7, shells: 3 }, g).segments.length, 5);
 });
 
-test("segments sit on the ring with even gaps, a lone one too", () => {
-  const ends = (d) => {
-    const m = d.match(/^M ([\d.]+) ([\d.]+) A 37 37 0 0 1 ([\d.]+) ([\d.]+)$/);
-    assert.ok(m, d);
-    return [[Number(m[1]), Number(m[2])], [Number(m[3]), Number(m[4])]];
-  };
-  for (const n of [2, 3, 8]) {
-    const { segments } = crewRing({ agents: n, shells: 0 });
-    for (const { d } of segments) {
-      for (const [x, y] of ends(d)) {
-        assert.ok(Math.abs(Math.hypot(x - RING.cx, y - RING.cy) - RING.r) < 0.01, `${n}: ${x},${y} on the ring`);
-      }
-    }
-    // The first starts half a gap after 12 o'clock.
-    const [[x0]] = ends(segments[0].d);
-    const want = RING.cx + RING.r * Math.cos(((-90 + RING.gapDeg / 2) * Math.PI) / 180);
-    assert.ok(Math.abs(x0 - want) < 0.01, `${n}: starts at ${x0}`);
+test("an agent's arc is thick and a shell's thin, in screen px for each portrait", () => {
+  const px = (density, kind) => (RINGS[density][kind] * { comfortable: 80, compact: 56 }[density]) / 80;
+  assert.deepEqual([px("comfortable", "agent"), px("comfortable", "shell")], [7, 3]);
+  assert.deepEqual([px("compact", "agent"), px("compact", "shell")].map((v) => Number(v.toFixed(6))), [5.5, 2.5]);
+  for (const [density, g] of Object.entries(RINGS)) {
+    const { segments } = crewRing({ agents: 1, shells: 2 }, g);
+    assert.deepEqual(segments.map((s) => s.width), [g.agent, g.shell, g.shell].map((v) => Number(v.toFixed(2))), density);
+    assert.equal(g.r + g.agent / 2, 40, `${density}: the thick arc's outer edge is the portrait's`);
   }
-  // A lone item keeps the gap at 12 o'clock: one long arc, never a closed ring.
-  const [one] = crewRing({ agents: 0, shells: 1 }).segments;
-  assert.equal(one.d, "M 45.79 3.46 A 37 37 0 1 1 34.21 3.46");
-  assert.ok(RING.gapDeg >= 18);
+});
+
+test("arcs sit on the ring with even gaps of a fixed length on the page, a lone one too", () => {
+  const ends = (d, g) => {
+    const r = Number(g.r.toFixed(2));
+    const m = d.match(new RegExp(`^M ([\\d.]+) ([\\d.]+) A ${r} ${r} 0 ([01]) 1 ([\\d.]+) ([\\d.]+)$`));
+    assert.ok(m, d);
+    return [[Number(m[1]), Number(m[2])], [Number(m[4]), Number(m[5])]];
+  };
+  const angle = ([x, y], g) => (Math.atan2(y - g.cy, x - g.cx) * 180) / Math.PI;
+  for (const [density, g] of Object.entries(RINGS)) {
+    const facePx = { comfortable: 80, compact: 56 }[density];
+    // The gap is gapPx along the ring on the page: 14 px comfortable, 11 px compact.
+    const gapOnPage = ((g.gapDeg * Math.PI) / 180) * g.r * (facePx / 80);
+    assert.ok(Math.abs(gapOnPage - { comfortable: 14, compact: 11 }[density]) < 1e-9, `${density}: ${gapOnPage}`);
+    assert.ok(g.gapDeg >= 20, `${density}: ${g.gapDeg} degrees reads as a gap`);
+    for (const n of [2, 3, 5]) {
+      const { segments } = crewRing({ agents: n, shells: 0 }, g);
+      assert.equal(segments.length, n);
+      for (const { d } of segments) {
+        for (const p of ends(d, g)) assert.ok(Math.abs(Math.hypot(p[0] - g.cx, p[1] - g.cy) - g.r) < 0.01, `${density} ${n}: on the ring`);
+      }
+      // Each gap between neighbours is gapDeg wide, the one at 12 o'clock too.
+      for (let i = 0; i < n; i++) {
+        const end = angle(ends(segments[i].d, g)[1], g);
+        const next = angle(ends(segments[(i + 1) % n].d, g)[0], g);
+        const gap = (((next - end) % 360) + 360) % 360;
+        assert.ok(Math.abs(gap - g.gapDeg) < 0.1, `${density} ${n}: gap ${i} is ${gap}`);
+      }
+      assert.ok(Math.abs(angle(ends(segments[0].d, g)[0], g) - (-90 + g.gapDeg / 2)) < 0.1, `${density} ${n}: starts half a gap after 12`);
+    }
+    // A lone item keeps its one gap at 12 o'clock: one long arc, never a closed ring.
+    const [one] = crewRing({ agents: 0, shells: 1 }, g).segments;
+    const [a, b] = ends(one.d, g);
+    assert.ok(Math.abs(a[0] - g.cx - (g.cx - b[0])) < 0.02 && Math.abs(a[1] - b[1]) < 0.02 && a[1] < g.cy, `${density}: symmetric about 12`);
+    assert.match(one.d, / 0 1 1 /, "the long way round");
+  }
+});
+
+test("the ring key shows while any card has background work, and only then", () => {
+  const withCrew = (background) => card(session({ background }), CAST, NOW);
+  assert.equal(showsRingKey([]), false, "an empty wall");
+  assert.equal(showsRingKey([withCrew({ agents: 0, shells: 0 }), withCrew(undefined)]), false, "a quiet wall stays clean");
+  assert.equal(showsRingKey([withCrew({ agents: 0, shells: 0 }), withCrew({ agents: 0, shells: 1 })]), true);
+  assert.equal(showsRingKey([withCrew({ agents: 0, shells: 0, tasks: 1 })]), true, "another task draws a thin arc");
+  assert.deepEqual(Object.keys(crewRings({ agents: 1, shells: 0 })), ["comfortable", "compact"]);
 });
 
 test("the pill stays the plain status; the crew line says what is out", () => {
   const background = { agents: 2, shells: 1 };
   for (const reason of [null, "background"]) {
     const c = card(session({ status: "working", reason, background }), CAST, NOW);
-    assert.deepEqual(c.pill, { label: "working", age: "2m" }, String(reason));
+    assert.deepEqual(c.pill, { label: "working", age: "2m", when: "2m" }, String(reason));
     assert.equal(c.crew, "2 agents, 1 shell");
-    assert.equal(c.ring.segments.length, 3);
+    assert.equal(c.rings.comfortable.segments.length, 3);
     assert.equal(c.tone, "working");
   }
   const none = card(session({ status: "working", reason: null }), CAST, NOW);
-  assert.deepEqual([none.pill.label, none.crew, none.promptFree, none.ring.segments.length], ["working", null, false, 0]);
+  assert.deepEqual([none.pill.label, none.crew, none.promptFree, none.rings.comfortable.segments.length], ["working", null, false, 0]);
   const needs = card(session({ background }), CAST, NOW);
   assert.equal(needs.pill.label, "needs you");
-  assert.equal(needs.ring.segments.length, 3, "its ring still shows the crew");
+  assert.equal(needs.rings.comfortable.segments.length, 3, "its ring still shows the crew");
 });
 
 test("prompt free shows only once the turn ended with work out, never for a subagent mid-turn", () => {
   // A foreground subagent inside a turn: the hook leaves the reason null until Stop.
   const mid = card(session({ status: "working", reason: null, background: { agents: 1, shells: 0 } }), CAST, NOW);
-  assert.deepEqual([mid.crew, mid.promptFree, mid.ring.segments.length], ["1 agent", false, 1]);
+  assert.deepEqual([mid.crew, mid.promptFree, mid.rings.comfortable.segments.length], ["1 agent", false, 1]);
   assert.doesNotMatch(mid.label, /prompt free/);
   const after = card(session({ status: "working", reason: "background", background: { agents: 1, shells: 0 } }), CAST, NOW);
   assert.equal(after.promptFree, true);
@@ -487,7 +525,7 @@ test("the ask line says what a session waits for", () => {
 
 test("a card carries pill, ask, tone, dim, place and its voice as a tooltip", () => {
   const c = card(session(), CAST, NOW);
-  assert.deepEqual(c.pill, { label: "needs you", age: "2m" });
+  assert.deepEqual(c.pill, { label: "needs you", age: "2m", when: "2m" });
   assert.equal(c.ask, "Waiting for you to approve Bash");
   assert.equal(c.tone, "needs");
   assert.equal(c.dim, false);
@@ -496,21 +534,21 @@ test("a card carries pill, ask, tone, dim, place and its voice as a tooltip", ()
   assert.deepEqual(c.also, ["also in ideas"]);
   assert.equal(c.voiceTitle, "Voice: Michael");
   const quiet = card(session({ status: "silent", status_at: ago(360), name: null }), CAST, NOW);
-  assert.deepEqual(quiet.pill, { label: "silent", age: "no word for 6m" });
+  assert.deepEqual(quiet.pill, { label: "silent", age: "no word for 6m", when: "6m" });
   assert.equal(quiet.dim, true);
   assert.equal(quiet.ask, null);
   assert.equal(quiet.task, "No session name yet");
   const idle = card(session({ status: "working", status_at: ago(900), quiet_since: ago(720) }), CAST, NOW);
-  assert.deepEqual(idle.pill, { label: "working?", age: "no activity for 12m" });
+  assert.deepEqual(idle.pill, { label: "working?", age: "no activity for 12m", when: "12m quiet" });
 });
 
 test("the pill's age: ended, error and a quiet needs-you card", () => {
   assert.deepEqual(card(session({ status: "ended", reason: "closed", status_at: ago(360) }), CAST, NOW).pill,
-    { label: "ended \u00b7 closed", age: "6m" });
+    { label: "ended \u00b7 closed", age: "6m", when: "6m" });
   assert.deepEqual(card(session({ status: "error", reason: "rate limit", status_at: ago(180) }), CAST, NOW).pill,
-    { label: "error \u00b7 rate limit", age: "3m" });
+    { label: "error \u00b7 rate limit", age: "3m", when: "3m" });
   assert.deepEqual(card(session({ quiet_since: ago(31 * 60), status_at: ago(35 * 60) }), CAST, NOW).pill,
-    { label: "needs you?", age: "no word for 31m" });
+    { label: "needs you?", age: "no word for 31m", when: "31m quiet" });
 });
 
 test("also lists each other repo once, never the current one", () => {
@@ -611,4 +649,48 @@ test("card: prompt and reply are plain text", () => {
   const c = card({ session_id: "x", status: "idle", prompt: { text: "**hi** `x`" }, reply: { text: "- [a](u)" } }, {}, NOW);
   assert.equal(c.prompt, "hi x");
   assert.equal(c.reply, "a");
+});
+
+test("the compact card folds the also-in list into a +N chip that names every repo", () => {
+  assert.equal(alsoChip([]), null);
+  assert.deepEqual(alsoChip(["ideas"]), { text: "+1", label: "Also in ideas" });
+  assert.deepEqual(alsoChip(["ideas", "talks"]), { text: "+2", label: "Also in ideas and talks" });
+  assert.deepEqual(alsoChip(["ideas", "talks", "papers"]), { text: "+3", label: "Also in ideas, talks and papers" });
+  const touched = [{ repo: "ideas", at: ago(60) }, { repo: "klepsydra", at: ago(60) }, { repo: "ideas", at: ago(30) }, { repo: "talks", at: ago(9) }];
+  const c = card(session({ touched }), CAST, NOW);
+  assert.deepEqual(c.alsoChip, { text: "+2", label: "Also in ideas and talks" }, "each other repo once, never the current one");
+  assert.equal(c.also.length, 2, "the chip counts what the full card lists");
+  assert.equal(card(session({ touched: [] }), CAST, NOW).alsoChip, null);
+});
+
+test("the compact pill's time takes in updated, which has no line of its own there", () => {
+  const working = (over) => session({ status: "working", reason: null, ...over });
+  // Fresh: the status age alone, as on the full card.
+  assert.equal(pillWhen(working({ status_at: ago(120), updated_at: ago(60) }), NOW), "2m");
+  // Over five minutes since anything, and the same age: said once.
+  const stale = working({ status_at: ago(420), updated_at: ago(420) });
+  assert.equal(card(stale, CAST, NOW).updated, "updated 7m ago");
+  assert.equal(pillWhen(stale, NOW), "7m");
+  // In this state 30m, updated 7m ago: both, the status age first.
+  const both = working({ status_at: ago(1800), updated_at: ago(420) });
+  assert.equal(card(both, CAST, NOW).pill.age, "30m", "the full card keeps its pill");
+  assert.equal(card(both, CAST, NOW).pill.when, "30m \u00b7 7m ago");
+  // The boundary is updated's own: at five minutes it is not shown, so the pill holds the status age.
+  assert.equal(pillWhen(working({ status_at: ago(1800), updated_at: ago(300) }), NOW), "30m");
+  // An ended card's pill already says how long; an unknown time is not folded in.
+  assert.equal(pillWhen(session({ status: "ended", reason: "closed", status_at: ago(1800), updated_at: ago(420) }), NOW), "30m");
+  assert.equal(pillWhen(working({ status_at: ago(1800), updated_at: "x" }), NOW), "30m");
+  // Quiet and silent cards shorten the full card's phrase.
+  assert.equal(pillWhen(working({ status_at: ago(1800), updated_at: ago(900), quiet_since: ago(720) }), NOW), "12m quiet");
+  assert.equal(statusParts(working({ quiet_since: ago(720) }), NOW).at(-1), "no activity for 12m");
+  assert.equal(pillWhen(session({ status: "silent", reason: null, status_at: ago(7200), updated_at: ago(7200) }), NOW), "2h");
+});
+
+test("Open terminal's accessible name carries the reason it is off", () => {
+  assert.equal(card(session({ status: "working" }), CAST, NOW).jumpLabel, "Open terminal, Hephaestus");
+  const unnamed = card(session({ name: null, tmux: null }), CAST, NOW);
+  assert.equal(unnamed.jump.enabled, false);
+  assert.equal(unnamed.jumpLabel, "Open terminal, Hephaestus, unavailable: no session name yet");
+  const ended = card(session({ status: "ended", reason: "closed" }), CAST, NOW);
+  assert.equal(ended.jumpLabel, "Open terminal, Hephaestus, unavailable: session ended");
 });

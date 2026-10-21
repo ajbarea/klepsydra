@@ -8,11 +8,24 @@
 </head>
 <body>
   <div class="bar">
-    <div class="tally" role="group" aria-label="Session counts"></div>
+    <div class="lead">
+      <div class="tally" role="group" aria-label="Session counts"></div>
+      <p class="ring-key" hidden>
+        <span class="visually-hidden">Ring key: thick arc, subagent; thin arc, background shell.</span>
+        <span class="key" aria-hidden="true"><svg viewBox="0 0 32 18"><path class="agent" d="M 4.5 16 A 11.5 11.5 0 0 1 27.5 16"/></svg>agent</span>
+        <span class="key" aria-hidden="true"><svg viewBox="0 0 32 18"><path class="shell" d="M 4.5 16 A 11.5 11.5 0 0 1 27.5 16"/></svg>shell</span>
+      </p>
+    </div>
     <button type="button" id="new-session">+ New session</button>
     <span id="new-note" role="status"></span>
+    <fieldset class="density">
+      <legend class="visually-hidden">Card density</legend>
+      <label><input type="radio" name="density" value="auto" checked /><span>Auto</span></label>
+      <label><input type="radio" name="density" value="comfortable" /><span>Comfortable</span></label>
+      <label><input type="radio" name="density" value="compact" /><span>Compact</span></label>
+    </fieldset>
   </div>
-  <main id="wall" aria-label="Claude Code sessions"></main>
+  <main id="wall" class="wall" aria-label="Claude Code sessions"></main>
   <p id="empty" hidden>No Claude Code sessions are running.</p>
   <p id="live" class="visually-hidden" aria-live="polite"></p>
 
@@ -22,18 +35,21 @@
         <span class="portrait">
           <svg class="waves" viewBox="-12 -12 104 104" aria-hidden="true"></svg>
           <svg class="ring" viewBox="0 0 80 80" aria-hidden="true">
-            <title>Background work: one segment per subagent (solid) or shell or other task (dashed)</title>
-            <circle class="track" cx="40" cy="40" r="37"/><g class="crew"></g>
+            <title>Background work: one arc per subagent (thick) or shell (thin)</title>
+            <circle class="track" cx="40" cy="40" r="36.5"/><g class="crew"></g>
           </svg>
           <img class="face" alt="" />
           <span class="more" aria-hidden="true" hidden></span>
         </span>
         <div class="who"><h2 class="name"></h2><p class="task"></p></div>
-        <p class="pill"><span class="mark"></span><span class="label"></span> <span class="age"></span></p>
+        <p class="pill"><span class="mark"></span><span class="label"></span> <span class="age"></span><span class="when"></span></p>
       </header>
-      <p class="where"><span class="repo"></span><span class="branch" hidden></span></p>
-      <ul class="also"></ul>
-      <p class="crew-line" hidden><span class="count"></span><span class="free" hidden>prompt free</span></p>
+      <div class="meta">
+        <p class="where"><span class="repo"></span><span class="branch" hidden></span></p>
+        <ul class="also"></ul>
+        <span class="also-more" role="img" hidden></span>
+        <p class="crew-line" hidden><span class="count"></span><span class="free" hidden>prompt free</span></p>
+      </div>
       <p class="ask" hidden><span class="mark"></span><span class="text"></span></p>
       <div class="said">
         <p class="prompt"></p>
@@ -42,9 +58,11 @@
       </div>
       <p class="updated" hidden></p>
       <footer class="actions">
-        <span class="note" role="status"></span>
-        <span class="why" hidden></span>
-        <button type="button" class="clear" hidden title="Removes this card. A session that is still running brings it back at its next event, without its start time or the repos it touched.">Clear</button>
+        <span class="foot">
+          <span class="note" role="status"></span>
+          <span class="why" hidden></span>
+          <button type="button" class="clear" hidden title="Removes this card. A session that is still running brings it back at its next event, without its start time or the repos it touched.">Clear</button>
+        </span>
         <button type="button" class="jump">Open terminal</button>
       </footer>
     </article>

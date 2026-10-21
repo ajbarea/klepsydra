@@ -130,25 +130,47 @@ test("the strip marks the speaking session through the hold only", () => {
 test("frames run only while someone speaks, and reduced motion gets a still ring", () => {
   const src = readFileSync(new URL("./fleet/wall.js", import.meta.url), "utf8");
   const draw = src.slice(src.indexOf("function drawSpeaking"), src.indexOf("function receive"));
-  assert.equal((src.match(/requestAnimationFrame\(/g) ?? []).length, 1, "one place schedules frames");
+  // The waves' frames, and one frame for Auto's density check after the wall resizes.
+  assert.equal((src.match(/requestAnimationFrame\(/g) ?? []).length, 2, "two places schedule frames");
+  assert.match(src, /densityFrame = requestAnimationFrame\(showDensity\)/, "the density check is one frame, never a loop");
   assert.ok(draw.indexOf("if (!f) return;") < draw.indexOf("requestAnimationFrame("), "idle stops the loop");
   assert.match(draw, /reducedMotion\(\)[\s\S]*circles\(svg, "still", 1\)[\s\S]*return;/);
   assert.match(src, /said\.push\(`\$\{identity\(who, cast\)\.name\} speaking`\)/);
   assert.match(readFileSync(new URL("./wall.html", import.meta.url), "utf8"), /<svg class="waves"[^>]*aria-hidden="true">/);
 });
 
-test("the waves stay in the avatar's column and row: never under the name or into the next row", () => {
+test("the waves stay in the avatar's column and row in either density: never under the name or into the next row", () => {
   const css = readFileSync(new URL("./fleet/wall.css", import.meta.url), "utf8");
-  const rule = (sel) => css.match(new RegExp(`${sel.replace(/\./g, "\\.")} \\{([^}]*)\\}`))?.[1] ?? "";
-  const px = (decl, prop) => parseFloat(decl.match(new RegExp(`(?:^|[\\s;])${prop}:\\s*([\\d.]+)px`))[1]);
-  // The portrait is 80 units of an 80 px box, centred at 40.
-  const room = Math.min(px(rule(".card header"), "column-gap"), px(rule(".card"), "gap"));
-  assert.equal(room, 12);
-  for (const level of [0, 0.5, 1]) {
-    for (let t = 0; t < WAVE.periodMs; t += 10) {
-      for (const w of waves(level, 1, t)) assert.ok(w.r + w.width / 2 <= 40 + room, `level ${level} at ${t} ms: ${w.r + w.width / 2}`);
+  const rule = (sel) => css.match(new RegExp(`${sel.replace(/[.[\]"=]/g, "\\$&")} \\{([^}]*)\\}`))?.[1] ?? "";
+  const tokens = (block) => Object.fromEntries([...block.matchAll(/(--[\w-]+):\s*([^;]+);/g)].map((m) => [m[1], m[2].trim()]));
+  const root = tokens(rule(":root"));
+  const px = (set, name) => {
+    const v = set[name] ?? root[name];
+    const ref = v.match(/^var\((--[\w-]+)\)$/);
+    return ref ? px(set, ref[1]) : parseFloat(v);
+  };
+  // The gaps that hold the waves' room are these tokens in both densities.
+  assert.match(rule(".card header"), /column-gap: var\(--head-gap\)/);
+  assert.match(rule(".card"), /\bgap: var\(--card-rows\)/);
+  assert.match(rule('[data-density="compact"] .name'), /margin-left: var\(--head-gap\)/);
+  assert.match(rule('[data-density="compact"] .meta'), /margin-top: var\(--card-rows\)/);
+  assert.match(rule(".portrait .waves"), /--reach: calc\(var\(--wall-face\) \* 12 \/ 80\)/, "the waves scale with the portrait");
+  const rooms = {};
+  for (const [density, set] of [["comfortable", {}], ["compact", tokens(rule('[data-density="compact"]'))]]) {
+    // The portrait is 80 units of a --wall-face box, centred at 40.
+    const scale = px(set, "--wall-face") / 80;
+    const room = Math.min(px(set, "--head-gap"), px(set, "--card-rows"));
+    rooms[density] = room;
+    for (const level of [0, 0.5, 1]) {
+      for (let t = 0; t < WAVE.periodMs; t += 10) {
+        for (const w of waves(level, 1, t)) {
+          const reach = (w.r + w.width / 2 - 40) * scale;
+          assert.ok(reach <= room, `${density}, level ${level} at ${t} ms: ${reach} past the portrait, ${room} free`);
+        }
+      }
     }
   }
+  assert.deepEqual(rooms, { comfortable: 12, compact: 10 });
 });
 
 test("the reader keeps a half-read line as long as the wall holds a gap", () => {

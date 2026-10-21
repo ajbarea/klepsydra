@@ -1,16 +1,18 @@
 // The card wall: a card per Claude Code session, in the reader's order, with
 // a way back to its terminal.
 import cast from "./cast.json" with { type: "json" };
-import { announcements, card, identity, shouldSlide, startedNeeding, transitionName, statuses, tally } from "./model.js";
+import { RINGS, announcements, card, identity, shouldSlide, showsRingKey, startedNeeding, transitionName, statuses, tally } from "./model.js";
 import { announcer, press, setOff, syncChildren } from "./dom.js";
 import { inTauri, subscribe } from "./feed.js";
 import { showFace } from "./face.js";
 import { GOLD, SPEAK_FADE_MS, STILL, Speaker, WAVE, waves } from "./speaking.js";
+import { parseDensity, resolveDensity } from "./density.js";
 
 const TICK_MS = 15_000; // ages re-render between snapshots, as on the gauge
-const FACE_PX = 66; // --wall-face less the ring's inset
+const FACE_PX = 62; // the comfortable --wall-face less twice its --face-inset
 const SVG_NS = "http://www.w3.org/2000/svg";
 const SEGMENT_FADE_MS = 200; // wall.css .seg.leave
+const RESIZE_SETTLE_MS = 100; // Auto measures once a drag pauses, not every frame of it
 const BRANCH_ICON =
   '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="4" cy="3.5" r="1.8"/><circle cx="4" cy="12.5" r="1.8"/><circle cx="12" cy="5" r="1.8"/><path d="M4 5.3v5.4M12 6.8c0 3-3.5 3-8 4.2"/></svg><span></span>';
 const TALLY = [
@@ -29,6 +31,9 @@ const tpl = document.getElementById("card-tpl");
 const counts = document.querySelector(".tally");
 const newButton = document.getElementById("new-session");
 const newNote = document.getElementById("new-note");
+const bar = document.querySelector(".bar");
+const densityPicker = document.querySelector(".density");
+const ringKey = document.querySelector(".ring-key");
 newButton.hidden = !inTauri;
 newButton.addEventListener("click", () =>
   press(newButton, newNote, () => window.__TAURI__.core.invoke("launch_session"), "Starting…"),
@@ -54,7 +59,7 @@ const show = (el, text) => {
 
 function paint(el, c) {
   const pulsing = el.classList.contains("pulse"); // a repaint must not cut the pulse short
-  el.className = `card ${c.dim ? "dim" : ""} tone-${c.tone}${pulsing ? " pulse" : ""}`;
+  el.className = `card ${c.dim ? "dim" : ""} tone-${c.tone}${c.ask ? " asking" : ""}${pulsing ? " pulse" : ""}`;
   el.style.viewTransitionName = transitionName(c.id);
   el.setAttribute("aria-label", c.label);
   el.querySelector(".portrait").title = c.voiceTitle ?? "";
@@ -70,6 +75,7 @@ function paint(el, c) {
   }
   setText(el.querySelector(".pill .label"), c.pill.label);
   setText(el.querySelector(".pill .age"), c.pill.age);
+  setText(el.querySelector(".pill .when"), c.pill.when);
   const crewLine = el.querySelector(".crew-line");
   crewLine.hidden = !c.crew;
   setText(crewLine.querySelector(".count"), c.crew);
@@ -88,6 +94,11 @@ function paint(el, c) {
   el.querySelector(".also").replaceChildren(
     ...c.also.map((t) => Object.assign(document.createElement("li"), { textContent: t })),
   );
+  const more = el.querySelector(".also-more");
+  show(more, c.alsoChip?.text);
+  more.title = c.alsoChip?.label ?? "";
+  if (c.alsoChip) more.setAttribute("aria-label", c.alsoChip.label);
+  else more.removeAttribute("aria-label");
 
   show(el.querySelector(".error"), c.error);
   for (const [cls, text] of [["prompt", c.prompt], ["reply", c.reply]]) {
@@ -119,16 +130,22 @@ function paint(el, c) {
   setOff(clear, false);
 }
 
-// One segment per piece of background work. Segments past the new count fade
-// out; new ones fade in; the rest take their new place at once.
+// One arc per piece of background work, drawn for the density on screen.
+// Arcs past the new count fade out; new ones fade in; the rest take their new
+// place at once.
 function paintRing(el, c) {
+  const ring = c.rings[shown] ?? c.rings.comfortable;
+  const g = RINGS[shown] ?? RINGS.comfortable;
   const crew = el.querySelector(".ring .crew");
-  el.querySelector(".ring").classList.toggle("busy", c.ring.segments.length > 0);
+  const track = el.querySelector(".ring .track");
+  track.setAttribute("r", g.r);
+  track.setAttribute("stroke-width", g.shell);
+  el.querySelector(".ring").classList.toggle("busy", ring.segments.length > 0);
   if (c.ringColor) crew.style.setProperty("--crew", c.ringColor);
   else crew.style.removeProperty("--crew");
-  const shown = [...crew.children].filter((p) => !p.classList.contains("leave"));
-  c.ring.segments.forEach((seg, i) => {
-    let path = shown[i];
+  const drawn = [...crew.children].filter((p) => !p.classList.contains("leave"));
+  ring.segments.forEach((seg, i) => {
+    let path = drawn[i];
     if (!path) {
       path = document.createElementNS(SVG_NS, "path");
       path.classList.add("seg", "enter");
@@ -138,15 +155,16 @@ function paintRing(el, c) {
     path.classList.toggle("agent", seg.kind === "agent");
     path.classList.toggle("shell", seg.kind === "shell");
     path.setAttribute("d", seg.d);
+    path.setAttribute("stroke-width", seg.width);
   });
-  for (const path of shown.slice(c.ring.segments.length)) {
+  for (const path of drawn.slice(ring.segments.length)) {
     if (reducedMotion()) path.remove();
     else {
       path.classList.add("leave");
       setTimeout(() => path.remove(), SEGMENT_FADE_MS);
     }
   }
-  show(el.querySelector(".more"), c.ring.more > 0 ? `+${c.ring.more}` : null);
+  show(el.querySelector(".more"), ring.more > 0 ? `+${ring.more}` : null);
 }
 
 function paintTally() {
@@ -173,9 +191,17 @@ function render(snapshot) {
   empty.hidden = sessions.length > 0;
   paintTally();
   const cards = sessions.map((s) => card(s, cast, now));
+  cardOf = new Map(cards.map((c) => [c.id, c]));
+  ringKey.hidden = !showsRingKey(cards);
   const sync = () => {
     syncChildren(wall, cards, (c) => c.id, () => tpl.content.firstElementChild.cloneNode(true), paint);
     for (const el of wall.children) if (started.has(el.dataset.key) && !reducedMotion()) el.classList.add("pulse");
+    // Auto looks again when a card arrives or leaves, not when one's text changes.
+    const ids = cards.map((c) => c.id).join(" ");
+    if (ids !== lastIds) {
+      lastIds = ids;
+      showDensity();
+    }
   };
   const was = [...wall.children].map((el) => el.dataset.key);
   if (shouldSlide(was, cards.map((c) => c.id), snapshot) && canSlide()) document.startViewTransition(() => sync());
@@ -270,6 +296,80 @@ wall.addEventListener("click", (e) => {
   if (button.classList.contains("clear")) press(button, note, () => invoke("clear_session", { id: button.dataset.id }));
   else press(button, note, () => invoke("jump_to_terminal", { id: button.dataset.id, name: button.dataset.name }));
 });
+
+// Density: the saved choice, and what is on screen. Auto measures an unseen
+// comfortable copy of the wall, so its switch rests on the real render.
+let choice = "auto";
+let shown = "comfortable";
+let lastIds = "";
+let cardOf = new Map(); // the last painted card by id, to redraw rings for a new density
+
+/**
+ * Whether the comfortable wall, with `extra` more cards as tall as its
+ * tallest, fits the window without scrolling. The copy carries the bar too,
+ * as comfortable, since the compact bar can be a line shorter.
+ */
+function comfortableFits(extra) {
+  const probe = document.createElement("div");
+  probe.inert = true;
+  probe.setAttribute("aria-hidden", "true");
+  // The window's whole width: a wall that fits shows no scrollbar to take any of it.
+  Object.assign(probe.style, { position: "absolute", top: "0", left: "0", width: `${innerWidth}px`, visibility: "hidden" });
+  const copy = (el) => {
+    const c = el.cloneNode(true);
+    c.dataset.density = "comfortable";
+    // A copied radio would join the real control's group and take its check.
+    for (const input of c.querySelectorAll("input[name]")) input.removeAttribute("name");
+    for (const card of c.querySelectorAll(".card")) card.style.viewTransitionName = "";
+    return c;
+  };
+  const grid = copy(wall);
+  grid.removeAttribute("id");
+  probe.append(copy(bar), grid);
+  document.body.append(probe);
+  const cards = [...grid.children];
+  const tallest = cards.reduce((a, b) => (b.offsetHeight > (a?.offsetHeight ?? -1) ? b : a), null);
+  for (let i = 0; i < extra && tallest; i++) grid.append(tallest.cloneNode(true));
+  // Fractional heights round up: a wall 0.4 px over still scrolls.
+  const fits = Math.ceil(probe.getBoundingClientRect().height) <= innerHeight;
+  probe.remove();
+  return fits;
+}
+
+function showDensity() {
+  const was = shown;
+  shown = resolveDensity(choice, shown, comfortableFits);
+  if (shown !== was) for (const el of wall.children) if (cardOf.has(el.dataset.key)) paintRing(el, cardOf.get(el.dataset.key));
+  wall.dataset.density = shown;
+  bar.dataset.density = shown;
+  densityPicker.querySelector('label:has([value="auto"])').title =
+    `Compact while the comfortable cards would scroll; ${shown} now`;
+}
+
+function choose(value) {
+  choice = parseDensity(value);
+  for (const input of densityPicker.querySelectorAll("input")) input.checked = input.value === choice;
+  showDensity();
+}
+
+densityPicker.addEventListener("change", (e) => {
+  choose(e.target.value);
+  if (inTauri) window.__TAURI__.core.invoke("set_wall_density", { density: choice }).catch(() => {});
+});
+let resizeTimer = 0;
+addEventListener("resize", () => {
+  clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(showDensity, RESIZE_SETTLE_MS);
+});
+// A card that grows or shrinks (a needs-you line, a longer error) changes the
+// wall's height without a card arriving: Auto looks again, once a frame. A
+// switch it makes changes the height too, and the hysteresis holds it there.
+let densityFrame = 0;
+new ResizeObserver(() => {
+  cancelAnimationFrame(densityFrame);
+  densityFrame = requestAnimationFrame(showDensity);
+}).observe(wall);
+if (inTauri) window.__TAURI__.core.invoke("get_wall_density").then(choose, () => {});
 
 subscribe(receive);
 setInterval(() => render(), TICK_MS);

@@ -194,3 +194,81 @@ pub async fn open_wall(app: AppHandle, focus: String) -> Result<(), String> {
     });
     Ok(())
 }
+
+/// The wall's card density choices, as prefs.json keeps them under
+/// `wall_density`; the first is the default (wall `density.js` DENSITIES).
+const DENSITIES: [&str; 3] = ["auto", "comfortable", "compact"];
+const DENSITY_KEY: &str = "wall_density";
+
+/// The saved density, or the default for a missing or unknown value.
+fn density_of(prefs: Option<&serde_json::Map<String, Value>>) -> &'static str {
+    let saved = prefs.and_then(|p| p.get(DENSITY_KEY)?.as_str());
+    DENSITIES
+        .into_iter()
+        .find(|d| Some(*d) == saved)
+        .unwrap_or(DENSITIES[0])
+}
+
+/// The value to save for `density`, or an error naming the choices.
+fn density_value(density: &str) -> Result<Value, String> {
+    if DENSITIES.contains(&density) {
+        Ok(Value::from(density))
+    } else {
+        Err(format!(
+            "unknown density {density:?}; one of {}",
+            DENSITIES.join(", ")
+        ))
+    }
+}
+
+/// The wall's saved card density, read like the other prefs.
+#[tauri::command]
+pub fn get_wall_density(app: AppHandle) -> String {
+    density_of(crate::read_prefs(&app).as_ref()).to_owned()
+}
+
+/// Save the density chosen on the wall.
+#[tauri::command]
+pub fn set_wall_density(app: AppHandle, density: String) -> Result<(), String> {
+    crate::write_pref(&app, DENSITY_KEY, density_value(&density)?);
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn prefs(v: Value) -> serde_json::Map<String, Value> {
+        v.as_object().cloned().unwrap()
+    }
+
+    #[test]
+    fn density_defaults_to_auto() {
+        assert_eq!(density_of(None), "auto", "prefs.json unreadable");
+        assert_eq!(density_of(Some(&prefs(serde_json::json!({})))), "auto");
+        for bad in [
+            serde_json::json!("dense"),
+            serde_json::json!(1),
+            Value::Null,
+        ] {
+            let p = prefs(serde_json::json!({ "wall_density": bad }));
+            assert_eq!(density_of(Some(&p)), "auto");
+        }
+    }
+
+    #[test]
+    fn a_saved_density_reads_back() {
+        for d in DENSITIES {
+            let saved = density_value(d).unwrap();
+            let p = prefs(serde_json::json!({ "zoom": 2, "wall_density": saved }));
+            assert_eq!(density_of(Some(&p)), d);
+        }
+    }
+
+    #[test]
+    fn an_unknown_density_is_refused() {
+        let err = density_value("Compact").unwrap_err();
+        assert!(err.contains("auto, comfortable, compact"), "{err}");
+        assert!(density_value("").is_err());
+    }
+}

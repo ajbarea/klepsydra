@@ -380,11 +380,15 @@ window, made on the first click and only hidden after that. A summary bar
 counts the sessions that need you, work, are done, and are idle or ended, with
 an error count only when one exists. Each card shows:
 
-- the session's face in a ring showing its background crew: one segment per
-  subagent (solid, in the character's colour, or gold for a medallion) or
-  background shell or other background task (thinner and dashed), with a gap at 12 o'clock even for
-  one, at most eight with "+N" beside the ring for the rest, and a plain ring
-  with none out;
+- the session's face in a ring showing its background crew: one solid arc per
+  piece of work, agents first, clockwise from 12 o'clock, in the character's
+  colour (gold for a medallion). A subagent's arc is thick and a background
+  shell's or other task's thin, so the kind rests on width, not colour. Arcs
+  are kept apart by a fixed 14 px gap (11 px on a compact card), a lone arc
+  keeps its gap at 12 o'clock, at most five show with "+N" beside the ring for
+  the rest (a shell keeps at least one), and the ring is plain with none out.
+  While any card has work out, a key beside the tally draws the two arcs,
+  "agent" and "shell"; on a narrow wall it takes a second line under the tally;
 - a status pill, top right, with the badge, label and age, and the reason on
   an ended or error card;
 - under where it works, what is out ("2 agents, 1 shell, 1 task") and, once the turn
@@ -443,6 +447,30 @@ title.
 running brings its card back at its next event, without its start time or the
 repos it touched.
 
+### Card density
+
+The control beside **+ New session** picks the card density: **Auto** (the
+default), **Comfortable** or **Compact**. Comfortable is the card above.
+Compact keeps three short rows: the header, with a 56 px portrait (crew ring
+and speaking waves included), the name and session name, the pill and a
+smaller **Open terminal**; one line for where it works, the crew and a "+N" chip
+for the other repos it touched (hover it for their names); and the exchange,
+the prompt on one line and the reply on two. "updated 7m ago" joins the
+pill's time ("30m · 7m ago"), and Clear sits beside Open terminal and takes
+its place when it is off. A line at the foot of each compact card is kept for
+a button's note, or the reason Open terminal is off, so neither covers the
+card's text; a note cut short shows in full on hover. An off button's name
+carries its reason for screen readers too.
+Eight compact cards fit the wall snapped to half a 1920x1080 screen (about
+945x1000 of content) and sixteen fit it maximised (about 1920x1000).
+
+Auto turns compact as soon as the comfortable cards would scroll, measured on
+an unseen comfortable copy of the wall and its bar whenever the wall changes
+size (a card arriving, leaving or growing) and when the window is resized. It turns back only once the comfortable cards would
+still fit with one more card, so a session ending and another starting at the
+boundary leaves the wall as it is. The choice is saved as `wall_density` in
+`prefs.json`.
+
 ### Starting sessions
 
 **+ New session**, in the wall's summary bar, starts `claude` in `launch_dir`
@@ -482,7 +510,8 @@ nor marker. The status tones (card edge, pill, badges) stay status-only.
 Windows Terminal tabs opened by hand are not coloured.
 
 To see the wall without sessions, serve the repo root (for example
-`python3 -m http.server`) and open `/src/wall.html?demo`.
+`python3 -m http.server`) and open `/src/wall.html?demo`; `?demo=8` shows
+its first eight sessions.
 
 A session's face follows its keryx voice, so it stays the same while the
 session moves between repos. Fifteen voices, all fourteen in keryx's rotation pool

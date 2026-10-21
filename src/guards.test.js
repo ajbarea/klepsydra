@@ -528,6 +528,9 @@ test("the demo feed is never reachable inside the app", async () => {
   assert.equal(devSnapshotUrl(false, "?focus=x"), "./dev-fleet.json");
   const feed = read("src/fleet/feed.js");
   assert.equal(feed.match(/fleet-demo\.json/g).length, 1, "one way to the demo");
+  const { demoCount } = await import("./fleet/feed.js");
+  assert.equal(demoCount("?demo=8"), 8);
+  for (const search of ["?demo", "?demo=0", "?demo=-2", "?demo=x", "?demo=2.5", ""]) assert.equal(demoCount(search), Infinity, search);
   assert.match(feed, /devSnapshotUrl\(inTauri, location\.search\)/);
 });
 
@@ -560,4 +563,33 @@ test("the wall slides a reorder inside a feature-detected view transition, else 
   assert.match(src, /style\.viewTransitionName = transitionName\(c\.id\)/);
   assert.match(src, /started\.has\(el\.dataset\.key\) && !reducedMotion\(\)/, "no pulse class under reduced motion");
   assert.match(src, /startedNeeding\(/);
+});
+
+test("the compact card's +N chip names its repos in its accessible name and on hover", () => {
+  assert.match(read("src/wall.html"), /<span class="also-more" role="img" hidden><\/span>/);
+  const src = read("src/fleet/wall.js");
+  assert.match(src, /show\(more, c\.alsoChip\?\.text\)/);
+  assert.match(src, /more\.title = c\.alsoChip\?\.label \?\? ""/);
+  assert.match(src, /more\.setAttribute\("aria-label", c\.alsoChip\.label\)/);
+});
+
+test("the density control is a labelled radio group, Auto checked until the saved choice loads", () => {
+  const html = read("src/wall.html");
+  const picker = html.slice(html.indexOf('<fieldset class="density">'), html.indexOf("</fieldset>"));
+  assert.match(picker, /<legend class="visually-hidden">Card density<\/legend>/);
+  const values = [...picker.matchAll(/<input type="radio" name="density" value="(\w+)"( checked)? \/>/g)].map((m) => m[1] + (m[2] ?? ""));
+  assert.deepEqual(values, ["auto checked", "comfortable", "compact"]);
+  const css = read("src/fleet/wall.css");
+  assert.match(css, /\.density label:has\(input:focus-visible\) \{ outline: 2px solid var\(--card-focus\)/, "a keyboard user sees where they are");
+});
+
+test("the ring key draws aria-hidden arcs and gives screen readers one sentence", () => {
+  const html = read("src/wall.html");
+  const key = html.slice(html.indexOf('<p class="ring-key" hidden>'), html.indexOf("</p>", html.indexOf('<p class="ring-key"')));
+  assert.match(key, /<span class="visually-hidden">Ring key: thick arc, subagent; thin arc, background shell\.<\/span>/);
+  const keys = [...key.matchAll(/<span class="key" aria-hidden="true"><svg[^>]*><path class="(\w+)"[^>]*\/><\/svg>(\w+)<\/span>/g)].map((m) => `${m[1]}:${m[2]}`);
+  assert.deepEqual(keys, ["agent:agent", "shell:shell"]);
+  assert.ok(html.indexOf('class="tally"') < html.indexOf('class="ring-key"'), "beside the tally");
+  assert.match(read("src/fleet/wall.js"), /ringKey\.hidden = !showsRingKey\(cards\)/);
+  assert.match(html, /<title>Background work: one arc per subagent \(thick\) or shell \(thin\)<\/title>/);
 });

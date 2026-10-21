@@ -100,3 +100,17 @@ test("a different announcement soon after a repeated one is the one left", () =>
     mock.timers.reset();
   }
 });
+
+test("a note's full text is its title, so a cut-off note can still be read", () => {
+  mock.timers.enable({ apis: ["setTimeout"] });
+  try {
+    const note = { textContent: "", title: "" };
+    const long = "Error: no tmux window named Hephaestus in the fleet session, so nothing was selected";
+    say(note, long);
+    assert.equal(note.title, long);
+    mock.timers.tick(NOTE_MS);
+    assert.deepEqual([note.textContent, note.title], ["", ""], "cleared together");
+  } finally {
+    mock.timers.reset();
+  }
+});
