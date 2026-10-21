@@ -471,6 +471,15 @@ button:focus-visible { outline: 2px solid var(--card-focus); outline-offset: 2px
 .ledger-line { display: flex; align-items: center; gap: var(--space-4); min-width: 0; color: var(--text-dim); font-size: 12.5px; font-variant-numeric: tabular-nums; }
 .receipt { min-width: 0; }
 .r-short { display: none; }
+.partial {
+  flex: none;
+  padding: 0 var(--space-3);
+  border: 1px dashed var(--text-quiet);
+  border-radius: 999px;
+  color: var(--text-dim);
+  font-size: 12px;
+  cursor: default;
+}
 .chip {
   position: relative; /* its hit area reaches past the compact line */
   flex: none;
@@ -631,6 +640,7 @@ button:focus-visible { outline: 2px solid var(--card-focus); outline-offset: 2px
 [data-density="compact"] .receipt { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 [data-density="compact"] .r-short { display: inline; }
 [data-density="compact"] .chip { padding: 0 var(--space-3); line-height: 15px; }
+[data-density="compact"] .partial { line-height: 15px; }
 [data-density="compact"] .card:has(.note:not(:empty)) .ledger-line,
 [data-density="compact"] .card:has(.why:not([hidden])) .ledger-line { display: none; }
 

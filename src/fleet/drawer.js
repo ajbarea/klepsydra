@@ -3,8 +3,8 @@
 // figure is set as text; the only markup is built here from constants.
 import { identity } from "./model.js";
 import {
-  activeTime, cacheShare, costLine, fullNumber, plural, sumTotals, todaySessions, tokensByCharacter, topAttribution,
-  totalTokens,
+  activeTime, cacheShare, costLine, costText, fullNumber, modelName, plural, sumTotals, todaySessions, tokensByCharacter,
+  tokensByModel, topAttribution, totalTokens,
 } from "./ledger.js";
 
 const MIN_BAR_PX = 2; // a nonzero count never draws as nothing
@@ -161,7 +161,7 @@ export function createDrawer({ dialog, sessions, cast, fetchToday, home }) {
     } else if (filter !== null && totalTokens(day_.tokens) === 0) {
       out.push(el("p", "empty-state", "Nothing counted for this session today."));
     } else {
-      out.push(totalsSection(day_), charactersSection(shown, names), attributionSection(day, shown));
+      out.push(totalsSection(day_), charactersSection(shown, names), modelsSection(day, shown), attributionSection(day, shown));
     }
     out.push(blockedSection(guardrails, total, names), errorsSection(day_));
     const cost = costLine(day_.cost_usd_estimate_micros);
@@ -204,6 +204,26 @@ export function createDrawer({ dialog, sessions, cast, fetchToday, home }) {
       r.cells[1].setAttribute("aria-hidden", "true");
     }
     s.append(t);
+    return s;
+  }
+
+  function modelsSection(day, shown) {
+    const s = section("ledger-models", "Tokens by model");
+    const rows = tokensByModel(day.models, shown.map(([id]) => id));
+    if (!rows.length) {
+      s.append(el("p", "none", "No tokens by model today."));
+      return s;
+    }
+    s.append(el("p", "hint", "The estimate is Claude Code's local list-price figure, not your bill."));
+    s.append(
+      table(
+        "ledger-models-table",
+        "Tokens today by model",
+        ["Model", "Tokens", "Estimate"],
+        rows.map((r) => [modelName(r.name), fullNumber(r.tokens), costText(r.micros)]),
+        [1, 2],
+      ),
+    );
     return s;
   }
 

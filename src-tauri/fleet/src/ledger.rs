@@ -33,6 +33,15 @@ pub const VERSION: u32 = 1;
 /// Most names one session keeps per attribution kind; past it, tokens go
 /// under `OTHER`.
 pub const MAX_NAMES: usize = 32;
+/// Most models one session keeps; past it, tokens and cost go under `OTHER`.
+pub const MAX_MODELS: usize = 16;
+/// Most receiver gaps the state file keeps; past it the oldest goes.
+pub const MAX_GAPS: usize = 64;
+/// Where the overlay stamps the time, in epoch seconds, while the receiver is
+/// listening; the time since the last stamp is what a restart missed.
+pub const ALIVE_FILE: &str = "alive";
+/// How often the stamp is written.
+pub const ALIVE_EVERY: i64 = 60;
 /// Where tokens go once a session has `MAX_NAMES` names of one kind; in
 /// parentheses so no skill, plugin or server name can be it.
 pub const OTHER: &str = "(other)";
@@ -125,16 +134,32 @@ pub struct Attribution {
     pub mcp_servers: BTreeMap<String, u64>,
 }
 
-/// Add `n` to `name`, or to `OTHER` once `map` holds `MAX_NAMES` others.
-fn attribute(map: &mut BTreeMap<String, u64>, name: &str, n: u64) {
+/// The key `name` is kept under in `map`: itself, or `OTHER` once `map` holds
+/// `max` others.
+fn capped<'a, V>(map: &BTreeMap<String, V>, name: &'a str, max: usize) -> &'a str {
     let named = map.len() - usize::from(map.contains_key(OTHER));
-    let key = if map.contains_key(name) || named < MAX_NAMES {
+    if map.contains_key(name) || named < max {
         name
     } else {
         OTHER
-    };
+    }
+}
+
+/// Add `n` to `name`, or to `OTHER` once `map` holds `MAX_NAMES` others.
+fn attribute(map: &mut BTreeMap<String, u64>, name: &str, n: u64) {
+    let key = capped(map, name, MAX_NAMES);
     let slot = map.entry(key.to_string()).or_default();
     *slot = slot.saturating_add(n);
+}
+
+/// One model's share of a session's tokens and cost estimate (the `model`
+/// attribute of `token.usage` and `cost.usage`).
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct ModelTotals {
+    pub tokens: Tokens,
+    /// In millionths of a US dollar, as `Totals` keeps it.
+    pub cost_usd_estimate_micros: u64,
 }
 
 /// One local day's file.
@@ -148,6 +173,8 @@ pub struct Day {
     pub guardrails: Vec<Guardrail>,
     /// Tokens by skill, plugin and MCP server, per session.
     pub attribution: BTreeMap<String, Attribution>,
+    /// Tokens and cost by model, per session.
+    pub models: BTreeMap<String, BTreeMap<String, ModelTotals>>,
     /// Counted metric points that carried no `session.id`, and so no total.
     pub no_session: u64,
 }
@@ -162,6 +189,15 @@ struct Baseline {
     at: i64,
 }
 
+/// A stretch of time in which the receiver was not listening, in epoch
+/// seconds. A session alive during it may have lost exports.
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+struct Gap {
+    from: i64,
+    to: i64,
+}
+
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
 struct State {
@@ -171,6 +207,8 @@ struct State {
     /// Counted keys and when they were counted, in epoch seconds.
     seen: HashMap<u64, i64>,
     series: HashMap<u64, Baseline>,
+    /// When the receiver was down, oldest first.
+    gaps: Vec<Gap>,
 }
 
 /// What one export added.
@@ -237,6 +275,22 @@ fn classify(p: &Point) -> Option<(Field, f64)> {
         },
         _ => None,
     }
+}
+
+fn is_tokens(f: Field) -> bool {
+    matches!(
+        f,
+        Field::Input | Field::Output | Field::CacheRead | Field::CacheCreation
+    )
+}
+
+/// The epoch second `dir`'s `alive` file holds, if it is readable.
+fn read_alive(dir: &Path) -> Option<i64> {
+    std::fs::read_to_string(dir.join(ALIVE_FILE))
+        .ok()?
+        .trim()
+        .parse()
+        .ok()
 }
 
 impl Totals {
@@ -415,6 +469,8 @@ pub struct Ledger {
     day: Day,
     state: State,
     receiver: Option<Receiver>,
+    /// When `alive` was last written by this run.
+    alive_at: Option<i64>,
 }
 
 /// Whether the OTLP receiver is listening, for the wall to show.
@@ -482,6 +538,7 @@ impl Ledger {
                 ..State::default()
             },
             receiver: None,
+            alive_at: None,
         }
     }
 
@@ -505,6 +562,7 @@ impl Ledger {
             day: Day::default(),
             state,
             receiver: None,
+            alive_at: None,
         };
         ledger.start_day(now, &mut problems);
         (ledger, problems)
@@ -524,6 +582,56 @@ impl Ledger {
         let horizon = now - RETENTION_DAYS * DAY;
         self.state.sessions.retain(|_, t| t.updated_at >= horizon);
         self.state.series.retain(|_, b| b.at >= horizon);
+        self.state.gaps.retain(|g| g.to >= horizon);
+    }
+
+    /// The receiver started listening at `now`: the time since the last
+    /// stamp, or everything before now when there never was one, is a gap.
+    /// Stamps `alive` and saves.
+    pub fn note_listening(&mut self, now: i64) -> std::io::Result<()> {
+        let from = self
+            .dir
+            .as_deref()
+            .and_then(read_alive)
+            .map_or(0, |at| at.min(now));
+        self.state.gaps.push(Gap { from, to: now });
+        let horizon = now - RETENTION_DAYS * DAY;
+        self.state.gaps.retain(|g| g.to >= horizon);
+        let extra = self.state.gaps.len().saturating_sub(MAX_GAPS);
+        self.state.gaps.drain(..extra);
+        self.write_alive(now);
+        self.save()
+    }
+
+    fn write_alive(&mut self, now: i64) {
+        if let Some(dir) = &self.dir {
+            let _ = write_atomic(&dir.join(ALIVE_FILE), now.to_string().as_bytes());
+        }
+        self.alive_at = Some(now);
+    }
+
+    /// Write `alive` when the receiver is listening and `ALIVE_EVERY` has
+    /// passed since the last stamp. Nothing is stamped while it is not
+    /// listening, so that time reads as a gap at the next start. Returns
+    /// whether it wrote.
+    pub fn stamp_alive(&mut self, now: i64) -> bool {
+        if !self.receiver.as_ref().is_some_and(|r| r.listening) {
+            return false;
+        }
+        // A clock that went backwards stamps at once.
+        if self
+            .alive_at
+            .is_some_and(|at| (0..ALIVE_EVERY).contains(&(now - at)))
+        {
+            return false;
+        }
+        self.write_alive(now);
+        true
+    }
+
+    /// Whether `[from, to]` overlaps a time the receiver was not listening.
+    pub fn overlaps_gap(&self, from: i64, to: i64) -> bool {
+        self.state.gaps.iter().any(|g| from <= g.to && to >= g.from)
     }
 
     /// Move to `now`'s day when it is a new one.
@@ -564,6 +672,7 @@ impl Ledger {
             sessions,
             guardrails: _,
             attribution,
+            models,
             no_session,
         } = &self.day;
         let day = if current {
@@ -573,6 +682,7 @@ impl Ledger {
                 sessions: sessions.clone(),
                 guardrails: Vec::new(),
                 attribution: attribution.clone(),
+                models: models.clone(),
                 no_session: *no_session,
             }
         } else {
@@ -629,6 +739,7 @@ impl Ledger {
         let dropped = cap_sessions(&mut self.day.sessions, session);
         for id in dropped {
             self.day.attribution.remove(&id);
+            self.day.models.remove(&id);
         }
         cap_sessions(&mut self.state.sessions, session);
     }
@@ -649,6 +760,25 @@ impl Ledger {
                 attribute(map, name, n);
             }
         }
+    }
+
+    /// Credit a counted `token.usage` or `cost.usage` point's `n` to its
+    /// `model`, if it names one.
+    fn credit_model(&mut self, session: &str, p: &Point, field: Field, n: u64) {
+        let Some(model) = p.attrs.get("model") else {
+            return;
+        };
+        let models = self.day.models.entry(session.to_string()).or_default();
+        let key = capped(models, model, MAX_MODELS).to_string();
+        let m = models.entry(key).or_default();
+        let slot = match field {
+            Field::Input => &mut m.tokens.input,
+            Field::Output => &mut m.tokens.output,
+            Field::CacheRead => &mut m.tokens.cache_read,
+            Field::CacheCreation => &mut m.tokens.cache_creation,
+            _ => &mut m.cost_usd_estimate_micros,
+        };
+        *slot = slot.saturating_add(n);
     }
 
     /// Count the points of one metrics export.
@@ -723,11 +853,11 @@ impl Ledger {
                 continue;
             };
             self.add(session, field, n, now);
-            if matches!(
-                field,
-                Field::Input | Field::Output | Field::CacheRead | Field::CacheCreation
-            ) {
+            if is_tokens(field) {
                 self.attribute(session, p, n);
+            }
+            if is_tokens(field) || field == Field::Cost {
+                self.credit_model(session, p, field, n);
             }
             tally.counted += 1;
         }
@@ -1474,5 +1604,200 @@ mod tests {
         let v = serde_json::to_value(l.today_view(NOW, None)).unwrap();
         assert_eq!(v["receiver"]["error"], "taken");
         assert_eq!(v["day"]["day"], "2026-10-20");
+    }
+
+    /// A delta `cost.usage` point of `usd` dollars for `model`.
+    fn cost_at(session: &str, usd: f64, end: u64, model: &str) -> Value {
+        let ns = (end * 1_000_000_000).to_string();
+        let a = json!([
+            {"key":"session.id","value":{"stringValue":session}},
+            {"key":"model","value":{"stringValue":model}},
+        ]);
+        json!({"resourceMetrics":[{"scopeMetrics":[{"metrics":[{"name":"claude_code.cost.usage","sum":{"aggregationTemporality":1,"dataPoints":[{"attributes":a,"startTimeUnixNano":ns,"timeUnixNano":ns,"asDouble":usd}]}}]}]}]})
+    }
+
+    #[test]
+    fn tokens_and_cost_are_kept_per_session_and_model() {
+        let mut l = Ledger::in_memory(NOW);
+        let now = NOW as u64;
+        let opus = [("model", "claude-opus-5-5")];
+        let haiku = [("model", "claude-haiku-5")];
+        l.record_metrics(
+            &metrics(&tokens_at("s1", "cacheRead", 900, now, &opus)),
+            NOW,
+        );
+        l.record_metrics(
+            &metrics(&tokens_at("s1", "output", 40, now - 1, &opus)),
+            NOW,
+        );
+        l.record_metrics(&metrics(&tokens_at("s1", "input", 7, now - 2, &haiku)), NOW);
+        l.record_metrics(
+            &metrics(&cost_at("s1", 0.5, now - 3, "claude-opus-5-5")),
+            NOW,
+        );
+        // No model attribute: counted in the totals, under no model.
+        l.record_metrics(&metrics(&tokens_at("s1", "output", 5, now - 4, &[])), NOW);
+        // A retried export counts once, models included.
+        let again = l.record_metrics(&metrics(&tokens_at("s1", "input", 7, now - 2, &haiku)), NOW);
+        assert_eq!(again.duplicate, 1);
+
+        let m = &l.day().models["s1"];
+        assert_eq!(m.len(), 2);
+        let opus = &m["claude-opus-5-5"];
+        assert_eq!((opus.tokens.cache_read, opus.tokens.output), (900, 40));
+        assert_eq!(opus.cost_usd_estimate_micros, 500_000);
+        assert_eq!(m["claude-haiku-5"].tokens.input, 7);
+        assert_eq!(m["claude-haiku-5"].cost_usd_estimate_micros, 0);
+        assert_eq!(l.day().sessions["s1"].tokens.output, 45);
+    }
+
+    #[test]
+    fn models_past_the_cap_fold_into_other() {
+        let mut l = Ledger::in_memory(NOW);
+        for n in 0..(MAX_MODELS as u64 + 4) {
+            let name = format!("model-{n:03}");
+            let p = tokens_at("s1", "output", 1, NOW as u64 - n, &[("model", &name)]);
+            l.record_metrics(&metrics(&p), NOW);
+        }
+        let m = &l.day().models["s1"];
+        assert_eq!(m.len(), MAX_MODELS + 1);
+        assert_eq!(m[OTHER].tokens.output, 4);
+        // A kept model still counts under its own name, cost too.
+        l.record_metrics(
+            &metrics(&cost_at("s1", 1.0, NOW as u64 + 1, "model-000")),
+            NOW,
+        );
+        assert_eq!(
+            l.day().models["s1"]["model-000"].cost_usd_estimate_micros,
+            1_000_000
+        );
+        assert_eq!(l.day().models["s1"].len(), MAX_MODELS + 1);
+    }
+
+    #[test]
+    fn a_dropped_session_takes_its_models_with_it() {
+        let mut l = Ledger::in_memory(NOW);
+        for n in 0..(MAX_SESSIONS as u64 + 3) {
+            let p = tokens_at(
+                &format!("s{n}"),
+                "output",
+                1,
+                NOW as u64,
+                &[("model", "claude-opus-5-5")],
+            );
+            l.record_metrics(&metrics(&p), NOW + n as i64);
+        }
+        let day = l.day();
+        assert!(day.models.len() <= MAX_SESSIONS);
+        assert!(day.models.keys().all(|id| day.sessions.contains_key(id)));
+        assert!(day.models.contains_key(&format!("s{}", MAX_SESSIONS + 2)));
+    }
+
+    #[test]
+    fn a_day_file_without_models_loads_and_one_with_them_round_trips() {
+        let dir = Scratch::new("ledger-models");
+        dir.write("2026-10-20.json", r#"{"day":"2026-10-20","sessions":{}}"#);
+        let (mut l, problems) = Ledger::open(dir.0.clone(), NOW, TimeZone::UTC);
+        assert!(problems.is_empty(), "{problems:?}");
+        assert!(l.day().models.is_empty());
+        let p = tokens_at("s1", "output", 3, NOW as u64, &[("model", "m")]);
+        l.record_metrics(&metrics(&p), NOW);
+        l.save().unwrap();
+        let (again, _) = Ledger::open(dir.0.clone(), NOW, TimeZone::UTC);
+        assert_eq!(again.day().models["s1"]["m"].tokens.output, 3);
+        // The wall's view carries them too.
+        assert_eq!(
+            l.today_view(NOW, None).day.models["s1"]["m"].tokens.output,
+            3
+        );
+    }
+
+    fn listening() -> Receiver {
+        Receiver {
+            addr: "127.0.0.1:4318".into(),
+            listening: true,
+            error: None,
+        }
+    }
+
+    #[test]
+    fn the_first_listen_ever_records_everything_before_it_as_a_gap() {
+        let dir = Scratch::new("ledger-gap-first");
+        let (mut l, _) = Ledger::open(dir.0.clone(), NOW, TimeZone::UTC);
+        assert!(!l.overlaps_gap(0, NOW));
+        l.note_listening(NOW).unwrap();
+        assert!(l.overlaps_gap(NOW - 1000, NOW - 500));
+        assert!(!l.overlaps_gap(NOW + 1, NOW + 100));
+        assert_eq!(
+            std::fs::read_to_string(dir.0.join(ALIVE_FILE)).unwrap(),
+            NOW.to_string()
+        );
+    }
+
+    #[test]
+    fn the_time_since_the_last_stamp_is_a_gap_and_survives_a_restart() {
+        let dir = Scratch::new("ledger-gap");
+        let (mut l, _) = Ledger::open(dir.0.clone(), NOW, TimeZone::UTC);
+        l.note_listening(NOW).unwrap();
+        l.set_receiver(listening());
+        assert!(l.stamp_alive(NOW + 60));
+        // Not stamped again inside the interval.
+        assert!(!l.stamp_alive(NOW + 61));
+        assert!(l.stamp_alive(NOW + 120));
+        // The overlay is gone for ten minutes, then listens again.
+        let back = NOW + 120 + 600;
+        let (mut l, _) = Ledger::open(dir.0.clone(), back, TimeZone::UTC);
+        l.note_listening(back).unwrap();
+        assert!(l.overlaps_gap(NOW + 300, NOW + 301));
+        assert!(
+            !l.overlaps_gap(NOW + 60, NOW + 110),
+            "the overlay was running"
+        );
+        assert!(!l.overlaps_gap(back + 1, back + 50));
+        // Inclusive at both ends: a session ending as the overlay went away.
+        assert!(l.overlaps_gap(NOW, NOW + 120));
+        // Saved with the state, so a third start still knows it.
+        let (l, _) = Ledger::open(dir.0.clone(), back + 5, TimeZone::UTC);
+        assert!(l.overlaps_gap(NOW + 300, NOW + 301));
+    }
+
+    #[test]
+    fn nothing_is_stamped_while_the_receiver_is_not_listening() {
+        let dir = Scratch::new("ledger-gap-down");
+        let (mut l, _) = Ledger::open(dir.0.clone(), NOW, TimeZone::UTC);
+        assert!(!l.stamp_alive(NOW));
+        l.set_receiver(Receiver {
+            addr: "127.0.0.1:4318".into(),
+            listening: false,
+            error: Some("address in use".into()),
+        });
+        assert!(!l.stamp_alive(NOW + 600));
+        assert!(!dir.0.join(ALIVE_FILE).exists());
+    }
+
+    #[test]
+    fn gaps_are_capped_and_pruned_with_the_retention() {
+        let dir = Scratch::new("ledger-gap-cap");
+        let (mut l, _) = Ledger::open(dir.0.clone(), NOW, TimeZone::UTC);
+        for n in 0..(MAX_GAPS as i64 + 5) {
+            l.note_listening(NOW + n * 10).unwrap();
+        }
+        assert_eq!(l.state.gaps.len(), MAX_GAPS);
+        // The oldest went: the first start's gap from 0 is no more.
+        assert!(!l.overlaps_gap(0, 5));
+        // A gap older than the retention goes with the next listen.
+        let late = NOW + (RETENTION_DAYS + 2) * DAY;
+        l.note_listening(late).unwrap();
+        assert!(!l.overlaps_gap(NOW, NOW + 500));
+        assert_eq!(l.state.gaps.len(), 1);
+    }
+
+    #[test]
+    fn a_state_file_without_gaps_loads() {
+        let dir = Scratch::new("ledger-gap-old");
+        dir.write(STATE_FILE, r#"{"version":1,"sessions":{}}"#);
+        let (l, problems) = Ledger::open(dir.0.clone(), NOW, TimeZone::UTC);
+        assert!(problems.is_empty(), "{problems:?}");
+        assert!(!l.overlaps_gap(0, NOW));
     }
 }

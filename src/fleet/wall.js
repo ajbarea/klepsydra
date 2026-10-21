@@ -144,7 +144,7 @@ function paint(el, c) {
   setOff(clear, false);
 }
 
-// The receipt and the guardrail chip share one line, hidden when both are empty.
+// The receipt, the partial mark and the guardrail chip share one line, hidden when all are empty.
 function paintLedger(el, c) {
   const line = el.querySelector(".ledger-line");
   line.hidden = !c.ledger;
@@ -153,6 +153,11 @@ function paintLedger(el, c) {
   setText(receipt.querySelector(".r-full"), c.ledger?.full);
   setText(receipt.querySelector(".r-short"), c.ledger?.short);
   receipt.title = c.ledger?.full ?? "";
+  const partial = el.querySelector(".partial");
+  show(partial, c.ledger?.partial?.text);
+  partial.title = c.ledger?.partial?.label ?? "";
+  if (c.ledger?.partial) partial.setAttribute("aria-label", c.ledger.partial.label);
+  else partial.removeAttribute("aria-label");
   const chip = el.querySelector(".chip");
   chip.hidden = !c.ledger?.chip;
   chip.dataset.id = c.id;

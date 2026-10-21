@@ -224,6 +224,7 @@ mod tests {
             claude: claude.map(|(pid, start)| Claude { pid, start }),
             background: Crew::default(),
             ledger: None,
+            ledger_partial: false,
             marks: Default::default(),
         }
     }

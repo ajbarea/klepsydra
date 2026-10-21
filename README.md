@@ -630,9 +630,16 @@ separately.
   arguments unless `OTEL_LOG_TOOL_DETAILS` is set. The exports still carry
   your account email and organization ID as attributes; klepsydra does not
   store them.
-- **Cost is an estimate.** Claude Code's `cost.usage` is what the tokens would
-  cost at API prices. On a Pro or Max plan it is not money spent, so the
-  ledger stores it as `cost_usd_estimate_micros`.
+- **Cost is an estimate.** Claude Code's `cost.usage` is its local list-price
+  estimate: it works the figure out on your machine from token counts at
+  standard list rates, so it can differ from your bill. On a Pro or Max plan
+  it is not money spent. The ledger stores it as `cost_usd_estimate_micros`,
+  and the Console usage page or claude.ai usage settings are the billing
+  record ([Claude Code costs](https://code.claude.com/docs/en/costs)).
+- **Tokens by model.** Each day file keeps, per session, the four token types
+  and the cost estimate for every `model` the session used (`models`), at most
+  16 per session; the rest are added under `(other)`. The drawer's "Tokens by
+  model" table sums them over the sessions it shows.
 - **Where it is kept.** One file per local calendar day in `ledger/` under
   the app data dir, such as `ledger/2026-10-20.json`, written whole each time.
   Files more than 30 local days old are deleted. `ledger/state.json` holds each session's running
@@ -642,6 +649,34 @@ separately.
   port 4318, klepsydra logs it to `fleet.log` and exposes it in the fleet
   view as `receiver`, and the drawer shows it. It runs without
   the ledger and tries the port again every 30 seconds.
+- **Partial sessions.** While the receiver listens, the overlay stamps
+  `ledger/alive` with the time every 60 seconds. When the receiver next starts
+  listening, the time since the last stamp (everything before it, on the first
+  run ever) is recorded as a gap in `ledger/state.json` (at most 64, kept 30
+  days). A session that was alive during a gap wears a dashed "partial" mark
+  on its receipt: some of its telemetry was not received because klepsydra was
+  not running for part of it. The mark says nothing about a session that was
+  merely idle.
+- **Checking the ledger against the transcripts.** `ledger-verify` sets a
+  day's ledger against the usage Claude Code writes to its own transcripts
+  (`~/.claude*/projects/*/<session>.jsonl` and `<session>/subagents/*.jsonl`;
+  the largest `message.usage` per message id, counted on the local day of its
+  timestamp). It prints, per session, the ledger and transcript counts of each
+  token type with the percent difference, and exits 1 when any session's
+  ledger is more than 2% lower on `cache_read` or `cache_creation`, which
+  means exports were lost. A ledger that is higher is expected (it also sees
+  calls that never reach a transcript, such as side calls on smaller models)
+  and is only reported. From WSL:
+
+  ```bash
+  cd src-tauri && cargo run -q -p klepsydra-fleet --bin ledger-verify -- \
+    --ledger /mnt/c/Users/$USER/AppData/Local/dev.ajsoftworks.klepsydra/ledger \
+    --day 2026-10-21
+  ```
+
+  `--projects DIR` (repeatable) replaces the default of every
+  `~/.claude*/projects`, and `--tz ZONE` the machine's time zone. It runs on a
+  recorded fixture in `cargo test -p klepsydra-fleet`.
 
 On the wall, each card with something to count has a receipt line, such as
 `+312 −40 lines · 2 commits · 1 PR · 1.2M tokens (86% cached)`, which is
@@ -650,8 +685,8 @@ parts. A chip such as "3 blocked" counts the tool calls a hook or a
 permission rule turned down in that session, and opens the drawer for it. The
 **Ledger** button in the header opens the drawer for every session: today's
 totals, tokens per character, tokens by skill, plugin and MCP server, the
-list of blocked tool calls, API errors and refusals, and one dim line with
-the cost as an API-price estimate. Every chart has a table beside it. Claude
+tokens by model, the list of blocked tool calls, API errors and refusals, and
+one dim line with the cost as Claude Code's local list-price estimate. Every chart has a table beside it. Claude
 Code redacts third-party plugin and skill names, and MCP servers you
 configured, so the drawer labels those "third-party" and "custom". The
 drawer is local and reads only today's file.

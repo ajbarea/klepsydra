@@ -190,10 +190,24 @@ const LAUNCHER = "src-tauri/src/launch.rs";
 const launcherHazards = (text) =>
   [/"--"/, /"-c"/, /^\s*use\b[^;]*\bas\s+\w+\s*;/m].filter((re) => re.test(text)).map(String);
 
+// A dev-only binary that is never linked into the app. It may name the exit
+// code type, which is the one thing here that is not starting a process.
+const EXIT_CODE_BINARIES = ["src-tauri/fleet/src/bin/ledger-verify.rs"];
+const withoutExitCode = (text) => text.replaceAll("std::process::ExitCode", "");
+
 test("only the launcher starts a process", () => {
   assert.ok(RUST.includes(LAUNCHER), `${LAUNCHER} not found`);
   for (const f of [...RUST, ...FRONTEND, ...MANIFESTS, ...CONFIG].filter((f) => f !== LAUNCHER)) {
-    assert.deepEqual(spawns(read(f)), [], f);
+    const text = read(f);
+    assert.deepEqual(spawns(EXIT_CODE_BINARIES.includes(f) ? withoutExitCode(text) : text), [], f);
+  }
+  for (const f of EXIT_CODE_BINARIES) assert.ok(RUST.includes(f), `${f} not found`);
+});
+
+test("the exit-code allowance covers nothing else that starts a process", () => {
+  assert.deepEqual(spawns(withoutExitCode("use std::process::ExitCode;")), []);
+  for (const planted of ["std::process::Command::new(x)", "use std::process::{Command, ExitCode};", "std::process::exit(1)"]) {
+    assert.notDeepEqual(spawns(withoutExitCode(planted)), [], planted);
   }
 });
 
@@ -419,7 +433,8 @@ test("the hooks make no sound", () => {
 const NOT_SCANNED = {
   "hooks/fixtures/": "recorded hook payloads, data",
   "statusline/fixtures/": "recorded status line payloads, data",
-  "src-tauri/fleet/tests/fixtures/": "recorded OTLP exports, data",
+  "src-tauri/fleet/tests/fixtures/": "recorded OTLP exports, transcripts and ledger days, data",
+  "src-tauri/fleet/tests/ledger_verify.rs": "runs the dev-only ledger-verify binary; a test, never in the app",
   "src/fleet/faces/": "generated portraits and their license table, data",
   "src/fleet/fonts/": "the nameplate's bundled typeface and its licence, data",
   "src/fleet/cast.json": "voice to portrait table, data",

@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  NAME_CAP, OTHER, activeTime, attributionName, cacheShare, chipLabel, compactNumber, compactPick, costLine, fullNumber,
+  MODEL_CAP, NAME_CAP, OTHER, PARTIAL_LABEL, costText, modelName, tokensByModel, activeTime, attributionName, cacheShare, chipLabel, compactNumber, compactPick, costLine, fullNumber,
   ledgerLine, receiptParts, receiptText, sumTotals, todaySessions, tokensByCharacter, topAttribution, totalTokens,
 } from "./fleet/ledger.js";
 
@@ -88,8 +88,10 @@ test("active time, counts and the cost line print plainly", () => {
   assert.equal(activeTime(125 * 60_000), "2h 05m");
   assert.equal(fullNumber(1234567), "1,234,567");
   assert.equal(costLine(0), null);
-  assert.equal(costLine(1_234_567), "≈ $1.23 API-equivalent (an estimate, not your bill)");
-  assert.match(costLine(500), /under \$0\.01/);
+  assert.match(costLine(500), /^≈ under \$0\.01 /);
+  assert.equal(costText(1_234_567), "$1.23");
+  assert.equal(costText(500), "under $0.01");
+  assert.equal(costText(0), "none");
 });
 
 test("tokens by character sum a character's sessions, largest first, and fold the unknown", () => {
@@ -129,4 +131,53 @@ test("the top attribution rows merge sessions, rank and count the rest", () => {
   assert.deepEqual([top.more, top.moreTokens], [1, 1]);
   assert.deepEqual(topAttribution(attribution, "mcp_servers", ["a", "b", "c"]), { rows: [], more: 0, moreTokens: 0 });
   assert.deepEqual(topAttribution(undefined, "skills", ["a"]).rows, []);
+});
+
+test("the cost line says whose estimate it is and where the bill is", () => {
+  const line = costLine(1_234_567);
+  assert.ok(line.startsWith("≈ $1.23 "), line);
+  assert.match(line, /Claude Code's local list-price estimate/);
+  assert.match(line, /not your bill/);
+  assert.match(line, /Console usage page or claude\.ai usage settings/);
+  assert.ok(!line.includes("\u2014"), "no em-dash");
+});
+
+test("a partial session shows a short mark with the reason in full", () => {
+  assert.equal(PARTIAL_LABEL, "Some telemetry for this session was not received: klepsydra was not running for part of it.");
+  assert.deepEqual(ledgerLine({ commits: 1 }, true).partial, { text: "partial", label: PARTIAL_LABEL });
+  assert.equal(ledgerLine({ commits: 1 }).partial, null);
+  assert.equal(ledgerLine({ commits: 1 }, false).partial, null);
+  // The mark is on the line even when nothing else is, but never without a ledger.
+  const alone = ledgerLine({ tokens: {}, commits: 0 }, true);
+  assert.equal(alone.full, "");
+  assert.equal(alone.partial.text, "partial");
+  assert.equal(ledgerLine(undefined, true), null);
+  // It does not cost the receipt a part: the compact fit budget stays three.
+  const full = ledgerLine({ commits: 2, pull_requests: 1, lines_added: 1, tokens: { input: 1 } }, true);
+  assert.equal(full.short, "+1 \u22120 lines \u00b7 2 commits \u00b7 1 PR");
+});
+
+test("tokens by model add a model's sessions, largest first, with its estimate", () => {
+  const models = {
+    a: { "claude-opus-5-5": { tokens: { input: 1, output: 2, cache_read: 3, cache_creation: 4 }, cost_usd_estimate_micros: 1_500_000 }, "claude-haiku-5": { tokens: { input: 100 }, cost_usd_estimate_micros: 500 } },
+    b: { "claude-opus-5-5": { tokens: { output: 10 }, cost_usd_estimate_micros: 250_000 }, "(other)": { tokens: { input: 1 } } },
+    c: { "claude-opus-5-5": { tokens: { output: 999 } } },
+  };
+  assert.deepEqual(tokensByModel(models, ["a", "b"]), [
+    { name: "claude-opus-5-5", tokens: 20, micros: 1_750_000 },
+    { name: "claude-haiku-5", tokens: 100, micros: 500 },
+    { name: "(other)", tokens: 1, micros: 0 },
+  ].sort((x, y) => y.tokens - x.tokens || x.name.localeCompare(y.name)));
+  assert.deepEqual(tokensByModel(models, ["zzz"]), []);
+  assert.deepEqual(tokensByModel(undefined, ["a"]), []);
+  // A model with no tokens and no cost is not a row.
+  assert.deepEqual(tokensByModel({ a: { m: { tokens: {} } } }, ["a"]), []);
+});
+
+test("the model cap is named honestly and matches ledger.rs", async () => {
+  assert.match(modelName("(other)"), /^other \(past the 16 models/);
+  assert.equal(modelName("claude-opus-5-5"), "claude-opus-5-5");
+  const { readFileSync } = await import("node:fs");
+  const rust = readFileSync(new URL("../src-tauri/fleet/src/ledger.rs", import.meta.url), "utf8");
+  assert.match(rust, new RegExp(`pub const MAX_MODELS: usize = ${MODEL_CAP};`));
 });

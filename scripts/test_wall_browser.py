@@ -356,6 +356,47 @@ def receipt_text(wall):
     page.close()
 
 
+PARTIAL_SENTENCE = "Some telemetry for this session was not received: klepsydra was not running for part of it."
+PARTIAL_STATE = """() => {
+  const marks = [...document.querySelectorAll('.partial')].filter((m) => !m.hidden);
+  return marks.map((m) => {
+    const line = m.closest('.ledger-line').getBoundingClientRect();
+    const r = m.getBoundingClientRect();
+    const card = m.closest('.card');
+    return {
+      text: m.textContent, title: m.title, label: m.getAttribute('aria-label'), role: m.getAttribute('role'),
+      inside: r.width > 0 && r.left >= line.left - 0.5 && r.right <= line.right + 0.5,
+      clipped: m.scrollWidth > m.clientWidth,
+      oneLine: r.height < 24,
+      cardTall: card.getBoundingClientRect().height.toFixed(1),
+    };
+  });
+}"""
+
+
+def partial_mark(wall):
+    """A session whose ledger_partial is set wears a short mark, named in full,
+    inside its ledger line in both densities; the rest wear none."""
+    page = wall.open(1920, 2000, 16)
+    for density in ("compact", "comfortable"):
+        page.click(f".density label:has([value={density}])")
+        page.wait_for_timeout(SETTLE_MS)
+        got = page.evaluate(PARTIAL_STATE)
+        one = len(got) == 1
+        ok = (
+            one
+            and got[0]["text"] == "partial"
+            and got[0]["title"] == PARTIAL_SENTENCE
+            and got[0]["label"] == PARTIAL_SENTENCE
+            and got[0]["role"] == "img"
+            and got[0]["inside"]
+            and not got[0]["clipped"]
+            and got[0]["oneLine"]
+        )
+        wall.check(ok, f"the partial mark is short, named in full and fits ({density})", got)
+    page.close()
+
+
 def chip_name(wall):
     """The chip's accessible name says what was blocked; its short text is hidden from readers."""
     page = wall.open(1920, 1000, 16)
@@ -459,6 +500,7 @@ def drawer_tables(wall):
         and len(got["rows"]) >= 10
         and all(r[1] == "true" and r[2] == 1 and r[3].replace(",", "").isdigit() for r in got["rows"])
         and "Tokens today by character" in names
+        and "Tokens today by model" in names
         and "Tokens today by skill" in names
         and "Tokens today by plugin" in names
         and "Tokens today by MCP server" in names
@@ -470,9 +512,21 @@ def drawer_tables(wall):
         and len(got["cost"]) == 1
         and got["cost"][0].startswith("\u2248 $")
         and "not your bill" in got["cost"][0]
+        and "local list-price estimate" in got["cost"][0]
+        and "Console usage page or claude.ai usage settings" in got["cost"][0]
         and not got["scrollsX"]
     )
     wall.check(ok, "the drawer's tables, bars and cost line", {k: got[k] for k in ("heads", "cost", "textOnAccent", "links")} | {"tables": names, "rows": len(got["rows"])})
+    models = page.evaluate(
+        """() => [...document.querySelectorAll('#ledger-models-table tbody tr')].map((r) => [...r.cells].map((c) => c.textContent))"""
+    )
+    heads = page.evaluate("[...document.querySelectorAll('#ledger-models-table thead th')].map((h) => h.textContent)")
+    ok = (
+        heads == ["Model", "Tokens", "Estimate"]
+        and [m[0] for m in models] == ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5"]
+        and all(m[1].replace(",", "").isdigit() and m[2].startswith("$") for m in models)
+    )
+    wall.check(ok, "tokens by model: a real table, largest first, with an estimate", [heads, models])
     text = page.inner_text("#ledger")
     labels = (
         "third-party (names redacted by Claude Code)" in text
@@ -784,6 +838,7 @@ def main() -> int:
             note_clear_of_exchange,
             ledger_line_clear_of_text,
             receipt_text,
+            partial_mark,
             chip_name,
             drawer_opens_and_returns_focus,
             drawer_tables,

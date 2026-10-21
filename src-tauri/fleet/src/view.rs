@@ -94,6 +94,10 @@ pub struct View {
     /// from it; left out of the JSON otherwise.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ledger: Option<Totals>,
+    /// The session was alive while the receiver was not listening, so its
+    /// telemetry may be missing some exports; left out of the JSON when not.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub ledger_partial: bool,
     #[serde(skip)]
     pub marks: Marks,
 }
@@ -255,6 +259,7 @@ pub fn view(entry: &Entry, now: i64) -> Option<View> {
             Crew::default()
         },
         ledger: None,
+        ledger_partial: false,
         marks: Marks {
             state_at: f.state_at,
             turns: f.counted_turns(),
