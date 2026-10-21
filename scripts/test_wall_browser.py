@@ -6,7 +6,9 @@ take the rest). In Auto, sixteen demo cards fit the first and eight the
 second, compact, in four and two columns, with no vertical scrollbar and the
 ring key in view. Auto never leaves a comfortable wall scrolling: not when a
 card grows, not at an exact fit, not where the comfortable bar is taller than
-the compact one. A note on a compact card never covers its exchange.
+the compact one. A note on a compact card never covers its exchange. The ledger line and
+chip fit the compact foot slot, and the ledger drawer opens, closes and gives
+focus back.
 
     uv run -q --no-project --with playwright python -I scripts/test_wall_browser.py
 
@@ -55,8 +57,20 @@ class Wall:
     def __init__(self, browser, port):
         self.browser, self.port, self.failed, self.passed = browser, port, 0, 0
 
-    def open(self, width, height, cards, fixture=None):
+    def open(self, width, height, cards, fixture=None, ledger=None):
         page = self.browser.new_page(viewport={"width": width, "height": height})
+        self.ledger_requests = 0
+
+        def count(route):
+            self.ledger_requests += 1
+            if ledger is None:
+                route.continue_()
+            else:
+                route.fulfill(
+                    status=200, content_type="application/json", body=ledger
+                )
+
+        page.route("**/ledger-demo.json", count)
         if fixture:
             page.route(
                 "**/fleet-demo.json",
@@ -246,6 +260,263 @@ def note_clear_of_exchange(wall):
     page.close()
 
 
+DRAWER_OPEN = "document.getElementById('ledger').open"
+ACTIVE = """() => {
+  const a = document.activeElement;
+  const card = a.closest('.card');
+  return { id: a.id, cls: a.className, card: card ? card.querySelector('.name').textContent : null };
+}"""
+
+
+def ledger_view(**changes):
+    """The ledger sample as a string, with `changes` laid over it."""
+    view = json.loads((ROOT / "scripts/fixtures/ledger-demo.json").read_text())
+    view.update(changes)
+    return json.dumps(view)
+
+
+def open_drawer(page):
+    page.click("#ledger-open")
+    page.wait_for_selector("#ledger .ledger-content table, #ledger .empty-state")
+
+
+def ledger_line_clear_of_text(wall):
+    """A compact card's ledger line sits in the foot slot: clear of every
+    text, inside the card, and gone while a note shows."""
+    page = wall.open(1920, 1000, 16)
+    got = page.evaluate(
+        """() => {
+      const hit = (a, b) => a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
+      const out = { lines: 0, overlaps: [], tall: new Set(), long: 0, chips: 0 };
+      for (const card of document.querySelectorAll('.card')) {
+        const line = card.querySelector('.ledger-line');
+        out.tall.add(card.getBoundingClientRect().height.toFixed(1));
+        if (getComputedStyle(line).display === 'none' || line.hidden) continue;
+        out.lines++;
+        const l = line.getBoundingClientRect();
+        if (l.bottom > card.getBoundingClientRect().bottom) out.overlaps.push('outside');
+        for (const el of card.querySelectorAll('.said p, .ask, .meta, .name, .task, .pill, .jump')) {
+          const r = el.getBoundingClientRect();
+          if (r.height && getComputedStyle(el).display !== 'none' && hit(l, r)) out.overlaps.push(el.className);
+        }
+        const short = card.querySelector('.r-short').textContent;
+        if (short.split(' \u00b7 ').length > 3) out.long++;
+        if (!card.querySelector('.chip').hidden) out.chips++;
+        // A note takes the slot.
+        card.querySelector('.note').textContent = 'Opened';
+        if (getComputedStyle(line).display !== 'none') out.overlaps.push('shown with a note');
+        card.querySelector('.note').textContent = '';
+      }
+      out.tall = [...out.tall];
+      return out;
+    }"""
+    )
+    ok = (
+        got["lines"] >= 8
+        and not got["overlaps"]
+        and got["long"] == 0
+        and got["chips"] >= 3
+        and len(got["tall"]) == 1
+    )
+    wall.check(ok, "compact ledger lines clear of the text, one card height", got)
+    page.close()
+
+
+def receipt_text(wall):
+    """Comfortable cards say the whole receipt; compact ones the top three;
+    an all-zero session has no line."""
+    page = wall.open(1920, 2000, 16)
+    page.click(".density label:has([value=comfortable])")
+    page.wait_for_timeout(SETTLE_MS)
+    got = page.evaluate(
+        """() => {
+      const find = (name) => [...document.querySelectorAll('.card')].find((c) => c.querySelector('.name').textContent === name);
+      const text = (name) => find(name).querySelector('.r-full').textContent;
+      const visible = (name) => !find(name).querySelector('.ledger-line').hidden && getComputedStyle(find(name).querySelector('.ledger-line')).display !== 'none';
+      return {
+        hephaestus: text('Hephaestus'),
+        techne: text('Techne'),
+        zero: visible('Dokimasia'),
+        none: visible('Nightly corpus rebuild'),
+        shortHidden: getComputedStyle(find('Techne').querySelector('.r-short')).display,
+      };
+    }"""
+    )
+    ok = (
+        got["hephaestus"]
+        == "+312 \u221240 lines \u00b7 2 commits \u00b7 1 PR \u00b7 1.2M tokens (86% cached)"
+        and got["techne"].startswith("+1.5k \u2212310 lines \u00b7 6 commits \u00b7 2 PRs")
+        and got["zero"] is False
+        and got["none"] is False
+        and got["shortHidden"] == "none"
+    )
+    wall.check(ok, "receipt lines: full when comfortable, absent when all zero", got)
+    page.close()
+
+
+def chip_name(wall):
+    """The chip's accessible name says what was blocked; its short text is hidden from readers."""
+    page = wall.open(1920, 1000, 16)
+    chip = page.get_by_role("button", name="3 tool calls blocked by guardrails")
+    one = page.get_by_role("button", name="1 tool call blocked by guardrails")
+    got = page.evaluate(
+        """() => [...document.querySelectorAll('.chip')].map((c) => [c.querySelector('.c-short').textContent, c.querySelector('.c-short').getAttribute('aria-hidden')])"""
+    )
+    four = page.get_by_role("button", name="4 tool calls blocked by guardrails")
+    ok = chip.count() == 1 and one.count() == 1 and four.count() == 1 and all(h == "true" for _, h in got)
+    wall.check(ok, "the guardrail chip is named in full", [chip.count(), one.count(), got[:3]])
+    page.close()
+
+
+def drawer_opens_and_returns_focus(wall):
+    """The header button and a chip open a modal dialog; Esc and Close shut
+    it and focus goes back to the opener."""
+    page = wall.open(1920, 1000, 16)
+    page.focus("#ledger-open")
+    page.keyboard.press("Enter")
+    page.wait_for_selector("#ledger .ledger-content table")
+    named = page.get_by_role("dialog", name="Ledger").count()
+    inert = page.evaluate("document.querySelector('#ledger:modal') !== null")
+    page.keyboard.press("Escape")
+    page.wait_for_function(f"!{DRAWER_OPEN}")
+    from_button = page.evaluate(ACTIVE)
+    wall.check(
+        named == 1 and inert and from_button["id"] == "ledger-open",
+        "the Ledger button opens a named modal; Esc returns focus to it",
+        [named, inert, from_button],
+    )
+
+    chip = page.locator(".card:has(.name:text-is('Kallos')) .chip")
+    chip.focus()
+    page.keyboard.press("Enter")
+    page.wait_for_selector("#ledger .scope")
+    scope = page.inner_text("#ledger .scope")
+    blocked = page.locator("#ledger-blocked-table tbody tr")
+    who = {c.inner_text() for c in page.locator("#ledger-blocked-table tbody tr td:nth-child(2)").all()}
+    page.click("#ledger .ledger-close")
+    page.wait_for_function(f"!{DRAWER_OPEN}")
+    from_chip = page.evaluate(ACTIVE)
+    ok = (
+        "Showing Kallos only" in scope
+        and blocked.count() == 3
+        and who == {"Kallos"}
+        and from_chip["card"] == "Kallos"
+        and "chip" in from_chip["cls"]
+    )
+    wall.check(ok, "a chip opens the ledger for its session; Close returns focus", [scope, blocked.count(), who, from_chip])
+
+    chip.click()
+    page.wait_for_selector("#ledger .scope")
+    page.click("#ledger .scope button")
+    page.wait_for_function("document.querySelectorAll('#ledger-blocked-table tbody tr').length === 5")
+    page.keyboard.press("Escape")
+    page.close()
+
+
+def drawer_tables(wall):
+    """Every chart has its table: tokens by character is one table whose bar
+    is decoration; attribution, the guardrail log and the figures are text."""
+    page = wall.open(960, 1000, 16)
+    open_drawer(page)
+    got = page.evaluate(
+        """() => {
+      const d = document.getElementById('ledger');
+      const t = document.getElementById('ledger-characters-table');
+      const heads = [...t.tHead.rows[0].cells].map((c) => [c.textContent, c.getAttribute('aria-hidden')]);
+      const rows = [...t.tBodies[0].rows].map((r) => [r.cells[0].textContent, r.cells[1].getAttribute('aria-hidden'), r.cells[1].querySelectorAll('.fill').length, r.cells[2].textContent]);
+      const tables = [...d.querySelectorAll('table')].map((x) => [x.querySelector('caption').textContent, [...x.querySelectorAll('thead th')].map((h) => h.textContent)]);
+      const colour = getComputedStyle(d.querySelector('.fill')).backgroundColor;
+      const textOnAccent = [...d.querySelectorAll('td, th, dd, dt, p, h3')].some((e) => getComputedStyle(e).color === colour && colour !== getComputedStyle(d).color);
+      const fills = [...d.querySelectorAll('.fill')].map((f) => f.getBoundingClientRect().height);
+      return { heads, rows, tables, textOnAccent, fills, links: d.querySelectorAll('a, [href]').length,
+               cost: [...d.querySelectorAll('.cost')].map((c) => c.textContent),
+               scrollsX: d.scrollWidth > d.clientWidth };
+    }"""
+    )
+    names = [t[0] for t in got["tables"]]
+    ok = (
+        got["heads"][0] == ["Character", None]
+        and got["heads"][1][1] == "true"
+        and got["heads"][2][0] == "Tokens"
+        and len(got["rows"]) >= 10
+        and all(r[1] == "true" and r[2] == 1 and r[3].replace(",", "").isdigit() for r in got["rows"])
+        and "Tokens today by character" in names
+        and "Tokens today by skill" in names
+        and "Tokens today by plugin" in names
+        and "Tokens today by MCP server" in names
+        and "Tool calls blocked today" in names
+        and all(h for t in got["tables"] for h in t[1][:1])
+        and not got["textOnAccent"]
+        and set(got["fills"]) == {8}
+        and got["links"] == 0
+        and len(got["cost"]) == 1
+        and got["cost"][0].startswith("\u2248 $")
+        and "not your bill" in got["cost"][0]
+        and not got["scrollsX"]
+    )
+    wall.check(ok, "the drawer's tables, bars and cost line", {k: got[k] for k in ("heads", "cost", "textOnAccent", "links")} | {"tables": names, "rows": len(got["rows"])})
+    text = page.inner_text("#ledger")
+    labels = (
+        "third-party (names redacted by Claude Code)" in text
+        and "custom (names redacted by Claude Code)" in text
+        and "\u2014" not in text
+    )
+    wall.check(labels, "redacted attribution names are labelled, no em-dash", labels)
+    page.close()
+
+
+def drawer_states(wall):
+    """No tokens today: the empty state names the README section and links
+    nowhere. A taken port: the notice shows the receiver's error."""
+    empty = ledger_view(
+        day={"version": 1, "day": "2026-10-21", "sessions": {}, "guardrails": [], "attribution": {}, "no_session": 0},
+        guardrails=[],
+        guardrails_total=0,
+    )
+    page = wall.open(960, 1000, 8, ledger=empty)
+    open_drawer(page)
+    text = page.inner_text("#ledger .ledger-content")
+    links = page.locator("#ledger a, #ledger [href]").count()
+    tables = page.locator("#ledger-characters-table").count()
+    ok = "\u201cThe ledger\u201d" in text and "README" in text and links == 0 and tables == 0
+    wall.check(ok, "empty state names the README section, no link", [text[:120], links, tables])
+    page.close()
+
+    error = "Only one usage of each socket address is normally permitted. (os error 10048)"
+    taken = ledger_view(receiver={"addr": "127.0.0.1:4318", "listening": False, "error": error})
+    page = wall.open(960, 1000, 8, ledger=taken)
+    open_drawer(page)
+    notice = page.inner_text("#ledger .notice")
+    ok = "127.0.0.1:4318" in notice and error in notice and "not receiving" in notice
+    wall.check(ok, "a taken port shows the receiver's error", notice)
+    page.close()
+
+    page = wall.open(960, 1000, 8)
+    open_drawer(page)
+    quiet = page.locator("#ledger .notice").count() == 0
+    wall.check(quiet, "no notice while the receiver is listening", quiet)
+    page.close()
+
+
+def drawer_follows_snapshots(wall):
+    """Each snapshot reads the ledger again while the drawer is open, and not once it is shut."""
+    page = wall.open(960, 1000, 8)
+    open_drawer(page)
+    seen = wall.ledger_requests
+    deadline = 20000
+    waited = 0
+    while wall.ledger_requests <= seen and waited < deadline:
+        page.wait_for_timeout(250)
+        waited += 250
+    again = wall.ledger_requests > seen
+    page.keyboard.press("Escape")
+    page.wait_for_function(f"!{DRAWER_OPEN}")
+    shut = wall.ledger_requests
+    page.wait_for_timeout(6000)
+    wall.check(again and wall.ledger_requests == shut, "an open drawer refetches on a snapshot, a shut one does not", [seen, shut, wall.ledger_requests])
+    page.close()
+
+
 def main() -> int:
     handler = functools.partial(Quiet, directory=str(ROOT))
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)  # a free port
@@ -262,6 +533,13 @@ def main() -> int:
             never_scrolls_comfortable,
             bar_of_comfortable,
             note_clear_of_exchange,
+            ledger_line_clear_of_text,
+            receipt_text,
+            chip_name,
+            drawer_opens_and_returns_focus,
+            drawer_tables,
+            drawer_states,
+            drawer_follows_snapshots,
         )
         for case in cases:
             if not only or case.__name__ in only:

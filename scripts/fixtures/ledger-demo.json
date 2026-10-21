@@ -1,0 +1,453 @@
+{
+ "at": 1792500000,
+ "day": {
+  "version": 1,
+  "day": "2026-10-21",
+  "sessions": {
+   "demo-1-am_michael": {
+    "tokens": {
+     "input": 60000,
+     "output": 24000,
+     "cache_read": 600000,
+     "cache_creation": 36000
+    },
+    "cost_usd_estimate_micros": 2892000,
+    "lines_added": 187,
+    "lines_removed": 24,
+    "commits": 2,
+    "pull_requests": 1,
+    "active": {
+     "user_ms": 1368000,
+     "cli_ms": 2556000
+    },
+    "edit_decisions": {},
+    "tool_results": {
+     "count": 0,
+     "failures": 0
+    },
+    "api_errors": 0,
+    "api_refusals": 0,
+    "guardrail_rejects": 0,
+    "user_rejects": 0,
+    "updated_at": 1792499880
+   },
+   "demo-2-af_bella": {
+    "tokens": {
+     "input": 21000,
+     "output": 12600,
+     "cache_read": 246000,
+     "cache_creation": 28800
+    },
+    "cost_usd_estimate_micros": 984000,
+    "lines_added": 52,
+    "lines_removed": 7,
+    "commits": 1,
+    "pull_requests": 0,
+    "active": {
+     "user_ms": 792000,
+     "cli_ms": 1440000
+    },
+    "edit_decisions": {},
+    "tool_results": {
+     "count": 0,
+     "failures": 0
+    },
+    "api_errors": 0,
+    "api_refusals": 0,
+    "guardrail_rejects": 3,
+    "user_rejects": 0,
+    "updated_at": 1792499880
+   },
+   "demo-3-af_sarah": {
+    "tokens": {
+     "input": 5400,
+     "output": 2040,
+     "cache_read": 0,
+     "cache_creation": 0
+    },
+    "cost_usd_estimate_micros": 126000,
+    "lines_added": 0,
+    "lines_removed": 0,
+    "commits": 0,
+    "pull_requests": 0,
+    "active": {
+     "user_ms": 144000,
+     "cli_ms": 216000
+    },
+    "edit_decisions": {},
+    "tool_results": {
+     "count": 0,
+     "failures": 0
+    },
+    "api_errors": 0,
+    "api_refusals": 0,
+    "guardrail_rejects": 0,
+    "user_rejects": 0,
+    "updated_at": 1792499880
+   },
+   "demo-4-bf_emma": {
+    "tokens": {
+     "input": 126000,
+     "output": 57600,
+     "cache_read": 4440000,
+     "cache_creation": 420000
+    },
+    "cost_usd_estimate_micros": 10140000,
+    "lines_added": 870,
+    "lines_removed": 186,
+    "commits": 6,
+    "pull_requests": 2,
+    "active": {
+     "user_ms": 3420000,
+     "cli_ms": 6768000
+    },
+    "edit_decisions": {},
+    "tool_results": {
+     "count": 0,
+     "failures": 0
+    },
+    "api_errors": 0,
+    "api_refusals": 0,
+    "guardrail_rejects": 1,
+    "user_rejects": 0,
+    "updated_at": 1792499880
+   },
+   "demo-9-bm_fable": {
+    "tokens": {
+     "input": 31200,
+     "output": 18000,
+     "cache_read": 1140000,
+     "cache_creation": 72000
+    },
+    "cost_usd_estimate_micros": 1860000,
+    "lines_added": 38,
+    "lines_removed": 5,
+    "commits": 0,
+    "pull_requests": 0,
+    "active": {
+     "user_ms": 1080000,
+     "cli_ms": 1872000
+    },
+    "edit_decisions": {},
+    "tool_results": {
+     "count": 0,
+     "failures": 0
+    },
+    "api_errors": 0,
+    "api_refusals": 0,
+    "guardrail_rejects": 0,
+    "user_rejects": 0,
+    "updated_at": 1792499880
+   },
+   "demo-5-bf_isabella": {
+    "tokens": {
+     "input": 36000,
+     "output": 16800,
+     "cache_read": 1080000,
+     "cache_creation": 198000
+    },
+    "cost_usd_estimate_micros": 1740000,
+    "lines_added": 0,
+    "lines_removed": 0,
+    "commits": 3,
+    "pull_requests": 1,
+    "active": {
+     "user_ms": 720000,
+     "cli_ms": 1188000
+    },
+    "edit_decisions": {},
+    "tool_results": {
+     "count": 0,
+     "failures": 0
+    },
+    "api_errors": 0,
+    "api_refusals": 0,
+    "guardrail_rejects": 0,
+    "user_rejects": 0,
+    "updated_at": 1792499880
+   },
+   "demo-6-af_nova": {
+    "tokens": {
+     "input": 8400,
+     "output": 1200,
+     "cache_read": 36000,
+     "cache_creation": 5400
+    },
+    "cost_usd_estimate_micros": 252000,
+    "lines_added": 0,
+    "lines_removed": 0,
+    "commits": 0,
+    "pull_requests": 0,
+    "active": {
+     "user_ms": 216000,
+     "cli_ms": 288000
+    },
+    "edit_decisions": {},
+    "tool_results": {
+     "count": 0,
+     "failures": 0
+    },
+    "api_errors": 2,
+    "api_refusals": 1,
+    "guardrail_rejects": 0,
+    "user_rejects": 0,
+    "updated_at": 1792499880
+   },
+   "demo-8-am_puck": {
+    "tokens": {
+     "input": 12000,
+     "output": 8400,
+     "cache_read": 168000,
+     "cache_creation": 15600
+    },
+    "cost_usd_estimate_micros": 384000,
+    "lines_added": 24,
+    "lines_removed": 3,
+    "commits": 1,
+    "pull_requests": 0,
+    "active": {
+     "user_ms": 396000,
+     "cli_ms": 612000
+    },
+    "edit_decisions": {},
+    "tool_results": {
+     "count": 0,
+     "failures": 0
+    },
+    "api_errors": 0,
+    "api_refusals": 0,
+    "guardrail_rejects": 0,
+    "user_rejects": 0,
+    "updated_at": 1792499880
+   },
+   "demo-10-bm_george": {
+    "tokens": {
+     "input": 10800,
+     "output": 6600,
+     "cache_read": 312000,
+     "cache_creation": 24600
+    },
+    "cost_usd_estimate_micros": 540000,
+    "lines_added": 132,
+    "lines_removed": 18,
+    "commits": 1,
+    "pull_requests": 0,
+    "active": {
+     "user_ms": 504000,
+     "cli_ms": 792000
+    },
+    "edit_decisions": {},
+    "tool_results": {
+     "count": 0,
+     "failures": 0
+    },
+    "api_errors": 0,
+    "api_refusals": 0,
+    "guardrail_rejects": 0,
+    "user_rejects": 0,
+    "updated_at": 1792499880
+   },
+   "demo-12-af_alloy": {
+    "tokens": {
+     "input": 18000,
+     "output": 7200,
+     "cache_read": 24000,
+     "cache_creation": 5400
+    },
+    "cost_usd_estimate_micros": 0,
+    "lines_added": 0,
+    "lines_removed": 0,
+    "commits": 0,
+    "pull_requests": 0,
+    "active": {
+     "user_ms": 0,
+     "cli_ms": 0
+    },
+    "edit_decisions": {},
+    "tool_results": {
+     "count": 0,
+     "failures": 0
+    },
+    "api_errors": 0,
+    "api_refusals": 0,
+    "guardrail_rejects": 0,
+    "user_rejects": 0,
+    "updated_at": 1792499880
+   },
+   "demo-15-am_onyx": {
+    "tokens": {
+     "input": 46200,
+     "output": 22800,
+     "cache_read": 1380000,
+     "cache_creation": 90000
+    },
+    "cost_usd_estimate_micros": 2280000,
+    "lines_added": 7,
+    "lines_removed": 2,
+    "commits": 0,
+    "pull_requests": 0,
+    "active": {
+     "user_ms": 900000,
+     "cli_ms": 1296000
+    },
+    "edit_decisions": {},
+    "tool_results": {
+     "count": 0,
+     "failures": 0
+    },
+    "api_errors": 0,
+    "api_refusals": 0,
+    "guardrail_rejects": 1,
+    "user_rejects": 0,
+    "updated_at": 1792499880
+   },
+   "demo-16-af_kore": {
+    "tokens": {
+     "input": 24600,
+     "output": 11400,
+     "cache_read": 540000,
+     "cache_creation": 48000
+    },
+    "cost_usd_estimate_micros": 900000,
+    "lines_added": 0,
+    "lines_removed": 0,
+    "commits": 2,
+    "pull_requests": 0,
+    "active": {
+     "user_ms": 612000,
+     "cli_ms": 900000
+    },
+    "edit_decisions": {},
+    "tool_results": {
+     "count": 0,
+     "failures": 0
+    },
+    "api_errors": 0,
+    "api_refusals": 0,
+    "guardrail_rejects": 0,
+    "user_rejects": 0,
+    "updated_at": 1792499880
+   },
+   "earlier-session-0001": {
+    "tokens": {
+     "input": 8000,
+     "output": 2000,
+     "cache_read": 90000,
+     "cache_creation": 6000
+    },
+    "cost_usd_estimate_micros": 150000,
+    "lines_added": 10,
+    "lines_removed": 0,
+    "commits": 0,
+    "pull_requests": 0,
+    "active": {
+     "user_ms": 180000,
+     "cli_ms": 300000
+    },
+    "edit_decisions": {},
+    "tool_results": {
+     "count": 0,
+     "failures": 0
+    },
+    "api_errors": 0,
+    "api_refusals": 0,
+    "guardrail_rejects": 0,
+    "user_rejects": 0,
+    "updated_at": 1792499880
+   }
+  },
+  "guardrails": [],
+  "attribution": {
+   "demo-4-bf_emma": {
+    "skills": {
+     "techne:elenchus": 2900000,
+     "graphe:latex": 1100000,
+     "third-party": 640000,
+     "dataviz": 180000
+    },
+    "plugins": {
+     "techne": 3100000,
+     "graphe": 1300000,
+     "third-party": 640000
+    },
+    "mcp_servers": {
+     "custom": 420000,
+     "claude_ai_Slack": 90000
+    }
+   },
+   "demo-1-am_michael": {
+    "skills": {
+     "techne:audit": 380000,
+     "third-party": 70000
+    },
+    "plugins": {
+     "techne": 380000,
+     "third-party": 70000
+    },
+    "mcp_servers": {}
+   },
+   "demo-5-bf_isabella": {
+    "skills": {
+     "graphe:slides": 880000,
+     "other": 40000
+    },
+    "plugins": {
+     "graphe": 880000
+    },
+    "mcp_servers": {
+     "custom": 120000
+    }
+   },
+   "demo-15-am_onyx": {
+    "skills": {
+     "heuresis:idea": 1100000
+    },
+    "plugins": {
+     "heuresis": 1100000
+    },
+    "mcp_servers": {
+     "custom": 60000
+    }
+   }
+  },
+  "no_session": 0
+ },
+ "receiver": {
+  "addr": "127.0.0.1:4318",
+  "listening": true,
+  "error": null
+ },
+ "guardrails": [
+  {
+   "at": 1792499640,
+   "session_id": "demo-15-am_onyx",
+   "tool_name": "Bash",
+   "source": "hook"
+  },
+  {
+   "at": 1792499340,
+   "session_id": "demo-2-af_bella",
+   "tool_name": "Write",
+   "source": "hook"
+  },
+  {
+   "at": 1792498560,
+   "session_id": "demo-2-af_bella",
+   "tool_name": "Bash",
+   "source": "config"
+  },
+  {
+   "at": 1792497540,
+   "session_id": "demo-4-bf_emma",
+   "tool_name": "WebFetch",
+   "source": "config"
+  },
+  {
+   "at": 1792496220,
+   "session_id": "demo-2-af_bella",
+   "tool_name": "Bash",
+   "source": "hook"
+  }
+ ],
+ "guardrails_total": 5
+}

@@ -251,3 +251,40 @@ test("hover keeps 4.5:1 text on the neutral button", () => {
   assert.ok(contrast(token(css, "--text"), token(css, "--button-hover")) >= 4.5);
   assert.ok(contrast(token(css, "--text"), token(css, "--button-bg")) >= 4.5);
 });
+
+test("the compact ledger line takes the foot slot without growing it, and its chip keeps a 24 px target", () => {
+  const css = read("./fleet/wall.css");
+  const rule = (sel) => css.match(new RegExp(`${sel.replace(/[.[\]"=]/g, "\\$&")} \\{([^}]*)\\}`))?.[1] ?? "";
+  const line = rule('[data-density="compact"] .ledger-line');
+  const slot = rule('[data-density="compact"] .note,\n[data-density="compact"] .why');
+  assert.ok(line && slot, "both rules found");
+  for (const prop of ["grid-area", "margin", "font-size", "line-height"]) {
+    const of = (decl) => decl.match(new RegExp(`(?:^|[\\s;])${prop}:\\s*([^;]+);`))?.[1].trim();
+    assert.ok(of(line), `${prop} is set`);
+    assert.equal(of(line), of(slot), `${prop} matches the slot a note uses`);
+  }
+  // The chip is 17 px tall in the slot; its hit area reaches 4 px past each side, 25 px in all.
+  assert.match(rule(".chip::after"), /inset:\s*-4px 0/);
+  assert.match(css, /\.card:has\(\.note:not\(:empty\)\) \.ledger-line/, "a note takes the slot");
+  assert.match(css, /\.card:has\(\.why:not\(\[hidden\]\)\) \.ledger-line/, "so does Open terminal's reason");
+});
+
+test("the drawer's text wears text colours on the card's own surface, and a bar clears 3:1", () => {
+  const css = read("./fleet/wall.css");
+  const surface = token(css, "--card-bg");
+  for (const fg of ["--text", "--text-dim", "--text-quiet"]) {
+    assert.ok(contrast(token(css, fg), surface) >= 4.5, `${fg} on the drawer`);
+  }
+  assert.equal(token(css, "--card-bg"), token(css, "--card-bg"));
+  assert.match(css, /\.ledger \{[^}]*background: var\(--card-bg\)/, "the drawer sits on the card surface");
+  const cast = JSON.parse(read("./fleet/cast.json"));
+  for (const c of Object.values(cast.characters)) {
+    assert.ok(contrast(c.accent, surface) >= 3, `${c.name}'s bar on the drawer: ${contrast(c.accent, surface).toFixed(2)}`);
+  }
+  // The series colour reaches only the bar's fill, never a word.
+  const uses = [...css.matchAll(/([^{}]+)\{([^{}]*var\(--accent[^{}]*)\}/g)].map((m) => m[1].trim());
+  assert.ok(uses.every((sel) => !/(^|,)\s*\.ledger[^{,]*(td|th|dd|dt|p|h3|button)\b/.test(sel)), uses.join(" | "));
+  assert.match(css.match(/\.ledger \.fill \{([^}]*)\}/)[1], /background: var\(--accent/);
+  assert.match(css.match(/\.ledger \.fill \{([^}]*)\}/)[1], /border-radius: 0 4px 4px 0/, "4px rounded data end, square at the baseline");
+  assert.match(css.match(/\.ledger \.fill \{([^}]*)\}/)[1], /height: 8px/, "a thin mark");
+});

@@ -593,3 +593,29 @@ test("the ring key draws aria-hidden arcs and gives screen readers one sentence"
   assert.match(read("src/fleet/wall.js"), /ringKey\.hidden = !showsRingKey\(cards\)/);
   assert.match(html, /<title>Background work: one arc per subagent \(thick\) or shell \(thin\)<\/title>/);
 });
+
+test("the ledger sample is never reachable inside the app, and the drawer reads the ledger through one command", async () => {
+  globalThis.window ??= {};
+  const feed = await import("./fleet/feed.js");
+  for (const search of ["?demo", "?demo=1", ""]) assert.equal(feed.demoLedgerUrl(true, search), null, search);
+  assert.equal(feed.demoLedgerUrl(false, "?demo"), "../scripts/fixtures/ledger-demo.json");
+  assert.equal(feed.demoLedgerUrl(false, "?focus=x"), null, "only with ?demo");
+  const src = read("src/fleet/feed.js");
+  assert.equal(src.match(/ledger-demo\.json/g).length, 1, "one way to the ledger sample");
+  assert.match(src, /invoke\("ledger_today", \{ session \}\)/);
+  assert.ok(existsSync(join(ROOT, "scripts/fixtures/ledger-demo.json")));
+});
+
+test("the ledger drawer is a labelled modal dialog with a Close button that links nowhere", () => {
+  const html = read("src/wall.html");
+  const dialog = html.slice(html.indexOf('<dialog id="ledger"'), html.indexOf("</dialog>"));
+  assert.match(dialog, /^<dialog id="ledger" class="ledger" aria-labelledby="ledger-title">/);
+  assert.match(dialog, /<h2 id="ledger-title">Ledger<\/h2>/);
+  assert.match(dialog, /<button type="button" class="ledger-close">Close<\/button>/);
+  assert.match(html, /<button type="button" id="ledger-open" aria-haspopup="dialog">Ledger<\/button>/);
+  const drawer = read("src/fleet/drawer.js");
+  assert.match(drawer, /dialog\.showModal\(\)/, "modal, so the wall behind it is inert");
+  assert.match(drawer, /back\.focus\(\)/, "focus returns explicitly");
+  assert.doesNotMatch(drawer, /innerHTML|insertAdjacentHTML|href|<a\b|https?:/, "text nodes only, and no link to follow");
+  assert.doesNotMatch(dialog, /<a\b|href/);
+});
