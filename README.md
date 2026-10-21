@@ -562,8 +562,8 @@ The portraits are files in `src/fleet/faces`, each listed in `LICENSES.json`,
 and `scripts/cut-portraits.py` cuts them: ten from kourai-khryseai, five from
 `assets/portraits/`. Each character has a round face at 96 and 192 px, a
 half-figure (`-figure.webp`) and the whole portrait (`-full.webp`). The five
-newer figures are cut from their painted backdrops by BiRefNet (MIT) through
-`scripts/cutout-portraits.py`, run once; its output is committed. The medallion is
+newer figures are cut from their painted backdrops by `scripts/cutout-portraits.py`
+(rembg's `isnet-anime` model, Apache-2.0), run once; its output is committed. The medallion is
 an SVG drawn in `src/fleet/medallion.js`. The overlay loads no library and
 fetches nothing.
 

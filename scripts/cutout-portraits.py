@@ -1,11 +1,12 @@
 """Cut a portrait's figure out of its painted backdrop, for the wall's header band.
 
 The ten kourai portraits ship with transparent cut-outs; the newer ones are
-painted on a dark backdrop. This runs BiRefNet (MIT, rembg's
-`birefnet-portrait` model) once on kourai-khryseai's 2048 px original
-(assets/avatars/originals/<name>.jpg) scaled to 1024 px, and writes
-assets/portraits/<name>-cutout.webp, which is committed, so
-scripts/cut-portraits.py needs no model. About ten minutes a portrait on CPU.
+painted on a dark backdrop. This runs rembg's `isnet-anime` model (IS-Net
+trained on illustrated characters, SkyTNT/anime-segmentation, Apache-2.0)
+once on kourai-khryseai's 2048 px original (assets/avatars/originals/<name>.jpg)
+scaled to 1024 px, and writes assets/portraits/<name>-cutout.webp, which is
+committed, so scripts/cut-portraits.py needs no model. About 3 s and 1.2 GB a
+portrait on CPU; BiRefNet cut as cleanly but needed over 3.5 GB.
 
 Usage: uv run --no-project --with "rembg[cpu]==2.0.85" --with pillow==12.3.0 python -I scripts/cutout-portraits.py <kourai-khryseai> <name>...
 """
@@ -21,7 +22,7 @@ PORTRAITS = ROOT / "assets" / "portraits"
 
 
 def main(kourai: Path, names: list[str]) -> None:
-    session = new_session("birefnet-portrait")
+    session = new_session("isnet-anime")
     for name in names:
         original = Image.open(kourai / "assets" / "avatars" / "originals" / f"{name}.jpg").convert("RGB")
         if original.size != (2048, 2048):

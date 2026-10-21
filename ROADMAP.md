@@ -26,6 +26,10 @@ session that stops answering reads as silent, never as working.
   which reaches no hook; it is named by its folder for now.
 
 ## Completed
+- 2026-10-21: Comfortable cards wear their character (#62): a header band lit in
+  their colour with their cut-out figure breaking its top edge, a nameplate
+  with their epithet, crew marks on a plaque at the figure's foot, and the
+  whole portrait one click away (#44). Compact's face grew to 64 px.
 - 2026-10-20: Launch sessions as tmux windows from the wall, stable jump,
   Clear, gone, redesigned wall (#31, merged as #35).
 - 2026-10-20: Exercised every tray item live on Windows, by real mouse

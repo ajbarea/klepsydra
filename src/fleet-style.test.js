@@ -323,6 +323,7 @@ test("on a figure the crew rides the plinth and the ring steps aside; the waves 
   assert.match(css, /\.has-figure \.portrait \.ring,\s*\.has-figure \.portrait \.face \{ display: none; \}/);
   assert.match(css, /\[data-density="compact"\] \.has-figure \.portrait \.ring,\s*\[data-density="compact"\] \.has-figure \.portrait \.face \{ display: block; \}/);
   assert.match(css, /\.marks \{[^}]*display: none;/, "no marks unless a figure shows");
+  assert.match(css, /\[data-density="compact"\] \.has-figure \.marks:not\(:empty\),[^{]*\{ display: none; \}/, "nor on a compact card, whose ring shows them");
   const figure = css.match(/\n\.has-figure \.look \{([^}]*)\}/)?.[1] ?? "";
   const portrait = css.match(/\n\.has-figure \.aura \{([^}]*)\}/)?.[1] ?? "";
   assert.ok(Number(figure.match(/z-index: (-?\d+)/)[1]) > Number(portrait.match(/z-index: (-?\d+)/)[1]), "waves behind the figure");

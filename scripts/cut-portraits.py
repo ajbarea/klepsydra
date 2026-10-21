@@ -58,7 +58,7 @@ FIGURE_SOURCE = (
 )
 NEW_FIGURE_SOURCE = (
     "AJ Barea, generated from the briefs in docs/characters/portrait-briefs.md; cut out of its backdrop "
-    "with BiRefNet (MIT, https://github.com/ZhengPeng7/BiRefNet) as assets/portraits/{name}-cutout.webp, "
+    "by scripts/cutout-portraits.py (rembg isnet-anime, Apache-2.0) as assets/portraits/{name}-cutout.webp, "
     "scaled to {size} px"
 )
 FULL_SOURCE = "kourai-khryseai assets/avatars/vn/{name}_neutral.png (https://github.com/ajbarea/kourai-khryseai), whole, {size} px"

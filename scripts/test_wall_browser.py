@@ -331,6 +331,12 @@ def band_clear(wall):
         )
         wall.check(not bad, f"band clear at {width}", bad)
         page.close()
+    page = wall.open(945, 1000, 16)
+    shown = page.evaluate(
+        "[...document.querySelectorAll('.marks, .stage, .epithet')].filter((e) => e.getBoundingClientRect().height > 0).length"
+    )
+    wall.check(shown == 0, "a compact card shows no band, epithet or plinth", shown)
+    page.close()
 
 
 def main() -> int:

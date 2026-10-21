@@ -289,20 +289,22 @@ button:focus-visible { outline: 2px solid var(--card-focus); outline-offset: 2px
 .has-figure .portrait .face { display: none; }
 .card:not(.has-figure) .portrait { position: absolute; left: 40px; top: 32px; }
 .marks { display: none; }
+/* A small gilded plaque at the figure's foot. */
 .has-figure .marks:not(:empty) {
   position: absolute;
   z-index: 2;
-  left: var(--fig-left);
+  left: calc(var(--fig-left) + var(--fig) / 2);
   bottom: 0;
-  width: var(--fig);
+  translate: -50% 0;
   display: flex;
-  justify-content: center;
   align-items: center;
   gap: 3px;
-  height: 22px;
+  height: 20px;
+  padding: 0 var(--space-3);
   background: var(--plinth-bg);
-  border-top: 1px solid var(--band-line);
-  box-shadow: 0 -6px 10px var(--plinth-bg);
+  border: 1px solid var(--band-line);
+  border-bottom: 0;
+  border-radius: 6px 6px 0 0;
   pointer-events: none;
 }
 .marks svg { width: 22px; height: 12px; overflow: visible; }
@@ -497,9 +499,10 @@ button:focus-visible { outline: 2px solid var(--card-focus); outline-offset: 2px
 [data-density="compact"] .card header,
 [data-density="compact"] .card .actions,
 [data-density="compact"] .card .foot { display: contents; }
-[data-density="compact"] .name { margin-left: var(--head-gap); font-size: 16px; }
+/* Compact keeps its own name face: the band's capitals run too wide beside the pill. */
+[data-density="compact"] .name { margin-left: var(--head-gap); font: 650 16px/1.15 var(--display); letter-spacing: -0.01em; }
 [data-density="compact"] .stage,
-[data-density="compact"] .marks,
+[data-density="compact"] .has-figure .marks:not(:empty),
 [data-density="compact"] .epithet,
 [data-density="compact"] .figure { display: none; }
 /* Compact keeps the round portrait and its ring; the look button covers it. */
