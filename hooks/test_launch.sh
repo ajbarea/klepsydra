@@ -236,7 +236,11 @@ unset WT_DELAY
 echo "a tab that has not attached yet"
 stop_server; detach_all; : >"$WT_LOG"
 pending="$work/klepsydra-tab-pending-$UID"
-export WT_DELAY=6 # a cold WSL: the tab attaches after the launcher stops waiting
+# A cold WSL: the tab attaches after the launcher stops waiting. The launcher
+# polls 50 times, nominally 5 s but longer on a loaded machine, so the stub
+# waits far past any poll; a nearer delay let it attach inside the window and
+# leave no pending stamp.
+export WT_DELAY=60
 out=$(bash "$launch" new "$work/repos" 2>&1); rc=$?
 check "cold tab: exit 0" "$rc" "0"
 check "cold tab: says the tab has not attached" "$out" \
