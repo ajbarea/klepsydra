@@ -65,6 +65,7 @@ fn incarnation(dir: &Path) -> Option<u64> {
 }
 
 pub struct Reader {
+    dir: PathBuf,
     fleet: PathBuf,
     tx: Sender<Wake>,
     rx: Receiver<Wake>,
@@ -80,6 +81,7 @@ impl Reader {
     pub fn new(klepsydra_dir: &Path) -> Self {
         let (tx, rx) = channel();
         Reader {
+            dir: klepsydra_dir.to_path_buf(),
             fleet: klepsydra_dir.join("fleet"),
             tx,
             rx,
@@ -203,6 +205,12 @@ impl Reader {
             }
         }
         let problems = self.reporter.fresh(&broken);
+        snap.wrapup = crate::wrapup::request(&self.dir, t);
+        if let Some(r) = &snap.wrapup {
+            for v in &mut snap.sessions {
+                v.wrapup = crate::wrapup::answer(&self.dir, r, &v.session_id);
+            }
+        }
         let shown = self.last.as_ref().and_then(|s| s.speaking.as_ref());
         snap.speaking = speaking(&read_speaking(&self.fleet), shown, &snap.sessions, t);
         if self.last.as_ref() == Some(&snap) {
@@ -260,6 +268,30 @@ mod tests {
             "woke by the watcher, not the poll"
         );
         assert_eq!(snap.unwrap().sessions.len(), 1);
+    }
+
+    #[test]
+    fn the_wrap_up_request_and_each_answer_reach_the_snapshot() {
+        let (root, mut r) = reader("wrapup");
+        root.write(&format!("fleet/{A}.json"), &session(A, "done"));
+        let t = 1_700_000_100;
+        let snap = r.step(Duration::ZERO, || t).0.unwrap();
+        assert_eq!((snap.wrapup, snap.sessions[0].wrapup.clone()), (None, None));
+        std::fs::create_dir(root.0.join("wrapup")).unwrap();
+        root.write(
+            "wrapup/request.json",
+            &format!(r#"{{"id":"9","at":{t},"until":{}}}"#, t + 600),
+        );
+        root.write(
+            &format!("wrapup/{A}.json"),
+            r#"{"request":"9","state":"ready","at":1700000101}"#,
+        );
+        let snap = r.step(Duration::ZERO, || t).0.unwrap();
+        assert_eq!(snap.wrapup.unwrap().id, "9");
+        let answer = snap.sessions[0].wrapup.clone().unwrap();
+        assert_eq!(answer.state, crate::wrapup::State::Ready);
+        let json = serde_json::to_value(&snap.sessions[0]).unwrap();
+        assert_eq!(json["wrapup"]["state"], "ready");
     }
 
     #[test]
