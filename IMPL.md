@@ -1,27 +1,35 @@
 # IMPL
 
-Slice: #22 End and Interrupt from a card. Branch feat/end-session, worktree
-`.claude/worktrees/end-session`, PR #70, on main.
+Slice: #58 Wrap up. Branch feat/wrap-up, worktree `.claude/worktrees/wrap-up`,
+stacked on feat/end-session (#22), which is stacked on feat/ledger-ui (#64).
+Design: the 10-21 comment on #58 (`gh api repos/ajbarea/klepsydra/issues/58/comments`).
 
-## Done
-- Launcher `end` / `interrupt` verbs (pane + pid checks as Jump, fleet tmux
-  only); `end` sends Esc, Ctrl+C, types `/exit`, presses Enter only when the
-  input line reads exactly `/exit`, then waits for Claude to exit. Leaves
-  tmux copy mode first; `KLEPSYDRA_END_WAIT` must be 1-3 digits.
-- App: `end_session`, `interrupt_session`; a per-session `PaneFlight` gate
-  so a second End of one session is refused while Jump and New run on.
-- Wall: "Session actions" menu (Interrupt while working, "End session…"),
-  confirm dialog naming the session with Cancel focused, 5 s undo window;
-  the menu stays off from the send until `end_session` answers.
+## Done (pushed, no PR yet)
+- `hooks/klepsydra-wrapup.sh`: sync Stop hook (asks once per request via
+  additionalContext, silent otherwise, fails open) and the reporter
+  (`ready SESSION`, `blocked SESSION REASON`). Tests: `hooks/test_wrapup.sh`
+  (47), in CI and skill-context.
+- `hooks/klepsydra-wrapup.md`: the instructions, installed as the personal
+  skill `~/.claude/skills/klepsydra-wrapup/SKILL.md` (`${CLAUDE_SESSION_ID}`).
+- Launcher `wrapup` verb: Ctrl+C, type `/klepsydra-wrapup`, Enter only when
+  the input line reads exactly that; refuses mid-turn (footer "esc to
+  interrupt"). Shares `run_command` with `end`. test_launch.sh 157 pass.
+- Fleet crate `wrapup.rs`: request/answer reading, `route(status, in_fleet)`,
+  `start`/`cancel`/`mark_asked`/`unmark`; snapshot carries `wrapup` and each
+  session's answer. 216 fleet tests.
+- App: `start_wrapup`, `cancel_wrapup` commands (launch.rs). NOT yet built on
+  Windows (interop was down).
+- README: install block (`wrapup-settings` markers, tested).
 
 ## Next
-- Independent review (opus, `/code-review high`), at most 3 rounds; fix,
-  CI green, merge. Then #58 (feat/wrap-up) rebases onto main.
+1. After #64 and #22 merge: rebase onto main (`git rebase --onto origin/main <old base>`).
+2. Wall UI: "Wrap up…" button + confirm (who gets it and how), card states
+   (wrapping up / ready / not ready: reason / no answer after `until`),
+   tally "N of M ready", "Safe to restart" only when all live cards ready,
+   "End all ready sessions…" (one confirm naming them, then #22's End each),
+   "Stop wrap-up" (cancel). Tests incl. one-click-never-ends.
+3. `build-windows.sh --check`, live test with two real sessions, PR (Closes #58),
+   review, merge, deploy (copy script + skill, add Stop hook to both settings.json).
 
 ## Verify
-- `node --test src/*.test.js`
-- `cd src-tauri && cargo fmt --all --check && cargo clippy -p klepsydra-fleet --all-targets -- -D warnings && cargo test -p klepsydra-fleet`
-- every `hooks/test_*.sh`, `statusline/test_statusline.sh`, `scripts/test_*.sh`
-- `uv run -q --no-project --with playwright python -I scripts/test_wall_browser.py`
-- `KLEPSYDRA_STAGE=klepsydra-build-end_session bash scripts/build-windows.sh --check`
-- All heavy commands under `flock /tmp/fleet-heavy.lock`.
+- Full gate list in skill-context, plus `bash hooks/test_wrapup.sh`.
