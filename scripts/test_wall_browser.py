@@ -8,7 +8,10 @@ ring key in view. Auto never leaves a comfortable wall scrolling: not when a
 card grows, not at an exact fit, not where the comfortable bar is taller than
 the compact one. A note on a compact card never covers its exchange. The ledger line and
 chip fit the compact foot slot, and the ledger drawer opens, closes and gives
-focus back.
+focus back. Ending a session: the card's menu, the confirm dialog and the 5 s
+undo window run against a stubbed `window.__TAURI__` that records every invoke,
+and no single click or key, nor any run of them short of the full deliberate
+path, sends end_session.
 
     uv run -q --no-project --with playwright python -I scripts/test_wall_browser.py
 
@@ -868,6 +871,320 @@ def band_clear(wall):
     page.close()
 
 
+# ---- Ending a session -------------------------------------------------------
+
+TIMES = {"status_at", "active_at", "updated_at", "quiet_since", "at", "started_at", "ends_at"}
+
+
+def shifted(value, by):
+    """The demo snapshot with its times moved up to now, as feed.js does in a browser."""
+    if isinstance(value, list):
+        return [shifted(v, by) for v in value]
+    if not isinstance(value, dict):
+        return value
+    return {
+        k: v + by if k in TIMES and isinstance(v, (int, float)) else shifted(v, by)
+        for k, v in value.items()
+    }
+
+
+# Stands in for the Tauri runtime. In the app the wall's only feed is
+# fleet_subscribe, which hands a Channel the snapshot (ipc.js `follow`); every
+# other command is recorded in window.__calls and answers "ok".
+TAURI_STUB = """
+window.__calls = [];
+window.__TAURI__ = { core: {
+  Channel: class { },
+  invoke: (cmd, args) => {
+    if (cmd === 'fleet_subscribe') {
+      window.__channel = args.onMessage;
+      setTimeout(() => args.onMessage.onmessage(%s), 0);
+      return Promise.resolve();
+    }
+    if (cmd === 'get_wall_density') return Promise.resolve('auto');
+    window.__calls.push([cmd, args]);
+    return Promise.resolve('ok');
+  },
+} };
+"""
+ENDS = "window.__calls.filter(([c]) => c === 'end_session')"
+WORKING_CARD = ".card:has(.pill .label:text-is('working')):has(.menu:not([hidden]))"
+
+
+def open_app(wall, width=1920, height=1000):
+    """The demo wall as the app would feed it, with invokes recorded."""
+    import time
+
+    fixture = json.loads((ROOT / "scripts/fixtures/fleet-demo.json").read_text())
+    at = fixture.pop("at")
+    snapshot = shifted(fixture, int(time.time()) - at)
+    page = wall.browser.new_page(viewport={"width": width, "height": height})
+    page.snapshot = snapshot
+    page.add_init_script(TAURI_STUB % json.dumps(snapshot))
+    page.goto(f"http://127.0.0.1:{wall.port}/src/wall.html")
+    page.wait_for_function("document.getElementById('wall').children.length > 0")
+    page.wait_for_timeout(SETTLE_MS)
+    return page
+
+
+def menu_of(card):
+    return card.locator(".menu")
+
+
+def open_menu(page, card):
+    menu_of(card).click()
+    page.wait_for_selector("#session-menu:not([hidden])")
+
+
+def calls(page, cmd):
+    return page.evaluate(f"window.__calls.filter(([c]) => c === '{cmd}')")
+
+
+def menu_shown_only_where_it_acts(wall):
+    page = open_app(wall)
+    got = page.evaluate(
+        """() => Object.fromEntries([...document.querySelectorAll('.card')].map((c) => [
+          c.dataset.key, !c.querySelector('.menu').hidden]))"""
+    )
+    shown = {k for k, v in got.items() if v}
+    ended = "demo-8-am_puck"  # ended
+    other_socket = "demo-6-af_nova"  # a tmux server that is not klepsydra's
+    no_claude = "demo-12-af_alloy"  # no Claude process recorded
+    new = "demo-7-af_aoede"  # no tmux
+    ok = (
+        shown
+        and not shown & {ended, other_socket, no_claude, new}
+        and "demo-2-af_bella" in shown
+    )
+    wall.check(ok, "the menu shows only for live sessions in klepsydra's tmux with a Claude process", sorted(shown))
+    card = page.locator(WORKING_CARD).first
+    btn = menu_of(card)
+    name = card.locator(".name").inner_text()
+    attrs = btn.evaluate(
+        "b => [b.getAttribute('aria-haspopup'), b.getAttribute('aria-expanded'), b.getAttribute('aria-label')]"
+    )
+    wall.check(attrs == ["menu", "false", f"Session actions for {name}"], "the menu button's ARIA", attrs)
+    btn.click()
+    items = page.evaluate(
+        "[...document.querySelectorAll('#session-menu [role=menuitem]')].filter((i) => !i.hidden).map((i) => i.textContent.trim())"
+    )
+    expanded = btn.get_attribute("aria-expanded")
+    focused = page.evaluate("document.activeElement.textContent.trim()")
+    wall.check(
+        items == ["Interrupt", "End session…"] and expanded == "true" and focused == "Interrupt",
+        "a working card's menu holds Interrupt then End session…, with the first item focused",
+        [items, expanded, focused],
+    )
+    page.keyboard.press("ArrowDown")
+    down = page.evaluate("document.activeElement.textContent.trim()")
+    page.keyboard.press("ArrowDown")
+    wrap = page.evaluate("document.activeElement.textContent.trim()")
+    page.keyboard.press("End")
+    end = page.evaluate("document.activeElement.textContent.trim()")
+    page.keyboard.press("Home")
+    home = page.evaluate("document.activeElement.textContent.trim()")
+    wall.check([down, wrap, end, home] == ["End session…", "Interrupt", "End session…", "Interrupt"], "arrow keys, Home and End move through the items", [down, wrap, end, home])
+    page.keyboard.press("Escape")
+    back = page.evaluate("[document.activeElement === document.querySelector('.menu[aria-expanded=false]:focus'), document.getElementById('session-menu').hidden]")
+    wall.check(back == [True, True], "Esc closes the menu and returns focus to its button", back)
+    btn.click()
+    page.mouse.click(5, 5)
+    shut = page.evaluate("document.getElementById('session-menu').hidden")
+    wall.check(shut and btn.get_attribute("aria-expanded") == "false", "a click outside closes the menu", shut)
+    idle = page.locator(".card:has(.pill .label:text-is('done')):has(.menu:not([hidden]))").first
+    open_menu(page, idle)
+    items = page.evaluate(
+        "[...document.querySelectorAll('#session-menu [role=menuitem]')].filter((i) => !i.hidden).map((i) => i.textContent.trim())"
+    )
+    wall.check(items == ["End session…"], "Interrupt is offered only while the card reads working", items)
+    page.close()
+
+
+def one_click_or_key_never_ends(wall):
+    """The hard rule: nothing short of confirm, then the full 5 s, sends end_session."""
+    page = open_app(wall)
+    card = page.locator(WORKING_CARD).first
+    key = card.evaluate("c => c.dataset.key")
+    log = []
+
+    def step(what):
+        log.append(what)
+
+    # A single click on the menu button.
+    open_menu(page, card)
+    step("click menu button")
+    page.keyboard.press("Escape")
+    # A single click on End session…
+    open_menu(page, card)
+    page.get_by_role("menuitem", name="End session…").click()
+    page.wait_for_function("document.getElementById('end-dialog').open")
+    step("click End session…")
+    focus = page.evaluate("document.activeElement.className")
+    wall.check(focus == "end-cancel", "Cancel has focus when the confirm opens", focus)
+    page.keyboard.press("Escape")
+    page.wait_for_function("!document.getElementById('end-dialog').open")
+    # Enter and Space on the focused card.
+    card.evaluate("c => c.focus()")
+    page.keyboard.press("Enter")
+    page.keyboard.press("Space")
+    step("Enter and Space on the card")
+    # Enter on the menu button opens the menu; Enter on its End item opens the dialog.
+    menu_of(card).focus()
+    page.keyboard.press("Enter")
+    page.wait_for_selector("#session-menu:not([hidden])")
+    step("Enter on the menu button")
+    page.keyboard.press("ArrowDown")
+    page.keyboard.press("Enter")  # on End session…
+    page.wait_for_function("document.getElementById('end-dialog').open")
+    step("Enter on End session…")
+    page.keyboard.press("Enter")  # right after the dialog opens: Cancel
+    page.wait_for_function("!document.getElementById('end-dialog').open")
+    step("Enter right after the dialog opened")
+    # Space right after opening, the same way.
+    menu_of(card).focus()
+    page.keyboard.press("Space")
+    page.wait_for_selector("#session-menu:not([hidden])")
+    page.keyboard.press("ArrowDown")
+    page.keyboard.press("Space")
+    page.wait_for_function("document.getElementById('end-dialog').open")
+    page.keyboard.press("Space")
+    page.wait_for_function("!document.getElementById('end-dialog').open")
+    step("Space right after the dialog opened")
+    # A click on the backdrop cancels too.
+    open_menu(page, card)
+    page.get_by_role("menuitem", name="End session…").click()
+    page.mouse.click(5, 5)
+    page.wait_for_function("!document.getElementById('end-dialog').open")
+    step("backdrop click")
+    page.wait_for_timeout(6500)
+    ended = page.evaluate(ENDS)
+    showing = page.evaluate("[...document.querySelectorAll('.ending')].some((e) => !e.hidden)")
+    wall.check(not ended and not showing, "no single click or key sends end_session or starts the undo window", [ended, showing, log])
+    page.close()
+    return key
+
+
+def deliberate_end_sends_once(wall):
+    page = open_app(wall)
+    card = page.locator(WORKING_CARD).first
+    key = card.evaluate("c => c.dataset.key")
+    name = card.locator(".name").inner_text()
+    open_menu(page, card)
+    page.get_by_role("menuitem", name="End session…").click()
+    page.wait_for_function("document.getElementById('end-dialog').open")
+    title = page.locator("#end-title").inner_text()
+    text = page.locator("#end-text").inner_text()
+    wall.check(
+        title == f"End {name}'s session?" and "as if you typed /exit" in text and "mid-turn" in text,
+        "the confirm names the character and says a working card is mid-turn",
+        [title, text],
+    )
+    page.get_by_role("button", name=f"End {name}").click()
+    page.wait_for_timeout(500)
+    shown = card.locator(".ending-text").inner_text()
+    focus = page.evaluate("document.activeElement.className")
+    sent_early = page.evaluate(ENDS)
+    wall.check(
+        shown.startswith(f"Ending {name} in ") and focus == "undo" and not sent_early,
+        "confirming shows the countdown with focus on Undo and sends nothing yet",
+        [shown, focus, sent_early],
+    )
+    page.wait_for_timeout(4000)
+    still = page.evaluate(ENDS)
+    page.wait_for_timeout(1500)
+    sent = page.evaluate(ENDS)
+    wall.check(not still and sent == [["end_session", {"id": key}]], "after 5 s exactly one end_session goes out, with the card's id", [still, sent])
+    note = card.locator(".note").inner_text()
+    wall.check(note == "ok", "its result shows in the card's note", note)
+    page.close()
+
+
+def undo_sends_nothing(wall):
+    page = open_app(wall)
+    card = page.locator(WORKING_CARD).first
+    name = card.locator(".name").inner_text()
+    open_menu(page, card)
+    page.get_by_role("menuitem", name="End session…").click()
+    page.get_by_role("button", name=f"End {name}").click()
+    page.wait_for_timeout(2000)
+    card.locator(".undo").click()
+    page.wait_for_timeout(6000)
+    sent = page.evaluate(ENDS)
+    gone = card.locator(".ending").is_hidden()
+    note = card.locator(".note").inner_text()
+    back = page.evaluate("document.activeElement === document.querySelector('.card .menu:focus')")
+    wall.check(not sent and gone and note == f"{name} keeps running" and back, "Undo within 5 s sends nothing and hands focus back to the menu", [sent, gone, note, back])
+    page.close()
+
+
+def stray_enter_on_undo_undoes(wall):
+    page = open_app(wall)
+    card = page.locator(WORKING_CARD).first
+    name = card.locator(".name").inner_text()
+    open_menu(page, card)
+    page.get_by_role("menuitem", name="End session…").click()
+    page.get_by_role("button", name=f"End {name}").click()
+    page.wait_for_timeout(300)
+    page.keyboard.press("Enter")
+    page.wait_for_timeout(6000)
+    sent = page.evaluate(ENDS)
+    wall.check(not sent, "a stray Enter after confirming lands on Undo and cancels the end", sent)
+    page.close()
+
+
+def interrupt_sends_once(wall):
+    page = open_app(wall)
+    card = page.locator(WORKING_CARD).first
+    key = card.evaluate("c => c.dataset.key")
+    open_menu(page, card)
+    page.get_by_role("menuitem", name="Interrupt").click()
+    page.wait_for_timeout(600)
+    sent = calls(page, "interrupt_session")
+    ended = page.evaluate(ENDS)
+    note = card.locator(".note").inner_text()
+    wall.check(sent == [["interrupt_session", {"id": key}]] and not ended and note == "ok", "Interrupt sends one interrupt_session and shows its line in the note", [sent, ended, note])
+    page.close()
+
+
+def end_cancelled_when_the_session_ends(wall):
+    """A snapshot that ends the session while its undo window runs cancels the end."""
+    page = open_app(wall)
+    card = page.locator(WORKING_CARD).first
+    key = card.evaluate("c => c.dataset.key")
+    name = card.locator(".name").inner_text()
+    card = page.locator(f'.card[data-key="{key}"]')  # by id: the working-card locator moves on once this one ends
+    open_menu(page, card)
+    page.get_by_role("menuitem", name="End session…").click()
+    page.get_by_role("button", name=f"End {name}").click()
+    page.wait_for_timeout(500)
+    # Feed the same fleet with this session ended and the card's window still running.
+    snapshot = json.loads(json.dumps(page.snapshot))
+    for row in snapshot["sessions"]:
+        if row["session_id"] == key:
+            row["status"] = "ended"
+    page.evaluate("(s) => window.__channel.onmessage(s)", snapshot)
+    page.wait_for_timeout(300)
+    hidden = card.locator(".ending").is_hidden()
+    page.wait_for_timeout(5500)
+    sent = page.evaluate(ENDS)
+    menu_gone = menu_of(card).is_hidden()
+    wall.check(hidden and not sent and menu_gone, "a session that ends during its undo window cancels the pending end", [hidden, sent, menu_gone])
+    # And a card that leaves the wall does too.
+    card = page.locator(WORKING_CARD).first
+    key = card.evaluate("c => c.dataset.key")
+    name = card.locator(".name").inner_text()
+    open_menu(page, card)
+    page.get_by_role("menuitem", name="End session…").click()
+    page.get_by_role("button", name=f"End {name}").click()
+    page.wait_for_timeout(300)
+    snapshot["sessions"] = [r for r in snapshot["sessions"] if r["session_id"] != key]
+    page.evaluate("(s) => window.__channel.onmessage(s)", snapshot)
+    page.wait_for_timeout(5800)
+    sent = page.evaluate(ENDS)
+    wall.check(not sent, "a card that leaves the wall during its undo window cancels the pending end", sent)
+    page.close()
+
+
 def main() -> int:
     handler = functools.partial(Quiet, directory=str(ROOT))
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)  # a free port
@@ -899,6 +1216,13 @@ def main() -> int:
             compact_look_on_face,
             long_tool_stays_in_card,
             dialog_caption_fits,
+            menu_shown_only_where_it_acts,
+            one_click_or_key_never_ends,
+            deliberate_end_sends_once,
+            undo_sends_nothing,
+            stray_enter_on_undo_undoes,
+            interrupt_sends_once,
+            end_cancelled_when_the_session_ends,
         )
         for case in cases:
             if not only or case.__name__ in only:

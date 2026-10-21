@@ -394,3 +394,14 @@ test("the tone stripe follows the card's rounded corners, now that the card no l
 test("the wall, focused only as a fallback, draws no outline of its own", () => {
   assert.match(wallCss(), /\.wall:focus \{ outline: none; \}/);
 });
+
+test("End <Character> meets 4.5:1 at rest and on hover, and its text wears a text colour", () => {
+  const css = read("./fleet/wall.css");
+  for (const bg of ["--danger-bg", "--danger-hover"]) {
+    assert.ok(contrast(token(css, "--danger-ink"), token(css, bg)) >= 4.5, `${bg}: ${contrast(token(css, "--danger-ink"), token(css, bg)).toFixed(2)}`);
+  }
+  // The danger fill is not the dialog's default: Cancel is first and focused (guards.test.js).
+  assert.ok(contrast(token(css, "--text"), token(css, "--card-bg")) >= 4.5, "dialog heading");
+  assert.ok(contrast(token(css, "--text-dim"), token(css, "--card-bg")) >= 4.5, "dialog text");
+  assert.ok(contrast(token(css, "--text-dim"), token(css, "--card-bg")) >= 3, "the three dots");
+});

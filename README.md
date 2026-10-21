@@ -458,6 +458,24 @@ title.
 running brings its card back at its next event, without its start time or the
 repos it touched.
 
+### Ending a session
+
+A session that runs in klepsydra's tmux (the socket `klepsydra`) and has a
+known `claude` shows a three-dot button in its card's header, named "Session
+actions for" the character. Its menu offers **Interrupt**, while the card
+reads working, and **End session…**. Interrupt sends Esc to the session's pane
+and asks nothing. **End session…** opens a dialog that names the character
+and the repo, with Cancel focused, so Enter right after it opens cancels.
+**End** the character in that dialog, and the card reads "Ending in 5 s" with
+an **Undo** button. Only when the five seconds run out does klepsydra type
+`/exit` into the pane. A click or a key never ends a session on its own, and a
+card that disappears, or leaves klepsydra's tmux, cancels its pending end.
+
+The card refuses, with the reason, in three cases. The session is outside
+klepsydra's tmux, so its pane is not ours to type into. The prompt did not
+read exactly `/exit`, so Enter was not pressed and the line was cleared. Or the
+session is still running a few seconds after `/exit` was sent.
+
 ### Card density
 
 The control beside **+ New session** picks the card density: **Auto** (the

@@ -528,6 +528,41 @@ test("the wall has a New session button that calls the launcher", () => {
   assert.match(html, />Open terminal</);
 });
 
+test("no code path ends a session except the undo window's expiry", () => {
+  const files = FRONTEND.filter((f) => !f.endsWith(".test.js"));
+  const hits = files.filter((f) => /end_session/.test(read(f)));
+  assert.deepEqual(hits, ["src/fleet/end.js"], "the one command name sits in one module");
+  const end = read("src/fleet/end.js");
+  assert.equal((end.match(/end_session/g) ?? []).length, 1);
+  // It sits inside expire(), and expire() is called from exactly one place: the timer's last tick.
+  const expire = end.slice(end.indexOf("function expire("), end.indexOf("return {\n    pending"));
+  assert.match(expire, /invoke\("end_session", \{ id \}\)/);
+  assert.equal((end.match(/expire\(id/g) ?? []).length, 2, "its definition and its one call");
+  assert.match(end, /setTimeout\(\(\) => expire\(id, \{ onSend, onDone \}\), UNDO_MS\)/, "the call is the timer that runs UNDO_MS out");
+  // The wall never names the command or calls the launcher's end itself; its clicks reach only start and cancel.
+  const wall = read("src/fleet/wall.js");
+  assert.doesNotMatch(wall, /end_session/);
+  assert.match(wall, /ender\.start\(/);
+  assert.equal((wall.match(/ender\.start\(/g) ?? []).length, 1, "one place begins an end, and only the dialog's confirm reaches it");
+  assert.match(wall, /if \(dialog\.returnValue === "end"\) beginEnd\(who\)/);
+  assert.equal((wall.match(/beginEnd\(/g) ?? []).length, 2, "its definition and the confirm");
+  assert.equal((wall.match(/dialog\.close\("end"\)/g) ?? []).length, 1, "only the End button's click closes with end");
+  assert.doesNotMatch(wall, /\bautofocus\b/);
+  const endDialog = read("src/wall.html").match(/<dialog id="end-dialog"[\s\S]*?<\/dialog>/)[0];
+  assert.doesNotMatch(endDialog, /autofocus/, "the ledger heading may take focus; the end dialog's buttons never");
+});
+
+test("the actions menu button and the confirm dialog follow their ARIA patterns", () => {
+  const html = read("src/wall.html");
+  assert.match(html, /<button type="button" class="menu" aria-haspopup="menu" aria-expanded="false" hidden>/);
+  assert.match(html, /<div id="session-menu" class="session-menu" role="menu" hidden>/);
+  assert.match(html, /<dialog id="end-dialog" class="end-dialog" role="alertdialog" aria-labelledby="end-title" aria-describedby="end-text">/);
+  const order = html.indexOf('class="end-cancel"') < html.indexOf('class="end-confirm"');
+  assert.ok(order, "Cancel comes first");
+  assert.match(read("src/fleet/wall.js"), /dialog\.showModal\(\);\n\s*endCancel\.focus\(\)/, "Cancel takes focus when it opens");
+  assert.ok(!/\u2014/.test(html), "no em-dash in the page's copy");
+});
+
 test("the CSP lets images, and nothing else, come from a data URL", () => {
   const csp = JSON.parse(read("src-tauri/tauri.conf.json")).app.security.csp;
   const directives = Object.fromEntries(csp.split(";").map((d) => d.trim().split(/\s+/)).map(([k, ...v]) => [k, v]));

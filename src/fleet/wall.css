@@ -42,6 +42,9 @@
   --button-line: #344052;
   --button-hover: #2e3846;
   --needs-ink: #000000; /* on --tone-needs */
+  --danger-bg: #b3261e; /* End <Character>: filled, so it reads as the weighty choice; never the default */
+  --danger-hover: #9c1f18;
+  --danger-ink: #ffffff;
   --font: "Segoe UI Variable Text", "Segoe UI", "Inter", system-ui, sans-serif;
   --display: "Segoe UI Variable Display", "Segoe UI", "Inter Display", "Inter", system-ui, sans-serif;
   --title: "Cinzel", "Trajan Pro", Georgia, serif;
@@ -226,6 +229,30 @@ button:focus-visible { outline: 2px solid var(--card-focus); outline-offset: 2px
 .card.dim .figure { filter: grayscale(0.85) brightness(0.8); }
 .card.dim .name, .card.dim .where, .card.dim .reply { color: var(--text-dim); }
 .card.dim .prompt, .card.dim .repo .wt, .card.dim .branch { color: var(--text-quiet); }
+
+/* The actions menu button: three dots in the band's top right corner, a 24 px
+   target on the pill's row, so it adds no height. The pill steps left of it. */
+button.menu {
+  grid-area: menu;
+  position: absolute;
+  z-index: 3;
+  top: var(--space-6);
+  right: var(--space-3);
+  align-self: center;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  border-color: transparent;
+  color: var(--ivory);
+}
+button.menu:hover:not([aria-disabled="true"]), button.menu[aria-expanded="true"] { background: var(--button-bg); color: var(--text); }
+button.menu svg { width: 16px; height: 16px; fill: currentColor; }
+.card.has-menu .pill { right: calc(var(--space-3) + 24px + var(--space-2)); }
 
 /* The header band: the character arriving. Their figure stands on the band's
    foot and breaks its top edge, lit from behind in their colour over a dark,
@@ -495,6 +522,9 @@ button:focus-visible { outline: 2px solid var(--card-focus); outline-offset: 2px
 .actions { display: flex; align-items: center; gap: 8px; border-top: 1px solid var(--card-line); padding-top: 12px; }
 .actions .note { color: var(--text-dim); font-size: 12.5px; margin-right: auto; overflow-wrap: anywhere; }
 .actions .why { color: var(--text-dim); font-size: 12.5px; }
+/* The undo window: the countdown and Undo take the note's place. */
+.ending { display: flex; align-items: center; gap: var(--space-4); margin-right: auto; font-size: 12.5px; color: var(--text); }
+.ending-text { font-variant-numeric: tabular-nums; }
 
 /* The full portrait (#44): a native modal dialog, centred over a dimmed wall,
    the portrait at up to the window's height with its nameplate beneath. */
@@ -534,15 +564,15 @@ button:focus-visible { outline: 2px solid var(--card-focus); outline-offset: 2px
 .wall[data-density="compact"] { grid-auto-rows: 1fr; }
 .wall[data-density="compact"] .card {
   display: grid;
-  grid-template-columns: var(--wall-face) minmax(0, 1fr) auto auto auto;
+  grid-template-columns: var(--wall-face) minmax(0, 1fr) auto auto auto auto;
   grid-template-rows: auto auto auto auto 1fr auto;
   grid-template-areas:
-    "face name pill clear jump"
-    "face task task task task"
-    "meta meta meta meta meta"
-    "ask ask ask ask ask"
-    "said said said said said"
-    "note note note note note";
+    "face name pill clear jump menu"
+    "face task task task task task"
+    "meta meta meta meta meta meta"
+    "ask ask ask ask ask ask"
+    "said said said said said said"
+    "note note note note note note";
   gap: 0;
 }
 [data-density="compact"] .card header,
@@ -577,6 +607,8 @@ button:focus-visible { outline: 2px solid var(--card-focus); outline-offset: 2px
   font-size: 12px;
 }
 [data-density="compact"] .clear { grid-area: clear; }
+/* The menu sits a wider step from Open terminal and Clear than they sit from each other. */
+[data-density="compact"] button.menu { position: static; align-self: center; color: var(--text-dim); margin: 0 0 0 var(--space-7); }
 /* An ended card's Open terminal is off and its pill says why: Clear takes its place. */
 [data-density="compact"] .card:has(.clear:not([hidden])) .jump[aria-disabled="true"] { display: none; }
 [data-density="compact"] .note,
@@ -593,7 +625,11 @@ button:focus-visible { outline: 2px solid var(--card-focus); outline-offset: 2px
   text-overflow: ellipsis; /* the note's title holds the whole text */
 }
 [data-density="compact"] .note:not(:empty) { color: var(--text); }
-[data-density="compact"] .card:has(.note:not(:empty)) .why { display: none; } /* the newer word wins the slot */
+/* Undo is 28 px tall inside the one-line slot: its margins take the difference, so the card does not grow. */
+[data-density="compact"] .ending { grid-area: note; justify-self: end; min-height: 17px; gap: var(--space-3); margin: var(--space-1) 0 0; font-size: 12px; line-height: 17px; }
+[data-density="compact"] .undo { min-height: 28px; margin: -5.5px 0; padding: 0 var(--space-4); font-size: 12px; }
+[data-density="compact"] .card:has(.note:not(:empty)) .why,
+[data-density="compact"] .card:has(.ending:not([hidden])) .why { display: none; } /* the newer word wins the slot */
 [data-density="compact"] .meta {
   grid-area: meta;
   display: flex;
@@ -642,7 +678,44 @@ button:focus-visible { outline: 2px solid var(--card-focus); outline-offset: 2px
 [data-density="compact"] .chip { padding: 0 var(--space-3); line-height: 15px; }
 [data-density="compact"] .partial { line-height: 15px; }
 [data-density="compact"] .card:has(.note:not(:empty)) .ledger-line,
+[data-density="compact"] .card:has(.ending:not([hidden])) .ledger-line,
 [data-density="compact"] .card:has(.why:not([hidden])) .ledger-line { display: none; }
+
+/* The actions menu: one element for the wall, placed by wall.js beside the button that opened it. */
+.session-menu {
+  position: fixed;
+  z-index: 10;
+  min-width: 168px;
+  padding: var(--space-1);
+  background: var(--card-bg);
+  border: 1px solid var(--button-line);
+  border-radius: 10px;
+  box-shadow: 0 10px 30px rgb(0 0 0 / 50%);
+}
+.session-menu button { display: block; width: 100%; text-align: left; background: transparent; border-color: transparent; padding: 8px var(--space-5); }
+.session-menu button:hover { background: var(--button-bg); }
+.session-menu button:focus-visible { outline-offset: -2px; background: var(--button-bg); }
+.session-menu hr { border: 0; border-top: 1px solid var(--card-line); margin: var(--space-1) 0; }
+
+/* The End confirm: a modal alert dialog. Cancel has focus; End is the danger fill, never the default. */
+.end-dialog {
+  width: min(440px, calc(100vw - 32px));
+  margin: auto;
+  padding: 0;
+  border: 1px solid var(--button-line);
+  border-radius: 14px;
+  background: var(--card-bg);
+  color: var(--text);
+  color-scheme: dark;
+}
+.end-dialog::backdrop { background: rgb(0 0 0 / 60%); }
+.end-body { display: flex; flex-direction: column; gap: var(--space-5); padding: 22px 24px 20px; }
+.end-body h2 { font: 650 20px/1.25 var(--display); letter-spacing: -0.01em; overflow-wrap: anywhere; }
+#end-text { display: grid; gap: var(--space-3); color: var(--text-dim); overflow-wrap: anywhere; }
+#end-text .end-warn { color: var(--text); font-weight: 600; }
+.end-buttons { display: flex; justify-content: flex-end; gap: var(--space-4); margin-top: var(--space-3); }
+button.end-confirm { background: var(--danger-bg); border-color: var(--danger-bg); color: var(--danger-ink); }
+button.end-confirm:hover:not([aria-disabled="true"]) { background: var(--danger-hover); border-color: var(--danger-hover); }
 
 /* The ledger drawer: a modal dialog down the right edge. Bars are marks in a
    character's colour; every word and number wears a text colour. */
