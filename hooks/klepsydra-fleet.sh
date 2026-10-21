@@ -448,14 +448,17 @@ def notified: if type == "string" then [scan("<task-notification>[\\s\\S]*?</tas
   | ($ev.tool_response // {}) as $out
   | (.background | if type == "array" then map(select(type == "object" and (.id | text) != null
        and (.kind | IN("agent", "shell", "task")) and (.at | type) == "number")) else [] end) as $bg
-  # Stops seen before their start, until STOPPED_TTL passes.
+  # Stopped agents not known to run async, until STOPPED_TTL passes: their late
+  # start, launch or tool event adds no phantom. An async one may be resumed.
   | ((.background_stopped | if type == "array" then . else [] end)
      | map(select(type == "object" and (.id | text) != null and (.at | type) == "number" and $now - .at < $stopped_ttl))) as $tomb
   | ([$tomb[].id]) as $dead
-  # Every stop leaves one, so a late start or launch adds no phantom.
   | .background_stopped = (if $fresh then []
-      elif $event == "SubagentStop" and ($agent | text) != null then ($tomb + [{id: $agent, at: $now}])[-$bg_max:]
+      elif $event == "SubagentStop" and ($agent | text) != null and (any($bg[]; .id == $agent and .async == true) | not)
+      then ($tomb + [{id: $agent, at: $now}])[-$bg_max:]
       else $tomb end)
+  # The turn is over: Stop ran, or the prompt went idle with work still out.
+  | (.state == "done" or turn_over) as $over
   | .background = (
       if $event == "SessionEnd" or $fresh then []
       elif $event == "SubagentStart" and ($agent | IN($dead[]) | not) then $bg | bg_add($agent; "agent")
@@ -469,10 +472,11 @@ def notified: if type == "string" then [scan("<task-notification>[\\s\\S]*?</tas
       # An idle prompt with no Stop is an interrupted turn: a subagent never seen to
       # launch async was in the foreground and died with it (Esc runs neither Stop
       # nor SubagentStop). A launched agent or a shell runs on.
-      # The agent whose question is still open is waiting, not dead.
+      # The agent still asking under a background agent (nesting) is waiting, not dead.
       elif $event == "Notification" and $ev.notification_type == "idle_prompt" then
         (if .state == "needs_you" then .needs.by // "" else "" end) as $asker
-        | $bg | map(select(.kind != "agent" or .async == true or .id == $asker))
+        | (any($bg[]; .kind == "agent" and .async == true and .id != $asker)) as $parent
+        | $bg | map(select(.kind != "agent" or .async == true or (.id == $asker and $parent)))
       elif $event == "PostToolUse" and ($ev.tool_name | IN("TaskStop", "KillShell")) then
         $bg | bg_drop([$in.task_id, $in.shell_id, ($out | objects | .task_id)])
       elif $event == "UserPromptSubmit" then $bg | bg_drop($ev.prompt | notified)
@@ -481,16 +485,28 @@ def notified: if type == "string" then [scan("<task-notification>[\\s\\S]*?</tas
         [$ev.background_tasks[] | objects | select((.id | text) != null and (.status | finished | not))
          | .id as $id | {id: $id, kind: bg_kind, at: ([$bg[] | select(.id == $id) | .at][0] // $now)}
          | if .kind == "agent" then .async = true else . end]
+      # With no list, an agent adopted in the turn and never seen async ended with it;
+      # a real background one is adopted again, async, at its next event.
+      elif $event == "Stop" then $bg | map(select(.adopted != true or .async == true))
       else $bg end
       # A subagent's own events show it still runs.
       | map(if .id == $agent and $now - .at >= 60 then .at = $now else . end)
       | .[-$bg_max:])
+  # A Stop's task list is the truth until the next turn starts.
+  | .background_listed = (if $fresh or $event == "UserPromptSubmit" then null
+      elif $event == "Stop" then (($ev.background_tasks | type) == "array" or null)
+      else .background_listed end)
   # An agent the set never saw start (a lost SubagentStart, a hook installed
-  # mid-session, one the idle prompt dropped) is adopted from its own events.
+  # mid-session, one the idle prompt dropped) is adopted from its own events,
+  # unless the turn is over and its Stop listed what still runs. Adopted after
+  # the turn, it outlives the turn: async.
   | (($agent | text) as $aid
-     | $aid != null and ($event | IN("SubagentStart", "SubagentStop", "SessionEnd") | not) and ($fresh | not)
-       and ($aid | IN($dead[]) | not) and (any(.background[]; .id == $aid) | not)) as $adopt
-  | if $adopt then .background = (.background + [{id: $agent, kind: "agent", at: $now}])[-$bg_max:] else . end
+     | $aid != null and ($event | IN("SubagentStart", "SubagentStop", "SessionEnd", "Stop") | not) and ($fresh | not)
+       and ($aid | IN($dead[]) | not) and (any(.background[]; .id == $aid) | not)
+       and (($over and .background_listed == true) | not)) as $adopt
+  | if $adopt then .background |= (bg_add($agent; "agent") | .[-$bg_max:]
+      | map(if .id == $agent then .adopted = true | (if $over then .async = true else . end) else . end))
+    else . end
 
   # State, with what it needs from AJ and who asked.
   | (if $event == "SessionStart" then
@@ -548,6 +564,7 @@ def notified: if type == "string" then [scan("<task-notification>[\\s\\S]*?</tas
 
   | if .background == [] then del(.background) else . end
   | if .background_stopped == [] then del(.background_stopped) else . end
+  | if .background_listed == null then del(.background_listed) else . end
 
   # An event that changes nothing still refreshes written_at, once a minute.
   # turns_at stamps the count with the write, so a reader can tell a count an

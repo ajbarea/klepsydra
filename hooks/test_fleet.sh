@@ -899,6 +899,78 @@ now=1792358600 fire notification-idle.json
 check "the idle prompt keeps a nested agent's open request" "$(field '[.state, .reason, .needs.by]')" '["needs_you","approve Bash","nested-1"]'
 check "and keeps the agent asking" "$(bg)" "\"agent:$A,agent:nested-1\""
 
+# Review round 1 of the adoption change: each pins a path it first got wrong.
+# Esc with a foreground agent's request open: the idle prompt ends it, as before.
+rm -f "$file"
+now=1792359000 fire session-start.json
+now=1792359001 fire user-prompt.json
+now=1792359002 fire subagent-start.json
+now=1792359003 fire permission-request.json ".agent_id = \"$A\""
+now=1792359100 fire notification-idle.json
+check "Esc on a foreground agent's request: the idle prompt gives done" "$(field '[.state, .reason, has("background")]')" '["done",null,false]'
+
+# An async agent stopped and resumed under its id within the minute counts again.
+rm -f "$file"
+now=1792359200 fire session-start.json
+now=1792359201 fire user-prompt.json
+now=1792359202 fire subagent-start.json
+now=1792359202 fire post-tool-agent-background.json
+now=1792359203 fire stop.json '.background_tasks = null'
+now=1792359210 fire subagent-stop.json
+now=1792359212 fire subagent-start.json
+now=1792359212 fire post-tool-agent-background.json
+now=1792359213 fire post-tool-bash.json ".agent_id = \"$A\""
+now=1792359214 fire stop.json '.background_tasks = null'
+check "a resumed async agent counts again" "$(field '[.state, .reason]')" '["working","background"]'
+check "and is in the set" "$(bg)" "\"agent:$A\""
+
+# A Stop's task list is the truth until the next turn: a late event from a
+# finished foreground agent, applied after it, adopts nothing.
+rm -f "$file"
+now=1792359300 fire session-start.json
+now=1792359301 fire user-prompt.json
+now=1792359302 fire stop.json '.background_tasks = []'
+now=1792359302 fire post-tool-bash.json '.agent_id = "fg-late"'
+check "after a listed Stop, a late event adopts nothing" "$(field '[.state, has("background")]')" '["done",false]'
+now=1792359303 fire subagent-stop.json '.agent_id = "fg-late"'
+check "and its late stop leaves it done" "$(field '[.state, .reason]')" '["done",null]'
+now=1792359310 fire user-prompt.json
+now=1792359311 fire post-tool-bash.json '.agent_id = "next-turn"'
+check "the next turn adopts again" "$(bg)" '"agent:next-turn"'
+
+# An agent adopted after its turn ended outlives the turn: it is async, so the
+# next idle prompt keeps it.
+rm -f "$file"
+now=1792359400 fire session-start.json
+now=1792359401 fire user-prompt.json
+now=1792359402 fire subagent-start.json
+now=1792359403 fire stop.json '.background_tasks = null'
+now=1792359500 fire notification-idle.json
+now=1792359510 fire post-tool-bash.json ".agent_id = \"$A\""
+check "adopted after the turn: marked async" "$(field "[.background[] | select(.id == \"$A\") | .async][0]")" "true"
+now=1792359600 fire notification-idle.json
+check "the next idle prompt keeps it" "$(field '[.state, .reason]')" '["working","background"]'
+
+# A foreground agent adopted during the turn, its stop lost, and a Stop with no
+# task list: dropped, as main did; a real background one comes back on its next event.
+rm -f "$file"
+now=1792359700 fire session-start.json
+now=1792359701 fire user-prompt.json
+now=1792359702 fire post-tool-bash.json '.agent_id = "fg-1"'
+now=1792359703 fire stop.json '.background_tasks = null'
+check "a Stop with no list drops an agent adopted in the turn" "$(field '[.state, .reason, has("background")]')" '["done",null,false]'
+
+# The idle prompt keeps a nested agent's request while a background agent is out.
+rm -f "$file"
+now=1792359800 fire session-start.json
+now=1792359801 fire user-prompt.json
+now=1792359802 fire subagent-start.json '.agent_id = "parent-bg"'
+now=1792359802 fire post-tool-agent-background.json '.tool_response.agentId = "parent-bg"'
+now=1792359803 fire subagent-start.json '.agent_id = "child-fg"'
+now=1792359804 fire permission-request.json '.agent_id = "child-fg"'
+now=1792359900 fire notification-idle.json
+check "a nested request under a background agent survives the idle prompt" "$(field '[.state, .needs.by]')" '["needs_you","child-fg"]'
+
 # An old file, written before the field existed, reads and updates.
 rm -f "$file"
 printf '{"v":1,"session_id":"%s","name":null,"started_at":1792356000,"launch_dir":null,"claude":null,"tmux":null,"host":null,"voice":null,"voice_from":null,"state":"working","reason":null,"needs":null,"state_at":1792356000,"where":null,"touched":[],"prompt":null,"reply":null,"error":null,"ended":null,"written_at":1792356000}\n' "$S" >"$file"
