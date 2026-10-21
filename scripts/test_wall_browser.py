@@ -298,6 +298,34 @@ def portrait_dialog(wall):
     page.close()
 
 
+def arrival_once(wall):
+    """A card arrives once: built while Compact shows, it does not replay its
+    arrival when the wall turns Comfortable."""
+    page = wall.open(945, 1000, 8)
+    page.click(".density label:has([value=comfortable])")
+    page.wait_for_timeout(SETTLE_MS)
+    left = page.evaluate("document.querySelectorAll('.card.arriving').length")
+    wall.check(left == 0, "no arrival replays on a density switch", left)
+    page.close()
+
+
+def dialog_backdrop_only(wall):
+    """In a short window only the backdrop closes the portrait, never a click
+    inside the dialog beside the image."""
+    page = wall.open(1280, 360, 4)
+    page.click(".density label:has([value=comfortable])")
+    page.wait_for_timeout(SETTLE_MS)
+    page.locator(".card .look:not([hidden])").first.click()
+    box = page.evaluate(
+        "(() => { const d = document.getElementById('portrait').getBoundingClientRect(); const i = document.querySelector('#portrait .full').getBoundingClientRect(); return [d.left, d.top, d.right, i.right, i.bottom]; })()"
+    )
+    inside = [(box[3] + box[2]) / 2, (box[1] + box[4]) / 2] if box[2] - box[3] > 4 else [box[0] + 4, box[1] + 4]
+    page.mouse.click(*inside)
+    still = page.evaluate("document.getElementById('portrait').open")
+    wall.check(still, "a click inside the dialog keeps it open", box)
+    page.close()
+
+
 def band_clear(wall):
     """On the band nothing covers the nameplate or the pill, and nothing but
     the figure (and its clipped aura) leaves the card's top edge."""
@@ -357,6 +385,8 @@ def main() -> int:
             note_clear_of_exchange,
             portrait_dialog,
             band_clear,
+            arrival_once,
+            dialog_backdrop_only,
         )
         for case in cases:
             if not only or case.__name__ in only:

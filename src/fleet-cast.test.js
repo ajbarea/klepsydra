@@ -2,7 +2,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { contrast, inkOn, markerWidth, mix, readableOn, MARKER_PX, MARKER_WIDE_PX } from "./fleet/contrast.js";
-import { BUTTON_BGS, PLATE_BG } from "./fleet/model.js";
+import { BAND, BUTTON_BGS } from "./fleet/model.js";
+const PLATE_BG = BAND.plate;
 
 const cast = JSON.parse(readFileSync(new URL("./fleet/cast.json", import.meta.url), "utf8"));
 const faces = new URL("./fleet/faces/", import.meta.url);

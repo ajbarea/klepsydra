@@ -1,10 +1,14 @@
 // WCAG 2.2 contrast, shared by the card's button marker and the style tests.
 
+/** The 0-255 channels of "#rrggbb". */
+const channels = (hex) => [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16));
+const toLinear = (c) => (c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4);
+const fromLinear = (c) => (c <= 0.0031308 ? 12.92 * c : 1.055 * c ** (1 / 2.4) - 0.055);
+const hex2 = (n) => Math.round(n).toString(16).padStart(2, "0");
+
 /** Relative luminance of "#rrggbb". */
 export function luminance(hex) {
-  const [r, g, b] = [1, 3, 5]
-    .map((i) => parseInt(hex.slice(i, i + 2), 16) / 255)
-    .map((c) => (c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4));
+  const [r, g, b] = channels(hex).map((c) => toLinear(c / 255));
   return 0.2126 * r + 0.7152 * g + 0.0722 * b;
 }
 
@@ -24,18 +28,15 @@ export const MARKER_WIDE_PX = 6;
 export const markerWidth = (accent, backgrounds) =>
   backgrounds.some((bg) => contrast(accent, bg) < 3) ? MARKER_WIDE_PX : MARKER_PX;
 
-const hex2 = (n) => Math.round(n).toString(16).padStart(2, "0");
 /** `a` moved toward `b` by `t` (0..1), in sRGB. */
 export function mix(a, b, t) {
-  const ch = (h, i) => parseInt(h.slice(i, i + 2), 16);
-  return `#${[1, 3, 5].map((i) => hex2(ch(a, i) + (ch(b, i) - ch(a, i)) * t)).join("")}`;
+  const [p, q] = [channels(a), channels(b)];
+  return `#${p.map((c, i) => hex2(c + (q[i] - c) * t)).join("")}`;
 }
 
 // sRGB <-> OKLab (Ottosson), for what CSS `color-mix(in oklab, ...)` gives.
-const toLinear = (c) => (c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4);
-const fromLinear = (c) => (c <= 0.0031308 ? 12.92 * c : 1.055 * c ** (1 / 2.4) - 0.055);
 function oklab(hex) {
-  const [r, g, b] = [1, 3, 5].map((i) => toLinear(parseInt(hex.slice(i, i + 2), 16) / 255));
+  const [r, g, b] = channels(hex).map((c) => toLinear(c / 255));
   const [l, m, s] = [
     0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b,
     0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b,

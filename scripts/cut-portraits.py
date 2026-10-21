@@ -86,7 +86,10 @@ def main(kourai: Path, faces: Path) -> None:
                 else {"source": SOURCE.format(name=name, size=size), "license": LICENSE}
             )
         cutout = ROOT / "assets" / "portraits" / f"{name}-cutout.webp" if new else kourai / "assets" / "avatars" / "vn" / f"{name}_transparent.png"
-        figure = Image.open(cutout).convert("RGBA").crop(FIGURE[name]).resize((FIGURE_PX, FIGURE_PX), Image.Resampling.LANCZOS)
+        figure = Image.open(cutout).convert("RGBA")
+        if figure.size != expected:  # FIGURE's boxes are in the source's pixels
+            raise SystemExit(f"{name}: expected {expected}, got {figure.size} in {cutout.name}")
+        figure = figure.crop(FIGURE[name]).resize((FIGURE_PX, FIGURE_PX), Image.Resampling.LANCZOS)
         figure.save(faces / f"kourai/{name}-figure.webp", "WEBP", quality=82, alpha_quality=90, method=6)
         licenses[f"kourai/{name}-figure.webp"] = {
             "source": (NEW_FIGURE_SOURCE if new else FIGURE_SOURCE).format(name=name, size=FIGURE_PX),

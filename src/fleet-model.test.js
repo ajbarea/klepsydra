@@ -5,7 +5,7 @@ import {
   STATUS, shortAge, longAge, statusParts, voiceName, identity, accessibleName,
   statuses, startedNeeding, orderChanged, shouldSlide, transitionName, announcements, updatedText, badgeSvg, stripItems, card,
   askText, plainText, tally, crewOf, crewText, crewRing, crewRings, crewMarks, RINGS, RING_MAX, showsRingKey, alsoChip, pillWhen,
-  PLATE_BG,
+  BAND,
 } from "./fleet/model.js";
 import { contrast } from "./fleet/contrast.js";
 import { TONES, hash, initialOf, medallion, medallionSvg, toneOf } from "./fleet/medallion.js";
@@ -376,7 +376,7 @@ test("a character's card carries its epithet ink at 4.5:1 on the nameplate; a me
   const cast = JSON.parse(readFileSync(new URL("./fleet/cast.json", import.meta.url), "utf8"));
   for (const voice of Object.keys(cast.characters)) {
     const c = card(session({ voice }), cast, NOW);
-    assert.ok(contrast(c.accentInk, PLATE_BG) >= 4.5, `${c.name}: ${c.accentInk}`);
+    assert.ok(contrast(c.accentInk, BAND.plate) >= 4.5, `${c.name}: ${c.accentInk}`);
     assert.equal(c.epithet, cast.characters[voice].epithet);
     assert.ok(c.figure && c.full, c.name);
   }
@@ -455,6 +455,8 @@ test("the crew marks are the ring unrolled: the same kinds in the same order, th
   }
   const c = card(session({ background: { agents: 2, shells: 1 } }), CAST, NOW);
   assert.deepEqual(c.marks, { kinds: ["agent", "agent", "shell"], more: 0 });
+  const marks = crewMarks({ agents: 2, shells: 1 });
+  assert.deepEqual(crewRing({ agents: 9, shells: 9 }, RINGS.compact, marks).segments.map((s) => s.kind), marks.kinds, "the ring lays out the marks it is given");
 });
 
 test("an agent's arc is thick and a shell's thin, in screen px for each portrait", () => {

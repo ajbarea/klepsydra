@@ -151,6 +151,9 @@ function paintBand(el, c) {
   if (c.figure) {
     if (figure.getAttribute("src") !== c.figure.src) figure.src = c.figure.src;
     ["--head-x", "--head-y"].forEach((prop, i) => el.style.setProperty(prop, c.figure.head[i]));
+  } else {
+    figure.removeAttribute("src");
+    for (const prop of ["--head-x", "--head-y"]) el.style.removeProperty(prop);
   }
   const marks = el.querySelector(".marks");
   const key = `${c.marks.kinds.join(" ")}|${c.marks.more}`;
@@ -234,10 +237,11 @@ function render(snapshot) {
   cardOf = new Map(cards.map((c) => [c.id, c]));
   ringKey.hidden = !showsRingKey(cards);
   const sync = () => {
-    // A new card arrives once: its figure steps in and its light rises (wall.css .arriving).
+    // A new card arrives once: its figure steps in and its light rises (wall.css
+    // .arriving). Only on the comfortable band; a compact card has no stage to run it.
     const make = () => {
       const el = tpl.content.firstElementChild.cloneNode(true);
-      if (!reducedMotion()) el.classList.add("arriving");
+      if (shown === "comfortable" && !reducedMotion()) el.classList.add("arriving");
       return el;
     };
     syncChildren(wall, cards, (c) => c.id, make, paint);
@@ -255,10 +259,14 @@ function render(snapshot) {
 }
 
 // The pulse and the arrival play once; a later repaint must not replay them.
+const arrived = (e) => {
+  if (e.animationName === "light-rise") e.target.closest(".card")?.classList.remove("arriving");
+};
 wall.addEventListener("animationend", (e) => {
   e.target.classList?.remove("pulse");
-  if (e.animationName === "light-rise") e.target.closest(".card")?.classList.remove("arriving");
+  arrived(e);
 });
+wall.addEventListener("animationcancel", arrived);
 
 // The full portrait (#44): a native modal dialog, so focus stays inside it and
 // Escape closes it. Focus goes back to the portrait that opened it, or to the
@@ -270,12 +278,14 @@ function showPortrait(id) {
   if (!c?.full) return;
   openedFrom = id;
   const img = portrait.querySelector(".full");
+  img.removeAttribute("src"); // never the last portrait under this name while the new one loads
   img.src = c.full;
   img.alt = `${c.name}'s portrait`;
   setText(portrait.querySelector("#portrait-name"), c.name);
   const epithet = portrait.querySelector(".epithet");
   setText(epithet, c.epithet);
   if (c.accentInk) portrait.style.setProperty("--accent-ink", c.accentInk);
+  else portrait.style.removeProperty("--accent-ink");
   setText(portrait.querySelector(".voice"), c.voiceTitle);
   portrait.showModal();
 }
@@ -425,6 +435,8 @@ function showDensity() {
   if (shown !== was) for (const el of wall.children) if (cardOf.has(el.dataset.key)) paintRing(el, cardOf.get(el.dataset.key));
   wall.dataset.density = shown;
   bar.dataset.density = shown;
+  // Cards that arrived while the wall was compact do not arrive again when it turns comfortable.
+  if (shown !== "comfortable") for (const el of wall.querySelectorAll(".arriving")) el.classList.remove("arriving");
   densityPicker.querySelector('label:has([value="auto"])').title =
     `Compact while the comfortable cards would scroll; ${shown} now`;
 }

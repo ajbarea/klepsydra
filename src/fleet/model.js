@@ -251,12 +251,18 @@ export const BUTTON_BGS = ["#252d39", "#2e3846"];
  * equal to the stylesheet's.
  */
 export const BAND = { plate: "#141820", glow: 0.62, rays: 0.16, underText: 0.15, needs: "#e69f00", dimWith: "#3a414c", dimShare: 0.3 };
-export const PLATE_BG = BAND.plate;
 const LIGHT_AT_TEXT = (1 - (1 - BAND.glow) * (1 - BAND.rays)) * BAND.underText;
 
 /** The brightest the band gets under its text, in each light a character's card can wear: its own, needs-you, quiet. */
 export const bandGrounds = (accent) =>
   [accent, BAND.needs, mixOklab(BAND.dimWith, accent, BAND.dimShare)].map((light) => mix(BAND.plate, light, LIGHT_AT_TEXT));
+
+// An accent's epithet ink depends on the accent alone, so each is worked out once.
+const inks = new Map();
+const accentInk = (accent) => {
+  if (!inks.has(accent)) inks.set(accent, readableOn(accent, bandGrounds(accent)));
+  return inks.get(accent);
+};
 
 /**
  * How the Open terminal button is styled. "off" (disabled): quiet, nothing else.
@@ -331,8 +337,8 @@ export function crewMarks(crew) {
  * The ring's arcs for one density's geometry, each {kind, d, width}, and how
  * many more are out than drawn: `crewMarks` laid around the portrait.
  */
-export function crewRing(crew, g = RINGS.comfortable) {
-  const { kinds, more } = crewMarks(crew);
+export function crewRing(crew, g = RINGS.comfortable, marks = crewMarks(crew)) {
+  const { kinds, more } = marks;
   const step = 360 / Math.max(kinds.length, 1);
   // Every count keeps its gaps, a lone item too, so an arc never reads as a closed ring.
   const segments = kinds.map((kind, i) => {
@@ -343,8 +349,8 @@ export function crewRing(crew, g = RINGS.comfortable) {
 }
 
 /** The ring in each density. */
-export const crewRings = (crew) =>
-  Object.fromEntries(Object.entries(RINGS).map(([density, g]) => [density, crewRing(crew, g)]));
+export const crewRings = (crew, marks = crewMarks(crew)) =>
+  Object.fromEntries(Object.entries(RINGS).map(([density, g]) => [density, crewRing(crew, g, marks)]));
 
 /** Whether the wall's ring key shows: while any card has background work out. */
 export const showsRingKey = (cards) => cards.some((c) => c.rings.comfortable.segments.length > 0);
@@ -414,6 +420,7 @@ export function card(s, cast, nowMs) {
   const crew = crewOf(s);
   const also = [...new Set((s.touched ?? []).map((t) => t.repo))].filter((r) => r && r !== s.where?.repo);
   const jump = jumpable(s);
+  const marks = crewMarks(crew);
   return {
     id: s.session_id,
     task: s.name || "No session name yet",
@@ -424,8 +431,8 @@ export function card(s, cast, nowMs) {
       when: pillWhen(s, nowMs),
     },
     ask: s.status === "needs_you" ? askText(s.reason) : null,
-    rings: crewRings(crew),
-    marks: crewMarks(crew),
+    rings: crewRings(crew, marks),
+    marks,
     // An agent's segment wears the character's colour; a medallion's, the wall's gold.
     ringColor: who.accent,
     crew: crewText(crew),
@@ -442,7 +449,7 @@ export function card(s, cast, nowMs) {
     face2x: who.face2x,
     full: who.full,
     accent: who.accent,
-    accentInk: who.accent ? readableOn(who.accent, bandGrounds(who.accent)) : null,
+    accentInk: who.accent ? accentInk(who.accent) : null,
     epithet: who.epithet,
     figure: who.figure,
     ...jumpStyle(s, who.accent),

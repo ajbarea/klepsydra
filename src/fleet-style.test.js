@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { TONES, medallionSvg } from "./fleet/medallion.js";
 import { contrast, mix, mixOklab, readableOn } from "./fleet/contrast.js";
-import { BAND, PLATE_BG, RINGS, bandGrounds } from "./fleet/model.js";
+import { BAND, RINGS, bandGrounds } from "./fleet/model.js";
 
 const read = (f) => readFileSync(new URL(f, import.meta.url), "utf8");
 const badgeCss = read("./fleet/badge.css");
@@ -274,7 +274,6 @@ test("the band's constants in the model are the stylesheet's", () => {
     t,
   );
   assert.equal(BAND.needs, token(badgeCss, "--badge-needs"), "a needs-you band is lit amber");
-  assert.equal(PLATE_BG, BAND.plate);
 });
 
 test("text on the band reads at 4.5:1 under every light that can reach it", () => {
@@ -343,4 +342,18 @@ test("the nameplate's face is bundled, with its licence", () => {
   const css = wallCss();
   assert.match(css, /@font-face \{[^}]*font-family: "Cinzel";[^}]*src: url\("fonts\/cinzel-latin-wght-normal\.woff2"\)/);
   assert.match(read("./fleet/fonts/OFL.txt"), /SIL Open Font License, Version 1\.1/);
+});
+
+test("the tone stripe follows the card's rounded corners, now that the card no longer clips", () => {
+  const css = wallCss();
+  const stripe = css.match(/\n\.card::before \{([^}]*)\}/)?.[1] ?? "";
+  assert.match(stripe, /border-left: 3px solid var\(--tone\)/, "a border on the card-shaped box curves with the corner");
+  assert.match(stripe, /border-radius: 0 0 13px 13px/);
+  assert.match(stripe, /pointer-events: none/);
+  assert.match(css, /\[data-density="compact"\] \.card::before \{ border-radius: 13px; \}/);
+  assert.doesNotMatch(css.replace(/\/\*[\s\S]*?\*\//g, ""), /\.card::before \{[^}]*\bwidth: 3px/);
+});
+
+test("the wall, focused only as a fallback, draws no outline of its own", () => {
+  assert.match(wallCss(), /\.wall:focus \{ outline: none; \}/);
 });
