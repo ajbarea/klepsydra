@@ -3,7 +3,7 @@
 
 use std::collections::HashMap;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::ledger::{Receiver, Totals};
 use crate::session::{Claude, Kind, Place, Said, SessionFile, State, Tmux, Touched};
@@ -31,7 +31,7 @@ pub const BACKGROUND_STALE_AFTER: i64 = 3600;
 /// hook stamps a moment before the file lands.
 const BACKGROUND_AHEAD: i64 = 60;
 
-#[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum Status {
     NeedsYou,
