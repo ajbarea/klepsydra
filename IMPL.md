@@ -5,7 +5,7 @@ ledger drawer). Branch feat/ledger-ui, worktree `.claude/worktrees/ledger-ui`.
 The issue body (`gh api repos/ajbarea/klepsydra/issues/56 -q .body`) and its
 Slice 2 "Done when" are binding.
 
-## Done (all committed locally, nothing pushed)
+## Done (pushed; PR #64)
 - Rust: `Day.attribution` and `ledger_today` (TodayView), registered in main.rs.
 - `src/fleet/ledger.js` (DOM-free, `src/fleet-ledger.test.js`): compactNumber,
   cacheShare, receipt parts, compact pick, chip label, drawer figures,

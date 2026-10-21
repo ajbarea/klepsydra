@@ -219,7 +219,7 @@ export function createDrawer({ dialog, sessions, cast, fetchToday, home }) {
       el(
         "p",
         "hint",
-        "Claude Code redacts the names of third-party plugins and their skills, and of MCP servers you configured, unless prompt and tool details are logged. klepsydra leaves that off.",
+        "Claude Code redacts the names of third-party plugins and their skills, and of MCP servers you configured, unless OTEL_LOG_TOOL_DETAILS is set. klepsydra leaves it unset.",
       ),
     );
     for (const { kind, title, noun, top } of kinds) {

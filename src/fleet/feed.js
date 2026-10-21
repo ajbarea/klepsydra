@@ -73,7 +73,7 @@ const EMPTY_TODAY = { day: { sessions: {}, attribution: {} }, receiver: null, gu
 /**
  * Today's ledger for the drawer, filtered to `session` when given: the app's
  * ledger_today command, or in a browser the ?demo sample (its times moved up
- * to now, its guardrails cut as the command cuts them), else an empty day.
+ * to now, its guardrails filtered as the command filters them), else an empty day.
  */
 export async function todayLedger(session = null) {
   if (inTauri) return window.__TAURI__.core.invoke("ledger_today", { session });

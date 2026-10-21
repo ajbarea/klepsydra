@@ -357,12 +357,12 @@ def receipt_text(wall):
 def chip_name(wall):
     """The chip's accessible name says what was blocked; its short text is hidden from readers."""
     page = wall.open(1920, 1000, 16)
-    chip = page.get_by_role("button", name="3 tool calls blocked by guardrails")
-    one = page.get_by_role("button", name="1 tool call blocked by guardrails")
+    chip = page.get_by_role("button", name="3 blocked: tool calls a hook or config rule turned down")
+    one = page.get_by_role("button", name="1 blocked: tool call a hook or config rule turned down")
     got = page.evaluate(
         """() => [...document.querySelectorAll('.chip')].map((c) => [c.querySelector('.c-short').textContent, c.querySelector('.c-short').getAttribute('aria-hidden')])"""
     )
-    four = page.get_by_role("button", name="4 tool calls blocked by guardrails")
+    four = page.get_by_role("button", name="4 blocked: tool calls a hook or config rule turned down")
     ok = chip.count() == 1 and one.count() == 1 and four.count() == 1 and all(h == "true" for _, h in got)
     wall.check(ok, "the guardrail chip is named in full", [chip.count(), one.count(), got[:3]])
     page.close()

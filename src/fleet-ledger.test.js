@@ -47,8 +47,9 @@ test("the compact receipt keeps the three most informative parts in reading orde
 test("the guardrail chip counts blocked calls and names them in full", () => {
   assert.equal(chipLabel(0), null);
   assert.equal(chipLabel(undefined), null);
-  assert.deepEqual(chipLabel(1), { short: "1 blocked", full: "1 tool call blocked by guardrails" });
-  assert.deepEqual(chipLabel(3), { short: "3 blocked", full: "3 tool calls blocked by guardrails" });
+  assert.deepEqual(chipLabel(1), { short: "1 blocked", full: "1 blocked: tool call a hook or config rule turned down" });
+  assert.deepEqual(chipLabel(3), { short: "3 blocked", full: "3 blocked: tool calls a hook or config rule turned down" });
+  for (const n of [1, 2, 40]) assert.ok(chipLabel(n).full.startsWith(chipLabel(n).short), "label in name");
 });
 
 test("a card's ledger line is absent when all zero, and shows a chip with no receipt", () => {

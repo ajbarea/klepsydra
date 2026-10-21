@@ -85,7 +85,9 @@ export const receiptText = (parts) => parts.map((p) => p.text).join(" · ");
 export function chipLabel(count) {
   const blocked = n(count);
   if (!blocked) return null;
-  return { short: `${blocked} blocked`, full: `${plural(blocked, "tool call")} blocked by guardrails` };
+  // The name starts with the visible words, so speaking them finds the button (WCAG 2.5.3).
+  const calls = blocked === 1 ? "tool call" : "tool calls";
+  return { short: `${blocked} blocked`, full: `${blocked} blocked: ${calls} a hook or config rule turned down` };
 }
 
 /** What a card shows from its session's ledger; null when there is nothing to say. */
