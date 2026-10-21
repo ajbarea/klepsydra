@@ -640,8 +640,21 @@ separately.
 - **When the overlay is off.** Claude Code's exports fail quietly and the
   session carries on; that stretch is not counted. If something else holds
   port 4318, klepsydra logs it to `fleet.log` and exposes it in the fleet
-  view as `receiver`, for the wall to show (not yet shown). It runs without
+  view as `receiver`, and the drawer shows it. It runs without
   the ledger and tries the port again every 30 seconds.
+
+On the wall, each card with something to count has a receipt line, such as
+`+312 −40 lines · 2 commits · 1 PR · 1.2M tokens (86% cached)`, which is
+hidden while everything is zero; a compact card shows its three most telling
+parts. A chip such as "3 blocked" counts the tool calls a hook or a
+permission rule turned down in that session, and opens the drawer for it. The
+**Ledger** button in the header opens the drawer for every session: today's
+totals, tokens per character, tokens by skill, plugin and MCP server, the
+list of blocked tool calls, API errors and refusals, and one dim line with
+the cost as an API-price estimate. Every chart has a table beside it. Claude
+Code redacts third-party plugin and skill names, and MCP servers you
+configured, so the drawer labels those "third-party" and "custom". The
+drawer is local and reads only today's file.
 
 ## How often it refreshes
 

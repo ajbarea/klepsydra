@@ -828,6 +828,7 @@ fn main() {
             fleet::fleet_subscribe,
             fleet::open_wall,
             fleet::clear_session,
+            fleet::ledger_today,
             fleet::get_wall_density,
             fleet::set_wall_density,
             jump::jump_to_terminal,

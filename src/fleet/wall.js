@@ -3,7 +3,8 @@
 import cast from "./cast.json" with { type: "json" };
 import { RINGS, announcements, card, identity, shouldSlide, showsRingKey, startedNeeding, transitionName, statuses, tally } from "./model.js";
 import { announcer, press, setOff, syncChildren } from "./dom.js";
-import { inTauri, subscribe } from "./feed.js";
+import { inTauri, subscribe, todayLedger } from "./feed.js";
+import { createDrawer } from "./drawer.js";
 import { showFace } from "./face.js";
 import { GOLD, SPEAK_FADE_MS, STILL, Speaker, WAVE, waves } from "./speaking.js";
 import { parseDensity, resolveDensity } from "./density.js";
@@ -41,6 +42,15 @@ newButton.addEventListener("click", () =>
 );
 
 let sessions = [];
+const ledgerButton = document.getElementById("ledger-open");
+const drawer = createDrawer({
+  dialog: document.getElementById("ledger"),
+  sessions: () => sessions,
+  cast,
+  fetchToday: todayLedger,
+  home: ledgerButton,
+});
+ledgerButton.addEventListener("click", () => drawer.open(null, ledgerButton));
 let before;
 let pending = null; // a card to show once it exists
 const speaker = new Speaker();
@@ -110,6 +120,7 @@ function paint(el, c) {
     said.title = text ?? "";
   }
   show(el.querySelector(".updated"), c.updated);
+  paintLedger(el, c);
 
   const jump = el.querySelector(".jump");
   jump.dataset.name = c.session ?? "";
@@ -131,6 +142,22 @@ function paint(el, c) {
   clear.hidden = !c.clear;
   clear.dataset.id = c.id;
   setOff(clear, false);
+}
+
+// The receipt and the guardrail chip share one line, hidden when both are empty.
+function paintLedger(el, c) {
+  const line = el.querySelector(".ledger-line");
+  line.hidden = !c.ledger;
+  const receipt = el.querySelector(".receipt");
+  receipt.hidden = !c.ledger?.full;
+  setText(receipt.querySelector(".r-full"), c.ledger?.full);
+  setText(receipt.querySelector(".r-short"), c.ledger?.short);
+  receipt.title = c.ledger?.full ?? "";
+  const chip = el.querySelector(".chip");
+  chip.hidden = !c.ledger?.chip;
+  chip.dataset.id = c.id;
+  setText(chip.querySelector(".c-short"), c.ledger?.chip?.short);
+  setText(chip.querySelector(".c-full"), c.ledger?.chip?.full);
 }
 
 // The header band: the character's light and figure, epithet, and the crew
@@ -370,6 +397,7 @@ function receive(message) {
     before = statuses(message.sessions);
     sessions = message.sessions;
     render(started);
+    drawer.refresh();
     if (!frameId) drawSpeaking();
     if (pending) focusCard(pending);
   }
@@ -377,6 +405,11 @@ function receive(message) {
 }
 
 wall.addEventListener("click", (e) => {
+  const chip = e.target.closest(".chip");
+  if (chip) {
+    drawer.open(chip.dataset.id, chip);
+    return;
+  }
   const look = e.target.closest(".look");
   if (look) {
     showPortrait(look.dataset.id);

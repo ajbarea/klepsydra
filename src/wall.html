@@ -15,6 +15,7 @@
         <span class="key" aria-hidden="true"><svg viewBox="0 0 32 18"><path class="agent" d="M 4.5 16 A 11.5 11.5 0 0 1 27.5 16"/></svg>agent</span>
         <span class="key" aria-hidden="true"><svg viewBox="0 0 32 18"><path class="shell" d="M 4.5 16 A 11.5 11.5 0 0 1 27.5 16"/></svg>shell</span>
       </p>
+      <button type="button" id="ledger-open" aria-haspopup="dialog">Ledger</button>
     </div>
     <button type="button" id="new-session">+ New session</button>
     <span id="new-note" role="status"></span>
@@ -33,6 +34,19 @@
     <div class="caption">
       <div><h2 id="portrait-name"></h2><p class="epithet"></p><p class="voice"></p></div>
       <form method="dialog"><button type="submit" class="close">Close</button></form>
+    </div>
+  </dialog>
+
+  <dialog id="ledger" class="ledger" aria-labelledby="ledger-title">
+    <div class="ledger-body">
+      <header class="ledger-head">
+        <div>
+          <h2 id="ledger-title" tabindex="-1" autofocus>Ledger</h2>
+          <p class="ledger-day"></p>
+        </div>
+        <button type="button" class="ledger-close">Close</button>
+      </header>
+      <div class="ledger-content"></div>
     </div>
   </dialog>
 
@@ -69,6 +83,10 @@
         <p class="error" hidden></p>
       </div>
       <p class="updated" hidden></p>
+      <p class="ledger-line" hidden>
+        <span class="receipt"><span class="r-full"></span><span class="r-short" aria-hidden="true"></span></span>
+        <button type="button" class="chip" aria-haspopup="dialog" title="Open the ledger for this session" hidden><span class="c-short" aria-hidden="true"></span><span class="c-full visually-hidden"></span></button>
+      </p>
       <footer class="actions">
         <span class="foot">
           <span class="note" role="status"></span>

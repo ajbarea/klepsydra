@@ -38,6 +38,33 @@
    "background": {
     "agents": 0,
     "shells": 0
+   },
+   "ledger": {
+    "tokens": {
+     "input": 100000,
+     "output": 40000,
+     "cache_read": 1000000,
+     "cache_creation": 60000
+    },
+    "cost_usd_estimate_micros": 4820000,
+    "lines_added": 312,
+    "lines_removed": 40,
+    "commits": 2,
+    "pull_requests": 1,
+    "active": {
+     "user_ms": 2280000,
+     "cli_ms": 4260000
+    },
+    "edit_decisions": {},
+    "tool_results": {
+     "count": 0,
+     "failures": 0
+    },
+    "api_errors": 0,
+    "api_refusals": 0,
+    "guardrail_rejects": 0,
+    "user_rejects": 0,
+    "updated_at": 1792499880
    }
   },
   {
@@ -72,6 +99,33 @@
    "background": {
     "agents": 0,
     "shells": 0
+   },
+   "ledger": {
+    "tokens": {
+     "input": 35000,
+     "output": 21000,
+     "cache_read": 410000,
+     "cache_creation": 48000
+    },
+    "cost_usd_estimate_micros": 1640000,
+    "lines_added": 88,
+    "lines_removed": 12,
+    "commits": 1,
+    "pull_requests": 0,
+    "active": {
+     "user_ms": 1320000,
+     "cli_ms": 2400000
+    },
+    "edit_decisions": {},
+    "tool_results": {
+     "count": 0,
+     "failures": 0
+    },
+    "api_errors": 0,
+    "api_refusals": 0,
+    "guardrail_rejects": 3,
+    "user_rejects": 0,
+    "updated_at": 1792499880
    }
   },
   {
@@ -106,6 +160,33 @@
    "background": {
     "agents": 0,
     "shells": 0
+   },
+   "ledger": {
+    "tokens": {
+     "input": 9000,
+     "output": 3400,
+     "cache_read": 0,
+     "cache_creation": 0
+    },
+    "cost_usd_estimate_micros": 210000,
+    "lines_added": 0,
+    "lines_removed": 0,
+    "commits": 0,
+    "pull_requests": 0,
+    "active": {
+     "user_ms": 240000,
+     "cli_ms": 360000
+    },
+    "edit_decisions": {},
+    "tool_results": {
+     "count": 0,
+     "failures": 0
+    },
+    "api_errors": 0,
+    "api_refusals": 0,
+    "guardrail_rejects": 0,
+    "user_rejects": 0,
+    "updated_at": 1792499880
    }
   },
   {
@@ -140,6 +221,33 @@
    "background": {
     "agents": 1,
     "shells": 0
+   },
+   "ledger": {
+    "tokens": {
+     "input": 210000,
+     "output": 96000,
+     "cache_read": 7400000,
+     "cache_creation": 700000
+    },
+    "cost_usd_estimate_micros": 16900000,
+    "lines_added": 1450,
+    "lines_removed": 310,
+    "commits": 6,
+    "pull_requests": 2,
+    "active": {
+     "user_ms": 5700000,
+     "cli_ms": 11280000
+    },
+    "edit_decisions": {},
+    "tool_results": {
+     "count": 0,
+     "failures": 0
+    },
+    "api_errors": 0,
+    "api_refusals": 0,
+    "guardrail_rejects": 4,
+    "user_rejects": 0,
+    "updated_at": 1792499880
    }
   },
   {
@@ -179,6 +287,33 @@
    "background": {
     "agents": 2,
     "shells": 1
+   },
+   "ledger": {
+    "tokens": {
+     "input": 52000,
+     "output": 30000,
+     "cache_read": 1900000,
+     "cache_creation": 120000
+    },
+    "cost_usd_estimate_micros": 3100000,
+    "lines_added": 64,
+    "lines_removed": 9,
+    "commits": 0,
+    "pull_requests": 0,
+    "active": {
+     "user_ms": 1800000,
+     "cli_ms": 3120000
+    },
+    "edit_decisions": {},
+    "tool_results": {
+     "count": 0,
+     "failures": 0
+    },
+    "api_errors": 0,
+    "api_refusals": 0,
+    "guardrail_rejects": 0,
+    "user_rejects": 0,
+    "updated_at": 1792499880
    }
   },
   {
@@ -213,6 +348,33 @@
    "background": {
     "agents": 0,
     "shells": 0
+   },
+   "ledger": {
+    "tokens": {
+     "input": 60000,
+     "output": 28000,
+     "cache_read": 1800000,
+     "cache_creation": 330000
+    },
+    "cost_usd_estimate_micros": 2900000,
+    "lines_added": 0,
+    "lines_removed": 0,
+    "commits": 3,
+    "pull_requests": 1,
+    "active": {
+     "user_ms": 1200000,
+     "cli_ms": 1980000
+    },
+    "edit_decisions": {},
+    "tool_results": {
+     "count": 0,
+     "failures": 0
+    },
+    "api_errors": 0,
+    "api_refusals": 0,
+    "guardrail_rejects": 0,
+    "user_rejects": 0,
+    "updated_at": 1792499880
    }
   },
   {
@@ -244,6 +406,33 @@
    "background": {
     "agents": 0,
     "shells": 0
+   },
+   "ledger": {
+    "tokens": {
+     "input": 14000,
+     "output": 2000,
+     "cache_read": 60000,
+     "cache_creation": 9000
+    },
+    "cost_usd_estimate_micros": 420000,
+    "lines_added": 0,
+    "lines_removed": 0,
+    "commits": 0,
+    "pull_requests": 0,
+    "active": {
+     "user_ms": 360000,
+     "cli_ms": 480000
+    },
+    "edit_decisions": {},
+    "tool_results": {
+     "count": 0,
+     "failures": 0
+    },
+    "api_errors": 2,
+    "api_refusals": 1,
+    "guardrail_rejects": 0,
+    "user_rejects": 0,
+    "updated_at": 1792499880
    }
   },
   {
@@ -272,6 +461,33 @@
    "background": {
     "agents": 0,
     "shells": 0
+   },
+   "ledger": {
+    "tokens": {
+     "input": 0,
+     "output": 0,
+     "cache_read": 0,
+     "cache_creation": 0
+    },
+    "cost_usd_estimate_micros": 0,
+    "lines_added": 0,
+    "lines_removed": 0,
+    "commits": 0,
+    "pull_requests": 0,
+    "active": {
+     "user_ms": 0,
+     "cli_ms": 0
+    },
+    "edit_decisions": {},
+    "tool_results": {
+     "count": 0,
+     "failures": 0
+    },
+    "api_errors": 0,
+    "api_refusals": 0,
+    "guardrail_rejects": 0,
+    "user_rejects": 0,
+    "updated_at": 1792499880
    }
   },
   {
@@ -306,6 +522,33 @@
    "background": {
     "agents": 0,
     "shells": 0
+   },
+   "ledger": {
+    "tokens": {
+     "input": 20000,
+     "output": 14000,
+     "cache_read": 280000,
+     "cache_creation": 26000
+    },
+    "cost_usd_estimate_micros": 640000,
+    "lines_added": 40,
+    "lines_removed": 5,
+    "commits": 1,
+    "pull_requests": 0,
+    "active": {
+     "user_ms": 660000,
+     "cli_ms": 1020000
+    },
+    "edit_decisions": {},
+    "tool_results": {
+     "count": 0,
+     "failures": 0
+    },
+    "api_errors": 0,
+    "api_refusals": 0,
+    "guardrail_rejects": 0,
+    "user_rejects": 0,
+    "updated_at": 1792499880
    }
   },
   {
@@ -340,6 +583,33 @@
    "background": {
     "agents": 1,
     "shells": 1
+   },
+   "ledger": {
+    "tokens": {
+     "input": 18000,
+     "output": 11000,
+     "cache_read": 520000,
+     "cache_creation": 41000
+    },
+    "cost_usd_estimate_micros": 900000,
+    "lines_added": 220,
+    "lines_removed": 31,
+    "commits": 1,
+    "pull_requests": 0,
+    "active": {
+     "user_ms": 840000,
+     "cli_ms": 1320000
+    },
+    "edit_decisions": {},
+    "tool_results": {
+     "count": 0,
+     "failures": 0
+    },
+    "api_errors": 0,
+    "api_refusals": 0,
+    "guardrail_rejects": 0,
+    "user_rejects": 0,
+    "updated_at": 1792499880
    }
   },
   {
@@ -374,6 +644,33 @@
    "background": {
     "agents": 0,
     "shells": 0
+   },
+   "ledger": {
+    "tokens": {
+     "input": 0,
+     "output": 0,
+     "cache_read": 0,
+     "cache_creation": 0
+    },
+    "cost_usd_estimate_micros": 0,
+    "lines_added": 0,
+    "lines_removed": 0,
+    "commits": 0,
+    "pull_requests": 0,
+    "active": {
+     "user_ms": 0,
+     "cli_ms": 0
+    },
+    "edit_decisions": {},
+    "tool_results": {
+     "count": 0,
+     "failures": 0
+    },
+    "api_errors": 0,
+    "api_refusals": 0,
+    "guardrail_rejects": 0,
+    "user_rejects": 0,
+    "updated_at": 1792499880
    }
   },
   {
@@ -408,6 +705,33 @@
    "background": {
     "agents": 0,
     "shells": 0
+   },
+   "ledger": {
+    "tokens": {
+     "input": 30000,
+     "output": 12000,
+     "cache_read": 40000,
+     "cache_creation": 9000
+    },
+    "cost_usd_estimate_micros": 0,
+    "lines_added": 0,
+    "lines_removed": 0,
+    "commits": 0,
+    "pull_requests": 0,
+    "active": {
+     "user_ms": 0,
+     "cli_ms": 0
+    },
+    "edit_decisions": {},
+    "tool_results": {
+     "count": 0,
+     "failures": 0
+    },
+    "api_errors": 0,
+    "api_refusals": 0,
+    "guardrail_rejects": 0,
+    "user_rejects": 0,
+    "updated_at": 1792499880
    }
   },
   {
@@ -442,6 +766,33 @@
    "background": {
     "agents": 7,
     "shells": 3
+   },
+   "ledger": {
+    "tokens": {
+     "input": 0,
+     "output": 0,
+     "cache_read": 0,
+     "cache_creation": 0
+    },
+    "cost_usd_estimate_micros": 0,
+    "lines_added": 0,
+    "lines_removed": 0,
+    "commits": 0,
+    "pull_requests": 0,
+    "active": {
+     "user_ms": 0,
+     "cli_ms": 0
+    },
+    "edit_decisions": {},
+    "tool_results": {
+     "count": 0,
+     "failures": 0
+    },
+    "api_errors": 0,
+    "api_refusals": 0,
+    "guardrail_rejects": 0,
+    "user_rejects": 0,
+    "updated_at": 1792499880
    }
   },
   {
@@ -519,6 +870,33 @@
    "background": {
     "agents": 0,
     "shells": 0
+   },
+   "ledger": {
+    "tokens": {
+     "input": 77000,
+     "output": 38000,
+     "cache_read": 2300000,
+     "cache_creation": 150000
+    },
+    "cost_usd_estimate_micros": 3800000,
+    "lines_added": 12,
+    "lines_removed": 4,
+    "commits": 0,
+    "pull_requests": 0,
+    "active": {
+     "user_ms": 1500000,
+     "cli_ms": 2160000
+    },
+    "edit_decisions": {},
+    "tool_results": {
+     "count": 0,
+     "failures": 0
+    },
+    "api_errors": 0,
+    "api_refusals": 0,
+    "guardrail_rejects": 1,
+    "user_rejects": 0,
+    "updated_at": 1792499880
    }
   },
   {
@@ -553,6 +931,33 @@
    "background": {
     "agents": 0,
     "shells": 1
+   },
+   "ledger": {
+    "tokens": {
+     "input": 41000,
+     "output": 19000,
+     "cache_read": 900000,
+     "cache_creation": 80000
+    },
+    "cost_usd_estimate_micros": 1500000,
+    "lines_added": 0,
+    "lines_removed": 0,
+    "commits": 2,
+    "pull_requests": 0,
+    "active": {
+     "user_ms": 1020000,
+     "cli_ms": 1500000
+    },
+    "edit_decisions": {},
+    "tool_results": {
+     "count": 0,
+     "failures": 0
+    },
+    "api_errors": 0,
+    "api_refusals": 0,
+    "guardrail_rejects": 0,
+    "user_rejects": 0,
+    "updated_at": 1792499880
    }
   }
  ],

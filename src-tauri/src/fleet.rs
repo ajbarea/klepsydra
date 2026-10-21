@@ -9,7 +9,7 @@ use std::time::Instant;
 #[cfg(windows)]
 use klepsydra_fleet::cue::Cues;
 use klepsydra_fleet::hub::{Hub, Sink};
-use klepsydra_fleet::ledger::{Ledger, Receiver, Shared};
+use klepsydra_fleet::ledger::{Ledger, Receiver, Shared, TodayView};
 use klepsydra_fleet::problem_log::{append_capped, CAP};
 use klepsydra_fleet::receiver;
 use klepsydra_fleet::scan::Problem;
@@ -60,6 +60,26 @@ pub fn clear_session(app: AppHandle, id: String) -> Result<(), String> {
         .unwrap_or_else(|| check_clearable(None, &id))?;
     let dir = crate::klepsydra_dir(&app).ok_or("klepsydra has no data folder.")?;
     remove_session(&dir.join("fleet"), &id)
+}
+
+/// The ledger the receiver writes, managed as app state once it is open.
+pub struct LedgerState(Shared);
+
+/// Today's ledger for the wall's drawer; given a `session`, its guardrail
+/// log is that session's alone.
+/// Off the main thread: the receiver holds the lock while it saves.
+#[tauri::command]
+pub async fn ledger_today(app: AppHandle, session: Option<String>) -> Result<TodayView, String> {
+    let shared = app
+        .try_state::<LedgerState>()
+        .ok_or("klepsydra has no ledger: it has no data folder.")?
+        .0
+        .clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        klepsydra_fleet::ledger::lock(&shared).today_view(unix_now(), session.as_deref())
+    })
+    .await
+    .map_err(|e| format!("Could not read the ledger: {e}"))
 }
 
 /// A line for stderr, for dev runs, and for `<dir>/fleet.log`, which release
@@ -141,6 +161,7 @@ pub fn start(app: &AppHandle, dir: Option<PathBuf>) {
     };
     let app = app.clone();
     let ledger = start_ledger(&dir);
+    app.manage(LedgerState(ledger.clone()));
     std::thread::spawn(move || {
         let mut reader = Reader::new(&dir).with_ledger(ledger);
         #[cfg(windows)]

@@ -3,6 +3,7 @@
 
 import { markerWidth, mix, mixOklab, readableOn } from "./contrast.js";
 import { medallion } from "./medallion.js";
+import { ledgerLine } from "./ledger.js";
 import { speakingNow } from "./speaking.js";
 
 // Each status's badge: shape, symbol and tone carry it together with the
@@ -459,6 +460,7 @@ export function card(s, cast, nowMs) {
     prompt: plainText(s.prompt?.text ?? null),
     reply: plainText(s.reply?.text ?? null),
     error: s.status === "error" ? s.error ?? null : null,
+    ledger: ledgerLine(s.ledger),
     updated: s.status === "ended" ? null : updatedText(s, nowMs), // the pill's age says it
     jump,
     clear: s.status === "ended" || s.status === "silent",

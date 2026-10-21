@@ -30,6 +30,14 @@ pub const MAX_SESSIONS: usize = 512;
 pub const GUARDRAIL_CAP: usize = 10_000;
 /// The file format's version.
 pub const VERSION: u32 = 1;
+/// Most names one session keeps per attribution kind; past it, tokens go
+/// under `OTHER`.
+pub const MAX_NAMES: usize = 32;
+/// Where tokens go once a session has `MAX_NAMES` names of one kind; in
+/// parentheses so no skill, plugin or server name can be it.
+pub const OTHER: &str = "(other)";
+/// Most guardrail entries the wall is handed at once, newest first.
+pub const GUARDRAIL_VIEW: usize = 200;
 /// Holds what spans days: lifetime totals, dedupe keys, cumulative baselines.
 pub const STATE_FILE: &str = "state.json";
 
@@ -104,6 +112,31 @@ pub struct Guardrail {
     pub source: String,
 }
 
+/// A session's tokens by the skill, plugin and MCP server active for the
+/// request (`token.usage`'s `skill.name`, `plugin.name` and
+/// `mcp_server.name`). Claude Code redacts user-defined MCP servers to
+/// `custom` and third-party plugins and their skills to `third-party` unless
+/// `OTEL_LOG_TOOL_DETAILS` is set.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct Attribution {
+    pub skills: BTreeMap<String, u64>,
+    pub plugins: BTreeMap<String, u64>,
+    pub mcp_servers: BTreeMap<String, u64>,
+}
+
+/// Add `n` to `name`, or to `OTHER` once `map` holds `MAX_NAMES` others.
+fn attribute(map: &mut BTreeMap<String, u64>, name: &str, n: u64) {
+    let named = map.len() - usize::from(map.contains_key(OTHER));
+    let key = if map.contains_key(name) || named < MAX_NAMES {
+        name
+    } else {
+        OTHER
+    };
+    let slot = map.entry(key.to_string()).or_default();
+    *slot = slot.saturating_add(n);
+}
+
 /// One local day's file.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
@@ -113,6 +146,8 @@ pub struct Day {
     pub day: String,
     pub sessions: BTreeMap<String, Totals>,
     pub guardrails: Vec<Guardrail>,
+    /// Tokens by skill, plugin and MCP server, per session.
+    pub attribution: BTreeMap<String, Attribution>,
     /// Counted metric points that carried no `session.id`, and so no total.
     pub no_session: u64,
 }
@@ -391,20 +426,35 @@ pub struct Receiver {
     pub error: Option<String>,
 }
 
+/// Today's ledger as the wall's drawer reads it.
+#[derive(Clone, Debug, Serialize, PartialEq)]
+pub struct TodayView {
+    /// Today's file, its guardrail log moved to `guardrails`.
+    pub day: Day,
+    pub receiver: Option<Receiver>,
+    /// The newest `GUARDRAIL_VIEW` entries, newest first, of one session's
+    /// when the view is filtered to it.
+    pub guardrails: Vec<Guardrail>,
+    /// How many entries matched before the cut.
+    pub guardrails_total: usize,
+}
+
 /// Drop the least recently updated sessions past `MAX_SESSIONS`, never
 /// `keep`, the one just updated.
-fn cap_sessions(map: &mut BTreeMap<String, Totals>, keep: &str) {
+/// Returns the sessions dropped.
+fn cap_sessions(map: &mut BTreeMap<String, Totals>, keep: &str) -> Vec<String> {
+    let mut dropped = Vec::new();
     while map.len() > MAX_SESSIONS {
         let oldest = map
             .iter()
             .filter(|(id, _)| id.as_str() != keep)
             .min_by_key(|(id, t)| (t.updated_at, id.as_str()))
             .map(|(id, _)| id.clone());
-        match oldest {
-            Some(id) => map.remove(&id),
-            None => break,
-        };
+        let Some(id) = oldest else { break };
+        map.remove(&id);
+        dropped.push(id);
     }
+    dropped
 }
 
 /// The ledger as the receiver and the fleet reader share it.
@@ -502,6 +552,55 @@ impl Ledger {
         &self.day
     }
 
+    /// Today's ledger for the wall, its guardrail log cut to the newest
+    /// `GUARDRAIL_VIEW` and, given a `session`, filtered to that session.
+    pub fn today_view(&self, now: i64, session: Option<&str>) -> TodayView {
+        let name = day_name(now, &self.tz);
+        let current = self.day.day == name;
+        // Every field named, so a new one cannot be left off the wall unseen.
+        let Day {
+            version: _,
+            day: _,
+            sessions,
+            guardrails: _,
+            attribution,
+            no_session,
+        } = &self.day;
+        let day = if current {
+            Day {
+                version: VERSION,
+                day: name,
+                sessions: sessions.clone(),
+                guardrails: Vec::new(),
+                attribution: attribution.clone(),
+                no_session: *no_session,
+            }
+        } else {
+            Day {
+                version: VERSION,
+                day: name,
+                ..Day::default()
+            }
+        };
+        // Exports can arrive late, so the order is by when each happened.
+        let mut matching: Vec<&Guardrail> = if current {
+            self.day
+                .guardrails
+                .iter()
+                .filter(|g| session.is_none_or(|s| g.session_id == s))
+                .collect()
+        } else {
+            Vec::new()
+        };
+        matching.sort_by_key(|g| std::cmp::Reverse(g.at));
+        TodayView {
+            guardrails_total: matching.len(),
+            guardrails: matching.into_iter().take(GUARDRAIL_VIEW).cloned().collect(),
+            receiver: self.receiver.clone(),
+            day,
+        }
+    }
+
     /// A session's totals since its first export.
     pub fn session(&self, id: &str) -> Option<&Totals> {
         self.state.sessions.get(id)
@@ -526,7 +625,29 @@ impl Ledger {
             let t = map.entry(session.to_string()).or_default();
             f(t);
             t.updated_at = now;
-            cap_sessions(map, session);
+        }
+        let dropped = cap_sessions(&mut self.day.sessions, session);
+        for id in dropped {
+            self.day.attribution.remove(&id);
+        }
+        cap_sessions(&mut self.state.sessions, session);
+    }
+
+    /// Credit `n` tokens of a counted `token.usage` point to its skill,
+    /// plugin and MCP server, if it names any.
+    fn attribute(&mut self, session: &str, p: &Point, n: u64) {
+        const KEYS: [&str; 3] = ["skill.name", "plugin.name", "mcp_server.name"];
+        if !KEYS.iter().any(|k| p.attrs.contains_key(*k)) {
+            return;
+        }
+        let a = self.day.attribution.entry(session.to_string()).or_default();
+        for (key, map) in KEYS
+            .into_iter()
+            .zip([&mut a.skills, &mut a.plugins, &mut a.mcp_servers])
+        {
+            if let Some(name) = p.attrs.get(key) {
+                attribute(map, name, n);
+            }
         }
     }
 
@@ -602,6 +723,12 @@ impl Ledger {
                 continue;
             };
             self.add(session, field, n, now);
+            if matches!(
+                field,
+                Field::Input | Field::Output | Field::CacheRead | Field::CacheCreation
+            ) {
+                self.attribute(session, p, n);
+            }
             tally.counted += 1;
         }
         tally
@@ -1153,5 +1280,199 @@ mod tests {
         d["resourceMetrics"][0]["scopeMetrics"][0]["metrics"][0]["sum"]["dataPoints"][0]
             ["startTimeUnixNano"] = json!(s(future).to_string());
         assert_eq!(l.record_metrics(&metrics(&d), NOW).future, 1);
+    }
+
+    /// A delta `token.usage` point of `value` tokens of `ty`, ending at `end`,
+    /// carrying `attrs` beside its session.
+    fn tokens_at(session: &str, ty: &str, value: u64, end: u64, attrs: &[(&str, &str)]) -> Value {
+        let ns = (end * 1_000_000_000).to_string();
+        let mut a = vec![
+            json!({"key":"session.id","value":{"stringValue":session}}),
+            json!({"key":"type","value":{"stringValue":ty}}),
+        ];
+        for (k, v) in attrs {
+            a.push(json!({"key":k,"value":{"stringValue":v}}));
+        }
+        json!({"resourceMetrics":[{"scopeMetrics":[{"metrics":[{"name":"claude_code.token.usage","sum":{"aggregationTemporality":1,"dataPoints":[{"attributes":a,"startTimeUnixNano":ns,"timeUnixNano":ns,"asDouble":value}]}}]}]}]})
+    }
+
+    #[test]
+    fn tokens_are_attributed_to_their_skill_plugin_and_mcp_server() {
+        let mut l = Ledger::in_memory(NOW);
+        let now = NOW as u64;
+        let skill = [
+            ("skill.name", "third-party"),
+            ("plugin.name", "third-party"),
+        ];
+        l.record_metrics(&metrics(&tokens_at("s1", "input", 100, now, &skill)), NOW);
+        l.record_metrics(
+            &metrics(&tokens_at("s1", "cacheRead", 900, now - 1, &skill)),
+            NOW,
+        );
+        let mcp = [("mcp_server.name", "custom"), ("mcp_tool.name", "custom")];
+        l.record_metrics(&metrics(&tokens_at("s1", "output", 40, now - 2, &mcp)), NOW);
+        // No attribution, and a retried export: neither adds a name.
+        l.record_metrics(&metrics(&tokens_at("s1", "output", 7, now - 3, &[])), NOW);
+        let t = l.record_metrics(&metrics(&tokens_at("s1", "input", 100, now, &skill)), NOW);
+        assert_eq!(t.duplicate, 1);
+
+        let a = &l.day().attribution["s1"];
+        assert_eq!(a.skills, BTreeMap::from([("third-party".into(), 1000)]));
+        assert_eq!(a.plugins, BTreeMap::from([("third-party".into(), 1000)]));
+        assert_eq!(a.mcp_servers, BTreeMap::from([("custom".into(), 40)]));
+        // Tokens still add up whatever their attribution.
+        let tokens = &l.day().sessions["s1"].tokens;
+        assert_eq!(
+            (tokens.input, tokens.output, tokens.cache_read),
+            (100, 47, 900)
+        );
+    }
+
+    #[test]
+    fn attribution_names_past_the_cap_fold_into_other() {
+        let mut l = Ledger::in_memory(NOW);
+        for n in 0..(MAX_NAMES as u64 + 5) {
+            let name = format!("skill-{n:03}");
+            let p = tokens_at("s1", "output", 1, NOW as u64 - n, &[("skill.name", &name)]);
+            l.record_metrics(&metrics(&p), NOW);
+        }
+        let skills = &l.day().attribution["s1"].skills;
+        assert_eq!(skills.len(), MAX_NAMES + 1);
+        assert_eq!(skills[OTHER], 5);
+        assert_eq!(skills.values().sum::<u64>(), MAX_NAMES as u64 + 5);
+        // A source name that looks like the cap's key is not merged into it.
+        assert!(!OTHER
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || "-_:.".contains(c)));
+        // A name already kept still counts under its own name.
+        let p = tokens_at(
+            "s1",
+            "output",
+            1,
+            NOW as u64 + 1,
+            &[("skill.name", "skill-000")],
+        );
+        l.record_metrics(&metrics(&p), NOW);
+        assert_eq!(l.day().attribution["s1"].skills["skill-000"], 2);
+    }
+
+    #[test]
+    fn a_dropped_session_takes_its_attribution_with_it() {
+        let mut l = Ledger::in_memory(NOW);
+        for n in 0..(MAX_SESSIONS as u64 + 3) {
+            let p = tokens_at(
+                &format!("s{n}"),
+                "output",
+                1,
+                NOW as u64,
+                &[("skill.name", "x")],
+            );
+            l.record_metrics(&metrics(&p), NOW + n as i64);
+        }
+        let day = l.day();
+        assert!(day.attribution.len() <= MAX_SESSIONS);
+        assert!(day
+            .attribution
+            .keys()
+            .all(|id| day.sessions.contains_key(id)));
+        assert!(day
+            .attribution
+            .contains_key(&format!("s{}", MAX_SESSIONS + 2)));
+    }
+
+    #[test]
+    fn today_is_empty_once_the_day_has_rolled_without_an_export() {
+        let mut l = Ledger::in_memory(NOW);
+        l.record_metrics(
+            &metrics(&tokens_at("s1", "output", 5, NOW as u64, &[])),
+            NOW,
+        );
+        l.day.guardrails.push(Guardrail {
+            at: NOW,
+            session_id: "s1".into(),
+            tool_name: "Bash".into(),
+            source: "hook".into(),
+        });
+        let today = l.today_view(NOW, None);
+        assert_eq!(today.day.day, "2026-10-20");
+        assert_eq!(today.day.sessions["s1"].tokens.output, 5);
+        assert_eq!(today.guardrails_total, 1);
+        // The last second of the day, then the first of the next.
+        let midnight = 1_792_540_800; // 2026-10-21T00:00:00Z
+        assert_eq!(l.today_view(midnight - 1, None).day.day, "2026-10-20");
+        let tomorrow = l.today_view(midnight, None);
+        assert_eq!(tomorrow.day.day, "2026-10-21");
+        assert!(tomorrow.day.sessions.is_empty() && tomorrow.day.attribution.is_empty());
+        assert_eq!(
+            (tomorrow.guardrails_total, tomorrow.day.version),
+            (0, VERSION)
+        );
+    }
+
+    #[test]
+    fn a_day_file_without_attribution_loads_and_one_with_it_round_trips() {
+        let dir = Scratch::new("ledger-attr");
+        dir.write("2026-10-20.json", r#"{"day":"2026-10-20","sessions":{}}"#);
+        let (mut l, problems) = Ledger::open(dir.0.clone(), NOW, TimeZone::UTC);
+        assert!(problems.is_empty(), "{problems:?}");
+        assert!(l.day().attribution.is_empty());
+        let p = tokens_at(
+            "s1",
+            "output",
+            3,
+            NOW as u64,
+            &[("mcp_server.name", "github")],
+        );
+        l.record_metrics(&metrics(&p), NOW);
+        l.save().unwrap();
+        let (again, _) = Ledger::open(dir.0.clone(), NOW, TimeZone::UTC);
+        assert_eq!(again.day().attribution["s1"].mcp_servers["github"], 3);
+    }
+
+    #[test]
+    fn the_wall_gets_the_newest_guardrails_first_and_can_filter_by_session() {
+        let mut l = Ledger::in_memory(NOW);
+        for n in 0..(GUARDRAIL_VIEW + 10) {
+            let session = if n % 2 == 0 { "even" } else { "odd" };
+            l.day.guardrails.push(Guardrail {
+                at: NOW - 1000 + n as i64,
+                session_id: session.into(),
+                tool_name: format!("tool{n}"),
+                source: "hook".into(),
+            });
+        }
+        // One that arrived late but happened first sorts by when it happened.
+        l.day.guardrails.push(Guardrail {
+            at: NOW - 5000,
+            session_id: "late".into(),
+            tool_name: "late".into(),
+            source: "config".into(),
+        });
+        let all = l.today_view(NOW, None);
+        assert_eq!(all.guardrails_total, GUARDRAIL_VIEW + 11);
+        assert!(all.guardrails.windows(2).all(|w| w[0].at >= w[1].at));
+        assert!(all.guardrails.iter().all(|g| g.tool_name != "late"));
+        l.day.guardrails.pop();
+        let all = l.today_view(NOW, None);
+        assert_eq!(all.guardrails_total, GUARDRAIL_VIEW + 10);
+        assert_eq!(all.guardrails.len(), GUARDRAIL_VIEW);
+        assert_eq!(
+            all.guardrails[0].tool_name,
+            format!("tool{}", GUARDRAIL_VIEW + 9)
+        );
+        assert!(all.day.guardrails.is_empty());
+        let odd = l.today_view(NOW, Some("odd"));
+        assert_eq!(odd.guardrails_total, (GUARDRAIL_VIEW + 10) / 2);
+        assert!(odd.guardrails.iter().all(|g| g.session_id == "odd"));
+        assert!(l.today_view(NOW, Some("none")).guardrails.is_empty());
+        assert_eq!(all.receiver, None);
+        l.set_receiver(Receiver {
+            addr: "127.0.0.1:4318".into(),
+            listening: false,
+            error: Some("taken".into()),
+        });
+        let v = serde_json::to_value(l.today_view(NOW, None)).unwrap();
+        assert_eq!(v["receiver"]["error"], "taken");
+        assert_eq!(v["day"]["day"], "2026-10-20");
     }
 }
