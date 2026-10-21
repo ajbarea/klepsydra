@@ -8,7 +8,7 @@ scaled to 1024 px, and writes assets/portraits/<name>-cutout.webp, which is
 committed, so scripts/cut-portraits.py needs no model. About 3 s and 1.2 GB a
 portrait on CPU; BiRefNet cut as cleanly but needed over 3.5 GB.
 
-Usage: uv run --no-project --with "rembg[cpu]==2.0.85" --with pillow==12.3.0 python -I scripts/cutout-portraits.py <kourai-khryseai> <name>...
+Usage (rembg 2.0.85 needs pillow below 13): uv run --no-project --with "rembg[cpu]==2.0.85" --with pillow==12.3.0 python -I scripts/cutout-portraits.py <kourai-khryseai> <name>...
 """
 
 import sys

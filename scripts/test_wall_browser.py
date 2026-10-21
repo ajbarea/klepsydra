@@ -326,6 +326,63 @@ def dialog_backdrop_only(wall):
     page.close()
 
 
+def compact_look_on_face(wall):
+    """In Compact the portrait button covers the round face exactly."""
+    page = wall.open(945, 1000, 8)
+    off = page.evaluate(
+        """() => [...document.querySelectorAll('.card')].filter((c) => !c.querySelector('.look').hidden).map((c) => {
+          const [l, f] = [c.querySelector('.look'), c.querySelector('.portrait')].map((e) => e.getBoundingClientRect());
+          return Math.max(...['left', 'top', 'width', 'height'].map((k) => Math.abs(l[k] - f[k])));
+        }).filter((d) => d > 0.5)"""
+    )
+    wall.check(not off, "the compact look button sits on the face", off)
+    page.close()
+
+
+def long_tool_stays_in_card(wall):
+    """A needs-you line naming a long tool wraps inside its card at either density."""
+    for density in ("comfortable", "compact"):
+        page = wall.open(945, 1000, 8)
+        page.click(f".density label:has([value={density}])")
+        page.wait_for_timeout(SETTLE_MS)
+        spill = page.evaluate(
+            """() => {
+          const ask = [...document.querySelectorAll('.card .ask')].find((a) => !a.hidden);
+          ask.querySelector('.text').textContent = 'Waiting for you to approve mcp__claude_ai_Gmail__apply_sensitive_message_label_and_then_some_more_words_without_breaks';
+          const [a, c] = [ask.getBoundingClientRect(), ask.closest('.card').getBoundingClientRect()];
+          return a.right > c.right + 0.5 || ask.scrollWidth > ask.clientWidth + 1 ? [a.right, c.right, ask.scrollWidth, ask.clientWidth] : null;
+        }"""
+        )
+        wall.check(spill is None, f"a long tool name stays in its {density} card", spill)
+        page.close()
+
+
+def dialog_caption_fits(wall):
+    """In a short window the dialog's caption is never cut off: it fits or scrolls."""
+    page = wall.open(1280, 300, 4)
+    page.click(".density label:has([value=comfortable])")
+    page.wait_for_timeout(SETTLE_MS)
+    cut = []
+    for i in range(page.locator(".card .look:not([hidden])").count()):
+        page.locator(".card .look:not([hidden])").nth(i).click()
+        cut += page.evaluate(
+            """() => {
+          const d = document.getElementById('portrait');
+          const r = d.getBoundingClientRect();
+          const out = [];
+          for (const el of d.querySelectorAll('.caption h2, .caption .epithet, .caption .voice, .caption .close')) {
+            const e = el.getBoundingClientRect();
+            if (e.right > r.right + 0.5 || el.scrollWidth > el.clientWidth + 1) out.push(el.textContent + ' wide');
+          }
+          if (getComputedStyle(d).overflowY !== 'auto' && d.scrollHeight > d.clientHeight) out.push('clipped below');
+          return out;
+        }"""
+        )
+        page.keyboard.press("Escape")
+    wall.check(not cut, "the dialog caption fits or scrolls at 1280x300", cut)
+    page.close()
+
+
 def band_clear(wall):
     """On the band nothing covers the nameplate or the pill, and nothing but
     the figure (and its clipped aura) leaves the card's top edge."""
@@ -387,6 +444,9 @@ def main() -> int:
             band_clear,
             arrival_once,
             dialog_backdrop_only,
+            compact_look_on_face,
+            long_tool_stays_in_card,
+            dialog_caption_fits,
         )
         for case in cases:
             if not only or case.__name__ in only:
