@@ -829,6 +829,8 @@ fn main() {
             fleet::open_wall,
             fleet::clear_session,
             fleet::ledger_today,
+            launch::end_session,
+            launch::interrupt_session,
             fleet::get_wall_density,
             fleet::set_wall_density,
             jump::jump_to_terminal,

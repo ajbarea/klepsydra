@@ -1,6 +1,6 @@
 //! The one place klepsydra starts a process: wsl.exe, from a click, one call
-//! at a time, running ~/.claude/klepsydra-launch.sh to start a session or
-//! bring a session's tmux window forward.
+//! at a time, running ~/.claude/klepsydra-launch.sh to start a session, bring
+//! a session's tmux window forward, or end or interrupt it.
 
 use std::sync::Mutex;
 #[cfg(any(windows, test))]
@@ -84,19 +84,59 @@ pub fn new_args(dir: &str, distro: Option<&str>) -> Result<Vec<String>, String> 
     Ok(a)
 }
 
-/// wsl.exe's arguments to bring `t`'s tmux window forward.
-pub fn jump_args(t: &Target) -> Result<Vec<String>, String> {
+/// What the launcher does to a session's tmux pane.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PaneVerb {
+    /// Bring its window forward.
+    Jump,
+    /// Type /exit into it.
+    End,
+    /// Press Esc in it.
+    Interrupt,
+}
+
+impl PaneVerb {
+    fn word(self) -> &'static str {
+        match self {
+            PaneVerb::Jump => "jump",
+            PaneVerb::End => "end",
+            PaneVerb::Interrupt => "interrupt",
+        }
+    }
+}
+
+/// wsl.exe's arguments to do `verb` to `t`'s tmux pane. Only Jump reaches a
+/// tmux started by hand; klepsydra types into its own server's panes alone.
+pub fn pane_args(t: &Target, verb: PaneVerb) -> Result<Vec<String>, String> {
     if !(distro_ok(&t.distro) && socket_ok(&t.socket) && pane_ok(&t.pane) && t.pid != 0) {
         return Err("This session's tmux pane cannot be named safely.".into());
     }
+    if verb != PaneVerb::Jump && !is_fleet(t) {
+        return Err(NOT_FLEET.into());
+    }
     let (pid, start) = (t.pid.to_string(), t.start.to_string());
     Ok([
-        "-d", &t.distro, "--cd", "~", "-e", "bash", SCRIPT, "jump", &t.socket, &t.pane, &pid,
+        "-d",
+        &t.distro,
+        "--cd",
+        "~",
+        "-e",
+        "bash",
+        SCRIPT,
+        verb.word(),
+        &t.socket,
+        &t.pane,
+        &pid,
         &start,
     ]
     .map(String::from)
     .to_vec())
 }
+
+/// Why End and Interrupt refuse a session outside the launcher's tmux; the
+/// launcher says the same.
+const NOT_FLEET: &str =
+    "That session is not in klepsydra's tmux, so klepsydra will not type into it.";
 
 /// Whether `t` runs on the launcher's own tmux server, the only one whose tab
 /// carries `FLEET_TAB`.
@@ -281,8 +321,34 @@ fn run(_args: &[String]) -> Result<String, String> {
 
 /// Bring `t`'s tmux window to the front of its session.
 pub fn tmux_jump(app: &tauri::AppHandle, t: &Target) -> Result<String, String> {
-    let args = jump_args(t)?;
+    let args = pane_args(t, PaneVerb::Jump)?;
     gated(&app.state::<InFlight>(), || run(&args))
+}
+
+/// Do `verb` to session `id`'s pane, as the latest snapshot names it.
+async fn to_pane(app: tauri::AppHandle, id: String, verb: PaneVerb) -> Result<String, String> {
+    let target = app
+        .state::<crate::fleet::Fleet>()
+        .with_latest(|v| target(v, &id))
+        .flatten()
+        .ok_or("This session has no tmux pane klepsydra knows, so it can only be stopped from its own terminal.")?;
+    let args = pane_args(&target, verb)?;
+    tauri::async_runtime::spawn_blocking(move || gated(&app.state::<InFlight>(), || run(&args)))
+        .await
+        .map_err(|e| format!("Could not reach the session: {e}"))?
+}
+
+/// End session `id` as if /exit were typed in its terminal. The wall asks
+/// first and waits out its undo window before calling this.
+#[tauri::command]
+pub async fn end_session(app: tauri::AppHandle, id: String) -> Result<String, String> {
+    to_pane(app, id, PaneVerb::End).await
+}
+
+/// Interrupt session `id`'s turn, as if Esc were pressed in its terminal.
+#[tauri::command]
+pub async fn interrupt_session(app: tauri::AppHandle, id: String) -> Result<String, String> {
+    to_pane(app, id, PaneVerb::Interrupt).await
 }
 
 /// Start `claude` in the `launch_dir` pref as a window of the fleet session.
@@ -340,7 +406,7 @@ mod tests {
     }
 
     #[test]
-    fn jump_args_refuse_anything_but_a_plain_pane_and_socket() {
+    fn pane_args_refuse_anything_but_a_plain_pane_and_socket() {
         let ok = Target {
             socket: "/tmp/tmux-1001/klepsydra".into(),
             pane: "%3".into(),
@@ -349,7 +415,7 @@ mod tests {
             start: 8_717_628,
         };
         assert_eq!(
-            jump_args(&ok).unwrap()[6..],
+            pane_args(&ok, PaneVerb::Jump).unwrap()[6..],
             [
                 SCRIPT,
                 "jump",
@@ -385,8 +451,40 @@ mod tests {
                 ..ok.clone()
             },
         ] {
-            assert!(jump_args(&bad).is_err(), "{bad:?}");
+            for verb in [PaneVerb::Jump, PaneVerb::End, PaneVerb::Interrupt] {
+                assert!(pane_args(&bad, verb).is_err(), "{verb:?} {bad:?}");
+            }
         }
+    }
+
+    #[test]
+    fn end_and_interrupt_name_their_verb_and_only_reach_the_fleet() {
+        let fleet = Target {
+            socket: "/tmp/tmux-1001/klepsydra".into(),
+            pane: "%3".into(),
+            distro: "Ubuntu".into(),
+            pid: 2231,
+            start: 8_717_628,
+        };
+        assert_eq!(pane_args(&fleet, PaneVerb::End).unwrap()[7], "end");
+        assert_eq!(
+            pane_args(&fleet, PaneVerb::Interrupt).unwrap()[7],
+            "interrupt"
+        );
+        let hand = Target {
+            socket: "/tmp/tmux-1001/default".into(),
+            ..fleet
+        };
+        assert!(pane_args(&hand, PaneVerb::Jump).is_ok());
+        for verb in [PaneVerb::End, PaneVerb::Interrupt] {
+            assert_eq!(pane_args(&hand, verb), Err(NOT_FLEET.to_string()));
+        }
+    }
+
+    #[test]
+    fn the_launcher_refuses_a_hand_started_tmux_in_the_same_words() {
+        let script = include_str!("../../hooks/klepsydra-launch.sh");
+        assert!(script.contains(&format!("fail \"{NOT_FLEET}\"")));
     }
 
     #[test]
