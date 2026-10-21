@@ -834,6 +834,71 @@ now=$((1792357802 + 61)) fire subagent-start.json
 check "past the tombstone's minute, a start counts again" "$(bg)" "\"agent:$A\""
 check "the tombstone is gone once expired" "$(field 'has("background_stopped")')" "false"
 
+# Agents the set never saw start are adopted from their own events.
+rm -f "$file"
+now=1792358000 fire session-start.json
+now=1792358001 fire user-prompt.json
+now=1792358002 fire post-tool-bash.json '.agent_id = "agent-unseen"'
+check "an unseen agent's tool event adopts it" "$(bg)" '"agent:agent-unseen"'
+now=1792358003 fire permission-request.json '.agent_id = "agent-asks"'
+check "an unseen agent's request adopts it and keeps needs you" "$(field '[.state, ([.background[].id] | join(","))]')" '["needs_you","agent-unseen,agent-asks"]'
+now=1792358004 fire post-tool-bash.json '.agent_id = "agent-asks"'
+now=1792358005 fire subagent-stop.json '.agent_id = "agent-unseen"'
+now=1792358006 fire post-tool-bash.json '.agent_id = "agent-unseen"'
+check "a late event from a stopped agent does not bring it back" "$(bg)" '"agent:agent-asks"'
+now=1792358007 fire post-tool-bash.json '.agent_id = null'
+now=1792358008 fire post-tool-bash.json '.agent_id = 42'
+check "no id, or one that is not text, adopts nothing" "$(bg)" '"agent:agent-asks"'
+
+# A real background agent the idle prompt dropped (its async launch lost, and a
+# Stop without a task list) comes back with its next event.
+rm -f "$file"
+now=1792358100 fire session-start.json
+now=1792358101 fire user-prompt.json
+now=1792358102 fire subagent-start.json
+now=1792358103 fire stop.json '.background_tasks = null'
+now=1792358200 fire notification-idle.json
+check "the idle prompt drops an agent never seen to launch async" "$(field '[.state, has("background")]')" '["done",false]'
+now=1792358210 fire post-tool-bash.json ".agent_id = \"$A\""
+check "its next event adopts it again" "$(bg)" "\"agent:$A\""
+check "and the card works in background again" "$(field '[.state, .reason]')" '["working","background"]'
+
+# Every SubagentStop leaves a tombstone, not only one before its start.
+rm -f "$file"
+now=1792358300 fire session-start.json
+now=1792358301 fire user-prompt.json
+now=1792358302 fire subagent-start.json
+now=1792358303 fire subagent-stop.json
+now=1792358304 fire post-tool-agent-background.json
+check "a late async launch after start and stop adds no phantom" "$(field 'has("background")')" "false"
+
+# Tombstones are capped, and a fresh start clears them.
+for i in $(seq 1 300); do
+  printf '{"id":"t%s","at":1792358400}\n' "$i"
+done | jq -s '.' >"$work/tombs.json"
+jq -c --slurpfile t "$work/tombs.json" '.background_stopped = $t[0]' "$file" >"$file.new" && mv "$file.new" "$file"
+now=1792358401 fire subagent-stop.json '.agent_id = "t-new"'
+check "the tombstones keep at most 64, newest last" "$(field '[(.background_stopped | length), .background_stopped[-1].id]')" '[64,"t-new"]'
+now=1792358402 fire session-start.json '.source = "startup"'
+check "a fresh start clears the tombstones" "$(field 'has("background_stopped")')" "false"
+now=1792358403 fire subagent-stop.json '.agent_id = "t-compact"'
+now=1792358404 fire session-start.json '.source = "compact"'
+check "a compaction keeps them" "$(field '[.background_stopped[].id]')" '["t-compact"]'
+
+# A foreground agent nested in a background agent asks AJ; the idle prompt
+# keeps the one asking, so its request is not lost.
+rm -f "$file"
+now=1792358500 fire session-start.json
+now=1792358501 fire user-prompt.json
+now=1792358502 fire subagent-start.json
+now=1792358502 fire post-tool-agent-background.json
+now=1792358503 fire subagent-start.json '.agent_id = "nested-1"'
+now=1792358504 fire permission-request.json '.agent_id = "nested-1"'
+now=1792358505 fire stop.json '.background_tasks = null'
+now=1792358600 fire notification-idle.json
+check "the idle prompt keeps a nested agent's open request" "$(field '[.state, .reason, .needs.by]')" '["needs_you","approve Bash","nested-1"]'
+check "and keeps the agent asking" "$(bg)" "\"agent:$A,agent:nested-1\""
+
 # An old file, written before the field existed, reads and updates.
 rm -f "$file"
 printf '{"v":1,"session_id":"%s","name":null,"started_at":1792356000,"launch_dir":null,"claude":null,"tmux":null,"host":null,"voice":null,"voice_from":null,"state":"working","reason":null,"needs":null,"state_at":1792356000,"where":null,"touched":[],"prompt":null,"reply":null,"error":null,"ended":null,"written_at":1792356000}\n' "$S" >"$file"

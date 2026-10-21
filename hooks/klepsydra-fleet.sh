@@ -452,8 +452,10 @@ def notified: if type == "string" then [scan("<task-notification>[\\s\\S]*?</tas
   | ((.background_stopped | if type == "array" then . else [] end)
      | map(select(type == "object" and (.id | text) != null and (.at | type) == "number" and $now - .at < $stopped_ttl))) as $tomb
   | ([$tomb[].id]) as $dead
-  | .background_stopped = (if $event == "SubagentStop" and ($agent | text) != null and (any($bg[]; .id == $agent) | not)
-      then $tomb + [{id: $agent, at: $now}] else $tomb end)
+  # Every stop leaves one, so a late start or launch adds no phantom.
+  | .background_stopped = (if $fresh then []
+      elif $event == "SubagentStop" and ($agent | text) != null then ($tomb + [{id: $agent, at: $now}])[-$bg_max:]
+      else $tomb end)
   | .background = (
       if $event == "SessionEnd" or $fresh then []
       elif $event == "SubagentStart" and ($agent | IN($dead[]) | not) then $bg | bg_add($agent; "agent")
@@ -467,8 +469,10 @@ def notified: if type == "string" then [scan("<task-notification>[\\s\\S]*?</tas
       # An idle prompt with no Stop is an interrupted turn: a subagent never seen to
       # launch async was in the foreground and died with it (Esc runs neither Stop
       # nor SubagentStop). A launched agent or a shell runs on.
+      # The agent whose question is still open is waiting, not dead.
       elif $event == "Notification" and $ev.notification_type == "idle_prompt" then
-        $bg | map(select(.kind != "agent" or .async == true))
+        (if .state == "needs_you" then .needs.by // "" else "" end) as $asker
+        | $bg | map(select(.kind != "agent" or .async == true or .id == $asker))
       elif $event == "PostToolUse" and ($ev.tool_name | IN("TaskStop", "KillShell")) then
         $bg | bg_drop([$in.task_id, $in.shell_id, ($out | objects | .task_id)])
       elif $event == "UserPromptSubmit" then $bg | bg_drop($ev.prompt | notified)
@@ -481,6 +485,12 @@ def notified: if type == "string" then [scan("<task-notification>[\\s\\S]*?</tas
       # A subagent's own events show it still runs.
       | map(if .id == $agent and $now - .at >= 60 then .at = $now else . end)
       | .[-$bg_max:])
+  # An agent the set never saw start (a lost SubagentStart, a hook installed
+  # mid-session, one the idle prompt dropped) is adopted from its own events.
+  | (($agent | text) as $aid
+     | $aid != null and ($event | IN("SubagentStart", "SubagentStop", "SessionEnd") | not) and ($fresh | not)
+       and ($aid | IN($dead[]) | not) and (any(.background[]; .id == $aid) | not)) as $adopt
+  | if $adopt then .background = (.background + [{id: $agent, kind: "agent", at: $now}])[-$bg_max:] else . end
 
   # State, with what it needs from AJ and who asked.
   | (if $event == "SessionStart" then
@@ -510,6 +520,7 @@ def notified: if type == "string" then [scan("<task-notification>[\\s\\S]*?</tas
        if .background != [] then {state: "working", reason: "background"} else {state: "done", reason: null} end
      elif $event == "StopFailure" then {state: "error", reason: (($ev.error // "unknown") | gsub("_"; " "))}
      elif $event == "SessionEnd" then {state: "ended", reason: (($ev.reason // "other") | ended_as)}
+     elif $adopt and .state == "done" then {state: "working", reason: "background"}
      else {state: .state, reason: .reason} end) as $t
   | (if $t.state != .state or $t.reason != .reason or $event == "UserPromptSubmit" then .state_at = $now else . end)
   | .needs = (if $t.state != "needs_you" then null else ($t.needs // .needs) end)
