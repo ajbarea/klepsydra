@@ -453,15 +453,17 @@ def notified: if type == "string" then [scan("<task-notification>[\\s\\S]*?</tas
   | ((.background_stopped | if type == "array" then . else [] end)
      | map(select(type == "object" and (.id | text) != null and (.at | type) == "number" and $now - .at < $stopped_ttl))) as $tomb
   | ([$tomb[].id]) as $dead
+  # Stops seen before any start: only these block a start, so a resumed agent counts at once.
+  | ([$tomb[] | select(.early == true) | .id]) as $unstarted
   | .background_stopped = (if $fresh then []
       elif $event == "SubagentStop" and ($agent | text) != null and (any($bg[]; .id == $agent and .async == true) | not)
-      then ($tomb + [{id: $agent, at: $now}])[-$bg_max:]
+      then ($tomb + [{id: $agent, at: $now} + (if any($bg[]; .id == $agent) then {} else {early: true} end)])[-$bg_max:]
       else $tomb end)
   # The turn is over: Stop ran, or the prompt went idle with work still out.
   | (.state == "done" or turn_over) as $over
   | .background = (
       if $event == "SessionEnd" or $fresh then []
-      elif $event == "SubagentStart" and ($agent | IN($dead[]) | not) then $bg | bg_add($agent; "agent")
+      elif $event == "SubagentStart" and ($agent | IN($unstarted[]) | not) then $bg | bg_add($agent; "agent")
       elif $event == "SubagentStop" then $bg | bg_drop([$agent])
       elif $event == "PostToolUse" and $ev.tool_name == "Bash" and $in.run_in_background == true then
         $bg | bg_add(($out | objects | .backgroundTaskId | text) // ($ev.tool_use_id | text); "shell")
@@ -472,9 +474,10 @@ def notified: if type == "string" then [scan("<task-notification>[\\s\\S]*?</tas
       # An idle prompt with no Stop is an interrupted turn: a subagent never seen to
       # launch async was in the foreground and died with it (Esc runs neither Stop
       # nor SubagentStop). A launched agent or a shell runs on.
-      # The agent still asking under a background agent (nesting) is waiting, not dead.
+      # An agent still asking after the turn's Stop, under a background agent
+      # (nesting), is waiting, not dead; Esc runs no Stop, so its request ends here.
       elif $event == "Notification" and $ev.notification_type == "idle_prompt" then
-        (if .state == "needs_you" then .needs.by // "" else "" end) as $asker
+        (if .state == "needs_you" and (.needs.turn_over // false) == true then .needs.by // "" else "" end) as $asker
         | (any($bg[]; .kind == "agent" and .async == true and .id != $asker)) as $parent
         | $bg | map(select(.kind != "agent" or .async == true or (.id == $asker and $parent)))
       elif $event == "PostToolUse" and ($ev.tool_name | IN("TaskStop", "KillShell")) then
@@ -494,7 +497,7 @@ def notified: if type == "string" then [scan("<task-notification>[\\s\\S]*?</tas
       | .[-$bg_max:])
   # A Stop's task list is the truth until the next turn starts.
   | .background_listed = (if $fresh or $event == "UserPromptSubmit" then null
-      elif $event == "Stop" then (($ev.background_tasks | type) == "array" or null)
+      elif $event == "Stop" then (if ($ev.background_tasks | type) == "array" then true else null end)
       else .background_listed end)
   # An agent the set never saw start (a lost SubagentStart, a hook installed
   # mid-session, one the idle prompt dropped) is adopted from its own events,

@@ -968,8 +968,34 @@ now=1792359802 fire subagent-start.json '.agent_id = "parent-bg"'
 now=1792359802 fire post-tool-agent-background.json '.tool_response.agentId = "parent-bg"'
 now=1792359803 fire subagent-start.json '.agent_id = "child-fg"'
 now=1792359804 fire permission-request.json '.agent_id = "child-fg"'
+now=1792359805 fire stop.json '.background_tasks = null'
 now=1792359900 fire notification-idle.json
 check "a nested request under a background agent survives the idle prompt" "$(field '[.state, .needs.by]')" '["needs_you","child-fg"]'
+
+# Esc on a foreground agent's request while a background agent is out: no
+# Stop ran, so the request did not outlive the turn and ends with it.
+rm -f "$file"
+now=1792360000 fire session-start.json
+now=1792360001 fire user-prompt.json
+now=1792360002 fire subagent-start.json '.agent_id = "bg-1"'
+now=1792360002 fire post-tool-agent-background.json '.tool_response.agentId = "bg-1"'
+now=1792360003 fire subagent-start.json '.agent_id = "fg-1"'
+now=1792360004 fire permission-request.json '.agent_id = "fg-1"'
+now=1792360100 fire notification-idle.json
+check "Esc on a request beside a background agent: working in background" "$(field '[.state, .reason]')" '["working","background"]'
+check "and only the background agent stays" "$(bg)" '"agent:bg-1"'
+
+# A foreground agent stopped and resumed (SendMessage) under its id within the
+# minute: its start counts at once.
+rm -f "$file"
+now=1792360200 fire session-start.json
+now=1792360201 fire user-prompt.json
+now=1792360202 fire subagent-start.json '.agent_id = "fg-r"'
+now=1792360210 fire subagent-stop.json '.agent_id = "fg-r"'
+now=1792360215 fire subagent-start.json '.agent_id = "fg-r"'
+check "a resumed foreground agent's start counts" "$(bg)" '"agent:fg-r"'
+now=1792360216 fire stop.json '.background_tasks = null'
+check "a Stop with no list leaves no listed mark" "$(field 'has("background_listed")')" "false"
 
 # An old file, written before the field existed, reads and updates.
 rm -f "$file"
