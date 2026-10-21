@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  activeTime, attributionName, cacheShare, chipLabel, compactNumber, compactPick, costLine, fullNumber,
+  NAME_CAP, OTHER, activeTime, attributionName, cacheShare, chipLabel, compactNumber, compactPick, costLine, fullNumber,
   ledgerLine, receiptParts, receiptText, sumTotals, todaySessions, tokensByCharacter, topAttribution, totalTokens,
 } from "./fleet/ledger.js";
 
@@ -105,8 +105,16 @@ test("attribution is honest about redacted and capped names", () => {
   assert.equal(attributionName("mcp_servers", "custom"), "custom (names redacted by Claude Code)");
   assert.equal(attributionName("skills", "custom"), "custom", "custom is redaction only for MCP servers");
   assert.equal(attributionName("mcp_servers", "third-party"), "third-party");
-  assert.match(attributionName("skills", "other"), /^other \(past the 32 names/);
+  assert.match(attributionName("skills", "(other)"), /^other \(past the 32 names/);
+  assert.equal(attributionName("skills", "other"), "other", "a real name is never the cap");
   assert.equal(attributionName("skills", "graphe:latex"), "graphe:latex");
+});
+
+test("the cap's key and size match ledger.rs", async () => {
+  const { readFileSync } = await import("node:fs");
+  const rust = readFileSync(new URL("../src-tauri/fleet/src/ledger.rs", import.meta.url), "utf8");
+  assert.match(rust, new RegExp(`pub const MAX_NAMES: usize = ${NAME_CAP};`));
+  assert.ok(rust.includes(`pub const OTHER: &str = "${OTHER}";`));
 });
 
 test("the top attribution rows merge sessions, rank and count the rest", () => {

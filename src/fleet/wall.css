@@ -62,7 +62,8 @@
 
 html, body { background: var(--wall-bg); color: var(--text); font: 14px/1.45 var(--font); }
 
-.visually-hidden {
+.visually-hidden,
+[data-density="compact"] .r-full {
   position: absolute;
   top: 0; /* at its own place, the live region under the wall would add a pixel of scroll */
   left: 0;
@@ -430,7 +431,6 @@ button:focus-visible { outline: 2px solid var(--card-focus); outline-offset: 2px
 }
 [data-density="compact"] .receipt { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 [data-density="compact"] .r-short { display: inline; }
-[data-density="compact"] .r-full { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 [data-density="compact"] .chip { padding: 0 var(--space-3); line-height: 15px; }
 [data-density="compact"] .card:has(.note:not(:empty)) .ledger-line,
 [data-density="compact"] .card:has(.why:not([hidden])) .ledger-line { display: none; }

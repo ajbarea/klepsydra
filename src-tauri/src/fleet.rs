@@ -67,13 +67,19 @@ pub struct LedgerState(Shared);
 
 /// Today's ledger for the wall's drawer; given a `session`, its guardrail
 /// log is that session's alone.
+/// Off the main thread: the receiver holds the lock while it saves.
 #[tauri::command]
-pub fn ledger_today(app: AppHandle, session: Option<String>) -> Result<TodayView, String> {
-    let state = app
+pub async fn ledger_today(app: AppHandle, session: Option<String>) -> Result<TodayView, String> {
+    let shared = app
         .try_state::<LedgerState>()
-        .ok_or("klepsydra has no ledger: it has no data folder.")?;
-    let ledger = klepsydra_fleet::ledger::lock(&state.0);
-    Ok(ledger.today_view(unix_now(), session.as_deref()))
+        .ok_or("klepsydra has no ledger: it has no data folder.")?
+        .0
+        .clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        klepsydra_fleet::ledger::lock(&shared).today_view(unix_now(), session.as_deref())
+    })
+    .await
+    .map_err(|e| format!("Could not read the ledger: {e}"))
 }
 
 /// A line for stderr, for dev runs, and for `<dir>/fleet.log`, which release

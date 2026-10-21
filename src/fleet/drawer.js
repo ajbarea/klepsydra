@@ -3,7 +3,8 @@
 // figure is set as text; the only markup is built here from constants.
 import { identity } from "./model.js";
 import {
-  activeTime, cacheShare, costLine, fullNumber, sumTotals, todaySessions, tokensByCharacter, topAttribution, totalTokens,
+  activeTime, cacheShare, costLine, fullNumber, plural, sumTotals, todaySessions, tokensByCharacter, topAttribution,
+  totalTokens,
 } from "./ledger.js";
 
 const MIN_BAR_PX = 2; // a nonzero count never draws as nothing
@@ -16,7 +17,20 @@ function el(tag, cls, text, attrs) {
   return node;
 }
 
-const plural = (count, word) => `${count} ${word}${count === 1 ? "" : "s"}`;
+/** A list of label and value pairs. */
+function figures(pairs) {
+  const dl = el("dl", "figures");
+  for (const [label, value] of pairs) {
+    const row = el("div");
+    row.append(el("dt", null, label), el("dd", null, value));
+    dl.append(row);
+  }
+  return dl;
+}
+
+/** Whether `node` can take focus back: still in the page and drawn. */
+const usable = (node) =>
+  Boolean(node?.isConnected) && (node.checkVisibility ? node.checkVisibility() : !node.closest("[hidden]"));
 
 /** A section: an h3 that names its content, and the body. */
 function section(id, title) {
@@ -81,6 +95,7 @@ export function createDrawer({ dialog, sessions, cast, fetchToday, home }) {
   let opener = null;
   let view = null; // the last good view, held while a refetch runs
   let turn = 0; // a newer fetch makes an older one stale
+  let painted = ""; // what the body shows, so an unchanged snapshot leaves it (and focus) alone
 
   const who = () => {
     const map = new Map();
@@ -94,6 +109,9 @@ export function createDrawer({ dialog, sessions, cast, fetchToday, home }) {
   function paint() {
     if (!view) return;
     const names = who();
+    const key = JSON.stringify([view, filter, [...names]]);
+    if (key === painted) return;
+    painted = key;
     const { day, receiver, guardrails, guardrails_total: total } = view;
     const everyone = todaySessions(day);
     const shown = todaySessions(day, filter);
@@ -116,7 +134,7 @@ export function createDrawer({ dialog, sessions, cast, fetchToday, home }) {
     if (filter !== null) {
       const scope = el("p", "scope");
       scope.append(`Showing ${names.get(filter)?.name ?? "one session"} only. `);
-      const all = el("button", "link", "Show all sessions", { type: "button" });
+      const all = el("button", "link", "Show all sessions", { type: "button", id: "ledger-show-all" });
       all.addEventListener("click", () => {
         filter = null;
         refresh();
@@ -125,7 +143,10 @@ export function createDrawer({ dialog, sessions, cast, fetchToday, home }) {
       out.push(scope);
     }
 
-    if (dayTokens === 0) {
+    const heard = total > 0 || everyone.some(([, t]) => t.api_errors || t.api_refusals || t.tool_results?.count);
+    if (dayTokens === 0 && heard) {
+      out.push(el("p", "empty-state", "No token counts yet today; the other telemetry below has arrived."));
+    } else if (dayTokens === 0) {
       out.push(
         el(
           "p",
@@ -141,18 +162,14 @@ export function createDrawer({ dialog, sessions, cast, fetchToday, home }) {
     out.push(blockedSection(guardrails, total, names), errorsSection(day_));
     const cost = costLine(day_.cost_usd_estimate_micros);
     if (cost) out.push(el("p", "cost", cost));
+    const focused = content.contains(document.activeElement) ? document.activeElement.id : "";
     content.replaceChildren(...out);
+    if (focused) document.getElementById(focused)?.focus();
   }
 
   function totalsSection(totals) {
     const s = section("ledger-totals", "Totals today");
-    const dl = el("dl", "figures");
-    for (const [label, value] of FIGURES(totals)) {
-      const row = el("div");
-      row.append(el("dt", null, label), el("dd", null, value));
-      dl.append(row);
-    }
-    s.append(dl);
+    s.append(figures(FIGURES(totals)));
     return s;
   }
 
@@ -245,13 +262,7 @@ export function createDrawer({ dialog, sessions, cast, fetchToday, home }) {
 
   function errorsSection(totals) {
     const s = section("ledger-errors", "API errors and refusals");
-    const dl = el("dl", "figures");
-    for (const [label, value] of [["API errors", totals.api_errors], ["API refusals", totals.api_refusals]]) {
-      const row = el("div");
-      row.append(el("dt", null, label), el("dd", null, fullNumber(value)));
-      dl.append(row);
-    }
-    s.append(dl);
+    s.append(figures([["API errors", fullNumber(totals.api_errors)], ["API refusals", fullNumber(totals.api_refusals)]]));
     return s;
   }
 
@@ -262,6 +273,7 @@ export function createDrawer({ dialog, sessions, cast, fetchToday, home }) {
       next = await fetchToday(filter);
     } catch (err) {
       if (mine !== turn) return;
+      painted = "";
       content.replaceChildren(el("p", "notice", `The ledger could not be read: ${String(err)}`, { role: "status" }));
       return;
     }
@@ -271,7 +283,7 @@ export function createDrawer({ dialog, sessions, cast, fetchToday, home }) {
   }
 
   function focusBack() {
-    const back = opener?.isConnected && !opener.closest("[hidden]") ? opener : home;
+    const back = usable(opener) ? opener : home;
     back.focus();
     opener = null;
   }
@@ -292,6 +304,7 @@ export function createDrawer({ dialog, sessions, cast, fetchToday, home }) {
       filter = session ?? null;
       opener = from ?? null;
       view = null;
+      painted = "";
       content.replaceChildren(el("p", "none", "Reading the ledger…", { role: "status" }));
       if (!dialog.open) dialog.showModal();
       return refresh();

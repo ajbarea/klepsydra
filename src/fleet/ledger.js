@@ -5,7 +5,7 @@
 
 const MINUS = "−";
 const n = (v) => (Number.isFinite(v) && v > 0 ? Math.floor(v) : 0);
-const plural = (count, word, many = `${word}s`) => `${count} ${count === 1 ? word : many}`;
+export const plural = (count, word, many = `${word}s`) => `${count} ${count === 1 ? word : many}`;
 
 // A count scaled to 1 decimal under 10 and none from 10 up, so 1.2M and 34k
 // read at a glance; a trailing ".0" never shows.
@@ -155,7 +155,7 @@ export function tokensByCharacter(sessions, who) {
 }
 
 // Claude Code redacts these names unless OTEL_LOG_TOOL_DETAILS is set, which
-// klepsydra leaves unset; `other` is klepsydra's own cap (ledger.rs MAX_NAMES).
+// klepsydra leaves unset; `(other)` is klepsydra's own cap (ledger.rs OTHER, MAX_NAMES).
 // https://code.claude.com/docs/en/monitoring-usage
 const REDACTED = {
   "third-party": "third-party (names redacted by Claude Code)",
@@ -163,10 +163,11 @@ const REDACTED = {
 };
 const REDACTS = { skills: "third-party", plugins: "third-party", mcp_servers: "custom" };
 export const NAME_CAP = 32; // ledger.rs MAX_NAMES
+export const OTHER = "(other)"; // ledger.rs OTHER
 
 /** A name as the drawer shows it, honest about a redacted or capped one. */
 export function attributionName(kind, name) {
-  if (name === "other") return `other (past the ${NAME_CAP} names kept per session)`;
+  if (name === OTHER) return `other (past the ${NAME_CAP} names kept per session)`;
   return name === REDACTS[kind] ? REDACTED[name] : name;
 }
 

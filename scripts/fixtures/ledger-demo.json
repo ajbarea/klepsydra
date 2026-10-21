@@ -389,7 +389,7 @@
    "demo-5-bf_isabella": {
     "skills": {
      "graphe:slides": 880000,
-     "other": 40000
+     "(other)": 40000
     },
     "plugins": {
      "graphe": 880000

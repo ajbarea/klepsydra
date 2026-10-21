@@ -410,6 +410,17 @@ def drawer_opens_and_returns_focus(wall):
     page.click("#ledger .scope button")
     page.wait_for_function("document.querySelectorAll('#ledger-blocked-table tbody tr').length === 5")
     page.keyboard.press("Escape")
+    page.wait_for_function(f"!{DRAWER_OPEN}")
+
+    # An opener that stops being drawn while the drawer is open (a compact
+    # card's note hides its ledger line) hands focus to the Ledger button.
+    chip.click()
+    page.wait_for_selector("#ledger .scope")
+    page.evaluate("[...document.querySelectorAll('.card')].find(c => c.querySelector('.name').textContent === 'Kallos').querySelector('.ledger-line').style.setProperty('display', 'none')")
+    page.keyboard.press("Escape")
+    page.wait_for_function(f"!{DRAWER_OPEN}")
+    fallback = page.evaluate(ACTIVE)
+    wall.check(fallback["id"] == "ledger-open", "a hidden opener gives focus to the Ledger button", fallback)
     page.close()
 
 
@@ -491,6 +502,16 @@ def drawer_states(wall):
     wall.check(ok, "a taken port shows the receiver's error", notice)
     page.close()
 
+    no_tokens = ledger_view(
+        day={"version": 1, "day": "2026-10-21", "sessions": {}, "guardrails": [], "attribution": {}, "no_session": 0},
+    )
+    page = wall.open(960, 1000, 8, ledger=no_tokens)
+    open_drawer(page)
+    text = page.inner_text("#ledger .ledger-content")
+    ok = "other telemetry below has arrived" in text and "README" not in text and page.locator("#ledger-blocked-table").count() == 1
+    wall.check(ok, "blocked calls but no tokens: no telemetry-off advice", text[:160])
+    page.close()
+
     page = wall.open(960, 1000, 8)
     open_drawer(page)
     quiet = page.locator("#ledger .notice").count() == 0
@@ -509,6 +530,21 @@ def drawer_follows_snapshots(wall):
         page.wait_for_timeout(250)
         waited += 250
     again = wall.ledger_requests > seen
+    page.keyboard.press("Escape")
+    page.wait_for_function(f"!{DRAWER_OPEN}")
+
+    # A repaint keeps focus where it was inside the drawer.
+    page.locator(".card:has(.name:text-is('Kallos')) .chip").click()
+    page.wait_for_selector("#ledger-show-all")
+    page.focus("#ledger-show-all")
+    seen = wall.ledger_requests
+    waited = 0
+    while wall.ledger_requests <= seen and waited < deadline:
+        page.wait_for_timeout(250)
+        waited += 250
+    page.wait_for_timeout(300)
+    kept = page.evaluate("document.activeElement?.id")
+    wall.check(wall.ledger_requests > seen and kept == "ledger-show-all", "a snapshot keeps focus inside the open drawer", [seen, wall.ledger_requests, kept])
     page.keyboard.press("Escape")
     page.wait_for_function(f"!{DRAWER_OPEN}")
     shut = wall.ledger_requests

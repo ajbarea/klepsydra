@@ -33,8 +33,9 @@ pub const VERSION: u32 = 1;
 /// Most names one session keeps per attribution kind; past it, tokens go
 /// under `OTHER`.
 pub const MAX_NAMES: usize = 32;
-/// Where tokens go once a session has `MAX_NAMES` names of one kind.
-pub const OTHER: &str = "other";
+/// Where tokens go once a session has `MAX_NAMES` names of one kind; in
+/// parentheses so no skill, plugin or server name can be it.
+pub const OTHER: &str = "(other)";
 /// Most guardrail entries the wall is handed at once, newest first.
 pub const GUARDRAIL_VIEW: usize = 200;
 /// Holds what spans days: lifetime totals, dedupe keys, cumulative baselines.
@@ -126,7 +127,8 @@ pub struct Attribution {
 
 /// Add `n` to `name`, or to `OTHER` once `map` holds `MAX_NAMES` others.
 fn attribute(map: &mut BTreeMap<String, u64>, name: &str, n: u64) {
-    let key = if map.contains_key(name) || map.len() < MAX_NAMES - 1 {
+    let named = map.len() - usize::from(map.contains_key(OTHER));
+    let key = if map.contains_key(name) || named < MAX_NAMES {
         name
     } else {
         OTHER
@@ -439,18 +441,20 @@ pub struct TodayView {
 
 /// Drop the least recently updated sessions past `MAX_SESSIONS`, never
 /// `keep`, the one just updated.
-fn cap_sessions(map: &mut BTreeMap<String, Totals>, keep: &str) {
+/// Returns the sessions dropped.
+fn cap_sessions(map: &mut BTreeMap<String, Totals>, keep: &str) -> Vec<String> {
+    let mut dropped = Vec::new();
     while map.len() > MAX_SESSIONS {
         let oldest = map
             .iter()
             .filter(|(id, _)| id.as_str() != keep)
             .min_by_key(|(id, t)| (t.updated_at, id.as_str()))
             .map(|(id, _)| id.clone());
-        match oldest {
-            Some(id) => map.remove(&id),
-            None => break,
-        };
+        let Some(id) = oldest else { break };
+        map.remove(&id);
+        dropped.push(id);
     }
+    dropped
 }
 
 /// The ledger as the receiver and the fleet reader share it.
@@ -565,14 +569,37 @@ impl Ledger {
     /// Today's ledger for the wall, its guardrail log cut to the newest
     /// `GUARDRAIL_VIEW` and, given a `session`, filtered to that session.
     pub fn today_view(&self, now: i64, session: Option<&str>) -> TodayView {
-        let mut day = self.today(now);
-        let matching: Vec<Guardrail> = std::mem::take(&mut day.guardrails)
-            .into_iter()
-            .filter(|g| session.is_none_or(|s| g.session_id == s))
-            .collect();
+        let name = day_name(now, &self.tz);
+        let current = self.day.day == name;
+        let day = Day {
+            version: VERSION,
+            day: name,
+            guardrails: Vec::new(),
+            ..if current {
+                Day {
+                    sessions: self.day.sessions.clone(),
+                    attribution: self.day.attribution.clone(),
+                    no_session: self.day.no_session,
+                    ..Day::default()
+                }
+            } else {
+                Day::default()
+            }
+        };
+        // Exports can arrive late, so the order is by when each happened.
+        let mut matching: Vec<&Guardrail> = if current {
+            self.day
+                .guardrails
+                .iter()
+                .filter(|g| session.is_none_or(|s| g.session_id == s))
+                .collect()
+        } else {
+            Vec::new()
+        };
+        matching.sort_by_key(|g| std::cmp::Reverse(g.at));
         TodayView {
             guardrails_total: matching.len(),
-            guardrails: matching.into_iter().rev().take(GUARDRAIL_VIEW).collect(),
+            guardrails: matching.into_iter().take(GUARDRAIL_VIEW).cloned().collect(),
             receiver: self.receiver.clone(),
             day,
         }
@@ -602,12 +629,12 @@ impl Ledger {
             let t = map.entry(session.to_string()).or_default();
             f(t);
             t.updated_at = now;
-            cap_sessions(map, session);
         }
-        let sessions = &self.day.sessions;
-        self.day
-            .attribution
-            .retain(|id, _| sessions.contains_key(id));
+        let dropped = cap_sessions(&mut self.day.sessions, session);
+        for id in dropped {
+            self.day.attribution.remove(&id);
+        }
+        cap_sessions(&mut self.state.sessions, session);
     }
 
     /// Credit `n` tokens of a counted `token.usage` point to its skill,
@@ -1314,9 +1341,13 @@ mod tests {
             l.record_metrics(&metrics(&p), NOW);
         }
         let skills = &l.day().attribution["s1"].skills;
-        assert_eq!(skills.len(), MAX_NAMES);
-        assert_eq!(skills[OTHER], 6);
+        assert_eq!(skills.len(), MAX_NAMES + 1);
+        assert_eq!(skills[OTHER], 5);
         assert_eq!(skills.values().sum::<u64>(), MAX_NAMES as u64 + 5);
+        // A source name that looks like the cap's key is not merged into it.
+        assert!(!OTHER
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || "-_:.".contains(c)));
         // A name already kept still counts under its own name.
         let p = tokens_at(
             "s1",
@@ -1401,6 +1432,18 @@ mod tests {
                 source: "hook".into(),
             });
         }
+        // One that arrived late but happened first sorts by when it happened.
+        l.day.guardrails.push(Guardrail {
+            at: NOW - 5000,
+            session_id: "late".into(),
+            tool_name: "late".into(),
+            source: "config".into(),
+        });
+        let all = l.today_view(NOW, None);
+        assert_eq!(all.guardrails_total, GUARDRAIL_VIEW + 11);
+        assert!(all.guardrails.windows(2).all(|w| w[0].at >= w[1].at));
+        assert!(all.guardrails.iter().all(|g| g.tool_name != "late"));
+        l.day.guardrails.pop();
         let all = l.today_view(NOW, None);
         assert_eq!(all.guardrails_total, GUARDRAIL_VIEW + 10);
         assert_eq!(all.guardrails.len(), GUARDRAIL_VIEW);
