@@ -261,6 +261,8 @@ def note_clear_of_exchange(wall):
 
 
 DRAWER_OPEN = "document.getElementById('ledger').open"
+# Shut, and its close event has run: focus moves in that event, a task after .open turns false.
+DRAWER_SHUT = "!document.getElementById('ledger').open && !document.getElementById('ledger').contains(document.activeElement)"
 ACTIVE = """() => {
   const a = document.activeElement;
   const card = a.closest('.card');
@@ -378,7 +380,7 @@ def drawer_opens_and_returns_focus(wall):
     named = page.get_by_role("dialog", name="Ledger").count()
     inert = page.evaluate("document.querySelector('#ledger:modal') !== null")
     page.keyboard.press("Escape")
-    page.wait_for_function(f"!{DRAWER_OPEN}")
+    page.wait_for_function(DRAWER_SHUT)
     from_button = page.evaluate(ACTIVE)
     wall.check(
         named == 1 and inert and from_button["id"] == "ledger-open",
@@ -394,7 +396,7 @@ def drawer_opens_and_returns_focus(wall):
     blocked = page.locator("#ledger-blocked-table tbody tr")
     who = {c.inner_text() for c in page.locator("#ledger-blocked-table tbody tr td:nth-child(2)").all()}
     page.click("#ledger .ledger-close")
-    page.wait_for_function(f"!{DRAWER_OPEN}")
+    page.wait_for_function(DRAWER_SHUT)
     from_chip = page.evaluate(ACTIVE)
     ok = (
         "Showing Kallos only" in scope
@@ -407,10 +409,13 @@ def drawer_opens_and_returns_focus(wall):
 
     chip.click()
     page.wait_for_selector("#ledger .scope")
-    page.click("#ledger .scope button")
+    page.focus("#ledger .scope button")
+    page.keyboard.press("Enter")
     page.wait_for_function("document.querySelectorAll('#ledger-blocked-table tbody tr').length === 5")
+    inside = page.evaluate("document.getElementById('ledger').contains(document.activeElement) && document.activeElement.id")
+    wall.check(inside == "ledger-title", "Show all keeps focus inside the dialog, on its title", inside)
     page.keyboard.press("Escape")
-    page.wait_for_function(f"!{DRAWER_OPEN}")
+    page.wait_for_function(DRAWER_SHUT)
 
     # An opener that stops being drawn while the drawer is open (a compact
     # card's note hides its ledger line) hands focus to the Ledger button.
@@ -418,7 +423,7 @@ def drawer_opens_and_returns_focus(wall):
     page.wait_for_selector("#ledger .scope")
     page.evaluate("[...document.querySelectorAll('.card')].find(c => c.querySelector('.name').textContent === 'Kallos').querySelector('.ledger-line').style.setProperty('display', 'none')")
     page.keyboard.press("Escape")
-    page.wait_for_function(f"!{DRAWER_OPEN}")
+    page.wait_for_function(DRAWER_SHUT)
     fallback = page.evaluate(ACTIVE)
     wall.check(fallback["id"] == "ledger-open", "a hidden opener gives focus to the Ledger button", fallback)
     page.close()
@@ -508,7 +513,7 @@ def drawer_states(wall):
     page = wall.open(960, 1000, 8, ledger=no_tokens)
     open_drawer(page)
     text = page.inner_text("#ledger .ledger-content")
-    ok = "other telemetry below has arrived" in text and "README" not in text and page.locator("#ledger-blocked-table").count() == 1
+    ok = "other telemetry has arrived" in text and "README" not in text and page.locator("#ledger-blocked-table").count() == 1
     wall.check(ok, "blocked calls but no tokens: no telemetry-off advice", text[:160])
     page.close()
 
@@ -531,7 +536,7 @@ def drawer_follows_snapshots(wall):
         waited += 250
     again = wall.ledger_requests > seen
     page.keyboard.press("Escape")
-    page.wait_for_function(f"!{DRAWER_OPEN}")
+    page.wait_for_function(DRAWER_SHUT)
 
     # A repaint keeps focus where it was inside the drawer.
     page.locator(".card:has(.name:text-is('Kallos')) .chip").click()
@@ -546,7 +551,7 @@ def drawer_follows_snapshots(wall):
     kept = page.evaluate("document.activeElement?.id")
     wall.check(wall.ledger_requests > seen and kept == "ledger-show-all", "a snapshot keeps focus inside the open drawer", [seen, wall.ledger_requests, kept])
     page.keyboard.press("Escape")
-    page.wait_for_function(f"!{DRAWER_OPEN}")
+    page.wait_for_function(DRAWER_SHUT)
     shut = wall.ledger_requests
     page.wait_for_timeout(6000)
     wall.check(again and wall.ledger_requests == shut, "an open drawer refetches on a snapshot, a shut one does not", [seen, shut, wall.ledger_requests])

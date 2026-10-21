@@ -31,7 +31,7 @@ Slice 2 "Done when" are binding.
   base commit too (no tab-pending stamp in this environment); untouched here.
 
 ## Next
-- PR open (Closes #56). Independent review, then merge and deploy; live
+- PR #64 open (Refs #56; #56 closes after the live check). Independent review, then merge and deploy; live
   check in the Windows app with real telemetry.
 
 ## Verify

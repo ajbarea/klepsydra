@@ -107,7 +107,8 @@ export function createDrawer({ dialog, sessions, cast, fetchToday, home }) {
   };
 
   function paint() {
-    if (!view) return;
+    // A fetch can land between Esc and the close event: a shut drawer neither paints nor takes focus.
+    if (!view || !dialog.open) return;
     const names = who();
     const key = JSON.stringify([view, filter, [...names]]);
     if (key === painted) return;
@@ -143,9 +144,10 @@ export function createDrawer({ dialog, sessions, cast, fetchToday, home }) {
       out.push(scope);
     }
 
-    const heard = total > 0 || everyone.some(([, t]) => t.api_errors || t.api_refusals || t.tool_results?.count);
+    // Any session in today's file, or any blocked call, means telemetry is arriving.
+    const heard = everyone.length > 0 || total > 0 || day.no_session > 0;
     if (dayTokens === 0 && heard) {
-      out.push(el("p", "empty-state", "No token counts yet today; the other telemetry below has arrived."));
+      out.push(el("p", "empty-state", "No token counts yet today; other telemetry has arrived."), totalsSection(day_));
     } else if (dayTokens === 0) {
       out.push(
         el(
@@ -164,7 +166,8 @@ export function createDrawer({ dialog, sessions, cast, fetchToday, home }) {
     if (cost) out.push(el("p", "cost", cost));
     const focused = content.contains(document.activeElement) ? document.activeElement.id : "";
     content.replaceChildren(...out);
-    if (focused) document.getElementById(focused)?.focus();
+    // A control that went with the repaint (Show all) hands focus to the title, inside the dialog.
+    if (focused) (document.getElementById(focused) ?? dialog.querySelector("#ledger-title")).focus();
   }
 
   function totalsSection(totals) {
@@ -219,7 +222,7 @@ export function createDrawer({ dialog, sessions, cast, fetchToday, home }) {
       el(
         "p",
         "hint",
-        "Claude Code redacts the names of third-party plugins and their skills, and of MCP servers you configured, unless OTEL_LOG_TOOL_DETAILS is set. klepsydra leaves it unset.",
+        "Claude Code redacts the names of third-party plugins and their skills, and of MCP servers you configured, unless OTEL_LOG_TOOL_DETAILS is set; the README's settings leave it unset.",
       ),
     );
     for (const { kind, title, noun, top } of kinds) {

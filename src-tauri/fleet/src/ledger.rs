@@ -552,38 +552,34 @@ impl Ledger {
         &self.day
     }
 
-    /// The day file for `now`'s day: today's as it stands, or an empty one
-    /// when the day has turned and nothing has been exported since.
-    pub fn today(&self, now: i64) -> Day {
-        let name = day_name(now, &self.tz);
-        if self.day.day == name {
-            return self.day.clone();
-        }
-        Day {
-            version: VERSION,
-            day: name,
-            ..Day::default()
-        }
-    }
-
     /// Today's ledger for the wall, its guardrail log cut to the newest
     /// `GUARDRAIL_VIEW` and, given a `session`, filtered to that session.
     pub fn today_view(&self, now: i64, session: Option<&str>) -> TodayView {
         let name = day_name(now, &self.tz);
         let current = self.day.day == name;
-        let day = Day {
-            version: VERSION,
-            day: name,
-            guardrails: Vec::new(),
-            ..if current {
-                Day {
-                    sessions: self.day.sessions.clone(),
-                    attribution: self.day.attribution.clone(),
-                    no_session: self.day.no_session,
-                    ..Day::default()
-                }
-            } else {
-                Day::default()
+        // Every field named, so a new one cannot be left off the wall unseen.
+        let Day {
+            version: _,
+            day: _,
+            sessions,
+            guardrails: _,
+            attribution,
+            no_session,
+        } = &self.day;
+        let day = if current {
+            Day {
+                version: VERSION,
+                day: name,
+                sessions: sessions.clone(),
+                guardrails: Vec::new(),
+                attribution: attribution.clone(),
+                no_session: *no_session,
+            }
+        } else {
+            Day {
+                version: VERSION,
+                day: name,
+                ..Day::default()
             }
         };
         // Exports can arrive late, so the order is by when each happened.
@@ -1391,13 +1387,26 @@ mod tests {
             &metrics(&tokens_at("s1", "output", 5, NOW as u64, &[])),
             NOW,
         );
-        let today = l.today(NOW);
-        assert_eq!(today.day, "2026-10-20");
-        assert_eq!(today.sessions["s1"].tokens.output, 5);
-        let tomorrow = l.today(NOW + DAY);
-        assert_eq!(tomorrow.day, "2026-10-21");
-        assert!(tomorrow.sessions.is_empty() && tomorrow.attribution.is_empty());
-        assert_eq!(tomorrow.version, VERSION);
+        l.day.guardrails.push(Guardrail {
+            at: NOW,
+            session_id: "s1".into(),
+            tool_name: "Bash".into(),
+            source: "hook".into(),
+        });
+        let today = l.today_view(NOW, None);
+        assert_eq!(today.day.day, "2026-10-20");
+        assert_eq!(today.day.sessions["s1"].tokens.output, 5);
+        assert_eq!(today.guardrails_total, 1);
+        // The last second of the day, then the first of the next.
+        let midnight = 1_792_540_800; // 2026-10-21T00:00:00Z
+        assert_eq!(l.today_view(midnight - 1, None).day.day, "2026-10-20");
+        let tomorrow = l.today_view(midnight, None);
+        assert_eq!(tomorrow.day.day, "2026-10-21");
+        assert!(tomorrow.day.sessions.is_empty() && tomorrow.day.attribution.is_empty());
+        assert_eq!(
+            (tomorrow.guardrails_total, tomorrow.day.version),
+            (0, VERSION)
+        );
     }
 
     #[test]
