@@ -139,9 +139,10 @@ test("frames run only while someone speaks, and reduced motion gets a still ring
   assert.match(readFileSync(new URL("./wall.html", import.meta.url), "utf8"), /<svg class="waves"[^>]*aria-hidden="true">/);
 });
 
-test("the waves stay in the avatar's column and row in either density: never under the name or into the next row", () => {
+test("the waves stay clear of the nameplate and the next card: on the band, and on a compact card", () => {
   const css = readFileSync(new URL("./fleet/wall.css", import.meta.url), "utf8");
-  const rule = (sel) => css.match(new RegExp(`${sel.replace(/[.[\]"=]/g, "\\$&")} \\{([^}]*)\\}`))?.[1] ?? "";
+  const cast = JSON.parse(readFileSync(new URL("./fleet/cast.json", import.meta.url), "utf8"));
+  const rule = (sel) => css.match(new RegExp(`(?:^|\\n)${sel.replace(/[.[\]"=:()]/g, "\\$&")} \\{([^}]*)\\}`))?.[1] ?? "";
   const tokens = (block) => Object.fromEntries([...block.matchAll(/(--[\w-]+):\s*([^;]+);/g)].map((m) => [m[1], m[2].trim()]));
   const root = tokens(rule(":root"));
   const px = (set, name) => {
@@ -149,28 +150,38 @@ test("the waves stay in the avatar's column and row in either density: never und
     const ref = v.match(/^var\((--[\w-]+)\)$/);
     return ref ? px(set, ref[1]) : parseFloat(v);
   };
-  // The gaps that hold the waves' room are these tokens in both densities.
-  assert.match(rule(".card header"), /column-gap: var\(--head-gap\)/);
-  assert.match(rule(".card"), /\bgap: var\(--card-rows\)/);
+  assert.match(rule(".portrait .waves"), /--reach: calc\(var\(--wall-face\) \* 12 \/ 80\)/, "the waves scale with the portrait");
+  // How far the waves reach past the portrait's edge, in its 80 units, at their loudest.
+  let reach = 0;
+  for (const level of [0, 0.5, 1]) {
+    for (let t = 0; t < WAVE.periodMs; t += 10) for (const w of waves(level, 1, t)) reach = Math.max(reach, w.r + w.width / 2 - 40);
+  }
+
+  // The band: a figure's waves ride its head, in an aura clipped where the figure breaks the edge.
+  const header = tokens(rule(".card header"));
+  const fig = parseFloat(header["--fig"]);
+  const figLeft = parseFloat(header["--fig-left"]);
+  const textLeft = parseFloat(rule(".card header").match(/padding: 0 var\(--space-8\) var\(--space-6\) (\d+)px/)[1]);
+  assert.match(rule(".has-figure .aura"), /inset: calc\(var\(--band-h\) - var\(--fig\)\) 0 0 0;[^}]*overflow: hidden;/);
+  const face = px({}, "--wall-face");
+  const out = face / 2 + (reach * face) / 80;
+  for (const c of Object.values(cast.characters)) {
+    const right = figLeft + c.head[0] * fig + out;
+    assert.ok(right <= textLeft, `${c.name}'s waves end at ${right.toFixed(1)} px, the nameplate starts at ${textLeft}`);
+  }
+  // A medallion on the band keeps its round portrait, inside the band.
+  const medallion = rule(".card:not(.has-figure) .portrait").match(/left: (\d+)px; top: (\d+)px/).slice(1).map(Number);
+  const edge = (reach * face) / 80;
+  assert.ok(medallion[0] + face + edge <= textLeft, "a medallion's waves stay off the nameplate");
+  assert.ok(medallion[1] - edge >= 0 && medallion[1] + face + edge <= px({}, "--band-h"), "and inside the band");
+
+  // Compact: the room the head gap and the row gap leave.
+  const compact = tokens(rule('[data-density="compact"]'));
   assert.match(rule('[data-density="compact"] .name'), /margin-left: var\(--head-gap\)/);
   assert.match(rule('[data-density="compact"] .meta'), /margin-top: var\(--card-rows\)/);
-  assert.match(rule(".portrait .waves"), /--reach: calc\(var\(--wall-face\) \* 12 \/ 80\)/, "the waves scale with the portrait");
-  const rooms = {};
-  for (const [density, set] of [["comfortable", {}], ["compact", tokens(rule('[data-density="compact"]'))]]) {
-    // The portrait is 80 units of a --wall-face box, centred at 40.
-    const scale = px(set, "--wall-face") / 80;
-    const room = Math.min(px(set, "--head-gap"), px(set, "--card-rows"));
-    rooms[density] = room;
-    for (const level of [0, 0.5, 1]) {
-      for (let t = 0; t < WAVE.periodMs; t += 10) {
-        for (const w of waves(level, 1, t)) {
-          const reach = (w.r + w.width / 2 - 40) * scale;
-          assert.ok(reach <= room, `${density}, level ${level} at ${t} ms: ${reach} past the portrait, ${room} free`);
-        }
-      }
-    }
-  }
-  assert.deepEqual(rooms, { comfortable: 12, compact: 10 });
+  const room = Math.min(px(compact, "--head-gap"), px(compact, "--card-rows"));
+  const tight = (reach * px(compact, "--wall-face")) / 80;
+  assert.ok(tight <= room, `compact: ${tight} past the portrait, ${room} free`);
 });
 
 test("the reader keeps a half-read line as long as the wall holds a gap", () => {
