@@ -119,9 +119,9 @@ html, body { background: var(--wall-bg); color: var(--text); font: 14px/1.45 var
 #new-session { order: 3; }
 /* The Ledger button sits with the tally and ring key: at half width the bar has no room for it beside the density choice. */
 /* As tall as the ring key beside it, so a wrapped bar grows no taller; the
-   hit area reaches 3 px past each edge, 24 px in all (WCAG 2.2, 2.5.8). */
+   hit area reaches 3 px past each border edge, 24 px in all (WCAG 2.2, 2.5.8). */
 #ledger-open { position: relative; padding: 0 var(--space-5); font-size: 12.5px; line-height: 16px; }
-#ledger-open::after { content: ""; position: absolute; inset: -3px 0; }
+#ledger-open::after { content: ""; position: absolute; inset: -4px 0; }
 
 /* Density: a quiet segmented control beside + New session. */
 .density { order: 2; display: inline-flex; gap: 2px; padding: 1px; border: 1px solid var(--card-line); border-radius: 8px; }
