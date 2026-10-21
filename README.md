@@ -165,6 +165,29 @@ with subagents or background shells still running stays working. A subagent
 whose start was missed is picked up from its own tool events.
 For the gauge alone, keep `statusLine` and leave out `hooks`.
 
+For Wrap up (see [Wrapping up](#wrapping-up)), also copy its script and its
+skill, and register the script as a second `Stop` hook. Unlike the fleet
+hook it is not `async`: Claude Code reads what it prints, which is nothing
+unless the wall has asked for a wrap-up this session has not yet answered.
+
+```bash
+cp hooks/klepsydra-wrapup.sh ~/.claude/ && chmod +x ~/.claude/klepsydra-wrapup.sh
+mkdir -p ~/.claude/skills/klepsydra-wrapup
+cp hooks/klepsydra-wrapup.md ~/.claude/skills/klepsydra-wrapup/SKILL.md
+```
+
+<!-- wrapup-settings:start -->
+```json
+{
+  "hooks": {
+    "Stop": [{ "hooks": [{ "type": "command", "command": "~/.claude/klepsydra-wrapup.sh", "timeout": 10 }] }]
+  }
+}
+```
+<!-- wrapup-settings:end -->
+
+Merging it adds a second entry to the `Stop` list above; keep both.
+
 For the ledger (see [The ledger](#the-ledger)), also merge this `env` block
 into the user-scope `~/.claude/settings.json`. Claude Code reads these
 settings only from user scope, not from a repository's settings:

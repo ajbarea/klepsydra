@@ -98,6 +98,19 @@ check "no live request: the old answer stays" "$(state "$S1" .request)" '"2000"'
 out=$(bash "$hook" bogus 2>&1); rc=$?
 check "unknown command: exit 1" "$rc" "1"
 
+echo "install block"
+settings=$(sed -n '/^<!-- wrapup-settings:start -->$/,/^<!-- wrapup-settings:end -->$/p' "$here/../README.md" |
+  grep -v -e '^<!--' -e '^```')
+check "settings: parses" "$(jq -r 'type' <<<"$settings" 2>/dev/null)" "object"
+check "settings: Stop only" "$(jq -c '.hooks | keys' <<<"$settings")" '["Stop"]'
+check "settings: not async, so its output is read" "$(jq '[.hooks.Stop[].hooks[] | has("async")] | any' <<<"$settings")" "false"
+check "settings: the wrap-up script" "$(jq -r '.hooks.Stop[0].hooks[0].command | ltrimstr("~")' <<<"$settings")" "/.claude/klepsydra-wrapup.sh"
+check "settings: a short timeout" "$(jq '.hooks.Stop[0].hooks[0].timeout <= 10' <<<"$settings")" "true"
+check "README installs the skill where the script reads it" \
+  "$(grep -c 'cp hooks/klepsydra-wrapup.md ~/.claude/skills/klepsydra-wrapup/SKILL.md' "$here/../README.md")" "1"
+check "the script's default skill path is that one" \
+  "$(grep -cF -- "/.claude/skills/klepsydra-wrapup/SKILL.md}" "$hook")" "1"
+
 echo "shared blocks"
 block() { sed -n '/^# --- klepsydra dir/,/^# --- end klepsydra dir ---$/p' "$1"; }
 check "dir block identical in the fleet hook" "$(block "$hook")" "$(block "$here/klepsydra-fleet.sh")"
