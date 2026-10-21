@@ -31,8 +31,8 @@ Slice 2 "Done when" are binding.
   base commit too (no tab-pending stamp in this environment); untouched here.
 
 ## Next
-- Open the PR ("Closes #56", label enhancement, assignee ajbarea) once AJ
-  says; do not merge. Live check in the Windows app with real telemetry.
+- PR open (Closes #56). Independent review, then merge and deploy; live
+  check in the Windows app with real telemetry.
 
 ## Verify
 - `node --test src/*.test.js`, the shell suites and shellcheck, the fleet
