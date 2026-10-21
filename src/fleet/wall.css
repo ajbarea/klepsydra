@@ -93,6 +93,8 @@ html, body { background: var(--wall-bg); color: var(--text); font: 14px/1.45 var
 #new-note { order: 1; color: var(--text-dim); font-size: 12.5px; }
 #new-note:empty { display: none; }
 #new-session { order: 3; }
+/* The Ledger button sits with the tally and ring key: at half width the bar has no room for it beside the density choice. */
+#ledger-open { padding: 5px var(--space-5); font-size: 12.5px; }
 
 /* Density: a quiet segmented control beside + New session. */
 .density { order: 2; display: inline-flex; gap: 2px; padding: 1px; border: 1px solid var(--card-line); border-radius: 8px; }
@@ -305,6 +307,23 @@ button:focus-visible { outline: 2px solid var(--card-focus); outline-offset: 2px
 
 .updated { color: var(--text-quiet); font-size: 12.5px; }
 
+/* The ledger line: what the session did (its receipt) and a chip for tool
+   calls a guardrail turned down. Comfortable: a row above the footer. */
+.ledger-line { display: flex; align-items: center; gap: var(--space-4); min-width: 0; color: var(--text-dim); font-size: 12.5px; font-variant-numeric: tabular-nums; }
+.receipt { min-width: 0; }
+.r-short { display: none; }
+.chip {
+  position: relative; /* its hit area reaches past the compact line */
+  flex: none;
+  padding: 2px var(--space-3);
+  font: 600 12px/1.3 var(--font);
+  color: var(--text);
+  background: transparent;
+  border-color: var(--text-quiet);
+  border-radius: 999px;
+}
+.chip::after { content: ""; position: absolute; inset: -4px 0; }
+
 .actions { display: flex; align-items: center; gap: 8px; border-top: 1px solid var(--card-line); padding-top: 12px; }
 .actions .note { color: var(--text-dim); font-size: 12.5px; margin-right: auto; overflow-wrap: anywhere; }
 .actions .why { color: var(--text-dim); font-size: 12.5px; }
@@ -397,6 +416,72 @@ button:focus-visible { outline: 2px solid var(--card-focus); outline-offset: 2px
   overflow: hidden;
 }
 [data-density="compact"] .updated { display: none; }
+
+/* The ledger line takes the foot slot: the three most telling parts of the
+   receipt and the chip, on the line a note or Open terminal's reason would
+   use. It gives way to either, which are newer words. */
+[data-density="compact"] .ledger-line {
+  grid-area: note;
+  justify-self: start;
+  max-width: 100%;
+  margin: var(--space-1) 0 0;
+  font-size: 12px;
+  line-height: 17px;
+}
+[data-density="compact"] .receipt { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+[data-density="compact"] .r-short { display: inline; }
+[data-density="compact"] .r-full { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+[data-density="compact"] .chip { padding: 0 var(--space-3); line-height: 15px; }
+[data-density="compact"] .card:has(.note:not(:empty)) .ledger-line,
+[data-density="compact"] .card:has(.why:not([hidden])) .ledger-line { display: none; }
+
+/* The ledger drawer: a modal dialog down the right edge. Bars are marks in a
+   character's colour; every word and number wears a text colour. */
+.ledger {
+  position: fixed;
+  inset: 0 0 0 auto;
+  width: min(600px, 100vw);
+  max-width: 100vw;
+  height: 100%;
+  max-height: none;
+  margin: 0;
+  border: 0;
+  border-left: 1px solid var(--card-line);
+  background: var(--card-bg);
+  color: var(--text);
+  color-scheme: dark;
+}
+.ledger::backdrop { background: rgb(0 0 0 / 60%); }
+.ledger-body { height: 100%; overflow-y: auto; display: flex; flex-direction: column; gap: 24px; padding: 22px 24px 32px; }
+.ledger-head { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-7); }
+.ledger-head h2 { font: 650 22px/1.2 var(--display); letter-spacing: -0.01em; }
+.ledger-day { color: var(--text-dim); font-size: 13px; }
+.ledger-content { display: flex; flex-direction: column; gap: 26px; }
+.ledger h3 { font: 650 15px/1.3 var(--display); margin-bottom: var(--space-3); }
+.ledger-section > * + * { margin-top: var(--space-3); }
+.ledger .hint, .ledger .none, .ledger .scope { color: var(--text-dim); font-size: 13px; }
+.ledger .none { margin-top: var(--space-3); }
+.ledger .notice { padding: 10px 12px; border-left: 3px solid var(--tone-error); background: var(--card-quiet); border-radius: 0 8px 8px 0; }
+.ledger .empty-state { padding: 12px 14px; background: var(--card-quiet); border-radius: 8px; color: var(--text-dim); }
+.ledger .cost { color: var(--text-quiet); font-size: 12.5px; }
+.ledger button.link { background: none; border: 0; padding: 2px 0; color: var(--text); font-weight: 600; text-decoration: underline; text-underline-offset: 3px; }
+.ledger button.link:hover:not([aria-disabled="true"]) { background: none; }
+
+.figures { display: grid; grid-template-columns: repeat(auto-fill, minmax(168px, 1fr)); gap: 10px 20px; }
+.figures dt { color: var(--text-dim); font-size: 12.5px; }
+.figures dd { font: 600 16px/1.3 var(--font); font-variant-numeric: tabular-nums; }
+
+.ledger table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.ledger th { padding: 4px 8px 6px 0; text-align: left; font-size: 12px; font-weight: 600; color: var(--text-dim); border-bottom: 1px solid var(--card-line); }
+.ledger td { padding: 6px 8px 6px 0; border-bottom: 1px solid var(--card-line); overflow-wrap: anywhere; }
+.ledger tr > :last-child { padding-right: 0; }
+.ledger .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+/* The chart's table: fixed columns, so the bar column keeps its width whatever the names are. */
+.ledger table.chart { table-layout: fixed; }
+.ledger table.chart th:first-child { width: 30%; }
+.ledger table.chart th:last-child { width: 24%; }
+.ledger .track { display: block; height: 8px; border-radius: 0 4px 4px 0; background: var(--ring-track); }
+.ledger .fill { display: block; height: 8px; border-radius: 0 4px 4px 0; background: var(--accent, var(--text-quiet)); }
 
 /* One pulse when a card starts needing AJ: an amber ring leaves the edge and fades. */
 @media (prefers-reduced-motion: no-preference) {

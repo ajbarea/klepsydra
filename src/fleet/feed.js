@@ -16,6 +16,11 @@ export function devSnapshotUrl(app, search) {
   return new URLSearchParams(search).has("demo") ? "../scripts/fixtures/fleet-demo.json" : "./dev-fleet.json";
 }
 
+/** The browser's ledger sample, only with ?demo and never inside the app. */
+export function demoLedgerUrl(app, search) {
+  return !app && new URLSearchParams(search).has("demo") ? "../scripts/fixtures/ledger-demo.json" : null;
+}
+
 // The sample's times are as of its `at`; shift them so its ages read as written.
 const TIMES = new Set(["status_at", "active_at", "updated_at", "quiet_since", "at", "started_at", "ends_at"]);
 function shifted(value, by) {
@@ -61,4 +66,23 @@ export function subscribe(onMessage) {
       if (focus) onMessage({ focus });
     })
     .catch(() => {});
+}
+
+const EMPTY_TODAY = { day: { sessions: {}, attribution: {} }, receiver: null, guardrails: [], guardrails_total: 0 };
+
+/**
+ * Today's ledger for the drawer, filtered to `session` when given: the app's
+ * ledger_today command, or in a browser the ?demo sample (its times moved up
+ * to now, its guardrails cut as the command cuts them), else an empty day.
+ */
+export async function todayLedger(session = null) {
+  if (inTauri) return window.__TAURI__.core.invoke("ledger_today", { session });
+  const url = demoLedgerUrl(inTauri, location.search);
+  if (!url) return EMPTY_TODAY;
+  const res = await fetch(url, { cache: "no-store" });
+  if (!res.ok) return EMPTY_TODAY;
+  const { at, ...rest } = await res.json();
+  const view = typeof at === "number" ? shifted(rest, Math.floor(Date.now() / 1000) - at) : rest;
+  const guardrails = view.guardrails.filter((g) => session === null || g.session_id === session);
+  return { ...view, guardrails, guardrails_total: guardrails.length };
 }
