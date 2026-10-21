@@ -662,9 +662,13 @@ separately.
   (`~/.claude*/projects/*/<session>.jsonl` and `<session>/subagents/*.jsonl`;
   the largest `message.usage` per message id, counted on the local day of its
   timestamp). It prints, per session, the ledger and transcript counts of each
-  token type with the percent difference, and exits 1 when any session's
-  ledger is more than 2% lower on `cache_read` or `cache_creation`, which
-  means exports were lost. A ledger that is higher is expected (it also sees
+  token type with the percent difference, and exits 1 when a session the
+  ledger has is more than 2% lower on `cache_read` or `cache_creation`, which
+  means exports were lost ("lost exports"). A session with transcript usage
+  and no ledger entry at all never exported, as when it started without the
+  telemetry settings; it is listed under "sent no telemetry (started without
+  the telemetry settings)" and does not set the exit code. The last line gives
+  both counts. A ledger that is higher is expected (it also sees
   calls that never reach a transcript, such as side calls on smaller models)
   and is only reported. From WSL:
 

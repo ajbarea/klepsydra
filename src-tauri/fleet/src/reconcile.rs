@@ -214,15 +214,23 @@ impl Row {
         (t > 0).then(|| (l as f64 - t as f64) / t as f64 * 100.0)
     }
 
-    /// Whether the ledger lost exports: more than `LOST_PERCENT` lower on
-    /// cache read or cache creation. A session the ledger never heard of is
-    /// lower on everything.
+    /// Whether the ledger lost exports: it has the session, and is more than
+    /// `LOST_PERCENT` lower on cache read or cache creation.
     pub fn lost(&self) -> bool {
-        let Some(t) = &self.transcript else {
+        let (Some(l), Some(t)) = (&self.ledger, &self.transcript) else {
             return false;
         };
-        let l = self.ledger.clone().unwrap_or_default();
         lower(l.cache_read, t.cache_read) || lower(l.cache_creation, t.cache_creation)
+    }
+
+    /// Whether the session used tokens but is not in the ledger at all: it
+    /// never exported, as when it started without the telemetry settings.
+    pub fn no_telemetry(&self) -> bool {
+        self.ledger.is_none()
+            && self
+                .transcript
+                .as_ref()
+                .is_some_and(|t| KINDS.iter().any(|(_, get)| get(t) > 0))
     }
 }
 
@@ -271,6 +279,11 @@ impl Report {
         self.rows.iter().filter(|r| r.lost()).collect()
     }
 
+    /// The sessions with transcript usage and no ledger entry.
+    pub fn no_telemetry(&self) -> Vec<&Row> {
+        self.rows.iter().filter(|r| r.no_telemetry()).collect()
+    }
+
     /// The table `ledger-verify` prints.
     pub fn render(&self) -> String {
         let mut out = format!(
@@ -284,7 +297,7 @@ impl Report {
             let state = match (&row.ledger, &row.transcript) {
                 (_, _) if row.lost() => "  LEDGER LOWER",
                 (Some(_), None) => "  ledger only",
-                (None, Some(_)) => "  transcripts only",
+                (None, Some(_)) => "  sent no telemetry",
                 _ => "",
             };
             out.push_str(&format!("\n{}{state}\n", row.session));
@@ -307,10 +320,17 @@ impl Report {
                 ));
             }
         }
-        let lost = self.lost();
+        let silent = self.no_telemetry();
+        if !silent.is_empty() {
+            out.push_str("\nsent no telemetry (started without the telemetry settings):\n");
+            for r in &silent {
+                out.push_str(&format!("  {}\n", r.session));
+            }
+        }
         out.push_str(&format!(
-            "\n{} of {} sessions lost exports (ledger more than {LOST_PERCENT}% lower on cache_read or cache_creation)\n",
-            lost.len(),
+            "\n{} lost exports (ledger more than {LOST_PERCENT}% lower on cache_read or cache_creation); {} sent no telemetry (started without the telemetry settings); {} sessions\n",
+            self.lost().len(),
+            silent.len(),
             self.rows.len()
         ));
         out
@@ -541,22 +561,37 @@ mod tests {
                     ("both".into(), tokens(1, 1, 100, 100)),
                     ("transcript-only".into(), tokens(1, 1, 50, 0)),
                     ("silent".into(), tokens(1, 1, 0, 0)),
+                    ("empty".into(), tokens(0, 0, 0, 0)),
                 ]),
                 files: 3,
                 malformed: 0,
             },
         );
         let names: Vec<_> = report.rows.iter().map(|r| r.session.as_str()).collect();
-        assert_eq!(names, ["both", "ledger-only", "silent", "transcript-only"]);
-        // Ledger-only: higher, so reported only. Transcript-only with cache
-        // tokens: the ledger never heard of it, so it lost exports. One with
-        // none has nothing to lose.
-        let lost: Vec<_> = report.lost().iter().map(|r| r.session.as_str()).collect();
-        assert_eq!(lost, ["transcript-only"]);
+        assert_eq!(
+            names,
+            ["both", "empty", "ledger-only", "silent", "transcript-only"]
+        );
+        // Ledger-only: higher, so reported only. A session the ledger never
+        // heard of sent no telemetry: its own section, never lost exports.
+        // One with no usage at all ("empty") is neither.
+        assert!(report.lost().is_empty());
+        let silent: Vec<_> = report
+            .no_telemetry()
+            .iter()
+            .map(|r| r.session.as_str())
+            .collect();
+        assert_eq!(silent, ["silent", "transcript-only"]);
         let table = report.render();
         assert!(table.contains("ledger only"), "{table}");
-        assert!(table.contains("transcripts only"), "{table}");
-        assert!(table.contains("1 of 4 sessions lost exports"), "{table}");
+        assert!(
+            table.contains("sent no telemetry (started without the telemetry settings)"),
+            "{table}"
+        );
+        assert!(
+            table.contains("0 lost exports") && table.contains("2 sent no telemetry"),
+            "{table}"
+        );
     }
 
     #[test]
@@ -568,11 +603,24 @@ mod tests {
             names.sort();
             names
         };
-        // Session 2's ledger is 10% low on cache_read and session 4 has no
-        // ledger entry; session 1's is higher, 3's is 1% low on cache_creation,
-        // and 5 has no transcript.
-        assert_eq!(lost("ledger"), [id(2), id(4)]);
+        // Session 2's ledger is 10% low on cache_read; session 1's is higher,
+        // 3's is 1% low on cache_creation, and 5 has no transcript. Session 4
+        // has no ledger entry: it sent no telemetry, which is not a loss.
+        assert_eq!(lost("ledger"), [id(2)]);
         assert!(lost("ledger-ok").is_empty());
+        let day = read_day(&fixtures().join("ledger"), DAY).unwrap();
+        let report = compare(&day, recorded());
+        let silent: Vec<_> = report
+            .no_telemetry()
+            .iter()
+            .map(|r| r.session.clone())
+            .collect();
+        assert_eq!(silent, [id(4)]);
+        let ok = compare(
+            &read_day(&fixtures().join("ledger-ok"), DAY).unwrap(),
+            recorded(),
+        );
+        assert!(ok.no_telemetry().is_empty());
     }
 
     #[test]
@@ -585,7 +633,10 @@ mod tests {
         );
         assert!(table.contains("-10.0%"), "{table}");
         assert!(table.contains("+"), "{table}");
-        assert!(table.contains("2 of 5 sessions lost exports"), "{table}");
+        assert!(
+            table.contains("1 lost exports") && table.contains("1 sent no telemetry"),
+            "{table}"
+        );
         assert!(table.contains("1 malformed lines skipped"), "{table}");
     }
 
