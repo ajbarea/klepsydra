@@ -41,13 +41,10 @@ Slice 2 "Done when" are binding.
 - Renders: scratchpad `ledger/` (both widths, both densities, the drawer,
   filtered drawer, 2x card).
 
-## Resume here (10-21, usage limit)
-- Merged origin/main (#66 card theming) into this branch; conflicts resolved
-  (both sides kept). Ledger button shrunk to 18 px (24 px hit area) so the
-  945 bar fits again (bottom 983.9, same as main).
-- Still open before merge: browser suite on the merge had 3 FAILs; the fit one
-  is fixed, re-run to confirm. Investigate "compact notes clear of the text: []"
-  and #66's "a card gone while open hands focus to the wall" (got focus on a
-  'close' button), likely an interaction with this branch's render/drawer.
-- Then CI, re-read PR comments, squash-merge #64, deploy, live telemetry
+## Merge with #66
+- origin/main (#66) merged in; conflicts kept both sides. The Ledger button is
+  18 px tall with a 24 px hit area, so the wrapped 945 bar fits as on main.
+- The portrait dialog's tests now wait for its close event before reading
+  focus, as the drawer's do. Browser suite 40/40 twice, node 255, fleet 307.
+- Next: review of the merge, CI, squash-merge #64, deploy, live telemetry
   check, close #56.

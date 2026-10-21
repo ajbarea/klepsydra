@@ -618,6 +618,7 @@ def portrait_dialog(wall):
             page.click("#portrait .close")
         else:
             page.mouse.click(4, 4)
+        page.wait_for_function("!document.getElementById('portrait').open && !document.getElementById('portrait').contains(document.activeElement)")
         closed = page.evaluate(state)
         wall.check(
             opened["open"] and who == f"View {opened['name']}'s portrait" and not closed["open"] and closed["focus"] == "look",
@@ -627,6 +628,8 @@ def portrait_dialog(wall):
     look.click()
     page.evaluate("document.querySelector('.card').remove()")
     page.keyboard.press("Escape")
+    # Focus moves in the close event, a task after .open turns false.
+    page.wait_for_function("!document.getElementById('portrait').open && !document.getElementById('portrait').contains(document.activeElement)")
     gone = page.evaluate(state)
     wall.check(gone["focus"] == "wall", "a card gone while open hands focus to the wall", gone)
     page.close()
