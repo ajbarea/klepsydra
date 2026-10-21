@@ -70,6 +70,8 @@ files belong to: the JS guards scan hooks and scripts too.
 - `bash hooks/test_fleet.sh`: the fleet hook's states, where, identity,
   pruning (every refusal first) and the README settings block.
 - `bash scripts/test_measure_memory.sh`: the release memory rule.
+- `bash hooks/test_wrapup.sh`: the wrap-up Stop hook (silent unless a live
+  request is unasked, never blocks a stop, fails open) and its reporter.
 - `bash hooks/test_launch.sh`: the tmux launcher against a private tmux server
   and a stub `wt.exe` (one tab per fleet, a failed launch starts nothing).
 - `bash scripts/test_build_windows.sh`: the Windows build's stage-name check.
