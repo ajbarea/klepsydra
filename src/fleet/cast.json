@@ -1,20 +1,20 @@
 {
   "v": 1,
   "characters": {
-    "af_heart": { "name": "Cupid", "face": "cupid", "accent": "#D55E00", "gender": "f" },
-    "am_michael": { "name": "Hephaestus", "face": "hephaestus", "accent": "#DA8C20", "gender": "m" },
-    "bf_emma": { "name": "Techne", "face": "techne", "accent": "#FFC832", "gender": "f" },
-    "af_bella": { "name": "Kallos", "face": "kallos", "accent": "#FFDCA0", "gender": "f" },
-    "bf_isabella": { "name": "Mneme", "face": "mneme", "accent": "#B496DC", "gender": "f" },
-    "am_puck": { "name": "Puck", "face": "puck", "accent": "#009E73", "gender": "m" },
-    "af_aoede": { "name": "Dokimasia", "face": "dokimasia", "accent": "#DA5032", "gender": "f" },
-    "af_kore": { "name": "Aidos", "face": "aidos", "accent": "#56B4E9", "gender": "f" },
-    "af_sarah": { "name": "Metis", "face": "metis", "accent": "#C8B464", "gender": "f" },
-    "af_nova": { "name": "Aletheia", "face": "aletheia", "accent": "#0072B2", "gender": "f" },
-    "bm_george": { "name": "Chronos", "face": "chronos", "accent": "#F0E442", "gender": "m" },
-    "am_fenrir": { "name": "Argos", "face": "argos", "accent": "#CC79A7", "gender": "m" },
-    "bm_fable": { "name": "Hermes", "face": "hermes", "accent": "#E07B39", "gender": "m" },
-    "af_alloy": { "name": "Elpis", "face": "elpis", "accent": "#F1D2A1", "gender": "f" },
-    "af_nicole": { "name": "Hesychia", "face": "hesychia", "accent": "#A9B8D0", "gender": "f" }
+    "af_heart": {"name": "Cupid", "face": "cupid", "accent": "#D55E00", "gender": "f", "epithet": "Arrow of the Heart", "head": [0.5, 0.31, 0.15]},
+    "am_michael": {"name": "Hephaestus", "face": "hephaestus", "accent": "#DA8C20", "gender": "m", "epithet": "Master of the Forge", "head": [0.5, 0.21, 0.15]},
+    "bf_emma": {"name": "Techne", "face": "techne", "accent": "#FFC832", "gender": "f", "epithet": "Artisan of Code", "head": [0.5, 0.23, 0.15]},
+    "af_bella": {"name": "Kallos", "face": "kallos", "accent": "#FFDCA0", "gender": "f", "epithet": "Eye of Elegance", "head": [0.48, 0.29, 0.16]},
+    "bf_isabella": {"name": "Mneme", "face": "mneme", "accent": "#B496DC", "gender": "f", "epithet": "Keeper of Memory", "head": [0.48, 0.25, 0.16]},
+    "am_puck": {"name": "Puck", "face": "puck", "accent": "#009E73", "gender": "m", "epithet": "Spirit of Mischief", "head": [0.5, 0.25, 0.15]},
+    "af_aoede": {"name": "Dokimasia", "face": "dokimasia", "accent": "#DA5032", "gender": "f", "epithet": "Guardian of Standards", "head": [0.48, 0.23, 0.16]},
+    "af_kore": {"name": "Aidos", "face": "aidos", "accent": "#56B4E9", "gender": "f", "epithet": "Mirror of Honesty", "head": [0.44, 0.28, 0.17]},
+    "af_sarah": {"name": "Metis", "face": "metis", "accent": "#C8B464", "gender": "f", "epithet": "Architect of Intent", "head": [0.27, 0.27, 0.14]},
+    "af_nova": {"name": "Aletheia", "face": "aletheia", "accent": "#0072B2", "gender": "f", "epithet": "Witness to Truth", "head": [0.49, 0.25, 0.16]},
+    "bm_george": {"name": "Chronos", "face": "chronos", "accent": "#F0E442", "gender": "m", "epithet": "Keeper of the Hours", "head": [0.51, 0.31, 0.2]},
+    "am_fenrir": {"name": "Argos", "face": "argos", "accent": "#CC79A7", "gender": "m", "epithet": "The Hundred-Eyed Watch", "head": [0.5, 0.27, 0.2]},
+    "bm_fable": {"name": "Hermes", "face": "hermes", "accent": "#E07B39", "gender": "m", "epithet": "Herald of the Gods", "head": [0.49, 0.25, 0.2]},
+    "af_alloy": {"name": "Elpis", "face": "elpis", "accent": "#F1D2A1", "gender": "f", "epithet": "Hope That Stayed", "head": [0.45, 0.25, 0.19]},
+    "af_nicole": {"name": "Hesychia", "face": "hesychia", "accent": "#A9B8D0", "gender": "f", "epithet": "Keeper of Quiet", "head": [0.48, 0.25, 0.19]}
   }
 }

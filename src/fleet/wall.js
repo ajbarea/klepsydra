@@ -12,6 +12,7 @@ const TICK_MS = 15_000; // ages re-render between snapshots, as on the gauge
 const FACE_PX = 62; // the comfortable --wall-face less twice its --face-inset
 const SVG_NS = "http://www.w3.org/2000/svg";
 const SEGMENT_FADE_MS = 200; // wall.css .seg.leave
+const MARK_ARC = "M 4.5 16 A 11.5 11.5 0 0 1 27.5 16"; // the ring key's arc (wall.html)
 const RESIZE_SETTLE_MS = 100; // Auto measures once a drag pauses, not every frame of it
 const BRANCH_ICON =
   '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="4" cy="3.5" r="1.8"/><circle cx="4" cy="12.5" r="1.8"/><circle cx="12" cy="5" r="1.8"/><path d="M4 5.3v5.4M12 6.8c0 3-3.5 3-8 4.2"/></svg><span></span>';
@@ -58,8 +59,9 @@ const show = (el, text) => {
 };
 
 function paint(el, c) {
-  const pulsing = el.classList.contains("pulse"); // a repaint must not cut the pulse short
-  el.className = `card ${c.dim ? "dim" : ""} tone-${c.tone}${c.ask ? " asking" : ""}${pulsing ? " pulse" : ""}`;
+  // A repaint must not cut the pulse or the arrival short.
+  const playing = ["pulse", "arriving"].filter((cls) => el.classList.contains(cls)).map((cls) => ` ${cls}`).join("");
+  el.className = `card ${c.dim ? "dim" : ""} tone-${c.tone}${c.ask ? " asking" : ""}${c.figure ? " has-figure" : ""}${playing}`;
   el.style.viewTransitionName = transitionName(c.id);
   el.setAttribute("aria-label", c.label);
   el.querySelector(".portrait").title = c.voiceTitle ?? "";
@@ -67,6 +69,7 @@ function paint(el, c) {
   showFace(el.querySelector(".face"), c.face, c.face2x, FACE_PX);
   setText(el.querySelector(".name"), c.name);
   setText(el.querySelector(".task"), c.task);
+  paintBand(el, c);
 
   const badgeKey = `${c.status}${c.quiet}`;
   if (el.dataset.badge !== badgeKey) {
@@ -128,6 +131,43 @@ function paint(el, c) {
   clear.hidden = !c.clear;
   clear.dataset.id = c.id;
   setOff(clear, false);
+}
+
+// The header band: the character's light and figure, epithet, and the crew
+// marks on the figure's plinth. Colours ride on the card as custom properties.
+function paintBand(el, c) {
+  for (const [prop, value] of [["--accent", c.accent], ["--accent-ink", c.accentInk]]) {
+    if (value) el.style.setProperty(prop, value);
+    else el.style.removeProperty(prop);
+  }
+  const epithet = el.querySelector(".epithet");
+  epithet.hidden = !c.epithet;
+  setText(epithet.lastElementChild, c.epithet);
+  const look = el.querySelector(".look");
+  look.hidden = !c.full;
+  look.dataset.id = c.id;
+  look.setAttribute("aria-label", `View ${c.name}'s portrait`);
+  const figure = look.querySelector(".figure");
+  if (c.figure) {
+    if (figure.getAttribute("src") !== c.figure.src) figure.src = c.figure.src;
+    ["--head-x", "--head-y"].forEach((prop, i) => el.style.setProperty(prop, c.figure.head[i]));
+  }
+  const marks = el.querySelector(".marks");
+  const key = `${c.marks.kinds.join(" ")}|${c.marks.more}`;
+  if (marks.dataset.key !== key) {
+    marks.dataset.key = key;
+    marks.replaceChildren(
+      ...c.marks.kinds.map((kind) => {
+        const svg = document.createElementNS(SVG_NS, "svg");
+        svg.setAttribute("viewBox", "0 0 32 18");
+        svg.innerHTML = `<path class="${kind}" d="${MARK_ARC}"/>`;
+        return svg;
+      }),
+      ...(c.marks.more > 0 ? [Object.assign(document.createElement("b"), { textContent: `+${c.marks.more}` })] : []),
+    );
+  }
+  if (c.ringColor) marks.style.setProperty("--crew", c.ringColor);
+  else marks.style.removeProperty("--crew");
 }
 
 // One arc per piece of background work, drawn for the density on screen.
@@ -194,7 +234,13 @@ function render(snapshot) {
   cardOf = new Map(cards.map((c) => [c.id, c]));
   ringKey.hidden = !showsRingKey(cards);
   const sync = () => {
-    syncChildren(wall, cards, (c) => c.id, () => tpl.content.firstElementChild.cloneNode(true), paint);
+    // A new card arrives once: its figure steps in and its light rises (wall.css .arriving).
+    const make = () => {
+      const el = tpl.content.firstElementChild.cloneNode(true);
+      if (!reducedMotion()) el.classList.add("arriving");
+      return el;
+    };
+    syncChildren(wall, cards, (c) => c.id, make, paint);
     for (const el of wall.children) if (started.has(el.dataset.key) && !reducedMotion()) el.classList.add("pulse");
     // Auto looks again when a card arrives or leaves, not when one's text changes.
     const ids = cards.map((c) => c.id).join(" ");
@@ -208,8 +254,40 @@ function render(snapshot) {
   else sync();
 }
 
-// The pulse plays once; a later repaint must not replay it.
-wall.addEventListener("animationend", (e) => e.target.classList?.remove("pulse"));
+// The pulse and the arrival play once; a later repaint must not replay them.
+wall.addEventListener("animationend", (e) => {
+  e.target.classList?.remove("pulse");
+  if (e.animationName === "light-rise") e.target.closest(".card")?.classList.remove("arriving");
+});
+
+// The full portrait (#44): a native modal dialog, so focus stays inside it and
+// Escape closes it. Focus goes back to the portrait that opened it, or to the
+// wall when that card has left.
+const portrait = document.getElementById("portrait");
+let openedFrom = null;
+function showPortrait(id) {
+  const c = cardOf.get(id);
+  if (!c?.full) return;
+  openedFrom = id;
+  const img = portrait.querySelector(".full");
+  img.src = c.full;
+  img.alt = `${c.name}'s portrait`;
+  setText(portrait.querySelector("#portrait-name"), c.name);
+  const epithet = portrait.querySelector(".epithet");
+  setText(epithet, c.epithet);
+  if (c.accentInk) portrait.style.setProperty("--accent-ink", c.accentInk);
+  setText(portrait.querySelector(".voice"), c.voiceTitle);
+  portrait.showModal();
+}
+portrait.addEventListener("close", () => {
+  const card = [...wall.children].find((el) => el.dataset.key === openedFrom);
+  openedFrom = null;
+  (card?.querySelector(".look") ?? wall).focus();
+});
+// A click on the backdrop lands on the dialog itself; its content fills the rest.
+portrait.addEventListener("click", (e) => {
+  if (e.target === portrait) portrait.close();
+});
 
 function focusCard(id) {
   const el = [...wall.children].find((c) => c.dataset.key === id);
@@ -289,6 +367,11 @@ function receive(message) {
 }
 
 wall.addEventListener("click", (e) => {
+  const look = e.target.closest(".look");
+  if (look) {
+    showPortrait(look.dataset.id);
+    return;
+  }
   const button = e.target.closest(".jump, .clear");
   if (!button || !inTauri) return;
   const note = button.closest(".card").querySelector(".note");

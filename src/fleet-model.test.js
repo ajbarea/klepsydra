@@ -4,8 +4,10 @@ import { readFileSync } from "node:fs";
 import {
   STATUS, shortAge, longAge, statusParts, voiceName, identity, accessibleName,
   statuses, startedNeeding, orderChanged, shouldSlide, transitionName, announcements, updatedText, badgeSvg, stripItems, card,
-  askText, plainText, tally, crewOf, crewText, crewRing, crewRings, RINGS, RING_MAX, showsRingKey, alsoChip, pillWhen,
+  askText, plainText, tally, crewOf, crewText, crewRing, crewRings, crewMarks, RINGS, RING_MAX, showsRingKey, alsoChip, pillWhen,
+  PLATE_BG,
 } from "./fleet/model.js";
+import { contrast } from "./fleet/contrast.js";
 import { TONES, hash, initialOf, medallion, medallionSvg, toneOf } from "./fleet/medallion.js";
 
 const NOW = 1_792_353_000_000; // fixed clock, ms
@@ -187,8 +189,26 @@ test("identity: a cast voice is its character", () => {
     voice: "Michael",
     face: "fleet/faces/kourai/hephaestus-96.webp",
     face2x: "fleet/faces/kourai/hephaestus-192.webp",
+    full: "fleet/faces/kourai/hephaestus-full.webp",
     accent: null, // CAST here has no accent
+    epithet: null,
+    figure: null, // nor a head to place the figure by
   });
+});
+
+test("identity: a character brings its epithet, its figure placed by its head, and its full portrait", () => {
+  const cast = JSON.parse(readFileSync(new URL("./fleet/cast.json", import.meta.url), "utf8"));
+  const who = identity(session(), cast);
+  assert.equal(who.epithet, "Master of the Forge");
+  assert.equal(who.full, "fleet/faces/kourai/hephaestus-full.webp");
+  assert.equal(who.figure.src, "fleet/faces/kourai/hephaestus-figure.webp");
+  assert.deepEqual(who.figure.head, cast.characters.am_michael.head);
+  const bad = { characters: { am_michael: { name: "H", face: "hephaestus", head: [0.5, "x", 0.2] } } };
+  assert.equal(identity(session(), bad).figure, null, "a malformed head shows no figure");
+  for (const voice of ["bm_lewis", null, "af_heart(0.5)+af_bella(0.5)"]) {
+    const m = identity(session({ voice }), cast);
+    assert.deepEqual([m.epithet, m.figure, m.full], [null, null, null], `${voice}: a medallion has none`);
+  }
 });
 
 /** The SVG inside a medallion's data URL. */
@@ -352,6 +372,18 @@ test("a kourai card carries its accent; any other card has none", () => {
   assert.equal(identity(session(), bad).accent, null, "a malformed accent is dropped");
 });
 
+test("a character's card carries its epithet ink at 4.5:1 on the nameplate; a medallion's carries none", () => {
+  const cast = JSON.parse(readFileSync(new URL("./fleet/cast.json", import.meta.url), "utf8"));
+  for (const voice of Object.keys(cast.characters)) {
+    const c = card(session({ voice }), cast, NOW);
+    assert.ok(contrast(c.accentInk, PLATE_BG) >= 4.5, `${c.name}: ${c.accentInk}`);
+    assert.equal(c.epithet, cast.characters[voice].epithet);
+    assert.ok(c.figure && c.full, c.name);
+  }
+  const m = card(session({ voice: "bm_lewis" }), cast, NOW);
+  assert.deepEqual([m.accentInk, m.epithet, m.figure, m.full], [null, null, null, null]);
+});
+
 test("the Open terminal button: fill only for needs-you, a marker for a character, plain for a medallion, nothing when off", () => {
   const cast = JSON.parse(readFileSync(new URL("./fleet/cast.json", import.meta.url), "utf8"));
   const style = (o, c = cast) => {
@@ -416,8 +448,17 @@ test("the ring draws an arc per piece of work, agents first, at most five", () =
   for (const g of Object.values(RINGS)) assert.deepEqual(crewRing({ agents: 7, shells: 3 }, g).segments.length, 5);
 });
 
+test("the crew marks are the ring unrolled: the same kinds in the same order, the same +N", () => {
+  for (const crew of [{ agents: 0, shells: 0 }, { agents: 2, shells: 1 }, { agents: 7, shells: 3 }, { agents: 1, shells: 12, tasks: 2 }]) {
+    const ring = crewRing(crew);
+    assert.deepEqual(crewMarks(crew), { kinds: ring.segments.map((s) => s.kind), more: ring.more }, JSON.stringify(crew));
+  }
+  const c = card(session({ background: { agents: 2, shells: 1 } }), CAST, NOW);
+  assert.deepEqual(c.marks, { kinds: ["agent", "agent", "shell"], more: 0 });
+});
+
 test("an agent's arc is thick and a shell's thin, in screen px for each portrait", () => {
-  const px = (density, kind) => (RINGS[density][kind] * { comfortable: 80, compact: 56 }[density]) / 80;
+  const px = (density, kind) => (RINGS[density][kind] * { comfortable: 80, compact: 64 }[density]) / 80;
   assert.deepEqual([px("comfortable", "agent"), px("comfortable", "shell")], [7, 3]);
   assert.deepEqual([px("compact", "agent"), px("compact", "shell")].map((v) => Number(v.toFixed(6))), [5.5, 2.5]);
   for (const [density, g] of Object.entries(RINGS)) {
@@ -436,7 +477,7 @@ test("arcs sit on the ring with even gaps of a fixed length on the page, a lone 
   };
   const angle = ([x, y], g) => (Math.atan2(y - g.cy, x - g.cx) * 180) / Math.PI;
   for (const [density, g] of Object.entries(RINGS)) {
-    const facePx = { comfortable: 80, compact: 56 }[density];
+    const facePx = { comfortable: 80, compact: 64 }[density];
     // The gap is gapPx along the ring on the page: 14 px comfortable, 11 px compact.
     const gapOnPage = ((g.gapDeg * Math.PI) / 180) * g.r * (facePx / 80);
     assert.ok(Math.abs(gapOnPage - { comfortable: 14, compact: 11 }[density]) < 1e-9, `${density}: ${gapOnPage}`);

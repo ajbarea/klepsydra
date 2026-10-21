@@ -7,7 +7,7 @@ fifteen characters. Hermes's accent is the burnt orange `#E07B39`, not the
 `#E69F00` below, which is the needs-you amber. The briefs are kept as the record.
 
 These five characters give the four keryx pool voices that had no portrait,
-and the pin-only `af_nicole`, a face of their own. Each brief is one shared style block plus one character
+and keryx's specialty voice `af_nicole`, a face of their own. Each brief is one shared style block plus one character
 block. Paste both into the image generator, attach the reference portraits
 listed under each character, and iterate the way you did for the first ten.
 
@@ -15,8 +15,9 @@ listed under each character, and iterate the way you did for the first ten.
 
 Fifteen: one per voice in keryx's rotation pool (fourteen), plus Hesychia. The ten
 kourai characters cover the first ten voices; these four cover the rest. Hesychia
-is for `af_nicole`, which keryx never hands out unless you pin it (see Hesychia
-below). Sessions past the fifteenth get blended voices and show a medallion.
+is for `af_nicole`, which keryx hands out after the pool voices and before any
+blend (keryx 0.9.3). Sessions past the fifteenth get blended voices and show a
+medallion.
 
 ## Reference portraits
 
@@ -135,7 +136,7 @@ one the same way.
 ## Hesychia, Keeper of Quiet
 
 - **Upload with the prompt:** `hephaestus_neutral.png` (framing), `aletheia_neutral.png` (serene), `kallos_neutral.png` (soft glow)
-- **Voice:** `af_nicole` (soft, near-whisper; keryx hands it out only when pinned)
+- **Voice:** `af_nicole` (soft, near-whisper; keryx hands it out fifteenth, after the pool)
 - **Accent:** moonlit silver-blue `#A9B8D0`
 - **Role:** the spirit of stillness and rest. In Pindar (Pythian 8) she is Dike's daughter and holds the keys of counsel and war.
 - **Character block:**

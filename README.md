@@ -517,7 +517,7 @@ its first eight sessions.
 
 A session's face follows its keryx voice, so it stays the same while the
 session moves between repos. Fifteen voices, all fourteen in keryx's rotation pool
-and `af_nicole` (keryx hands it out only when pinned), are cast as characters and
+and `af_nicole` (keryx's fifteenth, before any blend), are cast as characters and
 show their portraits: ten from kourai-khryseai and five (Chronos, Argos, Hermes,
 Elpis, Hesychia) painted for this app. Any other voice shows the voice's name
 and a forge medallion: a laurel ring on a dark disc around the name's
@@ -537,9 +537,33 @@ two running sessions that keryx itself gave one voice both keep it. So a face
 changes with the status only once, when its session ends beside a running one
 with the same voice (after `/clear`, the new session keeps the portrait).
 
+On a Comfortable card the character arrives in a header band. Their cut-out
+half-figure stands on the band's foot and breaks the card's top edge, lit from
+behind in their colour: a glow and rays over a dark, grained stage. Beside it
+sits the nameplate: the name in classical capitals (Cinzel, bundled under the
+SIL Open Font License), their epithet ("Master of the Forge") in their colour
+with a laurel sprig, then the task; the status pill rides the corner. Only 15%
+of the light reaches past the figure, so the band's text keeps 4.5:1 in every
+light a card can wear. A test checks each character's own light, the needs-you
+amber, and a quiet card's dim light. A card that needs you is lit amber; a quiet or
+ended one dims its light and greys its figure. On a figure the crew ring would
+cross the face, so its arcs ride a plinth at the figure's foot instead, the
+same thick and thin arcs in the same order, and the speaking waves rise behind
+the head. A medallion keeps its round portrait and ring on the band. A new
+card's figure steps in and its light rises, once, unless the system asks for
+reduced motion. Compact keeps the round portrait (64 px) and its ring.
+
+Click a character's figure (in Compact, their face), or press Enter or Space
+on it, to open their whole portrait with their name, epithet and voice.
+Escape, Close or a click outside closes it, and focus goes back to the figure,
+or to the wall if the card has left.
+
 The portraits are files in `src/fleet/faces`, each listed in `LICENSES.json`,
 and `scripts/cut-portraits.py` cuts them: ten from kourai-khryseai, five from
-`assets/portraits/`. The medallion is
+`assets/portraits/`. Each character has a round face at 96 and 192 px, a
+half-figure (`-figure.webp`) and the whole portrait (`-full.webp`). The five
+newer figures are cut from their painted backdrops by BiRefNet (MIT) through
+`scripts/cutout-portraits.py`, run once; its output is committed. The medallion is
 an SVG drawn in `src/fleet/medallion.js`. The overlay loads no library and
 fetches nothing.
 

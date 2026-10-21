@@ -421,6 +421,7 @@ const NOT_SCANNED = {
   "statusline/fixtures/": "recorded status line payloads, data",
   "src-tauri/fleet/tests/fixtures/": "recorded OTLP exports, data",
   "src/fleet/faces/": "generated portraits and their license table, data",
+  "src/fleet/fonts/": "the nameplate's bundled typeface and its licence, data",
   "src/fleet/cast.json": "voice to portrait table, data",
   "src-tauri/fleet/Cargo.toml": "scanned as a manifest",
 };

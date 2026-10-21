@@ -246,6 +246,93 @@ def note_clear_of_exchange(wall):
     page.close()
 
 
+def comfortable(wall, width, cards):
+    page = wall.open(width, 2400, cards)
+    page.set_default_timeout(5000)
+    page.click(".density label:has([value=comfortable])")
+    page.wait_for_timeout(SETTLE_MS)
+    return page
+
+
+def portrait_dialog(wall):
+    """The figure opens the full portrait: Enter, Space and a click open it;
+    Escape, Close and the backdrop close it; focus goes back to the figure,
+    or to the wall once its card has gone. In Compact the face opens it."""
+    page = comfortable(wall, 1920, 8)
+    state = """() => ({
+      open: document.getElementById('portrait').open,
+      focus: document.activeElement.id || document.activeElement.className,
+      name: document.getElementById('portrait-name').textContent,
+    })"""
+    look = page.locator(".card .look:not([hidden])").first
+    who = look.get_attribute("aria-label")
+    for opener, closer in [("Enter", "Escape"), ("Space", "close"), ("click", "backdrop")]:
+        if opener == "click":
+            look.click()
+        else:
+            look.focus()
+            page.keyboard.press(opener)
+        opened = page.evaluate(state)
+        if closer == "Escape":
+            page.keyboard.press("Escape")
+        elif closer == "close":
+            page.click("#portrait .close")
+        else:
+            page.mouse.click(4, 4)
+        closed = page.evaluate(state)
+        wall.check(
+            opened["open"] and who == f"View {opened['name']}'s portrait" and not closed["open"] and closed["focus"] == "look",
+            f"{opener} opens, {closer} closes, focus returns",
+            [opened, closed],
+        )
+    look.click()
+    page.evaluate("document.querySelector('.card').remove()")
+    page.keyboard.press("Escape")
+    gone = page.evaluate(state)
+    wall.check(gone["focus"] == "wall", "a card gone while open hands focus to the wall", gone)
+    page.close()
+    page = wall.open(945, 1000, 8)
+    page.locator(".card .look:not([hidden])").first.click()
+    compact = page.evaluate(state)
+    wall.check(compact["open"], "the compact face opens it", compact)
+    page.close()
+
+
+def band_clear(wall):
+    """On the band nothing covers the nameplate or the pill, and nothing but
+    the figure (and its clipped aura) leaves the card's top edge."""
+    for width in (1920, 945):
+        page = comfortable(wall, width, 16)
+        bad = page.evaluate(
+            """() => {
+          const hit = (a, b) => a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
+          const shown = (el) => el && !el.hidden && getComputedStyle(el).display !== 'none' && el.getBoundingClientRect().height > 0;
+          const out = [];
+          for (const card of document.querySelectorAll('.card')) {
+            const name = card.querySelector('.name').textContent;
+            const c = card.getBoundingClientRect();
+            const text = [...card.querySelectorAll('header .name, header .epithet, header .task, header .pill')].filter(shown);
+            // The portrait's waves reach 12/80 of it past its edge; the aura only clips them.
+            const grow = (r, by) => ({ left: r.left - by, right: r.right + by, top: r.top - by, bottom: r.bottom + by });
+            for (const el of ['.look', '.marks', '.portrait']) {
+              const e = card.querySelector(el);
+              if (!shown(e)) continue;
+              const box = e.getBoundingClientRect();
+              const r = el === '.portrait' ? grow(box, box.width * 12 / 80) : box;
+              for (const t of text) if (hit(r, t.getBoundingClientRect())) out.push(`${name}: ${el} covers ${t.className}`);
+              const top = el === '.portrait' && card.classList.contains('has-figure') ? card.querySelector('.aura').getBoundingClientRect().top : r.top;
+              if (top < c.top - 14.5) out.push(`${name}: ${el} ${(c.top - top).toFixed(1)} px over the top`);
+            }
+            const [n, pill] = [card.querySelector('.name'), card.querySelector('.pill')].map((e) => e.getBoundingClientRect());
+            if (hit(n, pill)) out.push(`${name}: name under the pill`);
+          }
+          return out;
+        }"""
+        )
+        wall.check(not bad, f"band clear at {width}", bad)
+        page.close()
+
+
 def main() -> int:
     handler = functools.partial(Quiet, directory=str(ROOT))
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)  # a free port
@@ -262,6 +349,8 @@ def main() -> int:
             never_scrolls_comfortable,
             bar_of_comfortable,
             note_clear_of_exchange,
+            portrait_dialog,
+            band_clear,
         )
         for case in cases:
             if not only or case.__name__ in only:

@@ -1,32 +1,31 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, readFileSync } from "node:fs";
-import { contrast, inkOn, markerWidth, MARKER_PX, MARKER_WIDE_PX } from "./fleet/contrast.js";
-import { BUTTON_BGS } from "./fleet/model.js";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { contrast, inkOn, markerWidth, mix, readableOn, MARKER_PX, MARKER_WIDE_PX } from "./fleet/contrast.js";
+import { BUTTON_BGS, PLATE_BG } from "./fleet/model.js";
 
 const cast = JSON.parse(readFileSync(new URL("./fleet/cast.json", import.meta.url), "utf8"));
 const faces = new URL("./fleet/faces/", import.meta.url);
 const exists = (file) => existsSync(new URL(file, faces));
 
-// keryx's rotation pool (keryx src/keryx/voices.py POOL, 0.9.0): the only
-// voices keryx hands a terminal unasked.
+// keryx's rotation pool (keryx src/keryx/voices.py POOL, 0.9.0).
 const POOL = [
   "af_heart", "am_michael", "bf_emma", "bm_george", "af_bella", "am_fenrir", "bf_isabella",
   "bm_fable", "am_puck", "af_aoede", "af_kore", "af_sarah", "af_alloy", "af_nova",
 ];
 const KOURAI = ["aidos", "aletheia", "cupid", "dokimasia", "hephaestus", "kallos", "metis", "mneme", "puck", "techne"];
 const NEW = ["argos", "chronos", "elpis", "hermes", "hesychia"];
-// keryx hands af_nicole out only when the user pins it, so it is cast but not in the pool.
-const PINNED = "af_nicole";
+// keryx's specialty voice, handed out after the pool and before any blend (keryx 0.9.3).
+const SPECIALTY = "af_nicole";
 const PORTRAITS = [...KOURAI, ...NEW].sort();
 
 test("the fifteen characters each have one voice of their gender: every pool voice, and af_nicole", () => {
   const entries = Object.entries(cast.characters);
   assert.deepEqual(entries.map(([, c]) => c.face).sort(), PORTRAITS);
   assert.equal(new Set(entries.map(([, c]) => c.name)).size, 15);
-  assert.deepEqual(Object.keys(cast.characters).sort(), [...POOL, PINNED].sort(), "every pool voice has a character, and af_nicole is cast too");
+  assert.deepEqual(Object.keys(cast.characters).sort(), [...POOL, SPECIALTY].sort(), "every pool voice has a character, and af_nicole is cast too");
   for (const [voice, c] of entries) {
-    assert.ok(POOL.includes(voice) || voice === PINNED, `${voice} is neither in keryx's pool nor the pinned voice`);
+    assert.ok(POOL.includes(voice) || voice === SPECIALTY, `${voice} is neither in keryx's pool nor its specialty voice`);
     assert.equal(voice[1], c.gender, `${c.name} cast against gender`);
   }
 });
@@ -58,7 +57,7 @@ test("every character has its accent, and nothing else is in an entry", () => {
   for (const c of Object.values(cast.characters)) {
     assert.match(c.accent, /^#[0-9A-Fa-f]{6}$/, `${c.name} accent`);
     assert.equal(c.accent, CANON[c.face] ?? ADDED[c.face], `${c.name} accent`);
-    assert.deepEqual(Object.keys(c).sort(), ["accent", "face", "gender", "name"]);
+    assert.deepEqual(Object.keys(c).sort(), ["accent", "epithet", "face", "gender", "head", "name"]);
   }
 });
 
@@ -123,4 +122,55 @@ test("only an enabled needs button is filled; the marker rule sets a shadow and 
   const mark = css.match(/\.jump\[data-kind="accent"\] \{([^}]*)\}/)[1];
   assert.match(mark, /box-shadow: inset var\(--mark-w\) 0 0 var\(--accent\)/);
   assert.doesNotMatch(mark, /background|border/);
+});
+
+test("contrast's mix runs from one colour to the other", () => {
+  assert.equal(mix("#000000", "#ffffff", 0), "#000000");
+  assert.equal(mix("#000000", "#ffffff", 1), "#ffffff");
+  assert.equal(mix("#204060", "#204060", 0.5), "#204060");
+});
+
+test("readableOn keeps an accent that already reads, and lifts one that does not just far enough", () => {
+  assert.equal(readableOn("#FFC832", PLATE_BG), "#FFC832", "Techne reads as she is");
+  for (const c of Object.values(cast.characters)) {
+    const ink = readableOn(c.accent, PLATE_BG);
+    assert.ok(contrast(ink, PLATE_BG) >= 4.5, `${c.name}: ${ink}`);
+    if (contrast(c.accent, PLATE_BG) < 4.5) {
+      assert.ok(contrast(mix(ink, c.accent, 0.1), PLATE_BG) < 4.5 + 0.2, `${c.name} lifted no further than it needs`);
+    }
+  }
+  const dark = readableOn("#F1D2A1", "#ffffff");
+  assert.ok(contrast(dark, "#ffffff") >= 4.5, "toward black on a light ground");
+});
+
+// Epithets: kourai-khryseai shared/src/kourai_common/agents.py `epithet` for the ten,
+// docs/characters/portrait-briefs.md headings for the five newer ones.
+const EPITHETS = {
+  hephaestus: "Master of the Forge", metis: "Architect of Intent", techne: "Artisan of Code",
+  dokimasia: "Guardian of Standards", kallos: "Eye of Elegance", mneme: "Keeper of Memory",
+  puck: "Spirit of Mischief", cupid: "Arrow of the Heart", aidos: "Mirror of Honesty", aletheia: "Witness to Truth",
+  chronos: "Keeper of the Hours", argos: "The Hundred-Eyed Watch", hermes: "Herald of the Gods",
+  elpis: "Hope That Stayed", hesychia: "Keeper of Quiet",
+};
+
+test("every character has its canon epithet and a head to place its figure by", () => {
+  for (const c of Object.values(cast.characters)) {
+    assert.equal(c.epithet, EPITHETS[c.face], c.name);
+    assert.equal(c.head.length, 3, c.name);
+    const [x, y, r] = c.head;
+    assert.ok(x > 0.15 && x < 0.85 && y > 0.1 && y < 0.5, `${c.name}: the head sits in the figure's upper middle`);
+    assert.ok(r >= 0.1 && r <= 0.25, `${c.name}: head radius ${r}`);
+  }
+});
+
+test("every character has its figure and full portrait, and every face file has a licence entry", () => {
+  const licenses = JSON.parse(readFileSync(new URL("LICENSES.json", faces), "utf8"));
+  for (const c of Object.values(cast.characters)) {
+    for (const kind of ["figure", "full"]) {
+      const file = `kourai/${c.face}-${kind}.webp`;
+      assert.ok(exists(file), file);
+      assert.ok(licenses[file]?.source && licenses[file]?.license, `${file} licence`);
+    }
+  }
+  for (const file of readdirSync(new URL("kourai/", faces))) assert.ok(licenses[`kourai/${file}`], `kourai/${file} licence`);
 });
