@@ -144,10 +144,12 @@ export function createDrawer({ dialog, sessions, cast, fetchToday, home }) {
       out.push(scope);
     }
 
-    // Any session in today's file, or any blocked call, means telemetry is arriving.
-    const heard = everyone.length > 0 || total > 0 || day.no_session > 0;
-    if (dayTokens === 0 && heard) {
-      out.push(el("p", "empty-state", "No token counts yet today; other telemetry has arrived."), totalsSection(day_));
+    // Telemetry is on when today's file has anything, or a card carries a receipt from an earlier export.
+    const today = everyone.length > 0 || total > 0 || day.no_session > 0;
+    const before = sessions().some((s) => totalTokens(s.ledger?.tokens ?? {}) > 0);
+    if (dayTokens === 0 && (today || before)) {
+      out.push(el("p", "empty-state", "No token counts yet today."));
+      if (everyone.length > 0) out.push(totalsSection(day_));
     } else if (dayTokens === 0) {
       out.push(
         el(
@@ -164,10 +166,9 @@ export function createDrawer({ dialog, sessions, cast, fetchToday, home }) {
     out.push(blockedSection(guardrails, total, names), errorsSection(day_));
     const cost = costLine(day_.cost_usd_estimate_micros);
     if (cost) out.push(el("p", "cost", cost));
-    const focused = content.contains(document.activeElement) ? document.activeElement.id : "";
+    const focused = focusedId();
     content.replaceChildren(...out);
-    // A control that went with the repaint (Show all) hands focus to the title, inside the dialog.
-    if (focused) (document.getElementById(focused) ?? dialog.querySelector("#ledger-title")).focus();
+    keepFocus(focused);
   }
 
   function totalsSection(totals) {
@@ -269,6 +270,12 @@ export function createDrawer({ dialog, sessions, cast, fetchToday, home }) {
     return s;
   }
 
+  const focusedId = () => (content.contains(document.activeElement) ? document.activeElement.id : "");
+  // A control that went with a repaint (Show all) hands focus to the title, inside the dialog.
+  const keepFocus = (id) => {
+    if (id) (document.getElementById(id) ?? dialog.querySelector("#ledger-title")).focus();
+  };
+
   async function refresh() {
     const mine = ++turn;
     let next;
@@ -277,7 +284,9 @@ export function createDrawer({ dialog, sessions, cast, fetchToday, home }) {
     } catch (err) {
       if (mine !== turn) return;
       painted = "";
+      const focused = focusedId();
       content.replaceChildren(el("p", "notice", `The ledger could not be read: ${String(err)}`, { role: "status" }));
+      keepFocus(focused);
       return;
     }
     if (mine !== turn) return;

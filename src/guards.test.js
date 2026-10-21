@@ -610,7 +610,7 @@ test("the ledger drawer is a labelled modal dialog with a Close button that link
   const html = read("src/wall.html");
   const dialog = html.slice(html.indexOf('<dialog id="ledger"'), html.indexOf("</dialog>"));
   assert.match(dialog, /^<dialog id="ledger" class="ledger" aria-labelledby="ledger-title">/);
-  assert.match(dialog, /<h2 id="ledger-title" tabindex="-1">Ledger<\/h2>/);
+  assert.match(dialog, /<h2 id="ledger-title" tabindex="-1" autofocus>Ledger<\/h2>/);
   assert.match(dialog, /<button type="button" class="ledger-close">Close<\/button>/);
   assert.match(html, /<button type="button" id="ledger-open" aria-haspopup="dialog">Ledger<\/button>/);
   const drawer = read("src/fleet/drawer.js");

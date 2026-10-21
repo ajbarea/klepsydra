@@ -377,6 +377,8 @@ def drawer_opens_and_returns_focus(wall):
     page.focus("#ledger-open")
     page.keyboard.press("Enter")
     page.wait_for_selector("#ledger .ledger-content table")
+    first = page.evaluate("document.activeElement.id")
+    wall.check(first == "ledger-title", "the drawer opens with focus on its title", first)
     named = page.get_by_role("dialog", name="Ledger").count()
     inert = page.evaluate("document.querySelector('#ledger:modal') !== null")
     page.keyboard.press("Escape")
@@ -489,13 +491,25 @@ def drawer_states(wall):
         guardrails=[],
         guardrails_total=0,
     )
-    page = wall.open(960, 1000, 8, ledger=empty)
+    # No receipts on the cards either: nothing has ever been exported.
+    fleet = json.loads((ROOT / "scripts/fixtures/fleet-demo.json").read_text())
+    for session in fleet["sessions"]:
+        session.pop("ledger", None)
+    page = wall.open(960, 1000, 8, fixture=json.dumps(fleet), ledger=empty)
     open_drawer(page)
     text = page.inner_text("#ledger .ledger-content")
     links = page.locator("#ledger a, #ledger [href]").count()
     tables = page.locator("#ledger-characters-table").count()
     ok = "\u201cThe ledger\u201d" in text and "README" in text and links == 0 and tables == 0
     wall.check(ok, "empty state names the README section, no link", [text[:120], links, tables])
+    page.close()
+
+    # An empty day, but the cards' receipts show telemetry worked before (the next morning).
+    page = wall.open(960, 1000, 8, ledger=empty)
+    open_drawer(page)
+    text = page.inner_text("#ledger .ledger-content")
+    ok = "No token counts yet today." in text and "README" not in text
+    wall.check(ok, "an empty morning with earlier receipts gives no setup advice", text[:120])
     page.close()
 
     error = "Only one usage of each socket address is normally permitted. (os error 10048)"
@@ -513,8 +527,21 @@ def drawer_states(wall):
     page = wall.open(960, 1000, 8, ledger=no_tokens)
     open_drawer(page)
     text = page.inner_text("#ledger .ledger-content")
-    ok = "other telemetry has arrived" in text and "README" not in text and page.locator("#ledger-blocked-table").count() == 1
+    ok = "No token counts yet today." in text and "README" not in text and page.locator("#ledger-blocked-table").count() == 1
     wall.check(ok, "blocked calls but no tokens: no telemetry-off advice", text[:160])
+    page.close()
+
+    # A read that fails after Show all keeps focus in the dialog too.
+    page = wall.open(1920, 1000, 16)
+    page.locator(".card:has(.name:text-is('Kallos')) .chip").click()
+    page.wait_for_selector("#ledger-show-all")
+    page.unroute("**/ledger-demo.json")
+    page.route("**/ledger-demo.json", lambda r: r.abort())
+    page.focus("#ledger-show-all")
+    page.keyboard.press("Enter")
+    page.wait_for_selector("#ledger .ledger-content .notice")
+    kept = page.evaluate("document.activeElement.id")
+    wall.check(kept == "ledger-title", "a failed read keeps focus in the dialog", kept)
     page.close()
 
     page = wall.open(960, 1000, 8)
