@@ -585,6 +585,184 @@ def drawer_follows_snapshots(wall):
     page.close()
 
 
+def comfortable(wall, width, cards):
+    page = wall.open(width, 2400, cards)
+    page.set_default_timeout(5000)
+    page.click(".density label:has([value=comfortable])")
+    page.wait_for_timeout(SETTLE_MS)
+    return page
+
+
+def portrait_dialog(wall):
+    """The figure opens the full portrait: Enter, Space and a click open it;
+    Escape, Close and the backdrop close it; focus goes back to the figure,
+    or to the wall once its card has gone. In Compact the face opens it."""
+    page = comfortable(wall, 1920, 8)
+    state = """() => ({
+      open: document.getElementById('portrait').open,
+      focus: document.activeElement.id || document.activeElement.className,
+      name: document.getElementById('portrait-name').textContent,
+    })"""
+    look = page.locator(".card .look:not([hidden])").first
+    who = look.get_attribute("aria-label")
+    for opener, closer in [("Enter", "Escape"), ("Space", "close"), ("click", "backdrop")]:
+        if opener == "click":
+            look.click()
+        else:
+            look.focus()
+            page.keyboard.press(opener)
+        opened = page.evaluate(state)
+        if closer == "Escape":
+            page.keyboard.press("Escape")
+        elif closer == "close":
+            page.click("#portrait .close")
+        else:
+            page.mouse.click(4, 4)
+        closed = page.evaluate(state)
+        wall.check(
+            opened["open"] and who == f"View {opened['name']}'s portrait" and not closed["open"] and closed["focus"] == "look",
+            f"{opener} opens, {closer} closes, focus returns",
+            [opened, closed],
+        )
+    look.click()
+    page.evaluate("document.querySelector('.card').remove()")
+    page.keyboard.press("Escape")
+    gone = page.evaluate(state)
+    wall.check(gone["focus"] == "wall", "a card gone while open hands focus to the wall", gone)
+    page.close()
+    page = wall.open(945, 1000, 8)
+    page.locator(".card .look:not([hidden])").first.click()
+    compact = page.evaluate(state)
+    wall.check(compact["open"], "the compact face opens it", compact)
+    page.close()
+
+
+def arrival_once(wall):
+    """A card arrives once: built while Compact shows, it does not replay its
+    arrival when the wall turns Comfortable."""
+    page = wall.open(945, 1000, 8)
+    page.click(".density label:has([value=comfortable])")
+    page.wait_for_timeout(SETTLE_MS)
+    left = page.evaluate("document.querySelectorAll('.card.arriving').length")
+    wall.check(left == 0, "no arrival replays on a density switch", left)
+    page.close()
+
+
+def dialog_backdrop_only(wall):
+    """In a short window only the backdrop closes the portrait, never a click
+    inside the dialog beside the image."""
+    page = wall.open(1280, 360, 4)
+    page.click(".density label:has([value=comfortable])")
+    page.wait_for_timeout(SETTLE_MS)
+    page.locator(".card .look:not([hidden])").first.click()
+    box = page.evaluate(
+        "(() => { const d = document.getElementById('portrait').getBoundingClientRect(); const i = document.querySelector('#portrait .full').getBoundingClientRect(); return [d.left, d.top, d.right, i.right, i.bottom]; })()"
+    )
+    inside = [(box[3] + box[2]) / 2, (box[1] + box[4]) / 2] if box[2] - box[3] > 4 else [box[0] + 4, box[1] + 4]
+    page.mouse.click(*inside)
+    still = page.evaluate("document.getElementById('portrait').open")
+    wall.check(still, "a click inside the dialog keeps it open", box)
+    page.close()
+
+
+def compact_look_on_face(wall):
+    """In Compact the portrait button covers the round face exactly."""
+    page = wall.open(945, 1000, 8)
+    off = page.evaluate(
+        """() => [...document.querySelectorAll('.card')].filter((c) => !c.querySelector('.look').hidden).map((c) => {
+          const [l, f] = [c.querySelector('.look'), c.querySelector('.portrait')].map((e) => e.getBoundingClientRect());
+          return Math.max(...['left', 'top', 'width', 'height'].map((k) => Math.abs(l[k] - f[k])));
+        }).filter((d) => d > 0.5)"""
+    )
+    wall.check(not off, "the compact look button sits on the face", off)
+    page.close()
+
+
+def long_tool_stays_in_card(wall):
+    """A needs-you line naming a long tool wraps inside its card at either density."""
+    for density in ("comfortable", "compact"):
+        page = wall.open(945, 1000, 8)
+        page.click(f".density label:has([value={density}])")
+        page.wait_for_timeout(SETTLE_MS)
+        spill = page.evaluate(
+            """() => {
+          const ask = [...document.querySelectorAll('.card .ask')].find((a) => !a.hidden);
+          ask.querySelector('.text').textContent = 'Waiting for you to approve mcp__claude_ai_Gmail__apply_sensitive_message_label_and_then_some_more_words_without_breaks';
+          const [a, c] = [ask.getBoundingClientRect(), ask.closest('.card').getBoundingClientRect()];
+          return a.right > c.right + 0.5 || ask.scrollWidth > ask.clientWidth + 1 ? [a.right, c.right, ask.scrollWidth, ask.clientWidth] : null;
+        }"""
+        )
+        wall.check(spill is None, f"a long tool name stays in its {density} card", spill)
+        page.close()
+
+
+def dialog_caption_fits(wall):
+    """In a short window the dialog's caption is never cut off: it fits or scrolls."""
+    page = wall.open(1280, 300, 4)
+    page.click(".density label:has([value=comfortable])")
+    page.wait_for_timeout(SETTLE_MS)
+    cut = []
+    for i in range(page.locator(".card .look:not([hidden])").count()):
+        page.locator(".card .look:not([hidden])").nth(i).click()
+        cut += page.evaluate(
+            """() => {
+          const d = document.getElementById('portrait');
+          const r = d.getBoundingClientRect();
+          const out = [];
+          for (const el of d.querySelectorAll('.caption h2, .caption .epithet, .caption .voice, .caption .close')) {
+            const e = el.getBoundingClientRect();
+            if (e.right > r.right + 0.5 || el.scrollWidth > el.clientWidth + 1) out.push(el.textContent + ' wide');
+          }
+          if (getComputedStyle(d).overflowY !== 'auto' && d.scrollHeight > d.clientHeight) out.push('clipped below');
+          return out;
+        }"""
+        )
+        page.keyboard.press("Escape")
+    wall.check(not cut, "the dialog caption fits or scrolls at 1280x300", cut)
+    page.close()
+
+
+def band_clear(wall):
+    """On the band nothing covers the nameplate or the pill, and nothing but
+    the figure (and its clipped aura) leaves the card's top edge."""
+    for width in (1920, 945):
+        page = comfortable(wall, width, 16)
+        bad = page.evaluate(
+            """() => {
+          const hit = (a, b) => a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
+          const shown = (el) => el && !el.hidden && getComputedStyle(el).display !== 'none' && el.getBoundingClientRect().height > 0;
+          const out = [];
+          for (const card of document.querySelectorAll('.card')) {
+            const name = card.querySelector('.name').textContent;
+            const c = card.getBoundingClientRect();
+            const text = [...card.querySelectorAll('header .name, header .epithet, header .task, header .pill')].filter(shown);
+            // The portrait's waves reach 12/80 of it past its edge; the aura only clips them.
+            const grow = (r, by) => ({ left: r.left - by, right: r.right + by, top: r.top - by, bottom: r.bottom + by });
+            for (const el of ['.look', '.marks', '.portrait']) {
+              const e = card.querySelector(el);
+              if (!shown(e)) continue;
+              const box = e.getBoundingClientRect();
+              const r = el === '.portrait' ? grow(box, box.width * 12 / 80) : box;
+              for (const t of text) if (hit(r, t.getBoundingClientRect())) out.push(`${name}: ${el} covers ${t.className}`);
+              const top = el === '.portrait' && card.classList.contains('has-figure') ? card.querySelector('.aura').getBoundingClientRect().top : r.top;
+              if (top < c.top - 14.5) out.push(`${name}: ${el} ${(c.top - top).toFixed(1)} px over the top`);
+            }
+            const [n, pill] = [card.querySelector('.name'), card.querySelector('.pill')].map((e) => e.getBoundingClientRect());
+            if (hit(n, pill)) out.push(`${name}: name under the pill`);
+          }
+          return out;
+        }"""
+        )
+        wall.check(not bad, f"band clear at {width}", bad)
+        page.close()
+    page = wall.open(945, 1000, 16)
+    shown = page.evaluate(
+        "[...document.querySelectorAll('.marks, .stage, .epithet')].filter((e) => e.getBoundingClientRect().height > 0).length"
+    )
+    wall.check(shown == 0, "a compact card shows no band, epithet or plinth", shown)
+    page.close()
+
+
 def main() -> int:
     handler = functools.partial(Quiet, directory=str(ROOT))
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)  # a free port
@@ -608,6 +786,13 @@ def main() -> int:
             drawer_tables,
             drawer_states,
             drawer_follows_snapshots,
+            portrait_dialog,
+            band_clear,
+            arrival_once,
+            dialog_backdrop_only,
+            compact_look_on_face,
+            long_tool_stays_in_card,
+            dialog_caption_fits,
         )
         for case in cases:
             if not only or case.__name__ in only:

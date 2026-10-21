@@ -7,12 +7,28 @@
     "source": "kourai-khryseai assets/avatars/vn/aidos_neutral.png (https://github.com/ajbarea/kourai-khryseai), head cropped and scaled to 96 px",
     "license": "MIT (kourai-khryseai LICENSE, Copyright (c) 2026 AJ Barea)"
   },
+  "kourai/aidos-figure.webp": {
+    "source": "kourai-khryseai assets/avatars/vn/aidos_transparent.png (https://github.com/ajbarea/kourai-khryseai), half-figure cropped and scaled to 384 px",
+    "license": "MIT (kourai-khryseai LICENSE, Copyright (c) 2026 AJ Barea)"
+  },
+  "kourai/aidos-full.webp": {
+    "source": "kourai-khryseai assets/avatars/vn/aidos_neutral.png (https://github.com/ajbarea/kourai-khryseai), whole, 640 px",
+    "license": "MIT (kourai-khryseai LICENSE, Copyright (c) 2026 AJ Barea)"
+  },
   "kourai/aletheia-192.webp": {
     "source": "kourai-khryseai assets/avatars/vn/aletheia_neutral.png (https://github.com/ajbarea/kourai-khryseai), head cropped and scaled to 192 px",
     "license": "MIT (kourai-khryseai LICENSE, Copyright (c) 2026 AJ Barea)"
   },
   "kourai/aletheia-96.webp": {
     "source": "kourai-khryseai assets/avatars/vn/aletheia_neutral.png (https://github.com/ajbarea/kourai-khryseai), head cropped and scaled to 96 px",
+    "license": "MIT (kourai-khryseai LICENSE, Copyright (c) 2026 AJ Barea)"
+  },
+  "kourai/aletheia-figure.webp": {
+    "source": "kourai-khryseai assets/avatars/vn/aletheia_transparent.png (https://github.com/ajbarea/kourai-khryseai), half-figure cropped and scaled to 384 px",
+    "license": "MIT (kourai-khryseai LICENSE, Copyright (c) 2026 AJ Barea)"
+  },
+  "kourai/aletheia-full.webp": {
+    "source": "kourai-khryseai assets/avatars/vn/aletheia_neutral.png (https://github.com/ajbarea/kourai-khryseai), whole, 640 px",
     "license": "MIT (kourai-khryseai LICENSE, Copyright (c) 2026 AJ Barea)"
   },
   "kourai/argos-192.webp": {
@@ -23,12 +39,28 @@
     "source": "AJ Barea, generated from the briefs in docs/characters/portrait-briefs.md (assets/portraits/argos.jpg), head cropped and scaled to 96 px",
     "license": "MIT (Copyright (c) 2026 AJ Barea)"
   },
+  "kourai/argos-figure.webp": {
+    "source": "AJ Barea, generated from the briefs in docs/characters/portrait-briefs.md; cut out of its backdrop by scripts/cutout-portraits.py (rembg isnet-anime, Apache-2.0) as assets/portraits/argos-cutout.webp, scaled to 384 px",
+    "license": "MIT (Copyright (c) 2026 AJ Barea)"
+  },
+  "kourai/argos-full.webp": {
+    "source": "AJ Barea, generated from the briefs in docs/characters/portrait-briefs.md (assets/portraits/argos.jpg), whole, 768 px",
+    "license": "MIT (Copyright (c) 2026 AJ Barea)"
+  },
   "kourai/chronos-192.webp": {
     "source": "AJ Barea, generated from the briefs in docs/characters/portrait-briefs.md (assets/portraits/chronos.jpg), head cropped and scaled to 192 px",
     "license": "MIT (Copyright (c) 2026 AJ Barea)"
   },
   "kourai/chronos-96.webp": {
     "source": "AJ Barea, generated from the briefs in docs/characters/portrait-briefs.md (assets/portraits/chronos.jpg), head cropped and scaled to 96 px",
+    "license": "MIT (Copyright (c) 2026 AJ Barea)"
+  },
+  "kourai/chronos-figure.webp": {
+    "source": "AJ Barea, generated from the briefs in docs/characters/portrait-briefs.md; cut out of its backdrop by scripts/cutout-portraits.py (rembg isnet-anime, Apache-2.0) as assets/portraits/chronos-cutout.webp, scaled to 384 px",
+    "license": "MIT (Copyright (c) 2026 AJ Barea)"
+  },
+  "kourai/chronos-full.webp": {
+    "source": "AJ Barea, generated from the briefs in docs/characters/portrait-briefs.md (assets/portraits/chronos.jpg), whole, 768 px",
     "license": "MIT (Copyright (c) 2026 AJ Barea)"
   },
   "kourai/cupid-192.webp": {
@@ -39,12 +71,28 @@
     "source": "kourai-khryseai assets/avatars/vn/cupid_neutral.png (https://github.com/ajbarea/kourai-khryseai), head cropped and scaled to 96 px",
     "license": "MIT (kourai-khryseai LICENSE, Copyright (c) 2026 AJ Barea)"
   },
+  "kourai/cupid-figure.webp": {
+    "source": "kourai-khryseai assets/avatars/vn/cupid_transparent.png (https://github.com/ajbarea/kourai-khryseai), half-figure cropped and scaled to 384 px",
+    "license": "MIT (kourai-khryseai LICENSE, Copyright (c) 2026 AJ Barea)"
+  },
+  "kourai/cupid-full.webp": {
+    "source": "kourai-khryseai assets/avatars/vn/cupid_neutral.png (https://github.com/ajbarea/kourai-khryseai), whole, 640 px",
+    "license": "MIT (kourai-khryseai LICENSE, Copyright (c) 2026 AJ Barea)"
+  },
   "kourai/dokimasia-192.webp": {
     "source": "kourai-khryseai assets/avatars/vn/dokimasia_neutral.png (https://github.com/ajbarea/kourai-khryseai), head cropped and scaled to 192 px",
     "license": "MIT (kourai-khryseai LICENSE, Copyright (c) 2026 AJ Barea)"
   },
   "kourai/dokimasia-96.webp": {
     "source": "kourai-khryseai assets/avatars/vn/dokimasia_neutral.png (https://github.com/ajbarea/kourai-khryseai), head cropped and scaled to 96 px",
+    "license": "MIT (kourai-khryseai LICENSE, Copyright (c) 2026 AJ Barea)"
+  },
+  "kourai/dokimasia-figure.webp": {
+    "source": "kourai-khryseai assets/avatars/vn/dokimasia_transparent.png (https://github.com/ajbarea/kourai-khryseai), half-figure cropped and scaled to 384 px",
+    "license": "MIT (kourai-khryseai LICENSE, Copyright (c) 2026 AJ Barea)"
+  },
+  "kourai/dokimasia-full.webp": {
+    "source": "kourai-khryseai assets/avatars/vn/dokimasia_neutral.png (https://github.com/ajbarea/kourai-khryseai), whole, 640 px",
     "license": "MIT (kourai-khryseai LICENSE, Copyright (c) 2026 AJ Barea)"
   },
   "kourai/elpis-192.webp": {
@@ -55,12 +103,28 @@
     "source": "AJ Barea, generated from the briefs in docs/characters/portrait-briefs.md (assets/portraits/elpis.jpg), head cropped and scaled to 96 px",
     "license": "MIT (Copyright (c) 2026 AJ Barea)"
   },
+  "kourai/elpis-figure.webp": {
+    "source": "AJ Barea, generated from the briefs in docs/characters/portrait-briefs.md; cut out of its backdrop by scripts/cutout-portraits.py (rembg isnet-anime, Apache-2.0) as assets/portraits/elpis-cutout.webp, scaled to 384 px",
+    "license": "MIT (Copyright (c) 2026 AJ Barea)"
+  },
+  "kourai/elpis-full.webp": {
+    "source": "AJ Barea, generated from the briefs in docs/characters/portrait-briefs.md (assets/portraits/elpis.jpg), whole, 768 px",
+    "license": "MIT (Copyright (c) 2026 AJ Barea)"
+  },
   "kourai/hephaestus-192.webp": {
     "source": "kourai-khryseai assets/avatars/vn/hephaestus_neutral.png (https://github.com/ajbarea/kourai-khryseai), head cropped and scaled to 192 px",
     "license": "MIT (kourai-khryseai LICENSE, Copyright (c) 2026 AJ Barea)"
   },
   "kourai/hephaestus-96.webp": {
     "source": "kourai-khryseai assets/avatars/vn/hephaestus_neutral.png (https://github.com/ajbarea/kourai-khryseai), head cropped and scaled to 96 px",
+    "license": "MIT (kourai-khryseai LICENSE, Copyright (c) 2026 AJ Barea)"
+  },
+  "kourai/hephaestus-figure.webp": {
+    "source": "kourai-khryseai assets/avatars/vn/hephaestus_transparent.png (https://github.com/ajbarea/kourai-khryseai), half-figure cropped and scaled to 384 px",
+    "license": "MIT (kourai-khryseai LICENSE, Copyright (c) 2026 AJ Barea)"
+  },
+  "kourai/hephaestus-full.webp": {
+    "source": "kourai-khryseai assets/avatars/vn/hephaestus_neutral.png (https://github.com/ajbarea/kourai-khryseai), whole, 640 px",
     "license": "MIT (kourai-khryseai LICENSE, Copyright (c) 2026 AJ Barea)"
   },
   "kourai/hermes-192.webp": {
@@ -71,12 +135,28 @@
     "source": "AJ Barea, generated from the briefs in docs/characters/portrait-briefs.md (assets/portraits/hermes.jpg), head cropped and scaled to 96 px",
     "license": "MIT (Copyright (c) 2026 AJ Barea)"
   },
+  "kourai/hermes-figure.webp": {
+    "source": "AJ Barea, generated from the briefs in docs/characters/portrait-briefs.md; cut out of its backdrop by scripts/cutout-portraits.py (rembg isnet-anime, Apache-2.0) as assets/portraits/hermes-cutout.webp, scaled to 384 px",
+    "license": "MIT (Copyright (c) 2026 AJ Barea)"
+  },
+  "kourai/hermes-full.webp": {
+    "source": "AJ Barea, generated from the briefs in docs/characters/portrait-briefs.md (assets/portraits/hermes.jpg), whole, 768 px",
+    "license": "MIT (Copyright (c) 2026 AJ Barea)"
+  },
   "kourai/hesychia-192.webp": {
     "source": "AJ Barea, generated from the briefs in docs/characters/portrait-briefs.md (assets/portraits/hesychia.jpg), head cropped and scaled to 192 px",
     "license": "MIT (Copyright (c) 2026 AJ Barea)"
   },
   "kourai/hesychia-96.webp": {
     "source": "AJ Barea, generated from the briefs in docs/characters/portrait-briefs.md (assets/portraits/hesychia.jpg), head cropped and scaled to 96 px",
+    "license": "MIT (Copyright (c) 2026 AJ Barea)"
+  },
+  "kourai/hesychia-figure.webp": {
+    "source": "AJ Barea, generated from the briefs in docs/characters/portrait-briefs.md; cut out of its backdrop by scripts/cutout-portraits.py (rembg isnet-anime, Apache-2.0) as assets/portraits/hesychia-cutout.webp, scaled to 384 px",
+    "license": "MIT (Copyright (c) 2026 AJ Barea)"
+  },
+  "kourai/hesychia-full.webp": {
+    "source": "AJ Barea, generated from the briefs in docs/characters/portrait-briefs.md (assets/portraits/hesychia.jpg), whole, 768 px",
     "license": "MIT (Copyright (c) 2026 AJ Barea)"
   },
   "kourai/kallos-192.webp": {
@@ -87,12 +167,28 @@
     "source": "kourai-khryseai assets/avatars/vn/kallos_neutral.png (https://github.com/ajbarea/kourai-khryseai), head cropped and scaled to 96 px",
     "license": "MIT (kourai-khryseai LICENSE, Copyright (c) 2026 AJ Barea)"
   },
+  "kourai/kallos-figure.webp": {
+    "source": "kourai-khryseai assets/avatars/vn/kallos_transparent.png (https://github.com/ajbarea/kourai-khryseai), half-figure cropped and scaled to 384 px",
+    "license": "MIT (kourai-khryseai LICENSE, Copyright (c) 2026 AJ Barea)"
+  },
+  "kourai/kallos-full.webp": {
+    "source": "kourai-khryseai assets/avatars/vn/kallos_neutral.png (https://github.com/ajbarea/kourai-khryseai), whole, 640 px",
+    "license": "MIT (kourai-khryseai LICENSE, Copyright (c) 2026 AJ Barea)"
+  },
   "kourai/metis-192.webp": {
     "source": "kourai-khryseai assets/avatars/vn/metis_neutral.png (https://github.com/ajbarea/kourai-khryseai), head cropped and scaled to 192 px",
     "license": "MIT (kourai-khryseai LICENSE, Copyright (c) 2026 AJ Barea)"
   },
   "kourai/metis-96.webp": {
     "source": "kourai-khryseai assets/avatars/vn/metis_neutral.png (https://github.com/ajbarea/kourai-khryseai), head cropped and scaled to 96 px",
+    "license": "MIT (kourai-khryseai LICENSE, Copyright (c) 2026 AJ Barea)"
+  },
+  "kourai/metis-figure.webp": {
+    "source": "kourai-khryseai assets/avatars/vn/metis_transparent.png (https://github.com/ajbarea/kourai-khryseai), half-figure cropped and scaled to 384 px",
+    "license": "MIT (kourai-khryseai LICENSE, Copyright (c) 2026 AJ Barea)"
+  },
+  "kourai/metis-full.webp": {
+    "source": "kourai-khryseai assets/avatars/vn/metis_neutral.png (https://github.com/ajbarea/kourai-khryseai), whole, 640 px",
     "license": "MIT (kourai-khryseai LICENSE, Copyright (c) 2026 AJ Barea)"
   },
   "kourai/mneme-192.webp": {
@@ -103,6 +199,14 @@
     "source": "kourai-khryseai assets/avatars/vn/mneme_neutral.png (https://github.com/ajbarea/kourai-khryseai), head cropped and scaled to 96 px",
     "license": "MIT (kourai-khryseai LICENSE, Copyright (c) 2026 AJ Barea)"
   },
+  "kourai/mneme-figure.webp": {
+    "source": "kourai-khryseai assets/avatars/vn/mneme_transparent.png (https://github.com/ajbarea/kourai-khryseai), half-figure cropped and scaled to 384 px",
+    "license": "MIT (kourai-khryseai LICENSE, Copyright (c) 2026 AJ Barea)"
+  },
+  "kourai/mneme-full.webp": {
+    "source": "kourai-khryseai assets/avatars/vn/mneme_neutral.png (https://github.com/ajbarea/kourai-khryseai), whole, 640 px",
+    "license": "MIT (kourai-khryseai LICENSE, Copyright (c) 2026 AJ Barea)"
+  },
   "kourai/puck-192.webp": {
     "source": "kourai-khryseai assets/avatars/vn/puck_neutral.png (https://github.com/ajbarea/kourai-khryseai), head cropped and scaled to 192 px",
     "license": "MIT (kourai-khryseai LICENSE, Copyright (c) 2026 AJ Barea)"
@@ -111,12 +215,28 @@
     "source": "kourai-khryseai assets/avatars/vn/puck_neutral.png (https://github.com/ajbarea/kourai-khryseai), head cropped and scaled to 96 px",
     "license": "MIT (kourai-khryseai LICENSE, Copyright (c) 2026 AJ Barea)"
   },
+  "kourai/puck-figure.webp": {
+    "source": "kourai-khryseai assets/avatars/vn/puck_transparent.png (https://github.com/ajbarea/kourai-khryseai), half-figure cropped and scaled to 384 px",
+    "license": "MIT (kourai-khryseai LICENSE, Copyright (c) 2026 AJ Barea)"
+  },
+  "kourai/puck-full.webp": {
+    "source": "kourai-khryseai assets/avatars/vn/puck_neutral.png (https://github.com/ajbarea/kourai-khryseai), whole, 640 px",
+    "license": "MIT (kourai-khryseai LICENSE, Copyright (c) 2026 AJ Barea)"
+  },
   "kourai/techne-192.webp": {
     "source": "kourai-khryseai assets/avatars/vn/techne_neutral.png (https://github.com/ajbarea/kourai-khryseai), head cropped and scaled to 192 px",
     "license": "MIT (kourai-khryseai LICENSE, Copyright (c) 2026 AJ Barea)"
   },
   "kourai/techne-96.webp": {
     "source": "kourai-khryseai assets/avatars/vn/techne_neutral.png (https://github.com/ajbarea/kourai-khryseai), head cropped and scaled to 96 px",
+    "license": "MIT (kourai-khryseai LICENSE, Copyright (c) 2026 AJ Barea)"
+  },
+  "kourai/techne-figure.webp": {
+    "source": "kourai-khryseai assets/avatars/vn/techne_transparent.png (https://github.com/ajbarea/kourai-khryseai), half-figure cropped and scaled to 384 px",
+    "license": "MIT (kourai-khryseai LICENSE, Copyright (c) 2026 AJ Barea)"
+  },
+  "kourai/techne-full.webp": {
+    "source": "kourai-khryseai assets/avatars/vn/techne_neutral.png (https://github.com/ajbarea/kourai-khryseai), whole, 640 px",
     "license": "MIT (kourai-khryseai LICENSE, Copyright (c) 2026 AJ Barea)"
   }
 }

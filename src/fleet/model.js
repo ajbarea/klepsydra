@@ -1,7 +1,7 @@
 // What the fleet strip and wall show for each session, kept free of the DOM
 // so it can be unit tested. Sessions arrive from the reader already ordered.
 
-import { markerWidth } from "./contrast.js";
+import { markerWidth, mix, mixOklab, readableOn } from "./contrast.js";
 import { medallion } from "./medallion.js";
 import { ledgerLine } from "./ledger.js";
 import { speakingNow } from "./speaking.js";
@@ -100,17 +100,22 @@ export function identity(s, cast) {
   if (character) {
     const base = `${FACES}/kourai/${character.face}`;
     const accent = /^#[0-9a-f]{6}$/i.test(character.accent) ? character.accent : null;
+    const head = character.head;
+    const placed = Array.isArray(head) && head.length === 3 && head.every((v) => typeof v === "number" && v > 0 && v < 1);
     return {
       name: character.name,
       voice: voiceName(voice),
       face: `${base}-96.webp`,
       face2x: `${base}-192.webp`,
+      full: `${base}-full.webp`,
       accent,
+      epithet: typeof character.epithet === "string" ? character.epithet : null,
+      figure: placed ? { src: `${base}-figure.webp`, head } : null,
     };
   }
   const name = voice ? voiceName(voice) : s.name || basename(s.launch_dir) || s.session_id.slice(0, 8);
   const face = medallion(name, voice ?? s.session_id);
-  return { name, voice: null, face, face2x: face, accent: null };
+  return { name, voice: null, face, face2x: face, full: null, accent: null, epithet: null, figure: null };
 }
 
 /** "Hermes, 2 agents and 1 shell running in background, working, prompt free, 2 minutes" */
@@ -239,6 +244,26 @@ function jumpable(s) {
 
 /** The Open terminal button's resting and hover backgrounds (wall.css --button-bg, --button-hover); a style test keeps them equal. */
 export const BUTTON_BGS = ["#252d39", "#2e3846"];
+/**
+ * The comfortable card's header band (wall.css): its plate, its light (a glow
+ * and rays, each at most this strong), the mask that lets only `underText` of
+ * it past the figure to the text, the needs-you amber that replaces a
+ * character's light, and a quiet card's dim light. A style test keeps these
+ * equal to the stylesheet's.
+ */
+export const BAND = { plate: "#141820", glow: 0.62, rays: 0.16, underText: 0.15, needs: "#e69f00", dimWith: "#3a414c", dimShare: 0.3 };
+const LIGHT_AT_TEXT = (1 - (1 - BAND.glow) * (1 - BAND.rays)) * BAND.underText;
+
+/** The brightest the band gets under its text, in each light a character's card can wear: its own, needs-you, quiet. */
+export const bandGrounds = (accent) =>
+  [accent, BAND.needs, mixOklab(BAND.dimWith, accent, BAND.dimShare)].map((light) => mix(BAND.plate, light, LIGHT_AT_TEXT));
+
+// An accent's epithet ink depends on the accent alone, so each is worked out once.
+const inks = new Map();
+const accentInk = (accent) => {
+  if (!inks.has(accent)) inks.set(accent, readableOn(accent, bandGrounds(accent)));
+  return inks.get(accent);
+};
 
 /**
  * How the Open terminal button is styled. "off" (disabled): quiet, nothing else.
@@ -280,7 +305,7 @@ const ringFor = (facePx, agentPx, shellPx, gapPx) => {
 };
 export const RINGS = {
   comfortable: ringFor(80, 7, 3, 14),
-  compact: ringFor(56, 5.5, 2.5, 11),
+  compact: ringFor(64, 5.5, 2.5, 11),
 };
 // Five at most: a glance counts about four without counting, and more arcs
 // stop reading apart; "+N" says the rest, and the crew line the exact counts.
@@ -295,29 +320,38 @@ const arc = (g, from, to) =>
   `M ${point(g, from)} A ${round2(g.r)} ${round2(g.r)} 0 ${to - from > 180 ? 1 : 0} 1 ${point(g, to)}`;
 
 /**
- * The ring's arcs for one density's geometry, each {kind, d, width}, and how
- * many more are out than drawn. Other tasks draw as shells (thin); the crew
- * line names them. Past RING_MAX, the thin kind keeps at least one arc, so it
- * is never hidden.
+ * What the crew shows: a mark per piece of work, agents first, at most
+ * RING_MAX, and how many more are out. Other tasks show as shells (thin); the
+ * crew line names them. Past RING_MAX the thin kind keeps one mark, so it is
+ * never hidden. The ring lays these around a portrait; a figure's plinth
+ * lays them in a row.
  */
-export function crewRing(crew, g = RINGS.comfortable) {
-  const total = crewSize(crew);
+export function crewMarks(crew) {
   const thin = (crew.shells ?? 0) + (crew.tasks ?? 0);
   const shells = thin && Math.min(thin, Math.max(1, RING_MAX - crew.agents));
   const agents = Math.min(crew.agents, RING_MAX - shells);
   const kinds = [...Array(agents).fill("agent"), ...Array(shells).fill("shell")];
+  return { kinds, more: crewSize(crew) - kinds.length };
+}
+
+/**
+ * The ring's arcs for one density's geometry, each {kind, d, width}, and how
+ * many more are out than drawn: `crewMarks` laid around the portrait.
+ */
+export function crewRing(crew, g = RINGS.comfortable, marks = crewMarks(crew)) {
+  const { kinds, more } = marks;
   const step = 360 / Math.max(kinds.length, 1);
   // Every count keeps its gaps, a lone item too, so an arc never reads as a closed ring.
   const segments = kinds.map((kind, i) => {
     const from = -90 + i * step + g.gapDeg / 2;
     return { kind, d: arc(g, from, from + step - g.gapDeg), width: round2(g[kind]) };
   });
-  return { segments, more: total - kinds.length };
+  return { segments, more };
 }
 
 /** The ring in each density. */
-export const crewRings = (crew) =>
-  Object.fromEntries(Object.entries(RINGS).map(([density, g]) => [density, crewRing(crew, g)]));
+export const crewRings = (crew, marks = crewMarks(crew)) =>
+  Object.fromEntries(Object.entries(RINGS).map(([density, g]) => [density, crewRing(crew, g, marks)]));
 
 /** Whether the wall's ring key shows: while any card has background work out. */
 export const showsRingKey = (cards) => cards.some((c) => c.rings.comfortable.segments.length > 0);
@@ -387,6 +421,7 @@ export function card(s, cast, nowMs) {
   const crew = crewOf(s);
   const also = [...new Set((s.touched ?? []).map((t) => t.repo))].filter((r) => r && r !== s.where?.repo);
   const jump = jumpable(s);
+  const marks = crewMarks(crew);
   return {
     id: s.session_id,
     task: s.name || "No session name yet",
@@ -397,7 +432,8 @@ export function card(s, cast, nowMs) {
       when: pillWhen(s, nowMs),
     },
     ask: s.status === "needs_you" ? askText(s.reason) : null,
-    rings: crewRings(crew),
+    rings: crewRings(crew, marks),
+    marks,
     // An agent's segment wears the character's colour; a medallion's, the wall's gold.
     ringColor: who.accent,
     crew: crewText(crew),
@@ -412,7 +448,11 @@ export function card(s, cast, nowMs) {
     session: s.name ?? null,
     face: who.face,
     face2x: who.face2x,
+    full: who.full,
     accent: who.accent,
+    accentInk: who.accent ? accentInk(who.accent) : null,
+    epithet: who.epithet,
+    figure: who.figure,
     ...jumpStyle(s, who.accent),
     status: s.status,
     quiet: isQuiet(s),

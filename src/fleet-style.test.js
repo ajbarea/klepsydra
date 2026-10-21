@@ -2,8 +2,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { TONES, medallionSvg } from "./fleet/medallion.js";
-import { contrast } from "./fleet/contrast.js";
-import { RINGS } from "./fleet/model.js";
+import { contrast, mix, mixOklab, readableOn } from "./fleet/contrast.js";
+import { BAND, RINGS, bandGrounds } from "./fleet/model.js";
 
 const read = (f) => readFileSync(new URL(f, import.meta.url), "utf8");
 const badgeCss = read("./fleet/badge.css");
@@ -91,16 +91,16 @@ test("both densities step on one spacing scale, and compact is the 12 px grid th
   assert.ok(scale.length >= 6 && scale.every((v, i) => i === 0 || v > scale[i - 1]), "an ascending scale");
   const compact = css.match(/\n\[data-density="compact"\] \{([^}]*)\}/)[1];
   for (const [, name, value] of compact.matchAll(/(--[\w-]+):\s*([^;]+);/g)) {
-    if (name === "--wall-face" || name === "--face-inset") continue; // portrait geometry, not spacing
+    if (["--wall-face", "--face-inset", "--band-h"].includes(name)) continue; // portrait and band geometry, not spacing
     assert.match(value, /^(var\(--space-\d+\)\s*)+$/, `${name} steps on the scale`);
   }
   const comfortable = densityPx(css, "comfortable");
   const tight = densityPx(css, "compact");
   assert.deepEqual([comfortable("--card-gap")[0], comfortable("--wall-pad")[0]], [16, 28], "comfortable is unchanged");
   assert.deepEqual([tight("--card-gap")[0], tight("--wall-pad")[0]], [12, 12]);
-  assert.deepEqual(comfortable("--card-pad"), [18, 18, 14], "comfortable is unchanged");
+  assert.deepEqual(comfortable("--card-pad"), [0, 18, 14], "comfortable's band takes the top");
   assert.equal(comfortable("--wall-face")[0], 80);
-  assert.equal(tight("--wall-face")[0], 56);
+  assert.equal(tight("--wall-face")[0], 64, "the compact face grew for #44");
 });
 
 test("compact keeps Open terminal, Clear and the density choices at 24x24 px or more", () => {
@@ -287,4 +287,110 @@ test("the drawer's text wears text colours on the card's own surface, and a bar 
   assert.match(css.match(/\.ledger \.fill \{([^}]*)\}/)[1], /background: var\(--accent/);
   assert.match(css.match(/\.ledger \.fill \{([^}]*)\}/)[1], /border-radius: 0 4px 4px 0/, "4px rounded data end, square at the baseline");
   assert.match(css.match(/\.ledger \.fill \{([^}]*)\}/)[1], /height: 8px/, "a thin mark");
+});
+
+// ---- The header band (#62) ----
+const wallCss = () => read("./fleet/wall.css");
+const bandTokens = () => {
+  const css = wallCss();
+  const pct = (name) => parseFloat(token(css, name)) / 100;
+  return {
+    plate: token(css, "--plate-bg"),
+    glow: pct("--glow-alpha"),
+    rays: pct("--rays-alpha"),
+    underText: pct("--under-text"),
+    dimWith: token(css, "--dim-light-with"),
+    dimShare: pct("--dim-light-share"),
+  };
+};
+
+test("the band's constants in the model are the stylesheet's", () => {
+  const t = bandTokens();
+  assert.deepEqual(
+    { plate: BAND.plate, glow: BAND.glow, rays: BAND.rays, underText: BAND.underText, dimWith: BAND.dimWith, dimShare: BAND.dimShare },
+    t,
+  );
+  assert.equal(BAND.needs, token(badgeCss, "--badge-needs"), "a needs-you band is lit amber");
+});
+
+test("text on the band reads at 4.5:1 under every light that can reach it", () => {
+  const css = wallCss();
+  const cast = JSON.parse(read("./fleet/cast.json"));
+  const ivory = token(css, "--ivory");
+  const dim = token(css, "--text-dim");
+  for (const c of Object.values(cast.characters)) {
+    const ink = readableOn(c.accent, bandGrounds(c.accent));
+    for (const ground of bandGrounds(c.accent)) {
+      for (const [what, fg] of [["name", ivory], ["task", dim], ["epithet", ink]]) {
+        const r = contrast(fg, ground);
+        assert.ok(r >= 4.5, `${c.name} ${what} on ${ground}: ${r.toFixed(2)}`);
+      }
+      // The pill: its tone at 16% over the band, its label the tone mixed 70% with white (wall.css .pill).
+      const age = token(css, "--pill-age");
+      for (const tone of ["--tone-needs", "--tone-working", "--tone-done", "--tone-error", "--tone-quiet"]) {
+        const hex = token(css, tone).startsWith("var(") ? token(badgeCss, token(css, tone).slice(4, -1)) : token(css, tone);
+        const pill = mix(ground, hex, 0.16);
+        const label = mixOklab("#ffffff", hex, 0.7);
+        assert.ok(contrast(label, pill) >= 4.5, `${c.name} ${tone} pill: ${contrast(label, pill).toFixed(2)}`);
+        assert.ok(contrast(age, pill) >= 4.5, `${c.name} ${tone} pill age: ${contrast(age, pill).toFixed(2)}`);
+      }
+    }
+  }
+});
+
+test("the band caps its light under text with the mask, and lights needs-you amber and a quiet card dim", () => {
+  const css = wallCss();
+  const stage = css.match(/\.stage \{([^}]*)\}/)?.[1] ?? "";
+  assert.match(stage, /mask-image: linear-gradient\(90deg, #000 var\(--fade-from\), rgb\(0 0 0 \/ var\(--under-text\)\) var\(--fade-to\)\)/);
+  assert.match(css, /\.card\.tone-needs \{[^}]*--light: var\(--tone-needs\)/);
+  assert.match(css, /\.card\.dim \{[^}]*--light: color-mix\(in oklab, var\(--accent, var\(--band-gold\)\) var\(--dim-light-share\), var\(--dim-light-with\)\)/);
+});
+
+test("crew marks on the plinth are 3:1 against it for every character", () => {
+  const plinth = token(wallCss(), "--plinth-bg");
+  const cast = JSON.parse(read("./fleet/cast.json"));
+  for (const c of Object.values(cast.characters)) {
+    assert.ok(contrast(c.accent, plinth) >= 3, `${c.name}: ${contrast(c.accent, plinth).toFixed(2)}`);
+  }
+});
+
+test("on a figure the crew rides the plinth and the ring steps aside; the waves stay behind the figure", () => {
+  const css = wallCss();
+  assert.match(css, /\.has-figure \.portrait \.ring,\s*\.has-figure \.portrait \.face \{ display: none; \}/);
+  assert.match(css, /\[data-density="compact"\] \.has-figure \.portrait \.ring,\s*\[data-density="compact"\] \.has-figure \.portrait \.face \{ display: block; \}/);
+  assert.match(css, /\.marks \{[^}]*display: none;/, "no marks unless a figure shows");
+  assert.match(css, /\[data-density="compact"\] \.has-figure \.marks:not\(:empty\),[^{]*\{ display: none; \}/, "nor on a compact card, whose ring shows them");
+  const figure = css.match(/\n\.has-figure \.look \{([^}]*)\}/)?.[1] ?? "";
+  const portrait = css.match(/\n\.has-figure \.aura \{([^}]*)\}/)?.[1] ?? "";
+  assert.ok(Number(figure.match(/z-index: (-?\d+)/)[1]) > Number(portrait.match(/z-index: (-?\d+)/)[1]), "waves behind the figure");
+});
+
+test("the arrival plays only where motion is allowed, and dims nothing by opacity", () => {
+  const css = wallCss().replace(/\/\*[\s\S]*?\*\//g, "");
+  const block = css.match(/@media \(prefers-reduced-motion: no-preference\) \{[\s\S]*?\n\}/g).join("\n");
+  for (const name of ["figure-arrive", "light-rise"]) {
+    assert.match(block, new RegExp(`@keyframes ${name}`));
+    assert.equal(css.split(`@keyframes ${name}`).length, 2, `${name} is defined once`);
+  }
+  assert.equal((css.match(/\.arriving/g) ?? []).length, (block.match(/\.arriving/g) ?? []).length, "no arrival outside it");
+});
+
+test("the nameplate's face is bundled, with its licence", () => {
+  const css = wallCss();
+  assert.match(css, /@font-face \{[^}]*font-family: "Cinzel";[^}]*src: url\("fonts\/cinzel-latin-wght-normal\.woff2"\)/);
+  assert.match(read("./fleet/fonts/OFL.txt"), /SIL Open Font License, Version 1\.1/);
+});
+
+test("the tone stripe follows the card's rounded corners, now that the card no longer clips", () => {
+  const css = wallCss();
+  const stripe = css.match(/\n\.card::before \{([^}]*)\}/)?.[1] ?? "";
+  assert.match(stripe, /border-left: 3px solid var\(--tone\)/, "a border on the card-shaped box curves with the corner");
+  assert.match(stripe, /border-radius: 0 0 13px 13px/);
+  assert.match(stripe, /pointer-events: none/);
+  assert.match(css, /\[data-density="compact"\] \.card::before \{ border-radius: 13px; \}/);
+  assert.doesNotMatch(css.replace(/\/\*[\s\S]*?\*\//g, ""), /\.card::before \{[^}]*\bwidth: 3px/);
+});
+
+test("the wall, focused only as a fallback, draws no outline of its own", () => {
+  assert.match(wallCss(), /\.wall:focus \{ outline: none; \}/);
 });

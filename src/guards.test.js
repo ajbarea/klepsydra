@@ -421,6 +421,7 @@ const NOT_SCANNED = {
   "statusline/fixtures/": "recorded status line payloads, data",
   "src-tauri/fleet/tests/fixtures/": "recorded OTLP exports, data",
   "src/fleet/faces/": "generated portraits and their license table, data",
+  "src/fleet/fonts/": "the nameplate's bundled typeface and its licence, data",
   "src/fleet/cast.json": "voice to portrait table, data",
   "src-tauri/fleet/Cargo.toml": "scanned as a manifest",
 };
@@ -608,7 +609,8 @@ test("the ledger sample is never reachable inside the app, and the drawer reads 
 
 test("the ledger drawer is a labelled modal dialog with a Close button that links nowhere", () => {
   const html = read("src/wall.html");
-  const dialog = html.slice(html.indexOf('<dialog id="ledger"'), html.indexOf("</dialog>"));
+  const start = html.indexOf('<dialog id="ledger"');
+  const dialog = html.slice(start, html.indexOf("</dialog>", start));
   assert.match(dialog, /^<dialog id="ledger" class="ledger" aria-labelledby="ledger-title">/);
   assert.match(dialog, /<h2 id="ledger-title" tabindex="-1" autofocus>Ledger<\/h2>/);
   assert.match(dialog, /<button type="button" class="ledger-close">Close<\/button>/);
