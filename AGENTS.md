@@ -9,11 +9,11 @@ klepsydra is an always-on-top desktop gauge (Tauri 2 shell, plain JavaScript fro
 - `node --test src/*.test.js`
 - `bash statusline/test_statusline.sh`, `bash hooks/test_fleet.sh`, `bash hooks/test_launch.sh` (needs tmux), `bash scripts/test_measure_memory.sh`, `bash scripts/test_build_windows.sh`
 - `shellcheck hooks/*.sh statusline/*.sh scripts/*.sh` (under WSL: `uvx --from shellcheck-py shellcheck ...`)
-- `cd src-tauri && cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings`
-- `cd src-tauri && cargo test -p klepsydra-fleet`
+- `(cd src-tauri && cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings)`
+- `(cd src-tauri && cargo test -p klepsydra-fleet)`
 - `uv run -q --no-project --with playwright python -I scripts/test_wall_browser.py` (a few minutes; needs Playwright's Chromium; local only)
 
-Under WSL the app crate cannot compile (no WebKitGTK headers): use `-p klepsydra-fleet` for clippy and `bash scripts/build-windows.sh --check` for the rest. From a worktree, set `KLEPSYDRA_STAGE=klepsydra-build-<worktree name>` so it mirrors into a stage of its own.
+Under WSL the app crate cannot compile (no WebKitGTK headers): use `-p klepsydra-fleet` for clippy and `bash scripts/build-windows.sh --check` for the rest. From a worktree, set `KLEPSYDRA_STAGE=klepsydra-build-<name>` so it mirrors into a stage of its own; `<name>` takes only letters, digits, `.` and `_` (`scripts/build-windows.sh` refuses `-`), so write `agents-md` as `agents_md`.
 
 ## Rules
 
