@@ -6,14 +6,15 @@ set -uo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
 launch="$here/klepsydra-launch.sh"
 work=$(mktemp -d)
-sock="kl-test-$$" sock2="kl-test2-$$"
+sock="kl-test-$$" sock2="kl-test2-$$" sock3="kl-test3-$$"
 sockdir="${TMUX_TMPDIR:-/tmp}/tmux-$(id -u)" # where tmux puts a -L socket
 clients=()
 cleanup() {
   for p in "${clients[@]}" $(cat "$work/stub-pids" 2>/dev/null); do kill "$p" 2>/dev/null; done
   tmux -L "$sock" kill-server 2>/dev/null
   tmux -L "$sock2" kill-server 2>/dev/null
-  rm -f -- "$sockdir/$sock" "$sockdir/$sock2"
+  tmux -L "$sock3" kill-server 2>/dev/null
+  rm -f -- "$sockdir/$sock" "$sockdir/$sock2" "$sockdir/$sock3"
   rm -rf "$work"
 }
 trap cleanup EXIT
@@ -86,6 +87,7 @@ check "first: the tab attaches by the socket's path" "$(head -1 "$WT_LOG")" \
   "-w fleet new-tab --title klepsydra sessions --suppressApplicationTitle wsl.exe -d Test -e tmux -S $(t display -p '#{socket_path}') attach -t =fleet"
 check "first: an attached tab leaves no pending stamp" "$([[ -e $work/klepsydra-tab-pending-$UID ]] && echo left)" ""
 check "first: conf loaded" "$(t show -gv automatic-rename-format)" "#{pane_title}"
+check "first: focus events on" "$(t show -gv focus-events)" "on"
 attach
 bash "$launch" new "$work/repos" >/dev/null 2>&1
 check "second: two windows" "$(windows)" "2"
@@ -194,6 +196,12 @@ check "other socket: exit 0" "$rc" "0"
 check "other socket: a plain tab" "$(head -1 "$WT_LOG")" \
   "-w fleet new-tab wsl.exe -d Test -e tmux -S $socket2 attach -t =hand"
 tmux -L "$sock2" kill-server 2>/dev/null
+# The user's ~/.tmux.conf can turn focus events back off.
+printf 'set -g focus-events off\n' >"$HOME/.tmux.conf"
+tmux -L "$sock3" -f "$KLEPSYDRA_TMUX_CONF" new-session -d -s optout "sleep 600"
+check "the user's tmux.conf turns focus events off" "$(tmux -L "$sock3" show -gv focus-events)" "off"
+check "the user's tmux.conf keeps the window names" "$(tmux -L "$sock3" show -gv automatic-rename-format)" "#{pane_title}"
+tmux -L "$sock3" kill-server 2>/dev/null; rm -f "$HOME/.tmux.conf"
 detach_all; : >"$WT_LOG"
 bash "$launch" jump "$socket" "$first" "$fpid" "$fstart" >/dev/null 2>&1
 check "fleet socket: titled tab" "$(head -1 "$WT_LOG" | grep -c -- "^-w fleet new-tab --title klepsydra sessions --suppressApplicationTitle wsl.exe")" "1"
@@ -302,7 +310,7 @@ check "a socket path wt.exe would split: nothing running, no tab" \
 
 echo "cleanup"
 cleanup; trap - EXIT
-check "no socket files left" "$(find "$sockdir" -maxdepth 1 \( -name "$sock" -o -name "$sock2" \) 2>/dev/null)" ""
+check "no socket files left" "$(find "$sockdir" -maxdepth 1 \( -name "$sock" -o -name "$sock2" -o -name "$sock3" \) 2>/dev/null)" ""
 
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [[ $fail -eq 0 ]]
