@@ -489,10 +489,12 @@ terminal before clicking again."
 
 `launch_dir` and `launch_distro` are keys in `prefs.json`, in the app data dir.
 `launch_dir` defaults to `~`. `launch_distro` defaults to WSL's default
-distro. tmux loads `~/.tmux.conf` first, then `~/.claude/klepsydra-tmux.conf`,
-which names each window after its Claude session and keeps a window open when
-`claude` exits with an error. This is the one place the overlay starts a
-process: `wsl.exe`, from a click, one call at a time.
+distro. tmux loads `~/.claude/klepsydra-tmux.conf`, which turns on focus
+events so Claude Code can track terminal focus, then `~/.tmux.conf`, which can
+turn them back off. The klepsydra file then names each window after its Claude
+session and keeps a window open when `claude` exits with an error. This is the
+one place the overlay starts a process: `wsl.exe`, from a click, one call at a
+time.
 
 Each kourai character's canon colour marks its session twice: its window in
 the tmux status bar and a 4 px left marker on its card's **Open terminal**
