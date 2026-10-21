@@ -448,16 +448,17 @@ def notified: if type == "string" then [scan("<task-notification>[\\s\\S]*?</tas
   | ($ev.tool_response // {}) as $out
   | (.background | if type == "array" then map(select(type == "object" and (.id | text) != null
        and (.kind | IN("agent", "shell", "task")) and (.at | type) == "number")) else [] end) as $bg
-  # Stopped agents not known to run async, until STOPPED_TTL passes: their late
-  # start, launch or tool event adds no phantom. An async one may be resumed.
+  # Stopped agents, one entry each, until STOPPED_TTL passes: their late launch
+  # or tool event adds no phantom. Only a stop seen before any start (early)
+  # blocks a start, so a resumed agent counts at once.
   | ((.background_stopped | if type == "array" then . else [] end)
      | map(select(type == "object" and (.id | text) != null and (.at | type) == "number" and $now - .at < $stopped_ttl))) as $tomb
   | ([$tomb[].id]) as $dead
   # Stops seen before any start: only these block a start, so a resumed agent counts at once.
   | ([$tomb[] | select(.early == true) | .id]) as $unstarted
   | .background_stopped = (if $fresh then []
-      elif $event == "SubagentStop" and ($agent | text) != null and (any($bg[]; .id == $agent and .async == true) | not)
-      then ($tomb + [{id: $agent, at: $now} + (if any($bg[]; .id == $agent) then {} else {early: true} end)])[-$bg_max:]
+      elif $event == "SubagentStop" and ($agent | text) != null
+      then ([$tomb[] | select(.id != $agent)] + [{id: $agent, at: $now} + (if any($bg[]; .id == $agent) then {} else {early: true} end)])[-$bg_max:]
       else $tomb end)
   # The turn is over: Stop ran, or the prompt went idle with work still out.
   | (.state == "done" or turn_over) as $over

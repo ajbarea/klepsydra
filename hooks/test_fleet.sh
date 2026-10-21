@@ -997,6 +997,22 @@ check "a resumed foreground agent's start counts" "$(bg)" '"agent:fg-r"'
 now=1792360216 fire stop.json '.background_tasks = null'
 check "a Stop with no list leaves no listed mark" "$(field 'has("background_listed")')" "false"
 
+# A finished async agent's late tool event, after a Stop with no list, adds no phantom.
+rm -f "$file"
+now=1792360300 fire session-start.json
+now=1792360301 fire user-prompt.json
+now=1792360302 fire subagent-start.json
+now=1792360302 fire post-tool-agent-background.json
+now=1792360303 fire stop.json '.background_tasks = null'
+now=1792360310 fire subagent-stop.json
+now=1792360311 fire task-notification-background.json
+now=1792360312 fire stop.json '.background_tasks = null'
+now=1792360313 fire post-tool-bash.json ".agent_id = \"$A\""
+check "a late event from a stopped async agent adds no phantom" "$(field '[.state, has("background")]')" '["done",false]'
+# Repeated stops of one id keep one tombstone.
+for i in 1 2 3; do now=$((1792360320 + i)) fire subagent-stop.json '.agent_id = "teammate"'; done
+check "one tombstone per id" "$(field '[.background_stopped[] | select(.id == "teammate")] | length')" "1"
+
 # An old file, written before the field existed, reads and updates.
 rm -f "$file"
 printf '{"v":1,"session_id":"%s","name":null,"started_at":1792356000,"launch_dir":null,"claude":null,"tmux":null,"host":null,"voice":null,"voice_from":null,"state":"working","reason":null,"needs":null,"state_at":1792356000,"where":null,"touched":[],"prompt":null,"reply":null,"error":null,"ended":null,"written_at":1792356000}\n' "$S" >"$file"
