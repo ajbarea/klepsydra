@@ -161,7 +161,7 @@ export function createDrawer({ dialog, sessions, cast, fetchToday, home }) {
     } else if (filter !== null && totalTokens(day_.tokens) === 0) {
       out.push(el("p", "empty-state", "Nothing counted for this session today."));
     } else {
-      out.push(totalsSection(day_), charactersSection(shown, names), modelsSection(day, shown), attributionSection(day, shown));
+      out.push(totalsSection(day_), charactersSection(day, shown), modelsSection(day, shown), attributionSection(day, shown));
     }
     out.push(blockedSection(guardrails, total, names), errorsSection(day_));
     const cost = costLine(day_.cost_usd_estimate_micros);
@@ -177,9 +177,17 @@ export function createDrawer({ dialog, sessions, cast, fetchToday, home }) {
     return s;
   }
 
-  function charactersSection(shown, names) {
+  // Other sessions says what it holds in its accessible name and its tooltip.
+  function named(row) {
+    if (!row.label) return row.name;
+    const span = el("span", null, row.name, { title: row.label });
+    span.append(el("span", "visually-hidden", row.label.slice(row.name.length)));
+    return span;
+  }
+
+  function charactersSection(day, shown) {
     const s = section("ledger-characters", "Tokens by character");
-    const rows = tokensByCharacter(shown, names);
+    const rows = tokensByCharacter(shown, day.voices, cast);
     const max = Math.max(1, ...rows.map((r) => r.tokens));
     // The bar is decoration: the name and the count beside it are the data.
     const bar = (row) => {
@@ -194,7 +202,7 @@ export function createDrawer({ dialog, sessions, cast, fetchToday, home }) {
       "ledger-characters-table",
       "Tokens today by character",
       ["Character", "", "Tokens"],
-      rows.map((r) => [r.name, bar(r), fullNumber(r.tokens)]),
+      rows.map((r) => [named(r), bar(r), fullNumber(r.tokens)]),
       [2],
     );
     // The bar column has no words, so it is out of the table's reading too.

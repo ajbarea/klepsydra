@@ -149,19 +149,27 @@ export function activeTime(ms) {
 export const fullNumber = (v) => n(v).toLocaleString("en-US");
 
 /**
- * Tokens by character: one row per character name, largest first. `who` maps
- * a session id to {name, accent}; a session it does not know is "Earlier sessions".
+ * Tokens by character: one row per character, largest first. A session is its
+ * recorded voice's character (`voices`, the day file's session to voice map)
+ * looked up in `cast`, whether or not its card is still on the wall. Every
+ * other session lands in one "Other sessions" row, always last.
  */
-export function tokensByCharacter(sessions, who) {
+export function tokensByCharacter(sessions, voices, cast) {
   const rows = new Map();
+  const other = { name: "Other sessions", accent: null, tokens: 0, other: true, count: 0 };
   for (const [id, totals] of sessions) {
-    const known = who.get(id);
-    const name = known?.name ?? "Earlier sessions";
-    const row = rows.get(name) ?? { name, accent: known?.accent ?? null, tokens: 0 };
-    row.tokens += totalTokens(totals.tokens);
-    rows.set(name, row);
+    const tokens = totalTokens(totals.tokens);
+    if (!tokens) continue;
+    const voice = voices?.[id];
+    const character = typeof voice === "string" && Object.hasOwn(cast?.characters ?? {}, voice) ? cast.characters[voice] : null;
+    const row = character ? rows.get(character.name) ?? { name: character.name, accent: character.accent ?? null, tokens: 0 } : other;
+    row.tokens += tokens;
+    if (!character) other.count += 1;
+    else rows.set(character.name, row);
   }
-  return [...rows.values()].filter((r) => r.tokens > 0).sort((a, b) => b.tokens - a.tokens || a.name.localeCompare(b.name));
+  const out = [...rows.values()].sort((a, b) => b.tokens - a.tokens || a.name.localeCompare(b.name));
+  if (other.count) out.push({ ...other, label: `Other sessions: ${other.count} (no character)` });
+  return out;
 }
 
 // Claude Code redacts these names unless OTEL_LOG_TOOL_DETAILS is set, which

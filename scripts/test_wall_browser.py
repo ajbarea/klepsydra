@@ -517,6 +517,20 @@ def drawer_tables(wall):
         and not got["scrollsX"]
     )
     wall.check(ok, "the drawer's tables, bars and cost line", {k: got[k] for k in ("heads", "cost", "textOnAccent", "links")} | {"tables": names, "rows": len(got["rows"])})
+    rows = page.evaluate(
+        """() => [...document.querySelectorAll('#ledger-characters-table tbody tr')].map((r) => [r.cells[0].textContent, r.cells[0].querySelector('[title]')?.title ?? null])"""
+    )
+    names = [r[0] for r in rows]
+    ok = (
+        names[-1] == "Other sessions: 2 (no character)"
+        and rows[-1][1] == "Other sessions: 2 (no character)"
+        and names.count("Other sessions: 2 (no character)") == 1
+        and not any("Earlier" in n for n in names)
+        and "Techne" in names
+        and "Aidos" in names
+        and "am_onyx" not in " ".join(names)
+    )
+    wall.check(ok, "tokens by character: recorded voices only, one Other sessions row last", rows)
     models = page.evaluate(
         """() => [...document.querySelectorAll('#ledger-models-table tbody tr')].map((r) => [...r.cells].map((c) => c.textContent))"""
     )

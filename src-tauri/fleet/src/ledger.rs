@@ -175,6 +175,10 @@ pub struct Day {
     pub attribution: BTreeMap<String, Attribution>,
     /// Tokens and cost by model, per session.
     pub models: BTreeMap<String, BTreeMap<String, ModelTotals>>,
+    /// The voice (the fleet file's key, such as `af_heart`) each session had
+    /// when it was first seen with one, so its tokens stay with its character
+    /// after its card is gone.
+    pub voices: BTreeMap<String, String>,
     /// Counted metric points that carried no `session.id`, and so no total.
     pub no_session: u64,
 }
@@ -769,6 +773,7 @@ impl Ledger {
             guardrails: _,
             attribution,
             models,
+            voices,
             no_session,
         } = &self.day;
         let day = if current {
@@ -779,6 +784,7 @@ impl Ledger {
                 guardrails: Vec::new(),
                 attribution: attribution.clone(),
                 models: models.clone(),
+                voices: voices.clone(),
                 no_session: *no_session,
             }
         } else {
@@ -805,6 +811,19 @@ impl Ledger {
             receiver: self.receiver.clone(),
             day,
         }
+    }
+
+    /// Remember `voice` for `session` if today's file has the session and no
+    /// voice for it yet. Returns whether it recorded one.
+    pub fn note_voice(&mut self, session: &str, voice: &str) -> bool {
+        if voice.is_empty()
+            || !self.day.sessions.contains_key(session)
+            || self.day.voices.contains_key(session)
+        {
+            return false;
+        }
+        self.day.voices.insert(session.into(), voice.into());
+        true
     }
 
     /// A session's totals since its first export.
@@ -836,6 +855,7 @@ impl Ledger {
         for id in dropped {
             self.day.attribution.remove(&id);
             self.day.models.remove(&id);
+            self.day.voices.remove(&id);
         }
         cap_sessions(&mut self.state.sessions, session);
     }
@@ -2235,5 +2255,56 @@ mod tests {
         }
         // The state counts as lost: the gap before the open is recorded.
         assert!(l.overlaps_gap(0, NOW));
+    }
+
+    #[test]
+    fn a_voice_is_kept_for_a_session_in_todays_file_and_the_first_one_wins() {
+        let mut l = Ledger::in_memory(NOW);
+        // Not in the file yet: nothing to attach it to.
+        assert!(!l.note_voice("s1", "af_heart"));
+        assert!(l.day().voices.is_empty());
+        l.record_metrics(
+            &metrics(&tokens_at("s1", "output", 1, NOW as u64, &[])),
+            NOW,
+        );
+        assert!(l.note_voice("s1", "af_heart"));
+        assert!(!l.note_voice("s1", "af_heart"), "unchanged");
+        assert!(!l.note_voice("s1", "bf_emma"), "the first value wins");
+        assert!(!l.note_voice("s1", ""), "an empty voice is none");
+        assert_eq!(l.day().voices["s1"], "af_heart");
+        assert_eq!(l.today_view(NOW, None).day.voices["s1"], "af_heart");
+    }
+
+    #[test]
+    fn a_dropped_session_takes_its_voice_with_it() {
+        let mut l = Ledger::in_memory(NOW);
+        for n in 0..(MAX_SESSIONS as u64 + 3) {
+            let id = format!("s{n}");
+            l.record_metrics(
+                &metrics(&tokens_at(&id, "output", 1, NOW as u64, &[])),
+                NOW + n as i64,
+            );
+            l.note_voice(&id, "af_heart");
+        }
+        let day = l.day();
+        assert!(day.voices.len() <= MAX_SESSIONS);
+        assert!(day.voices.keys().all(|id| day.sessions.contains_key(id)));
+        assert!(day.voices.contains_key(&format!("s{}", MAX_SESSIONS + 2)));
+    }
+
+    #[test]
+    fn a_day_file_without_voices_loads_and_one_with_them_round_trips() {
+        let dir = Scratch::new("ledger-voices");
+        dir.write(
+            "2026-10-20.json",
+            r#"{"day":"2026-10-20","sessions":{"s1":{"tokens":{"output":5}}}}"#,
+        );
+        let (mut l, problems) = Ledger::open(dir.0.clone(), NOW, TimeZone::UTC);
+        assert!(problems.is_empty(), "{problems:?}");
+        assert!(l.day().voices.is_empty());
+        assert!(l.note_voice("s1", "am_michael"));
+        l.save().unwrap();
+        let (again, _) = Ledger::open(dir.0.clone(), NOW, TimeZone::UTC);
+        assert_eq!(again.day().voices["s1"], "am_michael");
     }
 }

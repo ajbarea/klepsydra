@@ -167,8 +167,11 @@ impl Reader {
             .map(|e| (e.file.session_id.as_str(), e.file.started_at))
             .collect();
         if let Some(ledger) = &self.ledger {
-            let l = lock(ledger);
+            let mut l = lock(ledger);
             for v in &mut snap.sessions {
+                if let Some(voice) = &v.voice {
+                    l.note_voice(&v.session_id, voice);
+                }
                 v.ledger = l.session(&v.session_id).cloned();
                 // Alive from its start to its end, or to now while it runs.
                 let started = started.get(v.session_id.as_str()).copied().flatten();
@@ -202,7 +205,7 @@ pub fn unix_now() -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::scan::tests::{session, Scratch, A};
+    use crate::scan::tests::{session, Scratch, A, B};
     use crate::view::Status;
 
     fn reader(name: &str) -> (Scratch, Reader) {
@@ -625,5 +628,34 @@ mod tests {
         root.write(&format!("fleet/{A}.json"), &session(A, "working"));
         let snap = r.step(Duration::ZERO, unix_now).0.unwrap();
         assert!(!snap.sessions[0].ledger_partial);
+    }
+
+    #[test]
+    fn a_session_in_todays_ledger_has_its_voice_recorded_once() {
+        use crate::ledger::Ledger;
+        use std::sync::{Arc, Mutex};
+        let root = Scratch::new("ledger-voice");
+        std::fs::create_dir_all(root.0.join("fleet")).unwrap();
+        let t = unix_now();
+        for (id, voice) in [(A, "af_heart"), (B, "bf_emma")] {
+            let text = claude_session(id, 4242, 99).replace(
+                r#""state":"working""#,
+                &format!(r#""state":"working","voice":"{voice}""#),
+            );
+            root.write(&format!("fleet/{id}.json"), &text);
+        }
+        let ledger = Arc::new(Mutex::new(Ledger::in_memory(t)));
+        let ns = (t as u64 * 1_000_000_000).to_string();
+        let export = serde_json::json!({"resourceMetrics":[{"scopeMetrics":[{"metrics":[{"name":"claude_code.commit.count","sum":{"aggregationTemporality":1,"dataPoints":[{"attributes":[{"key":"session.id","value":{"stringValue":A}}],"timeUnixNano":ns,"asDouble":1}]}}]}]}]});
+        ledger
+            .lock()
+            .unwrap()
+            .record_metrics(&crate::otel::metrics(&export), t);
+        let mut r = Reader::new(&root.0).with_ledger(ledger.clone());
+        r.step(Duration::ZERO, || t);
+        let l = ledger.lock().unwrap();
+        // A is in today's file; B has no telemetry yet, so no voice.
+        assert_eq!(l.day().voices.get(A).map(String::as_str), Some("af_heart"));
+        assert!(!l.day().voices.contains_key(B));
     }
 }
