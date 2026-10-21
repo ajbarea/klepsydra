@@ -16,13 +16,14 @@ record is the #62 comment of 10-21.
    (`scripts/cutout-portraits.py`, run once). BiRefNet needed over 3.5 GB a
    run; two at once likely took WSL down on 10-21. isnet-anime: 3 s, 1.2 GB.
 3. ✅ Model: `identity` adds epithet, figure, full; `card` adds `accentInk`
-   (`readableOn` in contrast.js), and the crew marks (`crewKinds`, shared with
-   the ring).
+   (`readableOn` in contrast.js), and the crew marks (`crewMarks`, which the ring
+   lays out too).
 4. ✅ Band (wall.css, wall.html, wall.js): stage light capped under text, the
    figure breaking the top edge, Cinzel nameplate, epithet with sprig, pill in
-   the corner, crew marks on a plinth (the ring stays for medallions and
+   the corner, crew marks on a plaque (the ring stays for medallions and
    Compact), speaking waves behind the head, needs amber light, dim light on
-   quiet cards, arrival via `@starting-style`.
+   quiet cards, a one-shot `.arriving` class on a new card (keyframes, no opacity),
+   and a 4.5:1 `--pill-age` (`--text-dim` fell to 4.02:1 on a needs pill).
 5. ✅ #44 dialog: `.look` button on the figure (on the face in Compact), native
    `<dialog>`, focus back to the button or the wall.
 6. ✅ Compact: face 56 -> 64 px (fit bottoms 963 and 984 px); the name keeps its own face.
