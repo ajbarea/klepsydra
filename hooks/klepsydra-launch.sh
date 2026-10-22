@@ -38,11 +38,30 @@ take_lock() {
   flock -w 10 "$LOCKFD" || fail "Another launch is still running."
 }
 
+find_linux_terminal() {
+  if [[ -n ${KLEPSYDRA_TERMINAL:-} ]]; then
+    command -v "$KLEPSYDRA_TERMINAL" && return 0
+  fi
+  local t
+  for t in x-terminal-emulator xfce4-terminal gnome-terminal ptyxis kitty alacritty konsole xterm; do
+    if command -v "$t" >/dev/null 2>&1; then
+      printf '%s\n' "$t"
+      return 0
+    fi
+  done
+  return 1
+}
+
 # Check a tab can be opened, before anything is created.
 tab_preflight() {
-  need "$WT" "wt.exe was not found, so no terminal tab could be opened."
-  [[ ${WSL_DISTRO_NAME:-} =~ ^[A-Za-z0-9._-]{1,64}$ ]] ||
-    fail "WSL_DISTRO_NAME is missing or not usable, so no tab could be opened."
+  if [[ -n ${WSL_DISTRO_NAME:-} ]]; then
+    need "$WT" "wt.exe was not found, so no terminal tab could be opened."
+    [[ ${WSL_DISTRO_NAME:-} =~ ^[A-Za-z0-9._-]{1,64}$ ]] ||
+      fail "WSL_DISTRO_NAME is missing or not usable, so no tab could be opened."
+  else
+    find_linux_terminal >/dev/null 2>&1 ||
+      fail "No terminal emulator was found on PATH, so no terminal tab could be opened."
+  fi
 }
 
 # Set for the fleet's own tab: its title is fixed, so Jump can find it.
@@ -75,12 +94,33 @@ open_tab() { # target tmux-socket-args...
   key="$* $target"
   ATTACHED=0
   tab_pending "$key" && return 0
-  # The lock fd is closed for wt.exe so a tab never outlives the lock.
-  "$WT" -w fleet new-tab "${TITLE_ARGS[@]}" wsl.exe -d "$WSL_DISTRO_NAME" -e tmux "$@" attach -t "$target" \
-    >/dev/null 2>&1 {LOCKFD}>&- || {
-    undo
-    fail "Windows Terminal did not open a tab."
-  }
+  if [[ -n ${WSL_DISTRO_NAME:-} ]]; then
+    # The lock fd is closed for wt.exe so a tab never outlives the lock.
+    "$WT" -w fleet new-tab "${TITLE_ARGS[@]}" wsl.exe -d "$WSL_DISTRO_NAME" -e tmux "$@" attach -t "$target" \
+      >/dev/null 2>&1 {LOCKFD}>&- || {
+      undo
+      fail "Windows Terminal did not open a tab."
+    }
+  else
+    local term
+    term=$(find_linux_terminal) || { undo; fail "No terminal emulator found."; }
+    local -a cmd=("$term")
+    case $(basename "$term") in
+      xfce4-terminal*|x-terminal-emulator*)
+        cmd+=(-T "$TAB_TITLE" -e "tmux $(printf '%q ' "$@") attach -t $target")
+        ;;
+      gnome-terminal)
+        cmd+=(--title="$TAB_TITLE" -- tmux "$@" attach -t "$target")
+        ;;
+      kitty|alacritty|xterm|konsole)
+        cmd+=(-T "$TAB_TITLE" -e tmux "$@" attach -t "$target")
+        ;;
+      *)
+        cmd+=(-e tmux "$@" attach -t "$target")
+        ;;
+    esac
+    "${cmd[@]}" >/dev/null 2>&1 {LOCKFD}>&- &
+  fi
   if [[ ! -e $PENDING && ! -L $PENDING ]] || stamp_usable; then
     { printf '%(%s)T %s\n' -1 "$key" >"$PENDING"; } 2>/dev/null
   fi

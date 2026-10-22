@@ -4,7 +4,6 @@ mod fleet;
 mod geometry;
 mod jump;
 mod launch;
-#[cfg(windows)]
 mod ping;
 
 use std::path::PathBuf;
@@ -891,7 +890,6 @@ fn main() {
                 layout == "compact",
                 None::<&str>,
             )?;
-            #[cfg(windows)]
             let ping_item = {
                 let on = read_prefs(app.handle())
                     .and_then(|p| p.get("ping")?.as_bool())
@@ -913,12 +911,10 @@ fn main() {
                 ],
             )?;
             // After "Compact": reset, home, separator, compact.
-            #[cfg(windows)]
             menu.insert(&ping_item, 4)?;
 
             let toggle = start_item.clone();
             let compact = compact_item.clone();
-            #[cfg(windows)]
             let ping_box = ping_item.clone();
             TrayIconBuilder::with_id("main")
                 .icon(app.default_window_icon().expect("bundled icon").clone())
@@ -937,7 +933,6 @@ fn main() {
                         let on = set_layout(app, compact.is_checked().unwrap_or(false));
                         let _ = compact.set_checked(on);
                     }
-                    #[cfg(windows)]
                     "ping" => {
                         let on = ping_box.is_checked().unwrap_or(false);
                         write_pref(app, "ping", serde_json::json!(on));

@@ -2,11 +2,8 @@
 //! new snapshot to every webview that subscribed, and opens the card wall.
 
 use std::path::{Path, PathBuf};
-use std::time::Duration;
-#[cfg(windows)]
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
-#[cfg(windows)]
 use klepsydra_fleet::cue::Cues;
 use klepsydra_fleet::hub::{Hub, Sink};
 use klepsydra_fleet::ledger::{Ledger, Receiver, Shared, TodayView};
@@ -171,7 +168,6 @@ pub fn start(app: &AppHandle, dir: Option<PathBuf>) {
     let stamp = ledger.clone();
     std::thread::spawn(move || {
         let mut reader = Reader::new(&dir).with_ledger(ledger);
-        #[cfg(windows)]
         let mut cues = Cues::new(unix_now());
         let mut wait = Duration::ZERO;
         loop {
@@ -182,7 +178,6 @@ pub fn start(app: &AppHandle, dir: Option<PathBuf>) {
             if let Some(snapshot) = snapshot {
                 // Every snapshot moves the baseline, so turning Ping on never
                 // replays what changed while it was off.
-                #[cfg(windows)]
                 if let Some(c) = cues.next(&snapshot, Instant::now(), unix_now()) {
                     crate::ping::cue(c);
                 }
