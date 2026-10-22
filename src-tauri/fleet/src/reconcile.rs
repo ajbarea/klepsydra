@@ -1,8 +1,9 @@
 //! Checking a day's ledger against what Claude Code wrote to its own
 //! transcripts: the transcripts hold the usage of every API call the session
 //! made, so a session whose ledger counts fewer cache tokens than they do lost
-//! exports (the receiver was down). The ledger counts more, as it also sees
-//! calls that never reach a transcript, so higher is only reported.
+//! exports, and so did one missing from the ledger that ran while the
+//! receiver was down. The ledger counts more, as it also sees calls that
+//! never reach a transcript, so higher is only reported.
 
 use std::collections::BTreeMap;
 use std::io::BufRead;
@@ -12,7 +13,7 @@ use jiff::tz::TimeZone;
 use jiff::Timestamp;
 use serde::Deserialize;
 
-use crate::ledger::{day_name, Day, Tokens};
+use crate::ledger::{day_name, Day, Gap, Tokens};
 
 /// How far below the transcripts the ledger may be on cache tokens before the
 /// session is flagged, in percent. Rounding and the odd message that never
@@ -76,6 +77,8 @@ fn add(a: &mut Tokens, b: &Tokens) {
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct Transcripts {
     pub sessions: BTreeMap<String, Tokens>,
+    /// Per session, the epoch seconds of its first and last counted message.
+    pub spans: BTreeMap<String, (i64, i64)>,
     /// Files read.
     pub files: usize,
     /// Lines that were not JSON, such as one cut off mid-write.
@@ -162,10 +165,18 @@ pub fn read_transcripts(roots: &[PathBuf], day: &str, tz: &TimeZone) -> Transcri
                     out.malformed += 1;
                     continue;
                 };
-                if day_name(at.as_second(), tz) != day {
+                let at = at.as_second();
+                if day_name(at, tz) != day {
                     continue;
                 }
                 let session = line.session_id.unwrap_or_else(|| file_session.clone());
+                out.spans
+                    .entry(session.clone())
+                    .and_modify(|(first, last)| {
+                        *first = (*first).min(at);
+                        *last = (*last).max(at);
+                    })
+                    .or_insert((at, at));
                 let tokens = usage.tokens();
                 messages
                     .entry((session, id))
@@ -186,6 +197,9 @@ pub struct Row {
     pub session: String,
     pub ledger: Option<Tokens>,
     pub transcript: Option<Tokens>,
+    /// Missing from the ledger, its transcript messages overlap a time the
+    /// receiver was not listening.
+    pub receiver_down: bool,
 }
 
 /// Reads one token kind out of `Tokens`.
@@ -214,23 +228,36 @@ impl Row {
         (t > 0).then(|| (l as f64 - t as f64) / t as f64 * 100.0)
     }
 
-    /// Whether the ledger lost exports: it has the session, and is more than
-    /// `LOST_PERCENT` lower on cache read or cache creation.
-    pub fn lost(&self) -> bool {
-        let (Some(l), Some(t)) = (&self.ledger, &self.transcript) else {
-            return false;
-        };
-        lower(l.cache_read, t.cache_read) || lower(l.cache_creation, t.cache_creation)
+    /// Why the ledger lost exports, if it did: it has the session and is
+    /// more than `LOST_PERCENT` lower on cache read or cache creation
+    /// ("ledger lower"), or it has none of a session that used tokens while
+    /// the receiver was down ("receiver down").
+    pub fn lost_reason(&self) -> Option<&'static str> {
+        match (&self.ledger, &self.transcript) {
+            (Some(l), Some(t)) => (lower(l.cache_read, t.cache_read)
+                || lower(l.cache_creation, t.cache_creation))
+            .then_some("ledger lower"),
+            (None, Some(_)) => (self.receiver_down && self.used()).then_some("receiver down"),
+            _ => None,
+        }
     }
 
-    /// Whether the session used tokens but is not in the ledger at all: it
-    /// never exported, as when it started without the telemetry settings.
+    /// Whether the ledger lost exports of this session.
+    pub fn lost(&self) -> bool {
+        self.lost_reason().is_some()
+    }
+
+    fn used(&self) -> bool {
+        self.transcript
+            .as_ref()
+            .is_some_and(|t| KINDS.iter().any(|(_, get)| get(t) > 0))
+    }
+
+    /// Whether the session used tokens, is not in the ledger at all, and ran
+    /// in no receiver gap: it never exported, as when it started without the
+    /// telemetry settings.
     pub fn no_telemetry(&self) -> bool {
-        self.ledger.is_none()
-            && self
-                .transcript
-                .as_ref()
-                .is_some_and(|t| KINDS.iter().any(|(_, get)| get(t) > 0))
+        self.ledger.is_none() && !self.receiver_down && self.used()
     }
 }
 
@@ -243,8 +270,9 @@ pub struct Report {
     pub malformed: usize,
 }
 
-/// Pair each session of `day`'s ledger with its transcripts', by session id.
-pub fn compare(day: &Day, transcripts: Transcripts) -> Report {
+/// Pair each session of `day`'s ledger with its transcripts', by session id,
+/// given the `gaps` in which the receiver was not listening.
+pub fn compare(day: &Day, transcripts: Transcripts, gaps: &[Gap]) -> Report {
     let mut rows: BTreeMap<String, Row> = BTreeMap::new();
     for (id, t) in &day.sessions {
         rows.insert(
@@ -253,17 +281,21 @@ pub fn compare(day: &Day, transcripts: Transcripts) -> Report {
                 session: id.clone(),
                 ledger: Some(t.tokens.clone()),
                 transcript: None,
+                receiver_down: false,
             },
         );
     }
     for (id, t) in transcripts.sessions {
-        rows.entry(id.clone())
-            .or_insert_with(|| Row {
-                session: id,
-                ledger: None,
-                transcript: None,
-            })
-            .transcript = Some(t);
+        let span = transcripts.spans.get(&id).copied();
+        let row = rows.entry(id.clone()).or_insert_with(|| Row {
+            session: id,
+            ledger: None,
+            transcript: None,
+            receiver_down: false,
+        });
+        row.transcript = Some(t);
+        row.receiver_down = row.ledger.is_none()
+            && span.is_some_and(|(from, to)| gaps.iter().any(|g| g.overlaps(from, to)));
     }
     Report {
         day: day.day.clone(),
@@ -295,6 +327,7 @@ impl Report {
         );
         for row in &self.rows {
             let state = match (&row.ledger, &row.transcript) {
+                (None, _) if row.lost() => "  LOST (receiver down)",
                 (_, _) if row.lost() => "  LEDGER LOWER",
                 (Some(_), None) => "  ledger only",
                 (None, Some(_)) => "  sent no telemetry",
@@ -320,6 +353,14 @@ impl Report {
                 ));
             }
         }
+        let lost = self.lost();
+        if !lost.is_empty() {
+            out.push_str("\nlost exports:\n");
+            for r in &lost {
+                let reason = r.lost_reason().unwrap_or_default();
+                out.push_str(&format!("  {} ({reason})\n", r.session));
+            }
+        }
         let silent = self.no_telemetry();
         if !silent.is_empty() {
             out.push_str("\nsent no telemetry (started without the telemetry settings):\n");
@@ -328,8 +369,8 @@ impl Report {
             }
         }
         out.push_str(&format!(
-            "\n{} lost exports (ledger more than {LOST_PERCENT}% lower on cache_read or cache_creation); {} sent no telemetry (started without the telemetry settings); {} sessions\n",
-            self.lost().len(),
+            "\n{} lost exports (ledger more than {LOST_PERCENT}% lower on cache_read or cache_creation, or missing while the receiver was down); {} sent no telemetry (started without the telemetry settings); {} sessions\n",
+            lost.len(),
             silent.len(),
             self.rows.len()
         ));
@@ -347,7 +388,7 @@ pub fn read_day(ledger_dir: &Path, day: &str) -> Result<Day, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ledger::Totals;
+    use crate::ledger::{Gap, Totals};
     use crate::scan::tests::Scratch;
 
     const DAY: &str = "2026-10-06";
@@ -405,6 +446,20 @@ mod tests {
         assert_eq!(t.sessions[&id(2)], tokens(17, 720, 50_207, 17_659));
         assert_eq!(t.sessions[&id(4)], tokens(17, 523, 50_217, 17_689));
         assert_eq!(t.files, 5);
+    }
+
+    #[test]
+    fn each_session_keeps_its_first_and_last_message_time() {
+        let at = |s: &str| s.parse::<Timestamp>().unwrap().as_second();
+        let t = recorded();
+        // Its assistant messages, not the user's first line at 10:47:49Z.
+        assert_eq!(
+            t.spans[&id(4)],
+            (at("2026-10-06T10:47:51Z"), at("2026-10-06T10:47:55Z"))
+        );
+        // Only the messages counted on the day: session 3's 03:59:59Z line
+        // falls on Oct 5 in New York.
+        assert_eq!(t.spans[&id(3)].0, at("2026-10-06T04:00:00Z"));
     }
 
     #[test]
@@ -518,6 +573,7 @@ mod tests {
             session: "s".into(),
             ledger: Some(ledger),
             transcript: Some(transcript),
+            receiver_down: false,
         }
     }
 
@@ -564,8 +620,9 @@ mod tests {
                     ("empty".into(), tokens(0, 0, 0, 0)),
                 ]),
                 files: 3,
-                malformed: 0,
+                ..Transcripts::default()
             },
+            &[],
         );
         let names: Vec<_> = report.rows.iter().map(|r| r.session.as_str()).collect();
         assert_eq!(
@@ -598,7 +655,7 @@ mod tests {
     fn the_recorded_day_flags_exactly_the_sessions_that_lost_exports() {
         let lost = |dir: &str| {
             let day = read_day(&fixtures().join(dir), DAY).unwrap();
-            let report = compare(&day, recorded());
+            let report = compare(&day, recorded(), &[]);
             let mut names: Vec<String> = report.lost().iter().map(|r| r.session.clone()).collect();
             names.sort();
             names
@@ -609,7 +666,7 @@ mod tests {
         assert_eq!(lost("ledger"), [id(2)]);
         assert!(lost("ledger-ok").is_empty());
         let day = read_day(&fixtures().join("ledger"), DAY).unwrap();
-        let report = compare(&day, recorded());
+        let report = compare(&day, recorded(), &[]);
         let silent: Vec<_> = report
             .no_telemetry()
             .iter()
@@ -619,6 +676,7 @@ mod tests {
         let ok = compare(
             &read_day(&fixtures().join("ledger-ok"), DAY).unwrap(),
             recorded(),
+            &[],
         );
         assert!(ok.no_telemetry().is_empty());
     }
@@ -626,7 +684,7 @@ mod tests {
     #[test]
     fn the_table_shows_both_sides_and_the_difference() {
         let day = read_day(&fixtures().join("ledger"), DAY).unwrap();
-        let table = compare(&day, recorded()).render();
+        let table = compare(&day, recorded(), &[]).render();
         assert!(
             table.contains(&id(2)) && table.contains("LEDGER LOWER"),
             "{table}"
@@ -644,5 +702,43 @@ mod tests {
     fn a_missing_day_file_is_an_error_naming_it() {
         let err = read_day(&fixtures().join("ledger"), "2001-01-01").unwrap_err();
         assert!(err.contains("2001-01-01.json"), "{err}");
+    }
+
+    #[test]
+    fn a_session_missing_from_the_ledger_during_a_gap_lost_its_exports() {
+        let day = day_of(&[("ok", tokens(1, 1, 100, 100))]);
+        let transcripts = || Transcripts {
+            sessions: BTreeMap::from([
+                ("ok".to_string(), tokens(1, 1, 100, 100)),
+                ("down".to_string(), tokens(1, 1, 50_000, 9_000)),
+                ("before".to_string(), tokens(1, 1, 7, 0)),
+            ]),
+            spans: BTreeMap::from([
+                ("ok".to_string(), (100, 900)),
+                ("down".to_string(), (500, 650)),
+                ("before".to_string(), (100, 199)),
+            ]),
+            files: 3,
+            malformed: 0,
+        };
+        // The receiver was down from 200 to 600: "down" ran into it.
+        let gaps = [Gap { from: 200, to: 600 }];
+        let report = compare(&day, transcripts(), &gaps);
+        let names = |rows: Vec<&Row>| rows.iter().map(|r| r.session.clone()).collect::<Vec<_>>();
+        assert_eq!(names(report.lost()), ["down"]);
+        assert_eq!(names(report.no_telemetry()), ["before"]);
+        let table = report.render();
+        assert!(table.contains("down  LOST (receiver down)"), "{table}");
+        assert!(table.contains("  down (receiver down)"), "{table}");
+        assert!(
+            table.contains("1 lost exports") && table.contains("1 sent no telemetry"),
+            "{table}"
+        );
+        // A gap ends inclusive; with none, it is a session that never exported.
+        let edge = compare(&day, transcripts(), &[Gap { from: 650, to: 700 }]);
+        assert_eq!(names(edge.lost()), ["down"]);
+        let none = compare(&day, transcripts(), &[]);
+        assert!(none.lost().is_empty());
+        assert_eq!(names(none.no_telemetry()), ["before", "down"]);
     }
 }

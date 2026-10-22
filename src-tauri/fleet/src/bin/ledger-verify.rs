@@ -1,13 +1,15 @@
 //! `ledger-verify --ledger DIR --day YYYY-MM-DD [--projects DIR]... [--tz ZONE]`
 //!
 //! Sets a day's ledger against the transcripts Claude Code wrote, and exits 1
-//! when a session's ledger is more than 2% lower on cache_read or
-//! cache_creation, which means exports were lost. See `reconcile`.
+//! when exports were lost: a session's ledger is more than 2% lower on
+//! cache_read or cache_creation, or a session missing from it ran while the
+//! receiver was down. See `reconcile`.
 
 use std::path::PathBuf;
 use std::process::ExitCode;
 
 use jiff::tz::TimeZone;
+use klepsydra_fleet::ledger::read_gaps;
 use klepsydra_fleet::reconcile::{compare, read_day, read_transcripts};
 
 const USAGE: &str =
@@ -97,7 +99,18 @@ fn main() -> ExitCode {
             return ExitCode::from(2);
         }
     };
-    let report = compare(&day, read_transcripts(&args.projects, &args.day, &args.tz));
+    let gaps = match read_gaps(&args.ledger) {
+        Ok(g) => g,
+        Err(e) => {
+            eprintln!("ledger-verify: {e}");
+            return ExitCode::from(2);
+        }
+    };
+    let report = compare(
+        &day,
+        read_transcripts(&args.projects, &args.day, &args.tz),
+        &gaps,
+    );
     print!("{}", report.render());
     ExitCode::from(u8::from(!report.lost().is_empty()))
 }
