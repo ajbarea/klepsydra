@@ -34,7 +34,9 @@ cat >"$work/bin/wt.exe" <<'EOF'
 #!/usr/bin/env bash
 # Logs its argv, then attaches like the real tab: WT_DELAY seconds after returning,
 # with Windows Terminal's TERM, whatever the runner has (CI sets none).
+# WT_DELAY=never is a tab that never attaches.
 printf '%s\n' "$*" >>"$WT_LOG"
+[[ ${WT_DELAY:-} == never ]] && exit 0
 args=("$@")
 for i in "${!args[@]}"; do [[ ${args[i]} == -e ]] && { cmd=("${args[@]:i+1}"); break; }; done
 (
@@ -236,11 +238,10 @@ unset WT_DELAY
 echo "a tab that has not attached yet"
 stop_server; detach_all; : >"$WT_LOG"
 pending="$work/klepsydra-tab-pending-$UID"
-# A cold WSL: the tab attaches after the launcher stops waiting. The launcher
-# polls 50 times, nominally 5 s but longer on a loaded machine, so the stub
-# waits far past any poll; a nearer delay let it attach inside the window and
-# leave no pending stamp.
-export WT_DELAY=60
+# A cold WSL: the tab attaches after the launcher stops waiting. The launcher's
+# poll runs longer on a loaded machine, so any fixed delay can land inside it
+# and leave no pending stamp; this tab never attaches.
+export WT_DELAY=never
 out=$(bash "$launch" new "$work/repos" 2>&1); rc=$?
 check "cold tab: exit 0" "$rc" "0"
 check "cold tab: says the tab has not attached" "$out" \
