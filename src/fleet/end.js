@@ -6,6 +6,8 @@
 /** How long a confirmed End waits, with Undo on the card, before anything is sent. */
 export const UNDO_MS = 5000;
 const SECOND_MS = 1000;
+/** How long the dialog's End stays off after it opens, so the second click of a double-click lands on nothing (twice Windows' default double-click time). */
+export const ARM_MS = 1000;
 
 /** The tmux socket's name under which the launcher keeps its sessions (launch.rs FLEET_SOCKET). */
 export const FLEET_SOCKET = "klepsydra";

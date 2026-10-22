@@ -3,7 +3,7 @@
 import cast from "./cast.json" with { type: "json" };
 import { RINGS, announcements, card, identity, shouldSlide, showsRingKey, startedNeeding, transitionName, statuses, tally } from "./model.js";
 import { announcer, press, say, setOff, syncChildren } from "./dom.js";
-import { confirmCopy, createEnder, endingAnnouncement, endingText } from "./end.js";
+import { ARM_MS, confirmCopy, createEnder, endingAnnouncement, endingText } from "./end.js";
 import { inTauri, subscribe, todayLedger } from "./feed.js";
 import { createDrawer } from "./drawer.js";
 import { showFace } from "./face.js";
@@ -459,9 +459,11 @@ const endCancel = dialog.querySelector(".end-cancel");
 const endConfirm = dialog.querySelector(".end-confirm");
 let menuFor = null; // { id, button } while the menu is open
 let endFor = null; // { id, opener } while the confirm dialog is open
+let armTimer = 0;
 const cardEl = (id) => [...wall.children].find((c) => c.dataset.key === id) ?? null;
 const menuItems = () => [...menu.querySelectorAll('[role="menuitem"]')].filter((i) => !i.hidden);
-const usable = (node) => Boolean(node?.isConnected) && node.checkVisibility();
+const usable = (node) =>
+  Boolean(node?.isConnected) && (node.checkVisibility ? node.checkVisibility() : !node.closest("[hidden]"));
 
 function syncMenu() {
   const c = cardOf.get(menuFor.id);
@@ -555,16 +557,22 @@ function openEnd(id, opener) {
   endConfirm.textContent = copy.confirm;
   endFor = { id, opener };
   dialog.returnValue = "";
+  setOff(endConfirm, true);
+  clearTimeout(armTimer);
+  armTimer = setTimeout(() => setOff(endConfirm, false), ARM_MS);
   dialog.showModal();
   endCancel.focus(); // Enter or Space right after opening cancels
 }
 
-endConfirm.addEventListener("click", () => dialog.close("end"));
+endConfirm.addEventListener("click", () => {
+  if (endConfirm.getAttribute("aria-disabled") !== "true") dialog.close("end");
+});
 endCancel.addEventListener("click", () => dialog.close("cancel"));
 dialog.addEventListener("click", (e) => {
   if (e.target === dialog) dialog.close("cancel"); // the backdrop; the body fills the rest
 });
 dialog.addEventListener("close", () => {
+  clearTimeout(armTimer);
   const who = endFor;
   endFor = null;
   if (!who) return;
@@ -591,7 +599,7 @@ function beginEnd({ id, opener }) {
     onSend: () => {
       const now = cardEl(id);
       if (!now) return;
-      hideEnding(now, true); // the menu stays off until end_session answers
+      hideEnding(now, true); // the menu stays off until the end call answers
       say(now.querySelector(".note"), `Ending ${c.name}…`, 0);
     },
     onDone: ({ text }) => {
@@ -626,7 +634,10 @@ function reconcileActions() {
     if (cardOf.get(id)?.actions.menu) continue;
     ender.cancel(id);
     const el = cardEl(id);
-    if (el) hideEnding(el);
+    if (!el) continue;
+    const focused = el.querySelector(".ending").contains(document.activeElement);
+    hideEnding(el);
+    if (focused) [el.querySelector(".clear"), document.getElementById("new-session")].find(usable)?.focus({ preventScroll: true });
   }
   if (endFor && !cardOf.get(endFor.id)?.actions.menu) dialog.close("cancel");
   if (menuFor) {

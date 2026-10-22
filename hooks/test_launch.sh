@@ -287,6 +287,20 @@ check "copy mode, interrupt: exit 0" "$rc" "0"
 check "copy mode, interrupt: Esc reached the session" "$(paste -sd' ' "$work/fake.log")" "esc"
 check "copy mode, interrupt: out of copy mode" "$(t display -p -t "$p" '#{pane_in_mode}')" "0"
 
+# An End the app gave up on may still be running: a second one is refused.
+: >"$work/fake.log"; p=$(fake)
+exec {held}>>"$work/klepsydra-pane-$UID-${p#%}.lock"; flock -n "$held"
+for verb in end interrupt; do
+  out=$(send "$verb" "$p" 2>&1); rc=$?
+  check "pane locked, $verb: exit 1" "$rc" "1"
+  check "pane locked, $verb: says so" "$out" "That session is already being ended or interrupted."
+done
+check "pane locked: no key sent" "$(wc -c <"$work/fake.log")" "0"
+exec {held}>&-
+out=$(send interrupt "$p" 2>&1)
+check "pane unlocked: interrupt runs" "$out" "Sent Esc to the session."
+t kill-pane -t "$p"
+
 # KLEPSYDRA_END_WAIT reaches arithmetic: only 1 to 3 digits count, else 10 s.
 : >"$work/fake.log"; p=$(fake FAKE_STAY=1)
 rm -f "$work/crafted"

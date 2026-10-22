@@ -937,6 +937,12 @@ def open_menu(page, card):
     page.wait_for_selector("#session-menu:not([hidden])")
 
 
+def confirm_end(page, name):
+    """Click the dialog's End once it wakes, as a deliberate second step would."""
+    page.wait_for_selector(".end-confirm:not([aria-disabled='true'])")
+    page.get_by_role("button", name=f"End {name}").click()
+
+
 def calls(page, cmd):
     return page.evaluate(f"window.__calls.filter(([c]) => c === '{cmd}')")
 
@@ -1093,7 +1099,7 @@ def deliberate_end_sends_once(wall):
         "the confirm names the character and says a working card is mid-turn",
         [title, text],
     )
-    page.get_by_role("button", name=f"End {name}").click()
+    confirm_end(page, name)
     page.wait_for_timeout(500)
     shown = card.locator(".ending-text").inner_text()
     focus = page.evaluate("document.activeElement.className")
@@ -1116,14 +1122,14 @@ def deliberate_end_sends_once(wall):
 def menu_off_until_the_call_answers(wall):
     """The card's menu stays disabled from the undo window's end until end_session answers."""
     page = open_app(wall)
-    page.evaluate("window.__hold = new Promise((r) => { window.__release = r; })")
+    page.evaluate("() => { window.__hold = new Promise((r) => { window.__release = r; }); }")
     card = page.locator(WORKING_CARD).first
     key = card.evaluate("c => c.dataset.key")
     name = card.locator(".name").inner_text()
     card = page.locator(f'.card[data-key="{key}"]')
     open_menu(page, card)
     page.get_by_role("menuitem", name="End session…").click()
-    page.get_by_role("button", name=f"End {name}").click()
+    confirm_end(page, name)
     page.wait_for_timeout(5600)
     state = lambda: page.evaluate(
         f"""() => {{
@@ -1146,13 +1152,52 @@ def menu_off_until_the_call_answers(wall):
     page.close()
 
 
+def double_click_never_confirms(wall):
+    """A click on End right after the dialog opens, as a double-click's second, does nothing."""
+    page = open_app(wall)
+    card = page.locator(WORKING_CARD).first
+    name = card.locator(".name").inner_text()
+    results = []
+    for attempt in ("first open", "reopened"):
+        open_menu(page, card)
+        page.get_by_role("menuitem", name="End session…").click()
+        page.wait_for_function("document.getElementById('end-dialog').open")
+        box = page.locator(".end-confirm").bounding_box()
+        page.mouse.click(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
+        page.wait_for_timeout(150)
+        results.append(
+            page.evaluate(
+                """() => [document.getElementById('end-dialog').open,
+                document.querySelector('.end-confirm').getAttribute('aria-disabled'),
+                [...document.querySelectorAll('.ending')].some((e) => !e.hidden)]"""
+            )
+        )
+        page.keyboard.press("Escape")
+        page.wait_for_function("!document.getElementById('end-dialog').open")
+    wall.check(
+        all(r == [True, "true", False] for r in results) and not page.evaluate(ENDS),
+        "End ignores a click in its first second, on every opening",
+        results,
+    )
+    open_menu(page, card)
+    page.get_by_role("menuitem", name="End session…").click()
+    page.wait_for_timeout(1200)
+    armed = page.evaluate("document.querySelector('.end-confirm').getAttribute('aria-disabled')")
+    page.get_by_role("button", name=f"End {name}").click()
+    page.wait_for_timeout(300)  # the dialog's close event runs as its own task
+    started = page.evaluate("[...document.querySelectorAll('.ending')].some((e) => !e.hidden)")
+    page.keyboard.press("Enter")  # Undo has focus
+    wall.check(armed in (None, "false") and started and not page.evaluate(ENDS), "after a second End wakes, and its click starts the undo window", [armed, started])
+    page.close()
+
+
 def undo_sends_nothing(wall):
     page = open_app(wall)
     card = page.locator(WORKING_CARD).first
     name = card.locator(".name").inner_text()
     open_menu(page, card)
     page.get_by_role("menuitem", name="End session…").click()
-    page.get_by_role("button", name=f"End {name}").click()
+    confirm_end(page, name)
     page.wait_for_timeout(2000)
     card.locator(".undo").click()
     page.wait_for_timeout(6000)
@@ -1170,7 +1215,7 @@ def stray_enter_on_undo_undoes(wall):
     name = card.locator(".name").inner_text()
     open_menu(page, card)
     page.get_by_role("menuitem", name="End session…").click()
-    page.get_by_role("button", name=f"End {name}").click()
+    confirm_end(page, name)
     page.wait_for_timeout(300)
     page.keyboard.press("Enter")
     page.wait_for_timeout(6000)
@@ -1202,7 +1247,7 @@ def end_cancelled_when_the_session_ends(wall):
     card = page.locator(f'.card[data-key="{key}"]')  # by id: the working-card locator moves on once this one ends
     open_menu(page, card)
     page.get_by_role("menuitem", name="End session…").click()
-    page.get_by_role("button", name=f"End {name}").click()
+    confirm_end(page, name)
     page.wait_for_timeout(500)
     # Feed the same fleet with this session ended and the card's window still running.
     snapshot = json.loads(json.dumps(page.snapshot))
@@ -1222,7 +1267,7 @@ def end_cancelled_when_the_session_ends(wall):
     name = card.locator(".name").inner_text()
     open_menu(page, card)
     page.get_by_role("menuitem", name="End session…").click()
-    page.get_by_role("button", name=f"End {name}").click()
+    confirm_end(page, name)
     page.wait_for_timeout(300)
     snapshot["sessions"] = [r for r in snapshot["sessions"] if r["session_id"] != key]
     page.evaluate("(s) => window.__channel.onmessage(s)", snapshot)
@@ -1266,6 +1311,7 @@ def main() -> int:
             menu_shown_only_where_it_acts,
             one_click_or_key_never_ends,
             deliberate_end_sends_once,
+            double_click_never_confirms,
             menu_off_until_the_call_answers,
             undo_sends_nothing,
             stray_enter_on_undo_undoes,

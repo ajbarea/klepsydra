@@ -1,6 +1,6 @@
 import { test, mock } from "node:test";
 import assert from "node:assert/strict";
-import { UNDO_MS, confirmCopy, createEnder, endingAnnouncement, endingText, sessionActions } from "./fleet/end.js";
+import { ARM_MS, UNDO_MS, confirmCopy, createEnder, endingAnnouncement, endingText, sessionActions } from "./fleet/end.js";
 import { card } from "./fleet/model.js";
 
 const fleet = { tmux: { socket: "/tmp/tmux-1001/klepsydra", pane: "%3" }, distro: "Ubuntu", claude: { pid: 7, start: 9 } };
@@ -170,4 +170,9 @@ test("a failed call is reported, not thrown", async () => {
   } finally {
     mock.timers.reset();
   }
+});
+
+test("the dialog's End wakes only after a double-click would be over", () => {
+  assert.ok(ARM_MS >= 500, "Windows' default double-click time is 500 ms");
+  assert.ok(ARM_MS < UNDO_MS);
 });

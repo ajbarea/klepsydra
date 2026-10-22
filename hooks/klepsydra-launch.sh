@@ -233,6 +233,13 @@ leave_modes() {
   fail "The session's pane is in a tmux mode that would not close. Open its terminal to end it."
 }
 
+# One End or Interrupt per pane: an End the app gave up on may still be running.
+lock_pane() {
+  local file=${XDG_RUNTIME_DIR:-/tmp}/klepsydra-pane-$UID-${pane#%}.lock
+  { exec {PANEFD}>>"$file"; } 2>/dev/null || fail "Could not open $file."
+  flock -n "$PANEFD" || fail "That session is already being ended or interrupted."
+}
+
 keys() { tmux "${t[@]}" send-keys -t "$pane" "$@" 2>/dev/null || fail "tmux could not send keys to the session."; }
 
 # Whether PANE's input line reads exactly /exit, between its rules: not a line
@@ -254,6 +261,7 @@ end_session() { # socket pane pid start
   local socket=$1 pane=$2 pid=$3 start=$4 session _
   local -a t=()
   fleet_pane "$@"
+  lock_pane
   leave_modes
   # Esc closes a dialog, declines a pending permission or stops a turn, so
   # Enter cannot answer one; Ctrl+C then clears a draft (Up brings it back).
@@ -280,6 +288,7 @@ interrupt() { # socket pane pid start
   local socket=$1 pane=$2 session
   local -a t=()
   fleet_pane "$@"
+  lock_pane
   leave_modes
   keys Escape
   printf 'Sent Esc to the session.\n'
