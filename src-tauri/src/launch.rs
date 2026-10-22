@@ -312,6 +312,14 @@ fn pane_timed_out() -> String {
     )
 }
 
+/// The card's line when typing the wrap-up gets no answer from WSL in `TIMEOUT`.
+fn wrapup_timed_out() -> String {
+    format!(
+        "WSL did not answer within {} seconds; the session may not have been asked. Check its terminal.",
+        TIMEOUT.as_secs()
+    )
+}
+
 #[cfg(windows)]
 fn run(args: &[String], timed_out: fn() -> String) -> Result<String, String> {
     use std::os::windows::process::CommandExt;
@@ -437,7 +445,11 @@ pub async fn start_wrapup(app: tauri::AppHandle) -> Result<Vec<Asked>, String> {
                 let typed = wrapup::mark_asked(&dir, &r, &id, r.at)
                     .map_err(|e| e.to_string())
                     .and_then(|()| pane_args(t, PaneVerb::Wrapup))
-                    .and_then(|args| gated(&app.state::<InFlight>(), || run(&args)));
+                    .and_then(|args| {
+                        pane_gated(&app.state::<PaneFlight>(), &id, || {
+                            run(&args, wrapup_timed_out)
+                        })
+                    });
                 if let Err(e) = typed {
                     wrapup::unmark(&dir, &id);
                     error = Some(e);
