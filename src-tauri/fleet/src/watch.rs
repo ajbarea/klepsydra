@@ -166,17 +166,20 @@ impl Reader {
             .map(|e| (e.file.session_id.as_str(), e.file.started_at))
             .collect();
         // The session's own voice: the view drops a shared one to keep faces distinct.
-        let voices: HashMap<&str, &str> = listing
+        let voices: HashMap<&str, (&str, bool)> = listing
             .entries
             .iter()
-            .filter_map(|e| Some((e.file.session_id.as_str(), e.file.voice.as_deref()?)))
+            .filter_map(|e| {
+                let home = e.file.voice_from.as_deref() == Some("home");
+                Some((e.file.session_id.as_str(), (e.file.voice.as_deref()?, home)))
+            })
             .collect();
         if let Some(ledger) = &self.ledger {
             let mut l = lock(ledger);
             let mut noted = false;
             for v in &mut snap.sessions {
-                if let Some(voice) = voices.get(v.session_id.as_str()) {
-                    noted |= l.note_voice(&v.session_id, voice, t);
+                if let Some(&(voice, home)) = voices.get(v.session_id.as_str()) {
+                    noted |= l.note_voice(&v.session_id, voice, home, t);
                 }
                 v.ledger = l.session(&v.session_id).cloned();
                 // Alive from its start to its end, or to now while it runs.

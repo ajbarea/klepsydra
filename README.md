@@ -716,7 +716,8 @@ parts. A chip such as "3 blocked" counts the tool calls a hook or a
 permission rule turned down in that session, and opens the drawer for it. The
 **Ledger** button in the header opens the drawer for every session: today's
 totals, tokens per character (by the voice in each session's own fleet file
-when it was first seen, written to the day file at once, so a character keeps
+when it was first seen, or the held voice that later replaces a repo's home
+voice as on the card, written to the day file at once, so a character keeps
 its tokens after its card is cleared and sessions sharing a voice all count
 for it; every session with no cast character is one "Other sessions" row,
 whose tooltip counts the sessions with no voice and those whose voice is
