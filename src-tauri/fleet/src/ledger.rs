@@ -4,7 +4,7 @@
 //! hook or a config rule turned down. Kept in memory for the fleet view and
 //! on disk as one ledger file per local calendar day.
 
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
@@ -219,6 +219,9 @@ struct State {
     cumulative_at: BTreeMap<String, i64>,
     /// When the receiver was down, oldest first.
     gaps: Vec<Gap>,
+    /// The sessions in the day files when the state file could not be read,
+    /// so their cumulative baselines were lost, and when it was set aside.
+    reseed: BTreeMap<String, i64>,
 }
 
 /// What one export added.
@@ -452,8 +455,8 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
 }
 
 /// Read `path` as `T`: the default when there is no file, and the default
-/// after setting an unreadable file aside as `<name>.bad`, so a write never
-/// replaces data it could not read without keeping a copy.
+/// after setting a file it could not read or parse aside as `<name>.bad`, so
+/// a write never replaces data it could not read without keeping a copy.
 fn load<T: Default + for<'de> Deserialize<'de>>(path: &Path, problems: &mut Vec<String>) -> T {
     load_checked(path, problems).0
 }
@@ -463,23 +466,24 @@ fn load_checked<T: Default + for<'de> Deserialize<'de>>(
     path: &Path,
     problems: &mut Vec<String>,
 ) -> (T, bool) {
+    let failed = |e: &dyn std::fmt::Display, problems: &mut Vec<String>| {
+        let mut aside = path.as_os_str().to_owned();
+        aside.push(".bad");
+        // A locked file may still copy where it cannot move.
+        let kept = std::fs::rename(path, &aside)
+            .or_else(|_| std::fs::copy(path, &aside).map(|_| ()))
+            .map_or_else(|a| format!("not set aside ({a})"), |()| "set aside".into());
+        problems.push(format!("{} {kept}: {e}", path.display()));
+        (T::default(), true)
+    };
     let text = match std::fs::read_to_string(path) {
         Ok(t) => t,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return (T::default(), false),
-        Err(e) => {
-            problems.push(format!("{}: {e}", path.display()));
-            return (T::default(), true);
-        }
+        Err(e) => return failed(&e, problems),
     };
     match serde_json::from_str(&text) {
         Ok(v) => (v, false),
-        Err(e) => {
-            let mut aside = path.as_os_str().to_owned();
-            aside.push(".bad");
-            let _ = std::fs::rename(path, &aside);
-            problems.push(format!("{} set aside: {e}", path.display()));
-            (T::default(), true)
-        }
+        Err(e) => failed(&e, problems),
     }
 }
 
@@ -498,9 +502,9 @@ pub fn read_gaps(dir: &Path) -> Result<Vec<Gap>, String> {
     }
 }
 
-/// Every session in `dir`'s readable day files.
-fn day_file_sessions(dir: &Path) -> BTreeSet<String> {
-    let mut out = BTreeSet::new();
+/// Every session in `dir`'s readable day files, with its latest update.
+fn day_file_sessions(dir: &Path) -> BTreeMap<String, i64> {
+    let mut out = BTreeMap::new();
     for e in std::fs::read_dir(dir).into_iter().flatten().flatten() {
         let name = e.file_name().to_string_lossy().into_owned();
         if !name.ends_with(".json") || file_day(&name).is_none() {
@@ -510,7 +514,10 @@ fn day_file_sessions(dir: &Path) -> BTreeSet<String> {
             continue;
         };
         if let Ok(day) = serde_json::from_str::<Day>(&text) {
-            out.extend(day.sessions.into_keys());
+            for (id, t) in day.sessions {
+                let at = out.entry(id).or_insert(t.updated_at);
+                *at = (*at).max(t.updated_at);
+            }
         }
     }
     out
@@ -526,9 +533,6 @@ pub struct Ledger {
     receiver: Option<Receiver>,
     /// When `alive` was last written by this run.
     alive_at: Option<i64>,
-    /// The sessions in the day files when the state file could not be read,
-    /// so their cumulative baselines were lost. Kept in memory only.
-    reseed: BTreeSet<String>,
 }
 
 /// Whether the OTLP receiver is listening, for the wall to show.
@@ -597,7 +601,6 @@ impl Ledger {
             },
             receiver: None,
             alive_at: None,
-            reseed: BTreeSet::new(),
         }
     }
 
@@ -615,11 +618,13 @@ impl Ledger {
         }
         let (mut state, lost): (State, bool) = load_checked(&dir.join(STATE_FILE), &mut problems);
         state.version = VERSION;
-        let reseed = if lost {
-            day_file_sessions(&dir)
-        } else {
-            BTreeSet::new()
-        };
+        if lost {
+            // The most recently updated sessions, as the session maps keep.
+            let mut found: Vec<_> = day_file_sessions(&dir).into_iter().collect();
+            found.sort_by_key(|(id, at)| (std::cmp::Reverse(*at), id.clone()));
+            found.truncate(MAX_SESSIONS);
+            state.reseed = found.into_iter().map(|(id, _)| (id, now)).collect();
+        }
         let mut ledger = Ledger {
             dir: Some(dir),
             tz,
@@ -627,12 +632,15 @@ impl Ledger {
             state,
             receiver: None,
             alive_at: None,
-            reseed,
         };
         ledger.start_day(now, &mut problems);
         if lost {
             // Whatever ran before now may have lost tokens with the baselines.
             ledger.state.gaps.push(Gap { from: 0, to: now });
+            // Saved at once: a quit before the first export must not lose it.
+            if let Err(e) = ledger.save() {
+                problems.push(format!("{STATE_FILE}: {e}"));
+            }
         }
         (ledger, problems)
     }
@@ -652,6 +660,7 @@ impl Ledger {
         self.state.sessions.retain(|_, t| t.updated_at >= horizon);
         self.state.series.retain(|_, b| b.at >= horizon);
         self.state.cumulative_at.retain(|_, at| *at >= horizon);
+        self.state.reseed.retain(|_, at| *at >= horizon);
         self.state.gaps.retain(|g| g.to >= horizon);
     }
 
@@ -706,9 +715,13 @@ impl Ledger {
 
     /// Whether `session`, alive over `[from, to]`, may have lost exports in a
     /// gap: a gap overlaps it and no cumulative point arrived at or after the
-    /// gap's end, which would have carried the running total.
+    /// gap's end, which would have carried the running total. A session that
+    /// lost its baselines always may have.
     // research(2026-10): cumulative OTLP points carry the running total, so a later one restores a gap (Grafana and Last9 Claude Code guides)
     pub fn lost_in_gap(&self, session: &str, from: i64, to: i64) -> bool {
+        if self.state.reseed.contains_key(session) {
+            return true;
+        }
         let restored = self.state.cumulative_at.get(session).copied();
         self.state
             .gaps
@@ -919,7 +932,7 @@ impl Ledger {
                 }
                 Temporality::Cumulative => {
                     let before = self.state.series.get(&p.series);
-                    let reseeded = self.reseed.contains(session);
+                    let reseeded = self.state.reseed.contains_key(session);
                     let seed = before.is_none() && reseeded;
                     let amount = match before {
                         // An older or repeated point of the same run.
@@ -2116,6 +2129,110 @@ mod tests {
         assert!(problems.is_empty(), "{problems:?}");
         l.record_metrics(&tokens("s1", NOW - 600, NOW + 40, 610.0), NOW + 40);
         assert_eq!(l.day().sessions["s1"].tokens.cache_read, 360);
-        assert!(l.overlaps_gap(NOW - 600, NOW - 500), "the gap was saved");
+        assert!(l.lost_in_gap("s1", NOW - 600, NOW + 40), "still partial");
+        assert!(!l.lost_in_gap("s2", NOW + 30, NOW + 40));
+    }
+
+    /// A ledger folder with `s1` at 300 cache tokens today and a state file
+    /// that does not parse.
+    fn lost_state(name: &str) -> Scratch {
+        let dir = Scratch::new(name);
+        let today = day_name(NOW, &TimeZone::UTC);
+        dir.write(
+            &format!("{today}.json"),
+            r#"{"sessions":{"s1":{"tokens":{"cache_read":300}}}}"#,
+        );
+        dir.write(STATE_FILE, "{not json");
+        dir
+    }
+
+    #[test]
+    fn a_quit_before_any_export_keeps_the_reseed() {
+        let dir = lost_state("ledger-reseed-quit");
+        let (l, problems) = Ledger::open(dir.0.clone(), NOW, TimeZone::UTC);
+        assert!(
+            problems.iter().any(|p| p.contains("set aside")),
+            "{problems:?}"
+        );
+        drop(l);
+        let (l, problems) = Ledger::open(dir.0.clone(), NOW + 40, TimeZone::UTC);
+        assert!(problems.is_empty(), "{problems:?}");
+        drop(l);
+        let (mut l, _) = Ledger::open(dir.0.clone(), NOW + 45, TimeZone::UTC);
+        let t = l.record_metrics(&tokens("s1", NOW - 600, NOW + 50, 550.0), NOW + 50);
+        assert_eq!((t.counted, t.seeded), (0, 1));
+        assert_eq!(l.day().sessions["s1"].tokens.cache_read, 300);
+        assert!(l.lost_in_gap("s1", NOW - 600, NOW + 50));
+    }
+
+    #[test]
+    fn a_reseeded_session_stays_partial_across_a_restart() {
+        let dir = lost_state("ledger-reseed-restart");
+        let (mut l, _) = Ledger::open(dir.0.clone(), NOW, TimeZone::UTC);
+        l.note_listening(NOW).unwrap();
+        let t = l.record_metrics(&tokens("s1", NOW - 600, NOW + 10, 550.0), NOW + 10);
+        assert_eq!(t.seeded, 1);
+        l.record_metrics(&tokens("s1", NOW - 600, NOW + 25, 560.0), NOW + 25);
+        assert_eq!(l.day().sessions["s1"].tokens.cache_read, 310);
+        l.save().unwrap();
+        drop(l);
+        let (mut l, _) = Ledger::open(dir.0.clone(), NOW + 40, TimeZone::UTC);
+        l.note_listening(NOW + 40).unwrap();
+        l.record_metrics(&tokens("s1", NOW - 600, NOW + 70, 600.0), NOW + 70);
+        assert_eq!(l.day().sessions["s1"].tokens.cache_read, 350);
+        // Partial whatever span is asked about, after cumulative points.
+        assert!(l.lost_in_gap("s1", NOW - 600, NOW + 70));
+        assert!(l.lost_in_gap("s1", NOW + 50, NOW + 70));
+        // A series it never had, here a new model, only seeds.
+        let ns = |n: i64| (n as u64 * 1_000_000_000).to_string();
+        let model = metrics(
+            &json!({"resourceMetrics":[{"scopeMetrics":[{"metrics":[{"name":"claude_code.token.usage","sum":{"aggregationTemporality":2,"dataPoints":[{"attributes":[{"key":"session.id","value":{"stringValue":"s1"}},{"key":"type","value":{"stringValue":"cacheRead"}},{"key":"model","value":{"stringValue":"m2"}}],"startTimeUnixNano":ns(NOW + 50),"timeUnixNano":ns(NOW + 85),"asDouble":80}]}}]}]}]}),
+        );
+        let t = l.record_metrics(&model, NOW + 85);
+        assert_eq!((t.counted, t.seeded), (0, 1));
+        assert_eq!(l.day().sessions["s1"].tokens.cache_read, 350);
+    }
+
+    #[test]
+    fn reseed_marks_are_capped_and_pruned_like_sessions() {
+        let dir = Scratch::new("ledger-reseed-cap");
+        let today = day_name(NOW, &TimeZone::UTC);
+        let sessions: serde_json::Map<String, Value> = (0..MAX_SESSIONS as i64 + 3)
+            .map(|n| (format!("s{n}"), json!({"updated_at": NOW - 1000 + n})))
+            .collect();
+        dir.write(
+            &format!("{today}.json"),
+            &json!({ "sessions": sessions }).to_string(),
+        );
+        dir.write(STATE_FILE, "{not json");
+        let (mut l, _) = Ledger::open(dir.0.clone(), NOW, TimeZone::UTC);
+        assert_eq!(l.state.reseed.len(), MAX_SESSIONS);
+        // The least recently updated go.
+        assert!(!l.state.reseed.contains_key("s0"));
+        assert!(l
+            .state
+            .reseed
+            .contains_key(&format!("s{}", MAX_SESSIONS + 2)));
+        let late = NOW + (RETENTION_DAYS + 2) * DAY;
+        l.record_metrics(&[], late);
+        assert!(l.state.reseed.is_empty());
+    }
+
+    #[test]
+    fn a_file_that_is_not_utf8_is_set_aside_not_overwritten() {
+        let dir = Scratch::new("ledger-not-utf8");
+        let today = day_name(NOW, &TimeZone::UTC);
+        let bytes = b"{\"sessions\":\xff}";
+        std::fs::write(dir.0.join(format!("{today}.json")), bytes).unwrap();
+        std::fs::write(dir.0.join(STATE_FILE), bytes).unwrap();
+        let (l, problems) = Ledger::open(dir.0.clone(), NOW, TimeZone::UTC);
+        assert_eq!(problems.len(), 2, "{problems:?}");
+        l.save().unwrap();
+        for name in [format!("{today}.json"), STATE_FILE.to_string()] {
+            let kept = std::fs::read(dir.0.join(format!("{name}.bad"))).unwrap();
+            assert_eq!(kept, bytes, "{name}");
+        }
+        // The state counts as lost: the gap before the open is recorded.
+        assert!(l.overlaps_gap(0, NOW));
     }
 }
