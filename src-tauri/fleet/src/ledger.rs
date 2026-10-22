@@ -835,7 +835,7 @@ impl Ledger {
         }
         match self.day.voices.get(session) {
             None => {}
-            Some(had) if !home && had != voice && self.day.home_voices.contains(session) => {}
+            Some(_) if !home && self.day.home_voices.contains(session) => {}
             Some(_) => return false,
         }
         self.day.voices.insert(session.into(), voice.into());
@@ -2327,6 +2327,11 @@ mod tests {
         assert!(l.day().home_voices.is_empty());
         assert!(l.note_voice("s2", "bf_emma", true, NOW));
         assert!(l.day().home_voices.contains("s2"));
+        // Holding the home voice itself makes it a hold, which then stays.
+        assert!(l.note_voice("s2", "bf_emma", false, NOW));
+        assert!(!l.day().home_voices.contains("s2"));
+        assert!(!l.note_voice("s2", "am_adam", false, NOW));
+        assert_eq!(l.day().voices["s2"], "bf_emma");
     }
 
     #[test]
