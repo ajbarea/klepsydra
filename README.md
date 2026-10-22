@@ -715,8 +715,15 @@ hidden while everything is zero; a compact card shows its three most telling
 parts. A chip such as "3 blocked" counts the tool calls a hook or a
 permission rule turned down in that session, and opens the drawer for it. The
 **Ledger** button in the header opens the drawer for every session: today's
-totals, tokens per character, tokens by skill, plugin and MCP server, the
-tokens by model, the list of blocked tool calls, API errors and refusals, and
+totals, tokens per character (by the voice in each session's own fleet file
+when it was first seen, or the held voice that later replaces a repo's home
+voice as on the card, written to the day file at once, so a character keeps
+its tokens after its card is cleared and sessions sharing a voice all count
+for it; every session with no cast character is one "Other sessions" row,
+whose tooltip counts the sessions with no voice and those whose voice is
+outside the cast), tokens by skill, plugin and MCP server, the
+tokens by model, the list of blocked tool calls (each named by the same
+character), API errors and refusals, and
 one dim line with the cost as Claude Code's local list-price estimate. Every chart has a table beside it. Claude
 Code redacts third-party plugin and skill names, and MCP servers you
 configured, so the drawer labels those "third-party" and "custom". The

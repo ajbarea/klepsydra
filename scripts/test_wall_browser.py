@@ -517,6 +517,35 @@ def drawer_tables(wall):
         and not got["scrollsX"]
     )
     wall.check(ok, "the drawer's tables, bars and cost line", {k: got[k] for k in ("heads", "cost", "textOnAccent", "links")} | {"tables": names, "rows": len(got["rows"])})
+    # Each row's name as a reader hears it (the visually hidden text, else the
+    # cell's), the words on screen, and the tooltip.
+    rows = page.evaluate(
+        """() => [...document.querySelectorAll('#ledger-characters-table tbody tr')].map((r) => {
+      const c = r.cells[0];
+      const shown = c.querySelector('[aria-hidden="true"]');
+      return [c.querySelector('.visually-hidden')?.textContent ?? c.textContent, shown ? shown.textContent : c.textContent, c.querySelector('[title]')?.title ?? null];
+    })"""
+    )
+    other = "Other sessions: 2 (1 with no voice, 1 with a voice outside the cast)"
+    names = [r[0] for r in rows]
+    cdp = page.context.new_cdp_session(page)
+    tree = [n for n in cdp.send("Accessibility.getFullAXTree")["nodes"] if not n.get("ignored")]
+    cdp.detach()
+    cells = [n.get("name", {}).get("value", "") for n in tree if n.get("role", {}).get("value") == "cell"]
+    # The tooltip sits on hidden words, so it is never read again as a description.
+    described = [n.get("description", {}).get("value") for n in tree]
+    ok = (
+        rows[-1] == [other, "Other sessions", other]
+        and names.count(other) == 1
+        and cells.count(other) == 1
+        and other not in described
+        and not any(" :" in c or c.count("Other sessions") > 1 for c in cells)
+        and not any("Earlier" in n for n in names)
+        and "Techne" in names
+        and "Aidos" in names
+        and "am_onyx" not in " ".join(names)
+    )
+    wall.check(ok, "tokens by character: recorded voices only, one Other sessions row last, named once", [rows, [c for c in cells if "Other" in c]])
     models = page.evaluate(
         """() => [...document.querySelectorAll('#ledger-models-table tbody tr')].map((r) => [...r.cells].map((c) => c.textContent))"""
     )
@@ -583,6 +612,25 @@ def drawer_states(wall):
     text = page.inner_text("#ledger .ledger-content")
     ok = "No token counts yet today." in text and "README" not in text and page.locator("#ledger-blocked-table").count() == 1
     wall.check(ok, "blocked calls but no tokens: no telemetry-off advice", text[:160])
+    page.close()
+
+    # Blocked calls from sessions no longer on the wall: a recorded voice
+    # still names its character; with none the row says "Earlier session".
+    view = json.loads(ledger_view())
+    day = view["day"]
+    for id_, voice in (("cleared-0001", "af_heart"), ("gone-0002", None)):
+        day["sessions"][id_] = {"tokens": {"input": 5}}
+        if voice:
+            day["voices"][id_] = voice
+    view["guardrails"] = [
+        {"at": 1792530000 + i, "session_id": id_, "tool_name": "Bash", "source": "config"}
+        for i, id_ in enumerate(("cleared-0001", "gone-0002"))
+    ]
+    view["guardrails_total"] = 2
+    page = wall.open(960, 1000, 8, ledger=json.dumps(view))
+    open_drawer(page)
+    who = sorted(c.inner_text() for c in page.locator("#ledger-blocked-table tbody tr td:nth-child(2)").all())
+    wall.check(who == ["Cupid", "Earlier session"], "a cleared session's blocked calls keep its character", who)
     page.close()
 
     # A read that fails after Show all keeps focus in the dialog too.

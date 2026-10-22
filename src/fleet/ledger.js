@@ -3,6 +3,8 @@
 // can be unit tested. A session's `ledger` is its totals since its first
 // export; the drawer's `day` is today's file (see ledger.rs).
 
+import { castAccent, castCharacter, ownValue, voiceName } from "./cast.js";
+
 const MINUS = "−";
 const n = (v) => (Number.isFinite(v) && v > 0 ? Math.floor(v) : 0);
 export const plural = (count, word, many = `${word}s`) => `${count} ${count === 1 ? word : many}`;
@@ -149,19 +151,52 @@ export function activeTime(ms) {
 export const fullNumber = (v) => n(v).toLocaleString("en-US");
 
 /**
- * Tokens by character: one row per character name, largest first. `who` maps
- * a session id to {name, accent}; a session it does not know is "Earlier sessions".
+ * Who session `id` was today: its recorded voice (`voices`, the day file's
+ * session to voice map) as its cast character, `{ name, accent, character:
+ * true }`; a recorded voice outside the cast named as a card names one, with
+ * `character: false`; else `wall` (its identity on the live wall, if any)
+ * when the day has no voice for it, which may be null.
  */
-export function tokensByCharacter(sessions, who) {
+export function characterOf(id, voices, cast, wall = null) {
+  const voice = ownValue(voices, id);
+  if (typeof voice !== "string" || voice === "") return wall;
+  const c = castCharacter(voice, cast);
+  return c ? { name: c.name, accent: castAccent(c), character: true } : { name: voiceName(voice), accent: null, character: false };
+}
+
+/**
+ * Tokens by character: one row per character, largest first, each session
+ * placed by `characterOf`, whether or not its card is still on the wall.
+ * Every other session lands in one "Other sessions" row, always last, whose
+ * label counts the sessions with no voice and those with a voice outside the
+ * cast.
+ */
+export function tokensByCharacter(sessions, voices, cast) {
   const rows = new Map();
+  const other = { name: "Other sessions", accent: null, tokens: 0, other: true, count: 0 };
+  let voiceless = 0;
   for (const [id, totals] of sessions) {
-    const known = who.get(id);
-    const name = known?.name ?? "Earlier sessions";
-    const row = rows.get(name) ?? { name, accent: known?.accent ?? null, tokens: 0 };
-    row.tokens += totalTokens(totals.tokens);
-    rows.set(name, row);
+    const tokens = totalTokens(totals.tokens);
+    if (!tokens) continue;
+    const who = characterOf(id, voices, cast);
+    if (who?.character) {
+      const row = rows.get(who.name) ?? { name: who.name, accent: who.accent, tokens: 0 };
+      row.tokens += tokens;
+      rows.set(who.name, row);
+    } else {
+      other.tokens += tokens;
+      other.count += 1;
+      if (!who) voiceless += 1;
+    }
   }
-  return [...rows.values()].filter((r) => r.tokens > 0).sort((a, b) => b.tokens - a.tokens || a.name.localeCompare(b.name));
+  const out = [...rows.values()].sort((a, b) => b.tokens - a.tokens || a.name.localeCompare(b.name));
+  if (other.count) {
+    const outside = other.count - voiceless;
+    const parts = [voiceless && `${voiceless} with no voice`, outside && `${outside} with a voice outside the cast`].filter(Boolean);
+    const what = other.count === 1 ? parts[0].replace(/^1 /, "") : parts.join(", ");
+    out.push({ ...other, label: `Other sessions: ${other.count} (${what})` });
+  }
+  return out;
 }
 
 // Claude Code redacts these names unless OTEL_LOG_TOOL_DETAILS is set, which

@@ -789,6 +789,20 @@
    }
   }
  },
+  "voices": {
+  "demo-1-am_michael": "am_michael",
+  "demo-2-af_bella": "af_bella",
+  "demo-3-af_sarah": "af_sarah",
+  "demo-4-bf_emma": "bf_emma",
+  "demo-9-bm_fable": "bm_fable",
+  "demo-5-bf_isabella": "bf_isabella",
+  "demo-6-af_nova": "af_nova",
+  "demo-8-am_puck": "am_puck",
+  "demo-10-bm_george": "bm_george",
+  "demo-12-af_alloy": "af_alloy",
+  "demo-15-am_onyx": "am_onyx",
+  "demo-16-af_kore": "af_kore"
+ },
   "no_session": 0
  },
  "receiver": {

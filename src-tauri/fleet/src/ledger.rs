@@ -4,7 +4,7 @@
 //! hook or a config rule turned down. Kept in memory for the fleet view and
 //! on disk as one ledger file per local calendar day.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
@@ -175,6 +175,14 @@ pub struct Day {
     pub attribution: BTreeMap<String, Attribution>,
     /// Tokens and cost by model, per session.
     pub models: BTreeMap<String, BTreeMap<String, ModelTotals>>,
+    /// The voice (the fleet file's key, such as `af_heart`) each session had
+    /// when it was first seen with one, so its tokens stay with its character
+    /// after its card is gone.
+    pub voices: BTreeMap<String, String>,
+    /// The sessions in `voices` whose voice is the repo's home voice, which a
+    /// later held voice replaces, as on the card.
+    #[serde(skip_serializing_if = "BTreeSet::is_empty")]
+    pub home_voices: BTreeSet<String>,
     /// Counted metric points that carried no `session.id`, and so no total.
     pub no_session: u64,
 }
@@ -769,6 +777,9 @@ impl Ledger {
             guardrails: _,
             attribution,
             models,
+            voices,
+            // Only the ledger decides by it.
+            home_voices: _,
             no_session,
         } = &self.day;
         let day = if current {
@@ -779,6 +790,8 @@ impl Ledger {
                 guardrails: Vec::new(),
                 attribution: attribution.clone(),
                 models: models.clone(),
+                voices: voices.clone(),
+                home_voices: BTreeSet::new(),
                 no_session: *no_session,
             }
         } else {
@@ -805,6 +818,33 @@ impl Ledger {
             receiver: self.receiver.clone(),
             day,
         }
+    }
+
+    /// Remember `voice` for `session` if `now`'s file has the session and no
+    /// voice for it yet, or only a `home` one that this held voice replaces,
+    /// moving to `now`'s day first. Returns whether it recorded one; the
+    /// caller saves.
+    pub fn note_voice(&mut self, session: &str, voice: &str, home: bool, now: i64) -> bool {
+        // A clock read before the receiver rolled must not roll the day back.
+        if day_name(now, &self.tz) < self.day.day {
+            return false;
+        }
+        self.roll(now);
+        if voice.is_empty() || !self.day.sessions.contains_key(session) {
+            return false;
+        }
+        match self.day.voices.get(session) {
+            None => {}
+            Some(_) if !home && self.day.home_voices.contains(session) => {}
+            Some(_) => return false,
+        }
+        self.day.voices.insert(session.into(), voice.into());
+        if home {
+            self.day.home_voices.insert(session.into());
+        } else {
+            self.day.home_voices.remove(session);
+        }
+        true
     }
 
     /// A session's totals since its first export.
@@ -836,6 +876,8 @@ impl Ledger {
         for id in dropped {
             self.day.attribution.remove(&id);
             self.day.models.remove(&id);
+            self.day.voices.remove(&id);
+            self.day.home_voices.remove(&id);
         }
         cap_sessions(&mut self.state.sessions, session);
     }
@@ -2235,5 +2277,139 @@ mod tests {
         }
         // The state counts as lost: the gap before the open is recorded.
         assert!(l.overlaps_gap(0, NOW));
+    }
+
+    #[test]
+    fn a_voice_is_kept_for_a_session_in_todays_file_and_the_first_one_wins() {
+        let mut l = Ledger::in_memory(NOW);
+        // Not in the file yet: nothing to attach it to.
+        assert!(!l.note_voice("s1", "af_heart", false, NOW));
+        assert!(l.day().voices.is_empty());
+        l.record_metrics(
+            &metrics(&tokens_at("s1", "output", 1, NOW as u64, &[])),
+            NOW,
+        );
+        assert!(l.note_voice("s1", "af_heart", false, NOW));
+        assert!(!l.note_voice("s1", "af_heart", false, NOW), "unchanged");
+        assert!(
+            !l.note_voice("s1", "bf_emma", false, NOW),
+            "the first value wins"
+        );
+        assert!(
+            !l.note_voice("s1", "", false, NOW),
+            "an empty voice is none"
+        );
+        assert_eq!(l.day().voices["s1"], "af_heart");
+        assert_eq!(l.today_view(NOW, None).day.voices["s1"], "af_heart");
+    }
+
+    #[test]
+    fn a_hold_replaces_a_recorded_home_voice_and_a_home_never_replaces_a_hold() {
+        let mut l = Ledger::in_memory(NOW);
+        for id in ["s1", "s2"] {
+            l.record_metrics(&metrics(&tokens_at(id, "output", 1, NOW as u64, &[])), NOW);
+        }
+        assert!(l.note_voice("s1", "bf_emma", true, NOW));
+        assert!(
+            !l.note_voice("s1", "af_heart", true, NOW),
+            "a home never replaces a home"
+        );
+        assert!(
+            l.note_voice("s1", "am_adam", false, NOW),
+            "a later hold wins, as on the card"
+        );
+        assert!(!l.note_voice("s1", "bf_emma", true, NOW));
+        assert!(
+            !l.note_voice("s1", "af_heart", false, NOW),
+            "the first hold stays"
+        );
+        assert_eq!(l.day().voices["s1"], "am_adam");
+        assert!(l.day().home_voices.is_empty());
+        assert!(l.note_voice("s2", "bf_emma", true, NOW));
+        assert!(l.day().home_voices.contains("s2"));
+        // Holding the home voice itself makes it a hold, which then stays.
+        assert!(l.note_voice("s2", "bf_emma", false, NOW));
+        assert!(!l.day().home_voices.contains("s2"));
+        assert!(!l.note_voice("s2", "am_adam", false, NOW));
+        assert_eq!(l.day().voices["s2"], "bf_emma");
+    }
+
+    #[test]
+    fn a_stale_clock_never_rolls_the_day_back() {
+        let mut l = Ledger::in_memory(NOW);
+        let next = NOW + DAY;
+        l.record_metrics(
+            &metrics(&tokens_at("s1", "output", 1, next as u64, &[])),
+            next,
+        );
+        let today = l.day().day.clone();
+        assert!(!l.note_voice("s1", "af_heart", false, NOW));
+        assert_eq!(l.day().day, today);
+        assert!(l.day().sessions.contains_key("s1"));
+    }
+
+    #[test]
+    fn a_dropped_session_takes_its_voice_with_it() {
+        let mut l = Ledger::in_memory(NOW);
+        for n in 0..(MAX_SESSIONS as u64 + 3) {
+            let id = format!("s{n}");
+            l.record_metrics(
+                &metrics(&tokens_at(&id, "output", 1, NOW as u64, &[])),
+                NOW + n as i64,
+            );
+            l.note_voice(&id, "af_heart", false, NOW + n as i64);
+        }
+        let day = l.day();
+        assert!(day.voices.len() <= MAX_SESSIONS);
+        assert!(day.voices.keys().all(|id| day.sessions.contains_key(id)));
+        assert!(day.voices.contains_key(&format!("s{}", MAX_SESSIONS + 2)));
+    }
+
+    #[test]
+    fn a_day_file_without_voices_loads_and_one_with_them_round_trips() {
+        let dir = Scratch::new("ledger-voices");
+        dir.write(
+            "2026-10-20.json",
+            r#"{"day":"2026-10-20","sessions":{"s1":{"tokens":{"output":5}}}}"#,
+        );
+        let (mut l, problems) = Ledger::open(dir.0.clone(), NOW, TimeZone::UTC);
+        assert!(problems.is_empty(), "{problems:?}");
+        assert!(l.day().voices.is_empty());
+        assert!(l.note_voice("s1", "am_michael", false, NOW));
+        l.save().unwrap();
+        let (again, _) = Ledger::open(dir.0.clone(), NOW, TimeZone::UTC);
+        assert_eq!(again.day().voices["s1"], "am_michael");
+    }
+
+    #[test]
+    fn a_voice_noted_after_midnight_goes_into_the_new_day_not_yesterdays() {
+        let dir = Scratch::new("ledger-voice-midnight");
+        let (mut l, _) = Ledger::open(dir.0.clone(), NOW, TimeZone::UTC);
+        l.record_metrics(
+            &metrics(&tokens_at("s1", "output", 1, NOW as u64, &[])),
+            NOW,
+        );
+        l.save().unwrap();
+        let yesterday = l.day().day.clone();
+        let next = (NOW / DAY + 1) * DAY + 10;
+        // No export yet today: the session is not in the new day's file.
+        assert!(!l.note_voice("s1", "af_heart", false, next));
+        assert_ne!(l.day().day, yesterday, "the day rolled");
+        assert!(l.day().voices.is_empty());
+        l.record_metrics(
+            &metrics(&tokens_at("s1", "output", 1, next as u64, &[])),
+            next,
+        );
+        assert!(l.note_voice("s1", "af_heart", false, next));
+        l.save().unwrap();
+        let read = |name: &str| -> Value {
+            serde_json::from_slice(&std::fs::read(dir.0.join(format!("{name}.json"))).unwrap())
+                .unwrap()
+        };
+        assert_eq!(read(&l.day().day)["voices"]["s1"], "af_heart");
+        assert!(
+            read(&yesterday)["voices"].get("s1").is_none(),
+            "yesterday's file never took today's voice"
+        );
     }
 }
