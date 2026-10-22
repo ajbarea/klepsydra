@@ -176,10 +176,20 @@ settings only from user scope, not from a repository's settings:
     "OTEL_LOGS_EXPORTER": "otlp",
     "OTEL_EXPORTER_OTLP_PROTOCOL": "http/json",
     "OTEL_EXPORTER_OTLP_ENDPOINT": "http://127.0.0.1:4318",
-    "OTEL_METRIC_EXPORT_INTERVAL": "15000"
+    "OTEL_METRIC_EXPORT_INTERVAL": "15000",
+    "OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE": "cumulative"
   }
 }
 ```
+
+Cumulative temporality makes each export carry the session's running total.
+The first export after the overlay reopens then restores what the session sent
+while it was closed; only a session that starts and ends while the overlay is
+closed is lost. Tokens restored after a gap are counted on the day they
+arrive. Claude Code reads these settings at startup, so a session started
+before the change keeps its delta exports until it restarts
+([Grafana](https://grafana.com/docs/grafana-cloud/monitor-infrastructure/integrations/integration-reference/integration-claude-code),
+[Last9](https://last9.io/docs/integrations/claude-code/)).
 
 Leave `OTEL_LOG_USER_PROMPTS` and `OTEL_LOG_TOOL_DETAILS` unset, so prompts and
 tool arguments stay redacted.
@@ -655,8 +665,9 @@ separately.
   run ever) is recorded as a gap in `ledger/state.json` (at most 64, kept 30
   days). A session that was alive during a gap wears a dashed "partial" mark
   on its receipt: some of its telemetry was not received because klepsydra was
-  not running for part of it. The mark says nothing about a session that was
-  merely idle.
+  not running for part of it. A session that sent a cumulative export after
+  the gap ended, with the setting above, was restored and wears no mark. The
+  mark says nothing about a session that was merely idle.
 - **Checking the ledger against the transcripts.** `ledger-verify` sets a
   day's ledger against the usage Claude Code writes to its own transcripts
   (`~/.claude*/projects/*/<session>.jsonl` and `<session>/subagents/*.jsonl`;

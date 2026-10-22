@@ -130,7 +130,8 @@ fn ingest(signal: Signal, body: &[u8], ledger: &Shared, log: &Log) -> StatusCode
             tally.no_session, tally.future
         ));
     }
-    if tally.counted > 0 {
+    // A repeat still moves the session's cumulative mark.
+    if tally.counted > 0 || tally.duplicate > 0 {
         if let Err(e) = l.save() {
             log(format!("otel: ledger not saved: {e}"));
         }
@@ -568,6 +569,26 @@ mod tests {
         assert_eq!(t.tokens.output, 706);
         assert_eq!(t.lines_added, 1);
         assert_eq!(t.guardrail_rejects, 1);
+    }
+
+    #[test]
+    fn a_counted_cumulative_export_is_on_disk_when_it_is_answered() {
+        let dir = crate::scan::tests::Scratch::new("receiver-saves");
+        let (l, _) = Ledger::open(dir.0.clone(), unix_now(), jiff::tz::TimeZone::UTC);
+        let ledger: Shared = Arc::new(Mutex::new(l));
+        let log: Log = Arc::new(|_| {});
+        let any = SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0);
+        let addr = spawn_with(any, LIMITS, ledger, log).unwrap();
+        let now = unix_now() as u64;
+        let ns = |n: u64| (n * 1_000_000_000).to_string();
+        let body = serde_json::json!({"resourceMetrics":[{"scopeMetrics":[{"metrics":[{"name":"claude_code.token.usage","sum":{"aggregationTemporality":2,"dataPoints":[{"attributes":[{"key":"session.id","value":{"stringValue":"s1"}},{"key":"type","value":{"stringValue":"input"}}],"startTimeUnixNano":ns(now - 60),"timeUnixNano":ns(now),"asDouble":7}]}}]}]}]});
+        assert_eq!(post(addr, "/v1/metrics", body.to_string().as_bytes()), 200);
+        // A fresh open, as after a crash, holds the baseline: a repeat is a duplicate.
+        let (mut again, _) = Ledger::open(dir.0.clone(), unix_now(), jiff::tz::TimeZone::UTC);
+        let points = otel::metrics(&body);
+        let t = again.record_metrics(&points, unix_now());
+        assert_eq!((t.counted, t.duplicate), (0, 1));
+        assert_eq!(again.session("s1").unwrap().tokens.input, 7);
     }
 
     /// Every nanosecond timestamp, and the event.sequence moved by the same

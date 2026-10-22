@@ -43,7 +43,7 @@ fn a_ledger_that_is_only_higher_exits_0() {
     let text = String::from_utf8_lossy(&out.stdout);
     assert_eq!(out.status.code(), Some(0), "{text}");
     assert!(
-        text.contains("0 lost exports; 0 sent no telemetry"),
+        text.contains("0 lost exports") && text.contains("0 sent no telemetry"),
         "{text}"
     );
 }
@@ -93,7 +93,7 @@ fn a_session_with_no_telemetry_alone_exits_0() {
     let text = String::from_utf8_lossy(&out.stdout);
     assert_eq!(out.status.code(), Some(0), "{text}");
     assert!(
-        text.contains("0 lost exports; 1 sent no telemetry"),
+        text.contains("0 lost exports") && text.contains("1 sent no telemetry"),
         "{text}"
     );
 }

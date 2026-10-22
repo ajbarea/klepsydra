@@ -177,7 +177,8 @@ impl Reader {
                 } else {
                     t
                 };
-                v.ledger_partial = l.overlaps_gap(started.unwrap_or(v.status_at), end);
+                v.ledger_partial =
+                    l.lost_in_gap(&v.session_id, started.unwrap_or(v.status_at), end);
             }
             snap.receiver = l.receiver().cloned();
         }
@@ -566,6 +567,56 @@ mod tests {
             let id = v["session_id"].as_str().unwrap();
             assert_eq!(v.get("ledger_partial").is_some(), partial(id), "{id}");
         }
+    }
+
+    #[test]
+    fn a_cumulative_export_after_the_gap_clears_the_partial_mark() {
+        use crate::ledger::{Ledger, Receiver};
+        use std::sync::{Arc, Mutex};
+        let root = Scratch::new("ledger-partial-cumulative");
+        let fleet = root.0.join("fleet");
+        std::fs::create_dir_all(&fleet).unwrap();
+        const T0: i64 = 1_800_000_000;
+        let ids = [
+            "11111111-2222-4333-8444-555555555561",
+            "11111111-2222-4333-8444-555555555562",
+            "11111111-2222-4333-8444-555555555563",
+        ];
+        for id in ids {
+            root.write(
+                &format!("fleet/{id}.json"),
+                &spanned(id, "working", T0 + 1000, None),
+            );
+        }
+        let (mut l, _) = Ledger::open(root.0.join("ledger"), T0 + 900, jiff::tz::TimeZone::UTC);
+        l.note_listening(T0 + 900).unwrap();
+        l.set_receiver(Receiver {
+            addr: "127.0.0.1:4318".into(),
+            listening: true,
+            error: None,
+        });
+        assert!(l.stamp_alive(T0 + 1060));
+        l.note_listening(T0 + 1200).unwrap(); // gap T0 + 1060..T0 + 1200
+        let point = |id: &str, temporality: u8, at: i64| {
+            let ns = (at as u64 * 1_000_000_000).to_string();
+            crate::otel::metrics(
+                &serde_json::json!({"resourceMetrics":[{"scopeMetrics":[{"metrics":[{"name":"claude_code.token.usage","sum":{"aggregationTemporality":temporality,"dataPoints":[{"attributes":[{"key":"session.id","value":{"stringValue":id}},{"key":"type","value":{"stringValue":"input"}}],"startTimeUnixNano":(T0 as u64 * 1_000_000_000).to_string(),"timeUnixNano":ns,"asDouble":3}]}}]}]}]}),
+            )
+        };
+        // Cumulative after the gap, delta after the gap, cumulative before its end.
+        l.record_metrics(&point(ids[0], 2, T0 + 1250), T0 + 1250);
+        l.record_metrics(&point(ids[1], 1, T0 + 1250), T0 + 1250);
+        l.record_metrics(&point(ids[2], 2, T0 + 1100), T0 + 1100);
+        let mut r = Reader::new(&root.0).with_ledger(Arc::new(Mutex::new(l)));
+        let snap = r.step(Duration::ZERO, || T0 + 1300).0.unwrap();
+        let partial = |id: &str| {
+            snap.sessions
+                .iter()
+                .find(|v| v.session_id == id)
+                .unwrap()
+                .ledger_partial
+        };
+        assert_eq!(ids.map(partial), [false, true, true]);
     }
 
     #[test]

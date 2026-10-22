@@ -207,6 +207,9 @@ struct State {
     /// Counted keys and when they were counted, in epoch seconds.
     seen: HashMap<u64, i64>,
     series: HashMap<u64, Baseline>,
+    /// Per session, the receiver time of its latest cumulative point, counted
+    /// or recognised as a repeat: its running total reached us then.
+    cumulative_at: BTreeMap<String, i64>,
     /// When the receiver was down, oldest first.
     gaps: Vec<Gap>,
 }
@@ -582,6 +585,7 @@ impl Ledger {
         let horizon = now - RETENTION_DAYS * DAY;
         self.state.sessions.retain(|_, t| t.updated_at >= horizon);
         self.state.series.retain(|_, b| b.at >= horizon);
+        self.state.cumulative_at.retain(|_, at| *at >= horizon);
         self.state.gaps.retain(|g| g.to >= horizon);
     }
 
@@ -632,6 +636,18 @@ impl Ledger {
     /// Whether `[from, to]` overlaps a time the receiver was not listening.
     pub fn overlaps_gap(&self, from: i64, to: i64) -> bool {
         self.state.gaps.iter().any(|g| from <= g.to && to >= g.from)
+    }
+
+    /// Whether `session`, alive over `[from, to]`, may have lost exports in a
+    /// gap: a gap overlaps it and no cumulative point arrived at or after the
+    /// gap's end, which would have carried the running total.
+    // research(2026-10): cumulative OTLP points carry the running total, so a later one restores a gap (Grafana and Last9 Claude Code guides)
+    pub fn lost_in_gap(&self, session: &str, from: i64, to: i64) -> bool {
+        let restored = self.state.cumulative_at.get(session).copied();
+        self.state
+            .gaps
+            .iter()
+            .any(|g| from <= g.to && to >= g.from && restored.is_none_or(|at| at < g.to))
     }
 
     /// Move to `now`'s day when it is a new one.
@@ -781,6 +797,22 @@ impl Ledger {
         *slot = slot.saturating_add(n);
     }
 
+    /// Note that a cumulative point of `session` reached us at `now`, and
+    /// drop the oldest notes past `MAX_SESSIONS`.
+    fn mark_cumulative(&mut self, session: &str, now: i64) {
+        let map = &mut self.state.cumulative_at;
+        map.insert(session.to_string(), now);
+        while map.len() > MAX_SESSIONS {
+            let oldest = map
+                .iter()
+                .filter(|(id, _)| id.as_str() != session)
+                .min_by_key(|(id, at)| (**at, id.as_str()))
+                .map(|(id, _)| id.clone());
+            let Some(id) = oldest else { break };
+            map.remove(&id);
+        }
+    }
+
     /// Count the points of one metrics export.
     pub fn record_metrics(&mut self, points: &[Point], now: i64) -> Tally {
         self.roll(now);
@@ -831,6 +863,7 @@ impl Ledger {
                         // A new start time is a reset: all of it is new.
                         _ => Some(value),
                     };
+                    self.mark_cumulative(session, now);
                     let Some(amount) = amount else {
                         tally.duplicate += 1;
                         continue;
@@ -1710,6 +1743,136 @@ mod tests {
             l.today_view(NOW, None).day.models["s1"]["m"].tokens.output,
             3
         );
+    }
+
+    /// One cumulative `cacheRead` point of `session`, exported at `at`
+    /// seconds, its process started at `at0`.
+    fn tokens(session: &str, at0: i64, at: i64, value: f64) -> Vec<Point> {
+        let ns = |n: i64| (n as u64 * 1_000_000_000).to_string();
+        metrics(
+            &json!({"resourceMetrics":[{"resource":{"attributes":[]},"scopeMetrics":[{"scope":{"name":"s"},"metrics":[{"name":"claude_code.token.usage","sum":{"aggregationTemporality":2,"isMonotonic":true,"dataPoints":[{"attributes":[{"key":"session.id","value":{"stringValue":session}},{"key":"type","value":{"stringValue":"cacheRead"}}],"startTimeUnixNano":ns(at0),"timeUnixNano":ns(at),"asDouble":value}]}}]}]}]}),
+        )
+    }
+
+    fn cache_read(l: &Ledger, session: &str) -> u64 {
+        l.session(session).unwrap().tokens.cache_read
+    }
+
+    #[test]
+    fn a_gap_with_no_exports_then_one_cumulative_export_restores_the_total() {
+        let mut l = Ledger::in_memory(NOW);
+        l.record_metrics(&tokens("s1", NOW - 60, NOW, 100.0), NOW);
+        l.record_metrics(&tokens("s1", NOW - 60, NOW + 15, 250.0), NOW + 15);
+        // Ten minutes with no receiver, then one export of the running total.
+        let back = NOW + 15 + 600;
+        let t = l.record_metrics(&tokens("s1", NOW - 60, back, 900.0), back);
+        assert_eq!(t.counted, 1);
+        assert_eq!(cache_read(&l, "s1"), 900);
+        assert_eq!(l.day().sessions["s1"].tokens.cache_read, 900);
+    }
+
+    #[test]
+    fn a_receiver_restart_mid_session_double_counts_nothing() {
+        let dir = Scratch::new("ledger-cumulative-restart");
+        let (mut l, _) = Ledger::open(dir.0.clone(), NOW, TimeZone::UTC);
+        l.record_metrics(&tokens("s1", NOW - 60, NOW, 100.0), NOW);
+        l.record_metrics(&tokens("s1", NOW - 60, NOW + 15, 250.0), NOW + 15);
+        l.save().unwrap();
+        drop(l);
+        let back = NOW + 120;
+        let (mut l, _) = Ledger::open(dir.0.clone(), back, TimeZone::UTC);
+        l.note_listening(back).unwrap();
+        // The repeat of the last export before the restart.
+        let t = l.record_metrics(&tokens("s1", NOW - 60, NOW + 15, 250.0), back);
+        assert_eq!((t.counted, t.duplicate), (0, 1));
+        l.record_metrics(&tokens("s1", NOW - 60, back, 400.0), back);
+        assert_eq!(cache_read(&l, "s1"), 400);
+        assert_eq!(l.day().sessions["s1"].tokens.cache_read, 400);
+    }
+
+    #[test]
+    fn a_cumulative_baseline_survives_midnight() {
+        let dir = Scratch::new("ledger-cumulative-midnight");
+        // 2026-10-21 23:59:00 UTC.
+        let late = 1_792_627_140;
+        let (mut l, _) = Ledger::open(dir.0.clone(), late, TimeZone::UTC);
+        l.record_metrics(&tokens("s1", late - 600, late, 100.0), late);
+        let yesterday = l.day().day.clone();
+        l.save().unwrap();
+        drop(l);
+        let next = late + 120;
+        let (mut l, _) = Ledger::open(dir.0.clone(), next, TimeZone::UTC);
+        assert_ne!(l.day().day, yesterday);
+        l.record_metrics(&tokens("s1", late - 600, next, 130.0), next);
+        assert_eq!(l.day().sessions["s1"].tokens.cache_read, 30);
+        assert_eq!(cache_read(&l, "s1"), 130);
+        let old: Day = load(&dir.0.join(format!("{yesterday}.json")), &mut Vec::new());
+        assert_eq!(old.sessions["s1"].tokens.cache_read, 100);
+    }
+
+    #[test]
+    fn delta_and_cumulative_sessions_count_side_by_side() {
+        let mut l = Ledger::in_memory(NOW);
+        let ns = (NOW as u64 * 1_000_000_000).to_string();
+        let delta = metrics(
+            &json!({"resourceMetrics":[{"scopeMetrics":[{"metrics":[{"name":"claude_code.token.usage","sum":{"aggregationTemporality":1,"dataPoints":[{"attributes":[{"key":"session.id","value":{"stringValue":"d1"}},{"key":"type","value":{"stringValue":"cacheRead"}}],"startTimeUnixNano":ns.clone(),"timeUnixNano":ns,"asDouble":40}]}}]}]}]}),
+        );
+        l.record_metrics(&delta, NOW);
+        l.record_metrics(&tokens("c1", NOW - 60, NOW, 100.0), NOW);
+        l.record_metrics(&tokens("c1", NOW - 60, NOW + 15, 160.0), NOW + 15);
+        assert_eq!(cache_read(&l, "d1"), 40);
+        assert_eq!(cache_read(&l, "c1"), 160);
+        assert_eq!(l.day().sessions["d1"].tokens.cache_read, 40);
+    }
+
+    #[test]
+    fn an_export_after_a_gap_means_the_gap_lost_nothing() {
+        let dir = Scratch::new("ledger-lost-in-gap");
+        let (mut l, _) = Ledger::open(dir.0.clone(), NOW, TimeZone::UTC);
+        l.note_listening(NOW + 1000).unwrap(); // gap 0..NOW + 1000
+        let (from, to) = (NOW + 500, NOW + 1100);
+        assert!(l.lost_in_gap("s1", from, to), "no export at all");
+        // A delta session never makes up for it.
+        let ns = ((NOW + 1050) as u64 * 1_000_000_000).to_string();
+        let delta = metrics(
+            &json!({"resourceMetrics":[{"scopeMetrics":[{"metrics":[{"name":"claude_code.token.usage","sum":{"aggregationTemporality":1,"dataPoints":[{"attributes":[{"key":"session.id","value":{"stringValue":"s1"}},{"key":"type","value":{"stringValue":"cacheRead"}}],"timeUnixNano":ns,"asDouble":5}]}}]}]}]}),
+        );
+        l.record_metrics(&delta, NOW + 1050);
+        assert!(l.lost_in_gap("s1", from, to));
+        // A cumulative export before the gap ended does not either.
+        l.record_metrics(&tokens("s2", NOW, NOW + 900, 10.0), NOW + 900);
+        assert!(l.lost_in_gap("s2", from, to));
+        // One at or after the end does, and so does a repeat of it.
+        l.record_metrics(&tokens("s2", NOW, NOW + 1000, 20.0), NOW + 1000);
+        assert!(!l.lost_in_gap("s2", from, to));
+        l.record_metrics(&tokens("s3", NOW, NOW + 1010, 20.0), NOW + 1000);
+        let repeat = l.record_metrics(&tokens("s3", NOW, NOW + 1010, 20.0), NOW + 1200);
+        assert_eq!(repeat.duplicate, 1);
+        assert!(!l.lost_in_gap("s3", from, to));
+        // A session outside every gap is never lost.
+        assert!(!l.lost_in_gap("s1", NOW + 1001, NOW + 1100));
+        // Saved with the state.
+        l.save().unwrap();
+        let (l, _) = Ledger::open(dir.0.clone(), NOW + 1300, TimeZone::UTC);
+        assert!(!l.lost_in_gap("s2", from, to));
+        assert!(l.lost_in_gap("s1", NOW + 100, NOW + 200));
+    }
+
+    #[test]
+    fn cumulative_marks_are_capped_and_pruned_like_sessions() {
+        let mut l = Ledger::in_memory(NOW);
+        for n in 0..(MAX_SESSIONS as i64 + 3) {
+            let id = format!("s{n}");
+            l.record_metrics(&tokens(&id, NOW, NOW + n, 1.0), NOW + n);
+        }
+        assert_eq!(l.state.cumulative_at.len(), MAX_SESSIONS);
+        assert!(l
+            .state
+            .cumulative_at
+            .contains_key(&format!("s{}", MAX_SESSIONS + 2)));
+        let late = NOW + (RETENTION_DAYS + 2) * DAY;
+        l.record_metrics(&[], late);
+        assert!(l.state.cumulative_at.is_empty());
     }
 
     fn listening() -> Receiver {
