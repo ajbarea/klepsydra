@@ -813,9 +813,11 @@ impl Ledger {
         }
     }
 
-    /// Remember `voice` for `session` if today's file has the session and no
-    /// voice for it yet. Returns whether it recorded one.
-    pub fn note_voice(&mut self, session: &str, voice: &str) -> bool {
+    /// Remember `voice` for `session` if `now`'s file has the session and no
+    /// voice for it yet, moving to `now`'s day first. Returns whether it
+    /// recorded one; the caller saves.
+    pub fn note_voice(&mut self, session: &str, voice: &str, now: i64) -> bool {
+        self.roll(now);
         if voice.is_empty()
             || !self.day.sessions.contains_key(session)
             || self.day.voices.contains_key(session)
@@ -2261,16 +2263,16 @@ mod tests {
     fn a_voice_is_kept_for_a_session_in_todays_file_and_the_first_one_wins() {
         let mut l = Ledger::in_memory(NOW);
         // Not in the file yet: nothing to attach it to.
-        assert!(!l.note_voice("s1", "af_heart"));
+        assert!(!l.note_voice("s1", "af_heart", NOW));
         assert!(l.day().voices.is_empty());
         l.record_metrics(
             &metrics(&tokens_at("s1", "output", 1, NOW as u64, &[])),
             NOW,
         );
-        assert!(l.note_voice("s1", "af_heart"));
-        assert!(!l.note_voice("s1", "af_heart"), "unchanged");
-        assert!(!l.note_voice("s1", "bf_emma"), "the first value wins");
-        assert!(!l.note_voice("s1", ""), "an empty voice is none");
+        assert!(l.note_voice("s1", "af_heart", NOW));
+        assert!(!l.note_voice("s1", "af_heart", NOW), "unchanged");
+        assert!(!l.note_voice("s1", "bf_emma", NOW), "the first value wins");
+        assert!(!l.note_voice("s1", "", NOW), "an empty voice is none");
         assert_eq!(l.day().voices["s1"], "af_heart");
         assert_eq!(l.today_view(NOW, None).day.voices["s1"], "af_heart");
     }
@@ -2284,7 +2286,7 @@ mod tests {
                 &metrics(&tokens_at(&id, "output", 1, NOW as u64, &[])),
                 NOW + n as i64,
             );
-            l.note_voice(&id, "af_heart");
+            l.note_voice(&id, "af_heart", NOW + n as i64);
         }
         let day = l.day();
         assert!(day.voices.len() <= MAX_SESSIONS);
@@ -2302,9 +2304,41 @@ mod tests {
         let (mut l, problems) = Ledger::open(dir.0.clone(), NOW, TimeZone::UTC);
         assert!(problems.is_empty(), "{problems:?}");
         assert!(l.day().voices.is_empty());
-        assert!(l.note_voice("s1", "am_michael"));
+        assert!(l.note_voice("s1", "am_michael", NOW));
         l.save().unwrap();
         let (again, _) = Ledger::open(dir.0.clone(), NOW, TimeZone::UTC);
         assert_eq!(again.day().voices["s1"], "am_michael");
+    }
+
+    #[test]
+    fn a_voice_noted_after_midnight_goes_into_the_new_day_not_yesterdays() {
+        let dir = Scratch::new("ledger-voice-midnight");
+        let (mut l, _) = Ledger::open(dir.0.clone(), NOW, TimeZone::UTC);
+        l.record_metrics(
+            &metrics(&tokens_at("s1", "output", 1, NOW as u64, &[])),
+            NOW,
+        );
+        l.save().unwrap();
+        let yesterday = l.day().day.clone();
+        let next = (NOW / DAY + 1) * DAY + 10;
+        // No export yet today: the session is not in the new day's file.
+        assert!(!l.note_voice("s1", "af_heart", next));
+        assert_ne!(l.day().day, yesterday, "the day rolled");
+        assert!(l.day().voices.is_empty());
+        l.record_metrics(
+            &metrics(&tokens_at("s1", "output", 1, next as u64, &[])),
+            next,
+        );
+        assert!(l.note_voice("s1", "af_heart", next));
+        l.save().unwrap();
+        let read = |name: &str| -> Value {
+            serde_json::from_slice(&std::fs::read(dir.0.join(format!("{name}.json"))).unwrap())
+                .unwrap()
+        };
+        assert_eq!(read(&l.day().day)["voices"]["s1"], "af_heart");
+        assert!(
+            read(&yesterday)["voices"].get("s1").is_none(),
+            "yesterday's file never took today's voice"
+        );
     }
 }

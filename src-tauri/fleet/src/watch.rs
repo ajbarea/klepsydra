@@ -158,7 +158,6 @@ impl Reader {
         }
         let listing = scan(&self.fleet);
         broken.extend(listing.problems);
-        let problems = self.reporter.fresh(&broken);
         let t = now();
         let mut snap = snapshot(&listing.entries, t);
         let started: HashMap<&str, Option<i64>> = listing
@@ -166,11 +165,18 @@ impl Reader {
             .iter()
             .map(|e| (e.file.session_id.as_str(), e.file.started_at))
             .collect();
+        // The session's own voice: the view drops a shared one to keep faces distinct.
+        let voices: HashMap<&str, &str> = listing
+            .entries
+            .iter()
+            .filter_map(|e| Some((e.file.session_id.as_str(), e.file.voice.as_deref()?)))
+            .collect();
         if let Some(ledger) = &self.ledger {
             let mut l = lock(ledger);
+            let mut noted = false;
             for v in &mut snap.sessions {
-                if let Some(voice) = &v.voice {
-                    l.note_voice(&v.session_id, voice);
+                if let Some(voice) = voices.get(v.session_id.as_str()) {
+                    noted |= l.note_voice(&v.session_id, voice, t);
                 }
                 v.ledger = l.session(&v.session_id).cloned();
                 // Alive from its start to its end, or to now while it runs.
@@ -184,7 +190,16 @@ impl Reader {
                     l.lost_in_gap(&v.session_id, started.unwrap_or(v.status_at), end);
             }
             snap.receiver = l.receiver().cloned();
+            if noted {
+                if let Err(e) = l.save() {
+                    broken.push(Problem {
+                        file: "ledger".into(),
+                        what: format!("voice not saved: {e}"),
+                    });
+                }
+            }
         }
+        let problems = self.reporter.fresh(&broken);
         let shown = self.last.as_ref().and_then(|s| s.speaking.as_ref());
         snap.speaking = speaking(&read_speaking(&self.fleet), shown, &snap.sessions, t);
         if self.last.as_ref() == Some(&snap) {
@@ -657,5 +672,118 @@ mod tests {
         // A is in today's file; B has no telemetry yet, so no voice.
         assert_eq!(l.day().voices.get(A).map(String::as_str), Some("af_heart"));
         assert!(!l.day().voices.contains_key(B));
+    }
+
+    /// A session file for `id` with `voice` from a repo's home, so two of them
+    /// share one face on the wall.
+    fn homed(id: &str, voice: &str) -> String {
+        claude_session(id, 4242, 99).replace(
+            r#""state":"working""#,
+            &format!(r#""state":"working","voice":"{voice}","voice_from":"home""#),
+        )
+    }
+
+    fn commit_export(id: &str, at: i64) -> Vec<crate::otel::Point> {
+        let ns = (at as u64 * 1_000_000_000).to_string();
+        crate::otel::metrics(
+            &serde_json::json!({"resourceMetrics":[{"scopeMetrics":[{"metrics":[{"name":"claude_code.commit.count","sum":{"aggregationTemporality":1,"dataPoints":[{"attributes":[{"key":"session.id","value":{"stringValue":id}}],"timeUnixNano":ns,"asDouble":1}]}}]}]}]}),
+        )
+    }
+
+    fn day_voices(dir: &Path, day: &str) -> serde_json::Value {
+        let bytes = std::fs::read(dir.join(format!("{day}.json"))).unwrap();
+        serde_json::from_slice::<serde_json::Value>(&bytes).unwrap()["voices"].clone()
+    }
+
+    #[test]
+    fn a_recorded_voice_is_on_disk_before_the_next_export() {
+        use crate::ledger::Ledger;
+        use std::sync::{Arc, Mutex};
+        let root = Scratch::new("ledger-voice-saved");
+        std::fs::create_dir_all(root.0.join("fleet")).unwrap();
+        root.write(&format!("fleet/{A}.json"), &homed(A, "af_heart"));
+        let dir = root.0.join("ledger");
+        let t = unix_now();
+        let (mut l, _) = Ledger::open(dir.clone(), t, jiff::tz::TimeZone::UTC);
+        l.record_metrics(&commit_export(A, t), t);
+        l.save().unwrap(); // as the receiver does after a counted export
+        let mut r = Reader::new(&root.0).with_ledger(Arc::new(Mutex::new(l)));
+        let (_, problems) = r.step(Duration::ZERO, || t);
+        assert!(problems.is_empty(), "{problems:?}");
+        // A restart before any later export keeps the voice.
+        let (again, _) = Ledger::open(dir, t + 60, jiff::tz::TimeZone::UTC);
+        assert_eq!(
+            again.day().voices.get(A).map(String::as_str),
+            Some("af_heart")
+        );
+    }
+
+    #[test]
+    fn a_voice_first_seen_after_midnight_lands_in_the_new_days_file() {
+        use crate::ledger::{day_name, Ledger};
+        use std::sync::{Arc, Mutex};
+        let root = Scratch::new("ledger-voice-midnight");
+        std::fs::create_dir_all(root.0.join("fleet")).unwrap();
+        root.write(&format!("fleet/{A}.json"), &homed(A, "af_heart"));
+        let dir = root.0.join("ledger");
+        let utc = jiff::tz::TimeZone::UTC;
+        let t = unix_now();
+        let next = (t / 86_400 + 1) * 86_400 + 10;
+        let (yesterday, today) = (day_name(t, &utc), day_name(next, &utc));
+        let (mut l, _) = Ledger::open(dir.clone(), t, utc);
+        l.record_metrics(&commit_export(A, t), t);
+        l.save().unwrap();
+        let ledger = Arc::new(Mutex::new(l));
+        let mut r = Reader::new(&root.0).with_ledger(ledger.clone());
+        // Past midnight with no export yet: yesterday's day is still in memory.
+        r.step(Duration::ZERO, || next);
+        assert_eq!(
+            ledger.lock().unwrap().day().day,
+            today,
+            "the reader rolled the day"
+        );
+        assert!(day_voices(&dir, &yesterday).get(A).is_none());
+        let mut l = ledger.lock().unwrap();
+        l.record_metrics(&commit_export(A, next), next);
+        l.save().unwrap();
+        drop(l);
+        r.step(Duration::ZERO, || next + 1);
+        assert_eq!(day_voices(&dir, &today)[A], "af_heart");
+        assert!(
+            day_voices(&dir, &yesterday).get(A).is_none(),
+            "yesterday's file never took the voice"
+        );
+    }
+
+    #[test]
+    fn two_sessions_sharing_a_voice_both_have_it_recorded() {
+        use crate::ledger::Ledger;
+        use std::sync::{Arc, Mutex};
+        let root = Scratch::new("ledger-voice-shared");
+        std::fs::create_dir_all(root.0.join("fleet")).unwrap();
+        for id in [A, B] {
+            root.write(&format!("fleet/{id}.json"), &homed(id, "af_heart"));
+        }
+        let t = unix_now();
+        let ledger = Arc::new(Mutex::new(Ledger::in_memory(t)));
+        for id in [A, B] {
+            ledger
+                .lock()
+                .unwrap()
+                .record_metrics(&commit_export(id, t), t);
+        }
+        let mut r = Reader::new(&root.0).with_ledger(ledger.clone());
+        let snap = r.step(Duration::ZERO, || t).0.unwrap();
+        // The wall still shows one face for the voice.
+        let faces = snap.sessions.iter().filter(|v| v.voice.is_some()).count();
+        assert_eq!(faces, 1, "{:?}", snap.sessions);
+        let l = ledger.lock().unwrap();
+        for id in [A, B] {
+            assert_eq!(
+                l.day().voices.get(id).map(String::as_str),
+                Some("af_heart"),
+                "{id}"
+            );
+        }
     }
 }
