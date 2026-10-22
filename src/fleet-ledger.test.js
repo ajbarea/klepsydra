@@ -105,7 +105,7 @@ test("tokens by character group by the recorded voice, largest first, with Other
   assert.deepEqual(rows.map((r) => [r.name, r.tokens]), [["Puck", 40], ["Cupid", 15], ["Other sessions", 909]]);
   assert.equal(rows[0].accent, "#009E73");
   // Other sessions is last whatever its size, and says what it holds.
-  assert.equal(rows[2].label, "Other sessions: 3 (no character)");
+  assert.equal(rows[2].label, "Other sessions: 3 (2 with no voice, 1 with a voice outside the cast)");
   assert.equal(rows[2].other, true);
   assert.ok(!rows[0].other && rows[0].label === undefined);
   assert.equal(rows.reduce((n, r) => n + r.tokens, 0), 10 + 5 + 40 + 7 + 2 + 900, "totals unchanged");
@@ -116,12 +116,15 @@ test("a character keeps its tokens after its card is cleared, and 'Earlier sessi
   // Nothing on the wall is consulted: the day file's voices alone place the session.
   const rows = tokensByCharacter([["cleared", t(12)], ["scratch", t(3)]], { cleared: "af_heart" }, CAST);
   assert.deepEqual(rows.map((r) => [r.name, r.tokens]), [["Cupid", 12], ["Other sessions", 3]]);
+  assert.equal(rows[1].label, "Other sessions: 1 (with no voice)");
   assert.ok(!rows.some((r) => /Earlier/.test(r.name)));
   // Old day files have no voices at all: everything is Other sessions.
   assert.deepEqual(tokensByCharacter([["x", t(4)]], undefined, CAST).map((r) => [r.name, r.tokens]), [["Other sessions", 4]]);
   assert.deepEqual(tokensByCharacter([["x", t(0)]], {}, CAST), []);
   // A voice key that is an Object.prototype name is not a character.
-  assert.equal(tokensByCharacter([["x", t(1)]], { x: "constructor" }, CAST)[0].name, "Other sessions");
+  const proto = tokensByCharacter([["x", t(1)]], { x: "constructor" }, CAST)[0];
+  assert.equal(proto.name, "Other sessions");
+  assert.equal(proto.label, "Other sessions: 1 (with a voice outside the cast)");
 });
 
 test("attribution is honest about redacted and capped names", () => {

@@ -152,23 +152,34 @@ export const fullNumber = (v) => n(v).toLocaleString("en-US");
  * Tokens by character: one row per character, largest first. A session is its
  * recorded voice's character (`voices`, the day file's session to voice map)
  * looked up in `cast`, whether or not its card is still on the wall. Every
- * other session lands in one "Other sessions" row, always last.
+ * other session lands in one "Other sessions" row, always last, whose label
+ * counts the sessions with no voice and those with a voice outside the cast.
  */
 export function tokensByCharacter(sessions, voices, cast) {
   const rows = new Map();
   const other = { name: "Other sessions", accent: null, tokens: 0, other: true, count: 0 };
+  let voiceless = 0;
   for (const [id, totals] of sessions) {
     const tokens = totalTokens(totals.tokens);
     if (!tokens) continue;
-    const voice = voices?.[id];
-    const character = typeof voice === "string" && Object.hasOwn(cast?.characters ?? {}, voice) ? cast.characters[voice] : null;
+    const voice = Object.hasOwn(voices ?? {}, id) ? voices[id] : undefined;
+    const hasVoice = typeof voice === "string" && voice !== "";
+    const character = hasVoice && Object.hasOwn(cast?.characters ?? {}, voice) ? cast.characters[voice] : null;
     const row = character ? rows.get(character.name) ?? { name: character.name, accent: character.accent ?? null, tokens: 0 } : other;
     row.tokens += tokens;
-    if (!character) other.count += 1;
-    else rows.set(character.name, row);
+    if (character) rows.set(character.name, row);
+    else {
+      other.count += 1;
+      if (!hasVoice) voiceless += 1;
+    }
   }
   const out = [...rows.values()].sort((a, b) => b.tokens - a.tokens || a.name.localeCompare(b.name));
-  if (other.count) out.push({ ...other, label: `Other sessions: ${other.count} (no character)` });
+  if (other.count) {
+    const outside = other.count - voiceless;
+    const parts = [voiceless && `${voiceless} with no voice`, outside && `${outside} with a voice outside the cast`].filter(Boolean);
+    const what = other.count === 1 ? parts[0].replace(/^1 /, "") : parts.join(", ");
+    out.push({ ...other, label: `Other sessions: ${other.count} (${what})` });
+  }
   return out;
 }
 

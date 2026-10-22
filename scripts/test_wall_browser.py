@@ -522,9 +522,9 @@ def drawer_tables(wall):
     )
     names = [r[0] for r in rows]
     ok = (
-        names[-1] == "Other sessions: 2 (no character)"
-        and rows[-1][1] == "Other sessions: 2 (no character)"
-        and names.count("Other sessions: 2 (no character)") == 1
+        names[-1] == "Other sessions: 2 (1 with no voice, 1 with a voice outside the cast)"
+        and rows[-1][1] == "Other sessions: 2 (1 with no voice, 1 with a voice outside the cast)"
+        and names.count("Other sessions: 2 (1 with no voice, 1 with a voice outside the cast)") == 1
         and not any("Earlier" in n for n in names)
         and "Techne" in names
         and "Aidos" in names
