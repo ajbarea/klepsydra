@@ -657,7 +657,8 @@ separately.
   `state.json` is set aside as `state.json.bad`, new baselines start, and the
   time before is recorded as a gap. A session already in a day file only sets
   its baseline with its next cumulative export, so its running total does not
-  count twice, and it reads partial.
+  count twice. Its new series (a resumed process, a new model) also count only
+  from their next export, so that session can read low; it reads partial.
 - **When the overlay is off.** Claude Code's exports fail quietly and the
   session carries on; that stretch is not counted. If something else holds
   port 4318, klepsydra logs it to `fleet.log` and exposes it in the fleet
@@ -685,12 +686,13 @@ separately.
   token type with the percent difference, and exits 1 when a session the
   ledger has is more than 2% lower on `cache_read` or `cache_creation`, which
   means exports were lost ("lost exports", reason "ledger lower"). A session
-  with transcript usage and no ledger entry whose messages overlap a gap in
-  `state.json` lost every export: it is listed under "lost exports" with the
-  reason "receiver down" and also exits 1. One with no ledger entry outside
-  every gap never exported, as when it started without the telemetry
-  settings; it is listed under "sent no telemetry (started without the
-  telemetry settings)" and does not set the exit code. The last line gives
+  with transcript usage and no ledger entry whose every message lies within
+  two minutes of a gap in `state.json` lost every export: it is listed under
+  "lost exports" with the reason "receiver down" and also exits 1. One with
+  no ledger entry and a message outside every gap never exported, as when it
+  started without the telemetry settings; it is listed under "sent no
+  telemetry (started without the telemetry settings)" and does not set the
+  exit code. The last line gives
   both counts, and an unreadable `state.json` exits 2. A ledger that is
   higher is expected (it also sees calls that never reach a transcript, such
   as side calls on smaller models) and is only reported. Restored tokens count
