@@ -3,23 +3,26 @@
 //! bring a session's tmux window forward.
 
 use std::sync::Mutex;
-#[cfg(any(windows, test))]
+#[cfg(any(windows, target_os = "linux", test))]
 use std::time::{Duration, Instant};
 
 use serde_json::Value;
 use tauri::Manager;
 
-/// The only program klepsydra starts.
+/// The only program klepsydra starts on Windows.
 #[cfg_attr(not(windows), allow(dead_code))]
 pub const WSL_EXE: &str = r"C:\Windows\System32\wsl.exe";
-/// The launcher, relative to the WSL home (`--cd ~`).
+/// The only program klepsydra starts on Linux.
+#[cfg_attr(windows, allow(dead_code))]
+pub const BASH_EXE: &str = "/bin/bash";
+/// The launcher, relative to the home directory.
 const SCRIPT: &str = ".claude/klepsydra-launch.sh";
-/// Longest wait for wsl.exe to finish: a cold WSL start alone can take 20 s.
-#[cfg(any(windows, test))]
+/// Longest wait for the launcher to finish: a cold WSL start alone can take 20 s.
+#[cfg(any(windows, target_os = "linux", test))]
 const TIMEOUT: Duration = Duration::from_secs(45);
-/// How long the output is still read once wsl.exe exits; a process it left
+/// How long the output is still read once the process exits; a process it left
 /// behind holding the pipe open cannot keep the call running past this.
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux"))]
 const DRAIN_GRACE: Duration = Duration::from_secs(2);
 
 /// Set while a call runs; a click meanwhile is refused.
@@ -98,6 +101,34 @@ pub fn jump_args(t: &Target) -> Result<Vec<String>, String> {
     .to_vec())
 }
 
+/// Linux bash arguments to start a session in `dir`.
+pub fn linux_new_args(dir: &str) -> Result<Vec<String>, String> {
+    if !dir_ok(dir) {
+        return Err(format!("launch_dir must start with ~ or /: {dir}"));
+    }
+    let home = std::env::var("HOME").unwrap_or_else(|_| "~".into());
+    let script = format!("{home}/{SCRIPT}");
+    Ok(vec!["-l".into(), script, "new".into(), dir.into()])
+}
+
+/// Linux bash arguments to bring `t`'s tmux window forward.
+pub fn linux_jump_args(t: &Target) -> Result<Vec<String>, String> {
+    if !(socket_ok(&t.socket) && pane_ok(&t.pane) && t.pid != 0) {
+        return Err("This session's tmux pane cannot be named safely.".into());
+    }
+    let home = std::env::var("HOME").unwrap_or_else(|_| "~".into());
+    let script = format!("{home}/{SCRIPT}");
+    let (pid, start) = (t.pid.to_string(), t.start.to_string());
+    Ok(vec![
+        script,
+        "jump".into(),
+        t.socket.clone(),
+        t.pane.clone(),
+        pid,
+        start,
+    ])
+}
+
 /// Whether `t` runs on the launcher's own tmux server, the only one whose tab
 /// carries `FLEET_TAB`.
 pub fn is_fleet(t: &Target) -> bool {
@@ -142,7 +173,7 @@ pub fn gated<T>(flight: &InFlight, f: impl FnOnce() -> Result<T, String>) -> Res
 }
 
 /// wsl.exe writes its own messages as UTF-16LE and the Linux side's as UTF-8.
-#[cfg(any(windows, test))]
+#[cfg(any(windows, target_os = "linux", test))]
 fn decode(b: &[u8]) -> String {
     let utf16 =
         b.len() >= 2 && b.len().is_multiple_of(2) && b.iter().skip(1).step_by(2).all(|&x| x == 0);
@@ -160,7 +191,7 @@ fn decode(b: &[u8]) -> String {
 }
 
 /// The last non-blank line, at most 200 characters.
-#[cfg(any(windows, test))]
+#[cfg(any(windows, target_os = "linux", test))]
 fn last_line(text: &str) -> String {
     let line = text
         .lines()
@@ -171,17 +202,17 @@ fn last_line(text: &str) -> String {
 }
 
 /// Most output kept from each stream.
-#[cfg(any(windows, test))]
+#[cfg(any(windows, target_os = "linux", test))]
 const KEEP: usize = 64 * 1024;
 
 /// A stream being read on its own thread.
-#[cfg(any(windows, test))]
+#[cfg(any(windows, target_os = "linux", test))]
 struct Drain {
     kept: std::sync::Arc<Mutex<Vec<u8>>>,
     done: std::sync::mpsc::Receiver<()>,
 }
 
-#[cfg(any(windows, test))]
+#[cfg(any(windows, target_os = "linux", test))]
 impl Drain {
     /// What was read, once the stream ends or at `deadline`, whichever is
     /// first; a stream still open then is left to its thread.
@@ -196,7 +227,7 @@ impl Drain {
 
 /// Read `r` to its end on a thread, keeping the last `KEEP` bytes, so a full
 /// pipe never stalls the child.
-#[cfg(any(windows, test))]
+#[cfg(any(windows, target_os = "linux", test))]
 fn drain<R: std::io::Read + Send + 'static>(mut r: R) -> Drain {
     let kept = std::sync::Arc::new(Mutex::new(Vec::new()));
     let (tx, done) = std::sync::mpsc::channel();
@@ -219,11 +250,12 @@ fn drain<R: std::io::Read + Send + 'static>(mut r: R) -> Drain {
     Drain { kept, done }
 }
 
-/// The card's line when wsl.exe does not finish within `TIMEOUT`.
-#[cfg(any(windows, test))]
+/// The card's line when the launcher does not finish within `TIMEOUT`.
+#[cfg(any(windows, target_os = "linux", test))]
 fn timed_out() -> String {
+    let sys = if cfg!(windows) { "WSL" } else { "Launcher" };
     format!(
-        "WSL did not answer within {} seconds. The session may still be starting; check the terminal before clicking again.",
+        "{sys} did not answer within {} seconds. The session may still be starting; check the terminal before clicking again.",
         TIMEOUT.as_secs()
     )
 }
@@ -274,14 +306,60 @@ fn run(args: &[String]) -> Result<String, String> {
     }
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
+fn run(args: &[String]) -> Result<String, String> {
+    use std::process::{Command, Stdio};
+    let mut child = Command::new(BASH_EXE)
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("Could not start {BASH_EXE}: {e}"))?;
+    let out = drain(child.stdout.take().ok_or("bash gave no stdout.")?);
+    let err = drain(child.stderr.take().ok_or("bash gave no stderr.")?);
+    let deadline = Instant::now() + TIMEOUT;
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(50)),
+            Ok(None) => {
+                let _ = child.kill();
+                return Err(timed_out());
+            }
+            Err(e) => return Err(e.to_string()),
+        }
+    };
+    let until = Instant::now() + DRAIN_GRACE;
+    let (stdout, stderr) = (
+        last_line(&decode(&out.wait(until))),
+        last_line(&decode(&err.wait(until))),
+    );
+    if status.success() {
+        Ok(stdout)
+    } else if stderr.is_empty() {
+        Err(if stdout.is_empty() {
+            format!("bash exited with {status}.")
+        } else {
+            stdout
+        })
+    } else {
+        Err(stderr)
+    }
+}
+
+#[cfg(not(any(windows, target_os = "linux")))]
 fn run(_args: &[String]) -> Result<String, String> {
-    Err("Starting a session works on Windows only.".into())
+    Err("Starting a session works on Windows and Linux only.".into())
 }
 
 /// Bring `t`'s tmux window to the front of its session.
 pub fn tmux_jump(app: &tauri::AppHandle, t: &Target) -> Result<String, String> {
-    let args = jump_args(t)?;
+    let args = if cfg!(windows) {
+        jump_args(t)?
+    } else {
+        linux_jump_args(t)?
+    };
     gated(&app.state::<InFlight>(), || run(&args))
 }
 
@@ -299,7 +377,11 @@ pub async fn launch_session(app: tauri::AppHandle) -> Result<String, String> {
         .get("launch_distro")
         .and_then(Value::as_str)
         .map(str::to_owned);
-    let args = new_args(&dir, distro.as_deref())?;
+    let args = if cfg!(windows) {
+        new_args(&dir, distro.as_deref())?
+    } else {
+        linux_new_args(&dir)?
+    };
     tauri::async_runtime::spawn_blocking(move || gated(&app.state::<InFlight>(), || run(&args)))
         .await
         .map_err(|e| format!("Could not run the launch: {e}"))?
@@ -495,9 +577,37 @@ mod tests {
     #[test]
     fn a_timeout_waits_45_seconds_and_says_the_session_may_be_starting() {
         assert_eq!(TIMEOUT, Duration::from_secs(45));
+        let sys = if cfg!(windows) { "WSL" } else { "Launcher" };
         assert_eq!(
             timed_out(),
-            "WSL did not answer within 45 seconds. The session may still be starting; check the terminal before clicking again."
+            format!("{sys} did not answer within 45 seconds. The session may still be starting; check the terminal before clicking again.")
         );
+    }
+
+    #[test]
+    fn linux_new_args_pass_folder_to_bash_login() {
+        let a = linux_new_args("~/my repos").unwrap();
+        assert_eq!(a[0], "-l");
+        assert!(a[1].ends_with("/.claude/klepsydra-launch.sh"));
+        assert_eq!(a[2], "new");
+        assert_eq!(a[3], "~/my repos");
+    }
+
+    #[test]
+    fn linux_jump_args_pass_target_to_bash() {
+        let t = Target {
+            socket: "/tmp/tmux-1000/default".into(),
+            pane: "%2".into(),
+            distro: "Debian".into(),
+            pid: 1234,
+            start: 5678,
+        };
+        let a = linux_jump_args(&t).unwrap();
+        assert!(a[0].ends_with("/.claude/klepsydra-launch.sh"));
+        assert_eq!(a[1], "jump");
+        assert_eq!(a[2], "/tmp/tmux-1000/default");
+        assert_eq!(a[3], "%2");
+        assert_eq!(a[4], "1234");
+        assert_eq!(a[5], "5678");
     }
 }
