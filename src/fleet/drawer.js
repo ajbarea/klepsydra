@@ -3,7 +3,7 @@
 // figure is set as text; the only markup is built here from constants.
 import { identity } from "./model.js";
 import {
-  activeTime, cacheShare, costLine, costText, fullNumber, modelName, plural, sumTotals, todaySessions, tokensByCharacter,
+  activeTime, cacheShare, characterOf, costLine, costText, fullNumber, modelName, plural, sumTotals, todaySessions, tokensByCharacter,
   tokensByModel, topAttribution, totalTokens,
 } from "./ledger.js";
 
@@ -114,6 +114,8 @@ export function createDrawer({ dialog, sessions, cast, fetchToday, home }) {
     if (key === painted) return;
     painted = key;
     const { day, receiver, guardrails, guardrails_total: total } = view;
+    // Today's recorded voice names a session; the wall only when the day has none.
+    const nameOf = (id) => characterOf(id, day.voices, cast, names.get(id))?.name;
     const everyone = todaySessions(day);
     const shown = todaySessions(day, filter);
     const day_ = sumTotals(shown.map(([, t]) => t));
@@ -134,7 +136,7 @@ export function createDrawer({ dialog, sessions, cast, fetchToday, home }) {
 
     if (filter !== null) {
       const scope = el("p", "scope");
-      scope.append(`Showing ${names.get(filter)?.name ?? "one session"} only. `);
+      scope.append(`Showing ${nameOf(filter) ?? "one session"} only. `);
       const all = el("button", "link", "Show all sessions", { type: "button", id: "ledger-show-all" });
       all.addEventListener("click", () => {
         filter = null;
@@ -163,7 +165,7 @@ export function createDrawer({ dialog, sessions, cast, fetchToday, home }) {
     } else {
       out.push(totalsSection(day_), charactersSection(day, shown), modelsSection(day, shown), attributionSection(day, shown));
     }
-    out.push(blockedSection(guardrails, total, names), errorsSection(day_));
+    out.push(blockedSection(guardrails, total, nameOf), errorsSection(day_));
     const cost = costLine(day_.cost_usd_estimate_micros);
     if (cost) out.push(el("p", "cost", cost));
     const focused = focusedId();
@@ -177,11 +179,11 @@ export function createDrawer({ dialog, sessions, cast, fetchToday, home }) {
     return s;
   }
 
-  // Other sessions says what it holds in its accessible name and its tooltip.
+  // Other sessions says what it holds in its tooltip and, read once in full, its accessible name.
   function named(row) {
     if (!row.label) return row.name;
-    const span = el("span", null, row.name, { title: row.label });
-    span.append(el("span", "visually-hidden", row.label.slice(row.name.length)));
+    const span = el("span");
+    span.append(el("span", null, row.name, { title: row.label, "aria-hidden": "true" }), el("span", "visually-hidden", row.label));
     return span;
   }
 
@@ -266,7 +268,7 @@ export function createDrawer({ dialog, sessions, cast, fetchToday, home }) {
     return s;
   }
 
-  function blockedSection(guardrails, total, names) {
+  function blockedSection(guardrails, total, nameOf) {
     const s = section("ledger-blocked", "Blocked today");
     const scope = filter === null ? "" : " in this session";
     if (!total) {
@@ -285,7 +287,7 @@ export function createDrawer({ dialog, sessions, cast, fetchToday, home }) {
         ["Time", "Character", "Tool", "Source"],
         guardrails.map((g) => {
           const time = el("time", null, clock(g.at), { datetime: new Date(g.at * 1000).toISOString() });
-          return [time, names.get(g.session_id)?.name ?? "Earlier session", g.tool_name, g.source];
+          return [time, nameOf(g.session_id) ?? "Earlier session", g.tool_name, g.source];
         }),
       ),
     );

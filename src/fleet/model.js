@@ -3,7 +3,10 @@
 
 import { markerWidth, mix, mixOklab, readableOn } from "./contrast.js";
 import { medallion } from "./medallion.js";
+import { castAccent, castCharacter, voiceName } from "./cast.js";
 import { ledgerLine } from "./ledger.js";
+
+export { voiceName };
 import { speakingNow } from "./speaking.js";
 
 // Each status's badge: shape, symbol and tone carry it together with the
@@ -74,18 +77,6 @@ export function statusParts(s, nowMs, age = shortAge) {
   return [statusOf(s.status).label, reasonText(s), a].filter(Boolean);
 }
 
-/** "am_fenrir" is "Fenrir"; a blend "af_bella(0.7)+af_heart(0.3)" is "Bella and Heart". */
-export function voiceName(voice) {
-  return String(voice)
-    .split("+")
-    .map((part) => {
-      const label = part.replace(/\(.*$/, "").trim();
-      const name = label.includes("_") ? label.slice(label.indexOf("_") + 1) : label;
-      return name.charAt(0).toUpperCase() + name.slice(1);
-    })
-    .join(" and ");
-}
-
 const basename = (path) => (typeof path === "string" ? path.replace(/\/+$/, "").split("/").pop() : "");
 
 /**
@@ -96,10 +87,10 @@ const basename = (path) => (typeof path === "string" ? path.replace(/\/+$/, "").
  */
 export function identity(s, cast) {
   const voice = typeof s.voice === "string" && s.voice ? s.voice : null;
-  const character = voice && Object.hasOwn(cast.characters, voice) ? cast.characters[voice] : null;
+  const character = castCharacter(voice, cast);
   if (character) {
     const base = `${FACES}/kourai/${character.face}`;
-    const accent = /^#[0-9a-f]{6}$/i.test(character.accent) ? character.accent : null;
+    const accent = castAccent(character);
     const head = character.head;
     const placed = Array.isArray(head) && head.length === 3 && head.every((v) => typeof v === "number" && v > 0 && v < 1);
     return {

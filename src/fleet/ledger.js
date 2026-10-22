@@ -3,6 +3,8 @@
 // can be unit tested. A session's `ledger` is its totals since its first
 // export; the drawer's `day` is today's file (see ledger.rs).
 
+import { castAccent, castCharacter, ownValue, voiceName } from "./cast.js";
+
 const MINUS = "−";
 const n = (v) => (Number.isFinite(v) && v > 0 ? Math.floor(v) : 0);
 export const plural = (count, word, many = `${word}s`) => `${count} ${count === 1 ? word : many}`;
@@ -149,11 +151,25 @@ export function activeTime(ms) {
 export const fullNumber = (v) => n(v).toLocaleString("en-US");
 
 /**
- * Tokens by character: one row per character, largest first. A session is its
- * recorded voice's character (`voices`, the day file's session to voice map)
- * looked up in `cast`, whether or not its card is still on the wall. Every
- * other session lands in one "Other sessions" row, always last, whose label
- * counts the sessions with no voice and those with a voice outside the cast.
+ * Who session `id` was today: its recorded voice (`voices`, the day file's
+ * session to voice map) as its cast character, `{ name, accent, character:
+ * true }`; a recorded voice outside the cast named as a card names one, with
+ * `character: false`; else `wall` (its identity on the live wall, if any)
+ * when the day has no voice for it, which may be null.
+ */
+export function characterOf(id, voices, cast, wall = null) {
+  const voice = ownValue(voices, id);
+  if (typeof voice !== "string" || voice === "") return wall;
+  const c = castCharacter(voice, cast);
+  return c ? { name: c.name, accent: castAccent(c), character: true } : { name: voiceName(voice), accent: null, character: false };
+}
+
+/**
+ * Tokens by character: one row per character, largest first, each session
+ * placed by `characterOf`, whether or not its card is still on the wall.
+ * Every other session lands in one "Other sessions" row, always last, whose
+ * label counts the sessions with no voice and those with a voice outside the
+ * cast.
  */
 export function tokensByCharacter(sessions, voices, cast) {
   const rows = new Map();
@@ -162,15 +178,15 @@ export function tokensByCharacter(sessions, voices, cast) {
   for (const [id, totals] of sessions) {
     const tokens = totalTokens(totals.tokens);
     if (!tokens) continue;
-    const voice = Object.hasOwn(voices ?? {}, id) ? voices[id] : undefined;
-    const hasVoice = typeof voice === "string" && voice !== "";
-    const character = hasVoice && Object.hasOwn(cast?.characters ?? {}, voice) ? cast.characters[voice] : null;
-    const row = character ? rows.get(character.name) ?? { name: character.name, accent: character.accent ?? null, tokens: 0 } : other;
-    row.tokens += tokens;
-    if (character) rows.set(character.name, row);
-    else {
+    const who = characterOf(id, voices, cast);
+    if (who?.character) {
+      const row = rows.get(who.name) ?? { name: who.name, accent: who.accent, tokens: 0 };
+      row.tokens += tokens;
+      rows.set(who.name, row);
+    } else {
+      other.tokens += tokens;
       other.count += 1;
-      if (!hasVoice) voiceless += 1;
+      if (!who) voiceless += 1;
     }
   }
   const out = [...rows.values()].sort((a, b) => b.tokens - a.tokens || a.name.localeCompare(b.name));

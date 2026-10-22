@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   MODEL_CAP, NAME_CAP, OTHER, PARTIAL_LABEL, costText, modelName, tokensByModel, activeTime, attributionName, cacheShare, chipLabel, compactNumber, compactPick, costLine, fullNumber,
-  ledgerLine, receiptParts, receiptText, sumTotals, todaySessions, tokensByCharacter, topAttribution, totalTokens,
+  characterOf, ledgerLine, receiptParts, receiptText, sumTotals, todaySessions, tokensByCharacter, topAttribution, totalTokens,
 } from "./fleet/ledger.js";
 
 test("compactNumber reads at a glance and rounds up into the next unit", () => {
@@ -125,6 +125,42 @@ test("a character keeps its tokens after its card is cleared, and 'Earlier sessi
   const proto = tokensByCharacter([["x", t(1)]], { x: "constructor" }, CAST)[0];
   assert.equal(proto.name, "Other sessions");
   assert.equal(proto.label, "Other sessions: 1 (with a voice outside the cast)");
+});
+
+test("characterOf names a cleared session by its recorded voice, and the wall only when the day has none", () => {
+  const wall = { name: "klepsydra", accent: null };
+  // Cleared from the wall: the day's voice alone names it.
+  assert.deepEqual(characterOf("cleared", { cleared: "af_heart" }, CAST), { name: "Cupid", accent: "#D55E00", character: true });
+  // The recorded voice wins over whatever the wall shows now.
+  assert.equal(characterOf("s", { s: "am_puck" }, CAST, wall).name, "Puck");
+  // A voice outside the cast is named as the wall names one, and is no character.
+  assert.deepEqual(characterOf("odd", { odd: "am_onyx" }, CAST, wall), { name: "Onyx", accent: null, character: false });
+  // No voice today: the live wall's identity, else nothing.
+  assert.equal(characterOf("live", {}, CAST, wall), wall);
+  assert.equal(characterOf("gone", {}, CAST), null);
+  assert.equal(characterOf("gone", { gone: "" }, CAST), null, "an empty voice is none");
+});
+
+test("characterOf reads own keys only, whatever the ids, voices or cast hold", () => {
+  const voices = JSON.parse('{"__proto__":"af_heart","constructor":"am_puck","":"af_heart","v1":"hasOwnProperty","v2":"constructor"}');
+  assert.equal(characterOf("__proto__", voices, CAST).name, "Cupid");
+  assert.equal(characterOf("constructor", voices, CAST).name, "Puck");
+  assert.equal(characterOf("", voices, CAST).name, "Cupid");
+  assert.equal(characterOf("toString", voices, CAST), null, "an Object.prototype name is no session");
+  for (const id of ["v1", "v2"]) assert.equal(characterOf(id, voices, CAST).character, false, id);
+  for (const bad of [null, undefined, [], ["af_heart"], "af_heart", 5]) {
+    assert.equal(characterOf("0", bad, CAST), null, JSON.stringify(bad));
+  }
+  // A cast entry that is not a named object is no character; a bad accent is dropped, as identity() drops it.
+  const cast = JSON.parse('{"characters":{"__proto__":{"name":"P","accent":"#000000"},"x":null,"y":{"accent":"#111111"},"z":"str","w":{"name":"W","accent":"red; x"}}}');
+  assert.deepEqual(characterOf("a", { a: "__proto__" }, cast), { name: "P", accent: "#000000", character: true });
+  for (const v of ["x", "y", "z"]) assert.equal(characterOf("a", { a: v }, cast).character, false, v);
+  assert.equal(characterOf("a", { a: "w" }, cast).accent, null);
+  assert.equal(characterOf("a", { a: "af_heart" }, undefined).character, false, "no cast, no character");
+  // tokensByCharacter places sessions by the same lookup.
+  const t = (input) => ({ tokens: { input } });
+  const rows = tokensByCharacter([["a", t(1)], ["b", t(2)], ["c", t(3)]], { a: "__proto__", b: "y", c: "w" }, cast);
+  assert.deepEqual(rows.map((r) => [r.name, r.tokens, r.accent]), [["W", 3, null], ["P", 1, "#000000"], ["Other sessions", 2, null]]);
 });
 
 test("attribution is honest about redacted and capped names", () => {
