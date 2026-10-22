@@ -653,7 +653,11 @@ separately.
 - **Where it is kept.** One file per local calendar day in `ledger/` under
   the app data dir, such as `ledger/2026-10-20.json`, written whole each time.
   Files more than 30 local days old are deleted. `ledger/state.json` holds each session's running
-  totals and what stops a retried export from counting twice.
+  totals and what stops a retried export from counting twice. An unreadable
+  `state.json` is set aside as `state.json.bad`, new baselines start, and the
+  time before is recorded as a gap. A session already in a day file only sets
+  its baseline with its next cumulative export, so its running total does not
+  count twice, and it reads partial.
 - **When the overlay is off.** Claude Code's exports fail quietly and the
   session carries on; that stretch is not counted. If something else holds
   port 4318, klepsydra logs it to `fleet.log` and exposes it in the fleet
@@ -665,9 +669,14 @@ separately.
   run ever) is recorded as a gap in `ledger/state.json` (at most 64, kept 30
   days). A session that was alive during a gap wears a dashed "partial" mark
   on its receipt: some of its telemetry was not received because klepsydra was
-  not running for part of it. A session that sent a cumulative export after
-  the gap ended, with the setting above, was restored and wears no mark. The
-  mark says nothing about a session that was merely idle.
+  not running for part of it. A session whose running total moved on in a
+  cumulative export received after the gap ended, with the setting above, was
+  restored and wears no mark; a retried export from before the gap does not
+  count. The mark says nothing about a session that was merely idle. It also
+  misses one case: a session resumed in a new process (the same session id)
+  after its earlier process ended while klepsydra was closed. The new process
+  restores only its own total, so the earlier process's last tokens are lost
+  and the session does not read partial.
 - **Checking the ledger against the transcripts.** `ledger-verify` sets a
   day's ledger against the usage Claude Code writes to its own transcripts
   (`~/.claude*/projects/*/<session>.jsonl` and `<session>/subagents/*.jsonl`;
@@ -675,13 +684,18 @@ separately.
   timestamp). It prints, per session, the ledger and transcript counts of each
   token type with the percent difference, and exits 1 when a session the
   ledger has is more than 2% lower on `cache_read` or `cache_creation`, which
-  means exports were lost ("lost exports"). A session with transcript usage
-  and no ledger entry at all never exported, as when it started without the
-  telemetry settings; it is listed under "sent no telemetry (started without
-  the telemetry settings)" and does not set the exit code. The last line gives
-  both counts. A ledger that is higher is expected (it also sees
-  calls that never reach a transcript, such as side calls on smaller models)
-  and is only reported. From WSL:
+  means exports were lost ("lost exports", reason "ledger lower"). A session
+  with transcript usage and no ledger entry whose messages overlap a gap in
+  `state.json` lost every export: it is listed under "lost exports" with the
+  reason "receiver down" and also exits 1. One with no ledger entry outside
+  every gap never exported, as when it started without the telemetry
+  settings; it is listed under "sent no telemetry (started without the
+  telemetry settings)" and does not set the exit code. The last line gives
+  both counts, and an unreadable `state.json` exits 2. A ledger that is
+  higher is expected (it also sees calls that never reach a transcript, such
+  as side calls on smaller models) and is only reported. Restored tokens count
+  on the day they arrive, so after a gap that crosses midnight the earlier day
+  can read low, and exit 1, with nothing lost. From WSL:
 
   ```bash
   cd src-tauri && cargo run -q -p klepsydra-fleet --bin ledger-verify -- \
