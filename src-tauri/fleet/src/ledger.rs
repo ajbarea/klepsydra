@@ -455,8 +455,9 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
 }
 
 /// Read `path` as `T`: the default when there is no file, and the default
-/// after setting a file it could not read or parse aside as `<name>.bad`, so
-/// a write never replaces data it could not read without keeping a copy.
+/// after setting a file it could not read or parse aside as `<name>.bad`. A
+/// file that can be neither moved nor copied is reported and replaced at the
+/// next save: once this run counts, its baselines are stale anyway.
 fn load<T: Default + for<'de> Deserialize<'de>>(path: &Path, problems: &mut Vec<String>) -> T {
     load_checked(path, problems).0
 }

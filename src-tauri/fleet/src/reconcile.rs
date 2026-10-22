@@ -176,8 +176,11 @@ pub fn read_transcripts(roots: &[PathBuf], day: &str, tz: &TimeZone) -> Transcri
                     continue;
                 }
                 let session = line.session_id.unwrap_or_else(|| file_session.clone());
-                out.times.entry(session.clone()).or_default().insert(at);
                 let tokens = usage.tokens();
+                // A synthetic line with zero usage says nothing about telemetry.
+                if KINDS.iter().any(|(_, get)| get(&tokens) > 0) {
+                    out.times.entry(session.clone()).or_default().insert(at);
+                }
                 messages
                     .entry((session, id))
                     .and_modify(|t| *t = field_max(t, &tokens))
@@ -463,6 +466,27 @@ mod tests {
         // Only the messages counted on the day: session 3's 03:59:59Z line
         // falls on Oct 5 in New York.
         assert_eq!(t.times[&id(3)].first(), Some(&at("2026-10-06T04:00:00Z")));
+    }
+
+    #[test]
+    fn a_message_with_no_usage_has_no_time() {
+        // Claude Code writes synthetic assistant lines with an id and zero usage.
+        let (_s, r) = root(
+            "reconcile-zero-usage",
+            &[(
+                "s.jsonl",
+                vec![
+                    line("s", "a", "2026-10-06T12:00:00Z", [0, 5, 0, 0]),
+                    line("s", "b", "2026-10-06T13:00:00Z", [0, 0, 0, 0]),
+                ],
+            )],
+        );
+        let t = read_transcripts(&[r], DAY, &new_york());
+        let at = |s: &str| s.parse::<Timestamp>().unwrap().as_second();
+        assert_eq!(
+            t.times["s"].iter().copied().collect::<Vec<_>>(),
+            vec![at("2026-10-06T12:00:00Z")]
+        );
     }
 
     #[test]
