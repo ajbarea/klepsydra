@@ -176,10 +176,20 @@ settings only from user scope, not from a repository's settings:
     "OTEL_LOGS_EXPORTER": "otlp",
     "OTEL_EXPORTER_OTLP_PROTOCOL": "http/json",
     "OTEL_EXPORTER_OTLP_ENDPOINT": "http://127.0.0.1:4318",
-    "OTEL_METRIC_EXPORT_INTERVAL": "15000"
+    "OTEL_METRIC_EXPORT_INTERVAL": "15000",
+    "OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE": "cumulative"
   }
 }
 ```
+
+Cumulative temporality makes each export carry the session's running total.
+The first export after the overlay reopens then restores what the session sent
+while it was closed; only a session that starts and ends while the overlay is
+closed is lost. Tokens restored after a gap are counted on the day they
+arrive. Claude Code reads these settings at startup, so a session started
+before the change keeps its delta exports until it restarts
+([Grafana](https://grafana.com/docs/grafana-cloud/monitor-infrastructure/integrations/integration-reference/integration-claude-code),
+[Last9](https://last9.io/docs/integrations/claude-code/)).
 
 Leave `OTEL_LOG_USER_PROMPTS` and `OTEL_LOG_TOOL_DETAILS` unset, so prompts and
 tool arguments stay redacted.
@@ -630,18 +640,74 @@ separately.
   arguments unless `OTEL_LOG_TOOL_DETAILS` is set. The exports still carry
   your account email and organization ID as attributes; klepsydra does not
   store them.
-- **Cost is an estimate.** Claude Code's `cost.usage` is what the tokens would
-  cost at API prices. On a Pro or Max plan it is not money spent, so the
-  ledger stores it as `cost_usd_estimate_micros`.
+- **Cost is an estimate.** Claude Code's `cost.usage` is its local list-price
+  estimate: it works the figure out on your machine from token counts at
+  standard list rates, so it can differ from your bill. On a Pro or Max plan
+  it is not money spent. The ledger stores it as `cost_usd_estimate_micros`,
+  and the Console usage page or claude.ai usage settings are the billing
+  record ([Claude Code costs](https://code.claude.com/docs/en/costs)).
+- **Tokens by model.** Each day file keeps, per session, the four token types
+  and the cost estimate for every `model` the session used (`models`), at most
+  16 per session; the rest are added under `(other)`. The drawer's "Tokens by
+  model" table sums them over the sessions it shows.
 - **Where it is kept.** One file per local calendar day in `ledger/` under
   the app data dir, such as `ledger/2026-10-20.json`, written whole each time.
   Files more than 30 local days old are deleted. `ledger/state.json` holds each session's running
-  totals and what stops a retried export from counting twice.
+  totals and what stops a retried export from counting twice. An unreadable
+  `state.json` is set aside as `state.json.bad`, new baselines start, and the
+  time before is recorded as a gap. A session already in a day file only sets
+  its baseline with its next cumulative export, so its running total does not
+  count twice. Its new series (a resumed process, a new model) also count only
+  from their next export, so that session can read low; it reads partial.
 - **When the overlay is off.** Claude Code's exports fail quietly and the
   session carries on; that stretch is not counted. If something else holds
   port 4318, klepsydra logs it to `fleet.log` and exposes it in the fleet
   view as `receiver`, and the drawer shows it. It runs without
   the ledger and tries the port again every 30 seconds.
+- **Partial sessions.** While the receiver listens, the overlay stamps
+  `ledger/alive` with the time every 60 seconds. When the receiver next starts
+  listening, the time since the last stamp (everything before it, on the first
+  run ever) is recorded as a gap in `ledger/state.json` (at most 64, kept 30
+  days). A session that was alive during a gap wears a dashed "partial" mark
+  on its receipt: some of its telemetry was not received because klepsydra was
+  not running for part of it. A session whose running total moved on in a
+  cumulative export received after the gap ended, with the setting above, was
+  restored and wears no mark; a retried export from before the gap does not
+  count. The mark says nothing about a session that was merely idle. It also
+  misses one case: a session resumed in a new process (the same session id)
+  after its earlier process ended while klepsydra was closed. The new process
+  restores only its own total, so the earlier process's last tokens are lost
+  and the session does not read partial.
+- **Checking the ledger against the transcripts.** `ledger-verify` sets a
+  day's ledger against the usage Claude Code writes to its own transcripts
+  (`~/.claude*/projects/*/<session>.jsonl` and `<session>/subagents/*.jsonl`;
+  the largest `message.usage` per message id, counted on the local day of its
+  timestamp). It prints, per session, the ledger and transcript counts of each
+  token type with the percent difference, and exits 1 when a session the
+  ledger has is more than 2% lower on `cache_read` or `cache_creation`, which
+  means exports were lost ("lost exports", reason "ledger lower"). A session
+  with transcript usage and no ledger entry whose every message lies within
+  two minutes of a gap in `state.json` lost every export: it is listed under
+  "lost exports" with the reason "receiver down" and also exits 1. One with
+  no ledger entry and a message outside every gap never exported, as when it
+  started without the telemetry settings; it is listed under "sent no
+  telemetry (started without the telemetry settings)" and does not set the
+  exit code. The last line gives
+  both counts, and an unreadable `state.json` exits 2. A ledger that is
+  higher is expected (it also sees calls that never reach a transcript, such
+  as side calls on smaller models) and is only reported. Restored tokens count
+  on the day they arrive, so after a gap that crosses midnight the earlier day
+  can read low, and exit 1, with nothing lost. From WSL:
+
+  ```bash
+  cd src-tauri && cargo run -q -p klepsydra-fleet --bin ledger-verify -- \
+    --ledger /mnt/c/Users/$USER/AppData/Local/dev.ajsoftworks.klepsydra/ledger \
+    --day 2026-10-21
+  ```
+
+  `--projects DIR` (repeatable) replaces the default of every
+  `~/.claude*/projects`, and `--tz ZONE` the machine's time zone. It runs on a
+  recorded fixture in `cargo test -p klepsydra-fleet`.
 
 On the wall, each card with something to count has a receipt line, such as
 `+312 −40 lines · 2 commits · 1 PR · 1.2M tokens (86% cached)`, which is
@@ -650,8 +716,8 @@ parts. A chip such as "3 blocked" counts the tool calls a hook or a
 permission rule turned down in that session, and opens the drawer for it. The
 **Ledger** button in the header opens the drawer for every session: today's
 totals, tokens per character, tokens by skill, plugin and MCP server, the
-list of blocked tool calls, API errors and refusals, and one dim line with
-the cost as an API-price estimate. Every chart has a table beside it. Claude
+tokens by model, the list of blocked tool calls, API errors and refusals, and
+one dim line with the cost as Claude Code's local list-price estimate. Every chart has a table beside it. Claude
 Code redacts third-party plugin and skill names, and MCP servers you
 configured, so the drawer labels those "third-party" and "custom". The
 drawer is local and reads only today's file.

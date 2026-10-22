@@ -1,0 +1,45 @@
+{
+  "version": 1,
+  "day": "2026-10-06",
+  "sessions": {
+    "00000000-0000-4000-8000-000000000001": {
+      "tokens": {
+        "input": 4500,
+        "output": 1747,
+        "cache_read": 107721,
+        "cache_creation": 44796
+      },
+      "updated_at": 1791300000
+    },
+    "00000000-0000-4000-8000-000000000002": {
+      "tokens": {
+        "input": 17,
+        "output": 720,
+        "cache_read": 45186,
+        "cache_creation": 17659
+      },
+      "updated_at": 1791300000
+    },
+    "00000000-0000-4000-8000-000000000003": {
+      "tokens": {
+        "input": 40,
+        "output": 600,
+        "cache_read": 97279,
+        "cache_creation": 42717
+      },
+      "updated_at": 1791300000
+    },
+    "00000000-0000-4000-8000-000000000005": {
+      "tokens": {
+        "input": 12,
+        "output": 30,
+        "cache_read": 100,
+        "cache_creation": 200
+      },
+      "updated_at": 1791300000
+    }
+  },
+  "guardrails": [],
+  "attribution": {},
+  "no_session": 0
+}

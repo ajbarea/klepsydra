@@ -74,7 +74,8 @@ files belong to: the JS guards scan hooks and scripts too.
   and a stub `wt.exe` (one tab per fleet, a failed launch starts nothing).
 - `bash scripts/test_build_windows.sh`: the Windows build's stage-name check.
 - `cd src-tauri && cargo test -p klepsydra-fleet`: the fleet reader, the OTLP
-  receiver (spawned on a free loopback port) and the ledger.
+  receiver (spawned on a free loopback port), the ledger, and `ledger-verify`
+  on its recorded transcript fixture.
 - `uv run -q --no-project --with playwright python -I scripts/test_wall_browser.py`:
   the wall in a real browser: 16 demo cards at 1920x1000 and 8 at 945x1000
   fit in Auto (compact, no scrollbar, ring key in view); Auto re-checks when
@@ -127,6 +128,9 @@ files belong to: the JS guards scan hooks and scripts too.
   happened; neither is restating the code.
 - `statusline/fixtures/*.json` are regression fixtures, each standing for a
   real input shape the hook must survive. Adding a shape means adding a fixture.
+- `src-tauri/fleet/tests/fixtures/transcripts/` holds transcript lines cut down to ids, times,
+  model and usage (session and message ids replaced by placeholders; two lines of
+  session 3 retimed to straddle New York's midnight) with matching ledger days.
 - `src-tauri/fleet/tests/fixtures/otel/{delta,cumulative}/*.json` are OTLP/HTTP
   JSON exports recorded from live `claude -p` sessions (Claude Code 2.1.301),
   with `user.email`, `user.account_uuid`, `user.account_id`, `user.id` and

@@ -90,13 +90,21 @@ export function chipLabel(count) {
   return { short: `${blocked} blocked`, full: `${blocked} blocked: ${calls} a hook or config rule turned down` };
 }
 
-/** What a card shows from its session's ledger; null when there is nothing to say. */
-export function ledgerLine(ledger) {
+/** The partial mark's reason, in full: the mark itself is one word. */
+export const PARTIAL_LABEL = "Some telemetry for this session was not received: klepsydra was not running for part of it.";
+
+/**
+ * What a card shows from its session's ledger; null when there is nothing to
+ * say. `partial` (the view's ledger_partial) adds the short "partial" mark,
+ * kept apart from the receipt so a compact card never trims it away.
+ */
+export function ledgerLine(ledger, partial = false) {
   if (!ledger) return null;
   const parts = receiptParts(ledger);
   const chip = chipLabel(ledger.guardrail_rejects);
-  if (!parts.length && !chip) return null;
-  return { full: receiptText(parts), short: receiptText(compactPick(parts)), chip };
+  const mark = partial ? { text: "partial", label: PARTIAL_LABEL } : null;
+  if (!parts.length && !chip && !mark) return null;
+  return { full: receiptText(parts), short: receiptText(compactPick(parts)), chip, partial: mark };
 }
 
 // ---- The drawer's figures ----
@@ -190,10 +198,44 @@ export function topAttribution(attribution, kind, ids, top = 8) {
   return { rows, more: rest.length, moreTokens: rest.reduce((sum, [, tokens]) => sum + tokens, 0) };
 }
 
-/** The one dim cost line: what the tokens would cost at API prices, never a bill. null at zero. */
-export function costLine(micros) {
+/** An estimate in dollars: "$1.23", "under $0.01", or "none" at zero. */
+export function costText(micros) {
   const value = n(micros);
-  if (!value) return null;
-  const dollars = value < 10_000 ? "under $0.01" : `$${(value / 1e6).toFixed(2)}`;
-  return `≈ ${dollars} API-equivalent (an estimate, not your bill)`;
+  if (!value) return "none";
+  return value < 10_000 ? "under $0.01" : `$${(value / 1e6).toFixed(2)}`;
+}
+
+/**
+ * The one dim cost line. Claude Code works the figure out locally from token
+ * counts at list prices, so it can differ from the bill; the billing record is
+ * the Console usage page or claude.ai usage settings.
+ * https://code.claude.com/docs/en/costs
+ */
+export function costLine(micros) {
+  if (!n(micros)) return null;
+  return `≈ ${costText(micros)} is Claude Code's local list-price estimate, not your bill. The Console usage page or claude.ai usage settings are the billing record.`;
+}
+
+export const MODEL_CAP = 16; // ledger.rs MAX_MODELS
+
+/** A model name as the drawer shows it, honest about the cap's fold. */
+export function modelName(name) {
+  return name === OTHER ? `other (past the ${MODEL_CAP} models kept per session)` : name;
+}
+
+/**
+ * Tokens and estimate by model over the sessions `ids` of `models`
+ * (ledger.rs `Day.models`): one row per model, largest first.
+ */
+export function tokensByModel(models, ids) {
+  const byName = new Map();
+  for (const id of ids) {
+    for (const [name, m] of Object.entries(models?.[id] ?? {})) {
+      const row = byName.get(name) ?? { name, tokens: 0, micros: 0 };
+      row.tokens += totalTokens(m.tokens);
+      row.micros += n(m.cost_usd_estimate_micros);
+      byName.set(name, row);
+    }
+  }
+  return [...byName.values()].filter((r) => r.tokens > 0 || r.micros > 0).sort((a, b) => b.tokens - a.tokens || a.name.localeCompare(b.name));
 }

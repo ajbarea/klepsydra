@@ -139,14 +139,20 @@ fn start_ledger(dir: &Path) -> Shared {
                     &format!("otel: receiver listening on {}", receiver::ADDR),
                 );
             }
-            klepsydra_fleet::ledger::lock(&shared).set_receiver(Receiver {
+            let mut l = klepsydra_fleet::ledger::lock(&shared);
+            l.set_receiver(Receiver {
                 addr: receiver::ADDR.to_string(),
                 listening,
                 error,
             });
             if listening {
+                // Whatever the receiver missed while it was down is a gap.
+                if let Err(e) = l.note_listening(unix_now()) {
+                    log_line(&dir, &format!("ledger: gap not saved: {e}"));
+                }
                 return;
             }
+            drop(l);
             std::thread::sleep(RETRY);
         }
     });
@@ -162,6 +168,7 @@ pub fn start(app: &AppHandle, dir: Option<PathBuf>) {
     let app = app.clone();
     let ledger = start_ledger(&dir);
     app.manage(LedgerState(ledger.clone()));
+    let stamp = ledger.clone();
     std::thread::spawn(move || {
         let mut reader = Reader::new(&dir).with_ledger(ledger);
         #[cfg(windows)]
@@ -184,6 +191,8 @@ pub fn start(app: &AppHandle, dir: Option<PathBuf>) {
                 }
             }
             wait = POLL;
+            // The stamp the next start reads its gap from.
+            klepsydra_fleet::ledger::lock(&stamp).stamp_alive(unix_now());
         }
     });
 }

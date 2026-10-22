@@ -1,50 +1,52 @@
 # IMPL
 
-Slice: #56 Slice 2, the ledger on the wall (receipt line, guardrail chip,
-ledger drawer). Branch feat/ledger-ui, worktree `.claude/worktrees/ledger-ui`.
-The issue body (`gh api repos/ajbarea/klepsydra/issues/56 -q .body`) and its
-Slice 2 "Done when" are binding.
+Slice: #68, the ledger checked against transcripts, and no loss while the app
+is closed. Branch feat/ledger-verify, worktree `.claude/worktrees/ledger-verify`.
+The issue and its comments (`gh api repos/ajbarea/klepsydra/issues/68/comments`)
+are binding.
 
-## Done (pushed; PR #64)
-- Rust: `Day.attribution` and `ledger_today` (TodayView), registered in main.rs.
-- `src/fleet/ledger.js` (DOM-free, `src/fleet-ledger.test.js`): compactNumber,
-  cacheShare, receipt parts, compact pick, chip label, drawer figures,
-  attribution labels (redacted names say so), cost line.
-- Card: `.ledger-line` (receipt + chip) above the footer; in compact it takes
-  the foot slot and gives way to a note or Open terminal's reason.
-- Drawer: `src/fleet/drawer.js`, a native `<dialog>` in wall.html opened by the
-  Ledger button (in `.lead`, beside the ring key) or a chip (filtered to that
-  session). Totals, tokens by character as one table plus aria-hidden bars,
-  attribution tables, blocked log, errors, one dim cost line, port-taken
-  notice, empty state naming README "The ledger". Refetches on each snapshot.
-- Demo: `scripts/fixtures/ledger-demo.json` (only with ?demo, via
-  `demoLedgerUrl`/`todayLedger` in feed.js) and `ledger` on the demo sessions.
-- Tests: guards (demo unreachable in the app, dialog shape, no links), style
-  tests (slot parity, 24 px chip target, contrast), 7 Playwright cases.
-- README "The ledger" describes the wall's receipt, chip and drawer.
-
-## Facts
-- The wall has no light theme, so the drawer uses the wall's dark tokens only.
-- The Ledger button sits with the tally and ring key: beside the density
-  choice it made the 945 px bar wrap the tally and the fit test scroll.
-- `hooks/test_launch.sh` fails at line 256 ("at: unbound variable") on the
-  base commit too (no tab-pending stamp in this environment); untouched here.
+## Done
+- `ledger-verify` binary (logic in `reconcile.rs`): ledger vs transcripts per
+  session, exit 1 when more than 2% low on cache_read or cache_creation, or
+  when a session missing from the ledger has every transcript message within
+  `GAP_SLACK` (`ALIVE_EVERY` + 60 s) of a receiver gap (`ledger::read_gaps`;
+  "receiver down"). Other missing sessions are "sent no telemetry" and exit 0;
+  unreadable state is 2. `Transcripts.times` keeps each message line's time.
+- Day file `models`: tokens and cost per session per model (16 max, rest under
+  `(other)`); the drawer's "Tokens by model" table.
+- `alive` stamp every 60 s and receiver gaps (`note_listening`).
+- Cost wording says list-price estimate and names the billing record.
+- Cumulative temporality: per-series diffs, baselines in state.json. Tests
+  cover a gap restored by one export, a receiver restart, midnight, delta and
+  cumulative side by side.
+- `State.cumulative_at` marks only a cumulative point that advanced its
+  baseline, at arrival time; `Ledger::lost_in_gap` feeds `ledger_partial`.
+  A pre-gap point retried after the gap leaves the session partial.
+- Unreadable state.json (parse, bad UTF-8 or other read error; moved or
+  copied aside as `.bad`): the day files' sessions go in `State.reseed`
+  (set-aside time, capped and pruned like the session maps), saved inside
+  `open`. A reseeded session's series without a baseline only seed
+  (`Tally.seeded`), and `lost_in_gap` is always true for it. A gap 0..open is
+  recorded. `save` writes state before the day file. Negative or NaN values
+  are ignored before they touch a baseline.
+- README: the cumulative env var, the partial rule and its resumed-process
+  limit, unreadable state and its low-reading new series, receiver-down in
+  `ledger-verify`, midnight gaps.
+- Round-2 review fixes pushed (no-telemetry vs gap, reseed persistence,
+  read-error aside, README line).
 
 ## Next
-- PR #64 open (Refs #56; #56 closes after the live check). Independent review, then merge and deploy; live
-  check in the Windows app with real telemetry.
+- Independent re-review of the round-2 fixes on PR #72.
+- Merge, deploy, then set `OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE`
+  in both accounts' settings.json (back up first; AJ's step) and run
+  `ledger-verify` on a live day after sessions restart.
+
+## Facts
+- `hooks/test_launch.sh` failed at "at: unbound variable" on an earlier base
+  too; check before blaming this branch.
+- node is at `~/.nvm/versions/node/v24.18.0/bin`.
 
 ## Verify
-- `node --test src/*.test.js`, the shell suites and shellcheck, the fleet
-  crate's fmt/clippy/test, `scripts/test_wall_browser.py`, and
-  `KLEPSYDRA_STAGE=klepsydra-build-ledgerui bash scripts/build-windows.sh --check`.
-- Renders: scratchpad `ledger/` (both widths, both densities, the drawer,
-  filtered drawer, 2x card).
-
-## Merge with #66
-- origin/main (#66) merged in; conflicts kept both sides. The Ledger button is
-  18 px tall with a 24 px hit area, so the wrapped 945 bar fits as on main.
-- The portrait dialog's tests now wait for its close event before reading
-  focus, as the drawer's do. Browser suite 40/40 twice, node 255, fleet 307.
-- Next: review of the merge, CI, squash-merge #64, deploy, live telemetry
-  check, close #56.
+- `cd src-tauri && cargo fmt --all --check && cargo clippy -p klepsydra-fleet --all-targets -- -D warnings && cargo test -p klepsydra-fleet`
+- `node --test src/*.test.js`, the shell suites, shellcheck, `scripts/test_wall_browser.py`,
+  `KLEPSYDRA_STAGE=klepsydra-build-ledger_verify bash scripts/build-windows.sh --check`.

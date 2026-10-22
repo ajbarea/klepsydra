@@ -9,6 +9,7 @@ pub mod lookup;
 pub mod otel;
 pub mod problem_log;
 pub mod receiver;
+pub mod reconcile;
 pub mod scan;
 pub mod session;
 pub mod speaking;

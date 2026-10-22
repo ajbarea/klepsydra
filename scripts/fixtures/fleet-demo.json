@@ -161,6 +161,7 @@
     "agents": 0,
     "shells": 0
    },
+   "ledger_partial": true,
    "ledger": {
     "tokens": {
      "input": 9000,

@@ -410,6 +410,385 @@
     }
    }
   },
+  "models": {
+  "demo-1-am_michael": {
+   "claude-opus-5-5": {
+    "tokens": {
+     "input": 48000,
+     "output": 19200,
+     "cache_read": 480000,
+     "cache_creation": 28800
+    },
+    "cost_usd_estimate_micros": 2602800
+   },
+   "claude-sonnet-5-5": {
+    "tokens": {
+     "input": 7200,
+     "output": 2880,
+     "cache_read": 72000,
+     "cache_creation": 4320
+    },
+    "cost_usd_estimate_micros": 260280
+   },
+   "claude-haiku-5": {
+    "tokens": {
+     "input": 4800,
+     "output": 1920,
+     "cache_read": 48000,
+     "cache_creation": 2880
+    },
+    "cost_usd_estimate_micros": 28920
+   }
+  },
+  "demo-2-af_bella": {
+   "claude-opus-5-5": {
+    "tokens": {
+     "input": 16800,
+     "output": 10080,
+     "cache_read": 196800,
+     "cache_creation": 23040
+    },
+    "cost_usd_estimate_micros": 885600
+   },
+   "claude-sonnet-5-5": {
+    "tokens": {
+     "input": 2520,
+     "output": 1512,
+     "cache_read": 29520,
+     "cache_creation": 3456
+    },
+    "cost_usd_estimate_micros": 88560
+   },
+   "claude-haiku-5": {
+    "tokens": {
+     "input": 1680,
+     "output": 1008,
+     "cache_read": 19680,
+     "cache_creation": 2304
+    },
+    "cost_usd_estimate_micros": 9840
+   }
+  },
+  "demo-3-af_sarah": {
+   "claude-opus-5-5": {
+    "tokens": {
+     "input": 4320,
+     "output": 1632,
+     "cache_read": 0,
+     "cache_creation": 0
+    },
+    "cost_usd_estimate_micros": 113400
+   },
+   "claude-sonnet-5-5": {
+    "tokens": {
+     "input": 648,
+     "output": 244,
+     "cache_read": 0,
+     "cache_creation": 0
+    },
+    "cost_usd_estimate_micros": 11340
+   },
+   "claude-haiku-5": {
+    "tokens": {
+     "input": 432,
+     "output": 163,
+     "cache_read": 0,
+     "cache_creation": 0
+    },
+    "cost_usd_estimate_micros": 1260
+   }
+  },
+  "demo-4-bf_emma": {
+   "claude-opus-5-5": {
+    "tokens": {
+     "input": 100800,
+     "output": 46080,
+     "cache_read": 3552000,
+     "cache_creation": 336000
+    },
+    "cost_usd_estimate_micros": 9126000
+   },
+   "claude-sonnet-5-5": {
+    "tokens": {
+     "input": 15120,
+     "output": 6912,
+     "cache_read": 532800,
+     "cache_creation": 50400
+    },
+    "cost_usd_estimate_micros": 912600
+   },
+   "claude-haiku-5": {
+    "tokens": {
+     "input": 10080,
+     "output": 4608,
+     "cache_read": 355200,
+     "cache_creation": 33600
+    },
+    "cost_usd_estimate_micros": 101400
+   }
+  },
+  "demo-9-bm_fable": {
+   "claude-opus-5-5": {
+    "tokens": {
+     "input": 24960,
+     "output": 14400,
+     "cache_read": 912000,
+     "cache_creation": 57600
+    },
+    "cost_usd_estimate_micros": 1674000
+   },
+   "claude-sonnet-5-5": {
+    "tokens": {
+     "input": 3744,
+     "output": 2160,
+     "cache_read": 136800,
+     "cache_creation": 8640
+    },
+    "cost_usd_estimate_micros": 167400
+   },
+   "claude-haiku-5": {
+    "tokens": {
+     "input": 2496,
+     "output": 1440,
+     "cache_read": 91200,
+     "cache_creation": 5760
+    },
+    "cost_usd_estimate_micros": 18600
+   }
+  },
+  "demo-5-bf_isabella": {
+   "claude-opus-5-5": {
+    "tokens": {
+     "input": 28800,
+     "output": 13440,
+     "cache_read": 864000,
+     "cache_creation": 158400
+    },
+    "cost_usd_estimate_micros": 1566000
+   },
+   "claude-sonnet-5-5": {
+    "tokens": {
+     "input": 4320,
+     "output": 2016,
+     "cache_read": 129600,
+     "cache_creation": 23760
+    },
+    "cost_usd_estimate_micros": 156600
+   },
+   "claude-haiku-5": {
+    "tokens": {
+     "input": 2880,
+     "output": 1344,
+     "cache_read": 86400,
+     "cache_creation": 15840
+    },
+    "cost_usd_estimate_micros": 17400
+   }
+  },
+  "demo-6-af_nova": {
+   "claude-opus-5-5": {
+    "tokens": {
+     "input": 6720,
+     "output": 960,
+     "cache_read": 28800,
+     "cache_creation": 4320
+    },
+    "cost_usd_estimate_micros": 226800
+   },
+   "claude-sonnet-5-5": {
+    "tokens": {
+     "input": 1008,
+     "output": 144,
+     "cache_read": 4320,
+     "cache_creation": 648
+    },
+    "cost_usd_estimate_micros": 22680
+   },
+   "claude-haiku-5": {
+    "tokens": {
+     "input": 672,
+     "output": 96,
+     "cache_read": 2880,
+     "cache_creation": 432
+    },
+    "cost_usd_estimate_micros": 2520
+   }
+  },
+  "demo-8-am_puck": {
+   "claude-opus-5-5": {
+    "tokens": {
+     "input": 9600,
+     "output": 6720,
+     "cache_read": 134400,
+     "cache_creation": 12480
+    },
+    "cost_usd_estimate_micros": 345600
+   },
+   "claude-sonnet-5-5": {
+    "tokens": {
+     "input": 1440,
+     "output": 1008,
+     "cache_read": 20160,
+     "cache_creation": 1872
+    },
+    "cost_usd_estimate_micros": 34560
+   },
+   "claude-haiku-5": {
+    "tokens": {
+     "input": 960,
+     "output": 672,
+     "cache_read": 13440,
+     "cache_creation": 1248
+    },
+    "cost_usd_estimate_micros": 3840
+   }
+  },
+  "demo-10-bm_george": {
+   "claude-opus-5-5": {
+    "tokens": {
+     "input": 8640,
+     "output": 5280,
+     "cache_read": 249600,
+     "cache_creation": 19680
+    },
+    "cost_usd_estimate_micros": 486000
+   },
+   "claude-sonnet-5-5": {
+    "tokens": {
+     "input": 1296,
+     "output": 792,
+     "cache_read": 37440,
+     "cache_creation": 2952
+    },
+    "cost_usd_estimate_micros": 48600
+   },
+   "claude-haiku-5": {
+    "tokens": {
+     "input": 864,
+     "output": 528,
+     "cache_read": 24960,
+     "cache_creation": 1968
+    },
+    "cost_usd_estimate_micros": 5400
+   }
+  },
+  "demo-12-af_alloy": {
+   "claude-opus-5-5": {
+    "tokens": {
+     "input": 14400,
+     "output": 5760,
+     "cache_read": 19200,
+     "cache_creation": 4320
+    },
+    "cost_usd_estimate_micros": 0
+   },
+   "claude-sonnet-5-5": {
+    "tokens": {
+     "input": 2160,
+     "output": 864,
+     "cache_read": 2880,
+     "cache_creation": 648
+    },
+    "cost_usd_estimate_micros": 0
+   },
+   "claude-haiku-5": {
+    "tokens": {
+     "input": 1440,
+     "output": 576,
+     "cache_read": 1920,
+     "cache_creation": 432
+    },
+    "cost_usd_estimate_micros": 0
+   }
+  },
+  "demo-15-am_onyx": {
+   "claude-opus-5-5": {
+    "tokens": {
+     "input": 36960,
+     "output": 18240,
+     "cache_read": 1104000,
+     "cache_creation": 72000
+    },
+    "cost_usd_estimate_micros": 2052000
+   },
+   "claude-sonnet-5-5": {
+    "tokens": {
+     "input": 5544,
+     "output": 2736,
+     "cache_read": 165600,
+     "cache_creation": 10800
+    },
+    "cost_usd_estimate_micros": 205200
+   },
+   "claude-haiku-5": {
+    "tokens": {
+     "input": 3696,
+     "output": 1824,
+     "cache_read": 110400,
+     "cache_creation": 7200
+    },
+    "cost_usd_estimate_micros": 22800
+   }
+  },
+  "demo-16-af_kore": {
+   "claude-opus-5-5": {
+    "tokens": {
+     "input": 19680,
+     "output": 9120,
+     "cache_read": 432000,
+     "cache_creation": 38400
+    },
+    "cost_usd_estimate_micros": 810000
+   },
+   "claude-sonnet-5-5": {
+    "tokens": {
+     "input": 2952,
+     "output": 1368,
+     "cache_read": 64800,
+     "cache_creation": 5760
+    },
+    "cost_usd_estimate_micros": 81000
+   },
+   "claude-haiku-5": {
+    "tokens": {
+     "input": 1968,
+     "output": 912,
+     "cache_read": 43200,
+     "cache_creation": 3840
+    },
+    "cost_usd_estimate_micros": 9000
+   }
+  },
+  "earlier-session-0001": {
+   "claude-opus-5-5": {
+    "tokens": {
+     "input": 6400,
+     "output": 1600,
+     "cache_read": 72000,
+     "cache_creation": 4800
+    },
+    "cost_usd_estimate_micros": 135000
+   },
+   "claude-sonnet-5-5": {
+    "tokens": {
+     "input": 960,
+     "output": 240,
+     "cache_read": 10800,
+     "cache_creation": 720
+    },
+    "cost_usd_estimate_micros": 13500
+   },
+   "claude-haiku-5": {
+    "tokens": {
+     "input": 640,
+     "output": 160,
+     "cache_read": 7200,
+     "cache_creation": 480
+    },
+    "cost_usd_estimate_micros": 1500
+   }
+  }
+ },
   "no_session": 0
  },
  "receiver": {

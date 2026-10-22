@@ -1,6 +1,7 @@
 //! Following a fleet directory: a filesystem watcher for prompt updates, and a
 //! re-read every `POLL` as a safety net and to let ages pass into silence.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::time::{Duration, Instant};
@@ -10,7 +11,7 @@ use notify::{EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use crate::ledger::{lock, Shared};
 use crate::scan::{scan, Problem, Reporter};
 use crate::speaking::{read as read_speaking, speaking};
-use crate::view::{snapshot, Snapshot};
+use crate::view::{snapshot, Snapshot, Status};
 
 /// The safety-net re-read, matching the gauge's POLL_MS.
 pub const POLL: Duration = Duration::from_secs(5);
@@ -160,10 +161,24 @@ impl Reader {
         let problems = self.reporter.fresh(&broken);
         let t = now();
         let mut snap = snapshot(&listing.entries, t);
+        let started: HashMap<&str, Option<i64>> = listing
+            .entries
+            .iter()
+            .map(|e| (e.file.session_id.as_str(), e.file.started_at))
+            .collect();
         if let Some(ledger) = &self.ledger {
             let l = lock(ledger);
             for v in &mut snap.sessions {
                 v.ledger = l.session(&v.session_id).cloned();
+                // Alive from its start to its end, or to now while it runs.
+                let started = started.get(v.session_id.as_str()).copied().flatten();
+                let end = if v.status == Status::Ended {
+                    v.status_at
+                } else {
+                    t
+                };
+                v.ledger_partial =
+                    l.lost_in_gap(&v.session_id, started.unwrap_or(v.status_at), end);
             }
             snap.receiver = l.receiver().cloned();
         }
@@ -479,5 +494,136 @@ mod tests {
         let json = serde_json::to_value(&next).unwrap();
         assert_eq!(json["receiver"]["listening"], false);
         assert_eq!(json["receiver"]["error"], "address in use");
+    }
+
+    fn spanned(id: &str, state: &str, start: i64, ended: Option<i64>) -> String {
+        let (at, end) = (
+            ended.unwrap_or(start),
+            ended.map_or(String::new(), |e| format!(r#","ended":{{"at":{e}}}"#)),
+        );
+        format!(
+            r#"{{"v":1,"session_id":"{id}","state":"{state}","state_at":{at},"started_at":{start}{end}}}"#
+        )
+    }
+
+    #[test]
+    fn a_session_alive_while_the_receiver_was_down_reads_partial() {
+        use crate::ledger::{Ledger, Receiver};
+        use std::sync::{Arc, Mutex};
+        let root = Scratch::new("ledger-partial");
+        let fleet = root.0.join("fleet");
+        std::fs::create_dir_all(&fleet).unwrap();
+        const T0: i64 = 1_800_000_000;
+        let ids = [
+            "11111111-2222-4333-8444-555555555551",
+            "11111111-2222-4333-8444-555555555552",
+            "11111111-2222-4333-8444-555555555553",
+            "11111111-2222-4333-8444-555555555554",
+        ];
+        // Running through the second gap, ended inside it, ended between the
+        // gaps, started after the last one.
+        let files = [
+            spanned(ids[0], "working", T0 + 1100, None),
+            spanned(ids[1], "ended", T0 + 1065, Some(T0 + 1070)),
+            spanned(ids[2], "ended", T0 + 1010, Some(T0 + 1050)),
+            spanned(ids[3], "working", T0 + 1250, None),
+        ];
+        for (id, text) in ids.iter().zip(&files) {
+            root.write(&format!("fleet/{id}.json"), text);
+        }
+        let (mut l, _) = Ledger::open(root.0.join("ledger"), T0 + 1000, jiff::tz::TimeZone::UTC);
+        l.note_listening(T0 + 1000).unwrap(); // gap 0..T0 + 1000
+        l.set_receiver(Receiver {
+            addr: "127.0.0.1:4318".into(),
+            listening: true,
+            error: None,
+        });
+        assert!(l.stamp_alive(T0 + 1060));
+        l.note_listening(T0 + 1200).unwrap(); // gap T0 + 1060..T0 + 1200
+        let ledger = Arc::new(Mutex::new(l));
+        let mut r = Reader::new(&root.0).with_ledger(ledger);
+        let snap = r.step(Duration::ZERO, || T0 + 1300).0.unwrap();
+        let seen: Vec<_> = snap
+            .sessions
+            .iter()
+            .map(|v| (&v.session_id, v.status))
+            .collect();
+        let partial = |id: &str| {
+            let v = snap.sessions.iter().find(|v| v.session_id == id);
+            v.unwrap_or_else(|| panic!("{id} not shown: {seen:?}"))
+                .ledger_partial
+        };
+        assert_eq!(
+            ids.map(partial),
+            [true, true, false, false],
+            "{:?}",
+            snap.sessions
+                .iter()
+                .map(|v| (&v.session_id, v.status))
+                .collect::<Vec<_>>()
+        );
+        let json = serde_json::to_value(&snap).unwrap();
+        for v in json["sessions"].as_array().unwrap() {
+            let id = v["session_id"].as_str().unwrap();
+            assert_eq!(v.get("ledger_partial").is_some(), partial(id), "{id}");
+        }
+    }
+
+    #[test]
+    fn a_cumulative_export_after_the_gap_clears_the_partial_mark() {
+        use crate::ledger::{Ledger, Receiver};
+        use std::sync::{Arc, Mutex};
+        let root = Scratch::new("ledger-partial-cumulative");
+        let fleet = root.0.join("fleet");
+        std::fs::create_dir_all(&fleet).unwrap();
+        const T0: i64 = 1_800_000_000;
+        let ids = [
+            "11111111-2222-4333-8444-555555555561",
+            "11111111-2222-4333-8444-555555555562",
+            "11111111-2222-4333-8444-555555555563",
+        ];
+        for id in ids {
+            root.write(
+                &format!("fleet/{id}.json"),
+                &spanned(id, "working", T0 + 1000, None),
+            );
+        }
+        let (mut l, _) = Ledger::open(root.0.join("ledger"), T0 + 900, jiff::tz::TimeZone::UTC);
+        l.note_listening(T0 + 900).unwrap();
+        l.set_receiver(Receiver {
+            addr: "127.0.0.1:4318".into(),
+            listening: true,
+            error: None,
+        });
+        assert!(l.stamp_alive(T0 + 1060));
+        l.note_listening(T0 + 1200).unwrap(); // gap T0 + 1060..T0 + 1200
+        let point = |id: &str, temporality: u8, at: i64| {
+            let ns = (at as u64 * 1_000_000_000).to_string();
+            crate::otel::metrics(
+                &serde_json::json!({"resourceMetrics":[{"scopeMetrics":[{"metrics":[{"name":"claude_code.token.usage","sum":{"aggregationTemporality":temporality,"dataPoints":[{"attributes":[{"key":"session.id","value":{"stringValue":id}},{"key":"type","value":{"stringValue":"input"}}],"startTimeUnixNano":(T0 as u64 * 1_000_000_000).to_string(),"timeUnixNano":ns,"asDouble":3}]}}]}]}]}),
+            )
+        };
+        // Cumulative after the gap, delta after the gap, cumulative before its end.
+        l.record_metrics(&point(ids[0], 2, T0 + 1250), T0 + 1250);
+        l.record_metrics(&point(ids[1], 1, T0 + 1250), T0 + 1250);
+        l.record_metrics(&point(ids[2], 2, T0 + 1100), T0 + 1100);
+        let mut r = Reader::new(&root.0).with_ledger(Arc::new(Mutex::new(l)));
+        let snap = r.step(Duration::ZERO, || T0 + 1300).0.unwrap();
+        let partial = |id: &str| {
+            snap.sessions
+                .iter()
+                .find(|v| v.session_id == id)
+                .unwrap()
+                .ledger_partial
+        };
+        assert_eq!(ids.map(partial), [false, true, true]);
+    }
+
+    #[test]
+    fn a_reader_without_a_ledger_marks_nothing_partial() {
+        let (root, mut r) = reader("no-partial");
+        root.write(&format!("fleet/{A}.json"), &session(A, "working"));
+        let snap = r.step(Duration::ZERO, unix_now).0.unwrap();
+        assert!(!snap.sessions[0].ledger_partial);
     }
 }

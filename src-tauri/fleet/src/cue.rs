@@ -166,6 +166,7 @@ mod tests {
             claude: None,
             background: Default::default(),
             ledger: None,
+            ledger_partial: false,
             marks: Marks {
                 state_at: START + at,
                 turns,
