@@ -27,6 +27,7 @@ PENDING_FOR=30
 SOCKET_RE='^/[A-Za-z0-9._/-]{1,255}$'
 ATTACHED=1 # cleared by open_tab until the tab's client shows up
 END_WAIT=${KLEPSYDRA_END_WAIT:-10} # seconds `end` waits for Claude to exit
+[[ $END_WAIT =~ ^[0-9]{1,3}$ ]] || END_WAIT=10 # it reaches $(( )), which would run a crafted value
 # Claude Code's input line as capture-pane shows it: U+276F and a no-break
 # space at the left edge, a rule (U+2500) on the lines above and below.
 PROMPT_MARK=$'\xe2\x9d\xaf\xc2\xa0'
@@ -222,6 +223,16 @@ fleet_pane() { # socket pane pid start
     fail "That session is not in klepsydra's tmux, so klepsydra will not type into it."
 }
 
+# A pane in copy mode swallows keys as copy-mode commands, so leave it first.
+leave_modes() {
+  local _
+  for _ in $(seq 5); do
+    [[ $(tmux "${t[@]}" display-message -p -t "$pane" '#{pane_in_mode}' 2>/dev/null) == 1 ]] || return 0
+    tmux "${t[@]}" send-keys -t "$pane" -X cancel 2>/dev/null || return 0
+  done
+  fail "The session's pane is in a tmux mode that would not close. Open its terminal to end it."
+}
+
 keys() { tmux "${t[@]}" send-keys -t "$pane" "$@" 2>/dev/null || fail "tmux could not send keys to the session."; }
 
 # Whether PANE's input line reads exactly /exit, between its rules: not a line
@@ -243,6 +254,7 @@ end_session() { # socket pane pid start
   local socket=$1 pane=$2 pid=$3 start=$4 session _
   local -a t=()
   fleet_pane "$@"
+  leave_modes
   # Esc closes a dialog, declines a pending permission or stops a turn, so
   # Enter cannot answer one; Ctrl+C then clears a draft (Up brings it back).
   keys Escape
@@ -250,10 +262,11 @@ end_session() { # socket pane pid start
   keys C-c
   sleep 0.5
   keys -l /exit
-  for _ in $(seq 20); do reads_exit && break; sleep 0.1; done
-  if ! reads_exit; then
+  local reads=0
+  for _ in $(seq 20); do reads_exit && { reads=1; break; }; sleep 0.1; done
+  if (( ! reads )); then
     keys C-c
-    fail "The session's prompt did not read /exit, so Enter was not pressed. Open its terminal to end it."
+    fail "The session's prompt did not read /exit, so Enter was not pressed. Its prompt may be in vim editor mode, or Claude Code's layout changed. Open its terminal to end it."
   fi
   keys Enter
   for _ in $(seq $((END_WAIT * 10))); do
@@ -267,6 +280,7 @@ interrupt() { # socket pane pid start
   local socket=$1 pane=$2 session
   local -a t=()
   fleet_pane "$@"
+  leave_modes
   keys Escape
   printf 'Sent Esc to the session.\n'
 }

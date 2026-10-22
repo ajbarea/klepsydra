@@ -513,7 +513,12 @@ menu.addEventListener("keydown", (e) => {
   const at = items.indexOf(document.activeElement);
   const to = { ArrowDown: (at + 1) % items.length, ArrowUp: (at - 1 + items.length) % items.length, Home: 0, End: items.length - 1 }[e.key];
   if (to !== undefined) items[to].focus();
-  else if (e.key === "Escape" || e.key === "Tab") closeMenu(true);
+  else if (e.key === "Tab") {
+    // APG: Tab closes the menu and moves on. The menu sits outside the card, so focus goes back to its
+    // button first and the browser's own Tab step leaves from there.
+    closeMenu(true);
+    return;
+  } else if (e.key === "Escape") closeMenu(true);
   else return;
   e.preventDefault();
   e.stopPropagation();
@@ -567,10 +572,10 @@ dialog.addEventListener("close", () => {
   else if (usable(who.opener)) who.opener.focus({ preventScroll: true });
 });
 
-function hideEnding(el) {
+function hideEnding(el, menuOff = false) {
   el.querySelector(".ending").hidden = true;
   el.querySelector(".ending-live").textContent = "";
-  setOff(el.querySelector(".menu"), false);
+  setOff(el.querySelector(".menu"), menuOff);
 }
 
 function beginEnd({ id, opener }) {
@@ -586,12 +591,14 @@ function beginEnd({ id, opener }) {
     onSend: () => {
       const now = cardEl(id);
       if (!now) return;
-      hideEnding(now);
+      hideEnding(now, true); // the menu stays off until end_session answers
       say(now.querySelector(".note"), `Ending ${c.name}…`, 0);
     },
     onDone: ({ text }) => {
       const now = cardEl(id);
-      if (now) say(now.querySelector(".note"), text);
+      if (!now) return;
+      setOff(now.querySelector(".menu"), false);
+      say(now.querySelector(".note"), text);
     },
   });
   if (!started) return;

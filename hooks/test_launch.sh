@@ -253,7 +253,7 @@ check "end: the process is gone" "$(alive "$p")" "gone"
 : >"$work/fake.log"; p=$(fake FAKE_DROP=x)
 out=$(send end "$p" 2>&1); rc=$?
 check "lost keys: exit 1" "$rc" "1"
-check "lost keys: says so" "$out" "The session's prompt did not read /exit, so Enter was not pressed. Open its terminal to end it."
+check "lost keys: says so" "$out" "The session's prompt did not read /exit, so Enter was not pressed. Its prompt may be in vim editor mode, or Claude Code's layout changed. Open its terminal to end it."
 check "lost keys: Enter never pressed" "$(grep -c '^submit:' "$work/fake.log")" "0"
 check "lost keys: the line is cleared" "$(tail -1 "$work/fake.log")" "ctrl-c"
 check "lost keys: still running" "$(alive "$p")" "alive"
@@ -272,8 +272,31 @@ check "interrupt: says so" "$out" "Sent Esc to the session."
 check "interrupt: Esc alone" "$(paste -sd' ' "$work/fake.log")" "esc"
 check "interrupt: still running" "$(alive "$p")" "alive"
 
+# A pane in copy mode would eat the keys as copy-mode commands.
+: >"$work/fake.log"; p=$(fake)
+t copy-mode -t "$p"
+check "copy mode: the pane is in it" "$(t display -p -t "$p" '#{pane_in_mode}')" "1"
+out=$(send end "$p" 2>&1); rc=$?
+check "copy mode, end: exit 0" "$rc" "0"
+check "copy mode, end: says so" "$out" "Ended the session."
+check "copy mode, end: the keys reached the session" "$(paste -sd' ' "$work/fake.log")" "esc ctrl-c submit:/exit"
+: >"$work/fake.log"; p=$(fake)
+t copy-mode -t "$p"
+out=$(send interrupt "$p" 2>&1); rc=$?
+check "copy mode, interrupt: exit 0" "$rc" "0"
+check "copy mode, interrupt: Esc reached the session" "$(paste -sd' ' "$work/fake.log")" "esc"
+check "copy mode, interrupt: out of copy mode" "$(t display -p -t "$p" '#{pane_in_mode}')" "0"
+
+# KLEPSYDRA_END_WAIT reaches arithmetic: only 1 to 3 digits count, else 10 s.
+: >"$work/fake.log"; p=$(fake FAKE_STAY=1)
+rm -f "$work/crafted"
+out=$(KLEPSYDRA_END_WAIT="a[\$(touch $work/crafted)]" send end "$p" 2>&1); rc=$?
+check "END_WAIT crafted: no command ran" "$([[ -e $work/crafted ]] && echo ran || echo none)" "none"
+check "END_WAIT crafted: waits out and says so" "$out" "Sent /exit, but the session is still running. Open its terminal to see why."
+t kill-pane -t "$p"
+
 # Every refusal Jump makes, End and Interrupt make too, before any key.
-: >"$work/fake.log"
+: >"$work/fake.log"; p=$(fake)
 ppid_=$(pane_pid "$p"); pst=$(pstart "$ppid_")
 for verb in end interrupt; do
   out=$(bash "$launch" "$verb" "$socket" "$p" "$spid" "$sstart" 2>&1)

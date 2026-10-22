@@ -226,11 +226,13 @@ test("the script and the app name the fleet tab alike", () => {
   assert.equal(rust[1], sh[1]);
 });
 
-test("the script and the app name the fleet socket alike", () => {
+test("the script, the app and the wall name the fleet socket alike", () => {
   const rust = read(LAUNCHER).match(/pub const FLEET_SOCKET: &str = "([^"]+)";/);
   const sh = read("hooks/klepsydra-launch.sh").match(/^SOCKET_NAME=\$\{KLEPSYDRA_TMUX_SOCKET:-([^}]+)\}/m);
-  assert.ok(rust && sh, "socket name constants not found");
+  const js = read("src/fleet/end.js").match(/export const FLEET_SOCKET = "([^"]+)";/);
+  assert.ok(rust && sh && js, "socket name constants not found");
   assert.equal(rust[1], sh[1]);
+  assert.equal(js[1], rust[1], "end.js's FLEET_SOCKET decides who gets a menu, so it must match launch.rs");
 });
 
 test("the launcher check catches a shell hop or an aliased Command", () => {

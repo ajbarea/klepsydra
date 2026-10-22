@@ -902,6 +902,7 @@ window.__TAURI__ = { core: {
       return Promise.resolve();
     }
     if (cmd === 'get_wall_density') return Promise.resolve('auto');
+    if (cmd === 'end_session' && window.__hold) { window.__calls.push([cmd, args]); return window.__hold; }
     window.__calls.push([cmd, args]);
     return Promise.resolve('ok');
   },
@@ -987,6 +988,19 @@ def menu_shown_only_where_it_acts(wall):
     page.keyboard.press("Escape")
     back = page.evaluate("[document.activeElement === document.querySelector('.menu[aria-expanded=false]:focus'), document.getElementById('session-menu').hidden]")
     wall.check(back == [True, True], "Esc closes the menu and returns focus to its button", back)
+    # Tab closes the menu and lets focus move on from the button (APG), never trapped or lost to the body.
+    for key_, want in (("Tab", "after"), ("Shift+Tab", "before")):
+        open_menu(page, card)
+        page.keyboard.press(key_)
+        moved = page.evaluate(
+            """() => {
+          const b = document.querySelector('.menu[aria-expanded=false]');
+          const a = document.activeElement;
+          return [document.getElementById('session-menu').hidden, a !== document.body, a.isConnected && !a.closest('#session-menu'), a.className || a.tagName];
+        }"""
+        )
+        button_class = page.evaluate("document.activeElement.className")
+        wall.check(moved[0] and moved[1] and moved[2] and button_class != "menu", f"{key_} closes the menu and focus moves on from its button", moved)
     btn.click()
     page.mouse.click(5, 5)
     shut = page.evaluate("document.getElementById('session-menu').hidden")
@@ -1096,6 +1110,39 @@ def deliberate_end_sends_once(wall):
     wall.check(not still and sent == [["end_session", {"id": key}]], "after 5 s exactly one end_session goes out, with the card's id", [still, sent])
     note = card.locator(".note").inner_text()
     wall.check(note == "ok", "its result shows in the card's note", note)
+    page.close()
+
+
+def menu_off_until_the_call_answers(wall):
+    """The card's menu stays disabled from the undo window's end until end_session answers."""
+    page = open_app(wall)
+    page.evaluate("window.__hold = new Promise((r) => { window.__release = r; })")
+    card = page.locator(WORKING_CARD).first
+    key = card.evaluate("c => c.dataset.key")
+    name = card.locator(".name").inner_text()
+    card = page.locator(f'.card[data-key="{key}"]')
+    open_menu(page, card)
+    page.get_by_role("menuitem", name="End session…").click()
+    page.get_by_role("button", name=f"End {name}").click()
+    page.wait_for_timeout(5600)
+    state = lambda: page.evaluate(
+        f"""() => {{
+      const c = document.querySelector('.card[data-key="{key}"]');
+      return [c.querySelector('.menu').getAttribute('aria-disabled'), c.querySelector('.ending').hidden, c.querySelector('.note').textContent];
+    }}"""
+    )
+    sent = state()
+    menu_of(card).click(force=True)
+    opened = page.evaluate("!document.getElementById('session-menu').hidden")
+    wall.check(
+        sent[0] == "true" and sent[1] and sent[2] == f"Ending {name}…" and not opened and len(page.evaluate(ENDS)) == 1,
+        "while end_session runs the card's menu stays disabled and will not open",
+        [sent, opened],
+    )
+    page.evaluate("window.__release('Ended')")
+    page.wait_for_timeout(400)
+    after = state()
+    wall.check(after[0] in (None, "false") and after[2] == "Ended", "the menu comes back once end_session answers", after)
     page.close()
 
 
@@ -1219,6 +1266,7 @@ def main() -> int:
             menu_shown_only_where_it_acts,
             one_click_or_key_never_ends,
             deliberate_end_sends_once,
+            menu_off_until_the_call_answers,
             undo_sends_nothing,
             stray_enter_on_undo_undoes,
             interrupt_sends_once,

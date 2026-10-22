@@ -471,6 +471,10 @@ an **Undo** button. Only when the five seconds run out does klepsydra type
 `/exit` into the pane. A click or a key never ends a session on its own, and a
 card that disappears, or leaves klepsydra's tmux, cancels its pending end.
 
+One known limit: with Claude Code's vim editor mode on, the prompt may not
+read `/exit` the way klepsydra expects, so Enter is not pressed and the card
+says so; end such a session from its own terminal.
+
 The card refuses, with the reason, in three cases. The session is outside
 klepsydra's tmux, so its pane is not ours to type into. The prompt did not
 read exactly `/exit`, so Enter was not pressed and the line was cleared. Or the

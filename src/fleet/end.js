@@ -16,8 +16,13 @@ export const FLEET_SOCKET = "klepsydra";
  * Interrupt only while it works.
  */
 export function sessionActions(s) {
-  const fleet = typeof s?.tmux?.socket === "string" && s.tmux.socket.split("/").pop() === FLEET_SOCKET;
-  const menu = s?.status !== "ended" && fleet && Boolean(s?.claude);
+  const uint = (n, max) => Number.isInteger(n) && n >= 0 && n <= max;
+  const str = (v) => typeof v === "string";
+  // launch::target() needs these, and pane_args() refuses a zero pid.
+  const named = str(s?.tmux?.socket) && str(s?.tmux?.pane) && str(s?.distro);
+  const known = uint(s?.claude?.pid, 0xffff_ffff) && s.claude.pid > 0 && uint(s?.claude?.start, Number.MAX_SAFE_INTEGER);
+  const fleet = named && s.tmux.socket.split("/").pop() === FLEET_SOCKET;
+  const menu = s?.status !== "ended" && fleet && known;
   return { menu, interrupt: menu && s.status === "working" };
 }
 
@@ -48,17 +53,22 @@ export const endingAnnouncement = (name) => `Ending ${name} in ${UNDO_MS / SECON
 export function createEnder({ invoke, timers = { setTimeout: (f, ms) => setTimeout(f, ms), clearTimeout: (t) => clearTimeout(t) } }) {
   const pending = new Map(); // id -> { timers }
 
+  // The end stays pending until the call answers: no second end and no menu meanwhile.
   function expire(id, { onSend, onDone }) {
-    pending.delete(id);
+    pending.get(id).sent = true;
     onSend?.();
+    const settle = (result) => {
+      pending.delete(id);
+      onDone(result);
+    };
     return Promise.resolve()
       .then(() => invoke("end_session", { id }))
-      .then((text) => onDone({ ok: true, text }), (err) => onDone({ ok: false, text: String(err) }));
+      .then((text) => settle({ ok: true, text }), (err) => settle({ ok: false, text: String(err) }));
   }
 
   return {
     pending: (id) => pending.has(id),
-    /** Open the undo window for `id`; false when one is already open. `onTick(secondsLeft)` runs now and each second; `onSend()` as the call goes out, `onDone({ok, text})` after it. */
+    /** Open the undo window for `id`; false when one is already open. `onTick(secondsLeft)` runs now and each second; `onSend()` as the call goes out, `onDone({ok, text})` once it answers; the end is pending until then. */
     start(id, { onTick, onSend, onDone }) {
       if (pending.has(id)) return false;
       const seconds = UNDO_MS / SECOND_MS;
@@ -73,11 +83,12 @@ export function createEnder({ invoke, timers = { setTimeout: (f, ms) => setTimeo
     /** Close the window with no call; false when none was open. */
     cancel(id) {
       const entry = pending.get(id);
-      if (!entry) return false;
+      if (!entry || entry.sent) return false;
       for (const t of entry.timers) timers.clearTimeout(t);
       pending.delete(id);
       return true;
     },
-    ids: () => [...pending.keys()],
+    /** The ends still inside their window; one already sent is past cancelling. */
+    ids: () => [...pending].filter(([, e]) => !e.sent).map(([id]) => id),
   };
 }

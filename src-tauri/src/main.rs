@@ -800,6 +800,7 @@ fn with_state<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R
         .manage(Requested::default())
         .manage(Layouts::default())
         .manage(launch::InFlight::default())
+        .manage(launch::PaneFlight::default())
 }
 
 fn main() {
