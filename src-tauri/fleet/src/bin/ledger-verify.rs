@@ -2,8 +2,8 @@
 //!
 //! Sets a day's ledger against the transcripts Claude Code wrote, and exits 1
 //! when exports were lost: a session's ledger is more than 2% lower on
-//! cache_read or cache_creation, or a session missing from it ran while the
-//! receiver was down. See `reconcile`.
+//! cache_read or cache_creation, or a session missing from it ran only while
+//! the receiver was down. See `reconcile`.
 
 use std::path::PathBuf;
 use std::process::ExitCode;

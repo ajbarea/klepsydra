@@ -130,6 +130,74 @@ fn a_session_with_no_ledger_entry_during_a_receiver_gap_exits_1() {
     );
 }
 
+/// 16:00Z is noon in New York; the receiver restarted then.
+const NOON_GAP: &str = r#"{"version":1,"gaps":[{"from":1791302400,"to":1791302460}]}"#;
+
+/// A projects folder whose one session, `id`, has a message at each of `at`.
+fn projects(id: &str, at: &[&str]) -> PathBuf {
+    let dir = std::env::temp_dir().join(format!("klepsydra-verify-p-{id}-{}", std::process::id()));
+    let file = dir.join("projects/p").join(format!("{id}.jsonl"));
+    std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+    let lines: Vec<String> = at
+        .iter()
+        .enumerate()
+        .map(|(n, t)| {
+            format!(
+                r#"{{"type":"assistant","timestamp":"{t}","sessionId":"{id}","message":{{"id":"m{n}","usage":{{"input_tokens":1,"output_tokens":1,"cache_read_input_tokens":100,"cache_creation_input_tokens":0}}}}}}"#
+            )
+        })
+        .collect();
+    std::fs::write(&file, lines.join("\n") + "\n").unwrap();
+    dir
+}
+
+#[test]
+fn a_short_gap_in_a_long_session_exits_0_and_a_session_inside_it_exits_1() {
+    for (id, at, code, line) in [
+        (
+            "long",
+            [
+                "2026-10-06T13:00:00Z",
+                "2026-10-06T16:00:30Z",
+                "2026-10-06T21:00:00Z",
+            ],
+            0,
+            "0 lost exports",
+        ),
+        (
+            "inside",
+            [
+                "2026-10-06T16:00:10Z",
+                "2026-10-06T16:00:30Z",
+                "2026-10-06T16:00:50Z",
+            ],
+            1,
+            "inside (receiver down)",
+        ),
+    ] {
+        let ledger = without_session_4(id, Some(NOON_GAP));
+        let root = projects(id, &at);
+        let out = Command::new(env!("CARGO_BIN_EXE_ledger-verify"))
+            .arg("--ledger")
+            .arg(&ledger)
+            .args([
+                "--day",
+                "2026-10-06",
+                "--tz",
+                "America/New_York",
+                "--projects",
+            ])
+            .arg(root.join("projects"))
+            .output()
+            .unwrap();
+        std::fs::remove_dir_all(&ledger).unwrap();
+        std::fs::remove_dir_all(&root).unwrap();
+        let text = String::from_utf8_lossy(&out.stdout);
+        assert_eq!(out.status.code(), Some(code), "{id}: {text}");
+        assert!(text.contains(line), "{id}: {text}");
+    }
+}
+
 #[test]
 fn a_state_file_it_cannot_read_exits_2_naming_it() {
     let dir = without_session_4("bad-state", Some("{not json"));

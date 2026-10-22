@@ -1,11 +1,11 @@
 //! Checking a day's ledger against what Claude Code wrote to its own
 //! transcripts: the transcripts hold the usage of every API call the session
 //! made, so a session whose ledger counts fewer cache tokens than they do lost
-//! exports, and so did one missing from the ledger that ran while the
+//! exports, and so did one missing from the ledger that ran only while the
 //! receiver was down. The ledger counts more, as it also sees calls that
 //! never reach a transcript, so higher is only reported.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io::BufRead;
 use std::path::{Path, PathBuf};
 
@@ -13,12 +13,18 @@ use jiff::tz::TimeZone;
 use jiff::Timestamp;
 use serde::Deserialize;
 
-use crate::ledger::{day_name, Day, Gap, Tokens};
+use crate::ledger::{day_name, Day, Gap, Tokens, ALIVE_EVERY};
 
 /// How far below the transcripts the ledger may be on cache tokens before the
 /// session is flagged, in percent. Rounding and the odd message that never
 /// finished streaming stay inside it.
 pub const LOST_PERCENT: u64 = 2;
+
+/// How far outside a receiver gap a message may lie and still have been
+/// exported during it: a gap's ends are known to `ALIVE_EVERY`, and a
+/// message's export follows it within one interval.
+// The interval is OTEL_METRIC_EXPORT_INTERVAL=15000 ms; 60 s rounds it up with margin.
+pub const GAP_SLACK: i64 = ALIVE_EVERY + 60;
 
 #[derive(Deserialize)]
 struct Line {
@@ -77,8 +83,8 @@ fn add(a: &mut Tokens, b: &Tokens) {
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct Transcripts {
     pub sessions: BTreeMap<String, Tokens>,
-    /// Per session, the epoch seconds of its first and last counted message.
-    pub spans: BTreeMap<String, (i64, i64)>,
+    /// Per session, the epoch seconds of each counted message line.
+    pub times: BTreeMap<String, BTreeSet<i64>>,
     /// Files read.
     pub files: usize,
     /// Lines that were not JSON, such as one cut off mid-write.
@@ -170,13 +176,7 @@ pub fn read_transcripts(roots: &[PathBuf], day: &str, tz: &TimeZone) -> Transcri
                     continue;
                 }
                 let session = line.session_id.unwrap_or_else(|| file_session.clone());
-                out.spans
-                    .entry(session.clone())
-                    .and_modify(|(first, last)| {
-                        *first = (*first).min(at);
-                        *last = (*last).max(at);
-                    })
-                    .or_insert((at, at));
+                out.times.entry(session.clone()).or_default().insert(at);
                 let tokens = usage.tokens();
                 messages
                     .entry((session, id))
@@ -197,8 +197,8 @@ pub struct Row {
     pub session: String,
     pub ledger: Option<Tokens>,
     pub transcript: Option<Tokens>,
-    /// Missing from the ledger, its transcript messages overlap a time the
-    /// receiver was not listening.
+    /// Missing from the ledger, every one of its transcript messages lies in
+    /// a time the receiver was not listening, give or take `GAP_SLACK`.
     pub receiver_down: bool,
 }
 
@@ -285,8 +285,12 @@ pub fn compare(day: &Day, transcripts: Transcripts, gaps: &[Gap]) -> Report {
             },
         );
     }
+    let in_gap = |at: i64| {
+        gaps.iter()
+            .any(|g| g.overlaps(at - GAP_SLACK, at + GAP_SLACK))
+    };
     for (id, t) in transcripts.sessions {
-        let span = transcripts.spans.get(&id).copied();
+        let times = transcripts.times.get(&id);
         let row = rows.entry(id.clone()).or_insert_with(|| Row {
             session: id,
             ledger: None,
@@ -295,7 +299,7 @@ pub fn compare(day: &Day, transcripts: Transcripts, gaps: &[Gap]) -> Report {
         });
         row.transcript = Some(t);
         row.receiver_down = row.ledger.is_none()
-            && span.is_some_and(|(from, to)| gaps.iter().any(|g| g.overlaps(from, to)));
+            && times.is_some_and(|ts| !ts.is_empty() && ts.iter().all(|&at| in_gap(at)));
     }
     Report {
         day: day.day.clone(),
@@ -449,17 +453,16 @@ mod tests {
     }
 
     #[test]
-    fn each_session_keeps_its_first_and_last_message_time() {
+    fn each_session_keeps_its_message_times() {
         let at = |s: &str| s.parse::<Timestamp>().unwrap().as_second();
         let t = recorded();
         // Its assistant messages, not the user's first line at 10:47:49Z.
-        assert_eq!(
-            t.spans[&id(4)],
-            (at("2026-10-06T10:47:51Z"), at("2026-10-06T10:47:55Z"))
-        );
+        let four = &t.times[&id(4)];
+        assert_eq!(four.first(), Some(&at("2026-10-06T10:47:51Z")));
+        assert_eq!(four.last(), Some(&at("2026-10-06T10:47:55Z")));
         // Only the messages counted on the day: session 3's 03:59:59Z line
         // falls on Oct 5 in New York.
-        assert_eq!(t.spans[&id(3)].0, at("2026-10-06T04:00:00Z"));
+        assert_eq!(t.times[&id(3)].first(), Some(&at("2026-10-06T04:00:00Z")));
     }
 
     #[test]
@@ -707,38 +710,86 @@ mod tests {
     #[test]
     fn a_session_missing_from_the_ledger_during_a_gap_lost_its_exports() {
         let day = day_of(&[("ok", tokens(1, 1, 100, 100))]);
+        let times = |ts: &[i64]| ts.iter().copied().collect::<BTreeSet<_>>();
         let transcripts = || Transcripts {
             sessions: BTreeMap::from([
                 ("ok".to_string(), tokens(1, 1, 100, 100)),
                 ("down".to_string(), tokens(1, 1, 50_000, 9_000)),
                 ("before".to_string(), tokens(1, 1, 7, 0)),
+                ("across".to_string(), tokens(1, 1, 7, 0)),
             ]),
-            spans: BTreeMap::from([
-                ("ok".to_string(), (100, 900)),
-                ("down".to_string(), (500, 650)),
-                ("before".to_string(), (100, 199)),
+            times: BTreeMap::from([
+                ("ok".to_string(), times(&[100, 9_000])),
+                ("down".to_string(), times(&[5_000, 6_000])),
+                ("before".to_string(), times(&[100, 1_000])),
+                ("across".to_string(), times(&[1_000, 5_000])),
             ]),
-            files: 3,
+            files: 4,
             malformed: 0,
         };
-        // The receiver was down from 200 to 600: "down" ran into it.
-        let gaps = [Gap { from: 200, to: 600 }];
+        // The receiver was down from 4000 to 7000: all of "down" ran in it,
+        // only part of "across".
+        let gaps = [Gap {
+            from: 4_000,
+            to: 7_000,
+        }];
         let report = compare(&day, transcripts(), &gaps);
         let names = |rows: Vec<&Row>| rows.iter().map(|r| r.session.clone()).collect::<Vec<_>>();
         assert_eq!(names(report.lost()), ["down"]);
-        assert_eq!(names(report.no_telemetry()), ["before"]);
+        assert_eq!(names(report.no_telemetry()), ["across", "before"]);
         let table = report.render();
         assert!(table.contains("down  LOST (receiver down)"), "{table}");
         assert!(table.contains("  down (receiver down)"), "{table}");
         assert!(
-            table.contains("1 lost exports") && table.contains("1 sent no telemetry"),
+            table.contains("1 lost exports") && table.contains("2 sent no telemetry"),
             "{table}"
         );
-        // A gap ends inclusive; with none, it is a session that never exported.
-        let edge = compare(&day, transcripts(), &[Gap { from: 650, to: 700 }]);
-        assert_eq!(names(edge.lost()), ["down"]);
+        // With no gap, it is a session that never exported.
         let none = compare(&day, transcripts(), &[]);
         assert!(none.lost().is_empty());
-        assert_eq!(names(none.no_telemetry()), ["before", "down"]);
+        assert_eq!(names(none.no_telemetry()), ["across", "before", "down"]);
+    }
+
+    /// One session missing from the ledger, its messages at `at`.
+    fn missing(at: &[i64]) -> Transcripts {
+        Transcripts {
+            sessions: BTreeMap::from([("s".to_string(), tokens(0, 0, 1000, 0))]),
+            times: BTreeMap::from([("s".to_string(), at.iter().copied().collect())]),
+            ..Transcripts::default()
+        }
+    }
+
+    #[test]
+    fn a_short_gap_in_a_long_session_is_not_a_lost_session() {
+        let day = day_of(&[]);
+        // 09:00 to 17:00 hourly; the receiver restarted at noon.
+        let nine = 1_000_000;
+        let hourly: Vec<i64> = (0..=8).map(|h| nine + h * 3600).collect();
+        let noon = nine + 3 * 3600;
+        let gaps = [Gap {
+            from: noon,
+            to: noon + 60,
+        }];
+        let r = compare(&day, missing(&hourly), &gaps);
+        assert!(r.lost().is_empty(), "exit 0");
+        assert!(r.rows[0].no_telemetry());
+        // A session that ran only inside the gap lost every export.
+        let r = compare(&day, missing(&[noon + 10, noon + 50]), &gaps);
+        assert_eq!(r.rows[0].lost_reason(), Some("receiver down"), "exit 1");
+    }
+
+    #[test]
+    fn a_message_within_the_slack_of_a_gap_counts_as_in_it() {
+        let day = day_of(&[]);
+        let gaps = [Gap {
+            from: 10_000,
+            to: 10_060,
+        }];
+        let lost = |at: i64| !compare(&day, missing(&[at]), &gaps).lost().is_empty();
+        assert!(lost(10_060 + GAP_SLACK));
+        assert!(!lost(10_060 + GAP_SLACK + 1));
+        assert!(lost(10_000 - GAP_SLACK));
+        assert!(!lost(10_000 - GAP_SLACK - 1));
+        assert_eq!(GAP_SLACK, 120);
     }
 }
