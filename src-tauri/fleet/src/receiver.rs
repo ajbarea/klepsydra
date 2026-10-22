@@ -130,8 +130,8 @@ fn ingest(signal: Signal, body: &[u8], ledger: &Shared, log: &Log) -> StatusCode
             tally.no_session, tally.future
         ));
     }
-    // A repeat still moves the session's cumulative mark.
-    if tally.counted > 0 || tally.duplicate > 0 {
+    // A seeded baseline is saved too, or a restart counts its total again.
+    if tally.counted > 0 || tally.seeded > 0 {
         if let Err(e) = l.save() {
             log(format!("otel: ledger not saved: {e}"));
         }
@@ -571,10 +571,12 @@ mod tests {
         assert_eq!(t.guardrail_rejects, 1);
     }
 
-    #[test]
-    fn a_counted_cumulative_export_is_on_disk_when_it_is_answered() {
-        let dir = crate::scan::tests::Scratch::new("receiver-saves");
-        let (l, _) = Ledger::open(dir.0.clone(), unix_now(), jiff::tz::TimeZone::UTC);
+    /// Post one cumulative export of 7 input tokens of "s1" to a receiver on
+    /// the ledger in `dir`, reopen the ledger as after a crash, and return it
+    /// with what a repeat of the export adds there.
+    fn post_then_reopen(dir: &crate::scan::tests::Scratch) -> (Tally, Ledger) {
+        let utc = || jiff::tz::TimeZone::UTC;
+        let (l, _) = Ledger::open(dir.0.clone(), unix_now(), utc());
         let ledger: Shared = Arc::new(Mutex::new(l));
         let log: Log = Arc::new(|_| {});
         let any = SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0);
@@ -583,12 +585,33 @@ mod tests {
         let ns = |n: u64| (n * 1_000_000_000).to_string();
         let body = serde_json::json!({"resourceMetrics":[{"scopeMetrics":[{"metrics":[{"name":"claude_code.token.usage","sum":{"aggregationTemporality":2,"dataPoints":[{"attributes":[{"key":"session.id","value":{"stringValue":"s1"}},{"key":"type","value":{"stringValue":"input"}}],"startTimeUnixNano":ns(now - 60),"timeUnixNano":ns(now),"asDouble":7}]}}]}]}]});
         assert_eq!(post(addr, "/v1/metrics", body.to_string().as_bytes()), 200);
-        // A fresh open, as after a crash, holds the baseline: a repeat is a duplicate.
-        let (mut again, _) = Ledger::open(dir.0.clone(), unix_now(), jiff::tz::TimeZone::UTC);
-        let points = otel::metrics(&body);
-        let t = again.record_metrics(&points, unix_now());
+        let (mut again, problems) = Ledger::open(dir.0.clone(), unix_now(), utc());
+        assert!(problems.is_empty(), "{problems:?}");
+        let t = again.record_metrics(&otel::metrics(&body), unix_now());
+        (t, again)
+    }
+
+    #[test]
+    fn a_counted_cumulative_export_is_on_disk_when_it_is_answered() {
+        let dir = crate::scan::tests::Scratch::new("receiver-saves");
+        let (t, again) = post_then_reopen(&dir);
+        // The baseline held: a repeat is a duplicate.
         assert_eq!((t.counted, t.duplicate), (0, 1));
         assert_eq!(again.session("s1").unwrap().tokens.input, 7);
+    }
+
+    #[test]
+    fn a_seeded_baseline_is_on_disk_when_it_is_answered() {
+        let dir = crate::scan::tests::Scratch::new("receiver-seeds");
+        let today = crate::ledger::day_name(unix_now(), &jiff::tz::TimeZone::UTC);
+        dir.write(
+            &format!("{today}.json"),
+            r#"{"sessions":{"s1":{"tokens":{"input":3}}}}"#,
+        );
+        dir.write(crate::ledger::STATE_FILE, "{not json");
+        let (t, again) = post_then_reopen(&dir);
+        assert_eq!((t.counted, t.duplicate), (0, 1));
+        assert_eq!(again.day().sessions["s1"].tokens.input, 3);
     }
 
     /// Every nanosecond timestamp, and the event.sequence moved by the same

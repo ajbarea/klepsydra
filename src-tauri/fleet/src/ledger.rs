@@ -4,7 +4,7 @@
 //! hook or a config rule turned down. Kept in memory for the fleet view and
 //! on disk as one ledger file per local calendar day.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
@@ -193,9 +193,16 @@ struct Baseline {
 /// seconds. A session alive during it may have lost exports.
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
-struct Gap {
-    from: i64,
-    to: i64,
+pub struct Gap {
+    pub from: i64,
+    pub to: i64,
+}
+
+impl Gap {
+    /// Whether `[from, to]` overlaps it, both ends included.
+    pub fn overlaps(&self, from: i64, to: i64) -> bool {
+        from <= self.to && to >= self.from
+    }
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
@@ -207,8 +214,8 @@ struct State {
     /// Counted keys and when they were counted, in epoch seconds.
     seen: HashMap<u64, i64>,
     series: HashMap<u64, Baseline>,
-    /// Per session, the receiver time of its latest cumulative point, counted
-    /// or recognised as a repeat: its running total reached us then.
+    /// Per session, the receiver time of its latest counted cumulative point:
+    /// its running total reached us then.
     cumulative_at: BTreeMap<String, i64>,
     /// When the receiver was down, oldest first.
     gaps: Vec<Gap>,
@@ -224,8 +231,12 @@ pub struct Tally {
     pub future: usize,
     /// Points the ledger would count but for a missing `session.id`.
     pub no_session: usize,
-    /// Names the ledger does not count, and values that are not numbers.
+    /// Names the ledger does not count, and values that are not numbers or
+    /// are negative.
     pub ignored: usize,
+    /// Cumulative points that only set a baseline: their running total was
+    /// counted before the state file was lost.
+    pub seeded: usize,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -444,24 +455,65 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
 /// after setting an unreadable file aside as `<name>.bad`, so a write never
 /// replaces data it could not read without keeping a copy.
 fn load<T: Default + for<'de> Deserialize<'de>>(path: &Path, problems: &mut Vec<String>) -> T {
+    load_checked(path, problems).0
+}
+
+/// `load`, and whether a file was there that could not be read.
+fn load_checked<T: Default + for<'de> Deserialize<'de>>(
+    path: &Path,
+    problems: &mut Vec<String>,
+) -> (T, bool) {
     let text = match std::fs::read_to_string(path) {
         Ok(t) => t,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return T::default(),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return (T::default(), false),
         Err(e) => {
             problems.push(format!("{}: {e}", path.display()));
-            return T::default();
+            return (T::default(), true);
         }
     };
     match serde_json::from_str(&text) {
-        Ok(v) => v,
+        Ok(v) => (v, false),
         Err(e) => {
             let mut aside = path.as_os_str().to_owned();
             aside.push(".bad");
             let _ = std::fs::rename(path, &aside);
             problems.push(format!("{} set aside: {e}", path.display()));
-            T::default()
+            (T::default(), true)
         }
     }
+}
+
+/// The receiver gaps recorded in `dir`'s state file, oldest first; none when
+/// there is no state file. It only reads: an unreadable file is an error and
+/// stays where it is.
+pub fn read_gaps(dir: &Path) -> Result<Vec<Gap>, String> {
+    let path = dir.join(STATE_FILE);
+    let failed = |e: &dyn std::fmt::Display| format!("{}: {e}", path.display());
+    match std::fs::read_to_string(&path) {
+        Ok(text) => serde_json::from_str::<State>(&text)
+            .map(|s| s.gaps)
+            .map_err(|e| failed(&e)),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
+        Err(e) => Err(failed(&e)),
+    }
+}
+
+/// Every session in `dir`'s readable day files.
+fn day_file_sessions(dir: &Path) -> BTreeSet<String> {
+    let mut out = BTreeSet::new();
+    for e in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+        let name = e.file_name().to_string_lossy().into_owned();
+        if !name.ends_with(".json") || file_day(&name).is_none() {
+            continue;
+        }
+        let Ok(text) = std::fs::read_to_string(e.path()) else {
+            continue;
+        };
+        if let Ok(day) = serde_json::from_str::<Day>(&text) {
+            out.extend(day.sessions.into_keys());
+        }
+    }
+    out
 }
 
 /// The ledger: today's file, lifetime totals, and what stops a retried
@@ -474,6 +526,9 @@ pub struct Ledger {
     receiver: Option<Receiver>,
     /// When `alive` was last written by this run.
     alive_at: Option<i64>,
+    /// The sessions in the day files when the state file could not be read,
+    /// so their cumulative baselines were lost. Kept in memory only.
+    reseed: BTreeSet<String>,
 }
 
 /// Whether the OTLP receiver is listening, for the wall to show.
@@ -542,6 +597,7 @@ impl Ledger {
             },
             receiver: None,
             alive_at: None,
+            reseed: BTreeSet::new(),
         }
     }
 
@@ -557,8 +613,13 @@ impl Ledger {
         if let Err(e) = std::fs::create_dir_all(&dir) {
             problems.push(format!("{}: {e}", dir.display()));
         }
-        let mut state: State = load(&dir.join(STATE_FILE), &mut problems);
+        let (mut state, lost): (State, bool) = load_checked(&dir.join(STATE_FILE), &mut problems);
         state.version = VERSION;
+        let reseed = if lost {
+            day_file_sessions(&dir)
+        } else {
+            BTreeSet::new()
+        };
         let mut ledger = Ledger {
             dir: Some(dir),
             tz,
@@ -566,8 +627,13 @@ impl Ledger {
             state,
             receiver: None,
             alive_at: None,
+            reseed,
         };
         ledger.start_day(now, &mut problems);
+        if lost {
+            // Whatever ran before now may have lost tokens with the baselines.
+            ledger.state.gaps.push(Gap { from: 0, to: now });
+        }
         (ledger, problems)
     }
 
@@ -635,7 +701,7 @@ impl Ledger {
 
     /// Whether `[from, to]` overlaps a time the receiver was not listening.
     pub fn overlaps_gap(&self, from: i64, to: i64) -> bool {
-        self.state.gaps.iter().any(|g| from <= g.to && to >= g.from)
+        self.state.gaps.iter().any(|g| g.overlaps(from, to))
     }
 
     /// Whether `session`, alive over `[from, to]`, may have lost exports in a
@@ -647,7 +713,7 @@ impl Ledger {
         self.state
             .gaps
             .iter()
-            .any(|g| from <= g.to && to >= g.from && restored.is_none_or(|at| at < g.to))
+            .any(|g| g.overlaps(from, to) && restored.is_none_or(|at| at < g.to))
     }
 
     /// Move to `now`'s day when it is a new one.
@@ -832,7 +898,9 @@ impl Ledger {
                 tally.future += 1;
                 continue;
             }
-            let Some(value) = scaled(p.value, scale) else {
+            // A counter is never negative, and a negative total would be
+            // kept as the next point's baseline.
+            let Some(value) = scaled(p.value, scale).filter(|_| p.value >= 0.0) else {
                 tally.ignored += 1;
                 continue;
             };
@@ -851,6 +919,8 @@ impl Ledger {
                 }
                 Temporality::Cumulative => {
                     let before = self.state.series.get(&p.series);
+                    let reseeded = self.reseed.contains(session);
+                    let seed = before.is_none() && reseeded;
                     let amount = match before {
                         // An older or repeated point of the same run.
                         Some(b) if p.start_ns < b.start_ns => None,
@@ -863,7 +933,6 @@ impl Ledger {
                         // A new start time is a reset: all of it is new.
                         _ => Some(value),
                     };
-                    self.mark_cumulative(session, now);
                     let Some(amount) = amount else {
                         tally.duplicate += 1;
                         continue;
@@ -877,10 +946,19 @@ impl Ledger {
                             at: now,
                         },
                     );
+                    if seed {
+                        tally.seeded += 1;
+                        continue;
+                    }
+                    // Arrival time, not the point's own: the exporter's
+                    // clock can drift from this one. A session that lost
+                    // its baselines stays partial.
+                    if !reseeded {
+                        self.mark_cumulative(session, now);
+                    }
                     amount
                 }
             };
-            // A delta sum of a monotonic counter never goes down.
             let Ok(n) = u64::try_from(amount) else {
                 tally.ignored += 1;
                 continue;
@@ -965,16 +1043,18 @@ impl Ledger {
         tally
     }
 
-    /// Write today's file and the state file. A ledger with no folder has
+    /// Write the state file and today's file. A ledger with no folder has
     /// nothing to write.
     pub fn save(&self) -> std::io::Result<()> {
         let Some(dir) = &self.dir else {
             return Ok(());
         };
-        let day = serde_json::to_vec_pretty(&self.day).map_err(std::io::Error::other)?;
-        write_atomic(&dir.join(format!("{}.json", self.day.day)), &day)?;
+        // State first: a crash between the two undercounts one export
+        // rather than counting it twice.
         let state = serde_json::to_vec(&self.state).map_err(std::io::Error::other)?;
-        write_atomic(&dir.join(STATE_FILE), &state)
+        write_atomic(&dir.join(STATE_FILE), &state)?;
+        let day = serde_json::to_vec_pretty(&self.day).map_err(std::io::Error::other)?;
+        write_atomic(&dir.join(format!("{}.json", self.day.day)), &day)
     }
 }
 
@@ -1842,13 +1922,9 @@ mod tests {
         // A cumulative export before the gap ended does not either.
         l.record_metrics(&tokens("s2", NOW, NOW + 900, 10.0), NOW + 900);
         assert!(l.lost_in_gap("s2", from, to));
-        // One at or after the end does, and so does a repeat of it.
+        // One at or after the end does.
         l.record_metrics(&tokens("s2", NOW, NOW + 1000, 20.0), NOW + 1000);
         assert!(!l.lost_in_gap("s2", from, to));
-        l.record_metrics(&tokens("s3", NOW, NOW + 1010, 20.0), NOW + 1000);
-        let repeat = l.record_metrics(&tokens("s3", NOW, NOW + 1010, 20.0), NOW + 1200);
-        assert_eq!(repeat.duplicate, 1);
-        assert!(!l.lost_in_gap("s3", from, to));
         // A session outside every gap is never lost.
         assert!(!l.lost_in_gap("s1", NOW + 1001, NOW + 1100));
         // Saved with the state.
@@ -1962,5 +2038,84 @@ mod tests {
         let (l, problems) = Ledger::open(dir.0.clone(), NOW, TimeZone::UTC);
         assert!(problems.is_empty(), "{problems:?}");
         assert!(!l.overlaps_gap(0, NOW));
+    }
+
+    #[test]
+    fn a_pre_gap_point_repeated_after_the_gap_leaves_the_session_partial() {
+        let dir = Scratch::new("ledger-stale-repeat");
+        let (mut l, _) = Ledger::open(dir.0.clone(), NOW - 100, TimeZone::UTC);
+        l.note_listening(NOW - 100).unwrap();
+        l.set_receiver(listening());
+        l.record_metrics(&tokens("s1", NOW - 100, NOW, 100.0), NOW);
+        // The overlay stamps at NOW + 10, closes, and listens again at NOW + 1000.
+        assert!(l.stamp_alive(NOW + 10));
+        l.note_listening(NOW + 1000).unwrap();
+        // s1 ended at NOW + 500, inside the gap.
+        let (from, to) = (NOW - 100, NOW + 500);
+        assert!(l.lost_in_gap("s1", from, to));
+        // Its last pre-gap export, retried after the gap, carries nothing new.
+        let t = l.record_metrics(&tokens("s1", NOW - 100, NOW, 100.0), NOW + 1001);
+        assert_eq!((t.counted, t.duplicate), (0, 1));
+        assert!(l.lost_in_gap("s1", from, to));
+        // One that moves the running total on restores it.
+        l.record_metrics(&tokens("s1", NOW - 100, NOW + 500, 300.0), NOW + 1002);
+        assert!(!l.lost_in_gap("s1", from, to));
+        assert_eq!(cache_read(&l, "s1"), 300);
+    }
+
+    #[test]
+    fn a_negative_or_nan_cumulative_value_is_ignored_and_keeps_no_baseline() {
+        let mut l = Ledger::in_memory(NOW);
+        let t = l.record_metrics(&tokens("s1", NOW - 60, NOW, -5.0), NOW);
+        assert_eq!((t.counted, t.ignored), (0, 1));
+        let mut nan = tokens("s1", NOW - 60, NOW + 5, 0.0);
+        nan[0].value = f64::NAN;
+        assert_eq!(l.record_metrics(&nan, NOW + 5).ignored, 1);
+        let t = l.record_metrics(&tokens("s1", NOW - 60, NOW + 15, 100.0), NOW + 15);
+        assert_eq!(t.counted, 1);
+        assert_eq!(cache_read(&l, "s1"), 100);
+    }
+
+    #[test]
+    fn an_unreadable_state_file_reseeds_baselines_and_marks_sessions_partial() {
+        let dir = Scratch::new("ledger-state-bad");
+        let today = day_name(NOW, &TimeZone::UTC);
+        let yesterday = day_name(NOW - DAY, &TimeZone::UTC);
+        dir.write(
+            &format!("{today}.json"),
+            r#"{"sessions":{"s1":{"tokens":{"cache_read":300}}}}"#,
+        );
+        // A session that ran over midnight has its earlier tokens in yesterday's file.
+        dir.write(
+            &format!("{yesterday}.json"),
+            r#"{"sessions":{"s3":{"tokens":{"cache_read":70}}}}"#,
+        );
+        dir.write(STATE_FILE, "{not json");
+        let (mut l, problems) = Ledger::open(dir.0.clone(), NOW, TimeZone::UTC);
+        assert!(
+            problems.iter().any(|p| p.contains("set aside")),
+            "{problems:?}"
+        );
+        // The running total already counted 300 of these 550: it only seeds.
+        let t = l.record_metrics(&tokens("s1", NOW - 600, NOW + 10, 550.0), NOW + 10);
+        assert_eq!((t.counted, t.seeded), (0, 1));
+        assert_eq!(l.day().sessions["s1"].tokens.cache_read, 300);
+        l.record_metrics(&tokens("s1", NOW - 600, NOW + 25, 600.0), NOW + 25);
+        assert_eq!(l.day().sessions["s1"].tokens.cache_read, 350);
+        // Tokens between the last save and the seed are gone: partial.
+        assert!(l.lost_in_gap("s1", NOW - 600, NOW + 25));
+        l.record_metrics(&tokens("s3", NOW - 900, NOW + 25, 90.0), NOW + 25);
+        assert!(!l.day().sessions.contains_key("s3"));
+        // A session the ledger never had counts its whole running total.
+        l.record_metrics(&tokens("s2", NOW, NOW + 25, 40.0), NOW + 25);
+        assert_eq!(l.day().sessions["s2"].tokens.cache_read, 40);
+        // The seeded baselines are saved with the state and hold after a restart.
+        l.save().unwrap();
+        drop(l);
+        let (mut l, problems) = Ledger::open(dir.0.clone(), NOW + 40, TimeZone::UTC);
+        assert!(problems.is_empty(), "{problems:?}");
+        l.record_metrics(&tokens("s1", NOW - 600, NOW + 40, 610.0), NOW + 40);
+        assert_eq!(l.day().sessions["s1"].tokens.cache_read, 360);
+        assert!(l.overlaps_gap(NOW - 600, NOW - 500), "the gap was saved");
     }
 }
