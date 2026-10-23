@@ -564,15 +564,15 @@ button.menu svg { width: 16px; height: 16px; fill: currentColor; }
 .wall[data-density="compact"] { grid-auto-rows: 1fr; }
 .wall[data-density="compact"] .card {
   display: grid;
-  grid-template-columns: var(--wall-face) minmax(0, 1fr) auto auto auto auto;
+  grid-template-columns: var(--wall-face) minmax(0, 1fr) auto auto auto;
   grid-template-rows: auto auto auto auto 1fr auto;
   grid-template-areas:
-    "face name pill clear jump menu"
-    "face task task task task task"
-    "meta meta meta meta meta meta"
-    "ask ask ask ask ask ask"
-    "said said said said said said"
-    "note note note note note note";
+    "face name pill clear jump"
+    "face task task task task"
+    "meta meta meta meta meta"
+    "ask ask ask ask ask"
+    "said said said said said"
+    "menu note note note note";
   gap: 0;
 }
 [data-density="compact"] .card header,
@@ -607,8 +607,9 @@ button.menu svg { width: 16px; height: 16px; fill: currentColor; }
   font-size: 12px;
 }
 [data-density="compact"] .clear { grid-area: clear; }
-/* The menu sits a wider step from Open terminal and Clear than they sit from each other. */
-[data-density="compact"] button.menu { position: static; align-self: center; color: var(--text-dim); margin: 0 0 0 var(--space-7); }
+/* The menu sits in the corner opposite Open terminal and Clear, on the note's
+   line, its 24 px target overhanging that 17 px line as Undo's does. */
+[data-density="compact"] button.menu { position: static; justify-self: start; align-self: center; color: var(--text-dim); margin: -3.5px 0; }
 /* An ended card's Open terminal is off and its pill says why: Clear takes its place. */
 [data-density="compact"] .card:has(.clear:not([hidden])) .jump[aria-disabled="true"] { display: none; }
 [data-density="compact"] .note,

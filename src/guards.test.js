@@ -677,6 +677,7 @@ test("the ledger drawer is a labelled modal dialog with a Close button that link
 test("the dialog's End is off for ARM_MS after every opening, and an off End closes nothing", () => {
   const wall = read("src/fleet/wall.js");
   const open = wall.slice(wall.indexOf("function openEnd("), wall.indexOf("endConfirm.addEventListener"));
-  assert.match(open, /setOff\(endConfirm, true\);\s*clearTimeout\(armTimer\);\s*armTimer = setTimeout\(\(\) => setOff\(endConfirm, false\), ARM_MS\);\s*dialog\.showModal\(\)/);
-  assert.match(wall, /endConfirm\.addEventListener\("click", \(\) => \{\s*if \(endConfirm\.getAttribute\("aria-disabled"\) !== "true"\) dialog\.close\("end"\);/);
+  assert.match(open, /setOff\(endConfirm, true\);\s*clearTimeout\(armTimer\);\s*armTimer = setTimeout\(\(\) => setOff\(endConfirm, false\), ARM_MS\);\s*openedAt = performance\.now\(\);\s*dialog\.showModal\(\)/);
+  assert.match(wall, /const armed = \(e\) => endConfirm\.getAttribute\("aria-disabled"\) !== "true" && e\.timeStamp - openedAt >= ARM_MS;/);
+  assert.match(wall, /endConfirm\.addEventListener\("click", \(e\) => \{\s*if \(armed\(e\)\) dialog\.close\("end"\);/);
 });

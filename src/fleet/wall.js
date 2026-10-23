@@ -287,6 +287,7 @@ function render(snapshot) {
     for (const el of wall.children) if (started.has(el.dataset.key) && !reducedMotion()) el.classList.add("pulse");
     // Moving a card in the DOM drops focus; give it back to what had it.
     if (focused !== document.body && focused?.isConnected && document.activeElement !== focused) focused.focus({ preventScroll: true });
+    else if (focused && focused !== document.body && !focused.isConnected) wall.focus({ preventScroll: true }); // its card left
     reconcileActions();
     // Auto looks again when a card arrives or leaves, not when one's text changes.
     const ids = cards.map((c) => c.id).join(" ");
@@ -460,6 +461,9 @@ const endConfirm = dialog.querySelector(".end-confirm");
 let menuFor = null; // { id, button } while the menu is open
 let endFor = null; // { id, opener } while the confirm dialog is open
 let armTimer = 0;
+let openedAt = 0;
+// End takes a click only once its timer has run and the click came ARM_MS after the opening.
+const armed = (e) => endConfirm.getAttribute("aria-disabled") !== "true" && e.timeStamp - openedAt >= ARM_MS;
 const cardEl = (id) => [...wall.children].find((c) => c.dataset.key === id) ?? null;
 const menuItems = () => [...menu.querySelectorAll('[role="menuitem"]')].filter((i) => !i.hidden);
 const usable = (node) =>
@@ -560,16 +564,18 @@ function openEnd(id, opener) {
   setOff(endConfirm, true);
   clearTimeout(armTimer);
   armTimer = setTimeout(() => setOff(endConfirm, false), ARM_MS);
+  openedAt = performance.now();
   dialog.showModal();
   endCancel.focus(); // Enter or Space right after opening cancels
 }
 
-endConfirm.addEventListener("click", () => {
-  if (endConfirm.getAttribute("aria-disabled") !== "true") dialog.close("end");
+endConfirm.addEventListener("click", (e) => {
+  if (armed(e)) dialog.close("end");
 });
 endCancel.addEventListener("click", () => dialog.close("cancel"));
 dialog.addEventListener("click", (e) => {
-  if (e.target === dialog) dialog.close("cancel"); // the backdrop; the body fills the rest
+  // The backdrop (the body fills the rest), once a double-click's second click is over.
+  if (e.target === dialog && armed(e)) dialog.close("cancel");
 });
 dialog.addEventListener("close", () => {
   clearTimeout(armTimer);
@@ -577,8 +583,13 @@ dialog.addEventListener("close", () => {
   endFor = null;
   if (!who) return;
   if (dialog.returnValue === "end") beginEnd(who);
-  else if (usable(who.opener)) who.opener.focus({ preventScroll: true });
+  else settleFocus(who.id, who.opener);
 });
+
+// Focus back to `first`, else the card (Enter or Space on it does nothing), else the wall.
+function settleFocus(id, first = null) {
+  [first, cardEl(id), wall].find(usable)?.focus({ preventScroll: true });
+}
 
 function hideEnding(el, menuOff = false) {
   el.querySelector(".ending").hidden = true;
@@ -637,7 +648,7 @@ function reconcileActions() {
     if (!el) continue;
     const focused = el.querySelector(".ending").contains(document.activeElement);
     hideEnding(el);
-    if (focused) [el.querySelector(".clear"), document.getElementById("new-session")].find(usable)?.focus({ preventScroll: true });
+    if (focused) settleFocus(id);
   }
   if (endFor && !cardOf.get(endFor.id)?.actions.menu) dialog.close("cancel");
   if (menuFor) {

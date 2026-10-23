@@ -27,7 +27,7 @@ PENDING_FOR=30
 SOCKET_RE='^/[A-Za-z0-9._/-]{1,255}$'
 ATTACHED=1 # cleared by open_tab until the tab's client shows up
 END_WAIT=${KLEPSYDRA_END_WAIT:-10} # seconds `end` waits for Claude to exit
-[[ $END_WAIT =~ ^[0-9]{1,3}$ ]] || END_WAIT=10 # it reaches $(( )), which would run a crafted value
+[[ $END_WAIT =~ ^[1-9][0-9]{0,2}$ ]] || END_WAIT=10 # it reaches $(( )), which would run a crafted value
 # Claude Code's input line as capture-pane shows it: U+276F and a no-break
 # space at the left edge, a rule (U+2500) on the lines above and below.
 PROMPT_MARK=$'\xe2\x9d\xaf\xc2\xa0'
@@ -234,10 +234,13 @@ leave_modes() {
 }
 
 # One End or Interrupt per pane: an End the app gave up on may still be running.
-lock_pane() {
+# The pane is checked again under the lock, as such an End may just have finished.
+own_pane() { # socket pane pid start
+  fleet_pane "$@"
   local file=${XDG_RUNTIME_DIR:-/tmp}/klepsydra-pane-$UID-${pane#%}.lock
   { exec {PANEFD}>>"$file"; } 2>/dev/null || fail "Could not open $file."
   flock -n "$PANEFD" || fail "That session is already being ended or interrupted."
+  fleet_pane "$@"
 }
 
 keys() { tmux "${t[@]}" send-keys -t "$pane" "$@" 2>/dev/null || fail "tmux could not send keys to the session."; }
@@ -260,8 +263,7 @@ reads_exit() {
 end_session() { # socket pane pid start
   local socket=$1 pane=$2 pid=$3 start=$4 session _
   local -a t=()
-  fleet_pane "$@"
-  lock_pane
+  own_pane "$@"
   leave_modes
   # Esc closes a dialog, declines a pending permission or stops a turn, so
   # Enter cannot answer one; Ctrl+C then clears a draft (Up brings it back).
@@ -287,8 +289,7 @@ end_session() { # socket pane pid start
 interrupt() { # socket pane pid start
   local socket=$1 pane=$2 session
   local -a t=()
-  fleet_pane "$@"
-  lock_pane
+  own_pane "$@"
   leave_modes
   keys Escape
   printf 'Sent Esc to the session.\n'

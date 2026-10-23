@@ -301,7 +301,7 @@ out=$(send interrupt "$p" 2>&1)
 check "pane unlocked: interrupt runs" "$out" "Sent Esc to the session."
 t kill-pane -t "$p"
 
-# KLEPSYDRA_END_WAIT reaches arithmetic: only 1 to 3 digits count, else 10 s.
+# KLEPSYDRA_END_WAIT reaches arithmetic: only 1 to 999 counts, else 10 s.
 : >"$work/fake.log"; p=$(fake FAKE_STAY=1)
 rm -f "$work/crafted"
 out=$(KLEPSYDRA_END_WAIT="a[\$(touch $work/crafted)]" send end "$p" 2>&1); rc=$?

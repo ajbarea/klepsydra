@@ -1070,9 +1070,10 @@ def one_click_or_key_never_ends(wall):
     page.keyboard.press("Space")
     page.wait_for_function("!document.getElementById('end-dialog').open")
     step("Space right after the dialog opened")
-    # A click on the backdrop cancels too.
+    # A click on the backdrop, once the dialog is past a double-click's reach, cancels too.
     open_menu(page, card)
     page.get_by_role("menuitem", name="End session…").click()
+    page.wait_for_selector(".end-confirm:not([aria-disabled='true'])")
     page.mouse.click(5, 5)
     page.wait_for_function("!document.getElementById('end-dialog').open")
     step("backdrop click")
@@ -1179,6 +1180,14 @@ def double_click_never_confirms(wall):
         "End ignores a click in its first second, on every opening",
         results,
     )
+    # A double-click on End session…: its second click lands on the dialog or its backdrop, and closes nothing.
+    open_menu(page, card)
+    page.get_by_role("menuitem", name="End session…").dblclick()
+    page.wait_for_timeout(150)
+    still = page.evaluate("[document.getElementById('end-dialog').open, document.querySelector('.end-confirm').getAttribute('aria-disabled')]")
+    wall.check(still == [True, "true"], "a double-click on End session… leaves the dialog open with End still off", still)
+    page.keyboard.press("Escape")
+    page.wait_for_function("!document.getElementById('end-dialog').open")
     open_menu(page, card)
     page.get_by_role("menuitem", name="End session…").click()
     page.wait_for_timeout(1200)
@@ -1188,6 +1197,43 @@ def double_click_never_confirms(wall):
     started = page.evaluate("[...document.querySelectorAll('.ending')].some((e) => !e.hidden)")
     page.keyboard.press("Enter")  # Undo has focus
     wall.check(armed in (None, "false") and started and not page.evaluate(ENDS), "after a second End wakes, and its click starts the undo window", [armed, started])
+    page.close()
+
+
+AWAY_PX = 48  # twice the 24 px target
+
+
+def end_sits_away(wall):
+    """AJ's rule: the menu that holds End, open or shut, keeps clear of Open terminal and Clear."""
+    page = open_app(wall)
+    found = {}
+    for density in ("compact", "comfortable"):
+        page.click(f".density label:has([value={density}])")
+        page.wait_for_timeout(SETTLE_MS)
+        near = []
+        cards = page.locator(".card:has(.menu:not([hidden]))")
+        for i in range(cards.count()):
+            card = cards.nth(i)
+            open_menu(page, card)
+            near.append(
+                card.evaluate(
+                    """(c) => {
+              const box = (el) => el.getBoundingClientRect();
+              const shown = (el) => el && el.checkVisibility() && box(el).width > 0;
+              const gap = (a, b) => Math.hypot(Math.max(0, a.left - b.right, b.left - a.right), Math.max(0, a.top - b.bottom, b.top - a.bottom));
+              const mine = [box(c.querySelector('.menu')), box(document.getElementById('session-menu'))];
+              const others = [...c.querySelectorAll('.jump, .clear')].filter(shown).map(box);
+              return Math.min(Infinity, ...mine.flatMap((m) => others.map((o) => gap(m, o))));
+            }"""
+                )
+            )
+            page.keyboard.press("Escape")
+        found[density] = [len(near), min(near) if near else None]
+    wall.check(
+        all(n > 0 and d >= AWAY_PX for n, d in found.values()),
+        f"in both densities the actions menu, button and list, stays {AWAY_PX} px or more from Open terminal and Clear",
+        found,
+    )
     page.close()
 
 
@@ -1257,10 +1303,12 @@ def end_cancelled_when_the_session_ends(wall):
     page.evaluate("(s) => window.__channel.onmessage(s)", snapshot)
     page.wait_for_timeout(300)
     hidden = card.locator(".ending").is_hidden()
+    focus = page.evaluate("document.activeElement.dataset.key ?? document.activeElement.className")
     page.wait_for_timeout(5500)
     sent = page.evaluate(ENDS)
     menu_gone = menu_of(card).is_hidden()
     wall.check(hidden and not sent and menu_gone, "a session that ends during its undo window cancels the pending end", [hidden, sent, menu_gone])
+    wall.check(focus == key, "focus on Undo moves to the card when its session ends", focus)
     # And a card that leaves the wall does too.
     card = page.locator(WORKING_CARD).first
     key = card.evaluate("c => c.dataset.key")
@@ -1271,9 +1319,25 @@ def end_cancelled_when_the_session_ends(wall):
     page.wait_for_timeout(300)
     snapshot["sessions"] = [r for r in snapshot["sessions"] if r["session_id"] != key]
     page.evaluate("(s) => window.__channel.onmessage(s)", snapshot)
-    page.wait_for_timeout(5800)
+    page.wait_for_timeout(300)
+    focus = page.evaluate("document.activeElement.id")
+    page.wait_for_timeout(5500)
     sent = page.evaluate(ENDS)
     wall.check(not sent, "a card that leaves the wall during its undo window cancels the pending end", sent)
+    wall.check(focus == "wall", "focus on Undo moves to the wall when its card leaves", focus)
+    # A session that ends while its confirm is open closes it, and focus goes to the card.
+    card = page.locator(WORKING_CARD).first
+    key = card.evaluate("c => c.dataset.key")
+    open_menu(page, card)
+    page.get_by_role("menuitem", name="End session…").click()
+    page.wait_for_function("document.getElementById('end-dialog').open")
+    for row in snapshot["sessions"]:
+        if row["session_id"] == key:
+            row["status"] = "ended"
+    page.evaluate("(s) => window.__channel.onmessage(s)", snapshot)
+    page.wait_for_timeout(300)
+    after = page.evaluate("[document.getElementById('end-dialog').open, document.activeElement.dataset.key ?? document.activeElement.className]")
+    wall.check(after == [False, key], "a session that ends while its confirm is open closes it and focus goes to the card", after)
     page.close()
 
 
@@ -1312,6 +1376,7 @@ def main() -> int:
             one_click_or_key_never_ends,
             deliberate_end_sends_once,
             double_click_never_confirms,
+            end_sits_away,
             menu_off_until_the_call_answers,
             undo_sends_nothing,
             stray_enter_on_undo_undoes,
