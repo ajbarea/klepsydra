@@ -461,9 +461,11 @@ repos it touched.
 ### Ending a session
 
 A session that runs in klepsydra's tmux (the socket `klepsydra`) and has a
-known `claude` shows a three-dot button in its card's header, named "Session
-actions for" the character. Its menu offers **Interrupt**, while the card
-reads working, and **End session…**. Interrupt sends Esc to the session's pane
+known `claude` shows a three-dot button, named "Session actions for" the
+character, away from Open terminal and Clear: at the top right of a
+comfortable card, in the bottom-left corner of a compact one. Its menu opens
+inside the card. The menu offers **Interrupt**, while the
+card reads working, and **End session…**. Interrupt sends Esc to the session's pane
 and asks nothing. **End session…** opens a dialog that names the character
 and the repo, with Cancel focused, so Enter right after it opens cancels.
 Its **End** button wakes a second after the dialog opens, so a double-click

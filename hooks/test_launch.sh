@@ -240,6 +240,8 @@ fake() { # [env...]: a fleet window running the fake; prints its pane id
 }
 send() { bash "$launch" "$1" "$socket" "$2" "$(pane_pid "$2")" "$(pstart "$(pane_pid "$2")")"; } # verb pane
 alive() { [[ -n $(t display -p -t "$1" '#{pane_id}' 2>/dev/null) ]] && echo alive || echo gone; }
+# tmux closes a pane a moment after its process exits.
+gone() { local _; for _ in $(seq 20); do [[ $(alive "$1") == gone ]] && break; sleep 0.1; done; alive "$1"; }
 detach_all; tabs0=$(tabs)
 
 : >"$work/fake.log"; p=$(fake)
@@ -248,7 +250,7 @@ out=$(send end "$p" 2>&1); rc=$?
 check "end: exit 0" "$rc" "0"
 check "end: says so" "$out" "Ended the session."
 check "end: Esc, Ctrl+C, then /exit alone" "$(paste -sd' ' "$work/fake.log")" "esc ctrl-c submit:/exit"
-check "end: the process is gone" "$(alive "$p")" "gone"
+check "end: the process is gone" "$(gone "$p")" "gone"
 
 : >"$work/fake.log"; p=$(fake FAKE_DROP=x)
 out=$(send end "$p" 2>&1); rc=$?

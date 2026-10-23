@@ -1204,38 +1204,63 @@ AWAY_PX = 48  # twice the 24 px target
 
 
 def end_sits_away(wall):
-    """AJ's rule: the menu that holds End, open or shut, keeps clear of Open terminal and Clear."""
+    """AJ's rule: the menu that holds End, shut or open, keeps clear of Open terminal and Clear,
+    its own card's and every other card's: the open list stays inside its own card."""
     page = open_app(wall)
     found = {}
+    silent = json.loads(json.dumps(page.snapshot))
+    fleet_rows = [r for r in silent["sessions"] if (r.get("tmux") or {}).get("socket", "").endswith("/klepsydra") and r["status"] != "ended"]
+    for r in fleet_rows[:2]:
+        r["status"] = "silent"  # Clear shows beside the menu
     for density in ("compact", "comfortable"):
         page.click(f".density label:has([value={density}])")
-        page.wait_for_timeout(SETTLE_MS)
-        near = []
-        cards = page.locator(".card:has(.menu:not([hidden]))")
-        for i in range(cards.count()):
-            card = cards.nth(i)
-            open_menu(page, card)
-            near.append(
-                card.evaluate(
-                    """(c) => {
+        for label, snap in (("demo", page.snapshot), ("two silent", silent)):
+            page.evaluate("(s) => window.__channel.onmessage(s)", snap)
+            page.wait_for_timeout(SETTLE_MS)
+            rows = []
+            cards = page.locator(".card:has(.menu:not([hidden]))")
+            for i in range(cards.count()):
+                card = cards.nth(i)
+                card.scroll_into_view_if_needed()
+                page.wait_for_timeout(100)  # a scroll closes the menu; let it land first
+                open_menu(page, card)
+                rows.append(
+                    card.evaluate(
+                        """(c) => {
               const box = (el) => el.getBoundingClientRect();
               const shown = (el) => el && el.checkVisibility() && box(el).width > 0;
               const gap = (a, b) => Math.hypot(Math.max(0, a.left - b.right, b.left - a.right), Math.max(0, a.top - b.bottom, b.top - a.bottom));
-              const mine = [box(c.querySelector('.menu')), box(document.getElementById('session-menu'))];
-              const others = [...c.querySelectorAll('.jump, .clear')].filter(shown).map(box);
-              return Math.min(Infinity, ...mine.flatMap((m) => others.map((o) => gap(m, o))));
+              const list = box(document.getElementById('session-menu'));
+              const mine = [box(c.querySelector('.menu')), list];
+              const buttons = [...document.querySelectorAll('.card .jump, .card .clear')].filter(shown);
+              const own = buttons.filter((b) => c.contains(b)).map(box);
+              const cb = box(c);
+              const inside = !document.getElementById('session-menu').hidden && list.left >= cb.left && list.right <= cb.right && list.top >= cb.top && list.bottom <= cb.bottom;
+              const others = buttons.filter((b) => !c.contains(b)).map(box);
+              return [
+                Math.min(Infinity, ...mine.flatMap((m) => own.map((o) => gap(m, o)))),
+                inside,
+                Math.min(Infinity, ...mine.flatMap((m) => others.map((o) => gap(m, o)))),
+                own.length,
+              ];
             }"""
+                    )
                 )
-            )
-            page.keyboard.press("Escape")
-        found[density] = [len(near), min(near) if near else None]
+                page.keyboard.press("Escape")
+            found[f"{density}, {label}"] = {
+                "cards": len(rows),
+                "own": min(r[0] for r in rows),
+                "inside": all(r[1] for r in rows),
+                "others": min(r[2] for r in rows),
+                "with Clear": sum(r[3] > 1 or False for r in rows),
+            }
     wall.check(
-        all(n > 0 and d >= AWAY_PX for n, d in found.values()),
-        f"in both densities the actions menu, button and list, stays {AWAY_PX} px or more from Open terminal and Clear",
+        all(f["cards"] > 0 and f["own"] >= AWAY_PX and f["inside"] and f["others"] > 0 for f in found.values())
+        and all(found[f"{d}, two silent"]["with Clear"] > 0 for d in ("compact", "comfortable")),
+        f"in both densities the actions menu stays {AWAY_PX} px or more from its card's Open terminal and Clear, and the open list stays inside its own card",
         found,
     )
     page.close()
-
 
 def undo_sends_nothing(wall):
     page = open_app(wall)

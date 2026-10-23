@@ -495,10 +495,13 @@ function openMenu(button, last = false) {
   menu.hidden = false;
   button.setAttribute("aria-expanded", "true");
   button.setAttribute("aria-controls", menu.id);
+  // The list stays inside its own card, never over another card's buttons:
+  // below the button where it fits, else above it (the compact corner).
   const at = button.getBoundingClientRect();
-  const left = Math.max(4, Math.min(at.right - menu.offsetWidth, innerWidth - menu.offsetWidth - 4));
-  const below = at.bottom + 4;
-  const top = below + menu.offsetHeight > innerHeight ? Math.max(4, at.top - menu.offsetHeight - 4) : below;
+  const box = button.closest(".card").getBoundingClientRect();
+  const [w, h] = [menu.offsetWidth, menu.offsetHeight];
+  const left = Math.max(box.left + 4, Math.min(at.right - w, box.right - w - 4));
+  const top = at.bottom + 4 + h <= box.bottom - 4 ? at.bottom + 4 : Math.max(box.top + 4, at.top - h - 4);
   Object.assign(menu.style, { left: `${left}px`, top: `${top}px` });
   const items = menuItems();
   items[last ? items.length - 1 : 0].focus();
@@ -653,7 +656,12 @@ function reconcileActions() {
   if (endFor && !cardOf.get(endFor.id)?.actions.menu) dialog.close("cancel");
   if (menuFor) {
     if (cardOf.get(menuFor.id)?.actions.menu) syncMenu();
-    else closeMenu(false);
+    else {
+      const { id } = menuFor;
+      const had = menu.contains(document.activeElement);
+      closeMenu(false);
+      if (had) settleFocus(id);
+    }
   }
 }
 
