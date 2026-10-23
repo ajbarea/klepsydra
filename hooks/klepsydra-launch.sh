@@ -298,8 +298,7 @@ end_session() { # socket pane pid start
 wrapup() { # socket pane pid start
   local socket=$1 pane=$2 session
   local -a t=()
-  fleet_pane "$@"
-  lock_pane
+  own_pane "$@"
   leave_modes
   screen | grep -q 'esc to interrupt' &&
     fail "The session is mid-turn; it is asked when the turn ends."

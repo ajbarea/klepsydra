@@ -551,7 +551,7 @@ test("no code path ends a session except the undo window's expiry", () => {
   assert.equal((wall.match(/beginEnd\(/g) ?? []).length, 2, "its definition and the confirm");
   // The one call sits in the dialog's close handler, past the return that anything but confirm takes.
   const close = wall.slice(wall.indexOf('dialog.addEventListener("close"'), wall.indexOf("\n});", wall.indexOf('dialog.addEventListener("close"')));
-  assert.match(close, /if \(dialog\.returnValue !== "confirm"\) \{\n\s*if \(usable\(what\.opener\)\) what\.opener\.focus\(\{ preventScroll: true \}\);\n\s*return;\n\s*\}\n\s*if \(what\.kind === "end"\) for \(const id of what\.ids\) beginEnd\(id\);/);
+  assert.match(close, /if \(dialog\.returnValue !== "confirm"\) \{\n\s*settleFocus\(what\.ids\[0\], what\.opener\);\n\s*return;\n\s*\}\n\s*if \(what\.kind === "end"\) for \(const id of what\.ids\) beginEnd\(id\);/);
   assert.equal((wall.match(/dialog\.close\("confirm"\)/g) ?? []).length, 1, "only the armed button's click closes with confirm");
   assert.doesNotMatch(wall, /returnValue = "confirm"|close\("end"\)/);
   // Two dialogs end sessions, End session… and End all ready sessions…, each from its own opener only.
