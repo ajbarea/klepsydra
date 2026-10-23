@@ -20,15 +20,15 @@ Design: the 10-21 comment on #58 (`gh api repos/ajbarea/klepsydra/issues/58/comm
 - App: `start_wrapup`, `cancel_wrapup` commands (launch.rs). NOT yet built on
   Windows (interop was down).
 - README: install block (`wrapup-settings` markers, tested).
+- Wall UI (`src/fleet/wrapup.js`, wall.js/html/css): Wrap up… confirm grouped
+  by route (ROUTES mirrors `route()`, guard parses both), card line in both
+  densities, "N of M ready", Stop wrap-up, Safe to restart, End all ready
+  sessions… through #22's one confirm (`openConfirm`) and per-card undo.
+  `?demo&wrapup` sample (`scripts/fixtures/wrapup-demo.json`). README "Wrapping up".
 
 ## Next
 1. After #64 and #22 merge: rebase onto main (`git rebase --onto origin/main <old base>`).
-2. Wall UI: "Wrap up…" button + confirm (who gets it and how), card states
-   (wrapping up / ready / not ready: reason / no answer after `until`),
-   tally "N of M ready", "Safe to restart" only when all live cards ready,
-   "End all ready sessions…" (one confirm naming them, then #22's End each),
-   "Stop wrap-up" (cancel). Tests incl. one-click-never-ends.
-3. `build-windows.sh --check`, live test with two real sessions, PR (Closes #58),
+2. `build-windows.sh --check`, live test with two real sessions, PR (Closes #58),
    review, merge, deploy (copy script + skill, add Stop hook to both settings.json).
 
 ## Verify

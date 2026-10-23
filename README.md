@@ -508,6 +508,35 @@ Another End or Interrupt of it is still running. The prompt did not read
 exactly `/exit`, so Enter was not pressed and the line was cleared. Or the
 session is still running a few seconds after `/exit` was sent.
 
+### Wrapping up
+
+<!-- budget: 300 words -->
+**Wrap up…**, beside Ledger, asks every live session to finish or
+checkpoint its current step, record what is still running, update its
+handoff, commit and push, then report whether it is safe to stop. A dialog
+lists who gets the request and how, with Cancel focused. An idle session in
+klepsydra's tmux has `/klepsydra-wrapup` typed now. A working one is asked
+by the Stop hook when its turn ends. One that needs you is asked once you
+answer and its turn ends. Any other session, idle outside klepsydra's tmux
+or silent, you ask by hand: type `/klepsydra-wrapup` in its terminal. Ended
+sessions are left out. If typing fails, the card's note says why.
+
+Each card then reads **Wrapping up…**, **Ready**, or **Not ready** with the
+reason the session gave. A card that needs you reads "Answer it first; it
+wraps up after", and one to ask by hand says so. A session has 10 minutes to
+answer; after that, silence reads **No answer**, never ready. The bar counts
+"4 of 6 ready" over the cards that have not ended, and **Safe to restart**
+appears only when every one of them is ready. **Stop wrap-up** stops the
+asking while the 10 minutes run; the answers so far stay on the wall for an
+hour.
+
+Once every card is ready, **End all ready sessions…** opens one dialog that
+names each session it will end, character and repo, with Cancel focused.
+Its button wakes a second after the dialog opens, as End does. Confirming
+starts each card's own 5 s End with Undo, so nothing is sent sooner and any
+one of them can still be kept. Ready sessions outside klepsydra's tmux are
+not listed, and the dialog says how many to end from their own terminals.
+
 ### Card density
 
 The control beside **+ New session** picks the card density: **Auto** (the
