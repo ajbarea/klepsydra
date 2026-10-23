@@ -11,7 +11,9 @@ chip fit the compact foot slot, and the ledger drawer opens, closes and gives
 focus back. Ending a session: the card's menu, the confirm dialog and the 5 s
 undo window run against a stubbed `window.__TAURI__` that records every invoke,
 and no single click or key, nor any run of them short of the full deliberate
-path, sends end_session.
+path, sends end_session. Wrapping up: the confirm's groups, each card's line
+in both densities, the bar's count, Stop wrap-up and Safe to restart, and End
+all ready sessions… under the same rule as End.
 
     uv run -q --no-project --with playwright python -I scripts/test_wall_browser.py
 
@@ -60,7 +62,7 @@ class Wall:
     def __init__(self, browser, port):
         self.browser, self.port, self.failed, self.passed = browser, port, 0, 0
 
-    def open(self, width, height, cards, fixture=None, ledger=None):
+    def open(self, width, height, cards, fixture=None, ledger=None, query=""):
         page = self.browser.new_page(viewport={"width": width, "height": height})
         self.ledger_requests = 0
 
@@ -81,13 +83,14 @@ class Wall:
                     status=200, content_type="application/json", body=fixture
                 ),
             )
-        page.goto(f"http://127.0.0.1:{self.port}/src/wall.html?demo={cards}")
+        page.goto(f"http://127.0.0.1:{self.port}/src/wall.html?demo={cards}{query}")
         page.wait_for_function(
             f"document.getElementById('wall').children.length === {cards}"
         )
-        # In the app the bar shows + New session; the fit must hold with it.
+        # In the app the bar shows + New session and Wrap up…; the fit must hold with them.
         page.evaluate(
             "document.getElementById('new-session').hidden = false;"
+            " document.getElementById('wrapup-open').hidden = false;"
             " dispatchEvent(new Event('resize'))"
         )
         page.wait_for_timeout(SETTLE_MS)
@@ -873,7 +876,7 @@ def band_clear(wall):
 
 # ---- Ending a session -------------------------------------------------------
 
-TIMES = {"status_at", "active_at", "updated_at", "quiet_since", "at", "started_at", "ends_at"}
+TIMES = {"status_at", "active_at", "updated_at", "quiet_since", "at", "started_at", "ends_at", "until"}
 
 
 def shifted(value, by):
@@ -904,6 +907,7 @@ window.__TAURI__ = { core: {
     if (cmd === 'get_wall_density') return Promise.resolve('auto');
     if (cmd === 'end_session' && window.__hold) { window.__calls.push([cmd, args]); return window.__hold; }
     window.__calls.push([cmd, args]);
+    if (cmd === 'start_wrapup') return Promise.resolve(window.__asked ?? []);
     return Promise.resolve('ok');
   },
 } };
@@ -1366,6 +1370,266 @@ def end_cancelled_when_the_session_ends(wall):
     page.close()
 
 
+# ---- Wrapping up -------------------------------------------------------------
+
+WRAPUP_SAMPLE = json.loads((ROOT / "scripts/fixtures/wrapup-demo.json").read_text())
+STARTS = "window.__calls.filter(([c]) => c === 'start_wrapup')"
+BY_HAND = "Ask by hand: type /klepsydra-wrapup in its terminal"
+# The demo fleet by route (wrapup.rs route() of each session's status and place), in wall order; demo-8 has ended.
+ROUTED = [
+    ("Typed now", ["demo-5-bf_isabella"]),
+    ("At the end of its turn", ["demo-2-af_bella", "demo-3-af_sarah", "demo-4-bf_emma", "demo-9-bm_fable", "demo-10-bm_george", "demo-13-af_nicole", "demo-14-medallion", "demo-16-af_kore"]),
+    ("After you answer", ["demo-1-am_michael", "demo-11-am_fenrir", "demo-15-am_onyx"]),
+    (BY_HAND, ["demo-6-af_nova", "demo-7-af_aoede", "demo-12-af_alloy"]),
+]
+LIVE = [k for _, keys in ROUTED for k in keys]
+# Live, in klepsydra's tmux with a Claude process: what End all ready can end.
+ENDABLE = sorted(set(LIVE) - {"demo-6-af_nova", "demo-7-af_aoede", "demo-12-af_alloy"})
+SHOWN = "() => Object.fromEntries([...document.querySelectorAll('.card')].map((c) => [c.dataset.key, c.querySelector('.wrapup').hidden ? null : c.querySelector('.wrapup').textContent]))"
+BAR = """() => {
+  const vis = (sel) => { const e = document.querySelector(sel); return !e.closest('[hidden]') && e.getBoundingClientRect().height > 0; };
+  return { bar: vis('.wrapup-bar'), count: document.querySelector('.wrapup-count').textContent, safe: vis('.wrapup-safe'), stop: vis('#wrapup-stop'), endAll: vis('#end-ready') };
+}"""
+
+
+def with_wrapup(snapshot, answers, until_in=300):
+    """`snapshot` with a request made five minutes ago, `until_in` s left to answer, and `answers` (id -> answer) on its sessions."""
+    import time
+
+    now = int(time.time())
+    snap = json.loads(json.dumps(snapshot))
+    snap["wrapup"] = {"id": str(now * 1000), "at": now - 300, "until": now + until_in}
+    for row in snap["sessions"]:
+        row.pop("wrapup", None)
+        if row["session_id"] in answers:
+            row["wrapup"] = {**answers[row["session_id"]], "at": now - 60}
+    return snap
+
+
+def feed(page, snapshot):
+    page.evaluate("(s) => window.__channel.onmessage(s)", snapshot)
+    page.wait_for_timeout(200)
+
+
+def all_ready():
+    return {k: {"state": "ready"} for k in LIVE}
+
+
+def names_by_key(page):
+    """Each card as the confirms list it: its name, and its repo."""
+    repos = {r["session_id"]: (r.get("where") or {}).get("repo") for r in page.snapshot["sessions"]}
+    names = page.evaluate("() => Object.fromEntries([...document.querySelectorAll('.card')].map((c) => [c.dataset.key, c.querySelector('.name').textContent]))")
+    return {k: f"{n} in {repos[k]}" if repos.get(k) else n for k, n in names.items()}
+
+
+DIALOG = """() => {
+  const d = document.getElementById('end-dialog');
+  return {
+    open: d.open, kind: d.dataset.kind, role: d.getAttribute('role'),
+    title: document.getElementById('end-title').textContent,
+    text: d.querySelector('.end-what').textContent,
+    groups: [...d.querySelectorAll('.end-list ul')].map((ul) => [ul.previousElementSibling?.tagName === 'H3' ? ul.previousElementSibling.textContent : null, [...ul.children].map((li) => li.textContent)]),
+    confirm: d.querySelector('.end-confirm').textContent,
+    armed: d.querySelector('.end-confirm').getAttribute('aria-disabled') !== 'true',
+    focus: document.activeElement.className,
+  };
+}"""
+
+
+def wrapup_confirm_lists_routes(wall):
+    """Wrap up… asks first, naming who gets the prompt and how; only its armed button asks."""
+    page = open_app(wall)
+    names = names_by_key(page)
+    error = "The prompt did not read /klepsydra-wrapup, so Enter was not pressed."
+    asked = [{"id": k, "route": r, "error": error if k == "demo-5-bf_isabella" else None} for r, (_, keys) in zip(["type", "turn_end", "after_answer", "by_hand"], ROUTED) for k in keys]
+    page.evaluate("(a) => { window.__asked = a; }", asked)
+    page.click("#wrapup-open")
+    page.wait_for_function("document.getElementById('end-dialog').open")
+    got = page.evaluate(DIALOG)
+    want = [[heading, [names[k] for k in keys]] for heading, keys in ROUTED]
+    wall.check(
+        got["groups"] == want and got["kind"] == "wrapup" and got["role"] == "alertdialog" and got["focus"] == "end-cancel" and not got["armed"] and got["confirm"] == "Ask 12 sessions",
+        "Wrap up… lists who is asked in four groups, the ended left out, Cancel focused and its button not yet armed",
+        got,
+    )
+    page.keyboard.press("Enter")
+    page.wait_for_function("!document.getElementById('end-dialog').open")
+    back = page.evaluate("document.activeElement.id")
+    wall.check(not page.evaluate(STARTS) and back == "wrapup-open", "Enter right after it opens cancels, asks no one, and focus goes back", back)
+    page.click("#wrapup-open")
+    page.wait_for_timeout(200)
+    page.locator(".end-confirm").click(force=True)
+    early = page.evaluate("[document.getElementById('end-dialog').open, " + STARTS + ".length]")
+    wall.check(early == [True, 0], "a click inside its first second does nothing", early)
+    page.wait_for_selector(".end-confirm:not([aria-disabled='true'])")
+    page.mouse.move(5, 5)  # off the button: its hover fill differs from Cancel's resting one
+    fills = page.evaluate("() => [getComputedStyle(document.querySelector('.end-confirm')).backgroundColor, getComputedStyle(document.querySelector('.end-cancel')).backgroundColor]")
+    wall.check(fills[0] == fills[1], "its armed button is the plain fill, as Cancel's, not the danger one", fills)
+    page.get_by_role("button", name="Ask 12 sessions").click()
+    page.wait_for_function("document.getElementById('wrapup-note').textContent.startsWith('Asked')")
+    note = page.evaluate("document.getElementById('wrapup-note').textContent")
+    card_note = page.evaluate("document.querySelector('.card[data-key=\"demo-5-bf_isabella\"] .note').textContent")
+    wall.check(
+        len(page.evaluate(STARTS)) == 1 and note == "Asked 12 sessions; 3 to ask by hand" and card_note == error and not page.evaluate(ENDS),
+        "confirming calls start_wrapup once, says who was asked, and shows a failed typing in that card's note",
+        [note, card_note],
+    )
+    page.close()
+
+
+def wrapup_cards_and_bar(wall):
+    """Each card's line, in both densities and clear of its text; the bar's count, Stop wrap-up and Safe to restart."""
+    page = open_app(wall)
+    feed(page, with_wrapup(page.snapshot, WRAPUP_SAMPLE["answers"]))
+    lines = page.evaluate(SHOWN)
+    reason = WRAPUP_SAMPLE["answers"]["demo-4-bf_emma"]["reason"]
+    want = {
+        "demo-5-bf_isabella": "Ready",
+        "demo-2-af_bella": "Ready",
+        "demo-3-af_sarah": "Wrapping up…",
+        "demo-4-bf_emma": f"Not ready: {reason}",
+        "demo-1-am_michael": "Answer it first; it wraps up after",
+        "demo-10-bm_george": "Wraps up when this turn ends",
+        "demo-6-af_nova": "Ask by hand: /klepsydra-wrapup",
+        "demo-8-am_puck": None,
+    }
+    wall.check(all(lines[k] == v for k, v in want.items()), "each card reads its answer, its route or nothing once ended", {k: lines[k] for k in want})
+    label = page.evaluate("document.querySelector('.card[data-key=\"demo-4-bf_emma\"]').getAttribute('aria-label')")
+    wall.check(label.endswith(f"Not ready: {reason}"), "the line is in the card's accessible name", label)
+    bar = page.evaluate(BAR)
+    wall.check(bar == {"bar": True, "count": "3 of 15 ready", "safe": False, "stop": True, "endAll": False}, "the bar counts live cards and offers Stop wrap-up only", bar)
+    for density in ("compact", "comfortable"):
+        page.check(f".density input[value='{density}']", force=True)
+        page.wait_for_timeout(SETTLE_MS)
+        got = page.evaluate(
+            """() => {
+          const hit = (a, b) => a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
+          const out = { shown: 0, bad: [] };
+          for (const card of document.querySelectorAll('.card')) {
+            const line = card.querySelector('.wrapup');
+            if (line.hidden) continue;
+            const l = line.getBoundingClientRect();
+            if (!l.height || getComputedStyle(line).display === 'none') { out.bad.push(card.dataset.key + ' unseen'); continue; }
+            out.shown++;
+            if (l.bottom > card.getBoundingClientRect().bottom + 0.5) out.bad.push(card.dataset.key + ' outside');
+            for (const el of card.querySelectorAll('.said p, .ask, .meta, .name, .task, .pill, .jump, .ledger-line, .why, .note')) {
+              const r = el.getBoundingClientRect();
+              if (r.width && r.height && getComputedStyle(el).display !== 'none' && hit(l, r)) out.bad.push(card.dataset.key + ' ' + el.className);
+            }
+          }
+          return out;
+        }"""
+        )
+        wall.check(got["shown"] == 15 and not got["bad"], f"every live card's line shows {density}, clear of its text", got)
+    page.click("#wrapup-stop")
+    page.wait_for_timeout(200)
+    wall.check(len(calls(page, "cancel_wrapup")) == 1, "Stop wrap-up calls cancel_wrapup once", calls(page, "cancel_wrapup"))
+    feed(page, with_wrapup(page.snapshot, all_ready()))
+    bar = page.evaluate(BAR)
+    said = page.evaluate("document.getElementById('live').textContent")
+    wall.check(bar == {"bar": True, "count": "15 of 15 ready", "safe": True, "stop": True, "endAll": True} and "Safe to restart" in said, "every live card ready: Safe to restart, announced, and End all ready sessions…", [bar, said])
+    one = dict(all_ready())
+    one["demo-3-af_sarah"] = {"state": "blocked", "reason": "a build"}
+    feed(page, with_wrapup(page.snapshot, one))
+    bar = page.evaluate(BAR)
+    wall.check(not bar["safe"] and not bar["endAll"] and bar["count"] == "14 of 15 ready", "one not ready takes both away", bar)
+    feed(page, with_wrapup(page.snapshot, WRAPUP_SAMPLE["answers"], until_in=-10))
+    lines = page.evaluate(SHOWN)
+    bar = page.evaluate(BAR)
+    wall.check(
+        not bar["stop"] and lines["demo-3-af_sarah"] == "No answer" and lines["demo-1-am_michael"] == "No answer" and lines["demo-5-bf_isabella"] == "Ready",
+        "past its window no Stop wrap-up, and silence reads No answer, never ready",
+        [bar, lines["demo-3-af_sarah"], lines["demo-5-bf_isabella"]],
+    )
+    snap = json.loads(json.dumps(page.snapshot))
+    feed(page, snap)
+    wall.check(page.evaluate(BAR)["bar"] is False and not any(page.evaluate(SHOWN).values()), "with no request the bar and the cards say nothing of it", page.evaluate(BAR))
+    page.close()
+
+
+def wrapup_demo_in_browser(wall):
+    """?demo&wrapup shows the sample request outside the app; its buttons stay with the app."""
+    page = wall.open(1920, 1000, 16, query="&wrapup")
+    bar = page.evaluate(BAR)
+    lines = page.evaluate(SHOWN)
+    wall.check(bar["count"] == "3 of 15 ready" and not bar["stop"] and lines["demo-4-bf_emma"].startswith("Not ready: ") and lines["demo-5-bf_isabella"] == "Ready", "the demo carries a request and its answers", [bar, lines["demo-4-bf_emma"]])
+    page.close()
+
+
+def end_all_ready(wall):
+    """One confirm names every session it ends; each card then runs its own undo window."""
+    page = open_app(wall)
+    feed(page, with_wrapup(page.snapshot, all_ready()))
+    names = names_by_key(page)
+    page.click("#end-ready")
+    page.wait_for_function("document.getElementById('end-dialog').open")
+    got = page.evaluate(DIALOG)
+    order = [k for k in LIVE if k in ENDABLE]
+    wall_order = page.evaluate("[...document.querySelectorAll('.card')].map((c) => c.dataset.key)")
+    want = [names[k] for k in wall_order if k in ENDABLE]
+    wall.check(
+        got["kind"] == "end" and got["title"] == "End 12 sessions?" and got["confirm"] == "End 12 sessions" and got["groups"] == [[None, want]]
+        and "Not listed: 3 sessions outside klepsydra's tmux" in got["text"] and got["focus"] == "end-cancel" and not got["armed"] and len(order) == 12,
+        "End all ready names each session it ends and the rest it cannot, Cancel focused",
+        got,
+    )
+    page.wait_for_selector(".end-confirm:not([aria-disabled='true'])")
+    page.get_by_role("button", name="End 12 sessions").click()
+    page.wait_for_timeout(300)
+    state = page.evaluate("() => [...document.querySelectorAll('.card')].filter((c) => !c.querySelector('.ending').hidden).map((c) => c.dataset.key).sort()")
+    focus = page.evaluate("document.activeElement.className")
+    wall.check(state == ENDABLE and not page.evaluate(ENDS) and focus == "undo" and not page.evaluate(BAR)["endAll"], "confirming opens every card's own undo window, sends nothing yet, and puts focus on an Undo", [len(state), focus])
+    page.locator('.card[data-key="demo-2-af_bella"] .undo').click()
+    page.wait_for_timeout(5300)
+    sent = sorted(a["id"] for _, a in page.evaluate(ENDS))
+    wall.check(sent == [k for k in ENDABLE if k != "demo-2-af_bella"], "after 5 s each end goes out once; the one undone stays", sent)
+    page.close()
+
+
+def one_click_or_key_never_ends_all(wall):
+    """The hard rule on the bulk path: no click or key short of the armed confirm sends end_session."""
+    page = open_app(wall)
+    feed(page, with_wrapup(page.snapshot, all_ready()))
+    log = []
+    dialog_open = "document.getElementById('end-dialog').open"
+    page.click("#end-ready")
+    page.wait_for_function(dialog_open)
+    log.append(("click End all ready…", page.evaluate("document.activeElement.className")))
+    page.keyboard.press("Escape")
+    page.wait_for_function("!" + dialog_open)
+    page.locator('.card[data-key="demo-5-bf_isabella"]').evaluate("c => c.focus()")
+    page.keyboard.press("Enter")
+    page.keyboard.press("Space")
+    log.append(("Enter and Space on a card", page.evaluate(dialog_open)))
+    for key_ in ("Enter", "Space"):
+        page.locator("#end-ready").focus()
+        page.keyboard.press(key_)
+        page.wait_for_function(dialog_open)
+        page.keyboard.press(key_)  # right after it opens: Cancel
+        page.wait_for_function("!" + dialog_open)
+        log.append((f"{key_} twice on End all ready…", page.evaluate("document.activeElement.id")))
+    page.click("#end-ready")
+    page.wait_for_timeout(200)
+    page.locator(".end-confirm").click(force=True)
+    log.append(("a click on its button inside ARM_MS", page.evaluate(dialog_open)))
+    page.keyboard.press("Escape")
+    page.wait_for_function("!" + dialog_open)
+    page.click("#end-ready")
+    page.mouse.click(5, 5)
+    page.wait_for_function("!" + dialog_open)
+    log.append(("backdrop click", False))
+    page.locator("#end-ready").dblclick()
+    page.wait_for_timeout(200)
+    log.append(("double-click on End all ready…", page.evaluate(dialog_open)))
+    page.keyboard.press("Escape")
+    page.wait_for_timeout(6500)
+    ended = page.evaluate(ENDS)
+    showing = page.evaluate("[...document.querySelectorAll('.ending')].some((e) => !e.hidden)")
+    focus_ok = log[0][1] == "end-cancel" and log[2][1] == "end-ready" and log[3][1] == "end-ready" and log[4][1] is True
+    wall.check(not ended and not showing and focus_ok, "no single click or key on the bulk path sends end_session or starts an undo window", [ended, showing, log])
+    page.close()
+
+
 def main() -> int:
     handler = functools.partial(Quiet, directory=str(ROOT))
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)  # a free port
@@ -1407,6 +1671,11 @@ def main() -> int:
             stray_enter_on_undo_undoes,
             interrupt_sends_once,
             end_cancelled_when_the_session_ends,
+            wrapup_confirm_lists_routes,
+            wrapup_cards_and_bar,
+            wrapup_demo_in_browser,
+            end_all_ready,
+            one_click_or_key_never_ends_all,
         )
         for case in cases:
             if not only or case.__name__ in only:

@@ -16,6 +16,14 @@
         <span class="key" aria-hidden="true"><svg viewBox="0 0 32 18"><path class="shell" d="M 4.5 16 A 11.5 11.5 0 0 1 27.5 16"/></svg>shell</span>
       </p>
       <button type="button" id="ledger-open" aria-haspopup="dialog">Ledger</button>
+      <button type="button" id="wrapup-open" aria-haspopup="dialog">Wrap up…</button>
+      <p class="wrapup-bar" hidden>
+        <span class="wrapup-count"></span>
+        <span class="wrapup-safe" hidden>Safe to restart</span>
+        <button type="button" id="wrapup-stop">Stop wrap-up</button>
+        <button type="button" id="end-ready" aria-haspopup="dialog" hidden>End all ready sessions…</button>
+      </p>
+      <span id="wrapup-note" role="status"></span>
     </div>
     <button type="button" id="new-session">+ New session</button>
     <span id="new-note" role="status"></span>
@@ -59,7 +67,7 @@
   <dialog id="end-dialog" class="end-dialog" role="alertdialog" aria-labelledby="end-title" aria-describedby="end-text">
     <div class="end-body">
       <h2 id="end-title"></h2>
-      <div id="end-text"><p class="end-what"></p><p class="end-warn" hidden></p></div>
+      <div id="end-text"><p class="end-what"></p><div class="end-list" hidden></div><p class="end-warn" hidden></p></div>
       <div class="end-buttons">
         <button type="button" class="end-cancel">Cancel</button>
         <button type="button" class="end-confirm"></button>
@@ -106,6 +114,7 @@
         <span class="partial" role="img" hidden></span>
         <button type="button" class="chip" aria-haspopup="dialog" title="Open the ledger for this session" hidden><span class="c-short" aria-hidden="true"></span><span class="c-full visually-hidden"></span></button>
       </p>
+      <p class="wrapup" hidden></p>
       <footer class="actions">
         <span class="foot">
           <span class="note" role="status"></span>

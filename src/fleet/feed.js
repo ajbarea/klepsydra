@@ -2,7 +2,8 @@
 // browser a dev-fleet.json snapshot (serve src/ and add ?focus=<id> to focus),
 // or with ?demo a sample fleet, its times moved up to now (serve the repo root
 // and open /src/wall.html?demo: the sample sits outside the bundled src/);
-// ?demo=8 shows its first eight sessions.
+// ?demo=8 shows its first eight sessions, and ?demo&wrapup adds a sample
+// wrap-up request and answers.
 // `onMessage` gets `{sessions, speaking}` snapshots and `{focus: id}` requests.
 // In a browser a snapshot's speaking line replays, a sentence at a time.
 import { follow } from "../ipc.js";
@@ -21,8 +22,28 @@ export function demoLedgerUrl(app, search) {
   return !app && new URLSearchParams(search).has("demo") ? "../scripts/fixtures/ledger-demo.json" : null;
 }
 
+/** The browser's wrap-up sample, only with ?demo&wrapup and never inside the app. */
+export function demoWrapupUrl(app, search) {
+  const q = new URLSearchParams(search);
+  return !app && q.has("demo") && q.has("wrapup") ? "../scripts/fixtures/wrapup-demo.json" : null;
+}
+
+/** `snapshot` with the wrap-up sample's request and each session's answer. */
+export function withWrapup(snapshot, sample) {
+  if (!sample?.request || !Array.isArray(snapshot?.sessions)) return snapshot;
+  const answers = sample.answers ?? {};
+  return {
+    ...snapshot,
+    wrapup: sample.request,
+    sessions: snapshot.sessions.map((s) => (answers[s.session_id] ? { ...s, wrapup: answers[s.session_id] } : s)),
+  };
+}
+
+const sample = (url) =>
+  url ? fetch(url, { cache: "no-store" }).then((res) => (res.ok ? res.json() : null)).catch(() => null) : Promise.resolve(null);
+
 // The sample's times are as of its `at`; shift them so its ages read as written.
-const TIMES = new Set(["status_at", "active_at", "updated_at", "quiet_since", "at", "started_at", "ends_at"]);
+const TIMES = new Set(["status_at", "active_at", "updated_at", "quiet_since", "at", "started_at", "ends_at", "until"]);
 function shifted(value, by) {
   if (Array.isArray(value)) return value.map((v) => shifted(v, by));
   if (!value || typeof value !== "object") return value;
@@ -53,13 +74,20 @@ export function subscribe(onMessage) {
     follow("fleet_subscribe", onMessage).catch(() => {});
     return;
   }
-  fetch(devSnapshotUrl(inTauri, location.search), { cache: "no-store" })
-    .then((res) => (res.ok ? res.json() : null))
-    .then((snapshot) => {
-      if (!snapshot) return;
-      const { at, ...rest } = snapshot;
-      if (Array.isArray(rest.sessions)) rest.sessions = rest.sessions.slice(0, demoCount(location.search));
-      const current = typeof at === "number" ? shifted(rest, Math.floor(Date.now() / 1000) - at) : snapshot;
+  Promise.all([
+    fetch(devSnapshotUrl(inTauri, location.search), { cache: "no-store" }).then((res) => (res.ok ? res.json() : null)),
+    sample(demoWrapupUrl(inTauri, location.search)),
+  ])
+    .then(([fleet, wrap]) => {
+      if (!fleet) return;
+      const now = Math.floor(Date.now() / 1000);
+      const moved = (x) => {
+        const { at, ...rest } = x;
+        return typeof at === "number" ? shifted(rest, now - at) : x;
+      };
+      const snapshot = moved(fleet);
+      if (Array.isArray(snapshot.sessions)) snapshot.sessions = snapshot.sessions.slice(0, demoCount(location.search));
+      const current = withWrapup(snapshot, wrap && moved(wrap));
       onMessage(current);
       replaySpeaking(current, onMessage);
       const focus = new URLSearchParams(location.search).get("focus");
