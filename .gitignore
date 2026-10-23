@@ -7,3 +7,4 @@ COMMITS.md
 
 # per-session git worktrees
 .claude/worktrees/
+__pycache__/

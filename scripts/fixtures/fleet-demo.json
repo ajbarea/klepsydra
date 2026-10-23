@@ -33,7 +33,10 @@
    "error": null,
    "updated_at": 1792499880,
    "quiet_since": null,
-   "tmux": null,
+   "tmux": {
+    "socket": "/tmp/tmux-1001/klepsydra",
+    "pane": "%1"
+   },
    "distro": "Ubuntu",
    "background": {
     "agents": 0,
@@ -65,6 +68,10 @@
     "guardrail_rejects": 0,
     "user_rejects": 0,
     "updated_at": 1792499880
+   },
+   "claude": {
+    "pid": 4001,
+    "start": 9001
    }
   },
   {
@@ -94,7 +101,10 @@
    "error": null,
    "updated_at": 1792499940,
    "quiet_since": null,
-   "tmux": null,
+   "tmux": {
+    "socket": "/tmp/tmux-1001/klepsydra",
+    "pane": "%2"
+   },
    "distro": "Ubuntu",
    "background": {
     "agents": 0,
@@ -126,6 +136,10 @@
     "guardrail_rejects": 3,
     "user_rejects": 0,
     "updated_at": 1792499880
+   },
+   "claude": {
+    "pid": 4002,
+    "start": 9002
    }
   },
   {
@@ -155,7 +169,10 @@
    "error": null,
    "updated_at": 1792499760,
    "quiet_since": 1792499280,
-   "tmux": null,
+   "tmux": {
+    "socket": "/tmp/tmux-1001/klepsydra",
+    "pane": "%3"
+   },
    "distro": "Ubuntu",
    "background": {
     "agents": 0,
@@ -188,6 +205,10 @@
     "guardrail_rejects": 0,
     "user_rejects": 0,
     "updated_at": 1792499880
+   },
+   "claude": {
+    "pid": 4003,
+    "start": 9003
    }
   },
   {
@@ -217,7 +238,10 @@
    "error": null,
    "updated_at": 1792499980,
    "quiet_since": null,
-   "tmux": null,
+   "tmux": {
+    "socket": "/tmp/tmux-1001/klepsydra",
+    "pane": "%4"
+   },
    "distro": "Ubuntu",
    "background": {
     "agents": 1,
@@ -249,6 +273,10 @@
     "guardrail_rejects": 4,
     "user_rejects": 0,
     "updated_at": 1792499880
+   },
+   "claude": {
+    "pid": 4004,
+    "start": 9004
    }
   },
   {
@@ -283,7 +311,10 @@
    "error": null,
    "updated_at": 1792499960,
    "quiet_since": null,
-   "tmux": null,
+   "tmux": {
+    "socket": "/tmp/tmux-1001/klepsydra",
+    "pane": "%9"
+   },
    "distro": "Ubuntu",
    "background": {
     "agents": 2,
@@ -315,6 +346,10 @@
     "guardrail_rejects": 0,
     "user_rejects": 0,
     "updated_at": 1792499880
+   },
+   "claude": {
+    "pid": 4009,
+    "start": 9009
    }
   },
   {
@@ -344,7 +379,10 @@
    "error": null,
    "updated_at": 1792499940,
    "quiet_since": null,
-   "tmux": null,
+   "tmux": {
+    "socket": "/tmp/tmux-1001/klepsydra",
+    "pane": "%5"
+   },
    "distro": "Ubuntu",
    "background": {
     "agents": 0,
@@ -376,6 +414,10 @@
     "guardrail_rejects": 0,
     "user_rejects": 0,
     "updated_at": 1792499880
+   },
+   "claude": {
+    "pid": 4005,
+    "start": 9005
    }
   },
   {
@@ -402,7 +444,10 @@
    "error": "API error: overloaded (529). The turn stopped.",
    "updated_at": 1792499820,
    "quiet_since": null,
-   "tmux": null,
+   "tmux": {
+    "socket": "/tmp/tmux-1001/default",
+    "pane": "%9"
+   },
    "distro": "Ubuntu",
    "background": {
     "agents": 0,
@@ -434,6 +479,10 @@
     "guardrail_rejects": 0,
     "user_rejects": 0,
     "updated_at": 1792499880
+   },
+   "claude": {
+    "pid": 4006,
+    "start": 9006
    }
   },
   {
@@ -579,7 +628,10 @@
    "error": null,
    "updated_at": 1792499900,
    "quiet_since": null,
-   "tmux": null,
+   "tmux": {
+    "socket": "/tmp/tmux-1001/klepsydra",
+    "pane": "%10"
+   },
    "distro": "Ubuntu",
    "background": {
     "agents": 1,
@@ -611,6 +663,10 @@
     "guardrail_rejects": 0,
     "user_rejects": 0,
     "updated_at": 1792499880
+   },
+   "claude": {
+    "pid": 4010,
+    "start": 9010
    }
   },
   {
@@ -640,7 +696,10 @@
    "error": null,
    "updated_at": 1792499900,
    "quiet_since": null,
-   "tmux": null,
+   "tmux": {
+    "socket": "/tmp/tmux-1001/klepsydra",
+    "pane": "%11"
+   },
    "distro": "Ubuntu",
    "background": {
     "agents": 0,
@@ -672,6 +731,10 @@
     "guardrail_rejects": 0,
     "user_rejects": 0,
     "updated_at": 1792499880
+   },
+   "claude": {
+    "pid": 4011,
+    "start": 9011
    }
   },
   {
@@ -701,7 +764,10 @@
    "error": null,
    "updated_at": 1792499900,
    "quiet_since": null,
-   "tmux": null,
+   "tmux": {
+    "socket": "/tmp/tmux-1001/klepsydra",
+    "pane": "%12"
+   },
    "distro": "Ubuntu",
    "background": {
     "agents": 0,
@@ -762,7 +828,10 @@
    "error": null,
    "updated_at": 1792499900,
    "quiet_since": null,
-   "tmux": null,
+   "tmux": {
+    "socket": "/tmp/tmux-1001/klepsydra",
+    "pane": "%13"
+   },
    "distro": "Ubuntu",
    "background": {
     "agents": 7,
@@ -794,6 +863,10 @@
     "guardrail_rejects": 0,
     "user_rejects": 0,
     "updated_at": 1792499880
+   },
+   "claude": {
+    "pid": 4013,
+    "start": 9013
    }
   },
   {
@@ -823,11 +896,18 @@
    "error": null,
    "updated_at": 1792499720,
    "quiet_since": null,
-   "tmux": null,
+   "tmux": {
+    "socket": "/tmp/tmux-1001/klepsydra",
+    "pane": "%14"
+   },
    "distro": "Ubuntu",
    "background": {
     "agents": 0,
     "shells": 1
+   },
+   "claude": {
+    "pid": 4014,
+    "start": 9014
    }
   },
   {
@@ -866,7 +946,10 @@
    "error": null,
    "updated_at": 1792499760,
    "quiet_since": null,
-   "tmux": null,
+   "tmux": {
+    "socket": "/tmp/tmux-1001/klepsydra",
+    "pane": "%15"
+   },
    "distro": "Ubuntu",
    "background": {
     "agents": 0,
@@ -898,6 +981,10 @@
     "guardrail_rejects": 1,
     "user_rejects": 0,
     "updated_at": 1792499880
+   },
+   "claude": {
+    "pid": 4015,
+    "start": 9015
    }
   },
   {
@@ -927,7 +1014,10 @@
    "error": null,
    "updated_at": 1792499580,
    "quiet_since": null,
-   "tmux": null,
+   "tmux": {
+    "socket": "/tmp/tmux-1001/klepsydra",
+    "pane": "%16"
+   },
    "distro": "Ubuntu",
    "background": {
     "agents": 0,
@@ -959,6 +1049,10 @@
     "guardrail_rejects": 0,
     "user_rejects": 0,
     "updated_at": 1792499880
+   },
+   "claude": {
+    "pid": 4016,
+    "start": 9016
    }
   }
  ],

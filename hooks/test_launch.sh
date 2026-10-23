@@ -207,9 +207,147 @@ tmux -L "$sock3" kill-server 2>/dev/null; rm -f "$HOME/.tmux.conf"
 detach_all; : >"$WT_LOG"
 bash "$launch" jump "$socket" "$first" "$fpid" "$fstart" >/dev/null 2>&1
 check "fleet socket: titled tab" "$(head -1 "$WT_LOG" | grep -c -- "^-w fleet new-tab --title klepsydra sessions --suppressApplicationTitle wsl.exe")" "1"
+echo "end and interrupt"
+# Draws Claude Code's input box as capture-pane shows it (U+276F, a no-break
+# space, rules above and below) and logs each key that matters and what Enter
+# submits. FAKE_DROP is a key it loses, as keys typed during a redraw are;
+# FAKE_STAY makes it ignore /exit.
+cat >"$work/bin/fake-claude" <<'EOF'
+#!/usr/bin/env bash
+log=$1 buf=""
+stty -icanon -echo -isig
+draw() { printf '\033[2J\033[Hhistory\n\xe2\x9d\xaf\xc2\xa0/exit\nout\n\xe2\x94\x80\xe2\x94\x80\n\xe2\x9d\xaf\xc2\xa0%s\n\xe2\x94\x80\xe2\x94\x80\n  \xe2\x9d\xaf /exit   Exit the CLI\n' "$buf"; }
+draw
+# dd, not read -n: bash's read turns ISIG back on, and Ctrl+C would kill it.
+while c=$(dd bs=1 count=1 2>/dev/null); do
+  case $c in
+    "") printf 'submit:%s\n' "$buf" >>"$log"; [[ $buf == /exit && -z ${FAKE_STAY:-} ]] && exit 0; buf="" ;;
+    $'\e') printf 'esc\n' >>"$log" ;;
+    $'\x03') printf 'ctrl-c\n' >>"$log"; buf="" ;;
+    "${FAKE_DROP:-}") ;;
+    *) buf+=$c ;;
+  esac
+  draw
+done
+EOF
+chmod +x "$work/bin/fake-claude"
+export KLEPSYDRA_END_WAIT=3
+fake() { # [env...]: a fleet window running the fake; prints its pane id
+  local p _
+  p=$(t new-window -d -P -F '#{pane_id}' -t =fleet: "env $* $work/bin/fake-claude $work/fake.log")
+  for _ in $(seq 50); do t capture-pane -p -t "$p" | grep -q '^history' && break; sleep 0.1; done
+  echo "$p"
+}
+send() { bash "$launch" "$1" "$socket" "$2" "$(pane_pid "$2")" "$(pstart "$(pane_pid "$2")")"; } # verb pane
+alive() { [[ -n $(t display -p -t "$1" '#{pane_id}' 2>/dev/null) ]] && echo alive || echo gone; }
+# tmux closes a pane a moment after its process exits.
+gone() { local _; for _ in $(seq 20); do [[ $(alive "$1") == gone ]] && break; sleep 0.1; done; alive "$1"; }
+detach_all; tabs0=$(tabs)
+
+: >"$work/fake.log"; p=$(fake)
+t send-keys -t "$p" -l 'half a draft'; sleep 0.2
+out=$(send end "$p" 2>&1); rc=$?
+check "end: exit 0" "$rc" "0"
+check "end: says so" "$out" "Ended the session."
+check "end: Esc, Ctrl+C, then /exit alone" "$(paste -sd' ' "$work/fake.log")" "esc ctrl-c submit:/exit"
+check "end: the process is gone" "$(gone "$p")" "gone"
+
+: >"$work/fake.log"; p=$(fake FAKE_DROP=x)
+out=$(send end "$p" 2>&1); rc=$?
+check "lost keys: exit 1" "$rc" "1"
+check "lost keys: says so" "$out" "The session's prompt did not read /exit, so Enter was not pressed. Its prompt may be in vim editor mode, or Claude Code's layout changed. Open its terminal to end it."
+check "lost keys: Enter never pressed" "$(grep -c '^submit:' "$work/fake.log")" "0"
+check "lost keys: the line is cleared" "$(tail -1 "$work/fake.log")" "ctrl-c"
+check "lost keys: still running" "$(alive "$p")" "alive"
+t kill-pane -t "$p"
+
+: >"$work/fake.log"; p=$(fake FAKE_STAY=1)
+out=$(send end "$p" 2>&1); rc=$?
+check "ignored /exit: exit 1" "$rc" "1"
+check "ignored /exit: says so" "$out" "Sent /exit, but the session is still running. Open its terminal to see why."
+t kill-pane -t "$p"
+
+: >"$work/fake.log"; p=$(fake)
+out=$(send interrupt "$p" 2>&1); rc=$?
+check "interrupt: exit 0" "$rc" "0"
+check "interrupt: says so" "$out" "Sent Esc to the session."
+check "interrupt: Esc alone" "$(paste -sd' ' "$work/fake.log")" "esc"
+check "interrupt: still running" "$(alive "$p")" "alive"
+
+# A pane in copy mode would eat the keys as copy-mode commands.
+: >"$work/fake.log"; p=$(fake)
+t copy-mode -t "$p"
+check "copy mode: the pane is in it" "$(t display -p -t "$p" '#{pane_in_mode}')" "1"
+out=$(send end "$p" 2>&1); rc=$?
+check "copy mode, end: exit 0" "$rc" "0"
+check "copy mode, end: says so" "$out" "Ended the session."
+check "copy mode, end: the keys reached the session" "$(paste -sd' ' "$work/fake.log")" "esc ctrl-c submit:/exit"
+: >"$work/fake.log"; p=$(fake)
+t copy-mode -t "$p"
+out=$(send interrupt "$p" 2>&1); rc=$?
+check "copy mode, interrupt: exit 0" "$rc" "0"
+check "copy mode, interrupt: Esc reached the session" "$(paste -sd' ' "$work/fake.log")" "esc"
+check "copy mode, interrupt: out of copy mode" "$(t display -p -t "$p" '#{pane_in_mode}')" "0"
+
+# An End the app gave up on may still be running: a second one is refused.
+: >"$work/fake.log"; p=$(fake)
+exec {held}>>"$work/klepsydra-pane-$UID-${p#%}.lock"; flock -n "$held"
+for verb in end interrupt; do
+  out=$(send "$verb" "$p" 2>&1); rc=$?
+  check "pane locked, $verb: exit 1" "$rc" "1"
+  check "pane locked, $verb: says so" "$out" "That session is already being ended or interrupted."
+done
+check "pane locked: no key sent" "$(wc -c <"$work/fake.log")" "0"
+exec {held}>&-
+out=$(send interrupt "$p" 2>&1)
+check "pane unlocked: interrupt runs" "$out" "Sent Esc to the session."
+t kill-pane -t "$p"
+
+# KLEPSYDRA_END_WAIT reaches arithmetic: only 1 to 999 counts, else 10 s.
+: >"$work/fake.log"; p=$(fake FAKE_STAY=1)
+rm -f "$work/crafted"
+out=$(KLEPSYDRA_END_WAIT="a[\$(touch $work/crafted)]" send end "$p" 2>&1); rc=$?
+check "END_WAIT crafted: no command ran" "$([[ -e $work/crafted ]] && echo ran || echo none)" "none"
+check "END_WAIT crafted: waits out and says so" "$out" "Sent /exit, but the session is still running. Open its terminal to see why."
+t kill-pane -t "$p"
+
+# Every refusal Jump makes, End and Interrupt make too, before any key.
+: >"$work/fake.log"; p=$(fake)
+ppid_=$(pane_pid "$p"); pst=$(pstart "$ppid_")
+for verb in end interrupt; do
+  out=$(bash "$launch" "$verb" "$socket" "$p" "$spid" "$sstart" 2>&1)
+  check "$verb, another pane's process: refused" "$out" "That session's tmux pane now belongs to another session."
+  out=$(bash "$launch" "$verb" "$socket" "$p" 2999999 "$pst" 2>&1)
+  check "$verb, dead pid: refused" "$out" "That session's tmux pane now belongs to another session."
+  out=$(bash "$launch" "$verb" "$socket" "$p" "$ppid_" "$((pst + 1))" 2>&1)
+  check "$verb, reused pid: refused" "$out" "That session's tmux pane now belongs to another session."
+  out=$(bash "$launch" "$verb" "$socket" '%3;x' "$ppid_" "$pst" 2>&1)
+  check "$verb, bad pane: refused" "$out" "Not a tmux pane: %3;x"
+  out=$(bash "$launch" "$verb" "$socket" '%99999' "$ppid_" "$pst" 2>&1)
+  check "$verb, unknown pane: refused" "$out" "That session's tmux pane is gone."
+  out=$(bash "$launch" "$verb" "rel/sock" "$p" "$ppid_" "$pst" 2>&1)
+  check "$verb, relative socket: refused" "$out" "Not a tmux socket path: rel/sock"
+  bash "$launch" "$verb" "$socket" "$p" "$ppid_" >/dev/null 2>&1; rc=$?
+  check "$verb, missing start: exit 1" "$rc" "1"
+done
+tmux -L "$sock2" -f /dev/null new-session -d -s hand "$work/bin/fake-claude $work/fake.log"
+for _ in $(seq 50); do tmux -L "$sock2" capture-pane -p | grep -q '^history' && break; sleep 0.1; done
+socket2=$(tmux -L "$sock2" display -p '#{socket_path}')
+pane2=$(tmux -L "$sock2" display -p '#{pane_id}')
+p2=$(tmux -L "$sock2" display -p '#{pane_pid}')
+for verb in end interrupt; do
+  out=$(bash "$launch" "$verb" "$socket2" "$pane2" "$p2" "$(pstart "$p2")" 2>&1); rc=$?
+  check "$verb, a hand-started tmux: exit 1" "$rc" "1"
+  check "$verb, a hand-started tmux: says so" "$out" "That session is not in klepsydra's tmux, so klepsydra will not type into it."
+done
+tmux -L "$sock2" kill-server 2>/dev/null
+check "refusals: no key reached a session" "$(wc -l <"$work/fake.log")" "0"
+check "end and interrupt: never a tab" "$(tabs)" "$tabs0"
+t kill-pane -t "$p"
+
 out=$(bash "$launch" bogus 2>&1); rc=$?
 check "unknown command: exit 1" "$rc" "1"
-check "unknown command: says so" "$out" "usage: klepsydra-launch.sh new DIR | jump SOCKET PANE PID START"
+check "unknown command: says so" "$out" "usage: klepsydra-launch.sh new DIR | jump|end|interrupt SOCKET PANE PID START"
 check "unknown command: no tab" "$(tabs)" "1"
 
 echo "one tab per fleet"

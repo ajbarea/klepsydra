@@ -458,6 +458,33 @@ title.
 running brings its card back at its next event, without its start time or the
 repos it touched.
 
+### Ending a session
+
+A session that runs in klepsydra's tmux (the socket `klepsydra`) and has a
+known `claude` shows a three-dot button, named "Session actions for" the
+character, away from Open terminal and Clear: at the top right of a
+comfortable card, in the bottom-left corner of a compact one. Its menu opens
+inside the card. The menu offers **Interrupt**, while the
+card reads working, and **End session…**. Interrupt sends Esc to the session's pane
+and asks nothing. **End session…** opens a dialog that names the character
+and the repo, with Cancel focused, so Enter right after it opens cancels.
+Its **End** button wakes a second after the dialog opens, so a double-click
+cannot reach it. **End** the character, and the card reads "Ending Hephaestus
+in 5 s" with an **Undo** button. Only when the five seconds run out does klepsydra type
+`/exit` into the pane. A click or a key never ends a session on its own, and a
+card that disappears, or leaves klepsydra's tmux, cancels its pending end.
+
+One known limit: with Claude Code's vim editor mode on, the prompt may not
+read `/exit` the way klepsydra expects, so Enter is not pressed and the card
+says so; end such a session from its own terminal.
+
+The card refuses, with the reason, whenever Jump would (no pane recorded, a
+pane that is gone or now hosts another process), and in these cases too. The
+session is outside klepsydra's tmux, so its pane is not ours to type into.
+Another End or Interrupt of it is still running. The prompt did not read
+exactly `/exit`, so Enter was not pressed and the line was cleared. Or the
+session is still running a few seconds after `/exit` was sent.
+
 ### Card density
 
 The control beside **+ New session** picks the card density: **Auto** (the

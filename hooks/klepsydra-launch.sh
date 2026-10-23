@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 # klepsydra's launcher, run by the overlay as
 #   wsl.exe -e bash -l .claude/klepsydra-launch.sh new DIR
-#   wsl.exe -e bash .claude/klepsydra-launch.sh jump SOCKET PANE PID START
+#   wsl.exe -e bash .claude/klepsydra-launch.sh jump|end|interrupt SOCKET PANE PID START
 # `new` starts claude in DIR as a window of tmux session "fleet" (socket
 # "klepsydra"); `jump` brings PANE's window to the front of its session, once
-# PANE still hosts Claude process PID (START = /proc/PID/stat field 22). Both
-# open a Windows Terminal tab (window "fleet", titled TAB_TITLE) only when no
+# PANE still hosts Claude process PID (START = /proc/PID/stat field 22).
+# `end` types /exit into that Claude Code and `interrupt` presses Esc there,
+# on klepsydra's own tmux server only. `new` and `jump` open a Windows Terminal tab (window "fleet", titled TAB_TITLE) only when no
 # client shows the session and no tab opened in the last PENDING_FOR seconds is
 # still starting. One line out: stdout on success, stderr on failure.
 set -uo pipefail
@@ -25,6 +26,12 @@ PENDING_FOR=30
 # A socket path safe to hand wt.exe, which splits its arguments at ";".
 SOCKET_RE='^/[A-Za-z0-9._/-]{1,255}$'
 ATTACHED=1 # cleared by open_tab until the tab's client shows up
+END_WAIT=${KLEPSYDRA_END_WAIT:-10} # seconds `end` waits for Claude to exit
+[[ $END_WAIT =~ ^[1-9][0-9]{0,2}$ ]] || END_WAIT=10 # it reaches $(( )), which would run a crafted value
+# Claude Code's input line as capture-pane shows it: U+276F and a no-break
+# space at the left edge, a rule (U+2500) on the lines above and below.
+PROMPT_MARK=$'\xe2\x9d\xaf\xc2\xa0'
+RULE=$'\xe2\x94\x80'
 
 fail() { printf '%s\n' "$*" >&2; exit 1; }
 undo() { (( ${#UNDO[@]} )) && "${UNDO[@]}" >/dev/null 2>&1; } # what a failed launch created
@@ -171,14 +178,16 @@ owns_process() { # ancestor pid start
   return 1
 }
 
-jump() { # socket pane pid start
-  local socket=$1 pane=$2 pid=$3 start=$4 session pane_pid
+# Refuse unless PANE on SOCKET still hosts Claude process PID with START.
+# Sets the caller's `t` (tmux's socket args) and `session` (PANE's session).
+check_pane() { # socket pane pid start
+  local socket=$1 pane=$2 pid=$3 start=$4 pane_pid
   [[ $socket =~ $SOCKET_RE ]] || fail "Not a tmux socket path: $socket"
   [[ $pane =~ ^%[0-9]{1,9}$ ]] || fail "Not a tmux pane: $pane"
   [[ $pid =~ ^[1-9][0-9]{0,9}$ ]] || fail "Not a process id: $pid"
   [[ $start =~ ^[0-9]{1,20}$ ]] || fail "Not a process start time: $start"
   need tmux "tmux is not installed in this distro."
-  local -a t=(-S "$socket")
+  t=(-S "$socket")
   # tmux 3.4 exits 0 with empty output for an unknown pane.
   session=$(tmux "${t[@]}" display-message -p -t "$pane" '#{session_name}' 2>/dev/null) ||
     fail "That session's tmux pane is gone."
@@ -188,6 +197,12 @@ jump() { # socket pane pid start
   [[ $pane_pid =~ ^[1-9][0-9]*$ ]] || fail "That session's tmux pane is gone."
   owns_process "$pane_pid" "$pid" "$start" ||
     fail "That session's tmux pane now belongs to another session."
+}
+
+jump() { # socket pane pid start
+  local socket=$1 pane=$2 session
+  local -a t=()
+  check_pane "$@"
   { tmux "${t[@]}" select-window -t "$pane" && tmux "${t[@]}" select-pane -t "$pane"; } 2>/dev/null ||
     fail "tmux could not select the window."
   take_lock
@@ -200,8 +215,90 @@ jump() { # socket pane pid start
   printf "Selected the session's tmux window.\n"
 }
 
+# Typing into a session is for klepsydra's own server; a hand-started tmux is
+# the user's.
+fleet_pane() { # socket pane pid start
+  check_pane "$@"
+  [[ ${1##*/} == "$SOCKET_NAME" ]] ||
+    fail "That session is not in klepsydra's tmux, so klepsydra will not type into it."
+}
+
+# A pane in copy mode swallows keys as copy-mode commands, so leave it first.
+leave_modes() {
+  local _
+  for _ in $(seq 5); do
+    [[ $(tmux "${t[@]}" display-message -p -t "$pane" '#{pane_in_mode}' 2>/dev/null) == 1 ]] || return 0
+    tmux "${t[@]}" send-keys -t "$pane" -X cancel 2>/dev/null || return 0
+  done
+  fail "The session's pane is in a tmux mode that would not close. Open its terminal to end it."
+}
+
+# One End or Interrupt per pane: an End the app gave up on may still be running.
+# The pane is checked again under the lock, as such an End may just have finished.
+own_pane() { # socket pane pid start
+  fleet_pane "$@"
+  local file=${XDG_RUNTIME_DIR:-/tmp}/klepsydra-pane-$UID-${pane#%}.lock
+  { exec {PANEFD}>>"$file"; } 2>/dev/null || fail "Could not open $file."
+  flock -n "$PANEFD" || fail "That session is already being ended or interrupted."
+  fleet_pane "$@"
+}
+
+keys() { tmux "${t[@]}" send-keys -t "$pane" "$@" 2>/dev/null || fail "tmux could not send keys to the session."; }
+
+# Whether PANE's input line reads exactly /exit, between its rules: not a line
+# of the transcript, not the command menu's entry.
+reads_exit() {
+  LC_ALL=C.UTF-8 tmux "${t[@]}" capture-pane -p -t "$pane" 2>/dev/null |
+    awk -v mark="$PROMPT_MARK" -v rule="$RULE" '
+      { line[NR] = $0 }
+      END {
+        for (i = 2; i < NR; i++) {
+          if (index(line[i - 1], rule) != 1 || index(line[i + 1], rule) != 1) continue
+          if (index(line[i], mark "/exit") == 1 && substr(line[i], length(mark) + 6) ~ /^ *$/) found = 1
+        }
+        exit !found
+      }'
+}
+
+end_session() { # socket pane pid start
+  local socket=$1 pane=$2 pid=$3 start=$4 session _
+  local -a t=()
+  own_pane "$@"
+  leave_modes
+  # Esc closes a dialog, declines a pending permission or stops a turn, so
+  # Enter cannot answer one; Ctrl+C then clears a draft (Up brings it back).
+  keys Escape
+  sleep 1
+  keys C-c
+  sleep 0.5
+  keys -l /exit
+  local reads=0
+  for _ in $(seq 20); do reads_exit && { reads=1; break; }; sleep 0.1; done
+  if (( ! reads )); then
+    keys C-c
+    fail "The session's prompt did not read /exit, so Enter was not pressed. Its prompt may be in vim editor mode, or Claude Code's layout changed. Open its terminal to end it."
+  fi
+  keys Enter
+  for _ in $(seq $((END_WAIT * 10))); do
+    proc_is "$pid" "$start" || { printf 'Ended the session.\n'; return 0; }
+    sleep 0.1
+  done
+  fail "Sent /exit, but the session is still running. Open its terminal to see why."
+}
+
+interrupt() { # socket pane pid start
+  local socket=$1 pane=$2 session
+  local -a t=()
+  own_pane "$@"
+  leave_modes
+  keys Escape
+  printf 'Sent Esc to the session.\n'
+}
+
 case ${1:-} in
   new) (( $# == 2 )) || fail "usage: klepsydra-launch.sh new DIR"; new "$2" ;;
   jump) (( $# == 5 )) || fail "usage: klepsydra-launch.sh jump SOCKET PANE PID START"; jump "$2" "$3" "$4" "$5" ;;
-  *) fail "usage: klepsydra-launch.sh new DIR | jump SOCKET PANE PID START" ;;
+  end) (( $# == 5 )) || fail "usage: klepsydra-launch.sh end SOCKET PANE PID START"; end_session "$2" "$3" "$4" "$5" ;;
+  interrupt) (( $# == 5 )) || fail "usage: klepsydra-launch.sh interrupt SOCKET PANE PID START"; interrupt "$2" "$3" "$4" "$5" ;;
+  *) fail "usage: klepsydra-launch.sh new DIR | jump|end|interrupt SOCKET PANE PID START" ;;
 esac

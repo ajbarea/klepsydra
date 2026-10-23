@@ -800,6 +800,7 @@ fn with_state<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R
         .manage(Requested::default())
         .manage(Layouts::default())
         .manage(launch::InFlight::default())
+        .manage(launch::PaneFlight::default())
 }
 
 fn main() {
@@ -829,6 +830,8 @@ fn main() {
             fleet::open_wall,
             fleet::clear_session,
             fleet::ledger_today,
+            launch::end_session,
+            launch::interrupt_session,
             fleet::get_wall_density,
             fleet::set_wall_density,
             jump::jump_to_terminal,

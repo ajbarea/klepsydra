@@ -8,6 +8,7 @@ import { ledgerLine } from "./ledger.js";
 
 export { voiceName };
 import { speakingNow } from "./speaking.js";
+import { sessionActions } from "./end.js";
 
 // Each status's badge: shape, symbol and tone carry it together with the
 // label, so no one of them is needed alone.
@@ -455,6 +456,8 @@ export function card(s, cast, nowMs) {
     updated: s.status === "ended" ? null : updatedText(s, nowMs), // the pill's age says it
     jump,
     clear: s.status === "ended" || s.status === "silent",
+    actions: sessionActions(s),
+    menuLabel: `Session actions for ${who.name}`,
     // An off button says why in its name too, not only in its tooltip.
     jumpLabel: `Open terminal, ${who.name}${jump.why ? `, unavailable: ${jump.why}` : ""}`,
     label: accessibleName(s, cast, nowMs),

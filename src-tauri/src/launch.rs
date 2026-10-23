@@ -1,10 +1,12 @@
 //! The one place klepsydra starts a process: wsl.exe, from a click, one call
-//! at a time, running ~/.claude/klepsydra-launch.sh to start a session or
-//! bring a session's tmux window forward.
+//! at a time, running ~/.claude/klepsydra-launch.sh to start a session, bring
+//! a session's tmux window forward, or end or interrupt it.
 
+use std::collections::HashSet;
 use std::sync::Mutex;
+use std::time::Duration;
 #[cfg(any(windows, test))]
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use serde_json::Value;
 use tauri::Manager;
@@ -15,7 +17,6 @@ pub const WSL_EXE: &str = r"C:\Windows\System32\wsl.exe";
 /// The launcher, relative to the WSL home (`--cd ~`).
 const SCRIPT: &str = ".claude/klepsydra-launch.sh";
 /// Longest wait for wsl.exe to finish: a cold WSL start alone can take 20 s.
-#[cfg(any(windows, test))]
 const TIMEOUT: Duration = Duration::from_secs(45);
 /// How long the output is still read once wsl.exe exits; a process it left
 /// behind holding the pipe open cannot keep the call running past this.
@@ -25,6 +26,11 @@ const DRAIN_GRACE: Duration = Duration::from_secs(2);
 /// Set while a call runs; a click meanwhile is refused.
 #[derive(Default)]
 pub struct InFlight(pub Mutex<bool>);
+
+/// The sessions whose pane has an End or Interrupt running. Those two verbs
+/// are per-session: another session, Jump and New session run independently.
+#[derive(Default)]
+pub struct PaneFlight(pub Mutex<HashSet<String>>);
 
 /// The title of the Windows Terminal tab the launcher opens; the script's
 /// `TAB_TITLE` is the same text, which a guard test asserts.
@@ -84,19 +90,59 @@ pub fn new_args(dir: &str, distro: Option<&str>) -> Result<Vec<String>, String> 
     Ok(a)
 }
 
-/// wsl.exe's arguments to bring `t`'s tmux window forward.
-pub fn jump_args(t: &Target) -> Result<Vec<String>, String> {
+/// What the launcher does to a session's tmux pane.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PaneVerb {
+    /// Bring its window forward.
+    Jump,
+    /// Type /exit into it.
+    End,
+    /// Press Esc in it.
+    Interrupt,
+}
+
+impl PaneVerb {
+    fn word(self) -> &'static str {
+        match self {
+            PaneVerb::Jump => "jump",
+            PaneVerb::End => "end",
+            PaneVerb::Interrupt => "interrupt",
+        }
+    }
+}
+
+/// wsl.exe's arguments to do `verb` to `t`'s tmux pane. Only Jump reaches a
+/// tmux started by hand; klepsydra types into its own server's panes alone.
+pub fn pane_args(t: &Target, verb: PaneVerb) -> Result<Vec<String>, String> {
     if !(distro_ok(&t.distro) && socket_ok(&t.socket) && pane_ok(&t.pane) && t.pid != 0) {
         return Err("This session's tmux pane cannot be named safely.".into());
     }
+    if verb != PaneVerb::Jump && !is_fleet(t) {
+        return Err(NOT_FLEET.into());
+    }
     let (pid, start) = (t.pid.to_string(), t.start.to_string());
     Ok([
-        "-d", &t.distro, "--cd", "~", "-e", "bash", SCRIPT, "jump", &t.socket, &t.pane, &pid,
+        "-d",
+        &t.distro,
+        "--cd",
+        "~",
+        "-e",
+        "bash",
+        SCRIPT,
+        verb.word(),
+        &t.socket,
+        &t.pane,
+        &pid,
         &start,
     ]
     .map(String::from)
     .to_vec())
 }
+
+/// Why End and Interrupt refuse a session outside the launcher's tmux; the
+/// launcher says the same.
+const NOT_FLEET: &str =
+    "That session is not in klepsydra's tmux, so klepsydra will not type into it.";
 
 /// Whether `t` runs on the launcher's own tmux server, the only one whose tab
 /// carries `FLEET_TAB`.
@@ -140,6 +186,34 @@ pub fn gated<T>(flight: &InFlight, f: impl FnOnce() -> Result<T, String>) -> Res
     let _reopen = Reopen(flight);
     f()
 }
+
+/// Frees session `id` in a `PaneFlight` when dropped, even while unwinding.
+struct Release<'a>(&'a PaneFlight, String);
+
+impl Drop for Release<'_> {
+    fn drop(&mut self) {
+        let mut busy = self.0 .0.lock().unwrap_or_else(|e| e.into_inner());
+        busy.remove(&self.1);
+    }
+}
+
+/// Run `f` unless an End or Interrupt of session `id` is already running.
+pub fn pane_gated<T>(
+    flight: &PaneFlight,
+    id: &str,
+    f: impl FnOnce() -> Result<T, String>,
+) -> Result<T, String> {
+    {
+        let mut busy = flight.0.lock().unwrap_or_else(|e| e.into_inner());
+        if !busy.insert(id.to_owned()) {
+            return Err(PANE_BUSY.into());
+        }
+    }
+    let _release = Release(flight, id.to_owned());
+    f()
+}
+
+const PANE_BUSY: &str = "That session is already being ended or interrupted.";
 
 /// wsl.exe writes its own messages as UTF-16LE and the Linux side's as UTF-8.
 #[cfg(any(windows, test))]
@@ -220,7 +294,6 @@ fn drain<R: std::io::Read + Send + 'static>(mut r: R) -> Drain {
 }
 
 /// The card's line when wsl.exe does not finish within `TIMEOUT`.
-#[cfg(any(windows, test))]
 fn timed_out() -> String {
     format!(
         "WSL did not answer within {} seconds. The session may still be starting; check the terminal before clicking again.",
@@ -228,8 +301,16 @@ fn timed_out() -> String {
     )
 }
 
+/// The card's line when End or Interrupt gets no answer from WSL in `TIMEOUT`.
+fn pane_timed_out() -> String {
+    format!(
+        "WSL did not answer within {} seconds; the session may not have ended. Check its terminal.",
+        TIMEOUT.as_secs()
+    )
+}
+
 #[cfg(windows)]
-fn run(args: &[String]) -> Result<String, String> {
+fn run(args: &[String], timed_out: fn() -> String) -> Result<String, String> {
     use std::os::windows::process::CommandExt;
     use std::process::{Command, Stdio};
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
@@ -275,14 +356,44 @@ fn run(args: &[String]) -> Result<String, String> {
 }
 
 #[cfg(not(windows))]
-fn run(_args: &[String]) -> Result<String, String> {
+fn run(_args: &[String], _timed_out: fn() -> String) -> Result<String, String> {
     Err("Starting a session works on Windows only.".into())
 }
 
 /// Bring `t`'s tmux window to the front of its session.
 pub fn tmux_jump(app: &tauri::AppHandle, t: &Target) -> Result<String, String> {
-    let args = jump_args(t)?;
-    gated(&app.state::<InFlight>(), || run(&args))
+    let args = pane_args(t, PaneVerb::Jump)?;
+    gated(&app.state::<InFlight>(), || run(&args, timed_out))
+}
+
+/// Do `verb` to session `id`'s pane, as the latest snapshot names it.
+async fn to_pane(app: tauri::AppHandle, id: String, verb: PaneVerb) -> Result<String, String> {
+    let target = app
+        .state::<crate::fleet::Fleet>()
+        .with_latest(|v| target(v, &id))
+        .flatten()
+        .ok_or("This session has no tmux pane klepsydra knows, so it can only be stopped from its own terminal.")?;
+    let args = pane_args(&target, verb)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        pane_gated(&app.state::<PaneFlight>(), &id, || {
+            run(&args, pane_timed_out)
+        })
+    })
+    .await
+    .map_err(|e| format!("Could not reach the session: {e}"))?
+}
+
+/// End session `id` as if /exit were typed in its terminal. The wall asks
+/// first and waits out its undo window before calling this.
+#[tauri::command]
+pub async fn end_session(app: tauri::AppHandle, id: String) -> Result<String, String> {
+    to_pane(app, id, PaneVerb::End).await
+}
+
+/// Interrupt session `id`'s turn, as if Esc were pressed in its terminal.
+#[tauri::command]
+pub async fn interrupt_session(app: tauri::AppHandle, id: String) -> Result<String, String> {
+    to_pane(app, id, PaneVerb::Interrupt).await
 }
 
 /// Start `claude` in the `launch_dir` pref as a window of the fleet session.
@@ -300,9 +411,11 @@ pub async fn launch_session(app: tauri::AppHandle) -> Result<String, String> {
         .and_then(Value::as_str)
         .map(str::to_owned);
     let args = new_args(&dir, distro.as_deref())?;
-    tauri::async_runtime::spawn_blocking(move || gated(&app.state::<InFlight>(), || run(&args)))
-        .await
-        .map_err(|e| format!("Could not run the launch: {e}"))?
+    tauri::async_runtime::spawn_blocking(move || {
+        gated(&app.state::<InFlight>(), || run(&args, timed_out))
+    })
+    .await
+    .map_err(|e| format!("Could not run the launch: {e}"))?
 }
 
 #[cfg(test)]
@@ -340,7 +453,7 @@ mod tests {
     }
 
     #[test]
-    fn jump_args_refuse_anything_but_a_plain_pane_and_socket() {
+    fn pane_args_refuse_anything_but_a_plain_pane_and_socket() {
         let ok = Target {
             socket: "/tmp/tmux-1001/klepsydra".into(),
             pane: "%3".into(),
@@ -349,7 +462,7 @@ mod tests {
             start: 8_717_628,
         };
         assert_eq!(
-            jump_args(&ok).unwrap()[6..],
+            pane_args(&ok, PaneVerb::Jump).unwrap()[6..],
             [
                 SCRIPT,
                 "jump",
@@ -385,8 +498,40 @@ mod tests {
                 ..ok.clone()
             },
         ] {
-            assert!(jump_args(&bad).is_err(), "{bad:?}");
+            for verb in [PaneVerb::Jump, PaneVerb::End, PaneVerb::Interrupt] {
+                assert!(pane_args(&bad, verb).is_err(), "{verb:?} {bad:?}");
+            }
         }
+    }
+
+    #[test]
+    fn end_and_interrupt_name_their_verb_and_only_reach_the_fleet() {
+        let fleet = Target {
+            socket: "/tmp/tmux-1001/klepsydra".into(),
+            pane: "%3".into(),
+            distro: "Ubuntu".into(),
+            pid: 2231,
+            start: 8_717_628,
+        };
+        assert_eq!(pane_args(&fleet, PaneVerb::End).unwrap()[7], "end");
+        assert_eq!(
+            pane_args(&fleet, PaneVerb::Interrupt).unwrap()[7],
+            "interrupt"
+        );
+        let hand = Target {
+            socket: "/tmp/tmux-1001/default".into(),
+            ..fleet
+        };
+        assert!(pane_args(&hand, PaneVerb::Jump).is_ok());
+        for verb in [PaneVerb::End, PaneVerb::Interrupt] {
+            assert_eq!(pane_args(&hand, verb), Err(NOT_FLEET.to_string()));
+        }
+    }
+
+    #[test]
+    fn the_launcher_refuses_a_hand_started_tmux_in_the_same_words() {
+        let script = include_str!("../../hooks/klepsydra-launch.sh");
+        assert!(script.contains(&format!("fail \"{NOT_FLEET}\"")));
     }
 
     #[test]
@@ -430,6 +575,53 @@ mod tests {
         assert!(
             gated(&flight, || Ok(())).is_ok(),
             "an error reopens the gate"
+        );
+    }
+
+    #[test]
+    fn a_second_end_of_the_same_session_is_refused_and_the_guard_reopens() {
+        let flight = PaneFlight::default();
+        let inner = pane_gated(&flight, "a", || {
+            Ok((
+                pane_gated(&flight, "a", || Ok(())),
+                pane_gated(&flight, "b", || Ok(())),
+            ))
+        })
+        .unwrap();
+        assert_eq!(inner.0, Err(PANE_BUSY.into()));
+        assert!(inner.1.is_ok(), "another session runs independently");
+        assert!(pane_gated(&flight, "a", || Ok(())).is_ok());
+        let _ = pane_gated::<()>(&flight, "a", || Err("x".into()));
+        assert!(
+            pane_gated(&flight, "a", || Ok(())).is_ok(),
+            "an error reopens the guard"
+        );
+    }
+
+    #[test]
+    fn a_pane_verb_does_not_hold_the_launch_gate_nor_wait_for_it() {
+        let (launch, panes) = (InFlight::default(), PaneFlight::default());
+        let r = gated(&launch, || pane_gated(&panes, "a", || Ok(())));
+        assert!(r.is_ok(), "End runs while a Jump holds the gate");
+        let r = pane_gated(&panes, "a", || gated(&launch, || Ok(())));
+        assert!(r.is_ok(), "Jump and New run while an End does");
+    }
+
+    #[test]
+    fn a_panic_in_a_pane_verb_reopens_its_session() {
+        let flight = PaneFlight::default();
+        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _ = pane_gated::<()>(&flight, "a", || panic!("boom"));
+        }));
+        assert!(r.is_err());
+        assert!(pane_gated(&flight, "a", || Ok(())).is_ok());
+    }
+
+    #[test]
+    fn a_pane_verb_timeout_says_the_session_may_not_have_ended() {
+        assert_eq!(
+            pane_timed_out(),
+            "WSL did not answer within 45 seconds; the session may not have ended. Check its terminal."
         );
     }
 

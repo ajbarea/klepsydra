@@ -2,7 +2,8 @@
 // a way back to its terminal.
 import cast from "./cast.json" with { type: "json" };
 import { RINGS, announcements, card, identity, shouldSlide, showsRingKey, startedNeeding, transitionName, statuses, tally } from "./model.js";
-import { announcer, press, setOff, syncChildren } from "./dom.js";
+import { announcer, press, say, setOff, syncChildren } from "./dom.js";
+import { ARM_MS, confirmCopy, createEnder, endingAnnouncement, endingText } from "./end.js";
 import { inTauri, subscribe, todayLedger } from "./feed.js";
 import { createDrawer } from "./drawer.js";
 import { showFace } from "./face.js";
@@ -71,7 +72,7 @@ const show = (el, text) => {
 function paint(el, c) {
   // A repaint must not cut the pulse or the arrival short.
   const playing = ["pulse", "arriving"].filter((cls) => el.classList.contains(cls)).map((cls) => ` ${cls}`).join("");
-  el.className = `card ${c.dim ? "dim" : ""} tone-${c.tone}${c.ask ? " asking" : ""}${c.figure ? " has-figure" : ""}${playing}`;
+  el.className = `card ${c.dim ? "dim" : ""} tone-${c.tone}${c.ask ? " asking" : ""}${c.figure ? " has-figure" : ""}${c.actions.menu ? " has-menu" : ""}${playing}`;
   el.style.viewTransitionName = transitionName(c.id);
   el.setAttribute("aria-label", c.label);
   el.querySelector(".portrait").title = c.voiceTitle ?? "";
@@ -142,6 +143,11 @@ function paint(el, c) {
   clear.hidden = !c.clear;
   clear.dataset.id = c.id;
   setOff(clear, false);
+  const menuButton = el.querySelector(".menu");
+  menuButton.hidden = !c.actions.menu;
+  menuButton.setAttribute("aria-label", c.menuLabel);
+  menuButton.title = c.menuLabel;
+  setOff(menuButton, ender.pending(c.id)); // one pending end per card
 }
 
 // The receipt, the partial mark and the guardrail chip share one line, hidden when all are empty.
@@ -269,6 +275,7 @@ function render(snapshot) {
   cardOf = new Map(cards.map((c) => [c.id, c]));
   ringKey.hidden = !showsRingKey(cards);
   const sync = () => {
+    const focused = document.activeElement;
     // A new card arrives once: its figure steps in and its light rises (wall.css
     // .arriving). Only on the comfortable band; a compact card has no stage to run it.
     const make = () => {
@@ -278,6 +285,10 @@ function render(snapshot) {
     };
     syncChildren(wall, cards, (c) => c.id, make, paint);
     for (const el of wall.children) if (started.has(el.dataset.key) && !reducedMotion()) el.classList.add("pulse");
+    // Moving a card in the DOM drops focus; give it back to what had it.
+    if (focused !== document.body && focused?.isConnected && document.activeElement !== focused) focused.focus({ preventScroll: true });
+    else if (focused && focused !== document.body && !focused.isConnected) wall.focus({ preventScroll: true }); // its card left
+    reconcileActions();
     // Auto looks again when a card arrives or leaves, not when one's text changes.
     const ids = cards.map((c) => c.id).join(" ");
     if (ids !== lastIds) {
@@ -410,6 +421,16 @@ function receive(message) {
 }
 
 wall.addEventListener("click", (e) => {
+  const menuButton = e.target.closest(".menu");
+  if (menuButton) {
+    toggleMenu(menuButton);
+    return;
+  }
+  const undo = e.target.closest(".undo");
+  if (undo) {
+    undoEnd(undo.closest(".card").dataset.key);
+    return;
+  }
   const chip = e.target.closest(".chip");
   if (chip) {
     drawer.open(chip.dataset.id, chip);
@@ -427,6 +448,222 @@ wall.addEventListener("click", (e) => {
   if (button.classList.contains("clear")) press(button, note, () => invoke("clear_session", { id: button.dataset.id }));
   else press(button, note, () => invoke("jump_to_terminal", { id: button.dataset.id, name: button.dataset.name }));
 });
+
+// Session actions: a menu per card, a confirm step, then an undo window. Only
+// the undo window's end (end.js) ends a session.
+const tauri = (command, args) =>
+  inTauri && window.__TAURI__?.core ? window.__TAURI__.core.invoke(command, args) : Promise.reject("Needs the klepsydra app");
+const ender = createEnder({ invoke: tauri });
+const menu = document.getElementById("session-menu");
+const dialog = document.getElementById("end-dialog");
+const endCancel = dialog.querySelector(".end-cancel");
+const endConfirm = dialog.querySelector(".end-confirm");
+let menuFor = null; // { id, button } while the menu is open
+let endFor = null; // { id, opener } while the confirm dialog is open
+let armTimer = 0;
+let openedAt = 0;
+// End takes a click only once its timer has run and the click came ARM_MS after the opening.
+const armed = (e) => endConfirm.getAttribute("aria-disabled") !== "true" && e.timeStamp - openedAt >= ARM_MS;
+const cardEl = (id) => [...wall.children].find((c) => c.dataset.key === id) ?? null;
+const menuItems = () => [...menu.querySelectorAll('[role="menuitem"]')].filter((i) => !i.hidden);
+const usable = (node) =>
+  Boolean(node?.isConnected) && (node.checkVisibility ? node.checkVisibility() : !node.closest("[hidden]"));
+
+function syncMenu() {
+  const c = cardOf.get(menuFor.id);
+  menu.querySelector('[data-act="interrupt"]').hidden = !c.actions.interrupt;
+  menu.querySelector("hr").hidden = !c.actions.interrupt;
+}
+
+function closeMenu(refocus) {
+  if (!menuFor) return;
+  const { button } = menuFor;
+  menuFor = null;
+  menu.hidden = true;
+  button.setAttribute("aria-expanded", "false");
+  button.removeAttribute("aria-controls");
+  if (refocus && usable(button)) button.focus({ preventScroll: true });
+}
+
+function openMenu(button, last = false) {
+  const id = button.closest(".card").dataset.key;
+  if (!cardOf.get(id)?.actions.menu || button.getAttribute("aria-disabled") === "true") return;
+  closeMenu(false);
+  menuFor = { id, button };
+  syncMenu();
+  menu.setAttribute("aria-label", cardOf.get(id).menuLabel);
+  menu.hidden = false;
+  button.setAttribute("aria-expanded", "true");
+  button.setAttribute("aria-controls", menu.id);
+  // The list stays inside its own card, never over another card's buttons:
+  // below the button where it fits, else above it (the compact corner).
+  const at = button.getBoundingClientRect();
+  const box = button.closest(".card").getBoundingClientRect();
+  const [w, h] = [menu.offsetWidth, menu.offsetHeight];
+  const left = Math.max(box.left + 4, Math.min(at.right - w, box.right - w - 4));
+  const top = at.bottom + 4 + h <= box.bottom - 4 ? at.bottom + 4 : Math.max(box.top + 4, at.top - h - 4);
+  Object.assign(menu.style, { left: `${left}px`, top: `${top}px` });
+  const items = menuItems();
+  items[last ? items.length - 1 : 0].focus();
+}
+
+const toggleMenu = (button) => (menuFor?.button === button ? closeMenu(true) : openMenu(button));
+
+wall.addEventListener("keydown", (e) => {
+  const button = e.target.closest?.(".menu");
+  if (button && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
+    e.preventDefault();
+    openMenu(button, e.key === "ArrowUp");
+  }
+});
+
+menu.addEventListener("keydown", (e) => {
+  const items = menuItems();
+  const at = items.indexOf(document.activeElement);
+  const to = { ArrowDown: (at + 1) % items.length, ArrowUp: (at - 1 + items.length) % items.length, Home: 0, End: items.length - 1 }[e.key];
+  if (to !== undefined) items[to].focus();
+  else if (e.key === "Tab") {
+    // APG: Tab closes the menu and moves on. The menu sits outside the card, so focus goes back to its
+    // button first and the browser's own Tab step leaves from there.
+    closeMenu(true);
+    return;
+  } else if (e.key === "Escape") closeMenu(true);
+  else return;
+  e.preventDefault();
+  e.stopPropagation();
+});
+
+menu.addEventListener("click", (e) => {
+  const item = e.target.closest("[data-act]");
+  if (!item || !menuFor) return;
+  const { id, button } = menuFor;
+  closeMenu(false);
+  if (item.dataset.act === "interrupt") {
+    press(button, cardEl(id).querySelector(".note"), () => tauri("interrupt_session", { id }), "Interrupting…");
+    button.focus({ preventScroll: true });
+  } else openEnd(id, button);
+});
+
+document.addEventListener("pointerdown", (e) => {
+  if (menuFor && !menu.contains(e.target) && !e.target.closest(".menu")) closeMenu(false);
+});
+addEventListener("resize", () => closeMenu(false));
+addEventListener("scroll", () => closeMenu(false), true);
+addEventListener("blur", () => closeMenu(false));
+
+function openEnd(id, opener) {
+  const c = cardOf.get(id);
+  if (!c?.actions.menu || ender.pending(id)) return;
+  const copy = confirmCopy(c);
+  dialog.querySelector("#end-title").textContent = copy.title;
+  dialog.querySelector(".end-what").textContent = copy.text;
+  const warn = dialog.querySelector(".end-warn");
+  warn.hidden = !copy.warn;
+  warn.textContent = copy.warn ?? "";
+  endCancel.textContent = copy.cancel;
+  endConfirm.textContent = copy.confirm;
+  endFor = { id, opener };
+  dialog.returnValue = "";
+  setOff(endConfirm, true);
+  clearTimeout(armTimer);
+  armTimer = setTimeout(() => setOff(endConfirm, false), ARM_MS);
+  openedAt = performance.now();
+  dialog.showModal();
+  endCancel.focus(); // Enter or Space right after opening cancels
+}
+
+endConfirm.addEventListener("click", (e) => {
+  if (armed(e)) dialog.close("end");
+});
+endCancel.addEventListener("click", () => dialog.close("cancel"));
+dialog.addEventListener("click", (e) => {
+  // The backdrop (the body fills the rest), once a double-click's second click is over.
+  if (e.target === dialog && armed(e)) dialog.close("cancel");
+});
+dialog.addEventListener("close", () => {
+  clearTimeout(armTimer);
+  const who = endFor;
+  endFor = null;
+  if (!who) return;
+  if (dialog.returnValue === "end") beginEnd(who);
+  else settleFocus(who.id, who.opener);
+});
+
+// Focus back to `first`, else the card (Enter or Space on it does nothing), else the wall.
+function settleFocus(id, first = null) {
+  [first, cardEl(id), wall].find(usable)?.focus({ preventScroll: true });
+}
+
+function hideEnding(el, menuOff = false) {
+  el.querySelector(".ending").hidden = true;
+  el.querySelector(".ending-live").textContent = "";
+  setOff(el.querySelector(".menu"), menuOff);
+}
+
+function beginEnd({ id, opener }) {
+  const c = cardOf.get(id);
+  const el = cardEl(id);
+  if (!c?.actions.menu || !el) return;
+  const note = el.querySelector(".note");
+  const ending = el.querySelector(".ending");
+  const started = ender.start(id, {
+    onTick: (left) => {
+      el.querySelector(".ending-text").textContent = endingText(c.name, left);
+    },
+    onSend: () => {
+      const now = cardEl(id);
+      if (!now) return;
+      hideEnding(now, true); // the menu stays off until the end call answers
+      say(now.querySelector(".note"), `Ending ${c.name}…`, 0);
+    },
+    onDone: ({ text }) => {
+      const now = cardEl(id);
+      if (!now) return;
+      setOff(now.querySelector(".menu"), false);
+      say(now.querySelector(".note"), text);
+    },
+  });
+  if (!started) return;
+  say(note, "", 0);
+  ending.hidden = false;
+  setOff(opener, true);
+  el.querySelector(".ending-live").textContent = endingAnnouncement(c.name);
+  el.querySelector(".undo").focus({ preventScroll: true }); // a stray Enter undoes
+}
+
+function undoEnd(id) {
+  const el = cardEl(id);
+  const name = cardOf.get(id)?.name;
+  if (!ender.cancel(id) || !el) return;
+  hideEnding(el);
+  say(el.querySelector(".note"), name ? `${name} keeps running` : "Not ended");
+  const menuButton = el.querySelector(".menu");
+  if (usable(menuButton)) menuButton.focus({ preventScroll: true });
+}
+
+// A card that is gone, or whose session ended or left klepsydra's tmux, drops
+// its pending end, its open menu and its open dialog.
+function reconcileActions() {
+  for (const id of ender.ids()) {
+    if (cardOf.get(id)?.actions.menu) continue;
+    ender.cancel(id);
+    const el = cardEl(id);
+    if (!el) continue;
+    const focused = el.querySelector(".ending").contains(document.activeElement);
+    hideEnding(el);
+    if (focused) settleFocus(id);
+  }
+  if (endFor && !cardOf.get(endFor.id)?.actions.menu) dialog.close("cancel");
+  if (menuFor) {
+    if (cardOf.get(menuFor.id)?.actions.menu) syncMenu();
+    else {
+      const { id } = menuFor;
+      const had = menu.contains(document.activeElement);
+      closeMenu(false);
+      if (had) settleFocus(id);
+    }
+  }
+}
 
 // Density: the saved choice, and what is on screen. Auto measures an unseen
 // comfortable copy of the wall, so its switch rests on the real render.
