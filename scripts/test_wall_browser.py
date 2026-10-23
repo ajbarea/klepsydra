@@ -1615,6 +1615,7 @@ def one_click_or_key_never_ends_all(wall):
     page.keyboard.press("Escape")
     page.wait_for_function("!" + dialog_open)
     page.click("#end-ready")
+    page.wait_for_selector(".end-confirm:not([aria-disabled='true'])")  # past a double-click's reach
     page.mouse.click(5, 5)
     page.wait_for_function("!" + dialog_open)
     log.append(("backdrop click", False))
