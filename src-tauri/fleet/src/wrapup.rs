@@ -23,7 +23,14 @@ pub const SHOWN_AFTER: i64 = 3600;
 /// A reason longer than this is cut; the script caps it at 300 characters.
 const REASON_CHARS: usize = 300;
 /// More than this is no file klepsydra writes.
-const MAX_BYTES: u64 = 4096;
+const MAX_BYTES: u64 = 32768;
+/// At most this many sessions in one request.
+pub const MAX_IDS: usize = 256;
+
+/// A session id as the request names it and an answer file is named.
+fn id_ok(id: &str) -> bool {
+    (1..=64).contains(&id.len()) && id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
+}
 
 /// A wrap-up the wall asked for.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -33,6 +40,9 @@ pub struct Request {
     pub at: i64,
     /// When sessions stop being asked and silence reads "no answer".
     pub until: i64,
+    /// The sessions the wall listed: only these are asked, and only these answer.
+    #[serde(default)]
+    pub ids: Vec<String>,
 }
 
 /// A session's place in the wrap-up.
@@ -78,7 +88,9 @@ pub fn request(klepsydra_dir: &Path, now: i64) -> Option<Request> {
     let sane = !r.id.is_empty()
         && r.id.len() <= 20
         && r.id.bytes().all(|b| b.is_ascii_digit())
-        && r.at <= r.until;
+        && r.at <= r.until
+        && r.ids.len() <= MAX_IDS
+        && r.ids.iter().all(|i| id_ok(i));
     (sane && now <= r.until.saturating_add(SHOWN_AFTER)).then_some(r)
 }
 
@@ -138,17 +150,47 @@ fn save_request(klepsydra_dir: &Path, r: &Request) -> std::io::Result<()> {
     write_atomic(&folder(klepsydra_dir)?.join(REQUEST), &bytes)
 }
 
-/// Start a wrap-up at `now_ms`: sessions are asked until `WINDOW` passes.
-/// A new one replaces any before it, so every answer is asked for again.
-pub fn start(klepsydra_dir: &Path, now_ms: i64) -> std::io::Result<Request> {
+/// Start a wrap-up of sessions `ids` at `now_ms`: they are asked until
+/// `WINDOW` passes. A new one replaces any before it, and the answers to it
+/// are removed, so every session is asked again.
+pub fn start(klepsydra_dir: &Path, now_ms: i64, ids: &[String]) -> std::io::Result<Request> {
     let at = now_ms.div_euclid(1000);
+    let mut listed: Vec<String> = Vec::new();
+    for id in ids.iter().filter(|i| id_ok(i)) {
+        if !listed.contains(id) && listed.len() < MAX_IDS {
+            listed.push(id.clone());
+        }
+    }
     let r = Request {
         id: now_ms.to_string(),
         at,
         until: at + WINDOW,
+        ids: listed,
     };
+    let dir = folder(klepsydra_dir)?;
+    prune(&dir);
     save_request(klepsydra_dir, &r)?;
     Ok(r)
+}
+
+/// Remove the answers in `dir`: regular `<session>.json` files only.
+fn prune(dir: &Path) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for e in entries.flatten() {
+        let name = e.file_name();
+        let Some(name) = name.to_str() else { continue };
+        let Some(stem) = name.strip_suffix(".json") else {
+            continue;
+        };
+        if name == REQUEST || !id_ok(stem) {
+            continue;
+        }
+        if e.file_type().is_ok_and(|t| t.is_file()) {
+            let _ = std::fs::remove_file(e.path());
+        }
+    }
 }
 
 /// Stop asking at `now`; the answers so far stay on the wall.
@@ -232,6 +274,7 @@ mod tests {
             id: "7".into(),
             at: NOW,
             until: NOW + WINDOW,
+            ids: vec![A.to_owned()],
         };
         assert_eq!(answer(&d.0, &r, A), None);
         put(
@@ -284,6 +327,7 @@ mod tests {
             id: "7".into(),
             at: NOW,
             until: NOW + WINDOW,
+            ids: vec![A.to_owned()],
         };
         let long = "é".repeat(500);
         put(
@@ -326,13 +370,14 @@ mod tests {
     #[test]
     fn start_cancel_and_marks_round_trip() {
         let d = Scratch::new("wrapup-start");
-        let r = start(&d.0, NOW * 1000 + 250).unwrap();
+        let r = start(&d.0, NOW * 1000 + 250, &[A.to_owned()]).unwrap();
         assert_eq!(
             r,
             Request {
                 id: format!("{}", NOW * 1000 + 250),
                 at: NOW,
-                until: NOW + WINDOW
+                until: NOW + WINDOW,
+                ids: vec![A.to_owned()],
             }
         );
         assert_eq!(request(&d.0, NOW), Some(r.clone()));
@@ -352,10 +397,85 @@ mod tests {
     fn the_script_reads_the_request_the_app_writes() {
         // klepsydra-wrapup.sh reads .id as text and .until as a number.
         let d = Scratch::new("wrapup-shape");
-        start(&d.0, 1_792_600_000_123).unwrap();
+        start(&d.0, 1_792_600_000_123, &[A.to_owned()]).unwrap();
         let v: serde_json::Value =
             serde_json::from_str(&std::fs::read_to_string(d.0.join(DIR).join(REQUEST)).unwrap())
                 .unwrap();
         assert!(v["id"].is_string() && v["until"].is_i64(), "{v}");
+        assert_eq!(
+            v["ids"],
+            serde_json::json!([A]),
+            "and .ids as an array of text"
+        );
+    }
+
+    #[test]
+    fn start_lists_each_valid_id_once_and_caps_the_list() {
+        let d = Scratch::new("wrapup-ids");
+        let many: Vec<String> = (0..MAX_IDS + 5).map(|n| format!("s-{n}")).collect();
+        let mut ids = vec![
+            A.to_owned(),
+            A.to_owned(),
+            "../x".into(),
+            String::new(),
+            "a".repeat(65),
+        ];
+        ids.extend(many);
+        let r = start(&d.0, NOW * 1000, &ids).unwrap();
+        assert_eq!(r.ids.len(), MAX_IDS);
+        assert_eq!(r.ids[0], A);
+        assert_eq!(r.ids.iter().filter(|i| *i == A).count(), 1);
+        assert!(r.ids.iter().all(|i| id_ok(i)));
+        assert_eq!(request(&d.0, NOW), Some(r), "a full list still reads back");
+    }
+
+    #[test]
+    fn a_request_naming_a_bad_id_or_too_many_is_none() {
+        let d = dir();
+        let with = |ids: &str| {
+            put(
+                &d,
+                REQUEST,
+                &format!(
+                    r#"{{"id":"9","at":{NOW},"until":{},"ids":{ids}}}"#,
+                    NOW + 600
+                ),
+            );
+            request(&d.0, NOW)
+        };
+        assert!(with(&format!(r#"["{A}"]"#)).is_some());
+        assert!(with(r#"["../etc"]"#).is_none());
+        assert!(with(r#"[""]"#).is_none());
+        let too_many: Vec<String> = (0..=MAX_IDS).map(|n| format!(r#""s{n}""#)).collect();
+        assert!(with(&format!("[{}]", too_many.join(","))).is_none());
+        put(
+            &d,
+            REQUEST,
+            &format!(r#"{{"id":"9","at":{NOW},"until":{}}}"#, NOW + 600),
+        );
+        assert_eq!(
+            request(&d.0, NOW).unwrap().ids,
+            Vec::<String>::new(),
+            "none listed: nobody is asked"
+        );
+    }
+
+    #[test]
+    fn a_new_request_removes_the_old_answers_and_nothing_else() {
+        let d = dir();
+        put(
+            &d,
+            &format!("{A}.json"),
+            r#"{"request":"1","state":"ready","at":1}"#,
+        );
+        put(&d, "notes.txt", "keep");
+        put(&d, "x.json.123.tmp", "keep");
+        std::fs::create_dir(d.0.join(DIR).join("b.json")).unwrap();
+        let r = start(&d.0, NOW * 1000, &[A.to_owned()]).unwrap();
+        assert_eq!(answer(&d.0, &r, A), None);
+        assert!(!d.0.join(DIR).join(format!("{A}.json")).exists());
+        for kept in ["notes.txt", "x.json.123.tmp", "b.json", REQUEST] {
+            assert!(d.0.join(DIR).join(kept).exists(), "{kept}");
+        }
     }
 }

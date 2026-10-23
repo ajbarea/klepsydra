@@ -300,7 +300,7 @@ wrapup() { # socket pane pid start
   local -a t=()
   own_pane "$@"
   leave_modes
-  screen | grep -q 'esc to interrupt' &&
+  screen | grep -qE 'esc to (interrupt|cancel)' &&
     fail "The session is mid-turn; it is asked when the turn ends."
   # Ctrl+C clears a draft (Up brings it back); on an idle prompt it does nothing else.
   keys C-c

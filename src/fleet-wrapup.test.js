@@ -1,13 +1,13 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { GROUPS, asking, readiness, sessionRoute, wrapupAnnouncements, wrapupCopy, wrapupLine, wrapupLines } from "./fleet/wrapup.js";
+import { GROUPS, asking, isReady, listed, readiness, sessionRoute, stale, wrapupAnnouncements, wrapupCopy, wrapupLine, wrapupLines } from "./fleet/wrapup.js";
 import { endAllCopy } from "./fleet/end.js";
 import { card } from "./fleet/model.js";
 
-const fleet = { tmux: { socket: "/tmp/tmux-1001/klepsydra", pane: "%3" }, distro: "Ubuntu", claude: { pid: 7, start: 9 } };
+const fleet = { session_id: "s", tmux: { socket: "/tmp/tmux-1001/klepsydra", pane: "%3" }, distro: "Ubuntu", claude: { pid: 7, start: 9 } };
 const outside = { ...fleet, tmux: { socket: "/tmp/tmux-1001/default", pane: "%3" } };
 const AT = 1_792_600_000;
-const REQUEST = { id: "1792600000000", at: AT, until: AT + 600 };
+const REQUEST = { id: "1792600000000", at: AT, until: AT + 600, ids: ["s", "a", "b", "c", "d", "e", "f", "g"] };
 const BEFORE = (REQUEST.until - 1) * 1000;
 const AFTER = (REQUEST.until + 1) * 1000;
 const ANSWERS = {
@@ -74,7 +74,7 @@ test("every answer and status reads its own line, before the window closes and a
 });
 
 test("a blocked answer without a reason still reads not ready, and the reason is kept as written", () => {
-  const blocked = (reason) => wrapupLine({ status: "done", wrapup: { state: "blocked", reason, at: AT } }, REQUEST, BEFORE).text;
+  const blocked = (reason) => wrapupLine({ session_id: "s", status: "done", wrapup: { state: "blocked", reason, at: AT } }, REQUEST, BEFORE).text;
   assert.equal(blocked(undefined), "Not ready");
   assert.equal(blocked("   "), "Not ready");
   assert.equal(blocked("<b>build</b> & deploy"), "Not ready: <b>build</b> & deploy", "text, never markup: the wall sets it as textContent");
@@ -88,13 +88,42 @@ test("Stop wrap-up shows only while sessions are still asked", () => {
 });
 
 test("the bar counts live sessions only, and is safe only when every one, and at least one, is ready", () => {
-  const ready = { status: "working", wrapup: ANSWERS.ready };
-  assert.deepEqual(readiness([]), { ready: 0, live: 0, safe: false, text: "0 of 0 ready" }, "none live");
-  assert.deepEqual(readiness([{ status: "ended", wrapup: ANSWERS.ready }]), { ready: 0, live: 0, safe: false, text: "0 of 0 ready" }, "only an ended card");
-  assert.deepEqual(readiness([ready, { status: "done", wrapup: ANSWERS.asked }]), { ready: 1, live: 2, safe: false, text: "1 of 2 ready" }, "one not ready");
-  assert.deepEqual(readiness([ready, { status: "done", wrapup: ANSWERS.blocked }]).safe, false, "one blocked");
-  assert.deepEqual(readiness([ready, { status: "silent" }]).safe, false, "one with no answer");
-  assert.deepEqual(readiness([ready, ready, { status: "ended" }]), { ready: 2, live: 2, safe: true, text: "2 of 2 ready" }, "an ended card ignored");
+  const ready = { session_id: "s", status: "working", wrapup: ANSWERS.ready };
+  const as = (id, rest) => ({ ...rest, session_id: id });
+  assert.deepEqual(readiness([], REQUEST), { ready: 0, live: 0, safe: false, text: "0 of 0 ready" }, "none live");
+  assert.deepEqual(readiness([as("a", { status: "ended", wrapup: ANSWERS.ready })], REQUEST), { ready: 0, live: 0, safe: false, text: "0 of 0 ready" }, "only an ended card");
+  assert.deepEqual(readiness([ready, as("a", { status: "done", wrapup: ANSWERS.asked })], REQUEST), { ready: 1, live: 2, safe: false, text: "1 of 2 ready" }, "one not ready");
+  assert.deepEqual(readiness([ready, as("a", { status: "done", wrapup: ANSWERS.blocked })], REQUEST).safe, false, "one blocked");
+  assert.deepEqual(readiness([ready, as("a", { status: "silent" })], REQUEST).safe, false, "one with no answer");
+  assert.deepEqual(readiness([ready, as("a", ready), as("b", { status: "ended" })], REQUEST), { ready: 2, live: 2, safe: true, text: "2 of 2 ready" }, "an ended card ignored");
+  assert.equal(readiness([ready, as("new", ready)], REQUEST).safe, false, "a session the request does not list is never ready");
+  assert.equal(readiness([ready], { ...REQUEST, ids: undefined }).safe, false, "a request that lists nobody");
+  assert.equal(readiness([ready], null).safe, false, "no request");
+});
+
+test("only listed sessions are asked: one started later reads Not asked", () => {
+  assert.equal(listed({ session_id: "s" }, REQUEST), true);
+  assert.equal(listed({ session_id: "zz" }, REQUEST), false);
+  assert.equal(listed({ session_id: "s" }, { ...REQUEST, ids: "s" }), false, "ids must be a list");
+  assert.deepEqual(wrapupLine({ ...fleet, session_id: "zz", status: "done", wrapup: ANSWERS.ready }, REQUEST, BEFORE), { state: "unasked", text: "Not asked" });
+  assert.equal(wrapupLine({ ...fleet, session_id: "zz", status: "ended" }, REQUEST, BEFORE), null, "an ended one says nothing");
+});
+
+test("a ready answer goes stale once a later prompt or a later spell of work overtakes it", () => {
+  const answered = { ...fleet, status: "done", status_at: AT + 5, prompt: { text: "/klepsydra-wrapup", at: AT - 2 }, wrapup: { state: "ready", at: AT } };
+  assert.equal(stale(answered), false, "its own /klepsydra-wrapup came first");
+  assert.equal(isReady(answered, REQUEST), true);
+  assert.equal(wrapupLine(answered, REQUEST, BEFORE).text, "Ready");
+  const prompted = { ...answered, prompt: { text: "one more thing", at: AT + 30 } };
+  assert.equal(stale(prompted), true, "a prompt after the answer");
+  assert.deepEqual(wrapupLine(prompted, REQUEST, BEFORE), { state: "stale", text: "Working again" });
+  assert.equal(isReady(prompted, REQUEST), false);
+  const woke = { ...answered, status: "working", status_at: AT + 30 };
+  assert.equal(stale(woke), true, "work began after the answer");
+  assert.equal(stale({ ...answered, status: "working", status_at: AT - 10 }), false, "the checkpoint turn itself, still working");
+  assert.equal(stale({ ...answered, status: "done", status_at: AT + 30 }), false, "its turn ending after the answer");
+  assert.equal(stale({ ...prompted, wrapup: { state: "blocked", reason: "x", at: AT } }), false, "only a ready answer goes stale");
+  assert.equal(readiness([answered, { ...prompted, session_id: "a" }], REQUEST).safe, false);
 });
 
 const model = (s) => card({ session_id: s.id, where: { repo: s.repo ?? "r" }, ...s }, {}, BEFORE, REQUEST);

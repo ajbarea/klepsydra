@@ -176,6 +176,10 @@ mkdir -p ~/.claude/skills/klepsydra-wrapup
 cp hooks/klepsydra-wrapup.md ~/.claude/skills/klepsydra-wrapup/SKILL.md
 ```
 
+A second Claude Code config folder (another `CLAUDE_CONFIG_DIR`) needs the
+skill too, at `skills/klepsydra-wrapup/SKILL.md` inside it, or a typed
+`/klepsydra-wrapup` finds no command there. The script stays in `~/.claude`.
+
 <!-- wrapup-settings:start -->
 ```json
 {
@@ -510,32 +514,34 @@ session is still running a few seconds after `/exit` was sent.
 
 ### Wrapping up
 
-<!-- budget: 300 words -->
-**Wrap up…**, beside Ledger, asks every live session to finish or
-checkpoint its current step, record what is still running, update its
-handoff, commit and push, then report whether it is safe to stop. A dialog
-lists who gets the request and how, with Cancel focused. An idle session in
-klepsydra's tmux has `/klepsydra-wrapup` typed now. A working one is asked
-by the Stop hook when its turn ends. One that needs you is asked once you
-answer and its turn ends. Any other session, idle outside klepsydra's tmux
-or silent, you ask by hand: type `/klepsydra-wrapup` in its terminal. Ended
-sessions are left out. If typing fails, the card's note says why.
+<!-- budget: 320 words -->
+**Wrap up…**, beside Ledger, asks the live sessions to finish or
+checkpoint their current step, record what is still running, update the
+handoff, commit it, then report whether stopping is safe. A dialog lists who
+is asked and how, with Cancel focused, and only those sessions are asked. An
+idle session in klepsydra's tmux has `/klepsydra-wrapup` typed now. A working
+one is asked by the Stop hook when its turn ends; one that needs you, once
+you answer and its turn ends. Any other session, idle outside klepsydra's
+tmux or silent, you ask by hand: type `/klepsydra-wrapup` in its terminal. If
+typing fails, the card's note says why. The dialog closes if a session
+arrives or changes how it would be asked.
 
 Each card then reads **Wrapping up…**, **Ready**, or **Not ready** with the
-reason the session gave. A card that needs you reads "Answer it first; it
-wraps up after", and one to ask by hand says so. A session has 10 minutes to
-answer; after that, silence reads **No answer**, never ready. The bar counts
-"4 of 6 ready" over the cards that have not ended, and **Safe to restart**
-appears only when every one of them is ready. **Stop wrap-up** stops the
-asking while the 10 minutes run; the answers so far stay on the wall for an
-hour.
+reason the session gave. A session has 10 minutes to answer; after that,
+silence reads **No answer**, never ready. A session started after the wrap-up
+reads **Not asked**, and a ready one that starts working again reads
+**Working again**; neither counts as ready until a new Wrap up asks it. The
+bar counts "4 of 6 ready" over the cards that have not ended, and **Safe to
+restart** appears only when every one of them is ready. **Stop wrap-up**
+stops the asking; the answers stay on the wall for an hour.
 
 Once every card is ready, **End all ready sessions…** opens one dialog that
 names each session it will end, character and repo, with Cancel focused.
-Its button wakes a second after the dialog opens, as End does. Confirming
-starts each card's own 5 s End with Undo, so nothing is sent sooner and any
-one of them can still be kept. Ready sessions outside klepsydra's tmux are
-not listed, and the dialog says how many to end from their own terminals.
+Its button wakes a second after the dialog opens, as End does, and the
+dialog closes if any card stops being ready. Confirming starts each card's
+own 5 s End with Undo, so nothing is sent sooner and any one can still be
+kept. Ready sessions outside klepsydra's tmux are not listed, and the dialog
+says how many to end from their own terminals.
 
 ### Card density
 

@@ -53,13 +53,17 @@ write_atomic() { # file text
   fi
 }
 
-# Sets request_id when the wall's request has not expired.
-live_request() {
-  local id until
-  [[ -n ${KLEPSYDRA_DIR:-} ]] || return 1
-  IFS=$'\t' read -r id until < <(jq -r '[(.id | strings), (.until | numbers | floor | tostring)] | @tsv' \
+# A regular file, not a FIFO (a read would hang the Stop) and not a symlink.
+plain() { [[ -f $1 && ! -L $1 ]]; }
+
+# Sets request_id when the wall's request has not expired and lists SESSION.
+live_request() { # session
+  local id until listed
+  [[ -n ${KLEPSYDRA_DIR:-} ]] && plain "$WRAP/request.json" || return 1
+  IFS=$'\t' read -r id until listed < <(jq -r --arg s "$1" \
+    '[(.id | strings), (.until | numbers | floor | tostring), ((.ids // []) | index($s) != null | tostring)] | @tsv' \
     "$WRAP/request.json" 2>/dev/null) || return 1
-  [[ $id =~ ^[0-9]{1,20}$ && $until =~ ^[0-9]{1,12}$ ]] || return 1
+  [[ $id =~ ^[0-9]{1,20}$ && $until =~ ^[0-9]{1,12}$ && $listed == true ]] || return 1
   (( until >= $(now) )) || return 1
   request_id=$id
 }
@@ -67,6 +71,7 @@ live_request() {
 # The skill's body without its frontmatter, the session's id put in.
 instructions() { # session
   local body
+  plain "$SKILL" || return 1
   body=$(awk 'NR == 1 && $0 == "---" { fm = 1; next } fm && $0 == "---" { fm = 0; next } !fm' "$SKILL" 2>/dev/null) || return 1
   [[ -n ${body//[[:space:]]/} ]] || return 1
   # shellcheck disable=SC2016 # the skill's literal placeholder, not an expansion
@@ -77,8 +82,11 @@ stop_hook() {
   local sid body
   sid=$(jq -r '.session_id | strings' 2>/dev/null) || return 0
   [[ $sid =~ $UUID_RE ]] || return 0
-  live_request || return 0
-  jq -e --arg r "$request_id" '.request == $r' "$WRAP/$sid.json" >/dev/null 2>&1 && return 0
+  live_request "$sid" || return 0
+  if [[ -e $WRAP/$sid.json || -L $WRAP/$sid.json ]]; then
+    plain "$WRAP/$sid.json" || return 0
+    jq -e --arg r "$request_id" '.request == $r' "$WRAP/$sid.json" >/dev/null 2>&1 && return 0
+  fi
   body=$(instructions "$sid") || return 0
   write_atomic "$WRAP/$sid.json" "$(jq -cn --arg r "$request_id" --argjson at "$(now)" \
     '{request: $r, state: "asked", at: $at}')" || return 0
@@ -94,7 +102,7 @@ report() { # state session [reason]
     reason=${reason:0:REASON_CHARS}
   fi
   command -v jq >/dev/null 2>&1 || fail "jq is not installed."
-  live_request || fail "No wrap-up is waiting for an answer; nothing was recorded."
+  live_request "$sid" || fail "No wrap-up is waiting for this session's answer; nothing was recorded."
   write_atomic "$WRAP/$sid.json" "$(jq -cn --arg r "$request_id" --arg s "$state" --arg why "$reason" \
     --argjson at "$(now)" '{request: $r, state: $s, at: $at} + (if $why == "" then {} else {reason: $why} end)')" ||
     fail "Could not write $WRAP/$sid.json."

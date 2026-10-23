@@ -33,6 +33,16 @@ export const GROUPS = [
 
 const BY_HAND = "Ask by hand: /klepsydra-wrapup";
 
+/** Whether `request` lists session `s`: only listed sessions are asked, and a request that names none lists nobody. */
+export const listed = (s, request) => Array.isArray(request?.ids) && request.ids.includes(s?.session_id);
+
+/** A ready answer that a later prompt, or a later spell of work, has overtaken. */
+export const stale = (s) =>
+  s?.wrapup?.state === "ready" && (s.prompt?.at > s.wrapup.at || (s.status === "working" && s.status_at > s.wrapup.at));
+
+/** Whether session `s` counts as ready for `request`. */
+export const isReady = (s, request) => listed(s, request) && s.wrapup?.state === "ready" && !stale(s);
+
 /**
  * What session `s`'s card says about `request` at `nowMs`: {state, text}, or
  * null with no request or once ended. Silence past `until` is "No answer",
@@ -40,8 +50,9 @@ const BY_HAND = "Ask by hand: /klepsydra-wrapup";
  */
 export function wrapupLine(s, request, nowMs) {
   if (!request || s?.status === "ended") return null;
+  if (!listed(s, request)) return { state: "unasked", text: "Not asked" };
   const answer = s.wrapup?.state;
-  if (answer === "ready") return { state: "ready", text: "Ready" };
+  if (answer === "ready") return stale(s) ? { state: "stale", text: "Working again" } : { state: "ready", text: "Ready" };
   if (answer === "blocked") {
     const reason = typeof s.wrapup.reason === "string" && s.wrapup.reason.trim() ? s.wrapup.reason.trim() : null;
     return { state: "blocked", text: reason ? `Not ready: ${reason}` : "Not ready" };
@@ -57,9 +68,9 @@ export function wrapupLine(s, request, nowMs) {
 export const asking = (request, nowMs) => Boolean(request) && nowMs <= request.until * 1000;
 
 /** The bar's count while a request is shown: ready live sessions of all live ones; safe only when every one, and at least one, is ready. */
-export function readiness(sessions) {
+export function readiness(sessions, request) {
   const live = sessions.filter((s) => s.status !== "ended");
-  const ready = live.filter((s) => s.wrapup?.state === "ready").length;
+  const ready = live.filter((s) => isReady(s, request)).length;
   return { ready, live: live.length, safe: live.length > 0 && ready === live.length, text: `${ready} of ${live.length} ready` };
 }
 
@@ -76,7 +87,7 @@ export function wrapupCopy(cards) {
   const count = listed.filter((c) => c.wrapupRoute !== "by_hand").length;
   return {
     title: "Ask every session to wrap up?",
-    text: `Each one finishes or checkpoints its current step, records what is still running, updates its handoff, commits and pushes, then says whether it is safe to stop. Each card shows its answer, or "No answer" after ${WINDOW_S / 60} minutes.`,
+    text: `Each one finishes or checkpoints its current step, records what is still running, updates its handoff and commits it, then says whether it is safe to stop. Each card shows its answer, or "No answer" after ${WINDOW_S / 60} minutes.`,
     groups,
     warn: null,
     confirm: count ? `Ask ${sessionCount(count)}` : "Start wrap-up",

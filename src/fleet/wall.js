@@ -285,7 +285,7 @@ function render(snapshot) {
   ringKey.hidden = !showsRingKey(cards);
   const said = wrapupAnnouncements(wrapupBefore, cards);
   wrapupBefore = wrapupLines(cards);
-  const safe = Boolean(request) && readiness(sessions).safe;
+  const safe = Boolean(request) && readiness(sessions, request).safe;
   if (safe && !wasSafe) said.push("Every session is ready. Safe to restart");
   wasSafe = safe;
   const sync = () => {
@@ -615,7 +615,7 @@ function openEnd(id, opener) {
 // While every live card is ready: the ones klepsydra can end, none already
 // ending, and how many ready ones it cannot.
 function readyToEnd() {
-  if (!request || !readiness(sessions).safe) return { ids: [], outside: 0 };
+  if (!request || !readiness(sessions, request).safe) return { ids: [], outside: 0 };
   const live = [...cardOf.values()].filter((c) => c.status !== "ended");
   const ids = live.filter((c) => c.actions.menu && !ender.pending(c.id)).map((c) => c.id);
   return { ids, outside: live.filter((c) => !c.actions.menu).length };
@@ -624,13 +624,24 @@ function readyToEnd() {
 function openEndReady() {
   const { ids, outside } = readyToEnd();
   if (!ids.length) return;
-  const stillReady = () => ids.every((id) => endable(id) && cardOf.get(id).wrapup?.state === "ready");
+  // Every live card still ready, not just the listed ones: a session that arrives unready closes it.
+  const stillReady = () => Boolean(request) && readiness(sessions, request).safe && ids.every((id) => endable(id));
   openConfirm("end", ids, endAllCopy(ids.map((id) => cardOf.get(id)), outside), endReadyButton, stillReady);
 }
 
+// Who the Wrap up confirm lists and how each is asked; it closes if that changes.
+const wrapupList = () =>
+  [...cardOf.values()]
+    .filter((c) => c.wrapupRoute)
+    .map((c) => `${c.id} ${c.wrapupRoute}`)
+    .join("\n");
+
 function openWrapup() {
   if (wrapButton.getAttribute("aria-disabled") === "true") return;
-  openConfirm("wrapup", [], wrapupCopy([...cardOf.values()]), wrapButton);
+  const cards = [...cardOf.values()];
+  const list = wrapupList();
+  const ids = cards.filter((c) => c.wrapupRoute).map((c) => c.id);
+  openConfirm("wrapup", ids, wrapupCopy(cards), wrapButton, () => wrapupList() === list);
 }
 
 endConfirm.addEventListener("click", (e) => {
@@ -651,7 +662,7 @@ dialog.addEventListener("close", () => {
     return;
   }
   if (what.kind === "end") for (const id of what.ids) beginEnd(id);
-  else startWrapup();
+  else startWrapup(what.ids);
 });
 
 // Focus back to `first`, else the card (Enter or Space on it does nothing), else the wall.
@@ -746,13 +757,13 @@ stopButton.addEventListener("click", () =>
   press(stopButton, wrapNote, () => tauri("cancel_wrapup").then(() => "Stopped asking; answers so far stay"), "Stopping…"),
 );
 
-function startWrapup() {
+function startWrapup(ids) {
   if (usable(wrapButton)) wrapButton.focus({ preventScroll: true });
   press(
     wrapButton,
     wrapNote,
     async () => {
-      const answer = await tauri("start_wrapup");
+      const answer = await tauri("start_wrapup", { ids });
       const asked = Array.isArray(answer) ? answer : [];
       for (const a of asked) {
         const el = a.error ? cardEl(a.id) : null;
@@ -772,7 +783,7 @@ const paintEndReady = () => {
 
 function paintWrapup(cards, now) {
   const focused = bar.contains(document.activeElement) ? document.activeElement : null;
-  const r = readiness(sessions);
+  const r = readiness(sessions, request);
   wrapBar.hidden = !request;
   document.querySelector(".wrapup-count").textContent = r.text;
   document.querySelector(".wrapup-safe").hidden = !r.safe;

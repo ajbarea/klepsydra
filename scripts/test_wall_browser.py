@@ -1398,11 +1398,22 @@ def with_wrapup(snapshot, answers, until_in=300):
 
     now = int(time.time())
     snap = json.loads(json.dumps(snapshot))
-    snap["wrapup"] = {"id": str(now * 1000), "at": now - 300, "until": now + until_in}
+    live = [r["session_id"] for r in snap["sessions"] if r["status"] != "ended"]
+    snap["wrapup"] = {"id": str(now * 1000), "at": now - 300, "until": now + until_in, "ids": live}
     for row in snap["sessions"]:
         row.pop("wrapup", None)
         if row["session_id"] in answers:
-            row["wrapup"] = {**answers[row["session_id"]], "at": now - 60}
+            row["wrapup"] = {**answers[row["session_id"]], "at": now}
+    return snap
+
+
+def arrived(snapshot, key="demo-99-new"):
+    """`snapshot` with one more live session, unasked and unready."""
+    snap = json.loads(json.dumps(snapshot))
+    row = json.loads(json.dumps(next(r for r in snap["sessions"] if r["session_id"] == "demo-2-af_bella")))
+    row.update({"session_id": key, "name": "late arrival"})
+    row.pop("wrapup", None)
+    snap["sessions"].append(row)
     return snap
 
 
@@ -1469,11 +1480,46 @@ def wrapup_confirm_lists_routes(wall):
     page.wait_for_function("document.getElementById('wrapup-note').textContent.startsWith('Asked')")
     note = page.evaluate("document.getElementById('wrapup-note').textContent")
     card_note = page.evaluate("document.querySelector('.card[data-key=\"demo-5-bf_isabella\"] .note').textContent")
+    starts = page.evaluate(STARTS)
     wall.check(
-        len(page.evaluate(STARTS)) == 1 and note == "Asked 12 sessions; 3 to ask by hand" and card_note == error and not page.evaluate(ENDS),
+        len(starts) == 1 and note == "Asked 12 sessions; 3 to ask by hand" and card_note == error and not page.evaluate(ENDS),
         "confirming calls start_wrapup once, says who was asked, and shows a failed typing in that card's note",
         [note, card_note],
     )
+    wall.check(sorted((starts[0][1] or {}).get("ids") or []) == sorted(LIVE), "start_wrapup gets exactly the sessions the confirm listed", starts[0][1])
+    page.close()
+
+
+def wrapup_dialogs_close_on_change(wall):
+    """A confirm that no longer describes the wall closes: a session arrives, or one stops being ready."""
+    page = open_app(wall)
+    closed = "!document.getElementById('end-dialog').open"
+    page.click("#wrapup-open")
+    page.wait_for_function("document.getElementById('end-dialog').open")
+    feed(page, arrived(page.snapshot))
+    wrap_closed = page.evaluate(closed)
+    wall.check(wrap_closed and not page.evaluate(STARTS), "the Wrap up confirm closes, asking no one, when a session arrives", wrap_closed)
+    snap = with_wrapup(page.snapshot, all_ready())
+    feed(page, snap)
+    page.click("#end-ready")
+    page.wait_for_function("document.getElementById('end-dialog').open")
+    late = arrived(snap)
+    feed(page, late)
+    gone = [page.evaluate(closed), page.evaluate(BAR)["endAll"]]
+    lines = page.evaluate(SHOWN)
+    wall.check(gone == [True, False] and lines["demo-99-new"] == "Not asked", "End all ready closes when an unasked, unready session arrives, and is no longer offered", [gone, lines["demo-99-new"]])
+    feed(page, snap)
+    page.click("#end-ready")
+    page.wait_for_function("document.getElementById('end-dialog').open")
+    again = json.loads(json.dumps(snap))
+    for row in again["sessions"]:
+        if row["session_id"] == "demo-5-bf_isabella":
+            row["prompt"] = {"text": "one more thing", "at": row["wrapup"]["at"] + 5}
+    feed(page, again)
+    stale = [page.evaluate(closed), page.evaluate(SHOWN)["demo-5-bf_isabella"], page.evaluate(BAR)["safe"]]
+    wall.check(stale == [True, "Working again", False], "a ready session prompted again reads Working again, closes End all ready and withdraws Safe to restart", stale)
+    page.wait_for_timeout(5600)
+    wall.check(not page.evaluate(ENDS), "none of it sent end_session", page.evaluate(ENDS))
     page.close()
 
 
@@ -1676,6 +1722,7 @@ def main() -> int:
             wrapup_cards_and_bar,
             wrapup_demo_in_browser,
             end_all_ready,
+            wrapup_dialogs_close_on_change,
             one_click_or_key_never_ends_all,
         )
         for case in cases:

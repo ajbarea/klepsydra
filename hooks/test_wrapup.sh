@@ -22,9 +22,13 @@ export KLEPSYDRA_DIR="$work/kl" KLEPSYDRA_WRAPUP_SKILL="$here/klepsydra-wrapup.m
 mkdir -p "$KLEPSYDRA_DIR/wrapup"
 S1=4ce1be96-f12f-4c66-87eb-4ab36e451dc5
 S2=0b6f0f3e-1111-4c66-87eb-4ab36e451dc5
+S3=9a9a9a9a-2222-4c66-87eb-4ab36e451dc5 # never listed
 now=$(printf '%(%s)T' -1)
-request() { printf '{"id":"%s","at":%s,"until":%s}\n' "$1" "$now" "$2" >"$KLEPSYDRA_DIR/wrapup/request.json"; }
+request() { # id until [ids as JSON]
+  printf '{"id":"%s","at":%s,"until":%s,"ids":%s}\n' "$1" "$now" "$2" "${3:-[\"$S1\",\"$S2\"]}" >"$KLEPSYDRA_DIR/wrapup/request.json"
+}
 stop() { printf '{"session_id":"%s","hook_event_name":"Stop","stop_hook_active":%s}' "$1" "${2:-false}" | bash "$hook"; }
+stop_within() { printf '{"session_id":"%s","hook_event_name":"Stop"}' "$2" | timeout "$1" bash "$hook"; } # seconds session
 state() { jq -c "${2:-.}" "$KLEPSYDRA_DIR/wrapup/$1.json" 2>/dev/null; }
 
 echo "stop hook"
@@ -45,7 +49,14 @@ check "no placeholder is left" "$(grep -c 'CLAUDE_SESSION_ID' <<<"$ctx")" "0"
 check "no decision: the stop is never blocked" "$(jq -r 'has("decision")' <<<"$out")" "false"
 check "asked is recorded" "$(state "$S1" '[.request, .state]')" '["1000","asked"]'
 check "asked once: silent the second time" "$(stop "$S1" true)" ""
-check "another session is asked too" "$(stop "$S2" | jq -r '.hookSpecificOutput.hookEventName')" "Stop"
+check "another listed session is asked too" "$(stop "$S2" | jq -r '.hookSpecificOutput.hookEventName')" "Stop"
+check "a session the wall did not list: silent" "$(stop "$S3")" ""
+check "a session the wall did not list: records nothing" "$(state "$S3")" ""
+check "an unlisted session cannot report" "$(bash "$hook" ready "$S3" 2>&1; echo "rc=$?")" \
+  "No wrap-up is waiting for this session's answer; nothing was recorded.
+rc=1"
+printf '{"id":"999","at":%s,"until":%s}\n' "$now" $((now + 600)) >"$KLEPSYDRA_DIR/wrapup/request.json"
+check "a request that lists nobody asks nobody" "$(stop "$S3")" ""
 
 request 1001 $((now + 600))
 check "a new request asks again" "$(stop "$S1" | jq -r '.hookSpecificOutput.hookEventName')" "Stop"
@@ -93,10 +104,25 @@ check "a bad session id: says so" "$out" "Not a session id: ../x"
 request 2001 $((now - 5))
 out=$(bash "$hook" ready "$S1" 2>&1); rc=$?
 check "no live request: exit 1" "$rc" "1"
-check "no live request: says so" "$out" "No wrap-up is waiting for an answer; nothing was recorded."
+check "no live request: says so" "$out" "No wrap-up is waiting for this session's answer; nothing was recorded."
 check "no live request: the old answer stays" "$(state "$S1" .request)" '"2000"'
 out=$(bash "$hook" bogus 2>&1); rc=$?
 check "unknown command: exit 1" "$rc" "1"
+
+echo "files that are not files"
+request 3000 $((now + 600))
+rm -f "$KLEPSYDRA_DIR/wrapup/$S1.json"; mkfifo "$KLEPSYDRA_DIR/wrapup/$S1.json"
+out=$(stop_within 3 "$S1"); rc=$?
+check "a FIFO answer file: no hang, exit 0" "$rc" "0"
+check "a FIFO answer file: silent" "$out" ""
+rm -f "$KLEPSYDRA_DIR/wrapup/$S1.json"
+mv "$KLEPSYDRA_DIR/wrapup/request.json" "$work/request.json"; mkfifo "$KLEPSYDRA_DIR/wrapup/request.json"
+out=$(stop_within 3 "$S1"); rc=$?
+check "a FIFO request: no hang, exit 0" "$rc" "0"
+check "a FIFO request: silent" "$out" ""
+rm -f "$KLEPSYDRA_DIR/wrapup/request.json"; ln -s "$work/request.json" "$KLEPSYDRA_DIR/wrapup/request.json"
+check "a symlinked request: silent" "$(stop "$S1")" ""
+rm -f "$KLEPSYDRA_DIR/wrapup/request.json"
 
 echo "install block"
 settings=$(sed -n '/^<!-- wrapup-settings:start -->$/,/^<!-- wrapup-settings:end -->$/p' "$here/../README.md" |

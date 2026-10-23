@@ -410,10 +410,11 @@ pub struct Asked {
     pub error: Option<String>,
 }
 
-/// Start a wrap-up: every live session is asked to checkpoint and report,
-/// idle ones in klepsydra's tmux at once, the rest by the Stop hook.
+/// Start a wrap-up of the sessions `ids` the wall's confirm listed: each is
+/// asked to checkpoint and report, idle ones in klepsydra's tmux at once, the
+/// rest by the Stop hook. A session not listed is never asked.
 #[tauri::command]
-pub async fn start_wrapup(app: tauri::AppHandle) -> Result<Vec<Asked>, String> {
+pub async fn start_wrapup(app: tauri::AppHandle, ids: Vec<String>) -> Result<Vec<Asked>, String> {
     use klepsydra_fleet::wrapup::{self, Route};
     let dir = crate::klepsydra_dir(&app).ok_or("klepsydra has no data folder.")?;
     let snapshot = app
@@ -424,20 +425,34 @@ pub async fn start_wrapup(app: tauri::AppHandle) -> Result<Vec<Asked>, String> {
         .duration_since(std::time::UNIX_EPOCH)
         .map_err(|e| e.to_string())?
         .as_millis();
-    let r = wrapup::start(&dir, i64::try_from(now_ms).unwrap_or(i64::MAX))
+    let sessions = snapshot["sessions"].as_array().cloned().unwrap_or_default();
+    let on_wall = |id: &String| {
+        sessions
+            .iter()
+            .any(|s| s["session_id"].as_str() == Some(id))
+    };
+    let listed: Vec<String> = ids.into_iter().filter(on_wall).collect();
+    if listed.is_empty() {
+        return Err("None of those sessions is on the wall any more.".into());
+    }
+    let r = wrapup::start(&dir, i64::try_from(now_ms).unwrap_or(i64::MAX), &listed)
         .map_err(|e| format!("Could not start the wrap-up: {e}"))?;
     tauri::async_runtime::spawn_blocking(move || {
-        let sessions = snapshot["sessions"].as_array().cloned().unwrap_or_default();
         let mut asked = Vec::new();
         for s in sessions {
             let Some(id) = s["session_id"].as_str().map(str::to_owned) else {
                 continue;
             };
+            if !r.ids.contains(&id) {
+                continue;
+            }
             let Ok(status) = serde_json::from_value(s["status"].clone()) else {
                 continue;
             };
             let t = target(&snapshot, &id);
-            let Some(route) = wrapup::route(status, t.as_ref().is_some_and(is_fleet)) else {
+            // As the wall judges it: a fleet pane with a known Claude process.
+            let typable = t.as_ref().is_some_and(|t| is_fleet(t) && t.pid > 0);
+            let Some(route) = wrapup::route(status, typable) else {
                 continue;
             };
             let mut error = None;
@@ -451,7 +466,10 @@ pub async fn start_wrapup(app: tauri::AppHandle) -> Result<Vec<Asked>, String> {
                         })
                     });
                 if let Err(e) = typed {
-                    wrapup::unmark(&dir, &id);
+                    // A timeout may have typed it: keep the mark, so the Stop hook does not ask twice.
+                    if e != wrapup_timed_out() {
+                        wrapup::unmark(&dir, &id);
+                    }
                     error = Some(e);
                 }
             }
