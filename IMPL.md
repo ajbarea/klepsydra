@@ -1,27 +1,33 @@
 # IMPL
 
-Slice: #22 End and Interrupt from a card. Branch feat/end-session, worktree
-`.claude/worktrees/end-session`, PR #70, on main.
+Slice: #58 Wrap up. Branch feat/wrap-up, worktree `.claude/worktrees/wrap-up`,
+on main (after #22, PR #70). Design: the 10-21 comment on #58.
 
 ## Done
-- Launcher `end` / `interrupt` verbs (pane + pid checks as Jump, fleet tmux
-  only); `end` sends Esc, Ctrl+C, types `/exit`, presses Enter only when the
-  input line reads exactly `/exit`, then waits for Claude to exit. Leaves
-  tmux copy mode first; `KLEPSYDRA_END_WAIT` must be 1-3 digits.
-- App: `end_session`, `interrupt_session`; a per-session `PaneFlight` gate
-  so a second End of one session is refused while Jump and New run on.
-- Wall: "Session actions" menu (Interrupt while working, "End session…"),
-  confirm dialog naming the session with Cancel focused, 5 s undo window;
-  the menu stays off from the send until `end_session` answers.
+- `hooks/klepsydra-wrapup.sh`: sync Stop hook (asks once per request through
+  `additionalContext`, silent otherwise, fails open) and the reporter
+  (`ready SESSION`, `blocked SESSION REASON`). `hooks/klepsydra-wrapup.md` is
+  the skill (`~/.claude/skills/klepsydra-wrapup/SKILL.md`).
+- Launcher `wrapup` verb: Ctrl+C, types `/klepsydra-wrapup`, Enter only when
+  the line reads exactly that; refuses mid-turn; takes #22's pane lock.
+- Fleet crate `wrapup.rs` (request, answers, `route()`, start/cancel/mark);
+  app `start_wrapup` / `cancel_wrapup` (per-session pane gate).
+- Wall: Wrap up… confirm grouped by route (`src/fleet/wrapup.js` mirrors
+  `route()`, a guard parses both), card line, "N of M ready", Stop wrap-up,
+  Safe to restart, End all ready sessions… through #22's one confirm and
+  per-card undo. `?demo&wrapup` sample. README "Wrapping up".
+- Live (Claude Code, throwaway session, project-only settings, private
+  `KLEPSYDRA_DIR`): the Stop hook made the session checkpoint, commit and
+  report `ready`; asked once.
 
 ## Next
-- Independent review (opus, `/code-review high`), at most 3 rounds; fix,
-  CI green, merge. Then #58 (feat/wrap-up) rebases onto main.
+- PR (Closes #58), independent review (opus, at most 3 rounds), CI, merge.
+- Deploy needs AJ's ok: copy `klepsydra-wrapup.sh` to `~/.claude/`, the skill
+  to `~/.claude/skills/klepsydra-wrapup/SKILL.md`, the Stop hook block into
+  both `settings.json` (`~/.claude`, `~/.claude-personal`), and install the
+  app build.
 
 ## Verify
-- `node --test src/*.test.js`
-- `cd src-tauri && cargo fmt --all --check && cargo clippy -p klepsydra-fleet --all-targets -- -D warnings && cargo test -p klepsydra-fleet`
-- every `hooks/test_*.sh`, `statusline/test_statusline.sh`, `scripts/test_*.sh`
-- `uv run -q --no-project --with playwright python -I scripts/test_wall_browser.py`
-- `KLEPSYDRA_STAGE=klepsydra-build-end_session bash scripts/build-windows.sh --check`
+- Full gate list in `.claude/skill-context.md`, plus `bash hooks/test_wrapup.sh`.
+- `KLEPSYDRA_STAGE=klepsydra-build-wrap_up bash scripts/build-windows.sh --check`
 - All heavy commands under `flock /tmp/fleet-heavy.lock`.

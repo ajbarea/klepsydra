@@ -3,7 +3,7 @@
 
 use std::collections::HashMap;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::ledger::{Receiver, Totals};
 use crate::session::{Claude, Kind, Place, Said, SessionFile, State, Tmux, Touched};
@@ -31,7 +31,7 @@ pub const BACKGROUND_STALE_AFTER: i64 = 3600;
 /// hook stamps a moment before the file lands.
 const BACKGROUND_AHEAD: i64 = 60;
 
-#[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum Status {
     NeedsYou,
@@ -98,6 +98,10 @@ pub struct View {
     /// telemetry may be missing some exports; left out of the JSON when not.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub ledger_partial: bool,
+    /// Its answer to the wall's wrap-up, while one is shown; left out of the
+    /// JSON otherwise.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub wrapup: Option<crate::wrapup::Answer>,
     #[serde(skip)]
     pub marks: Marks,
 }
@@ -130,6 +134,10 @@ pub struct Snapshot {
     /// of the JSON before then.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub receiver: Option<Receiver>,
+    /// The wall's wrap-up request, while it is shown; left out of the JSON
+    /// otherwise.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub wrapup: Option<crate::wrapup::Request>,
 }
 
 /// What to show for one session at `now`, or None once it has ended long enough ago.
@@ -260,6 +268,7 @@ pub fn view(entry: &Entry, now: i64) -> Option<View> {
         },
         ledger: None,
         ledger_partial: false,
+        wrapup: None,
         marks: Marks {
             state_at: f.state_at,
             turns: f.counted_turns(),
@@ -334,6 +343,7 @@ pub fn snapshot(entries: &[Entry], now: i64) -> Snapshot {
         sessions,
         speaking: None,
         receiver: None,
+        wrapup: None,
     }
 }
 

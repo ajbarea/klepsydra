@@ -38,6 +38,8 @@ jobs:
       # cover the shapes that would otherwise show a wrong status.
       - name: Fleet hook tests
         run: bash hooks/test_fleet.sh
+      - name: Wrap-up hook tests
+        run: bash hooks/test_wrapup.sh
       - name: Launcher tests
         run: |
           command -v tmux >/dev/null || { sudo apt-get update && sudo apt-get install -y tmux; }

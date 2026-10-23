@@ -167,6 +167,7 @@ mod tests {
             background: Default::default(),
             ledger: None,
             ledger_partial: false,
+            wrapup: None,
             marks: Marks {
                 state_at: START + at,
                 turns,
@@ -188,6 +189,7 @@ mod tests {
                 .collect(),
             speaking: None,
             receiver: None,
+            wrapup: None,
         }
     }
 

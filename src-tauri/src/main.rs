@@ -832,6 +832,8 @@ fn main() {
             fleet::ledger_today,
             launch::end_session,
             launch::interrupt_session,
+            launch::start_wrapup,
+            launch::cancel_wrapup,
             fleet::get_wall_density,
             fleet::set_wall_density,
             jump::jump_to_terminal,

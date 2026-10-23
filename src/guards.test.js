@@ -441,6 +441,7 @@ const NOT_SCANNED = {
   "src/fleet/fonts/": "the nameplate's bundled typeface and its licence, data",
   "src/fleet/cast.json": "voice to portrait table, data",
   "src-tauri/fleet/Cargo.toml": "scanned as a manifest",
+  "hooks/klepsydra-wrapup.md": "the wrap-up skill's instructions, prose installed as a skill",
 };
 
 /** Every file (any extension) a fleet change can add, found without the guards' own walks. */
@@ -546,9 +547,21 @@ test("no code path ends a session except the undo window's expiry", () => {
   assert.doesNotMatch(wall, /end_session/);
   assert.match(wall, /ender\.start\(/);
   assert.equal((wall.match(/ender\.start\(/g) ?? []).length, 1, "one place begins an end, and only the dialog's confirm reaches it");
-  assert.match(wall, /if \(dialog\.returnValue === "end"\) beginEnd\(who\)/);
+  assert.match(wall, /function beginEnd\(id\) \{[^}]*ender\.start\(id,/, "inside beginEnd");
   assert.equal((wall.match(/beginEnd\(/g) ?? []).length, 2, "its definition and the confirm");
-  assert.equal((wall.match(/dialog\.close\("end"\)/g) ?? []).length, 1, "only the End button's click closes with end");
+  // The one call sits in the dialog's close handler, past the return that anything but confirm takes.
+  const close = wall.slice(wall.indexOf('dialog.addEventListener("close"'), wall.indexOf("\n});", wall.indexOf('dialog.addEventListener("close"')));
+  assert.match(close, /if \(dialog\.returnValue !== "confirm"\) \{\n\s*settleFocus\(what\.ids\[0\], what\.opener\);\n\s*return;\n\s*\}\n\s*if \(what\.kind === "end"\) for \(const id of what\.ids\) beginEnd\(id\);/);
+  assert.equal((wall.match(/dialog\.close\("confirm"\)/g) ?? []).length, 1, "only the armed button's click closes with confirm");
+  assert.doesNotMatch(wall, /returnValue = "confirm"|close\("end"\)/);
+  // Two dialogs end sessions, End session… and End all ready sessions…, each from its own opener only.
+  assert.equal((wall.match(/openConfirm\("end"/g) ?? []).length, 2);
+  assert.match(wall, /function openEnd\(id, opener\) \{[^}]*openConfirm\("end", \[id\]/);
+  assert.match(wall, /function openEndReady\(\) \{[\s\S]*?openConfirm\("end", ids,[\s\S]*?\n\}/);
+  assert.equal((wall.match(/openEnd\(id, button\)/g) ?? []).length, 1, "the menu's End session… item");
+  assert.equal((wall.match(/openEndReady\b/g) ?? []).length, 2, "its definition and its button's click");
+  assert.match(wall, /endReadyButton\.addEventListener\("click", openEndReady\)/);
+  assert.equal((wall.match(/confirmFor = \{/g) ?? []).length, 1, "the dialog's target is set in openConfirm alone");
   assert.doesNotMatch(wall, /\bautofocus\b/);
   const endDialog = read("src/wall.html").match(/<dialog id="end-dialog"[\s\S]*?<\/dialog>/)[0];
   assert.doesNotMatch(endDialog, /autofocus/, "the ledger heading may take focus; the end dialog's buttons never");
@@ -676,8 +689,87 @@ test("the ledger drawer is a labelled modal dialog with a Close button that link
 
 test("the dialog's End is off for ARM_MS after every opening, and an off End closes nothing", () => {
   const wall = read("src/fleet/wall.js");
-  const open = wall.slice(wall.indexOf("function openEnd("), wall.indexOf("endConfirm.addEventListener"));
+  const open = wall.slice(wall.indexOf("function openConfirm("), wall.indexOf("const listOf"));
+  assert.equal((wall.match(/\.showModal\(\)/g) ?? []).length, 2, "the confirm's and the portrait's: every confirm opens through openConfirm");
+  assert.equal((wall.match(/portrait\.showModal\(\)/g) ?? []).length, 1);
   assert.match(open, /setOff\(endConfirm, true\);\s*clearTimeout\(armTimer\);\s*armTimer = setTimeout\(\(\) => setOff\(endConfirm, false\), ARM_MS\);\s*openedAt = performance\.now\(\);\s*dialog\.showModal\(\)/);
   assert.match(wall, /const armed = \(e\) => endConfirm\.getAttribute\("aria-disabled"\) !== "true" && e\.timeStamp - openedAt >= ARM_MS;/);
-  assert.match(wall, /endConfirm\.addEventListener\("click", \(e\) => \{\s*if \(armed\(e\)\) dialog\.close\("end"\);/);
+  assert.match(wall, /endConfirm\.addEventListener\("click", \(e\) => \{\s*if \(armed\(e\)\) dialog\.close\("confirm"\);/);
+});
+
+// wrapup.rs route() as data: [[status, in_fleet], route] for every status and both places.
+function rustRoutes(wrapupRs = read("src-tauri/fleet/src/wrapup.rs")) {
+  const variants = read("src-tauri/fleet/src/view.rs").match(/pub enum Status \{([^}]*)\}/)[1].match(/\w+/g);
+  const body = wrapupRs.match(/pub fn route\(status: Status, in_fleet: bool\) -> Option<Route> \{\s*match status \{([^}]*)\}/)[1];
+  const lines = body.split("\n").map((l) => l.trim()).filter(Boolean);
+  const arms = lines.map((l) => {
+    const m = l.match(/^((?:Status::\w+)(?: \| Status::\w+)*)( if in_fleet)? => (None|Some\(Route::(\w+)\)),$/);
+    assert.ok(m, `an arm the guard cannot read: ${l}`);
+    return { statuses: m[1].match(/Status::(\w+)/g).map((v) => v.slice(8)), fleetOnly: Boolean(m[2]), route: m[4] ?? null };
+  });
+  const snake = (v) => v.replace(/[A-Z]/g, (c, i) => (i ? "_" : "") + c.toLowerCase());
+  const table = {};
+  for (const v of variants) {
+    table[snake(v)] = [true, false].map((fleet) => {
+      const arm = arms.find((a) => a.statuses.includes(v) && (!a.fleetOnly || fleet));
+      assert.ok(arm, `${v} has no arm`);
+      return arm.route && snake(arm.route);
+    });
+  }
+  return table;
+}
+
+test("the wall's route preview is wrapup.rs route(), arm for arm", async () => {
+  const { ROUTES, route } = await import("./fleet/wrapup.js");
+  const rust = rustRoutes();
+  assert.deepEqual(Object.keys(ROUTES).sort(), Object.keys(rust).sort(), "one entry per Status");
+  assert.deepEqual(ROUTES, rust);
+  for (const [status, [inside, outside]] of Object.entries(rust)) {
+    assert.equal(route(status, true), inside, status);
+    assert.equal(route(status, false), outside, status);
+  }
+  const window = read("src-tauri/fleet/src/wrapup.rs").match(/pub const WINDOW: i64 = (\d+);/);
+  assert.equal((await import("./fleet/wrapup.js")).WINDOW_S, Number(window[1]), "the confirm's minutes are the reader's window");
+});
+
+test("the route guard sees a changed arm, and refuses one it cannot read", async () => {
+  const { ROUTES } = await import("./fleet/wrapup.js");
+  const rs = read("src-tauri/fleet/src/wrapup.rs");
+  const typed = "Status::Done | Status::New | Status::Error if in_fleet => Some(Route::Type),";
+  assert.ok(rs.includes(typed), "the arm to plant against");
+  for (const planted of [
+    typed.replace(" | Status::Error", ""),
+    typed.replace(" if in_fleet", ""),
+    typed.replace("Route::Type", "Route::ByHand"),
+  ]) {
+    assert.notDeepEqual(rustRoutes(rs.replace(typed, planted)), ROUTES, planted);
+  }
+  assert.throws(() => rustRoutes(rs.replace("Status::Ended => None,", "_ => None,")), /cannot read/);
+});
+
+test("the wrap-up line and the confirm's lists go in as text", () => {
+  const wall = read("src/fleet/wall.js");
+  const paint = wall.slice(wall.indexOf("function paint("), wall.indexOf("\nfunction render("));
+  assert.match(paint, /show\(wrap, c\.wrapup\?\.text\)/, "the reason is session-written: textContent only");
+  assert.doesNotMatch(read("src/fleet/wrapup.js"), /innerHTML|insertAdjacentHTML/);
+  const open = wall.slice(wall.indexOf("function openConfirm("), wall.indexOf("const endable"));
+  assert.doesNotMatch(open, /innerHTML|insertAdjacentHTML/);
+  assert.match(read("src/wall.html"), /<span id="wrapup-note" role="status"><\/span>/);
+  assert.match(wall, /wrapButton\.hidden = !inTauri/);
+});
+
+test("the wrap-up sample is never reachable inside the app, and only with ?demo", async () => {
+  globalThis.window ??= {};
+  const feed = await import("./fleet/feed.js");
+  for (const search of ["?demo&wrapup", "?demo=8&wrapup", "?wrapup", ""]) assert.equal(feed.demoWrapupUrl(true, search), null, search);
+  assert.equal(feed.demoWrapupUrl(false, "?demo&wrapup"), "../scripts/fixtures/wrapup-demo.json");
+  for (const search of ["?wrapup", "?demo", "?focus=x"]) assert.equal(feed.demoWrapupUrl(false, search), null, search);
+  assert.equal(read("src/fleet/feed.js").match(/wrapup-demo\.json/g).length, 1, "one way to the sample");
+  const sample = JSON.parse(read("scripts/fixtures/wrapup-demo.json"));
+  const merged = feed.withWrapup({ sessions: [{ session_id: "demo-2-af_bella" }, { session_id: "x" }] }, sample);
+  assert.deepEqual(merged.wrapup, sample.request);
+  assert.deepEqual(merged.sessions, [{ session_id: "demo-2-af_bella", wrapup: sample.answers["demo-2-af_bella"] }, { session_id: "x" }]);
+  assert.deepEqual(feed.withWrapup({ sessions: [] }, null), { sessions: [] }, "no sample, no change");
+  const ids = new Set(JSON.parse(read("scripts/fixtures/fleet-demo.json")).sessions.map((s) => s.session_id));
+  for (const id of Object.keys(sample.answers)) assert.ok(ids.has(id), `${id} is a demo session`);
 });

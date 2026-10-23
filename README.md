@@ -165,6 +165,33 @@ with subagents or background shells still running stays working. A subagent
 whose start was missed is picked up from its own tool events.
 For the gauge alone, keep `statusLine` and leave out `hooks`.
 
+For Wrap up (see [Wrapping up](#wrapping-up)), also copy its script and its
+skill, and register the script as a second `Stop` hook. Unlike the fleet
+hook it is not `async`: Claude Code reads what it prints, which is nothing
+unless the wall has asked for a wrap-up this session has not yet answered.
+
+```bash
+cp hooks/klepsydra-wrapup.sh ~/.claude/ && chmod +x ~/.claude/klepsydra-wrapup.sh
+mkdir -p ~/.claude/skills/klepsydra-wrapup
+cp hooks/klepsydra-wrapup.md ~/.claude/skills/klepsydra-wrapup/SKILL.md
+```
+
+A second Claude Code config folder (another `CLAUDE_CONFIG_DIR`) needs the
+skill too, at `skills/klepsydra-wrapup/SKILL.md` inside it, or a typed
+`/klepsydra-wrapup` finds no command there. The script stays in `~/.claude`.
+
+<!-- wrapup-settings:start -->
+```json
+{
+  "hooks": {
+    "Stop": [{ "hooks": [{ "type": "command", "command": "~/.claude/klepsydra-wrapup.sh", "timeout": 10 }] }]
+  }
+}
+```
+<!-- wrapup-settings:end -->
+
+Merging it adds a second entry to the `Stop` list above; keep both.
+
 For the ledger (see [The ledger](#the-ledger)), also merge this `env` block
 into the user-scope `~/.claude/settings.json`. Claude Code reads these
 settings only from user scope, not from a repository's settings:
@@ -484,6 +511,37 @@ session is outside klepsydra's tmux, so its pane is not ours to type into.
 Another End or Interrupt of it is still running. The prompt did not read
 exactly `/exit`, so Enter was not pressed and the line was cleared. Or the
 session is still running a few seconds after `/exit` was sent.
+
+### Wrapping up
+
+<!-- budget: 320 words -->
+**Wrap up…**, beside Ledger, asks the live sessions to finish or
+checkpoint their current step, record what is still running, update the
+handoff, commit it, then report whether stopping is safe. A dialog lists who
+is asked and how, with Cancel focused, and only those sessions are asked. An
+idle session in klepsydra's tmux has `/klepsydra-wrapup` typed now. A working
+one is asked by the Stop hook when its turn ends; one that needs you, once
+you answer and its turn ends. Any other session, idle outside klepsydra's
+tmux or silent, you ask by hand: type `/klepsydra-wrapup` in its terminal. If
+typing fails, the card's note says why. The dialog closes if a session
+arrives or changes how it would be asked.
+
+Each card then reads **Wrapping up…**, **Ready**, or **Not ready** with the
+reason the session gave. A session has 10 minutes to answer; after that,
+silence reads **No answer**, never ready. A session started after the wrap-up
+reads **Not asked**, and a ready one that starts working again reads
+**Working again**; neither counts as ready until a new Wrap up asks it. The
+bar counts "4 of 6 ready" over the cards that have not ended, and **Safe to
+restart** appears only when every one of them is ready. **Stop wrap-up**
+stops the asking; the answers stay on the wall for an hour.
+
+Once every card is ready, **End all ready sessions…** opens one dialog that
+names each session it will end, character and repo, with Cancel focused.
+Its button wakes a second after the dialog opens, as End does, and the
+dialog closes if any card stops being ready. Confirming starts each card's
+own 5 s End with Undo, so nothing is sent sooner and any one can still be
+kept. Ready sessions outside klepsydra's tmux are not listed, and the dialog
+says how many to end from their own terminals.
 
 ### Card density
 

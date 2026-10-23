@@ -8,7 +8,8 @@ import { ledgerLine } from "./ledger.js";
 
 export { voiceName };
 import { speakingNow } from "./speaking.js";
-import { sessionActions } from "./end.js";
+import { listWords, sessionActions } from "./end.js";
+import { wrapupLine, sessionRoute } from "./wrapup.js";
 
 // Each status's badge: shape, symbol and tone carry it together with the
 // label, so no one of them is needed alone.
@@ -155,9 +156,6 @@ export function announcements(before, sessions, cast, nowMs = Date.now()) {
         .join(", ");
     });
 }
-
-/** "a", "a and b", "a, b and c". */
-const listWords = (xs) => (xs.length < 2 ? xs.join("") : `${xs.slice(0, -1).join(", ")} and ${xs.at(-1)}`);
 
 /** The compact card's "+2" for the repos a session touched besides its own, named in full for hover and its accessible name; null with none. */
 export function alsoChip(repos) {
@@ -406,9 +404,10 @@ export function plainText(md) {
   return t.replace(/\u0000(\d+)\u0000/g, (_, i) => codes[i]).replace(/\s+/g, " ").trim();
 }
 
-/** One card on the wall. */
-export function card(s, cast, nowMs) {
+/** One card on the wall; `request` is the snapshot's wrap-up, when one is shown. */
+export function card(s, cast, nowMs, request = null) {
   const who = identity(s, cast);
+  const wrapup = wrapupLine(s, request, nowMs);
   const st = statusOf(s.status, isQuiet(s));
   const crew = crewOf(s);
   const also = [...new Set((s.touched ?? []).map((t) => t.repo))].filter((r) => r && r !== s.where?.repo);
@@ -457,9 +456,11 @@ export function card(s, cast, nowMs) {
     jump,
     clear: s.status === "ended" || s.status === "silent",
     actions: sessionActions(s),
+    wrapupRoute: sessionRoute(s),
+    wrapup,
     menuLabel: `Session actions for ${who.name}`,
     // An off button says why in its name too, not only in its tooltip.
     jumpLabel: `Open terminal, ${who.name}${jump.why ? `, unavailable: ${jump.why}` : ""}`,
-    label: accessibleName(s, cast, nowMs),
+    label: [accessibleName(s, cast, nowMs), wrapup?.text].filter(Boolean).join(", "),
   };
 }

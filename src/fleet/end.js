@@ -12,21 +12,34 @@ export const ARM_MS = 1000;
 /** The tmux socket's name under which the launcher keeps its sessions (launch.rs FLEET_SOCKET). */
 export const FLEET_SOCKET = "klepsydra";
 
+/** Whether session `s` runs in klepsydra's tmux with a known Claude process: the panes the launcher types into. */
+export function inFleet(s) {
+  const uint = (n, max) => Number.isInteger(n) && n >= 0 && n <= max;
+  const str = (v) => typeof v === "string";
+  // launch::target() needs these, and pane_args() refuses a zero pid.
+  const named = str(s?.tmux?.socket) && str(s?.tmux?.pane) && str(s?.distro);
+  const known = uint(s?.claude?.pid, 0xffff_ffff) && s.claude.pid > 0 && uint(s?.claude?.start, Number.MAX_SAFE_INTEGER);
+  return named && known && s.tmux.socket.split("/").pop() === FLEET_SOCKET;
+}
+
 /**
  * What a card's actions menu offers. The menu exists only for a live session in
  * klepsydra's tmux whose Claude process is known (the launcher refuses the rest);
  * Interrupt only while it works.
  */
 export function sessionActions(s) {
-  const uint = (n, max) => Number.isInteger(n) && n >= 0 && n <= max;
-  const str = (v) => typeof v === "string";
-  // launch::target() needs these, and pane_args() refuses a zero pid.
-  const named = str(s?.tmux?.socket) && str(s?.tmux?.pane) && str(s?.distro);
-  const known = uint(s?.claude?.pid, 0xffff_ffff) && s.claude.pid > 0 && uint(s?.claude?.start, Number.MAX_SAFE_INTEGER);
-  const fleet = named && s.tmux.socket.split("/").pop() === FLEET_SOCKET;
-  const menu = s?.status !== "ended" && fleet && known;
+  const menu = s?.status !== "ended" && inFleet(s);
   return { menu, interrupt: menu && s.status === "working" };
 }
+
+/** A card as a confirm lists it: the character, and the repo when known. */
+export const cardWho = (c) => (c.place?.repo ? `${c.name} in ${c.place.repo}` : c.name);
+
+/** "1 session", "3 sessions". */
+export const sessionCount = (n) => `${n} session${n === 1 ? "" : "s"}`;
+
+/** "a", "a and b", "a, b and c". */
+export const listWords = (xs) => (xs.length < 2 ? xs.join("") : `${xs.slice(0, -1).join(", ")} and ${xs.at(-1)}`);
 
 /** The confirm dialog's words for card `c` (a model card: name, place, status). */
 export function confirmCopy(c) {
@@ -37,6 +50,25 @@ export function confirmCopy(c) {
     text: `This ends ${c.name}'s Claude session${where}, as if you typed /exit in its terminal. Any unsent text in its prompt is dropped; the conversation can be resumed later.`,
     warn: c.status === "working" ? "It is mid-turn: the turn stops and its unfinished work is lost." : null,
     confirm: `End ${c.name}`,
+    cancel: "Cancel",
+  };
+}
+
+/**
+ * The confirm's words for ending every card in `cards` at once (model cards),
+ * each through its own undo window. `outside` counts the ready sessions that
+ * klepsydra cannot end, which are not listed.
+ */
+export function endAllCopy(cards, outside = 0) {
+  const n = cards.length;
+  const busy = cards.filter((c) => c.status === "working").map((c) => c.name);
+  const rest = outside ? ` Not listed: ${sessionCount(outside)} outside klepsydra's tmux, which you end from ${outside === 1 ? "its own terminal" : "their own terminals"}.` : "";
+  return {
+    title: `End ${sessionCount(n)}?`,
+    text: `This ends each session below, as if you typed /exit in its terminal. Each card counts down ${UNDO_MS / SECOND_MS} s with its own Undo before anything is sent.${rest}`,
+    groups: [{ heading: null, names: cards.map(cardWho) }],
+    warn: busy.length ? `${listWords(busy)} ${busy.length === 1 ? "is" : "are"} mid-turn: the turn stops and its unfinished work is lost.` : null,
+    confirm: `End ${sessionCount(n)}`,
     cancel: "Cancel",
   };
 }

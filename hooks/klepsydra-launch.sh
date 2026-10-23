@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # klepsydra's launcher, run by the overlay as
 #   wsl.exe -e bash -l .claude/klepsydra-launch.sh new DIR
-#   wsl.exe -e bash .claude/klepsydra-launch.sh jump|end|interrupt SOCKET PANE PID START
+#   wsl.exe -e bash .claude/klepsydra-launch.sh jump|end|interrupt|wrapup SOCKET PANE PID START
 # `new` starts claude in DIR as a window of tmux session "fleet" (socket
 # "klepsydra"); `jump` brings PANE's window to the front of its session, once
 # PANE still hosts Claude process PID (START = /proc/PID/stat field 22).
-# `end` types /exit into that Claude Code and `interrupt` presses Esc there,
-# on klepsydra's own tmux server only. `new` and `jump` open a Windows Terminal tab (window "fleet", titled TAB_TITLE) only when no
+# `end` types /exit into that Claude Code, `wrapup` types /klepsydra-wrapup
+# and `interrupt` presses Esc there, on klepsydra's own tmux server only. `new` and `jump` open a Windows Terminal tab (window "fleet", titled TAB_TITLE) only when no
 # client shows the session and no tab opened in the last PENDING_FOR seconds is
 # still starting. One line out: stdout on success, stderr on failure.
 set -uo pipefail
@@ -245,19 +245,33 @@ own_pane() { # socket pane pid start
 
 keys() { tmux "${t[@]}" send-keys -t "$pane" "$@" 2>/dev/null || fail "tmux could not send keys to the session."; }
 
-# Whether PANE's input line reads exactly /exit, between its rules: not a line
-# of the transcript, not the command menu's entry.
-reads_exit() {
-  LC_ALL=C.UTF-8 tmux "${t[@]}" capture-pane -p -t "$pane" 2>/dev/null |
-    awk -v mark="$PROMPT_MARK" -v rule="$RULE" '
-      { line[NR] = $0 }
-      END {
-        for (i = 2; i < NR; i++) {
-          if (index(line[i - 1], rule) != 1 || index(line[i + 1], rule) != 1) continue
-          if (index(line[i], mark "/exit") == 1 && substr(line[i], length(mark) + 6) ~ /^ *$/) found = 1
-        }
-        exit !found
-      }'
+screen() { LC_ALL=C.UTF-8 tmux "${t[@]}" capture-pane -p -t "$pane" 2>/dev/null; }
+
+# Whether PANE's input line reads exactly COMMAND, between its rules: not a
+# line of the transcript, not the command menu's entry.
+reads() { # command
+  screen | awk -v mark="$PROMPT_MARK" -v rule="$RULE" -v want="$1" '
+    { line[NR] = $0 }
+    END {
+      for (i = 2; i < NR; i++) {
+        if (index(line[i - 1], rule) != 1 || index(line[i + 1], rule) != 1) continue
+        if (index(line[i], mark want) == 1 && substr(line[i], length(mark want) + 1) ~ /^ *$/) found = 1
+      }
+      exit !found
+    }'
+}
+
+# Type COMMAND into the cleared input line and press Enter, only once the line
+# reads exactly COMMAND; else clear it again and fail.
+run_command() { # command
+  local _
+  keys -l "$1"
+  for _ in $(seq 20); do reads "$1" && break; sleep 0.1; done
+  if ! reads "$1"; then
+    keys C-c
+    fail "The session's prompt did not read $1, so Enter was not pressed. Its prompt may be in vim editor mode, or Claude Code's layout changed. Open its terminal to do it there."
+  fi
+  keys Enter
 }
 
 end_session() { # socket pane pid start
@@ -271,19 +285,28 @@ end_session() { # socket pane pid start
   sleep 1
   keys C-c
   sleep 0.5
-  keys -l /exit
-  local reads=0
-  for _ in $(seq 20); do reads_exit && { reads=1; break; }; sleep 0.1; done
-  if (( ! reads )); then
-    keys C-c
-    fail "The session's prompt did not read /exit, so Enter was not pressed. Its prompt may be in vim editor mode, or Claude Code's layout changed. Open its terminal to end it."
-  fi
-  keys Enter
+  run_command /exit
   for _ in $(seq $((END_WAIT * 10))); do
     proc_is "$pid" "$start" || { printf 'Ended the session.\n'; return 0; }
     sleep 0.1
   done
   fail "Sent /exit, but the session is still running. Open its terminal to see why."
+}
+
+# Ask an idle session to wrap up. A session mid-turn is refused, since
+# Ctrl+C would stop its turn; the Stop hook asks it when the turn ends.
+wrapup() { # socket pane pid start
+  local socket=$1 pane=$2 session
+  local -a t=()
+  own_pane "$@"
+  leave_modes
+  screen | grep -qE 'esc to (interrupt|cancel)' &&
+    fail "The session is mid-turn; it is asked when the turn ends."
+  # Ctrl+C clears a draft (Up brings it back); on an idle prompt it does nothing else.
+  keys C-c
+  sleep 0.5
+  run_command /klepsydra-wrapup
+  printf 'Asked the session to wrap up.\n'
 }
 
 interrupt() { # socket pane pid start
@@ -299,6 +322,7 @@ case ${1:-} in
   new) (( $# == 2 )) || fail "usage: klepsydra-launch.sh new DIR"; new "$2" ;;
   jump) (( $# == 5 )) || fail "usage: klepsydra-launch.sh jump SOCKET PANE PID START"; jump "$2" "$3" "$4" "$5" ;;
   end) (( $# == 5 )) || fail "usage: klepsydra-launch.sh end SOCKET PANE PID START"; end_session "$2" "$3" "$4" "$5" ;;
+  wrapup) (( $# == 5 )) || fail "usage: klepsydra-launch.sh wrapup SOCKET PANE PID START"; wrapup "$2" "$3" "$4" "$5" ;;
   interrupt) (( $# == 5 )) || fail "usage: klepsydra-launch.sh interrupt SOCKET PANE PID START"; interrupt "$2" "$3" "$4" "$5" ;;
-  *) fail "usage: klepsydra-launch.sh new DIR | jump|end|interrupt SOCKET PANE PID START" ;;
+  *) fail "usage: klepsydra-launch.sh new DIR | jump|end|interrupt|wrapup SOCKET PANE PID START" ;;
 esac
