@@ -404,6 +404,17 @@ export function plainText(md) {
   return t.replace(/\u0000(\d+)\u0000/g, (_, i) => codes[i]).replace(/\s+/g, " ").trim();
 }
 
+/** A Remote Control session link (session.rs REMOTE_PREFIX), else null: nothing else becomes a link. */
+export function remoteLink(url) {
+  return typeof url === "string" && /^https:\/\/claude\.ai\/code\/[A-Za-z0-9_-]{1,128}$/.test(url) ? url : null;
+}
+
+/** The sessions with every needs-you one first, each group in the reader's order. */
+export const needsFirst = (sessions) => [
+  ...sessions.filter((s) => s.status === "needs_you"),
+  ...sessions.filter((s) => s.status !== "needs_you"),
+];
+
 /** One card on the wall; `request` is the snapshot's wrap-up, when one is shown. */
 export function card(s, cast, nowMs, request = null) {
   const who = identity(s, cast);
@@ -458,6 +469,8 @@ export function card(s, cast, nowMs, request = null) {
     actions: sessionActions(s),
     wrapupRoute: sessionRoute(s),
     wrapup,
+    remote: remoteLink(s.remote_url),
+    remoteLabel: `Open ${who.name}'s session in Claude`,
     menuLabel: `Session actions for ${who.name}`,
     // An off button says why in its name too, not only in its tooltip.
     jumpLabel: `Open terminal, ${who.name}${jump.why ? `, unavailable: ${jump.why}` : ""}`,

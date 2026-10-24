@@ -933,3 +933,67 @@ body.queue-docked { padding-right: var(--queue-w); }
 .queue-content .q-align-center { text-align: center; }
 .queue-content blockquote { border-left: 3px solid var(--card-line); padding-left: var(--space-5); color: var(--text-dim); }
 .queue-content hr { border: 0; border-top: 1px solid var(--card-line); }
+
+/* The phone wall (html.served: the page came from the phone wall server).
+   Read-only: every button but the ones marked data-phone is gone, so no
+   desktop action (New, Open terminal, Clear, the session menu, the ledger,
+   or any added later) can be reached from a phone. A card with a Remote
+   Control link opens it. */
+.served button:not([data-phone]),
+.served .density { display: none !important; }
+a.remote {
+  display: inline-flex;
+  align-items: center;
+  margin-left: auto;
+  padding: 0 var(--space-5);
+  border: 1px solid var(--button-line);
+  border-radius: 8px;
+  background: var(--button-bg);
+  color: var(--text);
+  font-size: 12.5px;
+  text-decoration: none;
+}
+a.remote:focus-visible { outline: 2px solid var(--card-focus); outline-offset: 2px; }
+/* Compact: a row of its own under the foot, so the name keeps the head row's
+   width and the ledger line its slot. */
+.served .wall[data-density="compact"] .card.has-remote {
+  grid-template-rows: auto auto auto auto 1fr auto auto;
+  grid-template-areas:
+    "face name pill clear jump"
+    "face task task task task"
+    "meta meta meta meta meta"
+    "ask ask ask ask ask"
+    "said said said said said"
+    "menu note note note note"
+    "remote remote remote remote remote";
+}
+[data-density="compact"] a.remote { grid-area: remote; justify-content: center; margin: var(--space-4) 0 0; }
+/* Open terminal's reason says nothing on a phone, which has no terminal button. */
+.served .why { display: none; }
+.served .card.has-remote { cursor: pointer; }
+#link { color: var(--tone-needs); font-size: 12.5px; }
+
+/* On a phone: one column of compact cards under a tally that stays in view,
+   and targets of at least 44 px (Apple HIG; WCAG 2.5.8 asks 24). */
+@media (max-width: 600px) {
+  .served { --card-min: 0px; --wall-pad: var(--space-5); }
+  /* One column: each card its own height, not the tallest card's. */
+  .served .wall, .served .wall[data-density="compact"] { grid-template-columns: minmax(0, 1fr); grid-auto-rows: auto; }
+  .served .bar {
+    position: sticky;
+    top: 0;
+    z-index: 5;
+    gap: var(--space-3);
+    padding: calc(var(--space-4) + env(safe-area-inset-top)) var(--wall-pad) var(--space-4);
+    background: var(--wall-bg);
+    border-bottom: 1px solid var(--card-line);
+  }
+  .served .lead { gap: var(--space-2) var(--space-7); }
+  .served .tally { gap: var(--space-1) var(--space-6); }
+  .served .tally b { font-size: 22px; }
+  .served .ring-key { display: none; }
+  .served .wall { padding-bottom: calc(var(--wall-pad) + env(safe-area-inset-bottom)); }
+  .served a.remote { min-height: 44px; min-width: 44px; }
+  .served .card .look { min-width: 44px; min-height: 44px; }
+  .served #portrait .close { min-height: 44px; }
+}

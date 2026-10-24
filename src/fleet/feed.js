@@ -11,6 +11,44 @@ import { RATE } from "./speaking.js";
 
 export const inTauri = Boolean(window.__TAURI_INTERNALS__ ?? window.__TAURI__);
 
+/**
+ * Where this page's fleet comes from: "app" inside klepsydra; "served" from
+ * the phone wall server, which serves the wall at its root; "demo" with ?demo;
+ * else "dev", a dev snapshot beside the page.
+ */
+export function feedKind(app, search, pathname) {
+  if (app) return "app";
+  if (new URLSearchParams(search).has("demo")) return "demo";
+  return pathname === "/" ? "served" : "dev";
+}
+
+/** True on the phone: the page came from the phone wall server. */
+export const served = feedKind(inTauri, globalThis.location?.search ?? "", globalThis.location?.pathname ?? "") === "served";
+
+/**
+ * Follow the phone wall server's event stream: each event a snapshot. The
+ * browser reconnects a dropped stream itself; `onLink` hears whether the
+ * stream is up, so the page can say when what it shows may be old.
+ */
+export function followServed(onMessage, onLink = () => {}, Source = globalThis.EventSource) {
+  const source = new Source("/events");
+  source.onopen = () => onLink(true);
+  source.onerror = () => onLink(false);
+  source.onmessage = (e) => {
+    let snapshot;
+    try {
+      snapshot = JSON.parse(e.data);
+    } catch {
+      return;
+    }
+    if (Array.isArray(snapshot?.sessions)) {
+      onLink(true);
+      onMessage(snapshot);
+    }
+  };
+  return source;
+}
+
 /** The browser's snapshot file; none inside the app. */
 export function devSnapshotUrl(app, search) {
   if (app) return null;
@@ -84,9 +122,13 @@ export function demoSnapshot(snapshot, search, nowS) {
   return typeof at === "number" ? shifted(rest, nowS - at) : rest;
 }
 
-export function subscribe(onMessage) {
+export function subscribe(onMessage, onLink) {
   if (inTauri) {
     follow("fleet_subscribe", onMessage).catch(() => {});
+    return;
+  }
+  if (served) {
+    followServed(onMessage, onLink);
     return;
   }
   Promise.all([
