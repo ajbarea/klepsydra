@@ -102,6 +102,8 @@ html, body { background: var(--wall-bg); color: var(--text); font: 14px/1.45 var
 
 /* Summary bar: who needs AJ, and how many are up. */
 .bar { display: flex; align-items: center; gap: 28px; padding: 20px var(--wall-pad) 8px; }
+/* At the window's narrowest (420 px) the density choice and + New session take a line of their own. */
+@media (max-width: 480px) { .bar { flex-wrap: wrap; } }
 /* The tally, and the ring key beside it, or on a quieter line under it when the bar is narrow. */
 .lead { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 28px; margin-right: auto; min-width: 0; }
 .tally { display: flex; flex-wrap: wrap; gap: 8px 22px; align-items: baseline; color: var(--text-dim); }
@@ -197,12 +199,13 @@ button:focus-visible { outline: 2px solid var(--card-focus); outline-offset: 2px
 .empty h2 { font: 700 28px/1.15 var(--title); letter-spacing: 0.04em; color: var(--ivory); }
 .empty h2:focus { outline: none; } /* focused only when the last card leaves (wall.js) */
 .empty-body { max-width: 34em; color: var(--text-dim); font-size: 15px; }
-.empty-actions { display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: var(--space-5) var(--space-9); margin-top: var(--space-5); }
-#start-session { max-width: min(100%, 520px); padding: 13px 22px; font-size: 15px; overflow: hidden; text-overflow: ellipsis; }
+/* A long launch_dir cuts short inside the window; the button's title holds all of it. */
+.empty-actions { display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: var(--space-5) var(--space-9); max-width: 100%; margin-top: var(--space-5); }
+#start-session { min-width: 0; max-width: min(100%, 520px); padding: 13px 22px; font-size: 15px; overflow: hidden; text-overflow: ellipsis; }
 /* Quiet beside the start button; 25 px tall, past the 24 px minimum target (WCAG 2.2, 2.5.8). */
 #clear-ended { padding: 6px 0; color: var(--text-dim); font-weight: 400; }
 #clear-ended:hover:not([aria-disabled="true"]) { color: var(--text); }
-#start-note { color: var(--text-dim); font-size: 12.5px; }
+#start-note, #clear-note { color: var(--text-dim); font-size: 12.5px; }
 
 .card {
   --tone: var(--tone-quiet);

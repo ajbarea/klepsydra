@@ -498,11 +498,18 @@ fn launch_dir(prefs: &Prefs) -> &str {
         .unwrap_or("~")
 }
 
+/// The folder a launch starts in and wsl.exe's arguments for it: one check
+/// for the empty state's label and the launch.
+fn launch_plan(prefs: &Prefs) -> Result<(&str, Vec<String>), String> {
+    let dir = launch_dir(prefs);
+    let distro = prefs.get("launch_distro").and_then(Value::as_str);
+    Ok((dir, new_args(dir, distro)?))
+}
+
 /// The folder a launch would start in, when prefs.json can be read and the
-/// folder is one `new_args` takes.
+/// launch would run.
 fn launch_dir_of(prefs: Option<&Prefs>) -> Option<String> {
-    let dir = launch_dir(prefs?);
-    dir_ok(dir).then(|| dir.to_owned())
+    launch_plan(prefs?).ok().map(|(dir, _)| dir.to_owned())
 }
 
 /// The folder + New session starts in, for the wall's empty state. Reads only.
@@ -516,8 +523,7 @@ pub fn get_launch_dir(app: tauri::AppHandle) -> Option<String> {
 pub async fn launch_session(app: tauri::AppHandle) -> Result<String, String> {
     let prefs = crate::read_prefs(&app)
         .ok_or("prefs.json could not be read, so the launch folder is unknown.")?;
-    let distro = prefs.get("launch_distro").and_then(Value::as_str);
-    let args = new_args(launch_dir(&prefs), distro)?;
+    let (_, args) = launch_plan(&prefs)?;
     tauri::async_runtime::spawn_blocking(move || {
         gated(&app.state::<InFlight>(), || run(&args, timed_out))
     })
@@ -577,6 +583,19 @@ mod tests {
             launch_dir_of(Some(&prefs(json!({"launch_dir": 3})))).as_deref(),
             Some("~")
         );
+    }
+
+    #[test]
+    fn the_label_names_a_folder_only_when_the_launch_would_run() {
+        let prefs = |v: Value| v.as_object().cloned().unwrap();
+        let bad = prefs(json!({"launch_dir": "/home/aj", "launch_distro": "Ubuntu 24.04"}));
+        assert_eq!(
+            launch_dir_of(Some(&bad)),
+            None,
+            "a distro wsl.exe would refuse"
+        );
+        let good = prefs(json!({"launch_dir": "/home/aj", "launch_distro": "Ubuntu-24.04"}));
+        assert_eq!(launch_dir_of(Some(&good)).as_deref(), Some("/home/aj"));
     }
 
     #[test]

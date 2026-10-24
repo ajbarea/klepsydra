@@ -64,6 +64,7 @@ test("the empty state: Hesychia's portrait as decoration, the title, what will a
   assert.match(block, /<button type="button" id="start-session" hidden>Start a session<\/button>/);
   assert.match(block, /<button type="button" id="clear-ended" class="link" hidden><\/button>/);
   assert.match(block, /<span id="start-note" role="status"><\/span>/);
+  assert.match(block, /<span id="clear-note" role="status"><\/span>/, "the clear link has a note of its own");
   assert.ok(!/—/.test(block), "no em-dash in the copy");
   assert.ok(html.indexOf('<main id="wall"') < html.indexOf('<section id="empty"'), "it stands where the wall stands");
 });
@@ -75,7 +76,8 @@ test("the start button runs the same launch as + New session, in the app only", 
   assert.match(src, /startButton\.addEventListener\("click", \(\) => startSession\(startButton, startNote\)\)/);
   assert.match(src, /startButton\.hidden = !inTauri/);
   assert.match(src, /invoke\("get_launch_dir"\)/);
-  assert.match(src, /clearAll\(endedIds\(sessions\), tauri\)/, "the link clears through clear_session, ended sessions only");
+  assert.match(src, /press\(clearEnded, clearNote, \(\) => clearAll\(endedIds\(sessions\), tauri\)/, "the link clears through clear_session, ended sessions only, into its own note");
+  assert.doesNotMatch(src, /press\(clearEnded, startNote/, "Start's note is Start's alone");
 });
 
 test("the empty state fades in, and not under reduced motion", () => {

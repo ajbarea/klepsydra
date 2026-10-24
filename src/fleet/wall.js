@@ -41,6 +41,7 @@ const densityPicker = document.querySelector(".density");
 const ringKey = document.querySelector(".ring-key");
 const startButton = document.getElementById("start-session");
 const startNote = document.getElementById("start-note");
+const clearNote = document.getElementById("clear-note");
 const clearEnded = document.getElementById("clear-ended");
 const emptyTitle = document.getElementById("empty-title");
 // + New session and the empty state's button start a session the same way.
@@ -52,7 +53,7 @@ startButton.hidden = !inTauri;
 startButton.addEventListener("click", () => startSession(startButton, startNote));
 clearEnded.addEventListener("click", () => {
   if (wallState(sessions) !== "ended") return;
-  press(clearEnded, startNote, () => clearAll(endedIds(sessions), tauri), "Clearing…");
+  press(clearEnded, clearNote, () => clearAll(endedIds(sessions), tauri), "Clearing…");
 });
 
 let sessions = [];
@@ -83,8 +84,13 @@ let launchDir = null;
 // for one of those cards.
 function paintEmpty(state) {
   const quiet = state !== "cards" && !revealed;
+  const shows = wall.hidden && !quiet;
   empty.hidden = !quiet;
   wall.hidden = quiet;
+  // Behind the empty state the wall is not laid out: Auto measures it once it
+  // shows, and nothing arrives that nobody saw.
+  if (quiet) for (const el of wall.querySelectorAll(".arriving")) el.classList.remove("arriving");
+  if (shows) showDensity();
   paintStart();
   const n = state === "ended" ? endedIds(sessions).length : 0;
   clearEnded.hidden = n === 0;
@@ -345,15 +351,15 @@ function render(snapshot) {
     // .arriving). Only on the comfortable band; a compact card has no stage to run it.
     const make = () => {
       const el = tpl.content.firstElementChild.cloneNode(true);
-      if (shown === "comfortable" && !reducedMotion()) el.classList.add("arriving");
+      if (!wall.hidden && shown === "comfortable" && !reducedMotion()) el.classList.add("arriving");
       return el;
     };
+    paintEmpty(state); // first, so a card made behind the empty state never arrives
     syncChildren(wall, cards, (c) => c.id, make, paint);
     for (const el of wall.children) if (started.has(el.dataset.key) && !reducedMotion()) el.classList.add("pulse");
     // Moving a card in the DOM drops focus; give it back to what had it.
     if (focused !== document.body && focused?.isConnected && document.activeElement !== focused) focused.focus({ preventScroll: true });
     else if (focused && focused !== document.body && !focused.isConnected) wall.focus({ preventScroll: true }); // its card left
-    paintEmpty(state);
     // The wall gave way to the empty state, or the clear link left: its title takes focus.
     if (inside && !usable(document.activeElement)) [emptyTitle, wall].find(usable)?.focus({ preventScroll: true });
     reconcileActions();
@@ -909,6 +915,7 @@ function comfortableFits(extra) {
 }
 
 function showDensity() {
+  if (wall.hidden) return; // the empty state shows; paintEmpty measures on the way out
   const was = shown;
   shown = resolveDensity(choice, shown, comfortableFits);
   if (shown !== was) for (const el of wall.children) if (cardOf.has(el.dataset.key)) paintRing(el, cardOf.get(el.dataset.key));

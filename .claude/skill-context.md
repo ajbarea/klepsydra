@@ -84,8 +84,8 @@ files belong to: the JS guards scan hooks and scripts too.
   a card grows, never leaves a comfortable wall scrolling (a pixel at a time
   through the boundary, and where the comfortable bar is taller), and a
   compact note covers no text; the empty state (no sessions, or only ended
-  ones) fits both sizes and its buttons send only launch_session and
-  clear_session. Takes a few minutes. Needs
+  ones) fits both sizes, a long launch folder fits 420 px, and its buttons
+  send only launch_session and clear_session, each into its own note. Takes a few minutes. Needs
   Playwright's Chromium, or a Chrome at `$KLEPSYDRA_CHROME`; local only, not
   in CI.
 
