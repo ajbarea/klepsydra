@@ -488,21 +488,36 @@ pub async fn interrupt_session(app: tauri::AppHandle, id: String) -> Result<Stri
     to_pane(app, id, PaneVerb::Interrupt).await
 }
 
+type Prefs = serde_json::Map<String, Value>;
+
+/// The `launch_dir` pref, `~` when unset.
+fn launch_dir(prefs: &Prefs) -> &str {
+    prefs
+        .get("launch_dir")
+        .and_then(Value::as_str)
+        .unwrap_or("~")
+}
+
+/// The folder a launch would start in, when prefs.json can be read and the
+/// folder is one `new_args` takes.
+fn launch_dir_of(prefs: Option<&Prefs>) -> Option<String> {
+    let dir = launch_dir(prefs?);
+    dir_ok(dir).then(|| dir.to_owned())
+}
+
+/// The folder + New session starts in, for the wall's empty state. Reads only.
+#[tauri::command]
+pub fn get_launch_dir(app: tauri::AppHandle) -> Option<String> {
+    launch_dir_of(crate::read_prefs(&app).as_ref())
+}
+
 /// Start `claude` in the `launch_dir` pref as a window of the fleet session.
 #[tauri::command]
 pub async fn launch_session(app: tauri::AppHandle) -> Result<String, String> {
     let prefs = crate::read_prefs(&app)
         .ok_or("prefs.json could not be read, so the launch folder is unknown.")?;
-    let dir = prefs
-        .get("launch_dir")
-        .and_then(Value::as_str)
-        .unwrap_or("~")
-        .to_owned();
-    let distro = prefs
-        .get("launch_distro")
-        .and_then(Value::as_str)
-        .map(str::to_owned);
-    let args = new_args(&dir, distro.as_deref())?;
+    let distro = prefs.get("launch_distro").and_then(Value::as_str);
+    let args = new_args(launch_dir(&prefs), distro)?;
     tauri::async_runtime::spawn_blocking(move || {
         gated(&app.state::<InFlight>(), || run(&args, timed_out))
     })
@@ -534,6 +549,34 @@ mod tests {
         );
         let a = new_args("/home/aj", Some("Ubuntu")).unwrap();
         assert_eq!(&a[..2], ["-d", "Ubuntu"]);
+    }
+
+    #[test]
+    fn the_empty_state_names_the_folder_a_launch_would_use() {
+        let prefs = |v: Value| v.as_object().cloned().unwrap();
+        assert_eq!(launch_dir_of(None), None, "prefs.json unreadable");
+        assert_eq!(launch_dir_of(Some(&prefs(json!({})))).as_deref(), Some("~"));
+        let set = prefs(json!({"launch_dir": "/home/aj/ajsoftworks"}));
+        assert_eq!(
+            launch_dir_of(Some(&set)).as_deref(),
+            Some("/home/aj/ajsoftworks")
+        );
+        assert_eq!(
+            launch_dir(&set),
+            "/home/aj/ajsoftworks",
+            "the launch reads the same key"
+        );
+        for bad in [json!("relative/dir"), json!("")] {
+            assert_eq!(
+                launch_dir_of(Some(&prefs(json!({"launch_dir": bad})))),
+                None
+            );
+        }
+        // Not a string: the launch falls back to ~, so the label does too.
+        assert_eq!(
+            launch_dir_of(Some(&prefs(json!({"launch_dir": 3})))).as_deref(),
+            Some("~")
+        );
     }
 
     #[test]
