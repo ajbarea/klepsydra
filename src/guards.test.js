@@ -681,3 +681,70 @@ test("the dialog's End is off for ARM_MS after every opening, and an off End clo
   assert.match(wall, /const armed = \(e\) => endConfirm\.getAttribute\("aria-disabled"\) !== "true" && e\.timeStamp - openedAt >= ARM_MS;/);
   assert.match(wall, /endConfirm\.addEventListener\("click", \(e\) => \{\s*if \(armed\(e\)\) dialog\.close\("end"\);/);
 });
+
+// Windows Firewall prompts once per executable path that listens beyond loopback,
+// and every staged test build is a new path. Every listen goes through
+// receiver.rs's bind, which refuses an address beyond loopback first.
+const LISTENS = /\blisten\s*\(|\bTcpListener::bind\b|\bUdpSocket\b|\bTcpSocket\b|\bTcpListener\s+as\b/;
+
+/** The text of `fn name(` up to its matching brace; null when absent. */
+function fnBody(text, name) {
+  const start = text.indexOf(`fn ${name}(`);
+  if (start < 0) return null;
+  let depth = 0;
+  for (let i = text.indexOf("{", start); i < text.length; i++) {
+    if (text[i] === "{") depth++;
+    else if (text[i] === "}" && --depth === 0) return [start, i + 1];
+  }
+  return null;
+}
+
+/** `file:line` of each way to listen outside receiver.rs's bind, or a bind that listens before its loopback check. */
+export function strayListeners(files) {
+  const bad = [];
+  for (const [file, raw] of files) {
+    const text = raw.replace(/\r\n/g, "\n");
+    const body = file.endsWith("fleet/src/receiver.rs") ? fnBody(text, "bind") : null;
+    if (file.endsWith("fleet/src/receiver.rs")) {
+      const code = body ? text.slice(...body) : "";
+      const check = code.indexOf("is_loopback()");
+      const listens = [...code.matchAll(/\b(\w+)\s*\.listen\s*\(/g)];
+      const bound = code.match(/\b(\w+)\.bind\(&addr\b/)?.[1];
+      const one = listens.length === 1 && listens[0][1] === bound && code.match(/\blisten\s*\(/g).length === 1;
+      if (check < 0 || !one || check > listens[0].index) bad.push(`${file}:bind`);
+    }
+    let offset = 0;
+    for (const [i, line] of text.split("\n").entries()) {
+      const inside = body && offset >= body[0] && offset < body[1];
+      if (LISTENS.test(line) && !inside) bad.push(`${file}:${i + 1}`);
+      offset += line.length + 1;
+    }
+  }
+  return bad;
+}
+
+test("nothing under src-tauri listens except through the loopback-only bind", () => {
+  const rust = filesUnder("src-tauri", [".rs"]).filter((f) => !f.startsWith("src-tauri/target/"));
+  assert.ok(rust.includes("src-tauri/fleet/src/receiver.rs"), "the receiver is scanned");
+  assert.ok(rust.includes("src-tauri/build.rs") && rust.some((f) => f.startsWith("src-tauri/fleet/tests/")));
+  assert.deepEqual(strayListeners(rust.map((f) => [f, read(f)])), []);
+});
+
+test("the listen check catches each way to listen elsewhere, and a bind that skips the loopback check", () => {
+  const recv = "src-tauri/fleet/src/receiver.rs";
+  const bind = "fn bind(addr: A) -> R {\n    if !addr.ip().is_loopback() {\n        return e;\n    }\n    let probe = socket()?;\n    bind_wildcard(&probe, 1)?;\n    s.bind(&addr.into())?;\n    s.listen(128)?;\n}\n";
+  const check = (file, text) => strayListeners([[file, text]]);
+  assert.deepEqual(check(recv, bind), []);
+  assert.deepEqual(check(recv, bind.replace(/\r?\n/g, "\r\n")), [], "a CRLF checkout reads alike");
+  assert.deepEqual(check(recv, bind.replace("is_loopback", "is_private")), [`${recv}:bind`]);
+  assert.deepEqual(check(recv, bind.replace("    s.listen", "    probe.listen(1)?;\n    s.listen")), [`${recv}:bind`], "the wildcard probe never listens");
+  assert.deepEqual(check(recv, bind.replace("s.listen", "probe.listen")), [`${recv}:bind`], "only the socket bound to addr listens");
+  assert.deepEqual(check(recv, `${bind}fn other() {\n    probe.listen(1)?;\n}\n`), [`${recv}:11`]);
+  assert.deepEqual(check("x.rs", "use std::net::TcpListener as Tl;"), ["x.rs:1"]);
+  assert.deepEqual(check("x.rs", "unsafe { WinSock::listen(sock, 1) };"), ["x.rs:1"]);
+  assert.deepEqual(check("x.rs", 'let l = TcpListener::bind("0.0.0.0:0")?;'), ["x.rs:1"]);
+  assert.deepEqual(check("x.rs", "let u = UdpSocket::bind(addr)?;"), ["x.rs:1"]);
+  assert.deepEqual(check("x.rs", "let t = TcpSocket::new_v4()?;"), ["x.rs:1"]);
+  assert.deepEqual(check("x.rs", "Socket::listen(&probe, 1)?;"), ["x.rs:1"]);
+  assert.deepEqual(check("x.rs", "probe\n    .listen(1)?;"), ["x.rs:2"]);
+});
