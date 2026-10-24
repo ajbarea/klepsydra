@@ -170,6 +170,7 @@ mod tests {
             wrapup: None,
             turn_at: None,
             asked_after_turn: false,
+            remote_url: None,
             marks: Marks {
                 state_at: START + at,
                 turns,

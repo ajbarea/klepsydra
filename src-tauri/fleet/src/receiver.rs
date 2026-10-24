@@ -70,7 +70,7 @@ struct Head<'a> {
 
 /// Whether `host` names the receiver at `bound`: its address or `localhost`,
 /// with its port. Any other name is a page that rebound its own.
-fn our_host(host: Option<&str>, bound: SocketAddr) -> bool {
+pub(crate) fn our_host(host: Option<&str>, bound: SocketAddr) -> bool {
     let Some(host) = host else {
         return false;
     };
@@ -192,7 +192,7 @@ async fn handle(
 }
 
 /// The pause after another accept error in a row.
-fn backoff(previous: Duration) -> Duration {
+pub(crate) fn backoff(previous: Duration) -> Duration {
     previous.saturating_mul(2).clamp(BACKOFF_FIRST, BACKOFF_MAX)
 }
 
@@ -245,7 +245,7 @@ fn bind_wildcard(s: &Socket, port: u16) -> std::io::Result<()> {
 /// connections could then reach either, so an exclusive wildcard bind is tried
 /// first and dropped: it fails while anything else holds the port. Linux
 /// refuses that bind on its own.
-fn bind(addr: SocketAddrV4) -> std::io::Result<TcpListener> {
+pub(crate) fn bind(addr: SocketAddrV4) -> std::io::Result<TcpListener> {
     if !addr.ip().is_loopback() {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidInput,

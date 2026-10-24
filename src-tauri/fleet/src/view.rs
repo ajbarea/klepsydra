@@ -108,6 +108,9 @@ pub struct View {
     /// Stop follows his answer; left out of the JSON when not.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub asked_after_turn: bool,
+    /// The Remote Control link that opens the session on claude.ai or in
+    /// the Claude app; none while Remote Control is off or the session ended.
+    pub remote_url: Option<String>,
     #[serde(skip)]
     pub marks: Marks,
 }
@@ -278,6 +281,11 @@ pub fn view(entry: &Entry, now: i64) -> Option<View> {
         turn_at: f.turn_at.map(at),
         asked_after_turn: status == Status::NeedsYou
             && f.needs.as_ref().and_then(|n| n.turn_over) == Some(true),
+        remote_url: if status == Status::Ended {
+            None
+        } else {
+            f.remote_url.clone()
+        },
         marks: Marks {
             state_at: f.state_at,
             turns: f.counted_turns(),
@@ -389,6 +397,7 @@ mod tests {
             turns_at: None,
             turn_at: None,
             needs: None,
+            remote_url: None,
         }
     }
 
@@ -668,6 +677,26 @@ mod tests {
         assert_eq!(
             json["background"],
             serde_json::json!({"agents": 0, "shells": 0, "tasks": 0})
+        );
+    }
+
+    #[test]
+    fn a_remote_control_link_rides_on_a_live_session_only() {
+        const URL: &str = "https://claude.ai/code/session_01AbC";
+        let with = |state, status_at| {
+            let mut e = entry("a", state, status_at, NOW - 5);
+            e.file.remote_url = Some(URL.into());
+            e
+        };
+        let live = view(&with(State::NeedsYou, NOW - 5), NOW).unwrap();
+        assert_eq!(live.remote_url.as_deref(), Some(URL));
+        assert_eq!(serde_json::to_value(&live).unwrap()["remote_url"], URL);
+        let ended = view(&with(State::Ended, NOW - 5), NOW).unwrap();
+        assert_eq!((ended.status, ended.remote_url), (Status::Ended, None));
+        let none = view(&entry("b", State::Working, NOW - 5, NOW - 5), NOW).unwrap();
+        assert_eq!(
+            serde_json::to_value(&none).unwrap()["remote_url"],
+            serde_json::Value::Null
         );
     }
 

@@ -122,6 +122,30 @@ fn lenient_needs<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<Needs>
     Ok(serde_json::from_value(serde_json::Value::deserialize(d)?).ok())
 }
 
+/// Where a Remote Control session can be opened: claude.ai's Claude Code
+/// sessions, by an id of letters, digits, `_` and `-`. Nothing else is a
+/// link the phone may follow.
+pub const REMOTE_PREFIX: &str = "https://claude.ai/code/";
+
+/// Whether `url` is a Remote Control session link.
+pub fn remote_url_ok(url: &str) -> bool {
+    url.strip_prefix(REMOTE_PREFIX).is_some_and(|id| {
+        (1..=128).contains(&id.len())
+            && id
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
+    })
+}
+
+/// `remote_url` when it is a Remote Control session link; anything else,
+/// including a value of the wrong type, is none rather than costing the file.
+fn lenient_remote_url<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<String>, D::Error> {
+    Ok(match serde_json::Value::deserialize(d)? {
+        serde_json::Value::String(url) if remote_url_ok(&url) => Some(url),
+        _ => None,
+    })
+}
+
 /// The kernel boot and distro a session runs on.
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
 pub struct Host {
@@ -186,6 +210,10 @@ pub struct SessionFile {
     pub turn_at: Option<i64>,
     #[serde(default, deserialize_with = "lenient_needs")]
     pub needs: Option<Needs>,
+    /// The Remote Control link the hook last read from the transcript; none
+    /// while Remote Control is off.
+    #[serde(default, deserialize_with = "lenient_remote_url")]
+    pub remote_url: Option<String>,
 }
 
 /// Why a session file was skipped.
@@ -552,6 +580,39 @@ mod tests {
                 "{other}"
             );
         }
+    }
+
+    #[test]
+    fn only_a_remote_control_link_is_kept() {
+        let url = |extra: &str| parse(&file(extra), ID).unwrap().remote_url;
+        assert_eq!(url(""), None, "a file from before the field");
+        assert_eq!(url(r#","remote_url":null"#), None);
+        assert_eq!(
+            url(r#","remote_url":"https://claude.ai/code/session_01AbC-x_9""#),
+            Some("https://claude.ai/code/session_01AbC-x_9".into())
+        );
+        for bad in [
+            r#"1"#,
+            r#"{"url":"https://claude.ai/code/session_01"}"#,
+            r#""""#,
+            r#""https://claude.ai/code/""#,
+            r#""http://claude.ai/code/session_01""#,
+            r#""https://claude.ai.evil.example/code/session_01""#,
+            r#""https://evil.example/https://claude.ai/code/session_01""#,
+            r#""https://claude.ai/code/session_01?next=https://evil.example""#,
+            r#""https://claude.ai/code/session_01/../../settings""#,
+            r#""https://claude.ai/code/session_01#x""#,
+            r#""javascript:alert(1)//https://claude.ai/code/x""#,
+            r#""HTTPS://CLAUDE.AI/code/session_01""#,
+        ] {
+            let f = parse(&file(&format!(r#","remote_url":{bad}"#)), ID);
+            assert_eq!(f.map(|f| f.remote_url), Ok(None), "{bad}");
+        }
+        let long = format!(
+            r#","remote_url":"https://claude.ai/code/{}""#,
+            "a".repeat(129)
+        );
+        assert_eq!(url(&long), None);
     }
 
     #[test]

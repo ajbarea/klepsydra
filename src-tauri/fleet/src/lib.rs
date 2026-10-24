@@ -8,6 +8,7 @@ pub mod hub;
 pub mod ledger;
 pub mod lookup;
 pub mod otel;
+pub mod phone;
 pub mod problem_log;
 pub mod queue;
 pub mod receiver;
