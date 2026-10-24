@@ -27,7 +27,16 @@
     </fieldset>
   </div>
   <main id="wall" class="wall" aria-label="Claude Code sessions" tabindex="-1"></main>
-  <p id="empty" hidden>No Claude Code sessions are running.</p>
+  <section id="empty" class="empty" aria-labelledby="empty-title" hidden>
+    <img class="keeper" src="fleet/faces/kourai/hesychia-full.webp" alt="" />
+    <h2 id="empty-title" tabindex="-1">All quiet.</h2>
+    <p class="empty-body">Each Claude Code session you start appears here as a card, with its character, its repo and what it's doing.</p>
+    <div class="empty-actions">
+      <button type="button" id="start-session" hidden>Start a session</button>
+      <button type="button" id="clear-ended" class="link" hidden></button>
+    </div>
+    <span id="start-note" role="status"></span>
+  </section>
   <p id="live" class="visually-hidden" aria-live="polite"></p>
   <dialog id="portrait" aria-labelledby="portrait-name">
     <img class="full" alt="" />

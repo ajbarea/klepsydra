@@ -1,27 +1,35 @@
 # IMPL
 
-Slice: #22 End and Interrupt from a card. Branch feat/end-session, worktree
-`.claude/worktrees/end-session`, PR #70, on main.
+Slice: #46 First-use empty state kept by Hesychia. Branch feat/empty-state,
+worktree `.claude/worktrees/empty-state`. No PR yet.
 
 ## Done
-- Launcher `end` / `interrupt` verbs (pane + pid checks as Jump, fleet tmux
-  only); `end` sends Esc, Ctrl+C, types `/exit`, presses Enter only when the
-  input line reads exactly `/exit`, then waits for Claude to exit. Leaves
-  tmux copy mode first; `KLEPSYDRA_END_WAIT` must be 1-3 digits.
-- App: `end_session`, `interrupt_session`; a per-session `PaneFlight` gate
-  so a second End of one session is refused while Jump and New run on.
-- Wall: "Session actions" menu (Interrupt while working, "End session…"),
-  confirm dialog naming the session with Cancel focused, 5 s undo window;
-  the menu stays off from the send until `end_session` answers.
+- `src/fleet/empty.js`: the wall's state (empty / only ended / cards), the
+  start label, the clear-N label, `clearAll` (clear_session per ended id).
+- Wall: `<section id="empty">` in the wall's place: Hesychia's full portrait
+  (decorative, `alt=""`), "All quiet.", one line on what will appear,
+  **Start a session in <launch_dir>** (the same `launch_session` call and
+  note as + New session, hidden outside the app), and with only ended cards
+  a quiet **Clear N ended sessions** link. A fade only, none under reduced
+  motion. Focus that was in the wall goes to the empty state's title.
+- Only ended cards: the empty state replaces them (Carbon: an empty state
+  replaces the element it stands for). A focus request for an ended card
+  (a strip click) shows the ended cards until a session starts or all clear.
+- App: read-only `get_launch_dir` (None when prefs.json is unreadable or
+  `launch_dir` is not a folder the launch takes); `launch_session` reads the
+  folder through the same helper.
+- Demo: `?demo&empty`, `?demo&ended`.
 
 ## Next
-- Independent review (opus, `/code-review high`), at most 3 rounds; fix,
-  CI green, merge. Then #58 (feat/wrap-up) rebases onto main.
+- Open the PR (label enhancement, Closes #46), independent review (opus,
+  `/code-review high`), at most 3 rounds; fix, CI green, merge.
+- Live UIA check with zero sessions on the Windows build (issue's Done when).
 
 ## Verify
 - `node --test src/*.test.js`
 - `cd src-tauri && cargo fmt --all --check && cargo clippy -p klepsydra-fleet --all-targets -- -D warnings && cargo test -p klepsydra-fleet`
 - every `hooks/test_*.sh`, `statusline/test_statusline.sh`, `scripts/test_*.sh`
 - `uv run -q --no-project --with playwright python -I scripts/test_wall_browser.py`
-- `KLEPSYDRA_STAGE=klepsydra-build-end_session bash scripts/build-windows.sh --check`
+  (`empty_state`, `ended_only` for this slice)
+- `KLEPSYDRA_STAGE=klepsydra-build-empty_state bash scripts/build-windows.sh --check`
 - All heavy commands under `flock /tmp/fleet-heavy.lock`.

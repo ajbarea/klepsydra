@@ -154,12 +154,12 @@ button {
   white-space: nowrap;
 }
 button:hover:not([aria-disabled="true"]) { background: var(--button-hover); }
-#new-session { background: var(--text); color: var(--wall-bg); border-color: var(--text); }
-#new-session:hover:not([aria-disabled="true"]) { background: #ffffff; }
+#new-session, #start-session { background: var(--text); color: var(--wall-bg); border-color: var(--text); }
+#new-session:hover:not([aria-disabled="true"]), #start-session:hover:not([aria-disabled="true"]) { background: #ffffff; }
 button.clear { background: transparent; border-color: transparent; color: var(--text-dim); }
 button.clear:hover:not([aria-disabled="true"]) { background: var(--button-bg); color: var(--text); }
 /* Off reads as off: no fill, a faint border, a dim label (still 4.5:1 on the card). */
-button[aria-disabled="true"], #new-session[aria-disabled="true"] { color: var(--text-dim); background: transparent; border-color: var(--card-line); cursor: default; }
+button[aria-disabled="true"], #new-session[aria-disabled="true"], #start-session[aria-disabled="true"] { color: var(--text-dim); background: transparent; border-color: var(--card-line); cursor: default; }
 /* Open terminal. A character's colour is a left marker on the neutral button (it matches the tmux window); the label names the action. */
 .jump[data-kind="accent"] { box-shadow: inset var(--mark-w) 0 0 var(--accent); }
 /* The one filled button: the card needs you. Amber means needs you only, so no marker there. */
@@ -179,7 +179,24 @@ button:focus-visible { outline: 2px solid var(--card-focus); outline-offset: 2px
 /* Focused only when a portrait's card has gone (wall.js); the wall itself is no control. */
 .wall:focus { outline: none; }
 
-#empty { padding: var(--wall-pad); color: var(--text-dim); }
+/* Nothing running: Hesychia keeps the quiet wall, in the wall's place. Her
+   portrait's dark ground melts into the wall's at its edge. */
+.empty { display: flex; flex-direction: column; align-items: center; gap: var(--space-5); max-width: 640px; margin: 0 auto; padding: clamp(16px, 14vh, 160px) var(--wall-pad) var(--wall-pad); text-align: center; }
+.empty .keeper {
+  width: clamp(160px, 30vh, 280px);
+  aspect-ratio: 1;
+  -webkit-mask-image: radial-gradient(closest-side, #000 72%, transparent);
+  mask-image: radial-gradient(closest-side, #000 72%, transparent);
+}
+.empty h2 { font: 700 28px/1.15 var(--title); letter-spacing: 0.04em; color: var(--ivory); }
+.empty h2:focus { outline: none; } /* focused only when the last card leaves (wall.js) */
+.empty-body { max-width: 34em; color: var(--text-dim); font-size: 15px; }
+.empty-actions { display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: var(--space-5) var(--space-9); margin-top: var(--space-5); }
+#start-session { max-width: min(100%, 520px); padding: 13px 22px; font-size: 15px; overflow: hidden; text-overflow: ellipsis; }
+/* Quiet beside the start button; 25 px tall, past the 24 px minimum target (WCAG 2.2, 2.5.8). */
+#clear-ended { padding: 6px 0; color: var(--text-dim); font-weight: 400; }
+#clear-ended:hover:not([aria-disabled="true"]) { color: var(--text); }
+#start-note { color: var(--text-dim); font-size: 12.5px; }
 
 .card {
   --tone: var(--tone-quiet);
@@ -747,8 +764,8 @@ button.end-confirm:hover:not([aria-disabled="true"]) { background: var(--danger-
 .ledger .notice { padding: 10px 12px; border-left: 3px solid var(--tone-error); background: var(--card-quiet); border-radius: 0 8px 8px 0; }
 .ledger .empty-state { padding: 12px 14px; background: var(--card-quiet); border-radius: 8px; color: var(--text-dim); }
 .ledger .cost { color: var(--text-quiet); font-size: 12.5px; }
-.ledger button.link { background: none; border: 0; padding: 2px 0; color: var(--text); font-weight: 600; text-decoration: underline; text-underline-offset: 3px; }
-.ledger button.link:hover:not([aria-disabled="true"]) { background: none; }
+button.link { background: none; border: 0; padding: 2px 0; color: var(--text); font-weight: 600; text-decoration: underline; text-underline-offset: 3px; }
+button.link:hover:not([aria-disabled="true"]) { background: none; }
 
 .figures { display: grid; grid-template-columns: repeat(auto-fill, minmax(168px, 1fr)); gap: 10px 20px; }
 .figures dt { color: var(--text-dim); font-size: 12.5px; }
@@ -783,6 +800,11 @@ button.end-confirm:hover:not([aria-disabled="true"]) { background: var(--danger-
     to { box-shadow: 0 0 0 14px transparent; }
   }
   .card.pulse { animation: card-pulse 1200ms ease-out 1; }
+  /* The empty state fades in each time it shows, and does nothing else. */
+  @keyframes empty-fade {
+    from { opacity: 0; }
+  }
+  .empty:not([hidden]) { animation: empty-fade 400ms ease-out; }
 }
 /* Reordered cards slide to their new places. */
 ::view-transition-group(*) { animation-duration: 300ms; animation-timing-function: ease-out; }
