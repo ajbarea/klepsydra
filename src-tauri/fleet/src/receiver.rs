@@ -239,12 +239,19 @@ fn bind_wildcard(s: &Socket, port: u16) -> std::io::Result<()> {
     s.bind(&SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, port).into())
 }
 
-/// Bind `addr` as a listener. On Windows a loopback bind succeeds beside
-/// another process's wildcard listener on the same port, and connections
-/// could then reach either, so an exclusive wildcard bind is tried first and
-/// dropped: it fails while anything else holds the port. Linux refuses that
-/// bind on its own.
+/// Bind `addr` as a listener. An address beyond loopback is refused, as
+/// Windows Firewall would ask about it. On Windows a loopback bind succeeds
+/// beside another process's wildcard listener on the same port, and
+/// connections could then reach either, so an exclusive wildcard bind is tried
+/// first and dropped: it fails while anything else holds the port. Linux
+/// refuses that bind on its own.
 fn bind(addr: SocketAddrV4) -> std::io::Result<TcpListener> {
+    if !addr.ip().is_loopback() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("listens on loopback only, not {addr}"),
+        ));
+    }
     #[cfg(windows)]
     if addr.port() != 0 {
         let probe = socket()?;
@@ -543,6 +550,16 @@ mod tests {
     fn a_spawned_receiver_binds_loopback_only() {
         let s = server();
         assert!(s.addr.ip().is_loopback());
+    }
+
+    #[test]
+    fn an_address_beyond_loopback_is_refused_before_any_bind() {
+        for ip in [Ipv4Addr::new(0, 0, 0, 0), Ipv4Addr::new(10, 0, 0, 1)] {
+            let ledger: Shared = Arc::new(Mutex::new(Ledger::in_memory(unix_now())));
+            let log: Log = Arc::new(|_| {});
+            let err = spawn(SocketAddrV4::new(ip, 0), ledger, log).unwrap_err();
+            assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput, "{ip}");
+        }
     }
 
     #[test]

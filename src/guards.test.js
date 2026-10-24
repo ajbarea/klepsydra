@@ -683,49 +683,61 @@ test("the dialog's End is off for ARM_MS after every opening, and an off End clo
 });
 
 // Windows Firewall prompts once per executable path that listens beyond loopback,
-// and every staged test build is a new path. A wildcard address appears only in
-// receiver.rs's bind_wildcard, and no socket handed to it ever listens.
-const WILDCARD = /0\.0\.0\.0|\bUNSPECIFIED\b|\[::\]|INADDR_ANY|"::"/;
+// and every staged test build is a new path. Every listen goes through
+// receiver.rs's bind, which refuses an address beyond loopback first.
+const LISTENS = /\.listen\s*\(|\bTcpListener::bind\b|\bUdpSocket\b|\bTcpSocket\b|\bSocket::listen\b/;
 
-/** `file:line` of each wildcard address outside bind_wildcard, and of each listen on a socket it bound. */
-export function wildcardListeners(files) {
+/** The text of `fn name(` up to its matching brace; null when absent. */
+function fnBody(text, name) {
+  const start = text.indexOf(`fn ${name}(`);
+  if (start < 0) return null;
+  let depth = 0;
+  for (let i = text.indexOf("{", start); i < text.length; i++) {
+    if (text[i] === "{") depth++;
+    else if (text[i] === "}" && --depth === 0) return [start, i + 1];
+  }
+  return null;
+}
+
+/** `file:line` of each way to listen outside receiver.rs's bind, or a bind that listens before its loopback check. */
+export function strayListeners(files) {
   const bad = [];
-  for (const [file, text] of files) {
-    const start = text.indexOf("fn bind_wildcard(");
-    const body = start < 0 ? null : [start, text.indexOf("\n}\n", start)];
-    if (body && /listen/.test(text.slice(...body))) bad.push(`${file}:bind_wildcard`);
+  for (const [file, raw] of files) {
+    const text = raw.replace(/\r\n/g, "\n");
+    const body = file.endsWith("fleet/src/receiver.rs") ? fnBody(text, "bind") : null;
+    if (file.endsWith("fleet/src/receiver.rs")) {
+      const code = body ? text.slice(...body) : "";
+      const check = code.indexOf("is_loopback()");
+      if (check < 0 || check > code.search(/\.listen\s*\(/)) bad.push(`${file}:bind`);
+    }
     let offset = 0;
     for (const [i, line] of text.split("\n").entries()) {
       const inside = body && offset >= body[0] && offset < body[1];
-      if (WILDCARD.test(line) && !inside) bad.push(`${file}:${i + 1}`);
+      if (LISTENS.test(line) && !inside) bad.push(`${file}:${i + 1}`);
       offset += line.length + 1;
-    }
-    for (const [, sock] of text.matchAll(/\bbind_wildcard\(&(\w+)/g)) {
-      if (new RegExp(`\\b${sock}\\s*\\.listen\\(`).test(text)) bad.push(`${file}:${sock}.listen`);
     }
   }
   return bad;
 }
 
-test("nothing under src-tauri listens beyond loopback", () => {
-  const rust = [
-    ...RUST,
-    ...filesUnder("src-tauri/fleet/tests", [".rs"]),
-    ...filesUnder("src-tauri/fleet/benches", [".rs"]),
-    "src-tauri/build.rs",
-  ].filter((f) => existsSync(join(ROOT, f)));
-  const files = rust.map((f) => [f, read(f)]);
-  assert.ok(files.some(([f, t]) => f.endsWith("receiver.rs") && t.includes("fn bind_wildcard(")), "the helper is scanned");
-  assert.deepEqual(wildcardListeners(files), []);
+test("nothing under src-tauri listens except through the loopback-only bind", () => {
+  const rust = filesUnder("src-tauri", [".rs"]).filter((f) => !f.startsWith("src-tauri/target/"));
+  assert.ok(rust.includes("src-tauri/fleet/src/receiver.rs"), "the receiver is scanned");
+  assert.ok(rust.includes("src-tauri/build.rs") && rust.some((f) => f.startsWith("src-tauri/fleet/tests/")));
+  assert.deepEqual(strayListeners(rust.map((f) => [f, read(f)])), []);
 });
 
-test("the wildcard check catches a listener, a stray wildcard and a held socket that listens", () => {
-  const helper = "fn bind_wildcard(s: &Socket, port: u16) -> R {\n    s.bind(&SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, port).into())\n}\n";
-  const one = (text) => wildcardListeners([["x.rs", text]]);
-  assert.deepEqual(one(helper), []);
-  assert.deepEqual(one(`${helper}let l = TcpListener::bind("0.0.0.0:0").unwrap();`), ["x.rs:4"]);
-  assert.deepEqual(one(`${helper}let l = TcpListener::bind((Ipv4Addr::UNSPECIFIED, 0))?;`), ["x.rs:4"]);
-  assert.deepEqual(one(`${helper}let u = UdpSocket::bind("[::]:0")?;`), ["x.rs:4"]);
-  assert.deepEqual(one(`${helper}bind_wildcard(&probe, 1)?;\nprobe\n    .listen(1)?;`), ["x.rs:probe.listen"]);
-  assert.deepEqual(one(helper.replace("into())", "into())?;\n    s.listen(1)")), ["x.rs:bind_wildcard"]);
+test("the listen check catches each way to listen elsewhere, and a bind that skips the loopback check", () => {
+  const recv = "src-tauri/fleet/src/receiver.rs";
+  const bind = "fn bind(addr: A) -> R {\n    if !addr.ip().is_loopback() {\n        return e;\n    }\n    s.listen(128)?;\n}\n";
+  const check = (file, text) => strayListeners([[file, text]]);
+  assert.deepEqual(check(recv, bind), []);
+  assert.deepEqual(check(recv, bind.replace(/\r?\n/g, "\r\n")), [], "a CRLF checkout reads alike");
+  assert.deepEqual(check(recv, bind.replace("is_loopback", "is_private")), [`${recv}:bind`]);
+  assert.deepEqual(check(recv, `${bind}fn other() {\n    probe.listen(1)?;\n}\n`), [`${recv}:8`]);
+  assert.deepEqual(check("x.rs", 'let l = TcpListener::bind("0.0.0.0:0")?;'), ["x.rs:1"]);
+  assert.deepEqual(check("x.rs", "let u = UdpSocket::bind(addr)?;"), ["x.rs:1"]);
+  assert.deepEqual(check("x.rs", "let t = TcpSocket::new_v4()?;"), ["x.rs:1"]);
+  assert.deepEqual(check("x.rs", "Socket::listen(&probe, 1)?;"), ["x.rs:1"]);
+  assert.deepEqual(check("x.rs", "probe\n    .listen(1)?;"), ["x.rs:2"]);
 });
