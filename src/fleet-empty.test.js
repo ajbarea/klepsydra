@@ -63,21 +63,27 @@ test("the empty state: Hesychia's portrait as decoration, the title, what will a
   assert.match(block, /<p class="empty-body">Each Claude Code session you start appears here as a card, with its character, its repo and what it's doing\.<\/p>/);
   assert.match(block, /<button type="button" id="start-session" hidden>Start a session<\/button>/);
   assert.match(block, /<button type="button" id="clear-ended" class="link" hidden><\/button>/);
-  assert.match(block, /<span id="start-note" role="status"><\/span>/);
+  assert.doesNotMatch(block, /start-note/, "Start answers in the bar's note, which outlives the empty state");
   assert.match(block, /<span id="clear-note" role="status"><\/span>/, "the clear link has a note of its own");
   assert.ok(!/—/.test(block), "no em-dash in the copy");
-  assert.ok(html.indexOf('<main id="wall"') < html.indexOf('<section id="empty"'), "it stands where the wall stands");
+  // One main landmark holds a level-one heading, the wall and the empty state (axe landmark-one-main, page-has-heading-one).
+  assert.equal((html.match(/<main\b/g) ?? []).length, 1);
+  const main = html.slice(html.indexOf("<main"), html.indexOf("</main>"));
+  assert.match(main, /^<main id="main">\s*<h1 id="wall-title" class="visually-hidden">Claude Code sessions<\/h1>/);
+  assert.match(main, /<section id="wall" class="wall" aria-labelledby="wall-title" tabindex="-1"><\/section>/);
+  assert.ok(main.indexOf('<section id="wall"') < main.indexOf('<section id="empty"'), "the empty state stands where the wall stands");
+  assert.equal((html.match(/<h1\b/g) ?? []).length, 1, "one h1");
 });
 
 test("the start button runs the same launch as + New session, in the app only", () => {
   const src = read("fleet/wall.js");
   assert.equal((src.match(/invoke\("launch_session"\)/g) ?? []).length, 1, "one launch call, shared by both buttons");
   assert.match(src, /newButton\.addEventListener\("click", \(\) => startSession\(newButton, newNote\)\)/);
-  assert.match(src, /startButton\.addEventListener\("click", \(\) => startSession\(startButton, startNote\)\)/);
+  assert.match(src, /startButton\.addEventListener\("click", \(\) => startSession\(startButton, newNote\)\)/, "its answer shows in the bar, where it outlives the empty state");
   assert.match(src, /startButton\.hidden = !inTauri/);
   assert.match(src, /invoke\("get_launch_dir"\)/);
   assert.match(src, /press\(clearEnded, clearNote, \(\) => clearAll\(endedIds\(sessions\), tauri\)/, "the link clears through clear_session, ended sessions only, into its own note");
-  assert.doesNotMatch(src, /press\(clearEnded, startNote/, "Start's note is Start's alone");
+  assert.match(src, /clearEnded\.hidden = n === 0 \|\| !inTauri/, "the clear link, like Start, only in the app");
 });
 
 test("the empty state fades in, and not under reduced motion", () => {
@@ -105,5 +111,16 @@ test("the demo shows the empty wall with ?demo&empty and the ended-only wall wit
   assert.deepEqual(demoSessions(all, "?demo&ended").map((x) => x.session_id), ["b", "d"]);
   assert.deepEqual(demoSessions(all, "?demo=2").map((x) => x.session_id), ["a", "b"]);
   assert.deepEqual(demoSessions(all, "?demo"), all);
-  assert.match(read("fleet/feed.js"), /snapshot\.sessions = demoSessions\(snapshot\.sessions, location\.search\)/);
+});
+
+test("a dev snapshot without `at` is still filtered by ?empty and ?ended", async () => {
+  globalThis.window ??= {};
+  const { demoSnapshot } = await import("./fleet/feed.js");
+  const snap = { sessions: [s("a", "working"), s("b", "ended")], speaking: null };
+  assert.deepEqual(demoSnapshot(snap, "?empty", 0).sessions, []);
+  assert.deepEqual(demoSnapshot(snap, "?ended", 0).sessions.map((x) => x.session_id), ["b"]);
+  assert.deepEqual(demoSnapshot(snap, "", 0), snap);
+  const timed = demoSnapshot({ at: 100, sessions: [{ ...s("a", "done"), status_at: 90 }] }, "?demo", 160);
+  assert.deepEqual(timed, { sessions: [{ ...s("a", "done"), status_at: 150 }] }, "times moved up to now, `at` dropped");
+  assert.match(read("fleet/feed.js"), /const current = withWrapup\(demoSnapshot\(fleet, location\.search, now\), wrap && moved\(wrap\)\)/);
 });

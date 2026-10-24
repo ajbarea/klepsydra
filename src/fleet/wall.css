@@ -205,7 +205,7 @@ button:focus-visible { outline: 2px solid var(--card-focus); outline-offset: 2px
 /* Quiet beside the start button; 25 px tall, past the 24 px minimum target (WCAG 2.2, 2.5.8). */
 #clear-ended { padding: 6px 0; color: var(--text-dim); font-weight: 400; }
 #clear-ended:hover:not([aria-disabled="true"]) { color: var(--text); }
-#start-note, #clear-note { color: var(--text-dim); font-size: 12.5px; }
+#clear-note { color: var(--text-dim); font-size: 12.5px; }
 
 .card {
   --tone: var(--tone-quiet);

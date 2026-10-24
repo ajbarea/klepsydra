@@ -34,7 +34,9 @@
       <label><input type="radio" name="density" value="compact" /><span>Compact</span></label>
     </fieldset>
   </div>
-  <main id="wall" class="wall" aria-label="Claude Code sessions" tabindex="-1"></main>
+  <main id="main">
+  <h1 id="wall-title" class="visually-hidden">Claude Code sessions</h1>
+  <section id="wall" class="wall" aria-labelledby="wall-title" tabindex="-1"></section>
   <section id="empty" class="empty" aria-labelledby="empty-title" hidden>
     <img class="keeper" src="fleet/faces/kourai/hesychia-full.webp" alt="" />
     <h2 id="empty-title" tabindex="-1">All quiet.</h2>
@@ -43,9 +45,9 @@
       <button type="button" id="start-session" hidden>Start a session</button>
       <button type="button" id="clear-ended" class="link" hidden></button>
     </div>
-    <span id="start-note" role="status"></span>
     <span id="clear-note" role="status"></span>
   </section>
+  </main>
   <p id="live" class="visually-hidden" aria-live="polite"></p>
   <dialog id="portrait" aria-labelledby="portrait-name">
     <img class="full" alt="" />

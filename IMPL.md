@@ -25,9 +25,16 @@ worktree `.claude/worktrees/empty-state`, PR #83 open.
   Auto skips the hidden wall and measures on reveal, no card arrives unseen
   (`reveal_density`); Start and Clear have their own notes (`separate_notes`);
   `ended_only` runs at 1920x1000 and 945x1000.
+- Review round 2 fixed: each sync derives its cards from the latest render
+  (`reveal_race`, `reveal_does_not_arrive`, `bar_follows_empty_state`); focus
+  on <body> counts as lost (`ended_only`); the folder is read again on window
+  focus, latest answer only (`launch_dir_follows_prefs`); Clear hides outside
+  the app (`browser_hides_app_actions`); a dev snapshot without `at` is
+  filtered (`demoSnapshot`); Start answers in the bar's note
+  (`launch_note_outlives_empty_state`); one `<main>` with an `h1` (`landmarks`).
 
 ## Next
-- Review round 2 on PR #83 (at most 3 rounds), then CI green and merge.
+- Review round 3 on PR #83 (the last), then CI green and merge.
 - After merge: live UIA check with zero sessions on the installed Windows build.
 
 ## Verify
@@ -35,7 +42,6 @@ worktree `.claude/worktrees/empty-state`, PR #83 open.
 - `cd src-tauri && cargo fmt --all --check && cargo clippy -p klepsydra-fleet --all-targets -- -D warnings && cargo test -p klepsydra-fleet`
 - every `hooks/test_*.sh`, `statusline/test_statusline.sh`, `scripts/test_*.sh`
 - `uv run -q --no-project --with playwright python -I scripts/test_wall_browser.py`
-  (`empty_state`, `ended_only`, `long_folder_fits`, `reveal_density`,
-  `separate_notes` for this slice)
+  (the empty-state cases listed in the PR body)
 - `KLEPSYDRA_STAGE=klepsydra-build-empty_state bash scripts/build-windows.sh --check`
 - All heavy commands under `flock /tmp/fleet-heavy.lock`.

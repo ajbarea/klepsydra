@@ -533,7 +533,7 @@ test("the wall has a New session button that calls the launcher", () => {
   assert.match(read("src/fleet/wall.js"), /invoke\("launch_session"\)/);
   assert.match(read("src/fleet/wall.js"), /newButton\.hidden = !inTauri/);
   const html = read("src/wall.html");
-  assert.ok(html.indexOf("</div>", html.indexOf('class="bar"')) < html.indexOf('<main id="wall"'));
+  assert.ok(html.indexOf("</div>", html.indexOf('class="bar"')) < html.indexOf('<section id="wall"'));
 
   assert.match(html, /<div class="tally" role="group" aria-label="Session counts">/);
   assert.match(html, />Open terminal</);

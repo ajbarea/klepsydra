@@ -40,7 +40,6 @@ const bar = document.querySelector(".bar");
 const densityPicker = document.querySelector(".density");
 const ringKey = document.querySelector(".ring-key");
 const startButton = document.getElementById("start-session");
-const startNote = document.getElementById("start-note");
 const clearNote = document.getElementById("clear-note");
 const clearEnded = document.getElementById("clear-ended");
 const emptyTitle = document.getElementById("empty-title");
@@ -50,7 +49,8 @@ const startSession = (button, note) =>
 newButton.hidden = !inTauri;
 newButton.addEventListener("click", () => startSession(newButton, newNote));
 startButton.hidden = !inTauri;
-startButton.addEventListener("click", () => startSession(startButton, startNote));
+// Its answer goes to the bar's note, which stays in view once the empty state gives way.
+startButton.addEventListener("click", () => startSession(startButton, newNote));
 clearEnded.addEventListener("click", () => {
   if (wallState(sessions) !== "ended") return;
   press(clearEnded, clearNote, () => clearAll(endedIds(sessions), tauri), "Clearing…");
@@ -78,22 +78,22 @@ let stillTimer = 0;
 let wasState = null;
 let revealed = false; // a focus request named an ended card, so the ended cards show
 let launchDir = null;
+let dirAsk = 0; // the latest get_launch_dir request; an older answer is dropped
+let latest = { state: "empty", cards: [] }; // the last render's, which a deferred sync reads
+let knownIds = new Set(); // the sessions of the last render: a card for one of them is not new
 
 // The empty state stands in for the wall while nothing runs. With only ended
 // cards it still does, and offers to clear them, until a focus request asks
-// for one of those cards.
-function paintEmpty(state) {
-  const quiet = state !== "cards" && !revealed;
-  const shows = wall.hidden && !quiet;
+// for one of those cards. Read when a sync runs, never when it was asked for.
+const showsCards = () => latest.state === "cards" || revealed;
+const visibleCards = () => (showsCards() ? latest.cards : []);
+
+function paintEmpty(quiet) {
   empty.hidden = !quiet;
-  wall.hidden = quiet;
-  // Behind the empty state the wall is not laid out: Auto measures it once it
-  // shows, and nothing arrives that nobody saw.
-  if (quiet) for (const el of wall.querySelectorAll(".arriving")) el.classList.remove("arriving");
-  if (shows) showDensity();
+  wall.hidden = quiet; // it holds no card then
   paintStart();
-  const n = state === "ended" ? endedIds(sessions).length : 0;
-  clearEnded.hidden = n === 0;
+  const n = latest.state === "ended" ? endedIds(sessions).length : 0;
+  clearEnded.hidden = n === 0 || !inTauri;
   setText(clearEnded, n ? clearLabel(n) : "");
 }
 
@@ -103,18 +103,26 @@ function paintStart() {
   startButton.title = label;
 }
 
-// The launch folder, read again each time the empty state comes back. Its
-// answer changes the label only: what shows is render's to decide.
+// The launch folder, read again each time the empty state comes back and,
+// while it shows, each time the window does (it hides rather than closes, so
+// a prefs.json edit lands meanwhile). Its answer changes the label only.
 function readLaunchDir() {
   if (!inTauri) return;
+  const ask = ++dirAsk;
   window.__TAURI__.core.invoke("get_launch_dir").then(
     (dir) => {
+      if (ask !== dirAsk) return;
       launchDir = dir;
       paintStart();
     },
     () => {},
   );
 }
+const rereadLaunchDir = () => {
+  if (!empty.hidden && !document.hidden) readLaunchDir();
+};
+addEventListener("focus", rereadLaunchDir);
+document.addEventListener("visibilitychange", rereadLaunchDir);
 
 // Everything session-derived goes in as text; the badge and branch icon are
 // markup built from constants.
@@ -338,6 +346,9 @@ function render(snapshot) {
   paintTally();
   const cards = sessions.map((s) => card(s, cast, now, request));
   cardOf = new Map(cards.map((c) => [c.id, c]));
+  latest = { state, cards };
+  const prior = knownIds;
+  knownIds = new Set(cards.map((c) => c.id));
   ringKey.hidden = !showsRingKey(cards);
   const said = wrapupAnnouncements(wrapupBefore, cards);
   wrapupBefore = wrapupLines(cards);
@@ -347,31 +358,34 @@ function render(snapshot) {
   const sync = () => {
     const focused = document.activeElement;
     const inside = wall.contains(focused) || empty.contains(focused);
-    // A new card arrives once: its figure steps in and its light rises (wall.css
-    // .arriving). Only on the comfortable band; a compact card has no stage to run it.
-    const make = () => {
+    const visible = visibleCards();
+    // A new session's card arrives once: its figure steps in and its light rises
+    // (wall.css .arriving). Only on the comfortable band; a compact card has no
+    // stage to run it. An ended card shown again is not new.
+    const make = (c) => {
       const el = tpl.content.firstElementChild.cloneNode(true);
-      if (!wall.hidden && shown === "comfortable" && !reducedMotion()) el.classList.add("arriving");
+      if (!prior.has(c.id) && shown === "comfortable" && !reducedMotion()) el.classList.add("arriving");
       return el;
     };
-    paintEmpty(state); // first, so a card made behind the empty state never arrives
-    syncChildren(wall, cards, (c) => c.id, make, paint);
+    paintEmpty(!showsCards());
+    syncChildren(wall, visible, (c) => c.id, make, paint);
     for (const el of wall.children) if (started.has(el.dataset.key) && !reducedMotion()) el.classList.add("pulse");
     // Moving a card in the DOM drops focus; give it back to what had it.
     if (focused !== document.body && focused?.isConnected && document.activeElement !== focused) focused.focus({ preventScroll: true });
     else if (focused && focused !== document.body && !focused.isConnected) wall.focus({ preventScroll: true }); // its card left
     // The wall gave way to the empty state, or the clear link left: its title takes focus.
-    if (inside && !usable(document.activeElement)) [emptyTitle, wall].find(usable)?.focus({ preventScroll: true });
+    const lost = document.activeElement === document.body || !usable(document.activeElement);
+    if (inside && lost) [emptyTitle, wall].find(usable)?.focus({ preventScroll: true });
     reconcileActions();
     // Auto looks again when a card arrives or leaves, not when one's text changes.
-    const ids = cards.map((c) => c.id).join(" ");
+    const ids = visible.map((c) => c.id).join(" ");
     if (ids !== lastIds) {
       lastIds = ids;
       showDensity();
     }
   };
   const was = [...wall.children].map((el) => el.dataset.key);
-  if (shouldSlide(was, cards.map((c) => c.id), snapshot) && canSlide()) document.startViewTransition(() => sync());
+  if (shouldSlide(was, visibleCards().map((c) => c.id), snapshot) && canSlide()) document.startViewTransition(() => sync());
   else sync();
   paintWrapup(cards, now);
   return said;
@@ -419,7 +433,7 @@ portrait.addEventListener("click", (e) => {
 });
 
 function focusCard(id) {
-  if (wall.hidden && sessions.some((s) => s.session_id === id)) {
+  if (!revealed && wallState(sessions) === "ended" && sessions.some((s) => s.session_id === id)) {
     revealed = true;
     render();
   }
@@ -915,7 +929,6 @@ function comfortableFits(extra) {
 }
 
 function showDensity() {
-  if (wall.hidden) return; // the empty state shows; paintEmpty measures on the way out
   const was = shown;
   shown = resolveDensity(choice, shown, comfortableFits);
   if (shown !== was) for (const el of wall.children) if (cardOf.has(el.dataset.key)) paintRing(el, cardOf.get(el.dataset.key));
