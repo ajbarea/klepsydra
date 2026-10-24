@@ -52,7 +52,7 @@ fn wake(dirs: &[PathBuf], res: notify::Result<notify::Event>) -> Option<Wake> {
 
 /// Identifies one incarnation of the directory where the platform's watcher
 /// does not report its removal (Windows); elsewhere the removal event does.
-fn incarnation(dir: &Path) -> Option<u64> {
+pub(crate) fn incarnation(dir: &Path) -> Option<u64> {
     #[cfg(windows)]
     {
         use std::os::windows::fs::MetadataExt;
