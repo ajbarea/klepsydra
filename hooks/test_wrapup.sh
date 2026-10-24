@@ -109,6 +109,55 @@ check "no live request: the old answer stays" "$(state "$S1" .request)" '"2000"'
 out=$(bash "$hook" bogus 2>&1); rc=$?
 check "unknown command: exit 1" "$rc" "1"
 
+echo "late reports"
+request 2100 $((now + 600))
+stop "$S1" >/dev/null
+stop "$S2" >/dev/null
+bash "$hook" ready "$S2" >/dev/null 2>&1
+request 2100 $((now - 30)) # Stop wrap-up, or the window ran out
+out=$(bash "$hook" blocked "$S1" "a build" 2>&1); rc=$?
+check "asked, then the window closed: the report is still taken" "$rc $out" "0 Told klepsydra: blocked."
+check "asked, then the window closed: recorded" "$(state "$S1" '[.request, .state]')" '["2100","blocked"]'
+out=$(bash "$hook" blocked "$S2" "changed my mind" 2>&1); rc=$?
+check "answered, then the window closed: no second answer" "$rc" "1"
+check "answered, then the window closed: the answer stays" "$(state "$S2" .state)" '"ready"'
+request 2101 $((now + 600))
+stop "$S1" >/dev/null
+request 2101 $((now - 3601))
+out=$(bash "$hook" ready "$S1" 2>&1); rc=$?
+check "asked, but the wall no longer shows the request: refused" "$rc" "1"
+check "asked, but the wall no longer shows the request: still asked" "$(state "$S1" .state)" '"asked"'
+
+echo "a session clock that disagrees with the app's"
+# The app stamps the request by its clock, the one that also stamps files in
+# the folder; under WSL the session's clock drifts from it. KLEPSYDRA_NOW
+# stands in for the session's clock.
+n=0
+for ahead in -300 0 120 700; do
+  n=$((n + 1))
+  t=$(printf '%(%s)T' -1)
+  request "60$n" $((t + 60))
+  out=$(printf '{"session_id":"%s"}' "$S1" | KLEPSYDRA_NOW=$((t + ahead)) bash "$hook")
+  check "clock ${ahead} s: a live request is asked" "$(jq -r '.hookSpecificOutput.hookEventName' <<<"$out" 2>/dev/null)" "Stop"
+  check "clock ${ahead} s: asked at the session's time, which the reader corrects" "$(state "$S1" '.at')" "$((t + ahead))"
+  request "61$n" $((t - 5))
+  check "clock ${ahead} s: an expired request asks nobody" "$(printf '{"session_id":"%s"}' "$S2" | KLEPSYDRA_NOW=$((t + ahead)) bash "$hook")" ""
+  request "62$n" $((t + 60))
+  check "clock ${ahead} s: a live request takes a report" "$(KLEPSYDRA_NOW=$((t + ahead)) bash "$hook" ready "$S2" 2>&1)" "Told klepsydra: ready."
+  request "63$n" $((t - 5))
+  check "clock ${ahead} s: an expired one, unasked, refuses it" "$(KLEPSYDRA_NOW=$((t + ahead)) bash "$hook" ready "$S2" >/dev/null 2>&1; echo $?)" "1"
+done
+
+echo "the skill's folder"
+mkdir -p "$work/config/skills/klepsydra-wrapup"
+cp "$here/klepsydra-wrapup.md" "$work/config/skills/klepsydra-wrapup/SKILL.md"
+request 7000 $((now + 600))
+out=$(printf '{"session_id":"%s"}' "$S1" | env -u KLEPSYDRA_WRAPUP_SKILL CLAUDE_CONFIG_DIR="$work/config" HOME="$work/nohome" bash "$hook")
+check "read from CLAUDE_CONFIG_DIR, as Claude Code reads its skills" "$(jq -r '.hookSpecificOutput.hookEventName' <<<"$out" 2>/dev/null)" "Stop"
+request 7001 $((now + 600))
+out=$(printf '{"session_id":"%s"}' "$S1" | env -u KLEPSYDRA_WRAPUP_SKILL -u CLAUDE_CONFIG_DIR HOME="$work/nohome" bash "$hook")
+check "no skill in ~/.claude without CLAUDE_CONFIG_DIR: silent" "$out" ""
+
 echo "files that are not files"
 request 3000 $((now + 600))
 rm -f "$KLEPSYDRA_DIR/wrapup/$S1.json"; mkfifo "$KLEPSYDRA_DIR/wrapup/$S1.json"
@@ -134,8 +183,9 @@ check "settings: the wrap-up script" "$(jq -r '.hooks.Stop[0].hooks[0].command |
 check "settings: a short timeout" "$(jq '.hooks.Stop[0].hooks[0].timeout <= 10' <<<"$settings")" "true"
 check "README installs the skill where the script reads it" \
   "$(grep -c 'cp hooks/klepsydra-wrapup.md ~/.claude/skills/klepsydra-wrapup/SKILL.md' "$here/../README.md")" "1"
+# shellcheck disable=SC2016 # the script's literal text, not an expansion
 check "the script's default skill path is that one" \
-  "$(grep -cF -- "/.claude/skills/klepsydra-wrapup/SKILL.md}" "$hook")" "1"
+  "$(grep -cF -- '${CLAUDE_CONFIG_DIR:-${HOME:-}/.claude}/skills/klepsydra-wrapup/SKILL.md}' "$hook")" "1"
 
 echo "shared blocks"
 block() { sed -n '/^# --- klepsydra dir/,/^# --- end klepsydra dir ---$/p' "$1"; }

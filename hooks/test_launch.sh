@@ -298,7 +298,12 @@ exec {held}>>"$work/klepsydra-pane-$UID-${p#%}.lock"; flock -n "$held"
 for verb in end interrupt wrapup; do
   out=$(send "$verb" "$p" 2>&1); rc=$?
   check "pane locked, $verb: exit 1" "$rc" "1"
-  check "pane locked, $verb: says so" "$out" "That session is already being ended or interrupted."
+  if [[ $verb == wrapup ]]; then
+    check "pane locked, $verb: says so in its own words" "$out" \
+      "klepsydra is already sending that session something; ask it by hand: type /klepsydra-wrapup in its terminal."
+  else
+    check "pane locked, $verb: says so" "$out" "That session is already being ended or interrupted."
+  fi
 done
 check "pane locked: no key sent" "$(wc -c <"$work/fake.log")" "0"
 exec {held}>&-

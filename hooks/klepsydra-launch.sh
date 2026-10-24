@@ -223,6 +223,10 @@ fleet_pane() { # socket pane pid start
     fail "That session is not in klepsydra's tmux, so klepsydra will not type into it."
 }
 
+# What a refusal tells the user to do instead, per verb; each verb sets its own.
+open_to="end it"
+busy="That session is already being ended or interrupted."
+
 # A pane in copy mode swallows keys as copy-mode commands, so leave it first.
 leave_modes() {
   local _
@@ -230,16 +234,17 @@ leave_modes() {
     [[ $(tmux "${t[@]}" display-message -p -t "$pane" '#{pane_in_mode}' 2>/dev/null) == 1 ]] || return 0
     tmux "${t[@]}" send-keys -t "$pane" -X cancel 2>/dev/null || return 0
   done
-  fail "The session's pane is in a tmux mode that would not close. Open its terminal to end it."
+  fail "The session's pane is in a tmux mode that would not close. Open its terminal to $open_to."
 }
 
-# One End or Interrupt per pane: an End the app gave up on may still be running.
-# The pane is checked again under the lock, as such an End may just have finished.
+# One End, Interrupt or Wrap up per pane: an End the app gave up on may still
+# be running. The pane is checked again under the lock, as such an End may
+# just have finished.
 own_pane() { # socket pane pid start
   fleet_pane "$@"
   local file=${XDG_RUNTIME_DIR:-/tmp}/klepsydra-pane-$UID-${pane#%}.lock
   { exec {PANEFD}>>"$file"; } 2>/dev/null || fail "Could not open $file."
-  flock -n "$PANEFD" || fail "That session is already being ended or interrupted."
+  flock -n "$PANEFD" || fail "$busy"
   fleet_pane "$@"
 }
 
@@ -298,6 +303,8 @@ end_session() { # socket pane pid start
 wrapup() { # socket pane pid start
   local socket=$1 pane=$2 session
   local -a t=()
+  local open_to="ask it there: type /klepsydra-wrapup"
+  local busy="klepsydra is already sending that session something; ask it by hand: type /klepsydra-wrapup in its terminal."
   own_pane "$@"
   leave_modes
   screen | grep -qE 'esc to (interrupt|cancel)' &&
@@ -312,6 +319,7 @@ wrapup() { # socket pane pid start
 interrupt() { # socket pane pid start
   local socket=$1 pane=$2 session
   local -a t=()
+  local open_to="interrupt it"
   own_pane "$@"
   leave_modes
   keys Escape

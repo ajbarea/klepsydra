@@ -9,7 +9,8 @@
 #
 # As `klepsydra-wrapup.sh ready SESSION` or `klepsydra-wrapup.sh blocked
 # SESSION REASON`, run by Claude at the end of that turn: it records the
-# session's answer for the wall.
+# session's answer for the wall, while the request is live, or later while
+# the wall still shows it and this session was asked and has not answered.
 
 set -uo pipefail
 
@@ -36,12 +37,19 @@ fi
 # --- end klepsydra dir ---
 
 UUID_RE='^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
-SKILL=${KLEPSYDRA_WRAPUP_SKILL:-${HOME:-}/.claude/skills/klepsydra-wrapup/SKILL.md}
+SKILL=${KLEPSYDRA_WRAPUP_SKILL:-${CLAUDE_CONFIG_DIR:-${HOME:-}/.claude}/skills/klepsydra-wrapup/SKILL.md}
 WRAP=${KLEPSYDRA_DIR:-}/wrapup
 REASON_CHARS=300
+SHOWN_AFTER=3600 # wrapup.rs SHOWN_AFTER: the wall shows a request this long past its window
+DAY=86400        # no session clock is believed to be this far off
 
 fail() { printf '%s\n' "$*" >&2; exit 1; }
-now() { printf '%(%s)T' -1; }
+# This session's clock, as the fleet hook reads it.
+now() {
+  local t=${KLEPSYDRA_NOW:-}
+  [[ $t =~ ^[0-9]+$ ]] || printf -v t '%(%s)T' -1
+  printf '%s' "$t"
+}
 
 write_atomic() { # file text
   local tmp="$1.$$.tmp"
@@ -56,16 +64,33 @@ write_atomic() { # file text
 # A regular file, not a FIFO (a read would hang the Stop) and not a symlink.
 plain() { [[ -f $1 && ! -L $1 ]]; }
 
-# Sets request_id when the wall's request has not expired and lists SESSION.
-live_request() { # session
+# Sets request_id and request_until when the wall's request lists SESSION.
+listing_request() { # session
   local id until listed
   [[ -n ${KLEPSYDRA_DIR:-} ]] && plain "$WRAP/request.json" || return 1
   IFS=$'\t' read -r id until listed < <(jq -r --arg s "$1" \
     '[(.id | strings), (.until | numbers | floor | tostring), ((.ids // []) | index($s) != null | tostring)] | @tsv' \
     "$WRAP/request.json" 2>/dev/null) || return 1
   [[ $id =~ ^[0-9]{1,20}$ && $until =~ ^[0-9]{1,12}$ && $listed == true ]] || return 1
-  (( until >= $(now) )) || return 1
-  request_id=$id
+  request_id=$id request_until=$until
+}
+
+# Now by the clock that stamps files in the folder, which is the app's, the
+# one the request's times are by. Under WSL this session's clock drifts from
+# it after the host sleeps, so the request is never judged by this session's.
+folder_now() {
+  local probe="$WRAP/.clock.$$.tmp" t
+  { printf x >"$probe"; } 2>/dev/null || return 1
+  t=$(stat -c %Y -- "$probe" 2>/dev/null)
+  rm -f -- "$probe" 2>/dev/null
+  [[ $t =~ ^[0-9]{1,12}$ ]] || return 1
+  printf '%s' "$t"
+}
+
+# This session's state in the current request: asked, ready or blocked.
+answer_state() { # session
+  plain "$WRAP/$1.json" || return 1
+  jq -r --arg r "$request_id" 'select(.request == $r) | .state | strings' "$WRAP/$1.json" 2>/dev/null
 }
 
 # The skill's body without its frontmatter, the session's id put in.
@@ -79,14 +104,18 @@ instructions() { # session
 }
 
 stop_hook() {
-  local sid body
+  local sid body t
+  [[ -n ${KLEPSYDRA_DIR:-} ]] && plain "$WRAP/request.json" || return 0 # no request: not a process spent
   sid=$(jq -r '.session_id | strings' 2>/dev/null) || return 0
   [[ $sid =~ $UUID_RE ]] || return 0
-  live_request "$sid" || return 0
+  listing_request "$sid" || return 0
   if [[ -e $WRAP/$sid.json || -L $WRAP/$sid.json ]]; then
     plain "$WRAP/$sid.json" || return 0
     jq -e --arg r "$request_id" '.request == $r' "$WRAP/$sid.json" >/dev/null 2>&1 && return 0
   fi
+  (( request_until + DAY >= $(now) )) || return 0 # long gone, whatever the drift: no probe
+  t=$(folder_now) || return 0
+  (( request_until >= t )) || return 0
   body=$(instructions "$sid") || return 0
   write_atomic "$WRAP/$sid.json" "$(jq -cn --arg r "$request_id" --argjson at "$(now)" \
     '{request: $r, state: "asked", at: $at}')" || return 0
@@ -102,7 +131,13 @@ report() { # state session [reason]
     reason=${reason:0:REASON_CHARS}
   fi
   command -v jq >/dev/null 2>&1 || fail "jq is not installed."
-  live_request "$sid" || fail "No wrap-up is waiting for this session's answer; nothing was recorded."
+  local none="No wrap-up is waiting for this session's answer; nothing was recorded." t
+  listing_request "$sid" || fail "$none"
+  t=$(folder_now) || fail "Could not write in $WRAP."
+  # Past its window, a session still asked may answer while the wall shows it.
+  if (( request_until < t )); then
+    (( request_until + SHOWN_AFTER >= t )) && [[ $(answer_state "$sid") == asked ]] || fail "$none"
+  fi
   write_atomic "$WRAP/$sid.json" "$(jq -cn --arg r "$request_id" --arg s "$state" --arg why "$reason" \
     --argjson at "$(now)" '{request: $r, state: $s, at: $at} + (if $why == "" then {} else {reason: $why} end)')" ||
     fail "Could not write $WRAP/$sid.json."
