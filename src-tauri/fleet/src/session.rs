@@ -207,23 +207,25 @@ pub fn parse(text: &str, stem: &str, modified: i64) -> Result<SessionFile, Rejec
     Ok(file)
 }
 
+/// Seconds to add to a time a writer stamped as `written` to put it on this
+/// machine's clock, given that the file it wrote last changed at `modified`
+/// by this clock. Every file a hook writes and the reader times goes through it.
+pub fn skew(written: i64, modified: i64) -> i64 {
+    let d = modified.saturating_sub(written);
+    if d.saturating_abs() > SKEW_SLACK {
+        d
+    } else {
+        0
+    }
+}
+
 impl SessionFile {
     /// Seconds to add to the hook's times to put them on this machine's clock.
     /// The hook stamps `written_at` just before it writes, and the filesystem
     /// stamps the write by this machine's clock, so the difference is how far
     /// the two clocks disagree (a Linux guest's drifts after the host sleeps).
     pub fn skew(&self, modified: i64) -> i64 {
-        match self.written_at {
-            Some(w) => {
-                let d = modified.saturating_sub(w);
-                if d.saturating_abs() > SKEW_SLACK {
-                    d
-                } else {
-                    0
-                }
-            }
-            None => 0,
-        }
+        self.written_at.map_or(0, |w| skew(w, modified))
     }
 
     /// `turns`, if the last write kept it: a counting hook stamps it with the

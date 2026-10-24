@@ -3,6 +3,7 @@
 //! `hooks/klepsydra-wrapup.sh` writes `<session>.json` when it asks a session
 //! and when the session reports.
 
+use std::io::Read;
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
@@ -73,13 +74,38 @@ struct File {
     #[serde(default)]
     reason: Option<String>,
     at: i64,
+    /// `MARK_BY` on a mark the app wrote before typing; the script writes none.
+    #[serde(default)]
+    by: Option<String>,
 }
+
+/// Who wrote a mark: the app, before typing `/klepsydra-wrapup`.
+const MARK_BY: &str = "app";
 
 fn text(path: &Path) -> Option<String> {
     match read_small(path, MAX_BYTES) {
         Found::Text(t) => Some(t),
         _ => None,
     }
+}
+
+/// A regular file's text and its mtime in seconds by this machine's clock,
+/// both from one handle; none for anything else, or more than `MAX_BYTES`.
+fn stamped(path: &Path) -> Option<(String, i64)> {
+    let meta = std::fs::symlink_metadata(path).ok()?;
+    if !meta.is_file() || meta.len() > MAX_BYTES {
+        return None;
+    }
+    let mut f = std::fs::File::open(path).ok()?;
+    let mut text = String::new();
+    (&mut f).take(MAX_BYTES).read_to_string(&mut text).ok()?;
+    let m = f.metadata().ok()?.modified().ok()?;
+    let secs = m.duration_since(std::time::UNIX_EPOCH).ok()?.as_secs();
+    Some((text, i64::try_from(secs).ok()?))
+}
+
+fn answer_path(klepsydra_dir: &Path, id: &str) -> std::path::PathBuf {
+    klepsydra_dir.join(DIR).join(format!("{id}.json"))
 }
 
 /// The request in `klepsydra_dir`, while the wall still shows it at `now`.
@@ -96,9 +122,11 @@ pub fn request(klepsydra_dir: &Path, now: i64) -> Option<Request> {
 
 /// Session `id`'s answer to `request`, if it has one. An answer to an older
 /// request is none. `id` must already be a session id the scan accepted.
+/// Its `at` is put on this machine's clock as a session file's times are:
+/// the script stamps it by the session's clock, which a Linux guest lets drift.
 pub fn answer(klepsydra_dir: &Path, request: &Request, id: &str) -> Option<Answer> {
-    let f: File =
-        serde_json::from_str(&text(&klepsydra_dir.join(DIR).join(format!("{id}.json")))?).ok()?;
+    let (text, modified) = stamped(&answer_path(klepsydra_dir, id))?;
+    let f: File = serde_json::from_str(&text).ok()?;
     if f.request != request.id {
         return None;
     }
@@ -109,7 +137,7 @@ pub fn answer(klepsydra_dir: &Path, request: &Request, id: &str) -> Option<Answe
     Some(Answer {
         state: f.state,
         reason,
-        at: f.at,
+        at: f.at.saturating_add(crate::session::skew(f.at, modified)),
     })
 }
 
@@ -127,10 +155,17 @@ pub enum Route {
     ByHand,
 }
 
-/// How a session with `status` gets the wrap-up; none once it has ended.
-/// `in_fleet` is whether it runs in klepsydra's own tmux server.
-pub fn route(status: Status, in_fleet: bool) -> Option<Route> {
+/// The reason of a session whose turn is over but whose background work is
+/// still out: it sits idle at its prompt, and its Stop has already run.
+pub const AFTER_TURN: &str = "background";
+
+/// How a session with `status` and `reason` gets the wrap-up; none once it
+/// has ended. `in_fleet` is whether it runs in klepsydra's own tmux server.
+pub fn route(status: Status, reason: Option<&str>, in_fleet: bool) -> Option<Route> {
+    let after_turn = status == Status::Working && reason == Some(AFTER_TURN);
     match status {
+        Status::Working if after_turn && in_fleet => Some(Route::Type),
+        Status::Working if after_turn => Some(Route::ByHand),
         Status::Working => Some(Route::TurnEnd),
         Status::NeedsYou => Some(Route::AfterAnswer),
         Status::Done | Status::New | Status::Error if in_fleet => Some(Route::Type),
@@ -203,18 +238,134 @@ pub fn cancel(klepsydra_dir: &Path, now: i64) -> std::io::Result<()> {
 }
 
 /// Record that session `id` was asked, before `/klepsydra-wrapup` is typed,
-/// so the Stop hook at the end of that turn does not ask again.
-pub fn mark_asked(klepsydra_dir: &Path, r: &Request, id: &str, now: i64) -> std::io::Result<()> {
-    let text = serde_json::json!({"request": r.id, "state": State::Asked, "at": now});
-    write_atomic(
-        &folder(klepsydra_dir)?.join(format!("{id}.json")),
-        text.to_string().as_bytes(),
-    )
+/// so the Stop hook at the end of that turn does not ask again. Create-only:
+/// false, with nothing written, when the session already has an answer to
+/// `r` (asked by the Stop hook, or answered), which is then not typed into.
+pub fn mark_asked(klepsydra_dir: &Path, r: &Request, id: &str, now: i64) -> std::io::Result<bool> {
+    let dir = folder(klepsydra_dir)?;
+    let path = dir.join(format!("{id}.json"));
+    let text =
+        serde_json::json!({"request": r.id, "state": State::Asked, "at": now, "by": MARK_BY})
+            .to_string();
+    // A hard link to a written file creates the answer whole, or fails if one is there.
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_nanos());
+    let tmp = dir.join(format!("{id}.json.{nanos}.mark.tmp"));
+    std::fs::write(&tmp, &text)?;
+    let linked = std::fs::hard_link(&tmp, &path);
+    let _ = std::fs::remove_file(&tmp);
+    if linked.is_ok() {
+        return Ok(true);
+    }
+    if answer(klepsydra_dir, r, id).is_some() {
+        return Ok(false);
+    }
+    // An older request's answer, or a filesystem without hard links.
+    write_atomic(&path, text.as_bytes())?;
+    Ok(true)
 }
 
 /// Undo `mark_asked` when the typing failed, so the Stop hook asks instead.
-pub fn unmark(klepsydra_dir: &Path, id: &str) {
-    let _ = std::fs::remove_file(klepsydra_dir.join(DIR).join(format!("{id}.json")));
+/// Only a mark the app wrote for `r` goes; an answer, or the Stop hook's ask, stays.
+pub fn unmark(klepsydra_dir: &Path, r: &Request, id: &str) {
+    let path = answer_path(klepsydra_dir, id);
+    let Some((text, _)) = stamped(&path) else {
+        return;
+    };
+    let ours = serde_json::from_str::<File>(&text).is_ok_and(|f| {
+        f.request == r.id && f.state == State::Asked && f.by.as_deref() == Some(MARK_BY)
+    });
+    if ours {
+        let _ = std::fs::remove_file(path);
+    }
+}
+
+/// What asking one session did.
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+pub struct Asked {
+    pub id: String,
+    pub route: Route,
+    /// Why typing the command failed; the Stop hook asks it at its next turn end.
+    pub error: Option<String>,
+}
+
+/// Why typing into one session failed, and whether it may have been typed all the same.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Failed {
+    pub error: String,
+    pub maybe_typed: bool,
+}
+
+/// At most this many sessions are typed into at once.
+const TYPING_AT_ONCE: usize = 8;
+
+/// Ask the sessions in `plan` about `r`: every Type one is marked asked
+/// first, then typed into by `type_one`, several at once. One already asked
+/// or answered is not typed into; one whose typing failed is unmarked, unless
+/// it may have been typed, so the Stop hook asks it instead. In plan order.
+pub fn ask<F>(
+    klepsydra_dir: &Path,
+    r: &Request,
+    plan: &[(String, Route)],
+    now: i64,
+    type_one: F,
+) -> Vec<Asked>
+where
+    F: Fn(&str) -> Result<(), Failed> + Sync,
+{
+    let mut out: Vec<Asked> = plan
+        .iter()
+        .map(|(id, route)| Asked {
+            id: id.clone(),
+            route: *route,
+            error: None,
+        })
+        .collect();
+    let mut to_type = Vec::new();
+    for (i, a) in out.iter_mut().enumerate() {
+        if a.route != Route::Type {
+            continue;
+        }
+        match mark_asked(klepsydra_dir, r, &a.id, now) {
+            Ok(true) => to_type.push(i),
+            Ok(false) => {}
+            Err(e) => a.error = Some(format!("Could not record the ask: {e}")),
+        }
+    }
+    for batch in to_type.chunks(TYPING_AT_ONCE) {
+        let results: Vec<(usize, Result<(), Failed>)> = std::thread::scope(|scope| {
+            let running: Vec<_> = batch
+                .iter()
+                .map(|&i| {
+                    let id = out[i].id.clone();
+                    let type_one = &type_one;
+                    (i, scope.spawn(move || type_one(&id)))
+                })
+                .collect();
+            running
+                .into_iter()
+                .map(|(i, h)| {
+                    let res = h.join().unwrap_or_else(|_| {
+                        Err(Failed {
+                            error: "Typing the wrap-up failed; check its terminal.".into(),
+                            maybe_typed: true,
+                        })
+                    });
+                    (i, res)
+                })
+                .collect()
+        });
+        for (i, result) in results {
+            if let Err(f) = result {
+                if !f.maybe_typed {
+                    unmark(klepsydra_dir, r, &out[i].id);
+                }
+                out[i].error = Some(f.error);
+            }
+        }
+    }
+    out
 }
 
 #[cfg(test)]
@@ -294,13 +445,10 @@ mod tests {
             &format!("{A}.json"),
             r#"{"request":"7","state":"blocked","reason":"a 2 h build","at":2}"#,
         );
+        let blocked = answer(&d.0, &r, A).unwrap();
         assert_eq!(
-            answer(&d.0, &r, A),
-            Some(Answer {
-                state: State::Blocked,
-                reason: Some("a 2 h build".into()),
-                at: 2
-            })
+            (blocked.state, blocked.reason.as_deref()),
+            (State::Blocked, Some("a 2 h build"))
         );
         put(
             &d,
@@ -363,8 +511,30 @@ mod tests {
             (Status::Silent, true, Some(ByHand)),
             (Status::Ended, true, None),
         ] {
-            assert_eq!(route(status, fleet), want, "{status:?} in_fleet={fleet}");
+            assert_eq!(
+                route(status, None, fleet),
+                want,
+                "{status:?} in_fleet={fleet}"
+            );
         }
+    }
+
+    #[test]
+    fn a_session_idle_at_its_prompt_with_work_out_is_typed_into_not_left_for_a_stop() {
+        // Its turn is over (Stop has run) and a background shell or agent is out:
+        // no Stop is coming, so it is asked as an idle session is.
+        use Route::*;
+        assert_eq!(route(Status::Working, Some("background"), true), Some(Type));
+        assert_eq!(
+            route(Status::Working, Some("background"), false),
+            Some(ByHand)
+        );
+        assert_eq!(route(Status::Working, Some("other"), true), Some(TurnEnd));
+        assert_eq!(route(Status::Done, Some("background"), true), Some(Type));
+        assert_eq!(
+            route(Status::NeedsYou, Some("background"), true),
+            Some(AfterAnswer)
+        );
     }
 
     #[test]
@@ -381,9 +551,9 @@ mod tests {
             }
         );
         assert_eq!(request(&d.0, NOW), Some(r.clone()));
-        mark_asked(&d.0, &r, A, NOW + 1).unwrap();
+        assert!(mark_asked(&d.0, &r, A, NOW + 1).unwrap());
         assert_eq!(answer(&d.0, &r, A).unwrap().state, State::Asked);
-        unmark(&d.0, A);
+        unmark(&d.0, &r, A);
         assert_eq!(answer(&d.0, &r, A), None);
         cancel(&d.0, NOW + 30).unwrap();
         assert_eq!(request(&d.0, NOW + 30).unwrap().until, NOW + 30);
@@ -477,5 +647,226 @@ mod tests {
         for kept in ["notes.txt", "x.json.123.tmp", "b.json", REQUEST] {
             assert!(d.0.join(DIR).join(kept).exists(), "{kept}");
         }
+    }
+
+    fn mark_file(d: &Scratch, text: &str) {
+        put(d, &format!("{A}.json"), text);
+    }
+
+    #[test]
+    fn a_mark_never_overwrites_an_answer_to_this_request_and_unmark_takes_only_its_own() {
+        let d = dir();
+        let r = Request {
+            id: "7".into(),
+            at: NOW,
+            until: NOW + WINDOW,
+            ids: vec![A.to_owned()],
+        };
+        let path = d.0.join(DIR).join(format!("{A}.json"));
+        for (theirs, what) in [
+            (
+                r#"{"request":"7","state":"ready","at":1}"#,
+                "a ready answer",
+            ),
+            (
+                r#"{"request":"7","state":"blocked","reason":"x","at":1}"#,
+                "a blocked answer",
+            ),
+            (
+                r#"{"request":"7","state":"asked","at":1}"#,
+                "the Stop hook's ask",
+            ),
+        ] {
+            mark_file(&d, theirs);
+            assert!(!mark_asked(&d.0, &r, A, NOW).unwrap(), "{what}: not marked");
+            assert_eq!(
+                std::fs::read_to_string(&path).unwrap(),
+                theirs,
+                "{what}: kept"
+            );
+            unmark(&d.0, &r, A);
+            assert_eq!(
+                std::fs::read_to_string(&path).unwrap(),
+                theirs,
+                "{what}: unmark leaves it"
+            );
+        }
+        mark_file(&d, r#"{"request":"6","state":"ready","at":1}"#);
+        assert!(
+            mark_asked(&d.0, &r, A, NOW).unwrap(),
+            "an older request's answer is replaced"
+        );
+        assert_eq!(answer(&d.0, &r, A).unwrap().state, State::Asked);
+        unmark(&d.0, &r, A);
+        assert!(!path.exists(), "its own mark is removed");
+        assert!(mark_asked(&d.0, &r, A, NOW).unwrap(), "none there: marked");
+        let newer = Request {
+            id: "8".into(),
+            ..r.clone()
+        };
+        unmark(&d.0, &newer, A);
+        assert!(path.exists(), "another request's mark stays");
+        let leftovers: Vec<_> = std::fs::read_dir(d.0.join(DIR))
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|n| n != &format!("{A}.json"))
+            .collect();
+        assert!(leftovers.is_empty(), "no temp file left: {leftovers:?}");
+    }
+
+    #[test]
+    fn an_answer_gets_the_writer_clock_correction_a_session_file_gets() {
+        // The script stamps `at` by its own clock (a Linux guest's drifts); the
+        // file's mtime is this machine's. Same rule as session::skew.
+        let d = dir();
+        let r = Request {
+            id: "7".into(),
+            at: NOW,
+            until: NOW + WINDOW,
+            ids: vec![A.to_owned()],
+        };
+        let mtime = NOW + 100;
+        for (ahead, want) in [
+            (-300, mtime),
+            (-2, mtime - 2),
+            (0, mtime),
+            (2, mtime + 2),
+            (120, mtime),
+            (700, mtime),
+        ] {
+            mark_file(
+                &d,
+                &format!(
+                    r#"{{"request":"7","state":"ready","at":{}}}"#,
+                    mtime + ahead
+                ),
+            );
+            let t = std::time::UNIX_EPOCH + std::time::Duration::from_secs(mtime as u64);
+            std::fs::File::options()
+                .write(true)
+                .open(d.0.join(DIR).join(format!("{A}.json")))
+                .unwrap()
+                .set_modified(t)
+                .unwrap();
+            assert_eq!(
+                answer(&d.0, &r, A).unwrap().at,
+                want,
+                "writer clock {ahead:+} s"
+            );
+            assert_eq!(
+                want - (mtime + ahead),
+                crate::session::skew(mtime + ahead, mtime)
+            );
+        }
+    }
+
+    #[test]
+    fn ask_marks_every_typed_session_before_typing_any_and_types_them_at_once() {
+        use std::sync::{Condvar, Mutex};
+        use std::time::Duration;
+        let d = Scratch::new("wrapup-ask");
+        let ids: Vec<String> = (1..=5)
+            .map(|n| format!("4ce1be96-f12f-4c66-87eb-4ab36e451dc{n}"))
+            .collect();
+        let r = start(&d.0, NOW * 1000, &ids).unwrap();
+        let answered = &ids[3];
+        put(
+            &d,
+            &format!("{answered}.json"),
+            &format!(r#"{{"request":"{}","state":"ready","at":{NOW}}}"#, r.id),
+        );
+        let plan = vec![
+            (ids[0].clone(), Route::Type),
+            (ids[1].clone(), Route::Type),
+            (ids[2].clone(), Route::Type),
+            (ids[3].clone(), Route::Type),
+            (ids[4].clone(), Route::TurnEnd),
+        ];
+        let typed = Mutex::new(Vec::new());
+        let gate = (Mutex::new(0usize), Condvar::new());
+        let marked_first = Mutex::new(true);
+        let out = ask(&d.0, &r, &plan, NOW + 1, |id| {
+            for t in &ids[..3] {
+                let state = answer(&d.0, &r, t).map(|a| a.state);
+                if state != Some(State::Asked) {
+                    *marked_first.lock().unwrap() = false;
+                }
+            }
+            typed.lock().unwrap().push(id.to_owned());
+            let (n, cv) = &gate;
+            let mut n = n.lock().unwrap();
+            *n += 1;
+            cv.notify_all();
+            let _ = cv
+                .wait_timeout_while(n, Duration::from_secs(5), |n| *n < 3)
+                .unwrap();
+            if id == ids[1] {
+                Err(Failed {
+                    error: "the prompt did not read it".into(),
+                    maybe_typed: false,
+                })
+            } else if id == ids[2] {
+                Err(Failed {
+                    error: "no answer in time".into(),
+                    maybe_typed: true,
+                })
+            } else {
+                Ok(())
+            }
+        });
+        assert!(
+            *marked_first.lock().unwrap(),
+            "every typed session was marked before any typing"
+        );
+        assert_eq!(*gate.0.lock().unwrap(), 3, "all three were typed at once");
+        let mut typed = typed.into_inner().unwrap();
+        typed.sort();
+        assert_eq!(
+            typed,
+            ids[..3].to_vec(),
+            "never the answered one or the mid-turn one"
+        );
+        let route_of = |i: usize| out.iter().find(|a| a.id == ids[i]).unwrap();
+        assert_eq!(route_of(0).error, None);
+        assert_eq!(
+            route_of(1).error.as_deref(),
+            Some("the prompt did not read it")
+        );
+        assert_eq!(route_of(2).error.as_deref(), Some("no answer in time"));
+        assert_eq!(
+            (route_of(3).route, route_of(3).error.clone()),
+            (Route::Type, None)
+        );
+        assert_eq!(
+            (route_of(4).route, route_of(4).error.clone()),
+            (Route::TurnEnd, None)
+        );
+        assert_eq!(answer(&d.0, &r, &ids[0]).unwrap().state, State::Asked);
+        assert_eq!(
+            answer(&d.0, &r, &ids[1]),
+            None,
+            "a failed typing is unmarked: the Stop hook asks"
+        );
+        assert_eq!(
+            answer(&d.0, &r, &ids[2]).unwrap().state,
+            State::Asked,
+            "one that may have been typed keeps its mark"
+        );
+        assert_eq!(
+            answer(&d.0, &r, &ids[3]).unwrap().state,
+            State::Ready,
+            "an answer stays"
+        );
+        assert_eq!(
+            answer(&d.0, &r, &ids[4]),
+            None,
+            "the Stop hook asks a mid-turn one"
+        );
+        assert_eq!(
+            out.iter().map(|a| a.id.clone()).collect::<Vec<_>>(),
+            ids,
+            "in plan order"
+        );
     }
 }
