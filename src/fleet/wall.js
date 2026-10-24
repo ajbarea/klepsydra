@@ -3,8 +3,8 @@
 import cast from "./cast.json" with { type: "json" };
 import { RINGS, announcements, card, identity, shouldSlide, showsRingKey, startedNeeding, transitionName, statuses, tally } from "./model.js";
 import { announcer, press, say, setOff, syncChildren } from "./dom.js";
-import { ARM_MS, confirmCopy, createEnder, endAllCopy, endingAnnouncement, endingText, sessionCount } from "./end.js";
-import { asking, readiness, wrapupAnnouncements, wrapupCopy, wrapupLines } from "./wrapup.js";
+import { ARM_MS, confirmCopy, createEnder, endAllCopy, endingAnnouncement, endingText, withdrawnText } from "./end.js";
+import { askedNote, asking, isReady, readiness, wrapupAnnouncements, wrapupCopy, wrapupLines } from "./wrapup.js";
 import { inTauri, subscribe, todayLedger } from "./feed.js";
 import { createDrawer } from "./drawer.js";
 import { showFace } from "./face.js";
@@ -570,8 +570,9 @@ addEventListener("blur", () => closeMenu(false));
 
 // The one confirm dialog, for End on one card, End all ready sessions and
 // Wrap up. `holds()` says whether what it names still stands; a snapshot
-// that breaks it closes the dialog as Cancel would.
-function openConfirm(kind, ids, copy, opener, holds = () => true) {
+// that breaks it closes the dialog as Cancel would. `bulk`: End all ready,
+// whose every end still needs its session ready when its window runs out.
+function openConfirm(kind, ids, copy, opener, holds = () => true, bulk = false) {
   dialog.dataset.kind = kind;
   dialog.querySelector("#end-title").textContent = copy.title;
   dialog.querySelector(".end-what").textContent = copy.text;
@@ -589,7 +590,7 @@ function openConfirm(kind, ids, copy, opener, holds = () => true) {
   warn.textContent = copy.warn ?? "";
   endCancel.textContent = copy.cancel;
   endConfirm.textContent = copy.confirm;
-  confirmFor = { kind, ids, opener, holds };
+  confirmFor = { kind, ids, opener, holds, bulk };
   dialog.returnValue = "";
   setOff(endConfirm, true);
   clearTimeout(armTimer);
@@ -626,7 +627,7 @@ function openEndReady() {
   if (!ids.length) return;
   // Every live card still ready, not just the listed ones: a session that arrives unready closes it.
   const stillReady = () => Boolean(request) && readiness(sessions, request).safe && ids.every((id) => endable(id));
-  openConfirm("end", ids, endAllCopy(ids.map((id) => cardOf.get(id)), outside), endReadyButton, stillReady);
+  openConfirm("end", ids, endAllCopy(ids.map((id) => cardOf.get(id)), outside), endReadyButton, stillReady, true);
 }
 
 // Who the Wrap up confirm lists and how each is asked; it closes if that changes.
@@ -641,7 +642,9 @@ function openWrapup() {
   const cards = [...cardOf.values()];
   const list = wrapupList();
   const ids = cards.filter((c) => c.wrapupRoute).map((c) => c.id);
-  openConfirm("wrapup", ids, wrapupCopy(cards), wrapButton, () => wrapupList() === list);
+  // A request still asking is replaced, and its answers cleared: the confirm says so.
+  const running = asking(request, Date.now());
+  openConfirm("wrapup", ids, wrapupCopy(cards, running), wrapButton, () => wrapupList() === list && asking(request, Date.now()) === running);
 }
 
 endConfirm.addEventListener("click", (e) => {
@@ -661,7 +664,7 @@ dialog.addEventListener("close", () => {
     settleFocus(what.ids[0], what.opener);
     return;
   }
-  if (what.kind === "end") for (const id of what.ids) beginEnd(id);
+  if (what.kind === "end") for (const id of what.ids) beginEnd(id, what.bulk);
   else startWrapup(what.ids);
 });
 
@@ -676,13 +679,25 @@ function hideEnding(el, menuOff = false) {
   setOff(el.querySelector(".menu"), menuOff);
 }
 
-function beginEnd(id) {
+// Whether session `id` still counts as ready for the request shown.
+const readyNow = (id) => Boolean(request) && isReady(sessions.find((s) => s.session_id === id), request);
+
+function beginEnd(id, bulk = false) {
   const c = cardOf.get(id);
   const el = cardEl(id);
   if (!c?.actions.menu || !el) return;
   const note = el.querySelector(".note");
   const ending = el.querySelector(".ending");
   const started = ender.start(id, {
+    // End all ready ends a session only while it is still ready.
+    holds: bulk ? () => readyNow(id) : undefined,
+    onSkip: () => {
+      const now = cardEl(id);
+      if (!now) return;
+      hideEnding(now);
+      say(now.querySelector(".note"), withdrawnText(c.name));
+      paintEndReady();
+    },
     onTick: (left) => {
       el.querySelector(".ending-text").textContent = endingText(c.name, left);
     },
@@ -720,15 +735,18 @@ function undoEnd(id) {
 }
 
 // A card that is gone, or whose session ended or left klepsydra's tmux, drops
-// its pending end, its open menu and its open dialog.
+// its pending end, its open menu and its open dialog; so does a bulk end
+// whose session is no longer ready.
 function reconcileActions() {
   for (const id of ender.ids()) {
-    if (cardOf.get(id)?.actions.menu) continue;
+    const endable = cardOf.get(id)?.actions.menu;
+    if (endable && ender.holds(id)) continue;
     ender.cancel(id);
     const el = cardEl(id);
     if (!el) continue;
     const focused = el.querySelector(".ending").contains(document.activeElement);
     hideEnding(el);
+    if (endable) say(el.querySelector(".note"), withdrawnText(cardOf.get(id).name));
     if (focused) settleFocus(id);
   }
   if (confirmFor && !confirmFor.holds()) dialog.close("cancel");
@@ -769,8 +787,7 @@ function startWrapup(ids) {
         const el = a.error ? cardEl(a.id) : null;
         if (el) say(el.querySelector(".note"), a.error);
       }
-      const hand = asked.filter((a) => a.route === "by_hand").length;
-      return `Asked ${sessionCount(asked.length - hand)}${hand ? `; ${hand} to ask by hand` : ""}`;
+      return askedNote(asked, (id) => cardOf.get(id)?.name);
     },
     "Asking…",
   );

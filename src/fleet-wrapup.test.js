@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { GROUPS, asking, isReady, listed, readiness, sessionRoute, stale, wrapupAnnouncements, wrapupCopy, wrapupLine, wrapupLines } from "./fleet/wrapup.js";
+import { GROUPS, askedNote, asking, isReady, listed, readiness, sessionRoute, stale, wrapupAnnouncements, wrapupCopy, wrapupLine, wrapupLines } from "./fleet/wrapup.js";
 import { endAllCopy } from "./fleet/end.js";
 import { card } from "./fleet/model.js";
 
@@ -194,4 +194,39 @@ test("a changed line is announced once, never on the first look or as a request 
   const next = at([["a", "A", "Ready"], ["b", "B", "Wraps up when this turn ends"]]);
   assert.deepEqual(wrapupAnnouncements(wrapupLines(first), next), ["A: Ready"]);
   assert.deepEqual(wrapupAnnouncements(wrapupLines(next), next), [], "the same lines again: a tick says nothing");
+});
+
+test("a session idle at its prompt with background work out is typed into, since no Stop is coming", () => {
+  const bg = { ...fleet, status: "working", reason: "background" };
+  assert.equal(sessionRoute(bg), "type");
+  assert.equal(sessionRoute({ ...outside, status: "working", reason: "background" }), "by_hand");
+  assert.equal(sessionRoute({ ...fleet, status: "working", reason: null }), "turn_end");
+  assert.equal(sessionRoute({ ...fleet, status: "done", reason: "background" }), "type");
+  assert.equal(sessionRoute({ ...fleet, status: "needs_you", reason: "background" }), "after_answer");
+  assert.equal(wrapupLine(bg, REQUEST, BEFORE).text, "Ask by hand: /klepsydra-wrapup", "unmarked: its typing failed");
+  assert.equal(wrapupLine({ ...bg, wrapup: ANSWERS.asked }, REQUEST, BEFORE).text, "Wrapping up…");
+  assert.notEqual(wrapupLine(bg, REQUEST, BEFORE).text, "Wraps up when this turn ends");
+});
+
+test("Wrap up while one is still asking says it starts over and clears the answers so far", () => {
+  const cards = [model({ id: "a", name: "A", status: "done", ...fleet })];
+  const fresh = wrapupCopy(cards);
+  assert.equal(fresh.warn, null);
+  const again = wrapupCopy(cards, true);
+  assert.equal(again.title, "Start the wrap-up over?");
+  assert.equal(again.warn, "A wrap-up is still asking. Starting over clears every answer so far, and sessions that already answered are asked again.");
+  assert.equal(again.confirm, "Start over: ask 1 session");
+  assert.ok(!again.warn.includes("—") && !again.title.includes("—"));
+});
+
+test("the note after Wrap up counts only the sessions actually asked, and names each failure", () => {
+  const names = { a: "Hermes", b: "Metis", c: "Elpis", d: "Aidos", e: "Nike" };
+  const nameOf = (id) => names[id];
+  const ok = (id, route) => ({ id, route, error: null });
+  const bad = (id) => ({ id, route: "type", error: "The prompt did not read /klepsydra-wrapup" });
+  assert.equal(askedNote([ok("a", "type"), ok("b", "turn_end"), ok("c", "by_hand")], nameOf), "Asked 2 sessions; 1 to ask by hand");
+  assert.equal(askedNote([ok("a", "type"), bad("b")], nameOf), "Asked 1 session; not typed into Metis, see its card");
+  assert.equal(askedNote([bad("b"), bad("d"), ok("e", "by_hand")], nameOf), "Asked 0 sessions; 1 to ask by hand; not typed into Metis and Aidos, see their cards");
+  assert.equal(askedNote([], nameOf), "Asked 0 sessions");
+  assert.equal(askedNote([bad("zz")], nameOf), "Asked 0 sessions; not typed into a session, see its card", "a card gone since");
 });

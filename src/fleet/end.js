@@ -76,6 +76,9 @@ export function endAllCopy(cards, outside = 0) {
 /** The card's line while the undo window runs. */
 export const endingText = (name, secondsLeft) => `Ending ${name} in ${secondsLeft} s`;
 
+/** The card's note when End all ready withdraws its end: the session is no longer ready. */
+export const withdrawnText = (name) => `${name} is no longer ready; not ended`;
+
 /** Said once, when the window opens: a live region that is not re-announced each second. */
 export const endingAnnouncement = (name) => `Ending ${name} in ${UNDO_MS / SECOND_MS} seconds. Undo is available.`;
 
@@ -88,8 +91,15 @@ export function createEnder({ invoke, timers = { setTimeout: (f, ms) => setTimeo
   const pending = new Map(); // id -> { timers }
 
   // The end stays pending until the call answers: no second end and no menu meanwhile.
+  // A bulk end whose condition no longer holds sends nothing.
   function expire(id, { onSend, onDone }) {
-    pending.get(id).sent = true;
+    const entry = pending.get(id);
+    if (entry.holds && !entry.holds()) {
+      pending.delete(id);
+      entry.onSkip?.();
+      return Promise.resolve();
+    }
+    entry.sent = true;
     onSend?.();
     const settle = (result) => {
       pending.delete(id);
@@ -102,12 +112,15 @@ export function createEnder({ invoke, timers = { setTimeout: (f, ms) => setTimeo
 
   return {
     pending: (id) => pending.has(id),
-    /** Open the undo window for `id`; false when one is already open. `onTick(secondsLeft)` runs now and each second; `onSend()` as the call goes out, `onDone({ok, text})` once it answers; the end is pending until then. */
-    start(id, { onTick, onSend, onDone }) {
+    /**
+     * Open the undo window for `id`; false when one is already open. `onTick(secondsLeft)` runs now and each second; `onSend()` as the call goes out, `onDone({ok, text})` once it answers; the end is pending until then.
+     * `holds()`, when given, is asked again as the window runs out: false sends nothing and calls `onSkip()` instead.
+     */
+    start(id, { onTick, onSend, onDone, holds, onSkip }) {
       if (pending.has(id)) return false;
       const seconds = UNDO_MS / SECOND_MS;
       // Every second's timer is set now, so a late tick cannot push the end past UNDO_MS.
-      const entry = { timers: [] };
+      const entry = { timers: [], holds, onSkip };
       pending.set(id, entry);
       onTick(seconds);
       for (let n = 1; n < seconds; n++) entry.timers.push(timers.setTimeout(() => onTick(seconds - n), n * SECOND_MS));
@@ -122,6 +135,8 @@ export function createEnder({ invoke, timers = { setTimeout: (f, ms) => setTimeo
       pending.delete(id);
       return true;
     },
+    /** Whether `id`'s end, if any, still meets the condition it was started on. */
+    holds: (id) => !pending.get(id)?.holds || Boolean(pending.get(id).holds()),
     /** The ends still inside their window; one already sent is past cancelling. */
     ids: () => [...pending].filter(([, e]) => !e.sent).map(([id]) => id),
   };

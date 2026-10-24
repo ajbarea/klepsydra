@@ -1375,10 +1375,11 @@ def end_cancelled_when_the_session_ends(wall):
 WRAPUP_SAMPLE = json.loads((ROOT / "scripts/fixtures/wrapup-demo.json").read_text())
 STARTS = "window.__calls.filter(([c]) => c === 'start_wrapup')"
 BY_HAND = "Ask by hand: type /klepsydra-wrapup in its terminal"
-# The demo fleet by route (wrapup.rs route() of each session's status and place), in wall order; demo-8 has ended.
+# The demo fleet by route (wrapup.rs route() of each session's status, reason and place), in wall order;
+# demo-8 has ended. Working with work out after its turn (9, 13, 14) sits idle at its prompt: typed now.
 ROUTED = [
-    ("Typed now", ["demo-5-bf_isabella"]),
-    ("At the end of its turn", ["demo-2-af_bella", "demo-3-af_sarah", "demo-4-bf_emma", "demo-9-bm_fable", "demo-10-bm_george", "demo-13-af_nicole", "demo-14-medallion", "demo-16-af_kore"]),
+    ("Typed now", ["demo-9-bm_fable", "demo-5-bf_isabella", "demo-13-af_nicole", "demo-14-medallion"]),
+    ("At the end of its turn", ["demo-2-af_bella", "demo-3-af_sarah", "demo-4-bf_emma", "demo-10-bm_george", "demo-16-af_kore"]),
     ("After you answer", ["demo-1-am_michael", "demo-11-am_fenrir", "demo-15-am_onyx"]),
     (BY_HAND, ["demo-6-af_nova", "demo-7-af_aoede", "demo-12-af_alloy"]),
 ]
@@ -1480,10 +1481,11 @@ def wrapup_confirm_lists_routes(wall):
     page.wait_for_function("document.getElementById('wrapup-note').textContent.startsWith('Asked')")
     note = page.evaluate("document.getElementById('wrapup-note').textContent")
     card_note = page.evaluate("document.querySelector('.card[data-key=\"demo-5-bf_isabella\"] .note').textContent")
+    who = page.evaluate("document.querySelector('.card[data-key=\"demo-5-bf_isabella\"] .name').textContent")
     starts = page.evaluate(STARTS)
     wall.check(
-        len(starts) == 1 and note == "Asked 12 sessions; 3 to ask by hand" and card_note == error and not page.evaluate(ENDS),
-        "confirming calls start_wrapup once, says who was asked, and shows a failed typing in that card's note",
+        len(starts) == 1 and note == f"Asked 11 sessions; 3 to ask by hand; not typed into {who}, see its card" and card_note == error and not page.evaluate(ENDS),
+        "confirming calls start_wrapup once, counts only who was asked, names the failed typing, and shows it in that card's note",
         [note, card_note],
     )
     wall.check(sorted((starts[0][1] or {}).get("ids") or []) == sorted(LIVE), "start_wrapup gets exactly the sessions the confirm listed", starts[0][1])
@@ -1632,6 +1634,32 @@ def end_all_ready(wall):
     page.close()
 
 
+def bulk_end_waits_on_ready(wall):
+    """A session that goes back to work inside End all ready's undo window is not ended; the rest are."""
+    page = open_app(wall)
+    snap = with_wrapup(page.snapshot, all_ready())
+    feed(page, snap)
+    page.click("#end-ready")
+    page.wait_for_selector(".end-confirm:not([aria-disabled='true'])")
+    page.get_by_role("button", name="End 12 sessions").click()
+    page.wait_for_timeout(1000)
+    again = json.loads(json.dumps(snap))
+    for row in again["sessions"]:
+        if row["session_id"] == "demo-5-bf_isabella":
+            row["status"] = "working"
+            row["status_at"] = row["wrapup"]["at"] + 5
+            row["prompt"] = {"text": "one more thing", "at": row["wrapup"]["at"] + 5}
+    feed(page, again)
+    card = '.card[data-key="demo-5-bf_isabella"]'
+    name = page.evaluate(f"document.querySelector('{card} .name').textContent")
+    state = page.evaluate(f"[document.querySelector('{card} .ending').hidden, document.querySelector('{card} .note').textContent]")
+    wall.check(state == [True, f"{name} is no longer ready; not ended"], "its undo window closes at once, and its card says why", state)
+    page.wait_for_timeout(4600)
+    sent = sorted(a["id"] for _, a in page.evaluate(ENDS))
+    wall.check(sent == [k for k in ENDABLE if k != "demo-5-bf_isabella"], "the others still end; the one working again never gets end_session", sent)
+    page.close()
+
+
 def one_click_or_key_never_ends_all(wall):
     """The hard rule on the bulk path: no click or key short of the armed confirm sends end_session."""
     page = open_app(wall)
@@ -1722,6 +1750,7 @@ def main() -> int:
             wrapup_cards_and_bar,
             wrapup_demo_in_browser,
             end_all_ready,
+            bulk_end_waits_on_ready,
             wrapup_dialogs_close_on_change,
             one_click_or_key_never_ends_all,
         )

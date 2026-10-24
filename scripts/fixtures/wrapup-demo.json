@@ -47,6 +47,14 @@
     "demo-8-am_puck": {
       "state": "ready",
       "at": 1792499760
+    },
+    "demo-13-af_nicole": {
+      "state": "asked",
+      "at": 1792499705
+    },
+    "demo-14-medallion": {
+      "state": "asked",
+      "at": 1792499705
     }
   }
 }
