@@ -231,6 +231,14 @@ fn socket() -> std::io::Result<Socket> {
     Ok(s)
 }
 
+/// Bind `s` to every address on `port`, for holding the port only. Windows
+/// Firewall asks for an exception the first time an executable listens beyond
+/// loopback, so nothing bound here may listen.
+#[cfg(any(windows, test))]
+fn bind_wildcard(s: &Socket, port: u16) -> std::io::Result<()> {
+    s.bind(&SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, port).into())
+}
+
 /// Bind `addr` as a listener. On Windows a loopback bind succeeds beside
 /// another process's wildcard listener on the same port, and connections
 /// could then reach either, so an exclusive wildcard bind is tried first and
@@ -240,7 +248,7 @@ fn bind(addr: SocketAddrV4) -> std::io::Result<TcpListener> {
     #[cfg(windows)]
     if addr.port() != 0 {
         let probe = socket()?;
-        probe.bind(&SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, addr.port()).into())?;
+        bind_wildcard(&probe, addr.port())?;
     }
     let s = socket()?;
     s.bind(&addr.into())?;
@@ -764,13 +772,17 @@ mod tests {
     }
 
     #[test]
-    fn a_wildcard_listener_on_the_port_is_a_clash() {
-        let other = TcpListener::bind("0.0.0.0:0").unwrap();
-        let port = other.local_addr().unwrap().port();
+    fn a_socket_holding_the_wildcard_port_is_a_clash() {
+        let other = Socket::new(Domain::IPV4, Type::STREAM, Some(Protocol::TCP)).unwrap();
+        bind_wildcard(&other, 0).unwrap();
+        let port = other.local_addr().unwrap().as_socket_ipv4().unwrap().port();
         let ledger: Shared = Arc::new(Mutex::new(Ledger::in_memory(unix_now())));
         let log: Log = Arc::new(|_| {});
         let ours = spawn(SocketAddrV4::new(Ipv4Addr::LOCALHOST, port), ledger, log);
-        assert!(ours.is_err(), "bound beside a wildcard listener");
+        assert!(
+            ours.is_err(),
+            "bound beside a socket holding the wildcard port"
+        );
     }
 
     #[test]
