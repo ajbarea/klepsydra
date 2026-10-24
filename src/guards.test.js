@@ -685,7 +685,7 @@ test("the dialog's End is off for ARM_MS after every opening, and an off End clo
 // Windows Firewall prompts once per executable path that listens beyond loopback,
 // and every staged test build is a new path. Every listen goes through
 // receiver.rs's bind, which refuses an address beyond loopback first.
-const LISTENS = /\.listen\s*\(|\bTcpListener::bind\b|\bUdpSocket\b|\bTcpSocket\b|\bSocket::listen\b/;
+const LISTENS = /\blisten\s*\(|\bTcpListener::bind\b|\bUdpSocket\b|\bTcpSocket\b|\bTcpListener\s+as\b/;
 
 /** The text of `fn name(` up to its matching brace; null when absent. */
 function fnBody(text, name) {
@@ -708,7 +708,10 @@ export function strayListeners(files) {
     if (file.endsWith("fleet/src/receiver.rs")) {
       const code = body ? text.slice(...body) : "";
       const check = code.indexOf("is_loopback()");
-      if (check < 0 || check > code.search(/\.listen\s*\(/)) bad.push(`${file}:bind`);
+      const listens = [...code.matchAll(/\b(\w+)\s*\.listen\s*\(/g)];
+      const bound = code.match(/\b(\w+)\.bind\(&addr\b/)?.[1];
+      const one = listens.length === 1 && listens[0][1] === bound && code.match(/\blisten\s*\(/g).length === 1;
+      if (check < 0 || !one || check > listens[0].index) bad.push(`${file}:bind`);
     }
     let offset = 0;
     for (const [i, line] of text.split("\n").entries()) {
@@ -729,12 +732,16 @@ test("nothing under src-tauri listens except through the loopback-only bind", ()
 
 test("the listen check catches each way to listen elsewhere, and a bind that skips the loopback check", () => {
   const recv = "src-tauri/fleet/src/receiver.rs";
-  const bind = "fn bind(addr: A) -> R {\n    if !addr.ip().is_loopback() {\n        return e;\n    }\n    s.listen(128)?;\n}\n";
+  const bind = "fn bind(addr: A) -> R {\n    if !addr.ip().is_loopback() {\n        return e;\n    }\n    let probe = socket()?;\n    bind_wildcard(&probe, 1)?;\n    s.bind(&addr.into())?;\n    s.listen(128)?;\n}\n";
   const check = (file, text) => strayListeners([[file, text]]);
   assert.deepEqual(check(recv, bind), []);
   assert.deepEqual(check(recv, bind.replace(/\r?\n/g, "\r\n")), [], "a CRLF checkout reads alike");
   assert.deepEqual(check(recv, bind.replace("is_loopback", "is_private")), [`${recv}:bind`]);
-  assert.deepEqual(check(recv, `${bind}fn other() {\n    probe.listen(1)?;\n}\n`), [`${recv}:8`]);
+  assert.deepEqual(check(recv, bind.replace("    s.listen", "    probe.listen(1)?;\n    s.listen")), [`${recv}:bind`], "the wildcard probe never listens");
+  assert.deepEqual(check(recv, bind.replace("s.listen", "probe.listen")), [`${recv}:bind`], "only the socket bound to addr listens");
+  assert.deepEqual(check(recv, `${bind}fn other() {\n    probe.listen(1)?;\n}\n`), [`${recv}:11`]);
+  assert.deepEqual(check("x.rs", "use std::net::TcpListener as Tl;"), ["x.rs:1"]);
+  assert.deepEqual(check("x.rs", "unsafe { WinSock::listen(sock, 1) };"), ["x.rs:1"]);
   assert.deepEqual(check("x.rs", 'let l = TcpListener::bind("0.0.0.0:0")?;'), ["x.rs:1"]);
   assert.deepEqual(check("x.rs", "let u = UdpSocket::bind(addr)?;"), ["x.rs:1"]);
   assert.deepEqual(check("x.rs", "let t = TcpSocket::new_v4()?;"), ["x.rs:1"]);
