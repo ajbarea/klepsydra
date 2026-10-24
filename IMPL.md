@@ -1,31 +1,34 @@
 # IMPL
 
 Slice: #58 Wrap up. Branch feat/wrap-up, worktree `.claude/worktrees/wrap-up`,
-on main (after #22, PR #70). Design: the 10-21 comment on #58.
+PR #82. Design: the 10-21 comment on #58.
 
 ## Done
 - `hooks/klepsydra-wrapup.sh`: sync Stop hook (asks once per request through
   `additionalContext`, silent otherwise, fails open) and the reporter
   (`ready SESSION`, `blocked SESSION REASON`). `hooks/klepsydra-wrapup.md` is
-  the skill (`~/.claude/skills/klepsydra-wrapup/SKILL.md`).
+  the skill, read from `${CLAUDE_CONFIG_DIR:-~/.claude}/skills/klepsydra-wrapup/`.
 - Launcher `wrapup` verb: Ctrl+C, types `/klepsydra-wrapup`, Enter only when
-  the line reads exactly that; refuses mid-turn; takes #22's pane lock.
-- Fleet crate `wrapup.rs` (request, answers, `route()`, start/cancel/mark);
-  app `start_wrapup` / `cancel_wrapup` (per-session pane gate).
+  the line reads exactly that; refuses mid-turn; takes #22's pane lock, with
+  its own refusal texts.
+- Fleet crate `wrapup.rs` (request, answers, `route()`, start/cancel,
+  create-only marks, `ask()`); app `start_wrapup` / `cancel_wrapup`.
 - Wall: Wrap up… confirm grouped by route (`src/fleet/wrapup.js` mirrors
   `route()`, a guard parses both), card line, "N of M ready", Stop wrap-up,
-  Safe to restart, End all ready sessions… through #22's one confirm and
-  per-card undo. `?demo&wrapup` sample. README "Wrapping up".
-- Live (Claude Code, throwaway session, project-only settings, private
-  `KLEPSYDRA_DIR`): the Stop hook made the session checkpoint, commit and
-  report `ready`; asked once.
+  Safe to restart, End all ready sessions…. README "Wrapping up".
+- Review round 2 fixed: answer times get the session files' clock
+  correction and the script judges the request by the folder's clock; late
+  reports from an asked session while the wall shows the request; idle with
+  background work out routes Type; every Type session marked first, typed
+  in parallel, unmark takes only its own mark; End all ready re-checks
+  readiness at expiry and on every snapshot; restart warning; wrapup/ watched;
+  result note counts only the asked and names failures.
 
 ## Next
-- PR (Closes #58), independent review (opus, at most 3 rounds), CI, merge.
+- Review round 3 (independent, opus), CI, merge.
 - Deploy needs AJ's ok: copy `klepsydra-wrapup.sh` to `~/.claude/`, the skill
-  to `~/.claude/skills/klepsydra-wrapup/SKILL.md`, the Stop hook block into
-  both `settings.json` (`~/.claude`, `~/.claude-personal`), and install the
-  app build.
+  to `skills/klepsydra-wrapup/SKILL.md` in each config folder, the Stop hook
+  block into both `settings.json`, and install the app build.
 
 ## Verify
 - Full gate list in `.claude/skill-context.md`, plus `bash hooks/test_wrapup.sh`.
