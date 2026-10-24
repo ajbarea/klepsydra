@@ -81,7 +81,9 @@ files belong to: the JS guards scan hooks and scripts too.
   fit in Auto (compact, no scrollbar, ring key in view); Auto re-checks when
   a card grows, never leaves a comfortable wall scrolling (a pixel at a time
   through the boundary, and where the comfortable bar is taller), and a
-  compact note covers no text. Takes a few minutes. Needs
+  compact note covers no text; the empty state (no sessions, or only ended
+  ones) fits both sizes and its buttons send only launch_session and
+  clear_session. Takes a few minutes. Needs
   Playwright's Chromium, or a Chrome at `$KLEPSYDRA_CHROME`; local only, not
   in CI.
 

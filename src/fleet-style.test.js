@@ -124,7 +124,9 @@ test("the wall's text meets 4.5:1 on live and quiet cards", () => {
     }
   }
   assert.ok(contrast(token(css, "--tone-working"), token(css, "--card-bg")) >= 3, "working edge");
-  assert.doesNotMatch(css.replace(/\/\*[\s\S]*?\*\//g, ""), /opacity:/, "dimming is by colour, so dimmed text keeps its contrast");
+  // The empty state's entrance is the one fade; it ends at full opacity.
+  const settled = css.replace(/\/\*[\s\S]*?\*\//g, "").replace(/@keyframes empty-fade \{\s*from \{ opacity: 0; \}\s*\}/, "");
+  assert.doesNotMatch(settled, /opacity:/, "dimming is by colour, so dimmed text keeps its contrast");
 });
 
 test("the ring's fades and the dimming respect reduced motion and keep the face visible", () => {
@@ -212,9 +214,9 @@ test("the reorder slide is bounded, and cards keep their own transition names", 
 
 test("a disabled button reads as off: no fill, a quieter border, a label still at 4.5:1", () => {
   const css = read("./fleet/wall.css");
-  const rule = css.match(/button\[aria-disabled="true"\], #new-session\[aria-disabled="true"\] \{([^}]*)\}/)?.[1] ?? "";
-  // #new-session (1 id) outranks button[...] (1 type, 1 attr): the id form must be listed and come last.
-  assert.ok(css.indexOf('#new-session[aria-disabled="true"]') > css.indexOf("#new-session {"));
+  const rule = css.match(/button\[aria-disabled="true"\], #new-session\[aria-disabled="true"\], #start-session\[aria-disabled="true"\] \{([^}]*)\}/)?.[1] ?? "";
+  // The filled buttons' ids outrank button[...] (1 type, 1 attr): each id form must be listed and come last.
+  for (const id of ["#new-session", "#start-session"]) assert.ok(css.indexOf(`${id}[aria-disabled="true"]`) > css.search(new RegExp(`${id}[ ,]`)), id);
   assert.match(rule, /background: transparent/);
   assert.match(rule, /border-color: var\(--card-line\)/);
   assert.ok(contrast(token(css, "--text-dim"), token(css, "--card-bg")) >= 4.5);

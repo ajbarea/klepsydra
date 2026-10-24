@@ -458,6 +458,14 @@ title.
 running brings its card back at its next event, without its start time or the
 repos it touched.
 
+With no session running, Hesychia, Keeper of Quiet, holds the wall in place of
+the cards: "All quiet.", a line on what will appear, and **Start a session in
+DIR**, which starts a session as **+ New session** does and names
+`launch_dir`. When only ended cards remain, the same view shows with **Clear N
+ended sessions** beside the button. Clicking a strip portrait of an ended
+session shows the ended cards instead, until a session starts or they are all
+cleared. It fades in, and appears at once under reduced motion.
+
 ### Ending a session
 
 A session that runs in klepsydra's tmux (the socket `klepsydra`) and has a
@@ -551,7 +559,8 @@ Windows Terminal tabs opened by hand are not coloured.
 
 To see the wall without sessions, serve the repo root (for example
 `python3 -m http.server`) and open `/src/wall.html?demo`; `?demo=8` shows
-its first eight sessions.
+its first eight sessions, `?demo&empty` the empty wall and `?demo&ended` the
+wall with only an ended card.
 
 A session's face follows its keryx voice, so it stays the same while the
 session moves between repos. Fifteen voices, all fourteen in keryx's rotation pool
@@ -890,6 +899,9 @@ A release ships only when all three hold:
       - Press **Open terminal** on each card: each hops to its own window.
       - Close the tab, then press **+**: the tab reattaches and adds a window.
       - Press **Clear** on an ended card: it goes.
+      - With every session ended, the wall reads "All quiet." with **Clear N
+        ended sessions**; press it, then **Start a session in DIR**: one
+        window starts in `launch_dir`.
       - Run `wsl --shutdown` and start klepsydra and a session again: the old
         cards read "ended · gone".
    8. Restore your settings:
