@@ -125,14 +125,15 @@ mod tests {
         assert_eq!(unsafe { libc::mkfifo(c.as_ptr(), 0o600) }, 0);
         let (tx, rx) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
-            let _ = tx.send(refused(read_text(&fifo, 64)));
+            let checked = refused(read_text(&fifo, 64));
+            // Opened directly, as a swap after the check would be, it neither
+            // blocks nor reads as a file.
+            let held = open(&fifo).and_then(|f| f.metadata()).map(|m| m.is_file());
+            let _ = tx.send((checked, held.ok()));
         });
         let got = rx
             .recv_timeout(std::time::Duration::from_secs(5))
             .expect("returned");
-        assert_eq!(got, "NotFile");
-        // Opened directly, as a swap after the check would be, it neither blocks nor reads as a file.
-        let held = open(&dir.0.join("q.md")).unwrap().metadata().unwrap();
-        assert!(!held.is_file());
+        assert_eq!(got, ("NotFile".to_string(), Some(false)));
     }
 }
