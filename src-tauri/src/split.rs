@@ -70,15 +70,39 @@ pub async fn set_split_mode(app: tauri::AppHandle, on: bool) -> Result<String, S
             }
         })
         .await
-        .map_err(|e| format!("Could not split: {e}"))??;
-        crate::write_pref(&app, SPLIT_KEY, Value::Bool(on));
-        Ok(said)
+        .map_err(|e| format!("Could not split: {e}"))
+        .and_then(|said| said);
+        crate::write_pref(&app, SPLIT_KEY, Value::Bool(saved_on(on, said.is_ok())));
+        said
     }
     #[cfg(not(windows))]
     {
         let _ = (app, on);
         Err(WINDOWS_ONLY.into())
     }
+}
+
+/// The choice to save after a call to split (`on`) or not: on only once a
+/// split has landed, so a saved on that fails when the wall opens (the
+/// terminal not open) is not tried again, and its note not repeated, at every
+/// open.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn saved_on(on: bool, landed: bool) -> bool {
+    on && landed
+}
+
+/// The split's moves in order, as (window, visible frame, stacked under):
+/// the wall onto the left half keeping its place in the z-order, then the
+/// terminal onto the right half stacked right under the wall, so a window
+/// over the terminal cannot cover the right half.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn moves(
+    wall: isize,
+    terminal: isize,
+    work: crate::geometry::Rect,
+) -> [(isize, crate::geometry::Rect, Option<isize>); 2] {
+    let (left, right) = crate::geometry::halves(work);
+    [(wall, left, None), (terminal, right, Some(wall))]
 }
 
 /// A saved placement's show command, without activating: putting a window
@@ -139,10 +163,10 @@ fn give_focus_back(before: isize, after: isize, moved: isize) -> bool {
 #[cfg(windows)]
 mod win {
     use super::{
-        give_focus_back, lookup_error, quiet_show, restore_placement, terminal_pos_flags,
+        give_focus_back, lookup_error, moves, quiet_show, restore_placement, terminal_pos_flags,
         wall_pos_flags,
     };
-    use crate::geometry::{frame_insets, halves, widen, Insets, Rect};
+    use crate::geometry::{frame_insets, widen, Insets, Rect};
     use std::sync::Mutex;
     use windows::Win32::Foundation::{HWND, LPARAM, RECT, WPARAM};
     use windows::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_EXTENDED_FRAME_BOUNDS};
@@ -396,8 +420,10 @@ mod win {
                 s.terminal = Some((terminal, before_t));
             }
         }
-        let (left, right) = halves(work);
-        if let Err(e) = place(w, left, None).and_then(|_| place(t, right, Some(w))) {
+        let placed = moves(wall, terminal, work)
+            .into_iter()
+            .try_for_each(|(h, r, under)| place(hwnd(h), r, under.map(hwnd)));
+        if let Err(e) = placed {
             // Half a split is no split: both go back.
             restore(take(), wall);
             return Err(e);
@@ -416,6 +442,7 @@ mod win {
     #[cfg(test)]
     mod tests {
         use super::*;
+        use crate::geometry::halves;
         use windows::core::w;
         use windows::Win32::UI::HiDpi::{
             SetThreadDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2,
@@ -480,6 +507,62 @@ mod win {
             let after = unsafe { GetForegroundWindow() };
             assert_ne!(after, h, "placing it never activated it");
             assert_eq!(after, before);
+        }
+
+        #[test]
+        fn a_window_that_stops_answering_is_refused_within_a_second() {
+            use std::sync::mpsc;
+            use std::time::{Duration, Instant};
+            use windows::Win32::UI::WindowsAndMessaging::{PeekMessageW, MSG, PM_REMOVE};
+            let (made_tx, made) = mpsc::channel::<isize>();
+            let (go, go_rx) = mpsc::channel::<()>();
+            // A window whose thread stops pumping messages until told to go:
+            // hung, to every other thread.
+            let owner = std::thread::spawn(move || {
+                let h = unsafe {
+                    CreateWindowExW(
+                        WINDOW_EX_STYLE(0),
+                        w!("STATIC"),
+                        w!("klepsydra hung test"),
+                        WS_OVERLAPPEDWINDOW,
+                        100,
+                        100,
+                        320,
+                        240,
+                        None,
+                        None,
+                        None,
+                        None,
+                    )
+                }
+                .expect("a throwaway window");
+                made_tx.send(h.0 as isize).unwrap();
+                let _ = go_rx.recv();
+                let mut msg = MSG::default();
+                while unsafe { PeekMessageW(&mut msg, None, 0, 0, PM_REMOVE) }.as_bool() {}
+                let _ = unsafe { DestroyWindow(h) };
+            });
+            let raw = made.recv().unwrap();
+            let (done_tx, done) = mpsc::channel();
+            std::thread::spawn(move || {
+                let h = hwnd(raw);
+                let t = Instant::now();
+                let read = placement(h).err();
+                let read_in = t.elapsed();
+                let t = Instant::now();
+                let moved = set_rect(h, Rect::new(0, 0, 200, 200), None, wall_pos_flags()).err();
+                let _ = done_tx.send((read, read_in, moved, t.elapsed()));
+            });
+            let got = done.recv_timeout(Duration::from_secs(5));
+            go.send(()).unwrap();
+            owner.join().unwrap();
+            let (read, read_in, moved, moved_in) =
+                got.expect("both calls to a hung window return within 5 s");
+            let second = Duration::from_millis(1000);
+            assert_eq!(read.as_deref(), Some(HUNG), "reading its placement");
+            assert!(read_in < second, "read refused in {read_in:?}");
+            assert_eq!(moved.as_deref(), Some(HUNG), "moving it");
+            assert!(moved_in < second, "move refused in {moved_in:?}");
         }
     }
 }
@@ -582,6 +665,30 @@ mod tests {
             "someone else took it"
         );
         assert!(!give_focus_back(0, terminal, terminal), "no window had it");
+    }
+
+    #[test]
+    fn the_wall_takes_the_left_and_the_terminal_goes_right_under_it() {
+        use crate::geometry::{halves, Rect};
+        let work = Rect::new(-1920, 40, 1921, 1000);
+        let (left, right) = halves(work);
+        let (wall, terminal) = (10, 20);
+        assert_eq!(
+            moves(wall, terminal, work),
+            [(wall, left, None), (terminal, right, Some(wall))],
+            "the wall keeps its place in the z-order; the terminal is stacked under it"
+        );
+    }
+
+    #[test]
+    fn only_a_split_that_landed_is_saved_on() {
+        assert!(saved_on(true, true));
+        assert!(
+            !saved_on(true, false),
+            "a saved on that fails at load is not tried again at every open"
+        );
+        assert!(!saved_on(false, true));
+        assert!(!saved_on(false, false));
     }
 
     #[test]

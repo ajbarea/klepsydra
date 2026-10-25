@@ -143,7 +143,7 @@ test("the wall wires the toggle, and the app registers both commands", () => {
   assert.match(main, /split::get_split_mode,\s*split::set_split_mode,/);
   const rs = read("../src-tauri/src/split.rs");
   assert.match(rs, /pub const SPLIT_KEY: &str = "wall_split";/);
-  assert.match(rs, /crate::write_pref\(&app, SPLIT_KEY, /, "saved the way wall density is");
+  assert.match(rs, /crate::write_pref\(&app, SPLIT_KEY, Value::Bool\(saved_on\(on, said\.is_ok\(\)\)\)\);/, "saved the way wall density is, on only once a split lands");
   assert.match(rs, /crate::read_prefs\(&app\)/);
 });
 
@@ -179,4 +179,9 @@ test("split's lookup selects the fleet tab in the window it places", () => {
   assert.ok(window.length > 0, "uia::window is found");
   assert.match(window, /select\(tab\)\?/, "the tab is selected, so the right half shows the fleet");
   assert.deepEqual(placesWindows(window), [], "selecting moves no window");
+});
+
+test("split places each window as `moves` plans it, the terminal under the wall", () => {
+  const rs = code(read("../src-tauri/src/split.rs"));
+  assert.match(rs, /moves\(wall, terminal, work\)\s*\.into_iter\(\)\s*\.try_for_each\(\|\(h, r, under\)\| place\(hwnd\(h\), r, under\.map\(hwnd\)\)\)/);
 });
