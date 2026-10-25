@@ -17,8 +17,9 @@ use crate::watch::incarnation;
 pub const FILE_NAME: &str = "claude-queue.md";
 /// The prefs.json key that overrides the default path.
 pub const PREF: &str = "queue_path";
-/// More than this is not a to-do list: the real one is about 15 KB, and a
-/// 256 KiB file still parses and renders in well under a frame.
+/// More than this is not a to-do list: the real one is about 15 KB. At the
+/// cap, about 17 times that, the panel's parse took a median 46 ms (node 24,
+/// 7 runs); a runaway file past it is refused rather than parsed on every save.
 pub const MAX_BYTES: u64 = 256 * 1024;
 /// A burst of writes (an editor's save, an agent's rewrite) is one re-read
 /// once the folder has been quiet this long...

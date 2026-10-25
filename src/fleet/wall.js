@@ -7,6 +7,7 @@ import { ARM_MS, confirmCopy, createEnder, endAllCopy, endingAnnouncement, endin
 import { askedNote, asking, isReady, readiness, wrapupAnnouncements, wrapupCopy, wrapupLines } from "./wrapup.js";
 import { inTauri, subscribe, todayLedger } from "./feed.js";
 import { createDrawer } from "./drawer.js";
+import { createQueuePanel } from "./queuepanel.js";
 import { showFace } from "./face.js";
 import { GOLD, SPEAK_FADE_MS, STILL, Speaker, WAVE, waves } from "./speaking.js";
 import { parseDensity, resolveDensity } from "./density.js";
@@ -80,6 +81,8 @@ const drawer = createDrawer({
   home: ledgerButton,
 });
 ledgerButton.addEventListener("click", () => drawer.open(null, ledgerButton));
+// Docked, the panel narrows the wall, and Auto measures again (its ResizeObserver).
+const queue = createQueuePanel({ dialog: document.getElementById("queue"), button: document.getElementById("queue-open") });
 let before;
 let wrapupBefore; // each card's wrap-up line at the last render
 let wasSafe = false;
@@ -919,7 +922,8 @@ function comfortableFits(extra) {
   probe.inert = true;
   probe.setAttribute("aria-hidden", "true");
   // The window's whole width: a wall that fits shows no scrollbar to take any of it.
-  Object.assign(probe.style, { position: "absolute", top: "0", left: "0", width: `${innerWidth}px`, visibility: "hidden" });
+  // Less the docked Queue panel, which the wall gives up its room to.
+  Object.assign(probe.style, { position: "absolute", top: "0", left: "0", width: `${innerWidth - queue.dockedWidth()}px`, visibility: "hidden" });
   const copy = (el) => {
     const c = el.cloneNode(true);
     c.dataset.density = "comfortable";

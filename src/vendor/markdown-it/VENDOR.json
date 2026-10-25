@@ -1,0 +1,17 @@
+{
+  "name": "markdown-it",
+  "version": "15.0.3",
+  "license": "MIT",
+  "source": "https://registry.npmjs.org/markdown-it/-/markdown-it-15.0.3.tgz",
+  "integrity": "sha512-+Az7Ojz3iRGu8KYMvJ6xVhvrxP3eE+vEtJX75Ow88XBpcQNV/0lGX5ZynIIBftREo4DC2jsveAMDaeltmm8QvQ==",
+  "files": {
+    "markdown-it.esm.min.mjs": {
+      "from": "package/dist/browser/markdown-it.esm.min.mjs",
+      "sha256": "d5432491790141da046b1197353705db03264f40b5727f3b4b591f5aba193e30"
+    },
+    "LICENSE": {
+      "from": "package/LICENSE",
+      "sha256": "792c48c5a849a15fdf9e37e8bcf9e6d1dd13b32b46c642a748a0a46a9919d473"
+    }
+  }
+}

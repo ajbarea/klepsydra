@@ -1,0 +1,219 @@
+// The Queue panel: the queue file rendered live beside the wall. Docked on
+// the right when the window is wide, a modal dialog like Ledger when it is
+// narrow. Every word from the file goes in through queue.js as text.
+import { follow } from "../ipc.js";
+import { inTauri } from "./feed.js";
+import { build, queueLabel, render } from "./queue.js";
+
+/** At this window width and wider the panel docks; below it, it is a modal dialog. */
+export const DOCK_MIN_PX = 1200;
+/** The docked width: its bounds, the default, and one arrow-key step. */
+export const WIDTH = { min: 320, max: 900, initial: 480, step: 16 };
+const STORE = { width: "klepsydra.queue.width", open: "klepsydra.queue.open" };
+const COPIED_MS = 2000;
+
+/** `w` held to the panel's bounds, and to leave `viewport - w` for one column of cards. */
+export function clampWidth(w, viewport) {
+  const room = Math.max(WIDTH.min, Math.min(WIDTH.max, viewport - 700));
+  return Math.round(Math.min(room, Math.max(WIDTH.min, Number.isFinite(w) ? w : WIDTH.initial)));
+}
+
+/** The browser's sample queue file, only with ?demo and never inside the app. */
+export function demoQueueUrl(app, search) {
+  return !app && new URLSearchParams(search).has("demo") ? "../scripts/fixtures/queue-demo.md" : null;
+}
+
+/** Queue file views, `{path, text, problem}`: the app's queue_subscribe channel, or the ?demo sample. */
+export function followQueue(onMessage) {
+  if (inTauri) {
+    follow("queue_subscribe", onMessage).catch(() => {});
+    return;
+  }
+  const url = demoQueueUrl(inTauri, location.search);
+  if (!url) {
+    onMessage({ path: null, text: null, problem: "The app reads the queue file; add ?demo to see the sample." });
+    return;
+  }
+  fetch(url, { cache: "no-store" })
+    .then((res) => (res.ok ? res.text() : Promise.reject(new Error(String(res.status)))))
+    .then(
+      (text) => onMessage({ path: url, text, problem: null }),
+      () => onMessage({ path: url, text: null, problem: "The sample queue file could not be read." }),
+    );
+}
+
+const stored = (key) => {
+  try {
+    return localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+};
+const store = (key, value) => {
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    // Private mode or blocked storage: the panel just forgets.
+  }
+};
+
+/** Wire the panel to `dialog`, toggled by `button`; `onLayout()` runs when its docked width changes. */
+export function createQueuePanel({ dialog, button, onLayout = () => {} }) {
+  const body = dialog.querySelector(".queue-body");
+  const content = dialog.querySelector(".queue-content");
+  const pathLine = dialog.querySelector(".queue-path");
+  const problem = dialog.querySelector(".queue-problem");
+  const live = dialog.querySelector(".queue-live");
+  const title = dialog.querySelector("#queue-title");
+  const grip = dialog.querySelector(".queue-resize");
+  const wide = matchMedia(`(min-width: ${DOCK_MIN_PX}px)`);
+  const opened = new Map(); // section title -> open, as the viewer left it
+  // Reopened at start only where it docks: a dialog over the wall at launch would hide it.
+  let open = stored(STORE.open) === "1" && wide.matches;
+  let width = clampWidth(Number(stored(STORE.width) ?? NaN), innerWidth);
+  let switching = false;
+  let last = null;
+
+  const docked = () => open && wide.matches;
+
+  function layout() {
+    width = clampWidth(width, innerWidth);
+    document.documentElement.style.setProperty("--queue-w", `${width}px`);
+    document.body.classList.toggle("queue-docked", docked());
+    grip.setAttribute("aria-valuemin", String(WIDTH.min));
+    grip.setAttribute("aria-valuemax", String(clampWidth(Infinity, innerWidth)));
+    grip.setAttribute("aria-valuenow", String(width));
+    button.setAttribute("aria-expanded", String(open));
+    onLayout();
+  }
+
+  /** Show the dialog in the mode the window's width calls for. */
+  function place(focus) {
+    switching = true;
+    if (dialog.open) dialog.close();
+    switching = false;
+    if (open) {
+      if (wide.matches) dialog.show();
+      else dialog.showModal();
+      dialog.dataset.mode = wide.matches ? "docked" : "modal";
+      if (focus) title.focus();
+    }
+    layout();
+  }
+
+  function setOpen(next, focus = next) {
+    open = next;
+    store(STORE.open, open ? "1" : "0");
+    place(focus);
+    if (!open && focus !== false) button.focus();
+  }
+
+  button.addEventListener("click", () => setOpen(!open));
+  dialog.querySelector(".queue-close").addEventListener("click", () => setOpen(false));
+  // A modal closes itself on Esc; the docked panel closes on it too.
+  dialog.addEventListener("close", () => {
+    if (!switching && open) setOpen(false);
+  });
+  dialog.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && !dialog.matches(":modal")) {
+      e.preventDefault();
+      setOpen(false);
+    }
+  });
+  dialog.addEventListener("click", (e) => {
+    if (e.target === dialog && dialog.matches(":modal")) setOpen(false);
+  });
+  wide.addEventListener("change", () => {
+    const had = dialog.contains(document.activeElement);
+    place(had);
+  });
+  addEventListener("resize", layout);
+
+  function resizeTo(w) {
+    width = clampWidth(w, innerWidth);
+    store(STORE.width, String(width));
+    layout();
+  }
+  grip.addEventListener("keydown", (e) => {
+    const steps = { ArrowLeft: WIDTH.step, ArrowRight: -WIDTH.step, PageUp: WIDTH.step * 4, PageDown: -WIDTH.step * 4 };
+    if (e.key in steps) resizeTo(width + steps[e.key]);
+    else if (e.key === "Home") resizeTo(WIDTH.min);
+    else if (e.key === "End") resizeTo(Infinity);
+    else return;
+    e.preventDefault();
+  });
+  grip.addEventListener("pointerdown", (e) => {
+    if (e.button !== 0) return;
+    grip.setPointerCapture(e.pointerId);
+    const move = (m) => resizeTo(document.documentElement.clientWidth - m.clientX);
+    const done = () => {
+      grip.removeEventListener("pointermove", move);
+      grip.removeEventListener("pointerup", done);
+      grip.removeEventListener("pointercancel", done);
+    };
+    grip.addEventListener("pointermove", move);
+    grip.addEventListener("pointerup", done);
+    grip.addEventListener("pointercancel", done);
+    e.preventDefault();
+  });
+
+  const announce = (text) => {
+    live.textContent = "";
+    setTimeout(() => {
+      live.textContent = text;
+    }, 50);
+  };
+
+  async function copy(text, from) {
+    const label = from.textContent;
+    try {
+      await navigator.clipboard.writeText(text);
+      from.textContent = "Copied";
+      announce("Copied");
+    } catch {
+      // Selected, the text is one Ctrl+C away.
+      const pre = from.parentElement?.querySelector("pre");
+      if (pre) getSelection()?.selectAllChildren(pre);
+      from.textContent = "Not copied";
+      announce(pre ? "Could not copy. The code is selected: press Ctrl+C." : `Could not copy. The link is ${text}`);
+    }
+    setTimeout(() => {
+      from.textContent = label;
+    }, COPIED_MS);
+  }
+
+  /** Where focus is inside the content, as an index among its controls. */
+  const controls = () => [...content.querySelectorAll("summary, button")];
+  function paint(view) {
+    last = view;
+    const shown = view.text !== null && view.text !== undefined;
+    const { nodes, count } = shown ? render(view.text, (t) => opened.get(t)) : { nodes: [], count: null };
+    button.textContent = queueLabel(count);
+    pathLine.textContent = view.path ?? "";
+    pathLine.title = view.path ?? "";
+    problem.hidden = !view.problem;
+    problem.textContent = view.problem ?? "";
+    const at = controls().indexOf(document.activeElement);
+    const scroll = body.scrollTop;
+    content.replaceChildren(...build(nodes, document, { copy }));
+    for (const d of content.querySelectorAll("details")) {
+      d.addEventListener("toggle", () => opened.set(d.dataset.key, d.open));
+    }
+    body.scrollTop = scroll;
+    if (at >= 0) (controls()[at] ?? title).focus();
+  }
+
+  place(false);
+  followQueue(paint);
+
+  return {
+    /** The docked panel's width in px; 0 while it is closed or a dialog. */
+    dockedWidth: () => (docked() ? width : 0),
+    get isOpen() {
+      return open;
+    },
+    get view() {
+      return last;
+    },
+  };
+}
