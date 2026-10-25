@@ -15,7 +15,8 @@ use klepsydra_fleet::receiver::Log;
 use klepsydra_fleet::watch::unix_now;
 use serde_json::Value;
 
-const TIMES: [&str; 7] = [
+/// The snapshot's times, as the wall's ?demo shifts them (feed.js TIMES).
+const TIMES: [&str; 10] = [
     "status_at",
     "active_at",
     "updated_at",
@@ -23,6 +24,9 @@ const TIMES: [&str; 7] = [
     "at",
     "started_at",
     "ends_at",
+    "until",
+    "settled_at",
+    "turn_at",
 ];
 
 fn shifted(v: &mut Value, by: i64) {

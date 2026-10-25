@@ -17,7 +17,7 @@ use http_body_util::{BodyExt, Empty, Full};
 use hyper::body::{Body, Bytes, Frame, Incoming};
 use hyper::header::{
     HeaderValue, ALLOW, CACHE_CONTROL, CONNECTION, CONTENT_LENGTH, CONTENT_SECURITY_POLICY,
-    CONTENT_TYPE, HOST, ORIGIN, REFERRER_POLICY, X_CONTENT_TYPE_OPTIONS,
+    CONTENT_TYPE, HOST, LOCATION, ORIGIN, REFERRER_POLICY, X_CONTENT_TYPE_OPTIONS,
 };
 use hyper::server::conn::http1;
 use hyper::service::service_fn;
@@ -56,9 +56,32 @@ pub const LIMITS: Limits = Limits {
 /// The app's bundled frontend: the bytes at a path such as `fleet/wall.js`.
 pub type Assets = Arc<dyn Fn(&str) -> Option<Vec<u8>> + Send + Sync>;
 
-/// A session's fields the wall reads. The rest (its tmux pane, Claude
-/// process, distro, full launch folder) serve the desktop's actions alone.
-const SESSION_FIELDS: [&str; 18] = [
+/// `resolve` held to the paths in `known`, the bundle's own (with or
+/// without a leading `/`): Tauri's resolver answers a path it lacks with
+/// `<path>.html`, `<path>/index.html`, then `index.html`, which would serve
+/// the gauge's page as any missing file of the wall.
+pub fn exact_assets<K: AsRef<str>>(
+    known: impl IntoIterator<Item = K>,
+    resolve: impl Fn(&str) -> Option<Vec<u8>> + Send + Sync + 'static,
+) -> Assets {
+    let known: std::collections::HashSet<String> = known
+        .into_iter()
+        .map(|k| k.as_ref().trim_start_matches('/').to_string())
+        .collect();
+    Arc::new(move |path: &str| {
+        if known.contains(path) {
+            resolve(path)
+        } else {
+            None
+        }
+    })
+}
+
+/// A session's fields the wall reads, its wrap-up answer and turn among them
+/// (shown, never acted on: the phone has no wrap-up buttons). The rest (its
+/// tmux pane, Claude process, distro, full launch folder) serve the
+/// desktop's actions alone.
+const SESSION_FIELDS: [&str; 21] = [
     "session_id",
     "name",
     "voice",
@@ -77,11 +100,15 @@ const SESSION_FIELDS: [&str; 18] = [
     "ledger",
     "ledger_partial",
     "remote_url",
+    "wrapup",
+    "turn_at",
+    "asked_after_turn",
 ];
 
 /// The snapshot as the phone gets it: each session cut to `SESSION_FIELDS`,
 /// its launch folder to the folder's own name (a card with no name or voice
-/// is named by it), and the speaking line. The receiver's status stays home.
+/// is named by it), the speaking line, and the wall's wrap-up request while
+/// one is shown. The receiver's status stays home.
 pub fn phone_view(snapshot: &Value) -> Value {
     let sessions: Vec<Value> = snapshot
         .get("sessions")
@@ -112,6 +139,9 @@ pub fn phone_view(snapshot: &Value) -> Value {
         "speaking".into(),
         snapshot.get("speaking").cloned().unwrap_or(Value::Null),
     );
+    if let Some(request) = snapshot.get("wrapup").filter(|r| !r.is_null()) {
+        out.insert("wrapup".into(), request.clone());
+    }
     Value::Object(out)
 }
 
@@ -120,6 +150,9 @@ pub fn phone_view(snapshot: &Value) -> Value {
 enum Route {
     /// A file of the bundled frontend, by its path there.
     Asset(String),
+    /// The wall's page by its file name: sent to `/`, the one address where
+    /// the page knows it came from this server.
+    Home,
     Snapshot,
     Events,
 }
@@ -210,6 +243,7 @@ pub fn asset_type(path: &str) -> Option<&'static str> {
 fn route(path: &str) -> Option<Route> {
     match path {
         "/" => Some(Route::Asset("wall.html".into())),
+        "/wall.html" => Some(Route::Home),
         "/fleet.json" => Some(Route::Snapshot),
         "/events" => Some(Route::Events),
         _ => {
@@ -383,6 +417,12 @@ fn handle(req: &Request<Incoming>, s: &Shared) -> Reply {
                 ),
                 None => refuse(StatusCode::NOT_FOUND),
             }
+        }
+        Route::Home => {
+            let mut r = refuse(StatusCode::PERMANENT_REDIRECT);
+            r.headers_mut()
+                .insert(LOCATION, HeaderValue::from_static("/"));
+            r
         }
         Route::Snapshot => match s.snapshots.borrow().clone() {
             Some(json) => answer(
@@ -719,7 +759,7 @@ mod tests {
     fn only_the_walls_files_are_routes() {
         for (path, want) in [
             ("/", Some(Route::Asset("wall.html".into()))),
-            ("/wall.html", Some(Route::Asset("wall.html".into()))),
+            ("/wall.html", Some(Route::Home)),
             ("/fleet/wall.js", Some(Route::Asset("fleet/wall.js".into()))),
             (
                 "/fleet/cast.json",
@@ -792,7 +832,9 @@ mod tests {
                 "distro": "Ubuntu", "claude": {"pid": 42, "start": 7},
                 "background": {"agents": 1, "shells": 0, "tasks": 0},
                 "ledger": {"tokens": {"input": 1}}, "ledger_partial": true,
-                "remote_url": "https://claude.ai/code/session_01ABC"
+                "remote_url": "https://claude.ai/code/session_01ABC",
+                "wrapup": {"state": "blocked", "reason": "a review is running", "at": 5, "settled_at": 6},
+                "turn_at": 4, "asked_after_turn": true
             }, {"session_id": "s2", "launch_dir": "C:\\Users\\aj\\proj", "status": "done"}, "junk"],
             "speaking": {"session_id": "s1", "envelope": [0.5], "started_at": 1.0, "ends_at": 2.0},
             "receiver": {"addr": "127.0.0.1:4318", "listening": true, "error": null}
@@ -813,8 +855,26 @@ mod tests {
             "a non-object session is dropped"
         );
         assert_eq!(v["speaking"], snapshot["speaking"]);
+        assert_eq!(s["wrapup"], snapshot["sessions"][0]["wrapup"]);
+        assert_eq!(s["turn_at"], 4);
+        assert_eq!(s["asked_after_turn"], true);
         let top: Vec<&str> = v.as_object().unwrap().keys().map(String::as_str).collect();
-        assert_eq!(top, ["sessions", "speaking"]);
+        assert_eq!(
+            top,
+            ["sessions", "speaking"],
+            "no wrap-up request, none sent"
+        );
+        let request = json!({"id": "1", "at": 1, "until": 601, "ids": ["s1"]});
+        let mut asked = snapshot.clone();
+        asked["wrapup"] = request.clone();
+        let v = phone_view(&asked);
+        assert_eq!(
+            v["wrapup"], request,
+            "the wall's wrap-up request reaches the phone"
+        );
+        let mut top: Vec<&str> = v.as_object().unwrap().keys().map(String::as_str).collect();
+        top.sort_unstable();
+        assert_eq!(top, ["sessions", "speaking", "wrapup"]);
         let text = v.to_string();
         for private in ["tmux", "/tmp/tmux", "pid", "Ubuntu", "4318", "/home/aj"] {
             assert!(
@@ -835,11 +895,41 @@ mod tests {
         asked: Arc<Mutex<Vec<String>>>,
     }
 
-    fn files(path: &str) -> Option<Vec<u8>> {
-        match path {
-            "wall.html" => Some(b"<!doctype html><title>wall</title>".to_vec()),
-            "fleet/wall.js" => Some(b"export {};".to_vec()),
-            _ => None,
+    /// The stub bundle: the wall, one of its files, and the gauge's page.
+    const BUNDLE: [(&str, &[u8]); 3] = [
+        ("wall.html", b"<!doctype html><title>wall</title>"),
+        ("fleet/wall.js", b"export {};"),
+        ("index.html", b"<!doctype html><title>gauge</title>"),
+    ];
+
+    /// What Tauri 2's asset resolver answers for `path` (tauri
+    /// `manager::AppManager::get_asset`): the file, else `<path>.html`, else
+    /// `<path>/index.html`, else `index.html`.
+    fn tauri_get(path: &str) -> Option<Vec<u8>> {
+        let hit = |p: &str| {
+            BUNDLE
+                .iter()
+                .find(|(k, _)| *k == p)
+                .map(|(_, b)| b.to_vec())
+        };
+        hit(path)
+            .or_else(|| hit(&format!("{path}.html")))
+            .or_else(|| hit(&format!("{path}/index.html")))
+            .or_else(|| hit("index.html"))
+    }
+
+    #[test]
+    fn a_resolver_is_held_to_the_bundles_exact_paths() {
+        for known in [
+            ["/wall.html", "/fleet/wall.js"],
+            ["wall.html", "fleet/wall.js"],
+        ] {
+            let exact = exact_assets(known, tauri_get);
+            assert_eq!(exact("wall.html"), tauri_get("wall.html"));
+            assert_eq!(exact("fleet/wall.js"), tauri_get("fleet/wall.js"));
+            for missing in ["fleet/missing.js", "fleet/wall", "index.html", "", "fleet"] {
+                assert_eq!(exact(missing), None, "{missing}");
+            }
         }
     }
 
@@ -853,9 +943,11 @@ mod tests {
     fn serve(limits: Limits) -> Probe {
         let asked = Arc::new(Mutex::new(Vec::new()));
         let seen = asked.clone();
+        // As the app builds it: Tauri's resolver held to the bundle's keys.
+        let exact = exact_assets(BUNDLE.iter().map(|(k, _)| format!("/{k}")), tauri_get);
         let assets: Assets = Arc::new(move |p: &str| {
             seen.lock().unwrap().push(p.to_string());
-            files(p)
+            exact(p)
         });
         let log: Log = Arc::new(|_| {});
         let server = Server::spawn_with(
@@ -912,7 +1004,7 @@ mod tests {
         let SocketAddr::V4(taken) = p.server.addr() else {
             unreachable!()
         };
-        let again = Server::spawn(taken, Arc::new(files), Arc::new(|_| {}));
+        let again = Server::spawn(taken, Arc::new(tauri_get), Arc::new(|_| {}));
         assert!(again.is_err());
     }
 
@@ -996,7 +1088,7 @@ mod tests {
             "{headers}"
         );
         assert!(lower.contains("frame-ancestors 'none'"), "{headers}");
-        assert_eq!(body, files("wall.html").unwrap());
+        assert_eq!(body, tauri_get("wall.html").unwrap());
         let (code, headers, body) = get(addr, "GET", "/fleet/wall.js", "");
         assert_eq!(code, 200);
         assert!(
@@ -1011,12 +1103,34 @@ mod tests {
         assert!(
             headers.to_ascii_lowercase().contains(&format!(
                 "content-length: {}",
-                files("wall.html").unwrap().len()
+                tauri_get("wall.html").unwrap().len()
             )),
             "{headers}"
         );
         assert!(body.is_empty(), "HEAD sent a body");
-        assert_eq!(get(addr, "GET", "/fleet/missing.js", "").0, 404);
+        // Tauri's resolver answers a missing file with index.html: the
+        // server sends only what the bundle holds at that exact path.
+        assert_eq!(tauri_get("fleet/missing.js"), tauri_get("index.html"));
+        for path in [
+            "/fleet/missing.js",
+            "/fleet/missing.css",
+            "/phone/missing.png",
+            "/sw.js",
+        ] {
+            let (code, _, body) = get(addr, "GET", path, "");
+            assert_eq!(code, 404, "{path}");
+            assert!(body.is_empty(), "{path}: {body:?}");
+        }
+        // The wall has one address, its root, where the page knows it is served.
+        for method in ["GET", "HEAD"] {
+            let (code, headers, body) = get(addr, method, "/wall.html", "");
+            assert_eq!(code, 308, "{method} /wall.html");
+            assert!(
+                headers.to_ascii_lowercase().contains("\r\nlocation: /\r\n"),
+                "{headers}"
+            );
+            assert!(body.is_empty());
+        }
         let before = p.asked.lock().unwrap().len();
         for path in [
             "/dev-fleet.json",
