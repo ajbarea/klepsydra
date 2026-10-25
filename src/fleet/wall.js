@@ -10,6 +10,7 @@ import { createDrawer } from "./drawer.js";
 import { showFace } from "./face.js";
 import { GOLD, SPEAK_FADE_MS, STILL, Speaker, WAVE, waves } from "./speaking.js";
 import { parseDensity, resolveDensity } from "./density.js";
+import { clearAll, clearLabel, endedIds, startLabel, wallState } from "./empty.js";
 
 const TICK_MS = 15_000; // ages re-render between snapshots, as on the gauge
 const FACE_PX = 62; // the comfortable --wall-face less twice its --face-inset
@@ -38,10 +39,35 @@ const newNote = document.getElementById("new-note");
 const bar = document.querySelector(".bar");
 const densityPicker = document.querySelector(".density");
 const ringKey = document.querySelector(".ring-key");
+const startButton = document.getElementById("start-session");
+const clearNote = document.getElementById("clear-note");
+const clearEnded = document.getElementById("clear-ended");
+const emptyTitle = document.getElementById("empty-title");
+// + New session and the empty state's button start a session the same way,
+// and while one runs the other is off too.
+async function startSession(button, note) {
+  if (button.getAttribute("aria-disabled") === "true") return;
+  const other = button === newButton ? startButton : newButton;
+  setOff(other, true);
+  try {
+    await press(button, note, () => window.__TAURI__.core.invoke("launch_session"), "Starting…");
+  } finally {
+    setOff(other, false);
+  }
+}
 newButton.hidden = !inTauri;
-newButton.addEventListener("click", () =>
-  press(newButton, newNote, () => window.__TAURI__.core.invoke("launch_session"), "Starting…"),
-);
+newButton.addEventListener("click", () => startSession(newButton, newNote));
+startButton.hidden = !inTauri;
+// Its answer goes to the bar's note, which stays in view once the empty state gives way.
+startButton.addEventListener("click", () => startSession(startButton, newNote));
+// A cleared id stays off the link until the snapshot that drops its card.
+let cleared = new Set();
+const toClear = () => endedIds(sessions).filter((id) => !cleared.has(id));
+clearEnded.addEventListener("click", () => {
+  if (wallState(sessions) !== "ended") return;
+  const ids = toClear();
+  press(clearEnded, clearNote, () => clearAll(ids, tauri, (id) => cleared.add(id)), "Clearing…").then(() => paintEmpty(!empty.hidden));
+});
 
 let sessions = [];
 let request = null; // the snapshot's wrap-up, while one is shown
@@ -62,6 +88,53 @@ const speaker = new Speaker();
 let speakingEl = null; // the card whose portrait shows the waves
 let frameId = 0;
 let stillTimer = 0;
+let wasState = null;
+let revealed = false; // a focus request named an ended card, so the ended cards show
+let launchDir = null;
+let dirAsk = 0; // the latest get_launch_dir request; an older answer is dropped
+let latest = { state: "empty", cards: [] }; // the last render's, which a deferred sync reads
+
+// The empty state stands in for the wall while nothing runs. With only ended
+// cards it still does, and offers to clear them, until a focus request asks
+// for one of those cards. Read when a sync runs, never when it was asked for.
+const showsCards = () => latest.state === "cards" || revealed;
+const visibleCards = () => (showsCards() ? latest.cards : []);
+
+function paintEmpty(quiet) {
+  empty.hidden = !quiet;
+  wall.hidden = quiet; // it holds no card then
+  paintStart();
+  const n = latest.state === "ended" ? toClear().length : 0;
+  clearEnded.hidden = n === 0 || !inTauri;
+  setText(clearEnded, n ? clearLabel(n) : "");
+}
+
+function paintStart() {
+  const label = startLabel(launchDir);
+  setText(startButton, label);
+  startButton.title = label;
+}
+
+// The launch folder, read again each time the empty state comes back and,
+// while it shows, each time the window does (it hides rather than closes, so
+// a prefs.json edit lands meanwhile). Its answer changes the label only.
+function readLaunchDir() {
+  if (!inTauri) return;
+  const ask = ++dirAsk;
+  window.__TAURI__.core.invoke("get_launch_dir").then(
+    (dir) => {
+      if (ask !== dirAsk) return;
+      launchDir = dir;
+      paintStart();
+    },
+    () => {},
+  );
+}
+const rereadLaunchDir = () => {
+  if (!empty.hidden && !document.hidden) readLaunchDir();
+};
+addEventListener("focus", rereadLaunchDir);
+document.addEventListener("visibilitychange", rereadLaunchDir);
 
 // Everything session-derived goes in as text; the badge and branch icon are
 // markup built from constants.
@@ -278,11 +351,17 @@ const canSlide = () =>
 function render(snapshot) {
   const started = snapshot ?? new Set();
   const now = Date.now();
-  empty.hidden = sessions.length > 0;
+  const state = wallState(sessions);
+  if (state !== "ended") revealed = false;
+  if (state !== wasState && state !== "cards") readLaunchDir();
+  wasState = state;
   paintTally();
   const cards = sessions.map((s) => card(s, cast, now, request));
+  const prior = new Set(cardOf.keys()); // a card for one of these is not new
   cardOf = new Map(cards.map((c) => [c.id, c]));
-  ringKey.hidden = !showsRingKey(cards);
+  latest = { state, cards };
+  cleared = new Set([...cleared].filter((id) => cardOf.has(id)));
+  ringKey.hidden = !showsRingKey(visibleCards());
   const said = wrapupAnnouncements(wrapupBefore, cards);
   wrapupBefore = wrapupLines(cards);
   const safe = Boolean(request) && readiness(sessions, request).safe;
@@ -290,28 +369,35 @@ function render(snapshot) {
   wasSafe = safe;
   const sync = () => {
     const focused = document.activeElement;
-    // A new card arrives once: its figure steps in and its light rises (wall.css
-    // .arriving). Only on the comfortable band; a compact card has no stage to run it.
-    const make = () => {
+    const inside = wall.contains(focused) || empty.contains(focused);
+    const visible = visibleCards();
+    // A new session's card arrives once: its figure steps in and its light rises
+    // (wall.css .arriving). Only on the comfortable band; a compact card has no
+    // stage to run it. An ended card shown again is not new.
+    const make = (c) => {
       const el = tpl.content.firstElementChild.cloneNode(true);
-      if (shown === "comfortable" && !reducedMotion()) el.classList.add("arriving");
+      if (!prior.has(c.id) && shown === "comfortable" && !reducedMotion()) el.classList.add("arriving");
       return el;
     };
-    syncChildren(wall, cards, (c) => c.id, make, paint);
+    paintEmpty(!showsCards());
+    syncChildren(wall, visible, (c) => c.id, make, paint);
     for (const el of wall.children) if (started.has(el.dataset.key) && !reducedMotion()) el.classList.add("pulse");
     // Moving a card in the DOM drops focus; give it back to what had it.
     if (focused !== document.body && focused?.isConnected && document.activeElement !== focused) focused.focus({ preventScroll: true });
     else if (focused && focused !== document.body && !focused.isConnected) wall.focus({ preventScroll: true }); // its card left
+    // The wall gave way to the empty state, or the clear link left: its title takes focus.
+    const lost = document.activeElement === document.body || !usable(document.activeElement);
+    if (inside && lost) [emptyTitle, wall].find(usable)?.focus({ preventScroll: true });
     reconcileActions();
     // Auto looks again when a card arrives or leaves, not when one's text changes.
-    const ids = cards.map((c) => c.id).join(" ");
+    const ids = visible.map((c) => c.id).join(" ");
     if (ids !== lastIds) {
       lastIds = ids;
       showDensity();
     }
   };
   const was = [...wall.children].map((el) => el.dataset.key);
-  if (shouldSlide(was, cards.map((c) => c.id), snapshot) && canSlide()) document.startViewTransition(() => sync());
+  if (shouldSlide(was, visibleCards().map((c) => c.id), snapshot) && canSlide()) document.startViewTransition(() => sync());
   else sync();
   paintWrapup(cards, now);
   return said;
@@ -351,17 +437,22 @@ function showPortrait(id) {
 portrait.addEventListener("close", () => {
   const card = [...wall.children].find((el) => el.dataset.key === openedFrom);
   openedFrom = null;
-  (card?.querySelector(".look") ?? wall).focus();
+  [card?.querySelector(".look"), wall, emptyTitle].find(usable)?.focus();
 });
 // A click on the backdrop lands on the dialog itself; its content fills the rest.
 portrait.addEventListener("click", (e) => {
   if (e.target === portrait) portrait.close();
 });
 
-function focusCard(id) {
+// A request for a card not drawn yet waits one snapshot, and no longer.
+function focusCard(id, retry = false) {
+  if (!revealed && wallState(sessions) === "ended" && sessions.some((s) => s.session_id === id)) {
+    revealed = true;
+    render();
+  }
   const el = [...wall.children].find((c) => c.dataset.key === id);
   if (!el) {
-    pending = id;
+    pending = retry ? null : id;
     return;
   }
   pending = null;
@@ -432,7 +523,7 @@ function receive(message) {
     if (said.length) announce(said.join(". "));
     drawer.refresh();
     if (!frameId) drawSpeaking();
-    if (pending) focusCard(pending);
+    if (pending) focusCard(pending, true);
   }
   if (typeof message?.focus === "string") focusCard(message.focus);
 }
@@ -668,9 +759,9 @@ dialog.addEventListener("close", () => {
   else startWrapup(what.ids);
 });
 
-// Focus back to `first`, else the card (Enter or Space on it does nothing), else the wall.
+// Focus back to `first`, else the card (Enter or Space on it does nothing), else the wall or the empty state.
 function settleFocus(id, first = null) {
-  [first, cardEl(id), wall].find(usable)?.focus({ preventScroll: true });
+  [first, cardEl(id), wall, emptyTitle].find(usable)?.focus({ preventScroll: true });
 }
 
 function hideEnding(el, menuOff = false) {

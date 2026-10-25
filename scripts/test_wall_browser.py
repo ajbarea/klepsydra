@@ -13,7 +13,11 @@ undo window run against a stubbed `window.__TAURI__` that records every invoke,
 and no single click or key, nor any run of them short of the full deliberate
 path, sends end_session. Wrapping up: the confirm's groups, each card's line
 in both densities, the bar's count, Stop wrap-up and Safe to restart, and End
-all ready sessions… under the same rule as End.
+all ready sessions… under the same rule as End. With no sessions, or only
+ended ones, the empty state stands in the wall's place, in view and
+unscrolled, and its buttons send only launch_session and clear_session for
+the ended ids; set $KLEPSYDRA_EMPTY_SHOT to a path for a 1920x1000
+screenshot of it.
 
     uv run -q --no-project --with playwright python -I scripts/test_wall_browser.py
 
@@ -905,6 +909,7 @@ window.__TAURI__ = { core: {
       return Promise.resolve();
     }
     if (cmd === 'get_wall_density') return Promise.resolve('auto');
+    if (cmd === 'get_launch_dir') { window.__calls.push([cmd, args]); return window.__dirAnswer ? window.__dirAnswer() : Promise.resolve('/home/aj/ajsoftworks'); }
     if (cmd === 'end_session' && window.__hold) { window.__calls.push([cmd, args]); return window.__hold; }
     window.__calls.push([cmd, args]);
     if (cmd === 'start_wrapup') return Promise.resolve(window.__asked ?? []);
@@ -916,20 +921,395 @@ ENDS = "window.__calls.filter(([c]) => c === 'end_session')"
 WORKING_CARD = ".card:has(.pill .label:text-is('working')):has(.menu:not([hidden]))"
 
 
-def open_app(wall, width=1920, height=1000):
-    """The demo wall as the app would feed it, with invokes recorded."""
+def open_app(wall, width=1920, height=1000, keep=None, motion="no-preference", launch_dir="/home/aj/ajsoftworks"):
+    """The demo wall as the app would feed it, with invokes recorded; `keep`
+    picks which demo sessions the snapshot carries."""
     import time
 
     fixture = json.loads((ROOT / "scripts/fixtures/fleet-demo.json").read_text())
     at = fixture.pop("at")
     snapshot = shifted(fixture, int(time.time()) - at)
-    page = wall.browser.new_page(viewport={"width": width, "height": height})
+    if keep is not None:
+        snapshot["sessions"] = [s for s in snapshot["sessions"] if keep(s)]
+        snapshot["speaking"] = None
+    page = wall.browser.new_page(
+        viewport={"width": width, "height": height}, reduced_motion=motion
+    )
     page.snapshot = snapshot
-    page.add_init_script(TAURI_STUB % json.dumps(snapshot))
+    page.snapshot_all = shifted(json.loads((ROOT / "scripts/fixtures/fleet-demo.json").read_text()), int(time.time()) - at)["sessions"]
+    stub = TAURI_STUB.replace("'/home/aj/ajsoftworks'", json.dumps(launch_dir))
+    page.add_init_script(stub % json.dumps(snapshot))
     page.goto(f"http://127.0.0.1:{wall.port}/src/wall.html")
-    page.wait_for_function("document.getElementById('wall').children.length > 0")
+    if snapshot["sessions"] and keep is None:
+        page.wait_for_function("document.getElementById('wall').children.length > 0")
+    else:
+        page.wait_for_function("window.__channel !== undefined")
     page.wait_for_timeout(SETTLE_MS)
     return page
+
+
+EMPTY = """() => {
+  const empty = document.getElementById('empty');
+  const box = (sel) => {
+    const el = document.querySelector(sel);
+    if (!el || !el.checkVisibility()) return null;
+    const r = el.getBoundingClientRect();
+    return [Math.round(r.left), Math.round(r.top), Math.round(r.right), Math.round(r.bottom)];
+  };
+  return {
+    empty: empty.checkVisibility(),
+    wall: document.getElementById('wall').checkVisibility(),
+    start: box('#start-session') && document.getElementById('start-session').textContent,
+    clear: box('#clear-ended') && document.getElementById('clear-ended').textContent,
+    keeper: box('.keeper'),
+    title: box('#empty-title'),
+    button: box('#start-session'),
+    scrolls: document.documentElement.scrollHeight > innerHeight,
+    wide: document.documentElement.scrollWidth > innerWidth,
+    alt: document.querySelector('.keeper').getAttribute('alt'),
+    animation: getComputedStyle(empty).animationName,
+  };
+}"""
+
+
+def inside(box, width, height):
+    return box is not None and box[0] >= 0 and box[1] >= 0 and box[2] <= width and box[3] <= height
+
+
+def send(page, snapshot):
+    page.evaluate("(s) => window.__channel.onmessage(s)", snapshot)
+    page.wait_for_timeout(SETTLE_MS)
+
+
+def empty_state(wall):
+    """No sessions: Hesychia, the title and the start button in place of the
+    wall, in view and unscrolled at 1920x1000 and 945x1000; the button runs
+    the same launch as + New session; the fade is off under reduced motion."""
+    for width, height in ((1920, 1000), (945, 1000)):
+        page = open_app(wall, width, height, keep=lambda s: False)
+        got = page.evaluate(EMPTY)
+        laid_out = all(inside(got[k], width, height) for k in ("keeper", "title", "button"))
+        wall.check(
+            got["empty"] and not got["wall"] and laid_out and not got["scrolls"] and not got["wide"],
+            f"the empty state stands in the wall's place, in view at {width}x{height}",
+            got,
+        )
+        if width == 1920:
+            wall.check(
+                got["start"] == "Start a session in /home/aj/ajsoftworks" and got["clear"] is None and got["alt"] == "",
+                "it names the launch folder, offers nothing to clear and its portrait is decoration",
+                [got["start"], got["clear"], got["alt"]],
+            )
+            wall.check(got["animation"] == "empty-fade", "it fades in", got["animation"])
+            shot = os.environ.get("KLEPSYDRA_EMPTY_SHOT")
+            if shot:
+                page.wait_for_timeout(500)
+                page.screenshot(path=shot)
+            page.locator("#start-session").click()
+            page.wait_for_timeout(200)
+            page.locator("#new-session").click()
+            page.wait_for_timeout(200)
+            sent = calls(page, "launch_session")
+            note = page.locator("#new-note").inner_text()
+            wall.check(
+                sent == [["launch_session", None], ["launch_session", None]] and note == "ok",
+                "Start a session and + New session send the same launch, and its note shows the answer",
+                [sent, note],
+            )
+        page.close()
+    page = open_app(wall, keep=lambda s: False, motion="reduce")
+    got = page.evaluate(EMPTY)
+    wall.check(got["empty"] and got["animation"] == "none", "no fade under reduced motion", got["animation"])
+    page.close()
+
+
+SHORT_DIR = "/home/ajbar/ajsoftworks/klepsydra/.claude/worktrees/empty-state"  # 63 characters
+LONG_DIR = "/home/aj/" + "very-long-folder-name/" * 30  # 669 characters
+
+
+def long_folder_fits(wall):
+    """A long launch folder in a narrow window: the start button and the clear
+    link stay in view and the page never scrolls sideways."""
+    for width, height in ((420, 320), (945, 1000)):
+        for folder in (SHORT_DIR, LONG_DIR):
+            page = open_app(wall, width, height, keep=lambda s: s["status"] == "ended", launch_dir=folder)
+            got = page.evaluate(EMPTY)
+            link = page.evaluate("(() => { const r = document.getElementById('clear-ended').getBoundingClientRect(); return [Math.round(r.left), Math.round(r.right)]; })()")
+            row = page.evaluate("Math.round(document.querySelector('.empty-actions').getBoundingClientRect().width)")
+            fits = not got["wide"] and got["button"] and got["button"][0] >= 0 and got["button"][2] <= width and link[0] >= 0 and link[1] <= width
+            wall.check(
+                fits and got["start"] == f"Start a session in {folder}",
+                f"a {len(folder)}-character folder at {width}x{height}: Start and Clear in view, no sideways scroll",
+                {"button": got["button"], "link": link, "row": row, "wide": got["wide"]},
+            )
+            page.close()
+
+
+def reveal_density(wall):
+    """Ended cards that arrive behind the empty state are laid out once they
+    show: a focus request for the last of sixteen finds the wall compact, the
+    card in view and focused, and no card left to arrive."""
+    page = open_app(wall, keep=lambda s: False)
+    import time
+
+    fixture = json.loads((ROOT / "scripts/fixtures/fleet-demo.json").read_text())
+    at = fixture.pop("at")
+    one = next(s for s in shifted(fixture, int(time.time()) - at)["sessions"] if s["status"] == "ended")
+    rows = [{**one, "session_id": f"demo-ended-{i}"} for i in range(16)]
+    send(page, {"sessions": rows, "speaking": None})
+    behind = page.evaluate("[document.getElementById('wall').hidden, document.querySelectorAll('#wall .arriving').length]")
+    target = rows[-1]["session_id"]
+    # Auto measures as the wall shows, before the card is scrolled to, not a frame later.
+    at_once = page.evaluate(
+        "(id) => { window.__channel.onmessage({focus: id}); return document.getElementById('wall').dataset.density; }", target
+    )
+    page.wait_for_timeout(SETTLE_MS * 2)
+    got = page.evaluate(
+        """(id) => { const el = document.querySelector(`.card[data-key="${id}"]`); const r = el.getBoundingClientRect();
+        return {density: document.getElementById('wall').dataset.density, scrolls: document.documentElement.scrollHeight > innerHeight,
+          inView: r.top >= 0 && r.bottom <= innerHeight, focus: document.activeElement.dataset.key ?? null,
+          arriving: document.querySelectorAll('#wall .arriving').length}; }""",
+        target,
+    )
+    wall.check(
+        behind == [True, 0] and at_once == "compact" and got == {"density": "compact", "scrolls": False, "inView": True, "focus": target, "arriving": 0},
+        "sixteen ended cards shown by a focus request: compact, in view, focused, none arriving",
+        [behind, at_once, got],
+    )
+    page.close()
+
+
+def separate_notes(wall):
+    """Start and the clear link each answer in their own note."""
+    page = open_app(wall, keep=lambda s: s["status"] == "ended")
+    page.evaluate(
+        """() => { const inv = window.__TAURI__.core.invoke; window.__TAURI__.core.invoke = (c, a) => {
+          if (c === 'launch_session') return new Promise((r, j) => setTimeout(() => j('no distro'), 300));
+          if (c === 'clear_session') return Promise.reject('running again');
+          return inv(c, a); }; }"""
+    )
+    page.locator("#start-session").click()
+    page.locator("#clear-ended").click()
+    page.wait_for_timeout(500)
+    got = page.evaluate("[document.getElementById('new-note').textContent, document.getElementById('clear-note').textContent]")
+    wall.check(got == ["no distro", "1 of 1 not cleared: running again"], "Start's note and the clear link's note stay apart", got)
+    page.close()
+
+
+def launch_note_outlives_empty_state(wall):
+    """A launch's answer shows where it stays in view once the empty state gives way."""
+    page = open_app(wall, keep=lambda s: False)
+    page.evaluate(
+        """() => { const inv = window.__TAURI__.core.invoke; window.__TAURI__.core.invoke = (c, a) => {
+          if (c === 'launch_session') return new Promise((r, j) => { window.__fail = j; });
+          return inv(c, a); }; }"""
+    )
+    page.locator("#start-session").click()
+    working = next(s for s in page.snapshot_all if s["status"] == "working")
+    send(page, {"sessions": [working], "speaking": None})
+    page.evaluate("window.__fail('The terminal tab has not attached yet.')")
+    page.wait_for_timeout(200)
+    got = page.evaluate(
+        "[document.getElementById('empty').checkVisibility(), [...document.querySelectorAll('[role=status]')].filter((n) => n.checkVisibility() && n.textContent).map((n) => n.textContent)]"
+    )
+    wall.check(got == [False, ["The terminal tab has not attached yet."]], "a late launch error shows after the empty state gives way", got)
+    page.close()
+
+
+def one_launch_at_a_time(wall):
+    """While one start button's launch runs, the other is off and sends nothing."""
+    page = open_app(wall, keep=lambda s: False)
+    page.evaluate(
+        """() => { const inv = window.__TAURI__.core.invoke; window.__TAURI__.core.invoke = (c, a) => {
+          if (c === 'launch_session') { window.__calls.push([c, a ?? null]); return new Promise((r) => { window.__done = r; }); }
+          return inv(c, a); }; }"""
+    )
+    page.locator("#start-session").click()
+    page.wait_for_timeout(100)
+    off = page.evaluate("document.getElementById('new-session').getAttribute('aria-disabled')")
+    page.locator("#new-session").click(force=True)
+    page.wait_for_timeout(100)
+    sent = len(calls(page, "launch_session"))
+    page.evaluate("window.__done('ok')")
+    page.wait_for_timeout(100)
+    back = page.evaluate("document.getElementById('new-session').getAttribute('aria-disabled')")
+    wall.check([off, sent, back] == ["true", 1, None], "one launch at a time across both start buttons", [off, sent, back])
+    page.close()
+
+
+def cleared_link_waits(wall):
+    """After a clear succeeds the link stays away until the snapshot drops the cards."""
+    page = open_app(wall, keep=lambda s: s["status"] == "ended")
+    page.locator("#clear-ended").click()
+    page.wait_for_timeout(200)
+    got = page.evaluate("document.getElementById('clear-ended').checkVisibility()")
+    send(page, {"sessions": [], "speaking": None})
+    after = page.evaluate("[document.getElementById('clear-ended').checkVisibility(), document.getElementById('empty').checkVisibility()]")
+    wall.check([got, after] == [False, [False, True]], "a cleared link stays off until its cards leave", [got, after])
+    page.close()
+
+
+def stale_focus_never_reveals(wall):
+    """A focus request for a card not drawn waits one snapshot; later it cannot reveal ended cards."""
+    page = open_app(wall, keep=lambda s: s["status"] == "working")
+    ghost = next(s for s in page.snapshot_all if s["status"] == "ended")
+    page.evaluate("(id) => window.__channel.onmessage({focus: id})", ghost["session_id"])
+    send(page, page.snapshot)
+    send(page, {"sessions": [ghost], "speaking": None})
+    got = page.evaluate("[document.getElementById('empty').checkVisibility(), document.getElementById('wall').children.length]")
+    wall.check(got == [True, 0], "a stale focus request leaves the quiet wall alone", got)
+    page.close()
+
+
+def reveal_race(wall):
+    """A snapshot that slides the cards, then a focus request for an ended card
+    in the same task: the ended cards show and that card has focus, whichever
+    runs first."""
+    for same in (False, True):
+        page = open_app(wall, keep=lambda s: s["status"] in ("ended", "working"))
+        ss = page.snapshot["sessions"]
+        ended = [s for s in ss if s["status"] == "ended"]
+        now_ended = ended + [{**s, "status": "ended"} for s in ss if s["status"] == "working"]
+        target = ended[0]["session_id"]
+        if same:
+            page.evaluate("([s, id]) => window.__channel.onmessage({sessions: s, speaking: null, focus: id})", [now_ended, target])
+        else:
+            page.evaluate("([s, id]) => { window.__channel.onmessage({sessions: s, speaking: null}); window.__channel.onmessage({focus: id}); }", [now_ended, target])
+        page.wait_for_timeout(700)
+        got = page.evaluate(
+            "[document.getElementById('empty').checkVisibility(), document.getElementById('wall').children.length, document.activeElement.dataset.key ?? document.activeElement.id]"
+        )
+        wall.check(got == [False, len(now_ended), target], f"a reordering snapshot and a focus request {'in one message' if same else 'back to back'}: the ended cards show, that one focused", got)
+        page.close()
+
+
+def reveal_does_not_arrive(wall):
+    """Cards shown again are not new: an ended card a focus request shows, or
+    one shown again when a live session starts, does not play the arrival; the
+    new session's card does."""
+    page = open_app(wall, keep=lambda s: s["status"] == "ended")
+    ended = page.snapshot["sessions"]
+    send(page, {"focus": ended[0]["session_id"]})
+    revealed = page.evaluate("[document.getElementById('wall').dataset.density, document.querySelectorAll('#wall .arriving').length]")
+    send(page, {"sessions": [], "speaking": None})
+    send(page, {"sessions": ended, "speaking": None})
+    working = next(s for s in page.snapshot_all if s["status"] == "working")
+    send(page, {"sessions": [working] + ended, "speaking": None})
+    page.wait_for_timeout(50)
+    arriving = page.evaluate("[...document.querySelectorAll('#wall .arriving')].map((c) => c.dataset.key)")
+    wall.check(revealed == ["comfortable", 0], "an ended card a focus request shows does not arrive", revealed)
+    wall.check(arriving == [working["session_id"]], "with a live session the ended cards show without arriving", arriving)
+    page.close()
+
+
+def bar_follows_empty_state(wall):
+    """Auto measures what is on screen: a compact wall that empties has a comfortable bar."""
+    page = open_app(wall, 945, 1000)
+    was = page.evaluate("[document.querySelector('.bar').dataset.density, document.getElementById('wall').dataset.density]")
+    send(page, {"sessions": [], "speaking": None})
+    now = page.evaluate("[document.querySelector('.bar').dataset.density, document.getElementById('empty').checkVisibility()]")
+    wall.check(was == ["compact", "compact"] and now == ["comfortable", True], "the bar turns comfortable when the wall empties", [was, now])
+    page.close()
+
+
+def launch_dir_follows_prefs(wall):
+    """The window only hides and shows, so the start label reads the folder
+    again when the window regains focus, and keeps only the latest answer."""
+    page = open_app(wall, keep=lambda s: False)
+    page.evaluate("window.__dirAnswer = () => Promise.resolve('/home/aj/new-place')")
+    page.evaluate("dispatchEvent(new Event('focus'))")
+    page.wait_for_timeout(200)
+    label = page.locator("#start-session").inner_text()
+    wall.check(label == "Start a session in /home/aj/new-place", "the start label follows a prefs edit when the window regains focus", label)
+    page.evaluate(
+        """() => { let n = 0; window.__dirAnswer = () => { n++; const mine = n;
+          return new Promise((r) => setTimeout(() => r(mine === 1 ? '/old' : '/new'), mine === 1 ? 400 : 20)); }; }"""
+    )
+    page.evaluate("dispatchEvent(new Event('focus')); document.dispatchEvent(new Event('visibilitychange'))")
+    page.wait_for_timeout(700)
+    label = page.locator("#start-session").inner_text()
+    wall.check(label == "Start a session in /new", "a slower, older answer does not overwrite the latest", label)
+    send(page, {"sessions": [next(s for s in page.snapshot_all if s["status"] == "working")], "speaking": None})
+    before = len(calls(page, "get_launch_dir"))
+    page.evaluate("dispatchEvent(new Event('focus'))")
+    page.wait_for_timeout(100)
+    wall.check(len(calls(page, "get_launch_dir")) == before, "with cards on the wall, focus reads nothing", before)
+    page.close()
+
+
+def browser_hides_app_actions(wall):
+    """Outside the app neither Start nor the clear link shows: both need it."""
+    page = wall.browser.new_page(viewport={"width": 1280, "height": 800})
+    page.goto(f"http://127.0.0.1:{wall.port}/src/wall.html?demo&ended")
+    page.wait_for_function("document.getElementById('empty').checkVisibility()")
+    got = page.evaluate("['start-session', 'clear-ended', 'new-session'].map((id) => document.getElementById(id).checkVisibility())")
+    wall.check(got == [False, False, False], "outside the app the empty state offers no button", got)
+    page.close()
+
+
+def landmarks(wall):
+    """One main landmark, one level-one heading, the empty state inside main."""
+    for keep in (lambda s: False, None):
+        page = open_app(wall, keep=keep)
+        got = page.evaluate(
+            """({main: document.querySelectorAll('main, [role=main]').length, h1: document.querySelectorAll('h1').length,
+              wall: !!document.getElementById('wall').closest('main'), empty: !!document.getElementById('empty').closest('main')})"""
+        )
+        wall.check(got == {"main": 1, "h1": 1, "wall": True, "empty": True}, "one main, one h1, the wall and the empty state inside it", got)
+        page.close()
+
+
+def ended_only(wall):
+    """Only ended cards, at 1920x1000 and 945x1000: the empty state with a
+    link that clears exactly them; a live session brings the wall back, and a
+    focus request for an ended card shows the ended cards."""
+    for width, height in ((1920, 1000), (945, 1000)):
+        ended_only_at(wall, width, height)
+
+
+def ended_only_at(wall, width, height):
+    at = f" at {width}x{height}"
+    page = open_app(wall, width, height, keep=lambda s: s["status"] in ("ended", "working"))
+    ended = next(s for s in page.snapshot["sessions"] if s["status"] == "ended")
+    working = [s for s in page.snapshot["sessions"] if s["status"] == "working"]
+    second = {**ended, "session_id": "demo-ended-2"}
+    mixed = page.evaluate(EMPTY)
+    wall.check(not mixed["empty"] and mixed["wall"], "ended beside working: the cards show" + at, mixed)
+    # The last working session ends while one of its buttons has focus.
+    page.locator(f'.card[data-key="{working[0]["session_id"]}"] .jump').focus()
+    send(page, {"sessions": [ended, second] + [{**s, "status": "ended"} for s in working[:1]], "speaking": None})
+    focus = page.evaluate("document.activeElement.id")
+    send(page, {"sessions": [ended, second], "speaking": None})
+    got = page.evaluate(EMPTY)
+    wall.check(
+        got["empty"] and not got["wall"] and got["clear"] == "Clear 2 ended sessions",
+        "only ended cards: the empty state offers to clear both" + at,
+        got,
+    )
+    wall.check(focus == "empty-title", "focus in a card that gives way goes to the empty state's title" + at, focus)
+    page.locator("#clear-ended").click()
+    page.wait_for_timeout(200)
+    sent = page.evaluate("window.__calls.filter(([c]) => c !== 'get_launch_dir')")
+    wall.check(
+        sent == [["clear_session", {"id": ended["session_id"]}], ["clear_session", {"id": "demo-ended-2"}]],
+        "the link clears each ended session and nothing else" + at,
+        sent,
+    )
+    send(page, {"focus": ended["session_id"]})
+    shown = page.evaluate(EMPTY)
+    focus = page.evaluate("document.activeElement.dataset.key")
+    wall.check(
+        not shown["empty"] and shown["wall"] and focus == ended["session_id"],
+        "a focus request for an ended card shows the ended cards, that one focused" + at,
+        [shown["empty"], shown["wall"], focus],
+    )
+    send(page, {"sessions": [], "speaking": None})
+    got = page.evaluate(EMPTY)
+    wall.check(got["empty"] and not got["wall"] and got["clear"] is None, "all cleared: the empty state, nothing to clear" + at, got)
+    send(page, {"sessions": [working[0]], "speaking": None})
+    got = page.evaluate(EMPTY)
+    wall.check(not got["empty"] and got["wall"], "a live session takes the empty state's place" + at, got)
+    page.close()
 
 
 def menu_of(card):
@@ -1769,6 +2149,21 @@ def main() -> int:
             bulk_end_waits_on_ready,
             wrapup_dialogs_close_on_change,
             one_click_or_key_never_ends_all,
+            empty_state,
+            ended_only,
+            long_folder_fits,
+            reveal_density,
+            separate_notes,
+            launch_note_outlives_empty_state,
+            one_launch_at_a_time,
+            cleared_link_waits,
+            stale_focus_never_reveals,
+            reveal_race,
+            reveal_does_not_arrive,
+            bar_follows_empty_state,
+            launch_dir_follows_prefs,
+            browser_hides_app_actions,
+            landmarks,
         )
         for case in cases:
             if not only or case.__name__ in only:

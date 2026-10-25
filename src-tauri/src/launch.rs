@@ -488,21 +488,42 @@ pub async fn interrupt_session(app: tauri::AppHandle, id: String) -> Result<Stri
     to_pane(app, id, PaneVerb::Interrupt).await
 }
 
+type Prefs = serde_json::Map<String, Value>;
+
+/// The `launch_dir` pref, `~` when unset.
+fn launch_dir(prefs: &Prefs) -> &str {
+    prefs
+        .get("launch_dir")
+        .and_then(Value::as_str)
+        .unwrap_or("~")
+}
+
+/// The folder a launch starts in and wsl.exe's arguments for it: one check
+/// for the empty state's label and the launch.
+fn launch_plan(prefs: &Prefs) -> Result<(&str, Vec<String>), String> {
+    let dir = launch_dir(prefs);
+    let distro = prefs.get("launch_distro").and_then(Value::as_str);
+    Ok((dir, new_args(dir, distro)?))
+}
+
+/// The folder a launch would start in, when prefs.json can be read and the
+/// launch would run.
+fn launch_dir_of(prefs: Option<&Prefs>) -> Option<String> {
+    launch_plan(prefs?).ok().map(|(dir, _)| dir.to_owned())
+}
+
+/// The folder + New session starts in, for the wall's empty state. Reads only.
+#[tauri::command]
+pub async fn get_launch_dir(app: tauri::AppHandle) -> Option<String> {
+    launch_dir_of(crate::read_prefs(&app).as_ref())
+}
+
 /// Start `claude` in the `launch_dir` pref as a window of the fleet session.
 #[tauri::command]
 pub async fn launch_session(app: tauri::AppHandle) -> Result<String, String> {
     let prefs = crate::read_prefs(&app)
         .ok_or("prefs.json could not be read, so the launch folder is unknown.")?;
-    let dir = prefs
-        .get("launch_dir")
-        .and_then(Value::as_str)
-        .unwrap_or("~")
-        .to_owned();
-    let distro = prefs
-        .get("launch_distro")
-        .and_then(Value::as_str)
-        .map(str::to_owned);
-    let args = new_args(&dir, distro.as_deref())?;
+    let (_, args) = launch_plan(&prefs)?;
     tauri::async_runtime::spawn_blocking(move || {
         gated(&app.state::<InFlight>(), || run(&args, timed_out))
     })
@@ -534,6 +555,47 @@ mod tests {
         );
         let a = new_args("/home/aj", Some("Ubuntu")).unwrap();
         assert_eq!(&a[..2], ["-d", "Ubuntu"]);
+    }
+
+    #[test]
+    fn the_empty_state_names_the_folder_a_launch_would_use() {
+        let prefs = |v: Value| v.as_object().cloned().unwrap();
+        assert_eq!(launch_dir_of(None), None, "prefs.json unreadable");
+        assert_eq!(launch_dir_of(Some(&prefs(json!({})))).as_deref(), Some("~"));
+        let set = prefs(json!({"launch_dir": "/home/aj/ajsoftworks"}));
+        assert_eq!(
+            launch_dir_of(Some(&set)).as_deref(),
+            Some("/home/aj/ajsoftworks")
+        );
+        assert_eq!(
+            launch_dir(&set),
+            "/home/aj/ajsoftworks",
+            "the launch reads the same key"
+        );
+        for bad in [json!("relative/dir"), json!("")] {
+            assert_eq!(
+                launch_dir_of(Some(&prefs(json!({"launch_dir": bad})))),
+                None
+            );
+        }
+        // Not a string: the launch falls back to ~, so the label does too.
+        assert_eq!(
+            launch_dir_of(Some(&prefs(json!({"launch_dir": 3})))).as_deref(),
+            Some("~")
+        );
+    }
+
+    #[test]
+    fn the_label_names_a_folder_only_when_the_launch_would_run() {
+        let prefs = |v: Value| v.as_object().cloned().unwrap();
+        let bad = prefs(json!({"launch_dir": "/home/aj", "launch_distro": "Ubuntu 24.04"}));
+        assert_eq!(
+            launch_dir_of(Some(&bad)),
+            None,
+            "a distro wsl.exe would refuse"
+        );
+        let good = prefs(json!({"launch_dir": "/home/aj", "launch_distro": "Ubuntu-24.04"}));
+        assert_eq!(launch_dir_of(Some(&good)).as_deref(), Some("/home/aj"));
     }
 
     #[test]

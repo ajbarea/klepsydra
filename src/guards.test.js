@@ -528,12 +528,12 @@ test("the wall's Jump passes the session id along with its name", () => {
 });
 
 test("the wall has a New session button that calls the launcher", () => {
-  assert.match(read("src/wall.html"), /<button type="button" id="new-session">\+ New session<\/button>/);
+  assert.match(read("src/wall.html"), /<button type="button" id="new-session" class="primary">\+ New session<\/button>/);
   assert.match(read("src/wall.html"), /<span id="new-note" role="status"><\/span>/);
   assert.match(read("src/fleet/wall.js"), /invoke\("launch_session"\)/);
   assert.match(read("src/fleet/wall.js"), /newButton\.hidden = !inTauri/);
   const html = read("src/wall.html");
-  assert.ok(html.indexOf("</div>", html.indexOf('class="bar"')) < html.indexOf('<main id="wall"'));
+  assert.ok(html.indexOf("</header>", html.indexOf('<header class="bar"')) < html.indexOf('<section id="wall"'));
 
   assert.match(html, /<div class="tally" role="group" aria-label="Session counts">/);
   assert.match(html, />Open terminal</);
@@ -666,7 +666,7 @@ test("the ring key draws aria-hidden arcs and gives screen readers one sentence"
   const keys = [...key.matchAll(/<span class="key" aria-hidden="true"><svg[^>]*><path class="(\w+)"[^>]*\/><\/svg>(\w+)<\/span>/g)].map((m) => `${m[1]}:${m[2]}`);
   assert.deepEqual(keys, ["agent:agent", "shell:shell"]);
   assert.ok(html.indexOf('class="tally"') < html.indexOf('class="ring-key"'), "beside the tally");
-  assert.match(read("src/fleet/wall.js"), /ringKey\.hidden = !showsRingKey\(cards\)/);
+  assert.match(read("src/fleet/wall.js"), /ringKey\.hidden = !showsRingKey\(visibleCards\(\)\)/);
   assert.match(html, /<title>Background work: one arc per subagent \(thick\) or shell \(thin\)<\/title>/);
 });
 

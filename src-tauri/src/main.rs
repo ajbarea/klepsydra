@@ -837,7 +837,8 @@ fn main() {
             fleet::get_wall_density,
             fleet::set_wall_density,
             jump::jump_to_terminal,
-            launch::launch_session
+            launch::launch_session,
+            launch::get_launch_dir
         ])
         .setup(|app| {
             let window = app.get_webview_window("main").expect("main window");
