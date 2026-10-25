@@ -899,8 +899,9 @@ def shifted(value, by):
 
 
 # Stands in for the Tauri runtime. In the app the wall's only feed is
-# fleet_subscribe, which hands a Channel the snapshot (ipc.js `follow`); every
-# other command is recorded in window.__calls and answers "ok".
+# fleet_subscribe, which hands a Channel the snapshot (ipc.js `follow`); the
+# Queue panel's queue_subscribe gets nothing; every other command is recorded
+# in window.__calls and answers "ok".
 TAURI_STUB = """
 window.__calls = [];
 window.__TAURI__ = { core: {
@@ -911,6 +912,7 @@ window.__TAURI__ = { core: {
       setTimeout(() => args.onMessage.onmessage(%s), 0);
       return Promise.resolve();
     }
+    if (cmd === 'queue_subscribe') return Promise.resolve();
     if (cmd === 'get_wall_density') return Promise.resolve('auto');
     if (cmd === 'get_launch_dir') { window.__calls.push([cmd, args]); return window.__dirAnswer ? window.__dirAnswer() : Promise.resolve('/home/aj/ajsoftworks'); }
     if (cmd === 'end_session' && window.__hold) { window.__calls.push([cmd, args]); return window.__hold; }

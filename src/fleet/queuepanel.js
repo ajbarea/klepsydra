@@ -225,7 +225,17 @@ export function createQueuePanel({ dialog, button, onLayout = () => {}, onResize
     // Read off the page, not from toggle events: one still queued would land after the repaint.
     for (const d of content.querySelectorAll("details")) opened.set(d.dataset.key, d.open);
     const shown = present(view, (t) => opened.get(t), document, copy);
-    button.textContent = queueLabel(shown.count);
+    // The words after the count are visually hidden below the dock breakpoint
+    // (wall.css), where the half-screen bar has no room; the name keeps them.
+    const label = queueLabel(shown.count);
+    const cut = label.indexOf(" for you");
+    button.replaceChildren(cut < 0 ? label : label.slice(0, cut));
+    if (cut >= 0) {
+      const more = document.createElement("span");
+      more.className = "for-you";
+      more.textContent = label.slice(cut);
+      button.append(more);
+    }
     pathLine.textContent = view.path ?? "";
     pathLine.title = view.path ?? "";
     problem.hidden = !shown.problem;
