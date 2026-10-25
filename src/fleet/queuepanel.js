@@ -3,7 +3,7 @@
 // narrow. Every word from the file goes in through queue.js as text.
 import { follow } from "../ipc.js";
 import { inTauri } from "./feed.js";
-import { build, queueLabel, render } from "./queue.js";
+import { present, queueLabel } from "./queue.js";
 
 /** At this window width and wider the panel docks; below it, it is a modal dialog. */
 export const DOCK_MIN_PX = 1200;
@@ -196,16 +196,18 @@ export function createQueuePanel({ dialog, button, onLayout = () => {} }) {
     last = view;
     // Read off the page, not from toggle events: one still queued would land after the repaint.
     for (const d of content.querySelectorAll("details")) opened.set(d.dataset.key, d.open);
-    const shown = view.text !== null && view.text !== undefined;
-    const { nodes, count } = shown ? render(view.text, (t) => opened.get(t)) : { nodes: [], count: null };
-    button.textContent = queueLabel(count);
+    const shown = present(view, (t) => opened.get(t), document, copy);
+    button.textContent = queueLabel(shown.count);
     pathLine.textContent = view.path ?? "";
     pathLine.title = view.path ?? "";
-    problem.hidden = !view.problem;
-    problem.textContent = view.problem ?? "";
+    problem.hidden = !shown.problem;
+    problem.textContent = shown.problem ?? "";
     const at = controls().indexOf(document.activeElement);
     const scroll = body.scrollTop;
-    content.replaceChildren(...build(nodes, document, { copy }));
+    // One node at a time: a spread of a long paragraph's nodes would overflow the stack.
+    const fragment = document.createDocumentFragment();
+    for (const child of shown.children) fragment.append(child);
+    content.replaceChildren(fragment);
     body.scrollTop = scroll;
     if (at >= 0) (controls()[at] ?? title).focus();
   }

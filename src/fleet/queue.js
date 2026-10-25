@@ -30,8 +30,25 @@ export const parse = (text) => md.parse(text ?? "", {});
 const node = (tag, props = {}) => ({ tag, kids: [], ...props });
 const DONE = "✅";
 const PENDING = "📋";
-/** A comment alone is invisible in any renderer, so it stays out of the panel too. */
-const commentOnly = (html) => /^\s*<!--[\s\S]*?-->\s*$/.test(html);
+/**
+ * `html` less its comments, which no renderer shows. An unclosed one stays as
+ * written. One pass, so a file of unclosed openers stays linear.
+ */
+function uncommented(html) {
+  let out = "";
+  let at = 0;
+  for (;;) {
+    const open = html.indexOf("<!--", at);
+    const close = open < 0 ? -1 : html.indexOf("-->", open + 4);
+    if (close < 0) return out + html.slice(at);
+    out += html.slice(at, open);
+    at = close + 3;
+  }
+}
+/** Append each of `items` to `list`: a spread of a long paragraph would overflow the stack. */
+const pushAll = (list, items) => {
+  for (const item of items) list.push(item);
+};
 
 const BLOCK = {
   paragraph: "p",
@@ -68,7 +85,8 @@ function inline(children) {
     else if (c.type === "hardbreak") top.kids.push(node("br"));
     else if (c.type === "image") top.kids.push(c.content);
     else if (c.type === "html_inline") {
-      if (!commentOnly(c.content)) top.kids.push(c.content);
+      const shown = uncommented(c.content);
+      if (shown) top.kids.push(shown);
     } else if (c.content) top.kids.push(c.content);
   }
   return root.kids;
@@ -121,12 +139,13 @@ export function toTree(tokens) {
     } else if (t.nesting === -1) {
       if (stack.length > 1) stack.pop();
     } else if (t.type === "inline") {
-      top.kids.push(...inline(t.children));
+      pushAll(top.kids, inline(t.children));
     } else if (t.type === "fence" || t.type === "code_block") {
       const code = t.content.replace(/\n$/, "");
       top.kids.push(node("div", { cls: "q-code", copy: code, kids: [node("pre", { kids: [node("code", { text: code })] })] }));
     } else if (t.type === "html_block") {
-      if (!commentOnly(t.content)) top.kids.push(node("pre", { cls: "q-html", text: t.content.replace(/\n$/, "") }));
+      const shown = uncommented(t.content).trim();
+      if (shown) top.kids.push(node("pre", { cls: "q-html", text: shown }));
     } else if (t.type === "hr") {
       top.kids.push(node("hr"));
     } else if (t.content) {
@@ -179,25 +198,17 @@ export function sections(nodes, opened = () => undefined) {
 }
 
 /**
- * Top-level items in the file's first Needs you section, less the ones
- * marked ✅; null when the file has no such section.
+ * The visible top-level items of the first Needs you section that do not
+ * read as done: counted from the nodes the panel shows, so the two agree.
+ * Null when the file has no such section.
  */
-export function needsYouCount(tokens) {
-  const at = tokens.findIndex(
-    (t, i) => t.type === "heading_open" && t.tag === "h2" && isNeedsYou(tokens[i + 1]?.content ?? ""),
-  );
-  if (at < 0) return null;
-  let level = null;
+export function needsYouCount(nodes) {
+  const needs = nodes.find((n) => typeof n !== "string" && n.tag === "details" && n.cls === "q-needs");
+  if (!needs) return null;
   let count = 0;
-  for (let i = at + 3; i < tokens.length; i++) {
-    const t = tokens[i];
-    if (t.type === "heading_open" && (t.tag === "h1" || t.tag === "h2")) break;
-    if (t.type !== "list_item_open") continue;
-    level ??= t.level;
-    if (t.level !== level) continue;
-    // The item's first inline token is its own text.
-    const first = tokens.slice(i + 1).find((x) => x.type === "inline");
-    if (!first?.content.trimStart().startsWith(DONE)) count++;
+  for (const list of needs.kids) {
+    if (typeof list === "string" || (list.tag !== "ol" && list.tag !== "ul")) continue;
+    for (const item of list.kids) if (typeof item !== "string" && item.tag === "li" && item.cls !== "q-done") count++;
   }
   return count;
 }
@@ -224,7 +235,7 @@ export function build(nodes, doc, { copy }) {
     if (n.key !== undefined) el.dataset.key = n.key;
     if (n.tag === "details") el.open = Boolean(n.open);
     if (n.text !== undefined) el.textContent = n.text;
-    else el.append(...build(n.kids, doc, { copy }));
+    else for (const k of build(n.kids, doc, { copy })) el.append(k);
     out.push(el);
     if (n.copy !== undefined) el.append(copyButton(doc, "Copy", "Copy code", n.copy, copy));
     if (n.link) out.push(copyButton(doc, "Copy link", `Copy link: ${n.link}`, n.link, copy));
@@ -244,6 +255,20 @@ function copyButton(doc, label, name, text, copy) {
 
 /** The queue file's markdown as the panel shows it: its nodes and the Needs you count. */
 export function render(text, opened) {
-  const tokens = parse(text);
-  return { nodes: sections(toTree(tokens), opened), count: needsYouCount(tokens) };
+  const nodes = sections(toTree(parse(text)), opened);
+  return { nodes, count: needsYouCount(nodes) };
+}
+
+/**
+ * What the panel shows for `view`: its elements, the count and the problem
+ * line. A file that cannot be shown says so rather than leaving the last one up.
+ */
+export function present(view, opened, doc, copy, renderWith = render) {
+  if (view.text === null || view.text === undefined) return { children: [], count: null, problem: view.problem ?? null };
+  try {
+    const { nodes, count } = renderWith(view.text, opened);
+    return { children: build(nodes, doc, { copy }), count, problem: view.problem ?? null };
+  } catch (err) {
+    return { children: [], count: null, problem: `The queue file could not be shown: ${err?.message ?? err}` };
+  }
 }

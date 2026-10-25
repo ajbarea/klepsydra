@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { build, needsYouCount, parse, queueLabel, render, safeHref, sections, textOf, toTree } from "./fleet/queue.js";
+import { build, parse, present, queueLabel, render, safeHref, sections, textOf, toTree } from "./fleet/queue.js";
 
 const FIXTURE = readFileSync(new URL("../scripts/fixtures/queue-demo.md", import.meta.url), "utf8");
 
@@ -35,7 +35,7 @@ const doc = { createElement: (t) => new El(t), createTextNode: (text) => ({ text
 function dom(text, opened) {
   const root = new El("div");
   const copied = [];
-  root.append(...build(render(text, opened).nodes, doc, { copy: (t) => copied.push(t) }));
+  for (const n of build(render(text, opened).nodes, doc, { copy: (t) => copied.push(t) })) root.append(n);
   return { root, copied };
 }
 const find = (root, tag) => root.all((e) => e.tag === tag);
@@ -165,13 +165,14 @@ test("sections fold, Needs you open by default and the rest as remembered", () =
 });
 
 test("the Needs you count is its top-level items less the done ones, and null without the section", () => {
-  assert.equal(needsYouCount(parse(FIXTURE)), 4, "five items, one ✅");
-  assert.equal(needsYouCount(parse("# Q\n\n## Running now\n\n1. a\n")), null);
-  assert.equal(needsYouCount(parse("")), null);
-  assert.equal(needsYouCount(parse("## Needs you\n\nNothing today.\n\n## Later\n\n1. a\n2. b\n")), 0);
-  assert.equal(needsYouCount(parse("## needs YOU now\n\n- a\n  - nested\n  - nested\n- b\n")), 2, "nested items are part of their item");
-  assert.equal(needsYouCount(parse("## Needs you\n\n- a\n\n### Sub\n\n- b\n\n## Next\n\n- c\n")), 2, "a ### stays in the section");
-  assert.equal(needsYouCount(parse("## Not needs you\n\n- a\n")), null);
+  const count = (text) => render(text).count;
+  assert.equal(count(FIXTURE), 4, "five items, one ✅");
+  assert.equal(count("# Q\n\n## Running now\n\n1. a\n"), null);
+  assert.equal(count(""), null);
+  assert.equal(count("## Needs you\n\nNothing today.\n\n## Later\n\n1. a\n2. b\n"), 0);
+  assert.equal(count("## needs YOU now\n\n- a\n  - nested\n  - nested\n- b\n"), 2, "nested items are part of their item");
+  assert.equal(count("## Needs you\n\n- a\n\n### Sub\n\n- b\n\n## Next\n\n- c\n"), 2, "a ### stays in the section");
+  assert.equal(count("## Not needs you\n\n- a\n"), null);
 });
 
 test("the header label cannot be read as the sessions' needs-you tally", () => {
@@ -196,7 +197,7 @@ test("a file at the size cap parses and renders quickly", () => {
   const big = FIXTURE.repeat(Math.ceil((256 * 1024) / FIXTURE.length)).slice(0, 256 * 1024);
   const started = performance.now();
   const root = new El("div");
-  root.append(...build(render(big).nodes, doc, { copy() {} }));
+  for (const n of build(render(big).nodes, doc, { copy() {} })) root.append(n);
   const ms = performance.now() - started;
   assert.ok(ms < 1000, `${ms.toFixed(0)} ms`);
 });
@@ -213,4 +214,67 @@ test("the docked width keeps to its bounds and leaves the cards room; no number 
   assert.equal(clampWidth(700, 1300), 600, "700 px stay for the cards");
   assert.equal(clampWidth(700, 945), WIDTH.min, "never below the minimum");
   assert.equal(clampWidth(500.4, 1920), 500);
+});
+
+// The count is what the panel shows: the visible top-level items of the
+// Needs you section that do not read as done.
+test("the Needs you count agrees with the panel, whatever the markup", () => {
+  const count = (text) => render(text).count;
+  const shownNotDone = (text) => {
+    const { root } = dom(text);
+    const needs = root.all((e) => e.tag === "details" && e.className === "q-needs")[0];
+    if (!needs) return null;
+    return needs.kids.filter((k) => k.tag === "ol" || k.tag === "ul").flatMap((l) => l.kids.filter((i) => i.tag === "li" && i.className !== "q-done")).length;
+  };
+  for (const [text, want] of [
+    ["## Needs you\n\n1. **✅ Done.**\n2. b\n", 1],
+    ["## **Needs you**\n\n- a\n- b\n", 2],
+    ["## [Needs you](https://x.example)\n\n- a\n", 1],
+    ["## Needs you\n\n1.\n2. ✅ b\n", 1],
+    ["## Needs you\n\n- ![✅](x.png) shipped\n- b\n", 1],
+    ["## Needs you\n\n> - a\n\n- b\n- c\n", 2],
+    ["## Needs you\n\n- a\n\n## Needs you\n\n- b\n- c\n", 1],
+  ]) {
+    assert.equal(count(text), want, JSON.stringify(text));
+    assert.equal(count(text), shownNotDone(text), `display: ${JSON.stringify(text)}`);
+  }
+});
+
+test("a long Needs you list counts in well under a second", () => {
+  const text = "## Needs you\n\n" + "- a\n".repeat(65000);
+  const started = performance.now();
+  assert.equal(render(text).count, 65000);
+  const ms = performance.now() - started;
+  assert.ok(ms < 1000, `${ms.toFixed(0)} ms`);
+});
+
+test("a paragraph of many inline nodes renders without overflowing the stack", () => {
+  for (const text of ["a\n".repeat(131071), "*a".repeat(131072), "`a` ".repeat(65535)]) {
+    assert.doesNotThrow(() => dom(text), `${text.slice(0, 6)}… (${text.length})`);
+  }
+});
+
+test("a render that throws is one problem line, not the old file", () => {
+  const boom = () => {
+    throw new RangeError("Maximum call stack size exceeded");
+  };
+  const shown = present({ path: "/q.md", text: "# Q", problem: null }, () => undefined, doc, () => {}, boom);
+  assert.deepEqual([shown.count, shown.children.length], [null, 0]);
+  assert.equal(shown.problem, "The queue file could not be shown: Maximum call stack size exceeded");
+  const ok = present({ path: "/q.md", text: "## Needs you\n\n- a\n", problem: null }, () => undefined, doc, () => {});
+  assert.deepEqual([ok.count, ok.problem, ok.children.length > 0], [1, null, true]);
+  const missing = present({ path: "/q.md", text: null, problem: "No queue file at this path." }, () => undefined, doc, () => {});
+  assert.deepEqual([missing.count, missing.problem, missing.children.length], [null, "No queue file at this path.", 0]);
+});
+
+test("comments are left out wherever they sit, and the text between them stays", () => {
+  assert.equal(dom("<!-- a --> Ship the fix today <!-- b -->\n").root.textContent, "Ship the fix today");
+  assert.equal(dom("<!-- a -->\n").root.kids.length, 0);
+  assert.equal(dom("a <!-- x --> b\n").root.textContent, "a  b");
+  assert.equal(dom("<div><!-- x --></div>\n").root.textContent, "<div></div>");
+  // An unclosed comment shows as written, and many of them stay linear.
+  assert.equal(dom("<!-- open\n").root.textContent, "<!-- open");
+  const started = performance.now();
+  dom("<!--".repeat(65536));
+  assert.ok(performance.now() - started < 1000);
 });
