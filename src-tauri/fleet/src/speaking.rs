@@ -231,6 +231,8 @@ mod tests {
             ledger: None,
             ledger_partial: false,
             wrapup: None,
+            turn_at: None,
+            asked_after_turn: false,
             marks: Default::default(),
         }
     }

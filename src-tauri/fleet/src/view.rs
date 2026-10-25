@@ -102,6 +102,12 @@ pub struct View {
     /// JSON otherwise.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub wrapup: Option<crate::wrapup::Answer>,
+    /// When its latest turn began, prompts and background notifications alike.
+    pub turn_at: Option<i64>,
+    /// It waits on AJ for something asked after its turn had ended, so no
+    /// Stop follows his answer; left out of the JSON when not.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub asked_after_turn: bool,
     #[serde(skip)]
     pub marks: Marks,
 }
@@ -269,6 +275,9 @@ pub fn view(entry: &Entry, now: i64) -> Option<View> {
         ledger: None,
         ledger_partial: false,
         wrapup: None,
+        turn_at: f.turn_at.map(at),
+        asked_after_turn: status == Status::NeedsYou
+            && f.needs.as_ref().and_then(|n| n.turn_over) == Some(true),
         marks: Marks {
             state_at: f.state_at,
             turns: f.counted_turns(),
@@ -350,7 +359,7 @@ pub fn snapshot(entries: &[Entry], now: i64) -> Snapshot {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::session::{Background, Ended, Host};
+    use crate::session::{Background, Ended, Host, Needs};
 
     const NOW: i64 = 1_792_353_000;
 
@@ -378,6 +387,8 @@ mod tests {
             background: vec![],
             turns: None,
             turns_at: None,
+            turn_at: None,
+            needs: None,
         }
     }
 
@@ -392,6 +403,37 @@ mod tests {
 
     fn ids(s: &Snapshot) -> Vec<&str> {
         s.sessions.iter().map(|v| v.session_id.as_str()).collect()
+    }
+
+    #[test]
+    fn a_turn_start_is_on_the_readers_clock_and_old_files_have_none() {
+        let mut e = entry("a", State::Working, NOW - 5, NOW - 5);
+        assert_eq!(
+            view(&e, NOW).unwrap().turn_at,
+            None,
+            "a file from before the field"
+        );
+        // Writer clock 600 s ahead; the file landed at NOW - 5 by this clock.
+        e.file.written_at = Some(NOW - 5 + 600);
+        e.file.turn_at = Some(NOW - 20 + 600);
+        assert_eq!(view(&e, NOW).unwrap().turn_at, Some(NOW - 20));
+    }
+
+    #[test]
+    fn a_question_asked_after_the_turn_ended_is_marked_so() {
+        let mut e = entry("a", State::NeedsYou, NOW - 5, NOW - 5);
+        assert!(!view(&e, NOW).unwrap().asked_after_turn);
+        e.file.needs = Some(Needs {
+            turn_over: Some(true),
+        });
+        assert!(view(&e, NOW).unwrap().asked_after_turn);
+        let json = serde_json::to_value(view(&e, NOW).unwrap()).unwrap();
+        assert_eq!(json["asked_after_turn"], true);
+        e.file.state = State::Done;
+        assert!(
+            !view(&e, NOW).unwrap().asked_after_turn,
+            "only while it waits on AJ"
+        );
     }
 
     #[test]

@@ -436,29 +436,15 @@ pub async fn start_wrapup(
     }
     let r = wrapup::start(&dir, i64::try_from(now_ms).unwrap_or(i64::MAX), &listed)
         .map_err(|e| format!("Could not start the wrap-up: {e}"))?;
-    let mut plan = Vec::new();
-    let mut targets = std::collections::HashMap::new();
-    for s in &sessions {
-        let Some(id) = s["session_id"].as_str().map(str::to_owned) else {
-            continue;
-        };
-        if !r.ids.contains(&id) {
-            continue;
-        }
-        let Ok(status) = serde_json::from_value(s["status"].clone()) else {
-            continue;
-        };
-        let t = target(&snapshot, &id);
-        // As the wall judges it: a fleet pane with a known Claude process.
-        let typable = t.as_ref().is_some_and(|t| is_fleet(t) && t.pid > 0);
-        let Some(route) = wrapup::route(status, s["reason"].as_str(), typable) else {
-            continue;
-        };
-        if let Some(t) = t {
-            targets.insert(id.clone(), t);
-        }
-        plan.push((id, route));
-    }
+    // As the wall judges it: a fleet pane with a known Claude process.
+    let targets: std::collections::HashMap<String, Target> = r
+        .ids
+        .iter()
+        .filter_map(|id| Some((id.clone(), target(&snapshot, id)?)))
+        .filter(|(_, t)| is_fleet(t) && t.pid > 0)
+        .collect();
+    // Routed from the session files as they read now; each is read again just before typing.
+    let plan = wrapup::plan(&dir, &r.ids, |id| targets.contains_key(id), r.at);
     tauri::async_runtime::spawn_blocking(move || {
         wrapup::ask(&dir, &r, &plan, r.at, |id| {
             let failed = |error: String| Failed {

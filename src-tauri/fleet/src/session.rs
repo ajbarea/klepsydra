@@ -109,6 +109,19 @@ fn lenient_turns<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<u64>, 
     ))
 }
 
+/// What a session waiting on AJ needs. Only whether the ask came after its
+/// turn had ended (a background subagent's) is read.
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq)]
+pub struct Needs {
+    #[serde(default)]
+    pub turn_over: Option<bool>,
+}
+
+/// `needs` when it reads as one; any other shape costs only the field.
+fn lenient_needs<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<Needs>, D::Error> {
+    Ok(serde_json::from_value(serde_json::Value::deserialize(d)?).ok())
+}
+
 /// The kernel boot and distro a session runs on.
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
 pub struct Host {
@@ -167,6 +180,12 @@ pub struct SessionFile {
     /// both along unchanged while it moves `written_at`.
     #[serde(default)]
     pub turns_at: Option<i64>,
+    /// When its latest turn began: every prompt, a background task's
+    /// notification included. None from a hook that never stamped it.
+    #[serde(default)]
+    pub turn_at: Option<i64>,
+    #[serde(default, deserialize_with = "lenient_needs")]
+    pub needs: Option<Needs>,
 }
 
 /// Why a session file was skipped.
@@ -246,6 +265,7 @@ impl SessionFile {
             ("prompt.at", self.prompt.as_ref().map(|s| s.at)),
             ("reply.at", self.reply.as_ref().map(|s| s.at)),
             ("ended.at", self.ended.as_ref().map(|e| e.at)),
+            ("turn_at", self.turn_at),
         ]
         .into_iter()
         .chain(self.touched.iter().map(|t| ("touched.at", Some(t.at))));

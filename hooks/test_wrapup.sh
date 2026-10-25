@@ -128,6 +128,82 @@ out=$(bash "$hook" ready "$S1" 2>&1); rc=$?
 check "asked, but the wall no longer shows the request: refused" "$rc" "1"
 check "asked, but the wall no longer shows the request: still asked" "$(state "$S1" .state)" '"asked"'
 
+echo "settling: an answer counts once the turn that gave it has ended"
+request 2200 $((now + 600))
+stop "$S1" >/dev/null # asked
+check "asked: nothing to settle" "$(stop "$S1"; state "$S1" 'has("settled")')" "false"
+bash "$hook" ready "$S1" >/dev/null 2>&1
+check "reported: not settled yet" "$(state "$S1" 'has("settled")')" "false"
+out=$(printf '{"session_id":"%s"}' "$S1" | KLEPSYDRA_NOW=$((now + 40)) bash "$hook"); rc=$?
+check "the turn's Stop: prints nothing" "$rc $out" "0 "
+check "the turn's Stop: settles it at its time" "$(state "$S1" '[.state, .settled]')" "[\"ready\",$((now + 40))]"
+printf '{"session_id":"%s"}' "$S1" | KLEPSYDRA_NOW=$((now + 90)) bash "$hook" >/dev/null
+check "a later Stop: settled once only" "$(state "$S1" .settled)" "$((now + 40))"
+stop "$S2" >/dev/null
+bash "$hook" blocked "$S2" "a build" >/dev/null 2>&1
+request 2200 $((now - 30)) # Stop wrap-up
+check "after the window: its Stop still settles, silently" "$(stop "$S2")" ""
+check "after the window: settled" "$(state "$S2" '[.state, (.settled | type)]')" '["blocked","number"]'
+
+echo "the real hooks and the wall's rule together: a session in a turn never counts ready"
+# The fleet hook and this script, driven as Claude Code would, read by
+# wrapup.js as the reader hands it over (one clock, so no skew).
+if command -v node >/dev/null 2>&1; then
+  K=$work/real; mkdir -p "$K/fleet" "$K/wrapup"
+  cat >"$work/judge.mjs" <<JS
+import { isReady, wrapupLine } from "$here/../src/fleet/wrapup.js";
+import fs from "node:fs";
+const [file, ansFile, reqFile, nowS] = process.argv.slice(2);
+const f = JSON.parse(fs.readFileSync(file, "utf8"));
+const req = JSON.parse(fs.readFileSync(reqFile, "utf8"));
+let a = null;
+try { a = JSON.parse(fs.readFileSync(ansFile, "utf8")); } catch {}
+const status = f.state === "working" && f.reason === "background" && !(f.background ?? []).length ? "done" : f.state;
+const s = { session_id: f.session_id, status, reason: status === "done" ? null : f.reason, status_at: f.state_at, prompt: f.prompt, turn_at: f.turn_at ?? null,
+  tmux: { socket: "/tmp/tmux-1001/klepsydra", pane: "%3" }, distro: "Ubuntu", claude: { pid: 42, start: 7 },
+  wrapup: a && a.request === req.id ? { state: a.state, at: a.at, settled_at: a.settled } : undefined };
+console.log(isReady(s, req) + " " + wrapupLine(s, req, Number(nowS) * 1000).text);
+JS
+  T=$(printf '%(%s)T' -1)
+  real() { # sid: the session the helpers below drive
+    sid=$1
+    ev() { KLEPSYDRA_DIR=$K KLEPSYDRA_NOW=$1 bash "$here/klepsydra-fleet.sh" <<<"$(jq -cn --arg s "$sid" --argjson x "$2" '{session_id: $s, cwd: "/tmp"} + $x')"; }
+    turn_end() { ev "$1" "$2"; printf '{"session_id":"%s"}' "$sid" | KLEPSYDRA_DIR=$K KLEPSYDRA_NOW=$1 bash "$hook" >/dev/null; }
+    judge() { node "$work/judge.mjs" "$K/fleet/$sid.json" "$K/wrapup/$sid.json" "$K/wrapup/request.json" "$1"; }
+  }
+  printf '{"id":"%s000","at":%s,"until":%s,"ids":["%s","%s"]}' "$T" "$T" $((T + 600)) "$S1" "$S2" >"$K/wrapup/request.json"
+
+  real "$S1" # idle at its prompt with a background shell out, typed into
+  ev $((T - 100)) '{"hook_event_name":"SessionStart","source":"startup"}'
+  ev $((T - 90)) '{"hook_event_name":"UserPromptSubmit","prompt":"run the suite in the background"}'
+  ev $((T - 80)) '{"hook_event_name":"PostToolUse","tool_name":"Bash","tool_input":{"run_in_background":true},"tool_response":{"backgroundTaskId":"sh1"}}'
+  turn_end $((T - 70)) '{"hook_event_name":"Stop","background_tasks":[{"id":"sh1","type":"shell","status":"running"}]}'
+  ev $((T + 2)) '{"hook_event_name":"UserPromptSubmit","prompt":"/klepsydra-wrapup"}'
+  KLEPSYDRA_DIR=$K KLEPSYDRA_NOW=$((T + 5)) bash "$hook" ready "$S1" >/dev/null 2>&1
+  check "real: reported ready, its turn still going" "$(judge $((T + 6)))" "false Finishing its turn"
+  turn_end $((T + 7)) '{"hook_event_name":"Stop","background_tasks":[{"id":"sh1","type":"shell","status":"running"}]}'
+  check "real: its turn ended, the shell still out" "$(judge $((T + 8)))" "false Ready once its background work ends"
+  ev $((T + 20)) '{"hook_event_name":"UserPromptSubmit","prompt":"<task-notification><task-id>sh1</task-id></task-notification>"}'
+  check "real: the shell's notification starts a turn" "$(judge $((T + 21)))" "false Working again"
+  ev $((T + 25)) '{"hook_event_name":"PreToolUse","tool_name":"AskUserQuestion"}'
+  check "real: that turn waits on AJ" "$(judge $((T + 26)))" "false Working again"
+  ev $((T + 40)) '{"hook_event_name":"PostToolUse","tool_name":"AskUserQuestion"}'
+  turn_end $((T + 60)) '{"hook_event_name":"Stop","background_tasks":[]}'
+  check "real: that turn over, the old answer does not count again" "$(judge $((T + 61)))" "false Working again"
+
+  real "$S2" # idle, typed into, answers, its turn ends: ready
+  ev $((T - 100)) '{"hook_event_name":"SessionStart","source":"startup"}'
+  ev $((T - 90)) '{"hook_event_name":"UserPromptSubmit","prompt":"fix the reader"}'
+  turn_end $((T - 70)) '{"hook_event_name":"Stop","background_tasks":[]}'
+  ev $((T + 2)) '{"hook_event_name":"UserPromptSubmit","prompt":"/klepsydra-wrapup"}'
+  KLEPSYDRA_DIR=$K KLEPSYDRA_NOW=$((T + 5)) bash "$hook" ready "$S2" >/dev/null 2>&1
+  check "real: an idle session before its Stop" "$(judge $((T + 6)))" "false Finishing its turn"
+  turn_end $((T + 8)) '{"hook_event_name":"Stop","background_tasks":[]}'
+  check "real: its turn over and nothing out: ready" "$(judge $((T + 9)))" "true Ready"
+else
+  check "node is installed (the CI job has it)" "missing" "node"
+fi
+
 echo "a session clock that disagrees with the app's"
 # The app stamps the request by its clock, the one that also stamps files in
 # the folder; under WSL the session's clock drifts from it. KLEPSYDRA_NOW

@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { GROUPS, askedNote, asking, isReady, listed, readiness, sessionRoute, stale, wrapupAnnouncements, wrapupCopy, wrapupLine, wrapupLines } from "./fleet/wrapup.js";
+import { GROUPS, askedNote, asking, isReady, listed, readiness, readyState, sessionRoute, wrapupAnnouncements, wrapupCopy, wrapupLine, wrapupLines } from "./fleet/wrapup.js";
 import { endAllCopy } from "./fleet/end.js";
 import { card } from "./fleet/model.js";
 
@@ -12,7 +12,7 @@ const BEFORE = (REQUEST.until - 1) * 1000;
 const AFTER = (REQUEST.until + 1) * 1000;
 const ANSWERS = {
   asked: { state: "asked", at: AT },
-  ready: { state: "ready", at: AT },
+  ready: { state: "ready", at: AT, settled_at: AT + 2 },
   blocked: { state: "blocked", reason: "a review of #70 is running, 20 min", at: AT },
   none: undefined,
 };
@@ -42,7 +42,12 @@ test("the preview routes each status as wrapup.rs does, in klepsydra's tmux or n
 test("every answer and status reads its own line, before the window closes and after", () => {
   const rows = {
     // answer: status -> [before until, after until]
-    ready: { working: ["Ready", "Ready"], needs_you: ["Ready", "Ready"], done: ["Ready", "Ready"], silent: ["Ready", "Ready"] },
+    ready: {
+      working: ["Working again", "Working again"],
+      needs_you: ["Ready once you answer it", "Ready once you answer it"],
+      done: ["Ready", "Ready"],
+      silent: ["Ready", "Ready"],
+    },
     blocked: Object.fromEntries(["working", "needs_you", "done", "silent"].map((s) => [s, Array(2).fill("Not ready: a review of #70 is running, 20 min")])),
     asked: {
       working: ["Wrapping up…", "No answer"],
@@ -88,7 +93,7 @@ test("Stop wrap-up shows only while sessions are still asked", () => {
 });
 
 test("the bar counts live sessions only, and is safe only when every one, and at least one, is ready", () => {
-  const ready = { session_id: "s", status: "working", wrapup: ANSWERS.ready };
+  const ready = { session_id: "s", status: "done", wrapup: ANSWERS.ready };
   const as = (id, rest) => ({ ...rest, session_id: id });
   assert.deepEqual(readiness([], REQUEST), { ready: 0, live: 0, safe: false, text: "0 of 0 ready" }, "none live");
   assert.deepEqual(readiness([as("a", { status: "ended", wrapup: ANSWERS.ready })], REQUEST), { ready: 0, live: 0, safe: false, text: "0 of 0 ready" }, "only an ended card");
@@ -109,21 +114,39 @@ test("only listed sessions are asked: one started later reads Not asked", () => 
   assert.equal(wrapupLine({ ...fleet, session_id: "zz", status: "ended" }, REQUEST, BEFORE), null, "an ended one says nothing");
 });
 
-test("a ready answer goes stale once a later prompt or a later spell of work overtakes it", () => {
-  const answered = { ...fleet, status: "done", status_at: AT + 5, prompt: { text: "/klepsydra-wrapup", at: AT - 2 }, wrapup: { state: "ready", at: AT } };
-  assert.equal(stale(answered), false, "its own /klepsydra-wrapup came first");
-  assert.equal(isReady(answered, REQUEST), true);
-  assert.equal(wrapupLine(answered, REQUEST, BEFORE).text, "Ready");
-  const prompted = { ...answered, prompt: { text: "one more thing", at: AT + 30 } };
-  assert.equal(stale(prompted), true, "a prompt after the answer");
-  assert.deepEqual(wrapupLine(prompted, REQUEST, BEFORE), { state: "stale", text: "Working again" });
-  assert.equal(isReady(prompted, REQUEST), false);
-  const woke = { ...answered, status: "working", status_at: AT + 30 };
-  assert.equal(stale(woke), true, "work began after the answer");
-  assert.equal(stale({ ...answered, status: "working", status_at: AT - 10 }), false, "the checkpoint turn itself, still working");
-  assert.equal(stale({ ...answered, status: "done", status_at: AT + 30 }), false, "its turn ending after the answer");
-  assert.equal(stale({ ...prompted, wrapup: { state: "blocked", reason: "x", at: AT } }), false, "only a ready answer goes stale");
-  assert.equal(readiness([answered, { ...prompted, session_id: "a" }], REQUEST).safe, false);
+// One rule: a ready answer counts once the turn that gave it has ended (the
+// Stop hook stamps settled_at), and only until the session starts another
+// turn; a session still at work never counts.
+test("a ready answer counts only once its turn has ended and until another begins", () => {
+  const settled = AT + 10;
+  const base = { ...fleet, status: "done", status_at: settled, turn_at: AT - 30, prompt: { text: "/klepsydra-wrapup", at: AT - 30 }, wrapup: { state: "ready", at: AT, settled_at: settled } };
+  const rows = [
+    // [what, session, readyState, line]
+    ["settled, idle", base, "ready", "Ready"],
+    ["reported, its turn still going (it ran ready and kept on)", { ...base, status: "working", status_at: AT - 30, wrapup: { state: "ready", at: AT } }, "finishing", "Finishing its turn"],
+    ["reported, not settled, idle (an old file)", { ...base, wrapup: { state: "ready", at: AT } }, "finishing", "Finishing its turn"],
+    ["settled, then a notification turn that waits on AJ", { ...base, status: "needs_you", turn_at: settled + 5 }, "stale", "Working again"],
+    ["settled, then a notification turn that ended", { ...base, status: "done", turn_at: settled + 5, status_at: settled + 9 }, "stale", "Working again"],
+    ["a turn that began the second it settled", { ...base, turn_at: settled }, "stale", "Working again"],
+    ["settled, then a prompt (a file with no turn_at)", { ...base, turn_at: null, prompt: { text: "more", at: settled + 1 } }, "stale", "Working again"],
+    ["settled with background work out", { ...base, status: "working", reason: "background" }, "background", "Ready once its background work ends"],
+    ["settled, then a background agent's question", { ...base, status: "needs_you", asked_after_turn: true }, "waiting", "Ready once you answer it"],
+    ["settled, working with no new turn recorded", { ...base, status: "working" }, "stale", "Working again"],
+  ];
+  for (const [what, s, state, line] of rows) {
+    assert.equal(readyState(s), state, what);
+    assert.equal(wrapupLine(s, REQUEST, BEFORE).text, line, what);
+    assert.equal(isReady(s, REQUEST), state === "ready", what);
+    assert.equal(readiness([s], REQUEST).safe, state === "ready", what);
+  }
+  assert.equal(readyState({ ...base, wrapup: { state: "blocked", reason: "x", at: AT } }), null, "only a ready answer has a ready state");
+});
+
+test("a background agent's question after the turn ended is not promised a wrap-up after the answer", () => {
+  const s = { ...fleet, status: "needs_you", asked_after_turn: true };
+  assert.equal(wrapupLine(s, REQUEST, BEFORE).text, "Answer it, then ask by hand: /klepsydra-wrapup");
+  assert.equal(wrapupLine({ ...s, asked_after_turn: false }, REQUEST, BEFORE).text, "Answer it first; it wraps up after");
+  assert.equal(wrapupLine(s, REQUEST, AFTER).text, "No answer");
 });
 
 const model = (s) => card({ session_id: s.id, where: { repo: s.repo ?? "r" }, ...s }, {}, BEFORE, REQUEST);
@@ -219,14 +242,16 @@ test("Wrap up while one is still asking says it starts over and clears the answe
   assert.ok(!again.warn.includes("—") && !again.title.includes("—"));
 });
 
-test("the note after Wrap up counts only the sessions actually asked, and names each failure", () => {
+test("the note after Wrap up counts the sessions typed into now, those asked at turn end, and names each failure", () => {
   const names = { a: "Hermes", b: "Metis", c: "Elpis", d: "Aidos", e: "Nike" };
   const nameOf = (id) => names[id];
-  const ok = (id, route) => ({ id, route, error: null });
-  const bad = (id) => ({ id, route: "type", error: "The prompt did not read /klepsydra-wrapup" });
-  assert.equal(askedNote([ok("a", "type"), ok("b", "turn_end"), ok("c", "by_hand")], nameOf), "Asked 2 sessions; 1 to ask by hand");
-  assert.equal(askedNote([ok("a", "type"), bad("b")], nameOf), "Asked 1 session; not typed into Metis, see its card");
-  assert.equal(askedNote([bad("b"), bad("d"), ok("e", "by_hand")], nameOf), "Asked 0 sessions; 1 to ask by hand; not typed into Metis and Aidos, see their cards");
-  assert.equal(askedNote([], nameOf), "Asked 0 sessions");
-  assert.equal(askedNote([bad("zz")], nameOf), "Asked 0 sessions; not typed into a session, see its card", "a card gone since");
+  const typed = (id) => ({ id, route: "type", error: null, typed: true });
+  const ok = (id, route) => ({ id, route, error: null, typed: false });
+  const bad = (id) => ({ id, route: "type", error: "The prompt did not read /klepsydra-wrapup", typed: false });
+  assert.equal(askedNote([typed("a"), ok("b", "turn_end"), ok("c", "by_hand")], nameOf), "Typed into 1 session; 1 asked when its turn ends; 1 to ask by hand");
+  assert.equal(askedNote([typed("a"), ok("b", "type")], nameOf), "Typed into 1 session; 1 already asked", "an ask carried over, or an answer, is not typed again");
+  assert.equal(askedNote([typed("a"), bad("b")], nameOf), "Typed into 1 session; not typed into Metis, see its card");
+  assert.equal(askedNote([ok("a", "turn_end"), ok("b", "after_answer"), bad("b"), bad("d"), ok("e", "by_hand")], nameOf), "Typed into 0 sessions; 2 asked when their turn ends; 1 to ask by hand; not typed into Metis and Aidos, see their cards");
+  assert.equal(askedNote([], nameOf), "Typed into 0 sessions");
+  assert.equal(askedNote([bad("zz")], nameOf), "Typed into 0 sessions; not typed into a session, see its card", "a card gone since");
 });

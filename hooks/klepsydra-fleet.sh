@@ -553,7 +553,8 @@ def notified: if type == "string" then [scan("<task-notification>[\\s\\S]*?</tas
   # What AJ asked and what came back. A background subagent's report arrives
   # as a prompt starting <task-notification>; it is not AJ's.
   | if $event == "UserPromptSubmit" then
-      .error = null
+      # Every prompt starts a turn, a background task's notification too.
+      .error = null | .turn_at = $now
       | if ($ev.prompt // "" | test("^\\s*<task-notification>")) then .
         else .prompt = (($ev.prompt | clip) as $p | if $p then {text: $p, at: $now} else .prompt end) end
     elif $event == "Stop" then

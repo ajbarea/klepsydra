@@ -103,6 +103,13 @@ instructions() { # session
   printf '%s' "${body//'${CLAUDE_SESSION_ID}'/$1}"
 }
 
+# Stamp SESSION's answer settled: this Stop ends the turn that gave it.
+settle() { # session
+  local text
+  text=$(jq -c --argjson t "$(now)" '. + {settled: $t}' "$WRAP/$1.json" 2>/dev/null) || return 0
+  write_atomic "$WRAP/$1.json" "$text" || return 0
+}
+
 stop_hook() {
   local sid body t
   [[ -n ${KLEPSYDRA_DIR:-} ]] && plain "$WRAP/request.json" || return 0 # no request: not a process spent
@@ -111,7 +118,15 @@ stop_hook() {
   listing_request "$sid" || return 0
   if [[ -e $WRAP/$sid.json || -L $WRAP/$sid.json ]]; then
     plain "$WRAP/$sid.json" || return 0
-    jq -e --arg r "$request_id" '.request == $r' "$WRAP/$sid.json" >/dev/null 2>&1 && return 0
+    local state settled
+    IFS=$'\t' read -r state settled < <(jq -r --arg r "$request_id" \
+      'select(.request == $r) | [(.state | strings), (.settled | numbers | tostring)] | @tsv' \
+      "$WRAP/$sid.json" 2>/dev/null)
+    if [[ -n $state ]]; then
+      # The turn that gave an answer has ended: from now it counts, until the next turn.
+      [[ $state == ready || $state == blocked ]] && [[ -z $settled ]] && settle "$sid"
+      return 0
+    fi
   fi
   (( request_until + DAY >= $(now) )) || return 0 # long gone, whatever the drift: no probe
   t=$(folder_now) || return 0

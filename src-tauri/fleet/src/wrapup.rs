@@ -65,6 +65,10 @@ pub struct Answer {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
     pub at: i64,
+    /// When the turn that gave the answer ended (the Stop hook stamps it); a
+    /// ready answer counts only from then.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub settled_at: Option<i64>,
 }
 
 #[derive(Deserialize)]
@@ -73,6 +77,8 @@ struct File {
     state: State,
     #[serde(default)]
     reason: Option<String>,
+    #[serde(default)]
+    settled: Option<i64>,
     at: i64,
     /// `MARK_BY` on a mark the app wrote before typing; the script writes none.
     #[serde(default)]
@@ -122,8 +128,9 @@ pub fn request(klepsydra_dir: &Path, now: i64) -> Option<Request> {
 
 /// Session `id`'s answer to `request`, if it has one. An answer to an older
 /// request is none. `id` must already be a session id the scan accepted.
-/// Its `at` is put on this machine's clock as a session file's times are:
-/// the script stamps it by the session's clock, which a Linux guest lets drift.
+/// Its times are put on this machine's clock as a session file's are: the
+/// script stamps them by the session's clock, which a Linux guest lets drift,
+/// and the last of them (`settled`, else `at`) is the stamp of the last write.
 pub fn answer(klepsydra_dir: &Path, request: &Request, id: &str) -> Option<Answer> {
     let (text, modified) = stamped(&answer_path(klepsydra_dir, id))?;
     let f: File = serde_json::from_str(&text).ok()?;
@@ -134,10 +141,12 @@ pub fn answer(klepsydra_dir: &Path, request: &Request, id: &str) -> Option<Answe
         .reason
         .filter(|_| f.state == State::Blocked)
         .map(|r| r.chars().take(REASON_CHARS).collect());
+    let shift = crate::session::skew(f.settled.unwrap_or(f.at), modified);
     Some(Answer {
         state: f.state,
         reason,
-        at: f.at.saturating_add(crate::session::skew(f.at, modified)),
+        at: f.at.saturating_add(shift),
+        settled_at: f.settled.map(|t| t.saturating_add(shift)),
     })
 }
 
@@ -187,7 +196,9 @@ fn save_request(klepsydra_dir: &Path, r: &Request) -> std::io::Result<()> {
 
 /// Start a wrap-up of sessions `ids` at `now_ms`: they are asked until
 /// `WINDOW` passes. A new one replaces any before it, and the answers to it
-/// are removed, so every session is asked again.
+/// are removed, so every session is asked again, except one still asked by
+/// a request that was asking: it may be mid-checkpoint, so it stays asked
+/// and is not typed into again.
 pub fn start(klepsydra_dir: &Path, now_ms: i64, ids: &[String]) -> std::io::Result<Request> {
     let at = now_ms.div_euclid(1000);
     let mut listed: Vec<String> = Vec::new();
@@ -202,14 +213,20 @@ pub fn start(klepsydra_dir: &Path, now_ms: i64, ids: &[String]) -> std::io::Resu
         until: at + WINDOW,
         ids: listed,
     };
-    let dir = folder(klepsydra_dir)?;
-    prune(&dir);
+    let running = request(klepsydra_dir, at).filter(|old| at <= old.until);
     save_request(klepsydra_dir, &r)?;
+    prune(&klepsydra_dir.join(DIR), &r, running.as_ref(), at);
     Ok(r)
 }
 
-/// Remove the answers in `dir`: regular `<session>.json` files only.
-fn prune(dir: &Path) {
+/// Settle the answers in `dir` on `r`, written just before: one to `r`
+/// stays, an ask by `running` of a session `r` lists is carried over to it,
+/// and every other regular `<session>.json` goes. A `dir` that is not a
+/// folder (a symlink to one) is left alone.
+fn prune(dir: &Path, r: &Request, running: Option<&Request>, now: i64) {
+    if !std::fs::symlink_metadata(dir).is_ok_and(|m| m.is_dir()) {
+        return;
+    }
     let Ok(entries) = std::fs::read_dir(dir) else {
         return;
     };
@@ -219,12 +236,47 @@ fn prune(dir: &Path) {
         let Some(stem) = name.strip_suffix(".json") else {
             continue;
         };
-        if name == REQUEST || !id_ok(stem) {
+        if name == REQUEST || !id_ok(stem) || !e.file_type().is_ok_and(|t| t.is_file()) {
             continue;
         }
-        if e.file_type().is_ok_and(|t| t.is_file()) {
-            let _ = std::fs::remove_file(e.path());
+        let mut file: Option<serde_json::Value> =
+            stamped(&e.path()).and_then(|(text, _)| serde_json::from_str(&text).ok());
+        let of =
+            |v: &serde_json::Value, k: &str| v.get(k).and_then(|x| x.as_str()).map(str::to_owned);
+        if let Some(v) = &file {
+            if of(v, "request").as_deref() == Some(r.id.as_str()) {
+                continue;
+            }
         }
+        let carried = file.as_mut().filter(|v| {
+            running.is_some_and(|o| of(v, "request").as_deref() == Some(o.id.as_str()))
+                && of(v, "state").as_deref() == Some("asked")
+                && r.ids.iter().any(|i| i == stem)
+        });
+        if let Some(v) = carried {
+            // Stamped now by this clock, so the reader's correction stays nil.
+            v["request"] = r.id.clone().into();
+            v["at"] = now.into();
+            if write_atomic(&e.path(), v.to_string().as_bytes()).is_ok() {
+                continue;
+            }
+        }
+        let _ = std::fs::remove_file(e.path());
+    }
+}
+
+/// Remove the request once the wall no longer shows it (`SHOWN_AFTER` past
+/// its window), so a Stop hook reads nothing; its answers go at the next start.
+pub fn forget_expired(klepsydra_dir: &Path, now: i64) {
+    let path = klepsydra_dir.join(DIR).join(REQUEST);
+    let Some(text) = text(&path) else {
+        return;
+    };
+    let Ok(r) = serde_json::from_str::<Request>(&text) else {
+        return;
+    };
+    if now > r.until.saturating_add(SHOWN_AFTER) {
+        let _ = std::fs::remove_file(path);
     }
 }
 
@@ -288,7 +340,54 @@ pub struct Asked {
     pub route: Route,
     /// Why typing the command failed; the Stop hook asks it at its next turn end.
     pub error: Option<String>,
+    /// `/klepsydra-wrapup` was typed into it now.
+    pub typed: bool,
 }
+
+/// One session the wall listed, how it is asked, and the raw `state_at` of
+/// the session file that decided it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Planned {
+    pub id: String,
+    pub route: Route,
+    state_at: i64,
+}
+
+/// Sessions `ids` as their files read at `now`, each with its route;
+/// `typable(id)` is whether its pane is one klepsydra types into. A session
+/// with no file, or ended, is left out. In `ids` order.
+pub fn plan(
+    klepsydra_dir: &Path,
+    ids: &[String],
+    typable: impl Fn(&str) -> bool,
+    now: i64,
+) -> Vec<Planned> {
+    let listing = crate::scan::scan(&klepsydra_dir.join("fleet"));
+    ids.iter()
+        .filter_map(|id| {
+            let e = listing.entries.iter().find(|e| e.file.session_id == *id)?;
+            let v = crate::view::view(e, now)?;
+            let route = route(v.status, v.reason.as_deref(), typable(id))?;
+            Some(Planned {
+                id: id.clone(),
+                route,
+                state_at: e.file.state_at,
+            })
+        })
+        .collect()
+}
+
+/// Whether `p` would still be typed into: its file unchanged in state since
+/// the plan, and still routed Type.
+fn unmoved(klepsydra_dir: &Path, p: &Planned, now: i64) -> bool {
+    plan(klepsydra_dir, std::slice::from_ref(&p.id), |_| true, now)
+        .first()
+        .is_some_and(|q| q.route == Route::Type && q.state_at == p.state_at)
+}
+
+/// The card's note for a session that changed between the plan and its typing.
+const MOVED: &str =
+    "It changed before klepsydra could type; its Stop hook asks it when its next turn ends.";
 
 /// Why typing into one session failed, and whether it may have been typed all the same.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -307,7 +406,7 @@ const TYPING_AT_ONCE: usize = 8;
 pub fn ask<F>(
     klepsydra_dir: &Path,
     r: &Request,
-    plan: &[(String, Route)],
+    plan: &[Planned],
     now: i64,
     type_one: F,
 ) -> Vec<Asked>
@@ -316,10 +415,11 @@ where
 {
     let mut out: Vec<Asked> = plan
         .iter()
-        .map(|(id, route)| Asked {
-            id: id.clone(),
-            route: *route,
+        .map(|p| Asked {
+            id: p.id.clone(),
+            route: p.route,
             error: None,
+            typed: false,
         })
         .collect();
     let mut to_type = Vec::new();
@@ -338,9 +438,20 @@ where
             let running: Vec<_> = batch
                 .iter()
                 .map(|&i| {
-                    let id = out[i].id.clone();
+                    let p = &plan[i];
                     let type_one = &type_one;
-                    (i, scope.spawn(move || type_one(&id)))
+                    // Re-read just before typing: Ctrl+C must not reach a turn that began since.
+                    let go = move || {
+                        if unmoved(klepsydra_dir, p, now) {
+                            type_one(&p.id)
+                        } else {
+                            Err(Failed {
+                                error: MOVED.into(),
+                                maybe_typed: false,
+                            })
+                        }
+                    };
+                    (i, scope.spawn(go))
                 })
                 .collect();
             running
@@ -357,11 +468,14 @@ where
                 .collect()
         });
         for (i, result) in results {
-            if let Err(f) = result {
-                if !f.maybe_typed {
-                    unmark(klepsydra_dir, r, &out[i].id);
+            match result {
+                Ok(()) => out[i].typed = true,
+                Err(f) => {
+                    if !f.maybe_typed {
+                        unmark(klepsydra_dir, r, &out[i].id);
+                    }
+                    out[i].error = Some(f.error);
                 }
-                out[i].error = Some(f.error);
             }
         }
     }
@@ -374,6 +488,8 @@ mod tests {
     use crate::scan::tests::Scratch;
 
     const A: &str = "4ce1be96-f12f-4c66-87eb-4ab36e451dc5";
+    const B: &str = "0b6f0f3e-1111-4c66-87eb-4ab36e451dc5";
+    const C: &str = "9a9a9a9a-2222-4c66-87eb-4ab36e451dc5";
     const NOW: i64 = 1_792_600_000;
 
     fn dir() -> Scratch {
@@ -769,24 +885,37 @@ mod tests {
         let ids: Vec<String> = (1..=5)
             .map(|n| format!("4ce1be96-f12f-4c66-87eb-4ab36e451dc{n}"))
             .collect();
-        let r = start(&d.0, NOW * 1000, &ids).unwrap();
+        let now = crate::watch::unix_now();
+        std::fs::create_dir_all(d.0.join("fleet")).unwrap();
+        for (i, id) in ids.iter().enumerate() {
+            let state = if i == 4 { "working" } else { "done" };
+            d.write(
+                &format!("fleet/{id}.json"),
+                &crate::scan::tests::session(id, state),
+            );
+        }
+        let r = start(&d.0, now * 1000, &ids).unwrap();
         let answered = &ids[3];
         put(
             &d,
             &format!("{answered}.json"),
-            &format!(r#"{{"request":"{}","state":"ready","at":{NOW}}}"#, r.id),
+            &format!(r#"{{"request":"{}","state":"ready","at":{now}}}"#, r.id),
         );
-        let plan = vec![
-            (ids[0].clone(), Route::Type),
-            (ids[1].clone(), Route::Type),
-            (ids[2].clone(), Route::Type),
-            (ids[3].clone(), Route::Type),
-            (ids[4].clone(), Route::TurnEnd),
-        ];
+        let plan = plan(&d.0, &ids, |_| true, now);
+        assert_eq!(
+            plan.iter().map(|p| p.route).collect::<Vec<_>>(),
+            [
+                Route::Type,
+                Route::Type,
+                Route::Type,
+                Route::Type,
+                Route::TurnEnd
+            ]
+        );
         let typed = Mutex::new(Vec::new());
         let gate = (Mutex::new(0usize), Condvar::new());
         let marked_first = Mutex::new(true);
-        let out = ask(&d.0, &r, &plan, NOW + 1, |id| {
+        let out = ask(&d.0, &r, &plan, now, |id| {
             for t in &ids[..3] {
                 let state = answer(&d.0, &r, t).map(|a| a.state);
                 if state != Some(State::Asked) {
@@ -828,7 +957,11 @@ mod tests {
             "never the answered one or the mid-turn one"
         );
         let route_of = |i: usize| out.iter().find(|a| a.id == ids[i]).unwrap();
-        assert_eq!(route_of(0).error, None);
+        assert_eq!((route_of(0).error.clone(), route_of(0).typed), (None, true));
+        assert!(
+            !route_of(3).typed && !route_of(4).typed,
+            "only the ones typed into now"
+        );
         assert_eq!(
             route_of(1).error.as_deref(),
             Some("the prompt did not read it")
@@ -868,5 +1001,174 @@ mod tests {
             ids,
             "in plan order"
         );
+    }
+
+    #[test]
+    fn a_session_that_moved_since_the_plan_is_not_typed_into() {
+        let d = Scratch::new("wrapup-moved");
+        let now = crate::watch::unix_now();
+        std::fs::create_dir_all(d.0.join("fleet")).unwrap();
+        d.write(
+            &format!("fleet/{A}.json"),
+            &crate::scan::tests::session(A, "done"),
+        );
+        let r = start(&d.0, now * 1000, &[A.to_owned()]).unwrap();
+        let planned = plan(&d.0, &[A.to_owned()], |_| true, now);
+        assert_eq!(planned[0].route, Route::Type);
+        // A prompt lands between the plan and the typing.
+        d.write(
+            &format!("fleet/{A}.json"),
+            &format!(r#"{{"v":1,"session_id":"{A}","state":"working","state_at":1700000050}}"#),
+        );
+        let typed = std::sync::Mutex::new(0);
+        let out = ask(&d.0, &r, &planned, now, |_| {
+            *typed.lock().unwrap() += 1;
+            Ok(())
+        });
+        assert_eq!(
+            *typed.lock().unwrap(),
+            0,
+            "Ctrl+C never reaches a session that started a turn"
+        );
+        assert!(out[0].error.is_some() && !out[0].typed);
+        assert_eq!(answer(&d.0, &r, A), None, "unmarked: its Stop hook asks it");
+        // The same state, written again with nothing new, still types.
+        d.write(
+            &format!("fleet/{A}.json"),
+            &crate::scan::tests::session(A, "done"),
+        );
+        let r = start(&d.0, now * 1000 + 1, &[A.to_owned()]).unwrap();
+        let planned = plan(&d.0, &[A.to_owned()], |_| true, now);
+        let out = ask(&d.0, &r, &planned, now, |_| Ok(()));
+        assert!(out[0].typed, "{out:?}");
+    }
+
+    #[test]
+    fn start_over_keeps_a_running_ask_and_clears_answers() {
+        let d = dir();
+        let ids = [A.to_owned(), B.to_owned(), C.to_owned()];
+        let first = start(&d.0, NOW * 1000, &ids).unwrap();
+        put(
+            &d,
+            &format!("{A}.json"),
+            &format!(r#"{{"request":"{}","state":"asked","at":{NOW}}}"#, first.id),
+        );
+        put(
+            &d,
+            &format!("{B}.json"),
+            &format!(
+                r#"{{"request":"{}","state":"ready","at":{NOW},"settled":{NOW}}}"#,
+                first.id
+            ),
+        );
+        put(
+            &d,
+            &format!("{C}.json"),
+            &format!(
+                r#"{{"request":"{}","state":"blocked","reason":"x","at":{NOW}}}"#,
+                first.id
+            ),
+        );
+        let again = start(&d.0, (NOW + 60) * 1000, &ids).unwrap();
+        assert_eq!(
+            answer(&d.0, &again, A).map(|a| a.state),
+            Some(State::Asked),
+            "mid-checkpoint: still asked"
+        );
+        assert_eq!(answer(&d.0, &again, B), None);
+        assert_eq!(answer(&d.0, &again, C), None);
+        assert!(
+            !mark_asked(&d.0, &again, A, NOW + 60).unwrap(),
+            "so it is not typed into"
+        );
+        // Past the old window an ask is not carried.
+        let late = start(&d.0, (NOW + 60 + WINDOW + 1) * 1000, &ids).unwrap();
+        assert_eq!(answer(&d.0, &late, A), None);
+    }
+
+    #[test]
+    fn prune_never_follows_a_symlinked_folder() {
+        #[cfg(unix)]
+        {
+            let d = Scratch::new("wrapup-link");
+            let elsewhere = Scratch::new("wrapup-elsewhere");
+            elsewhere.write(
+                &format!("{A}.json"),
+                r#"{"request":"1","state":"ready","at":1}"#,
+            );
+            std::os::unix::fs::symlink(&elsewhere.0, d.0.join(DIR)).unwrap();
+            let _ = start(&d.0, NOW * 1000, &[A.to_owned()]);
+            assert!(elsewhere.0.join(format!("{A}.json")).exists());
+        }
+    }
+
+    #[test]
+    fn a_settled_answer_is_corrected_by_its_last_write() {
+        // Reported at T+5 and settled at T+30 by a writer clock `ahead`; the
+        // settling write landed at T+30 by this clock.
+        let d = dir();
+        let r = Request {
+            id: "7".into(),
+            at: NOW,
+            until: NOW + WINDOW,
+            ids: vec![A.to_owned()],
+        };
+        for ahead in [-300, 0, 120] {
+            put(
+                &d,
+                &format!("{A}.json"),
+                &format!(
+                    r#"{{"request":"7","state":"ready","at":{},"settled":{}}}"#,
+                    NOW + 5 + ahead,
+                    NOW + 30 + ahead
+                ),
+            );
+            let t = std::time::UNIX_EPOCH + std::time::Duration::from_secs((NOW + 30) as u64);
+            std::fs::File::options()
+                .write(true)
+                .open(d.0.join(DIR).join(format!("{A}.json")))
+                .unwrap()
+                .set_modified(t)
+                .unwrap();
+            let a = answer(&d.0, &r, A).unwrap();
+            assert_eq!(
+                (a.at, a.settled_at),
+                (NOW + 5, Some(NOW + 30)),
+                "writer clock {ahead:+} s"
+            );
+        }
+        put(
+            &d,
+            &format!("{A}.json"),
+            r#"{"request":"7","state":"ready","at":1}"#,
+        );
+        assert_eq!(
+            answer(&d.0, &r, A).unwrap().settled_at,
+            None,
+            "an old file: not settled"
+        );
+    }
+
+    #[test]
+    fn a_request_past_the_walls_hour_is_removed() {
+        let d = dir();
+        let r = start(&d.0, NOW * 1000, &[A.to_owned()]).unwrap();
+        put(
+            &d,
+            &format!("{A}.json"),
+            &format!(r#"{{"request":"{}","state":"ready","at":1}}"#, r.id),
+        );
+        let path = d.0.join(DIR).join(REQUEST);
+        forget_expired(&d.0, r.until + SHOWN_AFTER);
+        assert!(path.exists(), "still shown");
+        forget_expired(&d.0, r.until + SHOWN_AFTER + 1);
+        assert!(!path.exists(), "gone: a Stop pays nothing for it");
+        assert!(
+            d.0.join(DIR).join(format!("{A}.json")).exists(),
+            "answers stay until the next start"
+        );
+        put(&d, REQUEST, "not json");
+        forget_expired(&d.0, i64::MAX);
+        assert!(path.exists(), "not ours to judge: left alone");
     }
 }

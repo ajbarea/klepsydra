@@ -85,6 +85,8 @@ impl Reader {
     /// A reader for `<klepsydra_dir>/fleet`, which may not exist yet.
     pub fn new(klepsydra_dir: &Path) -> Self {
         let (tx, rx) = channel();
+        // The wrap-up's folder is watched from the start, so the first request is not a poll late.
+        let _ = std::fs::create_dir_all(klepsydra_dir.join(crate::wrapup::DIR));
         Reader {
             dir: klepsydra_dir.to_path_buf(),
             fleet: klepsydra_dir.join("fleet"),
@@ -231,6 +233,7 @@ impl Reader {
             }
         }
         let problems = self.reporter.fresh(&broken);
+        crate::wrapup::forget_expired(&self.dir, t);
         snap.wrapup = crate::wrapup::request(&self.dir, t);
         if let Some(r) = &snap.wrapup {
             for v in &mut snap.sessions {
@@ -303,7 +306,6 @@ mod tests {
         let t = 1_700_000_100;
         let snap = r.step(Duration::ZERO, || t).0.unwrap();
         assert_eq!((snap.wrapup, snap.sessions[0].wrapup.clone()), (None, None));
-        std::fs::create_dir(root.0.join("wrapup")).unwrap();
         root.write(
             "wrapup/request.json",
             &format!(r#"{{"id":"9","at":{t},"until":{}}}"#, t + 600),
@@ -346,7 +348,7 @@ mod tests {
             );
             root.write(&format!("fleet/{A}.json"), &session);
             set_mtime(&root.0.join(format!("fleet/{A}.json")), t + 190);
-            std::fs::create_dir(root.0.join("wrapup")).unwrap();
+            std::fs::create_dir_all(root.0.join("wrapup")).unwrap();
             root.write(
                 "wrapup/request.json",
                 &format!(r#"{{"id":"9","at":{t},"until":{},"ids":["{A}"]}}"#, t + 600),
@@ -371,7 +373,7 @@ mod tests {
     fn a_wrap_up_answer_arrives_well_before_the_poll() {
         let (root, mut r) = reader("wrapup-watch");
         root.write(&format!("fleet/{A}.json"), &session(A, "done"));
-        std::fs::create_dir(root.0.join("wrapup")).unwrap();
+        std::fs::create_dir_all(root.0.join("wrapup")).unwrap();
         let t = unix_now();
         root.write(
             "wrapup/request.json",
@@ -400,6 +402,42 @@ mod tests {
             snap.unwrap().sessions[0].wrapup.as_ref().map(|a| a.state),
             Some(crate::wrapup::State::Ready)
         );
+    }
+
+    #[test]
+    fn the_first_wrap_up_ever_arrives_well_before_the_poll() {
+        let (root, mut r) = reader("wrapup-first");
+        assert!(
+            root.0.join("wrapup").is_dir(),
+            "the reader makes the folder it watches"
+        );
+        root.write(&format!("fleet/{A}.json"), &session(A, "done"));
+        r.step(Duration::ZERO, unix_now);
+        let dir = root.0.clone();
+        let writer = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(200));
+            crate::wrapup::start(&dir, unix_now() * 1000, &[A.to_owned()]).unwrap();
+        });
+        let started = Instant::now();
+        let (snap, _) = r.step(POLL, unix_now);
+        writer.join().unwrap();
+        assert!(
+            started.elapsed() < Duration::from_secs(3),
+            "woke by the watcher, not the poll"
+        );
+        assert!(snap.unwrap().wrapup.is_some());
+    }
+
+    #[test]
+    fn a_request_past_its_hour_is_removed_by_the_reader() {
+        let (root, mut r) = reader("wrapup-forget");
+        let t = 1_700_000_100;
+        root.write(
+            "wrapup/request.json",
+            &format!(r#"{{"id":"9","at":{t},"until":{}}}"#, t + 600),
+        );
+        r.step(Duration::ZERO, || t + 600 + crate::wrapup::SHOWN_AFTER + 1);
+        assert!(!root.0.join("wrapup/request.json").exists());
     }
 
     #[test]
