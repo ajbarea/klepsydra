@@ -43,7 +43,7 @@ const sample = (url) =>
   url ? fetch(url, { cache: "no-store" }).then((res) => (res.ok ? res.json() : null)).catch(() => null) : Promise.resolve(null);
 
 // The sample's times are as of its `at`; shift them so its ages read as written.
-const TIMES = new Set(["status_at", "active_at", "updated_at", "quiet_since", "at", "started_at", "ends_at", "until"]);
+const TIMES = new Set(["status_at", "active_at", "updated_at", "quiet_since", "at", "started_at", "ends_at", "until", "settled_at", "turn_at"]);
 function shifted(value, by) {
   if (Array.isArray(value)) return value.map((v) => shifted(v, by));
   if (!value || typeof value !== "object") return value;

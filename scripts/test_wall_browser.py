@@ -876,7 +876,7 @@ def band_clear(wall):
 
 # ---- Ending a session -------------------------------------------------------
 
-TIMES = {"status_at", "active_at", "updated_at", "quiet_since", "at", "started_at", "ends_at", "until"}
+TIMES = {"status_at", "active_at", "updated_at", "quiet_since", "at", "started_at", "ends_at", "until", "settled_at", "turn_at"}
 
 
 def shifted(value, by):
@@ -1404,7 +1404,18 @@ def with_wrapup(snapshot, answers, until_in=300):
     for row in snap["sessions"]:
         row.pop("wrapup", None)
         if row["session_id"] in answers:
-            row["wrapup"] = {**answers[row["session_id"]], "at": now}
+            answer = answers[row["session_id"]]
+            # A settled answer's turn ended just now, after its prompt.
+            row["wrapup"] = {**answer, "at": now, **({"settled_at": now} if "settled_at" in answer else {})}
+    return snap
+
+
+def calm(snapshot):
+    """`snapshot` with every live session idle at its prompt: only those can count ready."""
+    snap = json.loads(json.dumps(snapshot))
+    for row in snap["sessions"]:
+        if row["status"] != "ended":
+            row.update({"status": "done", "reason": None})
     return snap
 
 
@@ -1424,7 +1435,7 @@ def feed(page, snapshot):
 
 
 def all_ready():
-    return {k: {"state": "ready"} for k in LIVE}
+    return {k: {"state": "ready", "settled_at": 0} for k in LIVE}
 
 
 def names_by_key(page):
@@ -1453,7 +1464,11 @@ def wrapup_confirm_lists_routes(wall):
     page = open_app(wall)
     names = names_by_key(page)
     error = "The prompt did not read /klepsydra-wrapup, so Enter was not pressed."
-    asked = [{"id": k, "route": r, "error": error if k == "demo-5-bf_isabella" else None} for r, (_, keys) in zip(["type", "turn_end", "after_answer", "by_hand"], ROUTED) for k in keys]
+    asked = [
+        {"id": k, "route": r, "error": error if k == "demo-5-bf_isabella" else None, "typed": r == "type" and k != "demo-5-bf_isabella"}
+        for r, (_, keys) in zip(["type", "turn_end", "after_answer", "by_hand"], ROUTED)
+        for k in keys
+    ]
     page.evaluate("(a) => { window.__asked = a; }", asked)
     page.click("#wrapup-open")
     page.wait_for_function("document.getElementById('end-dialog').open")
@@ -1478,14 +1493,14 @@ def wrapup_confirm_lists_routes(wall):
     fills = page.evaluate("() => [getComputedStyle(document.querySelector('.end-confirm')).backgroundColor, getComputedStyle(document.querySelector('.end-cancel')).backgroundColor]")
     wall.check(fills[0] == fills[1], "its armed button is the plain fill, as Cancel's, not the danger one", fills)
     page.get_by_role("button", name="Ask 12 sessions").click()
-    page.wait_for_function("document.getElementById('wrapup-note').textContent.startsWith('Asked')")
+    page.wait_for_function("document.getElementById('wrapup-note').textContent.startsWith('Typed into')")
     note = page.evaluate("document.getElementById('wrapup-note').textContent")
     card_note = page.evaluate("document.querySelector('.card[data-key=\"demo-5-bf_isabella\"] .note').textContent")
     who = page.evaluate("document.querySelector('.card[data-key=\"demo-5-bf_isabella\"] .name').textContent")
     starts = page.evaluate(STARTS)
     wall.check(
-        len(starts) == 1 and note == f"Asked 11 sessions; 3 to ask by hand; not typed into {who}, see its card" and card_note == error and not page.evaluate(ENDS),
-        "confirming calls start_wrapup once, counts only who was asked, names the failed typing, and shows it in that card's note",
+        len(starts) == 1 and note == f"Typed into 3 sessions; 8 asked when their turn ends; 3 to ask by hand; not typed into {who}, see its card" and card_note == error and not page.evaluate(ENDS),
+        "confirming calls start_wrapup once, counts who was typed into and who is asked later, names the failed typing, and shows it in that card's note",
         [note, card_note],
     )
     wall.check(sorted((starts[0][1] or {}).get("ids") or []) == sorted(LIVE), "start_wrapup gets exactly the sessions the confirm listed", starts[0][1])
@@ -1501,7 +1516,7 @@ def wrapup_dialogs_close_on_change(wall):
     feed(page, arrived(page.snapshot))
     wrap_closed = page.evaluate(closed)
     wall.check(wrap_closed and not page.evaluate(STARTS), "the Wrap up confirm closes, asking no one, when a session arrives", wrap_closed)
-    snap = with_wrapup(page.snapshot, all_ready())
+    snap = with_wrapup(calm(page.snapshot), all_ready())
     feed(page, snap)
     page.click("#end-ready")
     page.wait_for_function("document.getElementById('end-dialog').open")
@@ -1533,7 +1548,8 @@ def wrapup_cards_and_bar(wall):
     reason = WRAPUP_SAMPLE["answers"]["demo-4-bf_emma"]["reason"]
     want = {
         "demo-5-bf_isabella": "Ready",
-        "demo-2-af_bella": "Ready",
+        "demo-2-af_bella": "Finishing its turn",
+        "demo-9-bm_fable": "Ready once its background work ends",
         "demo-3-af_sarah": "Wrapping up…",
         "demo-4-bf_emma": f"Not ready: {reason}",
         "demo-1-am_michael": "Answer it first; it wraps up after",
@@ -1545,7 +1561,7 @@ def wrapup_cards_and_bar(wall):
     label = page.evaluate("document.querySelector('.card[data-key=\"demo-4-bf_emma\"]').getAttribute('aria-label')")
     wall.check(label.endswith(f"Not ready: {reason}"), "the line is in the card's accessible name", label)
     bar = page.evaluate(BAR)
-    wall.check(bar == {"bar": True, "count": "3 of 15 ready", "safe": False, "stop": True, "endAll": False}, "the bar counts live cards and offers Stop wrap-up only", bar)
+    wall.check(bar == {"bar": True, "count": "1 of 15 ready", "safe": False, "stop": True, "endAll": False}, "the bar counts only settled, idle sessions and offers Stop wrap-up only", bar)
     for density in ("compact", "comfortable"):
         page.check(f".density input[value='{density}']", force=True)
         page.wait_for_timeout(SETTLE_MS)
@@ -1572,13 +1588,13 @@ def wrapup_cards_and_bar(wall):
     page.click("#wrapup-stop")
     page.wait_for_timeout(200)
     wall.check(len(calls(page, "cancel_wrapup")) == 1, "Stop wrap-up calls cancel_wrapup once", calls(page, "cancel_wrapup"))
-    feed(page, with_wrapup(page.snapshot, all_ready()))
+    feed(page, with_wrapup(calm(page.snapshot), all_ready()))
     bar = page.evaluate(BAR)
     said = page.evaluate("document.getElementById('live').textContent")
     wall.check(bar == {"bar": True, "count": "15 of 15 ready", "safe": True, "stop": True, "endAll": True} and "Safe to restart" in said, "every live card ready: Safe to restart, announced, and End all ready sessions…", [bar, said])
     one = dict(all_ready())
-    one["demo-3-af_sarah"] = {"state": "blocked", "reason": "a build"}
-    feed(page, with_wrapup(page.snapshot, one))
+    one["demo-3-af_sarah"] = {"state": "blocked", "reason": "a build", "settled_at": 0}
+    feed(page, with_wrapup(calm(page.snapshot), one))
     bar = page.evaluate(BAR)
     wall.check(not bar["safe"] and not bar["endAll"] and bar["count"] == "14 of 15 ready", "one not ready takes both away", bar)
     feed(page, with_wrapup(page.snapshot, WRAPUP_SAMPLE["answers"], until_in=-10))
@@ -1600,14 +1616,14 @@ def wrapup_demo_in_browser(wall):
     page = wall.open(1920, 1000, 16, query="&wrapup")
     bar = page.evaluate(BAR)
     lines = page.evaluate(SHOWN)
-    wall.check(bar["count"] == "3 of 15 ready" and not bar["stop"] and lines["demo-4-bf_emma"].startswith("Not ready: ") and lines["demo-5-bf_isabella"] == "Ready", "the demo carries a request and its answers", [bar, lines["demo-4-bf_emma"]])
+    wall.check(bar["count"] == "1 of 15 ready" and not bar["stop"] and lines["demo-4-bf_emma"].startswith("Not ready: ") and lines["demo-5-bf_isabella"] == "Ready", "the demo carries a request and its answers", [bar, lines["demo-4-bf_emma"]])
     page.close()
 
 
 def end_all_ready(wall):
     """One confirm names every session it ends; each card then runs its own undo window."""
     page = open_app(wall)
-    feed(page, with_wrapup(page.snapshot, all_ready()))
+    feed(page, with_wrapup(calm(page.snapshot), all_ready()))
     names = names_by_key(page)
     page.click("#end-ready")
     page.wait_for_function("document.getElementById('end-dialog').open")
@@ -1637,7 +1653,7 @@ def end_all_ready(wall):
 def bulk_end_waits_on_ready(wall):
     """A session that goes back to work inside End all ready's undo window is not ended; the rest are."""
     page = open_app(wall)
-    snap = with_wrapup(page.snapshot, all_ready())
+    snap = with_wrapup(calm(page.snapshot), all_ready())
     feed(page, snap)
     page.click("#end-ready")
     page.wait_for_selector(".end-confirm:not([aria-disabled='true'])")
@@ -1663,7 +1679,7 @@ def bulk_end_waits_on_ready(wall):
 def one_click_or_key_never_ends_all(wall):
     """The hard rule on the bulk path: no click or key short of the armed confirm sends end_session."""
     page = open_app(wall)
-    feed(page, with_wrapup(page.snapshot, all_ready()))
+    feed(page, with_wrapup(calm(page.snapshot), all_ready()))
     log = []
     dialog_open = "document.getElementById('end-dialog').open"
     page.click("#end-ready")
