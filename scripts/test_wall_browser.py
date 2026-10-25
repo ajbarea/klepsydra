@@ -2319,6 +2319,126 @@ def queue_follows_the_app(wall):
     page.close()
 
 
+def queue_copy_labels_and_failures(wall):
+    """Two Copy clicks within the label's 2 s leave it reading Copy again; a
+    link whose copy fails selects nothing and names the address instead."""
+    page = wall.browser.new_page(viewport={"width": 1920, "height": 1000}, permissions=["clipboard-read", "clipboard-write"])
+    page.goto(f"http://127.0.0.1:{wall.port}/src/wall.html?demo=4")
+    page.click("#queue-open")
+    page.wait_for_selector("#queue .queue-content details")
+    code = page.locator("#queue .q-code > .q-copy").first
+    code.click()
+    page.wait_for_timeout(300)
+    code.click()
+    page.wait_for_timeout(1900)  # past the first click's 2 s, inside the second's
+    mid = code.text_content()
+    page.wait_for_timeout(700)
+    twice = code.text_content()
+    page.close()
+
+    # An item with both a link and a code block: the link's failure must not select the code.
+    both = "## Needs you\n\n1. Read [the tracker](https://tracker.example.com/items/42), then run:\n   ```bash\n   cp ~/.claude/settings.json /tmp/x\n   ```\n"
+    page = wall.browser.new_page(viewport={"width": 1920, "height": 1000})
+    page.add_init_script("navigator.clipboard.writeText = () => Promise.reject(new DOMException('denied', 'NotAllowedError'));")
+    page.route("**/queue-demo.md", lambda r: r.fulfill(status=200, content_type="text/markdown", body=both))
+    page.goto(f"http://127.0.0.1:{wall.port}/src/wall.html?demo=4")
+    page.click("#queue-open")
+    page.wait_for_selector("#queue .queue-content details")
+    link = page.locator("#queue button[aria-label='Copy link: https://tracker.example.com/items/42']")
+    link.click()
+    page.wait_for_function("document.querySelector('#queue .queue-live').textContent !== ''")
+    failed = page.evaluate("""() => ({
+      selected: getSelection().toString(),
+      said: document.querySelector('#queue .queue-live').textContent,
+    })""")
+    label = link.text_content()
+    page.wait_for_timeout(2600)
+    after = link.text_content()
+    code = page.locator("#queue .q-code > .q-copy").first
+    code.click()
+    page.wait_for_function("getSelection().toString() !== ''")
+    selected = page.evaluate("getSelection().toString()")
+    ok = (
+        mid == "Copied"
+        and twice == "Copy"
+        and failed == {"selected": "", "said": "Could not copy. The link is https://tracker.example.com/items/42"}
+        and label == "Not copied"
+        and after == "Copy link"
+        and selected.startswith("cp ~/.claude/settings.json")
+    )
+    wall.check(ok, "Copy twice keeps its label; a failed link copy selects nothing, a failed code copy selects the code", [mid, twice, failed, label, after, selected[:30]])
+    page.close()
+
+
+QUEUE_FAIL = """
+(() => {
+  const invoke = window.__TAURI__.core.invoke;
+  window.__TAURI__.core.invoke = (cmd, args) =>
+    cmd === 'queue_subscribe' ? Promise.reject('no such command') : invoke(cmd, args);
+})();
+"""
+
+
+def queue_says_when_it_cannot_follow(wall):
+    """A queue_subscribe the app refuses is the panel's problem line, not a blank panel."""
+    import time
+
+    fixture = json.loads((ROOT / "scripts/fixtures/fleet-demo.json").read_text())
+    at = fixture.pop("at")
+    page = wall.browser.new_page(viewport={"width": 1920, "height": 1000})
+    page.add_init_script(TAURI_STUB % json.dumps(shifted(fixture, int(time.time()) - at)))
+    page.add_init_script(QUEUE_FAIL)
+    page.goto(f"http://127.0.0.1:{wall.port}/src/wall.html")
+    page.click("#queue-open")
+    page.wait_for_timeout(SETTLE_MS)
+    shown = page.evaluate("!document.querySelector('#queue .queue-problem').hidden")
+    said = page.inner_text("#queue .queue-problem") if shown else None
+    wall.check(said == "The queue file could not be followed: no such command", "a failed queue_subscribe shows on the problem line", said)
+    page.close()
+
+
+def queue_drag_settles_once(wall):
+    """Dragging the separator moves the panel every frame, stores the width
+    once on release, and runs Auto's measure once then, not on every frame."""
+    page = wall.open(1920, 1000, 8)
+    page.click("#queue-open")
+    page.wait_for_selector("#queue .queue-content details")
+    page.wait_for_timeout(SETTLE_MS)
+    page.evaluate("""() => {
+      window.__measures = 0;
+      new MutationObserver((m) => { window.__measures += m.length; })
+        .observe(document.querySelector('.density label:has([value=auto])'), { attributes: true, attributeFilter: ['title'] });
+    }""")
+    box = page.locator("#queue .queue-resize").bounding_box()
+    x, y = box["x"] + box["width"] / 2, box["y"] + 300
+    page.mouse.move(x, y)
+    page.mouse.down()
+    page.mouse.move(x - 200, y, steps=20)
+    page.wait_for_timeout(SETTLE_MS)
+    during = page.evaluate("""() => ({
+      measures: window.__measures,
+      stored: localStorage.getItem('klepsydra.queue.width'),
+      width: Math.round(document.getElementById('queue').getBoundingClientRect().width),
+    })""")
+    page.mouse.up()
+    page.wait_for_timeout(SETTLE_MS)
+    after = page.evaluate("""() => ({
+      measures: window.__measures,
+      stored: localStorage.getItem('klepsydra.queue.width'),
+      width: Math.round(document.getElementById('queue').getBoundingClientRect().width),
+    })""")
+    ok = (
+        during["measures"] == 0
+        and during["stored"] is None
+        and abs(during["width"] - 680) <= 2
+        and after["stored"] == str(during["width"])
+        and after["width"] == during["width"]
+        and after["measures"] == 1
+    )
+    wall.check(ok, "a drag resizes live, then stores the width and measures Auto once on release", [during, after])
+    page.close()
+
+
 def main() -> int:
     handler = functools.partial(Quiet, directory=str(ROOT))
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)  # a free port
@@ -2386,6 +2506,9 @@ def main() -> int:
             queue_resizes_by_keyboard_and_remembers,
             queue_renders_as_text_and_copies,
             queue_follows_the_app,
+            queue_copy_labels_and_failures,
+            queue_says_when_it_cannot_follow,
+            queue_drag_settles_once,
         )
         for case in cases:
             if not only or case.__name__ in only:

@@ -16,8 +16,11 @@ pub enum Refused {
     NotUtf8,
 }
 
-/// Open `path` without following a symlink and, on Unix, without blocking on
-/// a FIFO swapped in after the type check.
+/// Open `path`. On Unix the open neither follows a symlink nor blocks on a
+/// FIFO swapped in after the type check. Windows opens what a swapped-in
+/// link points to: FILE_FLAG_OPEN_REPARSE_POINT would stop that, but it
+/// also opens a OneDrive placeholder (a Desktop synced on demand) without
+/// fetching its content, and how a read of one behaves then is undocumented.
 fn open(path: &Path) -> std::io::Result<File> {
     let mut options = OpenOptions::new();
     options.read(true);
@@ -31,8 +34,9 @@ fn open(path: &Path) -> std::io::Result<File> {
 
 /// The text of the regular file at `path`, at most `max` bytes. The type is
 /// checked before opening, so a FIFO is never opened and a symlink never
-/// followed, and again on the open handle, so a swap between the two is
-/// refused too.
+/// followed, and the open handle must be a regular file too. On Unix a
+/// symlink or FIFO swapped in between the two is refused; on Windows a
+/// swapped-in link is followed to a regular file, read within the cap.
 pub fn read_text(path: &Path, max: u64) -> Result<String, Refused> {
     let gone = |e: &std::io::Error| e.kind() == std::io::ErrorKind::NotFound;
     let meta = match std::fs::symlink_metadata(path) {

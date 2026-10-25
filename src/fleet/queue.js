@@ -218,7 +218,7 @@ export const queueLabel = (count) => (count === null || count === undefined ? "Q
 
 /**
  * Build the tree with `doc`'s createElement and text nodes. `copy(text,
- * button)` runs for a Copy click. Only tags from the tree and the attributes
+ * button, label)` runs for a Copy click; `label` is the button's own text. Only tags from the tree and the attributes
  * named here are ever set.
  */
 export function build(nodes, doc, { copy }) {
@@ -249,7 +249,7 @@ function copyButton(doc, label, name, text, copy) {
   b.className = "q-copy";
   b.textContent = label;
   b.setAttribute("aria-label", name);
-  b.addEventListener("click", () => copy(text, b));
+  b.addEventListener("click", () => copy(text, b, label));
   return b;
 }
 

@@ -67,12 +67,12 @@ pub fn queue_subscribe(
 }
 
 /// The queue file's path: the `queue_path` pref, else the Desktop known
-/// folder's `claude-queue.md`. Read again on every step, so an edited pref
-/// takes effect within a poll.
+/// folder's `claude-queue.md`; a prefs.json that will not read is an error,
+/// not the default. Read again on every step, so an edited pref takes effect
+/// within a poll.
 fn queue_path(app: &AppHandle) -> Result<PathBuf, String> {
-    let prefs = crate::read_prefs(app);
-    let pref = prefs.as_ref().and_then(|p| p.get(queue::PREF));
-    queue::resolve(pref, app.path().desktop_dir().ok())
+    let pref = queue::pref(crate::prefs_path(app).as_deref())?;
+    queue::resolve(pref.as_ref(), app.path().desktop_dir().ok())
 }
 
 /// Follow the queue file for as long as the app runs, sending each change.

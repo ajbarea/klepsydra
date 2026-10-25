@@ -82,7 +82,11 @@ const drawer = createDrawer({
 });
 ledgerButton.addEventListener("click", () => drawer.open(null, ledgerButton));
 // Docked, the panel narrows the wall, and Auto measures again (its ResizeObserver).
-const queue = createQueuePanel({ dialog: document.getElementById("queue"), button: document.getElementById("queue-open") });
+const queue = createQueuePanel({
+  dialog: document.getElementById("queue"),
+  button: document.getElementById("queue-open"),
+  onResized: () => showDensity(),
+});
 let before;
 let wrapupBefore; // each card's wrap-up line at the last render
 let wasSafe = false;
@@ -977,6 +981,7 @@ addEventListener("resize", () => {
 // switch it makes changes the height too, and the hysteresis holds it there.
 let densityFrame = 0;
 new ResizeObserver(() => {
+  if (queue.resizing) return; // a drag of the Queue panel measures once, on release
   cancelAnimationFrame(densityFrame);
   densityFrame = requestAnimationFrame(showDensity);
 }).observe(wall);

@@ -27,7 +27,9 @@ export function demoQueueUrl(app, search) {
 /** Queue file views, `{path, text, problem}`: the app's queue_subscribe channel, or the ?demo sample. */
 export function followQueue(onMessage) {
   if (inTauri) {
-    follow("queue_subscribe", onMessage).catch(() => {});
+    follow("queue_subscribe", onMessage).catch((err) =>
+      onMessage({ path: null, text: null, problem: `The queue file could not be followed: ${err?.message ?? err}` }),
+    );
     return;
   }
   const url = demoQueueUrl(inTauri, location.search);
@@ -58,8 +60,11 @@ const store = (key, value) => {
   }
 };
 
-/** Wire the panel to `dialog`, toggled by `button`; `onLayout()` runs when its docked width changes. */
-export function createQueuePanel({ dialog, button, onLayout = () => {} }) {
+/**
+ * Wire the panel to `dialog`, toggled by `button`. `onLayout()` runs on every
+ * layout; `onResized()` once at the end of a drag of the separator.
+ */
+export function createQueuePanel({ dialog, button, onLayout = () => {}, onResized = () => {} }) {
   const body = dialog.querySelector(".queue-body");
   const content = dialog.querySelector(".queue-content");
   const pathLine = dialog.querySelector(".queue-path");
@@ -142,6 +147,10 @@ export function createQueuePanel({ dialog, button, onLayout = () => {} }) {
     store(STORE.width, String(wanted));
     layout();
   }
+  // A drag moves the panel once a frame and settles once, on release: the
+  // wall's Auto measure skips the frames in between (`resizing`).
+  let resizing = false;
+  let frame = 0;
   grip.addEventListener("keydown", (e) => {
     const steps = { ArrowLeft: WIDTH.step, ArrowRight: -WIDTH.step, PageUp: WIDTH.step * 4, PageDown: -WIDTH.step * 4 };
     if (e.key in steps) resizeTo(width + steps[e.key]);
@@ -153,11 +162,26 @@ export function createQueuePanel({ dialog, button, onLayout = () => {} }) {
   grip.addEventListener("pointerdown", (e) => {
     if (e.button !== 0) return;
     grip.setPointerCapture(e.pointerId);
-    const move = (m) => resizeTo(document.documentElement.clientWidth - m.clientX);
+    resizing = true;
+    let x = e.clientX;
+    const move = (m) => {
+      x = m.clientX;
+      if (frame) return;
+      frame = requestAnimationFrame(() => {
+        frame = 0;
+        wanted = clampWidth(document.documentElement.clientWidth - x, innerWidth);
+        layout();
+      });
+    };
     const done = () => {
       grip.removeEventListener("pointermove", move);
       grip.removeEventListener("pointerup", done);
       grip.removeEventListener("pointercancel", done);
+      cancelAnimationFrame(frame);
+      frame = 0;
+      resizing = false;
+      resizeTo(document.documentElement.clientWidth - x);
+      onResized();
     };
     grip.addEventListener("pointermove", move);
     grip.addEventListener("pointerup", done);
@@ -172,22 +196,26 @@ export function createQueuePanel({ dialog, button, onLayout = () => {} }) {
     }, 50);
   };
 
-  async function copy(text, from) {
-    const label = from.textContent;
+  const relabel = new WeakMap(); // a button's pending return to its label
+  async function copy(text, from, label) {
     try {
       await navigator.clipboard.writeText(text);
       from.textContent = "Copied";
       announce("Copied");
     } catch {
       // Selected, the text is one Ctrl+C away.
-      const pre = from.parentElement?.querySelector("pre");
+      const pre = from.closest(".q-code")?.querySelector("pre");
       if (pre) getSelection()?.selectAllChildren(pre);
       from.textContent = "Not copied";
       announce(pre ? "Could not copy. The code is selected: press Ctrl+C." : `Could not copy. The link is ${text}`);
     }
-    setTimeout(() => {
-      from.textContent = label;
-    }, COPIED_MS);
+    clearTimeout(relabel.get(from));
+    relabel.set(
+      from,
+      setTimeout(() => {
+        from.textContent = label;
+      }, COPIED_MS),
+    );
   }
 
   /** Where focus is inside the content, as an index among its controls. */
@@ -218,6 +246,10 @@ export function createQueuePanel({ dialog, button, onLayout = () => {} }) {
   return {
     /** The docked panel's width in px; 0 while it is closed or a dialog. */
     dockedWidth: () => (docked() ? width : 0),
+    /** True while the separator is being dragged. */
+    get resizing() {
+      return resizing;
+    },
     get isOpen() {
       return open;
     },

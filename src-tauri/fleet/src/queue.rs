@@ -17,6 +17,8 @@ use crate::watch::incarnation;
 pub const FILE_NAME: &str = "claude-queue.md";
 /// The prefs.json key that overrides the default path.
 pub const PREF: &str = "queue_path";
+/// The app writes a few keys to prefs.json; more than this is not its file.
+const PREFS_MAX_BYTES: u64 = 64 * 1024;
 /// More than this is not a to-do list: the real one is about 15 KB. At the
 /// cap, about 17 times that, the panel's parse took a median 46 ms (node 24,
 /// 7 runs); a runaway file past it is refused rather than parsed on every save.
@@ -49,6 +51,34 @@ pub fn resolve(pref: Option<&Value>, desktop: Option<PathBuf>) -> Result<PathBuf
             "{PREF} in prefs.json is not an absolute path: {s:?}."
         )),
         Some(_) => Err(format!("{PREF} in prefs.json is not a path.")),
+    }
+}
+
+/// The `queue_path` pref from the prefs.json at `prefs`, or None when there
+/// is no such file or key. A prefs.json that will not read or parse is an
+/// error: the panel says so rather than quietly reading the Desktop file.
+pub fn pref(prefs: Option<&Path>) -> Result<Option<Value>, String> {
+    let Some(prefs) = prefs else {
+        return Ok(None);
+    };
+    let text = match read_text(prefs, PREFS_MAX_BYTES) {
+        Ok(t) => t,
+        Err(Refused::Missing) => return Ok(None),
+        Err(why) => {
+            let reason = match why {
+                Refused::Unreadable(e) => e.to_string(),
+                Refused::TooLarge => format!("over {} KB", PREFS_MAX_BYTES / 1024),
+                Refused::NotUtf8 => "not UTF-8 text".into(),
+                Refused::Missing | Refused::NotFile => "not a regular file".into(),
+            };
+            return Err(format!(
+                "prefs.json could not be read ({reason}), so the queue path is unknown."
+            ));
+        }
+    };
+    match serde_json::from_str::<Value>(&text) {
+        Ok(Value::Object(map)) => Ok(map.get(PREF).cloned()),
+        _ => Err("prefs.json could not be parsed, so the queue path is unknown.".into()),
     }
 }
 
@@ -238,6 +268,34 @@ mod tests {
         assert_eq!(v.text, None);
         assert_eq!(v.path.as_deref(), path.to_str());
         v.problem.expect("a problem")
+    }
+
+    #[test]
+    fn the_pref_is_read_from_prefs_json_and_a_broken_one_says_so() {
+        let dir = Scratch::new("queue-prefs");
+        let prefs = dir.0.join("prefs.json");
+        assert_eq!(pref(None), Ok(None), "no data folder");
+        assert_eq!(pref(Some(&prefs)), Ok(None), "no prefs.json yet");
+        dir.write("prefs.json", r#"{"zoom":2}"#);
+        assert_eq!(pref(Some(&prefs)), Ok(None), "no queue_path");
+        dir.write("prefs.json", r#"{"zoom":2,"queue_path":"/q/todo.md"}"#);
+        assert_eq!(pref(Some(&prefs)), Ok(Some(json!("/q/todo.md"))));
+        for (text, says) in [
+            (r#"{"queue_path":"/q/todo.md""#, "could not be parsed"),
+            ("[1]", "could not be parsed"),
+            ("", "could not be parsed"),
+        ] {
+            dir.write("prefs.json", text);
+            let err = pref(Some(&prefs)).unwrap_err();
+            assert!(
+                err.contains("prefs.json") && err.contains(says),
+                "{text}: {err}"
+            );
+        }
+        std::fs::remove_file(&prefs).unwrap();
+        std::fs::create_dir(&prefs).unwrap();
+        let err = pref(Some(&prefs)).unwrap_err();
+        assert!(err.contains("prefs.json could not be read"), "{err}");
     }
 
     #[test]
