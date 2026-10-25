@@ -85,7 +85,9 @@ files belong to: the JS guards scan hooks and scripts too.
   through the boundary, and where the comfortable bar is taller), and a
   compact note covers no text; the empty state (no sessions, or only ended
   ones) fits both sizes, a long launch folder fits 420 px, and its buttons
-  send only launch_session and clear_session, each into its own note. Takes a few minutes. Needs
+  send only launch_session and clear_session, each into its own note; the
+  Queue panel docks at 1920 and is a dialog at 945, resizes by keyboard,
+  renders as text only and follows its channel. Takes a few minutes. Needs
   Playwright's Chromium, or a Chrome at `$KLEPSYDRA_CHROME`; local only, not
   in CI.
 

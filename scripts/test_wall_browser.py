@@ -18,6 +18,9 @@ ended ones, the empty state stands in the wall's place, in view and
 unscrolled, and its buttons send only launch_session and clear_session for
 the ended ids; set $KLEPSYDRA_EMPTY_SHOT to a path for a 1920x1000
 screenshot of it.
+The Queue panel docks beside the wall at 1920 and is a modal dialog at 945,
+resizes from the keyboard, renders the sample file as text only, copies code
+and links, and follows the app's queue_subscribe channel.
 
     uv run -q --no-project --with playwright python -I scripts/test_wall_browser.py
 
@@ -2098,6 +2101,221 @@ def one_click_or_key_never_ends_all(wall):
     showing = page.evaluate("[...document.querySelectorAll('.ending')].some((e) => !e.hidden)")
     focus_ok = log[0][1] == "end-cancel" and log[2][1] == "end-ready" and log[3][1] == "end-ready" and log[4][1] is True
     wall.check(not ended and not showing and focus_ok, "no single click or key on the bulk path sends end_session or starts an undo window", [ended, showing, log])
+
+
+# ---- The Queue panel ---------------------------------------------------------
+
+QUEUE_STATE = """() => {
+  const q = document.getElementById('queue');
+  const r = q.getBoundingClientRect();
+  return {
+    open: q.open,
+    modal: q.matches(':modal'),
+    mode: q.dataset.mode ?? null,
+    label: document.getElementById('queue-open').textContent,
+    expanded: document.getElementById('queue-open').getAttribute('aria-expanded'),
+    hscroll: document.documentElement.scrollWidth > innerWidth,
+    wallRight: Math.round(document.getElementById('wall').getBoundingClientRect().right),
+    barRight: Math.round(document.querySelector('.bar').getBoundingClientRect().right),
+    left: Math.round(r.left),
+    width: Math.round(r.width),
+    active: document.activeElement.id || document.activeElement.className,
+  };
+}"""
+# The close event, and the panel's handling of it, come a task after the dialog shuts.
+QUEUE_SHUT = "!document.getElementById('queue').open && document.getElementById('queue-open').getAttribute('aria-expanded') === 'false'"
+
+
+def queue_docks_wide_and_is_a_dialog_narrow(wall):
+    """At 1920 the Queue button docks the panel beside the wall, which gives
+    up its room; at 945 it is a modal dialog. Either way it opens with focus
+    on its title, closes on Esc with focus back on the button, and the page
+    never scrolls sideways. Crossing the breakpoint while open switches mode."""
+    for width, modal in ((1920, False), (945, True)):
+        page = wall.open(width, 1000, 16 if width == 1920 else 8)
+        before = page.evaluate(QUEUE_STATE)
+        page.focus("#queue-open")
+        page.keyboard.press("Enter")
+        page.wait_for_selector("#queue .queue-content details")
+        page.wait_for_timeout(SETTLE_MS)
+        st = page.evaluate(QUEUE_STATE)
+        named = page.get_by_role("dialog", name="Queue").count()
+        ok = (
+            before["open"] is False
+            and before["expanded"] == "false"
+            and st["open"]
+            and st["modal"] is modal
+            and st["mode"] == ("modal" if modal else "docked")
+            and st["expanded"] == "true"
+            and st["active"] == "queue-title"
+            and not st["hscroll"]
+            and named == 1
+            and st["label"] == "Queue \u00b7 4 for you"
+            and (modal or (st["wallRight"] <= st["left"] and st["barRight"] <= st["left"]))
+        )
+        wall.check(ok, f"at {width} px the Queue panel opens {'as a modal dialog' if modal else 'docked beside the wall'}", st)
+        page.keyboard.press("Escape")
+        page.wait_for_function(QUEUE_SHUT)
+        shut = page.evaluate(QUEUE_STATE)
+        wall.check(
+            shut["active"] == "queue-open" and shut["expanded"] == "false" and shut["barRight"] == before["barRight"],
+            f"at {width} px Esc closes the panel, the wall gets its room back and focus returns to the button",
+            shut,
+        )
+        page.close()
+
+    page = wall.open(1920, 1000, 8)
+    page.click("#queue-open")
+    page.wait_for_selector("#queue .queue-content details")
+    narrow = wall.resize(page, 945, 1000) and page.evaluate(QUEUE_STATE)
+    page.wait_for_timeout(SETTLE_MS)  # a late close event from the switch must not shut it
+    narrow = page.evaluate(QUEUE_STATE)
+    tight = wall.resize(page, 1300, 1000) and page.evaluate(QUEUE_STATE)
+    wide = wall.resize(page, 1920, 1000) and page.evaluate(QUEUE_STATE)
+    wall.check(
+        narrow["modal"] and narrow["open"] and not narrow["hscroll"]
+        and tight["mode"] == "docked" and tight["width"] == 480 and not tight["hscroll"]
+        and wide["open"] and not wide["modal"] and wide["mode"] == "docked" and wide["width"] == 480,
+        "an open panel turns into a dialog below the breakpoint, docks again above it, and a narrow window never shrinks the width asked for",
+        [narrow, wide],
+    )
+    page.close()
+
+
+def queue_resizes_by_keyboard_and_remembers(wall):
+    """The separator is a focusable slider of the docked width: arrows step it,
+    Home and End reach its bounds, and the width survives a reload."""
+    page = wall.open(1920, 1000, 8)
+    page.click("#queue-open")
+    page.wait_for_selector("#queue .queue-content details")
+    sep = page.locator("#queue [role=separator]")
+    start = int(sep.get_attribute("aria-valuenow"))
+    sep.focus()
+    page.keyboard.press("ArrowLeft")
+    page.keyboard.press("ArrowLeft")
+    wider = page.evaluate(QUEUE_STATE)
+    page.keyboard.press("Home")
+    least = int(sep.get_attribute("aria-valuenow"))
+    page.keyboard.press("End")
+    most = int(sep.get_attribute("aria-valuenow"))
+    page.keyboard.press("ArrowRight")
+    kept = int(sep.get_attribute("aria-valuenow"))
+    page.reload()
+    page.wait_for_selector("#queue[open] .queue-content details")
+    again = page.evaluate(QUEUE_STATE)
+    ok = (
+        start == 480
+        and wider["width"] == 512
+        and least == 320
+        and most == int(sep.get_attribute("aria-valuemax")) == 900
+        and kept == 884
+        and again["open"]
+        and again["width"] == 884
+        and not again["hscroll"]
+        and again["active"] not in ("queue-resize", "queue-close", "queue-title")
+    )
+    wall.check(ok, "the separator steps, bounds and remembers the docked width", [start, wider["width"], least, most, kept, again])
+    page.close()
+
+
+def queue_renders_as_text_and_copies(wall):
+    """The sample file renders with no link, image or script element; the
+    HTML block and the javascript: link show as text; Copy puts a code block's
+    text and a link's address on the clipboard."""
+    page = wall.browser.new_page(viewport={"width": 1920, "height": 1000}, permissions=["clipboard-read", "clipboard-write"])
+    page.goto(f"http://127.0.0.1:{wall.port}/src/wall.html?demo=8")
+    page.click("#queue-open")
+    page.wait_for_selector("#queue .queue-content details")
+    got = page.evaluate("""() => {
+      const c = document.querySelector('#queue .queue-content');
+      return {
+        unsafe: c.querySelectorAll('a, img, script, iframe, [href], [src], [style], [onclick], [onerror]').length,
+        html: [...c.querySelectorAll('.q-html')].map((e) => e.textContent),
+        open: [...c.querySelectorAll('details')].map((d) => d.open),
+        done: c.querySelectorAll('.q-done').length,
+        pending: c.querySelectorAll('.q-pending').length,
+      };
+    }""")
+    page.click("#queue summary:has-text('Queued')")
+    bad = page.inner_text("#queue details:has(summary:has-text('Queued')) li:nth-child(2)")
+    page.click("#queue .q-code .q-copy >> nth=0")
+    page.wait_for_function("[...document.querySelectorAll('#queue .q-copy')].some((b) => b.textContent === 'Copied')")
+    code = page.evaluate("navigator.clipboard.readText()")
+    page.click("#queue button[aria-label='Copy link: https://tracker.example.com/items/42']")
+    link = page.evaluate("navigator.clipboard.readText()")
+    page.wait_for_function("document.querySelector('#queue .queue-live').textContent === 'Copied'")
+    said = page.inner_text("#queue .queue-live")
+    ok = (
+        got["unsafe"] == 0
+        and got["html"] == ['<script>alert("an HTML block shows as text")</script>']
+        and got["open"] == [True, False, False, False]
+        and got["done"] == 2
+        and got["pending"] == 2
+        and "[bad link](javascript:alert(1))" in bad
+        and code.startswith("cp ~/.claude/settings.json") and "jq " in code
+        and link == "https://tracker.example.com/items/42"
+        and said == "Copied"
+    )
+    wall.check(ok, "the queue renders as text only, and Copy copies code and links", [got, bad, code[:30], link, said])
+    page.close()
+
+
+QUEUE_STUB = """
+(() => {
+  const invoke = window.__TAURI__.core.invoke;
+  window.__TAURI__.core.invoke = (cmd, args) => {
+    if (cmd === 'queue_subscribe') {
+      window.__queue = args.onMessage;
+      setTimeout(() => args.onMessage.onmessage(%s), 0);
+      return Promise.resolve();
+    }
+    return invoke(cmd, args);
+  };
+})();
+"""
+
+
+def queue_follows_the_app(wall):
+    """In the app the panel follows queue_subscribe: an edit repaints it and
+    its count while the sections the viewer opened stay open, and a missing
+    file is one line with the count gone."""
+    import time
+
+    fixture = json.loads((ROOT / "scripts/fixtures/fleet-demo.json").read_text())
+    at = fixture.pop("at")
+    snapshot = shifted(fixture, int(time.time()) - at)
+    text = (ROOT / "scripts/fixtures/queue-demo.md").read_text()
+    first = {"path": "C:\\Users\\you\\Desktop\\claude-queue.md", "text": text, "problem": None}
+    page = wall.browser.new_page(viewport={"width": 1920, "height": 1000})
+    page.add_init_script(TAURI_STUB % json.dumps(snapshot))
+    page.add_init_script(QUEUE_STUB % json.dumps(first))
+    page.goto(f"http://127.0.0.1:{wall.port}/src/wall.html")
+    page.wait_for_function("document.getElementById('queue-open').textContent.includes('for you')")
+    page.click("#queue-open")
+    page.wait_for_selector("#queue .queue-content details")
+    page.click("#queue summary:has-text('Running now')")
+    edited = text.replace("## Running now", "6. **A new ask.**\n\n## Running now")
+    page.evaluate("(v) => window.__queue.onmessage(v)", {**first, "text": edited})
+    page.wait_for_function("document.getElementById('queue-open').textContent === 'Queue \u00b7 5 for you'")
+    after = page.evaluate("""() => ({
+      open: [...document.querySelectorAll('#queue details')].map((d) => d.open),
+      asks: document.querySelectorAll('#queue details.q-needs > ol > li').length,
+      path: document.querySelector('#queue .queue-path').textContent,
+    })""")
+    page.evaluate("(v) => window.__queue.onmessage(v)", {"path": first["path"], "text": None, "problem": "No queue file at this path."})
+    page.wait_for_function("document.getElementById('queue-open').textContent === 'Queue'")
+    gone = page.evaluate("""() => ({
+      problem: document.querySelector('#queue .queue-problem').textContent,
+      shown: !document.querySelector('#queue .queue-problem').hidden,
+      blocks: document.querySelector('#queue .queue-content').children.length,
+    })""")
+    ok = (
+        after["open"] == [True, True, False, False]
+        and after["asks"] == 6
+        and after["path"].endswith("claude-queue.md")
+        and gone == {"problem": "No queue file at this path.", "shown": True, "blocks": 0}
+    )
+    wall.check(ok, "an edit repaints the panel and its count, keeping open sections; a missing file is one line", [after, gone])
     page.close()
 
 
@@ -2164,6 +2382,10 @@ def main() -> int:
             launch_dir_follows_prefs,
             browser_hides_app_actions,
             landmarks,
+            queue_docks_wide_and_is_a_dialog_narrow,
+            queue_resizes_by_keyboard_and_remembers,
+            queue_renders_as_text_and_copies,
+            queue_follows_the_app,
         )
         for case in cases:
             if not only or case.__name__ in only:
