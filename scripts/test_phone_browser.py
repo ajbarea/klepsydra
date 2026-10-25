@@ -161,7 +161,8 @@ def main() -> int:
                 ctx.route("https://claude.ai/**", lambda route: (opened.append(route.request.url), route.fulfill(status=200, body="claude"))[1])
                 page = ctx.new_page()
                 page.goto(f"http://{addr}/")
-                page.wait_for_function("document.getElementById('wall').children.length === 16", timeout=15000)
+                shown = wait_until(page, "document.getElementById('wall').children.length === 16", 15)
+                run.check(shown, "sixteen cards arrive over the stream", shown)
                 page.wait_for_timeout(400)
                 s = page.evaluate(LAYOUT)
                 run.check(s["served"], "the page knows it is served", s["served"])
@@ -234,7 +235,8 @@ def main() -> int:
                 # A wrap-up request: the readiness count and each card's answer
                 # show; Wrap up, Stop and End all ready do not.
                 snapshot_file(snapshot, with_wrapup)
-                wait_until(page, "!document.querySelector('.wrapup-bar').hidden", 5)
+                # The bar paints at once; the cards may repaint inside a view transition.
+                wait_until(page, "!document.querySelector('.wrapup-bar').hidden && !!document.querySelector('.card .wrapup:not([hidden])')", 5)
                 wrap = page.evaluate("""() => {
                   const shown = (el) => el && el.checkVisibility();
                   return {

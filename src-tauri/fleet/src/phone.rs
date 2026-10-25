@@ -207,12 +207,17 @@ fn same_origin(origin: &str, host: &str) -> bool {
 }
 
 /// The frontend files the wall needs, and their types: its page, its
-/// folder, the IPC shim it imports, the install files and the icons. The
-/// gauge, the tests and the dev snapshots are not among them.
+/// folder, the IPC shim and the vendored markdown-it it imports, the install
+/// files and the icons. The gauge, the tests and the dev snapshots are not
+/// among them.
 pub fn asset_type(path: &str) -> Option<&'static str> {
     let root = matches!(
         path,
-        "wall.html" | "ipc.js" | "manifest.webmanifest" | "sw.js"
+        "wall.html"
+            | "ipc.js"
+            | "manifest.webmanifest"
+            | "sw.js"
+            | "vendor/markdown-it/markdown-it.esm.min.mjs"
     );
     let folder = path.starts_with("fleet/") || path.starts_with("phone/");
     let clean = !path.is_empty()
@@ -229,7 +234,7 @@ pub fn asset_type(path: &str) -> Option<&'static str> {
     let ext = path.rsplit_once('.').map(|(_, e)| e)?;
     Some(match ext {
         "html" => "text/html; charset=utf-8",
-        "js" => "text/javascript; charset=utf-8",
+        "js" | "mjs" => "text/javascript; charset=utf-8",
         "css" => "text/css; charset=utf-8",
         "json" => "application/json",
         "webmanifest" => "application/manifest+json",

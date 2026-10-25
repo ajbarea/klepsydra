@@ -184,3 +184,23 @@ test("the phone wall installs: manifest, Home Screen icon, and a shell-only serv
   assert.match(sw, /LIVE\.has\(url\.pathname\)\) return;/, "the fleet is never answered from the cache");
   assert.match(read("src/fleet/wall.js"), /if \(served\) navigator\.serviceWorker\?\.register\("\/sw\.js"\)/);
 });
+
+test("every module the wall imports is a file the phone server serves", () => {
+  const rs = read("src-tauri/fleet/src/phone.rs");
+  const fn = rs.slice(rs.indexOf("pub fn asset_type"), rs.indexOf("_ => return None", rs.indexOf("pub fn asset_type")));
+  const roots = [...fn.slice(0, fn.indexOf(");")).matchAll(/"([^"]+)"/g)].map((m) => m[1]);
+  const folders = [...fn.matchAll(/starts_with\("([^"]+)"\)/g)].map((m) => m[1]);
+  const exts = [...fn.matchAll(/^\s*((?:"\w+"\s*\|\s*)*"\w+") =>/gm)].flatMap((m) => [...m[1].matchAll(/"(\w+)"/g)].map((x) => x[1]));
+  const served = (p) => (roots.includes(p) || folders.some((f) => p.startsWith(f))) && exts.includes(p.split(".").pop());
+  const seen = new Set();
+  const walk = (file) => {
+    if (seen.has(file)) return;
+    seen.add(file);
+    for (const [, spec] of read(`src/${file}`).matchAll(/^import\s[^;]*?from\s+"(\.{1,2}\/[^"]+)"/gm)) {
+      walk(join(file, "..", spec).replaceAll("\\", "/"));
+    }
+  };
+  walk("fleet/wall.js");
+  assert.ok(seen.size > 10, `the walk found the wall's modules: ${[...seen]}`);
+  assert.deepEqual([...seen].filter((p) => !served(p)), []);
+});
