@@ -152,6 +152,8 @@ pub struct Follower {
     watcher: Option<RecommendedWatcher>,
     /// The file the watch is for, and its folder's incarnation.
     watched: Option<(PathBuf, Option<u64>)>,
+    /// The path the last step read, so a changed one is read at once.
+    followed: Option<Result<PathBuf, String>>,
     last: Option<QueueView>,
 }
 
@@ -163,6 +165,7 @@ impl Default for Follower {
             rx,
             watcher: None,
             watched: None,
+            followed: None,
             last: None,
         }
     }
@@ -198,11 +201,13 @@ impl Follower {
     }
 
     /// Wait up to `timeout` for a change to `path`, let a burst of writes
-    /// settle, then read it. Returns the view when it differs from the last
-    /// one returned.
+    /// settle, then read it; a path other than the last step's is read at
+    /// once. Returns the view when it differs from the last one returned.
     pub fn step(&mut self, path: &Result<PathBuf, String>, timeout: Duration) -> Option<QueueView> {
         self.attach(path.as_deref().ok());
-        if self.rx.recv_timeout(timeout).is_ok() {
+        let moved = self.followed.as_ref() != Some(path);
+        self.followed = Some(path.clone());
+        if !moved && self.rx.recv_timeout(timeout).is_ok() {
             let cap = Instant::now() + SETTLE_CAP;
             while let Some(left) = cap.checked_duration_since(Instant::now()) {
                 if self.rx.recv_timeout(left.min(QUIET)).is_err() {
@@ -414,11 +419,17 @@ mod tests {
         let other = Scratch::new("queue-moved");
         other.write("todo.md", "# Moved\n");
         let moved = Ok(other.0.join("todo.md"));
-        let got = f.step(&moved, Duration::ZERO).unwrap();
+        let started = Instant::now();
+        let got = f.step(&moved, Duration::from_secs(30)).unwrap();
         assert_eq!(
             got.text.as_deref(),
             Some("# Moved\n"),
             "a changed pref reads the new file"
+        );
+        assert!(
+            started.elapsed() < Duration::from_secs(1),
+            "a new path is read at once, not after a poll: {:?}",
+            started.elapsed()
         );
     }
 
