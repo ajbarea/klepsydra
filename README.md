@@ -600,7 +600,9 @@ Split is off by default. Turning it on saves `wall_split` in `prefs.json`,
 and the wall splits again the first time it opens after klepsydra starts. Where the windows sat before is
 kept in memory only: after klepsydra restarts, turning split off leaves both
 windows where they are. Jump in split mode switches the tmux window on the
-right and moves neither window. The toggle is hidden on Linux.
+right and moves neither window. The toggle is hidden on Linux. A Windows
+Terminal window set to stay on top loses that when split, and turning split
+off does not set it again.
 
 ### Starting sessions
 
