@@ -1367,6 +1367,17 @@ rc_line 4 | jq -c '.timestamp = "2026-10-18T19:51:30.000Z"' >>"$tp"; rc_line 8 >
 rc_fire post-tool-bash.json $((rnow + 95))
 check "remote: a line quoted in a reply is not Remote Control" "$(rc_url)" "https://claude.ai/code/session_01PLACEHOLDERagain"
 
+# The phrase typed or quoted by AJ is no notice, and fills none of the slots
+# kept for Remote Control's own lines.
+{ rc_line 1
+  for i in 1 2 3 4 5; do
+    jq -nc --arg t "Remote Control disconnected again? ($i)" --arg at "2026-10-18T19:51:3$i.000Z" \
+      '{type: "user", message: {role: "user", content: $t}, timestamp: $at}'
+  done; } >"$tp"
+check "remote: (five prompts quote the notice)" "$(grep -c '"content":"Remote Control disconnected' "$tp")" "5"
+rm -f "$rfile"; rc_fire session-start.json $((rnow - 60)); rc_fire user-prompt.json $((rnow + 98))
+check "remote: the phrase in a prompt is not the notice" "$(rc_url)" "https://claude.ai/code/session_01PLACEHOLDERconnect"
+
 # Latest wins within one read, and a tail with none keeps what the file knew.
 { rc_line 1; rc_line 4; } >"$tp"; rc_fire post-tool-bash.json $((rnow + 100))
 check "remote: of several, the latest wins" "$(rc_url)" "https://claude.ai/code/session_01PLACEHOLDERagain"

@@ -380,13 +380,14 @@ prune_hourly() { # stamp prune dir now
 # The transcript's last few lines that turn Remote Control on or off, one per
 # line: `/remote-control` connecting (system bridge_status, with the session
 # URL), Claude Code's remote_session_change attachment, and its "Remote
-# Control disconnected" notice. A tail and one awk, never a full read; nothing
+# Control disconnected" system notice (the phrase in a prompt or reply, its
+# quotes escaped there, takes no slot). A tail and one awk, never a full read; nothing
 # for a path that is not an absolute, readable .jsonl file.
 remote_lines() { # transcript
   [[ $1 == /*.jsonl && -f $1 && -r $1 ]] || return 0
   tail -c "$REMOTE_TAIL" -- "$1" 2>/dev/null | LC_ALL=C awk -v keep="$REMOTE_LINES" -v max="$REMOTE_LINE_MAX" '
     length($0) <= max && (index($0, "\"subtype\":\"bridge_status\"") || index($0, "\"type\":\"remote_session_change\"") \
-      || index($0, "Remote Control disconnected")) { seen[n++ % keep] = $0 }
+      || (index($0, "\"type\":\"system\"") && index($0, "\"content\":\"Remote Control disconnected"))) { seen[n++ % keep] = $0 }
     END { for (i = (n > keep ? n - keep : 0); i < n; i++) print seen[i % keep] }'
   return 0
 }
