@@ -151,7 +151,7 @@ report() { # state session [reason]
   t=$(folder_now) || fail "Could not write in $WRAP."
   # Past its window, a session still asked may answer while the wall shows it.
   if (( request_until < t )); then
-    (( request_until + SHOWN_AFTER >= t )) && [[ $(answer_state "$sid") == asked ]] || fail "$none"
+    if ! (( request_until + SHOWN_AFTER >= t )) || [[ $(answer_state "$sid") != asked ]]; then fail "$none"; fi
   fi
   write_atomic "$WRAP/$sid.json" "$(jq -cn --arg r "$request_id" --arg s "$state" --arg why "$reason" \
     --argjson at "$(now)" '{request: $r, state: $s, at: $at} + (if $why == "" then {} else {reason: $why} end)')" ||

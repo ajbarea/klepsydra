@@ -456,7 +456,7 @@ pub async fn start_wrapup(
                 .get(id)
                 .ok_or_else(|| "This session has no tmux pane klepsydra knows.".to_owned())
                 .and_then(|t| pane_args(t, PaneVerb::Wrapup))
-                .map_err(&failed)?;
+                .map_err(failed)?;
             pane_gated(&app.state::<PaneFlight>(), id, || {
                 run(&args, wrapup_timed_out)
             })
