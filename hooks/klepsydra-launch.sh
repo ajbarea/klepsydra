@@ -266,6 +266,29 @@ reads() { # command
     }'
 }
 
+# The last non-blank line above the input box: while a turn runs, Claude
+# Code's spinner ("✢ Pollinating… (5m 2s · ↓ 9.8k tokens)", an older one
+# with "esc to interrupt"); else the transcript's last line. Fails when no
+# input box is on the screen.
+above_box() {
+  screen | awk -v mark="$PROMPT_MARK" -v rule="$RULE" '
+    { line[NR] = $0 }
+    END {
+      for (i = 2; i < NR; i++)
+        if (index(line[i - 1], rule) == 1 && index(line[i + 1], rule) == 1 && index(line[i], mark) == 1) box = i - 1
+      if (!box) exit 1
+      for (j = box - 1; j >= 1; j--) if (line[j] ~ /[^ \t]/) { print line[j]; exit 0 }
+    }'
+}
+
+# Whether the session is mid-turn, judged only by the line above its box, so
+# a transcript that quotes a spinner or the hint does not count.
+mid_turn() {
+  local last
+  last=$(above_box) || fail "The session's input box is not on its screen, so klepsydra did not type into it. Open its terminal to $open_to."
+  LC_ALL=C.UTF-8 grep -qE '^. .+… \(|esc to (interrupt|cancel)' <<<"$last"
+}
+
 # Type COMMAND into the cleared input line and press Enter, only once the line
 # reads exactly COMMAND; else clear it again and fail.
 run_command() { # command
@@ -307,8 +330,7 @@ wrapup() { # socket pane pid start
   local busy="klepsydra is already sending that session something; ask it by hand: type /klepsydra-wrapup in its terminal."
   own_pane "$@"
   leave_modes
-  screen | grep -qE 'esc to (interrupt|cancel)' &&
-    fail "The session is mid-turn; it is asked when the turn ends."
+  mid_turn && fail "The session is mid-turn; it is asked when the turn ends."
   # Ctrl+C clears a draft (Up brings it back); on an idle prompt it does nothing else.
   keys C-c
   sleep 0.5

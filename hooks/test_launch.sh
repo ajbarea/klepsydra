@@ -216,9 +216,21 @@ cat >"$work/bin/fake-claude" <<'EOF'
 #!/usr/bin/env bash
 log=$1 buf=""
 stty -icanon -echo -isig
+mark=$'\xe2\x9d\xaf\xc2\xa0'
 draw() {
-  printf '\033[2J\033[Hhistory\n\xe2\x9d\xaf\xc2\xa0/exit\nout\n\xe2\x94\x80\xe2\x94\x80\n\xe2\x9d\xaf\xc2\xa0%s\n\xe2\x94\x80\xe2\x94\x80\n  \xe2\x9d\xaf /exit   Exit the CLI\n' "$buf"
-  [[ -z ${FAKE_BUSY:-} ]] || printf '  auto mode on \xc2\xb7 esc to interrupt\n'
+  # FAKE_TAIL: a recorded screen tail, its input line showing what was typed.
+  if [[ -n ${FAKE_TAIL:-} ]]; then
+    printf '\033[2J\033[Hhistory\n'
+    while IFS= read -r line; do
+      [[ $line == "$mark"* ]] && line=$mark$buf
+      printf '%s\n' "$line"
+    done <"$FAKE_TAIL"
+    return
+  fi
+  printf '\033[2J\033[Hhistory\n\xe2\x9d\xaf\xc2\xa0/exit\nout\n'
+  # An older Claude Code's spinner, with its hint, just above the input box.
+  [[ -z ${FAKE_BUSY:-} ]] || printf '\xe2\x9c\xbb Thinking\xe2\x80\xa6 (12s \xc2\xb7 esc to interrupt)\n'
+  printf '\xe2\x94\x80\xe2\x94\x80\n\xe2\x9d\xaf\xc2\xa0%s\n\xe2\x94\x80\xe2\x94\x80\n  \xe2\x9d\xaf /exit   Exit the CLI\n' "$buf"
 }
 draw
 # dd, not read -n: bash's read turns ISIG back on, and Ctrl+C would kill it.
@@ -333,6 +345,19 @@ out=$(send wrapup "$p" 2>&1); rc=$?
 check "wrapup mid-turn: exit 1" "$rc" "1"
 check "wrapup mid-turn: says so" "$out" "The session is mid-turn; it is asked when the turn ends."
 check "wrapup mid-turn: no key" "$(wc -l <"$work/fake.log")" "0"
+t kill-pane -t "$p"
+# Claude Code 2.1.302 at work: a spinner above the box, no "esc to interrupt" anywhere.
+: >"$work/fake.log"; p=$(fake FAKE_TAIL="$here/fixtures/pane-working-2.1.302.txt")
+out=$(send wrapup "$p" 2>&1); rc=$?
+check "wrapup, 2.1.302 at work: refused" "$rc $out" "1 The session is mid-turn; it is asked when the turn ends."
+check "wrapup, 2.1.302 at work: no key" "$(wc -l <"$work/fake.log")" "0"
+t kill-pane -t "$p"
+# Idle, though its transcript quotes the hint and a spinner line: only the line above the box counts.
+{ printf 'it read \xe2\x9c\xbb Thinking\xe2\x80\xa6 (12s \xc2\xb7 esc to interrupt)\n'; cat "$here/fixtures/pane-idle-2.1.302.txt"; } >"$work/idle-quoting.txt"
+: >"$work/fake.log"; p=$(fake FAKE_TAIL="$work/idle-quoting.txt")
+out=$(send wrapup "$p" 2>&1); rc=$?
+check "wrapup, idle 2.1.302 quoting the hint: typed" "$rc $out" "0 Asked the session to wrap up."
+check "wrapup, idle 2.1.302 quoting the hint: Ctrl+C, then the command" "$(paste -sd' ' "$work/fake.log")" "ctrl-c submit:/klepsydra-wrapup"
 t kill-pane -t "$p"
 : >"$work/fake.log"; p=$(fake FAKE_DROP=k)
 out=$(send wrapup "$p" 2>&1); rc=$?
