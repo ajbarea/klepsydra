@@ -200,3 +200,17 @@ test("a file at the size cap parses and renders quickly", () => {
   const ms = performance.now() - started;
   assert.ok(ms < 1000, `${ms.toFixed(0)} ms`);
 });
+
+test("the docked width keeps to its bounds and leaves the cards room; no number is the default", async () => {
+  globalThis.window ??= {};
+  const { clampWidth, WIDTH } = await import("./fleet/queuepanel.js");
+  assert.equal(clampWidth(NaN, 1920), WIDTH.initial);
+  assert.equal(clampWidth(Number(undefined), 1920), WIDTH.initial);
+  assert.equal(clampWidth(Infinity, 1920), WIDTH.max);
+  assert.equal(clampWidth(Infinity, Infinity), WIDTH.max);
+  assert.equal(clampWidth(0, 1920), WIDTH.min);
+  assert.equal(clampWidth(-50, 1920), WIDTH.min);
+  assert.equal(clampWidth(700, 1300), 600, "700 px stay for the cards");
+  assert.equal(clampWidth(700, 945), WIDTH.min, "never below the minimum");
+  assert.equal(clampWidth(500.4, 1920), 500);
+});

@@ -12,10 +12,11 @@ export const WIDTH = { min: 320, max: 900, initial: 480, step: 16 };
 const STORE = { width: "klepsydra.queue.width", open: "klepsydra.queue.open" };
 const COPIED_MS = 2000;
 
-/** `w` held to the panel's bounds, and to leave `viewport - w` for one column of cards. */
+/** `w` held to the panel's bounds and to leave 700 px for the cards; the default for a `w` that is no number. */
 export function clampWidth(w, viewport) {
   const room = Math.max(WIDTH.min, Math.min(WIDTH.max, viewport - 700));
-  return Math.round(Math.min(room, Math.max(WIDTH.min, Number.isFinite(w) ? w : WIDTH.initial)));
+  const want = typeof w === "number" && !Number.isNaN(w) ? w : WIDTH.initial;
+  return Math.round(Math.min(room, Math.max(WIDTH.min, want)));
 }
 
 /** The browser's sample queue file, only with ?demo and never inside the app. */
@@ -70,14 +71,15 @@ export function createQueuePanel({ dialog, button, onLayout = () => {} }) {
   const opened = new Map(); // section title -> open, as the viewer left it
   // Reopened at start only where it docks: a dialog over the wall at launch would hide it.
   let open = stored(STORE.open) === "1" && wide.matches;
-  let width = clampWidth(Number(stored(STORE.width) ?? NaN), innerWidth);
-  let switching = false;
+  // The width asked for; a narrow window shows less of it without forgetting it.
+  let wanted = clampWidth(Number(stored(STORE.width) ?? NaN), Infinity);
+  let width = clampWidth(wanted, innerWidth);
   let last = null;
 
   const docked = () => open && wide.matches;
 
   function layout() {
-    width = clampWidth(width, innerWidth);
+    width = clampWidth(wanted, innerWidth);
     document.documentElement.style.setProperty("--queue-w", `${width}px`);
     document.body.classList.toggle("queue-docked", docked());
     grip.setAttribute("aria-valuemin", String(WIDTH.min));
@@ -89,14 +91,18 @@ export function createQueuePanel({ dialog, button, onLayout = () => {} }) {
 
   /** Show the dialog in the mode the window's width calls for. */
   function place(focus) {
-    switching = true;
+    const before = document.activeElement;
     if (dialog.open) dialog.close();
-    switching = false;
     if (open) {
       if (wide.matches) dialog.show();
       else dialog.showModal();
       dialog.dataset.mode = wide.matches ? "docked" : "modal";
+      // show() focuses the first control inside; a panel reopened at load leaves focus where it was.
       if (focus) title.focus();
+      else if (!dialog.matches(":modal") && dialog.contains(document.activeElement)) {
+        if (before && !dialog.contains(before)) before.focus({ preventScroll: true });
+        if (dialog.contains(document.activeElement)) document.activeElement.blur();
+      }
     }
     layout();
   }
@@ -110,9 +116,11 @@ export function createQueuePanel({ dialog, button, onLayout = () => {} }) {
 
   button.addEventListener("click", () => setOpen(!open));
   dialog.querySelector(".queue-close").addEventListener("click", () => setOpen(false));
-  // A modal closes itself on Esc; the docked panel closes on it too.
+  // A modal closes itself on Esc; the docked panel closes on it too. The
+  // close event comes a task later, so one from a switch of mode finds the
+  // dialog open again and is ignored.
   dialog.addEventListener("close", () => {
-    if (!switching && open) setOpen(false);
+    if (open && !dialog.open) setOpen(false);
   });
   dialog.addEventListener("keydown", (e) => {
     if (e.key === "Escape" && !dialog.matches(":modal")) {
@@ -130,8 +138,8 @@ export function createQueuePanel({ dialog, button, onLayout = () => {} }) {
   addEventListener("resize", layout);
 
   function resizeTo(w) {
-    width = clampWidth(w, innerWidth);
-    store(STORE.width, String(width));
+    wanted = clampWidth(w, innerWidth);
+    store(STORE.width, String(wanted));
     layout();
   }
   grip.addEventListener("keydown", (e) => {
@@ -186,6 +194,8 @@ export function createQueuePanel({ dialog, button, onLayout = () => {} }) {
   const controls = () => [...content.querySelectorAll("summary, button")];
   function paint(view) {
     last = view;
+    // Read off the page, not from toggle events: one still queued would land after the repaint.
+    for (const d of content.querySelectorAll("details")) opened.set(d.dataset.key, d.open);
     const shown = view.text !== null && view.text !== undefined;
     const { nodes, count } = shown ? render(view.text, (t) => opened.get(t)) : { nodes: [], count: null };
     button.textContent = queueLabel(count);
@@ -196,9 +206,6 @@ export function createQueuePanel({ dialog, button, onLayout = () => {} }) {
     const at = controls().indexOf(document.activeElement);
     const scroll = body.scrollTop;
     content.replaceChildren(...build(nodes, document, { copy }));
-    for (const d of content.querySelectorAll("details")) {
-      d.addEventListener("toggle", () => opened.set(d.dataset.key, d.open));
-    }
     body.scrollTop = scroll;
     if (at >= 0) (controls()[at] ?? title).focus();
   }
