@@ -863,7 +863,8 @@ editor, and the panel only reads it.
   `http:` and `mailto:` links get the button; any other link is plain text.
 - **One line when it cannot.** A missing file, a folder, link or pipe at the
   path, a file over 256 KB, or one that is not UTF-8 text is not read, and
-  the panel says which.
+  the panel says which. So does a `prefs.json` that cannot be read (rather
+  than falling back to the Desktop file), and a file that cannot be shown.
 
 ## How often it refreshes
 

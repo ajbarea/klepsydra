@@ -20,8 +20,9 @@ pub const PREF: &str = "queue_path";
 /// The app writes a few keys to prefs.json; more than this is not its file.
 const PREFS_MAX_BYTES: u64 = 64 * 1024;
 /// More than this is not a to-do list: the real one is about 15 KB. At the
-/// cap, about 17 times that, the panel's parse took a median 46 ms (node 24,
-/// 7 runs); a runaway file past it is refused rather than parsed on every save.
+/// cap, the slowest of 20 worst-case files (262,144 `[`) took the panel a
+/// median 471 ms to parse, walk and count (node 24, 5 runs); a runaway file
+/// past it is refused rather than parsed on every save.
 pub const MAX_BYTES: u64 = 256 * 1024;
 /// A burst of writes (an editor's save, an agent's rewrite) is one re-read
 /// once the folder has been quiet this long...
