@@ -216,7 +216,22 @@ cat >"$work/bin/fake-claude" <<'EOF'
 #!/usr/bin/env bash
 log=$1 buf=""
 stty -icanon -echo -isig
-draw() { printf '\033[2J\033[Hhistory\n\xe2\x9d\xaf\xc2\xa0/exit\nout\n\xe2\x94\x80\xe2\x94\x80\n\xe2\x9d\xaf\xc2\xa0%s\n\xe2\x94\x80\xe2\x94\x80\n  \xe2\x9d\xaf /exit   Exit the CLI\n' "$buf"; }
+mark=$'\xe2\x9d\xaf\xc2\xa0'
+draw() {
+  # FAKE_TAIL: a recorded screen tail, its input line showing what was typed.
+  if [[ -n ${FAKE_TAIL:-} ]]; then
+    printf '\033[2J\033[Hhistory\n'
+    while IFS= read -r line; do
+      [[ $line == "$mark"* ]] && line=$mark$buf
+      printf '%s\n' "$line"
+    done <"$FAKE_TAIL"
+    return
+  fi
+  printf '\033[2J\033[Hhistory\n\xe2\x9d\xaf\xc2\xa0/exit\nout\n'
+  # An older Claude Code's spinner, with its hint, just above the input box.
+  [[ -z ${FAKE_BUSY:-} ]] || printf '\xe2\x9c\xbb Thinking\xe2\x80\xa6 (12s \xc2\xb7 esc to interrupt)\n'
+  printf '\xe2\x94\x80\xe2\x94\x80\n\xe2\x9d\xaf\xc2\xa0%s\n\xe2\x94\x80\xe2\x94\x80\n  \xe2\x9d\xaf /exit   Exit the CLI\n' "$buf"
+}
 draw
 # dd, not read -n: bash's read turns ISIG back on, and Ctrl+C would kill it.
 while c=$(dd bs=1 count=1 2>/dev/null); do
@@ -255,7 +270,7 @@ check "end: the process is gone" "$(gone "$p")" "gone"
 : >"$work/fake.log"; p=$(fake FAKE_DROP=x)
 out=$(send end "$p" 2>&1); rc=$?
 check "lost keys: exit 1" "$rc" "1"
-check "lost keys: says so" "$out" "The session's prompt did not read /exit, so Enter was not pressed. Its prompt may be in vim editor mode, or Claude Code's layout changed. Open its terminal to end it."
+check "lost keys: says so" "$out" "The session's prompt did not read /exit, so Enter was not pressed. Its prompt may be in vim editor mode, or Claude Code's layout changed. Open its terminal to do it there."
 check "lost keys: Enter never pressed" "$(grep -c '^submit:' "$work/fake.log")" "0"
 check "lost keys: the line is cleared" "$(tail -1 "$work/fake.log")" "ctrl-c"
 check "lost keys: still running" "$(alive "$p")" "alive"
@@ -292,10 +307,15 @@ check "copy mode, interrupt: out of copy mode" "$(t display -p -t "$p" '#{pane_i
 # An End the app gave up on may still be running: a second one is refused.
 : >"$work/fake.log"; p=$(fake)
 exec {held}>>"$work/klepsydra-pane-$UID-${p#%}.lock"; flock -n "$held"
-for verb in end interrupt; do
+for verb in end interrupt wrapup; do
   out=$(send "$verb" "$p" 2>&1); rc=$?
   check "pane locked, $verb: exit 1" "$rc" "1"
-  check "pane locked, $verb: says so" "$out" "That session is already being ended or interrupted."
+  if [[ $verb == wrapup ]]; then
+    check "pane locked, $verb: says so in its own words" "$out" \
+      "klepsydra is already sending that session something; ask it by hand: type /klepsydra-wrapup in its terminal."
+  else
+    check "pane locked, $verb: says so" "$out" "That session is already being ended or interrupted."
+  fi
 done
 check "pane locked: no key sent" "$(wc -c <"$work/fake.log")" "0"
 exec {held}>&-
@@ -311,10 +331,58 @@ check "END_WAIT crafted: no command ran" "$([[ -e $work/crafted ]] && echo ran |
 check "END_WAIT crafted: waits out and says so" "$out" "Sent /exit, but the session is still running. Open its terminal to see why."
 t kill-pane -t "$p"
 
-# Every refusal Jump makes, End and Interrupt make too, before any key.
+echo "wrap up"
 : >"$work/fake.log"; p=$(fake)
+t send-keys -t "$p" -l 'a draft'; sleep 0.2
+out=$(send wrapup "$p" 2>&1); rc=$?
+check "wrapup: exit 0" "$rc" "0"
+check "wrapup: says so" "$out" "Asked the session to wrap up."
+check "wrapup: Ctrl+C, then the command alone, no Esc" "$(paste -sd' ' "$work/fake.log")" "ctrl-c submit:/klepsydra-wrapup"
+check "wrapup: still running" "$(alive "$p")" "alive"
+t kill-pane -t "$p"
+: >"$work/fake.log"; p=$(fake FAKE_BUSY=1)
+out=$(send wrapup "$p" 2>&1); rc=$?
+check "wrapup mid-turn: exit 1" "$rc" "1"
+check "wrapup mid-turn: says so" "$out" "The session is mid-turn; it is asked when the turn ends."
+check "wrapup mid-turn: no key" "$(wc -l <"$work/fake.log")" "0"
+t kill-pane -t "$p"
+# Claude Code 2.1.302 at work: a spinner above the box, no "esc to interrupt" anywhere.
+: >"$work/fake.log"; p=$(fake FAKE_TAIL="$here/fixtures/pane-working-2.1.302.txt")
+out=$(send wrapup "$p" 2>&1); rc=$?
+check "wrapup, 2.1.302 at work: refused" "$rc $out" "1 The session is mid-turn; it is asked when the turn ends."
+check "wrapup, 2.1.302 at work: no key" "$(wc -l <"$work/fake.log")" "0"
+t kill-pane -t "$p"
+# 2.1.302 running a tool: a tip sits under the spinner, and the footer reads "esc to interrupt".
+: >"$work/fake.log"; p=$(fake FAKE_TAIL="$here/fixtures/pane-working-tool-2.1.302.txt")
+out=$(send wrapup "$p" 2>&1); rc=$?
+check "wrapup, 2.1.302 running a tool: refused" "$rc $out" "1 The session is mid-turn; it is asked when the turn ends."
+check "wrapup, 2.1.302 running a tool: no key" "$(wc -l <"$work/fake.log")" "0"
+t kill-pane -t "$p"
+# The footer's hint alone, with the transcript's last line above the box: refused.
+sed '$s/$/ \xc2\xb7 esc to interrupt/' "$here/fixtures/pane-idle-2.1.302.txt" >"$work/footer-hint.txt"
+: >"$work/fake.log"; p=$(fake FAKE_TAIL="$work/footer-hint.txt")
+out=$(send wrapup "$p" 2>&1); rc=$?
+check "wrapup, esc hint in the footer: refused" "$rc $out" "1 The session is mid-turn; it is asked when the turn ends."
+check "wrapup, esc hint in the footer: no key" "$(wc -l <"$work/fake.log")" "0"
+t kill-pane -t "$p"
+# Idle, though its transcript quotes the hint and a spinner line: only the line above the box counts.
+{ printf 'it read \xe2\x9c\xbb Thinking\xe2\x80\xa6 (12s \xc2\xb7 esc to interrupt)\n'; cat "$here/fixtures/pane-idle-2.1.302.txt"; } >"$work/idle-quoting.txt"
+: >"$work/fake.log"; p=$(fake FAKE_TAIL="$work/idle-quoting.txt")
+out=$(send wrapup "$p" 2>&1); rc=$?
+check "wrapup, idle 2.1.302 quoting the hint: typed" "$rc $out" "0 Asked the session to wrap up."
+check "wrapup, idle 2.1.302 quoting the hint: Ctrl+C, then the command" "$(paste -sd' ' "$work/fake.log")" "ctrl-c submit:/klepsydra-wrapup"
+t kill-pane -t "$p"
+: >"$work/fake.log"; p=$(fake FAKE_DROP=k)
+out=$(send wrapup "$p" 2>&1); rc=$?
+check "wrapup, lost keys: refused" "$out" "The session's prompt did not read /klepsydra-wrapup, so Enter was not pressed. Its prompt may be in vim editor mode, or Claude Code's layout changed. Open its terminal to do it there."
+check "wrapup, lost keys: Enter never pressed" "$(grep -c '^submit:' "$work/fake.log")" "0"
+t kill-pane -t "$p"
+: >"$work/fake.log"; p=$(fake)
+
+# Every refusal Jump makes, End, Interrupt and Wrap up make too, before any key.
+: >"$work/fake.log"
 ppid_=$(pane_pid "$p"); pst=$(pstart "$ppid_")
-for verb in end interrupt; do
+for verb in end interrupt wrapup; do
   out=$(bash "$launch" "$verb" "$socket" "$p" "$spid" "$sstart" 2>&1)
   check "$verb, another pane's process: refused" "$out" "That session's tmux pane now belongs to another session."
   out=$(bash "$launch" "$verb" "$socket" "$p" 2999999 "$pst" 2>&1)
@@ -335,7 +403,7 @@ for _ in $(seq 50); do tmux -L "$sock2" capture-pane -p | grep -q '^history' && 
 socket2=$(tmux -L "$sock2" display -p '#{socket_path}')
 pane2=$(tmux -L "$sock2" display -p '#{pane_id}')
 p2=$(tmux -L "$sock2" display -p '#{pane_pid}')
-for verb in end interrupt; do
+for verb in end interrupt wrapup; do
   out=$(bash "$launch" "$verb" "$socket2" "$pane2" "$p2" "$(pstart "$p2")" 2>&1); rc=$?
   check "$verb, a hand-started tmux: exit 1" "$rc" "1"
   check "$verb, a hand-started tmux: says so" "$out" "That session is not in klepsydra's tmux, so klepsydra will not type into it."
@@ -347,7 +415,7 @@ t kill-pane -t "$p"
 
 out=$(bash "$launch" bogus 2>&1); rc=$?
 check "unknown command: exit 1" "$rc" "1"
-check "unknown command: says so" "$out" "usage: klepsydra-launch.sh new DIR | jump|end|interrupt SOCKET PANE PID START"
+check "unknown command: says so" "$out" "usage: klepsydra-launch.sh new DIR | jump|end|interrupt|wrapup SOCKET PANE PID START"
 check "unknown command: no tab" "$(tabs)" "1"
 
 echo "one tab per fleet"

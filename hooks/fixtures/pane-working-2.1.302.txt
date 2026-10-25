@@ -1,0 +1,7 @@
+✢ Pollinating… (5m 2s · ↓ 9.8k tokens)
+
+────────────────────────────────────────
+❯ 
+────────────────────────────────────────
+  Opus 5.5 · ctx 23% · 5h 35%
+  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← 1 agent

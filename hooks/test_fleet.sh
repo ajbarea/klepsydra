@@ -161,6 +161,7 @@ check "start: voice" "$(field .voice)" '"am_michael"'
 check "start: where" "$(field '.where | [.repo, .worktree, .branch, .by, .at]')" \
   "[\"klepsydra\",\"fleet\",\"feat/fleet-visualizer\",\"cwd\",$now]"
 check "start: nothing asked yet" "$(field '[.prompt, .reply, .needs, .error, .ended]')" "[null,null,null,null,null]"
+check "start: no turn yet" "$(field .turn_at)" "null"
 
 touch -d @1 "$file"
 now=1792353005 fire notification-permission.json
@@ -173,11 +174,13 @@ fire user-prompt.json
 check "prompt: working" "$(field '[.state, .state_at]')" "[\"working\",$now]"
 check "prompt: stored" "$(field .prompt)" \
   "{\"text\":\"i just want to be able to VIZ them, one glance at the screen\",\"at\":$now}"
+check "prompt: a turn begins" "$(field .turn_at)" "$now"
 
 now=1792353020
 fire task-notification.json
 check "subagent report: still working" "$(field .state)" '"working"'
 check "subagent report: keeps AJ's prompt" "$(field .prompt.at)" "1792353010"
+check "subagent report: a turn begins all the same" "$(field .turn_at)" "$now"
 fire pasted-content.json
 check "pasted text quoting a report is AJ's prompt" "$(field '.prompt.text | startswith("why did this fire?")')" "true"
 
@@ -190,6 +193,7 @@ now=1792353030
 fire permission-request.json
 check "permission request: needs you" "$(field '[.state, .reason, .state_at]')" "[\"needs_you\",\"approve Bash\",$now]"
 check "permission request: prints nothing, so decides nothing" "$(fire permission-request.json)" ""
+check "other events leave the turn's start" "$(field .turn_at)" "1792353020"
 check "tool input never recorded" "$(grep -c SECRET "$file")" "0"
 
 now=1792353040

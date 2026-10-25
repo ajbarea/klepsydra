@@ -3,7 +3,8 @@
 import cast from "./cast.json" with { type: "json" };
 import { RINGS, announcements, card, identity, shouldSlide, showsRingKey, startedNeeding, transitionName, statuses, tally } from "./model.js";
 import { announcer, press, say, setOff, syncChildren } from "./dom.js";
-import { ARM_MS, confirmCopy, createEnder, endingAnnouncement, endingText } from "./end.js";
+import { ARM_MS, confirmCopy, createEnder, endAllCopy, endingAnnouncement, endingText, withdrawnText } from "./end.js";
+import { askedNote, asking, isReady, readiness, wrapupAnnouncements, wrapupCopy, wrapupLines } from "./wrapup.js";
 import { inTauri, subscribe, todayLedger } from "./feed.js";
 import { createDrawer } from "./drawer.js";
 import { showFace } from "./face.js";
@@ -43,6 +44,7 @@ newButton.addEventListener("click", () =>
 );
 
 let sessions = [];
+let request = null; // the snapshot's wrap-up, while one is shown
 const ledgerButton = document.getElementById("ledger-open");
 const drawer = createDrawer({
   dialog: document.getElementById("ledger"),
@@ -53,6 +55,8 @@ const drawer = createDrawer({
 });
 ledgerButton.addEventListener("click", () => drawer.open(null, ledgerButton));
 let before;
+let wrapupBefore; // each card's wrap-up line at the last render
+let wasSafe = false;
 let pending = null; // a card to show once it exists
 const speaker = new Speaker();
 let speakingEl = null; // the card whose portrait shows the waves
@@ -122,6 +126,10 @@ function paint(el, c) {
   }
   show(el.querySelector(".updated"), c.updated);
   paintLedger(el, c);
+  const wrap = el.querySelector(".wrapup");
+  show(wrap, c.wrapup?.text);
+  wrap.title = c.wrapup?.text ?? "";
+  wrap.dataset.state = c.wrapup?.state ?? "";
 
   const jump = el.querySelector(".jump");
   jump.dataset.name = c.session ?? "";
@@ -266,14 +274,20 @@ const canSlide = () =>
   typeof document.startViewTransition === "function" && !reducedMotion();
 
 // A snapshot (`snapshot` = ids that started needing) may slide and pulse; the 15 s tick passes nothing and does neither.
+// Returns what the live region should say about the wrap-up since the last render.
 function render(snapshot) {
   const started = snapshot ?? new Set();
   const now = Date.now();
   empty.hidden = sessions.length > 0;
   paintTally();
-  const cards = sessions.map((s) => card(s, cast, now));
+  const cards = sessions.map((s) => card(s, cast, now, request));
   cardOf = new Map(cards.map((c) => [c.id, c]));
   ringKey.hidden = !showsRingKey(cards);
+  const said = wrapupAnnouncements(wrapupBefore, cards);
+  wrapupBefore = wrapupLines(cards);
+  const safe = Boolean(request) && readiness(sessions, request).safe;
+  if (safe && !wasSafe) said.push("Every session is ready. Safe to restart");
+  wasSafe = safe;
   const sync = () => {
     const focused = document.activeElement;
     // A new card arrives once: its figure steps in and its light rises (wall.css
@@ -299,6 +313,8 @@ function render(snapshot) {
   const was = [...wall.children].map((el) => el.dataset.key);
   if (shouldSlide(was, cards.map((c) => c.id), snapshot) && canSlide()) document.startViewTransition(() => sync());
   else sync();
+  paintWrapup(cards, now);
+  return said;
 }
 
 // The pulse and the arrival play once; a later repaint must not replay them.
@@ -408,11 +424,12 @@ function receive(message) {
     const speaking = speaker.update(message.speaking ?? null, Date.now());
     const who = speaking && message.sessions.find((s) => s.session_id === speaking);
     if (who) said.push(`${identity(who, cast).name} speaking`);
-    if (said.length) announce(said.join(". "));
     const started = startedNeeding(before, message.sessions);
     before = statuses(message.sessions);
     sessions = message.sessions;
-    render(started);
+    request = message.wrapup ?? null;
+    said.push(...render(started));
+    if (said.length) announce(said.join(". "));
     drawer.refresh();
     if (!frameId) drawSpeaking();
     if (pending) focusCard(pending);
@@ -459,7 +476,7 @@ const dialog = document.getElementById("end-dialog");
 const endCancel = dialog.querySelector(".end-cancel");
 const endConfirm = dialog.querySelector(".end-confirm");
 let menuFor = null; // { id, button } while the menu is open
-let endFor = null; // { id, opener } while the confirm dialog is open
+let confirmFor = null; // { kind, ids, opener, holds } while the confirm dialog is open
 let armTimer = 0;
 let openedAt = 0;
 // End takes a click only once its timer has run and the click came ARM_MS after the opening.
@@ -551,18 +568,29 @@ addEventListener("resize", () => closeMenu(false));
 addEventListener("scroll", () => closeMenu(false), true);
 addEventListener("blur", () => closeMenu(false));
 
-function openEnd(id, opener) {
-  const c = cardOf.get(id);
-  if (!c?.actions.menu || ender.pending(id)) return;
-  const copy = confirmCopy(c);
+// The one confirm dialog, for End on one card, End all ready sessions and
+// Wrap up. `holds()` says whether what it names still stands; a snapshot
+// that breaks it closes the dialog as Cancel would. `bulk`: End all ready,
+// whose every end still needs its session ready when its window runs out.
+function openConfirm(kind, ids, copy, opener, holds = () => true, bulk = false) {
+  dialog.dataset.kind = kind;
   dialog.querySelector("#end-title").textContent = copy.title;
   dialog.querySelector(".end-what").textContent = copy.text;
+  const list = dialog.querySelector(".end-list");
+  const groups = copy.groups ?? [];
+  list.hidden = groups.length === 0;
+  list.replaceChildren(
+    ...groups.flatMap((g) => [
+      ...(g.heading ? [Object.assign(document.createElement("h3"), { textContent: g.heading })] : []),
+      listOf(g.names),
+    ]),
+  );
   const warn = dialog.querySelector(".end-warn");
   warn.hidden = !copy.warn;
   warn.textContent = copy.warn ?? "";
   endCancel.textContent = copy.cancel;
   endConfirm.textContent = copy.confirm;
-  endFor = { id, opener };
+  confirmFor = { kind, ids, opener, holds, bulk };
   dialog.returnValue = "";
   setOff(endConfirm, true);
   clearTimeout(armTimer);
@@ -572,8 +600,55 @@ function openEnd(id, opener) {
   endCancel.focus(); // Enter or Space right after opening cancels
 }
 
+const listOf = (names) => {
+  const ul = document.createElement("ul");
+  ul.append(...names.map((n) => Object.assign(document.createElement("li"), { textContent: n })));
+  return ul;
+};
+
+const endable = (id) => Boolean(cardOf.get(id)?.actions.menu);
+
+function openEnd(id, opener) {
+  if (!endable(id) || ender.pending(id)) return;
+  openConfirm("end", [id], confirmCopy(cardOf.get(id)), opener, () => endable(id));
+}
+
+// While every live card is ready: the ones klepsydra can end, none already
+// ending, and how many ready ones it cannot.
+function readyToEnd() {
+  if (!request || !readiness(sessions, request).safe) return { ids: [], outside: 0 };
+  const live = [...cardOf.values()].filter((c) => c.status !== "ended");
+  const ids = live.filter((c) => c.actions.menu && !ender.pending(c.id)).map((c) => c.id);
+  return { ids, outside: live.filter((c) => !c.actions.menu).length };
+}
+
+function openEndReady() {
+  const { ids, outside } = readyToEnd();
+  if (!ids.length) return;
+  // Every live card still ready, not just the listed ones: a session that arrives unready closes it.
+  const stillReady = () => Boolean(request) && readiness(sessions, request).safe && ids.every((id) => endable(id));
+  openConfirm("end", ids, endAllCopy(ids.map((id) => cardOf.get(id)), outside), endReadyButton, stillReady, true);
+}
+
+// Who the Wrap up confirm lists and how each is asked; it closes if that changes.
+const wrapupList = () =>
+  [...cardOf.values()]
+    .filter((c) => c.wrapupRoute)
+    .map((c) => `${c.id} ${c.wrapupRoute}`)
+    .join("\n");
+
+function openWrapup() {
+  if (wrapButton.getAttribute("aria-disabled") === "true") return;
+  const cards = [...cardOf.values()];
+  const list = wrapupList();
+  const ids = cards.filter((c) => c.wrapupRoute).map((c) => c.id);
+  // A request still asking is replaced, and its answers cleared: the confirm says so.
+  const running = asking(request, Date.now());
+  openConfirm("wrapup", ids, wrapupCopy(cards, running), wrapButton, () => wrapupList() === list && asking(request, Date.now()) === running);
+}
+
 endConfirm.addEventListener("click", (e) => {
-  if (armed(e)) dialog.close("end");
+  if (armed(e)) dialog.close("confirm");
 });
 endCancel.addEventListener("click", () => dialog.close("cancel"));
 dialog.addEventListener("click", (e) => {
@@ -582,11 +657,15 @@ dialog.addEventListener("click", (e) => {
 });
 dialog.addEventListener("close", () => {
   clearTimeout(armTimer);
-  const who = endFor;
-  endFor = null;
-  if (!who) return;
-  if (dialog.returnValue === "end") beginEnd(who);
-  else settleFocus(who.id, who.opener);
+  const what = confirmFor;
+  confirmFor = null;
+  if (!what) return;
+  if (dialog.returnValue !== "confirm") {
+    settleFocus(what.ids[0], what.opener);
+    return;
+  }
+  if (what.kind === "end") for (const id of what.ids) beginEnd(id, what.bulk);
+  else startWrapup(what.ids);
 });
 
 // Focus back to `first`, else the card (Enter or Space on it does nothing), else the wall.
@@ -600,13 +679,25 @@ function hideEnding(el, menuOff = false) {
   setOff(el.querySelector(".menu"), menuOff);
 }
 
-function beginEnd({ id, opener }) {
+// Whether session `id` still counts as ready for the request shown.
+const readyNow = (id) => Boolean(request) && isReady(sessions.find((s) => s.session_id === id), request);
+
+function beginEnd(id, bulk = false) {
   const c = cardOf.get(id);
   const el = cardEl(id);
   if (!c?.actions.menu || !el) return;
   const note = el.querySelector(".note");
   const ending = el.querySelector(".ending");
   const started = ender.start(id, {
+    // End all ready ends a session only while it is still ready.
+    holds: bulk ? () => readyNow(id) : undefined,
+    onSkip: () => {
+      const now = cardEl(id);
+      if (!now) return;
+      hideEnding(now);
+      say(now.querySelector(".note"), withdrawnText(c.name));
+      paintEndReady();
+    },
     onTick: (left) => {
       el.querySelector(".ending-text").textContent = endingText(c.name, left);
     },
@@ -626,9 +717,10 @@ function beginEnd({ id, opener }) {
   if (!started) return;
   say(note, "", 0);
   ending.hidden = false;
-  setOff(opener, true);
+  setOff(el.querySelector(".menu"), true);
   el.querySelector(".ending-live").textContent = endingAnnouncement(c.name);
   el.querySelector(".undo").focus({ preventScroll: true }); // a stray Enter undoes
+  paintEndReady();
 }
 
 function undoEnd(id) {
@@ -636,24 +728,28 @@ function undoEnd(id) {
   const name = cardOf.get(id)?.name;
   if (!ender.cancel(id) || !el) return;
   hideEnding(el);
+  paintEndReady();
   say(el.querySelector(".note"), name ? `${name} keeps running` : "Not ended");
   const menuButton = el.querySelector(".menu");
   if (usable(menuButton)) menuButton.focus({ preventScroll: true });
 }
 
 // A card that is gone, or whose session ended or left klepsydra's tmux, drops
-// its pending end, its open menu and its open dialog.
+// its pending end, its open menu and its open dialog; so does a bulk end
+// whose session is no longer ready.
 function reconcileActions() {
   for (const id of ender.ids()) {
-    if (cardOf.get(id)?.actions.menu) continue;
+    const endable = cardOf.get(id)?.actions.menu;
+    if (endable && ender.holds(id)) continue;
     ender.cancel(id);
     const el = cardEl(id);
     if (!el) continue;
     const focused = el.querySelector(".ending").contains(document.activeElement);
     hideEnding(el);
+    if (endable) say(el.querySelector(".note"), withdrawnText(cardOf.get(id).name));
     if (focused) settleFocus(id);
   }
-  if (endFor && !cardOf.get(endFor.id)?.actions.menu) dialog.close("cancel");
+  if (confirmFor && !confirmFor.holds()) dialog.close("cancel");
   if (menuFor) {
     if (cardOf.get(menuFor.id)?.actions.menu) syncMenu();
     else {
@@ -663,6 +759,56 @@ function reconcileActions() {
       if (had) settleFocus(id);
     }
   }
+}
+
+// Wrapping up: the bar's Wrap up…, and while a request is shown its count,
+// Stop wrap-up, Safe to restart and End all ready sessions….
+const wrapButton = document.getElementById("wrapup-open");
+const wrapNote = document.getElementById("wrapup-note");
+const wrapBar = document.querySelector(".wrapup-bar");
+const stopButton = document.getElementById("wrapup-stop");
+const endReadyButton = document.getElementById("end-ready");
+wrapButton.hidden = !inTauri;
+wrapButton.addEventListener("click", openWrapup);
+endReadyButton.addEventListener("click", openEndReady);
+stopButton.addEventListener("click", () =>
+  press(stopButton, wrapNote, () => tauri("cancel_wrapup").then(() => "Stopped asking; answers so far stay"), "Stopping…"),
+);
+
+function startWrapup(ids) {
+  if (usable(wrapButton)) wrapButton.focus({ preventScroll: true });
+  press(
+    wrapButton,
+    wrapNote,
+    async () => {
+      const answer = await tauri("start_wrapup", { ids });
+      const asked = Array.isArray(answer) ? answer : [];
+      for (const a of asked) {
+        const el = a.error ? cardEl(a.id) : null;
+        if (el) say(el.querySelector(".note"), a.error);
+      }
+      return askedNote(asked, (id) => cardOf.get(id)?.name);
+    },
+    "Asking…",
+  );
+}
+
+// Offered while there is a ready card to end and none of them is ending yet.
+const paintEndReady = () => {
+  endReadyButton.hidden = !inTauri || readyToEnd().ids.length === 0;
+};
+
+function paintWrapup(cards, now) {
+  const focused = bar.contains(document.activeElement) ? document.activeElement : null;
+  const r = readiness(sessions, request);
+  wrapBar.hidden = !request;
+  document.querySelector(".wrapup-count").textContent = r.text;
+  document.querySelector(".wrapup-safe").hidden = !r.safe;
+  stopButton.hidden = !inTauri || !asking(request, now);
+  paintEndReady();
+  setOff(wrapButton, !cards.some((c) => c.wrapupRoute));
+  // A button that just went away hands focus to Wrap up…, never to the page.
+  if (focused && !usable(focused) && usable(wrapButton)) wrapButton.focus({ preventScroll: true });
 }
 
 // Density: the saved choice, and what is on screen. Auto measures an unseen
@@ -742,4 +888,7 @@ new ResizeObserver(() => {
 if (inTauri) window.__TAURI__.core.invoke("get_wall_density").then(choose, () => {});
 
 subscribe(receive);
-setInterval(() => render(), TICK_MS);
+setInterval(() => {
+  const said = render();
+  if (said.length) announce(said.join(". "));
+}, TICK_MS);

@@ -99,6 +99,8 @@ pub enum PaneVerb {
     End,
     /// Press Esc in it.
     Interrupt,
+    /// Type /klepsydra-wrapup into it.
+    Wrapup,
 }
 
 impl PaneVerb {
@@ -107,6 +109,7 @@ impl PaneVerb {
             PaneVerb::Jump => "jump",
             PaneVerb::End => "end",
             PaneVerb::Interrupt => "interrupt",
+            PaneVerb::Wrapup => "wrapup",
         }
     }
 }
@@ -309,6 +312,14 @@ fn pane_timed_out() -> String {
     )
 }
 
+/// The card's line when typing the wrap-up gets no answer from WSL in `TIMEOUT`.
+fn wrapup_timed_out() -> String {
+    format!(
+        "WSL did not answer within {} seconds; the session may not have been asked. Check its terminal.",
+        TIMEOUT.as_secs()
+    )
+}
+
 #[cfg(windows)]
 fn run(args: &[String], timed_out: fn() -> String) -> Result<String, String> {
     use std::os::windows::process::CommandExt;
@@ -388,6 +399,87 @@ async fn to_pane(app: tauri::AppHandle, id: String, verb: PaneVerb) -> Result<St
 #[tauri::command]
 pub async fn end_session(app: tauri::AppHandle, id: String) -> Result<String, String> {
     to_pane(app, id, PaneVerb::End).await
+}
+
+/// The card's line when Wrap up finds an End or Interrupt of that session running.
+const WRAPUP_BUSY: &str =
+    "klepsydra is already sending that session something; ask it by hand: type /klepsydra-wrapup in its terminal.";
+
+/// Start a wrap-up of the sessions `ids` the wall's confirm listed: each is
+/// asked to checkpoint and report, idle ones in klepsydra's tmux at once (all
+/// marked asked first, then typed into together), the rest by the Stop hook.
+/// A session not listed is never asked.
+#[tauri::command]
+pub async fn start_wrapup(
+    app: tauri::AppHandle,
+    ids: Vec<String>,
+) -> Result<Vec<klepsydra_fleet::wrapup::Asked>, String> {
+    use klepsydra_fleet::wrapup::{self, Failed};
+    let dir = crate::klepsydra_dir(&app).ok_or("klepsydra has no data folder.")?;
+    let snapshot = app
+        .state::<crate::fleet::Fleet>()
+        .with_latest(Value::clone)
+        .ok_or("The fleet has not been read yet.")?;
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|e| e.to_string())?
+        .as_millis();
+    let sessions = snapshot["sessions"].as_array().cloned().unwrap_or_default();
+    let on_wall = |id: &String| {
+        sessions
+            .iter()
+            .any(|s| s["session_id"].as_str() == Some(id))
+    };
+    let listed: Vec<String> = ids.into_iter().filter(on_wall).collect();
+    if listed.is_empty() {
+        return Err("None of those sessions is on the wall any more.".into());
+    }
+    let r = wrapup::start(&dir, i64::try_from(now_ms).unwrap_or(i64::MAX), &listed)
+        .map_err(|e| format!("Could not start the wrap-up: {e}"))?;
+    // As the wall judges it: a fleet pane with a known Claude process.
+    let targets: std::collections::HashMap<String, Target> = r
+        .ids
+        .iter()
+        .filter_map(|id| Some((id.clone(), target(&snapshot, id)?)))
+        .filter(|(_, t)| is_fleet(t) && t.pid > 0)
+        .collect();
+    // Routed from the session files as they read now; each is read again just before typing.
+    let plan = wrapup::plan(&dir, &r.ids, |id| targets.contains_key(id), r.at);
+    tauri::async_runtime::spawn_blocking(move || {
+        wrapup::ask(&dir, &r, &plan, r.at, |id| {
+            let failed = |error: String| Failed {
+                // A timeout may have typed it: keep the mark, so the Stop hook does not ask twice.
+                maybe_typed: error == wrapup_timed_out(),
+                error,
+            };
+            let args = targets
+                .get(id)
+                .ok_or_else(|| "This session has no tmux pane klepsydra knows.".to_owned())
+                .and_then(|t| pane_args(t, PaneVerb::Wrapup))
+                .map_err(failed)?;
+            pane_gated(&app.state::<PaneFlight>(), id, || {
+                run(&args, wrapup_timed_out)
+            })
+            .map(|_| ())
+            .map_err(|e| {
+                failed(if e == PANE_BUSY {
+                    WRAPUP_BUSY.into()
+                } else {
+                    e
+                })
+            })
+        })
+    })
+    .await
+    .map_err(|e| format!("Could not ask the sessions: {e}"))
+}
+
+/// Stop asking sessions to wrap up; answers so far stay on the wall.
+#[tauri::command]
+pub fn cancel_wrapup(app: tauri::AppHandle) -> Result<(), String> {
+    let dir = crate::klepsydra_dir(&app).ok_or("klepsydra has no data folder.")?;
+    klepsydra_fleet::wrapup::cancel(&dir, klepsydra_fleet::watch::unix_now())
+        .map_err(|e| format!("Could not stop the wrap-up: {e}"))
 }
 
 /// Interrupt session `id`'s turn, as if Esc were pressed in its terminal.
@@ -518,12 +610,13 @@ mod tests {
             pane_args(&fleet, PaneVerb::Interrupt).unwrap()[7],
             "interrupt"
         );
+        assert_eq!(pane_args(&fleet, PaneVerb::Wrapup).unwrap()[7], "wrapup");
         let hand = Target {
             socket: "/tmp/tmux-1001/default".into(),
             ..fleet
         };
         assert!(pane_args(&hand, PaneVerb::Jump).is_ok());
-        for verb in [PaneVerb::End, PaneVerb::Interrupt] {
+        for verb in [PaneVerb::End, PaneVerb::Interrupt, PaneVerb::Wrapup] {
             assert_eq!(pane_args(&hand, verb), Err(NOT_FLEET.to_string()));
         }
     }

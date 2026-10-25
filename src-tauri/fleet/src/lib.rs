@@ -16,3 +16,4 @@ pub mod speaking;
 pub mod tabs;
 pub mod view;
 pub mod watch;
+pub mod wrapup;

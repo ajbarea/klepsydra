@@ -1,0 +1,64 @@
+{
+  "at": 1792500000,
+  "request": {
+    "id": "1792499700000",
+    "at": 1792499700,
+    "until": 1792500300,
+    "ids": [
+      "demo-1-am_michael",
+      "demo-2-af_bella",
+      "demo-3-af_sarah",
+      "demo-4-bf_emma",
+      "demo-9-bm_fable",
+      "demo-5-bf_isabella",
+      "demo-6-af_nova",
+      "demo-7-af_aoede",
+      "demo-10-bm_george",
+      "demo-11-am_fenrir",
+      "demo-12-af_alloy",
+      "demo-13-af_nicole",
+      "demo-14-medallion",
+      "demo-15-am_onyx",
+      "demo-16-af_kore"
+    ]
+  },
+  "answers": {
+    "demo-5-bf_isabella": {
+      "state": "ready",
+      "at": 1792499945,
+      "settled_at": 1792499955
+    },
+    "demo-2-af_bella": {
+      "state": "ready",
+      "at": 1792499920
+    },
+    "demo-9-bm_fable": {
+      "state": "ready",
+      "at": 1792499915,
+      "settled_at": 1792499918
+    },
+    "demo-3-af_sarah": {
+      "state": "asked",
+      "at": 1792499820
+    },
+    "demo-4-bf_emma": {
+      "state": "blocked",
+      "reason": "a review agent on PR #70 is still running, about 20 min; it would have to start over",
+      "at": 1792499940,
+      "settled_at": 1792499960
+    },
+    "demo-8-am_puck": {
+      "state": "ready",
+      "at": 1792499760,
+      "settled_at": 1792499770
+    },
+    "demo-13-af_nicole": {
+      "state": "asked",
+      "at": 1792499705
+    },
+    "demo-14-medallion": {
+      "state": "asked",
+      "at": 1792499705
+    }
+  }
+}

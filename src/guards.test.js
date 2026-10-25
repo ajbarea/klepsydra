@@ -235,6 +235,14 @@ test("the script, the app and the wall name the fleet socket alike", () => {
   assert.equal(js[1], rust[1], "end.js's FLEET_SOCKET decides who gets a menu, so it must match launch.rs");
 });
 
+test("Wrap up refuses a busy pane in its own words, the same from the app and the script", () => {
+  const rust = read(LAUNCHER).match(/const WRAPUP_BUSY: &str =\s*"([^"]+)";/);
+  const sh = read("hooks/klepsydra-launch.sh").match(/^wrapup\(\) \{[\s\S]*?local busy="([^"]+)"/m);
+  assert.ok(rust && sh, "busy texts not found");
+  assert.equal(rust[1], sh[1]);
+  assert.doesNotMatch(rust[1], /ended|interrupted/);
+});
+
 test("the launcher check catches a shell hop or an aliased Command", () => {
   for (const planted of ['.args(["-c", cmd])', "use std::process::Command as C;", 'a = ["--", "sh"];']) {
     assert.notDeepEqual(launcherHazards(planted), [], planted);
@@ -441,6 +449,7 @@ const NOT_SCANNED = {
   "src/fleet/fonts/": "the nameplate's bundled typeface and its licence, data",
   "src/fleet/cast.json": "voice to portrait table, data",
   "src-tauri/fleet/Cargo.toml": "scanned as a manifest",
+  "hooks/klepsydra-wrapup.md": "the wrap-up skill's instructions, prose installed as a skill",
 };
 
 /** Every file (any extension) a fleet change can add, found without the guards' own walks. */
@@ -546,9 +555,23 @@ test("no code path ends a session except the undo window's expiry", () => {
   assert.doesNotMatch(wall, /end_session/);
   assert.match(wall, /ender\.start\(/);
   assert.equal((wall.match(/ender\.start\(/g) ?? []).length, 1, "one place begins an end, and only the dialog's confirm reaches it");
-  assert.match(wall, /if \(dialog\.returnValue === "end"\) beginEnd\(who\)/);
+  assert.match(wall, /function beginEnd\(id, bulk = false\) \{[^}]*ender\.start\(id,/, "inside beginEnd");
+  assert.match(wall, /holds: bulk \? \(\) => readyNow\(id\) : undefined,/, "End all ready's ends each wait on their session staying ready");
+  assert.match(wall, /const readyNow = \(id\) => Boolean\(request\) && isReady\(sessions\.find\(\(s\) => s\.session_id === id\), request\);/);
   assert.equal((wall.match(/beginEnd\(/g) ?? []).length, 2, "its definition and the confirm");
-  assert.equal((wall.match(/dialog\.close\("end"\)/g) ?? []).length, 1, "only the End button's click closes with end");
+  // The one call sits in the dialog's close handler, past the return that anything but confirm takes.
+  const close = wall.slice(wall.indexOf('dialog.addEventListener("close"'), wall.indexOf("\n});", wall.indexOf('dialog.addEventListener("close"')));
+  assert.match(close, /if \(dialog\.returnValue !== "confirm"\) \{\n\s*settleFocus\(what\.ids\[0\], what\.opener\);\n\s*return;\n\s*\}\n\s*if \(what\.kind === "end"\) for \(const id of what\.ids\) beginEnd\(id, what\.bulk\);/);
+  assert.equal((wall.match(/dialog\.close\("confirm"\)/g) ?? []).length, 1, "only the armed button's click closes with confirm");
+  assert.doesNotMatch(wall, /returnValue = "confirm"|close\("end"\)/);
+  // Two dialogs end sessions, End session… and End all ready sessions…, each from its own opener only.
+  assert.equal((wall.match(/openConfirm\("end"/g) ?? []).length, 2);
+  assert.match(wall, /function openEnd\(id, opener\) \{[^}]*openConfirm\("end", \[id\]/);
+  assert.match(wall, /function openEndReady\(\) \{[\s\S]*?openConfirm\("end", ids,[\s\S]*?\n\}/);
+  assert.equal((wall.match(/openEnd\(id, button\)/g) ?? []).length, 1, "the menu's End session… item");
+  assert.equal((wall.match(/openEndReady\b/g) ?? []).length, 2, "its definition and its button's click");
+  assert.match(wall, /endReadyButton\.addEventListener\("click", openEndReady\)/);
+  assert.equal((wall.match(/confirmFor = \{/g) ?? []).length, 1, "the dialog's target is set in openConfirm alone");
   assert.doesNotMatch(wall, /\bautofocus\b/);
   const endDialog = read("src/wall.html").match(/<dialog id="end-dialog"[\s\S]*?<\/dialog>/)[0];
   assert.doesNotMatch(endDialog, /autofocus/, "the ledger heading may take focus; the end dialog's buttons never");
@@ -676,10 +699,108 @@ test("the ledger drawer is a labelled modal dialog with a Close button that link
 
 test("the dialog's End is off for ARM_MS after every opening, and an off End closes nothing", () => {
   const wall = read("src/fleet/wall.js");
-  const open = wall.slice(wall.indexOf("function openEnd("), wall.indexOf("endConfirm.addEventListener"));
+  const open = wall.slice(wall.indexOf("function openConfirm("), wall.indexOf("const listOf"));
+  assert.equal((wall.match(/\.showModal\(\)/g) ?? []).length, 2, "the confirm's and the portrait's: every confirm opens through openConfirm");
+  assert.equal((wall.match(/portrait\.showModal\(\)/g) ?? []).length, 1);
   assert.match(open, /setOff\(endConfirm, true\);\s*clearTimeout\(armTimer\);\s*armTimer = setTimeout\(\(\) => setOff\(endConfirm, false\), ARM_MS\);\s*openedAt = performance\.now\(\);\s*dialog\.showModal\(\)/);
   assert.match(wall, /const armed = \(e\) => endConfirm\.getAttribute\("aria-disabled"\) !== "true" && e\.timeStamp - openedAt >= ARM_MS;/);
-  assert.match(wall, /endConfirm\.addEventListener\("click", \(e\) => \{\s*if \(armed\(e\)\) dialog\.close\("end"\);/);
+  assert.match(wall, /endConfirm\.addEventListener\("click", \(e\) => \{\s*if \(armed\(e\)\) dialog\.close\("confirm"\);/);
+});
+
+// wrapup.rs route() as data: {table: status -> [in_fleet, outside] route,
+// afterTurn: the same pair for a working session whose turn is over}.
+function rustRoutes(wrapupRs = read("src-tauri/fleet/src/wrapup.rs")) {
+  const variants = read("src-tauri/fleet/src/view.rs").match(/pub enum Status \{([^}]*)\}/)[1].match(/\w+/g);
+  const body = wrapupRs.match(
+    /pub fn route\(status: Status, reason: Option<&str>, in_fleet: bool\) -> Option<Route> \{\s*let after_turn = status == Status::Working && reason == Some\(AFTER_TURN\);\s*match status \{([^}]*)\}/,
+  )[1];
+  const lines = body.split("\n").map((l) => l.trim()).filter(Boolean);
+  const arms = lines.map((l) => {
+    const m = l.match(/^((?:Status::\w+)(?: \| Status::\w+)*)(?: if (after_turn && in_fleet|after_turn|in_fleet))? => (None|Some\(Route::(\w+)\)),$/);
+    assert.ok(m, `an arm the guard cannot read: ${l}`);
+    const guard = m[2] ?? "";
+    return { statuses: m[1].match(/Status::(\w+)/g).map((v) => v.slice(8)), afterTurn: guard.includes("after_turn"), fleetOnly: guard.includes("in_fleet"), route: m[4] ?? null };
+  });
+  const snake = (v) => v.replace(/[A-Z]/g, (c, i) => (i ? "_" : "") + c.toLowerCase());
+  const pick = (v, afterTurn) =>
+    [true, false].map((fleet) => {
+      const arm = arms.find((a) => a.statuses.includes(v) && (!a.afterTurn || afterTurn) && (!a.fleetOnly || fleet));
+      assert.ok(arm, `${v} has no arm`);
+      return arm.route && snake(arm.route);
+    });
+  const table = {};
+  for (const v of variants) table[snake(v)] = pick(v, false);
+  return { table, afterTurn: pick("Working", true) };
+}
+
+test("the wall's route preview is wrapup.rs route(), arm for arm", async () => {
+  const { AFTER_TURN, AFTER_TURN_ROUTES, ROUTES, route } = await import("./fleet/wrapup.js");
+  const rust = rustRoutes();
+  assert.deepEqual(Object.keys(ROUTES).sort(), Object.keys(rust.table).sort(), "one entry per Status");
+  assert.deepEqual(ROUTES, rust.table);
+  assert.deepEqual(AFTER_TURN_ROUTES, rust.afterTurn, "a working session idle at its prompt");
+  for (const [status, [inside, outside]] of Object.entries(rust.table)) {
+    assert.equal(route(status, true), inside, status);
+    assert.equal(route(status, false), outside, status);
+    // Only a working session's reason changes its route.
+    const bg = status === "working" ? rust.afterTurn : [inside, outside];
+    assert.deepEqual([route(status, true, AFTER_TURN), route(status, false, AFTER_TURN)], bg, `${status} with work out`);
+  }
+  const rs = read("src-tauri/fleet/src/wrapup.rs");
+  assert.equal(rs.match(/pub const AFTER_TURN: &str = "([^"]+)";/)[1], AFTER_TURN);
+  assert.match(read("hooks/klepsydra-fleet.sh"), new RegExp(`\\{state: "working", reason: "${AFTER_TURN}"\\}`), "the reason the fleet hook writes");
+  assert.match(read("src-tauri/fleet/src/view.rs"), new RegExp(`f\\.reason\\.as_deref\\(\\) == Some\\("${AFTER_TURN}"\\)`), "and the reader keeps");
+  const window = rs.match(/pub const WINDOW: i64 = (\d+);/);
+  assert.equal((await import("./fleet/wrapup.js")).WINDOW_S, Number(window[1]), "the confirm's minutes are the reader's window");
+  const shown = rs.match(/pub const SHOWN_AFTER: i64 = (\d+);/);
+  assert.match(read("hooks/klepsydra-wrapup.sh"), new RegExp(`^SHOWN_AFTER=${shown[1]} `, "m"), "the script takes late reports as long as the wall shows the request");
+});
+
+test("the route guard sees a changed arm, and refuses one it cannot read", async () => {
+  const { AFTER_TURN_ROUTES, ROUTES } = await import("./fleet/wrapup.js");
+  const rs = read("src-tauri/fleet/src/wrapup.rs");
+  const typed = "Status::Done | Status::New | Status::Error if in_fleet => Some(Route::Type),";
+  const idle = "Status::Working if after_turn && in_fleet => Some(Route::Type),";
+  assert.ok(rs.includes(typed) && rs.includes(idle), "the arms to plant against");
+  const same = (r) => JSON.stringify(r.table) === JSON.stringify(ROUTES) && JSON.stringify(r.afterTurn) === JSON.stringify(AFTER_TURN_ROUTES);
+  for (const [arm, planted] of [
+    [typed, typed.replace(" | Status::Error", "")],
+    [typed, typed.replace(" if in_fleet", "")],
+    [typed, typed.replace("Route::Type", "Route::ByHand")],
+    [idle, idle.replace("Route::Type", "Route::TurnEnd")],
+    [idle, idle.replace(" && in_fleet", "")],
+    [idle, ""],
+  ]) {
+    assert.ok(!same(rustRoutes(rs.replace(arm, planted))), planted || `${arm} removed`);
+  }
+  assert.throws(() => rustRoutes(rs.replace("Status::Ended => None,", "_ => None,")), /cannot read/);
+});
+
+test("the wrap-up line and the confirm's lists go in as text", () => {
+  const wall = read("src/fleet/wall.js");
+  const paint = wall.slice(wall.indexOf("function paint("), wall.indexOf("\nfunction render("));
+  assert.match(paint, /show\(wrap, c\.wrapup\?\.text\)/, "the reason is session-written: textContent only");
+  assert.doesNotMatch(read("src/fleet/wrapup.js"), /innerHTML|insertAdjacentHTML/);
+  const open = wall.slice(wall.indexOf("function openConfirm("), wall.indexOf("const endable"));
+  assert.doesNotMatch(open, /innerHTML|insertAdjacentHTML/);
+  assert.match(read("src/wall.html"), /<span id="wrapup-note" role="status"><\/span>/);
+  assert.match(wall, /wrapButton\.hidden = !inTauri/);
+});
+
+test("the wrap-up sample is never reachable inside the app, and only with ?demo", async () => {
+  globalThis.window ??= {};
+  const feed = await import("./fleet/feed.js");
+  for (const search of ["?demo&wrapup", "?demo=8&wrapup", "?wrapup", ""]) assert.equal(feed.demoWrapupUrl(true, search), null, search);
+  assert.equal(feed.demoWrapupUrl(false, "?demo&wrapup"), "../scripts/fixtures/wrapup-demo.json");
+  for (const search of ["?wrapup", "?demo", "?focus=x"]) assert.equal(feed.demoWrapupUrl(false, search), null, search);
+  assert.equal(read("src/fleet/feed.js").match(/wrapup-demo\.json/g).length, 1, "one way to the sample");
+  const sample = JSON.parse(read("scripts/fixtures/wrapup-demo.json"));
+  const merged = feed.withWrapup({ sessions: [{ session_id: "demo-2-af_bella" }, { session_id: "x" }] }, sample);
+  assert.deepEqual(merged.wrapup, sample.request);
+  assert.deepEqual(merged.sessions, [{ session_id: "demo-2-af_bella", wrapup: sample.answers["demo-2-af_bella"] }, { session_id: "x" }]);
+  assert.deepEqual(feed.withWrapup({ sessions: [] }, null), { sessions: [] }, "no sample, no change");
+  const ids = new Set(JSON.parse(read("scripts/fixtures/fleet-demo.json")).sessions.map((s) => s.session_id));
+  for (const id of Object.keys(sample.answers)) assert.ok(ids.has(id), `${id} is a demo session`);
 });
 
 // Windows Firewall prompts once per executable path that listens beyond loopback,

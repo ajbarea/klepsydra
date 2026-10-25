@@ -176,3 +176,38 @@ test("the dialog's End wakes only after a double-click would be over", () => {
   assert.ok(ARM_MS >= 500, "Windows' default double-click time is 500 ms");
   assert.ok(ARM_MS < UNDO_MS);
 });
+
+test("a bulk end whose session stops being ready inside the window is never sent", async () => {
+  const { calls, ender, done } = harness();
+  try {
+    let ready = true;
+    const skipped = [];
+    const opts = { onTick() {}, onSend: () => done.push("send"), onDone: (r) => done.push(r), holds: () => ready, onSkip: () => skipped.push(ender.pending("a")) };
+    assert.ok(ender.start("a", opts));
+    assert.equal(ender.holds("a"), true);
+    mock.timers.tick(UNDO_MS - 1000);
+    ready = false; // it went Working again during the undo
+    assert.equal(ender.holds("a"), false, "the wall's reconcile sees it and cancels");
+    mock.timers.tick(1000);
+    await flush();
+    assert.deepEqual(calls, [], "never sent, even if nothing cancelled it");
+    assert.deepEqual(done, [], "no send, no answer");
+    assert.deepEqual(skipped, [false], "onSkip runs once, with the end already released");
+    assert.ok(ender.start("a", opts), "free again");
+    assert.equal(ender.holds("b"), true, "no end, nothing to withdraw");
+  } finally {
+    mock.timers.reset();
+  }
+});
+
+test("a bulk end whose session is still ready goes out as any other", async () => {
+  const { calls, ender, opts } = harness();
+  try {
+    ender.start("a", { ...opts, holds: () => true });
+    mock.timers.tick(UNDO_MS);
+    await flush();
+    assert.deepEqual(calls, [["end_session", { id: "a" }]]);
+  } finally {
+    mock.timers.reset();
+  }
+});

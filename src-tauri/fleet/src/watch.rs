@@ -24,20 +24,21 @@ const COALESCE: Duration = Duration::from_millis(75);
 enum Wake {
     /// A session or beat file may have changed.
     Change,
-    /// The fleet directory itself changed; the watch may be dead.
+    /// A watched directory itself changed; the watch may be dead.
     Rewatch,
 }
 
 /// Temp files are written then renamed over a session file, and the rename is
 /// what counts. Opens and closes are the reader's own reads, so they never do.
-fn wake(fleet: &Path, res: notify::Result<notify::Event>) -> Option<Wake> {
+/// `dirs` are the watched directories: the fleet's and the wrap-up's.
+fn wake(dirs: &[PathBuf], res: notify::Result<notify::Event>) -> Option<Wake> {
     let Ok(event) = res else {
         return Some(Wake::Change);
     };
     if matches!(event.kind, EventKind::Access(_)) {
         return None;
     }
-    if event.paths.iter().any(|p| p == fleet) {
+    if event.paths.iter().any(|p| dirs.contains(p)) {
         return Some(Wake::Rewatch);
     }
     let session = |p: &PathBuf| {
@@ -65,7 +66,12 @@ fn incarnation(dir: &Path) -> Option<u64> {
 }
 
 pub struct Reader {
+    dir: PathBuf,
     fleet: PathBuf,
+    /// The wrap-up's folder, watched too once it exists.
+    wrapup: PathBuf,
+    /// Its incarnation while the watcher covers it.
+    wrap_watched: Option<Option<u64>>,
     tx: Sender<Wake>,
     rx: Receiver<Wake>,
     watcher: Option<RecommendedWatcher>,
@@ -79,8 +85,13 @@ impl Reader {
     /// A reader for `<klepsydra_dir>/fleet`, which may not exist yet.
     pub fn new(klepsydra_dir: &Path) -> Self {
         let (tx, rx) = channel();
+        // The wrap-up's folder is watched from the start, so the first request is not a poll late.
+        let _ = std::fs::create_dir_all(klepsydra_dir.join(crate::wrapup::DIR));
         Reader {
+            dir: klepsydra_dir.to_path_buf(),
             fleet: klepsydra_dir.join("fleet"),
+            wrapup: klepsydra_dir.join(crate::wrapup::DIR),
+            wrap_watched: None,
             tx,
             rx,
             watcher: None,
@@ -97,22 +108,36 @@ impl Reader {
         self
     }
 
-    /// Watch the directory once it exists; drop the watch if it goes away, so
-    /// a recreated directory is watched afresh. A watcher that cannot start is
-    /// a problem; the re-read every `POLL` still covers it.
+    /// Watch the fleet directory once it exists, and the wrap-up's once it
+    /// does; drop the watch if either goes away, so a recreated directory is
+    /// watched afresh. A watcher that cannot start is a problem; the re-read
+    /// every `POLL` still covers it.
     fn attach(&mut self) -> Option<Problem> {
         if !self.fleet.is_dir() {
             self.watcher = None;
             return None;
         }
+        let wrap_now = self.wrapup.is_dir().then(|| incarnation(&self.wrapup));
         if self.watcher.is_some() && self.watched == incarnation(&self.fleet) {
-            return None;
+            match (self.wrap_watched, wrap_now) {
+                (was, now) if was == now => return None,
+                (None, Some(now)) => {
+                    if let Some(w) = &mut self.watcher {
+                        if w.watch(&self.wrapup, RecursiveMode::NonRecursive).is_ok() {
+                            self.wrap_watched = Some(now);
+                        }
+                    }
+                    return None;
+                }
+                _ => {} // gone or remade: start over
+            }
         }
         self.watched = incarnation(&self.fleet);
+        self.wrap_watched = None;
         let tx = self.tx.clone();
-        let fleet = self.fleet.clone();
+        let dirs = vec![self.fleet.clone(), self.wrapup.clone()];
         let started = notify::recommended_watcher(move |res| {
-            if let Some(w) = wake(&fleet, res) {
+            if let Some(w) = wake(&dirs, res) {
                 let _ = tx.send(w);
             }
         })
@@ -121,7 +146,12 @@ impl Reader {
             Ok(w)
         });
         match started {
-            Ok(w) => {
+            Ok(mut w) => {
+                if let Some(now) = wrap_now {
+                    if w.watch(&self.wrapup, RecursiveMode::NonRecursive).is_ok() {
+                        self.wrap_watched = Some(now);
+                    }
+                }
                 self.watcher = Some(w);
                 None
             }
@@ -203,6 +233,13 @@ impl Reader {
             }
         }
         let problems = self.reporter.fresh(&broken);
+        crate::wrapup::forget_expired(&self.dir, t);
+        snap.wrapup = crate::wrapup::request(&self.dir, t);
+        if let Some(r) = &snap.wrapup {
+            for v in &mut snap.sessions {
+                v.wrapup = crate::wrapup::answer(&self.dir, r, &v.session_id);
+            }
+        }
         let shown = self.last.as_ref().and_then(|s| s.speaking.as_ref());
         snap.speaking = speaking(&read_speaking(&self.fleet), shown, &snap.sessions, t);
         if self.last.as_ref() == Some(&snap) {
@@ -260,6 +297,147 @@ mod tests {
             "woke by the watcher, not the poll"
         );
         assert_eq!(snap.unwrap().sessions.len(), 1);
+    }
+
+    #[test]
+    fn the_wrap_up_request_and_each_answer_reach_the_snapshot() {
+        let (root, mut r) = reader("wrapup");
+        root.write(&format!("fleet/{A}.json"), &session(A, "done"));
+        let t = 1_700_000_100;
+        let snap = r.step(Duration::ZERO, || t).0.unwrap();
+        assert_eq!((snap.wrapup, snap.sessions[0].wrapup.clone()), (None, None));
+        root.write(
+            "wrapup/request.json",
+            &format!(r#"{{"id":"9","at":{t},"until":{}}}"#, t + 600),
+        );
+        root.write(
+            &format!("wrapup/{A}.json"),
+            r#"{"request":"9","state":"ready","at":1700000101}"#,
+        );
+        let snap = r.step(Duration::ZERO, || t).0.unwrap();
+        assert_eq!(snap.wrapup.unwrap().id, "9");
+        let answer = snap.sessions[0].wrapup.clone().unwrap();
+        assert_eq!(answer.state, crate::wrapup::State::Ready);
+        let json = serde_json::to_value(&snap.sessions[0]).unwrap();
+        assert_eq!(json["wrapup"]["state"], "ready");
+    }
+
+    fn set_mtime(path: &std::path::Path, t: i64) {
+        std::fs::File::options()
+            .write(true)
+            .open(path)
+            .unwrap()
+            .set_modified(std::time::UNIX_EPOCH + Duration::from_secs(t as u64))
+            .unwrap();
+    }
+
+    #[test]
+    fn an_answer_and_its_session_share_one_clock_whatever_the_writers_skew() {
+        // Prompted at T+5, answered ready at T+185, by a writer clock `ahead`
+        // of this one; both files land by this clock. The answer must still
+        // follow the prompt, and a later prompt must still overtake it.
+        let t = 1_792_800_000;
+        for ahead in [-300, 0, 120, 700] {
+            let (root, mut r) = reader("wrapup-skew");
+            let w = |x: i64| x + ahead;
+            let session = format!(
+                r#"{{"v":1,"session_id":"{A}","state":"done","state_at":{},"written_at":{},"prompt":{{"text":"/klepsydra-wrapup","at":{}}}}}"#,
+                w(t + 190),
+                w(t + 190),
+                w(t + 5)
+            );
+            root.write(&format!("fleet/{A}.json"), &session);
+            set_mtime(&root.0.join(format!("fleet/{A}.json")), t + 190);
+            std::fs::create_dir_all(root.0.join("wrapup")).unwrap();
+            root.write(
+                "wrapup/request.json",
+                &format!(r#"{{"id":"9","at":{t},"until":{},"ids":["{A}"]}}"#, t + 600),
+            );
+            root.write(
+                &format!("wrapup/{A}.json"),
+                &format!(r#"{{"request":"9","state":"ready","at":{}}}"#, w(t + 185)),
+            );
+            set_mtime(&root.0.join(format!("wrapup/{A}.json")), t + 185);
+            let snap = r.step(Duration::ZERO, || t + 200).0.unwrap();
+            let v = &snap.sessions[0];
+            let (prompt, answer) = (v.prompt.as_ref().unwrap().at, v.wrapup.as_ref().unwrap().at);
+            assert_eq!(
+                (prompt, answer),
+                (t + 5, t + 185),
+                "writer clock {ahead:+} s"
+            );
+        }
+    }
+
+    #[test]
+    fn a_wrap_up_answer_arrives_well_before_the_poll() {
+        let (root, mut r) = reader("wrapup-watch");
+        root.write(&format!("fleet/{A}.json"), &session(A, "done"));
+        std::fs::create_dir_all(root.0.join("wrapup")).unwrap();
+        let t = unix_now();
+        root.write(
+            "wrapup/request.json",
+            &format!(r#"{{"id":"9","at":{t},"until":{},"ids":["{A}"]}}"#, t + 600),
+        );
+        r.step(Duration::ZERO, unix_now);
+        let wrap = root.0.join("wrapup");
+        let writer = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(200));
+            let tmp = wrap.join(format!("{A}.json.77.tmp"));
+            std::fs::write(
+                &tmp,
+                format!(r#"{{"request":"9","state":"ready","at":{t}}}"#),
+            )
+            .unwrap();
+            std::fs::rename(&tmp, wrap.join(format!("{A}.json"))).unwrap();
+        });
+        let started = Instant::now();
+        let (snap, _) = r.step(POLL, unix_now);
+        writer.join().unwrap();
+        assert!(
+            started.elapsed() < Duration::from_secs(3),
+            "woke by the watcher, not the poll"
+        );
+        assert_eq!(
+            snap.unwrap().sessions[0].wrapup.as_ref().map(|a| a.state),
+            Some(crate::wrapup::State::Ready)
+        );
+    }
+
+    #[test]
+    fn the_first_wrap_up_ever_arrives_well_before_the_poll() {
+        let (root, mut r) = reader("wrapup-first");
+        assert!(
+            root.0.join("wrapup").is_dir(),
+            "the reader makes the folder it watches"
+        );
+        root.write(&format!("fleet/{A}.json"), &session(A, "done"));
+        r.step(Duration::ZERO, unix_now);
+        let dir = root.0.clone();
+        let writer = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(200));
+            crate::wrapup::start(&dir, unix_now() * 1000, &[A.to_owned()]).unwrap();
+        });
+        let started = Instant::now();
+        let (snap, _) = r.step(POLL, unix_now);
+        writer.join().unwrap();
+        assert!(
+            started.elapsed() < Duration::from_secs(3),
+            "woke by the watcher, not the poll"
+        );
+        assert!(snap.unwrap().wrapup.is_some());
+    }
+
+    #[test]
+    fn a_request_past_its_hour_is_removed_by_the_reader() {
+        let (root, mut r) = reader("wrapup-forget");
+        let t = 1_700_000_100;
+        root.write(
+            "wrapup/request.json",
+            &format!(r#"{{"id":"9","at":{t},"until":{}}}"#, t + 600),
+        );
+        r.step(Duration::ZERO, || t + 600 + crate::wrapup::SHOWN_AFTER + 1);
+        assert!(!root.0.join("wrapup/request.json").exists());
     }
 
     #[test]

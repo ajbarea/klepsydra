@@ -68,21 +68,26 @@ pub enum Found {
     Text(String),
 }
 
-/// `speaking.json` in `fleet`. The type is checked before opening, so a FIFO
-/// is never opened and a symlink never followed.
+/// `speaking.json` in `fleet`.
 pub fn read(fleet: &Path) -> Found {
-    let path = fleet.join(FILE);
+    read_small(&fleet.join(FILE), MAX_BYTES)
+}
+
+/// The regular file at `path` when it is at most `max` bytes. The type is
+/// checked before opening, so a FIFO is never opened and a symlink never
+/// followed.
+pub fn read_small(path: &Path, max: u64) -> Found {
     let gone = |e: &std::io::Error| e.kind() == std::io::ErrorKind::NotFound;
-    let meta = match std::fs::symlink_metadata(&path) {
+    let meta = match std::fs::symlink_metadata(path) {
         Ok(m) => m,
         Err(e) if gone(&e) => return Found::Absent,
         Err(_) => return Found::Failed,
     };
-    if !meta.is_file() || meta.len() > MAX_BYTES {
+    if !meta.is_file() || meta.len() > max {
         return Found::Absent;
     }
     let mut text = String::new();
-    match File::open(&path).and_then(|f| f.take(MAX_BYTES).read_to_string(&mut text)) {
+    match File::open(path).and_then(|f| f.take(max).read_to_string(&mut text)) {
         Ok(_) => Found::Text(text),
         Err(e) if gone(&e) => Found::Absent,
         Err(_) => Found::Failed,
@@ -225,6 +230,9 @@ mod tests {
             background: Crew::default(),
             ledger: None,
             ledger_partial: false,
+            wrapup: None,
+            turn_at: None,
+            asked_after_turn: false,
             marks: Default::default(),
         }
     }

@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # klepsydra's launcher, run by the overlay as
 #   wsl.exe -e bash -l .claude/klepsydra-launch.sh new DIR
-#   wsl.exe -e bash .claude/klepsydra-launch.sh jump|end|interrupt SOCKET PANE PID START
+#   wsl.exe -e bash .claude/klepsydra-launch.sh jump|end|interrupt|wrapup SOCKET PANE PID START
 # `new` starts claude in DIR as a window of tmux session "fleet" (socket
 # "klepsydra"); `jump` brings PANE's window to the front of its session, once
 # PANE still hosts Claude process PID (START = /proc/PID/stat field 22).
-# `end` types /exit into that Claude Code and `interrupt` presses Esc there,
-# on klepsydra's own tmux server only. `new` and `jump` open a Windows Terminal tab (window "fleet", titled TAB_TITLE) only when no
+# `end` types /exit into that Claude Code, `wrapup` types /klepsydra-wrapup
+# and `interrupt` presses Esc there, on klepsydra's own tmux server only. `new` and `jump` open a Windows Terminal tab (window "fleet", titled TAB_TITLE) only when no
 # client shows the session and no tab opened in the last PENDING_FOR seconds is
 # still starting. One line out: stdout on success, stderr on failure.
 set -uo pipefail
@@ -223,6 +223,10 @@ fleet_pane() { # socket pane pid start
     fail "That session is not in klepsydra's tmux, so klepsydra will not type into it."
 }
 
+# What a refusal tells the user to do instead, per verb; each verb sets its own.
+open_to="end it"
+busy="That session is already being ended or interrupted."
+
 # A pane in copy mode swallows keys as copy-mode commands, so leave it first.
 leave_modes() {
   local _
@@ -230,34 +234,77 @@ leave_modes() {
     [[ $(tmux "${t[@]}" display-message -p -t "$pane" '#{pane_in_mode}' 2>/dev/null) == 1 ]] || return 0
     tmux "${t[@]}" send-keys -t "$pane" -X cancel 2>/dev/null || return 0
   done
-  fail "The session's pane is in a tmux mode that would not close. Open its terminal to end it."
+  fail "The session's pane is in a tmux mode that would not close. Open its terminal to $open_to."
 }
 
-# One End or Interrupt per pane: an End the app gave up on may still be running.
-# The pane is checked again under the lock, as such an End may just have finished.
+# One End, Interrupt or Wrap up per pane: an End the app gave up on may still
+# be running. The pane is checked again under the lock, as such an End may
+# just have finished.
 own_pane() { # socket pane pid start
   fleet_pane "$@"
   local file=${XDG_RUNTIME_DIR:-/tmp}/klepsydra-pane-$UID-${pane#%}.lock
   { exec {PANEFD}>>"$file"; } 2>/dev/null || fail "Could not open $file."
-  flock -n "$PANEFD" || fail "That session is already being ended or interrupted."
+  flock -n "$PANEFD" || fail "$busy"
   fleet_pane "$@"
 }
 
 keys() { tmux "${t[@]}" send-keys -t "$pane" "$@" 2>/dev/null || fail "tmux could not send keys to the session."; }
 
-# Whether PANE's input line reads exactly /exit, between its rules: not a line
-# of the transcript, not the command menu's entry.
-reads_exit() {
-  LC_ALL=C.UTF-8 tmux "${t[@]}" capture-pane -p -t "$pane" 2>/dev/null |
-    awk -v mark="$PROMPT_MARK" -v rule="$RULE" '
-      { line[NR] = $0 }
-      END {
-        for (i = 2; i < NR; i++) {
-          if (index(line[i - 1], rule) != 1 || index(line[i + 1], rule) != 1) continue
-          if (index(line[i], mark "/exit") == 1 && substr(line[i], length(mark) + 6) ~ /^ *$/) found = 1
-        }
-        exit !found
-      }'
+screen() { LC_ALL=C.UTF-8 tmux "${t[@]}" capture-pane -p -t "$pane" 2>/dev/null; }
+
+# Whether PANE's input line reads exactly COMMAND, between its rules: not a
+# line of the transcript, not the command menu's entry.
+reads() { # command
+  screen | awk -v mark="$PROMPT_MARK" -v rule="$RULE" -v want="$1" '
+    { line[NR] = $0 }
+    END {
+      for (i = 2; i < NR; i++) {
+        if (index(line[i - 1], rule) != 1 || index(line[i + 1], rule) != 1) continue
+        if (index(line[i], mark want) == 1 && substr(line[i], length(mark want) + 1) ~ /^ *$/) found = 1
+      }
+      exit !found
+    }'
+}
+
+# What tells a running turn, around the input box: "S" + the first line above
+# it that starts in column 0 (Claude Code's spinner, "✢ Pollinating… (5m 2s ·
+# ↓ 9.8k tokens)"; tips and notices under the spinner are indented, the
+# transcript's last line is not), and "F" + each footer line below it, where
+# "esc to interrupt" shows while a tool runs. Fails when no input box is on
+# the screen. Lines the terminal wrapped are joined first, so a long tip's
+# tail never reads as a column-0 line.
+around_box() {
+  LC_ALL=C.UTF-8 tmux "${t[@]}" capture-pane -p -J -t "$pane" 2>/dev/null | awk -v mark="$PROMPT_MARK" -v rule="$RULE" '
+    { line[NR] = $0 }
+    END {
+      for (i = 2; i < NR; i++)
+        if (index(line[i - 1], rule) == 1 && index(line[i + 1], rule) == 1 && index(line[i], mark) == 1) box = i - 1
+      if (!box) exit 1
+      for (j = box - 1; j >= 1; j--) if (line[j] ~ /^[^ \t]/) { print "S" line[j]; break }
+      for (k = box + 3; k <= NR; k++) print "F" line[k]
+    }'
+}
+
+# Whether the session is mid-turn: a spinner as the first column-0 line above
+# its box, or the esc hint in its footer. The transcript above is never read,
+# so one that quotes a spinner or the hint does not count.
+mid_turn() {
+  local around
+  around=$(around_box) || fail "The session's input box is not on its screen, so klepsydra did not type into it. Open its terminal to $open_to."
+  LC_ALL=C.UTF-8 grep -qE '^S. .+… \(|^F.*esc to (interrupt|cancel)' <<<"$around"
+}
+
+# Type COMMAND into the cleared input line and press Enter, only once the line
+# reads exactly COMMAND; else clear it again and fail.
+run_command() { # command
+  local _
+  keys -l "$1"
+  for _ in $(seq 20); do reads "$1" && break; sleep 0.1; done
+  if ! reads "$1"; then
+    keys C-c
+    fail "The session's prompt did not read $1, so Enter was not pressed. Its prompt may be in vim editor mode, or Claude Code's layout changed. Open its terminal to do it there."
+  fi
+  keys Enter
 }
 
 end_session() { # socket pane pid start
@@ -271,14 +318,7 @@ end_session() { # socket pane pid start
   sleep 1
   keys C-c
   sleep 0.5
-  keys -l /exit
-  local reads=0
-  for _ in $(seq 20); do reads_exit && { reads=1; break; }; sleep 0.1; done
-  if (( ! reads )); then
-    keys C-c
-    fail "The session's prompt did not read /exit, so Enter was not pressed. Its prompt may be in vim editor mode, or Claude Code's layout changed. Open its terminal to end it."
-  fi
-  keys Enter
+  run_command /exit
   for _ in $(seq $((END_WAIT * 10))); do
     proc_is "$pid" "$start" || { printf 'Ended the session.\n'; return 0; }
     sleep 0.1
@@ -286,9 +326,27 @@ end_session() { # socket pane pid start
   fail "Sent /exit, but the session is still running. Open its terminal to see why."
 }
 
+# Ask an idle session to wrap up. A session mid-turn is refused, since
+# Ctrl+C would stop its turn; the Stop hook asks it when the turn ends.
+wrapup() { # socket pane pid start
+  local socket=$1 pane=$2 session
+  local -a t=()
+  local open_to="ask it there: type /klepsydra-wrapup"
+  local busy="klepsydra is already sending that session something; ask it by hand: type /klepsydra-wrapup in its terminal."
+  own_pane "$@"
+  leave_modes
+  mid_turn && fail "The session is mid-turn; it is asked when the turn ends."
+  # Ctrl+C clears a draft (Up brings it back); on an idle prompt it does nothing else.
+  keys C-c
+  sleep 0.5
+  run_command /klepsydra-wrapup
+  printf 'Asked the session to wrap up.\n'
+}
+
 interrupt() { # socket pane pid start
   local socket=$1 pane=$2 session
   local -a t=()
+  local open_to="interrupt it"
   own_pane "$@"
   leave_modes
   keys Escape
@@ -299,6 +357,7 @@ case ${1:-} in
   new) (( $# == 2 )) || fail "usage: klepsydra-launch.sh new DIR"; new "$2" ;;
   jump) (( $# == 5 )) || fail "usage: klepsydra-launch.sh jump SOCKET PANE PID START"; jump "$2" "$3" "$4" "$5" ;;
   end) (( $# == 5 )) || fail "usage: klepsydra-launch.sh end SOCKET PANE PID START"; end_session "$2" "$3" "$4" "$5" ;;
+  wrapup) (( $# == 5 )) || fail "usage: klepsydra-launch.sh wrapup SOCKET PANE PID START"; wrapup "$2" "$3" "$4" "$5" ;;
   interrupt) (( $# == 5 )) || fail "usage: klepsydra-launch.sh interrupt SOCKET PANE PID START"; interrupt "$2" "$3" "$4" "$5" ;;
-  *) fail "usage: klepsydra-launch.sh new DIR | jump|end|interrupt SOCKET PANE PID START" ;;
+  *) fail "usage: klepsydra-launch.sh new DIR | jump|end|interrupt|wrapup SOCKET PANE PID START" ;;
 esac
