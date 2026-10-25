@@ -283,8 +283,8 @@ test("the Queue label hides its words below exactly the dock breakpoint", () => 
   const js = readFileSync(new URL("./fleet/queuepanel.js", import.meta.url), "utf8");
   const DOCK_MIN_PX = Number(js.match(/export const DOCK_MIN_PX = (\d+);/)?.[1]);
   const css = readFileSync(new URL("./fleet/wall.css", import.meta.url), "utf8");
-  const m = css.match(/@media \(max-width: (\d+)px\) \{\s*#queue-open \.for-you \{/);
+  const m = css.match(/@media \(width < (\d+)px\) \{\s*#queue-open \.for-you \{/);
   assert.ok(m, "the narrow rule for the label's words");
-  assert.equal(Number(m[1]), DOCK_MIN_PX - 1);
+  assert.equal(Number(m[1]), DOCK_MIN_PX);
   assert.match(js, /more\.className = "for-you"/);
 });

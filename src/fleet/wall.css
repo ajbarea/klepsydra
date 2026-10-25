@@ -866,7 +866,7 @@ button.link:hover:not([aria-disabled="true"]) { background: none; }
 #queue-open::after { content: ""; position: absolute; inset: -4px 0; }
 #queue-open[aria-expanded="true"] { background: var(--button-hover); border-color: var(--text-dim); }
 /* Below the dock breakpoint (DOCK_MIN_PX) the half-screen bar fits "Queue · N" only; the name keeps "for you". */
-@media (max-width: 1199px) {
+@media (width < 1200px) {
   #queue-open .for-you { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 }
 body.queue-docked { padding-right: var(--queue-w); }
