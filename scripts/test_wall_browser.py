@@ -923,6 +923,8 @@ window.__TAURI__ = { core: {
 } };
 """
 ENDS = "window.__calls.filter(([c]) => c === 'end_session')"
+# The wall's read-only queries on load; any other recorded call is an action.
+READS = ["get_launch_dir", "get_split_mode"]
 WORKING_CARD = ".card:has(.pill .label:text-is('working')):has(.menu:not([hidden]))"
 
 
@@ -1294,7 +1296,7 @@ def ended_only_at(wall, width, height):
     wall.check(focus == "empty-title", "focus in a card that gives way goes to the empty state's title" + at, focus)
     page.locator("#clear-ended").click()
     page.wait_for_timeout(200)
-    sent = page.evaluate("window.__calls.filter(([c]) => c !== 'get_launch_dir')")
+    sent = page.evaluate(f"window.__calls.filter(([c]) => !{json.dumps(READS)}.includes(c))")
     wall.check(
         sent == [["clear_session", {"id": ended["session_id"]}], ["clear_session", {"id": "demo-ended-2"}]],
         "the link clears each ended session and nothing else" + at,
@@ -2103,6 +2105,7 @@ def one_click_or_key_never_ends_all(wall):
     showing = page.evaluate("[...document.querySelectorAll('.ending')].some((e) => !e.hidden)")
     focus_ok = log[0][1] == "end-cancel" and log[2][1] == "end-ready" and log[3][1] == "end-ready" and log[4][1] is True
     wall.check(not ended and not showing and focus_ok, "no single click or key on the bulk path sends end_session or starts an undo window", [ended, showing, log])
+    page.close()
 
 
 # ---- The Queue panel ---------------------------------------------------------
