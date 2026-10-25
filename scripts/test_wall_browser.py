@@ -1116,6 +1116,51 @@ def launch_note_outlives_empty_state(wall):
     page.close()
 
 
+def one_launch_at_a_time(wall):
+    """While one start button's launch runs, the other is off and sends nothing."""
+    page = open_app(wall, keep=lambda s: False)
+    page.evaluate(
+        """() => { const inv = window.__TAURI__.core.invoke; window.__TAURI__.core.invoke = (c, a) => {
+          if (c === 'launch_session') { window.__calls.push([c, a ?? null]); return new Promise((r) => { window.__done = r; }); }
+          return inv(c, a); }; }"""
+    )
+    page.locator("#start-session").click()
+    page.wait_for_timeout(100)
+    off = page.evaluate("document.getElementById('new-session').getAttribute('aria-disabled')")
+    page.locator("#new-session").click(force=True)
+    page.wait_for_timeout(100)
+    sent = len(calls(page, "launch_session"))
+    page.evaluate("window.__done('ok')")
+    page.wait_for_timeout(100)
+    back = page.evaluate("document.getElementById('new-session').getAttribute('aria-disabled')")
+    wall.check([off, sent, back] == ["true", 1, None], "one launch at a time across both start buttons", [off, sent, back])
+    page.close()
+
+
+def cleared_link_waits(wall):
+    """After a clear succeeds the link stays away until the snapshot drops the cards."""
+    page = open_app(wall, keep=lambda s: s["status"] == "ended")
+    page.locator("#clear-ended").click()
+    page.wait_for_timeout(200)
+    got = page.evaluate("document.getElementById('clear-ended').checkVisibility()")
+    send(page, {"sessions": [], "speaking": None})
+    after = page.evaluate("[document.getElementById('clear-ended').checkVisibility(), document.getElementById('empty').checkVisibility()]")
+    wall.check([got, after] == [False, [False, True]], "a cleared link stays off until its cards leave", [got, after])
+    page.close()
+
+
+def stale_focus_never_reveals(wall):
+    """A focus request for a card not drawn waits one snapshot; later it cannot reveal ended cards."""
+    page = open_app(wall, keep=lambda s: s["status"] == "working")
+    ghost = next(s for s in page.snapshot_all if s["status"] == "ended")
+    page.evaluate("(id) => window.__channel.onmessage({focus: id})", ghost["session_id"])
+    send(page, page.snapshot)
+    send(page, {"sessions": [ghost], "speaking": None})
+    got = page.evaluate("[document.getElementById('empty').checkVisibility(), document.getElementById('wall').children.length]")
+    wall.check(got == [True, 0], "a stale focus request leaves the quiet wall alone", got)
+    page.close()
+
+
 def reveal_race(wall):
     """A snapshot that slides the cards, then a focus request for an ended card
     in the same task: the ended cards show and that card has focus, whichever
@@ -2110,6 +2155,9 @@ def main() -> int:
             reveal_density,
             separate_notes,
             launch_note_outlives_empty_state,
+            one_launch_at_a_time,
+            cleared_link_waits,
+            stale_focus_never_reveals,
             reveal_race,
             reveal_does_not_arrive,
             bar_follows_empty_state,

@@ -18,12 +18,12 @@ export const startLabel = (dir) => (typeof dir === "string" && dir.trim() ? `${S
 export const clearLabel = (n) => `Clear ${n} ended session${n === 1 ? "" : "s"}`;
 
 /**
- * Clear each id with clear_session. Resolves to the note to show: empty when
- * every one cleared (the next snapshot takes the cards away), else how many
- * were left and the first reason.
+ * Clear each id with clear_session, telling `done` each one that cleared.
+ * Resolves to the note to show: empty when every one cleared (the next
+ * snapshot takes the cards away), else how many were left and the first reason.
  */
-export async function clearAll(ids, invoke) {
-  const results = await Promise.allSettled(ids.map((id) => invoke("clear_session", { id })));
+export async function clearAll(ids, invoke, done = () => {}) {
+  const results = await Promise.allSettled(ids.map((id) => invoke("clear_session", { id }).then(() => done(id))));
   const failed = results.filter((r) => r.status === "rejected");
   return failed.length ? `${failed.length} of ${ids.length} not cleared: ${failed[0].reason}` : "";
 }

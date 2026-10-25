@@ -43,17 +43,30 @@ const startButton = document.getElementById("start-session");
 const clearNote = document.getElementById("clear-note");
 const clearEnded = document.getElementById("clear-ended");
 const emptyTitle = document.getElementById("empty-title");
-// + New session and the empty state's button start a session the same way.
-const startSession = (button, note) =>
-  press(button, note, () => window.__TAURI__.core.invoke("launch_session"), "Starting…");
+// + New session and the empty state's button start a session the same way,
+// and while one runs the other is off too.
+async function startSession(button, note) {
+  if (button.getAttribute("aria-disabled") === "true") return;
+  const other = button === newButton ? startButton : newButton;
+  setOff(other, true);
+  try {
+    await press(button, note, () => window.__TAURI__.core.invoke("launch_session"), "Starting…");
+  } finally {
+    setOff(other, false);
+  }
+}
 newButton.hidden = !inTauri;
 newButton.addEventListener("click", () => startSession(newButton, newNote));
 startButton.hidden = !inTauri;
 // Its answer goes to the bar's note, which stays in view once the empty state gives way.
 startButton.addEventListener("click", () => startSession(startButton, newNote));
+// A cleared id stays off the link until the snapshot that drops its card.
+let cleared = new Set();
+const toClear = () => endedIds(sessions).filter((id) => !cleared.has(id));
 clearEnded.addEventListener("click", () => {
   if (wallState(sessions) !== "ended") return;
-  press(clearEnded, clearNote, () => clearAll(endedIds(sessions), tauri), "Clearing…");
+  const ids = toClear();
+  press(clearEnded, clearNote, () => clearAll(ids, tauri, (id) => cleared.add(id)), "Clearing…").then(() => paintEmpty(!empty.hidden));
 });
 
 let sessions = [];
@@ -80,7 +93,6 @@ let revealed = false; // a focus request named an ended card, so the ended cards
 let launchDir = null;
 let dirAsk = 0; // the latest get_launch_dir request; an older answer is dropped
 let latest = { state: "empty", cards: [] }; // the last render's, which a deferred sync reads
-let knownIds = new Set(); // the sessions of the last render: a card for one of them is not new
 
 // The empty state stands in for the wall while nothing runs. With only ended
 // cards it still does, and offers to clear them, until a focus request asks
@@ -92,7 +104,7 @@ function paintEmpty(quiet) {
   empty.hidden = !quiet;
   wall.hidden = quiet; // it holds no card then
   paintStart();
-  const n = latest.state === "ended" ? endedIds(sessions).length : 0;
+  const n = latest.state === "ended" ? toClear().length : 0;
   clearEnded.hidden = n === 0 || !inTauri;
   setText(clearEnded, n ? clearLabel(n) : "");
 }
@@ -345,11 +357,11 @@ function render(snapshot) {
   wasState = state;
   paintTally();
   const cards = sessions.map((s) => card(s, cast, now, request));
+  const prior = new Set(cardOf.keys()); // a card for one of these is not new
   cardOf = new Map(cards.map((c) => [c.id, c]));
   latest = { state, cards };
-  const prior = knownIds;
-  knownIds = new Set(cards.map((c) => c.id));
-  ringKey.hidden = !showsRingKey(cards);
+  cleared = new Set([...cleared].filter((id) => cardOf.has(id)));
+  ringKey.hidden = !showsRingKey(visibleCards());
   const said = wrapupAnnouncements(wrapupBefore, cards);
   wrapupBefore = wrapupLines(cards);
   const safe = Boolean(request) && readiness(sessions, request).safe;
@@ -432,14 +444,15 @@ portrait.addEventListener("click", (e) => {
   if (e.target === portrait) portrait.close();
 });
 
-function focusCard(id) {
+// A request for a card not drawn yet waits one snapshot, and no longer.
+function focusCard(id, retry = false) {
   if (!revealed && wallState(sessions) === "ended" && sessions.some((s) => s.session_id === id)) {
     revealed = true;
     render();
   }
   const el = [...wall.children].find((c) => c.dataset.key === id);
   if (!el) {
-    pending = id;
+    pending = retry ? null : id;
     return;
   }
   pending = null;
@@ -510,7 +523,7 @@ function receive(message) {
     if (said.length) announce(said.join(". "));
     drawer.refresh();
     if (!frameId) drawSpeaking();
-    if (pending) focusCard(pending);
+    if (pending) focusCard(pending, true);
   }
   if (typeof message?.focus === "string") focusCard(message.focus);
 }

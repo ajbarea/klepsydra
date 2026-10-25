@@ -214,9 +214,11 @@ test("the reorder slide is bounded, and cards keep their own transition names", 
 
 test("a disabled button reads as off: no fill, a quieter border, a label still at 4.5:1", () => {
   const css = read("./fleet/wall.css");
-  const rule = css.match(/button\[aria-disabled="true"\], #new-session\[aria-disabled="true"\], #start-session\[aria-disabled="true"\] \{([^}]*)\}/)?.[1] ?? "";
-  // The filled buttons' ids outrank button[...] (1 type, 1 attr): each id form must be listed and come last.
-  for (const id of ["#new-session", "#start-session"]) assert.ok(css.indexOf(`${id}[aria-disabled="true"]`) > css.search(new RegExp(`${id}[ ,]`)), id);
+  const rule = css.match(/^button\[aria-disabled="true"\] \{([^}]*)\}/m)?.[1] ?? "";
+  // button.primary ties with button[aria-disabled] (1 type, 1 class or attr), so the off rule must come later,
+  // and no id rule may paint a filled button, as an id would outrank both.
+  assert.ok(css.search(/^button\[aria-disabled="true"\] \{/m) > css.search(/^button\.primary \{/m));
+  for (const [, body] of css.matchAll(/#(?:new|start)-session[^{]*\{([^}]*)\}/g)) assert.doesNotMatch(body, /background|(?:^|[\s;])color:|border-color/);
   assert.match(rule, /background: transparent/);
   assert.match(rule, /border-color: var\(--card-line\)/);
   assert.ok(contrast(token(css, "--text-dim"), token(css, "--card-bg")) >= 4.5);

@@ -32,9 +32,15 @@ worktree `.claude/worktrees/empty-state`, PR #83 open.
   the app (`browser_hides_app_actions`); a dev snapshot without `at` is
   filtered (`demoSnapshot`); Start answers in the bar's note
   (`launch_note_outlives_empty_state`); one `<main>` with an `h1` (`landmarks`).
+- Review round 3 fixed: one launch at a time across both start buttons
+  (`one_launch_at_a_time`); a cleared id stays off the link until its card
+  leaves (`cleared_link_waits`); a focus request waits one snapshot only
+  (`stale_focus_never_reveals`); the ring key counts shown cards only; the bar
+  is a `<header>` landmark; `get_launch_dir` is async; filled buttons share
+  `button.primary`; README says when the label omits the folder.
 
 ## Next
-- Review round 3 on PR #83 (the last), then CI green and merge.
+- Merge after #82 (CI green).
 - After merge: live UIA check with zero sessions on the installed Windows build.
 
 ## Verify

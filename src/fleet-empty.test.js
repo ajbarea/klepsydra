@@ -6,6 +6,12 @@ import { START, clearAll, clearLabel, endedIds, startLabel, wallState } from "./
 const read = (f) => readFileSync(new URL(f, import.meta.url), "utf8");
 const s = (id, status) => ({ session_id: id, status });
 
+test("clearAll tells its caller each id that cleared, and only those", async () => {
+  const done = [];
+  await clearAll(["a", "b", "c"], async (_cmd, { id }) => { if (id === "b") throw "gone"; }, (id) => done.push(id));
+  assert.deepEqual(done.sort(), ["a", "c"]);
+});
+
 test("the wall's state: empty with no sessions, ended when every one has ended, else cards", () => {
   assert.equal(wallState([]), "empty");
   assert.equal(wallState([s("a", "ended")]), "ended");
@@ -61,7 +67,7 @@ test("the empty state: Hesychia's portrait as decoration, the title, what will a
   assert.match(block, /<img class="keeper" src="fleet\/faces\/kourai\/hesychia-full\.webp" alt="" \/>/, "decorative: screen readers skip it");
   assert.match(block, /<h2 id="empty-title" tabindex="-1">All quiet\.<\/h2>/);
   assert.match(block, /<p class="empty-body">Each Claude Code session you start appears here as a card, with its character, its repo and what it's doing\.<\/p>/);
-  assert.match(block, /<button type="button" id="start-session" hidden>Start a session<\/button>/);
+  assert.match(block, /<button type="button" id="start-session" class="primary" hidden>Start a session<\/button>/);
   assert.match(block, /<button type="button" id="clear-ended" class="link" hidden><\/button>/);
   assert.doesNotMatch(block, /start-note/, "Start answers in the bar's note, which outlives the empty state");
   assert.match(block, /<span id="clear-note" role="status"><\/span>/, "the clear link has a note of its own");
@@ -82,7 +88,7 @@ test("the start button runs the same launch as + New session, in the app only", 
   assert.match(src, /startButton\.addEventListener\("click", \(\) => startSession\(startButton, newNote\)\)/, "its answer shows in the bar, where it outlives the empty state");
   assert.match(src, /startButton\.hidden = !inTauri/);
   assert.match(src, /invoke\("get_launch_dir"\)/);
-  assert.match(src, /press\(clearEnded, clearNote, \(\) => clearAll\(endedIds\(sessions\), tauri\)/, "the link clears through clear_session, ended sessions only, into its own note");
+  assert.match(src, /const toClear = \(\) => endedIds\(sessions\)\.filter[\s\S]*press\(clearEnded, clearNote, \(\) => clearAll\(ids, tauri, \(id\) => cleared\.add\(id\)\)/, "the link clears through clear_session, ended sessions only, into its own note");
   assert.match(src, /clearEnded\.hidden = n === 0 \|\| !inTauri/, "the clear link, like Start, only in the app");
 });
 
@@ -100,7 +106,7 @@ test("the app registers the read-only launch folder command", () => {
   const main = read("../src-tauri/src/main.rs");
   assert.match(main, /launch::launch_session,\s*launch::get_launch_dir\s*\]/);
   const launch = read("../src-tauri/src/launch.rs");
-  assert.match(launch, /pub fn get_launch_dir\(app: tauri::AppHandle\) -> Option<String>/);
+  assert.match(launch, /pub async fn get_launch_dir\(app: tauri::AppHandle\) -> Option<String>/);
 });
 
 test("the demo shows the empty wall with ?demo&empty and the ended-only wall with ?demo&ended", async () => {

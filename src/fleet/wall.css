@@ -162,12 +162,12 @@ button {
   white-space: nowrap;
 }
 button:hover:not([aria-disabled="true"]) { background: var(--button-hover); }
-#new-session, #start-session { background: var(--text); color: var(--wall-bg); border-color: var(--text); }
-#new-session:hover:not([aria-disabled="true"]), #start-session:hover:not([aria-disabled="true"]) { background: #ffffff; }
+button.primary { background: var(--text); color: var(--wall-bg); border-color: var(--text); }
+button.primary:hover:not([aria-disabled="true"]) { background: #ffffff; }
 button.clear { background: transparent; border-color: transparent; color: var(--text-dim); }
 button.clear:hover:not([aria-disabled="true"]) { background: var(--button-bg); color: var(--text); }
 /* Off reads as off: no fill, a faint border, a dim label (still 4.5:1 on the card). */
-button[aria-disabled="true"], #new-session[aria-disabled="true"], #start-session[aria-disabled="true"] { color: var(--text-dim); background: transparent; border-color: var(--card-line); cursor: default; }
+button[aria-disabled="true"] { color: var(--text-dim); background: transparent; border-color: var(--card-line); cursor: default; }
 /* Open terminal. A character's colour is a left marker on the neutral button (it matches the tmux window); the label names the action. */
 .jump[data-kind="accent"] { box-shadow: inset var(--mark-w) 0 0 var(--accent); }
 /* The one filled button: the card needs you. Amber means needs you only, so no marker there. */

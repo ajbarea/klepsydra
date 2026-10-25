@@ -489,8 +489,9 @@ repos it touched.
 With no session running, Hesychia, Keeper of Quiet, holds the wall in place of
 the cards: "All quiet.", a line on what will appear, and **Start a session in
 DIR**, which starts a session as **+ New session** does, answers in the same
-note beside **+**, and names `launch_dir` (read again whenever the wall window
-comes back). When only ended cards remain, the same view shows with **Clear N
+note beside **+**, and names `launch_dir` when a launch there would run
+(otherwise it reads **Start a session**; the folder is read again whenever the
+wall window comes back). While one start runs, the other is off. When only ended cards remain, the same view shows with **Clear N
 ended sessions** beside the button. Clicking a strip portrait of an ended
 session shows the ended cards instead, until a session starts or they are all
 cleared. It fades in, and appears at once under reduced motion.

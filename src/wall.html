@@ -7,7 +7,7 @@
 <link rel="stylesheet" href="fleet/wall.css" />
 </head>
 <body>
-  <div class="bar">
+  <header class="bar">
     <div class="lead">
       <div class="tally" role="group" aria-label="Session counts"></div>
       <p class="ring-key" hidden>
@@ -25,7 +25,7 @@
       </p>
       <span id="wrapup-note" role="status"></span>
     </div>
-    <button type="button" id="new-session">+ New session</button>
+    <button type="button" id="new-session" class="primary">+ New session</button>
     <span id="new-note" role="status"></span>
     <fieldset class="density">
       <legend class="visually-hidden">Card density</legend>
@@ -33,7 +33,7 @@
       <label><input type="radio" name="density" value="comfortable" /><span>Comfortable</span></label>
       <label><input type="radio" name="density" value="compact" /><span>Compact</span></label>
     </fieldset>
-  </div>
+  </header>
   <main id="main">
   <h1 id="wall-title" class="visually-hidden">Claude Code sessions</h1>
   <section id="wall" class="wall" aria-labelledby="wall-title" tabindex="-1"></section>
@@ -42,7 +42,7 @@
     <h2 id="empty-title" tabindex="-1">All quiet.</h2>
     <p class="empty-body">Each Claude Code session you start appears here as a card, with its character, its repo and what it's doing.</p>
     <div class="empty-actions">
-      <button type="button" id="start-session" hidden>Start a session</button>
+      <button type="button" id="start-session" class="primary" hidden>Start a session</button>
       <button type="button" id="clear-ended" class="link" hidden></button>
     </div>
     <span id="clear-note" role="status"></span>

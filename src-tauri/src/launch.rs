@@ -514,7 +514,7 @@ fn launch_dir_of(prefs: Option<&Prefs>) -> Option<String> {
 
 /// The folder + New session starts in, for the wall's empty state. Reads only.
 #[tauri::command]
-pub fn get_launch_dir(app: tauri::AppHandle) -> Option<String> {
+pub async fn get_launch_dir(app: tauri::AppHandle) -> Option<String> {
     launch_dir_of(crate::read_prefs(&app).as_ref())
 }
 
