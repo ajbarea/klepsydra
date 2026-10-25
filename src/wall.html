@@ -20,10 +20,12 @@
         <span class="key" aria-hidden="true"><svg viewBox="0 0 32 18"><path class="agent" d="M 4.5 16 A 11.5 11.5 0 0 1 27.5 16"/></svg>agent</span>
         <span class="key" aria-hidden="true"><svg viewBox="0 0 32 18"><path class="shell" d="M 4.5 16 A 11.5 11.5 0 0 1 27.5 16"/></svg>shell</span>
       </p>
-      <button type="button" id="split" aria-pressed="false" title="The wall on the left half of this screen, the fleet terminal on the right" hidden>Split<span class="visually-hidden"> with terminal</span></button>
-      <button type="button" id="ledger-open" aria-haspopup="dialog">Ledger</button>
-      <button type="button" id="queue-open" aria-controls="queue" aria-expanded="false">Queue</button>
-      <button type="button" id="wrapup-open" aria-haspopup="dialog">Wrap up…</button>
+      <div class="tools">
+        <button type="button" id="split" aria-pressed="false" title="The wall on the left half of this screen, the fleet terminal on the right" hidden>Split<span class="visually-hidden"> with terminal</span></button>
+        <button type="button" id="ledger-open" aria-haspopup="dialog">Ledger</button>
+        <button type="button" id="queue-open" aria-controls="queue" aria-expanded="false">Queue</button>
+        <button type="button" id="wrapup-open" aria-haspopup="dialog">Wrap up…</button>
+      </div>
       <p class="wrapup-bar" hidden>
         <span class="wrapup-count"></span>
         <span class="wrapup-safe" hidden>Safe to restart</span>

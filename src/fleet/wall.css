@@ -105,7 +105,9 @@ html, body { background: var(--wall-bg); color: var(--text); font: 14px/1.45 var
 /* At the window's narrowest (420 px) the density choice and + New session take a line of their own. */
 @media (max-width: 480px) { .bar { flex-wrap: wrap; } }
 /* The tally, and the ring key beside it, or on a quieter line under it when the bar is narrow. */
-.lead { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 28px; margin-right: auto; min-width: 0; }
+.lead { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 20px; margin-right: auto; min-width: 0; }
+/* Split, Ledger, Queue and Wrap up… sit closer to each other than to the key, so the half-screen bar keeps them on one line. */
+.tools { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; }
 .tally { display: flex; flex-wrap: wrap; gap: 8px 22px; align-items: baseline; color: var(--text-dim); }
 .ring-key { display: flex; gap: 16px; align-items: center; color: var(--text-dim); font-size: 12.5px; }
 .ring-key .key { display: inline-flex; align-items: center; gap: 6px; }
