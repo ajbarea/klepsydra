@@ -828,6 +828,43 @@ Code redacts third-party plugin and skill names, and MCP servers you
 configured, so the drawer labels those "third-party" and "custom". The
 drawer is local and reads only today's file.
 
+### Queue panel
+
+The **Queue** button beside **Ledger** shows your to-do file inside the wall:
+by default `claude-queue.md` on your Desktop (the Desktop known folder, so a
+redirected Desktop is found too). To read another file, set `queue_path` in
+`prefs.json` to its absolute path; the change applies within five seconds.
+The file stays the source of truth: agents and you keep editing it with any
+editor, and the panel only reads it.
+
+<p align="center">
+  <img src="assets/queue-panel.png" alt="The Queue panel docked to the right of the card wall: the file's title and intro, a Needs you section open with numbered asks, two code blocks each with a Copy button, links with Copy link buttons, a done ask in quieter text, and folded Running now, Queued and Answers sections" width="360">
+</p>
+
+- **Live.** klepsydra watches the file's folder and re-reads the file a
+  quarter second after a burst of writes ends (at most a second after the
+  first), and every five seconds besides, so an agent's edit shows within a
+  second or two.
+- **Docked or a dialog.** At 1200 px wide and more the panel docks on the
+  right and the cards make room; narrower, it opens as a dialog over the
+  wall, as Ledger does. Drag its left edge, or focus that edge and use the
+  arrow keys (Home and End for the narrowest and widest), to resize it; the
+  width is remembered.
+- **The header count.** The button reads "Queue · 3 for you": the items in
+  the file's "Needs you" section, less those marked ✅. It names the file's
+  asks, not the sessions the tally counts as needing you.
+- **Reading aids.** Each `##` section folds, with Needs you open. Lines
+  starting with ✅ read quieter, as done; 📋 lines carry a pending mark.
+  Every code block has a **Copy** button.
+- **Text only.** The file is parsed with a pinned copy of markdown-it and
+  built into the page as text. Raw HTML shows as text. A link shows its text,
+  with the address on hover and a **Copy link** button: klepsydra starts no
+  program but the launcher, so it does not open links itself. Only `https:`,
+  `http:` and `mailto:` links get the button; any other link is plain text.
+- **One line when it cannot.** A missing file, a folder, link or pipe at the
+  path, a file over 256 KB, or one that is not UTF-8 text is not read, and
+  the panel says which.
+
 ## How often it refreshes
 
 The status line is event-driven: Claude Code runs it as you work, and the hook
