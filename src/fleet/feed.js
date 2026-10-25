@@ -13,8 +13,9 @@ export const inTauri = Boolean(window.__TAURI_INTERNALS__ ?? window.__TAURI__);
 
 /**
  * Where this page's fleet comes from: "app" inside klepsydra; "served" from
- * the phone wall server, which serves the wall at its root; "demo" with ?demo;
- * else "dev", a dev snapshot beside the page.
+ * the phone wall server, the one place the wall loads at a root path (the
+ * server sends its /wall.html there; a dev server's root is the gauge or a
+ * listing); "demo" with ?demo; else "dev", a dev snapshot beside the page.
  */
 export function feedKind(app, search, pathname) {
   if (app) return "app";
@@ -25,28 +26,51 @@ export function feedKind(app, search, pathname) {
 /** True on the phone: the page came from the phone wall server. */
 export const served = feedKind(inTauri, globalThis.location?.search ?? "", globalThis.location?.pathname ?? "") === "served";
 
+/** The first wait before a closed stream is opened again, and the longest. */
+export const RETRY_MS = [1000, 30000];
+
+// EventSource.CLOSED: the browser gave the stream up and will not reconnect it.
+const CLOSED = 2;
+
 /**
  * Follow the phone wall server's event stream: each event a snapshot. The
- * browser reconnects a dropped stream itself; `onLink` hears whether the
- * stream is up, so the page can say when what it shows may be old.
+ * browser reconnects a stream that drops, but gives one up for good on any
+ * answer but a 200 event stream (a 503 at the stream cap, Serve's 502 while
+ * klepsydra restarts); that one is opened again after a wait that starts at
+ * 1 s and doubles to 30 s, back to 1 s once a stream opens. `onLink` hears
+ * whether the stream is up, so the page can say when what it shows may be old.
  */
-export function followServed(onMessage, onLink = () => {}, Source = globalThis.EventSource) {
-  const source = new Source("/events");
-  source.onopen = () => onLink(true);
-  source.onerror = () => onLink(false);
-  source.onmessage = (e) => {
-    let snapshot;
-    try {
-      snapshot = JSON.parse(e.data);
-    } catch {
-      return;
-    }
-    if (Array.isArray(snapshot?.sessions)) {
+export function followServed(onMessage, onLink = () => {}, Source = globalThis.EventSource, later = (fn, ms) => setTimeout(fn, ms)) {
+  let wait = RETRY_MS[0];
+  const open = () => {
+    const source = new Source("/events");
+    source.onopen = () => {
+      wait = RETRY_MS[0];
       onLink(true);
-      onMessage(snapshot);
-    }
+    };
+    source.onerror = () => {
+      onLink(false);
+      if (source.readyState !== CLOSED) return;
+      source.onerror = null;
+      source.close();
+      later(open, wait);
+      wait = Math.min(wait * 2, RETRY_MS[1]);
+    };
+    source.onmessage = (e) => {
+      let snapshot;
+      try {
+        snapshot = JSON.parse(e.data);
+      } catch {
+        return;
+      }
+      if (Array.isArray(snapshot?.sessions)) {
+        onLink(true);
+        onMessage(snapshot);
+      }
+    };
+    return source;
   };
-  return source;
+  return open();
 }
 
 /** The browser's snapshot file; none inside the app. */

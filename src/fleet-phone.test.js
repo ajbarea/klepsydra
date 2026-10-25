@@ -25,7 +25,12 @@ class FakeSource {
   static made = [];
   constructor(url) {
     this.url = url;
+    this.readyState = 0;
     FakeSource.made.push(this);
+  }
+  close() {
+    this.closed = true;
+    this.readyState = 2;
   }
 }
 
@@ -45,6 +50,47 @@ test("on the phone the wall follows /events, a snapshot per event", () => {
   source.onmessage({ data: JSON.stringify(second) });
   assert.deepEqual(got, [first, second], "only snapshots reach the wall");
   assert.deepEqual(link, [true, true, false, true], "a lost stream says so until the next snapshot");
+});
+
+test("a stream the browser closed for good (a 503 at the stream cap, a 502 while klepsydra restarts) is opened again, backing off", () => {
+  FakeSource.made = [];
+  const waits = [];
+  let due = null;
+  const later = (fn, ms) => {
+    waits.push(ms);
+    due = fn;
+  };
+  const link = [];
+  feed.followServed(() => {}, (up) => link.push(up), FakeSource, later);
+  const fail = (state) => {
+    const s = FakeSource.made.at(-1);
+    s.readyState = state;
+    s.onerror();
+    return s;
+  };
+  const retry = () => {
+    const fn = due;
+    due = null;
+    fn();
+  };
+  fail(0);
+  assert.deepEqual(waits, [], "a stream the browser reconnects itself is left to it");
+  assert.equal(FakeSource.made.length, 1);
+  for (let i = 0; i < 7; i++) {
+    const old = fail(2);
+    assert.equal(old.closed, true, "the dead source is closed");
+    retry();
+  }
+  assert.deepEqual(waits, [1000, 2000, 4000, 8000, 16000, 30000, 30000], "1 s doubling, at most 30 s");
+  assert.equal(FakeSource.made.length, 8, "a new source after each wait");
+  assert.ok(FakeSource.made.every((s) => s.url === "/events"));
+  FakeSource.made.at(-1).onopen();
+  fail(2);
+  assert.equal(waits.at(-1), 1000, "an open stream resets the wait");
+  assert.equal(link.at(-1), false);
+  retry();
+  FakeSource.made.at(-1).onmessage({ data: JSON.stringify({ sessions: [], speaking: null }) });
+  assert.equal(link.at(-1), true, "the wall hears the stream is back");
 });
 
 test("the served feed is wired: subscribe takes the event stream when served", () => {
