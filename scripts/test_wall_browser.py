@@ -2438,6 +2438,42 @@ def queue_drag_settles_once(wall):
         and after["measures"] == 1
     )
     wall.check(ok, "a drag resizes live, then stores the width and measures Auto once on release", [during, after])
+
+
+def split_toggle(wall):
+    """Split with terminal: hidden in a browser; in the app a labelled toggle,
+    off until the saved choice loads, that calls set_split_mode; and the wall
+    at half a screen still fits eight compact cards with it in the bar."""
+    width, height, cards, columns = FIT[1]
+    page = wall.open(width, height, cards)
+    hidden = page.evaluate("document.getElementById('split').hidden")
+    wall.check(hidden, "a browser shows no split toggle", hidden)
+    page.evaluate(
+        "document.getElementById('split').hidden = false;"
+        " dispatchEvent(new Event('resize'))"
+    )
+    page.wait_for_timeout(SETTLE_MS)
+    got = page.evaluate(STATE)
+    want = {"cards": cards, "density": "compact", "columns": columns, "scrolls": False, "key": True}
+    ok = {k: got[k] for k in want} == want and got["bottom"] <= height
+    wall.check(ok, f"fit {width}x{height} with the split toggle", got)
+    page.close()
+
+    page = open_app(wall, width, height)
+    # The hit area reaches 3 px past the border each way, as Ledger's: 24 px (WCAG 2.2, 2.5.8).
+    state = """() => { const b = document.getElementById('split'); const r = b.getBoundingClientRect();
+      const x = r.left + r.width / 2, at = (y) => b.contains(document.elementFromPoint(x, y));
+      return [b.hidden, b.getAttribute('aria-pressed'), b.textContent.trim(),
+              at(r.top - 3) && at(r.bottom + 2.5) && r.height + 6 >= 24,
+              document.getElementById('split-note').textContent]; }"""
+    before = page.evaluate(state)
+    wall.check(before[:4] == [False, "false", "Split with terminal", True], "the app shows the toggle, off, named, with a 24 px target", before)
+    page.click("#split")
+    page.wait_for_timeout(100)
+    after = page.evaluate(state)
+    calls = page.evaluate("window.__calls.filter(([c]) => c.endsWith('split_mode'))")
+    ok = calls == [["get_split_mode", None], ["set_split_mode", {"on": True}]] and after[1] == "true" and after[4] == "ok"
+    wall.check(ok, "a click calls set_split_mode and the toggle turns on once it answers", [calls, after])
     page.close()
 
 
@@ -2511,6 +2547,7 @@ def main() -> int:
             queue_copy_labels_and_failures,
             queue_says_when_it_cannot_follow,
             queue_drag_settles_once,
+            split_toggle,
         )
         for case in cases:
             if not only or case.__name__ in only:

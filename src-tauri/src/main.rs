@@ -7,6 +7,7 @@ mod launch;
 mod phone;
 #[cfg(windows)]
 mod ping;
+mod split;
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -124,7 +125,7 @@ fn collect_readings(dir: &std::path::Path, out: &mut Vec<serde_json::Value>) {
 }
 
 /// Small settings the gauge keeps for itself: the zoom level, the saved home,
-/// where the window last sat, and the wall's card density.
+/// where the window last sat, the wall's card density and split mode.
 fn prefs_path(app: &tauri::AppHandle) -> Option<PathBuf> {
     klepsydra_dir(app).map(|d| d.join("prefs.json"))
 }
@@ -832,6 +833,8 @@ fn main() {
             fleet::fleet_subscribe,
             fleet::queue_subscribe,
             fleet::open_wall,
+            split::get_split_mode,
+            split::set_split_mode,
             fleet::clear_session,
             fleet::ledger_today,
             launch::end_session,
