@@ -516,34 +516,34 @@ session is still running a few seconds after `/exit` was sent.
 ### Wrapping up
 
 <!-- budget: 320 words -->
-**Wrap up…**, beside Ledger, asks the live sessions to finish or
-checkpoint their current step, record what is still running, update the
-handoff, commit it, then report whether stopping is safe. A dialog lists who
+**Wrap up…**, beside Ledger, asks the live sessions to checkpoint, record
+what still runs, commit their handoff and report whether stopping is safe. A dialog lists who
 is asked and how, with Cancel focused, and only those sessions are asked.
-Idle sessions in klepsydra's tmux, including one idle at its prompt with
-background work out, are marked asked, then have `/klepsydra-wrapup` typed
-together. A working one is asked by the Stop hook when its turn ends; one
-that needs you, once you answer and its turn ends. Ask any other by hand:
-type `/klepsydra-wrapup` in its terminal. A failed typing is named in
-the card's note. The dialog closes if a session arrives or changes how it
-would be asked; while a wrap-up is still asking, it warns that starting over
-clears the answers so far.
+Idle sessions in klepsydra's tmux, including one idle with background work
+out, are marked asked, then have `/klepsydra-wrapup` typed together. A
+working one is asked by the Stop hook when its turn ends; one that needs
+you, once you answer and its turn ends. Ask any other by hand: type
+`/klepsydra-wrapup` in its terminal. A failed typing is named in its card's note.
+The dialog closes if a session arrives or changes how it would be
+asked; starting over while a wrap-up still asks clears the answers so far,
+though a session mid-checkpoint stays asked.
 
 Each card then reads **Wrapping up…**, **Ready**, or **Not ready** with the
-session's reason. After 10 minutes silence reads **No answer**, never
-ready, though a session already asked may still answer while the wall shows
-it. A later session reads **Not asked**, and a ready one
-that starts working again reads **Working again**; neither counts as ready.
-The bar counts "4 of 6 ready" over the cards that have not ended, and
-**Safe to restart** appears only when every one is ready. **Stop wrap-up**
-stops the asking; the answers stay on the wall for an hour.
+session's reason. A ready answer counts only once the turn that gave it has
+ended (**Finishing its turn** until then), never while its background work
+runs, and not after the session starts another turn (**Working again**).
+After 10 minutes silence reads **No answer**, though a session already asked
+may still answer while the wall shows it. A later session reads **Not
+asked**. The bar counts "4 of 6 ready" over the cards that have not ended,
+and **Safe to restart** appears only when every one is ready. **Stop
+wrap-up** stops the asking; answers stay on the wall for an hour.
 
 Once every card is ready, **End all ready sessions…** names each session it
 will end, with Cancel focused. Its button wakes a second after it opens, and
 it closes if any card stops being ready. Confirming starts each card's own
 5 s End with Undo; a session that stops being ready meanwhile is not ended,
-and its note says so. Ready sessions outside klepsydra's tmux are not
-listed; the dialog says how many to end from their own terminals.
+and its note says so. The dialog counts ready sessions outside
+klepsydra's tmux, which you end yourself.
 
 ### Card density
 

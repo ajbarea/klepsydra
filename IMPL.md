@@ -18,15 +18,20 @@ PR #82. Design: the 10-21 comment on #58.
   Safe to restart, End all ready sessions…. README "Wrapping up".
 - Review round 2 fixed: answer times get the session files' clock
   correction and the script judges the request by the folder's clock; late
-  reports from an asked session while the wall shows the request; idle with
-  background work out routes Type; every Type session marked first, typed
-  in parallel, unmark takes only its own mark; End all ready re-checks
-  readiness at expiry and on every snapshot; restart warning; wrapup/ watched;
-  result note counts only the asked and names failures.
+  reports; idle with background work routes Type; marks first, parallel
+  typing; End all ready re-checks readiness; restart warning; wrapup/ watched.
+- Review round 3 fixed: a ready answer counts once the Stop hook settles it
+  (the turn that gave it ended) and until the next turn (`turn_at`, which the
+  fleet hook stamps on every prompt, notifications too), never while working
+  or waiting; the launcher judges mid-turn by the line above the input box
+  (2.1.302 spinner fixtures); Start over keeps a running ask; each session is
+  re-read just before typing; the reader makes `wrapup/` and drops a request
+  past its hour; prune never follows a symlinked folder.
 
 ## Next
-- Review round 3 (independent, opus), CI, merge.
-- Deploy needs AJ's ok: copy `klepsydra-wrapup.sh` to `~/.claude/`, the skill
+- Round 3 was the last review round: CI, then merge on AJ's word.
+- Deploy needs AJ's ok: copy `klepsydra-wrapup.sh` and the updated
+  `klepsydra-fleet.sh` (it now stamps `turn_at`) to `~/.claude/`, the skill
   to `skills/klepsydra-wrapup/SKILL.md` in each config folder, the Stop hook
   block into both `settings.json`, and install the app build.
 
