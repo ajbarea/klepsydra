@@ -192,7 +192,6 @@ mod tests {
     use crate::scan::tests::Scratch;
     use crate::session::Claude;
     use crate::view::Crew;
-    use std::fs::File;
 
     const NOW: i64 = 1_792_520_222;
 
@@ -497,6 +496,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn a_file_that_will_not_open_is_a_failed_read() {
+        use std::fs::File;
         use std::os::unix::fs::PermissionsExt;
         let dir = Scratch::new("speaking-locked");
         dir.write(FILE, &example());

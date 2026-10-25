@@ -103,6 +103,17 @@ mod tests {
         assert_eq!(refused(read_text(&dir.0.join("latin1.md"), 64)), "NotUtf8");
     }
 
+    /// A file whose size says it fits but whose read runs on, as one that
+    /// grew after the check would: procfs reports every file as empty.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_read_past_the_cap_is_refused_whatever_the_size_said() {
+        let status = Path::new("/proc/self/status");
+        assert_eq!(std::fs::symlink_metadata(status).unwrap().len(), 0);
+        assert_eq!(refused(read_text(status, 8)), "TooLarge");
+        assert!(read_text(status, 1 << 20).is_ok());
+    }
+
     #[cfg(unix)]
     #[test]
     fn a_symlink_is_never_followed() {

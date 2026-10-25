@@ -10,11 +10,14 @@ const md = markdownit({ html: true, linkify: false, typographer: false });
 /** The only link schemes the panel offers to copy. */
 export const SCHEMES = ["https:", "http:", "mailto:"];
 
-/** `href` when it is an absolute https, http or mailto address, else null. */
+/**
+ * `href` when it is an absolute https, http or mailto address, else null.
+ * The URL parser trims and lower-cases the scheme, so " JavaScript:" is
+ * "javascript:", and a relative address has no base to resolve against.
+ */
 export function safeHref(href) {
   if (typeof href !== "string") return null;
   const h = href.trim();
-  if (!SCHEMES.some((s) => h.toLowerCase().startsWith(s))) return null;
   try {
     return SCHEMES.includes(new URL(h).protocol) ? h : null;
   } catch {
