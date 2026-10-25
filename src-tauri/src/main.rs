@@ -1014,7 +1014,11 @@ fn main() {
 mod tests {
     #[test]
     fn writers_of_different_keys_at_once_keep_every_key() {
-        let dir = std::env::temp_dir().join(format!("klepsydra-prefs-{}", std::process::id()));
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("klepsydra-prefs-{nanos}"));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("prefs.json");
         let _ = std::fs::remove_file(&path);
