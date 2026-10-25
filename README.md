@@ -586,7 +586,11 @@ terminal") puts the wall on the
 left half of its monitor and the `fleet` Windows Terminal window (the one
 holding the "klepsydra sessions" tab) on the right half. The halves are of
 the work area, so the taskbar stays clear, and the windows' visible edges
-meet on the split line. A maximized or minimized window is restored first.
+meet on the split line, and the terminal is stacked right under the wall so
+no other window covers its half. The fleet tab is selected in it. A maximized
+or minimized window is first shown at its normal size without taking the
+focus; a terminal maximized and then minimized comes back at its normal size
+on the right, not maximized.
 Pressing it again turns split off and puts both windows back where they were,
 maximized if they were; a window closed meanwhile is skipped. The toggle is
 pressed only once a split has landed. If the fleet terminal is not open, the

@@ -15,14 +15,17 @@ impl Rect {
     }
 
     /// From a Win32 RECT's edges; the right and bottom edges are exclusive.
+    #[cfg_attr(not(windows), allow(dead_code))]
     pub fn from_edges(left: i32, top: i32, right: i32, bottom: i32) -> Self {
         Rect::new(left, top, right - left, bottom - top)
     }
 
+    #[cfg_attr(not(windows), allow(dead_code))]
     pub fn right(&self) -> i32 {
         self.x + self.w
     }
 
+    #[cfg_attr(not(windows), allow(dead_code))]
     pub fn bottom(&self) -> i32 {
         self.y + self.h
     }
@@ -217,6 +220,7 @@ pub fn resize_inset(scale: f64) -> f64 {
 /// How far a window's rect reaches past its visible frame on each side: the
 /// invisible resize borders `GetWindowRect` counts and the DWM extended frame
 /// bounds leave out.
+#[cfg_attr(not(windows), allow(dead_code))]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Insets {
     pub left: i32,
@@ -228,6 +232,7 @@ pub struct Insets {
 /// The left and right halves of a work area. The left takes the floor of half
 /// the width and the right the rest, so they meet with no gap or overlap and
 /// fill it exactly, whatever the width's parity or the origin's sign.
+#[cfg_attr(not(windows), allow(dead_code))]
 pub fn halves(work: Rect) -> (Rect, Rect) {
     let left = work.w.div_euclid(2);
     (
@@ -239,6 +244,7 @@ pub fn halves(work: Rect) -> (Rect, Rect) {
 /// The insets of a window whose rect is `window` and whose visible frame is
 /// `frame`, both in the same (physical) pixels. A side where the frame reaches
 /// past the rect, which a real frame never does, counts as none.
+#[cfg_attr(not(windows), allow(dead_code))]
 pub fn frame_insets(window: Rect, frame: Rect) -> Insets {
     Insets {
         left: (frame.x - window.x).max(0),
@@ -250,6 +256,7 @@ pub fn frame_insets(window: Rect, frame: Rect) -> Insets {
 
 /// The rect to give a window with insets `by` so its visible frame lands on
 /// `visible`.
+#[cfg_attr(not(windows), allow(dead_code))]
 pub fn widen(visible: Rect, by: Insets) -> Rect {
     Rect::new(
         visible.x - by.left,

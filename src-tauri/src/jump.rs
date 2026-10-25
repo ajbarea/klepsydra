@@ -128,7 +128,7 @@ fn jump(lookup: Lookup<'_>) -> Result<String, JumpError> {
 pub(crate) use uia::TERMINAL_CLASS;
 
 /// The handle of the Windows Terminal window holding the fleet tab, for split
-/// mode. It only finds the window: no tab is selected and nothing moves.
+/// mode, with the fleet tab selected in it. Nothing moves.
 #[cfg(windows)]
 pub(crate) fn fleet_window() -> Result<isize, JumpError> {
     uia::window(Lookup::Exact(crate::launch::FLEET_TAB))
@@ -270,9 +270,14 @@ mod uia {
             .map_err(failed("Could not find the terminal window"))
     }
 
-    /// The window holding the tab `lookup` picks, as an integer handle.
+    /// The window holding the tab `lookup` picks, as an integer handle, with
+    /// that tab selected. Nothing moves.
     pub fn window(lookup: Lookup<'_>) -> Result<isize, JumpError> {
-        with_tab(lookup, |tab| Ok(window_of(tab)?.0 as isize))
+        with_tab(lookup, |tab| {
+            let hwnd = window_of(tab)?;
+            select(tab)?;
+            Ok(hwnd.0 as isize)
+        })
     }
 
     pub fn jump(lookup: Lookup<'_>) -> Result<String, JumpError> {

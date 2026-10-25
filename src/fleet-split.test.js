@@ -171,3 +171,12 @@ test("the placement check catches each way to move a window, and ignores a comme
   ]) assert.notDeepEqual(placesWindows(planted), [], planted);
   assert.deepEqual(placesWindows("// never SetWindowPos here\n/* MoveWindow */ fn ok() {}"), []);
 });
+
+test("split's lookup selects the fleet tab in the window it places", () => {
+  const jump = code(read("../src-tauri/src/jump.rs"));
+  assert.match(jump, /pub\(crate\) fn fleet_window\(\) -> Result<isize, JumpError> \{\s*uia::window\(Lookup::Exact\(crate::launch::FLEET_TAB\)\)\s*\}/);
+  const window = jump.slice(jump.indexOf("pub fn window("), jump.indexOf("pub fn jump("));
+  assert.ok(window.length > 0, "uia::window is found");
+  assert.match(window, /select\(tab\)\?/, "the tab is selected, so the right half shows the fleet");
+  assert.deepEqual(placesWindows(window), [], "selecting moves no window");
+});
