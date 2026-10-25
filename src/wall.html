@@ -16,6 +16,7 @@
         <span class="key" aria-hidden="true"><svg viewBox="0 0 32 18"><path class="shell" d="M 4.5 16 A 11.5 11.5 0 0 1 27.5 16"/></svg>shell</span>
       </p>
       <button type="button" id="ledger-open" aria-haspopup="dialog">Ledger</button>
+      <button type="button" id="queue-open" aria-controls="queue" aria-expanded="false">Queue</button>
       <button type="button" id="wrapup-open" aria-haspopup="dialog">Wrap up…</button>
       <p class="wrapup-bar" hidden>
         <span class="wrapup-count"></span>
@@ -67,6 +68,22 @@
         <button type="button" class="ledger-close">Close</button>
       </header>
       <div class="ledger-content"></div>
+    </div>
+  </dialog>
+
+  <dialog id="queue" class="queue" aria-labelledby="queue-title">
+    <div class="queue-resize" role="separator" aria-orientation="vertical" aria-label="Queue panel width" aria-controls="queue" tabindex="0"></div>
+    <div class="queue-body">
+      <header class="queue-head">
+        <div>
+          <h2 id="queue-title" tabindex="-1">Queue</h2>
+          <p class="queue-path"></p>
+        </div>
+        <button type="button" class="queue-close">Close</button>
+      </header>
+      <p class="queue-problem" role="status" hidden></p>
+      <div class="queue-content"></div>
+      <p class="queue-live visually-hidden" role="status"></p>
     </div>
   </dialog>
 

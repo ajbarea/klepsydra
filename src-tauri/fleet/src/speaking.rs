@@ -1,12 +1,11 @@
 //! keryx's `speaking.json`: the line it is playing, matched to the card whose
 //! session is speaking. keryx writes it; the reader only reads it.
 
-use std::fs::File;
-use std::io::Read;
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
+use crate::bounded::{read_text, Refused};
 use crate::session::{MAX_TIME, MIN_TIME};
 use crate::view::{Status, View};
 
@@ -73,24 +72,13 @@ pub fn read(fleet: &Path) -> Found {
     read_small(&fleet.join(FILE), MAX_BYTES)
 }
 
-/// The regular file at `path` when it is at most `max` bytes. The type is
-/// checked before opening, so a FIFO is never opened and a symlink never
-/// followed.
+/// The regular file at `path` when it is at most `max` bytes, read through
+/// `bounded::read_text`, so a FIFO is never opened and a symlink never followed.
 pub fn read_small(path: &Path, max: u64) -> Found {
-    let gone = |e: &std::io::Error| e.kind() == std::io::ErrorKind::NotFound;
-    let meta = match std::fs::symlink_metadata(path) {
-        Ok(m) => m,
-        Err(e) if gone(&e) => return Found::Absent,
-        Err(_) => return Found::Failed,
-    };
-    if !meta.is_file() || meta.len() > max {
-        return Found::Absent;
-    }
-    let mut text = String::new();
-    match File::open(path).and_then(|f| f.take(max).read_to_string(&mut text)) {
-        Ok(_) => Found::Text(text),
-        Err(e) if gone(&e) => Found::Absent,
-        Err(_) => Found::Failed,
+    match read_text(path, max) {
+        Ok(text) => Found::Text(text),
+        Err(Refused::Missing | Refused::NotFile | Refused::TooLarge) => Found::Absent,
+        Err(Refused::Unreadable(_) | Refused::NotUtf8) => Found::Failed,
     }
 }
 
@@ -508,6 +496,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn a_file_that_will_not_open_is_a_failed_read() {
+        use std::fs::File;
         use std::os::unix::fs::PermissionsExt;
         let dir = Scratch::new("speaking-locked");
         dir.write(FILE, &example());

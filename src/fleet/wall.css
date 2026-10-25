@@ -858,3 +858,78 @@ button.link:hover:not([aria-disabled="true"]) { background: none; }
   * { transition: none !important; animation: none !important; }
   ::view-transition-group(*) { animation-duration: 0s; }
 }
+
+/* The Queue panel: the queue file beside the wall. Wide windows dock it on
+   the right and the wall gives up that room; narrow ones get a modal dialog
+   down the right edge, as Ledger is. */
+#queue-open { position: relative; padding: 0 var(--space-5); font-size: 12.5px; line-height: 16px; }
+#queue-open::after { content: ""; position: absolute; inset: -4px 0; }
+#queue-open[aria-expanded="true"] { background: var(--button-hover); border-color: var(--text-dim); }
+/* Below the dock breakpoint (DOCK_MIN_PX) the half-screen bar fits "Queue · N" only; the name keeps "for you". */
+@media (width < 1200px) {
+  #queue-open .for-you { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+}
+body.queue-docked { padding-right: var(--queue-w); }
+.queue {
+  position: fixed;
+  inset: 0 0 0 auto;
+  width: var(--queue-w, 480px);
+  max-width: 100vw;
+  height: 100%;
+  max-height: none;
+  margin: 0;
+  border: 0;
+  border-left: 1px solid var(--card-line);
+  background: var(--card-bg);
+  color: var(--text);
+  color-scheme: dark;
+}
+.queue[data-mode="modal"] { width: min(600px, 100vw); }
+.queue::backdrop { background: rgb(0 0 0 / 60%); }
+/* The separator is the panel's left edge: drag it, or focus it and use the arrow keys. */
+.queue-resize { position: absolute; inset: 0 auto 0 -4px; width: 9px; cursor: col-resize; z-index: 1; touch-action: none; }
+.queue-resize::after { content: ""; position: absolute; inset: 0 4px 0 4px; background: transparent; }
+.queue-resize:hover::after, .queue-resize:focus-visible::after { background: var(--text-dim); }
+.queue-resize:focus-visible { outline: 2px solid var(--card-focus); outline-offset: -2px; }
+.queue[data-mode="modal"] .queue-resize { display: none; }
+.queue-body { height: 100%; overflow-y: auto; display: flex; flex-direction: column; gap: 16px; padding: 22px 24px 32px; }
+.queue-head { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-7); }
+.queue-head > div { min-width: 0; }
+.queue-head h2 { font: 650 22px/1.2 var(--display); letter-spacing: -0.01em; }
+.queue-path { color: var(--text-dim); font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.queue-problem { padding: 10px 12px; border-left: 3px solid var(--tone-error); background: var(--card-quiet); border-radius: 0 8px 8px 0; }
+.queue-content { display: flex; flex-direction: column; gap: 12px; overflow-wrap: anywhere; font-size: 13.5px; }
+.queue-content h3 { font: 650 17px/1.3 var(--display); }
+.queue-content h4, .queue-content h5, .queue-content h6 { font: 650 15px/1.3 var(--display); }
+.queue-content details { border-top: 1px solid var(--card-line); padding-top: var(--space-4); }
+.queue-content details > * + * { margin-top: var(--space-4); }
+.queue-content summary { display: flex; align-items: center; gap: var(--space-3); min-height: 24px; cursor: pointer; list-style: none; }
+.queue-content summary::-webkit-details-marker { display: none; }
+.queue-content summary::before { content: "▸"; color: var(--text-dim); width: 1em; }
+.queue-content details[open] > summary::before { content: "▾"; }
+.queue-content summary > * { display: inline; }
+.queue-content summary:focus-visible { outline: 2px solid var(--card-focus); outline-offset: 2px; border-radius: 4px; }
+.queue-content ol, .queue-content ul { padding-left: 1.5em; display: flex; flex-direction: column; gap: var(--space-2); }
+.queue-content li > ol, .queue-content li > ul { margin-top: var(--space-2); }
+.queue-content code { font: 12.5px/1.4 ui-monospace, "Cascadia Mono", Consolas, monospace; background: var(--card-quiet); border-radius: 4px; padding: 0 3px; }
+/* Copy sits on its own row above the code, so it never covers a command; long lines wrap rather than scroll. */
+.queue-content .q-code { display: grid; grid-template-areas: "copy" "code"; gap: var(--space-1); margin: var(--space-3) 0; }
+.queue-content pre { grid-area: code; font: 12.5px/1.45 ui-monospace, "Cascadia Mono", Consolas, monospace; background: var(--wall-bg); border: 1px solid var(--card-line); border-radius: 8px; padding: 10px 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.queue-content pre code { background: none; padding: 0; }
+.queue-content .q-code > .q-copy { grid-area: copy; justify-self: end; }
+.queue-content .q-html { white-space: pre-wrap; color: var(--text-dim); }
+.queue-content button.q-copy { padding: 3px 8px; min-height: 24px; font-size: 12px; }
+.queue-content .q-link { text-decoration: underline dotted; text-underline-offset: 3px; }
+.queue-content .q-link + .q-copy { margin-left: var(--space-2); vertical-align: baseline; }
+/* Done reads quieter (still 4.5:1); pending carries the working tone as a mark, the text stays full. */
+.queue-content .q-done { color: var(--text-dim); }
+.queue-content .q-done strong { color: var(--text-dim); }
+.queue-content li.q-pending::marker { color: var(--tone-working); }
+.queue-content p.q-pending { border-left: 3px solid var(--tone-working); padding-left: var(--space-3); }
+.queue-content table { width: 100%; border-collapse: collapse; }
+.queue-content th { padding: 4px 8px 6px 0; font-size: 12px; font-weight: 600; color: var(--text-dim); border-bottom: 1px solid var(--card-line); text-align: left; }
+.queue-content td { padding: 6px 8px 6px 0; border-bottom: 1px solid var(--card-line); }
+.queue-content .q-align-right { text-align: right; }
+.queue-content .q-align-center { text-align: center; }
+.queue-content blockquote { border-left: 3px solid var(--card-line); padding-left: var(--space-5); color: var(--text-dim); }
+.queue-content hr { border: 0; border-top: 1px solid var(--card-line); }

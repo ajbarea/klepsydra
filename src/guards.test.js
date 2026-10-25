@@ -2,6 +2,7 @@
 // app, not only fleet files, so a guard cannot pass by finding nothing to read.
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { extname, join, relative, sep } from "node:path";
@@ -868,4 +869,121 @@ test("the listen check catches each way to listen elsewhere, and a bind that ski
   assert.deepEqual(check("x.rs", "let t = TcpSocket::new_v4()?;"), ["x.rs:1"]);
   assert.deepEqual(check("x.rs", "Socket::listen(&probe, 1)?;"), ["x.rs:1"]);
   assert.deepEqual(check("x.rs", "probe\n    .listen(1)?;"), ["x.rs:2"]);
+});
+
+// The Queue panel renders a file other programs write. Its modules build
+// elements and text nodes only: no markup, no address to follow, no script.
+const QUEUE_RENDER = ["src/fleet/queue.js", "src/fleet/queuepanel.js"];
+const MARKUP = [
+  /\binnerHTML\b/,
+  /\bouterHTML\b/,
+  /insertAdjacentHTML/,
+  /document\.write/,
+  /createContextualFragment/,
+  /\bDOMParser\b/,
+  /\.href\s*=/,
+  /\.src\s*=/,
+  /setAttribute\(\s*["'`](href|src|srcdoc|style|on\w*)["'`]/i,
+  /createElement\(\s*["'`](a|img|script|iframe|object|embed|link|style)["'`]/i,
+  /\bwindow\.open\(|\blocation\s*=|location\.(assign|replace)\(/,
+  /\.render\(\s*tokens|md\.render(Inline)?\(/,
+];
+export const writesMarkup = (text) => MARKUP.filter((re) => re.test(text)).map(String);
+
+test("the queue renderer never writes markup, follows an address or uses markdown-it's HTML renderer", () => {
+  for (const f of QUEUE_RENDER) {
+    assert.ok(FRONTEND.includes(f), `${f} is scanned`);
+    assert.deepEqual(writesMarkup(read(f)), [], f);
+  }
+  for (const planted of [
+    "el.innerHTML = text",
+    "el.outerHTML = x",
+    'el.insertAdjacentHTML("beforeend", x)',
+    "document.write(x)",
+    "range.createContextualFragment(x)",
+    "new DOMParser()",
+    "a.href = url",
+    "img.src = url",
+    'el.setAttribute("href", url)',
+    "el.setAttribute('onclick', x)",
+    'el.setAttribute("style", x)',
+    'document.createElement("a")',
+    "document.createElement('script')",
+    "window.open(url)",
+    "location = url",
+    "location.assign(url)",
+    "md.render(text)",
+  ]) {
+    assert.notDeepEqual(writesMarkup(planted), [], planted);
+  }
+  assert.deepEqual(writesMarkup('b.setAttribute("aria-label", name); el.textContent = t; doc.createElement("pre")'), []);
+  const html = read("src/wall.html");
+  const dialog = html.slice(html.indexOf('<dialog id="queue"'), html.indexOf("</dialog>", html.indexOf('<dialog id="queue"')));
+  assert.match(dialog, /^<dialog id="queue" class="queue" aria-labelledby="queue-title">/);
+  assert.match(dialog, /role="separator" aria-orientation="vertical" aria-label="Queue panel width"/);
+  assert.doesNotMatch(dialog, /<a\b|href|\u2014/);
+  assert.match(html, /id="ledger-open"[^>]*>Ledger<\/button>\s*<button type="button" id="queue-open" aria-controls="queue" aria-expanded="false">Queue<\/button>/, "beside Ledger");
+});
+
+test("the queue sample is never reachable inside the app, and the panel reads the file through one command", async () => {
+  globalThis.window ??= {};
+  const { demoQueueUrl } = await import("./fleet/queuepanel.js");
+  for (const search of ["?demo", "?demo=1", ""]) assert.equal(demoQueueUrl(true, search), null, search);
+  assert.equal(demoQueueUrl(false, "?demo"), "../scripts/fixtures/queue-demo.md");
+  assert.equal(demoQueueUrl(false, "?focus=x"), null, "only with ?demo");
+  const src = read("src/fleet/queuepanel.js");
+  assert.match(src, /const url = demoQueueUrl\(inTauri, location\.search\);/);
+  assert.equal(src.match(/queue-demo\.md/g).length, 1, "one way to the sample");
+  assert.match(src, /follow\("queue_subscribe", onMessage\)/);
+  const hits = FRONTEND.filter((f) => /queue_subscribe/.test(read(f)));
+  assert.deepEqual(hits, ["src/fleet/queuepanel.js"]);
+  const dist = join(ROOT, "src-tauri", JSON.parse(read("src-tauri/tauri.conf.json")).build.frontendDist);
+  assert.ok(relative(dist, join(ROOT, "scripts/fixtures/queue-demo.md")).startsWith(".."), "outside the bundle");
+});
+
+/** Files under a vendor dir that differ from its VENDOR.json: unlisted, missing, or a hash that drifted. */
+export function vendorDrift(dir) {
+  const manifest = JSON.parse(readFileSync(join(dir, "VENDOR.json"), "utf8"));
+  const listed = manifest.files ?? {};
+  const onDisk = readdirSync(dir).filter((f) => f !== "VENDOR.json");
+  const sha = (f) => createHash("sha256").update(readFileSync(join(dir, f))).digest("hex");
+  return {
+    unlisted: onDisk.filter((f) => !(f in listed)).sort(),
+    missing: Object.keys(listed).filter((f) => !onDisk.includes(f)).sort(),
+    drifted: Object.keys(listed).filter((f) => onDisk.includes(f) && sha(f) !== listed[f].sha256).sort(),
+  };
+}
+
+test("every vendored file is the pinned upstream file, byte for byte, with its licence", () => {
+  const vendor = join(ROOT, "src/vendor");
+  const libs = readdirSync(vendor);
+  assert.deepEqual(libs, ["markdown-it"]);
+  for (const lib of libs) {
+    const dir = join(vendor, lib);
+    assert.deepEqual(vendorDrift(dir), { unlisted: [], missing: [], drifted: [] }, lib);
+    const m = JSON.parse(readFileSync(join(dir, "VENDOR.json"), "utf8"));
+    assert.match(m.version, /^\d+\.\d+\.\d+$/, "an exact version");
+    assert.ok(m.source.endsWith(`-${m.version}.tgz`), "the source is that version's tarball");
+    assert.match(m.integrity, /^sha512-/);
+    assert.ok("LICENSE" in m.files, "its licence ships with it");
+  }
+  const banner = read("src/vendor/markdown-it/markdown-it.esm.min.mjs").split("\n")[0];
+  assert.equal(banner, "/*! markdown-it 15.0.3 https://github.com/markdown-it/markdown-it @license MIT */");
+  assert.match(read("src/fleet/queue.js"), /from "\.\.\/vendor\/markdown-it\/markdown-it\.esm\.min\.mjs";/);
+});
+
+test("the vendor check catches an edited, an added and a removed file", () => {
+  const dir = mkdtempSync(join(tmpdir(), "vendor-"));
+  writeFileSync(join(dir, "lib.mjs"), "export default 1;\n");
+  writeFileSync(join(dir, "LICENSE"), "MIT\n");
+  const sha = (t) => createHash("sha256").update(t).digest("hex");
+  const manifest = { files: { "lib.mjs": { sha256: sha("export default 1;\n") }, LICENSE: { sha256: sha("MIT\n") } } };
+  writeFileSync(join(dir, "VENDOR.json"), JSON.stringify(manifest));
+  assert.deepEqual(vendorDrift(dir), { unlisted: [], missing: [], drifted: [] });
+  writeFileSync(join(dir, "lib.mjs"), "export default 2;\n");
+  writeFileSync(join(dir, "extra.mjs"), "");
+  assert.deepEqual(vendorDrift(dir), { unlisted: ["extra.mjs"], missing: [], drifted: ["lib.mjs"] });
+  manifest.files["gone.mjs"] = { sha256: sha("") };
+  writeFileSync(join(dir, "VENDOR.json"), JSON.stringify(manifest));
+  assert.deepEqual(vendorDrift(dir).missing, ["gone.mjs"]);
 });

@@ -409,3 +409,25 @@ test("End <Character> meets 4.5:1 at rest and on hover, and its text wears a tex
   assert.ok(contrast(token(css, "--text-dim"), token(css, "--card-bg")) >= 4.5, "dialog text");
   assert.ok(contrast(token(css, "--text-dim"), token(css, "--card-bg")) >= 3, "the three dots");
 });
+
+test("the Queue panel's text meets 4.5:1 on every surface it sits on, and its marks 3:1", () => {
+  const css = read("./fleet/wall.css");
+  const t = (name) => token(css, name);
+  assert.match(css, /\.queue \{[^}]*background: var\(--card-bg\)/, "the panel sits on the card surface");
+  assert.match(css, /\.queue-content \.q-done \{ color: var\(--text-dim\); \}/, "done reads quieter in a text colour");
+  assert.match(css, /\.queue-content pre \{[^}]*background: var\(--wall-bg\)/);
+  assert.match(css, /\.queue-content code \{[^}]*background: var\(--card-quiet\)/);
+  for (const [fg, bg, what] of [
+    ["--text", "--card-bg", "body text"],
+    ["--text-dim", "--card-bg", "done lines, the path, table heads"],
+    ["--text", "--wall-bg", "code blocks"],
+    ["--text-dim", "--wall-bg", "an HTML block shown as text"],
+    ["--text", "--card-quiet", "inline code"],
+    ["--text", "--button-bg", "Copy buttons"],
+    ["--text", "--button-hover", "the open Queue button"],
+  ]) {
+    assert.ok(contrast(t(fg), t(bg)) >= 4.5, `${what}: ${contrast(t(fg), t(bg)).toFixed(2)}`);
+  }
+  assert.ok(contrast(t("--tone-working"), t("--card-bg")) >= 3, "the pending mark");
+  assert.ok(contrast(t("--card-focus"), t("--card-bg")) >= 3, "the focus ring on the separator and summaries");
+});

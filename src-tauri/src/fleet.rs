@@ -11,6 +11,7 @@ use klepsydra_fleet::cue::Cues;
 use klepsydra_fleet::hub::{Hub, Sink};
 use klepsydra_fleet::ledger::{Ledger, Receiver, Shared, TodayView};
 use klepsydra_fleet::problem_log::{append_capped, CAP};
+use klepsydra_fleet::queue;
 use klepsydra_fleet::receiver;
 use klepsydra_fleet::scan::Problem;
 use klepsydra_fleet::watch::{unix_now, Reader, POLL};
@@ -40,6 +41,11 @@ pub struct Strip(pub std::sync::Mutex<Option<[f64; 4]>>);
 /// Who follows the fleet, managed as app state.
 pub type Fleet = Hub<Webview>;
 
+/// Who follows the queue file, managed as app state: a type of its own, since
+/// Tauri keys state by type.
+#[derive(Default)]
+pub struct QueueFeed(pub Hub<Webview>);
+
 /// A webview asks for snapshots: the latest at once, then each new one.
 #[tauri::command]
 pub fn fleet_subscribe(
@@ -48,6 +54,42 @@ pub fn fleet_subscribe(
     on_message: Channel<Value>,
 ) {
     fleet.subscribe(window.label(), Webview(on_message));
+}
+
+/// A webview asks for the queue file: the latest read at once, then each change.
+#[tauri::command]
+pub fn queue_subscribe(
+    window: tauri::WebviewWindow,
+    feed: tauri::State<'_, QueueFeed>,
+    on_message: Channel<Value>,
+) {
+    feed.0.subscribe(window.label(), Webview(on_message));
+}
+
+/// The queue file's path: the `queue_path` pref, else the Desktop known
+/// folder's `claude-queue.md`; a prefs.json that will not read is an error,
+/// not the default. Read again on every step, so an edited pref takes effect
+/// within a poll.
+fn queue_path(app: &AppHandle) -> Result<PathBuf, String> {
+    let pref = queue::pref(crate::prefs_path(app).as_deref())?;
+    queue::resolve(pref.as_ref(), app.path().desktop_dir().ok())
+}
+
+/// Follow the queue file for as long as the app runs, sending each change.
+pub fn start_queue(app: &AppHandle) {
+    let app = app.clone();
+    std::thread::spawn(move || {
+        let mut follower = queue::Follower::default();
+        let mut wait = Duration::ZERO;
+        loop {
+            if let Some(view) = follower.step(&queue_path(&app), wait) {
+                if let Ok(v) = serde_json::to_value(view) {
+                    app.state::<QueueFeed>().0.publish(v);
+                }
+            }
+            wait = POLL;
+        }
+    });
 }
 
 /// Remove an ended or silent session's card. A session still running brings

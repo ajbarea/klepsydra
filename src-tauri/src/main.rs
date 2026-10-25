@@ -795,6 +795,7 @@ fn with_state<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R
         .manage(Grip::default())
         .manage(fleet::Strip::default())
         .manage(fleet::Fleet::default())
+        .manage(fleet::QueueFeed::default())
         .manage(Moved::default())
         .manage(Sized::default())
         .manage(Requested::default())
@@ -827,6 +828,7 @@ fn main() {
             reset_position,
             set_tray_level,
             fleet::fleet_subscribe,
+            fleet::queue_subscribe,
             fleet::open_wall,
             fleet::clear_session,
             fleet::ledger_today,
@@ -971,6 +973,7 @@ fn main() {
             raise_above_taskbar(&window);
             watch_grip(app.handle().clone());
             fleet::start(app.handle(), klepsydra_dir(app.handle()));
+            fleet::start_queue(app.handle());
             Ok(())
         })
         .run(tauri::generate_context!())
