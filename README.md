@@ -742,17 +742,21 @@ whose Host is neither loopback nor a `*.ts.net` name.
 On the phone the wall is one column of compact cards, needs-you first, under
 a tally that stays at the top. It updates as the desktop's does, over one
 event stream. Nothing on it acts on a session: New, Open terminal, End,
-Interrupt, Clear and the ledger stay on the desktop. A session with Remote
+Interrupt, Clear, Wrap up and the ledger stay on the desktop, though a
+wrap-up's answers and readiness count show. A session with Remote
 Control on (`/remote-control` in its terminal) shows **Open in Claude**, and
 a tap on its card opens that session on claude.ai or in the Claude app. The
 link appears at the session's next hook event after Remote Control connects,
 and goes when it disconnects or the session ends. When the stream drops, the
-wall says the cards may be out of date until it reconnects.
+wall says the cards may be out of date until it reconnects, and keeps
+trying (every 1 s at first, at most every 30 s) while klepsydra restarts.
 
 The server answers only GET and HEAD, serves only the wall's own files, its
 snapshot at `/fleet.json` and the stream at `/events`, and sends each session
-without its tmux pane, process or full folder path. The page's service worker
-keeps only the page and its files, never the fleet.
+without its tmux pane, process or full folder path. Card previews (prompts
+and replies), errors and the cost estimate are visible to any tailnet device
+your Tailscale ACLs let reach this PC. The page's service worker keeps only
+the page and its files, never the fleet.
 
 The Home Screen icons are drawn by `scripts/make-phone-icons.py` from the
 mark in `src-tauri/icons/`.

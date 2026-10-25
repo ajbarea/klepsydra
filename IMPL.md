@@ -1,41 +1,44 @@
 # IMPL
 
 Slice: #52 Fleet on the phone (read-only wall over Tailscale Serve). Branch
-feat/phone-wall, worktree `.claude/worktrees/phone-wall`. PRs #82 (wrap-up)
-and #83 (empty state) merge first; rebase onto them, then open the PR.
+feat/phone-wall, worktree `.claude/worktrees/phone-wall`, PR #91 (part of
+#52; rebased onto #82 and #83).
 
 ## Done
-- `fleet::phone`: hyper server on `127.0.0.1:8318` (IANA-unassigned, below
-  Windows' dynamic range, clear of 4317/4318). GET/HEAD only (405 + Allow);
-  Host loopback or `*.ts.net`; same-origin `Origin` only; a
-  `Tailscale-Funnel-Request` is refused. Routes: `/` (wall.html), the wall's
-  files by allow-list, `/fleet.json` (503 before the first snapshot),
-  `/events` (SSE, 15 s heartbeat, 8 streams). Sessions cut to the wall's
-  fields (no tmux, claude, distro, receiver; launch_dir as its basename).
-  `Server::stop`/drop closes the port and every stream. Shares `bind`,
-  `our_host`, `backoff` with the OTLP receiver.
-- App: tray "Phone wall" (pref `phone_wall`, off by default), `src-tauri/src/phone.rs`
-  serves the bundle through `asset_resolver`; `fleet::start` publishes to it.
-- `remote_url`: the hook tails 1 MiB of `transcript_path` (awk, 4 lines of
-  at most 8 KiB) for bridge_status / remote_session_change / "Remote Control
-  disconnected"; newest since the process started wins; none in the tail
-  keeps the stored link; fresh start and SessionEnd clear it. Off is
-  `sendUserFileHint: false` (the attachment's url is null while attribution
-  is off, as on AJ's machine). session.rs keeps only `https://claude.ai/code/<id>`.
-- Page: `served` (root path, not app, not ?demo) follows `/events`; `.served`
-  hides every button not marked `data-phone`; one column of compact cards,
-  needs-you first, sticky tally, 44 px targets; "Open in Claude" link and
-  card tap; a reconnecting note. Manifest, 180/192/512 icons
-  (`scripts/make-phone-icons.py`), shell-only `sw.js`.
-- README "Fleet on your phone", AGENTS rule, skill-context suite list.
+- `fleet::phone`: hyper server on `127.0.0.1:8318`, GET/HEAD only, Host
+  loopback or `*.ts.net`, same-origin `Origin`, no Funnel; the wall's files
+  by allow-list, `/fleet.json`, `/events` (SSE, 15 s heartbeat, 8 streams).
+  Sessions cut to the wall's fields, now with `wrapup`, `turn_at`,
+  `asked_after_turn` and the snapshot's `wrapup` request (display only).
+- Assets: `exact_assets` holds Tauri's resolver to the bundle's own keys
+  (`asset_resolver().iter()`), since `get_asset` falls back to `<path>.html`,
+  `<path>/index.html`, then `index.html`. The test stub mimics that fallback.
+  `# research(2026-10)`: tauri 2.12.2 `src/manager/mod.rs` `get_asset`
+  (read in ~/.cargo/registry; the mime type is parsed from the requested
+  path, so a mime check would not catch the fallback).
+- `/wall.html` answers 308 to `/`: the page's one address, so `feedKind`'s
+  root-path rule cannot load dev mode from the phone server.
+- `followServed`: a stream the browser closed for good (readyState CLOSED,
+  e.g. 503 at the cap, Serve's 502 during a restart) is reopened after 1 s
+  doubling to 30 s, reset on open. `# research(2026-10)`: WHATWG HTML
+  server-sent events, "fail the connection" on a non-200 or wrong type sets
+  CLOSED and the UA "does not attempt to reconnect"; the spec suggests
+  exponential backoff.
+- Hook: the awk prefilter takes "Remote Control disconnected" only from a
+  `"type":"system"` line's `"content":"...` field.
+- Browser suite: wrap-up bar and answers, empty state (ended only, none)
+  with no desktop control, `/wall.html` redirect, stream refused at the cap
+  then reopened. README: tailnet visibility sentence.
 
 ## Next
-- Gate (all suites), push. Rebase onto #82/#83 when they merge: the Wrap up
-  button from #82 is hidden on the phone by the `data-phone` rule; check
-  feed.js `subscribe` and wall.js `receive` merge cleanly.
-- Independent review (opus, `/code-review high`), at most 3 rounds.
-- AJ: the live iPhone check over the tailnet (Tailscale not installed here);
-  confirm a tap on "Open in Claude" opens the Claude app.
+- Round 2 independent review of the fixes; merge after #88.
+- AJ: the live iPhone check over the tailnet (Tailscale not installed
+  here), a tap on "Open in Claude" opening the Claude app, and 390x844
+  screenshots.
+
+## AJ decides
+- Whether the server should also require Tailscale identity headers
+  (`Tailscale-User-Login`) and an allow-listed login, beyond the ACLs.
 
 ## Verify
 - `node --test src/*.test.js`

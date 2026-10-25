@@ -82,7 +82,9 @@ files belong to: the JS guards scan hooks and scripts too.
   the phone wall served by the real server (the fleet crate's `phone`
   example) at 390x844: one column, needs-you first, sticky tally, no
   horizontal scroll, 44 px targets, no desktop action, the Remote Control
-  link, a second snapshot over `/events`, the service worker and manifest.
+  link, a second snapshot over `/events`, the service worker and manifest,
+  a wrap-up request and the empty state shown without their buttons,
+  `/wall.html` sent to `/`, and a stream refused at the cap opened again.
   Needs cargo and Playwright's Chromium; local only.
 - `uv run -q --no-project --with playwright python -I scripts/test_wall_browser.py`:
   the wall in a real browser: 16 demo cards at 1920x1000 and 8 at 945x1000
