@@ -26,12 +26,20 @@ live check on the installed build). Lands after #82 and #83.
   after the check (FILE_FLAG_OPEN_REPARSE_POINT left out for OneDrive
   placeholders); the doc says so.
 
-## Next
-- Review round 2 (at most 3 rounds), CI, merge after #82 and #83.
-- Live check on the installed Windows build: an edit from WSL reaches the
-  panel within seconds; Copy works in WebView2. Then close #86.
-- Phase 2 (separate PR): tick a Needs you item, atomic replace with an mtime
-  precondition.
+## Next (2026-10-25)
+- Rebased onto main 50faa64 (#82 Wrap up, #83 empty state). `speaking::read_small`
+  (Wrap up's reader) now goes through `bounded::read_text` too.
+- Review round 2 done: one should-fix (a changed `queue_path` waited up to two
+  polls) fixed, read at once, test red first. Its nits left open: the
+  post-open handle check in `bounded.rs` has no test; a link in a `##`
+  heading nests a button in `<summary>`; same-titled sections share one
+  open state.
+- After the rebase the 945 px bar wrapped (Queue + Wrap up): below the dock
+  breakpoint the label reads "Queue · N", the name keeps "for you"; a guard
+  ties the CSS breakpoint to DOCK_MIN_PX. #89's Split toggle adds to this
+  line, so recheck the 945 fit when #89 rebases.
+- Then: closing check (round 3), CI, merge. Live check on the installed
+  build, then close #86. Phase 2 (tick a Needs you item) is a separate PR.
 
 ## Verify
 - `node --test src/*.test.js`
