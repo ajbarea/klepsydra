@@ -12,6 +12,7 @@ klepsydra is an always-on-top desktop gauge (Tauri 2 shell, plain JavaScript fro
 - `(cd src-tauri && cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings)`
 - `(cd src-tauri && cargo test -p klepsydra-fleet)`
 - `uv run -q --no-project --with playwright python -I scripts/test_wall_browser.py` (a few minutes; needs Playwright's Chromium; local only)
+- `uv run -q --no-project --with playwright python -I scripts/test_phone_browser.py` (builds and runs the phone wall server; needs cargo and Playwright's Chromium; local only)
 
 Under WSL the app crate cannot compile (no WebKitGTK headers): use `-p klepsydra-fleet` for clippy and `bash scripts/build-windows.sh --check` for the rest. From a worktree, set `KLEPSYDRA_STAGE=klepsydra-build-<name>` so it mirrors into a stage of its own; `<name>` takes only letters, digits, `.` and `_` (`scripts/build-windows.sh` refuses `-`), so write `agents-md` as `agents_md`.
 
@@ -23,6 +24,7 @@ Under WSL the app crate cannot compile (no WebKitGTK headers): use `-p klepsydra
 - Usage readings come only from the `statusLine` hook. Add no API calls, credentials or second background process.
 - Readings belong in the app data dir and harness output in temp. Never write an install-directory path (`AppData\Local\Klepsydra`, or `LOCALAPPDATA` / `local_data_dir` joined to klepsydra) in shell, JS or Rust sources; CI greps for it.
 - The OTLP receiver listens only on `127.0.0.1:4318` and refuses requests carrying an `Origin` header. The ledger never stores the account email or organization ID the exports carry, and the fixtures in `src-tauri/fleet/tests/fixtures/otel/` hold placeholder identities: re-record them from a live session rather than hand-editing.
+- The phone wall (`src-tauri/fleet/src/phone.rs`) listens only on `127.0.0.1:8318`, only while the tray's "Phone wall" is ticked, answers only GET and HEAD, and admits only a loopback or `*.ts.net` Host, a same-origin `Origin` and no Funnel. No route may write or reach a session action; a session reaches the phone cut to the fields the wall reads.
 - Adding an input shape to the statusLine hook means adding a fixture in `statusline/fixtures/`.
 - Do not run `scripts/measure-memory.sh run` (8 hours), `scripts/build-windows.sh` without `--check`, `scripts/build-linux.sh`, `scripts/visual-check.sh`, `scripts/cut-portraits.py` or `npm run tauri dev`; they are long, interactive or platform-bound.
 

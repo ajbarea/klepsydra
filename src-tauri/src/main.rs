@@ -4,6 +4,7 @@ mod fleet;
 mod geometry;
 mod jump;
 mod launch;
+mod phone;
 #[cfg(windows)]
 mod ping;
 
@@ -802,6 +803,7 @@ fn with_state<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R
         .manage(Layouts::default())
         .manage(launch::InFlight::default())
         .manage(launch::PaneFlight::default())
+        .manage(phone::Phone::default())
 }
 
 fn main() {
@@ -907,6 +909,10 @@ fn main() {
                 ping::set(on);
                 CheckMenuItem::with_id(app, "ping", "Ping", true, on, None::<&str>)?
             };
+            // Off unless ticked: the wall on loopback for Tailscale Serve (README).
+            let phone_on = phone::set(app.handle(), phone::saved(app.handle()));
+            let phone_item =
+                CheckMenuItem::with_id(app, "phone", "Phone wall", true, phone_on, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
             let menu = Menu::with_items(
                 app,
@@ -916,6 +922,7 @@ fn main() {
                     &PredefinedMenuItem::separator(app)?,
                     &compact_item,
                     &start_item,
+                    &phone_item,
                     &PredefinedMenuItem::separator(app)?,
                     &quit,
                 ],
@@ -926,6 +933,7 @@ fn main() {
 
             let toggle = start_item.clone();
             let compact = compact_item.clone();
+            let phone_box = phone_item.clone();
             #[cfg(windows)]
             let ping_box = ping_item.clone();
             TrayIconBuilder::with_id("main")
@@ -953,6 +961,11 @@ fn main() {
                         if on {
                             ping::preview(klepsydra_fleet::cue::Cue::NeedsYou);
                         }
+                    }
+                    "phone" => {
+                        let want = phone_box.is_checked().unwrap_or(false);
+                        write_pref(app, phone::PREF, serde_json::json!(want));
+                        let _ = phone_box.set_checked(phone::set(app, want));
                     }
                     "reset" => {
                         if let Some(w) = app.get_webview_window("main") {

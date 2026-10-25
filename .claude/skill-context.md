@@ -76,8 +76,16 @@ files belong to: the JS guards scan hooks and scripts too.
   and a stub `wt.exe` (one tab per fleet, a failed launch starts nothing).
 - `bash scripts/test_build_windows.sh`: the Windows build's stage-name check.
 - `cd src-tauri && cargo test -p klepsydra-fleet`: the fleet reader, the OTLP
-  receiver (spawned on a free loopback port), the ledger, and `ledger-verify`
-  on its recorded transcript fixture.
+  receiver and the phone wall server (each spawned on a free loopback port),
+  the ledger, and `ledger-verify` on its recorded transcript fixture.
+- `uv run -q --no-project --with playwright python -I scripts/test_phone_browser.py`:
+  the phone wall served by the real server (the fleet crate's `phone`
+  example) at 390x844: one column, needs-you first, sticky tally, no
+  horizontal scroll, 44 px targets, no desktop action, the Remote Control
+  link, a second snapshot over `/events`, the service worker and manifest,
+  a wrap-up request and the empty state shown without their buttons,
+  `/wall.html` sent to `/`, and a stream refused at the cap opened again.
+  Needs cargo and Playwright's Chromium; local only.
 - `uv run -q --no-project --with playwright python -I scripts/test_wall_browser.py`:
   the wall in a real browser: 16 demo cards at 1920x1000 and 8 at 945x1000
   fit in Auto (compact, no scrollbar, ring key in view); Auto re-checks when

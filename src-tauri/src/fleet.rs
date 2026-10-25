@@ -126,7 +126,7 @@ pub async fn ledger_today(app: AppHandle, session: Option<String>) -> Result<Tod
 
 /// A line for stderr, for dev runs, and for `<dir>/fleet.log`, which release
 /// builds have instead of a console.
-fn log_line(dir: &Path, what: &str) {
+pub(crate) fn log_line(dir: &Path, what: &str) {
     eprintln!("klepsydra: {what}");
     let line = format!("{} {what}", unix_now());
     append_capped(&dir.join("fleet.log"), &line, CAP);
@@ -229,6 +229,7 @@ pub fn start(app: &AppHandle, dir: Option<PathBuf>) {
                     crate::ping::cue(c);
                 }
                 if let Ok(v) = serde_json::to_value(snapshot) {
+                    crate::phone::publish(&app, &v);
                     app.state::<Fleet>().publish(v);
                 }
             }

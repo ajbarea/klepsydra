@@ -1,11 +1,11 @@
 // The card wall: a card per Claude Code session, in the reader's order, with
 // a way back to its terminal.
 import cast from "./cast.json" with { type: "json" };
-import { RINGS, announcements, card, identity, shouldSlide, showsRingKey, startedNeeding, transitionName, statuses, tally } from "./model.js";
+import { RINGS, announcements, card, identity, needsFirst, shouldSlide, showsRingKey, startedNeeding, transitionName, statuses, tally } from "./model.js";
 import { announcer, press, say, setOff, syncChildren } from "./dom.js";
 import { ARM_MS, confirmCopy, createEnder, endAllCopy, endingAnnouncement, endingText, withdrawnText } from "./end.js";
 import { askedNote, asking, isReady, readiness, wrapupAnnouncements, wrapupCopy, wrapupLines } from "./wrapup.js";
-import { inTauri, subscribe, todayLedger } from "./feed.js";
+import { inTauri, served, subscribe, todayLedger } from "./feed.js";
 import { createDrawer } from "./drawer.js";
 import { createQueuePanel } from "./queuepanel.js";
 import { showFace } from "./face.js";
@@ -69,6 +69,18 @@ clearEnded.addEventListener("click", () => {
   const ids = toClear();
   press(clearEnded, clearNote, () => clearAll(ids, tauri, (id) => cleared.add(id)), "Clearing…").then(() => paintEmpty(!empty.hidden));
 });
+// On the phone (the page came from the phone wall server) only the look and
+// the Remote Control link act: wall.css hides every other button there.
+document.documentElement.classList.toggle("served", served);
+if (served) navigator.serviceWorker?.register("/sw.js").catch(() => {});
+const linkNote = document.getElementById("link");
+// The phone's stream is down: what the wall shows may be old, so it says so.
+const showLink = (up) => {
+  linkNote.hidden = up;
+  linkNote.textContent = up ? "" : "Reconnecting: the cards may be out of date";
+};
+// A phone's narrow screen takes one column of compact cards.
+const phoneNarrow = () => served && matchMedia("(max-width: 600px)").matches;
 
 let sessions = [];
 let request = null; // the snapshot's wrap-up, while one is shown
@@ -231,6 +243,14 @@ function paint(el, c) {
   clear.hidden = !c.clear;
   clear.dataset.id = c.id;
   setOff(clear, false);
+  // A Remote Control link, on the phone only: the desktop has its terminal.
+  const remote = el.querySelector(".remote");
+  remote.hidden = !(served && c.remote);
+  if (served && c.remote) {
+    remote.href = c.remote;
+    remote.setAttribute("aria-label", c.remoteLabel);
+  } else remote.removeAttribute("href");
+  el.classList.toggle("has-remote", served && Boolean(c.remote));
   const menuButton = el.querySelector(".menu");
   menuButton.hidden = !c.actions.menu;
   menuButton.setAttribute("aria-label", c.menuLabel);
@@ -524,7 +544,7 @@ function receive(message) {
     if (who) said.push(`${identity(who, cast).name} speaking`);
     const started = startedNeeding(before, message.sessions);
     before = statuses(message.sessions);
-    sessions = message.sessions;
+    sessions = served ? needsFirst(message.sessions) : message.sessions;
     request = message.wrapup ?? null;
     said.push(...render(started));
     if (said.length) announce(said.join(". "));
@@ -554,6 +574,12 @@ wall.addEventListener("click", (e) => {
   const look = e.target.closest(".look");
   if (look) {
     showPortrait(look.dataset.id);
+    return;
+  }
+  // On the phone a tap anywhere on a card with a Remote Control link opens it.
+  if (served && !e.target.closest("a, button")) {
+    const remote = e.target.closest(".card")?.querySelector(".remote:not([hidden])");
+    if (remote) remote.click();
     return;
   }
   const button = e.target.closest(".jump, .clear");
@@ -951,7 +977,7 @@ function comfortableFits(extra) {
 
 function showDensity() {
   const was = shown;
-  shown = resolveDensity(choice, shown, comfortableFits);
+  shown = resolveDensity(phoneNarrow() ? "compact" : choice, shown, comfortableFits);
   if (shown !== was) for (const el of wall.children) if (cardOf.has(el.dataset.key)) paintRing(el, cardOf.get(el.dataset.key));
   wall.dataset.density = shown;
   bar.dataset.density = shown;
@@ -987,7 +1013,7 @@ new ResizeObserver(() => {
 }).observe(wall);
 if (inTauri) window.__TAURI__.core.invoke("get_wall_density").then(choose, () => {});
 
-subscribe(receive);
+subscribe(receive, showLink);
 setInterval(() => {
   const said = render();
   if (said.length) announce(said.join(". "));

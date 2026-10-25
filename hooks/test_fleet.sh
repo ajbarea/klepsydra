@@ -251,7 +251,11 @@ check "stop: one turn ended" "$(field .turns)" "1"
 check "stop: the reply from last_assistant_message" "$(field .reply.text)" \
   '"That works with no model calls: the hook writes one file per session and the overlay reads them."'
 check "stop: never the lagging transcript" "$(grep -c STALE "$file")" "0"
-check "the hook never opens the transcript" "$(grep -c transcript_path "$hook")" "0"
+# The transcript lags the turn, so the reply never comes from it. Remote
+# Control is the one thing the hook reads there, and only as a tail.
+# shellcheck disable=SC2016 # literal text to find in the hook
+check "the hook reads the transcript only for Remote Control" \
+  "$(grep -c '"\$transcript"' "$hook") $(grep -c 'remote=$(remote_lines "$transcript")' "$hook")" "1 1"
 now=$((now + 5)) fire stop.json '.last_assistant_message = ""'
 check "stop with no text keeps the last reply" "$(field '[.reply.text, .reply.at]')" \
   '["That works with no model calls: the hook writes one file per session and the overlay reads them.",1792353050]'
@@ -1325,6 +1329,115 @@ while read -r v acc ink; do
 done <<<"$want"
 check "the hook's ink matches contrast.js for all seventeen" "$got" "$want"$'\n'
 check "all seventeen were compared" "$(wc -l <<<"$want")" "17"
+
+echo "remote control"
+
+# The transcript's Remote Control lines (fixtures/remote-control.jsonl, one of
+# each shape Claude Code writes, ids replaced by placeholders), appended one at
+# a time to a transcript as Claude Code would, with a hook event after each.
+R=33333333-4444-4555-8666-777777777777
+rfile="$dir/fleet/$R.json"
+tp="$work/projects/-home-aj-repo/$R.jsonl"
+mkdir -p "${tp%/*}"
+rc_line() { sed -n "${1}p" "$fixtures/remote-control.jsonl"; }
+rc_fire() { # fixture now [filter]
+  fire "$1" ".session_id = \"$R\" | .transcript_path = \"$tp\" | ${3:-.}" KLEPSYDRA_NOW="$2" >/dev/null
+}
+rc_url() { jq -r '.remote_url // "none"' "$rfile"; }
+rnow=1792353000 # 19:50:00Z; the fixture's lines run from 19:50:10Z
+
+: >"$tp"
+rc_fire session-start.json "$rnow"
+check "remote: none at start" "$(rc_url) $(jq .remote_since "$rfile")" "none $((rnow - 30))"
+rc_line 1 >>"$tp"; rc_fire user-prompt.json $((rnow + 15))
+check "remote: /remote-control connects" "$(rc_url)" "https://claude.ai/code/session_01PLACEHOLDERconnect"
+rc_line 2 >>"$tp"; rc_fire post-tool-bash.json $((rnow + 25))
+check "remote: the bridge still up keeps the link" "$(rc_url)" "https://claude.ai/code/session_01PLACEHOLDERconnect"
+rc_line 3 >>"$tp"; rc_fire post-tool-bash.json $((rnow + 35))
+check "remote: the bridge gone drops it" "$(rc_url)" "none"
+rc_line 4 >>"$tp"; rc_fire post-tool-bash.json $((rnow + 45))
+check "remote: a reconnect brings the new link" "$(rc_url)" "https://claude.ai/code/session_01PLACEHOLDERagain"
+rc_line 5 >>"$tp"; rc_fire post-tool-bash.json $((rnow + 55))
+check "remote: a disconnected notice drops it" "$(rc_url)" "none"
+rc_line 6 >>"$tp"; rc_fire post-tool-bash.json $((rnow + 65))
+check "remote: an attributed attachment's url is the link" "$(rc_url)" "https://claude.ai/code/session_01PLACEHOLDERattrib"
+rc_line 7 >>"$tp"; rc_fire post-tool-bash.json $((rnow + 75))
+check "remote: a link off claude.ai/code is dropped" "$(rc_url)" "none"
+rc_line 4 | jq -c '.timestamp = "2026-10-18T19:51:30.000Z"' >>"$tp"; rc_line 8 >>"$tp"
+rc_fire post-tool-bash.json $((rnow + 95))
+check "remote: a line quoted in a reply is not Remote Control" "$(rc_url)" "https://claude.ai/code/session_01PLACEHOLDERagain"
+
+# The phrase typed or quoted by AJ is no notice, and fills none of the slots
+# kept for Remote Control's own lines.
+{ rc_line 1
+  for i in 1 2 3 4 5; do
+    jq -nc --arg t "Remote Control disconnected again? ($i)" --arg at "2026-10-18T19:51:3$i.000Z" \
+      '{type: "user", message: {role: "user", content: $t}, timestamp: $at}'
+  done; } >"$tp"
+check "remote: (five prompts quote the notice)" "$(grep -c '"content":"Remote Control disconnected' "$tp")" "5"
+rm -f "$rfile"; rc_fire session-start.json $((rnow - 60)); rc_fire user-prompt.json $((rnow + 98))
+check "remote: the phrase in a prompt is not the notice" "$(rc_url)" "https://claude.ai/code/session_01PLACEHOLDERconnect"
+
+# Latest wins within one read, and a tail with none keeps what the file knew.
+{ rc_line 1; rc_line 4; } >"$tp"; rc_fire post-tool-bash.json $((rnow + 100))
+check "remote: of several, the latest wins" "$(rc_url)" "https://claude.ai/code/session_01PLACEHOLDERagain"
+head -c 1100000 /dev/zero | tr '\0' 'x' >>"$tp"; printf '\n' >>"$tp"
+rc_fire post-tool-bash.json $((rnow + 110))
+check "remote: past the tail, the link stays" "$(rc_url)" "https://claude.ai/code/session_01PLACEHOLDERagain"
+
+# A line too long to be Remote Control's own is skipped, and the event is
+# still written (an argument over 128 KiB would fail jq and lose it).
+head -c 200000 /dev/zero | tr '\0' 'y' >"$work/pad"
+rc_line 3 | jq -c --rawfile pad "$work/pad" '.pad = $pad' >>"$tp"
+check "remote: the overlong line is in the transcript" "$(tail -n 1 "$tp" | wc -c)" "$(( $(rc_line 3 | wc -c) + 200009 ))"
+rc_fire user-prompt.json $((rnow + 120)) '.prompt = "after a long line"'
+check "remote: an overlong line is skipped" "$(rc_url)" "https://claude.ai/code/session_01PLACEHOLDERagain"
+check "remote: and the event is written" "$(jq -r .prompt.text "$rfile")" "after a long line"
+
+# The session ends: no link. A resume is a new process: the lines its
+# transcript already holds are the last process's, so it starts with none.
+rc_fire session-end.json $((rnow + 130))
+check "remote: an ended session has none" "$(rc_url)" "none"
+# A process killed with no SessionEnd, then resumed: its transcript ends with
+# the old process's connect, which is not this one's.
+rc_fire session-start.json $((rnow + 140)) '.source = "resume"'
+rc_line 1 | jq -c '.timestamp = "2026-10-18T19:52:25.000Z"' >>"$tp"; rc_fire user-prompt.json $((rnow + 150))
+check "remote: (a link before the kill)" "$(rc_url)" "https://claude.ai/code/session_01PLACEHOLDERconnect"
+rc_fire session-start.json $((rnow + 3600)) '.source = "resume"'
+check "remote: a resumed session starts with none" "$(rc_url)" "none"
+rc_fire user-prompt.json $((rnow + 3610))
+check "remote: the last process's lines stay the last process's" "$(rc_url)" "none"
+rc_line 1 | jq -c '.timestamp = "2026-10-18T20:50:20.000Z"' >>"$tp"
+rc_fire user-prompt.json $((rnow + 3630))
+check "remote: then its own connect counts" "$(rc_url)" "https://claude.ai/code/session_01PLACEHOLDERconnect"
+rc_fire session-start.json $((rnow + 3700)) '.source = "compact"'
+check "remote: a compaction keeps the link" "$(rc_url)" "https://claude.ai/code/session_01PLACEHOLDERconnect"
+
+# A file from before the field reads every line; a bad stored link is dropped.
+jq -c 'del(.remote_since) | .remote_url = "https://evil.example/x"' "$rfile" >"$rfile.new" && mv "$rfile.new" "$rfile"
+: >"$tp"; rc_fire post-tool-bash.json $((rnow + 3710))
+check "remote: a stored link off claude.ai is dropped" "$(rc_url)" "none"
+rc_line 1 >"$tp"; rc_fire post-tool-bash.json $((rnow + 3720))
+check "remote: an old file without remote_since reads every line" "$(rc_url)" "https://claude.ai/code/session_01PLACEHOLDERconnect"
+
+# Only an absolute .jsonl path is read: a relative one would be read from
+# wherever the hook runs (here the repo root, where the fixture is).
+rc_line 1 >"$work/connect.jsonl"; rc_line 1 >"$work/connect.txt"
+for bad in "connect.jsonl" "$work/connect.txt"; do
+  rm -f "$rfile"
+  ( cd "$work" && rc_fire session-start.json $((rnow - 60)) ".transcript_path = \"$bad\""
+    rc_fire user-prompt.json $((rnow + 15)) ".transcript_path = \"$bad\"" )
+  check "remote: transcript '$bad' is not read" "$(rc_url)" "none"
+done
+( cd "$work" && rc_fire user-prompt.json $((rnow + 16)) ".transcript_path = \"$work/connect.jsonl\"" )
+check "remote: (the same line read from its absolute path)" "$(rc_url)" "https://claude.ai/code/session_01PLACEHOLDERconnect"
+
+# No transcript, a relative one, or one that reads as an option: no link, and no failure.
+for bad in "" "relative/$R.jsonl" "-n" "$work/missing.jsonl" "$work/projects"; do
+  rm -f "$rfile"
+  out=$(fire session-start.json ".session_id = \"$R\" | .transcript_path = \"$bad\"" KLEPSYDRA_NOW="$rnow"); rc=$?
+  check "remote: transcript '$bad' is ignored" "$rc|$out|$(rc_url)|$(jq -r .state "$rfile")" "0||none|new"
+done
 
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [[ $fail -eq 0 ]]

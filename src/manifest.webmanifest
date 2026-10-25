@@ -1,0 +1,15 @@
+{
+  "name": "klepsydra fleet",
+  "short_name": "klepsydra",
+  "description": "Who is working, who needs you, and who is speaking, across your Claude Code sessions.",
+  "id": "/",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#11151b",
+  "theme_color": "#11151b",
+  "icons": [
+    { "src": "phone/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "phone/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}

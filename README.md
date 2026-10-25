@@ -716,6 +716,51 @@ has no "Ping".
 The chimes are built by `scripts/make-sounds.mjs`, which writes
 `src-tauri/sounds/`; the tests fail if the files and the script disagree.
 
+### Fleet on your phone
+
+<!-- budget: 450 words -->
+The wall can follow you to the kitchen. With "Phone wall" ticked in the tray
+menu, klepsydra serves a read-only copy of the wall on `127.0.0.1:8318`, and
+Tailscale Serve carries it to your phone over your tailnet. Unticked (the
+default), nothing listens.
+
+1. Tick **Phone wall** in klepsydra's tray menu. The box stays ticked across
+   restarts; if the port is taken it stays clear and `fleet.log` says why.
+2. Install Tailscale on the PC and on the iPhone, signed in to the same
+   tailnet.
+3. In the Tailscale admin console, under DNS, enable **HTTPS certificates**
+   (MagicDNS too, if it is off).
+4. On the PC, in a terminal: `tailscale serve --bg 8318`. To stop serving:
+   `tailscale serve --https=443 off`.
+5. On the iPhone, open `https://<device>.<tailnet>.ts.net` in Safari, then
+   Share, **Add to Home Screen**. It opens as an app from then on.
+
+Never use `tailscale funnel` for this: Funnel puts the wall on the open
+internet. The server refuses any request Funnel forwards, and any request
+whose Host is neither loopback nor a `*.ts.net` name.
+
+On the phone the wall is one column of compact cards, needs-you first, under
+a tally that stays at the top. It updates as the desktop's does, over one
+event stream. Nothing on it acts on a session: New, Open terminal, End,
+Interrupt, Clear, Wrap up and the ledger stay on the desktop, though a
+wrap-up's answers and readiness count show. A session with Remote
+Control on (`/remote-control` in its terminal) shows **Open in Claude**, and
+a tap on its card opens that session on claude.ai or in the Claude app. The
+link appears at the session's next hook event after Remote Control connects,
+and goes when it disconnects or the session ends. When the stream drops, the
+wall says the cards may be out of date until it reconnects, and keeps
+trying (every 1 s at first, at most every 30 s) while klepsydra restarts.
+
+The server answers only GET and HEAD, serves only the wall's own files, its
+snapshot at `/fleet.json` and the stream at `/events`, and sends each session
+without its tmux pane, process or full folder path. Card previews (prompts
+and replies), errors and the cost estimate are visible to any tailnet device
+your Tailscale ACLs let reach this PC. The page's service worker keeps only
+the page and its files, never the fleet.
+
+The Home Screen icons are drawn by `scripts/make-phone-icons.py` from the
+mark in `src-tauri/icons/`.
+
 ### The ledger
 
 With the `env` block above, every Claude Code session sends its
@@ -931,7 +976,7 @@ bash hooks/test_fleet.sh                 # fleet hook: states, where, identity, 
 bash hooks/test_launch.sh                # launcher: new, jump, tab reuse, against a private tmux socket
 bash scripts/test_measure_memory.sh      # the release memory check
 node --test src/*.test.js                # ramp, countdown, reconciliation, fleet model, faces, guards
-(cd src-tauri && cargo test -p klepsydra-fleet)   # fleet reader, OTLP receiver and ledger
+(cd src-tauri && cargo test -p klepsydra-fleet)   # fleet reader, OTLP receiver, phone wall server and ledger
 bash scripts/build-windows.sh --check    # clippy and every Rust test, on Windows
 bash scripts/visual-check.sh             # screenshots every state, the strip and wall included
 ```

@@ -43,6 +43,13 @@ LOCK=${XDG_RUNTIME_DIR:-/tmp}/klepsydra-fleet-$UID.lock
 PROMPT_CHARS=300
 # The events README.md registers this hook on; any other is ignored.
 EVENTS="SessionStart UserPromptSubmit PermissionRequest PreToolUse Notification PostToolUse PostToolUseFailure SubagentStart SubagentStop Stop StopFailure SessionEnd"
+# Remote Control: the hook reads this much of the transcript's end for the
+# lines that turn it on or off, keeps the last REMOTE_LINES of them, and skips
+# any longer than REMOTE_LINE_MAX bytes (the real ones are under 1 KB), so
+# what it hands jq stays far below Linux's 128 KiB limit on one argument.
+REMOTE_TAIL=1048576
+REMOTE_LINES=4
+REMOTE_LINE_MAX=8192
 # At most this many background entries are kept; past it the oldest go.
 BACKGROUND_MAX=64
 # Async hooks can land out of order: a subagent's stop seen before its start is
@@ -370,6 +377,21 @@ prune_hourly() { # stamp prune dir now
 }
 # --- end prune helpers ---
 
+# The transcript's last few lines that turn Remote Control on or off, one per
+# line: `/remote-control` connecting (system bridge_status, with the session
+# URL), Claude Code's remote_session_change attachment, and its "Remote
+# Control disconnected" system notice (the phrase in a prompt or reply, its
+# quotes escaped there, takes no slot). A tail and one awk, never a full read; nothing
+# for a path that is not an absolute, readable .jsonl file.
+remote_lines() { # transcript
+  [[ $1 == /*.jsonl && -f $1 && -r $1 ]] || return 0
+  tail -c "$REMOTE_TAIL" -- "$1" 2>/dev/null | LC_ALL=C awk -v keep="$REMOTE_LINES" -v max="$REMOTE_LINE_MAX" '
+    length($0) <= max && (index($0, "\"subtype\":\"bridge_status\"") || index($0, "\"type\":\"remote_session_change\"") \
+      || (index($0, "\"type\":\"system\"") && index($0, "\"content\":\"Remote Control disconnected"))) { seen[n++ % keep] = $0 }
+    END { for (i = (n > keep ? n - keep : 0); i < n; i++) print seen[i % keep] }'
+  return 0
+}
+
 # The session file after one event, as compact JSON, or nothing when no field
 # changed. `$old` is the current file's text (empty for none).
 read -r -d '' APPLY <<'JQ' || true  # read returns 1 at the end of input
@@ -393,6 +415,21 @@ def turn_over: .reason == "background" or (.needs.turn_over // false) == true;
 def asked($by; $tool): {by: $by, tool: $tool} + (if turn_over then {turn_over: true} else {} end);
 def crew_asks: .state == "needs_you" and (.needs.by // "") != "" and (.needs.by as $by | any(.background[]; .id == $by));
 def bg_drop($ids): ($ids | map(text | select(. != null))) as $gone | map(select(.id | IN($gone[]) | not));
+# Remote Control. A link is only ever a claude.ai Claude Code session.
+def rc_ok: if type == "string" and test("^https://claude\\.ai/code/[A-Za-z0-9_-]{1,128}$") then . else null end;
+def rc_time: .timestamp | strings | sub("\\.[0-9]+Z$"; "Z") | try fromdateiso8601 catch null;
+# What one transcript line says of Remote Control: {url} for on (null when its
+# link is not one to follow) or off, nothing when it says neither. The
+# attachment's url is set only when Claude Code attributes the session (null
+# while AJ's settings turn attribution off), so its sendUserFileHint, true
+# while a Remote Control bridge is up, is what says off.
+def rc_word:
+  if .type == "system" and .subtype == "bridge_status" then {url: (.url | rc_ok)}
+  elif .type == "attachment" and (.attachment | objects | .type) == "remote_session_change" then
+    (.attachment.url | rc_ok) as $u
+    | if $u != null then {url: $u} elif .attachment.sendUserFileHint == false then {url: null} else empty end
+  elif .type == "system" and (.content | strings | startswith("Remote Control disconnected")) then {url: null}
+  else empty end;
 # The task and tool-use ids of every <task-notification> block in a prompt.
 def notified: if type == "string" then [scan("<task-notification>[\\s\\S]*?</task-notification>")
   | scan("<(?:task-id|tool-use-id)>\\s*([^<\\s]+)\\s*</(?:task-id|tool-use-id)>") | .[0]] else [] end;
@@ -422,6 +459,18 @@ def notified: if type == "string" then [scan("<task-notification>[\\s\\S]*?</tas
   | .claude = (if $fresh then $me else (.claude // $me) end)
   | .tmux = (if $fresh then $pane else ($pane // .tmux) end)
   | .host = (if $fresh then $host else ($host // .host) end)
+  # Remote Control: the newest word on it since this process started wins; a
+  # tail with none keeps what the file knew. A new process starts with none,
+  # and its transcript's older lines (a resumed session's) are the last one's.
+  | (if $fresh then $now - 30 else (.remote_since | numbers) // 0 end) as $rc_since
+  | (if $fresh then .remote_since = $rc_since else . end)
+  | ([$remote | split("\n")[] | try fromjson catch empty | objects
+      | select((rc_time // 0) >= $rc_since) | rc_word] | last) as $rc
+  | .remote_url = (if $event == "SessionEnd" then null
+      elif $rc != null then $rc.url
+      elif $fresh then null
+      else .remote_url | rc_ok end)
+  | if .remote_url == null then del(.remote_url) else . end
   # A hold always applies; a repo's home voice only to a session with no voice
   # yet, so a face never follows the cwd. Files from before voice_from held.
   | .voice_from = (.voice_from // (if .voice != null then "hold" else null end))
@@ -631,15 +680,16 @@ colour_window() { # voice
 }
 
 main() {
-  local input fields session event cwd edited now file old new lock voice="" voice_from="" cwd_repo by=cwd
+  local input fields session event cwd edited transcript now file old new lock voice="" voice_from="" cwd_repo by=cwd remote=""
   input=$(cat)
   fields=$(printf '%s' "$input" | jq -r '
     def s: if type == "string" then gsub("[\u001f\n]"; " ") else "" end;
     [ (.session_id | s), (.hook_event_name | s), (.cwd | s),
       (if .hook_event_name == "PostToolUse" and (.tool_name | IN("Edit", "Write", "NotebookEdit"))
-       then ((.tool_input.file_path // .tool_input.notebook_path) | s) else "" end)
+       then ((.tool_input.file_path // .tool_input.notebook_path) | s) else "" end),
+      (.transcript_path | s)
     ] | join("\u001f")' 2>/dev/null) || return 0
-  IFS=$'\x1f' read -r session event cwd edited <<<"$fields"
+  IFS=$'\x1f' read -r session event cwd edited transcript <<<"$fields"
   [[ $session =~ $UUID_RE && " $EVENTS " == *" $event "* ]] || return 0
 
   now=${KLEPSYDRA_NOW:-}
@@ -667,6 +717,8 @@ main() {
   [[ -n ${KLEPSYDRA_DIR:-} ]] || return 0
   local fleet=$KLEPSYDRA_DIR/fleet
   mkdir -p "$fleet" 2>/dev/null || return 0
+  # Read before the lock: no other session waits on this one's transcript.
+  [[ $event == SessionEnd ]] || remote=$(remote_lines "$transcript")
   { exec {lock}>>"$LOCK"; } 2>/dev/null || return 0
   flock -w 5 "$lock" || return 0
 
@@ -677,7 +729,7 @@ main() {
     --arg repo "$where_repo" --arg worktree "$where_worktree" --arg branch "$where_branch" \
     --arg by "$by" \
     --arg tmux_socket "$tmux_socket" --arg tmux_pane "$tmux_pane" --arg boot "$host_boot" --arg distro "$host_distro" \
-    --arg voice "$voice" --arg voice_from "$voice_from" --arg pid "$found_pid" --arg start "$found_start" \
+    --arg voice "$voice" --arg voice_from "$voice_from" --arg pid "$found_pid" --arg start "$found_start" --arg remote "$remote" \
     "$APPLY" 2>/dev/null) || new=""
   [[ -n $new ]] && write_atomic "$file" "$new"
   # Only a start, or a changed voice, touches the window.
