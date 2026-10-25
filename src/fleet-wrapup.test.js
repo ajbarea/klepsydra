@@ -43,7 +43,7 @@ test("every answer and status reads its own line, before the window closes and a
   const rows = {
     // answer: status -> [before until, after until]
     ready: {
-      working: ["Working again", "Working again"],
+      working: ["Worked since it answered; once idle, ask again: /klepsydra-wrapup", "Worked since it answered; once idle, ask again: /klepsydra-wrapup"],
       needs_you: ["Ready once you answer it", "Ready once you answer it"],
       done: ["Ready", "Ready"],
       silent: ["Ready", "Ready"],
@@ -125,13 +125,13 @@ test("a ready answer counts only once its turn has ended and until another begin
     ["settled, idle", base, "ready", "Ready"],
     ["reported, its turn still going (it ran ready and kept on)", { ...base, status: "working", status_at: AT - 30, wrapup: { state: "ready", at: AT } }, "finishing", "Finishing its turn"],
     ["reported, not settled, idle (an old file)", { ...base, wrapup: { state: "ready", at: AT } }, "finishing", "Finishing its turn"],
-    ["settled, then a notification turn that waits on AJ", { ...base, status: "needs_you", turn_at: settled + 5 }, "stale", "Working again"],
-    ["settled, then a notification turn that ended", { ...base, status: "done", turn_at: settled + 5, status_at: settled + 9 }, "stale", "Working again"],
-    ["a turn that began the second it settled", { ...base, turn_at: settled }, "stale", "Working again"],
-    ["settled, then a prompt (a file with no turn_at)", { ...base, turn_at: null, prompt: { text: "more", at: settled + 1 } }, "stale", "Working again"],
+    ["settled, then a notification turn that waits on AJ", { ...base, status: "needs_you", turn_at: settled + 5 }, "stale", "Worked since it answered; once idle, ask again: /klepsydra-wrapup"],
+    ["settled, then a notification turn that ended", { ...base, status: "done", turn_at: settled + 5, status_at: settled + 9 }, "stale", "Worked since it answered; once idle, ask again: /klepsydra-wrapup"],
+    ["a turn that began the second it settled", { ...base, turn_at: settled }, "stale", "Worked since it answered; once idle, ask again: /klepsydra-wrapup"],
+    ["settled, then a prompt (a file with no turn_at)", { ...base, turn_at: null, prompt: { text: "more", at: settled + 1 } }, "stale", "Worked since it answered; once idle, ask again: /klepsydra-wrapup"],
     ["settled with background work out", { ...base, status: "working", reason: "background" }, "background", "Ready once its background work ends"],
     ["settled, then a background agent's question", { ...base, status: "needs_you", asked_after_turn: true }, "waiting", "Ready once you answer it"],
-    ["settled, working with no new turn recorded", { ...base, status: "working" }, "stale", "Working again"],
+    ["settled, working with no new turn recorded", { ...base, status: "working" }, "stale", "Worked since it answered; once idle, ask again: /klepsydra-wrapup"],
   ];
   for (const [what, s, state, line] of rows) {
     assert.equal(readyState(s), state, what);

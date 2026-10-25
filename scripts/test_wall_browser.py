@@ -1534,7 +1534,7 @@ def wrapup_dialogs_close_on_change(wall):
             row["prompt"] = {"text": "one more thing", "at": row["wrapup"]["at"] + 5}
     feed(page, again)
     stale = [page.evaluate(closed), page.evaluate(SHOWN)["demo-5-bf_isabella"], page.evaluate(BAR)["safe"]]
-    wall.check(stale == [True, "Working again", False], "a ready session prompted again reads Working again, closes End all ready and withdraws Safe to restart", stale)
+    wall.check(stale == [True, "Worked since it answered; once idle, ask again: /klepsydra-wrapup", False], "a ready session prompted again says to ask again, closes End all ready and withdraws Safe to restart", stale)
     page.wait_for_timeout(5600)
     wall.check(not page.evaluate(ENDS), "none of it sent end_session", page.evaluate(ENDS))
     page.close()

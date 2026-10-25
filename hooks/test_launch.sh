@@ -352,6 +352,19 @@ out=$(send wrapup "$p" 2>&1); rc=$?
 check "wrapup, 2.1.302 at work: refused" "$rc $out" "1 The session is mid-turn; it is asked when the turn ends."
 check "wrapup, 2.1.302 at work: no key" "$(wc -l <"$work/fake.log")" "0"
 t kill-pane -t "$p"
+# 2.1.302 running a tool: a tip sits under the spinner, and the footer reads "esc to interrupt".
+: >"$work/fake.log"; p=$(fake FAKE_TAIL="$here/fixtures/pane-working-tool-2.1.302.txt")
+out=$(send wrapup "$p" 2>&1); rc=$?
+check "wrapup, 2.1.302 running a tool: refused" "$rc $out" "1 The session is mid-turn; it is asked when the turn ends."
+check "wrapup, 2.1.302 running a tool: no key" "$(wc -l <"$work/fake.log")" "0"
+t kill-pane -t "$p"
+# The footer's hint alone, with the transcript's last line above the box: refused.
+sed '$s/$/ \xc2\xb7 esc to interrupt/' "$here/fixtures/pane-idle-2.1.302.txt" >"$work/footer-hint.txt"
+: >"$work/fake.log"; p=$(fake FAKE_TAIL="$work/footer-hint.txt")
+out=$(send wrapup "$p" 2>&1); rc=$?
+check "wrapup, esc hint in the footer: refused" "$rc $out" "1 The session is mid-turn; it is asked when the turn ends."
+check "wrapup, esc hint in the footer: no key" "$(wc -l <"$work/fake.log")" "0"
+t kill-pane -t "$p"
 # Idle, though its transcript quotes the hint and a spinner line: only the line above the box counts.
 { printf 'it read \xe2\x9c\xbb Thinking\xe2\x80\xa6 (12s \xc2\xb7 esc to interrupt)\n'; cat "$here/fixtures/pane-idle-2.1.302.txt"; } >"$work/idle-quoting.txt"
 : >"$work/fake.log"; p=$(fake FAKE_TAIL="$work/idle-quoting.txt")

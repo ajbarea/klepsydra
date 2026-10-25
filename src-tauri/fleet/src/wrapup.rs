@@ -213,17 +213,19 @@ pub fn start(klepsydra_dir: &Path, now_ms: i64, ids: &[String]) -> std::io::Resu
         until: at + WINDOW,
         ids: listed,
     };
-    let running = request(klepsydra_dir, at).filter(|old| at <= old.until);
+    let previous = request(klepsydra_dir, at);
     save_request(klepsydra_dir, &r)?;
-    prune(&klepsydra_dir.join(DIR), &r, running.as_ref(), at);
+    prune(&klepsydra_dir.join(DIR), &r, previous.as_ref(), at);
     Ok(r)
 }
 
 /// Settle the answers in `dir` on `r`, written just before: one to `r`
-/// stays, an ask by `running` of a session `r` lists is carried over to it,
-/// and every other regular `<session>.json` goes. A `dir` that is not a
-/// folder (a symlink to one) is left alone.
-fn prune(dir: &Path, r: &Request, running: Option<&Request>, now: i64) {
+/// stays, an ask by `previous` of a session `r` lists, written less than
+/// `WINDOW` ago by the file's own time (that session may still be
+/// checkpointing, stopped or not), is carried over to it, and every other
+/// regular `<session>.json` goes. A `dir` that is not a folder (a symlink to
+/// one) is left alone.
+fn prune(dir: &Path, r: &Request, previous: Option<&Request>, now: i64) {
     if !std::fs::symlink_metadata(dir).is_ok_and(|m| m.is_dir()) {
         return;
     }
@@ -239,8 +241,12 @@ fn prune(dir: &Path, r: &Request, running: Option<&Request>, now: i64) {
         if name == REQUEST || !id_ok(stem) || !e.file_type().is_ok_and(|t| t.is_file()) {
             continue;
         }
+        let read = stamped(&e.path());
+        let recent = read
+            .as_ref()
+            .is_some_and(|(_, written)| now - written < WINDOW);
         let mut file: Option<serde_json::Value> =
-            stamped(&e.path()).and_then(|(text, _)| serde_json::from_str(&text).ok());
+            read.and_then(|(text, _)| serde_json::from_str(&text).ok());
         let of =
             |v: &serde_json::Value, k: &str| v.get(k).and_then(|x| x.as_str()).map(str::to_owned);
         if let Some(v) = &file {
@@ -249,7 +255,8 @@ fn prune(dir: &Path, r: &Request, running: Option<&Request>, now: i64) {
             }
         }
         let carried = file.as_mut().filter(|v| {
-            running.is_some_and(|o| of(v, "request").as_deref() == Some(o.id.as_str()))
+            recent
+                && previous.is_some_and(|o| of(v, "request").as_deref() == Some(o.id.as_str()))
                 && of(v, "state").as_deref() == Some("asked")
                 && r.ids.iter().any(|i| i == stem)
         });
@@ -500,6 +507,16 @@ mod tests {
 
     fn put(d: &Scratch, name: &str, text: &str) {
         d.write(&format!("{DIR}/{name}"), text);
+    }
+
+    /// Set `name`'s modified time to `secs`, the reader's clock for it.
+    fn written_at(d: &Scratch, name: &str, secs: i64) {
+        std::fs::File::options()
+            .write(true)
+            .open(d.0.join(DIR).join(name))
+            .unwrap()
+            .set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_secs(secs as u64))
+            .unwrap();
     }
 
     #[test]
@@ -1053,6 +1070,7 @@ mod tests {
             &format!("{A}.json"),
             &format!(r#"{{"request":"{}","state":"asked","at":{NOW}}}"#, first.id),
         );
+        written_at(&d, &format!("{A}.json"), NOW);
         put(
             &d,
             &format!("{B}.json"),
@@ -1082,8 +1100,33 @@ mod tests {
             "so it is not typed into"
         );
         // Past the old window an ask is not carried.
+        written_at(&d, &format!("{A}.json"), NOW + 60);
         let late = start(&d.0, (NOW + 60 + WINDOW + 1) * 1000, &ids).unwrap();
         assert_eq!(answer(&d.0, &late, A), None);
+    }
+
+    #[test]
+    fn stop_then_start_over_keeps_an_ask_still_checkpointing() {
+        let d = dir();
+        let ids = [A.to_owned()];
+        let first = start(&d.0, NOW * 1000, &ids).unwrap();
+        put(
+            &d,
+            &format!("{A}.json"),
+            &format!(r#"{{"request":"{}","state":"asked","at":{NOW}}}"#, first.id),
+        );
+        written_at(&d, &format!("{A}.json"), NOW);
+        cancel(&d.0, NOW + 30).unwrap();
+        let again = start(&d.0, (NOW + 60) * 1000, &ids).unwrap();
+        assert_eq!(
+            answer(&d.0, &again, A).map(|a| a.state),
+            Some(State::Asked),
+            "stopped, yet that session may still be checkpointing"
+        );
+        assert!(
+            !mark_asked(&d.0, &again, A, NOW + 60).unwrap(),
+            "so it is not typed into"
+        );
     }
 
     #[test]

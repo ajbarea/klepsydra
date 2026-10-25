@@ -184,12 +184,12 @@ JS
   turn_end $((T + 7)) '{"hook_event_name":"Stop","background_tasks":[{"id":"sh1","type":"shell","status":"running"}]}'
   check "real: its turn ended, the shell still out" "$(judge $((T + 8)))" "false Ready once its background work ends"
   ev $((T + 20)) '{"hook_event_name":"UserPromptSubmit","prompt":"<task-notification><task-id>sh1</task-id></task-notification>"}'
-  check "real: the shell's notification starts a turn" "$(judge $((T + 21)))" "false Working again"
+  check "real: the shell's notification starts a turn" "$(judge $((T + 21)))" "false Worked since it answered; once idle, ask again: /klepsydra-wrapup"
   ev $((T + 25)) '{"hook_event_name":"PreToolUse","tool_name":"AskUserQuestion"}'
-  check "real: that turn waits on AJ" "$(judge $((T + 26)))" "false Working again"
+  check "real: that turn waits on AJ" "$(judge $((T + 26)))" "false Worked since it answered; once idle, ask again: /klepsydra-wrapup"
   ev $((T + 40)) '{"hook_event_name":"PostToolUse","tool_name":"AskUserQuestion"}'
   turn_end $((T + 60)) '{"hook_event_name":"Stop","background_tasks":[]}'
-  check "real: that turn over, the old answer does not count again" "$(judge $((T + 61)))" "false Working again"
+  check "real: that turn over, the old answer does not count again" "$(judge $((T + 61)))" "false Worked since it answered; once idle, ask again: /klepsydra-wrapup"
 
   real "$S2" # idle, typed into, answers, its turn ends: ready
   ev $((T - 100)) '{"hook_event_name":"SessionStart","source":"startup"}'

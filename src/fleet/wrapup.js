@@ -66,7 +66,7 @@ export function readyState(s) {
 const READY_LINES = {
   ready: "Ready",
   finishing: "Finishing its turn",
-  stale: "Working again",
+  stale: "Worked since it answered; once idle, ask again: /klepsydra-wrapup",
   background: "Ready once its background work ends",
   waiting: "Ready once you answer it",
 };

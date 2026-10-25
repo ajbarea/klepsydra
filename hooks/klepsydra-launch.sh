@@ -266,27 +266,32 @@ reads() { # command
     }'
 }
 
-# The last non-blank line above the input box: while a turn runs, Claude
-# Code's spinner ("✢ Pollinating… (5m 2s · ↓ 9.8k tokens)", an older one
-# with "esc to interrupt"); else the transcript's last line. Fails when no
-# input box is on the screen.
-above_box() {
-  screen | awk -v mark="$PROMPT_MARK" -v rule="$RULE" '
+# What tells a running turn, around the input box: "S" + the first line above
+# it that starts in column 0 (Claude Code's spinner, "✢ Pollinating… (5m 2s ·
+# ↓ 9.8k tokens)"; tips and notices under the spinner are indented, the
+# transcript's last line is not), and "F" + each footer line below it, where
+# "esc to interrupt" shows while a tool runs. Fails when no input box is on
+# the screen. Lines the terminal wrapped are joined first, so a long tip's
+# tail never reads as a column-0 line.
+around_box() {
+  LC_ALL=C.UTF-8 tmux "${t[@]}" capture-pane -p -J -t "$pane" 2>/dev/null | awk -v mark="$PROMPT_MARK" -v rule="$RULE" '
     { line[NR] = $0 }
     END {
       for (i = 2; i < NR; i++)
         if (index(line[i - 1], rule) == 1 && index(line[i + 1], rule) == 1 && index(line[i], mark) == 1) box = i - 1
       if (!box) exit 1
-      for (j = box - 1; j >= 1; j--) if (line[j] ~ /[^ \t]/) { print line[j]; exit 0 }
+      for (j = box - 1; j >= 1; j--) if (line[j] ~ /^[^ \t]/) { print "S" line[j]; break }
+      for (k = box + 3; k <= NR; k++) print "F" line[k]
     }'
 }
 
-# Whether the session is mid-turn, judged only by the line above its box, so
-# a transcript that quotes a spinner or the hint does not count.
+# Whether the session is mid-turn: a spinner as the first column-0 line above
+# its box, or the esc hint in its footer. The transcript above is never read,
+# so one that quotes a spinner or the hint does not count.
 mid_turn() {
-  local last
-  last=$(above_box) || fail "The session's input box is not on its screen, so klepsydra did not type into it. Open its terminal to $open_to."
-  LC_ALL=C.UTF-8 grep -qE '^. .+… \(|esc to (interrupt|cancel)' <<<"$last"
+  local around
+  around=$(around_box) || fail "The session's input box is not on its screen, so klepsydra did not type into it. Open its terminal to $open_to."
+  LC_ALL=C.UTF-8 grep -qE '^S. .+… \(|^F.*esc to (interrupt|cancel)' <<<"$around"
 }
 
 # Type COMMAND into the cleared input line and press Enter, only once the line

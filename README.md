@@ -531,7 +531,7 @@ though a session mid-checkpoint stays asked.
 Each card then reads **Wrapping up…**, **Ready**, or **Not ready** with the
 session's reason. A ready answer counts only once the turn that gave it has
 ended (**Finishing its turn** until then), never while its background work
-runs, and not after the session starts another turn (**Working again**).
+runs, and not after another turn starts (then: ask again).
 After 10 minutes silence reads **No answer**, though a session already asked
 may still answer while the wall shows it. A later session reads **Not
 asked**. The bar counts "4 of 6 ready" over the cards that have not ended,

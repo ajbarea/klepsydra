@@ -27,9 +27,13 @@ PR #82. Design: the 10-21 comment on #58.
   (2.1.302 spinner fixtures); Start over keeps a running ask; each session is
   re-read just before typing; the reader makes `wrapup/` and drops a request
   past its hour; prune never follows a symlinked folder.
+- Round 3 closing check fixed: mid-turn reads the first column-0 line above
+  the box (tips under a spinner are indented; wrapped lines joined) and the
+  footer's esc hint; Stop then Start over keeps an ask written within
+  `WINDOW` (file time); "Working again" now says to ask again once idle.
 
 ## Next
-- Round 3 was the last review round: CI, then merge on AJ's word.
+- CI green, then squash-merge.
 - Deploy needs AJ's ok: copy `klepsydra-wrapup.sh` and the updated
   `klepsydra-fleet.sh` (it now stamps `turn_at`) to `~/.claude/`, the skill
   to `skills/klepsydra-wrapup/SKILL.md` in each config folder, the Stop hook
