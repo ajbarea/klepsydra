@@ -455,8 +455,13 @@ fn handle(req: &Request<Incoming>, s: &Shared) -> Reply {
         },
         // Only a card the phone shows with a clip: what its wall would offer.
         Route::Clip(id) => match s.snapshots.borrow().clone() {
-            Some(json) if offers_clip(&json, &id) => match (s.clips)(&id) {
-                Some(bytes) => clip(Bytes::from(bytes), header(RANGE), only_head),
+            Some(json) if offers_clip(&json, &id, req.uri().query()) => match (s.clips)(&id) {
+                // Range applies to GET only (RFC 9110 14.2).
+                Some(bytes) => clip(
+                    Bytes::from(bytes),
+                    header(RANGE).filter(|_| !only_head),
+                    only_head,
+                ),
                 None => refuse(StatusCode::NOT_FOUND),
             },
             _ => refuse(StatusCode::NOT_FOUND),
@@ -492,14 +497,26 @@ fn handle(req: &Request<Incoming>, s: &Shared) -> Reply {
 /// split, such as several ranges), `Err` for a range outside it. Safari asks
 /// for media in ranges and plays nothing from a server that answers 200.
 fn byte_range(header: Option<&str>, len: usize) -> Result<Option<(usize, usize)>, ()> {
-    let Some(spec) = header.and_then(|h| h.trim().strip_prefix("bytes=")) else {
+    // The unit is case-insensitive.
+    let Some(spec) = header
+        .map(str::trim)
+        .filter(|h| h.len() > 6 && h.is_char_boundary(6) && h[..6].eq_ignore_ascii_case("bytes="))
+        .map(|h| &h[6..])
+    else {
         return Ok(None);
     };
     if spec.contains(',') {
         return Ok(None);
     }
     let (from, to) = spec.split_once('-').ok_or(())?;
-    let num = |s: &str| s.trim().parse::<usize>().map_err(|_| ());
+    // Digits too many for usize name a position past any body.
+    let num = |s: &str| {
+        let s = s.trim();
+        if s.is_empty() || !s.bytes().all(|b| b.is_ascii_digit()) {
+            return Err(());
+        }
+        Ok(s.parse::<usize>().unwrap_or(usize::MAX))
+    };
     let (start, end) = match (from.trim(), to.trim()) {
         ("", "") => return Err(()),
         ("", last) => {
@@ -556,16 +573,21 @@ fn clip(bytes: Bytes, range: Option<&str>, head: bool) -> Reply {
 }
 
 /// Whether the phone's snapshot `json` shows session `id` with a reply clip.
-fn offers_clip(json: &[u8], id: &str) -> bool {
+/// With `at=` in `query`, only that clip: Safari fetches a clip in several
+/// ranges, and a newer reply must not splice into the one already playing.
+fn offers_clip(json: &[u8], id: &str, query: Option<&str>) -> bool {
     let Ok(v) = serde_json::from_slice::<Value>(json) else {
         return false;
     };
+    let asked = query.and_then(|q| q.split('&').find_map(|kv| kv.strip_prefix("at=")));
     v.get("sessions")
         .and_then(Value::as_array)
         .is_some_and(|all| {
             all.iter().any(|s| {
                 s.get("session_id").and_then(Value::as_str) == Some(id)
-                    && s.get("reply_at").is_some_and(Value::is_i64)
+                    && s.get("reply_at")
+                        .and_then(Value::as_i64)
+                        .is_some_and(|at| asked.is_none_or(|a| a.parse::<i64>().ok() == Some(at)))
             })
         })
 }
@@ -1396,6 +1418,22 @@ mod tests {
                 .contains("accept-ranges: bytes"),
             "{headers}"
         );
+        let (code, headers, _) = get(addr, "HEAD", &path, "Range: bytes=0-1\r\n");
+        let whole = format!("content-length: {len}");
+        assert!(
+            code == 200 && headers.to_ascii_lowercase().contains(&whole),
+            "HEAD ignores Range: {headers}"
+        );
+        assert_eq!(
+            get(addr, "GET", &format!("{path}?at=5"), "").0,
+            200,
+            "the clip the card shows"
+        );
+        assert_eq!(
+            get(addr, "GET", &format!("{path}?at=4"), "Range: bytes=2-\r\n").0,
+            404,
+            "an older clip's range"
+        );
     }
 
     #[test]
@@ -1431,9 +1469,26 @@ mod tests {
             "bytes=-",
             "bytes=a-b",
             "bytes=1",
+            "bytes=+1-2",
+            "bytes=99999999999999999999999-",
         ] {
             assert_eq!(byte_range(Some(bad), 10), Err(()), "{bad}");
         }
+        assert_eq!(
+            byte_range(Some("Bytes=0-0"), 10),
+            Ok(Some((0, 0))),
+            "the unit in any case"
+        );
+        assert_eq!(
+            byte_range(Some("bytes=3-99999999999999999999999"), 10),
+            Ok(Some((3, 9))),
+            "a huge end clamps"
+        );
+        assert_eq!(
+            byte_range(Some("bytes=-99999999999999999999999"), 10),
+            Ok(Some((0, 9))),
+            "a huge suffix is all of it"
+        );
         assert_eq!(byte_range(Some("bytes=0-"), 0), Err(()), "nothing to send");
     }
 

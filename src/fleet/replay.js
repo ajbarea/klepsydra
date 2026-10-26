@@ -25,9 +25,10 @@ export function createReplayer({ audio, app, invoke, onChange, objectUrl = URL.c
     onChange(was.id);
   }
   audio.addEventListener("ended", finish);
-  // A clip that fails mid-play; an error from a source already replaced is not this one's.
+  // A clip that fails once playing; before that, play()'s rejection says why.
+  // An error from a source already replaced is not this one's.
   audio.addEventListener("error", () => {
-    if (current?.src && audio.src === current.src) finish();
+    if (current?.started && audio.src === current.src) finish();
   });
 
   /** Play `id`'s clip, or stop it when it is the one playing. Resolves to a note for its card, or null. */
@@ -37,7 +38,7 @@ export function createReplayer({ audio, app, invoke, onChange, objectUrl = URL.c
       return null;
     }
     finish();
-    const mine = { id, url: null, src: null };
+    const mine = { id, url: null, src: null, started: false };
     current = mine;
     onChange(id);
     try {
@@ -52,6 +53,7 @@ export function createReplayer({ audio, app, invoke, onChange, objectUrl = URL.c
       }
       mine.src = audio.src;
       await audio.play();
+      mine.started = true;
       return null;
     } catch (err) {
       if (current !== mine) return null;

@@ -33,6 +33,9 @@ class FakeAudio {
   end() {
     this.listeners.ended?.();
   }
+  fail() {
+    this.listeners.error?.();
+  }
 }
 
 function setup({ app = true, invoke, audio = new FakeAudio() } = {}) {
@@ -145,4 +148,20 @@ test("a card offers its clip only when keryx kept one", () => {
   const c = card({ ...base, reply_at: 9 }, cast, 2000);
   assert.match(c.playLabel, /^Play .+'s last reply$/);
   assert.match(c.stopLabel, /^Stop .+'s reply$/);
+});
+
+test("a clip that fails before it plays keeps its note; one that fails while playing frees the button", async () => {
+  // As the spec orders it: the element's error fires, then play() rejects.
+  const audio = new FakeAudio();
+  audio.play = function () {
+    this.fail();
+    return Promise.reject(new Error("NotSupportedError"));
+  };
+  const early = setup({ audio });
+  assert.equal(await early.r.toggle(A, 5), "Could not play the reply: NotSupportedError");
+  assert.ok(!early.r.playing(A));
+  const late = setup();
+  await late.r.toggle(A, 5);
+  late.audio.fail();
+  assert.ok(!late.r.playing(A));
 });
