@@ -1,36 +1,40 @@
 # IMPL
 
-Repo resume state (2026-10-25, late). Main holds #82 Wrap up, #83 empty
-state, #88 Queue panel (#86), #91 phone wall (part of #52), #89 split mode
-(#32), #93 ledger rows for shared home voices (#87) and #92 (portrait style
-prompt label). Installed build: 1ad1405, deployed 10-25 21:48 (Wrap up and
-its Stop hook, empty state, Queue panel, phone wall). Not yet live: #89
-split mode and #93.
-
-## Next
-1. #90: after every session ends under a wrap-up, the bar reads "0 of 0
-   ready" and Safe to restart vanishes.
-2. Open question from #87: sessions launched from `~/ajsoftworks` while
-   keryx holds no voice all take that folder's home voice, so the wall shows
-   several cards of one character (the ledger now keeps their rows apart).
-   Whether the wall should tell them apart too is unfiled.
+Repo resume state (2026-10-26, night). The 10-26 queue is merged: #101
+README lead, #103 (#90 wrap-up after every session ends; an unreadable
+fleet folder keeps the last snapshot), #104 (#98 ledger attribution), #105
+(#99 Queue text size), #106 (#100 reply playback, with keryx #61). Installed
+build: 1ad1405 (10-25 21:48). Not yet live: #89 split mode, #93, and all of
+the above.
 
 ## Waits on AJ
-- Deploy of #89 and #93 (his yes): `scripts/build-windows.sh` from main,
-  stop the exe, installer `/S`, start. No hook or settings change this time.
-- Live checks on the installed build (below), then close #86 (Queue panel)
-  and, once split mode is installed, #32.
-- #52: the iPhone check over Tailscale (tray "Phone wall"; README "Fleet on
-  your phone"), and whether to check Serve's `Tailscale-User-Login` header.
+- Deploy (his yes): `scripts/build-windows.sh` from main, stop the exe,
+  installer `/S`, start; copy `hooks/klepsydra-fleet.sh` to `~/.claude/`
+  (#104 changed it: home voice by edited repo, `where.git`). keryx: update
+  the plugin to main 43711a2 so it writes `replies/<session>.wav`
+  (`reply_clips` on by default), then restart its daemon.
+- After the deploy: tap a reply clip on the iPhone wall (Safari plays via
+  byte ranges; only Chromium is tested here) and check #86/#32 live.
+- #52: the iPhone check over Tailscale.
+
+## Next
+1. Unfiled from #87/#98: the wall could tell home-voiced cards apart the way
+   the ledger now does.
+2. The card's title is Claude Code's session name; a long-lived session
+   keeps its first one unless renamed (`/rename`).
+3. `split::win::tests::a_maximized_then_minimized_window_is_placed_normal_without_the_focus`
+   failed once on the windows-latest runner (#105 run 40404101948) and
+   passed on rerun: watch for a flake.
 
 ## Follow-ups (from reviews, not blocking)
-- Phone: load the Queue panel only off the phone; filter the wrap-up
-  objects field by field before they reach the phone.
+- Phone: load the Queue panel only off the phone; filter wrap-up objects
+  field by field before they reach the phone.
 - Queue: the post-open handle check in `bounded.rs` has no test; a link in a
   `##` heading nests a button in `<summary>`.
 - Split: turning split off has no second DPI pass; split drops Windows
-  Terminal's always-on-top (README says so); a stale placement survives a
-  wall close.
+  Terminal's always-on-top; a stale placement survives a wall close.
+- Reply clips: the phone server reads the whole clip per range request (8 MB
+  cap); `-e` on a git dir reads an unreadable one as gone.
 
 ## Live checks (installed build)
 - Split mode:
@@ -62,6 +66,7 @@ split mode and #93.
   GetAwarenessFromDpiAwarenessContext(GetThreadDpiAwarenessContext()).
 
 ## Verify
-- Full gate list in `.claude/skill-context.md`; all heavy commands under
+- Full gate list in `.claude/skill-context.md`; heavy commands under
   `flock /tmp/fleet-heavy.lock`; app crate via
   `KLEPSYDRA_STAGE=klepsydra-build-<name> bash scripts/build-windows.sh --check </dev/null`.
+- After every rebase, rerun the wall and phone browser suites.
