@@ -105,11 +105,12 @@ export function wrapupLine(s, request, nowMs) {
 /** Whether the request still asks sessions at `nowMs`: Stop wrap-up shows only then. */
 export const asking = (request, nowMs) => Boolean(request) && nowMs <= request.until * 1000;
 
-/** The bar's count while a request is shown: ready live sessions of all live ones; safe only when every one, and at least one, is ready. */
+/** The bar's count while a request is shown: ready live sessions of all live ones; safe when every one is ready, or once every session has ended. */
 export function readiness(sessions, request) {
   const live = sessions.filter((s) => s.status !== "ended");
+  if (!live.length) return { ready: 0, live: 0, safe: Boolean(request), text: "Every session has ended" };
   const ready = live.filter((s) => isReady(s, request)).length;
-  return { ready, live: live.length, safe: live.length > 0 && ready === live.length, text: `${ready} of ${live.length} ready` };
+  return { ready, live: live.length, safe: ready === live.length, text: `${ready} of ${live.length} ready` };
 }
 
 /**

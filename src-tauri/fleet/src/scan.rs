@@ -22,6 +22,9 @@ pub struct Problem {
 pub struct Listing {
     pub entries: Vec<Entry>,
     pub problems: Vec<Problem>,
+    /// The folder exists but could not be listed, so `entries` says nothing
+    /// about which sessions run.
+    pub unread: bool,
 }
 
 /// The text of an open file and its mtime in seconds, both from this one
@@ -54,11 +57,21 @@ fn read_regular(item: &std::fs::DirEntry) -> Option<std::io::Result<(String, i64
 
 /// Every `<uuid>.json` in `fleet` with its `<uuid>.beat`. Anything else there
 /// (temp files mid-write, the hook's lock, stray files) is not a session and is
-/// passed over without a word. A missing directory is an empty fleet.
+/// passed over without a word. A missing directory is an empty fleet; one
+/// that cannot be listed is `unread`, with a problem saying why.
 pub fn scan(fleet: &Path) -> Listing {
     let mut out = Listing::default();
-    let Ok(dir) = std::fs::read_dir(fleet) else {
-        return out;
+    let dir = match std::fs::read_dir(fleet) {
+        Ok(dir) => dir,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return out,
+        Err(e) => {
+            out.unread = true;
+            out.problems.push(Problem {
+                file: fleet.display().to_string(),
+                what: format!("fleet folder not read: {e}"),
+            });
+            return out;
+        }
     };
     let mut files = Vec::new();
     let mut beats: HashMap<String, (i64, Option<String>)> = HashMap::new();
@@ -242,6 +255,17 @@ pub(crate) mod tests {
                 what: "unknown version 2".into()
             }]
         );
+    }
+
+    #[test]
+    fn a_fleet_path_that_cannot_be_listed_is_unread_not_empty() {
+        let dir = Scratch::new("unread");
+        dir.write("fleet", "not a folder");
+        let l = scan(&dir.0.join("fleet"));
+        assert!(l.unread);
+        assert!(l.entries.is_empty());
+        assert_eq!(l.problems.len(), 1, "{:?}", l.problems);
+        assert!(!scan(&dir.0.join("missing")).unread);
     }
 
     #[test]

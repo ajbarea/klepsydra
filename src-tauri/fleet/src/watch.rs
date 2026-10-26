@@ -188,6 +188,11 @@ impl Reader {
         }
         let listing = scan(&self.fleet);
         broken.extend(listing.problems);
+        if listing.unread {
+            // No word on the sessions: the wall keeps what it shows, so an
+            // empty read never reads as every session ended (Safe to restart).
+            return (None, self.reporter.fresh(&broken));
+        }
         let t = now();
         let mut snap = snapshot(&listing.entries, t);
         let started: HashMap<&str, Option<i64>> = listing
@@ -643,6 +648,29 @@ mod tests {
         );
         assert_eq!(snap.unwrap().sessions.len(), 1);
     }
+    #[test]
+    fn an_unreadable_fleet_folder_keeps_the_last_snapshot() {
+        let root = Scratch::new("unread-fleet");
+        std::fs::create_dir_all(root.0.join("fleet")).unwrap();
+        root.write(&format!("fleet/{A}.json"), &session(A, "working"));
+        let t = unix_now();
+        let mut r = Reader::new(&root.0);
+        assert_eq!(r.step(Duration::ZERO, || t).0.unwrap().sessions.len(), 1);
+        std::fs::remove_dir_all(root.0.join("fleet")).unwrap();
+        root.write("fleet", "not a folder");
+        let (snap, problems) = r.step(Duration::ZERO, || t);
+        assert!(
+            snap.is_none(),
+            "an unreadable folder is no news, not an empty fleet"
+        );
+        assert!(
+            problems
+                .iter()
+                .any(|p| p.what.starts_with("fleet folder not read")),
+            "{problems:?}"
+        );
+    }
+
     #[test]
     fn a_session_gets_its_telemetry_totals_and_a_change_republishes() {
         use crate::ledger::Ledger;
