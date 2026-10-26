@@ -28,6 +28,9 @@ session that stops answering reads as silent, never as working.
   as an atomic replace refused when the file changed since it was read.
 
 ## Completed
+- 2026-10-26: Slop audit of everything merged since 10-23 (#96): comments,
+  docstrings and docs prose in 79 files checked against the code, behaviour
+  unchanged; claims about mark_asked, failed typings and End ready corrected.
 - 2026-10-21: Comfortable cards wear their character (#62): a header band lit in
   their colour with their cut-out figure breaking its top edge, a nameplate
   with their epithet, crew marks on a plaque at the figure's foot, and the

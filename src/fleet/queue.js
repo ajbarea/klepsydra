@@ -1,8 +1,9 @@
 // The Queue panel's renderer: the queue file's markdown parsed by the
 // vendored markdown-it, its tokens walked into a plain tree, and the tree
 // built with createElement and text nodes only. Nothing from the file is ever
-// read as markup: raw HTML shows as text, and a link is its text with the
-// address on hover and a Copy link button, never an href to follow.
+// read as markup: raw HTML shows as text, a safe link (https, http, mailto)
+// is its text with the address on hover and a Copy link button, and no link
+// gets an href.
 import markdownit from "../vendor/markdown-it/markdown-it.esm.min.mjs";
 
 const md = markdownit({ html: true, linkify: false, typographer: false });

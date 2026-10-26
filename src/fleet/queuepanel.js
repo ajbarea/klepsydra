@@ -218,7 +218,7 @@ export function createQueuePanel({ dialog, button, onLayout = () => {}, onResize
     );
   }
 
-  /** Where focus is inside the content, as an index among its controls. */
+  /** The content's focusable controls: its summaries and buttons. */
   const controls = () => [...content.querySelectorAll("summary, button")];
   function paint(view) {
     last = view;

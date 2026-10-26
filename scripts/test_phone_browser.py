@@ -6,10 +6,11 @@ with the sixteen-session demo fleet, and opens it as an iPhone would (390x844,
 touch, 3x). Checks: one column of compact cards, needs-you cards first, the
 tally sticky at the top, no horizontal scroll, every visible control at least
 44 px, no desktop action anywhere, a card's Remote Control link (and a tap on
-the card) opening claude.ai, a second snapshot arriving over /events, and the
-service worker and manifest installing, a wrap-up request and the empty state
-shown with none of their buttons, /wall.html sent to the root, and a stream
-refused at the cap opened again. Saves a screenshot.
+the card) opening claude.ai, a second snapshot arriving over /events, the
+service worker and manifest installing, fleet.json cut to the wall's fields, a
+write refused, a wrap-up request and the empty state shown with none of their
+buttons, /wall.html sent to the root, and a stream refused at the cap opened
+again. Saves a screenshot.
 
     uv run -q --no-project --with playwright python -I scripts/test_phone_browser.py [shot.png]
 

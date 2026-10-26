@@ -421,7 +421,7 @@ def rc_time: .timestamp | strings | sub("\\.[0-9]+Z$"; "Z") | try fromdateiso860
 # What one transcript line says of Remote Control: {url} for on (null when its
 # link is not one to follow) or off, nothing when it says neither. The
 # attachment's url is set only when Claude Code attributes the session (null
-# while AJ's settings turn attribution off), so its sendUserFileHint, true
+# when attribution is off), so its sendUserFileHint, true
 # while a Remote Control bridge is up, is what says off.
 def rc_word:
   if .type == "system" and .subtype == "bridge_status" then {url: (.url | rc_ok)}

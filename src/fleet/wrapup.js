@@ -78,8 +78,8 @@ export const isReady = (s, request) => listed(s, request) && readyState(s) === "
  * What session `s`'s card says about `request` at `nowMs`: {state, text}, or
  * null with no request or once ended. Silence past `until` is "No answer",
  * never ready. The app marks every typed session asked before it types into
- * any, and unmarks one whose typing failed, so a typed route with no answer
- * is one to ask by hand.
+ * any, and unmarks one whose typing failed unless it may have been typed (a
+ * timeout or a panic), so a typed route with no answer is one to ask by hand.
  */
 export function wrapupLine(s, request, nowMs) {
   if (!request || s?.status === "ended") return null;

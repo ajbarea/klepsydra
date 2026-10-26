@@ -920,7 +920,8 @@ function startWrapup(ids) {
   );
 }
 
-// Offered while there is a ready card to end and none of them is ending yet.
+// Offered in the app while every live card is ready and klepsydra can end
+// at least one not already ending.
 const paintEndReady = () => {
   endReadyButton.hidden = !inTauri || readyToEnd().ids.length === 0;
 };
