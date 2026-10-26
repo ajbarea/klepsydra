@@ -14,6 +14,22 @@ impl Rect {
         Rect { x, y, w, h }
     }
 
+    /// From a Win32 RECT's edges; the right and bottom edges are exclusive.
+    #[cfg_attr(not(windows), allow(dead_code))]
+    pub fn from_edges(left: i32, top: i32, right: i32, bottom: i32) -> Self {
+        Rect::new(left, top, right - left, bottom - top)
+    }
+
+    #[cfg_attr(not(windows), allow(dead_code))]
+    pub fn right(&self) -> i32 {
+        self.x + self.w
+    }
+
+    #[cfg_attr(not(windows), allow(dead_code))]
+    pub fn bottom(&self) -> i32 {
+        self.y + self.h
+    }
+
     fn overlap(&self, o: &Rect) -> i64 {
         let w = (self.x + self.w).min(o.x + o.w) - self.x.max(o.x);
         let h = (self.y + self.h).min(o.y + o.h) - self.y.max(o.y);
@@ -199,6 +215,55 @@ pub fn contains((left, top, right, bottom): (f64, f64, f64, f64), x: f64, y: f64
 pub fn resize_inset(scale: f64) -> f64 {
     const TAO_RESIZE_BORDER: f64 = 5.0; // tao's linux/event_loop.rs
     (TAO_RESIZE_BORDER + 1.0) * scale
+}
+
+/// How far a window's rect reaches past its visible frame on each side: the
+/// invisible resize borders `GetWindowRect` counts and the DWM extended frame
+/// bounds leave out.
+#[cfg_attr(not(windows), allow(dead_code))]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Insets {
+    pub left: i32,
+    pub top: i32,
+    pub right: i32,
+    pub bottom: i32,
+}
+
+/// The left and right halves of a work area. The left takes the floor of half
+/// the width and the right the rest, so they meet with no gap or overlap and
+/// fill it exactly, whatever the width's parity or the origin's sign.
+#[cfg_attr(not(windows), allow(dead_code))]
+pub fn halves(work: Rect) -> (Rect, Rect) {
+    let left = work.w.div_euclid(2);
+    (
+        Rect::new(work.x, work.y, left, work.h),
+        Rect::new(work.x + left, work.y, work.w - left, work.h),
+    )
+}
+
+/// The insets of a window whose rect is `window` and whose visible frame is
+/// `frame`, both in the same (physical) pixels. A side where the frame reaches
+/// past the rect, which a real frame never does, counts as none.
+#[cfg_attr(not(windows), allow(dead_code))]
+pub fn frame_insets(window: Rect, frame: Rect) -> Insets {
+    Insets {
+        left: (frame.x - window.x).max(0),
+        top: (frame.y - window.y).max(0),
+        right: (window.right() - frame.right()).max(0),
+        bottom: (window.bottom() - frame.bottom()).max(0),
+    }
+}
+
+/// The rect to give a window with insets `by` so its visible frame lands on
+/// `visible`.
+#[cfg_attr(not(windows), allow(dead_code))]
+pub fn widen(visible: Rect, by: Insets) -> Rect {
+    Rect::new(
+        visible.x - by.left,
+        visible.y - by.top,
+        visible.w + by.left + by.right,
+        visible.h + by.top + by.bottom,
+    )
 }
 
 #[cfg(test)]
@@ -520,5 +585,157 @@ mod tests {
     fn the_resize_band_is_tao_border_plus_one_scaled() {
         assert_eq!(resize_inset(1.0), 6.0);
         assert_eq!(resize_inset(1.5), 9.0);
+    }
+
+    /// The visible frame of a window placed at `r` with insets `by`.
+    fn visible(r: Rect, by: Insets) -> Rect {
+        Rect::from_edges(
+            r.x + by.left,
+            r.y + by.top,
+            r.right() - by.right,
+            r.bottom() - by.bottom,
+        )
+    }
+
+    #[test]
+    fn a_win32_rect_converts_by_its_edges() {
+        let r = Rect::from_edges(-1921, -300, -1, 740);
+        assert_eq!(r, Rect::new(-1921, -300, 1920, 1040));
+        assert_eq!((r.right(), r.bottom()), (-1, 740));
+    }
+
+    #[test]
+    fn an_even_work_area_splits_in_equal_halves() {
+        let (l, r) = halves(Rect::new(0, 0, 1920, 1032));
+        assert_eq!(l, Rect::new(0, 0, 960, 1032));
+        assert_eq!(r, Rect::new(960, 0, 960, 1032));
+    }
+
+    #[test]
+    fn an_odd_width_gives_the_right_half_the_spare_pixel() {
+        let (l, r) = halves(Rect::new(0, 0, 1921, 1032));
+        assert_eq!(l, Rect::new(0, 0, 960, 1032));
+        assert_eq!(r, Rect::new(960, 0, 961, 1032));
+    }
+
+    #[test]
+    fn a_monitor_left_of_the_primary_splits_at_negative_x() {
+        let (l, r) = halves(Rect::new(-2560, 0, 2560, 1400));
+        assert_eq!(l, Rect::new(-2560, 0, 1280, 1400));
+        assert_eq!(r, Rect::new(-1280, 0, 1280, 1400));
+        let (l, r) = halves(Rect::new(-1921, -300, 1921, 1040));
+        assert_eq!(l, Rect::new(-1921, -300, 960, 1040));
+        assert_eq!(r, Rect::new(-961, -300, 961, 1040));
+    }
+
+    #[test]
+    fn the_halves_keep_the_work_area_clear_of_the_taskbar() {
+        // A 1920x1080 monitor with a 48 px taskbar along its top.
+        let (l, r) = halves(Rect::new(0, 48, 1920, 1032));
+        assert_eq!((l.y, l.bottom(), r.y, r.bottom()), (48, 1080, 48, 1080));
+    }
+
+    #[test]
+    fn the_halves_meet_exactly_and_fill_the_work_area() {
+        for x in [-3841, -2560, -1921, -1, 0, 1, 1920, 2561] {
+            for w in [0, 1, 2, 3, 945, 1919, 1920, 1921, 2560, 3841] {
+                let work = Rect::new(x, -7, w, 1040);
+                let (l, r) = halves(work);
+                assert_eq!(l.x, work.x, "{work:?}");
+                assert_eq!(l.right(), r.x, "no gap or overlap: {work:?}");
+                assert_eq!(r.right(), work.right(), "{work:?}");
+                assert!(l.w >= 0 && (r.w - l.w == 0 || r.w - l.w == 1), "{work:?}");
+                assert_eq!((l.y, l.h, r.y, r.h), (work.y, work.h, work.y, work.h));
+            }
+        }
+    }
+
+    #[test]
+    fn insets_are_the_invisible_borders_on_each_side() {
+        // Windows 11 at 100%: 7 px resize borders left, right and bottom, none on top.
+        let frame = Rect::new(100, 100, 800, 600);
+        let window = Rect::from_edges(93, 100, 907, 707);
+        let by = frame_insets(window, frame);
+        assert_eq!(
+            by,
+            Insets {
+                left: 7,
+                top: 0,
+                right: 7,
+                bottom: 7
+            }
+        );
+        // At 150% they are 11 px, at a negative origin too.
+        let frame = Rect::new(-1500, 200, 900, 700);
+        let window = Rect::from_edges(-1511, 200, -589, 911);
+        assert_eq!(
+            frame_insets(window, frame),
+            Insets {
+                left: 11,
+                top: 0,
+                right: 11,
+                bottom: 11
+            }
+        );
+    }
+
+    #[test]
+    fn a_frame_reaching_past_the_rect_counts_as_no_inset() {
+        let window = Rect::new(100, 100, 800, 600);
+        let frame = Rect::new(95, 98, 812, 610);
+        assert_eq!(frame_insets(window, frame), Insets::default());
+        assert_eq!(frame_insets(window, window), Insets::default());
+    }
+
+    #[test]
+    fn widening_puts_the_visible_frame_on_the_target() {
+        let by = Insets {
+            left: 7,
+            top: 0,
+            right: 7,
+            bottom: 7,
+        };
+        let target = Rect::new(960, 0, 960, 1032);
+        let placed = widen(target, by);
+        assert_eq!(placed, Rect::new(953, 0, 974, 1039));
+        assert_eq!(visible(placed, by), target);
+        assert_eq!(
+            widen(target, Insets::default()),
+            target,
+            "no frame bounds, no change"
+        );
+    }
+
+    #[test]
+    fn the_visible_edges_of_both_halves_meet() {
+        // The wall and the terminal have different borders; the visible edges
+        // still meet on the split line, and each stays inside the work area.
+        let wall = Insets {
+            left: 8,
+            top: 1,
+            right: 8,
+            bottom: 8,
+        };
+        let terminal = Insets {
+            left: 11,
+            top: 0,
+            right: 11,
+            bottom: 11,
+        };
+        for work in [
+            Rect::new(0, 0, 1920, 1032),
+            Rect::new(-2561, 40, 2561, 1400),
+            Rect::new(1920, 0, 1281, 984),
+        ] {
+            let (l, r) = halves(work);
+            let (seen_l, seen_r) = (
+                visible(widen(l, wall), wall),
+                visible(widen(r, terminal), terminal),
+            );
+            assert_eq!(seen_l.right(), seen_r.x, "{work:?}");
+            assert_eq!((seen_l.x, seen_r.right()), (work.x, work.right()));
+            assert_eq!((seen_l.y, seen_l.bottom()), (work.y, work.bottom()));
+            assert_eq!((seen_r.y, seen_r.bottom()), (work.y, work.bottom()));
+        }
     }
 }

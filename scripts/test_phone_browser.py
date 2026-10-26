@@ -173,6 +173,8 @@ def main() -> int:
                 run.check(s["hscroll"] <= 0, "no horizontal scroll", s["hscroll"])
                 run.check(s["small"] == [], "every visible control is at least 44 px", s["small"])
                 run.check(s["desktop"] == [], "no desktop action shows", s["desktop"])
+                tools = page.evaluate("getComputedStyle(document.querySelector('.tools')).display")
+                run.check(tools == "none", "the desktop tool group takes no room on the phone", tools)
                 run.check(s["remotes"] == [REMOTE], "only the claude.ai link is a link", s["remotes"])
                 page.screenshot(path=str(shot))
                 print(f"  shot {shot}")

@@ -1,50 +1,70 @@
 # IMPL
 
-Slice: #52 Fleet on the phone (read-only wall over Tailscale Serve). Branch
-feat/phone-wall, worktree `.claude/worktrees/phone-wall`, PR #91 (part of
-#52; rebased onto #82 and #83).
-
-## Done
-- `fleet::phone`: hyper server on `127.0.0.1:8318`, GET/HEAD only, Host
-  loopback or `*.ts.net`, same-origin `Origin`, no Funnel; the wall's files
-  by allow-list, `/fleet.json`, `/events` (SSE, 15 s heartbeat, 8 streams).
-  Sessions cut to the wall's fields, now with `wrapup`, `turn_at`,
-  `asked_after_turn` and the snapshot's `wrapup` request (display only).
-- Assets: `exact_assets` holds Tauri's resolver to the bundle's own keys
-  (`asset_resolver().iter()`), since `get_asset` falls back to `<path>.html`,
-  `<path>/index.html`, then `index.html`. The test stub mimics that fallback.
-  `# research(2026-10)`: tauri 2.12.2 `src/manager/mod.rs` `get_asset`
-  (read in ~/.cargo/registry; the mime type is parsed from the requested
-  path, so a mime check would not catch the fallback).
-- `/wall.html` answers 308 to `/`: the page's one address, so `feedKind`'s
-  root-path rule cannot load dev mode from the phone server.
-- `followServed`: a stream the browser closed for good (readyState CLOSED,
-  e.g. 503 at the cap, Serve's 502 during a restart) is reopened after 1 s
-  doubling to 30 s, reset on open. `# research(2026-10)`: WHATWG HTML
-  server-sent events, "fail the connection" on a non-200 or wrong type sets
-  CLOSED and the UA "does not attempt to reconnect"; the spec suggests
-  exponential backoff.
-- Hook: the awk prefilter takes "Remote Control disconnected" only from a
-  `"type":"system"` line's `"content":"...` field.
-- Browser suite: wrap-up bar and answers, empty state (ended only, none)
-  with no desktop control, `/wall.html` redirect, stream refused at the cap
-  then reopened. README: tailnet visibility sentence.
+Repo resume state (2026-10-25). Main holds #82 Wrap up, #83 empty state,
+#88 Queue panel (#86), #91 phone wall (part of #52), #89 split mode (#32).
+None of these is deployed: the installed build is still 4bc0fb9 (10-22).
 
 ## Next
-- Round 2 independent review of the fixes; merge after #88.
-- AJ: the live iPhone check over the tailnet (Tailscale not installed
-  here), a tap on "Open in Claude" opening the Claude app, and 390x844
-  screenshots.
+1. #87: the ledger credits every session to one character when sessions
+   share a voice. Attribute by the card's character; test three sessions
+   sharing one voice.
+2. Queue item 17: AJ's shared portrait style prompt and negative prompt,
+   word for word, into `docs/characters/portrait-briefs.md` (docs-only PR;
+   text in the archived brief under `~/.local/state/fleet-orchestrator/archive/`).
+3. #90: after every session ends under a wrap-up, the bar reads "0 of 0
+   ready" and Safe to restart vanishes.
 
-## AJ decides
-- Whether the server should also require Tailscale identity headers
-  (`Tailscale-User-Login`) and an allow-listed login, beyond the ACLs.
+## Waits on AJ
+- Deploy (his yes): copy `hooks/klepsydra-wrapup.sh` and the updated
+  `hooks/klepsydra-fleet.sh` (stamps `turn_at`, reads the Remote Control
+  link) to `~/.claude/`; the skill `hooks/klepsydra-wrapup.md` to
+  `skills/klepsydra-wrapup/SKILL.md` in `~/.claude` and `~/.claude-personal`;
+  the README's Stop hook block into both `settings.json`; then
+  `scripts/build-windows.sh` from main, stop the exe, installer `/S`, start.
+- After the deploy: the live checks below, then close #86 (Queue panel)
+  and #32 (split mode).
+- #52: the iPhone check over Tailscale (tray "Phone wall"; README "Fleet on
+  your phone"), and whether to check Serve's `Tailscale-User-Login` header.
+
+## Follow-ups (from reviews, not blocking)
+- Phone: load the Queue panel only off the phone; filter the wrap-up
+  objects field by field before they reach the phone.
+- Queue: the post-open handle check in `bounded.rs` has no test; a link in a
+  `##` heading nests a button in `<summary>`.
+- Split: turning split off has no second DPI pass; split drops Windows
+  Terminal's always-on-top (README says so); a stale placement survives a
+  wall close.
+
+## Live checks (installed build)
+- Split mode:
+  - Live check on Windows (needs an installed build, AJ's call): open the
+    fleet tab and the wall, then a UIA/PowerShell script that presses
+    "Split with terminal" (InvokePattern on the button by name), reads both
+    windows' DWM extended frame bounds and asserts wall.right == terminal.left,
+    both tops/bottoms == rcWork, outer edges == rcWork; repeat with the
+    terminal maximized, minimized and on a second monitor at another scale;
+    press again and assert both GetWindowPlacement match the saved ones; Jump
+    a card and assert neither rect changed. Also: a maximized browser over the
+    terminal (the terminal must end above it, under the wall); the fleet tab
+    not the active tab (it must be selected); a terminal maximized then
+    minimized (it must end normal on the right, the wall keeping the focus);
+    off after a split across monitors with different DPI restores the same
+    size.
+- Queue panel: an edit from WSL reaches the panel within seconds; Copy works
+  in WebView2.
+
+## Sources
+- GetWindowRect includes invisible borders; use DWMWA_EXTENDED_FRAME_BOUNDS,
+  which is not DPI-virtualized: learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-getwindowrect
+- rcNormalPosition is workspace coordinates: devblogs.microsoft.com/oldnewthing/?p=38523
+- WM_DPICHANGED: a window crossing to another DPI resizes itself to the
+  suggested rect: learn.microsoft.com/windows/win32/hidpi/wm-dpichanged
+  (hence measure after the first move, then place again).
+- Per-monitor v2 awareness: tao 0.37.1 `become_dpi_aware` (event loop
+  default `dpi_aware: true`), checked at runtime with
+  GetAwarenessFromDpiAwarenessContext(GetThreadDpiAwarenessContext()).
 
 ## Verify
-- `node --test src/*.test.js`
-- `cd src-tauri && cargo fmt --all --check && cargo clippy -p klepsydra-fleet --all-targets -- -D warnings && cargo test -p klepsydra-fleet`
-- every `hooks/test_*.sh`, `statusline/test_statusline.sh`, `scripts/test_*.sh`
-- `uv run -q --no-project --with playwright python -I scripts/test_wall_browser.py`
-- `uv run -q --no-project --with playwright python -I scripts/test_phone_browser.py`
-- `KLEPSYDRA_STAGE=klepsydra-build-phone_wall bash scripts/build-windows.sh --check`
-- All heavy commands under `flock /tmp/fleet-heavy.lock`.
+- Full gate list in `.claude/skill-context.md`; all heavy commands under
+  `flock /tmp/fleet-heavy.lock`; app crate via
+  `KLEPSYDRA_STAGE=klepsydra-build-<name> bash scripts/build-windows.sh --check </dev/null`.

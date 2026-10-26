@@ -579,6 +579,31 @@ still fit with one more card, so a session ending and another starting at the
 boundary leaves the wall as it is. The choice is saved as `wall_density` in
 `prefs.json`.
 
+### Split mode
+
+On Windows, **Split** (beside **Ledger**; its full name is "Split with
+terminal") puts the wall on the
+left half of its monitor and the `fleet` Windows Terminal window (the one
+holding the "klepsydra sessions" tab) on the right half. The halves are of
+the work area, so the taskbar stays clear, and the windows' visible edges
+meet on the split line, and the terminal is stacked right under the wall so
+no other window covers its half. The fleet tab is selected in it. A maximized
+or minimized window is first shown at its normal size without taking the
+focus; a terminal maximized and then minimized comes back at its normal size
+on the right, not maximized.
+Pressing it again turns split off and puts both windows back where they were,
+maximized if they were; a window closed meanwhile is skipped. The toggle is
+pressed only once a split has landed. If the fleet terminal is not open, the
+note says so and nothing moves; **+ New session** opens it.
+
+Split is off by default. Turning it on saves `wall_split` in `prefs.json`,
+and the wall splits again the first time it opens after klepsydra starts. Where the windows sat before is
+kept in memory only: after klepsydra restarts, turning split off leaves both
+windows where they are. Jump in split mode switches the tmux window on the
+right and moves neither window. The toggle is hidden on Linux. A Windows
+Terminal window set to stay on top loses that when split, and turning split
+off does not set it again.
+
 ### Starting sessions
 
 **+ New session**, in the wall's summary bar, starts `claude` in `launch_dir`

@@ -12,6 +12,7 @@ import { showFace } from "./face.js";
 import { GOLD, SPEAK_FADE_MS, STILL, Speaker, WAVE, waves } from "./speaking.js";
 import { parseDensity, resolveDensity } from "./density.js";
 import { clearAll, clearLabel, endedIds, startLabel, wallState } from "./empty.js";
+import { wireSplit } from "./split.js";
 
 const TICK_MS = 15_000; // ages re-render between snapshots, as on the gauge
 const FACE_PX = 62; // the comfortable --wall-face less twice its --face-inset
@@ -595,6 +596,8 @@ wall.addEventListener("click", (e) => {
 const tauri = (command, args) =>
   inTauri && window.__TAURI__?.core ? window.__TAURI__.core.invoke(command, args) : Promise.reject("Needs the klepsydra app");
 const ender = createEnder({ invoke: tauri });
+// Split mode: the wall left, the fleet terminal right (Windows only; split.js).
+wireSplit({ button: document.getElementById("split"), note: document.getElementById("split-note"), invoke: tauri, app: inTauri });
 const menu = document.getElementById("session-menu");
 const dialog = document.getElementById("end-dialog");
 const endCancel = dialog.querySelector(".end-cancel");

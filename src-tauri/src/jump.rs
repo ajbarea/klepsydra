@@ -8,7 +8,7 @@ use klepsydra_fleet::tabs::{Lookup, TabError};
 /// Why the tab step did nothing: no tab could be chosen, or UI Automation
 /// itself failed.
 #[derive(Clone, Debug, PartialEq, Eq)]
-enum JumpError {
+pub(crate) enum JumpError {
     Tab(TabError),
     Failed(String),
 }
@@ -125,6 +125,16 @@ fn jump(lookup: Lookup<'_>) -> Result<String, JumpError> {
 }
 
 #[cfg(windows)]
+pub(crate) use uia::TERMINAL_CLASS;
+
+/// The handle of the Windows Terminal window holding the fleet tab, for split
+/// mode, with the fleet tab selected in it. Nothing moves.
+#[cfg(windows)]
+pub(crate) fn fleet_window() -> Result<isize, JumpError> {
+    uia::window(Lookup::Exact(crate::launch::FLEET_TAB))
+}
+
+#[cfg(windows)]
 mod uia {
     use super::JumpError;
     use klepsydra_fleet::tabs::{pick, Lookup};
@@ -147,7 +157,7 @@ mod uia {
     };
 
     /// Windows Terminal's top-level window class.
-    const TERMINAL_CLASS: &str = "CASCADIA_HOSTING_WINDOW_CLASS";
+    pub const TERMINAL_CLASS: &str = "CASCADIA_HOSTING_WINDOW_CLASS";
     /// Longest (ms) UI Automation waits to reach a provider; its default is 2000.
     const CONNECTION_TIMEOUT_MS: u32 = 1000;
     /// Longest (ms) UI Automation waits for one call to a provider to finish.
@@ -228,7 +238,11 @@ mod uia {
         move |e| JumpError::Failed(format!("{doing}: {e}"))
     }
 
-    pub fn jump(lookup: Lookup<'_>) -> Result<String, JumpError> {
+    /// Run `then` on the one tab `lookup` picks, with UI Automation up.
+    fn with_tab<R>(
+        lookup: Lookup<'_>,
+        then: impl FnOnce(&Tab) -> Result<R, JumpError>,
+    ) -> Result<R, JumpError> {
         lookup.check()?;
         let _com = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) }
             .is_ok()
@@ -248,19 +262,40 @@ mod uia {
         let (tabs, hidden) =
             tabs(&uia).map_err(failed("Could not list Windows Terminal windows"))?;
         let titles: Vec<String> = tabs.iter().map(|t| t.title.clone()).collect();
-        let tab = &tabs[pick(lookup, &titles, hidden)?];
-        let hwnd = unsafe { tab.window.CurrentNativeWindowHandle() }
-            .map_err(failed("Could not find the terminal window"))?;
+        then(&tabs[pick(lookup, &titles, hidden)?])
+    }
+
+    fn window_of(tab: &Tab) -> Result<HWND, JumpError> {
+        unsafe { tab.window.CurrentNativeWindowHandle() }
+            .map_err(failed("Could not find the terminal window"))
+    }
+
+    /// The window holding the tab `lookup` picks, as an integer handle, with
+    /// that tab selected. Nothing moves.
+    pub fn window(lookup: Lookup<'_>) -> Result<isize, JumpError> {
+        with_tab(lookup, |tab| {
+            let hwnd = window_of(tab)?;
+            select(tab)?;
+            Ok(hwnd.0 as isize)
+        })
+    }
+
+    pub fn jump(lookup: Lookup<'_>) -> Result<String, JumpError> {
+        with_tab(lookup, |tab| {
+            let hwnd = window_of(tab)?;
+            select(tab)?;
+            Ok(forward(hwnd, &tab.title))
+        })
+    }
+
+    fn select(tab: &Tab) -> Result<(), JumpError> {
         unsafe {
             let select: IUIAutomationSelectionItemPattern = tab
                 .item
                 .GetCurrentPatternAs(UIA_SelectionItemPatternId)
                 .map_err(failed("Could not select the tab"))?;
-            select
-                .Select()
-                .map_err(failed("Could not select the tab"))?;
+            select.Select().map_err(failed("Could not select the tab"))
         }
-        Ok(forward(hwnd, &tab.title))
     }
 }
 

@@ -7,6 +7,7 @@ mod launch;
 mod phone;
 #[cfg(windows)]
 mod ping;
+mod split;
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -124,7 +125,7 @@ fn collect_readings(dir: &std::path::Path, out: &mut Vec<serde_json::Value>) {
 }
 
 /// Small settings the gauge keeps for itself: the zoom level, the saved home,
-/// where the window last sat, and the wall's card density.
+/// where the window last sat, the wall's card density and split mode.
 fn prefs_path(app: &tauri::AppHandle) -> Option<PathBuf> {
     klepsydra_dir(app).map(|d| d.join("prefs.json"))
 }
@@ -132,8 +133,11 @@ fn prefs_path(app: &tauri::AppHandle) -> Option<PathBuf> {
 /// The prefs, empty when there is no file yet. `None` when one exists but
 /// cannot be read or parsed, so a write never replaces it with less.
 fn read_prefs(app: &tauri::AppHandle) -> Option<serde_json::Map<String, serde_json::Value>> {
-    let path = prefs_path(app)?;
-    match std::fs::read_to_string(&path) {
+    read_prefs_at(&prefs_path(app)?)
+}
+
+fn read_prefs_at(path: &std::path::Path) -> Option<serde_json::Map<String, serde_json::Value>> {
+    match std::fs::read_to_string(path) {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Some(Default::default()),
         Err(_) => None,
         Ok(text) => serde_json::from_str::<serde_json::Value>(&text)
@@ -144,7 +148,18 @@ fn read_prefs(app: &tauri::AppHandle) -> Option<serde_json::Map<String, serde_js
 }
 
 fn write_pref(app: &tauri::AppHandle, key: &str, value: serde_json::Value) {
-    let (Some(path), Some(mut prefs)) = (prefs_path(app), read_prefs(app)) else {
+    if let Some(path) = prefs_path(app) {
+        write_pref_at(&path, key, value);
+    }
+}
+
+/// One prefs.json write at a time in this process: each is a read, a change
+/// and a rename, so two at once would lose one key or share the tmp file.
+static PREFS_WRITE: Mutex<()> = Mutex::new(());
+
+fn write_pref_at(path: &std::path::Path, key: &str, value: serde_json::Value) {
+    let _one = PREFS_WRITE.lock().unwrap_or_else(|e| e.into_inner());
+    let Some(mut prefs) = read_prefs_at(path) else {
         return;
     };
     prefs.insert(key.into(), value);
@@ -155,7 +170,7 @@ fn write_pref(app: &tauri::AppHandle, key: &str, value: serde_json::Value) {
     let tmp = path.with_extension("json.tmp");
     let text = serde_json::Value::Object(prefs).to_string();
     if std::fs::write(&tmp, text).is_ok() {
-        let _ = std::fs::rename(&tmp, &path);
+        let _ = std::fs::rename(&tmp, path);
     }
 }
 
@@ -832,6 +847,8 @@ fn main() {
             fleet::fleet_subscribe,
             fleet::queue_subscribe,
             fleet::open_wall,
+            split::get_split_mode,
+            split::set_split_mode,
             fleet::clear_session,
             fleet::ledger_today,
             launch::end_session,
@@ -995,6 +1012,41 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn writers_of_different_keys_at_once_keep_every_key() {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("klepsydra-prefs-{nanos}"));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("prefs.json");
+        let _ = std::fs::remove_file(&path);
+        let writers: Vec<_> = (0..16)
+            .map(|i| {
+                let path = path.clone();
+                std::thread::spawn(move || {
+                    for n in 0..25 {
+                        super::write_pref_at(&path, &format!("k{i}"), serde_json::json!(n));
+                    }
+                })
+            })
+            .collect();
+        for w in writers {
+            w.join().unwrap();
+        }
+        let prefs = super::read_prefs_at(&path).expect("prefs.json whole");
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_dir(&dir);
+        for i in 0..16 {
+            assert_eq!(
+                prefs.get(&format!("k{i}")),
+                Some(&serde_json::json!(24)),
+                "k{i}"
+            );
+        }
+    }
+
     #[test]
     fn every_managed_state_has_a_type_of_its_own() {
         // Builder::manage asserts that no type is managed twice.
