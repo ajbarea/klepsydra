@@ -177,6 +177,18 @@ export function cardLabels(entries) {
 }
 
 /**
+ * Each session's row label: its card's (`cards`, `[id, label]`), else the one
+ * today's file recorded (`recorded`, the day file's `labels`), so a card gone
+ * from the wall keeps its name; then `cardLabels` tells shared ones apart.
+ */
+export function rowLabels(cards, recorded) {
+  const merged = new Map(cards);
+  const kept = recorded && typeof recorded === "object" ? Object.entries(recorded) : [];
+  for (const [id, label] of kept) if (typeof label === "string" && label && !merged.get(id)) merged.set(id, label);
+  return cardLabels([...merged]);
+}
+
+/**
  * Tokens by character: one row per character, largest first, each session
  * placed by `characterOf`, whether or not its card is still on the wall; a
  * home-voiced session has a row of its own, named from `labels` (session id

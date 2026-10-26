@@ -26,6 +26,8 @@ pub const DEDUPE_WINDOW: i64 = 3600;
 pub const MAX_AHEAD: i64 = 300;
 /// Most sessions one map keeps; past it the least recently updated goes.
 pub const MAX_SESSIONS: usize = 512;
+/// Characters kept of a session's label; a card shows far fewer.
+pub const MAX_LABEL: usize = 120;
 /// Most guardrail entries one day file keeps.
 pub const GUARDRAIL_CAP: usize = 10_000;
 /// The file format's version.
@@ -180,9 +182,14 @@ pub struct Day {
     /// after its card is gone.
     pub voices: BTreeMap<String, String>,
     /// The sessions in `voices` whose voice is the repo's home voice, which a
-    /// later held voice replaces, as on the card.
+    /// later held voice, or the home voice of a repo it moves to, replaces, as
+    /// on the card.
     #[serde(skip_serializing_if = "BTreeSet::is_empty")]
     pub home_voices: BTreeSet<String>,
+    /// What told each session's card apart when last seen (its name, else its
+    /// repo), so its row keeps it after the card is gone.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub labels: BTreeMap<String, String>,
     /// Counted metric points that carried no `session.id`, and so no total.
     pub no_session: u64,
 }
@@ -779,6 +786,7 @@ impl Ledger {
             models,
             voices,
             home_voices,
+            labels,
             no_session,
         } = &self.day;
         let day = if current {
@@ -792,6 +800,7 @@ impl Ledger {
                 voices: voices.clone(),
                 // The drawer never merges home-voiced sessions into one row.
                 home_voices: home_voices.clone(),
+                labels: labels.clone(),
                 no_session: *no_session,
             }
         } else {
@@ -821,9 +830,9 @@ impl Ledger {
     }
 
     /// Remember `voice` for `session` if `now`'s file has the session and no
-    /// voice for it yet, or only a `home` one that this held voice replaces,
-    /// moving to `now`'s day first. Returns whether it recorded one; the
-    /// caller saves.
+    /// voice for it yet, or only a `home` one that this voice replaces (a held
+    /// one, or another repo's home), moving to `now`'s day first. Returns
+    /// whether it recorded one; the caller saves.
     pub fn note_voice(&mut self, session: &str, voice: &str, home: bool, now: i64) -> bool {
         // A clock read before the receiver rolled must not roll the day back.
         if day_name(now, &self.tz) < self.day.day {
@@ -835,7 +844,10 @@ impl Ledger {
         }
         match self.day.voices.get(session) {
             None => {}
-            Some(_) if !home && self.day.home_voices.contains(session) => {}
+            Some(v) if v == voice && home == self.day.home_voices.contains(session) => {
+                return false
+            }
+            Some(_) if self.day.home_voices.contains(session) => {}
             Some(_) => return false,
         }
         self.day.voices.insert(session.into(), voice.into());
@@ -844,6 +856,25 @@ impl Ledger {
         } else {
             self.day.home_voices.remove(session);
         }
+        true
+    }
+
+    /// Remember `label` as what tells `session`'s card apart, the latest one
+    /// winning, if `now`'s file has the session, moving to `now`'s day first.
+    /// Returns whether it changed; the caller saves.
+    pub fn note_label(&mut self, session: &str, label: &str, now: i64) -> bool {
+        if day_name(now, &self.tz) < self.day.day {
+            return false;
+        }
+        self.roll(now);
+        if label.is_empty() || !self.day.sessions.contains_key(session) {
+            return false;
+        }
+        let label: String = label.chars().take(MAX_LABEL).collect();
+        if self.day.labels.get(session) == Some(&label) {
+            return false;
+        }
+        self.day.labels.insert(session.into(), label);
         true
     }
 
@@ -878,6 +909,7 @@ impl Ledger {
             self.day.models.remove(&id);
             self.day.voices.remove(&id);
             self.day.home_voices.remove(&id);
+            self.day.labels.remove(&id);
         }
         cap_sessions(&mut self.state.sessions, session);
     }
@@ -2304,16 +2336,22 @@ mod tests {
     }
 
     #[test]
-    fn a_hold_replaces_a_recorded_home_voice_and_a_home_never_replaces_a_hold() {
+    fn a_hold_or_a_later_home_replaces_a_home_voice_and_a_home_never_replaces_a_hold() {
         let mut l = Ledger::in_memory(NOW);
         for id in ["s1", "s2"] {
             l.record_metrics(&metrics(&tokens_at(id, "output", 1, NOW as u64, &[])), NOW);
         }
         assert!(l.note_voice("s1", "bf_emma", true, NOW));
         assert!(
-            !l.note_voice("s1", "af_heart", true, NOW),
-            "a home never replaces a home"
+            !l.note_voice("s1", "bf_emma", true, NOW),
+            "the same home again changes nothing"
         );
+        assert!(
+            l.note_voice("s1", "af_heart", true, NOW),
+            "the home of the repo it moved to replaces the launch folder's, as on the card"
+        );
+        assert_eq!(l.day().voices["s1"], "af_heart");
+        assert!(l.day().home_voices.contains("s1"));
         assert!(
             l.note_voice("s1", "am_adam", false, NOW),
             "a later hold wins, as on the card"
@@ -2380,6 +2418,53 @@ mod tests {
     }
 
     #[test]
+    fn a_label_is_kept_for_a_session_of_the_day_and_the_latest_wins() {
+        let mut l = Ledger::in_memory(NOW);
+        assert!(
+            !l.note_label("s1", "Techne PR queue", NOW),
+            "no session, no label"
+        );
+        l.record_metrics(
+            &metrics(&tokens_at("s1", "output", 1, NOW as u64, &[])),
+            NOW,
+        );
+        assert!(!l.note_label("s1", "", NOW));
+        assert!(l.note_label("s1", "techne", NOW));
+        assert!(l.note_label("s1", "Techne PR queue", NOW));
+        assert!(!l.note_label("s1", "Techne PR queue", NOW), "unchanged");
+        let long = "é".repeat(MAX_LABEL + 5);
+        assert!(l.note_label("s1", &long, NOW));
+        assert_eq!(
+            l.day().labels["s1"].chars().count(),
+            MAX_LABEL,
+            "capped on a char boundary"
+        );
+        assert!(
+            !l.note_label("s1", &long, NOW),
+            "the same long name again changes nothing"
+        );
+        assert!(l.note_label("s1", "Techne PR queue", NOW));
+        let v = serde_json::to_value(l.today_view(NOW, None)).unwrap();
+        assert_eq!(v["day"]["labels"]["s1"], "Techne PR queue");
+    }
+
+    #[test]
+    fn a_dropped_session_takes_its_label_with_it() {
+        let mut l = Ledger::in_memory(NOW);
+        for n in 0..(MAX_SESSIONS as u64 + 3) {
+            let id = format!("s{n}");
+            l.record_metrics(
+                &metrics(&tokens_at(&id, "output", 1, NOW as u64, &[])),
+                NOW + n as i64,
+            );
+            l.note_label(&id, "a card", NOW + n as i64);
+        }
+        let day = l.day();
+        assert!(day.labels.len() <= MAX_SESSIONS);
+        assert!(day.labels.keys().all(|id| day.sessions.contains_key(id)));
+    }
+
+    #[test]
     fn a_day_file_without_voices_loads_and_one_with_them_round_trips() {
         let dir = Scratch::new("ledger-voices");
         dir.write(
@@ -2389,10 +2474,13 @@ mod tests {
         let (mut l, problems) = Ledger::open(dir.0.clone(), NOW, TimeZone::UTC);
         assert!(problems.is_empty(), "{problems:?}");
         assert!(l.day().voices.is_empty());
+        assert!(l.day().labels.is_empty());
         assert!(l.note_voice("s1", "am_michael", false, NOW));
+        assert!(l.note_label("s1", "Techne PR queue", NOW));
         l.save().unwrap();
         let (again, _) = Ledger::open(dir.0.clone(), NOW, TimeZone::UTC);
         assert_eq!(again.day().voices["s1"], "am_michael");
+        assert_eq!(again.day().labels["s1"], "Techne PR queue");
     }
 
     #[test]
