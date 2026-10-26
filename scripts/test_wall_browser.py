@@ -2285,6 +2285,116 @@ def queue_resizes_by_keyboard_and_remembers(wall):
     page.close()
 
 
+TEXT_STATE = """() => {
+  const c = document.querySelector('#queue .queue-content');
+  const body = document.querySelector('#queue .queue-body');
+  const q = document.getElementById('queue').getBoundingClientRect();
+  const inside = [...document.querySelectorAll('#queue .queue-tools button')].every((b) => {
+    const r = b.getBoundingClientRect();
+    return r.width > 0 && r.left >= q.left && r.right <= q.right;
+  });
+  const h = document.getElementById('queue-title').getBoundingClientRect();
+  const t = document.querySelector('#queue .queue-tools').getBoundingClientRect();
+  const apart = h.right <= t.left || h.bottom <= t.top;
+  return {
+    zoom: c.style.zoom,
+    reset: document.querySelector('#queue .queue-reset').textContent,
+    resetName: document.querySelector('#queue .queue-reset').getAttribute('aria-label'),
+    smallerOff: document.querySelector('#queue .queue-smaller').getAttribute('aria-disabled'),
+    largerOff: document.querySelector('#queue .queue-larger').getAttribute('aria-disabled'),
+    stored: localStorage.getItem('klepsydra.queue.text'),
+    cards: Math.round(document.querySelector('#wall .card .name').getBoundingClientRect().height * 10),
+    title: [Math.round(h.width), document.getElementById('queue-title').scrollWidth <= Math.ceil(h.width)],
+    apart,
+    share: Math.round(body.scrollTop / Math.max(1, body.scrollHeight - body.clientHeight) * 100),
+    hscroll: document.documentElement.scrollWidth > innerWidth || body.scrollWidth > body.clientWidth,
+    inside,
+  };
+}"""
+
+
+def queue_text_size(wall):
+    """A-/A+ and the percentage set the Queue text size from 75% to 200%;
+    Ctrl+= / Ctrl+- / Ctrl+0 act while the panel is open and not under
+    another dialog, Ctrl+wheel over the panel steps it, the cards never
+    change, and the size survives a reload."""
+    page = wall.open(1920, 1000, 8)
+    page.keyboard.press("Control+Equal")
+    closed = page.evaluate(TEXT_STATE)
+    wall.check(closed["zoom"] == "1" and closed["stored"] is None, "with the panel closed Ctrl+= changes nothing", closed)
+    page.click("#queue-open")
+    page.wait_for_selector("#queue .queue-content details")
+    page.wait_for_timeout(SETTLE_MS)
+    card_name = page.evaluate(TEXT_STATE)["cards"]  # docked: the wall has made room
+    page.keyboard.press("Control+Equal")
+    page.keyboard.press("Control+Equal")
+    up = page.evaluate(TEXT_STATE)
+    page.keyboard.press("Control+Minus")
+    down = page.evaluate(TEXT_STATE)["zoom"]
+    page.keyboard.press("Control+0")
+    reset = page.evaluate(TEXT_STATE)
+    wall.check(
+        up["zoom"] == "1.25" and up["reset"] == "125%" and up["resetName"] == "Reset text size, now 125%" and up["stored"] == "1.25"
+        and up["cards"] == card_name and down == "1.1" and reset["zoom"] == "1" and reset["stored"] == "1",
+        "Ctrl+= steps 110% then 125%, Ctrl+- back, Ctrl+0 resets; the cards keep their size",
+        [up, down, reset],
+    )
+    for _ in range(5):
+        page.click("#queue .queue-larger")
+    page.click("#queue .queue-larger", force=True)  # off at 200%: a press there does nothing
+    most = page.evaluate(TEXT_STATE)
+    wall.check(most["zoom"] == "2" and most["largerOff"] == "true" and most["smallerOff"] == "false" and not most["hscroll"], "A+ stops at 200% and turns off there; nothing scrolls sideways", most)
+    page.click("#queue .queue-reset")
+    for _ in range(3):
+        page.click("#queue .queue-smaller")
+    page.click("#queue .queue-smaller", force=True)
+    least = page.evaluate(TEXT_STATE)
+    wall.check(least["zoom"] == "0.75" and least["smallerOff"] == "true", "A- stops at 75%", least)
+    page.click("#queue .queue-reset")
+    box = page.locator("#queue .queue-content").bounding_box()
+    page.mouse.move(box["x"] + box["width"] / 2, box["y"] + 40)
+    page.keyboard.down("Control")
+    page.mouse.wheel(0, -100)
+    page.wait_for_timeout(150)
+    page.mouse.wheel(0, -100)
+    page.keyboard.up("Control")
+    page.wait_for_timeout(100)
+    wheeled = page.evaluate(TEXT_STATE)["zoom"]
+    page.mouse.wheel(0, 300)
+    page.wait_for_timeout(100)
+    plain = page.evaluate(TEXT_STATE)["zoom"]
+    wall.check(wheeled == "1.25" and plain == "1.25", "Ctrl+wheel over the panel steps a notch at a time; a plain wheel only scrolls", [wheeled, plain])
+    page.locator("#queue [role=separator]").focus()
+    page.keyboard.press("Home")
+    narrow = page.evaluate(TEXT_STATE)
+    wall.check(narrow["inside"] and narrow["apart"] and narrow["title"][1] and not narrow["hscroll"], "at its narrowest the header's buttons stay inside the panel, clear of the whole title", narrow)
+    page.evaluate("document.querySelectorAll('#queue details').forEach((d) => { d.open = true; })")
+    page.evaluate("(b => { b.scrollTop = (b.scrollHeight - b.clientHeight) / 2; })(document.querySelector('#queue .queue-body'))")
+    before = page.evaluate(TEXT_STATE)["share"]
+    page.keyboard.press("Control+Equal")  # a click would scroll the header into view
+    after = page.evaluate(TEXT_STATE)["share"]
+    wall.check(40 <= before <= 60 and abs(after - before) <= 3, "a size change keeps the reading position", [before, after])
+    page.click("#queue .queue-reset")
+    page.click("#queue .queue-larger")
+    page.click("#queue .queue-larger")
+    page.reload()
+    page.wait_for_selector("#queue[open] .queue-content details")
+    again = page.evaluate(TEXT_STATE)
+    wall.check(again["zoom"] == "1.25" and again["reset"] == "125%", "the size survives a reload", again)
+    open_drawer(page)
+    page.keyboard.press("Control+Equal")
+    under = page.evaluate(TEXT_STATE)["zoom"]
+    wall.check(under == "1.25", "under the Ledger dialog the keys leave the panel alone", under)
+    page.close()
+    page = wall.open(945, 1000, 8)
+    page.click("#queue-open")
+    page.wait_for_selector("#queue .queue-content details")
+    page.keyboard.press("Control+Equal")
+    modal = page.evaluate(TEXT_STATE)
+    wall.check(modal["zoom"] == "1.1" and modal["inside"], "as a dialog at 945 px the keys work and the buttons fit", modal)
+    page.close()
+
+
 def queue_renders_as_text_and_copies(wall):
     """The sample file renders with no link, image or script element; the
     HTML block and the javascript: link show as text; Copy puts a code block's
@@ -2609,6 +2719,7 @@ def main() -> int:
             landmarks,
             queue_docks_wide_and_is_a_dialog_narrow,
             queue_resizes_by_keyboard_and_remembers,
+            queue_text_size,
             queue_renders_as_text_and_copies,
             queue_follows_the_app,
             queue_copy_labels_and_failures,

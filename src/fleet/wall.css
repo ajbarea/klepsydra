@@ -905,8 +905,14 @@ body.queue-docked { padding-right: var(--queue-w); }
 .queue-resize:focus-visible { outline: 2px solid var(--card-focus); outline-offset: -2px; }
 .queue[data-mode="modal"] .queue-resize { display: none; }
 .queue-body { height: 100%; overflow-y: auto; display: flex; flex-direction: column; gap: 16px; padding: 22px 24px 32px; }
-.queue-head { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-7); }
-.queue-head > div { min-width: 0; }
+/* A narrow panel puts the tools on a line of their own under the title. */
+.queue-head { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: var(--space-4) var(--space-7); }
+.queue-head > div:first-child { min-width: 0; flex: 1 1 9rem; }
+.queue-tools { display: flex; justify-content: flex-end; gap: var(--space-5); flex: none; margin-left: auto; }
+.queue-text { display: flex; }
+.queue-text button { padding: 0 var(--space-4); font-variant-numeric: tabular-nums; }
+.queue-text button + button { margin-left: -1px; }
+.queue-reset { min-width: 5ch; }
 .queue-head h2 { font: 650 22px/1.2 var(--display); letter-spacing: -0.01em; }
 .queue-path { color: var(--text-dim); font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .queue-problem { padding: 10px 12px; border-left: 3px solid var(--tone-error); background: var(--card-quiet); border-radius: 0 8px 8px 0; }
