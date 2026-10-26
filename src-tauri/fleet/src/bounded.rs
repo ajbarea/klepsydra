@@ -1,5 +1,6 @@
 //! Reading a small text file another program writes: a regular file only,
-//! never a symlink, FIFO or folder, and never more than a cap.
+//! never a symlink (on Unix, even one swapped in after the check), FIFO or
+//! folder, and never more than a cap.
 
 use std::fs::{File, OpenOptions};
 use std::io::Read;
@@ -16,7 +17,7 @@ pub enum Refused {
     NotUtf8,
 }
 
-/// Open `path`. On Unix the open neither follows a symlink nor blocks on a
+/// Open `path`. On Unix the open does not follow a symlink or block on a
 /// FIFO swapped in after the type check. Windows opens what a swapped-in
 /// link points to: FILE_FLAG_OPEN_REPARSE_POINT would stop that, but it
 /// also opens a OneDrive placeholder (a Desktop synced on demand) without
@@ -141,8 +142,8 @@ mod tests {
         let (tx, rx) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
             let checked = refused(read_text(&fifo, 64));
-            // Opened directly, as a swap after the check would be, it neither
-            // blocks nor reads as a file.
+            // Opened directly, as a swap after the check would be, it does not
+            // block or read as a file.
             let held = open(&fifo).and_then(|f| f.metadata()).map(|m| m.is_file());
             let _ = tx.send((checked, held.ok()));
         });

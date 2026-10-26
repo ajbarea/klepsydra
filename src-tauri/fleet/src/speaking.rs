@@ -73,7 +73,7 @@ pub fn read(fleet: &Path) -> Found {
 }
 
 /// The regular file at `path` when it is at most `max` bytes, read through
-/// `bounded::read_text`, so a FIFO is never opened and a symlink never followed.
+/// `bounded::read_text`.
 pub fn read_small(path: &Path, max: u64) -> Found {
     match read_text(path, max) {
         Ok(text) => Found::Text(text),

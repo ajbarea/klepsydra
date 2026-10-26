@@ -5,7 +5,8 @@
 # "async" so Claude Code reads its output): while the wall's wrap-up request
 # is live and this session has not been asked, it hands Claude the wrap-up
 # instructions once, as additionalContext, so the turn continues with a
-# checkpoint. Otherwise, and on any error, it prints nothing and exits 0.
+# checkpoint (the hooks reference: a Stop hook's additionalContext continues
+# the conversation). Otherwise, and on any error, it prints nothing and exits 0.
 #
 # As `klepsydra-wrapup.sh ready SESSION` or `klepsydra-wrapup.sh blocked
 # SESSION REASON`, run by Claude at the end of that turn: it records the
@@ -75,8 +76,8 @@ listing_request() { # session
   request_id=$id request_until=$until
 }
 
-# Now by the clock that stamps files in the folder, which is the app's, the
-# one the request's times are by. Under WSL this session's clock drifts from
+# The current time by the clock that stamps files in the folder (the app's),
+# the one the request's times are by. Under WSL this session's clock drifts from
 # it after the host sleeps, so the request is never judged by this session's.
 folder_now() {
   local probe="$WRAP/.clock.$$.tmp" t

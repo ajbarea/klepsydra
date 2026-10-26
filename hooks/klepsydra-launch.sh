@@ -336,7 +336,7 @@ wrapup() { # socket pane pid start
   own_pane "$@"
   leave_modes
   mid_turn && fail "The session is mid-turn; it is asked when the turn ends."
-  # Ctrl+C clears a draft (Up brings it back); on an idle prompt it does nothing else.
+  # One Ctrl+C clears a draft (Up brings it back); on an idle prompt it does nothing else.
   keys C-c
   sleep 0.5
   run_command /klepsydra-wrapup

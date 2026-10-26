@@ -10,8 +10,8 @@ the compact one. A note on a compact card never covers its exchange. The ledger 
 chip fit the compact foot slot, and the ledger drawer opens, closes and gives
 focus back. Ending a session: the card's menu, the confirm dialog and the 5 s
 undo window run against a stubbed `window.__TAURI__` that records every invoke,
-and no single click or key, nor any run of them short of the full deliberate
-path, sends end_session. Wrapping up: the confirm's groups, each card's line
+and only the full deliberate path sends end_session, not a single click or key
+or any shorter run of them. Wrapping up: the confirm's groups, each card's line
 in both densities, the bar's count, Stop wrap-up and Safe to restart, and End
 all ready sessions… under the same rule as End. With no sessions, or only
 ended ones, the empty state stands in the wall's place, in view and
@@ -1276,7 +1276,7 @@ def launch_dir_follows_prefs(wall):
 
 
 def browser_hides_app_actions(wall):
-    """Outside the app neither Start nor the clear link shows: both need it."""
+    """Outside the app Start, the clear link and New stay hidden: each needs the app."""
     page = wall.browser.new_page(viewport={"width": 1280, "height": 800})
     page.goto(f"http://127.0.0.1:{wall.port}/src/wall.html?demo&ended")
     page.wait_for_function("document.getElementById('empty').checkVisibility()")

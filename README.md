@@ -168,7 +168,8 @@ For the gauge alone, keep `statusLine` and leave out `hooks`.
 For Wrap up (see [Wrapping up](#wrapping-up)), also copy its script and its
 skill, and register the script as a second `Stop` hook. Unlike the fleet
 hook it is not `async`: Claude Code reads what it prints, which is nothing
-unless the wall has asked for a wrap-up this session has not yet answered.
+unless the wall has asked for a wrap-up and this session has not yet been
+asked.
 
 ```bash
 cp hooks/klepsydra-wrapup.sh ~/.claude/ && chmod +x ~/.claude/klepsydra-wrapup.sh
@@ -585,9 +586,9 @@ On Windows, **Split** (beside **Ledger**; its full name is "Split with
 terminal") puts the wall on the
 left half of its monitor and the `fleet` Windows Terminal window (the one
 holding the "klepsydra sessions" tab) on the right half. The halves are of
-the work area, so the taskbar stays clear, and the windows' visible edges
-meet on the split line, and the terminal is stacked right under the wall so
-no other window covers its half. The fleet tab is selected in it. A maximized
+the work area, so the taskbar stays clear. The windows' visible edges meet
+on the split line, and the terminal is stacked right under the wall so no
+other window covers its half. The fleet tab is selected in it. A maximized
 or minimized window is first shown at its normal size without taking the
 focus; a terminal maximized and then minimized comes back at its normal size
 on the right, not maximized.
@@ -744,7 +745,7 @@ The chimes are built by `scripts/make-sounds.mjs`, which writes
 ### Fleet on your phone
 
 <!-- budget: 450 words -->
-The wall can follow you to the kitchen. With "Phone wall" ticked in the tray
+With "Phone wall" ticked in the tray
 menu, klepsydra serves a read-only copy of the wall on `127.0.0.1:8318`, and
 Tailscale Serve carries it to your phone over your tailnet. Unticked (the
 default), nothing listens.
@@ -762,7 +763,7 @@ default), nothing listens.
 
 Never use `tailscale funnel` for this: Funnel puts the wall on the open
 internet. The server refuses any request Funnel forwards, and any request
-whose Host is neither loopback nor a `*.ts.net` name.
+whose Host is not loopback or a `*.ts.net` name.
 
 On the phone the wall is one column of compact cards, needs-you first, under
 a tally that stays at the top. It updates as the desktop's does, over one

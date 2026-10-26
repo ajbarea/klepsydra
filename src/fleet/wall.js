@@ -71,7 +71,8 @@ clearEnded.addEventListener("click", () => {
   press(clearEnded, clearNote, () => clearAll(ids, tauri, (id) => cleared.add(id)), "Clearing…").then(() => paintEmpty(!empty.hidden));
 });
 // On the phone (the page came from the phone wall server) only the look and
-// the Remote Control link act: wall.css hides every other button there.
+// the Remote Control link act: wall.css hides every other button there, and
+// the phone server has no command route.
 document.documentElement.classList.toggle("served", served);
 if (served) navigator.serviceWorker?.register("/sw.js").catch(() => {});
 const linkNote = document.getElementById("link");
@@ -920,7 +921,8 @@ function startWrapup(ids) {
   );
 }
 
-// Offered while there is a ready card to end and none of them is ending yet.
+// Offered in the app while every live card is ready and klepsydra can end
+// at least one not already ending.
 const paintEndReady = () => {
   endReadyButton.hidden = !inTauri || readyToEnd().ids.length === 0;
 };

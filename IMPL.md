@@ -7,6 +7,11 @@ prompt label). Installed build: 1ad1405, deployed 10-25 21:48 (Wrap up and
 its Stop hook, empty state, Queue panel, phone wall). Not yet live: #89
 split mode and #93.
 
+## In flight
+- chore/deslop-since-10-23: comments, docstrings and docs prose in what
+  merged since 10-23 (behaviour unchanged; every suite and lint green).
+  Next: independent review (3 rounds max), merge, remove the worktree.
+
 ## Next
 1. #90: after every session ends under a wrap-up, the bar reads "0 of 0
    ready" and Safe to restart vanishes.

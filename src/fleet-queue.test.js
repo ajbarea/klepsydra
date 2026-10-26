@@ -240,7 +240,7 @@ test("the Needs you count agrees with the panel, whatever the markup", () => {
   }
 });
 
-test("a long Needs you list counts in well under a second", () => {
+test("a long Needs you list counts in under a second", () => {
   const text = "## Needs you\n\n" + "- a\n".repeat(65000);
   const started = performance.now();
   assert.equal(render(text).count, 65000);
