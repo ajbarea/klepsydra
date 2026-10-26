@@ -1,7 +1,7 @@
 [package]
 name = "klepsydra"
 version = "0.1.0"
-description = "Claude Code usage gauge, always on screen"
+description = "Claude Code usage gauge and fleet wall"
 edition = "2021"
 
 [workspace]

@@ -1,7 +1,8 @@
 # ROADMAP
 
 A Claude Code usage gauge that is always on screen, so the limit is readable at
-a glance instead of by running `/usage` in whichever terminal is in front.
+a glance instead of by running `/usage` in whichever terminal is in front, and
+a wall of every Claude Code session, the ones waiting on you first.
 
 ## Design constraint
 
