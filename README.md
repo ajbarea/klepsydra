@@ -4,7 +4,7 @@
 
 <h1 align="center">klepsydra</h1>
 
-<p align="center">Your Claude Code usage limit, always on screen.</p>
+<p align="center">Your Claude Code usage limit always on screen, and every session on one wall.</p>
 
 <p align="center">
   <a href="https://github.com/ajbarea/klepsydra/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/ajbarea/klepsydra/ci.yml?branch=main&label=CI" alt="CI"></a>
@@ -12,11 +12,20 @@
   <img src="https://img.shields.io/badge/platform-Windows%20%7C%20Linux-0078D4" alt="Platform: Windows | Linux">
 </p>
 
-A thin always-on-top bar showing how much of your Claude Code limit you have
-used, so you can see it without running `/usage` in whichever terminal happens
-to be in front. The bar fills blue to yellow to red as the window is consumed.
-With several Claude Code sessions open, a portrait for each sits beside the
-bar, and the ones waiting on you come first.
+<!-- budget: 160 words -->
+klepsydra is a thin always-on-top bar for Windows and Linux that shows how
+much of your Claude Code session and weekly limits you have used, so you see
+it without running `/usage` in whichever terminal is in front. The bar fills
+blue to yellow to red as a window is used up.
+
+Beside the bar sits a portrait for each Claude Code session, the ones waiting
+on you first. Click one to open the fleet wall: a card per session with its
+status, where it works and its last exchange, and buttons to jump to its
+terminal or end it. From the wall you can open the
+[ledger](#the-ledger) of tokens and blocked calls, read your to-do file in the
+[Queue panel](#queue-panel), [wrap up](#wrapping-up) every session before a
+restart, [split](#split-mode) the screen with the fleet terminal (Windows),
+and follow the wall [from your phone](#fleet-on-your-phone).
 
 ## Why "klepsydra"
 

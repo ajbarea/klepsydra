@@ -9,8 +9,10 @@ belong here.
 - kind: desktop application (always-on-top usage gauge). Public.
 - default_branch: main
 - description: a thin always-on-top bar showing how much of the Claude Code
-  rate-limit window has been used, fed by the `statusLine` hook rather than by
-  any API call
+  rate-limit windows has been used, fed by the `statusLine` hook rather than by
+  any API call, plus the fleet wall: a card per Claude Code session (fed by the
+  fleet hook), the token ledger (a local OTLP receiver), the Queue panel,
+  wrap-up, split mode and a read-only phone wall
 - language: JavaScript (frontend, `src/`), Rust (shell, `src-tauri/`), Bash
   (the two hooks and the build scripts)
 - toolchain: Tauri 2 + Cargo for the shell, Node's built-in test runner for the
