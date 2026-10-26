@@ -48,7 +48,7 @@ one the same way.
 > the rendering, lighting, framing and level of detail of the attached
 > reference portraits exactly.
 
-**Negative prompt (all four):**
+**Negative prompt (every brief):**
 
 > anime, large eyes, chibi, pastel colour wash, photorealistic, 3D render,
 > CGI, grimdark, blood, gore, armour, weapons, battle, text, watermark,
