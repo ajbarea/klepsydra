@@ -242,3 +242,34 @@ test("the model cap is named honestly and matches ledger.rs", async () => {
   const rust = readFileSync(new URL("../src-tauri/fleet/src/ledger.rs", import.meta.url), "utf8");
   assert.match(rust, new RegExp(`pub const MAX_MODELS: usize = ${MODEL_CAP};`));
 });
+
+test("three sessions sharing one home voice keep three rows, each named for its card", () => {
+  const t = (input) => ({ tokens: { input } });
+  // Launched from one folder with keryx muted: all three take that folder's home voice.
+  const voices = { techne: "af_heart", klep: "af_heart", orch: "af_heart" };
+  const homes = ["techne", "klep", "orch"];
+  const labels = new Map([["techne", "techne"], ["klep", "klepsydra"]]);
+  const sessions = [["techne", t(190)], ["klep", t(63)], ["orch", t(28)]];
+  const rows = tokensByCharacter(sessions, voices, CAST, { homes, labels });
+  assert.deepEqual(
+    rows.map((r) => [r.name, r.tokens]),
+    [["Cupid · techne", 190], ["Cupid · klepsydra", 63], ["Cupid · session orch", 28]],
+  );
+  assert.ok(rows.every((r) => r.accent === "#D55E00" && !r.other));
+  // A voice keryx held is the character itself: its sessions share one row.
+  assert.deepEqual(tokensByCharacter(sessions, voices, CAST).map((r) => [r.name, r.tokens]), [["Cupid", 281]]);
+  // A held session and a home-voiced one with the same voice stay apart.
+  const mixed = tokensByCharacter(sessions, voices, CAST, { homes: ["orch"], labels });
+  assert.deepEqual(mixed.map((r) => [r.name, r.tokens]), [["Cupid", 253], ["Cupid · session orch", 28]]);
+});
+
+test("characterOf names a home-voiced session for its card, and a held one for its character", () => {
+  const voices = { h: "af_heart", k: "af_heart" };
+  assert.equal(characterOf("h", voices, CAST, null, { homes: ["h"], label: "techne" }).name, "Cupid · techne");
+  assert.equal(characterOf("h", voices, CAST, null, { homes: ["h"] }).name, "Cupid · session h");
+  assert.equal(characterOf("k", voices, CAST, null, { homes: ["h"], label: "x" }).name, "Cupid");
+  // A home voice outside the cast names the session as before.
+  assert.equal(characterOf("o", { o: "am_onyx" }, CAST, null, { homes: ["o"], label: "x" }).name, "Onyx");
+  // home_voices of the wrong shape is ignored.
+  assert.equal(characterOf("h", voices, CAST, null, { homes: { h: true }, label: "x" }).name, "Cupid");
+});
