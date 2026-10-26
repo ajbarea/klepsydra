@@ -1,18 +1,18 @@
 # IMPL
 
-Repo resume state (2026-10-25). Main holds #82 Wrap up, #83 empty state,
-#88 Queue panel (#86), #91 phone wall (part of #52), #89 split mode (#32).
-None of these is deployed: the installed build is still 4bc0fb9 (10-22).
+Repo resume state (2026-10-25, late). Main holds #82 Wrap up, #83 empty
+state, #88 Queue panel (#86), #91 phone wall (part of #52), #89 split mode
+(#32), #93 ledger rows for shared home voices (#87) and #92 (portrait style
+prompt label). None of these is deployed: the installed build is still
+4bc0fb9 (10-22).
 
 ## Next
-1. #87: the ledger credits every session to one character when sessions
-   share a voice. Attribute by the card's character; test three sessions
-   sharing one voice.
-2. Queue item 17: AJ's shared portrait style prompt and negative prompt,
-   word for word, into `docs/characters/portrait-briefs.md` (docs-only PR;
-   text in the archived brief under `~/.local/state/fleet-orchestrator/archive/`).
-3. #90: after every session ends under a wrap-up, the bar reads "0 of 0
+1. #90: after every session ends under a wrap-up, the bar reads "0 of 0
    ready" and Safe to restart vanishes.
+2. Open question from #87: sessions launched from `~/ajsoftworks` while
+   keryx holds no voice all take that folder's home voice, so the wall shows
+   several cards of one character (the ledger now keeps their rows apart).
+   Whether the wall should tell them apart too is unfiled.
 
 ## Waits on AJ
 - Deploy (his yes): copy `hooks/klepsydra-wrapup.sh` and the updated
