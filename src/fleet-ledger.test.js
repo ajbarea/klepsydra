@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   MODEL_CAP, NAME_CAP, OTHER, PARTIAL_LABEL, costText, modelName, tokensByModel, activeTime, attributionName, cacheShare, chipLabel, compactNumber, compactPick, costLine, fullNumber,
-  characterOf, ledgerLine, receiptParts, receiptText, sumTotals, todaySessions, tokensByCharacter, topAttribution, totalTokens,
+  cardLabels, characterOf, ledgerLine, receiptParts, receiptText, sumTotals, todaySessions, tokensByCharacter, topAttribution, totalTokens,
 } from "./fleet/ledger.js";
 
 test("compactNumber reads at a glance and rounds up into the next unit", () => {
@@ -272,4 +272,14 @@ test("characterOf names a home-voiced session for its card, and a held one for i
   assert.equal(characterOf("o", { o: "am_onyx" }, CAST, null, { homes: ["o"], label: "x" }).name, "Onyx");
   // home_voices of the wrong shape is ignored.
   assert.equal(characterOf("h", voices, CAST, null, { homes: { h: true }, label: "x" }).name, "Cupid");
+});
+
+test("card labels gain the session's short id only where two cards would read alike", () => {
+  const got = cardLabels([["aaaaaaaa-1", "techne"], ["bbbbbbbb-2", "techne"], ["cccccccc-3", "papers"], ["dddddddd-4", null]]);
+  assert.deepEqual([...got], [
+    ["aaaaaaaa-1", "techne, aaaaaaaa"],
+    ["bbbbbbbb-2", "techne, bbbbbbbb"],
+    ["cccccccc-3", "papers"],
+    ["dddddddd-4", null],
+  ]);
 });

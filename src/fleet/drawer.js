@@ -3,7 +3,7 @@
 // figure is set as text; the only markup is built here from constants.
 import { identity } from "./model.js";
 import {
-  activeTime, cacheShare, characterOf, costLine, costText, fullNumber, modelName, plural, sumTotals, todaySessions, tokensByCharacter,
+  activeTime, cacheShare, cardLabels, characterOf, costLine, costText, fullNumber, modelName, plural, sumTotals, todaySessions, tokensByCharacter,
   tokensByModel, topAttribution, totalTokens,
 } from "./ledger.js";
 
@@ -117,8 +117,8 @@ export function createDrawer({ dialog, sessions, cast, fetchToday, home }) {
     const { day, receiver, guardrails, guardrails_total: total } = view;
     // Today's recorded voice names a session; the wall only when the day has none.
     const homes = day.home_voices;
-    const nameOf = (id) => characterOf(id, day.voices, cast, names.get(id), { homes, label: names.get(id)?.label })?.name;
-    const labels = new Map([...names].map(([id, n]) => [id, n.label]));
+    const labels = cardLabels([...names].map(([id, n]) => [id, n.label]));
+    const nameOf = (id) => characterOf(id, day.voices, cast, names.get(id), { homes, label: labels.get(id) })?.name;
     const everyone = todaySessions(day);
     const shown = todaySessions(day, filter);
     const day_ = sumTotals(shown.map(([, t]) => t));

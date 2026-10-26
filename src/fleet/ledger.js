@@ -169,6 +169,13 @@ export function characterOf(id, voices, cast, wall = null, { homes = null, label
   return { name: `${c.name} · ${label || `session ${id.slice(0, 8)}`}`, accent: castAccent(c), character: true, own: true };
 }
 
+/** Each card's label (`[id, label]`), with the session's short id added where two cards share one, so their rows read apart. */
+export function cardLabels(entries) {
+  const seen = new Map();
+  for (const [, label] of entries) if (label) seen.set(label, (seen.get(label) ?? 0) + 1);
+  return new Map(entries.map(([id, label]) => [id, label && seen.get(label) > 1 ? `${label}, ${id.slice(0, 8)}` : label]));
+}
+
 /**
  * Tokens by character: one row per character, largest first, each session
  * placed by `characterOf`, whether or not its card is still on the wall; a
