@@ -16,8 +16,9 @@ use http_body_util::combinators::BoxBody;
 use http_body_util::{BodyExt, Empty, Full};
 use hyper::body::{Body, Bytes, Frame, Incoming};
 use hyper::header::{
-    HeaderValue, ALLOW, CACHE_CONTROL, CONNECTION, CONTENT_LENGTH, CONTENT_SECURITY_POLICY,
-    CONTENT_TYPE, HOST, LOCATION, ORIGIN, REFERRER_POLICY, X_CONTENT_TYPE_OPTIONS,
+    HeaderValue, ACCEPT_RANGES, ALLOW, CACHE_CONTROL, CONNECTION, CONTENT_LENGTH, CONTENT_RANGE,
+    CONTENT_SECURITY_POLICY, CONTENT_TYPE, HOST, LOCATION, ORIGIN, RANGE, REFERRER_POLICY,
+    X_CONTENT_TYPE_OPTIONS,
 };
 use hyper::server::conn::http1;
 use hyper::service::service_fn;
@@ -455,13 +456,7 @@ fn handle(req: &Request<Incoming>, s: &Shared) -> Reply {
         // Only a card the phone shows with a clip: what its wall would offer.
         Route::Clip(id) => match s.snapshots.borrow().clone() {
             Some(json) if offers_clip(&json, &id) => match (s.clips)(&id) {
-                Some(bytes) => answer(
-                    StatusCode::OK,
-                    Some("audio/wav"),
-                    "no-store",
-                    Some(Bytes::from(bytes)),
-                    only_head,
-                ),
+                Some(bytes) => clip(Bytes::from(bytes), header(RANGE), only_head),
                 None => refuse(StatusCode::NOT_FOUND),
             },
             _ => refuse(StatusCode::NOT_FOUND),
@@ -490,6 +485,74 @@ fn handle(req: &Request<Incoming>, s: &Shared) -> Reply {
             r
         }
     }
+}
+
+/// The bytes a `Range` header asks of a body `len` long, as an inclusive
+/// pair: `None` for the whole body (no header, or one this server does not
+/// split, such as several ranges), `Err` for a range outside it. Safari asks
+/// for media in ranges and plays nothing from a server that answers 200.
+fn byte_range(header: Option<&str>, len: usize) -> Result<Option<(usize, usize)>, ()> {
+    let Some(spec) = header.and_then(|h| h.trim().strip_prefix("bytes=")) else {
+        return Ok(None);
+    };
+    if spec.contains(',') {
+        return Ok(None);
+    }
+    let (from, to) = spec.split_once('-').ok_or(())?;
+    let num = |s: &str| s.trim().parse::<usize>().map_err(|_| ());
+    let (start, end) = match (from.trim(), to.trim()) {
+        ("", "") => return Err(()),
+        ("", last) => {
+            let n = num(last)?;
+            if n == 0 {
+                return Err(());
+            }
+            (len.saturating_sub(n), len.checked_sub(1).ok_or(())?)
+        }
+        (first, "") => (num(first)?, len.checked_sub(1).ok_or(())?),
+        (first, last) => (num(first)?, num(last)?.min(len.saturating_sub(1))),
+    };
+    if start >= len || start > end {
+        return Err(());
+    }
+    Ok(Some((start, end)))
+}
+
+/// A reply clip, whole or the range asked for.
+fn clip(bytes: Bytes, range: Option<&str>, head: bool) -> Reply {
+    let len = bytes.len();
+    let mut r = match byte_range(range, len) {
+        Ok(None) => answer(
+            StatusCode::OK,
+            Some("audio/wav"),
+            "no-store",
+            Some(bytes),
+            head,
+        ),
+        Ok(Some((start, end))) => {
+            let mut r = answer(
+                StatusCode::PARTIAL_CONTENT,
+                Some("audio/wav"),
+                "no-store",
+                Some(bytes.slice(start..=end)),
+                head,
+            );
+            if let Ok(v) = HeaderValue::from_str(&format!("bytes {start}-{end}/{len}")) {
+                r.headers_mut().insert(CONTENT_RANGE, v);
+            }
+            r
+        }
+        Err(()) => {
+            let mut r = refuse(StatusCode::RANGE_NOT_SATISFIABLE);
+            if let Ok(v) = HeaderValue::from_str(&format!("bytes */{len}")) {
+                r.headers_mut().insert(CONTENT_RANGE, v);
+            }
+            r
+        }
+    };
+    r.headers_mut()
+        .insert(ACCEPT_RANGES, HeaderValue::from_static("bytes"));
+    r
 }
 
 /// Whether the phone's snapshot `json` shows session `id` with a reply clip.
@@ -1293,6 +1356,85 @@ mod tests {
             404,
             "its card has left the wall"
         );
+    }
+
+    #[test]
+    fn a_clip_is_sent_in_the_ranges_safari_asks_for() {
+        let p = serve(QUICK);
+        let addr = p.server.addr();
+        p.server.publish(&json!({"sessions": [
+            {"session_id": CLIP_ID, "status": "done", "status_at": 1, "reply_at": 5},
+        ]}));
+        let path = format!("/audio/{CLIP_ID}");
+        let len = CLIP.len();
+        let (code, headers, body) = get(addr, "GET", &path, "Range: bytes=0-1\r\n");
+        let lower = headers.to_ascii_lowercase();
+        assert_eq!((code, body.as_slice()), (206, &CLIP[0..2]));
+        assert!(
+            lower.contains(&format!("content-range: bytes 0-1/{len}")),
+            "{headers}"
+        );
+        assert!(lower.contains("accept-ranges: bytes"), "{headers}");
+        assert!(lower.contains("content-length: 2"), "{headers}");
+        let (code, _, body) = get(addr, "GET", &path, "Range: bytes=4-\r\n");
+        assert_eq!((code, body.as_slice()), (206, &CLIP[4..]));
+        let (code, _, body) = get(addr, "GET", &path, "Range: bytes=-3\r\n");
+        assert_eq!((code, body.as_slice()), (206, &CLIP[len - 3..]));
+        let (code, headers, body) = get(addr, "GET", &path, &format!("Range: bytes={len}-\r\n"));
+        assert_eq!((code, body.len()), (416, 0));
+        assert!(
+            headers
+                .to_ascii_lowercase()
+                .contains(&format!("content-range: bytes */{len}")),
+            "{headers}"
+        );
+        let (code, headers, body) = get(addr, "GET", &path, "");
+        assert_eq!((code, body.len()), (200, len));
+        assert!(
+            headers
+                .to_ascii_lowercase()
+                .contains("accept-ranges: bytes"),
+            "{headers}"
+        );
+    }
+
+    #[test]
+    fn byte_ranges_parse_as_rfc_9110_reads_them() {
+        assert_eq!(byte_range(None, 10), Ok(None));
+        assert_eq!(byte_range(Some("bytes=0-1"), 10), Ok(Some((0, 1))));
+        assert_eq!(byte_range(Some("bytes=2-"), 10), Ok(Some((2, 9))));
+        assert_eq!(byte_range(Some("bytes=-4"), 10), Ok(Some((6, 9))));
+        assert_eq!(
+            byte_range(Some("bytes=-40"), 10),
+            Ok(Some((0, 9))),
+            "a suffix longer than the body is all of it"
+        );
+        assert_eq!(
+            byte_range(Some("bytes=5-99"), 10),
+            Ok(Some((5, 9))),
+            "an end past the body stops at it"
+        );
+        assert_eq!(
+            byte_range(Some("bytes=0-1,4-5"), 10),
+            Ok(None),
+            "several ranges: the whole body"
+        );
+        assert_eq!(
+            byte_range(Some("items=0-1"), 10),
+            Ok(None),
+            "another unit is ignored"
+        );
+        for bad in [
+            "bytes=10-",
+            "bytes=5-2",
+            "bytes=-0",
+            "bytes=-",
+            "bytes=a-b",
+            "bytes=1",
+        ] {
+            assert_eq!(byte_range(Some(bad), 10), Err(()), "{bad}");
+        }
+        assert_eq!(byte_range(Some("bytes=0-"), 0), Err(()), "nothing to send");
     }
 
     #[test]

@@ -296,8 +296,11 @@ test("only Ping and a card's reply button make a sound", () => {
   assert.equal(replay.match(/\.play\(/g).length, 1, "one play call");
   const sources = [...replay.matchAll(/audio\.src = ([^;]+);/g)].map((m) => m[1]);
   assert.deepEqual(sources, ["mine.url", "clipUrl(id, at)"], "it plays the clip reply_clip read, or the phone server's");
+  assert.ok(!/setAttribute\(\s*["']src/.test(replay) && !/\.srcObject\b/.test(replay), "no other way to a source");
   assert.match(replay, /mine\.url = objectUrl\(new Blob\(\[bytes\], \{ type: "audio\/wav" \}\)\);/);
   assert.match(replay, /await invoke\("reply_clip", \{ id \}\)/);
+  const phone = replay.slice(replay.indexOf("} else {"), replay.indexOf("await audio.play()"));
+  assert.ok(phone.includes("audio.src = clipUrl(id, at);") && !/\bawait\b/.test(phone.replace(/\/\/.*$/gm, "")), "on the phone play() runs inside the press, no await before it");
   const wall = read("src/fleet/wall.js");
   assert.equal(wall.match(/replayer\.toggle\(/g).length, 1, "it plays only from a press of a card's play button");
   assert.match(wall, /const play = e\.target\.closest\("\.play"\);\n\s*if \(play\) \{\n[^}]*replayer\.toggle\(/);

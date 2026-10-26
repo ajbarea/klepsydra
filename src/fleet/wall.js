@@ -261,7 +261,6 @@ function paint(el, c) {
   setOff(menuButton, ender.pending(c.id)); // one pending end per card
 }
 
-// The receipt, the partial mark and the guardrail chip share one line, hidden when all are empty.
 // A card's play button for keryx's latest spoken reply: shown only with a
 // clip, on the desktop and the phone alike; Stop while it plays.
 const replayer = createReplayer({
@@ -285,6 +284,7 @@ function paintPlay(el, c) {
   el.querySelector(".reply-line").hidden = c.clip === null && !c.reply;
 }
 
+// The receipt, the partial mark and the guardrail chip share one line, hidden when all are empty.
 function paintLedger(el, c) {
   const line = el.querySelector(".ledger-line");
   line.hidden = !c.ledger;

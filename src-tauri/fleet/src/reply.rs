@@ -10,8 +10,10 @@ use std::time::UNIX_EPOCH;
 use crate::session::is_session_id;
 
 pub const FOLDER: &str = "replies";
-/// A clip larger than this is not read: ten minutes of keryx's 24 kHz mono.
-pub const MAX_BYTES: u64 = 32 * 1024 * 1024;
+/// A clip larger than this is not read: about 87 s of keryx's 24 kHz 16-bit
+/// mono, past any spoken summary. It bounds what one phone request holds
+/// and how long the phone server's one thread spends reading.
+pub const MAX_BYTES: u64 = 8 * 1024 * 1024;
 /// A RIFF/WAVE header alone, with no sound after it.
 const HEADER_BYTES: u64 = 44;
 
