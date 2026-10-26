@@ -62,14 +62,14 @@ STOPPED_TTL=60
 # and a path outside any repo by its own name.
 git_where() { # path
   local here=${1%/} folder dotgit link gitdir common main
-  where_repo="" where_worktree="" where_branch="" where_bare=0
+  where_repo="" where_worktree="" where_branch="" where_git="" where_bare=0
   [[ -n $here ]] || here=/
   if [[ $here != /* ]]; then where_repo=${here##*/} where_bare=1; return; fi
   folder=$here
   while :; do
     dotgit=$folder/.git
     if [[ -d $dotgit ]]; then
-      where_repo=${folder##*/}
+      where_repo=${folder##*/} where_git=$dotgit
       branch_of "$dotgit"
       return
     elif [[ -f $dotgit ]]; then
@@ -93,6 +93,7 @@ git_where() { # path
           where_worktree=${folder##*/}
         fi
       fi
+      where_git=$gitdir
       branch_of "$gitdir"
       return
     fi
@@ -177,16 +178,19 @@ holder_voice() { # pid start
   jq -r --arg h "$1:$2" '.holders[$h].voice // empty | strings' "$VOICES" 2>/dev/null
 }
 
-# The voice keryx remembers for repo `source`, the one keryx hands a new
-# terminal there, until it forgets a repo unheard for FORGET_SECONDS (keryx's
-# own constant); else nothing. A muted keryx holds no new terminal, so a
-# session takes its repo's voice from here.
+# The voice keryx remembers for each repo, the one keryx hands a new terminal
+# there, as {repo: voice}, leaving out a repo unheard for FORGET_SECONDS
+# (keryx's own constant); {} without keryx. A muted keryx holds no new
+# terminal, so a session takes a repo's voice from here.
 FORGET_SECONDS=$((90 * 24 * 3600))
-home_voice() { # source now
-  [[ -n $1 && -n $VOICES && -r $VOICES ]] || return 0
-  jq -r --arg s "$1" --argjson now "$2" --argjson within "$FORGET_SECONDS" '
-    .homes[$s] | select(type == "object" and (.seen | type) == "number" and $now - .seen <= $within)
-    | .voice // empty | strings' "$VOICES" 2>/dev/null
+home_voices() { # now
+  local homes=""
+  [[ -n $VOICES && -r $VOICES ]] && homes=$(jq -c --argjson now "$1" --argjson within "$FORGET_SECONDS" '
+    .homes | if type == "object" then . else {} end
+    | with_entries(select(.value | type == "object" and (.seen | type) == "number" and $now - .seen <= $within
+        and (.voice | type) == "string" and .voice != "") | .value = .value.voice)' "$VOICES" 2>/dev/null)
+  [[ $homes == \{* ]] || homes='{}'
+  printf '%s' "$homes"
 }
 
 # Whether the Claude Code process recorded as `pid start` still runs. A zombie
@@ -471,25 +475,38 @@ def notified: if type == "string" then [scan("<task-notification>[\\s\\S]*?</tas
       elif $fresh then null
       else .remote_url | rc_ok end)
   | if .remote_url == null then del(.remote_url) else . end
-  # A hold always applies; a repo's home voice only to a session with no voice
-  # yet, so a face never follows the cwd. Files from before voice_from held.
-  | .voice_from = (.voice_from // (if .voice != null then "hold" else null end))
-  | if ($voice | text) == null or ($voice_from == "home" and .voice != null) then .
-    else .voice = $voice | .voice_from = $voice_from end
-
-  # Where: the last edit's repo, or the cwd's until something is edited.
-  | (if $repo != "" and ($by == "edit" or .where == null or .where.by == "cwd")
+  # Where: the last edit's repo, or the cwd's until something is edited, or
+  # once the edited checkout is gone (a removed worktree, its branch with it).
+  # `git` is the checkout's git dir, kept only to tell that it is gone.
+  | (if $repo != "" and ($by == "edit" or .where == null or .where.by == "cwd" or $where_gone)
      then {repo: $repo, worktree: ($worktree | text), branch: ($branch | text)}
      else null end) as $w
   | if $w == null then .
-    elif .where != null and (.where | {repo, worktree, branch}) == $w then .where.by = (if $by == "edit" then "edit" else .where.by end)
+    elif .where != null and (.where | {repo, worktree, branch}) == $w
+    then .where.by = (if $by == "edit" then "edit" else .where.by end) | .where.git = ($git | text)
     else
       (if .where != null and .where.repo != $w.repo
        then .touched = ([{repo: .where.repo, at: $now}]
                         + (.touched | map(select(.repo != $s.where.repo and .repo != $w.repo))))[0:6]
        else . end)
-      | .where = $w + {by: $by, at: $now}
+      | .where = $w + {by: $by, at: $now, git: ($git | text)}
     end
+  | if .where.git == null then del(.where.git) else . end
+
+  # A hold always applies. Without one a session takes a repo's home voice:
+  # the repo it works in, else the one it started in, and the home of each
+  # repo it then edits in, so agents launched from one folder read apart. A
+  # face never follows the cwd alone. Files from before voice_from held.
+  | .voice_from = (.voice_from // (if .voice != null then "hold" else null end))
+  | ($homes[.where.repo // ""] | text) as $here
+  | ($homes[$cwd_repo] | text) as $launch
+  | if ($voice | text) != null then .voice = $voice | .voice_from = "hold" | del(.voice_repo)
+    elif .voice == null and ($here // $launch) != null
+    then .voice = ($here // $launch) | .voice_from = "home"
+      | .voice_repo = (if $here != null then .where.repo else $cwd_repo end)
+    elif .voice_from == "home" and .where.by == "edit" and $here != null and .voice_repo != .where.repo
+    then .voice = $here | .voice_repo = .where.repo
+    else . end
 
   # Background work: one entry per subagent or background shell still running,
   # so a turn that ends with work out stays working. An absent field is none.
@@ -680,7 +697,7 @@ colour_window() { # voice
 }
 
 main() {
-  local input fields session event cwd edited transcript now file old new lock voice="" voice_from="" cwd_repo by=cwd remote=""
+  local input fields session event cwd edited transcript now file old new lock voice="" cwd_repo by=cwd remote="" homes='{}' old_git where_gone=false
   input=$(cat)
   fields=$(printf '%s' "$input" | jq -r '
     def s: if type == "string" then gsub("[\u001f\n]"; " ") else "" end;
@@ -705,12 +722,7 @@ main() {
   if claude_ancestor "${KLEPSYDRA_PID:-$$}"; then
     voice=$(holder_voice "$found_pid" "$found_start") || voice=""
   fi
-  if [[ -n $voice ]]; then
-    voice_from=hold
-  else
-    voice=$(home_voice "$cwd_repo" "$now") || voice=""
-    if [[ -n $voice ]]; then voice_from=home; fi
-  fi
+  [[ -n $voice ]] || homes=$(home_voices "$now")
 
   host_facts
   tmux_facts
@@ -725,11 +737,13 @@ main() {
   file=$fleet/$session.json
   old=""
   [[ -f $file ]] && { old=$(<"$file"); } 2>/dev/null
+  old_git=$(jq -r '.where.git | strings' <<<"$old" 2>/dev/null) || old_git=""
+  [[ $old_git == /* && ! -e $old_git ]] && where_gone=true
   new=$(printf '%s' "$input" | jq -c --arg old "$old" --argjson now "$now" --argjson chars "$PROMPT_CHARS" --argjson bg_max "$BACKGROUND_MAX" --argjson stopped_ttl "$STOPPED_TTL" \
     --arg repo "$where_repo" --arg worktree "$where_worktree" --arg branch "$where_branch" \
-    --arg by "$by" \
+    --arg git "$where_git" --argjson where_gone "$where_gone" --arg by "$by" \
     --arg tmux_socket "$tmux_socket" --arg tmux_pane "$tmux_pane" --arg boot "$host_boot" --arg distro "$host_distro" \
-    --arg voice "$voice" --arg voice_from "$voice_from" --arg pid "$found_pid" --arg start "$found_start" --arg remote "$remote" \
+    --arg voice "$voice" --argjson homes "$homes" --arg cwd_repo "$cwd_repo" --arg pid "$found_pid" --arg start "$found_start" --arg remote "$remote" \
     "$APPLY" 2>/dev/null) || new=""
   [[ -n $new ]] && write_atomic "$file" "$new"
   # Only a start, or a changed voice, touches the window.

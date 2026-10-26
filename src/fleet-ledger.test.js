@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   MODEL_CAP, NAME_CAP, OTHER, PARTIAL_LABEL, costText, modelName, tokensByModel, activeTime, attributionName, cacheShare, chipLabel, compactNumber, compactPick, costLine, fullNumber,
-  cardLabels, characterOf, ledgerLine, receiptParts, receiptText, sumTotals, todaySessions, tokensByCharacter, topAttribution, totalTokens,
+  cardLabels, characterOf, ledgerLine, rowLabels, receiptParts, receiptText, sumTotals, todaySessions, tokensByCharacter, topAttribution, totalTokens,
 } from "./fleet/ledger.js";
 
 test("compactNumber reads at a glance and rounds up into the next unit", () => {
@@ -282,4 +282,18 @@ test("card labels gain the session's short id only where two cards would read al
     ["cccccccc-3", "papers"],
     ["dddddddd-4", null],
   ]);
+});
+
+test("a card gone from the wall keeps the label today's file recorded; a card on the wall wins", () => {
+  const recorded = { "aaaaaaaa-1": "Techne PR queue", "bbbbbbbb-2": "old title", "cccccccc-3": "", "dddddddd-4": 7, __proto__: null };
+  const got = rowLabels([["bbbbbbbb-2", "Sphragis chain K"], ["eeeeeeee-5", null]], recorded);
+  assert.equal(got.get("aaaaaaaa-1"), "Techne PR queue", "gone from the wall");
+  assert.equal(got.get("bbbbbbbb-2"), "Sphragis chain K", "the card's label wins");
+  assert.equal(got.get("cccccccc-3"), undefined, "an empty label is none");
+  assert.equal(got.get("dddddddd-4"), undefined, "a label that is not text is none");
+  assert.equal(got.get("eeeeeeee-5"), null);
+  assert.equal(rowLabels([["eeeeeeee-5", null]], { "eeeeeeee-5": "pharos" }).get("eeeeeeee-5"), "pharos", "a card with no label takes the recorded one");
+  assert.equal(rowLabels([], null).size, 0, "a day file from before labels");
+  const twins = rowLabels([["aaaaaaaa-1", "techne"]], { "bbbbbbbb-2": "techne" });
+  assert.deepEqual([...twins.values()], ["techne, aaaaaaaa", "techne, bbbbbbbb"], "a recorded label shared with a card still reads apart");
 });

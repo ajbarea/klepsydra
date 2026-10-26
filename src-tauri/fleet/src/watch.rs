@@ -216,6 +216,11 @@ impl Reader {
                 if let Some(&(voice, home)) = voices.get(v.session_id.as_str()) {
                     noted |= l.note_voice(&v.session_id, voice, home, t);
                 }
+                // The wall's label for the card (drawer.js `who`).
+                let label = v.name.as_deref().filter(|n| !n.is_empty());
+                if let Some(label) = label.or(v.place.as_ref().map(|p| p.repo.as_str())) {
+                    noted |= l.note_label(&v.session_id, label, t);
+                }
                 v.ledger = l.session(&v.session_id).cloned();
                 // Alive from its start to its end, or to now while it runs.
                 let started = started.get(v.session_id.as_str()).copied().flatten();
@@ -232,7 +237,7 @@ impl Reader {
                 if let Err(e) = l.save() {
                     broken.push(Problem {
                         file: "ledger".into(),
-                        what: format!("voice not saved: {e}"),
+                        what: format!("voice or label not saved: {e}"),
                     });
                 }
             }
@@ -696,6 +701,40 @@ mod tests {
         assert_eq!(next.sessions[0].ledger.as_ref().unwrap().commits, 2);
         let json = serde_json::to_value(&next).unwrap();
         assert_eq!(json["sessions"][0]["ledger"]["commits"], 2);
+    }
+
+    #[test]
+    fn the_ledger_keeps_each_cards_label_its_name_else_its_repo() {
+        use crate::ledger::Ledger;
+        use std::sync::{Arc, Mutex};
+        let root = Scratch::new("ledger-labels");
+        std::fs::create_dir_all(root.0.join("fleet")).unwrap();
+        root.write(&format!("fleet/{A}.json"), &session(A, "working"));
+        root.write(
+            &format!("fleet/{A}.beat"),
+            "Techne PR queue resume\t179235300\n",
+        );
+        root.write(
+            &format!("fleet/{B}.json"),
+            &format!(
+                r#"{{"v":1,"session_id":"{B}","state":"done","state_at":1700000000,"where":{{"repo":"pharos","branch":"main","by":"edit","at":1700000000}}}}"#
+            ),
+        );
+        let t = unix_now();
+        let ledger = Arc::new(Mutex::new(Ledger::in_memory(t)));
+        let ns = (t as u64 * 1_000_000_000).to_string();
+        for id in [A, B] {
+            let export = serde_json::json!({"resourceMetrics":[{"scopeMetrics":[{"metrics":[{"name":"claude_code.commit.count","sum":{"aggregationTemporality":1,"dataPoints":[{"attributes":[{"key":"session.id","value":{"stringValue":id}}],"timeUnixNano":ns,"asDouble":1}]}}]}]}]});
+            ledger
+                .lock()
+                .unwrap()
+                .record_metrics(&crate::otel::metrics(&export), t);
+        }
+        let mut r = Reader::new(&root.0).with_ledger(ledger.clone());
+        r.step(Duration::ZERO, || t).0.unwrap();
+        let l = ledger.lock().unwrap();
+        assert_eq!(l.day().labels[A], "Techne PR queue resume");
+        assert_eq!(l.day().labels[B], "pharos");
     }
 
     #[test]

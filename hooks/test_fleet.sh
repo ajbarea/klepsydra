@@ -339,6 +339,55 @@ fire user-prompt.json ".session_id = \"$H\""
 check "a voice from before voice_from counts as held" "$(hfield '[.voice, .voice_from]')" '["am_michael","hold"]'
 rm -f "$hfile" "$work/voices.json"
 
+echo "home voice follows the repo a session edits"
+# Agents launched from one folder that holds no repo, while keryx holds none
+# of them, each read as the repo they work in.
+W=33333333-4444-4555-8666-777777777777
+wfile="$dir/fleet/$W.json"
+wfield() { jq -c "$1" "$wfile"; }
+wfire() { fire "$1" ".session_id = \"$W\" | .cwd = \"${3:-$repos/loose/notes}\" | ${2:-.}"; }
+homes=$(printf '"notes":{"voice":"am_michael","seen":%s},"ideas":{"voice":"af_sarah","seen":%s},"subsrc":{"voice":"bf_isabella","seen":%s}' $((now - 60)) $((now - 60)) $((now - 60)))
+printf '{"homes":{%s}}\n' "$homes" >"$work/voices.json"
+wfire session-start.json
+check "launched outside any repo: that folder's home voice" "$(wfield '[.voice, .voice_from, .voice_repo]')" '["am_michael","home","notes"]'
+wfire post-tool-edit.json ".tool_input.file_path = \"$repos/ideas/README.md\""
+check "an edit in a repo with a home takes its voice" "$(wfield '[.voice, .voice_from, .voice_repo]')" '["af_sarah","home","ideas"]'
+wfire user-prompt.json . "$repos/subsrc"
+check "a cd alone never moves the face" "$(wfield '[.voice, .voice_repo]')" '["af_sarah","ideas"]'
+wfire post-tool-edit.json ".tool_input.file_path = \"$repos/klepsydra/x.rs\""
+check "a repo with no home keeps the face" "$(wfield '[.voice, .voice_repo, .where.repo]')" '["af_sarah","ideas","klepsydra"]'
+wfire post-tool-edit.json ".tool_input.file_path = \"$repos/subsrc/x.rs\""
+check "the next repo with a home takes its voice" "$(wfield '[.voice, .voice_repo]')" '["bf_isabella","subsrc"]'
+printf '{"homes":{%s},"holders":{"500:8717628":{"voice":"am_adam","seen":1}}}\n' "$homes" >"$work/voices.json"
+wfire post-tool-bash.json
+check "a hold wins and drops the home's repo" "$(wfield '[.voice, .voice_from, .voice_repo]')" '["am_adam","hold",null]'
+printf '{"homes":{%s}}\n' "$homes" >"$work/voices.json"
+wfire post-tool-edit.json ".tool_input.file_path = \"$repos/ideas/README.md\""
+check "a held face never follows an edit" "$(wfield '[.voice, .voice_from]')" '["am_adam","hold"]'
+rm -f "$wfile"
+wfire session-start.json . "$repos/klepsydra"
+check "started in a repo with no home: no voice" "$(wfield .voice)" "null"
+wfire post-tool-edit.json ".tool_input.file_path = \"$repos/ideas/README.md\"" "$repos/klepsydra"
+check "until it edits in one that has a home" "$(wfield '[.voice, .voice_from, .voice_repo]')" '["af_sarah","home","ideas"]'
+rm -f "$wfile" "$work/voices.json"
+
+echo "a removed worktree"
+wfire session-start.json
+g -C "$repos/ideas" worktree add -q -b feat/gone "$repos/ideas-gone"
+wfire post-tool-edit.json ".tool_input.file_path = \"$repos/ideas-gone/f.md\""
+check "an edit in a worktree" "$(wfield '.where | [.repo, .worktree, .branch, .by]')" '["ideas","ideas-gone","feat/gone","edit"]'
+check "its git dir is kept to tell when it is gone" "$(wfield .where.git)" "\"$repos/ideas/.git/worktrees/ideas-gone\""
+wfire user-prompt.json
+check "while it stands, where stays" "$(wfield '.where | [.repo, .worktree, .branch, .by]')" '["ideas","ideas-gone","feat/gone","edit"]'
+g -C "$repos/ideas" worktree remove "$repos/ideas-gone" && g -C "$repos/ideas" branch -q -D feat/gone
+now=$((now + 1)) wfire user-prompt.json
+check "once removed, where falls back to the cwd's" "$(wfield '.where | [.repo, .worktree, .branch, .by]')" '["notes",null,null,"cwd"]'
+check "the removed place is touched" "$(wfield '.touched[0].repo')" '"ideas"'
+check "a folder outside any repo keeps no git dir" "$(wfield '.where | has("git")')" "false"
+wfire post-tool-edit.json ".tool_input.file_path = \"$repos/klepsydra/x.rs\""
+check "a main checkout's git dir" "$(wfield .where.git)" "\"$repos/klepsydra/.git\""
+rm -f "$wfile"
+
 echo "lifecycle"
 now=1792353300
 fire session-end.json

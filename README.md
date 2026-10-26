@@ -443,8 +443,9 @@ an error count only when one exists. Each card shows:
 - under where it works, what is out ("2 agents, 1 shell, 1 task") and, once the turn
   has ended with that work still running, "prompt free": the session takes a
   new prompt meanwhile;
-- the session's name, where it works now (repo, worktree, branch chip) and the
-  other repos it touched;
+- the session's name, where it works now (repo, worktree, branch chip: the
+  repo of its last edit, else its folder's, and its folder's again once that
+  worktree is removed) and the other repos it touched;
 - for a session that needs you, a line saying what it waits for;
 - the last prompt in a quoted block and the full reply under it.
 
@@ -671,9 +672,12 @@ pale gold, verdigris) picked by the voice, so two voices with one initial
 usually differ. A session without keryx is named by its session, else its
 folder, and its metal is picked by its session id.
 
-While keryx is muted (`/keryx off`) it holds no new terminal, so a new session
-takes the voice keryx remembers for its repo and the cast stays on screen. The
-session keeps that voice as it moves between repos.
+While keryx is muted (`/keryx off`) it holds no new terminal, so a session
+takes the voice keryx remembers for a repo and the cast stays on screen: the
+repo it starts in at first, then, once it edits files in a repo keryx knows,
+that repo's. So agents launched from one folder read as the repos they work
+in. Changing folder alone never changes the voice, and a voice keryx holds
+for the terminal always wins.
 
 Sessions sharing a voice show its face by claim: a session that has not ended
 before one that has, then a voice keryx held before a repo's, then the first
@@ -895,10 +899,11 @@ parts. A chip such as "3 blocked" counts the tool calls a hook or a
 permission rule turned down in that session, and opens the drawer for it. The
 **Ledger** button in the header opens the drawer for every session: today's
 totals, tokens per character (by the voice in each session's own fleet file
-when it was first seen, or the held voice that later replaces a repo's home
-voice as on the card, written to the day file at once, so a character keeps
-its tokens after its card is cleared and sessions sharing a voice all count
-for it; every session with no cast character is one "Other sessions" row,
+when it was first seen, or the voice that later replaces a repo's home voice
+as on the card, written to the day file at once, so a character keeps its
+tokens after its card is cleared and sessions sharing a held voice all count
+for it; a session on a repo's home voice keeps a row of its own, named for its
+card, and the day file keeps that name once the card is gone; every session with no cast character is one "Other sessions" row,
 whose tooltip counts the sessions with no voice and those whose voice is
 outside the cast), tokens by skill, plugin and MCP server, the
 tokens by model, the list of blocked tool calls (each named by the same
