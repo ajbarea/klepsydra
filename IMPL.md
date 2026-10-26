@@ -10,7 +10,7 @@ split mode and #93.
 ## In flight
 - chore/deslop-since-10-23: comments, docstrings and docs prose in what
   merged since 10-23 (behaviour unchanged; every suite and lint green).
-  Next: independent review (3 rounds max), merge, remove the worktree.
+  PR #96; review round 1 fixed. Next: round 2 (3 max), merge, remove the worktree.
 
 ## Next
 1. #90: after every session ends under a wrap-up, the bar reads "0 of 0

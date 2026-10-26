@@ -71,8 +71,7 @@ clearEnded.addEventListener("click", () => {
   press(clearEnded, clearNote, () => clearAll(ids, tauri, (id) => cleared.add(id)), "Clearing…").then(() => paintEmpty(!empty.hidden));
 });
 // On the phone (the page came from the phone wall server) only the look and
-// the Remote Control link act: wall.css hides every other button there, and
-// the phone server has no command route.
+// the Remote Control link act: wall.css hides every other button there.
 document.documentElement.classList.toggle("served", served);
 if (served) navigator.serviceWorker?.register("/sw.js").catch(() => {});
 const linkNote = document.getElementById("link");

@@ -299,9 +299,10 @@ pub fn cancel(klepsydra_dir: &Path, now: i64) -> std::io::Result<()> {
 /// Record that session `id` was asked, before `/klepsydra-wrapup` is typed,
 /// so the Stop hook at the end of that turn does not ask again. False, with
 /// nothing written, when the session already has an answer to `r` (asked by
-/// the Stop hook, or answered), which is then not typed into. Create-only
-/// where hard links work; without them the file is checked and then
-/// replaced, so an answer written between the two is lost.
+/// the Stop hook, or answered), which is then not typed into. Written through
+/// a hard link, which fails if the file exists; when the link fails for any
+/// reason (no hard links, or an older request's answer in place) the file is
+/// checked and then replaced, so an answer written between the two is lost.
 pub fn mark_asked(klepsydra_dir: &Path, r: &Request, id: &str, now: i64) -> std::io::Result<bool> {
     let dir = folder(klepsydra_dir)?;
     let path = dir.join(format!("{id}.json"));

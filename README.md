@@ -745,10 +745,9 @@ The chimes are built by `scripts/make-sounds.mjs`, which writes
 ### Fleet on your phone
 
 <!-- budget: 450 words -->
-With "Phone wall" ticked in the tray
-menu, klepsydra serves a read-only copy of the wall on `127.0.0.1:8318`, and
-Tailscale Serve carries it to your phone over your tailnet. Unticked (the
-default), nothing listens.
+With "Phone wall" ticked in the tray menu, klepsydra serves a read-only copy
+of the wall on `127.0.0.1:8318`, and Tailscale Serve carries it to your phone
+over your tailnet. Unticked (the default), nothing listens.
 
 1. Tick **Phone wall** in klepsydra's tray menu. The box stays ticked across
    restarts; if the port is taken it stays clear and `fleet.log` says why.

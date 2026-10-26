@@ -106,6 +106,7 @@ function leadText(n) {
   return n.text ?? "";
 }
 
+/** All the text in `n`. */
 export function textOf(n) {
   if (typeof n === "string") return n;
   return (n.text ?? "") + (n.kids ?? []).map(textOf).join("");

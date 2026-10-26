@@ -947,10 +947,10 @@ body.queue-docked { padding-right: var(--queue-w); }
 .queue-content hr { border: 0; border-top: 1px solid var(--card-line); }
 
 /* The phone wall (html.served: the page came from the phone wall server).
-   Read-only: every button but the ones marked data-phone is hidden here
-   (New, Open terminal, Clear, the session menu, the ledger, or any added
-   later); the phone server has no command route, so none could run anyway.
-   A card with a Remote Control link opens it. */
+   Read-only: every button but the ones marked data-phone is gone, so no
+   desktop action (New, Open terminal, Clear, the session menu, the ledger,
+   or any added later) can be reached from a phone. A card with a Remote
+   Control link opens it. */
 .served button:not([data-phone]),
 .served .density,
 .served .tools { display: none !important; }
