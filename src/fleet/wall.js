@@ -392,8 +392,9 @@ function render(snapshot) {
   ringKey.hidden = !showsRingKey(visibleCards());
   const said = wrapupAnnouncements(wrapupBefore, cards);
   wrapupBefore = wrapupLines(cards);
-  const safe = Boolean(request) && readiness(sessions, request).safe;
-  if (safe && !wasSafe) said.push("Every session is ready. Safe to restart");
+  const r = readiness(sessions, request);
+  const safe = Boolean(request) && r.safe;
+  if (safe && !wasSafe) said.push(`${r.live ? "Every session is ready" : "Every session has ended"}. Safe to restart`);
   wasSafe = safe;
   const sync = () => {
     const focused = document.activeElement;

@@ -92,11 +92,13 @@ test("Stop wrap-up shows only while sessions are still asked", () => {
   assert.equal(asking(REQUEST, AFTER), false);
 });
 
-test("the bar counts live sessions only, and is safe only when every one, and at least one, is ready", () => {
+test("the bar counts live sessions only, and is safe when every one is ready or every session has ended", () => {
   const ready = { session_id: "s", status: "done", wrapup: ANSWERS.ready };
   const as = (id, rest) => ({ ...rest, session_id: id });
-  assert.deepEqual(readiness([], REQUEST), { ready: 0, live: 0, safe: false, text: "0 of 0 ready" }, "none live");
-  assert.deepEqual(readiness([as("a", { status: "ended", wrapup: ANSWERS.ready })], REQUEST), { ready: 0, live: 0, safe: false, text: "0 of 0 ready" }, "only an ended card");
+  assert.deepEqual(readiness([], REQUEST), { ready: 0, live: 0, safe: true, text: "Every session has ended" }, "none live, every card cleared");
+  assert.deepEqual(readiness([as("a", { status: "ended", wrapup: ANSWERS.ready })], REQUEST), { ready: 0, live: 0, safe: true, text: "Every session has ended" }, "only an ended card");
+  assert.equal(readiness([as("a", { status: "ended" })], REQUEST).safe, true, "an ended card that never answered");
+  assert.equal(readiness([as("a", { status: "ended" })], null).safe, false, "every card ended, no request");
   assert.deepEqual(readiness([ready, as("a", { status: "done", wrapup: ANSWERS.asked })], REQUEST), { ready: 1, live: 2, safe: false, text: "1 of 2 ready" }, "one not ready");
   assert.deepEqual(readiness([ready, as("a", { status: "done", wrapup: ANSWERS.blocked })], REQUEST).safe, false, "one blocked");
   assert.deepEqual(readiness([ready, as("a", { status: "silent" })], REQUEST).safe, false, "one with no answer");

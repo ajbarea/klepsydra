@@ -546,7 +546,8 @@ runs, and not after another turn starts (then: ask again).
 After 10 minutes silence reads **No answer**, though a session already asked
 may still answer while the wall shows it. A later session reads **Not
 asked**. The bar counts "4 of 6 ready" over the cards that have not ended,
-and **Safe to restart** appears only when every one is ready. **Stop
+and **Safe to restart** appears only when every one is ready, or once every
+session has ended (the bar then reads "Every session has ended"). **Stop
 wrap-up** stops the asking; answers stay on the wall for an hour.
 
 Once every card is ready, **End all ready sessions…** names each session it

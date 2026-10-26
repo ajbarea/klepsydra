@@ -2068,6 +2068,37 @@ def end_all_ready(wall):
     page.close()
 
 
+def ended(snapshot):
+    """`snapshot` with every session ended, as after End all ready sessions."""
+    snap = json.loads(json.dumps(snapshot))
+    for row in snap["sessions"]:
+        row.update({"status": "ended", "reason": "exited"})
+    return snap
+
+
+def wrapup_after_every_end(wall):
+    """Once every session has ended under a request, the bar says so and keeps
+    Safe to restart beside the empty state, never "0 of 0 ready"."""
+    want = {"bar": True, "count": "Every session has ended", "safe": True, "stop": True, "endAll": False}
+    page = open_app(wall)
+    snap = with_wrapup(calm(page.snapshot), all_ready())
+    feed(page, snap)
+    feed(page, ended(snap))
+    bar = page.evaluate(BAR)
+    empty = page.evaluate("document.getElementById('empty').checkVisibility()")
+    wall.check(bar == want and empty, "End all ready, then every card ends: Safe to restart stays beside the empty state", [bar, empty])
+    feed(page, {**snap, "sessions": []})
+    wall.check(page.evaluate(BAR) == want, "and stays once the ended cards are cleared", page.evaluate(BAR))
+    page.close()
+    page = open_app(wall)
+    snap = with_wrapup(page.snapshot, WRAPUP_SAMPLE["answers"])
+    feed(page, snap)
+    feed(page, ended(snap))
+    said = page.evaluate("document.getElementById('live').textContent")
+    wall.check(page.evaluate(BAR) == want and "Every session has ended. Safe to restart" in said, "sessions that end before they are ready announce it once", said)
+    page.close()
+
+
 def bulk_end_waits_on_ready(wall):
     """A session that goes back to work inside End all ready's undo window is not ended; the rest are."""
     page = open_app(wall)
@@ -2557,6 +2588,7 @@ def main() -> int:
             wrapup_cards_and_bar,
             wrapup_demo_in_browser,
             end_all_ready,
+            wrapup_after_every_end,
             bulk_end_waits_on_ready,
             wrapup_dialogs_close_on_change,
             one_click_or_key_never_ends_all,
