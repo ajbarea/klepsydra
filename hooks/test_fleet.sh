@@ -369,6 +369,13 @@ wfire session-start.json . "$repos/klepsydra"
 check "started in a repo with no home: no voice" "$(wfield .voice)" "null"
 wfire post-tool-edit.json ".tool_input.file_path = \"$repos/ideas/README.md\"" "$repos/klepsydra"
 check "until it edits in one that has a home" "$(wfield '[.voice, .voice_from, .voice_repo]')" '["af_sarah","home","ideas"]'
+rm -f "$wfile"
+printf '{"homes":{%s}}\n{"homes":{}}\n' "$homes" >"$work/voices.json"
+wfire session-start.json
+check "a voices.json holding two values: the first counts, the file is still written" "$(wfield '[.voice, .voice_repo]')" '["am_michael","notes"]'
+printf '[1,2]\n' >"$work/voices.json"
+wfire user-prompt.json
+check "a voices.json that is no object leaves the session updating" "$(wfield '[.voice, .state]')" '["am_michael","working"]'
 rm -f "$wfile" "$work/voices.json"
 
 echo "a removed worktree"

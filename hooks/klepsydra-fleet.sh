@@ -185,8 +185,10 @@ holder_voice() { # pid start
 FORGET_SECONDS=$((90 * 24 * 3600))
 home_voices() { # now
   local homes=""
-  [[ -n $VOICES && -r $VOICES ]] && homes=$(jq -c --argjson now "$1" --argjson within "$FORGET_SECONDS" '
-    .homes | if type == "object" then . else {} end
+  # One object or none: the first value only, since a second would make the
+  # file's --argjson refuse it and stop every session's updates.
+  [[ -n $VOICES && -r $VOICES ]] && homes=$(jq -nc --argjson now "$1" --argjson within "$FORGET_SECONDS" '
+    first(inputs) | .homes | if type == "object" then . else {} end
     | with_entries(select(.value | type == "object" and (.seen | type) == "number" and $now - .seen <= $within
         and (.voice | type) == "string" and .voice != "") | .value = .value.voice)' "$VOICES" 2>/dev/null)
   [[ $homes == \{* ]] || homes='{}'
@@ -737,8 +739,10 @@ main() {
   file=$fleet/$session.json
   old=""
   [[ -f $file ]] && { old=$(<"$file"); } 2>/dev/null
-  old_git=$(jq -r '.where.git | strings' <<<"$old" 2>/dev/null) || old_git=""
-  [[ $old_git == /* && ! -e $old_git ]] && where_gone=true
+  # The git dir the file last named (an escaped path is not read): gone means the checkout was removed.
+  old_git=""
+  [[ $old =~ \"git\":\"(/[^\"\\]*)\" ]] && old_git=${BASH_REMATCH[1]}
+  [[ -n $old_git && ! -e $old_git ]] && where_gone=true
   new=$(printf '%s' "$input" | jq -c --arg old "$old" --argjson now "$now" --argjson chars "$PROMPT_CHARS" --argjson bg_max "$BACKGROUND_MAX" --argjson stopped_ttl "$STOPPED_TTL" \
     --arg repo "$where_repo" --arg worktree "$where_worktree" --arg branch "$where_branch" \
     --arg git "$where_git" --argjson where_gone "$where_gone" --arg by "$by" \

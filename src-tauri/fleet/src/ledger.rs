@@ -26,6 +26,8 @@ pub const DEDUPE_WINDOW: i64 = 3600;
 pub const MAX_AHEAD: i64 = 300;
 /// Most sessions one map keeps; past it the least recently updated goes.
 pub const MAX_SESSIONS: usize = 512;
+/// Characters kept of a session's label; a card shows far fewer.
+pub const MAX_LABEL: usize = 120;
 /// Most guardrail entries one day file keeps.
 pub const GUARDRAIL_CAP: usize = 10_000;
 /// The file format's version.
@@ -868,10 +870,11 @@ impl Ledger {
         if label.is_empty() || !self.day.sessions.contains_key(session) {
             return false;
         }
-        if self.day.labels.get(session).is_some_and(|l| l == label) {
+        let label: String = label.chars().take(MAX_LABEL).collect();
+        if self.day.labels.get(session) == Some(&label) {
             return false;
         }
-        self.day.labels.insert(session.into(), label.into());
+        self.day.labels.insert(session.into(), label);
         true
     }
 
@@ -2429,6 +2432,18 @@ mod tests {
         assert!(l.note_label("s1", "techne", NOW));
         assert!(l.note_label("s1", "Techne PR queue", NOW));
         assert!(!l.note_label("s1", "Techne PR queue", NOW), "unchanged");
+        let long = "é".repeat(MAX_LABEL + 5);
+        assert!(l.note_label("s1", &long, NOW));
+        assert_eq!(
+            l.day().labels["s1"].chars().count(),
+            MAX_LABEL,
+            "capped on a char boundary"
+        );
+        assert!(
+            !l.note_label("s1", &long, NOW),
+            "the same long name again changes nothing"
+        );
+        assert!(l.note_label("s1", "Techne PR queue", NOW));
         let v = serde_json::to_value(l.today_view(NOW, None)).unwrap();
         assert_eq!(v["day"]["labels"]["s1"], "Techne PR queue");
     }

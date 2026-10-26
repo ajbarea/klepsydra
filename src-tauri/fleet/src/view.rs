@@ -298,8 +298,10 @@ pub fn view(entry: &Entry, now: i64) -> Option<View> {
 /// voice, then the earlier start, then the lower session id. The keeper shows
 /// the face; the others show a medallion, except a hold that has not
 /// ended, since two holds of one voice are keryx's own choice once every voice
-/// is in use. Only ending counts, never silence, so a face changes with its
-/// session's status at most once and never flips back.
+/// is in use. Only ending counts, never silence, so a held face changes with
+/// its session's status at most once and never flips back; a session on a
+/// repo's home voice also changes face when an edit moves it to another
+/// repo's home voice.
 fn keep_faces_distinct(shown: &mut [(&SessionFile, View)]) {
     let live = |v: &View| v.status != Status::Ended;
     let held = |f: &SessionFile| f.voice_from.as_deref() != Some("home");

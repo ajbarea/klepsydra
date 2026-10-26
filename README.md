@@ -682,9 +682,11 @@ for the terminal always wins.
 Sessions sharing a voice show its face by claim: a session that has not ended
 before one that has, then a voice keryx held before a repo's, then the first
 started. The others show a medallion and their own name until the keeper leaves;
-two running sessions that keryx itself gave one voice both keep it. So a face
-changes with the status only once, when its session ends beside a running one
-with the same voice (after `/clear`, the new session keeps the portrait).
+two running sessions that keryx itself gave one voice both keep it. So a held
+face changes with the status only once, when its session ends beside a running
+one with the same voice (after `/clear`, the new session keeps the portrait). A
+session on a repo's voice also changes face when an edit takes it to another
+repo's.
 
 On a Comfortable card the character arrives in a header band. Their cut-out
 half-figure stands on the band's foot and breaks the card's top edge, lit from
