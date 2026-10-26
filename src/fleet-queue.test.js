@@ -288,3 +288,27 @@ test("the Queue label hides its words below exactly the dock breakpoint", () => 
   assert.equal(Number(m[1]), DOCK_MIN_PX);
   assert.match(js, /more\.className = "for-you"/);
 });
+
+test("text sizes step as browsers zoom, stay in bounds, and read a stored value back safely", async () => {
+  globalThis.window ??= {};
+  const { TEXT_SIZES, stepText, textKey, textSize } = await import("./fleet/queuepanel.js");
+  assert.equal(TEXT_SIZES[0], 0.75);
+  assert.equal(TEXT_SIZES.at(-1), 2);
+  assert.ok(TEXT_SIZES.includes(1), "100% is a step, so reset lands on one");
+  assert.deepEqual([stepText(1, 1), stepText(1.1, 1), stepText(1, -1)], [1.1, 1.25, 0.9]);
+  assert.equal(stepText(2, 1), 2, "never past the largest");
+  assert.equal(stepText(0.75, -1), 0.75, "never past the smallest");
+  assert.equal(textSize(null), 1, "nothing stored");
+  assert.equal(textSize("abc"), 1);
+  assert.equal(textSize("1.25"), 1.25, "as localStorage hands it back");
+  assert.equal(textSize("1.3"), 1.25, "an off-step value goes to the nearest step");
+  assert.equal(textSize("9"), 2);
+  assert.equal(textSize("-4"), 0.75);
+  assert.equal(stepText("1.3", 1), 1.5, "a step from an off-step value starts at its nearest");
+  const key = (k, mods = {}) => textKey({ key: k, ctrlKey: true, altKey: false, metaKey: false, ...mods });
+  assert.deepEqual([key("="), key("+"), key("-"), key("0")], [1, 1, -1, 0]);
+  assert.equal(key("=", { ctrlKey: false }), null, "only with Ctrl");
+  assert.equal(key("=", { altKey: true }), null, "Ctrl+Alt is AltGr on some layouts");
+  assert.equal(key("a"), null);
+  assert.equal(key("toString"), null, "no key reads through to the prototype");
+});

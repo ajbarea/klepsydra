@@ -89,7 +89,14 @@
           <h2 id="queue-title" tabindex="-1">Queue</h2>
           <p class="queue-path"></p>
         </div>
-        <button type="button" class="queue-close">Close</button>
+        <div class="queue-tools">
+          <div class="queue-text" role="group" aria-label="Text size">
+            <button type="button" class="queue-smaller" aria-label="Smaller text" title="Smaller text (Ctrl+-)">A&minus;</button>
+            <button type="button" class="queue-reset" title="Reset text size (Ctrl+0)">100%</button>
+            <button type="button" class="queue-larger" aria-label="Larger text" title="Larger text (Ctrl+=)">A+</button>
+          </div>
+          <button type="button" class="queue-close">Close</button>
+        </div>
       </header>
       <p class="queue-problem" role="status" hidden></p>
       <div class="queue-content"></div>

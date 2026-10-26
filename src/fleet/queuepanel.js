@@ -4,12 +4,13 @@
 import { follow } from "../ipc.js";
 import { inTauri } from "./feed.js";
 import { present, queueLabel } from "./queue.js";
+import { wheelPixels, wheelStep } from "../zoom.js";
 
 /** At this window width and wider the panel docks; below it, it is a modal dialog. */
 export const DOCK_MIN_PX = 1200;
 /** The docked width: its bounds, the default, and one arrow-key step. */
 export const WIDTH = { min: 320, max: 900, initial: 480, step: 16 };
-const STORE = { width: "klepsydra.queue.width", open: "klepsydra.queue.open" };
+const STORE = { width: "klepsydra.queue.width", open: "klepsydra.queue.open", text: "klepsydra.queue.text" };
 const COPIED_MS = 2000;
 
 /** `w` held to the panel's bounds and to leave 700 px for the cards; the default for a `w` that is no number. */
@@ -17,6 +18,30 @@ export function clampWidth(w, viewport) {
   const room = Math.max(WIDTH.min, Math.min(WIDTH.max, viewport - 700));
   const want = typeof w === "number" && !Number.isNaN(w) ? w : WIDTH.initial;
   return Math.round(Math.min(room, Math.max(WIDTH.min, want)));
+}
+
+/** The text sizes, stepped as browsers step zoom: 75% to 200%, 100% the default. */
+export const TEXT_SIZES = [0.75, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2];
+
+/** A stored text size held to the nearest of TEXT_SIZES; 1 for anything that is no number. */
+export function textSize(stored) {
+  const n = typeof stored === "number" ? stored : Number.parseFloat(stored);
+  if (!Number.isFinite(n)) return 1;
+  return TEXT_SIZES.reduce((a, b) => (Math.abs(b - n) < Math.abs(a - n) ? b : a));
+}
+
+/** The size `by` steps from `size` (+1 larger, -1 smaller), kept within TEXT_SIZES. */
+export function stepText(size, by) {
+  const i = TEXT_SIZES.indexOf(textSize(size)) + by;
+  return TEXT_SIZES[Math.max(0, Math.min(TEXT_SIZES.length - 1, i))];
+}
+
+const TEXT_KEYS = new Map([["=", 1], ["+", 1], ["-", -1], ["0", 0]]);
+
+/** What a key press does to the text size, as in browsers: +1 for Ctrl+= or Ctrl++, -1 for Ctrl+-, 0 (reset) for Ctrl+0, else null. */
+export function textKey(e) {
+  if (!e.ctrlKey || e.altKey || e.metaKey) return null;
+  return TEXT_KEYS.get(e.key) ?? null;
 }
 
 /** The browser's sample queue file, only with ?demo and never inside the app. */
@@ -72,6 +97,9 @@ export function createQueuePanel({ dialog, button, onLayout = () => {}, onResize
   const live = dialog.querySelector(".queue-live");
   const title = dialog.querySelector("#queue-title");
   const grip = dialog.querySelector(".queue-resize");
+  const smaller = dialog.querySelector(".queue-smaller");
+  const larger = dialog.querySelector(".queue-larger");
+  const reset = dialog.querySelector(".queue-reset");
   const wide = matchMedia(`(min-width: ${DOCK_MIN_PX}px)`);
   const opened = new Map(); // section title -> open, as the viewer left it
   // Reopened at start only where it docks: a dialog over the wall at launch would hide it.
@@ -196,6 +224,54 @@ export function createQueuePanel({ dialog, button, onLayout = () => {}, onResize
     }, 50);
   };
 
+  // Text size: the content only, by CSS zoom, so code and Copy buttons grow with the words.
+  let size = textSize(stored(STORE.text));
+  function showText() {
+    content.style.zoom = String(size);
+    const pct = `${Math.round(size * 100)}%`;
+    reset.textContent = pct;
+    reset.setAttribute("aria-label", `Reset text size, now ${pct}`);
+    smaller.setAttribute("aria-disabled", String(size === TEXT_SIZES[0]));
+    larger.setAttribute("aria-disabled", String(size === TEXT_SIZES.at(-1)));
+  }
+  function setText(next) {
+    if (next === size) return;
+    // Keep the reader's place: the same share of the way down.
+    const range = body.scrollHeight - body.clientHeight;
+    const share = range > 0 ? body.scrollTop / range : 0;
+    size = next;
+    store(STORE.text, String(size));
+    showText();
+    body.scrollTop = share * (body.scrollHeight - body.clientHeight);
+    announce(`Text ${Math.round(size * 100)}%`);
+  }
+  smaller.addEventListener("click", () => setText(stepText(size, -1)));
+  larger.addEventListener("click", () => setText(stepText(size, 1)));
+  reset.addEventListener("click", () => setText(1));
+  // The keys act while the panel is open, unless another dialog is in front of it.
+  addEventListener("keydown", (e) => {
+    const by = textKey(e);
+    if (by === null || !open) return;
+    const front = document.querySelector("dialog:modal");
+    if (front && front !== dialog) return;
+    e.preventDefault();
+    setText(by === 0 ? 1 : stepText(size, by));
+  });
+  // Ctrl+wheel over the panel, a notch a step; touchpad pinches add up to one.
+  let wheel = null;
+  dialog.addEventListener(
+    "wheel",
+    (e) => {
+      if (!e.ctrlKey) return;
+      e.preventDefault();
+      const turn = wheelStep(wheel, wheelPixels(e.deltaY, e.deltaMode), e.timeStamp);
+      wheel = turn.state;
+      if (turn.steps) setText(stepText(size, turn.steps));
+    },
+    { passive: false },
+  );
+  showText();
+
   const relabel = new WeakMap(); // a button's pending return to its label
   async function copy(text, from, label) {
     try {
@@ -262,6 +338,10 @@ export function createQueuePanel({ dialog, button, onLayout = () => {}, onResize
     },
     get isOpen() {
       return open;
+    },
+    /** The content's text size, 1 for 100%. */
+    get textSize() {
+      return size;
     },
     get view() {
       return last;

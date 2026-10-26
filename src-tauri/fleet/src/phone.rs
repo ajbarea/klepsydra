@@ -207,14 +207,15 @@ fn same_origin(origin: &str, host: &str) -> bool {
 }
 
 /// The frontend files the wall needs, and their types: its page, its
-/// folder, the IPC shim and the vendored markdown-it it imports, the install
-/// files and the icons. The gauge, the tests and the dev snapshots are not
-/// among them.
+/// folder, the IPC shim, the wheel steps it shares with the gauge and the
+/// vendored markdown-it it imports, the install files and the icons. The
+/// gauge, the tests and the dev snapshots are not among them.
 pub fn asset_type(path: &str) -> Option<&'static str> {
     let root = matches!(
         path,
         "wall.html"
             | "ipc.js"
+            | "zoom.js"
             | "manifest.webmanifest"
             | "sw.js"
             | "vendor/markdown-it/markdown-it.esm.min.mjs"
@@ -781,6 +782,7 @@ mod tests {
                 )),
             ),
             ("/ipc.js", Some(Route::Asset("ipc.js".into()))),
+            ("/zoom.js", Some(Route::Asset("zoom.js".into()))),
             (
                 "/manifest.webmanifest",
                 Some(Route::Asset("manifest.webmanifest".into())),

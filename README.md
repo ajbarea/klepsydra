@@ -937,6 +937,12 @@ editor, and the panel only reads it.
   wall, as Ledger does. Drag its left edge, or focus that edge and use the
   arrow keys (Home and End for the narrowest and widest), to resize it; the
   width is remembered.
+- **Text size.** **A−** and **A+** in the panel's header make its text
+  smaller or larger, from 75% to 200%, and the percentage between them resets
+  it to 100%. While the panel is open, Ctrl+= and Ctrl+- do the same, Ctrl+0
+  resets, and Ctrl with the mouse wheel over the panel steps it a notch at a
+  time. Only the panel's text changes, never the cards, and the size is
+  remembered.
 - **The header count.** The button reads "Queue · 3 for you": the items in
   the file's "Needs you" section, less those marked ✅. It names the file's
   asks, not the sessions the tally counts as needing you.
