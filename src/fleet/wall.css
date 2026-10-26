@@ -952,7 +952,8 @@ body.queue-docked { padding-right: var(--queue-w); }
    or any added later) can be reached from a phone. A card with a Remote
    Control link opens it. */
 .served button:not([data-phone]),
-.served .density { display: none !important; }
+.served .density,
+.served .tools { display: none !important; }
 a.remote {
   display: inline-flex;
   align-items: center;

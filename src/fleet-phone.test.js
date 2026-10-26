@@ -134,7 +134,7 @@ test("on the phone every desktop action is hidden: only buttons marked data-phon
   const html = read("src/wall.html");
   const css = read("src/fleet/wall.css");
   const wall = read("src/fleet/wall.js");
-  assert.match(css, /\.served button:not\(\[data-phone\]\),\s*\.served \.density \{ display: none !important; \}/);
+  assert.match(css, /\.served button:not\(\[data-phone\]\),\s*\.served \.density,\s*\.served \.tools \{ display: none !important; \}/);
   const buttons = [...html.matchAll(/<button\b[^>]*>/g)].map((m) => m[0]);
   const phone = buttons.filter((b) => /\bdata-phone\b/.test(b));
   assert.deepEqual(
