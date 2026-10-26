@@ -16,8 +16,9 @@ use http_body_util::combinators::BoxBody;
 use http_body_util::{BodyExt, Empty, Full};
 use hyper::body::{Body, Bytes, Frame, Incoming};
 use hyper::header::{
-    HeaderValue, ALLOW, CACHE_CONTROL, CONNECTION, CONTENT_LENGTH, CONTENT_SECURITY_POLICY,
-    CONTENT_TYPE, HOST, LOCATION, ORIGIN, REFERRER_POLICY, X_CONTENT_TYPE_OPTIONS,
+    HeaderValue, ACCEPT_RANGES, ALLOW, CACHE_CONTROL, CONNECTION, CONTENT_LENGTH, CONTENT_RANGE,
+    CONTENT_SECURITY_POLICY, CONTENT_TYPE, HOST, LOCATION, ORIGIN, RANGE, REFERRER_POLICY,
+    X_CONTENT_TYPE_OPTIONS,
 };
 use hyper::server::conn::http1;
 use hyper::service::service_fn;
@@ -56,6 +57,9 @@ pub const LIMITS: Limits = Limits {
 /// The app's bundled frontend: the bytes at a path such as `fleet/wall.js`.
 pub type Assets = Arc<dyn Fn(&str) -> Option<Vec<u8>> + Send + Sync>;
 
+/// keryx's latest reply clip for a session id (`reply::read`).
+pub type Clips = Arc<dyn Fn(&str) -> Option<Vec<u8>> + Send + Sync>;
+
 /// `resolve` held to the paths in `known`, the bundle's own (with or
 /// without a leading `/`): Tauri's resolver answers a path it lacks with
 /// `<path>.html`, `<path>/index.html`, then `index.html`, which would serve
@@ -81,7 +85,7 @@ pub fn exact_assets<K: AsRef<str>>(
 /// (shown, never acted on: the phone has no wrap-up buttons). The rest (its
 /// tmux pane, Claude process, distro, full launch folder) serve the
 /// desktop's actions alone.
-const SESSION_FIELDS: [&str; 21] = [
+const SESSION_FIELDS: [&str; 22] = [
     "session_id",
     "name",
     "voice",
@@ -100,6 +104,7 @@ const SESSION_FIELDS: [&str; 21] = [
     "ledger",
     "ledger_partial",
     "remote_url",
+    "reply_at",
     "wrapup",
     "turn_at",
     "asked_after_turn",
@@ -155,6 +160,8 @@ enum Route {
     Home,
     Snapshot,
     Events,
+    /// A session's latest spoken reply, by its id.
+    Clip(String),
 }
 
 /// The parts of a request that decide its answer.
@@ -252,6 +259,10 @@ fn route(path: &str) -> Option<Route> {
         "/wall.html" => Some(Route::Home),
         "/fleet.json" => Some(Route::Snapshot),
         "/events" => Some(Route::Events),
+        _ if path.starts_with("/audio/") => {
+            let id = &path["/audio/".len()..];
+            crate::session::is_session_id(id).then(|| Route::Clip(id.into()))
+        }
         _ => {
             let file = path.strip_prefix('/')?;
             asset_type(file).map(|_| Route::Asset(file.into()))
@@ -391,6 +402,7 @@ async fn feed(
 struct Shared {
     bound: SocketAddr,
     assets: Assets,
+    clips: Clips,
     snapshots: watch::Receiver<Option<Bytes>>,
     streams: Arc<Semaphore>,
     heartbeat: Duration,
@@ -441,6 +453,19 @@ fn handle(req: &Request<Incoming>, s: &Shared) -> Reply {
             // No snapshot yet: an empty wall would say no session runs.
             None => refuse(StatusCode::SERVICE_UNAVAILABLE),
         },
+        // Only a card the phone shows with a clip: what its wall would offer.
+        Route::Clip(id) => match s.snapshots.borrow().clone() {
+            Some(json) if offers_clip(&json, &id, req.uri().query()) => match (s.clips)(&id) {
+                // Range applies to GET only (RFC 9110 14.2).
+                Some(bytes) => clip(
+                    Bytes::from(bytes),
+                    header(RANGE).filter(|_| !only_head),
+                    only_head,
+                ),
+                None => refuse(StatusCode::NOT_FOUND),
+            },
+            _ => refuse(StatusCode::NOT_FOUND),
+        },
         Route::Events => {
             if only_head {
                 return answer(
@@ -467,6 +492,106 @@ fn handle(req: &Request<Incoming>, s: &Shared) -> Reply {
     }
 }
 
+/// The bytes a `Range` header asks of a body `len` long, as an inclusive
+/// pair: `None` for the whole body (no header, or one this server does not
+/// split, such as several ranges), `Err` for a range outside it. Safari asks
+/// for media in ranges and plays nothing from a server that answers 200.
+fn byte_range(header: Option<&str>, len: usize) -> Result<Option<(usize, usize)>, ()> {
+    // The unit is case-insensitive.
+    let Some(spec) = header
+        .map(str::trim)
+        .filter(|h| h.len() > 6 && h.is_char_boundary(6) && h[..6].eq_ignore_ascii_case("bytes="))
+        .map(|h| &h[6..])
+    else {
+        return Ok(None);
+    };
+    if spec.contains(',') {
+        return Ok(None);
+    }
+    let (from, to) = spec.split_once('-').ok_or(())?;
+    // Digits too many for usize name a position past any body.
+    let num = |s: &str| {
+        let s = s.trim();
+        if s.is_empty() || !s.bytes().all(|b| b.is_ascii_digit()) {
+            return Err(());
+        }
+        Ok(s.parse::<usize>().unwrap_or(usize::MAX))
+    };
+    let (start, end) = match (from.trim(), to.trim()) {
+        ("", "") => return Err(()),
+        ("", last) => {
+            let n = num(last)?;
+            if n == 0 {
+                return Err(());
+            }
+            (len.saturating_sub(n), len.checked_sub(1).ok_or(())?)
+        }
+        (first, "") => (num(first)?, len.checked_sub(1).ok_or(())?),
+        (first, last) => (num(first)?, num(last)?.min(len.saturating_sub(1))),
+    };
+    if start >= len || start > end {
+        return Err(());
+    }
+    Ok(Some((start, end)))
+}
+
+/// A reply clip, whole or the range asked for.
+fn clip(bytes: Bytes, range: Option<&str>, head: bool) -> Reply {
+    let len = bytes.len();
+    let mut r = match byte_range(range, len) {
+        Ok(None) => answer(
+            StatusCode::OK,
+            Some("audio/wav"),
+            "no-store",
+            Some(bytes),
+            head,
+        ),
+        Ok(Some((start, end))) => {
+            let mut r = answer(
+                StatusCode::PARTIAL_CONTENT,
+                Some("audio/wav"),
+                "no-store",
+                Some(bytes.slice(start..=end)),
+                head,
+            );
+            if let Ok(v) = HeaderValue::from_str(&format!("bytes {start}-{end}/{len}")) {
+                r.headers_mut().insert(CONTENT_RANGE, v);
+            }
+            r
+        }
+        Err(()) => {
+            let mut r = refuse(StatusCode::RANGE_NOT_SATISFIABLE);
+            if let Ok(v) = HeaderValue::from_str(&format!("bytes */{len}")) {
+                r.headers_mut().insert(CONTENT_RANGE, v);
+            }
+            r
+        }
+    };
+    r.headers_mut()
+        .insert(ACCEPT_RANGES, HeaderValue::from_static("bytes"));
+    r
+}
+
+/// Whether the phone's snapshot `json` shows session `id` with a reply clip.
+/// With `at=` in `query`, only that clip: Safari fetches a clip in several
+/// ranges, and a newer reply must not splice into the one already playing.
+fn offers_clip(json: &[u8], id: &str, query: Option<&str>) -> bool {
+    let Ok(v) = serde_json::from_slice::<Value>(json) else {
+        return false;
+    };
+    let asked = query.and_then(|q| q.split('&').find_map(|kv| kv.strip_prefix("at=")));
+    v.get("sessions")
+        .and_then(Value::as_array)
+        .is_some_and(|all| {
+            all.iter().any(|s| {
+                s.get("session_id").and_then(Value::as_str) == Some(id)
+                    && s.get("reply_at")
+                        .and_then(Value::as_i64)
+                        .is_some_and(|at| asked.is_none_or(|a| a.parse::<i64>().ok() == Some(at)))
+            })
+        })
+}
+
 /// The running server. Dropping it, or `stop`, closes the port and every
 /// connection before it returns.
 pub struct Server {
@@ -479,14 +604,20 @@ pub struct Server {
 impl Server {
     /// Bind `addr` now, so a port in use is reported to the caller, then
     /// serve on a thread of its own until stopped.
-    pub fn spawn(addr: SocketAddrV4, assets: Assets, log: Log) -> std::io::Result<Server> {
-        Self::spawn_with(addr, LIMITS, assets, log)
+    pub fn spawn(
+        addr: SocketAddrV4,
+        assets: Assets,
+        clips: Clips,
+        log: Log,
+    ) -> std::io::Result<Server> {
+        Self::spawn_with(addr, LIMITS, assets, clips, log)
     }
 
     pub fn spawn_with(
         addr: SocketAddrV4,
         limits: Limits,
         assets: Assets,
+        clips: Clips,
         log: Log,
     ) -> std::io::Result<Server> {
         let std_listener = bind(addr)?;
@@ -501,6 +632,7 @@ impl Server {
         let shared = Arc::new(Shared {
             bound,
             assets,
+            clips,
             snapshots: watcher,
             streams: Arc::new(Semaphore::new(limits.streams)),
             heartbeat: limits.heartbeat,
@@ -841,7 +973,7 @@ mod tests {
                 "ledger": {"tokens": {"input": 1}}, "ledger_partial": true,
                 "remote_url": "https://claude.ai/code/session_01ABC",
                 "wrapup": {"state": "blocked", "reason": "a review is running", "at": 5, "settled_at": 6},
-                "turn_at": 4, "asked_after_turn": true
+                "turn_at": 4, "asked_after_turn": true, "reply_at": 8
             }, {"session_id": "s2", "launch_dir": "C:\\Users\\aj\\proj", "status": "done"}, "junk"],
             "speaking": {"session_id": "s1", "envelope": [0.5], "started_at": 1.0, "ends_at": 2.0},
             "receiver": {"addr": "127.0.0.1:4318", "listening": true, "error": null}
@@ -902,6 +1034,10 @@ mod tests {
         asked: Arc<Mutex<Vec<String>>>,
     }
 
+    /// The one session the stub clip store has a clip for, and the clip.
+    const CLIP_ID: &str = "cb9fa591-1514-44d1-a31c-eba4a7cb41ed";
+    const CLIP: &[u8] = b"RIFF....WAVEfmt  a clip";
+
     /// The stub bundle: the wall, one of its files, and the gauge's page.
     const BUNDLE: [(&str, &[u8]); 3] = [
         ("wall.html", b"<!doctype html><title>wall</title>"),
@@ -957,10 +1093,12 @@ mod tests {
             exact(p)
         });
         let log: Log = Arc::new(|_| {});
+        let clips: Clips = Arc::new(|id: &str| (id == CLIP_ID).then(|| CLIP.to_vec()));
         let server = Server::spawn_with(
             SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0),
             limits,
             assets,
+            clips,
             log,
         )
         .unwrap();
@@ -1011,7 +1149,12 @@ mod tests {
         let SocketAddr::V4(taken) = p.server.addr() else {
             unreachable!()
         };
-        let again = Server::spawn(taken, Arc::new(tauri_get), Arc::new(|_| {}));
+        let again = Server::spawn(
+            taken,
+            Arc::new(tauri_get),
+            Arc::new(|_| None),
+            Arc::new(|_| {}),
+        );
         assert!(again.is_err());
     }
 
@@ -1187,6 +1330,172 @@ mod tests {
         assert_eq!(v["sessions"][0]["status_at"], 2);
         assert!(v["sessions"][0].get("tmux").is_none());
         assert!(v.get("receiver").is_none());
+    }
+
+    #[test]
+    fn a_clip_is_served_only_for_a_card_the_phone_shows_with_one() {
+        let p = serve(QUICK);
+        let addr = p.server.addr();
+        let path = format!("/audio/{CLIP_ID}");
+        assert_eq!(get(addr, "GET", &path, "").0, 404, "no snapshot yet");
+        let other = "0b6e1c5a-1111-4222-8333-444455556666";
+        p.server.publish(&json!({"sessions": [
+            {"session_id": CLIP_ID, "status": "done", "status_at": 1},
+            {"session_id": other, "status": "done", "status_at": 1, "reply_at": 5},
+        ]}));
+        assert_eq!(get(addr, "GET", &path, "").0, 404, "its card shows no clip");
+        assert_eq!(
+            get(addr, "GET", &format!("/audio/{other}"), "").0,
+            404,
+            "a card with a clip the store does not have"
+        );
+        p.server.publish(&json!({"sessions": [
+            {"session_id": CLIP_ID, "status": "done", "status_at": 1, "reply_at": 5},
+        ]}));
+        let (code, headers, body) = get(addr, "GET", &path, "");
+        let lower = headers.to_ascii_lowercase();
+        assert_eq!((code, body.as_slice()), (200, CLIP));
+        assert!(lower.contains("content-type: audio/wav"), "{headers}");
+        assert!(lower.contains("cache-control: no-store"), "{headers}");
+        let (code, _, body) = get(addr, "HEAD", &path, "");
+        assert_eq!((code, body.len()), (200, 0));
+        assert_eq!(
+            get(addr, "POST", &path, "").0,
+            405,
+            "the wall stays read-only"
+        );
+        for bad in [
+            "/audio/",
+            "/audio/../wall.html",
+            "/audio/x",
+            &format!("/audio/{CLIP_ID}.wav"),
+        ] {
+            assert_eq!(get(addr, "GET", bad, "").0, 404, "{bad}");
+        }
+        p.server.publish(&json!({"sessions": []}));
+        assert_eq!(
+            get(addr, "GET", &path, "").0,
+            404,
+            "its card has left the wall"
+        );
+    }
+
+    #[test]
+    fn a_clip_is_sent_in_the_ranges_safari_asks_for() {
+        let p = serve(QUICK);
+        let addr = p.server.addr();
+        p.server.publish(&json!({"sessions": [
+            {"session_id": CLIP_ID, "status": "done", "status_at": 1, "reply_at": 5},
+        ]}));
+        let path = format!("/audio/{CLIP_ID}");
+        let len = CLIP.len();
+        let (code, headers, body) = get(addr, "GET", &path, "Range: bytes=0-1\r\n");
+        let lower = headers.to_ascii_lowercase();
+        assert_eq!((code, body.as_slice()), (206, &CLIP[0..2]));
+        assert!(
+            lower.contains(&format!("content-range: bytes 0-1/{len}")),
+            "{headers}"
+        );
+        assert!(lower.contains("accept-ranges: bytes"), "{headers}");
+        assert!(lower.contains("content-length: 2"), "{headers}");
+        let (code, _, body) = get(addr, "GET", &path, "Range: bytes=4-\r\n");
+        assert_eq!((code, body.as_slice()), (206, &CLIP[4..]));
+        let (code, _, body) = get(addr, "GET", &path, "Range: bytes=-3\r\n");
+        assert_eq!((code, body.as_slice()), (206, &CLIP[len - 3..]));
+        let (code, headers, body) = get(addr, "GET", &path, &format!("Range: bytes={len}-\r\n"));
+        assert_eq!((code, body.len()), (416, 0));
+        assert!(
+            headers
+                .to_ascii_lowercase()
+                .contains(&format!("content-range: bytes */{len}")),
+            "{headers}"
+        );
+        let (code, headers, body) = get(addr, "GET", &path, "");
+        assert_eq!((code, body.len()), (200, len));
+        assert!(
+            headers
+                .to_ascii_lowercase()
+                .contains("accept-ranges: bytes"),
+            "{headers}"
+        );
+        let (code, headers, _) = get(addr, "HEAD", &path, "Range: bytes=0-1\r\n");
+        let whole = format!("content-length: {len}");
+        assert!(
+            code == 200 && headers.to_ascii_lowercase().contains(&whole),
+            "HEAD ignores Range: {headers}"
+        );
+        assert_eq!(
+            get(addr, "GET", &format!("{path}?at=5"), "").0,
+            200,
+            "the clip the card shows"
+        );
+        assert_eq!(
+            get(addr, "GET", &format!("{path}?at=4"), "Range: bytes=2-\r\n").0,
+            404,
+            "an older clip's range"
+        );
+    }
+
+    #[test]
+    fn byte_ranges_parse_as_rfc_9110_reads_them() {
+        assert_eq!(byte_range(None, 10), Ok(None));
+        assert_eq!(byte_range(Some("bytes=0-1"), 10), Ok(Some((0, 1))));
+        assert_eq!(byte_range(Some("bytes=2-"), 10), Ok(Some((2, 9))));
+        assert_eq!(byte_range(Some("bytes=-4"), 10), Ok(Some((6, 9))));
+        assert_eq!(
+            byte_range(Some("bytes=-40"), 10),
+            Ok(Some((0, 9))),
+            "a suffix longer than the body is all of it"
+        );
+        assert_eq!(
+            byte_range(Some("bytes=5-99"), 10),
+            Ok(Some((5, 9))),
+            "an end past the body stops at it"
+        );
+        assert_eq!(
+            byte_range(Some("bytes=0-1,4-5"), 10),
+            Ok(None),
+            "several ranges: the whole body"
+        );
+        assert_eq!(
+            byte_range(Some("items=0-1"), 10),
+            Ok(None),
+            "another unit is ignored"
+        );
+        for bad in [
+            "bytes=10-",
+            "bytes=5-2",
+            "bytes=-0",
+            "bytes=-",
+            "bytes=a-b",
+            "bytes=1",
+            "bytes=+1-2",
+            "bytes=99999999999999999999999-",
+        ] {
+            assert_eq!(byte_range(Some(bad), 10), Err(()), "{bad}");
+        }
+        assert_eq!(
+            byte_range(Some("Bytes=0-0"), 10),
+            Ok(Some((0, 0))),
+            "the unit in any case"
+        );
+        assert_eq!(
+            byte_range(Some("bytes=3-99999999999999999999999"), 10),
+            Ok(Some((3, 9))),
+            "a huge end clamps"
+        );
+        assert_eq!(
+            byte_range(Some("bytes=-99999999999999999999999"), 10),
+            Ok(Some((0, 9))),
+            "a huge suffix is all of it"
+        );
+        assert_eq!(byte_range(Some("bytes=0-"), 0), Err(()), "nothing to send");
+    }
+
+    #[test]
+    fn the_phone_gets_each_cards_reply_time() {
+        let v = phone_view(&json!({"sessions": [{"session_id": "s1", "reply_at": 7}]}));
+        assert_eq!(v["sessions"][0]["reply_at"], 7);
     }
 
     /// Open `/events` and return a reader positioned after the headers.

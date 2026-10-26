@@ -111,6 +111,10 @@ pub struct View {
     /// The Remote Control link that opens the session on claude.ai or in
     /// the Claude app; none while Remote Control is off or the session ended.
     pub remote_url: Option<String>,
+    /// When keryx last kept this session's spoken reply (`reply::written_at`),
+    /// so the card can play it; left out of the JSON without one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reply_at: Option<i64>,
     #[serde(skip)]
     pub marks: Marks,
 }
@@ -286,6 +290,7 @@ pub fn view(entry: &Entry, now: i64) -> Option<View> {
         } else {
             f.remote_url.clone()
         },
+        reply_at: None,
         marks: Marks {
             state_at: f.state_at,
             turns: f.counted_turns(),

@@ -13,6 +13,7 @@ import { GOLD, SPEAK_FADE_MS, STILL, Speaker, WAVE, waves } from "./speaking.js"
 import { parseDensity, resolveDensity } from "./density.js";
 import { clearAll, clearLabel, endedIds, startLabel, wallState } from "./empty.js";
 import { wireSplit } from "./split.js";
+import { createReplayer } from "./replay.js";
 
 const TICK_MS = 15_000; // ages re-render between snapshots, as on the gauge
 const FACE_PX = 62; // the comfortable --wall-face less twice its --face-inset
@@ -217,6 +218,7 @@ function paint(el, c) {
     setText(said, text);
     said.title = text ?? "";
   }
+  paintPlay(el, c);
   show(el.querySelector(".updated"), c.updated);
   paintLedger(el, c);
   const wrap = el.querySelector(".wrapup");
@@ -257,6 +259,29 @@ function paint(el, c) {
   menuButton.setAttribute("aria-label", c.menuLabel);
   menuButton.title = c.menuLabel;
   setOff(menuButton, ender.pending(c.id)); // one pending end per card
+}
+
+// A card's play button for keryx's latest spoken reply: shown only with a
+// clip, on the desktop and the phone alike; Stop while it plays.
+const replayer = createReplayer({
+  audio: document.getElementById("reply-audio"),
+  app: inTauri,
+  invoke: (command, args) => window.__TAURI__.core.invoke(command, args),
+  onChange: (id) => {
+    const el = [...wall.children].find((n) => n.dataset.key === id);
+    const c = cardOf.get(id);
+    if (el && c) paintPlay(el, c);
+  },
+});
+
+function paintPlay(el, c) {
+  const play = el.querySelector(".play");
+  const playing = replayer.playing(c.id);
+  play.hidden = c.clip === null;
+  play.classList.toggle("playing", playing);
+  play.setAttribute("aria-label", playing ? c.stopLabel : c.playLabel);
+  play.title = playing ? c.stopLabel : c.playLabel;
+  el.querySelector(".reply-line").hidden = c.clip === null && !c.reply;
 }
 
 // The receipt, the partial mark and the guardrail chip share one line, hidden when all are empty.
@@ -387,6 +412,7 @@ function render(snapshot) {
   const cards = sessions.map((s) => card(s, cast, now, request));
   const prior = new Set(cardOf.keys()); // a card for one of these is not new
   cardOf = new Map(cards.map((c) => [c.id, c]));
+  replayer.keep(new Set(cardOf.keys()));
   latest = { state, cards };
   cleared = new Set([...cleared].filter((id) => cardOf.has(id)));
   ringKey.hidden = !showsRingKey(visibleCards());
@@ -576,6 +602,13 @@ wall.addEventListener("click", (e) => {
   const look = e.target.closest(".look");
   if (look) {
     showPortrait(look.dataset.id);
+    return;
+  }
+  const play = e.target.closest(".play");
+  if (play) {
+    const id = play.closest(".card").dataset.key;
+    const note = play.closest(".card").querySelector(".note");
+    replayer.toggle(id, cardOf.get(id)?.clip).then((why) => why && say(note, why));
     return;
   }
   // On the phone a tap anywhere on a card with a Remote Control link opens it.

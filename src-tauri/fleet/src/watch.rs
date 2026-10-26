@@ -243,6 +243,9 @@ impl Reader {
             }
         }
         let problems = self.reporter.fresh(&broken);
+        for v in &mut snap.sessions {
+            v.reply_at = crate::reply::written_at(&self.dir, &v.session_id);
+        }
         crate::wrapup::forget_expired(&self.dir, t);
         snap.wrapup = crate::wrapup::request(&self.dir, t);
         if let Some(r) = &snap.wrapup {
@@ -674,6 +677,29 @@ mod tests {
                 .any(|p| p.what.starts_with("fleet folder not read")),
             "{problems:?}"
         );
+    }
+
+    #[test]
+    fn a_session_with_a_reply_clip_says_when_keryx_kept_it() {
+        let root = Scratch::new("reply-at");
+        std::fs::create_dir_all(root.0.join("fleet")).unwrap();
+        std::fs::create_dir_all(root.0.join("replies")).unwrap();
+        root.write(&format!("fleet/{A}.json"), &session(A, "done"));
+        root.write(&format!("fleet/{B}.json"), &session(B, "done"));
+        let mut wav = b"RIFF\x24\x00\x00\x00WAVEfmt ".to_vec();
+        wav.resize(100, 0);
+        std::fs::write(root.0.join("replies").join(format!("{A}.wav")), wav).unwrap();
+        let t = unix_now();
+        let snap = Reader::new(&root.0).step(Duration::ZERO, || t).0.unwrap();
+        let at = |id: &str| {
+            snap.sessions
+                .iter()
+                .find(|v| v.session_id == id)
+                .unwrap()
+                .reply_at
+        };
+        assert!(at(A).is_some_and(|s| s > 1_700_000_000));
+        assert_eq!(at(B), None);
     }
 
     #[test]

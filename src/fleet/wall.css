@@ -528,6 +528,17 @@ button.menu svg { width: 16px; height: 16px; fill: currentColor; }
 .said p:empty { display: none; }
 .said .prompt { color: var(--text-dim); padding-left: 10px; border-left: 2px solid var(--card-line); }
 .said .reply { color: var(--text); }
+.reply-line { display: flex; align-items: flex-start; gap: var(--space-3); min-width: 0; }
+.reply-line[hidden] { display: none; }
+.reply-line .reply { flex: 1; min-width: 0; }
+.play { flex: none; display: grid; place-items: center; width: 24px; height: 24px; padding: 0; border-radius: 50%; }
+.play svg { width: 12px; height: 12px; fill: currentColor; }
+.play .sq, .play.playing .tri { display: none; }
+.play.playing .sq { display: inline; }
+.play.playing { border-color: var(--text); }
+/* Compact: no taller than one line of the reply, so the fit holds. */
+[data-density="compact"] .play { width: 18px; height: 18px; }
+[data-density="compact"] .play svg { width: 9px; height: 9px; }
 
 .updated { color: var(--text-quiet); font-size: 12.5px; }
 
@@ -1014,5 +1025,6 @@ a.remote:focus-visible { outline: 2px solid var(--card-focus); outline-offset: 2
   .served .wall { padding-bottom: calc(var(--wall-pad) + env(safe-area-inset-bottom)); }
   .served a.remote { min-height: 44px; min-width: 44px; }
   .served .card .look { min-width: 44px; min-height: 44px; }
+  .served .card .play { width: 44px; height: 44px; }
   .served #portrait .close { min-height: 44px; }
 }

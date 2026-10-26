@@ -3,14 +3,15 @@
 //! <frontend-dir> <snapshot.json> [port]`. Serves the frontend from disk, as
 //! the app serves its bundle, and the snapshot with its times moved up to now
 //! (by its `at`, as the wall's ?demo does), again each time the file changes.
-//! Port 0, the default, picks a free one. Prints the bound address.
+//! Port 0, the default, picks a free one. Prints the bound address. With
+//! `KLEPSYDRA_DIR` set, reply clips come from its `replies/`.
 
 use std::net::{Ipv4Addr, SocketAddrV4};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
-use klepsydra_fleet::phone::{asset_type, Assets, Server};
+use klepsydra_fleet::phone::{asset_type, Assets, Clips, Server};
 use klepsydra_fleet::receiver::Log;
 use klepsydra_fleet::watch::unix_now;
 use serde_json::Value;
@@ -67,9 +68,16 @@ fn main() {
         asset_type(path)?;
         std::fs::read(root.join(path)).ok()
     });
+    let clips: Clips = match std::env::var_os("KLEPSYDRA_DIR") {
+        Some(dir) => {
+            let dir = PathBuf::from(dir);
+            Arc::new(move |id: &str| klepsydra_fleet::reply::read(&dir, id))
+        }
+        None => Arc::new(|_| None),
+    };
     let log: Log = Arc::new(|l| eprintln!("{l}"));
     let addr = SocketAddrV4::new(Ipv4Addr::LOCALHOST, port);
-    let server = match Server::spawn(addr, assets, log) {
+    let server = match Server::spawn(addr, assets, clips, log) {
         Ok(s) => s,
         Err(e) => {
             eprintln!("no phone wall on {addr}: {e}");

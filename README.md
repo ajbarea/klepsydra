@@ -447,7 +447,11 @@ an error count only when one exists. Each card shows:
   repo of its last edit, else its folder's, and its folder's again once that
   worktree is removed) and the other repos it touched;
 - for a session that needs you, a line saying what it waits for;
-- the last prompt in a quoted block and the full reply under it.
+- the last prompt in a quoted block and the full reply under it, with a play
+  button beside the reply when keryx kept that reply's audio (keryx's
+  `reply_clips`, on by default). It plays the session's latest spoken reply on
+  this machine, one card at a time; press it again to stop. keryx writes the
+  clip to `replies/<session id>.wav` beside the fleet folder.
 
 A left edge in the status tone marks each card, and a needs-you card adds an
 amber border. Ended, silent and not-started cards are dimmer. The grid uses
@@ -784,7 +788,8 @@ On the phone the wall is one column of compact cards, needs-you first, under
 a tally that stays at the top. It updates as the desktop's does, over one
 event stream. Nothing on it acts on a session: New, Open terminal, End,
 Interrupt, Clear, Wrap up and the ledger stay on the desktop, though a
-wrap-up's answers and readiness count show. A session with Remote
+wrap-up's answers and readiness count show. A card's play button plays its
+latest spoken reply on the phone, not the PC, from `/audio/<session id>`. A session with Remote
 Control on (`/remote-control` in its terminal) shows **Open in Claude**, and
 a tap on its card opens that session on claude.ai or in the Claude app. The
 link appears at the session's next hook event after Remote Control connects,
@@ -793,11 +798,12 @@ wall says the cards may be out of date until it reconnects, and keeps
 trying (every 1 s at first, at most every 30 s) while klepsydra restarts.
 
 The server answers only GET and HEAD, serves only the wall's own files, its
-snapshot at `/fleet.json` and the stream at `/events`, and sends each session
-without its tmux pane, process or full folder path. Card previews (prompts
-and replies), errors and the cost estimate are visible to any tailnet device
-your Tailscale ACLs let reach this PC. The page's service worker keeps only
-the page and its files, never the fleet.
+snapshot at `/fleet.json`, the stream at `/events` and the reply clips of the
+cards it shows, and sends each session without its tmux pane, process or full
+folder path. Card previews (prompts and replies), the spoken replies, errors
+and the cost estimate are visible to any tailnet device your Tailscale ACLs
+let reach this PC. The page's service worker keeps only the page and its
+files, never the fleet or a clip.
 
 The Home Screen icons are drawn by `scripts/make-phone-icons.py` from the
 mark in `src-tauri/icons/`.

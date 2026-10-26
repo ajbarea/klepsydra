@@ -851,6 +851,7 @@ fn main() {
             split::set_split_mode,
             fleet::clear_session,
             fleet::ledger_today,
+            fleet::reply_clip,
             launch::end_session,
             launch::interrupt_session,
             launch::start_wrapup,

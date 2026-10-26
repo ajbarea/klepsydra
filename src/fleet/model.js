@@ -471,6 +471,10 @@ export function card(s, cast, nowMs, request = null) {
     wrapup,
     remote: remoteLink(s.remote_url),
     remoteLabel: `Open ${who.name}'s session in Claude`,
+    // keryx's latest spoken reply, when it kept one (replay.js).
+    clip: Number.isInteger(s.reply_at) ? s.reply_at : null,
+    playLabel: `Play ${who.name}'s last reply`,
+    stopLabel: `Stop ${who.name}'s reply`,
     menuLabel: `Session actions for ${who.name}`,
     // An off button says why in its name too, not only in its tooltip.
     jumpLabel: `Open terminal, ${who.name}${jump.why ? `, unavailable: ${jump.why}` : ""}`,
