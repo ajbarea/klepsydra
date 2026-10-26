@@ -1,28 +1,25 @@
 # IMPL
 
-Repo resume state (2026-10-25). Main holds #82 Wrap up, #83 empty state,
-#88 Queue panel (#86), #91 phone wall (part of #52), #89 split mode (#32).
-None of these is deployed: the installed build is still 4bc0fb9 (10-22).
+Repo resume state (2026-10-25, late). Main holds #82 Wrap up, #83 empty
+state, #88 Queue panel (#86), #91 phone wall (part of #52), #89 split mode
+(#32), #93 ledger rows for shared home voices (#87) and #92 (portrait style
+prompt label). Installed build: 1ad1405, deployed 10-25 21:48 (Wrap up and
+its Stop hook, empty state, Queue panel, phone wall). Not yet live: #89
+split mode and #93.
 
 ## Next
-1. #87: the ledger credits every session to one character when sessions
-   share a voice. Attribute by the card's character; test three sessions
-   sharing one voice.
-2. Queue item 17: AJ's shared portrait style prompt and negative prompt,
-   word for word, into `docs/characters/portrait-briefs.md` (docs-only PR;
-   text in the archived brief under `~/.local/state/fleet-orchestrator/archive/`).
-3. #90: after every session ends under a wrap-up, the bar reads "0 of 0
+1. #90: after every session ends under a wrap-up, the bar reads "0 of 0
    ready" and Safe to restart vanishes.
+2. Open question from #87: sessions launched from `~/ajsoftworks` while
+   keryx holds no voice all take that folder's home voice, so the wall shows
+   several cards of one character (the ledger now keeps their rows apart).
+   Whether the wall should tell them apart too is unfiled.
 
 ## Waits on AJ
-- Deploy (his yes): copy `hooks/klepsydra-wrapup.sh` and the updated
-  `hooks/klepsydra-fleet.sh` (stamps `turn_at`, reads the Remote Control
-  link) to `~/.claude/`; the skill `hooks/klepsydra-wrapup.md` to
-  `skills/klepsydra-wrapup/SKILL.md` in `~/.claude` and `~/.claude-personal`;
-  the README's Stop hook block into both `settings.json`; then
-  `scripts/build-windows.sh` from main, stop the exe, installer `/S`, start.
-- After the deploy: the live checks below, then close #86 (Queue panel)
-  and #32 (split mode).
+- Deploy of #89 and #93 (his yes): `scripts/build-windows.sh` from main,
+  stop the exe, installer `/S`, start. No hook or settings change this time.
+- Live checks on the installed build (below), then close #86 (Queue panel)
+  and, once split mode is installed, #32.
 - #52: the iPhone check over Tailscale (tray "Phone wall"; README "Fleet on
   your phone"), and whether to check Serve's `Tailscale-User-Login` header.
 
