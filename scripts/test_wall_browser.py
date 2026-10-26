@@ -2095,7 +2095,7 @@ def wrapup_after_every_end(wall):
     feed(page, snap)
     feed(page, ended(snap))
     said = page.evaluate("document.getElementById('live').textContent")
-    wall.check(page.evaluate(BAR) == want and "Every session has ended. Safe to restart" in said, "sessions that end before they are ready announce it once", said)
+    wall.check(page.evaluate(BAR) == want and "Every session has ended. Safe to restart" in said, "sessions that end before they are ready: the live region says Safe to restart", said)
     page.close()
 
 
