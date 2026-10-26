@@ -37,11 +37,13 @@ export function stepText(size, by) {
 }
 
 const TEXT_KEYS = new Map([["=", 1], ["+", 1], ["-", -1], ["0", 0]]);
+// Where the key's character is another (Ctrl+0 is "à" on AZERTY), its place, as browsers fall back.
+const TEXT_CODES = new Map([["Digit0", 0], ["Numpad0", 0], ["NumpadAdd", 1], ["NumpadSubtract", -1]]);
 
 /** What a key press does to the text size, as in browsers: +1 for Ctrl+= or Ctrl++, -1 for Ctrl+-, 0 (reset) for Ctrl+0, else null. */
 export function textKey(e) {
   if (!e.ctrlKey || e.altKey || e.metaKey) return null;
-  return TEXT_KEYS.get(e.key) ?? null;
+  return TEXT_KEYS.get(e.key) ?? TEXT_CODES.get(e.code) ?? null;
 }
 
 /** The browser's sample queue file, only with ?demo and never inside the app. */
@@ -248,18 +250,18 @@ export function createQueuePanel({ dialog, button, onLayout = () => {}, onResize
   smaller.addEventListener("click", () => setText(stepText(size, -1)));
   larger.addEventListener("click", () => setText(stepText(size, 1)));
   reset.addEventListener("click", () => setText(1));
-  // The keys act while the panel is open, unless another dialog is in front of it.
+  // The keys act while the panel is open, unless another dialog is in front
+  // of it: a modal keeps the focus inside itself, so focus elsewhere means another.
   addEventListener("keydown", (e) => {
     const by = textKey(e);
     if (by === null || !open) return;
-    const front = document.querySelector("dialog:modal");
-    if (front && front !== dialog) return;
+    if (document.querySelector("dialog:modal") && !dialog.contains(document.activeElement)) return;
     e.preventDefault();
     setText(by === 0 ? 1 : stepText(size, by));
   });
-  // Ctrl+wheel over the panel, a notch a step; touchpad pinches add up to one.
+  // Ctrl+wheel over the panel (not a modal's backdrop), a notch a step; touchpad pinches add up to one.
   let wheel = null;
-  dialog.addEventListener(
+  body.addEventListener(
     "wheel",
     (e) => {
       if (!e.ctrlKey) return;

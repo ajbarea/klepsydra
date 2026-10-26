@@ -2293,6 +2293,9 @@ TEXT_STATE = """() => {
     const r = b.getBoundingClientRect();
     return r.width > 0 && r.left >= q.left && r.right <= q.right;
   });
+  const h = document.getElementById('queue-title').getBoundingClientRect();
+  const t = document.querySelector('#queue .queue-tools').getBoundingClientRect();
+  const apart = h.right <= t.left || h.bottom <= t.top;
   return {
     zoom: c.style.zoom,
     reset: document.querySelector('#queue .queue-reset').textContent,
@@ -2300,7 +2303,10 @@ TEXT_STATE = """() => {
     smallerOff: document.querySelector('#queue .queue-smaller').getAttribute('aria-disabled'),
     largerOff: document.querySelector('#queue .queue-larger').getAttribute('aria-disabled'),
     stored: localStorage.getItem('klepsydra.queue.text'),
-    cards: getComputedStyle(document.querySelector('#wall .card')).zoom,
+    cards: Math.round(document.querySelector('#wall .card .name').getBoundingClientRect().height * 10),
+    title: [Math.round(h.width), document.getElementById('queue-title').scrollWidth <= Math.ceil(h.width)],
+    apart,
+    share: Math.round(body.scrollTop / Math.max(1, body.scrollHeight - body.clientHeight) * 100),
     hscroll: document.documentElement.scrollWidth > innerWidth || body.scrollWidth > body.clientWidth,
     inside,
   };
@@ -2318,6 +2324,8 @@ def queue_text_size(wall):
     wall.check(closed["zoom"] == "1" and closed["stored"] is None, "with the panel closed Ctrl+= changes nothing", closed)
     page.click("#queue-open")
     page.wait_for_selector("#queue .queue-content details")
+    page.wait_for_timeout(SETTLE_MS)
+    card_name = page.evaluate(TEXT_STATE)["cards"]  # docked: the wall has made room
     page.keyboard.press("Control+Equal")
     page.keyboard.press("Control+Equal")
     up = page.evaluate(TEXT_STATE)
@@ -2327,7 +2335,7 @@ def queue_text_size(wall):
     reset = page.evaluate(TEXT_STATE)
     wall.check(
         up["zoom"] == "1.25" and up["reset"] == "125%" and up["resetName"] == "Reset text size, now 125%" and up["stored"] == "1.25"
-        and up["cards"] == "1" and down == "1.1" and reset["zoom"] == "1" and reset["stored"] == "1",
+        and up["cards"] == card_name and down == "1.1" and reset["zoom"] == "1" and reset["stored"] == "1",
         "Ctrl+= steps 110% then 125%, Ctrl+- back, Ctrl+0 resets; the cards keep their size",
         [up, down, reset],
     )
@@ -2359,7 +2367,16 @@ def queue_text_size(wall):
     page.locator("#queue [role=separator]").focus()
     page.keyboard.press("Home")
     narrow = page.evaluate(TEXT_STATE)
-    wall.check(narrow["inside"] and not narrow["hscroll"], "at its narrowest the header's buttons stay inside the panel", narrow)
+    wall.check(narrow["inside"] and narrow["apart"] and narrow["title"][1] and not narrow["hscroll"], "at its narrowest the header's buttons stay inside the panel, clear of the whole title", narrow)
+    page.evaluate("document.querySelectorAll('#queue details').forEach((d) => { d.open = true; })")
+    page.evaluate("(b => { b.scrollTop = (b.scrollHeight - b.clientHeight) / 2; })(document.querySelector('#queue .queue-body'))")
+    before = page.evaluate(TEXT_STATE)["share"]
+    page.keyboard.press("Control+Equal")  # a click would scroll the header into view
+    after = page.evaluate(TEXT_STATE)["share"]
+    wall.check(40 <= before <= 60 and abs(after - before) <= 3, "a size change keeps the reading position", [before, after])
+    page.click("#queue .queue-reset")
+    page.click("#queue .queue-larger")
+    page.click("#queue .queue-larger")
     page.reload()
     page.wait_for_selector("#queue[open] .queue-content details")
     again = page.evaluate(TEXT_STATE)

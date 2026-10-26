@@ -311,4 +311,7 @@ test("text sizes step as browsers zoom, stay in bounds, and read a stored value 
   assert.equal(key("=", { altKey: true }), null, "Ctrl+Alt is AltGr on some layouts");
   assert.equal(key("a"), null);
   assert.equal(key("toString"), null, "no key reads through to the prototype");
+  assert.equal(key("à", { code: "Digit0" }), 0, "AZERTY's Ctrl+0 by its place");
+  assert.deepEqual([key("+", { code: "NumpadAdd" }), key("Subtract", { code: "NumpadSubtract" })], [1, -1]);
+  assert.equal(key("&", { code: "Digit1" }), null);
 });
