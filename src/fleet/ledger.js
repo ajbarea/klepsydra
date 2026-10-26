@@ -155,34 +155,48 @@ export const fullNumber = (v) => n(v).toLocaleString("en-US");
  * session to voice map) as its cast character, `{ name, accent, character:
  * true }`; a recorded voice outside the cast named as a card names one, with
  * `character: false`; else `wall` (its identity on the live wall, if any)
- * when the day has no voice for it, which may be null.
+ * when the day has no voice for it, which may be null. A home voice (`homes`,
+ * the day file's `home_voices`) is only its launch folder's guess, shared by
+ * every session started there, so its character is named with `label` (what
+ * tells its card apart) and `own: true`, and its tokens are never merged.
  */
-export function characterOf(id, voices, cast, wall = null) {
+export function characterOf(id, voices, cast, wall = null, { homes = null, label = null } = {}) {
   const voice = ownValue(voices, id);
   if (typeof voice !== "string" || voice === "") return wall;
   const c = castCharacter(voice, cast);
-  return c ? { name: c.name, accent: castAccent(c), character: true } : { name: voiceName(voice), accent: null, character: false };
+  if (!c) return { name: voiceName(voice), accent: null, character: false };
+  if (!(Array.isArray(homes) && homes.includes(id))) return { name: c.name, accent: castAccent(c), character: true };
+  return { name: `${c.name} · ${label || `session ${id.slice(0, 8)}`}`, accent: castAccent(c), character: true, own: true };
+}
+
+/** Each card's label (`[id, label]`), with the session's short id added where two cards share one, so their rows read apart. */
+export function cardLabels(entries) {
+  const seen = new Map();
+  for (const [, label] of entries) if (label) seen.set(label, (seen.get(label) ?? 0) + 1);
+  return new Map(entries.map(([id, label]) => [id, label && seen.get(label) > 1 ? `${label}, ${id.slice(0, 8)}` : label]));
 }
 
 /**
  * Tokens by character: one row per character, largest first, each session
- * placed by `characterOf`, whether or not its card is still on the wall.
- * Every other session lands in one "Other sessions" row, always last, whose
- * label counts the sessions with no voice and those with a voice outside the
- * cast.
+ * placed by `characterOf`, whether or not its card is still on the wall; a
+ * home-voiced session has a row of its own, named from `labels` (session id
+ * to what tells its card apart). Every other session lands in one "Other
+ * sessions" row, always last, whose label counts the sessions with no voice
+ * and those with a voice outside the cast.
  */
-export function tokensByCharacter(sessions, voices, cast) {
+export function tokensByCharacter(sessions, voices, cast, { homes = null, labels = null } = {}) {
   const rows = new Map();
   const other = { name: "Other sessions", accent: null, tokens: 0, other: true, count: 0 };
   let voiceless = 0;
   for (const [id, totals] of sessions) {
     const tokens = totalTokens(totals.tokens);
     if (!tokens) continue;
-    const who = characterOf(id, voices, cast);
+    const who = characterOf(id, voices, cast, null, { homes, label: labels?.get(id) });
     if (who?.character) {
-      const row = rows.get(who.name) ?? { name: who.name, accent: who.accent, tokens: 0 };
+      const key = who.own ? `session:${id}` : `character:${who.name}`;
+      const row = rows.get(key) ?? { name: who.name, accent: who.accent, tokens: 0 };
       row.tokens += tokens;
-      rows.set(who.name, row);
+      rows.set(key, row);
     } else {
       other.tokens += tokens;
       other.count += 1;

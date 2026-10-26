@@ -3,7 +3,7 @@
 // figure is set as text; the only markup is built here from constants.
 import { identity } from "./model.js";
 import {
-  activeTime, cacheShare, characterOf, costLine, costText, fullNumber, modelName, plural, sumTotals, todaySessions, tokensByCharacter,
+  activeTime, cacheShare, cardLabels, characterOf, costLine, costText, fullNumber, modelName, plural, sumTotals, todaySessions, tokensByCharacter,
   tokensByModel, topAttribution, totalTokens,
 } from "./ledger.js";
 
@@ -101,7 +101,8 @@ export function createDrawer({ dialog, sessions, cast, fetchToday, home }) {
     const map = new Map();
     for (const s of sessions()) {
       const id = identity(s, cast);
-      map.set(s.session_id, { name: id.name, accent: id.accent });
+      // What tells two cards of one character apart: the session's name, else its repo.
+      map.set(s.session_id, { name: id.name, accent: id.accent, label: s.name || s.where?.repo || null });
     }
     return map;
   };
@@ -115,7 +116,9 @@ export function createDrawer({ dialog, sessions, cast, fetchToday, home }) {
     painted = key;
     const { day, receiver, guardrails, guardrails_total: total } = view;
     // Today's recorded voice names a session; the wall only when the day has none.
-    const nameOf = (id) => characterOf(id, day.voices, cast, names.get(id))?.name;
+    const homes = day.home_voices;
+    const labels = cardLabels([...names].map(([id, n]) => [id, n.label]));
+    const nameOf = (id) => characterOf(id, day.voices, cast, names.get(id), { homes, label: labels.get(id) })?.name;
     const everyone = todaySessions(day);
     const shown = todaySessions(day, filter);
     const day_ = sumTotals(shown.map(([, t]) => t));
@@ -163,7 +166,7 @@ export function createDrawer({ dialog, sessions, cast, fetchToday, home }) {
     } else if (filter !== null && totalTokens(day_.tokens) === 0) {
       out.push(el("p", "empty-state", "Nothing counted for this session today."));
     } else {
-      out.push(totalsSection(day_), charactersSection(day, shown), modelsSection(day, shown), attributionSection(day, shown));
+      out.push(totalsSection(day_), charactersSection(day, shown, labels), modelsSection(day, shown), attributionSection(day, shown));
     }
     out.push(blockedSection(guardrails, total, nameOf), errorsSection(day_));
     const cost = costLine(day_.cost_usd_estimate_micros);
@@ -187,9 +190,9 @@ export function createDrawer({ dialog, sessions, cast, fetchToday, home }) {
     return span;
   }
 
-  function charactersSection(day, shown) {
+  function charactersSection(day, shown, labels) {
     const s = section("ledger-characters", "Tokens by character");
-    const rows = tokensByCharacter(shown, day.voices, cast);
+    const rows = tokensByCharacter(shown, day.voices, cast, { homes: day.home_voices, labels });
     const max = Math.max(1, ...rows.map((r) => r.tokens));
     // The bar is decoration: the name and the count beside it are the data.
     const bar = (row) => {

@@ -778,8 +778,7 @@ impl Ledger {
             attribution,
             models,
             voices,
-            // Only the ledger decides by it.
-            home_voices: _,
+            home_voices,
             no_session,
         } = &self.day;
         let day = if current {
@@ -791,7 +790,8 @@ impl Ledger {
                 attribution: attribution.clone(),
                 models: models.clone(),
                 voices: voices.clone(),
-                home_voices: BTreeSet::new(),
+                // The drawer never merges home-voiced sessions into one row.
+                home_voices: home_voices.clone(),
                 no_session: *no_session,
             }
         } else {
@@ -2332,6 +2332,20 @@ mod tests {
         assert!(!l.day().home_voices.contains("s2"));
         assert!(!l.note_voice("s2", "am_adam", false, NOW));
         assert_eq!(l.day().voices["s2"], "bf_emma");
+    }
+
+    #[test]
+    fn the_wall_gets_which_voices_are_home_voices() {
+        let mut l = Ledger::in_memory(NOW);
+        for id in ["home", "held"] {
+            l.record_metrics(&metrics(&tokens_at(id, "output", 1, NOW as u64, &[])), NOW);
+        }
+        assert!(l.note_voice("home", "am_michael", true, NOW));
+        assert!(l.note_voice("held", "am_michael", false, NOW));
+        // The drawer never merges home-voiced sessions, so it must know which they are.
+        let v = serde_json::to_value(l.today_view(NOW, None)).unwrap();
+        assert_eq!(v["day"]["home_voices"], json!(["home"]));
+        assert_eq!(v["day"]["voices"]["held"], "am_michael");
     }
 
     #[test]

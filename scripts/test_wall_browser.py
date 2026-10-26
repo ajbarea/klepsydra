@@ -579,6 +579,37 @@ def drawer_tables(wall):
     page.close()
 
 
+def shared_home_voice(wall):
+    """Three sessions launched from one folder share its home voice: three
+    cards of one character, and three rows in the drawer, each named for its
+    card, in Tokens by character and in Blocked today."""
+    fleet = json.loads((ROOT / "scripts/fixtures/fleet-demo.json").read_text())
+    ids = [x["session_id"] for x in fleet["sessions"][:3]]
+    for x in fleet["sessions"][:3]:
+        x["voice"] = "am_michael"
+    view = json.loads(ledger_view())
+    day = view["day"]
+    base = day["sessions"][ids[0]]
+    for n, sid in enumerate(ids):
+        day["sessions"][sid] = base | {"tokens": {"input": 1000 * (3 - n), "output": 10, "cache_read": 0, "cache_creation": 0}}
+        day["voices"][sid] = "am_michael"
+    day["home_voices"] = ids
+    view["guardrails"] = [{"at": view["guardrails"][0]["at"], "session_id": ids[1], "tool_name": "Bash", "source": "hook"}]
+    view["guardrails_total"] = 1
+    page = wall.open(960, 1000, 8, fixture=json.dumps(fleet), ledger=json.dumps(view))
+    open_drawer(page)
+    names = page.evaluate(
+        """() => [...document.querySelectorAll('#ledger-characters-table tbody tr')].map((r) =>
+          r.cells[0].querySelector('.visually-hidden')?.textContent ?? r.cells[0].textContent)"""
+    )
+    blocked = page.locator("#ledger-blocked-table tbody tr td:nth-child(2)").all_inner_texts()
+    tasks = [x["name"] for x in fleet["sessions"][:3]]
+    want = [f"Hephaestus \u00b7 {t}" for t in tasks]
+    ok = [n for n in names if n.startswith("Hephaestus")] == want and blocked == [want[1]]
+    wall.check(ok, "sessions sharing a home voice keep a row each, named for its card", [names, blocked])
+    page.close()
+
+
 def drawer_states(wall):
     """No tokens today: the empty state names the README section and links
     nowhere. A taken port: the notice shows the receiver's error."""
@@ -2503,6 +2534,7 @@ def main() -> int:
             drawer_opens_and_returns_focus,
             drawer_tables,
             drawer_states,
+            shared_home_voice,
             drawer_follows_snapshots,
             portrait_dialog,
             band_clear,

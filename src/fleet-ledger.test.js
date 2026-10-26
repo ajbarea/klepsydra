@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   MODEL_CAP, NAME_CAP, OTHER, PARTIAL_LABEL, costText, modelName, tokensByModel, activeTime, attributionName, cacheShare, chipLabel, compactNumber, compactPick, costLine, fullNumber,
-  characterOf, ledgerLine, receiptParts, receiptText, sumTotals, todaySessions, tokensByCharacter, topAttribution, totalTokens,
+  cardLabels, characterOf, ledgerLine, receiptParts, receiptText, sumTotals, todaySessions, tokensByCharacter, topAttribution, totalTokens,
 } from "./fleet/ledger.js";
 
 test("compactNumber reads at a glance and rounds up into the next unit", () => {
@@ -241,4 +241,45 @@ test("the model cap is named honestly and matches ledger.rs", async () => {
   const { readFileSync } = await import("node:fs");
   const rust = readFileSync(new URL("../src-tauri/fleet/src/ledger.rs", import.meta.url), "utf8");
   assert.match(rust, new RegExp(`pub const MAX_MODELS: usize = ${MODEL_CAP};`));
+});
+
+test("three sessions sharing one home voice keep three rows, each named for its card", () => {
+  const t = (input) => ({ tokens: { input } });
+  // Launched from one folder with keryx muted: all three take that folder's home voice.
+  const voices = { techne: "af_heart", klep: "af_heart", orch: "af_heart" };
+  const homes = ["techne", "klep", "orch"];
+  const labels = new Map([["techne", "techne"], ["klep", "klepsydra"]]);
+  const sessions = [["techne", t(190)], ["klep", t(63)], ["orch", t(28)]];
+  const rows = tokensByCharacter(sessions, voices, CAST, { homes, labels });
+  assert.deepEqual(
+    rows.map((r) => [r.name, r.tokens]),
+    [["Cupid · techne", 190], ["Cupid · klepsydra", 63], ["Cupid · session orch", 28]],
+  );
+  assert.ok(rows.every((r) => r.accent === "#D55E00" && !r.other));
+  // A voice keryx held is the character itself: its sessions share one row.
+  assert.deepEqual(tokensByCharacter(sessions, voices, CAST).map((r) => [r.name, r.tokens]), [["Cupid", 281]]);
+  // A held session and a home-voiced one with the same voice stay apart.
+  const mixed = tokensByCharacter(sessions, voices, CAST, { homes: ["orch"], labels });
+  assert.deepEqual(mixed.map((r) => [r.name, r.tokens]), [["Cupid", 253], ["Cupid · session orch", 28]]);
+});
+
+test("characterOf names a home-voiced session for its card, and a held one for its character", () => {
+  const voices = { h: "af_heart", k: "af_heart" };
+  assert.equal(characterOf("h", voices, CAST, null, { homes: ["h"], label: "techne" }).name, "Cupid · techne");
+  assert.equal(characterOf("h", voices, CAST, null, { homes: ["h"] }).name, "Cupid · session h");
+  assert.equal(characterOf("k", voices, CAST, null, { homes: ["h"], label: "x" }).name, "Cupid");
+  // A home voice outside the cast names the session as before.
+  assert.equal(characterOf("o", { o: "am_onyx" }, CAST, null, { homes: ["o"], label: "x" }).name, "Onyx");
+  // home_voices of the wrong shape is ignored.
+  assert.equal(characterOf("h", voices, CAST, null, { homes: { h: true }, label: "x" }).name, "Cupid");
+});
+
+test("card labels gain the session's short id only where two cards would read alike", () => {
+  const got = cardLabels([["aaaaaaaa-1", "techne"], ["bbbbbbbb-2", "techne"], ["cccccccc-3", "papers"], ["dddddddd-4", null]]);
+  assert.deepEqual([...got], [
+    ["aaaaaaaa-1", "techne, aaaaaaaa"],
+    ["bbbbbbbb-2", "techne, bbbbbbbb"],
+    ["cccccccc-3", "papers"],
+    ["dddddddd-4", null],
+  ]);
 });
