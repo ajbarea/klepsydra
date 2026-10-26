@@ -3,8 +3,9 @@
 Repo resume state (2026-10-25, late). Main holds #82 Wrap up, #83 empty
 state, #88 Queue panel (#86), #91 phone wall (part of #52), #89 split mode
 (#32), #93 ledger rows for shared home voices (#87) and #92 (portrait style
-prompt label). None of these is deployed: the installed build is still
-4bc0fb9 (10-22).
+prompt label). Installed build: 1ad1405, deployed 10-25 21:48 (Wrap up and
+its Stop hook, empty state, Queue panel, phone wall). Not yet live: #89
+split mode and #93.
 
 ## Next
 1. #90: after every session ends under a wrap-up, the bar reads "0 of 0
@@ -15,14 +16,10 @@ prompt label). None of these is deployed: the installed build is still
    Whether the wall should tell them apart too is unfiled.
 
 ## Waits on AJ
-- Deploy (his yes): copy `hooks/klepsydra-wrapup.sh` and the updated
-  `hooks/klepsydra-fleet.sh` (stamps `turn_at`, reads the Remote Control
-  link) to `~/.claude/`; the skill `hooks/klepsydra-wrapup.md` to
-  `skills/klepsydra-wrapup/SKILL.md` in `~/.claude` and `~/.claude-personal`;
-  the README's Stop hook block into both `settings.json`; then
-  `scripts/build-windows.sh` from main, stop the exe, installer `/S`, start.
-- After the deploy: the live checks below, then close #86 (Queue panel)
-  and #32 (split mode).
+- Deploy of #89 and #93 (his yes): `scripts/build-windows.sh` from main,
+  stop the exe, installer `/S`, start. No hook or settings change this time.
+- Live checks on the installed build (below), then close #86 (Queue panel)
+  and, once split mode is installed, #32.
 - #52: the iPhone check over Tailscale (tray "Phone wall"; README "Fleet on
   your phone"), and whether to check Serve's `Tailscale-User-Login` header.
 
