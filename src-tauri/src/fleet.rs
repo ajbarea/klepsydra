@@ -104,6 +104,16 @@ pub fn clear_session(app: AppHandle, id: String) -> Result<(), String> {
     remove_session(&dir.join("fleet"), &id)
 }
 
+/// keryx's latest spoken reply for session `id`, as WAV bytes for the card
+/// to play.
+#[tauri::command]
+pub fn reply_clip(app: AppHandle, id: String) -> Result<tauri::ipc::Response, String> {
+    let dir = crate::klepsydra_dir(&app).ok_or("klepsydra has no data folder.")?;
+    klepsydra_fleet::reply::read(&dir, &id)
+        .map(tauri::ipc::Response::new)
+        .ok_or_else(|| "No reply to play.".into())
+}
+
 /// The ledger the receiver writes, managed as app state once it is open.
 pub struct LedgerState(Shared);
 

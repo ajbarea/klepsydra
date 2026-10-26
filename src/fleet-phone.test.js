@@ -139,8 +139,8 @@ test("on the phone every desktop action is hidden: only buttons marked data-phon
   const phone = buttons.filter((b) => /\bdata-phone\b/.test(b));
   assert.deepEqual(
     phone.map((b) => b.match(/class="([^"]+)"/)[1]).sort(),
-    ["close", "look"],
-    "only the portrait's look and its Close act on the phone",
+    ["close", "look", "play"],
+    "only the portrait's look, its Close and a card's reply button act on the phone",
   );
   for (const action of ['id="new-session"', 'class="jump"', 'class="clear"', 'class="menu"', 'data-act="interrupt"', 'data-act="end"', 'class="undo"', 'class="end-confirm"', 'id="ledger-open"', 'class="chip"']) {
     const b = buttons.find((x) => x.includes(action));
@@ -181,7 +181,7 @@ test("the phone wall installs: manifest, Home Screen icon, and a shell-only serv
   assert.equal(touch[25], 2, "opaque RGB: iOS fills a transparent icon with black");
   const sw = read("src/sw.js");
   assert.match(sw, /const LIVE = new Set\(\["\/fleet\.json", "\/events"\]\);/);
-  assert.match(sw, /LIVE\.has\(url\.pathname\)\) return;/, "the fleet is never answered from the cache");
+  assert.match(sw, /LIVE\.has\(url\.pathname\) \|\| url\.pathname\.startsWith\("\/audio\/"\)\) return;/, "the fleet and its clips are never answered from the cache");
   assert.match(read("src/fleet/wall.js"), /if \(served\) navigator\.serviceWorker\?\.register\("\/sw\.js"\)/);
 });
 

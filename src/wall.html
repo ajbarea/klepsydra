@@ -121,6 +121,8 @@
     </div>
   </dialog>
 
+  <audio id="reply-audio" preload="none" hidden></audio>
+
   <template id="card-tpl">
     <article class="card" tabindex="-1">
       <header>
@@ -151,7 +153,10 @@
       <p class="ask" hidden><span class="mark"></span><span class="text"></span></p>
       <div class="said">
         <p class="prompt"></p>
-        <p class="reply"></p>
+        <div class="reply-line">
+          <button type="button" class="play" data-phone hidden><svg viewBox="0 0 16 16" aria-hidden="true"><path class="tri" d="M4.5 2.8v10.4L13 8z"/><rect class="sq" x="3.5" y="3.5" width="9" height="9" rx="1"/></svg></button>
+          <p class="reply"></p>
+        </div>
         <p class="error" hidden></p>
       </div>
       <p class="updated" hidden></p>

@@ -4,7 +4,7 @@
 
 use std::sync::{Arc, Mutex};
 
-use klepsydra_fleet::phone::{exact_assets, Assets, Server, ADDR};
+use klepsydra_fleet::phone::{exact_assets, Assets, Clips, Server, ADDR};
 use klepsydra_fleet::receiver::Log;
 use tauri::{AppHandle, Manager};
 
@@ -61,9 +61,11 @@ pub fn set(app: &AppHandle, on: bool) -> bool {
             .get(path.to_string())
             .map(|a| a.bytes)
     });
+    let dir = crate::klepsydra_dir(app);
+    let clips: Clips = Arc::new(move |id: &str| klepsydra_fleet::reply::read(dir.as_deref()?, id));
     let handle = app.clone();
     let server_log: Log = Arc::new(move |l: String| log(&handle, &l));
-    match Server::spawn(ADDR, assets, server_log) {
+    match Server::spawn(ADDR, assets, clips, server_log) {
         Ok(server) => {
             app.state::<crate::fleet::Fleet>()
                 .with_latest(|v| server.publish(v));

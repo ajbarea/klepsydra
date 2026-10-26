@@ -949,6 +949,7 @@ window.__TAURI__ = { core: {
     if (cmd === 'end_session' && window.__hold) { window.__calls.push([cmd, args]); return window.__hold; }
     window.__calls.push([cmd, args]);
     if (cmd === 'start_wrapup') return Promise.resolve(window.__asked ?? []);
+    if (cmd === 'reply_clip') return window.__clip ? Promise.resolve(window.__clip()) : Promise.reject('No reply to play.');
     return Promise.resolve('ok');
   },
 } };
@@ -2099,6 +2100,50 @@ def wrapup_after_every_end(wall):
     page.close()
 
 
+# A third of a second of 24 kHz silence, as keryx keeps a reply clip.
+WAV_JS = """() => {
+  const n = 8000, b = new DataView(new ArrayBuffer(44 + n * 2));
+  const s = (o, t) => [...t].forEach((c, i) => b.setUint8(o + i, c.charCodeAt(0)));
+  s(0, 'RIFF'); b.setUint32(4, 36 + n * 2, true); s(8, 'WAVEfmt '); b.setUint32(16, 16, true);
+  b.setUint16(20, 1, true); b.setUint16(22, 1, true); b.setUint32(24, 24000, true); b.setUint32(28, 48000, true);
+  b.setUint16(32, 2, true); b.setUint16(34, 16, true); s(36, 'data'); b.setUint32(40, n * 2, true);
+  return b.buffer;
+}"""
+
+
+def reply_buttons(wall):
+    """A card keryx kept a reply for has a play button by its reply; a press
+    reads that session's clip through reply_clip and plays it, Stop while it
+    plays, Play again once it ends or is pressed; a card without one has none."""
+    page = open_app(wall)
+    page.evaluate(f"window.__clip = {WAV_JS}")
+    want = sorted(s["session_id"] for s in page.snapshot["sessions"] if "reply_at" in s)
+    shown = page.evaluate("[...document.querySelectorAll('.card')].filter((c) => c.querySelector('.play').checkVisibility()).map((c) => c.dataset.key).sort()")
+    wall.check(shown == want and len(want) == 10, "a play button on exactly the cards keryx kept a reply for", [len(shown), len(want)])
+    key = want[0]
+    button = page.locator(f'.card[data-key="{key}"] .play')
+    name = page.locator(f'.card[data-key="{key}"] .name').text_content()
+    before = button.get_attribute("aria-label")
+    button.click()
+    page.wait_for_selector(f'.card[data-key="{key}"] .play.playing')
+    during = button.get_attribute("aria-label")
+    sent = page.evaluate("window.__calls.filter(([c]) => c === 'reply_clip')")
+    page.wait_for_selector(f'.card[data-key="{key}"] .play:not(.playing)', timeout=5000)
+    wall.check(
+        before == f"Play {name}'s last reply" and during == f"Stop {name}'s reply" and sent == [["reply_clip", {"id": key}]],
+        "a press reads that session's clip and plays it, Stop while it plays, Play once it ends",
+        [before, during, sent],
+    )
+    page.evaluate("window.__clip = null")
+    button.click()
+    page.wait_for_function(f"document.querySelector('.card[data-key=\"{key}\"] .note').textContent.startsWith('Could not play')")
+    wall.check(not page.locator(f'.card[data-key="{key}"] .play.playing').count(), "a clip that cannot be read says so and plays nothing", page.locator(f'.card[data-key="{key}"] .note').text_content())
+    none = next(s["session_id"] for s in page.snapshot["sessions"] if "reply_at" not in s and s.get("reply"))
+    line = page.evaluate(f"[document.querySelector('.card[data-key=\"{none}\"] .play').checkVisibility(), document.querySelector('.card[data-key=\"{none}\"] .reply').checkVisibility()]")
+    wall.check(line == [False, True], "a card without a clip keeps its reply and has no button", line)
+    page.close()
+
+
 def bulk_end_waits_on_ready(wall):
     """A session that goes back to work inside End all ready's undo window is not ended; the rest are."""
     page = open_app(wall)
@@ -2699,6 +2744,7 @@ def main() -> int:
             wrapup_demo_in_browser,
             end_all_ready,
             wrapup_after_every_end,
+            reply_buttons,
             bulk_end_waits_on_ready,
             wrapup_dialogs_close_on_change,
             one_click_or_key_never_ends_all,

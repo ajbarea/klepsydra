@@ -27,7 +27,7 @@
     "at": 1792499820
    },
    "reply": {
-    "text": "Filed as **techne #182**. Status:\n- \u2705 **#34 colours are live:** your `fleet` windows, see [the PR](https://github.com/ajbarea/klepsydra/pull/1)\n- \ud83d\udccb _next:_ review src/fleet/model.js",
+    "text": "Filed as **techne #182**. Status:\n- ✅ **#34 colours are live:** your `fleet` windows, see [the PR](https://github.com/ajbarea/klepsydra/pull/1)\n- 📋 _next:_ review src/fleet/model.js",
     "at": 1792499850
    },
    "error": null,
@@ -72,7 +72,8 @@
    "claude": {
     "pid": 4001,
     "start": 9001
-   }
+   },
+   "reply_at": 1792499880
   },
   {
    "session_id": "demo-2-af_bella",
@@ -140,7 +141,8 @@
    "claude": {
     "pid": 4002,
     "start": 9002
-   }
+   },
+   "reply_at": 1792499880
   },
   {
    "session_id": "demo-3-af_sarah",
@@ -209,7 +211,8 @@
    "claude": {
     "pid": 4003,
     "start": 9003
-   }
+   },
+   "reply_at": 1792499880
   },
   {
    "session_id": "demo-4-bf_emma",
@@ -277,7 +280,8 @@
    "claude": {
     "pid": 4004,
     "start": 9004
-   }
+   },
+   "reply_at": 1792499880
   },
   {
    "session_id": "demo-9-bm_fable",
@@ -350,7 +354,8 @@
    "claude": {
     "pid": 4009,
     "start": 9009
-   }
+   },
+   "reply_at": 1792499880
   },
   {
    "session_id": "demo-5-bf_isabella",
@@ -418,7 +423,8 @@
    "claude": {
     "pid": 4005,
     "start": 9005
-   }
+   },
+   "reply_at": 1792499880
   },
   {
    "session_id": "demo-6-af_nova",
@@ -667,7 +673,8 @@
    "claude": {
     "pid": 4010,
     "start": 9010
-   }
+   },
+   "reply_at": 1792499880
   },
   {
    "session_id": "demo-11-am_fenrir",
@@ -735,7 +742,8 @@
    "claude": {
     "pid": 4011,
     "start": 9011
-   }
+   },
+   "reply_at": 1792499880
   },
   {
    "session_id": "demo-12-af_alloy",
@@ -799,7 +807,8 @@
     "guardrail_rejects": 0,
     "user_rejects": 0,
     "updated_at": 1792499880
-   }
+   },
+   "reply_at": 1792499880
   },
   {
    "session_id": "demo-13-af_nicole",
@@ -867,7 +876,8 @@
    "claude": {
     "pid": 4013,
     "start": 9013
-   }
+   },
+   "reply_at": 1792499880
   },
   {
    "session_id": "demo-14-medallion",

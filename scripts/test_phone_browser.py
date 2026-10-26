@@ -34,6 +34,8 @@ TAURI = ROOT / "src-tauri"
 DEMO = ROOT / "scripts/fixtures/fleet-demo.json"
 WRAPUP = ROOT / "scripts/fixtures/wrapup-demo.json"
 REMOTE = "https://claude.ai/code/session_01PLACEHOLDERphone"
+# The one card keryx kept a clip for that the server can serve: a real session id.
+CLIP_ID = "3f1c0a52-7b1e-4c0e-9a55-2f6f0d1d7a10"
 DESKTOP = ", ".join([
     ".jump", ".clear", ".menu", "#new-session", "#ledger-open", ".chip", ".density", ".undo", ".end-confirm", "[data-act]",
     "#wrapup-open", "#wrapup-stop", "#end-ready", "#start-session", "#clear-ended",
@@ -60,6 +62,8 @@ def snapshot_file(path, change=None):
     fleet = json.loads(DEMO.read_text())
     fleet["sessions"][1]["remote_url"] = REMOTE
     fleet["sessions"][2]["remote_url"] = "https://evil.example/code/session_01x"
+    [*_, last] = [s for s in fleet["sessions"] if "reply_at" in s]
+    last["session_id"] = CLIP_ID
     if change:
         change(fleet)
     tmp = path.with_suffix(".tmp")
@@ -79,6 +83,18 @@ def with_wrapup(fleet):
             s["wrapup"] = sample["answers"][s["session_id"]]
 
 
+def write_clip(klepsydra):
+    """A third of a second of silence as keryx writes a reply clip."""
+    import wave
+
+    (klepsydra / "replies").mkdir(parents=True)
+    with wave.open(str(klepsydra / "replies" / f"{CLIP_ID}.wav"), "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(24000)
+        w.writeframes(b"\x00\x00" * 8000)
+
+
 def start_server(snapshot):
     subprocess.run(
         ["cargo", "build", "-q", "-p", "klepsydra-fleet", "--example", "phone"],
@@ -90,6 +106,7 @@ def start_server(snapshot):
         [str(exe), str(ROOT / "src"), str(snapshot), "0"],
         stdout=subprocess.PIPE,
         text=True,
+        env={**os.environ, "KLEPSYDRA_DIR": str(snapshot.parent / "klepsydra")},
     )
     line = proc.stdout.readline().strip()
     if not line.startswith("listening on "):
@@ -147,6 +164,7 @@ def main() -> int:
     with tempfile.TemporaryDirectory(prefix="klepsydra-phone-") as tmp:
         snapshot = pathlib.Path(tmp) / "fleet.json"
         fleet = snapshot_file(snapshot)
+        write_clip(pathlib.Path(tmp) / "klepsydra")
         needs = sum(s["status"] == "needs_you" for s in fleet["sessions"])
         proc, addr = start_server(snapshot)
         try:
@@ -179,6 +197,25 @@ def main() -> int:
                 run.check(s["remotes"] == [REMOTE], "only the claude.ai link is a link", s["remotes"])
                 page.screenshot(path=str(shot))
                 print(f"  shot {shot}")
+
+                # A card's reply button plays keryx's clip from the server, on the phone.
+                plays = page.evaluate("[...document.querySelectorAll('.card .play')].filter((b) => b.checkVisibility()).length")
+                with_clip = sum("reply_at" in s for s in fleet["sessions"])
+                run.check(plays == with_clip, "a play button on each card keryx kept a reply for", [plays, with_clip])
+                got = page.evaluate("""async (id) => {
+                  const a = await fetch(`/audio/${id}`);
+                  const demo = await fetch('/audio/demo-1-am_michael');
+                  return [a.status, a.headers.get('content-type'), (await a.arrayBuffer()).byteLength, demo.status];
+                }""", CLIP_ID)
+                run.check(got[:2] == [200, "audio/wav"] and got[2] > 44 and got[3] == 404, "the server sends that card's clip, and only for a real session", got)
+                button = page.locator(f'.card[data-key="{CLIP_ID}"] .play')
+                button.click()
+                playing = wait_until(page, f"!!document.querySelector('.card[data-key=\"{CLIP_ID}\"] .play.playing')", 3)
+                src = page.evaluate("document.getElementById('reply-audio').getAttribute('src')")
+                run.check(playing and src.startswith(f"/audio/{CLIP_ID}?at="), "a tap plays it from the server", [playing, src])
+                stopped = wait_until(page, f"!document.querySelector('.card[data-key=\"{CLIP_ID}\"] .play.playing')", 5)
+                label = button.get_attribute("aria-label")
+                run.check(stopped and label.startswith("Play "), "it ends by itself and the button reads Play again", [stopped, label])
 
                 # The tally stays at the top while the wall scrolls under it.
                 page.evaluate("window.scrollTo(0, document.documentElement.scrollHeight)")

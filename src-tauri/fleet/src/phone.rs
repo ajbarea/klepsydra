@@ -56,6 +56,9 @@ pub const LIMITS: Limits = Limits {
 /// The app's bundled frontend: the bytes at a path such as `fleet/wall.js`.
 pub type Assets = Arc<dyn Fn(&str) -> Option<Vec<u8>> + Send + Sync>;
 
+/// keryx's latest reply clip for a session id (`reply::read`).
+pub type Clips = Arc<dyn Fn(&str) -> Option<Vec<u8>> + Send + Sync>;
+
 /// `resolve` held to the paths in `known`, the bundle's own (with or
 /// without a leading `/`): Tauri's resolver answers a path it lacks with
 /// `<path>.html`, `<path>/index.html`, then `index.html`, which would serve
@@ -81,7 +84,7 @@ pub fn exact_assets<K: AsRef<str>>(
 /// (shown, never acted on: the phone has no wrap-up buttons). The rest (its
 /// tmux pane, Claude process, distro, full launch folder) serve the
 /// desktop's actions alone.
-const SESSION_FIELDS: [&str; 21] = [
+const SESSION_FIELDS: [&str; 22] = [
     "session_id",
     "name",
     "voice",
@@ -100,6 +103,7 @@ const SESSION_FIELDS: [&str; 21] = [
     "ledger",
     "ledger_partial",
     "remote_url",
+    "reply_at",
     "wrapup",
     "turn_at",
     "asked_after_turn",
@@ -155,6 +159,8 @@ enum Route {
     Home,
     Snapshot,
     Events,
+    /// A session's latest spoken reply, by its id.
+    Clip(String),
 }
 
 /// The parts of a request that decide its answer.
@@ -252,6 +258,10 @@ fn route(path: &str) -> Option<Route> {
         "/wall.html" => Some(Route::Home),
         "/fleet.json" => Some(Route::Snapshot),
         "/events" => Some(Route::Events),
+        _ if path.starts_with("/audio/") => {
+            let id = &path["/audio/".len()..];
+            crate::session::is_session_id(id).then(|| Route::Clip(id.into()))
+        }
         _ => {
             let file = path.strip_prefix('/')?;
             asset_type(file).map(|_| Route::Asset(file.into()))
@@ -391,6 +401,7 @@ async fn feed(
 struct Shared {
     bound: SocketAddr,
     assets: Assets,
+    clips: Clips,
     snapshots: watch::Receiver<Option<Bytes>>,
     streams: Arc<Semaphore>,
     heartbeat: Duration,
@@ -441,6 +452,20 @@ fn handle(req: &Request<Incoming>, s: &Shared) -> Reply {
             // No snapshot yet: an empty wall would say no session runs.
             None => refuse(StatusCode::SERVICE_UNAVAILABLE),
         },
+        // Only a card the phone shows with a clip: what its wall would offer.
+        Route::Clip(id) => match s.snapshots.borrow().clone() {
+            Some(json) if offers_clip(&json, &id) => match (s.clips)(&id) {
+                Some(bytes) => answer(
+                    StatusCode::OK,
+                    Some("audio/wav"),
+                    "no-store",
+                    Some(Bytes::from(bytes)),
+                    only_head,
+                ),
+                None => refuse(StatusCode::NOT_FOUND),
+            },
+            _ => refuse(StatusCode::NOT_FOUND),
+        },
         Route::Events => {
             if only_head {
                 return answer(
@@ -467,6 +492,21 @@ fn handle(req: &Request<Incoming>, s: &Shared) -> Reply {
     }
 }
 
+/// Whether the phone's snapshot `json` shows session `id` with a reply clip.
+fn offers_clip(json: &[u8], id: &str) -> bool {
+    let Ok(v) = serde_json::from_slice::<Value>(json) else {
+        return false;
+    };
+    v.get("sessions")
+        .and_then(Value::as_array)
+        .is_some_and(|all| {
+            all.iter().any(|s| {
+                s.get("session_id").and_then(Value::as_str) == Some(id)
+                    && s.get("reply_at").is_some_and(Value::is_i64)
+            })
+        })
+}
+
 /// The running server. Dropping it, or `stop`, closes the port and every
 /// connection before it returns.
 pub struct Server {
@@ -479,14 +519,20 @@ pub struct Server {
 impl Server {
     /// Bind `addr` now, so a port in use is reported to the caller, then
     /// serve on a thread of its own until stopped.
-    pub fn spawn(addr: SocketAddrV4, assets: Assets, log: Log) -> std::io::Result<Server> {
-        Self::spawn_with(addr, LIMITS, assets, log)
+    pub fn spawn(
+        addr: SocketAddrV4,
+        assets: Assets,
+        clips: Clips,
+        log: Log,
+    ) -> std::io::Result<Server> {
+        Self::spawn_with(addr, LIMITS, assets, clips, log)
     }
 
     pub fn spawn_with(
         addr: SocketAddrV4,
         limits: Limits,
         assets: Assets,
+        clips: Clips,
         log: Log,
     ) -> std::io::Result<Server> {
         let std_listener = bind(addr)?;
@@ -501,6 +547,7 @@ impl Server {
         let shared = Arc::new(Shared {
             bound,
             assets,
+            clips,
             snapshots: watcher,
             streams: Arc::new(Semaphore::new(limits.streams)),
             heartbeat: limits.heartbeat,
@@ -841,7 +888,7 @@ mod tests {
                 "ledger": {"tokens": {"input": 1}}, "ledger_partial": true,
                 "remote_url": "https://claude.ai/code/session_01ABC",
                 "wrapup": {"state": "blocked", "reason": "a review is running", "at": 5, "settled_at": 6},
-                "turn_at": 4, "asked_after_turn": true
+                "turn_at": 4, "asked_after_turn": true, "reply_at": 8
             }, {"session_id": "s2", "launch_dir": "C:\\Users\\aj\\proj", "status": "done"}, "junk"],
             "speaking": {"session_id": "s1", "envelope": [0.5], "started_at": 1.0, "ends_at": 2.0},
             "receiver": {"addr": "127.0.0.1:4318", "listening": true, "error": null}
@@ -902,6 +949,10 @@ mod tests {
         asked: Arc<Mutex<Vec<String>>>,
     }
 
+    /// The one session the stub clip store has a clip for, and the clip.
+    const CLIP_ID: &str = "cb9fa591-1514-44d1-a31c-eba4a7cb41ed";
+    const CLIP: &[u8] = b"RIFF....WAVEfmt  a clip";
+
     /// The stub bundle: the wall, one of its files, and the gauge's page.
     const BUNDLE: [(&str, &[u8]); 3] = [
         ("wall.html", b"<!doctype html><title>wall</title>"),
@@ -957,10 +1008,12 @@ mod tests {
             exact(p)
         });
         let log: Log = Arc::new(|_| {});
+        let clips: Clips = Arc::new(|id: &str| (id == CLIP_ID).then(|| CLIP.to_vec()));
         let server = Server::spawn_with(
             SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0),
             limits,
             assets,
+            clips,
             log,
         )
         .unwrap();
@@ -1011,7 +1064,12 @@ mod tests {
         let SocketAddr::V4(taken) = p.server.addr() else {
             unreachable!()
         };
-        let again = Server::spawn(taken, Arc::new(tauri_get), Arc::new(|_| {}));
+        let again = Server::spawn(
+            taken,
+            Arc::new(tauri_get),
+            Arc::new(|_| None),
+            Arc::new(|_| {}),
+        );
         assert!(again.is_err());
     }
 
@@ -1187,6 +1245,60 @@ mod tests {
         assert_eq!(v["sessions"][0]["status_at"], 2);
         assert!(v["sessions"][0].get("tmux").is_none());
         assert!(v.get("receiver").is_none());
+    }
+
+    #[test]
+    fn a_clip_is_served_only_for_a_card_the_phone_shows_with_one() {
+        let p = serve(QUICK);
+        let addr = p.server.addr();
+        let path = format!("/audio/{CLIP_ID}");
+        assert_eq!(get(addr, "GET", &path, "").0, 404, "no snapshot yet");
+        let other = "0b6e1c5a-1111-4222-8333-444455556666";
+        p.server.publish(&json!({"sessions": [
+            {"session_id": CLIP_ID, "status": "done", "status_at": 1},
+            {"session_id": other, "status": "done", "status_at": 1, "reply_at": 5},
+        ]}));
+        assert_eq!(get(addr, "GET", &path, "").0, 404, "its card shows no clip");
+        assert_eq!(
+            get(addr, "GET", &format!("/audio/{other}"), "").0,
+            404,
+            "a card with a clip the store does not have"
+        );
+        p.server.publish(&json!({"sessions": [
+            {"session_id": CLIP_ID, "status": "done", "status_at": 1, "reply_at": 5},
+        ]}));
+        let (code, headers, body) = get(addr, "GET", &path, "");
+        let lower = headers.to_ascii_lowercase();
+        assert_eq!((code, body.as_slice()), (200, CLIP));
+        assert!(lower.contains("content-type: audio/wav"), "{headers}");
+        assert!(lower.contains("cache-control: no-store"), "{headers}");
+        let (code, _, body) = get(addr, "HEAD", &path, "");
+        assert_eq!((code, body.len()), (200, 0));
+        assert_eq!(
+            get(addr, "POST", &path, "").0,
+            405,
+            "the wall stays read-only"
+        );
+        for bad in [
+            "/audio/",
+            "/audio/../wall.html",
+            "/audio/x",
+            &format!("/audio/{CLIP_ID}.wav"),
+        ] {
+            assert_eq!(get(addr, "GET", bad, "").0, 404, "{bad}");
+        }
+        p.server.publish(&json!({"sessions": []}));
+        assert_eq!(
+            get(addr, "GET", &path, "").0,
+            404,
+            "its card has left the wall"
+        );
+    }
+
+    #[test]
+    fn the_phone_gets_each_cards_reply_time() {
+        let v = phone_view(&json!({"sessions": [{"session_id": "s1", "reply_at": 7}]}));
+        assert_eq!(v["sessions"][0]["reply_at"], 7);
     }
 
     /// Open `/events` and return a reader positioned after the headers.

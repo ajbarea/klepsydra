@@ -279,12 +279,28 @@ test("no shell or opener plugin is configured", () => {
   assert.deepEqual(processPlugins('{"plugins":{"window-state":{}}}'), []);
 });
 
-// Ping is the one sound, and it plays only the chimes built into the binary.
+// Ping plays only the chimes built into the binary; the one other sound is a
+// card's reply button, which plays keryx's clip for that session on a press.
 const PING = "src-tauri/src/ping.rs";
+const REPLAY = "src/fleet/replay.js";
+const REPLY_AUDIO = '<audio id="reply-audio" preload="none" hidden></audio>';
 
-test("only Ping makes a sound", () => {
+test("only Ping and a card's reply button make a sound", () => {
   assert.ok(RUST.includes(PING), `${PING} not found`);
-  for (const f of FRONTEND) assert.deepEqual(makesSound(read(f)), [], f);
+  for (const f of FRONTEND.filter((f) => f !== REPLAY)) {
+    const text = f === "src/wall.html" ? read(f).replace(REPLY_AUDIO, "") : read(f);
+    assert.deepEqual(makesSound(text), [], f);
+  }
+  assert.equal(read("src/wall.html").split(REPLY_AUDIO).length, 2, "one audio element, for the reply button");
+  const replay = read(REPLAY);
+  assert.equal(replay.match(/\.play\(/g).length, 1, "one play call");
+  const sources = [...replay.matchAll(/audio\.src = ([^;]+);/g)].map((m) => m[1]);
+  assert.deepEqual(sources, ["mine.url", "clipUrl(id, at)"], "it plays the clip reply_clip read, or the phone server's");
+  assert.match(replay, /mine\.url = objectUrl\(new Blob\(\[bytes\], \{ type: "audio\/wav" \}\)\);/);
+  assert.match(replay, /await invoke\("reply_clip", \{ id \}\)/);
+  const wall = read("src/fleet/wall.js");
+  assert.equal(wall.match(/replayer\.toggle\(/g).length, 1, "it plays only from a press of a card's play button");
+  assert.match(wall, /const play = e\.target\.closest\("\.play"\);\n\s*if \(play\) \{\n[^}]*replayer\.toggle\(/);
   for (const f of RUST.filter((f) => f !== PING)) assert.deepEqual(makesNativeSound(read(f)), [], f);
   // The one audio feature Ping needs, and no audio crate.
   for (const f of CARGO) {
@@ -595,6 +611,8 @@ test("the CSP lets images, and nothing else, come from a data URL", () => {
   assert.deepEqual(directives["default-src"], ["'self'"]);
   assert.deepEqual(directives["img-src"], ["'self'", "data:"], "the medallion faces are data URLs");
   for (const [k, v] of Object.entries(directives)) if (k !== "img-src") assert.ok(!v.includes("data:"), k);
+  assert.deepEqual(directives["media-src"], ["'self'", "blob:"], "a reply clip plays from an object URL");
+  for (const [k, v] of Object.entries(directives)) if (k !== "media-src") assert.ok(!v.includes("blob:"), k);
 });
 
 test("the demo feed is never reachable inside the app", async () => {

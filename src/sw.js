@@ -1,7 +1,7 @@
 // The phone wall's service worker: keeps the app shell (the page and its
 // files) so the Home Screen app opens without the network. The fleet itself,
-// /fleet.json and /events, is never cached or answered from here: a stale
-// wall must never pass for a live one.
+// /fleet.json, /events and the reply clips under /audio/, is never cached or
+// answered from here: a stale wall must never pass for a live one.
 const SHELL = "klepsydra-shell-v1";
 const LIVE = new Set(["/fleet.json", "/events"]);
 
@@ -22,7 +22,7 @@ self.addEventListener("activate", (e) => {
 // copy only when the network fails.
 self.addEventListener("fetch", (e) => {
   const url = new URL(e.request.url);
-  if (e.request.method !== "GET" || url.origin !== self.location.origin || LIVE.has(url.pathname)) return;
+  if (e.request.method !== "GET" || url.origin !== self.location.origin || LIVE.has(url.pathname) || url.pathname.startsWith("/audio/")) return;
   e.respondWith(
     fetch(e.request)
       .then((res) => {
