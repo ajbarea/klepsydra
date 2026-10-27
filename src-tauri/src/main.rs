@@ -79,49 +79,26 @@ fn legacy_dir(app: &tauri::AppHandle) -> Option<PathBuf> {
     root.is_absolute().then(|| root.join("klepsydra"))
 }
 
+/// Where the statusLine hook has published: the data folder, and the old
+/// location too, since the hook is a copy in the user's ~/.claude and an
+/// upgraded overlay meets a hook still publishing where it always did.
+fn usage_dirs(app: &tauri::AppHandle) -> Vec<PathBuf> {
+    [klepsydra_dir(app), legacy_dir(app)]
+        .into_iter()
+        .flatten()
+        .collect()
+}
+
 /// Every published reading, one per Claude Code session.
 ///
 /// A file per session (under a directory per account) means neither separate
 /// logins nor several terminals on one login ever contend for a file. Sessions
 /// of the same account disagree routinely -- each holds whatever the last API
-/// response it saw reported -- so reconciling them is the frontend's job.
+/// response it saw reported -- so reconciling them is the frontend's job, as
+/// is a session appearing in both folders.
 #[tauri::command]
 fn read_usage(app: tauri::AppHandle) -> serde_json::Value {
-    let mut out: Vec<serde_json::Value> = Vec::new();
-    // The old location too: the hook is a copy in the user's ~/.claude, so an
-    // upgraded overlay meets a hook still publishing where it always did. A
-    // session appearing in both is what the frontend already reconciles.
-    for dir in [klepsydra_dir(&app), legacy_dir(&app)]
-        .into_iter()
-        .flatten()
-    {
-        collect_readings(&dir, &mut out);
-    }
-    serde_json::Value::Array(out)
-}
-
-fn collect_readings(dir: &std::path::Path, out: &mut Vec<serde_json::Value>) {
-    let Ok(accounts) = std::fs::read_dir(dir.join("accounts")) else {
-        return;
-    };
-    for account in accounts.flatten() {
-        let Ok(sessions) = std::fs::read_dir(account.path()) else {
-            continue; // a stale pre-per-session file, not a directory
-        };
-        for session in sessions.flatten() {
-            let path = session.path();
-            if path.extension().and_then(|e| e.to_str()) != Some("json") {
-                continue;
-            }
-            let Ok(text) = std::fs::read_to_string(&path) else {
-                continue;
-            };
-            let Ok(value) = serde_json::from_str::<serde_json::Value>(&text) else {
-                continue;
-            };
-            out.push(value);
-        }
-    }
+    serde_json::Value::Array(klepsydra_fleet::usage::read(usage_dirs(&app)))
 }
 
 /// Small settings the gauge keeps for itself: the zoom level, the saved home,

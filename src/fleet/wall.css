@@ -45,6 +45,13 @@
   --danger-bg: #b3261e; /* End <Character>: filled, so it reads as the weighty choice; never the default */
   --danger-hover: #9c1f18;
   --danger-ink: #ffffff;
+  /* The usage-limit gauges' ramp: style.css's, which the gauge's own rows use. */
+  --ramp-low: #3b82f6;
+  --ramp-mid: #eab308;
+  --ramp-high: #ef4444;
+  --ramp-mid-at: 60;
+  --ramp-high-at: 85;
+  --ramp-mode: bands;
   --font: "Segoe UI Variable Text", "Segoe UI", "Inter", system-ui, sans-serif;
   --display: "Segoe UI Variable Display", "Segoe UI", "Inter Display", "Inter", system-ui, sans-serif;
   --title: "Cinzel", "Trajan Pro", Georgia, serif;
@@ -1053,6 +1060,33 @@ a.remote:focus-visible { outline: 2px solid var(--card-focus); outline-offset: 2
 .served .why { display: none; }
 .served .card.has-remote { cursor: pointer; }
 #link { color: var(--tone-needs); font-size: 12.5px; }
+
+/* The usage-limit gauges, on a snapshot that carries readings (the phone's).
+   gaugeview.js draws the rows the gauge's compact layout draws: a ring per
+   window, its percent and countdown over its label. The words carry the
+   numbers; the ring's fill keeps 3:1 on the bar and on its track. */
+.limits { flex-basis: 100%; min-width: 0; }
+.limit-rows { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: var(--space-3) var(--space-6); list-style: none; }
+.limits .entry {
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr);
+  grid-template-areas: "ring pct sub" "ring label label";
+  column-gap: var(--space-3);
+  align-items: baseline;
+  line-height: 1.2;
+}
+.limits .row { display: contents; }
+.limits .track { display: none; }
+.limits .ring { grid-area: ring; align-self: center; width: 32px; height: 32px; transform: rotate(-90deg); }
+.limits .ring circle { fill: none; stroke-width: 3; }
+.limits .ring-track { stroke: var(--ring-track); }
+.limits .ring-fill { stroke-linecap: round; }
+.limits .pct { grid-area: pct; font: 600 17px/1.2 var(--display); font-variant-numeric: tabular-nums; color: var(--text); }
+.limits .sub { grid-area: sub; min-width: 0; color: var(--text-dim); font-size: 13px; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.limits .label { grid-area: label; min-width: 0; color: var(--text-dim); font-size: 12.5px; overflow-wrap: anywhere; }
+.limit-wait { color: var(--text-dim); font-size: 12.5px; }
+/* The wall is dark in either scheme; Safari's own parts follow it. */
+.served { color-scheme: dark; }
 
 /* On a phone: one column of compact cards under a tally that stays in view,
    and targets of at least 44 px (Apple HIG; WCAG 2.5.8 asks 24). */

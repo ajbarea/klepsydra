@@ -1,4 +1,8 @@
 // Pure rendering logic, kept free of Tauri and DOM so it can be unit tested.
+// The desktop gauge and the phone wall both draw from it (gaugeview.js).
+
+/** What a gauge with no reading says. */
+export const WAITING = "waiting for Claude Code";
 
 // Past this age a reading says how old it is.
 export const SHOW_AGE_AFTER_MS = 15 * 60 * 1000;
@@ -126,7 +130,7 @@ export function formatAgeShort(ms) {
  * or unreadable). Never throws; an unusable payload degrades to "waiting".
  */
 export function evaluate(payload, key, nowMs = Date.now()) {
-  const waiting = { state: "waiting", label: windowLabel(key), pct: null, sub: "waiting for Claude Code", short: "waiting" };
+  const waiting = { state: "waiting", label: windowLabel(key), pct: null, sub: WAITING, short: "waiting" };
   if (!payload || typeof payload !== "object") return waiting;
 
   const win = payload.windows?.[key];
@@ -188,6 +192,44 @@ export function ringDash(pct, cap) {
 }
 // A zero-length dash may draw no cap at all, so the dot keeps a hair of length.
 const MIN_DASH = 0.01;
+
+/** The round caps' length along the 100-long path of a ring of radius `r` drawn `stroke` wide. */
+export function ringCap(stroke, r) {
+  return (stroke / (2 * Math.PI * r)) * 100;
+}
+
+/**
+ * The ring's stroke for `pct`: the dash less its caps, moved half a cap
+ * forward so the drawn arc starts at 12 o'clock. Hidden at zero, where the
+ * caps alone would draw a dot.
+ */
+export function ringStyle(pct, cap) {
+  const p = Math.max(0, Math.min(100, pct ?? 0));
+  return { dasharray: `${ringDash(pct, cap)} 100`, dashoffset: `${-cap / 2}`, visible: p > 0 };
+}
+
+/**
+ * A row's words: the compact layout's short forms or the full layout's,
+ * and one sentence for a screen reader, which reads the full forms.
+ */
+export function entryText(row, compact) {
+  return {
+    label: row.label,
+    pct: compact ? formatPctShort(row.pct) : formatPct(row.pct),
+    sub: compact ? row.short : row.sub,
+    spoken: `${row.label}: ${formatPct(row.pct)}. ${row.sub}`,
+  };
+}
+
+/**
+ * The phone wall's rows from a snapshot's `usage` readings, as toRows draws
+ * the gauge's; null when the snapshot carries none (an older server, or a
+ * server with no readings to read), so no gauge shows.
+ */
+export function usageRows(snapshot, nowMs = Date.now()) {
+  const usage = snapshot?.usage;
+  return Array.isArray(usage) ? toRows(usage, nowMs) : null;
+}
 
 /** Whether a file came from a hook that publishes only new API responses. */
 const isObserved = (s) => s?.observed_at != null && Number.isFinite(Number(s.observed_at));

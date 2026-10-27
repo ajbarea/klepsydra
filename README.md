@@ -786,7 +786,7 @@ The chimes are built by `scripts/make-sounds.mjs`, which writes
 
 ### Fleet on your phone
 
-<!-- budget: 450 words -->
+<!-- budget: 560 words -->
 With "Phone wall" ticked in the tray menu, klepsydra serves a read-only copy
 of the wall on `127.0.0.1:8318`, and Tailscale Serve carries it to your phone
 over your tailnet. Unticked (the default), nothing listens.
@@ -819,10 +819,18 @@ and goes when it disconnects or the session ends. When the stream drops, the
 wall says the cards may be out of date until it reconnects, and keeps
 trying (every 1 s at first, at most every 30 s) while klepsydra restarts.
 
+The sticky bar also holds the usage-limit gauges: a ring per account and
+window with its percent, time to reset and label, as the strip shows them
+(`57% 8m Personal · session`), drawn by the gauge's own code from the same
+readings. The server reads them every 5 seconds, as the gauge does, and a
+change reaches the phone over the same stream. With no reading the gauges
+say they are waiting. The wall stays dark when the phone is in light mode.
+
 The server answers only GET and HEAD, serves only the wall's own files, its
 snapshot at `/fleet.json`, the stream at `/events` and the reply clips of the
-cards it shows, and sends each session without its tmux pane, process or full
-folder path. Card previews (prompts and replies), the spoken replies, errors
+cards it shows. It sends each session without its tmux pane, process or full
+folder path, and each usage reading with only its label, times and windows,
+its account id replaced by `a1`, `a2` and so on. Card previews (prompts and replies), the spoken replies, errors
 and the cost estimate are visible to any tailnet device your Tailscale ACLs
 let reach this PC. The page's service worker keeps only the page and its
 files, never the fleet or a clip.
@@ -1036,8 +1044,9 @@ publishes whenever a render carries a new reading. `refreshInterval: 30` also
 re-runs it every 30 seconds, idle or not. The usage reading ignores those
 re-runs, since each repeats the session's last API response, but each writes
 the session's heartbeat for the fleet strip, at most once per 10 seconds. The
-overlay re-reads the files every 5 seconds, and the countdown ticks every 15
-seconds off `resets_at`, so it stays right even when nothing is publishing.
+overlay re-reads the files every 5 seconds (the phone wall's server too), and
+the countdown ticks every 15 seconds off `resets_at`, so it stays right even
+when nothing is publishing.
 
 ## Switching accounts
 
@@ -1065,7 +1074,8 @@ rebuild, done.
 The fleet strip's sizes and the compact layout's ring sit in the same block,
 followed by the few tokens the compact layout changes. The strip's badge colours are in
 `src/fleet/badge.css`, where a test holds each to 3:1 contrast, and the card
-wall's tokens open `src/fleet/wall.css`.
+wall's tokens open `src/fleet/wall.css`, with a copy of the ramp for the
+phone's gauges that a test holds equal to this one.
 
 ## When it does not know
 

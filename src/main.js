@@ -1,4 +1,5 @@
-import { rampColor, toRows, formatPct, formatPctShort, ringDash } from "./gauge.js";
+import { toRows, formatPct, WAITING } from "./gauge.js";
+import { readMode, readStops, syncEntries } from "./gaugeview.js";
 import { follow } from "./ipc.js";
 import { wheelPixels, wheelStep, clampLevel, scaleAt } from "./zoom.js";
 
@@ -21,23 +22,6 @@ if (forcedWidth) {
   document.documentElement.style.setProperty("--panel-width-base", `${parseInt(forcedWidth, 10)}px`);
 }
 
-function stops() {
-  const s = getComputedStyle(document.documentElement);
-  return {
-    low: s.getPropertyValue("--ramp-low"),
-    mid: s.getPropertyValue("--ramp-mid"),
-    high: s.getPropertyValue("--ramp-high"),
-    midAt: parseFloat(s.getPropertyValue("--ramp-mid-at")),
-    highAt: parseFloat(s.getPropertyValue("--ramp-high-at")),
-  };
-}
-
-function rampMode() {
-  const q = new URLSearchParams(location.search).get("mode");
-  if (q) return q;
-  return getComputedStyle(document.documentElement).getPropertyValue("--ramp-mode").trim();
-}
-
 /** Reading the files is the only thing that differs between app and browser. */
 async function readUsage() {
   try {
@@ -55,7 +39,7 @@ const panel = document.getElementById("panel");
 const stripEl = document.getElementById("strip");
 const rowsEl = document.getElementById("rows");
 const emptyEl = document.getElementById("empty");
-const tpl = document.getElementById("row-tpl");
+emptyEl.textContent = WAITING;
 const grip = document.getElementById("grip");
 const zoomEl = document.getElementById("zoom");
 
@@ -77,39 +61,6 @@ let layoutSeq = 0; // the latest layout change; an older one still loading gives
 let started = false; // the first draw waits for the layout
 
 const compact = () => layout === "compact";
-
-/** The round caps' length along the ring's 100-long path. */
-function ringCap(ring) {
-  const stroke = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--ring-stroke"));
-  return (stroke / (2 * Math.PI * ring.r.baseVal.value)) * 100;
-}
-
-function paint(entry, row) {
-  const short = compact();
-  entry.querySelector(".label").textContent = row.label;
-  entry.querySelector(".pct").textContent = short ? formatPctShort(row.pct) : formatPct(row.pct);
-  entry.querySelector(".sub").textContent = short ? row.short : row.sub;
-  entry.dataset.state = row.state;
-
-  const colour = rampColor(row.pct ?? 0, stops(), rampMode());
-  const fill = entry.querySelector(".fill");
-  const clamped = Math.max(0, Math.min(100, row.pct ?? 0));
-  fill.style.width = `${clamped}%`;
-  // A nonzero reading stays visible as a dot instead of collapsing sub-pixel.
-  fill.style.minWidth = clamped > 0 ? "calc(var(--bar-height) * var(--scale))" : "0";
-  fill.style.backgroundColor = colour;
-
-  // The ring's circle has pathLength 100, so the dash is the percentage less
-  // its caps. A nonzero reading stays visible as a dot, as for the bar; at
-  // zero the caps would draw that dot too, so the fill goes.
-  // Half a cap forward, so the drawn arc starts at 12 o'clock.
-  const ring = entry.querySelector(".ring-fill");
-  const cap = ringCap(ring);
-  ring.style.strokeDasharray = `${ringDash(row.pct, cap)} 100`;
-  ring.style.strokeDashoffset = `${-cap / 2}`;
-  ring.style.visibility = clamped > 0 ? "visible" : "hidden";
-  ring.style.stroke = colour;
-}
 
 /**
  * "compact" draws rings in one row; anything else is the full layout. Each
@@ -223,24 +174,10 @@ function render(pin = false) {
   emptyEl.hidden = rows.length > 0;
   panel.dataset.state = rows.length === 0 ? "waiting" : "live";
 
-  // Reuse entries by key so an unchanged row keeps its transition state.
-  const existing = new Map(
-    [...rowsEl.children].map((el) => [el.dataset.key, el]),
-  );
-  const wanted = [];
-  for (const row of rows) {
-    let entry = existing.get(row.key);
-    if (entry) existing.delete(row.key);
-    else {
-      entry = tpl.content.firstElementChild.cloneNode(true);
-      entry.dataset.key = row.key;
-    }
-    paint(entry, row);
-    wanted.push(entry);
-  }
-  for (const dead of existing.values()) dead.remove();
-  wanted.forEach((el, i) => {
-    if (rowsEl.children[i] !== el) rowsEl.insertBefore(el, rowsEl.children[i] ?? null);
+  syncEntries(rowsEl, rows, {
+    compact: compact(),
+    stops: readStops(),
+    mode: readMode(document.documentElement, new URLSearchParams(location.search).get("mode")),
   });
 
   document.title = rows.length ? `klepsydra ${formatPct(rows[0].pct)}` : "klepsydra";

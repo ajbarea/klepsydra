@@ -12,27 +12,13 @@
     <div id="grip" title="Drag to move, scroll to resize"></div>
     <div id="content">
       <div id="rows"></div>
-      <span class="sub" id="empty">waiting for Claude Code</span>
+      <span class="sub" id="empty"></span>
     </div>
     <span id="zoom" aria-live="polite"></span>
   </div>
   <div id="strip" role="group" aria-label="Claude Code sessions" hidden></div>
   </div>
 
-  <template id="row-tpl">
-    <div class="entry">
-      <div class="row">
-        <svg class="ring" viewBox="0 0 24 24" aria-hidden="true">
-          <circle class="ring-track" cx="12" cy="12" r="9.5" pathLength="100" />
-          <circle class="ring-fill" cx="12" cy="12" r="9.5" pathLength="100" />
-        </svg>
-        <span class="label"></span>
-        <span class="track"><span class="fill"></span></span>
-        <span class="pct"></span>
-      </div>
-      <span class="sub"></span>
-    </div>
-  </template>
 
   <script type="module" src="main.js"></script>
 </body>

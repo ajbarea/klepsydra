@@ -204,3 +204,62 @@ test("every module the wall imports is a file the phone server serves", () => {
   assert.ok(seen.size > 10, `the walk found the wall's modules: ${[...seen]}`);
   assert.deepEqual([...seen].filter((p) => !served(p)), []);
 });
+
+// ── the usage-limit gauges ──────────────────────────────────────────────────
+const { contrast } = await import("./fleet/contrast.js");
+const token = (css, name) => css.match(new RegExp(`${name}:\\s*([^;]+);`))?.[1].trim();
+const RAMP = ["--ramp-low", "--ramp-mid", "--ramp-high", "--ramp-mid-at", "--ramp-high-at", "--ramp-mode"];
+
+test("the phone draws the gauge's rows with the gauge's own code: one model, no second formatter", () => {
+  const wall = read("src/fleet/wall.js");
+  const main = read("src/main.js");
+  assert.match(wall, /import \{ WAITING, usageRows \} from "\.\.\/gauge\.js";/);
+  assert.match(wall, /import \{ readMode, readStops, syncEntries \} from "\.\.\/gaugeview\.js";/);
+  assert.match(main, /import \{ readMode, readStops, syncEntries \} from "\.\/gaugeview\.js";/);
+  assert.match(wall, /syncEntries\(limitRows, rows, \{ compact: true, stops: readStops\(\), mode: readMode\(\) \}, true\);/);
+  assert.match(main, /syncEntries\(rowsEl, rows, \{/);
+  // The words and the ring's arithmetic live in gauge.js alone.
+  const others = ["src/main.js", "src/gaugeview.js", ...["wall.js", "model.js", "strip.js", "drawer.js"].map((f) => `src/fleet/${f}`)];
+  for (const f of others) {
+    const src = read(f);
+    assert.doesNotMatch(src, /function format|% used|Resets in|resets_at|used_percentage|2 \* Math\.PI|strokeDasharray = `/, f);
+  }
+  assert.doesNotMatch(read("src/index.html"), /<template id="row-tpl">/, "the row's markup is gaugeview.js's");
+});
+
+test("the wall's ramp is the gauge's", () => {
+  const style = read("src/style.css");
+  const wall = read("src/fleet/wall.css");
+  for (const t of RAMP) {
+    assert.ok(token(style, t), `${t} in style.css`);
+    assert.equal(token(wall, t), token(style, t), t);
+  }
+});
+
+test("the gauges read at AA on the phone's bar: words 4.5:1, the ring's fill 3:1 on the bar and its track", () => {
+  const wall = read("src/fleet/wall.css");
+  const bar = token(wall, "--wall-bg");
+  const track = token(wall, "--ring-track");
+  for (const t of ["--ramp-low", "--ramp-mid", "--ramp-high"]) {
+    const c = token(wall, t);
+    assert.ok(contrast(c, bar) >= 3, `${t} on the bar: ${contrast(c, bar).toFixed(2)}`);
+    assert.ok(contrast(c, track) >= 3, `${t} on the track: ${contrast(c, track).toFixed(2)}`);
+  }
+  for (const t of ["--text", "--text-dim"]) {
+    assert.ok(contrast(token(wall, t), bar) >= 4.5, t);
+  }
+  const rule = (sel) => wall.match(new RegExp(`${sel.replace(/[.*]/g, "\\$&")} \\{([^}]*)\\}`))?.[1] ?? "";
+  assert.match(rule(".limits .pct"), /color: var\(--text\)/);
+  for (const sel of [".limits .sub", ".limits .label", ".limit-wait"]) assert.match(rule(sel), /color: var\(--text-dim\)/, sel);
+  assert.match(rule(".limits .ring-track"), /stroke: var\(--ring-track\)/);
+  assert.match(wall, /@media \(max-width: 600px\) \{\n  \.served \{[^}]*\}[\s\S]*?\.served \.bar \{[^}]*background: var\(--wall-bg\)/, "the bar the gauges sit on is --wall-bg");
+});
+
+test("the gauges sit in the sticky bar, shown only for a snapshot with readings", () => {
+  const html = read("src/wall.html");
+  const bar = html.slice(html.indexOf('<header class="bar">'), html.indexOf("</header>"));
+  assert.match(bar, /<section class="limits" aria-label="Usage limits" hidden>\s*<ul class="limit-rows"><\/ul>\s*<p class="limit-wait" hidden><\/p>\s*<\/section>/);
+  const wall = read("src/fleet/wall.js");
+  assert.match(wall, /const rows = usageRows\(latestSnapshot, now\);\s*limits\.hidden = rows === null;/);
+  assert.match(wall, /paintTally\(\);\s*paintLimits\(now\);/, "drawn on every snapshot and every tick");
+});

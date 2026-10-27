@@ -4,14 +4,15 @@
 //! the app serves its bundle, and the snapshot with its times moved up to now
 //! (by its `at`, as the wall's ?demo does), again each time the file changes.
 //! Port 0, the default, picks a free one. Prints the bound address. With
-//! `KLEPSYDRA_DIR` set, reply clips come from its `replies/`.
+//! `KLEPSYDRA_DIR` set, reply clips come from its `replies/` and the usage
+//! gauges from its `accounts/`, as the app reads them.
 
 use std::net::{Ipv4Addr, SocketAddrV4};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
-use klepsydra_fleet::phone::{asset_type, Assets, Clips, Server};
+use klepsydra_fleet::phone::{asset_type, Assets, Clips, Server, Usage};
 use klepsydra_fleet::receiver::Log;
 use klepsydra_fleet::watch::unix_now;
 use serde_json::Value;
@@ -68,16 +69,18 @@ fn main() {
         asset_type(path)?;
         std::fs::read(root.join(path)).ok()
     });
-    let clips: Clips = match std::env::var_os("KLEPSYDRA_DIR") {
-        Some(dir) => {
-            let dir = PathBuf::from(dir);
-            Arc::new(move |id: &str| klepsydra_fleet::reply::read(&dir, id))
-        }
+    let dir = std::env::var_os("KLEPSYDRA_DIR").map(PathBuf::from);
+    let clips: Clips = match dir.clone() {
+        Some(dir) => Arc::new(move |id: &str| klepsydra_fleet::reply::read(&dir, id)),
         None => Arc::new(|_| None),
     };
+    let usage: Option<Usage> = dir.map(|dir| {
+        let read: Usage = Arc::new(move || klepsydra_fleet::usage::read([&dir]));
+        read
+    });
     let log: Log = Arc::new(|l| eprintln!("{l}"));
     let addr = SocketAddrV4::new(Ipv4Addr::LOCALHOST, port);
-    let server = match Server::spawn(addr, assets, clips, log) {
+    let server = match Server::spawn(addr, assets, clips, usage, log) {
         Ok(s) => s,
         Err(e) => {
             eprintln!("no phone wall on {addr}: {e}");
