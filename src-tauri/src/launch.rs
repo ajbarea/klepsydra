@@ -339,7 +339,7 @@ fn timed_out() -> String {
 /// The card's line when a Jump gets no answer from WSL in `JUMP_TIMEOUT`.
 fn jump_timed_out() -> String {
     format!(
-        "WSL did not answer within {} seconds, so the session was not brought forward. Try again.",
+        "WSL did not answer within {} seconds. The window may still come forward; if it does not, try again.",
         JUMP_TIMEOUT.as_secs()
     )
 }
@@ -438,11 +438,19 @@ fn run(_args: &[String], _wait: Duration, _timed_out: fn() -> String) -> Result<
 /// Bring session `id`'s tmux window, `t`, to the front of its tmux session.
 pub fn tmux_jump(app: &tauri::AppHandle, id: &str, t: &Target) -> Result<String, String> {
     let args = pane_args(t, PaneVerb::Jump)?;
-    logged(app, PaneVerb::Jump.word(), || {
-        jump_gated(&app.state::<JumpFlight>(), id, || {
-            run(&args, JUMP_TIMEOUT, jump_timed_out)
-        })
+    jump_with(&app.state::<JumpFlight>(), id, |wait, said| {
+        logged(app, PaneVerb::Jump.word(), || run(&args, wait, said))
     })
+}
+
+/// A Jump of session `id`: `call` runs under that card's gate alone, given
+/// the Jump's wait and its timeout line.
+fn jump_with<T>(
+    jumps: &JumpFlight,
+    id: &str,
+    call: impl FnOnce(Duration, fn() -> String) -> Result<T, String>,
+) -> Result<T, String> {
+    jump_gated(jumps, id, || call(JUMP_TIMEOUT, jump_timed_out))
 }
 
 /// Do `verb` to session `id`'s pane, as the latest snapshot names it.
@@ -454,10 +462,8 @@ async fn to_pane(app: tauri::AppHandle, id: String, verb: PaneVerb) -> Result<St
         .ok_or("This session has no tmux pane klepsydra knows, so it can only be stopped from its own terminal.")?;
     let args = pane_args(&target, verb)?;
     tauri::async_runtime::spawn_blocking(move || {
-        logged(&app, verb.word(), || {
-            pane_gated(&app.state::<PaneFlight>(), &id, || {
-                run(&args, TIMEOUT, pane_timed_out)
-            })
+        pane_gated(&app.state::<PaneFlight>(), &id, || {
+            logged(&app, verb.word(), || run(&args, TIMEOUT, pane_timed_out))
         })
     })
     .await
@@ -527,8 +533,8 @@ pub async fn start_wrapup(
                 .ok_or_else(|| "This session has no tmux pane klepsydra knows.".to_owned())
                 .and_then(|t| pane_args(t, PaneVerb::Wrapup))
                 .map_err(failed)?;
-            logged(&app, PaneVerb::Wrapup.word(), || {
-                pane_gated(&app.state::<PaneFlight>(), id, || {
+            pane_gated(&app.state::<PaneFlight>(), id, || {
+                logged(&app, PaneVerb::Wrapup.word(), || {
                     run(&args, TIMEOUT, wrapup_timed_out)
                 })
             })
@@ -597,8 +603,8 @@ pub async fn launch_session(app: tauri::AppHandle) -> Result<String, String> {
         .ok_or("prefs.json could not be read, so the launch folder is unknown.")?;
     let (_, args) = launch_plan(&prefs)?;
     tauri::async_runtime::spawn_blocking(move || {
-        logged(&app, "launch", || {
-            gated(&app.state::<InFlight>(), || run(&args, TIMEOUT, timed_out))
+        gated(&app.state::<InFlight>(), || {
+            logged(&app, "launch", || run(&args, TIMEOUT, timed_out))
         })
     })
     .await
@@ -872,6 +878,17 @@ mod tests {
     }
 
     #[test]
+    fn a_jump_runs_under_its_card_alone_with_the_jump_wait() {
+        let (jumps, launch) = (JumpFlight::default(), InFlight::default());
+        let r = gated(&launch, || {
+            jump_with(&jumps, "a", |wait, said| Ok((wait, said())))
+        });
+        assert_eq!(r, Ok((JUMP_TIMEOUT, jump_timed_out())));
+        let again = jump_with(&jumps, "a", |_, _| jump_with(&jumps, "a", |_, _| Ok(())));
+        assert_eq!(again, Err(JUMP_BUSY.into()));
+    }
+
+    #[test]
     fn a_jump_neither_holds_nor_waits_for_an_end_of_its_session() {
         let (jumps, panes) = (JumpFlight::default(), PaneFlight::default());
         assert!(jump_gated(&jumps, "a", || pane_gated(&panes, "a", || Ok(()))).is_ok());
@@ -885,7 +902,7 @@ mod tests {
         assert!(JUMP_TIMEOUT * 2 < TIMEOUT, "{JUMP_TIMEOUT:?}");
         assert_eq!(
             jump_timed_out(),
-            "WSL did not answer within 15 seconds, so the session was not brought forward. Try again."
+            "WSL did not answer within 15 seconds. The window may still come forward; if it does not, try again."
         );
     }
 
@@ -899,10 +916,6 @@ mod tests {
         assert_eq!(
             call_line("launch", ms(15_003), &Err("WSL did not answer.".into())),
             "wsl launch: failed in 15.00 s: WSL did not answer."
-        );
-        assert_eq!(
-            call_line("jump", ms(0), &Err(JUMP_BUSY.into())),
-            format!("wsl jump: failed in 0.00 s: {JUMP_BUSY}")
         );
     }
 

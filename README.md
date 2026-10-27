@@ -652,10 +652,11 @@ A click waits up to 45 seconds for WSL. Past that the note says "WSL did not
 answer within 45 seconds. The session may still be starting; check the
 terminal before clicking again." A Jump waits 15 seconds, past the 10 seconds a
 failing WSL interop call takes to report, then says "WSL did not answer within
-15 seconds, so the session was not brought forward. Try again." A slow Jump
-holds only its own card: other cards' Jumps and **+ New session** still run.
-Each call adds a line to `fleet.log` with its verb, how long it took and its
-outcome.
+15 seconds. The window may still come forward; if it does not, try again." A
+slow Jump holds only its own card: other cards' Jumps and **+ New session**
+still run. A Jump that has to open the terminal tab waits up to 10 seconds for
+another click opening one, then says so. Each `wsl.exe` call adds a line to
+`fleet.log` with its verb, how long it took and its outcome.
 
 `launch_dir` and `launch_distro` are keys in `prefs.json`, in the app data dir.
 `launch_dir` defaults to `~`. `launch_distro` defaults to WSL's default

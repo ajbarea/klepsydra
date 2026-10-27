@@ -40,9 +40,9 @@ need() { command -v "$1" >/dev/null 2>&1 || fail "$2"; }
 has_client() { [[ -n $(tmux "${@:2}" list-clients -t "$1" -F x 2>/dev/null) ]]; } # target socket-args...
 
 # Serialise launches: one tab per fleet even for back-to-back clicks.
-take_lock() {
+take_lock() { # [what to say when another holds it for 10 s]
   { exec {LOCKFD}>>"$LOCK"; } 2>/dev/null || fail "Could not open $LOCK."
-  flock -w 10 "$LOCKFD" || fail "Another launch is still running."
+  flock -w 10 "$LOCKFD" || fail "${1:-Another launch is still running.}"
 }
 
 # Check a tab can be opened, before anything is created.
@@ -205,7 +205,7 @@ jump() { # socket pane pid start
   check_pane "$@"
   { tmux "${t[@]}" select-window -t "$pane" && tmux "${t[@]}" select-pane -t "$pane"; } 2>/dev/null ||
     fail "tmux could not select the window."
-  take_lock
+  take_lock "Selected the session's tmux window, but another click is still opening a terminal tab. Try again."
   if ! has_client "=$session" "${t[@]}"; then
     tab_preflight
     # Only the fleet's own server gets the fixed title; another stays a plain tab.

@@ -207,6 +207,20 @@ tmux -L "$sock3" kill-server 2>/dev/null; rm -f "$HOME/.tmux.conf"
 detach_all; : >"$WT_LOG"
 bash "$launch" jump "$socket" "$first" "$fpid" "$fstart" >/dev/null 2>&1
 check "fleet socket: titled tab" "$(head -1 "$WT_LOG" | grep -c -- "^-w fleet new-tab --title klepsydra sessions --suppressApplicationTitle wsl.exe")" "1"
+# Another click holding the lock past its 10 s: the window is selected anyway.
+detach_all; : >"$WT_LOG"
+lock="$work/klepsydra-launch-$UID.lock"
+( exec 9>>"$lock"; flock 9; exec sleep 30 ) &
+holder=$!
+for _ in $(seq 100); do flock -n "$lock" true || break; sleep 0.05; done
+t select-window -t "$(t list-windows -t =fleet -F '#{window_id}' | tail -1)"
+out=$(jmp "$first" "$fpid" "$fstart" 2>&1); rc=$?
+kill "$holder" 2>/dev/null; wait "$holder" 2>/dev/null
+check "jump behind a held lock: exit 1" "$rc" "1"
+check "jump behind a held lock: says no launch" "$out" \
+  "Selected the session's tmux window, but another click is still opening a terminal tab. Try again."
+check "jump behind a held lock: window selected" "$(t display -p -t =fleet: '#{pane_id}')" "$first"
+check "jump behind a held lock: no tab" "$(tabs)" "0"
 echo "end and interrupt"
 # Draws Claude Code's input box as capture-pane shows it (U+276F, a no-break
 # space, rules above and below) and logs each key that matters and what Enter
