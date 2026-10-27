@@ -467,7 +467,7 @@ const NOT_SCANNED = {
   "src-tauri/fleet/tests/ledger_verify.rs": "runs the dev-only ledger-verify binary; a test, never in the app",
   "src/fleet/faces/": "generated portraits and their license table, data",
   "src/fleet/fonts/": "the nameplate's bundled typeface and its licence, data",
-  "src/fleet/cast.json": "voice to portrait table, data",
+  "src/fleet/themes/": "character themes, each a voice to name and face table, data",
   "src-tauri/fleet/Cargo.toml": "scanned as a manifest",
   "hooks/klepsydra-wrapup.md": "the wrap-up skill's instructions, prose installed as a skill",
 };

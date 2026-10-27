@@ -60,11 +60,11 @@ test("clearing nothing sends nothing", async () => {
   assert.equal(calls, 0);
 });
 
-test("the empty state: Hesychia's portrait as decoration, the title, what will appear, one start button and a clear link", () => {
+test("the empty state: the theme keeper's portrait as decoration, the title, what will appear, one start button and a clear link", () => {
   const html = read("wall.html");
   const block = html.slice(html.indexOf('<section id="empty"'), html.indexOf("</section>", html.indexOf('<section id="empty"')));
   assert.match(block, /^<section id="empty" class="empty" aria-labelledby="empty-title" hidden>/);
-  assert.match(block, /<img class="keeper" src="fleet\/faces\/kourai\/hesychia-full\.webp" alt="" \/>/, "decorative: screen readers skip it");
+  assert.match(block, /<img class="keeper" alt="" \/>/, "decorative: screen readers skip it; wall.js sets the theme keeper's portrait");
   assert.match(block, /<h2 id="empty-title" tabindex="-1">All quiet\.<\/h2>/);
   assert.match(block, /<p class="empty-body">Each Claude Code session you start appears here as a card, with its character, its repo and what it's doing\.<\/p>/);
   assert.match(block, /<button type="button" id="start-session" class="primary" hidden>Start a session<\/button>/);

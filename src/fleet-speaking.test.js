@@ -141,7 +141,7 @@ test("frames run only while someone speaks, and reduced motion gets a still ring
 
 test("the waves stay clear of the nameplate and the next card: on the band, and on a compact card", () => {
   const css = readFileSync(new URL("./fleet/wall.css", import.meta.url), "utf8");
-  const cast = JSON.parse(readFileSync(new URL("./fleet/cast.json", import.meta.url), "utf8"));
+  const cast = JSON.parse(readFileSync(new URL("./fleet/themes/kourai.json", import.meta.url), "utf8"));
   const rule = (sel) => css.match(new RegExp(`(?:^|\\n)${sel.replace(/[.[\]"=:()]/g, "\\$&")} \\{([^}]*)\\}`))?.[1] ?? "";
   const tokens = (block) => Object.fromEntries([...block.matchAll(/(--[\w-]+):\s*([^;]+);/g)].map((m) => [m[1], m[2].trim()]));
   const root = tokens(rule(":root"));

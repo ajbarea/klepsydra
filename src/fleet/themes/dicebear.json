@@ -1,0 +1,23 @@
+{
+  "v": 1,
+  "label": "DiceBear",
+  "faces": "dicebear",
+  "keeper": "af_nicole",
+  "characters": {
+    "af_heart": {"name": "Heart", "face": "af-heart", "accent": "#D55E00", "gender": "f"},
+    "am_michael": {"name": "Michael", "face": "am-michael", "accent": "#DA8C20", "gender": "m"},
+    "bf_emma": {"name": "Emma", "face": "bf-emma", "accent": "#FFC832", "gender": "f"},
+    "af_bella": {"name": "Bella", "face": "af-bella", "accent": "#FFDCA0", "gender": "f"},
+    "bf_isabella": {"name": "Isabella", "face": "bf-isabella", "accent": "#B496DC", "gender": "f"},
+    "am_puck": {"name": "Puck", "face": "am-puck", "accent": "#009E73", "gender": "m"},
+    "af_aoede": {"name": "Aoede", "face": "af-aoede", "accent": "#DA5032", "gender": "f"},
+    "af_kore": {"name": "Kore", "face": "af-kore", "accent": "#56B4E9", "gender": "f"},
+    "af_sarah": {"name": "Sarah", "face": "af-sarah", "accent": "#C8B464", "gender": "f"},
+    "af_nova": {"name": "Nova", "face": "af-nova", "accent": "#0072B2", "gender": "f"},
+    "bm_george": {"name": "George", "face": "bm-george", "accent": "#F0E442", "gender": "m"},
+    "am_fenrir": {"name": "Fenrir", "face": "am-fenrir", "accent": "#CC79A7", "gender": "m"},
+    "bm_fable": {"name": "Fable", "face": "bm-fable", "accent": "#E07B39", "gender": "m"},
+    "af_alloy": {"name": "Alloy", "face": "af-alloy", "accent": "#F1D2A1", "gender": "f"},
+    "af_nicole": {"name": "Nicole", "face": "af-nicole", "accent": "#A9B8D0", "gender": "f"}
+  }
+}

@@ -5,7 +5,7 @@ import { contrast, inkOn, markerWidth, mix, readableOn, MARKER_PX, MARKER_WIDE_P
 import { BAND, BUTTON_BGS } from "./fleet/model.js";
 const PLATE_BG = BAND.plate;
 
-const cast = JSON.parse(readFileSync(new URL("./fleet/cast.json", import.meta.url), "utf8"));
+const cast = JSON.parse(readFileSync(new URL("./fleet/themes/kourai.json", import.meta.url), "utf8"));
 const faces = new URL("./fleet/faces/", import.meta.url);
 const exists = (file) => existsSync(new URL(file, faces));
 
@@ -37,7 +37,8 @@ test("kourai's named Kokoro seeds are kept", () => {
 });
 
 test("every character has both portrait files, and the cast holds nothing else", () => {
-  assert.deepEqual(Object.keys(cast).sort(), ["characters", "v"]);
+  assert.deepEqual(Object.keys(cast).sort(), ["characters", "faces", "keeper", "label", "v"]);
+  assert.deepEqual([cast.label, cast.faces, cast.keeper], ["Kourai", "kourai", "af_nicole"], "Hesychia keeps the quiet wall");
   for (const c of Object.values(cast.characters)) {
     for (const size of [96, 192]) assert.ok(exists(`kourai/${c.face}-${size}.webp`), `${c.face} ${size}`);
   }

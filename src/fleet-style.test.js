@@ -282,7 +282,7 @@ test("the drawer's text wears text colours on the card's own surface, and a bar 
   }
   assert.equal(token(css, "--card-bg"), token(css, "--card-bg"));
   assert.match(css, /\.ledger, \.queue \{[^}]*background: var\(--card-bg\)/, "the drawer sits on the card surface, as the Queue does");
-  const cast = JSON.parse(read("./fleet/cast.json"));
+  const cast = JSON.parse(read("./fleet/themes/kourai.json"));
   for (const c of Object.values(cast.characters)) {
     assert.ok(contrast(c.accent, surface) >= 3, `${c.name}'s bar on the drawer: ${contrast(c.accent, surface).toFixed(2)}`);
   }
@@ -320,7 +320,7 @@ test("the band's constants in the model are the stylesheet's", () => {
 
 test("text on the band reads at 4.5:1 under every light that can reach it", () => {
   const css = wallCss();
-  const cast = JSON.parse(read("./fleet/cast.json"));
+  const cast = JSON.parse(read("./fleet/themes/kourai.json"));
   const ivory = token(css, "--ivory");
   const dim = token(css, "--text-dim");
   for (const c of Object.values(cast.characters)) {
@@ -353,7 +353,7 @@ test("the band caps its light under text with the mask, and lights needs-you amb
 
 test("crew marks on the plinth are 3:1 against it for every character", () => {
   const plinth = token(wallCss(), "--plinth-bg");
-  const cast = JSON.parse(read("./fleet/cast.json"));
+  const cast = JSON.parse(read("./fleet/themes/kourai.json"));
   for (const c of Object.values(cast.characters)) {
     assert.ok(contrast(c.accent, plinth) >= 3, `${c.name}: ${contrast(c.accent, plinth).toFixed(2)}`);
   }

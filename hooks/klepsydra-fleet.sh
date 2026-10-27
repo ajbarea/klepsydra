@@ -749,8 +749,9 @@ file_voice() { # text
 
 # Marks the session's tmux window with its character's colour, on the
 # launcher's own socket only, and clears it for a voice with no character.
-# The accent and its ink come from the cast (cast.json `accent`; the ink is
-# black or white, whichever has more WCAG contrast, as contrast.js picks).
+# The accent and its ink come from the cast (themes/kourai.json `accent`,
+# the same in every theme; the ink is black or white, whichever has more WCAG
+# contrast, as contrast.js picks).
 WINDOW_STYLES=(window-status-style window-status-current-style)
 colour_window() { # voice
   local accent="" ink="" row="" opt

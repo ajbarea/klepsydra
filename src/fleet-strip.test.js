@@ -50,7 +50,7 @@ const NOW = 1_000_000;
 const setup = () => {
   const el = new El("div");
   const opened = [];
-  const render = mountStrip(el, { open: (id) => opened.push(id) });
+  const render = mountStrip(el, { open: (id) => opened.push(id), cast: () => ({ characters: {} }) });
   const pulsing = () => el.children.filter((b) => b.classes.has("pulse")).map((b) => b.dataset.id);
   return { el, opened, render, pulsing };
 };
@@ -138,4 +138,24 @@ test("the speaking session's portrait wears the gold ring and says so", () => {
   assert.doesNotMatch(el.children[1].attrs["aria-label"], /speaking/);
   render([session("a", "working"), session("b", "working")], 1_002_000, true, speaking);
   assert.deepEqual(ring(), [false, false], "a line long over marks no one");
+});
+
+test("a theme switch redraws each portrait in the theme now worn, on the same button", async () => {
+  const { THEMES } = await import("./fleet/theme.js");
+  const el = new El("div");
+  let theme = THEMES.kourai;
+  const render = mountStrip(el, { open: () => {}, cast: () => theme });
+  const s = [session("a", "working", { voice: "bm_fable" })];
+  render(s, NOW);
+  const button = el.children[0];
+  assert.equal(button.firstChild.src, "fleet/faces/kourai/hermes-192.webp");
+  assert.match(button.attrs["aria-label"], /^Hermes,/);
+  for (const id of ["professions", "dicebear"]) {
+    theme = THEMES[id];
+    render(s, NOW, false);
+    const c = THEMES[id].characters.bm_fable;
+    assert.equal(el.children[0], button, `${id}: the same button`);
+    assert.equal(button.firstChild.src, `fleet/faces/${id}/${c.face}-192.webp`, id);
+    assert.match(button.attrs["aria-label"], new RegExp(`^${c.name},`), id);
+  }
 });

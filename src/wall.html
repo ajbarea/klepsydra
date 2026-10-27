@@ -38,12 +38,15 @@
     <button type="button" id="new-session" class="primary">+ New session</button>
     <span id="new-note" role="status"></span>
     <span id="split-note" role="status"></span>
-    <fieldset class="density">
-      <legend class="visually-hidden">Card density</legend>
-      <label><input type="radio" name="density" value="auto" checked /><span>Auto</span></label>
-      <label><input type="radio" name="density" value="comfortable" /><span>Comfortable</span></label>
-      <label><input type="radio" name="density" value="compact" /><span>Compact</span></label>
-    </fieldset>
+<div class="view">
+      <fieldset class="density">
+        <legend class="visually-hidden">Card density</legend>
+        <label><input type="radio" name="density" value="auto" checked /><span>Auto</span></label>
+        <label><input type="radio" name="density" value="comfortable" /><span>Comfortable</span></label>
+        <label><input type="radio" name="density" value="compact" /><span>Compact</span></label>
+      </fieldset>
+      <label class="theme-pick" title="Characters: how each session looks"><span class="visually-hidden">Characters</span><select id="theme"></select></label>
+    </div>
   </header>
   <main id="main">
   <section class="limits" aria-label="Usage limits" hidden>
@@ -53,7 +56,7 @@
   <h1 id="wall-title" class="visually-hidden">Claude Code sessions</h1>
   <section id="wall" class="wall" aria-labelledby="wall-title" tabindex="-1"></section>
   <section id="empty" class="empty" aria-labelledby="empty-title" hidden>
-    <img class="keeper" src="fleet/faces/kourai/hesychia-full.webp" alt="" />
+    <img class="keeper" alt="" />
     <h2 id="empty-title" tabindex="-1">All quiet.</h2>
     <p class="empty-body">Each Claude Code session you start appears here as a card, with its character, its repo and what it's doing.</p>
     <div class="empty-actions">

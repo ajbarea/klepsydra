@@ -266,9 +266,18 @@ function receiveFleet(message) {
 async function startFleet() {
   try {
     const { mountStrip } = await import("./fleet/strip.js");
-    const { subscribe } = await import("./fleet/feed.js");
+    const { subscribe, subscribeTheme } = await import("./fleet/feed.js");
+    const { themeOf } = await import("./fleet/theme.js");
+    let theme = themeOf(null);
     drawStrip = mountStrip(stripEl, {
       open: (id) => inTauri && window.__TAURI__.core.invoke("open_wall", { focus: id }).catch(() => {}),
+      cast: () => theme,
+    });
+    // A switch from the tray or the wall redraws the strip's faces at once.
+    subscribeTheme((id) => {
+      if (themeOf(id) === theme) return;
+      theme = themeOf(id);
+      render();
     });
     subscribe(receiveFleet);
   } catch {

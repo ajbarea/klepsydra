@@ -1077,6 +1077,11 @@ window.__TAURI__ = { core: {
       return Promise.resolve();
     }
     if (cmd === 'queue_subscribe') return Promise.resolve();
+    if (cmd === 'theme_subscribe') {
+      window.__theme = args.onMessage;
+      setTimeout(() => args.onMessage.onmessage(window.__savedTheme ?? 'kourai'), 0);
+      return Promise.resolve();
+    }
     if (cmd === 'get_wall_density') return Promise.resolve('auto');
     if (cmd === 'get_launch_dir') { window.__calls.push([cmd, args]); return window.__dirAnswer ? window.__dirAnswer() : Promise.resolve('/home/aj/ajsoftworks'); }
     if (cmd === 'end_session' && window.__hold) { window.__calls.push([cmd, args]); return window.__hold; }
@@ -1093,9 +1098,9 @@ READS = ["get_launch_dir", "get_split_mode"]
 WORKING_CARD = ".card:has(.pill .label:text-is('working')):has(.menu:not([hidden]))"
 
 
-def open_app(wall, width=1920, height=1000, keep=None, motion="no-preference", launch_dir="/home/aj/ajsoftworks"):
+def open_app(wall, width=1920, height=1000, keep=None, motion="no-preference", launch_dir="/home/aj/ajsoftworks", theme=None):
     """The demo wall as the app would feed it, with invokes recorded; `keep`
-    picks which demo sessions the snapshot carries."""
+    picks which demo sessions the snapshot carries, `theme` the saved theme."""
     import time
 
     fixture = json.loads((ROOT / "scripts/fixtures/fleet-demo.json").read_text())
@@ -1111,6 +1116,8 @@ def open_app(wall, width=1920, height=1000, keep=None, motion="no-preference", l
     page.snapshot_all = shifted(json.loads((ROOT / "scripts/fixtures/fleet-demo.json").read_text()), int(time.time()) - at)["sessions"]
     stub = TAURI_STUB.replace("'/home/aj/ajsoftworks'", json.dumps(launch_dir))
     page.add_init_script(stub % json.dumps(snapshot))
+    if theme is not None:
+        page.add_init_script(f"window.__savedTheme = {json.dumps(theme)};")
     page.goto(f"http://127.0.0.1:{wall.port}/src/wall.html")
     if snapshot["sessions"] and keep is None:
         page.wait_for_function("document.getElementById('wall').children.length > 0")
@@ -4117,6 +4124,132 @@ def split_toggle(wall):
     page.close()
 
 
+THEMES = {t: json.loads((ROOT / f"src/fleet/themes/{t}.json").read_text()) for t in ("kourai", "professions", "dicebear")}
+# Each card's voice key, name, face, epithet and accent; the picker; the keeper.
+LOOKS = """() => ({
+  cards: [...document.querySelectorAll('#wall .card')].map((c) => ({
+    key: c.dataset.key,
+    name: c.querySelector('.name').textContent,
+    face: c.querySelector('.face').getAttribute('src'),
+    epithet: c.querySelector('.epithet').hidden ? null : c.querySelector('.epithet').textContent,
+    accent: c.style.getPropertyValue('--accent'),
+    figure: c.classList.contains('has-figure'),
+  })),
+  picker: document.getElementById('theme').value,
+  options: [...document.getElementById('theme').options].map((o) => [o.value, o.textContent]),
+  keeper: document.querySelector('.keeper').getAttribute('src'),
+  focus: document.activeElement.className,
+})"""
+
+
+def worn(wall, page, theme, got, what):
+    """Each cast card wears `theme`'s name, face and epithet; the picker and keeper agree."""
+    cast = THEMES[theme]["characters"]
+    voices = {s["session_id"]: s.get("voice") for s in page.snapshot_all}
+    cards = [c for c in got["cards"] if voices.get(c["key"]) in cast]
+    def ok(c):
+        ch = cast[voices[c["key"]]]
+        return (
+            c["name"] == ch["name"]
+            and c["face"] == f"fleet/faces/{theme}/{ch['face']}-192.webp"
+            and c["epithet"] == ch.get("epithet")
+            and c["figure"] == ("head" in ch)
+        )
+    wrong = [c for c in cards if not ok(c)]
+    keeper = f"fleet/faces/{theme}/{cast[THEMES[theme]['keeper']]['face']}-full.webp"
+    wall.check(cards and not wrong and got["picker"] == theme and got["keeper"] == keeper, f"{what}: every cast card wears {theme}", [wrong[:2], got["picker"], got["keeper"]])
+
+
+def themes_switch_live(wall):
+    """Characters (#135): the saved theme arrives over theme_subscribe and the
+    wall wears it; a switch from the tray (a new message) or the picker
+    repaints every card's name, face and epithet at once and never its accent,
+    order or focus; the picker asks the app to save it; an unknown theme is
+    Kourai."""
+    page = open_app(wall, 1920, 1000, theme="professions")
+    got = page.evaluate(LOOKS)
+    worn(wall, page, "professions", got, "the saved theme on load")
+    wall.check(got["options"] == [["kourai", "Kourai"], ["professions", "Professions"], ["dicebear", "DiceBear"]],
+               "the picker offers the three themes, Kourai first", got["options"])
+    base = got
+    page.locator(".card .jump:not([aria-disabled='true'])").first.focus()
+    for theme in ("dicebear", "kourai", "professions"):
+        page.evaluate("(t) => window.__theme.onmessage(t)", theme)
+        page.wait_for_timeout(SETTLE_MS)
+        got = page.evaluate(LOOKS)
+        worn(wall, page, theme, got, "a tray switch, live")
+        same = ([c["key"] for c in got["cards"]], [c["accent"] for c in got["cards"]])
+        wall.check(same == ([c["key"] for c in base["cards"]], [c["accent"] for c in base["cards"]]) and got["focus"] == "jump",
+                   f"{theme}: the same cards, order, accents and focus", [same, got["focus"]])
+    before = len(page.evaluate("window.__calls"))
+    page.select_option("#theme", "dicebear")
+    page.wait_for_timeout(SETTLE_MS)
+    calls = page.evaluate("window.__calls")[before:]
+    worn(wall, page, "dicebear", page.evaluate(LOOKS), "the picker, at once")
+    wall.check(calls == [["set_theme", {"theme": "dicebear"}]], "the picker asks the app to save the theme, once", calls)
+    page.evaluate("window.__theme.onmessage('dicebear')")
+    page.wait_for_timeout(SETTLE_MS)
+    wall.check(page.evaluate("window.__calls").count(["set_theme", {"theme": "dicebear"}]) == 1, "the app's echo saves nothing again", page.evaluate("window.__calls")[before:])
+    for bad in ("Professions", "", "__proto__", None, 3):
+        page.evaluate("(t) => window.__theme.onmessage(t)", bad)
+        page.wait_for_timeout(100)
+        got = page.evaluate(LOOKS)
+        worn(wall, page, "kourai", got, f"an unknown theme {bad!r} is Kourai")
+    page.click(".density label:has([value=compact])")
+    page.wait_for_timeout(SETTLE_MS)
+    page.evaluate("window.__theme.onmessage('professions')")
+    page.wait_for_timeout(SETTLE_MS)
+    worn(wall, page, "professions", page.evaluate(LOOKS), "a switch on the compact wall")
+    page.close()
+
+
+def themes_keeper_and_portrait(wall):
+    """In each theme the empty wall's keeper is the theme's own and loads, and
+    every cast card's portrait button opens its full picture, loaded (Kourai's
+    portrait; the others' face drawn large), comfortable and compact."""
+    for theme in THEMES:
+        page = open_app(wall, 1920, 1000, keep=lambda s: False, theme=theme)
+        page.wait_for_function("document.querySelector('.keeper').complete")
+        got = page.evaluate("(() => { const k = document.querySelector('.keeper'); return [k.getAttribute('src'), k.naturalWidth, document.getElementById('empty').checkVisibility()]; })()")
+        cast = THEMES[theme]["characters"]
+        wall.check(got[0] == f"fleet/faces/{theme}/{cast['af_nicole']['face']}-full.webp" and got[1] >= 512 and got[2],
+                   f"{theme}: the empty wall's keeper is the theme's and loads", got)
+        page.close()
+        page = open_app(wall, 1920, 1000, theme=theme)
+        voices = {s["session_id"]: s.get("voice") for s in page.snapshot_all}
+        for density in ("comfortable", "compact"):
+            page.click(f".density label:has([value={density}])")
+            page.wait_for_timeout(SETTLE_MS)
+            bad = []
+            keys = [k for k in page.evaluate("[...document.querySelectorAll('#wall .card')].map((c) => c.dataset.key)") if voices.get(k) in cast]
+            for key in keys:
+                page.locator(f'.card[data-key="{key}"] .look').click()
+                page.wait_for_function("document.getElementById('portrait').open && document.querySelector('#portrait .full').complete")
+                got = page.evaluate("(() => { const i = document.querySelector('#portrait .full'); return [i.getAttribute('src'), i.naturalWidth, document.getElementById('portrait-name').textContent]; })()")
+                ch = cast[voices[key]]
+                if got != [f"fleet/faces/{theme}/{ch['face']}-full.webp", got[1], ch["name"]] or got[1] < 512:
+                    bad.append(got)
+                page.keyboard.press("Escape")
+                page.wait_for_function("!document.getElementById('portrait').open")
+            wall.check(keys and not bad, f"{theme}, {density}: each cast card opens its full picture", bad[:3])
+        page.close()
+
+
+def themes_fit(wall):
+    """Each theme's comfortable wall still fits: four cards at 945x1000 and
+    eight at 1920x1000, unscrolled, with the picker in the bar."""
+    for theme in THEMES:
+        for width, height, cards, columns in COMFORTABLE_FIT:
+            page = wall.open(width, height, cards, query=f"&theme={theme}")
+            page.click(".density label:has([value=comfortable])")
+            page.wait_for_timeout(SETTLE_MS)
+            got = page.evaluate(STATE)
+            faces = page.evaluate("[...document.querySelectorAll('#wall .face')].map((f) => f.getAttribute('src'))")
+            ok = got["density"] == "comfortable" and not got["scrolls"] and got["bottom"] <= height and got["columns"] == columns
+            wall.check(ok and any(f.startswith(f"fleet/faces/{theme}/") for f in faces), f"{theme}: {cards} comfortable cards fit {width}x{height}", got)
+            page.close()
+
+
 def main() -> int:
     handler = functools.partial(Quiet, directory=str(ROOT))
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)  # a free port
@@ -4217,6 +4350,9 @@ def main() -> int:
             ledger_reads_bounded,
             ledger_rolls_over_at_midnight,
             split_toggle,
+            themes_switch_live,
+            themes_keeper_and_portrait,
+            themes_fit,
         )
         for case in cases:
             if not only or case.__name__ in only:

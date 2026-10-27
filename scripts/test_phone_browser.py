@@ -10,7 +10,8 @@ the card) opening claude.ai, a second snapshot arriving over /events, the
 service worker and manifest installing, fleet.json cut to the wall's fields, a
 write refused, a wrap-up request and the empty state shown with none of their
 buttons, /wall.html sent to the root, and a stream refused at the cap opened
-again. The usage-limit gauges, from readings in the server's accounts folder:
+again. The character theme saved in the server's prefs.json, and a switch
+followed live. The usage-limit gauges, from readings in the server's accounts folder:
 one per account and window in the gauge's order and words, opening the page
 and scrolling away under a sticky bar that six leave no taller than three, a
 new reading over /events, a stale one saying its age, none at all reading as
@@ -48,8 +49,19 @@ REMOTE = "https://claude.ai/code/session_01PLACEHOLDERphone"
 CLIP_ID = "3f1c0a52-7b1e-4c0e-9a55-2f6f0d1d7a10"
 DESKTOP = ", ".join([
     ".jump", ".clear", ".menu", "#new-session", "#ledger-open", ".chip", ".density", ".undo", ".end-confirm", "[data-act]",
-    "#wrapup-open", "#wrapup-stop", "#end-ready", "#start-session", "#clear-ended",
+    "#wrapup-open", "#wrapup-stop", "#end-ready", "#start-session", "#clear-ended", "#theme",
 ])
+THEMES = {t: json.loads((ROOT / f"src/fleet/themes/{t}.json").read_text()) for t in ("kourai", "professions", "dicebear")}
+# Each card's voice, name, face and accent, and the empty wall's keeper.
+LOOKS = """() => ({
+  cards: [...document.querySelectorAll('#wall .card')].map((c) => ({
+    key: c.dataset.key,
+    name: c.querySelector('.name').textContent,
+    face: c.querySelector('.face').getAttribute('src'),
+    accent: c.style.getPropertyValue('--accent'),
+  })),
+  keeper: document.querySelector('.keeper').getAttribute('src'),
+})"""
 
 
 class Run:
@@ -473,8 +485,31 @@ def main() -> int:
                 card = next(c for c in page.evaluate(FULL_TEXT) if c["key"] == key)
                 run.check(card["open"] and card["expanded"] == "true" and card["cut"] == [], "an open card stays open across a new snapshot", card)
 
-                # A new reading arrives over the stream; one three hours old says so.
+                # Characters (#135): the phone wears the theme saved in prefs.json
+                # and follows a switch live; names and faces change, accents never.
                 klepsydra = pathlib.Path(tmp) / "klepsydra"
+                voices = {s["session_id"]: s.get("voice") for s in json.loads(snapshot.read_text())["sessions"]}
+                looks = {}
+                for theme in ("professions", "dicebear", "nonsense", "kourai"):
+                    want = theme if theme in THEMES else "kourai"
+                    tmp_prefs = klepsydra / "prefs.json.tmp"
+                    tmp_prefs.write_text(json.dumps({"zoom": 1, "theme": theme}))
+                    tmp_prefs.replace(klepsydra / "prefs.json")
+                    worn = wait_until(page, f"[...document.querySelectorAll('#wall .card .face')].some((f) => (f.getAttribute('src') || '').startsWith('fleet/faces/{want}/'))", 10)
+                    got = page.evaluate(LOOKS)
+                    cast = THEMES[want]["characters"]
+                    cast_cards = [c for c in got["cards"] if voices.get(c["key"]) in cast]
+                    names = all(c["name"] == cast[voices[c["key"]]]["name"] for c in cast_cards)
+                    faces = all(c["face"] == f"fleet/faces/{want}/{cast[voices[c['key']]]['face']}-192.webp" for c in cast_cards)
+                    run.check(worn and cast_cards and names and faces, f"the phone wears {theme!r} as {want}: each cast card's name and face", got["cards"][:3])
+                    run.check(got["keeper"] == f"fleet/faces/{want}/{cast['af_nicole']['face']}-full.webp", f"{want}: the keeper is the theme's", got["keeper"])
+                    looks[theme] = got
+                accents = {t: [c["accent"] for c in v["cards"]] for t, v in looks.items()}
+                run.check(len({json.dumps(a) for a in accents.values()}) == 1, "a switch never changes a card's accent", accents)
+                keys = {t: [c["key"] for c in v["cards"]] for t, v in looks.items()}
+                run.check(len({json.dumps(k) for k in keys.values()}) == 1 and len(keys["kourai"]) == 16, "nor which cards show, or their order", keys)
+
+                # A new reading arrives over the stream; one three hours old says so.
                 write_reading(klepsydra, PERSONAL, "Personal", {"five_hour": (91, 8 * 60 + 50), "seven_day": (27, (6 * 24 + 6) * 3600 + 1800)})
                 write_reading(klepsydra, TEAM, "Team", {"five_hour": (12, 2 * 3600 + 600)}, ago=3 * 3600, session="00000000-0000-4000-8000-000000000002")
                 write_reading(klepsydra, LAB, "Lab", {"five_hour": (5, 3600), "seven_day": (40, 86400), "spend_limit": (10, 86400)}, ago=4 * 3600, session="00000000-0000-4000-8000-000000000003")

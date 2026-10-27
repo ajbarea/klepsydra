@@ -1,5 +1,8 @@
 {
   "v": 1,
+  "label": "Kourai",
+  "faces": "kourai",
+  "keeper": "af_nicole",
   "characters": {
     "af_heart": {"name": "Cupid", "face": "cupid", "accent": "#D55E00", "gender": "f", "epithet": "Arrow of the Heart", "head": [0.5, 0.31, 0.15]},
     "am_michael": {"name": "Hephaestus", "face": "hephaestus", "accent": "#DA8C20", "gender": "m", "epithet": "Master of the Forge", "head": [0.5, 0.21, 0.15]},

@@ -29,7 +29,7 @@ check() {
   fi
 }
 
-cp "$here/../src/fleet/cast.json" "$work/test-cast.json"
+cp "$here/../src/fleet/themes/kourai.json" "$work/test-cast.json"
 # shellcheck source=hooks/klepsydra-fleet.sh
 source "$hook"
 
@@ -1315,7 +1315,7 @@ check "all three kept their bytes" "$(cat "$g5/fleet/$A1.json"; jq -c .v "$g5/fl
 echo "window colours"
 
 printf '{"holders":{"500:8717628":{"voice":"am_michael","seen":1},"700:9000000":{"voice":"af_heart(0.5)+af_bella(0.5)","seen":1}}}\n' >"$work/win-voices.json"
-cast_src="$here/../src/fleet/cast.json"
+cast_src="$here/../src/fleet/themes/kourai.json"
 fsock=$work/sock/klepsydra
 C1=aaaaaaaa-2222-4333-8444-555555555551
 C2=aaaaaaaa-2222-4333-8444-555555555552

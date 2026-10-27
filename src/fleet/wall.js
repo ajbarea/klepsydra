@@ -1,11 +1,11 @@
 // The card wall: a card per Claude Code session, in the reader's order, with
 // a way back to its terminal.
-import cast from "./cast.json" with { type: "json" };
 import { RINGS, announcements, card, identity, needsFirst, shouldSlide, showsRingKey, startedNeeding, transitionName, statuses, tally } from "./model.js";
 import { announcer, press, say, setOff, syncChildren } from "./dom.js";
 import { ARM_MS, confirmCopy, createEnder, endAllCopy, endingAnnouncement, endingText, withdrawnText } from "./end.js";
 import { askedNote, asking, isReady, readiness, wrapupAnnouncements, wrapupCopy, wrapupLines } from "./wrapup.js";
-import { inTauri, served, subscribe, todayLedger } from "./feed.js";
+import { inTauri, served, subscribe, subscribeTheme, todayLedger } from "./feed.js";
+import { DEFAULT_THEME, THEMES, keeperOf, themeId, themeOf } from "./theme.js";
 import { createDrawer } from "./drawer.js";
 import { createQueuePanel } from "./queuepanel.js";
 import { createEdge } from "./sidepanel.js";
@@ -93,6 +93,9 @@ const showLink = (up) => {
 // A phone's narrow screen takes one column of compact cards.
 const phoneNarrow = () => served && matchMedia("(max-width: 600px)").matches;
 
+// The character theme the wall wears: who each voice is and how they look.
+let themeName = DEFAULT_THEME;
+let cast = themeOf(themeName);
 let sessions = [];
 let request = null; // the snapshot's wrap-up, while one is shown
 let latestSnapshot = null; // its usage readings draw the limit gauges
@@ -105,7 +108,7 @@ const drawer = createDrawer({
   tab: document.getElementById("ledger-tab"),
   edge,
   sessions: () => sessions,
-  cast,
+  cast: () => cast,
   fetchToday: todayLedger,
   onResized: () => showDensity(),
 });
@@ -522,6 +525,10 @@ function showPortrait(id) {
   const c = cardOf.get(id);
   if (!c?.full) return;
   openedFrom = id;
+  fillPortrait(c);
+  portrait.showModal();
+}
+function fillPortrait(c) {
   const img = portrait.querySelector(".full");
   img.removeAttribute("src"); // never the last portrait under this name while the new one loads
   img.src = c.full;
@@ -532,7 +539,6 @@ function showPortrait(id) {
   if (c.accentInk) portrait.style.setProperty("--accent-ink", c.accentInk);
   else portrait.style.removeProperty("--accent-ink");
   setText(portrait.querySelector(".voice"), c.voiceTitle);
-  portrait.showModal();
 }
 portrait.addEventListener("close", () => {
   const card = [...wall.children].find((el) => el.dataset.key === openedFrom);
@@ -610,6 +616,8 @@ function drawSpeaking() {
 }
 
 function receive(message) {
+  // The phone wears the theme the app names on each snapshot.
+  if (served && Array.isArray(message?.sessions)) wearTheme(message.theme, false);
   if (Array.isArray(message?.sessions)) {
     const said = announcements(before, message.sessions, cast, Date.now());
     const speaking = speaker.update(message.speaking ?? null, Date.now());
@@ -1124,6 +1132,41 @@ new ResizeObserver(() => {
   densityFrame = requestAnimationFrame(showDensity);
 }).observe(wall);
 if (inTauri) window.__TAURI__.core.invoke("get_wall_density").then(choose, () => {});
+
+// Characters (#135): the theme picker, the tray's Characters menu and the
+// phone all wear one theme. A switch changes names, faces and epithets only:
+// voices, and with them accents and the speaking ripple, stay put.
+const themePicker = document.getElementById("theme");
+themePicker.replaceChildren(
+  ...Object.entries(THEMES).map(([id, t]) => Object.assign(document.createElement("option"), { value: id, textContent: t.label })),
+);
+const keeper = empty.querySelector(".keeper");
+
+/** Wear theme `id` (an unknown one is the default), and repaint unless `paint` is false. */
+function wearTheme(id, paint = true) {
+  const next = themeId(id);
+  const was = themeName;
+  themeName = next;
+  cast = themeOf(next);
+  themePicker.value = next;
+  const src = keeperOf(cast);
+  if (src && keeper.getAttribute("src") !== src) keeper.src = src;
+  if (!paint || next === was) return;
+  if (latestSnapshot) {
+    const said = render();
+    if (said.length) announce(said.join(". "));
+  }
+  if (portrait.open && cardOf.has(openedFrom)) fillPortrait(cardOf.get(openedFrom));
+  drawer.refresh();
+}
+wearTheme(DEFAULT_THEME, false);
+themePicker.addEventListener("change", () => {
+  const id = themePicker.value;
+  wearTheme(id);
+  // The app saves it and sends it back to every window, the tray and the phone.
+  if (inTauri) window.__TAURI__.core.invoke("set_theme", { theme: id }).catch(() => {});
+});
+subscribeTheme((id) => wearTheme(id));
 
 subscribe(receive, showLink);
 setInterval(() => {

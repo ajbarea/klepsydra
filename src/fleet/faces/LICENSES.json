@@ -1,4 +1,184 @@
 {
+  "dicebear/af-alloy-192.webp": {
+    "source": "DiceBear Lorelei, a remix of Lorelei by Lisa Wischofsky (https://www.dicebear.com/styles/lorelei/), rendered with @dicebear/core@9.4.2 and @dicebear/lorelei@9.4.2 from seed \"af_alloy\", 192 px",
+    "license": "CC0-1.0"
+  },
+  "dicebear/af-alloy-96.webp": {
+    "source": "DiceBear Lorelei, a remix of Lorelei by Lisa Wischofsky (https://www.dicebear.com/styles/lorelei/), rendered with @dicebear/core@9.4.2 and @dicebear/lorelei@9.4.2 from seed \"af_alloy\", 96 px",
+    "license": "CC0-1.0"
+  },
+  "dicebear/af-alloy-full.webp": {
+    "source": "DiceBear Lorelei, a remix of Lorelei by Lisa Wischofsky (https://www.dicebear.com/styles/lorelei/), rendered with @dicebear/core@9.4.2 and @dicebear/lorelei@9.4.2 from seed \"af_alloy\", 512 px",
+    "license": "CC0-1.0"
+  },
+  "dicebear/af-aoede-192.webp": {
+    "source": "DiceBear Lorelei, a remix of Lorelei by Lisa Wischofsky (https://www.dicebear.com/styles/lorelei/), rendered with @dicebear/core@9.4.2 and @dicebear/lorelei@9.4.2 from seed \"af_aoede\", 192 px",
+    "license": "CC0-1.0"
+  },
+  "dicebear/af-aoede-96.webp": {
+    "source": "DiceBear Lorelei, a remix of Lorelei by Lisa Wischofsky (https://www.dicebear.com/styles/lorelei/), rendered with @dicebear/core@9.4.2 and @dicebear/lorelei@9.4.2 from seed \"af_aoede\", 96 px",
+    "license": "CC0-1.0"
+  },
+  "dicebear/af-aoede-full.webp": {
+    "source": "DiceBear Lorelei, a remix of Lorelei by Lisa Wischofsky (https://www.dicebear.com/styles/lorelei/), rendered with @dicebear/core@9.4.2 and @dicebear/lorelei@9.4.2 from seed \"af_aoede\", 512 px",
+    "license": "CC0-1.0"
+  },
+  "dicebear/af-bella-192.webp": {
+    "source": "DiceBear Lorelei, a remix of Lorelei by Lisa Wischofsky (https://www.dicebear.com/styles/lorelei/), rendered with @dicebear/core@9.4.2 and @dicebear/lorelei@9.4.2 from seed \"af_bella\", 192 px",
+    "license": "CC0-1.0"
+  },
+  "dicebear/af-bella-96.webp": {
+    "source": "DiceBear Lorelei, a remix of Lorelei by Lisa Wischofsky (https://www.dicebear.com/styles/lorelei/), rendered with @dicebear/core@9.4.2 and @dicebear/lorelei@9.4.2 from seed \"af_bella\", 96 px",
+    "license": "CC0-1.0"
+  },
+  "dicebear/af-bella-full.webp": {
+    "source": "DiceBear Lorelei, a remix of Lorelei by Lisa Wischofsky (https://www.dicebear.com/styles/lorelei/), rendered with @dicebear/core@9.4.2 and @dicebear/lorelei@9.4.2 from seed \"af_bella\", 512 px",
+    "license": "CC0-1.0"
+  },
+  "dicebear/af-heart-192.webp": {
+    "source": "DiceBear Lorelei, a remix of Lorelei by Lisa Wischofsky (https://www.dicebear.com/styles/lorelei/), rendered with @dicebear/core@9.4.2 and @dicebear/lorelei@9.4.2 from seed \"af_heart\", 192 px",
+    "license": "CC0-1.0"
+  },
+  "dicebear/af-heart-96.webp": {
+    "source": "DiceBear Lorelei, a remix of Lorelei by Lisa Wischofsky (https://www.dicebear.com/styles/lorelei/), rendered with @dicebear/core@9.4.2 and @dicebear/lorelei@9.4.2 from seed \"af_heart\", 96 px",
+    "license": "CC0-1.0"
+  },
+  "dicebear/af-heart-full.webp": {
+    "source": "DiceBear Lorelei, a remix of Lorelei by Lisa Wischofsky (https://www.dicebear.com/styles/lorelei/), rendered with @dicebear/core@9.4.2 and @dicebear/lorelei@9.4.2 from seed \"af_heart\", 512 px",
+    "license": "CC0-1.0"
+  },
+  "dicebear/af-kore-192.webp": {
+    "source": "DiceBear Lorelei, a remix of Lorelei by Lisa Wischofsky (https://www.dicebear.com/styles/lorelei/), rendered with @dicebear/core@9.4.2 and @dicebear/lorelei@9.4.2 from seed \"af_kore\", 192 px",
+    "license": "CC0-1.0"
+  },
+  "dicebear/af-kore-96.webp": {
+    "source": "DiceBear Lorelei, a remix of Lorelei by Lisa Wischofsky (https://www.dicebear.com/styles/lorelei/), rendered with @dicebear/core@9.4.2 and @dicebear/lorelei@9.4.2 from seed \"af_kore\", 96 px",
+    "license": "CC0-1.0"
+  },
+  "dicebear/af-kore-full.webp": {
+    "source": "DiceBear Lorelei, a remix of Lorelei by Lisa Wischofsky (https://www.dicebear.com/styles/lorelei/), rendered with @dicebear/core@9.4.2 and @dicebear/lorelei@9.4.2 from seed \"af_kore\", 512 px",
+    "license": "CC0-1.0"
+  },
+  "dicebear/af-nicole-192.webp": {
+    "source": "DiceBear Lorelei, a remix of Lorelei by Lisa Wischofsky (https://www.dicebear.com/styles/lorelei/), rendered with @dicebear/core@9.4.2 and @dicebear/lorelei@9.4.2 from seed \"af_nicole\", 192 px",
+    "license": "CC0-1.0"
+  },
+  "dicebear/af-nicole-96.webp": {
+    "source": "DiceBear Lorelei, a remix of Lorelei by Lisa Wischofsky (https://www.dicebear.com/styles/lorelei/), rendered with @dicebear/core@9.4.2 and @dicebear/lorelei@9.4.2 from seed \"af_nicole\", 96 px",
+    "license": "CC0-1.0"
+  },
+  "dicebear/af-nicole-full.webp": {
+    "source": "DiceBear Lorelei, a remix of Lorelei by Lisa Wischofsky (https://www.dicebear.com/styles/lorelei/), rendered with @dicebear/core@9.4.2 and @dicebear/lorelei@9.4.2 from seed \"af_nicole\", 512 px",
+    "license": "CC0-1.0"
+  },
+  "dicebear/af-nova-192.webp": {
+    "source": "DiceBear Lorelei, a remix of Lorelei by Lisa Wischofsky (https://www.dicebear.com/styles/lorelei/), rendered with @dicebear/core@9.4.2 and @dicebear/lorelei@9.4.2 from seed \"af_nova\", 192 px",
+    "license": "CC0-1.0"
+  },
+  "dicebear/af-nova-96.webp": {
+    "source": "DiceBear Lorelei, a remix of Lorelei by Lisa Wischofsky (https://www.dicebear.com/styles/lorelei/), rendered with @dicebear/core@9.4.2 and @dicebear/lorelei@9.4.2 from seed \"af_nova\", 96 px",
+    "license": "CC0-1.0"
+  },
+  "dicebear/af-nova-full.webp": {
+    "source": "DiceBear Lorelei, a remix of Lorelei by Lisa Wischofsky (https://www.dicebear.com/styles/lorelei/), rendered with @dicebear/core@9.4.2 and @dicebear/lorelei@9.4.2 from seed \"af_nova\", 512 px",
+    "license": "CC0-1.0"
+  },
+  "dicebear/af-sarah-192.webp": {
+    "source": "DiceBear Lorelei, a remix of Lorelei by Lisa Wischofsky (https://www.dicebear.com/styles/lorelei/), rendered with @dicebear/core@9.4.2 and @dicebear/lorelei@9.4.2 from seed \"af_sarah\", 192 px",
+    "license": "CC0-1.0"
+  },
+  "dicebear/af-sarah-96.webp": {
+    "source": "DiceBear Lorelei, a remix of Lorelei by Lisa Wischofsky (https://www.dicebear.com/styles/lorelei/), rendered with @dicebear/core@9.4.2 and @dicebear/lorelei@9.4.2 from seed \"af_sarah\", 96 px",
+    "license": "CC0-1.0"
+  },
+  "dicebear/af-sarah-full.webp": {
+    "source": "DiceBear Lorelei, a remix of Lorelei by Lisa Wischofsky (https://www.dicebear.com/styles/lorelei/), rendered with @dicebear/core@9.4.2 and @dicebear/lorelei@9.4.2 from seed \"af_sarah\", 512 px",
+    "license": "CC0-1.0"
+  },
+  "dicebear/am-fenrir-192.webp": {
+    "source": "DiceBear Lorelei, a remix of Lorelei by Lisa Wischofsky (https://www.dicebear.com/styles/lorelei/), rendered with @dicebear/core@9.4.2 and @dicebear/lorelei@9.4.2 from seed \"am_fenrir\", 192 px",
+    "license": "CC0-1.0"
+  },
+  "dicebear/am-fenrir-96.webp": {
+    "source": "DiceBear Lorelei, a remix of Lorelei by Lisa Wischofsky (https://www.dicebear.com/styles/lorelei/), rendered with @dicebear/core@9.4.2 and @dicebear/lorelei@9.4.2 from seed \"am_fenrir\", 96 px",
+    "license": "CC0-1.0"
+  },
+  "dicebear/am-fenrir-full.webp": {
+    "source": "DiceBear Lorelei, a remix of Lorelei by Lisa Wischofsky (https://www.dicebear.com/styles/lorelei/), rendered with @dicebear/core@9.4.2 and @dicebear/lorelei@9.4.2 from seed \"am_fenrir\", 512 px",
+    "license": "CC0-1.0"
+  },
+  "dicebear/am-michael-192.webp": {
+    "source": "DiceBear Lorelei, a remix of Lorelei by Lisa Wischofsky (https://www.dicebear.com/styles/lorelei/), rendered with @dicebear/core@9.4.2 and @dicebear/lorelei@9.4.2 from seed \"am_michael\", 192 px",
+    "license": "CC0-1.0"
+  },
+  "dicebear/am-michael-96.webp": {
+    "source": "DiceBear Lorelei, a remix of Lorelei by Lisa Wischofsky (https://www.dicebear.com/styles/lorelei/), rendered with @dicebear/core@9.4.2 and @dicebear/lorelei@9.4.2 from seed \"am_michael\", 96 px",
+    "license": "CC0-1.0"
+  },
+  "dicebear/am-michael-full.webp": {
+    "source": "DiceBear Lorelei, a remix of Lorelei by Lisa Wischofsky (https://www.dicebear.com/styles/lorelei/), rendered with @dicebear/core@9.4.2 and @dicebear/lorelei@9.4.2 from seed \"am_michael\", 512 px",
+    "license": "CC0-1.0"
+  },
+  "dicebear/am-puck-192.webp": {
+    "source": "DiceBear Lorelei, a remix of Lorelei by Lisa Wischofsky (https://www.dicebear.com/styles/lorelei/), rendered with @dicebear/core@9.4.2 and @dicebear/lorelei@9.4.2 from seed \"am_puck\", 192 px",
+    "license": "CC0-1.0"
+  },
+  "dicebear/am-puck-96.webp": {
+    "source": "DiceBear Lorelei, a remix of Lorelei by Lisa Wischofsky (https://www.dicebear.com/styles/lorelei/), rendered with @dicebear/core@9.4.2 and @dicebear/lorelei@9.4.2 from seed \"am_puck\", 96 px",
+    "license": "CC0-1.0"
+  },
+  "dicebear/am-puck-full.webp": {
+    "source": "DiceBear Lorelei, a remix of Lorelei by Lisa Wischofsky (https://www.dicebear.com/styles/lorelei/), rendered with @dicebear/core@9.4.2 and @dicebear/lorelei@9.4.2 from seed \"am_puck\", 512 px",
+    "license": "CC0-1.0"
+  },
+  "dicebear/bf-emma-192.webp": {
+    "source": "DiceBear Lorelei, a remix of Lorelei by Lisa Wischofsky (https://www.dicebear.com/styles/lorelei/), rendered with @dicebear/core@9.4.2 and @dicebear/lorelei@9.4.2 from seed \"bf_emma\", 192 px",
+    "license": "CC0-1.0"
+  },
+  "dicebear/bf-emma-96.webp": {
+    "source": "DiceBear Lorelei, a remix of Lorelei by Lisa Wischofsky (https://www.dicebear.com/styles/lorelei/), rendered with @dicebear/core@9.4.2 and @dicebear/lorelei@9.4.2 from seed \"bf_emma\", 96 px",
+    "license": "CC0-1.0"
+  },
+  "dicebear/bf-emma-full.webp": {
+    "source": "DiceBear Lorelei, a remix of Lorelei by Lisa Wischofsky (https://www.dicebear.com/styles/lorelei/), rendered with @dicebear/core@9.4.2 and @dicebear/lorelei@9.4.2 from seed \"bf_emma\", 512 px",
+    "license": "CC0-1.0"
+  },
+  "dicebear/bf-isabella-192.webp": {
+    "source": "DiceBear Lorelei, a remix of Lorelei by Lisa Wischofsky (https://www.dicebear.com/styles/lorelei/), rendered with @dicebear/core@9.4.2 and @dicebear/lorelei@9.4.2 from seed \"bf_isabella\", 192 px",
+    "license": "CC0-1.0"
+  },
+  "dicebear/bf-isabella-96.webp": {
+    "source": "DiceBear Lorelei, a remix of Lorelei by Lisa Wischofsky (https://www.dicebear.com/styles/lorelei/), rendered with @dicebear/core@9.4.2 and @dicebear/lorelei@9.4.2 from seed \"bf_isabella\", 96 px",
+    "license": "CC0-1.0"
+  },
+  "dicebear/bf-isabella-full.webp": {
+    "source": "DiceBear Lorelei, a remix of Lorelei by Lisa Wischofsky (https://www.dicebear.com/styles/lorelei/), rendered with @dicebear/core@9.4.2 and @dicebear/lorelei@9.4.2 from seed \"bf_isabella\", 512 px",
+    "license": "CC0-1.0"
+  },
+  "dicebear/bm-fable-192.webp": {
+    "source": "DiceBear Lorelei, a remix of Lorelei by Lisa Wischofsky (https://www.dicebear.com/styles/lorelei/), rendered with @dicebear/core@9.4.2 and @dicebear/lorelei@9.4.2 from seed \"bm_fable\", 192 px",
+    "license": "CC0-1.0"
+  },
+  "dicebear/bm-fable-96.webp": {
+    "source": "DiceBear Lorelei, a remix of Lorelei by Lisa Wischofsky (https://www.dicebear.com/styles/lorelei/), rendered with @dicebear/core@9.4.2 and @dicebear/lorelei@9.4.2 from seed \"bm_fable\", 96 px",
+    "license": "CC0-1.0"
+  },
+  "dicebear/bm-fable-full.webp": {
+    "source": "DiceBear Lorelei, a remix of Lorelei by Lisa Wischofsky (https://www.dicebear.com/styles/lorelei/), rendered with @dicebear/core@9.4.2 and @dicebear/lorelei@9.4.2 from seed \"bm_fable\", 512 px",
+    "license": "CC0-1.0"
+  },
+  "dicebear/bm-george-192.webp": {
+    "source": "DiceBear Lorelei, a remix of Lorelei by Lisa Wischofsky (https://www.dicebear.com/styles/lorelei/), rendered with @dicebear/core@9.4.2 and @dicebear/lorelei@9.4.2 from seed \"bm_george\", 192 px",
+    "license": "CC0-1.0"
+  },
+  "dicebear/bm-george-96.webp": {
+    "source": "DiceBear Lorelei, a remix of Lorelei by Lisa Wischofsky (https://www.dicebear.com/styles/lorelei/), rendered with @dicebear/core@9.4.2 and @dicebear/lorelei@9.4.2 from seed \"bm_george\", 96 px",
+    "license": "CC0-1.0"
+  },
+  "dicebear/bm-george-full.webp": {
+    "source": "DiceBear Lorelei, a remix of Lorelei by Lisa Wischofsky (https://www.dicebear.com/styles/lorelei/), rendered with @dicebear/core@9.4.2 and @dicebear/lorelei@9.4.2 from seed \"bm_george\", 512 px",
+    "license": "CC0-1.0"
+  },
   "kourai/aidos-192.webp": {
     "source": "kourai-khryseai assets/avatars/vn/aidos_neutral.png (https://github.com/ajbarea/kourai-khryseai), head cropped and scaled to 192 px",
     "license": "MIT (kourai-khryseai LICENSE, Copyright (c) 2026 AJ Barea)"
@@ -238,5 +418,185 @@
   "kourai/techne-full.webp": {
     "source": "kourai-khryseai assets/avatars/vn/techne_neutral.png (https://github.com/ajbarea/kourai-khryseai), whole, 640 px",
     "license": "MIT (kourai-khryseai LICENSE, Copyright (c) 2026 AJ Barea)"
+  },
+  "professions/architect-192.webp": {
+    "source": "Lucide (https://lucide.dev) \"drafting-compass\" from lucide-static@1.55.0, on a #C8B464 disc, 192 px",
+    "license": "ISC (Lucide LICENSE, Copyright (c) Lucide Icons and Contributors)"
+  },
+  "professions/architect-96.webp": {
+    "source": "Lucide (https://lucide.dev) \"drafting-compass\" from lucide-static@1.55.0, on a #C8B464 disc, 96 px",
+    "license": "ISC (Lucide LICENSE, Copyright (c) Lucide Icons and Contributors)"
+  },
+  "professions/architect-full.webp": {
+    "source": "Lucide (https://lucide.dev) \"drafting-compass\" from lucide-static@1.55.0, on a #C8B464 disc, 512 px",
+    "license": "ISC (Lucide LICENSE, Copyright (c) Lucide Icons and Contributors)"
+  },
+  "professions/archivist-192.webp": {
+    "source": "Lucide (https://lucide.dev) \"archive\" from lucide-static@1.55.0, on a #B496DC disc, 192 px",
+    "license": "ISC (Lucide LICENSE, Copyright (c) Lucide Icons and Contributors)"
+  },
+  "professions/archivist-96.webp": {
+    "source": "Lucide (https://lucide.dev) \"archive\" from lucide-static@1.55.0, on a #B496DC disc, 96 px",
+    "license": "ISC (Lucide LICENSE, Copyright (c) Lucide Icons and Contributors)"
+  },
+  "professions/archivist-full.webp": {
+    "source": "Lucide (https://lucide.dev) \"archive\" from lucide-static@1.55.0, on a #B496DC disc, 512 px",
+    "license": "ISC (Lucide LICENSE, Copyright (c) Lucide Icons and Contributors)"
+  },
+  "professions/counsellor-192.webp": {
+    "source": "Lucide (https://lucide.dev) \"heart\" from lucide-static@1.55.0, on a #D55E00 disc, 192 px",
+    "license": "ISC (Lucide LICENSE, Copyright (c) Lucide Icons and Contributors)"
+  },
+  "professions/counsellor-96.webp": {
+    "source": "Lucide (https://lucide.dev) \"heart\" from lucide-static@1.55.0, on a #D55E00 disc, 96 px",
+    "license": "ISC (Lucide LICENSE, Copyright (c) Lucide Icons and Contributors)"
+  },
+  "professions/counsellor-full.webp": {
+    "source": "Lucide (https://lucide.dev) \"heart\" from lucide-static@1.55.0, on a #D55E00 disc, 512 px",
+    "license": "ISC (Lucide LICENSE, Copyright (c) Lucide Icons and Contributors)"
+  },
+  "professions/editor-192.webp": {
+    "source": "Lucide (https://lucide.dev) \"pen-line\" from lucide-static@1.55.0, on a #56B4E9 disc, 192 px",
+    "license": "ISC (Lucide LICENSE, Copyright (c) Lucide Icons and Contributors)"
+  },
+  "professions/editor-96.webp": {
+    "source": "Lucide (https://lucide.dev) \"pen-line\" from lucide-static@1.55.0, on a #56B4E9 disc, 96 px",
+    "license": "ISC (Lucide LICENSE, Copyright (c) Lucide Icons and Contributors)"
+  },
+  "professions/editor-full.webp": {
+    "source": "Lucide (https://lucide.dev) \"pen-line\" from lucide-static@1.55.0, on a #56B4E9 disc, 512 px",
+    "license": "ISC (Lucide LICENSE, Copyright (c) Lucide Icons and Contributors)"
+  },
+  "professions/engineer-192.webp": {
+    "source": "Lucide (https://lucide.dev) \"wrench\" from lucide-static@1.55.0, on a #FFC832 disc, 192 px",
+    "license": "ISC (Lucide LICENSE, Copyright (c) Lucide Icons and Contributors)"
+  },
+  "professions/engineer-96.webp": {
+    "source": "Lucide (https://lucide.dev) \"wrench\" from lucide-static@1.55.0, on a #FFC832 disc, 96 px",
+    "license": "ISC (Lucide LICENSE, Copyright (c) Lucide Icons and Contributors)"
+  },
+  "professions/engineer-full.webp": {
+    "source": "Lucide (https://lucide.dev) \"wrench\" from lucide-static@1.55.0, on a #FFC832 disc, 512 px",
+    "license": "ISC (Lucide LICENSE, Copyright (c) Lucide Icons and Contributors)"
+  },
+  "professions/foreman-192.webp": {
+    "source": "Lucide (https://lucide.dev) \"hammer\" from lucide-static@1.55.0, on a #DA8C20 disc, 192 px",
+    "license": "ISC (Lucide LICENSE, Copyright (c) Lucide Icons and Contributors)"
+  },
+  "professions/foreman-96.webp": {
+    "source": "Lucide (https://lucide.dev) \"hammer\" from lucide-static@1.55.0, on a #DA8C20 disc, 96 px",
+    "license": "ISC (Lucide LICENSE, Copyright (c) Lucide Icons and Contributors)"
+  },
+  "professions/foreman-full.webp": {
+    "source": "Lucide (https://lucide.dev) \"hammer\" from lucide-static@1.55.0, on a #DA8C20 disc, 512 px",
+    "license": "ISC (Lucide LICENSE, Copyright (c) Lucide Icons and Contributors)"
+  },
+  "professions/guard-192.webp": {
+    "source": "Lucide (https://lucide.dev) \"shield\" from lucide-static@1.55.0, on a #CC79A7 disc, 192 px",
+    "license": "ISC (Lucide LICENSE, Copyright (c) Lucide Icons and Contributors)"
+  },
+  "professions/guard-96.webp": {
+    "source": "Lucide (https://lucide.dev) \"shield\" from lucide-static@1.55.0, on a #CC79A7 disc, 96 px",
+    "license": "ISC (Lucide LICENSE, Copyright (c) Lucide Icons and Contributors)"
+  },
+  "professions/guard-full.webp": {
+    "source": "Lucide (https://lucide.dev) \"shield\" from lucide-static@1.55.0, on a #CC79A7 disc, 512 px",
+    "license": "ISC (Lucide LICENSE, Copyright (c) Lucide Icons and Contributors)"
+  },
+  "professions/guide-192.webp": {
+    "source": "Lucide (https://lucide.dev) \"compass\" from lucide-static@1.55.0, on a #009E73 disc, 192 px",
+    "license": "ISC (Lucide LICENSE, Copyright (c) Lucide Icons and Contributors)"
+  },
+  "professions/guide-96.webp": {
+    "source": "Lucide (https://lucide.dev) \"compass\" from lucide-static@1.55.0, on a #009E73 disc, 96 px",
+    "license": "ISC (Lucide LICENSE, Copyright (c) Lucide Icons and Contributors)"
+  },
+  "professions/guide-full.webp": {
+    "source": "Lucide (https://lucide.dev) \"compass\" from lucide-static@1.55.0, on a #009E73 disc, 512 px",
+    "license": "ISC (Lucide LICENSE, Copyright (c) Lucide Icons and Contributors)"
+  },
+  "professions/inspector-192.webp": {
+    "source": "Lucide (https://lucide.dev) \"clipboard-check\" from lucide-static@1.55.0, on a #DA5032 disc, 192 px",
+    "license": "ISC (Lucide LICENSE, Copyright (c) Lucide Icons and Contributors)"
+  },
+  "professions/inspector-96.webp": {
+    "source": "Lucide (https://lucide.dev) \"clipboard-check\" from lucide-static@1.55.0, on a #DA5032 disc, 96 px",
+    "license": "ISC (Lucide LICENSE, Copyright (c) Lucide Icons and Contributors)"
+  },
+  "professions/inspector-full.webp": {
+    "source": "Lucide (https://lucide.dev) \"clipboard-check\" from lucide-static@1.55.0, on a #DA5032 disc, 512 px",
+    "license": "ISC (Lucide LICENSE, Copyright (c) Lucide Icons and Contributors)"
+  },
+  "professions/librarian-192.webp": {
+    "source": "Lucide (https://lucide.dev) \"book-open\" from lucide-static@1.55.0, on a #A9B8D0 disc, 192 px",
+    "license": "ISC (Lucide LICENSE, Copyright (c) Lucide Icons and Contributors)"
+  },
+  "professions/librarian-96.webp": {
+    "source": "Lucide (https://lucide.dev) \"book-open\" from lucide-static@1.55.0, on a #A9B8D0 disc, 96 px",
+    "license": "ISC (Lucide LICENSE, Copyright (c) Lucide Icons and Contributors)"
+  },
+  "professions/librarian-full.webp": {
+    "source": "Lucide (https://lucide.dev) \"book-open\" from lucide-static@1.55.0, on a #A9B8D0 disc, 512 px",
+    "license": "ISC (Lucide LICENSE, Copyright (c) Lucide Icons and Contributors)"
+  },
+  "professions/mentor-192.webp": {
+    "source": "Lucide (https://lucide.dev) \"sprout\" from lucide-static@1.55.0, on a #F1D2A1 disc, 192 px",
+    "license": "ISC (Lucide LICENSE, Copyright (c) Lucide Icons and Contributors)"
+  },
+  "professions/mentor-96.webp": {
+    "source": "Lucide (https://lucide.dev) \"sprout\" from lucide-static@1.55.0, on a #F1D2A1 disc, 96 px",
+    "license": "ISC (Lucide LICENSE, Copyright (c) Lucide Icons and Contributors)"
+  },
+  "professions/mentor-full.webp": {
+    "source": "Lucide (https://lucide.dev) \"sprout\" from lucide-static@1.55.0, on a #F1D2A1 disc, 512 px",
+    "license": "ISC (Lucide LICENSE, Copyright (c) Lucide Icons and Contributors)"
+  },
+  "professions/messenger-192.webp": {
+    "source": "Lucide (https://lucide.dev) \"send\" from lucide-static@1.55.0, on a #E07B39 disc, 192 px",
+    "license": "ISC (Lucide LICENSE, Copyright (c) Lucide Icons and Contributors)"
+  },
+  "professions/messenger-96.webp": {
+    "source": "Lucide (https://lucide.dev) \"send\" from lucide-static@1.55.0, on a #E07B39 disc, 96 px",
+    "license": "ISC (Lucide LICENSE, Copyright (c) Lucide Icons and Contributors)"
+  },
+  "professions/messenger-full.webp": {
+    "source": "Lucide (https://lucide.dev) \"send\" from lucide-static@1.55.0, on a #E07B39 disc, 512 px",
+    "license": "ISC (Lucide LICENSE, Copyright (c) Lucide Icons and Contributors)"
+  },
+  "professions/researcher-192.webp": {
+    "source": "Lucide (https://lucide.dev) \"search\" from lucide-static@1.55.0, on a #0072B2 disc, 192 px",
+    "license": "ISC (Lucide LICENSE, Copyright (c) Lucide Icons and Contributors)"
+  },
+  "professions/researcher-96.webp": {
+    "source": "Lucide (https://lucide.dev) \"search\" from lucide-static@1.55.0, on a #0072B2 disc, 96 px",
+    "license": "ISC (Lucide LICENSE, Copyright (c) Lucide Icons and Contributors)"
+  },
+  "professions/researcher-full.webp": {
+    "source": "Lucide (https://lucide.dev) \"search\" from lucide-static@1.55.0, on a #0072B2 disc, 512 px",
+    "license": "ISC (Lucide LICENSE, Copyright (c) Lucide Icons and Contributors)"
+  },
+  "professions/reviewer-192.webp": {
+    "source": "Lucide (https://lucide.dev) \"eye\" from lucide-static@1.55.0, on a #FFDCA0 disc, 192 px",
+    "license": "ISC (Lucide LICENSE, Copyright (c) Lucide Icons and Contributors)"
+  },
+  "professions/reviewer-96.webp": {
+    "source": "Lucide (https://lucide.dev) \"eye\" from lucide-static@1.55.0, on a #FFDCA0 disc, 96 px",
+    "license": "ISC (Lucide LICENSE, Copyright (c) Lucide Icons and Contributors)"
+  },
+  "professions/reviewer-full.webp": {
+    "source": "Lucide (https://lucide.dev) \"eye\" from lucide-static@1.55.0, on a #FFDCA0 disc, 512 px",
+    "license": "ISC (Lucide LICENSE, Copyright (c) Lucide Icons and Contributors)"
+  },
+  "professions/timekeeper-192.webp": {
+    "source": "Lucide (https://lucide.dev) \"clock\" from lucide-static@1.55.0, on a #F0E442 disc, 192 px",
+    "license": "ISC (Lucide LICENSE, Copyright (c) Lucide Icons and Contributors)"
+  },
+  "professions/timekeeper-96.webp": {
+    "source": "Lucide (https://lucide.dev) \"clock\" from lucide-static@1.55.0, on a #F0E442 disc, 96 px",
+    "license": "ISC (Lucide LICENSE, Copyright (c) Lucide Icons and Contributors)"
+  },
+  "professions/timekeeper-full.webp": {
+    "source": "Lucide (https://lucide.dev) \"clock\" from lucide-static@1.55.0, on a #F0E442 disc, 512 px",
+    "license": "ISC (Lucide LICENSE, Copyright (c) Lucide Icons and Contributors)"
   }
 }
