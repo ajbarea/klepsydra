@@ -3373,6 +3373,40 @@ def ledger_docks_wide_and_is_a_dialog_narrow(wall):
         page.close()
 
 
+def ledger_gives_auto_its_room(wall):
+    """Docked, the Ledger narrows the wall and Auto measures the narrower wall:
+    eight comfortable cards fit 1920 but not 1440, so it turns compact and
+    never scrolls. A drag of its separator measures once, on release."""
+    page = wall.open(1920, 1000, 8)
+    before = page.evaluate(STATE)
+    page.click("#ledger-open")
+    page.wait_for_selector(LEDGER_READ)
+    page.wait_for_timeout(SETTLE_MS)
+    docked = page.evaluate(STATE)
+    wall.check(
+        before["density"] == "comfortable" and docked["density"] == "compact" and not docked["scrolls"],
+        "with the Ledger docked Auto measures the narrower wall: compact, no scroll",
+        [before, docked],
+    )
+    page.evaluate("""() => {
+      window.__measures = 0;
+      new MutationObserver((m) => { window.__measures += m.length; })
+        .observe(document.querySelector('.density label:has([value=auto])'), { attributes: true, attributeFilter: ['title'] });
+    }""")
+    drag(page, ledger_grip(page), 1920 - 680, steps=20)
+    page.wait_for_timeout(SETTLE_MS)
+    during = page.evaluate("({ measures: window.__measures, stored: localStorage.getItem('klepsydra.ledger.width') })")
+    page.mouse.up()
+    page.wait_for_timeout(SETTLE_MS)
+    after = page.evaluate("({ measures: window.__measures, stored: localStorage.getItem('klepsydra.ledger.width') })")
+    wall.check(
+        during["measures"] == 0 and during["stored"] is None and abs(int(after["stored"] or 0) - 680) <= 2 and after["measures"] == 1,
+        "a drag of the Ledger's separator stores its width and measures Auto once, on release",
+        [during, after],
+    )
+    page.close()
+
+
 def ledger_snaps_by_drag(wall):
     """Dragged past half its minimum the Ledger snaps shut to its tab, focus on
     the tab and its width untouched; dragged near the left edge it fills the
@@ -3925,6 +3959,7 @@ def main() -> int:
             queue_shortcut_waits_behind_another_dialog,
             queue_lost_drag_restores,
             ledger_docks_wide_and_is_a_dialog_narrow,
+            ledger_gives_auto_its_room,
             ledger_snaps_by_drag,
             ledger_separator_snaps_by_keyboard,
             ledger_text_size,
