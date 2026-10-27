@@ -142,6 +142,14 @@ fn terminal_pos_flags() -> u32 {
     SWP_NOACTIVATE | SWP_NOOWNERZORDER
 }
 
+/// Whether giving back a saved placement shown as `cmd` takes the
+/// foreground: only maximized, which has no quiet form.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn put_back_activates(cmd: u32) -> bool {
+    const SHOWMAXIMIZED: u32 = 3;
+    quiet_show(cmd) == SHOWMAXIMIZED
+}
+
 /// The show command and flags that take a maximized or minimized window to
 /// its normal size without activating it, from its current `flags`. A window
 /// maximized and then minimized is restored to normal, not maximized.
@@ -163,8 +171,8 @@ fn give_focus_back(before: isize, after: isize, moved: isize) -> bool {
 #[cfg(windows)]
 mod win {
     use super::{
-        give_focus_back, lookup_error, moves, quiet_show, restore_placement, terminal_pos_flags,
-        wall_pos_flags,
+        give_focus_back, lookup_error, moves, put_back_activates, quiet_show, restore_placement,
+        terminal_pos_flags, wall_pos_flags,
     };
     use crate::geometry::{frame_insets, widen, Insets, Rect};
     use std::sync::Mutex;
@@ -331,11 +339,11 @@ mod win {
             let (show, flags) = restore_placement(wp.flags.0);
             wp.showCmd = show;
             wp.flags = WINDOWPLACEMENT_FLAGS(flags);
-            answering(h)?;
             let before = settled_foreground();
+            answering(h)?;
             unsafe { SetWindowPlacement(h, &wp) }
                 .map_err(|e| format!("Could not restore a window: {e}"))?;
-            hand_back(before, h);
+            hand_back(before, h, true);
             if sized(h) {
                 return Err(STILL.into());
             }
@@ -367,9 +375,29 @@ mod win {
         }
     }
 
-    /// Give the foreground back to `before` if showing `moved` took it.
-    fn hand_back(before: isize, moved: HWND) {
-        if give_focus_back(before, foreground(), moved.0 as isize) && exists(before) {
+    /// The foreground once `moved` has it, or after `SETTLE_MS`: another
+    /// process's window takes it when its own thread gets to it.
+    fn taken_by(moved: isize) -> isize {
+        let start = std::time::Instant::now();
+        loop {
+            let fg = foreground();
+            if fg == moved || start.elapsed() >= std::time::Duration::from_millis(SETTLE_MS) {
+                return fg;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(SETTLE_STEP_MS));
+        }
+    }
+
+    /// Give the foreground back to `before` if showing `moved` took it;
+    /// `expected` when the show is one that takes it, so it is waited for.
+    fn hand_back(before: isize, moved: HWND, expected: bool) {
+        let raw = moved.0 as isize;
+        let after = if expected {
+            taken_by(raw)
+        } else {
+            foreground()
+        };
+        if give_focus_back(before, after, raw) && exists(before) {
             let _ = unsafe { SetForegroundWindow(hwnd(before)) };
         }
     }
@@ -405,7 +433,7 @@ mod win {
         if let Some((raw, wp)) = was.terminal {
             if exists(raw) && is_terminal(hwnd(raw)) {
                 moved |= put_back(hwnd(raw), wp);
-                hand_back(before, hwnd(raw));
+                hand_back(before, hwnd(raw), put_back_activates(wp.showCmd));
             }
         }
         moved
@@ -650,6 +678,14 @@ mod tests {
             (SW_SHOWNOACTIVATE, WPF_SETMINPOSITION),
             "other flags are kept"
         );
+    }
+
+    #[test]
+    fn only_a_window_put_back_maximized_is_waited_on_for_the_focus() {
+        // SW_HIDE, SW_SHOWNORMAL, SW_SHOWMINIMIZED, SW_SHOWMAXIMIZED, SW_SHOWNOACTIVATE.
+        for (cmd, takes) in [(0, false), (1, false), (2, false), (3, true), (4, false)] {
+            assert_eq!(put_back_activates(cmd), takes, "show command {cmd}");
+        }
     }
 
     #[test]
