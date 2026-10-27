@@ -1511,6 +1511,35 @@ for bad in "" "relative/$R.jsonl" "-n" "$work/missing.jsonl" "$work/projects"; d
   check "remote: transcript '$bad' is ignored" "$rc|$out|$(rc_url)|$(jq -r .state "$rfile")" "0||none|new"
 done
 
+# /clear ends the session and starts another id in the same Claude process,
+# whose Remote Control stays up; the new transcript's only line about it is an
+# attachment with no link and sendUserFileHint true.
+R2=33333333-4444-4555-8666-888888888888
+rfile2="$dir/fleet/$R2.json"
+tp2="${tp%/*}/$R2.jsonl"
+rm -f "$rfile"
+rc_line 1 >"$tp"; rc_fire session-start.json "$rnow"; rc_fire user-prompt.json $((rnow + 15))
+check "remote: (a link before /clear)" "$(rc_url)" "https://claude.ai/code/session_01PLACEHOLDERconnect"
+rc_fire session-end.json $((rnow + 100)) '.reason = "clear"'
+check "remote: a cleared session keeps its link on file" "$(jq -r '[.state, .remote_url] | join(" ")' "$rfile")" \
+  "ended https://claude.ai/code/session_01PLACEHOLDERconnect"
+rc_line 2 | jq -c '.timestamp = "2026-10-18T19:51:45.000Z"' >"$tp2"
+c2fire() { fire "$1" ".session_id = \"$R2\" | .transcript_path = \"$tp2\" | ${3:-.}" KLEPSYDRA_NOW="$2" "${@:4}" >/dev/null; }
+c2fire session-start.json $((rnow + 101)) '.source = "clear"'
+check "remote: /clear carries the link to the new session" "$(jq -r '.remote_url // "none"' "$rfile2")" \
+  "https://claude.ai/code/session_01PLACEHOLDERconnect"
+c2fire user-prompt.json $((rnow + 110))
+check "remote: and keeps it on the next event" "$(jq -r '.remote_url // "none"' "$rfile2")" \
+  "https://claude.ai/code/session_01PLACEHOLDERconnect"
+rc_line 3 | jq -c '.timestamp = "2026-10-18T19:52:00.000Z"' >>"$tp2"; c2fire user-prompt.json $((rnow + 125))
+check "remote: an off word after /clear drops it" "$(jq -r '.remote_url // "none"' "$rfile2")" "none"
+rm -f "$rfile2"; : >"$tp2"
+c2fire session-start.json $((rnow + 130)) '.source = "startup"'
+check "remote: a new process takes no cleared link" "$(jq -r '.remote_url // "none"' "$rfile2")" "none"
+rm -f "$rfile2"
+c2fire session-start.json $((rnow + 131)) '.source = "clear"' KLEPSYDRA_PID=710
+check "remote: another process's cleared link is not taken" "$(jq -r '.remote_url // "none"' "$rfile2")" "none"
+
 echo "queue command"
 
 # The command names the Queue panel's file in queue.json; under WSL it hands

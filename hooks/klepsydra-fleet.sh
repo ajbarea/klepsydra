@@ -399,6 +399,28 @@ remote_lines() { # transcript
   return 0
 }
 
+# The Remote Control link a /clear leaves: /clear ends the session and starts
+# another id in the same Claude process, whose Remote Control stays up, and the
+# new transcript never names the link. Read from the session files of Claude
+# process `pid` started at `start`, the latest active; empty for none. One jq
+# over the files' first lines.
+cleared_link() { # fleet pid start
+  local names=() f id line
+  [[ $2 =~ ^[1-9][0-9]*$ && $3 =~ ^[0-9]+$ ]] || return 0
+  for f in "$1"/*.json; do
+    id=${f##*/}; id=${id%.json}
+    [[ $id =~ $UUID_RE && -f $f && ! -L $f ]] && names+=("$f")
+  done
+  (( ${#names[@]} )) || return 0
+  for f in "${names[@]}"; do
+    { IFS= read -r line <"$f" && printf '%s\n' "$line"; } 2>/dev/null
+  done | jq -nRr --argjson pid "$2" --argjson start "$3" '
+    [inputs | try fromjson catch empty | objects
+      | select(.claude.pid == $pid and .claude.start == $start and (.remote_url | type) == "string")]
+    | max_by([.ended.at, .state_at, .written_at] | map(numbers) | max // 0) | .remote_url // empty' 2>/dev/null
+  return 0
+}
+
 # The session file after one event, as compact JSON, or nothing when no field
 # changed. `$old` is the current file's text (empty for none).
 read -r -d '' APPLY <<'JQ' || true  # read returns 1 at the end of input
@@ -473,9 +495,11 @@ def notified: if type == "string" then [scan("<task-notification>[\\s\\S]*?</tas
   | (if $fresh then .remote_since = $rc_since else . end)
   | ([$remote | split("\n")[] | try fromjson catch empty | objects
       | select((rc_time // 0) >= $rc_since) | rc_word] | last) as $rc
-  | .remote_url = (if $event == "SessionEnd" then null
+  # /clear keeps the process and its Remote Control: the cleared session's
+  # file keeps the link, and the next session takes it ($cleared).
+  | .remote_url = (if $event == "SessionEnd" and $ev.reason != "clear" then null
       elif $rc != null then $rc.url
-      elif $fresh then null
+      elif $fresh then $cleared | rc_ok
       else .remote_url | rc_ok end)
   | if .remote_url == null then del(.remote_url) else . end
   # Where: the last edit's repo, or the cwd's until something is edited, or
@@ -754,16 +778,16 @@ colour_window() { # voice
 }
 
 main() {
-  local input fields session event cwd edited transcript now file old new lock voice="" cwd_repo by=cwd remote="" homes='{}' old_git where_gone=false
+  local input fields session event cwd edited transcript source now file old new lock voice="" cwd_repo by=cwd remote="" cleared="" homes='{}' old_git where_gone=false
   input=$(cat)
   fields=$(printf '%s' "$input" | jq -r '
     def s: if type == "string" then gsub("[\u001f\n]"; " ") else "" end;
     [ (.session_id | s), (.hook_event_name | s), (.cwd | s),
       (if .hook_event_name == "PostToolUse" and (.tool_name | IN("Edit", "Write", "NotebookEdit"))
        then ((.tool_input.file_path // .tool_input.notebook_path) | s) else "" end),
-      (.transcript_path | s)
+      (.transcript_path | s), (.source | s)
     ] | join("\u001f")' 2>/dev/null) || return 0
-  IFS=$'\x1f' read -r session event cwd edited transcript <<<"$fields"
+  IFS=$'\x1f' read -r session event cwd edited transcript source <<<"$fields"
   [[ $session =~ $UUID_RE && " $EVENTS " == *" $event "* ]] || return 0
 
   now=${KLEPSYDRA_NOW:-}
@@ -791,6 +815,7 @@ main() {
   { exec {lock}>>"$LOCK"; } 2>/dev/null || return 0
   flock -w 5 "$lock" || return 0
 
+  [[ $event == SessionStart && $source == clear ]] && cleared=$(cleared_link "$fleet" "$found_pid" "$found_start")
   file=$fleet/$session.json
   old=""
   [[ -f $file ]] && { old=$(<"$file"); } 2>/dev/null
@@ -802,7 +827,7 @@ main() {
     --arg repo "$where_repo" --arg worktree "$where_worktree" --arg branch "$where_branch" \
     --arg git "$where_git" --argjson where_gone "$where_gone" --arg by "$by" \
     --arg tmux_socket "$tmux_socket" --arg tmux_pane "$tmux_pane" --arg boot "$host_boot" --arg distro "$host_distro" \
-    --arg voice "$voice" --argjson homes "$homes" --arg cwd_repo "$cwd_repo" --arg pid "$found_pid" --arg start "$found_start" --arg remote "$remote" \
+    --arg voice "$voice" --argjson homes "$homes" --arg cwd_repo "$cwd_repo" --arg pid "$found_pid" --arg start "$found_start" --arg remote "$remote" --arg cleared "$cleared" \
     "$APPLY" 2>/dev/null) || new=""
   [[ -n $new ]] && write_atomic "$file" "$new"
   # Only a start, or a changed voice, touches the window.
