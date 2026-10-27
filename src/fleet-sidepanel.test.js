@@ -103,8 +103,3 @@ test("the edge reports the docked panel's room and any drag, and knows its own d
   assert.equal(edge.holds(q.dialog), true);
   assert.equal(edge.holds({}), false, "another dialog, such as the portrait, is not the edge's");
 });
-
-test("an open Ledger reads again at most every 5 s", async () => {
-  const { REFRESH_MS } = await import("./fleet/drawer.js");
-  assert.equal(REFRESH_MS, 5000);
-});

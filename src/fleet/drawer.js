@@ -104,6 +104,7 @@ export function createDrawer({ dialog, button, tab, edge, sessions, cast, fetchT
   let reading = Promise.resolve(); // the latest read, which open() hands back
   let readAt = -Infinity; // when the latest read started
   let later = 0; // a snapshot's read held back by REFRESH_MS
+  let midnight = 0; // the read just past local midnight, when "today" turns over
   let painted = ""; // what the body shows, so an unchanged snapshot leaves it (and focus) alone
 
   const who = () => {
@@ -339,8 +340,24 @@ export function createDrawer({ dialog, button, tab, edge, sessions, cast, fetchT
     paint();
   }
 
+  /**
+   * Read again a second past the next local midnight, and again each night
+   * after, while the drawer is open: an idle fleet sends no snapshot, and the
+   * day would read yesterday's. Not held back by REFRESH_MS.
+   */
+  function atMidnight() {
+    clearTimeout(midnight);
+    const now = new Date();
+    const next = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1, 0, 0, 1);
+    midnight = setTimeout(() => {
+      refresh();
+      atMidnight();
+    }, next - now);
+  }
+
   /** Read from the start: the drawer opened, or turned to another session. */
   function start() {
+    atMidnight();
     view = null;
     painted = "";
     content.replaceChildren(el("p", "none", "Reading the ledger…", { role: "status" }));
@@ -354,6 +371,7 @@ export function createDrawer({ dialog, button, tab, edge, sessions, cast, fetchT
     onOpen: start,
     onShut: () => {
       clearTimeout(later);
+      clearTimeout(midnight);
       later = 0;
       turn++; // an answer still on its way has nowhere to go
       filter = null;

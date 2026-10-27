@@ -3997,6 +3997,54 @@ def ledger_reads_bounded(wall):
     page.close()
 
 
+def ledger_rolls_over_at_midnight(wall):
+    """An open Ledger reads again just past local midnight with no snapshot
+    to prompt it, even within 5 s of a snapshot's read; a shut one does not."""
+    import datetime
+    import time
+
+    fixture = json.loads((ROOT / "scripts/fixtures/fleet-demo.json").read_text())
+    at = fixture.pop("at")
+    snapshot = shifted(fixture, int(time.time()) - at)
+    page = wall.browser.new_page(viewport={"width": 1920, "height": 1000}, timezone_id="UTC")
+    page.clock.install(time=datetime.datetime(2026, 10, 27, 23, 59, 30, tzinfo=datetime.timezone.utc))
+    page.add_init_script(TAURI_STUB % json.dumps(snapshot))
+    page.add_init_script("""(() => {
+      const inv = window.__TAURI__.core.invoke;
+      window.__reads = 0;
+      window.__TAURI__.core.invoke = (cmd, args) => {
+        if (cmd !== 'ledger_today') return inv(cmd, args);
+        window.__reads++;
+        return fetch('/scripts/fixtures/ledger-demo.json').then((r) => r.json()).then(({ at, ...v }) => v);
+      };
+    })()""")
+    page.goto(f"http://127.0.0.1:{wall.port}/src/wall.html")
+    page.wait_for_function("document.getElementById('wall').children.length > 0")
+    page.click("#ledger-open")
+    page.wait_for_selector(LEDGER_READ)
+    reads = lambda: page.evaluate("window.__reads")
+    opened = reads()
+    page.clock.run_for(25000)  # 23:59:55, no snapshot: no read
+    quiet = reads()
+    page.evaluate("(s) => window.__channel.onmessage(s)", snapshot)  # its read is due at once
+    page.wait_for_timeout(100)
+    snapped = reads()
+    page.clock.run_for(8000)  # past 00:00, under 5 s after that read
+    page.wait_for_timeout(100)
+    rolled = reads()
+    page.click("#ledger-open")
+    page.wait_for_function(LEDGER_SHUT)
+    page.clock.fast_forward("24:00:00")
+    page.wait_for_timeout(100)
+    shut = reads()
+    wall.check(
+        opened == 1 and quiet == 1 and snapped == 2 and rolled == 3 and shut == 3,
+        "an open Ledger reads again just past midnight, not held back by the 5 s bound; a shut one does not",
+        {"opened": opened, "23:59:55": quiet, "snapshot": snapped, "00:00:03": rolled, "a day shut": shut},
+    )
+    page.close()
+
+
 def split_toggle(wall):
     """Split with terminal: hidden in a browser; in the app a labelled toggle,
     off until the saved choice loads, that calls set_split_mode; and the wall
@@ -4131,6 +4179,7 @@ def main() -> int:
             ledger_reflows_at_every_size,
             ctrl_alt_b_over_any_ledger,
             ledger_reads_bounded,
+            ledger_rolls_over_at_midnight,
             split_toggle,
         )
         for case in cases:
