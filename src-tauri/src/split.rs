@@ -191,6 +191,9 @@ mod win {
         "klepsydra is not per-monitor DPI aware here, so a split would misplace the windows.";
     /// How long (ms) a window has to answer before it counts as hung.
     const ANSWER_MS: u32 = 500;
+    /// How long (ms) to wait for the foreground to settle, and how often to look.
+    const SETTLE_MS: u64 = 250;
+    const SETTLE_STEP_MS: u64 = 5;
 
     /// Each window's placement from before the split, with its handle as an
     /// integer (a placement is plain numbers, so this is Send). Taken on
@@ -329,7 +332,7 @@ mod win {
             wp.showCmd = show;
             wp.flags = WINDOWPLACEMENT_FLAGS(flags);
             answering(h)?;
-            let before = foreground();
+            let before = settled_foreground();
             unsafe { SetWindowPlacement(h, &wp) }
                 .map_err(|e| format!("Could not restore a window: {e}"))?;
             hand_back(before, h);
@@ -347,6 +350,21 @@ mod win {
 
     fn foreground() -> isize {
         unsafe { GetForegroundWindow() }.0 as isize
+    }
+
+    /// The foreground window once it has one: it reads none while activation
+    /// passes between windows (a window just minimized hands it on), and a
+    /// window restored then takes it with no one to give it back to. None
+    /// after `SETTLE_MS` means no window has it.
+    fn settled_foreground() -> isize {
+        let start = std::time::Instant::now();
+        loop {
+            let fg = foreground();
+            if fg != 0 || start.elapsed() >= std::time::Duration::from_millis(SETTLE_MS) {
+                return fg;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(SETTLE_STEP_MS));
+        }
     }
 
     /// Give the foreground back to `before` if showing `moved` took it.
@@ -377,7 +395,7 @@ mod win {
     /// a handle now another program's); whether anything moved. The
     /// foreground goes back to whoever had it if the terminal took it.
     fn restore(was: Saved, wall: isize) -> bool {
-        let before = foreground();
+        let before = settled_foreground();
         let mut moved = false;
         if let Some((raw, wp)) = was.wall {
             if raw == wall && exists(raw) {
@@ -497,7 +515,9 @@ mod win {
                 wp.flags.contains(WPF_RESTORETOMAXIMIZED),
                 "it would restore maximized"
             );
-            let before = unsafe { GetForegroundWindow() };
+            // Read once activation has passed on: mid-handoff it reads none.
+            let before = hwnd(settled_foreground());
+            assert!(!before.is_invalid(), "a window has the foreground");
             assert_ne!(before, h);
             let (left, _) = halves(work_area(h).unwrap());
             let target = Rect::new(left.x + 40, left.y + 40, 720, 520);
