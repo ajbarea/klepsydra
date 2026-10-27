@@ -5,6 +5,30 @@ import { build, EMPTY, parse, present, queueLabel, render, safeHref, sections, t
 
 const FIXTURE = readFileSync(new URL("../scripts/fixtures/queue-demo.md", import.meta.url), "utf8");
 
+/**
+ * This thread's CPU time for `f()`, in ms: neither a loaded machine's waits
+ * nor the GC helper threads count.
+ */
+function cpuMs(f) {
+  const start = process.threadCpuUsage();
+  f();
+  const { user, system } = process.threadCpuUsage(start);
+  return (user + system) / 1000;
+}
+
+/**
+ * Asserts `run(n)` costs grow linearly, as Go's checkLinear does: the best of
+ * three CPU times at n and 4n, where linear work grows about 4-fold and
+ * quadratic 16-fold. `n` doubles until a run takes 20 ms, past timer grain.
+ */
+function assertLinear(run, n) {
+  const best = (m) => Math.min(...Array.from({ length: 3 }, () => cpuMs(() => run(m))));
+  while (best(n) < 20) n *= 2;
+  const small = best(n);
+  const large = best(4 * n);
+  assert.ok(large < 8 * small, `n=${n}: ${small.toFixed(1)} ms, 4n: ${large.toFixed(1)} ms`);
+}
+
 // A just-enough DOM that records every attribute set and refuses markup.
 class El {
   constructor(tag) {
@@ -193,13 +217,14 @@ test("textOf reads a node's whole text", () => {
   assert.equal(textOf(h.kids[0]), "A b c");
 });
 
-test("a file at the size cap parses and renders quickly", () => {
-  const big = FIXTURE.repeat(Math.ceil((256 * 1024) / FIXTURE.length)).slice(0, 256 * 1024);
-  const started = performance.now();
-  const root = new El("div");
-  for (const n of build(render(big).nodes, doc, { copy() {} })) root.append(n);
-  const ms = performance.now() - started;
-  assert.ok(ms < 1000, `${ms.toFixed(0)} ms`);
+test("a file at the size cap parses and renders quickly, and its cost grows linearly", () => {
+  const show = (bytes) => {
+    const root = new El("div");
+    for (const n of build(render(FIXTURE.repeat(Math.ceil(bytes / FIXTURE.length)).slice(0, bytes)).nodes, doc, { copy() {} })) root.append(n);
+  };
+  const ms = cpuMs(() => show(256 * 1024));
+  assert.ok(ms < 5000, `${ms.toFixed(0)} ms of CPU`);
+  assertLinear(show, 64 * 1024);
 });
 
 test("the docked width keeps to its bounds and leaves the cards room; no number is the default", async () => {
@@ -240,12 +265,9 @@ test("the Needs you count agrees with the panel, whatever the markup", () => {
   }
 });
 
-test("a long Needs you list counts in under a second", () => {
-  const text = "## Needs you\n\n" + "- a\n".repeat(65000);
-  const started = performance.now();
-  assert.equal(render(text).count, 65000);
-  const ms = performance.now() - started;
-  assert.ok(ms < 1000, `${ms.toFixed(0)} ms`);
+test("a long Needs you list counts in linear time", () => {
+  assert.equal(render("## Needs you\n\n" + "- a\n".repeat(65000)).count, 65000);
+  assertLinear((n) => assert.equal(render("## Needs you\n\n" + "- a\n".repeat(n)).count, n), 1000);
 });
 
 test("a paragraph of many inline nodes renders without overflowing the stack", () => {
@@ -279,9 +301,7 @@ test("comments are left out wherever they sit, and the text between them stays",
   assert.equal(dom("<div><!-- x --></div>\n").root.textContent, "<div></div>");
   // An unclosed comment shows as written, and many of them stay linear.
   assert.equal(dom("<!-- open\n").root.textContent, "<!-- open");
-  const started = performance.now();
-  dom("<!--".repeat(65536));
-  assert.ok(performance.now() - started < 1000);
+  assertLinear((n) => dom("<!--".repeat(n)), 4096);
 });
 
 test("the Queue label hides its words below exactly the dock breakpoint", () => {

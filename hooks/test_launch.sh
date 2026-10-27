@@ -257,6 +257,17 @@ send() { bash "$launch" "$1" "$socket" "$2" "$(pane_pid "$2")" "$(pstart "$(pane
 alive() { [[ -n $(t display -p -t "$1" '#{pane_id}' 2>/dev/null) ]] && echo alive || echo gone; }
 # tmux closes a pane a moment after its process exits.
 gone() { local _; for _ in $(seq 20); do [[ $(alive "$1") == gone ]] && break; sleep 0.1; done; alive "$1"; }
+# The fake logs a key when it reads it, which can be after the launch script
+# returns: check its key log once it reads WANT, or as it stands after 10 s.
+check_keys() { # name want
+  local got _
+  for _ in $(seq 100); do
+    got=$(paste -sd' ' "$work/fake.log")
+    [[ $got == "$2" ]] && break
+    sleep 0.1
+  done
+  check "$1" "$got" "$2"
+}
 detach_all; tabs0=$(tabs)
 
 : >"$work/fake.log"; p=$(fake)
@@ -264,7 +275,7 @@ t send-keys -t "$p" -l 'half a draft'; sleep 0.2
 out=$(send end "$p" 2>&1); rc=$?
 check "end: exit 0" "$rc" "0"
 check "end: says so" "$out" "Ended the session."
-check "end: Esc, Ctrl+C, then /exit alone" "$(paste -sd' ' "$work/fake.log")" "esc ctrl-c submit:/exit"
+check_keys "end: Esc, Ctrl+C, then /exit alone" "esc ctrl-c submit:/exit"
 check "end: the process is gone" "$(gone "$p")" "gone"
 
 : >"$work/fake.log"; p=$(fake FAKE_DROP=x)
@@ -272,7 +283,7 @@ out=$(send end "$p" 2>&1); rc=$?
 check "lost keys: exit 1" "$rc" "1"
 check "lost keys: says so" "$out" "The session's prompt did not read /exit, so Enter was not pressed. Its prompt may be in vim editor mode, or Claude Code's layout changed. Open its terminal to do it there."
 check "lost keys: Enter never pressed" "$(grep -c '^submit:' "$work/fake.log")" "0"
-check "lost keys: the line is cleared" "$(tail -1 "$work/fake.log")" "ctrl-c"
+check_keys "lost keys: the line is cleared" "esc ctrl-c ctrl-c"
 check "lost keys: still running" "$(alive "$p")" "alive"
 t kill-pane -t "$p"
 
@@ -286,7 +297,7 @@ t kill-pane -t "$p"
 out=$(send interrupt "$p" 2>&1); rc=$?
 check "interrupt: exit 0" "$rc" "0"
 check "interrupt: says so" "$out" "Sent Esc to the session."
-check "interrupt: Esc alone" "$(paste -sd' ' "$work/fake.log")" "esc"
+check_keys "interrupt: Esc alone" "esc"
 check "interrupt: still running" "$(alive "$p")" "alive"
 
 # A pane in copy mode would eat the keys as copy-mode commands.
@@ -296,12 +307,12 @@ check "copy mode: the pane is in it" "$(t display -p -t "$p" '#{pane_in_mode}')"
 out=$(send end "$p" 2>&1); rc=$?
 check "copy mode, end: exit 0" "$rc" "0"
 check "copy mode, end: says so" "$out" "Ended the session."
-check "copy mode, end: the keys reached the session" "$(paste -sd' ' "$work/fake.log")" "esc ctrl-c submit:/exit"
+check_keys "copy mode, end: the keys reached the session" "esc ctrl-c submit:/exit"
 : >"$work/fake.log"; p=$(fake)
 t copy-mode -t "$p"
 out=$(send interrupt "$p" 2>&1); rc=$?
 check "copy mode, interrupt: exit 0" "$rc" "0"
-check "copy mode, interrupt: Esc reached the session" "$(paste -sd' ' "$work/fake.log")" "esc"
+check_keys "copy mode, interrupt: Esc reached the session" "esc"
 check "copy mode, interrupt: out of copy mode" "$(t display -p -t "$p" '#{pane_in_mode}')" "0"
 
 # An End the app gave up on may still be running: a second one is refused.
@@ -337,7 +348,7 @@ t send-keys -t "$p" -l 'a draft'; sleep 0.2
 out=$(send wrapup "$p" 2>&1); rc=$?
 check "wrapup: exit 0" "$rc" "0"
 check "wrapup: says so" "$out" "Asked the session to wrap up."
-check "wrapup: Ctrl+C, then the command alone, no Esc" "$(paste -sd' ' "$work/fake.log")" "ctrl-c submit:/klepsydra-wrapup"
+check_keys "wrapup: Ctrl+C, then the command alone, no Esc" "ctrl-c submit:/klepsydra-wrapup"
 check "wrapup: still running" "$(alive "$p")" "alive"
 t kill-pane -t "$p"
 : >"$work/fake.log"; p=$(fake FAKE_BUSY=1)
@@ -370,7 +381,7 @@ t kill-pane -t "$p"
 : >"$work/fake.log"; p=$(fake FAKE_TAIL="$work/idle-quoting.txt")
 out=$(send wrapup "$p" 2>&1); rc=$?
 check "wrapup, idle 2.1.302 quoting the hint: typed" "$rc $out" "0 Asked the session to wrap up."
-check "wrapup, idle 2.1.302 quoting the hint: Ctrl+C, then the command" "$(paste -sd' ' "$work/fake.log")" "ctrl-c submit:/klepsydra-wrapup"
+check_keys "wrapup, idle 2.1.302 quoting the hint: Ctrl+C, then the command" "ctrl-c submit:/klepsydra-wrapup"
 t kill-pane -t "$p"
 : >"$work/fake.log"; p=$(fake FAKE_DROP=k)
 out=$(send wrapup "$p" 2>&1); rc=$?
