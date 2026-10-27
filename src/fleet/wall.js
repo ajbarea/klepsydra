@@ -99,6 +99,7 @@ ledgerButton.addEventListener("click", () => drawer.open(null, ledgerButton));
 const queue = createQueuePanel({
   dialog: document.getElementById("queue"),
   button: document.getElementById("queue-open"),
+  tab: document.getElementById("queue-tab"),
   onResized: () => showDensity(),
 });
 let before;

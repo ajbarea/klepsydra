@@ -315,3 +315,84 @@ test("text sizes step as browsers zoom, stay in bounds, and read a stored value 
   assert.deepEqual([key("+", { code: "NumpadAdd" }), key("Subtract", { code: "NumpadSubtract" })], [1, -1]);
   assert.equal(key("&", { code: "Digit1" }), null);
 });
+
+test("a drag snaps shut past half the panel's minimum and full past half the cards' minimum", async () => {
+  globalThis.window ??= {};
+  const { snap, WIDTH, WALL_MIN, clampWidth } = await import("./fleet/queuepanel.js");
+  assert.equal(WALL_MIN, 700, "the room clampWidth leaves the cards");
+  assert.equal(clampWidth(Infinity, 1920), Math.min(WIDTH.max, 1920 - WALL_MIN));
+  const shutBelow = WIDTH.min / 2;
+  for (const viewport of [1200, 1300, 1920, 2560]) {
+    const fullAbove = viewport - WALL_MIN / 2;
+    assert.equal(snap(shutBelow - 1, viewport), "shut", `${viewport}: one px past the shut line`);
+    assert.equal(snap(shutBelow, viewport), "docked", `${viewport}: on the shut line it stays`);
+    assert.equal(snap(0, viewport), "shut");
+    assert.equal(snap(-40, viewport), "shut", "past the window's edge");
+    assert.equal(snap(WIDTH.min, viewport), "docked");
+    assert.equal(snap(fullAbove, viewport), "docked", `${viewport}: on the full line it stays`);
+    assert.equal(snap(fullAbove + 1, viewport), "full", `${viewport}: one px past the full line`);
+    assert.equal(snap(viewport + 40, viewport), "full", "past the window's left edge");
+  }
+  // One line each way, so a drag back across it undoes the snap at the same place (AppKit, VS Code).
+  assert.equal(snap(shutBelow - 0.5, 1920), "shut");
+  assert.equal(snap(shutBelow + 0.5, 1920), "docked");
+  assert.equal(snap(NaN, 1920), "docked", "no number snaps nowhere");
+});
+
+test("the stored view reads back safely, an older build's open flag standing in for a missing one", async () => {
+  globalThis.window ??= {};
+  const { parseView } = await import("./fleet/queuepanel.js");
+  assert.equal(parseView("shut", null), "shut");
+  assert.equal(parseView("docked", null), "docked");
+  assert.equal(parseView("full", "0"), "full", "the view wins over the old flag");
+  assert.equal(parseView(null, "1"), "docked", "an older build left it open");
+  assert.equal(parseView(null, "0"), "shut");
+  assert.equal(parseView(null, null), "shut", "first run: shut, its tab showing");
+  assert.equal(parseView("banana", null), "shut", "corrupt");
+  assert.equal(parseView("banana", "1"), "docked", "corrupt, with the old flag");
+  assert.equal(parseView("toString", null), "shut", "no value reads through to the prototype");
+  assert.equal(parseView(" full", null), "shut");
+});
+
+test("the separator's keys: arrows step, Home and End reach the bounds then snap past them, Enter shuts or restores", async () => {
+  globalThis.window ??= {};
+  const { separatorKey, WIDTH } = await import("./fleet/queuepanel.js");
+  const max = 900; // at 1920
+  const k = (key, view, width) => separatorKey(key, view, width, max);
+  assert.deepEqual(k("ArrowLeft", "docked", 480), { view: "docked", width: 480 + WIDTH.step });
+  assert.deepEqual(k("ArrowRight", "docked", 480), { view: "docked", width: 480 - WIDTH.step });
+  assert.deepEqual(k("PageUp", "docked", 480), { view: "docked", width: 480 + 4 * WIDTH.step });
+  assert.deepEqual(k("PageDown", "docked", 480), { view: "docked", width: 480 - 4 * WIDTH.step });
+  assert.deepEqual(k("ArrowRight", "docked", WIDTH.min), { view: "docked", width: WIDTH.min - WIDTH.step }, "the caller clamps; an arrow never snaps");
+  assert.deepEqual(k("Home", "docked", 480), { view: "docked", width: WIDTH.min });
+  assert.deepEqual(k("Home", "docked", WIDTH.min), { view: "shut", width: WIDTH.min }, "Home at the narrowest shuts");
+  assert.deepEqual(k("End", "docked", 480), { view: "docked", width: max });
+  assert.deepEqual(k("End", "docked", max), { view: "full", width: max }, "End at the widest fills the window");
+  assert.deepEqual(k("Enter", "docked", 480), { view: "shut", width: 480 }, "APG: Enter collapses");
+  assert.deepEqual(k("Enter", "full", 480), { view: "docked", width: 480 }, "APG: Enter restores");
+  assert.deepEqual(k("Home", "full", 480), { view: "docked", width: WIDTH.min });
+  assert.deepEqual(k("ArrowRight", "full", 480), { view: "docked", width: max }, "a step out of full lands at the widest");
+  assert.deepEqual(k("PageDown", "full", 480), { view: "docked", width: max });
+  for (const key of ["ArrowLeft", "PageUp", "End"]) assert.equal(k(key, "full", 480), null, `${key} in full: already the largest`);
+  assert.equal(k("a", "docked", 480), null);
+  assert.equal(k("toString", "docked", 480), null);
+  assert.equal(k("Enter", "shut", 480), null, "a shut panel's separator is hidden");
+});
+
+test("Ctrl+Alt+B toggles the panel, as VS Code's secondary side bar; nothing else does", async () => {
+  globalThis.window ??= {};
+  const { toggleKey } = await import("./fleet/queuepanel.js");
+  const key = (k, code, mods = {}) => toggleKey({ key: k, code, ctrlKey: true, altKey: true, metaKey: false, shiftKey: false, repeat: false, ...mods });
+  assert.equal(key("b", "KeyB"), true);
+  assert.equal(key("B", "KeyB"), true, "with Caps Lock");
+  assert.equal(key("b", "KeyN"), true, "Dvorak: the letter, not the place");
+  assert.equal(key("x", "KeyB"), false, "Dvorak's x sits where QWERTY's b is");
+  assert.equal(key("и", "KeyB"), true, "a non-Latin layout: its place, as browsers fall back");
+  assert.equal(key("{", "KeyB"), true, "AltGr+B typing a character: its place");
+  assert.equal(key("b", "KeyB", { repeat: true }), false, "a held key toggles once");
+  assert.equal(key("b", "KeyB", { altKey: false }), false, "Ctrl+B alone is not it");
+  assert.equal(key("b", "KeyB", { ctrlKey: false }), false);
+  assert.equal(key("b", "KeyB", { shiftKey: true }), false);
+  assert.equal(key("b", "KeyB", { metaKey: true }), false);
+  assert.equal(key("n", "KeyN"), false);
+});

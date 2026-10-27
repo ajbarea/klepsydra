@@ -939,11 +939,35 @@ editor, and the panel only reads it.
   quarter second after a burst of writes ends (at most a second after the
   first), and every five seconds besides, so an agent's edit shows within a
   second or two.
-- **Docked or a dialog.** At 1200 px wide and more the panel docks on the
+- **Shut, docked or full.** At 1200 px wide and more the panel docks on the
   right and the cards make room; narrower, it opens as a dialog over the
   wall, as Ledger does. Drag its left edge, or focus that edge and use the
-  arrow keys (Home and End for the narrowest and widest), to resize it; the
-  width is remembered.
+  arrow keys (Home and End for the narrowest and widest), to resize it.
+  Drag the edge right past half the narrowest width (160 px from the window's
+  edge) and the panel snaps shut; drag it left to within 350 px of the
+  window's left edge (half the 700 px it leaves the cards) and it fills the
+  window. Either snap shows while you hold the drag, and dragging back over
+  the line undoes it, as VS Code's panels and macOS split views do.
+- **The tab.** Shut, the panel leaves a small **Queue** tab at the middle of
+  the right edge, in the wall's margin. Click it, or press **Ctrl+Alt+B**
+  anywhere (the shortcut VS Code uses for its right-hand side bar), to open
+  the panel again at its last width; Ctrl+Alt+B shuts it too. **Close**, Esc
+  and the **Queue** button shut it to the tab as well. Below 1200 px there
+  is no margin to spare, so a shut panel shows no tab and the **Queue**
+  button opens it.
+- **Full screen.** The **Full screen** button in the panel's header (beside
+  Close) fills the window, keeping the text-size controls; Esc, the same
+  button, or a drag of the left edge back to the right returns it to docked.
+  Below 1200 px the button widens the dialog to the whole window, and Esc
+  steps back to the dialog.
+- **From the keyboard.** On the focused edge, Enter shuts the panel and moves
+  focus to its tab, where Enter or Space opens it again. Home at the
+  narrowest width shuts it, End at the widest fills the window. In full,
+  Enter docks it at its width, Home at the narrowest, and the Right arrow or
+  Page Down at the widest.
+- **Remembered.** The width and whether the panel is shut, docked or full
+  are kept across restarts. A window under 1200 px starts with it shut (a
+  dialog at launch would hide the wall), without forgetting the choice.
 - **Text size.** **A−** and **A+** in the panel's header make its text
   smaller or larger, from 75% to 200%, and the percentage between them resets
   it to 100%. While the panel is open, Ctrl+= and Ctrl+- do the same, Ctrl+0

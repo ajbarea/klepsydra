@@ -943,7 +943,9 @@ test("the queue renderer never writes markup, follows an address or uses markdow
   assert.match(dialog, /^<dialog id="queue" class="queue" aria-labelledby="queue-title">/);
   assert.match(dialog, /role="separator" aria-orientation="vertical" aria-label="Queue panel width"/);
   assert.doesNotMatch(dialog, /<a\b|href|\u2014/);
-  assert.match(html, /id="ledger-open"[^>]*>Ledger<\/button>\s*<button type="button" id="queue-open" aria-controls="queue" aria-expanded="false">Queue<\/button>/, "beside Ledger");
+  assert.match(html, /id="ledger-open"[^>]*>Ledger<\/button>\s*<button type="button" id="queue-open" aria-controls="queue" aria-expanded="false"[^>]*>Queue<\/button>/, "beside Ledger");
+  // The shut panel's tab, outside the dialog.
+  assert.match(html, /<\/dialog>\s*<button type="button" id="queue-tab" class="queue-tab" aria-label="Open Queue" aria-controls="queue"[^>]*>Queue<\/button>/);
 });
 
 test("the queue sample is never reachable inside the app, and the panel reads the file through one command", async () => {

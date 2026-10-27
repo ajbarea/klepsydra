@@ -23,7 +23,7 @@
       <div class="tools">
         <button type="button" id="split" aria-pressed="false" title="The wall on the left half of this screen, the fleet terminal on the right" hidden>Split<span class="visually-hidden"> with terminal</span></button>
         <button type="button" id="ledger-open" aria-haspopup="dialog">Ledger</button>
-        <button type="button" id="queue-open" aria-controls="queue" aria-expanded="false">Queue</button>
+        <button type="button" id="queue-open" aria-controls="queue" aria-expanded="false" aria-keyshortcuts="Control+Alt+B" title="Queue (Ctrl+Alt+B)">Queue</button>
         <button type="button" id="wrapup-open" aria-haspopup="dialog">Wrap up…</button>
       </div>
       <p class="wrapup-bar" hidden>
@@ -95,6 +95,7 @@
             <button type="button" class="queue-reset" title="Reset text size (Ctrl+0)">100%</button>
             <button type="button" class="queue-larger" aria-label="Larger text" title="Larger text (Ctrl+=)">A+</button>
           </div>
+          <button type="button" class="queue-full" aria-pressed="false" aria-label="Full screen" title="Full screen (Esc to leave)"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 6V2.5H6M10 2.5h3.5V6M13.5 10v3.5H10M6 13.5H2.5V10"/></svg></button>
           <button type="button" class="queue-close">Close</button>
         </div>
       </header>
@@ -103,6 +104,7 @@
       <p class="queue-live visually-hidden" role="status"></p>
     </div>
   </dialog>
+  <button type="button" id="queue-tab" class="queue-tab" aria-label="Open Queue" aria-controls="queue" aria-expanded="false" aria-keyshortcuts="Control+Alt+B" title="Open Queue (Ctrl+Alt+B)" hidden>Queue</button>
 
   <div id="session-menu" class="session-menu" role="menu" hidden>
     <button type="button" role="menuitem" tabindex="-1" data-act="interrupt">Interrupt</button>
