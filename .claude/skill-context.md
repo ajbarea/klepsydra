@@ -116,6 +116,8 @@ files belong to: the JS guards scan hooks and scripts too.
 - `scripts/cut-portraits.py`: recuts the committed kourai portraits; needs
   kourai-khryseai and Pillow through `uv`.
 - `scripts/measure-memory.sh run`: takes 8 hours.
+- `scripts/readme-shots.py`: rewrites the README's screenshots in `assets/`;
+  run it when what a screenshot shows changes, not as a test.
 - `scripts/build-windows.sh` — rsyncs to `C:\Users\<user>\klepsydra-build` and
   drives `powershell.exe`; produces an NSIS installer and takes minutes.
   `KLEPSYDRA_STAGE=klepsydra-build-<name>` stages a branch in its own folder.
