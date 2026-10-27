@@ -75,8 +75,7 @@ test("the empty state: Hesychia's portrait as decoration, the title, what will a
   // One main landmark holds a level-one heading, the wall and the empty state (axe landmark-one-main, page-has-heading-one).
   assert.equal((html.match(/<main\b/g) ?? []).length, 1);
   const main = html.slice(html.indexOf("<main"), html.indexOf("</main>"));
-  assert.match(main, /^<main id="main">\s*<h1 id="wall-title" class="visually-hidden">Claude Code sessions<\/h1>/);
-  assert.match(main, /<section id="wall" class="wall" aria-labelledby="wall-title" tabindex="-1"><\/section>/);
+  assert.match(main, /<h1 id="wall-title" class="visually-hidden">Claude Code sessions<\/h1>\s*<section id="wall" class="wall" aria-labelledby="wall-title" tabindex="-1"><\/section>/, "the heading sits right before the wall it names");
   assert.ok(main.indexOf('<section id="wall"') < main.indexOf('<section id="empty"'), "the empty state stands where the wall stands");
   assert.equal((html.match(/<h1\b/g) ?? []).length, 1, "one h1");
 });
