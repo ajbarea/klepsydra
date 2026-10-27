@@ -818,6 +818,7 @@ fn with_state<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R
         .manage(Layouts::default())
         .manage(launch::InFlight::default())
         .manage(launch::PaneFlight::default())
+        .manage(launch::JumpFlight::default())
         .manage(phone::Phone::default())
 }
 

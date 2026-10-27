@@ -15,7 +15,8 @@ pub fn append_capped(path: &Path, line: &str, cap: u64) {
     }
     let open = OpenOptions::new().create(true).append(true).open(path);
     if let Ok(mut f) = open {
-        let _ = writeln!(f, "{line}");
+        // One write, so lines appended at once from two threads stay whole.
+        let _ = f.write_all(format!("{line}\n").as_bytes());
     }
 }
 
