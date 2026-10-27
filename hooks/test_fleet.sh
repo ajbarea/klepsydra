@@ -1569,6 +1569,16 @@ for host in '.host.distro = "Other"' '.host.boot = "0b6e1c5a-9999-4222-8333-4444
   done
 done
 
+# Two sessions last active in the same second: the later started is the newer.
+for f in "$rfile" "$rfile2"; do
+  jq -c ".written_at = $((rnow + 400)) | .state_at = $((rnow + 400))" "$f" >"$f.new" && mv "$f.new" "$f"
+done
+jq -c ".started_at = $((rnow + 1)) | .remote_url = \"https://claude.ai/code/session_01PLACEHOLDERconnect\"" "$rfile" >"$rfile.new" && mv "$rfile.new" "$rfile"
+jq -c ".started_at = $((rnow + 200)) | del(.remote_url)" "$rfile2" >"$rfile2.new" && mv "$rfile2.new" "$rfile2"
+rm -f "$rfile3"
+c3fire session-start.json $((rnow + 400)) '.source = "clear"'
+check "remote: a same-second tie goes to the later started" "$(jq -r '.remote_url // "none"' "$rfile3")" "none"
+
 echo "queue command"
 
 # The command names the Queue panel's file in queue.json; under WSL it hands

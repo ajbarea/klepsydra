@@ -405,19 +405,21 @@ remote_lines() { # transcript
 # active other session of Claude process `pid` started at `start` on this boot
 # and distro; empty for none. Reads as mark_gone does, from inside the folder.
 cleared_link() { # fleet pid start self
-  local f pid start boot distro last url best=-1 link=""
+  local f pid start boot distro last began url best=-1 best_began=-1 link=""
   [[ $2 =~ ^[1-9][0-9]*$ && $3 =~ ^[0-9]+$ && -n $host_boot ]] || return 0
-  while IFS=$'\t' read -r f pid start boot distro last url; do
+  while IFS=$'\t' read -r f pid start boot distro last began url; do
     [[ $f != "$4.json" && $pid == "$2" && $start == "$3" && $boot == "$host_boot" \
-      && $distro == "${host_distro:-?}" && $last =~ ^[0-9]+$ ]] || continue
-    (( last > best )) && best=$last link=$url
+      && $distro == "${host_distro:-?}" && $last =~ ^[0-9]+$ && $began =~ ^[0-9]+$ ]] || continue
+    # The later started breaks a tie within one second.
+    (( last > best || (last == best && began > best_began) )) && best=$last best_began=$began link=$url
   done < <(cd -- "$1" 2>/dev/null || exit 0
     names=()
     for f in *.json; do
       [[ ${f%.json} =~ $UUID_RE && -f $f && ! -L $f ]] && names+=("$f")
     done
     session_rows '[((.claude.pid | numbers) // 0 | floor), ((.claude.start | numbers) // 0 | floor),
-      (.host.boot | or_q), (.host.distro | or_q), last_active, (.remote_url | or_q)]' "${names[@]}")
+      (.host.boot | or_q), (.host.distro | or_q), last_active, ((.started_at | numbers) // 0 | floor),
+      (.remote_url | or_q)]' "${names[@]}")
   [[ $link != "?" ]] && printf '%s' "$link"
   return 0
 }
