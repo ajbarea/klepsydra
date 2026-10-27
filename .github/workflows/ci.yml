@@ -19,6 +19,10 @@ jobs:
     name: Gauge logic + statusLine hook
     runs-on: ubuntu-latest
     steps:
+      # actions/checkout runs `git init`, which prints a hint while Git's
+      # default branch name is unset.
+      - name: Set Git's default branch name
+        run: git config --global init.defaultBranch main
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -36,7 +40,17 @@ jobs:
         run: bash statusline/test_statusline.sh
       # The fleet hook is the only writer of a session's state, so its fixtures
       # cover the shapes that would otherwise show a wrong status.
+      # keryx names a session's repo the same way the fleet hook does; with
+      # its source checked out the parity cases run instead of skipping.
+      - name: Checkout keryx (parity source)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ajbarea/keryx
+          path: keryx
+          persist-credentials: false
       - name: Fleet hook tests
+        env:
+          KERYX_SRC: ${{ github.workspace }}/keryx/src
         run: bash hooks/test_fleet.sh
       - name: Wrap-up hook tests
         run: bash hooks/test_wrapup.sh
@@ -85,6 +99,10 @@ jobs:
         os: [windows-latest, ubuntu-latest]
     runs-on: ${{ matrix.os }}
     steps:
+      # actions/checkout runs `git init`, which prints a hint while Git's
+      # default branch name is unset.
+      - name: Set Git's default branch name
+        run: git config --global init.defaultBranch main
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
