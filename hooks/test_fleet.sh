@@ -71,7 +71,8 @@ check "outside any repo" "$(where "$repos/loose/notes")" "notes||"
 check "filesystem root" "$(where /)" "||"
 check "a CRLF .git file" "$(where "$repos/crlf")" "klepsydra|crlf|feat/fleet-visualizer"
 
-# keryx names the same repos; when its source is here, ask it directly.
+# keryx names the same repos; when its source is here, ask it directly. A
+# KERYX_SRC that names no source fails, so CI cannot skip the parity.
 keryx_src=${KERYX_SRC:-$HOME/ajsoftworks/keryx/src}
 if [[ -f "$keryx_src/keryx/hook.py" ]]; then
   for p in klepsydra klepsydra/src/deep klepsydra/.claude/worktrees/fleet ideas/vendor/subsrc subsrc loose/notes crlf; do
@@ -80,6 +81,8 @@ if [[ -f "$keryx_src/keryx/hook.py" ]]; then
     git_where "$repos/$p"
     check "keryx agrees: $p" "$where_repo" "$got"
   done
+elif [[ -n ${KERYX_SRC:-} ]]; then
+  check "keryx source at \$KERYX_SRC" "missing" "$keryx_src/keryx/hook.py"
 else
   echo "  skip keryx parity: no keryx source at $keryx_src"
 fi
