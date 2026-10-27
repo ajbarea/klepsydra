@@ -36,7 +36,9 @@ function fake(edge, name, view = "shut") {
     get isOpen() {
       return p.view !== "shut";
     },
+    shuts: 0,
     shut() {
+      p.shuts++;
       p.view = "shut";
     },
     layout() {
@@ -84,4 +86,5 @@ test("an edge shuts nothing when the panel opening is the only one open", () => 
   const ledger = fake(edge, "ledger");
   q.open("full");
   assert.deepEqual([q.view, ledger.view], ["full", "shut"]);
+  assert.deepEqual([q.shuts, ledger.shuts], [0, 0], "docked to full is no shut: the Ledger would lose its session");
 });

@@ -3719,12 +3719,19 @@ def ledger_chip_opens_on_a_session(wall):
     other.click()
     page.wait_for_function("(who) => document.querySelector('#ledger .scope')?.textContent.includes(`Showing ${who} only`)", arg=who)
     turned = page.evaluate(LEDGER_STATE)
+    # Full and back keep the session and the opener: docked to full is no shut.
+    page.click("#ledger .ledger-full")
+    page.wait_for_timeout(SETTLE_MS)
+    page.keyboard.press("Escape")
+    page.wait_for_timeout(SETTLE_MS)
+    turned["scope"] = page.evaluate("document.querySelector('#ledger .scope')?.textContent ?? null")
     page.click("#ledger .ledger-close")
     page.wait_for_function(LEDGER_SHUT)
     back = page.evaluate(ACTIVE)
     wall.check(
-        turned["open"] and turned["active"] == "ledger-title" and back["card"] == who and "chip" in back["cls"],
-        "another chip turns the open Ledger to its session; Close returns focus to that chip",
+        turned["open"] and turned["active"] == "ledger-title" and f"Showing {who} only" in (turned["scope"] or "")
+        and back["card"] == who and "chip" in back["cls"],
+        "another chip turns the open Ledger to its session, which full and back keep; Close returns focus to that chip",
         [turned["scope"], back],
     )
     page.click("#ledger-open")
