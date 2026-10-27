@@ -7,34 +7,22 @@ fleet folder keeps the last snapshot), #104 (#98 ledger attribution), #105
 build: 1ad1405 (10-25 21:48). Not yet live: #89 split mode, #93, and all of
 the above.
 
-## This branch: feat/ledger-panel (#130)
-- Slice: the Ledger gets the Queue panel's snapping (#119) and text size
-  (#105) through one module, `src/fleet/sidepanel.js` (view, width, text
-  size, separator, drag, tab, modal fallback below DOCK_MIN_PX, stored
-  under `klepsydra.<name>.*`). `queuepanel.js` re-exports its helpers and
-  keeps the file, Copy and Ctrl+Alt+B; `drawer.js` keeps the figures, the
-  chip filter, refresh and focus return (`returnTo`). `createEdge()` holds
-  the two on the right edge one at a time; both tabs stack only while both
-  are shut.
-- Done: module, wiring, CSS, README; node tests (`fleet-sidepanel.test.js`,
-  guards) and browser cases mirrored for the Ledger (`ledger_*`,
-  `panels_*`); mutation checks; screenshots in fleet-briefing.
-- Changed tests (premise removed by #130): `drawer_opens_and_returns_focus`
-  (docked, not modal, at 1920), `queue_shortcut_waits_behind_another_dialog`
-  (the portrait is the other modal now), the Ledger guard, and the
-  DOCK_MIN_PX source path in `fleet-queue.test.js`.
-- Round 1 (PR #136 review): rebased on b5d0040; the button's toggle keeps
-  focus on the button; Ctrl+Alt+B opens the Queue over any Ledger (the
-  edge's own modal is not "in front"); an open Ledger reads at most every
-  5 s (`REFRESH_MS`); the Ledger reflows at 320/480/600 px x 75-200%; the
-  edge holds the docked width and drag state; one `--panel-w` per dialog,
-  one `--dock-w`; README shots regenerated (ledger.png docked).
-- Round 2: an open Ledger reads again a second past local midnight
-  (fake-clock test); the REFRESH_MS constant test dropped; fleet-briefing
-  shots recaptured after round 1.
-- Next: AJ reviews the PR and screenshots; deploy with the rest.
-- Verify: the gate list below; `scripts/test_wall_browser.py ledger_*
-  panels_*` runs the new cases alone.
+## This branch: fix/ask-line (#124)
+- Slice: (1) a cut needs-you line loses its middle, not the tool's name:
+  `askParts(reason)` in `model.js` splits it into lead and keep (an MCP
+  tool keeps its name past the last `__`); wall.css puts the ellipsis on the
+  lead (`.ask-lead`, `.ask-keep`; `.lead` is the bar's class). (2) Phone
+  wall: `fulltext.js` decides which cards cut text short; those show a
+  **Full text** disclosure (`data-phone`, `aria-expanded`) that unfolds
+  every cut line and names the "+N" repos (`alsoPast`), view state only.
+  Auto's probe copy has no `#wall` id, so it measures open cards shut.
+- Done: code, node tests (`fleet-fulltext.test.js`, model, phone guard),
+  browser cases (`ask_keeps_the_tool_name`, `long_tool_stays_in_card`;
+  phone 390 and 700 px), mutation checks, README, skill-context, shots in
+  fleet-briefing `shots/2026-10-27/klepsydra-124-*`.
+- Next: PR #140 review (do not merge or deploy unasked); deploy with the rest.
+- Verify: the gate list below; `scripts/test_wall_browser.py
+  ask_keeps_the_tool_name long_tool_stays_in_card` runs the wall cases alone.
 
 ## Waits on AJ
 - Deploy (his yes): `scripts/build-windows.sh` from main, stop the exe,

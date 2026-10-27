@@ -449,8 +449,9 @@ an error count only when one exists. Each card shows:
   worktree is removed; one line, cut short with all of it on hover, wrapped
   instead on the phone wall) and the other repos it touched: up to four by
   name, then a "+N" chip naming the rest on hover;
-- for a session that needs you, a line saying what it waits for, cut short
-  to one line with all of it on hover;
+- for a session that needs you, a line saying what it waits for, on one
+  line with all of it on hover; cut short, it loses its middle, so the tool's
+  own name stays in view ("approve mcp__plugin_pl…browser_navigate");
 - the last prompt on one line in a quoted block and the reply on two under
   it, one while the card asks or shows an error (hover either for all of
   it); an error takes two lines, with all of it on hover; a play
@@ -820,18 +821,17 @@ whose Host is not loopback or a `*.ts.net` name.
 
 On the phone the wall is one column of compact cards, needs-you first, under
 a tally that stays at the top. It updates as the desktop's does, over one
-event stream. Nothing on it acts on a session: New, Open terminal, End,
-Interrupt, Clear, Wrap up and the ledger stay on the desktop, though a
-wrap-up's answers and readiness count show. A card's play button plays its
-latest spoken reply on the phone, not the PC, from `/audio/<session id>`. A session with Remote
-Control on (`/remote-control` in its terminal) shows **Open in Claude**, and
-a tap on its card opens that session on claude.ai or in the Claude app. The
-link appears at the session's next hook event after Remote Control connects,
-and goes when it disconnects or the session ends. `/clear` starts a new
-session in the same Claude process, whose Remote Control stays connected, so
-the new session keeps the link. When the stream drops, the
-wall says the cards may be out of date until it reconnects, and keeps
-trying (every 1 s at first, at most every 30 s) while klepsydra restarts.
+event stream. Nothing on it acts on a session: every session action and the
+ledger stay on the desktop, though a wrap-up's answers and readiness count
+show. Touch has no hover, so a card that cuts text short shows **Full text**,
+which unfolds it in place and asks the server nothing. A card's play button
+plays its latest spoken reply on the phone. A session with Remote Control on
+(`/remote-control` in its terminal) shows **Open in Claude**, and a tap on its
+card opens that session on claude.ai or in the Claude app. The link appears at
+the session's next hook event after Remote Control connects, survives
+`/clear`, and goes when it disconnects or the session ends. When the stream
+drops, the wall says the cards may be out of date until it reconnects, and
+keeps trying while klepsydra restarts.
 
 The usage-limit gauges open the page: a ring per account and window with
 its percent, time to reset and label (`57% 8m Personal · session`), drawn by
@@ -847,9 +847,8 @@ The server answers only GET and HEAD, serves only the wall's own files, its
 snapshot at `/fleet.json`, the stream at `/events` and the reply clips of the
 cards it shows. It sends each session without its tmux pane, process or full
 folder path, and each usage reading with only its label, times and session,
-week and spend windows, its account as `a1`, `a2`. It reads only regular
-`.json` files up to 64 KiB, never through a symlink. Card previews (prompts and replies), the spoken replies, errors
-and the cost estimate are visible to any tailnet device your Tailscale ACLs
+week and spend windows, its account as `a1`, `a2`. Card previews (prompts
+and replies), the spoken replies, errors and the cost estimate are visible to any tailnet device your Tailscale ACLs
 let reach this PC. The page's service worker keeps only the page and its
 files, never the fleet or a clip.
 

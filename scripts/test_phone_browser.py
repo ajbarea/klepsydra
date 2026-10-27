@@ -14,8 +14,12 @@ again. The usage-limit gauges, from readings in the server's accounts folder:
 one per account and window in the gauge's order and words, opening the page
 and scrolling away under a sticky bar that six leave no taller than three, a
 new reading over /events, a stale one saying its age, none at all reading as
-waiting, and AA contrast with the system in light and in dark.
-Saves a screenshot in each scheme.
+waiting, and AA contrast with the system in light and in dark. A card's
+Full text: shown on each card that cuts text short and no other, unfolding
+every cut line in place, opening nothing and asking the server nothing,
+open across a new snapshot; at 700x1000 with touch, full cards with it at
+44 px, the wall staying comfortable once it is open.
+Saves a screenshot in each scheme, and one at 700 px with Full text open.
 
     uv run -q --no-project --with playwright python -I scripts/test_phone_browser.py [shot.png]
 
@@ -87,6 +91,55 @@ def with_wrapup(fleet):
     for s in fleet["sessions"]:
         if s["session_id"] in sample["answers"]:
             s["wrapup"] = sample["answers"][s["session_id"]]
+
+
+LONG = "Re-running the sweep over five seeds, then redrawing the bars with the median and range before the deck refresh picks them up. " * 2
+OTHER_REPOS = ["kourai-khryseai", "papers", "ajsoftworks", "talks", "techne", "claude-prefs", "keryx"]
+MCP_TOOL = "mcp__plugin_playwright_playwright__browser_run_code_unsafe"
+
+
+def busy(fleet):
+    """Two demo cards as full as a live card gets: one asking for a long MCP
+    tool, one in a long API error, each with a long name, worktree and branch,
+    six other repos, and a long prompt and reply."""
+    at = fleet["at"]
+    states = [
+        {"status": "needs_you", "reason": f"approve {MCP_TOOL}", "error": None},
+        {"status": "error", "reason": "overloaded", "error": "API Error: 529 overloaded_error, the request was retried three times and failed. " * 3},
+    ]
+    fleet["sessions"] = [{
+        **s, **state,
+        "quiet_since": None, "remote_url": REMOTE if state["status"] == "needs_you" else None,
+        "name": "A session name long enough to run past the nameplate",
+        "status_at": at - 600, "updated_at": at - 600,
+        "where": {**s["where"], "worktree": "comfortable-density-four-and-eight", "branch": "feat/comfortable-density-four-and-eight"},
+        "touched": [{"repo": r, "at": at - 900} for r in OTHER_REPOS if r != s["where"]["repo"]][:6],
+        "prompt": {"text": LONG, "at": at - 660},
+        "reply": {"text": LONG, "at": at - 600},
+    } for s, state in zip(fleet["sessions"], states)]
+    fleet.pop("wrapup", None)
+
+
+# Each card's Full text: whether it shows, and what the card cuts short.
+FULL_TEXT = """() => [...document.getElementById('wall').children].map((c) => {
+  const shown = (el) => el.checkVisibility();
+  const cut = [...c.querySelectorAll('.task, .repo, .branch span, .ask .ask-lead, .ask .ask-keep, .said p, .wrapup')]
+    .filter((el) => shown(el) && (el.scrollWidth > el.clientWidth || el.scrollHeight > el.clientHeight))
+    .map((el) => el.className || el.parentElement.className);
+  const chips = [...c.querySelectorAll('.also-more, .also-rest')].filter(shown).map((el) => el.textContent);
+  const b = c.querySelector('.unfold');
+  return {
+    key: c.dataset.key,
+    unfold: shown(b),
+    expanded: b.getAttribute('aria-expanded'),
+    name: b.getAttribute('aria-label'),
+    height: Math.round(b.getBoundingClientRect().height),
+    open: c.classList.contains('open-text'),
+    cut, chips,
+    repos: [...c.querySelectorAll('.also li')].filter(shown).map((li) => li.textContent),
+    ask: c.querySelector('.ask').checkVisibility() ? c.querySelector('.ask .text').innerText : null,
+  };
+})"""
 
 
 # Demo accounts named as the gauge's own examples are; placeholder ids.
@@ -380,6 +433,33 @@ def main() -> int:
                 page.wait_for_timeout(300)
                 run.check(len(ctx.pages) == before, "a card without a link is no link", len(ctx.pages))
 
+                # Full text: on each card that cuts text short and on no other; a
+                # press unfolds it in place, opens nothing and asks the server nothing.
+                cards = page.evaluate(FULL_TEXT)
+                wrong = [c for c in cards if c["unfold"] != bool(c["cut"] or c["chips"])]
+                run.check(any(c["unfold"] for c in cards) and not wrong, "Full text shows on each card that cuts text short, and no other", wrong or cards)
+                key = next(c["key"] for c in cards if c["unfold"])
+                target = page.locator(f'.card[data-key="{key}"] .unfold')
+                asked = []
+                page.on("request", lambda r: asked.append(r.url) if "/audio/" not in r.url else None)
+                before = len(ctx.pages)
+                target.tap()
+                page.wait_for_timeout(300)
+                card = next(c for c in page.evaluate(FULL_TEXT) if c["key"] == key)
+                run.check(card["open"] and card["expanded"] == "true" and card["cut"] == [] and card["chips"] == [],
+                          "a tap on Full text shows every cut line whole, and names the repos its chip counted", card)
+                run.check(len(ctx.pages) == before and asked == [], "Full text opens nothing and asks the server nothing", [len(ctx.pages), asked])
+                run.check(card["name"].startswith("Full text, "), "its name starts with what it says", card["name"])
+                s = page.evaluate(LAYOUT)
+                run.check(s["hscroll"] <= 0 and s["small"] == [], "an open card scrolls nothing sideways; every control 44 px", [s["hscroll"], s["small"]])
+                target.tap()
+                page.wait_for_timeout(300)
+                card = next(c for c in page.evaluate(FULL_TEXT) if c["key"] == key)
+                run.check(not card["open"] and card["expanded"] == "false" and (card["cut"] or card["chips"]) and card["unfold"],
+                          "a second tap folds it again", card)
+                target.tap()
+                page.wait_for_timeout(300)
+
                 # A second snapshot arrives over /events.
                 def one_more_needs(f):
                     working = next(s for s in f["sessions"] if s["status"] == "working")
@@ -390,6 +470,8 @@ def main() -> int:
                 wait_until(page, f"document.querySelector('.tally .t-needs b').textContent === '{needs + 1}'", 5)
                 got = page.evaluate(LAYOUT)["needs"]
                 run.check(got == str(needs + 1), "a new snapshot arrives over the stream", got)
+                card = next(c for c in page.evaluate(FULL_TEXT) if c["key"] == key)
+                run.check(card["open"] and card["expanded"] == "true" and card["cut"] == [], "an open card stays open across a new snapshot", card)
 
                 # A new reading arrives over the stream; one three hours old says so.
                 klepsydra = pathlib.Path(tmp) / "klepsydra"
@@ -461,6 +543,40 @@ def main() -> int:
                 page.goto(f"http://{addr}/wall.html")
                 at = [page.url, page.evaluate("document.documentElement.classList.contains('served')")]
                 run.check(at == [f"http://{addr}/", True], "/wall.html is the served wall at the root", at)
+
+                # A touch screen above 600 px: full cards, each with Full text at 44 px;
+                # open, the MCP tool, the error, the prompt and every repo read whole,
+                # and the wall stays comfortable.
+                snapshot_file(snapshot, busy)
+                wide = browser.new_context(viewport={"width": 700, "height": 1000}, device_scale_factor=2, is_mobile=True, has_touch=True)
+                tablet = wide.new_page()
+                tablet.emulate_media(color_scheme="dark")
+                tablet.goto(f"http://{addr}/")
+                wait_until(tablet, "document.getElementById('wall').children.length === 2", 15)
+                tablet.wait_for_timeout(400)
+                cards = tablet.evaluate(FULL_TEXT)
+                density = tablet.evaluate("document.getElementById('wall').dataset.density")
+                run.check(density == "comfortable" and all(c["unfold"] and c["height"] >= 44 for c in cards),
+                          "at 700 px the cards are full, each with Full text at 44 px", [density, cards])
+                run.check(cards[0]["ask"] and cards[0]["ask"].endswith("browser_run_code_unsafe") and "\u2026" not in cards[0]["ask"],
+                          "the ask's text holds the whole tool", cards[0]["ask"])
+                for i in range(2):
+                    tablet.locator(".card .unfold").nth(i).tap()
+                tablet.wait_for_timeout(400)
+                run.check(len(wide.pages) == 1, "Full text on a card with a Remote Control link opens nothing", len(wide.pages))
+                cards = tablet.evaluate(FULL_TEXT)
+                ok = all(c["open"] and c["cut"] == [] and c["chips"] == [] and len(c["repos"]) == 6 for c in cards)
+                run.check(ok, "open, every line on both cards reads whole and each names its six other repos", cards)
+                s = tablet.evaluate(LAYOUT)
+                density = tablet.evaluate("document.getElementById('wall').dataset.density")
+                run.check(density == "comfortable" and s["hscroll"] <= 0, "opening Full text leaves the wall comfortable, with no sideways scroll", [density, s["hscroll"]])
+                wide_shot = shot.with_name(f"{shot.stem}-700-full-text{shot.suffix}")
+                # A full-page capture drops the touch emulation (pointer: fine), so grow the viewport instead.
+                tablet.set_viewport_size({"width": 700, "height": tablet.evaluate("document.documentElement.scrollHeight")})
+                tablet.wait_for_timeout(300)
+                tablet.screenshot(path=str(wide_shot))
+                print(f"  shot {wide_shot}")
+                wide.close()
                 browser.close()
 
             # Every stream slot taken: the page's stream is refused with a 503,

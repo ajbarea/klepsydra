@@ -15,6 +15,7 @@ import { parseDensity, resolveDensity } from "./density.js";
 import { clearAll, clearLabel, endedIds, startLabel, wallState } from "./empty.js";
 import { wireSplit } from "./split.js";
 import { createReplayer } from "./replay.js";
+import { cutsText } from "./fulltext.js";
 import { WAITING, usageRows } from "../gauge.js";
 import { readMode, readStops, syncEntries } from "../gaugeview.js";
 
@@ -71,6 +72,8 @@ startButton.hidden = !inTauri;
 startButton.addEventListener("click", () => startSession(startButton, newNote));
 // A cleared id stays off the link until the snapshot that drops its card.
 let cleared = new Set();
+// The phone cards whose Full text is open, by id; a card that leaves drops out.
+let openText = new Set();
 const toClear = () => endedIds(sessions).filter((id) => !cleared.has(id));
 clearEnded.addEventListener("click", () => {
   if (wallState(sessions) !== "ended") return;
@@ -182,7 +185,7 @@ const show = (el, text) => {
 function paint(el, c) {
   // A repaint must not cut the pulse or the arrival short.
   const playing = ["pulse", "arriving"].filter((cls) => el.classList.contains(cls)).map((cls) => ` ${cls}`).join("");
-  el.className = `card ${c.dim ? "dim" : ""} tone-${c.tone}${c.ask ? " asking" : ""}${c.figure ? " has-figure" : ""}${c.actions.menu ? " has-menu" : ""}${playing}`;
+  el.className = `card ${c.dim ? "dim" : ""} tone-${c.tone}${c.ask ? " asking" : ""}${c.figure ? " has-figure" : ""}${c.actions.menu ? " has-menu" : ""}${openText.has(c.id) ? " open-text" : ""}${playing}`;
   el.style.viewTransitionName = transitionName(c.id);
   el.setAttribute("aria-label", c.label);
   el.querySelector(".portrait").title = c.voiceTitle ?? "";
@@ -206,7 +209,9 @@ function paint(el, c) {
   crewLine.querySelector(".free").hidden = !c.promptFree;
   const ask = el.querySelector(".ask");
   ask.hidden = !c.ask;
-  setText(ask.querySelector(".text"), c.ask);
+  // Cut short, the line loses its middle: the tool's own name stays in view (wall.css).
+  setText(ask.querySelector(".ask-lead"), c.askParts?.[0]);
+  setText(ask.querySelector(".ask-keep"), c.askParts?.[1]);
   ask.title = c.ask ?? "";
 
   const repo = el.querySelector(".repo");
@@ -219,13 +224,13 @@ function paint(el, c) {
   el.querySelector(".where").title = [`${c.place?.repo ?? ""}${c.place?.worktree ? ` / ${c.place.worktree}` : ""}`, c.place?.branch].filter(Boolean).join(" \u00b7 ");
   const also = c.also.map((t) => Object.assign(document.createElement("li"), { textContent: t }));
   if (c.alsoRest) {
-    // The repos past the named ones, as the compact chip names them.
+    // The repos past the named ones, as the compact chip names them; Full text names each instead.
     const chip = Object.assign(document.createElement("span"), { className: "also-rest", textContent: c.alsoRest.text, title: c.alsoRest.label });
     chip.setAttribute("role", "img");
     chip.setAttribute("aria-label", c.alsoRest.label);
-    const li = document.createElement("li");
+    const li = Object.assign(document.createElement("li"), { className: "rest" });
     li.append(chip);
-    also.push(li);
+    also.push(li, ...c.alsoPast.map((t) => Object.assign(document.createElement("li"), { className: "past", textContent: t })));
   }
   el.querySelector(".also").replaceChildren(...also);
   const more = el.querySelector(".also-more");
@@ -277,6 +282,9 @@ function paint(el, c) {
     remote.setAttribute("aria-label", c.remoteLabel);
   } else remote.removeAttribute("href");
   el.classList.toggle("has-remote", served && Boolean(c.remote));
+  const unfold = el.querySelector(".unfold");
+  unfold.setAttribute("aria-expanded", String(openText.has(c.id)));
+  unfold.setAttribute("aria-label", `Full text, ${c.name}`);
   const menuButton = el.querySelector(".menu");
   menuButton.hidden = !c.actions.menu;
   menuButton.setAttribute("aria-label", c.menuLabel);
@@ -450,6 +458,7 @@ function render(snapshot) {
   replayer.keep(new Set(cardOf.keys()));
   latest = { state, cards };
   cleared = new Set([...cleared].filter((id) => cardOf.has(id)));
+  openText = new Set([...openText].filter((id) => cardOf.has(id)));
   ringKey.hidden = !showsRingKey(visibleCards());
   const said = wrapupAnnouncements(wrapupBefore, cards);
   wrapupBefore = wrapupLines(cards);
@@ -479,6 +488,7 @@ function render(snapshot) {
     const lost = document.activeElement === document.body || !usable(document.activeElement);
     if (inside && lost) [emptyTitle, wall].find(usable)?.focus({ preventScroll: true });
     reconcileActions();
+    syncFullText();
     // Auto looks again when a card arrives or leaves, not when one's text changes.
     const ids = visible.map((c) => c.id).join(" ");
     if (ids !== lastIds) {
@@ -645,6 +655,17 @@ wall.addEventListener("click", (e) => {
     const id = play.closest(".card").dataset.key;
     const note = play.closest(".card").querySelector(".note");
     replayer.toggle(id, cardOf.get(id)?.clip).then((why) => why && say(note, why));
+    return;
+  }
+  // Full text opens or shuts in place; nothing else.
+  const unfold = e.target.closest(".unfold");
+  if (unfold) {
+    const card = unfold.closest(".card");
+    const id = card.dataset.key;
+    if (!openText.delete(id)) openText.add(id);
+    card.classList.toggle("open-text", openText.has(id));
+    unfold.setAttribute("aria-expanded", String(openText.has(id)));
+    syncFullText();
     return;
   }
   // On the phone a tap anywhere on a card with a Remote Control link opens it.
@@ -1037,6 +1058,8 @@ function comfortableFits(extra) {
     return c;
   };
   const grid = copy(wall);
+  // Without the id, wall.css's #wall .open-text rules miss the copy: Auto
+  // judges every card shut, so opening Full text never turns the wall compact.
   grid.removeAttribute("id");
   probe.append(copy(bar), grid);
   document.body.append(probe);
@@ -1059,7 +1082,22 @@ function showDensity() {
   if (shown !== "comfortable") for (const el of wall.querySelectorAll(".arriving")) el.classList.remove("arriving");
   densityPicker.querySelector('label:has([value="auto"])').title =
     `Compact while the comfortable cards would scroll; ${shown} now`;
+  syncFullText();
 }
+
+// The phone's Full text shows on a card that cuts text short, and stays on
+// one already open. A pointer has each cut line's title; touch has no hover.
+function syncFullText() {
+  if (!served) return;
+  const cards = [...wall.children].filter((el) => cardOf.has(el.dataset.key));
+  const want = cards.map((el) => openText.has(el.dataset.key) || cutsText(el, usable));
+  cards.forEach((el, i) => {
+    const button = el.querySelector(".unfold");
+    if (!want[i] && document.activeElement === button) el.focus({ preventScroll: true });
+    button.hidden = !want[i];
+  });
+}
+if (served) document.fonts?.ready.then(syncFullText);
 
 function choose(value) {
   choice = parseDensity(value);

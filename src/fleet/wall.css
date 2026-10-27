@@ -517,6 +517,7 @@ button.menu svg { width: 16px; height: 16px; fill: currentColor; }
   cursor: default;
 }
 .also-rest { display: inline-block; }
+.also .past { display: none; } /* the repos the "+N" chip names, shown only by Full text */
 .crew-line { display: flex; flex-wrap: wrap; gap: 4px 10px; margin-top: -4px; color: var(--text-dim); font-size: 12.5px; }
 .crew-line .free { color: var(--text-quiet); }
 .crew-line .free::before { content: "\00b7"; margin-right: 10px; }
@@ -531,8 +532,14 @@ button.menu svg { width: 16px; height: 16px; fill: currentColor; }
   background: color-mix(in oklab, var(--tone-needs) 14%, transparent);
   color: color-mix(in oklab, var(--tone-needs) 75%, white);
 }
-/* One line in either density: a long tool name cuts short, and the line's title holds all of it. */
-.ask .text { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+/* One line in either density. Cut short, it loses its middle: the lead takes
+   the ellipsis and the tool's own name (.ask-keep) stays whole, cut itself only
+   when wider than the line less four characters of lead. The line's title
+   holds all of it. */
+.ask .text { display: flex; min-width: 0; white-space: pre; }
+.ask .text > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.ask .ask-keep { flex: none; max-width: calc(100% - 4ch); }
+.ask .ask-keep:empty { display: none; }
 .ask .badge { width: 18px; height: 18px; }
 
 .error { color: var(--text-error); overflow-wrap: anywhere; }
@@ -1033,7 +1040,7 @@ a.remote {
 a.remote:focus-visible { outline: 2px solid var(--card-focus); outline-offset: 2px; }
 /* Compact: a row of its own under the foot, so the name keeps the head row's
    width and the ledger line its slot. */
-.served .wall[data-density="compact"] .card.has-remote {
+.served .wall[data-density="compact"] .card {
   grid-template-rows: auto auto auto auto 1fr auto auto;
   grid-template-areas:
     "face name pill clear jump"
@@ -1044,7 +1051,34 @@ a.remote:focus-visible { outline: 2px solid var(--card-focus); outline-offset: 2
     "menu note note note note"
     "remote remote remote remote remote";
 }
-[data-density="compact"] a.remote { grid-area: remote; justify-content: center; margin: var(--space-4) 0 0; }
+[data-density="compact"] a.remote { flex: 1; justify-content: center; }
+/* Full text and Open in Claude: in the footer's row on the full card, a row
+   of their own under the foot on the compact one. */
+.phone-acts { display: contents; }
+[data-density="compact"] .phone-acts { grid-area: remote; display: flex; gap: var(--space-3); margin-top: var(--space-4); }
+[data-density="compact"] .phone-acts:not(:has(> :not([hidden]))) { display: none; }
+/* A card's Full text (fulltext.js), shown on the phone while the card cuts
+   text short: touch has no hover for the titles. Open, every cut line shows
+   whole and the "+N" chips give way to the repos they name. */
+.unfold { display: inline-flex; align-items: center; gap: var(--space-2); margin-left: auto; min-height: 28px; padding: 0 var(--space-5); font-size: 12.5px; }
+.unfold svg { width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.unfold[aria-expanded="true"] svg { transform: rotate(180deg); }
+.unfold:not([hidden]) + a.remote { margin-left: 0; }
+[data-density="compact"] .unfold { margin-left: 0; }
+#wall .open-text .task,
+#wall .open-text .repo,
+#wall .open-text .branch span,
+#wall .open-text .where,
+#wall .open-text .meta { white-space: normal; overflow-wrap: anywhere; flex-wrap: wrap; }
+#wall .open-text .ask .text { display: block; white-space: normal; overflow-wrap: anywhere; }
+#wall .open-text .ask .text > span { overflow: visible; }
+#wall .open-text .said p,
+#wall .open-text .wrapup { -webkit-line-clamp: unset; white-space: normal; }
+#wall .open-text .also-more,
+#wall .open-text .also-rest,
+#wall .open-text .also .rest { display: none; }
+#wall .open-text .also .past { display: block; }
+#wall[data-density="compact"] .open-text .also { display: flex; }
 /* Open terminal's reason says nothing on a phone, which has no terminal button. */
 .served .why { display: none; }
 .served .card.has-remote { cursor: pointer; }
@@ -1102,5 +1136,12 @@ a.remote:focus-visible { outline: 2px solid var(--card-focus); outline-offset: 2
   .served a.remote { min-height: 44px; min-width: 44px; }
   .served .card .look { min-width: 44px; min-height: 44px; }
   .served .card .play { width: 44px; height: 44px; }
+  .served .card .unfold { min-height: 44px; }
   .served #portrait .close { min-height: 44px; }
+}
+
+/* A touch screen wider than a phone takes a card's links at the phone's 44 px too. */
+@media (pointer: coarse) {
+  .served .card .unfold,
+  .served a.remote { min-height: 44px; }
 }

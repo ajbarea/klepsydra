@@ -346,12 +346,25 @@ export const crewRings = (crew, marks = crewMarks(crew)) =>
 /** Whether the wall's ring key shows: while any card has background work out. */
 export const showsRingKey = (cards) => cards.some((c) => c.rings.comfortable.segments.length > 0);
 
-/** The needs-you line: what the session waits for. */
-export function askText(reason) {
-  if (reason === "question") return "Waiting for your answer";
-  if (reason === "approve plan") return "Waiting for you to approve the plan";
-  return reason ? `Waiting for you to ${reason}` : "Waiting for you";
+/**
+ * The needs-you line as [lead, keep]: `keep` is the end a card holds in view
+ * when the line is cut short, the tool a permission asks for. An MCP tool
+ * keeps its own name past the server prefix ("mcp__server__tool" keeps
+ * "tool"); the cut falls in the lead, so the line is cut in the middle.
+ */
+export function askParts(reason) {
+  if (reason === "question") return ["Waiting for your answer", ""];
+  if (reason === "approve plan") return ["Waiting for you to approve the plan", ""];
+  if (!reason) return ["Waiting for you", ""];
+  if (!reason.startsWith("approve ")) return [`Waiting for you to ${reason}`, ""];
+  const tool = reason.slice("approve ".length);
+  const cut = tool.lastIndexOf("__");
+  const keep = cut > 0 && cut + 2 < tool.length ? tool.slice(cut + 2) : tool;
+  return [`Waiting for you to approve ${tool.slice(0, tool.length - keep.length)}`, keep];
 }
+
+/** The needs-you line: what the session waits for. */
+export const askText = (reason) => askParts(reason).join("");
 
 const DIM = new Set(["new", "silent", "ended"]);
 // A pill that names its reason: "ended · gone", "error · rate limit".
@@ -437,6 +450,7 @@ export function card(s, cast, nowMs, request = null) {
       when: pillWhen(s, nowMs),
     },
     ask: s.status === "needs_you" ? askText(s.reason) : null,
+    askParts: s.status === "needs_you" ? askParts(s.reason) : null,
     rings: crewRings(crew, marks),
     marks,
     // An agent's segment wears the character's colour; a medallion's, the wall's gold.
@@ -448,6 +462,7 @@ export function card(s, cast, nowMs, request = null) {
     place: s.where ? { repo: s.where.repo, worktree: s.where.worktree ?? null, branch: s.where.branch ?? null } : null,
     also: also.slice(0, ALSO_NAMED).map((r) => `also in ${r}`),
     alsoRest: alsoChip(also.slice(ALSO_NAMED)),
+    alsoPast: also.slice(ALSO_NAMED).map((r) => `also in ${r}`), // named only while a phone card shows its full text
     alsoChip: alsoChip(also),
     voiceTitle: who.voice ? `Voice: ${who.voice}` : null,
     name: who.name,

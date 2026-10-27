@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import {
   STATUS, shortAge, longAge, statusParts, voiceName, identity, accessibleName,
   statuses, startedNeeding, orderChanged, shouldSlide, transitionName, announcements, updatedText, badgeSvg, stripItems, card,
-  askText, plainText, tally, crewOf, crewText, crewRing, crewRings, crewMarks, RINGS, RING_MAX, showsRingKey, alsoChip, ALSO_NAMED, pillWhen,
+  askText, askParts, plainText, tally, crewOf, crewText, crewRing, crewRings, crewMarks, RINGS, RING_MAX, showsRingKey, alsoChip, ALSO_NAMED, pillWhen,
   BAND,
 } from "./fleet/model.js";
 import { contrast } from "./fleet/contrast.js";
@@ -566,6 +566,39 @@ test("the ask line says what a session waits for", () => {
   assert.equal(askText(null), "Waiting for you");
 });
 
+test("the ask line keeps the tool's own name for the end a cut leaves in view", () => {
+  const lead = "Waiting for you to approve ";
+  const cases = [
+    ["approve mcp__plugin_playwright_playwright__browser_navigate", [`${lead}mcp__plugin_playwright_playwright__`, "browser_navigate"]],
+    ["approve mcp__github__search", [`${lead}mcp__github__`, "search"]],
+    ["approve mcp__claude_ai_Gmail__apply_sensitive_message_label", [`${lead}mcp__claude_ai_Gmail__`, "apply_sensitive_message_label"]],
+    ["approve Bash", [lead, "Bash"]],
+    ["approve a tool", [lead, "a tool"]],
+    // No name past the last "__", or nothing before it: the whole tool is kept.
+    ["approve mcp__github__", [lead, "mcp__github__"]],
+    ["approve __search", [lead, "__search"]],
+    ["approve mcp__a__b__c", [`${lead}mcp__a__b__`, "c"]],
+    ["approve plan", ["Waiting for you to approve the plan", ""]],
+    ["question", ["Waiting for your answer", ""]],
+    ["review", ["Waiting for you to review", ""]],
+    [null, ["Waiting for you", ""]],
+    ["", ["Waiting for you", ""]],
+  ];
+  for (const [reason, want] of cases) {
+    const parts = askParts(reason);
+    assert.deepEqual(parts, want, String(reason));
+    assert.equal(parts.join(""), askText(reason), `${reason}: the two parts are the whole line`);
+  }
+});
+
+test("a needs-you card carries its ask in parts; any other has none", () => {
+  const asking = card(session({ status: "needs_you", reason: "approve mcp__github__search" }), CAST, NOW);
+  assert.deepEqual(asking.askParts, ["Waiting for you to approve mcp__github__", "search"]);
+  assert.equal(asking.ask, asking.askParts.join(""));
+  const working = card(session({ status: "working", reason: "approve Bash" }), CAST, NOW);
+  assert.deepEqual([working.ask, working.askParts], [null, null]);
+});
+
 test("a card carries pill, ask, tone, dim, place and its voice as a tooltip", () => {
   const c = card(session(), CAST, NOW);
   assert.deepEqual(c.pill, { label: "needs you", age: "2m", when: "2m" });
@@ -709,6 +742,8 @@ test("the compact card folds the also-in list into a +N chip that names every re
   const full = card(session({ touched: many }), CAST, NOW);
   assert.deepEqual(full.also, ["also in a", "also in b", "also in c", "also in d"]);
   assert.deepEqual(full.alsoRest, { text: "+2", label: "Also in e and f" });
+  assert.deepEqual(full.alsoPast, ["also in e", "also in f"], "the rest, named while a phone card shows its full text");
+  assert.deepEqual(card(session({ touched: many.slice(0, ALSO_NAMED) }), CAST, NOW).alsoPast, []);
   assert.equal(full.alsoChip.text, "+6");
   assert.equal(card(session({ touched: many.slice(0, ALSO_NAMED) }), CAST, NOW).alsoRest, null, "no chip while every repo is named");
 });
