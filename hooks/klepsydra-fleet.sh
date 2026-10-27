@@ -2,8 +2,9 @@
 # Claude Code hook for the klepsydra fleet strip. Keeps one JSON file per
 # session in <KLEPSYDRA_DIR>/fleet: its state, where it works, and what it was
 # last asked and last said. Registered with "async": true on the events listed
-# in README.md, so Claude Code never waits for it. It prints nothing and always
-# exits 0.
+# in README.md, so Claude Code never waits for it. As a hook it prints nothing
+# and always exits 0; run as `klepsydra-fleet.sh queue ...` it is a command
+# (queue_cmd below).
 
 set -uo pipefail
 
@@ -678,18 +679,28 @@ queue_cmd() { # args...
       path=$2
       if [[ ${3:-} == --by ]]; then
         [[ -n ${4:-} && $# -eq 4 ]] || { echo "$usage" >&2; return 2; }
-        by=$4
+        # The panel's rule (queue.rs `kept`): 1 to 80 characters once trimmed, none a control.
+        by=$(jq -rn --arg b "$4" '$b | gsub("^\\s+|\\s+$"; "") | select(length >= 1 and length <= 80 and (test("[\u0000-\u001f\u007f-\u009f]") | not))') || by=""
+        [[ -n $by ]] || { echo "klepsydra: --by takes a name of 1 to 80 characters with no control characters" >&2; return 2; }
       elif [[ $# -ne 2 ]]; then
         echo "$usage" >&2; return 2
       fi
+      [[ $path != -* ]] || { echo "$usage" >&2; return 2; }
       [[ $path == /* ]] || path=$PWD/$path
+      [[ ! -d $path ]] || { echo "klepsydra: $2 is a folder; name the queue file" >&2; return 2; }
       { read -r osrelease <"$PROC_ROOT/sys/kernel/osrelease"; } 2>/dev/null
       if [[ $osrelease == *[Mm]icrosoft* ]] && command -v wslpath >/dev/null; then
         path=$(wslpath -w -- "$path" 2>/dev/null) || { echo "klepsydra: $2 has no Windows path" >&2; return 1; }
       fi
-      mkdir -p -- "$KLEPSYDRA_DIR" || return 1
-      write_atomic "$keeper" "$(jq -nc --arg path "$path" --arg by "$by" '{path: $path, by: (if $by == "" then null else $by end)}')"
-      [[ -f $keeper ]] || { echo "klepsydra: could not write $keeper" >&2; return 1; }
+      local tmp=$keeper.$$.tmp
+      # -T: a folder at the name is a failure, not a place to move the file into.
+      if ! { mkdir -p -- "$KLEPSYDRA_DIR" 2>/dev/null &&
+             jq -nc --arg path "$path" --arg by "$by" '{path: $path, by: (if $by == "" then null else $by end)}' >"$tmp" 2>/dev/null &&
+             mv -fT -- "$tmp" "$keeper" 2>/dev/null; }; then
+        rm -f -- "$tmp" 2>/dev/null
+        echo "klepsydra: could not write $keeper" >&2
+        return 1
+      fi
       echo "The Queue panel now reads $path${by:+, kept by $by}."
       ;;
     clear)

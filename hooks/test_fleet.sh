@@ -1528,11 +1528,27 @@ check "queue set: no --by keeps no one" "$(jq -c . "$qdir/queue.json")" '{"path"
 ( cd "$work" && queue set rel.md >/dev/null )
 check "queue set: a relative path is made absolute" "$(jq -r .path "$qdir/queue.json")" "$work/rel.md"
 check "queue show: prints queue.json" "$(queue show)" "$(cat "$qdir/queue.json")"
-for args in "set" "set a b" "set a --by" "set a --by x y" "nope" ""; do
+for args in "set" "set a b" "set a --by" "set a --by x y" "set --" "set -x" "nope" ""; do
   # shellcheck disable=SC2086 # each case is its words
   out=$(queue $args 2>&1); rc=$?
   check "queue $args: usage, exit 2" "$rc|${out%% *}" "2|usage:"
 done
+# --by follows the panel's rule (queue.rs `kept`), so a name it would drop is refused here.
+queue set /home/aj/q.md --by "  Hermes  " >/dev/null
+check "queue set --by: trimmed" "$(jq -r .by "$qdir/queue.json")" "Hermes"
+long80=$(printf 'é%.0s' {1..80})
+queue set /home/aj/q.md --by "$long80" >/dev/null
+check "queue set --by: 80 characters, not bytes, is the cap" "$(jq -r '.by | length' "$qdir/queue.json")" "80"
+before=$(cat "$qdir/queue.json")
+for by in $'a\nb' "$long80é" "   " $'tab\there'; do
+  out=$(queue set /home/aj/other.md --by "$by" 2>&1); rc=$?
+  check "queue set --by $(printf %q "$by" | cut -c1-12): refused, nothing written" "$rc|${out%% --by*}|$(cat "$qdir/queue.json")" "2|klepsydra:|$before"
+done
+out=$(queue set "$work" 2>&1); rc=$?
+check "queue set: a folder is refused" "$rc|${out##* is }" "2|a folder; name the queue file"
+mkdir -p "$work/qblock/queue.json"
+out=$(KLEPSYDRA_DIR=$work/qblock KLEPSYDRA_PROC=$qproc bash "$hook" queue set /home/aj/q.md 2>&1); rc=$?
+check "queue set: an unwritable queue.json says so, and leaves nothing" "$rc|${out%%:*}|$(find "$work/qblock" -mindepth 1 | wc -l)" "1|klepsydra|1"
 # shellcheck disable=SC2016 # the stub script expands its own arguments
 printf '#!/bin/sh\n[ "$1" = -w ] && [ "$2" = -- ] && printf "C:%%s\\n" "$3"\n' >"$work/wslbin/wslpath"
 chmod +x "$work/wslbin/wslpath"

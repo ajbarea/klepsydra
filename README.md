@@ -941,7 +941,10 @@ and the panel names the file and says who keeps it ("Kept by Hermes
 yours to read. `queue show` prints the current choice and `queue clear` goes
 back to the default. Both write `queue.json` in klepsydra's data folder (under
 WSL the path goes across as a Windows one), the newest choice wins, and it
-applies within five seconds. An older `queue_path` in `prefs.json` still
+applies within five seconds. `--by` takes a name of 1 to 80 characters. A
+file kept inside WSL (`\\wsl.localhost\...`) sends Windows no change
+notices, so its edits show on the five-second re-read rather than at once;
+one on a Windows drive (`/mnt/c/...`) shows within a second or two. An older `queue_path` in `prefs.json` still
 works when there is no `queue.json`.
 
 <p align="center">
