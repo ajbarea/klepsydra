@@ -446,10 +446,11 @@ an error count only when one exists. Each card shows:
   new prompt meanwhile;
 - the session's name, where it works now (repo, worktree, branch chip: the
   repo of its last edit, else its folder's, and its folder's again once that
-  worktree is removed) and the other repos it touched;
+  worktree is removed; one line, cut short with all of it on hover) and the
+  other repos it touched;
 - for a session that needs you, a line saying what it waits for;
 - the last prompt on one line in a quoted block and the reply on two under
-  it (hover either for all of it), with a play
+  it, one while the card asks (hover either for all of it), with a play
   button beside the reply when keryx kept that reply's audio (keryx's
   `reply_clips`, on by default). It plays the session's latest spoken reply on
   this machine, one card at a time; press it again to stop. keryx writes the
@@ -579,9 +580,12 @@ klepsydra's tmux, which you end yourself.
 
 The control beside **+ New session** picks the card density: **Auto** (the
 default), **Comfortable** or **Compact**. Comfortable is the card above:
-four fit the wall in split mode (2x2, about 958x1000 of content) and eight
-fit it maximised (4x2, about 1920x1000), each as full as a card gets outside
-a wrap-up, with no scrollbar.
+four fit the wall in split mode (2x2, about 945 to 958x1000 of content) and
+eight fit it maximised (4x2, about 1920x1000) with no scrollbar, as the
+browser test measures them: every card waiting on you, with a long session
+name, place and branch, six other repos, a crew, a long prompt and reply, a
+two-line receipt and "updated". A wrap-up line or a long error can still
+make Auto turn compact.
 Compact keeps three short rows: the header, with a 56 px portrait (crew ring
 and speaking waves included), the name and session name, the pill and a
 smaller **Open terminal**; one line for where it works, the crew and a "+N" chip

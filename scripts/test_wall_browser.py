@@ -922,10 +922,14 @@ COMFORTABLE_FIT = [  # (width, height, cards, columns)
 ]
 
 
+OTHER_REPOS = ["kourai-khryseai", "papers", "ajsoftworks", "talks", "techne", "claude-prefs", "keryx"]
+
+
 def busy(n):
     """The demo's first `n` sessions, each as full as a live card gets outside
-    a wrap-up: another repo touched, a crew, a long prompt and reply, a ledger
-    line with a blocked chip, and quiet ten minutes, so "updated" shows."""
+    a wrap-up: waiting on AJ, six other repos touched, a long session name,
+    worktree and branch, a crew, a long prompt and reply, a ledger line with
+    a blocked chip, and quiet ten minutes, so "updated" shows."""
     demo = json.loads((ROOT / "scripts/fixtures/fleet-demo.json").read_text())
     at, ledger = demo["at"], demo["sessions"][0]["ledger"]
     long = "Re-running the sweep over five seeds, then redrawing the bars with the median and range before the deck refresh picks them up. " * 2
@@ -933,9 +937,15 @@ def busy(n):
     for s in demo["sessions"][:n]:
         sessions.append({
             **s,
+            "status": "needs_you",
+            "reason": "approve Bash",
+            "error": None,
+            "quiet_since": None,
+            "name": "A session name long enough to run past the nameplate",
             "status_at": at - 600,
             "updated_at": at - 600,
-            "touched": [{"repo": "kourai-khryseai" if s["where"]["repo"] != "kourai-khryseai" else "papers", "at": at - 900}],
+            "where": {**s["where"], "worktree": "comfortable-density-four-and-eight", "branch": "feat/comfortable-density-four-and-eight"},
+            "touched": [{"repo": r, "at": at - 900} for r in OTHER_REPOS if r != s["where"]["repo"]][:6],
             "background": {"agents": 2, "shells": 1},
             "prompt": {"text": long, "at": at - 660},
             "reply": {"text": long, "at": at - 600},
@@ -965,6 +975,7 @@ FITS = """() => {
     rows: rows.length,
     cards: cards.map((c) => Math.round(c.getBoundingClientRect().height)),
     breakout: breakout.length ? [Math.min(...breakout.map((b) => b.over)), Math.min(...breakout.map((b) => b.clear))] : null,
+    jump: [...new Set(cards.map((c) => c.querySelector('.jump').getBoundingClientRect().height))],
   };
 }"""
 
@@ -972,8 +983,9 @@ FITS = """() => {
 def comfortable_fits(wall):
     """Comfortable holds four cards in split mode (2x2) and eight maximised
     (4x2) with no vertical scrollbar, the demo as it is and with every card
-    full; Auto stays comfortable there. Each figure breaks the card's top
-    edge cleanly: above it, yet clear of the bar and the row above."""
+    full and waiting on AJ; Auto stays comfortable there. Each figure breaks
+    the card's top edge cleanly: above it, yet clear of the bar and the row
+    above. Open terminal is 24 to 28 px tall."""
     for width, height, cards, columns in COMFORTABLE_FIT:
         for fleet, body in (("demo", None), ("full", busy(cards))):
             for density in ("comfortable", "auto"):
@@ -988,6 +1000,7 @@ def comfortable_fits(wall):
                     and (got["columns"], got["rows"]) == (columns, cards // columns)
                     and over >= 4
                     and clear >= 4
+                    and all(24 <= h <= 28 for h in got["jump"])  # the 24 px minimum (WCAG 2.2, 2.5.8), no taller than compact's
                 )
                 wall.check(ok, f"{cards} {fleet} cards fit {density} at {width}x{height}", got)
                 page.close()

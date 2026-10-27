@@ -92,8 +92,8 @@ files belong to: the JS guards scan hooks and scripts too.
   the wall in a real browser: 16 demo cards at 1920x1000 and 8 at 945x1000
   fit in Auto (compact, no scrollbar, ring key in view); 4 comfortable cards
   fit 945x1000 and 958x1000 and 8 fit 1920x1000, the demo and every card
-  full, forced and in Auto, each figure breaking the card's top edge clear of
-  the bar and the row above; Auto re-checks when
+  full and waiting on AJ, forced and in Auto, each figure breaking the card's
+  top edge clear of the bar and the row above, Open terminal 24 to 28 px; Auto re-checks when
   a card grows, never leaves a comfortable wall scrolling (a pixel at a time
   through the boundary, and where the comfortable bar is taller), and a
   compact note covers no text; the empty state (no sessions, or only ended

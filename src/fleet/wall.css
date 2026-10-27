@@ -349,8 +349,8 @@ button.menu svg { width: 16px; height: 16px; fill: currentColor; }
 .figure { display: block; width: 100%; height: 100%; object-fit: contain; }
 /* The art's own top edge fades rather than cutting off where it breaks the card's edge. */
 .has-figure .figure {
-  -webkit-mask-image: linear-gradient(transparent, #000 6px);
-  mask-image: linear-gradient(transparent, #000 6px);
+  -webkit-mask-image: linear-gradient(transparent, #000 3px);
+  mask-image: linear-gradient(transparent, #000 3px);
   filter: drop-shadow(0 0 1px color-mix(in oklab, var(--light) 70%, transparent)) drop-shadow(0 6px 14px rgb(0 0 0 / 0.55));
 }
 .card:not(.has-figure) .figure { display: none; }
@@ -472,11 +472,14 @@ button.menu svg { width: 16px; height: 16px; fill: currentColor; }
 .mark { display: inline-flex; flex: none; }
 .pill .badge { width: 16px; height: 16px; }
 
-.where { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; overflow-wrap: anywhere; }
-.repo { font-weight: 600; }
+/* One line in either density; a long place cuts short and its title holds all of it. */
+.where { display: flex; align-items: center; gap: 6px 10px; min-width: 0; overflow: hidden; white-space: nowrap; }
+.repo { min-width: 0; overflow: hidden; text-overflow: ellipsis; font-weight: 600; }
 .repo .wt { color: var(--text-dim); font-weight: 500; }
 .branch {
   display: inline-flex;
+  flex: 0 1 auto;
+  min-width: 0;
   gap: 5px;
   align-items: center;
   color: var(--text-dim);
@@ -486,6 +489,7 @@ button.menu svg { width: 16px; height: 16px; fill: currentColor; }
   border-radius: 6px;
 }
 .branch svg { width: 12px; height: 12px; flex: none; }
+.branch span { overflow: hidden; text-overflow: ellipsis; }
 .also { display: flex; flex-wrap: wrap; gap: 4px 10px; list-style: none; margin-top: -4px; color: var(--text-quiet); font-size: 12.5px; }
 .also:empty { display: none; }
 .meta, .foot { display: contents; } /* rows of their own only on the compact card */
@@ -529,7 +533,9 @@ button.menu svg { width: 16px; height: 16px; fill: currentColor; }
   overflow-wrap: anywhere;
 }
 .said p:empty { display: none; }
-/* What AJ asked is one line (its title holds the rest); the reply keeps two. */
+/* What AJ asked is one line (its title holds the rest); the reply keeps two,
+   or one while the card asks, since the ask is the news. */
+.card.asking .said p.reply { -webkit-line-clamp: 1; }
 .said p.prompt { -webkit-line-clamp: 1; color: var(--text-dim); padding-left: 10px; border-left: 2px solid var(--card-line); }
 .said .reply { color: var(--text); }
 .reply-line { display: flex; align-items: flex-start; gap: var(--space-3); min-width: 0; }
@@ -728,10 +734,8 @@ button.menu svg { width: 16px; height: 16px; fill: currentColor; }
   white-space: nowrap;
   font-size: 13px;
 }
-[data-density="compact"] .where { flex: 0 1 auto; flex-wrap: nowrap; gap: var(--space-3); min-width: 0; overflow: hidden; }
-[data-density="compact"] .repo { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-[data-density="compact"] .branch { flex: 0 1 auto; min-width: 0; padding: 1px 6px; font-size: 12px; }
-[data-density="compact"] .branch span { overflow: hidden; text-overflow: ellipsis; }
+[data-density="compact"] .where { flex: 0 1 auto; gap: var(--space-3); }
+[data-density="compact"] .branch { padding: 1px 6px; font-size: 12px; }
 [data-density="compact"] .also { display: none; }
 [data-density="compact"] .also-more:not([hidden]) { display: inline-block; }
 [data-density="compact"] .crew-line { flex: none; margin-top: 0; font-size: 12px; }
@@ -740,7 +744,6 @@ button.menu svg { width: 16px; height: 16px; fill: currentColor; }
 [data-density="compact"] .ask .badge { width: 14px; height: 14px; }
 [data-density="compact"] .ask .text { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 [data-density="compact"] .said { grid-area: said; gap: 2px; margin-top: var(--space-2); font-size: 13px; line-height: 1.4; }
-[data-density="compact"] .card.asking .said .reply { -webkit-line-clamp: 1; }
 [data-density="compact"] .said .error {
   display: -webkit-box;
   -webkit-box-orient: vertical;

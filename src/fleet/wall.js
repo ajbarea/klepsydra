@@ -204,6 +204,7 @@ function paint(el, c) {
   branch.hidden = !c.place?.branch;
   if (!branch.firstChild) branch.innerHTML = BRANCH_ICON;
   setText(branch.lastChild, c.place?.branch);
+  el.querySelector(".where").title = [`${c.place?.repo ?? ""}${c.place?.worktree ? ` / ${c.place.worktree}` : ""}`, c.place?.branch].filter(Boolean).join(" \u00b7 ");
   el.querySelector(".also").replaceChildren(
     ...c.also.map((t) => Object.assign(document.createElement("li"), { textContent: t })),
   );
