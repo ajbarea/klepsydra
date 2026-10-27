@@ -16,7 +16,12 @@ the above.
   for the phone (label, times, percent and reset; account id to `a1`, `a2`).
   The phone server polls a usage source every 5 s, puts `usage` on the
   snapshot, and sends only a changed one.
-- Next: AJ checks the PR screenshots, then the live phone after a deploy.
+- Round 1 (#127): the reader mirrors the hook's guards (no symlinks, regular
+  files via `bounded::read_text`, 64 KiB, 32 accounts x 512 files, newest
+  first); only the gauge's three windows reach the phone; gauge.js reads
+  JSON numbers only; the gauges scroll away under a one-tally sticky bar.
+- Next: AJ judges the screenshots (fleet-briefing) and decides light mode
+  for the phone wall; then the live phone after a deploy.
 - Verify: the gate list below; the phone suite now writes demo readings.
 
 ## Waits on AJ
