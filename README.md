@@ -169,7 +169,8 @@ prints anything, so the permission hook never answers a prompt. The
 a URL) and the idle notice that corrects a session still marked as working
 after its turn ended. `PostToolUseFailure` ends a wait whose approved command
 then failed. `SubagentStart` and `SubagentStop`, with background `Bash` calls
-seen at `PostToolUse`, keep each session's background work: a turn that ends
+seen at `PostToolUse` (started in the background, or moved there at their
+timeout or by hand), keep each session's background work: a turn that ends
 with subagents or background shells still running stays working. A subagent
 whose start was missed is picked up from its own tool events.
 For the gauge alone, keep `statusLine` and leave out `hooks`.
