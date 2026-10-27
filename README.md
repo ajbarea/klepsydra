@@ -973,9 +973,20 @@ Code redacts third-party plugin and skill names, and MCP servers you
 configured, so the drawer labels those "third-party" and "custom". The
 drawer is local and reads only today's file.
 
+The drawer is a side panel built the same way as the [Queue panel](#queue-panel), and it
+behaves the same way. It docks on the right at 1200 px and wider and is a
+dialog when the window is narrower. It can be shut to a **Ledger** tab or
+filled to the whole window. It takes the same drags, the same separator keys
+and the same text size controls, and it remembers its own width, view and
+text size. Those are kept apart from the Queue's. A chip opens it docked on
+that card's session, a chip pressed while it is open turns it to that
+session, and Close or Esc gives focus back to the chip. While it is open,
+each new snapshot from the fleet makes it read the ledger again.
+
 ### Queue panel
 
-The **Queue** button beside **Ledger** shows your to-do file inside the wall:
+The **Queue** button beside **Ledger** shows your to-do file inside the wall,
+in a side panel the Ledger shares (`src/fleet/sidepanel.js`):
 by default `claude-queue.md` on your Desktop (the Desktop known folder, so a
 redirected Desktop is found too). The file stays the source of truth: agents
 and you keep editing it with any editor, and the panel only reads it.
@@ -1008,7 +1019,7 @@ works when there is no `queue.json`.
   second or two.
 - **Shut, docked or full.** At 1200 px wide and more the panel docks on the
   right and the cards make room; narrower, it opens as a dialog over the
-  wall, as Ledger does. Drag its left edge, or focus that edge and use the
+  wall, as the Ledger does. Drag its left edge, or focus that edge and use the
   arrow keys (Home and End for the narrowest and widest), to resize it.
   Drag the edge right past half the narrowest width (160 px from the window's
   edge) and the panel snaps shut; drag it left to within 350 px of the
@@ -1022,6 +1033,15 @@ works when there is no `queue.json`.
   and the **Queue** button shut it to the tab as well. Below 1200 px there
   is no margin to spare, so a shut panel shows no tab and the **Queue**
   button opens it.
+- **One panel at a time.** The Queue and the Ledger share the right edge.
+  Opening one, docked or full, shuts the other, the way Chrome's side panel
+  and VS Code's side bar show one view at a time. While both are shut their
+  tabs sit one above the other, Ledger over Queue, so either is one click
+  away. While one is open neither tab shows, and the header buttons switch
+  between them. Each panel keeps its own width, view and text size
+  (`klepsydra.queue.*` and `klepsydra.ledger.*` in the page's storage).
+  Ctrl+Alt+B opens the Queue over an open Ledger. The Ledger has no shortcut
+  of its own.
 - **Full screen.** The **Full screen** button in the panel's header (beside
   Close) fills the window, keeping the text-size controls; Esc, the same
   button, or a drag of the left edge back to the right returns it to docked.
