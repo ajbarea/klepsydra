@@ -335,6 +335,8 @@ mod win {
     /// stacked under `under` when given.
     fn place(h: HWND, visible: Rect, under: Option<HWND>) -> Result<(), String> {
         if sized(h) {
+            // Restored from minimized, Windows activates it anyway (measured).
+            let minimized = unsafe { IsIconic(h) }.as_bool();
             let mut wp = placement(h)?;
             let (show, flags) = restore_placement(wp.flags.0);
             wp.showCmd = show;
@@ -343,7 +345,7 @@ mod win {
             answering(h)?;
             unsafe { SetWindowPlacement(h, &wp) }
                 .map_err(|e| format!("Could not restore a window: {e}"))?;
-            hand_back(before, h, true);
+            hand_back(before, h, minimized);
             if sized(h) {
                 return Err(STILL.into());
             }
