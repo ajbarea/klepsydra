@@ -815,7 +815,9 @@ latest spoken reply on the phone, not the PC, from `/audio/<session id>`. A sess
 Control on (`/remote-control` in its terminal) shows **Open in Claude**, and
 a tap on its card opens that session on claude.ai or in the Claude app. The
 link appears at the session's next hook event after Remote Control connects,
-and goes when it disconnects or the session ends. When the stream drops, the
+and goes when it disconnects or the session ends. `/clear` starts a new
+session in the same Claude process, whose Remote Control stays connected, so
+the new session keeps the link. When the stream drops, the
 wall says the cards may be out of date until it reconnects, and keeps
 trying (every 1 s at first, at most every 30 s) while klepsydra restarts.
 
