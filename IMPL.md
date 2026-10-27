@@ -23,6 +23,12 @@ the above.
   (docked, not modal, at 1920), `queue_shortcut_waits_behind_another_dialog`
   (the portrait is the other modal now), the Ledger guard, and the
   DOCK_MIN_PX source path in `fleet-queue.test.js`.
+- Round 1 (PR #136 review): rebased on b5d0040; the button's toggle keeps
+  focus on the button; Ctrl+Alt+B opens the Queue over any Ledger (the
+  edge's own modal is not "in front"); an open Ledger reads at most every
+  5 s (`REFRESH_MS`); the Ledger reflows at 320/480/600 px x 75-200%; the
+  edge holds the docked width and drag state; one `--panel-w` per dialog,
+  one `--dock-w`; README shots regenerated (ledger.png docked).
 - Next: AJ reviews the PR and screenshots; deploy with the rest.
 - Verify: the gate list below; `scripts/test_wall_browser.py ledger_*
   panels_*` runs the new cases alone.
