@@ -695,7 +695,7 @@ queue_cmd() { # args...
       local tmp=$keeper.$$.tmp
       # -T: a folder at the name is a failure, not a place to move the file into.
       if ! { mkdir -p -- "$KLEPSYDRA_DIR" 2>/dev/null &&
-             jq -nc --arg path "$path" --arg by "$by" '{path: $path, by: (if $by == "" then null else $by end)}' >"$tmp" 2>/dev/null &&
+             jq -nc --arg path "$path" --arg by "$by" '{path: $path, by: (if $by == "" then null else $by end)}' 2>/dev/null >"$tmp" &&
              mv -fT -- "$tmp" "$keeper" 2>/dev/null; }; then
         rm -f -- "$tmp" 2>/dev/null
         echo "klepsydra: could not write $keeper" >&2
