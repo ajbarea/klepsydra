@@ -207,6 +207,9 @@ check "a subagent's tool finishing leaves it waiting" "$(field .state)" '"needs_
 fire post-tool-bash.json
 check "its own tool finishing clears it" "$(field '[.state, .reason, .needs]')" '["working",null,null]'
 check "tool output never recorded" "$(grep -c SECRET "$file")" "0"
+fire permission-request.json
+fire post-tool-bash.json '.tool_response = "text"'
+check "a text tool response still clears it" "$(field '[.state, .reason, .needs]')" '["working",null,null]'
 
 fire permission-request.json
 fire post-tool-bash.json '.hook_event_name = "PostToolUseFailure"'
@@ -766,7 +769,7 @@ check "KillShell removes it by shell_id" "$(bg)" '""'
 fire post-tool-bash-timed-out.json
 check "a shell moved to the background at its timeout is added" "$(bg)" '"shell:bfc4dro89"'
 fire post-tool-task-stop.json '.tool_input = {task_id: "bfc4dro89"} | .tool_response = {task_id: "bfc4dro89"}'
-fire post-tool-bash-timed-out.json '.tool_response |= (del(.timedOutAfterMs) | .backgroundedByUser = true)'
+fire post-tool-bash-timed-out.json '.tool_response |= (del(.timedOutAfterMs) | .backgroundedToDeliverMessage = true)'
 check "and one moved there by hand" "$(bg)" '"shell:bfc4dro89"'
 fire post-tool-task-stop.json '.tool_input = {task_id: "bfc4dro89"} | .tool_response = {task_id: "bfc4dro89"}'
 fire post-tool-bash-timed-out.json '.tool_response.backgroundTaskId = null'
@@ -816,6 +819,7 @@ fire subagent-start.json 'del(.agent_id)'
 fire post-tool-bash-background.json '.tool_response = "text" | .tool_use_id = null'
 fire post-tool-bash-background.json '.tool_input.run_in_background = "true" | .tool_response.backgroundTaskId = null'
 fire post-tool-bash-timed-out.json '.tool_response.backgroundTaskId = ["x1"]'
+fire post-tool-bash-timed-out.json '.tool_response = "text"'
 fire post-tool-agent-background.json '.tool_response.agentId = ["x"]'
 fire stop-background.json '.background_tasks = [42, null, {"status": "running"}, {"id": 7, "status": "running"}]'
 check "malformed adds: nothing added, done" "$(field '[has("background"), .state]')" '[false,"done"]'

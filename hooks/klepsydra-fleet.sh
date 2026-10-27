@@ -537,7 +537,8 @@ def notified: if type == "string" then [scan("<task-notification>[\\s\\S]*?</tas
       # A shell asked to run in the background, or one moved there at its timeout
       # or by hand, which only its task id tells.
       elif $event == "PostToolUse" and $ev.tool_name == "Bash"
-           and ($in.run_in_background == true or ($out | objects | .backgroundTaskId | text) != null) then
+           and ($in.run_in_background == true
+                or (if ($out | type) == "object" then $out.backgroundTaskId | text else null end) != null) then
         $bg | bg_add(($out | objects | .backgroundTaskId | text) // ($ev.tool_use_id | text); "shell")
       # Only an async launch says an agent outlives the turn; SubagentStart cannot tell.
       elif $event == "PostToolUse" and $ev.tool_name == "Agent" and ($out | objects | .isAsync) == true
