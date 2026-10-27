@@ -704,19 +704,39 @@ test("the ledger sample is never reachable inside the app, and the drawer reads 
   assert.ok(existsSync(join(ROOT, "scripts/fixtures/ledger-demo.json")));
 });
 
-test("the ledger drawer is a labelled modal dialog with a Close button that links nowhere", () => {
+test("the Ledger is a labelled side panel dialog with a Close button that links nowhere", () => {
   const html = read("src/wall.html");
   const start = html.indexOf('<dialog id="ledger"');
   const dialog = html.slice(start, html.indexOf("</dialog>", start));
   assert.match(dialog, /^<dialog id="ledger" class="ledger" aria-labelledby="ledger-title">/);
-  assert.match(dialog, /<h2 id="ledger-title" tabindex="-1" autofocus>Ledger<\/h2>/);
+  assert.match(dialog, /<h2 id="ledger-title" tabindex="-1">Ledger<\/h2>/);
+  assert.match(dialog, /role="separator" aria-orientation="vertical" aria-label="Ledger panel width" aria-controls="ledger"/);
   assert.match(dialog, /<button type="button" class="ledger-close">Close<\/button>/);
-  assert.match(html, /<button type="button" id="ledger-open" aria-haspopup="dialog">Ledger<\/button>/);
+  for (const part of ["smaller", "reset", "larger", "full", "content", "body", "live", "resize"]) {
+    assert.match(dialog, new RegExp(`class="ledger-${part}[" ]`), `the shared panel's ${part}`);
+  }
+  assert.match(html, /<button type="button" id="ledger-open" aria-controls="ledger" aria-expanded="false">Ledger<\/button>/);
+  // The shut panel's tab, outside the dialog, and before the Queue's so the two read in the edge's order.
+  assert.match(html, /<\/dialog>\s*<button type="button" id="ledger-tab" class="ledger-tab" aria-label="Open Ledger" aria-controls="ledger"[^>]*>Ledger<\/button>/);
+  assert.ok(html.indexOf('id="ledger-tab"') < html.indexOf('id="queue-tab"'));
   const drawer = read("src/fleet/drawer.js");
-  assert.match(drawer, /dialog\.showModal\(\)/, "modal, so the wall behind it is inert");
-  assert.match(drawer, /back\.focus\(\)/, "focus returns explicitly");
+  assert.match(drawer, /createSidePanel\(\{\s*name: "ledger"/, "the Queue's panel, not a copy");
+  assert.match(drawer, /returnTo: \(\) => \(usable\(opener\) \? opener : button\)/, "focus returns to the opener, else the button");
+  assert.match(read("src/fleet/sidepanel.js"), /dialog\.showModal\(\)/, "modal below the dock width and in full, so the wall behind it is inert");
   assert.doesNotMatch(drawer, /innerHTML|insertAdjacentHTML|href|<a\b|https?:/, "text nodes only, and no link to follow");
   assert.doesNotMatch(dialog, /<a\b|href/);
+});
+
+test("the side panel module writes no markup, and the Queue and the Ledger both run on it", () => {
+  const side = "src/fleet/sidepanel.js";
+  assert.ok(FRONTEND.includes(side), `${side} is scanned`);
+  assert.deepEqual(writesMarkup(read(side)), [], side);
+  const queue = read("src/fleet/queuepanel.js");
+  assert.match(queue, /createSidePanel\(\{ name: "queue"/);
+  // One implementation: the snap, separator and text-size code lives in sidepanel.js alone.
+  for (const f of ["src/fleet/queuepanel.js", "src/fleet/drawer.js", "src/fleet/wall.js"]) {
+    assert.doesNotMatch(read(f), /setPointerCapture|function separatorKey|function snap\(|TEXT_SIZES\s*=|matchMedia\(`\(min-width/, f);
+  }
 });
 
 test("the dialog's End is off for ARM_MS after every opening, and an off End closes nothing", () => {

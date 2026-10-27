@@ -308,7 +308,8 @@ test("comments are left out wherever they sit, and the text between them stays",
 
 test("the Queue label hides its words below exactly the dock breakpoint", () => {
   const js = readFileSync(new URL("./fleet/queuepanel.js", import.meta.url), "utf8");
-  const DOCK_MIN_PX = Number(js.match(/export const DOCK_MIN_PX = (\d+);/)?.[1]);
+  const side = readFileSync(new URL("./fleet/sidepanel.js", import.meta.url), "utf8");
+  const DOCK_MIN_PX = Number(side.match(/export const DOCK_MIN_PX = (\d+);/)?.[1]);
   const css = readFileSync(new URL("./fleet/wall.css", import.meta.url), "utf8");
   const m = css.match(/@media \(width < (\d+)px\) \{\s*#queue-open \.for-you \{/);
   assert.ok(m, "the narrow rule for the label's words");

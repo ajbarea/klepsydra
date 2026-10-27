@@ -7,22 +7,34 @@ fleet folder keeps the last snapshot), #104 (#98 ledger attribution), #105
 build: 1ad1405 (10-25 21:48). Not yet live: #89 split mode, #93, and all of
 the above.
 
-## This branch: feat/phone-gauges (#123)
-- Done: the phone wall's sticky bar shows the usage-limit gauges. Model and
-  words stay in `src/gauge.js` (`entryText`, `ringStyle`, `usageRows`); the
-  row's DOM moved out of `main.js` and `index.html` into `src/gaugeview.js`,
-  which the gauge and the wall both import. The fleet crate's `usage.rs`
-  reads `accounts/*/*.json` (`read_usage` uses it too) and cuts each reading
-  for the phone (label, times, percent and reset; account id to `a1`, `a2`).
-  The phone server polls a usage source every 5 s, puts `usage` on the
-  snapshot, and sends only a changed one.
-- Round 1 (#127): the reader mirrors the hook's guards (no symlinks, regular
-  files via `bounded::read_text`, 64 KiB, 32 accounts x 512 files, newest
-  first); only the gauge's three windows reach the phone; gauge.js reads
-  JSON numbers only; the gauges scroll away under a one-tally sticky bar.
-- Next: AJ judges the screenshots (fleet-briefing) and decides light mode
-  for the phone wall; then the live phone after a deploy.
-- Verify: the gate list below; the phone suite now writes demo readings.
+## This branch: feat/ledger-panel (#130)
+- Slice: the Ledger gets the Queue panel's snapping (#119) and text size
+  (#105) through one module, `src/fleet/sidepanel.js` (view, width, text
+  size, separator, drag, tab, modal fallback below DOCK_MIN_PX, stored
+  under `klepsydra.<name>.*`). `queuepanel.js` re-exports its helpers and
+  keeps the file, Copy and Ctrl+Alt+B; `drawer.js` keeps the figures, the
+  chip filter, refresh and focus return (`returnTo`). `createEdge()` holds
+  the two on the right edge one at a time; both tabs stack only while both
+  are shut.
+- Done: module, wiring, CSS, README; node tests (`fleet-sidepanel.test.js`,
+  guards) and browser cases mirrored for the Ledger (`ledger_*`,
+  `panels_*`); mutation checks; screenshots in fleet-briefing.
+- Changed tests (premise removed by #130): `drawer_opens_and_returns_focus`
+  (docked, not modal, at 1920), `queue_shortcut_waits_behind_another_dialog`
+  (the portrait is the other modal now), the Ledger guard, and the
+  DOCK_MIN_PX source path in `fleet-queue.test.js`.
+- Round 1 (PR #136 review): rebased on b5d0040; the button's toggle keeps
+  focus on the button; Ctrl+Alt+B opens the Queue over any Ledger (the
+  edge's own modal is not "in front"); an open Ledger reads at most every
+  5 s (`REFRESH_MS`); the Ledger reflows at 320/480/600 px x 75-200%; the
+  edge holds the docked width and drag state; one `--panel-w` per dialog,
+  one `--dock-w`; README shots regenerated (ledger.png docked).
+- Round 2: an open Ledger reads again a second past local midnight
+  (fake-clock test); the REFRESH_MS constant test dropped; fleet-briefing
+  shots recaptured after round 1.
+- Next: AJ reviews the PR and screenshots; deploy with the rest.
+- Verify: the gate list below; `scripts/test_wall_browser.py ledger_*
+  panels_*` runs the new cases alone.
 
 ## Waits on AJ
 - Deploy (his yes): `scripts/build-windows.sh` from main, stop the exe,

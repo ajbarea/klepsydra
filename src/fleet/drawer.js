@@ -1,13 +1,17 @@
-// The ledger drawer: a modal <dialog> over the wall with today's totals,
-// tokens per character, attribution, the guardrail log and errors. Every
-// figure is set as text; the only markup is built here from constants.
+// The Ledger: today's totals, tokens per character, attribution, the
+// guardrail log and errors, on the shared side panel (sidepanel.js: shut to
+// a tab, docked, or full). Every figure is set as text; the only markup is
+// built here from constants.
 import { identity } from "./model.js";
+import { createSidePanel } from "./sidepanel.js";
 import {
   activeTime, cacheShare, characterOf, costLine, costText, fullNumber, modelName, plural, rowLabels, sumTotals, todaySessions, tokensByCharacter,
   tokensByModel, topAttribution, totalTokens,
 } from "./ledger.js";
 
 const MIN_BAR_PX = 2; // a nonzero count never draws as nothing
+/** An open Ledger reads the ledger again at most this often, however fast snapshots come. */
+export const REFRESH_MS = 5000;
 
 function el(tag, cls, text, attrs) {
   const node = document.createElement(tag);
@@ -84,17 +88,23 @@ const FIGURES = (totals) => {
 };
 
 /**
- * Wire a drawer to `dialog`. `sessions()` gives the wall's current sessions,
- * `cast` the characters, `fetchToday(session)` the ledger_today view, and
- * `home` the header button that takes focus back when the opener is gone.
+ * Wire a drawer to `dialog`, toggled by `button` (which takes focus back when
+ * the opener is gone) and reopened from `tab`, sharing `edge` with the other
+ * side panels. `sessions()` gives the wall's current sessions, `cast` the
+ * characters, `fetchToday(session)` the ledger_today view; `onResized()` runs
+ * once at the end of a drag of the separator.
  */
-export function createDrawer({ dialog, sessions, cast, fetchToday, home }) {
+export function createDrawer({ dialog, button, tab, edge, sessions, cast, fetchToday, onResized }) {
   const content = dialog.querySelector(".ledger-content");
   const dayLabel = dialog.querySelector(".ledger-day");
   let filter = null; // a session id, or null for all
   let opener = null;
   let view = null; // the last good view, held while a refetch runs
   let turn = 0; // a newer fetch makes an older one stale
+  let reading = Promise.resolve(); // the latest read, which open() hands back
+  let readAt = -Infinity; // when the latest read started
+  let later = 0; // a snapshot's read held back by REFRESH_MS
+  let midnight = 0; // the read just past local midnight, when "today" turns over
   let painted = ""; // what the body shows, so an unchanged snapshot leaves it (and focus) alone
 
   const who = () => {
@@ -108,8 +118,8 @@ export function createDrawer({ dialog, sessions, cast, fetchToday, home }) {
   };
 
   function paint() {
-    // A fetch can land between Esc and the close event: a shut drawer neither paints nor takes focus.
-    if (!view || !dialog.open) return;
+    // A fetch can land after the drawer shut: a shut drawer neither paints nor takes focus.
+    if (!view || !panel.isOpen) return;
     const names = who();
     const key = JSON.stringify([view, filter, [...names]]);
     if (key === painted) return;
@@ -310,6 +320,9 @@ export function createDrawer({ dialog, sessions, cast, fetchToday, home }) {
   };
 
   async function refresh() {
+    clearTimeout(later);
+    later = 0;
+    readAt = performance.now();
     const mine = ++turn;
     let next;
     try {
@@ -327,20 +340,43 @@ export function createDrawer({ dialog, sessions, cast, fetchToday, home }) {
     paint();
   }
 
-  function focusBack() {
-    const back = usable(opener) ? opener : home;
-    back.focus();
-    opener = null;
+  /**
+   * Read again a second past the next local midnight, and again each night
+   * after, while the drawer is open: an idle fleet sends no snapshot, and the
+   * day would read yesterday's. Not held back by REFRESH_MS.
+   */
+  function atMidnight() {
+    clearTimeout(midnight);
+    const now = new Date();
+    const next = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1, 0, 0, 1);
+    midnight = setTimeout(() => {
+      refresh();
+      atMidnight();
+    }, next - now);
   }
 
-  dialog.addEventListener("close", () => {
-    turn++; // an answer still on its way has nowhere to go
-    focusBack();
-  });
-  dialog.querySelector(".ledger-close").addEventListener("click", () => dialog.close());
-  // A click on the backdrop lands on the dialog itself, never on its body.
-  dialog.addEventListener("click", (e) => {
-    if (e.target === dialog) dialog.close();
+  /** Read from the start: the drawer opened, or turned to another session. */
+  function start() {
+    atMidnight();
+    view = null;
+    painted = "";
+    content.replaceChildren(el("p", "none", "Reading the ledger…", { role: "status" }));
+    reading = refresh();
+  }
+
+  const panel = createSidePanel({
+    name: "ledger", dialog, button, tab, edge, onResized,
+    // Focus goes back to what opened it, or to the Ledger button once that is gone.
+    returnTo: () => (usable(opener) ? opener : button),
+    onOpen: start,
+    onShut: () => {
+      clearTimeout(later);
+      clearTimeout(midnight);
+      later = 0;
+      turn++; // an answer still on its way has nowhere to go
+      filter = null;
+      opener = null;
+    },
   });
 
   return {
@@ -348,16 +384,20 @@ export function createDrawer({ dialog, sessions, cast, fetchToday, home }) {
     open(session, from) {
       filter = session ?? null;
       opener = from ?? null;
-      view = null;
-      painted = "";
-      content.replaceChildren(el("p", "none", "Reading the ledger…", { role: "status" }));
-      if (!dialog.open) dialog.showModal();
-      return refresh();
+      // Shut, opening reads it (onOpen); open, it turns to the new session.
+      if (panel.isOpen) start();
+      panel.open();
+      return reading;
     },
-    /** Read again, as each snapshot does while the drawer is open. */
-    refresh: () => (dialog.open ? refresh() : undefined),
-    get isOpen() {
-      return dialog.open;
+    /**
+     * Read again for a snapshot while the drawer is open: at once if the last
+     * read is REFRESH_MS old, else once when it is, so a burst reads once.
+     */
+    refresh() {
+      if (!panel.isOpen || later) return;
+      const wait = readAt + REFRESH_MS - performance.now();
+      if (wait <= 0) refresh();
+      else later = setTimeout(refresh, wait);
     },
   };
 }

@@ -169,13 +169,12 @@ def main():
         save(page.screenshot(clip=page.evaluate(CARDS)), "wall-split")
         page.close()
 
-        # The Ledger drawer.
+        # The Ledger, docked beside the wall.
         page = wall(browser, port, 1920, 1000, "demo=8", "comfortable")
         page.click("#ledger-open")
-        drawer = page.get_by_role("dialog", name="Ledger")
-        drawer.wait_for()
+        page.wait_for_selector("#ledger .ledger-content table")
         page.wait_for_timeout(SETTLE_MS)
-        save(drawer.screenshot(), "ledger")
+        save(page.locator("#ledger").screenshot(), "ledger")
         page.close()
 
         # The Queue panel, docked beside the wall.

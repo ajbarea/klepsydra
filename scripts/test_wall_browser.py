@@ -426,8 +426,8 @@ def chip_name(wall):
 
 
 def drawer_opens_and_returns_focus(wall):
-    """The header button and a chip open a modal dialog; Esc and Close shut
-    it and focus goes back to the opener."""
+    """The header button and a chip open the Ledger; Esc and Close shut it
+    and focus goes back to the opener."""
     page = wall.open(1920, 1000, 16)
     page.focus("#ledger-open")
     page.keyboard.press("Enter")
@@ -435,14 +435,14 @@ def drawer_opens_and_returns_focus(wall):
     first = page.evaluate("document.activeElement.id")
     wall.check(first == "ledger-title", "the drawer opens with focus on its title", first)
     named = page.get_by_role("dialog", name="Ledger").count()
-    inert = page.evaluate("document.querySelector('#ledger:modal') !== null")
+    docked = page.evaluate("document.querySelector('#ledger:modal') === null && document.getElementById('ledger').dataset.mode === 'docked'")
     page.keyboard.press("Escape")
     page.wait_for_function(DRAWER_SHUT)
     from_button = page.evaluate(ACTIVE)
     wall.check(
-        named == 1 and inert and from_button["id"] == "ledger-open",
-        "the Ledger button opens a named modal; Esc returns focus to it",
-        [named, inert, from_button],
+        named == 1 and docked and from_button["id"] == "ledger-open",
+        "the Ledger button opens a named panel, docked at 1920; Esc returns focus to it",
+        [named, docked, from_button],
     )
 
     chip = page.locator(".card:has(.name:text-is('Kallos')) .chip")
@@ -3180,19 +3180,24 @@ def queue_full_beside_a_classic_scrollbar(wall):
     browser.close()
 
 
+def open_portrait(page):
+    page.locator(".card .look:not([hidden])").first.click()
+    page.wait_for_function("document.getElementById('portrait').open")
+
+
 def queue_shortcut_waits_behind_another_dialog(wall):
-    """Under the Ledger dialog Ctrl+Alt+B leaves the Queue panel alone, shut or docked."""
-    page = wall.open(1920, 1000, 8)
-    open_drawer(page)
+    """Under another modal dialog (the portrait) Ctrl+Alt+B leaves the Queue panel alone, shut or docked."""
+    page = comfortable(wall, 1920, 8)
+    open_portrait(page)
     page.keyboard.press("Control+Alt+b")
     page.wait_for_timeout(SETTLE_MS)
     shut = page.evaluate(SNAP_STATE)
-    wall.check(not shut["open"] and shut["view"] is None, "under the Ledger dialog Ctrl+Alt+B does not open the shut panel", shut)
+    wall.check(not shut["open"] and shut["view"] is None, "under the portrait dialog Ctrl+Alt+B does not open the shut panel", shut)
     page.close()
-    page = wall.open(1920, 1000, 8)
+    page = comfortable(wall, 1920, 8)
     page.click("#queue-open")
     page.wait_for_selector("#queue[open] .queue-content details")
-    open_drawer(page)
+    open_portrait(page)
     page.keyboard.press("Control+Alt+b")
     page.wait_for_timeout(SETTLE_MS)
     docked = page.evaluate(SNAP_STATE)
@@ -3239,6 +3244,805 @@ def queue_lost_drag_restores(wall):
             [held["width"], after, extra],
         )
         page.close()
+
+
+# The Ledger runs on the Queue's side panel (sidepanel.js): the cases below
+# mirror the Queue's, with the Ledger's own stored keys, and check that the
+# two share the right edge one at a time.
+LEDGER_STATE = """() => {
+  const d = document.getElementById('ledger');
+  const q = document.getElementById('queue');
+  const r = d.getBoundingClientRect();
+  const box = (el) => {
+    if (!el || !el.checkVisibility()) return null;
+    const b = el.getBoundingClientRect();
+    return [Math.round(b.left), Math.round(b.top), Math.round(b.right), Math.round(b.bottom)];
+  };
+  const lt = document.getElementById('ledger-tab');
+  const qt = document.getElementById('queue-tab');
+  const cards = [...document.querySelectorAll('#wall .card')].map((c) => c.getBoundingClientRect());
+  const covers = (t) => !!t && cards.some((c) => c.left < t[2] && c.right > t[0] && c.top < t[3] && c.bottom > t[1]);
+  const hit = (el, t) => {
+    if (!t) return false;
+    const h = document.elementFromPoint((t[0] + t[2]) / 2, (t[1] + t[3]) / 2);
+    return !!h && el.contains(h);
+  };
+  const tab = box(lt);
+  const queueTab = box(qt);
+  return {
+    open: d.open,
+    modal: d.matches(':modal'),
+    mode: d.dataset.mode ?? null,
+    width: Math.round(r.width),
+    left: Math.round(r.left),
+    view: localStorage.getItem('klepsydra.ledger.view'),
+    stored: localStorage.getItem('klepsydra.ledger.width'),
+    text: localStorage.getItem('klepsydra.ledger.text'),
+    zoom: d.querySelector('.ledger-content').style.zoom,
+    reset: d.querySelector('.ledger-reset').textContent,
+    smallerOff: d.querySelector('.ledger-smaller').getAttribute('aria-disabled'),
+    largerOff: d.querySelector('.ledger-larger').getAttribute('aria-disabled'),
+    queueOpen: q.open,
+    queueView: localStorage.getItem('klepsydra.queue.view'),
+    queueStored: localStorage.getItem('klepsydra.queue.width'),
+    queueText: localStorage.getItem('klepsydra.queue.text'),
+    queueZoom: q.querySelector('.queue-content').style.zoom,
+    queueWidth: Math.round(q.getBoundingClientRect().width),
+    tab,
+    queueTab,
+    tabName: lt.getAttribute('aria-label'),
+    tabHit: hit(lt, tab),
+    queueTabHit: hit(qt, queueTab),
+    tabCovers: covers(tab) || covers(queueTab),
+    cardsRight: Math.round(Math.max(...cards.map((c) => c.right))),
+    wallRight: Math.round(document.getElementById('wall').getBoundingClientRect().right),
+    edge: document.documentElement.clientWidth,
+    mid: innerHeight / 2,
+    expanded: document.getElementById('ledger-open').getAttribute('aria-expanded'),
+    active: document.activeElement.id || document.activeElement.className,
+    hscroll: document.documentElement.scrollWidth > innerWidth,
+    docked: document.body.classList.contains('ledger-docked'),
+    full: d.querySelector('.ledger-full').getAttribute('aria-pressed'),
+    textButtons: [...d.querySelectorAll('.ledger-text button')].every((b) => b.checkVisibility()),
+    now: Number(d.querySelector('[role=separator]').getAttribute('aria-valuenow')),
+    scope: d.querySelector('.scope')?.textContent ?? null,
+  };
+}"""
+LEDGER_SHUT = "!document.getElementById('ledger').open && document.getElementById('ledger-open').getAttribute('aria-expanded') === 'false'"
+LEDGER_READ = "#ledger[open] .ledger-content table"
+
+
+def ledger_grip(page):
+    box = page.locator("#ledger .ledger-resize").bounding_box()
+    return box["x"] + box["width"] / 2, box["y"] + 300
+
+
+def tabs_stacked(st):
+    """Both shut tabs on the right edge, clear of the cards and each other: the
+    Queue's mid edge as before, the Ledger's just above it, each clickable."""
+    t, q = st["tab"], st["queueTab"]
+    return (
+        t is not None and q is not None
+        and t[2] == st["edge"] and q[2] == st["edge"]
+        and abs((q[1] + q[3]) / 2 - st["mid"]) <= 1
+        and t[3] <= q[1]
+        and min(t[2] - t[0], t[3] - t[1]) >= 24
+        and st["tabName"] == "Open Ledger"
+        and st["tabHit"] and st["queueTabHit"]
+        and not st["tabCovers"]
+        and st["cardsRight"] <= min(t[0], q[0])
+        and not st["hscroll"]
+    )
+
+
+def drag(page, grip, to_x, steps=15):
+    x, y = grip
+    page.mouse.move(x, y)
+    page.mouse.down()
+    page.mouse.move(to_x, y, steps=steps)
+    page.wait_for_timeout(100)
+
+
+def ledger_docks_wide_and_is_a_dialog_narrow(wall):
+    """At 1920 the Ledger button docks the Ledger beside the wall, which gives
+    up its room; at 945 it is a 600 px modal dialog. Either way it opens with
+    focus on its title and Esc shuts it with focus back on the button."""
+    for width, modal in ((1920, False), (945, True)):
+        page = wall.open(width, 1000, 16 if width == 1920 else 8)
+        page.focus("#ledger-open")
+        page.keyboard.press("Enter")
+        page.wait_for_selector(LEDGER_READ)
+        page.wait_for_timeout(SETTLE_MS)
+        st = page.evaluate(LEDGER_STATE)
+        ok = (
+            st["open"] and st["modal"] is modal and st["mode"] == ("modal" if modal else "docked")
+            and st["expanded"] == "true" and st["active"] == "ledger-title" and not st["hscroll"]
+            and st["width"] == (600 if modal else 480)
+            and (modal or (st["docked"] and st["wallRight"] <= st["left"]))
+            and page.get_by_role("dialog", name="Ledger").count() == 1
+        )
+        wall.check(ok, f"at {width} px the Ledger opens {'as a modal dialog' if modal else 'docked beside the wall'}", st)
+        page.keyboard.press("Escape")
+        page.wait_for_function(LEDGER_SHUT)
+        shut = page.evaluate(LEDGER_STATE)
+        wall.check(
+            shut["active"] == "ledger-open" and not shut["docked"] and shut["view"] == "shut",
+            f"at {width} px Esc shuts the Ledger, the wall gets its room back and focus returns to the button",
+            shut,
+        )
+        page.close()
+
+
+def ledger_gives_auto_its_room(wall):
+    """Docked, the Ledger narrows the wall and Auto measures the narrower wall:
+    eight comfortable cards fit 1920 but not 1440, so it turns compact and
+    never scrolls. A drag of its separator measures once, on release."""
+    page = wall.open(1920, 1000, 8)
+    before = page.evaluate(STATE)
+    page.click("#ledger-open")
+    page.wait_for_selector(LEDGER_READ)
+    page.wait_for_timeout(SETTLE_MS)
+    docked = page.evaluate(STATE)
+    wall.check(
+        before["density"] == "comfortable" and docked["density"] == "compact" and not docked["scrolls"],
+        "with the Ledger docked Auto measures the narrower wall: compact, no scroll",
+        [before, docked],
+    )
+    page.evaluate("""() => {
+      window.__measures = 0;
+      new MutationObserver((m) => { window.__measures += m.length; })
+        .observe(document.querySelector('.density label:has([value=auto])'), { attributes: true, attributeFilter: ['title'] });
+    }""")
+    drag(page, ledger_grip(page), 1920 - 680, steps=20)
+    page.wait_for_timeout(SETTLE_MS)
+    during = page.evaluate("({ measures: window.__measures, stored: localStorage.getItem('klepsydra.ledger.width') })")
+    page.mouse.up()
+    page.wait_for_timeout(SETTLE_MS)
+    after = page.evaluate("({ measures: window.__measures, stored: localStorage.getItem('klepsydra.ledger.width') })")
+    wall.check(
+        during["measures"] == 0 and during["stored"] is None and abs(int(after["stored"] or 0) - 680) <= 2 and after["measures"] == 1,
+        "a drag of the Ledger's separator stores its width and measures Auto once, on release",
+        [during, after],
+    )
+    page.close()
+
+
+def ledger_snaps_by_drag(wall):
+    """Dragged past half its minimum the Ledger snaps shut to its tab, focus on
+    the tab and its width untouched; dragged near the left edge it fills the
+    window as a modal; a drag back out of full docks it where it drops."""
+    page = wall.open(1920, 1000, 16)
+    page.click("#ledger-tab")
+    page.wait_for_selector(LEDGER_READ)
+    opened = page.evaluate(LEDGER_STATE)
+    wall.check(
+        opened["open"] and opened["mode"] == "docked" and opened["width"] == 480 and opened["tab"] is None
+        and opened["queueTab"] is None and opened["active"] == "ledger-title" and opened["view"] == "docked",
+        "a click on the Ledger's tab docks it and focuses its title; both tabs go while it holds the edge",
+        opened,
+    )
+    drag(page, ledger_grip(page), 1920 - 170)
+    least = page.evaluate(LEDGER_STATE)
+    page.mouse.move(1920 - 150, 300, steps=4)
+    page.wait_for_timeout(100)
+    over = page.evaluate(LEDGER_STATE)
+    page.mouse.move(1919, 300, steps=10)
+    page.mouse.up()
+    page.wait_for_timeout(SETTLE_MS)
+    shut = page.evaluate(LEDGER_STATE)
+    wall.check(
+        least["width"] == 320 and over["width"] <= 1 and over["open"]
+        and not shut["open"] and tabs_stacked(shut) and shut["view"] == "shut" and shut["stored"] is None
+        and not shut["docked"] and shut["expanded"] == "false" and shut["active"] == "ledger-tab",
+        "a drag stops at 320, previews shut past 160, and on release snaps shut, the width untouched and the focus on its tab",
+        [least["width"], over["width"], shut],
+    )
+    page.click("#ledger-tab")
+    page.wait_for_selector(LEDGER_READ)
+    drag(page, ledger_grip(page), 340, steps=20)
+    held = page.evaluate(LEDGER_STATE)
+    page.mouse.move(10, 300, steps=5)
+    page.mouse.up()
+    page.wait_for_timeout(SETTLE_MS)
+    full = page.evaluate(LEDGER_STATE)
+    wall.check(
+        held["width"] == 1920 and full["open"] and full["modal"] and full["mode"] == "full" and full["width"] == 1920
+        and full["left"] == 0 and full["full"] == "true" and full["textButtons"] and full["view"] == "full"
+        and full["stored"] is None and not full["hscroll"],
+        "a drag past 350 px from the left previews full, and on release fills the window as a modal with its text controls",
+        [held["width"], full],
+    )
+    page.keyboard.press("Escape")
+    page.wait_for_timeout(SETTLE_MS)
+    esc = page.evaluate(LEDGER_STATE)
+    page.click("#ledger .ledger-full")
+    page.wait_for_timeout(SETTLE_MS)
+    drag(page, ledger_grip(page), 1100, steps=20)
+    page.mouse.up()
+    page.wait_for_timeout(SETTLE_MS)
+    dropped = page.evaluate(LEDGER_STATE)
+    wall.check(
+        esc["mode"] == "docked" and not esc["modal"] and esc["width"] == 480 and esc["active"] == "ledger-title"
+        and dropped["mode"] == "docked" and dropped["width"] == 820 and dropped["stored"] == "820"
+        and dropped["active"] == "ledger-resize",
+        "Esc in full docks it; a drag right out of full docks it where it drops, focus kept on its separator",
+        [esc, dropped],
+    )
+    page.close()
+
+
+def ledger_separator_snaps_by_keyboard(wall):
+    """The Ledger's separator is the APG window splitter: Enter shuts it to its
+    tab and Enter there restores it; Home at the narrowest shuts it, End at
+    the widest fills the window, and Enter in full docks it."""
+    page = wall.open(1920, 1000, 8)
+    page.click("#ledger-open")
+    page.wait_for_selector(LEDGER_READ)
+    sep = page.locator("#ledger [role=separator]")
+    sep.focus()
+    page.keyboard.press("ArrowLeft")
+    page.keyboard.press("ArrowLeft")
+    wider = page.evaluate(LEDGER_STATE)
+    page.keyboard.press("Enter")
+    page.wait_for_timeout(SETTLE_MS)
+    entered = page.evaluate(LEDGER_STATE)
+    page.keyboard.press("Enter")
+    page.wait_for_selector(LEDGER_READ)
+    restored = page.evaluate(LEDGER_STATE)
+    wall.check(
+        wider["width"] == 512 and wider["stored"] == "512" and wider["queueStored"] is None
+        and not entered["open"] and entered["active"] == "ledger-tab" and tabs_stacked(entered)
+        and restored["open"] and restored["width"] == 512 and restored["active"] == "ledger-title",
+        "arrows step the Ledger alone; Enter on its separator shuts it to its tab, Enter on the tab restores it",
+        [wider, entered, restored],
+    )
+    sep.focus()
+    page.keyboard.press("Home")
+    home = page.evaluate(LEDGER_STATE)
+    page.keyboard.press("Home")
+    page.wait_for_timeout(SETTLE_MS)
+    home2 = page.evaluate(LEDGER_STATE)
+    page.keyboard.press(" ")
+    page.wait_for_selector(LEDGER_READ)
+    spaced = page.evaluate(LEDGER_STATE)
+    wall.check(
+        home["now"] == 320 and home["open"] and not home2["open"] and home2["active"] == "ledger-tab"
+        and home2["stored"] == "320" and spaced["open"] and spaced["width"] == 320,
+        "Home reaches 320, a second Home shuts it, and Space on its tab reopens it at 320",
+        [home, home2, spaced],
+    )
+    sep.focus()
+    page.keyboard.press("End")
+    end = page.evaluate(LEDGER_STATE)
+    page.keyboard.press("End")
+    page.wait_for_timeout(SETTLE_MS)
+    end2 = page.evaluate(LEDGER_STATE)
+    page.keyboard.press("Enter")
+    page.wait_for_timeout(SETTLE_MS)
+    out = page.evaluate(LEDGER_STATE)
+    wall.check(
+        end["now"] == 900 and not end["modal"]
+        and end2["mode"] == "full" and end2["modal"] and end2["width"] == 1920 and end2["active"] == "ledger-resize"
+        and out["mode"] == "docked" and out["width"] == 900 and out["active"] == "ledger-resize",
+        "End reaches 900, a second End fills the window with focus kept on the separator, and Enter docks it again",
+        [end, end2, out],
+    )
+    page.close()
+
+
+def ledger_text_size(wall):
+    """A-/A+ and the percentage set the Ledger's text size from 75% to 200%;
+    Ctrl+= / Ctrl+- / Ctrl+0 act while it is open, Ctrl+wheel over it steps
+    it, the cards never change, and the Queue's size is its own."""
+    page = wall.open(1920, 1000, 8)
+    page.keyboard.press("Control+Equal")
+    closed = page.evaluate(LEDGER_STATE)
+    wall.check(closed["zoom"] == "1" and closed["text"] is None and closed["queueText"] is None, "with both panels shut Ctrl+= changes nothing", closed)
+    page.click("#ledger-open")
+    page.wait_for_selector(LEDGER_READ)
+    page.wait_for_timeout(SETTLE_MS)
+    name = lambda: page.evaluate("Math.round(document.querySelector('#wall .card .name').getBoundingClientRect().height * 10)")
+    card_name = name()
+    page.keyboard.press("Control+Equal")
+    page.keyboard.press("Control+Equal")
+    up = page.evaluate(LEDGER_STATE)
+    page.keyboard.press("Control+Minus")
+    down = page.evaluate(LEDGER_STATE)["zoom"]
+    page.keyboard.press("Control+0")
+    reset = page.evaluate(LEDGER_STATE)
+    wall.check(
+        up["zoom"] == "1.25" and up["reset"] == "125%" and up["text"] == "1.25" and up["queueText"] is None
+        and name() == card_name and down == "1.1" and reset["zoom"] == "1" and reset["text"] == "1",
+        "Ctrl+= steps the Ledger 110% then 125%, Ctrl+- back, Ctrl+0 resets; the cards and the Queue keep their size",
+        [up, down, reset],
+    )
+    for _ in range(6):
+        page.click("#ledger .ledger-larger", force=True)
+    most = page.evaluate(LEDGER_STATE)
+    page.click("#ledger .ledger-reset")
+    for _ in range(4):
+        page.click("#ledger .ledger-smaller", force=True)
+    least = page.evaluate(LEDGER_STATE)
+    wall.check(
+        most["zoom"] == "2" and most["largerOff"] == "true" and most["smallerOff"] == "false" and not most["hscroll"]
+        and least["zoom"] == "0.75" and least["smallerOff"] == "true",
+        "A+ stops at 200% and A- at 75%, each turning off there; nothing scrolls sideways",
+        [most, least],
+    )
+    page.click("#ledger .ledger-reset")
+    box = page.locator("#ledger .ledger-content").bounding_box()
+    page.mouse.move(box["x"] + box["width"] / 2, box["y"] + 40)
+    page.keyboard.down("Control")
+    page.mouse.wheel(0, -100)
+    page.wait_for_timeout(150)
+    page.mouse.wheel(0, -100)
+    page.keyboard.up("Control")
+    page.wait_for_timeout(100)
+    wheeled = page.evaluate(LEDGER_STATE)["zoom"]
+    wall.check(wheeled == "1.25", "Ctrl+wheel over the Ledger steps a notch at a time", wheeled)
+    page.locator("#ledger [role=separator]").focus()
+    page.keyboard.press("Home")
+    narrow = page.evaluate("""() => {
+      const d = document.getElementById('ledger').getBoundingClientRect();
+      const h = document.getElementById('ledger-title').getBoundingClientRect();
+      const t = document.querySelector('#ledger .ledger-tools').getBoundingClientRect();
+      return {
+        inside: [...document.querySelectorAll('#ledger .ledger-tools button')].every((b) => { const r = b.getBoundingClientRect(); return r.width > 0 && r.left >= d.left && r.right <= d.right; }),
+        apart: h.right <= t.left || h.bottom <= t.top,
+        sideways: document.querySelector('#ledger .ledger-body').scrollWidth > document.querySelector('#ledger .ledger-body').clientWidth,
+      };
+    }""")
+    wall.check(narrow["inside"] and narrow["apart"] and not narrow["sideways"], "at 320 px the Ledger's header buttons stay inside it, clear of the title, at 125%", narrow)
+    page.close()
+    page = wall.open(945, 1000, 8)
+    page.click("#ledger-open")
+    page.wait_for_selector(LEDGER_READ)
+    page.keyboard.press("Control+Equal")
+    modal = page.evaluate(LEDGER_STATE)
+    wall.check(modal["zoom"] == "1.1" and modal["modal"], "as a dialog at 945 px the keys work", modal)
+    page.close()
+
+
+def panels_remember_separately(wall):
+    """Each panel keeps its own view, width and text size across a reload:
+    the Queue under klepsydra.queue.*, the Ledger under klepsydra.ledger.*."""
+    page = wall.open(1920, 1000, 8)
+    page.click("#ledger-open")
+    page.wait_for_selector(LEDGER_READ)
+    page.locator("#ledger [role=separator]").focus()
+    for _ in range(4):
+        page.keyboard.press("ArrowLeft")
+    page.click("#ledger .ledger-larger")
+    page.click("#ledger .ledger-larger")
+    page.click("#queue-open")
+    page.wait_for_selector("#queue[open] .queue-content details")
+    page.click("#queue .queue-smaller")
+    swapped = page.evaluate(LEDGER_STATE)
+    page.reload()
+    page.wait_for_selector("#queue[open] .queue-content details")
+    page.wait_for_timeout(SETTLE_MS)
+    queue_back = page.evaluate(LEDGER_STATE)
+    page.click("#ledger-open")
+    page.wait_for_selector(LEDGER_READ)
+    page.wait_for_timeout(SETTLE_MS)
+    ledger_back = page.evaluate(LEDGER_STATE)
+    page.reload()
+    page.wait_for_selector(LEDGER_READ)
+    page.wait_for_timeout(SETTLE_MS)
+    again = page.evaluate(LEDGER_STATE)
+    wall.check(
+        not swapped["open"] and swapped["queueOpen"] and swapped["stored"] == "544" and swapped["text"] == "1.25"
+        and swapped["queueText"] == "0.9" and swapped["queueStored"] is None
+        and queue_back["queueOpen"] and queue_back["queueWidth"] == 480 and queue_back["queueZoom"] == "0.9"
+        and not queue_back["open"] and queue_back["zoom"] == "1.25"
+        and ledger_back["open"] and ledger_back["width"] == 544 and ledger_back["zoom"] == "1.25" and not ledger_back["queueOpen"]
+        and again["open"] and again["mode"] == "docked" and again["width"] == 544 and not again["queueOpen"]
+        and again["queueZoom"] == "0.9" and not again["hscroll"],
+        "the Ledger and the Queue each come back from a reload with their own view, width and text size",
+        [swapped, queue_back, ledger_back, again],
+    )
+    page.close()
+
+
+def panels_one_at_a_time(wall):
+    """The Queue and the Ledger share the right edge one at a time: first run
+    shows both tabs stacked; opening either, docked or full, shuts the other
+    and hides both tabs; shutting it brings both back."""
+    page = wall.open(1920, 1000, 16)
+    first = page.evaluate(LEDGER_STATE)
+    wall.check(not first["open"] and not first["queueOpen"] and tabs_stacked(first), "first run: both panels shut, both tabs stacked on the edge, clear of the cards", first)
+    page.click("#queue-tab")
+    page.wait_for_selector("#queue[open] .queue-content details")
+    page.click("#ledger-open")
+    page.wait_for_selector(LEDGER_READ)
+    page.wait_for_timeout(SETTLE_MS)
+    ledger = page.evaluate(LEDGER_STATE)
+    wall.check(
+        ledger["open"] and ledger["mode"] == "docked" and not ledger["queueOpen"] and ledger["queueView"] == "shut"
+        and ledger["tab"] is None and ledger["queueTab"] is None and ledger["active"] == "ledger-title"
+        and ledger["wallRight"] <= ledger["left"] and not ledger["hscroll"],
+        "the Ledger button over a docked Queue shuts the Queue and docks the Ledger; no tab shows over it",
+        ledger,
+    )
+    page.keyboard.press("Control+Alt+b")
+    page.wait_for_selector("#queue[open] .queue-content details")
+    page.wait_for_timeout(SETTLE_MS)
+    keyed = page.evaluate(LEDGER_STATE)
+    wall.check(
+        keyed["queueOpen"] and not keyed["open"] and keyed["view"] == "shut" and keyed["active"] == "queue-title"
+        and keyed["tab"] is None and keyed["queueTab"] is None,
+        "Ctrl+Alt+B over the docked Ledger opens the Queue and shuts the Ledger",
+        keyed,
+    )
+    page.click("#queue .queue-close")
+    page.wait_for_function(QUEUE_SHUT)
+    page.click("#ledger-tab")
+    page.wait_for_selector(LEDGER_READ)
+    page.click("#ledger .ledger-full")
+    page.wait_for_timeout(SETTLE_MS)
+    full = page.evaluate(LEDGER_STATE)
+    page.keyboard.press("Escape")
+    page.wait_for_timeout(SETTLE_MS)
+    page.click("#queue-open")
+    page.wait_for_selector("#queue[open] .queue-content details")
+    page.wait_for_timeout(SETTLE_MS)
+    swapped = page.evaluate(LEDGER_STATE)
+    page.click("#queue .queue-close")
+    page.wait_for_function(QUEUE_SHUT)
+    back = page.evaluate(LEDGER_STATE)
+    wall.check(
+        full["mode"] == "full" and full["modal"] and full["queueTab"] is None and full["tab"] is None
+        and swapped["queueOpen"] and not swapped["open"] and swapped["view"] == "shut"
+        and tabs_stacked(back) and back["active"] == "queue-open",
+        "full holds the edge too; the Queue button over the Ledger swaps them, and Close brings both tabs back",
+        [full, swapped, back],
+    )
+    page.close()
+
+
+def ledger_chip_opens_on_a_session(wall):
+    """A card's chip opens the docked Ledger on that session; another chip
+    while it is open turns it to that one; Close returns focus to the chip;
+    the Ledger button shuts the open Ledger; a snapshot reads it again."""
+    page = wall.open(1920, 1000, 16)
+    kallos = page.locator(".card:has(.name:text-is('Kallos')) .chip")
+    kallos.click()
+    page.wait_for_selector("#ledger .scope")
+    st = page.evaluate(LEDGER_STATE)
+    wall.check(
+        st["open"] and st["mode"] == "docked" and "Showing Kallos only" in (st["scope"] or "") and st["active"] == "ledger-title",
+        "a chip opens the docked Ledger on its session, focus on the title",
+        st,
+    )
+    other = page.locator(".card:not(:has(.name:text-is('Kallos'))) .chip:not([hidden])").first
+    who = other.evaluate("(c) => c.closest('.card').querySelector('.name').textContent")
+    other.click()
+    page.wait_for_function("(who) => document.querySelector('#ledger .scope')?.textContent.includes(`Showing ${who} only`)", arg=who)
+    turned = page.evaluate(LEDGER_STATE)
+    # Full and back keep the session and the opener: docked to full is no shut.
+    page.click("#ledger .ledger-full")
+    page.wait_for_timeout(SETTLE_MS)
+    page.keyboard.press("Escape")
+    page.wait_for_timeout(SETTLE_MS)
+    turned["scope"] = page.evaluate("document.querySelector('#ledger .scope')?.textContent ?? null")
+    page.click("#ledger .ledger-close")
+    page.wait_for_function(LEDGER_SHUT)
+    back = page.evaluate(ACTIVE)
+    wall.check(
+        turned["open"] and turned["active"] == "ledger-title" and f"Showing {who} only" in (turned["scope"] or "")
+        and back["card"] == who and "chip" in back["cls"],
+        "another chip turns the open Ledger to its session, which full and back keep; Close returns focus to that chip",
+        [turned["scope"], back],
+    )
+    page.click("#ledger-open")
+    page.wait_for_selector(LEDGER_READ)
+    unfiltered = page.evaluate(LEDGER_STATE)["scope"]
+    seen = wall.ledger_requests
+    waited = 0
+    while wall.ledger_requests <= seen and waited < 20000:
+        page.wait_for_timeout(250)
+        waited += 250
+    read_again = wall.ledger_requests > seen
+    page.click("#ledger-open")
+    page.wait_for_function(LEDGER_SHUT)
+    toggled = page.evaluate(LEDGER_STATE)
+    wall.check(
+        unfiltered is None and read_again and not toggled["open"] and toggled["active"] == "ledger-open",
+        "the Ledger button opens it on every session (a closed filter is forgotten), a snapshot reads it again, and the button shuts it",
+        [unfiltered, read_again, toggled],
+    )
+    page.close()
+
+
+def ledger_old_and_narrow_state(wall):
+    """Below the dock breakpoint a stored Ledger view starts shut, unforgotten,
+    with no tab; docked is the 600 px dialog, full the whole window, and Esc
+    steps back through them. A corrupt stored view or width is shut and 480."""
+    def at(width, values):
+        page = wall.browser.new_page(viewport={"width": width, "height": 1000})
+        page.goto(f"http://127.0.0.1:{wall.port}/src/wall.html?demo=8")
+        page.evaluate("(v) => { localStorage.clear(); for (const [k, x] of Object.entries(v)) localStorage.setItem(k, x); }", values)
+        page.reload()
+        page.wait_for_function("document.getElementById('wall').children.length === 8")
+        page.wait_for_timeout(SETTLE_MS)
+        return page
+
+    page = at(1920, {"klepsydra.ledger.view": "banana", "klepsydra.ledger.width": "abc", "klepsydra.ledger.text": "x"})
+    bad = page.evaluate(LEDGER_STATE)
+    page.click("#ledger-tab")
+    page.wait_for_selector(LEDGER_READ)
+    bad_open = page.evaluate(LEDGER_STATE)
+    wall.check(not bad["open"] and tabs_stacked(bad) and bad_open["width"] == 480 and bad_open["zoom"] == "1", "a corrupt Ledger view is shut with its tab; a corrupt width opens at 480, a corrupt size at 100%", [bad, bad_open])
+    page.close()
+    page = at(1920, {"klepsydra.ledger.view": "docked", "klepsydra.ledger.width": "5000"})
+    big = page.evaluate(LEDGER_STATE)
+    wall.check(big["open"] and big["mode"] == "docked" and big["width"] == 900 and not big["hscroll"], "a stored docked Ledger reopens at load; a width past the maximum is held to 900", big)
+    page.close()
+
+    page = at(945, {"klepsydra.ledger.view": "full", "klepsydra.ledger.width": "700"})
+    start = page.evaluate(LEDGER_STATE)
+    wall.check(not start["open"] and start["tab"] is None and start["queueTab"] is None and start["view"] == "full", "at 945 a stored full Ledger starts shut, with no tab, and is not forgotten", start)
+    page.click("#ledger-open")
+    page.wait_for_selector(LEDGER_READ)
+    dialog = page.evaluate(LEDGER_STATE)
+    page.click("#ledger .ledger-full")
+    page.wait_for_timeout(SETTLE_MS)
+    full = page.evaluate(LEDGER_STATE)
+    page.keyboard.press("Escape")
+    page.wait_for_timeout(SETTLE_MS)
+    esc = page.evaluate(LEDGER_STATE)
+    page.keyboard.press("Escape")
+    page.wait_for_function(LEDGER_SHUT)
+    shut = page.evaluate(LEDGER_STATE)
+    wall.check(
+        dialog["modal"] and dialog["mode"] == "modal" and dialog["width"] == 600 and dialog["textButtons"]
+        and full["modal"] and full["mode"] == "full" and full["width"] == 945 and full["textButtons"] and not full["hscroll"]
+        and esc["modal"] and esc["width"] == 600
+        and not shut["open"] and shut["tab"] is None and shut["active"] == "ledger-open" and shut["stored"] == "700",
+        "at 945 the Ledger is the 600 px dialog, Full screen the whole window, Esc steps back to the dialog then shut, its width kept",
+        [dialog, full, esc, shut],
+    )
+    page.click("#ledger-open")
+    page.wait_for_selector(LEDGER_READ)
+    page.mouse.click(10, 500)  # the backdrop
+    page.wait_for_function(LEDGER_SHUT)
+    backdrop = page.evaluate(LEDGER_STATE)
+    wide = wall.resize(page, 1920, 1000) and page.evaluate(LEDGER_STATE)
+    wall.check(backdrop["active"] == "ledger-open" and tabs_stacked(wide), "the backdrop shuts the dialog, focus on the button; widened, both tabs show", [backdrop, wide])
+    page.close()
+
+
+def panels_reduced_motion(wall):
+    """Under prefers-reduced-motion no panel or tab animates: not opening, not
+    in a held drag's preview, not snapping; a transition either panel gains is
+    zeroed by the page's reduced-motion rule."""
+    page = wall.browser.new_page(viewport={"width": 1920, "height": 1000}, reduced_motion="reduce")
+    page.goto(f"http://127.0.0.1:{wall.port}/src/wall.html?demo=8")
+    page.wait_for_function("document.getElementById('wall').children.length === 8")
+    # Any transition a panel or tab might gain later; the reduced-motion rule must still win.
+    page.add_style_tag(content=".ledger, .queue, .ledger-tab, .queue-tab, .ledger-body, .queue-body { transition: width 400ms, left 400ms, opacity 400ms, translate 400ms; }")
+    moving = """() => {
+      const parts = ['#ledger', '#queue', '#ledger-tab', '#queue-tab'].map((s) => document.querySelector(s));
+      const ours = document.getAnimations().filter((a) => parts.some((p) => p.contains(a.effect?.target)));
+      return {
+        running: ours.length,
+        durations: parts.map((p) => getComputedStyle(p).transitionDuration),
+      };
+    }"""
+    page.click("#ledger-tab")
+    page.wait_for_selector(LEDGER_READ)
+    opened = page.evaluate(moving)
+    drag(page, ledger_grip(page), 1920 - 150)
+    held = page.evaluate(moving)
+    page.mouse.move(1919, 300, steps=5)
+    page.mouse.up()
+    snapped = page.evaluate(moving)
+    page.click("#queue-tab")
+    page.wait_for_selector("#queue[open] .queue-content details")
+    queued = page.evaluate(moving)
+    still = all(m["running"] == 0 and all(d == "0s" for d in m["durations"]) for m in (opened, held, snapped, queued))
+    wall.check(still, "under reduced motion the panels and tabs neither animate nor transition, opening, dragging or snapping", [opened, held, snapped, queued])
+    page.close()
+
+
+def ledger_button_keeps_focus(wall):
+    """The Ledger button toggles: shutting a Ledger a chip opened keeps focus
+    on the button; Close and Esc give it back to the chip, docked or as the
+    narrow dialog."""
+    page = wall.open(1920, 1000, 16)
+    chip = page.locator(".card:has(.name:text-is('Kallos')) .chip")
+    chip.click()
+    page.wait_for_selector("#ledger .scope")
+    page.click("#ledger-open")
+    page.wait_for_function(LEDGER_SHUT)
+    toggled = page.evaluate(ACTIVE)
+    chip.click()
+    page.wait_for_selector("#ledger .scope")
+    page.keyboard.press("Escape")
+    page.wait_for_function(LEDGER_SHUT)
+    escaped = page.evaluate(ACTIVE)
+    wall.check(
+        toggled["id"] == "ledger-open" and escaped["card"] == "Kallos" and "chip" in escaped["cls"],
+        "the Ledger button shuts a chip-opened Ledger with focus on the button; Esc returns it to the chip",
+        [toggled, escaped],
+    )
+    page.close()
+    page = wall.open(945, 1000, 8)
+    chip = page.locator(".card:has(.name:text-is('Kallos')) .chip")
+    chip.click()
+    page.wait_for_selector("#ledger .scope")
+    modal = page.evaluate("document.getElementById('ledger').matches(':modal')")
+    page.keyboard.press("Escape")
+    page.wait_for_function(LEDGER_SHUT)
+    escaped = page.evaluate(ACTIVE)
+    chip.click()
+    page.wait_for_selector("#ledger .scope")
+    page.click("#ledger .ledger-close")
+    page.wait_for_function(LEDGER_SHUT)
+    closed = page.evaluate(ACTIVE)
+    wall.check(
+        modal and escaped["card"] == "Kallos" and "chip" in escaped["cls"] and closed["card"] == "Kallos",
+        "as the 945 px dialog, Esc and Close return focus to the chip that opened it",
+        [modal, escaped, closed],
+    )
+    page.close()
+
+
+REFLOW = """() => {
+  const body = document.querySelector('#ledger .ledger-body');
+  const edge = body.getBoundingClientRect().right;
+  const over = [...document.querySelectorAll('#ledger .ledger-content *')]
+    .filter((el) => el.getClientRects().length && el.getBoundingClientRect().right > edge + 0.5)
+    .map((el) => el.tagName + '.' + el.className + ':' + Math.round(el.getBoundingClientRect().right - edge));
+  return {
+    zoom: document.querySelector('#ledger .ledger-content').style.zoom,
+    width: Math.round(document.getElementById('ledger').getBoundingClientRect().width),
+    sideways: body.scrollWidth - body.clientWidth,
+    over: over.slice(0, 4),
+  };
+}"""
+
+
+def ledger_reflows_at_every_size(wall):
+    """No text size from 75% to 200% scrolls the Ledger sideways, docked at
+    320 and 480 px or as the 600 px dialog: figures and tables reflow."""
+    bad = []
+    seen = 0
+    for width, cards, at in ((1920, 8, (320, 480)), (945, 8, (600,))):
+        page = wall.open(width, 1000, cards)
+        page.click("#ledger-open")
+        page.wait_for_selector(LEDGER_READ)
+        for want in at:
+            if width == 1920:
+                sep = page.locator("#ledger [role=separator]")
+                sep.focus()
+                now = int(sep.get_attribute("aria-valuenow"))
+                for _ in range(abs(want - now) // 16):
+                    page.keyboard.press("ArrowRight" if want < now else "ArrowLeft")
+            for _ in range(4):
+                page.keyboard.press("Control+Minus")
+            for step in range(9):
+                if step:
+                    page.keyboard.press("Control+Equal")
+                st = page.evaluate(REFLOW)
+                seen += 1
+                if st["width"] != want or st["sideways"] > 0 or st["over"]:
+                    bad.append(st)
+        page.close()
+    wall.check(seen == 27 and not bad, "no text size from 75% to 200% scrolls the Ledger sideways at 320, 480 or 600 px", bad[:4] or seen)
+
+
+def ctrl_alt_b_over_any_ledger(wall):
+    """One at a time in every state: Ctrl+Alt+B over a full Ledger, or the
+    narrow dialog, shuts it and opens the Queue."""
+    page = wall.open(1920, 1000, 8)
+    page.click("#ledger-open")
+    page.wait_for_selector(LEDGER_READ)
+    page.click("#ledger .ledger-full")
+    page.wait_for_timeout(SETTLE_MS)
+    page.keyboard.press("Control+Alt+b")
+    page.wait_for_timeout(SETTLE_MS)
+    full = page.evaluate(LEDGER_STATE)
+    page.close()
+    page = wall.open(945, 1000, 8)
+    page.click("#ledger-open")
+    page.wait_for_selector(LEDGER_READ)
+    page.keyboard.press("Control+Alt+b")
+    page.wait_for_timeout(SETTLE_MS)
+    narrow = page.evaluate(LEDGER_STATE)
+    narrow["queueModal"] = page.evaluate("document.getElementById('queue').matches(':modal')")
+    page.close()
+    wall.check(
+        not full["open"] and full["queueOpen"] and full["queueView"] == "docked" and full["active"] == "queue-title"
+        and not narrow["open"] and narrow["queueOpen"] and narrow["queueModal"] and narrow["active"] == "queue-title",
+        "Ctrl+Alt+B over a full Ledger or the narrow Ledger dialog shuts it and opens the Queue",
+        [full, narrow],
+    )
+
+
+def ledger_reads_bounded(wall):
+    """An open Ledger reads the ledger at most once every 5 s however fast
+    snapshots come, and catches up once after a burst."""
+    page = open_app(wall, 1920, 1000)
+    page.evaluate("""() => {
+      const inv = window.__TAURI__.core.invoke;
+      window.__reads = 0;
+      window.__TAURI__.core.invoke = (cmd, args) => {
+        if (cmd !== 'ledger_today') return inv(cmd, args);
+        window.__reads++;
+        return fetch('/scripts/fixtures/ledger-demo.json').then((r) => r.json()).then(({ at, ...v }) => v);
+      };
+    }""")
+    page.click("#ledger-open")
+    page.wait_for_selector(LEDGER_READ)
+    opened = page.evaluate("window.__reads")
+    for _ in range(20):
+        page.evaluate("(s) => window.__channel.onmessage(s)", page.snapshot)
+        page.wait_for_timeout(100)
+    burst = page.evaluate("window.__reads") - opened
+    page.wait_for_timeout(4000)
+    caught = page.evaluate("window.__reads") - opened
+    page.click("#ledger-open")
+    page.wait_for_function(LEDGER_SHUT)
+    shut = page.evaluate("window.__reads")
+    for _ in range(5):
+        page.evaluate("(s) => window.__channel.onmessage(s)", page.snapshot)
+    page.wait_for_timeout(5500)
+    after = page.evaluate("window.__reads") - shut
+    wall.check(
+        opened == 1 and burst == 0 and caught == 1 and after == 0,
+        "20 snapshots in 2 s read the open Ledger once, 5 s after it opened; a shut one reads nothing",
+        {"opened": opened, "during the burst": burst, "after 6 s": caught, "after shutting": after},
+    )
+    page.close()
+
+
+def ledger_rolls_over_at_midnight(wall):
+    """An open Ledger reads again just past local midnight with no snapshot
+    to prompt it, even within 5 s of a snapshot's read; a shut one does not."""
+    import datetime
+    import time
+
+    fixture = json.loads((ROOT / "scripts/fixtures/fleet-demo.json").read_text())
+    at = fixture.pop("at")
+    snapshot = shifted(fixture, int(time.time()) - at)
+    page = wall.browser.new_page(viewport={"width": 1920, "height": 1000}, timezone_id="UTC")
+    page.clock.install(time=datetime.datetime(2026, 10, 27, 23, 59, 30, tzinfo=datetime.timezone.utc))
+    page.add_init_script(TAURI_STUB % json.dumps(snapshot))
+    page.add_init_script("""(() => {
+      const inv = window.__TAURI__.core.invoke;
+      window.__reads = 0;
+      window.__TAURI__.core.invoke = (cmd, args) => {
+        if (cmd !== 'ledger_today') return inv(cmd, args);
+        window.__reads++;
+        return fetch('/scripts/fixtures/ledger-demo.json').then((r) => r.json()).then(({ at, ...v }) => v);
+      };
+    })()""")
+    page.goto(f"http://127.0.0.1:{wall.port}/src/wall.html")
+    page.wait_for_function("document.getElementById('wall').children.length > 0")
+    page.click("#ledger-open")
+    page.wait_for_selector(LEDGER_READ)
+    reads = lambda: page.evaluate("window.__reads")
+    opened = reads()
+    page.clock.run_for(25000)  # 23:59:55, no snapshot: no read
+    quiet = reads()
+    page.evaluate("(s) => window.__channel.onmessage(s)", snapshot)  # its read is due at once
+    page.wait_for_timeout(100)
+    snapped = reads()
+    page.clock.run_for(8000)  # past 00:00, under 5 s after that read
+    page.wait_for_timeout(100)
+    rolled = reads()
+    page.click("#ledger-open")
+    page.wait_for_function(LEDGER_SHUT)
+    page.clock.fast_forward("24:00:00")
+    page.wait_for_timeout(100)
+    shut = reads()
+    wall.check(
+        opened == 1 and quiet == 1 and snapped == 2 and rolled == 3 and shut == 3,
+        "an open Ledger reads again just past midnight, not held back by the 5 s bound; a shut one does not",
+        {"opened": opened, "23:59:55": quiet, "snapshot": snapped, "00:00:03": rolled, "a day shut": shut},
+    )
+    page.close()
 
 
 def split_toggle(wall):
@@ -3361,6 +4165,21 @@ def main() -> int:
             queue_full_beside_a_classic_scrollbar,
             queue_shortcut_waits_behind_another_dialog,
             queue_lost_drag_restores,
+            ledger_docks_wide_and_is_a_dialog_narrow,
+            ledger_gives_auto_its_room,
+            ledger_snaps_by_drag,
+            ledger_separator_snaps_by_keyboard,
+            ledger_text_size,
+            panels_remember_separately,
+            panels_one_at_a_time,
+            ledger_chip_opens_on_a_session,
+            ledger_old_and_narrow_state,
+            panels_reduced_motion,
+            ledger_button_keeps_focus,
+            ledger_reflows_at_every_size,
+            ctrl_alt_b_over_any_ledger,
+            ledger_reads_bounded,
+            ledger_rolls_over_at_midnight,
             split_toggle,
         )
         for case in cases:

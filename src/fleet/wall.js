@@ -8,6 +8,7 @@ import { askedNote, asking, isReady, readiness, wrapupAnnouncements, wrapupCopy,
 import { inTauri, served, subscribe, todayLedger } from "./feed.js";
 import { createDrawer } from "./drawer.js";
 import { createQueuePanel } from "./queuepanel.js";
+import { createEdge } from "./sidepanel.js";
 import { showFace } from "./face.js";
 import { GOLD, SPEAK_FADE_MS, STILL, Speaker, WAVE, waves } from "./speaking.js";
 import { parseDensity, resolveDensity } from "./density.js";
@@ -92,20 +93,24 @@ const phoneNarrow = () => served && matchMedia("(max-width: 600px)").matches;
 let sessions = [];
 let request = null; // the snapshot's wrap-up, while one is shown
 let latestSnapshot = null; // its usage readings draw the limit gauges
-const ledgerButton = document.getElementById("ledger-open");
+// The Ledger and the Queue share the right edge, one open at a time. Docked,
+// a panel narrows the wall, and Auto measures again (its ResizeObserver).
+const edge = createEdge();
 const drawer = createDrawer({
   dialog: document.getElementById("ledger"),
+  button: document.getElementById("ledger-open"),
+  tab: document.getElementById("ledger-tab"),
+  edge,
   sessions: () => sessions,
   cast,
   fetchToday: todayLedger,
-  home: ledgerButton,
+  onResized: () => showDensity(),
 });
-ledgerButton.addEventListener("click", () => drawer.open(null, ledgerButton));
-// Docked, the panel narrows the wall, and Auto measures again (its ResizeObserver).
-const queue = createQueuePanel({
+createQueuePanel({
   dialog: document.getElementById("queue"),
   button: document.getElementById("queue-open"),
   tab: document.getElementById("queue-tab"),
+  edge,
   onResized: () => showDensity(),
 });
 let before;
@@ -1021,8 +1026,8 @@ function comfortableFits(extra) {
   probe.inert = true;
   probe.setAttribute("aria-hidden", "true");
   // The window's whole width: a wall that fits shows no scrollbar to take any of it.
-  // Less the docked Queue panel, which the wall gives up its room to.
-  Object.assign(probe.style, { position: "absolute", top: "0", left: "0", width: `${innerWidth - queue.dockedWidth()}px`, visibility: "hidden" });
+  // Less the docked panel (Queue or Ledger), which the wall gives up its room to.
+  Object.assign(probe.style, { position: "absolute", top: "0", left: "0", width: `${innerWidth - edge.dockedWidth()}px`, visibility: "hidden" });
   const copy = (el) => {
     const c = el.cloneNode(true);
     c.dataset.density = "comfortable";
@@ -1076,7 +1081,7 @@ addEventListener("resize", () => {
 // switch it makes changes the height too, and the hysteresis holds it there.
 let densityFrame = 0;
 new ResizeObserver(() => {
-  if (queue.resizing) return; // a drag of the Queue panel measures once, on release
+  if (edge.resizing) return; // a drag of a panel's separator measures once, on release
   cancelAnimationFrame(densityFrame);
   densityFrame = requestAnimationFrame(showDensity);
 }).observe(wall);
