@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/wall-comfortable.png" alt="The fleet wall at 1920 px: eight session cards in two rows, each with a portrait, status, repo and branch, the last prompt and reply, and Open terminal; one card waits for approval, one shows an API error" width="900">
+  <img src="assets/wall-comfortable.png" alt="The fleet wall at 1920 px: eight session cards in two rows, each with a portrait, status and Open terminal, and most with a repo and branch and the last prompt and reply; the first waits for approval, the second shows an API error" width="900">
 </p>
 
 <h1 align="center">klepsydra</h1>
@@ -616,7 +616,7 @@ boundary leaves the wall as it is. The choice is saved as `wall_density` in
 `prefs.json`.
 
 <p align="center">
-  <img src="assets/wall-compact.png" alt="The wall in Compact at 1920 px: sixteen smaller cards in four rows, each with its round portrait, status, place, and last exchange cut short" width="900">
+  <img src="assets/wall-compact.png" alt="The wall in Compact at 1920 px: sixteen smaller cards in four rows, each with its round portrait and status, and most with a place and the last exchange cut short" width="900">
 </p>
 
 ### Split mode

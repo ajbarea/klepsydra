@@ -195,7 +195,7 @@ def main():
         # the usage gauges, the tally and the first cards.
         with tempfile.TemporaryDirectory(prefix="klepsydra-shots-") as tmp:
             snapshot = pathlib.Path(tmp) / "fleet.json"
-            phone.snapshot_file(snapshot)
+            phone.snapshot_file(snapshot, app_order)
             proc, addr = phone.start_server(snapshot)
             try:
                 # After the build, so the countdowns read as written.
