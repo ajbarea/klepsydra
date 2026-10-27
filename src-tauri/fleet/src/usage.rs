@@ -336,10 +336,19 @@ mod tests {
         assert_eq!(sessions(&read([&d.0])), ["kept"]);
     }
 
-    /// Set `path`'s modified time to `secs` past the epoch.
+    /// Set the modified time of `path`, a file or a folder, to `secs` past the epoch.
     fn touch(path: &Path, secs: u64) {
-        std::fs::File::options()
-            .write(true)
+        let mut options = std::fs::File::options();
+        #[cfg(unix)]
+        options.read(true);
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::OpenOptionsExt;
+            // SetFileTime takes a folder's handle only with backup semantics:
+            // FILE_WRITE_ATTRIBUTES, FILE_FLAG_BACKUP_SEMANTICS.
+            options.access_mode(0x0100).custom_flags(0x0200_0000);
+        }
+        options
             .open(path)
             .unwrap()
             .set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_secs(secs))
@@ -364,16 +373,9 @@ mod tests {
         );
         ok(&d.0, TEAM, "team");
         // The account written to last is kept: here the team's, once the
-        // personal folder is dated earlier (a folder's time is settable on Unix).
-        #[cfg(unix)]
-        std::fs::File::open(d.0.join("accounts").join(PERSONAL))
-            .unwrap()
-            .set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_000))
-            .unwrap();
-        let one = read_capped([&d.0], MAX_BYTES, 1, 8);
-        assert_eq!(sessions(&one).len(), 1, "one account's readings: {one:?}");
-        #[cfg(unix)]
-        assert_eq!(sessions(&one), ["team"]);
+        // personal folder is dated earlier.
+        touch(&d.0.join("accounts").join(PERSONAL), 1_000);
+        assert_eq!(sessions(&read_capped([&d.0], MAX_BYTES, 1, 8)), ["team"]);
     }
 
     #[cfg(unix)]
