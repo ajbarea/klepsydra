@@ -534,7 +534,10 @@ def notified: if type == "string" then [scan("<task-notification>[\\s\\S]*?</tas
       if $event == "SessionEnd" or $fresh then []
       elif $event == "SubagentStart" and ($agent | IN($unstarted[]) | not) then $bg | bg_add($agent; "agent")
       elif $event == "SubagentStop" then $bg | bg_drop([$agent])
-      elif $event == "PostToolUse" and $ev.tool_name == "Bash" and $in.run_in_background == true then
+      # A shell asked to run in the background, or one moved there at its timeout
+      # or by hand, which only its task id tells.
+      elif $event == "PostToolUse" and $ev.tool_name == "Bash"
+           and ($in.run_in_background == true or ($out | objects | .backgroundTaskId | text) != null) then
         $bg | bg_add(($out | objects | .backgroundTaskId | text) // ($ev.tool_use_id | text); "shell")
       # Only an async launch says an agent outlives the turn; SubagentStart cannot tell.
       elif $event == "PostToolUse" and $ev.tool_name == "Agent" and ($out | objects | .isAsync) == true
