@@ -18,13 +18,14 @@ function cpuMs(f) {
 
 /**
  * Asserts `run(n)` costs grow linearly, as Go's checkLinear does: the best of
- * three CPU times at n and 4n, where linear work grows about 4-fold and
- * quadratic 16-fold. `n` doubles until a run takes 20 ms, past timer grain.
+ * five CPU times at n and 4n, where linear work grows about 4-fold and
+ * quadratic 16-fold. `n` doubles until a run takes 50 ms, well past timer
+ * grain and JIT warm-up.
  */
 function assertLinear(run, n) {
-  const best = (m) => Math.min(...Array.from({ length: 3 }, () => cpuMs(() => run(m))));
-  while (best(n) < 20) n *= 2;
-  const small = best(n);
+  const best = (m) => Math.min(...Array.from({ length: 5 }, () => cpuMs(() => run(m))));
+  let small = best(n);
+  while (small < 50) small = best((n *= 2));
   const large = best(4 * n);
   assert.ok(large < 8 * small, `n=${n}: ${small.toFixed(1)} ms, 4n: ${large.toFixed(1)} ms`);
 }
