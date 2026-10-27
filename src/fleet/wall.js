@@ -14,6 +14,8 @@ import { parseDensity, resolveDensity } from "./density.js";
 import { clearAll, clearLabel, endedIds, startLabel, wallState } from "./empty.js";
 import { wireSplit } from "./split.js";
 import { createReplayer } from "./replay.js";
+import { WAITING, usageRows } from "../gauge.js";
+import { readMode, readStops, syncEntries } from "../gaugeview.js";
 
 const TICK_MS = 15_000; // ages re-render between snapshots, as on the gauge
 const FACE_PX = 62; // the comfortable --wall-face less twice its --face-inset
@@ -46,6 +48,9 @@ const startButton = document.getElementById("start-session");
 const clearNote = document.getElementById("clear-note");
 const clearEnded = document.getElementById("clear-ended");
 const emptyTitle = document.getElementById("empty-title");
+const limits = document.querySelector(".limits");
+const limitRows = limits.querySelector(".limit-rows");
+const limitWait = limits.querySelector(".limit-wait");
 // + New session and the empty state's button start a session the same way,
 // and while one runs the other is off too.
 async function startSession(button, note) {
@@ -86,6 +91,7 @@ const phoneNarrow = () => served && matchMedia("(max-width: 600px)").matches;
 
 let sessions = [];
 let request = null; // the snapshot's wrap-up, while one is shown
+let latestSnapshot = null; // its usage readings draw the limit gauges
 const ledgerButton = document.getElementById("ledger-open");
 const drawer = createDrawer({
   dialog: document.getElementById("ledger"),
@@ -394,6 +400,17 @@ function paintRing(el, c) {
   show(el.querySelector(".more"), ring.more > 0 ? `+${ring.more}` : null);
 }
 
+// The usage-limit gauges: the desktop gauge's rows, drawn by its own code,
+// for a snapshot that carries readings (the phone server's).
+function paintLimits(now) {
+  const rows = usageRows(latestSnapshot, now);
+  limits.hidden = rows === null;
+  if (rows === null) return;
+  limitWait.hidden = rows.length > 0;
+  limitWait.textContent = WAITING;
+  syncEntries(limitRows, rows, { compact: true, stops: readStops(), mode: readMode() }, true);
+}
+
 function paintTally() {
   const t = tally(sessions);
   counts.replaceChildren(
@@ -421,6 +438,7 @@ function render(snapshot) {
   if (state !== wasState && state !== "cards") readLaunchDir();
   wasState = state;
   paintTally();
+  paintLimits(now);
   const cards = sessions.map((s) => card(s, cast, now, request));
   const prior = new Set(cardOf.keys()); // a card for one of these is not new
   cardOf = new Map(cards.map((c) => [c.id, c]));
@@ -586,6 +604,7 @@ function receive(message) {
     before = statuses(message.sessions);
     sessions = served ? needsFirst(message.sessions) : message.sessions;
     request = message.wrapup ?? null;
+    latestSnapshot = message;
     said.push(...render(started));
     if (said.length) announce(said.join(". "));
     drawer.refresh();

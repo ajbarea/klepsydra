@@ -1,4 +1,8 @@
 // Pure rendering logic, kept free of Tauri and DOM so it can be unit tested.
+// The desktop gauge and the phone wall both draw from it (gaugeview.js).
+
+/** What a gauge with no reading says. */
+export const WAITING = "waiting for Claude Code";
 
 // Past this age a reading says how old it is.
 export const SHOW_AGE_AFTER_MS = 15 * 60 * 1000;
@@ -9,6 +13,12 @@ export const DROP_AFTER_MS = 30 * 24 * 60 * 60 * 1000;
 // Two sessions can timestamp the same window a moment apart; within this many
 // seconds they are the same window, not a newer one.
 export const WINDOW_MATCH_SECONDS = 90;
+
+/**
+ * A reading's number: a JSON number only, as the phone server sends it
+ * (usage.rs), else NaN. "57" in a file is no reading.
+ */
+const num = (x) => (typeof x === "number" && Number.isFinite(x) ? x : Number.NaN);
 
 // Fixed display order, so rows never reshuffle between polls.
 export const WINDOW_ORDER = ["five_hour", "seven_day", "spend_limit"];
@@ -126,13 +136,13 @@ export function formatAgeShort(ms) {
  * or unreadable). Never throws; an unusable payload degrades to "waiting".
  */
 export function evaluate(payload, key, nowMs = Date.now()) {
-  const waiting = { state: "waiting", label: windowLabel(key), pct: null, sub: "waiting for Claude Code", short: "waiting" };
+  const waiting = { state: "waiting", label: windowLabel(key), pct: null, sub: WAITING, short: "waiting" };
   if (!payload || typeof payload !== "object") return waiting;
 
   const win = payload.windows?.[key];
-  if (!win || !Number.isFinite(Number(win.used_percentage))) return waiting;
+  if (!win || !Number.isFinite(num(win.used_percentage))) return waiting;
 
-  const resetsAt = Number(win.resets_at);
+  const resetsAt = num(win.resets_at);
   const countdown = formatCountdown(resetsAt, nowMs);
   // The window that number described has ended, and the next one has not
   // started; usage elsewhere since then would not have reached this machine.
@@ -144,7 +154,7 @@ export function evaluate(payload, key, nowMs = Date.now()) {
     return { state: "reset", label: windowLabel(key), pct: 0, sub, short };
   }
 
-  const age = nowMs - Number(win.observed_at ?? payload.observed_at ?? payload.written_at) * 1000;
+  const age = nowMs - num(win.observed_at ?? payload.observed_at ?? payload.written_at) * 1000;
   let sub = countdown;
   let short = formatCountdownShort(resetsAt, nowMs);
   if (!Number.isFinite(age)) {
@@ -158,7 +168,7 @@ export function evaluate(payload, key, nowMs = Date.now()) {
   return {
     state: "live",
     label: windowLabel(key),
-    pct: Number(win.used_percentage),
+    pct: num(win.used_percentage),
     sub,
     short,
   };
@@ -189,8 +199,46 @@ export function ringDash(pct, cap) {
 // A zero-length dash may draw no cap at all, so the dot keeps a hair of length.
 const MIN_DASH = 0.01;
 
+/** The round caps' length along the 100-long path of a ring of radius `r` drawn `stroke` wide. */
+export function ringCap(stroke, r) {
+  return (stroke / (2 * Math.PI * r)) * 100;
+}
+
+/**
+ * The ring's stroke for `pct`: the dash less its caps, moved half a cap
+ * forward so the drawn arc starts at 12 o'clock. Hidden at zero, where the
+ * caps alone would draw a dot.
+ */
+export function ringStyle(pct, cap) {
+  const p = Math.max(0, Math.min(100, pct ?? 0));
+  return { dasharray: `${ringDash(pct, cap)} 100`, dashoffset: `${-cap / 2}`, visible: p > 0 };
+}
+
+/**
+ * A row's words: the compact layout's short forms or the full layout's,
+ * and one sentence for a screen reader, which reads the full forms.
+ */
+export function entryText(row, compact) {
+  return {
+    label: row.label,
+    pct: compact ? formatPctShort(row.pct) : formatPct(row.pct),
+    sub: compact ? row.short : row.sub,
+    spoken: `${row.label}: ${formatPct(row.pct)}. ${row.sub}`,
+  };
+}
+
+/**
+ * The phone wall's rows from a snapshot's `usage` readings, as toRows draws
+ * the gauge's; null when the snapshot carries none (an older server, or a
+ * server with no readings to read), so no gauge shows.
+ */
+export function usageRows(snapshot, nowMs = Date.now()) {
+  const usage = snapshot?.usage;
+  return Array.isArray(usage) ? toRows(usage, nowMs) : null;
+}
+
 /** Whether a file came from a hook that publishes only new API responses. */
-const isObserved = (s) => s?.observed_at != null && Number.isFinite(Number(s.observed_at));
+const isObserved = (s) => Number.isFinite(num(s?.observed_at));
 
 /**
  * When a session's reading arrived, or for an older hook's file, when it was
@@ -198,7 +246,7 @@ const isObserved = (s) => s?.observed_at != null && Number.isFinite(Number(s.obs
  */
 function stampOf(s) {
   const raw = isObserved(s) ? s.observed_at : s?.written_at;
-  return raw == null ? Number.NaN : Number(raw);
+  return num(raw);
 }
 
 /**
@@ -228,7 +276,7 @@ function reconcilable(sessions) {
 export function pickWindow(sessions, key, byTime) {
   const all = sessions.flatMap((s) => {
     const w = s?.windows?.[key];
-    const ok = w && Number.isFinite(Number(w.used_percentage)) && Number.isFinite(Number(w.resets_at));
+    const ok = w && Number.isFinite(num(w.used_percentage)) && Number.isFinite(num(w.resets_at));
     return ok ? [{ ...w, observed_at: stampOf(s) }] : [];
   });
   if (all.length === 0) return null;

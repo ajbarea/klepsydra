@@ -1,10 +1,11 @@
 //! The tray's Phone wall: the fleet crate's read-only wall server, on while
 //! the box is ticked and remembered in prefs.json. It serves the bundled
-//! frontend through Tauri's asset resolver and the fleet's latest snapshot.
+//! frontend through Tauri's asset resolver, the fleet's latest snapshot and
+//! the usage readings the gauge reads.
 
 use std::sync::{Arc, Mutex};
 
-use klepsydra_fleet::phone::{exact_assets, Assets, Clips, Server, ADDR};
+use klepsydra_fleet::phone::{exact_assets, Assets, Clips, Server, Usage, ADDR};
 use klepsydra_fleet::receiver::Log;
 use tauri::{AppHandle, Manager};
 
@@ -63,9 +64,11 @@ pub fn set(app: &AppHandle, on: bool) -> bool {
     });
     let dir = crate::klepsydra_dir(app);
     let clips: Clips = Arc::new(move |id: &str| klepsydra_fleet::reply::read(dir.as_deref()?, id));
+    let dirs = crate::usage_dirs(app);
+    let usage: Usage = Arc::new(move || klepsydra_fleet::usage::read(&dirs));
     let handle = app.clone();
     let server_log: Log = Arc::new(move |l: String| log(&handle, &l));
-    match Server::spawn(ADDR, assets, clips, server_log) {
+    match Server::spawn(ADDR, assets, clips, Some(usage), server_log) {
         Ok(server) => {
             app.state::<crate::fleet::Fleet>()
                 .with_latest(|v| server.publish(v));

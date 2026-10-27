@@ -10,7 +10,12 @@ the card) opening claude.ai, a second snapshot arriving over /events, the
 service worker and manifest installing, fleet.json cut to the wall's fields, a
 write refused, a wrap-up request and the empty state shown with none of their
 buttons, /wall.html sent to the root, and a stream refused at the cap opened
-again. Saves a screenshot.
+again. The usage-limit gauges, from readings in the server's accounts folder:
+one per account and window in the gauge's order and words, opening the page
+and scrolling away under a sticky bar that six leave no taller than three, a
+new reading over /events, a stale one saying its age, none at all reading as
+waiting, and AA contrast with the system in light and in dark.
+Saves a screenshot in each scheme.
 
     uv run -q --no-project --with playwright python -I scripts/test_phone_browser.py [shot.png]
 
@@ -21,6 +26,7 @@ Chrome at $KLEPSYDRA_CHROME.
 import json
 import os
 import pathlib
+import re
 import socket
 import subprocess
 import sys
@@ -83,11 +89,40 @@ def with_wrapup(fleet):
             s["wrapup"] = sample["answers"][s["session_id"]]
 
 
+# Demo accounts named as the gauge's own examples are; placeholder ids.
+PERSONAL = "00000000-0000-4000-8000-0000000000b2"
+TEAM = "00000000-0000-4000-8000-0000000000a1"
+LAB = "00000000-0000-4000-8000-0000000000c3"
+
+
+def write_reading(klepsydra, account, label, windows, ago=0, session="00000000-0000-4000-8000-000000000001"):
+    """A reading as the statusLine hook publishes it, observed `ago` seconds
+    ago; each window is (percent, seconds to its reset, negative once past)."""
+    now = int(time.time())
+    folder = klepsydra / "accounts" / account
+    folder.mkdir(parents=True, exist_ok=True)
+    reading = {
+        "account": account, "label": label, "session": session, "api_ms": 1234,
+        "written_at": now - ago, "observed_at": now - ago,
+        "windows": {k: {"used_percentage": pct, "resets_at": now + reset} for k, (pct, reset) in windows.items()},
+    }
+    tmp = folder / f"{session}.json.1.tmp"
+    tmp.write_text(json.dumps(reading))
+    tmp.replace(folder / f"{session}.json")
+
+
+def demo_usage(klepsydra):
+    """The strip's examples: two windows on the account in use, a reset
+    window on the one signed out of an hour ago."""
+    write_reading(klepsydra, PERSONAL, "Personal", {"five_hour": (57, 8 * 60 + 50), "seven_day": (27, (6 * 24 + 6) * 3600 + 1800)})
+    write_reading(klepsydra, TEAM, "Team", {"five_hour": (64, -7 * 3600 - 600)}, ago=3600, session="00000000-0000-4000-8000-000000000002")
+
+
 def write_clip(klepsydra):
     """A third of a second of silence as keryx writes a reply clip."""
     import wave
 
-    (klepsydra / "replies").mkdir(parents=True)
+    (klepsydra / "replies").mkdir(parents=True, exist_ok=True)
     with wave.open(str(klepsydra / "replies" / f"{CLIP_ID}.wav"), "wb") as w:
         w.setnchannels(1)
         w.setsampwidth(2)
@@ -157,6 +192,73 @@ LAYOUT = """() => {
   };
 }""" % json.dumps(DESKTOP)
 
+# What the gauges show: each row's words, its ring, and the colours to judge.
+GAUGES = """() => {
+  const limits = document.querySelector('.limits');
+  const css = (el, p) => el && getComputedStyle(el)[p];
+  const rows = [...limits.querySelectorAll('.limit-rows > li')].map((li) => {
+    const fill = li.querySelector('.ring-fill');
+    const r = li.getBoundingClientRect();
+    return {
+      text: ['pct', 'sub', 'label'].map((k) => li.querySelector('.' + k).textContent).join(' '),
+      said: li.querySelector('.spoken').textContent,
+      hidden: li.querySelector('.row').getAttribute('aria-hidden'),
+      ring: fill.style.visibility !== 'hidden' && li.querySelector('.ring').checkVisibility(),
+      dash: fill.style.strokeDasharray,
+      stroke: css(fill, 'stroke'),
+      track: css(li.querySelector('.ring-track'), 'stroke'),
+      pct: css(li.querySelector('.pct'), 'color'),
+      sub: css(li.querySelector('.sub'), 'color'),
+      label: css(li.querySelector('.label'), 'color'),
+      box: [r.left, r.right, r.top, r.bottom].map(Math.round),
+    };
+  });
+  const bar = document.querySelector('.bar');
+  return {
+    shown: limits.checkVisibility(),
+    inBar: bar.contains(limits),
+    region: [limits.tagName, limits.getAttribute('aria-label')],
+    wait: limits.querySelector('.limit-wait').checkVisibility() ? limits.querySelector('.limit-wait').textContent : null,
+    rows,
+    ground: css(document.body, 'backgroundColor'),
+    barHeight: Math.round(bar.getBoundingClientRect().height),
+    scheme: css(document.documentElement, 'colorScheme'),
+    width: innerWidth,
+  };
+}"""
+
+
+def rgb(c):
+    return [int(x) for x in c[c.index("(") + 1:c.index(")")].split(",")[:3]]
+
+
+def contrast(a, b):
+    def lum(c):
+        ch = [v / 255 for v in rgb(c)]
+        ch = [v / 12.92 if v <= 0.04045 else ((v + 0.055) / 1.055) ** 2.4 for v in ch]
+        return 0.2126 * ch[0] + 0.7152 * ch[1] + 0.0722 * ch[2]
+    hi, lo = sorted([lum(a), lum(b)], reverse=True)
+    return (hi + 0.05) / (lo + 0.05)
+
+
+def check_gauges(run, page, scheme):
+    """The demo gauges in `scheme`: words at 4.5:1, the ring's fill at 3:1 on the page and its track."""
+    page.emulate_media(color_scheme=scheme)
+    page.wait_for_timeout(100)
+    g = page.evaluate(GAUGES)
+    run.check(g["scheme"] == "dark", f"{scheme}: the wall stays dark, and says so to the browser", g["scheme"])
+    low = []
+    for row in g["rows"]:
+        for k in ("pct", "sub", "label"):
+            if contrast(row[k], g["ground"]) < 4.5:
+                low.append((row["text"], k, round(contrast(row[k], g["ground"]), 2)))
+        for k in ("ground", "track"):
+            against = g["ground"] if k == "ground" else row["track"]
+            if row["ring"] and contrast(row["stroke"], against) < 3:
+                low.append((row["text"], f"ring on {k}", round(contrast(row["stroke"], against), 2)))
+    run.check(g["rows"] and low == [], f"{scheme}: every gauge reads at AA", low or g)
+    return g
+
 
 def main() -> int:
     shot = pathlib.Path(sys.argv[1]) if len(sys.argv) > 1 else pathlib.Path(tempfile.gettempdir()) / "klepsydra-phone-390x844.png"
@@ -167,6 +269,8 @@ def main() -> int:
         write_clip(pathlib.Path(tmp) / "klepsydra")
         needs = sum(s["status"] == "needs_you" for s in fleet["sessions"])
         proc, addr = start_server(snapshot)
+        # After the build, so the countdowns read as written.
+        demo_usage(pathlib.Path(tmp) / "klepsydra")
         try:
             with sync_playwright() as p:
                 browser = p.chromium.launch(executable_path=os.environ.get("KLEPSYDRA_CHROME") or None)
@@ -195,6 +299,31 @@ def main() -> int:
                 tools = page.evaluate("getComputedStyle(document.querySelector('.tools')).display")
                 run.check(tools == "none", "the desktop tool group takes no room on the phone", tools)
                 run.check(s["remotes"] == [REMOTE], "only the claude.ai link is a link", s["remotes"])
+
+                # The usage-limit gauges: every account and window, in the gauge's words and order.
+                wait_until(page, "document.querySelectorAll('.limit-rows > li').length === 3", 10)
+                g = page.evaluate(GAUGES)
+                run.check(g["shown"] and not g["inBar"] and g["region"] == ["SECTION", "Usage limits"], "the gauges open the page, a named region outside the sticky bar", g)
+                bar_height = g["barHeight"]
+                texts = [r["text"] for r in g["rows"]]
+                want = [r"57% [78]m Personal \u00b7 session", r"27% 6d 6h Personal \u00b7 week", r"0% reset 7h ago Team \u00b7 session"]
+                run.check(len(texts) == 3 and all(re.fullmatch(w, t) for w, t in zip(want, texts)),
+                          "one gauge per account and window, as the strip reads them", texts)
+                said = [r["said"] for r in g["rows"]]
+                run.check(re.fullmatch(r"Personal \u00b7 session: 57% used\. Resets in [78] min", said[0]) and all(r["hidden"] == "true" for r in g["rows"]),
+                          "a screen reader hears one sentence per gauge, not its short forms", said)
+                run.check([r["ring"] for r in g["rows"]] == [True, True, False], "a ring per window, none drawn on a reset one", [r["ring"] for r in g["rows"]])
+                # The drawn arc is the percent: the dash plus its round caps (3 wide on r 9.5).
+                cap = 3 / (2 * 3.141592653589793 * 9.5) * 100
+                arcs = [round(float(r["dash"].replace(",", " ").split()[0]) + cap) if r["dash"] else None for r in g["rows"][:2]]
+                run.check(arcs == [57, 27], "each ring's arc is its percent, on a gauge drawn fresh", [r["dash"] for r in g["rows"]])
+                run.check(all(0 <= r["box"][0] and r["box"][1] <= g["width"] for r in g["rows"]), "every gauge inside the screen", [r["box"] for r in g["rows"]])
+                run.check(g["rows"][0]["stroke"] == "rgb(59, 130, 246)", "the ramp's low stop under 60%", g["rows"][0]["stroke"])
+                for scheme in ("light", "dark"):
+                    check_gauges(run, page, scheme)
+                    page.screenshot(path=str(shot.with_name(f"{shot.stem}-{scheme}{shot.suffix}")))
+                    print(f"  shot {shot.with_name(f'{shot.stem}-{scheme}{shot.suffix}')}")
+                page.emulate_media(color_scheme=None)
                 page.screenshot(path=str(shot))
                 print(f"  shot {shot}")
 
@@ -222,6 +351,8 @@ def main() -> int:
                 page.wait_for_timeout(200)
                 bar = page.evaluate("(() => { const b = document.querySelector('.bar').getBoundingClientRect(); return [Math.round(b.top), scrollY > 0]; })()")
                 run.check(bar == [0, True], "the tally is sticky", bar)
+                gone = page.evaluate("(() => { const l = document.querySelector('.limits').getBoundingClientRect(); return Math.round(l.bottom) <= Math.round(document.querySelector('.bar').getBoundingClientRect().bottom); })()")
+                run.check(gone, "the gauges scroll away under the tally", gone)
                 page.evaluate("window.scrollTo(0, 0)")
 
                 # A tap on the card, off its controls, opens its Remote Control link.
@@ -259,6 +390,29 @@ def main() -> int:
                 wait_until(page, f"document.querySelector('.tally .t-needs b').textContent === '{needs + 1}'", 5)
                 got = page.evaluate(LAYOUT)["needs"]
                 run.check(got == str(needs + 1), "a new snapshot arrives over the stream", got)
+
+                # A new reading arrives over the stream; one three hours old says so.
+                klepsydra = pathlib.Path(tmp) / "klepsydra"
+                write_reading(klepsydra, PERSONAL, "Personal", {"five_hour": (91, 8 * 60 + 50), "seven_day": (27, (6 * 24 + 6) * 3600 + 1800)})
+                write_reading(klepsydra, TEAM, "Team", {"five_hour": (12, 2 * 3600 + 600)}, ago=3 * 3600, session="00000000-0000-4000-8000-000000000002")
+                write_reading(klepsydra, LAB, "Lab", {"five_hour": (5, 3600), "seven_day": (40, 86400), "spend_limit": (10, 86400)}, ago=4 * 3600, session="00000000-0000-4000-8000-000000000003")
+                wait_until(page, "document.querySelector('.limit-rows > li .pct').textContent === '91%' && document.querySelectorAll('.limit-rows > li .ring-fill')[2].style.visibility !== 'hidden' && document.querySelectorAll('.limit-rows > li').length === 6", 15)
+                g = page.evaluate(GAUGES)
+                texts = [r["text"] for r in g["rows"]]
+                run.check(re.fullmatch(r"91% [78]m Personal \u00b7 session", texts[0]) and g["rows"][0]["stroke"] == "rgb(239, 68, 68)", "a new reading arrives over the stream, red past 85%", [texts[0], g["rows"][0]["stroke"]])
+                run.check(re.fullmatch(r"12% 2h (10|9)m \u00b7 3h old Team \u00b7 session", texts[2]), "a reading hours old says how old", texts[2])
+                run.check(g["barHeight"] == bar_height, "six gauges leave the sticky bar as tall as three did", [bar_height, g["barHeight"]])
+                s = page.evaluate(LAYOUT)
+                run.check(s["hscroll"] <= 0 and s["small"] == [], "no horizontal scroll, every control 44 px, with the gauges", [s["hscroll"], s["small"]])
+
+                # No reading left: the gauges wait, as the strip does.
+                for f in (klepsydra / "accounts").glob("*/*.json"):
+                    f.unlink()
+                wait_until(page, "document.querySelectorAll('.limit-rows > li').length === 0", 15)
+                g = page.evaluate(GAUGES)
+                run.check(g["shown"] and g["rows"] == [] and g["wait"] == "waiting for Claude Code", "with no reading the gauges wait", g)
+                demo_usage(klepsydra)
+                wait_until(page, "document.querySelectorAll('.limit-rows > li').length === 3", 15)
 
                 # Install: the service worker controls the page's scope, the manifest loads.
                 scope = page.evaluate("navigator.serviceWorker.ready.then((r) => r.scope)")

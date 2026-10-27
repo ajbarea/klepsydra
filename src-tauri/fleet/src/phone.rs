@@ -3,7 +3,9 @@
 //! loopback interface only, Serve being the one way in from outside, answers
 //! only GET and HEAD, and answers only requests named for loopback or for a
 //! tailnet `*.ts.net` name, so a web page cannot reach it through DNS
-//! rebinding. Nothing it serves writes anything.
+//! rebinding. Nothing it serves writes anything. Each snapshot carries the
+//! fleet and, from a usage source, the statusLine hook's readings for the
+//! wall's usage-limit gauges.
 
 use std::convert::Infallible;
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
@@ -37,14 +39,15 @@ pub const ADDR: SocketAddrV4 = SocketAddrV4::new(Ipv4Addr::LOCALHOST, 8318);
 
 /// How long a connection may take over a request's head, how many
 /// connections are served at once, how many of them may hold an event
-/// stream, and how often a quiet stream sends a comment so no proxy between
-/// here and the phone closes it.
+/// stream, how often a quiet stream sends a comment so no proxy between
+/// here and the phone closes it, and how often the usage readings are read.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Limits {
     pub header: Duration,
     pub connections: usize,
     pub streams: usize,
     pub heartbeat: Duration,
+    pub usage: Duration,
 }
 
 pub const LIMITS: Limits = Limits {
@@ -52,6 +55,8 @@ pub const LIMITS: Limits = Limits {
     connections: 32,
     streams: 8,
     heartbeat: Duration::from_secs(15),
+    // The gauge's POLL_MS (main.js).
+    usage: Duration::from_secs(5),
 };
 
 /// The app's bundled frontend: the bytes at a path such as `fleet/wall.js`.
@@ -59,6 +64,9 @@ pub type Assets = Arc<dyn Fn(&str) -> Option<Vec<u8>> + Send + Sync>;
 
 /// keryx's latest reply clip for a session id (`reply::read`).
 pub type Clips = Arc<dyn Fn(&str) -> Option<Vec<u8>> + Send + Sync>;
+
+/// Every usage reading, as `read_usage` gives the gauge (`usage::read`).
+pub type Usage = Arc<dyn Fn() -> Vec<Value> + Send + Sync>;
 
 /// `resolve` held to the paths in `known`, the bundle's own (with or
 /// without a leading `/`): Tauri's resolver answers a path it lacks with
@@ -214,15 +222,18 @@ fn same_origin(origin: &str, host: &str) -> bool {
 }
 
 /// The frontend files the wall needs, and their types: its page, its
-/// folder, the IPC shim, the wheel steps it shares with the gauge and the
-/// vendored markdown-it it imports, the install files and the icons. The
-/// gauge, the tests and the dev snapshots are not among them.
+/// folder, the IPC shim, the wheel steps and the gauge's model and rows it
+/// shares with the gauge, the vendored markdown-it it imports, the install
+/// files and the icons. The gauge's page, the tests and the dev snapshots
+/// are not among them.
 pub fn asset_type(path: &str) -> Option<&'static str> {
     let root = matches!(
         path,
         "wall.html"
             | "ipc.js"
             | "zoom.js"
+            | "gauge.js"
+            | "gaugeview.js"
             | "manifest.webmanifest"
             | "sw.js"
             | "vendor/markdown-it/markdown-it.esm.min.mjs"
@@ -406,6 +417,59 @@ struct Shared {
     snapshots: watch::Receiver<Option<Bytes>>,
     streams: Arc<Semaphore>,
     heartbeat: Duration,
+}
+
+/// The two halves of the phone's snapshot: the fleet's phone view, and the
+/// usage readings' once a usage source has been read.
+#[derive(Default)]
+struct Parts {
+    fleet: Option<Value>,
+    usage: Option<Value>,
+}
+
+/// The snapshot every phone gets, made from its parts.
+struct Feed {
+    parts: std::sync::Mutex<Parts>,
+    snapshots: watch::Sender<Option<Bytes>>,
+}
+
+impl Feed {
+    /// Change a part and send the snapshot, if it changed. None goes out
+    /// before the fleet's first: usage alone would be an empty wall.
+    fn update(&self, change: impl FnOnce(&mut Parts)) {
+        let mut parts = self.parts.lock().unwrap_or_else(|e| e.into_inner());
+        change(&mut parts);
+        let Some(mut view) = parts.fleet.clone() else {
+            return;
+        };
+        if let (Some(usage), Some(map)) = (&parts.usage, view.as_object_mut()) {
+            map.insert("usage".into(), usage.clone());
+        }
+        let Ok(json) = serde_json::to_vec(&view) else {
+            return;
+        };
+        let json = Bytes::from(json);
+        self.snapshots.send_if_modified(|now| {
+            if now.as_ref() == Some(&json) {
+                return false;
+            }
+            *now = Some(json);
+            true
+        });
+    }
+}
+
+/// Read the usage source every `every`, off the server's thread, for as long
+/// as the server runs.
+async fn follow_usage(read: Usage, feed: Arc<Feed>, every: Duration) {
+    loop {
+        let r = read.clone();
+        if let Ok(readings) = tokio::task::spawn_blocking(move || r()).await {
+            let view = crate::usage::phone_view(&readings);
+            feed.update(|p| p.usage = Some(view));
+        }
+        tokio::time::sleep(every).await;
+    }
 }
 
 fn handle(req: &Request<Incoming>, s: &Shared) -> Reply {
@@ -596,21 +660,23 @@ fn offers_clip(json: &[u8], id: &str, query: Option<&str>) -> bool {
 /// connection before it returns.
 pub struct Server {
     addr: SocketAddr,
-    snapshots: watch::Sender<Option<Bytes>>,
+    feed: Arc<Feed>,
     stop: Option<oneshot::Sender<()>>,
     thread: Option<std::thread::JoinHandle<()>>,
 }
 
 impl Server {
     /// Bind `addr` now, so a port in use is reported to the caller, then
-    /// serve on a thread of its own until stopped.
+    /// serve on a thread of its own until stopped. With a `usage` source,
+    /// its readings ride on every snapshot.
     pub fn spawn(
         addr: SocketAddrV4,
         assets: Assets,
         clips: Clips,
+        usage: Option<Usage>,
         log: Log,
     ) -> std::io::Result<Server> {
-        Self::spawn_with(addr, LIMITS, assets, clips, log)
+        Self::spawn_with(addr, LIMITS, assets, clips, usage, log)
     }
 
     pub fn spawn_with(
@@ -618,6 +684,7 @@ impl Server {
         limits: Limits,
         assets: Assets,
         clips: Clips,
+        usage: Option<Usage>,
         log: Log,
     ) -> std::io::Result<Server> {
         let std_listener = bind(addr)?;
@@ -628,6 +695,10 @@ impl Server {
             .enable_time()
             .build()?;
         let (snapshots, watcher) = watch::channel(None);
+        let feed = Arc::new(Feed {
+            parts: Default::default(),
+            snapshots,
+        });
         let (stop, stopped) = oneshot::channel::<()>();
         let shared = Arc::new(Shared {
             bound,
@@ -637,11 +708,15 @@ impl Server {
             streams: Arc::new(Semaphore::new(limits.streams)),
             heartbeat: limits.heartbeat,
         });
+        let usage = usage.map(|read| (read, feed.clone()));
         let thread = std::thread::Builder::new()
             .name("phone-wall".into())
             .spawn(move || {
                 runtime.block_on(async move {
                     tokio::spawn(accept(std_listener, limits, shared, log));
+                    if let Some((read, feed)) = usage {
+                        tokio::spawn(follow_usage(read, feed, limits.usage));
+                    }
                     // Stopped, or the Server dropped without a word.
                     let _ = stopped.await;
                 });
@@ -650,7 +725,7 @@ impl Server {
             })?;
         Ok(Server {
             addr: bound,
-            snapshots,
+            feed,
             stop: Some(stop),
             thread: Some(thread),
         })
@@ -662,9 +737,8 @@ impl Server {
 
     /// Hand every phone the fleet's newest snapshot, cut to what it shows.
     pub fn publish(&self, snapshot: &Value) {
-        if let Ok(json) = serde_json::to_vec(&phone_view(snapshot)) {
-            self.snapshots.send_replace(Some(Bytes::from(json)));
-        }
+        let view = phone_view(snapshot);
+        self.feed.update(|p| p.fleet = Some(view));
     }
 
     /// Close the port and every connection, and return once they are closed.
@@ -750,6 +824,7 @@ mod tests {
         assert_ne!(ADDR.port(), 4317);
         assert_eq!(LIMITS.heartbeat, Duration::from_secs(15));
         assert_eq!(LIMITS.streams, 8);
+        assert_eq!(LIMITS.usage, Duration::from_secs(5), "the gauge's poll");
     }
 
     fn head<'a>(
@@ -915,6 +990,8 @@ mod tests {
             ),
             ("/ipc.js", Some(Route::Asset("ipc.js".into()))),
             ("/zoom.js", Some(Route::Asset("zoom.js".into()))),
+            ("/gauge.js", Some(Route::Asset("gauge.js".into()))),
+            ("/gaugeview.js", Some(Route::Asset("gaugeview.js".into()))),
             (
                 "/manifest.webmanifest",
                 Some(Route::Asset("manifest.webmanifest".into())),
@@ -934,7 +1011,7 @@ mod tests {
             "/dev-fixture.json",
             "/index.html",
             "/main.js",
-            "/gauge.js",
+            "/gauge.test.js",
             "/style.css",
             "/fleet-model.test.js",
             "/fleet/../index.html",
@@ -1081,9 +1158,14 @@ mod tests {
         connections: 8,
         streams: 2,
         heartbeat: Duration::from_millis(300),
+        usage: Duration::from_millis(50),
     };
 
     fn serve(limits: Limits) -> Probe {
+        serve_usage(limits, None)
+    }
+
+    fn serve_usage(limits: Limits, usage: Option<Usage>) -> Probe {
         let asked = Arc::new(Mutex::new(Vec::new()));
         let seen = asked.clone();
         // As the app builds it: Tauri's resolver held to the bundle's keys.
@@ -1099,6 +1181,7 @@ mod tests {
             limits,
             assets,
             clips,
+            usage,
             log,
         )
         .unwrap();
@@ -1153,6 +1236,7 @@ mod tests {
             taken,
             Arc::new(tauri_get),
             Arc::new(|_| None),
+            None,
             Arc::new(|_| {}),
         );
         assert!(again.is_err());
@@ -1627,5 +1711,189 @@ mod tests {
         let addr = p.server.addr();
         drop(p);
         assert!(TcpStream::connect(addr).is_err());
+    }
+
+    // --- the usage readings ---
+
+    const ACCOUNT: &str = "00000000-0000-4000-8000-00000000abcd";
+
+    fn reading(pct: u32) -> Value {
+        json!({
+            "account": ACCOUNT, "label": "Personal", "session": "00000000-0000-4000-8000-000000000001",
+            "written_at": 1_800_000_000, "observed_at": 1_800_000_000, "api_ms": 5,
+            "windows": {"five_hour": {"used_percentage": pct, "resets_at": 1_800_003_600}}
+        })
+    }
+
+    /// A usage source whose readings the test sets, and how often it was read.
+    struct Source {
+        readings: Arc<Mutex<Vec<Value>>>,
+        reads: Arc<Mutex<usize>>,
+        usage: Usage,
+    }
+
+    fn source(start: Vec<Value>) -> Source {
+        let readings = Arc::new(Mutex::new(start));
+        let reads = Arc::new(Mutex::new(0));
+        let (r, n) = (readings.clone(), reads.clone());
+        let usage: Usage = Arc::new(move || {
+            *n.lock().unwrap() += 1;
+            r.lock().unwrap().clone()
+        });
+        Source {
+            readings,
+            reads,
+            usage,
+        }
+    }
+
+    fn wait_for<T>(what: &str, mut f: impl FnMut() -> Option<T>) -> T {
+        let started = std::time::Instant::now();
+        loop {
+            if let Some(v) = f() {
+                return v;
+            }
+            assert!(started.elapsed() < Duration::from_secs(5), "{what}");
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+
+    #[test]
+    fn the_snapshot_carries_the_readings_cut_to_the_gauges_fields() {
+        let p = serve_usage(QUICK, Some(source(vec![reading(57)]).usage));
+        let addr = p.server.addr();
+        p.server.publish(&snapshot(1));
+        let v = wait_for("the readings never reached fleet.json", || {
+            let (code, _, body) = get(addr, "GET", "/fleet.json", "");
+            let v: Value = serde_json::from_slice(&body).ok()?;
+            (code == 200 && v.get("usage").is_some()).then_some(v)
+        });
+        assert_eq!(v["usage"], crate::usage::phone_view(&[reading(57)]));
+        let mut fleet = v.clone();
+        fleet.as_object_mut().unwrap().remove("usage");
+        assert_eq!(
+            fleet,
+            phone_view(&snapshot(1)),
+            "the fleet half is the phone view"
+        );
+        let text = v.to_string();
+        for private in [ACCOUNT, "api_ms", "00000000-0000-4000-8000-000000000001"] {
+            assert!(
+                !text.contains(private),
+                "{private} reached the phone: {text}"
+            );
+        }
+    }
+
+    #[test]
+    fn readings_alone_are_no_snapshot() {
+        let Source { reads, usage, .. } = source(vec![reading(57)]);
+        let p = serve_usage(QUICK, Some(usage));
+        wait_for("the source was never read twice", || {
+            (*reads.lock().unwrap() >= 2).then_some(())
+        });
+        assert_eq!(
+            get(p.server.addr(), "GET", "/fleet.json", "").0,
+            503,
+            "an empty wall would say no session runs"
+        );
+    }
+
+    #[test]
+    fn a_changed_reading_reaches_open_streams_and_an_unchanged_one_does_not() {
+        let Source {
+            readings,
+            reads,
+            usage,
+        } = source(vec![reading(57)]);
+        let p = serve_usage(QUICK, Some(usage));
+        let addr = p.server.addr();
+        p.server.publish(&snapshot(1));
+        let (code, mut r) = open_events(addr);
+        assert_eq!(code, 200);
+        let pct = |v: &Value| v["usage"][0]["windows"]["five_hour"]["used_percentage"].clone();
+        let mut first = data(&next_item(&mut r));
+        while first.get("usage").is_none() {
+            first = data(&next_item(&mut r));
+        }
+        assert_eq!(pct(&first), 57);
+        *readings.lock().unwrap() = vec![reading(58)];
+        let item = next_item(&mut r);
+        assert_eq!(pct(&data(&item)), 58, "the new reading is the next event");
+        // Polled many times over, unchanged, and the fleet republished as it
+        // was: nothing new, so only heartbeats.
+        let before = *reads.lock().unwrap();
+        p.server.publish(&snapshot(1));
+        assert_eq!(next_item(&mut r), ": keepalive");
+        assert_eq!(next_item(&mut r), ": keepalive");
+        assert!(*reads.lock().unwrap() >= before + 3, "the source is polled");
+    }
+
+    #[test]
+    fn without_a_source_the_snapshot_has_no_usage() {
+        let p = serve(QUICK);
+        p.server.publish(&snapshot(1));
+        std::thread::sleep(Duration::from_millis(150));
+        let (_, _, body) = get(p.server.addr(), "GET", "/fleet.json", "");
+        let v: Value = serde_json::from_slice(&body).unwrap();
+        assert!(v.get("usage").is_none(), "{v}");
+    }
+
+    #[test]
+    fn an_unknown_window_or_any_extra_field_never_reaches_the_phone() {
+        let mut odd = reading(57);
+        odd["email"] = json!("someone@example.com");
+        odd["organization_id"] = json!("org-0000");
+        odd["windows"]["secret_window"] = json!({"used_percentage": 1, "resets_at": 2});
+        odd["windows"]["five_hour"]["note"] = json!("private");
+        let p = serve_usage(QUICK, Some(source(vec![odd]).usage));
+        let addr = p.server.addr();
+        p.server.publish(&snapshot(1));
+        let (code, mut r) = open_events(addr);
+        assert_eq!(code, 200);
+        let event = loop {
+            let item = next_item(&mut r);
+            if item.starts_with("data: ") && data(&item).get("usage").is_some() {
+                break item;
+            }
+        };
+        let (_, _, body) = get(addr, "GET", "/fleet.json", "");
+        for (what, text) in [
+            ("/events", event),
+            ("/fleet.json", String::from_utf8(body).unwrap()),
+        ] {
+            let v: Value = serde_json::from_str(text.trim_start_matches("data: ")).unwrap();
+            let usage = &v["usage"][0];
+            let mut keys: Vec<&str> = usage
+                .as_object()
+                .unwrap()
+                .keys()
+                .map(String::as_str)
+                .collect();
+            keys.sort_unstable();
+            assert_eq!(
+                keys,
+                ["account", "label", "observed_at", "windows", "written_at"],
+                "{what}"
+            );
+            assert_eq!(
+                usage["windows"],
+                json!({"five_hour": {"used_percentage": 57, "resets_at": 1_800_003_600}}),
+                "{what}"
+            );
+            // The fleet half names sessions; the readings never do.
+            let readings = v["usage"].to_string();
+            assert!(!readings.contains("session"), "{what}: {readings}");
+            for private in [
+                "secret_window",
+                "someone@example.com",
+                "org-0000",
+                "private",
+                ACCOUNT,
+                "api_ms",
+            ] {
+                assert!(!text.contains(private), "{private} reached {what}: {text}");
+            }
+        }
     }
 }

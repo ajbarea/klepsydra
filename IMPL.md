@@ -1,25 +1,28 @@
 # IMPL
 
-Repo resume state (2026-10-26, night). The 10-26 queue is merged: #101
+Repo resume state (2026-10-27). The 10-26 queue is merged: #101
 README lead, #103 (#90 wrap-up after every session ends; an unreadable
 fleet folder keeps the last snapshot), #104 (#98 ledger attribution), #105
 (#99 Queue text size), #106 (#100 reply playback, with keryx #61). Installed
 build: 1ad1405 (10-25 21:48). Not yet live: #89 split mode, #93, and all of
 the above.
 
-## This branch: feat/comfortable-density (#113)
-- Done: Comfortable holds 4 cards at 945/958x1000 and 8 at 1920x1000 with no
-  scrollbar, every card full (`comfortable_fits` in the wall suite, failing
-  on main). Band 140 -> 120 px, figure 154 -> 130 px (10 px over the edge,
-  its top 3 px faded), rows 12 -> 8 px, footer 46 -> 37 px (28 px buttons),
-  prompt on one line, reply on one while asking, place on one line,
-  "updated" moved into the footer. Rounds 1-2: ask and error clamped (one /
-  two lines, titles), reply one line beside an error, other repos capped at
-  four plus a "+N" chip (model ALSO_NAMED), said gap 4 px, place wraps on
-  the phone wall; fit fleet = all asking (MCP tool) and all error, 12 repos.
-- Next: AJ checks the PR screenshots and the live wall in split mode.
-- Verify: the gate list below. `reply_buttons` timed out waiting for a clip
-  to end in three runs (one on main), then passed: a flake to watch.
+## This branch: feat/phone-gauges (#123)
+- Done: the phone wall's sticky bar shows the usage-limit gauges. Model and
+  words stay in `src/gauge.js` (`entryText`, `ringStyle`, `usageRows`); the
+  row's DOM moved out of `main.js` and `index.html` into `src/gaugeview.js`,
+  which the gauge and the wall both import. The fleet crate's `usage.rs`
+  reads `accounts/*/*.json` (`read_usage` uses it too) and cuts each reading
+  for the phone (label, times, percent and reset; account id to `a1`, `a2`).
+  The phone server polls a usage source every 5 s, puts `usage` on the
+  snapshot, and sends only a changed one.
+- Round 1 (#127): the reader mirrors the hook's guards (no symlinks, regular
+  files via `bounded::read_text`, 64 KiB, 32 accounts x 512 files, newest
+  first); only the gauge's three windows reach the phone; gauge.js reads
+  JSON numbers only; the gauges scroll away under a one-tally sticky bar.
+- Next: AJ judges the screenshots (fleet-briefing) and decides light mode
+  for the phone wall; then the live phone after a deploy.
+- Verify: the gate list below; the phone suite now writes demo readings.
 
 ## Waits on AJ
 - Deploy (his yes): `scripts/build-windows.sh` from main, stop the exe,

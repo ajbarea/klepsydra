@@ -18,6 +18,7 @@ pub mod scan;
 pub mod session;
 pub mod speaking;
 pub mod tabs;
+pub mod usage;
 pub mod view;
 pub mod watch;
 pub mod wrapup;

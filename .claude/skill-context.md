@@ -60,7 +60,8 @@ files belong to: the JS guards scan hooks and scripts too.
 
 
 - `node --test src/*.test.js` — ramp, countdown, reading age, reconciliation
-  (newest reading wins), multi-account rows
+  (newest reading wins), multi-account rows, the rows' words and ring that
+  the gauge and the phone wall share
 - `bash statusline/test_statusline.sh` — the hook is the only path that publishes
   usage, so the cases cover what would otherwise fail silently: account
   identity, two accounts not overwriting each other, two sessions of one account
@@ -78,7 +79,8 @@ files belong to: the JS guards scan hooks and scripts too.
   and a stub `wt.exe` (one tab per fleet, a failed launch starts nothing).
 - `bash scripts/test_build_windows.sh`: the Windows build's stage-name check.
 - `cd src-tauri && cargo test -p klepsydra-fleet`: the fleet reader, the OTLP
-  receiver and the phone wall server (each spawned on a free loopback port),
+  receiver and the phone wall server (each spawned on a free loopback port)
+  with the usage readings it serves,
   the ledger, and `ledger-verify` on its recorded transcript fixture.
 - `uv run -q --no-project --with playwright python -I scripts/test_phone_browser.py`:
   the phone wall served by the real server (the fleet crate's `phone`
@@ -86,7 +88,11 @@ files belong to: the JS guards scan hooks and scripts too.
   horizontal scroll, 44 px targets, no desktop action, the Remote Control
   link, a second snapshot over `/events`, the service worker and manifest,
   a wrap-up request and the empty state shown without their buttons,
-  `/wall.html` sent to `/`, and a stream refused at the cap opened again.
+  `/wall.html` sent to `/`, a stream refused at the cap opened again, and
+  the usage-limit gauges from demo readings (one per account and window in
+  the strip's words, scrolling away under a sticky bar they leave one tally
+  high, a new reading over `/events`, a stale one, none, AA contrast in
+  light and dark, a screenshot of each).
   Needs cargo and Playwright's Chromium; local only.
 - `uv run -q --no-project --with playwright python -I scripts/test_wall_browser.py`:
   the wall in a real browser: 16 demo cards at 1920x1000 and 8 at 945x1000
