@@ -474,6 +474,8 @@ button.menu svg { width: 16px; height: 16px; fill: currentColor; }
 
 /* One line in either density; a long place cuts short and its title holds all of it. */
 .where { display: flex; align-items: center; gap: 6px 10px; min-width: 0; overflow: hidden; white-space: nowrap; }
+/* A touch screen has no hover for the title: a full card on the phone wall wraps instead. */
+.served .wall:not([data-density="compact"]) .where { flex-wrap: wrap; white-space: normal; overflow-wrap: anywhere; }
 .repo { min-width: 0; overflow: hidden; text-overflow: ellipsis; font-weight: 600; }
 .repo .wt { color: var(--text-dim); font-weight: 500; }
 .branch {
@@ -493,7 +495,10 @@ button.menu svg { width: 16px; height: 16px; fill: currentColor; }
 .also { display: flex; flex-wrap: wrap; gap: 4px 10px; list-style: none; margin-top: -4px; color: var(--text-quiet); font-size: 12.5px; }
 .also:empty { display: none; }
 .meta, .foot { display: contents; } /* rows of their own only on the compact card */
-.also-more {
+/* "+3": the other repos past the ones a card names, named in full on hover
+   and to screen readers. Compact shows one chip for all of them. */
+.also-more,
+.also-rest {
   display: none;
   flex: none;
   padding: 1px 6px;
@@ -504,6 +509,7 @@ button.menu svg { width: 16px; height: 16px; fill: currentColor; }
   font-variant-numeric: tabular-nums;
   cursor: default;
 }
+.also-rest { display: inline-block; }
 .crew-line { display: flex; flex-wrap: wrap; gap: 4px 10px; margin-top: -4px; color: var(--text-dim); font-size: 12.5px; }
 .crew-line .free { color: var(--text-quiet); }
 .crew-line .free::before { content: "\00b7"; margin-right: 10px; }
@@ -517,14 +523,21 @@ button.menu svg { width: 16px; height: 16px; fill: currentColor; }
   font-weight: 600;
   background: color-mix(in oklab, var(--tone-needs) 14%, transparent);
   color: color-mix(in oklab, var(--tone-needs) 75%, white);
-  overflow-wrap: anywhere; /* a tool name has no break points, and the card no longer clips */
 }
-.ask .text { min-width: 0; }
+/* One line in either density: a long tool name cuts short, and the line's title holds all of it. */
+.ask .text { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .ask .badge { width: 18px; height: 18px; }
 
 .error { color: var(--text-error); overflow-wrap: anywhere; }
+/* Two lines in either density; its title holds the rest. */
+.said .error {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+}
 
-.said { flex: 1; display: grid; gap: 6px; align-content: start; }
+.said { flex: 1; display: grid; gap: var(--space-1); align-content: start; }
 .said p:not(.error) {
   display: -webkit-box;
   -webkit-box-orient: vertical;
@@ -534,8 +547,9 @@ button.menu svg { width: 16px; height: 16px; fill: currentColor; }
 }
 .said p:empty { display: none; }
 /* What AJ asked is one line (its title holds the rest); the reply keeps two,
-   or one while the card asks, since the ask is the news. */
-.card.asking .said p.reply { -webkit-line-clamp: 1; }
+   or one while the card asks or shows an error, since that is the news. */
+.card.asking .said p.reply,
+.said:has(.error:not([hidden])) p.reply { -webkit-line-clamp: 1; }
 .said p.prompt { -webkit-line-clamp: 1; color: var(--text-dim); padding-left: 10px; border-left: 2px solid var(--card-line); }
 .said .reply { color: var(--text); }
 .reply-line { display: flex; align-items: flex-start; gap: var(--space-3); min-width: 0; }
@@ -742,14 +756,7 @@ button.menu svg { width: 16px; height: 16px; fill: currentColor; }
 [data-density="compact"] .crew-line .free { display: none; } /* the full card says it */
 [data-density="compact"] .ask { grid-area: ask; margin-top: var(--space-2); padding: 3px var(--space-3); gap: var(--space-2); font-size: 13px; }
 [data-density="compact"] .ask .badge { width: 14px; height: 14px; }
-[data-density="compact"] .ask .text { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 [data-density="compact"] .said { grid-area: said; gap: 2px; margin-top: var(--space-2); font-size: 13px; line-height: 1.4; }
-[data-density="compact"] .said .error {
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-  overflow: hidden;
-}
 [data-density="compact"] .updated { display: none; }
 
 /* The ledger line takes the foot slot: the three most telling parts of the

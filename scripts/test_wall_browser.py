@@ -149,9 +149,9 @@ def grows(wall):
     need = comfortable_height(wall, width, cards)
     page = wall.open(width, need + 20, cards)
     before = page.evaluate(STATE)
+    # A button's note is the one text a comfortable card does not clamp.
     page.evaluate(
-        "() => { const e = document.querySelector('.card .error');"
-        " e.hidden = false; e.textContent = 'A long error. '.repeat(40); }"
+        "() => { document.querySelector('.card .note').textContent = 'A long note. '.repeat(40); }"
     )
     page.wait_for_timeout(SETTLE_MS)
     after = page.evaluate(STATE)
@@ -829,7 +829,7 @@ def compact_look_on_face(wall):
 
 
 def long_tool_stays_in_card(wall):
-    """A needs-you line naming a long tool wraps inside its card at either density."""
+    """A needs-you line naming a long tool stays inside its card at either density, cut short."""
     for density in ("comfortable", "compact"):
         page = wall.open(945, 1000, 8)
         page.click(f".density label:has([value={density}])")
@@ -922,33 +922,37 @@ COMFORTABLE_FIT = [  # (width, height, cards, columns)
 ]
 
 
-OTHER_REPOS = ["kourai-khryseai", "papers", "ajsoftworks", "talks", "techne", "claude-prefs", "keryx"]
+OTHER_REPOS = ["kourai-khryseai", "papers", "ajsoftworks", "talks", "techne", "claude-prefs", "keryx",
+               "pharos", "sphragis", "ariadne", "ldqis", "agones", "askesis", "epistole"]
+LONG = "Re-running the sweep over five seeds, then redrawing the bars with the median and range before the deck refresh picks them up. " * 2
 
 
-def busy(n):
+def busy(n, shape="asking"):
     """The demo's first `n` sessions, each as full as a live card gets outside
-    a wrap-up: waiting on AJ, six other repos touched, a long session name,
-    worktree and branch, a crew, a long prompt and reply, a ledger line with
-    a blocked chip, and quiet ten minutes, so "updated" shows."""
+    a wrap-up: a long session name, worktree and branch, twelve other repos
+    touched, a crew, a long prompt and reply, a ledger line with a blocked
+    chip, and quiet ten minutes, so "updated" shows. `shape` "asking" waits
+    on AJ to approve a long MCP tool; "error" ends on a long API error."""
     demo = json.loads((ROOT / "scripts/fixtures/fleet-demo.json").read_text())
     at, ledger = demo["at"], demo["sessions"][0]["ledger"]
-    long = "Re-running the sweep over five seeds, then redrawing the bars with the median and range before the deck refresh picks them up. " * 2
+    states = {
+        "asking": {"status": "needs_you", "reason": "approve mcp__plugin_playwright_playwright__browser_run_code_unsafe", "error": None},
+        "error": {"status": "error", "reason": None, "error": "API Error: 529 overloaded_error, the request was retried three times and failed. " * 3},
+    }
     sessions = []
     for s in demo["sessions"][:n]:
         sessions.append({
             **s,
-            "status": "needs_you",
-            "reason": "approve Bash",
-            "error": None,
+            **states[shape],
             "quiet_since": None,
             "name": "A session name long enough to run past the nameplate",
             "status_at": at - 600,
             "updated_at": at - 600,
             "where": {**s["where"], "worktree": "comfortable-density-four-and-eight", "branch": "feat/comfortable-density-four-and-eight"},
-            "touched": [{"repo": r, "at": at - 900} for r in OTHER_REPOS if r != s["where"]["repo"]][:6],
+            "touched": [{"repo": r, "at": at - 900} for r in OTHER_REPOS if r != s["where"]["repo"]][:12],
             "background": {"agents": 2, "shells": 1},
-            "prompt": {"text": long, "at": at - 660},
-            "reply": {"text": long, "at": at - 600},
+            "prompt": {"text": LONG, "at": at - 660},
+            "reply": {"text": LONG, "at": at - 600},
             "ledger": {**(s.get("ledger") or ledger), "guardrail_rejects": 3},
         })
     return json.dumps({**demo, "sessions": sessions, "speaking": None})
@@ -983,11 +987,11 @@ FITS = """() => {
 def comfortable_fits(wall):
     """Comfortable holds four cards in split mode (2x2) and eight maximised
     (4x2) with no vertical scrollbar, the demo as it is and with every card
-    full and waiting on AJ; Auto stays comfortable there. Each figure breaks
+    full, all asking or all in error; Auto stays comfortable there. Each figure breaks
     the card's top edge cleanly: above it, yet clear of the bar and the row
     above. Open terminal is 24 to 28 px tall."""
     for width, height, cards, columns in COMFORTABLE_FIT:
-        for fleet, body in (("demo", None), ("full", busy(cards))):
+        for fleet, body in (("demo", None), ("asking", busy(cards)), ("error", busy(cards, "error"))):
             for density in ("comfortable", "auto"):
                 page = wall.open(width, height, cards, body)
                 page.click(f".density label:has([value={density}])")

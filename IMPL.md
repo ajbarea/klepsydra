@@ -13,8 +13,10 @@ the above.
   on main). Band 140 -> 120 px, figure 154 -> 130 px (10 px over the edge,
   its top 3 px faded), rows 12 -> 8 px, footer 46 -> 37 px (28 px buttons),
   prompt on one line, reply on one while asking, place on one line,
-  "updated" moved into the footer. Review round 1 (all-asking worst case,
-  mutation check) addressed.
+  "updated" moved into the footer. Rounds 1-2: ask and error clamped (one /
+  two lines, titles), reply one line beside an error, other repos capped at
+  four plus a "+N" chip (model ALSO_NAMED), said gap 4 px, place wraps on
+  the phone wall; fit fleet = all asking (MCP tool) and all error, 12 repos.
 - Next: AJ checks the PR screenshots and the live wall in split mode.
 - Verify: the gate list below. `reply_buttons` timed out waiting for a clip
   to end in three runs (one on main), then passed: a flake to watch.

@@ -415,6 +415,9 @@ export const needsFirst = (sessions) => [
   ...sessions.filter((s) => s.status !== "needs_you"),
 ];
 
+/** How many other repos the full card names before a "+N" chip takes the rest. */
+export const ALSO_NAMED = 4;
+
 /** One card on the wall; `request` is the snapshot's wrap-up, when one is shown. */
 export function card(s, cast, nowMs, request = null) {
   const who = identity(s, cast);
@@ -443,7 +446,8 @@ export function card(s, cast, nowMs, request = null) {
     promptFree: reasonText(s) === PROMPT_FREE && crewSize(crew) > 0,
     dim: DIM.has(s.status),
     place: s.where ? { repo: s.where.repo, worktree: s.where.worktree ?? null, branch: s.where.branch ?? null } : null,
-    also: also.map((r) => `also in ${r}`),
+    also: also.slice(0, ALSO_NAMED).map((r) => `also in ${r}`),
+    alsoRest: alsoChip(also.slice(ALSO_NAMED)),
     alsoChip: alsoChip(also),
     voiceTitle: who.voice ? `Voice: ${who.voice}` : null,
     name: who.name,

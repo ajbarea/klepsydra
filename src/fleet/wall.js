@@ -196,6 +196,7 @@ function paint(el, c) {
   const ask = el.querySelector(".ask");
   ask.hidden = !c.ask;
   setText(ask.querySelector(".text"), c.ask);
+  ask.title = c.ask ?? "";
 
   const repo = el.querySelector(".repo");
   const worktree = c.place?.worktree ? [Object.assign(document.createElement("span"), { className: "wt", textContent: ` / ${c.place.worktree}` })] : [];
@@ -205,9 +206,17 @@ function paint(el, c) {
   if (!branch.firstChild) branch.innerHTML = BRANCH_ICON;
   setText(branch.lastChild, c.place?.branch);
   el.querySelector(".where").title = [`${c.place?.repo ?? ""}${c.place?.worktree ? ` / ${c.place.worktree}` : ""}`, c.place?.branch].filter(Boolean).join(" \u00b7 ");
-  el.querySelector(".also").replaceChildren(
-    ...c.also.map((t) => Object.assign(document.createElement("li"), { textContent: t })),
-  );
+  const also = c.also.map((t) => Object.assign(document.createElement("li"), { textContent: t }));
+  if (c.alsoRest) {
+    // The repos past the named ones, as the compact chip names them.
+    const chip = Object.assign(document.createElement("span"), { className: "also-rest", textContent: c.alsoRest.text, title: c.alsoRest.label });
+    chip.setAttribute("role", "img");
+    chip.setAttribute("aria-label", c.alsoRest.label);
+    const li = document.createElement("li");
+    li.append(chip);
+    also.push(li);
+  }
+  el.querySelector(".also").replaceChildren(...also);
   const more = el.querySelector(".also-more");
   show(more, c.alsoChip?.text);
   more.title = c.alsoChip?.label ?? "";
@@ -215,6 +224,7 @@ function paint(el, c) {
   else more.removeAttribute("aria-label");
 
   show(el.querySelector(".error"), c.error);
+  el.querySelector(".error").title = c.error ?? "";
   for (const [cls, text] of [["prompt", c.prompt], ["reply", c.reply]]) {
     const said = el.querySelector(`.said .${cls}`);
     setText(said, text);
