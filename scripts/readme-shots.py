@@ -9,18 +9,19 @@ prints each one's size. Run it after a change to what a screenshot shows:
       python -I scripts/readme-shots.py
 
 Needs Playwright's Chromium (`uvx playwright install chromium`), or a Chrome
-at $KLEPSYDRA_CHROME.
+at $KLEPSYDRA_CHROME, and cargo, which builds the phone wall's server.
 """
 
 import functools
 import http.server
+import io
 import json
 import os
 import pathlib
+import re
 import sys
-import threading
-import io
 import tempfile
+import threading
 import time
 
 import oxipng
@@ -31,6 +32,7 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
 import test_phone_browser as phone  # noqa: E402  the phone suite's server and demo data
 OUT = ROOT / "assets"
+DEMO = ROOT / "scripts/fixtures/fleet-demo.json"
 SETTLE_MS = 600  # past the wall's resize settle, arrivals and a frame
 
 
@@ -41,7 +43,7 @@ class Quiet(http.server.SimpleHTTPRequestHandler):
 
 def accounts():
     """Two accounts as the bar shows them: a personal session and week, and a
-    team session that reset a while ago."""
+    team session with two and a half hours to go."""
     now = int(time.time())
 
     def w(pct, reset_in):
@@ -56,12 +58,33 @@ def accounts():
     })
 
 
+# The app's order (the fleet crate's view.rs `snapshot`): needs you first, the
+# longest wait leading; then error, working, done, new, silent and ended, each
+# newest first. The wall shows a snapshot as it comes, and the sample is unsorted.
+STATUS_ORDER = ["needs_you", "error", "working", "done", "new", "silent", "ended"]
+
+
+def app_order(fleet):
+    def key(s):
+        at = s["status_at"] if s["status"] == "needs_you" else -s["status_at"]
+        return (STATUS_ORDER.index(s["status"]), at, s["session_id"])
+
+    fleet["sessions"].sort(key=key)
+    return fleet
+
+
 def json_route(body):
     return lambda r: r.fulfill(status=200, content_type="application/json", body=body)
 
 
 def wall(browser, port, width, height, query, density=None):
+    """The wall at `width` x `height` on ?QUERY, the sample's first ?demo=N
+    sessions (the page's slice) in the app's order."""
     page = browser.new_page(viewport={"width": width, "height": height})
+    fleet = json.loads(DEMO.read_text())
+    n = int(m.group(1)) if (m := re.search(r"\bdemo=(\d+)", query)) else len(fleet["sessions"])
+    fleet["sessions"][:n] = app_order({"sessions": fleet["sessions"][:n]})["sessions"]
+    page.route("**/fleet-demo.json", json_route(json.dumps(fleet)))
     page.goto(f"http://127.0.0.1:{port}/src/wall.html?{query}")
     page.wait_for_function("document.getElementById('wall').children.length > 0")
     # The app shows + New session and Wrap up… in the bar; a browser hides them.
@@ -119,7 +142,7 @@ def main():
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
     port = server.server_address[1]
     threading.Thread(target=server.serve_forever, daemon=True).start()
-    fleet = (ROOT / "scripts/fixtures/fleet-demo.json").read_text()
+    fleet = json.dumps(app_order(json.loads(DEMO.read_text())))
     chrome = os.environ.get("KLEPSYDRA_CHROME")
     with sync_playwright() as p:
         browser = p.chromium.launch(executable_path=chrome) if chrome else p.chromium.launch()
@@ -174,20 +197,23 @@ def main():
             snapshot = pathlib.Path(tmp) / "fleet.json"
             phone.snapshot_file(snapshot)
             proc, addr = phone.start_server(snapshot)
-            # After the build, so the countdowns read as written.
-            phone.demo_usage(pathlib.Path(tmp) / "klepsydra")
             try:
+                # After the build, so the countdowns read as written.
+                phone.demo_usage(pathlib.Path(tmp) / "klepsydra")
                 ctx = browser.new_context(viewport={"width": 390, "height": 844}, device_scale_factor=2,
                                           is_mobile=True, has_touch=True)
                 page = ctx.new_page()
                 page.goto(f"http://{addr}/")
-                phone.wait_until(page, "document.getElementById('wall').children.length > 0", 15)
-                phone.wait_until(page, "document.querySelectorAll('.limits .limit-rows > li').length > 0", 15)
+                for ready in ("document.getElementById('wall').children.length > 0",
+                              "document.querySelectorAll('.limits .limit-rows > li').length > 0"):
+                    if not phone.wait_until(page, ready, 15):
+                        raise SystemExit(f"the phone wall never showed: {ready}")
                 page.wait_for_timeout(SETTLE_MS)
                 save(page.screenshot(), "phone-wall")
                 ctx.close()
             finally:
                 proc.kill()
+                proc.wait()
 
         browser.close()
     server.shutdown()

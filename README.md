@@ -616,7 +616,7 @@ boundary leaves the wall as it is. The choice is saved as `wall_density` in
 `prefs.json`.
 
 <p align="center">
-  <img src="assets/wall-compact.png" alt="The wall in Compact at 1920 px: sixteen smaller cards in four rows, each with its round portrait, status, place, and last exchange cut to one line" width="900">
+  <img src="assets/wall-compact.png" alt="The wall in Compact at 1920 px: sixteen smaller cards in four rows, each with its round portrait, status, place, and last exchange cut short" width="900">
 </p>
 
 ### Split mode
