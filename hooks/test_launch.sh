@@ -10,7 +10,7 @@ sock="kl-test-$$" sock2="kl-test2-$$" sock3="kl-test3-$$"
 sockdir="${TMUX_TMPDIR:-/tmp}/tmux-$(id -u)" # where tmux puts a -L socket
 clients=()
 cleanup() {
-  for p in "${clients[@]}" $(cat "$work/stub-pids" 2>/dev/null); do kill "$p" 2>/dev/null; done
+  for p in "${clients[@]}" ${holder:-} $(cat "$work/stub-pids" 2>/dev/null); do kill "$p" 2>/dev/null; done
   tmux -L "$sock" kill-server 2>/dev/null
   tmux -L "$sock2" kill-server 2>/dev/null
   tmux -L "$sock3" kill-server 2>/dev/null
@@ -424,6 +424,13 @@ lock="$work/klepsydra-launch-$UID.lock"
 ( exec 9>>"$lock"; flock 9; exec sleep 30 ) &
 holder=$!
 for _ in $(seq 100); do flock -n "$lock" true || break; sleep 0.05; done
+attach
+started=$SECONDS
+out=$(jmp "$first" "$fpid" "$fstart" 2>&1); rc=$?
+check "attached jump beside a held lock: exit 0" "$rc" "0"
+check "attached jump beside a held lock: says so" "$out" "Selected the session's tmux window."
+check "attached jump beside a held lock: no wait" "$(( SECONDS - started < 5 ))" "1"
+detach_all; : >"$WT_LOG"
 t select-window -t "$(t list-windows -t =fleet -F '#{window_id}' | tail -1)"
 out=$(jmp "$first" "$fpid" "$fstart" 2>&1); rc=$?
 kill "$holder" 2>/dev/null; wait "$holder" 2>/dev/null
