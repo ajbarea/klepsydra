@@ -10,6 +10,8 @@ import {
 } from "./ledger.js";
 
 const MIN_BAR_PX = 2; // a nonzero count never draws as nothing
+/** An open Ledger reads the ledger again at most this often, however fast snapshots come. */
+export const REFRESH_MS = 5000;
 
 function el(tag, cls, text, attrs) {
   const node = document.createElement(tag);
@@ -100,6 +102,8 @@ export function createDrawer({ dialog, button, tab, edge, sessions, cast, fetchT
   let view = null; // the last good view, held while a refetch runs
   let turn = 0; // a newer fetch makes an older one stale
   let reading = Promise.resolve(); // the latest read, which open() hands back
+  let readAt = -Infinity; // when the latest read started
+  let later = 0; // a snapshot's read held back by REFRESH_MS
   let painted = ""; // what the body shows, so an unchanged snapshot leaves it (and focus) alone
 
   const who = () => {
@@ -315,6 +319,9 @@ export function createDrawer({ dialog, button, tab, edge, sessions, cast, fetchT
   };
 
   async function refresh() {
+    clearTimeout(later);
+    later = 0;
+    readAt = performance.now();
     const mine = ++turn;
     let next;
     try {
@@ -346,6 +353,8 @@ export function createDrawer({ dialog, button, tab, edge, sessions, cast, fetchT
     returnTo: () => (usable(opener) ? opener : button),
     onOpen: start,
     onShut: () => {
+      clearTimeout(later);
+      later = 0;
       turn++; // an answer still on its way has nowhere to go
       filter = null;
       opener = null;
@@ -362,16 +371,15 @@ export function createDrawer({ dialog, button, tab, edge, sessions, cast, fetchT
       panel.open();
       return reading;
     },
-    /** Read again, as each snapshot does while the drawer is open. */
-    refresh: () => (panel.isOpen ? refresh() : undefined),
-    /** The docked panel's width in px; 0 while it is closed or a dialog. */
-    dockedWidth: panel.dockedWidth,
-    /** True while the separator is being dragged. */
-    get resizing() {
-      return panel.resizing;
-    },
-    get isOpen() {
-      return panel.isOpen;
+    /**
+     * Read again for a snapshot while the drawer is open: at once if the last
+     * read is REFRESH_MS old, else once when it is, so a burst reads once.
+     */
+    refresh() {
+      if (!panel.isOpen || later) return;
+      const wait = readAt + REFRESH_MS - performance.now();
+      if (wait <= 0) refresh();
+      else later = setTimeout(refresh, wait);
     },
   };
 }

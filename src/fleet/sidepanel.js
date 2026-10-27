@@ -116,6 +116,14 @@ export function createEdge() {
     changed(panel) {
       for (const p of panels) if (p !== panel) p.layout();
     },
+    /** Whether `dialog` is one of the edge's panels. */
+    holds: (dialog) => [...panels].some((p) => p.dialog === dialog),
+    /** The room the docked panel takes from the wall, in px; 0 when none is docked. */
+    dockedWidth: () => [...panels].reduce((sum, p) => sum + p.dockedWidth(), 0),
+    /** True while any panel's separator is being dragged. */
+    get resizing() {
+      return [...panels].some((p) => p.resizing);
+    },
   };
 }
 
@@ -173,8 +181,11 @@ export function createSidePanel({
   function layout() {
     width = clampWidth(wanted, innerWidth);
     const max = clampWidth(Infinity, innerWidth);
-    document.documentElement.style.setProperty(`--${name}-w`, `${width}px`);
-    document.body.classList.toggle(`${name}-docked`, docked() && preview !== "shut");
+    dialog.style.setProperty("--panel-w", `${width}px`);
+    const taking = docked() && preview !== "shut";
+    // One panel docks at a time, so the docked one sets the wall's room.
+    if (taking) document.documentElement.style.setProperty("--dock-w", `${width}px`);
+    document.body.classList.toggle(`${name}-docked`, taking);
     // The tab needs an edge to spare: none on the phone, in a half-screen
     // window, or while another panel holds the edge.
     const tabbed = view === "shut" && wide.matches && !served && !edge.othersOpen(api);
@@ -238,8 +249,8 @@ export function createSidePanel({
     if (was !== "shut") onShut();
   }
 
-  /** The button's toggle: shut opens docked; open shuts, focus going to returnTo(). */
-  const toggle = () => (view === "shut" ? setView("docked") : setView("shut", returnTo()));
+  /** The button's toggle: shut opens docked; open shuts, focus staying on the button. */
+  const toggle = () => (view === "shut" ? setView("docked") : setView("shut", button));
 
   button.addEventListener("click", toggle);
   tab.addEventListener("click", () => setView("docked"));
@@ -270,8 +281,12 @@ export function createSidePanel({
   });
   addEventListener("resize", layout);
   // A key acts unless another dialog is in front: a modal keeps the focus
-  // inside itself, so focus elsewhere means another.
-  const behind = () => document.querySelector("dialog:modal") && !dialog.contains(document.activeElement);
+  // inside itself, so focus elsewhere means another. A panel on the same
+  // edge does not count: opening this one shuts it.
+  const behind = () => {
+    const modal = document.querySelector("dialog:modal");
+    return Boolean(modal) && !dialog.contains(document.activeElement) && !edge.holds(modal);
+  };
 
   function resizeTo(w) {
     wanted = clampWidth(w, innerWidth);
@@ -392,28 +407,16 @@ export function createSidePanel({
   showText();
 
   const api = {
-    layout,
-    /** Shut by another panel opening: no focus moves. */
-    shut: () => setView("shut", false, true),
-    get isOpen() {
-      return view !== "shut";
-    },
-  };
-  edge.join(api);
-  if (view !== "shut") {
-    edge.opening(api);
-    onOpen();
-  }
-  place(false);
-  edge.changed(api);
-
-  return {
+    dialog,
     title,
     body,
     content,
     announce,
     behind,
     toggle,
+    layout,
+    /** Shut by another panel opening: no focus moves. */
+    shut: () => setView("shut", false, true),
     /** Open docked if shut, focusing the title; an open panel keeps its view and takes the focus to its title. */
     open() {
       if (view === "shut") setView("docked");
@@ -433,4 +436,12 @@ export function createSidePanel({
       return size;
     },
   };
+  edge.join(api);
+  if (view !== "shut") {
+    edge.opening(api);
+    onOpen();
+  }
+  place(false);
+  edge.changed(api);
+  return api;
 }

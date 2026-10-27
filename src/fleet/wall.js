@@ -106,7 +106,7 @@ const drawer = createDrawer({
   fetchToday: todayLedger,
   onResized: () => showDensity(),
 });
-const queue = createQueuePanel({
+createQueuePanel({
   dialog: document.getElementById("queue"),
   button: document.getElementById("queue-open"),
   tab: document.getElementById("queue-tab"),
@@ -1027,8 +1027,7 @@ function comfortableFits(extra) {
   probe.setAttribute("aria-hidden", "true");
   // The window's whole width: a wall that fits shows no scrollbar to take any of it.
   // Less the docked panel (Queue or Ledger), which the wall gives up its room to.
-  const docked = queue.dockedWidth() + drawer.dockedWidth();
-  Object.assign(probe.style, { position: "absolute", top: "0", left: "0", width: `${innerWidth - docked}px`, visibility: "hidden" });
+  Object.assign(probe.style, { position: "absolute", top: "0", left: "0", width: `${innerWidth - edge.dockedWidth()}px`, visibility: "hidden" });
   const copy = (el) => {
     const c = el.cloneNode(true);
     c.dataset.density = "comfortable";
@@ -1082,7 +1081,7 @@ addEventListener("resize", () => {
 // switch it makes changes the height too, and the hysteresis holds it there.
 let densityFrame = 0;
 new ResizeObserver(() => {
-  if (queue.resizing || drawer.resizing) return; // a drag of a panel's separator measures once, on release
+  if (edge.resizing) return; // a drag of a panel's separator measures once, on release
   cancelAnimationFrame(densityFrame);
   densityFrame = requestAnimationFrame(showDensity);
 }).observe(wall);

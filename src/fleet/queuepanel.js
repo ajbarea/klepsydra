@@ -60,7 +60,6 @@ export function createQueuePanel({ dialog, button, tab, edge, onLayout, onResize
   const keeper = dialog.querySelector(".queue-kept");
   const problem = dialog.querySelector(".queue-problem");
   const opened = new Map(); // section title -> open, as the viewer left it
-  let last = null;
 
   addEventListener("keydown", (e) => {
     if (served || !toggleKey(e) || panel.behind()) return;
@@ -93,7 +92,6 @@ export function createQueuePanel({ dialog, button, tab, edge, onLayout, onResize
   /** The content's focusable controls: its summaries and buttons. */
   const controls = () => [...content.querySelectorAll("summary, button")];
   function paint(view) {
-    last = view;
     // Read off the page, not from toggle events: one still queued would land after the repaint.
     for (const d of content.querySelectorAll("details")) opened.set(d.dataset.key, d.open);
     const shown = present(view, (t) => opened.get(t), document, copy);
@@ -126,23 +124,5 @@ export function createQueuePanel({ dialog, button, tab, edge, onLayout, onResize
   }
 
   followQueue(paint);
-
-  return {
-    /** The docked panel's width in px; 0 while it is closed or a dialog. */
-    dockedWidth: panel.dockedWidth,
-    /** True while the separator is being dragged. */
-    get resizing() {
-      return panel.resizing;
-    },
-    get isOpen() {
-      return panel.isOpen;
-    },
-    /** The content's text size, 1 for 100%. */
-    get textSize() {
-      return panel.textSize;
-    },
-    get view() {
-      return last;
-    },
-  };
+  return panel;
 }
