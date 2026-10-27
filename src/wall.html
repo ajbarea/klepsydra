@@ -22,7 +22,7 @@
       </p>
       <div class="tools">
         <button type="button" id="split" aria-pressed="false" title="The wall on the left half of this screen, the fleet terminal on the right" hidden>Split<span class="visually-hidden"> with terminal</span></button>
-        <button type="button" id="ledger-open" aria-haspopup="dialog">Ledger</button>
+        <button type="button" id="ledger-open" aria-controls="ledger" aria-expanded="false">Ledger</button>
         <button type="button" id="queue-open" aria-controls="queue" aria-expanded="false" aria-keyshortcuts="Control+Alt+B" title="Queue (Ctrl+Alt+B)">Queue</button>
         <button type="button" id="wrapup-open" aria-haspopup="dialog">Wrap up…</button>
       </div>
@@ -73,17 +73,28 @@
   </dialog>
 
   <dialog id="ledger" class="ledger" aria-labelledby="ledger-title">
+    <div class="ledger-resize" role="separator" aria-orientation="vertical" aria-label="Ledger panel width" aria-controls="ledger" tabindex="0"></div>
     <div class="ledger-body">
       <header class="ledger-head">
         <div>
-          <h2 id="ledger-title" tabindex="-1" autofocus>Ledger</h2>
+          <h2 id="ledger-title" tabindex="-1">Ledger</h2>
           <p class="ledger-day"></p>
         </div>
-        <button type="button" class="ledger-close">Close</button>
+        <div class="ledger-tools">
+          <div class="ledger-text" role="group" aria-label="Text size">
+            <button type="button" class="ledger-smaller" aria-label="Smaller text" title="Smaller text (Ctrl+-)">A&minus;</button>
+            <button type="button" class="ledger-reset" title="Reset text size (Ctrl+0)">100%</button>
+            <button type="button" class="ledger-larger" aria-label="Larger text" title="Larger text (Ctrl+=)">A+</button>
+          </div>
+          <button type="button" class="ledger-full" aria-pressed="false" aria-label="Full screen" title="Full screen (Esc to leave)"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 6V2.5H6M10 2.5h3.5V6M13.5 10v3.5H10M6 13.5H2.5V10"/></svg></button>
+          <button type="button" class="ledger-close">Close</button>
+        </div>
       </header>
       <div class="ledger-content"></div>
+      <p class="ledger-live visually-hidden" role="status"></p>
     </div>
   </dialog>
+  <button type="button" id="ledger-tab" class="ledger-tab" aria-label="Open Ledger" aria-controls="ledger" aria-expanded="false" title="Open Ledger" hidden>Ledger</button>
 
   <dialog id="queue" class="queue" aria-labelledby="queue-title">
     <div class="queue-resize" role="separator" aria-orientation="vertical" aria-label="Queue panel width" aria-controls="queue" tabindex="0"></div>
