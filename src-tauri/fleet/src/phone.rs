@@ -419,12 +419,14 @@ struct Shared {
     heartbeat: Duration,
 }
 
-/// The two halves of the phone's snapshot: the fleet's phone view, and the
-/// usage readings' once a usage source has been read.
+/// The parts of the phone's snapshot: the fleet's phone view, the usage
+/// readings' once a usage source has been read, and the character theme once
+/// the app has named one.
 #[derive(Default)]
 struct Parts {
     fleet: Option<Value>,
     usage: Option<Value>,
+    theme: Option<&'static str>,
 }
 
 /// The snapshot every phone gets, made from its parts.
@@ -442,8 +444,13 @@ impl Feed {
         let Some(mut view) = parts.fleet.clone() else {
             return;
         };
-        if let (Some(usage), Some(map)) = (&parts.usage, view.as_object_mut()) {
-            map.insert("usage".into(), usage.clone());
+        if let Some(map) = view.as_object_mut() {
+            if let Some(usage) = &parts.usage {
+                map.insert("usage".into(), usage.clone());
+            }
+            if let Some(theme) = parts.theme {
+                map.insert("theme".into(), Value::from(theme));
+            }
         }
         let Ok(json) = serde_json::to_vec(&view) else {
             return;
@@ -741,6 +748,14 @@ impl Server {
         self.feed.update(|p| p.fleet = Some(view));
     }
 
+    /// Have every phone wear the character theme `id`: a known one, else the
+    /// default (`theme::known`), so the phone never asks for a file that is
+    /// not there.
+    pub fn set_theme(&self, id: &str) {
+        let theme = crate::theme::known(Some(id));
+        self.feed.update(|p| p.theme = Some(theme));
+    }
+
     /// Close the port and every connection, and return once they are closed.
     pub fn stop(mut self) {
         self.shutdown();
@@ -975,12 +990,18 @@ mod tests {
             ("/wall.html", Some(Route::Home)),
             ("/fleet/wall.js", Some(Route::Asset("fleet/wall.js".into()))),
             (
-                "/fleet/cast.json",
-                Some(Route::Asset("fleet/cast.json".into())),
+                "/fleet/themes/kourai.json",
+                Some(Route::Asset("fleet/themes/kourai.json".into())),
             ),
             (
                 "/fleet/faces/kourai/hermes-96.webp",
                 Some(Route::Asset("fleet/faces/kourai/hermes-96.webp".into())),
+            ),
+            (
+                "/fleet/faces/professions/messenger-96.webp",
+                Some(Route::Asset(
+                    "fleet/faces/professions/messenger-96.webp".into(),
+                )),
             ),
             (
                 "/fleet/fonts/cinzel-latin-wght-normal.woff2",
@@ -1827,6 +1848,62 @@ mod tests {
         assert_eq!(next_item(&mut r), ": keepalive");
         assert_eq!(next_item(&mut r), ": keepalive");
         assert!(*reads.lock().unwrap() >= before + 3, "the source is polled");
+    }
+
+    #[test]
+    fn the_theme_rides_on_the_snapshot_and_a_switch_reaches_open_streams() {
+        let p = serve(QUICK);
+        let addr = p.server.addr();
+        p.server.set_theme("professions");
+        assert_eq!(
+            get(addr, "GET", "/fleet.json", "").0,
+            503,
+            "a theme alone is no snapshot"
+        );
+        p.server.publish(&snapshot(1));
+        let (_, _, body) = get(addr, "GET", "/fleet.json", "");
+        let v: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(v["theme"], "professions");
+        let mut fleet = v.clone();
+        fleet.as_object_mut().unwrap().remove("theme");
+        assert_eq!(
+            fleet,
+            phone_view(&snapshot(1)),
+            "the theme changes nothing else"
+        );
+        let (code, mut r) = open_events(addr);
+        assert_eq!(code, 200);
+        assert_eq!(data(&next_item(&mut r))["theme"], "professions");
+        p.server.set_theme("dicebear");
+        assert_eq!(
+            data(&next_item(&mut r))["theme"],
+            "dicebear",
+            "a switch is the next event, without a new fleet snapshot"
+        );
+        p.server.set_theme("dicebear");
+        assert_eq!(
+            next_item(&mut r),
+            ": keepalive",
+            "the same theme again is nothing new"
+        );
+    }
+
+    #[test]
+    fn an_unknown_theme_reaches_the_phone_as_kourai() {
+        let p = serve(QUICK);
+        p.server.publish(&snapshot(1));
+        let (_, _, body) = get(p.server.addr(), "GET", "/fleet.json", "");
+        let v: Value = serde_json::from_slice(&body).unwrap();
+        assert!(
+            v.get("theme").is_none(),
+            "none named yet: the wall's default"
+        );
+        for bad in ["../faces", "Professions", "", "lorelei"] {
+            p.server.set_theme(bad);
+            let (_, _, body) = get(p.server.addr(), "GET", "/fleet.json", "");
+            let v: Value = serde_json::from_slice(&body).unwrap();
+            assert_eq!(v["theme"], "kourai", "{bad}");
+        }
     }
 
     #[test]

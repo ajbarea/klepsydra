@@ -4,8 +4,9 @@
 //! the app serves its bundle, and the snapshot with its times moved up to now
 //! (by its `at`, as the wall's ?demo does), again each time the file changes.
 //! Port 0, the default, picks a free one. Prints the bound address. With
-//! `KLEPSYDRA_DIR` set, reply clips come from its `replies/` and the usage
-//! gauges from its `accounts/`, as the app reads them.
+//! `KLEPSYDRA_DIR` set, reply clips come from its `replies/`, the usage
+//! gauges from its `accounts/`, and the character theme from its
+//! `prefs.json`, read again each time it changes, as the app reads them.
 
 use std::net::{Ipv4Addr, SocketAddrV4};
 use std::path::PathBuf;
@@ -14,6 +15,7 @@ use std::time::{Duration, SystemTime};
 
 use klepsydra_fleet::phone::{asset_type, Assets, Clips, Server, Usage};
 use klepsydra_fleet::receiver::Log;
+use klepsydra_fleet::theme;
 use klepsydra_fleet::watch::unix_now;
 use serde_json::Value;
 
@@ -74,6 +76,7 @@ fn main() {
         Some(dir) => Arc::new(move |id: &str| klepsydra_fleet::reply::read(&dir, id)),
         None => Arc::new(|_| None),
     };
+    let prefs = dir.as_ref().map(|d| d.join("prefs.json"));
     let usage: Option<Usage> = dir.map(|dir| {
         let read: Usage = Arc::new(move || klepsydra_fleet::usage::read([&dir]));
         read
@@ -90,7 +93,18 @@ fn main() {
     println!("listening on {}", server.addr());
     let snapshot = PathBuf::from(snapshot);
     let mut seen: Option<SystemTime> = None;
+    let mut theme_seen: Option<SystemTime> = None;
     loop {
+        if let Some(prefs) = &prefs {
+            let changed = std::fs::metadata(prefs).and_then(|m| m.modified()).ok();
+            if changed != theme_seen {
+                theme_seen = changed;
+                let saved = std::fs::read_to_string(prefs)
+                    .ok()
+                    .and_then(|t| serde_json::from_str::<Value>(&t).ok());
+                server.set_theme(theme::of(saved.as_ref().and_then(Value::as_object)));
+            }
+        }
         let changed = std::fs::metadata(&snapshot).and_then(|m| m.modified()).ok();
         if changed != seen {
             seen = changed;
