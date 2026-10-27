@@ -282,8 +282,8 @@ check "end: the process is gone" "$(gone "$p")" "gone"
 out=$(send end "$p" 2>&1); rc=$?
 check "lost keys: exit 1" "$rc" "1"
 check "lost keys: says so" "$out" "The session's prompt did not read /exit, so Enter was not pressed. Its prompt may be in vim editor mode, or Claude Code's layout changed. Open its terminal to do it there."
-check "lost keys: Enter never pressed" "$(grep -c '^submit:' "$work/fake.log")" "0"
 check_keys "lost keys: the line is cleared" "esc ctrl-c ctrl-c"
+check "lost keys: Enter never pressed" "$(grep -c '^submit:' "$work/fake.log")" "0"
 check "lost keys: still running" "$(alive "$p")" "alive"
 t kill-pane -t "$p"
 
@@ -386,7 +386,7 @@ t kill-pane -t "$p"
 : >"$work/fake.log"; p=$(fake FAKE_DROP=k)
 out=$(send wrapup "$p" 2>&1); rc=$?
 check "wrapup, lost keys: refused" "$out" "The session's prompt did not read /klepsydra-wrapup, so Enter was not pressed. Its prompt may be in vim editor mode, or Claude Code's layout changed. Open its terminal to do it there."
-check "wrapup, lost keys: Enter never pressed" "$(grep -c '^submit:' "$work/fake.log")" "0"
+check_keys "wrapup, lost keys: the line is cleared, Enter never pressed" "ctrl-c ctrl-c"
 t kill-pane -t "$p"
 : >"$work/fake.log"; p=$(fake)
 
