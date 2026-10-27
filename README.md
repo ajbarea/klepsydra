@@ -498,6 +498,15 @@ Rename the tab by hand to exactly the session's name (right-click the tab,
 Rename tab), or start the session from **+ New session**, which needs no tab
 title.
 
+**Open in Claude**, on a card whose session has Remote Control on
+(`/remote-control` in its terminal), opens that session on claude.ai in your
+default browser. It sits beside Open terminal on a comfortable card and at
+the right of a compact card's last line, in Claude's orange (#d97757) with
+dark text. The wall sends only the card's session id; klepsydra opens the
+link it read for that session from the fleet folder, and only one of the form
+`https://claude.ai/code/<id>`, the same check the hook and the phone make.
+The card's note says "Opened in your browser", or why nothing opened.
+
 **Clear** on an ended or silent card removes it now. A session that is still
 running brings its card back at its next event, without its start time or the
 repos it touched.
@@ -791,10 +800,10 @@ event stream. Nothing on it acts on a session: New, Open terminal, End,
 Interrupt, Clear, Wrap up and the ledger stay on the desktop, though a
 wrap-up's answers and readiness count show. A card's play button plays its
 latest spoken reply on the phone, not the PC, from `/audio/<session id>`. A session with Remote
-Control on (`/remote-control` in its terminal) shows **Open in Claude**, and
-a tap on its card opens that session on claude.ai or in the Claude app. The
-link appears at the session's next hook event after Remote Control connects,
-and goes when it disconnects or the session ends. When the stream drops, the
+Control on (`/remote-control` in its terminal) shows **Open in Claude** in
+Claude's orange, and a tap on its card opens that session on claude.ai or in
+the Claude app. The link appears at the session's next hook event after
+Remote Control connects, and goes when it disconnects or the session ends. When the stream drops, the
 wall says the cards may be out of date until it reconnects, and keeps
 trying (every 1 s at first, at most every 30 s) while klepsydra restarts.
 
@@ -998,8 +1007,9 @@ works when there is no `queue.json`.
   Every code block has a **Copy** button.
 - **Text only.** The file is parsed with a pinned copy of markdown-it and
   built into the page as text. Raw HTML shows as text. A link shows its text,
-  with the address on hover and a **Copy link** button: klepsydra starts no
-  program but the launcher, so it does not open links itself. Only `https:`,
+  with the address on hover and a **Copy link** button: the only link
+  klepsydra opens itself is a session's Remote Control link, from Open in
+  Claude. Only `https:`,
   `http:` and `mailto:` links get the button; any other link is plain text.
 - **Empty until written.** A path with no file yet shows an empty queue
   naming the path, not an error; it fills in when an agent writes the file.

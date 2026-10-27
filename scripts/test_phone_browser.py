@@ -37,7 +37,7 @@ REMOTE = "https://claude.ai/code/session_01PLACEHOLDERphone"
 # The one card keryx kept a clip for that the server can serve: a real session id.
 CLIP_ID = "3f1c0a52-7b1e-4c0e-9a55-2f6f0d1d7a10"
 DESKTOP = ", ".join([
-    ".jump", ".clear", ".menu", "#new-session", "#ledger-open", ".chip", ".density", ".undo", ".end-confirm", "[data-act]",
+    ".jump", ".remote-open", ".clear", ".menu", "#new-session", "#ledger-open", ".chip", ".density", ".undo", ".end-confirm", "[data-act]",
     "#wrapup-open", "#wrapup-stop", "#end-ready", "#start-session", "#clear-ended",
 ])
 
@@ -195,6 +195,16 @@ def main() -> int:
                 tools = page.evaluate("getComputedStyle(document.querySelector('.tools')).display")
                 run.check(tools == "none", "the desktop tool group takes no room on the phone", tools)
                 run.check(s["remotes"] == [REMOTE], "only the claude.ai link is a link", s["remotes"])
+                look = page.evaluate("""() => {
+                  const a = [...document.querySelectorAll('a.remote')].find((x) => x.checkVisibility());
+                  const s = getComputedStyle(a);
+                  return [s.backgroundColor, s.color, a.querySelector('svg.away')?.getAttribute('aria-hidden'), a.getAttribute('aria-label'), a.textContent];
+                }""")
+                run.check(
+                    look == ["rgb(217, 119, 87)", "rgb(20, 20, 19)", "true", "Open in Claude, Kallos's session", "Open in Claude"],
+                    "Open in Claude wears Claude's orange with dark ink, its arrow hidden from screen readers",
+                    look,
+                )
                 page.screenshot(path=str(shot))
                 print(f"  shot {shot}")
 

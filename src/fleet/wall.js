@@ -247,7 +247,8 @@ function paint(el, c) {
   clear.hidden = !c.clear;
   clear.dataset.id = c.id;
   setOff(clear, false);
-  // A Remote Control link, on the phone only: the desktop has its terminal.
+  // A Remote Control link: on the phone a plain link; in the app a button the
+  // app answers by opening the link it holds for that session (open_remote).
   const remote = el.querySelector(".remote");
   remote.hidden = !(served && c.remote);
   if (served && c.remote) {
@@ -255,6 +256,11 @@ function paint(el, c) {
     remote.setAttribute("aria-label", c.remoteLabel);
   } else remote.removeAttribute("href");
   el.classList.toggle("has-remote", served && Boolean(c.remote));
+  const open = el.querySelector(".remote-open");
+  open.hidden = !(inTauri && c.remote);
+  open.dataset.id = c.id;
+  open.setAttribute("aria-label", c.remoteLabel);
+  el.classList.toggle("has-open", inTauri && Boolean(c.remote));
   const menuButton = el.querySelector(".menu");
   menuButton.hidden = !c.actions.menu;
   menuButton.setAttribute("aria-label", c.menuLabel);
@@ -618,11 +624,12 @@ wall.addEventListener("click", (e) => {
     if (remote) remote.click();
     return;
   }
-  const button = e.target.closest(".jump, .clear");
+  const button = e.target.closest(".jump, .clear, .remote-open");
   if (!button || !inTauri) return;
   const note = button.closest(".card").querySelector(".note");
   const { invoke } = window.__TAURI__.core;
   if (button.classList.contains("clear")) press(button, note, () => invoke("clear_session", { id: button.dataset.id }));
+  else if (button.classList.contains("remote-open")) press(button, note, () => invoke("open_remote", { id: button.dataset.id }));
   else press(button, note, () => invoke("jump_to_terminal", { id: button.dataset.id, name: button.dataset.name }));
 });
 

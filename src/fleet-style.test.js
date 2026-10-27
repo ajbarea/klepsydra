@@ -395,6 +395,21 @@ test("the tone stripe follows the card's rounded corners, now that the card no l
   assert.doesNotMatch(css.replace(/\/\*[\s\S]*?\*\//g, ""), /\.card::before \{[^}]*\bwidth: 3px/);
 });
 
+test("Open in Claude wears Claude's orange with dark ink at 4.5:1, on the phone and in the app", () => {
+  const css = read("./fleet/wall.css");
+  const [orange, ink] = [token(css, "--claude-orange"), token(css, "--claude-ink")];
+  assert.deepEqual([orange, ink], ["#d97757", "#141413"], "Anthropic's published Orange and Dark");
+  assert.ok(contrast(ink, orange) >= 4.5, `label and arrow: ${contrast(ink, orange).toFixed(2)}`);
+  assert.ok(contrast("#ffffff", orange) < 4.5, "white on the orange would fail AA, so the ink is dark");
+  // The fill is the button's edge (WCAG 1.4.11): 3:1 on every ground a card has.
+  for (const bg of ["--card-bg", "--card-quiet", "--wall-bg"]) {
+    assert.ok(contrast(orange, token(css, bg)) >= 3, `${bg}: ${contrast(orange, token(css, bg)).toFixed(2)}`);
+  }
+  assert.match(css, /a\.remote, button\.remote-open \{[^}]*background: var\(--claude-orange\);\s*color: var\(--claude-ink\);/);
+  assert.match(css, /a\.remote:hover, button\.remote-open:hover:not\(\[aria-disabled="true"\]\) \{ background: var\(--claude-orange\);/, "hover keeps the fill");
+  assert.match(css, /\.away \{[^}]*stroke: currentColor;/, "the arrow is drawn in the ink");
+});
+
 test("the wall, focused only as a fallback, draws no outline of its own", () => {
   assert.match(wallCss(), /\.wall:focus \{ outline: none; \}/);
 });

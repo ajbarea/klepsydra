@@ -960,9 +960,9 @@ READS = ["get_launch_dir", "get_split_mode"]
 WORKING_CARD = ".card:has(.pill .label:text-is('working')):has(.menu:not([hidden]))"
 
 
-def open_app(wall, width=1920, height=1000, keep=None, motion="no-preference", launch_dir="/home/aj/ajsoftworks"):
+def open_app(wall, width=1920, height=1000, keep=None, motion="no-preference", launch_dir="/home/aj/ajsoftworks", change=None):
     """The demo wall as the app would feed it, with invokes recorded; `keep`
-    picks which demo sessions the snapshot carries."""
+    picks which demo sessions the snapshot carries, and `change` edits it."""
     import time
 
     fixture = json.loads((ROOT / "scripts/fixtures/fleet-demo.json").read_text())
@@ -971,6 +971,8 @@ def open_app(wall, width=1920, height=1000, keep=None, motion="no-preference", l
     if keep is not None:
         snapshot["sessions"] = [s for s in snapshot["sessions"] if keep(s)]
         snapshot["speaking"] = None
+    if change:
+        change(snapshot)
     page = wall.browser.new_page(
         viewport={"width": width, "height": height}, reduced_motion=motion
     )
@@ -1284,6 +1286,105 @@ def browser_hides_app_actions(wall):
     got = page.evaluate("['start-session', 'clear-ended', 'new-session'].map((id) => document.getElementById(id).checkVisibility())")
     wall.check(got == [False, False, False], "outside the app the empty state offers no button", got)
     page.close()
+
+
+REMOTES = {
+    "demo-1-am_michael": "https://claude.ai/code/session_01DEMOneedsyou",
+    "demo-2-af_bella": "https://claude.ai/code/session_01DEMOworking",
+    "demo-3-af_sarah": "https://evil.example/code/session_01x",
+}
+
+
+def with_remotes(snapshot):
+    for s in snapshot["sessions"]:
+        if s["session_id"] in REMOTES:
+            s["remote_url"] = REMOTES[s["session_id"]]
+
+
+OPEN_IN_CLAUDE = """() => {
+  const r = (el) => el.getBoundingClientRect();
+  const shown = (el) => el && el.checkVisibility();
+  const hit = (a, b) => a.width > 0 && b.width > 0 && a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
+  const cards = [...document.querySelectorAll('.card')];
+  const heights = [...new Set(cards.map((c) => Math.round(r(c).height)))];
+  return {
+    density: document.getElementById('wall').dataset.density,
+    scrolls: document.documentElement.scrollHeight > innerHeight,
+    heights,
+    links: [...document.querySelectorAll('a.remote')].filter(shown).length,
+    buttons: cards.filter((c) => shown(c.querySelector('.remote-open'))).map((c) => {
+      const b = c.querySelector('.remote-open');
+      const jump = c.querySelector('.jump');
+      const s = getComputedStyle(b);
+      const texts = [...c.querySelectorAll('.name, .task, .pill, .where, .meta, .ask, .prompt, .reply, .ledger-line, .jump, .menu, .note')].filter(shown);
+      return {
+        key: c.dataset.key,
+        label: b.getAttribute('aria-label'),
+        text: b.textContent,
+        colors: [s.backgroundColor, s.color],
+        inside: r(b).left >= r(c).left && r(b).right <= r(c).right && r(b).top >= r(c).top && r(b).bottom <= r(c).bottom,
+        covers: texts.filter((e) => hit(r(e), r(b))).map((e) => e.className),
+        height: Math.round(r(b).height),
+        jump: [jump.textContent, Math.round(r(jump).height), r(b).right <= r(jump).left || r(b).top >= r(jump).bottom],
+      };
+    }),
+  };
+}"""
+
+
+def open_in_claude(wall):
+    """In the app a card with a Remote Control link shows Open in Claude, in
+    Claude's orange with dark ink, beside an unchanged Open terminal; a press
+    sends only the card's id to open_remote, the page goes nowhere, and a
+    foreign link shows no button. The wall still fits without a scrollbar,
+    compact at 16 cards and comfortable at 4, and no card grows."""
+    for label, keep, density in (("16", None, "compact"), ("4", lambda s: s["session_id"] in list(REMOTES)[:2] + ["demo-4-bf_emma", "demo-9-bm_fable"], "comfortable")):
+        plain = open_app(wall, keep=keep)
+        before = plain.evaluate(OPEN_IN_CLAUDE)
+        plain.close()
+        page = open_app(wall, keep=keep, change=with_remotes)
+        got = page.evaluate(OPEN_IN_CLAUDE)
+        keys = [b["key"] for b in got["buttons"]]
+        wall.check(
+            sorted(keys) == sorted(list(REMOTES)[:2]) and got["links"] == 0,
+            f"{label} cards: a button on each card with a claude.ai link, none for a foreign one, no plain link",
+            [keys, got["links"]],
+        )
+        wall.check(
+            all(b["label"] in ("Open in Claude, Hephaestus's session", "Open in Claude, Kallos's session") and b["text"] == "Open in Claude" for b in got["buttons"]),
+            f"{label} cards: each is named for its session",
+            [(b["label"], b["text"]) for b in got["buttons"]],
+        )
+        wall.check(
+            all(b["colors"] == ["rgb(217, 119, 87)", "rgb(20, 20, 19)"] for b in got["buttons"]),
+            f"{label} cards: Claude's orange with dark ink",
+            [b["colors"] for b in got["buttons"]],
+        )
+        wall.check(
+            got["density"] == density == before["density"] and not got["scrolls"] and got["heights"] == before["heights"],
+            f"{label} cards: still {density}, no scrollbar, and no card grows",
+            [got["density"], got["scrolls"], got["heights"], before["heights"]],
+        )
+        wall.check(
+            all(b["inside"] and b["covers"] == [] and b["jump"][0] == "Open terminal" and b["jump"][2] for b in got["buttons"]),
+            f"{label} cards: the button stays in its card, covers nothing and leaves Open terminal in place",
+            got["buttons"],
+        )
+        if density == "comfortable":
+            wall.check(all(b["height"] == b["jump"][1] for b in got["buttons"]), "comfortable: as tall as Open terminal", got["buttons"])
+        url = page.url
+        page.locator('.card[data-key="demo-2-af_bella"] .remote-open').click()
+        page.wait_for_timeout(200)
+        sent = calls(page, "open_remote")
+        note = page.locator('.card[data-key="demo-2-af_bella"] .note').inner_text()
+        wall.check(
+            sent == [["open_remote", {"id": "demo-2-af_bella"}]] and note == "ok" and page.url == url and len(page.context.pages) == 1,
+            f"{label} cards: a press sends only the card's id, shows the answer, and the page goes nowhere",
+            [sent, note, page.url, len(page.context.pages)],
+        )
+        others = page.evaluate("window.__calls.filter(([c]) => !['get_launch_dir', 'get_split_mode', 'open_remote'].includes(c))")
+        wall.check(others == [], f"{label} cards: nothing else is sent", others)
+        page.close()
 
 
 def landmarks(wall):
@@ -3245,6 +3346,7 @@ def main() -> int:
             bar_follows_empty_state,
             launch_dir_follows_prefs,
             browser_hides_app_actions,
+            open_in_claude,
             landmarks,
             queue_docks_wide_and_is_a_dialog_narrow,
             queue_resizes_by_keyboard_and_remembers,

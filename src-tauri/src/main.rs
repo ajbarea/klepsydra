@@ -7,6 +7,7 @@ mod launch;
 mod phone;
 #[cfg(windows)]
 mod ping;
+mod remote;
 mod split;
 
 use std::path::PathBuf;
@@ -860,6 +861,7 @@ fn main() {
             fleet::get_wall_density,
             fleet::set_wall_density,
             jump::jump_to_terminal,
+            remote::open_remote,
             launch::launch_session,
             launch::get_launch_dir
         ])

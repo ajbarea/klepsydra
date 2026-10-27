@@ -45,6 +45,10 @@
   --danger-bg: #b3261e; /* End <Character>: filled, so it reads as the weighty choice; never the default */
   --danger-hover: #9c1f18;
   --danger-ink: #ffffff;
+  /* Open in Claude: Claude's orange from Anthropic's published brand colours,
+     with their dark (5.9:1); white on it is 3.1:1, under AA's 4.5:1. */
+  --claude-orange: #d97757;
+  --claude-ink: #141413;
   --font: "Segoe UI Variable Text", "Segoe UI", "Inter", system-ui, sans-serif;
   --display: "Segoe UI Variable Display", "Segoe UI", "Inter Display", "Inter", system-ui, sans-serif;
   --title: "Cinzel", "Trajan Pro", Georgia, serif;
@@ -1003,19 +1007,54 @@ body.queue-tabbed .wall { padding-right: max(var(--wall-pad), calc(var(--queue-t
 .served button:not([data-phone]),
 .served .density,
 .served .tools { display: none !important; }
+/* Open in Claude, the phone's link and the app's button alike: Claude's
+   orange with dark ink, and a plain arrow for "opens elsewhere" (no Anthropic
+   mark: its use needs Anthropic's written permission). */
 a.remote {
   display: inline-flex;
   align-items: center;
   margin-left: auto;
   padding: 0 var(--space-5);
-  border: 1px solid var(--button-line);
   border-radius: 8px;
-  background: var(--button-bg);
-  color: var(--text);
   font-size: 12.5px;
   text-decoration: none;
 }
+a.remote, button.remote-open {
+  gap: var(--space-2);
+  background: var(--claude-orange);
+  color: var(--claude-ink);
+  border: 1px solid var(--claude-orange);
+  font-weight: 600;
+}
+button.remote-open { display: inline-flex; align-items: center; }
+button.remote-open[hidden] { display: none; }
+/* Hover keeps the fill (the base hover rule would grey it), as needs-you's Open terminal does. */
+a.remote:hover, button.remote-open:hover:not([aria-disabled="true"]) { background: var(--claude-orange); box-shadow: inset 0 0 0 2px var(--claude-ink); }
+a.remote .away, button.remote-open .away { width: 12px; height: 12px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 a.remote:focus-visible { outline: 2px solid var(--card-focus); outline-offset: 2px; }
+/* Compact, in the app: the button sits at the foot's right end, under the
+   pill and Open terminal, 28 px tall in the one-line slot as Undo is, so
+   the card does not grow. */
+.wall[data-density="compact"] .card.has-open {
+  grid-template-areas:
+    "face name pill clear jump"
+    "face task task task task"
+    "meta meta meta meta meta"
+    "ask ask ask ask ask"
+    "said said said said said"
+    "menu note open open open";
+}
+[data-density="compact"] button.remote-open {
+  grid-area: open;
+  justify-self: end;
+  align-self: end;
+  min-height: 28px;
+  /* The slot is 4 px of gap and a 17 px line, 21 px: the button starts at
+     the gap and its last 7 px lie in the card's 8 px bottom padding. */
+  margin: 0 0 -7px var(--space-3);
+  padding: 0 var(--space-4);
+  font-size: 12px;
+}
 /* Compact: a row of its own under the foot, so the name keeps the head row's
    width and the ledger line its slot. */
 .served .wall[data-density="compact"] .card.has-remote {

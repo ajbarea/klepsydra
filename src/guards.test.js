@@ -196,13 +196,50 @@ const launcherHazards = (text) =>
 const EXIT_CODE_BINARIES = ["src-tauri/fleet/src/bin/ledger-verify.rs"];
 const withoutExitCode = (text) => text.replaceAll("std::process::ExitCode", "");
 
+// Open in Claude is the one other hand-off: remote.rs opens a session's
+// checked Remote Control link with the opener crate's Rust function. The
+// plugin is never registered, so the page has no opener command.
+const OPENER = "src-tauri/src/remote.rs";
+const OPEN_CALL = "tauri_plugin_opener::open_url(&url, None::<&str>)";
+const OPENER_DEP = /^tauri-plugin-opener = "2"$/m;
+
+/** `text` of file `f` without the one opener call or dependency line it may hold. */
+export const withoutOpener = (f, text) =>
+  f === OPENER ? text.replace(OPEN_CALL, "") : f === "src-tauri/Cargo.toml" ? text.replace(OPENER_DEP, "") : text;
+
 test("only the launcher starts a process", () => {
   assert.ok(RUST.includes(LAUNCHER), `${LAUNCHER} not found`);
   for (const f of [...RUST, ...FRONTEND, ...MANIFESTS, ...CONFIG].filter((f) => f !== LAUNCHER)) {
-    const text = read(f);
+    const text = withoutOpener(f, read(f));
     assert.deepEqual(spawns(EXIT_CODE_BINARIES.includes(f) ? withoutExitCode(text) : text), [], f);
   }
   for (const f of EXIT_CODE_BINARIES) assert.ok(RUST.includes(f), `${f} not found`);
+});
+
+test("Open in Claude opens only the session's checked link, and the page gets no opener", () => {
+  assert.ok(RUST.includes(OPENER), `${OPENER} not found`);
+  const src = read(OPENER);
+  assert.equal(src.split(OPEN_CALL).length, 2, "one open call");
+  assert.match(src, /pub async fn open_remote\(app: tauri::AppHandle, id: String\)/, "the page sends a session id, never a link");
+  assert.match(src, /let url = link\(&app\.state::<Fleet>\(\), &id\)\?;/, "the link is the snapshot's");
+  assert.match(src, /fn link\(fleet: &Fleet, id: &str\) -> Result<String, String> \{\s*fleet\s*\.with_latest\(\|v\| lookup::remote_url\(Some\(v\), id\)\)\s*\.unwrap_or_else\(\|\| lookup::remote_url\(None, id\)\)\s*\}/, "checked again");
+  assert.equal([...src.matchAll(/\burl\b/g)].length, 2, "the checked url is bound once and opened once");
+  assert.match(read("src-tauri/Cargo.toml"), OPENER_DEP);
+  for (const f of RUST) assert.doesNotMatch(read(f), /tauri_plugin_opener::(init|Builder)|OpenerExt|\.opener\(\)/, `${f}: the opener plugin is never registered or reached as a plugin`);
+  const calls = FRONTEND.flatMap((f) => [...read(f).matchAll(/invoke\("open_remote", ([^)]*)\)/g)].map((m) => m[1]));
+  assert.deepEqual(calls, ["{ id: button.dataset.id }"], "the wall sends only the card's id");
+  // The allowance covers that call and that line only.
+  for (const [f, planted] of [
+    [OPENER, `${OPEN_CALL}; tauri_plugin_opener::open_path(p, None::<&str>)`],
+    [OPENER, `${OPEN_CALL}; ${OPEN_CALL}`],
+    [OPENER, "tauri_plugin_opener::open_url(&other, None::<&str>)"],
+    [OPENER, `${OPEN_CALL}; std::process::Command::new("x")`],
+    ["src-tauri/src/main.rs", OPEN_CALL],
+    ["src-tauri/Cargo.toml", 'tauri-plugin-opener = { version = "2", features = ["x"] }'],
+    ["src-tauri/fleet/Cargo.toml", 'tauri-plugin-opener = "2"'],
+  ]) {
+    assert.notDeepEqual(spawns(withoutOpener(f, planted)), [], `${f}: ${planted}`);
+  }
 });
 
 test("the exit-code allowance covers nothing else that starts a process", () => {

@@ -128,6 +128,8 @@ test("only a claude.ai Claude Code session link becomes the card's link", () => 
   assert.equal(card({ ...base, remote_url: "https://claude.ai/code/session_01x" }, { characters: {} }, 2000).remote, "https://claude.ai/code/session_01x");
   assert.equal(card({ ...base, remote_url: "https://evil.example/x" }, { characters: {} }, 2000).remote, null);
   assert.equal(card(base, { characters: {} }, 2000).remote, null);
+  // Label in Name (WCAG 2.5.3): the visible "Open in Claude" starts the name, so speech input finds it.
+  assert.match(card({ ...base, remote_url: "https://claude.ai/code/session_01x" }, { characters: {} }, 2000).remoteLabel, /^Open in Claude, .+'s session$/);
 });
 
 test("on the phone every desktop action is hidden: only buttons marked data-phone show", () => {
@@ -142,7 +144,7 @@ test("on the phone every desktop action is hidden: only buttons marked data-phon
     ["close", "look", "play"],
     "only the portrait's look, its Close and a card's reply button act on the phone",
   );
-  for (const action of ['id="new-session"', 'class="jump"', 'class="clear"', 'class="menu"', 'data-act="interrupt"', 'data-act="end"', 'class="undo"', 'class="end-confirm"', 'id="ledger-open"', 'class="chip"']) {
+  for (const action of ['id="new-session"', 'class="jump"', 'class="remote-open"', 'class="clear"', 'class="menu"', 'data-act="interrupt"', 'data-act="end"', 'class="undo"', 'class="end-confirm"', 'id="ledger-open"', 'class="chip"']) {
     const b = buttons.find((x) => x.includes(action));
     assert.ok(b, `${action} found`);
     assert.doesNotMatch(b, /data-phone/, `${action} is desktop-only`);
@@ -151,13 +153,25 @@ test("on the phone every desktop action is hidden: only buttons marked data-phon
   assert.match(wall, /document\.documentElement\.classList\.toggle\("served", served\)/);
 });
 
+const AWAY = '<svg class="away" viewBox="0 0 16 16" aria-hidden="true"><path d="M6 3.5h6.5V10M12.5 3.5 4 12"/></svg>';
+
 test("a card's Remote Control link is a plain new-tab link, set only on the phone", () => {
   const html = read("src/wall.html");
-  assert.match(html, /<a class="remote" target="_blank" rel="noopener noreferrer" hidden>Open in Claude<\/a>/);
+  assert.ok(html.includes(`<a class="remote" target="_blank" rel="noopener noreferrer" hidden>Open in Claude${AWAY}</a>`));
   const wall = read("src/fleet/wall.js");
   assert.match(wall, /remote\.hidden = !\(served && c\.remote\);/);
   assert.match(wall, /if \(served && c\.remote\) \{\s*remote\.href = c\.remote;/);
   assert.match(wall, /if \(served && !e\.target\.closest\("a, button"\)\)/, "a tap on the card, not on its controls, opens the link");
+});
+
+test("in the app Open in Claude is a button the app answers, holding no link", () => {
+  const html = read("src/wall.html");
+  assert.ok(html.includes(`<button type="button" class="remote-open" hidden>Open in Claude${AWAY}</button>\n        <button type="button" class="jump">Open terminal</button>`), "beside Open terminal, which stays as it was");
+  assert.equal(html.split(AWAY).length, 3, "the arrow is drawn inline, once per control, hidden from screen readers");
+  const wall = read("src/fleet/wall.js");
+  assert.match(wall, /open\.hidden = !\(inTauri && c\.remote\);/);
+  assert.match(wall, /open\.setAttribute\("aria-label", c\.remoteLabel\);/);
+  assert.doesNotMatch(wall, /open\.(href|dataset\.url)|remote_url/, "the button carries the session id only");
 });
 
 test("the phone wall installs: manifest, Home Screen icon, and a shell-only service worker", () => {

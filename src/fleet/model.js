@@ -470,7 +470,7 @@ export function card(s, cast, nowMs, request = null) {
     wrapupRoute: sessionRoute(s),
     wrapup,
     remote: remoteLink(s.remote_url),
-    remoteLabel: `Open ${who.name}'s session in Claude`,
+    remoteLabel: `Open in Claude, ${who.name}'s session`,
     // keryx's latest spoken reply, when it kept one (replay.js).
     clip: Number.isInteger(s.reply_at) ? s.reply_at : null,
     playLabel: `Play ${who.name}'s last reply`,
