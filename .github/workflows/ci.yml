@@ -19,6 +19,10 @@ jobs:
     name: Gauge logic + statusLine hook
     runs-on: ubuntu-latest
     steps:
+      # actions/checkout runs `git init`, which prints a hint while Git's
+      # default branch name is unset.
+      - name: Set Git's default branch name
+        run: git config --global init.defaultBranch main
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -95,6 +99,10 @@ jobs:
         os: [windows-latest, ubuntu-latest]
     runs-on: ${{ matrix.os }}
     steps:
+      # actions/checkout runs `git init`, which prints a hint while Git's
+      # default branch name is unset.
+      - name: Set Git's default branch name
+        run: git config --global init.defaultBranch main
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
