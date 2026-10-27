@@ -262,21 +262,21 @@ alive() { [[ -n $(t display -p -t "$1" '#{pane_id}' 2>/dev/null) ]] && echo aliv
 # tmux closes a pane a moment after its process exits; at most 10 s. A pane
 # still there says how its process ended (remain-on-exit keeps a failed one).
 gone() {
+  local why
   until_true is_gone "$1" && { echo gone; return; }
-  echo "alive ($(t display -p -t "$1" 'dead=#{pane_dead} status=#{pane_dead_status} signal=#{pane_dead_signal}'))"
+  why=$(t display -p -t "$1" 'dead=#{pane_dead} status=#{pane_dead_status} signal=#{pane_dead_signal}')
+  # tmux shows empty fields for a pane that closed meanwhile.
+  is_gone "$1" && { echo gone; return; }
+  echo "alive ($why)"
 }
 is_gone() { [[ $(alive "$1") == gone ]]; }
 # The fake logs a key when it reads it, which can be after the launch script
 # returns: check its key log once it reads WANT, or as it stands after 10 s.
 check_keys() { # name want
-  local got _
-  for _ in $(seq 100); do
-    got=$(paste -sd' ' "$work/fake.log")
-    [[ $got == "$2" ]] && break
-    sleep 0.1
-  done
-  check "$1" "$got" "$2"
+  until_true keys_read "$2"
+  check "$1" "$(paste -sd' ' "$work/fake.log")" "$2"
 }
+keys_read() { [[ $(paste -sd' ' "$work/fake.log") == "$1" ]]; }
 detach_all; tabs0=$(tabs)
 
 : >"$work/fake.log"; p=$(fake)

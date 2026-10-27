@@ -297,7 +297,8 @@ mid_turn() {
 }
 
 # Type COMMAND into the cleared input line and press Enter, only once the line
-# reads exactly COMMAND, within 5 s on a busy machine; else clear it again and fail.
+# reads exactly COMMAND, over 50 reads 0.1 s apart (at least 5 s on a busy
+# machine); else clear it again and fail.
 run_command() { # command
   local _
   keys -l "$1"
