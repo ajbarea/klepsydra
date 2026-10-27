@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/hero.png" alt="klepsydra sitting over the Windows taskbar, showing 3% of the five-hour window used" width="520">
+  <img src="assets/wall-comfortable.png" alt="The fleet wall at 1920 px: eight session cards in two rows, each with a portrait, status and Open terminal, and most with a repo and branch and the last prompt and reply; the first waits for approval, the second shows an API error" width="900">
 </p>
 
 <h1 align="center">klepsydra</h1>
@@ -113,7 +113,7 @@ Each account publishes to its own file, so terminals on different logins never
 overwrite each other, and the overlay draws a labelled row for each:
 
 <p align="center">
-  <img src="assets/two-accounts.png" alt="Three rows: a personal session and week window, and a team session window, each separately labelled" width="450">
+  <img src="assets/two-accounts.png" alt="Three rows: Personal session 57% used, Personal week 27% used and Team session 12% used, each with its reset time" width="428">
 </p>
 
 With one account the rows drop the prefix and read "Current session" and "This
@@ -361,7 +361,7 @@ fleet strip beside it. Countdowns shorten ("4h 58m", "3d 11h"), and a
 reading more than 15 minutes old still says how old it is ("2h · 20m old").
 
 <p align="center">
-  <img src="assets/compact-taskbar.png" alt="The compact gauge inside the Windows taskbar: three rings with 12% and 4h 37m for the personal session, 20% and 6d 15h for the personal week, an empty ring with 0% and reset 2h ago for the team session, and five session portraits beside them" width="614">
+  <img src="assets/compact-taskbar.png" alt="The compact gauge at taskbar height: rings for 57% of the personal session with 7m to reset, 27% of the personal week with 6d 6h, 12% of the team session with 2h 29m, then sixteen session portraits with status badges" width="720">
 </p>
 
 Each layout keeps its own size from the handle, since compact is sized to the
@@ -387,7 +387,7 @@ is revealed.
 ## The fleet strip
 
 <p align="center">
-  <img src="assets/fleet-strip.png" alt="The gauge's three account rows, and beside them fifteen session portraits: three with orange needs-you diamonds first, then a vermillion error square, three blue working circles, four green done checks, and grey rings for sessions not started or ended" width="670">
+  <img src="assets/fleet-strip.png" alt="The gauge's three account rows (57%, 27% and 12% used, each with its reset time), and beside them sixteen session portraits, each with a badge for its status" width="760">
 </p>
 
 With several Claude Code sessions open, klepsydra shows a portrait for each to
@@ -549,6 +549,10 @@ session is still running a few seconds after `/exit` was sent.
 ### Wrapping up
 
 <!-- budget: 320 words -->
+<p align="center">
+  <img src="assets/wrap-up.png" alt="The wall during a wrap-up: the bar says 1 of 8 ready, and each card has a line for where its session stands, such as Wrapping up, Ready, Answer it first or Ask by hand" width="900">
+</p>
+
 **Wrap up…**, beside Ledger, asks the live sessions to checkpoint, record
 what still runs, commit their handoff and report whether stopping is safe. A dialog lists who
 is asked and how, with Cancel focused, and only those sessions are asked.
@@ -582,7 +586,7 @@ klepsydra's tmux, which you end yourself.
 ### Card density
 
 The control beside **+ New session** picks the card density: **Auto** (the
-default), **Comfortable** or **Compact**. Comfortable is the card above:
+default), **Comfortable** or **Compact**. Comfortable is the wall at the top of this page:
 four fit the wall in split mode (2x2, about 945 to 958x1000 of content) and
 eight fit it maximised (4x2, about 1920x1000) with no scrollbar, as the
 browser test measures them: every card waiting on you to approve a long
@@ -611,7 +615,15 @@ still fit with one more card, so a session ending and another starting at the
 boundary leaves the wall as it is. The choice is saved as `wall_density` in
 `prefs.json`.
 
+<p align="center">
+  <img src="assets/wall-compact.png" alt="The wall in Compact at 1920 px: sixteen smaller cards in four rows, each with its round portrait and status, and most with a place and the last exchange cut short" width="900">
+</p>
+
 ### Split mode
+
+<p align="center">
+  <img src="assets/wall-split.png" alt="The wall at split width, 958 px: four Comfortable cards in a 2x2 grid with the bar's counts, Ledger, Queue and Wrap up buttons above" width="480">
+</p>
 
 On Windows, **Split** (beside **Ledger**; its full name is "Split with
 terminal") puts the wall on the
@@ -827,6 +839,10 @@ the gauge's own code from the same readings, read every 5 seconds. They
 scroll away under the tally, and say so while no reading exists. The wall
 stays dark when the phone is in light mode.
 
+<p align="center">
+  <img src="assets/phone-wall.png" alt="The phone wall at iPhone width: rings for the Personal and Team accounts' usage, the tally (3 needs you, 8 working, 2 done, 1 error, 2 idle or ended), then the needs-you cards, each with its portrait, task, repo and branch, the ask, the last exchange and a play button" width="300">
+</p>
+
 The server answers only GET and HEAD, serves only the wall's own files, its
 snapshot at `/fleet.json`, the stream at `/events` and the reply clips of the
 cards it shows. It sends each session without its tmux pane, process or full
@@ -841,6 +857,10 @@ The Home Screen icons are drawn by `scripts/make-phone-icons.py` from the
 mark in `src-tauri/icons/`.
 
 ### The ledger
+
+<p align="center">
+  <img src="assets/ledger.png" alt="The Ledger drawer: totals for today (tokens, input, output, cache, lines, commits, pull requests, active time), tokens by character as bars, and tokens by model with the list-price estimate" width="420">
+</p>
 
 With the `env` block above, every Claude Code session sends its
 OpenTelemetry metrics and events to klepsydra, which counts them per session:
@@ -979,7 +999,7 @@ one on a Windows drive (`/mnt/c/...`) shows within a second or two. An older `qu
 works when there is no `queue.json`.
 
 <p align="center">
-  <img src="assets/queue-panel.png" alt="The Queue panel docked to the right of the card wall: the file's title and intro, a Needs you section open with numbered asks, two code blocks each with a Copy button, links with Copy link buttons, a done ask in quieter text, and folded Running now, Queued and Answers sections" width="360">
+  <img src="assets/queue-panel.png" alt="The Queue panel as it docks beside the wall: text size and full-screen buttons, then the file's title and intro, a Needs you section open with numbered asks, two code blocks each with a Copy button, links with Copy link buttons, a done ask in quieter text, and folded Running now, Queued and Answers sections" width="360">
 </p>
 
 - **Live.** klepsydra watches the file's folder and re-reads the file a
