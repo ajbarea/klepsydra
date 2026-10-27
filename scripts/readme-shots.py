@@ -20,6 +20,7 @@ import pathlib
 import sys
 import threading
 import io
+import tempfile
 import time
 
 import oxipng
@@ -27,6 +28,8 @@ from PIL import Image
 from playwright.sync_api import sync_playwright
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT / "scripts"))
+import test_phone_browser as phone  # noqa: E402  the phone suite's server and demo data
 OUT = ROOT / "assets"
 SETTLE_MS = 600  # past the wall's resize settle, arrivals and a frame
 
@@ -164,6 +167,27 @@ def main():
         page = wall(browser, port, 1920, 1000, "demo=8&wrapup", "comfortable")
         save(page.screenshot(clip=page.evaluate(CARDS)), "wrap-up")
         page.close()
+
+        # The phone wall, served by the real phone server, at iPhone size:
+        # the usage gauges, the tally and the first cards.
+        with tempfile.TemporaryDirectory(prefix="klepsydra-shots-") as tmp:
+            snapshot = pathlib.Path(tmp) / "fleet.json"
+            phone.snapshot_file(snapshot)
+            proc, addr = phone.start_server(snapshot)
+            # After the build, so the countdowns read as written.
+            phone.demo_usage(pathlib.Path(tmp) / "klepsydra")
+            try:
+                ctx = browser.new_context(viewport={"width": 390, "height": 844}, device_scale_factor=2,
+                                          is_mobile=True, has_touch=True)
+                page = ctx.new_page()
+                page.goto(f"http://{addr}/")
+                phone.wait_until(page, "document.getElementById('wall').children.length > 0", 15)
+                phone.wait_until(page, "document.querySelectorAll('.limits .limit-rows > li').length > 0", 15)
+                page.wait_for_timeout(SETTLE_MS)
+                save(page.screenshot(), "phone-wall")
+                ctx.close()
+            finally:
+                proc.kill()
 
         browser.close()
     server.shutdown()

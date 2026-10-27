@@ -839,6 +839,10 @@ the gauge's own code from the same readings, read every 5 seconds. They
 scroll away under the tally, and say so while no reading exists. The wall
 stays dark when the phone is in light mode.
 
+<p align="center">
+  <img src="assets/phone-wall.png" alt="The phone wall at iPhone width: rings for the Personal and Team accounts' usage, the tally (3 needs you, 8 working, 2 done, 1 error, 2 idle or ended), then the needs-you cards, each with its portrait, task, repo and branch, the ask, the last exchange and a play button" width="300">
+</p>
+
 The server answers only GET and HEAD, serves only the wall's own files, its
 snapshot at `/fleet.json`, the stream at `/events` and the reply clips of the
 cards it shows. It sends each session without its tmux pane, process or full
