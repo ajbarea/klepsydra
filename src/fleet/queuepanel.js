@@ -318,7 +318,11 @@ export function createQueuePanel({ dialog, button, tab, onLayout = () => {}, onR
       const to = land ? snap(reach(), innerWidth) : view;
       if (to === "docked" && land) resizeTo(reach());
       // A modal's focus would drop to the page as it docks; it stays on the separator.
-      if (to !== view) setView(to, to !== "shut" && had ? grip : false);
+      // Shut, the separator goes with the panel, so the focus moves to the tab once it shows.
+      if (to !== view) {
+        setView(to, to !== "shut" && had ? grip : false);
+        if (to === "shut" && had) (tab.hidden ? button : tab).focus();
+      }
       else layout();
       onResized();
     };

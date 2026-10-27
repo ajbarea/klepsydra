@@ -2761,8 +2761,8 @@ def queue_snaps_shut_to_a_tab(wall):
     wall.check(
         least["width"] == 320 and over["width"] <= 1 and over["open"] and back["width"] == 320
         and not shut["open"] and tab_in_place(shut) and shut["view"] == "shut" and shut["stored"] is None
-        and not shut["docked"] and shut["expanded"] == "false",
-        "a drag stops at 320, shows it shut past 160 and open again back over the line, and on release snaps shut, the width untouched",
+        and not shut["docked"] and shut["expanded"] == "false" and shut["active"] == "queue-tab",
+        "a drag stops at 320, shows it shut past 160 and open again back over the line, and on release snaps shut, the width untouched and the focus on the tab",
         [least["width"], over["width"], back["width"], shut],
     )
     page.keyboard.press("Control+Alt+b")
@@ -2794,6 +2794,32 @@ def queue_snaps_shut_to_a_tab(wall):
     page.wait_for_timeout(SETTLE_MS)
     inside = page.evaluate(SNAP_STATE)
     wall.check(inside["open"] and inside["width"] == 320 and inside["stored"] == "320", "released on the docked side of the line, it docks at the minimum", inside)
+    page.close()
+
+
+def queue_full_drags_shut_at_the_right(wall):
+    """Dragged from full all the way right, the shut preview collapses at the
+    right edge, not the left, and the release leaves the focus on the tab."""
+    page = wall.open(1920, 1000, 8)
+    page.click("#queue-open")
+    page.wait_for_selector("#queue .queue-content details")
+    page.click("#queue .queue-full")
+    page.wait_for_timeout(SETTLE_MS)
+    x, y = grip_point(page)
+    page.mouse.move(x, y)
+    page.mouse.down()
+    page.mouse.move(1919, y, steps=20)
+    page.wait_for_timeout(100)
+    held = page.evaluate(SNAP_STATE)
+    page.mouse.up()
+    page.wait_for_timeout(SETTLE_MS)
+    shut = page.evaluate(SNAP_STATE)
+    wall.check(
+        held["width"] <= 1 and held["left"] >= 1900 and not shut["open"] and shut["view"] == "shut"
+        and shut["active"] == "queue-tab",
+        "a drag from full to the right edge previews shut there and lands with the focus on the tab",
+        [held, shut],
+    )
     page.close()
 
 
@@ -3216,6 +3242,7 @@ def main() -> int:
             queue_drag_settles_once,
             queue_snaps_shut_to_a_tab,
             queue_snaps_full,
+            queue_full_drags_shut_at_the_right,
             queue_separator_snaps_by_keyboard,
             queue_old_and_narrow_state,
             queue_full_beside_a_classic_scrollbar,
