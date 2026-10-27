@@ -401,23 +401,24 @@ remote_lines() { # transcript
 
 # The Remote Control link a /clear leaves: /clear ends the session and starts
 # another id in the same Claude process, whose Remote Control stays up, and the
-# new transcript never names the link. Read from the session files of Claude
-# process `pid` started at `start`, the latest active; empty for none. One jq
-# over the files' first lines.
-cleared_link() { # fleet pid start
-  local names=() f id line
-  [[ $2 =~ ^[1-9][0-9]*$ && $3 =~ ^[0-9]+$ ]] || return 0
-  for f in "$1"/*.json; do
-    id=${f##*/}; id=${id%.json}
-    [[ $id =~ $UUID_RE && -f $f && ! -L $f ]] && names+=("$f")
-  done
-  (( ${#names[@]} )) || return 0
-  for f in "${names[@]}"; do
-    { IFS= read -r line <"$f" && printf '%s\n' "$line"; } 2>/dev/null
-  done | jq -nRr --argjson pid "$2" --argjson start "$3" '
-    [inputs | try fromjson catch empty | objects
-      | select(.claude.pid == $pid and .claude.start == $start and (.remote_url | type) == "string")]
-    | max_by([.ended.at, .state_at, .written_at] | map(numbers) | max // 0) | .remote_url // empty' 2>/dev/null
+# new transcript never names the link. It is the link, or none, of the latest
+# active other session of Claude process `pid` started at `start` on this boot
+# and distro; empty for none. Reads as mark_gone does, from inside the folder.
+cleared_link() { # fleet pid start self
+  local f pid start boot distro last url best=-1 link=""
+  [[ $2 =~ ^[1-9][0-9]*$ && $3 =~ ^[0-9]+$ && -n $host_boot ]] || return 0
+  while IFS=$'\t' read -r f pid start boot distro last url; do
+    [[ $f != "$4.json" && $pid == "$2" && $start == "$3" && $boot == "$host_boot" \
+      && $distro == "${host_distro:-?}" && $last =~ ^[0-9]+$ ]] || continue
+    (( last > best )) && best=$last link=$url
+  done < <(cd -- "$1" 2>/dev/null || exit 0
+    names=()
+    for f in *.json; do
+      [[ ${f%.json} =~ $UUID_RE && -f $f && ! -L $f ]] && names+=("$f")
+    done
+    session_rows '[((.claude.pid | numbers) // 0 | floor), ((.claude.start | numbers) // 0 | floor),
+      (.host.boot | or_q), (.host.distro | or_q), last_active, (.remote_url | or_q)]' "${names[@]}")
+  [[ $link != "?" ]] && printf '%s' "$link"
   return 0
 }
 
@@ -815,7 +816,7 @@ main() {
   { exec {lock}>>"$LOCK"; } 2>/dev/null || return 0
   flock -w 5 "$lock" || return 0
 
-  [[ $event == SessionStart && $source == clear ]] && cleared=$(cleared_link "$fleet" "$found_pid" "$found_start")
+  [[ $event == SessionStart && $source == clear ]] && cleared=$(cleared_link "$fleet" "$found_pid" "$found_start" "$session")
   file=$fleet/$session.json
   old=""
   [[ -f $file ]] && { old=$(<"$file"); } 2>/dev/null

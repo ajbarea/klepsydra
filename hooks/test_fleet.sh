@@ -1513,18 +1513,22 @@ done
 
 # /clear ends the session and starts another id in the same Claude process,
 # whose Remote Control stays up; the new transcript's only line about it is an
-# attachment with no link and sendUserFileHint true.
+# attachment with no link and sendUserFileHint true. A Claude process of
+# their own, since every other fixture session shares pid 500.
+mkproc 1500 1 claude 9200000 S claude
+mkproc 1510 1500 klepsydra-fleet 9200001 S bash "$hook"
+r1fire() { fire "$1" ".session_id = \"$R\" | .transcript_path = \"$tp\" | ${3:-.}" KLEPSYDRA_NOW="$2" KLEPSYDRA_PID=1510 >/dev/null; }
 R2=33333333-4444-4555-8666-888888888888
 rfile2="$dir/fleet/$R2.json"
 tp2="${tp%/*}/$R2.jsonl"
 rm -f "$rfile"
-rc_line 1 >"$tp"; rc_fire session-start.json "$rnow"; rc_fire user-prompt.json $((rnow + 15))
+rc_line 1 >"$tp"; r1fire session-start.json "$rnow"; r1fire user-prompt.json $((rnow + 15))
 check "remote: (a link before /clear)" "$(rc_url)" "https://claude.ai/code/session_01PLACEHOLDERconnect"
-rc_fire session-end.json $((rnow + 100)) '.reason = "clear"'
+r1fire session-end.json $((rnow + 100)) '.reason = "clear"'
 check "remote: a cleared session keeps its link on file" "$(jq -r '[.state, .remote_url] | join(" ")' "$rfile")" \
   "ended https://claude.ai/code/session_01PLACEHOLDERconnect"
 rc_line 2 | jq -c '.timestamp = "2026-10-18T19:51:45.000Z"' >"$tp2"
-c2fire() { fire "$1" ".session_id = \"$R2\" | .transcript_path = \"$tp2\" | ${3:-.}" KLEPSYDRA_NOW="$2" "${@:4}" >/dev/null; }
+c2fire() { fire "$1" ".session_id = \"$R2\" | .transcript_path = \"$tp2\" | ${3:-.}" KLEPSYDRA_NOW="$2" KLEPSYDRA_PID=1510 "${@:4}" >/dev/null; }
 c2fire session-start.json $((rnow + 101)) '.source = "clear"'
 check "remote: /clear carries the link to the new session" "$(jq -r '.remote_url // "none"' "$rfile2")" \
   "https://claude.ai/code/session_01PLACEHOLDERconnect"
@@ -1539,6 +1543,31 @@ check "remote: a new process takes no cleared link" "$(jq -r '.remote_url // "no
 rm -f "$rfile2"
 c2fire session-start.json $((rnow + 131)) '.source = "clear"' KLEPSYDRA_PID=710
 check "remote: another process's cleared link is not taken" "$(jq -r '.remote_url // "none"' "$rfile2")" "none"
+# A link turned off after one /clear stays off after the next.
+R3=33333333-4444-4555-8666-999999999999
+rfile3="$dir/fleet/$R3.json"
+tp3="${tp%/*}/$R3.jsonl"; : >"$tp3"
+c3fire() { fire "$1" ".session_id = \"$R3\" | .transcript_path = \"$tp3\" | ${3:-.}" KLEPSYDRA_NOW="$2" KLEPSYDRA_PID=1510 >/dev/null; }
+rm -f "$rfile2"; : >"$tp2"
+c2fire session-start.json $((rnow + 200)) '.source = "clear"'
+check "remote: (the next /clear carries it)" "$(jq -r '.remote_url // "none"' "$rfile2")" \
+  "https://claude.ai/code/session_01PLACEHOLDERconnect"
+rc_line 3 | jq -c '.timestamp = "2026-10-18T19:53:30.000Z"' >>"$tp2"; c2fire user-prompt.json $((rnow + 215))
+c2fire session-end.json $((rnow + 220)) '.reason = "clear"'
+c3fire session-start.json $((rnow + 221)) '.source = "clear"'
+check "remote: a link turned off before /clear stays off" "$(jq -r '.remote_url // "none"' "$rfile3")" "none"
+# Another distro or an earlier boot can reuse the pid and start time.
+for host in '.host.distro = "Other"' '.host.boot = "0b6e1c5a-9999-4222-8333-444455556666"'; do
+  for f in "$rfile" "$rfile2"; do
+    jq -c "$host | .remote_url = \"https://claude.ai/code/session_01PLACEHOLDERconnect\" | .written_at = $((rnow + 300))" "$f" >"$f.new" && mv "$f.new" "$f"
+  done
+  rm -f "$rfile3"
+  c3fire session-start.json $((rnow + 301)) '.source = "clear"'
+  check "remote: a link from $host is not taken" "$(jq -r '.remote_url // "none"' "$rfile3")" "none"
+  for f in "$rfile" "$rfile2"; do
+    jq -c '.host.distro = null | .host.boot = "0b6e1c5a-1111-4222-8333-444455556666"' "$f" >"$f.new" && mv "$f.new" "$f"
+  done
+done
 
 echo "queue command"
 
