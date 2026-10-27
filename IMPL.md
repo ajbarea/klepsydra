@@ -29,6 +29,9 @@ the above.
   5 s (`REFRESH_MS`); the Ledger reflows at 320/480/600 px x 75-200%; the
   edge holds the docked width and drag state; one `--panel-w` per dialog,
   one `--dock-w`; README shots regenerated (ledger.png docked).
+- Round 2: an open Ledger reads again a second past local midnight
+  (fake-clock test); the REFRESH_MS constant test dropped; fleet-briefing
+  shots recaptured after round 1.
 - Next: AJ reviews the PR and screenshots; deploy with the rest.
 - Verify: the gate list below; `scripts/test_wall_browser.py ledger_*
   panels_*` runs the new cases alone.
