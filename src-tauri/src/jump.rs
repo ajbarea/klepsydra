@@ -46,7 +46,7 @@ pub async fn jump_to_terminal(
         .flatten();
     tauri::async_runtime::spawn_blocking(move || {
         let tmux = match target {
-            Some(t) => Tmux::of(&t, crate::launch::tmux_jump(&app, &t)),
+            Some(t) => Tmux::of(&t, crate::launch::tmux_jump(&app, &id, &t)),
             None => Tmux::None,
         };
         dispatch(tmux, &name, jump)
@@ -383,7 +383,7 @@ mod tests {
     fn a_failed_fleet_jump_says_why_and_searches_no_tab() {
         for why in [
             "That session's tmux pane now belongs to another session.",
-            "A launch is already running.",
+            crate::launch::JUMP_BUSY,
         ] {
             let (out, asked) = run(Tmux::Fleet(Err(why.into())), Ok("Jumped.".into()));
             assert_eq!(out, Err(why.into()));

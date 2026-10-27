@@ -486,8 +486,8 @@ pane id and checks the Claude process is still in that pane, selects the
 window, then selects the Windows Terminal tab titled exactly "klepsydra
 sessions", the fixed title of the fleet tab; a hand-opened session of that name,
 whose title starts with a status glyph, is not it. If the pane now holds
-another session, or a launch is already running, the card says so and no tab
-is selected. If no tab matches, the window is still selected and the card
+another session, or a Jump of that card is still running, the card says so
+and no tab is selected. If no tab matches, the window is still selected and the card
 says "Selected the session's tmux window."; hidden tabs, two matching tabs and
 a UI Automation failure are reported as they are. If Windows keeps the focus,
 the tab's taskbar button flashes instead. A session in tmux opens this way
@@ -650,7 +650,12 @@ for it. The note then says "Started a session in DIR. The terminal tab has not
 attached yet.", and for 30 seconds another **+** or Jump opens no second tab.
 A click waits up to 45 seconds for WSL. Past that the note says "WSL did not
 answer within 45 seconds. The session may still be starting; check the
-terminal before clicking again."
+terminal before clicking again." A Jump waits 15 seconds, past the 10 seconds a
+failing WSL interop call takes to report, then says "WSL did not answer within
+15 seconds, so the session was not brought forward. Try again." A slow Jump
+holds only its own card: other cards' Jumps and **+ New session** still run.
+Each call adds a line to `fleet.log` with its verb, how long it took and its
+outcome.
 
 `launch_dir` and `launch_distro` are keys in `prefs.json`, in the app data dir.
 `launch_dir` defaults to `~`. `launch_distro` defaults to WSL's default

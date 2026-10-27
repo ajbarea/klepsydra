@@ -1,6 +1,6 @@
-//! The one place klepsydra starts a process: wsl.exe, from a click, one call
-//! at a time, running ~/.claude/klepsydra-launch.sh to start a session, bring
-//! a session's tmux window forward, or end or interrupt it.
+//! The one place klepsydra starts a process: wsl.exe, from a click, running
+//! ~/.claude/klepsydra-launch.sh to start a session, bring a session's tmux
+//! window forward, or end or interrupt it. Each call is logged to `fleet.log`.
 
 use std::collections::HashSet;
 use std::sync::Mutex;
@@ -18,19 +18,31 @@ pub const WSL_EXE: &str = r"C:\Windows\System32\wsl.exe";
 const SCRIPT: &str = ".claude/klepsydra-launch.sh";
 /// Longest wait for wsl.exe to finish: a cold WSL start alone can take 20 s.
 const TIMEOUT: Duration = Duration::from_secs(45);
+/// Longest wait for a Jump, whose session already runs in a started WSL: long
+/// enough for a refused interop connection to report its own error.
+const JUMP_TIMEOUT: Duration = Duration::from_secs(15);
 /// How long the output is still read once wsl.exe exits; a process it left
 /// behind holding the pipe open cannot keep the call running past this.
 #[cfg(windows)]
 const DRAIN_GRACE: Duration = Duration::from_secs(2);
 
-/// Set while a call runs; a click meanwhile is refused.
+/// Set while a New session runs; another meanwhile is refused.
 #[derive(Default)]
 pub struct InFlight(pub Mutex<bool>);
+
+/// Sessions with a call of one kind running.
+#[derive(Default)]
+struct Keyed(Mutex<HashSet<String>>);
 
 /// The sessions whose pane has an End or Interrupt running. Those two verbs
 /// are per-session: another session, Jump and New session run independently.
 #[derive(Default)]
-pub struct PaneFlight(pub Mutex<HashSet<String>>);
+pub struct PaneFlight(Keyed);
+
+/// The sessions with a Jump running. A second Jump of that card is refused;
+/// another card, New session, End and Interrupt run independently.
+#[derive(Default)]
+pub struct JumpFlight(Keyed);
 
 /// The title of the Windows Terminal tab the launcher opens; the script's
 /// `TAB_TITLE` is the same text, which a guard test asserts.
@@ -190,8 +202,8 @@ pub fn gated<T>(flight: &InFlight, f: impl FnOnce() -> Result<T, String>) -> Res
     f()
 }
 
-/// Frees session `id` in a `PaneFlight` when dropped, even while unwinding.
-struct Release<'a>(&'a PaneFlight, String);
+/// Frees session `id` in a `Keyed` when dropped, even while unwinding.
+struct Release<'a>(&'a Keyed, String);
 
 impl Drop for Release<'_> {
     fn drop(&mut self) {
@@ -200,23 +212,43 @@ impl Drop for Release<'_> {
     }
 }
 
-/// Run `f` unless an End or Interrupt of session `id` is already running.
-pub fn pane_gated<T>(
-    flight: &PaneFlight,
+/// Run `f` unless `flight` already has a call of session `id` running.
+fn keyed<T>(
+    flight: &Keyed,
     id: &str,
+    busy_said: &str,
     f: impl FnOnce() -> Result<T, String>,
 ) -> Result<T, String> {
     {
         let mut busy = flight.0.lock().unwrap_or_else(|e| e.into_inner());
         if !busy.insert(id.to_owned()) {
-            return Err(PANE_BUSY.into());
+            return Err(busy_said.into());
         }
     }
     let _release = Release(flight, id.to_owned());
     f()
 }
 
+/// Run `f` unless an End or Interrupt of session `id` is already running.
+pub fn pane_gated<T>(
+    flight: &PaneFlight,
+    id: &str,
+    f: impl FnOnce() -> Result<T, String>,
+) -> Result<T, String> {
+    keyed(&flight.0, id, PANE_BUSY, f)
+}
+
+/// Run `f` unless a Jump of session `id` is already running.
+pub fn jump_gated<T>(
+    flight: &JumpFlight,
+    id: &str,
+    f: impl FnOnce() -> Result<T, String>,
+) -> Result<T, String> {
+    keyed(&flight.0, id, JUMP_BUSY, f)
+}
+
 const PANE_BUSY: &str = "That session is already being ended or interrupted.";
+pub const JUMP_BUSY: &str = "That session is already being brought forward.";
 
 /// wsl.exe writes its own messages as UTF-16LE and the Linux side's as UTF-8.
 #[cfg(any(windows, test))]
@@ -304,6 +336,14 @@ fn timed_out() -> String {
     )
 }
 
+/// The card's line when a Jump gets no answer from WSL in `JUMP_TIMEOUT`.
+fn jump_timed_out() -> String {
+    format!(
+        "WSL did not answer within {} seconds, so the session was not brought forward. Try again.",
+        JUMP_TIMEOUT.as_secs()
+    )
+}
+
 /// The card's line when End or Interrupt gets no answer from WSL in `TIMEOUT`.
 fn pane_timed_out() -> String {
     format!(
@@ -320,8 +360,32 @@ fn wrapup_timed_out() -> String {
     )
 }
 
+/// `fleet.log`'s line for one call: its verb, how long it took and its outcome.
+fn call_line(verb: &str, took: Duration, r: &Result<String, String>) -> String {
+    let secs = took.as_secs_f64();
+    match r {
+        Ok(_) => format!("wsl {verb}: ok in {secs:.2} s"),
+        Err(e) => format!("wsl {verb}: failed in {secs:.2} s: {e}"),
+    }
+}
+
+/// Run `f`, a call named `verb`, and log it with `call_line`.
+fn logged<T>(
+    app: &tauri::AppHandle,
+    verb: &str,
+    f: impl FnOnce() -> Result<T, String>,
+) -> Result<T, String> {
+    let started = std::time::Instant::now();
+    let r = f();
+    if let Some(dir) = crate::klepsydra_dir(app) {
+        let said = r.as_ref().map(|_| String::new()).map_err(String::clone);
+        crate::fleet::log_line(&dir, &call_line(verb, started.elapsed(), &said));
+    }
+    r
+}
+
 #[cfg(windows)]
-fn run(args: &[String], timed_out: fn() -> String) -> Result<String, String> {
+fn run(args: &[String], wait: Duration, timed_out: fn() -> String) -> Result<String, String> {
     use std::os::windows::process::CommandExt;
     use std::process::{Command, Stdio};
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
@@ -336,7 +400,7 @@ fn run(args: &[String], timed_out: fn() -> String) -> Result<String, String> {
         .map_err(|e| format!("Could not start {WSL_EXE}: {e}"))?;
     let out = drain(child.stdout.take().ok_or("wsl.exe gave no stdout.")?);
     let err = drain(child.stderr.take().ok_or("wsl.exe gave no stderr.")?);
-    let deadline = Instant::now() + TIMEOUT;
+    let deadline = Instant::now() + wait;
     let status = loop {
         match child.try_wait() {
             Ok(Some(status)) => break status,
@@ -367,14 +431,18 @@ fn run(args: &[String], timed_out: fn() -> String) -> Result<String, String> {
 }
 
 #[cfg(not(windows))]
-fn run(_args: &[String], _timed_out: fn() -> String) -> Result<String, String> {
+fn run(_args: &[String], _wait: Duration, _timed_out: fn() -> String) -> Result<String, String> {
     Err("Starting a session works on Windows only.".into())
 }
 
-/// Bring `t`'s tmux window to the front of its session.
-pub fn tmux_jump(app: &tauri::AppHandle, t: &Target) -> Result<String, String> {
+/// Bring session `id`'s tmux window, `t`, to the front of its tmux session.
+pub fn tmux_jump(app: &tauri::AppHandle, id: &str, t: &Target) -> Result<String, String> {
     let args = pane_args(t, PaneVerb::Jump)?;
-    gated(&app.state::<InFlight>(), || run(&args, timed_out))
+    logged(app, PaneVerb::Jump.word(), || {
+        jump_gated(&app.state::<JumpFlight>(), id, || {
+            run(&args, JUMP_TIMEOUT, jump_timed_out)
+        })
+    })
 }
 
 /// Do `verb` to session `id`'s pane, as the latest snapshot names it.
@@ -386,8 +454,10 @@ async fn to_pane(app: tauri::AppHandle, id: String, verb: PaneVerb) -> Result<St
         .ok_or("This session has no tmux pane klepsydra knows, so it can only be stopped from its own terminal.")?;
     let args = pane_args(&target, verb)?;
     tauri::async_runtime::spawn_blocking(move || {
-        pane_gated(&app.state::<PaneFlight>(), &id, || {
-            run(&args, pane_timed_out)
+        logged(&app, verb.word(), || {
+            pane_gated(&app.state::<PaneFlight>(), &id, || {
+                run(&args, TIMEOUT, pane_timed_out)
+            })
         })
     })
     .await
@@ -457,8 +527,10 @@ pub async fn start_wrapup(
                 .ok_or_else(|| "This session has no tmux pane klepsydra knows.".to_owned())
                 .and_then(|t| pane_args(t, PaneVerb::Wrapup))
                 .map_err(failed)?;
-            pane_gated(&app.state::<PaneFlight>(), id, || {
-                run(&args, wrapup_timed_out)
+            logged(&app, PaneVerb::Wrapup.word(), || {
+                pane_gated(&app.state::<PaneFlight>(), id, || {
+                    run(&args, TIMEOUT, wrapup_timed_out)
+                })
             })
             .map(|_| ())
             .map_err(|e| {
@@ -525,7 +597,9 @@ pub async fn launch_session(app: tauri::AppHandle) -> Result<String, String> {
         .ok_or("prefs.json could not be read, so the launch folder is unknown.")?;
     let (_, args) = launch_plan(&prefs)?;
     tauri::async_runtime::spawn_blocking(move || {
-        gated(&app.state::<InFlight>(), || run(&args, timed_out))
+        logged(&app, "launch", || {
+            gated(&app.state::<InFlight>(), || run(&args, TIMEOUT, timed_out))
+        })
     })
     .await
     .map_err(|e| format!("Could not run the launch: {e}"))?
@@ -760,6 +834,76 @@ mod tests {
         assert!(r.is_ok(), "End runs while a Jump holds the gate");
         let r = pane_gated(&panes, "a", || gated(&launch, || Ok(())));
         assert!(r.is_ok(), "Jump and New run while an End does");
+    }
+
+    #[test]
+    fn a_hung_jump_blocks_neither_another_card_nor_a_launch() {
+        let (jumps, launch) = (
+            std::sync::Arc::new(JumpFlight::default()),
+            InFlight::default(),
+        );
+        let (held_tx, held) = std::sync::mpsc::channel();
+        let (free, free_rx) = std::sync::mpsc::channel::<()>();
+        let hung = {
+            let jumps = std::sync::Arc::clone(&jumps);
+            std::thread::spawn(move || {
+                jump_gated(&jumps, "a", || {
+                    held_tx.send(()).unwrap();
+                    free_rx.recv().unwrap();
+                    Ok(())
+                })
+            })
+        };
+        held.recv().unwrap();
+        assert!(
+            jump_gated(&jumps, "b", || Ok(())).is_ok(),
+            "another card jumps"
+        );
+        assert!(gated(&launch, || Ok(())).is_ok(), "New session runs");
+        let again = jump_gated(&jumps, "a", || Ok(()));
+        assert_eq!(again, Err(JUMP_BUSY.into()));
+        assert!(!JUMP_BUSY.contains("launch"), "{JUMP_BUSY}");
+        free.send(()).unwrap();
+        assert!(hung.join().unwrap().is_ok());
+        assert!(
+            jump_gated(&jumps, "a", || Ok(())).is_ok(),
+            "the card reopens"
+        );
+    }
+
+    #[test]
+    fn a_jump_neither_holds_nor_waits_for_an_end_of_its_session() {
+        let (jumps, panes) = (JumpFlight::default(), PaneFlight::default());
+        assert!(jump_gated(&jumps, "a", || pane_gated(&panes, "a", || Ok(()))).is_ok());
+        assert!(pane_gated(&panes, "a", || jump_gated(&jumps, "a", || Ok(()))).is_ok());
+    }
+
+    #[test]
+    fn a_jump_gives_up_past_a_failed_interop_call_and_well_before_a_launch() {
+        // A refused WSL interop connection takes about 10 s to fail.
+        assert!(JUMP_TIMEOUT > Duration::from_secs(10), "{JUMP_TIMEOUT:?}");
+        assert!(JUMP_TIMEOUT * 2 < TIMEOUT, "{JUMP_TIMEOUT:?}");
+        assert_eq!(
+            jump_timed_out(),
+            "WSL did not answer within 15 seconds, so the session was not brought forward. Try again."
+        );
+    }
+
+    #[test]
+    fn each_call_logs_its_verb_time_and_outcome() {
+        let ms = Duration::from_millis;
+        assert_eq!(
+            call_line("jump", ms(420), &Ok("x".into())),
+            "wsl jump: ok in 0.42 s"
+        );
+        assert_eq!(
+            call_line("launch", ms(15_003), &Err("WSL did not answer.".into())),
+            "wsl launch: failed in 15.00 s: WSL did not answer."
+        );
+        assert_eq!(
+            call_line("jump", ms(0), &Err(JUMP_BUSY.into())),
+            format!("wsl jump: failed in 0.00 s: {JUMP_BUSY}")
+        );
     }
 
     #[test]
