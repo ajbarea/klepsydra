@@ -23,6 +23,20 @@ export const GLYPHS = {
 const LORELEI_BACKGROUNDS = ["b6e3f4", "c0aede", "d1d4f9", "ffd5dc", "ffdfbf"];
 const LORELEI = "DiceBear Lorelei, a remix of Lorelei by Lisa Wischofsky (https://www.dicebear.com/styles/lorelei/)";
 const LUCIDE = "Lucide (https://lucide.dev)";
+const ISC = "ISC (Lucide LICENSE, Copyright (c) Lucide Icons and Contributors)";
+const MIT = "MIT (Feather, Copyright (c) 2013-present Cole Bemis; in Lucide's LICENSE)";
+// The Lucide LICENSE, shipped beside the faces it covers.
+export const LICENSE_FILE = "professions/LICENSE-lucide.txt";
+
+/** The icons Lucide's LICENSE names as derived from Feather, which stay under Feather's MIT licence. */
+export function featherIcons(license) {
+  const list = license.match(/derived from the Feather project:\s*\n\s*\n([^\n]+)/)?.[1];
+  if (!list) throw new Error("no Feather list in the Lucide LICENSE");
+  return new Set(list.split(",").map((s) => s.trim()).filter(Boolean));
+}
+
+/** A glyph's licence: Feather's MIT for an icon derived from Feather, else Lucide's ISC. */
+export const glyphLicense = (glyph, feather) => (feather.has(glyph) ? MIT : ISC);
 
 /** The glyph's ink on an accent disc: the darker or lighter of two, whichever reads better. */
 export const glyphInk = (accent) => (contrast("#11151b", accent) >= contrast("#ffffff", accent) ? "#11151b" : "#ffffff");
@@ -64,12 +78,16 @@ async function main([modules, out]) {
     manifest[file] = { source, license };
   };
 
+  const license = readFileSync(join(pkg("lucide-static"), "LICENSE"), "utf8");
+  const feather = featherIcons(license);
+  write(LICENSE_FILE, license, `lucide-static@${PINS["lucide-static"]} LICENSE`, "ISC AND MIT");
   const professions = theme("professions");
   for (const c of Object.values(professions.characters)) {
     const glyph = GLYPHS[c.face];
     if (!glyph) throw new Error(`no glyph for ${c.face}`);
     const svg = professionSvg(c.accent, readFileSync(join(pkg("lucide-static"), "icons", `${glyph}.svg`), "utf8"));
-    write(`professions/${c.face}.svg`, svg, `${LUCIDE} "${glyph}" from lucide-static@${PINS["lucide-static"]}, on a ${c.accent} disc`, "ISC (Lucide LICENSE, Copyright (c) Lucide Icons and Contributors)");
+    const from = feather.has(glyph) ? `${LUCIDE} "${glyph}", derived from Feather (https://feathericons.com),` : `${LUCIDE} "${glyph}"`;
+    write(`professions/${c.face}.svg`, svg, `${from} from lucide-static@${PINS["lucide-static"]}, on a ${c.accent} disc`, glyphLicense(glyph, feather));
   }
   const dicebear = theme("dicebear");
   for (const [voice, c] of Object.entries(dicebear.characters)) {
@@ -77,7 +95,7 @@ async function main([modules, out]) {
     write(`dicebear/${c.face}.svg`, svg, `${LORELEI}, rendered with @dicebear/core@${PINS["@dicebear/core"]} and @dicebear/lorelei@${PINS["@dicebear/lorelei"]} from seed "${voice}"`, "CC0-1.0");
   }
   writeFileSync(join(out, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`);
-  console.log(`drew ${Object.keys(manifest).length} faces`);
+  console.log(`drew ${Object.keys(manifest).filter((f) => f.endsWith(".svg")).length} faces`);
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) await main(process.argv.slice(2));

@@ -34,6 +34,12 @@ def main(svgs: Path, faces: Path) -> None:
         browser = p.chromium.launch()
         page = browser.new_page(device_scale_factor=1)
         for svg_file, entry in manifest.items():
+            if not svg_file.endswith(".svg"):
+                # A licence text, shipped as it is.
+                (faces / svg_file).parent.mkdir(parents=True, exist_ok=True)
+                (faces / svg_file).write_bytes((svgs / svg_file).read_bytes())
+                licenses[svg_file] = entry
+                continue
             theme, name = svg_file.removesuffix(".svg").split("/")
             if theme not in THEMES:
                 raise SystemExit(f"{svg_file}: not a theme this script renders")
@@ -56,7 +62,7 @@ def main(svgs: Path, faces: Path) -> None:
                 }
         browser.close()
     licenses_path.write_text(json.dumps(dict(sorted(licenses.items())), indent=2) + "\n")
-    print(f"rendered {len(manifest)} faces at {', '.join(str(v) for v in SIZES.values())} px")
+    print(f"rendered {sum(f.endswith('.svg') for f in manifest)} faces at {', '.join(str(v) for v in SIZES.values())} px")
 
 
 if __name__ == "__main__":

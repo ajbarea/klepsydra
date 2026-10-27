@@ -761,8 +761,8 @@ fetches nothing.
 ### Character themes
 
 The cast can wear one of three themes, chosen in the tray's **Characters**
-menu or the picker beside the wall's density choice. The choice is kept in
-`prefs.json` (`"theme"`), applies at once to the wall, the strip and the
+menu or the wall's Characters picker, over its density choice. The choice is
+kept in `prefs.json` (`"theme"`), applies at once to the wall, the strip and the
 ledger without a restart, and the phone wall follows it.
 
 - **Kourai** (the default): the kourai portraits above.
@@ -783,12 +783,17 @@ on the band, and the portrait button opens the face drawn large. The empty
 wall's keeper is each theme's `af_nicole` (Hesychia, the Librarian, Nicole).
 
 The Professions and DiceBear faces are WebP files rendered once by
-`scripts/render-themes.sh` from exactly pinned packages (`lucide-static@1.55.0`,
-`@dicebear/core@9.4.2`, `@dicebear/lorelei@9.4.2`) and committed, each with
-its `LICENSES.json` entry; the app calls no avatar service.
+`scripts/render-themes.sh` and committed, each with its `LICENSES.json`
+entry; the app calls no avatar service. The script installs
+`lucide-static@1.55.0`, `@dicebear/core@9.4.2` and `@dicebear/lorelei@9.4.2`,
+and everything they pull in, from the lockfile in `scripts/render-themes/`.
 
 Credits: the Professions glyphs are from [Lucide](https://lucide.dev)
-(ISC licence, Copyright (c) Lucide Icons and Contributors). The DiceBear
+(ISC licence, Copyright (c) Lucide Icons and Contributors), except the
+Guide's compass, the Researcher's magnifier and the Timekeeper's clock,
+which Lucide derives from [Feather](https://feathericons.com) (MIT licence,
+Copyright (c) 2013-present Cole Bemis). Both licences ship beside the faces
+in `src/fleet/faces/professions/LICENSE-lucide.txt`. The DiceBear
 faces are [DiceBear](https://www.dicebear.com)'s Lorelei style, a remix of
 [Lorelei](https://www.dicebear.com/styles/lorelei/) by Lisa Wischofsky,
 released under CC0 1.0 (no attribution required; credited here anyway);

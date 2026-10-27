@@ -490,6 +490,9 @@ def main() -> int:
                 klepsydra = pathlib.Path(tmp) / "klepsydra"
                 voices = {s["session_id"]: s.get("voice") for s in json.loads(snapshot.read_text())["sessions"]}
                 looks = {}
+                # An open portrait follows the switch too.
+                page.locator('.card[data-key="demo-1-am_michael"] .look').tap()
+                wait_until(page, "document.getElementById('portrait').open", 5)
                 for theme in ("professions", "dicebear", "nonsense", "kourai"):
                     want = theme if theme in THEMES else "kourai"
                     tmp_prefs = klepsydra / "prefs.json.tmp"
@@ -504,6 +507,13 @@ def main() -> int:
                     run.check(worn and cast_cards and names and faces, f"the phone wears {theme!r} as {want}: each cast card's name and face", got["cards"][:3])
                     run.check(got["keeper"] == f"fleet/faces/{want}/{cast['af_nicole']['face']}-full.webp", f"{want}: the keeper is the theme's", got["keeper"])
                     looks[theme] = got
+                    michael = THEMES[want]["characters"]["am_michael"]
+                    want_full = f"fleet/faces/{want}/{michael['face']}-full.webp"
+                    shown = wait_until(page, f"document.querySelector('#portrait .full').getAttribute('src') === '{want_full}' && document.getElementById('portrait-name').textContent", 5)
+                    run.check(shown == michael["name"] and page.evaluate("document.getElementById('portrait').open"),
+                              f"{want}: the open portrait shows the theme's {michael['name']}", shown)
+                page.keyboard.press("Escape")
+                wait_until(page, "!document.getElementById('portrait').open", 5)
                 accents = {t: [c["accent"] for c in v["cards"]] for t, v in looks.items()}
                 run.check(len({json.dumps(a) for a in accents.values()}) == 1, "a switch never changes a card's accent", accents)
                 keys = {t: [c["key"] for c in v["cards"]] for t, v in looks.items()}

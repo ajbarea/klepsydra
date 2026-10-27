@@ -4250,6 +4250,49 @@ def themes_fit(wall):
             page.close()
 
 
+PICKER = """() => {
+  const bar = document.querySelector('.bar');
+  const box = (e) => e.getBoundingClientRect();
+  const pick = document.querySelector('.theme-pick');
+  const with_ = Math.round(box(bar).height * 100);
+  pick.style.display = 'none';
+  const without = Math.round(box(bar).height * 100);
+  pick.style.display = '';
+  const p = box(pick);
+  const cx = (p.left + p.right) / 2, cy = (p.top + p.bottom) / 2;
+  // The spacing exception to the 24 px target (WCAG 2.2, 2.5.8): no other target within 12 px of an undersized one's centre.
+  const near = (r) => Math.hypot(Math.max(r.left - cx, 0, cx - r.right), Math.max(r.top - cy, 0, cy - r.bottom)) < 12;
+  const others = [...bar.querySelectorAll('button, label, a, input, select, .tally, .ring-key')]
+    .filter((e) => !pick.contains(e) && !e.contains(pick) && e.checkVisibility() && box(e).width > 0)
+    .map((e) => [e.id || e.className || e.tagName, box(e)]);
+  const hits = (r) => r.left < p.right && p.left < r.right && r.top < p.bottom && p.top < r.bottom;
+  return {
+    with: with_ / 100, without: without / 100,
+    inside: p.left >= 0 && p.right <= innerWidth && p.top >= box(bar).top && p.bottom <= box(bar).bottom,
+    overlaps: others.filter(([, r]) => hits(r)).map(([n]) => n),
+    crowded: p.height < 24 ? others.filter(([, r]) => near(r)).map(([n]) => n) : [],
+    height: p.height,
+  };
+}"""
+
+
+def picker_costs_no_height(wall):
+    """The Characters picker never makes the bar taller or wrap: at each
+    width, with the app's buttons shown or not, the bar is as tall as
+    without the picker, and the picker sits inside the bar, over no other
+    control and 12 px clear of each (the spacing exception to 24 px)."""
+    for width in (420, 945, 958, 1100, 1279, 1280, 1366, 1500, 1920):
+        for app in (True, False):
+            page = wall.open(width, 1000, 8, query="&theme=professions")
+            if not app:
+                page.evaluate("document.getElementById('new-session').hidden = true; document.getElementById('wrapup-open').hidden = true; dispatchEvent(new Event('resize'))")
+                page.wait_for_timeout(SETTLE_MS)
+            got = page.evaluate(PICKER)
+            ok = got["with"] == got["without"] and got["inside"] and not got["overlaps"] and not got["crowded"]
+            wall.check(ok, f"{width} px{' with the app buttons' if app else ''}: the picker costs the bar no height and crowds nothing", got)
+            page.close()
+
+
 def main() -> int:
     handler = functools.partial(Quiet, directory=str(ROOT))
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)  # a free port
@@ -4353,6 +4396,7 @@ def main() -> int:
             themes_switch_live,
             themes_keeper_and_portrait,
             themes_fit,
+            picker_costs_no_height,
         )
         for case in cases:
             if not only or case.__name__ in only:

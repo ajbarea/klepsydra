@@ -153,10 +153,10 @@ html, body { background: var(--wall-bg); color: var(--text); font: 14px/1.45 var
 #wrapup-note { color: var(--text-dim); font-size: 12.5px; }
 #wrapup-note:empty { display: none; }
 
-/* The view: density and characters, beside + New session; under the
-   width where the lead wraps anyway they stack, so the bar grows no taller. */
-.view { order: 2; display: flex; align-items: center; gap: var(--space-5); }
-@media (max-width: 1279px) { .view { flex-direction: column; align-items: stretch; gap: 4px; } }
+/* The view: density, with the Characters picker set above it in the bar's
+   top padding, so the picker takes no room in the bar's row: the bar never
+   wraps or grows for it. */
+.view { order: 2; position: relative; display: flex; }
 /* Density: a quiet segmented control. */
 .density { display: inline-flex; gap: 2px; padding: 1px; border: 1px solid var(--card-line); border-radius: 8px; }
 .density label {
@@ -173,22 +173,33 @@ html, body { background: var(--wall-bg); color: var(--text); font: 14px/1.45 var
 .density label:has(input:checked) { background: var(--button-bg); color: var(--text); }
 .density label:has(input:focus-visible) { outline: 2px solid var(--card-focus); outline-offset: 2px; }
 .density input { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
-/* Characters: the theme picker beside the density choice, as quiet. */
-.theme-pick { display: flex; }
-.theme-pick select {
-  flex: 1;
-  min-height: 24px; /* the 24x24 minimum target (WCAG 2.2, 2.5.8) */
-  padding: 0 var(--space-4);
-  border: 1px solid var(--card-line);
-  border-radius: 8px;
-  background: transparent;
+/* Characters: a quiet line over the density choice's right end, 16 px tall
+   and 12 px clear of every other control: the spacing exception to the
+   24 px target size (WCAG 2.2, 2.5.8). */
+.theme-pick {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 4.5px); /* inside the bar's 20 px top padding */
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
   color: var(--text-dim);
+  font: 600 11.5px/1 var(--font);
+  white-space: nowrap;
+}
+.theme-pick select {
+  height: 16px;
+  padding: 0 2px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text);
   color-scheme: dark;
-  font: 600 12.5px/1 var(--font);
+  font: inherit;
   cursor: pointer;
 }
-.theme-pick select:hover { color: var(--text); }
-.theme-pick select:focus-visible { outline: 2px solid var(--card-focus); outline-offset: 2px; }
+.theme-pick select:hover { background: var(--button-bg); }
+.theme-pick select:focus-visible { outline: 2px solid var(--card-focus); outline-offset: 1px; }
 
 button {
   font: 600 13px/1 var(--font);

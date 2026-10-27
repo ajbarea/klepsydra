@@ -419,6 +419,10 @@
     "source": "kourai-khryseai assets/avatars/vn/techne_neutral.png (https://github.com/ajbarea/kourai-khryseai), whole, 640 px",
     "license": "MIT (kourai-khryseai LICENSE, Copyright (c) 2026 AJ Barea)"
   },
+  "professions/LICENSE-lucide.txt": {
+    "source": "lucide-static@1.55.0 LICENSE",
+    "license": "ISC AND MIT"
+  },
   "professions/architect-192.webp": {
     "source": "Lucide (https://lucide.dev) \"drafting-compass\" from lucide-static@1.55.0, on a #C8B464 disc, 192 px",
     "license": "ISC (Lucide LICENSE, Copyright (c) Lucide Icons and Contributors)"
@@ -504,16 +508,16 @@
     "license": "ISC (Lucide LICENSE, Copyright (c) Lucide Icons and Contributors)"
   },
   "professions/guide-192.webp": {
-    "source": "Lucide (https://lucide.dev) \"compass\" from lucide-static@1.55.0, on a #009E73 disc, 192 px",
-    "license": "ISC (Lucide LICENSE, Copyright (c) Lucide Icons and Contributors)"
+    "source": "Lucide (https://lucide.dev) \"compass\", derived from Feather (https://feathericons.com), from lucide-static@1.55.0, on a #009E73 disc, 192 px",
+    "license": "MIT (Feather, Copyright (c) 2013-present Cole Bemis; in Lucide's LICENSE)"
   },
   "professions/guide-96.webp": {
-    "source": "Lucide (https://lucide.dev) \"compass\" from lucide-static@1.55.0, on a #009E73 disc, 96 px",
-    "license": "ISC (Lucide LICENSE, Copyright (c) Lucide Icons and Contributors)"
+    "source": "Lucide (https://lucide.dev) \"compass\", derived from Feather (https://feathericons.com), from lucide-static@1.55.0, on a #009E73 disc, 96 px",
+    "license": "MIT (Feather, Copyright (c) 2013-present Cole Bemis; in Lucide's LICENSE)"
   },
   "professions/guide-full.webp": {
-    "source": "Lucide (https://lucide.dev) \"compass\" from lucide-static@1.55.0, on a #009E73 disc, 512 px",
-    "license": "ISC (Lucide LICENSE, Copyright (c) Lucide Icons and Contributors)"
+    "source": "Lucide (https://lucide.dev) \"compass\", derived from Feather (https://feathericons.com), from lucide-static@1.55.0, on a #009E73 disc, 512 px",
+    "license": "MIT (Feather, Copyright (c) 2013-present Cole Bemis; in Lucide's LICENSE)"
   },
   "professions/inspector-192.webp": {
     "source": "Lucide (https://lucide.dev) \"clipboard-check\" from lucide-static@1.55.0, on a #DA5032 disc, 192 px",
@@ -564,16 +568,16 @@
     "license": "ISC (Lucide LICENSE, Copyright (c) Lucide Icons and Contributors)"
   },
   "professions/researcher-192.webp": {
-    "source": "Lucide (https://lucide.dev) \"search\" from lucide-static@1.55.0, on a #0072B2 disc, 192 px",
-    "license": "ISC (Lucide LICENSE, Copyright (c) Lucide Icons and Contributors)"
+    "source": "Lucide (https://lucide.dev) \"search\", derived from Feather (https://feathericons.com), from lucide-static@1.55.0, on a #0072B2 disc, 192 px",
+    "license": "MIT (Feather, Copyright (c) 2013-present Cole Bemis; in Lucide's LICENSE)"
   },
   "professions/researcher-96.webp": {
-    "source": "Lucide (https://lucide.dev) \"search\" from lucide-static@1.55.0, on a #0072B2 disc, 96 px",
-    "license": "ISC (Lucide LICENSE, Copyright (c) Lucide Icons and Contributors)"
+    "source": "Lucide (https://lucide.dev) \"search\", derived from Feather (https://feathericons.com), from lucide-static@1.55.0, on a #0072B2 disc, 96 px",
+    "license": "MIT (Feather, Copyright (c) 2013-present Cole Bemis; in Lucide's LICENSE)"
   },
   "professions/researcher-full.webp": {
-    "source": "Lucide (https://lucide.dev) \"search\" from lucide-static@1.55.0, on a #0072B2 disc, 512 px",
-    "license": "ISC (Lucide LICENSE, Copyright (c) Lucide Icons and Contributors)"
+    "source": "Lucide (https://lucide.dev) \"search\", derived from Feather (https://feathericons.com), from lucide-static@1.55.0, on a #0072B2 disc, 512 px",
+    "license": "MIT (Feather, Copyright (c) 2013-present Cole Bemis; in Lucide's LICENSE)"
   },
   "professions/reviewer-192.webp": {
     "source": "Lucide (https://lucide.dev) \"eye\" from lucide-static@1.55.0, on a #FFDCA0 disc, 192 px",
@@ -588,15 +592,15 @@
     "license": "ISC (Lucide LICENSE, Copyright (c) Lucide Icons and Contributors)"
   },
   "professions/timekeeper-192.webp": {
-    "source": "Lucide (https://lucide.dev) \"clock\" from lucide-static@1.55.0, on a #F0E442 disc, 192 px",
-    "license": "ISC (Lucide LICENSE, Copyright (c) Lucide Icons and Contributors)"
+    "source": "Lucide (https://lucide.dev) \"clock\", derived from Feather (https://feathericons.com), from lucide-static@1.55.0, on a #F0E442 disc, 192 px",
+    "license": "MIT (Feather, Copyright (c) 2013-present Cole Bemis; in Lucide's LICENSE)"
   },
   "professions/timekeeper-96.webp": {
-    "source": "Lucide (https://lucide.dev) \"clock\" from lucide-static@1.55.0, on a #F0E442 disc, 96 px",
-    "license": "ISC (Lucide LICENSE, Copyright (c) Lucide Icons and Contributors)"
+    "source": "Lucide (https://lucide.dev) \"clock\", derived from Feather (https://feathericons.com), from lucide-static@1.55.0, on a #F0E442 disc, 96 px",
+    "license": "MIT (Feather, Copyright (c) 2013-present Cole Bemis; in Lucide's LICENSE)"
   },
   "professions/timekeeper-full.webp": {
-    "source": "Lucide (https://lucide.dev) \"clock\" from lucide-static@1.55.0, on a #F0E442 disc, 512 px",
-    "license": "ISC (Lucide LICENSE, Copyright (c) Lucide Icons and Contributors)"
+    "source": "Lucide (https://lucide.dev) \"clock\", derived from Feather (https://feathericons.com), from lucide-static@1.55.0, on a #F0E442 disc, 512 px",
+    "license": "MIT (Feather, Copyright (c) 2013-present Cole Bemis; in Lucide's LICENSE)"
   }
 }

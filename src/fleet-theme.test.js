@@ -8,7 +8,7 @@ import { castFiles } from "./fleet/cast.js";
 import { card, identity, stripItems } from "./fleet/model.js";
 import { characterOf, tokensByCharacter } from "./fleet/ledger.js";
 import { contrast } from "./fleet/contrast.js";
-import { GLYPHS, PINS, glyphInk } from "../scripts/render-themes.mjs";
+import { GLYPHS, LICENSE_FILE, PINS, featherIcons, glyphInk, glyphLicense } from "../scripts/render-themes.mjs";
 
 const ROOT = join(import.meta.dirname, "..");
 const read = (f) => readFileSync(join(ROOT, f), "utf8");
@@ -166,10 +166,20 @@ test("each profession's glyph reads on its disc at 3:1 or more (WCAG 2.2, 1.4.11
 
 test("the faces are rendered offline from exactly pinned packages; nothing calls an avatar service", () => {
   const sh = read("scripts/render-themes.sh");
-  for (const [name, version] of Object.entries(PINS)) {
-    assert.match(version, /^\d+\.\d+\.\d+$/, `${name} is pinned exactly`);
-    assert.ok(sh.includes(`${name}@${version}`), `render-themes.sh installs ${name}@${version}`);
+  const manifest = JSON.parse(read("scripts/render-themes/package.json"));
+  assert.deepEqual(manifest.dependencies, PINS, "the render's package.json is the script's pins");
+  for (const [name, version] of Object.entries(PINS)) assert.match(version, /^\d+\.\d+\.\d+$/, `${name} is pinned exactly`);
+  // Every package, transitive ones too, at one version and hash: a rerender installs the same tree.
+  const lock = JSON.parse(read("scripts/render-themes/package-lock.json"));
+  assert.equal(lock.lockfileVersion, 3);
+  assert.deepEqual(lock.packages[""].dependencies, PINS);
+  for (const [name, version] of Object.entries(PINS)) assert.equal(lock.packages[`node_modules/${name}`]?.version, version, name);
+  for (const [path, entry] of Object.entries(lock.packages).filter(([k]) => k)) {
+    assert.match(entry.integrity ?? "", /^sha512-/, `${path} has its hash`);
+    assert.match(entry.resolved ?? "", /^https:\/\/registry\.npmjs\.org\//, `${path} from the npm registry`);
   }
+  assert.match(sh, /npm ci --prefix "\$tmp" [^\n]*--ignore-scripts/, "installed from the lockfile, no install scripts");
+  assert.doesNotMatch(sh, /npm install/, "never an unlocked install");
   const pkg = JSON.parse(read("package.json"));
   const deps = { ...pkg.dependencies, ...pkg.devDependencies };
   assert.deepEqual(Object.keys(deps).filter((d) => /dicebear|lucide/.test(d)), [], "no avatar library in the app");
@@ -209,6 +219,31 @@ test("the wall, the strip and the drawer read the theme now worn, not a fixed ca
   assert.match(read("src/main.js"), /subscribeTheme\(\(id\) => \{\s*if \(themeOf\(id\) === theme\) return;\s*theme = themeOf\(id\);\s*render\(\);\s*\}\);/, "the gauge's strip redraws on a switch");
   assert.match(read("src/main.js"), /cast: \(\) => theme,/, "and draws the theme now worn");
   const html = read("src/wall.html");
-  assert.match(html, /<label class="theme-pick"[^>]*><span class="visually-hidden">Characters<\/span><select id="theme"><\/select><\/label>/);
+  assert.match(html, /<label class="theme-pick"[^>]*><span>Characters<\/span><select id="theme"><\/select><\/label>/);
+  assert.match(wall, /refillPortrait\(\);\n  drawer\.refresh\(\);/, "a switch refills an open portrait");
+  assert.match(wall, /if \(said\.length\) announce\(said\.join\("\. "\)\);\n    refillPortrait\(\);/, "and so does a snapshot, the phone's theme with it");
   assert.match(read("src/fleet/wall.css"), /\.served \.theme-pick,/, "no picker on the phone");
+});
+
+test("each profession's glyph carries its own licence: Feather's MIT where Lucide's LICENSE says it derives from Feather", () => {
+  const license = read(`src/fleet/faces/${LICENSE_FILE}`);
+  assert.match(license, /^ISC License/, "Lucide's LICENSE ships beside the faces");
+  const feather = featherIcons(license);
+  assert.ok(feather.size > 100 && feather.has("compass") && feather.has("airplay"), `the Feather list read whole (${feather.size})`);
+  const licenses = JSON.parse(read("src/fleet/faces/LICENSES.json"));
+  assert.equal(licenses[LICENSE_FILE]?.license, "ISC AND MIT");
+  const fromFeather = [];
+  for (const c of Object.values(THEMES.professions.characters)) {
+    const glyph = GLYPHS[c.face];
+    for (const size of ["96", "192", "full"]) {
+      const entry = licenses[`professions/${c.face}-${size}.webp`];
+      assert.equal(entry.license, glyphLicense(glyph, feather), `${c.face} ${size}`);
+      assert.equal(/Feather/.test(entry.source), feather.has(glyph), `${c.face} ${size}: the source names Feather when it is`);
+    }
+    if (feather.has(glyph)) fromFeather.push(glyph);
+  }
+  assert.deepEqual(fromFeather.sort(), ["clock", "compass", "search"], "Lucide 1.55.0 lists these three as Feather's");
+  assert.match(glyphLicense("compass", feather), /^MIT \(Feather, Copyright \(c\) 2013-present Cole Bemis/);
+  assert.match(glyphLicense("hammer", feather), /^ISC /);
+  assert.match(read("README.md"), /\[Feather\]\(https:\/\/feathericons\.com\) \(MIT licence,\s+Copyright \(c\) 2013-present Cole Bemis\)/, "the README credits Feather");
 });

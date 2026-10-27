@@ -530,8 +530,10 @@ function showPortrait(id) {
 }
 function fillPortrait(c) {
   const img = portrait.querySelector(".full");
-  img.removeAttribute("src"); // never the last portrait under this name while the new one loads
-  img.src = c.full;
+  if (img.getAttribute("src") !== c.full) {
+    img.removeAttribute("src"); // never the last portrait under this name while the new one loads
+    img.src = c.full;
+  }
   img.alt = `${c.name}'s portrait`;
   setText(portrait.querySelector("#portrait-name"), c.name);
   const epithet = portrait.querySelector(".epithet");
@@ -539,6 +541,10 @@ function fillPortrait(c) {
   if (c.accentInk) portrait.style.setProperty("--accent-ink", c.accentInk);
   else portrait.style.removeProperty("--accent-ink");
   setText(portrait.querySelector(".voice"), c.voiceTitle);
+}
+/** An open portrait shows its card as now painted: a theme switch renames and redraws it. */
+function refillPortrait() {
+  if (portrait.open && cardOf.get(openedFrom)?.full) fillPortrait(cardOf.get(openedFrom));
 }
 portrait.addEventListener("close", () => {
   const card = [...wall.children].find((el) => el.dataset.key === openedFrom);
@@ -630,6 +636,7 @@ function receive(message) {
     latestSnapshot = message;
     said.push(...render(started));
     if (said.length) announce(said.join(". "));
+    refillPortrait();
     drawer.refresh();
     if (!frameId) drawSpeaking();
     if (pending) focusCard(pending, true);
@@ -1156,7 +1163,7 @@ function wearTheme(id, paint = true) {
     const said = render();
     if (said.length) announce(said.join(". "));
   }
-  if (portrait.open && cardOf.has(openedFrom)) fillPortrait(cardOf.get(openedFrom));
+  refillPortrait();
   drawer.refresh();
 }
 wearTheme(DEFAULT_THEME, false);

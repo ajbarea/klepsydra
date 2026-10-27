@@ -14,7 +14,8 @@ the above.
   `identity` builds face paths from the theme's `faces` folder
   (`castFiles`, plain path segments only, else the medallion). The wall,
   the strip (gauge window) and the ledger drawer read the theme worn; the
-  wall's picker sits beside density; the tray has a Characters submenu.
+  wall's picker sits over the density choice, in the bar's top padding
+  (no row width, so the bar never grows); the tray has a Characters submenu.
   Rust: `klepsydra_fleet::theme` (ids, default, prefs read and refusal),
   app `theme.rs` (`theme_subscribe`, `set_theme`, tray ticks), the phone
   server's `set_theme` puts `theme` on every snapshot, and the `phone`

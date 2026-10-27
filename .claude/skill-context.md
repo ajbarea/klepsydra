@@ -125,8 +125,10 @@ files belong to: the JS guards scan hooks and scripts too.
 - `scripts/cut-portraits.py`: recuts the committed kourai portraits; needs
   kourai-khryseai and Pillow through `uv`.
 - `scripts/render-themes.sh`: re-renders the committed Professions and
-  DiceBear faces from pinned npm packages (network) through Playwright's
-  Chromium and Pillow; run it when a theme's cast changes, not as a test.
+  DiceBear faces from the npm packages that
+  `scripts/render-themes/package-lock.json` pins (network), through
+  Playwright's Chromium and Pillow; run it when a theme's cast changes, not
+  as a test.
 - `scripts/measure-memory.sh run`: takes 8 hours.
 - `scripts/readme-shots.py`: rewrites the README's screenshots in `assets/`;
   run it when what a screenshot shows changes, not as a test.
