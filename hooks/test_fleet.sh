@@ -1358,6 +1358,29 @@ done
 cfire session-start.json $C4 KLEPSYDRA_CAST="$work/no-such-cast.json"
 check "no cast: no tmux call" "$(cat "$tlog")" ""
 
+# The overlay keeps the theme worn in its data dir (cast.json, written on
+# every switch): the hook reads it there before ~/.claude's copy, and a cast
+# newer than a session's file recolours that window at its next event, once.
+themes="$here/../src/fleet/themes"
+accent_of() { jq -r --arg v am_michael '.characters[$v].accent' "$themes/$1.json"; }
+cp "$themes/professions.json" "$dir/cast.json"
+touch -d '-20 min' "$dir/cast.json"
+cfire session-start.json $C1 KLEPSYDRA_CAST=
+check "the data dir's cast colours a start" "$(head -1 "$tlog")" "-S $fsock set-option -w -t %3 window-status-style fg=$(accent_of professions)"
+cfire user-prompt.json $C1 KLEPSYDRA_CAST=
+check "an older cast on a later event: no tmux call" "$(cat "$tlog")" ""
+cp "$themes/dicebear.json" "$dir/cast.json"
+touch -d '-10 min' "$dir/cast.json"
+touch -d '-15 min' "$dir/fleet/$C1.json"
+cfire user-prompt.json $C1 KLEPSYDRA_CAST=
+check "a switch recolours at the next event" "$(head -1 "$tlog")" "-S $fsock set-option -w -t %3 window-status-style fg=$(accent_of dicebear)"
+cfire user-prompt.json $C1 KLEPSYDRA_CAST=
+check "and only once" "$(cat "$tlog")" ""
+rm -f -- "${dir:?}/cast.json"
+mkdir -p "$work/home/.claude" && cp "$themes/kourai.json" "$work/home/.claude/klepsydra-cast.json"
+cfire session-start.json $C2 KLEPSYDRA_CAST= HOME="$work/home"
+check "without the overlay's cast, ~/.claude's" "$(head -1 "$tlog")" "-S $fsock set-option -w -t %3 window-status-style fg=$(accent_of kourai)"
+
 # A tmux that fails changes nothing the hook says or does.
 echo fail >"$work/tmux.mode"
 out=$(cfire session-start.json $C4); rc=$?

@@ -4,6 +4,9 @@ import { readFileSync } from "node:fs";
 import { TONES, medallionSvg } from "./fleet/medallion.js";
 import { contrast, mix, mixOklab, readableOn } from "./fleet/contrast.js";
 import { BAND, RINGS, bandGrounds } from "./fleet/model.js";
+// Every character in every theme (themes/*.json): a theme's accent meets each check the Kourai cast does.
+const everyCharacter = () =>
+  ["kourai", "professions", "dicebear"].flatMap((id) => Object.values(JSON.parse(read(`./fleet/themes/${id}.json`)).characters));
 
 const read = (f) => readFileSync(new URL(f, import.meta.url), "utf8");
 const badgeCss = read("./fleet/badge.css");
@@ -282,8 +285,7 @@ test("the drawer's text wears text colours on the card's own surface, and a bar 
   }
   assert.equal(token(css, "--card-bg"), token(css, "--card-bg"));
   assert.match(css, /\.ledger, \.queue \{[^}]*background: var\(--card-bg\)/, "the drawer sits on the card surface, as the Queue does");
-  const cast = JSON.parse(read("./fleet/themes/kourai.json"));
-  for (const c of Object.values(cast.characters)) {
+  for (const c of everyCharacter()) {
     assert.ok(contrast(c.accent, surface) >= 3, `${c.name}'s bar on the drawer: ${contrast(c.accent, surface).toFixed(2)}`);
   }
   // The series colour reaches only the bar's fill, never a word.
@@ -320,10 +322,9 @@ test("the band's constants in the model are the stylesheet's", () => {
 
 test("text on the band reads at 4.5:1 under every light that can reach it", () => {
   const css = wallCss();
-  const cast = JSON.parse(read("./fleet/themes/kourai.json"));
   const ivory = token(css, "--ivory");
   const dim = token(css, "--text-dim");
-  for (const c of Object.values(cast.characters)) {
+  for (const c of everyCharacter()) {
     const ink = readableOn(c.accent, bandGrounds(c.accent));
     for (const ground of bandGrounds(c.accent)) {
       for (const [what, fg] of [["name", ivory], ["task", dim], ["epithet", ink]]) {
@@ -353,8 +354,7 @@ test("the band caps its light under text with the mask, and lights needs-you amb
 
 test("crew marks on the plinth are 3:1 against it for every character", () => {
   const plinth = token(wallCss(), "--plinth-bg");
-  const cast = JSON.parse(read("./fleet/themes/kourai.json"));
-  for (const c of Object.values(cast.characters)) {
+  for (const c of everyCharacter()) {
     assert.ok(contrast(c.accent, plinth) >= 3, `${c.name}: ${contrast(c.accent, plinth).toFixed(2)}`);
   }
 });

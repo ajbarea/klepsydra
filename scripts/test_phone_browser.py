@@ -504,7 +504,8 @@ def main() -> int:
                     cast_cards = [c for c in got["cards"] if voices.get(c["key"]) in cast]
                     names = all(c["name"] == cast[voices[c["key"]]]["name"] for c in cast_cards)
                     faces = all(c["face"] == f"fleet/faces/{want}/{cast[voices[c['key']]]['face']}-192.webp" for c in cast_cards)
-                    run.check(worn and cast_cards and names and faces, f"the phone wears {theme!r} as {want}: each cast card's name and face", got["cards"][:3])
+                    faces = faces and all(c["accent"] == cast[voices[c["key"]]]["accent"] for c in cast_cards)
+                    run.check(worn and cast_cards and names and faces, f"the phone wears {theme!r} as {want}: each cast card's name, face and accent", got["cards"][:3])
                     run.check(got["keeper"] == f"fleet/faces/{want}/{cast['af_nicole']['face']}-full.webp", f"{want}: the keeper is the theme's", got["keeper"])
                     looks[theme] = got
                     michael = THEMES[want]["characters"]["am_michael"]
@@ -514,8 +515,8 @@ def main() -> int:
                               f"{want}: the open portrait shows the theme's {michael['name']}", shown)
                 page.keyboard.press("Escape")
                 wait_until(page, "!document.getElementById('portrait').open", 5)
-                accents = {t: [c["accent"] for c in v["cards"]] for t, v in looks.items()}
-                run.check(len({json.dumps(a) for a in accents.values()}) == 1, "a switch never changes a card's accent", accents)
+                plain = {t: [c["accent"] for c in v["cards"] if voices.get(c["key"]) not in THEMES["kourai"]["characters"]] for t, v in looks.items()}
+                run.check(len({json.dumps(a) for a in plain.values()}) == 1, "a card no theme casts keeps its look", plain)
                 keys = {t: [c["key"] for c in v["cards"]] for t, v in looks.items()}
                 run.check(len({json.dumps(k) for k in keys.values()}) == 1 and len(keys["kourai"]) == 16, "nor which cards show, or their order", keys)
 

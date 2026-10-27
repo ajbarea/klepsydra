@@ -123,7 +123,8 @@ profile starts without your settings, plugins or skills until you copy them.
 ## Install
 
 **1. Publish the numbers and the sessions.** Copy the hooks, the launcher and
-its tmux settings, the cast (the voice-to-colour table the hook reads), and
+its tmux settings, the cast (the voice-to-colour table the hook reads until
+the overlay writes the theme worn to its data dir), and
 point Claude Code at the hooks. Starting sessions from
 the wall needs tmux 3.3 or later (`remain-on-exit failed`); Ubuntu 24.04's 3.4
 is the tested version.
@@ -685,9 +686,10 @@ the tmux status bar and a 4 px left marker on its card's **Open terminal**
 button (6 px for the two accents, Aletheia and Dokimasia, that fall under 3:1 on the button at rest or on hover), so the
 gold marker leads to the gold window. The fleet hook sets the window's colours
 (`window-status-style`, and `window-status-current-style` with black or white
-text, whichever reads better) at the session's start and whenever its keryx
-voice changes, only on the `klepsydra` socket and only from
-`~/.claude/klepsydra-cast.json`. The button is neutral by default, so emphasis
+text, whichever reads better) at the session's start, whenever its keryx
+voice changes and at its first event after a theme switch, only on the
+`klepsydra` socket, from the theme worn (`<app data dir>/cast.json`, else
+`~/.claude/klepsydra-cast.json`). The button is neutral by default, so emphasis
 follows urgency and not whichever character a session got. The one filled
 button is on a card that needs you (also the quiet "needs you?"): amber, black
 text at 9:1, no marker. A session whose voice is no character gets the plain
@@ -760,27 +762,50 @@ fetches nothing.
 
 ### Character themes
 
-The cast can wear one of three themes, chosen in the tray's **Characters**
-menu or the wall's Characters picker, over its density choice. The choice is
-kept in `prefs.json` (`"theme"`), applies at once to the wall, the strip and the
-ledger without a restart, and the phone wall follows it.
+The cast wears one of three themes, all full and equal, chosen in the tray's
+**Characters** menu or the wall's Characters picker over its density choice.
+The choice is kept in `prefs.json` (`"theme"`) and applies at once, without a
+restart: every card's name, epithet, face and colour (Comfortable and
+Compact), the strip beside the gauge, an open portrait, the Ledger's
+names, the Queue's keeper, the empty wall's keeper, the phone wall and the
+tray's tick. The wall names the theme on `<html data-theme="...">`, as a CSS
+colour theme does; each card's colour is its own `--accent`.
 
 - **Kourai** (the default): the kourai portraits above.
 - **Professions**: plain roles a newcomer reads at once (Foreman, Engineer,
   Architect, Inspector, Reviewer, Archivist, Researcher, Librarian, and so
-  on), each a role glyph on a disc in the character's colour, with a short
-  line of what they do ("Writes the Code").
-- **DiceBear**: the Lorelei avatars klepsydra wore before the portraits,
-  named by voice (Michael, Emma, Fable).
+  on), each a role glyph on a disc in its colour, with a line of what they
+  do ("Writes the Code").
+- **DiceBear**: the Lorelei avatars klepsydra wore before the portraits, as a
+  cast of their own (Max, "Runs the Show"; Ivy, "Ships the Code"; Luna,
+  "Keeps the Peace").
 
-A theme changes only how a session looks: its name, face and epithet. The
-voice, and with it the colour, the tmux window, the speaking waves and which
-session keeps a face, stays the same in every theme. Each theme is one data
-file, `src/fleet/themes/<id>.json`, shaped like the others and keyed by the
-same keryx voice ids; a test holds every theme to every voice in the cast.
-Only Kourai has half-figures, so in the other two a card keeps its round face
-on the band, and the portrait button opens the face drawn large. The empty
-wall's keeper is each theme's `af_nicole` (Hesychia, the Librarian, Nicole).
+Each theme is one data file, `src/fleet/themes/<id>.json`, shaped like the
+others and keyed by the same keryx voice ids, so a voice is one character in
+every theme and the speaking waves and which session keeps a face never
+change. A test holds every theme to every voice. Only Kourai has
+half-figures, so in the other two a card keeps its round face on the band
+and the portrait button opens the face drawn large. The empty wall's keeper
+is each theme's `af_nicole` (Hesychia, the Librarian, Luna). Picking with
+the arrow keys wears each theme at once and saves only where the picker
+rests.
+
+Each theme has its own colour per voice; Kourai keeps kourai's canon. The
+Professions and DiceBear colours are 15 OKLCH hues 24 degrees apart over
+three lightness steps (0.66, 0.78, 0.90), so neighbours differ in lightness
+as well as hue, which a colour-blind eye still sees. Tests hold each colour
+to 3:1 or more on the card, the plinth and the button at rest and on hover
+(WCAG 2.2, 1.4.11), each name, task and epithet on the band to 4.5:1 under
+every light (1.4.3), every pair apart in OKLab by 0.08 or more, and by
+0.015 or more as seen with protanopia, deuteranopia or tritanopia (Machado,
+Oliveira and Fernandes 2009); Kourai's own nearest pair under deuteranopia
+is 0.021. A colour never carries a character alone: the name and face do
+(1.4.1).
+
+The tmux windows take the theme's colours too. The overlay writes the theme
+worn to `<app data dir>/cast.json` at start and on every switch; the fleet
+hook reads it before `~/.claude/klepsydra-cast.json`, and a session's window
+takes the new colour at its next hook event.
 
 The Professions and DiceBear faces are WebP files rendered once by
 `scripts/render-themes.sh` and committed, each with its `LICENSES.json`

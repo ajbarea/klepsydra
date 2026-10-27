@@ -49,10 +49,31 @@ pub fn set_theme(app: AppHandle, theme: String) -> Result<(), String> {
     Ok(())
 }
 
-/// Send the theme now saved to every window, the phone wall and the tray's
-/// ticks, so all of them and the next start agree even if the save failed.
+/// Write theme `id`'s file to the data folder's `cast.json`, where the fleet
+/// hook reads each session's tmux window colour; a failure is logged.
+fn write_hook_cast(app: &AppHandle, id: &str) {
+    let Some(dir) = crate::klepsydra_dir(app) else {
+        return;
+    };
+    let bytes = app
+        .asset_resolver()
+        .get(format!("fleet/themes/{id}.json"))
+        .map(|a| a.bytes);
+    let written = match bytes {
+        Some(b) => theme::write_cast(&dir, &b),
+        None => Err(std::io::Error::other("not in the bundle")),
+    };
+    if let Err(e) = written {
+        crate::fleet::log_line(&dir, &format!("theme: no hook cast for {id}: {e}"));
+    }
+}
+
+/// Send the theme now saved to every window, the phone wall, the hook's
+/// cast and the tray's ticks, so all of them and the next start agree even
+/// if the save failed.
 pub fn publish(app: &AppHandle) {
     let now = saved(app);
+    write_hook_cast(app, now);
     app.state::<Themes>().0.publish(Value::from(now));
     crate::phone::set_theme(app, now);
     if let Ok(items) = app.state::<ThemeMenu>().0.lock() {
@@ -86,6 +107,7 @@ pub fn menu(app: &AppHandle) -> tauri::Result<Submenu<Wry>> {
         *held = items;
     }
     app.state::<Themes>().0.publish(Value::from(now));
+    write_hook_cast(app, now);
     Ok(submenu)
 }
 

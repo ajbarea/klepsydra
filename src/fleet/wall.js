@@ -5,7 +5,7 @@ import { announcer, press, say, setOff, syncChildren } from "./dom.js";
 import { ARM_MS, confirmCopy, createEnder, endAllCopy, endingAnnouncement, endingText, withdrawnText } from "./end.js";
 import { askedNote, asking, isReady, readiness, wrapupAnnouncements, wrapupCopy, wrapupLines } from "./wrapup.js";
 import { inTauri, served, subscribe, subscribeTheme, todayLedger } from "./feed.js";
-import { DEFAULT_THEME, THEMES, keeperOf, themeId, themeOf } from "./theme.js";
+import { DEFAULT_THEME, THEME_SAVE_MS, THEMES, keeperOf, themeId, themeOf } from "./theme.js";
 import { createDrawer } from "./drawer.js";
 import { createQueuePanel } from "./queuepanel.js";
 import { createEdge } from "./sidepanel.js";
@@ -94,8 +94,8 @@ const showLink = (up) => {
 const phoneNarrow = () => served && matchMedia("(max-width: 600px)").matches;
 
 // The character theme the wall wears: who each voice is and how they look.
-let themeName = DEFAULT_THEME;
-let cast = themeOf(themeName);
+let worn = DEFAULT_THEME;
+let cast = themeOf(worn);
 let sessions = [];
 let request = null; // the snapshot's wrap-up, while one is shown
 let latestSnapshot = null; // its usage readings draw the limit gauges
@@ -112,11 +112,12 @@ const drawer = createDrawer({
   fetchToday: todayLedger,
   onResized: () => showDensity(),
 });
-createQueuePanel({
+const queue = createQueuePanel({
   dialog: document.getElementById("queue"),
   button: document.getElementById("queue-open"),
   tab: document.getElementById("queue-tab"),
   edge,
+  cast: () => cast,
   onResized: () => showDensity(),
 });
 let before;
@@ -1141,8 +1142,10 @@ new ResizeObserver(() => {
 if (inTauri) window.__TAURI__.core.invoke("get_wall_density").then(choose, () => {});
 
 // Characters (#135): the theme picker, the tray's Characters menu and the
-// phone all wear one theme. A switch changes names, faces and epithets only:
-// voices, and with them accents and the speaking ripple, stay put.
+// phone all wear one theme. html[data-theme] names it, as a CSS colour theme
+// does, and a switch repaints every name, face, epithet and accent from the
+// data already held: the wall and its compact cards, the empty wall's keeper,
+// an open portrait, the Ledger and the Queue's keeper, with nothing read again.
 const themePicker = document.getElementById("theme");
 themePicker.replaceChildren(
   ...Object.entries(THEMES).map(([id, t]) => Object.assign(document.createElement("option"), { value: id, textContent: t.label })),
@@ -1152,9 +1155,10 @@ const keeper = empty.querySelector(".keeper");
 /** Wear theme `id` (an unknown one is the default), and repaint unless `paint` is false. */
 function wearTheme(id, paint = true) {
   const next = themeId(id);
-  const was = themeName;
-  themeName = next;
+  const was = worn;
+  worn = next;
   cast = themeOf(next);
+  document.documentElement.dataset.theme = next;
   themePicker.value = next;
   const src = keeperOf(cast);
   if (src && keeper.getAttribute("src") !== src) keeper.src = src;
@@ -1164,16 +1168,27 @@ function wearTheme(id, paint = true) {
     if (said.length) announce(said.join(". "));
   }
   refillPortrait();
-  drawer.refresh();
+  drawer.repaint();
+  queue.retheme();
 }
 wearTheme(DEFAULT_THEME, false);
+// The picker wears each step at once; the app saves only where it rests, so an
+// arrow key held over the closed picker writes prefs.json and reaches every
+// window and the phone once, not once a step.
+let saving = 0;
 themePicker.addEventListener("change", () => {
-  const id = themePicker.value;
-  wearTheme(id);
-  // The app saves it and sends it back to every window, the tray and the phone.
-  if (inTauri) window.__TAURI__.core.invoke("set_theme", { theme: id }).catch(() => {});
+  wearTheme(themePicker.value);
+  if (!inTauri) return;
+  clearTimeout(saving);
+  saving = setTimeout(() => {
+    saving = 0;
+    window.__TAURI__.core.invoke("set_theme", { theme: themePicker.value }).catch(() => {});
+  }, THEME_SAVE_MS);
 });
-subscribeTheme((id) => wearTheme(id));
+// While a choice waits to be saved, the app's word is older than it.
+subscribeTheme((id) => {
+  if (!saving) wearTheme(id);
+});
 
 subscribe(receive, showLink);
 setInterval(() => {

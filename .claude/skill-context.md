@@ -116,7 +116,11 @@ files belong to: the JS guards scan hooks and scripts too.
   (Kourai, Professions, DiceBear) worn from the saved choice and switched
   live from the tray or the picker (names, faces and epithets change; cards,
   order, accents and focus do not; an unknown theme is Kourai), its keeper and
-  every card's portrait loading, and its comfortable wall still fitting. Takes a few minutes. Needs
+  every card's portrait loading, and its comfortable wall still fitting; one
+  switch through all three with the Ledger docked and a portrait open
+  repaints cards, portrait, Ledger and keeper with no Ledger read, the Queue
+  renames its keeper, the picker saves once where it rests, and the picker
+  never makes the bar taller. Takes a few minutes. Needs
   Playwright's Chromium, or a Chrome at `$KLEPSYDRA_CHROME`; local only, not
   in CI.
 

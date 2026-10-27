@@ -24,8 +24,13 @@ the above.
   character's accent disc; DiceBear are Lorelei (9.4.2, CC0) seeded by voice
   id with the pre-#37 backgrounds. Rendered by `scripts/render-themes.sh`
   (WebP 96/192/512) and committed with LICENSES entries.
-- Next: AJ judges the Professions and DiceBear screenshots
-  (fleet-briefing shots/2026-10-27/klepsydra-135-*), then merge and deploy.
+- Round 3 (AJ's verdict: three full, equal themes): DiceBear has its own
+  names and epithets; Professions and DiceBear their own accents (OKLCH,
+  15 hues x 3 lightness steps; AA and simulated-CVD tests); html[data-theme];
+  the Ledger repaints without a read; the Queue's keeper is renamed; the
+  picker saves where it rests (THEME_SAVE_MS); the app writes the theme to
+  `<data dir>/cast.json` and the hook recolours a window once after a switch.
+- Next: review, ready PR, merge on green; Heph deploys.
 - Verify: the gate list below, both browser suites (theme cases at the end
   of each), `cargo test -p klepsydra-fleet theme`.
 

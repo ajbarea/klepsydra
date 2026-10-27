@@ -2,6 +2,8 @@
 //! prefs.json under `theme`. Each id names a data file the frontend loads,
 //! `src/fleet/themes/<id>.json`; the first is the default.
 
+use std::path::Path;
+
 use serde_json::{Map, Value};
 
 /// prefs.json's key for the theme.
@@ -35,6 +37,26 @@ pub fn value(id: &str) -> Result<Value, String> {
         let ids: Vec<&str> = THEMES.iter().map(|(t, _)| *t).collect();
         Err(format!("unknown theme {id:?}; one of {}", ids.join(", ")))
     }
+}
+
+/// The file in the data folder the fleet hook reads its tmux window colours
+/// from (`klepsydra-fleet.sh`, `colour_window`): the theme worn, as its file.
+pub const HOOK_CAST: &str = "cast.json";
+
+/// Write `theme` (a theme file's bytes) to `<dir>/cast.json` for the fleet
+/// hook, whole or not at all: a temp file renamed into place. Refused, and
+/// the old file kept, unless it is a JSON object whose `characters` is one.
+pub fn write_cast(dir: &Path, theme: &[u8]) -> std::io::Result<()> {
+    let invalid =
+        |what: &str| std::io::Error::new(std::io::ErrorKind::InvalidData, what.to_string());
+    let v: Value = serde_json::from_slice(theme).map_err(|e| invalid(&e.to_string()))?;
+    if !v.get("characters").is_some_and(Value::is_object) {
+        return Err(invalid("a theme has a characters object"));
+    }
+    std::fs::create_dir_all(dir)?;
+    let tmp = dir.join(format!("{HOOK_CAST}.tmp"));
+    std::fs::write(&tmp, theme)?;
+    std::fs::rename(&tmp, dir.join(HOOK_CAST))
 }
 
 #[cfg(test)]
@@ -83,5 +105,48 @@ mod tests {
         assert!(err.contains("kourai, professions, dicebear"), "{err}");
         assert!(value("").is_err());
         assert!(value("../kourai").is_err());
+    }
+
+    fn temp_dir(name: &str) -> std::path::PathBuf {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("klepsydra-theme-{name}-{nanos}"));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn the_hook_cast_is_the_theme_file_whole() {
+        let dir = temp_dir("cast");
+        let theme =
+            br##"{"v":1,"characters":{"am_michael":{"name":"Foreman","accent":"#FF8D70"}}}"##;
+        write_cast(&dir, theme).unwrap();
+        assert_eq!(std::fs::read(dir.join(HOOK_CAST)).unwrap(), theme);
+        assert!(!dir.join("cast.json.tmp").exists(), "no temp file left");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_file_that_is_no_theme_is_refused_and_the_old_cast_kept() {
+        let dir = temp_dir("refused");
+        let good = br#"{"v":1,"characters":{}}"#;
+        write_cast(&dir, good).unwrap();
+        for bad in [
+            &b"not json"[..],
+            br#"{"v":1}"#,
+            br#"{"characters":[]}"#,
+            br#"[1,2]"#,
+            b"",
+        ] {
+            assert!(
+                write_cast(&dir, bad).is_err(),
+                "{}",
+                String::from_utf8_lossy(bad)
+            );
+            assert_eq!(std::fs::read(dir.join(HOOK_CAST)).unwrap(), good);
+        }
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

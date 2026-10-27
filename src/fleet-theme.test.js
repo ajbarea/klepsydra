@@ -3,11 +3,12 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { DEFAULT_THEME, THEMES, keeperOf, themeId, themeOf } from "./fleet/theme.js";
+import { DEFAULT_THEME, THEMES, keeperOf, themeId, themeName, themeOf } from "./fleet/theme.js";
 import { castFiles } from "./fleet/cast.js";
 import { card, identity, stripItems } from "./fleet/model.js";
 import { characterOf, tokensByCharacter } from "./fleet/ledger.js";
-import { contrast } from "./fleet/contrast.js";
+import { contrast, markerWidth, MARKER_PX, oklab } from "./fleet/contrast.js";
+import { BUTTON_BGS } from "./fleet/model.js";
 import { GLYPHS, LICENSE_FILE, PINS, featherIcons, glyphInk, glyphLicense } from "../scripts/render-themes.mjs";
 
 const ROOT = join(import.meta.dirname, "..");
@@ -44,11 +45,64 @@ test("every theme has cast.json's shape and covers every voice in the cast, and 
   }
 });
 
-test("a switch changes only the look: every voice keeps its accent and gender in every theme", () => {
+test("every voice keeps its gender in every theme, and every character has a name of its own and an epithet", () => {
   for (const [id, t] of Object.entries(THEMES)) {
     for (const voice of VOICES) {
-      assert.equal(t.characters[voice].accent, kourai.characters[voice].accent, `${id} ${voice} accent`);
-      assert.equal(t.characters[voice].gender, kourai.characters[voice].gender, `${id} ${voice} gender`);
+      const c = t.characters[voice];
+      assert.equal(c.gender, kourai.characters[voice].gender, `${id} ${voice} gender`);
+      assert.ok(typeof c.epithet === "string" && c.epithet.length >= 5, `${id} ${voice} has an epithet`);
+      // Kourai's Puck is named for his Kokoro seed; the others name a character, not a voice.
+      if (id !== "kourai") assert.notEqual(c.name.toLowerCase(), voice.slice(3), `${id} ${voice}: a character's name, not the voice's`);
+    }
+  }
+  // One name, one voice, across every theme: a name another theme gave (the Queue's keeper) maps back.
+  const owner = new Map();
+  for (const t of Object.values(THEMES)) {
+    for (const [voice, c] of Object.entries(t.characters)) {
+      assert.ok(!owner.has(c.name) || owner.get(c.name) === voice, `${c.name} names two voices`);
+      owner.set(c.name, voice);
+    }
+  }
+});
+
+// Machado, Oliveira and Fernandes (2009) dichromacy at severity 1, in linear sRGB.
+const CVD = {
+  protanopia: [[0.152286, 1.052583, -0.204868], [0.114503, 0.786281, 0.099216], [-0.003882, -0.048116, 1.051998]],
+  deuteranopia: [[0.367322, 0.860646, -0.227968], [0.280085, 0.672501, 0.047413], [-0.01182, 0.04294, 0.968881]],
+  tritanopia: [[1.255528, -0.076749, -0.178779], [-0.078411, 0.930809, 0.147602], [0.004733, 0.691367, 0.3039]],
+};
+const toLinear = (v) => (v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4);
+const toHex = (lin) => `#${lin.map((v) => { v = Math.min(1, Math.max(0, v)); v = v <= 0.0031308 ? 12.92 * v : 1.055 * v ** (1 / 2.4) - 0.055; return Math.round(v * 255).toString(16).padStart(2, "0"); }).join("")}`;
+const seenAs = (hex, m) => {
+  const c = [1, 3, 5].map((i) => toLinear(parseInt(hex.slice(i, i + 2), 16) / 255));
+  return toHex(m.map((row) => row[0] * c[0] + row[1] * c[1] + row[2] * c[2]));
+};
+const apart = (a, b) => Math.hypot(...oklab(a).map((v, i) => v - oklab(b)[i]));
+const nearest = (list) => Math.min(...list.flatMap((a, i) => list.slice(i + 1).map((b) => apart(a, b))));
+
+test("each theme has its own accents; Professions' and DiceBear's clear 3:1 on every surface and read apart, also to a colour-blind eye", () => {
+  const css = read("src/fleet/wall.css");
+  const token = (name) => css.match(new RegExp(`${name}:\\s*(#[0-9a-f]{6})`, "i"))[1];
+  const surfaces = ["--card-bg", "--plinth-bg", ...["--button-bg", "--button-hover"]].map(token);
+  assert.deepEqual(surfaces.slice(2), BUTTON_BGS);
+  const statuses = ["#E69F00", "#D55E00", "#0072B2", "#009E73"];
+  const accents = (id) => VOICES.map((v) => THEMES[id].characters[v].accent);
+  assert.notDeepEqual(accents("professions"), accents("kourai"));
+  assert.notDeepEqual(accents("dicebear"), accents("kourai"));
+  assert.notDeepEqual(accents("dicebear"), accents("professions"));
+  for (const id of ["professions", "dicebear"]) {
+    const list = accents(id);
+    assert.equal(new Set(list).size, 15, `${id}: fifteen accents`);
+    for (const a of list) {
+      for (const bg of surfaces) assert.ok(contrast(a, bg) >= 3, `${id} ${a} on ${bg}: ${contrast(a, bg).toFixed(2)} (WCAG 1.4.11)`);
+      assert.equal(markerWidth(a, BUTTON_BGS), MARKER_PX, `${id} ${a}: the plain marker`);
+      for (const st of statuses) assert.ok(apart(a, st) >= 0.05, `${id} ${a} looks like the status tone ${st}`);
+    }
+    // Hue tells them apart; lightness, in three steps, still does where hue fails.
+    assert.ok(nearest(list) >= 0.08, `${id}: nearest pair ${nearest(list).toFixed(3)}`);
+    for (const [kind, m] of Object.entries(CVD)) {
+      const near = nearest(list.map((a) => seenAs(a, m)));
+      assert.ok(near >= 0.015, `${id} under ${kind}: nearest pair ${near.toFixed(3)}`);
     }
   }
 });
@@ -100,9 +154,9 @@ test("the theme ids and names are the fleet crate's (theme.rs THEMES), the defau
 });
 
 /** A card's fields that may differ between two themes: who the session is, never what it does. */
-const LOOK = new Set(["name", "face", "face2x", "full", "epithet", "figure", "label", "remoteLabel", "playLabel", "stopLabel", "menuLabel", "jumpLabel"]);
+const LOOK = new Set(["name", "face", "face2x", "full", "epithet", "figure", "accent", "accentInk", "ringColor", "jumpMark", "label", "remoteLabel", "playLabel", "stopLabel", "menuLabel", "jumpLabel"]);
 
-test("switching themes changes only each card's look: accents, rings, tone, actions and order stay", () => {
+test("switching themes changes only each card's look (name, face, epithet, accent); rings, tone, actions and order stay", () => {
   const cards = (id) => shifted.map((s) => card(s, THEMES[id], NOW));
   const base = cards("kourai");
   for (const id of ["professions", "dicebear"]) {
@@ -114,6 +168,7 @@ test("switching themes changes only each card's look: accents, rings, tone, acti
       }
     }
     assert.ok(other.some((c, i) => c.name !== base[i].name), `${id} changes some name`);
+    assert.ok(other.some((c, i) => c.accent && c.accent !== base[i].accent), `${id} changes some accent`);
   }
 });
 
@@ -212,15 +267,20 @@ test("the wall, the strip and the drawer read the theme now worn, not a fixed ca
   const wall = read("src/fleet/wall.js");
   assert.doesNotMatch(wall, /cast\.json/);
   assert.match(wall, /cast: \(\) => cast,/, "the drawer asks for the theme each time");
-  assert.match(wall, /subscribeTheme\(\(id\) => wearTheme\(id\)\)/);
+  assert.match(wall, /subscribeTheme\(\(id\) => \{\s*if \(!saving\) wearTheme\(id\);\s*\}\);/, "the app's word, unless a choice waits to be saved");
+  assert.match(wall, /document\.documentElement\.dataset\.theme = next;/, "html[data-theme] names the theme, as a CSS colour theme");
   assert.match(wall, /if \(served && Array\.isArray\(message\?\.sessions\)\) wearTheme\(message\.theme, false\);/, "the phone wears the snapshot's theme");
-  assert.match(wall, /invoke\("set_theme", \{ theme: id \}\)/);
+  assert.match(wall, /saving = setTimeout\(\(\) => \{\s*saving = 0;\s*window\.__TAURI__\.core\.invoke\("set_theme", \{ theme: themePicker\.value \}\)[^\n]*\n\s*\}, THEME_SAVE_MS\);/, "saved where the picker rests");
   assert.doesNotMatch(read("src/fleet/strip.js"), /cast\.json|import cast/);
   assert.match(read("src/main.js"), /subscribeTheme\(\(id\) => \{\s*if \(themeOf\(id\) === theme\) return;\s*theme = themeOf\(id\);\s*render\(\);\s*\}\);/, "the gauge's strip redraws on a switch");
   assert.match(read("src/main.js"), /cast: \(\) => theme,/, "and draws the theme now worn");
   const html = read("src/wall.html");
   assert.match(html, /<label class="theme-pick"[^>]*><span>Characters<\/span><select id="theme"><\/select><\/label>/);
-  assert.match(wall, /refillPortrait\(\);\n  drawer\.refresh\(\);/, "a switch refills an open portrait");
+  assert.match(wall, /refillPortrait\(\);\n  drawer\.repaint\(\);\n  queue\.retheme\(\);/, "a switch refills an open portrait, the Ledger and the Queue's keeper, reading nothing");
+  const drawer = read("src/fleet/drawer.js");
+  assert.match(drawer, /const key = JSON\.stringify\(\[view, filter, \[\.\.\.names\], cast\(\)\.label\]\);/, "the Ledger repaints for a new theme");
+  assert.match(drawer, /repaint: \(\) => paint\(\),/);
+  assert.match(read("src/fleet/queuepanel.js"), /Kept by \$\{themeName\(keptBy, cast\(\)\)\}/);
   assert.match(wall, /if \(said\.length\) announce\(said\.join\("\. "\)\);\n    refillPortrait\(\);/, "and so does a snapshot, the phone's theme with it");
   assert.match(read("src/fleet/wall.css"), /\.served \.theme-pick,/, "no picker on the phone");
 });
@@ -239,6 +299,7 @@ test("each profession's glyph carries its own licence: Feather's MIT where Lucid
       const entry = licenses[`professions/${c.face}-${size}.webp`];
       assert.equal(entry.license, glyphLicense(glyph, feather), `${c.face} ${size}`);
       assert.equal(/Feather/.test(entry.source), feather.has(glyph), `${c.face} ${size}: the source names Feather when it is`);
+      assert.ok(entry.source.includes(`on a ${c.accent} disc`), `${c.face} ${size}: drawn on its accent (${entry.source})`);
     }
     if (feather.has(glyph)) fromFeather.push(glyph);
   }
@@ -246,4 +307,17 @@ test("each profession's glyph carries its own licence: Feather's MIT where Lucid
   assert.match(glyphLicense("compass", feather), /^MIT \(Feather, Copyright \(c\) 2013-present Cole Bemis/);
   assert.match(glyphLicense("hammer", feather), /^ISC /);
   assert.match(read("README.md"), /\[Feather\]\(https:\/\/feathericons\.com\) \(MIT licence,\s+Copyright \(c\) 2013-present Cole Bemis\)/, "the README credits Feather");
+});
+
+test("a name a session gave itself becomes the theme's name for the same voice, and anything else stays as written", () => {
+  for (const id of IDS) {
+    const t = THEMES[id];
+    assert.equal(themeName("Hermes", t), t.characters.bm_fable.name, id);
+    assert.equal(themeName("Hermes (orchestrator)", t), `${t.characters.bm_fable.name} (orchestrator)`, id);
+    assert.equal(themeName(THEMES.dicebear.characters.am_michael.name, t), t.characters.am_michael.name, id);
+    assert.equal(themeName("Foreman", t), t.characters.am_michael.name, id);
+  }
+  for (const other of ["", "AJ", "hermes", "Hermesian", "the Hermes agent", "Hermes(x)", null, undefined, 3]) {
+    assert.equal(themeName(other, THEMES.professions), other, String(other));
+  }
 });

@@ -35,7 +35,7 @@ export function mix(a, b, t) {
 }
 
 // sRGB <-> OKLab (Ottosson), for what CSS `color-mix(in oklab, ...)` gives.
-function oklab(hex) {
+export function oklab(hex) {
   const [r, g, b] = channels(hex).map((c) => toLinear(c / 255));
   const [l, m, s] = [
     0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b,

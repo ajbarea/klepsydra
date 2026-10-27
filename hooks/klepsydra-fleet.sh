@@ -37,8 +37,11 @@ if [[ -z $VOICES ]]; then
   if [[ -n ${XDG_CACHE_HOME:-} ]]; then VOICES=$XDG_CACHE_HOME/keryx/voices.json
   elif [[ -n ${HOME:-} ]]; then VOICES=$HOME/.cache/keryx/voices.json; fi
 fi
+# The theme worn, whose accents colour the tmux windows: the overlay writes
+# it to its data dir on every switch; ~/.claude's copy serves until it has.
 CAST=${KLEPSYDRA_CAST:-}
-[[ -n $CAST || -z ${HOME:-} ]] || CAST=$HOME/.claude/klepsydra-cast.json
+if [[ -z $CAST && -n ${KLEPSYDRA_DIR:-} && -f $KLEPSYDRA_DIR/cast.json ]]; then CAST=$KLEPSYDRA_DIR/cast.json
+elif [[ -z $CAST && -n ${HOME:-} ]]; then CAST=$HOME/.claude/klepsydra-cast.json; fi
 # Every session's hooks run as separate processes, so writes take one lock.
 LOCK=${XDG_RUNTIME_DIR:-/tmp}/klepsydra-fleet-$UID.lock
 PROMPT_CHARS=300
@@ -833,9 +836,14 @@ main() {
     --arg tmux_socket "$tmux_socket" --arg tmux_pane "$tmux_pane" --arg boot "$host_boot" --arg distro "$host_distro" \
     --arg voice "$voice" --argjson homes "$homes" --arg cwd_repo "$cwd_repo" --arg pid "$found_pid" --arg start "$found_start" --arg remote "$remote" --arg cleared "$cleared" \
     "$APPLY" 2>/dev/null) || new=""
+  # A cast newer than this session's file: the theme changed under it. The
+  # file's time is moved past the cast's, so one switch recolours it once.
+  local recolour=0
+  if [[ ${tmux_socket##*/} == klepsydra && -n $tmux_pane && -f $file && -n $CAST && $CAST -nt $file ]]; then recolour=1; fi
   [[ -n $new ]] && write_atomic "$file" "$new"
-  # Only a start, or a changed voice, touches the window.
-  local was_voice now_voice recolour=0
+  (( recolour )) && touch -c -- "$file" 2>/dev/null
+  # Only a start, a changed voice or a new theme touches the window.
+  local was_voice now_voice
   was_voice=$(file_voice "$old") now_voice=$(file_voice "${new:-$old}")
   if [[ $event == SessionStart || $was_voice != "$now_voice" ]]; then recolour=1; fi
   [[ $event == SessionStart ]] && mark_gone "$KLEPSYDRA_DIR" "$now" "$session"

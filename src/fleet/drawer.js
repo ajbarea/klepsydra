@@ -121,7 +121,8 @@ export function createDrawer({ dialog, button, tab, edge, sessions, cast, fetchT
     // A fetch can land after the drawer shut: a shut drawer neither paints nor takes focus.
     if (!view || !panel.isOpen) return;
     const names = who();
-    const key = JSON.stringify([view, filter, [...names]]);
+    // The theme too: a voice the wall no longer shows is still named by it.
+    const key = JSON.stringify([view, filter, [...names], cast().label]);
     if (key === painted) return;
     painted = key;
     const { day, receiver, guardrails, guardrails_total: total } = view;
@@ -380,6 +381,8 @@ export function createDrawer({ dialog, button, tab, edge, sessions, cast, fetchT
   });
 
   return {
+    /** Paint the last read again, in the theme now worn: a theme switch reads nothing. */
+    repaint: () => paint(),
     /** Open for all sessions, or for one `session`; `from` is the button to give focus back to. */
     open(session, from) {
       filter = session ?? null;
