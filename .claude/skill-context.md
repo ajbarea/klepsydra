@@ -94,7 +94,9 @@ files belong to: the JS guards scan hooks and scripts too.
   high, a new reading over `/events`, a stale one, none, AA contrast in
   light and dark, a screenshot of each); a card's Full text shown only where
   text is cut, unfolding it in place and reaching no session, at 390 and at
-  700 px with touch.
+  700 px with touch; and the character theme saved in the server's
+  prefs.json worn and followed live, an unknown one as Kourai, an open
+  portrait following it.
   Needs cargo and Playwright's Chromium; local only.
 - `uv run -q --no-project --with playwright python -I scripts/test_wall_browser.py`:
   the wall in a real browser: 16 demo cards at 1920x1000 and 8 at 945x1000
@@ -110,7 +112,11 @@ files belong to: the JS guards scan hooks and scripts too.
   ones) fits both sizes, a long launch folder fits 420 px, and its buttons
   send only launch_session and clear_session, each into its own note; the
   Queue panel docks at 1920 and is a dialog at 945, resizes by keyboard,
-  renders as text only and follows its channel. Takes a few minutes. Needs
+  renders as text only and follows its channel; each character theme
+  (Kourai, Professions, DiceBear) worn from the saved choice and switched
+  live from the tray or the picker (names, faces and epithets change; cards,
+  order, accents and focus do not; an unknown theme is Kourai), its keeper and
+  every card's portrait loading, and its comfortable wall still fitting. Takes a few minutes. Needs
   Playwright's Chromium, or a Chrome at `$KLEPSYDRA_CHROME`; local only, not
   in CI.
 
@@ -118,6 +124,9 @@ files belong to: the JS guards scan hooks and scripts too.
 
 - `scripts/cut-portraits.py`: recuts the committed kourai portraits; needs
   kourai-khryseai and Pillow through `uv`.
+- `scripts/render-themes.sh`: re-renders the committed Professions and
+  DiceBear faces from pinned npm packages (network) through Playwright's
+  Chromium and Pillow; run it when a theme's cast changes, not as a test.
 - `scripts/measure-memory.sh run`: takes 8 hours.
 - `scripts/readme-shots.py`: rewrites the README's screenshots in `assets/`;
   run it when what a screenshot shows changes, not as a test.

@@ -130,7 +130,7 @@ is the tested version.
 
 ```bash
 cp statusline/klepsydra-statusline.sh hooks/klepsydra-fleet.sh hooks/klepsydra-launch.sh hooks/klepsydra-tmux.conf ~/.claude/
-cp src/fleet/cast.json ~/.claude/klepsydra-cast.json
+cp src/fleet/themes/kourai.json ~/.claude/klepsydra-cast.json
 chmod +x ~/.claude/klepsydra-statusline.sh ~/.claude/klepsydra-fleet.sh ~/.claude/klepsydra-launch.sh
 ```
 
@@ -697,8 +697,9 @@ Windows Terminal tabs opened by hand are not coloured.
 
 To see the wall without sessions, serve the repo root (for example
 `python3 -m http.server`) and open `/src/wall.html?demo`; `?demo=8` shows
-its first eight sessions, `?demo&empty` the empty wall and `?demo&ended` the
-wall with only an ended card.
+its first eight sessions, `?demo&empty` the empty wall, `?demo&ended` the
+wall with only an ended card, and `&theme=professions` or `&theme=dicebear`
+another character theme.
 
 A session's face follows its keryx voice, so it stays the same while the
 session moves between repos. Fifteen voices, all fourteen in keryx's rotation pool
@@ -756,6 +757,43 @@ newer figures are cut from their painted backdrops by `scripts/cutout-portraits.
 (rembg's `isnet-anime` model, Apache-2.0), run once; its output is committed. The medallion is
 an SVG drawn in `src/fleet/medallion.js`. The overlay loads no library and
 fetches nothing.
+
+### Character themes
+
+The cast can wear one of three themes, chosen in the tray's **Characters**
+menu or the picker beside the wall's density choice. The choice is kept in
+`prefs.json` (`"theme"`), applies at once to the wall, the strip and the
+ledger without a restart, and the phone wall follows it.
+
+- **Kourai** (the default): the kourai portraits above.
+- **Professions**: plain roles a newcomer reads at once (Foreman, Engineer,
+  Architect, Inspector, Reviewer, Archivist, Researcher, Librarian, and so
+  on), each a role glyph on a disc in the character's colour, with a short
+  line of what they do ("Writes the Code").
+- **DiceBear**: the Lorelei avatars klepsydra wore before the portraits,
+  named by voice (Michael, Emma, Fable).
+
+A theme changes only how a session looks: its name, face and epithet. The
+voice, and with it the colour, the tmux window, the speaking waves and which
+session keeps a face, stays the same in every theme. Each theme is one data
+file, `src/fleet/themes/<id>.json`, shaped like the others and keyed by the
+same keryx voice ids; a test holds every theme to every voice in the cast.
+Only Kourai has half-figures, so in the other two a card keeps its round face
+on the band, and the portrait button opens the face drawn large. The empty
+wall's keeper is each theme's `af_nicole` (Hesychia, the Librarian, Nicole).
+
+The Professions and DiceBear faces are WebP files rendered once by
+`scripts/render-themes.sh` from exactly pinned packages (`lucide-static@1.55.0`,
+`@dicebear/core@9.4.2`, `@dicebear/lorelei@9.4.2`) and committed, each with
+its `LICENSES.json` entry; the app calls no avatar service.
+
+Credits: the Professions glyphs are from [Lucide](https://lucide.dev)
+(ISC licence, Copyright (c) Lucide Icons and Contributors). The DiceBear
+faces are [DiceBear](https://www.dicebear.com)'s Lorelei style, a remix of
+[Lorelei](https://www.dicebear.com/styles/lorelei/) by Lisa Wischofsky,
+released under CC0 1.0 (no attribution required; credited here anyway);
+the DiceBear library is MIT. Licences per style:
+[dicebear.com/licenses](https://www.dicebear.com/licenses/).
 
 The fleet hook writes `<app data dir>/fleet/<session>.json`: the state, where
 the session works, the first 300 characters of your last prompt and of the

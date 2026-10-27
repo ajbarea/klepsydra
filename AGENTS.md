@@ -26,7 +26,7 @@ Under WSL the app crate cannot compile (no WebKitGTK headers): use `-p klepsydra
 - The OTLP receiver listens only on `127.0.0.1:4318` and refuses requests carrying an `Origin` header. The ledger never stores the account email or organization ID the exports carry, and the fixtures in `src-tauri/fleet/tests/fixtures/otel/` hold placeholder identities: re-record them from a live session rather than hand-editing.
 - The phone wall (`src-tauri/fleet/src/phone.rs`) listens only on `127.0.0.1:8318`, only while the tray's "Phone wall" is ticked, answers only GET and HEAD, and admits only a loopback or `*.ts.net` Host, a same-origin `Origin` and no Funnel. No route may write or reach a session action; a session reaches the phone cut to the fields the wall reads. Account data reaches it only as `usage.rs` cuts it: per session reading, its label, `observed_at`, `written_at` and the `five_hour`, `seven_day` and `spend_limit` windows' percent and reset time, under an ordinal account (`a1`); never an account or session id, an email, a file name or another window.
 - Adding an input shape to the statusLine hook means adding a fixture in `statusline/fixtures/`.
-- Do not run `scripts/measure-memory.sh run` (8 hours), `scripts/build-windows.sh` without `--check`, `scripts/build-linux.sh`, `scripts/visual-check.sh`, `scripts/cut-portraits.py` or `npm run tauri dev`; they are long, interactive or platform-bound.
+- Do not run `scripts/measure-memory.sh run` (8 hours), `scripts/build-windows.sh` without `--check`, `scripts/build-linux.sh`, `scripts/visual-check.sh`, `scripts/cut-portraits.py`, `scripts/render-themes.sh` or `npm run tauri dev`; they are long, interactive or platform-bound.
 
 ## State
 
