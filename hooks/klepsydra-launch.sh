@@ -206,9 +206,8 @@ jump() { # socket pane pid start
   { tmux "${t[@]}" select-window -t "$pane" && tmux "${t[@]}" select-pane -t "$pane"; } 2>/dev/null ||
     fail "tmux could not select the window."
   # An attached tab needs no lock; one missing is checked again under it.
-  if ! has_client "=$session" "${t[@]}"; then
-    take_lock "Selected the session's tmux window, but another click is still opening a terminal tab. Try again."
-  fi
+  has_client "=$session" "${t[@]}" && { printf "Selected the session's tmux window.\n"; return 0; }
+  take_lock "Selected the session's tmux window, but another click is still opening a terminal tab. Try again."
   if ! has_client "=$session" "${t[@]}"; then
     tab_preflight
     # Only the fleet's own server gets the fixed title; another stays a plain tab.
