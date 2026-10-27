@@ -98,18 +98,19 @@ test("both densities step on one spacing scale, and compact is the 12 px grid th
   const tight = densityPx(css, "compact");
   assert.deepEqual([comfortable("--card-gap")[0], comfortable("--wall-pad")[0]], [16, 28], "comfortable is unchanged");
   assert.deepEqual([tight("--card-gap")[0], tight("--wall-pad")[0]], [12, 12]);
-  assert.deepEqual(comfortable("--card-pad"), [0, 18, 14], "comfortable's band takes the top");
+  assert.deepEqual(comfortable("--card-pad"), [0, 18, 12], "comfortable's band takes the top");
   assert.equal(comfortable("--wall-face")[0], 80);
   assert.equal(tight("--wall-face")[0], 64, "the compact face grew for #44");
 });
 
-test("compact keeps Open terminal, Clear and the density choices at 24x24 px or more", () => {
+test("both densities keep Open terminal, Clear and the density choices at 24x24 px or more", () => {
   const css = read("./fleet/wall.css");
   const rule = (sel) => css.match(new RegExp(`${sel.replace(/[.[\]"=]/g, "\\$&")} \\{([^}]*)\\}`))?.[1] ?? "";
   const px = (decl, prop) => parseFloat(decl.match(new RegExp(`(?:^|[\\s;])${prop}:\\s*([\\d.]+)px`))?.[1] ?? "NaN");
   const buttons = rule('[data-density="compact"] .jump,\n[data-density="compact"] .clear');
   assert.ok(px(buttons, "min-height") >= 24 && px(buttons, "min-width") >= 24, "Open terminal and Clear");
   assert.ok(px(rule(".density label"), "min-height") >= 24, "a density choice");
+  assert.ok(px(rule(".actions .jump, .actions .clear, .actions .undo"), "min-height") >= 24, "comfortable Open terminal, Clear and Undo");
   // The needs fill and the accent marker are the base rules', untouched by compact.
   assert.doesNotMatch(buttons, /background|box-shadow|border/);
   assert.doesNotMatch(css, /\[data-density="compact"\][^{]*\.jump\[data-kind/);

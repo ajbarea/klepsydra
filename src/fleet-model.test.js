@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import {
   STATUS, shortAge, longAge, statusParts, voiceName, identity, accessibleName,
   statuses, startedNeeding, orderChanged, shouldSlide, transitionName, announcements, updatedText, badgeSvg, stripItems, card,
-  askText, plainText, tally, crewOf, crewText, crewRing, crewRings, crewMarks, RINGS, RING_MAX, showsRingKey, alsoChip, pillWhen,
+  askText, plainText, tally, crewOf, crewText, crewRing, crewRings, crewMarks, RINGS, RING_MAX, showsRingKey, alsoChip, ALSO_NAMED, pillWhen,
   BAND,
 } from "./fleet/model.js";
 import { contrast } from "./fleet/contrast.js";
@@ -704,6 +704,13 @@ test("the compact card folds the also-in list into a +N chip that names every re
   assert.deepEqual(c.alsoChip, { text: "+2", label: "Also in ideas and talks" }, "each other repo once, never the current one");
   assert.equal(c.also.length, 2, "the chip counts what the full card lists");
   assert.equal(card(session({ touched: [] }), CAST, NOW).alsoChip, null);
+  // The full card names the first ALSO_NAMED and a "+N" chip names the rest; compact's chip counts all.
+  const many = ["a", "b", "c", "d", "e", "f"].map((repo) => ({ repo, at: 1 }));
+  const full = card(session({ touched: many }), CAST, NOW);
+  assert.deepEqual(full.also, ["also in a", "also in b", "also in c", "also in d"]);
+  assert.deepEqual(full.alsoRest, { text: "+2", label: "Also in e and f" });
+  assert.equal(full.alsoChip.text, "+6");
+  assert.equal(card(session({ touched: many.slice(0, ALSO_NAMED) }), CAST, NOW).alsoRest, null, "no chip while every repo is named");
 });
 
 test("the compact pill's time takes in updated, which has no line of its own there", () => {

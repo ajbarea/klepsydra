@@ -4,7 +4,8 @@ Maximised on a 1920x1080 screen the wall's content is about 1920x1000, and
 snapped to half the screen about 945x1000 (the taskbar, title bar and frame
 take the rest). In Auto, sixteen demo cards fit the first and eight the
 second, compact, in four and two columns, with no vertical scrollbar and the
-ring key in view. Auto never leaves a comfortable wall scrolling: not when a
+ring key in view. Comfortable holds four full cards at half the screen
+and eight maximised, and Auto keeps it there. Auto never leaves a comfortable wall scrolling: not when a
 card grows, not at an exact fit, not where the comfortable bar is taller than
 the compact one. A note on a compact card never covers its exchange. The ledger line and
 chip fit the compact foot slot, and the ledger drawer opens, closes and gives
@@ -148,9 +149,9 @@ def grows(wall):
     need = comfortable_height(wall, width, cards)
     page = wall.open(width, need + 20, cards)
     before = page.evaluate(STATE)
+    # A button's note is the one text a comfortable card does not clamp.
     page.evaluate(
-        "() => { const e = document.querySelector('.card .error');"
-        " e.hidden = false; e.textContent = 'A long error. '.repeat(40); }"
+        "() => { document.querySelector('.card .note').textContent = 'A long note. '.repeat(40); }"
     )
     page.wait_for_timeout(SETTLE_MS)
     after = page.evaluate(STATE)
@@ -828,7 +829,7 @@ def compact_look_on_face(wall):
 
 
 def long_tool_stays_in_card(wall):
-    """A needs-you line naming a long tool wraps inside its card at either density."""
+    """A needs-you line naming a long tool stays inside its card at either density, cut short."""
     for density in ("comfortable", "compact"):
         page = wall.open(945, 1000, 8)
         page.click(f".density label:has([value={density}])")
@@ -910,6 +911,103 @@ def band_clear(wall):
     )
     wall.check(shown == 0, "a compact card shows no band, epithet or plinth", shown)
     page.close()
+
+
+# Split mode on a 1920x1080 screen leaves the wall about 945 to 958 px wide;
+# maximised, 1920. Either way about 1000 px tall under the taskbar.
+COMFORTABLE_FIT = [  # (width, height, cards, columns)
+    (945, 1000, 4, 2),
+    (958, 1000, 4, 2),
+    (1920, 1000, 8, 4),
+]
+
+
+OTHER_REPOS = ["kourai-khryseai", "papers", "ajsoftworks", "talks", "techne", "claude-prefs", "keryx",
+               "pharos", "sphragis", "ariadne", "ldqis", "agones", "askesis", "epistole"]
+LONG = "Re-running the sweep over five seeds, then redrawing the bars with the median and range before the deck refresh picks them up. " * 2
+
+
+def busy(n, shape="asking"):
+    """The demo's first `n` sessions, each as full as a live card gets outside
+    a wrap-up: a long session name, worktree and branch, twelve other repos
+    touched, a crew, a long prompt and reply, a ledger line with a blocked
+    chip, and quiet ten minutes, so "updated" shows. `shape` "asking" waits
+    on AJ to approve a long MCP tool; "error" ends on a long API error."""
+    demo = json.loads((ROOT / "scripts/fixtures/fleet-demo.json").read_text())
+    at, ledger = demo["at"], demo["sessions"][0]["ledger"]
+    states = {
+        "asking": {"status": "needs_you", "reason": "approve mcp__plugin_playwright_playwright__browser_run_code_unsafe", "error": None},
+        "error": {"status": "error", "reason": None, "error": "API Error: 529 overloaded_error, the request was retried three times and failed. " * 3},
+    }
+    sessions = []
+    for s in demo["sessions"][:n]:
+        sessions.append({
+            **s,
+            **states[shape],
+            "quiet_since": None,
+            "name": "A session name long enough to run past the nameplate",
+            "status_at": at - 600,
+            "updated_at": at - 600,
+            "where": {**s["where"], "worktree": "comfortable-density-four-and-eight", "branch": "feat/comfortable-density-four-and-eight"},
+            "touched": [{"repo": r, "at": at - 900} for r in OTHER_REPOS if r != s["where"]["repo"]][:12],
+            "background": {"agents": 2, "shells": 1},
+            "prompt": {"text": LONG, "at": at - 660},
+            "reply": {"text": LONG, "at": at - 600},
+            "ledger": {**(s.get("ledger") or ledger), "guardrail_rejects": 3},
+        })
+    return json.dumps({**demo, "sessions": sessions, "speaking": None})
+
+
+FITS = """() => {
+  const d = document.documentElement;
+  const wall = document.getElementById('wall');
+  const bar = document.querySelector('.bar').getBoundingClientRect();
+  const cards = [...wall.children];
+  const rows = [...new Set(cards.map((c) => Math.round(c.getBoundingClientRect().top)))].sort((a, b) => a - b);
+  // Each figure breaks its card's top edge, and stays clear of the bar and of the row above.
+  const breakout = cards.filter((c) => c.classList.contains('has-figure')).map((c) => {
+    const [card, fig] = [c, c.querySelector('.figure')].map((e) => e.getBoundingClientRect());
+    const above = cards.map((o) => o.getBoundingClientRect()).filter((o) => o.bottom <= card.top && o.left < card.right && card.left < o.right);
+    const floor = Math.max(bar.bottom, ...above.map((o) => o.bottom));
+    return { over: card.top - fig.top, clear: fig.top - floor };
+  });
+  return {
+    density: wall.dataset.density,
+    scrollHeight: d.scrollHeight,
+    clientHeight: d.clientHeight,
+    columns: getComputedStyle(wall).gridTemplateColumns.split(' ').length,
+    rows: rows.length,
+    cards: cards.map((c) => Math.round(c.getBoundingClientRect().height)),
+    breakout: breakout.length ? [Math.min(...breakout.map((b) => b.over)), Math.min(...breakout.map((b) => b.clear))] : null,
+    jump: [...new Set(cards.map((c) => c.querySelector('.jump').getBoundingClientRect().height))],
+  };
+}"""
+
+
+def comfortable_fits(wall):
+    """Comfortable holds four cards in split mode (2x2) and eight maximised
+    (4x2) with no vertical scrollbar, the demo as it is and with every card
+    full, all asking or all in error; Auto stays comfortable there. Each figure breaks
+    the card's top edge cleanly: above it, yet clear of the bar and the row
+    above. Open terminal is 24 to 28 px tall."""
+    for width, height, cards, columns in COMFORTABLE_FIT:
+        for fleet, body in (("demo", None), ("asking", busy(cards)), ("error", busy(cards, "error"))):
+            for density in ("comfortable", "auto"):
+                page = wall.open(width, height, cards, body)
+                page.click(f".density label:has([value={density}])")
+                page.wait_for_timeout(SETTLE_MS)
+                got = page.evaluate(FITS)
+                over, clear = got["breakout"] or (0, 0)
+                ok = (
+                    got["density"] == "comfortable"
+                    and got["scrollHeight"] <= got["clientHeight"]
+                    and (got["columns"], got["rows"]) == (columns, cards // columns)
+                    and over >= 4
+                    and clear >= 4
+                    and all(24 <= h <= 28 for h in got["jump"])  # the 24 px minimum (WCAG 2.2, 2.5.8), no taller than compact's
+                )
+                wall.check(ok, f"{cards} {fleet} cards fit {density} at {width}x{height}", got)
+                page.close()
 
 
 # ---- Ending a session -------------------------------------------------------
@@ -3207,6 +3305,7 @@ def main() -> int:
             drawer_follows_snapshots,
             portrait_dialog,
             band_clear,
+            comfortable_fits,
             arrival_once,
             dialog_backdrop_only,
             compact_look_on_face,

@@ -15,8 +15,8 @@
   /* Comfortable: the full card. */
   --card-gap: var(--space-7);
   --wall-pad: var(--space-9);
-  --card-pad: 0 var(--space-8) var(--space-6); /* the band takes the top */
-  --card-rows: var(--space-5); /* between a card's rows; with --head-gap, the room the speaking waves need */
+  --card-pad: 0 var(--space-8) var(--space-5); /* the band takes the top */
+  --card-rows: var(--space-3); /* between a card's rows; the waves stay on the band here */
   --head-gap: var(--space-6);
   --wall-face: 80px;
   --face-inset: 9px; /* inside the thick arc (7 px at the edge), with a hairline of card between */
@@ -49,7 +49,7 @@
   --display: "Segoe UI Variable Display", "Segoe UI", "Inter Display", "Inter", system-ui, sans-serif;
   --title: "Cinzel", "Trajan Pro", Georgia, serif;
   /* The comfortable card's header band (#62); model.js BAND holds the same numbers. */
-  --band-h: 140px;
+  --band-h: 120px;
   --plate-bg: #141820;
   --plinth-bg: #0d1016;
   --band-line: #6f5a2c; /* the band's gilded rule */
@@ -274,7 +274,7 @@ button.menu {
   grid-area: menu;
   position: absolute;
   z-index: 3;
-  top: var(--space-6);
+  top: var(--space-4);
   right: var(--space-3);
   align-self: center;
   display: inline-flex;
@@ -298,10 +298,10 @@ button.menu svg { width: 16px; height: 16px; fill: currentColor; }
    the pill rides the corner. Past the figure only --under-text of the light
    reaches the text, so it reads at 4.5:1 in every light (fleet-style test). */
 .card header {
-  --fig: 154px;
+  --fig: 130px; /* 10 px over the card's top edge, clear of the 16 px gap above it */
   --fig-left: 4px;
-  --fade-from: 110px;
-  --fade-to: 158px;
+  --fade-from: 93px;
+  --fade-to: 133px;
   position: relative;
   isolation: isolate;
   display: grid;
@@ -310,8 +310,8 @@ button.menu svg { width: 16px; height: 16px; fill: currentColor; }
   align-content: end;
   row-gap: var(--space-1);
   height: var(--band-h);
-  margin: 0 calc(-1 * var(--space-8)) var(--space-1);
-  padding: 0 var(--space-8) var(--space-6) 166px;
+  margin: 0 calc(-1 * var(--space-8));
+  padding: 0 var(--space-8) var(--space-4) 154px; /* clear of the widest plinth */
   border-radius: 13px 13px 0 0;
   border-bottom: 1px solid var(--band-line);
   background: var(--plate-bg);
@@ -322,8 +322,8 @@ button.menu svg { width: 16px; height: 16px; fill: currentColor; }
   inset: 0;
   border-radius: inherit;
   background:
-    radial-gradient(closest-side, color-mix(in oklab, var(--light) var(--glow-alpha), transparent), transparent) -40px 0 / 270px 230px no-repeat,
-    repeating-conic-gradient(from 180deg at 82px 120%, color-mix(in oklab, var(--light) var(--rays-alpha), transparent) 0deg 3deg, transparent 3deg 10deg),
+    radial-gradient(closest-side, color-mix(in oklab, var(--light) var(--glow-alpha), transparent), transparent) -34px 0 / 228px 194px no-repeat,
+    repeating-conic-gradient(from 180deg at 69px 120%, color-mix(in oklab, var(--light) var(--rays-alpha), transparent) 0deg 3deg, transparent 3deg 10deg),
     var(--grain);
   -webkit-mask-image: linear-gradient(90deg, #000 var(--fade-from), rgb(0 0 0 / var(--under-text)) var(--fade-to));
   mask-image: linear-gradient(90deg, #000 var(--fade-from), rgb(0 0 0 / var(--under-text)) var(--fade-to));
@@ -347,7 +347,10 @@ button.menu svg { width: 16px; height: 16px; fill: currentColor; }
   height: var(--fig);
 }
 .figure { display: block; width: 100%; height: 100%; object-fit: contain; }
+/* The art's own top edge fades rather than cutting off where it breaks the card's edge. */
 .has-figure .figure {
+  -webkit-mask-image: linear-gradient(transparent, #000 3px);
+  mask-image: linear-gradient(transparent, #000 3px);
   filter: drop-shadow(0 0 1px color-mix(in oklab, var(--light) 70%, transparent)) drop-shadow(0 6px 14px rgb(0 0 0 / 0.55));
 }
 .card:not(.has-figure) .figure { display: none; }
@@ -370,8 +373,8 @@ button.menu svg { width: 16px; height: 16px; fill: currentColor; }
 .aura { display: contents; }
 .has-figure .portrait .ring,
 .has-figure .portrait .face { display: none; }
-.card:not(.has-figure) .portrait { position: absolute; left: 40px; top: 32px; }
-.card:not(.has-figure) .look { position: absolute; z-index: 1; left: 40px; top: 32px; width: var(--wall-face); height: var(--wall-face); border-radius: 50%; }
+.card:not(.has-figure) .portrait { position: absolute; left: 29px; top: 20px; }
+.card:not(.has-figure) .look { position: absolute; z-index: 1; left: 29px; top: 20px; width: var(--wall-face); height: var(--wall-face); border-radius: 50%; }
 .marks { display: none; }
 /* A small gilded plaque at the figure's foot. */
 .has-figure .marks:not(:empty) {
@@ -449,7 +452,7 @@ button.menu svg { width: 16px; height: 16px; fill: currentColor; }
 .pill {
   position: absolute;
   z-index: 3;
-  top: var(--space-6);
+  top: var(--space-4);
   right: var(--space-6);
   display: inline-flex;
   align-items: center;
@@ -469,11 +472,16 @@ button.menu svg { width: 16px; height: 16px; fill: currentColor; }
 .mark { display: inline-flex; flex: none; }
 .pill .badge { width: 16px; height: 16px; }
 
-.where { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; overflow-wrap: anywhere; }
-.repo { font-weight: 600; }
+/* One line in either density; a long place cuts short and its title holds all of it. */
+.where { display: flex; align-items: center; gap: 6px 10px; min-width: 0; overflow: hidden; white-space: nowrap; }
+/* A touch screen has no hover for the title: a full card on the phone wall wraps instead. */
+.served .wall:not([data-density="compact"]) .where { flex-wrap: wrap; white-space: normal; overflow-wrap: anywhere; }
+.repo { min-width: 0; overflow: hidden; text-overflow: ellipsis; font-weight: 600; }
 .repo .wt { color: var(--text-dim); font-weight: 500; }
 .branch {
   display: inline-flex;
+  flex: 0 1 auto;
+  min-width: 0;
   gap: 5px;
   align-items: center;
   color: var(--text-dim);
@@ -483,10 +491,14 @@ button.menu svg { width: 16px; height: 16px; fill: currentColor; }
   border-radius: 6px;
 }
 .branch svg { width: 12px; height: 12px; flex: none; }
-.also { display: flex; flex-wrap: wrap; gap: 4px 10px; list-style: none; margin-top: -6px; color: var(--text-quiet); font-size: 12.5px; }
+.branch span { overflow: hidden; text-overflow: ellipsis; }
+.also { display: flex; flex-wrap: wrap; gap: 4px 10px; list-style: none; margin-top: -4px; color: var(--text-quiet); font-size: 12.5px; }
 .also:empty { display: none; }
 .meta, .foot { display: contents; } /* rows of their own only on the compact card */
-.also-more {
+/* "+3": the other repos past the ones a card names, named in full on hover
+   and to screen readers. Compact shows one chip for all of them. */
+.also-more,
+.also-rest {
   display: none;
   flex: none;
   padding: 1px 6px;
@@ -497,7 +509,8 @@ button.menu svg { width: 16px; height: 16px; fill: currentColor; }
   font-variant-numeric: tabular-nums;
   cursor: default;
 }
-.crew-line { display: flex; flex-wrap: wrap; gap: 4px 10px; margin-top: -6px; color: var(--text-dim); font-size: 12.5px; }
+.also-rest { display: inline-block; }
+.crew-line { display: flex; flex-wrap: wrap; gap: 4px 10px; margin-top: -4px; color: var(--text-dim); font-size: 12.5px; }
 .crew-line .free { color: var(--text-quiet); }
 .crew-line .free::before { content: "\00b7"; margin-right: 10px; }
 
@@ -505,19 +518,26 @@ button.menu svg { width: 16px; height: 16px; fill: currentColor; }
   display: flex;
   gap: 8px;
   align-items: center;
-  padding: 8px 10px;
+  padding: 5px 10px;
   border-radius: 8px;
   font-weight: 600;
   background: color-mix(in oklab, var(--tone-needs) 14%, transparent);
   color: color-mix(in oklab, var(--tone-needs) 75%, white);
-  overflow-wrap: anywhere; /* a tool name has no break points, and the card no longer clips */
 }
-.ask .text { min-width: 0; }
+/* One line in either density: a long tool name cuts short, and the line's title holds all of it. */
+.ask .text { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .ask .badge { width: 18px; height: 18px; }
 
 .error { color: var(--text-error); overflow-wrap: anywhere; }
+/* Two lines in either density; its title holds the rest. */
+.said .error {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+}
 
-.said { flex: 1; display: grid; gap: 6px; align-content: start; }
+.said { flex: 1; display: grid; gap: var(--space-1); align-content: start; }
 .said p:not(.error) {
   display: -webkit-box;
   -webkit-box-orient: vertical;
@@ -526,7 +546,11 @@ button.menu svg { width: 16px; height: 16px; fill: currentColor; }
   overflow-wrap: anywhere;
 }
 .said p:empty { display: none; }
-.said .prompt { color: var(--text-dim); padding-left: 10px; border-left: 2px solid var(--card-line); }
+/* What AJ asked is one line (its title holds the rest); the reply keeps two,
+   or one while the card asks or shows an error, since that is the news. */
+.card.asking .said p.reply,
+.said:has(.error:not([hidden])) p.reply { -webkit-line-clamp: 1; }
+.said p.prompt { -webkit-line-clamp: 1; color: var(--text-dim); padding-left: 10px; border-left: 2px solid var(--card-line); }
 .said .reply { color: var(--text); }
 .reply-line { display: flex; align-items: flex-start; gap: var(--space-3); min-width: 0; }
 .reply-line[hidden] { display: none; }
@@ -540,7 +564,11 @@ button.menu svg { width: 16px; height: 16px; fill: currentColor; }
 [data-density="compact"] .play { width: 18px; height: 18px; }
 [data-density="compact"] .play svg { width: 9px; height: 9px; }
 
+/* On the footer's free left, so a quiet card grows no taller. */
 .updated { color: var(--text-quiet); font-size: 12.5px; }
+/* A note or the undo window is the newer word: it takes the footer's left. */
+.card:has(.note:not(:empty)) .updated,
+.card:has(.ending:not([hidden])) .updated { display: none; }
 
 /* The ledger line: what the session did (its receipt) and a chip for tool
    calls a guardrail turned down. Comfortable: a row above the footer. */
@@ -568,7 +596,9 @@ button.menu svg { width: 16px; height: 16px; fill: currentColor; }
 }
 .chip::after { content: ""; position: absolute; inset: -4px 0; }
 
-.actions { display: flex; align-items: center; gap: 8px; border-top: 1px solid var(--card-line); padding-top: 12px; }
+.actions { display: flex; align-items: center; gap: 8px; border-top: 1px solid var(--card-line); padding-top: var(--space-3); }
+/* 28 px tall, over the 24x24 minimum (WCAG 2.2, 2.5.8); compact sets its own. */
+.actions .jump, .actions .clear, .actions .undo { min-height: 28px; padding: 0 var(--space-5); }
 .actions .note { color: var(--text-dim); font-size: 12.5px; margin-right: auto; overflow-wrap: anywhere; }
 .actions .why { color: var(--text-dim); font-size: 12.5px; }
 /* The undo window: the countdown and Undo take the note's place. */
@@ -718,26 +748,15 @@ button.menu svg { width: 16px; height: 16px; fill: currentColor; }
   white-space: nowrap;
   font-size: 13px;
 }
-[data-density="compact"] .where { flex: 0 1 auto; flex-wrap: nowrap; gap: var(--space-3); min-width: 0; overflow: hidden; }
-[data-density="compact"] .repo { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-[data-density="compact"] .branch { flex: 0 1 auto; min-width: 0; padding: 1px 6px; font-size: 12px; }
-[data-density="compact"] .branch span { overflow: hidden; text-overflow: ellipsis; }
+[data-density="compact"] .where { flex: 0 1 auto; gap: var(--space-3); }
+[data-density="compact"] .branch { padding: 1px 6px; font-size: 12px; }
 [data-density="compact"] .also { display: none; }
 [data-density="compact"] .also-more:not([hidden]) { display: inline-block; }
 [data-density="compact"] .crew-line { flex: none; margin-top: 0; font-size: 12px; }
 [data-density="compact"] .crew-line .free { display: none; } /* the full card says it */
 [data-density="compact"] .ask { grid-area: ask; margin-top: var(--space-2); padding: 3px var(--space-3); gap: var(--space-2); font-size: 13px; }
 [data-density="compact"] .ask .badge { width: 14px; height: 14px; }
-[data-density="compact"] .ask .text { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 [data-density="compact"] .said { grid-area: said; gap: 2px; margin-top: var(--space-2); font-size: 13px; line-height: 1.4; }
-[data-density="compact"] .said .prompt,
-[data-density="compact"] .card.asking .said .reply { -webkit-line-clamp: 1; }
-[data-density="compact"] .said .error {
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-  overflow: hidden;
-}
 [data-density="compact"] .updated { display: none; }
 
 /* The ledger line takes the foot slot: the three most telling parts of the
