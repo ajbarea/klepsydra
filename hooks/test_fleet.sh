@@ -770,7 +770,7 @@ fire post-tool-bash-timed-out.json
 check "a shell moved to the background at its timeout is added" "$(bg)" '"shell:bfc4dro89"'
 fire post-tool-task-stop.json '.tool_input = {task_id: "bfc4dro89"} | .tool_response = {task_id: "bfc4dro89"}'
 fire post-tool-bash-timed-out.json '.tool_response |= (del(.timedOutAfterMs) | .backgroundedToDeliverMessage = true)'
-check "and one moved there by hand" "$(bg)" '"shell:bfc4dro89"'
+check "and one moved there to deliver a message" "$(bg)" '"shell:bfc4dro89"'
 fire post-tool-task-stop.json '.tool_input = {task_id: "bfc4dro89"} | .tool_response = {task_id: "bfc4dro89"}'
 fire post-tool-bash-timed-out.json '.tool_response.backgroundTaskId = null'
 check "a foreground shell that finished adds nothing" "$(bg)" '""'
