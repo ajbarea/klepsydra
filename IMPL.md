@@ -7,6 +7,16 @@ fleet folder keeps the last snapshot), #104 (#98 ledger attribution), #105
 build: 1ad1405 (10-25 21:48). Not yet live: #89 split mode, #93, and all of
 the above.
 
+## This branch: feat/comfortable-density (#113)
+- Done: Comfortable holds 4 cards at 945/958x1000 and 8 at 1920x1000 with no
+  scrollbar, every card full (`comfortable_fits` in the wall suite, failing
+  on main). Band 140 -> 120 px, figure 154 -> 130 px (10 px over the edge,
+  its top 6 px faded), rows 12 -> 8 px, footer 46 -> 37 px (28 px buttons),
+  prompt on one line, "updated" moved into the footer.
+- Next: AJ checks the PR screenshots and the live wall in split mode.
+- Verify: the gate list below. `reply_buttons` timed out waiting for a clip
+  to end in three runs (one on main), then passed: a flake to watch.
+
 ## Waits on AJ
 - Deploy (his yes): `scripts/build-windows.sh` from main, stop the exe,
   installer `/S`, start; copy `hooks/klepsydra-fleet.sh` to `~/.claude/`

@@ -161,7 +161,7 @@ test("the waves stay clear of the nameplate and the next card: on the band, and 
   const header = tokens(rule(".card header"));
   const fig = parseFloat(header["--fig"]);
   const figLeft = parseFloat(header["--fig-left"]);
-  const textLeft = parseFloat(rule(".card header").match(/padding: 0 var\(--space-8\) var\(--space-6\) (\d+)px/)[1]);
+  const textLeft = parseFloat(rule(".card header").match(/padding: 0 var\(--space-8\) var\(--space-4\) (\d+)px/)[1]);
   assert.match(rule(".has-figure .aura"), /inset: calc\(var\(--band-h\) - var\(--fig\)\) 0 0 0;[^}]*overflow: hidden;/);
   const face = px({}, "--wall-face");
   const out = face / 2 + (reach * face) / 80;

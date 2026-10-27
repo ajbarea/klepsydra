@@ -448,11 +448,14 @@ an error count only when one exists. Each card shows:
   repo of its last edit, else its folder's, and its folder's again once that
   worktree is removed) and the other repos it touched;
 - for a session that needs you, a line saying what it waits for;
-- the last prompt in a quoted block and the full reply under it, with a play
+- the last prompt on one line in a quoted block and the reply on two under
+  it (hover either for all of it), with a play
   button beside the reply when keryx kept that reply's audio (keryx's
   `reply_clips`, on by default). It plays the session's latest spoken reply on
   this machine, one card at a time; press it again to stop. keryx writes the
-  clip to `replies/<session id>.wav` beside the fleet folder.
+  clip to `replies/<session id>.wav` beside the fleet folder;
+- "updated 7m ago" beside **Open terminal** once the card's newest field is
+  over five minutes old.
 
 A left edge in the status tone marks each card, and a needs-you card adds an
 amber border. Ended, silent and not-started cards are dimmer. The grid uses
@@ -575,7 +578,10 @@ klepsydra's tmux, which you end yourself.
 ### Card density
 
 The control beside **+ New session** picks the card density: **Auto** (the
-default), **Comfortable** or **Compact**. Comfortable is the card above.
+default), **Comfortable** or **Compact**. Comfortable is the card above:
+four fit the wall in split mode (2x2, about 958x1000 of content) and eight
+fit it maximised (4x2, about 1920x1000), each as full as a card gets outside
+a wrap-up, with no scrollbar.
 Compact keeps three short rows: the header, with a 56 px portrait (crew ring
 and speaking waves included), the name and session name, the pill and a
 smaller **Open terminal**; one line for where it works, the crew and a "+N" chip
