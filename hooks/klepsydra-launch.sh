@@ -297,11 +297,11 @@ mid_turn() {
 }
 
 # Type COMMAND into the cleared input line and press Enter, only once the line
-# reads exactly COMMAND; else clear it again and fail.
+# reads exactly COMMAND, within 5 s on a busy machine; else clear it again and fail.
 run_command() { # command
   local _
   keys -l "$1"
-  for _ in $(seq 20); do reads "$1" && break; sleep 0.1; done
+  for _ in $(seq 50); do reads "$1" && break; sleep 0.1; done
   if ! reads "$1"; then
     keys C-c
     fail "The session's prompt did not read $1, so Enter was not pressed. Its prompt may be in vim editor mode, or Claude Code's layout changed. Open its terminal to do it there."

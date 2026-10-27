@@ -151,10 +151,14 @@ for bad in 12a ""; do
   check "bad start '$bad': says so" "$out" "Not a process start time: $bad"
 done
 check "refusals: window unchanged" "$(t display -p -t =fleet: '#{pane_id}')" "$second"
+# Run "$@" every 0.1 s until it succeeds, at most 10 s.
+until_true() { local _; for _ in $(seq 100); do "$@" && return 0; sleep 0.1; done; return 1; }
+has_child() { [[ -n $(pgrep -P "$1") ]]; }
+zombie_child() { local c; c=$(pgrep -P "$1" | head -1); [[ -n $c && $(awk '{print $3}' "/proc/$c/stat" 2>/dev/null) == Z ]]; }
 # The walk: claude is a descendant of pane_pid, not pane_pid itself.
 leaf() { local p=$1 c _; for _ in 1 2 3 4 5 6 7 8; do c=$(pgrep -P "$p" | head -1); [[ -n $c ]] || break; p=$c; done; echo "$p"; }
 deep=$(t new-window -d -P -F '#{pane_id}' -t =fleet: "bash -c 'sleep 600; true'")
-sleep 0.3
+until_true has_child "$(pane_pid "$deep")"
 dleaf=$(leaf "$(pane_pid "$deep")"); dstart=$(pstart "$dleaf")
 check "descendant: leaf is not the pane pid" "$([[ $dleaf != "$(pane_pid "$deep")" ]] && echo yes)" "yes"
 out=$(jmp "$deep" "$dleaf" "$dstart" 2>&1); rc=$?
@@ -164,7 +168,7 @@ out=$(jmp "$first" "$dleaf" "$dstart" 2>&1); rc=$?
 check "descendant against another pane: refused" "$out" "That session's tmux pane now belongs to another session."
 # A zombie child is not Claude.
 zp=$(t new-window -d -P -F '#{pane_id}' -t =fleet: "bash -c 'sleep 0.2 & exec sleep 600'")
-sleep 0.8
+until_true zombie_child "$(pane_pid "$zp")"
 zleaf=$(leaf "$(pane_pid "$zp")")
 check "zombie: made" "$(awk '{print $3}' "/proc/$zleaf/stat")" "Z"
 out=$(jmp "$zp" "$zleaf" "$(pstart "$zleaf")" 2>&1); rc=$?
@@ -255,8 +259,13 @@ fake() { # [env...]: a fleet window running the fake; prints its pane id
 }
 send() { bash "$launch" "$1" "$socket" "$2" "$(pane_pid "$2")" "$(pstart "$(pane_pid "$2")")"; } # verb pane
 alive() { [[ -n $(t display -p -t "$1" '#{pane_id}' 2>/dev/null) ]] && echo alive || echo gone; }
-# tmux closes a pane a moment after its process exits; at most 10 s.
-gone() { local _; for _ in $(seq 100); do [[ $(alive "$1") == gone ]] && break; sleep 0.1; done; alive "$1"; }
+# tmux closes a pane a moment after its process exits; at most 10 s. A pane
+# still there says how its process ended (remain-on-exit keeps a failed one).
+gone() {
+  until_true is_gone "$1" && { echo gone; return; }
+  echo "alive ($(t display -p -t "$1" 'dead=#{pane_dead} status=#{pane_dead_status} signal=#{pane_dead_signal}'))"
+}
+is_gone() { [[ $(alive "$1") == gone ]]; }
 # The fake logs a key when it reads it, which can be after the launch script
 # returns: check its key log once it reads WANT, or as it stands after 10 s.
 check_keys() { # name want
