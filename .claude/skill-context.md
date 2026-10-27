@@ -92,14 +92,17 @@ files belong to: the JS guards scan hooks and scripts too.
   the usage-limit gauges from demo readings (one per account and window in
   the strip's words, scrolling away under a sticky bar they leave one tally
   high, a new reading over `/events`, a stale one, none, AA contrast in
-  light and dark, a screenshot of each).
+  light and dark, a screenshot of each); a card's Full text shown only where
+  text is cut, unfolding it in place and reaching no session, at 390 and at
+  700 px with touch.
   Needs cargo and Playwright's Chromium; local only.
 - `uv run -q --no-project --with playwright python -I scripts/test_wall_browser.py`:
   the wall in a real browser: 16 demo cards at 1920x1000 and 8 at 945x1000
   fit in Auto (compact, no scrollbar, ring key in view); 4 comfortable cards
   fit 945x1000 and 958x1000 and 8 fit 1920x1000, the demo and every card
   full (all asking a long MCP tool, or all in a long error, twelve other
-  repos each), forced and in Auto, each figure breaking the card's
+  repos each), forced and in Auto, an MCP ask cut in the middle so the
+  tool's own name shows, each figure breaking the card's
   top edge clear of the bar and the row above, Open terminal 24 to 28 px; Auto re-checks when
   a card grows, never leaves a comfortable wall scrolling (a pixel at a time
   through the boundary, and where the comfortable bar is taller), and a

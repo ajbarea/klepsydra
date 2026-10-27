@@ -449,8 +449,9 @@ an error count only when one exists. Each card shows:
   worktree is removed; one line, cut short with all of it on hover, wrapped
   instead on the phone wall) and the other repos it touched: up to four by
   name, then a "+N" chip naming the rest on hover;
-- for a session that needs you, a line saying what it waits for, cut short
-  to one line with all of it on hover;
+- for a session that needs you, a line saying what it waits for, on one
+  line with all of it on hover; cut short, it loses its middle, so the tool's
+  own name stays in view ("approve mcp__plugin_pl…browser_navigate");
 - the last prompt on one line in a quoted block and the reply on two under
   it, one while the card asks or shows an error (hover either for all of
   it); an error takes two lines, with all of it on hover; a play
@@ -822,7 +823,9 @@ On the phone the wall is one column of compact cards, needs-you first, under
 a tally that stays at the top. It updates as the desktop's does, over one
 event stream. Nothing on it acts on a session: New, Open terminal, End,
 Interrupt, Clear, Wrap up and the ledger stay on the desktop, though a
-wrap-up's answers and readiness count show. A card's play button plays its
+wrap-up's answers and readiness count show. Touch has no hover, so a card
+that cuts text short shows **Full text**, which unfolds it in place and asks
+the server nothing. A card's play button plays its
 latest spoken reply on the phone, not the PC, from `/audio/<session id>`. A session with Remote
 Control on (`/remote-control` in its terminal) shows **Open in Claude**, and
 a tap on its card opens that session on claude.ai or in the Claude app. The

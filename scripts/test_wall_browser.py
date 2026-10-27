@@ -4,7 +4,8 @@ Maximised on a 1920x1080 screen the wall's content is about 1920x1000, and
 snapped to half the screen about 945x1000 (the taskbar, title bar and frame
 take the rest). In Auto, sixteen demo cards fit the first and eight the
 second, compact, in four and two columns, with no vertical scrollbar and the
-ring key in view. Comfortable holds four full cards at half the screen
+ring key in view. An MCP ask cut short loses its middle, never the tool's
+own name. Comfortable holds four full cards at half the screen
 and eight maximised, and Auto keeps it there. Auto never leaves a comfortable wall scrolling: not when a
 card grows, not at an exact fit, not where the comfortable bar is taller than
 the compact one. A note on a compact card never covers its exchange. The ledger line and
@@ -828,21 +829,55 @@ def compact_look_on_face(wall):
     page.close()
 
 
+# Each shown needs-you line: its two parts, whether each is cut, and whether it stays in its card.
+ASKS = """() => [...document.querySelectorAll('.card .ask')].filter((a) => !a.hidden).map((ask) => {
+  const [lead, keep] = ['.ask-lead', '.ask-keep'].map((s) => ask.querySelector(s));
+  const [a, c, k, l] = [ask, ask.closest('.card'), keep, lead].map((e) => e.getBoundingClientRect());
+  return {
+    keep: keep.textContent,
+    keepWhole: keep.scrollWidth <= keep.clientWidth,
+    leadCut: lead.scrollWidth > lead.clientWidth,
+    // An ellipsis draws only on a block box: a flex or inline lead clips mid-letter instead.
+    ellipsis: [lead, keep].every((e) => getComputedStyle(e).textOverflow === 'ellipsis' && getComputedStyle(e).display === 'block'),
+    leadWidth: Math.round(l.width),
+    inside: a.right <= c.right + 0.5 && k.right <= a.right + 0.5 && ask.scrollWidth <= ask.clientWidth + 1,
+    whole: ask.querySelector('.text').textContent === ask.title && ask.title.startsWith('Waiting for you to approve mcp__'),
+    unfold: [...document.querySelectorAll('.unfold')].some((b) => b.checkVisibility()),
+  };
+})"""
+
+
+def ask_keeps_the_tool_name(wall):
+    """An MCP ask cut short loses its middle, not the tool's own name: at 1920
+    and 945, in either density, each asking card's lead takes the ellipsis and
+    browser_run_code_unsafe shows whole after it, inside the card; the title
+    and the line's text hold all of it. The desktop wall has no Full text."""
+    for width, cards in ((1920, 8), (945, 4)):
+        for density in ("comfortable", "compact"):
+            page = wall.open(width, 1000, cards, busy(cards))
+            page.click(f".density label:has([value={density}])")
+            page.wait_for_timeout(SETTLE_MS)
+            asks = page.evaluate(ASKS)
+            ok = len(asks) == cards and all(
+                a["keep"] == "browser_run_code_unsafe" and a["keepWhole"] and a["leadCut"] and a["ellipsis"] and a["inside"] and a["whole"] and not a["unfold"]
+                for a in asks
+            )
+            wall.check(ok, f"an MCP ask keeps its tool's name, {density} at {width}", asks)
+            page.close()
+
+
 def long_tool_stays_in_card(wall):
-    """A needs-you line naming a long tool stays inside its card at either density, cut short."""
+    """A needs-you line whose tool name alone is wider than the card stays
+    inside it at either density: the name is cut too, and the lead keeps four
+    characters before its ellipsis."""
+    reason = "approve mcp__claude_ai_Gmail__apply_sensitive_message_label_and_then_some_more_words_without_breaks"
     for density in ("comfortable", "compact"):
-        page = wall.open(945, 1000, 8)
+        page = wall.open(945, 1000, 4, busy(4, reason=reason))
         page.click(f".density label:has([value={density}])")
         page.wait_for_timeout(SETTLE_MS)
-        spill = page.evaluate(
-            """() => {
-          const ask = [...document.querySelectorAll('.card .ask')].find((a) => !a.hidden);
-          ask.querySelector('.text').textContent = 'Waiting for you to approve mcp__claude_ai_Gmail__apply_sensitive_message_label_and_then_some_more_words_without_breaks';
-          const [a, c] = [ask.getBoundingClientRect(), ask.closest('.card').getBoundingClientRect()];
-          return a.right > c.right + 0.5 || ask.scrollWidth > ask.clientWidth + 1 ? [a.right, c.right, ask.scrollWidth, ask.clientWidth] : null;
-        }"""
-        )
-        wall.check(spill is None, f"a long tool name stays in its {density} card", spill)
+        asks = page.evaluate(ASKS)
+        ok = len(asks) == 4 and all(a["inside"] and not a["keepWhole"] and a["leadCut"] and a["ellipsis"] and a["leadWidth"] >= 20 for a in asks)
+        wall.check(ok, f"a long tool name stays in its {density} card", asks)
         page.close()
 
 
@@ -927,7 +962,7 @@ OTHER_REPOS = ["kourai-khryseai", "papers", "ajsoftworks", "talks", "techne", "c
 LONG = "Re-running the sweep over five seeds, then redrawing the bars with the median and range before the deck refresh picks them up. " * 2
 
 
-def busy(n, shape="asking"):
+def busy(n, shape="asking", reason="approve mcp__plugin_playwright_playwright__browser_run_code_unsafe"):
     """The demo's first `n` sessions, each as full as a live card gets outside
     a wrap-up: a long session name, worktree and branch, twelve other repos
     touched, a crew, a long prompt and reply, a ledger line with a blocked
@@ -936,7 +971,7 @@ def busy(n, shape="asking"):
     demo = json.loads((ROOT / "scripts/fixtures/fleet-demo.json").read_text())
     at, ledger = demo["at"], demo["sessions"][0]["ledger"]
     states = {
-        "asking": {"status": "needs_you", "reason": "approve mcp__plugin_playwright_playwright__browser_run_code_unsafe", "error": None},
+        "asking": {"status": "needs_you", "reason": reason, "error": None},
         "error": {"status": "error", "reason": None, "error": "API Error: 529 overloaded_error, the request was retried three times and failed. " * 3},
     }
     sessions = []
@@ -4113,6 +4148,7 @@ def main() -> int:
             arrival_once,
             dialog_backdrop_only,
             compact_look_on_face,
+            ask_keeps_the_tool_name,
             long_tool_stays_in_card,
             dialog_caption_fits,
             menu_shown_only_where_it_acts,
