@@ -1511,5 +1511,44 @@ for bad in "" "relative/$R.jsonl" "-n" "$work/missing.jsonl" "$work/projects"; d
   check "remote: transcript '$bad' is ignored" "$rc|$out|$(rc_url)|$(jq -r .state "$rfile")" "0||none|new"
 done
 
+echo "queue command"
+
+# The command names the Queue panel's file in queue.json; under WSL it hands
+# the Windows app a Windows path. A proc root without osrelease is not WSL.
+qdir="$work/queue-data"
+qproc="$work/queue-proc"
+mkdir -p "$qproc/sys/kernel" "$work/wslbin"
+queue() { KLEPSYDRA_DIR=$qdir KLEPSYDRA_PROC=$qproc bash "$hook" queue "$@"; }
+out=$(queue set /home/aj/queue.md --by "Hermes (orchestrator)"); rc=$?
+check "queue set: says so" "$rc|$out" "0|The Queue panel now reads /home/aj/queue.md, kept by Hermes (orchestrator)."
+check "queue set: path and keeper" "$(jq -c . "$qdir/queue.json")" '{"path":"/home/aj/queue.md","by":"Hermes (orchestrator)"}'
+check "queue set: no temp file left" "$(find "$qdir" -name '*.tmp' | wc -l)" "0"
+queue set /home/aj/other.md >/dev/null
+check "queue set: no --by keeps no one" "$(jq -c . "$qdir/queue.json")" '{"path":"/home/aj/other.md","by":null}'
+( cd "$work" && queue set rel.md >/dev/null )
+check "queue set: a relative path is made absolute" "$(jq -r .path "$qdir/queue.json")" "$work/rel.md"
+check "queue show: prints queue.json" "$(queue show)" "$(cat "$qdir/queue.json")"
+for args in "set" "set a b" "set a --by" "set a --by x y" "nope" ""; do
+  # shellcheck disable=SC2086 # each case is its words
+  out=$(queue $args 2>&1); rc=$?
+  check "queue $args: usage, exit 2" "$rc|${out%% *}" "2|usage:"
+done
+# shellcheck disable=SC2016 # the stub script expands its own arguments
+printf '#!/bin/sh\n[ "$1" = -w ] && [ "$2" = -- ] && printf "C:%%s\\n" "$3"\n' >"$work/wslbin/wslpath"
+chmod +x "$work/wslbin/wslpath"
+echo "6.6.87.2-microsoft-standard-WSL2" >"$qproc/sys/kernel/osrelease"
+PATH="$work/wslbin:$PATH" queue set /mnt/c/q.md >/dev/null
+check "queue set under WSL: a Windows path" "$(jq -r .path "$qdir/queue.json")" "C:/mnt/c/q.md"
+printf '#!/bin/sh\nexit 1\n' >"$work/wslbin/wslpath"
+before=$(cat "$qdir/queue.json")
+out=$(PATH="$work/wslbin:$PATH" queue set /nowhere.md 2>&1); rc=$?
+check "queue set under WSL: no Windows path, nothing written" "$rc|$out|$(cat "$qdir/queue.json")" "1|klepsydra: /nowhere.md has no Windows path|$before"
+rm -f "$qproc/sys/kernel/osrelease"
+out=$(queue clear); rc=$?
+check "queue clear: the default again" "$rc|$out|$([[ -e $qdir/queue.json ]] && echo kept || echo gone)" "0|The Queue panel reads its default file again.|gone"
+check "queue show: none" "$(queue show)" "No queue.json: the Queue panel reads its default file."
+out=$(KLEPSYDRA_DIR=""; queue_cmd show 2>&1); rc=$? # the sourced hook's: a run would find the real folder
+check "queue: no data folder is an error" "$rc|$out" "1|klepsydra: no data folder (set KLEPSYDRA_DIR)"
+
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [[ $fail -eq 0 ]]

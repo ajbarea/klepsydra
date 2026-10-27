@@ -153,6 +153,7 @@ export function createQueuePanel({ dialog, button, tab, onLayout = () => {}, onR
   const body = dialog.querySelector(".queue-body");
   const content = dialog.querySelector(".queue-content");
   const pathLine = dialog.querySelector(".queue-path");
+  const keeper = dialog.querySelector(".queue-kept");
   const problem = dialog.querySelector(".queue-problem");
   const live = dialog.querySelector(".queue-live");
   const title = dialog.querySelector("#queue-title");
@@ -430,7 +431,10 @@ export function createQueuePanel({ dialog, button, tab, onLayout = () => {}, onR
     }
     pathLine.textContent = view.path ?? "";
     pathLine.title = view.path ?? "";
+    keeper.hidden = !view.kept_by;
+    keeper.textContent = view.kept_by ? `Kept by ${view.kept_by}` : "";
     problem.hidden = !shown.problem;
+    problem.classList.toggle("empty", shown.empty === true);
     problem.textContent = shown.problem ?? "";
     const at = controls().indexOf(document.activeElement);
     const scroll = body.scrollTop;

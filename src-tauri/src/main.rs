@@ -823,6 +823,7 @@ fn with_state<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R
 
 fn main() {
     let builder = tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             None,
@@ -931,6 +932,8 @@ fn main() {
             let phone_on = phone::set(app.handle(), phone::saved(app.handle()));
             let phone_item =
                 CheckMenuItem::with_id(app, "phone", "Phone wall", true, phone_on, None::<&str>)?;
+            let queue_item =
+                MenuItem::with_id(app, "queue", "Choose queue file...", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
             let menu = Menu::with_items(
                 app,
@@ -941,6 +944,7 @@ fn main() {
                     &compact_item,
                     &start_item,
                     &phone_item,
+                    &queue_item,
                     &PredefinedMenuItem::separator(app)?,
                     &quit,
                 ],
@@ -996,6 +1000,7 @@ fn main() {
                             set_home(&w);
                         }
                     }
+                    "queue" => fleet::choose_queue(app),
                     "quit" => app.exit(0),
                     _ => {}
                 })

@@ -663,6 +663,46 @@ write_atomic() { # file text
   fi
 }
 
+# `klepsydra-fleet.sh queue set PATH [--by NAME] | clear | show`: name the
+# Queue panel's file in <KLEPSYDRA_DIR>/queue.json, and who keeps it, so a
+# session can own the queue AJ reads. Under WSL the overlay is a Windows app,
+# so the path goes across as a Windows one. Unlike the hook it says what it did
+# and exits non-zero on a mistake.
+queue_cmd() { # args...
+  local keeper path by="" osrelease="" usage="usage: klepsydra-fleet.sh queue set PATH [--by NAME] | clear | show"
+  [[ -n ${KLEPSYDRA_DIR:-} ]] || { echo "klepsydra: no data folder (set KLEPSYDRA_DIR)" >&2; return 1; }
+  keeper=$KLEPSYDRA_DIR/queue.json
+  case ${1:-} in
+    set)
+      [[ -n ${2:-} ]] || { echo "$usage" >&2; return 2; }
+      path=$2
+      if [[ ${3:-} == --by ]]; then
+        [[ -n ${4:-} && $# -eq 4 ]] || { echo "$usage" >&2; return 2; }
+        by=$4
+      elif [[ $# -ne 2 ]]; then
+        echo "$usage" >&2; return 2
+      fi
+      [[ $path == /* ]] || path=$PWD/$path
+      { read -r osrelease <"$PROC_ROOT/sys/kernel/osrelease"; } 2>/dev/null
+      if [[ $osrelease == *[Mm]icrosoft* ]] && command -v wslpath >/dev/null; then
+        path=$(wslpath -w -- "$path" 2>/dev/null) || { echo "klepsydra: $2 has no Windows path" >&2; return 1; }
+      fi
+      mkdir -p -- "$KLEPSYDRA_DIR" || return 1
+      write_atomic "$keeper" "$(jq -nc --arg path "$path" --arg by "$by" '{path: $path, by: (if $by == "" then null else $by end)}')"
+      [[ -f $keeper ]] || { echo "klepsydra: could not write $keeper" >&2; return 1; }
+      echo "The Queue panel now reads $path${by:+, kept by $by}."
+      ;;
+    clear)
+      rm -f -- "$keeper" || return 1
+      echo "The Queue panel reads its default file again."
+      ;;
+    show)
+      if [[ -f $keeper ]]; then cat -- "$keeper"; else echo "No queue.json: the Queue panel reads its default file."; fi
+      ;;
+    *) echo "$usage" >&2; return 2 ;;
+  esac
+}
+
 # The voice a session file records, or nothing: a text scan, no process.
 file_voice() { # text
   [[ $1 =~ \"voice\":\"([^\"]*)\" ]] && printf '%s' "${BASH_REMATCH[1]}"
@@ -767,6 +807,10 @@ main() {
 }
 
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  if [[ ${1:-} == queue ]]; then
+    queue_cmd "${@:2}"
+    exit
+  fi
   (main) >/dev/null 2>&1 # a subshell, so no failure inside can end this shell non-zero
   exit 0
 fi

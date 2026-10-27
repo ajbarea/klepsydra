@@ -926,10 +926,23 @@ drawer is local and reads only today's file.
 
 The **Queue** button beside **Ledger** shows your to-do file inside the wall:
 by default `claude-queue.md` on your Desktop (the Desktop known folder, so a
-redirected Desktop is found too). To read another file, set `queue_path` in
-`prefs.json` to its absolute path; the change applies within five seconds.
-The file stays the source of truth: agents and you keep editing it with any
-editor, and the panel only reads it.
+redirected Desktop is found too). The file stays the source of truth: agents
+and you keep editing it with any editor, and the panel only reads it.
+
+To read another file, pick it with the tray's **Choose queue file...**, or
+let a session own it: an orchestrator that keeps the queue runs
+
+```bash
+bash ~/.claude/klepsydra-fleet.sh queue set ~/fleet/queue.md --by "Hermes (orchestrator)"
+```
+
+and the panel names the file and says who keeps it ("Kept by Hermes
+(orchestrator)"), the way Claude Code's own to-do list is Claude's to edit and
+yours to read. `queue show` prints the current choice and `queue clear` goes
+back to the default. Both write `queue.json` in klepsydra's data folder (under
+WSL the path goes across as a Windows one), the newest choice wins, and it
+applies within five seconds. An older `queue_path` in `prefs.json` still
+works when there is no `queue.json`.
 
 <p align="center">
   <img src="assets/queue-panel.png" alt="The Queue panel docked to the right of the card wall: the file's title and intro, a Needs you section open with numbered asks, two code blocks each with a Copy button, links with Copy link buttons, a done ask in quieter text, and folded Running now, Queued and Answers sections" width="360">
@@ -985,9 +998,11 @@ editor, and the panel only reads it.
   with the address on hover and a **Copy link** button: klepsydra starts no
   program but the launcher, so it does not open links itself. Only `https:`,
   `http:` and `mailto:` links get the button; any other link is plain text.
-- **One line when it cannot.** A missing file, a folder, link or pipe at the
-  path, a file over 256 KB, or one that is not UTF-8 text is not read, and
-  the panel says which. So does a `prefs.json` that cannot be read (rather
+- **Empty until written.** A path with no file yet shows an empty queue
+  naming the path, not an error; it fills in when an agent writes the file.
+- **One line when it cannot.** A folder, link or pipe at the path, a file
+  over 256 KB, or one that is not UTF-8 text is not read, and the panel says
+  which. So does a `queue.json` or `prefs.json` that cannot be read (rather
   than falling back to the Desktop file), and a file that cannot be shown.
 
 ## How often it refreshes

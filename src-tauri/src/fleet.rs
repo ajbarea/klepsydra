@@ -75,6 +75,43 @@ fn queue_path(app: &AppHandle) -> Result<PathBuf, String> {
     queue::resolve(pref.as_ref(), app.path().desktop_dir().ok())
 }
 
+/// The queue file and who keeps it: `queue.json`'s in the data folder, else
+/// the pref's or the Desktop's, kept by no one.
+fn queue_source(app: &AppHandle) -> (Result<PathBuf, String>, Option<String>) {
+    match queue::kept(crate::klepsydra_dir(app).as_deref()) {
+        Some(kept) => (kept.path, kept.by),
+        None => (queue_path(app), None),
+    }
+}
+
+/// The tray's "Choose queue file...": the file picked goes to `queue.json`,
+/// kept by no session, starting in the current file's folder.
+pub fn choose_queue(app: &AppHandle) {
+    use tauri_plugin_dialog::DialogExt;
+    let Some(dir) = crate::klepsydra_dir(app) else {
+        return;
+    };
+    let mut pick = app
+        .dialog()
+        .file()
+        .set_title("Choose the queue file")
+        .add_filter("Markdown", &["md", "markdown"]);
+    if let Some(folder) = queue_source(app)
+        .0
+        .ok()
+        .and_then(|p| Some(p.parent()?.to_path_buf()))
+    {
+        pick = pick.set_directory(folder);
+    }
+    pick.pick_file(move |file| {
+        if let Some(path) = file.and_then(|f| f.into_path().ok()) {
+            if let Err(e) = queue::keep(&dir, &path, None) {
+                log_line(&dir, &format!("could not save the queue file choice: {e}"));
+            }
+        }
+    });
+}
+
 /// Follow the queue file for as long as the app runs, sending each change.
 pub fn start_queue(app: &AppHandle) {
     let app = app.clone();
@@ -82,7 +119,9 @@ pub fn start_queue(app: &AppHandle) {
         let mut follower = queue::Follower::default();
         let mut wait = Duration::ZERO;
         loop {
-            if let Some(view) = follower.step(&queue_path(&app), wait) {
+            let (path, by) = queue_source(&app);
+            follower.keep(by);
+            if let Some(view) = follower.step(&path, wait) {
                 if let Ok(v) = serde_json::to_value(view) {
                     app.state::<QueueFeed>().0.publish(v);
                 }
