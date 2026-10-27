@@ -255,8 +255,8 @@ fake() { # [env...]: a fleet window running the fake; prints its pane id
 }
 send() { bash "$launch" "$1" "$socket" "$2" "$(pane_pid "$2")" "$(pstart "$(pane_pid "$2")")"; } # verb pane
 alive() { [[ -n $(t display -p -t "$1" '#{pane_id}' 2>/dev/null) ]] && echo alive || echo gone; }
-# tmux closes a pane a moment after its process exits.
-gone() { local _; for _ in $(seq 20); do [[ $(alive "$1") == gone ]] && break; sleep 0.1; done; alive "$1"; }
+# tmux closes a pane a moment after its process exits; at most 10 s.
+gone() { local _; for _ in $(seq 100); do [[ $(alive "$1") == gone ]] && break; sleep 0.1; done; alive "$1"; }
 # The fake logs a key when it reads it, which can be after the launch script
 # returns: check its key log once it reads WANT, or as it stands after 10 s.
 check_keys() { # name want
