@@ -2660,6 +2660,347 @@ def queue_drag_settles_once(wall):
     wall.check(ok, "a drag resizes live, then stores the width and measures Auto once on release", [during, after])
 
 
+SNAP_STATE = """() => {
+  const q = document.getElementById('queue');
+  const tab = document.getElementById('queue-tab');
+  const r = q.getBoundingClientRect();
+  const t = tab && tab.checkVisibility() ? tab.getBoundingClientRect() : null;
+  const cards = [...document.querySelectorAll('#wall .card')].map((c) => c.getBoundingClientRect());
+  const hit = t && document.elementFromPoint(t.left + t.width / 2, t.top + t.height / 2);
+  return {
+    open: q.open,
+    modal: q.matches(':modal'),
+    mode: q.dataset.mode ?? null,
+    width: Math.round(r.width),
+    left: Math.round(r.left),
+    view: localStorage.getItem('klepsydra.queue.view'),
+    stored: localStorage.getItem('klepsydra.queue.width'),
+    tab: t && [Math.round(t.left), Math.round(t.top), Math.round(t.right), Math.round(t.bottom)],
+    tabName: tab?.getAttribute('aria-label') ?? null,
+    tabKeys: tab?.getAttribute('aria-keyshortcuts') ?? null,
+    tabHit: !!hit && tab.contains(hit),
+    tabCovers: !!t && cards.some((c) => c.left < t.right && c.right > t.left && c.top < t.bottom && c.bottom > t.top),
+    cardsRight: Math.round(Math.max(...cards.map((c) => c.right))),
+    edge: document.documentElement.clientWidth,
+    mid: innerHeight / 2,
+    expanded: document.getElementById('queue-open').getAttribute('aria-expanded'),
+    active: document.activeElement.id || document.activeElement.className,
+    hscroll: document.documentElement.scrollWidth > innerWidth,
+    docked: document.body.classList.contains('queue-docked'),
+    full: q.querySelector('.queue-full')?.getAttribute('aria-pressed') ?? null,
+    text: [...q.querySelectorAll('.queue-text button')].every((b) => b.checkVisibility()),
+    now: Number(q.querySelector('[role=separator]').getAttribute('aria-valuenow')),
+  };
+}"""
+
+
+def grip_point(page):
+    box = page.locator("#queue .queue-resize").bounding_box()
+    return box["x"] + box["width"] / 2, box["y"] + 300
+
+
+def tab_in_place(st, name="Open Queue"):
+    """The tab: shown, at the window's right edge, centred on its height, at least 24 px each way, clear of the cards."""
+    t = st["tab"]
+    return (
+        t is not None
+        and t[2] == st["edge"]
+        and abs((t[1] + t[3]) / 2 - st["mid"]) <= 1
+        and t[2] - t[0] >= 24
+        and t[3] - t[1] >= 24
+        and st["tabName"] == name
+        and st["tabKeys"] == "Control+Alt+B"
+        and st["tabHit"]
+        and not st["tabCovers"]
+        and st["cardsRight"] <= t[0]
+        and not st["hscroll"]
+    )
+
+
+def queue_snaps_shut_to_a_tab(wall):
+    """Dragged past half its minimum width the panel snaps shut, keeping the
+    width it had; a tab at the middle of the right edge, clear of the cards,
+    reopens it by click and Ctrl+Alt+B, and the shut panel survives a reload.
+    A drag back over the line before release opens it again at the minimum."""
+    for density in ("compact", "comfortable"):
+        page = wall.open(1920, 1000, 16 if density == "compact" else 4)
+        first = page.evaluate(SNAP_STATE)
+        wall.check(
+            first["open"] is False and first["view"] is None and tab_in_place(first),
+            f"first run ({density}): the panel is shut and its tab sits mid right edge, 24 px or more, clear of the cards",
+            first,
+        )
+        page.close()
+    page = wall.open(1920, 1000, 16)
+    page.click("#queue-tab")
+    page.wait_for_selector("#queue[open] .queue-content details")
+    opened = page.evaluate(SNAP_STATE)
+    wall.check(
+        opened["open"] and opened["mode"] == "docked" and opened["width"] == 480 and opened["tab"] is None
+        and opened["active"] == "queue-title" and opened["view"] == "docked",
+        "a click on the tab docks the panel and focuses its title; the tab goes",
+        opened,
+    )
+    x, y = grip_point(page)
+    page.mouse.move(x, y)
+    page.mouse.down()
+    page.mouse.move(1920 - 170, y, steps=15)
+    page.wait_for_timeout(100)
+    least = page.evaluate(SNAP_STATE)
+    page.mouse.move(1920 - 150, y, steps=4)
+    page.wait_for_timeout(100)
+    over = page.evaluate(SNAP_STATE)
+    page.mouse.move(1920 - 170, y, steps=4)
+    page.wait_for_timeout(100)
+    back = page.evaluate(SNAP_STATE)
+    page.mouse.move(1919, y, steps=10)
+    page.wait_for_timeout(100)
+    page.mouse.up()
+    page.wait_for_timeout(SETTLE_MS)
+    shut = page.evaluate(SNAP_STATE)
+    wall.check(
+        least["width"] == 320 and over["width"] <= 1 and over["open"] and back["width"] == 320
+        and not shut["open"] and tab_in_place(shut) and shut["view"] == "shut" and shut["stored"] is None
+        and not shut["docked"] and shut["expanded"] == "false",
+        "a drag stops at 320, shows it shut past 160 and open again back over the line, and on release snaps shut, the width untouched",
+        [least["width"], over["width"], back["width"], shut],
+    )
+    page.keyboard.press("Control+Alt+b")
+    page.wait_for_selector("#queue[open] .queue-content details")
+    keyed = page.evaluate(SNAP_STATE)
+    page.keyboard.press("Control+Alt+b")
+    page.wait_for_function(QUEUE_SHUT)
+    keyed_shut = page.evaluate(SNAP_STATE)
+    wall.check(
+        keyed["open"] and keyed["width"] == 480 and keyed["active"] == "queue-title"
+        and not keyed_shut["open"] and tab_in_place(keyed_shut) and keyed_shut["active"] == "queue-open",
+        "Ctrl+Alt+B reopens the shut panel at its width and shuts it again, focus going back to the Queue button",
+        [keyed, keyed_shut],
+    )
+    page.reload()
+    page.wait_for_function("document.getElementById('wall').children.length === 16")
+    page.wait_for_timeout(SETTLE_MS)
+    again = page.evaluate(SNAP_STATE)
+    wall.check(not again["open"] and tab_in_place(again), "shut survives a reload, with its tab", again)
+    # Dropped just inside the line, it opens at the minimum.
+    page.click("#queue-tab")
+    page.wait_for_selector("#queue[open] .queue-content details")
+    x, y = grip_point(page)
+    page.mouse.move(x, y)
+    page.mouse.down()
+    page.mouse.move(1920 - 159, y, steps=10)
+    page.mouse.move(1920 - 161, y, steps=2)
+    page.mouse.up()
+    page.wait_for_timeout(SETTLE_MS)
+    inside = page.evaluate(SNAP_STATE)
+    wall.check(inside["open"] and inside["width"] == 320 and inside["stored"] == "320", "released on the docked side of the line, it docks at the minimum", inside)
+    page.close()
+
+
+def queue_snaps_full(wall):
+    """Dragged to within half the cards' minimum of the left edge the panel
+    fills the window as a modal, text size controls and all; Esc, the Full
+    screen button or a drag back right return it to docked, and full survives
+    a reload. Close from full shuts it."""
+    page = wall.open(1920, 1000, 8)
+    page.click("#queue-open")
+    page.wait_for_selector("#queue .queue-content details")
+    x, y = grip_point(page)
+    page.mouse.move(x, y)
+    page.mouse.down()
+    page.mouse.move(400, y, steps=20)
+    page.wait_for_timeout(100)
+    most = page.evaluate(SNAP_STATE)
+    page.mouse.move(340, y, steps=4)
+    page.wait_for_timeout(100)
+    over = page.evaluate(SNAP_STATE)
+    page.mouse.move(10, y, steps=10)
+    page.mouse.up()
+    page.wait_for_timeout(SETTLE_MS)
+    full = page.evaluate(SNAP_STATE)
+    wall.check(
+        most["width"] == 900 and over["width"] == 1920
+        and full["open"] and full["modal"] and full["mode"] == "full" and full["width"] == 1920 and full["left"] == 0
+        and full["full"] == "true" and full["text"] and full["view"] == "full" and full["stored"] is None
+        and not full["hscroll"] and full["tab"] is None and page.get_by_role("dialog", name="Queue").count() == 1,
+        "a drag stops at 900, shows full past 350 px from the left, and on release fills the window as a modal with its text controls",
+        [most["width"], over["width"], full],
+    )
+    page.keyboard.press("Control+Equal")
+    zoom = page.evaluate("document.querySelector('#queue .queue-content').style.zoom")
+    page.keyboard.press("Escape")
+    page.wait_for_timeout(SETTLE_MS)
+    esc = page.evaluate(SNAP_STATE)
+    wall.check(
+        zoom == "1.1" and esc["open"] and not esc["modal"] and esc["mode"] == "docked" and esc["width"] == 480
+        and esc["docked"] and esc["full"] == "false" and esc["view"] == "docked" and esc["active"] == "queue-title",
+        "in full the text keys work, and Esc goes back to docked at its width",
+        [zoom, esc],
+    )
+    page.click("#queue .queue-full")
+    page.wait_for_timeout(SETTLE_MS)
+    button = page.evaluate(SNAP_STATE)
+    page.reload()
+    page.wait_for_selector("#queue[open] .queue-content details")
+    page.wait_for_timeout(SETTLE_MS)
+    reloaded = page.evaluate(SNAP_STATE)
+    wall.check(
+        button["mode"] == "full" and button["width"] == 1920 and button["active"] == "queue-full"
+        and reloaded["mode"] == "full" and reloaded["modal"] and reloaded["width"] == 1920,
+        "the Full screen button fills the window, and full survives a reload",
+        [button, reloaded],
+    )
+    x, y = grip_point(page)
+    page.mouse.move(x, y)
+    page.mouse.down()
+    page.mouse.move(340, y, steps=10)
+    page.wait_for_timeout(100)
+    held = page.evaluate(SNAP_STATE)
+    page.mouse.move(1100, y, steps=20)
+    page.wait_for_timeout(100)
+    out = page.evaluate(SNAP_STATE)
+    page.mouse.up()
+    page.wait_for_timeout(SETTLE_MS)
+    dropped = page.evaluate(SNAP_STATE)
+    wall.check(
+        x < 10 and held["width"] == 1920 and out["width"] == 820
+        and dropped["mode"] == "docked" and not dropped["modal"] and dropped["width"] == 820 and dropped["stored"] == "820",
+        "a drag right out of full docks the panel where it is dropped",
+        [x, held["width"], out["width"], dropped],
+    )
+    page.click("#queue .queue-full")
+    page.wait_for_timeout(SETTLE_MS)
+    page.click("#queue .queue-full")
+    page.wait_for_timeout(SETTLE_MS)
+    toggled = page.evaluate(SNAP_STATE)
+    page.click("#queue .queue-full")
+    page.wait_for_timeout(SETTLE_MS)
+    page.click("#queue .queue-close")
+    page.wait_for_function(QUEUE_SHUT)
+    closed = page.evaluate(SNAP_STATE)
+    wall.check(
+        toggled["mode"] == "docked" and toggled["width"] == 820 and toggled["active"] == "queue-full"
+        and not closed["open"] and tab_in_place(closed) and closed["view"] == "shut" and closed["active"] == "queue-open",
+        "a second press of Full screen docks it again; Close from full shuts it to its tab",
+        [toggled, closed],
+    )
+    page.close()
+
+
+def queue_separator_snaps_by_keyboard(wall):
+    """On the separator Enter shuts the panel to its tab, which takes focus,
+    and Enter there restores it (APG window splitter); Home at the narrowest
+    shuts it, End at the widest fills the window, and Enter in full docks it."""
+    page = wall.open(1920, 1000, 8)
+    page.click("#queue-open")
+    page.wait_for_selector("#queue .queue-content details")
+    sep = page.locator("#queue [role=separator]")
+    sep.focus()
+    page.keyboard.press("Enter")
+    page.wait_for_timeout(SETTLE_MS)
+    entered = page.evaluate(SNAP_STATE)
+    page.keyboard.press("Enter")
+    page.wait_for_selector("#queue[open] .queue-content details")
+    restored = page.evaluate(SNAP_STATE)
+    wall.check(
+        not entered["open"] and entered["active"] == "queue-tab" and tab_in_place(entered)
+        and restored["open"] and restored["width"] == 480 and restored["active"] == "queue-title",
+        "Enter on the separator shuts the panel and focuses its tab; Enter on the tab restores it",
+        [entered, restored],
+    )
+    sep.focus()
+    page.keyboard.press("Home")
+    home = page.evaluate(SNAP_STATE)
+    page.keyboard.press("Home")
+    page.wait_for_timeout(SETTLE_MS)
+    home2 = page.evaluate(SNAP_STATE)
+    page.keyboard.press(" ")
+    page.wait_for_selector("#queue[open] .queue-content details")
+    spaced = page.evaluate(SNAP_STATE)
+    wall.check(
+        home["now"] == 320 and home["open"] and not home2["open"] and home2["active"] == "queue-tab"
+        and home2["stored"] == "320" and spaced["open"] and spaced["width"] == 320,
+        "Home reaches the narrowest, a second Home shuts it, and Space on the tab reopens it at 320",
+        [home, home2, spaced],
+    )
+    sep.focus()
+    page.keyboard.press("End")
+    end = page.evaluate(SNAP_STATE)
+    page.keyboard.press("End")
+    page.wait_for_timeout(SETTLE_MS)
+    end2 = page.evaluate(SNAP_STATE)
+    page.keyboard.press("Enter")
+    page.wait_for_timeout(SETTLE_MS)
+    out = page.evaluate(SNAP_STATE)
+    wall.check(
+        end["now"] == 900 and not end["modal"]
+        and end2["mode"] == "full" and end2["modal"] and end2["width"] == 1920 and end2["active"] == "queue-resize"
+        and out["mode"] == "docked" and out["width"] == 900 and out["active"] == "queue-resize",
+        "End reaches the widest, a second End fills the window with focus kept on the separator, and Enter docks it again",
+        [end, end2, out],
+    )
+    page.close()
+
+
+def queue_old_and_narrow_state(wall):
+    """An older build's open flag reopens it docked; a stored width past the
+    maximum is held to it; a corrupt view is shut. Below the dock breakpoint
+    a stored view starts shut, unforgotten, with no tab; docked is the
+    600 px dialog, full the whole window, and Esc steps back through them."""
+    def at(width, values):
+        page = wall.browser.new_page(viewport={"width": width, "height": 1000})
+        page.goto(f"http://127.0.0.1:{wall.port}/src/wall.html?demo=8")
+        page.evaluate("(v) => { localStorage.clear(); for (const [k, x] of Object.entries(v)) localStorage.setItem(k, x); }", values)
+        page.reload()
+        page.wait_for_function("document.getElementById('wall').children.length === 8")
+        page.wait_for_timeout(SETTLE_MS)
+        return page
+
+    page = at(1920, {"klepsydra.queue.open": "1", "klepsydra.queue.width": "5000"})
+    old = page.evaluate(SNAP_STATE)
+    wall.check(old["open"] and old["mode"] == "docked" and old["width"] == 900 and not old["hscroll"], "an older build's open flag docks the panel; a width past the maximum is held to 900", old)
+    page.close()
+    page = at(1920, {"klepsydra.queue.view": "banana", "klepsydra.queue.width": "abc"})
+    bad = page.evaluate(SNAP_STATE)
+    page.click("#queue-tab")
+    page.wait_for_selector("#queue[open] .queue-content details")
+    bad_open = page.evaluate(SNAP_STATE)
+    wall.check(not bad["open"] and tab_in_place(bad) and bad_open["width"] == 480, "a corrupt view is shut with its tab; a corrupt width opens at 480", [bad, bad_open])
+    page.close()
+
+    page = at(945, {"klepsydra.queue.view": "full", "klepsydra.queue.width": "700"})
+    start = page.evaluate(SNAP_STATE)
+    wall.check(not start["open"] and start["tab"] is None and start["view"] == "full", "at 945 a stored full starts shut, with no tab, and is not forgotten", start)
+    page.click("#queue-open")
+    page.wait_for_selector("#queue .queue-content details")
+    dialog = page.evaluate(SNAP_STATE)
+    page.click("#queue .queue-full")
+    page.wait_for_timeout(SETTLE_MS)
+    full = page.evaluate(SNAP_STATE)
+    page.keyboard.press("Escape")
+    page.wait_for_timeout(SETTLE_MS)
+    esc = page.evaluate(SNAP_STATE)
+    page.keyboard.press("Escape")
+    page.wait_for_function(QUEUE_SHUT)
+    shut = page.evaluate(SNAP_STATE)
+    wall.check(
+        dialog["modal"] and dialog["mode"] == "modal" and dialog["width"] == 600 and dialog["text"]
+        and full["modal"] and full["mode"] == "full" and full["width"] == 945 and full["text"] and not full["hscroll"]
+        and esc["modal"] and esc["width"] == 600
+        and not shut["open"] and shut["tab"] is None and shut["active"] == "queue-open" and shut["stored"] == "700",
+        "at 945 the panel is the 600 px dialog, Full screen the whole window, Esc steps back to the dialog then shut, the docked width kept",
+        [dialog, full, esc, shut],
+    )
+    page.keyboard.press("Control+Alt+b")
+    page.wait_for_selector("#queue[open] .queue-content details")
+    keyed = page.evaluate(SNAP_STATE)
+    page.keyboard.press("Escape")
+    page.wait_for_function(QUEUE_SHUT)
+    wide = wall.resize(page, 1920, 1000) and page.evaluate(SNAP_STATE)
+    wall.check(keyed["modal"] and keyed["width"] == 600 and tab_in_place(wide), "Ctrl+Alt+B opens the dialog at 945; widened, the shut panel shows its tab", [keyed, wide])
+    page.close()
+
+
 def split_toggle(wall):
     """Split with terminal: hidden in a browser; in the app a labelled toggle,
     off until the saved choice loads, that calls set_split_mode; and the wall
@@ -2771,6 +3112,10 @@ def main() -> int:
             queue_copy_labels_and_failures,
             queue_says_when_it_cannot_follow,
             queue_drag_settles_once,
+            queue_snaps_shut_to_a_tab,
+            queue_snaps_full,
+            queue_separator_snaps_by_keyboard,
+            queue_old_and_narrow_state,
             split_toggle,
         )
         for case in cases:
