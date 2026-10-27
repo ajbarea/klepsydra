@@ -2864,8 +2864,9 @@ def queue_snaps_full(wall):
     dropped = page.evaluate(SNAP_STATE)
     wall.check(
         x < 10 and held["width"] == 1920 and out["width"] == 820
-        and dropped["mode"] == "docked" and not dropped["modal"] and dropped["width"] == 820 and dropped["stored"] == "820",
-        "a drag right out of full docks the panel where it is dropped",
+        and dropped["mode"] == "docked" and not dropped["modal"] and dropped["width"] == 820 and dropped["stored"] == "820"
+        and dropped["active"] == "queue-resize",
+        "a drag right out of full docks the panel where it is dropped, focus kept on its separator",
         [x, held["width"], out["width"], dropped],
     )
     page.click("#queue .queue-full")
@@ -3001,6 +3002,107 @@ def queue_old_and_narrow_state(wall):
     page.close()
 
 
+def queue_full_beside_a_classic_scrollbar(wall):
+    """With a classic scrollbar (the app's WebView2 default) and a wall that
+    scrolls, full covers the page left of the scrollbar: the panel and its
+    separator stay in the window, and a drag of the separator docks it."""
+    browser = wall.browser.browser_type.launch(
+        executable_path=os.environ.get("KLEPSYDRA_CHROME") or None, ignore_default_args=["--hide-scrollbars"]
+    )
+    page = browser.new_page(viewport={"width": 1920, "height": 1000})
+    page.goto(f"http://127.0.0.1:{wall.port}/src/wall.html?demo=16")
+    page.wait_for_function("document.getElementById('wall').children.length === 16")
+    page.click(".density label:has([value=comfortable])")
+    page.wait_for_timeout(SETTLE_MS)
+    page.click("#queue-tab")
+    page.wait_for_selector("#queue[open] .queue-content details")
+    page.click("#queue .queue-full")
+    page.wait_for_timeout(SETTLE_MS)
+    st = page.evaluate("""() => {
+      const q = document.getElementById('queue').getBoundingClientRect();
+      const g = document.querySelector('#queue .queue-resize').getBoundingClientRect();
+      const edge = document.documentElement.clientWidth;
+      return { bar: innerWidth - edge, edge, mode: document.getElementById('queue').dataset.mode,
+               left: q.left, right: q.right, grip: [g.left, g.right] };
+    }""")
+    wall.check(
+        st["bar"] > 0 and st["mode"] == "full" and st["left"] == 0 and st["right"] == st["edge"] and st["grip"][1] > 0,
+        "beside a classic scrollbar full starts at the window's left edge and ends at the scrollbar, its separator in view",
+        st,
+    )
+    box = page.locator("#queue .queue-resize").bounding_box()
+    x, y = max(box["x"], 0) + 1, box["y"] + 300
+    page.mouse.move(x, y)
+    page.mouse.down()
+    page.mouse.move(1100, y, steps=20)
+    page.mouse.up()
+    page.wait_for_timeout(SETTLE_MS)
+    out = page.evaluate("document.getElementById('queue').dataset.mode")
+    wall.check(out == "docked", "and a drag of that separator docks it", out)
+    browser.close()
+
+
+def queue_shortcut_waits_behind_another_dialog(wall):
+    """Under the Ledger dialog Ctrl+Alt+B leaves the Queue panel alone, shut or docked."""
+    page = wall.open(1920, 1000, 8)
+    open_drawer(page)
+    page.keyboard.press("Control+Alt+b")
+    page.wait_for_timeout(SETTLE_MS)
+    shut = page.evaluate(SNAP_STATE)
+    wall.check(not shut["open"] and shut["view"] is None, "under the Ledger dialog Ctrl+Alt+B does not open the shut panel", shut)
+    page.close()
+    page = wall.open(1920, 1000, 8)
+    page.click("#queue-open")
+    page.wait_for_selector("#queue[open] .queue-content details")
+    open_drawer(page)
+    page.keyboard.press("Control+Alt+b")
+    page.wait_for_timeout(SETTLE_MS)
+    docked = page.evaluate(SNAP_STATE)
+    wall.check(docked["open"] and docked["view"] == "docked", "nor shut the docked one", docked)
+    page.close()
+
+
+def queue_lost_drag_restores(wall):
+    """A drag that loses its pointer capture, or is cancelled, mid snap
+    preview puts the panel back as it was, stores nothing and lets Auto
+    measure again."""
+    for how in ("lostpointercapture", "pointercancel"):
+        page = wall.open(1920, 1000, 8)
+        page.click("#queue-open")
+        page.wait_for_selector("#queue .queue-content details")
+        page.wait_for_timeout(SETTLE_MS)
+        page.evaluate("""() => {
+          window.__measures = 0;
+          new MutationObserver((m) => { window.__measures += m.length; })
+            .observe(document.querySelector('.density label:has([value=auto])'), { attributes: true, attributeFilter: ['title'] });
+          addEventListener('pointerdown', (e) => { window.__pid = e.pointerId; }, true);
+        }""")
+        x, y = grip_point(page)
+        page.mouse.move(x, y)
+        page.mouse.down()
+        page.mouse.move(1919, y, steps=10)
+        page.wait_for_timeout(100)
+        held = page.evaluate(SNAP_STATE)
+        if how == "lostpointercapture":
+            page.evaluate("document.querySelector('#queue .queue-resize').releasePointerCapture(window.__pid)")
+        else:
+            page.evaluate("document.querySelector('#queue .queue-resize').dispatchEvent(new PointerEvent('pointercancel', { pointerId: window.__pid, bubbles: true }))")
+        page.wait_for_timeout(SETTLE_MS)
+        page.mouse.move(1700, y, steps=5)
+        page.mouse.up()
+        page.wait_for_timeout(SETTLE_MS)
+        after = page.evaluate(SNAP_STATE)
+        extra = page.evaluate("({ measures: window.__measures, snap: document.getElementById('queue').dataset.snap ?? null })")
+        wall.check(
+            held["width"] <= 1 and after["open"] and after["mode"] == "docked" and after["width"] == 480 and after["docked"]
+            and after["expanded"] == "true" and after["view"] == "docked" and after["stored"] is None
+            and extra["snap"] is None and extra["measures"] >= 1,
+            f"a {how} mid snap preview puts the docked panel back at 480 and Auto measures again",
+            [held["width"], after, extra],
+        )
+        page.close()
+
+
 def split_toggle(wall):
     """Split with terminal: hidden in a browser; in the app a labelled toggle,
     off until the saved choice loads, that calls set_split_mode; and the wall
@@ -3116,6 +3218,9 @@ def main() -> int:
             queue_snaps_full,
             queue_separator_snaps_by_keyboard,
             queue_old_and_narrow_state,
+            queue_full_beside_a_classic_scrollbar,
+            queue_shortcut_waits_behind_another_dialog,
+            queue_lost_drag_restores,
             split_toggle,
         )
         for case in cases:

@@ -382,13 +382,17 @@ test("the separator's keys: arrows step, Home and End reach the bounds then snap
 test("Ctrl+Alt+B toggles the panel, as VS Code's secondary side bar; nothing else does", async () => {
   globalThis.window ??= {};
   const { toggleKey } = await import("./fleet/queuepanel.js");
-  const key = (k, mods = {}) => toggleKey({ key: k, ctrlKey: true, altKey: true, metaKey: false, shiftKey: false, ...mods });
-  assert.equal(key("b"), true);
-  assert.equal(key("B"), true, "with Caps Lock");
-  assert.equal(key("b", { altKey: false }), false, "Ctrl+B alone is not it");
-  assert.equal(key("b", { ctrlKey: false }), false);
-  assert.equal(key("b", { shiftKey: true }), false);
-  assert.equal(key("b", { metaKey: true }), false);
-  assert.equal(key("{"), false, "AltGr+B typing a character on some layouts");
-  assert.equal(key("n"), false);
+  const key = (k, code, mods = {}) => toggleKey({ key: k, code, ctrlKey: true, altKey: true, metaKey: false, shiftKey: false, repeat: false, ...mods });
+  assert.equal(key("b", "KeyB"), true);
+  assert.equal(key("B", "KeyB"), true, "with Caps Lock");
+  assert.equal(key("b", "KeyN"), true, "Dvorak: the letter, not the place");
+  assert.equal(key("x", "KeyB"), false, "Dvorak's x sits where QWERTY's b is");
+  assert.equal(key("и", "KeyB"), true, "a non-Latin layout: its place, as browsers fall back");
+  assert.equal(key("{", "KeyB"), true, "AltGr+B typing a character: its place");
+  assert.equal(key("b", "KeyB", { repeat: true }), false, "a held key toggles once");
+  assert.equal(key("b", "KeyB", { altKey: false }), false, "Ctrl+B alone is not it");
+  assert.equal(key("b", "KeyB", { ctrlKey: false }), false);
+  assert.equal(key("b", "KeyB", { shiftKey: true }), false);
+  assert.equal(key("b", "KeyB", { metaKey: true }), false);
+  assert.equal(key("n", "KeyN"), false);
 });

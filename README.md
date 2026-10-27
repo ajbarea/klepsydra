@@ -962,8 +962,9 @@ editor, and the panel only reads it.
   steps back to the dialog.
 - **From the keyboard.** On the focused edge, Enter shuts the panel and moves
   focus to its tab, where Enter or Space opens it again. Home at the
-  narrowest width shuts it, End at the widest fills the window, and Enter in
-  full docks it.
+  narrowest width shuts it, End at the widest fills the window. In full,
+  Enter docks it at its width, Home at the narrowest, and the Right arrow or
+  Page Down at the widest.
 - **Remembered.** The width and whether the panel is shut, docked or full
   are kept across restarts. A window under 1200 px starts with it shut (a
   dialog at launch would hide the wall), without forgetting the choice.

@@ -67,9 +67,14 @@ export function separatorKey(key, view, width, max) {
   return null;
 }
 
-/** Ctrl+Alt+B, which toggles the panel as it toggles VS Code's secondary side bar. */
+/**
+ * Ctrl+Alt+B, which toggles the panel as it toggles VS Code's secondary side
+ * bar; once per press. By its letter, or where the key is no Latin letter
+ * (Cyrillic, AltGr), by its place, as browsers fall back.
+ */
 export function toggleKey(e) {
-  return e.ctrlKey && e.altKey && !e.metaKey && !e.shiftKey && (e.key === "b" || e.key === "B");
+  if (!e.ctrlKey || !e.altKey || e.metaKey || e.shiftKey || e.repeat) return false;
+  return /^[a-z]$/i.test(e.key) ? e.key.toLowerCase() === "b" : e.code === "KeyB";
 }
 
 /** The text sizes, stepped as browsers step zoom: 75% to 200%, 100% the default. */
@@ -286,6 +291,7 @@ export function createQueuePanel({ dialog, button, tab, onLayout = () => {}, onR
     grip.setPointerCapture(e.pointerId);
     resizing = true;
     const from = wanted; // kept by a drag that snaps, as VS Code keeps a snapped view's size
+    const had = dialog.contains(document.activeElement);
     let x = e.clientX;
     const reach = () => document.documentElement.clientWidth - x;
     const move = (m) => {
@@ -298,24 +304,30 @@ export function createQueuePanel({ dialog, button, tab, onLayout = () => {}, onR
         layout();
       });
     };
-    const done = () => {
+    // Released, the drag lands; cancelled or its capture lost, it puts the panel back.
+    const end = (land) => {
       grip.removeEventListener("pointermove", move);
       grip.removeEventListener("pointerup", done);
-      grip.removeEventListener("pointercancel", done);
+      grip.removeEventListener("pointercancel", undo);
+      grip.removeEventListener("lostpointercapture", undo);
       cancelAnimationFrame(frame);
       frame = 0;
       resizing = false;
       preview = null;
-      const to = snap(reach(), innerWidth);
       wanted = from;
-      if (to === "docked") resizeTo(reach());
-      if (to !== view) setView(to, false);
+      const to = land ? snap(reach(), innerWidth) : view;
+      if (to === "docked" && land) resizeTo(reach());
+      // A modal's focus would drop to the page as it docks; it stays on the separator.
+      if (to !== view) setView(to, to !== "shut" && had ? grip : false);
       else layout();
       onResized();
     };
+    const done = () => end(true);
+    const undo = () => end(false);
     grip.addEventListener("pointermove", move);
     grip.addEventListener("pointerup", done);
-    grip.addEventListener("pointercancel", done);
+    grip.addEventListener("pointercancel", undo);
+    grip.addEventListener("lostpointercapture", undo);
     e.preventDefault();
   });
 

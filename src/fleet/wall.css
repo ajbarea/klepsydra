@@ -916,8 +916,9 @@ body.queue-docked { padding-right: var(--queue-w); }
 .queue-resize:focus-visible { outline: 2px solid var(--card-focus); outline-offset: -2px; }
 .queue[data-mode="modal"] .queue-resize { display: none; }
 /* Full: a modal over the whole window. A held drag previews where it will land. */
-.queue[data-mode="full"], .queue[data-snap="full"] { width: 100vw; }
-.queue[data-snap="docked"] { width: var(--queue-w); }
+/* Inset, not 100vw: a classic scrollbar is in 100vw, and the separator would sit off screen. */
+.queue[data-mode="full"], .queue[data-snap="full"] { inset: 0; width: auto; }
+.queue[data-snap="docked"] { left: auto; width: var(--queue-w); }
 .queue[data-snap="shut"] { width: 0; }
 .queue[data-snap="shut"] .queue-body { visibility: hidden; }
 .queue-full { display: inline-flex; align-items: center; padding: 0 var(--space-4); }
