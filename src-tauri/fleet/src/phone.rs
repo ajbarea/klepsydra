@@ -1838,4 +1838,62 @@ mod tests {
         let v: Value = serde_json::from_slice(&body).unwrap();
         assert!(v.get("usage").is_none(), "{v}");
     }
+
+    #[test]
+    fn an_unknown_window_or_any_extra_field_never_reaches_the_phone() {
+        let mut odd = reading(57);
+        odd["email"] = json!("someone@example.com");
+        odd["organization_id"] = json!("org-0000");
+        odd["windows"]["secret_window"] = json!({"used_percentage": 1, "resets_at": 2});
+        odd["windows"]["five_hour"]["note"] = json!("private");
+        let p = serve_usage(QUICK, Some(source(vec![odd]).usage));
+        let addr = p.server.addr();
+        p.server.publish(&snapshot(1));
+        let (code, mut r) = open_events(addr);
+        assert_eq!(code, 200);
+        let event = loop {
+            let item = next_item(&mut r);
+            if item.starts_with("data: ") && data(&item).get("usage").is_some() {
+                break item;
+            }
+        };
+        let (_, _, body) = get(addr, "GET", "/fleet.json", "");
+        for (what, text) in [
+            ("/events", event),
+            ("/fleet.json", String::from_utf8(body).unwrap()),
+        ] {
+            let v: Value = serde_json::from_str(text.trim_start_matches("data: ")).unwrap();
+            let usage = &v["usage"][0];
+            let mut keys: Vec<&str> = usage
+                .as_object()
+                .unwrap()
+                .keys()
+                .map(String::as_str)
+                .collect();
+            keys.sort_unstable();
+            assert_eq!(
+                keys,
+                ["account", "label", "observed_at", "windows", "written_at"],
+                "{what}"
+            );
+            assert_eq!(
+                usage["windows"],
+                json!({"five_hour": {"used_percentage": 57, "resets_at": 1_800_003_600}}),
+                "{what}"
+            );
+            // The fleet half names sessions; the readings never do.
+            let readings = v["usage"].to_string();
+            assert!(!readings.contains("session"), "{what}: {readings}");
+            for private in [
+                "secret_window",
+                "someone@example.com",
+                "org-0000",
+                "private",
+                ACCOUNT,
+                "api_ms",
+            ] {
+                assert!(!text.contains(private), "{private} reached {what}: {text}");
+            }
+        }
+    }
 }

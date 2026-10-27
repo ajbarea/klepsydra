@@ -11,9 +11,10 @@ service worker and manifest installing, fleet.json cut to the wall's fields, a
 write refused, a wrap-up request and the empty state shown with none of their
 buttons, /wall.html sent to the root, and a stream refused at the cap opened
 again. The usage-limit gauges, from readings in the server's accounts folder:
-one per account and window in the gauge's order and words, in the sticky
-bar, a new reading over /events, a stale one saying its age, none at all
-reading as waiting, and AA contrast with the system in light and in dark.
+one per account and window in the gauge's order and words, opening the page
+and scrolling away under a sticky bar that six leave no taller than three, a
+new reading over /events, a stale one saying its age, none at all reading as
+waiting, and AA contrast with the system in light and in dark.
 Saves a screenshot in each scheme.
 
     uv run -q --no-project --with playwright python -I scripts/test_phone_browser.py [shot.png]
@@ -91,6 +92,7 @@ def with_wrapup(fleet):
 # Demo accounts named as the gauge's own examples are; placeholder ids.
 PERSONAL = "00000000-0000-4000-8000-0000000000b2"
 TEAM = "00000000-0000-4000-8000-0000000000a1"
+LAB = "00000000-0000-4000-8000-0000000000c3"
 
 
 def write_reading(klepsydra, account, label, windows, ago=0, session="00000000-0000-4000-8000-000000000001"):
@@ -199,7 +201,7 @@ GAUGES = """() => {
     const r = li.getBoundingClientRect();
     return {
       text: ['pct', 'sub', 'label'].map((k) => li.querySelector('.' + k).textContent).join(' '),
-      said: li.querySelector('.said').textContent,
+      said: li.querySelector('.spoken').textContent,
       hidden: li.querySelector('.row').getAttribute('aria-hidden'),
       ring: fill.style.visibility !== 'hidden' && li.querySelector('.ring').checkVisibility(),
       dash: fill.style.strokeDasharray,
@@ -218,7 +220,8 @@ GAUGES = """() => {
     region: [limits.tagName, limits.getAttribute('aria-label')],
     wait: limits.querySelector('.limit-wait').checkVisibility() ? limits.querySelector('.limit-wait').textContent : null,
     rows,
-    ground: css(bar, 'backgroundColor'),
+    ground: css(document.body, 'backgroundColor'),
+    barHeight: Math.round(bar.getBoundingClientRect().height),
     scheme: css(document.documentElement, 'colorScheme'),
     width: innerWidth,
   };
@@ -239,7 +242,7 @@ def contrast(a, b):
 
 
 def check_gauges(run, page, scheme):
-    """The demo gauges in `scheme`: shown in the bar, words at 4.5:1, the ring's fill at 3:1 on the bar and its track."""
+    """The demo gauges in `scheme`: words at 4.5:1, the ring's fill at 3:1 on the page and its track."""
     page.emulate_media(color_scheme=scheme)
     page.wait_for_timeout(100)
     g = page.evaluate(GAUGES)
@@ -300,7 +303,8 @@ def main() -> int:
                 # The usage-limit gauges: every account and window, in the gauge's words and order.
                 wait_until(page, "document.querySelectorAll('.limit-rows > li').length === 3", 10)
                 g = page.evaluate(GAUGES)
-                run.check(g["shown"] and g["inBar"] and g["region"] == ["SECTION", "Usage limits"], "the gauges show in the bar, a named region", g)
+                run.check(g["shown"] and not g["inBar"] and g["region"] == ["SECTION", "Usage limits"], "the gauges open the page, a named region outside the sticky bar", g)
+                bar_height = g["barHeight"]
                 texts = [r["text"] for r in g["rows"]]
                 want = [r"57% [78]m Personal \u00b7 session", r"27% 6d 6h Personal \u00b7 week", r"0% reset 7h ago Team \u00b7 session"]
                 run.check(len(texts) == 3 and all(re.fullmatch(w, t) for w, t in zip(want, texts)),
@@ -347,8 +351,8 @@ def main() -> int:
                 page.wait_for_timeout(200)
                 bar = page.evaluate("(() => { const b = document.querySelector('.bar').getBoundingClientRect(); return [Math.round(b.top), scrollY > 0]; })()")
                 run.check(bar == [0, True], "the tally is sticky", bar)
-                held = page.evaluate("(() => { const l = document.querySelector('.limits').getBoundingClientRect(); const w = document.getElementById('wall').getBoundingClientRect(); return [l.top >= 0 && l.bottom <= innerHeight, Math.round(l.bottom) <= Math.round(document.querySelector('.bar').getBoundingClientRect().bottom), Math.round(w.height) > innerHeight]; })()")
-                run.check(held == [True, True, True], "the gauges stay in view with the tally", held)
+                gone = page.evaluate("(() => { const l = document.querySelector('.limits').getBoundingClientRect(); return Math.round(l.bottom) <= Math.round(document.querySelector('.bar').getBoundingClientRect().bottom); })()")
+                run.check(gone, "the gauges scroll away under the tally", gone)
                 page.evaluate("window.scrollTo(0, 0)")
 
                 # A tap on the card, off its controls, opens its Remote Control link.
@@ -391,11 +395,13 @@ def main() -> int:
                 klepsydra = pathlib.Path(tmp) / "klepsydra"
                 write_reading(klepsydra, PERSONAL, "Personal", {"five_hour": (91, 8 * 60 + 50), "seven_day": (27, (6 * 24 + 6) * 3600 + 1800)})
                 write_reading(klepsydra, TEAM, "Team", {"five_hour": (12, 2 * 3600 + 600)}, ago=3 * 3600, session="00000000-0000-4000-8000-000000000002")
-                wait_until(page, "document.querySelector('.limit-rows > li .pct').textContent === '91%' && document.querySelectorAll('.limit-rows > li .ring-fill')[2].style.visibility !== 'hidden'", 15)
+                write_reading(klepsydra, LAB, "Lab", {"five_hour": (5, 3600), "seven_day": (40, 86400), "spend_limit": (10, 86400)}, ago=4 * 3600, session="00000000-0000-4000-8000-000000000003")
+                wait_until(page, "document.querySelector('.limit-rows > li .pct').textContent === '91%' && document.querySelectorAll('.limit-rows > li .ring-fill')[2].style.visibility !== 'hidden' && document.querySelectorAll('.limit-rows > li').length === 6", 15)
                 g = page.evaluate(GAUGES)
                 texts = [r["text"] for r in g["rows"]]
                 run.check(re.fullmatch(r"91% [78]m Personal \u00b7 session", texts[0]) and g["rows"][0]["stroke"] == "rgb(239, 68, 68)", "a new reading arrives over the stream, red past 85%", [texts[0], g["rows"][0]["stroke"]])
                 run.check(re.fullmatch(r"12% 2h (10|9)m \u00b7 3h old Team \u00b7 session", texts[2]), "a reading hours old says how old", texts[2])
+                run.check(g["barHeight"] == bar_height, "six gauges leave the sticky bar as tall as three did", [bar_height, g["barHeight"]])
                 s = page.evaluate(LAYOUT)
                 run.check(s["hscroll"] <= 0 and s["small"] == [], "no horizontal scroll, every control 44 px, with the gauges", [s["hscroll"], s["small"]])
 

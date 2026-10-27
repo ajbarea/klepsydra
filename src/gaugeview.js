@@ -48,7 +48,7 @@ export function makeEntry(key, spoken = false) {
   if (spoken) {
     row.setAttribute("aria-hidden", "true");
     entry.querySelector(".sub").setAttribute("aria-hidden", "true");
-    entry.append(el("span", "said visually-hidden"));
+    entry.append(el("span", "spoken visually-hidden"));
   }
   return entry;
 }
@@ -59,8 +59,8 @@ export function paintEntry(entry, row, { compact, stops, mode }) {
   entry.querySelector(".label").textContent = text.label;
   entry.querySelector(".pct").textContent = text.pct;
   entry.querySelector(".sub").textContent = text.sub;
-  const said = entry.querySelector(".said");
-  if (said) said.textContent = text.spoken;
+  const spoken = entry.querySelector(".spoken");
+  if (spoken) spoken.textContent = text.spoken;
   entry.dataset.state = row.state;
 
   const colour = rampColor(row.pct ?? 0, stops, mode);

@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { rampColor, rampPosition, formatCountdown, formatCountdownShort, formatAge, formatAgeShort, evaluate, formatPct, formatPctShort, ringDash, ringCap, ringStyle, entryText, usageRows, toRows, SHOW_AGE_AFTER_MS, DROP_AFTER_MS, WAITING } from "./gauge.js";
+import { WINDOW_ORDER, rampColor, rampPosition, formatCountdown, formatCountdownShort, formatAge, formatAgeShort, evaluate, formatPct, formatPctShort, ringDash, ringCap, ringStyle, entryText, usageRows, toRows, SHOW_AGE_AFTER_MS, DROP_AFTER_MS, WAITING } from "./gauge.js";
 
 const STOPS = { low: "#3b82f6", mid: "#eab308", high: "#ef4444", midAt: 60, highAt: 85 };
 const NOW = 1_800_000_000_000; // fixed clock
@@ -504,4 +504,20 @@ test("a snapshot without readings (an older server, or none to read) has no gaug
   for (const snap of [{ sessions: [] }, { sessions: [], usage: null }, { sessions: [], usage: {} }, { sessions: [], usage: "x" }, null, undefined]) {
     assert.equal(usageRows(snap, NOW), null, JSON.stringify(snap));
   }
+});
+
+test("only JSON numbers are readings, as the phone server sends them", () => {
+  const strings = { account: "a", label: "P", written_at: String(secs(NOW)), observed_at: String(secs(NOW)), windows: { five_hour: { used_percentage: "57", resets_at: String(secs(NOW + 3600e3)) } } };
+  assert.deepEqual(toRows([strings], NOW), [], "numeric strings draw nothing");
+  assert.equal(evaluate({ windows: { five_hour: { used_percentage: "57", resets_at: secs(NOW + 3600e3) } } }, "five_hour", NOW).state, "waiting");
+  const stringStamp = { ...acct("a", "P", { five_hour: win(5) }), observed_at: String(secs(NOW)) };
+  const rows = toRows([stringStamp, acct("a", "P", { five_hour: win(9) }, 3600e3)], NOW);
+  assert.equal(rows[0].pct, 9, "a string observed_at is not trusted as an observation");
+});
+
+test("the phone server sends exactly the windows the gauge draws", async () => {
+  const { readFileSync } = await import("node:fs");
+  const rs = readFileSync(new URL("../src-tauri/fleet/src/usage.rs", import.meta.url), "utf8");
+  const list = rs.match(/pub const WINDOWS: \[&str; \d+\] = \[([^\]]*)\];/)[1];
+  assert.deepEqual([...list.matchAll(/"(\w+)"/g)].map((m) => m[1]), WINDOW_ORDER);
 });

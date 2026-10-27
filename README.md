@@ -819,18 +819,18 @@ and goes when it disconnects or the session ends. When the stream drops, the
 wall says the cards may be out of date until it reconnects, and keeps
 trying (every 1 s at first, at most every 30 s) while klepsydra restarts.
 
-The sticky bar also holds the usage-limit gauges: a ring per account and
-window with its percent, time to reset and label, as the strip shows them
-(`57% 8m Personal · session`), drawn by the gauge's own code from the same
-readings. The server reads them every 5 seconds, as the gauge does, and a
-change reaches the phone over the same stream. With no reading the gauges
-say they are waiting. The wall stays dark when the phone is in light mode.
+The usage-limit gauges open the page: a ring per account and window with
+its percent, time to reset and label (`57% 8m Personal · session`), drawn by
+the gauge's own code from the same readings, read every 5 seconds. They
+scroll away under the tally, and say so while no reading exists. The wall
+stays dark when the phone is in light mode.
 
 The server answers only GET and HEAD, serves only the wall's own files, its
 snapshot at `/fleet.json`, the stream at `/events` and the reply clips of the
 cards it shows. It sends each session without its tmux pane, process or full
-folder path, and each usage reading with only its label, times and windows,
-its account id replaced by `a1`, `a2` and so on. Card previews (prompts and replies), the spoken replies, errors
+folder path, and each usage reading with only its label, times and session,
+week and spend windows, its account as `a1`, `a2`. It reads only regular
+`.json` files up to 64 KiB, never through a symlink. Card previews (prompts and replies), the spoken replies, errors
 and the cost estimate are visible to any tailnet device your Tailscale ACLs
 let reach this PC. The page's service worker keeps only the page and its
 files, never the fleet or a clip.

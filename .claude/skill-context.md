@@ -90,8 +90,9 @@ files belong to: the JS guards scan hooks and scripts too.
   a wrap-up request and the empty state shown without their buttons,
   `/wall.html` sent to `/`, a stream refused at the cap opened again, and
   the usage-limit gauges from demo readings (one per account and window in
-  the strip's words, in the sticky bar, a new reading over `/events`, a
-  stale one, none, AA contrast in light and dark, a screenshot of each).
+  the strip's words, scrolling away under a sticky bar they leave one tally
+  high, a new reading over `/events`, a stale one, none, AA contrast in
+  light and dark, a screenshot of each).
   Needs cargo and Playwright's Chromium; local only.
 - `uv run -q --no-project --with playwright python -I scripts/test_wall_browser.py`:
   the wall in a real browser: 16 demo cards at 1920x1000 and 8 at 945x1000

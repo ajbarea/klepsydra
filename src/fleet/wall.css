@@ -1061,11 +1061,13 @@ a.remote:focus-visible { outline: 2px solid var(--card-focus); outline-offset: 2
 .served .card.has-remote { cursor: pointer; }
 #link { color: var(--tone-needs); font-size: 12.5px; }
 
-/* The usage-limit gauges, on a snapshot that carries readings (the phone's).
-   gaugeview.js draws the rows the gauge's compact layout draws: a ring per
-   window, its percent and countdown over its label. The words carry the
-   numbers; the ring's fill keeps 3:1 on the bar and on its track. */
-.limits { flex-basis: 100%; min-width: 0; }
+/* The usage-limit gauges, on a snapshot that carries readings (the phone's):
+   first on the page, scrolling away under the tally, so the sticky bar stays
+   one tally high however many accounts there are. gaugeview.js draws the rows
+   the gauge's compact layout draws: a ring per window, its percent and
+   countdown over its label. The words carry the numbers; the ring's fill
+   keeps 3:1 on the page and on its track. */
+.limits { padding: var(--space-5) var(--wall-pad) 0; }
 .limit-rows { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: var(--space-3) var(--space-6); list-style: none; }
 .limits .entry {
   display: grid;

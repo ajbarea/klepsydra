@@ -236,13 +236,13 @@ test("the wall's ramp is the gauge's", () => {
   }
 });
 
-test("the gauges read at AA on the phone's bar: words 4.5:1, the ring's fill 3:1 on the bar and its track", () => {
+test("the gauges read at AA on the phone's page: words 4.5:1, the ring's fill 3:1 on the page and its track", () => {
   const wall = read("src/fleet/wall.css");
-  const bar = token(wall, "--wall-bg");
+  const bar = token(wall, "--wall-bg"); // the page the gauges sit on
   const track = token(wall, "--ring-track");
   for (const t of ["--ramp-low", "--ramp-mid", "--ramp-high"]) {
     const c = token(wall, t);
-    assert.ok(contrast(c, bar) >= 3, `${t} on the bar: ${contrast(c, bar).toFixed(2)}`);
+    assert.ok(contrast(c, bar) >= 3, `${t} on the page: ${contrast(c, bar).toFixed(2)}`);
     assert.ok(contrast(c, track) >= 3, `${t} on the track: ${contrast(c, track).toFixed(2)}`);
   }
   for (const t of ["--text", "--text-dim"]) {
@@ -252,13 +252,15 @@ test("the gauges read at AA on the phone's bar: words 4.5:1, the ring's fill 3:1
   assert.match(rule(".limits .pct"), /color: var\(--text\)/);
   for (const sel of [".limits .sub", ".limits .label", ".limit-wait"]) assert.match(rule(sel), /color: var\(--text-dim\)/, sel);
   assert.match(rule(".limits .ring-track"), /stroke: var\(--ring-track\)/);
-  assert.match(wall, /@media \(max-width: 600px\) \{\n  \.served \{[^}]*\}[\s\S]*?\.served \.bar \{[^}]*background: var\(--wall-bg\)/, "the bar the gauges sit on is --wall-bg");
+  assert.match(wall, /html, body \{ background: var\(--wall-bg\);/, "the page the gauges sit on is --wall-bg");
+  assert.doesNotMatch(rule(".limits"), /background/, "the gauges draw no ground of their own");
 });
 
-test("the gauges sit in the sticky bar, shown only for a snapshot with readings", () => {
+test("the gauges open the page, outside the sticky bar, shown only for a snapshot with readings", () => {
   const html = read("src/wall.html");
   const bar = html.slice(html.indexOf('<header class="bar">'), html.indexOf("</header>"));
-  assert.match(bar, /<section class="limits" aria-label="Usage limits" hidden>\s*<ul class="limit-rows"><\/ul>\s*<p class="limit-wait" hidden><\/p>\s*<\/section>/);
+  assert.doesNotMatch(bar, /limits/, "the sticky bar stays one tally high");
+  assert.match(html, /<main id="main">\s*<h1 id="wall-title"[^>]*>[^<]*<\/h1>\s*<section class="limits" aria-label="Usage limits" hidden>\s*<ul class="limit-rows"><\/ul>\s*<p class="limit-wait" hidden><\/p>\s*<\/section>/);
   const wall = read("src/fleet/wall.js");
   assert.match(wall, /const rows = usageRows\(latestSnapshot, now\);\s*limits\.hidden = rows === null;/);
   assert.match(wall, /paintTally\(\);\s*paintLimits\(now\);/, "drawn on every snapshot and every tick");

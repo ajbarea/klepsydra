@@ -5,26 +5,74 @@ use std::path::Path;
 
 use serde_json::{Map, Value};
 
+use crate::bounded::read_text;
+
+/// The most a reading file may hold: one is under 1 KiB.
+pub const MAX_BYTES: u64 = 64 * 1024;
+/// The most account folders, and reading files in each, read: the newest
+/// first, so a cap drops the oldest.
+pub const MAX_ACCOUNTS: usize = 32;
+pub const MAX_SESSIONS: usize = 512;
+
+/// An account folder's name as the hook makes it (its `owned` check).
+fn account_name(name: &str) -> bool {
+    let mut bytes = name.bytes();
+    bytes.next().is_some_and(|b| b.is_ascii_alphanumeric())
+        && bytes.all(|b| b.is_ascii_alphanumeric() || b == b'-')
+}
+
+/// The entries of `dir` that `keep` admits by name and type (never following
+/// a symlink), newest first, at most `max`.
+fn newest(
+    dir: &Path,
+    max: usize,
+    keep: impl Fn(&str, &std::fs::FileType) -> bool,
+) -> Vec<std::path::PathBuf> {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    let mut found: Vec<(std::time::SystemTime, std::path::PathBuf)> = entries
+        .flatten()
+        .filter_map(|e| {
+            let kind = e.file_type().ok()?;
+            let name = e.file_name();
+            keep(name.to_str()?, &kind).then_some(())?;
+            let at = e.metadata().and_then(|m| m.modified()).ok()?;
+            Some((at, e.path()))
+        })
+        .collect();
+    found.sort_by(|a, b| b.cmp(a));
+    found.into_iter().take(max).map(|(_, p)| p).collect()
+}
+
 /// Every reading under each of `dirs`' `accounts`, one per Claude Code
-/// session. A file that is missing, unreadable or not JSON is skipped, as is
-/// a stale pre-per-session file in place of an account's directory.
-/// Sessions disagree routinely; reconciling them is the frontend's job.
+/// session, as the hook leaves them: an account folder holding `.json`
+/// files. A symlink, FIFO or other non-regular file, a file over
+/// `MAX_BYTES`, or one that is not JSON is skipped, as is a stale
+/// pre-per-session file in place of an account's folder. Sessions disagree
+/// routinely; reconciling them is the frontend's job.
 pub fn read<P: AsRef<Path>>(dirs: impl IntoIterator<Item = P>) -> Vec<Value> {
+    read_capped(dirs, MAX_BYTES, MAX_ACCOUNTS, MAX_SESSIONS)
+}
+
+fn read_capped<P: AsRef<Path>>(
+    dirs: impl IntoIterator<Item = P>,
+    max_bytes: u64,
+    max_accounts: usize,
+    max_sessions: usize,
+) -> Vec<Value> {
     let mut out = Vec::new();
     for dir in dirs {
-        let Ok(accounts) = std::fs::read_dir(dir.as_ref().join("accounts")) else {
+        let accounts = dir.as_ref().join("accounts");
+        if !std::fs::symlink_metadata(&accounts).is_ok_and(|m| m.is_dir()) {
             continue;
-        };
-        for account in accounts.flatten() {
-            let Ok(sessions) = std::fs::read_dir(account.path()) else {
-                continue;
-            };
-            for session in sessions.flatten() {
-                let path = session.path();
-                if path.extension().and_then(|e| e.to_str()) != Some("json") {
-                    continue;
-                }
-                let Ok(text) = std::fs::read_to_string(&path) else {
+        }
+        for account in newest(&accounts, max_accounts, |name, kind| {
+            kind.is_dir() && account_name(name)
+        }) {
+            // read_text refuses a symlink, a FIFO or any other non-file.
+            for file in newest(&account, max_sessions, |name, _| name.ends_with(".json")) {
+                let Ok(text) = read_text(&file, max_bytes) else {
                     continue;
                 };
                 if let Ok(value) = serde_json::from_str::<Value>(&text) {
@@ -53,16 +101,12 @@ fn account_key(reading: &Object) -> String {
     }
 }
 
-/// A window name as Claude Code writes them (`five_hour`, `seven_day`).
-fn window_name(k: &str) -> bool {
-    !k.is_empty()
-        && k.len() <= 32
-        && k.bytes()
-            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
-}
+/// The windows the gauge draws (gauge.js WINDOW_ORDER); no other reaches the phone.
+pub const WINDOWS: [&str; 3] = ["five_hour", "seven_day", "spend_limit"];
 
-/// The readings as the phone gets them: each cut to its label, its times and
-/// each window's percent and reset time. The account id becomes `a1`, `a2`,
+/// The readings as the phone gets them, one per session, unmerged (gauge.js
+/// reconciles them): each cut to its label, its times and each of `WINDOWS`'
+/// percent and reset time, numbers only. The account id becomes `a1`, `a2`,
 /// ... in the ids' sorted order, which groups the readings as the id does and
 /// says nothing of it; the session id and API time stay home.
 pub fn phone_view(readings: &[Value]) -> Value {
@@ -93,7 +137,7 @@ pub fn phone_view(readings: &[Value]) -> Value {
             }
             let w: Map<String, Value> = windows
                 .iter()
-                .filter(|(k, _)| window_name(k))
+                .filter(|(k, _)| WINDOWS.contains(&k.as_str()))
                 .filter_map(|(k, w)| {
                     let w = w.as_object()?;
                     let kept: Map<String, Value> = WINDOW_FIELDS
@@ -248,5 +292,121 @@ mod tests {
             }])
         );
         assert_eq!(phone_view(&[]), json!([]));
+    }
+
+    fn sessions(values: &[Value]) -> Vec<String> {
+        let mut got: Vec<String> = values
+            .iter()
+            .map(|v| v["session"].as_str().unwrap_or("?").to_string())
+            .collect();
+        got.sort();
+        got
+    }
+
+    fn ok(dir: &Path, account: &str, session: &str) {
+        put(
+            dir,
+            account,
+            &format!("{session}.json"),
+            &reading(account, "Personal", session, 5).to_string(),
+        );
+    }
+
+    #[test]
+    fn a_file_over_the_cap_is_skipped() {
+        let d = Scratch::new("usage-big");
+        ok(&d.0, PERSONAL, "small");
+        let pad = "x".repeat(MAX_BYTES as usize);
+        put(
+            &d.0,
+            PERSONAL,
+            "big.json",
+            &json!({"session": "big", "pad": pad, "windows": {}}).to_string(),
+        );
+        assert_eq!(sessions(&read([&d.0])), ["small"]);
+    }
+
+    #[test]
+    fn an_odd_account_folder_name_is_skipped() {
+        let d = Scratch::new("usage-names");
+        ok(&d.0, PERSONAL, "kept");
+        for name in ["-dash", ".hidden", "under_score", "sp ace"] {
+            ok(&d.0, name, name.trim_start_matches(['-', '.']));
+        }
+        assert_eq!(sessions(&read([&d.0])), ["kept"]);
+    }
+
+    /// Set `path`'s modified time to `secs` past the epoch.
+    fn touch(path: &Path, secs: u64) {
+        std::fs::File::options()
+            .write(true)
+            .open(path)
+            .unwrap()
+            .set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_secs(secs))
+            .unwrap();
+    }
+
+    #[test]
+    fn past_a_cap_the_newest_files_and_accounts_are_kept() {
+        let d = Scratch::new("usage-caps");
+        for (n, at) in [("old", 1_000), ("new", 3_000), ("mid", 2_000)] {
+            ok(&d.0, PERSONAL, n);
+            touch(
+                &d.0.join("accounts")
+                    .join(PERSONAL)
+                    .join(format!("{n}.json")),
+                at,
+            );
+        }
+        assert_eq!(
+            sessions(&read_capped([&d.0], MAX_BYTES, 8, 2)),
+            ["mid", "new"]
+        );
+        ok(&d.0, TEAM, "team");
+        // The account written to last is kept: here the team's, once the
+        // personal folder is dated earlier (a folder's time is settable on Unix).
+        #[cfg(unix)]
+        std::fs::File::open(d.0.join("accounts").join(PERSONAL))
+            .unwrap()
+            .set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_000))
+            .unwrap();
+        let one = read_capped([&d.0], MAX_BYTES, 1, 8);
+        assert_eq!(sessions(&one).len(), 1, "one account's readings: {one:?}");
+        #[cfg(unix)]
+        assert_eq!(sessions(&one), ["team"]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symlinks_and_fifos_are_never_followed_or_opened() {
+        use std::os::unix::fs::symlink;
+        let d = Scratch::new("usage-links");
+        let outside = Scratch::new("usage-outside");
+        ok(&d.0, PERSONAL, "kept");
+        // A file outside, linked in as a reading and as an account folder.
+        put(
+            &outside.0,
+            TEAM,
+            "away.json",
+            &reading(TEAM, "Outside", "away", 9).to_string(),
+        );
+        let away = outside.0.join("accounts").join(TEAM);
+        symlink(
+            away.join("away.json"),
+            d.0.join("accounts").join(PERSONAL).join("link.json"),
+        )
+        .unwrap();
+        symlink(&away, d.0.join("accounts").join(TEAM)).unwrap();
+        // A FIFO named as a reading: opening it would block.
+        let fifo = d.0.join("accounts").join(PERSONAL).join("pipe.json");
+        let c = std::ffi::CString::new(fifo.to_str().unwrap()).unwrap();
+        assert_eq!(unsafe { libc::mkfifo(c.as_ptr(), 0o600) }, 0);
+        let got = read([&d.0]);
+        assert_eq!(sessions(&got), ["kept"]);
+        assert!(!serde_json::to_string(&got).unwrap().contains("Outside"));
+        // The accounts folder itself a link: nothing is read through it.
+        let linked = Scratch::new("usage-linked");
+        symlink(d.0.join("accounts"), linked.0.join("accounts")).unwrap();
+        assert!(read([&linked.0]).is_empty());
     }
 }

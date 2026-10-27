@@ -14,6 +14,12 @@ export const DROP_AFTER_MS = 30 * 24 * 60 * 60 * 1000;
 // seconds they are the same window, not a newer one.
 export const WINDOW_MATCH_SECONDS = 90;
 
+/**
+ * A reading's number: a JSON number only, as the phone server sends it
+ * (usage.rs), else NaN. "57" in a file is no reading.
+ */
+const num = (x) => (typeof x === "number" && Number.isFinite(x) ? x : Number.NaN);
+
 // Fixed display order, so rows never reshuffle between polls.
 export const WINDOW_ORDER = ["five_hour", "seven_day", "spend_limit"];
 
@@ -134,9 +140,9 @@ export function evaluate(payload, key, nowMs = Date.now()) {
   if (!payload || typeof payload !== "object") return waiting;
 
   const win = payload.windows?.[key];
-  if (!win || !Number.isFinite(Number(win.used_percentage))) return waiting;
+  if (!win || !Number.isFinite(num(win.used_percentage))) return waiting;
 
-  const resetsAt = Number(win.resets_at);
+  const resetsAt = num(win.resets_at);
   const countdown = formatCountdown(resetsAt, nowMs);
   // The window that number described has ended, and the next one has not
   // started; usage elsewhere since then would not have reached this machine.
@@ -148,7 +154,7 @@ export function evaluate(payload, key, nowMs = Date.now()) {
     return { state: "reset", label: windowLabel(key), pct: 0, sub, short };
   }
 
-  const age = nowMs - Number(win.observed_at ?? payload.observed_at ?? payload.written_at) * 1000;
+  const age = nowMs - num(win.observed_at ?? payload.observed_at ?? payload.written_at) * 1000;
   let sub = countdown;
   let short = formatCountdownShort(resetsAt, nowMs);
   if (!Number.isFinite(age)) {
@@ -162,7 +168,7 @@ export function evaluate(payload, key, nowMs = Date.now()) {
   return {
     state: "live",
     label: windowLabel(key),
-    pct: Number(win.used_percentage),
+    pct: num(win.used_percentage),
     sub,
     short,
   };
@@ -232,7 +238,7 @@ export function usageRows(snapshot, nowMs = Date.now()) {
 }
 
 /** Whether a file came from a hook that publishes only new API responses. */
-const isObserved = (s) => s?.observed_at != null && Number.isFinite(Number(s.observed_at));
+const isObserved = (s) => Number.isFinite(num(s?.observed_at));
 
 /**
  * When a session's reading arrived, or for an older hook's file, when it was
@@ -240,7 +246,7 @@ const isObserved = (s) => s?.observed_at != null && Number.isFinite(Number(s.obs
  */
 function stampOf(s) {
   const raw = isObserved(s) ? s.observed_at : s?.written_at;
-  return raw == null ? Number.NaN : Number(raw);
+  return num(raw);
 }
 
 /**
@@ -270,7 +276,7 @@ function reconcilable(sessions) {
 export function pickWindow(sessions, key, byTime) {
   const all = sessions.flatMap((s) => {
     const w = s?.windows?.[key];
-    const ok = w && Number.isFinite(Number(w.used_percentage)) && Number.isFinite(Number(w.resets_at));
+    const ok = w && Number.isFinite(num(w.used_percentage)) && Number.isFinite(num(w.resets_at));
     return ok ? [{ ...w, observed_at: stampOf(s) }] : [];
   });
   if (all.length === 0) return null;
