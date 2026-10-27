@@ -260,11 +260,16 @@ export function render(text, opened) {
   return { nodes, count: needsYouCount(nodes) };
 }
 
+/** The empty state's line: a path with no file yet is not a fault. */
+export const EMPTY = "No queue yet. It shows here once this file is written.";
+
 /**
- * What the panel shows for `view`: its elements, the count and the problem
- * line. A file that cannot be shown says so rather than leaving the last one up.
+ * What the panel shows for `view`: its elements, the count, and the problem
+ * or empty-state line (`empty` true for the latter). A file that cannot be
+ * shown says so rather than leaving the last one up.
  */
 export function present(view, opened, doc, copy, renderWith = render) {
+  if (view.missing === true) return { children: [], count: null, problem: EMPTY, empty: true };
   if (view.text === null || view.text === undefined) return { children: [], count: null, problem: view.problem ?? null };
   try {
     const { nodes, count } = renderWith(view.text, opened);

@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { build, parse, present, queueLabel, render, safeHref, sections, textOf, toTree } from "./fleet/queue.js";
+import { build, EMPTY, parse, present, queueLabel, render, safeHref, sections, textOf, toTree } from "./fleet/queue.js";
 
 const FIXTURE = readFileSync(new URL("../scripts/fixtures/queue-demo.md", import.meta.url), "utf8");
 
@@ -263,8 +263,13 @@ test("a render that throws is one problem line, not the old file", () => {
   assert.equal(shown.problem, "The queue file could not be shown: Maximum call stack size exceeded");
   const ok = present({ path: "/q.md", text: "## Needs you\n\n- a\n", problem: null }, () => undefined, doc, () => {});
   assert.deepEqual([ok.count, ok.problem, ok.children.length > 0], [1, null, true]);
-  const missing = present({ path: "/q.md", text: null, problem: "No queue file at this path." }, () => undefined, doc, () => {});
-  assert.deepEqual([missing.count, missing.problem, missing.children.length], [null, "No queue file at this path.", 0]);
+  const fault = present({ path: "/q", text: null, problem: "The queue path is not a regular file." }, () => undefined, doc, () => {});
+  assert.deepEqual([fault.count, fault.problem, fault.empty, fault.children.length], [null, "The queue path is not a regular file.", undefined, 0]);
+});
+
+test("a path with no file yet is the empty state, not a problem", () => {
+  const missing = present({ path: "/q.md", text: null, problem: "No queue file at this path.", missing: true }, () => undefined, doc, () => {});
+  assert.deepEqual([missing.count, missing.problem, missing.empty, missing.children.length], [null, EMPTY, true, 0]);
 });
 
 test("comments are left out wherever they sit, and the text between them stays", () => {

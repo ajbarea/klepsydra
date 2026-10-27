@@ -2531,13 +2531,27 @@ def queue_follows_the_app(wall):
       shown: !document.querySelector('#queue .queue-problem').hidden,
       blocks: document.querySelector('#queue .queue-content').children.length,
     })""")
+    keeper = "#queue .queue-kept"
+    unkept = page.evaluate(f"() => document.querySelector('{keeper}').hidden")
+    page.evaluate(
+        "(v) => window.__queue.onmessage(v)",
+        {"path": first["path"], "text": None, "problem": "No queue file at this path.", "missing": True, "kept_by": "Hermes (orchestrator)"},
+    )
+    page.wait_for_function(f"document.querySelector('{keeper}').textContent !== ''")
+    empty = page.evaluate(f"""() => ({{
+      kept: document.querySelector('{keeper}').hidden ? null : document.querySelector('{keeper}').textContent,
+      problem: document.querySelector('#queue .queue-problem').textContent,
+      empty: document.querySelector('#queue .queue-problem').classList.contains('empty'),
+    }})""")
     ok = (
         after["open"] == [True, True, False, False]
         and after["asks"] == 6
         and after["path"].endswith("claude-queue.md")
         and gone == {"problem": "No queue file at this path.", "shown": True, "blocks": 0}
+        and unkept
+        and empty == {"kept": "Kept by Hermes (orchestrator)", "problem": "No queue yet. It shows here once this file is written.", "empty": True}
     )
-    wall.check(ok, "an edit repaints the panel and its count, keeping open sections; a missing file is one line", [after, gone])
+    wall.check(ok, "an edit repaints the panel and its count, keeping open sections; a fault is one line; no file yet is the empty state, with its keeper named", [after, gone, unkept, empty])
     page.close()
 
 

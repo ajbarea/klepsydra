@@ -1,6 +1,8 @@
 //! The queue file: a markdown to-do list the fleet's agents keep, read for the
-//! wall's Queue panel. The path is a pref, by default `claude-queue.md` on the
-//! Desktop; the app only reads it.
+//! wall's Queue panel. Its path is `queue.json`'s in the data folder (set from
+//! the tray or by a session, which may name who keeps the file), else the
+//! `queue_path` pref, else `claude-queue.md` on the Desktop. The app only
+//! reads the queue file.
 
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{channel, Receiver, Sender};
@@ -17,6 +19,12 @@ use crate::watch::incarnation;
 pub const FILE_NAME: &str = "claude-queue.md";
 /// The prefs.json key that overrides the default path.
 pub const PREF: &str = "queue_path";
+/// The data folder's file naming the queue file and who keeps it.
+pub const KEEPER: &str = "queue.json";
+/// A path and a name; more than this is not that file.
+const KEEPER_MAX_BYTES: u64 = 4 * 1024;
+/// The longest keeper's name shown; a longer one is dropped, not cut.
+pub const BY_MAX_CHARS: usize = 80;
 /// The app writes a few keys to prefs.json; more than this is not its file.
 const PREFS_MAX_BYTES: u64 = 64 * 1024;
 /// More than this is not a to-do list. At the cap, the slowest of 20
@@ -37,6 +45,10 @@ pub struct QueueView {
     pub path: Option<String>,
     pub text: Option<String>,
     pub problem: Option<String>,
+    /// No file at the path yet: the panel's empty state, not a fault.
+    pub missing: bool,
+    /// Who keeps the file, as `queue.json` names them.
+    pub kept_by: Option<String>,
 }
 
 /// The queue file's path: the `queue_path` pref when set, else
@@ -47,12 +59,66 @@ pub fn resolve(pref: Option<&Value>, desktop: Option<PathBuf>) -> Result<PathBuf
             .filter(|d| d.is_absolute())
             .map(|d| d.join(FILE_NAME))
             .ok_or_else(|| format!("No Desktop folder was found; set {PREF} in prefs.json.")),
-        Some(Value::String(s)) if Path::new(s).is_absolute() => Ok(PathBuf::from(s)),
-        Some(Value::String(s)) => Err(format!(
-            "{PREF} in prefs.json is not an absolute path: {s:?}."
-        )),
-        Some(_) => Err(format!("{PREF} in prefs.json is not a path.")),
+        Some(v) => absolute(v, &format!("{PREF} in prefs.json")),
     }
+}
+
+/// `v` as an absolute path, or why not, naming `source`.
+fn absolute(v: &Value, source: &str) -> Result<PathBuf, String> {
+    match v {
+        Value::String(s) if Path::new(s).is_absolute() => Ok(PathBuf::from(s)),
+        Value::String(s) => Err(format!("{source} is not an absolute path: {s:?}.")),
+        _ => Err(format!("{source} is not a path.")),
+    }
+}
+
+/// The queue file `queue.json` names, and who keeps it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Kept {
+    pub path: Result<PathBuf, String>,
+    pub by: Option<String>,
+}
+
+/// The `queue.json` in the data folder `dir`, or None when there is none. One
+/// that will not read or parse names no file, so the panel says so rather
+/// than quietly following another. A `by` that is not a short plain name is
+/// dropped.
+pub fn kept(dir: Option<&Path>) -> Option<Kept> {
+    let file = dir?.join(KEEPER);
+    let broken = |why: &str| Kept {
+        path: Err(format!("{KEEPER} {why}, so the queue path is unknown.")),
+        by: None,
+    };
+    let text = match read_text(&file, KEEPER_MAX_BYTES) {
+        Ok(t) => t,
+        Err(Refused::Missing) => return None,
+        Err(_) => return Some(broken("could not be read")),
+    };
+    let Ok(Value::Object(map)) = serde_json::from_str::<Value>(&text) else {
+        return Some(broken("could not be parsed"));
+    };
+    let by = map
+        .get("by")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|b| !b.is_empty() && b.chars().count() <= BY_MAX_CHARS)
+        .filter(|b| !b.chars().any(char::is_control))
+        .map(str::to_owned);
+    let path = match map.get("path") {
+        Some(v) => absolute(v, &format!("path in {KEEPER}")),
+        None => Err(format!("{KEEPER} names no path.")),
+    };
+    Some(Kept { path, by })
+}
+
+/// Write `queue.json` in `dir` naming `path`, kept by `by`: a new file renamed
+/// over the old, so a reader never sees half of one.
+pub fn keep(dir: &Path, path: &Path, by: Option<&str>) -> std::io::Result<()> {
+    let body = serde_json::json!({ "path": path, "by": by });
+    std::fs::create_dir_all(dir)?;
+    let tmp = dir.join(format!("{KEEPER}.tmp"));
+    std::fs::write(&tmp, format!("{body}\n"))?;
+    std::fs::rename(&tmp, dir.join(KEEPER))
 }
 
 /// The `queue_path` pref from the prefs.json at `prefs`, or None when there
@@ -92,21 +158,29 @@ pub fn view(path: &Result<PathBuf, String>) -> QueueView {
                 path: None,
                 text: None,
                 problem: Some(why.clone()),
+                missing: false,
+                kept_by: None,
             }
         }
     };
+    let mut missing = false;
     let (text, problem) = match read_text(path, MAX_BYTES) {
         // A BOM is an editor's, not the list's.
         Ok(t) => (
             Some(t.strip_prefix('\u{feff}').unwrap_or(&t).to_owned()),
             None,
         ),
-        Err(why) => (None, Some(say(&why))),
+        Err(why) => {
+            missing = matches!(why, Refused::Missing);
+            (None, Some(say(&why)))
+        }
     };
     QueueView {
         path: Some(path.display().to_string()),
         text,
         problem,
+        missing,
+        kept_by: None,
     }
 }
 
@@ -154,6 +228,8 @@ pub struct Follower {
     watched: Option<(PathBuf, Option<u64>)>,
     /// The path the last step read, so a changed one is read at once.
     followed: Option<Result<PathBuf, String>>,
+    /// Who keeps the file, for the views `step` returns.
+    kept_by: Option<String>,
     last: Option<QueueView>,
 }
 
@@ -166,12 +242,18 @@ impl Default for Follower {
             watcher: None,
             watched: None,
             followed: None,
+            kept_by: None,
             last: None,
         }
     }
 }
 
 impl Follower {
+    /// Name who keeps the file in the views from the next `step` on.
+    pub fn keep(&mut self, by: Option<String>) {
+        self.kept_by = by;
+    }
+
     /// Watch `path`'s folder, once it exists and anew when the path or the
     /// folder changes. A watcher that cannot start leaves the re-read.
     fn attach(&mut self, path: Option<&Path>) {
@@ -215,7 +297,10 @@ impl Follower {
                 }
             }
         }
-        let next = view(path);
+        let next = QueueView {
+            kept_by: self.kept_by.clone(),
+            ..view(path)
+        };
         if self.last.as_ref() == Some(&next) {
             return None;
         }
@@ -267,6 +352,87 @@ mod tests {
             let err = resolve(Some(&bad), Some(PathBuf::from("/desk"))).unwrap_err();
             assert!(err.contains(says), "{bad}: {err}");
         }
+    }
+
+    #[test]
+    fn queue_json_names_the_file_and_who_keeps_it() {
+        let dir = Scratch::new("queue-kept");
+        assert_eq!(kept(None), None, "no data folder");
+        assert_eq!(kept(Some(&dir.0)), None, "no queue.json");
+        let file = dir.0.join("todo.md");
+        keep(&dir.0, &file, Some("Hermes (orchestrator)")).unwrap();
+        assert_eq!(
+            kept(Some(&dir.0)),
+            Some(Kept {
+                path: Ok(file.clone()),
+                by: Some("Hermes (orchestrator)".into())
+            })
+        );
+        assert!(!dir.0.join("queue.json.tmp").exists(), "renamed over");
+        keep(&dir.0, &file, None).unwrap();
+        assert_eq!(kept(Some(&dir.0)).unwrap().by, None, "chosen from the tray");
+        let long = "x".repeat(BY_MAX_CHARS + 1);
+        for by in [
+            json!(""),
+            json!("  "),
+            json!(7),
+            json!(long),
+            json!("a\u{7}b"),
+        ] {
+            dir.write("queue.json", &json!({"path": file, "by": by}).to_string());
+            assert_eq!(kept(Some(&dir.0)).unwrap().by, None, "{by}");
+        }
+        dir.write(
+            "queue.json",
+            &json!({"path": file, "by": "x".repeat(BY_MAX_CHARS)}).to_string(),
+        );
+        assert!(
+            kept(Some(&dir.0)).unwrap().by.is_some(),
+            "the cap itself shows"
+        );
+    }
+
+    #[test]
+    fn a_broken_queue_json_names_no_file() {
+        let dir = Scratch::new("queue-kept-broken");
+        for (text, says) in [
+            ("{", "could not be parsed"),
+            ("[]", "could not be parsed"),
+            ("{}", "names no path"),
+            (r#"{"path":"todo.md"}"#, "not an absolute path"),
+            (r#"{"path":7}"#, "not a path"),
+        ] {
+            dir.write("queue.json", text);
+            let err = kept(Some(&dir.0)).unwrap().path.unwrap_err();
+            assert!(err.contains(says), "{text}: {err}");
+        }
+        dir.write("queue.json", &"x".repeat(KEEPER_MAX_BYTES as usize + 1));
+        let err = kept(Some(&dir.0)).unwrap().path.unwrap_err();
+        assert!(err.contains("could not be read"), "{err}");
+    }
+
+    #[test]
+    fn a_missing_file_is_the_empty_state_and_the_keeper_rides_along() {
+        let dir = Scratch::new("queue-missing");
+        let path = Ok(dir.0.join("none.md"));
+        assert!(view(&path).missing);
+        dir.write("q.md", QUEUE);
+        assert!(!view(&Ok(dir.0.join("q.md"))).missing);
+        std::fs::create_dir(dir.0.join("folder.md")).unwrap();
+        assert!(
+            !view(&Ok(dir.0.join("folder.md"))).missing,
+            "a folder is a fault"
+        );
+        assert!(!view(&Err("x".into())).missing);
+        let mut f = Follower::default();
+        let first = f.step(&path, Duration::ZERO).unwrap();
+        assert_eq!(first.kept_by, None);
+        f.keep(Some("Hermes".into()));
+        let named = f
+            .step(&path, Duration::ZERO)
+            .expect("a new keeper is a new view");
+        assert_eq!(named.kept_by.as_deref(), Some("Hermes"));
+        assert_eq!(f.step(&path, Duration::ZERO), None, "unchanged");
     }
 
     fn problem(path: &Path) -> String {
