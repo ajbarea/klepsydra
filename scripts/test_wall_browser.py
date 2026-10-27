@@ -3845,6 +3845,158 @@ def panels_reduced_motion(wall):
     page.close()
 
 
+def ledger_button_keeps_focus(wall):
+    """The Ledger button toggles: shutting a Ledger a chip opened keeps focus
+    on the button; Close and Esc give it back to the chip, docked or as the
+    narrow dialog."""
+    page = wall.open(1920, 1000, 16)
+    chip = page.locator(".card:has(.name:text-is('Kallos')) .chip")
+    chip.click()
+    page.wait_for_selector("#ledger .scope")
+    page.click("#ledger-open")
+    page.wait_for_function(LEDGER_SHUT)
+    toggled = page.evaluate(ACTIVE)
+    chip.click()
+    page.wait_for_selector("#ledger .scope")
+    page.keyboard.press("Escape")
+    page.wait_for_function(LEDGER_SHUT)
+    escaped = page.evaluate(ACTIVE)
+    wall.check(
+        toggled["id"] == "ledger-open" and escaped["card"] == "Kallos" and "chip" in escaped["cls"],
+        "the Ledger button shuts a chip-opened Ledger with focus on the button; Esc returns it to the chip",
+        [toggled, escaped],
+    )
+    page.close()
+    page = wall.open(945, 1000, 8)
+    chip = page.locator(".card:has(.name:text-is('Kallos')) .chip")
+    chip.click()
+    page.wait_for_selector("#ledger .scope")
+    modal = page.evaluate("document.getElementById('ledger').matches(':modal')")
+    page.keyboard.press("Escape")
+    page.wait_for_function(LEDGER_SHUT)
+    escaped = page.evaluate(ACTIVE)
+    chip.click()
+    page.wait_for_selector("#ledger .scope")
+    page.click("#ledger .ledger-close")
+    page.wait_for_function(LEDGER_SHUT)
+    closed = page.evaluate(ACTIVE)
+    wall.check(
+        modal and escaped["card"] == "Kallos" and "chip" in escaped["cls"] and closed["card"] == "Kallos",
+        "as the 945 px dialog, Esc and Close return focus to the chip that opened it",
+        [modal, escaped, closed],
+    )
+    page.close()
+
+
+REFLOW = """() => {
+  const body = document.querySelector('#ledger .ledger-body');
+  const edge = body.getBoundingClientRect().right;
+  const over = [...document.querySelectorAll('#ledger .ledger-content *')]
+    .filter((el) => el.getClientRects().length && el.getBoundingClientRect().right > edge + 0.5)
+    .map((el) => el.tagName + '.' + el.className + ':' + Math.round(el.getBoundingClientRect().right - edge));
+  return {
+    zoom: document.querySelector('#ledger .ledger-content').style.zoom,
+    width: Math.round(document.getElementById('ledger').getBoundingClientRect().width),
+    sideways: body.scrollWidth - body.clientWidth,
+    over: over.slice(0, 4),
+  };
+}"""
+
+
+def ledger_reflows_at_every_size(wall):
+    """No text size from 75% to 200% scrolls the Ledger sideways, docked at
+    320 and 480 px or as the 600 px dialog: figures and tables reflow."""
+    bad = []
+    seen = 0
+    for width, cards, at in ((1920, 8, (320, 480)), (945, 8, (600,))):
+        page = wall.open(width, 1000, cards)
+        page.click("#ledger-open")
+        page.wait_for_selector(LEDGER_READ)
+        for want in at:
+            if width == 1920:
+                sep = page.locator("#ledger [role=separator]")
+                sep.focus()
+                now = int(sep.get_attribute("aria-valuenow"))
+                for _ in range(abs(want - now) // 16):
+                    page.keyboard.press("ArrowRight" if want < now else "ArrowLeft")
+            for _ in range(4):
+                page.keyboard.press("Control+Minus")
+            for step in range(9):
+                if step:
+                    page.keyboard.press("Control+Equal")
+                st = page.evaluate(REFLOW)
+                seen += 1
+                if st["width"] != want or st["sideways"] > 0 or st["over"]:
+                    bad.append(st)
+        page.close()
+    wall.check(seen == 27 and not bad, "no text size from 75% to 200% scrolls the Ledger sideways at 320, 480 or 600 px", bad[:4] or seen)
+
+
+def ctrl_alt_b_over_any_ledger(wall):
+    """One at a time in every state: Ctrl+Alt+B over a full Ledger, or the
+    narrow dialog, shuts it and opens the Queue."""
+    page = wall.open(1920, 1000, 8)
+    page.click("#ledger-open")
+    page.wait_for_selector(LEDGER_READ)
+    page.click("#ledger .ledger-full")
+    page.wait_for_timeout(SETTLE_MS)
+    page.keyboard.press("Control+Alt+b")
+    page.wait_for_timeout(SETTLE_MS)
+    full = page.evaluate(LEDGER_STATE)
+    page.close()
+    page = wall.open(945, 1000, 8)
+    page.click("#ledger-open")
+    page.wait_for_selector(LEDGER_READ)
+    page.keyboard.press("Control+Alt+b")
+    page.wait_for_timeout(SETTLE_MS)
+    narrow = page.evaluate(LEDGER_STATE)
+    narrow["queueModal"] = page.evaluate("document.getElementById('queue').matches(':modal')")
+    page.close()
+    wall.check(
+        not full["open"] and full["queueOpen"] and full["queueView"] == "docked" and full["active"] == "queue-title"
+        and not narrow["open"] and narrow["queueOpen"] and narrow["queueModal"] and narrow["active"] == "queue-title",
+        "Ctrl+Alt+B over a full Ledger or the narrow Ledger dialog shuts it and opens the Queue",
+        [full, narrow],
+    )
+
+
+def ledger_reads_bounded(wall):
+    """An open Ledger reads the ledger at most once every 5 s however fast
+    snapshots come, and catches up once after a burst."""
+    page = open_app(wall, 1920, 1000)
+    page.evaluate("""() => {
+      const inv = window.__TAURI__.core.invoke;
+      window.__reads = 0;
+      window.__TAURI__.core.invoke = (cmd, args) => {
+        if (cmd !== 'ledger_today') return inv(cmd, args);
+        window.__reads++;
+        return fetch('/scripts/fixtures/ledger-demo.json').then((r) => r.json()).then(({ at, ...v }) => v);
+      };
+    }""")
+    page.click("#ledger-open")
+    page.wait_for_selector(LEDGER_READ)
+    opened = page.evaluate("window.__reads")
+    for _ in range(20):
+        page.evaluate("(s) => window.__channel.onmessage(s)", page.snapshot)
+        page.wait_for_timeout(100)
+    burst = page.evaluate("window.__reads") - opened
+    page.wait_for_timeout(4000)
+    caught = page.evaluate("window.__reads") - opened
+    page.click("#ledger-open")
+    page.wait_for_function(LEDGER_SHUT)
+    shut = page.evaluate("window.__reads")
+    for _ in range(5):
+        page.evaluate("(s) => window.__channel.onmessage(s)", page.snapshot)
+    page.wait_for_timeout(5500)
+    after = page.evaluate("window.__reads") - shut
+    wall.check(
+        opened == 1 and burst == 0 and caught == 1 and after == 0,
+        "20 snapshots in 2 s read the open Ledger once, 5 s after it opened; a shut one reads nothing",
+        {"opened": opened, "during the burst": burst, "after 6 s": caught, "after shutting": after},
+    )
+    page.close()
+
+
 def split_toggle(wall):
     """Split with terminal: hidden in a browser; in the app a labelled toggle,
     off until the saved choice loads, that calls set_split_mode; and the wall
@@ -3975,6 +4127,10 @@ def main() -> int:
             ledger_chip_opens_on_a_session,
             ledger_old_and_narrow_state,
             panels_reduced_motion,
+            ledger_button_keeps_focus,
+            ledger_reflows_at_every_size,
+            ctrl_alt_b_over_any_ledger,
+            ledger_reads_bounded,
             split_toggle,
         )
         for case in cases:

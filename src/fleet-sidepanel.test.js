@@ -88,3 +88,23 @@ test("an edge shuts nothing when the panel opening is the only one open", () => 
   assert.deepEqual([q.view, ledger.view], ["full", "shut"]);
   assert.deepEqual([q.shuts, ledger.shuts], [0, 0], "docked to full is no shut: the Ledger would lose its session");
 });
+
+test("the edge reports the docked panel's room and any drag, and knows its own dialogs", () => {
+  const edge = side.createEdge();
+  const panel = (width, resizing) => ({ dialog: {}, isOpen: width > 0, dockedWidth: () => width, resizing, layout() {}, shut() {} });
+  const ledger = panel(0, false);
+  const q = panel(480, false);
+  edge.join(ledger);
+  edge.join(q);
+  assert.equal(edge.dockedWidth(), 480, "the wall gives up the docked panel's width");
+  assert.equal(edge.resizing, false);
+  ledger.resizing = true;
+  assert.equal(edge.resizing, true, "a drag of either separator holds Auto's measure");
+  assert.equal(edge.holds(q.dialog), true);
+  assert.equal(edge.holds({}), false, "another dialog, such as the portrait, is not the edge's");
+});
+
+test("an open Ledger reads again at most every 5 s", async () => {
+  const { REFRESH_MS } = await import("./fleet/drawer.js");
+  assert.equal(REFRESH_MS, 5000);
+});

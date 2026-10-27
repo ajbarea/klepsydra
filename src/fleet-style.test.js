@@ -281,7 +281,7 @@ test("the drawer's text wears text colours on the card's own surface, and a bar 
     assert.ok(contrast(token(css, fg), surface) >= 4.5, `${fg} on the drawer`);
   }
   assert.equal(token(css, "--card-bg"), token(css, "--card-bg"));
-  assert.match(css, /\.ledger \{[^}]*background: var\(--card-bg\)/, "the drawer sits on the card surface");
+  assert.match(css, /\.ledger, \.queue \{[^}]*background: var\(--card-bg\)/, "the drawer sits on the card surface, as the Queue does");
   const cast = JSON.parse(read("./fleet/cast.json"));
   for (const c of Object.values(cast.characters)) {
     assert.ok(contrast(c.accent, surface) >= 3, `${c.name}'s bar on the drawer: ${contrast(c.accent, surface).toFixed(2)}`);
