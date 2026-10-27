@@ -20,7 +20,7 @@ the above.
   browser cases (`ask_keeps_the_tool_name`, `long_tool_stays_in_card`;
   phone 390 and 700 px), mutation checks, README, skill-context, shots in
   fleet-briefing `shots/2026-10-27/klepsydra-124-*`.
-- Next: PR review; deploy with the rest.
+- Next: PR #140 review (do not merge or deploy unasked); deploy with the rest.
 - Verify: the gate list below; `scripts/test_wall_browser.py
   ask_keeps_the_tool_name long_tool_stays_in_card` runs the wall cases alone.
 
