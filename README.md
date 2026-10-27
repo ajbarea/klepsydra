@@ -859,7 +859,7 @@ mark in `src-tauri/icons/`.
 ### The ledger
 
 <p align="center">
-  <img src="assets/ledger.png" alt="The Ledger drawer: totals for today (tokens, input, output, cache, lines, commits, pull requests, active time), tokens by character as bars, and tokens by model with the list-price estimate" width="420">
+  <img src="assets/ledger.png" alt="The Ledger docked beside the wall, with its text size, full screen and Close buttons: totals for today (tokens, input, output, cache, lines, commits, pull requests, active time), tokens by character as bars, and tokens by model with the list-price estimate" width="420">
 </p>
 
 With the `env` block above, every Claude Code session sends its
@@ -980,8 +980,9 @@ filled to the whole window. It takes the same drags, the same separator keys
 and the same text size controls, and it remembers its own width, view and
 text size. Those are kept apart from the Queue's. A chip opens it docked on
 that card's session, a chip pressed while it is open turns it to that
-session, and Close or Esc gives focus back to the chip. While it is open,
-each new snapshot from the fleet makes it read the ledger again.
+session, and Close or Esc gives focus back to the chip, while the **Ledger**
+button that shuts it keeps the focus. While it is open, new snapshots from
+the fleet make it read the ledger again, at most once every 5 seconds.
 
 ### Queue panel
 
@@ -1040,8 +1041,8 @@ works when there is no `queue.json`.
   away. While one is open neither tab shows, and the header buttons switch
   between them. Each panel keeps its own width, view and text size
   (`klepsydra.queue.*` and `klepsydra.ledger.*` in the page's storage).
-  Ctrl+Alt+B opens the Queue over an open Ledger. The Ledger has no shortcut
-  of its own.
+  Ctrl+Alt+B opens the Queue over an open Ledger, docked, full or a dialog,
+  and shuts the Ledger. The Ledger has no shortcut of its own.
 - **Full screen.** The **Full screen** button in the panel's header (beside
   Close) fills the window, keeping the text-size controls; Esc, the same
   button, or a drag of the left edge back to the right returns it to docked.
