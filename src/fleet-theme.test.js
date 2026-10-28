@@ -282,10 +282,11 @@ test("the wall, the strip and the drawer read the theme now worn, not a fixed ca
   const wall = read("src/fleet/wall.js");
   assert.doesNotMatch(wall, /cast\.json/);
   assert.match(wall, /cast: \(\) => cast,/, "the drawer asks for the theme each time");
-  assert.match(wall, /subscribeTheme\(\(id\) => \{\s*if \(picking\) return;\s*wearTheme\(id\)\.then\(ready\);\s*\}\);/, "the app's word, unless a choice waits to be saved");
+  assert.match(wall, /subscribeTheme\(\(id\) => \{\s*clearTimeout\(noWord\);\s*if \(picking\) return;\s*wearTheme\(id\)\.then\(ready\);\s*\}\);/, "the app's word, unless a choice waits to be saved; once named, the first paint waits for its file");
+  assert.match(wall, /if \(worn === null\) return; \/\/ a later choice took over/, "a load the picker moved past touches nothing");
   assert.match(wall, /firstTheme\.then\(\(\) => subscribe\(receive, showLink\)\);/, "the first paint waits for the theme worn");
   assert.match(wall, /document\.documentElement\.dataset\.theme = next;/, "html[data-theme] names the theme, as a CSS colour theme");
-  assert.match(wall, /\? \(\) => wearTheme\(message\.theme, false\)[^\n]*\n\s*inbox = inbox\.then\(theme\)\.then\(\(\) => take\(message\)\);/, "the phone wears each snapshot's theme before painting it, in order");
+  assert.match(wall, /\? \(\) => wearTheme\(message\.theme, false\)[^\n]*\n\s*inbox = inbox\s*\.then\(theme\)\s*\.then\(\(\) => take\(message\)\)\s*\.catch\(/, "the phone wears each snapshot's theme before painting it, in order, and one it cannot show stops none after it");
   assert.match(wall, /saving = setTimeout\(saveTheme, THEME_SAVE_MS\);/, "saved where the picker rests");
   for (const [target, event] of [["themePicker", "blur"], ["", "blur"], ["", "pagehide"]]) {
     assert.match(wall, new RegExp(`${target ? `${target}\\.` : "\\n"}addEventListener\\("${event}", flushTheme\\);`), `a waiting choice is saved on ${target || "window"} ${event}`);
@@ -293,7 +294,7 @@ test("the wall, the strip and the drawer read the theme now worn, not a fixed ca
   assert.match(wall, /if \(document\.hidden\) flushTheme\(\);/);
   assert.match(wall, /setText\(themeNote, `Not saved: \$\{err\}`\);/, "a refused save says so");
   assert.doesNotMatch(read("src/fleet/strip.js"), /cast\.json|import cast/);
-  assert.match(read("src/main.js"), /subscribeTheme\(\(id\) => \{\s*wanted = id;\s*loadTheme\(id\)\s*\.then\(\(next\) => \{\s*if \(wanted !== id \|\| next === theme\) return;\s*theme = next;\s*render\(\);/, "the gauge's strip redraws on a switch, once the theme is loaded");
+  assert.match(read("src/main.js"), /subscribeTheme\(\(id\) => \{\s*clearTimeout\(noWord\);\s*wanted = id;\s*loadTheme\(id\)\s*\.then\(\(next\) => \{\s*if \(wanted !== id \|\| next === theme\) return;\s*theme = next;\s*render\(\);/, "the gauge's strip redraws on a switch, once the theme is loaded");
   assert.match(read("src/main.js"), /await first;\s*drawStrip = mountStrip\(/, "and first draws in the theme worn");
   assert.match(read("src/main.js"), /cast: \(\) => theme,/, "and draws the theme now worn");
   const html = read("src/wall.html");

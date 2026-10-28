@@ -19,7 +19,7 @@ import { cutsText } from "./fulltext.js";
 import { WAITING, usageRows } from "../gauge.js";
 import { readMode, readStops, syncEntries } from "../gaugeview.js";
 
-const FIRST_THEME_MS = 1500; // the longest the first paint waits for the saved theme
+const FIRST_THEME_MS = 1500; // the longest the first paint waits for the app to name the theme
 const TICK_MS = 15_000; // ages re-render between snapshots, as on the gauge
 const FACE_PX = 62; // the comfortable --wall-face less twice its --face-inset
 const SVG_NS = "http://www.w3.org/2000/svg";
@@ -630,7 +630,10 @@ let inbox = Promise.resolve();
 function receive(message) {
   if (!served) return take(message);
   const theme = Array.isArray(message?.sessions) ? () => wearTheme(message.theme, false) : () => null;
-  inbox = inbox.then(theme).then(() => take(message));
+  inbox = inbox
+    .then(theme)
+    .then(() => take(message))
+    .catch((err) => console.warn("klepsydra: a snapshot could not be shown:", err));
 }
 
 function take(message) {
@@ -1180,7 +1183,7 @@ function wearTheme(id, paint = true) {
   }
   return loadTheme(next).then(
     (loaded) => {
-      if (wanted !== next) return false;
+      if (wanted !== next) return null;
       put(next, loaded, paint);
       return true;
     },
@@ -1238,6 +1241,7 @@ themePicker.addEventListener("change", () => {
   clearTimeout(saving);
   saving = 0;
   wearTheme(themePicker.value).then((worn) => {
+    if (worn === null) return; // a later choice took over: this one changes nothing
     const now = flushNow;
     flushNow = false;
     if (!worn) {
@@ -1266,16 +1270,18 @@ addEventListener("pagehide", flushTheme);
 document.addEventListener("visibilitychange", () => {
   if (document.hidden) flushTheme();
 });
-// The first paint waits for the theme worn, so no card shows another theme
-// first; past FIRST_THEME_MS (no word from the app) it goes ahead in Kourai.
-// The phone's theme comes with each snapshot (receive).
+// The first paint waits for the theme worn, its file loaded or failed, so no
+// card shows another theme first; with no word from the app within
+// FIRST_THEME_MS it goes ahead in Kourai. The phone's theme comes with each
+// snapshot (receive).
 const firstTheme = new Promise((ready) => {
   if (served) {
     ready();
     return;
   }
-  setTimeout(ready, FIRST_THEME_MS);
+  const noWord = setTimeout(ready, FIRST_THEME_MS);
   subscribeTheme((id) => {
+    clearTimeout(noWord);
     if (picking) return;
     wearTheme(id).then(ready);
   });

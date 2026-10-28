@@ -541,6 +541,17 @@ def main() -> int:
                 (klepsydra / "prefs.json.tmp").replace(klepsydra / "prefs.json")
                 wait_until(page, "[...document.querySelectorAll('#wall .card .face')].some((f) => (f.getAttribute('src') || '').startsWith('fleet/faces/kourai/'))", 10)
 
+                # A snapshot the page cannot show is passed over: the next one still paints.
+                def malformed(f):
+                    f["sessions"] = [{"session_id": 5, "status": "working"}]
+                snapshot_file(snapshot, malformed)
+                page.wait_for_timeout(600)
+                snapshot_file(snapshot, lambda f: (one_more_needs(f), f["sessions"].pop()))
+                back = wait_until(page, "document.getElementById('wall').children.length === 15", 10)
+                run.check(back, "a snapshot that cannot be shown is passed over, and the next paints", page.evaluate("document.getElementById('wall').children.length"))
+                snapshot_file(snapshot, one_more_needs)
+                wait_until(page, "document.getElementById('wall').children.length === 16", 10)
+
                 # A new reading arrives over the stream; one three hours old says so.
                 write_reading(klepsydra, PERSONAL, "Personal", {"five_hour": (91, 8 * 60 + 50), "seven_day": (27, (6 * 24 + 6) * 3600 + 1800)})
                 write_reading(klepsydra, TEAM, "Team", {"five_hour": (12, 2 * 3600 + 600)}, ago=3 * 3600, session="00000000-0000-4000-8000-000000000002")

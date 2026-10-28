@@ -38,6 +38,7 @@ import os
 import pathlib
 import sys
 import threading
+import time
 
 from playwright.sync_api import sync_playwright
 
@@ -4426,6 +4427,55 @@ new MutationObserver((_, obs) => {
 """
 
 
+def hold_theme_until_fleet(page, theme):
+    """Hold theme `theme`'s file (Kourai's comes with the page) and note when the demo fleet has arrived."""
+    held = {"routes": [], "fleet": False}
+    page.on("requestfinished", lambda r: r.url.endswith("fleet-demo.json") and held.__setitem__("fleet", True))
+    if theme != "kourai":
+        page.route(f"**/fleet/themes/{theme}.json", lambda r: held["routes"].append(r))
+    return held
+
+
+def release_after_fleet(page, held):
+    """Let the held theme file go once the fleet is in and a page that did not
+    wait would have painted; a page that waits fetches no fleet before its
+    theme, so after 3 s (past the wall's 1.5 s wait for the app's word) anyway."""
+    deadline = time.monotonic() + 3
+    while not held["fleet"] and time.monotonic() < deadline:
+        page.wait_for_timeout(50)
+    page.wait_for_timeout(400)
+    for r in held["routes"]:
+        r.continue_()
+
+
+STRIP_FIRST = """
+new MutationObserver((_, obs) => {
+  const img = document.querySelector('#strip .face img');
+  if (!img || !img.getAttribute('src') || window.__first) return;
+  window.__first = { id: img.parentElement.dataset.id, face: img.getAttribute('src'), label: img.parentElement.getAttribute('aria-label') };
+  obs.disconnect();
+}).observe(document, { childList: true, subtree: true, attributes: true, attributeFilter: ['src'] });
+"""
+
+
+def strip_first_paint(wall):
+    """The gauge's strip first draws in the theme worn: with ?theme= and the
+    theme's file arriving after the fleet, its first portrait already wears it."""
+    voices = {s["session_id"]: s.get("voice") for s in json.loads((ROOT / "scripts/fixtures/fleet-demo.json").read_text())["sessions"]}
+    for theme in ("professions", "dicebear"):
+        page = wall.browser.new_page(viewport={"width": 1200, "height": 400})
+        page.add_init_script(STRIP_FIRST)
+        held = hold_theme_until_fleet(page, theme)
+        page.goto(f"http://127.0.0.1:{wall.port}/src/index.html?demo&theme={theme}")
+        release_after_fleet(page, held)
+        painted(page, "!!window.__first")
+        first = page.evaluate("window.__first")
+        ch = THEMES[theme]["characters"].get(voices.get(first["id"]))
+        ok = ch and first["face"].startswith(f"fleet/faces/{theme}/") and first["label"].startswith(f"{ch['name']},")
+        wall.check(ok, f"{theme}: the strip's first portrait already wears it", first)
+        page.close()
+
+
 def theme_first_paint(wall):
     """With a saved theme, the first card the wall paints already wears it:
     no frame of another theme first, from the app's saved choice or a
@@ -4436,15 +4486,57 @@ def theme_first_paint(wall):
             if how == "app":
                 page = open_app(wall, 1920, 1000, theme=theme, init=FIRST_CARD)
             else:
+                # The theme's file arrives only after the fleet has: a wall that painted
+                # before its theme would show its first card in Kourai.
                 page = wall.browser.new_page(viewport={"width": 1920, "height": 1000})
                 page.add_init_script(FIRST_CARD)
+                held = hold_theme_until_fleet(page, theme)
                 page.goto(f"http://127.0.0.1:{wall.port}/src/wall.html?demo=8&theme={theme}")
+                release_after_fleet(page, held)
                 painted(page, "document.getElementById('wall').children.length === 8")
             first = page.evaluate("window.__first")
             ch = THEMES[theme]["characters"].get(voices.get(first["key"])) if first else None
             ok = first and ch and first["name"] == ch["name"] and first["face"].startswith(f"fleet/faces/{theme}/") and first["theme"] == theme
             wall.check(ok, f"{theme} ({how}): the first card painted already wears it", first)
             page.close()
+
+
+def theme_stale_load_leaves_the_choice(wall):
+    """A load the picker has moved past changes nothing when it lands: with
+    Professions and then DiceBear asked for and both files held, a page
+    hidden meanwhile saves DiceBear the moment it is worn (not 600 ms
+    later), and an older word from the app during DiceBear's load does not
+    replace it."""
+    for older in (False, True):
+        page = open_app(wall, 1920, 1000)
+        held = {}
+        def keep(theme):
+            return lambda route: held.__setitem__(theme, route)
+        for theme in ("professions", "dicebear"):
+            page.route(f"**/fleet/themes/{theme}.json", keep(theme))
+        before = len(page.evaluate("window.__calls"))
+        page.select_option("#theme", "professions")
+        page.select_option("#theme", "dicebear")
+        page.wait_for_timeout(200)
+        if older:
+            page.evaluate("window.__theme.onmessage('kourai')")
+        else:
+            page.evaluate("dispatchEvent(new Event('pagehide'))")
+        held["professions"].continue_()
+        page.wait_for_timeout(200)
+        held["dicebear"].continue_()
+        page.wait_for_timeout(300)
+        early = page.evaluate("window.__calls")[before:]
+        page.wait_for_timeout(SAVE_MS + 200)
+        late = page.evaluate("window.__calls")[before:]
+        theme = page.evaluate("document.documentElement.dataset.theme")
+        if older:
+            wall.check(theme == "dicebear" and late == [["set_theme", {"theme": "dicebear"}]],
+                       "an older word from the app during DiceBear's load leaves DiceBear, saved", [theme, late])
+        else:
+            wall.check(theme == "dicebear" and early == [["set_theme", {"theme": "dicebear"}]] and late == early,
+                       "a page hidden while DiceBear loads saves it the moment it is worn, once", [theme, early, late])
+        page.close()
 
 
 def theme_switch_commits_only_what_it_wore(wall):
@@ -4633,7 +4725,9 @@ def main() -> int:
             theme_renames_the_queue_keeper,
             theme_save_flushes_and_says_when_refused,
             theme_first_paint,
+            strip_first_paint,
             theme_switch_commits_only_what_it_wore,
+            theme_stale_load_leaves_the_choice,
         )
         for case in cases:
             if not only or case.__name__ in only:
