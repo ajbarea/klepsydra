@@ -4078,9 +4078,9 @@ def ledger_rolls_over_at_midnight(wall):
     at once. A shut Ledger does not read.
 
     The page loads at 23:59:22 and the clock is paused at 23:59:30, so real
-    time spent loading (up to 8 s) cannot move it. The wall's 15 s ticks then
-    fall within 3 s after :37, :52, :07 and :22, never at 00:00:00 to
-    00:00:02, so only the midnight timer can read there. After a
+    time spent loading (under 8 s, or pause_at raises) cannot move it. The
+    wall's 15 s ticks then fall that load time after :37, :52, :07 and :22,
+    never at 00:00:00 to 00:00:02, so only the midnight timer can read there. After a
     fast_forward the ticks restart from where it lands."""
     import datetime
     import time
