@@ -4721,32 +4721,42 @@ def theme_switch_commits_only_what_it_wore(wall):
 
 def theme_retry_waits_before_loading(wall):
     """Picked again after its file failed, a theme says "Loading…" only once
-    that new pick has waited THEME_WAIT_MS, not at once: the failure clears
-    the first pick's clock."""
-    page = open_app(wall, 1920, 1000)
-    tries = []
+    that new pick has waited THEME_WAIT_MS: neither at once (a retry past the
+    first pick's deadline) nor when the first pick's own wait ends (a retry
+    soon after a quick failure). The failure ends the first pick's wait."""
+    # Retried 1.5 s after a quick failure, the first pick's wait ends 1.5 s
+    # into the retry's, inside the span sampled below.
+    for gap, how in ((THEME_WAIT_MS + 300, "past the first pick's deadline"), (THEME_WAIT_MS // 2, "soon after a quick failure")):
+        page = open_app(wall, 1920, 1000)
+        tries = []
 
-    def route(r):
-        tries.append(r)
-        if len(tries) == 1:
-            r.abort()
+        def fail_first(tries):
+            def route(r):  # one parameter: Playwright passes the request too to a handler that takes two
+                tries.append(r)
+                if len(tries) == 1:
+                    r.abort()
+            return route
 
-    page.route("**/fleet/themes/dicebear.json", route)
-    page.select_option("#theme", "dicebear")
-    page.wait_for_function("document.getElementById('theme-note').textContent.startsWith('Not switched')")
-    page.wait_for_timeout(THEME_WAIT_MS + 300)  # past the first pick's deadline
-    page.select_option("#theme", "dicebear")
-    page.wait_for_timeout(1000)
-    early = page.evaluate("document.getElementById('theme-note').textContent")
-    page.wait_for_timeout(THEME_WAIT_MS)
-    late = page.evaluate("document.getElementById('theme-note').textContent")
-    for r in tries[1:]:
-        r.continue_()
-    page.wait_for_function("document.documentElement.dataset.theme === 'dicebear'")
-    after = page.evaluate("document.getElementById('theme-note').textContent")
-    wall.check(len(tries) == 2 and not early.startswith("Loading") and late == "Loading the DiceBear theme…" and after == "",
-               "a theme picked again after its file failed says Loading… only after its own wait", [len(tries), early, late, after])
-    page.close()
+        page.route("**/fleet/themes/dicebear.json", fail_first(tries))
+        page.select_option("#theme", "dicebear")
+        page.wait_for_function("document.getElementById('theme-note').textContent.startsWith('Not switched')")
+        page.wait_for_timeout(gap)
+        t0 = time.monotonic()
+        page.select_option("#theme", "dicebear")
+        early = []
+        while time.monotonic() - t0 < THEME_WAIT_MS / 1000 - 0.5:  # the note, sampled until just before the retry's own wait ends
+            early.append(page.evaluate("document.getElementById('theme-note').textContent"))
+            page.wait_for_timeout(100)
+        page.wait_for_timeout(1000)
+        late = page.evaluate("document.getElementById('theme-note').textContent")
+        for r in tries[1:]:
+            r.continue_()
+        page.wait_for_function("document.documentElement.dataset.theme === 'dicebear'")
+        after = page.evaluate("document.getElementById('theme-note').textContent")
+        loading = [n for n in early if n.startswith("Loading")]
+        wall.check(len(tries) == 2 and early and not loading and late == "Loading the DiceBear theme…" and after == "",
+                   f"a theme picked again {how} says Loading… only after its own wait", [len(tries), len(early), loading[:1], late, after])
+        page.close()
 
 
 PICKER = """() => {

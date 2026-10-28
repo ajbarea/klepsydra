@@ -1227,10 +1227,12 @@ function wearSoon(id, paint = true) {
 /** Resolves THEME_WAIT_MS after a paint first waited for `next`'s file, saying it is still loading if it is. */
 function deadline(next) {
   if (!asked.has(next)) asked.set(next, performance.now());
-  const left = Math.max(0, asked.get(next) + THEME_WAIT_MS - performance.now());
+  const since = asked.get(next);
+  const left = Math.max(0, since + THEME_WAIT_MS - performance.now());
   return new Promise((late) =>
     setTimeout(() => {
-      if (wanted === next && worn !== next) setText(themeNote, `Loading the ${THEME_LABELS[next]} theme…`);
+      // A wait whose load failed since is over: a retry has its own.
+      if (asked.get(next) === since && wanted === next && worn !== next) setText(themeNote, `Loading the ${THEME_LABELS[next]} theme…`);
       late(null);
     }, left),
   );
