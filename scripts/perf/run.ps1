@@ -89,7 +89,10 @@ function Idle($proc, $label, $seconds) {
   foreach ($k in @($tot.Keys)) { $tot[$k] = [math]::Round($tot[$k], 2) }
   [ordered]@{ reading = $label; seconds = [math]::Round($span); total = $tot; roles = $roles } | ConvertTo-Json -Compress -Depth 5
 }
-function Cdp { & node $cdp $Port @args }
+function Cdp {
+  & node $cdp $Port @args
+  if ($LASTEXITCODE -ne 0) { [ordered]@{ cdp_failed = ($args -join " "); exit = $LASTEXITCODE } | ConvertTo-Json -Compress }
+}
 
 try {
   foreach ($n in ($Cards -split "," | ForEach-Object { [int]$_ })) {

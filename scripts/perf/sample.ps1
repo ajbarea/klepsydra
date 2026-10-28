@@ -2,6 +2,7 @@
 # browser process it started and that browser's children. One CSV row per
 # process per sample: memory in MB and CPU seconds used so far.
 param([Parameter(Mandatory)] [string]$Path, [int]$IntervalSec = 180, [double]$DurationMin = 600, [string]$Out = (Join-Path $env:USERPROFILE "klepsydra-perf\samples.csv"))
+New-Item -ItemType Directory -Force -Path (Split-Path $Out) | Out-Null
 if (-not (Test-Path $Out)) { "time,pid,role,ws_mb,private_mb,cpu_s" | Out-File -Encoding ascii $Out }
 $end = (Get-Date).AddMinutes($DurationMin)
 while ((Get-Date) -lt $end) {
