@@ -1,17 +1,24 @@
 //! Run the OTLP receiver alone, without the overlay, for a live check:
 //! `cargo run -p klepsydra-fleet --example receiver -- <ledger-dir> [port]`.
 //! Port 0, the default, picks a free one. Prints the bound address, then
-//! today's ledger each time it changes.
+//! today's ledger each time it changes; logs to stderr at `KLEPSYDRA_LOG`'s
+//! level (info by default).
 
 use std::net::{Ipv4Addr, SocketAddrV4};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use klepsydra_fleet::ledger::{lock, Ledger, Shared};
-use klepsydra_fleet::receiver::{self, Log};
+use klepsydra_fleet::receiver;
 use klepsydra_fleet::watch::unix_now;
 
+#[expect(
+    clippy::print_stdout,
+    clippy::print_stderr,
+    reason = "a command's usage text, and the address and ledger it reports"
+)]
 fn main() {
+    klepsydra_fleet::logfmt::to_stderr();
     let mut args = std::env::args().skip(1);
     let Some(dir) = args.next() else {
         eprintln!("usage: receiver <ledger-dir> [port]");
@@ -20,15 +27,14 @@ fn main() {
     let port: u16 = args.next().and_then(|p| p.parse().ok()).unwrap_or(0);
     let (ledger, problems) = Ledger::open_local(dir.into(), unix_now());
     for p in problems {
-        eprintln!("ledger: {p}");
+        log::error!("ledger: {p}");
     }
     let ledger: Shared = Arc::new(Mutex::new(ledger));
-    let log: Log = Arc::new(|l| eprintln!("{l}"));
     let addr = SocketAddrV4::new(Ipv4Addr::LOCALHOST, port);
-    match receiver::spawn(addr, ledger.clone(), log) {
+    match receiver::spawn(addr, ledger.clone()) {
         Ok(bound) => println!("listening on {bound}"),
         Err(e) => {
-            eprintln!("no receiver on {addr}: {e}");
+            log::error!("no receiver on {addr}: {e}");
             return;
         }
     }

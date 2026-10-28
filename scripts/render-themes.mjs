@@ -95,7 +95,7 @@ async function main([modules, out]) {
     write(`dicebear/${c.face}.svg`, svg, `${LORELEI}, rendered with @dicebear/core@${PINS["@dicebear/core"]} and @dicebear/lorelei@${PINS["@dicebear/lorelei"]} from seed "${voice}"`, "CC0-1.0");
   }
   writeFileSync(join(out, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`);
-  console.log(`drew ${Object.keys(manifest).filter((f) => f.endsWith(".svg")).length} faces`);
+  process.stdout.write(`drew ${Object.keys(manifest).filter((f) => f.endsWith(".svg")).length} faces\n`);
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) await main(process.argv.slice(2));

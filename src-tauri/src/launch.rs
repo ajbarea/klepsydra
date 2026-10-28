@@ -1,6 +1,6 @@
 //! The one place klepsydra starts a process: wsl.exe, from a click, running
 //! ~/.claude/klepsydra-launch.sh to start a session, bring a session's tmux
-//! window forward, or end or interrupt it. Each call is logged to `fleet.log`.
+//! window forward, or end or interrupt it. Each call is logged.
 
 use std::collections::HashSet;
 use std::sync::Mutex;
@@ -360,7 +360,7 @@ fn wrapup_timed_out() -> String {
     )
 }
 
-/// `fleet.log`'s line for one call: its verb, how long it took and its outcome.
+/// The log's line for one call: its verb, how long it took and its outcome.
 fn call_line(verb: &str, took: Duration, r: &Result<String, String>) -> String {
     let secs = took.as_secs_f64();
     match r {
@@ -369,17 +369,40 @@ fn call_line(verb: &str, took: Duration, r: &Result<String, String>) -> String {
     }
 }
 
-/// Run `f`, a call named `verb`, and log it with `call_line`.
+/// A call's level: info when it worked; warn when WSL did not answer in
+/// time, since the call may still land; error when it failed.
+fn call_level(r: &Result<String, String>) -> log::Level {
+    match r {
+        Ok(_) => log::Level::Info,
+        Err(e)
+            if [
+                timed_out(),
+                jump_timed_out(),
+                pane_timed_out(),
+                wrapup_timed_out(),
+            ]
+            .contains(e) =>
+        {
+            log::Level::Warn
+        }
+        Err(_) => log::Level::Error,
+    }
+}
+
+/// Run `f`, a call named `verb` for session `session` if it has one, and log
+/// it with `call_line` at `call_level`.
 fn logged<T>(
-    app: &tauri::AppHandle,
     verb: &str,
+    session: Option<&str>,
     f: impl FnOnce() -> Result<T, String>,
 ) -> Result<T, String> {
     let started = std::time::Instant::now();
     let r = f();
-    if let Some(dir) = crate::klepsydra_dir(app) {
-        let said = r.as_ref().map(|_| String::new()).map_err(String::clone);
-        crate::fleet::log_line(&dir, &call_line(verb, started.elapsed(), &said));
+    let said = r.as_ref().map(|_| String::new()).map_err(String::clone);
+    let (level, line) = (call_level(&said), call_line(verb, started.elapsed(), &said));
+    match session {
+        Some(id) => log::log!(level, session_id = id; "{line}"),
+        None => log::log!(level, "{line}"),
     }
     r
 }
@@ -439,7 +462,7 @@ fn run(_args: &[String], _wait: Duration, _timed_out: fn() -> String) -> Result<
 pub fn tmux_jump(app: &tauri::AppHandle, id: &str, t: &Target) -> Result<String, String> {
     let args = pane_args(t, PaneVerb::Jump)?;
     jump_with(&app.state::<JumpFlight>(), id, |wait, said| {
-        logged(app, PaneVerb::Jump.word(), || run(&args, wait, said))
+        logged(PaneVerb::Jump.word(), Some(id), || run(&args, wait, said))
     })
 }
 
@@ -463,7 +486,9 @@ async fn to_pane(app: tauri::AppHandle, id: String, verb: PaneVerb) -> Result<St
     let args = pane_args(&target, verb)?;
     tauri::async_runtime::spawn_blocking(move || {
         pane_gated(&app.state::<PaneFlight>(), &id, || {
-            logged(&app, verb.word(), || run(&args, TIMEOUT, pane_timed_out))
+            logged(verb.word(), Some(&id), || {
+                run(&args, TIMEOUT, pane_timed_out)
+            })
         })
     })
     .await
@@ -534,7 +559,7 @@ pub async fn start_wrapup(
                 .and_then(|t| pane_args(t, PaneVerb::Wrapup))
                 .map_err(failed)?;
             pane_gated(&app.state::<PaneFlight>(), id, || {
-                logged(&app, PaneVerb::Wrapup.word(), || {
+                logged(PaneVerb::Wrapup.word(), Some(id), || {
                     run(&args, TIMEOUT, wrapup_timed_out)
                 })
             })
@@ -604,7 +629,7 @@ pub async fn launch_session(app: tauri::AppHandle) -> Result<String, String> {
     let (_, args) = launch_plan(&prefs)?;
     tauri::async_runtime::spawn_blocking(move || {
         gated(&app.state::<InFlight>(), || {
-            logged(&app, "launch", || run(&args, TIMEOUT, timed_out))
+            logged("launch", None, || run(&args, TIMEOUT, timed_out))
         })
     })
     .await
@@ -917,6 +942,30 @@ mod tests {
             call_line("launch", ms(15_003), &Err("WSL did not answer.".into())),
             "wsl launch: failed in 15.00 s: WSL did not answer."
         );
+    }
+
+    #[test]
+    fn a_call_logs_info_when_it_worked_warn_when_wsl_was_late_and_error_when_it_failed() {
+        assert_eq!(call_level(&Ok("x".into())), log::Level::Info);
+        for late in [
+            timed_out(),
+            jump_timed_out(),
+            pane_timed_out(),
+            wrapup_timed_out(),
+        ] {
+            assert_eq!(call_level(&Err(late.clone())), log::Level::Warn, "{late}");
+        }
+        for failed in [
+            "Could not start C:\\Windows\\System32\\wsl.exe: access denied",
+            "wsl.exe exited with exit code: 1.",
+            "WSL did not answer.",
+        ] {
+            assert_eq!(
+                call_level(&Err(failed.into())),
+                log::Level::Error,
+                "{failed}"
+            );
+        }
     }
 
     #[test]

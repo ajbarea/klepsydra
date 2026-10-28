@@ -48,9 +48,6 @@ pub const LIMITS: Limits = Limits {
 const BACKOFF_FIRST: Duration = Duration::from_millis(10);
 const BACKOFF_MAX: Duration = Duration::from_secs(1);
 
-/// What became of one request, for the log.
-pub type Log = Arc<dyn Fn(String) + Send + Sync>;
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Signal {
     Metrics,
@@ -113,10 +110,16 @@ fn admit(h: &Head, bound: SocketAddr) -> Result<Signal, StatusCode> {
 }
 
 /// Count one body into the ledger and save it. Bad JSON is a 400.
-fn ingest(signal: Signal, body: &[u8], ledger: &Shared, log: &Log) -> StatusCode {
-    let Ok(value) = serde_json::from_slice::<serde_json::Value>(body) else {
-        log(format!("otel: dropped a {signal:?} body that is not JSON"));
-        return StatusCode::BAD_REQUEST;
+fn ingest(signal: Signal, body: &[u8], ledger: &Shared, bound: SocketAddr) -> StatusCode {
+    let value = match serde_json::from_slice::<serde_json::Value>(body) {
+        Ok(v) => v,
+        Err(e) => {
+            log::warn!(
+                "otel: dropped a {signal:?} body of {} bytes on {bound} that is not OTLP/HTTP JSON: {e}",
+                body.len()
+            );
+            return StatusCode::BAD_REQUEST;
+        }
     };
     let now = unix_now();
     let mut l = lock(ledger);
@@ -125,15 +128,16 @@ fn ingest(signal: Signal, body: &[u8], ledger: &Shared, log: &Log) -> StatusCode
         Signal::Logs => l.record_events(&otel::logs(&value), now),
     };
     if tally.no_session > 0 || tally.future > 0 {
-        log(format!(
-            "otel: dropped {} points with no session.id, {} dated ahead",
-            tally.no_session, tally.future
-        ));
+        log::warn!(
+            "otel: dropped {} {signal:?} points with no session.id, {} dated ahead of now",
+            tally.no_session,
+            tally.future
+        );
     }
     // A seeded baseline is saved too, or a restart counts its total again.
     if tally.counted > 0 || tally.seeded > 0 {
         if let Err(e) = l.save() {
-            log(format!("otel: ledger not saved: {e}"));
+            log::error!("otel: ledger not saved to disk: {e}");
         }
     }
     StatusCode::OK
@@ -162,7 +166,6 @@ async fn handle(
     bound: SocketAddr,
     body_timeout: Duration,
     ledger: Shared,
-    log: Log,
 ) -> Result<Response<Full<Bytes>>, Infallible> {
     let header = |name| req.headers().get(name).and_then(|v| v.to_str().ok());
     let head = Head {
@@ -188,7 +191,7 @@ async fn handle(
         }
         Ok(Err(_)) => return Ok(reply(StatusCode::BAD_REQUEST)),
     };
-    Ok(reply(ingest(signal, &body, &ledger, &log)))
+    Ok(reply(ingest(signal, &body, &ledger, bound)))
 }
 
 /// The pause after another accept error in a row.
@@ -266,15 +269,14 @@ pub(crate) fn bind(addr: SocketAddrV4) -> std::io::Result<TcpListener> {
 /// Bind `addr` now, so a port in use is reported to the caller, then serve
 /// on a thread of its own for as long as the process runs. Returns the
 /// address actually bound.
-pub fn spawn(addr: SocketAddrV4, ledger: Shared, log: Log) -> std::io::Result<SocketAddr> {
-    spawn_with(addr, LIMITS, ledger, log)
+pub fn spawn(addr: SocketAddrV4, ledger: Shared) -> std::io::Result<SocketAddr> {
+    spawn_with(addr, LIMITS, ledger)
 }
 
 pub fn spawn_with(
     addr: SocketAddrV4,
     limits: Limits,
     ledger: Shared,
-    log: Log,
 ) -> std::io::Result<SocketAddr> {
     let std_listener = bind(addr)?;
     std_listener.set_nonblocking(true)?;
@@ -289,7 +291,10 @@ pub fn spawn_with(
             runtime.block_on(async move {
                 let listener = match tokio::net::TcpListener::from_std(std_listener) {
                     Ok(l) => l,
-                    Err(e) => return log(format!("otel: receiver stopped: {e}")),
+                    Err(e) => {
+                        log::error!("otel: receiver on {bound} stopped; token counts stop until klepsydra restarts: {e}");
+                        return;
+                    }
                 };
                 let slots = Arc::new(Semaphore::new(limits.connections));
                 let mut pause = Duration::ZERO;
@@ -304,17 +309,17 @@ pub fn spawn_with(
                         }
                         Err(e) => {
                             if pause.is_zero() {
-                                log(format!("otel: accept failed: {e}"));
+                                log::warn!("otel: accept on {bound} failed; retrying: {e}");
                             }
                             pause = backoff(pause);
                             tokio::time::sleep(pause).await;
                             continue;
                         }
                     };
-                    let (ledger, log) = (ledger.clone(), log.clone());
+                    let ledger = ledger.clone();
                     tokio::spawn(async move {
                         let service = service_fn(move |req| {
-                            handle(req, bound, limits.body, ledger.clone(), log.clone())
+                            handle(req, bound, limits.body, ledger.clone())
                         });
                         let _ = http1::Builder::new()
                             .timer(TokioTimer::new())
@@ -480,7 +485,6 @@ mod tests {
     struct Server {
         addr: SocketAddr,
         ledger: Shared,
-        lines: Arc<Mutex<Vec<String>>>,
     }
 
     fn server() -> Server {
@@ -495,16 +499,10 @@ mod tests {
 
     fn server_with(limits: Limits) -> Server {
         let ledger: Shared = Arc::new(Mutex::new(Ledger::in_memory(unix_now())));
-        let lines = Arc::new(Mutex::new(Vec::new()));
-        let sink = lines.clone();
-        let log: Log = Arc::new(move |l| sink.lock().unwrap().push(l));
+        crate::logfmt::captured::start();
         let any_port = SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0);
-        let addr = spawn_with(any_port, limits, ledger.clone(), log).unwrap();
-        Server {
-            addr,
-            ledger,
-            lines,
-        }
+        let addr = spawn_with(any_port, limits, ledger.clone()).unwrap();
+        Server { addr, ledger }
     }
 
     /// Send raw request bytes; the status code of the answer. The body goes
@@ -556,8 +554,7 @@ mod tests {
     fn an_address_beyond_loopback_is_refused_before_any_bind() {
         for ip in [Ipv4Addr::new(0, 0, 0, 0), Ipv4Addr::new(10, 0, 0, 1)] {
             let ledger: Shared = Arc::new(Mutex::new(Ledger::in_memory(unix_now())));
-            let log: Log = Arc::new(|_| {});
-            let err = spawn(SocketAddrV4::new(ip, 0), ledger, log).unwrap_err();
+            let err = spawn(SocketAddrV4::new(ip, 0), ledger).unwrap_err();
             assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput, "{ip}");
         }
     }
@@ -568,8 +565,7 @@ mod tests {
         let SocketAddr::V4(taken) = s.addr else {
             unreachable!()
         };
-        let log: Log = Arc::new(|_| {});
-        let again = spawn(taken, s.ledger.clone(), log);
+        let again = spawn(taken, s.ledger.clone());
         assert!(again.is_err());
     }
 
@@ -603,9 +599,8 @@ mod tests {
         let utc = || jiff::tz::TimeZone::UTC;
         let (l, _) = Ledger::open(dir.0.clone(), unix_now(), utc());
         let ledger: Shared = Arc::new(Mutex::new(l));
-        let log: Log = Arc::new(|_| {});
         let any = SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0);
-        let addr = spawn_with(any, LIMITS, ledger, log).unwrap();
+        let addr = spawn_with(any, LIMITS, ledger).unwrap();
         let now = unix_now() as u64;
         let ns = |n: u64| (n * 1_000_000_000).to_string();
         let body = serde_json::json!({"resourceMetrics":[{"scopeMetrics":[{"metrics":[{"name":"claude_code.token.usage","sum":{"aggregationTemporality":2,"dataPoints":[{"attributes":[{"key":"session.id","value":{"stringValue":"s1"}},{"key":"type","value":{"stringValue":"input"}}],"startTimeUnixNano":ns(now - 60),"timeUnixNano":ns(now),"asDouble":7}]}}]}]}]});
@@ -688,12 +683,15 @@ mod tests {
         let _ = g.write_all(b"\x00\x01garbage\r\n\r\n");
         drop(g);
         assert_eq!(post(s.addr, "/v1/metrics", b"{}"), 200);
-        assert!(s
-            .lines
-            .lock()
-            .unwrap()
-            .iter()
-            .any(|l| l.contains("not JSON")));
+        // This server's own line: other tests' servers log to the same place.
+        let said =
+            crate::logfmt::captured::with(&format!("on {} that is not OTLP/HTTP JSON", s.addr));
+        assert!(
+            said.iter()
+                .any(|(level, target, _)| *level == log::Level::Warn
+                    && target == "klepsydra_fleet::receiver"),
+            "{said:?}"
+        );
     }
 
     /// A POST of `body` with these header lines (no Content-Length).
@@ -794,8 +792,7 @@ mod tests {
         bind_wildcard(&other, 0).unwrap();
         let port = other.local_addr().unwrap().as_socket_ipv4().unwrap().port();
         let ledger: Shared = Arc::new(Mutex::new(Ledger::in_memory(unix_now())));
-        let log: Log = Arc::new(|_| {});
-        let ours = spawn(SocketAddrV4::new(Ipv4Addr::LOCALHOST, port), ledger, log);
+        let ours = spawn(SocketAddrV4::new(Ipv4Addr::LOCALHOST, port), ledger);
         assert!(
             ours.is_err(),
             "bound beside a socket holding the wildcard port"

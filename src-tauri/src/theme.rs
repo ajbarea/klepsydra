@@ -41,18 +41,14 @@ pub fn theme_subscribe(
         .subscribe(window.label(), crate::fleet::Webview(on_message));
 }
 
-/// Save the theme chosen on the wall and apply it everywhere; an error (also
-/// logged) when prefs.json did not take it, so the wall can say why it
-/// wears the saved theme again.
+/// Save the theme chosen on the wall and apply it everywhere; an error when
+/// prefs.json did not take it, so the wall can say why it wears the saved
+/// theme again. The wall logs the refusal; `write_pref` logs its cause.
 #[tauri::command]
 pub fn set_theme(app: AppHandle, theme: String) -> Result<(), String> {
     crate::write_pref(&app, theme::KEY, theme::value(&theme)?);
     publish(&app);
-    let confirmed = theme::confirm(&theme, saved(&app));
-    if let (Err(e), Some(dir)) = (&confirmed, crate::klepsydra_dir(&app)) {
-        crate::fleet::log_line(&dir, &format!("theme: {e}"));
-    }
-    confirmed
+    theme::confirm(&theme, saved(&app))
 }
 
 /// Write theme `id`'s file to the data folder's `cast.json`, where the fleet
@@ -70,7 +66,10 @@ fn write_hook_cast(app: &AppHandle, id: &str) {
         None => Err(std::io::Error::other("not in the bundle")),
     };
     if let Err(e) = written {
-        crate::fleet::log_line(&dir, &format!("theme: no hook cast for {id}: {e}"));
+        log::error!(
+            "theme: {} not written for theme {id}, so tmux windows keep the last theme's colours: {e}",
+            theme::HOOK_CAST
+        );
     }
 }
 

@@ -1,0 +1,3 @@
+# Tests may print and dbg! while they run; shipped code logs through `log`.
+allow-print-in-tests = true
+allow-dbg-in-tests = true

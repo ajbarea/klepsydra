@@ -9,6 +9,20 @@ themes). #120 (Claude-orange trial) closed: AJ scrapped it.
 Installed build: d0e4a46 (10-28 06:17), with the fleet and launch hooks
 copied to `~/.claude/` (backups `.bak-20261028-0616`).
 
+## In flight: feat/logging (techne logging standard)
+- Rust logs through `log` + tauri-plugin-log: JSON lines in
+  `<data dir>/logs/klepsydra.log` (1 MiB, 4 rotated kept), plain on stderr,
+  `KLEPSYDRA_LOG` sets the level; `fleet.log` and `problem_log.rs` are gone.
+  The fleet crate's receiver and phone server log through the facade.
+- Pages log through `src/log.js` (`plugin:log|log`, granted in
+  `src-tauri/capabilities/default.json`). Lints: workspace clippy print
+  lints, Biome `noConsole`, ruff `G`/`LOG`, all in CI.
+- Verified: every gate in `.claude/skill-context.md`, `logcheck.py` clean,
+  and Windows proof runs (own KLEPSYDRA_DIR and WEBVIEW2_USER_DATA_FOLDER,
+  KLEPSYDRA_NO_AUTOSTART) logging a malformed session file, the taken OTLP
+  port, and the wall's refused set_theme as a `webview::fleet/wall.js` line
+  (driven over WebView2's DevTools port). Review rounds 1 to 3 are addressed.
+
 ## Open
 - #134: "end: the process is gone" fails now and then in full gate runs
   only (twice in #136's); the suite's tmux config keeps a failed pane

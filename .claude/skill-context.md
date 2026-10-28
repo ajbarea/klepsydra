@@ -49,6 +49,10 @@ belong here.
 
 - `shellcheck hooks/*.sh statusline/*.sh scripts/*.sh` (in WSL:
   `uvx --from shellcheck-py shellcheck ...`)
+- `npm run lint`: Biome with only `noConsole` on (warn and error allowed);
+  the pages log through `src/log.js`. `src/vendor/` is not linted.
+- `uvx ruff check`: the Python scripts, with ruff's `G` and `LOG` families
+  (`pyproject.toml`).
 - `cd src-tauri && cargo fmt --all --check`
 - `cd src-tauri && cargo clippy --workspace --all-targets -- -D warnings`
   (in WSL: `-p klepsydra-fleet`, and `bash scripts/build-windows.sh --check`)
@@ -151,8 +155,9 @@ files belong to: the JS guards scan hooks and scripts too.
 - workflows: `.github/workflows/ci.yml` (two jobs), and
   `.github/workflows/dependabot-auto-merge.yml`.
 - `Gauge logic + statusLine hook` runs on `ubuntu-latest` with Node 24: unit
-  tests, both hooks' tests, the release memory check's tests, shellcheck, and
-  the install-directory guard.
+  tests, both hooks' tests, the release memory check's tests, shellcheck,
+  Biome and ruff (the logging lints, as annotations), and the
+  install-directory guard.
 - `Rust (fmt + clippy, <os>)` is a matrix over `windows-latest` and
   `ubuntu-latest`, for the reason in `## repo`; the Linux leg installs the
   WebKitGTK and tray headers first. Clippy is `-D warnings`, so a warning is a

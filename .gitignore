@@ -8,3 +8,7 @@ COMMITS.md
 # per-session git worktrees
 .claude/worktrees/
 __pycache__/
+
+# logs (the app's own go to its data dir)
+*.log
+logs/

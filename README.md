@@ -677,7 +677,7 @@ failing WSL interop call takes to report, then says "WSL did not answer within
 slow Jump holds only its own card: other cards' Jumps and **+ New session**
 still run. A Jump that has to open the terminal tab waits up to 10 seconds for
 another click opening one, then says so. Each `wsl.exe` call adds a line to
-`fleet.log` with its verb, how long it took and its outcome.
+the [log](#logs) with its verb, its session, how long it took and its outcome.
 
 `launch_dir` and `launch_distro` are keys in `prefs.json`, in the app data dir.
 `launch_dir` defaults to `~`. `launch_distro` defaults to WSL's default
@@ -848,8 +848,7 @@ modification time is more than a day old.
 
 The overlay starts no process and asks WSL for nothing: it watches the folder
 and re-reads it every 5 seconds. A file it cannot read is skipped and logged
-once to `fleet.log` in the app data dir, and the rest of the fleet still
-shows.
+once to the [log](#logs), and the rest of the fleet still shows.
 
 ### Ping
 
@@ -882,7 +881,7 @@ of the wall on `127.0.0.1:8318`, and Tailscale Serve carries it to your phone
 over your tailnet. Unticked (the default), nothing listens.
 
 1. Tick **Phone wall** in klepsydra's tray menu. The box stays ticked across
-   restarts; if the port is taken it stays clear and `fleet.log` says why.
+   restarts; if the port is taken it stays clear and the [log](#logs) says why.
 2. Install Tailscale on the PC and on the iPhone, signed in to the same
    tailnet.
 3. In the Tailscale admin console, under DNS, enable **HTTPS certificates**
@@ -980,7 +979,7 @@ separately.
   from their next export, so that session can read low; it reads partial.
 - **When the overlay is off.** Claude Code's exports fail quietly and the
   session carries on; that stretch is not counted. If something else holds
-  port 4318, klepsydra logs it to `fleet.log` and exposes it in the fleet
+  port 4318, klepsydra logs it to the [log](#logs) and exposes it in the fleet
   view as `receiver`, and the drawer shows it. It runs without
   the ledger and tries the port again every 30 seconds.
 - **Partial sessions.** While the receiver listens, the overlay stamps
@@ -1219,6 +1218,40 @@ shows up here only once a terminal on this machine makes a request.
 window is active. The hook treats that as "nothing to say" and leaves the
 previous file alone rather than overwriting it with blanks.
 
+## Logs
+
+<!-- budget: 340 words -->
+The Rust shell and the pages (the gauge and the wall) write to one file,
+`logs/klepsydra.log` in the app data dir: on Windows
+`%LOCALAPPDATA%\dev.ajsoftworks.klepsydra\logs`, Tauri's log folder, and
+under `KLEPSYDRA_DIR` when that is set, so a test copy keeps its own. Each
+line is one JSON object: `ts` (UTC), `level`, `target` (the module that
+logged, `webview::<file>` for a page), `message` (a page's error with its
+stack), and `session_id` when the event is about one session. The first
+line of a run names the log file and the data folder; paths in later lines
+are relative to that folder, and a file of your own (the queue file) is named
+by its file name alone:
+
+```json
+{"ts":"2026-10-28T15:04:05.123Z","level":"WARN","target":"klepsydra::fleet","message":"skipped fleet/0b1e5b4e-6f0e-4bbd-9d3c-2a7a1c0f9e11.json: malformed: EOF while parsing a value at line 1 column 59","session_id":"0b1e5b4e-6f0e-4bbd-9d3c-2a7a1c0f9e11"}
+```
+
+`jq 'select(.level == "ERROR")' klepsydra.log` lists the failures. Past 1 MiB
+the file is renamed `klepsydra_<UTC time>.log` and a new one starts; the four
+newest renamed files are kept, so the logs stay under 5 MiB. While another
+program holds `klepsydra.log` open without delete sharing, that rename fails:
+tauri-plugin-log 2.10.1 then holds new lines in memory, tries the rename again
+with each line, and writes them all once it succeeds. A page failure that
+repeats on every poll or snapshot is logged the first time, then at the 10th,
+100th and 1000th. A run from a terminal also prints the same events as plain
+lines on stderr.
+
+The level is info: a call that worked, a server that started. Set
+`KLEPSYDRA_LOG` to `error`, `warn`, `info`, `debug` or `trace` before starting
+the app to change it; an unknown value is logged and info used. In a page,
+debug lines also need localStorage's `klepsydra.debug` set to `1`. Builds
+before the log moved wrote `fleet.log` in the app data dir; it can be deleted.
+
 ## Tests
 
 ```bash
@@ -1226,7 +1259,9 @@ bash statusline/test_statusline.sh       # usage hook and heartbeat, against rec
 bash hooks/test_fleet.sh                 # fleet hook: states, where, identity, pruning, gone, settings, window colours
 bash hooks/test_launch.sh                # launcher: new, jump, tab reuse, against a private tmux socket
 bash scripts/test_measure_memory.sh      # the release memory check
-node --test src/*.test.js                # ramp, countdown, reconciliation, fleet model, faces, guards
+node --test src/*.test.js                # ramp, countdown, reconciliation, fleet model, faces, guards, logger
+npm run lint                             # Biome: no console.log, info or debug; pages log through src/log.js
+uvx ruff check                           # the Python scripts, logging rules included
 (cd src-tauri && cargo test -p klepsydra-fleet)   # fleet reader, OTLP receiver, phone wall server and ledger
 bash scripts/build-windows.sh --check    # clippy and every Rust test, on Windows
 bash scripts/visual-check.sh             # screenshots every state, the strip and wall included
