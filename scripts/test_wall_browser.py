@@ -4072,10 +4072,16 @@ def ledger_reads_bounded(wall):
 def ledger_rolls_over_at_midnight(wall):
     """An open Ledger reads again just past local midnight with no snapshot
     to prompt it, even within 5 s of a snapshot's read, and again the next
-    night; after a sleep across midnight (the date moves, no timer fires) the
-    wall's next tick reads it; a shut one does not. The clock starts so the
-    wall's 15 s ticks fall at :07, :22, :37 and :52, so only the midnight
-    timer can read at 00:00:01."""
+    night. After a sleep across midnight (the date moves, no timer fires) the
+    wall's next tick reads it once, and the timer armed before the sleep
+    never reads again; a page coming back into view after another sleep reads
+    at once. A shut Ledger does not read.
+
+    The page loads at 23:59:22 and the clock is paused at 23:59:30, so real
+    time spent loading (up to 8 s) cannot move it. The wall's 15 s ticks then
+    fall within 3 s after :37, :52, :07 and :22, never at 00:00:00 to
+    00:00:02, so only the midnight timer can read there. After a
+    fast_forward the ticks restart from where it lands."""
     import datetime
     import time
 
@@ -4084,7 +4090,7 @@ def ledger_rolls_over_at_midnight(wall):
     snapshot = shifted(fixture, int(time.time()) - at)
     utc = datetime.UTC
     page = wall.browser.new_page(viewport={"width": 1920, "height": 1000}, timezone_id="UTC")
-    page.clock.install(time=datetime.datetime(2026, 10, 27, 23, 59, 37, tzinfo=utc))
+    page.clock.install(time=datetime.datetime(2026, 10, 27, 23, 59, 22, tzinfo=utc))
     page.add_init_script(TAURI_STUB % json.dumps(snapshot))
     page.add_init_script("""(() => {
       const inv = window.__TAURI__.core.invoke;
@@ -4099,9 +4105,10 @@ def ledger_rolls_over_at_midnight(wall):
     page.wait_for_function("document.getElementById('wall').children.length > 0")
     page.click("#ledger-open")
     page.wait_for_selector(LEDGER_READ)
-    reads = lambda: page.evaluate("window.__reads")
+    page.clock.pause_at(datetime.datetime(2026, 10, 27, 23, 59, 30, tzinfo=utc))
+    reads = lambda: page.evaluate("window.__reads")  # noqa: E731
     opened = reads()
-    page.clock.run_for(21000)  # 23:59:58, no snapshot: no read
+    page.clock.run_for(28000)  # 23:59:58, no snapshot: no read
     quiet = reads()
     page.evaluate("(s) => window.__channel.onmessage(s)", snapshot)  # its read is due at once
     page.wait_for_timeout(100)
@@ -4119,16 +4126,31 @@ def ledger_rolls_over_at_midnight(wall):
     page.clock.run_for(16000)  # one tick
     page.wait_for_timeout(100)
     woke = reads()
+    page.clock.fast_forward("14:59:40")  # 23:59:56 that night
+    page.clock.run_for(10000)  # past 00:00:01
+    page.wait_for_timeout(100)
+    third = reads()
+    page.clock.fast_forward("10:00:00")  # when the timer armed before the sleep was due
+    page.wait_for_timeout(100)
+    no_stray = reads()
+    page.clock.set_system_time(datetime.datetime(2026, 11, 1, 8, 0, 0, tzinfo=utc))  # slept again, the page hidden
+    page.evaluate("""() => {
+      Object.defineProperty(document, 'hidden', { value: false, configurable: true });
+      document.dispatchEvent(new Event('visibilitychange'));
+    }""")
+    page.wait_for_timeout(100)
+    shown = reads()
     page.click("#ledger-open")
     page.wait_for_function(LEDGER_SHUT)
     page.clock.fast_forward("24:00:00")
     page.wait_for_timeout(100)
     shut = reads()
+    got = [opened, quiet, snapped, rolled, eve, second, woke, third, no_stray, shown, shut]
     wall.check(
-        [opened, quiet, snapped, rolled, eve, second, woke, shut] == [1, 1, 2, 3, 3, 4, 5, 5],
-        "an open Ledger reads again just past each midnight, not held back by the 5 s bound, and after a sleep across one; a shut one does not",
-        {"opened": opened, "23:59:58": quiet, "snapshot": snapped, "00:00:02": rolled, "next 23:59:58": eve,
-         "next 00:00:02": second, "woke 09:00": woke, "a day shut": shut},
+        got == [1, 1, 2, 3, 3, 4, 5, 6, 6, 7, 7],
+        "an open Ledger reads again just past each midnight, not held back by the 5 s bound, once after a sleep across one and when shown again; a shut one does not",
+        dict(zip(["opened", "23:59:58", "snapshot", "00:00:02", "next 23:59:58", "next 00:00:02", "woke 09:00",
+                  "that midnight", "no stray read", "shown after a sleep", "a day shut"], got, strict=True)),
     )
     page.close()
 
