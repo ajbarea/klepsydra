@@ -8,6 +8,7 @@ const TICK_MS = 15_000;  // how often the countdown re-renders between reads
 const ZOOM_SHOWN_MS = 800;   // how long the new size stays on screen
 const ZOOM_SAVE_MS = 400;    // settle time before the size is written to disk
 const LAYOUT_WAIT_MS = 500;  // longest the first draw waits for the saved layout
+const FIRST_THEME_MS = 1500; // longest the strip's first draw waits for the app to name the theme
 
 const inTauri = Boolean(window.__TAURI_INTERNALS__ ?? window.__TAURI__);
 
@@ -266,9 +267,36 @@ function receiveFleet(message) {
 async function startFleet() {
   try {
     const { mountStrip } = await import("./fleet/strip.js");
-    const { subscribe } = await import("./fleet/feed.js");
+    const { subscribe, subscribeTheme } = await import("./fleet/feed.js");
+    const { THEME_WAIT_MS, loadTheme, loadedTheme } = await import("./fleet/theme.js");
+    let theme = loadedTheme(null);
+    let wanted = null;
+    // The strip first draws in the theme worn, never another first: it waits
+    // for the app to name it, at most FIRST_THEME_MS (else Kourai), then for
+    // its file, at most THEME_WAIT_MS, after which it draws in Kourai and
+    // turns when the file comes.
+    let ready;
+    let noWord = 0;
+    const first = new Promise((r) => {
+      ready = r;
+      noWord = setTimeout(r, FIRST_THEME_MS);
+    });
+    subscribeTheme((id) => {
+      clearTimeout(noWord);
+      setTimeout(ready, THEME_WAIT_MS); // a file that never answers holds the first draw no longer
+      wanted = id;
+      loadTheme(id)
+        .then((next) => {
+          if (wanted !== id || next === theme) return;
+          theme = next;
+          render();
+        }, () => {})
+        .finally(ready);
+    });
+    await first;
     drawStrip = mountStrip(stripEl, {
       open: (id) => inTauri && window.__TAURI__.core.invoke("open_wall", { focus: id }).catch(() => {}),
+      cast: () => theme,
     });
     subscribe(receiveFleet);
   } catch {

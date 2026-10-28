@@ -49,6 +49,9 @@ pub struct QueueView {
     pub missing: bool,
     /// Who keeps the file, as `queue.json` names them.
     pub kept_by: Option<String>,
+    /// The keryx voice of the session that set the file, as the fleet hook
+    /// recorded it: the panel names that character in the theme worn.
+    pub kept_voice: Option<String>,
 }
 
 /// The queue file's path: the `queue_path` pref when set, else
@@ -77,6 +80,19 @@ fn absolute(v: &Value, source: &str) -> Result<PathBuf, String> {
 pub struct Kept {
     pub path: Result<PathBuf, String>,
     pub by: Option<String>,
+    pub voice: Option<String>,
+}
+
+/// Whether `v` is a keryx voice id as the hook records one ("am_michael"):
+/// lower-case letters and digits around one `_`, at most 40 characters.
+fn is_voice(v: &str) -> bool {
+    v.len() <= 40
+        && v.split_once('_').is_some_and(|(a, b)| {
+            !a.is_empty()
+                && !b.is_empty()
+                && (a.bytes().chain(b.bytes()))
+                    .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit())
+        })
 }
 
 /// The `queue.json` in the data folder `dir`, or None when there is none. One
@@ -88,6 +104,7 @@ pub fn kept(dir: Option<&Path>) -> Option<Kept> {
     let broken = |why: &str| Kept {
         path: Err(format!("{KEEPER} {why}, so the queue path is unknown.")),
         by: None,
+        voice: None,
     };
     let text = match read_text(&file, KEEPER_MAX_BYTES) {
         Ok(t) => t,
@@ -104,11 +121,16 @@ pub fn kept(dir: Option<&Path>) -> Option<Kept> {
         .filter(|b| !b.is_empty() && b.chars().count() <= BY_MAX_CHARS)
         .filter(|b| !b.chars().any(char::is_control))
         .map(str::to_owned);
+    let voice = map
+        .get("voice")
+        .and_then(Value::as_str)
+        .filter(|v| is_voice(v))
+        .map(str::to_owned);
     let path = match map.get("path") {
         Some(v) => absolute(v, &format!("path in {KEEPER}")),
         None => Err(format!("{KEEPER} names no path.")),
     };
-    Some(Kept { path, by })
+    Some(Kept { path, by, voice })
 }
 
 /// Write `queue.json` in `dir` naming `path`, kept by `by`: a new file renamed
@@ -160,6 +182,7 @@ pub fn view(path: &Result<PathBuf, String>) -> QueueView {
                 problem: Some(why.clone()),
                 missing: false,
                 kept_by: None,
+                kept_voice: None,
             }
         }
     };
@@ -181,6 +204,7 @@ pub fn view(path: &Result<PathBuf, String>) -> QueueView {
         problem,
         missing,
         kept_by: None,
+        kept_voice: None,
     }
 }
 
@@ -228,8 +252,9 @@ pub struct Follower {
     watched: Option<(PathBuf, Option<u64>)>,
     /// The path the last step read, so a changed one is read at once.
     followed: Option<Result<PathBuf, String>>,
-    /// Who keeps the file, for the views `step` returns.
+    /// Who keeps the file, and their voice, for the views `step` returns.
     kept_by: Option<String>,
+    kept_voice: Option<String>,
     last: Option<QueueView>,
 }
 
@@ -243,15 +268,18 @@ impl Default for Follower {
             watched: None,
             followed: None,
             kept_by: None,
+            kept_voice: None,
             last: None,
         }
     }
 }
 
 impl Follower {
-    /// Name who keeps the file in the views from the next `step` on.
-    pub fn keep(&mut self, by: Option<String>) {
+    /// Name who keeps the file, and their voice, in the views from the next
+    /// `step` on.
+    pub fn keep(&mut self, by: Option<String>, voice: Option<String>) {
         self.kept_by = by;
+        self.kept_voice = voice;
     }
 
     /// Watch `path`'s folder, once it exists and anew when the path or the
@@ -299,6 +327,7 @@ impl Follower {
         }
         let next = QueueView {
             kept_by: self.kept_by.clone(),
+            kept_voice: self.kept_voice.clone(),
             ..view(path)
         };
         if self.last.as_ref() == Some(&next) {
@@ -355,6 +384,47 @@ mod tests {
     }
 
     #[test]
+    fn queue_json_carries_the_keepers_voice_when_the_hook_recorded_one() {
+        let dir = Scratch::new("queue-voice");
+        let path = dir.0.join("q.md");
+        let write = |voice: Value| {
+            let body = json!({ "path": path, "by": "Heph (orchestrator)", "voice": voice });
+            std::fs::write(dir.0.join(KEEPER), body.to_string()).unwrap();
+        };
+        write(json!("am_michael"));
+        let k = kept(Some(&dir.0)).unwrap();
+        assert_eq!(
+            (k.by.as_deref(), k.voice.as_deref()),
+            (Some("Heph (orchestrator)"), Some("am_michael"))
+        );
+        for bad in [
+            json!(null),
+            json!(""),
+            json!("Hermes"),
+            json!("am_michael; x"),
+            json!("am-michael"),
+            json!(7),
+            json!("af_heart(0.5)+af_bella(0.5)"),
+            json!(format!("a_{}", "x".repeat(40))),
+        ] {
+            write(bad.clone());
+            assert_eq!(kept(Some(&dir.0)).unwrap().voice, None, "{bad}");
+        }
+        let mut f = Follower::default();
+        f.keep(Some("Heph".into()), Some("am_michael".into()));
+        let v = f.step(&Ok(path.clone()), Duration::ZERO).unwrap();
+        assert_eq!(
+            (v.kept_by.as_deref(), v.kept_voice.as_deref()),
+            (Some("Heph"), Some("am_michael"))
+        );
+        f.keep(Some("Heph".into()), None);
+        let v = f
+            .step(&Ok(path), Duration::ZERO)
+            .expect("a dropped voice is a new view");
+        assert_eq!(v.kept_voice, None);
+    }
+
+    #[test]
     fn queue_json_names_the_file_and_who_keeps_it() {
         let dir = Scratch::new("queue-kept");
         assert_eq!(kept(None), None, "no data folder");
@@ -365,7 +435,8 @@ mod tests {
             kept(Some(&dir.0)),
             Some(Kept {
                 path: Ok(file.clone()),
-                by: Some("Hermes (orchestrator)".into())
+                by: Some("Hermes (orchestrator)".into()),
+                voice: None,
             })
         );
         assert!(!dir.0.join("queue.json.tmp").exists(), "renamed over");
@@ -427,7 +498,7 @@ mod tests {
         let mut f = Follower::default();
         let first = f.step(&path, Duration::ZERO).unwrap();
         assert_eq!(first.kept_by, None);
-        f.keep(Some("Hermes".into()));
+        f.keep(Some("Hermes".into()), None);
         let named = f
             .step(&path, Duration::ZERO)
             .expect("a new keeper is a new view");

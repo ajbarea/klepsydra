@@ -29,7 +29,7 @@ check() {
   fi
 }
 
-cp "$here/../src/fleet/cast.json" "$work/test-cast.json"
+cp "$here/../src/fleet/themes/kourai.json" "$work/test-cast.json"
 # shellcheck source=hooks/klepsydra-fleet.sh
 source "$hook"
 
@@ -1315,7 +1315,7 @@ check "all three kept their bytes" "$(cat "$g5/fleet/$A1.json"; jq -c .v "$g5/fl
 echo "window colours"
 
 printf '{"holders":{"500:8717628":{"voice":"am_michael","seen":1},"700:9000000":{"voice":"af_heart(0.5)+af_bella(0.5)","seen":1}}}\n' >"$work/win-voices.json"
-cast_src="$here/../src/fleet/cast.json"
+cast_src="$here/../src/fleet/themes/kourai.json"
 fsock=$work/sock/klepsydra
 C1=aaaaaaaa-2222-4333-8444-555555555551
 C2=aaaaaaaa-2222-4333-8444-555555555552
@@ -1357,6 +1357,29 @@ for bad in "#DA8C20; run-shell x" $'#DA8C20\n' "red" "#DA8C2" 5; do
 done
 cfire session-start.json $C4 KLEPSYDRA_CAST="$work/no-such-cast.json"
 check "no cast: no tmux call" "$(cat "$tlog")" ""
+
+# The overlay keeps the theme worn in its data dir (cast.json, written on
+# every switch): the hook reads it there before ~/.claude's copy, and a cast
+# newer than a session's file recolours that window at its next event, once.
+themes="$here/../src/fleet/themes"
+accent_of() { jq -r --arg v am_michael '.characters[$v].accent' "$themes/$1.json"; }
+cp "$themes/professions.json" "$dir/cast.json"
+touch -d '-20 min' "$dir/cast.json"
+cfire session-start.json $C1 KLEPSYDRA_CAST=
+check "the data dir's cast colours a start" "$(head -1 "$tlog")" "-S $fsock set-option -w -t %3 window-status-style fg=$(accent_of professions)"
+cfire user-prompt.json $C1 KLEPSYDRA_CAST=
+check "an older cast on a later event: no tmux call" "$(cat "$tlog")" ""
+cp "$themes/dicebear.json" "$dir/cast.json"
+touch -d '-10 min' "$dir/cast.json"
+touch -d '-15 min' "$dir/fleet/$C1.json"
+cfire user-prompt.json $C1 KLEPSYDRA_CAST=
+check "a switch recolours at the next event" "$(head -1 "$tlog")" "-S $fsock set-option -w -t %3 window-status-style fg=$(accent_of dicebear)"
+cfire user-prompt.json $C1 KLEPSYDRA_CAST=
+check "and only once" "$(cat "$tlog")" ""
+rm -f -- "${dir:?}/cast.json"
+mkdir -p "$work/home/.claude" && cp "$themes/kourai.json" "$work/home/.claude/klepsydra-cast.json"
+cfire session-start.json $C2 KLEPSYDRA_CAST= HOME="$work/home"
+check "without the overlay's cast, ~/.claude's" "$(head -1 "$tlog")" "-S $fsock set-option -w -t %3 window-status-style fg=$(accent_of kourai)"
 
 # A tmux that fails changes nothing the hook says or does.
 echo fail >"$work/tmux.mode"
@@ -1589,10 +1612,23 @@ mkdir -p "$qproc/sys/kernel" "$work/wslbin"
 queue() { KLEPSYDRA_DIR=$qdir KLEPSYDRA_PROC=$qproc bash "$hook" queue "$@"; }
 out=$(queue set /home/aj/queue.md --by "Hermes (orchestrator)"); rc=$?
 check "queue set: says so" "$rc|$out" "0|The Queue panel now reads /home/aj/queue.md, kept by Hermes (orchestrator)."
-check "queue set: path and keeper" "$(jq -c . "$qdir/queue.json")" '{"path":"/home/aj/queue.md","by":"Hermes (orchestrator)"}'
+check "queue set: path and keeper" "$(jq -c . "$qdir/queue.json")" '{"path":"/home/aj/queue.md","by":"Hermes (orchestrator)","voice":null}'
 check "queue set: no temp file left" "$(find "$qdir" -name '*.tmp' | wc -l)" "0"
 queue set /home/aj/other.md >/dev/null
-check "queue set: no --by keeps no one" "$(jq -c . "$qdir/queue.json")" '{"path":"/home/aj/other.md","by":null}'
+check "queue set: no --by keeps no one" "$(jq -c . "$qdir/queue.json")" '{"path":"/home/aj/other.md","by":null,"voice":null}'
+# A keeper typed with --by is kept as typed. Without --by, run from a Claude
+# Code session keryx holds a voice for, the hook names the keeper itself: the
+# voice, and that character's name in the theme worn, which the panel follows.
+insession() { KLEPSYDRA_DIR=$qdir KLEPSYDRA_PROC="$work/proc" KLEPSYDRA_PID=${PID:-600} KERYX_VOICES="$work/win-voices.json" KLEPSYDRA_CAST="$here/../src/fleet/themes/${THEME:-kourai}.json" bash "$hook" queue set "$@"; }
+insession /home/aj/q.md --by "Heph (orchestrator)" >/dev/null
+check "queue set --by in a session: as typed, no voice" "$(jq -c '[.by, .voice]' "$qdir/queue.json")" '["Heph (orchestrator)",null]'
+out=$(insession /home/aj/q.md)
+check "queue set in a session: the hook names the keeper" "$(jq -c '[.by, .voice]' "$qdir/queue.json")" '["Hephaestus","am_michael"]'
+check "queue set in a session: and says so" "$out" "The Queue panel now reads /home/aj/q.md, kept by Hephaestus."
+out=$(THEME=professions insession /home/aj/q.md)
+check "queue set in a session: named in the theme worn" "$(jq -c '[.by, .voice]' "$qdir/queue.json")|$out" '["Foreman","am_michael"]|The Queue panel now reads /home/aj/q.md, kept by Foreman.'
+out=$(PID=810 insession /home/aj/q.md)
+check "queue set outside any session: no keeper" "$(jq -c '[.by, .voice]' "$qdir/queue.json")|$out" '[null,null]|The Queue panel now reads /home/aj/q.md.'
 ( cd "$work" && queue set rel.md >/dev/null )
 check "queue set: a relative path is made absolute" "$(jq -r .path "$qdir/queue.json")" "$work/rel.md"
 check "queue show: prints queue.json" "$(queue show)" "$(cat "$qdir/queue.json")"

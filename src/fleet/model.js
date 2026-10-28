@@ -3,7 +3,7 @@
 
 import { markerWidth, mix, mixOklab, readableOn } from "./contrast.js";
 import { medallion } from "./medallion.js";
-import { castAccent, castCharacter, voiceName } from "./cast.js";
+import { castAccent, castCharacter, castFiles, voiceName } from "./cast.js";
 import { ledgerLine } from "./ledger.js";
 
 export { voiceName };
@@ -35,7 +35,6 @@ const isQuiet = (s) => s.status in QUIET && s.quiet_since != null;
 // A card says when it last changed once that is older than this.
 export const SHOW_UPDATED_AFTER_MS = 5 * 60 * 1000;
 
-const FACES = "fleet/faces";
 // NaN for a missing or unusable time, which the age formatters print as "unknown".
 const ageMs = (atSec, nowMs) =>
   typeof atSec === "number" && Number.isFinite(atSec) ? nowMs - atSec * 1000 : NaN;
@@ -82,16 +81,17 @@ export function statusParts(s, nowMs, age = shortAge) {
 const basename = (path) => (typeof path === "string" ? path.replace(/\/+$/, "").split("/").pop() : "");
 
 /**
- * Who a session is, from its identity alone, never its state: the kourai
- * character cast for its keryx voice; else a medallion bearing the initial of
- * the voice's name, or of the session's name or folder when it has no voice,
- * in a metal picked by the voice, or by the session id when it has none.
+ * Who a session is, from its identity alone, never its state: the character
+ * the theme (`cast`) casts for its keryx voice; else a medallion bearing the
+ * initial of the voice's name, or of the session's name or folder when it has
+ * no voice, in a metal picked by the voice, or by the session id when it has
+ * none. A character whose face files cannot be named is a medallion too.
  */
 export function identity(s, cast) {
   const voice = typeof s.voice === "string" && s.voice ? s.voice : null;
   const character = castCharacter(voice, cast);
-  if (character) {
-    const base = `${FACES}/kourai/${character.face}`;
+  const base = character && castFiles(character, cast);
+  if (base) {
     const accent = castAccent(character);
     const head = character.head;
     const placed = Array.isArray(head) && head.length === 3 && head.every((v) => typeof v === "number" && v > 0 && v < 1);

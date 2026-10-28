@@ -8,6 +8,7 @@ mod phone;
 #[cfg(windows)]
 mod ping;
 mod split;
+mod theme;
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -102,7 +103,8 @@ fn read_usage(app: tauri::AppHandle) -> serde_json::Value {
 }
 
 /// Small settings the gauge keeps for itself: the zoom level, the saved home,
-/// where the window last sat, the wall's card density and split mode.
+/// where the window last sat, the wall's card density, split mode and
+/// the character theme.
 fn prefs_path(app: &tauri::AppHandle) -> Option<PathBuf> {
     klepsydra_dir(app).map(|d| d.join("prefs.json"))
 }
@@ -797,6 +799,8 @@ fn with_state<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R
         .manage(launch::PaneFlight::default())
         .manage(launch::JumpFlight::default())
         .manage(phone::Phone::default())
+        .manage(theme::Themes::default())
+        .manage(theme::ThemeMenu::default())
 }
 
 fn main() {
@@ -837,6 +841,8 @@ fn main() {
             launch::cancel_wrapup,
             fleet::get_wall_density,
             fleet::set_wall_density,
+            theme::theme_subscribe,
+            theme::set_theme,
             jump::jump_to_terminal,
             launch::launch_session,
             launch::get_launch_dir
@@ -910,6 +916,7 @@ fn main() {
             let phone_on = phone::set(app.handle(), phone::saved(app.handle()));
             let phone_item =
                 CheckMenuItem::with_id(app, "phone", "Phone wall", true, phone_on, None::<&str>)?;
+            let characters = theme::menu(app.handle())?;
             let queue_item =
                 MenuItem::with_id(app, "queue", "Choose queue file...", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
@@ -922,6 +929,7 @@ fn main() {
                     &compact_item,
                     &start_item,
                     &phone_item,
+                    &characters,
                     &queue_item,
                     &PredefinedMenuItem::separator(app)?,
                     &quit,
@@ -980,7 +988,9 @@ fn main() {
                     }
                     "queue" => fleet::choose_queue(app),
                     "quit" => app.exit(0),
-                    _ => {}
+                    other => {
+                        theme::on_menu(app, other);
+                    }
                 })
                 .build(app)?;
 

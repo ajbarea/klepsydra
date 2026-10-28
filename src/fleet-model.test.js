@@ -14,6 +14,7 @@ const NOW = 1_792_353_000_000; // fixed clock, ms
 const ago = (s) => NOW / 1000 - s;
 const statusLine = (s, nowMs) => statusParts(s, nowMs).join(" \u00b7 ");
 const CAST = {
+  faces: "kourai",
   characters: { am_michael: { name: "Hephaestus", face: "hephaestus" } },
 };
 const session = (over = {}) => ({
@@ -197,7 +198,7 @@ test("identity: a cast voice is its character", () => {
 });
 
 test("identity: a character brings its epithet, its figure placed by its head, and its full portrait", () => {
-  const cast = JSON.parse(readFileSync(new URL("./fleet/cast.json", import.meta.url), "utf8"));
+  const cast = JSON.parse(readFileSync(new URL("./fleet/themes/kourai.json", import.meta.url), "utf8"));
   const who = identity(session(), cast);
   assert.equal(who.epithet, "Master of the Forge");
   assert.equal(who.full, "fleet/faces/kourai/hephaestus-full.webp");
@@ -357,12 +358,12 @@ test("a card holds what the wall shows", () => {
 });
 
 test("the model reads the cast the app ships", () => {
-  const cast = JSON.parse(readFileSync(new URL("./fleet/cast.json", import.meta.url), "utf8"));
+  const cast = JSON.parse(readFileSync(new URL("./fleet/themes/kourai.json", import.meta.url), "utf8"));
   assert.equal(identity(session(), cast).name, "Hephaestus");
 });
 
 test("a kourai card carries its accent; any other card has none", () => {
-  const cast = JSON.parse(readFileSync(new URL("./fleet/cast.json", import.meta.url), "utf8"));
+  const cast = JSON.parse(readFileSync(new URL("./fleet/themes/kourai.json", import.meta.url), "utf8"));
   assert.equal(card(session(), cast, NOW).accent, "#DA8C20");
   assert.equal(card(session({ voice: "aletheia" }), CAST, NOW).accent, null, "no character, no accent");
   for (const voice of ["bm_lewis", null, "af_heart(0.5)+af_bella(0.5)"]) {
@@ -373,7 +374,7 @@ test("a kourai card carries its accent; any other card has none", () => {
 });
 
 test("a character's card carries its epithet ink at 4.5:1 on the nameplate; a medallion's carries none", () => {
-  const cast = JSON.parse(readFileSync(new URL("./fleet/cast.json", import.meta.url), "utf8"));
+  const cast = JSON.parse(readFileSync(new URL("./fleet/themes/kourai.json", import.meta.url), "utf8"));
   for (const voice of Object.keys(cast.characters)) {
     const c = card(session({ voice }), cast, NOW);
     assert.ok(contrast(c.accentInk, BAND.plate) >= 4.5, `${c.name}: ${c.accentInk}`);
@@ -385,7 +386,7 @@ test("a character's card carries its epithet ink at 4.5:1 on the nameplate; a me
 });
 
 test("the Open terminal button: fill only for needs-you, a marker for a character, plain for a medallion, nothing when off", () => {
-  const cast = JSON.parse(readFileSync(new URL("./fleet/cast.json", import.meta.url), "utf8"));
+  const cast = JSON.parse(readFileSync(new URL("./fleet/themes/kourai.json", import.meta.url), "utf8"));
   const style = (o, c = cast) => {
     const k = card(session(o), c, NOW);
     return [k.jumpKind, k.jumpMark];
@@ -545,7 +546,7 @@ test("prompt free shows only once the turn ended with work out, never for a suba
 });
 
 test("the crew is in the accessible name, and the ring takes the character's colour or none", () => {
-  const cast = { characters: { am_michael: { name: "Hermes", face: "hermes", accent: "#3a7bd5" } } };
+  const cast = { faces: "kourai", characters: { am_michael: { name: "Hermes", face: "hermes", accent: "#3a7bd5" } } };
   const s = session({ status: "working", reason: "background", status_at: ago(120), background: { agents: 2, shells: 1 } });
   assert.equal(accessibleName(s, cast, NOW), "Hermes, 2 agents and 1 shell running in background, working, prompt free, 2 minutes");
   assert.equal(card(s, cast, NOW).label, accessibleName(s, cast, NOW));

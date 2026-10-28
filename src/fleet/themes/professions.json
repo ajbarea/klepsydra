@@ -1,0 +1,23 @@
+{
+  "v": 1,
+  "label": "Professions",
+  "faces": "professions",
+  "keeper": "af_nicole",
+  "characters": {
+    "af_heart": {"name": "Counsellor", "face": "counsellor", "accent": "#E1627C", "gender": "f", "epithet": "Looks After the Team"},
+    "am_michael": {"name": "Foreman", "face": "foreman", "accent": "#FF8D70", "gender": "m", "epithet": "Runs the Workshop"},
+    "bf_emma": {"name": "Engineer", "face": "engineer", "accent": "#FFC16A", "gender": "f", "epithet": "Writes the Code"},
+    "af_bella": {"name": "Reviewer", "face": "reviewer", "accent": "#C28500", "gender": "f", "epithet": "Reviews the Style"},
+    "bf_isabella": {"name": "Archivist", "face": "archivist", "accent": "#C5BD1E", "gender": "f", "epithet": "Keeps the Record"},
+    "am_puck": {"name": "Guide", "face": "guide", "accent": "#BBF37C", "gender": "m", "epithet": "Shows the Way"},
+    "af_aoede": {"name": "Inspector", "face": "inspector", "accent": "#1AAD63", "gender": "f", "epithet": "Tests the Work"},
+    "af_kore": {"name": "Editor", "face": "editor", "accent": "#00D8B7", "gender": "f", "epithet": "Checks the Wording"},
+    "af_sarah": {"name": "Architect", "face": "architect", "accent": "#00FCFF", "gender": "f", "epithet": "Plans the Build"},
+    "af_nova": {"name": "Researcher", "face": "researcher", "accent": "#00A3DC", "gender": "f", "epithet": "Checks the Facts"},
+    "bm_george": {"name": "Timekeeper", "face": "timekeeper", "accent": "#5EBDFF", "gender": "m", "epithet": "Keeps the Hours"},
+    "am_fenrir": {"name": "Guard", "face": "guard", "accent": "#BDD5FF", "gender": "m", "epithet": "Keeps Watch"},
+    "bm_fable": {"name": "Messenger", "face": "messenger", "accent": "#9F79E6", "gender": "m", "epithet": "Carries the News"},
+    "af_alloy": {"name": "Mentor", "face": "mentor", "accent": "#E692F4", "gender": "f", "epithet": "Helps Things Grow"},
+    "af_nicole": {"name": "Librarian", "face": "librarian", "accent": "#FFB1F4", "gender": "f", "epithet": "Keeps the Quiet"}
+  }
+}

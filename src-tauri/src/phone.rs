@@ -70,6 +70,7 @@ pub fn set(app: &AppHandle, on: bool) -> bool {
     let server_log: Log = Arc::new(move |l: String| log(&handle, &l));
     match Server::spawn(ADDR, assets, clips, Some(usage), server_log) {
         Ok(server) => {
+            server.set_theme(crate::theme::saved(app));
             app.state::<crate::fleet::Fleet>()
                 .with_latest(|v| server.publish(v));
             log(app, &format!("phone: wall serving on {ADDR}"));
@@ -88,6 +89,15 @@ pub fn publish(app: &AppHandle, snapshot: &serde_json::Value) {
     if let Ok(slot) = app.state::<Phone>().0.lock() {
         if let Some(server) = slot.as_ref() {
             server.publish(snapshot);
+        }
+    }
+}
+
+/// Have a running server's phones wear theme `id`.
+pub fn set_theme(app: &AppHandle, id: &str) {
+    if let Ok(slot) = app.state::<Phone>().0.lock() {
+        if let Some(server) = slot.as_ref() {
+            server.set_theme(id);
         }
     }
 }

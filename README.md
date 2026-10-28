@@ -123,14 +123,15 @@ profile starts without your settings, plugins or skills until you copy them.
 ## Install
 
 **1. Publish the numbers and the sessions.** Copy the hooks, the launcher and
-its tmux settings, the cast (the voice-to-colour table the hook reads), and
+its tmux settings, the cast (the voice-to-colour table the hook reads until
+the overlay writes the theme worn to its data dir), and
 point Claude Code at the hooks. Starting sessions from
 the wall needs tmux 3.3 or later (`remain-on-exit failed`); Ubuntu 24.04's 3.4
 is the tested version.
 
 ```bash
 cp statusline/klepsydra-statusline.sh hooks/klepsydra-fleet.sh hooks/klepsydra-launch.sh hooks/klepsydra-tmux.conf ~/.claude/
-cp src/fleet/cast.json ~/.claude/klepsydra-cast.json
+cp src/fleet/themes/kourai.json ~/.claude/klepsydra-cast.json
 chmod +x ~/.claude/klepsydra-statusline.sh ~/.claude/klepsydra-fleet.sh ~/.claude/klepsydra-launch.sh
 ```
 
@@ -685,9 +686,10 @@ the tmux status bar and a 4 px left marker on its card's **Open terminal**
 button (6 px for the two accents, Aletheia and Dokimasia, that fall under 3:1 on the button at rest or on hover), so the
 gold marker leads to the gold window. The fleet hook sets the window's colours
 (`window-status-style`, and `window-status-current-style` with black or white
-text, whichever reads better) at the session's start and whenever its keryx
-voice changes, only on the `klepsydra` socket and only from
-`~/.claude/klepsydra-cast.json`. The button is neutral by default, so emphasis
+text, whichever reads better) at the session's start, whenever its keryx
+voice changes and at its first event after a theme switch, only on the
+`klepsydra` socket, from the theme worn (`<app data dir>/cast.json`, else
+`~/.claude/klepsydra-cast.json`). The button is neutral by default, so emphasis
 follows urgency and not whichever character a session got. The one filled
 button is on a card that needs you (also the quiet "needs you?"): amber, black
 text at 9:1, no marker. A session whose voice is no character gets the plain
@@ -697,8 +699,9 @@ Windows Terminal tabs opened by hand are not coloured.
 
 To see the wall without sessions, serve the repo root (for example
 `python3 -m http.server`) and open `/src/wall.html?demo`; `?demo=8` shows
-its first eight sessions, `?demo&empty` the empty wall and `?demo&ended` the
-wall with only an ended card.
+its first eight sessions, `?demo&empty` the empty wall, `?demo&ended` the
+wall with only an ended card, and `&theme=professions` or `&theme=dicebear`
+another character theme.
 
 A session's face follows its keryx voice, so it stays the same while the
 session moves between repos. Fifteen voices, all fourteen in keryx's rotation pool
@@ -756,6 +759,73 @@ newer figures are cut from their painted backdrops by `scripts/cutout-portraits.
 (rembg's `isnet-anime` model, Apache-2.0), run once; its output is committed. The medallion is
 an SVG drawn in `src/fleet/medallion.js`. The overlay loads no library and
 fetches nothing.
+
+### Character themes
+
+The cast wears one of three themes, all full and equal, chosen in the tray's
+**Characters** menu or the wall's Characters picker over its density choice.
+The choice is kept in `prefs.json` (`"theme"`) and applies at once, without a
+restart: every card's name, epithet, face and colour (Comfortable and
+Compact), the strip beside the gauge, an open portrait, the Ledger's
+names, the Queue's keeper, the empty wall's keeper, the phone wall and the
+tray's tick. The wall names the theme on `<html data-theme="...">`, as a CSS
+colour theme does; each card's colour is its own `--accent`.
+
+- **Kourai** (the default): the kourai portraits above.
+- **Professions**: plain roles a newcomer reads at once (Foreman, Engineer,
+  Architect, Inspector, Reviewer, Archivist, Researcher, Librarian, and so
+  on), each a role glyph on a disc in its colour, with a line of what they
+  do ("Writes the Code").
+- **DiceBear**: the Lorelei avatars klepsydra wore before the portraits, as a
+  cast of their own (Max, "Runs the Show"; Ivy, "Ships the Code"; Luna,
+  "Keeps the Peace").
+
+Each theme is one data file, `src/fleet/themes/<id>.json`, shaped like the
+others and keyed by the same keryx voice ids; a page loads Kourai's with
+itself and another the first time it is worn, so a voice is one character in
+every theme and the speaking waves and which session keeps a face never
+change. A test holds every theme to every voice. Only Kourai has
+half-figures, so in the other two a card keeps its round face on the band
+and the portrait button opens the face drawn large. The empty wall's keeper
+is each theme's `af_nicole` (Hesychia, the Librarian, Luna). Picking with
+the arrow keys wears each theme at once and saves only where the picker
+rests.
+
+Each theme has its own colour per voice; Kourai keeps kourai's canon. The
+Professions and DiceBear colours are 15 OKLCH hues 24 degrees apart over
+three lightness steps (0.66, 0.78, 0.90), so neighbours differ in lightness
+as well as hue, which a colour-blind eye still sees. Tests hold each colour
+to 3:1 or more on the card, the plinth and the button at rest and on hover
+(WCAG 2.2, 1.4.11), each name, task and epithet on the band to 4.5:1 under
+every light (1.4.3), every pair apart in OKLab by 0.08 or more, and by
+0.015 or more as seen with protanopia, deuteranopia or tritanopia (Machado,
+Oliveira and Fernandes 2009); the closest is DiceBear's 0.016 under
+deuteranopia. Kourai's canon colours are kept as they are, though their
+nearest pair under tritanopia is 0.014, under that bar. A colour never
+carries a character alone: the name and face do (1.4.1).
+
+The tmux windows take the theme's colours too. The overlay writes the theme
+worn to `<app data dir>/cast.json` at start and on every switch; the fleet
+hook reads it before `~/.claude/klepsydra-cast.json`, and a session's window
+takes the new colour at its next hook event.
+
+The Professions and DiceBear faces are WebP files rendered once by
+`scripts/render-themes.sh` and committed, each with its `LICENSES.json`
+entry; the app calls no avatar service. The script installs
+`lucide-static@1.55.0`, `@dicebear/core@9.4.2` and `@dicebear/lorelei@9.4.2`,
+and everything they pull in, from the lockfile in `scripts/render-themes/`.
+
+Credits: the Professions glyphs are from [Lucide](https://lucide.dev)
+(ISC licence, Copyright (c) Lucide Icons and Contributors), except the
+Guide's compass, the Researcher's magnifier and the Timekeeper's clock,
+which Lucide derives from [Feather](https://feathericons.com) (MIT licence,
+Copyright (c) 2013-present Cole Bemis). Both licences ship beside the faces
+in `src/fleet/faces/professions/LICENSE-lucide.txt`. The DiceBear
+faces are [DiceBear](https://www.dicebear.com)'s Lorelei style, a remix of
+[Lorelei](https://www.dicebear.com/styles/lorelei/) by Lisa Wischofsky,
+released under CC0 1.0 (no attribution required; credited here anyway);
+the DiceBear library is MIT. Licences per style:
+[dicebear.com/licenses](https://www.dicebear.com/licenses/).
 
 The fleet hook writes `<app data dir>/fleet/<session>.json`: the state, where
 the session works, the first 300 characters of your last prompt and of the
@@ -1003,7 +1073,11 @@ and the panel names the file and says who keeps it ("Kept by Hermes
 yours to read. `queue show` prints the current choice and `queue clear` goes
 back to the default. Both write `queue.json` in klepsydra's data folder (under
 WSL the path goes across as a Windows one), the newest choice wins, and it
-applies within five seconds. `--by` takes a name of 1 to 80 characters. A
+applies within five seconds. `--by` takes a name of 1 to 80 characters,
+always shown as typed. Without `--by`, from a session keryx holds a voice
+for, the hook names the keeper itself (the voice's character in the theme
+worn, "kept by Hephaestus"), and the panel renames it when the theme
+changes. A
 file kept inside WSL (`\\wsl.localhost\...`) sends Windows no change
 notices, so its edits show on the five-second re-read rather than at once;
 one on a Windows drive (`/mnt/c/...`) shows within a second or two. An older `queue_path` in `prefs.json` still

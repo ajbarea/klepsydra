@@ -1,6 +1,7 @@
 // The Queue panel: the queue file rendered live beside the wall, on the
 // shared side panel (sidepanel.js: shut to a tab, docked, or full). Every
 // word from the file goes in through queue.js as text.
+import { keeperName } from "./theme.js";
 import { follow } from "../ipc.js";
 import { inTauri, served } from "./feed.js";
 import { present, queueLabel } from "./queue.js";
@@ -50,16 +51,26 @@ export function followQueue(onMessage) {
 
 /**
  * Wire the panel to `dialog`, toggled by `button` and reopened from `tab`,
- * sharing `edge` with the other side panels. `onLayout()` runs on every
- * layout; `onResized()` once at the end of a drag of the separator.
+ * sharing `edge` with the other side panels. `cast()` is the character theme
+ * worn, which names the file's keeper; `onLayout()` runs on every layout;
+ * `onResized()` once at the end of a drag of the separator.
  */
-export function createQueuePanel({ dialog, button, tab, edge, onLayout, onResized }) {
+export function createQueuePanel({ dialog, button, tab, edge, cast = () => null, onLayout, onResized }) {
   const panel = createSidePanel({ name: "queue", dialog, button, tab, edge, onLayout, onResized });
   const { body, content, title, announce } = panel;
   const pathLine = dialog.querySelector(".queue-path");
   const keeper = dialog.querySelector(".queue-kept");
   const problem = dialog.querySelector(".queue-problem");
   const opened = new Map(); // section title -> open, as the viewer left it
+  let keptBy = null; // the keeper as queue.json names them, and the voice the hook recorded
+  let keptVoice = null;
+  /** "Kept by" the keeper: the character their voice is in the theme worn, else the name as typed. */
+  const paintKeeper = () => {
+    const name = keeperName(keptBy, keptVoice, cast());
+    keeper.hidden = !name;
+    keeper.textContent = name ? `Kept by ${name}` : "";
+    keeper.title = keptBy && name !== keptBy ? `Set as ${keptBy}` : "";
+  };
 
   addEventListener("keydown", (e) => {
     if (served || !toggleKey(e) || panel.behind()) return;
@@ -108,8 +119,9 @@ export function createQueuePanel({ dialog, button, tab, edge, onLayout, onResize
     }
     pathLine.textContent = view.path ?? "";
     pathLine.title = view.path ?? "";
-    keeper.hidden = !view.kept_by;
-    keeper.textContent = view.kept_by ? `Kept by ${view.kept_by}` : "";
+    keptBy = view.kept_by ?? null;
+    keptVoice = view.kept_voice ?? null;
+    paintKeeper();
     problem.hidden = !shown.problem;
     problem.classList.toggle("empty", shown.empty === true);
     problem.textContent = shown.problem ?? "";
@@ -124,5 +136,7 @@ export function createQueuePanel({ dialog, button, tab, edge, onLayout, onResize
   }
 
   followQueue(paint);
+  /** A theme switch renames the keeper; nothing is read again. */
+  panel.retheme = paintKeeper;
   return panel;
 }

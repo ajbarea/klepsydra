@@ -2,7 +2,7 @@
 # Five new kourai portraits: generation briefs
 
 **Done.** The art exists as `assets/portraits/{chronos,argos,hermes,elpis,hesychia}.jpg`
-(1024 px), `scripts/cut-portraits.py` cuts the faces, and `cast.json` holds all
+(1024 px), `scripts/cut-portraits.py` cuts the faces, and `src/fleet/themes/kourai.json` holds all
 fifteen characters. Hermes's accent is the burnt orange `#E07B39`, not the
 `#E69F00` below, which is the needs-you amber. The briefs are kept as the record.
 

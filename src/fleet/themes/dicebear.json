@@ -1,0 +1,23 @@
+{
+  "v": 1,
+  "label": "DiceBear",
+  "faces": "dicebear",
+  "keeper": "af_nicole",
+  "characters": {
+    "af_heart": {"name": "Rosa", "face": "af-heart", "accent": "#00D7CE", "gender": "f", "epithet": "Cheers Everyone On"},
+    "am_michael": {"name": "Max", "face": "am-michael", "accent": "#00F8FF", "gender": "m", "epithet": "Runs the Show"},
+    "bf_emma": {"name": "Ivy", "face": "bf-emma", "accent": "#009DE7", "gender": "f", "epithet": "Ships the Code"},
+    "af_bella": {"name": "Bea", "face": "af-bella", "accent": "#7EB5FF", "gender": "f", "epithet": "Spots the Rough Edges"},
+    "bf_isabella": {"name": "Wren", "face": "bf-isabella", "accent": "#D5CDFF", "gender": "f", "epithet": "Writes It All Down"},
+    "am_puck": {"name": "Pip", "face": "am-puck", "accent": "#B073DA", "gender": "m", "epithet": "Knows a Shortcut"},
+    "af_aoede": {"name": "Tess", "face": "af-aoede", "accent": "#F48EE1", "gender": "f", "epithet": "Breaks It First"},
+    "af_kore": {"name": "Kit", "face": "af-kore", "accent": "#FFAFDE", "gender": "f", "epithet": "Says It Plainly"},
+    "af_sarah": {"name": "Nora", "face": "af-sarah", "accent": "#E36364", "gender": "f", "epithet": "Draws the Plan"},
+    "af_nova": {"name": "Ada", "face": "af-nova", "accent": "#FF9358", "gender": "f", "epithet": "Checks the Sources"},
+    "bm_george": {"name": "Hugo", "face": "bm-george", "accent": "#FFC958", "gender": "m", "epithet": "Minds the Clock"},
+    "am_fenrir": {"name": "Rex", "face": "am-fenrir", "accent": "#B38E00", "gender": "m", "epithet": "Keeps an Eye Out"},
+    "bm_fable": {"name": "Ollie", "face": "bm-fable", "accent": "#AFC43A", "gender": "m", "epithet": "Spreads the Word"},
+    "af_alloy": {"name": "Sunny", "face": "af-alloy", "accent": "#9EF994", "gender": "f", "epithet": "Keeps Spirits Up"},
+    "af_nicole": {"name": "Luna", "face": "af-nicole", "accent": "#00B07B", "gender": "f", "epithet": "Keeps the Peace"}
+  }
+}

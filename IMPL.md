@@ -7,22 +7,32 @@ fleet folder keeps the last snapshot), #104 (#98 ledger attribution), #105
 build: 1ad1405 (10-25 21:48). Not yet live: #89 split mode, #93, and all of
 the above.
 
-## This branch: fix/ask-line (#124)
-- Slice: (1) a cut needs-you line loses its middle, not the tool's name:
-  `askParts(reason)` in `model.js` splits it into lead and keep (an MCP
-  tool keeps its name past the last `__`); wall.css puts the ellipsis on the
-  lead (`.ask-lead`, `.ask-keep`; `.lead` is the bar's class). (2) Phone
-  wall: `fulltext.js` decides which cards cut text short; those show a
-  **Full text** disclosure (`data-phone`, `aria-expanded`) that unfolds
-  every cut line and names the "+N" repos (`alsoPast`), view state only.
-  Auto's probe copy has no `#wall` id, so it measures open cards shut.
-- Done: code, node tests (`fleet-fulltext.test.js`, model, phone guard),
-  browser cases (`ask_keeps_the_tool_name`, `long_tool_stays_in_card`;
-  phone 390 and 700 px), mutation checks, README, skill-context, shots in
-  fleet-briefing `shots/2026-10-27/klepsydra-124-*`.
-- Next: PR #140 review (do not merge or deploy unasked); deploy with the rest.
-- Verify: the gate list below; `scripts/test_wall_browser.py
-  ask_keeps_the_tool_name long_tool_stays_in_card` runs the wall cases alone.
+## This branch: feat/character-themes (#135)
+- Done: three character themes as data, `src/fleet/themes/{kourai,
+  professions,dicebear}.json` (cast.json moved to kourai.json, characters
+  unchanged, plus `label`, `faces`, `keeper`). `theme.js` is the one loader;
+  `identity` builds face paths from the theme's `faces` folder
+  (`castFiles`, plain path segments only, else the medallion). The wall,
+  the strip (gauge window) and the ledger drawer read the theme worn; the
+  wall's picker sits over the density choice, in the bar's top padding
+  (no row width, so the bar never grows); the tray has a Characters submenu.
+  Rust: `klepsydra_fleet::theme` (ids, default, prefs read and refusal),
+  app `theme.rs` (`theme_subscribe`, `set_theme`, tray ticks), the phone
+  server's `set_theme` puts `theme` on every snapshot, and the `phone`
+  example reads it from `$KLEPSYDRA_DIR/prefs.json`.
+- Faces: Professions are Lucide glyphs (lucide-static 1.55.0, ISC) on the
+  character's accent disc; DiceBear are Lorelei (9.4.2, CC0) seeded by voice
+  id with the pre-#37 backgrounds. Rendered by `scripts/render-themes.sh`
+  (WebP 96/192/512) and committed with LICENSES entries.
+- Round 3 (AJ's verdict: three full, equal themes): DiceBear has its own
+  names and epithets; Professions and DiceBear their own accents (OKLCH,
+  15 hues x 3 lightness steps; AA and simulated-CVD tests); html[data-theme];
+  the Ledger repaints without a read; the Queue's keeper is renamed; the
+  picker saves where it rests (THEME_SAVE_MS); the app writes the theme to
+  `<data dir>/cast.json` and the hook recolours a window once after a switch.
+- Next: review, ready PR, merge on green; Heph deploys.
+- Verify: the gate list below, both browser suites (theme cases at the end
+  of each), `cargo test -p klepsydra-fleet theme`.
 
 ## Waits on AJ
 - Deploy (his yes): `scripts/build-windows.sh` from main, stop the exe,

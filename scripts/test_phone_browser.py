@@ -10,7 +10,8 @@ the card) opening claude.ai, a second snapshot arriving over /events, the
 service worker and manifest installing, fleet.json cut to the wall's fields, a
 write refused, a wrap-up request and the empty state shown with none of their
 buttons, /wall.html sent to the root, and a stream refused at the cap opened
-again. The usage-limit gauges, from readings in the server's accounts folder:
+again. The character theme saved in the server's prefs.json, and a switch
+followed live. The usage-limit gauges, from readings in the server's accounts folder:
 one per account and window in the gauge's order and words, opening the page
 and scrolling away under a sticky bar that six leave no taller than three, a
 new reading over /events, a stale one saying its age, none at all reading as
@@ -48,8 +49,19 @@ REMOTE = "https://claude.ai/code/session_01PLACEHOLDERphone"
 CLIP_ID = "3f1c0a52-7b1e-4c0e-9a55-2f6f0d1d7a10"
 DESKTOP = ", ".join([
     ".jump", ".clear", ".menu", "#new-session", "#ledger-open", ".chip", ".density", ".undo", ".end-confirm", "[data-act]",
-    "#wrapup-open", "#wrapup-stop", "#end-ready", "#start-session", "#clear-ended",
+    "#wrapup-open", "#wrapup-stop", "#end-ready", "#start-session", "#clear-ended", "#theme",
 ])
+THEMES = {t: json.loads((ROOT / f"src/fleet/themes/{t}.json").read_text()) for t in ("kourai", "professions", "dicebear")}
+# Each card's voice, name, face and accent, and the empty wall's keeper.
+LOOKS = """() => ({
+  cards: [...document.querySelectorAll('#wall .card')].map((c) => ({
+    key: c.dataset.key,
+    name: c.querySelector('.name').textContent,
+    face: c.querySelector('.face').getAttribute('src'),
+    accent: c.style.getPropertyValue('--accent'),
+  })),
+  keeper: document.querySelector('.keeper').getAttribute('src'),
+})"""
 
 
 class Run:
@@ -473,8 +485,119 @@ def main() -> int:
                 card = next(c for c in page.evaluate(FULL_TEXT) if c["key"] == key)
                 run.check(card["open"] and card["expanded"] == "true" and card["cut"] == [], "an open card stays open across a new snapshot", card)
 
-                # A new reading arrives over the stream; one three hours old says so.
+                # Characters (#135): the phone wears the theme saved in prefs.json
+                # and follows a switch live; names and faces change, accents never.
                 klepsydra = pathlib.Path(tmp) / "klepsydra"
+                voices = {s["session_id"]: s.get("voice") for s in json.loads(snapshot.read_text())["sessions"]}
+                looks = {}
+                # An open portrait follows the switch too.
+                page.locator('.card[data-key="demo-1-am_michael"] .look').tap()
+                wait_until(page, "document.getElementById('portrait').open", 5)
+                for theme in ("professions", "dicebear", "nonsense", "kourai"):
+                    want = theme if theme in THEMES else "kourai"
+                    tmp_prefs = klepsydra / "prefs.json.tmp"
+                    tmp_prefs.write_text(json.dumps({"zoom": 1, "theme": theme}))
+                    tmp_prefs.replace(klepsydra / "prefs.json")
+                    worn = wait_until(page, f"[...document.querySelectorAll('#wall .card .face')].some((f) => (f.getAttribute('src') || '').startsWith('fleet/faces/{want}/'))", 10)
+                    got = page.evaluate(LOOKS)
+                    cast = THEMES[want]["characters"]
+                    cast_cards = [c for c in got["cards"] if voices.get(c["key"]) in cast]
+                    names = all(c["name"] == cast[voices[c["key"]]]["name"] for c in cast_cards)
+                    faces = all(c["face"] == f"fleet/faces/{want}/{cast[voices[c['key']]]['face']}-192.webp" for c in cast_cards)
+                    faces = faces and all(c["accent"] == cast[voices[c["key"]]]["accent"] for c in cast_cards)
+                    run.check(worn and cast_cards and names and faces, f"the phone wears {theme!r} as {want}: each cast card's name, face and accent", got["cards"][:3])
+                    run.check(got["keeper"] == f"fleet/faces/{want}/{cast['af_nicole']['face']}-full.webp", f"{want}: the keeper is the theme's", got["keeper"])
+                    looks[theme] = got
+                    michael = THEMES[want]["characters"]["am_michael"]
+                    want_full = f"fleet/faces/{want}/{michael['face']}-full.webp"
+                    shown = wait_until(page, f"document.querySelector('#portrait .full').getAttribute('src') === '{want_full}' && document.getElementById('portrait-name').textContent", 5)
+                    run.check(shown == michael["name"] and page.evaluate("document.getElementById('portrait').open"),
+                              f"{want}: the open portrait shows the theme's {michael['name']}", shown)
+                page.keyboard.press("Escape")
+                wait_until(page, "!document.getElementById('portrait').open", 5)
+                plain = {t: [c["accent"] for c in v["cards"] if voices.get(c["key"]) not in THEMES["kourai"]["characters"]] for t, v in looks.items()}
+                run.check(len({json.dumps(a) for a in plain.values()}) == 1, "a card no theme casts keeps its look", plain)
+                keys = {t: [c["key"] for c in v["cards"]] for t, v in looks.items()}
+                run.check(len({json.dumps(k) for k in keys.values()}) == 1 and len(keys["kourai"]) == 16, "nor which cards show, or their order", keys)
+                # A phone opened with a theme saved paints its first card in that theme, no other first.
+                (klepsydra / "prefs.json.tmp").write_text(json.dumps({"theme": "dicebear"}))
+                (klepsydra / "prefs.json.tmp").replace(klepsydra / "prefs.json")
+                wait_until(page, "[...document.querySelectorAll('#wall .card .face')].some((f) => (f.getAttribute('src') || '').startsWith('fleet/faces/dicebear/'))", 10)
+                fresh = ctx.new_page()
+                fresh.add_init_script("""new MutationObserver((_, obs) => {
+                  const card = document.querySelector('#wall .card');
+                  if (!card || window.__first) return;
+                  window.__first = { key: card.dataset.key, name: card.querySelector('.name').textContent, face: card.querySelector('.face').getAttribute('src') };
+                  obs.disconnect();
+                }).observe(document, { childList: true, subtree: true });""")
+                fresh.goto(f"http://{addr}/")
+                wait_until(fresh, "document.getElementById('wall').children.length === 16", 15)
+                first = fresh.evaluate("window.__first")
+                ch = THEMES["dicebear"]["characters"].get(voices.get(first["key"])) if first else None
+                run.check(bool(ch) and first["name"] == ch["name"] and first["face"].startswith("fleet/faces/dicebear/"), "a phone opened in DiceBear paints its first card in DiceBear", first)
+                fresh.close()
+                # A theme file that never answers: the phone paints within THEME_WAIT_MS in
+                # the theme it wears, a later snapshot is not held behind it, and the
+                # theme takes over when the file comes.
+                wait_ms = int(re.search(r"THEME_WAIT_MS = (\d+)", (ROOT / "src/fleet/theme.js").read_text()).group(1))
+                # Its own context with no service worker: a worker would answer the held file.
+                stuck_ctx = browser.new_context(viewport={"width": 390, "height": 844}, device_scale_factor=3, is_mobile=True, has_touch=True, service_workers="block")
+                stuck = stuck_ctx.new_page()
+                held = []
+                stuck.route("**/fleet/themes/dicebear.json", lambda r: held.append(r))
+                t0 = time.monotonic()
+                stuck.goto(f"http://{addr}/")
+                shown = wait_until(stuck, "document.getElementById('wall').children.length === 16", wait_ms / 1000 + 4)
+                took = time.monotonic() - t0
+                face = stuck.evaluate("document.querySelector('#wall .card .face')?.getAttribute('src') ?? ''")
+                run.check(shown and held and took < wait_ms / 1000 + 2.5 and face.startswith("fleet/faces/kourai/"), f"a theme file that never answers: the phone paints in {took:.1f} s, in Kourai", [shown, took, face])
+                snapshot_file(snapshot, lambda f: f["sessions"].pop())
+                later = wait_until(stuck, "document.getElementById('wall').children.length === 15", 2)
+                run.check(later, "and a later snapshot is not held behind the theme's file", stuck.evaluate("document.getElementById('wall').children.length"))
+                for r in held:
+                    r.continue_()
+                turned = wait_until(stuck, "(document.querySelector('#wall .card .face')?.getAttribute('src') || '').startsWith('fleet/faces/dicebear/')", 5)
+                run.check(turned, "and the theme takes over when the file comes", stuck.evaluate("document.querySelector('#wall .card .face')?.getAttribute('src') ?? ''"))
+                stuck_ctx.close()
+                # A switch to a theme not loaded yet paints the cards once, in the new theme,
+                # not the old snapshot first and then the new.
+                (klepsydra / "prefs.json.tmp").write_text(json.dumps({"theme": "kourai"}))
+                (klepsydra / "prefs.json.tmp").replace(klepsydra / "prefs.json")
+                once_ctx = browser.new_context(viewport={"width": 390, "height": 844}, device_scale_factor=3, is_mobile=True, has_touch=True, service_workers="block")
+                once = once_ctx.new_page()
+                once.goto(f"http://{addr}/")
+                wait_until(once, "document.getElementById('wall').children.length === 16 && (document.querySelector('#wall .card .face')?.getAttribute('src') || '').startsWith('fleet/faces/kourai/')", 10)
+                once.evaluate("""() => {
+                  window.__paints = 0;
+                  const name = document.querySelector('#wall .card .name');
+                  new MutationObserver((rs) => { window.__paints += rs.length; }).observe(name, { childList: true, characterData: true, subtree: true });
+                }""")
+                (klepsydra / "prefs.json.tmp").write_text(json.dumps({"theme": "dicebear"}))
+                (klepsydra / "prefs.json.tmp").replace(klepsydra / "prefs.json")
+                wait_until(once, "(document.querySelector('#wall .card .face')?.getAttribute('src') || '').startsWith('fleet/faces/dicebear/')", 10)
+                once.wait_for_timeout(500)
+                paints = once.evaluate("window.__paints")
+                run.check(paints == 1, "a switch to a theme not loaded yet paints the cards once", paints)
+                once_ctx.close()
+                snapshot_file(snapshot, one_more_needs)
+                wait_until(page, "document.getElementById('wall').children.length === 16", 10)
+                page.bring_to_front()
+                (klepsydra / "prefs.json.tmp").write_text(json.dumps({"theme": "kourai"}))
+                (klepsydra / "prefs.json.tmp").replace(klepsydra / "prefs.json")
+                wait_until(page, "[...document.querySelectorAll('#wall .card .face')].some((f) => (f.getAttribute('src') || '').startsWith('fleet/faces/kourai/'))", 10)
+
+                # A snapshot the page cannot show is passed over: the next one still paints.
+                def malformed(f):
+                    f["sessions"] = [{"session_id": 5, "status": "working"}]
+                snapshot_file(snapshot, malformed)
+                page.wait_for_timeout(600)
+                snapshot_file(snapshot, lambda f: (one_more_needs(f), f["sessions"].pop()))
+                back = wait_until(page, "document.getElementById('wall').children.length === 15", 10)
+                run.check(back, "a snapshot that cannot be shown is passed over, and the next paints", page.evaluate("document.getElementById('wall').children.length"))
+                snapshot_file(snapshot, one_more_needs)
+                wait_until(page, "document.getElementById('wall').children.length === 16", 10)
+
+                # A new reading arrives over the stream; one three hours old says so.
                 write_reading(klepsydra, PERSONAL, "Personal", {"five_hour": (91, 8 * 60 + 50), "seven_day": (27, (6 * 24 + 6) * 3600 + 1800)})
                 write_reading(klepsydra, TEAM, "Team", {"five_hour": (12, 2 * 3600 + 600)}, ago=3 * 3600, session="00000000-0000-4000-8000-000000000002")
                 write_reading(klepsydra, LAB, "Lab", {"five_hour": (5, 3600), "seven_day": (40, 86400), "spend_limit": (10, 86400)}, ago=4 * 3600, session="00000000-0000-4000-8000-000000000003")

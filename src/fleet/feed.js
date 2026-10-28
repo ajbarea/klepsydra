@@ -3,7 +3,8 @@
 // or with ?demo a sample fleet, its times moved up to now (serve the repo root
 // and open /src/wall.html?demo: the sample sits outside the bundled src/);
 // ?demo=8 shows its first eight sessions, ?demo&empty none and ?demo&ended the
-// ended ones, and ?demo&wrapup adds a sample wrap-up request and answers.
+// ended ones, ?demo&wrapup adds a sample wrap-up request and answers, and
+// ?theme=<id> picks a character theme.
 // `onMessage` gets `{sessions, speaking}` snapshots and `{focus: id}` requests.
 // In a browser a snapshot's speaking line replays, a sentence at a time.
 import { follow } from "../ipc.js";
@@ -173,6 +174,22 @@ export function subscribe(onMessage, onLink) {
       if (focus) onMessage({ focus });
     })
     .catch(() => {});
+}
+
+/** The theme a browser page asks for with ?theme=; null when it names none. */
+export const pageTheme = (search) => new URLSearchParams(search).get("theme");
+
+/**
+ * Follow the character theme: inside the app the saved one, then each
+ * change from the tray or the wall; in a browser the page's ?theme=, once.
+ * The phone's comes on each snapshot instead, so this sends it nothing.
+ */
+export function subscribeTheme(onTheme) {
+  if (inTauri) {
+    follow("theme_subscribe", onTheme).catch(() => {});
+    return;
+  }
+  if (!served) onTheme(pageTheme(location.search));
 }
 
 const EMPTY_TODAY = { day: { sessions: {}, attribution: {} }, receiver: null, guardrails: [], guardrails_total: 0 };

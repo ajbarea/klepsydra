@@ -1,11 +1,11 @@
 // The card wall: a card per Claude Code session, in the reader's order, with
 // a way back to its terminal.
-import cast from "./cast.json" with { type: "json" };
 import { RINGS, announcements, card, identity, needsFirst, shouldSlide, showsRingKey, startedNeeding, transitionName, statuses, tally } from "./model.js";
 import { announcer, press, say, setOff, syncChildren } from "./dom.js";
 import { ARM_MS, confirmCopy, createEnder, endAllCopy, endingAnnouncement, endingText, withdrawnText } from "./end.js";
 import { askedNote, asking, isReady, readiness, wrapupAnnouncements, wrapupCopy, wrapupLines } from "./wrapup.js";
-import { inTauri, served, subscribe, todayLedger } from "./feed.js";
+import { inTauri, served, subscribe, subscribeTheme, todayLedger } from "./feed.js";
+import { DEFAULT_THEME, THEME_LABELS, THEME_SAVE_MS, THEME_WAIT_MS, keeperOf, loadTheme, loadedTheme, themeId } from "./theme.js";
 import { createDrawer } from "./drawer.js";
 import { createQueuePanel } from "./queuepanel.js";
 import { createEdge } from "./sidepanel.js";
@@ -19,6 +19,7 @@ import { cutsText } from "./fulltext.js";
 import { WAITING, usageRows } from "../gauge.js";
 import { readMode, readStops, syncEntries } from "../gaugeview.js";
 
+const FIRST_THEME_MS = 1500; // the longest the first paint waits for the app to name the theme
 const TICK_MS = 15_000; // ages re-render between snapshots, as on the gauge
 const FACE_PX = 62; // the comfortable --wall-face less twice its --face-inset
 const SVG_NS = "http://www.w3.org/2000/svg";
@@ -93,6 +94,9 @@ const showLink = (up) => {
 // A phone's narrow screen takes one column of compact cards.
 const phoneNarrow = () => served && matchMedia("(max-width: 600px)").matches;
 
+// The character theme the wall wears: who each voice is and how they look.
+let worn = DEFAULT_THEME;
+let cast = loadedTheme(worn);
 let sessions = [];
 let request = null; // the snapshot's wrap-up, while one is shown
 let latestSnapshot = null; // its usage readings draw the limit gauges
@@ -105,15 +109,16 @@ const drawer = createDrawer({
   tab: document.getElementById("ledger-tab"),
   edge,
   sessions: () => sessions,
-  cast,
+  cast: () => cast,
   fetchToday: todayLedger,
   onResized: () => showDensity(),
 });
-createQueuePanel({
+const queue = createQueuePanel({
   dialog: document.getElementById("queue"),
   button: document.getElementById("queue-open"),
   tab: document.getElementById("queue-tab"),
   edge,
+  cast: () => cast,
   onResized: () => showDensity(),
 });
 let before;
@@ -522,9 +527,15 @@ function showPortrait(id) {
   const c = cardOf.get(id);
   if (!c?.full) return;
   openedFrom = id;
+  fillPortrait(c);
+  portrait.showModal();
+}
+function fillPortrait(c) {
   const img = portrait.querySelector(".full");
-  img.removeAttribute("src"); // never the last portrait under this name while the new one loads
-  img.src = c.full;
+  if (img.getAttribute("src") !== c.full) {
+    img.removeAttribute("src"); // never the last portrait under this name while the new one loads
+    img.src = c.full;
+  }
   img.alt = `${c.name}'s portrait`;
   setText(portrait.querySelector("#portrait-name"), c.name);
   const epithet = portrait.querySelector(".epithet");
@@ -532,7 +543,10 @@ function showPortrait(id) {
   if (c.accentInk) portrait.style.setProperty("--accent-ink", c.accentInk);
   else portrait.style.removeProperty("--accent-ink");
   setText(portrait.querySelector(".voice"), c.voiceTitle);
-  portrait.showModal();
+}
+/** An open portrait shows its card as now painted: a theme switch renames and redraws it. */
+function refillPortrait() {
+  if (portrait.open && cardOf.get(openedFrom)?.full) fillPortrait(cardOf.get(openedFrom));
 }
 portrait.addEventListener("close", () => {
   const card = [...wall.children].find((el) => el.dataset.key === openedFrom);
@@ -609,7 +623,21 @@ function drawSpeaking() {
   frameId = requestAnimationFrame(drawSpeaking);
 }
 
+// The phone wears the theme each snapshot names before painting it, so its
+// first card is already in that theme, but waits at most THEME_WAIT_MS for
+// the theme's file (wearSoon): past that it paints in the theme it wears and
+// takes the new one when the file comes. Snapshots are taken in order.
+let inbox = Promise.resolve();
 function receive(message) {
+  if (!served) return take(message);
+  const theme = Array.isArray(message?.sessions) ? () => wearSoon(message.theme, false) : () => null;
+  inbox = inbox
+    .then(theme)
+    .then(() => take(message))
+    .catch((err) => console.warn("klepsydra: a snapshot could not be shown:", err));
+}
+
+function take(message) {
   if (Array.isArray(message?.sessions)) {
     const said = announcements(before, message.sessions, cast, Date.now());
     const speaking = speaker.update(message.speaking ?? null, Date.now());
@@ -622,6 +650,7 @@ function receive(message) {
     latestSnapshot = message;
     said.push(...render(started));
     if (said.length) announce(said.join(". "));
+    refillPortrait();
     drawer.refresh();
     if (!frameId) drawSpeaking();
     if (pending) focusCard(pending, true);
@@ -1125,7 +1154,185 @@ new ResizeObserver(() => {
 }).observe(wall);
 if (inTauri) window.__TAURI__.core.invoke("get_wall_density").then(choose, () => {});
 
-subscribe(receive, showLink);
+// Characters (#135): the theme picker, the tray's Characters menu and the
+// phone all wear one theme. html[data-theme] names it, as a CSS colour theme
+// does, and a switch repaints every name, face, epithet and accent from the
+// data already held: the wall and its compact cards, the empty wall's keeper,
+// an open portrait, the Ledger and the Queue's keeper, with nothing read again.
+const themePicker = document.getElementById("theme");
+themePicker.replaceChildren(
+  ...Object.entries(THEME_LABELS).map(([id, label]) => Object.assign(document.createElement("option"), { value: id, textContent: label })),
+);
+const keeper = empty.querySelector(".keeper");
+
+let wanted = DEFAULT_THEME; // the theme last asked for: a slower load must not undo a later one
+const themeNote = document.getElementById("theme-note");
+/**
+ * Wear theme `id` (an unknown one is the default), repainting unless `paint`
+ * is false. A theme not loaded yet is worn once its file arrives. Resolves
+ * true once worn; false when another theme was asked for meanwhile (the last
+ * ask wins) or its file could not be loaded, which leaves the theme worn as
+ * it was, the picker on it, and says why.
+ */
+function wearTheme(id, paint = true) {
+  const next = themeId(id);
+  wanted = next;
+  const theme = loadedTheme(next);
+  if (theme) {
+    put(next, theme, paint);
+    return Promise.resolve(true);
+  }
+  return loadTheme(next).then(
+    (loaded) => {
+      if (wanted !== next) return null;
+      put(next, loaded, paint);
+      if (themeNote.textContent.startsWith("Loading")) setText(themeNote, "");
+      return true;
+    },
+    (err) => {
+      console.warn(`klepsydra: theme ${next} could not be loaded:`, err);
+      if (wanted === next) {
+        wanted = worn;
+        themePicker.value = worn;
+        setText(themeNote, `Not switched: the ${THEME_LABELS[next]} theme could not be loaded.`);
+      }
+      return false;
+    },
+  );
+}
+const asked = new Map(); // theme id -> when a paint first waited for its file
+/**
+ * Wear theme `id` for a paint, repainting at once unless `paint` is false
+ * (a snapshot about to paint): at once when its file is in; else resolves
+ * when it is worn or fails, or THEME_WAIT_MS after a paint first waited for
+ * it, whichever is first. Past that the page paints in the theme it wears,
+ * the note says the theme is still loading, and the theme is worn, painted
+ * again, when its file comes.
+ */
+function wearSoon(id, paint = true) {
+  const next = themeId(id);
+  if (loadedTheme(next)) return wearTheme(next, paint);
+  if (!asked.has(next)) asked.set(next, performance.now());
+  let late = false;
+  // Worn in time, the paint waiting on it draws it; worn late, it paints itself.
+  const wear = wearTheme(next, paint).then((done) => {
+    if (done === true && late && !paint) repaintTheme();
+    return done;
+  });
+  return Promise.race([wear, deadline(next)]).finally(() => {
+    late = true;
+  });
+}
+/** Resolves THEME_WAIT_MS after a paint first waited for `next`'s file, saying it is still loading if it is. */
+function deadline(next) {
+  if (!asked.has(next)) asked.set(next, performance.now());
+  const left = Math.max(0, asked.get(next) + THEME_WAIT_MS - performance.now());
+  return new Promise((late) =>
+    setTimeout(() => {
+      if (wanted === next && worn !== next) setText(themeNote, `Loading the ${THEME_LABELS[next]} theme…`);
+      late(null);
+    }, left),
+  );
+}
+function put(next, theme, paint) {
+  const was = worn;
+  worn = next;
+  cast = theme;
+  document.documentElement.dataset.theme = next;
+  themePicker.value = next;
+  const src = keeperOf(cast);
+  if (src && keeper.getAttribute("src") !== src) keeper.src = src;
+  if (!paint || next === was) return;
+  repaintTheme();
+}
+/** Paint every surface again in the theme worn: the cards, an open portrait, the Ledger, the Queue's keeper. */
+function repaintTheme() {
+  if (latestSnapshot) {
+    const said = render();
+    if (said.length) announce(said.join(". "));
+  }
+  refillPortrait();
+  drawer.repaint();
+  queue.retheme();
+}
+put(DEFAULT_THEME, loadedTheme(DEFAULT_THEME), false);
+// The picker wears each step once its file is in, and only then is the step
+// a choice: the app saves where the picker rests, so an arrow key held over
+// the closed picker writes prefs.json and reaches every window and the phone
+// once, not once a step, and never for a theme the wall could not wear.
+let saving = 0;
+let picking = false; // a choice not saved yet, over which the app's word is older
+let flushNow = false; // the picker let go while its theme was still loading: save once worn
+/** Save the theme worn now. A save prefs.json refused says so; the app sends back the theme it kept. */
+function saveTheme() {
+  clearTimeout(saving);
+  saving = 0;
+  picking = false;
+  window.__TAURI__.core.invoke("set_theme", { theme: worn }).then(
+    () => setText(themeNote, ""),
+    (err) => {
+      console.warn("klepsydra: theme not saved:", err);
+      setText(themeNote, `Not saved: ${err}`);
+    },
+  );
+}
+themePicker.addEventListener("change", () => {
+  picking = true;
+  clearTimeout(saving);
+  saving = 0;
+  // Picked before the app names a theme, a file that never answers holds the first paint no longer than any other.
+  if (!loadedTheme(themePicker.value)) deadline(themeId(themePicker.value)).then(firstReady);
+  wearTheme(themePicker.value).then((worn) => {
+    firstReady();
+    if (worn === null) return; // a later choice took over: this one changes nothing
+    const now = flushNow;
+    flushNow = false;
+    if (!worn) {
+      picking = false;
+      return;
+    }
+    setText(themeNote, "");
+    if (!inTauri) {
+      picking = false;
+      return;
+    }
+    clearTimeout(saving);
+    saving = setTimeout(saveTheme, THEME_SAVE_MS);
+    if (now) saveTheme();
+  });
+});
+// A choice still waiting is saved before the picker, the window or the page
+// lets go of it: a click on the tray's Quit first takes the focus away.
+const flushTheme = () => {
+  if (saving) saveTheme();
+  else if (picking) flushNow = true;
+};
+themePicker.addEventListener("blur", flushTheme);
+addEventListener("blur", flushTheme);
+addEventListener("pagehide", flushTheme);
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) flushTheme();
+});
+// The first paint waits for the theme worn, so no card shows another theme
+// first: for the app to name it, at most FIRST_THEME_MS (else Kourai), then
+// for its file, at most THEME_WAIT_MS (wearSoon). A theme picked before the
+// app names one lets the paint go as soon as it is worn or fails. The
+// phone's theme comes with each snapshot (receive).
+let firstReady = () => {};
+const firstTheme = new Promise((ready) => {
+  firstReady = ready;
+  if (served) {
+    ready();
+    return;
+  }
+  const noWord = setTimeout(ready, FIRST_THEME_MS);
+  subscribeTheme((id) => {
+    clearTimeout(noWord);
+    if (picking) return;
+    wearSoon(id).then(ready);
+  });
+});
+firstTheme.then(() => subscribe(receive, showLink));
 setInterval(() => {
   const said = render();
   if (said.length) announce(said.join(". "));

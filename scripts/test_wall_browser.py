@@ -33,10 +33,12 @@ at $KLEPSYDRA_CHROME.
 import functools
 import http.server
 import json
+import re
 import os
 import pathlib
 import sys
 import threading
+import time
 
 from playwright.sync_api import sync_playwright
 
@@ -67,12 +69,36 @@ class Quiet(http.server.SimpleHTTPRequestHandler):
         pass
 
 
+def watch(page):
+    """Keep what a page asked for and said, so an open that never paints can name why."""
+    seen = {"asked": [], "done": set(), "said": []}
+    page.on("request", lambda r: seen["asked"].append(r.url))
+    page.on("requestfinished", lambda r: seen["done"].add(r.url))
+    page.on("requestfailed", lambda r: seen["said"].append(f"failed {r.url}: {r.failure}"))
+    page.on("console", lambda m: m.type in ("error", "warning") and seen["said"].append(f"{m.type}: {m.text}"[:300]))
+    page.on("pageerror", lambda e: seen["said"].append(f"pageerror: {e}"[:300]))
+    page.seen = seen
+
+
+def painted(page, expression):
+    """Wait for `expression`; on a timeout, print what the page still waited on, then fail as before."""
+    try:
+        page.wait_for_function(expression)
+    except Exception:
+        seen = getattr(page, "seen", None)
+        if seen:
+            pending = [u.split("/", 3)[-1] for u in seen["asked"] if u not in seen["done"]]
+            print(f"  open never painted: pending {pending[:10]}, said {seen['said'][:8]}", file=sys.stderr)
+        raise
+
+
 class Wall:
     def __init__(self, browser, port):
         self.browser, self.port, self.failed, self.passed = browser, port, 0, 0
 
     def open(self, width, height, cards, fixture=None, ledger=None, query=""):
         page = self.browser.new_page(viewport={"width": width, "height": height})
+        watch(page)
         self.ledger_requests = 0
 
         def count(route):
@@ -93,9 +119,7 @@ class Wall:
                 ),
             )
         page.goto(f"http://127.0.0.1:{self.port}/src/wall.html?demo={cards}{query}")
-        page.wait_for_function(
-            f"document.getElementById('wall').children.length === {cards}"
-        )
+        painted(page, f"document.getElementById('wall').children.length === {cards}")
         # In the app the bar shows + New session and Wrap up…; the fit must hold with them.
         page.evaluate(
             "document.getElementById('new-session').hidden = false;"
@@ -1076,9 +1100,15 @@ window.__TAURI__ = { core: {
       setTimeout(() => args.onMessage.onmessage(%s), 0);
       return Promise.resolve();
     }
-    if (cmd === 'queue_subscribe') return Promise.resolve();
+    if (cmd === 'queue_subscribe') { window.__queue = args.onMessage; return Promise.resolve(); }
+    if (cmd === 'theme_subscribe') {
+      window.__theme = args.onMessage;
+      setTimeout(() => args.onMessage.onmessage(window.__savedTheme ?? 'kourai'), window.__themeDelay ?? 0);
+      return Promise.resolve();
+    }
     if (cmd === 'get_wall_density') return Promise.resolve('auto');
     if (cmd === 'get_launch_dir') { window.__calls.push([cmd, args]); return window.__dirAnswer ? window.__dirAnswer() : Promise.resolve('/home/aj/ajsoftworks'); }
+    if (cmd === 'set_theme' && window.__setThemeFails) { window.__calls.push([cmd, args]); return Promise.reject(window.__setThemeFails); }
     if (cmd === 'end_session' && window.__hold) { window.__calls.push([cmd, args]); return window.__hold; }
     window.__calls.push([cmd, args]);
     if (cmd === 'start_wrapup') return Promise.resolve(window.__asked ?? []);
@@ -1093,9 +1123,9 @@ READS = ["get_launch_dir", "get_split_mode"]
 WORKING_CARD = ".card:has(.pill .label:text-is('working')):has(.menu:not([hidden]))"
 
 
-def open_app(wall, width=1920, height=1000, keep=None, motion="no-preference", launch_dir="/home/aj/ajsoftworks"):
+def open_app(wall, width=1920, height=1000, keep=None, motion="no-preference", launch_dir="/home/aj/ajsoftworks", theme=None, init=None, before=None):
     """The demo wall as the app would feed it, with invokes recorded; `keep`
-    picks which demo sessions the snapshot carries."""
+    picks which demo sessions the snapshot carries, `theme` the saved theme."""
     import time
 
     fixture = json.loads((ROOT / "scripts/fixtures/fleet-demo.json").read_text())
@@ -1110,12 +1140,19 @@ def open_app(wall, width=1920, height=1000, keep=None, motion="no-preference", l
     page.snapshot = snapshot
     page.snapshot_all = shifted(json.loads((ROOT / "scripts/fixtures/fleet-demo.json").read_text()), int(time.time()) - at)["sessions"]
     stub = TAURI_STUB.replace("'/home/aj/ajsoftworks'", json.dumps(launch_dir))
+    watch(page)
     page.add_init_script(stub % json.dumps(snapshot))
+    if theme is not None:
+        page.add_init_script(f"window.__savedTheme = {json.dumps(theme)};")
+    if init is not None:
+        page.add_init_script(init)
+    if before is not None:
+        before(page)
     page.goto(f"http://127.0.0.1:{wall.port}/src/wall.html")
     if snapshot["sessions"] and keep is None:
-        page.wait_for_function("document.getElementById('wall').children.length > 0")
+        painted(page, "document.getElementById('wall').children.length > 0")
     else:
-        page.wait_for_function("window.__channel !== undefined")
+        painted(page, "window.__channel !== undefined")
     page.wait_for_timeout(SETTLE_MS)
     return page
 
@@ -4117,6 +4154,576 @@ def split_toggle(wall):
     page.close()
 
 
+THEMES = {t: json.loads((ROOT / f"src/fleet/themes/{t}.json").read_text()) for t in ("kourai", "professions", "dicebear")}
+# Each card's voice key, name, face, epithet and accent; the picker; the keeper.
+LOOKS = """() => ({
+  cards: [...document.querySelectorAll('#wall .card')].map((c) => ({
+    key: c.dataset.key,
+    name: c.querySelector('.name').textContent,
+    face: c.querySelector('.face').getAttribute('src'),
+    epithet: c.querySelector('.epithet').hidden ? null : c.querySelector('.epithet').textContent,
+    accent: c.style.getPropertyValue('--accent'),
+    figure: c.classList.contains('has-figure'),
+  })),
+  picker: document.getElementById('theme').value,
+  options: [...document.getElementById('theme').options].map((o) => [o.value, o.textContent]),
+  keeper: document.querySelector('.keeper').getAttribute('src'),
+  focus: document.activeElement.className,
+  theme: document.documentElement.dataset.theme,
+})"""
+SAVE_MS = int(re.search(r"THEME_SAVE_MS = (\d+)", (ROOT / "src/fleet/theme.js").read_text()).group(1))
+
+
+def worn(wall, page, theme, got, what):
+    """Each cast card wears `theme`'s name, face and epithet; the picker and keeper agree."""
+    cast = THEMES[theme]["characters"]
+    voices = {s["session_id"]: s.get("voice") for s in page.snapshot_all}
+    cards = [c for c in got["cards"] if voices.get(c["key"]) in cast]
+    def ok(c):
+        ch = cast[voices[c["key"]]]
+        return (
+            c["name"] == ch["name"]
+            and c["face"] == f"fleet/faces/{theme}/{ch['face']}-192.webp"
+            and c["epithet"] == ch.get("epithet")
+            and c["figure"] == ("head" in ch)
+            and c["accent"] == ch["accent"]
+        )
+    wrong = [c for c in cards if not ok(c)]
+    keeper = f"fleet/faces/{theme}/{cast[THEMES[theme]['keeper']]['face']}-full.webp"
+    wall.check(cards and not wrong and got["picker"] == theme and got["keeper"] == keeper, f"{what}: every cast card wears {theme}", [wrong[:2], got["picker"], got["keeper"]])
+
+
+def themes_switch_live(wall):
+    """Characters (#135): the saved theme arrives over theme_subscribe and the
+    wall wears it; a switch from the tray (a new message) or the picker
+    repaints every card's name, face and epithet at once and never its accent,
+    order or focus; the picker asks the app to save it; an unknown theme is
+    Kourai."""
+    page = open_app(wall, 1920, 1000, theme="professions")
+    got = page.evaluate(LOOKS)
+    worn(wall, page, "professions", got, "the saved theme on load")
+    wall.check(got["options"] == [["kourai", "Kourai"], ["professions", "Professions"], ["dicebear", "DiceBear"]],
+               "the picker offers the three themes, Kourai first", got["options"])
+    base = got
+    page.locator(".card .jump:not([aria-disabled='true'])").first.focus()
+    for theme in ("dicebear", "kourai", "professions"):
+        page.evaluate("(t) => window.__theme.onmessage(t)", theme)
+        page.wait_for_timeout(SETTLE_MS)
+        got = page.evaluate(LOOKS)
+        worn(wall, page, theme, got, "a tray switch, live")
+        keys = [c["key"] for c in got["cards"]]
+        wall.check(keys == [c["key"] for c in base["cards"]] and got["focus"] == "jump" and got["theme"] == theme,
+                   f"{theme}: the same cards in the same order, focus kept, html[data-theme] set", [keys, got["focus"], got["theme"]])
+    before = len(page.evaluate("window.__calls"))
+    page.select_option("#theme", "dicebear")
+    page.wait_for_timeout(SETTLE_MS)
+    worn(wall, page, "dicebear", page.evaluate(LOOKS), "the picker, at once")
+    page.wait_for_timeout(SAVE_MS)
+    calls = page.evaluate("window.__calls")[before:]
+    wall.check(calls == [["set_theme", {"theme": "dicebear"}]], "the picker asks the app to save the theme, once", calls)
+    # An arrow key over the closed picker wears each step at once and saves once, where it rests.
+    before = len(page.evaluate("window.__calls"))
+    page.focus("#theme")
+    seen = []
+    for _ in range(2):
+        page.keyboard.press("ArrowUp")
+        page.wait_for_timeout(120)
+        seen.append(page.evaluate("[document.documentElement.dataset.theme, document.querySelector('#wall .card .name').textContent]"))
+    early = page.evaluate("window.__calls")[before:]
+    page.wait_for_timeout(SAVE_MS + 200)
+    calls = page.evaluate("window.__calls")[before:]
+    wall.check([t for t, _ in seen] == ["professions", "kourai"] and early == [] and calls == [["set_theme", {"theme": "kourai"}]],
+               "arrow keys wear each theme at once and save once, where the picker rests", [seen, early, calls])
+    page.evaluate("window.__theme.onmessage('dicebear')")
+    page.wait_for_timeout(SETTLE_MS)
+    page.evaluate("window.__theme.onmessage('dicebear')")
+    page.wait_for_timeout(SETTLE_MS)
+    wall.check(page.evaluate("window.__calls").count(["set_theme", {"theme": "dicebear"}]) == 1, "the app's echo saves nothing again", page.evaluate("window.__calls")[before:])
+    for bad in ("Professions", "", "__proto__", None, 3):
+        page.evaluate("(t) => window.__theme.onmessage(t)", bad)
+        page.wait_for_timeout(100)
+        got = page.evaluate(LOOKS)
+        worn(wall, page, "kourai", got, f"an unknown theme {bad!r} is Kourai")
+    page.click(".density label:has([value=compact])")
+    page.wait_for_timeout(SETTLE_MS)
+    page.evaluate("window.__theme.onmessage('professions')")
+    page.wait_for_timeout(SETTLE_MS)
+    worn(wall, page, "professions", page.evaluate(LOOKS), "a switch on the compact wall")
+    page.close()
+
+
+def themes_keeper_and_portrait(wall):
+    """In each theme the empty wall's keeper is the theme's own and loads, and
+    every cast card's portrait button opens its full picture, loaded (Kourai's
+    portrait; the others' face drawn large), comfortable and compact."""
+    for theme in THEMES:
+        page = open_app(wall, 1920, 1000, keep=lambda s: False, theme=theme)
+        page.wait_for_function("document.querySelector('.keeper').complete")
+        got = page.evaluate("(() => { const k = document.querySelector('.keeper'); return [k.getAttribute('src'), k.naturalWidth, document.getElementById('empty').checkVisibility()]; })()")
+        cast = THEMES[theme]["characters"]
+        wall.check(got[0] == f"fleet/faces/{theme}/{cast['af_nicole']['face']}-full.webp" and got[1] >= 512 and got[2],
+                   f"{theme}: the empty wall's keeper is the theme's and loads", got)
+        page.close()
+        page = open_app(wall, 1920, 1000, theme=theme)
+        voices = {s["session_id"]: s.get("voice") for s in page.snapshot_all}
+        for density in ("comfortable", "compact"):
+            page.click(f".density label:has([value={density}])")
+            page.wait_for_timeout(SETTLE_MS)
+            bad = []
+            keys = [k for k in page.evaluate("[...document.querySelectorAll('#wall .card')].map((c) => c.dataset.key)") if voices.get(k) in cast]
+            for key in keys:
+                page.locator(f'.card[data-key="{key}"] .look').click()
+                page.wait_for_function("document.getElementById('portrait').open && document.querySelector('#portrait .full').complete")
+                got = page.evaluate("(() => { const i = document.querySelector('#portrait .full'); return [i.getAttribute('src'), i.naturalWidth, document.getElementById('portrait-name').textContent]; })()")
+                ch = cast[voices[key]]
+                if got != [f"fleet/faces/{theme}/{ch['face']}-full.webp", got[1], ch["name"]] or got[1] < 512:
+                    bad.append(got)
+                page.keyboard.press("Escape")
+                page.wait_for_function("!document.getElementById('portrait').open")
+            wall.check(keys and not bad, f"{theme}, {density}: each cast card opens its full picture", bad[:3])
+        page.close()
+
+
+def themes_fit(wall):
+    """Each theme's comfortable wall still fits: four cards at 945x1000 and
+    eight at 1920x1000, unscrolled, with the picker in the bar."""
+    for theme in THEMES:
+        for width, height, cards, columns in COMFORTABLE_FIT:
+            page = wall.open(width, height, cards, query=f"&theme={theme}")
+            page.click(".density label:has([value=comfortable])")
+            page.wait_for_timeout(SETTLE_MS)
+            got = page.evaluate(STATE)
+            faces = page.evaluate("[...document.querySelectorAll('#wall .face')].map((f) => f.getAttribute('src'))")
+            ok = got["density"] == "comfortable" and not got["scrolls"] and got["bottom"] <= height and got["columns"] == columns
+            wall.check(ok and any(f.startswith(f"fleet/faces/{theme}/") for f in faces), f"{theme}: {cards} comfortable cards fit {width}x{height}", got)
+            page.close()
+
+
+EVERYWHERE = """(voices) => {
+  const text = (sel) => document.querySelector(sel)?.textContent ?? '';
+  const portrait = document.getElementById('portrait');
+  return {
+    theme: document.documentElement.dataset.theme,
+    density: document.getElementById('wall').dataset.density,
+    cards: [...document.querySelectorAll('#wall .card')].map((c) => ({
+      key: c.dataset.key, name: c.querySelector('.name').textContent,
+      face: c.querySelector('.face').getAttribute('src'), accent: c.style.getPropertyValue('--accent'),
+      epithet: c.querySelector('.epithet').hidden ? null : c.querySelector('.epithet').textContent,
+    })),
+    portrait: portrait.open ? [text('#portrait-name'), portrait.querySelector('.full').getAttribute('src'), text('#portrait .epithet')] : null,
+    ledger: document.getElementById('ledger').open ? text('#ledger section[aria-labelledby=ledger-characters]') : null,
+    docked: document.getElementById('ledger').dataset.mode,
+    keeper: document.querySelector('.keeper').getAttribute('src'),
+  };
+}"""
+
+
+def theme_everywhere(wall):
+    """One switch, every surface: with the Ledger docked and a portrait open,
+    each theme in turn shows only its own names, faces, epithets and accents
+    on the cards (Comfortable and Compact), in the portrait, in the Ledger's
+    Tokens by character and in the empty wall's keeper, and the Ledger is
+    not read again for it."""
+    page = wall.open(1920, 1000, 16)
+    page.click(".density label:has([value=comfortable])")
+    page.click("#ledger-open")
+    page.wait_for_selector("#ledger section[aria-labelledby=ledger-characters]")
+    page.wait_for_timeout(SETTLE_MS)
+    reads = wall.ledger_requests
+    voices = {s["session_id"]: s.get("voice") for s in json.loads((ROOT / "scripts/fixtures/fleet-demo.json").read_text())["sessions"]}
+    ledger_voices = set(json.loads((ROOT / "scripts/fixtures/ledger-demo.json").read_text())["day"]["voices"].values())
+    michael = next(k for k, v in voices.items() if v == "am_michael")
+    page.locator(f'.card[data-key="{michael}"] .look').click()
+    page.wait_for_function("document.getElementById('portrait').open")
+    for density in ("comfortable", "compact"):
+        if density == "compact":
+            page.keyboard.press("Escape")
+            page.wait_for_function("!document.getElementById('portrait').open")
+            page.click(".density label:has([value=compact])")
+            page.wait_for_timeout(SETTLE_MS)
+        for theme in ("professions", "dicebear", "kourai"):
+            # The portrait is modal, so the picker behind it is set as a script would.
+            page.evaluate("(t) => { const p = document.getElementById('theme'); p.value = t; p.dispatchEvent(new Event('change')); }", theme)
+            page.wait_for_timeout(SETTLE_MS)
+            got = page.evaluate(EVERYWHERE)
+            cast = THEMES[theme]["characters"]
+            others = {c["name"] for t, th in THEMES.items() if t != theme for v, c in th["characters"].items() if c["name"] != cast[v]["name"]}
+            bad = []
+            for c in got["cards"]:
+                ch = cast.get(voices.get(c["key"]))
+                if ch and [c["name"], c["face"], c["accent"], c["epithet"]] != [ch["name"], f"fleet/faces/{theme}/{ch['face']}-192.webp", ch["accent"], ch.get("epithet")]:
+                    bad.append(c)
+            ledger_names = [cast[v]["name"] for v in ledger_voices if v in cast]
+            stale = [n for n in others if n in (got["ledger"] or "")]
+            portrait_ok = got["portrait"] is None if density == "compact" else got["portrait"] == [cast["am_michael"]["name"], f"fleet/faces/{theme}/{cast['am_michael']['face']}-full.webp", cast["am_michael"].get("epithet", "")]
+            ok = (got["theme"] == theme and got["density"] == density and not bad and portrait_ok
+                  and got["ledger"] and all(n in got["ledger"] for n in ledger_names) and not stale and got["docked"] == "docked"
+                  and got["keeper"] == f"fleet/faces/{theme}/{cast['af_nicole']['face']}-full.webp")
+            wall.check(ok, f"{density}, {theme}: cards, portrait, docked Ledger and keeper show only {theme}", {"bad": bad[:2], "portrait": got["portrait"], "stale": stale, "ledger": (got["ledger"] or "")[:160], "theme": got["theme"]})
+    wall.check(wall.ledger_requests == reads, "no theme switch reads the Ledger again", [reads, wall.ledger_requests])
+    page.close()
+
+
+def theme_renames_the_queue_keeper(wall):
+    """A keeper the hook named (its voice recorded) is named as the theme worn
+    names that character (Hephaestus is the Foreman in Professions); one
+    typed with --by stays as typed, even another theme's name ("Editor")."""
+    page = open_app(wall, 1920, 1000)
+    page.wait_for_function("window.__queue !== undefined")
+    for kept, voice, theme, want in (
+        # Named by the hook (no --by, in a voiced session): follows the theme.
+        ("Hephaestus", "am_michael", "professions", "Kept by Foreman"),
+        ("Hephaestus", "am_michael", "dicebear", f"Kept by {THEMES['dicebear']['characters']['am_michael']['name']}"),
+        ("Hephaestus", "am_michael", "kourai", "Kept by Hephaestus"),
+        # Typed with --by: as typed, in every theme.
+        ("Heph (orchestrator)", None, "professions", "Kept by Heph (orchestrator)"),
+        ("Editor", None, "kourai", "Kept by Editor"),
+    ):
+        page.evaluate("([k, v]) => window.__queue.onmessage({path: 'C:/q.md', text: '# Q', problem: null, kept_by: k, kept_voice: v})", [kept, voice])
+        page.evaluate("(t) => window.__theme.onmessage(t)", theme)
+        page.wait_for_timeout(SETTLE_MS)
+        got = page.evaluate("document.querySelector('#queue .queue-kept').textContent")
+        wall.check(got == want, f"{theme}: {want}", got)
+    page.close()
+
+
+def theme_save_flushes_and_says_when_refused(wall):
+    """A choice still waiting to be saved is saved at once when the picker
+    loses focus (a click on the tray's Quit takes it away), and only once; a
+    save prefs.json refuses says so beside the picker, and the theme the app
+    sends back is worn again."""
+    page = open_app(wall, 1920, 1000)
+    before = len(page.evaluate("window.__calls"))
+    page.focus("#theme")
+    page.select_option("#theme", "professions")
+    page.evaluate("document.getElementById('theme').blur()")
+    page.wait_for_timeout(100)
+    early = page.evaluate("window.__calls")[before:]
+    page.wait_for_timeout(SAVE_MS + 200)
+    late = page.evaluate("window.__calls")[before:]
+    wall.check(early == [["set_theme", {"theme": "professions"}]] and late == early, "a blur saves the waiting choice at once, and once", [early, late])
+    page.evaluate("window.__setThemeFails = 'prefs.json could not be saved, so the theme is still kourai, not dicebear.'")
+    page.select_option("#theme", "dicebear")
+    page.wait_for_timeout(SAVE_MS + 200)
+    page.evaluate("window.__theme.onmessage('kourai')")
+    page.wait_for_timeout(SETTLE_MS)
+    got = page.evaluate("[document.getElementById('theme-note').textContent, document.getElementById('theme-note').checkVisibility(), document.documentElement.dataset.theme, document.getElementById('theme').value]")
+    wall.check(got == ["Not saved: prefs.json could not be saved, so the theme is still kourai, not dicebear.", True, "kourai", "kourai"],
+               "a refused save says why, and the wall wears the theme the app kept", got)
+    page.evaluate("window.__setThemeFails = null")
+    page.select_option("#theme", "professions")
+    page.wait_for_timeout(SAVE_MS + 200)
+    note = page.evaluate("document.getElementById('theme-note').textContent")
+    wall.check(note == "", "the next save clears the note", note)
+    page.close()
+
+
+# Keeps the first card the wall ever paints: its name and face as first drawn.
+FIRST_CARD = """
+new MutationObserver((_, obs) => {
+  const card = document.querySelector('#wall .card');
+  if (!card || window.__first) return;
+  window.__first = { key: card.dataset.key, name: card.querySelector('.name').textContent, face: card.querySelector('.face').getAttribute('src'), theme: document.documentElement.dataset.theme };
+  obs.disconnect();
+}).observe(document, { childList: true, subtree: true });
+"""
+
+
+def hold_theme_until_fleet(page, theme):
+    """Hold theme `theme`'s file (Kourai's comes with the page) and note when the demo fleet has arrived."""
+    held = {"routes": [], "fleet": False}
+    page.on("requestfinished", lambda r: r.url.endswith("fleet-demo.json") and held.__setitem__("fleet", True))
+    if theme != "kourai":
+        page.route(f"**/fleet/themes/{theme}.json", lambda r: held["routes"].append(r))
+    return held
+
+
+def release_after_fleet(page, held):
+    """Let the held theme file go once the fleet is in and a page that did not
+    wait would have painted; a page that waits fetches no fleet before its
+    theme, so anyway a second before THEME_WAIT_MS, past the wall's 1.5 s
+    wait for the app's word, so a fallback that cut the load short shows."""
+    deadline = time.monotonic() + THEME_WAIT_MS / 1000 - 1
+    while not held["fleet"] and time.monotonic() < deadline:
+        page.wait_for_timeout(50)
+    page.wait_for_timeout(400)
+    for r in held["routes"]:
+        r.continue_()
+
+
+STRIP_FIRST = """
+new MutationObserver((_, obs) => {
+  const img = document.querySelector('#strip .face img');
+  if (!img || !img.getAttribute('src') || window.__first) return;
+  window.__first = { id: img.parentElement.dataset.id, face: img.getAttribute('src'), label: img.parentElement.getAttribute('aria-label') };
+  obs.disconnect();
+}).observe(document, { childList: true, subtree: true, attributes: true, attributeFilter: ['src'] });
+"""
+
+
+def strip_first_paint(wall):
+    """The gauge's strip first draws in the theme worn: with ?theme= and the
+    theme's file arriving after the fleet, its first portrait already wears it."""
+    voices = {s["session_id"]: s.get("voice") for s in json.loads((ROOT / "scripts/fixtures/fleet-demo.json").read_text())["sessions"]}
+    for theme in ("professions", "dicebear"):
+        page = wall.browser.new_page(viewport={"width": 1200, "height": 400})
+        page.add_init_script(STRIP_FIRST)
+        held = hold_theme_until_fleet(page, theme)
+        page.goto(f"http://127.0.0.1:{wall.port}/src/index.html?demo&theme={theme}")
+        release_after_fleet(page, held)
+        painted(page, "!!window.__first")
+        first = page.evaluate("window.__first")
+        ch = THEMES[theme]["characters"].get(voices.get(first["id"]))
+        ok = ch and first["face"].startswith(f"fleet/faces/{theme}/") and first["label"].startswith(f"{ch['name']},")
+        wall.check(ok, f"{theme}: the strip's first portrait already wears it", first)
+        page.close()
+
+
+def theme_first_paint(wall):
+    """With a saved theme, the first card the wall paints already wears it:
+    no frame of another theme first, from the app's saved choice or a
+    browser page's ?theme=."""
+    voices = {s["session_id"]: s.get("voice") for s in json.loads((ROOT / "scripts/fixtures/fleet-demo.json").read_text())["sessions"]}
+    for theme in THEMES:
+        for how in ("app", "page"):
+            if how == "app":
+                page = open_app(wall, 1920, 1000, theme=theme, init=FIRST_CARD)
+            else:
+                # The theme's file arrives only after the fleet has: a wall that painted
+                # before its theme would show its first card in Kourai.
+                page = wall.browser.new_page(viewport={"width": 1920, "height": 1000})
+                page.add_init_script(FIRST_CARD)
+                held = hold_theme_until_fleet(page, theme)
+                page.goto(f"http://127.0.0.1:{wall.port}/src/wall.html?demo=8&theme={theme}")
+                release_after_fleet(page, held)
+                painted(page, "document.getElementById('wall').children.length === 8")
+            first = page.evaluate("window.__first")
+            ch = THEMES[theme]["characters"].get(voices.get(first["key"])) if first else None
+            ok = first and ch and first["name"] == ch["name"] and first["face"].startswith(f"fleet/faces/{theme}/") and first["theme"] == theme
+            wall.check(ok, f"{theme} ({how}): the first card painted already wears it", first)
+            page.close()
+
+
+def theme_stale_load_leaves_the_choice(wall):
+    """A load the picker has moved past changes nothing when it lands: with
+    Professions and then DiceBear asked for and both files held, a page
+    hidden meanwhile saves DiceBear the moment it is worn (not 600 ms
+    later), and an older word from the app during DiceBear's load does not
+    replace it."""
+    for older in (False, True):
+        page = open_app(wall, 1920, 1000)
+        held = {}
+        def keep(theme):
+            return lambda route: held.__setitem__(theme, route)
+        for theme in ("professions", "dicebear"):
+            page.route(f"**/fleet/themes/{theme}.json", keep(theme))
+        before = len(page.evaluate("window.__calls"))
+        page.select_option("#theme", "professions")
+        page.select_option("#theme", "dicebear")
+        page.wait_for_timeout(200)
+        if older:
+            page.evaluate("window.__theme.onmessage('kourai')")
+        else:
+            page.evaluate("dispatchEvent(new Event('pagehide'))")
+        held["professions"].continue_()
+        page.wait_for_timeout(200)
+        held["dicebear"].continue_()
+        page.wait_for_timeout(300)
+        early = page.evaluate("window.__calls")[before:]
+        page.wait_for_timeout(SAVE_MS + 200)
+        late = page.evaluate("window.__calls")[before:]
+        theme = page.evaluate("document.documentElement.dataset.theme")
+        if older:
+            wall.check(theme == "dicebear" and late == [["set_theme", {"theme": "dicebear"}]],
+                       "an older word from the app during DiceBear's load leaves DiceBear, saved", [theme, late])
+        else:
+            wall.check(theme == "dicebear" and early == [["set_theme", {"theme": "dicebear"}]] and late == early,
+                       "a page hidden while DiceBear loads saves it the moment it is worn, once", [theme, early, late])
+        page.close()
+
+
+THEME_WAIT_MS = int(re.search(r"THEME_WAIT_MS = (\d+)", (ROOT / "src/fleet/theme.js").read_text()).group(1))
+
+
+def theme_file_that_never_answers(wall):
+    """A theme file that never answers holds no surface blank: the wall
+    paints within THEME_WAIT_MS (and a little) in Kourai, the note says the
+    theme is still loading, and the theme takes over when its file comes,
+    from the app's saved choice and from ?theme=; the gauge strip draws in
+    Kourai and turns too. A theme picked before the app names one, which
+    then fails, still lets the wall paint."""
+    slack = 2.5
+    for how in ("app", "page"):
+        held = []
+        t0 = time.monotonic()
+        if how == "app":
+            page = open_app(wall, 1920, 1000, theme="professions", before=lambda p: p.route("**/fleet/themes/professions.json", lambda r: held.append(r)))
+        else:
+            page = wall.browser.new_page(viewport={"width": 1920, "height": 1000})
+            watch(page)
+            page.route("**/fleet/themes/professions.json", lambda r: held.append(r))
+            page.goto(f"http://127.0.0.1:{wall.port}/src/wall.html?demo=8&theme=professions")
+            painted(page, "document.getElementById('wall').children.length === 8")
+        took = time.monotonic() - t0
+        got = page.evaluate("[document.documentElement.dataset.theme, document.querySelector('#wall .card .face').getAttribute('src'), document.getElementById('theme-note').textContent]")
+        wall.check(held and took < THEME_WAIT_MS / 1000 + slack and got[0] == "kourai" and got[1].startswith("fleet/faces/kourai/") and got[2] == "Loading the Professions theme…",
+                   f"{how}: a theme file that never answers: the wall paints in {took:.1f} s, in Kourai, and says it is loading", [took, got])
+        for r in held:
+            r.continue_()
+        page.wait_for_timeout(600)
+        got = page.evaluate("[document.documentElement.dataset.theme, document.querySelector('#wall .card .face').getAttribute('src'), document.getElementById('theme-note').textContent]")
+        wall.check(got[0] == "professions" and got[1].startswith("fleet/faces/professions/") and got[2] == "",
+                   f"{how}: when the file comes, the theme takes over and the note goes", got)
+        page.close()
+    # Picked before the app's word, then failed after it: the wall still paints.
+    held = []
+    t0 = time.monotonic()
+    page = wall.browser.new_page(viewport={"width": 1920, "height": 1000})
+    fixture = json.loads((ROOT / "scripts/fixtures/fleet-demo.json").read_text())
+    at = fixture.pop("at")
+    page.add_init_script(TAURI_STUB % json.dumps(shifted(fixture, int(time.time()) - at)))
+    page.add_init_script("window.__themeDelay = 500;")
+    watch(page)
+    page.route("**/fleet/themes/dicebear.json", lambda r: held.append(r))
+    page.goto(f"http://127.0.0.1:{wall.port}/src/wall.html")
+    page.wait_for_function("document.getElementById('theme').options.length === 3")
+    page.select_option("#theme", "dicebear")
+    page.wait_for_timeout(900)
+    for r in held:
+        r.abort()
+    try:
+        page.wait_for_function("document.getElementById('wall').children.length > 0", timeout=int((THEME_WAIT_MS / 1000 + slack) * 1000))
+        cards = page.evaluate("document.getElementById('wall').children.length")
+    except Exception:
+        cards = 0
+    note = page.evaluate("document.getElementById('theme-note').textContent")
+    wall.check(cards > 0 and note == "Not switched: the DiceBear theme could not be loaded.", "a theme picked before the app's word that fails after it: the wall still paints, and says why", [cards, note, round(time.monotonic() - t0, 1)])
+    page.close()
+    # Picked before the app's word, its file never answering: the wall paints within THEME_WAIT_MS.
+    held = []
+    t0 = time.monotonic()
+    page = wall.browser.new_page(viewport={"width": 1920, "height": 1000})
+    page.add_init_script(TAURI_STUB % json.dumps(shifted(fixture, int(time.time()) - at)))
+    page.add_init_script("window.__themeDelay = 500;")
+    watch(page)
+    page.route("**/fleet/themes/dicebear.json", lambda r: held.append(r))
+    page.goto(f"http://127.0.0.1:{wall.port}/src/wall.html")
+    page.wait_for_function("document.getElementById('theme').options.length === 3")
+    page.select_option("#theme", "dicebear")
+    try:
+        page.wait_for_function("document.getElementById('wall').children.length > 0", timeout=int((THEME_WAIT_MS / 1000 + slack) * 1000))
+        cards = page.evaluate("document.getElementById('wall').children.length")
+    except Exception:
+        cards = 0
+    took = time.monotonic() - t0
+    note = page.evaluate("document.getElementById('theme-note').textContent")
+    wall.check(held and cards > 0 and took < THEME_WAIT_MS / 1000 + slack and note == "Loading the DiceBear theme…",
+               f"a theme picked before the app's word whose file never answers: the wall paints in {took:.1f} s and says it is loading", [cards, note])
+    for r in held:
+        r.continue_()
+    page.wait_for_timeout(600)
+    got = page.evaluate("[document.documentElement.dataset.theme, document.getElementById('theme-note').textContent]")
+    wall.check(got == ["dicebear", ""], "and wears it when the file comes", got)
+    page.close()
+    # The gauge strip.
+    held = []
+    t0 = time.monotonic()
+    page = wall.browser.new_page(viewport={"width": 1200, "height": 400})
+    page.route("**/fleet/themes/professions.json", lambda r: held.append(r))
+    page.goto(f"http://127.0.0.1:{wall.port}/src/index.html?demo&theme=professions")
+    try:
+        page.wait_for_function("!!document.querySelector('#strip .face img[src]')", timeout=int((THEME_WAIT_MS / 1000 + slack) * 1000))
+        first = page.evaluate("document.querySelector('#strip .face img').getAttribute('src')")
+    except Exception:
+        first = None
+    took = time.monotonic() - t0
+    wall.check(held and first and first.startswith("fleet/faces/kourai/"), f"the strip draws in {took:.1f} s, in Kourai, while its theme's file never answers", first)
+    for r in held:
+        r.continue_()
+    page.wait_for_timeout(600)
+    now = page.evaluate("document.querySelector('#strip .face img')?.getAttribute('src')")
+    wall.check(bool(now) and now.startswith("fleet/faces/professions/"), "and turns when the file comes", now)
+    page.close()
+
+
+def theme_switch_commits_only_what_it_wore(wall):
+    """A theme whose file fails to load is never worn, saved or sent: the
+    wall keeps its theme, the picker goes back and the note says why. The
+    last switch asked for wins over a slower load: Kourai to Professions
+    (held) to DiceBear ends on DiceBear, and Kourai to Professions (held) and
+    back ends on Kourai, each saving only the theme it ended on."""
+    page = open_app(wall, 1920, 1000)
+    page.route("**/fleet/themes/dicebear.json", lambda r: r.abort())
+    before = len(page.evaluate("window.__calls"))
+    page.select_option("#theme", "dicebear")
+    page.wait_for_timeout(SAVE_MS + 300)
+    got = page.evaluate("[document.documentElement.dataset.theme, document.getElementById('theme').value, document.getElementById('theme-note').textContent, document.querySelector('#wall .card .face').getAttribute('src')]")
+    calls = page.evaluate("window.__calls")[before:]
+    wall.check(got[:3] == ["kourai", "kourai", "Not switched: the DiceBear theme could not be loaded."] and got[3].startswith("fleet/faces/kourai/") and calls == [],
+               "a theme that fails to load is not worn, saved or sent, and says why", [got, calls])
+    page.close()
+    for path, want in ((["professions", "dicebear"], "dicebear"), (["professions", "kourai"], "kourai")):
+        page = open_app(wall, 1920, 1000)
+        held = []
+        page.route("**/fleet/themes/professions.json", lambda r: held.append(r))
+        before = len(page.evaluate("window.__calls"))
+        for theme in path:
+            page.select_option("#theme", theme)
+            page.wait_for_timeout(150)
+        page.wait_for_function("document.documentElement.dataset.theme === '%s'" % want)
+        for r in held:
+            r.continue_()
+        page.wait_for_timeout(SAVE_MS + 400)
+        got = page.evaluate("[document.documentElement.dataset.theme, document.getElementById('theme').value, document.querySelector('#wall .card .face').getAttribute('src')]")
+        calls = page.evaluate("window.__calls")[before:]
+        wall.check(held and got[:2] == [want, want] and got[2].startswith(f"fleet/faces/{want}/") and calls == [["set_theme", {"theme": want}]],
+                   f"kourai to {' to '.join(path)}, Professions held: ends on {want} and saves only it", [len(held), got, calls])
+        page.close()
+
+
+PICKER = """() => {
+  const bar = document.querySelector('.bar');
+  const box = (e) => e.getBoundingClientRect();
+  const pick = document.querySelector('.theme-pick');
+  const with_ = Math.round(box(bar).height * 100);
+  pick.style.display = 'none';
+  const without = Math.round(box(bar).height * 100);
+  pick.style.display = '';
+  const p = box(pick);
+  const cx = (p.left + p.right) / 2, cy = (p.top + p.bottom) / 2;
+  // The spacing exception to the 24 px target (WCAG 2.2, 2.5.8): no other target within 12 px of an undersized one's centre.
+  const near = (r) => Math.hypot(Math.max(r.left - cx, 0, cx - r.right), Math.max(r.top - cy, 0, cy - r.bottom)) < 12;
+  const others = [...bar.querySelectorAll('button, label, a, input, select, .tally, .ring-key')]
+    .filter((e) => !pick.contains(e) && !e.contains(pick) && e.checkVisibility() && box(e).width > 0)
+    .map((e) => [e.id || e.className || e.tagName, box(e)]);
+  const hits = (r) => r.left < p.right && p.left < r.right && r.top < p.bottom && p.top < r.bottom;
+  return {
+    with: with_ / 100, without: without / 100,
+    inside: p.left >= 0 && p.right <= innerWidth && p.top >= box(bar).top && p.bottom <= box(bar).bottom,
+    overlaps: others.filter(([, r]) => hits(r)).map(([n]) => n),
+    crowded: p.height < 24 ? others.filter(([, r]) => near(r)).map(([n]) => n) : [],
+    height: p.height,
+  };
+}"""
+
+
+def picker_costs_no_height(wall):
+    """The Characters picker never makes the bar taller or wrap: at each
+    width, with the app's buttons shown or not, the bar is as tall as
+    without the picker, and the picker sits inside the bar, over no other
+    control and 12 px clear of each (the spacing exception to 24 px)."""
+    for width in (420, 945, 958, 1100, 1279, 1280, 1366, 1500, 1920):
+        for app in (True, False):
+            page = wall.open(width, 1000, 8, query="&theme=professions")
+            if not app:
+                page.evaluate("document.getElementById('new-session').hidden = true; document.getElementById('wrapup-open').hidden = true; dispatchEvent(new Event('resize'))")
+                page.wait_for_timeout(SETTLE_MS)
+            got = page.evaluate(PICKER)
+            ok = got["with"] == got["without"] and got["inside"] and not got["overlaps"] and not got["crowded"]
+            wall.check(ok, f"{width} px{' with the app buttons' if app else ''}: the picker costs the bar no height and crowds nothing", got)
+            page.close()
+
+
 def main() -> int:
     handler = functools.partial(Quiet, directory=str(ROOT))
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)  # a free port
@@ -4217,6 +4824,18 @@ def main() -> int:
             ledger_reads_bounded,
             ledger_rolls_over_at_midnight,
             split_toggle,
+            themes_switch_live,
+            themes_keeper_and_portrait,
+            themes_fit,
+            picker_costs_no_height,
+            theme_everywhere,
+            theme_renames_the_queue_keeper,
+            theme_save_flushes_and_says_when_refused,
+            theme_first_paint,
+            strip_first_paint,
+            theme_switch_commits_only_what_it_wore,
+            theme_stale_load_leaves_the_choice,
+            theme_file_that_never_answers,
         )
         for case in cases:
             if not only or case.__name__ in only:

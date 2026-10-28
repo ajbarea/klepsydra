@@ -90,9 +90,9 @@ const FIGURES = (totals) => {
 /**
  * Wire a drawer to `dialog`, toggled by `button` (which takes focus back when
  * the opener is gone) and reopened from `tab`, sharing `edge` with the other
- * side panels. `sessions()` gives the wall's current sessions, `cast` the
- * characters, `fetchToday(session)` the ledger_today view; `onResized()` runs
- * once at the end of a drag of the separator.
+ * side panels. `sessions()` gives the wall's current sessions, `cast()` the
+ * character theme now worn, `fetchToday(session)` the ledger_today view;
+ * `onResized()` runs once at the end of a drag of the separator.
  */
 export function createDrawer({ dialog, button, tab, edge, sessions, cast, fetchToday, onResized }) {
   const content = dialog.querySelector(".ledger-content");
@@ -110,7 +110,7 @@ export function createDrawer({ dialog, button, tab, edge, sessions, cast, fetchT
   const who = () => {
     const map = new Map();
     for (const s of sessions()) {
-      const id = identity(s, cast);
+      const id = identity(s, cast());
       // What tells two cards of one character apart: the session's name, else its repo.
       map.set(s.session_id, { name: id.name, accent: id.accent, label: s.name || s.where?.repo || null });
     }
@@ -121,14 +121,15 @@ export function createDrawer({ dialog, button, tab, edge, sessions, cast, fetchT
     // A fetch can land after the drawer shut: a shut drawer neither paints nor takes focus.
     if (!view || !panel.isOpen) return;
     const names = who();
-    const key = JSON.stringify([view, filter, [...names]]);
+    // The theme too: a voice the wall no longer shows is still named by it.
+    const key = JSON.stringify([view, filter, [...names], cast().label]);
     if (key === painted) return;
     painted = key;
     const { day, receiver, guardrails, guardrails_total: total } = view;
     // Today's recorded voice names a session; the wall only when the day has none.
     const homes = day.home_voices;
     const labels = rowLabels([...names].map(([id, n]) => [id, n.label]), day.labels);
-    const nameOf = (id) => characterOf(id, day.voices, cast, names.get(id), { homes, label: labels.get(id) })?.name;
+    const nameOf = (id) => characterOf(id, day.voices, cast(), names.get(id), { homes, label: labels.get(id) })?.name;
     const everyone = todaySessions(day);
     const shown = todaySessions(day, filter);
     const day_ = sumTotals(shown.map(([, t]) => t));
@@ -202,7 +203,7 @@ export function createDrawer({ dialog, button, tab, edge, sessions, cast, fetchT
 
   function charactersSection(day, shown, labels) {
     const s = section("ledger-characters", "Tokens by character");
-    const rows = tokensByCharacter(shown, day.voices, cast, { homes: day.home_voices, labels });
+    const rows = tokensByCharacter(shown, day.voices, cast(), { homes: day.home_voices, labels });
     const max = Math.max(1, ...rows.map((r) => r.tokens));
     // The bar is decoration: the name and the count beside it are the data.
     const bar = (row) => {
@@ -380,6 +381,8 @@ export function createDrawer({ dialog, button, tab, edge, sessions, cast, fetchT
   });
 
   return {
+    /** Paint the last read again, in the theme now worn: a theme switch reads nothing. */
+    repaint: () => paint(),
     /** Open for all sessions, or for one `session`; `from` is the button to give focus back to. */
     open(session, from) {
       filter = session ?? null;
