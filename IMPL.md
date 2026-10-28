@@ -13,33 +13,22 @@ Installed build: still d0e4a46, quarantined by Defender (06:57 false
 positive, docs/perf/2026-10-28); AJ's running gauge was PID 24580 from
 `C:\Users\ajbar\klepsydra-build-logging` (an unmerged logging build).
 
-## This branch: fix/theme-select-dark (#151), PR not yet opened
-- Commit 03b06a4 (rebased on #145): `.theme-pick select` background
-  `var(--wall-bg)`, options `var(--card-bg)`, `option:checked`
-  `var(--button-hover)`; browser case `theme_list_is_dark`.
+## This branch: fix/theme-select-dark (#151), PR #155
+- `.theme-pick select` background `var(--wall-bg)`, options `var(--card-bg)`,
+  `option:checked` `var(--button-hover)`; browser case `theme_list_is_dark`
+  (mutation-checked: dropping either option rule fails it).
   `appearance: base-select` was tried and dropped (it broke #137's arrow
   keys wearing each theme at once; Chrome 135+ opt-in only).
-- Shots verified in real WebView2 (dark, 1920, demo fleet), filed as
-  `fleet-briefing/shots/2026-10-28/klepsydra-151-list-{before,after}-dark.png`.
-  The README line under 2026-10-28 is still to add, with the PR link. The
-  chosen row keeps Windows' own light highlight; AJ judges.
-  Harness: `C:\Users\ajbar\klepsydra-perf\run151.ps1 -Build <exe>` (pins
-  the wall topmost, captures around the select by named args).
-- Gates: node 446 pass, Biome and ruff clean on the rebased head. The wall
-  and phone browser suites were queued on the lock when the session
-  stopped, with no result read: rerun both before the PR.
-- Next: PR (label bug, assignee ajbarea, "Closes #151", shots, sources:
-  redmine.pfsense.org/issues/11730, bugs.webkit.org/show_bug.cgi?id=111873,
-  developer.chrome.com/blog/rfc-customizable-select); a fresh Opus
-  reviewer; merge.
+- Shots (real WebView2, dark, 1920, demo fleet):
+  `fleet-briefing/shots/2026-10-28/klepsydra-151-list-{before,after}-dark.png`,
+  README line added. The chosen row keeps Windows' own light highlight while
+  open; AJ judges.
+- Gates on the rebased head (on #153): node 446, Biome, ruff clean; phone
+  suite 88/88; wall suite 357/358, the one failure the new case expecting the
+  card colour on the chosen option, fixed and rerun. Opus review CLEAN.
+- Next: merge, then deploy (below).
 
-## Other open PRs
-- #97 Dependabot cargo group (tauri-build, hyper, tokio...): CI green
-  before #145; `@dependabot rebase` asked after #145 changed Cargo.lock.
-  Next: CI green on the rebase, an Opus read of the bump, merge.
-- #77 feat/linux-parity: AJ's older PR, not in this brief.
-
-## Deploy (after #151 and #97 merge)
+## Deploy (after #155 merges; #97 was closed for #153)
 - As on 10-27: `scripts/build-windows.sh` from main (stage
   klepsydra-build-deploy), stop the running gauge, installer `/S`, start;
   copy `hooks/klepsydra-{fleet,launch}.sh` and `hooks/klepsydra-tmux.conf`
