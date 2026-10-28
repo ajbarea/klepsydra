@@ -798,9 +798,10 @@ to 3:1 or more on the card, the plinth and the button at rest and on hover
 (WCAG 2.2, 1.4.11), each name, task and epithet on the band to 4.5:1 under
 every light (1.4.3), every pair apart in OKLab by 0.08 or more, and by
 0.015 or more as seen with protanopia, deuteranopia or tritanopia (Machado,
-Oliveira and Fernandes 2009); Kourai's own nearest pair under deuteranopia
-is 0.021. A colour never carries a character alone: the name and face do
-(1.4.1).
+Oliveira and Fernandes 2009); the closest is DiceBear's 0.016 under
+deuteranopia. Kourai's canon colours are kept as they are, though their
+nearest pair under tritanopia is 0.014, under that bar. A colour never
+carries a character alone: the name and face do (1.4.1).
 
 The tmux windows take the theme's colours too. The overlay writes the theme
 worn to `<app data dir>/cast.json` at start and on every switch; the fleet
@@ -1071,7 +1072,11 @@ and the panel names the file and says who keeps it ("Kept by Hermes
 yours to read. `queue show` prints the current choice and `queue clear` goes
 back to the default. Both write `queue.json` in klepsydra's data folder (under
 WSL the path goes across as a Windows one), the newest choice wins, and it
-applies within five seconds. `--by` takes a name of 1 to 80 characters. A
+applies within five seconds. `--by` takes a name of 1 to 80 characters. Run
+from a session keryx holds a voice for, `queue set` also records that voice,
+and the panel names the keeper as the theme worn names that character
+("Kept by Messenger (orchestrator)" in Professions); a name typed anywhere
+else stays as typed. A
 file kept inside WSL (`\\wsl.localhost\...`) sends Windows no change
 notices, so its edits show on the five-second re-read rather than at once;
 one on a Windows drive (`/mnt/c/...`) shows within a second or two. An older `queue_path` in `prefs.json` still

@@ -1,7 +1,7 @@
 // The Queue panel: the queue file rendered live beside the wall, on the
 // shared side panel (sidepanel.js: shut to a tab, docked, or full). Every
 // word from the file goes in through queue.js as text.
-import { themeName } from "./theme.js";
+import { keeperName } from "./theme.js";
 import { follow } from "../ipc.js";
 import { inTauri, served } from "./feed.js";
 import { present, queueLabel } from "./queue.js";
@@ -62,11 +62,14 @@ export function createQueuePanel({ dialog, button, tab, edge, cast = () => null,
   const keeper = dialog.querySelector(".queue-kept");
   const problem = dialog.querySelector(".queue-problem");
   const opened = new Map(); // section title -> open, as the viewer left it
-  let keptBy = null; // the keeper the file names, as it names itself
-  /** "Kept by" the keeper, a character named as the theme worn names it. */
+  let keptBy = null; // the keeper as queue.json names them, and the voice the hook recorded
+  let keptVoice = null;
+  /** "Kept by" the keeper: the character their voice is in the theme worn, else the name as typed. */
   const paintKeeper = () => {
-    keeper.hidden = !keptBy;
-    keeper.textContent = keptBy ? `Kept by ${themeName(keptBy, cast())}` : "";
+    const name = keeperName(keptBy, keptVoice, cast());
+    keeper.hidden = !name;
+    keeper.textContent = name ? `Kept by ${name}` : "";
+    keeper.title = keptBy && name !== keptBy ? `Set as ${keptBy}` : "";
   };
 
   addEventListener("keydown", (e) => {
@@ -117,6 +120,7 @@ export function createQueuePanel({ dialog, button, tab, edge, cast = () => null,
     pathLine.textContent = view.path ?? "";
     pathLine.title = view.path ?? "";
     keptBy = view.kept_by ?? null;
+    keptVoice = view.kept_voice ?? null;
     paintKeeper();
     problem.hidden = !shown.problem;
     problem.classList.toggle("empty", shown.empty === true);

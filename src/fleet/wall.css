@@ -141,6 +141,8 @@ html, body { background: var(--wall-bg); color: var(--text); font: 14px/1.45 var
 #split[aria-pressed="true"]::before { background: currentColor; }
 #split-note { order: 1; color: var(--text-dim); font-size: 12.5px; }
 #split-note:empty { display: none; }
+#theme-note { order: 1; color: var(--text-dim); font-size: 12.5px; }
+#theme-note:empty { display: none; }
 /* The Ledger button sits with the tally and ring key: at half width the bar has no room for it beside the density choice. */
 /* As tall as the ring key beside it, so a wrapped bar grows no taller; the
    hit area reaches 3 px past each border edge, 24 px in all (WCAG 2.2, 2.5.8). */

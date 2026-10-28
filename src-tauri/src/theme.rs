@@ -41,12 +41,18 @@ pub fn theme_subscribe(
         .subscribe(window.label(), crate::fleet::Webview(on_message));
 }
 
-/// Save the theme chosen on the wall and apply it everywhere.
+/// Save the theme chosen on the wall and apply it everywhere; an error (also
+/// logged) when prefs.json did not take it, so the wall can say why it
+/// wears the saved theme again.
 #[tauri::command]
 pub fn set_theme(app: AppHandle, theme: String) -> Result<(), String> {
     crate::write_pref(&app, theme::KEY, theme::value(&theme)?);
     publish(&app);
-    Ok(())
+    let confirmed = theme::confirm(&theme, saved(&app));
+    if let (Err(e), Some(dir)) = (&confirmed, crate::klepsydra_dir(&app)) {
+        crate::fleet::log_line(&dir, &format!("theme: {e}"));
+    }
+    confirmed
 }
 
 /// Write theme `id`'s file to the data folder's `cast.json`, where the fleet

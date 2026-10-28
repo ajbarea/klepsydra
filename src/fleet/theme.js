@@ -30,14 +30,15 @@ export function keeperOf(theme) {
 const VOICE_OF = new Map(Object.values(THEMES).flatMap((t) => Object.entries(t.characters).map(([voice, c]) => [c.name, voice])));
 
 /**
- * `label` (a name a session gave itself, such as the Queue's keeper,
- * "Hermes (orchestrator)") with a leading character name from any theme
- * replaced by the name `theme` gives the same voice; anything else as written.
+ * The Queue's keeper as `theme` names them. Only a `voice` the fleet hook
+ * recorded (the session that set the file) makes a character: its name in
+ * the theme, keeping what follows a name the label gave that voice in any
+ * theme ("Hermes (orchestrator)" is "Messenger (orchestrator)"). Without one,
+ * the label stays as typed, whatever it says.
  */
-export function themeName(label, theme) {
-  if (typeof label !== "string") return label;
-  const [, name, rest] = label.match(/^(.*?)( \(.*\))?$/);
-  const voice = VOICE_OF.get(name);
-  const now = voice && castCharacter(voice, theme)?.name;
-  return now ? `${now}${rest ?? ""}` : label;
+export function keeperName(label, voice, theme) {
+  const now = castCharacter(voice, theme)?.name;
+  if (!now) return label;
+  const [, name, rest] = typeof label === "string" ? label.match(/^(.*?)( \(.*\))?$/) : [];
+  return VOICE_OF.get(name) === voice ? `${now}${rest ?? ""}` : now;
 }

@@ -75,12 +75,12 @@ fn queue_path(app: &AppHandle) -> Result<PathBuf, String> {
     queue::resolve(pref.as_ref(), app.path().desktop_dir().ok())
 }
 
-/// The queue file and who keeps it: `queue.json`'s in the data folder, else
-/// the pref's or the Desktop's, kept by no one.
-fn queue_source(app: &AppHandle) -> (Result<PathBuf, String>, Option<String>) {
+/// The queue file, who keeps it and their voice: `queue.json`'s in the data
+/// folder, else the pref's or the Desktop's, kept by no one.
+fn queue_source(app: &AppHandle) -> (Result<PathBuf, String>, Option<String>, Option<String>) {
     match queue::kept(crate::klepsydra_dir(app).as_deref()) {
-        Some(kept) => (kept.path, kept.by),
-        None => (queue_path(app), None),
+        Some(kept) => (kept.path, kept.by, kept.voice),
+        None => (queue_path(app), None, None),
     }
 }
 
@@ -119,8 +119,8 @@ pub fn start_queue(app: &AppHandle) {
         let mut follower = queue::Follower::default();
         let mut wait = Duration::ZERO;
         loop {
-            let (path, by) = queue_source(&app);
-            follower.keep(by);
+            let (path, by, voice) = queue_source(&app);
+            follower.keep(by, voice);
             if let Some(view) = follower.step(&path, wait) {
                 if let Ok(v) = serde_json::to_value(view) {
                     app.state::<QueueFeed>().0.publish(v);

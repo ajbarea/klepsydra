@@ -722,10 +722,14 @@ queue_cmd() { # args...
       if [[ $osrelease == *[Mm]icrosoft* ]] && command -v wslpath >/dev/null; then
         path=$(wslpath -w -- "$path" 2>/dev/null) || { echo "klepsydra: $2 has no Windows path" >&2; return 1; }
       fi
-      local tmp=$keeper.$$.tmp
+      local tmp=$keeper.$$.tmp voice=""
+      # The voice keryx holds for the session running this, so the panel can
+      # name its character in the theme worn; a name typed in --by stays as typed.
+      if claude_ancestor "${KLEPSYDRA_PID:-$$}"; then voice=$(holder_voice "$found_pid" "$found_start") || voice=""; fi
       # -T: a folder at the name is a failure, not a place to move the file into.
       if ! { mkdir -p -- "$KLEPSYDRA_DIR" 2>/dev/null &&
-             jq -nc --arg path "$path" --arg by "$by" '{path: $path, by: (if $by == "" then null else $by end)}' 2>/dev/null >"$tmp" &&
+             jq -nc --arg path "$path" --arg by "$by" --arg voice "$voice" \
+               '{path: $path, by: (if $by == "" then null else $by end), voice: (if $voice == "" then null else $voice end)}' 2>/dev/null >"$tmp" &&
              mv -fT -- "$tmp" "$keeper" 2>/dev/null; }; then
         rm -f -- "$tmp" 2>/dev/null
         echo "klepsydra: could not write $keeper" >&2
@@ -752,9 +756,10 @@ file_voice() { # text
 
 # Marks the session's tmux window with its character's colour, on the
 # launcher's own socket only, and clears it for a voice with no character.
-# The accent and its ink come from the cast (themes/kourai.json `accent`,
-# the same in every theme; the ink is black or white, whichever has more WCAG
-# contrast, as contrast.js picks).
+# The accent and its ink come from the cast: the theme worn, which the
+# overlay writes to $KLEPSYDRA_DIR/cast.json, else ~/.claude/klepsydra-cast.json
+# (see CAST above); the ink is black or white, whichever has more WCAG
+# contrast, as contrast.js picks.
 WINDOW_STYLES=(window-status-style window-status-current-style)
 colour_window() { # voice
   local accent="" ink="" row="" opt

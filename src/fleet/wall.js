@@ -1176,14 +1176,36 @@ wearTheme(DEFAULT_THEME, false);
 // arrow key held over the closed picker writes prefs.json and reaches every
 // window and the phone once, not once a step.
 let saving = 0;
+const themeNote = document.getElementById("theme-note");
+/** Save the theme the picker rests on now. A save prefs.json refused says so; the app sends back the theme it kept. */
+function saveTheme() {
+  clearTimeout(saving);
+  saving = 0;
+  const theme = themePicker.value;
+  window.__TAURI__.core.invoke("set_theme", { theme }).then(
+    () => setText(themeNote, ""),
+    (err) => {
+      console.warn("klepsydra: theme not saved:", err);
+      setText(themeNote, `Not saved: ${err}`);
+    },
+  );
+}
 themePicker.addEventListener("change", () => {
   wearTheme(themePicker.value);
   if (!inTauri) return;
   clearTimeout(saving);
-  saving = setTimeout(() => {
-    saving = 0;
-    window.__TAURI__.core.invoke("set_theme", { theme: themePicker.value }).catch(() => {});
-  }, THEME_SAVE_MS);
+  saving = setTimeout(saveTheme, THEME_SAVE_MS);
+});
+// A choice still waiting is saved before the picker, the window or the page
+// lets go of it: a click on the tray's Quit first takes the focus away.
+const flushTheme = () => {
+  if (saving) saveTheme();
+};
+themePicker.addEventListener("blur", flushTheme);
+addEventListener("blur", flushTheme);
+addEventListener("pagehide", flushTheme);
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) flushTheme();
 });
 // While a choice waits to be saved, the app's word is older than it.
 subscribeTheme((id) => {

@@ -3,6 +3,7 @@
 //! `src/fleet/themes/<id>.json`; the first is the default.
 
 use std::path::Path;
+use std::sync::Mutex;
 
 use serde_json::{Map, Value};
 
@@ -43,10 +44,28 @@ pub fn value(id: &str) -> Result<Value, String> {
 /// from (`klepsydra-fleet.sh`, `colour_window`): the theme worn, as its file.
 pub const HOOK_CAST: &str = "cast.json";
 
+/// One cast.json write at a time in this process: each writes one temp file
+/// and renames it, so two at once would share it.
+static CAST_WRITE: Mutex<()> = Mutex::new(());
+
+/// Whether the theme `asked` for is the one prefs.json now holds (`saved`):
+/// else why not, naming both, for the wall to say rather than quietly wear
+/// the saved one again.
+pub fn confirm(asked: &str, saved: &str) -> Result<(), String> {
+    if asked == saved {
+        Ok(())
+    } else {
+        Err(format!(
+            "prefs.json could not be saved, so the theme is still {saved}, not {asked}."
+        ))
+    }
+}
+
 /// Write `theme` (a theme file's bytes) to `<dir>/cast.json` for the fleet
 /// hook, whole or not at all: a temp file renamed into place. Refused, and
 /// the old file kept, unless it is a JSON object whose `characters` is one.
 pub fn write_cast(dir: &Path, theme: &[u8]) -> std::io::Result<()> {
+    let _one = CAST_WRITE.lock().unwrap_or_else(|e| e.into_inner());
     let invalid =
         |what: &str| std::io::Error::new(std::io::ErrorKind::InvalidData, what.to_string());
     let v: Value = serde_json::from_slice(theme).map_err(|e| invalid(&e.to_string()))?;
@@ -147,6 +166,41 @@ mod tests {
             );
             assert_eq!(std::fs::read(dir.join(HOOK_CAST)).unwrap(), good);
         }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_choice_not_saved_says_so() {
+        assert_eq!(confirm("dicebear", "dicebear"), Ok(()));
+        let err = confirm("dicebear", "kourai").unwrap_err();
+        assert!(err.contains("still kourai, not dicebear"), "{err}");
+    }
+
+    #[test]
+    fn cast_writes_from_many_threads_each_land_whole() {
+        let dir = temp_dir("threads");
+        let themes: Vec<Vec<u8>> = (0..8)
+            .map(|i| {
+                format!(
+                    r#"{{"v":1,"label":"{}","characters":{{}}}}"#,
+                    "x".repeat(4000 + i)
+                )
+                .into_bytes()
+            })
+            .collect();
+        std::thread::scope(|s| {
+            for t in &themes {
+                let dir = &dir;
+                s.spawn(move || {
+                    for _ in 0..40 {
+                        write_cast(dir, t).unwrap();
+                    }
+                });
+            }
+        });
+        let last = std::fs::read(dir.join(HOOK_CAST)).unwrap();
+        assert!(themes.contains(&last), "the cast is one theme, whole");
+        assert!(!dir.join("cast.json.tmp").exists());
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

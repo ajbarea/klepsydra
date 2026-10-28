@@ -3,7 +3,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { DEFAULT_THEME, THEMES, keeperOf, themeId, themeName, themeOf } from "./fleet/theme.js";
+import { DEFAULT_THEME, THEMES, keeperName, keeperOf, themeId, themeOf } from "./fleet/theme.js";
 import { castFiles } from "./fleet/cast.js";
 import { card, identity, stripItems } from "./fleet/model.js";
 import { characterOf, tokensByCharacter } from "./fleet/ledger.js";
@@ -270,7 +270,12 @@ test("the wall, the strip and the drawer read the theme now worn, not a fixed ca
   assert.match(wall, /subscribeTheme\(\(id\) => \{\s*if \(!saving\) wearTheme\(id\);\s*\}\);/, "the app's word, unless a choice waits to be saved");
   assert.match(wall, /document\.documentElement\.dataset\.theme = next;/, "html[data-theme] names the theme, as a CSS colour theme");
   assert.match(wall, /if \(served && Array\.isArray\(message\?\.sessions\)\) wearTheme\(message\.theme, false\);/, "the phone wears the snapshot's theme");
-  assert.match(wall, /saving = setTimeout\(\(\) => \{\s*saving = 0;\s*window\.__TAURI__\.core\.invoke\("set_theme", \{ theme: themePicker\.value \}\)[^\n]*\n\s*\}, THEME_SAVE_MS\);/, "saved where the picker rests");
+  assert.match(wall, /saving = setTimeout\(saveTheme, THEME_SAVE_MS\);/, "saved where the picker rests");
+  for (const [target, event] of [["themePicker", "blur"], ["", "blur"], ["", "pagehide"]]) {
+    assert.match(wall, new RegExp(`${target ? `${target}\\.` : "\\n"}addEventListener\\("${event}", flushTheme\\);`), `a waiting choice is saved on ${target || "window"} ${event}`);
+  }
+  assert.match(wall, /if \(document\.hidden\) flushTheme\(\);/);
+  assert.match(wall, /setText\(themeNote, `Not saved: \$\{err\}`\);/, "a refused save says so");
   assert.doesNotMatch(read("src/fleet/strip.js"), /cast\.json|import cast/);
   assert.match(read("src/main.js"), /subscribeTheme\(\(id\) => \{\s*if \(themeOf\(id\) === theme\) return;\s*theme = themeOf\(id\);\s*render\(\);\s*\}\);/, "the gauge's strip redraws on a switch");
   assert.match(read("src/main.js"), /cast: \(\) => theme,/, "and draws the theme now worn");
@@ -280,7 +285,7 @@ test("the wall, the strip and the drawer read the theme now worn, not a fixed ca
   const drawer = read("src/fleet/drawer.js");
   assert.match(drawer, /const key = JSON\.stringify\(\[view, filter, \[\.\.\.names\], cast\(\)\.label\]\);/, "the Ledger repaints for a new theme");
   assert.match(drawer, /repaint: \(\) => paint\(\),/);
-  assert.match(read("src/fleet/queuepanel.js"), /Kept by \$\{themeName\(keptBy, cast\(\)\)\}/);
+  assert.match(read("src/fleet/queuepanel.js"), /const name = keeperName\(keptBy, keptVoice, cast\(\)\);/);
   assert.match(wall, /if \(said\.length\) announce\(said\.join\("\. "\)\);\n    refillPortrait\(\);/, "and so does a snapshot, the phone's theme with it");
   assert.match(read("src/fleet/wall.css"), /\.served \.theme-pick,/, "no picker on the phone");
 });
@@ -309,15 +314,18 @@ test("each profession's glyph carries its own licence: Feather's MIT where Lucid
   assert.match(read("README.md"), /\[Feather\]\(https:\/\/feathericons\.com\) \(MIT licence,\s+Copyright \(c\) 2013-present Cole Bemis\)/, "the README credits Feather");
 });
 
-test("a name a session gave itself becomes the theme's name for the same voice, and anything else stays as written", () => {
+test("the Queue's keeper is a character only by the voice the hook recorded; a typed name stays as typed", () => {
   for (const id of IDS) {
     const t = THEMES[id];
-    assert.equal(themeName("Hermes", t), t.characters.bm_fable.name, id);
-    assert.equal(themeName("Hermes (orchestrator)", t), `${t.characters.bm_fable.name} (orchestrator)`, id);
-    assert.equal(themeName(THEMES.dicebear.characters.am_michael.name, t), t.characters.am_michael.name, id);
-    assert.equal(themeName("Foreman", t), t.characters.am_michael.name, id);
+    const messenger = t.characters.bm_fable.name;
+    assert.equal(keeperName("Hermes (orchestrator)", "bm_fable", t), `${messenger} (orchestrator)`, id);
+    assert.equal(keeperName("Messenger", "bm_fable", t), messenger, id);
+    assert.equal(keeperName("Heph (orchestrator)", "am_michael", t), t.characters.am_michael.name, `${id}: the voice names it`);
+    // No voice recorded, or one no theme casts: whatever was typed, even another theme's name.
+    for (const typed of ["Editor", "Max", "Heph (orchestrator)", "Hermes (orchestrator)", "Guard", "AJ"]) {
+      assert.equal(keeperName(typed, null, t), typed, `${id}: ${typed}`);
+      assert.equal(keeperName(typed, "bm_lewis", t), typed, `${id}: ${typed} with an uncast voice`);
+    }
   }
-  for (const other of ["", "AJ", "hermes", "Hermesian", "the Hermes agent", "Hermes(x)", null, undefined, 3]) {
-    assert.equal(themeName(other, THEMES.professions), other, String(other));
-  }
+  assert.equal(keeperName(null, null, THEMES.kourai), null);
 });

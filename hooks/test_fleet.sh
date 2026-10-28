@@ -1612,10 +1612,16 @@ mkdir -p "$qproc/sys/kernel" "$work/wslbin"
 queue() { KLEPSYDRA_DIR=$qdir KLEPSYDRA_PROC=$qproc bash "$hook" queue "$@"; }
 out=$(queue set /home/aj/queue.md --by "Hermes (orchestrator)"); rc=$?
 check "queue set: says so" "$rc|$out" "0|The Queue panel now reads /home/aj/queue.md, kept by Hermes (orchestrator)."
-check "queue set: path and keeper" "$(jq -c . "$qdir/queue.json")" '{"path":"/home/aj/queue.md","by":"Hermes (orchestrator)"}'
+check "queue set: path and keeper" "$(jq -c . "$qdir/queue.json")" '{"path":"/home/aj/queue.md","by":"Hermes (orchestrator)","voice":null}'
 check "queue set: no temp file left" "$(find "$qdir" -name '*.tmp' | wc -l)" "0"
 queue set /home/aj/other.md >/dev/null
-check "queue set: no --by keeps no one" "$(jq -c . "$qdir/queue.json")" '{"path":"/home/aj/other.md","by":null}'
+check "queue set: no --by keeps no one" "$(jq -c . "$qdir/queue.json")" '{"path":"/home/aj/other.md","by":null,"voice":null}'
+# Run from a Claude Code session keryx holds a voice for, the voice is
+# recorded: the panel names that character in the theme worn, never a name typed.
+KLEPSYDRA_DIR=$qdir KLEPSYDRA_PROC="$work/proc" KLEPSYDRA_PID=600 KERYX_VOICES="$work/win-voices.json" bash "$hook" queue set /home/aj/q.md --by "Heph (orchestrator)" >/dev/null
+check "queue set in a session: its voice" "$(jq -c '[.by, .voice]' "$qdir/queue.json")" '["Heph (orchestrator)","am_michael"]'
+KLEPSYDRA_DIR=$qdir KLEPSYDRA_PROC="$work/proc" KLEPSYDRA_PID=810 KERYX_VOICES="$work/win-voices.json" bash "$hook" queue set /home/aj/q.md --by "Editor" >/dev/null
+check "queue set outside any session: no voice" "$(jq -c '[.by, .voice]' "$qdir/queue.json")" '["Editor",null]'
 ( cd "$work" && queue set rel.md >/dev/null )
 check "queue set: a relative path is made absolute" "$(jq -r .path "$qdir/queue.json")" "$work/rel.md"
 check "queue show: prints queue.json" "$(queue show)" "$(cat "$qdir/queue.json")"

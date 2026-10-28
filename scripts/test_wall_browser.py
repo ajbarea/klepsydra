@@ -1085,6 +1085,7 @@ window.__TAURI__ = { core: {
     }
     if (cmd === 'get_wall_density') return Promise.resolve('auto');
     if (cmd === 'get_launch_dir') { window.__calls.push([cmd, args]); return window.__dirAnswer ? window.__dirAnswer() : Promise.resolve('/home/aj/ajsoftworks'); }
+    if (cmd === 'set_theme' && window.__setThemeFails) { window.__calls.push([cmd, args]); return Promise.reject(window.__setThemeFails); }
     if (cmd === 'end_session' && window.__hold) { window.__calls.push([cmd, args]); return window.__hold; }
     window.__calls.push([cmd, args]);
     if (cmd === 'start_wrapup') return Promise.resolve(window.__asked ?? []);
@@ -4336,22 +4337,55 @@ def theme_everywhere(wall):
 
 
 def theme_renames_the_queue_keeper(wall):
-    """The Queue names its keeper as the theme worn names that character
-    ("Kept by Hermes (orchestrator)" is the Messenger in Professions), and a
-    name that is no character stays as written."""
+    """The Queue names its keeper as the theme worn names the character of
+    the voice the hook recorded ("Hermes (orchestrator)" with bm_fable is the
+    Messenger in Professions); without a voice a name stays as typed, even
+    another theme's ("Editor" under Kourai)."""
     page = open_app(wall, 1920, 1000)
     page.wait_for_function("window.__queue !== undefined")
-    for kept, theme, want in (
-        ("Hermes (orchestrator)", "professions", "Kept by Messenger (orchestrator)"),
-        ("Hermes (orchestrator)", "dicebear", f"Kept by {THEMES['dicebear']['characters']['bm_fable']['name']} (orchestrator)"),
-        ("Hermes (orchestrator)", "kourai", "Kept by Hermes (orchestrator)"),
-        ("AJ", "professions", "Kept by AJ"),
+    for kept, voice, theme, want in (
+        ("Hermes (orchestrator)", "bm_fable", "professions", "Kept by Messenger (orchestrator)"),
+        ("Hermes (orchestrator)", "bm_fable", "dicebear", f"Kept by {THEMES['dicebear']['characters']['bm_fable']['name']} (orchestrator)"),
+        ("Hermes (orchestrator)", "bm_fable", "kourai", "Kept by Hermes (orchestrator)"),
+        ("Editor", None, "kourai", "Kept by Editor"),
+        ("Heph (orchestrator)", None, "professions", "Kept by Heph (orchestrator)"),
     ):
-        page.evaluate("(k) => window.__queue.onmessage({path: 'C:/q.md', text: '# Q', problem: null, kept_by: k})", kept)
+        page.evaluate("([k, v]) => window.__queue.onmessage({path: 'C:/q.md', text: '# Q', problem: null, kept_by: k, kept_voice: v})", [kept, voice])
         page.evaluate("(t) => window.__theme.onmessage(t)", theme)
         page.wait_for_timeout(SETTLE_MS)
         got = page.evaluate("document.querySelector('#queue .queue-kept').textContent")
         wall.check(got == want, f"{theme}: {want}", got)
+    page.close()
+
+
+def theme_save_flushes_and_says_when_refused(wall):
+    """A choice still waiting to be saved is saved at once when the picker
+    loses focus (a click on the tray's Quit takes it away), and only once; a
+    save prefs.json refuses says so beside the picker, and the theme the app
+    sends back is worn again."""
+    page = open_app(wall, 1920, 1000)
+    before = len(page.evaluate("window.__calls"))
+    page.focus("#theme")
+    page.select_option("#theme", "professions")
+    page.evaluate("document.getElementById('theme').blur()")
+    page.wait_for_timeout(100)
+    early = page.evaluate("window.__calls")[before:]
+    page.wait_for_timeout(SAVE_MS + 200)
+    late = page.evaluate("window.__calls")[before:]
+    wall.check(early == [["set_theme", {"theme": "professions"}]] and late == early, "a blur saves the waiting choice at once, and once", [early, late])
+    page.evaluate("window.__setThemeFails = 'prefs.json could not be saved, so the theme is still kourai, not dicebear.'")
+    page.select_option("#theme", "dicebear")
+    page.wait_for_timeout(SAVE_MS + 200)
+    page.evaluate("window.__theme.onmessage('kourai')")
+    page.wait_for_timeout(SETTLE_MS)
+    got = page.evaluate("[document.getElementById('theme-note').textContent, document.getElementById('theme-note').checkVisibility(), document.documentElement.dataset.theme, document.getElementById('theme').value]")
+    wall.check(got == ["Not saved: prefs.json could not be saved, so the theme is still kourai, not dicebear.", True, "kourai", "kourai"],
+               "a refused save says why, and the wall wears the theme the app kept", got)
+    page.evaluate("window.__setThemeFails = null")
+    page.select_option("#theme", "professions")
+    page.wait_for_timeout(SAVE_MS + 200)
+    note = page.evaluate("document.getElementById('theme-note').textContent")
+    wall.check(note == "", "the next save clears the note", note)
     page.close()
 
 
@@ -4504,6 +4538,7 @@ def main() -> int:
             picker_costs_no_height,
             theme_everywhere,
             theme_renames_the_queue_keeper,
+            theme_save_flushes_and_says_when_refused,
         )
         for case in cases:
             if not only or case.__name__ in only:
