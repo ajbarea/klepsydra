@@ -803,6 +803,13 @@ fn with_state<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R
         .manage(theme::ThemeMenu::default())
 }
 
+/// `KLEPSYDRA_NO_AUTOSTART` set to anything but empty: this copy leaves the
+/// login entry alone. The entry is one per app name, so a test copy started
+/// with its own `KLEPSYDRA_DIR` would otherwise point it at itself.
+fn autostart_held() -> bool {
+    std::env::var_os("KLEPSYDRA_NO_AUTOSTART").is_some_and(|v| !v.is_empty())
+}
+
 fn main() {
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -867,14 +874,15 @@ fn main() {
             let legacy = legacy_dir(app.handle()).map(|d| d.join("autostart-initialised"));
             let exists = |m: &Option<PathBuf>| m.as_ref().map(|m| m.exists()).unwrap_or(false);
             let first_run = marker.is_some() && !exists(&marker) && !exists(&legacy);
-            if first_run || autostart.is_enabled().unwrap_or(false) {
+            if !autostart_held() && (first_run || autostart.is_enabled().unwrap_or(false)) {
                 let _ = autostart.enable();
             }
             // Write the marker whenever it is missing, not only on a first run:
             // left unwritten, an upgraded install answers "have we been here
             // before?" out of the old directory forever, and tidying that
             // directory away silently re-enables autostart the user turned off.
-            if let Some(m) = marker.as_ref().filter(|m| !m.exists()) {
+            // A held copy decided nothing, so it leaves the first run unspent.
+            if let Some(m) = marker.as_ref().filter(|m| !m.exists() && !autostart_held()) {
                 if let Some(parent) = m.parent() {
                     let _ = std::fs::create_dir_all(parent);
                 }
@@ -888,7 +896,7 @@ fn main() {
                 } else {
                     "Start at login"
                 },
-                true,
+                !autostart_held(),
                 autostart.is_enabled().unwrap_or(false),
                 None::<&str>,
             )?;
@@ -951,6 +959,9 @@ fn main() {
                 .show_menu_on_left_click(true)
                 .on_menu_event(move |app, event| match event.id.as_ref() {
                     "autostart" => {
+                        if autostart_held() {
+                            return;
+                        }
                         // The checkbox has already flipped; mirror it onto the system.
                         let want = toggle.is_checked().unwrap_or(false);
                         let mgr = app.autolaunch();

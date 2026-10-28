@@ -246,6 +246,13 @@ to both sides gives the overlay a path it cannot resolve. The hooks prune
 their old files only when the last folder of that path is
 `dev.ajsoftworks.klepsydra`; any other name leaves them in place.
 
+A second copy of the overlay, run to test a build beside the installed one,
+takes its own `KLEPSYDRA_DIR` and `KLEPSYDRA_NO_AUTOSTART` set to any
+value but empty (`1`, say; `0` holds it too). The login entry
+is one per app name, so without the second setting the copy re-registers it
+with its own path, and the next login starts the copy. With it set, the copy
+leaves the entry alone and its tray's start-at-login item is greyed out.
+
 **2. Build the overlay.** Windows and Linux differ here; see the Linux
 section below. On Windows it requires Rust (MSVC toolchain), Node, and the
 Microsoft C++ Build Tools:
