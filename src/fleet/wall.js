@@ -19,6 +19,7 @@ import { cutsText } from "./fulltext.js";
 import { WAITING, usageRows } from "../gauge.js";
 import { readMode, readStops, syncEntries } from "../gaugeview.js";
 
+const FIRST_THEME_MS = 1500; // the longest the first paint waits for the saved theme
 const TICK_MS = 15_000; // ages re-render between snapshots, as on the gauge
 const FACE_PX = 62; // the comfortable --wall-face less twice its --face-inset
 const SVG_NS = "http://www.w3.org/2000/svg";
@@ -622,9 +623,17 @@ function drawSpeaking() {
   frameId = requestAnimationFrame(drawSpeaking);
 }
 
+// The phone wears the theme each snapshot names before painting it, so its
+// first card is already in that theme; snapshots are taken in order, each
+// after any theme file the one before it waited for.
+let inbox = Promise.resolve();
 function receive(message) {
-  // The phone wears the theme the app names on each snapshot.
-  if (served && Array.isArray(message?.sessions)) wearTheme(message.theme, false);
+  if (!served) return take(message);
+  const theme = Array.isArray(message?.sessions) ? () => wearTheme(message.theme, false) : () => null;
+  inbox = inbox.then(theme).then(() => take(message));
+}
+
+function take(message) {
   if (Array.isArray(message?.sessions)) {
     const said = announcements(before, message.sessions, cast, Date.now());
     const speaking = speaker.update(message.speaking ?? null, Date.now());
@@ -1152,23 +1161,41 @@ themePicker.replaceChildren(
 );
 const keeper = empty.querySelector(".keeper");
 
-let wanted = DEFAULT_THEME; // the theme last asked for, which a slower load must not undo
+let wanted = DEFAULT_THEME; // the theme last asked for: a slower load must not undo a later one
+const themeNote = document.getElementById("theme-note");
 /**
- * Wear theme `id` (an unknown one is the default), and repaint unless
- * `paint` is false. A theme not loaded yet is worn, and painted, once its
- * file arrives, unless another was asked for meanwhile.
+ * Wear theme `id` (an unknown one is the default), repainting unless `paint`
+ * is false. A theme not loaded yet is worn once its file arrives. Resolves
+ * true once worn; false when another theme was asked for meanwhile (the last
+ * ask wins) or its file could not be loaded, which leaves the theme worn as
+ * it was, the picker on it, and says why.
  */
 function wearTheme(id, paint = true) {
   const next = themeId(id);
   wanted = next;
   const theme = loadedTheme(next);
-  if (!theme) {
-    loadTheme(next).then(
-      () => wanted === next && wearTheme(next),
-      (err) => console.warn(`klepsydra: theme ${next} could not be loaded:`, err),
-    );
-    return;
+  if (theme) {
+    put(next, theme, paint);
+    return Promise.resolve(true);
   }
+  return loadTheme(next).then(
+    (loaded) => {
+      if (wanted !== next) return false;
+      put(next, loaded, paint);
+      return true;
+    },
+    (err) => {
+      console.warn(`klepsydra: theme ${next} could not be loaded:`, err);
+      if (wanted === next) {
+        wanted = worn;
+        themePicker.value = worn;
+        setText(themeNote, `Not switched: the ${THEME_LABELS[next]} theme could not be loaded.`);
+      }
+      return false;
+    },
+  );
+}
+function put(next, theme, paint) {
   const was = worn;
   worn = next;
   cast = theme;
@@ -1185,18 +1212,20 @@ function wearTheme(id, paint = true) {
   drawer.repaint();
   queue.retheme();
 }
-wearTheme(DEFAULT_THEME, false);
-// The picker wears each step at once; the app saves only where it rests, so an
-// arrow key held over the closed picker writes prefs.json and reaches every
-// window and the phone once, not once a step.
+put(DEFAULT_THEME, loadedTheme(DEFAULT_THEME), false);
+// The picker wears each step once its file is in, and only then is the step
+// a choice: the app saves where the picker rests, so an arrow key held over
+// the closed picker writes prefs.json and reaches every window and the phone
+// once, not once a step, and never for a theme the wall could not wear.
 let saving = 0;
-const themeNote = document.getElementById("theme-note");
-/** Save the theme the picker rests on now. A save prefs.json refused says so; the app sends back the theme it kept. */
+let picking = false; // a choice not saved yet, over which the app's word is older
+let flushNow = false; // the picker let go while its theme was still loading: save once worn
+/** Save the theme worn now. A save prefs.json refused says so; the app sends back the theme it kept. */
 function saveTheme() {
   clearTimeout(saving);
   saving = 0;
-  const theme = themePicker.value;
-  window.__TAURI__.core.invoke("set_theme", { theme }).then(
+  picking = false;
+  window.__TAURI__.core.invoke("set_theme", { theme: worn }).then(
     () => setText(themeNote, ""),
     (err) => {
       console.warn("klepsydra: theme not saved:", err);
@@ -1205,15 +1234,31 @@ function saveTheme() {
   );
 }
 themePicker.addEventListener("change", () => {
-  wearTheme(themePicker.value);
-  if (!inTauri) return;
+  picking = true;
   clearTimeout(saving);
-  saving = setTimeout(saveTheme, THEME_SAVE_MS);
+  saving = 0;
+  wearTheme(themePicker.value).then((worn) => {
+    const now = flushNow;
+    flushNow = false;
+    if (!worn) {
+      picking = false;
+      return;
+    }
+    setText(themeNote, "");
+    if (!inTauri) {
+      picking = false;
+      return;
+    }
+    clearTimeout(saving);
+    saving = setTimeout(saveTheme, THEME_SAVE_MS);
+    if (now) saveTheme();
+  });
 });
 // A choice still waiting is saved before the picker, the window or the page
 // lets go of it: a click on the tray's Quit first takes the focus away.
 const flushTheme = () => {
   if (saving) saveTheme();
+  else if (picking) flushNow = true;
 };
 themePicker.addEventListener("blur", flushTheme);
 addEventListener("blur", flushTheme);
@@ -1221,12 +1266,21 @@ addEventListener("pagehide", flushTheme);
 document.addEventListener("visibilitychange", () => {
   if (document.hidden) flushTheme();
 });
-// While a choice waits to be saved, the app's word is older than it.
-subscribeTheme((id) => {
-  if (!saving) wearTheme(id);
+// The first paint waits for the theme worn, so no card shows another theme
+// first; past FIRST_THEME_MS (no word from the app) it goes ahead in Kourai.
+// The phone's theme comes with each snapshot (receive).
+const firstTheme = new Promise((ready) => {
+  if (served) {
+    ready();
+    return;
+  }
+  setTimeout(ready, FIRST_THEME_MS);
+  subscribeTheme((id) => {
+    if (picking) return;
+    wearTheme(id).then(ready);
+  });
 });
-
-subscribe(receive, showLink);
+firstTheme.then(() => subscribe(receive, showLink));
 setInterval(() => {
   const said = render();
   if (said.length) announce(said.join(". "));

@@ -282,9 +282,10 @@ test("the wall, the strip and the drawer read the theme now worn, not a fixed ca
   const wall = read("src/fleet/wall.js");
   assert.doesNotMatch(wall, /cast\.json/);
   assert.match(wall, /cast: \(\) => cast,/, "the drawer asks for the theme each time");
-  assert.match(wall, /subscribeTheme\(\(id\) => \{\s*if \(!saving\) wearTheme\(id\);\s*\}\);/, "the app's word, unless a choice waits to be saved");
+  assert.match(wall, /subscribeTheme\(\(id\) => \{\s*if \(picking\) return;\s*wearTheme\(id\)\.then\(ready\);\s*\}\);/, "the app's word, unless a choice waits to be saved");
+  assert.match(wall, /firstTheme\.then\(\(\) => subscribe\(receive, showLink\)\);/, "the first paint waits for the theme worn");
   assert.match(wall, /document\.documentElement\.dataset\.theme = next;/, "html[data-theme] names the theme, as a CSS colour theme");
-  assert.match(wall, /if \(served && Array\.isArray\(message\?\.sessions\)\) wearTheme\(message\.theme, false\);/, "the phone wears the snapshot's theme");
+  assert.match(wall, /\? \(\) => wearTheme\(message\.theme, false\)[^\n]*\n\s*inbox = inbox\.then\(theme\)\.then\(\(\) => take\(message\)\);/, "the phone wears each snapshot's theme before painting it, in order");
   assert.match(wall, /saving = setTimeout\(saveTheme, THEME_SAVE_MS\);/, "saved where the picker rests");
   for (const [target, event] of [["themePicker", "blur"], ["", "blur"], ["", "pagehide"]]) {
     assert.match(wall, new RegExp(`${target ? `${target}\\.` : "\\n"}addEventListener\\("${event}", flushTheme\\);`), `a waiting choice is saved on ${target || "window"} ${event}`);
@@ -292,7 +293,8 @@ test("the wall, the strip and the drawer read the theme now worn, not a fixed ca
   assert.match(wall, /if \(document\.hidden\) flushTheme\(\);/);
   assert.match(wall, /setText\(themeNote, `Not saved: \$\{err\}`\);/, "a refused save says so");
   assert.doesNotMatch(read("src/fleet/strip.js"), /cast\.json|import cast/);
-  assert.match(read("src/main.js"), /subscribeTheme\(\(id\) => \{\s*wanted = id;\s*loadTheme\(id\)\.then\(\(next\) => \{\s*if \(wanted !== id \|\| next === theme\) return;\s*theme = next;\s*render\(\);/, "the gauge's strip redraws on a switch, once the theme is loaded");
+  assert.match(read("src/main.js"), /subscribeTheme\(\(id\) => \{\s*wanted = id;\s*loadTheme\(id\)\s*\.then\(\(next\) => \{\s*if \(wanted !== id \|\| next === theme\) return;\s*theme = next;\s*render\(\);/, "the gauge's strip redraws on a switch, once the theme is loaded");
+  assert.match(read("src/main.js"), /await first;\s*drawStrip = mountStrip\(/, "and first draws in the theme worn");
   assert.match(read("src/main.js"), /cast: \(\) => theme,/, "and draws the theme now worn");
   const html = read("src/wall.html");
   assert.match(html, /<label class="theme-pick"[^>]*><span>Characters<\/span><select id="theme"><\/select><\/label>/);

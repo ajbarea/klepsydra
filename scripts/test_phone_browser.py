@@ -519,6 +519,27 @@ def main() -> int:
                 run.check(len({json.dumps(a) for a in plain.values()}) == 1, "a card no theme casts keeps its look", plain)
                 keys = {t: [c["key"] for c in v["cards"]] for t, v in looks.items()}
                 run.check(len({json.dumps(k) for k in keys.values()}) == 1 and len(keys["kourai"]) == 16, "nor which cards show, or their order", keys)
+                # A phone opened with a theme saved paints its first card in that theme, no other first.
+                (klepsydra / "prefs.json.tmp").write_text(json.dumps({"theme": "dicebear"}))
+                (klepsydra / "prefs.json.tmp").replace(klepsydra / "prefs.json")
+                wait_until(page, "[...document.querySelectorAll('#wall .card .face')].some((f) => (f.getAttribute('src') || '').startsWith('fleet/faces/dicebear/'))", 10)
+                fresh = ctx.new_page()
+                fresh.add_init_script("""new MutationObserver((_, obs) => {
+                  const card = document.querySelector('#wall .card');
+                  if (!card || window.__first) return;
+                  window.__first = { key: card.dataset.key, name: card.querySelector('.name').textContent, face: card.querySelector('.face').getAttribute('src') };
+                  obs.disconnect();
+                }).observe(document, { childList: true, subtree: true });""")
+                fresh.goto(f"http://{addr}/")
+                wait_until(fresh, "document.getElementById('wall').children.length === 16", 15)
+                first = fresh.evaluate("window.__first")
+                ch = THEMES["dicebear"]["characters"].get(voices.get(first["key"])) if first else None
+                run.check(bool(ch) and first["name"] == ch["name"] and first["face"].startswith("fleet/faces/dicebear/"), "a phone opened in DiceBear paints its first card in DiceBear", first)
+                fresh.close()
+                page.bring_to_front()
+                (klepsydra / "prefs.json.tmp").write_text(json.dumps({"theme": "kourai"}))
+                (klepsydra / "prefs.json.tmp").replace(klepsydra / "prefs.json")
+                wait_until(page, "[...document.querySelectorAll('#wall .card .face')].some((f) => (f.getAttribute('src') || '').startsWith('fleet/faces/kourai/'))", 10)
 
                 # A new reading arrives over the stream; one three hours old says so.
                 write_reading(klepsydra, PERSONAL, "Personal", {"five_hour": (91, 8 * 60 + 50), "seven_day": (27, (6 * 24 + 6) * 3600 + 1800)})
