@@ -13,6 +13,8 @@ export const THEME_LABELS = { kourai: "Kourai", professions: "Professions", dice
 export const DEFAULT_THEME = "kourai";
 /** How long the wall's picker rests on a theme before the app saves it. */
 export const THEME_SAVE_MS = 600;
+/** The longest a paint waits for a theme's file: past it, the page paints in the theme it wears and says the theme is still loading. */
+export const THEME_WAIT_MS = 3000;
 
 /** `id` when it names a theme; else the default. */
 export const themeId = (id) => (ownValue(THEME_LABELS, id) ? id : DEFAULT_THEME);

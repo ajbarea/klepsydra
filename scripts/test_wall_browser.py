@@ -1103,7 +1103,7 @@ window.__TAURI__ = { core: {
     if (cmd === 'queue_subscribe') { window.__queue = args.onMessage; return Promise.resolve(); }
     if (cmd === 'theme_subscribe') {
       window.__theme = args.onMessage;
-      setTimeout(() => args.onMessage.onmessage(window.__savedTheme ?? 'kourai'), 0);
+      setTimeout(() => args.onMessage.onmessage(window.__savedTheme ?? 'kourai'), window.__themeDelay ?? 0);
       return Promise.resolve();
     }
     if (cmd === 'get_wall_density') return Promise.resolve('auto');
@@ -1123,7 +1123,7 @@ READS = ["get_launch_dir", "get_split_mode"]
 WORKING_CARD = ".card:has(.pill .label:text-is('working')):has(.menu:not([hidden]))"
 
 
-def open_app(wall, width=1920, height=1000, keep=None, motion="no-preference", launch_dir="/home/aj/ajsoftworks", theme=None, init=None):
+def open_app(wall, width=1920, height=1000, keep=None, motion="no-preference", launch_dir="/home/aj/ajsoftworks", theme=None, init=None, before=None):
     """The demo wall as the app would feed it, with invokes recorded; `keep`
     picks which demo sessions the snapshot carries, `theme` the saved theme."""
     import time
@@ -1146,6 +1146,8 @@ def open_app(wall, width=1920, height=1000, keep=None, motion="no-preference", l
         page.add_init_script(f"window.__savedTheme = {json.dumps(theme)};")
     if init is not None:
         page.add_init_script(init)
+    if before is not None:
+        before(page)
     page.goto(f"http://127.0.0.1:{wall.port}/src/wall.html")
     if snapshot["sessions"] and keep is None:
         painted(page, "document.getElementById('wall').children.length > 0")
@@ -4439,8 +4441,9 @@ def hold_theme_until_fleet(page, theme):
 def release_after_fleet(page, held):
     """Let the held theme file go once the fleet is in and a page that did not
     wait would have painted; a page that waits fetches no fleet before its
-    theme, so after 3 s (past the wall's 1.5 s wait for the app's word) anyway."""
-    deadline = time.monotonic() + 3
+    theme, so anyway a second before THEME_WAIT_MS, past the wall's 1.5 s
+    wait for the app's word, so a fallback that cut the load short shows."""
+    deadline = time.monotonic() + THEME_WAIT_MS / 1000 - 1
     while not held["fleet"] and time.monotonic() < deadline:
         page.wait_for_timeout(50)
     page.wait_for_timeout(400)
@@ -4537,6 +4540,84 @@ def theme_stale_load_leaves_the_choice(wall):
             wall.check(theme == "dicebear" and early == [["set_theme", {"theme": "dicebear"}]] and late == early,
                        "a page hidden while DiceBear loads saves it the moment it is worn, once", [theme, early, late])
         page.close()
+
+
+THEME_WAIT_MS = int(re.search(r"THEME_WAIT_MS = (\d+)", (ROOT / "src/fleet/theme.js").read_text()).group(1))
+
+
+def theme_file_that_never_answers(wall):
+    """A theme file that never answers holds no surface blank: the wall
+    paints within THEME_WAIT_MS (and a little) in Kourai, the note says the
+    theme is still loading, and the theme takes over when its file comes,
+    from the app's saved choice and from ?theme=; the gauge strip draws in
+    Kourai and turns too. A theme picked before the app names one, which
+    then fails, still lets the wall paint."""
+    slack = 2.5
+    for how in ("app", "page"):
+        held = []
+        t0 = time.monotonic()
+        if how == "app":
+            page = open_app(wall, 1920, 1000, theme="professions", before=lambda p: p.route("**/fleet/themes/professions.json", lambda r: held.append(r)))
+        else:
+            page = wall.browser.new_page(viewport={"width": 1920, "height": 1000})
+            watch(page)
+            page.route("**/fleet/themes/professions.json", lambda r: held.append(r))
+            page.goto(f"http://127.0.0.1:{wall.port}/src/wall.html?demo=8&theme=professions")
+            painted(page, "document.getElementById('wall').children.length === 8")
+        took = time.monotonic() - t0
+        got = page.evaluate("[document.documentElement.dataset.theme, document.querySelector('#wall .card .face').getAttribute('src'), document.getElementById('theme-note').textContent]")
+        wall.check(held and took < THEME_WAIT_MS / 1000 + slack and got[0] == "kourai" and got[1].startswith("fleet/faces/kourai/") and got[2] == "Loading the Professions theme…",
+                   f"{how}: a theme file that never answers: the wall paints in {took:.1f} s, in Kourai, and says it is loading", [took, got])
+        for r in held:
+            r.continue_()
+        page.wait_for_timeout(600)
+        got = page.evaluate("[document.documentElement.dataset.theme, document.querySelector('#wall .card .face').getAttribute('src'), document.getElementById('theme-note').textContent]")
+        wall.check(got[0] == "professions" and got[1].startswith("fleet/faces/professions/") and got[2] == "",
+                   f"{how}: when the file comes, the theme takes over and the note goes", got)
+        page.close()
+    # Picked before the app's word, then failed after it: the wall still paints.
+    held = []
+    t0 = time.monotonic()
+    page = wall.browser.new_page(viewport={"width": 1920, "height": 1000})
+    fixture = json.loads((ROOT / "scripts/fixtures/fleet-demo.json").read_text())
+    at = fixture.pop("at")
+    page.add_init_script(TAURI_STUB % json.dumps(shifted(fixture, int(time.time()) - at)))
+    page.add_init_script("window.__themeDelay = 500;")
+    watch(page)
+    page.route("**/fleet/themes/dicebear.json", lambda r: held.append(r))
+    page.goto(f"http://127.0.0.1:{wall.port}/src/wall.html")
+    page.wait_for_function("document.getElementById('theme').options.length === 3")
+    page.select_option("#theme", "dicebear")
+    page.wait_for_timeout(900)
+    for r in held:
+        r.abort()
+    try:
+        page.wait_for_function("document.getElementById('wall').children.length > 0", timeout=int((THEME_WAIT_MS / 1000 + slack) * 1000))
+        cards = page.evaluate("document.getElementById('wall').children.length")
+    except Exception:
+        cards = 0
+    note = page.evaluate("document.getElementById('theme-note').textContent")
+    wall.check(cards > 0 and note == "Not switched: the DiceBear theme could not be loaded.", "a theme picked before the app's word that fails after it: the wall still paints, and says why", [cards, note, round(time.monotonic() - t0, 1)])
+    page.close()
+    # The gauge strip.
+    held = []
+    t0 = time.monotonic()
+    page = wall.browser.new_page(viewport={"width": 1200, "height": 400})
+    page.route("**/fleet/themes/professions.json", lambda r: held.append(r))
+    page.goto(f"http://127.0.0.1:{wall.port}/src/index.html?demo&theme=professions")
+    try:
+        page.wait_for_function("!!document.querySelector('#strip .face img[src]')", timeout=int((THEME_WAIT_MS / 1000 + slack) * 1000))
+        first = page.evaluate("document.querySelector('#strip .face img').getAttribute('src')")
+    except Exception:
+        first = None
+    took = time.monotonic() - t0
+    wall.check(held and first and first.startswith("fleet/faces/kourai/"), f"the strip draws in {took:.1f} s, in Kourai, while its theme's file never answers", first)
+    for r in held:
+        r.continue_()
+    page.wait_for_timeout(600)
+    now = page.evaluate("document.querySelector('#strip .face img')?.getAttribute('src')")
+    wall.check(bool(now) and now.startswith("fleet/faces/professions/"), "and turns when the file comes", now)
+    page.close()
 
 
 def theme_switch_commits_only_what_it_wore(wall):
@@ -4728,6 +4809,7 @@ def main() -> int:
             strip_first_paint,
             theme_switch_commits_only_what_it_wore,
             theme_stale_load_leaves_the_choice,
+            theme_file_that_never_answers,
         )
         for case in cases:
             if not only or case.__name__ in only:

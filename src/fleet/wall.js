@@ -5,7 +5,7 @@ import { announcer, press, say, setOff, syncChildren } from "./dom.js";
 import { ARM_MS, confirmCopy, createEnder, endAllCopy, endingAnnouncement, endingText, withdrawnText } from "./end.js";
 import { askedNote, asking, isReady, readiness, wrapupAnnouncements, wrapupCopy, wrapupLines } from "./wrapup.js";
 import { inTauri, served, subscribe, subscribeTheme, todayLedger } from "./feed.js";
-import { DEFAULT_THEME, THEME_LABELS, THEME_SAVE_MS, keeperOf, loadTheme, loadedTheme, themeId } from "./theme.js";
+import { DEFAULT_THEME, THEME_LABELS, THEME_SAVE_MS, THEME_WAIT_MS, keeperOf, loadTheme, loadedTheme, themeId } from "./theme.js";
 import { createDrawer } from "./drawer.js";
 import { createQueuePanel } from "./queuepanel.js";
 import { createEdge } from "./sidepanel.js";
@@ -624,12 +624,13 @@ function drawSpeaking() {
 }
 
 // The phone wears the theme each snapshot names before painting it, so its
-// first card is already in that theme; snapshots are taken in order, each
-// after any theme file the one before it waited for.
+// first card is already in that theme, but waits at most THEME_WAIT_MS for
+// the theme's file (wearSoon): past that it paints in the theme it wears and
+// takes the new one when the file comes. Snapshots are taken in order.
 let inbox = Promise.resolve();
 function receive(message) {
   if (!served) return take(message);
-  const theme = Array.isArray(message?.sessions) ? () => wearTheme(message.theme, false) : () => null;
+  const theme = Array.isArray(message?.sessions) ? () => wearSoon(message.theme, false) : () => null;
   inbox = inbox
     .then(theme)
     .then(() => take(message))
@@ -1185,6 +1186,7 @@ function wearTheme(id, paint = true) {
     (loaded) => {
       if (wanted !== next) return null;
       put(next, loaded, paint);
+      if (themeNote.textContent.startsWith("Loading")) setText(themeNote, "");
       return true;
     },
     (err) => {
@@ -1197,6 +1199,30 @@ function wearTheme(id, paint = true) {
       return false;
     },
   );
+}
+const asked = new Map(); // theme id -> when a paint first waited for its file
+/**
+ * Wear theme `id` for a paint, repainting at once unless `paint` is false
+ * (a snapshot about to paint): at once when its file is in; else resolves
+ * when it is worn or fails, or THEME_WAIT_MS after a paint first waited for
+ * it, whichever is first. Past that the page paints in the theme it wears,
+ * the note says the theme is still loading, and the theme is worn, painted
+ * again, when its file comes.
+ */
+function wearSoon(id, paint = true) {
+  const next = themeId(id);
+  if (loadedTheme(next)) return wearTheme(next, paint);
+  if (!asked.has(next)) asked.set(next, performance.now());
+  const left = Math.max(0, asked.get(next) + THEME_WAIT_MS - performance.now());
+  return Promise.race([
+    wearTheme(next),
+    new Promise((late) =>
+      setTimeout(() => {
+        if (wanted === next && worn !== next) setText(themeNote, `Loading the ${THEME_LABELS[next]} theme…`);
+        late(null);
+      }, left),
+    ),
+  ]);
 }
 function put(next, theme, paint) {
   const was = worn;
@@ -1241,6 +1267,7 @@ themePicker.addEventListener("change", () => {
   clearTimeout(saving);
   saving = 0;
   wearTheme(themePicker.value).then((worn) => {
+    firstReady();
     if (worn === null) return; // a later choice took over: this one changes nothing
     const now = flushNow;
     flushNow = false;
@@ -1270,11 +1297,14 @@ addEventListener("pagehide", flushTheme);
 document.addEventListener("visibilitychange", () => {
   if (document.hidden) flushTheme();
 });
-// The first paint waits for the theme worn, its file loaded or failed, so no
-// card shows another theme first; with no word from the app within
-// FIRST_THEME_MS it goes ahead in Kourai. The phone's theme comes with each
-// snapshot (receive).
+// The first paint waits for the theme worn, so no card shows another theme
+// first: for the app to name it, at most FIRST_THEME_MS (else Kourai), then
+// for its file, at most THEME_WAIT_MS (wearSoon). A theme picked before the
+// app names one lets the paint go as soon as it is worn or fails. The
+// phone's theme comes with each snapshot (receive).
+let firstReady = () => {};
 const firstTheme = new Promise((ready) => {
+  firstReady = ready;
   if (served) {
     ready();
     return;
@@ -1283,7 +1313,7 @@ const firstTheme = new Promise((ready) => {
   subscribeTheme((id) => {
     clearTimeout(noWord);
     if (picking) return;
-    wearTheme(id).then(ready);
+    wearSoon(id).then(ready);
   });
 });
 firstTheme.then(() => subscribe(receive, showLink));

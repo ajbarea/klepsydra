@@ -268,12 +268,13 @@ async function startFleet() {
   try {
     const { mountStrip } = await import("./fleet/strip.js");
     const { subscribe, subscribeTheme } = await import("./fleet/feed.js");
-    const { loadTheme, loadedTheme } = await import("./fleet/theme.js");
+    const { THEME_WAIT_MS, loadTheme, loadedTheme } = await import("./fleet/theme.js");
     let theme = loadedTheme(null);
     let wanted = null;
-    // The strip first draws in the theme worn, its file loaded or failed,
-    // never another first; with no word from the app within FIRST_THEME_MS
-    // it goes ahead in Kourai.
+    // The strip first draws in the theme worn, never another first: it waits
+    // for the app to name it, at most FIRST_THEME_MS (else Kourai), then for
+    // its file, at most THEME_WAIT_MS, after which it draws in Kourai and
+    // turns when the file comes.
     let ready;
     let noWord = 0;
     const first = new Promise((r) => {
@@ -282,6 +283,7 @@ async function startFleet() {
     });
     subscribeTheme((id) => {
       clearTimeout(noWord);
+      setTimeout(ready, THEME_WAIT_MS); // a file that never answers holds the first draw no longer
       wanted = id;
       loadTheme(id)
         .then((next) => {

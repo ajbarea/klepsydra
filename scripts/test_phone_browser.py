@@ -536,6 +536,31 @@ def main() -> int:
                 ch = THEMES["dicebear"]["characters"].get(voices.get(first["key"])) if first else None
                 run.check(bool(ch) and first["name"] == ch["name"] and first["face"].startswith("fleet/faces/dicebear/"), "a phone opened in DiceBear paints its first card in DiceBear", first)
                 fresh.close()
+                # A theme file that never answers: the phone paints within THEME_WAIT_MS in
+                # the theme it wears, a later snapshot is not held behind it, and the
+                # theme takes over when the file comes.
+                wait_ms = int(re.search(r"THEME_WAIT_MS = (\d+)", (ROOT / "src/fleet/theme.js").read_text()).group(1))
+                # Its own context with no service worker: a worker would answer the held file.
+                stuck_ctx = browser.new_context(viewport={"width": 390, "height": 844}, device_scale_factor=3, is_mobile=True, has_touch=True, service_workers="block")
+                stuck = stuck_ctx.new_page()
+                held = []
+                stuck.route("**/fleet/themes/dicebear.json", lambda r: held.append(r))
+                t0 = time.monotonic()
+                stuck.goto(f"http://{addr}/")
+                shown = wait_until(stuck, "document.getElementById('wall').children.length === 16", wait_ms / 1000 + 4)
+                took = time.monotonic() - t0
+                face = stuck.evaluate("document.querySelector('#wall .card .face')?.getAttribute('src') ?? ''")
+                run.check(shown and held and took < wait_ms / 1000 + 2.5 and face.startswith("fleet/faces/kourai/"), f"a theme file that never answers: the phone paints in {took:.1f} s, in Kourai", [shown, took, face])
+                snapshot_file(snapshot, lambda f: f["sessions"].pop())
+                later = wait_until(stuck, "document.getElementById('wall').children.length === 15", 2)
+                run.check(later, "and a later snapshot is not held behind the theme's file", stuck.evaluate("document.getElementById('wall').children.length"))
+                for r in held:
+                    r.continue_()
+                turned = wait_until(stuck, "(document.querySelector('#wall .card .face')?.getAttribute('src') || '').startsWith('fleet/faces/dicebear/')", 5)
+                run.check(turned, "and the theme takes over when the file comes", stuck.evaluate("document.querySelector('#wall .card .face')?.getAttribute('src') ?? ''"))
+                stuck_ctx.close()
+                snapshot_file(snapshot, one_more_needs)
+                wait_until(page, "document.getElementById('wall').children.length === 16", 10)
                 page.bring_to_front()
                 (klepsydra / "prefs.json.tmp").write_text(json.dumps({"theme": "kourai"}))
                 (klepsydra / "prefs.json.tmp").replace(klepsydra / "prefs.json")
