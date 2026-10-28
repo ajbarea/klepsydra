@@ -1213,16 +1213,26 @@ function wearSoon(id, paint = true) {
   const next = themeId(id);
   if (loadedTheme(next)) return wearTheme(next, paint);
   if (!asked.has(next)) asked.set(next, performance.now());
+  let late = false;
+  // Worn in time, the paint waiting on it draws it; worn late, it paints itself.
+  const wear = wearTheme(next, paint).then((done) => {
+    if (done === true && late && !paint) repaintTheme();
+    return done;
+  });
+  return Promise.race([wear, deadline(next)]).finally(() => {
+    late = true;
+  });
+}
+/** Resolves THEME_WAIT_MS after a paint first waited for `next`'s file, saying it is still loading if it is. */
+function deadline(next) {
+  if (!asked.has(next)) asked.set(next, performance.now());
   const left = Math.max(0, asked.get(next) + THEME_WAIT_MS - performance.now());
-  return Promise.race([
-    wearTheme(next),
-    new Promise((late) =>
-      setTimeout(() => {
-        if (wanted === next && worn !== next) setText(themeNote, `Loading the ${THEME_LABELS[next]} theme…`);
-        late(null);
-      }, left),
-    ),
-  ]);
+  return new Promise((late) =>
+    setTimeout(() => {
+      if (wanted === next && worn !== next) setText(themeNote, `Loading the ${THEME_LABELS[next]} theme…`);
+      late(null);
+    }, left),
+  );
 }
 function put(next, theme, paint) {
   const was = worn;
@@ -1233,6 +1243,10 @@ function put(next, theme, paint) {
   const src = keeperOf(cast);
   if (src && keeper.getAttribute("src") !== src) keeper.src = src;
   if (!paint || next === was) return;
+  repaintTheme();
+}
+/** Paint every surface again in the theme worn: the cards, an open portrait, the Ledger, the Queue's keeper. */
+function repaintTheme() {
   if (latestSnapshot) {
     const said = render();
     if (said.length) announce(said.join(". "));
@@ -1266,6 +1280,8 @@ themePicker.addEventListener("change", () => {
   picking = true;
   clearTimeout(saving);
   saving = 0;
+  // Picked before the app names a theme, a file that never answers holds the first paint no longer than any other.
+  if (!loadedTheme(themePicker.value)) deadline(themeId(themePicker.value)).then(firstReady);
   wearTheme(themePicker.value).then((worn) => {
     firstReady();
     if (worn === null) return; // a later choice took over: this one changes nothing

@@ -4599,6 +4599,32 @@ def theme_file_that_never_answers(wall):
     note = page.evaluate("document.getElementById('theme-note').textContent")
     wall.check(cards > 0 and note == "Not switched: the DiceBear theme could not be loaded.", "a theme picked before the app's word that fails after it: the wall still paints, and says why", [cards, note, round(time.monotonic() - t0, 1)])
     page.close()
+    # Picked before the app's word, its file never answering: the wall paints within THEME_WAIT_MS.
+    held = []
+    t0 = time.monotonic()
+    page = wall.browser.new_page(viewport={"width": 1920, "height": 1000})
+    page.add_init_script(TAURI_STUB % json.dumps(shifted(fixture, int(time.time()) - at)))
+    page.add_init_script("window.__themeDelay = 500;")
+    watch(page)
+    page.route("**/fleet/themes/dicebear.json", lambda r: held.append(r))
+    page.goto(f"http://127.0.0.1:{wall.port}/src/wall.html")
+    page.wait_for_function("document.getElementById('theme').options.length === 3")
+    page.select_option("#theme", "dicebear")
+    try:
+        page.wait_for_function("document.getElementById('wall').children.length > 0", timeout=int((THEME_WAIT_MS / 1000 + slack) * 1000))
+        cards = page.evaluate("document.getElementById('wall').children.length")
+    except Exception:
+        cards = 0
+    took = time.monotonic() - t0
+    note = page.evaluate("document.getElementById('theme-note').textContent")
+    wall.check(held and cards > 0 and took < THEME_WAIT_MS / 1000 + slack and note == "Loading the DiceBear theme…",
+               f"a theme picked before the app's word whose file never answers: the wall paints in {took:.1f} s and says it is loading", [cards, note])
+    for r in held:
+        r.continue_()
+    page.wait_for_timeout(600)
+    got = page.evaluate("[document.documentElement.dataset.theme, document.getElementById('theme-note').textContent]")
+    wall.check(got == ["dicebear", ""], "and wears it when the file comes", got)
+    page.close()
     # The gauge strip.
     held = []
     t0 = time.monotonic()

@@ -559,6 +559,26 @@ def main() -> int:
                 turned = wait_until(stuck, "(document.querySelector('#wall .card .face')?.getAttribute('src') || '').startsWith('fleet/faces/dicebear/')", 5)
                 run.check(turned, "and the theme takes over when the file comes", stuck.evaluate("document.querySelector('#wall .card .face')?.getAttribute('src') ?? ''"))
                 stuck_ctx.close()
+                # A switch to a theme not loaded yet paints the cards once, in the new theme,
+                # not the old snapshot first and then the new.
+                (klepsydra / "prefs.json.tmp").write_text(json.dumps({"theme": "kourai"}))
+                (klepsydra / "prefs.json.tmp").replace(klepsydra / "prefs.json")
+                once_ctx = browser.new_context(viewport={"width": 390, "height": 844}, device_scale_factor=3, is_mobile=True, has_touch=True, service_workers="block")
+                once = once_ctx.new_page()
+                once.goto(f"http://{addr}/")
+                wait_until(once, "document.getElementById('wall').children.length === 16 && (document.querySelector('#wall .card .face')?.getAttribute('src') || '').startsWith('fleet/faces/kourai/')", 10)
+                once.evaluate("""() => {
+                  window.__paints = 0;
+                  const name = document.querySelector('#wall .card .name');
+                  new MutationObserver((rs) => { window.__paints += rs.length; }).observe(name, { childList: true, characterData: true, subtree: true });
+                }""")
+                (klepsydra / "prefs.json.tmp").write_text(json.dumps({"theme": "dicebear"}))
+                (klepsydra / "prefs.json.tmp").replace(klepsydra / "prefs.json")
+                wait_until(once, "(document.querySelector('#wall .card .face')?.getAttribute('src') || '').startsWith('fleet/faces/dicebear/')", 10)
+                once.wait_for_timeout(500)
+                paints = once.evaluate("window.__paints")
+                run.check(paints == 1, "a switch to a theme not loaded yet paints the cards once", paints)
+                once_ctx.close()
                 snapshot_file(snapshot, one_more_needs)
                 wait_until(page, "document.getElementById('wall').children.length === 16", 10)
                 page.bring_to_front()
