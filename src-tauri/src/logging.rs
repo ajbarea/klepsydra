@@ -5,9 +5,10 @@
 
 use std::path::PathBuf;
 
-use klepsydra_fleet::logfmt::{self, DEFAULT_LEVEL, LEVEL_ENV};
+use klepsydra_fleet::logfmt::{self, Stderr, DEFAULT_LEVEL, LEVEL_ENV};
+use log::{Log, Metadata, Record};
 use tauri::Manager;
-use tauri_plugin_log::{Builder, RotationStrategy, Target, TargetKind, TimezoneStrategy};
+use tauri_plugin_log::{Builder, RotationStrategy, Target, TargetKind};
 
 /// Largest a log file grows before it rotates: about 5,000 lines.
 pub const MAX_FILE_BYTES: u128 = 1024 * 1024;
@@ -25,29 +26,44 @@ fn folder(app: &tauri::AppHandle) -> Option<PathBuf> {
         .or_else(|| app.path().app_log_dir().ok())
 }
 
-fn builder(level: log::LevelFilter, file: Option<PathBuf>) -> Builder {
-    let stderr = Target::new(TargetKind::Stderr).format(|out, message, record| {
-        out.finish(format_args!("{}", logfmt::plain_line(message, record)))
-    });
-    let b = Builder::new()
+/// The plugin's rotating file alone. Its format is the dispatch's own, the
+/// first formatter a record meets: fern rebuilds the record for the next
+/// one without its key-values, which would drop `session_id`. The UTC
+/// timezone, the default, names rotated files; setting it would replace
+/// this format.
+fn file_builder(level: log::LevelFilter, path: PathBuf) -> Builder {
+    Builder::new()
         .clear_targets()
-        .clear_format()
         .level(level)
         .max_file_size(MAX_FILE_BYTES)
         .rotation_strategy(RotationStrategy::KeepSome(KEEP_ROTATED))
-        .timezone_strategy(TimezoneStrategy::UseUtc)
-        .target(stderr);
-    match file {
-        Some(path) => b.target(
-            Target::new(TargetKind::Folder {
-                path,
-                file_name: Some(FILE_NAME.into()),
-            })
-            .format(|out, message, record| {
-                out.finish(format_args!("{}", logfmt::json_line(message, record)))
-            }),
-        ),
-        None => b,
+        .format(|out, message, record| {
+            out.finish(format_args!("{}", logfmt::json_line(message, record)))
+        })
+        .target(Target::new(TargetKind::Folder {
+            path,
+            file_name: Some(FILE_NAME.into()),
+        }))
+}
+
+/// Every record to the log file and, as a plain line, to stderr.
+struct Tee {
+    file: Box<dyn Log>,
+    stderr: Stderr,
+}
+
+impl Log for Tee {
+    fn enabled(&self, metadata: &Metadata) -> bool {
+        self.file.enabled(metadata) || self.stderr.enabled(metadata)
+    }
+
+    fn log(&self, record: &Record) {
+        self.file.log(record);
+        self.stderr.log(record);
+    }
+
+    fn flush(&self) {
+        self.file.flush();
     }
 }
 
@@ -59,14 +75,29 @@ pub fn start(app: &tauri::AppHandle) {
         Err(e) => (DEFAULT_LEVEL, Some(e)),
     };
     let dir = folder(app);
-    let (split, file_error) = match builder(level, dir.clone()).split(app) {
-        Ok(s) => (Ok(s), None),
-        Err(e) => (builder(level, None).split(app), Some(e)),
+    let split = dir
+        .clone()
+        .ok_or_else(|| "klepsydra has no data folder".to_owned())
+        .and_then(|d| file_builder(level, d).split(app).map_err(|e| e.to_string()));
+    let (plugin, logger, file_error): (_, Box<dyn Log>, _) = match split {
+        Ok((plugin, _, file)) => (
+            plugin,
+            Box::new(Tee {
+                file,
+                stderr: Stderr(level),
+            }),
+            None,
+        ),
+        // The plugin still serves the webviews' `log` command, into stderr.
+        Err(e) => (
+            Builder::new().skip_logger().build(),
+            Box::new(Stderr(level)),
+            Some(e),
+        ),
     };
-    let Ok((plugin, max, logger)) = split else {
-        return;
-    };
-    let _ = tauri_plugin_log::attach_logger(max, logger);
+    if log::set_boxed_logger(logger).is_ok() {
+        log::set_max_level(level);
+    }
     if let Err(e) = app.plugin(plugin) {
         log::error!("the webviews' log command is not registered, so their lines reach only their console: {e}");
     }
@@ -82,9 +113,60 @@ pub fn start(app: &tauri::AppHandle) {
             "no log file at {}, so lines go to stderr only: {e}",
             p.display()
         ),
-        (_, None) => log::warn!("klepsydra has no data folder, so lines go to stderr only"),
+        (Some(e), None) => log::warn!("no log file, so lines go to stderr only: {e}"),
+        (None, None) => {}
     }
     if let Some(e) = bad_level {
         log::warn!("{e}");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The plugin's own logger, given a record with a session id, writes one
+    /// JSON line with that id and the message as logged.
+    #[test]
+    fn the_log_file_keeps_the_message_as_logged_and_its_session_id() {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("klepsydra-log-{nanos}"));
+        let app = tauri::test::mock_app();
+        let (_, _, file) = file_builder(log::LevelFilter::Info, dir.clone())
+            .split(app.handle())
+            .unwrap();
+        let kv: &[(&str, &str)] = &[("session_id", "0b1e5b4e-6f0e-4bbd-9d3c-2a7a1c0f9e11")];
+        file.log(
+            &Record::builder()
+                .level(log::Level::Warn)
+                .target("klepsydra::fleet")
+                .key_values(&kv)
+                .args(format_args!("skipped x.json: malformed"))
+                .build(),
+        );
+        file.log(
+            &Record::builder()
+                .level(log::Level::Debug)
+                .args(format_args!("below the level"))
+                .build(),
+        );
+        file.flush();
+        let text = std::fs::read_to_string(dir.join("klepsydra.log")).unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+        let lines: Vec<serde_json::Value> = text
+            .lines()
+            .map(|l| serde_json::from_str(l).unwrap())
+            .collect();
+        assert_eq!(lines.len(), 1, "{text}");
+        assert_eq!(lines[0]["message"], "skipped x.json: malformed", "{text}");
+        assert_eq!(lines[0]["level"], "WARN");
+        assert_eq!(lines[0]["target"], "klepsydra::fleet");
+        assert_eq!(
+            lines[0]["session_id"], "0b1e5b4e-6f0e-4bbd-9d3c-2a7a1c0f9e11",
+            "{text}"
+        );
     }
 }
