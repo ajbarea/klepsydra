@@ -2187,10 +2187,7 @@ mod tests {
         );
         dir.write(STATE_FILE, "{not json");
         let (mut l, problems) = Ledger::open(dir.0.clone(), NOW, TimeZone::UTC);
-        assert!(
-            problems.iter().any(|p| p.contains("set aside")),
-            "{problems:?}"
-        );
+        named_from_its_folder(&problems, &dir);
         // The running total already counted 300 of these 550: it only seeds.
         let t = l.record_metrics(&tokens("s1", NOW - 600, NOW + 10, 550.0), NOW + 10);
         assert_eq!((t.counted, t.seeded), (0, 1));
@@ -2215,6 +2212,33 @@ mod tests {
         assert!(!l.lost_in_gap("s2", NOW + 30, NOW + 40));
     }
 
+    /// The set-aside state file is named from the ledger's own folder
+    /// (`ledger/state.json` in the app), never by the path above it, which
+    /// holds the user's home.
+    fn named_from_its_folder(problems: &[String], dir: &Scratch) {
+        let folder = dir.0.file_name().unwrap().to_string_lossy();
+        let p = problems
+            .iter()
+            .find(|p| p.contains("set aside"))
+            .unwrap_or_else(|| panic!("{problems:?}"));
+        assert!(
+            p.starts_with(&format!("{folder}/{STATE_FILE} set aside: ")),
+            "{p}"
+        );
+        let above = dir.0.parent().unwrap().to_string_lossy().into_owned();
+        assert!(!p.contains(&above), "{p}");
+    }
+
+    #[test]
+    fn a_ledger_folder_that_cannot_be_made_is_named_alone() {
+        let dir = Scratch::new("ledger-blocked");
+        dir.write("ledger", "a file where the folder goes");
+        let (_, problems) = Ledger::open(dir.0.join("ledger"), NOW, TimeZone::UTC);
+        let p = problems.first().unwrap_or_else(|| panic!("{problems:?}"));
+        assert!(p.starts_with("ledger: "), "{p}");
+        assert!(!p.contains(&dir.0.to_string_lossy().into_owned()), "{p}");
+    }
+
     /// A ledger folder with `s1` at 300 cache tokens today and a state file
     /// that does not parse.
     fn lost_state(name: &str) -> Scratch {
@@ -2232,10 +2256,7 @@ mod tests {
     fn a_quit_before_any_export_keeps_the_reseed() {
         let dir = lost_state("ledger-reseed-quit");
         let (l, problems) = Ledger::open(dir.0.clone(), NOW, TimeZone::UTC);
-        assert!(
-            problems.iter().any(|p| p.contains("set aside")),
-            "{problems:?}"
-        );
+        named_from_its_folder(&problems, &dir);
         drop(l);
         let (l, problems) = Ledger::open(dir.0.clone(), NOW + 40, TimeZone::UTC);
         assert!(problems.is_empty(), "{problems:?}");

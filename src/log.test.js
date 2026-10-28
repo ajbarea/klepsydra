@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { DEBUG_KEY, LEVELS, MAX_CHARS, REPEAT_KEYS, createLog, describe, detail, loggedRepeat } from "./log.js";
+import { DEBUG_KEY, LEVELS, MAX_CHARS, QUIET_MS, REPEAT_KEYS, createLog, describe, detail, loggedRepeat } from "./log.js";
 
 /** A console that keeps what each method was given. */
 function fakeConsole() {
@@ -192,21 +192,59 @@ test("the repeat memory is bounded and starts over when full", async () => {
   assert.equal(calls.length, REPEAT_KEYS + 2);
 });
 
-test("a call that works again ends its episode: the next failure is logged as new", async () => {
+test("a failure that flaps with successes between stays one episode", async () => {
   const { calls, window } = inApp();
-  const log = createLog("main.js", { window, console: fakeConsole() });
-  log.warnRepeat("set_size", "set_size failed", "busy"); // logged
-  log.warnRepeat("set_size", "set_size failed", "busy"); // a repeat
-  log.ok("set_grip"); // another key: no effect
-  log.warnRepeat("set_size", "set_size failed", "busy"); // still a repeat
-  log.ok("set_size");
-  log.warnRepeat("set_size", "set_size failed", "busy"); // a new episode
-  for (let i = 0; i < 9; i++) log.warnRepeat("set_size", "set_size failed", "busy");
+  let t = 0;
+  const log = createLog("fleet/wall.js", { window, console: fakeConsole(), now: () => t });
+  for (let i = 0; i < 9; i++) {
+    log.errorRepeat("snapshot", "a fleet snapshot could not be shown", "boom");
+    t += 250; // a success between, a quarter second later
+  }
+  await tick();
+  assert.equal(calls.length, 1, "nine flaps: one line");
+  for (let i = 9; i < 100; i++) {
+    log.errorRepeat("snapshot", "a fleet snapshot could not be shown", "boom");
+    t += 250;
+  }
   await tick();
   assert.deepEqual(
     calls.map(([, a]) => a.message),
-    ["set_size failed: busy", "set_size failed: busy", "set_size failed (10 times so far): busy"],
+    [
+      "a fleet snapshot could not be shown: boom",
+      "a fleet snapshot could not be shown (10 times so far): boom",
+      "a fleet snapshot could not be shown (100 times so far): boom",
+    ],
+    "a hundred flaps: the first and the counts, not a hundred lines",
   );
+});
+
+test("a failure back after QUIET_MS away is a new episode, logged again", async () => {
+  const { calls, window } = inApp();
+  let t = 0;
+  const log = createLog("main.js", { window, console: fakeConsole(), now: () => t });
+  log.warnRepeat("set_size", "set_size failed", "busy");
+  t += QUIET_MS - 1;
+  log.warnRepeat("set_size", "set_size failed", "busy"); // still the same episode
+  t += QUIET_MS;
+  log.warnRepeat("set_size", "set_size failed", "busy"); // quiet long enough: new
+  await tick();
+  assert.deepEqual(
+    calls.map(([, a]) => a.message),
+    ["set_size failed: busy", "set_size failed: busy"],
+  );
+});
+
+test("a failure that never recovers logs its 1st, 10th and 100th sighting", async () => {
+  const { calls, window } = inApp();
+  let t = 0;
+  const log = createLog("main.js", { window, console: fakeConsole(), now: () => t });
+  for (let i = 0; i < 150; i++) {
+    log.warnRepeat("read_usage", "read_usage failed", "gone");
+    t += 5000; // every poll
+  }
+  await tick();
+  assert.equal(calls.length, 3);
+  assert.equal(calls[2][1].message, "read_usage failed (100 times so far): gone");
 });
 
 test("a value that cannot be described drops the line, never the caller", async () => {

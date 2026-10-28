@@ -29,11 +29,7 @@ if (forcedWidth) {
 /** Reading the files is the only thing that differs between app and browser. */
 async function readUsage() {
   try {
-    if (inTauri) {
-      const usage = await window.__TAURI__.core.invoke("read_usage");
-      log.ok("read_usage");
-      return usage;
-    }
+    if (inTauri) return await window.__TAURI__.core.invoke("read_usage");
     // Browser dev: serve src/ with a dev-fixture.json holding the same shape.
     const res = await fetch("./dev-fixture.json", { cache: "no-store" });
     return res.ok ? await res.json() : null;
@@ -135,13 +131,10 @@ function syncSize(pin = false) {
   lastGrip = `${g.join(",")}|${strip ?? ""}`;
   window.__TAURI__.core
     .invoke("set_size", { width: w, height: h, pin, grip: g, strip })
-    .then(
-      () => log.ok("set_size"),
-      (err) => {
-        lastSize = ""; // not applied; the next render tries again
-        log.warnRepeat("set_size", `set_size ${size} failed; the next render tries again`, err);
-      },
-    );
+    .catch((err) => {
+      lastSize = ""; // not applied; the next render tries again
+      log.warnRepeat("set_size", `set_size ${size} failed; the next render tries again`, err);
+    });
 }
 
 /**
@@ -165,10 +158,7 @@ function syncTray(rows) {
   lastTray = signature;
   window.__TAURI__.core
     .invoke("set_tray_level", { pct, r: rgb[0], g: rgb[1], b: rgb[2] })
-    .then(
-      () => log.ok("set_tray_level"),
-      (err) => log.warnRepeat("set_tray_level", `set_tray_level ${Math.round(pct)}% failed`, err),
-    );
+    .catch((err) => log.warnRepeat("set_tray_level", `set_tray_level ${Math.round(pct)}% failed`, err));
 }
 
 /**
@@ -183,13 +173,10 @@ function syncGrip() {
   const key = `${[x, y, w, h].join(",")}|${strip ?? ""}`;
   if (w < 1 || h < 1 || key === lastGrip) return;
   lastGrip = key;
-  window.__TAURI__.core.invoke("set_grip", { x, y, w, h, strip }).then(
-    () => log.ok("set_grip"),
-    (err) => {
-      lastGrip = "";
-      log.warnRepeat("set_grip", `set_grip ${key} failed; the next render tries again`, err);
-    },
-  );
+  window.__TAURI__.core.invoke("set_grip", { x, y, w, h, strip }).catch((err) => {
+    lastGrip = "";
+    log.warnRepeat("set_grip", `set_grip ${key} failed; the next render tries again`, err);
+  });
 }
 
 function render(pin = false) {

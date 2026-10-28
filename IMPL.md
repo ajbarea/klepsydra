@@ -21,7 +21,7 @@ copied to `~/.claude/` (backups `.bak-20261028-0616`).
   and Windows proof runs (own KLEPSYDRA_DIR and WEBVIEW2_USER_DATA_FOLDER,
   KLEPSYDRA_NO_AUTOSTART) logging a malformed session file, the taken OTLP
   port, and the wall's refused set_theme as a `webview::fleet/wall.js` line
-  (driven over WebView2's DevTools port). Review round 1 fixes are in.
+  (driven over WebView2's DevTools port). Review rounds 1 to 3 are addressed.
 
 ## Open
 - #134: "end: the process is gone" fails now and then in full gate runs

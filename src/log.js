@@ -11,6 +11,14 @@ export const MAX_CHARS = 2000;
 export const DEBUG_KEY = "klepsydra.debug";
 /** Repeats remembered per logger; past this many the memory starts over. */
 export const REPEAT_KEYS = 200;
+/**
+ * How long a repeated failure must stay away before its next sighting counts
+ * as a new episode and is logged again: twelve of the gauge's and the
+ * fleet's 5 s polls. A failure that flaps with successes in between stays one
+ * episode, so it cannot flood the log; one that comes back after a real
+ * recovery is logged within a minute of its return.
+ */
+export const QUIET_MS = 60_000;
 
 /** An error, rejection value or anything else, as one line of text. */
 export function describe(err) {
@@ -55,7 +63,8 @@ export function createLog(where, env = {}) {
   const win = () => env.window ?? globalThis.window;
   const out = () => env.console ?? globalThis.console;
   const debugOn = () => env.debug ?? debugFlag(win());
-  const seen = new Map();
+  const now = () => (env.now ?? Date.now)();
+  const seen = new Map(); // id -> { n: sightings this episode, at: the last one }
 
   function send(level, message, fields) {
     const invoke = win()?.__TAURI__?.core?.invoke;
@@ -96,18 +105,19 @@ export function createLog(where, env = {}) {
     }
   };
 
-  /** `line` for the first sighting of `key` with this cause, then at the 10th, 100th... with the count. */
+  /**
+   * `line` for the first sighting of `key` with this cause, then at the 10th,
+   * 100th... with the count. A sighting QUIET_MS or more after the last one
+   * starts a new episode, logged again, whatever succeeded in between.
+   */
   function repeat(level, key, text, err, fields) {
     const id = idOf(key, err);
-    if (!seen.has(id) && seen.size >= REPEAT_KEYS) seen.clear();
-    const n = (seen.get(id) ?? 0) + 1;
-    seen.set(id, n);
+    const t = now();
+    const last = seen.get(id);
+    if (!last && seen.size >= REPEAT_KEYS) seen.clear();
+    const n = last && t - last.at < QUIET_MS ? last.n + 1 : 1;
+    seen.set(id, { n, at: t });
     if (loggedRepeat(n)) line(level, n === 1 ? text : `${text} (${n} times so far)`, err, fields);
-  }
-
-  /** Forget `key`'s repeats: its call worked, so the next failure starts a new episode and is logged. */
-  function ok(key) {
-    for (const id of seen.keys()) if (id.startsWith(`${key}\u0000`)) seen.delete(id);
   }
 
   return {
@@ -120,14 +130,10 @@ export function createLog(where, env = {}) {
     // The repeat calls are for a failure that can recur on every poll or
     // render. `key` names the call site, and repeats count per key and cause,
     // so neither may embed a changing value (a size, a count, a time); the
-    // text may, since only the first and the 10th, 100th... are logged. Call
-    // `ok(key)` where that call succeeds, so a failure after a recovery is
-    // logged again rather than counted into the old episode.
+    // text may, since only the first and the 10th, 100th... are logged.
     /** `warn` for a failure that can recur: logged once per `key` and cause, then at the 10th, 100th... */
     warnRepeat: (key, text, err, fields) => repeat("warn", key, text, err, fields),
     /** `error`, logged as `warnRepeat` is. */
     errorRepeat: (key, text, err, fields) => repeat("error", key, text, err, fields),
-    /** `key`'s call worked: its next failure is logged as a new one. */
-    ok,
   };
 }

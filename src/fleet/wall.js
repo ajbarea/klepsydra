@@ -671,7 +671,6 @@ function take(message) {
     if (pending) focusCard(pending, true);
   }
   if (typeof message?.focus === "string") focusCard(message.focus);
-  log.ok("snapshot");
 }
 
 wall.addEventListener("click", (e) => {
@@ -1203,7 +1202,6 @@ function wearTheme(id, paint = true) {
     (loaded) => {
       if (wanted !== next) return null;
       put(next, loaded, paint);
-      log.ok(`theme:${next}`);
       if (themeNote.textContent.startsWith("Loading")) setText(themeNote, "");
       return true;
     },

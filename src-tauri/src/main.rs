@@ -103,12 +103,12 @@ fn read_usage(app: tauri::AppHandle) -> serde_json::Value {
     serde_json::Value::Array(klepsydra_fleet::usage::read(usage_dirs(&app)))
 }
 
-/// Small settings the gauge keeps for itself: the zoom level, the saved home,
-/// where the window last sat, the wall's card density, split mode and
-/// the character theme.
 /// The prefs file's name in the data folder.
 const PREFS_FILE: &str = "prefs.json";
 
+/// Small settings the gauge keeps for itself: the zoom level, the saved home,
+/// where the window last sat, the wall's card density, split mode and
+/// the character theme.
 fn prefs_path(app: &tauri::AppHandle) -> Option<PathBuf> {
     klepsydra_dir(app).map(|d| d.join(PREFS_FILE))
 }
