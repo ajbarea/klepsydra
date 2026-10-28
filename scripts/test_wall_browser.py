@@ -4819,6 +4819,37 @@ def picker_costs_no_height(wall):
             page.close()
 
 
+LIST_COLOURS = """() => {
+  const rgb = (c) => c.match(/[\\d.]+/g).slice(0, 3).map(Number);
+  const lum = (c) => { const [r, g, b] = rgb(c).map((v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; }); return 0.2126 * r + 0.7152 * g + 0.0722 * b; };
+  const ratio = (a, b) => { const [x, y] = [lum(a), lum(b)].sort((m, n) => n - m); return (x + 0.05) / (y + 0.05); };
+  const opts = [...document.querySelectorAll('#theme option')];
+  return {
+    options: opts.map((o) => { const s = getComputedStyle(o); return { bg: s.backgroundColor, fg: s.color, ratio: Math.round(ratio(s.color, s.backgroundColor) * 10) / 10, light: lum(s.backgroundColor) > 0.2 }; }),
+  };
+}"""
+
+
+def theme_list_is_dark(wall):
+    """The Characters list opens dark (#151). Windows draws the native list
+    from the select's and the options' own colours, so the select is the
+    bar's colour, never transparent, and every option is the wall's card
+    colour with its text at 4.5:1 or more."""
+    page = wall.open(1920, 1000, 8)
+    got = page.evaluate(LIST_COLOURS)
+    tokens = page.evaluate("""() => {
+      const probe = document.createElement('div');
+      document.body.append(probe);
+      const of = (v) => { probe.style.background = `var(${v})`; return getComputedStyle(probe).backgroundColor; };
+      const out = { card: of('--card-bg'), wall: of('--wall-bg'), select: getComputedStyle(document.getElementById('theme')).backgroundColor };
+      probe.remove();
+      return out;
+    }""")
+    dark = all(o["bg"] == tokens["card"] and not o["light"] and o["ratio"] >= 4.5 for o in got["options"])
+    wall.check(len(got["options"]) == 3 and dark and tokens["select"] == tokens["wall"],
+               "the select wears the bar's colour and every option the card's, light text at 4.5:1 or more", [got["options"], tokens])
+    page.close()
+
 def main() -> int:
     handler = functools.partial(Quiet, directory=str(ROOT))
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)  # a free port
@@ -4923,6 +4954,7 @@ def main() -> int:
             themes_keeper_and_portrait,
             themes_fit,
             picker_costs_no_height,
+            theme_list_is_dark,
             theme_everywhere,
             theme_renames_the_queue_keeper,
             theme_save_flushes_and_says_when_refused,
