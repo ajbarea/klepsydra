@@ -1,0 +1,7 @@
+# Lint settings only: klepsydra is not a Python package. The scripts under
+# scripts/ run through `uv run --no-project --with ...`.
+[tool.ruff.lint]
+# Pyflakes and pycodestyle's error families (ruff's defaults), plus the
+# logging rules: no f-strings or .format in log calls (G), no root-logger
+# calls and no exception() outside a handler (LOG).
+select = ["E4", "E7", "E9", "F", "G", "LOG"]

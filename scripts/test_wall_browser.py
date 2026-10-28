@@ -1107,6 +1107,8 @@ window.__TAURI__ = { core: {
       return Promise.resolve();
     }
     if (cmd === 'get_wall_density') return Promise.resolve('auto');
+    // The front end's log lines, apart from the actions.
+    if (cmd === 'plugin:log|log') { (window.__logs ??= []).push(args); return Promise.resolve(); }
     if (cmd === 'get_launch_dir') { window.__calls.push([cmd, args]); return window.__dirAnswer ? window.__dirAnswer() : Promise.resolve('/home/aj/ajsoftworks'); }
     if (cmd === 'set_theme' && window.__setThemeFails) { window.__calls.push([cmd, args]); return Promise.reject(window.__setThemeFails); }
     if (cmd === 'end_session' && window.__hold) { window.__calls.push([cmd, args]); return window.__hold; }
@@ -1725,12 +1727,14 @@ def menu_off_until_the_call_answers(wall):
     page.get_by_role("menuitem", name="End session…").click()
     confirm_end(page, name)
     page.wait_for_timeout(5600)
-    state = lambda: page.evaluate(
-        f"""() => {{
+    def state():
+        return page.evaluate(
+            f"""() => {{
       const c = document.querySelector('.card[data-key="{key}"]');
       return [c.querySelector('.menu').getAttribute('aria-disabled'), c.querySelector('.ending').hidden, c.querySelector('.note').textContent];
     }}"""
-    )
+        )
+
     sent = state()
     menu_of(card).click(force=True)
     opened = page.evaluate("!document.getElementById('session-menu').hidden")
@@ -3613,7 +3617,9 @@ def ledger_text_size(wall):
     page.click("#ledger-open")
     page.wait_for_selector(LEDGER_READ)
     page.wait_for_timeout(SETTLE_MS)
-    name = lambda: page.evaluate("Math.round(document.querySelector('#wall .card .name').getBoundingClientRect().height * 10)")
+    def name():
+        return page.evaluate("Math.round(document.querySelector('#wall .card .name').getBoundingClientRect().height * 10)")
+
     card_name = name()
     page.keyboard.press("Control+Equal")
     page.keyboard.press("Control+Equal")
@@ -4106,7 +4112,10 @@ def ledger_rolls_over_at_midnight(wall):
     page.click("#ledger-open")
     page.wait_for_selector(LEDGER_READ)
     page.clock.pause_at(datetime.datetime(2026, 10, 27, 23, 59, 30, tzinfo=utc))
-    reads = lambda: page.evaluate("window.__reads")  # noqa: E731
+
+    def reads():
+        return page.evaluate("window.__reads")
+
     opened = reads()
     page.clock.run_for(28000)  # 23:59:58, no snapshot: no read
     quiet = reads()
@@ -4448,6 +4457,14 @@ def theme_save_flushes_and_says_when_refused(wall):
     got = page.evaluate("[document.getElementById('theme-note').textContent, document.getElementById('theme-note').checkVisibility(), document.documentElement.dataset.theme, document.getElementById('theme').value]")
     wall.check(got == ["Not saved: prefs.json could not be saved, so the theme is still kourai, not dicebear.", True, "kourai", "kourai"],
                "a refused save says why, and the wall wears the theme the app kept", got)
+    logs = page.evaluate("window.__logs ?? []")
+    want = {
+        "level": 5,
+        "message": "set_theme refused theme dicebear: prefs.json could not be saved, so the theme is still kourai, not dicebear.",
+        "location": "fleet/wall.js",
+    }
+    wall.check([{k: entry.get(k) for k in want} for entry in logs] == [want],
+               "the refusal reaches the app's log once, at error, naming the theme and why", logs)
     page.evaluate("window.__setThemeFails = null")
     page.select_option("#theme", "professions")
     page.wait_for_timeout(SAVE_MS + 200)

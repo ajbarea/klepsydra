@@ -29,7 +29,7 @@ use hyper_util::rt::{TokioIo, TokioTimer};
 use serde_json::{Map, Value};
 use tokio::sync::{mpsc, oneshot, watch, OwnedSemaphorePermit, Semaphore};
 
-use crate::receiver::{backoff, bind, our_host, Log};
+use crate::receiver::{backoff, bind, our_host};
 
 /// Where Tailscale Serve proxies to (`tailscale serve --bg 8318`): loopback
 /// only. 8318 is unassigned at IANA, below Windows' dynamic port range
@@ -234,6 +234,7 @@ pub fn asset_type(path: &str) -> Option<&'static str> {
             | "zoom.js"
             | "gauge.js"
             | "gaugeview.js"
+            | "log.js"
             | "manifest.webmanifest"
             | "sw.js"
             | "vendor/markdown-it/markdown-it.esm.min.mjs"
@@ -681,9 +682,8 @@ impl Server {
         assets: Assets,
         clips: Clips,
         usage: Option<Usage>,
-        log: Log,
     ) -> std::io::Result<Server> {
-        Self::spawn_with(addr, LIMITS, assets, clips, usage, log)
+        Self::spawn_with(addr, LIMITS, assets, clips, usage)
     }
 
     pub fn spawn_with(
@@ -692,7 +692,6 @@ impl Server {
         assets: Assets,
         clips: Clips,
         usage: Option<Usage>,
-        log: Log,
     ) -> std::io::Result<Server> {
         let std_listener = bind(addr)?;
         std_listener.set_nonblocking(true)?;
@@ -720,7 +719,7 @@ impl Server {
             .name("phone-wall".into())
             .spawn(move || {
                 runtime.block_on(async move {
-                    tokio::spawn(accept(std_listener, limits, shared, log));
+                    tokio::spawn(accept(std_listener, limits, shared));
                     if let Some((read, feed)) = usage {
                         tokio::spawn(follow_usage(read, feed, limits.usage));
                     }
@@ -777,15 +776,14 @@ impl Drop for Server {
     }
 }
 
-async fn accept(
-    std_listener: std::net::TcpListener,
-    limits: Limits,
-    shared: Arc<Shared>,
-    log: Log,
-) {
+async fn accept(std_listener: std::net::TcpListener, limits: Limits, shared: Arc<Shared>) {
     let listener = match tokio::net::TcpListener::from_std(std_listener) {
         Ok(l) => l,
-        Err(e) => return log(format!("phone: server stopped: {e}")),
+        Err(e) => {
+            let at = shared.bound;
+            log::error!("phone: wall server on {at} stopped; untick and tick Phone wall to start it again: {e}");
+            return;
+        }
     };
     let slots = Arc::new(Semaphore::new(limits.connections));
     let mut pause = Duration::ZERO;
@@ -800,7 +798,7 @@ async fn accept(
             }
             Err(e) => {
                 if pause.is_zero() {
-                    log(format!("phone: accept failed: {e}"));
+                    log::warn!("phone: accept on {} failed; retrying: {e}", shared.bound);
                 }
                 pause = backoff(pause);
                 tokio::time::sleep(pause).await;
@@ -1013,6 +1011,7 @@ mod tests {
             ("/zoom.js", Some(Route::Asset("zoom.js".into()))),
             ("/gauge.js", Some(Route::Asset("gauge.js".into()))),
             ("/gaugeview.js", Some(Route::Asset("gaugeview.js".into()))),
+            ("/log.js", Some(Route::Asset("log.js".into()))),
             (
                 "/manifest.webmanifest",
                 Some(Route::Asset("manifest.webmanifest".into())),
@@ -1195,7 +1194,6 @@ mod tests {
             seen.lock().unwrap().push(p.to_string());
             exact(p)
         });
-        let log: Log = Arc::new(|_| {});
         let clips: Clips = Arc::new(|id: &str| (id == CLIP_ID).then(|| CLIP.to_vec()));
         let server = Server::spawn_with(
             SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0),
@@ -1203,7 +1201,6 @@ mod tests {
             assets,
             clips,
             usage,
-            log,
         )
         .unwrap();
         Probe { server, asked }
@@ -1253,13 +1250,7 @@ mod tests {
         let SocketAddr::V4(taken) = p.server.addr() else {
             unreachable!()
         };
-        let again = Server::spawn(
-            taken,
-            Arc::new(tauri_get),
-            Arc::new(|_| None),
-            None,
-            Arc::new(|_| {}),
-        );
+        let again = Server::spawn(taken, Arc::new(tauri_get), Arc::new(|_| None), None);
         assert!(again.is_err());
     }
 

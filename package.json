@@ -5,9 +5,11 @@
   "private": true,
   "scripts": {
     "test": "node --test src/*.test.js",
+    "lint": "biome lint",
     "tauri": "tauri"
   },
   "devDependencies": {
+    "@biomejs/biome": "2.6.3",
     "@tauri-apps/cli": "^2.12.4"
   }
 }

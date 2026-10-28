@@ -5,7 +5,7 @@ import { announcer, press, say, setOff, syncChildren } from "./dom.js";
 import { ARM_MS, confirmCopy, createEnder, endAllCopy, endingAnnouncement, endingText, withdrawnText } from "./end.js";
 import { askedNote, asking, isReady, readiness, wrapupAnnouncements, wrapupCopy, wrapupLines } from "./wrapup.js";
 import { inTauri, served, subscribe, subscribeTheme, todayLedger } from "./feed.js";
-import { DEFAULT_THEME, THEME_LABELS, THEME_SAVE_MS, THEME_WAIT_MS, keeperOf, loadTheme, loadedTheme, themeId } from "./theme.js";
+import { DEFAULT_THEME, THEME_LABELS, THEME_SAVE_MS, THEME_WAIT_MS, keeperOf, loadTheme, loadedTheme, themeFile, themeId } from "./theme.js";
 import { createDrawer } from "./drawer.js";
 import { createQueuePanel } from "./queuepanel.js";
 import { createEdge } from "./sidepanel.js";
@@ -18,6 +18,7 @@ import { createReplayer } from "./replay.js";
 import { cutsText } from "./fulltext.js";
 import { WAITING, usageRows } from "../gauge.js";
 import { readMode, readStops, syncEntries } from "../gaugeview.js";
+import { createLog } from "../log.js";
 
 const FIRST_THEME_MS = 1500; // the longest the first paint waits for the app to name the theme
 const TICK_MS = 15_000; // ages re-render between snapshots, as on the gauge
@@ -36,6 +37,7 @@ const TALLY = [
   ["idle", "idle or ended"],
 ];
 
+const log = createLog("fleet/wall.js");
 const wall = document.getElementById("wall");
 const empty = document.getElementById("empty");
 const live = document.getElementById("live");
@@ -634,7 +636,10 @@ function receive(message) {
   inbox = inbox
     .then(theme)
     .then(() => take(message))
-    .catch((err) => console.warn("klepsydra: a snapshot could not be shown:", err));
+    .catch((err) => {
+      const n = Array.isArray(message?.sessions) ? message.sessions.length : "no";
+      log.error(`a fleet snapshot (${n} sessions, theme ${message?.theme}) could not be shown`, err);
+    });
 }
 
 function take(message) {
@@ -1191,7 +1196,7 @@ function wearTheme(id, paint = true) {
       return true;
     },
     (err) => {
-      console.warn(`klepsydra: theme ${next} could not be loaded:`, err);
+      log.warn(`theme ${next} could not be loaded from ${themeFile(next)}`, err);
       asked.delete(next); // a retry waits its own THEME_WAIT_MS before saying "Loading…"
       if (wanted === next) {
         wanted = worn;
@@ -1271,10 +1276,11 @@ function saveTheme() {
   clearTimeout(saving);
   saving = 0;
   picking = false;
-  window.__TAURI__.core.invoke("set_theme", { theme: worn }).then(
+  const asked = worn;
+  window.__TAURI__.core.invoke("set_theme", { theme: asked }).then(
     () => setText(themeNote, ""),
     (err) => {
-      console.warn("klepsydra: theme not saved:", err);
+      log.error(`set_theme refused theme ${asked}`, err);
       setText(themeNote, `Not saved: ${err}`);
     },
   );

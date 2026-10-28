@@ -3,7 +3,8 @@
 //! <frontend-dir> <snapshot.json> [port]`. Serves the frontend from disk, as
 //! the app serves its bundle, and the snapshot with its times moved up to now
 //! (by its `at`, as the wall's ?demo does), again each time the file changes.
-//! Port 0, the default, picks a free one. Prints the bound address. With
+//! Port 0, the default, picks a free one. Prints the bound address, and logs
+//! to stderr at `KLEPSYDRA_LOG`'s level (info by default). With
 //! `KLEPSYDRA_DIR` set, reply clips come from its `replies/`, the usage
 //! gauges from its `accounts/`, and the character theme from its
 //! `prefs.json`, read again each time it changes, as the app reads them.
@@ -14,7 +15,6 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
 use klepsydra_fleet::phone::{asset_type, Assets, Clips, Server, Usage};
-use klepsydra_fleet::receiver::Log;
 use klepsydra_fleet::theme;
 use klepsydra_fleet::watch::unix_now;
 use serde_json::Value;
@@ -59,7 +59,13 @@ fn load(path: &PathBuf) -> Option<Value> {
     Some(v)
 }
 
+#[expect(
+    clippy::print_stdout,
+    clippy::print_stderr,
+    reason = "a command's usage text and the bound address the browser suite reads"
+)]
 fn main() {
+    klepsydra_fleet::logfmt::to_stderr();
     let mut args = std::env::args().skip(1);
     let (Some(root), Some(snapshot)) = (args.next(), args.next()) else {
         eprintln!("usage: phone <frontend-dir> <snapshot.json> [port]");
@@ -81,12 +87,11 @@ fn main() {
         let read: Usage = Arc::new(move || klepsydra_fleet::usage::read([&dir]));
         read
     });
-    let log: Log = Arc::new(|l| eprintln!("{l}"));
     let addr = SocketAddrV4::new(Ipv4Addr::LOCALHOST, port);
-    let server = match Server::spawn(addr, assets, clips, usage, log) {
+    let server = match Server::spawn(addr, assets, clips, usage) {
         Ok(s) => s,
         Err(e) => {
-            eprintln!("no phone wall on {addr}: {e}");
+            log::error!("no phone wall on {addr}: {e}");
             return;
         }
     };

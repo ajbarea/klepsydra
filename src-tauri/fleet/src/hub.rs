@@ -33,7 +33,7 @@ fn lock<T>(m: &Mutex<T>) -> Option<MutexGuard<'_, T>> {
     static SAID: AtomicBool = AtomicBool::new(false);
     let guard = m.lock().ok();
     if guard.is_none() && !SAID.swap(true, Ordering::Relaxed) {
-        eprintln!("klepsydra: a hub lock was poisoned; its windows will stop updating");
+        log::error!("a hub lock was poisoned by a panic on another thread; its windows will stop updating until klepsydra restarts");
     }
     guard
 }

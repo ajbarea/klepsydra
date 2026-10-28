@@ -7,6 +7,16 @@ edition = "2021"
 [workspace]
 members = [".", "fleet"]
 
+# Diagnostics go through the `log` crate, so a stray print fails clippy.
+# Tests may print (clippy.toml).
+[workspace.lints.clippy]
+print_stdout = "warn"
+print_stderr = "warn"
+dbg_macro = "warn"
+
+[lints]
+workspace = true
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
@@ -14,6 +24,8 @@ tauri-build = { version = "2", features = [] }
 tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-autostart = "2"
 tauri-plugin-dialog = "2"
+tauri-plugin-log = "2.10"
+log = { version = "0.4.34", features = ["kv"] }
 tauri-plugin-window-state = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

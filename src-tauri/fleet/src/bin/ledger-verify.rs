@@ -80,6 +80,11 @@ fn default_projects() -> Vec<PathBuf> {
     found
 }
 
+#[expect(
+    clippy::print_stdout,
+    clippy::print_stderr,
+    reason = "a command: its report on stdout, its usage and refusals on stderr"
+)]
 fn main() -> ExitCode {
     let args = match parse(std::env::args().skip(1)) {
         Ok(a) => a,

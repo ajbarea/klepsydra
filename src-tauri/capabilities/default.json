@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "The gauge and the wall send their warnings and errors to the app's log file; nothing else.",
+  "windows": ["main", "wall"],
+  "permissions": ["log:default"]
+}

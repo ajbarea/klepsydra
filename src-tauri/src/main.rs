@@ -4,6 +4,7 @@ mod fleet;
 mod geometry;
 mod jump;
 mod launch;
+mod logging;
 mod phone;
 #[cfg(windows)]
 mod ping;
@@ -139,6 +140,10 @@ static PREFS_WRITE: Mutex<()> = Mutex::new(());
 fn write_pref_at(path: &std::path::Path, key: &str, value: serde_json::Value) {
     let _one = PREFS_WRITE.lock().unwrap_or_else(|e| e.into_inner());
     let Some(mut prefs) = read_prefs_at(path) else {
+        log::error!(
+            "{key} not saved: {} is not a readable JSON object, and is left as it is",
+            path.display()
+        );
         return;
     };
     prefs.insert(key.into(), value);
@@ -148,8 +153,8 @@ fn write_pref_at(path: &std::path::Path, key: &str, value: serde_json::Value) {
     // tmp-then-rename, so a crash mid-write leaves the old file whole.
     let tmp = path.with_extension("json.tmp");
     let text = serde_json::Value::Object(prefs).to_string();
-    if std::fs::write(&tmp, text).is_ok() {
-        let _ = std::fs::rename(&tmp, path);
+    if let Err(e) = std::fs::write(&tmp, text).and_then(|()| std::fs::rename(&tmp, path)) {
+        log::error!("{key} not saved to {}: {e}", path.display());
     }
 }
 
@@ -868,6 +873,7 @@ fn main() {
             launch::get_launch_dir
         ])
         .setup(|app| {
+            logging::start(app.handle());
             let window = app.get_webview_window("main").expect("main window");
             window.set_ignore_cursor_events(true)?;
             // GTK never sizes a non-resizable window below its content's

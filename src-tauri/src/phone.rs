@@ -6,7 +6,6 @@
 use std::sync::{Arc, Mutex};
 
 use klepsydra_fleet::phone::{exact_assets, Assets, Clips, Server, Usage, ADDR};
-use klepsydra_fleet::receiver::Log;
 use tauri::{AppHandle, Manager};
 
 /// prefs.json's key for the box.
@@ -23,15 +22,8 @@ pub fn saved(app: &AppHandle) -> bool {
         .unwrap_or(false)
 }
 
-fn log(app: &AppHandle, what: &str) {
-    match crate::klepsydra_dir(app) {
-        Some(dir) => crate::fleet::log_line(&dir, what),
-        None => eprintln!("klepsydra: {what}"),
-    }
-}
-
 /// Turn the server on or off and return whether it is on now: a port in
-/// use leaves it off and says so in `fleet.log`. Off closes the port and
+/// use leaves it off and says so in the log. Off closes the port and
 /// every phone's stream before it returns.
 pub fn set(app: &AppHandle, on: bool) -> bool {
     let state = app.state::<Phone>();
@@ -41,7 +33,7 @@ pub fn set(app: &AppHandle, on: bool) -> bool {
     if !on {
         if let Some(server) = slot.take() {
             server.stop();
-            log(app, &format!("phone: wall closed on {ADDR}"));
+            log::info!("phone: wall closed on {ADDR}");
         }
         return false;
     }
@@ -66,19 +58,17 @@ pub fn set(app: &AppHandle, on: bool) -> bool {
     let clips: Clips = Arc::new(move |id: &str| klepsydra_fleet::reply::read(dir.as_deref()?, id));
     let dirs = crate::usage_dirs(app);
     let usage: Usage = Arc::new(move || klepsydra_fleet::usage::read(&dirs));
-    let handle = app.clone();
-    let server_log: Log = Arc::new(move |l: String| log(&handle, &l));
-    match Server::spawn(ADDR, assets, clips, Some(usage), server_log) {
+    match Server::spawn(ADDR, assets, clips, Some(usage)) {
         Ok(server) => {
             server.set_theme(crate::theme::saved(app));
             app.state::<crate::fleet::Fleet>()
                 .with_latest(|v| server.publish(v));
-            log(app, &format!("phone: wall serving on {ADDR}"));
+            log::info!("phone: wall serving on {ADDR}");
             *slot = Some(server);
             true
         }
         Err(e) => {
-            log(app, &format!("phone: no wall on {ADDR}: {e}"));
+            log::warn!("phone: no wall on {ADDR}, so Phone wall stays unticked: {e}");
             false
         }
     }

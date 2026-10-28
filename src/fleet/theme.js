@@ -22,6 +22,9 @@ export const themeId = (id) => (ownValue(THEME_LABELS, id) ? id : DEFAULT_THEME)
 const loaded = new Map([[DEFAULT_THEME, kourai]]);
 const loading = new Map();
 
+/** Theme `id`'s file, as the page fetches it, for a message that names it. */
+export const themeFile = (id) => `fleet/themes/${themeId(id)}.json`;
+
 /** Theme `id` (an unknown one is the default) if its file is loaded; else null. */
 export const loadedTheme = (id) => loaded.get(themeId(id)) ?? null;
 

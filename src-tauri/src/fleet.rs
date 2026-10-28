@@ -10,7 +10,6 @@ use std::time::Instant;
 use klepsydra_fleet::cue::Cues;
 use klepsydra_fleet::hub::{Hub, Sink};
 use klepsydra_fleet::ledger::{Ledger, Receiver, Shared, TodayView};
-use klepsydra_fleet::problem_log::{append_capped, CAP};
 use klepsydra_fleet::queue;
 use klepsydra_fleet::receiver;
 use klepsydra_fleet::scan::Problem;
@@ -106,7 +105,11 @@ pub fn choose_queue(app: &AppHandle) {
     pick.pick_file(move |file| {
         if let Some(path) = file.and_then(|f| f.into_path().ok()) {
             if let Err(e) = queue::keep(&dir, &path, None) {
-                log_line(&dir, &format!("could not save the queue file choice: {e}"));
+                log::error!(
+                    "the queue file choice {} was not saved to {}: {e}",
+                    path.display(),
+                    dir.join(queue::KEEPER).display()
+                );
             }
         }
     });
@@ -173,22 +176,24 @@ pub async fn ledger_today(app: AppHandle, session: Option<String>) -> Result<Tod
     .map_err(|e| format!("Could not read the ledger: {e}"))
 }
 
-/// A line for stderr, for dev runs, and for `<dir>/fleet.log`, which release
-/// builds have instead of a console.
-pub(crate) fn log_line(dir: &Path, what: &str) {
-    eprintln!("klepsydra: {what}");
-    let line = format!("{} {what}", unix_now());
-    append_capped(&dir.join("fleet.log"), &line, CAP);
-}
-
+/// A skipped session file, with its session id when its name holds one.
 fn log_problem(dir: &Path, p: &Problem) {
     // "fleet" names the directory itself, not a file inside it.
     let at = if p.file == "fleet" {
-        "fleet".to_string()
+        dir.join("fleet")
     } else {
-        format!("fleet/{}", p.file)
+        dir.join("fleet").join(&p.file)
     };
-    log_line(dir, &format!("skipped {at}: {}", p.what));
+    match session_of(&p.file) {
+        Some(id) => log::warn!(session_id = id; "skipped {}: {}", at.display(), p.what),
+        None => log::warn!("skipped {}: {}", at.display(), p.what),
+    }
+}
+
+/// The session id a session file's name `<id>.json` holds.
+fn session_of(file: &str) -> Option<&str> {
+    file.strip_suffix(".json")
+        .filter(|id| klepsydra_fleet::session::is_session_id(id))
 }
 
 /// How often a receiver that could not bind its port tries again: the port
@@ -197,38 +202,33 @@ const RETRY: Duration = Duration::from_secs(30);
 
 /// Open the ledger in `<dir>/ledger` and start the OTLP receiver. While the
 /// port is taken the overlay runs on without telemetry, says so on the
-/// snapshot and in `fleet.log`, and tries again every `RETRY`.
+/// snapshot and in the log, and tries again every `RETRY`.
 fn start_ledger(dir: &Path) -> Shared {
     let (ledger, problems) = Ledger::open_local(dir.join("ledger"), unix_now());
     for p in &problems {
-        log_line(dir, &format!("ledger: {p}"));
+        log::error!("ledger: {p}");
     }
     let ledger: Shared = std::sync::Arc::new(std::sync::Mutex::new(ledger));
     let shared = ledger.clone();
     let dir = dir.to_path_buf();
     std::thread::spawn(move || {
-        let log_dir = dir.clone();
-        let log: receiver::Log = std::sync::Arc::new(move |l: String| log_line(&log_dir, &l));
         let mut logged = false;
         loop {
-            let (listening, error) =
-                match receiver::spawn(receiver::ADDR, shared.clone(), log.clone()) {
-                    Ok(_) => (true, None),
-                    Err(e) => (false, Some(e.to_string())),
-                };
+            let (listening, error) = match receiver::spawn(receiver::ADDR, shared.clone()) {
+                Ok(_) => (true, None),
+                Err(e) => (false, Some(e.to_string())),
+            };
             if let Some(e) = &error {
                 if !logged {
-                    log_line(
-                        &dir,
-                        &format!("otel: no receiver on {}: {e}", receiver::ADDR),
+                    log::warn!(
+                        "otel: no receiver on {}, so no token counts until it binds; retrying every {} s: {e}",
+                        receiver::ADDR,
+                        RETRY.as_secs()
                     );
                     logged = true;
                 }
-            } else if logged {
-                log_line(
-                    &dir,
-                    &format!("otel: receiver listening on {}", receiver::ADDR),
-                );
+            } else {
+                log::info!("otel: receiver listening on {}", receiver::ADDR);
             }
             let mut l = klepsydra_fleet::ledger::lock(&shared);
             l.set_receiver(Receiver {
@@ -239,7 +239,10 @@ fn start_ledger(dir: &Path) -> Shared {
             if listening {
                 // Whatever the receiver missed while it was down is a gap.
                 if let Err(e) = l.note_listening(unix_now()) {
-                    log_line(&dir, &format!("ledger: gap not saved: {e}"));
+                    log::error!(
+                        "ledger: the gap while the receiver was down was not saved in {}: {e}",
+                        dir.join("ledger").display()
+                    );
                 }
                 return;
             }
@@ -362,6 +365,21 @@ mod tests {
 
     fn prefs(v: Value) -> serde_json::Map<String, Value> {
         v.as_object().cloned().unwrap()
+    }
+
+    #[test]
+    fn a_skipped_session_file_names_its_session() {
+        let id = "0b1e5b4e-6f0e-4bbd-9d3c-2a7a1c0f9e11";
+        assert_eq!(session_of(&format!("{id}.json")), Some(id));
+        for other in [
+            "fleet",
+            "notes.json",
+            &format!("{id}.json.tmp"),
+            id,
+            ".json",
+        ] {
+            assert_eq!(session_of(other), None, "{other}");
+        }
     }
 
     #[test]

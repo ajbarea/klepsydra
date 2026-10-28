@@ -9,6 +9,7 @@ klepsydra is an always-on-top desktop gauge (Tauri 2 shell, plain JavaScript fro
 - `node --test src/*.test.js`
 - `bash statusline/test_statusline.sh`, `bash hooks/test_fleet.sh`, `bash hooks/test_launch.sh` (needs tmux), `bash scripts/test_measure_memory.sh`, `bash scripts/test_build_windows.sh`
 - `shellcheck hooks/*.sh statusline/*.sh scripts/*.sh` (under WSL: `uvx --from shellcheck-py shellcheck ...`)
+- `npm run lint` (Biome's `noConsole`: pages log through `src/log.js`) and `uvx ruff check` (the Python scripts, with ruff's `G` and `LOG` logging rules)
 - `(cd src-tauri && cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings)`
 - `(cd src-tauri && cargo test -p klepsydra-fleet)`
 - `uv run -q --no-project --with playwright python -I scripts/test_wall_browser.py` (a few minutes; needs Playwright's Chromium; local only)
@@ -20,6 +21,7 @@ Under WSL the app crate cannot compile (no WebKitGTK headers): use `-p klepsydra
 
 - Work in a git worktree and open a pull request; `main` is protected.
 - Never commit `COMMITS.md` (a local scratchpad).
+- Diagnostics go through the `log` crate in Rust and `src/log.js` in the pages, never `println!`, `eprintln!` or `console.log` (clippy and Biome fail on them); README's Logs section says where the file is and what a line holds.
 - The gauge never shows a confident wrong number: a stale reading says its age, an ended window says when it reset (ROADMAP, Design constraint).
 - Usage readings come only from the `statusLine` hook. Add no API calls, credentials or second background process.
 - Readings belong in the app data dir and harness output in temp. Never write an install-directory path (`AppData\Local\Klepsydra`, or `LOCALAPPDATA` / `local_data_dir` joined to klepsydra) in shell, JS or Rust sources; CI greps for it.
