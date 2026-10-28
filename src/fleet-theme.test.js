@@ -3,7 +3,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { DEFAULT_THEME, THEMES, keeperName, keeperOf, themeId, themeOf } from "./fleet/theme.js";
+import { DEFAULT_THEME, THEME_LABELS, keeperName, keeperOf, loadTheme, loadedTheme, themeId } from "./fleet/theme.js";
 import { castFiles } from "./fleet/cast.js";
 import { card, identity, stripItems } from "./fleet/model.js";
 import { characterOf, tokensByCharacter } from "./fleet/ledger.js";
@@ -13,18 +13,31 @@ import { GLYPHS, LICENSE_FILE, PINS, featherIcons, glyphInk, glyphLicense } from
 
 const ROOT = join(import.meta.dirname, "..");
 const read = (f) => readFileSync(join(ROOT, f), "utf8");
+// The theme files as they are on disk; the page loads them through theme.js.
+const IDS = ["kourai", "professions", "dicebear"];
+const THEMES = Object.fromEntries(IDS.map((id) => [id, JSON.parse(readFileSync(join(import.meta.dirname, "fleet", "themes", `${id}.json`), "utf8"))]));
 const kourai = THEMES.kourai;
 const VOICES = Object.keys(kourai.characters).sort();
-const IDS = ["kourai", "professions", "dicebear"];
 const NOW = Date.UTC(2026, 9, 27, 12);
 const demo = JSON.parse(read("scripts/fixtures/fleet-demo.json"));
 const shifted = demo.sessions.map((s) => ({ ...s }));
 
 test("three themes, one data file each under themes/, Kourai first and the default", () => {
-  assert.deepEqual(Object.keys(THEMES), IDS);
+  assert.deepEqual(Object.keys(THEME_LABELS), IDS);
   assert.equal(DEFAULT_THEME, "kourai");
   assert.deepEqual(readdirSync(join(ROOT, "src/fleet/themes")).sort(), IDS.map((id) => `${id}.json`).sort());
-  for (const id of IDS) assert.deepEqual(THEMES[id], JSON.parse(read(`src/fleet/themes/${id}.json`)), id);
+  for (const id of IDS) assert.equal(THEME_LABELS[id], THEMES[id].label, `${id}: the picker's name is the file's`);
+});
+
+test("a page loads the default theme with itself and any other once, the first time it is worn", async () => {
+  assert.deepEqual(loadedTheme("kourai"), kourai, "Kourai comes with the page");
+  assert.equal(loadedTheme("professions"), null, "not fetched until worn");
+  const [a, b] = await Promise.all([loadTheme("professions"), loadTheme("professions")]);
+  assert.equal(a, b, "one load for two asks");
+  assert.deepEqual(a, THEMES.professions);
+  assert.equal(loadedTheme("professions"), a, "kept once loaded");
+  assert.deepEqual(await loadTheme("dicebear"), THEMES.dicebear);
+  assert.equal(await loadTheme("no-such-theme"), loadedTheme("kourai"), "an unknown theme is the default");
 });
 
 test("every theme has cast.json's shape and covers every voice in the cast, and no other", () => {
@@ -141,7 +154,7 @@ test("an unknown theme is Kourai, an Object property included", () => {
   for (const id of IDS) assert.equal(themeId(id), id);
   for (const bad of ["Professions", "", "lorelei", "__proto__", "constructor", "toString", "hasOwnProperty", null, undefined, 3, {}, ["kourai"]]) {
     assert.equal(themeId(bad), "kourai", String(bad));
-    assert.equal(themeOf(bad), kourai, String(bad));
+    assert.deepEqual(loadedTheme(bad), kourai, String(bad));
   }
 });
 
@@ -260,7 +273,9 @@ test("one loader: only theme.js names a theme's file, and no frontend code branc
     assert.doesNotMatch(text, /themes\/|\b(professions|dicebear)\b|["']kourai["']|faces\/kourai/i, f);
   }
   const theme = read("src/fleet/theme.js");
-  assert.deepEqual([...theme.matchAll(/from "\.\/themes\/([a-z]+)\.json"/g)].map((m) => m[1]), IDS);
+  // Only the default is part of the page; the others are fetched by id when first worn.
+  assert.deepEqual([...theme.matchAll(/from "\.\/themes\/([a-z]+)\.json"/g)].map((m) => m[1]), ["kourai"]);
+  assert.match(theme, /import\(`\.\/themes\/\$\{key\}\.json`, \{ with: \{ type: "json" \} \}\)/);
 });
 
 test("the wall, the strip and the drawer read the theme now worn, not a fixed cast", () => {
@@ -277,7 +292,7 @@ test("the wall, the strip and the drawer read the theme now worn, not a fixed ca
   assert.match(wall, /if \(document\.hidden\) flushTheme\(\);/);
   assert.match(wall, /setText\(themeNote, `Not saved: \$\{err\}`\);/, "a refused save says so");
   assert.doesNotMatch(read("src/fleet/strip.js"), /cast\.json|import cast/);
-  assert.match(read("src/main.js"), /subscribeTheme\(\(id\) => \{\s*if \(themeOf\(id\) === theme\) return;\s*theme = themeOf\(id\);\s*render\(\);\s*\}\);/, "the gauge's strip redraws on a switch");
+  assert.match(read("src/main.js"), /subscribeTheme\(\(id\) => \{\s*wanted = id;\s*loadTheme\(id\)\.then\(\(next\) => \{\s*if \(wanted !== id \|\| next === theme\) return;\s*theme = next;\s*render\(\);/, "the gauge's strip redraws on a switch, once the theme is loaded");
   assert.match(read("src/main.js"), /cast: \(\) => theme,/, "and draws the theme now worn");
   const html = read("src/wall.html");
   assert.match(html, /<label class="theme-pick"[^>]*><span>Characters<\/span><select id="theme"><\/select><\/label>/);
@@ -317,11 +332,10 @@ test("each profession's glyph carries its own licence: Feather's MIT where Lucid
 test("the Queue's keeper is a character only by the voice the hook recorded; a typed name stays as typed", () => {
   for (const id of IDS) {
     const t = THEMES[id];
-    const messenger = t.characters.bm_fable.name;
-    assert.equal(keeperName("Hermes (orchestrator)", "bm_fable", t), `${messenger} (orchestrator)`, id);
-    assert.equal(keeperName("Messenger", "bm_fable", t), messenger, id);
-    assert.equal(keeperName("Heph (orchestrator)", "am_michael", t), t.characters.am_michael.name, `${id}: the voice names it`);
-    // No voice recorded, or one no theme casts: whatever was typed, even another theme's name.
+    // The hook named the keeper (no --by, in a voiced session): the theme names that voice.
+    assert.equal(keeperName("Hephaestus", "am_michael", t), t.characters.am_michael.name, id);
+    assert.equal(keeperName(null, "am_michael", t), t.characters.am_michael.name, id);
+    // Typed with --by (no voice recorded), or a voice no theme casts: as typed, even another theme's name.
     for (const typed of ["Editor", "Max", "Heph (orchestrator)", "Hermes (orchestrator)", "Guard", "AJ"]) {
       assert.equal(keeperName(typed, null, t), typed, `${id}: ${typed}`);
       assert.equal(keeperName(typed, "bm_lewis", t), typed, `${id}: ${typed} with an uncast voice`);

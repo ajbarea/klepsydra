@@ -723,9 +723,16 @@ queue_cmd() { # args...
         path=$(wslpath -w -- "$path" 2>/dev/null) || { echo "klepsydra: $2 has no Windows path" >&2; return 1; }
       fi
       local tmp=$keeper.$$.tmp voice=""
-      # The voice keryx holds for the session running this, so the panel can
-      # name its character in the theme worn; a name typed in --by stays as typed.
-      if claude_ancestor "${KLEPSYDRA_PID:-$$}"; then voice=$(holder_voice "$found_pid" "$found_start") || voice=""; fi
+      # A keeper typed with --by is kept as typed. Without one, the session
+      # running this names itself: the voice keryx holds for it, and that
+      # character's name in the theme worn, which the panel then follows.
+      if [[ -z $by ]] && claude_ancestor "${KLEPSYDRA_PID:-$$}"; then
+        voice=$(holder_voice "$found_pid" "$found_start") || voice=""
+        if [[ -n $voice ]]; then
+          by=$(jq -r --arg v "$voice" '.characters[$v].name // empty | strings' "$CAST" 2>/dev/null) || by=""
+          [[ -n $by ]] || by=$voice
+        fi
+      fi
       # -T: a folder at the name is a failure, not a place to move the file into.
       if ! { mkdir -p -- "$KLEPSYDRA_DIR" 2>/dev/null &&
              jq -nc --arg path "$path" --arg by "$by" --arg voice "$voice" \

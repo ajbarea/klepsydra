@@ -141,7 +141,8 @@ test("the speaking session's portrait wears the gold ring and says so", () => {
 });
 
 test("a theme switch redraws each portrait in the theme now worn, on the same button", async () => {
-  const { THEMES } = await import("./fleet/theme.js");
+  const { loadTheme } = await import("./fleet/theme.js");
+  const THEMES = Object.fromEntries(await Promise.all(["kourai", "professions", "dicebear"].map(async (id) => [id, await loadTheme(id)])));
   const el = new El("div");
   let theme = THEMES.kourai;
   const render = mountStrip(el, { open: () => {}, cast: () => theme });

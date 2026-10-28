@@ -5,7 +5,7 @@ import { announcer, press, say, setOff, syncChildren } from "./dom.js";
 import { ARM_MS, confirmCopy, createEnder, endAllCopy, endingAnnouncement, endingText, withdrawnText } from "./end.js";
 import { askedNote, asking, isReady, readiness, wrapupAnnouncements, wrapupCopy, wrapupLines } from "./wrapup.js";
 import { inTauri, served, subscribe, subscribeTheme, todayLedger } from "./feed.js";
-import { DEFAULT_THEME, THEME_SAVE_MS, THEMES, keeperOf, themeId, themeOf } from "./theme.js";
+import { DEFAULT_THEME, THEME_LABELS, THEME_SAVE_MS, keeperOf, loadTheme, loadedTheme, themeId } from "./theme.js";
 import { createDrawer } from "./drawer.js";
 import { createQueuePanel } from "./queuepanel.js";
 import { createEdge } from "./sidepanel.js";
@@ -95,7 +95,7 @@ const phoneNarrow = () => served && matchMedia("(max-width: 600px)").matches;
 
 // The character theme the wall wears: who each voice is and how they look.
 let worn = DEFAULT_THEME;
-let cast = themeOf(worn);
+let cast = loadedTheme(worn);
 let sessions = [];
 let request = null; // the snapshot's wrap-up, while one is shown
 let latestSnapshot = null; // its usage readings draw the limit gauges
@@ -1148,16 +1148,30 @@ if (inTauri) window.__TAURI__.core.invoke("get_wall_density").then(choose, () =>
 // an open portrait, the Ledger and the Queue's keeper, with nothing read again.
 const themePicker = document.getElementById("theme");
 themePicker.replaceChildren(
-  ...Object.entries(THEMES).map(([id, t]) => Object.assign(document.createElement("option"), { value: id, textContent: t.label })),
+  ...Object.entries(THEME_LABELS).map(([id, label]) => Object.assign(document.createElement("option"), { value: id, textContent: label })),
 );
 const keeper = empty.querySelector(".keeper");
 
-/** Wear theme `id` (an unknown one is the default), and repaint unless `paint` is false. */
+let wanted = DEFAULT_THEME; // the theme last asked for, which a slower load must not undo
+/**
+ * Wear theme `id` (an unknown one is the default), and repaint unless
+ * `paint` is false. A theme not loaded yet is worn, and painted, once its
+ * file arrives, unless another was asked for meanwhile.
+ */
 function wearTheme(id, paint = true) {
   const next = themeId(id);
+  wanted = next;
+  const theme = loadedTheme(next);
+  if (!theme) {
+    loadTheme(next).then(
+      () => wanted === next && wearTheme(next),
+      (err) => console.warn(`klepsydra: theme ${next} could not be loaded:`, err),
+    );
+    return;
+  }
   const was = worn;
   worn = next;
-  cast = themeOf(next);
+  cast = theme;
   document.documentElement.dataset.theme = next;
   themePicker.value = next;
   const src = keeperOf(cast);

@@ -781,7 +781,8 @@ colour theme does; each card's colour is its own `--accent`.
   "Keeps the Peace").
 
 Each theme is one data file, `src/fleet/themes/<id>.json`, shaped like the
-others and keyed by the same keryx voice ids, so a voice is one character in
+others and keyed by the same keryx voice ids; a page loads Kourai's with
+itself and another the first time it is worn, so a voice is one character in
 every theme and the speaking waves and which session keeps a face never
 change. A test holds every theme to every voice. Only Kourai has
 half-figures, so in the other two a card keeps its round face on the band
@@ -1072,11 +1073,11 @@ and the panel names the file and says who keeps it ("Kept by Hermes
 yours to read. `queue show` prints the current choice and `queue clear` goes
 back to the default. Both write `queue.json` in klepsydra's data folder (under
 WSL the path goes across as a Windows one), the newest choice wins, and it
-applies within five seconds. `--by` takes a name of 1 to 80 characters. Run
-from a session keryx holds a voice for, `queue set` also records that voice,
-and the panel names the keeper as the theme worn names that character
-("Kept by Messenger (orchestrator)" in Professions); a name typed anywhere
-else stays as typed. A
+applies within five seconds. `--by` takes a name of 1 to 80 characters,
+always shown as typed. Without `--by`, from a session keryx holds a voice
+for, the hook names the keeper itself (the voice's character in the theme
+worn, "kept by Hephaestus"), and the panel renames it when the theme
+changes. A
 file kept inside WSL (`\\wsl.localhost\...`) sends Windows no change
 notices, so its edits show on the five-second re-read rather than at once;
 one on a Windows drive (`/mnt/c/...`) shows within a second or two. An older `queue_path` in `prefs.json` still

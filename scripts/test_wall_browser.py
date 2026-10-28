@@ -68,12 +68,36 @@ class Quiet(http.server.SimpleHTTPRequestHandler):
         pass
 
 
+def watch(page):
+    """Keep what a page asked for and said, so an open that never paints can name why."""
+    seen = {"asked": [], "done": set(), "said": []}
+    page.on("request", lambda r: seen["asked"].append(r.url))
+    page.on("requestfinished", lambda r: seen["done"].add(r.url))
+    page.on("requestfailed", lambda r: seen["said"].append(f"failed {r.url}: {r.failure}"))
+    page.on("console", lambda m: m.type in ("error", "warning") and seen["said"].append(f"{m.type}: {m.text}"[:300]))
+    page.on("pageerror", lambda e: seen["said"].append(f"pageerror: {e}"[:300]))
+    page.seen = seen
+
+
+def painted(page, expression):
+    """Wait for `expression`; on a timeout, print what the page still waited on, then fail as before."""
+    try:
+        page.wait_for_function(expression)
+    except Exception:
+        seen = getattr(page, "seen", None)
+        if seen:
+            pending = [u.split("/", 3)[-1] for u in seen["asked"] if u not in seen["done"]]
+            print(f"  open never painted: pending {pending[:10]}, said {seen['said'][:8]}", file=sys.stderr)
+        raise
+
+
 class Wall:
     def __init__(self, browser, port):
         self.browser, self.port, self.failed, self.passed = browser, port, 0, 0
 
     def open(self, width, height, cards, fixture=None, ledger=None, query=""):
         page = self.browser.new_page(viewport={"width": width, "height": height})
+        watch(page)
         self.ledger_requests = 0
 
         def count(route):
@@ -94,9 +118,7 @@ class Wall:
                 ),
             )
         page.goto(f"http://127.0.0.1:{self.port}/src/wall.html?demo={cards}{query}")
-        page.wait_for_function(
-            f"document.getElementById('wall').children.length === {cards}"
-        )
+        painted(page, f"document.getElementById('wall').children.length === {cards}")
         # In the app the bar shows + New session and Wrap up…; the fit must hold with them.
         page.evaluate(
             "document.getElementById('new-session').hidden = false;"
@@ -1117,14 +1139,15 @@ def open_app(wall, width=1920, height=1000, keep=None, motion="no-preference", l
     page.snapshot = snapshot
     page.snapshot_all = shifted(json.loads((ROOT / "scripts/fixtures/fleet-demo.json").read_text()), int(time.time()) - at)["sessions"]
     stub = TAURI_STUB.replace("'/home/aj/ajsoftworks'", json.dumps(launch_dir))
+    watch(page)
     page.add_init_script(stub % json.dumps(snapshot))
     if theme is not None:
         page.add_init_script(f"window.__savedTheme = {json.dumps(theme)};")
     page.goto(f"http://127.0.0.1:{wall.port}/src/wall.html")
     if snapshot["sessions"] and keep is None:
-        page.wait_for_function("document.getElementById('wall').children.length > 0")
+        painted(page, "document.getElementById('wall').children.length > 0")
     else:
-        page.wait_for_function("window.__channel !== undefined")
+        painted(page, "window.__channel !== undefined")
     page.wait_for_timeout(SETTLE_MS)
     return page
 
@@ -4337,18 +4360,19 @@ def theme_everywhere(wall):
 
 
 def theme_renames_the_queue_keeper(wall):
-    """The Queue names its keeper as the theme worn names the character of
-    the voice the hook recorded ("Hermes (orchestrator)" with bm_fable is the
-    Messenger in Professions); without a voice a name stays as typed, even
-    another theme's ("Editor" under Kourai)."""
+    """A keeper the hook named (its voice recorded) is named as the theme worn
+    names that character (Hephaestus is the Foreman in Professions); one
+    typed with --by stays as typed, even another theme's name ("Editor")."""
     page = open_app(wall, 1920, 1000)
     page.wait_for_function("window.__queue !== undefined")
     for kept, voice, theme, want in (
-        ("Hermes (orchestrator)", "bm_fable", "professions", "Kept by Messenger (orchestrator)"),
-        ("Hermes (orchestrator)", "bm_fable", "dicebear", f"Kept by {THEMES['dicebear']['characters']['bm_fable']['name']} (orchestrator)"),
-        ("Hermes (orchestrator)", "bm_fable", "kourai", "Kept by Hermes (orchestrator)"),
-        ("Editor", None, "kourai", "Kept by Editor"),
+        # Named by the hook (no --by, in a voiced session): follows the theme.
+        ("Hephaestus", "am_michael", "professions", "Kept by Foreman"),
+        ("Hephaestus", "am_michael", "dicebear", f"Kept by {THEMES['dicebear']['characters']['am_michael']['name']}"),
+        ("Hephaestus", "am_michael", "kourai", "Kept by Hephaestus"),
+        # Typed with --by: as typed, in every theme.
         ("Heph (orchestrator)", None, "professions", "Kept by Heph (orchestrator)"),
+        ("Editor", None, "kourai", "Kept by Editor"),
     ):
         page.evaluate("([k, v]) => window.__queue.onmessage({path: 'C:/q.md', text: '# Q', problem: null, kept_by: k, kept_voice: v})", [kept, voice])
         page.evaluate("(t) => window.__theme.onmessage(t)", theme)

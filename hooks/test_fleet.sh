@@ -1616,12 +1616,19 @@ check "queue set: path and keeper" "$(jq -c . "$qdir/queue.json")" '{"path":"/ho
 check "queue set: no temp file left" "$(find "$qdir" -name '*.tmp' | wc -l)" "0"
 queue set /home/aj/other.md >/dev/null
 check "queue set: no --by keeps no one" "$(jq -c . "$qdir/queue.json")" '{"path":"/home/aj/other.md","by":null,"voice":null}'
-# Run from a Claude Code session keryx holds a voice for, the voice is
-# recorded: the panel names that character in the theme worn, never a name typed.
-KLEPSYDRA_DIR=$qdir KLEPSYDRA_PROC="$work/proc" KLEPSYDRA_PID=600 KERYX_VOICES="$work/win-voices.json" bash "$hook" queue set /home/aj/q.md --by "Heph (orchestrator)" >/dev/null
-check "queue set in a session: its voice" "$(jq -c '[.by, .voice]' "$qdir/queue.json")" '["Heph (orchestrator)","am_michael"]'
-KLEPSYDRA_DIR=$qdir KLEPSYDRA_PROC="$work/proc" KLEPSYDRA_PID=810 KERYX_VOICES="$work/win-voices.json" bash "$hook" queue set /home/aj/q.md --by "Editor" >/dev/null
-check "queue set outside any session: no voice" "$(jq -c '[.by, .voice]' "$qdir/queue.json")" '["Editor",null]'
+# A keeper typed with --by is kept as typed. Without --by, run from a Claude
+# Code session keryx holds a voice for, the hook names the keeper itself: the
+# voice, and that character's name in the theme worn, which the panel follows.
+insession() { KLEPSYDRA_DIR=$qdir KLEPSYDRA_PROC="$work/proc" KLEPSYDRA_PID=${PID:-600} KERYX_VOICES="$work/win-voices.json" KLEPSYDRA_CAST="$here/../src/fleet/themes/${THEME:-kourai}.json" bash "$hook" queue set "$@"; }
+insession /home/aj/q.md --by "Heph (orchestrator)" >/dev/null
+check "queue set --by in a session: as typed, no voice" "$(jq -c '[.by, .voice]' "$qdir/queue.json")" '["Heph (orchestrator)",null]'
+out=$(insession /home/aj/q.md)
+check "queue set in a session: the hook names the keeper" "$(jq -c '[.by, .voice]' "$qdir/queue.json")" '["Hephaestus","am_michael"]'
+check "queue set in a session: and says so" "$out" "The Queue panel now reads /home/aj/q.md, kept by Hephaestus."
+out=$(THEME=professions insession /home/aj/q.md)
+check "queue set in a session: named in the theme worn" "$(jq -c '[.by, .voice]' "$qdir/queue.json")|$out" '["Foreman","am_michael"]|The Queue panel now reads /home/aj/q.md, kept by Foreman.'
+out=$(PID=810 insession /home/aj/q.md)
+check "queue set outside any session: no keeper" "$(jq -c '[.by, .voice]' "$qdir/queue.json")|$out" '[null,null]|The Queue panel now reads /home/aj/q.md.'
 ( cd "$work" && queue set rel.md >/dev/null )
 check "queue set: a relative path is made absolute" "$(jq -r .path "$qdir/queue.json")" "$work/rel.md"
 check "queue show: prints queue.json" "$(queue show)" "$(cat "$qdir/queue.json")"
