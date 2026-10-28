@@ -959,6 +959,9 @@ fn main() {
                 .show_menu_on_left_click(true)
                 .on_menu_event(move |app, event| match event.id.as_ref() {
                     "autostart" => {
+                        if autostart_held() {
+                            return;
+                        }
                         // The checkbox has already flipped; mirror it onto the system.
                         let want = toggle.is_checked().unwrap_or(false);
                         let mgr = app.autolaunch();
