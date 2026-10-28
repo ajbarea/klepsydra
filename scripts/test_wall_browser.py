@@ -4719,6 +4719,36 @@ def theme_switch_commits_only_what_it_wore(wall):
         page.close()
 
 
+def theme_retry_waits_before_loading(wall):
+    """Picked again after its file failed, a theme says "Loading…" only once
+    that new pick has waited THEME_WAIT_MS, not at once: the failure clears
+    the first pick's clock."""
+    page = open_app(wall, 1920, 1000)
+    tries = []
+
+    def route(r):
+        tries.append(r)
+        if len(tries) == 1:
+            r.abort()
+
+    page.route("**/fleet/themes/dicebear.json", route)
+    page.select_option("#theme", "dicebear")
+    page.wait_for_function("document.getElementById('theme-note').textContent.startsWith('Not switched')")
+    page.wait_for_timeout(THEME_WAIT_MS + 300)  # past the first pick's deadline
+    page.select_option("#theme", "dicebear")
+    page.wait_for_timeout(1000)
+    early = page.evaluate("document.getElementById('theme-note').textContent")
+    page.wait_for_timeout(THEME_WAIT_MS)
+    late = page.evaluate("document.getElementById('theme-note').textContent")
+    for r in tries[1:]:
+        r.continue_()
+    page.wait_for_function("document.documentElement.dataset.theme === 'dicebear'")
+    after = page.evaluate("document.getElementById('theme-note').textContent")
+    wall.check(len(tries) == 2 and not early.startswith("Loading") and late == "Loading the DiceBear theme…" and after == "",
+               "a theme picked again after its file failed says Loading… only after its own wait", [len(tries), early, late, after])
+    page.close()
+
+
 PICKER = """() => {
   const bar = document.querySelector('.bar');
   const box = (e) => e.getBoundingClientRect();
@@ -4874,6 +4904,7 @@ def main() -> int:
             theme_switch_commits_only_what_it_wore,
             theme_stale_load_leaves_the_choice,
             theme_file_that_never_answers,
+            theme_retry_waits_before_loading,
         )
         for case in cases:
             if not only or case.__name__ in only:
