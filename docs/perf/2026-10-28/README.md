@@ -1,7 +1,7 @@
 <!-- budget: 1300 words, sources excluded -->
 # Performance audit, 2026-10-28
 
-This audit measures klepsydra.exe and its own WebView2 processes on the home PC: an AMD Ryzen 5 3600X (6 cores, 12 threads) running Windows 11 Home with WebView2 Runtime 155.0.4283.62. CPU is a percent of one logical core (the machine has 12). Memory is private bytes summed over the exe and its WebView2 processes.
+This audit measures klepsydra.exe and its own WebView2 processes on the home PC: an AMD Ryzen 5 3600X (6 cores, 12 threads) running Windows 11 Home with WebView2 Runtime 155.0.4283.62. CPU is percent of one logical core (12 here). Memory is private bytes summed over the exe and its WebView2 processes.
 
 **Result.** One thing measured badly and is fixed: the Rust shell woke its UI thread 60 times a second at idle. The exe's idle median fell from 1.20% to 0.49% of a core, and the whole process tree's from 1.51% to 0.75%. Memory over two live spans (18 and 48 minutes) is inconclusive until the 8-hour release reading; render cost (below) needs no change.
 
@@ -16,7 +16,7 @@ This audit measures klepsydra.exe and its own WebView2 processes on the home PC:
   5. the wall closed (it hides), then idle for 120 s.
 
   The raw output is in `run-1.txt`, `run-2.txt` and `run-3.txt`; `environment.txt` holds the machine, the WebView2 version and Defender's history. Baseline is main with #142 (C:\Users\ajbar\klepsydra-build-noauto); "fix" is the same plus the change below (klepsydra-build-perf).
-- **Not used:** a first pass spoiled by two harness bugs (a `-Cards` list read as 3610; JS quotes PowerShell 5.1 stripped, so the wall never opened), both fixed; its output was discarded.
+- **Not used:** a first pass spoiled by two harness bugs (a `-Cards` list read as 3610; JS quotes PowerShell 5.1 stripped, so the wall never opened), fixed and discarded.
 
 Guidance read first: Microsoft's WebView2 performance page (2026-09-02) recommends one environment per app (klepsydra's windows share one browser process), CSS over JS animation, few host messages, and a Low memory target for an inactive WebView.
 
@@ -46,7 +46,7 @@ Live, wall open and sessions writing, the tree used 4.95% (18 minutes) and 4.98%
 | live, wall open, 06:39 to 06:57 | 327 to 338, first 329, last 327 |
 | live, wall open, 07:00 to 07:48 | 310 to 371; 354 at start (GPU process at 186 MB), then 310 at 07:03 rising to 345, peak 371 at 07:33 |
 
-The first span is flat. The second rose 11% from 07:03 to 07:48, too short to tell a leak from a working set settling; the README's 8-hour release reading decides that, and is taken at the next deploy. Across `run-1.txt` to `run-3.txt` the wall adds 91 to 141 MB, mostly its renderer and the GPU process, and keeps it while hidden. Microsoft suggests `MemoryUsageTargetLevel` Low for a WebView that is not in use; wry 0.57 exposes it (`WebViewExtWindows::set_memory_usage_level`), reachable through tauri's `with_webview`, and Microsoft gives no figure for the saving. #146 tracks measuring it.
+The first span is flat. The second rose 11% from 07:03 to 07:48, too short to tell a leak from a working set settling; the README's 8-hour release reading decides that, and is taken at the next deploy. Across `run-1.txt` to `run-3.txt` the wall adds 91 to 141 MB, mostly its renderer and the GPU process, and keeps it while hidden. Microsoft suggests `MemoryUsageTargetLevel` Low for a WebView that is not in use; tauri's `with_webview` reaches it through the controller (`ICoreWebView2_19::SetMemoryUsageTargetLevel`, as wry 0.57 does in `webview2/mod.rs`), and Microsoft gives no figure for the saving. #146 tracks measuring it.
 
 ## Render cost
 
@@ -58,7 +58,7 @@ From `run-3.txt` (fix build, 30 s idle spans, the probe gated on the new documen
 | 6 | 89 to 100 ms | 95 to 105 ms | 6.0 to 33.5 ms |
 | 10 | 101 to 114 ms | 96 to 108 ms | 8.1 to 23.6 ms |
 
-The first update after a reload costs most (23.6, 33.5, 23.6 ms); the others 4.2 to 14.3. A quiet 3 s costs 0.2 to 1.2 ms, or 3.8 to 6.6 ms when the 15 s tick falls in it, which it does in the fifth window of each series. The earlier runs, whose probe did not check the redraw, agree (65 to 195 ms to N cards; 3.5 to 28 ms per update, once 121). With nothing changing, renderers spend per minute 18 to 31 ms on the shown wall, 29 to 39 on the hidden one (once 473), and 22 to 27 on the gauge.
+The first update after a reload costs most (23.6, 33.5, 23.6 ms); the others 4.2 to 14.3. A quiet 3 s costs 0.2 to 1.2 ms, or 3.8 to 6.6 ms when the 15 s tick falls in it, which it does in the fifth window of each series. The earlier runs, whose probe did not check the redraw, agree (65 to 195 ms to N cards; 3.5 to 28 ms per update, once 121). In `run-3.txt`, with nothing changing, renderers spend per minute 18 to 31 ms on the shown wall, 29 to 39 on the hidden one (once 473), and 22 to 27 on the gauge.
 
 ## Windows Defender, 06:57
 
@@ -74,7 +74,7 @@ How to keep it from happening again:
 
 1. **Report the false positive** (WDSI file submission, "incorrectly detected") with the hash and both detection names: free and can clear it for everyone, but slow and not guaranteed.
 2. **Sign release builds** with Azure Artifact Signing (formerly Trusted Signing): open to individual developers in the US and Canada, about $9.99 a month, and supported by Tauri's `bundle.windows.signCommand`. Reputation builds over releases signed with one certificate.
-3. **A narrow exclusion** AJ adds himself (admin): `%LOCALAPPDATA%\Klepsydra` only. It is quick, but that folder is then unscanned.
+3. **A narrow exclusion** AJ adds himself (admin): `%LOCALAPPDATA%\Klepsydra` only. Quick, but leaves that folder unscanned.
 
 Option 1 now, and 2 if a detection returns, keeps the most protection. No Defender setting was changed.
 
