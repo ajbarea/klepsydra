@@ -1336,4 +1336,8 @@ firstTheme.then(() => subscribe(receive, showLink));
 setInterval(() => {
   const said = render();
   if (said.length) announce(said.join(". "));
+  drawer.checkDay();
 }, TICK_MS);
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden) drawer.checkDay();
+});
