@@ -1,0 +1,74 @@
+== baseline 6,10 2026-10-28T09:14:30-04:00
+{"cards":6,"pid":18904,"targets":"[{\"type\":\"page\",\"url\":\"http://tauri.localhost/\"}]"}
+{"reading":"cards=6 gauge only","seconds":120,"total":{"private_mb":159.81,"cpu_pct":2.08,"ws_mb":358.95},"roles":{"wv-crashpad-handler":{"private_mb":2.82,"cpu_pct":0,"n":1,"ws_mb":12.89},"wv-utility-storage":{"private_mb":7.4,"cpu_pct":0,"n":1,"ws_mb":20.04},"exe":{"private_mb":5.6,"cpu_pct":1.67,"n":1,"ws_mb":26.11},"wv-browser":{"private_mb":36.29,"cpu_pct":0.21,"n":1,"ws_mb":120.95},"wv-gpu-process":{"private_mb":70.72,"cpu_pct":0.1,"n":1,"ws_mb":74.71},"wv-renderer":{"private_mb":25.37,"cpu_pct":0.09,"n":1,"ws_mb":63.95},"wv-utility-network":{"private_mb":11.61,"cpu_pct":0.01,"n":1,"ws_mb":40.3}}}
+{"page":"gauge","seconds":60,"TaskDuration":0.0207,"ScriptDuration":0.0034,"LayoutDuration":0,"RecalcStyleDuration":0,"LayoutCount":0,"RecalcStyleCount":0,"JSHeapUsedMB":1.29,"Nodes":135}
+"opened"
+{"wall_open":true}
+{"reading":"cards=6 wall shown","seconds":120,"total":{"private_mb":300.88,"cpu_pct":6.09,"ws_mb":542.16},"roles":{"wv-crashpad-handler":{"private_mb":2.81,"cpu_pct":0,"n":1,"ws_mb":13},"wv-utility-storage":{"private_mb":7.5,"cpu_pct":0,"n":1,"ws_mb":20.26},"exe":{"private_mb":13.32,"cpu_pct":2.41,"n":1,"ws_mb":62.27},"wv-browser":{"private_mb":44.68,"cpu_pct":1.29,"n":1,"ws_mb":141.92},"wv-gpu-process":{"private_mb":142.07,"cpu_pct":1.15,"n":1,"ws_mb":97.09},"wv-renderer":{"private_mb":78.5,"cpu_pct":1.08,"n":2,"ws_mb":166.49},"wv-utility-network":{"private_mb":12,"cpu_pct":0.16,"n":1,"ws_mb":41.13}}}
+{"page":"wall","seconds":60,"TaskDuration":0.1003,"ScriptDuration":0.0073,"LayoutDuration":0.0059,"RecalcStyleDuration":0.0041,"LayoutCount":4,"RecalcStyleCount":15,"JSHeapUsedMB":2.02,"Nodes":1979}
+{"page":"wall","cards":6,"msToCards":144.9,"JSHeapUsedMB":1.9,"Nodes":4320}
+{"page":"wall","cards":6,"msToCards":195,"JSHeapUsedMB":1.91,"Nodes":3037}
+{"page":"wall","cards":6,"msToCards":102.8,"JSHeapUsedMB":1.93,"Nodes":3034}
+{"page":"wall","cards":6,"msToCards":105,"JSHeapUsedMB":1.94,"Nodes":3034}
+{"page":"wall","cards":6,"msToCards":87.1,"JSHeapUsedMB":1.96,"Nodes":3034}
+{"page":"wall","quiet":{"TaskDuration":0.0002,"ScriptDuration":0,"LayoutDuration":0,"RecalcStyleDuration":0,"LayoutCount":0,"RecalcStyleCount":0},"update":{"TaskDuration":0.0273,"ScriptDuration":0.0018,"LayoutDuration":0.004,"RecalcStyleDuration":0.0058,"LayoutCount":3,"RecalcStyleCount":3}}
+{"page":"wall","quiet":{"TaskDuration":0.0003,"ScriptDuration":0,"LayoutDuration":0,"RecalcStyleDuration":0,"LayoutCount":0,"RecalcStyleCount":0},"update":{"TaskDuration":0.0112,"ScriptDuration":0.0015,"LayoutDuration":0.0023,"RecalcStyleDuration":0.0025,"LayoutCount":2,"RecalcStyleCount":2}}
+{"page":"wall","quiet":{"TaskDuration":0.0002,"ScriptDuration":0,"LayoutDuration":0,"RecalcStyleDuration":0,"LayoutCount":0,"RecalcStyleCount":0},"update":{"TaskDuration":0.008,"ScriptDuration":0,"LayoutDuration":0.0014,"RecalcStyleDuration":0.0008,"LayoutCount":1,"RecalcStyleCount":1}}
+{"page":"wall","quiet":{"TaskDuration":0.0002,"ScriptDuration":0,"LayoutDuration":0,"RecalcStyleDuration":0,"LayoutCount":0,"RecalcStyleCount":0},"update":{"TaskDuration":0.0061,"ScriptDuration":0,"LayoutDuration":0.0013,"RecalcStyleDuration":0.0009,"LayoutCount":1,"RecalcStyleCount":1}}
+{"page":"wall","quiet":{"TaskDuration":0.0059,"ScriptDuration":0.0014,"LayoutDuration":0.0012,"RecalcStyleDuration":0.0008,"LayoutCount":1,"RecalcStyleCount":1},"update":{"TaskDuration":0.0058,"ScriptDuration":0,"LayoutDuration":0.0012,"RecalcStyleDuration":0.0007,"LayoutCount":1,"RecalcStyleCount":1}}
+{"wall_visible_after_close":false}
+{"reading":"cards=6 wall hidden","seconds":120,"total":{"private_mb":294.17,"cpu_pct":1.68,"ws_mb":551.82},"roles":{"wv-crashpad-handler":{"private_mb":2.73,"cpu_pct":0,"n":1,"ws_mb":12.95},"wv-utility-storage":{"private_mb":7.42,"cpu_pct":0,"n":1,"ws_mb":20.29},"exe":{"private_mb":14.47,"cpu_pct":1.24,"n":1,"ws_mb":63.46},"wv-browser":{"private_mb":45.73,"cpu_pct":0.04,"n":1,"ws_mb":142.68},"wv-gpu-process":{"private_mb":128.34,"cpu_pct":0.14,"n":1,"ws_mb":100.12},"wv-renderer":{"private_mb":83.62,"cpu_pct":0.23,"n":2,"ws_mb":171.09},"wv-utility-network":{"private_mb":11.86,"cpu_pct":0.03,"n":1,"ws_mb":41.23}}}
+{"page":"wall","seconds":60,"TaskDuration":0.0224,"ScriptDuration":0.0066,"LayoutDuration":0.0056,"RecalcStyleDuration":0.0028,"LayoutCount":4,"RecalcStyleCount":4,"JSHeapUsedMB":2.29,"Nodes":2165}
+{"cards":10,"pid":16724,"targets":"[{\"type\":\"page\",\"url\":\"http://tauri.localhost/\"}]"}
+{"reading":"cards=10 gauge only","seconds":120,"total":{"private_mb":162.86,"cpu_pct":1.39,"ws_mb":357.79},"roles":{"wv-utility-network":{"private_mb":11.76,"cpu_pct":0,"n":1,"ws_mb":38.88},"exe":{"private_mb":6.12,"cpu_pct":1.15,"n":1,"ws_mb":26.7},"wv-crashpad-handler":{"private_mb":2.79,"cpu_pct":0,"n":1,"ws_mb":12.86},"wv-browser":{"private_mb":36.08,"cpu_pct":0.1,"n":1,"ws_mb":120.59},"wv-gpu-process":{"private_mb":71.1,"cpu_pct":0.07,"n":1,"ws_mb":72.53},"wv-renderer":{"private_mb":27.63,"cpu_pct":0.07,"n":1,"ws_mb":66.23},"wv-utility-storage":{"private_mb":7.38,"cpu_pct":0,"n":1,"ws_mb":20}}}
+{"page":"gauge","seconds":60,"TaskDuration":0.0227,"ScriptDuration":0.0035,"LayoutDuration":0,"RecalcStyleDuration":0,"LayoutCount":0,"RecalcStyleCount":1,"JSHeapUsedMB":1.7,"Nodes":165}
+"opened"
+{"wall_open":true}
+{"reading":"cards=10 wall shown","seconds":120,"total":{"private_mb":263.49,"cpu_pct":1.9,"ws_mb":476.62},"roles":{"wv-utility-network":{"private_mb":11.97,"cpu_pct":0.01,"n":1,"ws_mb":39.39},"exe":{"private_mb":7.14,"cpu_pct":1.28,"n":1,"ws_mb":29.7},"wv-crashpad-handler":{"private_mb":2.82,"cpu_pct":0,"n":1,"ws_mb":12.99},"wv-browser":{"private_mb":40.66,"cpu_pct":0.21,"n":1,"ws_mb":127.21},"wv-gpu-process":{"private_mb":120.55,"cpu_pct":0.22,"n":1,"ws_mb":90.29},"wv-renderer":{"private_mb":72.87,"cpu_pct":0.18,"n":2,"ws_mb":156.82},"wv-utility-storage":{"private_mb":7.48,"cpu_pct":0,"n":1,"ws_mb":20.22}}}
+{"page":"wall","seconds":60,"TaskDuration":0.0329,"ScriptDuration":0.0084,"LayoutDuration":0.007,"RecalcStyleDuration":0.0042,"LayoutCount":4,"RecalcStyleCount":4,"JSHeapUsedMB":1.84,"Nodes":2510}
+{"page":"wall","cards":10,"msToCards":104.3,"JSHeapUsedMB":1.87,"Nodes":6712}
+{"page":"wall","cards":10,"msToCards":106.4,"JSHeapUsedMB":3.28,"Nodes":13817}
+{"page":"wall","cards":10,"msToCards":100.3,"JSHeapUsedMB":1.89,"Nodes":2510}
+{"page":"wall","cards":10,"msToCards":113.5,"JSHeapUsedMB":1.92,"Nodes":6716}
+{"page":"wall","cards":10,"msToCards":114.3,"JSHeapUsedMB":1.94,"Nodes":8888}
+{"page":"wall","quiet":{"TaskDuration":0.0002,"ScriptDuration":0,"LayoutDuration":0,"RecalcStyleDuration":0,"LayoutCount":0,"RecalcStyleCount":0},"update":{"TaskDuration":0.0224,"ScriptDuration":0,"LayoutDuration":0.0027,"RecalcStyleDuration":0.0031,"LayoutCount":1,"RecalcStyleCount":1}}
+{"page":"wall","quiet":{"TaskDuration":0.0003,"ScriptDuration":0,"LayoutDuration":0,"RecalcStyleDuration":0,"LayoutCount":0,"RecalcStyleCount":0},"update":{"TaskDuration":0.0133,"ScriptDuration":0.0018,"LayoutDuration":0.0033,"RecalcStyleDuration":0.0018,"LayoutCount":2,"RecalcStyleCount":2}}
+{"page":"wall","quiet":{"TaskDuration":0.0002,"ScriptDuration":0,"LayoutDuration":0,"RecalcStyleDuration":0,"LayoutCount":0,"RecalcStyleCount":0},"update":{"TaskDuration":0.0081,"ScriptDuration":0,"LayoutDuration":0.0025,"RecalcStyleDuration":0.0011,"LayoutCount":1,"RecalcStyleCount":1}}
+{"page":"wall","quiet":{"TaskDuration":0.0002,"ScriptDuration":0,"LayoutDuration":0,"RecalcStyleDuration":0,"LayoutCount":0,"RecalcStyleCount":0},"update":{"TaskDuration":0.0079,"ScriptDuration":0,"LayoutDuration":0.002,"RecalcStyleDuration":0.0011,"LayoutCount":1,"RecalcStyleCount":1}}
+{"page":"wall","quiet":{"TaskDuration":0.0073,"ScriptDuration":0.0021,"LayoutDuration":0.0016,"RecalcStyleDuration":0.0009,"LayoutCount":1,"RecalcStyleCount":1},"update":{"TaskDuration":0.0072,"ScriptDuration":0,"LayoutDuration":0.0017,"RecalcStyleDuration":0.0011,"LayoutCount":1,"RecalcStyleCount":1}}
+{"wall_visible_after_close":false}
+{"reading":"cards=10 wall hidden","seconds":120,"total":{"private_mb":281.25,"cpu_pct":1.91,"ws_mb":495.1},"roles":{"wv-utility-network":{"private_mb":11.77,"cpu_pct":0.01,"n":1,"ws_mb":39.37},"exe":{"private_mb":8.36,"cpu_pct":1.48,"n":1,"ws_mb":30.73},"wv-crashpad-handler":{"private_mb":2.71,"cpu_pct":0,"n":1,"ws_mb":12.93},"wv-browser":{"private_mb":42.22,"cpu_pct":0,"n":1,"ws_mb":128.59},"wv-gpu-process":{"private_mb":122.94,"cpu_pct":0.2,"n":1,"ws_mb":91.52},"wv-renderer":{"private_mb":85.85,"cpu_pct":0.22,"n":2,"ws_mb":171.73},"wv-utility-storage":{"private_mb":7.4,"cpu_pct":0,"n":1,"ws_mb":20.23}}}
+{"page":"wall","seconds":60,"TaskDuration":0.0264,"ScriptDuration":0.0078,"LayoutDuration":0.0067,"RecalcStyleDuration":0.0035,"LayoutCount":4,"RecalcStyleCount":4,"JSHeapUsedMB":2.16,"Nodes":3801}
+{"login_entry_unchanged":true}
+== ab baseline 1 2026-10-28T09:36:28-04:00
+{"cards":0,"pid":9644,"targets":"[{\"type\":\"page\",\"url\":\"http://tauri.localhost/\"}]"}
+{"reading":"cards=0 gauge only","seconds":120,"total":{"private_mb":155.89,"cpu_pct":1.5,"ws_mb":349.28},"roles":{"wv-renderer":{"private_mb":24.18,"cpu_pct":0,"n":1,"ws_mb":60.38},"wv-utility-network":{"private_mb":11.65,"cpu_pct":0.01,"n":1,"ws_mb":40.39},"exe":{"private_mb":5.67,"cpu_pct":1.33,"n":1,"ws_mb":26.24},"wv-browser":{"private_mb":37.23,"cpu_pct":0.16,"n":1,"ws_mb":120.53},"wv-gpu-process":{"private_mb":66.98,"cpu_pct":0,"n":1,"ws_mb":68.84},"wv-crashpad-handler":{"private_mb":2.8,"cpu_pct":0,"n":1,"ws_mb":12.88},"wv-utility-storage":{"private_mb":7.38,"cpu_pct":0,"n":1,"ws_mb":20.02}}}
+{"page":"gauge","seconds":60,"TaskDuration":0.008,"ScriptDuration":0.0018,"LayoutDuration":0,"RecalcStyleDuration":0.0005,"LayoutCount":0,"RecalcStyleCount":16,"JSHeapUsedMB":1.33,"Nodes":87}
+{"login_entry_unchanged":true}
+== ab after 1 2026-10-28T09:40:07-04:00
+{"cards":0,"pid":27132,"targets":"[{\"type\":\"page\",\"url\":\"http://tauri.localhost/\"}]"}
+{"reading":"cards=0 gauge only","seconds":120,"total":{"private_mb":155.55,"cpu_pct":0.73,"ws_mb":351.48},"roles":{"exe":{"private_mb":5.61,"cpu_pct":0.38,"n":1,"ws_mb":26.2},"wv-utility-storage":{"private_mb":7.39,"cpu_pct":0,"n":1,"ws_mb":20.01},"wv-crashpad-handler":{"private_mb":2.8,"cpu_pct":0.01,"n":1,"ws_mb":12.87},"wv-browser":{"private_mb":37.84,"cpu_pct":0.22,"n":1,"ws_mb":121.25},"wv-gpu-process":{"private_mb":66.93,"cpu_pct":0,"n":1,"ws_mb":70.3},"wv-renderer":{"private_mb":23.17,"cpu_pct":0.04,"n":1,"ws_mb":60.34},"wv-utility-network":{"private_mb":11.81,"cpu_pct":0.08,"n":1,"ws_mb":40.51}}}
+{"page":"gauge","seconds":60,"TaskDuration":0.0082,"ScriptDuration":0.0018,"LayoutDuration":0,"RecalcStyleDuration":0.0005,"LayoutCount":0,"RecalcStyleCount":16,"JSHeapUsedMB":1.33,"Nodes":87}
+{"login_entry_unchanged":true}
+== ab baseline 2 2026-10-28T09:43:43-04:00
+{"cards":0,"pid":6104,"targets":"[{\"type\":\"page\",\"url\":\"http://tauri.localhost/\"}]"}
+{"reading":"cards=0 gauge only","seconds":120,"total":{"private_mb":155.42,"cpu_pct":1.51,"ws_mb":349.43},"roles":{"wv-utility-network":{"private_mb":11.85,"cpu_pct":0.03,"n":1,"ws_mb":40.56},"exe":{"private_mb":5.82,"cpu_pct":1.2,"n":1,"ws_mb":26.32},"wv-crashpad-handler":{"private_mb":2.79,"cpu_pct":0,"n":1,"ws_mb":12.88},"wv-browser":{"private_mb":36.31,"cpu_pct":0.18,"n":1,"ws_mb":120.84},"wv-gpu-process":{"private_mb":67.13,"cpu_pct":0.03,"n":1,"ws_mb":69},"wv-renderer":{"private_mb":24.14,"cpu_pct":0.07,"n":1,"ws_mb":59.82},"wv-utility-storage":{"private_mb":7.38,"cpu_pct":0,"n":1,"ws_mb":20.01}}}
+{"page":"gauge","seconds":60,"TaskDuration":0.0088,"ScriptDuration":0.0019,"LayoutDuration":0,"RecalcStyleDuration":0.0005,"LayoutCount":0,"RecalcStyleCount":16,"JSHeapUsedMB":1.33,"Nodes":87}
+{"login_entry_unchanged":true}
+== ab after 2 2026-10-28T09:47:20-04:00
+{"cards":0,"pid":25844,"targets":"[{\"type\":\"page\",\"url\":\"http://tauri.localhost/\"}]"}
+{"reading":"cards=0 gauge only","seconds":120,"total":{"private_mb":155.91,"cpu_pct":0.87,"ws_mb":350.24},"roles":{"wv-renderer":{"private_mb":24.13,"cpu_pct":0.03,"n":1,"ws_mb":59.97},"wv-utility-network":{"private_mb":11.68,"cpu_pct":0.07,"n":1,"ws_mb":38.86},"exe":{"private_mb":5.46,"cpu_pct":0.49,"n":1,"ws_mb":25.85},"wv-browser":{"private_mb":37.96,"cpu_pct":0.25,"n":1,"ws_mb":123.83},"wv-gpu-process":{"private_mb":66.49,"cpu_pct":0.03,"n":1,"ws_mb":68.83},"wv-crashpad-handler":{"private_mb":2.8,"cpu_pct":0,"n":1,"ws_mb":12.88},"wv-utility-storage":{"private_mb":7.39,"cpu_pct":0,"n":1,"ws_mb":20.02}}}
+{"page":"gauge","seconds":60,"TaskDuration":0.009,"ScriptDuration":0.0019,"LayoutDuration":0,"RecalcStyleDuration":0.0005,"LayoutCount":0,"RecalcStyleCount":16,"JSHeapUsedMB":1.32,"Nodes":85}
+{"login_entry_unchanged":true}
+== ab baseline 3 2026-10-28T09:50:57-04:00
+{"cards":0,"pid":28764,"targets":"[{\"type\":\"page\",\"url\":\"http://tauri.localhost/\"}]"}
+{"reading":"cards=0 gauge only","seconds":120,"total":{"private_mb":155.19,"cpu_pct":1.58,"ws_mb":349.79},"roles":{"wv-utility-network":{"private_mb":11.89,"cpu_pct":0.01,"n":1,"ws_mb":40.57},"wv-crashpad-handler":{"private_mb":2.79,"cpu_pct":0.01,"n":1,"ws_mb":12.86},"exe":{"private_mb":5.59,"cpu_pct":1.18,"n":1,"ws_mb":26.12},"wv-browser":{"private_mb":36.44,"cpu_pct":0.26,"n":1,"ws_mb":121.02},"wv-gpu-process":{"private_mb":67.09,"cpu_pct":0,"n":1,"ws_mb":68.98},"wv-renderer":{"private_mb":24.02,"cpu_pct":0.12,"n":1,"ws_mb":60.23},"wv-utility-storage":{"private_mb":7.37,"cpu_pct":0,"n":1,"ws_mb":20.01}}}
+{"page":"gauge","seconds":60,"TaskDuration":0.0079,"ScriptDuration":0.0019,"LayoutDuration":0,"RecalcStyleDuration":0.0004,"LayoutCount":0,"RecalcStyleCount":16,"JSHeapUsedMB":1.33,"Nodes":87}
+{"login_entry_unchanged":true}
+== ab after 3 2026-10-28T09:54:33-04:00
+{"cards":0,"pid":1708,"targets":"[{\"type\":\"page\",\"url\":\"http://tauri.localhost/\"}]"}
+{"reading":"cards=0 gauge only","seconds":120,"total":{"private_mb":156.16,"cpu_pct":0.75,"ws_mb":349.51},"roles":{"wv-crashpad-handler":{"private_mb":2.8,"cpu_pct":0,"n":1,"ws_mb":12.87},"wv-utility-storage":{"private_mb":7.38,"cpu_pct":0,"n":1,"ws_mb":20},"exe":{"private_mb":5.61,"cpu_pct":0.51,"n":1,"ws_mb":26.11},"wv-browser":{"private_mb":37.38,"cpu_pct":0.16,"n":1,"ws_mb":120.95},"wv-gpu-process":{"private_mb":67.1,"cpu_pct":0.03,"n":1,"ws_mb":68.98},"wv-renderer":{"private_mb":24.19,"cpu_pct":0.04,"n":1,"ws_mb":60.18},"wv-utility-network":{"private_mb":11.7,"cpu_pct":0.01,"n":1,"ws_mb":40.42}}}
+{"page":"gauge","seconds":60,"TaskDuration":0.0079,"ScriptDuration":0.0018,"LayoutDuration":0,"RecalcStyleDuration":0.0005,"LayoutCount":0,"RecalcStyleCount":16,"JSHeapUsedMB":1.33,"Nodes":87}
+{"login_entry_unchanged":true}
+== end 2026-10-28T09:58:10-04:00
+rc=0

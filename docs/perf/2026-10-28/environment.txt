@@ -1,0 +1,30 @@
+WebView2 Runtime: 155.0.4283.62
+CPU: AMD Ryzen 5 3600X 6-Core Processor, logical processors 12
+OS: Microsoft Windows 11 Home 10.0.26300
+
+Get-MpThreat:
+2147731849  Trojan:Win32/Bearfoos.B!ml  severity 5  category 8
+2147737394  Behavior:Win32/Persistence.A!ml  severity 5  category 46
+
+Get-MpThreatDetection (ThreatStatusID 3 = quarantined, 103 = remove failed):
+
+detected 2026-10-28T06:57:10  status changed 2026-10-28T06:57:28  threat 2147737394  status 103
+  process: C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe
+  resource: file:_<home>\klepsydra-perf\kperf.exe
+
+detected 2026-10-28T06:57:16  status changed 2026-10-28T06:57:37  threat 2147731849  status 3
+  process: Unknown
+  resource: file:_<home>\klepsydra-perf\kperf.exe
+
+detected 2026-10-28T06:57:34  status changed 2026-10-28T06:57:53  threat 2147731849  status 3
+  process: <local app data>\Klepsydra\klepsydra.exe
+  resource: file:_<local app data>\Klepsydra\klepsydra.exe
+  resource: file:_<roaming app data>\Microsoft\Windows\Start Menu\Programs\klepsydra.lnk
+  resource: file:_<home>\Desktop\klepsydra.lnk
+  resource: file:_<home>\klepsydra-perf\kperf.exe
+  resource: process:_pid:25696,ProcessStart:134376562219529125
+  resource: regkey:_HKCU@<user SID>\SOFTWARE\MICROSOFT\WINDOWS\CURRENTVERSION\RUN\\klepsydra
+  resource: regkey:_HKCU@<user SID>\SOFTWARE\MICROSOFT\WINDOWS\CURRENTVERSION\UNINSTALL\klepsydra
+  resource: runkey:_HKCU@<user SID>\SOFTWARE\MICROSOFT\WINDOWS\CURRENTVERSION\RUN\\klepsydra
+  resource: startup:_<roaming app data>\Microsoft\Windows\Start Menu\Programs\klepsydra.lnk
+  resource: uninstall:_HKCU@<user SID>\SOFTWARE\MICROSOFT\WINDOWS\CURRENTVERSION\UNINSTALL\klepsydra
