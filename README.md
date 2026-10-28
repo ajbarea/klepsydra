@@ -819,7 +819,7 @@ takes the new colour at its next hook event.
 The Professions and DiceBear faces are WebP files rendered once by
 `scripts/render-themes.sh` and committed, each with its `LICENSES.json`
 entry; the app calls no avatar service. The script installs
-`lucide-static@1.55.0`, `@dicebear/core@9.4.2` and `@dicebear/lorelei@9.4.2`,
+`lucide-static@1.55.0`, `@dicebear/core@9.4.3` and `@dicebear/lorelei@9.4.3`,
 and everything they pull in, from the lockfile in `scripts/render-themes/`.
 
 Credits: the Professions glyphs are from [Lucide](https://lucide.dev)
