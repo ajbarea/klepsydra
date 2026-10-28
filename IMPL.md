@@ -1,68 +1,59 @@
 # IMPL
 
-Repo resume state, 2026-10-28 16:20 (10-28 perf + logging brief; session
-stopped for a lab task). Merged 10-28: #142 (KLEPSYDRA_NO_AUTOSTART), #143
-(#137 Loading… nit), #144 (#138 Ledger after a sleep across midnight), #147
-(perf audit: idle exe CPU 1.20% -> 0.49% of a core; `docs/perf/2026-10-28/`),
-#145 (techne logging standard: JSON lines in `<data dir>/logs/klepsydra.log`,
-pages through `src/log.js`, a monotonic quiet-minute repeat limiter; 4 review
-rounds, last CLEAN), #152 (DiceBear 9.4.3 for the face renderer, Dependabot
-alert #2; 15 of 15 seeds render identical SVGs, so LICENSES.json keeps 9.4.2).
-Filed: #146 (hidden wall keeps 91-141 MB; try MemoryUsageTargetLevel Low).
-Installed build: still d0e4a46, quarantined by Defender (06:57 false
-positive, docs/perf/2026-10-28); AJ's running gauge was PID 24580 from
-`C:\Users\ajbar\klepsydra-build-logging` (an unmerged logging build).
+Repo resume state, 2026-10-28 19:05. The 10-28 perf + logging brief is done
+and deployed; the session stopped there for an LDQIS brief (Heph's call).
+Merged 10-28: #142 (KLEPSYDRA_NO_AUTOSTART), #143 (#137 Loading… nit), #144
+(#138 Ledger across midnight), #147 (perf audit: idle exe CPU 1.20% -> 0.49%
+of a core; `docs/perf/2026-10-28/`), #145 (techne logging standard: JSON
+lines in `<data dir>/logs/klepsydra.log`), #152 (DiceBear 9.4.3), #153
+(cargo bumps; #97 closed for it), #155 (#151: the Characters list opens dark;
+shots in `fleet-briefing/shots/2026-10-28/klepsydra-151-*`, AJ judges the
+chosen row's light Windows highlight).
 
-## This branch: fix/theme-select-dark (#151), PR #155
-- `.theme-pick select` background `var(--wall-bg)`, options `var(--card-bg)`,
-  `option:checked` `var(--button-hover)`; browser case `theme_list_is_dark`
-  (mutation-checked: dropping either option rule fails it).
-  `appearance: base-select` was tried and dropped (it broke #137's arrow
-  keys wearing each theme at once; Chrome 135+ opt-in only).
-- Shots (real WebView2, dark, 1920, demo fleet):
-  `fleet-briefing/shots/2026-10-28/klepsydra-151-list-{before,after}-dark.png`,
-  README line added. The chosen row keeps Windows' own light highlight while
-  open; AJ judges.
-- Gates on the rebased head (on #153): node 446, Biome, ruff clean; phone
-  suite 88/88; wall suite 357/358, the one failure the new case expecting the
-  card colour on the chosen option, fixed and rerun. Opus review CLEAN.
-- Next: merge, then deploy (below).
+## Installed build
+- e7a83d3, installed 10-28 18:59 from stage `klepsydra-build-deploy`
+  (`scripts/build-windows.sh`, NSIS `/S`); running from
+  `%LOCALAPPDATA%\Klepsydra`; Start menu shortcut and Uninstall key back.
+  Defender: no detection in the minutes after install and start.
+- `~/.claude/klepsydra-{fleet,launch}.sh` and `klepsydra-tmux.conf` already
+  matched main, so nothing was copied.
+- Not yet done: the 8-hour release memory reading
+  (`scripts/perf/sample.ps1 -Path %LOCALAPPDATA%\Klepsydra\klepsydra.exe`,
+  README, Releasing).
 
-## Deploy (after #155 merges; #97 was closed for #153)
-- As on 10-27: `scripts/build-windows.sh` from main (stage
-  klepsydra-build-deploy), stop the running gauge, installer `/S`, start;
-  copy `hooks/klepsydra-{fleet,launch}.sh` and `hooks/klepsydra-tmux.conf`
-  to `~/.claude/` with `.bak-<stamp>` backups. The installer recreates the
-  exe, shortcuts and Uninstall key; AJ then ticks Start with Windows (the
-  first-run marker exists, so autostart stays off). Check Defender does not
-  quarantine the new exe.
-- Then `scripts/perf/sample.ps1 -Path %LOCALAPPDATA%\Klepsydra\klepsydra.exe`
-  for the 8-hour release memory reading (README, Releasing).
+## Next (next free slot)
+1. `task-fleet-module.src` (same folder as this brief): the fleet module in
+   klepsydra, both accounts at once, then #148, #149, #150.
+2. #154: recover the fleet after a hard shutdown with one command.
+3. Logging follow-ups from #145's reviews, if any are still open.
 
 ## Cleanup still open
-- Worktrees: `.claude/worktrees/logging` and `dicebear` (both merged),
-  `deploy-1026` (detached), `faces-place` (feat/faces-place, unmerged, not
+- Worktrees: `.claude/worktrees/logging`, `dicebear` and `select151`
+  (merged), `deploy-1026` (detached, used for the deploy), `faces-place` (feat/faces-place, unmerged, not
   this brief).
 - Windows folders: `C:\Users\ajbar\klepsydra-perf`,
   `klepsydra-build-logproof`, `klepsydra-logproof`,
-  `klepsydra-logproof-tools`, `klepsydra-build-select151`, and
-  `klepsydra-build-logging` once 24580 is gone. Guarded deletes only.
+  `klepsydra-logproof-tools`, `klepsydra-build-select151`,
+  `klepsydra-build-logging` (its gauge is stopped). Keep
+  `klepsydra-build-deploy` (incremental deploys). Guarded deletes only.
 
 ## Open
 - #134: "end: the process is gone" fails now and then in full gate runs
   only; `gone()` prints its dead status, so the next failure names how the
   fake ended.
-- #146: hidden wall memory (above).
+- #146: a hidden wall keeps 91-141 MB; try MemoryUsageTargetLevel Low.
 - Grip watcher still makes four main-thread round trips at 2 Hz; caching
   the HWND is cheap.
 - This PC's audio server was hung on 10-28; reply-playback cases ran with
   audio pointed at nothing.
 
 ## Waits on AJ
-- After the deploy: the iPhone wall (gauges, a reply clip, the theme
+- Tick Start with Windows in the tray (the reinstall leaves it off).
+- Judge the #151 shots.
+- On the new build: the iPhone wall (gauges, a reply clip, the theme
   switch), and #52, the iPhone check over Tailscale.
 
-## Next
+## Ideas
 1. Unfiled from #87/#98: the wall could tell home-voiced cards apart the way
    the ledger now does.
 2. The card's title is Claude Code's session name; a long-lived session
