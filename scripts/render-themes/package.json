@@ -3,8 +3,8 @@
   "private": true,
   "description": "The pinned packages scripts/render-themes.sh draws the Professions and DiceBear faces with; never part of the app.",
   "dependencies": {
-    "@dicebear/core": "9.4.2",
-    "@dicebear/lorelei": "9.4.2",
+    "@dicebear/core": "9.4.3",
+    "@dicebear/lorelei": "9.4.3",
     "lucide-static": "1.55.0"
   }
 }

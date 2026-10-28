@@ -9,7 +9,7 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { contrast } from "../src/fleet/contrast.js";
 
-export const PINS = { "@dicebear/core": "9.4.2", "@dicebear/lorelei": "9.4.2", "lucide-static": "1.55.0" };
+export const PINS = { "@dicebear/core": "9.4.3", "@dicebear/lorelei": "9.4.3", "lucide-static": "1.55.0" };
 
 // Each profession's Lucide glyph.
 export const GLYPHS = {
