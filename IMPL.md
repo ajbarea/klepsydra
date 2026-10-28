@@ -1,57 +1,35 @@
 # IMPL
 
-Repo resume state (2026-10-27). The 10-26 queue is merged: #101
-README lead, #103 (#90 wrap-up after every session ends; an unreadable
-fleet folder keeps the last snapshot), #104 (#98 ledger attribution), #105
-(#99 Queue text size), #106 (#100 reply playback, with keryx #61). Installed
-build: 1ad1405 (10-25 21:48). Not yet live: #89 split mode, #93, and all of
-the above.
+Repo resume state (2026-10-28). The 10-27 queue is merged: #126 (Open in
+Claude across /clear), #127 (phone usage gauges), #129 (Windows usage-cap
+test), #131 (Tauri CLI 2.12.4), #132 (README screenshots), #133 (#128
+load-timing flakes), #136 (#130 Ledger side panel), #139 (launch waits, part
+of #134), #140 (#124 ask line, phone Full text), #137 (#135 character
+themes). #120 (Claude-orange trial) closed: AJ scrapped it.
+Installed build: d0e4a46 (10-28 06:17), with the fleet and launch hooks
+copied to `~/.claude/` (backups `.bak-20261028-0616`).
 
-## This branch: feat/character-themes (#135)
-- Done: three character themes as data, `src/fleet/themes/{kourai,
-  professions,dicebear}.json` (cast.json moved to kourai.json, characters
-  unchanged, plus `label`, `faces`, `keeper`). `theme.js` is the one loader;
-  `identity` builds face paths from the theme's `faces` folder
-  (`castFiles`, plain path segments only, else the medallion). The wall,
-  the strip (gauge window) and the ledger drawer read the theme worn; the
-  wall's picker sits over the density choice, in the bar's top padding
-  (no row width, so the bar never grows); the tray has a Characters submenu.
-  Rust: `klepsydra_fleet::theme` (ids, default, prefs read and refusal),
-  app `theme.rs` (`theme_subscribe`, `set_theme`, tray ticks), the phone
-  server's `set_theme` puts `theme` on every snapshot, and the `phone`
-  example reads it from `$KLEPSYDRA_DIR/prefs.json`.
-- Faces: Professions are Lucide glyphs (lucide-static 1.55.0, ISC) on the
-  character's accent disc; DiceBear are Lorelei (9.4.2, CC0) seeded by voice
-  id with the pre-#37 backgrounds. Rendered by `scripts/render-themes.sh`
-  (WebP 96/192/512) and committed with LICENSES entries.
-- Round 3 (AJ's verdict: three full, equal themes): DiceBear has its own
-  names and epithets; Professions and DiceBear their own accents (OKLCH,
-  15 hues x 3 lightness steps; AA and simulated-CVD tests); html[data-theme];
-  the Ledger repaints without a read; the Queue's keeper is renamed; the
-  picker saves where it rests (THEME_SAVE_MS); the app writes the theme to
-  `<data dir>/cast.json` and the hook recolours a window once after a switch.
-- Next: review, ready PR, merge on green; Heph deploys.
-- Verify: the gate list below, both browser suites (theme cases at the end
-  of each), `cargo test -p klepsydra-fleet theme`.
+## Open
+- #134: "end: the process is gone" fails now and then in full gate runs
+  only (twice in #136's); the suite's tmux config keeps a failed pane
+  (`remain-on-exit failed`), and `gone()` now prints its dead status, so
+  the next failure names how the fake ended.
+- #138: Ledger midnight read: a tighter test, a second night, sleep across
+  midnight.
+- #137 nit: after a theme file fails, picking that theme again shows
+  "Loading…" at once instead of after 3 s (`asked` is never cleared).
+- This PC's audio server was hung on 10-28; the browser suites ran with
+  audio pointed at nothing (reply-playback cases).
 
 ## Waits on AJ
-- Deploy (his yes): `scripts/build-windows.sh` from main, stop the exe,
-  installer `/S`, start; copy `hooks/klepsydra-fleet.sh` to `~/.claude/`
-  (#104 changed it: home voice by edited repo, `where.git`). keryx: update
-  the plugin to main 43711a2 so it writes `replies/<session>.wav`
-  (`reply_clips` on by default), then restart its daemon.
-- After the deploy: tap a reply clip on the iPhone wall (Safari plays via
-  byte ranges; only Chromium is tested here) and check #86/#32 live.
-- #52: the iPhone check over Tailscale.
+- After the deploy: the iPhone wall (gauges, a reply clip, the theme
+  switch), and #52, the iPhone check over Tailscale.
 
 ## Next
 1. Unfiled from #87/#98: the wall could tell home-voiced cards apart the way
    the ledger now does.
 2. The card's title is Claude Code's session name; a long-lived session
    keeps its first one unless renamed (`/rename`).
-3. `split::win::tests::a_maximized_then_minimized_window_is_placed_normal_without_the_focus`
-   failed once on the windows-latest runner (#105 run 40404101948) and
-   passed on rerun: watch for a flake.
 
 ## Follow-ups (from reviews, not blocking)
 - Phone: load the Queue panel only off the phone; filter wrap-up objects
