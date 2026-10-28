@@ -4,22 +4,26 @@
 # <Root>\run-<N> (scripts/perf/fixture.py). Prints one JSON line per reading.
 # docs/perf/2026-10-28/README.md says what each reading is.
 #
-# The build runs with KLEPSYDRA_NO_AUTOSTART, so it never touches the login
-# entry, and the run checks the entry is unchanged at the end. (A copy without
-# it re-registered the entry with its own path, and Defender read that rewrite
-# as persistence malware.)
+# Run scripts/perf/fixture.py for each N first, into <Root>\run-<N>, and copy
+# this folder's cdp.mjs beside this script.
+#
+# The build must honour KLEPSYDRA_NO_AUTOSTART (#142 and later): the run reads
+# the login entry before and 30 s after each start and stops the copy and
+# fails at once if it changed, never writing it back. (A copy without the
+# switch re-registered the entry with its own path, the harness wrote it
+# back, and Defender read the pair as persistence malware.)
 param(
   [string]$Cards = "0,3,6,10",  # comma-separated: -File passes one string
-  [string]$Root = "C:\Users\ajbar\klepsydra-perf",
+  [string]$Root = (Join-Path $env:USERPROFILE "klepsydra-perf"),
   [Parameter(Mandatory)] [string]$Build,
-  [int]$IdleSec = 180,
+  [int]$IdleSec = 120,
   [int]$Reps = 5,
   [int]$Port = 9333
 )
 $ErrorActionPreference = "Stop"
 $exe = $Build
-$started = @()
-$cdp = Join-Path $Root "cdp.mjs"
+$started = @()  # Process objects: their handles keep a reused PID from being mistaken for them
+$cdp = Join-Path $PSScriptRoot "cdp.mjs"
 $runKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
 $before = (Get-ItemProperty $runKey -ErrorAction SilentlyContinue).klepsydra
 
@@ -95,8 +99,11 @@ try {
     $env:WEBVIEW2_USER_DATA_FOLDER = Join-Path $dir "EBWebView"
     $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = "--remote-debugging-port=$Port"
     $proc = Start-Process $exe -PassThru
-    $started += $proc.Id
+    $started += $proc
     Start-Sleep -Seconds 30
+    if ((Get-ItemProperty $runKey -ErrorAction SilentlyContinue).klepsydra -ne $before) {
+      throw "the login entry changed after starting $exe; is it a build with KLEPSYDRA_NO_AUTOSTART (#142)? Stopped; nothing written back"
+    }
     [ordered]@{ cards = $n; pid = $proc.Id; targets = (Cdp targets) } | ConvertTo-Json -Compress
     Idle $proc "cards=$n gauge only" $IdleSec
     Cdp idle gauge 60
@@ -117,11 +124,11 @@ try {
       Idle $proc "cards=$n wall hidden" $IdleSec
       Cdp idle wall 60
     }
-    Stop-Process -Id $proc.Id -Force
+    $proc.Kill(); $proc.WaitForExit(10000) | Out-Null
     Start-Sleep -Seconds 5
   }
 } finally {
-  foreach ($id in $started) { Stop-Process -Id $id -Force -ErrorAction SilentlyContinue }
+  foreach ($p in $started) { if (-not $p.HasExited) { $p.Kill() } }
   $after = (Get-ItemProperty $runKey -ErrorAction SilentlyContinue).klepsydra
   [ordered]@{ login_entry_unchanged = ($after -eq $before) } | ConvertTo-Json -Compress
 }

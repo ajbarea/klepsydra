@@ -62,6 +62,8 @@ jobs:
         run: bash scripts/test_measure_memory.sh
       - name: Windows build stage check tests
         run: bash scripts/test_build_windows.sh
+      - name: Perf fixture tests
+        run: python3 -I scripts/perf/test_fixture.py
       - name: Shell lint
         run: shellcheck hooks/*.sh statusline/*.sh scripts/*.sh
       # The install dir is writable only because the NSIS mode is currentUser;

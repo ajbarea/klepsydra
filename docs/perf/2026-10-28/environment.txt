@@ -1,0 +1,47 @@
+WebView2 Runtime: 155.0.4283.62
+CPU: AMD Ryzen 5 3600X 6-Core Processor, logical processors 12
+OS: Microsoft Windows 11 Home 10.0.26300
+
+Get-MpThreat:
+
+
+ThreatID   : 2147731849
+ThreatName : Trojan:Win32/Bearfoos.B!ml
+SeverityID : 5
+CategoryID : 8
+
+ThreatID   : 2147737394
+ThreatName : Behavior:Win32/Persistence.A!ml
+SeverityID : 5
+CategoryID : 46
+
+
+
+
+Get-MpThreatDetection:
+
+
+InitialDetectionTime  : 10/28/2026 6:57:10 AM
+ThreatID              : 2147737394
+ThreatStatusID        : 103
+DetectionSourceTypeID : 3
+ProcessName           : C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe
+Resources             : {file:_C:\Users\ajbar\klepsydra-perf\kperf.exe}
+
+InitialDetectionTime  : 10/28/2026 6:57:16 AM
+ThreatID              : 2147731849
+ThreatStatusID        : 3
+DetectionSourceTypeID : 2
+ProcessName           : Unknown
+Resources             : {file:_C:\Users\ajbar\klepsydra-perf\kperf.exe}
+
+InitialDetectionTime  : 10/28/2026 6:57:34 AM
+ThreatID              : 2147731849
+ThreatStatusID        : 3
+DetectionSourceTypeID : 3
+ProcessName           : C:\Users\ajbar\AppData\Local\Klepsydra\klepsydra.exe
+Resources             : {file:_C:\Users\ajbar\AppData\Local\Klepsydra\klepsydra.exe, file:_C:\Users\ajbar\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\klepsydra.lnk, file:_C:\Users\ajbar\Desktop\klepsydra.lnk, file:_C:\Users\ajbar\klepsydra-perf\kperf.exe...}
+
+
+
+

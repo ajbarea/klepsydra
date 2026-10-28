@@ -65,6 +65,9 @@ async function main() {
     console.log(JSON.stringify({ page, seconds: Number(arg), ...delta(a, b), JSHeapUsedMB: +(b.JSHeapUsedSize / 2 ** 20).toFixed(2), Nodes: b.Nodes }));
   } else if (cmd === "cold") {
     const want = Number(arg);
+    // Navigation start to N cards in the DOM, read only from the new document
+    // (a poll that reached the old page would report its age).
+    const origin = await evalIn(c, "performance.timeOrigin");
     await c.send("Page.enable");
     await c.send("Page.reload", { ignoreCache: false });
     const t0 = Date.now();
@@ -72,7 +75,7 @@ async function main() {
     while (Date.now() - t0 < 20_000) {
       await sleep(10);
       try {
-        at = await evalIn(c, `document.querySelectorAll("#wall article.card, article.card").length >= ${want} ? performance.now() : null`);
+        at = await evalIn(c, `performance.timeOrigin !== ${origin} && document.querySelectorAll("#wall article.card").length >= ${want} ? performance.now() : null`);
       } catch { at = null; }
       if (at !== null) break;
     }
@@ -90,13 +93,21 @@ async function main() {
     const q1 = await metrics(c);
     const body = JSON.parse(fs.readFileSync(arg, "utf8"));
     const now = Math.floor(Date.now() / 1000);
-    body.reply = { text: `Measured at ${new Date().toISOString()}: the wall redraws this card.`, at: now };
+    const mark = `Measured ${Date.now()}`;
+    body.reply = { text: `${mark}: the wall redraws this card.`, at: now };
     body.state = "working"; body.state_at = now; body.written_at = now;
+    const t0 = Date.now();
     fs.writeFileSync(arg + ".tmp", JSON.stringify(body));
     fs.renameSync(arg + ".tmp", arg);
-    await sleep(3000);
+    // The reading counts only once the card shows the new reply.
+    let shown = null;
+    while (Date.now() - t0 < 3000) {
+      if (await evalIn(c, `document.getElementById("wall").textContent.includes(${JSON.stringify(mark)})`)) { shown = Date.now() - t0; break; }
+      await sleep(10);
+    }
+    await sleep(Math.max(0, 3000 - (Date.now() - t0)));
     const b = await metrics(c);
-    console.log(JSON.stringify({ page, quiet: delta(q0, q1), update: delta(q1, b) }));
+    console.log(JSON.stringify({ page, msToShown: shown, quiet: delta(q0, q1), update: delta(q1, b) }));
   } else if (cmd === "openwall") {
     console.log(JSON.stringify(await evalIn(c, `window.__TAURI_INTERNALS__.invoke("open_wall", { focus: "" }).then(() => "opened")`)));
   } else if (cmd === "eval") {
