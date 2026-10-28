@@ -105,6 +105,7 @@ export function createDrawer({ dialog, button, tab, edge, sessions, cast, fetchT
   let readAt = -Infinity; // when the latest read started
   let later = 0; // a snapshot's read held back by REFRESH_MS
   let midnight = 0; // the read just past local midnight, when "today" turns over
+  let readDay = ""; // the local date the latest read started on
   let painted = ""; // what the body shows, so an unchanged snapshot leaves it (and focus) alone
 
   const who = () => {
@@ -324,6 +325,7 @@ export function createDrawer({ dialog, button, tab, edge, sessions, cast, fetchT
     clearTimeout(later);
     later = 0;
     readAt = performance.now();
+    readDay = new Date().toDateString();
     const mine = ++turn;
     let next;
     try {
@@ -391,6 +393,16 @@ export function createDrawer({ dialog, button, tab, edge, sessions, cast, fetchT
       if (panel.isOpen) start();
       panel.open();
       return reading;
+    },
+    /**
+     * Read again if the local date moved on since the last read, while the
+     * drawer is open. Timers stop while the PC sleeps, so the midnight read can
+     * come late; the wall's tick and a page coming back into view catch it.
+     */
+    checkDay() {
+      if (!panel.isOpen || new Date().toDateString() === readDay) return;
+      atMidnight();
+      refresh();
     },
     /**
      * Read again for a snapshot while the drawer is open: at once if the last

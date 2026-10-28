@@ -4071,15 +4071,20 @@ def ledger_reads_bounded(wall):
 
 def ledger_rolls_over_at_midnight(wall):
     """An open Ledger reads again just past local midnight with no snapshot
-    to prompt it, even within 5 s of a snapshot's read; a shut one does not."""
+    to prompt it, even within 5 s of a snapshot's read, and again the next
+    night; after a sleep across midnight (the date moves, no timer fires) the
+    wall's next tick reads it; a shut one does not. The clock starts so the
+    wall's 15 s ticks fall at :07, :22, :37 and :52, so only the midnight
+    timer can read at 00:00:01."""
     import datetime
     import time
 
     fixture = json.loads((ROOT / "scripts/fixtures/fleet-demo.json").read_text())
     at = fixture.pop("at")
     snapshot = shifted(fixture, int(time.time()) - at)
+    utc = datetime.UTC
     page = wall.browser.new_page(viewport={"width": 1920, "height": 1000}, timezone_id="UTC")
-    page.clock.install(time=datetime.datetime(2026, 10, 27, 23, 59, 30, tzinfo=datetime.timezone.utc))
+    page.clock.install(time=datetime.datetime(2026, 10, 27, 23, 59, 37, tzinfo=utc))
     page.add_init_script(TAURI_STUB % json.dumps(snapshot))
     page.add_init_script("""(() => {
       const inv = window.__TAURI__.core.invoke;
@@ -4096,23 +4101,34 @@ def ledger_rolls_over_at_midnight(wall):
     page.wait_for_selector(LEDGER_READ)
     reads = lambda: page.evaluate("window.__reads")
     opened = reads()
-    page.clock.run_for(25000)  # 23:59:55, no snapshot: no read
+    page.clock.run_for(21000)  # 23:59:58, no snapshot: no read
     quiet = reads()
     page.evaluate("(s) => window.__channel.onmessage(s)", snapshot)  # its read is due at once
     page.wait_for_timeout(100)
     snapped = reads()
-    page.clock.run_for(8000)  # past 00:00, under 5 s after that read
+    page.clock.run_for(4000)  # 00:00:02, 3 s after that read: only the midnight timer reads
     page.wait_for_timeout(100)
     rolled = reads()
+    page.clock.fast_forward("23:59:56")  # 23:59:58 the next night
+    page.wait_for_timeout(100)
+    eve = reads()
+    page.clock.run_for(4000)  # 00:00:02
+    page.wait_for_timeout(100)
+    second = reads()
+    page.clock.set_system_time(datetime.datetime(2026, 10, 30, 9, 0, 0, tzinfo=utc))  # slept past a midnight
+    page.clock.run_for(16000)  # one tick
+    page.wait_for_timeout(100)
+    woke = reads()
     page.click("#ledger-open")
     page.wait_for_function(LEDGER_SHUT)
     page.clock.fast_forward("24:00:00")
     page.wait_for_timeout(100)
     shut = reads()
     wall.check(
-        opened == 1 and quiet == 1 and snapped == 2 and rolled == 3 and shut == 3,
-        "an open Ledger reads again just past midnight, not held back by the 5 s bound; a shut one does not",
-        {"opened": opened, "23:59:55": quiet, "snapshot": snapped, "00:00:03": rolled, "a day shut": shut},
+        [opened, quiet, snapped, rolled, eve, second, woke, shut] == [1, 1, 2, 3, 3, 4, 5, 5],
+        "an open Ledger reads again just past each midnight, not held back by the 5 s bound, and after a sleep across one; a shut one does not",
+        {"opened": opened, "23:59:58": quiet, "snapshot": snapped, "00:00:02": rolled, "next 23:59:58": eve,
+         "next 00:00:02": second, "woke 09:00": woke, "a day shut": shut},
     )
     page.close()
 
