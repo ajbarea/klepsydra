@@ -194,7 +194,7 @@ html, body { background: var(--wall-bg); color: var(--text); font: 14px/1.45 var
   padding: 0 2px;
   border: 0;
   border-radius: 4px;
-  background: transparent;
+  background: var(--wall-bg); /* the bar's own: never transparent, see below */
   color: var(--text);
   color-scheme: dark;
   font: inherit;
@@ -202,6 +202,12 @@ html, body { background: var(--wall-bg); color: var(--text); font: 14px/1.45 var
 }
 .theme-pick select:hover { background: var(--button-bg); }
 .theme-pick select:focus-visible { outline: 2px solid var(--card-focus); outline-offset: 1px; }
+/* The open list is drawn from the select's and the options' own colours (on
+   Windows), so both are set: a transparent select opened a light list
+   (#151). The select stays native, so the arrow keys still wear each theme
+   at once. */
+.theme-pick option { background: var(--card-bg); color: var(--text); }
+.theme-pick option:checked { background: var(--button-hover); color: var(--text); }
 
 button {
   font: 600 13px/1 var(--font);

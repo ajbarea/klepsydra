@@ -1,39 +1,62 @@
 # IMPL
 
-Repo resume state (2026-10-28). The 10-27 queue is merged: #126 (Open in
-Claude across /clear), #127 (phone usage gauges), #129 (Windows usage-cap
-test), #131 (Tauri CLI 2.12.4), #132 (README screenshots), #133 (#128
-load-timing flakes), #136 (#130 Ledger side panel), #139 (launch waits, part
-of #134), #140 (#124 ask line, phone Full text), #137 (#135 character
-themes). #120 (Claude-orange trial) closed: AJ scrapped it.
-Installed build: d0e4a46 (10-28 06:17), with the fleet and launch hooks
-copied to `~/.claude/` (backups `.bak-20261028-0616`).
+Repo resume state, 2026-10-28 16:20 (10-28 perf + logging brief; session
+stopped for a lab task). Merged 10-28: #142 (KLEPSYDRA_NO_AUTOSTART), #143
+(#137 Loading… nit), #144 (#138 Ledger after a sleep across midnight), #147
+(perf audit: idle exe CPU 1.20% -> 0.49% of a core; `docs/perf/2026-10-28/`),
+#145 (techne logging standard: JSON lines in `<data dir>/logs/klepsydra.log`,
+pages through `src/log.js`, a monotonic quiet-minute repeat limiter; 4 review
+rounds, last CLEAN), #152 (DiceBear 9.4.3 for the face renderer, Dependabot
+alert #2; 15 of 15 seeds render identical SVGs, so LICENSES.json keeps 9.4.2).
+Filed: #146 (hidden wall keeps 91-141 MB; try MemoryUsageTargetLevel Low).
+Installed build: still d0e4a46, quarantined by Defender (06:57 false
+positive, docs/perf/2026-10-28); AJ's running gauge was PID 24580 from
+`C:\Users\ajbar\klepsydra-build-logging` (an unmerged logging build).
 
-## In flight: feat/logging (techne logging standard)
-- Rust logs through `log` + tauri-plugin-log: JSON lines in
-  `<data dir>/logs/klepsydra.log` (1 MiB, 4 rotated kept), plain on stderr,
-  `KLEPSYDRA_LOG` sets the level; `fleet.log` and `problem_log.rs` are gone.
-  The fleet crate's receiver and phone server log through the facade.
-- Pages log through `src/log.js` (`plugin:log|log`, granted in
-  `src-tauri/capabilities/default.json`). Lints: workspace clippy print
-  lints, Biome `noConsole`, ruff `G`/`LOG`, all in CI.
-- Verified: every gate in `.claude/skill-context.md`, `logcheck.py` clean,
-  and Windows proof runs (own KLEPSYDRA_DIR and WEBVIEW2_USER_DATA_FOLDER,
-  KLEPSYDRA_NO_AUTOSTART) logging a malformed session file, the taken OTLP
-  port, and the wall's refused set_theme as a `webview::fleet/wall.js` line
-  (driven over WebView2's DevTools port). Review rounds 1 to 3 are addressed.
+## This branch: fix/theme-select-dark (#151), PR #155
+- `.theme-pick select` background `var(--wall-bg)`, options `var(--card-bg)`,
+  `option:checked` `var(--button-hover)`; browser case `theme_list_is_dark`
+  (mutation-checked: dropping either option rule fails it).
+  `appearance: base-select` was tried and dropped (it broke #137's arrow
+  keys wearing each theme at once; Chrome 135+ opt-in only).
+- Shots (real WebView2, dark, 1920, demo fleet):
+  `fleet-briefing/shots/2026-10-28/klepsydra-151-list-{before,after}-dark.png`,
+  README line added. The chosen row keeps Windows' own light highlight while
+  open; AJ judges.
+- Gates on the rebased head (on #153): node 446, Biome, ruff clean; phone
+  suite 88/88; wall suite 357/358, the one failure the new case expecting the
+  card colour on the chosen option, fixed and rerun. Opus review CLEAN.
+- Next: merge, then deploy (below).
+
+## Deploy (after #155 merges; #97 was closed for #153)
+- As on 10-27: `scripts/build-windows.sh` from main (stage
+  klepsydra-build-deploy), stop the running gauge, installer `/S`, start;
+  copy `hooks/klepsydra-{fleet,launch}.sh` and `hooks/klepsydra-tmux.conf`
+  to `~/.claude/` with `.bak-<stamp>` backups. The installer recreates the
+  exe, shortcuts and Uninstall key; AJ then ticks Start with Windows (the
+  first-run marker exists, so autostart stays off). Check Defender does not
+  quarantine the new exe.
+- Then `scripts/perf/sample.ps1 -Path %LOCALAPPDATA%\Klepsydra\klepsydra.exe`
+  for the 8-hour release memory reading (README, Releasing).
+
+## Cleanup still open
+- Worktrees: `.claude/worktrees/logging` and `dicebear` (both merged),
+  `deploy-1026` (detached), `faces-place` (feat/faces-place, unmerged, not
+  this brief).
+- Windows folders: `C:\Users\ajbar\klepsydra-perf`,
+  `klepsydra-build-logproof`, `klepsydra-logproof`,
+  `klepsydra-logproof-tools`, `klepsydra-build-select151`, and
+  `klepsydra-build-logging` once 24580 is gone. Guarded deletes only.
 
 ## Open
 - #134: "end: the process is gone" fails now and then in full gate runs
-  only (twice in #136's); the suite's tmux config keeps a failed pane
-  (`remain-on-exit failed`), and `gone()` now prints its dead status, so
-  the next failure names how the fake ended.
-- #138: Ledger midnight read: a tighter test, a second night, sleep across
-  midnight.
-- #137 nit: after a theme file fails, picking that theme again shows
-  "Loading…" at once instead of after 3 s (`asked` is never cleared).
-- This PC's audio server was hung on 10-28; the browser suites ran with
-  audio pointed at nothing (reply-playback cases).
+  only; `gone()` prints its dead status, so the next failure names how the
+  fake ended.
+- #146: hidden wall memory (above).
+- Grip watcher still makes four main-thread round trips at 2 Hz; caching
+  the HWND is cheap.
+- This PC's audio server was hung on 10-28; reply-playback cases ran with
+  audio pointed at nothing.
 
 ## Waits on AJ
 - After the deploy: the iPhone wall (gauges, a reply clip, the theme
