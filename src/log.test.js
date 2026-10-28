@@ -142,9 +142,16 @@ test("detail gives an Error's stack, and the one-line form for anything else", (
   const bare = new Error("no stack");
   bare.stack = undefined;
   assert.equal(detail(bare), "Error: no stack");
-  const foreign = new Error("mine");
-  foreign.stack = "a stack that names another error";
-  assert.equal(detail(foreign), "Error: mine");
+  // JavaScriptCore (WebKitGTK): frames only, no "Name: message" header.
+  const jsc = new TypeError("x is undefined");
+  jsc.stack = "paint@http://tauri.localhost/fleet/wall.js:12:3\ntake@http://tauri.localhost/fleet/wall.js:40:5";
+  assert.equal(
+    detail(jsc),
+    "TypeError: x is undefined\npaint@http://tauri.localhost/fleet/wall.js:12:3\ntake@http://tauri.localhost/fleet/wall.js:40:5",
+  );
+  const one = new Error("one frame");
+  one.stack = "f@x.js:1:2";
+  assert.equal(detail(one), "Error: one frame\nf@x.js:1:2");
   for (const v of ["No reply to play.", { code: 7 }, undefined]) assert.equal(detail(v), describe(v));
 });
 
@@ -183,4 +190,36 @@ test("the repeat memory is bounded and starts over when full", async () => {
   log.warnRepeat("k0", "w"); // forgotten, so logged again
   await tick();
   assert.equal(calls.length, REPEAT_KEYS + 2);
+});
+
+test("a call that works again ends its episode: the next failure is logged as new", async () => {
+  const { calls, window } = inApp();
+  const log = createLog("main.js", { window, console: fakeConsole() });
+  log.warnRepeat("set_size", "set_size failed", "busy"); // logged
+  log.warnRepeat("set_size", "set_size failed", "busy"); // a repeat
+  log.ok("set_grip"); // another key: no effect
+  log.warnRepeat("set_size", "set_size failed", "busy"); // still a repeat
+  log.ok("set_size");
+  log.warnRepeat("set_size", "set_size failed", "busy"); // a new episode
+  for (let i = 0; i < 9; i++) log.warnRepeat("set_size", "set_size failed", "busy");
+  await tick();
+  assert.deepEqual(
+    calls.map(([, a]) => a.message),
+    ["set_size failed: busy", "set_size failed: busy", "set_size failed (10 times so far): busy"],
+  );
+});
+
+test("a value that cannot be described drops the line, never the caller", async () => {
+  const { calls, window } = inApp();
+  const console = fakeConsole();
+  const log = createLog("main.js", { window, console });
+  const loop = Object.create(null);
+  loop.self = loop; // JSON.stringify throws, and String() finds no toString
+  assert.throws(() => describe(loop));
+  assert.doesNotThrow(() => log.error("e", loop));
+  assert.doesNotThrow(() => log.errorRepeat("k", "e", loop));
+  const broken = { console: { warn: () => { throw new Error("console gone"); } } };
+  assert.doesNotThrow(() => createLog("main.js", { window, ...broken }).warn("w"));
+  await tick();
+  assert.equal(calls.length, 0);
 });

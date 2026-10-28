@@ -23,10 +23,16 @@ export function describe(err) {
   }
 }
 
-/** `describe`, with an Error's stack when it has one, for the log file. */
+/**
+ * `describe`, with an Error's stack when it has one, for the log file. V8
+ * (WebView2) starts a stack with `Name: message`; JavaScriptCore (WebKitGTK)
+ * gives only `fn@url:line:col` frames, so those follow the one-line form.
+ */
 export function detail(err) {
-  const stack = err instanceof Error && typeof err.stack === "string" ? err.stack : "";
-  return stack.includes(err?.message ?? "") && stack.includes("\n") ? stack : describe(err);
+  const one = describe(err);
+  const stack = err instanceof Error && typeof err.stack === "string" ? err.stack.trim() : "";
+  if (!stack) return one;
+  return stack.startsWith(one) ? stack : `${one}\n${stack}`;
 }
 
 /** Whether the `n`th sighting of a repeat is logged: the first, then the 10th, 100th, 1000th... */
@@ -65,24 +71,43 @@ export function createLog(where, env = {}) {
   }
 
   function line(level, text, err, fields) {
-    const shown = `klepsydra: ${err === undefined ? text : `${text}: ${describe(err)}`}`;
-    if (level === "debug") {
-      out().debug(shown);
-    } else if (level === "warn") {
-      out().warn(shown, ...(err === undefined ? [] : [err]));
-    } else {
-      out().error(shown, ...(err === undefined ? [] : [err]));
+    // Logging never stops the page: a value that cannot be described (a
+    // throwing getter, a prototype-less object) drops the line, not the caller.
+    try {
+      const shown = `klepsydra: ${err === undefined ? text : `${text}: ${describe(err)}`}`;
+      if (level === "debug") {
+        out().debug(shown);
+      } else if (level === "warn") {
+        out().warn(shown, ...(err === undefined ? [] : [err]));
+      } else {
+        out().error(shown, ...(err === undefined ? [] : [err]));
+      }
+      send(level, err === undefined ? text : `${text}: ${detail(err)}`, fields);
+    } catch {
+      // as above
     }
-    send(level, err === undefined ? text : `${text}: ${detail(err)}`, fields);
   }
+
+  const idOf = (key, err) => {
+    try {
+      return `${key}\u0000${describe(err)}`;
+    } catch {
+      return `${key}\u0000`;
+    }
+  };
 
   /** `line` for the first sighting of `key` with this cause, then at the 10th, 100th... with the count. */
   function repeat(level, key, text, err, fields) {
-    const id = `${key}\u0000${describe(err)}`;
+    const id = idOf(key, err);
     if (!seen.has(id) && seen.size >= REPEAT_KEYS) seen.clear();
     const n = (seen.get(id) ?? 0) + 1;
     seen.set(id, n);
     if (loggedRepeat(n)) line(level, n === 1 ? text : `${text} (${n} times so far)`, err, fields);
+  }
+
+  /** Forget `key`'s repeats: its call worked, so the next failure starts a new episode and is logged. */
+  function ok(key) {
+    for (const id of seen.keys()) if (id.startsWith(`${key}\u0000`)) seen.delete(id);
   }
 
   return {
@@ -92,9 +117,17 @@ export function createLog(where, env = {}) {
     warn: (text, err, fields) => line("warn", text, err, fields),
     /** One piece of work failed; the page goes on. */
     error: (text, err, fields) => line("error", text, err, fields),
-    /** `warn` for a failure that can recur on every poll or render: logged once per `key` and cause, then at the 10th, 100th... */
+    // The repeat calls are for a failure that can recur on every poll or
+    // render. `key` names the call site, and repeats count per key and cause,
+    // so neither may embed a changing value (a size, a count, a time); the
+    // text may, since only the first and the 10th, 100th... are logged. Call
+    // `ok(key)` where that call succeeds, so a failure after a recovery is
+    // logged again rather than counted into the old episode.
+    /** `warn` for a failure that can recur: logged once per `key` and cause, then at the 10th, 100th... */
     warnRepeat: (key, text, err, fields) => repeat("warn", key, text, err, fields),
     /** `error`, logged as `warnRepeat` is. */
     errorRepeat: (key, text, err, fields) => repeat("error", key, text, err, fields),
+    /** `key`'s call worked: its next failure is logged as a new one. */
+    ok,
   };
 }

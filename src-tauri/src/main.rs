@@ -106,8 +106,11 @@ fn read_usage(app: tauri::AppHandle) -> serde_json::Value {
 /// Small settings the gauge keeps for itself: the zoom level, the saved home,
 /// where the window last sat, the wall's card density, split mode and
 /// the character theme.
+/// The prefs file's name in the data folder.
+const PREFS_FILE: &str = "prefs.json";
+
 fn prefs_path(app: &tauri::AppHandle) -> Option<PathBuf> {
-    klepsydra_dir(app).map(|d| d.join("prefs.json"))
+    klepsydra_dir(app).map(|d| d.join(PREFS_FILE))
 }
 
 /// The prefs, empty when there is no file yet. `None` when one exists but
@@ -141,8 +144,7 @@ fn write_pref_at(path: &std::path::Path, key: &str, value: serde_json::Value) {
     let _one = PREFS_WRITE.lock().unwrap_or_else(|e| e.into_inner());
     let Some(mut prefs) = read_prefs_at(path) else {
         log::error!(
-            "{key} not saved: {} is not a readable JSON object, and is left as it is",
-            path.display()
+            "{key} not saved: {PREFS_FILE} is not a readable JSON object, and is left as it is"
         );
         return;
     };
@@ -154,7 +156,7 @@ fn write_pref_at(path: &std::path::Path, key: &str, value: serde_json::Value) {
     let tmp = path.with_extension("json.tmp");
     let text = serde_json::Value::Object(prefs).to_string();
     if let Err(e) = std::fs::write(&tmp, text).and_then(|()| std::fs::rename(&tmp, path)) {
-        log::error!("{key} not saved to {}: {e}", path.display());
+        log::error!("{key} not saved to {PREFS_FILE}: {e}");
     }
 }
 

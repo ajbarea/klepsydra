@@ -68,7 +68,7 @@ fn write_hook_cast(app: &AppHandle, id: &str) {
     if let Err(e) = written {
         log::error!(
             "theme: {} not written for theme {id}, so tmux windows keep the last theme's colours: {e}",
-            dir.join(theme::HOOK_CAST).display()
+            theme::HOOK_CAST
         );
     }
 }

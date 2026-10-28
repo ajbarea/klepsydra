@@ -15,6 +15,8 @@
 
 const [port, cmd, page, arg] = process.argv.slice(2);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+/** One JSON line on stdout: this command's result. */
+const print = (v) => process.stdout.write(`${JSON.stringify(v)}\n`);
 
 async function connect(part) {
   const list = await (await fetch(`http://127.0.0.1:${port}/json`)).json();
@@ -56,13 +58,13 @@ async function evalIn(c, expression) {
 
 async function main() {
   const c = await connect(page);
-  if (cmd === "targets") return console.log(JSON.stringify(c.map((t) => ({ type: t.type, url: t.url }))));
+  if (cmd === "targets") return print(c.map((t) => ({ type: t.type, url: t.url })));
   await c.send("Performance.enable", { timeDomain: "threadTicks" });
   if (cmd === "idle") {
     const a = await metrics(c);
     await sleep(Number(arg) * 1000);
     const b = await metrics(c);
-    console.log(JSON.stringify({ page, seconds: Number(arg), ...delta(a, b), JSHeapUsedMB: +(b.JSHeapUsedSize / 2 ** 20).toFixed(2), Nodes: b.Nodes }));
+    print({ page, seconds: Number(arg), ...delta(a, b), JSHeapUsedMB: +(b.JSHeapUsedSize / 2 ** 20).toFixed(2), Nodes: b.Nodes });
   } else if (cmd === "cold") {
     const want = Number(arg);
     // Navigation start to N cards in the DOM, read only from the new document
@@ -81,7 +83,7 @@ async function main() {
     }
     await sleep(2000); // arrivals settle before the heap is read
     const b = await metrics(c);
-    console.log(JSON.stringify({ page, cards: want, msToCards: at === null ? null : +at.toFixed(1), JSHeapUsedMB: +(b.JSHeapUsedSize / 2 ** 20).toFixed(2), Nodes: b.Nodes }));
+    print({ page, cards: want, msToCards: at === null ? null : +at.toFixed(1), JSHeapUsedMB: +(b.JSHeapUsedSize / 2 ** 20).toFixed(2), Nodes: b.Nodes });
   } else if (cmd === "update") {
     // Rewrites one session file the way the hook does (temp file, then a
     // rename over it) with a new reply; the reader's watcher sees it within
@@ -107,11 +109,11 @@ async function main() {
     }
     await sleep(Math.max(0, 3000 - (Date.now() - t0)));
     const b = await metrics(c);
-    console.log(JSON.stringify({ page, msToShown: shown, quiet: delta(q0, q1), update: delta(q1, b) }));
+    print({ page, msToShown: shown, quiet: delta(q0, q1), update: delta(q1, b) });
   } else if (cmd === "openwall") {
-    console.log(JSON.stringify(await evalIn(c, `window.__TAURI_INTERNALS__.invoke("open_wall", { focus: "" }).then(() => "opened")`)));
+    print(await evalIn(c, `window.__TAURI_INTERNALS__.invoke("open_wall", { focus: "" }).then(() => "opened")`));
   } else if (cmd === "eval") {
-    console.log(JSON.stringify(await evalIn(c, arg)));
+    print(await evalIn(c, arg));
   }
   c.close();
 }

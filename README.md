@@ -1229,7 +1229,8 @@ line is one JSON object: `ts` (UTC), `level`, `target` (the module that
 logged, `webview::<file>` for a page), `message` (a page's error with its
 stack), and `session_id` when the event is about one session. The first
 line of a run names the log file and the data folder; paths in later lines
-are relative to that folder:
+are relative to that folder, and a file of your own (the queue file) is named
+by its file name alone:
 
 ```json
 {"ts":"2026-10-28T15:04:05.123Z","level":"WARN","target":"klepsydra::fleet","message":"skipped fleet/0b1e5b4e-6f0e-4bbd-9d3c-2a7a1c0f9e11.json: malformed: EOF while parsing a value at line 1 column 59","session_id":"0b1e5b4e-6f0e-4bbd-9d3c-2a7a1c0f9e11"}
@@ -1259,7 +1260,7 @@ bash hooks/test_fleet.sh                 # fleet hook: states, where, identity, 
 bash hooks/test_launch.sh                # launcher: new, jump, tab reuse, against a private tmux socket
 bash scripts/test_measure_memory.sh      # the release memory check
 node --test src/*.test.js                # ramp, countdown, reconciliation, fleet model, faces, guards, logger
-npm install && npm run lint              # Biome: no console.log, info or debug; pages log through src/log.js
+npm run lint                             # Biome: no console.log, info or debug; pages log through src/log.js
 uvx ruff check                           # the Python scripts, logging rules included
 (cd src-tauri && cargo test -p klepsydra-fleet)   # fleet reader, OTLP receiver, phone wall server and ledger
 bash scripts/build-windows.sh --check    # clippy and every Rust test, on Windows

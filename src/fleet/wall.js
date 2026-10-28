@@ -631,16 +631,25 @@ function drawSpeaking() {
 // takes the new one when the file comes. Snapshots are taken in order.
 let inbox = Promise.resolve();
 function receive(message) {
-  if (!served) return take(message);
+  if (!served) {
+    try {
+      take(message);
+    } catch (err) {
+      notShown(message, err);
+    }
+    return;
+  }
   const theme = Array.isArray(message?.sessions) ? () => wearSoon(message.theme, false) : () => null;
   inbox = inbox
     .then(theme)
     .then(() => take(message))
-    .catch((err) => {
-      const n = Array.isArray(message?.sessions) ? message.sessions.length : "no";
-      // Every snapshot after a render bug fails the same way: log the cause once, then a count.
-      log.errorRepeat("snapshot", `a fleet snapshot (${n} sessions, theme ${message?.theme}) could not be shown`, err);
-    });
+    .catch((err) => notShown(message, err));
+}
+
+/** Every snapshot after a render bug fails the same way: its cause once, then a count. */
+function notShown(message, err) {
+  const n = Array.isArray(message?.sessions) ? message.sessions.length : "no";
+  log.errorRepeat("snapshot", `a fleet snapshot (${n} sessions, theme ${message?.theme}) could not be shown`, err);
 }
 
 function take(message) {
@@ -662,6 +671,7 @@ function take(message) {
     if (pending) focusCard(pending, true);
   }
   if (typeof message?.focus === "string") focusCard(message.focus);
+  log.ok("snapshot");
 }
 
 wall.addEventListener("click", (e) => {
@@ -1193,11 +1203,13 @@ function wearTheme(id, paint = true) {
     (loaded) => {
       if (wanted !== next) return null;
       put(next, loaded, paint);
+      log.ok(`theme:${next}`);
       if (themeNote.textContent.startsWith("Loading")) setText(themeNote, "");
       return true;
     },
     (err) => {
-      log.warn(`theme ${next} could not be loaded from ${themeFile(next)}`, err);
+      // Each snapshot asks for its theme again: the cause once, then a count.
+      log.warnRepeat(`theme:${next}`, `theme ${next} could not be loaded from ${themeFile(next)}`, err);
       asked.delete(next); // a retry waits its own THEME_WAIT_MS before saying "Loading…"
       if (wanted === next) {
         wanted = worn;

@@ -469,6 +469,13 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     })
 }
 
+/// The last `n` parts of `path`, joined by `/`: `ledger/2026-10-28.json` for a
+/// day file, named as from the data folder without the user's home in it.
+fn tail(path: &Path, n: usize) -> String {
+    let parts: Vec<_> = path.iter().map(|p| p.to_string_lossy()).collect();
+    parts[parts.len().saturating_sub(n)..].join("/")
+}
+
 /// Read `path` as `T`: the default when there is no file, and the default
 /// after setting a file it could not read or parse aside as `<name>.bad`. A
 /// file that can be neither moved nor copied is reported and replaced at the
@@ -489,7 +496,7 @@ fn load_checked<T: Default + for<'de> Deserialize<'de>>(
         let kept = std::fs::rename(path, &aside)
             .or_else(|_| std::fs::copy(path, &aside).map(|_| ()))
             .map_or_else(|a| format!("not set aside ({a})"), |()| "set aside".into());
-        problems.push(format!("{} {kept}: {e}", path.display()));
+        problems.push(format!("{} {kept}: {e}", tail(path, 2)));
         (T::default(), true)
     };
     let text = match std::fs::read_to_string(path) {
@@ -630,7 +637,7 @@ impl Ledger {
     pub fn open(dir: PathBuf, now: i64, tz: TimeZone) -> (Self, Vec<String>) {
         let mut problems = Vec::new();
         if let Err(e) = std::fs::create_dir_all(&dir) {
-            problems.push(format!("{}: {e}", dir.display()));
+            problems.push(format!("{}: {e}", tail(&dir, 1)));
         }
         let (mut state, lost): (State, bool) = load_checked(&dir.join(STATE_FILE), &mut problems);
         state.version = VERSION;

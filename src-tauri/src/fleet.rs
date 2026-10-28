@@ -105,10 +105,13 @@ pub fn choose_queue(app: &AppHandle) {
     pick.pick_file(move |file| {
         if let Some(path) = file.and_then(|f| f.into_path().ok()) {
             if let Err(e) = queue::keep(&dir, &path, None) {
+                // The user's own file, by name only: it may sit under their home.
+                let name = path
+                    .file_name()
+                    .map_or_else(Default::default, |n| n.to_string_lossy());
                 log::error!(
-                    "the queue file choice {} was not saved to {}: {e}",
-                    path.display(),
-                    dir.join(queue::KEEPER).display()
+                    "the queue file choice {name} was not saved to {}: {e}",
+                    queue::KEEPER
                 );
             }
         }
@@ -211,7 +214,6 @@ fn start_ledger(dir: &Path) -> Shared {
     }
     let ledger: Shared = std::sync::Arc::new(std::sync::Mutex::new(ledger));
     let shared = ledger.clone();
-    let dir = dir.to_path_buf();
     std::thread::spawn(move || {
         let mut logged = false;
         loop {
@@ -241,8 +243,7 @@ fn start_ledger(dir: &Path) -> Shared {
                 // Whatever the receiver missed while it was down is a gap.
                 if let Err(e) = l.note_listening(unix_now()) {
                     log::error!(
-                        "ledger: the gap while the receiver was down was not saved in {}: {e}",
-                        dir.join("ledger").display()
+                        "ledger: the gap while the receiver was down was not saved in ledger/: {e}"
                     );
                 }
                 return;

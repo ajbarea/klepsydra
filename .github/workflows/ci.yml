@@ -43,7 +43,7 @@ jobs:
       # Before the keryx checkout, and keryx/ excluded besides, so its files
       # never reach klepsydra's lints.
       - name: JS lint (Biome noConsole)
-        run: npx --yes @biomejs/biome@2.6.3 lint --reporter=github
+        run: npm run lint -- --reporter=github
       - name: Python lint (ruff, logging rules)
         run: pipx run ruff==0.17.3 check --output-format=github
       # The fleet hook is the only writer of a session's state, so its fixtures
