@@ -1166,6 +1166,7 @@ themePicker.replaceChildren(
 const keeper = empty.querySelector(".keeper");
 
 let wanted = DEFAULT_THEME; // the theme last asked for: a slower load must not undo a later one
+const asked = new Map(); // theme id -> when a paint first waited for its file; cleared when it fails
 const themeNote = document.getElementById("theme-note");
 /**
  * Wear theme `id` (an unknown one is the default), repainting unless `paint`
@@ -1191,6 +1192,7 @@ function wearTheme(id, paint = true) {
     },
     (err) => {
       console.warn(`klepsydra: theme ${next} could not be loaded:`, err);
+      asked.delete(next); // a retry waits its own THEME_WAIT_MS before saying "Loading…"
       if (wanted === next) {
         wanted = worn;
         themePicker.value = worn;
@@ -1200,7 +1202,6 @@ function wearTheme(id, paint = true) {
     },
   );
 }
-const asked = new Map(); // theme id -> when a paint first waited for its file
 /**
  * Wear theme `id` for a paint, repainting at once unless `paint` is false
  * (a snapshot about to paint): at once when its file is in; else resolves
@@ -1226,10 +1227,12 @@ function wearSoon(id, paint = true) {
 /** Resolves THEME_WAIT_MS after a paint first waited for `next`'s file, saying it is still loading if it is. */
 function deadline(next) {
   if (!asked.has(next)) asked.set(next, performance.now());
-  const left = Math.max(0, asked.get(next) + THEME_WAIT_MS - performance.now());
+  const since = asked.get(next);
+  const left = Math.max(0, since + THEME_WAIT_MS - performance.now());
   return new Promise((late) =>
     setTimeout(() => {
-      if (wanted === next && worn !== next) setText(themeNote, `Loading the ${THEME_LABELS[next]} theme…`);
+      // A wait whose load failed since is over: a retry has its own.
+      if (asked.get(next) === since && wanted === next && worn !== next) setText(themeNote, `Loading the ${THEME_LABELS[next]} theme…`);
       late(null);
     }, left),
   );
