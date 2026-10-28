@@ -17,9 +17,11 @@ copied to `~/.claude/` (backups `.bak-20261028-0616`).
 - Pages log through `src/log.js` (`plugin:log|log`, granted in
   `src-tauri/capabilities/default.json`). Lints: workspace clippy print
   lints, Biome `noConsole`, ruff `G`/`LOG`, all in CI.
-- Verify: every gate in `.claude/skill-context.md`, `logcheck.py` clean, a
-  Windows proof run with `KLEPSYDRA_NO_AUTOSTART` (260e189, PR #142,
-  cherry-picked locally only) and a malformed session file.
+- Verified: every gate in `.claude/skill-context.md`, `logcheck.py` clean,
+  and a Windows proof run (KLEPSYDRA_DIR of its own, KLEPSYDRA_NO_AUTOSTART
+  from PR #142 cherry-picked locally only) logging a malformed session file
+  and the taken OTLP port. Not yet seen live: a page's line through
+  `plugin:log|log` (the wall suite covers it against a stubbed invoke).
 
 ## Open
 - #134: "end: the process is gone" fails now and then in full gate runs

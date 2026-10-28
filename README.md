@@ -1230,7 +1230,7 @@ logged, `webview::<file>` for a page), `message`, and `session_id` when the
 event is about one session:
 
 ```json
-{"ts":"2026-10-28T15:04:05.123Z","level":"WARN","target":"klepsydra::fleet","message":"skipped C:\\Users\\aj\\AppData\\Local\\dev.ajsoftworks.klepsydra\\fleet\\0b1e5b4e-6f0e-4bbd-9d3c-2a7a1c0f9e11.json: not JSON: expected value at line 1 column 1","session_id":"0b1e5b4e-6f0e-4bbd-9d3c-2a7a1c0f9e11"}
+{"ts":"2026-10-28T15:04:05.123Z","level":"WARN","target":"klepsydra::fleet","message":"skipped C:\\Users\\aj\\AppData\\Local\\dev.ajsoftworks.klepsydra\\fleet\\0b1e5b4e-6f0e-4bbd-9d3c-2a7a1c0f9e11.json: malformed: EOF while parsing a value at line 1 column 59","session_id":"0b1e5b4e-6f0e-4bbd-9d3c-2a7a1c0f9e11"}
 ```
 
 `jq 'select(.level == "ERROR")' klepsydra.log` lists the failures. Past 1 MiB
