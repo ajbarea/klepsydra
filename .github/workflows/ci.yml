@@ -38,6 +38,14 @@ jobs:
       # second account, malformed stdin, an unwritable destination.
       - name: statusLine hook tests
         run: bash statusline/test_statusline.sh
+      # Logging gates (techne's logging standard): pages log through
+      # src/log.js, never console.log, and Python log calls take arguments.
+      # Before the keryx checkout, and keryx/ excluded besides, so its files
+      # never reach klepsydra's lints.
+      - name: JS lint (Biome noConsole)
+        run: npx --yes @biomejs/biome@2.6.3 lint --reporter=github
+      - name: Python lint (ruff, logging rules)
+        run: pipx run ruff==0.17.3 check --output-format=github
       # The fleet hook is the only writer of a session's state, so its fixtures
       # cover the shapes that would otherwise show a wrong status.
       # keryx names a session's repo the same way the fleet hook does; with
@@ -66,14 +74,6 @@ jobs:
         run: python3 -I scripts/perf/test_fixture.py
       - name: Shell lint
         run: shellcheck hooks/*.sh statusline/*.sh scripts/*.sh
-      # Logging gates (techne's logging standard): pages log through
-      # src/log.js, never console.log, and Python log calls take arguments.
-      - name: JS lint (Biome noConsole)
-        run: |
-          npm install --no-fund --no-audit
-          npx biome lint --reporter=github
-      - name: Python lint (ruff, logging rules)
-        run: pipx run ruff==0.17.3 check --output-format=github
       # The install dir is writable only because the NSIS mode is currentUser;
       # a perMachine build puts it under Program Files. Readings and harness
       # output go to the app data dir and to temp respectively.

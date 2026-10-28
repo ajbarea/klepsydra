@@ -1,5 +1,10 @@
 # Lint settings only: klepsydra is not a Python package. The scripts under
 # scripts/ run through `uv run --no-project --with ...`.
+[tool.ruff]
+# CI checks keryx out here for the fleet hook's parity cases; its files are
+# keryx's to lint.
+extend-exclude = ["keryx"]
+
 [tool.ruff.lint]
 # Pyflakes and pycodestyle's error families (ruff's defaults), plus the
 # logging rules: no f-strings or .format in log calls (G), no root-logger

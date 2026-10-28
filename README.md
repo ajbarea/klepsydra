@@ -1220,23 +1220,30 @@ previous file alone rather than overwriting it with blanks.
 
 ## Logs
 
-<!-- budget: 260 words -->
+<!-- budget: 340 words -->
 The Rust shell and the pages (the gauge and the wall) write to one file,
 `logs/klepsydra.log` in the app data dir: on Windows
 `%LOCALAPPDATA%\dev.ajsoftworks.klepsydra\logs`, Tauri's log folder, and
 under `KLEPSYDRA_DIR` when that is set, so a test copy keeps its own. Each
 line is one JSON object: `ts` (UTC), `level`, `target` (the module that
-logged, `webview::<file>` for a page), `message`, and `session_id` when the
-event is about one session:
+logged, `webview::<file>` for a page), `message` (a page's error with its
+stack), and `session_id` when the event is about one session. The first
+line of a run names the log file and the data folder; paths in later lines
+are relative to that folder:
 
 ```json
-{"ts":"2026-10-28T15:04:05.123Z","level":"WARN","target":"klepsydra::fleet","message":"skipped C:\\Users\\aj\\AppData\\Local\\dev.ajsoftworks.klepsydra\\fleet\\0b1e5b4e-6f0e-4bbd-9d3c-2a7a1c0f9e11.json: malformed: EOF while parsing a value at line 1 column 59","session_id":"0b1e5b4e-6f0e-4bbd-9d3c-2a7a1c0f9e11"}
+{"ts":"2026-10-28T15:04:05.123Z","level":"WARN","target":"klepsydra::fleet","message":"skipped fleet/0b1e5b4e-6f0e-4bbd-9d3c-2a7a1c0f9e11.json: malformed: EOF while parsing a value at line 1 column 59","session_id":"0b1e5b4e-6f0e-4bbd-9d3c-2a7a1c0f9e11"}
 ```
 
 `jq 'select(.level == "ERROR")' klepsydra.log` lists the failures. Past 1 MiB
 the file is renamed `klepsydra_<UTC time>.log` and a new one starts; the four
-newest renamed files are kept, so the logs stay under 5 MiB. A run from a
-terminal also prints the same events as plain lines on stderr.
+newest renamed files are kept, so the logs stay under 5 MiB. While another
+program holds `klepsydra.log` open without delete sharing, that rename fails:
+tauri-plugin-log 2.10.1 then holds new lines in memory, tries the rename again
+with each line, and writes them all once it succeeds. A page failure that
+repeats on every poll or snapshot is logged the first time, then at the 10th,
+100th and 1000th. A run from a terminal also prints the same events as plain
+lines on stderr.
 
 The level is info: a call that worked, a server that started. Set
 `KLEPSYDRA_LOG` to `error`, `warn`, `info`, `debug` or `trace` before starting

@@ -104,10 +104,11 @@ pub fn start(app: &tauri::AppHandle) {
     let path = dir.map(|d| d.join(format!("{FILE_NAME}.log")));
     match (&file_error, &path) {
         (None, Some(p)) => log::info!(
-            "klepsydra {} logging at {} to {}",
+            "klepsydra {} logging at {} to {}; data folder {}",
             app.package_info().version,
             level.as_str().to_lowercase(),
-            p.display()
+            p.display(),
+            crate::klepsydra_dir(app).map_or("none".into(), |d| d.display().to_string())
         ),
         (Some(e), Some(p)) => log::warn!(
             "no log file at {}, so lines go to stderr only: {e}",

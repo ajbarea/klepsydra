@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { DEBUG_KEY, LEVELS, MAX_CHARS, createLog, describe } from "./log.js";
+import { DEBUG_KEY, LEVELS, MAX_CHARS, REPEAT_KEYS, createLog, describe, detail, loggedRepeat } from "./log.js";
 
 /** A console that keeps what each method was given. */
 function fakeConsole() {
@@ -22,6 +22,7 @@ test("inside the app a warning reaches the console and the log command, naming i
   const { calls, window } = inApp();
   const console = fakeConsole();
   const err = new TypeError("x is undefined");
+  err.stack = "TypeError: x is undefined\n    at paint (fleet/wall.js:12:3)";
   createLog("fleet/wall.js", { window, console }).warn("theme dicebear could not be loaded from fleet/themes/dicebear.json", err);
   await tick();
   assert.deepEqual(console.said, [["warn", "klepsydra: theme dicebear could not be loaded from fleet/themes/dicebear.json: TypeError: x is undefined", err]]);
@@ -30,7 +31,7 @@ test("inside the app a warning reaches the console and the log command, naming i
       "plugin:log|log",
       {
         level: LEVELS.warn,
-        message: "theme dicebear could not be loaded from fleet/themes/dicebear.json: TypeError: x is undefined",
+        message: "theme dicebear could not be loaded from fleet/themes/dicebear.json: TypeError: x is undefined\n    at paint (fleet/wall.js:12:3)",
         location: "fleet/wall.js",
         keyValues: undefined,
       },
@@ -133,4 +134,53 @@ test("describe gives one line for any rejection value", () => {
   const loop = {};
   loop.self = loop;
   assert.equal(describe(loop), "[object Object]");
+});
+
+test("detail gives an Error's stack, and the one-line form for anything else", () => {
+  const e = new Error("boom");
+  assert.match(detail(e), /^Error: boom\n\s+at /);
+  const bare = new Error("no stack");
+  bare.stack = undefined;
+  assert.equal(detail(bare), "Error: no stack");
+  const foreign = new Error("mine");
+  foreign.stack = "a stack that names another error";
+  assert.equal(detail(foreign), "Error: mine");
+  for (const v of ["No reply to play.", { code: 7 }, undefined]) assert.equal(detail(v), describe(v));
+});
+
+test("a repeat logs at the 1st, 10th, 100th and 1000th sighting", () => {
+  const logged = [];
+  for (let n = 1; n <= 1200; n++) if (loggedRepeat(n)) logged.push(n);
+  assert.deepEqual(logged, [1, 10, 100, 1000]);
+});
+
+test("a failure on every snapshot logs its cause once, then a count; another cause logs at once", async () => {
+  const { calls, window } = inApp();
+  const console = fakeConsole();
+  const log = createLog("fleet/wall.js", { window, console });
+  for (let i = 0; i < 12; i++) log.errorRepeat("snapshot", "a fleet snapshot could not be shown", new TypeError("x is undefined"));
+  log.errorRepeat("snapshot", "a fleet snapshot could not be shown", new RangeError("too far"));
+  log.warnRepeat("set_size", "set_size failed", "busy");
+  await tick();
+  assert.deepEqual(
+    calls.map(([, a]) => [a.level, a.message.split("\n")[0]]),
+    [
+      [5, "a fleet snapshot could not be shown: TypeError: x is undefined"],
+      [5, "a fleet snapshot could not be shown (10 times so far): TypeError: x is undefined"],
+      [5, "a fleet snapshot could not be shown: RangeError: too far"],
+      [4, "set_size failed: busy"],
+    ],
+  );
+  assert.equal(console.said.length, 4);
+});
+
+test("the repeat memory is bounded and starts over when full", async () => {
+  const { calls, window } = inApp();
+  const log = createLog("main.js", { window, console: fakeConsole() });
+  for (let i = 0; i < REPEAT_KEYS; i++) log.warnRepeat(`k${i}`, "w");
+  log.warnRepeat("k0", "w"); // still remembered: a repeat, not logged
+  log.warnRepeat("one more", "w"); // full: the memory starts over
+  log.warnRepeat("k0", "w"); // forgotten, so logged again
+  await tick();
+  assert.equal(calls.length, REPEAT_KEYS + 2);
 });

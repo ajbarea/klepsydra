@@ -2,6 +2,9 @@ import { toRows, formatPct, WAITING } from "./gauge.js";
 import { readMode, readStops, syncEntries } from "./gaugeview.js";
 import { follow } from "./ipc.js";
 import { wheelPixels, wheelStep, clampLevel, scaleAt } from "./zoom.js";
+import { createLog } from "./log.js";
+
+const log = createLog("main.js");
 
 const POLL_MS = 5_000;   // how often we re-read the account files
 const TICK_MS = 15_000;  // how often the countdown re-renders between reads
@@ -30,8 +33,10 @@ async function readUsage() {
     // Browser dev: serve src/ with a dev-fixture.json holding the same shape.
     const res = await fetch("./dev-fixture.json", { cache: "no-store" });
     return res.ok ? await res.json() : null;
-  } catch {
-    return null; // missing, unreadable or malformed all mean "no data"
+  } catch (err) {
+    // Missing, unreadable or malformed all mean "no data"; the gauge says it waits.
+    if (inTauri) log.warnRepeat("read_usage", "read_usage failed, so the gauge shows no reading", err);
+    return null;
   }
 }
 
@@ -90,7 +95,10 @@ function followLayout() {
   const q = new URLSearchParams(location.search).get("layout");
   if (q !== null || !inTauri) return applyLayout(q);
   return new Promise((resolve) => {
-    follow("layout_subscribe", (next) => applyLayout(next).then(resolve)).catch(resolve);
+    follow("layout_subscribe", (next) => applyLayout(next).then(resolve)).catch((err) => {
+      log.warn("layout_subscribe failed, so the gauge keeps its first layout", err);
+      resolve();
+    });
     setTimeout(resolve, LAYOUT_WAIT_MS);
   });
 }
@@ -123,8 +131,9 @@ function syncSize(pin = false) {
   lastGrip = `${g.join(",")}|${strip ?? ""}`;
   window.__TAURI__.core
     .invoke("set_size", { width: w, height: h, pin, grip: g, strip })
-    .catch(() => {
+    .catch((err) => {
       lastSize = ""; // not applied; the next render tries again
+      log.warnRepeat("set_size", `set_size ${size} failed; the next render tries again`, err);
     });
 }
 
@@ -149,7 +158,7 @@ function syncTray(rows) {
   lastTray = signature;
   window.__TAURI__.core
     .invoke("set_tray_level", { pct, r: rgb[0], g: rgb[1], b: rgb[2] })
-    .catch(() => {});
+    .catch((err) => log.warnRepeat("set_tray_level", `set_tray_level ${Math.round(pct)}% failed`, err));
 }
 
 /**
@@ -164,8 +173,9 @@ function syncGrip() {
   const key = `${[x, y, w, h].join(",")}|${strip ?? ""}`;
   if (w < 1 || h < 1 || key === lastGrip) return;
   lastGrip = key;
-  window.__TAURI__.core.invoke("set_grip", { x, y, w, h, strip }).catch(() => {
+  window.__TAURI__.core.invoke("set_grip", { x, y, w, h, strip }).catch((err) => {
     lastGrip = "";
+    log.warnRepeat("set_grip", `set_grip ${key} failed; the next render tries again`, err);
   });
 }
 
@@ -184,7 +194,8 @@ function render(pin = false) {
   document.title = rows.length ? `klepsydra ${formatPct(rows[0].pct)}` : "klepsydra";
   try {
     drawStrip?.(fleetSessions, Date.now(), fleetFresh, fleetSpeaking);
-  } catch {
+  } catch (err) {
+    log.error(`the fleet strip could not draw ${fleetSessions.length} sessions, so it is hidden`, err);
     drawStrip = null; // the gauge carries on without the strip
     stripEl.hidden = true;
   }
@@ -205,7 +216,8 @@ async function savedZoom(forLayout) {
   if (!inTauri) return 0;
   try {
     return clampLevel(await window.__TAURI__.core.invoke("get_zoom", { layout: forLayout }));
-  } catch {
+  } catch (err) {
+    log.warn(`get_zoom for the ${forLayout} layout failed, so the gauge opens at 100%`, err);
     return 0;
   }
 }
@@ -224,7 +236,10 @@ function showZoom() {
 function saveZoomNow() {
   clearTimeout(zoomSave);
   if (pendingZoom && inTauri) {
-    window.__TAURI__.core.invoke("set_zoom", pendingZoom).catch(() => {});
+    const asked = pendingZoom;
+    window.__TAURI__.core
+      .invoke("set_zoom", asked)
+      .catch((err) => log.error(`set_zoom ${JSON.stringify(asked)} was not saved`, err));
   }
   pendingZoom = null;
 }
@@ -268,7 +283,7 @@ async function startFleet() {
   try {
     const { mountStrip } = await import("./fleet/strip.js");
     const { subscribe, subscribeTheme } = await import("./fleet/feed.js");
-    const { THEME_WAIT_MS, loadTheme, loadedTheme } = await import("./fleet/theme.js");
+    const { THEME_WAIT_MS, loadTheme, loadedTheme, themeFile } = await import("./fleet/theme.js");
     let theme = loadedTheme(null);
     let wanted = null;
     // The strip first draws in the theme worn, never another first: it waits
@@ -290,16 +305,18 @@ async function startFleet() {
           if (wanted !== id || next === theme) return;
           theme = next;
           render();
-        }, () => {})
+        }, (err) => log.warn(`the strip's theme ${id} could not be loaded from ${themeFile(id)}`, err))
         .finally(ready);
     });
     await first;
     drawStrip = mountStrip(stripEl, {
-      open: (id) => inTauri && window.__TAURI__.core.invoke("open_wall", { focus: id }).catch(() => {}),
+      open: (id) =>
+        inTauri && window.__TAURI__.core.invoke("open_wall", { focus: id }).catch((err) => log.error(`open_wall for session ${id} failed`, err, { session_id: id })),
       cast: () => theme,
     });
     subscribe(receiveFleet);
-  } catch {
+  } catch (err) {
+    log.error("the fleet strip could not start, so the gauge runs without it", err);
     drawStrip = null;
     stripEl.hidden = true;
   }

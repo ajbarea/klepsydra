@@ -638,7 +638,8 @@ function receive(message) {
     .then(() => take(message))
     .catch((err) => {
       const n = Array.isArray(message?.sessions) ? message.sessions.length : "no";
-      log.error(`a fleet snapshot (${n} sessions, theme ${message?.theme}) could not be shown`, err);
+      // Every snapshot after a render bug fails the same way: log the cause once, then a count.
+      log.errorRepeat("snapshot", `a fleet snapshot (${n} sessions, theme ${message?.theme}) could not be shown`, err);
     });
 }
 

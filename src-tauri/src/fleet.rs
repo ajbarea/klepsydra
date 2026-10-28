@@ -176,17 +176,18 @@ pub async fn ledger_today(app: AppHandle, session: Option<String>) -> Result<Tod
     .map_err(|e| format!("Could not read the ledger: {e}"))
 }
 
-/// A skipped session file, with its session id when its name holds one.
-fn log_problem(dir: &Path, p: &Problem) {
+/// A skipped session file, under the data folder the startup line names,
+/// with its session id when its name holds one.
+fn log_problem(p: &Problem) {
     // "fleet" names the directory itself, not a file inside it.
     let at = if p.file == "fleet" {
-        dir.join("fleet")
+        "fleet".to_string()
     } else {
-        dir.join("fleet").join(&p.file)
+        format!("fleet/{}", p.file)
     };
     match session_of(&p.file) {
-        Some(id) => log::warn!(session_id = id; "skipped {}: {}", at.display(), p.what),
-        None => log::warn!("skipped {}: {}", at.display(), p.what),
+        Some(id) => log::warn!(session_id = id; "skipped {at}: {}", p.what),
+        None => log::warn!("skipped {at}: {}", p.what),
     }
 }
 
@@ -271,7 +272,7 @@ pub fn start(app: &AppHandle, dir: Option<PathBuf>) {
         loop {
             let (snapshot, problems) = reader.step(wait, unix_now);
             for p in &problems {
-                log_problem(&dir, p);
+                log_problem(p);
             }
             if let Some(snapshot) = snapshot {
                 // Every snapshot moves the baseline, so turning Ping on never
