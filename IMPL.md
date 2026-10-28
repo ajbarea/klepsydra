@@ -18,10 +18,10 @@ copied to `~/.claude/` (backups `.bak-20261028-0616`).
   `src-tauri/capabilities/default.json`). Lints: workspace clippy print
   lints, Biome `noConsole`, ruff `G`/`LOG`, all in CI.
 - Verified: every gate in `.claude/skill-context.md`, `logcheck.py` clean,
-  and a Windows proof run (KLEPSYDRA_DIR of its own, KLEPSYDRA_NO_AUTOSTART
-  from PR #142 cherry-picked locally only) logging a malformed session file
-  and the taken OTLP port. Not yet seen live: a page's line through
-  `plugin:log|log` (the wall suite covers it against a stubbed invoke).
+  and Windows proof runs (own KLEPSYDRA_DIR and WEBVIEW2_USER_DATA_FOLDER,
+  KLEPSYDRA_NO_AUTOSTART) logging a malformed session file, the taken OTLP
+  port, and the wall's refused set_theme as a `webview::fleet/wall.js` line
+  (driven over WebView2's DevTools port). Review round 1 fixes are in.
 
 ## Open
 - #134: "end: the process is gone" fails now and then in full gate runs
