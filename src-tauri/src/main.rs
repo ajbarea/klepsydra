@@ -576,18 +576,31 @@ struct Pointer {
     pressed: bool,
 }
 
+/// Windows: straight from user32 on this thread. `AppHandle::cursor_position`
+/// answers the same GetCursorPos from the event loop, so off the main thread
+/// each call is a round trip that wakes it, 60 times a second at idle. The
+/// process is per-monitor DPI aware, so these are physical desktop pixels.
 #[cfg(windows)]
-fn pointer(app: &tauri::AppHandle) -> Option<Pointer> {
+fn pointer(_app: &tauri::AppHandle) -> Option<Pointer> {
+    #[repr(C)]
+    struct Point {
+        x: i32,
+        y: i32,
+    }
     #[link(name = "user32")]
     unsafe extern "system" {
         fn GetAsyncKeyState(key: i32) -> i16;
+        fn GetCursorPos(point: *mut Point) -> i32;
     }
     const VK_LBUTTON: i32 = 0x01;
-    let cursor = app.cursor_position().ok()?;
+    let mut cursor = Point { x: 0, y: 0 };
+    if unsafe { GetCursorPos(&mut cursor) } == 0 {
+        return None;
+    }
     let pressed = unsafe { (GetAsyncKeyState(VK_LBUTTON) as u16 & 0x8000) != 0 };
     Some(Pointer {
-        x: cursor.x,
-        y: cursor.y,
+        x: f64::from(cursor.x),
+        y: f64::from(cursor.y),
         pressed,
     })
 }
