@@ -1,0 +1,58 @@
+== baseline 2026-10-28T08:33:00-04:00
+{"cards":0,"pid":5180,"targets":"[{\"type\":\"page\",\"url\":\"http://tauri.localhost/\"}]"}
+{"reading":"cards=0 gauge only","seconds":120,"total":{"private_mb":159.49,"cpu_pct":1.94,"ws_mb":351.47},"roles":{"wv-utility-network":{"private_mb":11.68,"cpu_pct":0.03,"n":1,"ws_mb":38.69},"wv-crashpad-handler":{"private_mb":2.79,"cpu_pct":0,"n":1,"ws_mb":12.77},"exe":{"private_mb":7.3,"cpu_pct":1.54,"n":1,"ws_mb":27.68},"wv-browser":{"private_mb":36.06,"cpu_pct":0.2,"n":1,"ws_mb":119.99},"wv-gpu-process":{"private_mb":67.5,"cpu_pct":0,"n":1,"ws_mb":69.75},"wv-renderer":{"private_mb":26.78,"cpu_pct":0.17,"n":1,"ws_mb":62.71},"wv-utility-storage":{"private_mb":7.38,"cpu_pct":0,"n":1,"ws_mb":19.88}}}
+{"page":"gauge","seconds":60,"TaskDuration":0.0088,"ScriptDuration":0.002,"LayoutDuration":0,"RecalcStyleDuration":0.0005,"LayoutCount":0,"RecalcStyleCount":16,"JSHeapUsedMB":1.33,"Nodes":88}
+{"cards":3,"pid":3048,"targets":"[{\"type\":\"page\",\"url\":\"http://tauri.localhost/\"}]"}
+{"reading":"cards=3 gauge only","seconds":120,"total":{"private_mb":163.85,"cpu_pct":1.65,"ws_mb":359},"roles":{"exe":{"private_mb":8.27,"cpu_pct":1.37,"n":1,"ws_mb":27.77},"wv-crashpad-handler":{"private_mb":2.82,"cpu_pct":0,"n":1,"ws_mb":12.49},"wv-browser":{"private_mb":37.82,"cpu_pct":0.2,"n":1,"ws_mb":120.74},"wv-gpu-process":{"private_mb":69.85,"cpu_pct":0.05,"n":1,"ws_mb":74.41},"wv-utility-storage":{"private_mb":7.4,"cpu_pct":0,"n":1,"ws_mb":19.88},"wv-renderer":{"private_mb":25.76,"cpu_pct":0.03,"n":1,"ws_mb":63.35},"wv-utility-network":{"private_mb":11.93,"cpu_pct":0,"n":1,"ws_mb":40.36}}}
+{"page":"gauge","seconds":60,"TaskDuration":0.0167,"ScriptDuration":0.0026,"LayoutDuration":0,"RecalcStyleDuration":0,"LayoutCount":0,"RecalcStyleCount":0,"JSHeapUsedMB":1.76,"Nodes":109}
+"opened"
+{"wall_open":true}
+{"reading":"cards=3 wall shown","seconds":120,"total":{"private_mb":257.8,"cpu_pct":1.7,"ws_mb":473.06},"roles":{"wv-crashpad-handler":{"private_mb":2.84,"cpu_pct":0,"n":1,"ws_mb":12.55},"wv-utility-storage":{"private_mb":7.5,"cpu_pct":0,"n":1,"ws_mb":20.02},"exe":{"private_mb":8.02,"cpu_pct":1.3,"n":1,"ws_mb":30.07},"wv-browser":{"private_mb":43.3,"cpu_pct":0.13,"n":1,"ws_mb":128.02},"wv-gpu-process":{"private_mb":118.15,"cpu_pct":0.18,"n":1,"ws_mb":91.5},"wv-renderer":{"private_mb":66.18,"cpu_pct":0.09,"n":2,"ws_mb":150.56},"wv-utility-network":{"private_mb":11.81,"cpu_pct":0,"n":1,"ws_mb":40.34}}}
+{"page":"wall","seconds":60,"TaskDuration":0.0147,"ScriptDuration":0.0037,"LayoutDuration":0.0038,"RecalcStyleDuration":0.0015,"LayoutCount":4,"RecalcStyleCount":4,"JSHeapUsedMB":2.29,"Nodes":1883}
+{"page":"wall","cards":3,"msToCards":72.6,"JSHeapUsedMB":1.85,"Nodes":2628}
+{"page":"wall","cards":3,"msToCards":65.1,"JSHeapUsedMB":3.04,"Nodes":5572}
+{"page":"wall","cards":3,"msToCards":73.4,"JSHeapUsedMB":4.22,"Nodes":8516}
+{"page":"wall","cards":3,"msToCards":68,"JSHeapUsedMB":1.89,"Nodes":2628}
+{"page":"wall","cards":3,"msToCards":71,"JSHeapUsedMB":3.07,"Nodes":6162}
+{"page":"wall","quiet":{"TaskDuration":0.0002,"ScriptDuration":0,"LayoutDuration":0,"RecalcStyleDuration":0,"LayoutCount":0,"RecalcStyleCount":0},"update":{"TaskDuration":0.0226,"ScriptDuration":0.0011,"LayoutDuration":0.0028,"RecalcStyleDuration":0.0033,"LayoutCount":3,"RecalcStyleCount":3}}
+{"page":"wall","quiet":{"TaskDuration":0.0005,"ScriptDuration":0,"LayoutDuration":0,"RecalcStyleDuration":0,"LayoutCount":0,"RecalcStyleCount":0},"update":{"TaskDuration":0.0082,"ScriptDuration":0.0009,"LayoutDuration":0.0014,"RecalcStyleDuration":0.0009,"LayoutCount":2,"RecalcStyleCount":2}}
+{"page":"wall","quiet":{"TaskDuration":0.0004,"ScriptDuration":0,"LayoutDuration":0,"RecalcStyleDuration":0,"LayoutCount":0,"RecalcStyleCount":0},"update":{"TaskDuration":0.0035,"ScriptDuration":0,"LayoutDuration":0.0007,"RecalcStyleDuration":0.0004,"LayoutCount":1,"RecalcStyleCount":1}}
+{"page":"wall","quiet":{"TaskDuration":0.0005,"ScriptDuration":0,"LayoutDuration":0,"RecalcStyleDuration":0,"LayoutCount":0,"RecalcStyleCount":0},"update":{"TaskDuration":0.0037,"ScriptDuration":0,"LayoutDuration":0.0007,"RecalcStyleDuration":0.0004,"LayoutCount":1,"RecalcStyleCount":1}}
+{"page":"wall","quiet":{"TaskDuration":0.0038,"ScriptDuration":0.0009,"LayoutDuration":0.0007,"RecalcStyleDuration":0.0004,"LayoutCount":1,"RecalcStyleCount":1},"update":{"TaskDuration":0.0041,"ScriptDuration":0,"LayoutDuration":0.0012,"RecalcStyleDuration":0.0004,"LayoutCount":1,"RecalcStyleCount":1}}
+{"wall_visible_after_close":false}
+{"reading":"cards=3 wall hidden","seconds":120,"total":{"private_mb":265.07,"cpu_pct":1.33,"ws_mb":496.31},"roles":{"wv-crashpad-handler":{"private_mb":2.73,"cpu_pct":0,"n":1,"ws_mb":12.5},"wv-utility-storage":{"private_mb":7.57,"cpu_pct":0,"n":1,"ws_mb":20.55},"exe":{"private_mb":10.61,"cpu_pct":1.02,"n":1,"ws_mb":31.82},"wv-browser":{"private_mb":45.15,"cpu_pct":0.04,"n":1,"ws_mb":130.5},"wv-gpu-process":{"private_mb":113.18,"cpu_pct":0.2,"n":1,"ws_mb":97.5},"wv-renderer":{"private_mb":73.8,"cpu_pct":0.07,"n":2,"ws_mb":162.51},"wv-utility-network":{"private_mb":12.03,"cpu_pct":0,"n":1,"ws_mb":40.93}}}
+{"login_entry_unchanged":true}
+Stop-Process : Cannot find a process with the process identifier 3048.
+At C:\Users\ajbar\klepsydra-perf\run.ps1:118 char:5
++     Stop-Process -Id $proc.Id -Force
++     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : ObjectNotFound: (3048:Int32) [Stop-Process], ProcessCommandException
+    + FullyQualifiedErrorId : NoProcessFoundForGivenId,Microsoft.PowerShell.Commands.StopProcessCommand
+ 
+== after 2026-10-28T08:47:30-04:00
+{"cards":0,"pid":7444,"targets":"[{\"type\":\"page\",\"url\":\"http://tauri.localhost/\"}]"}
+{"reading":"cards=0 gauge only","seconds":120,"total":{"private_mb":155.22,"cpu_pct":0.78,"ws_mb":351.4},"roles":{"wv-utility-network":{"private_mb":11.71,"cpu_pct":0.03,"n":1,"ws_mb":40.37},"wv-crashpad-handler":{"private_mb":2.81,"cpu_pct":0,"n":1,"ws_mb":12.88},"exe":{"private_mb":5.85,"cpu_pct":0.52,"n":1,"ws_mb":29.73},"wv-browser":{"private_mb":36.15,"cpu_pct":0.14,"n":1,"ws_mb":120.17},"wv-gpu-process":{"private_mb":67.19,"cpu_pct":0.01,"n":1,"ws_mb":68.92},"wv-renderer":{"private_mb":24.14,"cpu_pct":0.08,"n":1,"ws_mb":59.35},"wv-utility-storage":{"private_mb":7.37,"cpu_pct":0,"n":1,"ws_mb":19.98}}}
+{"page":"gauge","seconds":60,"TaskDuration":0.0085,"ScriptDuration":0.002,"LayoutDuration":0,"RecalcStyleDuration":0.0005,"LayoutCount":0,"RecalcStyleCount":16,"JSHeapUsedMB":1.33,"Nodes":87}
+{"cards":10,"pid":5276,"targets":"[{\"type\":\"page\",\"url\":\"http://tauri.localhost/\"}]"}
+{"reading":"cards=10 gauge only","seconds":120,"total":{"private_mb":256.31,"cpu_pct":4.86,"ws_mb":418.37},"roles":{"exe":{"private_mb":7.89,"cpu_pct":0.81,"n":1,"ws_mb":32.61},"wv-crashpad-handler":{"private_mb":2.81,"cpu_pct":0.07,"n":1,"ws_mb":13.03},"wv-browser":{"private_mb":47.34,"cpu_pct":2.07,"n":1,"ws_mb":145.71},"wv-gpu-process":{"private_mb":149.55,"cpu_pct":1.51,"n":1,"ws_mb":100.25},"wv-utility-storage":{"private_mb":7.38,"cpu_pct":0,"n":1,"ws_mb":20.19},"wv-renderer":{"private_mb":29.15,"cpu_pct":0.4,"n":1,"ws_mb":67.04},"wv-utility-network":{"private_mb":12.19,"cpu_pct":0,"n":1,"ws_mb":39.54}}}
+{"page":"gauge","seconds":60,"TaskDuration":0.0448,"ScriptDuration":0.0049,"LayoutDuration":0,"RecalcStyleDuration":0.0003,"LayoutCount":0,"RecalcStyleCount":11,"JSHeapUsedMB":2.02,"Nodes":173}
+"opened"
+{"wall_open":true}
+{"reading":"cards=10 wall shown","seconds":120,"total":{"private_mb":301.11,"cpu_pct":1.29,"ws_mb":531.03},"roles":{"exe":{"private_mb":8.71,"cpu_pct":0.49,"n":1,"ws_mb":37.45},"wv-crashpad-handler":{"private_mb":2.84,"cpu_pct":0,"n":1,"ws_mb":13.16},"wv-browser":{"private_mb":45.54,"cpu_pct":0.33,"n":1,"ws_mb":144.89},"wv-gpu-process":{"private_mb":133.88,"cpu_pct":0.25,"n":1,"ws_mb":96.89},"wv-utility-storage":{"private_mb":7.47,"cpu_pct":0,"n":1,"ws_mb":20.34},"wv-renderer":{"private_mb":90.8,"cpu_pct":0.21,"n":2,"ws_mb":178.97},"wv-utility-network":{"private_mb":11.87,"cpu_pct":0.01,"n":1,"ws_mb":39.33}}}
+{"page":"wall","seconds":60,"TaskDuration":0.0292,"ScriptDuration":0.0085,"LayoutDuration":0.007,"RecalcStyleDuration":0.0036,"LayoutCount":4,"RecalcStyleCount":8,"JSHeapUsedMB":3.02,"Nodes":3625}
+{"page":"wall","cards":10,"msToCards":162.2,"JSHeapUsedMB":2.09,"Nodes":6730}
+{"page":"wall","cards":10,"msToCards":113.3,"JSHeapUsedMB":2.04,"Nodes":2512}
+{"page":"wall","cards":10,"msToCards":117.2,"JSHeapUsedMB":2.06,"Nodes":2512}
+{"page":"wall","cards":10,"msToCards":113.5,"JSHeapUsedMB":2.09,"Nodes":6734}
+{"page":"wall","cards":10,"msToCards":108.5,"JSHeapUsedMB":2.12,"Nodes":6738}
+{"page":"wall","quiet":{"TaskDuration":0.0002,"ScriptDuration":0,"LayoutDuration":0,"RecalcStyleDuration":0,"LayoutCount":0,"RecalcStyleCount":0},"update":{"TaskDuration":0.1207,"ScriptDuration":0.0053,"LayoutDuration":0.0128,"RecalcStyleDuration":0.0536,"LayoutCount":32,"RecalcStyleCount":44}}
+{"page":"wall","quiet":{"TaskDuration":0.0004,"ScriptDuration":0,"LayoutDuration":0,"RecalcStyleDuration":0,"LayoutCount":0,"RecalcStyleCount":0},"update":{"TaskDuration":0.0279,"ScriptDuration":0.002,"LayoutDuration":0.0033,"RecalcStyleDuration":0.003,"LayoutCount":2,"RecalcStyleCount":2}}
+{"page":"wall","quiet":{"TaskDuration":0.0003,"ScriptDuration":0,"LayoutDuration":0,"RecalcStyleDuration":0,"LayoutCount":0,"RecalcStyleCount":0},"update":{"TaskDuration":0.0071,"ScriptDuration":0,"LayoutDuration":0.0016,"RecalcStyleDuration":0.0009,"LayoutCount":1,"RecalcStyleCount":1}}
+{"page":"wall","quiet":{"TaskDuration":0.0002,"ScriptDuration":0,"LayoutDuration":0,"RecalcStyleDuration":0,"LayoutCount":0,"RecalcStyleCount":0},"update":{"TaskDuration":0.0083,"ScriptDuration":0,"LayoutDuration":0.0018,"RecalcStyleDuration":0.0011,"LayoutCount":1,"RecalcStyleCount":1}}
+{"page":"wall","quiet":{"TaskDuration":0.0081,"ScriptDuration":0.0019,"LayoutDuration":0.0016,"RecalcStyleDuration":0.0008,"LayoutCount":1,"RecalcStyleCount":1},"update":{"TaskDuration":0.008,"ScriptDuration":0,"LayoutDuration":0.0017,"RecalcStyleDuration":0.0012,"LayoutCount":1,"RecalcStyleCount":1}}
+{"wall_visible_after_close":false}
+{"reading":"cards=10 wall hidden","seconds":120,"total":{"private_mb":308.41,"cpu_pct":0.94,"ws_mb":546.25},"roles":{"exe":{"private_mb":11.1,"cpu_pct":0.46,"n":1,"ws_mb":38.97},"wv-crashpad-handler":{"private_mb":2.72,"cpu_pct":0,"n":1,"ws_mb":13.09},"wv-browser":{"private_mb":46.32,"cpu_pct":0.04,"n":1,"ws_mb":145.12},"wv-gpu-process":{"private_mb":133.74,"cpu_pct":0.22,"n":1,"ws_mb":101.93},"wv-utility-storage":{"private_mb":7.39,"cpu_pct":0,"n":1,"ws_mb":20.36},"wv-renderer":{"private_mb":95.28,"cpu_pct":0.22,"n":2,"ws_mb":187.36},"wv-utility-network":{"private_mb":11.86,"cpu_pct":0,"n":1,"ws_mb":39.42}}}
+{"page":"wall","seconds":60,"TaskDuration":0.0273,"ScriptDuration":0.0082,"LayoutDuration":0.007,"RecalcStyleDuration":0.0038,"LayoutCount":4,"RecalcStyleCount":4,"JSHeapUsedMB":2.97,"Nodes":3504}
+{"login_entry_unchanged":true}
+== end 2026-10-28T09:02:05-04:00
+rc=0
