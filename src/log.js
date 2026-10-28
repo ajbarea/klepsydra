@@ -57,13 +57,15 @@ function debugFlag(win) {
 /**
  * A logger for the module at `where` (a path under src/, such as
  * "fleet/wall.js"), which becomes the log line's target `webview::<where>`.
- * `env` replaces the window, console and debug flag, for tests.
+ * `env` replaces the window, console, debug flag and clock (`now`, in ms),
+ * for tests.
  */
 export function createLog(where, env = {}) {
   const win = () => env.window ?? globalThis.window;
   const out = () => env.console ?? globalThis.console;
   const debugOn = () => env.debug ?? debugFlag(win());
-  const now = () => (env.now ?? Date.now)();
+  // Monotonic, so a clock set back cannot fold a new episode into an old one.
+  const now = () => (env.now ? env.now() : performance.now());
   const seen = new Map(); // id -> { n: sightings this episode, at: the last one }
 
   function send(level, message, fields) {
