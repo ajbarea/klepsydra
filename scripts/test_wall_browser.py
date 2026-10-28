@@ -4825,7 +4825,7 @@ LIST_COLOURS = """() => {
   const ratio = (a, b) => { const [x, y] = [lum(a), lum(b)].sort((m, n) => n - m); return (x + 0.05) / (y + 0.05); };
   const opts = [...document.querySelectorAll('#theme option')];
   return {
-    options: opts.map((o) => { const s = getComputedStyle(o); return { bg: s.backgroundColor, fg: s.color, ratio: Math.round(ratio(s.color, s.backgroundColor) * 10) / 10, light: lum(s.backgroundColor) > 0.2 }; }),
+    options: opts.map((o) => { const s = getComputedStyle(o); return { chosen: o.selected, bg: s.backgroundColor, fg: s.color, ratio: Math.round(ratio(s.color, s.backgroundColor) * 10) / 10, light: lum(s.backgroundColor) > 0.2 }; }),
   };
 }"""
 
@@ -4833,22 +4833,29 @@ LIST_COLOURS = """() => {
 def theme_list_is_dark(wall):
     """The Characters list opens dark (#151). Windows draws the native list
     from the select's and the options' own colours, so the select is the
-    bar's colour, never transparent, and every option is the wall's card
-    colour with its text at 4.5:1 or more."""
+    bar's colour, never transparent, every other option the wall's card
+    colour and the chosen one the hover colour, each with its text at 4.5:1
+    or more."""
     page = wall.open(1920, 1000, 8)
     got = page.evaluate(LIST_COLOURS)
     tokens = page.evaluate("""() => {
       const probe = document.createElement('div');
       document.body.append(probe);
       const of = (v) => { probe.style.background = `var(${v})`; return getComputedStyle(probe).backgroundColor; };
-      const out = { card: of('--card-bg'), wall: of('--wall-bg'), select: getComputedStyle(document.getElementById('theme')).backgroundColor };
+      const out = { card: of('--card-bg'), hover: of('--button-hover'), wall: of('--wall-bg'), select: getComputedStyle(document.getElementById('theme')).backgroundColor };
       probe.remove();
       return out;
     }""")
-    dark = all(o["bg"] == tokens["card"] and not o["light"] and o["ratio"] >= 4.5 for o in got["options"])
-    wall.check(len(got["options"]) == 3 and dark and tokens["select"] == tokens["wall"],
-               "the select wears the bar's colour and every option the card's, light text at 4.5:1 or more", [got["options"], tokens])
+    dark = all(
+        o["bg"] == tokens["hover" if o["chosen"] else "card"] and not o["light"] and o["ratio"] >= 4.5
+        for o in got["options"]
+    )
+    chosen = sum(o["chosen"] for o in got["options"])
+    wall.check(len(got["options"]) == 3 and chosen == 1 and dark and tokens["select"] == tokens["wall"],
+               "the select wears the bar's colour, the chosen option the hover colour and the rest the card's, light text at 4.5:1 or more",
+               [got["options"], tokens])
     page.close()
+
 
 def main() -> int:
     handler = functools.partial(Quiet, directory=str(ROOT))
