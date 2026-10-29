@@ -175,9 +175,15 @@ def runs_that_count(user: str, repo: str, gh: GitHub) -> tuple[list[dict], str]:
     """The decisive run (succeeded or failed) newest per workflow and branch, on
     the default branch or at an open PR's head, and the default branch. Each is
     asked for by branch or by head, so a busy repo cannot page one out."""
-    default = gh.get(
-        f"/repos/{user}/{repo}", keep=lambda b: {"default_branch": b["default_branch"]}
-    )["default_branch"]
+    meta = gh.get(
+        f"/repos/{user}/{repo}",
+        keep=lambda b: {
+            "default_branch": b["default_branch"],
+            "full_name": b["full_name"],
+        },
+    )
+    # A transferred repo answers under its new owner; compared without case.
+    default, own = meta["default_branch"], meta["full_name"].lower()
     pulls = gh.get(
         f"/repos/{user}/{repo}/pulls?state=open&per_page=100", keep=slim_pulls
     )
@@ -198,14 +204,32 @@ def runs_that_count(user: str, repo: str, gh: GitHub) -> tuple[list[dict], str]:
         if r.get("status") != "completed" or r.get("conclusion") not in DECISIVE:
             continue
         pr = r.get("_pr")
-        if not pr and (
-            r["head_branch"] != default or r.get("repo") not in (None, f"{user}/{repo}")
-        ):
+        r["fork"] = (r.get("repo") or own).lower() != own
+        if not pr and (r["head_branch"] != default or r["fork"]):
             continue
         key = (r["workflow_id"], pr["number"] if pr else default)
         if key not in newest or r["created_at"] > newest[key]["created_at"]:
             newest[key] = r | {"_pr": pr}
     return list(newest.values()), default
+
+
+def pr_numbers(user: str, repo: str, gh) -> list[int]:
+    return [
+        p["number"]
+        for p in gh.get(
+            f"/repos/{user}/{repo}/pulls?state=open&per_page=100", keep=slim_pulls
+        )
+    ]
+
+
+def workflow_ids(user: str, repo: str, gh) -> list[int]:
+    """The ids of the repo's workflows that are still active."""
+    return gh.get(
+        f"/repos/{user}/{repo}/actions/workflows?per_page=100",
+        keep=lambda b: [
+            w["id"] for w in b.get("workflows", []) if w.get("state") == "active"
+        ],
+    )
 
 
 def failing_step(user: str, repo: str, run_id: int, gh: GitHub) -> dict:
@@ -286,7 +310,7 @@ def needs_you(run: dict) -> bool:
     tmp = QUEUE.with_name(f".{QUEUE.name}.{os.getpid()}.tmp")
     try:
         return add_queue_line(run, mark, tmp)
-    except OSError as e:
+    except (OSError, ValueError) as e:
         tmp.unlink(missing_ok=True)
         event(
             logging.WARNING,
@@ -393,8 +417,7 @@ def repo_pass(
             dependabot.append(item)
             continue
         key = f"{repo}:{r['id']}"
-        fork = r.get("repo") not in (None, f"{user}/{repo}")
-        if key not in known and fork:
+        if key not in known and r["fork"]:
             known[key] = {
                 "failing": {},
                 "triage": {
@@ -445,16 +468,28 @@ def repo_pass(
         red.append(item)
     # 2. A red run whose workflow ran no newer decisive run stays red even when it has
     # paged out of the newest runs: only a newer run of the same workflow and place clears it.
+    # A held red goes when its PR is no longer open, its workflow is gone, a newer
+    # red took its place, or it is a month old.
     places = {
-        (r["workflow_id"], r["_pr"]["number"] if r["_pr"] else "default") for r in runs
+        (r["workflow_id"], r["_pr"]["number"] if r["_pr"] else "default"): r["id"]
+        for r in runs
     }
+    open_prs = set(pr_numbers(user, repo, gh))
+    workflows = set(workflow_ids(user, repo, gh))
+    month = time.time() - 30 * 86400
     for key, k in known.items():
         held = k.get("item")
-        if (
-            key.startswith(f"{repo}:")
-            and held
-            and (held["workflow_id"], held["place"]) not in places
-        ):
+        if not (key.startswith(f"{repo}:") and held):
+            continue
+        place = (held["workflow_id"], held["place"])
+        newer = places.get(place) not in (None, held["run_id"])
+        gone = (held["place"] != "default" and held["place"] not in open_prs) or held[
+            "workflow_id"
+        ] not in workflows
+        if newer or gone or k.get("seen", 0) < month:
+            k.pop("item")
+            continue
+        if place not in places:
             red.append(
                 {x: v for x, v in held.items() if x not in ("workflow_id", "place")}
                 | {"failing": k["failing"], "triage": k["triage"]}
@@ -540,6 +575,8 @@ def main(argv: list[str]) -> int:
         known = json.loads(known_path.read_text())
     except (OSError, ValueError):
         known = {}
+    for v in known.values():
+        v.setdefault("seen", int(time.time()))
     user, repos = sisters(TECHNE_TOML)
     event(logging.INFO, "ci watch started", repos=len(repos), poll_s=POLL_S)
     sweep_path = STATE / "ci" / "sweep.json"

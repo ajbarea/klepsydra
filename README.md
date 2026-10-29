@@ -1238,7 +1238,9 @@ branch or at the head of an open pull request. The newest completed run per
 workflow and branch that succeeded or failed decides (a cancelled, skipped or
 neutral run decides nothing): `failure`, `timed_out` or `startup_failure` is
 red, and a later green run clears it. The default branch and each open PR's
-head are asked for on their own, so a busy repo cannot page a red run out.
+head are asked for on their own. A red run that pages out of the newest runs
+stays red until a newer run of its workflow in the same place decides, its PR
+closes, its workflow is deleted, or a month passes.
 
 Each new red run gets one unattended, read-only triage by techne ci-audit's
 report mode (`report.sh`, from the installed techne plugin or

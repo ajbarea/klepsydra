@@ -55,8 +55,11 @@ def pr(n, sha, login="ajbarea"):
 class Fake:
     """GitHub's raw answers, filtered by the query as the API would."""
 
-    def __init__(self, runs, pulls=(), jobs=None, broken=()):
+    def __init__(
+        self, runs, pulls=(), jobs=None, broken=(), full_name=None, workflows=(1, 2, 3)
+    ):
         self.runs, self.pulls = list(runs), list(pulls)
+        self.full_name, self.workflows = full_name, workflows
         self.jobs = jobs or {
             "jobs": [
                 {
@@ -82,6 +85,8 @@ class Fake:
             body = self.jobs
         elif url.path.endswith("/pulls"):
             body = self.pulls
+        elif url.path.endswith("/actions/workflows"):
+            body = {"workflows": [{"id": w, "state": "active"} for w in self.workflows]}
         elif url.path.endswith("/actions/runs"):
             rs = [
                 r
@@ -91,7 +96,10 @@ class Fake:
             ]
             body = {"workflow_runs": rs}
         else:
-            body = {"default_branch": "main"}
+            body = {
+                "default_branch": "main",
+                "full_name": self.full_name or url.path.removeprefix("/repos/"),
+            }
         return keep(body) if keep else body
 
 
@@ -332,6 +340,54 @@ class Poll2(unittest.TestCase):
         self.assertEqual(
             self.triaged, [10], "the PR's run is not swept, and run 10 only once"
         )
+
+
+class Held(unittest.TestCase):
+    """A red run held after it paged out, and what lets it go."""
+
+    setUp = Poll.setUp
+    tearDown = Poll.tearDown
+
+    def test_a_pr_closed_while_red_lets_its_red_go(self):
+        known = {}
+        ci_watch.poll(
+            "o", ["r"], Fake([run(5, branch="b", sha="p")], pulls=[pr(4, "p")]), known
+        )
+        got = ci_watch.poll("o", ["r"], Fake([run(6, conclusion="success")]), known)
+        self.assertEqual(got["red"], [], "PR 4 is no longer open")
+
+    def test_a_deleted_or_renamed_workflow_lets_its_red_go(self):
+        known = {}
+        ci_watch.poll("o", ["r"], Fake([run(5, workflow=3)]), known)
+        got = ci_watch.poll(
+            "o", ["r"], Fake([run(6, conclusion="success")], workflows=(1, 2)), known
+        )
+        self.assertEqual(got["red"], [])
+
+    def test_a_newer_red_in_the_same_place_replaces_the_older_one(self):
+        known = {}
+        ci_watch.poll("o", ["r"], Fake([run(5, workflow=3)]), known)
+        ci_watch.poll(
+            "o", ["r"], Fake([run(7, workflow=3, at="2026-10-29T00:00:00Z")]), known
+        )
+        got = ci_watch.poll(
+            "o", ["r"], Fake([run(9, workflow=1, conclusion="success")]), known
+        )
+        self.assertEqual(
+            [r["run_id"] for r in got["red"]], [7], "only the newer red, once"
+        )
+
+    def test_a_transferred_repo_or_another_case_is_not_a_fork(self):
+        moved = run(5) | {"head_repository": {"full_name": "LDQIS/ldqis"}}
+        got = ci_watch.poll("aj", ["ldqis"], Fake([moved], full_name="ldqis/ldqis"), {})
+        self.assertEqual(
+            [(r["run_id"], r["triage"]["state"]) for r in got["red"]], [(5, "done")]
+        )
+
+    def test_a_queue_file_that_will_not_decode_hides_no_red(self):
+        (TMP / "q.md").write_bytes(b"\xff\xfe## Needs you\n")
+        got = ci_watch.poll("o", ["r"], Fake([run(5)]), {})
+        self.assertEqual(([r["run_id"] for r in got["red"]], got["errors"]), ([5], []))
 
 
 class Triage(unittest.TestCase):
