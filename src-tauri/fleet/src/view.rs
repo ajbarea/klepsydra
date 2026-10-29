@@ -116,10 +116,11 @@ pub struct View {
     /// of its own oldest first, so a card keeps its face. None from a hook
     /// that never stamped it.
     pub started_at: Option<i64>,
-    /// An ended session whose voice went to a live one (keep_faces_distinct);
-    /// left out of the JSON when not.
-    #[serde(skip_serializing_if = "std::ops::Not::not")]
-    pub ceded: bool,
+    /// The voice this card gave up to another card that keeps it
+    /// (keep_faces_distinct), live or ended; the wall counts it in this card's
+    /// place so no other card's face moves (castPicks). Left out when none.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ceded: Option<String>,
     /// The account it runs on; left out of the JSON when the hook never said.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub account: Option<crate::session::Account>,
@@ -303,7 +304,7 @@ pub fn view(entry: &Entry, now: i64) -> Option<View> {
             f.remote_url.clone()
         },
         started_at: f.started_at,
-        ceded: false,
+        ceded: None,
         account: f.account.clone(),
         reply_at: None,
         marks: Marks {
@@ -353,11 +354,7 @@ fn keep_faces_distinct(shown: &mut [(&SessionFile, View)]) {
             None => true,
         };
         if !keeps {
-            // An ended card that gave its voice to a live one: the wall casts
-            // it a character after every other card, so its new face moves no
-            // other card's (castPicks).
-            v.ceded = !live(v);
-            v.voice = None;
+            v.ceded = v.voice.take();
         }
     }
 }
@@ -1163,12 +1160,14 @@ mod tests {
                 .find(|v| v.session_id == id)
                 .unwrap()
                 .ceded
+                .clone()
         };
-        assert!(
-            ceded("old"),
-            "the ended card that gave its voice is marked, so the wall casts it last"
+        assert_eq!(
+            ceded("old").as_deref(),
+            Some("bf_emma"),
+            "the card that gave its voice names it, so the wall counts it in that card's place"
         );
-        assert!(!ceded("new"));
+        assert_eq!(ceded("new"), None);
     }
 
     #[test]

@@ -96,9 +96,11 @@ class Wall:
     def __init__(self, browser, port):
         self.browser, self.port, self.failed, self.passed = browser, port, 0, 0
 
-    def open(self, width, height, cards, fixture=None, ledger=None, query=""):
+    def open(self, width, height, cards, fixture=None, ledger=None, query="", init=None):
         page = self.browser.new_page(viewport={"width": width, "height": height})
         watch(page)
+        if init:
+            page.add_init_script(init)
         self.ledger_requests = 0
 
         def count(route):
@@ -566,7 +568,9 @@ def drawer_tables(wall):
       return [c.querySelector('.visually-hidden')?.textContent ?? c.textContent, shown ? shown.textContent : c.textContent, c.querySelector('[title]')?.title ?? null];
     })"""
     )
-    other = "Other sessions: 2 (1 with no voice, 1 with a voice outside the cast)"
+    # demo-15's voice is outside the cast, but its card wears a picked character (#148), so its
+    # tokens count under that row; only the earlier session with no voice and no card is Other.
+    other = "Other sessions: 1 (with no voice)"
     names = [r[0] for r in rows]
     cdp = page.context.new_cdp_session(page)
     tree = [n for n in cdp.send("Accessibility.getFullAXTree")["nodes"] if not n.get("ignored")]
@@ -635,6 +639,31 @@ def shared_home_voice(wall):
     ok = [n for n in names if n.startswith("Hephaestus")] == want and blocked == [want[1]]
     wall.check(ok, "sessions sharing a home voice keep a row each, named for its card", [names, blocked])
     page.close()
+
+
+def cast_pick_outlives_its_card(wall):
+    """#148: a session the wall cast a character keeps that character's row in
+    Tokens by character after its card leaves the wall (the pick is remembered)."""
+    fleet = json.loads((ROOT / "scripts/fixtures/fleet-demo.json").read_text())
+    sid = fleet["sessions"][1]["session_id"]
+    fleet["sessions"][1]["voice"] = None
+    view = json.loads(ledger_view())
+    view["day"]["voices"].pop(sid, None)
+    rows = """() => [...document.querySelectorAll('#ledger-characters-table tbody tr')].map((r) =>
+      r.cells[0].querySelector('.visually-hidden')?.textContent ?? r.cells[0].textContent)"""
+    page = wall.open(960, 1000, 8, fixture=json.dumps(fleet), ledger=json.dumps(view))
+    open_drawer(page)
+    before = page.evaluate(rows)
+    picks = page.evaluate("localStorage.getItem('klepsydra.ledger.picks')")
+    page.close()
+    gone = fleet | {"sessions": [x for x in fleet["sessions"] if x["session_id"] != sid]}
+    init = f"localStorage.setItem('klepsydra.ledger.picks', {json.dumps(picks)})"
+    page = wall.open(960, 1000, 8, fixture=json.dumps(gone), ledger=json.dumps(view), init=init)
+    open_drawer(page)
+    after = page.evaluate(rows)
+    page.close()
+    ok = bool(picks) and sid in picks and sorted(before) == sorted(after)
+    wall.check(ok, "a cast session keeps its character's Ledger row after its card leaves", [before, after])
 
 
 def drawer_states(wall):
@@ -4970,6 +4999,7 @@ def main() -> int:
             drawer_tables,
             drawer_states,
             shared_home_voice,
+            cast_pick_outlives_its_card,
             drawer_follows_snapshots,
             portrait_dialog,
             band_clear,

@@ -829,11 +829,23 @@ test("#148: a session with no character of its own gets one no live card shows, 
   const shared = faces([at("o", null, 1), at("n", olderPick, 2)]);
   assert.equal(shared.o, shared.n, "the two share the character; the older one never moves");
 
-  // #148 round 2: the ended card that gave its voice to a live one (the crate's `ceded`) is cast last.
-  for (let i = 0; i < 200; i++) {
-    const before = faces([at(`B${i}`, "v1", 2), at(`C${i}`, null, 3)])[`C${i}`];
-    const after = faces([at(`A${i}`, null, 1, { status: "ended", ceded: true }), at(`B${i}`, "v1", 2), at(`C${i}`, null, 3)])[`C${i}`];
-    assert.equal(after, before, "A's new face moves no other card's");
+  // #148 round 3: a card that gives its voice to another (the crate's `ceded`) moves no other card's face,
+  // whether an older card ended (a), a newcomer took it (b) or a hold beat a live card's home voice (c).
+  for (let i = 0; i < 500; i++) {
+    const B = `B${i}`;
+    const a1 = faces([at(`A${i}`, "v1", 1), at(B, null, 2), at(`N${i}`, "v1", 10)])[B];
+    const a2 = faces([at(`A${i}`, null, 1, { status: "ended", ceded: "v1" }), at(B, null, 2), at(`N${i}`, "v1", 10)])[B];
+    assert.equal(a2, a1, "(a) an older card ending moves no newer face");
+    const b1 = faces([at(`A${i}`, "v1", 1, { status: "ended" }), at(B, null, 2)])[B];
+    const b2 = faces([at(`A${i}`, null, 1, { status: "ended", ceded: "v1" }), at(B, null, 2), at(`N${i}`, "v1", 10)])[B];
+    assert.equal(b2, b1, "(b) a newcomer taking an ended card's voice moves no other face");
+    const c1 = faces([at(`A${i}`, "v1", 1), at(B, null, 2)])[B];
+    const c2 = faces([at(`A${i}`, null, 1, { ceded: "v1" }), at(B, null, 2), at(`N${i}`, "v1", 10)])[B];
+    assert.equal(c2, c1, "(c) a live card losing its home voice moves no other face");
+    // The card that gave its voice wears another character, and keeps it as newer cards come and go.
+    const own = faces([at(`A${i}`, null, 1, { ceded: "v1" }), at(`N${i}`, "v1", 10)])[`A${i}`];
+    assert.notEqual(own, "One");
+    assert.equal(faces([at(`A${i}`, null, 1, { ceded: "v1" }), at(`N${i}`, "v1", 10), at(`Z${i}`, null, 11), at(`Y${i}`, null, 12)])[`A${i}`], own);
   }
 
   // An older card ending never moves a newer one's face.

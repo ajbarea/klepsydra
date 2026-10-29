@@ -1083,7 +1083,7 @@ mod tests {
                 "background": {"agents": 1, "shells": 0, "tasks": 0},
                 "ledger": {"tokens": {"input": 1}}, "ledger_partial": true,
                 "remote_url": "https://claude.ai/code/session_01ABC",
-                "account": {"id": "a1", "label": "RIT-CS-DQL"}, "started_at": 1, "ceded": true,
+                "account": {"id": "a1", "label": "RIT-CS-DQL"}, "started_at": 1, "ceded": "bf_emma",
                 "wrapup": {"state": "blocked", "reason": "a review is running", "at": 5, "settled_at": 6},
                 "turn_at": 4, "asked_after_turn": true, "reply_at": 8
             }, {"session_id": "s2", "launch_dir": "C:\\Users\\aj\\proj", "status": "done"}, "junk"],

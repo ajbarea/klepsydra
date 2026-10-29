@@ -172,7 +172,7 @@ mod tests {
             asked_after_turn: false,
             remote_url: None,
             started_at: None,
-            ceded: false,
+            ceded: None,
             account: None,
             reply_at: None,
             marks: Marks {

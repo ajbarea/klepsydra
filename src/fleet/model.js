@@ -124,7 +124,9 @@ export function identity(s, cast) {
  * older ones, so a card keeps its face while it is on the wall: a newer
  * session never takes it, even one whose own voice is that character (the two
  * then share it), and an ended card holds its face until it leaves the wall.
- * Of the free characters it takes the one its id hashes highest with. The
+ * A card that gave its voice to another (`ceded`) keeps that voice's count in
+ * its own place, so newer faces never move; its new face may then match a
+ * newer card's. Of the free characters it takes the one its id hashes highest with. The
  * strip, the wall and the phone see the same sessions, so they agree. With no
  * theme loaded nothing is picked and the cards wear medallions.
  */
@@ -133,23 +135,24 @@ export function castPicks(sessions, cast) {
   if (!chars.length) return sessions;
   const own = (s) => (castFiles(castCharacter(s.voice, cast), cast) ? s.voice : null);
   const shown = new Map(chars.map((c) => [c, 0]));
-  // An ended card that gave its voice to a live one (`ceded`) is cast last, so its new face moves no other card's.
   const order = [...sessions].sort(
-    (a, b) =>
-      (a.ceded === true) - (b.ceded === true) ||
-      (a.started_at ?? Infinity) - (b.started_at ?? Infinity) ||
-      (a.session_id < b.session_id ? -1 : 1),
+    (a, b) => (a.started_at ?? Infinity) - (b.started_at ?? Infinity) || (a.session_id < b.session_id ? -1 : 1),
   );
   const pick = new Map();
   for (const s of order) {
     let c = own(s);
+    // The voice this card gave up to another (the crate's `ceded`): it still counts in this
+    // card's place, so newer cards see what they saw before; the card's new face avoids it.
+    const gave = own({ voice: s.ceded });
     if (!c) {
-      const least = Math.min(...shown.values());
-      const pool = chars.filter((x) => shown.get(x) === least);
+      const free = chars.length > 1 && gave ? chars.filter((x) => x !== gave) : chars;
+      const least = Math.min(...free.map((x) => shown.get(x)));
+      const pool = free.filter((x) => shown.get(x) === least);
       c = pool.reduce((best, x) => (hash(`${s.session_id}:${x}`) > hash(`${s.session_id}:${best}`) ? x : best));
       pick.set(s.session_id, c);
     }
-    if (shown.has(c)) shown.set(c, shown.get(c) + 1);
+    const counted = gave ?? c;
+    if (shown.has(counted)) shown.set(counted, shown.get(counted) + 1);
   }
   return sessions.map((s) => (pick.has(s.session_id) ? { ...s, pick: pick.get(s.session_id) } : s));
 }
