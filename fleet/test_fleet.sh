@@ -661,6 +661,67 @@ check "no move when the other account is nearly full too" "$(wc -c <"$work/moved
 t kill-window -t "$p"; : >"$REGISTRY"
 logout a; logout b; reading a Personal 40 1000; rm -f "$KLEPSYDRA_DIR/accounts/b/s.json"
 
+echo "two accounts: review round 1"
+login a; login b; reading a Personal 100 5000; reading b RIT 10 4000
+: >"$FLEET_LOG"; : >"$work/moved"
+p=$(pane rb "{\"above\":[\"⏺ Done. done 11:50 AM\",\"$LIMIT\"]}"); settle
+live "$p"
+printf '%s\trb\t%s\t%s\t/w\t%s\n' "$p" "$work/brief.src" "$SID" "$work/cfg-a" >"$REGISTRY"
+cat >"$work/launch-rb.sh" <<EOF
+#!/usr/bin/env bash
+# A move launch during which AJ types into the old pane; it repoints the row, account too, as launch.sh does.
+tmux -L "$FLEET_SOCK" send-keys -t "$p" -l "AJ: wait"
+sleep 1
+sed -i "s|^$p\t\(.*\)\t$work/cfg-a\$|%995\t\1\t$work/cfg-b|" "$REGISTRY"
+echo "pane=%995 session=x account=$work/cfg-b avail=1MiB brief=started"
+EOF
+LAUNCH="$work/launch-rb.sh" FLEET_NOW=$noon bash "$here/resume-at-reset.sh" --once 2>/dev/null
+check "review 2: a move AJ undid points the row back at the old pane and its own account" "$(cut -f1,4,6 "$REGISTRY")" "$p	$SID	$work/cfg-a"
+: >"$work/moved"
+LAUNCH="$work/launch-move.sh" FLEET_NOW=$((noon + 60)) bash "$here/resume-at-reset.sh" --once 2>/dev/null
+check "review 5: and it waits before launching again" "$(wc -c <"$work/moved")" "0"
+t kill-window -t "$p"; : >"$REGISTRY"
+
+: >"$FLEET_LOG"
+p=$(pane nd "{\"above\":[\"⏺ Done. done 11:50 AM\",\"$LIMIT\"]}"); settle
+live "$p"
+printf '%s\tnd\t%s\t%s\t/w\t%s\n' "$p" "$work/brief.src" "$SID" "$work/cfg-a" >"$REGISTRY"
+printf '%s' '{"above":["Claude Code"]}' >"$work/ndnew.json"; : >"$work/ndnew.log"
+cat >"$work/launch-nd.sh" <<EOF
+#!/usr/bin/env bash
+new=\$(tmux -L "$FLEET_SOCK" new-window -d -P -F '#{pane_id}' -t fleet: "python3 -I $fake $work/ndnew.json $work/ndnew.log")
+sed -i "s|^$p\t\(.*\)\t$work/cfg-a\$|\$new\t\1\t$work/cfg-b|" "$REGISTRY"
+echo "pane=\$new session=x account=$work/cfg-b avail=1MiB brief=NOT-DELIVERED"
+EOF
+t send-keys -t "$p" -l "AJ: keep this"; settle
+resume "$noon"
+LAUNCH="$work/launch-nd.sh" FLEET_NOW=$((noon + 60)) bash "$here/resume-at-reset.sh" --once 2>/dev/null
+check "review 3: a brief that never started leaves the old pane, AJ's line and the row as they were" \
+  "$(grep -c '^SUBMIT' "$work/nd.log") [$(input_text "$(screen "$p")")] $(cut -f1,6 "$REGISTRY")" "0 [AJ: keep this] $p	$work/cfg-a"
+check "and the new pane is exited" "$(grep -c 'SUBMIT /exit' "$work/ndnew.log")" "1"
+t kill-window -t "$p"; : >"$REGISTRY"
+
+: >"$FLEET_LOG"; : >"$work/moved"
+p=$(pane sentit "{\"above\":[\"⏺ Done. done 11:50 AM\",\"$LIMIT\"]}"); settle
+live "$p"
+printf '%s\tsentit\t%s\t%s\t/w\t%s\n' "$p" "$work/brief.src" "$SID" "$work/cfg-a" >"$REGISTRY"
+t send-keys -t "$p" -l "AJ: do the footer"; settle
+FLEET_NOW=$noon MOVE_MIN_S=999999 bash "$here/resume-at-reset.sh" --once 2>/dev/null
+state sentit "{\"above\":[\"⏺ Done. done 11:50 AM\",\"❯ AJ: do the footer\",\"$LIMIT\"],\"clear\":true}"
+mover "$((noon + 60))"
+check "review 4: a line AJ sent into the limit is carried: the session never acted on it" "$(grep -c '^AJ: do the footer$' "$work/moved-brief")" "1"
+t kill-window -t "$p" 2>/dev/null; : >"$REGISTRY"
+
+: >"$FLEET_LOG"; : >"$work/moved"
+p=$(pane pasted "{\"above\":[\"⏺ Done. done 11:50 AM\",\"$LIMIT\"]}"); settle
+live "$p"
+printf '%s\tpasted\t%s\t%s\t/w\t%s\n' "$p" "$work/brief.src" "$SID" "$work/cfg-a" >"$REGISTRY"
+t load-buffer -b x "$work/three.txt"; t paste-buffer -p -d -b x -t "$p"; settle
+mover "$noon"; mover "$((noon + 60))"
+check "review 4: a pasted block is not moved, and the log says why" "$(wc -c <"$work/moved") $(logged 'pasted block cannot be carried' | wc -w)" "0 1"
+t kill-window -t "$p"; : >"$REGISTRY"
+logout a; logout b; reading a Personal 40 1000; rm -f "$KLEPSYDRA_DIR/accounts/b/s.json"
+
 echo "two accounts: the second folder follows the first"
 src=$work/sync-src dst=$work/sync-dst
 mkdir -p "$src/plugins/data" "$src/skills/one" "$src/skills/synced" "$src/projects/p" "$src/agents" "$dst"
@@ -682,7 +743,7 @@ check "the plugin lists are copies and plugin data is shared" \
 check "CLAUDE.md, projects and each skill are links; claude.ai's synced skills are not" \
   "$(readlink "$dst/CLAUDE.md") $(readlink "$dst/projects") $(readlink "$dst/skills/one") $( [[ -e $dst/skills/synced ]] && echo synced || echo none)" \
   "$src/CLAUDE.md $src/projects $src/skills/one none"
-check "a folder in the way is moved aside, never deleted" "$(cat "$dst"/agents.bak-*/x.md)" "its own"
+check "a folder in the way is moved aside, out of the folders Claude Code reads, never deleted" "$(cat "$dst"/.sync-bak/agents.*/x.md) $(find "$dst" -maxdepth 1 -name 'agents.bak*' | wc -l)" "its own 0"
 check ".claude.json gets the shared keys and keeps its own account" \
   "$(jq -c '[.mcpServers.m.command, .projects["/w"].hasTrustDialogAccepted, .hasCompletedOnboarding, .oauthAccount.accountUuid, .userID, .numStartups]' "$dst/.claude.json")" \
   '["x",true,true,"b","second",3]'
@@ -692,6 +753,21 @@ check "--check after a sync is clean" "$(acsync --check "$dst"; echo $?)" "0"
 printf '{"statusLine":{"command":"y"}}\n' >"$src/settings.json"
 check "a change to ~/.claude's settings is drift" "$(acsync --check "$dst" | grep -c 'settings.json'; echo "rc=${PIPESTATUS[0]}")" $'1\nrc=1'
 check "the first folder is never its own second" "$(acsync "$src" >/dev/null; echo $?)" "2"
+jq '.projects["/w"].lastCost = 9 | .projects["/w"].lastSessionId = "s9"' "$src/.claude.json-default" >"$work/j" && mv "$work/j" "$src/.claude.json-default"
+printf '{"statusLine":{"command":"x"}}\n' >"$src/settings.json"; acsync "$dst" >/dev/null
+jq '.projects["/rit-only"] = {hasTrustDialogAccepted: true}' "$dst/.claude.json" >"$work/j" && mv "$work/j" "$dst/.claude.json"
+jq '.projects["/w"].lastCost = 1' "$src/.claude.json-default" >"$work/j" && mv "$work/j" "$src/.claude.json-default"
+check "review 7: a session's per-folder figures, and folders only the second trusts, are no drift" "$(acsync --check "$dst"; echo $?)" "0"
+jq '.projects["/new"] = {hasTrustDialogAccepted: true}' "$src/.claude.json-default" >"$work/j" && mv "$work/j" "$src/.claude.json-default"
+acsync "$dst" >/dev/null
+check "review 7: a sync adds the first's trust and keeps the second's own" \
+  "$(jq -c '[.projects["/new"].hasTrustDialogAccepted, .projects["/rit-only"].hasTrustDialogAccepted, .projects["/w"].lastCost]' "$dst/.claude.json")" "[true,true,null]"
+: >"$dst/.claude.json"
+check "review 7: a second .claude.json that does not parse is left alone and the sync fails" "$(acsync "$dst" >/dev/null; echo $?) $(wc -c <"$dst/.claude.json")" "1 0"
+jq -n '{oauthAccount: {accountUuid: "b"}}' >"$dst/.claude.json"
+mkdir -p "$src/skills/two"; rm -rf -- "${dst:?}/skills"; ln -s "$src/skills" "$dst/skills"
+check "review 1: a second folder whose skills link into the first is refused, and the first's skills are untouched" \
+  "$(acsync "$dst" >/dev/null; echo $?) $(find "$src/skills" -mindepth 1 -maxdepth 1 | sort | sed "s|$src/skills/||" | tr '\n' ' ')" "1 one synced two "
 
 echo "the fleet log"
 check "every line is one JSON object with ts, level, target and message" \

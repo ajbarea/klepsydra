@@ -29,7 +29,8 @@ while IFS=$'\t' read -r p name brief sid _ account; do
   account=${account:-$FLEET_DEFAULT_CONFIG}
   best=$(best_account "$(date +%s)")
   if [[ -n $best && $best != "$account" && $(account_of "$best") != "$(account_of "$account")" ]]; then
-    out=$(FLEET_ACCOUNT=$best bash "$here/relaunch-fresh.sh" "$p" "$name" "$brief" "a fresh start, moved to the account with more room" 2>/dev/null | head -1)
+    out=$(FLEET_ACCOUNT=$best FLEET_WHY="had grown too large to keep resuming, and starts again on the account with more room" \
+      bash "$here/relaunch-fresh.sh" "$p" "$name" "$brief" "none: carry on from the brief" 2>/dev/null | head -1)
     flog INFO "fresh session on the account with more room" pane="$p" name="$name" from="$account" to="$best" result="$out"
     echo "fresh: $name moved to $best: $out"
     continue

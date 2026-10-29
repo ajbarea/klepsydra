@@ -28,6 +28,7 @@ dir=${FLEET_DIR:-$HOME/ajsoftworks}
 sid=$(cat /proc/sys/kernel/random/uuid)
 account=${FLEET_ACCOUNT:-$(best_account "$(date +%s)")}
 account=${account:-$FLEET_DEFAULT_CONFIG}
+account=${account%/} # "~/.claude/" is the default too, which must not set CLAUDE_CONFIG_DIR
 # Workers bypass permissions and Heph does not, so Heph's SendMessage would wait
 # for AJ's approval; worker-settings.json accepts it (AJ approved 2026-10-27).
 # The subagent cap enforces the briefs' rule of at most two at a time.

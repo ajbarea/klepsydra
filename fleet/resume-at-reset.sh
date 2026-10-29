@@ -109,11 +109,13 @@ retire() { # PANE [INTERRUPT]
   t kill-pane -t "$1" 2>/dev/null
 }
 
-# Point the registry row launch.sh moved to NEW back at PANE and session SID.
-set_pane() { # NEW PANE SID
+# Point the registry row launch.sh moved to NEW back at PANE, session SID
+# and config folder CFG (none: the column is left empty, the default).
+set_pane() { # NEW PANE SID CFG
   local tmp
   tmp=$(mktemp "$REGISTRY.XXXXXX") || return 1
-  awk -F'\t' -v OFS='\t' -v n="$1" -v p="$2" -v sid="$3" '$1 == n { $1 = p; $4 = sid } { print }' "$REGISTRY" >"$tmp" && mv -f -- "$tmp" "$REGISTRY"
+  awk -F'\t' -v OFS='\t' -v n="$1" -v p="$2" -v sid="$3" -v cfg="${4:-}" \
+    '$1 == n { $1 = p; $4 = sid; if (NF >= 6 || cfg != "") $6 = cfg } { print }' "$REGISTRY" >"$tmp" && mv -f -- "$tmp" "$REGISTRY"
 }
 
 # Replace PANE (registry NAME, BRIEF) with a fresh session from its brief,
@@ -127,10 +129,10 @@ fresh() { # PANE NAME BRIEF [WHY] [ACCOUNT] [NOTE]
   local account=${5:-} carried=${6:-} box
   box=$(input_text "$(screen "$p")")
   [[ -z $box || ( -n $carried && $box == "$carried" ) ]] || return 1
-  local sid
+  local sid cfg out got
   exec 7>>"$FLEET_STATE/.fresh.lock"
   flock 7
-  sid=$(reg_field "$p" 4)
+  sid=$(reg_field "$p" 4) cfg=$(reg_field "$p" 6)
   if ! pane_runs "$p" "$sid"; then
     flog WARN "fresh session refused: the pane no longer runs its registered session" pane="$p" name="$name" session_id="$sid"
     return 2
@@ -143,9 +145,18 @@ fresh() { # PANE NAME BRIEF [WHY] [ACCOUNT] [NOTE]
     cat "$brief"
   } >"$txt"
   mkdir -p -- "$FLEET_STATE/log"
-  new=$(FLEET_ACCOUNT=$account bash "$LAUNCH" "$name" "$txt" 2>>"$FLEET_STATE/log/launch.err" | grep -o 'pane=%[0-9]*' | head -1 | cut -d= -f2)
+  out=$(FLEET_ACCOUNT=$account bash "$LAUNCH" "$name" "$txt" 2>>"$FLEET_STATE/log/launch.err" | head -1)
+  new=$(grep -o 'pane=%[0-9]*' <<<"$out" | cut -d= -f2) got=$(grep -o 'brief=[A-Za-z-]*' <<<"$out" | cut -d= -f2)
   if [[ -z $new ]]; then
     flog ERROR "fresh session not started; the old pane is kept" pane="$p" name="$name"
+    return 3
+  fi
+  # The brief must have started a turn: not delivered, or (on a move to an
+  # account said to have room) stopped by a limit, the old pane stays.
+  if [[ $got == NOT-DELIVERED || ( -n $account && $got != started ) ]]; then
+    flog ERROR "fresh session's brief did not start; the old pane stays and the new one goes" pane="$p" new_pane="$new" name="$name" brief="$got"
+    retire "$new" interrupt
+    with_registry set_pane "$new" "$p" "$sid" "$cfg"
     return 3
   fi
   # The launch took a while: AJ may have typed into the old pane or resumed it.
@@ -154,7 +165,7 @@ fresh() { # PANE NAME BRIEF [WHY] [ACCOUNT] [NOTE]
   if ! pane_runs "$p" "$sid" || busy "$now_s" || ! has_input_box "$now_s" || [[ $(input_text "$now_s") != "$box" ]]; then
     flog ERROR "the old pane changed while its fresh session launched; the old one stays and the new one goes" pane="$p" new_pane="$new" name="$name"
     retire "$new" interrupt
-    with_registry set_pane "$new" "$p" "$sid"
+    with_registry set_pane "$new" "$p" "$sid" "$cfg"
     return 4
   fi
   # The note went into the new brief; one C-c clears it from the old box.
@@ -162,7 +173,7 @@ fresh() { # PANE NAME BRIEF [WHY] [ACCOUNT] [NOTE]
     t send-keys -t "$p" C-c
     wait_for "$p" 5 idle_empty || true
   fi
-  retire "$p"
+  retire "$p" || flog WARN "the old pane is left running beside its fresh session" pane="$p" new_pane="$new" name="$name"
   printf '%s' "$new"
 }
 
@@ -273,12 +284,16 @@ one() { # PANE
   local other carry="" rc
   if (( !fresh_typing && !switched )) && [[ -n $reg ]] && (( due[$p] - NOW >= MOVE_MIN_S && NOW - ${move_failed[$p]:-0} >= 900 )) &&
     other=$(room_elsewhere "$cfg" "$NOW"); then
+    # What AJ typed while it waited is carried even when he sent it: the
+    # session answered only with the limit, so it never acted on it.
     if [[ -n $typed && $typed != "[Pasted text #"* ]]; then
       carry=$typed
-    elif [[ -z $typed && -n ${note[$p]:-} && ${note[$p]} != "[Pasted text #"* ]] && ! sent_already "$s" "${note[$p]}"; then
+    elif [[ -z $typed && -n ${note[$p]:-} && ${note[$p]} != "[Pasted text #"* ]]; then
       carry=${note[$p]}
     fi
-    if [[ -z $typed || -n $carry ]]; then
+    if [[ $typed == "[Pasted text #"* || ( -z $typed && ${note[$p]:-} == "[Pasted text #"* ) ]]; then
+      flog WARN "a pasted block cannot be carried to the other account; the pane waits for its reset" pane="$p" text="${typed:-${note[$p]}}"
+    elif [[ -z $typed || -n $carry ]]; then
       new=$(fresh "$p" "$name" "$brief" "stopped at a usage limit on one account, and you continue on the other, which has room" "$other" "$carry")
       rc=$?
       case $rc in
@@ -290,6 +305,8 @@ one() { # PANE
           return
           ;;
         1 | 4)
+          # A launch that AJ undid (4) cost a session: wait as after a failure.
+          (( rc == 4 )) && move_failed[$p]=$NOW
           flog INFO "AJ has the pane; leaving it to the next pass" pane="$p" why="$rc"
           return
           ;;
@@ -360,7 +377,9 @@ accounts() {
 # An account switch (a /login in the default folder, the orchestrator's) ends
 # with `fleet doctor`, once the panes have had DOCTOR_AFTER_S to settle.
 doctor_after_switch() {
-  local now_acct=${ACCT_ID[$FLEET_DEFAULT_CONFIG]:-$ACTIVE}
+  # The default folder's login only: a pass that cannot read it says nothing.
+  local now_acct=${ACCT_ID[$FLEET_DEFAULT_CONFIG]:-}
+  [[ -n $now_acct ]] || now_acct=$PREV_ACCT
   if [[ -n $now_acct && -n $PREV_ACCT && $now_acct != "$PREV_ACCT" ]]; then
     DOCTOR_DUE=$((NOW + ${DOCTOR_AFTER_S:-300}))
     flog INFO "account switch seen; fleet doctor follows" from="$PREV_ACCT" to="$now_acct"

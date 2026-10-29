@@ -21,7 +21,7 @@ if [[ -n $(input_text "$(screen "$p")") ]]; then
   exit 1
 fi
 txt="$FLEET_STATE/fresh-$name-$(date +%Y%m%d-%H%M).src"
-{ fresh_preamble "saved its state and stopped so another brief could use its slot"; printf '\n\nResume hint: %s\n\n' "$hint"; cat "$brief"; } >"$txt"
+{ fresh_preamble "${FLEET_WHY:-saved its state and stopped so another brief could use its slot}"; printf '\n\nResume hint: %s\n\n' "$hint"; cat "$brief"; } >"$txt"
 out=$(bash "$here/launch.sh" "$name" "$txt")
 echo "$out"
 new=$(sed -n 's/^pane=\(%[0-9]*\).*/\1/p' <<<"$out" | head -1)
