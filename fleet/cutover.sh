@@ -23,7 +23,7 @@ sc() { $SYSTEMCTL --user "$@"; }
 exec 7>>"$FLEET_STATE/.fresh.lock"
 flock -w 900 7 || flog WARN "a fresh session held its lock for 15 min; cutting over anyway"
 # Rows written before launch.sh recorded session ids get the live one now.
-# shellcheck disable=SC2329 # run through with_registry
+# shellcheck disable=SC2317,SC2329 # run through with_registry
 fill_ids() {
   local p name sid
   while IFS=$'\t' read -r p name _ sid _; do
