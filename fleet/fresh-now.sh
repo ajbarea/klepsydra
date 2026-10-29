@@ -4,13 +4,15 @@
 # cleared transcript records no Remote Control link, so the phone wall would
 # lose its Open in Claude button), then the fresh-start preamble and its brief.
 # A pane busy in a turn, or holding text AJ typed, is skipped and logged.
+# When another logged-in account has more room than the pane's, the pane is
+# relaunched there instead (relaunch-fresh.sh), since /clear keeps its login.
 set -u
 FLEET_TARGET=fleet::fresh-now
 here=$(dirname "$(readlink -f "$0")")
 # shellcheck source=fleet/lib.sh
 . "$here/lib.sh"
 want=" $* "
-while IFS=$'\t' read -r p name brief sid _; do
+while IFS=$'\t' read -r p name brief sid _ account; do
   [[ -n $p && -n $name && -n $brief ]] || continue
   [[ $# -gt 0 && $want != *" $p "* ]] && continue
   if ! pane_runs "$p" "$sid"; then
@@ -22,6 +24,14 @@ while IFS=$'\t' read -r p name brief sid _; do
   if ! idle_empty "$s"; then
     flog WARN "fresh session skipped: the pane is busy or holds typed text" pane="$p" name="$name"
     echo "skipped: $name in $p (busy, or text in its prompt)"
+    continue
+  fi
+  account=${account:-$FLEET_DEFAULT_CONFIG}
+  best=$(best_account "$(date +%s)")
+  if [[ -n $best && $best != "$account" && $(account_of "$best") != "$(account_of "$account")" ]]; then
+    out=$(FLEET_ACCOUNT=$best bash "$here/relaunch-fresh.sh" "$p" "$name" "$brief" "a fresh start, moved to the account with more room" 2>/dev/null | head -1)
+    flog INFO "fresh session on the account with more room" pane="$p" name="$name" from="$account" to="$best" result="$out"
+    echo "fresh: $name moved to $best: $out"
     continue
   fi
   txt="$FLEET_STATE/fresh-$name-$(date +%Y%m%d-%H%M).src"

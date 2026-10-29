@@ -1,0 +1,104 @@
+#!/usr/bin/env bash
+# accounts-sync.sh [--check] [DIR...]: make each second Claude Code config
+# folder (default: every folder in FLEET_ACCOUNTS but the first) behave like
+# ~/.claude while keeping its own login. Claude Code keeps one login per
+# folder (.credentials.json, and the account in its .claude.json), so both
+# folders stay logged in at once; this script never reads or writes a login.
+#   settings.json      a copy of ~/.claude's: hooks, statusLine, env and OTel,
+#                      plugins and their config, autoMemoryDirectory. A link
+#                      would be read as project settings when run from $HOME.
+#   plugins/*.json     copies of the installed and known lists, which point at
+#                      ~/.claude's plugin cache, so both run the same plugins;
+#                      plugins/data links to ~/.claude's (plugin state shared)
+#   .claude.json       only the keys in SHARED_KEYS (MCP servers, each
+#                      folder's trust and tools, onboarding done), so a fleet
+#                      launch never stops at a first-run screen
+#   links              CLAUDE.md, agents, commands, rules, output-styles,
+#                      keybindings.json, techne.toml, hooks, projects (one
+#                      session history, so a session resumes on either
+#                      account) and each skill folder but claude.ai's synced ones
+# --check prints what differs and fails if anything does; nothing is written.
+set -u
+FLEET_TARGET=fleet::accounts
+here=$(dirname "$(readlink -f "$0")")
+# shellcheck source=fleet/lib.sh
+. "$here/lib.sh"
+check=0
+[[ ${1:-} == --check ]] && { check=1; shift; }
+SRC=${FLEET_CLAUDE_SRC:-$FLEET_DEFAULT_CONFIG}
+SRC_JSON=$(config_json "$SRC")
+LINKS=(CLAUDE.md agents commands rules output-styles keybindings.json techne.toml hooks projects)
+SHARED_KEYS='["mcpServers","projects","githubRepoPaths","hasCompletedOnboarding","lastOnboardingVersion","lastReleaseNotesSeen","installMethod","autoUpdates","autoUpdatesProtectedForNative","shiftEnterKeyBindingInstalled","remoteDialogSeen","hasUsedRemoteControl","effortCalloutV2Dismissed","hasSeenAutoModeEntryWarning"]'
+if (( $# )); then
+  dsts=("$@")
+else
+  read -ra dsts <<<"$FLEET_ACCOUNTS"
+  dsts=("${dsts[@]:1}")
+fi
+drift=0
+
+differs() { drift=1; printf 'differs: %s\n' "$1"; }
+
+# Make DST/NAME a link to TARGET (when TARGET exists); a file or folder in the
+# way is moved aside to NAME.bak-<date>, never deleted.
+link() { # TARGET NAME
+  local target=$1 name=$2
+  [[ -e $target ]] || return 0
+  [[ $(readlink -- "$DST/$name") == "$target" ]] && return 0
+  if (( check )); then differs "$DST/$name is not a link to $target"; return 0; fi
+  [[ -e $DST/$name || -L $DST/$name ]] && mv -- "$DST/$name" "$DST/$name.bak-$(date +%Y%m%d%H%M%S)"
+  ln -s -- "$target" "$DST/$name"
+}
+
+# Make DST/NAME a copy of SRC-FILE's content.
+copy() { # SRC-FILE NAME
+  [[ -r $1 ]] || return 0
+  cmp -s -- "$1" "$DST/$2" && return 0
+  if (( check )); then differs "$DST/$2 is not a copy of $1"; return 0; fi
+  mkdir -p -- "$(dirname -- "$DST/$2")"
+  cp -- "$1" "$DST/$2.tmp.$$" && mv -f -- "$DST/$2.tmp.$$" "$DST/$2"
+}
+
+[[ -d $SRC ]] || { err "no Claude Code config at $SRC"; exit 2; }
+for DST in "${dsts[@]}"; do
+  if [[ $(readlink -f -- "$DST") == "$(readlink -f -- "$SRC")" ]]; then
+    err "the second folder is the first: $DST"
+    exit 2
+  fi
+  (( check )) || mkdir -p -- "$DST/plugins" "$DST/skills"
+  copy "$SRC/settings.json" settings.json
+  copy "$SRC/plugins/installed_plugins.json" plugins/installed_plugins.json
+  copy "$SRC/plugins/known_marketplaces.json" plugins/known_marketplaces.json
+  link "$SRC/plugins/data" plugins/data
+  for n in "${LINKS[@]}"; do link "$SRC/$n" "$n"; done
+  for d in "$SRC"/skills/*/; do
+    [[ -d $d && ${d%/} != */synced ]] || continue # skills synced from claude.ai differ per account
+    d=${d%/}
+    link "$d" "skills/${d##*/}"
+  done
+
+  # The shared keys of .claude.json, which also holds the account; the rest of it is left as it is.
+  if [[ -r $SRC_JSON ]]; then
+    want=$(jq -cS --argjson k "$SHARED_KEYS" 'with_entries(select(.key as $x | $k | index($x)))' "$SRC_JSON" 2>/dev/null)
+    have=$(jq -cS --argjson k "$SHARED_KEYS" 'with_entries(select(.key as $x | $k | index($x)))' "$DST/.claude.json" 2>/dev/null || echo '{}')
+    if [[ -n $want && $want != "$have" ]]; then
+      if (( check )); then
+        differs "$DST/.claude.json's shared keys"
+      else
+        tmp=$(mktemp "$DST/.claude.json.XXXXXX")
+        if [[ -r $DST/.claude.json ]]; then
+          jq --argjson w "$want" '. + $w' "$DST/.claude.json" >"$tmp"
+        else
+          jq -n --argjson w "$want" '$w' >"$tmp"
+        fi && chmod 600 "$tmp" && mv -f -- "$tmp" "$DST/.claude.json" || rm -f -- "${tmp:?}"
+      fi
+    fi
+  fi
+  (( check )) || flog INFO "second config folder synced" folder="$DST" from="$SRC"
+done
+
+if (( check )); then
+  (( drift )) && flog WARN "a second config folder differs from the first" folders="${dsts[*]}"
+  exit "$drift"
+fi
+echo "synced ${dsts[*]} from $SRC"

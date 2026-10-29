@@ -6,8 +6,9 @@
 # live session's fleet file holds, which is what the phone wall's Open in
 # Claude uses); the phone wall answers on 127.0.0.1:8318 and through
 # Tailscale Serve with a fresh fleet.json (a usage reading observed in the last
-# 2 minutes); a pane watcher is running. Briefs whose shared rules are out of
-# date are a warning.
+# 2 minutes); a pane watcher is running; each config folder in FLEET_ACCOUNTS
+# is logged in and the second ones match the first. Briefs whose shared rules
+# are out of date, and a second folder not logged in, are warnings.
 set -u
 FLEET_TARGET=fleet::doctor
 here=$(dirname "$(readlink -f "$0")")
@@ -103,6 +104,24 @@ elif [[ -z $serve || $serve == *"No serve config"* ]]; then
 else
   phone "phone wall over Tailscale" "https://$dns"
 fi
+
+# Two accounts: each config folder logged in, the second ones in step with the first.
+for dir in $FLEET_ACCOUNTS; do
+  if id=$(account_of "$dir"); then
+    report ok "account $dir" "logged in: $(account_label "$id")"
+  elif [[ $dir == "$FLEET_DEFAULT_CONFIG" ]]; then
+    report FAIL "account $dir" "not logged in: claude auth login"
+  else
+    report warn "account $dir" "not logged in, so the fleet runs on one account: CLAUDE_CONFIG_DIR=$dir claude auth login"
+  fi
+  if [[ $dir != "$FLEET_DEFAULT_CONFIG" && -d $dir ]]; then
+    if drift=$(bash "$here/accounts-sync.sh" --check "$dir" 2>/dev/null); then
+      report ok "settings $dir" "in step with $FLEET_DEFAULT_CONFIG"
+    else
+      report FAIL "settings $dir" "$(grep -c . <<<"$drift") differences: fleet accounts sync"
+    fi
+  fi
+done
 
 # Processes running watch-panes.sh itself (bash, then the script), not a shell that names it.
 watchers=$($PS -eo args= 2>/dev/null | awk '$1 ~ /(^|\/)bash$/ && $2 ~ /(^|\/)watch-panes\.sh$/ { $1 = $2 = ""; sub(/^ +/, ""); printf "%s;", $0 }')

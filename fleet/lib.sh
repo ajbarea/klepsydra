@@ -252,7 +252,8 @@ newest_reading() {
   find "$KLEPSYDRA_DIR/accounts" -mindepth 2 -maxdepth 2 -name '*.json' -printf '%T@ %p\n' 2>/dev/null | sort -rn | head -1 | cut -d' ' -f2-
 }
 
-# The registry, panes.tsv: pane, name, brief, then (from launch.sh) session id and folder.
+# The registry, panes.tsv: pane, name, brief, then (from launch.sh) session id,
+# working folder and Claude Code config folder (its account).
 REGISTRY=${REGISTRY:-$FLEET_STATE/panes.tsv}
 registered() { awk -F'\t' -v p="$1" '$1 == p { f = 1 } END { exit !f }' "$REGISTRY" 2>/dev/null; }
 reg_field() { awk -F'\t' -v p="$1" -v n="$2" '$1 == p { print $n; exit }' "$REGISTRY" 2>/dev/null; }
@@ -296,4 +297,100 @@ pane_runs() { # PANE SESSION-ID
   f=$KLEPSYDRA_DIR/fleet/$2.json
   [[ -f $f && ! -L $f ]] || return 1
   jq -e --arg p "$1" '.tmux.pane == $p and .ended == null' "$f" >/dev/null 2>&1
+}
+
+# Accounts: Claude Code keeps one login per config folder (CLAUDE_CONFIG_DIR),
+# so each folder in FLEET_ACCOUNTS is one account, the default first. The
+# default folder is used with CLAUDE_CONFIG_DIR unset: set to ~/.claude, Claude
+# Code would look for ~/.claude/.claude.json instead of ~/.claude.json.
+FLEET_DEFAULT_CONFIG=${FLEET_DEFAULT_CONFIG:-$HOME/.claude}
+FLEET_ACCOUNTS=${FLEET_ACCOUNTS:-$FLEET_DEFAULT_CONFIG $HOME/.claude-rit}
+FLEET_ROOM_PCT=${FLEET_ROOM_PCT:-90} # a five-hour window used past this has no room
+
+# The global config file of config folder DIR.
+config_json() { # DIR
+  if [[ $1 == "$FLEET_DEFAULT_CONFIG" ]]; then printf '%s' "${FLEET_DEFAULT_JSON:-$HOME/.claude.json}"; else printf '%s' "$1/.claude.json"; fi
+}
+
+# The account logged in at config folder DIR (its accountUuid), or nothing.
+# The login itself (.credentials.json) is only checked for, never read.
+account_of() { # DIR
+  [[ -e $1/.credentials.json ]] || return 1
+  jq -er '.oauthAccount.accountUuid // empty' "$(config_json "$1")" 2>/dev/null
+}
+
+# klepsydra's newest usage reading of account ID.
+reading_of() { # ID
+  [[ $1 =~ ^[0-9A-Za-z][0-9A-Za-z-]*$ ]] || return 1
+  find "$KLEPSYDRA_DIR/accounts/$1" -maxdepth 1 -name '*.json' -printf '%T@ %p\n' 2>/dev/null | sort -rn | head -1 | cut -d' ' -f2- | grep .
+}
+
+# Account ID's name as its readings give it (the gauge's), else its id.
+account_label() { # ID
+  local f l=""
+  f=$(reading_of "$1") && l=$(jq -r '.label // empty' "$f" 2>/dev/null)
+  printf '%s' "${l:-$1}"
+}
+
+# Account ID's room from its newest reading, as "FIVE SEVEN": 100 less the
+# percentage used, or 100 for a window that has reset, that the account does
+# not have (a Team seat has no weekly window), or with no reading at all.
+headroom() { # ID NOW
+  local f
+  f=$(reading_of "$1") || { echo "100 100"; return; }
+  jq -r --argjson now "$2" 'def room(w): if w == null or (w.resets_at // 0) <= $now then 100
+      else 100 - (w.used_percentage // 0) end;
+    "\(room(.windows.five_hour) | floor) \(room(.windows.seven_day) | floor)"' "$f" 2>/dev/null || echo "100 100"
+}
+
+# Whether account ID has room to work at NOW: its five-hour window under
+# FLEET_ROOM_PCT used and its weekly one under 95%.
+id_has_room() { # ID NOW
+  local five seven
+  read -r five seven <<<"$(headroom "$1" "$2")"
+  (( five > 100 - FLEET_ROOM_PCT && seven > 5 ))
+}
+
+# The logged-in config folder with the most room, the five-hour window first,
+# then the weekly; the earlier folder in FLEET_ACCOUNTS wins a tie. Prints
+# nothing when none is logged in.
+best_account() { # NOW
+  local dir id five seven best="" best_five=-1 best_seven=-1
+  for dir in $FLEET_ACCOUNTS; do
+    id=$(account_of "$dir") || continue
+    read -r five seven <<<"$(headroom "$id" "$1")"
+    if (( five > best_five || (five == best_five && seven > best_seven) )); then
+      best=$dir best_five=$five best_seven=$seven
+    fi
+  done
+  printf '%s' "$best"
+}
+
+# A logged-in config folder other than DIR, on another account, with room at
+# NOW (the one with the most); fails when there is none.
+room_elsewhere() { # DIR NOW
+  local dir id mine best="" best_five=-1 five seven
+  mine=$(account_of "$1")
+  for dir in $FLEET_ACCOUNTS; do
+    [[ $dir == "$1" ]] && continue
+    id=$(account_of "$dir") || continue
+    [[ $id == "$mine" ]] && continue
+    id_has_room "$id" "$2" || continue
+    read -r five seven <<<"$(headroom "$id" "$2")"
+    (( five > best_five )) && best=$dir best_five=$five
+  done
+  [[ -n $best ]] && printf '%s' "$best"
+}
+
+# The config folder pane PANE runs on: its registry row's (column 6), else the default.
+pane_config() { # PANE
+  local c
+  c=$(reg_field "$1" 6)
+  printf '%s' "${c:-$FLEET_DEFAULT_CONFIG}"
+}
+
+# The env(1) arguments that start claude on config folder DIR; the default
+# unsets CLAUDE_CONFIG_DIR, which a caller on the second folder would pass on.
+config_env() { # DIR
+  if [[ $1 == "$FLEET_DEFAULT_CONFIG" ]]; then printf -- '-u CLAUDE_CONFIG_DIR '; else printf 'CLAUDE_CONFIG_DIR=%q ' "$1"; fi
 }

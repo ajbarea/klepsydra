@@ -230,6 +230,8 @@ class Pane:
 
 def main():
     pane = Pane(sys.argv[1], sys.argv[2])
+    if os.environ.get("CLAUDE_CONFIG_DIR"):
+        pane.log("CONFIG " + os.environ["CLAUDE_CONFIG_DIR"])
     fd = sys.stdin.fileno()
     old = termios.tcgetattr(fd)
     tty.setraw(fd)

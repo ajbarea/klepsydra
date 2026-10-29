@@ -6,7 +6,9 @@
 # reached the prompt, and submit it. A retry never sends Escape, so it cannot
 # cancel a turn that started. Registers the pane, session and folder in
 # panes.tsv for NAME when NAME is a fleet agent (a row exists, or task-NAME.src).
-# Prints one line: pane=%N session=UUID avail=MiB brief=started|blocked-by-limit|NOT-DELIVERED.
+# The session runs on FLEET_ACCOUNT's config folder when set, else on the
+# logged-in account with the most room (best_account).
+# Prints one line: pane=%N session=UUID account=DIR avail=MiB brief=started|blocked-by-limit|NOT-DELIVERED.
 set -u
 FLEET_TARGET=fleet::launch
 here=$(dirname "$(readlink -f "$0")")
@@ -24,10 +26,12 @@ if (( avail < ${FLEET_MIN_AVAIL_MB:-3000} )); then
 fi
 dir=${FLEET_DIR:-$HOME/ajsoftworks}
 sid=$(cat /proc/sys/kernel/random/uuid)
+account=${FLEET_ACCOUNT:-$(best_account "$(date +%s)")}
+account=${account:-$FLEET_DEFAULT_CONFIG}
 # Workers bypass permissions and Heph does not, so Heph's SendMessage would wait
 # for AJ's approval; worker-settings.json accepts it (AJ approved 2026-10-27).
 # The subagent cap enforces the briefs' rule of at most two at a time.
-cmd="env CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS=2 ${FLEET_CLAUDE:-claude} --session-id $sid --settings $FLEET_STATE/worker-settings.json $*"
+cmd="env $(config_env "$account")CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS=2 ${FLEET_CLAUDE:-claude} --session-id $sid --settings $FLEET_STATE/worker-settings.json $*"
 if [[ ${FLEET_SCOPE:-1} != 0 ]]; then
   cmd="systemd-run --user --scope --collect --unit=fleet-$name-$(date +%s) -p MemoryHigh=${MEM_HIGH:-4G} -p MemoryMax=${MEM_MAX:-5G} -p MemorySwapMax=${MEM_SWAP:-1G} $cmd"
 fi
@@ -58,9 +62,9 @@ else
 fi
 brief=$(deliver "$pane" "$txt")
 case $brief in
-  started) flog INFO "brief delivered: a turn started" name="$name" pane="$pane" session_id="$sid" ;;
-  blocked-by-limit) flog WARN "brief delivered, but the account is at its limit; the resume service takes it from here" name="$name" pane="$pane" session_id="$sid" ;;
-  *) brief=NOT-DELIVERED; flog ERROR "brief not delivered" name="$name" pane="$pane" session_id="$sid" screen="$(screen "$pane" | plain | grep -v '^[[:space:]]*$' | tail -6)" ;;
+  started) flog INFO "brief delivered: a turn started" name="$name" pane="$pane" session_id="$sid" account="$account" ;;
+  blocked-by-limit) flog WARN "brief delivered, but the account is at its limit; the resume service takes it from here" name="$name" pane="$pane" session_id="$sid" account="$account" ;;
+  *) brief=NOT-DELIVERED; flog ERROR "brief not delivered" name="$name" pane="$pane" session_id="$sid" account="$account" screen="$(screen "$pane" | plain | grep -v '^[[:space:]]*$' | tail -6)" ;;
 esac
 
 # The registry row for NAME, repointed at this pane and session; a new row when
@@ -75,9 +79,9 @@ fi
 if [[ -n $row_brief ]]; then
   [[ -e $REGISTRY ]] || : >"$REGISTRY"
   tmp=$(mktemp "$REGISTRY.XXXXXX")
-  awk -F'\t' -v OFS='\t' -v n="$name" -v row="$pane	$name	$row_brief	$sid	$dir" '
+  awk -F'\t' -v OFS='\t' -v n="$name" -v row="$pane	$name	$row_brief	$sid	$dir	$account" '
     $2 == n { if (!done) print row; done = 1; next } { print } END { if (!done) print row }' "$REGISTRY" 2>/dev/null >"$tmp"
   mv -- "$tmp" "$REGISTRY"
 fi
-echo "pane=$pane session=$sid avail=${avail}MiB brief=$brief"
+echo "pane=$pane session=$sid account=$account avail=${avail}MiB brief=$brief"
 screen "$pane" | plain | grep -v '^[[:space:]]*$' | tail -6
