@@ -32,7 +32,9 @@ account=$(nodir "$account") # "~/.claude/" is the default too, which must not se
 # Workers bypass permissions and Heph does not, so Heph's SendMessage would wait
 # for AJ's approval; worker-settings.json accepts it (AJ approved 2026-10-27).
 # The subagent cap enforces the briefs' rule of at most two at a time.
-cmd="env $(config_env "$account")CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS=2 ${FLEET_CLAUDE:-claude} --session-id $sid --settings $FLEET_STATE/worker-settings.json $*"
+# FLEET_SETTINGS="" starts it without them (the orchestrator, fleet recover).
+settings=${FLEET_SETTINGS-$FLEET_STATE/worker-settings.json}
+cmd="env $(config_env "$account")CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS=2 ${FLEET_CLAUDE:-claude} --session-id $sid${settings:+ --settings $settings} $*"
 if [[ ${FLEET_SCOPE:-1} != 0 ]]; then
   cmd="systemd-run --user --scope --collect --unit=fleet-$name-$(date +%s) -p MemoryHigh=${MEM_HIGH:-4G} -p MemoryMax=${MEM_MAX:-5G} -p MemorySwapMax=${MEM_SWAP:-1G} $cmd"
 fi

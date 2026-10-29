@@ -4,8 +4,11 @@
 #   fleet log [N]         the last N decisions (default 30), as plain lines
 #   fleet brief NAME BODY write task-NAME.src: BODY plus the shared rules
 #   fleet brief --check   list briefs whose shared rules are out of date
+#   fleet brief --refresh rewrite them with the current shared rules
 #   fleet accounts        each config folder: its account and its room
 #   fleet accounts sync   make the second config folder behave like ~/.claude
+#   fleet recover         after a hard shutdown, relaunch every agent whose session is gone
+#   fleet shots [--apply] prune the briefing's decided and old screenshots (dry run without --apply)
 #   fleet install         link this checkout's scripts and units into place
 #   fleet cutover         restart the resume service on the installed scripts
 set -u
@@ -16,6 +19,8 @@ case $cmd in
   doctor) exec bash "$here/doctor.sh" "$@" ;;
   brief) exec bash "$here/brief.sh" "$@" ;;
   install) exec bash "$here/install.sh" "$@" ;;
+  recover) exec bash "$here/recover.sh" "$@" ;;
+  shots) exec python3 -I "$here/prune_shots.py" "$@" ;;
   accounts)
     if [[ ${1:-} == sync ]]; then shift; exec bash "$here/accounts-sync.sh" "$@"; fi
     # shellcheck source=fleet/lib.sh
@@ -38,5 +43,5 @@ case $cmd in
     tail -n "${1:-30}" "$FLEET_LOG" | jq -r '[.ts[0:19], .level, .target, .message] + ([to_entries[] | select(.key | IN("ts","level","target","message","run_id") | not) | "\(.key)=\(.value)"]) | join(" ")'
     ;;
   cutover) exec bash "$here/cutover.sh" "$@" ;;
-  *) sed -n '2,11p' "$0" | sed 's/^# \{0,1\}//'; [[ -z $cmd ]] || exit 2 ;;
+  *) sed -n '2,/^set -u/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//'; [[ -z $cmd ]] || exit 2 ;;
 esac

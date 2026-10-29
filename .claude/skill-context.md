@@ -81,6 +81,7 @@ files belong to: the JS guards scan hooks and scripts too.
   on a private tmux socket (limits, reset parsing, typed lines, launch
   delivery, doctor, install).
 - `python3 -I fleet/test_ci_watch.py`: the CI watch against a fake GitHub.
+- `python3 -I fleet/test_prune_shots.py`: the briefing's screenshot prune against a fake gh.
 - `python3 -I scripts/perf/test_fixture.py`: the perf harness's demo fleet
   writes only files it owns and no future times.
 - `bash hooks/test_wrapup.sh`: the wrap-up Stop hook (silent unless a live

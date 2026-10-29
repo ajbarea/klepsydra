@@ -19,7 +19,7 @@ if (( !force )) && [[ $(git -C "$here" rev-parse --path-format=absolute --git-di
   exit 2
 fi
 do_() { if (( dry )); then printf 'would: %s\n' "$*"; else "$@"; fi; }
-SCRIPTS=(launch.sh fresh-now.sh resume-at-reset.sh watch-panes.sh memfrag-log.sh relaunch-fresh.sh brief.sh doctor.sh cutover.sh accounts-sync.sh ci_watch.py worker-settings.json)
+SCRIPTS=(launch.sh fresh-now.sh resume-at-reset.sh watch-panes.sh memfrag-log.sh relaunch-fresh.sh brief.sh doctor.sh cutover.sh accounts-sync.sh recover.sh sync-briefing.sh ci_watch.py worker-settings.json)
 UNITS=${FLEET_UNITS:-$HOME/.config/systemd/user}
 BIN=${FLEET_BIN:-$HOME/.local/bin}
 archive=$FLEET_STATE/archive/fleet-scripts-$(date +%Y%m%d)
@@ -92,6 +92,24 @@ Description=klepsydra fleet: sync the second config folder hourly
 
 [Timer]
 OnCalendar=hourly
+Persistent=true
+
+[Install]
+WantedBy=timers.target"
+# AJ's briefing repo, committed and pushed when it changed.
+unit fleet-sync-briefing.service "[Unit]
+Description=klepsydra fleet: commit and push the fleet-briefing repo
+
+[Service]
+Type=oneshot
+TimeoutStartSec=180
+Environment=\"PATH=$PATH\" \"HOME=$HOME\"
+ExecStart=/usr/bin/bash $FLEET_STATE/sync-briefing.sh"
+unit fleet-sync-briefing.timer "[Unit]
+Description=klepsydra fleet: sync the fleet-briefing repo every 5 min
+
+[Timer]
+OnCalendar=*:0/5
 Persistent=true
 
 [Install]
