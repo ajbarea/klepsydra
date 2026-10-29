@@ -63,6 +63,9 @@ pub fn set(app: &AppHandle, on: bool) -> bool {
             server.set_theme(crate::theme::saved(app));
             app.state::<crate::fleet::Fleet>()
                 .with_latest(|v| server.publish(v));
+            app.state::<crate::fleet::CiFeed>()
+                .0
+                .with_latest(|v| server.set_ci(v));
             log::info!("phone: wall serving on {ADDR}");
             *slot = Some(server);
             true
@@ -79,6 +82,15 @@ pub fn publish(app: &AppHandle, snapshot: &serde_json::Value) {
     if let Ok(slot) = app.state::<Phone>().0.lock() {
         if let Some(server) = slot.as_ref() {
             server.publish(snapshot);
+        }
+    }
+}
+
+/// Show a running server's phones the CI watch's view.
+pub fn set_ci(app: &AppHandle, view: &serde_json::Value) {
+    if let Ok(slot) = app.state::<Phone>().0.lock() {
+        if let Some(server) = slot.as_ref() {
+            server.set_ci(view);
         }
     }
 }

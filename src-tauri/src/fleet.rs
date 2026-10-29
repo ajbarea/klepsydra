@@ -45,6 +45,43 @@ pub type Fleet = Hub<Webview>;
 #[derive(Default)]
 pub struct QueueFeed(pub Hub<Webview>);
 
+/// Who follows the CI watch's view (`ci.json`), managed as app state.
+#[derive(Default)]
+pub struct CiFeed(pub Hub<Webview>);
+
+/// A window follows the CI watch from now on, starting with its latest view.
+#[tauri::command]
+pub fn ci_subscribe(
+    window: tauri::WebviewWindow,
+    feed: tauri::State<'_, CiFeed>,
+    on_message: Channel<Value>,
+) {
+    feed.0.subscribe(window.label(), Webview(on_message));
+}
+
+/// Follow the CI watch's `ci.json` in the data folder for as long as the app
+/// runs, sending each change to the wall and the phone.
+pub fn start_ci(app: &AppHandle, dir: Option<PathBuf>) {
+    let Some(dir) = dir else {
+        return;
+    };
+    let app = app.clone();
+    std::thread::spawn(move || {
+        let mut follower = klepsydra_fleet::ci::Follower::default();
+        loop {
+            if let Some(view) = follower.step(&dir, unix_now()) {
+                // The hub first: a phone server starting now begins from its latest.
+                app.state::<CiFeed>().0.publish(view.clone());
+                crate::phone::set_ci(&app, &view);
+            }
+            std::thread::sleep(CI_POLL);
+        }
+    });
+}
+
+/// How often `ci.json` is looked at: the watch writes it every 2 minutes.
+const CI_POLL: Duration = Duration::from_secs(5);
+
 /// A webview asks for snapshots: the latest at once, then each new one.
 #[tauri::command]
 pub fn fleet_subscribe(

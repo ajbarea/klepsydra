@@ -138,9 +138,9 @@ test("on the phone every desktop action is hidden: only buttons marked data-phon
   const buttons = [...html.matchAll(/<button\b[^>]*>/g)].map((m) => m[0]);
   const phone = buttons.filter((b) => /\bdata-phone\b/.test(b));
   assert.deepEqual(
-    phone.map((b) => b.match(/class="([^"]+)"/)[1]).sort(),
-    ["close", "look", "play", "unfold"],
-    "only the portrait's look, its Close, a card's reply button and its Full text act on the phone",
+    phone.map((b) => (b.match(/class="([^"]+)"/) ?? b.match(/id="([^"]+)"/))[1]).sort(),
+    ["ci-open", "close", "look", "play", "unfold"],
+    "only the portrait's look, its Close, a card's reply button, its Full text and the CI list act on the phone",
   );
   for (const action of ['id="new-session"', 'class="jump"', 'class="clear"', 'class="menu"', 'data-act="interrupt"', 'data-act="end"', 'class="undo"', 'class="end-confirm"', 'id="ledger-open"', 'class="chip"']) {
     const b = buttons.find((x) => x.includes(action));

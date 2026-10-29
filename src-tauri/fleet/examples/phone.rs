@@ -6,8 +6,9 @@
 //! Port 0, the default, picks a free one. Prints the bound address, and logs
 //! to stderr at `KLEPSYDRA_LOG`'s level (info by default). With
 //! `KLEPSYDRA_DIR` set, reply clips come from its `replies/`, the usage
-//! gauges from its `accounts/`, and the character theme from its
-//! `prefs.json`, read again each time it changes, as the app reads them.
+//! gauges from its `accounts/`, the character theme from its `prefs.json`
+//! and the CI watch from its `ci.json`, read again each time they change, as
+//! the app reads them.
 
 use std::net::{Ipv4Addr, SocketAddrV4};
 use std::path::PathBuf;
@@ -83,6 +84,8 @@ fn main() {
         None => Arc::new(|_| None),
     };
     let prefs = dir.as_ref().map(|d| d.join("prefs.json"));
+    let ci_dir = dir.clone();
+    let mut ci = klepsydra_fleet::ci::Follower::default();
     let usage: Option<Usage> = dir.map(|dir| {
         let read: Usage = Arc::new(move || klepsydra_fleet::usage::read([&dir]));
         read
@@ -109,6 +112,9 @@ fn main() {
                     .and_then(|t| serde_json::from_str::<Value>(&t).ok());
                 server.set_theme(theme::of(saved.as_ref().and_then(Value::as_object)));
             }
+        }
+        if let Some(view) = ci_dir.as_ref().and_then(|d| ci.step(d, unix_now())) {
+            server.set_ci(&view);
         }
         let changed = std::fs::metadata(&snapshot).and_then(|m| m.modified()).ok();
         if changed != seen {
