@@ -168,11 +168,14 @@ def apply(readme: Path, dropped: set[str], gone: dict[str, str]) -> bool:
     before = readme.read_text() if readme.exists() else ""
     lock = None
     try:
-        lock = open(REPO / ".git" / "fleet-sync.lock", "w")
+        lock = open(
+            Path(git("rev-parse", "--absolute-git-dir").strip()) / "fleet-sync.lock",
+            "w",
+        )
         fcntl.flock(lock, fcntl.LOCK_EX)
         changed = [
             ln[3:]
-            for ln in git("status", "--porcelain", "--", *paths).splitlines()
+            for ln in git("status", "--porcelain", "-z", "--", *paths).split("\0")
             if ln[3:] in paths
         ]
         if changed:

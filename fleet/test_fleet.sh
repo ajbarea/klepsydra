@@ -965,13 +965,14 @@ check "Heph's records follow the new Heph" "$(cat "$FLEET_STATE/orchestrator.pan
 rm -f "$KLEPSYDRA_DIR/fleet/$SNEW.json"
 
 echo "recover: a stale orchestrator.session while Heph runs in its pane"
-SLIVE=aaaaaaaa-0000-4000-8000-0000000000c3
-printf '%s\n' "$SH" >"$FLEET_STATE/orchestrator.session"; printf '%%4\n' >"$FLEET_STATE/orchestrator.pane"
+SLIVE=aaaaaaaa-0000-4000-8000-0000000000c3 SDEADH=aaaaaaaa-0000-4000-8000-0000000000c7
+sfile "$SDEADH" 4242 778 "$NOWBOOT" %4   # Heph's last session, this boot, its process gone
+printf '%s\n' "$SDEADH" >"$FLEET_STATE/orchestrator.session"; printf '%%4\n' >"$FLEET_STATE/orchestrator.pane"
 sfile "$SLIVE" 4242 777 "$NOWBOOT" %4
 : >"$REGISTRY"; : >"$work/rec.log"
 out=$(rec)
 check "Heph's live session wins over the stale record; nothing launches" "$(tr '\n' '|' <<<"$out")$(wc -l <"$work/rec.log")" "running: orchestrator (%4)|nothing to recover|0"
-rm -f "$KLEPSYDRA_DIR/fleet/$SLIVE.json"
+rm -f "$KLEPSYDRA_DIR/fleet/$SLIVE.json" "$KLEPSYDRA_DIR/fleet/$SDEADH.json"
 
 echo "recover: a pane that still runs a session the row does not name"
 SOLD=aaaaaaaa-0000-4000-8000-0000000000c4 SCUR=aaaaaaaa-0000-4000-8000-0000000000c5
@@ -992,19 +993,26 @@ printf '%%3\n' >"$FLEET_STATE/orchestrator.pane"; printf '%s\n' "$SH" >"$FLEET_S
 sfile "$SHEPH" 4242 777 "$NOWBOOT" %0
 : >"$REGISTRY"; : >"$work/rec.log"
 out=$(rec)
-check "Heph alive in %0 is found; nothing launches; the records follow him" \
-  "$(tr '\n' '|' <<<"$out")$(wc -l <"$work/rec.log") $(cat "$FLEET_STATE/orchestrator.pane") $(cat "$FLEET_STATE/orchestrator.session")" \
-  "running: orchestrator (%0)|nothing to recover|0 %0 $SHEPH"
+check "a live session no record names is not taken for Heph, and no second Heph starts" \
+  "$(tr '\n' '|' <<<"$out")$(wc -l <"$work/rec.log") $(cat "$FLEET_STATE/orchestrator.pane")" \
+  "not recovered: orchestrator (1 live sessions in the fleet belong to no agent and none is on record as Heph; write Heph's pane to orchestrator.pane)|nothing to recover|0 %3"
+printf '%s\n' "$SHEPH" >"$FLEET_STATE/orchestrator.session"
+check "the session on record is Heph wherever it runs; the pane record follows him" \
+  "$(rec | head -1) $(cat "$FLEET_STATE/orchestrator.pane")" "running: orchestrator (%0) %0"
+printf '%s\n' "$SH" >"$FLEET_STATE/orchestrator.session"; printf '%%3\n' >"$FLEET_STATE/orchestrator.pane"
 check "the caller is Heph when it is a Claude session in the fleet's tmux" \
   "$(CLAUDECODE=1 TMUX_PANE=%6 TMUX="/tmp/tmux-1/$FLEET_SOCK,1,0" rec --dry-run | head -1)" "running: orchestrator (%6)"
 SOTHER=aaaaaaaa-0000-4000-8000-0000000000d2
 sfile "$SOTHER" 4242 777 "$NOWBOOT" %5
-check "of two, the one in orchestrator.pane is Heph" "$(rec --dry-run | head -1)" "running: orchestrator (%0)"
-printf '%%3\n' >"$FLEET_STATE/orchestrator.pane"
+printf '%s\n' "$SHEPH" >"$FLEET_STATE/orchestrator.session"
+check "of two, the one on record is Heph" "$(rec --dry-run | head -1)" "running: orchestrator (%0)"
+check "a Claude session that is not Heph running recover leaves the records alone" \
+  "$(CLAUDECODE=1 TMUX_PANE=%5 TMUX="/tmp/tmux-1/$FLEET_SOCK,1,0" rec | head -1) $(cat "$FLEET_STATE/orchestrator.session")" "running: orchestrator (%0) $SHEPH"
+printf '%s\n' "$SH" >"$FLEET_STATE/orchestrator.session"; printf '%%3\n' >"$FLEET_STATE/orchestrator.pane"
 out=$(rec)
 check "two live sessions that are no agent's: Heph is not launched" \
   "$(head -1 <<<"$out") $(wc -l <"$work/rec.log")" \
-  "not recovered: orchestrator (2 live sessions in the fleet belong to no agent; write Heph's pane to orchestrator.pane) 0"
+  "not recovered: orchestrator (2 live sessions in the fleet belong to no agent and none is on record as Heph; write Heph's pane to orchestrator.pane) 0"
 rm -f "$KLEPSYDRA_DIR/fleet/$SOTHER.json"
 
 echo "recover: a row is repaired only to a session alive before any launch"
@@ -1028,10 +1036,19 @@ rm -f "$KLEPSYDRA_DIR/fleet/$SNEWA.json" "$KLEPSYDRA_DIR/fleet/$SA1.json" "$KLEP
 SW0=aaaaaaaa-0000-4000-8000-0000000000d6
 sfile "$SW0" 4242 777 "$OLDBOOT" %0
 printf '%s\tw\t%s\t%s\t/w\n' %0 "$work/ba.src" "$SW0" >"$REGISTRY"
+printf '%s\n' "$SHEPH" >"$FLEET_STATE/orchestrator.session"
 : >"$work/rec.log"; rm -f "$work/rec.n"
 out=$(rec)
 check "Heph in a worker row's old pane is never repaired into that row" "$(tr '\n' '|' <<<"$out")" "recovered: w -> %901|running: orchestrator (%0)|"
 rm -f "$KLEPSYDRA_DIR/fleet/$SHEPH.json" "$KLEPSYDRA_DIR/fleet/$SW0.json"; : >"$REGISTRY"
+
+echo "recover: a session on another tmux server is never taken for a row"
+SX=aaaaaaaa-0000-4000-8000-0000000000d7 SAJ=aaaaaaaa-0000-4000-8000-0000000000d8
+sfile "$SX" 4242 778 "$NOWBOOT" %3
+jq -n '{session_id: "x", started_at: 1, ended: null, claude: {pid: 4242, start: 777}, host: {boot: "'"$NOWBOOT"'"}, tmux: {pane: "%3", socket: "/tmp/tmux-1001/default"}}' >"$KLEPSYDRA_DIR/fleet/$SAJ.json"
+printf '%s\tw\t%s\t%s\t/w\n' %3 "$work/ba.src" "$SX" >"$REGISTRY"
+check "AJ's own session in pane %3 of his tmux is not worker w's" "$(rec --no-orchestrator --dry-run | head -1 | cut -d' ' -f1-3)" "would recover: w"
+rm -f "$KLEPSYDRA_DIR/fleet/$SX.json" "$KLEPSYDRA_DIR/fleet/$SAJ.json"; : >"$REGISTRY"
 
 echo "recover: one run at a time"
 flock "$FLEET_STATE/.recover.lock" sleep 3 &
@@ -1080,6 +1097,14 @@ printf 'ticked\n' >"$work/brief-phone/README.md"
 git -C "$work/brief-phone" add README.md && git -C "$work/brief-phone" -c user.name=t -c user.email=t@t commit -q -m phone && git -C "$work/brief-phone" push -q origin HEAD 2>/dev/null
 printf 'q2\n' >"$work/brief/claude-queue.md"
 check "a push the remote rejects rebases once and lands both" "$(bsync) $(git -C "$work/brief-remote.git" rev-list --count HEAD)" "0 5"
+printf 'o\n' >"$work/brief/other.md"; git -C "$work/brief" add other.md && git -C "$work/brief" -c user.name=t -c user.email=t@t commit -q -m other && git -C "$work/brief" push -q origin HEAD 2>/dev/null
+git -C "$work/brief-phone" pull -q 2>/dev/null; printf 'ticked again\n' >"$work/brief-phone/README.md"
+git -C "$work/brief-phone" -c user.name=t -c user.email=t@t commit -qam phone2 && git -C "$work/brief-phone" push -q origin HEAD 2>/dev/null
+printf 'o\nan edit in progress\n' >"$work/brief/other.md"; printf 'q3\n' >"$work/brief/claude-queue.md"
+check "a rejected push with edits in the tree waits rather than rebasing over them" \
+  "$(bsync) $(tail -1 "$work/brief/other.md") $(git -C "$work/brief" ls-files -u | wc -l)" "1 an edit in progress 0"
+git -C "$work/brief" checkout -q -- other.md
+check "once the tree is clean it rebases and pushes" "$(bsync) $(git -C "$work/brief" rev-list --count '@{u}..HEAD')" "0 0"
 
 echo "the fleet log"
 check "every line is one JSON object with ts, level, target and message" \

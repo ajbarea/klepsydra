@@ -18,7 +18,7 @@ cd "$R" 2>/dev/null || { flog ERROR "briefing sync: no repo" dir="$R"; exit 1; }
 exec 9>"$(git rev-parse --git-dir)/fleet-sync.lock"
 flock -w 60 9 || { flog WARN "briefing sync: another sync or prune holds the lock"; exit 0; }
 gd=$(git rev-parse --git-dir)
-if [[ -d $gd/rebase-merge || -d $gd/rebase-apply || -f $gd/MERGE_HEAD ]]; then
+if [[ -d $gd/rebase-merge || -d $gd/rebase-apply || -f $gd/MERGE_HEAD || -n $(git ls-files -u) ]]; then
   flog ERROR "briefing sync: a rebase or merge is unfinished; left for a person" dir="$R"
   exit 1
 fi
@@ -53,8 +53,13 @@ if out=$(git push -q origin HEAD 2>&1); then
   flog INFO "briefing synced" commit="$(git rev-parse --short HEAD)" pushed="$ahead"
   exit 0
 fi
-# Rejected (the remote moved, e.g. AJ ticked a box on the phone): rebase once and retry.
-if git pull -q --rebase --autostash origin "$(git rev-parse --abbrev-ref HEAD)" >/dev/null 2>&1 && out=$(git push -q origin HEAD 2>&1); then
+# Rejected (the remote moved, e.g. AJ ticked a box on the phone): rebase once and retry,
+# only on a clean tree (an autostash that conflicts reports success and leaves markers).
+if ! git diff --quiet || ! git diff --cached --quiet; then
+  flog WARN "briefing sync: push rejected and the tree has edits; rebasing next pass" said="$(tail -3 <<<"$out")"
+  exit 1
+fi
+if git pull -q --rebase origin "$(git rev-parse --abbrev-ref HEAD)" >/dev/null 2>&1 && [[ -z $(git ls-files -u) ]] && out=$(git push -q origin HEAD 2>&1); then
   flog INFO "briefing synced after a rebase" commit="$(git rev-parse --short HEAD)"
   exit 0
 fi
