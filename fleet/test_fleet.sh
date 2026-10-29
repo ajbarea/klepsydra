@@ -939,7 +939,54 @@ check "the orchestrator is relaunched without worker settings, on the default ac
 check "its note names HEPH.md and holds AJ's messages since it was written, nothing else" \
   "$(grep -c "Read $work/HEPH.md first" "$work/rec-heph.txt") $(grep '^- ' "$work/rec-heph.txt" | tr '\n' '|')" "1 - AJ: move InteFL to Friday|- AJ: and ping Dima|"
 check "and orchestrator.pane follows it" "$(cat "$FLEET_STATE/orchestrator.pane")" "$(tail -1 <<<"$out" | grep -o '%[0-9]*')"
-rm -f "$FLEET_STATE/orchestrator.pane"; unset FLEET_BOOT_ID FLEET_PROC FLEET_PROJECTS
+check "and orchestrator.session records its session" "$(cat "$FLEET_STATE/orchestrator.session")" "x"
+
+echo "recover: a relaunched worker that takes the old orchestrator pane is not Heph"
+SW=aaaaaaaa-0000-4000-8000-0000000000c1 SNEW=aaaaaaaa-0000-4000-8000-0000000000c2
+: >"$work/rec.log"; rm -f "$FLEET_STATE/orchestrator.session"
+printf '%%0\n' >"$FLEET_STATE/orchestrator.pane"
+sfile "$SW" 4242 777 "$OLDBOOT" %7
+printf '%s\tw\t%s\t%s\t/w\n' %7 "$work/ba.src" "$SW" >"$REGISTRY"
+cat >"$work/launch-steal.sh" <<STEAL
+#!/usr/bin/env bash
+printf '%s\n' "\$1" >>"$work/rec.log"
+if [[ \$1 == w ]]; then
+  jq -n '{session_id: "x", started_at: 99, ended: null, claude: {pid: 4242, start: 777}, host: {boot: "$NOWBOOT"}, tmux: {pane: "%0"}}' >"$KLEPSYDRA_DIR/fleet/$SNEW.json"
+  echo "pane=%0 session=$SNEW account=x avail=1MiB brief=started"
+else
+  echo "pane=%950 session=heph-new account=x avail=1MiB brief=started"
+fi
+STEAL
+out=$(LAUNCH="$work/launch-steal.sh" FLEET_STAGGER_S=0 FLEET_HEPH="$work/HEPH.md" bash "$here/recover.sh" 2>/dev/null)
+check "the worker takes %0 and Heph is still relaunched" "$(tr '\n' '|' <<<"$out")" "recovered: w -> %0|recovered: orchestrator -> %950|"
+check "Heph's records follow the new Heph" "$(cat "$FLEET_STATE/orchestrator.pane") $(cat "$FLEET_STATE/orchestrator.session")" "%950 heph-new"
+rm -f "$KLEPSYDRA_DIR/fleet/$SNEW.json"
+
+echo "recover: a stale orchestrator.session while Heph runs in its pane"
+SLIVE=aaaaaaaa-0000-4000-8000-0000000000c3
+printf '%s\n' "$SH" >"$FLEET_STATE/orchestrator.session"; printf '%%4\n' >"$FLEET_STATE/orchestrator.pane"
+sfile "$SLIVE" 4242 777 "$NOWBOOT" %4
+: >"$REGISTRY"; : >"$work/rec.log"
+out=$(rec)
+check "Heph's live session wins over the stale record; nothing launches" "$(tr '\n' '|' <<<"$out")$(wc -l <"$work/rec.log")" "running: orchestrator (%4)|nothing to recover|0"
+rm -f "$KLEPSYDRA_DIR/fleet/$SLIVE.json"
+
+echo "recover: a pane that still runs a session the row does not name"
+SOLD=aaaaaaaa-0000-4000-8000-0000000000c4 SCUR=aaaaaaaa-0000-4000-8000-0000000000c5
+sfile "$SOLD" 4242 777 "$OLDBOOT" %8; sfile "$SCUR" 4242 777 "$NOWBOOT" %8
+printf '%s\tx\t%s\t%s\t/w\n%s\ty\t%s\t%s\t/w\n' %8 "$work/ba.src" "$SOLD" %9 "$work/gone.src" aaaaaaaa-0000-4000-8000-0000000000c6 >"$REGISTRY"
+out=$(rec --no-orchestrator)
+check "the row is repaired and no second agent starts; a missing brief is skipped" \
+  "$(tr '\n' '|' <<<"$out")$(wc -l <"$work/rec.log") $(cut -f4 "$REGISTRY" | head -1)" \
+  "running: x (%8, now session $SCUR)|not recovered: y (brief $work/gone.src is gone)|nothing to recover|0 $SCUR"
+rm -f "$KLEPSYDRA_DIR/fleet/$SOLD.json" "$KLEPSYDRA_DIR/fleet/$SCUR.json"
+
+echo "recover: one run at a time"
+flock "$FLEET_STATE/.recover.lock" sleep 3 &
+sleep 0.3
+check "a second run while one holds the lock refuses" "$(bash "$here/recover.sh" --no-orchestrator 2>&1; echo "rc=$?")" $'error: another fleet recover is running\nrc=1'
+wait
+rm -f "$FLEET_STATE/orchestrator.pane" "$FLEET_STATE/orchestrator.session"; : >"$REGISTRY"; unset FLEET_BOOT_ID FLEET_PROC FLEET_PROJECTS
 
 echo "launch without worker settings"
 cat >"$work/launcher-rec.sh" <<EOF
@@ -962,9 +1009,20 @@ check "nothing changed: no commit" "$(bsync) $(git -C "$work/brief" rev-list --c
 printf 'q\n' >"$work/brief/claude-queue.md"; printf 'x\n' >"$work/brief/notes.txt"
 touch "$work/leak"
 check "a gitleaks finding blocks the commit, and is logged" "$(bsync) $(git -C "$work/brief" rev-list --count HEAD) $(jq -r 'select(.message | contains("gitleaks found")) | .level' "$FLEET_LOG")" "1 1 ERROR"
+check "and leaves nothing staged" "$(git -C "$work/brief" diff --cached --name-only | wc -l)" "0"
 rm -f "$work/leak"
+printf '#!/usr/bin/env bash\necho "ERR [git] fatal: bad object" >&2\nexit 0\n' >"$work/bin/gitleaks-err"; chmod +x "$work/bin/gitleaks-err"
+check "a scanner that exits 0 with an error is no verdict" \
+  "$(BRIEFING_DIR="$work/brief" FLEET_GITLEAKS="$work/bin/gitleaks-err" bash "$here/sync-briefing.sh" 2>/dev/null; echo $?) $(git -C "$work/brief" rev-list --count HEAD)" "1 1"
 check "a change is committed and pushed" "$(bsync) $(git -C "$work/brief-remote.git" rev-list --count HEAD)" "0 2"
 check "only the briefing's own files go in" "$(git -C "$work/brief" show --name-only --format= HEAD)" "claude-queue.md"
+git -C "$work/brief" -c user.name=t -c user.email=t@t commit -q --allow-empty -m "a prune commit"
+check "a commit made while the tree is clean is still pushed" "$(bsync) $(git -C "$work/brief-remote.git" rev-list --count HEAD)" "0 3"
+git clone -q "$work/brief-remote.git" "$work/brief-phone" 2>/dev/null
+printf 'ticked\n' >"$work/brief-phone/README.md"
+git -C "$work/brief-phone" add README.md && git -C "$work/brief-phone" -c user.name=t -c user.email=t@t commit -q -m phone && git -C "$work/brief-phone" push -q origin HEAD 2>/dev/null
+printf 'q2\n' >"$work/brief/claude-queue.md"
+check "a push the remote rejects rebases once and lands both" "$(bsync) $(git -C "$work/brief-remote.git" rev-list --count HEAD)" "0 5"
 
 echo "the fleet log"
 check "every line is one JSON object with ts, level, target and message" \

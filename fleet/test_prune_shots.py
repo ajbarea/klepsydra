@@ -167,6 +167,95 @@ class PruneShots(unittest.TestCase):
         self.assertNotIn("answered in", out)
         self.assertTrue((self.repo / "shots/2026-10-28/c-3-x.png").exists())
 
+    def test_an_image_an_open_section_still_shows_is_kept(self):
+        # §1 is answered, but §2 (open) compares against the same "before" image.
+        body = self.BODY.replace(
+            img("2026-10-28/b-2-wall-dark.png"),
+            img("2026-10-28/b-2-wall-dark.png")
+            + " "
+            + img("2026-10-28/a-1-before-dark.png"),
+        )
+        self.review(body)
+        out = self.run_it("--apply")
+        self.assertNotIn("a-1-before-dark.png", out)
+        self.assertTrue((self.repo / "shots/2026-10-28/a-1-before-dark.png").exists())
+        self.assertFalse((self.repo / "shots/2026-10-28/a-1-after-dark.png").exists())
+
+    def test_untracked_edited_and_non_image_files_are_never_removed(self):
+        shots = self.repo / "shots"
+        (shots / "2026-10-10/untracked-old.png").write_bytes(b"png")
+        (shots / "2026-10-28/a-1-after-dark.png").write_bytes(b"edited")
+        (shots / "2026-10-10/notes.txt").write_text("x")
+        g = ["git", "-C", str(self.repo)]
+        subprocess.run([*g, "add", "shots/2026-10-10/notes.txt"], check=True)
+        subprocess.run(
+            [*g, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "n"],
+            check=True,
+        )
+        self.review(self.BODY)
+        out = self.run_it("--apply")
+        for kept in [
+            "2026-10-10/untracked-old.png",
+            "2026-10-28/a-1-after-dark.png",
+            "2026-10-10/notes.txt",
+        ]:
+            self.assertTrue((shots / kept).exists(), kept)
+            self.assertNotIn(kept, out)
+        self.assertFalse((shots / "2026-10-28/a-1-before-dark.png").exists())
+        status = subprocess.run(
+            [*g, "status", "--porcelain"], capture_output=True, text=True
+        ).stdout
+        self.assertEqual(
+            sorted(status.split("\n")),
+            sorted(
+                [
+                    "",
+                    " M shots/2026-10-28/a-1-after-dark.png",
+                    "?? shots/2026-10-10/untracked-old.png",
+                ]
+            ),
+        )
+
+    def test_a_failed_commit_removes_nothing_and_says_so(self):
+        hook = self.repo / ".git/hooks/pre-commit"
+        hook.write_text("#!/bin/sh\necho 'hook says no' >&2\nexit 1\n")
+        hook.chmod(0o755)
+        subprocess.run(
+            ["git", "-C", str(self.repo), "config", "core.hooksPath", str(hook.parent)],
+            check=True,
+        )
+        before = (self.repo / "shots/README.md").read_text()
+        self.review(self.BODY)
+        env = os.environ | {
+            "BRIEFING_DIR": str(self.repo),
+            "FLEET_GH": str(self.tmp / "gh"),
+            "FLEET_STATE": str(self.tmp / "state"),
+            "FLEET_NOW": str(NOW),
+            "GH_ISSUES": str(self.issues),
+            "GH_CALLS": str(self.calls),
+        }
+        out = subprocess.run(
+            [sys.executable, "-I", str(HERE / "prune_shots.py"), "--apply"],
+            capture_output=True,
+            text=True,
+            env=env,
+        )
+        self.assertEqual(out.returncode, 1, out.stderr)
+        self.assertIn("prune failed, nothing removed", out.stdout)
+        self.assertTrue((self.repo / "shots/2026-10-28/a-1-after-dark.png").exists())
+        self.assertEqual((self.repo / "shots/README.md").read_text(), before)
+        status = subprocess.run(
+            ["git", "-C", str(self.repo), "status", "--porcelain"],
+            capture_output=True,
+            text=True,
+        ).stdout
+        self.assertEqual(status, "")
+        self.assertNotIn("close", self.calls.read_text())
+        log = (self.tmp / "state" / "log").glob("*")
+        self.assertTrue(
+            any("shots prune failed" in f.read_text() for f in log if f.is_file())
+        )
+
     def test_the_repo_size_is_reported(self):
         self.review("")
         self.assertRegex(self.run_it(), r"briefing repo: \d+ MB\n")

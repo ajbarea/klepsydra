@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 # sync-briefing.sh: commit and push the private fleet-briefing repo (AJ's queue,
-# morning file and shots) when anything in it changed, after a gitleaks scan of
-# the working tree. A finding blocks the commit; nothing is ever forced. Run
+# morning file and shots) when anything in it changed or a commit waits to be
+# pushed. The staged content is scanned by gitleaks before it is committed, so
+# what is scanned is what is committed; a finding unstages it and blocks the
+# commit. A rejected push rebases once onto the remote and retries; nothing is
+# ever forced. Holds .git/fleet-sync.lock, which prune_shots.py takes too. Run
 # every 5 minutes by the fleet-sync-briefing timer.
 set -u
 FLEET_TARGET=fleet::sync-briefing
@@ -10,23 +13,39 @@ here=$(dirname "$(readlink -f "$0")")
 . "$here/lib.sh"
 R=${BRIEFING_DIR:-/mnt/c/Users/ajbar/fleet-briefing}
 GITLEAKS=${FLEET_GITLEAKS:-gitleaks}
+export GIT_TERMINAL_PROMPT=0
 cd "$R" 2>/dev/null || { flog ERROR "briefing sync: no repo" dir="$R"; exit 1; }
-[[ -z $(git status --porcelain -- claude-morning.md claude-queue.md README.md shots) ]] && exit 0
-if ! out=$("$GITLEAKS" dir . --no-banner --exit-code 1 2>&1); then
-  flog ERROR "briefing sync: gitleaks found something; not committed" dir="$R" said="$(tail -3 <<<"$out")"
-  exit 1
-fi
+exec 9>"$(git rev-parse --git-dir)/fleet-sync.lock"
+flock -w 60 9 || { flog WARN "briefing sync: another sync or prune holds the lock"; exit 0; }
+
 # Only paths that exist or are tracked: git add stops at the first pathspec that matches nothing.
 paths=()
 for f in claude-morning.md claude-queue.md README.md shots; do
   if [[ -e $f ]] || git ls-files --error-unmatch -- "$f" >/dev/null 2>&1; then paths+=("$f"); fi
 done
-git add -A -- "${paths[@]}"
-git diff --cached --quiet && exit 0
-git -c core.autocrlf=false commit -q -m "Update $(date '+%F %H:%M')" >/dev/null || { flog ERROR "briefing sync: commit failed"; exit 1; }
-if out=$(git push -q origin HEAD 2>&1); then
-  flog INFO "briefing synced" commit="$(git rev-parse --short HEAD)"
-else
-  flog ERROR "briefing sync: push failed" said="$(tail -3 <<<"$out")"
-  exit 1
+if [[ -n $(git status --porcelain -- "${paths[@]}") ]]; then
+  git add -A -- "${paths[@]}"
+  if ! git diff --cached --quiet; then
+    if ! out=$("$GITLEAKS" git --staged --no-banner --redact --exit-code 1 --log-level error . 2>&1) || [[ -n $out ]]; then
+      git reset -q -- "${paths[@]}"
+      flog ERROR "briefing sync: gitleaks found something or gave no verdict; unstaged, not committed" dir="$R" said="$(tail -3 <<<"$out")"
+      exit 1
+    fi
+    git commit -q -m "Update $(date '+%F %H:%M')" >/dev/null || { flog ERROR "briefing sync: commit failed"; exit 1; }
+  fi
 fi
+
+ahead=$(git rev-list --count '@{u}..HEAD' 2>/dev/null || echo 1)
+(( ahead > 0 )) || exit 0
+if out=$(git push -q origin HEAD 2>&1); then
+  flog INFO "briefing synced" commit="$(git rev-parse --short HEAD)" pushed="$ahead"
+  exit 0
+fi
+# Rejected (the remote moved, e.g. AJ ticked a box on the phone): rebase once and retry.
+if git pull -q --rebase --autostash origin "$(git rev-parse --abbrev-ref HEAD)" >/dev/null 2>&1 && out=$(git push -q origin HEAD 2>&1); then
+  flog INFO "briefing synced after a rebase" commit="$(git rev-parse --short HEAD)"
+  exit 0
+fi
+git rebase --abort >/dev/null 2>&1
+flog ERROR "briefing sync: push failed; still behind or diverged" said="$(tail -3 <<<"$out")" ahead="$ahead"
+exit 1

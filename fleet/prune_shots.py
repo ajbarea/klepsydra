@@ -14,6 +14,7 @@ its history past SQUASH_AT_MB.
 """
 
 import argparse
+import fcntl
 import fnmatch
 import json
 import logging
@@ -154,6 +155,62 @@ def readme_names(line: str, date: str | None, have: set[str]) -> set[str]:
     return names
 
 
+IMAGE_FILE = re.compile(r"\.(?:png|jpe?g|webp|gif)$", re.I)
+
+
+def apply(
+    readme: Path, lines: list[str], keep: list[str], gone: dict[str, str]
+) -> bool:
+    """Remove the images and README lines in one commit of only those paths, under the lock the
+    briefing sync takes, so a sync never commits half of it. On any failure the removals are
+    unstaged and the README restored, and the error is logged."""
+    paths = [f"shots/{img}" for img in sorted(gone)]
+    lock = open(REPO / ".git" / "fleet-sync.lock", "w")
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        git("--literal-pathspecs", "rm", "-q", "--ignore-unmatch", "--", *paths)
+        readme.write_text("".join(keep))
+        git("add", "--", "shots/README.md")
+        message = (
+            f"Shots: remove {len(gone)} images decided or over {MAX_AGE_DAYS} days old"
+        )
+        git(
+            "-c",
+            "core.autocrlf=false",
+            "--literal-pathspecs",
+            "commit",
+            "-q",
+            "-m",
+            message,
+            "--",
+            "shots/README.md",
+            *paths,
+        )
+    except (OSError, subprocess.CalledProcessError) as exc:
+        said = getattr(exc, "stderr", "") or str(exc)
+        subprocess.run(
+            ["git", "-C", str(REPO), "reset", "-q", "--", "shots"], check=False
+        )
+        subprocess.run(
+            ["git", "-C", str(REPO), "checkout", "-q", "--", *paths], check=False
+        )
+        readme.write_text("".join(lines))
+        event(
+            logging.ERROR, "shots prune failed; nothing removed", said=str(said)[-300:]
+        )
+        print(f"prune failed, nothing removed: {str(said).strip()[-200:]}")
+        return False
+    finally:
+        lock.close()
+    event(
+        logging.INFO,
+        "shots pruned",
+        removed=len(gone),
+        readme_lines=len(lines) - len(keep),
+    )
+    return True
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument(
@@ -163,13 +220,17 @@ def main() -> int:
     setup_log()
     failed = 0
     shots = REPO / "shots"
+    # Tracked images only: an untracked or edited file is not the sync's yet, and never removed.
+    tracked = git("ls-files", "-z", "--", "shots").split("\0")
+    dirty = set(git("status", "--porcelain", "-z", "--", "shots").split("\0"))
     have = {
-        str(p.relative_to(shots))
-        for p in shots.rglob("*")
-        if p.is_file() and p.name != "README.md"
+        t[len("shots/") :]
+        for t in tracked
+        if IMAGE_FILE.search(t) and not any(d.endswith(t) for d in dirty if d)
     }
 
     gone: dict[str, str] = {}  # image -> why it goes
+    shown: set[str] = set()  # images an open section still shows, in any Review issue
     closing: list[int] = []
     issues = gh_json(
         "issue",
@@ -200,6 +261,7 @@ def main() -> int:
                             )
             else:
                 open_secs.append(n)
+                shown |= {x for img in IMAGE.findall(text) for x in expand(img)}
         if secs and not open_secs:
             closing.append(issue["number"])
         print(
@@ -208,6 +270,8 @@ def main() -> int:
     for img in sorted(have):
         if img not in gone and age_days(img) > MAX_AGE_DAYS:
             gone[img] = f"over {MAX_AGE_DAYS} days old"
+    for img in shown & gone.keys():
+        del gone[img]
 
     readme = shots / "README.md"
     lines = readme.read_text().splitlines(keepends=True) if readme.exists() else []
@@ -227,26 +291,11 @@ def main() -> int:
         f"{'closed' if args.apply else 'would close'}: {', '.join(f'#{n}' for n in closing) or 'none'}"
     )
 
+    pruned = True
     if args.apply and (gone or len(keep) != len(lines)):
-        for img in sorted(gone):
-            git("rm", "-q", "--", f"shots/{img}")
-        readme.write_text("".join(keep))
-        git("add", "--", "shots/README.md")
-        git(
-            "-c",
-            "core.autocrlf=false",
-            "commit",
-            "-q",
-            "-m",
-            f"Shots: remove {len(gone)} images decided or over {MAX_AGE_DAYS} days old",
-        )
-        event(
-            logging.INFO,
-            "shots pruned",
-            removed=len(gone),
-            readme_lines=len(lines) - len(keep),
-        )
-    if args.apply:
+        pruned = apply(readme, lines, keep, gone)
+        failed |= not pruned
+    if args.apply and pruned:
         for n in closing:
             r = subprocess.run(
                 [

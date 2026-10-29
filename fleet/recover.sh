@@ -6,7 +6,9 @@
 # resume hint: its transcript's last two replies and a pointer to its newest
 # IMPL.md. The orchestrator, when its session is gone too, is launched from a
 # note naming HEPH.md and holding AJ's messages to it since HEPH.md was last
-# written. A running agent is left alone, so a second run does nothing.
+# written. A running agent is left alone, so a second run does nothing; a
+# pane that still runs a live session gets its row repaired, not a second
+# agent. One run at a time (a lock), so AJ and Heph never both launch.
 set -u
 FLEET_TARGET=fleet::recover
 here=$(dirname "$(readlink -f "$0")")
@@ -19,6 +21,49 @@ dry=0 orch_too=1
 for a in "$@"; do
   case $a in --dry-run) dry=1 ;; --no-orchestrator) orch_too=0 ;; *) err "usage: recover.sh [--dry-run] [--no-orchestrator]"; exit 2 ;; esac
 done
+if (( ! dry )); then
+  exec 9>"$FLEET_STATE/.recover.lock"
+  flock -n 9 || { err "another fleet recover is running"; exit 1; }
+fi
+
+# The one session alive in PANE (a dead file may still name it: a killed
+# session never writes "ended"), or nothing.
+alive_in_pane() { # PANE
+  local f id found=()
+  for f in "$KLEPSYDRA_DIR"/fleet/*.json; do
+    [[ -f $f && ! -L $f ]] || continue
+    jq -e --arg p "$1" '.tmux.pane == $p and .ended == null' "$f" >/dev/null 2>&1 || continue
+    id=$(basename "$f" .json)
+    session_alive "$id" && found+=("$id")
+  done
+  (( ${#found[@]} == 1 )) && printf '%s' "${found[0]}"
+}
+
+# The orchestrator's session, found before any launch: a relaunched worker
+# can take the old orchestrator pane's id on a new tmux server. Its record
+# (orchestrator.session) first, else the newest file naming its pane whose
+# session is no registered agent's.
+orch=$(orchestrator)
+orch_session() {
+  local rec now agents f
+  agents=$(cut -f4 "$REGISTRY" 2>/dev/null | grep .)
+  rec=$(cat "$FLEET_STATE/orchestrator.session" 2>/dev/null)
+  [[ -n $rec ]] && session_alive "$rec" && { printf '%s' "$rec"; return; }
+  # A stale record (Heph restarted or cleared): the pane's live session, when no agent's.
+  if [[ -n $orch ]] && now=$(alive_in_pane "$orch") && [[ -n $now ]] && ! grep -qxF -- "$now" <<<"$agents"; then
+    printf '%s' "$now"
+    return
+  fi
+  [[ -n $rec ]] && { printf '%s' "$rec"; return; }
+  [[ -n $orch ]] || return 0
+  for f in "$KLEPSYDRA_DIR"/fleet/*.json; do
+    [[ -f $f && ! -L $f ]] || continue
+    jq -r --arg p "$orch" 'select(.tmux.pane == $p) | "\(.started_at // 0) \(input_filename | split("/") | last | rtrimstr(".json"))"' "$f" 2>/dev/null
+  done | sort -rn | while read -r _ id; do
+    grep -qxF -- "$id" <<<"$agents" || { printf '%s' "$id"; break; }
+  done
+}
+osid=$(orch_session)
 
 # The transcript of session SID, in any config folder's projects.
 transcript() { # SID
@@ -48,12 +93,13 @@ newest_impl() { # TRANSCRIPT
 launched=0
 # Wait out the stagger before every launch but the first.
 stagger() { (( launched++ )) && sleep "$STAGGER"; return 0; }
-launch() { # NAME TEXTFILE [env...]: one launch; prints the new pane
+launch() { # NAME TEXTFILE [env...]: one launch; prints "PANE SESSION"
   local name=$1 txt=$2 out
   shift 2
   out=$(env "$@" bash "$LAUNCH" "$name" "$txt" 2>/dev/null | head -1)
   flog INFO "recovered" name="$name" result="$out"
-  printf '%s' "$(grep -o 'pane=%[0-9]*' <<<"$out" | cut -d= -f2)"
+  grep -q 'pane=%[0-9]' <<<"$out" || return 0
+  printf '%s %s' "$(grep -o 'pane=%[0-9]*' <<<"$out" | cut -d= -f2)" "$(grep -o 'session=[^ ]*' <<<"$out" | cut -d= -f2)"
 }
 
 lost=0
@@ -61,6 +107,18 @@ while IFS=$'\t' read -r p name brief sid _; do
   [[ -n $p && -n $name && -n $brief ]] || continue
   if session_alive "$sid"; then
     echo "running: $name ($p)"
+    continue
+  fi
+  # The pane still runs a live session the row does not name (a /clear whose
+  # new id was never recorded): repair the row, never start a second agent.
+  if now=$(alive_in_pane "$p") && [[ -n $now ]]; then
+    echo "running: $name ($p, now session $now)"
+    (( dry )) || { set_session "$p" "$now"; flog INFO "registry repaired" pane="$p" name="$name" session="$now"; }
+    continue
+  fi
+  if [[ ! -r $brief ]]; then
+    echo "not recovered: $name (brief $brief is gone)"
+    flog ERROR "recovery skipped: brief missing" name="$name" brief="$brief"
     continue
   fi
   lost=$((lost + 1))
@@ -81,17 +139,13 @@ while IFS=$'\t' read -r p name brief sid _; do
   } >"$txt"
   stagger
   new=$(launch "$name" "$txt")
+  new=${new%% *}
   echo "recovered: $name -> ${new:-NOT STARTED}"
   [[ -n $new ]] || flog ERROR "recovery launch failed" name="$name" brief="$txt"
 done < <(cat "$REGISTRY" 2>/dev/null)
 
-# The orchestrator: its session is the newest file naming its pane.
-orch=$(orchestrator)
-if (( orch_too )) && [[ -n $orch ]]; then
-  osid=$(for f in "$KLEPSYDRA_DIR"/fleet/*.json; do
-    [[ -f $f && ! -L $f ]] || continue
-    jq -r --arg p "$orch" 'select(.tmux.pane == $p) | "\(.started_at // 0) \(input_filename | split("/") | last | rtrimstr(".json"))"' "$f" 2>/dev/null
-  done | sort -rn | head -1 | cut -d' ' -f2)
+# The orchestrator, by the session found before the launches.
+if (( orch_too )) && [[ -n $orch$osid ]]; then
   if [[ -n $osid ]] && session_alive "$osid"; then
     echo "running: orchestrator ($orch)"
   else
@@ -115,8 +169,9 @@ if (( orch_too )) && [[ -n $orch ]]; then
       stagger
       new=$(launch heph "$txt" FLEET_SETTINGS= FLEET_ACCOUNT="$FLEET_DEFAULT_CONFIG")
       if [[ -n $new ]]; then
-        printf '%s\n' "$new" >"$FLEET_STATE/orchestrator.pane"
-        echo "recovered: orchestrator -> $new"
+        printf '%s\n' "${new%% *}" >"$FLEET_STATE/orchestrator.pane"
+        [[ $new == *" "?* ]] && printf '%s\n' "${new#* }" >"$FLEET_STATE/orchestrator.session"
+        echo "recovered: orchestrator -> ${new%% *}"
       else
         flog ERROR "recovery launch failed" name=orchestrator brief="$txt"
         echo "recovered: orchestrator -> NOT STARTED"
