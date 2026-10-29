@@ -4,7 +4,7 @@
 # command into ~/.local/bin, and the fleet's services into
 # ~/.config/systemd/user as enabled user units, which come back after a
 # restart. A copy a link replaces is kept in archive/fleet-scripts-<date>/.
-# Starts nothing: `fleet cutover` restarts the resume service.
+# Starts nothing: `fleet cutover` swaps the running services onto the units.
 set -u
 FLEET_TARGET=fleet::install
 here=$(dirname "$(readlink -f "$0")")
@@ -13,7 +13,7 @@ here=$(dirname "$(readlink -f "$0")")
 dry=0
 [[ ${1:-} == --dry-run ]] && dry=1
 do_() { if (( dry )); then printf 'would: %s\n' "$*"; else "$@"; fi; }
-SCRIPTS=(launch.sh fresh-now.sh resume-at-reset.sh watch-panes.sh memfrag-log.sh relaunch-fresh.sh brief.sh doctor.sh worker-settings.json)
+SCRIPTS=(launch.sh fresh-now.sh resume-at-reset.sh watch-panes.sh memfrag-log.sh relaunch-fresh.sh brief.sh doctor.sh cutover.sh worker-settings.json)
 UNITS=${FLEET_UNITS:-$HOME/.config/systemd/user}
 BIN=${FLEET_BIN:-$HOME/.local/bin}
 archive=$FLEET_STATE/archive/fleet-scripts-$(date +%Y%m%d)
@@ -74,10 +74,10 @@ RestartSec=30
 [Install]
 WantedBy=default.target"
 fi
-if (( ! dry )) && command -v systemctl >/dev/null; then
-  systemctl --user daemon-reload
-  systemctl --user enable fleet-resume-at-reset.service fleet-memfrag-log.timer >/dev/null 2>&1
-  [[ -r $mem_watch ]] && systemctl --user enable wsl-mem-watch.service >/dev/null 2>&1
+# Enabling and starting is the cut-over's: a transient unit of the same name
+# (systemd-run) makes enable fail until it is stopped (fleet cutover).
+if (( ! dry )) && command -v "${FLEET_SYSTEMCTL:-systemctl}" >/dev/null; then
+  "${FLEET_SYSTEMCTL:-systemctl}" --user daemon-reload
 fi
 (( dry )) || flog INFO "fleet installed" from="$here" state="$FLEET_STATE" archive="$archive"
-echo "installed from $here"
+echo "installed from $here; run fleet cutover to start the services on it"

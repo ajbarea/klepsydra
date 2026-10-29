@@ -346,6 +346,55 @@ check "the memfrag timer too" "$(grep -c 'OnCalendar=\*:0/30' "$inst/units/fleet
 FLEET_STATE="$inst/s2" FLEET_UNITS="$inst/u2" FLEET_BIN="$inst/b2" bash "$here/install.sh" --dry-run >"$work/dry" 2>/dev/null
 check "a dry run says what it would do and changes nothing" "$(grep -c '^would' "$work/dry" | sed 's/^[1-9][0-9]*$/some/') $(find "$inst" -mindepth 1 -maxdepth 1 -printf '%f\n' | sort | tr '\n' ' ')" "some bin state units "
 
+echo "cut-over"
+export SC="$work/sc" FLEET_LOG
+mkdir -p "$SC"
+cat >"$work/bin/systemctl" <<'SC'
+#!/usr/bin/env bash
+# A user systemd: each unit's state is a file under $SC. Like systemd, it will
+# not enable a unit file while a transient unit of that name exists.
+shift
+cmd=$1
+shift
+case $cmd in
+  show) u=${*: -1}; [[ -e $SC/$u.transient ]] && echo yes || echo no ;;
+  stop) rm -f -- "${SC:?}/${1:?}.transient" "${SC:?}/${1:?}.active" ;;
+  daemon-reload) : ;;
+  enable)
+    [[ $1 == --now ]] && shift
+    if [[ -e $SC/$1.transient ]]; then echo "Failed to enable unit: Unit $1 is transient or generated." >&2; exit 1; fi
+    touch "$SC/$1.enabled" "$SC/$1.active"
+    if [[ $1 == fleet-resume-at-reset.service && -z ${SC_SILENT:-} ]]; then
+      jq -nc --arg ts "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)" '{ts: $ts, level: "INFO", target: "fleet::resume", message: "resume service started"}' >>"$FLEET_LOG"
+    fi
+    ;;
+  is-enabled) [[ -e $SC/$1.enabled ]] && echo enabled || echo disabled ;;
+  is-active) [[ -e $SC/$1.active ]] && echo active || echo inactive ;;
+esac
+SC
+chmod +x "$work/bin/systemctl"
+cutover() { FLEET_SYSTEMCTL="$work/bin/systemctl" FLEET_UNITS="$work/units" FLEET_CUTOVER_WAIT=2 bash "$here/cutover.sh" 2>/dev/null; }
+touch "$SC/fleet-resume-at-reset.service.transient" "$SC/fleet-resume-at-reset.service.active" \
+  "$SC/fleet-memfrag-log.timer.transient" "$SC/fleet-memfrag-log.service.transient"
+check "the stand-in refuses enable over a transient unit, as systemd does (10-29 review)" \
+  "$("$work/bin/systemctl" --user enable fleet-resume-at-reset.service 2>&1 | tr -d '\n'; echo " rc=${PIPESTATUS[0]}")" \
+  "Failed to enable unit: Unit fleet-resume-at-reset.service is transient or generated. rc=1"
+out=$(cutover); code=$?
+check "the cut-over stops each transient unit, then enables and starts the installed one" "$out
+rc=$code" "ok   fleet-resume-at-reset.service: enabled and active
+ok   fleet-memfrag-log.timer: enabled and active
+ok   the resume service logged its start
+rc=0"
+check "no transient unit is left" "$(find "$SC" -name '*.transient' | wc -l)" "0"
+check "each stop is logged" "$(jq -r 'select(.message | startswith("transient unit stopped")) | .unit' "$FLEET_LOG" | sort | tr '\n' ' ')" \
+  "fleet-memfrag-log.service fleet-memfrag-log.timer fleet-resume-at-reset.service "
+rm -f -- "${SC:?}"/*
+touch "$SC/fleet-resume-at-reset.service.transient"
+out=$(SC_SILENT=1 cutover); code=$?
+check "a resume service that never logs its start fails the cut-over" "$code $(tail -1 <<<"$out")" "1 FAIL the resume service did not log its start"
+check "install writes the units but never enables them over a transient one" \
+  "$(grep -c -- '--user enable' "$here/install.sh") $(grep -c -- '--user daemon-reload' "$here/install.sh")" "0 1"
+
 echo "the fleet log"
 check "every line is one JSON object with ts, level, target and message" \
   "$(jq -s 'all(has("ts") and has("level") and has("target") and has("message"))' "$FLEET_LOG")" "true"
