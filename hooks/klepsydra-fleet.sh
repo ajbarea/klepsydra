@@ -914,6 +914,9 @@ main() {
   file=$fleet/$session.json
   old=""
   [[ -f $file ]] && { old=$(<"$file"); } 2>/dev/null
+  # Heph by a /clear stays Heph on later events in the orchestrator's pane,
+  # before orchestrator.session names the new session.
+  [[ $orchestrator == false && -z $agent && -n $orch_sid && $orch_pane == "$tmux_pane" && $old == *'"orchestrator":true'* ]] && orchestrator=true
   # The git dir the file last named (an escaped path is not read): gone means the checkout was removed.
   old_git=""
   [[ $old =~ \"git\":\"(/[^\"\\]*)\" ]] && old_git=${BASH_REMATCH[1]}
