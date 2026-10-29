@@ -44,15 +44,7 @@ agents=$(cut -f4 "$REGISTRY" 2>/dev/null | grep .)
 # Both starts are /proc clock ticks since boot (stat field 22), so a WSL clock
 # step cannot skew them, and a resumed session carries its new process's start.
 # With no server running, no row counts.
-this_boot=$(cat "${FLEET_BOOT_ID:-/proc/sys/kernel/random/boot_id}" 2>/dev/null)
-server_start=""
-spid=$(t display -p '#{pid}' 2>/dev/null)
-[[ $spid =~ ^[0-9]+$ ]] && server_start=$(proc_start "$spid")
-this_boot_row() { # SID
-  local f=$KLEPSYDRA_DIR/fleet/$1.json
-  [[ -n $this_boot && $server_start =~ ^[0-9]+$ && $(jq -r '.host.boot // ""' "$f" 2>/dev/null) == "$this_boot" ]] &&
-    (( $(jq -r '(.claude.start // 0) | floor' "$f" 2>/dev/null || echo 0) >= server_start ))
-}
+this_boot_row() { on_this_server "$1"; } # SID
 
 # Heph is a session the records name: the one whose id is orchestrator.session,
 # or the one in orchestrator.pane (a pane id counts only when the record ran on

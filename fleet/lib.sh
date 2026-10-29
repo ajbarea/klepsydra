@@ -398,7 +398,7 @@ room_elsewhere() { # DIR NOW
 
 # The config folder the orchestrator runs on: his live session's process's
 # CLAUDE_CONFIG_DIR (unset: the default), else orchestrator.config (written when
-# the fleet starts or moves him), else the default.
+# fleet recover starts him or the resume service moves him), else the default.
 heph_config() {
   local sid pid c env
   if sid=$(live_session "$(orchestrator)") && session_alive "$sid" &&
@@ -484,6 +484,19 @@ session_alive() { # SID
   read -r pid start boot < <(jq -r 'select(.ended == null) | "\(.claude.pid // 0) \(.claude.start // 0) \(.host.boot // "")"' "$f" 2>/dev/null)
   [[ ${pid:-0} =~ ^[1-9][0-9]*$ && -n ${boot:-} && $boot == "$(cat "${FLEET_BOOT_ID:-/proc/sys/kernel/random/boot_id}" 2>/dev/null)" ]] || return 1
   [[ $(proc_start "$pid") == "$start" ]]
+}
+
+# Whether session SID started on the running fleet tmux server: its fleet file
+# names this boot and a process start (/proc ticks since boot, so a WSL clock
+# step cannot skew it) no earlier than the server's. A tmux restart reuses pane
+# ids, so only such a session's pane id means what its file says.
+on_this_server() { # SID
+  local f=$KLEPSYDRA_DIR/fleet/$1.json spid sstart boot
+  spid=$(t display -p '#{pid}' 2>/dev/null)
+  [[ $spid =~ ^[0-9]+$ ]] && sstart=$(proc_start "$spid") || return 1
+  boot=$(cat "${FLEET_BOOT_ID:-/proc/sys/kernel/random/boot_id}" 2>/dev/null)
+  [[ -n $boot && $(jq -r '.host.boot // ""' "$f" 2>/dev/null) == "$boot" ]] &&
+    (( $(jq -r '(.claude.start // 0) | floor' "$f" 2>/dev/null || echo 0) >= sstart ))
 }
 
 # When process PID started, in clock ticks since boot (/proc/PID/stat field 22,

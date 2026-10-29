@@ -738,8 +738,8 @@ h=$(pane hephother "{\"above\":[\"⏺ ok\",\"$LIMIT\"]}"); settle
 printf '%s\n' "$h" >"$FLEET_STATE/orchestrator.pane"; live "$h"
 printf 'aaaaaaaa-0000-4000-8000-0000000000ee\n' >"$FLEET_STATE/orchestrator.session"
 hmove "$noon"
-check "review 1: a session other than the recorded Heph in his pane is never replaced" \
-  "$(wc -c <"$work/moved") $(events hephother) $(jq -r 'select(.message | startswith("orchestrator not moved")) | .pane' "$FLEET_LOG")" "0  $h"
+check "review 1: a session other than the recorded Heph in his pane is never replaced" "$(wc -c <"$work/moved") $(events hephother)" "0 "
+check "review 2: nor recorded as Heph" "$(cat "$FLEET_STATE/orchestrator.session")" "aaaaaaaa-0000-4000-8000-0000000000ee"
 printf '%s\tw\t%s\t%s\t/w\t%s\n' "$h" "$work/brief.src" "$SID" "$work/cfg-a" >"$REGISTRY"
 rm -f "$FLEET_STATE/orchestrator.session"
 LAUNCH="$work/launch-heph.sh" FLEET_NOW=$((noon + 1000)) bash "$here/resume-at-reset.sh" --once 2>/dev/null
@@ -752,7 +752,7 @@ printf '%s\n' "$h" >"$FLEET_STATE/orchestrator.pane"; live "$h"
 printf '%s\n' "$SID" >"$FLEET_STATE/orchestrator.session"
 cat >"$work/launch-heph-phone.sh" <<EOF
 #!/usr/bin/env bash
-jq '.state_at = 5' "$KLEPSYDRA_DIR/fleet/$SID.json" >"$work/st.json" && mv "$work/st.json" "$KLEPSYDRA_DIR/fleet/$SID.json"
+jq '.prompt.at = 5' "$KLEPSYDRA_DIR/fleet/$SID.json" >"$work/st.json" && mv "$work/st.json" "$KLEPSYDRA_DIR/fleet/$SID.json"
 echo "pane=%996 session=x account=\$FLEET_ACCOUNT avail=1MiB brief=started"
 EOF
 LAUNCH="$work/launch-heph-phone.sh" FLEET_HEPH="$work/HEPH.md" FLEET_NOW=$noon bash "$here/resume-at-reset.sh" --once 2>/dev/null

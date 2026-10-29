@@ -196,7 +196,7 @@ heph_move() { # PANE TO WHY [NOTE]
     flog WARN "orchestrator not moved: the pane does not run the recorded orchestrator session" pane="$p" session="${osid:-none}"
     return 2
   fi
-  stamp=$(state_stamp "$p")
+  stamp=$(prompt_stamp "$p")
   txt="$FLEET_STATE/heph-move-$(date +%Y%m%d-%H%M).md"
   {
     heph_note "$why" "$osid" "$HEPH" "the resume service started you on $to and the agents run on meanwhile."
@@ -216,9 +216,9 @@ heph_move() { # PANE TO WHY [NOTE]
     return 3
   fi
   # A phone message answered while the successor launched leaves the screen as
-  # it was but moves the session's state: the old Heph stays.
+  # it was but is a new prompt in his session: the old Heph stays.
   now_s=$(screen "$p")
-  if busy "$now_s" || ! has_input_box "$now_s" || [[ $(input_text "$now_s") != "$box" || $(state_stamp "$p") != "$stamp" ]]; then
+  if busy "$now_s" || ! has_input_box "$now_s" || [[ $(input_text "$now_s") != "$box" || $(prompt_stamp "$p") != "$stamp" ]]; then
     flog ERROR "the orchestrator's pane changed while its successor launched; the old one stays and the new one goes" pane="$p" new_pane="$new"
     drop "$new"
     return 4
@@ -227,8 +227,9 @@ heph_move() { # PANE TO WHY [NOTE]
     t send-keys -t "$p" C-c
     wait_for "$p" 5 idle_empty || true
   fi
-  # Two Hephs never run: the old one goes first, or the new one does.
-  if ! retire "$p"; then
+  # Two Hephs never run: the old one goes first, or the new one does (a pane
+  # that exited just as retire gave up has gone all the same).
+  if ! retire "$p" && fleet_panes | grep -qx -- "$p"; then
     flog ERROR "the old orchestrator pane would not exit; it stays and its successor goes" pane="$p" new_pane="$new"
     drop "$new"
     return 3
@@ -239,11 +240,12 @@ heph_move() { # PANE TO WHY [NOTE]
   printf '%s' "$new"
 }
 
-# The state_at of the live session in PANE (klepsydra's fleet file), or nothing.
-state_stamp() { # PANE
+# When the live session in PANE last took a prompt (klepsydra's fleet file sets
+# prompt.at for typed and phone prompts, not task notifications), or nothing.
+prompt_stamp() { # PANE
   local sid
   sid=$(live_session "$1") || return 0
-  jq -r '.state_at // ""' "$KLEPSYDRA_DIR/fleet/$sid.json" 2>/dev/null
+  jq -r '.prompt.at // ""' "$KLEPSYDRA_DIR/fleet/$sid.json" 2>/dev/null
 }
 
 # Retire a pane this pass launched, interrupting its turn; kill it if it will not exit.
@@ -264,8 +266,17 @@ moved() { # PANE [NEW]
 
 one() { # PANE
   local p=$1 s ps typed orch=0 armed at limit reset reg name brief idle new got tmp
-  # A registered agent in the pane orchestrator.pane names is not Heph (a tmux restart reuses ids).
-  [[ -n $ORCH && $p == "$ORCH" ]] && ! registered "$p" && orch=1
+  # Heph is the session on record in the pane on record. A tmux restart reuses
+  # pane ids, so another session there is him only when his recorded one has
+  # ended on this same server (a /clear or a restart in place), or none is
+  # recorded; a registered agent there never is.
+  local cur
+  if [[ -n $ORCH && $p == "$ORCH" ]] && ! registered "$p"; then
+    cur=$(live_session "$p")
+    if [[ -z $OSID || ( -n $cur && $cur == "$OSID" ) ]] || { ! session_alive "$OSID" && on_this_server "$OSID"; }; then
+      orch=1
+    fi
+  fi
   # The pane's account: its config folder's login, named as the gauge names
   # it; a folder with no known login falls back to the newest reading's.
   local cfg PANE_ID ACTIVE=$ACTIVE
@@ -316,12 +327,11 @@ one() { # PANE
   fi
   if (( orch )); then
     # Keep Heph's session on record, so `fleet recover` finds his transcript after a power cut.
-    local osid
     # Only a live session no agent's row names: a worker relaunched into Heph's old pane is not him.
-    if ! registered "$p" && osid=$(live_session "$p") && session_alive "$osid" && ! cut -f4 "$REGISTRY" 2>/dev/null | grep -qxF -- "$osid" &&
-      [[ $osid != "$(cat "$FLEET_STATE/orchestrator.session" 2>/dev/null)" ]]; then
-      printf '%s\n' "$osid" >"$FLEET_STATE/orchestrator.session"
-      flog INFO "orchestrator session recorded" pane="$p" session="$osid"
+    if [[ -n $cur && $cur != "$OSID" ]] && session_alive "$cur" && ! cut -f4 "$REGISTRY" 2>/dev/null | grep -qxF -- "$cur"; then
+      printf '%s\n' "$cur" >"$FLEET_STATE/orchestrator.session"
+      OSID=$cur
+      flog INFO "orchestrator session recorded" pane="$p" session="$cur"
     fi
   fi
 
@@ -353,7 +363,7 @@ one() { # PANE
   # from it unsent). A failed move waits 15 min before the next try.
   local other carry="" rc
   if (( !fresh_typing && !switched )) && { [[ -n $reg ]] || (( orch )); } && (( due[$p] - NOW >= MOVE_MIN_S && NOW - ${move_failed[$p]:-0} >= 900 )) &&
-    other=$(room_elsewhere "$cfg" "$NOW"); then
+    other=$(if (( orch )); then FLEET_ACCOUNTS=$FLEET_HEPH_ACCOUNTS room_elsewhere "$cfg" "$NOW"; else room_elsewhere "$cfg" "$NOW"; fi); then
     # What AJ typed while it waited is carried even when he sent it: the
     # session answered only with the limit, so it never acted on it. (Heph's
     # note carries AJ's sent messages from his transcript itself.)
@@ -474,7 +484,7 @@ doctor_after_switch() {
 PREV_ACCT="" DOCTOR_DUE=0
 
 pass() {
-  NOW=$(clock) ACTIVE=$(active_account) ORCH=$(orchestrator)
+  NOW=$(clock) ACTIVE=$(active_account) ORCH=$(orchestrator) OSID=$(cat "$FLEET_STATE/orchestrator.session" 2>/dev/null)
   accounts
   local p
   for p in $(fleet_panes); do one "$p"; done
