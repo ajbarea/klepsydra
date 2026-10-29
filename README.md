@@ -649,6 +649,15 @@ maximized if they were; a window closed meanwhile is skipped. The toggle is
 pressed only once a split has landed. If the fleet terminal is not open, the
 note says so and nothing moves; **+ New session** opens it.
 
+While split is on, klepsydra watches both windows. As soon as either one
+leaves its half (dragged or resized by more than 4 px, maximized, minimized
+or closed, the wall's close included), Split turns itself off and saves off,
+and its note names the window and how it left. Both windows stay where you
+put them; one press on **Split** snaps them back. The split's own moves, and
+half a second of settling after them, never count. The watcher is a
+`SetWinEventHook` on the two windows' threads, served by a thread of its
+own, so the wall's UI thread does not wake for it.
+
 Split is off by default. Turning it on saves `wall_split` in `prefs.json`,
 and the wall splits again the first time it opens after klepsydra starts. Where the windows sat before is
 kept in memory only: after klepsydra restarts, turning split off leaves both

@@ -2,7 +2,7 @@
 // the fleet terminal on the right. The app places both windows and remembers
 // the choice; this wires the wall's toggle to it. Free of the DOM so it can be
 // unit tested with stand-ins.
-import { press } from "./dom.js";
+import { press, say } from "./dom.js";
 
 /** The toggle's name, the same pressed or not (a toggle button's state is aria-pressed). */
 export const SPLIT_LABEL = "Split with terminal";
@@ -12,8 +12,10 @@ export const SPLIT_LABEL = "Split with terminal";
  * through `invoke`. Hidden unless `app` and get_split_mode answers, which it
  * does only on Windows. Pressed only once a split has landed; a saved choice
  * is applied when the wall loads. Resolves once the saved choice has loaded.
+ * Through `follow`, the app says when a window left the split: the toggle
+ * turns off and the note says which window, with nothing moved back.
  */
-export function wireSplit({ button, note, invoke, app }) {
+export function wireSplit({ button, note, invoke, app, follow }) {
   button.hidden = true;
   const show = (on) => button.setAttribute("aria-pressed", on ? "true" : "false");
   show(false);
@@ -28,6 +30,11 @@ export function wireSplit({ button, note, invoke, app }) {
   return invoke("get_split_mode").then(
     (saved) => {
       button.hidden = false;
+      follow?.("split_subscribe", (left) => {
+        if (left?.on !== false) return;
+        show(false);
+        say(note, left.note);
+      }).catch(() => {});
       if (saved === true) turn(true);
     },
     () => {},

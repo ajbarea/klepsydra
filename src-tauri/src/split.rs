@@ -2,9 +2,14 @@
 //! `fleet` Windows Terminal window on the right. Off by default; the wall's
 //! toggle turns it on, and prefs.json remembers it as `wall_split` (written
 //! true only once a split lands). Turning it off puts both windows back where
-//! they were. The arithmetic is `geometry`'s; the win32 calls here stay thin.
+//! they were. While on, a watcher turns it off as soon as either window leaves
+//! its half, leaving both where they are. The arithmetic is `geometry`'s; the
+//! win32 calls here stay thin.
 
+use crate::geometry::Rect;
 use serde_json::{Map, Value};
+use std::sync::Mutex;
+use tauri::ipc::Channel;
 
 /// The prefs.json key, beside `wall_density`.
 pub const SPLIT_KEY: &str = "wall_split";
@@ -50,6 +55,36 @@ pub fn get_split_mode(app: tauri::AppHandle) -> Result<bool, String> {
     }
 }
 
+/// The wall's end of the split: told when a window left it. One window, the
+/// wall, so the newest subscription replaces the last.
+#[derive(Default)]
+pub struct Follow(Mutex<Option<Channel<Value>>>);
+
+/// The wall hears from now on when a window leaves the split.
+#[tauri::command]
+pub fn split_subscribe(follow: tauri::State<'_, Follow>, on_message: Channel<Value>) {
+    *follow.0.lock().unwrap_or_else(|e| e.into_inner()) = Some(on_message);
+}
+
+/// A window left the split, so it is off: saved off and the wall told why.
+/// Nothing is put back; both windows stay where AJ put them.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn turned_off(app: &tauri::AppHandle, note: String) {
+    use tauri::Manager;
+    crate::write_pref(app, SPLIT_KEY, Value::Bool(false));
+    let follow = app.state::<Follow>();
+    let channel = follow.0.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(c) = channel.as_ref() {
+        if c.send(serde_json::json!({ "on": false, "note": note }))
+            .is_err()
+        {
+            log::warn!(
+                "split: off, but the wall did not hear it; its toggle shows on until it reloads"
+            );
+        }
+    }
+}
+
 /// Split (`on`) or put both windows back, and say what happened. Off the
 /// main thread, as Jump is: UI Automation lists every top-level window,
 /// the wall's own among them.
@@ -62,6 +97,8 @@ pub async fn set_split_mode(app: tauri::AppHandle, on: bool) -> Result<String, S
             .get_webview_window(crate::fleet::WALL)
             .ok_or("The wall is not open.")?;
         let hwnd = wall.hwnd().map_err(|e| e.to_string())?.0 as isize;
+        let to = app.clone();
+        win::when_left(move |note| turned_off(&to, note));
         let said = tauri::async_runtime::spawn_blocking(move || {
             if on {
                 win::split(hwnd)
@@ -160,6 +197,76 @@ fn restore_placement(flags: u32) -> (u32, u32) {
     (SW_SHOWNOACTIVATE, flags & !WPF_RESTORETOMAXIMIZED)
 }
 
+/// How far (physical px) an edge may drift from where the split left it and
+/// still count as in place: a DPI change rounds an edge by a pixel or two.
+#[cfg_attr(not(windows), allow(dead_code))]
+const DRIFT_PX: i32 = 4;
+
+/// How a window left the split.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(not(windows), allow(dead_code))]
+enum Left {
+    Closed,
+    Hidden,
+    Minimized,
+    Maximized,
+    Moved,
+}
+
+/// A window as the watcher reads it.
+#[derive(Clone, Copy, Debug)]
+#[cfg_attr(not(windows), allow(dead_code))]
+struct Seen {
+    exists: bool,
+    visible: bool,
+    iconic: bool,
+    zoomed: bool,
+    /// The visible frame; None when DWM gives none, which says nothing.
+    frame: Option<Rect>,
+}
+
+/// Whether a window held at `held` has left it, and how. A minimized
+/// window's frame sits far off-screen, so the show state is read first.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn left(held: Rect, seen: Seen) -> Option<Left> {
+    let drifted = |f: Rect| {
+        [
+            (f.x, held.x),
+            (f.y, held.y),
+            (f.right(), held.right()),
+            (f.bottom(), held.bottom()),
+        ]
+        .iter()
+        .any(|(a, b)| (a - b).abs() > DRIFT_PX)
+    };
+    if !seen.exists {
+        Some(Left::Closed)
+    } else if seen.iconic {
+        Some(Left::Minimized)
+    } else if !seen.visible {
+        Some(Left::Hidden)
+    } else if seen.zoomed {
+        Some(Left::Maximized)
+    } else if seen.frame.is_some_and(drifted) {
+        Some(Left::Moved)
+    } else {
+        None
+    }
+}
+
+/// The wall's note when `who` left the split by `how`.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn left_note(who: &str, how: Left) -> String {
+    let did = match how {
+        Left::Closed => "was closed",
+        Left::Hidden => "was closed",
+        Left::Minimized => "was minimized",
+        Left::Maximized => "was maximized",
+        Left::Moved => "moved",
+    };
+    format!("Split off: {who} {did}, so both windows stay where they are.")
+}
+
 /// Whether to hand the foreground back after showing `moved`: Windows
 /// activates a window restored from minimized even with SW_SHOWNOACTIVATE
 /// (measured), and one put back maximized takes it too.
@@ -171,8 +278,8 @@ fn give_focus_back(before: isize, after: isize, moved: isize) -> bool {
 #[cfg(windows)]
 mod win {
     use super::{
-        give_focus_back, lookup_error, moves, put_back_activates, quiet_show, restore_placement,
-        terminal_pos_flags, wall_pos_flags,
+        give_focus_back, left, left_note, lookup_error, moves, put_back_activates, quiet_show,
+        restore_placement, terminal_pos_flags, wall_pos_flags, Seen,
     };
     use crate::geometry::{frame_insets, widen, Insets, Rect};
     use std::sync::Mutex;
@@ -453,6 +560,8 @@ mod win {
     }
 
     pub fn split(wall: isize) -> Result<String, String> {
+        // The split's own moves never count as leaving it.
+        let generation = watch::disarm();
         per_monitor_aware()?;
         let terminal = crate::jump::fleet_window().map_err(lookup_error)?;
         let (w, t) = (hwnd(wall), hwnd(terminal));
@@ -476,14 +585,241 @@ mod win {
             restore(take(), wall);
             return Err(e);
         }
+        watch::arm(generation, wall, terminal);
         Ok(ON.into())
     }
 
     pub fn unsplit(wall: isize) -> String {
+        watch::disarm();
         if restore(take(), wall) {
             OFF.into()
         } else {
             "Split off.".into()
+        }
+    }
+
+    pub use watch::when_left;
+
+    /// A window as it is now.
+    fn seen(h: HWND) -> Seen {
+        use windows::Win32::UI::WindowsAndMessaging::IsWindowVisible;
+        let exists = exists(h.0 as isize);
+        Seen {
+            exists,
+            visible: exists && unsafe { IsWindowVisible(h) }.as_bool(),
+            iconic: exists && unsafe { IsIconic(h) }.as_bool(),
+            zoomed: exists && unsafe { IsZoomed(h) }.as_bool(),
+            frame: if exists { frame(h) } else { None },
+        }
+    }
+
+    /// The watcher: while split is on, a thread of its own hooks the two
+    /// windows' location, show-state and destroy events (SetWinEventHook, out
+    /// of context, so the events come to that thread's message loop and the
+    /// UI thread never wakes for them) and turns split off the moment either
+    /// leaves its half. Each split or unsplit starts a new generation, which
+    /// ends the last watcher, so the app's own moves are never seen as AJ's.
+    mod watch {
+        use super::{hwnd, left, left_note, saved, seen, Rect};
+        use std::cell::RefCell;
+        use std::sync::atomic::{AtomicU64, Ordering};
+        use std::sync::{Mutex, OnceLock};
+        use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
+        use windows::Win32::System::Threading::GetCurrentThreadId;
+        use windows::Win32::UI::Accessibility::{SetWinEventHook, UnhookWinEvent, HWINEVENTHOOK};
+        use windows::Win32::UI::WindowsAndMessaging::{
+            GetMessageW, GetWindowThreadProcessId, PeekMessageW, PostQuitMessage,
+            PostThreadMessageW, MSG, PM_NOREMOVE, WM_QUIT,
+        };
+
+        // WinEvents (winuser.h).
+        const EVENT_SYSTEM_MINIMIZESTART: u32 = 0x0016;
+        const EVENT_OBJECT_DESTROY: u32 = 0x8001;
+        const EVENT_OBJECT_LOCATIONCHANGE: u32 = 0x800B;
+        const WINEVENT_OUTOFCONTEXT: u32 = 0;
+        const OBJID_WINDOW: i32 = 0;
+        const CHILDID_SELF: i32 = 0;
+        /// How long (ms) after the split's last move before watching starts:
+        /// a window crossing to another DPI resizes itself once more.
+        const ARM_AFTER_MS: u64 = 500;
+
+        /// Bumped by every split, unsplit and leave; a watcher whose
+        /// generation is not current has nothing to watch.
+        static GENERATION: AtomicU64 = AtomicU64::new(0);
+        /// The running watcher's thread, to end it.
+        static WATCHER: Mutex<Option<u32>> = Mutex::new(None);
+        type OnLeft = Box<dyn Fn(String) + Send + Sync>;
+        static ON_LEFT: OnceLock<OnLeft> = OnceLock::new();
+
+        /// Set once what to do when a window leaves the split.
+        pub fn when_left(f: impl Fn(String) + Send + Sync + 'static) {
+            let _ = ON_LEFT.set(Box::new(f));
+        }
+
+        /// The two windows and where the split left them, on the watcher's
+        /// thread, where its hook callback reads them.
+        struct Held {
+            generation: u64,
+            windows: [(&'static str, isize, Rect); 2],
+        }
+
+        thread_local! {
+            static HELD: RefCell<Option<Held>> = const { RefCell::new(None) };
+        }
+
+        fn watcher() -> std::sync::MutexGuard<'static, Option<u32>> {
+            WATCHER.lock().unwrap_or_else(|e| e.into_inner())
+        }
+
+        /// End any watcher and start a new generation, returned.
+        pub fn disarm() -> u64 {
+            let generation = GENERATION.fetch_add(1, Ordering::SeqCst) + 1;
+            if let Some(thread) = watcher().take() {
+                let _ = unsafe { PostThreadMessageW(thread, WM_QUIT, WPARAM(0), LPARAM(0)) };
+            }
+            generation
+        }
+
+        /// Watch the split `generation` placed, once it has settled.
+        pub fn arm(generation: u64, wall: isize, terminal: isize) {
+            let spawned = std::thread::Builder::new()
+                .name("split-watch".into())
+                .spawn(move || run(generation, wall, terminal));
+            if let Err(e) = spawned {
+                log::warn!("split: not watched, so it will not turn itself off: {e}");
+            }
+        }
+
+        fn run(generation: u64, wall: isize, terminal: isize) {
+            std::thread::sleep(std::time::Duration::from_millis(ARM_AFTER_MS));
+            let frame = |h: isize| seen(hwnd(h)).frame;
+            let (Some(w), Some(t)) = (frame(wall), frame(terminal)) else {
+                log::warn!(
+                    "split: a window has no frame to watch, so split will not turn itself off"
+                );
+                return;
+            };
+            HELD.with(|held| {
+                *held.borrow_mut() = Some(Held {
+                    generation,
+                    windows: [("the wall", wall, w), ("the fleet terminal", terminal, t)],
+                })
+            });
+            // A queue for WM_QUIT before this thread is named as the watcher.
+            let mut msg = MSG::default();
+            let _ = unsafe { PeekMessageW(&mut msg, None, 0, 0, PM_NOREMOVE) };
+            let mut hooks = Vec::new();
+            for h in [wall, terminal] {
+                let thread = unsafe { GetWindowThreadProcessId(hwnd(h), None) };
+                for (min, max) in [
+                    (EVENT_SYSTEM_MINIMIZESTART, EVENT_SYSTEM_MINIMIZESTART),
+                    (EVENT_OBJECT_DESTROY, EVENT_OBJECT_LOCATIONCHANGE),
+                ] {
+                    let hook = unsafe {
+                        SetWinEventHook(
+                            min,
+                            max,
+                            None,
+                            Some(on_event),
+                            0,
+                            thread,
+                            WINEVENT_OUTOFCONTEXT,
+                        )
+                    };
+                    if hook.is_invalid() {
+                        log::warn!("split: could not hook a window's events, so split will not turn itself off");
+                    } else {
+                        hooks.push(hook);
+                    }
+                }
+            }
+            let named = {
+                let mut w = watcher();
+                // A split or unsplit since then leaves this watcher nothing to do.
+                let current = GENERATION.load(Ordering::SeqCst) == generation;
+                if current {
+                    *w = Some(unsafe { GetCurrentThreadId() });
+                }
+                current
+            };
+            if named && hooks.len() == 4 {
+                log::debug!("split: watching both windows");
+                // Moved while settling: it left before the hooks were in.
+                check(None);
+                while unsafe { GetMessageW(&mut msg, None, 0, 0) }.0 > 0 {}
+            }
+            for hook in hooks {
+                let _ = unsafe { UnhookWinEvent(hook) };
+            }
+        }
+
+        unsafe extern "system" fn on_event(
+            _hook: HWINEVENTHOOK,
+            event: u32,
+            h: HWND,
+            object: i32,
+            child: i32,
+            _thread: u32,
+            _ms: u32,
+        ) {
+            if object == OBJID_WINDOW && child == CHILDID_SELF {
+                check(Some((h.0 as isize, event)));
+            }
+        }
+
+        /// Whether either window left its half, `event` being the one that
+        /// woke the watcher; if so split goes off and the watcher ends.
+        fn check(event: Option<(isize, u32)>) {
+            let gone = HELD.with(|held| {
+                // A window call below never pumps messages, but a re-entered
+                // callback must not panic across the FFI boundary.
+                let held = held.try_borrow().ok()?;
+                let held = held.as_ref()?;
+                if let Some((h, _)) = event {
+                    if !held.windows.iter().any(|(_, w, _)| *w == h) {
+                        return None;
+                    }
+                }
+                held.windows.iter().find_map(|(who, w, at)| {
+                    let destroyed = event == Some((*w, EVENT_OBJECT_DESTROY));
+                    let mut now = seen(hwnd(*w));
+                    now.exists &= !destroyed;
+                    left(*at, now).map(|how| (held.generation, *who, how))
+                })
+            });
+            let Some((generation, who, how)) = gone else {
+                return;
+            };
+            // Under the saved placements' lock, so a split that starts now
+            // either ends this generation first or saves after the clear.
+            let current = {
+                let mut s = saved();
+                let current = GENERATION
+                    .compare_exchange(
+                        generation,
+                        generation + 1,
+                        Ordering::SeqCst,
+                        Ordering::SeqCst,
+                    )
+                    .is_ok();
+                if current {
+                    // Nothing goes back on the next unsplit but what the next
+                    // split finds.
+                    s.wall = None;
+                    s.terminal = None;
+                }
+                current
+            };
+            HELD.with(|held| *held.borrow_mut() = None);
+            unsafe { PostQuitMessage(0) };
+            if !current {
+                return;
+            }
+            watcher().take();
+            log::info!(window = who, how = format!("{how:?}"); "split: off, a window left its half; both stay where they are");
+            if let Some(f) = ON_LEFT.get() {
+                f(left_note(who, how));
+            }
         }
     }
 
@@ -508,6 +844,162 @@ mod win {
             fn drop(&mut self) {
                 let _ = unsafe { DestroyWindow(self.0) };
             }
+        }
+
+        /// The watcher's notes, in order; tests that arm it take `ONE` first,
+        /// since the generation and the note sink are process-wide.
+        static NOTES: Mutex<Vec<String>> = Mutex::new(Vec::new());
+        static ONE: Mutex<()> = Mutex::new(());
+
+        fn throwaway(x: i32) -> Own {
+            use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNOACTIVATE;
+            let own = Own(unsafe {
+                CreateWindowExW(
+                    WINDOW_EX_STYLE(0),
+                    w!("STATIC"),
+                    w!("klepsydra split watch test"),
+                    WS_OVERLAPPEDWINDOW,
+                    x,
+                    120,
+                    400,
+                    300,
+                    None,
+                    None,
+                    None,
+                    None,
+                )
+            }
+            .expect("a throwaway window"));
+            unsafe {
+                let _ = ShowWindow(own.0, SW_SHOWNOACTIVATE);
+            }
+            own
+        }
+
+        /// The notes said within `ms`, once at least one is in.
+        fn notes_within(ms: u64) -> Vec<String> {
+            let start = std::time::Instant::now();
+            while start.elapsed() < std::time::Duration::from_millis(ms) {
+                if !NOTES.lock().unwrap().is_empty() {
+                    // A second note would come right behind the first.
+                    std::thread::sleep(std::time::Duration::from_millis(200));
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            std::mem::take(&mut *NOTES.lock().unwrap())
+        }
+
+        /// Two windows "split" and watched, then `leave` done to them.
+        fn watched(leave: impl FnOnce(HWND, HWND)) -> Vec<String> {
+            let _one = ONE.lock().unwrap_or_else(|e| e.into_inner());
+            unsafe {
+                SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+            }
+            watch::when_left(|note| NOTES.lock().unwrap().push(note));
+            NOTES.lock().unwrap().clear();
+            let (wall, terminal) = (throwaway(100), throwaway(520));
+            let generation = watch::disarm();
+            watch::arm(generation, wall.0 .0 as isize, terminal.0 .0 as isize);
+            // Past the settle and the hooks going in.
+            std::thread::sleep(std::time::Duration::from_millis(900));
+            leave(wall.0, terminal.0);
+            let said = notes_within(2000);
+            watch::disarm();
+            said
+        }
+
+        fn nudge(h: HWND, dx: i32, dw: i32) {
+            let f = frame(h).unwrap();
+            let r = widen(Rect::new(f.x + dx, f.y, f.w + dw, f.h), insets(h));
+            set_rect(h, r, None, wall_pos_flags()).unwrap();
+        }
+
+        #[test]
+        fn each_way_of_leaving_turns_split_off_once_and_says_which_window() {
+            use windows::Win32::UI::WindowsAndMessaging::SW_HIDE;
+            let t = "the fleet terminal";
+            for (case, leave, expected) in [
+                (
+                    "drag",
+                    Box::new(|_, t| nudge(t, 60, 0)) as Box<dyn FnOnce(HWND, HWND)>,
+                    format!("Split off: {t} moved, so both windows stay where they are."),
+                ),
+                (
+                    "resize",
+                    Box::new(|_, t| nudge(t, 0, -80)),
+                    format!("Split off: {t} moved, so both windows stay where they are."),
+                ),
+                (
+                    "maximize",
+                    Box::new(|_, t| unsafe {
+                        let _ = ShowWindow(t, SW_SHOWMAXIMIZED);
+                    }),
+                    format!("Split off: {t} was maximized, so both windows stay where they are."),
+                ),
+                (
+                    "minimize",
+                    Box::new(|_, t| unsafe {
+                        let _ = ShowWindow(t, SW_MINIMIZE);
+                    }),
+                    format!("Split off: {t} was minimized, so both windows stay where they are."),
+                ),
+                (
+                    "close",
+                    Box::new(|_, t| unsafe {
+                        let _ = DestroyWindow(t);
+                    }),
+                    format!("Split off: {t} was closed, so both windows stay where they are."),
+                ),
+                (
+                    "wall dragged",
+                    Box::new(|w, _| nudge(w, -60, 0)),
+                    "Split off: the wall moved, so both windows stay where they are.".to_string(),
+                ),
+                (
+                    "wall closed (hidden)",
+                    Box::new(|w, _| unsafe {
+                        let _ = ShowWindow(w, SW_HIDE);
+                    }),
+                    "Split off: the wall was closed, so both windows stay where they are."
+                        .to_string(),
+                ),
+            ] {
+                assert_eq!(watched(leave), vec![expected], "{case}");
+            }
+        }
+
+        #[test]
+        fn the_split_settling_or_a_moved_back_window_never_turns_it_off() {
+            let quiet = [
+                (
+                    "a no-op move",
+                    Box::new(|_, t| nudge(t, 0, 0)) as Box<dyn FnOnce(HWND, HWND)>,
+                ),
+                ("a DPI rounding", Box::new(|_, t| nudge(t, 2, -1))),
+                (
+                    "an unsplit before AJ moves",
+                    Box::new(|_, t| {
+                        watch::disarm();
+                        nudge(t, 60, 0);
+                    }),
+                ),
+            ];
+            for (case, leave) in quiet {
+                assert!(watched(leave).is_empty(), "{case}");
+            }
+            // A window moved by the split itself, before the watch is armed.
+            let _one = ONE.lock().unwrap_or_else(|e| e.into_inner());
+            NOTES.lock().unwrap().clear();
+            let (wall, terminal) = (throwaway(100), throwaway(520));
+            let generation = watch::disarm();
+            watch::arm(generation, wall.0 .0 as isize, terminal.0 .0 as isize);
+            nudge(terminal.0, 30, 0);
+            assert!(
+                notes_within(1500).is_empty(),
+                "the settle is the split's own"
+            );
+            watch::disarm();
         }
 
         #[test]
@@ -747,6 +1239,103 @@ mod tests {
         );
         assert!(!saved_on(false, true));
         assert!(!saved_on(false, false));
+    }
+
+    fn seen(frame: Rect) -> Seen {
+        Seen {
+            exists: true,
+            visible: true,
+            iconic: false,
+            zoomed: false,
+            frame: Some(frame),
+        }
+    }
+
+    #[test]
+    fn a_window_leaves_by_closing_hiding_sizing_or_moving_past_the_drift() {
+        let held = Rect::new(960, 0, 960, 1040);
+        assert_eq!(left(held, seen(held)), None);
+        for (dx, dy, dw, dh) in [
+            (DRIFT_PX, 0, 0, 0),
+            (0, -DRIFT_PX, 0, DRIFT_PX),
+            (0, 0, -DRIFT_PX, 0),
+        ] {
+            let r = Rect::new(held.x + dx, held.y + dy, held.w + dw, held.h + dh);
+            assert_eq!(left(held, seen(r)), None, "within {DRIFT_PX} px: {r:?}");
+        }
+        for r in [
+            Rect::new(held.x + DRIFT_PX + 1, held.y, held.w, held.h),
+            Rect::new(held.x, held.y, held.w - DRIFT_PX - 1, held.h),
+            Rect::new(held.x, held.y + 300, held.w, held.h),
+            Rect::new(-1920, 0, 960, 1040),
+        ] {
+            assert_eq!(left(held, seen(r)), Some(Left::Moved), "{r:?}");
+        }
+        let far = Some(Rect::new(-32000, -32000, 160, 28));
+        let s = seen(held);
+        assert_eq!(
+            left(
+                held,
+                Seen {
+                    exists: false,
+                    frame: None,
+                    ..s
+                }
+            ),
+            Some(Left::Closed)
+        );
+        assert_eq!(
+            left(
+                held,
+                Seen {
+                    iconic: true,
+                    frame: far,
+                    ..s
+                }
+            ),
+            Some(Left::Minimized),
+            "not Moved: the show state first"
+        );
+        assert_eq!(
+            left(
+                held,
+                Seen {
+                    visible: false,
+                    ..s
+                }
+            ),
+            Some(Left::Hidden)
+        );
+        assert_eq!(
+            left(
+                held,
+                Seen {
+                    zoomed: true,
+                    frame: Some(Rect::new(-8, -8, 1936, 1056)),
+                    ..s
+                }
+            ),
+            Some(Left::Maximized)
+        );
+        assert_eq!(
+            left(held, Seen { frame: None, ..s }),
+            None,
+            "no frame says nothing"
+        );
+    }
+
+    #[test]
+    fn the_note_names_the_window_and_how_it_left() {
+        assert_eq!(
+            left_note("the fleet terminal", Left::Maximized),
+            "Split off: the fleet terminal was maximized, so both windows stay where they are."
+        );
+        assert_eq!(
+            left_note("the wall", Left::Hidden),
+            left_note("the wall", Left::Closed),
+            "the wall's close hides it"
+        );
+        assert!(left_note("the wall", Left::Moved).contains("the wall moved,"));
     }
 
     #[test]
