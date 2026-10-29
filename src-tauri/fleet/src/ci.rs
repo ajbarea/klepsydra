@@ -192,7 +192,11 @@ mod tests {
 
     #[test]
     fn the_follower_sends_only_changes() {
-        let dir = std::env::temp_dir().join(format!("klepsydra-ci-{}", std::process::id()));
+        let nanos = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("klepsydra-ci-{nanos}"));
         std::fs::create_dir_all(&dir).unwrap();
         let mut f = Follower::default();
         assert_eq!(
