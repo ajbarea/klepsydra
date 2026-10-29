@@ -1182,7 +1182,8 @@ wait
 rm -f "$FLEET_STATE/orchestrator.pane" "$FLEET_STATE/orchestrator.session"; : >"$REGISTRY"; unset FLEET_BOOT_ID FLEET_PROC FLEET_PROJECTS
 
 echo "the orchestrator's identity across /clear and tmux restarts (#173 review)"
-# A fake /proc: process 4242 started at tick 777, after the server (tick 500).
+# The recover section's fake /proc: process 4242 started at tick 777, after the server (tick 500).
+export FLEET_BOOT_ID="$work/boot_id" FLEET_PROC="$work/proc"
 : >"$REGISTRY"; rm -f "$KLEPSYDRA_DIR"/fleet/*.json "$FLEET_STATE/resume-state"
 login a; login b; reading a Personal 100 5000; reading b RIT 10 4000
 OS=aaaaaaaa-0000-4000-8000-0000000000a1 CUR=aaaaaaaa-0000-4000-8000-0000000000a2
@@ -1228,6 +1229,7 @@ check "review 2: a prompt Heph took during the launch (a phone message) keeps hi
 t kill-window -t "$h" 2>/dev/null
 rm -f "$KLEPSYDRA_DIR"/fleet/*.json "$FLEET_STATE/orchestrator."* "$FLEET_STATE/resume-state"
 logout a; logout b; reading a Personal 40 1000; rm -f "$KLEPSYDRA_DIR/accounts/b/s.json"
+unset FLEET_BOOT_ID FLEET_PROC
 
 echo "launch without worker settings"
 cat >"$work/launcher-rec.sh" <<EOF
