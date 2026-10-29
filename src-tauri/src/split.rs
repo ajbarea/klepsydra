@@ -1511,14 +1511,18 @@ mod win {
         fn terminal_on_its_own_thread() -> (isize, std::thread::JoinHandle<()>, u32) {
             use std::sync::mpsc;
             use windows::core::w;
+            use windows::Win32::Foundation::{LPARAM, LRESULT, WPARAM};
             use windows::Win32::UI::WindowsAndMessaging::{
                 DefWindowProcW, DispatchMessageW, GetMessageW, RegisterClassW, TranslateMessage,
                 MSG, SW_SHOWNOACTIVATE, WNDCLASSW,
             };
+            unsafe extern "system" fn proc_(h: HWND, m: u32, w: WPARAM, l: LPARAM) -> LRESULT {
+                unsafe { DefWindowProcW(h, m, w, l) }
+            }
             let (tx, rx) = mpsc::channel();
             let owner = std::thread::spawn(move || {
                 let class = WNDCLASSW {
-                    lpfnWndProc: Some(DefWindowProcW),
+                    lpfnWndProc: Some(proc_),
                     lpszClassName: w!("CASCADIA_HOSTING_WINDOW_CLASS"),
                     ..Default::default()
                 };
