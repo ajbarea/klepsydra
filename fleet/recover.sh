@@ -26,44 +26,65 @@ if (( ! dry )); then
   flock -n 9 || { err "another fleet recover is running"; exit 1; }
 fi
 
-# The one session alive in PANE (a dead file may still name it: a killed
-# session never writes "ended"), or nothing.
-alive_in_pane() { # PANE
-  local f id found=()
-  for f in "$KLEPSYDRA_DIR"/fleet/*.json; do
-    [[ -f $f && ! -L $f ]] || continue
-    jq -e --arg p "$1" '.tmux.pane == $p and .ended == null' "$f" >/dev/null 2>&1 || continue
-    id=$(basename "$f" .json)
-    session_alive "$id" && found+=("$id")
-  done
-  (( ${#found[@]} == 1 )) && printf '%s' "${found[0]}"
+# Every session alive before any launch, as "pane<TAB>session<TAB>in-fleet"
+# lines: what recover decides from, so a launch never changes who is who.
+# In-fleet: on the fleet's tmux server (a file without a socket counts, so a
+# live Heph is never missed).
+live_now=$(for f in "$KLEPSYDRA_DIR"/fleet/*.json; do
+  [[ -f $f && ! -L $f ]] || continue
+  id=$(basename "$f" .json)
+  row=$(jq -r --arg s "/$FLEET_SOCK" 'select(.ended == null and .tmux.pane != null)
+    | [.tmux.pane, (if .tmux.socket == null or (.tmux.socket | endswith($s)) then 1 else 0 end)] | @tsv' "$f" 2>/dev/null) || continue
+  [[ -n $row ]] && session_alive "$id" && printf '%s\t%s\t%s\n' "${row%%$'\t'*}" "$id" "${row##*$'\t'}"
+done)
+agents=$(cut -f4 "$REGISTRY" 2>/dev/null | grep .)
+# A row whose own session ran on this boot: a live session in its pane is its
+# successor (a /clear). A row from an earlier boot names a pane id the new tmux
+# server reuses, so a session there is someone else's.
+this_boot=$(cat "${FLEET_BOOT_ID:-/proc/sys/kernel/random/boot_id}" 2>/dev/null)
+this_boot_row() { # SID
+  [[ -n $this_boot && $(jq -r '.host.boot // ""' "$KLEPSYDRA_DIR/fleet/$1.json" 2>/dev/null) == "$this_boot" ]]
 }
 
-# The orchestrator's session, found before any launch: a relaunched worker
-# can take the old orchestrator pane's id on a new tmux server. Its record
-# (orchestrator.session) first, else the newest file naming its pane whose
-# session is no registered agent's.
-orch=$(orchestrator)
-orch_session() {
-  local rec now agents f
-  agents=$(cut -f4 "$REGISTRY" 2>/dev/null | grep .)
-  rec=$(cat "$FLEET_STATE/orchestrator.session" 2>/dev/null)
-  [[ -n $rec ]] && session_alive "$rec" && { printf '%s' "$rec"; return; }
-  # A stale record (Heph restarted or cleared): the pane's live session, when no agent's.
-  if [[ -n $orch ]] && now=$(alive_in_pane "$orch") && [[ -n $now ]] && ! grep -qxF -- "$now" <<<"$agents"; then
-    printf '%s' "$now"
-    return
+# Heph: the caller, when it is a Claude session in the fleet's tmux and no
+# registered agent (only Heph or AJ runs `fleet recover`); else the one live
+# fleet session that is no agent's. Several such sessions: Heph is not
+# launched, since a second orchestrator is the worst outcome.
+orch=$(orchestrator) heph_pane="" osid="" heph_unsure=0
+if [[ -n ${CLAUDECODE:-} && -n ${TMUX_PANE:-} && ${TMUX:-} == *"/$FLEET_SOCK,"* ]] && ! registered "$TMUX_PANE"; then
+  heph_pane=$TMUX_PANE
+  osid=$(awk -F'\t' -v p="$TMUX_PANE" '$1 == p { print $2; exit }' <<<"$live_now")
+else
+  # Unregistered live fleet sessions: in orchestrator.pane, Heph; in a pane a row
+  # names, that row's (a /clear gave it a new id); in any other pane, maybe Heph.
+  unreg=$(awk -F'\t' 'NR == FNR { if ($0 != "") a[$0] = 1; next } $3 == 1 && !($2 in a)' <(printf '%s\n' "$agents") <(printf '%s\n' "$live_now"))
+  rows=$(while IFS=$'\t' read -r rp _ _ rsid _; do [[ -n $rp ]] && this_boot_row "$rsid" && printf '%s\n' "$rp"; done <"$REGISTRY" 2>/dev/null)
+  inorch=$(awk -F'\t' -v o="$orch" '$1 == o' <<<"$unreg")
+  if [[ -n $orch && $(grep -c . <<<"$inorch") == 1 ]]; then
+    unreg=$inorch
+  else
+    unreg=$(awk -F'\t' 'NR == FNR { if ($0 != "") r[$0] = 1; next } $0 != "" && !($1 in r)' <(printf '%s\n' "$rows") <(printf '%s\n' "$unreg"))
   fi
-  [[ -n $rec ]] && { printf '%s' "$rec"; return; }
-  [[ -n $orch ]] || return 0
-  for f in "$KLEPSYDRA_DIR"/fleet/*.json; do
-    [[ -f $f && ! -L $f ]] || continue
-    jq -r --arg p "$orch" 'select(.tmux.pane == $p) | "\(.started_at // 0) \(input_filename | split("/") | last | rtrimstr(".json"))"' "$f" 2>/dev/null
-  done | sort -rn | while read -r _ id; do
-    grep -qxF -- "$id" <<<"$agents" || { printf '%s' "$id"; break; }
-  done
+  case $(grep -c . <<<"$unreg") in
+    0) # Gone: its recorded session (the resume service keeps it), else the newest
+       # file naming its pane that is no agent's, for its transcript.
+      osid=$(cat "$FLEET_STATE/orchestrator.session" 2>/dev/null)
+      [[ -z $osid && -n $orch ]] && osid=$(for f in "$KLEPSYDRA_DIR"/fleet/*.json; do
+        [[ -f $f && ! -L $f ]] || continue
+        jq -r --arg p "$orch" 'select(.tmux.pane == $p) | "\(.started_at // 0) \(input_filename | split("/") | last | rtrimstr(".json"))"' "$f" 2>/dev/null
+      done | sort -rn | while read -r _ id; do grep -qxF -- "$id" <<<"$agents" || { printf '%s' "$id"; break; }; done)
+      ;;
+    1) heph_pane=$(cut -f1 <<<"$unreg") osid=$(cut -f2 <<<"$unreg") ;;
+    *) heph_unsure=$(grep -c . <<<"$unreg") ;;
+  esac
+fi
+
+# The one session that was alive in PANE before any launch, is not Heph's and
+# no other row's: what a row whose own session is gone may be repaired to.
+repair_to() { # PANE
+  awk -F'\t' -v p="$1" -v h="$osid" 'NR == FNR { if ($0 != "") a[$0] = 1; next } $1 == p && $2 != h && !($2 in a) { print $2 }' \
+    <(printf '%s\n' "$agents") <(printf '%s\n' "$live_now") | awk 'END { if (NR == 1) print prev } { prev = $0 }'
 }
-osid=$(orch_session)
 
 # The transcript of session SID, in any config folder's projects.
 transcript() { # SID
@@ -111,7 +132,7 @@ while IFS=$'\t' read -r p name brief sid _; do
   fi
   # The pane still runs a live session the row does not name (a /clear whose
   # new id was never recorded): repair the row, never start a second agent.
-  if now=$(alive_in_pane "$p") && [[ -n $now ]]; then
+  if this_boot_row "$sid" && now=$(repair_to "$p") && [[ -n $now ]]; then
     echo "running: $name ($p, now session $now)"
     (( dry )) || { set_session "$p" "$now"; flog INFO "registry repaired" pane="$p" name="$name" session="$now"; }
     continue
@@ -144,11 +165,18 @@ while IFS=$'\t' read -r p name brief sid _; do
   [[ -n $new ]] || flog ERROR "recovery launch failed" name="$name" brief="$txt"
 done < <(cat "$REGISTRY" 2>/dev/null)
 
-# The orchestrator, by the session found before the launches.
-if (( orch_too )) && [[ -n $orch$osid ]]; then
-  if [[ -n $osid ]] && session_alive "$osid"; then
-    echo "running: orchestrator ($orch)"
-  else
+# The orchestrator, by what was alive before the launches.
+if (( orch_too && heph_unsure )); then
+  echo "not recovered: orchestrator ($heph_unsure live sessions in the fleet belong to no agent; write Heph's pane to orchestrator.pane)"
+  flog WARN "orchestrator not relaunched: Heph unclear" candidates="$heph_unsure"
+elif (( orch_too )) && [[ -n $heph_pane ]]; then
+  echo "running: orchestrator ($heph_pane)"
+  if (( ! dry )) && [[ $heph_pane != "$orch" || -n $osid && $osid != "$(cat "$FLEET_STATE/orchestrator.session" 2>/dev/null)" ]]; then
+    printf '%s\n' "$heph_pane" >"$FLEET_STATE/orchestrator.pane"
+    [[ -n $osid ]] && printf '%s\n' "$osid" >"$FLEET_STATE/orchestrator.session"
+    flog INFO "orchestrator record follows the live Heph" pane="$heph_pane" session="$osid"
+  fi
+elif (( orch_too )) && [[ -n $orch$osid ]]; then
     lost=$((lost + 1))
     tp=$(transcript "$osid")
     since=$(stat -c %Y -- "$HEPH" 2>/dev/null || echo 0)
@@ -177,7 +205,6 @@ if (( orch_too )) && [[ -n $orch$osid ]]; then
         echo "recovered: orchestrator -> NOT STARTED"
       fi
     fi
-  fi
 fi
 (( lost )) || echo "nothing to recover"
 flog INFO "recover ran" lost="$lost" dry="$dry"

@@ -920,6 +920,8 @@ sfile "$SB" 4242 777 "$NOWBOOT" %2; sfile "$SC" 4242 777 "$NOWBOOT" %3
 check "once they run, a second run recovers nothing" "$(rec --no-orchestrator | tail -1) $(wc -l <"$work/rec.log")" "nothing to recover 0"
 
 echo "recover: the orchestrator"
+# After a power cut nothing runs: the earlier checks' live sessions go.
+rm -f "$KLEPSYDRA_DIR/fleet/$SA.json" "$KLEPSYDRA_DIR/fleet/$SB.json" "$KLEPSYDRA_DIR/fleet/$SC.json"
 : >"$work/rec.log"; : >"$REGISTRY"
 SH=aaaaaaaa-0000-4000-8000-0000000000aa SN=aaaaaaaa-0000-4000-8000-0000000000bb
 printf '%%0\n' >"$FLEET_STATE/orchestrator.pane"
@@ -973,13 +975,63 @@ rm -f "$KLEPSYDRA_DIR/fleet/$SLIVE.json"
 
 echo "recover: a pane that still runs a session the row does not name"
 SOLD=aaaaaaaa-0000-4000-8000-0000000000c4 SCUR=aaaaaaaa-0000-4000-8000-0000000000c5
-sfile "$SOLD" 4242 777 "$OLDBOOT" %8; sfile "$SCUR" 4242 777 "$NOWBOOT" %8
+sfile "$SOLD" 4242 778 "$NOWBOOT" %8; sfile "$SCUR" 4242 777 "$NOWBOOT" %8   # this boot, its process gone (a /clear)
 printf '%s\tx\t%s\t%s\t/w\n%s\ty\t%s\t%s\t/w\n' %8 "$work/ba.src" "$SOLD" %9 "$work/gone.src" aaaaaaaa-0000-4000-8000-0000000000c6 >"$REGISTRY"
 out=$(rec --no-orchestrator)
 check "the row is repaired and no second agent starts; a missing brief is skipped" \
   "$(tr '\n' '|' <<<"$out")$(wc -l <"$work/rec.log") $(cut -f4 "$REGISTRY" | head -1)" \
   "running: x (%8, now session $SCUR)|not recovered: y (brief $work/gone.src is gone)|nothing to recover|0 $SCUR"
+sfile "$SOLD" 4242 777 "$OLDBOOT" %8
+printf '%s\tx\t%s\t%s\t/w\n' %8 "$work/ba.src" "$SOLD" >"$REGISTRY"; : >"$work/rec.log"
+check "a row from an earlier boot is never repaired to a session in its reused pane" "$(rec --no-orchestrator --dry-run | head -1 | cut -d' ' -f1-3)" "would recover: x"
 rm -f "$KLEPSYDRA_DIR/fleet/$SOLD.json" "$KLEPSYDRA_DIR/fleet/$SCUR.json"
+
+echo "recover: a live Heph outside orchestrator.pane is never doubled"
+SHEPH=aaaaaaaa-0000-4000-8000-0000000000d1
+printf '%%3\n' >"$FLEET_STATE/orchestrator.pane"; printf '%s\n' "$SH" >"$FLEET_STATE/orchestrator.session"
+sfile "$SHEPH" 4242 777 "$NOWBOOT" %0
+: >"$REGISTRY"; : >"$work/rec.log"
+out=$(rec)
+check "Heph alive in %0 is found; nothing launches; the records follow him" \
+  "$(tr '\n' '|' <<<"$out")$(wc -l <"$work/rec.log") $(cat "$FLEET_STATE/orchestrator.pane") $(cat "$FLEET_STATE/orchestrator.session")" \
+  "running: orchestrator (%0)|nothing to recover|0 %0 $SHEPH"
+check "the caller is Heph when it is a Claude session in the fleet's tmux" \
+  "$(CLAUDECODE=1 TMUX_PANE=%6 TMUX="/tmp/tmux-1/$FLEET_SOCK,1,0" rec --dry-run | head -1)" "running: orchestrator (%6)"
+SOTHER=aaaaaaaa-0000-4000-8000-0000000000d2
+sfile "$SOTHER" 4242 777 "$NOWBOOT" %5
+check "of two, the one in orchestrator.pane is Heph" "$(rec --dry-run | head -1)" "running: orchestrator (%0)"
+printf '%%3\n' >"$FLEET_STATE/orchestrator.pane"
+out=$(rec)
+check "two live sessions that are no agent's: Heph is not launched" \
+  "$(head -1 <<<"$out") $(wc -l <"$work/rec.log")" \
+  "not recovered: orchestrator (2 live sessions in the fleet belong to no agent; write Heph's pane to orchestrator.pane) 0"
+rm -f "$KLEPSYDRA_DIR/fleet/$SOTHER.json"
+
+echo "recover: a row is repaired only to a session alive before any launch"
+SA1=aaaaaaaa-0000-4000-8000-0000000000d3 SB1=aaaaaaaa-0000-4000-8000-0000000000d4 SNEWA=aaaaaaaa-0000-4000-8000-0000000000d5
+sfile "$SA1" 4242 777 "$OLDBOOT" %1; sfile "$SB1" 4242 777 "$OLDBOOT" %2
+printf '%s\ta\t%s\t%s\t/w\n%s\tb\t%s\t%s\t/w\n' %1 "$work/ba.src" "$SA1" %2 "$work/bb.src" "$SB1" >"$REGISTRY"
+cat >"$work/launch-takes2.sh" <<TAKES
+#!/usr/bin/env bash
+printf '%s\n' "\$1" >>"$work/rec.log"
+if [[ \$1 == a ]]; then
+  jq -n '{session_id: "x", started_at: 50, ended: null, claude: {pid: 4242, start: 777}, host: {boot: "$NOWBOOT"}, tmux: {pane: "%2"}}' >"$KLEPSYDRA_DIR/fleet/$SNEWA.json"
+  echo "pane=%2 session=$SNEWA account=x avail=1MiB brief=started"
+else
+  echo "pane=%7 session=b-new account=x avail=1MiB brief=started"
+fi
+TAKES
+: >"$work/rec.log"
+out=$(LAUNCH="$work/launch-takes2.sh" FLEET_STAGGER_S=0 bash "$here/recover.sh" --no-orchestrator 2>/dev/null)
+check "a worker relaunched into a later row's pane does not swallow that row" "$(tr '\n' '|' <<<"$out")" "recovered: a -> %2|recovered: b -> %7|"
+rm -f "$KLEPSYDRA_DIR/fleet/$SNEWA.json" "$KLEPSYDRA_DIR/fleet/$SA1.json" "$KLEPSYDRA_DIR/fleet/$SB1.json"
+SW0=aaaaaaaa-0000-4000-8000-0000000000d6
+sfile "$SW0" 4242 777 "$OLDBOOT" %0
+printf '%s\tw\t%s\t%s\t/w\n' %0 "$work/ba.src" "$SW0" >"$REGISTRY"
+: >"$work/rec.log"; rm -f "$work/rec.n"
+out=$(rec)
+check "Heph in a worker row's old pane is never repaired into that row" "$(tr '\n' '|' <<<"$out")" "recovered: w -> %901|running: orchestrator (%0)|"
+rm -f "$KLEPSYDRA_DIR/fleet/$SHEPH.json" "$KLEPSYDRA_DIR/fleet/$SW0.json"; : >"$REGISTRY"
 
 echo "recover: one run at a time"
 flock "$FLEET_STATE/.recover.lock" sleep 3 &
@@ -1017,6 +1069,11 @@ check "a scanner that exits 0 with an error is no verdict" \
 check "a change is committed and pushed" "$(bsync) $(git -C "$work/brief-remote.git" rev-list --count HEAD)" "0 2"
 check "only the briefing's own files go in" "$(git -C "$work/brief" show --name-only --format= HEAD)" "claude-queue.md"
 git -C "$work/brief" -c user.name=t -c user.email=t@t commit -q --allow-empty -m "a prune commit"
+touch "$work/leak"
+check "a commit about to be pushed is scanned first" "$(bsync) $(git -C "$work/brief-remote.git" rev-list --count HEAD)" "1 2"
+rm -f "$work/leak"; mkdir "$work/brief/.git/rebase-merge"
+check "an unfinished rebase is left for a person" "$(bsync) $(git -C "$work/brief-remote.git" rev-list --count HEAD)" "1 2"
+rmdir "$work/brief/.git/rebase-merge"
 check "a commit made while the tree is clean is still pushed" "$(bsync) $(git -C "$work/brief-remote.git" rev-list --count HEAD)" "0 3"
 git clone -q "$work/brief-remote.git" "$work/brief-phone" 2>/dev/null
 printf 'ticked\n' >"$work/brief-phone/README.md"

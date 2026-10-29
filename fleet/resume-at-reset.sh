@@ -224,7 +224,15 @@ one() { # PANE
     fi
     return
   fi
-  (( orch )) && return
+  if (( orch )); then
+    # Keep Heph's session on record, so `fleet recover` finds his transcript after a power cut.
+    local osid
+    if osid=$(live_session "$p") && [[ $osid != "$(cat "$FLEET_STATE/orchestrator.session" 2>/dev/null)" ]]; then
+      printf '%s\n' "$osid" >"$FLEET_STATE/orchestrator.session"
+      flog INFO "orchestrator session recorded" pane="$p" session="$osid"
+    fi
+    return
+  fi
 
   # Limited: the limit message is the last thing on screen, or the pane was
   # seen limited and still sits idle at its prompt (the status line's banner

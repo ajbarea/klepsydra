@@ -17,6 +17,11 @@ export GIT_TERMINAL_PROMPT=0
 cd "$R" 2>/dev/null || { flog ERROR "briefing sync: no repo" dir="$R"; exit 1; }
 exec 9>"$(git rev-parse --git-dir)/fleet-sync.lock"
 flock -w 60 9 || { flog WARN "briefing sync: another sync or prune holds the lock"; exit 0; }
+gd=$(git rev-parse --git-dir)
+if [[ -d $gd/rebase-merge || -d $gd/rebase-apply || -f $gd/MERGE_HEAD ]]; then
+  flog ERROR "briefing sync: a rebase or merge is unfinished; left for a person" dir="$R"
+  exit 1
+fi
 
 # Only paths that exist or are tracked: git add stops at the first pathspec that matches nothing.
 paths=()
@@ -37,6 +42,13 @@ fi
 
 ahead=$(git rev-list --count '@{u}..HEAD' 2>/dev/null || echo 1)
 (( ahead > 0 )) || exit 0
+# Every commit about to leave is scanned, the prune's and any made by hand included.
+range='@{u}..HEAD'
+git rev-parse -q --verify '@{u}' >/dev/null || range='HEAD --not --remotes'
+if ! out=$("$GITLEAKS" git --log-opts="$range --" --no-banner --redact --exit-code 1 --log-level error . 2>&1) || [[ -n $out ]]; then
+  flog ERROR "briefing sync: gitleaks found something in a commit to push, or gave no verdict; not pushed" dir="$R" said="$(tail -3 <<<"$out")"
+  exit 1
+fi
 if out=$(git push -q origin HEAD 2>&1); then
   flog INFO "briefing synced" commit="$(git rev-parse --short HEAD)" pushed="$ahead"
   exit 0

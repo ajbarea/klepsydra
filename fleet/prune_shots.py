@@ -158,16 +158,33 @@ def readme_names(line: str, date: str | None, have: set[str]) -> set[str]:
 IMAGE_FILE = re.compile(r"\.(?:png|jpe?g|webp|gif)$", re.I)
 
 
-def apply(
-    readme: Path, lines: list[str], keep: list[str], gone: dict[str, str]
-) -> bool:
+def apply(readme: Path, dropped: set[str], gone: dict[str, str]) -> bool:
     """Remove the images and README lines in one commit of only those paths, under the lock the
-    briefing sync takes, so a sync never commits half of it. On any failure the removals are
-    unstaged and the README restored, and the error is logged."""
+    briefing sync takes, so a sync never commits half of it. Under the lock it checks again: an
+    image changed since the scan stops the prune (the next run decides), and the README is
+    re-read so lines added meanwhile stay. On any failure the removals are unstaged, only the
+    files it removed come back, and the error is logged."""
     paths = [f"shots/{img}" for img in sorted(gone)]
-    lock = open(REPO / ".git" / "fleet-sync.lock", "w")
+    before = readme.read_text() if readme.exists() else ""
+    lock = None
     try:
+        lock = open(REPO / ".git" / "fleet-sync.lock", "w")
         fcntl.flock(lock, fcntl.LOCK_EX)
+        changed = [
+            ln[3:]
+            for ln in git("status", "--porcelain", "--", *paths).splitlines()
+            if ln[3:] in paths
+        ]
+        if changed:
+            event(
+                logging.WARNING,
+                "shots prune skipped: images changed",
+                paths=changed[:5],
+            )
+            print(f"prune skipped: {', '.join(changed[:3])} changed since the scan")
+            return True
+        before = readme.read_text() if readme.exists() else ""
+        keep = [ln for ln in before.splitlines(keepends=True) if ln not in dropped]
         git("--literal-pathspecs", "rm", "-q", "--ignore-unmatch", "--", *paths)
         readme.write_text("".join(keep))
         git("add", "--", "shots/README.md")
@@ -191,23 +208,32 @@ def apply(
         subprocess.run(
             ["git", "-C", str(REPO), "reset", "-q", "--", "shots"], check=False
         )
-        subprocess.run(
-            ["git", "-C", str(REPO), "checkout", "-q", "--", *paths], check=False
-        )
-        readme.write_text("".join(lines))
+        missing = [x for x in paths if not (REPO / x).exists()]
+        if missing:
+            subprocess.run(
+                [
+                    "git",
+                    "-C",
+                    str(REPO),
+                    "--literal-pathspecs",
+                    "checkout",
+                    "-q",
+                    "--",
+                    *missing,
+                ],
+                check=False,
+            )
+        if readme.exists() or before:
+            readme.write_text(before)
         event(
             logging.ERROR, "shots prune failed; nothing removed", said=str(said)[-300:]
         )
         print(f"prune failed, nothing removed: {str(said).strip()[-200:]}")
         return False
     finally:
-        lock.close()
-    event(
-        logging.INFO,
-        "shots pruned",
-        removed=len(gone),
-        readme_lines=len(lines) - len(keep),
-    )
+        if lock is not None:
+            lock.close()
+    event(logging.INFO, "shots pruned", removed=len(gone), readme_lines=len(dropped))
     return True
 
 
@@ -293,7 +319,7 @@ def main() -> int:
 
     pruned = True
     if args.apply and (gone or len(keep) != len(lines)):
-        pruned = apply(readme, lines, keep, gone)
+        pruned = apply(readme, {ln for ln in lines if ln not in keep}, gone)
         failed |= not pruned
     if args.apply and pruned:
         for n in closing:

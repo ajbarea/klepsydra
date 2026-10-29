@@ -256,6 +256,41 @@ class PruneShots(unittest.TestCase):
             any("shots prune failed" in f.read_text() for f in log if f.is_file())
         )
 
+    def test_an_image_rewritten_while_prune_waits_for_the_lock_is_kept(self):
+        self.review(self.BODY)
+        lock = self.repo / ".git" / "fleet-sync.lock"
+        holder = subprocess.Popen(["flock", str(lock), "sleep", "3"])
+        time.sleep(0.3)
+        env = os.environ | {
+            "BRIEFING_DIR": str(self.repo),
+            "FLEET_GH": str(self.tmp / "gh"),
+            "FLEET_STATE": str(self.tmp / "state"),
+            "FLEET_NOW": str(NOW),
+            "GH_ISSUES": str(self.issues),
+            "GH_CALLS": str(self.calls),
+            "GIT_AUTHOR_NAME": "t",
+            "GIT_AUTHOR_EMAIL": "t@t",
+            "GIT_COMMITTER_NAME": "t",
+            "GIT_COMMITTER_EMAIL": "t@t",
+        }
+        prune = subprocess.Popen(
+            [sys.executable, "-I", str(HERE / "prune_shots.py"), "--apply"],
+            env=env,
+            stdout=subprocess.PIPE,
+            text=True,
+        )
+        time.sleep(1.2)  # prune has scanned and waits for the lock
+        new = self.repo / "shots/2026-10-28/a-1-after-dark.png"
+        new.write_bytes(b"NEW")
+        (self.repo / "shots/README.md").write_text(
+            (self.repo / "shots/README.md").read_text() + "- d-4-x: added meanwhile.\n"
+        )
+        out, _ = prune.communicate(timeout=30)
+        holder.wait()
+        self.assertIn("prune skipped", out)
+        self.assertEqual(new.read_bytes(), b"NEW")
+        self.assertIn("d-4-x", (self.repo / "shots/README.md").read_text())
+
     def test_the_repo_size_is_reported(self):
         self.review("")
         self.assertRegex(self.run_it(), r"briefing repo: \d+ MB\n")
