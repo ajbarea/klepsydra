@@ -179,15 +179,24 @@ forget() { unset "due[$1]" "seen_on[$1]" "note[$1]"; }
 # a note naming HEPH.md and AJ's messages since (heph_note); WHY ends "the
 # orchestrator (Heph) ..."; NOTE, what AJ typed at the old pane and never sent,
 # goes with it. The old pane goes only once the new one's turn has started and
-# the old one is as it was; gives up, typing nothing, if AJ typed anything else.
-# Prints the new pane; fails as fresh does (1 AJ has it, 3 no start, 4 changed).
+# the old one is as it was (screen and session state), and the records follow
+# only once it has gone; gives up, typing nothing, if AJ typed anything else.
+# Prints the new pane; fails as fresh does (1 AJ has it, 2 not Heph, 3 no
+# start or the old one stayed, 4 changed).
 heph_move() { # PANE TO WHY [NOTE]
-  local p=$1 to=$2 why=$3 carried=${4:-} box osid txt out new nsid got now_s
+  local p=$1 to=$2 why=$3 carried=${4:-} box osid txt out new nsid got now_s stamp
   box=$(input_text "$(screen "$p")")
   [[ -z $box || ( -n $carried && $box == "$carried" ) ]] || return 1
   exec 7>>"$FLEET_STATE/.fresh.lock"
   flock 7
+  # Only Heph himself: a tmux restart reuses pane ids, so a registered agent or
+  # a session other than the one on record in his pane is never replaced.
   osid=$(cat "$FLEET_STATE/orchestrator.session" 2>/dev/null)
+  if registered "$p" || { [[ -n $osid ]] && [[ $(live_session "$p") != "$osid" ]]; }; then
+    flog WARN "orchestrator not moved: the pane does not run the recorded orchestrator session" pane="$p" session="${osid:-none}"
+    return 2
+  fi
+  stamp=$(state_stamp "$p")
   txt="$FLEET_STATE/heph-move-$(date +%Y%m%d-%H%M).md"
   {
     heph_note "$why" "$osid" "$HEPH" "the resume service started you on $to and the agents run on meanwhile."
@@ -203,24 +212,43 @@ heph_move() { # PANE TO WHY [NOTE]
   fi
   if [[ $got != started ]]; then
     flog ERROR "orchestrator not moved: its note did not start a turn; the new pane goes" pane="$p" new_pane="$new" to="$to" brief="$got"
-    retire "$new" interrupt
+    drop "$new"
     return 3
   fi
+  # A phone message answered while the successor launched leaves the screen as
+  # it was but moves the session's state: the old Heph stays.
   now_s=$(screen "$p")
-  if busy "$now_s" || ! has_input_box "$now_s" || [[ $(input_text "$now_s") != "$box" ]]; then
+  if busy "$now_s" || ! has_input_box "$now_s" || [[ $(input_text "$now_s") != "$box" || $(state_stamp "$p") != "$stamp" ]]; then
     flog ERROR "the orchestrator's pane changed while its successor launched; the old one stays and the new one goes" pane="$p" new_pane="$new"
-    retire "$new" interrupt
+    drop "$new"
     return 4
   fi
-  printf '%s\n' "$new" >"$FLEET_STATE/orchestrator.pane"
-  [[ -n $nsid ]] && printf '%s\n' "$nsid" >"$FLEET_STATE/orchestrator.session"
-  printf '%s\n' "$to" >"$FLEET_STATE/orchestrator.config"
   if [[ -n $box ]]; then
     t send-keys -t "$p" C-c
     wait_for "$p" 5 idle_empty || true
   fi
-  retire "$p" || flog WARN "the old orchestrator pane is left running beside its successor" pane="$p" new_pane="$new"
+  # Two Hephs never run: the old one goes first, or the new one does.
+  if ! retire "$p"; then
+    flog ERROR "the old orchestrator pane would not exit; it stays and its successor goes" pane="$p" new_pane="$new"
+    drop "$new"
+    return 3
+  fi
+  printf '%s\n' "$new" >"$FLEET_STATE/orchestrator.pane"
+  [[ -n $nsid ]] && printf '%s\n' "$nsid" >"$FLEET_STATE/orchestrator.session"
+  printf '%s\n' "$to" >"$FLEET_STATE/orchestrator.config"
   printf '%s' "$new"
+}
+
+# The state_at of the live session in PANE (klepsydra's fleet file), or nothing.
+state_stamp() { # PANE
+  local sid
+  sid=$(live_session "$1") || return 0
+  jq -r '.state_at // ""' "$KLEPSYDRA_DIR/fleet/$sid.json" 2>/dev/null
+}
+
+# Retire a pane this pass launched, interrupting its turn; kill it if it will not exit.
+drop() { # PANE
+  retire "$1" interrupt || t kill-pane -t "$1" 2>/dev/null
 }
 
 # Record a move PANE -> NEW (or a failed try, with no NEW) for the hold-downs.
@@ -236,7 +264,8 @@ moved() { # PANE [NEW]
 
 one() { # PANE
   local p=$1 s ps typed orch=0 armed at limit reset reg name brief idle new got tmp
-  [[ -n $ORCH && $p == "$ORCH" ]] && orch=1
+  # A registered agent in the pane orchestrator.pane names is not Heph (a tmux restart reuses ids).
+  [[ -n $ORCH && $p == "$ORCH" ]] && ! registered "$p" && orch=1
   # The pane's account: its config folder's login, named as the gauge names
   # it; a folder with no known login falls back to the newest reading's.
   local cfg PANE_ID ACTIVE=$ACTIVE

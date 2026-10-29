@@ -707,7 +707,7 @@ check "the old pane exits" "$(events heph)" "SUBMIT /exit"
 check "logged as the orchestrator's move" "$(jq -r 'select(.message == "moved to the other account at a limit") | [.orchestrator, .from, .to] | join(" ")' "$FLEET_LOG")" "1 $work/cfg-a $work/cfg-b"
 t kill-window -t "$h" 2>/dev/null
 
-: >"$work/moved"; rm -f "$FLEET_STATE/orchestrator.config"
+: >"$work/moved"; rm -f "$FLEET_STATE/orchestrator.config" "$FLEET_STATE/orchestrator.session"
 h=$(pane hephtyped "{\"above\":[\"⏺ ok\",\"$LIMIT\"]}"); settle
 printf '%s\n' "$h" >"$FLEET_STATE/orchestrator.pane"
 t send-keys -t "$h" -l "AJ: hold the sphragis PR"; settle
@@ -718,7 +718,7 @@ check "then goes with the move, never sent in the old pane" \
   "$(grep -c '^AJ: hold the sphragis PR$' "$work/moved-brief") $(events hephtyped)" "1 SUBMIT /exit"
 t kill-window -t "$h" 2>/dev/null
 
-: >"$work/moved"; rm -f "$FLEET_STATE/orchestrator.config"
+: >"$work/moved"; rm -f "$FLEET_STATE/orchestrator.config" "$FLEET_STATE/orchestrator.session"
 cat >"$work/launch-heph-bad.sh" <<EOF
 #!/usr/bin/env bash
 echo try >>"$work/moved"
@@ -731,7 +731,34 @@ for at in "$noon" "$((noon + 60))" "$((noon + 120))"; do
 done
 check "a move whose note never started keeps Heph's pane and records, and is not retried for 15 min" \
   "$(wc -l <"$work/moved") $(cat "$FLEET_STATE/orchestrator.pane") $(events hephbad)" "1 $h "
-t kill-window -t "$h" 2>/dev/null; rm -f "$FLEET_STATE/orchestrator.pane" "$FLEET_STATE/orchestrator.session"
+t kill-window -t "$h" 2>/dev/null
+
+: >"$work/moved"; : >"$FLEET_LOG"
+h=$(pane hephother "{\"above\":[\"⏺ ok\",\"$LIMIT\"]}"); settle
+printf '%s\n' "$h" >"$FLEET_STATE/orchestrator.pane"; live "$h"
+printf 'aaaaaaaa-0000-4000-8000-0000000000ee\n' >"$FLEET_STATE/orchestrator.session"
+hmove "$noon"
+check "review 1: a session other than the recorded Heph in his pane is never replaced" \
+  "$(wc -c <"$work/moved") $(events hephother) $(jq -r 'select(.message | startswith("orchestrator not moved")) | .pane' "$FLEET_LOG")" "0  $h"
+printf '%s\tw\t%s\t%s\t/w\t%s\n' "$h" "$work/brief.src" "$SID" "$work/cfg-a" >"$REGISTRY"
+rm -f "$FLEET_STATE/orchestrator.session"
+LAUNCH="$work/launch-heph.sh" FLEET_NOW=$((noon + 1000)) bash "$here/resume-at-reset.sh" --once 2>/dev/null
+check "review 1: a registered agent in the pane orchestrator.pane names is moved as a worker, not as Heph" "$(sed -n 2p "$work/moved")" "w"
+t kill-window -t "$h" 2>/dev/null; : >"$REGISTRY"
+
+: >"$work/moved"; rm -f "$FLEET_STATE/orchestrator.config"
+h=$(pane hephphone "{\"above\":[\"⏺ ok\",\"$LIMIT\"]}"); settle
+printf '%s\n' "$h" >"$FLEET_STATE/orchestrator.pane"; live "$h"
+printf '%s\n' "$SID" >"$FLEET_STATE/orchestrator.session"
+cat >"$work/launch-heph-phone.sh" <<EOF
+#!/usr/bin/env bash
+jq '.state_at = 5' "$KLEPSYDRA_DIR/fleet/$SID.json" >"$work/st.json" && mv "$work/st.json" "$KLEPSYDRA_DIR/fleet/$SID.json"
+echo "pane=%996 session=x account=\$FLEET_ACCOUNT avail=1MiB brief=started"
+EOF
+LAUNCH="$work/launch-heph-phone.sh" FLEET_HEPH="$work/HEPH.md" FLEET_NOW=$noon bash "$here/resume-at-reset.sh" --once 2>/dev/null
+check "review 2: a turn Heph took during the launch (a phone message) keeps him and his records" \
+  "$(cat "$FLEET_STATE/orchestrator.pane" "$FLEET_STATE/orchestrator.session" | tr '\n' ' ')$(events hephphone)" "$h $SID "
+t kill-window -t "$h" 2>/dev/null; rm -f "$FLEET_STATE/orchestrator.pane" "$FLEET_STATE/orchestrator.session" "$KLEPSYDRA_DIR/fleet/$SID.json"
 logout a; logout b; reading a Personal 40 1000; rm -f "$KLEPSYDRA_DIR/accounts/b/s.json"
 
 echo "two accounts: review round 1"
