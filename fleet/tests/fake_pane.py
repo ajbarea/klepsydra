@@ -62,6 +62,7 @@ class Pane:
         self.state = {}
         self.input = ""
         self.pastes = 0
+        self.pasted = (0, 0)  # where the last paste sits in the input, and its length
         self.menu = None
         self.rc_at = None  # when /remote-control's answer shows
         self.rc_was_on = False
@@ -134,7 +135,9 @@ class Pane:
                 prefix = self.state.pop("paste_prefix", "")
                 if prefix:
                     self.save()
-                self.input += prefix + text
+                self.input += prefix
+                self.pasted = (len(self.input), len(text))
+                self.input += text
                 self.log("PASTE " + str(len(text)))
                 continue
             if b.startswith(b"\x1b["):  # an arrow or other CSI key
@@ -213,11 +216,19 @@ class Pane:
             return above + [RULE] + LIMIT_MENU
         if self.menu == "rc":
             return above + [RULE] + RC_MENU
-        if self.pastes and ("\n" in self.input or len(self.input) > 800):
-            # Claude Code collapses a long paste; " +N lines" only when it has newlines.
-            lines = self.input.count(chr(10))
+        at, n = self.pasted
+        pasted = self.input[at : at + n] if self.pastes else ""
+        if pasted and ("\n" in pasted or len(pasted) > 800):
+            # Claude Code collapses a long paste in place, typed text around it
+            # kept; " +N lines" only when it has newlines.
+            lines = pasted.count(chr(10))
             more = f" +{lines} lines" if lines else ""
-            box = [PROMPT + f"[Pasted text #{self.pastes}{more}]"]
+            rest = (
+                self.input[:at]
+                + f"[Pasted text #{self.pastes}{more}]"
+                + self.input[at + n :]
+            )
+            box = [PROMPT + rest.replace(chr(10), " ")]
         elif self.input:
             first, *more = self.input.split("\n")
             box = [PROMPT + first] + ["  " + m for m in more]

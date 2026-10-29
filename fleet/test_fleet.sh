@@ -1047,7 +1047,10 @@ p=$(pane cil '{"above":["⏺ Done. done 11:50 AM"]}'); settle
 head -c 900 /dev/zero | tr '\0' 'x' >"$work/alert-long.txt"
 check "review 2: an alert over 800 characters (shown as [Pasted text #1]) is sent" \
   "$(inbox_deliver "$p" "$work/alert-long.txt") $(grep -c '^SUBMIT x' "$work/cil.log")" "sent 1"
-state cil '{"above":["⏺ Done. done 11:50 AM"],"paste_prefix":"AJ: "}'
+state cil '{"above":["⏺ Done. done 11:50 AM"],"paste_prefix":"AJ: ","clear":true}'
+check "review 5: a long alert pasted as AJ began a line shows beside it, and nothing is sent" \
+  "$(inbox_deliver "$p" "$work/alert-long.txt") [$(input_text "$(screen "$p")")] $(grep -c '^SUBMIT' "$work/cil.log")" "mixed [AJ: [Pasted text #2]] 1"
+state cil '{"above":["⏺ Done. done 11:50 AM"],"paste_prefix":"AJ: ","clear":true}'
 check "review 4: pasted as AJ began a line, nothing is sent and none of his line is taken" \
   "$(inbox_deliver "$p" "$work/alert3.txt") [$(input_text "$(screen "$p")")] $(grep -c '^SUBMIT' "$work/cil.log")" "mixed [AJ: $(<"$work/alert3.txt")] 1"
 t kill-window -t "$p"
