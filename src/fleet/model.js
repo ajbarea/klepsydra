@@ -431,12 +431,12 @@ export const needsFirst = (sessions) => [
 /** How many other repos the full card names before a "+N" chip takes the rest. */
 export const ALSO_NAMED = 4;
 
-/** One card on the wall; `request` is the snapshot's wrap-up, when one is shown. */
 /** Whether the live cards run on more than one account: only then is a card's account worth a chip. */
 export function accountsDiffer(cards) {
   return new Set(cards.filter((c) => c.accountId && c.status !== "ended").map((c) => c.accountId)).size > 1;
 }
 
+/** One card on the wall; `request` is the snapshot's wrap-up, when one is shown. */
 export function card(s, cast, nowMs, request = null) {
   const who = identity(s, cast);
   const wrapup = wrapupLine(s, request, nowMs);

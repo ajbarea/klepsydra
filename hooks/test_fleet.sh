@@ -1445,6 +1445,9 @@ rm -f "$afile"; afire session-start.json CLAUDE_CONFIG_DIR="$work/cfg-bad"
 check "account: an id that is not a plain id is not written" "$(jq 'has("account")' "$afile")" "false"
 rm -f "$afile"; afire session-start.json
 check "account: no config, no account" "$(jq 'has("account")' "$afile")" "false"
+mkdir -p "$work/cfg-two"; { cat "$work/cfg-team/.claude.json"; cat "$work/cfg-me/.claude.json"; } >"$work/cfg-two/.claude.json"
+rm -f "$afile"; afire session-start.json CLAUDE_CONFIG_DIR="$work/cfg-two"
+check "account: a config holding two documents is read by its first, and the event is still written" "$(jq -r .account.label "$afile") $(jq -r .state "$afile")" "RIT-CS-DQL new"
 rm -f "$afile"
 
 echo "remote control"
@@ -1563,6 +1566,15 @@ check "remote: then its own record counts" "$(rc_url)" "https://claude.ai/code/s
 rc_line 1 | jq -c '.timestamp = "2026-10-18T21:14:00.000Z"' >>"$tp"
 rc_fire post-tool-bash.json $((rnow + 5070))
 check "remote: and a /remote-control line wins over it" "$(rc_url)" "https://claude.ai/code/session_01PLACEHOLDERconnect"
+rc_line 5 | jq -c '.timestamp = "2026-10-18T21:15:00.000Z"' >>"$tp"; bridge cse_01PLACEHOLDERnew >>"$tp"
+rc_fire post-tool-bash.json $((rnow + 5090))
+check "remote: (off again, the record still re-appended)" "$(rc_url)" "none"
+rc_line 2 | jq -c '.timestamp = "2026-10-18T21:16:00.000Z"' >>"$tp"
+rc_fire post-tool-bash.json $((rnow + 5100))
+check "remote: back on at the menu with no record after it yet: no link to give" "$(rc_url)" "none"
+bridge cse_01PLACEHOLDERback >>"$tp"
+rc_fire post-tool-bash.json $((rnow + 5110))
+check "remote: back on at the menu (only the bridge-up attachment), the next record names the link" "$(rc_url)" "https://claude.ai/code/session_01PLACEHOLDERback"
 for bad in 'cse_01x/../evil' 'session_01x' 'cse_'; do
   rm -f "$rfile"; : >"$tp"
   rc_fire session-start.json $((rnow + 6000))

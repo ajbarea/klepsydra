@@ -472,7 +472,8 @@ def rc_word:
   if .type == "system" and .subtype == "bridge_status" then {url: (.url | rc_ok)}
   elif .type == "attachment" and (.attachment | objects | .type) == "remote_session_change" then
     (.attachment.url | rc_ok) as $u
-    | if $u != null then {url: $u} elif .attachment.sendUserFileHint == false then {url: null} else empty end
+    | if $u != null then {url: $u} elif .attachment.sendUserFileHint == false then {url: null}
+      elif .attachment.sendUserFileHint == true then {on: true} else empty end
   elif .type == "system" and (.content | strings | startswith("Remote Control disconnected")) then {url: null}
   elif .type == "bridge-session" then
     {url: (.bridgeSessionId | strings | select(test("^cse_[A-Za-z0-9]{1,100}$")) | "https://claude.ai/code/session_" + ltrimstr("cse_") | rc_ok), weak: true}
@@ -512,15 +513,21 @@ def notified: if type == "string" then [scan("<task-notification>[\\s\\S]*?</tas
   | (if $fresh then $now - 30 else (.remote_since | numbers) // 0 end) as $rc_since
   | (if $fresh then .remote_since = $rc_since else . end)
   | [$remote | split("\n")[] | try fromjson catch empty | objects
-      | select((rc_time // 0) >= $rc_since) | rc_word] as $words
+      | select((rc_time // 0) >= $rc_since) | (rc_time // 0) as $at | rc_word + {at: $at}] as $words
   # Remote Control on from startup and /remote-control answered at its menu
-  # write no line of their own; the bridge record then names the link, until
-  # this process says anything itself (remote_heard). Claude Code re-appends
-  # the record after Remote Control goes off too, so it never undoes an off.
+  # write no link of their own; the bridge record then names it, until this
+  # process says otherwise (remote_heard). Claude Code re-appends the record
+  # after Remote Control goes off too, so it never undoes an off; an
+  # attachment saying the bridge is up ({on}) takes a record dated after it.
   | ([$words[] | select(.weak | not)] | last) as $said
+  | ([$words[] | select(.weak)] | last) as $bridge
   | (if $fresh then del(.remote_heard) else . end)
-  | (if $said != null then .remote_heard = true else . end)
-  | ($said // (if .remote_url == null and .remote_heard != true then [$words[] | select(.weak)] | last else null end)) as $rc
+  | (if $said != null then .remote_heard = ($said.on != true) else . end)
+  | (if $said.on == true then
+       (if $bridge != null and $bridge.at >= $said.at then $bridge else null end)
+     elif $said != null then $said
+     elif .remote_url == null and .remote_heard != true then $bridge
+     else null end) as $rc
   # /clear keeps the process and its Remote Control: the cleared session's
   # file keeps the link, and the next session takes it ($cleared).
   | .remote_url = (if $event == "SessionEnd" and $ev.reason != "clear" then null
@@ -855,7 +862,7 @@ main() {
   # The account the session runs on, named as the statusLine names it, from
   # the global config CLAUDE_CONFIG_DIR picks: at its start and each prompt.
   if [[ $event == SessionStart || $event == UserPromptSubmit ]]; then
-    account=$(jq -c '(.oauthAccount | objects) // {}
+    account=$(jq -cn 'first(inputs) | (.oauthAccount | objects) // {}
       | select(.accountUuid | strings | test("^[0-9A-Za-z-]{1,64}$"))
       | {id: .accountUuid, label: (if .organizationType == "claude_team"
           then ((.organizationName | strings | select(length > 0) | .[0:80]) // "Team") else "Personal" end)}' \
