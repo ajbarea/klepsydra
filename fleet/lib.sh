@@ -247,6 +247,37 @@ deliver() { # PANE FILE
 }
 sent_or_started() { started "$1" || { has_input_box "$1" && [[ -z $(input_text "$1") ]]; }; }
 
+# Paste inbox file FILE into PANE and send it, only while the box is empty and
+# no turn runs, right before the paste; it is sent only when the box then
+# holds the message alone (its text, or a paste's placeholder), never with a
+# line AJ began meanwhile. Claude Code shows a paste over 800 characters, or
+# with more than two newlines, as "[Pasted text #N]" ("... +M lines]" when it
+# has newlines). Prints sent, not-pasted, mixed (pasted beside a line AJ
+# began: left in the box unsent, since taking it back out by keystrokes could
+# take his characters with it) or held (still in the box after three Enters).
+inbox_deliver() { # PANE FILE
+  local p=$1 file=$2 box want text
+  idle_empty "$(screen "$p")" || { echo not-pasted; return; }
+  t load-buffer -b "fleet-$$" "$file" && t paste-buffer -p -d -b "fleet-$$" -t "$p"
+  wait_for "$p" 5 holds_input || { echo not-pasted; return; }
+  box=$(input_text "$(screen "$p")")
+  # Both sides lose their whitespace the same way: a long line wraps in the box.
+  text=$(<"$file")
+  want=${text//[[:space:]]/}
+  if [[ ${box//[[:space:]]/} != "$want" && ! $box =~ ^\[Pasted\ text\ \#[0-9]+(\ \+[0-9]+\ lines)?\]$ ]]; then
+    echo mixed
+    return
+  fi
+  for _ in 1 2 3; do
+    t send-keys -t "$p" Enter
+    if wait_for "$p" "${FLEET_START_WAIT:-10}" sent_or_started; then
+      echo sent
+      return
+    fi
+  done
+  echo held
+}
+
 # klepsydra's newest usage reading (one file per session under accounts/<id>/).
 newest_reading() {
   find "$KLEPSYDRA_DIR/accounts" -mindepth 2 -maxdepth 2 -name '*.json' -printf '%T@ %p\n' 2>/dev/null | sort -rn | head -1 | cut -d' ' -f2-

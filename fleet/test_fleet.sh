@@ -487,11 +487,11 @@ check "and the exit is non-zero" "$code" "1"
 touch "$work/active" "$FLEET_STATE/resume.beat"
 session_file o1 "$o" https://claude.ai/code/session_01O
 out=$(DOC_UP=http DOC_SERVE="https://desk.tail1.ts.net (tailnet only)" doctor); code=$?
-check "all well but the watcher: a shell that names the script is not one" "$(grep -c '^ok ' <<<"$out") $(grep '^FAIL' <<<"$out" | cut -d: -f1)" "10 FAIL pane watcher"
+check "all well but the watcher: a shell that names the script is not one" "$(grep -c '^ok ' <<<"$out") $(grep '^FAIL' <<<"$out" | cut -d: -f1)" "11 FAIL pane watcher"
 check "the default account is logged in; the second, not yet, is a warning" \
   "$(grep '^ok   account' <<<"$out" | cut -d: -f1) | $(grep '^warn account' <<<"$out" | cut -d: -f1)" "ok   account $work/cfg-a | warn account $work/cfg-b"
 check "with a watcher running, every check is ok and the exit is 0" \
-  "$(DOC_WATCH='%2 %5' DOC_UP=http DOC_SERVE=on doctor | grep -c '^ok '; echo "rc=${PIPESTATUS[0]}")" $'11\nrc=0'
+  "$(DOC_WATCH='%2 %5' DOC_UP=http DOC_SERVE=on doctor | grep -c '^ok '; echo "rc=${PIPESTATUS[0]}")" $'12\nrc=0'
 check "the watcher's panes are named" "$(DOC_WATCH='%2 %5' doctor | grep '^ok   pane watcher')" "ok   pane watcher: watching %2 %5"
 check "the phone wall and its Tailscale twin answer fresh" "$(grep -c 'fleet.json observed 3[0-9] s ago' <<<"$out")" "2"
 jq -n '{usage: [{observed_at: 1000}]}' >"$work/fleet.json"
@@ -1016,6 +1016,46 @@ LAUNCH="$work/launch-rel.sh" bash "$here/relaunch-fresh.sh" "$p" rel "$work/brie
 check "review 3: a relaunch whose brief never started keeps the old pane, points the row back and exits the new one" \
   "$rc $(cut -f1,4,6 "$REGISTRY") $(grep -c 'SUBMIT /exit' "$work/relnew.log") $(grep -c '^SUBMIT' "$work/relold.log")" "1 $p	$SID	$work/cfg-a 1 0"
 t kill-window -t "$p"; : >"$REGISTRY"
+
+echo "CI reds typed into the agent on the branch (#180)"
+: >"$FLEET_LOG"; mkdir -p "$FLEET_STATE/inbox/cia"
+printf 'CI red in r: wf1 failed on feat/x: boom. https://x/1' >"$FLEET_STATE/inbox/cia/r-1.txt"
+touch -d '-2 min' "$FLEET_STATE/inbox/cia/r-1.txt"
+printf 'CI red in r: wf2 failed on feat/x: bang. https://x/2' >"$FLEET_STATE/inbox/cia/r-2.txt"
+p=$(pane cia '{"above":["⏺ Done. done 11:50 AM"],"busy":true}'); settle
+printf '%s\tcia\t%s\n' "$p" "$work/brief.src" >"$REGISTRY"
+resume "$noon"
+check "not into a running turn" "$(grep -c '^SUBMIT' "$work/cia.log") $(find "$FLEET_STATE/inbox/cia" -name '*.txt' | wc -l)" "0 2"
+state cia '{"above":["⏺ Done. done 11:50 AM"],"rc":"on"}'
+t send-keys -t "$p" -l "AJ: wait"; settle
+resume "$((noon + 60))"; resume "$((noon + 120))"
+check "nor over AJ's line" "$(grep -c '^SUBMIT' "$work/cia.log")" "0"
+state cia '{"above":["⏺ Done. done 11:50 AM"],"rc":"on","clear":true}'
+resume "$((noon + 180))"; resume "$((noon + 240))"
+check "at an idle, empty prompt the oldest goes in, and its file goes" \
+  "$(grep '^SUBMIT' "$work/cia.log") $(ls "$FLEET_STATE/inbox/cia")" "SUBMIT CI red in r: wf1 failed on feat/x: boom. https://x/1 r-2.txt"
+check "logged with the pane and the agent" "$(jq -r 'select(.message == "CI alert delivered") | [.pane, .name, .alert, .result] | join(" ")' "$FLEET_LOG")" "$p cia r-1.txt sent"
+t kill-window -t "$p"; : >"$REGISTRY"; rm -rf -- "${FLEET_STATE:?}/inbox"
+printf 'CI red in r: wf3 failed. https://x/3' >"$work/alert3.txt"
+p=$(pane cib '{"above":["⏺ working"],"busy":true}'); settle
+check "review 1: a pane busy by the time of delivery gets nothing pasted or pressed" "$(inbox_deliver "$p" "$work/alert3.txt") $(wc -l <"$work/cib.log")" "not-pasted 0"
+state cib '{"above":["⏺ Done. done 11:50 AM"]}'
+t send-keys -t "$p" -l "AJ: half"; settle
+check "review 1: nor one where AJ has begun a line" "$(inbox_deliver "$p" "$work/alert3.txt") [$(input_text "$(screen "$p")")] $(grep -c '^SUBMIT' "$work/cib.log")" "not-pasted [AJ: half] 0"
+t kill-window -t "$p"
+p=$(pane cil '{"above":["⏺ Done. done 11:50 AM"]}'); settle
+head -c 900 /dev/zero | tr '\0' 'x' >"$work/alert-long.txt"
+check "review 2: an alert over 800 characters (shown as [Pasted text #1]) is sent" \
+  "$(inbox_deliver "$p" "$work/alert-long.txt") $(grep -c '^SUBMIT x' "$work/cil.log")" "sent 1"
+state cil '{"above":["⏺ Done. done 11:50 AM"],"paste_prefix":"AJ: ","clear":true}'
+check "review 5: a long alert pasted as AJ began a line shows beside it, and nothing is sent" \
+  "$(inbox_deliver "$p" "$work/alert-long.txt") [$(input_text "$(screen "$p")")] $(grep -c '^SUBMIT' "$work/cil.log")" "mixed [AJ: [Pasted text #2]] 1"
+state cil '{"above":["⏺ Done. done 11:50 AM"],"paste_prefix":"AJ: ","clear":true}'
+check "review 4: pasted as AJ began a line, nothing is sent and none of his line is taken" \
+  "$(inbox_deliver "$p" "$work/alert3.txt") [$(input_text "$(screen "$p")")] $(grep -c '^SUBMIT' "$work/cil.log")" "mixed [AJ: $(<"$work/alert3.txt")] 1"
+t kill-window -t "$p"
+check "review 1: the pane watcher is quiet while no alert has ever been written" \
+  "$(FLEET_STATE="$work/noalerts" IDLE_S=1 timeout 2 bash "$here/watch-panes.sh" %999 2>&1 | grep -c 'No such file')" "0"
 
 echo "two accounts: the second folder follows the first"
 src=$work/sync-src dst=$work/sync-dst

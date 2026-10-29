@@ -17,6 +17,8 @@ A test steers it through a JSON state file, re-read on every tick:
   rc_delay   seconds before /remote-control's answer shows
   busy_delay seconds before a submitted turn's spinner shows
   menu       "limit" shows Claude Code's limit menu
+  paste_prefix  text typed into the box just before the next paste (AJ
+             typing as a paste goes in), then removed from the file
 
 Run: python3 -I fake_pane.py STATE LOG
 """
@@ -60,6 +62,7 @@ class Pane:
         self.state = {}
         self.input = ""
         self.pastes = 0
+        self.pasted = (0, 0)  # where the last paste sits in the input, and its length
         self.menu = None
         self.rc_at = None  # when /remote-control's answer shows
         self.rc_was_on = False
@@ -129,6 +132,11 @@ class Pane:
                 text = b[6:end].decode("utf-8", "replace").replace("\r", "\n")
                 self.buf = b[end + 6 :]
                 self.pastes += 1
+                prefix = self.state.pop("paste_prefix", "")
+                if prefix:
+                    self.save()
+                self.input += prefix
+                self.pasted = (len(self.input), len(text))
                 self.input += text
                 self.log("PASTE " + str(len(text)))
                 continue
@@ -208,9 +216,19 @@ class Pane:
             return above + [RULE] + LIMIT_MENU
         if self.menu == "rc":
             return above + [RULE] + RC_MENU
-        if self.pastes and "\n" in self.input:
-            shown = f"[Pasted text #{self.pastes} +{self.input.count(chr(10))} lines]"
-            box = [PROMPT + shown]
+        at, n = self.pasted
+        pasted = self.input[at : at + n] if self.pastes else ""
+        if pasted and ("\n" in pasted or len(pasted) > 800):
+            # Claude Code collapses a long paste in place, typed text around it
+            # kept; " +N lines" only when it has newlines.
+            lines = pasted.count(chr(10))
+            more = f" +{lines} lines" if lines else ""
+            rest = (
+                self.input[:at]
+                + f"[Pasted text #{self.pastes}{more}]"
+                + self.input[at + n :]
+            )
+            box = [PROMPT + rest.replace(chr(10), " ")]
         elif self.input:
             first, *more = self.input.split("\n")
             box = [PROMPT + first] + ["  " + m for m in more]

@@ -18,7 +18,9 @@
 # after a long idle. Each role prefers an account (#175): workers the first
 # folder in FLEET_ACCOUNTS, Heph the first in FLEET_HEPH_ACCOUNTS; a pane on
 # another moves back once its preferred one has FLEET_BACK_ROOM_PCT room, at a
-# finished turn and an empty prompt. --once runs one pass. Each decision is one line in the fleet log; each pass touches
+# finished turn and an empty prompt. A CI red the CI watch routed to an agent
+# (inbox/NAME/*.txt) is typed into its pane at an idle, empty prompt, oldest
+# first. --once runs one pass. Each decision is one line in the fleet log; each pass touches
 # resume.beat for `fleet doctor`.
 set -u
 FLEET_TARGET=fleet::resume
@@ -379,6 +381,31 @@ one() { # PANE
       (( rc == 1 )) || moved "$p"
       (( rc == 5 )) && back_hold "$pref_id"
     fi
+    return
+  fi
+
+  # A CI red on this agent's branch (#180): its inbox, typed in at an idle,
+  # empty prompt (never over AJ's line or into a running turn), oldest first.
+  local inbox_name msg
+  if (( !orch )) && [[ -z $limit && -z ${due[$p]:-} ]] && inbox_name=$(reg_field "$p" 2) && [[ -n $inbox_name ]] &&
+    msg=$(find "$FLEET_STATE/inbox/$inbox_name" -maxdepth 1 -name '*.txt' -type f -printf '%T@ %p\n' 2>/dev/null | sort -n | head -1 | cut -d' ' -f2-) &&
+    [[ -n $msg ]] && idle_empty "$s"; then
+    got=$(inbox_deliver "$p" "$msg")
+    case $got in
+      not-pasted) flog WARN "CI alert not delivered: the prompt was no longer idle and empty; trying again next pass" pane="$p" name="$inbox_name" alert="${msg##*/}" ;;
+      mixed)
+        flog WARN "CI alert pasted beside text typed meanwhile; left in the prompt unsent" pane="$p" name="$inbox_name" alert="${msg##*/}"
+        rm -f -- "${msg:?}"
+        ;;
+      held)
+        flog WARN "CI alert left in the prompt: Enter did not take" pane="$p" name="$inbox_name" alert="${msg##*/}"
+        rm -f -- "${msg:?}"
+        ;;
+      *)
+        flog INFO "CI alert delivered" pane="$p" name="$inbox_name" alert="${msg##*/}" result="$got"
+        rm -f -- "${msg:?}"
+        ;;
+    esac
     return
   fi
 
