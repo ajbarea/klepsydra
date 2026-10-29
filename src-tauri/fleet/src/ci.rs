@@ -90,28 +90,44 @@ pub fn view(raw: &str, now: i64) -> Option<Value> {
     }))
 }
 
-/// Follows `ci.json`, reading it again only when its modified time changes.
+/// Follows `ci.json`, reading it again only when its modified time changes;
+/// in between, only its staleness is worked out again.
 #[derive(Default)]
 pub struct Follower {
     seen: Option<SystemTime>,
-    stale: Option<bool>,
+    read_once: bool,
+    view: Option<Value>,
 }
 
 impl Follower {
-    /// The view when the file or its staleness changed since the last step.
+    /// The view when the file or its staleness changed since the last step;
+    /// null once the file is gone or unreadable after a view was sent.
     pub fn step(&mut self, dir: &Path, now: i64) -> Option<Value> {
         let path = dir.join(FILE);
         let modified = std::fs::symlink_metadata(&path)
             .and_then(|m| m.modified())
             .ok();
-        let raw = crate::bounded::read_text(&path, MAX_BYTES).ok();
-        let view = raw.as_deref().and_then(|r| view(r, now));
-        let stale = view.as_ref().map(|v| v["stale"] == true);
-        if modified == self.seen && stale == self.stale {
+        if self.read_once && modified == self.seen {
+            let view = self.view.as_mut()?;
+            let stale = now - view["observed_at"].as_i64().unwrap_or(now) > STALE_S;
+            if view["stale"] == stale {
+                return None;
+            }
+            view["stale"] = Value::Bool(stale);
+            return Some(view.clone());
+        }
+        let first = !self.read_once;
+        self.read_once = true;
+        self.seen = modified;
+        let view = crate::bounded::read_text(&path, MAX_BYTES)
+            .ok()
+            .and_then(|raw| view(&raw, now));
+        let changed = view != self.view;
+        self.view = view.clone();
+        // Nothing to say before anything was ever shown.
+        if !changed || (first && view.is_none()) {
             return None;
         }
-        self.seen = modified;
-        self.stale = stale;
         Some(view.unwrap_or(Value::Null))
     }
 }

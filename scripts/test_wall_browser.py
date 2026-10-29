@@ -4267,11 +4267,11 @@ def ci_watch(wall):
         "each row names repo, branch or PR, failing step and the triaged cause",
         got["rows"],
     )
+    titles = page.evaluate("[...document.querySelectorAll('#ci .ci-head')].map((h) => h.title)")
     wall.check(
-        got["links"] == [["https://github.com/ajbarea/pharos/actions/runs/5", "noopener noreferrer"],
-                         ["https://github.com/ajbarea/klepsydra/actions/runs/7", "noopener noreferrer"]],
-        "each run links to GitHub, opened apart",
-        got["links"],
+        got["links"] == [] and titles == ["https://github.com/ajbarea/pharos/actions/runs/5", "https://github.com/ajbarea/klepsydra/actions/runs/7"],
+        "on the desktop, which cannot open a link yet, each run's address is its tooltip",
+        [got["links"], titles],
     )
     shot = os.environ.get("KLEPSYDRA_CI_SHOT")
     if shot:

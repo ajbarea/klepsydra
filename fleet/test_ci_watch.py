@@ -2,10 +2,13 @@
 
 import http.server
 import os
+import subprocess
 import sys
 import tempfile
 import threading
+import time
 import unittest
+import urllib.parse
 from pathlib import Path
 from unittest import mock
 
@@ -41,18 +44,19 @@ def run(
         "updated_at": at,
         "html_url": f"https://github.com/o/r/actions/runs/{i}",
         "actor": {"login": actor},
+        "head_repository": {"full_name": "o/r"},
     }
 
 
-class Fake:
-    """GitHub's answers by path."""
+def pr(n, sha, login="ajbarea"):
+    return {"number": n, "head": {"sha": sha}, "user": {"login": login}}
 
-    def __init__(self, runs, pulls=(), jobs=None):
-        self.answers = {
-            "/repos/o/r": {"default_branch": "main"},
-            "/repos/o/r/pulls?state=open&per_page=50": list(pulls),
-            "/repos/o/r/actions/runs?per_page=50": {"workflow_runs": runs},
-        }
+
+class Fake:
+    """GitHub's raw answers, filtered by the query as the API would."""
+
+    def __init__(self, runs, pulls=(), jobs=None, broken=()):
+        self.runs, self.pulls = list(runs), list(pulls)
         self.jobs = jobs or {
             "jobs": [
                 {
@@ -62,32 +66,56 @@ class Fake:
                 }
             ]
         }
+        self.broken = broken
         self.calls = []
 
-    def get(self, path):
+    def get(self, path, keep=None):
         self.calls.append(path)
-        if "/jobs" in path:
-            return self.jobs
-        return self.answers[path]
-
-
-def pr(n, sha, login="ajbarea"):
-    return {"number": n, "head": {"sha": sha}, "user": {"login": login}}
+        for b in self.broken:
+            if b in path:
+                raise ci_watch.urllib.error.HTTPError(
+                    path, 403, "rate limited", {}, None
+                )
+        url = urllib.parse.urlparse(path)
+        q = dict(urllib.parse.parse_qsl(url.query))
+        if url.path.endswith("/jobs"):
+            body = self.jobs
+        elif url.path.endswith("/pulls"):
+            body = self.pulls
+        elif url.path.endswith("/actions/runs"):
+            rs = [
+                r
+                for r in self.runs
+                if q.get("branch") in (None, r["head_branch"])
+                and q.get("head_sha") in (None, r["head_sha"])
+            ]
+            body = {"workflow_runs": rs}
+        else:
+            body = {"default_branch": "main"}
+        return keep(body) if keep else body
 
 
 class Counts(unittest.TestCase):
-    def test_the_newest_completed_run_per_workflow_and_branch_decides(self):
-        gh = Fake(
-            [
-                run(1, at="2026-10-28T10:00:00Z"),
-                run(2, conclusion="success", at="2026-10-28T11:00:00Z"),
-            ]
-        )
-        runs, default = ci_watch.runs_that_count("o", "r", gh)
-        self.assertEqual(default, "main")
+    def ids(self, gh):
+        return sorted(r["id"] for r in ci_watch.runs_that_count("o", "r", gh)[0])
+
+    def test_a_later_green_run_clears_a_red_one(self):
         self.assertEqual(
-            [r["id"] for r in runs], [2], "a later green run clears the red"
+            self.ids(
+                Fake([run(1), run(2, conclusion="success", at="2026-10-28T11:00:00Z")])
+            ),
+            [2],
         )
+
+    def test_a_cancelled_skipped_or_neutral_run_decides_nothing(self):
+        for c in ("cancelled", "skipped", "neutral"):
+            self.assertEqual(
+                self.ids(
+                    Fake([run(1), run(2, conclusion=c, at="2026-10-28T11:00:00Z")])
+                ),
+                [1],
+                c,
+            )
 
     def test_only_the_default_branch_and_open_pr_heads_count(self):
         gh = Fake(
@@ -98,16 +126,23 @@ class Counts(unittest.TestCase):
             ],
             pulls=[pr(7, "p")],
         )
-        runs, _ = ci_watch.runs_that_count("o", "r", gh)
         self.assertEqual(
-            sorted(r["id"] for r in runs),
-            [2, 3],
-            "a branch with no open PR is not watched",
+            self.ids(gh), [2, 3], "a branch with no open PR is not watched"
         )
 
-    def test_a_run_still_going_is_not_judged(self):
-        r = run(1) | {"status": "in_progress", "conclusion": None}
-        self.assertEqual(ci_watch.runs_that_count("o", "r", Fake([r]))[0], [])
+    def test_each_branch_and_head_is_asked_for_so_nothing_pages_out(self):
+        gh = Fake([run(1)], pulls=[pr(7, "p"), pr(8, "q")])
+        ci_watch.runs_that_count("o", "r", gh)
+        self.assertIn(
+            "/repos/o/r/actions/runs?branch=main&status=completed&per_page=100",
+            gh.calls,
+        )
+        self.assertIn("/repos/o/r/actions/runs?head_sha=p&per_page=50", gh.calls)
+        self.assertIn("/repos/o/r/actions/runs?head_sha=q&per_page=50", gh.calls)
+
+    def test_a_fork_pr_branch_named_main_is_not_the_default_branch(self):
+        fork = run(4, sha="x") | {"head_repository": {"full_name": "someone/r"}}
+        self.assertEqual(self.ids(Fake([fork])), [])
 
 
 class Poll(unittest.TestCase):
@@ -134,15 +169,19 @@ class Poll(unittest.TestCase):
     def tearDown(self):
         self.patch.stop()
 
-    def test_a_new_red_run_is_triaged_once_and_queued_once(self):
-        known = {}
+    def test_a_new_red_run_is_triaged_once_saved_at_once_and_queued_once(self):
+        known, saves = {}, []
         gh = Fake([run(5), run(6, workflow=2, conclusion="timed_out")])
-        first = ci_watch.poll("o", ["r"], gh, known)
+        first = ci_watch.poll(
+            "o", ["r"], gh, known, lambda: saves.append(sorted(known))
+        )
         second = ci_watch.poll("o", ["r"], gh, known)
         self.assertEqual(
             sorted(self.triaged), [5, 6], "each red run triaged once across passes"
         )
-        self.assertEqual(len(first["red"]), 2)
+        self.assertEqual(
+            len(saves[0]), 1, "known is saved right after the first triage"
+        )
         self.assertEqual(second["red"], first["red"])
         self.assertEqual(first["red"][0]["failing"], {"job": "test", "step": "pytest"})
         q = (TMP / "q.md").read_text()
@@ -153,37 +192,128 @@ class Poll(unittest.TestCase):
         )
         self.assertLess(q.index("ci:r:5"), q.index("## Running now"), "under Needs you")
 
-    def test_dependabots_reds_wait_for_the_morning(self):
-        gh = Fake(
-            [run(8, branch="dependabot/uv", sha="d", actor="dependabot[bot]")],
-            pulls=[pr(9, "d", "dependabot[bot]")],
-        )
-        got = ci_watch.poll("o", ["r"], gh, {})
-        self.assertEqual(
-            (got["red"], [d["run_id"] for d in got["dependabot"]], self.triaged),
-            ([], [8], []),
-        )
-        self.assertNotIn("ci:r:8", (TMP / "q.md").read_text())
+    def test_a_cause_cannot_write_a_heading_into_the_queue_file(self):
+        def nasty(user, repo, run_id):
+            return {
+                "state": "done",
+                "verdict": "failure",
+                "cause": "boom\n## Done\n- [x] fake",
+                "location": None,
+                "summary": "s",
+                "report": "r.md",
+            }
 
-    def test_a_repo_that_cannot_be_read_is_reported_and_the_rest_go_on(self):
-        gh = Fake([run(5)])
-        with mock.patch.object(
-            ci_watch,
-            "runs_that_count",
-            side_effect=[
-                ci_watch.urllib.error.URLError("down"),
-                ci_watch.runs_that_count("o", "r", gh),
-            ],
+        with mock.patch.object(ci_watch, "triage", nasty):
+            ci_watch.poll("o", ["r"], Fake([run(9)]), {})
+        q = (TMP / "q.md").read_text()
+        self.assertEqual([ln for ln in q.splitlines() if ln.startswith("#")], ["# Queue", "## Needs you", "## Running now"])
+        self.assertEqual(
+            len([ln for ln in q.splitlines() if "ci:r:9" in ln]), 1, "one line"
+        )
+
+    def test_without_a_needs_you_heading_the_line_waits_and_comes_later(self):
+        (TMP / "q.md").write_text("# Queue\n")
+        known = {}
+        ci_watch.poll("o", ["r"], Fake([run(5)]), known)
+        self.assertEqual(known["r:5"]["queued"], False)
+        (TMP / "q.md").write_text("# Queue\n\n## Needs you\n")
+        ci_watch.poll("o", ["r"], Fake([run(5)]), known)
+        self.assertEqual(
+            (known["r:5"]["queued"], self.triaged),
+            (True, [5]),
+            "queued on a later pass, triaged once",
+        )
+
+    def test_dependabots_reds_wait_for_the_morning(self):
+        for pulls, actor in (
+            ([pr(9, "d", "dependabot[bot]")], "ajbarea"),
+            ([pr(9, "d")], "dependabot[bot]"),
         ):
-            got = ci_watch.poll("o", ["x", "r"], gh, {})
+            got = ci_watch.poll(
+                "o",
+                ["r"],
+                Fake([run(8, branch="dep/uv", sha="d", actor=actor)], pulls=pulls),
+                {},
+            )
+            self.assertEqual(
+                (got["red"], [d["run_id"] for d in got["dependabot"]], self.triaged),
+                ([], [8], []),
+                actor,
+            )
+
+    def test_any_error_in_one_repo_skips_it_for_the_pass(self):
+        for where in ("/jobs", "/actions/runs", "/pulls"):
+            got = ci_watch.poll("o", ["r"], Fake([run(7)], broken=(where,)), {})
+            self.assertEqual([e["repo"] for e in got["errors"]], ["r"], where)
+            self.assertIn("HTTPError", got["errors"][0]["error"])
+        self.assertEqual(
+            [r["run_id"] for r in ci_watch.poll("o", ["r"], Fake([run(5)]), {})["red"]],
+            [5],
+        )
+
+    def test_a_timeout_reading_github_is_one_repos_error_not_the_watchs_end(self):
+        class Slow(Fake):
+            def get(self, path, keep=None):
+                raise TimeoutError("read timed out")
+
+        got = ci_watch.poll("o", ["x"], Slow([]), {})
         self.assertEqual([e["repo"] for e in got["errors"]], ["x"])
-        self.assertEqual([r["run_id"] for r in got["red"]], [5])
+
+
+class Triage(unittest.TestCase):
+    def test_a_report_that_hangs_or_writes_nothing_is_a_failed_triage(self):
+        script = TMP / "report.sh"
+        script.write_text("#!/bin/bash\nexit 0\n")
+        with mock.patch.dict(os.environ, {"TECHNE_CI_REPORT": str(script)}):
+            self.assertEqual(
+                ci_watch.triage("o", "r", 1)["state"], "failed", "no report.json"
+            )
+            with mock.patch.object(
+                ci_watch.subprocess,
+                "run",
+                side_effect=subprocess.TimeoutExpired("bash", 900),
+            ):
+                got = ci_watch.triage("o", "r", 2)
+        self.assertEqual(got["state"], "failed")
+        self.assertIsInstance(got["why"], str)
+
+
+class Prune(unittest.TestCase):
+    def test_only_old_folders_report_sh_made_go_and_no_link_is_followed(self):
+        folder = TMP / "prune"
+        outside = TMP / "outside"
+        outside.mkdir(parents=True)
+        (outside / "keep.txt").write_text("not ours")
+        old = time.time() - 30 * 86400
+        made = folder / "r-1"
+        (made / "run").mkdir(parents=True)
+        (made / "run" / ".ci-report-run").write_text("")
+        (made / "report.json").write_text("{}")
+        (made / "run" / "link").symlink_to(outside)
+        foreign = folder / "notes-2"
+        foreign.mkdir()
+        (foreign / "x").write_text("y")
+        linked = folder / "r-3"
+        linked.symlink_to(outside)
+        fresh = folder / "r-4"
+        (fresh / "run").mkdir(parents=True)
+        (fresh / "run" / ".ci-report-run").write_text("")
+        for d in (made, foreign):
+            os.utime(d, (old, old))
+        ci_watch.prune_reports(folder, time.time())
+        self.assertFalse(made.exists(), "an old marked folder goes")
+        self.assertEqual(
+            (outside / "keep.txt").read_text(),
+            "not ours",
+            "its link was removed, not followed",
+        )
+        self.assertTrue(foreign.exists() and linked.is_symlink() and fresh.exists())
 
 
 class Conditional(unittest.TestCase):
     """The real client against a local server: an ETag answer, then a free 304."""
 
-    def test_an_unchanged_answer_is_a_304_and_reuses_the_body(self):
+    def test_an_unchanged_answer_is_a_304_and_reuses_the_kept_cut(self):
         seen = []
 
         class H(http.server.BaseHTTPRequestHandler):
@@ -198,7 +328,7 @@ class Conditional(unittest.TestCase):
                     self.send_response(304)
                     self.end_headers()
                     return
-                body = b'{"default_branch": "main"}'
+                body = b'{"default_branch": "main", "big": "' + b"x" * 1000 + b'"}'
                 self.send_response(200)
                 self.send_header("ETag", '"v1"')
                 self.send_header("X-Poll-Interval", "300")
@@ -211,21 +341,25 @@ class Conditional(unittest.TestCase):
 
         server = http.server.HTTPServer(("127.0.0.1", 0), H)
         threading.Thread(target=server.serve_forever, daemon=True).start()
+
+        def keep(b):
+            return {"default_branch": b["default_branch"]}
+
         with mock.patch.object(
             ci_watch, "API", f"http://127.0.0.1:{server.server_port}"
         ):
             gh = ci_watch.GitHub("t0ken", TMP / "etags.json")
-            a = gh.get("/repos/o/r")
-            b = gh.get("/repos/o/r")
+            a = gh.get("/repos/o/r", keep=keep)
+            b = gh.get("/repos/o/r", keep=keep)
         server.shutdown()
         server.server_close()
         self.assertEqual((a, b), ({"default_branch": "main"},) * 2)
         self.assertEqual(seen, [(None, "Bearer t0ken"), ('"v1"', "Bearer t0ken")])
         self.assertEqual(gh.poll_s, 300, "x-poll-interval is honoured")
         gh.save()
-        self.assertNotIn(
-            "t0ken", (TMP / "etags.json").read_text(), "the token is never written"
-        )
+        kept = (TMP / "etags.json").read_text()
+        self.assertNotIn("t0ken", kept, "the token is never written")
+        self.assertNotIn("xxxx", kept, "only the cut is kept, not the whole body")
 
 
 class Sisters(unittest.TestCase):

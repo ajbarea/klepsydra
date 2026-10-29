@@ -669,10 +669,13 @@ function showCi(view) {
   ciPanel.querySelector(".ci-runs").replaceChildren(
     ...v.rows.map((r) => {
       const li = document.createElement("li");
-      const head = document.createElement(r.url ? "a" : "span");
+      // A link on the phone; on the desktop the app cannot open one yet (#149), so the run's address is its tooltip.
+      const link = r.url && served;
+      const head = document.createElement(link ? "a" : "span");
       head.className = "ci-head";
       head.textContent = r.head;
-      if (r.url) Object.assign(head, { href: r.url, target: "_blank", rel: "noopener noreferrer" });
+      if (link) Object.assign(head, { href: r.url, target: "_blank", rel: "noopener noreferrer" });
+      else if (r.url) head.title = r.url;
       const step = Object.assign(document.createElement("span"), { className: "ci-step", textContent: r.step });
       const cause = Object.assign(document.createElement("span"), { className: "ci-cause", textContent: r.cause });
       li.append(head, step, cause);

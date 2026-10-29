@@ -382,7 +382,12 @@ def main() -> int:
                 page.wait_for_timeout(150)
                 rows = page.evaluate("[...document.querySelectorAll('#ci .ci-runs li')].map((li) => li.innerText)")
                 run.check(len(rows) == 1 and "tests/test_a.py:3" in rows[0], "it opens the red run with its cause", rows)
+                href = page.evaluate("document.querySelector('#ci .ci-head')?.getAttribute('href')")
+                run.check(href == "https://github.com/ajbarea/pharos/actions/runs/5", "on the phone the run is a link", href)
                 page.keyboard.press("Escape")
+                (pathlib.Path(tmp) / "klepsydra" / "ci.json").unlink()
+                gone = wait_until(page, "document.getElementById('ci-open').hidden", 15)
+                run.check(gone, "once ci.json is gone the phone hides the button", gone)
 
                 # The usage-limit gauges: every account and window, in the gauge's words and order.
                 wait_until(page, "document.querySelectorAll('.limit-rows > li').length === 3", 10)

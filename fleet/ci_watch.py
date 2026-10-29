@@ -7,7 +7,8 @@ Every repo in ~/.claude/techne.toml with status "active" is polled every 2
 minutes (longer when GitHub's x-poll-interval asks) with conditional requests:
 an unchanged answer is a 304, which costs no rate limit. A run counts when it is
 on the repo's default branch or at the head of an open pull request. The newest
-completed run per workflow and branch decides: failure, timed_out or
+completed run per workflow and branch that succeeded or failed decides
+(a cancelled, skipped or neutral run decides nothing): failure, timed_out or
 startup_failure is red; a later green run clears it. Each new red run that is
 not Dependabot's is triaged once by techne ci-audit's report mode (read-only),
 and gets one line under "Needs you" in the queue file. Dependabot's reds are
@@ -15,7 +16,9 @@ listed for the morning instead. Once a day the latest green run on each default
 branch is read for warnings. Nothing is pushed, merged or re-run.
 
 ci.json (in klepsydra's data folder) is what the wall and the phone show. The
-log is JSON lines in the fleet log folder, one per decision.
+log is JSON lines in the fleet log folder, one per decision. No error stops
+the watch: a repo that cannot be read is skipped for the pass and logged, and
+what it has triaged is saved as soon as it is, so a restart triages nothing twice.
 """
 
 import json
@@ -26,6 +29,7 @@ import re
 import subprocess
 import sys
 import time
+import threading
 import tomllib
 import urllib.error
 import urllib.request
@@ -33,6 +37,8 @@ from pathlib import Path
 
 API = "https://api.github.com"
 RED = ("failure", "timed_out", "startup_failure")
+DECISIVE = RED + ("success",)
+KEEP_REPORTS_S = 14 * 86400
 POLL_S = 120
 DEPENDABOT = "dependabot[bot]"
 HOME = Path.home()
@@ -104,8 +110,9 @@ class GitHub:
             self.cache = {}
         self.poll_s = POLL_S
 
-    def get(self, path: str):
-        held = self.cache.get(path)
+    def get(self, path: str, keep=None):
+        """GET PATH; with KEEP (the body cut to what is read), its ETag and that cut are kept."""
+        held = self.cache.get(path) if keep else None
         req = urllib.request.Request(API + path)
         req.add_header("Accept", "application/vnd.github+json")
         req.add_header("X-GitHub-Api-Version", "2022-11-28")
@@ -115,8 +122,10 @@ class GitHub:
         try:
             with urllib.request.urlopen(req, timeout=30) as r:
                 body = json.loads(r.read())
-                if r.headers.get("ETag"):
-                    self.cache[path] = {"etag": r.headers["ETag"], "body": body}
+                if keep:
+                    body = keep(body)
+                    if r.headers.get("ETag"):
+                        self.cache[path] = {"etag": r.headers["ETag"], "body": body}
                 self.poll_s = max(POLL_S, int(r.headers.get("X-Poll-Interval") or 0))
                 return body
         except urllib.error.HTTPError as e:
@@ -130,22 +139,70 @@ class GitHub:
         tmp.replace(self.cache_path)
 
 
+RUN_FIELDS = (
+    "id",
+    "name",
+    "workflow_id",
+    "head_branch",
+    "head_sha",
+    "status",
+    "conclusion",
+    "created_at",
+    "updated_at",
+    "html_url",
+)
+
+
+def slim_runs(body: dict) -> list[dict]:
+    return [
+        {k: r.get(k) for k in RUN_FIELDS}
+        | {
+            "actor": (r.get("actor") or {}).get("login"),
+            "repo": (r.get("head_repository") or {}).get("full_name"),
+        }
+        for r in body.get("workflow_runs", [])
+    ]
+
+
+def slim_pulls(body: list) -> list[dict]:
+    return [
+        {"number": p["number"], "sha": p["head"]["sha"], "user": p["user"]["login"]}
+        for p in body
+    ]
+
+
 def runs_that_count(user: str, repo: str, gh: GitHub) -> tuple[list[dict], str]:
-    """The newest completed run per workflow and branch that is on the default
-    branch or at an open PR's head, and the default branch."""
-    meta = gh.get(f"/repos/{user}/{repo}")
-    default = meta["default_branch"]
-    pulls = gh.get(f"/repos/{user}/{repo}/pulls?state=open&per_page=50")
-    heads = {p["head"]["sha"]: p for p in pulls}
-    runs = gh.get(f"/repos/{user}/{repo}/actions/runs?per_page=50")["workflow_runs"]
+    """The decisive run (succeeded or failed) newest per workflow and branch, on
+    the default branch or at an open PR's head, and the default branch. Each is
+    asked for by branch or by head, so a busy repo cannot page one out."""
+    default = gh.get(
+        f"/repos/{user}/{repo}", keep=lambda b: {"default_branch": b["default_branch"]}
+    )["default_branch"]
+    pulls = gh.get(
+        f"/repos/{user}/{repo}/pulls?state=open&per_page=100", keep=slim_pulls
+    )
+    runs = gh.get(
+        f"/repos/{user}/{repo}/actions/runs?branch={default}&status=completed&per_page=100",
+        keep=slim_runs,
+    )
+    for p in pulls:
+        runs = runs + [
+            r | {"_pr": p}
+            for r in gh.get(
+                f"/repos/{user}/{repo}/actions/runs?head_sha={p['sha']}&per_page=50",
+                keep=slim_runs,
+            )
+        ]
     newest: dict[tuple, dict] = {}
     for r in runs:
-        if r.get("status") != "completed":
+        if r.get("status") != "completed" or r.get("conclusion") not in DECISIVE:
             continue
-        pr = heads.get(r["head_sha"])
-        if r["head_branch"] != default and not pr:
+        pr = r.get("_pr")
+        if not pr and (
+            r["head_branch"] != default or r.get("repo") not in (None, f"{user}/{repo}")
+        ):
             continue
-        key = (r["workflow_id"], r["head_branch"])
+        key = (r["workflow_id"], pr["number"] if pr else default)
         if key not in newest or r["created_at"] > newest[key]["created_at"]:
             newest[key] = r | {"_pr": pr}
     return list(newest.values()), default
@@ -187,18 +244,21 @@ def triage(user: str, repo: str, run_id: int) -> dict:
             "why": "techne's ci-audit report mode is not installed",
         }
     out = STATE / "ci" / f"{repo}-{run_id}"
-    got = subprocess.run(
-        ["bash", str(script), f"{user}/{repo}", str(run_id), str(out)],
-        capture_output=True,
-        text=True,
-        timeout=900,
-    )
-    if got.returncode:
-        return {
-            "state": "failed",
-            "why": got.stderr.strip().splitlines()[-1:] or ["exit"],
-        }
-    r = json.loads((out / "report.json").read_text())
+    try:
+        got = subprocess.run(
+            ["bash", str(script), f"{user}/{repo}", str(run_id), str(out)],
+            capture_output=True,
+            text=True,
+            timeout=900,
+        )
+        if got.returncode:
+            return {
+                "state": "failed",
+                "why": (got.stderr.strip().splitlines() or ["exit"])[-1][:300],
+            }
+        r = json.loads((out / "report.json").read_text())
+    except (subprocess.TimeoutExpired, OSError, ValueError) as e:
+        return {"state": "failed", "why": f"{type(e).__name__}: {e}"[:300]}
     f = r.get("failing_step") or {}
     return {
         "state": "done",
@@ -210,23 +270,53 @@ def triage(user: str, repo: str, run_id: int) -> dict:
     }
 
 
-def needs_you(run: dict) -> None:
-    """One line under the queue file's "Needs you" for a new red run, once."""
+def one_line(text: str, cap: int = 200) -> str:
+    """TEXT as one plain line for the queue file: no newline, control character or leading #."""
+    flat = re.sub(r"[\x00-\x1f\x7f]+", " ", text).strip().lstrip("#").strip()
+    return flat[:cap]
+
+
+def needs_you(run: dict) -> bool:
+    """One line under the queue file's "Needs you" for a new red run, once.
+    True when the line is there (written now or before)."""
     if not QUEUE.exists():
-        return
+        event(logging.WARNING, "queue line not written: no queue file", path=str(QUEUE))
+        return False
     mark = f"<!-- ci:{run['repo']}:{run['run_id']} -->"
-    text = QUEUE.read_text()
-    if mark in text:
-        return
-    t = run.get("triage", {})
-    cause = t.get("cause") or "triage pending"
-    where = f" ({t['location']})" if t.get("location") else ""
-    line = f"- 🔴 **CI {run['repo']}**: {run['workflow']} failed on {run['branch']}: {cause}{where}. {run['url']} {mark}\n"
-    m = re.search(r"^## Needs you[^\n]*\n", text, re.M)
-    if not m:
-        return
-    QUEUE.write_text(text[: m.end()] + line + text[m.end() :])
-    event(logging.INFO, "queue line added", repo=run["repo"], run_id=run["run_id"])
+    for _ in range(3):
+        before = QUEUE.stat().st_mtime_ns
+        text = QUEUE.read_text(encoding="utf-8")
+        if mark in text:
+            return True
+        m = re.search(r"^## Needs you[^\n]*\n", text, re.M)
+        if not m:
+            event(
+                logging.WARNING,
+                "queue line not written: no Needs you heading",
+                path=str(QUEUE),
+            )
+            return False
+        t = run.get("triage", {})
+        cause = one_line(t.get("cause") or "triage pending")
+        where = f" ({one_line(t['location'], 120)})" if t.get("location") else ""
+        what = one_line(f"{run['workflow']} failed on {run['branch']}", 160)
+        line = f"- 🔴 **CI {one_line(run['repo'], 60)}**: {what}: {cause}{where}. {run['url']} {mark}\n"
+        tmp = QUEUE.with_name(f".{QUEUE.name}.{os.getpid()}.tmp")
+        tmp.write_text(text[: m.end()] + line + text[m.end() :], encoding="utf-8")
+        if (
+            QUEUE.stat().st_mtime_ns != before
+        ):  # someone saved it meanwhile: read it again
+            tmp.unlink(missing_ok=True)
+            continue
+        tmp.replace(QUEUE)
+        event(logging.INFO, "queue line added", repo=run["repo"], run_id=run["run_id"])
+        return True
+    event(
+        logging.WARNING,
+        "queue line not written: the file kept changing",
+        repo=run["repo"],
+    )
+    return False
 
 
 def write_json(path: Path, data: dict) -> None:
@@ -235,64 +325,87 @@ def write_json(path: Path, data: dict) -> None:
     tmp.replace(path)
 
 
-def poll(user: str, repos: list[str], gh: GitHub, known: dict) -> dict:
-    """One pass: the red runs that count, triaged once each, and the Dependabot reds."""
+def poll(
+    user: str, repos: list[str], gh: GitHub, known: dict, save_known=lambda: None
+) -> dict:
+    """One pass: the red runs that count, triaged once each, and the Dependabot reds.
+    A repo that fails anywhere is skipped for this pass and logged."""
     red, dependabot, errors = [], [], []
     for repo in repos:
         try:
-            runs, _ = runs_that_count(user, repo, gh)
-        except (urllib.error.URLError, KeyError, ValueError) as e:
-            errors.append({"repo": repo, "error": str(e)[:200]})
-            event(logging.WARNING, "repo not read", repo=repo, error=str(e)[:200])
+            red_here, dep_here = repo_pass(user, repo, gh, known, save_known)
+        except Exception as e:  # noqa: BLE001 — one repo never stops the watch
+            errors.append({"repo": repo, "error": f"{type(e).__name__}: {e}"[:200]})
+            event(
+                logging.WARNING,
+                "repo not read",
+                repo=repo,
+                error=f"{type(e).__name__}: {e}"[:200],
+            )
             continue
-        for r in runs:
-            if r.get("conclusion") not in RED:
-                continue
-            pr = r["_pr"]
-            item = {
-                "repo": repo,
-                "workflow": r["name"],
-                "branch": r["head_branch"],
-                "pr": pr["number"] if pr else None,
-                "run_id": r["id"],
-                "url": r["html_url"],
-                "conclusion": r["conclusion"],
-                "at": r["updated_at"],
-            }
-            if (pr and pr["user"]["login"] == DEPENDABOT) or r.get("actor", {}).get(
-                "login"
-            ) == DEPENDABOT:
-                dependabot.append(item)
-                continue
-            key = f"{repo}:{r['id']}"
-            if key not in known:
-                item["failing"] = failing_step(user, repo, r["id"], gh)
-                event(
-                    logging.WARNING,
-                    "red run",
-                    repo=repo,
-                    run_id=r["id"],
-                    workflow=r["name"],
-                    branch=r["head_branch"],
-                    **{f"failing_{k}": v for k, v in item["failing"].items()},
-                )
-                item["triage"] = triage(user, repo, r["id"])
-                event(
-                    logging.INFO,
-                    "triaged",
-                    repo=repo,
-                    run_id=r["id"],
-                    **{
-                        k: v
-                        for k, v in item["triage"].items()
-                        if k in ("state", "verdict", "location", "why")
-                    },
-                )
-                known[key] = {k: item[k] for k in ("failing", "triage")}
-                needs_you(item)
-            item |= known[key]
-            red.append(item)
+        red += red_here
+        dependabot += dep_here
     return {"red": red, "dependabot": dependabot, "errors": errors}
+
+
+def repo_pass(
+    user: str, repo: str, gh: GitHub, known: dict, save_known
+) -> tuple[list, list]:
+    red, dependabot = [], []
+    runs, _ = runs_that_count(user, repo, gh)
+    for r in runs:
+        if r.get("conclusion") not in RED:
+            continue
+        pr = r["_pr"]
+        item = {
+            "repo": repo,
+            "workflow": r["name"],
+            "branch": r["head_branch"],
+            "pr": pr["number"] if pr else None,
+            "run_id": r["id"],
+            "url": r["html_url"],
+            "conclusion": r["conclusion"],
+            "at": r["updated_at"],
+        }
+        if (pr and pr["user"] == DEPENDABOT) or r.get("actor") == DEPENDABOT:
+            dependabot.append(item)
+            continue
+        key = f"{repo}:{r['id']}"
+        if key not in known:
+            item["failing"] = failing_step(user, repo, r["id"], gh)
+            event(
+                logging.WARNING,
+                "red run",
+                repo=repo,
+                run_id=r["id"],
+                workflow=r["name"],
+                branch=r["head_branch"],
+                **{f"failing_{k}": v for k, v in item["failing"].items()},
+            )
+            item["triage"] = triage(user, repo, r["id"])
+            event(
+                logging.INFO,
+                "triaged",
+                repo=repo,
+                run_id=r["id"],
+                **{
+                    k: v
+                    for k, v in item["triage"].items()
+                    if k in ("state", "verdict", "location", "why")
+                },
+            )
+            known[key] = {
+                "failing": item["failing"],
+                "triage": item["triage"],
+                "queued": False,
+            }
+            save_known()
+        if not known[key].get("queued"):
+            known[key]["queued"] = needs_you(item | known[key])
+            save_known()
+        item |= {k: known[key][k] for k in ("failing", "triage")}
+        red.append(item)
+    return red, dependabot
 
 
 def sweep(user: str, repos: list[str], gh: GitHub) -> list[dict]:
@@ -301,7 +414,13 @@ def sweep(user: str, repos: list[str], gh: GitHub) -> list[dict]:
     for repo in repos:
         try:
             runs, default = runs_that_count(user, repo, gh)
-        except (urllib.error.URLError, KeyError, ValueError):
+        except Exception as e:  # noqa: BLE001 — the sweep skips what it cannot read
+            event(
+                logging.WARNING,
+                "sweep: repo not read",
+                repo=repo,
+                error=f"{type(e).__name__}: {e}"[:200],
+            )
             continue
         green = [
             r
@@ -324,6 +443,30 @@ def sweep(user: str, repos: list[str], gh: GitHub) -> list[dict]:
     return found
 
 
+def prune_reports(folder: Path, now: float) -> None:
+    """Remove the triage folders report.sh made (it marks each run/ folder) once
+    older than two weeks. Never follows a symlink: a link is removed as a link."""
+    for d in folder.glob("*-*"):
+        mark = d / "run" / ".ci-report-run"
+        if (
+            d.is_symlink()
+            or not d.is_dir()
+            or (d / "run").is_symlink()
+            or not mark.is_file()
+        ):
+            continue
+        if now - d.stat().st_mtime <= KEEP_REPORTS_S:
+            continue
+        for top, dirs, files in os.walk(d, topdown=False, followlinks=False):
+            for name in files:
+                (Path(top) / name).unlink()
+            for name in dirs:
+                p = Path(top) / name
+                p.unlink() if p.is_symlink() else p.rmdir()
+        d.rmdir()
+        event(logging.INFO, "old triage removed", folder=d.name)
+
+
 def main(argv: list[str]) -> int:
     setup_log()
     token = subprocess.run(
@@ -341,22 +484,55 @@ def main(argv: list[str]) -> int:
         known = {}
     user, repos = sisters(TECHNE_TOML)
     event(logging.INFO, "ci watch started", repos=len(repos), poll_s=POLL_S)
-    last_sweep: dict = {}
-    while True:
-        state = poll(user, repos, gh, known)
-        today = time.strftime("%F")
-        if last_sweep.get("date") != today and time.localtime().tm_hour >= SWEEP_HOUR:
-            last_sweep = {"date": today, "items": sweep(user, repos, gh)}
-            event(logging.INFO, "daily sweep", items=len(last_sweep["items"]))
-        state |= {
-            "sweep": last_sweep,
-            "v": 1,
-            "observed_at": int(time.time()),
-            "repos": len(repos),
-        }
-        write_json(KLEPSYDRA_DIR / "ci.json", state)
+    sweep_path = STATE / "ci" / "sweep.json"
+    try:
+        last_sweep = json.loads(sweep_path.read_text())
+    except (OSError, ValueError):
+        last_sweep = {}
+    sweeping: threading.Thread | None = None
+
+    def save_known() -> None:
         write_json(known_path, known)
-        gh.save()
+
+    def run_sweep(today: str) -> None:
+        nonlocal last_sweep
+        try:
+            items = sweep(user, repos, GitHub(token, STATE / "ci" / "sweep-etags.json"))
+            last_sweep = {"date": today, "items": items}
+            write_json(sweep_path, last_sweep)
+            event(logging.INFO, "daily sweep", items=len(items))
+        except Exception:  # noqa: BLE001 — logged; tomorrow's sweep tries again
+            log.exception("daily sweep failed")
+
+    while True:
+        try:
+            state = poll(user, repos, gh, known, save_known)
+            today = time.strftime("%F")
+            due = (
+                last_sweep.get("date") != today
+                and time.localtime().tm_hour >= SWEEP_HOUR
+            )
+            if (
+                due
+                and (sweeping is None or not sweeping.is_alive())
+                and "--once" not in argv
+            ):
+                sweeping = threading.Thread(
+                    target=run_sweep, args=(today,), daemon=True
+                )
+                sweeping.start()
+            state |= {
+                "sweep": last_sweep,
+                "v": 1,
+                "observed_at": int(time.time()),
+                "repos": len(repos),
+            }
+            write_json(KLEPSYDRA_DIR / "ci.json", state)
+            save_known()
+            gh.save()
+            prune_reports(STATE / "ci", time.time())
+        except Exception:  # noqa: BLE001 — logged; the next pass tries again
+            log.exception("a pass failed")
         if "--once" in argv:
             return 0
         time.sleep(gh.poll_s)

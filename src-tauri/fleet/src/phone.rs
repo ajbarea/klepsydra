@@ -453,7 +453,8 @@ impl Feed {
             if let Some(theme) = parts.theme {
                 map.insert("theme".into(), Value::from(theme));
             }
-            if let Some(ci) = parts.ci.as_ref().filter(|c| !c.is_null()) {
+            // Null too, once read: a phone that saw a view must hear it is gone.
+            if let Some(ci) = &parts.ci {
                 map.insert("ci".into(), ci.clone());
             }
         }

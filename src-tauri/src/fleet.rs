@@ -70,8 +70,9 @@ pub fn start_ci(app: &AppHandle, dir: Option<PathBuf>) {
         let mut follower = klepsydra_fleet::ci::Follower::default();
         loop {
             if let Some(view) = follower.step(&dir, unix_now()) {
+                // The hub first: a phone server starting now begins from its latest.
+                app.state::<CiFeed>().0.publish(view.clone());
                 crate::phone::set_ci(&app, &view);
-                app.state::<CiFeed>().0.publish(view);
             }
             std::thread::sleep(CI_POLL);
         }
