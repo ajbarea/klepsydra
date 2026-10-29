@@ -38,16 +38,24 @@ live_now=$(for f in "$KLEPSYDRA_DIR"/fleet/*.json; do
   [[ -n $row ]] && session_alive "$id" && printf '%s\t%s\t%s\n' "${row%%$'\t'*}" "$id" "${row##*$'\t'}"
 done)
 agents=$(cut -f4 "$REGISTRY" 2>/dev/null | grep .)
-# A row whose own session ran on this fleet tmux server: a live session in its
-# pane is its successor (a /clear). A row from an earlier server (a reboot, or
-# the server closed and started again) names a pane id the new server reuses,
-# so a session there is someone else's. With no server running, none is.
-server_start=$(t display -p '#{start_time}' 2>/dev/null)
+# A row whose own session's process started after the running fleet tmux
+# server did: a live session in its pane is its successor (a /clear). A row
+# from an earlier server (a reboot, or the server closed and started again)
+# names a pane id the new server reuses, so a session there is someone else's.
+# Both starts are /proc clock ticks since boot (stat field 22), so a WSL clock
+# step cannot skew them, and a resumed session carries its new process's start.
+# With no server running, no row counts.
 this_boot=$(cat "${FLEET_BOOT_ID:-/proc/sys/kernel/random/boot_id}" 2>/dev/null)
+server_start=""
+spid=$(t display -p '#{pid}' 2>/dev/null)
+if [[ $spid =~ ^[0-9]+$ ]] && sline=$(cat "${FLEET_PROC:-/proc}/$spid/stat" 2>/dev/null); then
+  read -ra sfields <<<"${sline##*) }"
+  server_start=${sfields[19]:-}
+fi
 this_boot_row() { # SID
   local f=$KLEPSYDRA_DIR/fleet/$1.json
-  [[ -n $this_boot && -n $server_start && $(jq -r '.host.boot // ""' "$f" 2>/dev/null) == "$this_boot" ]] &&
-    (( $(jq -r '(.started_at // 0) | floor' "$f" 2>/dev/null || echo 0) >= server_start ))
+  [[ -n $this_boot && $server_start =~ ^[0-9]+$ && $(jq -r '.host.boot // ""' "$f" 2>/dev/null) == "$this_boot" ]] &&
+    (( $(jq -r '(.claude.start // 0) | floor' "$f" 2>/dev/null || echo 0) >= server_start ))
 }
 
 # Heph is a session the records name: the one whose id is orchestrator.session,

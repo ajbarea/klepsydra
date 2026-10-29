@@ -870,6 +870,10 @@ export FLEET_BOOT_ID="$work/boot_id" FLEET_PROC="$work/proc" FLEET_PROJECTS="$wo
 echo 11111111-1111-4111-8111-111111111111 >"$FLEET_BOOT_ID"
 mkdir -p "$FLEET_PROC/4242"
 printf '4242 (claude code) S %s 777 1 2 3\n' "$(seq -s ' ' 1 18)" >"$FLEET_PROC/4242/stat"
+# The fleet tmux server started at tick 500: sessions at 777 started after it.
+spid=$(t display -p '#{pid}')
+mkdir -p "$FLEET_PROC/$spid"
+printf '%s (tmux: server) S %s 500 1 2 3\n' "$spid" "$(seq -s ' ' 1 18)" >"$FLEET_PROC/$spid/stat"
 sfile() { # SID PID START BOOT PANE [STARTED_AT]
   jq -n --argjson pid "$2" --argjson st "$3" --arg b "$4" --arg p "$5" --argjson at "${6:-1}" \
     '{session_id: "x", started_at: $at, ended: null, claude: {pid: $pid, start: $st}, host: {boot: $b}, tmux: {pane: $p}}' >"$KLEPSYDRA_DIR/fleet/$1.json"
@@ -966,7 +970,7 @@ rm -f "$KLEPSYDRA_DIR/fleet/$SNEW.json"
 
 echo "recover: a stale orchestrator.session while Heph runs in its pane"
 SLIVE=aaaaaaaa-0000-4000-8000-0000000000c3 SDEADH=aaaaaaaa-0000-4000-8000-0000000000c7
-sfile "$SDEADH" 4242 778 "$NOWBOOT" %4 "$(date +%s)"   # Heph's last session, this server, its process gone
+sfile "$SDEADH" 4242 778 "$NOWBOOT" %4   # Heph's last session, this server, its process gone
 printf '%s\n' "$SDEADH" >"$FLEET_STATE/orchestrator.session"; printf '%%4\n' >"$FLEET_STATE/orchestrator.pane"
 sfile "$SLIVE" 4242 777 "$NOWBOOT" %4
 : >"$REGISTRY"; : >"$work/rec.log"
@@ -976,7 +980,7 @@ rm -f "$KLEPSYDRA_DIR/fleet/$SLIVE.json" "$KLEPSYDRA_DIR/fleet/$SDEADH.json"
 
 echo "recover: a pane that still runs a session the row does not name"
 SOLD=aaaaaaaa-0000-4000-8000-0000000000c4 SCUR=aaaaaaaa-0000-4000-8000-0000000000c5
-sfile "$SOLD" 4242 778 "$NOWBOOT" %8 "$(date +%s)"; sfile "$SCUR" 4242 777 "$NOWBOOT" %8   # this server, its process gone (a /clear)
+sfile "$SOLD" 4242 778 "$NOWBOOT" %8; sfile "$SCUR" 4242 777 "$NOWBOOT" %8   # this server, its process gone (a /clear)
 printf '%s\tx\t%s\t%s\t/w\n%s\ty\t%s\t%s\t/w\n' %8 "$work/ba.src" "$SOLD" %9 "$work/gone.src" aaaaaaaa-0000-4000-8000-0000000000c6 >"$REGISTRY"
 out=$(rec --no-orchestrator)
 check "the row is repaired and no second agent starts; a missing brief is skipped" \
@@ -1077,8 +1081,7 @@ t kill-window -t "$po"; rm -f "$KLEPSYDRA_DIR/fleet/$SHR.json" "$FLEET_STATE/orc
 
 echo "recover: the fleet's tmux server started again without a reboot"
 SWOLD=aaaaaaaa-0000-4000-8000-0000000000f1 SHNEW=aaaaaaaa-0000-4000-8000-0000000000f2
-started=$(t display -p '#{start_time}')
-sfile "$SWOLD" 4242 778 "$NOWBOOT" %1 "$(( started - 100 ))"   # this boot, the old server
+sfile "$SWOLD" 4242 100 "$NOWBOOT" %1   # this boot, a process older than the server
 sfile "$SHNEW" 4242 777 "$NOWBOOT" %1 "$(date +%s)"
 printf '%s\tw1\t%s\t%s\t/w\n' %1 "$work/ba.src" "$SWOLD" >"$REGISTRY"
 printf '%%0\n' >"$FLEET_STATE/orchestrator.pane"; rm -f "$FLEET_STATE/orchestrator.session"

@@ -33,7 +33,7 @@ if [[ -n $(git status --porcelain -- "${paths[@]}") ]]; then
   skip=()
   while IFS= read -r big; do
     [[ -n $big ]] || continue
-    skip+=(":(exclude)$big")
+    skip+=(":(exclude,literal)$big")
     flog WARN "briefing sync: a file over 50 MB left out" file="$big"
   done < <(find "${paths[@]}" -type f -size +50M 2>/dev/null)
   git add -A -- "${paths[@]}" "${skip[@]}"
