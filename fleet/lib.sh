@@ -258,6 +258,8 @@ REGISTRY=${REGISTRY:-$FLEET_STATE/panes.tsv}
 registered() { awk -F'\t' -v p="$1" '$1 == p { f = 1 } END { exit !f }' "$REGISTRY" 2>/dev/null; }
 reg_field() { awk -F'\t' -v p="$1" -v n="$2" '$1 == p { print $n; exit }' "$REGISTRY" 2>/dev/null; }
 orchestrator() { cat "$FLEET_STATE/orchestrator.pane" 2>/dev/null; }
+# shellcheck disable=SC2034 # read by recover.sh and resume-at-reset.sh
+HEPH=${FLEET_HEPH:-$FLEET_STATE/HEPH.md}
 fleet_panes() { t list-panes -s -t "$FLEET_SESSION" -F '#{pane_id}' 2>/dev/null; }
 
 # The live session id klepsydra's fleet file shows in pane PANE, or nothing.
@@ -310,6 +312,11 @@ FLEET_ROOM_PCT=${FLEET_ROOM_PCT:-90} # a five-hour window used past this has no 
 nodir() { local d=$1; while [[ $d == ?*/ ]]; do d=${d%/}; done; printf '%s' "$d"; }
 FLEET_DEFAULT_CONFIG=$(nodir "$FLEET_DEFAULT_CONFIG")
 FLEET_ACCOUNTS=$(for d in $FLEET_ACCOUNTS; do printf '%s ' "$(nodir "$d")"; done)
+# The orchestrator's own order (#175): the same folders, last first, so worker
+# burn on the first account's window never stalls him.
+# shellcheck disable=SC2086 # split on purpose: one folder per line
+FLEET_HEPH_ACCOUNTS=${FLEET_HEPH_ACCOUNTS:-$(printf '%s\n' $FLEET_ACCOUNTS | tac | tr '\n' ' ')}
+FLEET_HEPH_ACCOUNTS=$(for d in $FLEET_HEPH_ACCOUNTS; do printf '%s ' "$(nodir "$d")"; done)
 
 # The global config file of config folder DIR.
 config_json() { # DIR
@@ -389,6 +396,21 @@ room_elsewhere() { # DIR NOW
   [[ -n $best ]] && printf '%s' "$best"
 }
 
+# The config folder the orchestrator runs on: his live session's process's
+# CLAUDE_CONFIG_DIR (unset: the default), else orchestrator.config (written when
+# fleet recover starts him or the resume service moves him), else the default.
+heph_config() {
+  local sid pid c env
+  if sid=$(live_session "$(orchestrator)") && session_alive "$sid" &&
+    pid=$(jq -r '.claude.pid' "$KLEPSYDRA_DIR/fleet/$sid.json" 2>/dev/null) &&
+    env=${FLEET_PROC:-/proc}/$pid/environ && [[ -r $env ]]; then
+    c=$(tr '\0' '\n' <"$env" | sed -n 's/^CLAUDE_CONFIG_DIR=//p' | tail -1)
+  else
+    c=$(cat "$FLEET_STATE/orchestrator.config" 2>/dev/null)
+  fi
+  nodir "${c:-$FLEET_DEFAULT_CONFIG}"
+}
+
 # The config folder pane PANE runs on: its registry row's (column 6), else the default.
 pane_config() { # PANE
   local c
@@ -464,6 +486,19 @@ session_alive() { # SID
   [[ $(proc_start "$pid") == "$start" ]]
 }
 
+# Whether session SID started on the running fleet tmux server: its fleet file
+# names this boot and a process start (/proc ticks since boot, so a WSL clock
+# step cannot skew it) no earlier than the server's. A tmux restart reuses pane
+# ids, so only such a session's pane id means what its file says.
+on_this_server() { # SID
+  local f=$KLEPSYDRA_DIR/fleet/$1.json spid sstart boot
+  spid=$(t display -p '#{pid}' 2>/dev/null)
+  [[ $spid =~ ^[0-9]+$ ]] && sstart=$(proc_start "$spid") || return 1
+  boot=$(cat "${FLEET_BOOT_ID:-/proc/sys/kernel/random/boot_id}" 2>/dev/null)
+  [[ -n $boot && $(jq -r '.host.boot // ""' "$f" 2>/dev/null) == "$boot" ]] &&
+    (( $(jq -r '(.claude.start // 0) | floor' "$f" 2>/dev/null || echo 0) >= sstart ))
+}
+
 # When process PID started, in clock ticks since boot (/proc/PID/stat field 22,
 # read after the last ") " so a name with spaces or parentheses parses); fails
 # when there is no such process.
@@ -472,4 +507,35 @@ proc_start() { # PID
   line=$(cat "${FLEET_PROC:-/proc}/$1/stat" 2>/dev/null) || return 1
   read -ra fields <<<"${line##*) }"
   [[ -n ${fields[19]:-} ]] && printf '%s' "${fields[19]}"
+}
+
+# The transcript of session SID, in any config folder's projects.
+transcript() { # SID
+  local dir
+  for dir in ${FLEET_PROJECTS:-$(for d in $FLEET_ACCOUNTS; do printf '%s/projects ' "$d"; done)}; do
+    find "$dir" -mindepth 2 -maxdepth 2 -name "$1.jsonl" -type f 2>/dev/null
+  done | head -1
+}
+
+# AJ's messages to the orchestrator session SID since HEPH.md was last written,
+# as "- " lines (his typed prompts only: no meta, tool results or notices).
+heph_asks() { # SID HEPH
+  local tp since
+  tp=$(transcript "$1")
+  [[ -n $tp ]] || return 0
+  since=$(stat -c %Y -- "$2" 2>/dev/null || echo 0)
+  jq -r --argjson since "$since" '
+    select(.type == "user" and (.isMeta | not) and (.message.content | type) == "string")
+    | select((.timestamp // "" | sub("\\.[0-9]+Z$"; "Z") | try fromdateiso8601 catch 0) > $since)
+    | .message.content | select(startswith("<") | not) | gsub("\n"; " ") | .[0:1000]' "$tp" 2>/dev/null | tail -20 | sed 's/^/- /'
+}
+
+# The note a fresh orchestrator starts from: why it replaces the last one, where
+# its state is (HEPH.md, the queue), what the fleet does meanwhile, and AJ's
+# messages to the last one since HEPH.md was written.
+heph_note() { # WHY SID HEPH DOING
+  local asks
+  asks=$(heph_asks "$2" "$3")
+  printf 'Fresh start: the orchestrator (Heph) %s; you replace it. Read %s first, then the "Running now" lines in /mnt/c/Users/ajbar/fleet-briefing/claude-queue.md; %s Put anything below that changes the plan into HEPH.md now.\n\n' "$1" "$3" "$4"
+  printf "AJ's messages to the last orchestrator after HEPH.md was last written:\n%s\n" "${asks:-- (none)}"
 }
