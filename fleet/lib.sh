@@ -439,7 +439,8 @@ set_pane() { # NEW PANE SID CFG
 # The prompt the last limit answered, when the limit is the only reply to it:
 # the "❯ ..." lines (a long one wraps) right above the last limit message in
 # SCREEN. A line AJ sent between two passes is only ever seen here. The
-# fleet's own text (the continue message, a brief) and a paste are not his.
+# fleet's own text (the continue message, a brief's first line) is not his; a
+# paste placeholder is returned, so the caller keeps the pane for its reset.
 answered_by_limit() { # SCREEN
   split_screen "$1"
   grep -v '^[[:space:]]*$' <<<"$ABOVE" | awk -v re="$LIMIT_RE" '
@@ -447,5 +448,5 @@ answered_by_limit() { # SCREEN
     /^❯ / { said = substr($0, length("❯ ") + 1); inp = 1; next }
     inp && /^  [^ ⎿]/ { sub(/^ +/, ""); said = said " " $0; next }
     { said = ""; inp = 0 }
-    END { if (hit != "") print hit }' | tail -1 | grep -v -e '^The usage limit has reset\.' -e '^Fresh start:' -e '\[Pasted text #' -e '\[Image #'
+    END { if (hit != "") print hit }' | tail -1 | grep -v -e '^The usage limit has reset\.' -e '^Fresh start:'
 }

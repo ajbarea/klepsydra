@@ -742,6 +742,14 @@ mover "$noon"; mover "$((noon + 60))"
 check "review 2, 4: a paste in the middle of a line is not moved either" "$(wc -c <"$work/moved") $(logged 'pasted block cannot be carried' | wc -w)" "0 1"
 t kill-window -t "$p"; : >"$REGISTRY"
 
+: >"$FLEET_LOG"; : >"$work/moved"
+p=$(pane pastesent "{\"above\":[\"⏺ Done. done 11:50 AM\",\"❯ [Pasted text #1 +3 lines]\",\"$LIMIT\"]}"); settle
+live "$p"
+printf '%s\tpastesent\t%s\t%s\t/w\t%s\n' "$p" "$work/brief.src" "$SID" "$work/cfg-a" >"$REGISTRY"
+mover "$noon"
+check "review 4: a paste AJ sent into the limit keeps the pane for its reset" "$(wc -c <"$work/moved") $(events pastesent | grep -c 'SUBMIT /exit')" "0 0"
+t kill-window -t "$p"; : >"$REGISTRY"
+
 : >"$FLEET_LOG"
 p=$(pane stuck "{\"above\":[\"⏺ Done. done 11:50 AM\",\"$LIMIT\"]}"); settle
 live "$p"
@@ -766,8 +774,8 @@ check "review 3: not a line an earlier limit answered and the session acted on s
   "[$(answered_by_limit "$(st "[\"❯ AJ: fix the README\",\"$LIMIT\",\"❯ AJ: go on\",\"⏺ working on it\",\"$LIMIT\"]")")]" "[]"
 check "review 3: not the service's own continue message" \
   "[$(answered_by_limit "$(st "[\"⏺ ok\",\"❯ The usage limit has reset. Continue from where you stopped\",\"$LIMIT\"]")")]" "[]"
-check "review 3: not a brief that hit the limit" \
-  "[$(answered_by_limit "$(st "[\"❯ Fresh start: a previous agent with the brief below\",\"$LIMIT\"]")")][$(answered_by_limit "$(st "[\"❯ [Pasted text #1 +40 lines]\",\"$LIMIT\"]")")]" "[][]"
+check "review 3: not a brief that hit the limit; a paste comes back as its placeholder, so the pane waits" \
+  "[$(answered_by_limit "$(st "[\"❯ Fresh start: a previous agent with the brief below\",\"$LIMIT\"]")")][$(answered_by_limit "$(st "[\"❯ [Pasted text #1 +40 lines]\",\"$LIMIT\"]")")]" "[][[Pasted text #1 +40 lines]]"
 t kill-window -t "$abl"
 
 : >"$FLEET_LOG"
