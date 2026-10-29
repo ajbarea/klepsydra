@@ -38,12 +38,16 @@ live_now=$(for f in "$KLEPSYDRA_DIR"/fleet/*.json; do
   [[ -n $row ]] && session_alive "$id" && printf '%s\t%s\t%s\n' "${row%%$'\t'*}" "$id" "${row##*$'\t'}"
 done)
 agents=$(cut -f4 "$REGISTRY" 2>/dev/null | grep .)
-# A row whose own session ran on this boot: a live session in its pane is its
-# successor (a /clear). A row from an earlier boot names a pane id the new tmux
-# server reuses, so a session there is someone else's.
+# A row whose own session ran on this fleet tmux server: a live session in its
+# pane is its successor (a /clear). A row from an earlier server (a reboot, or
+# the server closed and started again) names a pane id the new server reuses,
+# so a session there is someone else's. With no server running, none is.
+server_start=$(t display -p '#{start_time}' 2>/dev/null)
 this_boot=$(cat "${FLEET_BOOT_ID:-/proc/sys/kernel/random/boot_id}" 2>/dev/null)
 this_boot_row() { # SID
-  [[ -n $this_boot && $(jq -r '.host.boot // ""' "$KLEPSYDRA_DIR/fleet/$1.json" 2>/dev/null) == "$this_boot" ]]
+  local f=$KLEPSYDRA_DIR/fleet/$1.json
+  [[ -n $this_boot && -n $server_start && $(jq -r '.host.boot // ""' "$f" 2>/dev/null) == "$this_boot" ]] &&
+    (( $(jq -r '(.started_at // 0) | floor' "$f" 2>/dev/null || echo 0) >= server_start ))
 }
 
 # Heph is a session the records name: the one whose id is orchestrator.session,
@@ -62,7 +66,7 @@ rows=$(while IFS=$'\t' read -r rp _ _ rsid _; do [[ -n $rp ]] && this_boot_row "
 loose=$(awk -F'\t' 'NR == FNR { if ($0 != "") r[$0] = 1; next } $0 != "" && !($1 in r)' <(printf '%s\n' "$rows") <(printf '%s\n' "$unreg"))
 onrec=""
 [[ -n $rec ]] && onrec=$(awk -F'\t' -v r="$rec" '$2 == r' <<<"$unreg")
-if [[ -z $onrec && -n $orch ]] && { [[ -z $rec ]] || this_boot_row "$rec"; }; then
+if [[ -z $onrec && -n $orch ]] && ! grep -qxF -- "$orch" <<<"$rows" && { [[ -z $rec ]] || this_boot_row "$rec"; }; then
   onrec=$(awk -F'\t' -v o="$orch" '$1 == o' <<<"$unreg")
 fi
 [[ $(grep -c . <<<"$onrec") == 1 ]] || onrec=""

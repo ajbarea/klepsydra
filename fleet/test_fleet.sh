@@ -966,7 +966,7 @@ rm -f "$KLEPSYDRA_DIR/fleet/$SNEW.json"
 
 echo "recover: a stale orchestrator.session while Heph runs in its pane"
 SLIVE=aaaaaaaa-0000-4000-8000-0000000000c3 SDEADH=aaaaaaaa-0000-4000-8000-0000000000c7
-sfile "$SDEADH" 4242 778 "$NOWBOOT" %4   # Heph's last session, this boot, its process gone
+sfile "$SDEADH" 4242 778 "$NOWBOOT" %4 "$(date +%s)"   # Heph's last session, this server, its process gone
 printf '%s\n' "$SDEADH" >"$FLEET_STATE/orchestrator.session"; printf '%%4\n' >"$FLEET_STATE/orchestrator.pane"
 sfile "$SLIVE" 4242 777 "$NOWBOOT" %4
 : >"$REGISTRY"; : >"$work/rec.log"
@@ -976,7 +976,7 @@ rm -f "$KLEPSYDRA_DIR/fleet/$SLIVE.json" "$KLEPSYDRA_DIR/fleet/$SDEADH.json"
 
 echo "recover: a pane that still runs a session the row does not name"
 SOLD=aaaaaaaa-0000-4000-8000-0000000000c4 SCUR=aaaaaaaa-0000-4000-8000-0000000000c5
-sfile "$SOLD" 4242 778 "$NOWBOOT" %8; sfile "$SCUR" 4242 777 "$NOWBOOT" %8   # this boot, its process gone (a /clear)
+sfile "$SOLD" 4242 778 "$NOWBOOT" %8 "$(date +%s)"; sfile "$SCUR" 4242 777 "$NOWBOOT" %8   # this server, its process gone (a /clear)
 printf '%s\tx\t%s\t%s\t/w\n%s\ty\t%s\t%s\t/w\n' %8 "$work/ba.src" "$SOLD" %9 "$work/gone.src" aaaaaaaa-0000-4000-8000-0000000000c6 >"$REGISTRY"
 out=$(rec --no-orchestrator)
 check "the row is repaired and no second agent starts; a missing brief is skipped" \
@@ -1058,6 +1058,7 @@ printf '%%0\n' >"$FLEET_STATE/orchestrator.pane"; printf '%s\n' "$SH" >"$FLEET_S
 check "the calling Heph in %1 is recognised and w1 is relaunched" \
   "$(CLAUDECODE=1 TMUX_PANE=%1 TMUX="/tmp/tmux-1/$FLEET_SOCK,1,0" rec --dry-run | tr '\n' '|' | cut -d'|' -f1-2)" \
   "would recover: w1 (session $SW1, transcript none, IMPL.md none)|running: orchestrator (%1)"
+rm -f "$KLEPSYDRA_DIR/fleet/$SH2.json"   # no live Heph: the gone path reads the record
 check "a record that names an agent is no Heph's" \
   "$(printf '%s\n' "$SW1" >"$FLEET_STATE/orchestrator.session"; rec --dry-run | grep -c 'orchestrator (session '"$SW1")" "0"
 rm -f "$KLEPSYDRA_DIR/fleet/$SW1.json" "$KLEPSYDRA_DIR/fleet/$SH2.json"; : >"$REGISTRY"
@@ -1073,6 +1074,19 @@ printf '%s\tw9\t%s\t%s\t/w\n' "$po" "$work/ba.src" "$SHR" >"$REGISTRY"; printf '
 resume "$(( noon + 120 ))"
 check "a session a registry row names is never recorded as Heph" "$(cat "$FLEET_STATE/orchestrator.session")" "old"
 t kill-window -t "$po"; rm -f "$KLEPSYDRA_DIR/fleet/$SHR.json" "$FLEET_STATE/orchestrator.session"; : >"$REGISTRY"
+
+echo "recover: the fleet's tmux server started again without a reboot"
+SWOLD=aaaaaaaa-0000-4000-8000-0000000000f1 SHNEW=aaaaaaaa-0000-4000-8000-0000000000f2
+started=$(t display -p '#{start_time}')
+sfile "$SWOLD" 4242 778 "$NOWBOOT" %1 "$(( started - 100 ))"   # this boot, the old server
+sfile "$SHNEW" 4242 777 "$NOWBOOT" %1 "$(date +%s)"
+printf '%s\tw1\t%s\t%s\t/w\n' %1 "$work/ba.src" "$SWOLD" >"$REGISTRY"
+printf '%%0\n' >"$FLEET_STATE/orchestrator.pane"; rm -f "$FLEET_STATE/orchestrator.session"
+check "Heph in %1 of the new server is recognised and w1 is relaunched, not repaired to him" \
+  "$(CLAUDECODE=1 TMUX_PANE=%1 TMUX="/tmp/tmux-1/$FLEET_SOCK,1,0" rec --dry-run | tr '\n' '|' | cut -d'|' -f1-2 | cut -c1-26)" \
+  "would recover: w1 (session"
+check "and he is the orchestrator" "$(CLAUDECODE=1 TMUX_PANE=%1 TMUX="/tmp/tmux-1/$FLEET_SOCK,1,0" rec --dry-run | grep -c 'running: orchestrator (%1)')" "1"
+rm -f "$KLEPSYDRA_DIR/fleet/$SWOLD.json" "$KLEPSYDRA_DIR/fleet/$SHNEW.json"; : >"$REGISTRY"
 
 echo "recover: one run at a time"
 flock "$FLEET_STATE/.recover.lock" sleep 3 &

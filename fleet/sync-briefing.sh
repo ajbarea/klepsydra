@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # sync-briefing.sh: commit and push the private fleet-briefing repo (AJ's queue,
-# morning file and shots) when anything in it changed or a commit waits to be
+# morning file, shots and review drafts) when anything in it changed or a commit waits to be
 # pushed. The staged content is scanned by gitleaks before it is committed, so
 # what is scanned is what is committed; a finding unstages it and blocks the
 # commit. A rejected push rebases once onto the remote and retries; nothing is
@@ -29,7 +29,14 @@ for f in claude-morning.md claude-queue.md README.md shots review; do
   if [[ -e $f ]] || git ls-files --error-unmatch -- "$f" >/dev/null 2>&1; then paths+=("$f"); fi
 done
 if [[ -n $(git status --porcelain -- "${paths[@]}") ]]; then
-  git add -A -- "${paths[@]}"
+  # A file over 50 MB would fail every push (GitHub's limit is 100 MB): left out, and logged.
+  skip=()
+  while IFS= read -r big; do
+    [[ -n $big ]] || continue
+    skip+=(":(exclude)$big")
+    flog WARN "briefing sync: a file over 50 MB left out" file="$big"
+  done < <(find "${paths[@]}" -type f -size +50M 2>/dev/null)
+  git add -A -- "${paths[@]}" "${skip[@]}"
   if ! git diff --cached --quiet; then
     if ! out=$("$GITLEAKS" git --staged --no-banner --redact --exit-code 1 --log-level error . 2>&1) || [[ -n $out ]]; then
       git reset -q -- "${paths[@]}"
