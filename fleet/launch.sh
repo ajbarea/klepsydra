@@ -21,7 +21,7 @@ shift 2
 avail=$(awk '/MemAvailable/{print int($2/1024)}' /proc/meminfo)
 if (( avail < ${FLEET_MIN_AVAIL_MB:-3000} )); then
   flog WARN "launch held: too little memory" name="$name" avail_mb="$avail"
-  echo "HOLD: only ${avail} MiB available"
+  echo "HOLD: only ${avail} MiB available" # logcheck: ignore[stderr-for-errors] # the result line callers read; flog has it on stderr
   exit 2
 fi
 dir=${FLEET_DIR:-$HOME/ajsoftworks}
@@ -40,13 +40,13 @@ flock -w 600 8 || { flog ERROR "launch held: another launch kept the lock for 10
 before=$(fleet_panes | sort)
 if ! out=$(cd ~ && KLEPSYDRA_CLAUDE="$cmd" KLEPSYDRA_TMUX_SOCKET="$FLEET_SOCK" bash "${FLEET_LAUNCHER:-$HOME/.claude/klepsydra-launch.sh}" new "$dir" 2>&1 7>&- 8>&-); then
   flog ERROR "launch failed: the launcher refused" name="$name" said="$out"
-  echo "launch failed: $out"
+  echo "launch failed: $out" # logcheck: ignore[stderr-for-errors] # the result line
   exit 1
 fi
 pane=$(comm -13 <(printf '%s\n' "$before") <(fleet_panes | sort) | grep . | head -1)
 if [[ -z $pane ]]; then
   flog ERROR "launch failed: no new pane" name="$name"
-  echo "no new pane"
+  echo "no new pane" # logcheck: ignore[stderr-for-errors] # the result line
   exit 1
 fi
 ready() { idle_empty "$1" || limit_line "$1" >/dev/null; }

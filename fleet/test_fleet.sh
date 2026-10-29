@@ -508,6 +508,13 @@ check "the memfrag timer too" "$(grep -c 'OnCalendar=\*:0/30' "$inst/units/fleet
 FLEET_STATE="$inst/s2" FLEET_UNITS="$inst/u2" FLEET_BIN="$inst/b2" bash "$here/install.sh" --dry-run --force >"$work/dry" 2>/dev/null
 check "a dry run says what it would do and changes nothing" "$(grep -c '^would' "$work/dry" | sed 's/^[1-9][0-9]*$/some/') $(find "$inst" -mindepth 1 -maxdepth 1 -printf '%f\n' | sort | tr '\n' ' ')" "some bin state units "
 
+repo=$work/repo
+git init -q "$repo" && cp -r "$here" "$repo/fleet" && git -C "$repo" add -A && git -C "$repo" -c user.name=t -c user.email=t@t commit -qm x
+git -C "$repo" worktree add -q "$work/wt" 2>/dev/null
+guard() { FLEET_STATE="$inst/g" FLEET_UNITS="$inst/gu" FLEET_BIN="$inst/gb" bash "$1/fleet/install.sh" --dry-run >/dev/null 2>&1; echo $?; }
+check "the main checkout installs (10-29: from fleet/ git named its common dir relatively, so main read as a worktree)" "$(guard "$repo")" "0"
+check "a worktree is refused" "$(guard "$work/wt")" "2"
+
 echo "cut-over"
 export SC="$work/sc" FLEET_LOG
 mkdir -p "$SC"
@@ -586,18 +593,22 @@ out=$(launch acct1 '{"above":["Claude Code"]}')
 check "launch starts the session on the account with the most room" "$(grep -c "^CONFIG $work/cfg-b$" "$work/acct1.log") $(grep -o 'account=[^ ]*' <<<"$out")" "1 account=$work/cfg-b"
 check "and records the folder in the registry" "$(awk -F'\t' '$2 == "acct1" { print $6 }' "$REGISTRY")" "$work/cfg-b"
 reading b RIT 60 2000
-out=$(CLAUDE_CONFIG_DIR="$work/cfg-b" launch acct2 '{"above":["Claude Code"]}')
-check "on the default account, a caller's CLAUDE_CONFIG_DIR is not passed on" "$(grep -c '^CONFIG' "$work/acct2.log") ${out##* }" "0 brief=started"
+t set-environment -g CLAUDE_CONFIG_DIR "$work/cfg-b"   # a tmux server started from the second folder's shell
+out=$(launch acct2 '{"above":["Claude Code"]}')
+t set-environment -gu CLAUDE_CONFIG_DIR
+check "on the default account, a CLAUDE_CONFIG_DIR in tmux's environment is not passed on" "$(grep -c '^CONFIG' "$work/acct2.log") ${out##* }" "0 brief=started"
 check "the brief still goes in" "$(grep -c '^SUBMIT Do the thing' "$work/acct2.log")" "1"
 t kill-window -t "$(awk -F'\t' '$2 == "acct1" { print $1 }' "$REGISTRY")"; t kill-window -t "$(awk -F'\t' '$2 == "acct2" { print $1 }' "$REGISTRY")"; : >"$REGISTRY"
 
 echo "two accounts: the resume service"
 : >"$FLEET_LOG"
-reading a Personal 100 3000; reading b RIT 10 4000
+reading a Personal 100 5000; reading b RIT 10 4000
 p=$(pane own "{\"above\":[\"work\",\"$LIMIT\"]}"); settle
-resume "$noon"; resume "$(( noon + 60 ))"
+resume "$noon"
+reading b RIT 10 6000   # both accounts publish: which reading is newest flips minute to minute
+resume "$(( noon + 60 ))"
 check "with both logged in, the other account's newer reading is no switch for a pane on the default" "$(events own)" ""
-check "the limit is logged with the pane's own account" "$(jq -r 'select(.message == "limit seen") | .account' "$FLEET_LOG")" "Personal"
+check "the limit is logged with the pane's own account" "$(jq -r --arg p "$p" 'select(.message == "limit seen" and .pane == $p) | .account' "$FLEET_LOG")" "Personal"
 t kill-window -t "$p"
 
 cat >"$work/launch-move.sh" <<EOF
@@ -665,7 +676,7 @@ mkdir -p "$dst/agents"; printf 'its own\n' >"$dst/agents/x.md"
 acsync() { FLEET_DEFAULT_CONFIG="$src" FLEET_DEFAULT_JSON="$src/.claude.json-default" bash "$here/accounts-sync.sh" "$@" 2>/dev/null; }
 check "--check before the first sync finds differences" "$(acsync --check "$dst" >/dev/null; echo $?)" "1"
 acsync "$dst" >/dev/null
-check "settings.json is a copy, not a link" "$( [[ -L $dst/settings.json ]] && echo link || cat "$dst/settings.json")" '{"statusLine":{"command":"x"}}'
+check "settings.json is a copy, not a link" "$(find "$dst/settings.json" -type l | wc -l) $(cat "$dst/settings.json")" '0 {"statusLine":{"command":"x"}}'
 check "the plugin lists are copies and plugin data is shared" \
   "$(cmp -s "$src/plugins/installed_plugins.json" "$dst/plugins/installed_plugins.json" && echo same) $(readlink "$dst/plugins/data")" "same $src/plugins/data"
 check "CLAUDE.md, projects and each skill are links; claude.ai's synced skills are not" \

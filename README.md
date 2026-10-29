@@ -105,7 +105,7 @@ The statusLine payload carries no account identity, so the hook reads it from
 the global config, which `CLAUDE_CONFIG_DIR` relocates per login:
 
 ```bash
-CLAUDE_CONFIG_DIR=~/.claude-personal claude   # one account
+CLAUDE_CONFIG_DIR=~/.claude-rit claude        # one account
 claude                                         # the other
 ```
 
@@ -117,8 +117,27 @@ overwrite each other, and the overlay draws a labelled row for each:
 </p>
 
 With one account the rows drop the prefix and read "Current session" and "This
-week". A separate config dir is a separate *everything* though, so the second
-profile starts without your settings, plugins or skills until you copy them.
+week". A separate config dir is a separate *everything* though: settings,
+plugins, skills and session history. `fleet accounts sync` makes the second
+folder behave like `~/.claude` and never touches either login; the installed
+fleet (`make install-fleet`) re-runs it whenever `~/.claude`'s settings or
+plugin lists change, and hourly. It copies `settings.json` and the plugin
+lists, links `CLAUDE.md`, agents, commands, hooks, skills and `projects/` (so a
+session resumes on either account), and copies only the shared keys of
+`.claude.json` (MCP servers, folder trust, onboarding), never its account.
+
+Log the second account in once, from a shell:
+
+```bash
+CLAUDE_CONFIG_DIR=~/.claude-rit claude auth login
+```
+
+The fleet then starts each agent on the account with the most room (five-hour
+window first, then the weekly) and, when an agent hits a limit with over 15
+minutes to wait, moves it to a fresh session on the other account if that one
+has room, carrying anything typed at the limited pane. `fleet accounts` shows
+each folder's account and room; `fleet doctor` checks both are logged in and in
+step. The orchestrator's pane stays on `~/.claude`.
 
 ## Install
 

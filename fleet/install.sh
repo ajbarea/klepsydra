@@ -14,7 +14,7 @@ dry=0 force=0
 for a in "$@"; do
   case $a in --dry-run) dry=1 ;; --force) force=1 ;; esac
 done
-if (( !force )) && [[ $(git -C "$here" rev-parse --git-dir 2>/dev/null) != "$(git -C "$here" rev-parse --git-common-dir 2>/dev/null)" ]]; then
+if (( !force )) && [[ $(git -C "$here" rev-parse --path-format=absolute --git-dir 2>/dev/null) != "$(git -C "$here" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" ]]; then
   err "this checkout is a git worktree; links into it break when it is removed. Install from the main checkout, or pass --force."
   exit 2
 fi

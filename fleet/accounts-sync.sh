@@ -86,11 +86,15 @@ for DST in "${dsts[@]}"; do
         differs "$DST/.claude.json's shared keys"
       else
         tmp=$(mktemp "$DST/.claude.json.XXXXXX")
-        if [[ -r $DST/.claude.json ]]; then
-          jq --argjson w "$want" '. + $w' "$DST/.claude.json" >"$tmp"
+        # shellcheck disable=SC2016 # jq's own variables
+        if [[ -r $DST/.claude.json ]]; then merge=('. + $w' "$DST/.claude.json"); else merge=(-n '$w'); fi
+        if jq --argjson w "$want" "${merge[@]}" >"$tmp" && chmod 600 "$tmp"; then
+          mv -f -- "$tmp" "$DST/.claude.json"
         else
-          jq -n --argjson w "$want" '$w' >"$tmp"
-        fi && chmod 600 "$tmp" && mv -f -- "$tmp" "$DST/.claude.json" || rm -f -- "${tmp:?}"
+          rm -f -- "${tmp:?}"
+          err "could not write $DST/.claude.json"
+          drift=1
+        fi
       fi
     fi
   fi
@@ -100,5 +104,9 @@ done
 if (( check )); then
   (( drift )) && flog WARN "a second config folder differs from the first" folders="${dsts[*]}"
   exit "$drift"
+fi
+if (( drift )); then
+  flog ERROR "second config folder sync failed" folders="${dsts[*]}"
+  exit 1
 fi
 echo "synced ${dsts[*]} from $SRC"

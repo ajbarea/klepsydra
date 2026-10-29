@@ -77,5 +77,5 @@ for _ in $(seq "${FLEET_CUTOVER_WAIT:-15}"); do
   sleep 1
 done
 flog ERROR "the resume service did not log its start after the cut-over"
-echo "FAIL the resume service did not log its start"
+echo "FAIL the resume service did not log its start" # logcheck: ignore[stderr-for-errors] # the report line, as each check prints
 exit 1
