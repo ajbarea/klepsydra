@@ -123,6 +123,24 @@ for dir in $FLEET_ACCOUNTS; do
   fi
 done
 
+# Each role's preferred account (#175): a live pane left on another while its own has room.
+now=$(date +%s) away=""
+for p in $orch $panes; do
+  fleet_panes | grep -qx -- "$p" || continue
+  if [[ $p == "$orch" ]]; then
+    pref=${FLEET_HEPH_ACCOUNTS%% *} c=$(heph_config) who=orchestrator
+  else
+    pref=${FLEET_ACCOUNTS%% *} c=$(pane_config "$p") who=$(reg_field "$p" 2)
+  fi
+  pref_id=$(account_of "$pref") || continue
+  [[ $c != "$pref" && $(account_of "$c") != "$pref_id" ]] && back_room "$pref_id" "$now" && away+="$p ($who, prefers $(account_label "$pref_id")) "
+done
+if [[ -n $away ]]; then
+  report warn "preferred accounts" "on another account while their own has room: ${away% } (each moves back at its next finished turn)"
+else
+  report ok "preferred accounts" "every pane on its role's preferred account, or that one is short of room"
+fi
+
 # Processes running watch-panes.sh itself (bash, then the script), not a shell that names it.
 watchers=$($PS -eo args= 2>/dev/null | awk '$1 ~ /(^|\/)bash$/ && $2 ~ /(^|\/)watch-panes\.sh$/ { $1 = $2 = ""; sub(/^ +/, ""); printf "%s;", $0 }')
 if [[ -n $watchers ]]; then

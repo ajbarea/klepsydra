@@ -15,7 +15,10 @@
 # empty prompt. The orchestrator is looked after like a registered pane at a
 # limit (resumed at its reset, or moved to the account with room as a fresh Heph
 # from HEPH.md: heph_move), and is otherwise never typed into, nor replaced
-# after a long idle. --once runs one pass. Each decision is one line in the fleet log; each pass touches
+# after a long idle. Each role prefers an account (#175): workers the first
+# folder in FLEET_ACCOUNTS, Heph the first in FLEET_HEPH_ACCOUNTS; a pane on
+# another moves back once its preferred one has FLEET_BACK_ROOM_PCT room, at a
+# finished turn and an empty prompt. --once runs one pass. Each decision is one line in the fleet log; each pass touches
 # resume.beat for `fleet doctor`.
 set -u
 FLEET_TARGET=fleet::resume
@@ -110,6 +113,8 @@ fresh() { # PANE NAME BRIEF [WHY] [ACCOUNT] [NOTE]
     flog WARN "fresh session refused: the pane no longer runs its registered session" pane="$p" name="$name" session_id="$sid"
     return 2
   fi
+  local stamp
+  stamp=$(prompt_stamp "$p")
   txt="$FLEET_STATE/fresh-$name-$(date +%Y%m%d-%H%M).src"
   {
     fresh_preamble "$why"
@@ -135,7 +140,7 @@ fresh() { # PANE NAME BRIEF [WHY] [ACCOUNT] [NOTE]
   # The launch took a while: AJ may have typed into the old pane or resumed it.
   local now_s
   now_s=$(screen "$p")
-  if ! pane_runs "$p" "$sid" || busy "$now_s" || ! has_input_box "$now_s" || [[ $(input_text "$now_s") != "$box" ]]; then
+  if ! pane_runs "$p" "$sid" || busy "$now_s" || ! has_input_box "$now_s" || [[ $(input_text "$now_s") != "$box" || $(prompt_stamp "$p") != "$stamp" ]]; then
     flog ERROR "the old pane changed while its fresh session launched; the old one stays and the new one goes" pane="$p" new_pane="$new" name="$name"
     retire "$new" interrupt
     with_registry set_pane "$new" "$p" "$sid" "$cfg"
@@ -253,6 +258,22 @@ drop() { # PANE
   retire "$1" interrupt || t kill-pane -t "$1" 2>/dev/null
 }
 
+# Swap-backs to an account whose launch failed wait for its next reading: a
+# limit its gauge does not show then costs one session, not one per pane.
+BACK_HOLD=$FLEET_STATE/back-hold
+reading_mtime() { local f; f=$(reading_of "$1") && stat -c %Y -- "$f" 2>/dev/null || echo 0; } # ID
+back_hold() { # ID
+  local m
+  m=$(reading_mtime "$1")
+  { grep -v "^$1 " "$BACK_HOLD" 2>/dev/null; printf '%s %s\n' "$1" "$m"; } >"$BACK_HOLD.tmp" && mv -f -- "$BACK_HOLD.tmp" "$BACK_HOLD"
+  flog WARN "moves back to the account held until its next usage reading" account="$(account_label "$1")"
+}
+back_held() { # ID
+  local held
+  held=$(awk -v id="$1" '$1 == id { print $2 }' "$BACK_HOLD" 2>/dev/null)
+  [[ -n $held ]] && (( $(reading_mtime "$1") <= held ))
+}
+
 # Record a move PANE -> NEW (or a failed try, with no NEW) for the hold-downs.
 moved() { # PANE [NEW]
   if [[ -n ${2:-} ]]; then
@@ -328,6 +349,33 @@ one() { # PANE
     fi
     return
   fi
+  # Back to the role's preferred account: at a finished turn (no background
+  # work) and an empty prompt, so nothing in flight is lost; the 15 min
+  # hold-down above and after a failed try keeps a pane from flapping.
+  local pref pref_id back_why
+  if (( orch )); then pref=${FLEET_HEPH_ACCOUNTS%% *}; else pref=${FLEET_ACCOUNTS%% *}; fi
+  pref_id=${ACCT_ID[$pref]:-}
+  if [[ -z $limit && -z ${due[$p]:-} && -n $pref_id && $cfg != "$pref" && $pref_id != "${PANE_ID:-}" ]] &&
+    { (( orch )) || [[ -n $(reg_field "$p" 2) ]]; } && (( NOW - ${move_failed[$p]:-0} >= 900 )) &&
+    ! back_held "$pref_id" && back_room "$pref_id" "$NOW" && idle_empty "$s" && turn_done "$p"; then
+    back_why="moved back to its preferred account, $(account_label "$pref_id"), which has room again"
+    if (( orch )); then
+      new=$(heph_move "$p" "$pref" "$back_why")
+    else
+      new=$(fresh "$p" "$(reg_field "$p" 2)" "$(reg_field "$p" 3)" "was $back_why" "$pref")
+    fi
+    rc=$?
+    if (( rc == 0 )); then
+      flog INFO "moved back to the preferred account" pane="$p" new_pane="${new:-none}" from="$cfg" to="$pref" orchestrator="$orch"
+      moved "$p" "$new"
+    else
+      flog WARN "could not move back to the preferred account; trying again in 15 min" pane="$p" to="$pref" orchestrator="$orch" why="$rc"
+      (( rc == 1 )) || moved "$p"
+      (( rc == 3 )) && back_hold "$pref_id"
+    fi
+    return
+  fi
+
   if (( orch )); then
     # Keep Heph's session on record, so `fleet recover` finds his transcript after a power cut.
     # Only a live session no agent's row names: a worker relaunched into Heph's old pane is not him.

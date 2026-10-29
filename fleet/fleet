@@ -5,7 +5,8 @@
 #   fleet brief NAME BODY write task-NAME.src: BODY plus the shared rules
 #   fleet brief --check   list briefs whose shared rules are out of date
 #   fleet brief --refresh rewrite them with the current shared rules
-#   fleet accounts        each config folder: its account and its room
+#   fleet accounts        each config folder: its account and its room (* where a
+#                         new worker starts; workers prefer the first, Heph the last)
 #   fleet accounts sync   make the second config folder behave like ~/.claude
 #   fleet recover         after a hard shutdown, relaunch every agent whose session is gone
 #   fleet shots [--apply] prune the briefing's decided and old screenshots (dry run without --apply)
@@ -29,7 +30,8 @@ case $cmd in
     for dir in $FLEET_ACCOUNTS; do
       if id=$(account_of "$dir"); then
         read -r five seven <<<"$(headroom "$id" "$now")"
-        printf '%s %s: %s, five-hour room %s%%, weekly room %s%%\n' "$([[ $dir == "$best" ]] && echo '*' || echo ' ')" "$dir" "$(account_label "$id")" "$five" "$seven"
+        printf '%s %s: %s, five-hour room %s%%, weekly room %s%%%s\n' "$([[ $dir == "$best" ]] && echo '*' || echo ' ')" "$dir" "$(account_label "$id")" "$five" "$seven" \
+          "$([[ $dir == "${FLEET_ACCOUNTS%% *}" ]] && echo ' (workers prefer)')$([[ $dir == "${FLEET_HEPH_ACCOUNTS%% *}" ]] && echo ' (Heph prefers)')"
       else
         hint="claude auth login"
         [[ $dir == "$FLEET_DEFAULT_CONFIG" ]] || hint="CLAUDE_CONFIG_DIR=$dir $hint"

@@ -7,7 +7,7 @@
 # cancel a turn that started. Registers the pane, session and folder in
 # panes.tsv for NAME when NAME is a fleet agent (a row exists, or task-NAME.src).
 # The session runs on FLEET_ACCOUNT's config folder when set, else on the
-# logged-in account with the most room (best_account).
+# first logged-in account with room in FLEET_ACCOUNTS order (best_account).
 # Prints one line: pane=%N session=UUID account=DIR avail=MiB brief=started|blocked-by-limit|NOT-DELIVERED.
 set -u
 FLEET_TARGET=fleet::launch
