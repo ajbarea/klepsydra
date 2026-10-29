@@ -1207,6 +1207,11 @@ check "after a tmux restart (his recorded session ended on an earlier server), a
   "$(wc -c <"$work/moved") $(events hrestart) $(cat "$FLEET_STATE/orchestrator.session")" "0  $OS"
 check "and it is logged" "$(jq -r 'select(.message | startswith("the orchestrator'"'"'s pane runs another session")) | .session' "$FLEET_LOG")" "$CUR"
 t kill-window -t "$h" 2>/dev/null
+hcase hstale 100; rm -f "$KLEPSYDRA_DIR/fleet/$CUR.json" "$FLEET_STATE/resume-state"; : >"$work/moved"
+hfile "$OS" 4343 100 "$h"   # never ended (killed with its server): the only file naming the reused pane id
+hmove "$noon"
+check "review 4: a never-ended record from an earlier server does not make its reused pane id Heph" "$(wc -c <"$work/moved") $(events hstale)" "0 "
+t kill-window -t "$h" 2>/dev/null
 
 : >"$work/moved"; rm -f "$KLEPSYDRA_DIR"/fleet/*.json "$FLEET_STATE/resume-state" "$FLEET_STATE/orchestrator.config"
 h=$(pane hephphone "{\"above\":[\"⏺ ok\",\"$LIMIT\"]}"); settle
