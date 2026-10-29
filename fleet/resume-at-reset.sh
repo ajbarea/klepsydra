@@ -227,7 +227,9 @@ one() { # PANE
   if (( orch )); then
     # Keep Heph's session on record, so `fleet recover` finds his transcript after a power cut.
     local osid
-    if osid=$(live_session "$p") && [[ $osid != "$(cat "$FLEET_STATE/orchestrator.session" 2>/dev/null)" ]]; then
+    # Only a live session no agent's row names: a worker relaunched into Heph's old pane is not him.
+    if osid=$(live_session "$p") && session_alive "$osid" && ! cut -f4 "$REGISTRY" 2>/dev/null | grep -qxF -- "$osid" &&
+      [[ $osid != "$(cat "$FLEET_STATE/orchestrator.session" 2>/dev/null)" ]]; then
       printf '%s\n' "$osid" >"$FLEET_STATE/orchestrator.session"
       flog INFO "orchestrator session recorded" pane="$p" session="$osid"
     fi

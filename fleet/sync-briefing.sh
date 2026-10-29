@@ -25,7 +25,7 @@ fi
 
 # Only paths that exist or are tracked: git add stops at the first pathspec that matches nothing.
 paths=()
-for f in claude-morning.md claude-queue.md README.md shots; do
+for f in claude-morning.md claude-queue.md README.md shots review; do
   if [[ -e $f ]] || git ls-files --error-unmatch -- "$f" >/dev/null 2>&1; then paths+=("$f"); fi
 done
 if [[ -n $(git status --porcelain -- "${paths[@]}") ]]; then

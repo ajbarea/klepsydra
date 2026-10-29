@@ -54,6 +54,7 @@ this_boot_row() { # SID
 # never launched and the records untouched, since a second orchestrator is the
 # worst outcome.
 orch=$(orchestrator) rec=$(cat "$FLEET_STATE/orchestrator.session" 2>/dev/null)
+grep -qxF -- "${rec:-x}" <<<"$agents" && rec="" # a record naming an agent is no Heph's
 heph_pane="" osid="" heph_unsure=0
 unreg=$(awk -F'\t' 'NR == FNR { if ($0 != "") a[$0] = 1; next } $3 == 1 && !($2 in a)' <(printf '%s\n' "$agents") <(printf '%s\n' "$live_now"))
 # A worker's new session after a /clear sits in its this-boot row's pane: no Heph.
@@ -66,7 +67,7 @@ if [[ -z $onrec && -n $orch ]] && { [[ -z $rec ]] || this_boot_row "$rec"; }; th
 fi
 [[ $(grep -c . <<<"$onrec") == 1 ]] || onrec=""
 caller=""
-if [[ -n ${CLAUDECODE:-} && -n ${TMUX_PANE:-} && ${TMUX:-} == *"/$FLEET_SOCK,"* ]] && ! registered "$TMUX_PANE"; then
+if [[ -n ${CLAUDECODE:-} && -n ${TMUX_PANE:-} && ${TMUX:-} == *"/$FLEET_SOCK,"* ]] && ! grep -qxF -- "$TMUX_PANE" <<<"$rows"; then
   caller=$TMUX_PANE
 fi
 if [[ -n $onrec ]]; then

@@ -1050,6 +1050,30 @@ printf '%s\tw\t%s\t%s\t/w\n' %3 "$work/ba.src" "$SX" >"$REGISTRY"
 check "AJ's own session in pane %3 of his tmux is not worker w's" "$(rec --no-orchestrator --dry-run | head -1 | cut -d' ' -f1-3)" "would recover: w"
 rm -f "$KLEPSYDRA_DIR/fleet/$SX.json" "$KLEPSYDRA_DIR/fleet/$SAJ.json"; : >"$REGISTRY"
 
+echo "recover: after a power cut, Heph in a pane an old worker row names"
+SW1=aaaaaaaa-0000-4000-8000-0000000000e1 SH2=aaaaaaaa-0000-4000-8000-0000000000e2
+sfile "$SW1" 4242 777 "$OLDBOOT" %1; sfile "$SH2" 4242 777 "$NOWBOOT" %1
+printf '%s\tw1\t%s\t%s\t/w\n' %1 "$work/ba.src" "$SW1" >"$REGISTRY"
+printf '%%0\n' >"$FLEET_STATE/orchestrator.pane"; printf '%s\n' "$SH" >"$FLEET_STATE/orchestrator.session"
+check "the calling Heph in %1 is recognised and w1 is relaunched" \
+  "$(CLAUDECODE=1 TMUX_PANE=%1 TMUX="/tmp/tmux-1/$FLEET_SOCK,1,0" rec --dry-run | tr '\n' '|' | cut -d'|' -f1-2)" \
+  "would recover: w1 (session $SW1, transcript none, IMPL.md none)|running: orchestrator (%1)"
+check "a record that names an agent is no Heph's" \
+  "$(printf '%s\n' "$SW1" >"$FLEET_STATE/orchestrator.session"; rec --dry-run | grep -c 'orchestrator (session '"$SW1")" "0"
+rm -f "$KLEPSYDRA_DIR/fleet/$SW1.json" "$KLEPSYDRA_DIR/fleet/$SH2.json"; : >"$REGISTRY"
+
+echo "resume: Heph's session is recorded, never a worker's"
+SHR=aaaaaaaa-0000-4000-8000-0000000000e3
+po=$(pane orchrec '{"above":["idle"]}'); settle
+printf '%s\n' "$po" >"$FLEET_STATE/orchestrator.pane"; rm -f "$FLEET_STATE/orchestrator.session"
+sfile "$SHR" 4242 777 "$NOWBOOT" "$po"
+resume "$noon"; resume "$(( noon + 60 ))"
+check "the live session in orchestrator.pane is recorded" "$(cat "$FLEET_STATE/orchestrator.session" 2>/dev/null)" "$SHR"
+printf '%s\tw9\t%s\t%s\t/w\n' "$po" "$work/ba.src" "$SHR" >"$REGISTRY"; printf 'old\n' >"$FLEET_STATE/orchestrator.session"
+resume "$(( noon + 120 ))"
+check "a session a registry row names is never recorded as Heph" "$(cat "$FLEET_STATE/orchestrator.session")" "old"
+t kill-window -t "$po"; rm -f "$KLEPSYDRA_DIR/fleet/$SHR.json" "$FLEET_STATE/orchestrator.session"; : >"$REGISTRY"
+
 echo "recover: one run at a time"
 flock "$FLEET_STATE/.recover.lock" sleep 3 &
 sleep 0.3
