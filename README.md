@@ -132,15 +132,18 @@ Log the second account in once, from a shell:
 CLAUDE_CONFIG_DIR=~/.claude-rit claude auth login
 ```
 
-The fleet then starts each agent on the account with the most room (five-hour
-window first, then the weekly) and, when an agent hits a limit with over 15
-minutes to wait, moves it to a fresh session on the other account if that one
-has room, carrying anything typed at the limited pane. `fleet accounts` shows
+The order of `FLEET_ACCOUNTS` is the workers' preference: the fleet starts each
+agent on the first account with room (RIT, `~/.claude`, by default) and, when an
+agent hits a limit with over 15 minutes to wait, moves it to a fresh session on
+the other account if that one has room, carrying anything typed at the limited
+pane. Once the preferred account has half its five-hour window free again, each
+moved agent goes back at its next finished turn, never mid-turn. `fleet accounts` shows
 each folder's account and room; `fleet doctor` checks both are logged in and in
 step. The orchestrator (Heph) is looked after too: at a limit he is resumed at
 the reset, or moved to the other account as a fresh session from `HEPH.md` when
 that one has room. His own account order is the workers' reversed
-(`FLEET_HEPH_ACCOUNTS`), so worker load never stalls him.
+(`FLEET_HEPH_ACCOUNTS`, Personal first), so worker load never stalls him; he
+moves back to it the same way.
 
 ## Install
 

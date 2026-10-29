@@ -99,7 +99,10 @@ submit() { # PANE
 # preamble; prints the new pane. NOTE, what AJ typed at the pane, goes into the
 # new brief, and the old box may hold exactly it. Gives up, typing nothing, if
 # AJ has typed anything else meanwhile.
-fresh() { # PANE NAME BRIEF [WHY] [ACCOUNT] [NOTE]
+# (STAMP: the session's prompt.at when the caller judged the pane idle, so a
+# prompt taken since, even one already answered, keeps the old pane.) Returns
+# 5 when the new session's brief met a limit on ACCOUNT.
+fresh() { # PANE NAME BRIEF [WHY] [ACCOUNT] [NOTE] [STAMP]
   local p=$1 name=$2 brief=$3 txt new
   local why=${4:-stopped at a usage limit over an hour ago, so its cached conversation expired and resuming it would re-cache everything}
   local account=${5:-} carried=${6:-} box
@@ -114,7 +117,7 @@ fresh() { # PANE NAME BRIEF [WHY] [ACCOUNT] [NOTE]
     return 2
   fi
   local stamp
-  stamp=$(prompt_stamp "$p")
+  if (( $# >= 7 )); then stamp=$7; else stamp=$(prompt_stamp "$p"); fi
   txt="$FLEET_STATE/fresh-$name-$(date +%Y%m%d-%H%M).src"
   {
     fresh_preamble "$why"
@@ -135,6 +138,7 @@ fresh() { # PANE NAME BRIEF [WHY] [ACCOUNT] [NOTE]
     flog ERROR "fresh session's brief did not start; the old pane stays and the new one goes" pane="$p" new_pane="$new" name="$name" brief="$got"
     retire "$new" interrupt
     with_registry set_pane "$new" "$p" "$sid" "$cfg"
+    [[ $got == blocked-by-limit ]] && return 5
     return 3
   fi
   # The launch took a while: AJ may have typed into the old pane or resumed it.
@@ -187,8 +191,8 @@ forget() { unset "due[$1]" "seen_on[$1]" "note[$1]"; }
 # the old one is as it was (screen and session state), and the records follow
 # only once it has gone; gives up, typing nothing, if AJ typed anything else.
 # Prints the new pane; fails as fresh does (1 AJ has it, 2 not Heph, 3 no
-# start or the old one stayed, 4 changed).
-heph_move() { # PANE TO WHY [NOTE]
+# start or the old one stayed, 4 changed, 5 the note met a limit on TO).
+heph_move() { # PANE TO WHY [NOTE] [STAMP]
   local p=$1 to=$2 why=$3 carried=${4:-} box osid txt out new nsid got now_s stamp
   box=$(input_text "$(screen "$p")")
   [[ -z $box || ( -n $carried && $box == "$carried" ) ]] || return 1
@@ -201,7 +205,7 @@ heph_move() { # PANE TO WHY [NOTE]
     flog WARN "orchestrator not moved: the pane does not run the recorded orchestrator session" pane="$p" session="${osid:-none}"
     return 2
   fi
-  stamp=$(prompt_stamp "$p")
+  if (( $# >= 5 )); then stamp=$5; else stamp=$(prompt_stamp "$p"); fi
   txt="$FLEET_STATE/heph-move-$(date +%Y%m%d-%H%M).md"
   {
     heph_note "$why" "$osid" "$HEPH" "the resume service started you on $to and the agents run on meanwhile."
@@ -218,6 +222,7 @@ heph_move() { # PANE TO WHY [NOTE]
   if [[ $got != started ]]; then
     flog ERROR "orchestrator not moved: its note did not start a turn; the new pane goes" pane="$p" new_pane="$new" to="$to" brief="$got"
     drop "$new"
+    [[ $got == blocked-by-limit ]] && return 5
     return 3
   fi
   # A phone message answered while the successor launched leaves the screen as
@@ -258,20 +263,21 @@ drop() { # PANE
   retire "$1" interrupt || t kill-pane -t "$1" 2>/dev/null
 }
 
-# Swap-backs to an account whose launch failed wait for its next reading: a
-# limit its gauge does not show then costs one session, not one per pane.
+# Moves back to an account that answered one with a limit its gauge did not
+# show wait for its next reading, or BACK_HOLD_S at most: the limit then costs
+# one session, not one per pane.
 BACK_HOLD=$FLEET_STATE/back-hold
-reading_mtime() { local f; f=$(reading_of "$1") && stat -c %Y -- "$f" 2>/dev/null || echo 0; } # ID
+BACK_HOLD_S=${BACK_HOLD_S:-1800}
+reading_mtime() { local f; f=$(reading_of "$1") && find "$f" -maxdepth 0 -printf '%T@' 2>/dev/null || echo 0; } # ID
 back_hold() { # ID
-  local m
-  m=$(reading_mtime "$1")
-  { grep -v "^$1 " "$BACK_HOLD" 2>/dev/null; printf '%s %s\n' "$1" "$m"; } >"$BACK_HOLD.tmp" && mv -f -- "$BACK_HOLD.tmp" "$BACK_HOLD"
-  flog WARN "moves back to the account held until its next usage reading" account="$(account_label "$1")"
+  { grep -v "^$1 " "$BACK_HOLD" 2>/dev/null; printf '%s %s %s\n' "$1" "$(reading_mtime "$1")" "$NOW"; } >"$BACK_HOLD.tmp" &&
+    mv -f -- "$BACK_HOLD.tmp" "$BACK_HOLD"
+  flog WARN "moves back to the account held until its next usage reading" account="$(account_label "$1")" max_s="$BACK_HOLD_S"
 }
 back_held() { # ID
-  local held
-  held=$(awk -v id="$1" '$1 == id { print $2 }' "$BACK_HOLD" 2>/dev/null)
-  [[ -n $held ]] && (( $(reading_mtime "$1") <= held ))
+  local held at
+  read -r held at < <(awk -v id="$1" '$1 == id { print $2, $3 }' "$BACK_HOLD" 2>/dev/null)
+  [[ -n $held && -n $at ]] && (( NOW - at < BACK_HOLD_S )) && awk -v m="$(reading_mtime "$1")" -v h="$held" 'BEGIN { exit !(m <= h) }'
 }
 
 # Record a move PANE -> NEW (or a failed try, with no NEW) for the hold-downs.
@@ -286,7 +292,7 @@ moved() { # PANE [NEW]
 
 
 one() { # PANE
-  local p=$1 s ps typed orch=0 armed at limit reset reg name brief idle new got tmp
+  local p=$1 s ps typed orch=0 armed at limit reset reg name brief idle new got tmp rc
   # Heph is the session on record in the pane on record. A tmux restart reuses
   # pane ids, so another session there is him only when his recorded one has
   # ended on this same server (a /clear or a restart in place), or none is
@@ -359,10 +365,12 @@ one() { # PANE
     { (( orch )) || [[ -n $(reg_field "$p" 2) ]]; } && (( NOW - ${move_failed[$p]:-0} >= 900 )) &&
     ! back_held "$pref_id" && back_room "$pref_id" "$NOW" && idle_empty "$s" && turn_done "$p"; then
     back_why="moved back to its preferred account, $(account_label "$pref_id"), which has room again"
+    local idle_stamp
+    idle_stamp=$(prompt_stamp "$p")
     if (( orch )); then
-      new=$(heph_move "$p" "$pref" "$back_why")
+      new=$(heph_move "$p" "$pref" "$back_why" "" "$idle_stamp")
     else
-      new=$(fresh "$p" "$(reg_field "$p" 2)" "$(reg_field "$p" 3)" "was $back_why" "$pref")
+      new=$(fresh "$p" "$(reg_field "$p" 2)" "$(reg_field "$p" 3)" "was $back_why" "$pref" "" "$idle_stamp")
     fi
     rc=$?
     if (( rc == 0 )); then
@@ -371,7 +379,7 @@ one() { # PANE
     else
       flog WARN "could not move back to the preferred account; trying again in 15 min" pane="$p" to="$pref" orchestrator="$orch" why="$rc"
       (( rc == 1 )) || moved "$p"
-      (( rc == 3 )) && back_hold "$pref_id"
+      (( rc == 5 )) && back_hold "$pref_id"
     fi
     return
   fi
@@ -478,7 +486,7 @@ one() { # PANE
   else
     # Past an hour idle a registered pane starts fresh from its brief; a pane
     # that no longer runs its registered session (2) is resumed in place instead.
-    local rc=3
+    rc=3
     if [[ -n $reg ]] && idle=$((NOW - $(stopped_at "$p" "$ps"))) && (( idle >= FRESH_AFTER_S )); then
       new=$(fresh "$p" "$name" "$brief")
       rc=$?

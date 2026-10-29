@@ -799,24 +799,61 @@ check "not while the preferred account has under 50% room" "$(wc -c <"$work/move
 t kill-window -t "$p"; : >"$REGISTRY"
 reading a Personal 10 5000
 
-cat >"$work/launch-fail.sh" <<EOF
-#!/usr/bin/env bash
-echo try >>"$work/tries"
-echo "pane=%995 session=x account=\$FLEET_ACCOUNT avail=1MiB brief=blocked-by-limit"
-EOF
+launcher() { # NAME BRIEF-RESULT: a launch that counts its tries in $work/tries
+  # shellcheck disable=SC2016 # $FLEET_ACCOUNT is the launcher's own, at its run
+  printf '#!/usr/bin/env bash\necho try >>"%s"\necho "pane=%%995 session=x account=$FLEET_ACCOUNT avail=1MiB brief=%s"\n' "$work/tries" "$2" >"$work/$1"
+}
+launcher launch-fail.sh NOT-DELIVERED; launcher launch-limit.sh blocked-by-limit
+failer() { LAUNCH="$work/${2:-launch-fail.sh}" FLEET_NOW=$1 bash "$here/resume-at-reset.sh" --once 2>/dev/null; } # NOW [LAUNCHER]
 : >"$work/tries"; rm -f "$FLEET_STATE/back-hold"
 p=$(backpane flaky)
-failer() { LAUNCH="$work/launch-fail.sh" FLEET_NOW=$1 bash "$here/resume-at-reset.sh" --once 2>/dev/null; } # NOW
 failer "$noon"; failer "$((noon + 60))"; failer "$((noon + 120))"
-check "a move back the account refuses is not retried for 15 min, across service restarts" "$(wc -l <"$work/tries") $(grep -c '^SUBMIT' "$work/flaky.log")" "1 0"
+check "a failed move back is not retried for 15 min, across service restarts" "$(wc -l <"$work/tries") $(grep -c '^SUBMIT' "$work/flaky.log")" "1 0"
+failer "$((noon + 60 + 900))"
+check "then it is, and a failure that is not a limit holds no account" "$(wc -l <"$work/tries") $([[ -e $FLEET_STATE/back-hold ]] && echo held)" "2 "
 t kill-window -t "$p"; : >"$REGISTRY"
-p=$(backpane flaky2)
-failer "$((noon + 180))"; failer "$((noon + 240))"
-check "review 1: nor tried by another pane until the account publishes a newer reading" "$(wc -l <"$work/tries")" "1"
+
+: >"$work/tries"; rm -f "$FLEET_STATE/resume-state"
+p=$(backpane limited1)
+failer "$noon" launch-limit.sh; failer "$((noon + 60))" launch-limit.sh
+check "a move back the account answers with a limit holds the account" "$(wc -l <"$work/tries") $(cut -d' ' -f1 "$FLEET_STATE/back-hold")" "1 a"
+t kill-window -t "$p"; : >"$REGISTRY"
+p=$(backpane limited2)
+failer "$((noon + 120))" launch-limit.sh; failer "$((noon + 180))" launch-limit.sh
+check "review 1: so another pane does not try it until the account publishes a newer reading" "$(wc -l <"$work/tries")" "1"
 reading a Personal 10 6000
-failer "$((noon + 300))"
-check "then it is" "$(wc -l <"$work/tries")" "2"
-t kill-window -t "$p"; : >"$REGISTRY"; rm -f "$FLEET_STATE/back-hold"
+failer "$((noon + 240))" launch-limit.sh
+check "then it does" "$(wc -l <"$work/tries")" "2"
+t kill-window -t "$p"; : >"$REGISTRY"
+p=$(backpane limited3)
+failer "$((noon + 300))" launch-limit.sh; failer "$((noon + 360))" launch-limit.sh
+check "review 2: held again, with no newer reading" "$(wc -l <"$work/tries")" "2"
+failer "$((noon + 60 + 1800))" launch-limit.sh
+check "review 2: the hold lasts BACK_HOLD_S (30 min) at most" "$(wc -l <"$work/tries")" "3"
+t kill-window -t "$p"; : >"$REGISTRY"; rm -f "$FLEET_STATE/back-hold" "$FLEET_STATE/resume-state"
+
+: >"$work/tries"
+p=$(backpane lagging); state lagging '{"above":["⏺ Done. done 11:50 AM"],"busy":true}'
+failer "$noon"; failer "$((noon + 60))"
+check "review 2: not while the screen shows a turn running, even if the session's file says done" "$(wc -l <"$work/tries")" "0"
+t kill-window -t "$p"; : >"$REGISTRY"
+
+: >"$FLEET_LOG"; rm -f "$FLEET_STATE/resume-state"
+p=$(pane limback "{\"above\":[\"⏺ Done. done 11:50 AM\",\"$LIMIT\"]}"); settle
+done_live "$p"
+printf '%s\tlimback\t%s\t%s\t/w\t%s\n' "$p" "$work/brief.src" "$SID" "$work/cfg-b" >"$REGISTRY"
+reading b RIT 100 4000
+failer "$noon"
+check "review 2: a limited pane is not moved back, its limit path takes it" "$(jq -r 'select(.message == "moved back to the preferred account" or .message == "could not move back to the preferred account; trying again in 15 min") | .pane' "$FLEET_LOG") $(jq -r 'select(.message == "limit seen") | .pane' "$FLEET_LOG")" " $p"
+t kill-window -t "$p"; : >"$REGISTRY"; reading b RIT 10 4000; rm -f "$FLEET_STATE/resume-state"
+
+p=$(backpane away)
+check "review 2: fleet doctor names a pane left away from its preferred account" \
+  "$(bash "$here/doctor.sh" 2>/dev/null | grep 'preferred accounts' | cut -c1-60)" "warn preferred accounts: on another account while their own h"
+reading a Personal 60 5000
+check "and not while that account is short of room" "$(bash "$here/doctor.sh" 2>/dev/null | grep -c '^ok *preferred accounts')" "1"
+reading a Personal 10 5000
+t kill-window -t "$p"; : >"$REGISTRY"
 
 echo "two accounts: Heph's preferred account is the other end (#175)"
 : >"$work/moved"; : >"$FLEET_LOG"; rm -f "$FLEET_STATE/orchestrator.session" "$FLEET_STATE/resume-state"
