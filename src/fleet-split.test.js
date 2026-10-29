@@ -138,13 +138,77 @@ test("off Windows, and outside the app, the toggle stays hidden", async () => {
 
 test("the wall wires the toggle, and the app registers both commands", () => {
   const wall = read("./fleet/wall.js");
-  assert.match(wall, /wireSplit\(\{ button: document\.getElementById\("split"\), note: document\.getElementById\("split-note"\), invoke: tauri, app: inTauri \}\)/);
+  assert.match(wall, /wireSplit\(\{ button: document\.getElementById\("split"\), note: document\.getElementById\("split-note"\), invoke: tauri, app: inTauri, follow \}\)/);
+  assert.match(wall, /import \{ follow \} from "\.\.\/ipc\.js";/);
   const main = read("../src-tauri/src/main.rs");
-  assert.match(main, /split::get_split_mode,\s*split::set_split_mode,/);
+  assert.match(main, /split::get_split_mode,\s*split::set_split_mode,\s*split::split_subscribe,/);
+  assert.match(main, /\.manage\(split::Follow::default\(\)\)/);
   const rs = read("../src-tauri/src/split.rs");
   assert.match(rs, /pub const SPLIT_KEY: &str = "wall_split";/);
   assert.match(rs, /crate::write_pref\(&app, SPLIT_KEY, Value::Bool\(saved_on\(on, said\.is_ok\(\)\)\)\);/, "saved the way wall density is, on only once a split lands");
   assert.match(rs, /crate::read_prefs\(&app\)/);
+});
+
+/** A follow stand-in: records each subscription; `send(m)` pushes m to the last one. */
+function follower() {
+  const subs = [];
+  const follow = (cmd, onMessage) => {
+    subs.push([cmd, onMessage]);
+    return Promise.resolve();
+  };
+  return { subs, follow, send: (m) => subs.at(-1)[1](m) };
+}
+
+test("when a window leaves the split the toggle turns off, the note says why, and nothing is called", async () => {
+  const button = control();
+  const note = { textContent: "", title: "" };
+  const { calls, invoke } = app({ saved: Promise.resolve(true) });
+  const f = follower();
+  await wireSplit({ button, note, invoke, app: true, follow: f.follow });
+  await settle();
+  assert.deepEqual(f.subs.map(([c]) => c), ["split_subscribe"], "subscribed once, after the saved choice loads");
+  assert.ok(pressed(button));
+  const said = "Split off: the fleet terminal was maximized, so both windows stay where they are.";
+  f.send({ on: false, note: said });
+  assert.ok(!pressed(button), "unchecked");
+  assert.equal(note.textContent, said);
+  assert.deepEqual(calls.map(([c]) => c), ["get_split_mode", "set_split_mode"], "no put-back is asked for");
+  button.click();
+  await settle();
+  assert.ok(pressed(button), "one click snaps them back");
+  assert.deepEqual(calls.at(-1), ["set_split_mode", { on: true }]);
+});
+
+test("a message that is not a leave changes nothing, and outside Windows nothing subscribes", async () => {
+  const button = control();
+  const note = { textContent: "", title: "" };
+  const f = follower();
+  await wireSplit({ button, note, invoke: app({ saved: Promise.resolve(true) }).invoke, app: true, follow: f.follow });
+  await settle();
+  for (const m of [null, {}, { on: true, note: "x" }, "off"]) f.send(m);
+  assert.ok(pressed(button));
+  const g = follower();
+  await wireSplit({ button: control(), note, invoke: app({ saved: Promise.reject("Split mode works on Windows only.") }).invoke, app: true, follow: g.follow });
+  assert.deepEqual(g.subs, [], "the toggle stays hidden, so nothing listens");
+});
+
+test("the app watches from each split, stops at each unsplit and at exit, and wires the leave to the wall", () => {
+  const rs = code(read("../src-tauri/src/split.rs"));
+  const fn = (name) => rs.slice(rs.indexOf(`pub fn ${name}(`), rs.indexOf("\n    }\n", rs.indexOf(`pub fn ${name}(`)));
+  const split = fn("split");
+  assert.match(split, /^pub fn split\(wall: isize\) -> Result<String, String> \{\s*let generation = watch::disarm\(\);/, "a split ends the last watch before it moves anything");
+  assert.match(split, /watch::arm\(generation, wall, terminal\);\s*Ok\(ON\.into\(\)\)/, "and watches only once it has landed");
+  assert.match(fn("unsplit"), /^pub fn unsplit\(wall: isize\) -> String \{\s*watch::disarm\(\);\s*if restore\(take\(\), wall\)/, "an unsplit stops watching before it puts anything back");
+  assert.match(rs, /win::when_left\(move \|note\| turned_off\(&to, note\)\);/, "a leave reaches the wall and prefs.json");
+  const main = code(read("../src-tauri/src/main.rs"));
+  assert.match(main, /if let tauri::RunEvent::Exit = event \{\s*split::quitting\(\);\s*\}/, "quitting stops the watch before Tauri hides the windows");
+  assert.match(rs, /pub fn quitting\(\) \{\s*#\[cfg\(windows\)\]\s*win::stop_watching\(\);\s*\}/);
+});
+
+test("the app sends the leave the wall listens for, and saves split off", () => {
+  const rs = read("../src-tauri/src/split.rs");
+  assert.match(rs, /json!\(\{ "on": false, "note": note \}\)/);
+  assert.match(rs, /crate::write_pref\(app, SPLIT_KEY, Value::Bool\(false\)\)/);
 });
 
 /** Rust source with its comments removed. */

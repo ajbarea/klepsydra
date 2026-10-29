@@ -821,6 +821,7 @@ fn with_state<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R
         .manage(phone::Phone::default())
         .manage(theme::Themes::default())
         .manage(theme::ThemeMenu::default())
+        .manage(split::Follow::default())
 }
 
 /// `KLEPSYDRA_NO_AUTOSTART` set to anything but empty: this copy leaves the
@@ -859,6 +860,7 @@ fn main() {
             fleet::open_wall,
             split::get_split_mode,
             split::set_split_mode,
+            split::split_subscribe,
             fleet::clear_session,
             fleet::ledger_today,
             fleet::reply_clip,
@@ -1032,8 +1034,14 @@ fn main() {
             fleet::start_queue(app.handle());
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while running klepsydra");
+        .build(tauri::generate_context!())
+        .expect("error while building klepsydra")
+        .run(|_, event| {
+            // Before Tauri hides every window on its way out.
+            if let tauri::RunEvent::Exit = event {
+                split::quitting();
+            }
+        });
 }
 
 #[cfg(test)]

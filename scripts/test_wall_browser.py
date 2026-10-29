@@ -1101,6 +1101,7 @@ window.__TAURI__ = { core: {
       return Promise.resolve();
     }
     if (cmd === 'queue_subscribe') { window.__queue = args.onMessage; return Promise.resolve(); }
+    if (cmd === 'split_subscribe') { window.__split = args.onMessage; return Promise.resolve(); }
     if (cmd === 'theme_subscribe') {
       window.__theme = args.onMessage;
       setTimeout(() => args.onMessage.onmessage(window.__savedTheme ?? 'kourai'), window.__themeDelay ?? 0);
@@ -4198,6 +4199,28 @@ def split_toggle(wall):
     calls = page.evaluate("window.__calls.filter(([c]) => c.endsWith('split_mode'))")
     ok = calls == [["get_split_mode", None], ["set_split_mode", {"on": True}]] and after[1] == "true" and after[4] == "ok"
     wall.check(ok, "a click calls set_split_mode and the toggle turns on once it answers", [calls, after])
+    # Shots of the bar for AJ (#159): KLEPSYDRA_SPLIT_SHOT=<dir>/<prefix>, -on.png and -off.png added.
+    shot = os.environ.get("KLEPSYDRA_SPLIT_SHOT")
+    # The toolbar row, from the left edge to past the toggle's note.
+    bar = """() => { const r = (id) => document.getElementById(id).getBoundingClientRect();
+      const b = r('split'), n = r('split-note'), top = Math.min(b.top, n.top) - 12;
+      return { x: 0, y: Math.max(0, top), width: innerWidth, height: Math.max(b.bottom, n.bottom) - top + 24 }; }"""
+    if shot:
+        page.screenshot(path=f"{shot}-on.png", clip=page.evaluate(bar))
+    said = "Split off: the fleet terminal was maximized, so both windows stay where they are."
+    page.evaluate("(n) => window.__split.onmessage({ on: false, note: n })", said)
+    page.wait_for_timeout(100)
+    left = page.evaluate(state)
+    calls = page.evaluate("window.__calls.filter(([c]) => c.endsWith('split_mode'))")
+    ok = left[1] == "false" and left[4] == said and len(calls) == 2
+    wall.check(ok, "a window leaving the split unchecks the toggle and says why, with nothing put back", [left, calls])
+    if shot:
+        page.screenshot(path=f"{shot}-off.png", clip=page.evaluate(bar))
+    page.click("#split")
+    page.wait_for_timeout(100)
+    again = page.evaluate(state)
+    calls = page.evaluate("window.__calls.filter(([c]) => c.endsWith('split_mode'))")
+    wall.check(again[1] == "true" and calls[-1] == ["set_split_mode", {"on": True}], "one click snaps it back", [again, calls])
     page.close()
 
 
