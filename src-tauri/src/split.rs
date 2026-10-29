@@ -1035,6 +1035,9 @@ mod win {
 
         #[test]
         fn a_maximized_then_minimized_window_is_placed_normal_without_the_focus() {
+            // The watcher tests' windows come and go; one of them could hold the
+            // foreground this test reads.
+            let _one = ONE.lock().unwrap_or_else(|e| e.into_inner());
             // As the app's threads are: physical pixels for both rects.
             unsafe {
                 SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
