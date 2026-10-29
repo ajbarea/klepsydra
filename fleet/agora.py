@@ -112,7 +112,13 @@ def in_pane(pane: str) -> bool:
             timeout=5,
         )
         root = int(got.stdout.strip())
-    except (OSError, ValueError, subprocess.TimeoutExpired):
+    except (OSError, ValueError, subprocess.TimeoutExpired) as e:
+        event(
+            logging.WARNING,
+            "post refused: the pane's process could not be read",
+            pane=pane,
+            error=type(e).__name__,
+        )
         return False
     pid = os.getpid()
     for _ in range(64):
@@ -137,16 +143,14 @@ def read_line(path: Path) -> str:
 
 def fleet_name(pane: str, sid: str) -> str | None:
     """The agent the fleet registry (panes.tsv) names for this pane and session,
-    or "heph" for the orchestrator's session on record."""
+    or "heph": the orchestrator's session on record, or (as fleet recover
+    decides) a session in the orchestrator's pane that no registry row names,
+    which a new Heph is until the resume service records him. None for a
+    session the fleet does not know."""
     if sid and read_line(STATE / "orchestrator.session") == sid:
         return "heph"
-    if (
-        not read_line(STATE / "orchestrator.session")
-        and read_line(STATE / "orchestrator.pane") == pane
-    ):
-        return "heph"
-    for row in read_line(STATE / "panes.tsv").splitlines():
-        cols = row.split("\t")
+    rows = [r.split("\t") for r in read_line(STATE / "panes.tsv").splitlines()]
+    for cols in rows:
         if (
             len(cols) >= 4
             and cols[0] == pane
@@ -154,6 +158,9 @@ def fleet_name(pane: str, sid: str) -> str | None:
             and re.fullmatch(r"[\w.-]{1,64}", cols[1])
         ):
             return cols[1]
+    named = any(len(c) >= 4 and c[3] == sid for c in rows)
+    if not named and read_line(STATE / "orchestrator.pane") == pane:
+        return "heph"
     return None
 
 
@@ -164,7 +171,7 @@ def session() -> dict | None:
     socket = os.environ.get("TMUX", "").split(",")[0]
     if not re.fullmatch(r"%\d{1,9}", pane) or Path(socket).name != FLEET_SOCK:
         return None
-    if os.environ.get("AGORA_SKIP_PANE_CHECK") != "1" and not in_pane(pane):
+    if not in_pane(pane):
         return None
     found = []
     for f in (KLEPSYDRA_DIR / "fleet").glob("*.json"):
@@ -289,6 +296,11 @@ def post(kind: str, text: str, link: str | None) -> int:
     s = session()
     if s is None:
         say("Post from a fleet session's own shell: no live session runs in this pane.")
+        return 2
+    if not s.get("fleet_name"):
+        say(
+            "Only fleet agents post here: the fleet registry does not name this session."
+        )
         return 2
     if secret_in(flat):
         event(

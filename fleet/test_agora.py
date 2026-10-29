@@ -32,6 +32,13 @@ class Agora(unittest.TestCase):
             )
         )
         (self.tmp / "state").mkdir()
+        self.bin = self.tmp / "bin"
+        self.bin.mkdir()
+        tmux = self.bin / "tmux"
+        tmux.write_text(
+            '#!/usr/bin/env bash\nif [[ $FAKE_TMUX_PID == parent ]]; then echo "$PPID"; else echo "$FAKE_TMUX_PID"; fi\n'
+        )
+        tmux.chmod(0o755)
         self.live(voice=None)
         self.register("%4", "techne-evals", SID)
         (self.k / "picks.json").write_text(json.dumps({SID: "af_nova"}))
@@ -61,7 +68,7 @@ class Agora(unittest.TestCase):
         pane="%4",
         socket="/tmp/tmux-1000/klepsydra",
         gitleaks="none",
-        skip="1",
+        tmux_pid="parent",
     ):
         env = os.environ | {
             "KLEPSYDRA_DIR": str(self.k),
@@ -70,7 +77,10 @@ class Agora(unittest.TestCase):
             "TMUX": f"{socket},1,0",
             "TMUX_PANE": pane,
             "FLEET_GITLEAKS": gitleaks,
-            "AGORA_SKIP_PANE_CHECK": skip,
+            # A fake tmux on PATH names the pane's process: agora.py itself
+            # (its parent), or pid 1, a pane the poster does not run in.
+            "PATH": f"{self.bin}:{os.environ['PATH']}",
+            "FAKE_TMUX_PID": tmux_pid,
         }
         r = subprocess.run(
             [sys.executable, "-I", str(HERE / "agora.py"), *args],
@@ -138,6 +148,7 @@ class Agora(unittest.TestCase):
         self.live(
             sid="22222222-2222-4333-8444-555555555555", pane="%5", voice="bf_emma"
         )
+        self.register("%5", "sphragis", "22222222-2222-4333-8444-555555555555")
         self.assertEqual(self.run_agora("post", "x", pane="%5")[1], "Posted as Mneme.")
 
     def test_a_relaunched_agent_is_still_held_to_one_post_an_hour(self):
@@ -149,7 +160,7 @@ class Agora(unittest.TestCase):
         self.assertEqual(self.run_agora("post", "again", pane="%9", now=NOW + 60)[0], 4)
 
     def test_a_post_from_outside_the_pane_it_names_is_refused(self):
-        self.assertEqual(self.run_agora("post", "spoofed", skip="0")[0], 2)
+        self.assertEqual(self.run_agora("post", "spoofed", tmux_pid="1")[0], 2)
         self.assertEqual(self.posts(), [])
 
     def test_a_scan_with_no_verdict_refuses_and_says_why_in_the_log(self):
@@ -160,6 +171,21 @@ class Agora(unittest.TestCase):
         log = (self.tmp / "state" / "log" / "agora.log").read_text()
         self.assertIn('"rc": 126', log)
         self.assertNotIn("fine text", log)
+
+    def test_a_session_the_registry_does_not_name_cannot_post(self):
+        other = "44444444-2222-4333-8444-555555555555"
+        self.live(sid=other, pane="%6")
+        self.assertEqual(self.run_agora("post", "who am i", pane="%6")[0], 2)
+        self.assertEqual(self.posts(), [])
+
+    def test_a_new_heph_in_his_pane_posts_as_heph_before_he_is_recorded(self):
+        (self.tmp / "state" / "orchestrator.session").write_text("old-session\n")
+        (self.tmp / "state" / "orchestrator.pane").write_text("%0\n")
+        new = "55555555-2222-4333-8444-555555555555"
+        self.live(sid=new, pane="%0")
+        self.assertEqual(
+            self.run_agora("post", "back", pane="%0")[1], "Posted as Hephaestus."
+        )
 
     def test_a_malformed_line_is_skipped_and_controls_are_stripped(self):
         (self.k / "agora").mkdir()
