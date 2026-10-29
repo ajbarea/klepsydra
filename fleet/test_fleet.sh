@@ -1017,6 +1017,26 @@ check "review 3: a relaunch whose brief never started keeps the old pane, points
   "$rc $(cut -f1,4,6 "$REGISTRY") $(grep -c 'SUBMIT /exit' "$work/relnew.log") $(grep -c '^SUBMIT' "$work/relold.log")" "1 $p	$SID	$work/cfg-a 1 0"
 t kill-window -t "$p"; : >"$REGISTRY"
 
+echo "CI reds typed into the agent on the branch (#180)"
+: >"$FLEET_LOG"; mkdir -p "$FLEET_STATE/inbox/cia"
+printf 'CI red in r: wf1 failed on feat/x: boom. https://x/1' >"$FLEET_STATE/inbox/cia/r-1.txt"
+touch -d '-2 min' "$FLEET_STATE/inbox/cia/r-1.txt"
+printf 'CI red in r: wf2 failed on feat/x: bang. https://x/2' >"$FLEET_STATE/inbox/cia/r-2.txt"
+p=$(pane cia '{"above":["⏺ Done. done 11:50 AM"],"busy":true}'); settle
+printf '%s\tcia\t%s\n' "$p" "$work/brief.src" >"$REGISTRY"
+resume "$noon"
+check "not into a running turn" "$(grep -c '^SUBMIT' "$work/cia.log") $(find "$FLEET_STATE/inbox/cia" -name '*.txt' | wc -l)" "0 2"
+state cia '{"above":["⏺ Done. done 11:50 AM"],"rc":"on"}'
+t send-keys -t "$p" -l "AJ: wait"; settle
+resume "$((noon + 60))"; resume "$((noon + 120))"
+check "nor over AJ's line" "$(grep -c '^SUBMIT' "$work/cia.log")" "0"
+state cia '{"above":["⏺ Done. done 11:50 AM"],"rc":"on","clear":true}'
+resume "$((noon + 180))"; resume "$((noon + 240))"
+check "at an idle, empty prompt the oldest goes in, and its file goes" \
+  "$(grep '^SUBMIT' "$work/cia.log") $(ls "$FLEET_STATE/inbox/cia")" "SUBMIT CI red in r: wf1 failed on feat/x: boom. https://x/1 r-2.txt"
+check "logged with the pane and the agent" "$(jq -r 'select(.message == "CI alert delivered") | [.pane, .name, .alert, .result] | join(" ")' "$FLEET_LOG")" "$p cia r-1.txt started"
+t kill-window -t "$p"; : >"$REGISTRY"; rm -rf -- "${FLEET_STATE:?}/inbox"
+
 echo "two accounts: the second folder follows the first"
 src=$work/sync-src dst=$work/sync-dst
 mkdir -p "$src/plugins/data" "$src/skills/one" "$src/skills/synced" "$src/projects/p" "$src/agents" "$dst"

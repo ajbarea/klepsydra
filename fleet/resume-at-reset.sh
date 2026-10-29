@@ -18,7 +18,9 @@
 # after a long idle. Each role prefers an account (#175): workers the first
 # folder in FLEET_ACCOUNTS, Heph the first in FLEET_HEPH_ACCOUNTS; a pane on
 # another moves back once its preferred one has FLEET_BACK_ROOM_PCT room, at a
-# finished turn and an empty prompt. --once runs one pass. Each decision is one line in the fleet log; each pass touches
+# finished turn and an empty prompt. A CI red the CI watch routed to an agent
+# (inbox/NAME/*.txt) is typed into its pane at an idle, empty prompt, oldest
+# first. --once runs one pass. Each decision is one line in the fleet log; each pass touches
 # resume.beat for `fleet doctor`.
 set -u
 FLEET_TARGET=fleet::resume
@@ -378,6 +380,22 @@ one() { # PANE
       flog WARN "could not move back to the preferred account; trying again in 15 min" pane="$p" to="$pref" orchestrator="$orch" why="$rc"
       (( rc == 1 )) || moved "$p"
       (( rc == 5 )) && back_hold "$pref_id"
+    fi
+    return
+  fi
+
+  # A CI red on this agent's branch (#180): its inbox, typed in at an idle,
+  # empty prompt (never over AJ's line or into a running turn), oldest first.
+  local inbox_name msg
+  if (( !orch )) && [[ -z $limit && -z ${due[$p]:-} ]] && inbox_name=$(reg_field "$p" 2) && [[ -n $inbox_name ]] &&
+    msg=$(find "$FLEET_STATE/inbox/$inbox_name" -maxdepth 1 -name '*.txt' -type f -printf '%T@ %p\n' 2>/dev/null | sort -n | head -1 | cut -d' ' -f2-) &&
+    [[ -n $msg ]] && idle_empty "$s"; then
+    got=$(deliver "$p" "$msg")
+    if [[ $got == not-delivered ]]; then
+      flog WARN "CI alert not delivered; trying again next pass" pane="$p" name="$inbox_name" alert="${msg##*/}"
+    else
+      flog INFO "CI alert delivered" pane="$p" name="$inbox_name" alert="${msg##*/}" result="$got"
+      rm -f -- "${msg:?}"
     fi
     return
   fi

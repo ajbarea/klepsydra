@@ -1,7 +1,9 @@
 """Tests for ci_watch.py with a fake GitHub. Run: python3 -I fleet/test_ci_watch.py"""
 
 import http.server
+import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -18,6 +20,7 @@ os.environ |= {
     "FLEET_STATE": str(TMP / "state"),
     "KLEPSYDRA_DIR": str(TMP / "k"),
     "FLEET_QUEUE": str(TMP / "q.md"),
+    "FLEET_BOOT_ID": str(TMP / "boot"),
 }
 (TMP / "k").mkdir()
 sys.path.insert(0, str(HERE))
@@ -174,9 +177,13 @@ class Poll(unittest.TestCase):
 
         self.patch = mock.patch.object(ci_watch, "triage", triage)
         self.patch.start()
+        # These cases read the queue line, written at escalation: at once here.
+        self.escalate = mock.patch.object(ci_watch, "ESCALATE_S", 0)
+        self.escalate.start()
 
     def tearDown(self):
         self.patch.stop()
+        self.escalate.stop()
 
     def test_a_new_red_run_is_triaged_once_saved_at_once_and_queued_once(self):
         known, saves = {}, []
@@ -340,6 +347,207 @@ class Poll2(unittest.TestCase):
             ci_watch.sweep("o", ["r"], Fake(runs, pulls=[pr(4, "p")]), swept)
         self.assertEqual(
             self.triaged, [10], "the PR's run is not swept, and run 10 only once"
+        )
+
+
+class Route(unittest.TestCase):
+    """Reds go to the agent on the branch or to Heph; AJ only on escalation (#180)."""
+
+    def setUp(self):
+        Poll.setUp(self)
+        self.escalate.stop()
+        self.escalate = mock.patch.object(ci_watch, "ESCALATE_S", 1800)
+        self.escalate.start()
+        state = TMP / "state"
+        for f in (state / "ci" / "alerts.jsonl", state / "orchestrator.pane"):
+            f.unlink(missing_ok=True)
+        shutil.rmtree(state / "inbox", ignore_errors=True)
+        shutil.rmtree(TMP / "k" / "fleet", ignore_errors=True)
+        (TMP / "k" / "fleet").mkdir(parents=True)
+        (TMP / "boot").write_text("boot-1\n")
+        (state / "panes.tsv").write_text("%4\tklep\t/b/task-klep.src\tsid\t/w\t\n")
+
+    tearDown = Poll.tearDown
+
+    def session(self, name, pane, branch, boot="boot-1", ended=None):
+        (TMP / "k" / "fleet" / f"{name}.json").write_text(
+            json.dumps(
+                {
+                    "tmux": {"pane": pane},
+                    "host": {"boot": boot},
+                    "ended": ended,
+                    "where": {"repo": "r", "branch": branch},
+                }
+            )
+        )
+
+    def alerts(self):
+        path = TMP / "state" / "ci" / "alerts.jsonl"
+        if not path.exists():
+            return []
+        return [json.loads(ln) for ln in path.read_text().splitlines()]
+
+    def inbox(self):
+        return sorted(
+            p.relative_to(TMP / "state" / "inbox").as_posix()
+            for p in (TMP / "state" / "inbox").glob("*/*.txt")
+        )
+
+    def test_a_red_on_an_agents_pr_branch_goes_to_its_inbox_and_heph_log_not_aj(self):
+        self.session("s1", "%4", "feat/x")
+        known = {}
+        ci_watch.poll(
+            "o",
+            ["r"],
+            Fake([run(5, branch="feat/x", sha="p")], pulls=[pr(7, "p")]),
+            known,
+        )
+        self.assertEqual(self.inbox(), ["klep/r-5.txt"])
+        text = (TMP / "state" / "inbox" / "klep" / "r-5.txt").read_text()
+        self.assertIn("CI red in r: wf1 failed on feat/x: test_x fails (a.py:3).", text)
+        self.assertIn("Report: r.md.", text)
+        self.assertEqual(
+            [(a["kind"], a["wake"], a["agent"]) for a in self.alerts()],
+            [("agent", False, "klep")],
+        )
+        self.assertNotIn("ci:r:5", (TMP / "q.md").read_text(), "nothing for AJ yet")
+        ci_watch.poll(
+            "o",
+            ["r"],
+            Fake([run(5, branch="feat/x", sha="p")], pulls=[pr(7, "p")]),
+            known,
+        )
+        self.assertEqual(len(self.alerts()), 1, "routed once")
+
+    def test_a_red_on_main_wakes_heph(self):
+        self.session("s1", "%4", "main")
+        ci_watch.poll("o", ["r"], Fake([run(5)]), {})
+        self.assertEqual(self.inbox(), [], "main is Heph's, even with an agent on it")
+        self.assertEqual(
+            [(a["kind"], a["wake"]) for a in self.alerts()], [("heph", True)]
+        )
+
+    def test_a_pr_branch_with_no_live_agent_on_this_boot_goes_to_heph(self):
+        pulls = [pr(7, "p")]
+        for case in (
+            lambda: None,
+            lambda: self.session("s1", "%4", "feat/x", boot="boot-0"),
+            lambda: self.session("s1", "%4", "feat/x", ended={"at": 1}),
+            lambda: self.session("s1", "%9", "feat/x"),
+        ):
+            shutil.rmtree(TMP / "k" / "fleet")
+            (TMP / "k" / "fleet").mkdir()
+            (TMP / "state" / "ci" / "alerts.jsonl").unlink(missing_ok=True)
+            case()
+            ci_watch.poll(
+                "o", ["r"], Fake([run(5, branch="feat/x", sha="p")], pulls=pulls), {}
+            )
+            self.assertEqual(
+                (self.inbox(), [a["kind"] for a in self.alerts()]), ([], ["heph"])
+            )
+
+    def test_the_orchestrators_pane_or_two_agents_on_one_branch_go_to_heph(self):
+        (TMP / "state" / "panes.tsv").write_text(
+            "%4\tklep\tb\ts\t/w\t\n%5\ttechne\tb\ts\t/w\t\n"
+        )
+        self.session("s1", "%4", "feat/x")
+        self.session("s2", "%5", "feat/x")
+        pulls = [pr(7, "p")]
+        ci_watch.poll(
+            "o", ["r"], Fake([run(5, branch="feat/x", sha="p")], pulls=pulls), {}
+        )
+        self.assertEqual(self.inbox(), [], "two agents on one branch")
+        (TMP / "k" / "fleet" / "s2.json").unlink()
+        (TMP / "state" / "orchestrator.pane").write_text("%4\n")
+        ci_watch.poll(
+            "o", ["r"], Fake([run(6, branch="feat/x", sha="p")], pulls=pulls), {}
+        )
+        self.assertEqual(self.inbox(), [], "Heph's own pane")
+
+    def test_still_red_after_escalate_s_wakes_heph_to_push_once_and_queues_once(self):
+        self.session("s1", "%4", "feat/x")
+        known, gh = {}, Fake([run(5, branch="feat/x", sha="p")], pulls=[pr(7, "p")])
+        ci_watch.poll("o", ["r"], gh, known)
+        known["r:5"]["routed"]["at"] -= 1800
+        ci_watch.poll("o", ["r"], gh, known)
+        ci_watch.poll("o", ["r"], gh, known)
+        esc = [a for a in self.alerts() if a["kind"] == "escalate"]
+        self.assertEqual([(a["wake"], a["taken_by"]) for a in esc], [(True, "klep")])
+        self.assertIn("push AJ once", esc[0]["ask"])
+        self.assertEqual((TMP / "q.md").read_text().count("ci:r:5"), 1)
+
+    def test_a_red_cleared_before_escalate_s_never_reaches_aj(self):
+        known = {}
+        ci_watch.poll("o", ["r"], Fake([run(5)]), known)
+        known["r:5"]["routed"]["at"] -= 1800
+        ci_watch.poll(
+            "o",
+            ["r"],
+            Fake([run(5), run(6, conclusion="success", at="2026-10-28T11:00:00Z")]),
+            known,
+        )
+        self.assertEqual([a["kind"] for a in self.alerts()], ["heph"])
+        self.assertNotIn("ci:r:5", (TMP / "q.md").read_text())
+
+    def test_a_red_queued_before_routing_existed_is_not_routed_again(self):
+        known = {"r:5": {"failing": {}, "triage": {"state": "done"}, "queued": True}}
+        ci_watch.poll("o", ["r"], Fake([run(5)]), known)
+        self.assertEqual((self.alerts(), self.triaged), ([], []))
+
+    def test_the_watcher_wakes_on_heph_lines_only_and_never_twice(self):
+        state = TMP / "state"
+        env = os.environ | {
+            "FLEET_SOCK": f"ci-route-{os.getpid()}",
+            "WATCH_TICK": "0.1",
+        }
+        (state / "ci" / "alerts.seen").unlink(missing_ok=True)
+        (state / "ci").mkdir(parents=True, exist_ok=True)
+        (state / "ci" / "alerts.jsonl").write_text(
+            '{"wake": true, "kind": "heph", "repo": "r", "branch": "old", "text": "old"}\n'
+        )
+
+        def watch():
+            return subprocess.run(
+                ["bash", str(HERE / "watch-panes.sh")],
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=10,
+            ).stdout.strip()
+
+        with self.assertRaises(subprocess.TimeoutExpired):
+            subprocess.run(
+                ["bash", str(HERE / "watch-panes.sh")],
+                env=env,
+                capture_output=True,
+                timeout=1.5,
+            )
+        self.session("s1", "%4", "feat/x")
+        known = {}
+        ci_watch.poll(
+            "o",
+            ["r"],
+            Fake([run(5, branch="feat/x", sha="p")], pulls=[pr(7, "p")]),
+            known,
+        )
+        ci_watch.poll("o", ["r"], Fake([run(6, workflow=2)]), known)
+        self.assertEqual(
+            watch(),
+            "CI HEPH r main: CI red in r: wf2 failed on main: test_x fails (a.py:3). "
+            "https://github.com/o/r/actions/runs/6 Report: r.md.",
+            "the old line and the agent's line wake nobody",
+        )
+        known["r:5"]["routed"]["at"] -= 1800
+        ci_watch.poll(
+            "o",
+            ["r"],
+            Fake([run(5, branch="feat/x", sha="p")], pulls=[pr(7, "p")]),
+            known,
+        )
+        self.assertIn("CI ESCALATE r feat/x:", out := watch())
+        self.assertIn(
+            "Taken by klep. Next: still red 30 min after it was routed: push AJ once",
+            out,
         )
 
 

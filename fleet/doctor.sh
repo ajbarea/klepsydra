@@ -141,6 +141,14 @@ else
   report ok "preferred accounts" "every pane on its role's preferred account, or that one is short of room"
 fi
 
+# CI reds routed to an agent (#180) wait in its inbox for an idle prompt; an hour is too long.
+stale_inbox=$(find "$FLEET_STATE/inbox" -mindepth 2 -maxdepth 2 -name '*.txt' -type f -mmin +60 -printf '%P ' 2>/dev/null)
+if [[ -n $stale_inbox ]]; then
+  report warn "CI inbox" "undelivered over an hour (the agent never sat idle): ${stale_inbox% }"
+else
+  report ok "CI inbox" "nothing waiting over an hour"
+fi
+
 # Processes running watch-panes.sh itself (bash, then the script), not a shell that names it.
 watchers=$($PS -eo args= 2>/dev/null | awk '$1 ~ /(^|\/)bash$/ && $2 ~ /(^|\/)watch-panes\.sh$/ { $1 = $2 = ""; sub(/^ +/, ""); printf "%s;", $0 }')
 if [[ -n $watchers ]]; then
