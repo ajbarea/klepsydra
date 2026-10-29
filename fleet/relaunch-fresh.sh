@@ -9,7 +9,7 @@ here=$(dirname "$(readlink -f "$0")")
 . "$here/lib.sh"
 (( $# == 4 )) || { err "usage: relaunch-fresh.sh PANE NAME BRIEF HINT"; exit 2; }
 p=$1 name=$2 brief=$3 hint=$4
-sid=$(reg_field "$p" 4)
+sid=$(reg_field "$p" 4) cfg=$(reg_field "$p" 6)
 if ! pane_runs "$p" "$sid"; then
   flog WARN "relaunch refused: the pane no longer runs its registered session" pane="$p" name="$name"
   err "$p does not run $name's registered session (a stale panes.tsv row?)"
@@ -22,7 +22,7 @@ if [[ -n $(input_text "$(screen "$p")") ]]; then
 fi
 txt="$FLEET_STATE/fresh-$name-$(date +%Y%m%d-%H%M).src"
 { fresh_preamble "${FLEET_WHY:-saved its state and stopped so another brief could use its slot}"; printf '\n\nResume hint: %s\n\n' "$hint"; cat "$brief"; } >"$txt"
-out=$(bash "$here/launch.sh" "$name" "$txt")
+out=$(bash "${LAUNCH:-$here/launch.sh}" "$name" "$txt")
 echo "$out"
 new=$(sed -n 's/^pane=\(%[0-9]*\).*/\1/p' <<<"$out" | head -1)
 if [[ -z $new ]]; then
@@ -31,7 +31,10 @@ if [[ -z $new ]]; then
 fi
 got=$(sed -n 's/.*brief=\([A-Za-z-]*\).*/\1/p' <<<"$out" | head -1)
 if [[ $got != started ]]; then
-  flog ERROR "relaunch: the new session's brief did not start; both are left running" old_pane="$p" new_pane="$new" name="$name" brief="$got"
+  # As the resume service's fresh(): the new pane goes and the row points at the old one again.
+  flog ERROR "relaunch: the new session's brief did not start; the old pane stays and the new one goes" old_pane="$p" new_pane="$new" name="$name" brief="$got"
+  retire "$new" interrupt
+  with_registry set_pane "$new" "$p" "$sid" "$cfg"
   exit 1
 fi
 if pane_runs "$p" "$sid" && idle_empty "$(screen "$p")" && type_exactly "$p" "/exit"; then

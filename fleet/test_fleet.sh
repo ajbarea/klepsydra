@@ -758,6 +758,34 @@ check "review 2C: a new pane whose brief sits unsent in its box is cleared and e
 t kill-window -t "$p"; : >"$REGISTRY"
 logout a; logout b; reading a Personal 40 1000; rm -f "$KLEPSYDRA_DIR/accounts/b/s.json"
 
+echo "two accounts: review round 3"
+st() { state abl "{\"above\":$1}"; screen "$abl"; }
+abl=$(pane abl '{"above":["x"]}'); settle
+check "the line the last limit answered" "$(answered_by_limit "$(st "[\"⏺ ok\",\"❯ AJ: fix the README\",\"$LIMIT\"]")")" "AJ: fix the README"
+check "review 3: not a line an earlier limit answered and the session acted on since" \
+  "[$(answered_by_limit "$(st "[\"❯ AJ: fix the README\",\"$LIMIT\",\"❯ AJ: go on\",\"⏺ working on it\",\"$LIMIT\"]")")]" "[]"
+check "review 3: not the service's own continue message" \
+  "[$(answered_by_limit "$(st "[\"⏺ ok\",\"❯ The usage limit has reset. Continue from where you stopped\",\"$LIMIT\"]")")]" "[]"
+check "review 3: not a brief that hit the limit" \
+  "[$(answered_by_limit "$(st "[\"❯ Fresh start: a previous agent with the brief below\",\"$LIMIT\"]")")][$(answered_by_limit "$(st "[\"❯ [Pasted text #1 +40 lines]\",\"$LIMIT\"]")")]" "[][]"
+t kill-window -t "$abl"
+
+: >"$FLEET_LOG"
+p=$(pane relold '{"above":["idle"]}'); settle
+live "$p"
+printf '%s\trel\t%s\t%s\t/w\t%s\n' "$p" "$work/brief.src" "$SID" "$work/cfg-a" >"$REGISTRY"
+printf '%s' '{"above":["Claude Code"],"input":"the brief, never sent"}' >"$work/relnew.json"; : >"$work/relnew.log"
+cat >"$work/launch-rel.sh" <<EOF
+#!/usr/bin/env bash
+new=\$(tmux -L "$FLEET_SOCK" new-window -d -P -F '#{pane_id}' -t fleet: "python3 -I $fake $work/relnew.json $work/relnew.log")
+sed -i "s|^$p\t\(.*\)\t$work/cfg-a\$|\$new\t\1\t$work/cfg-b|" "$REGISTRY"
+echo "pane=\$new session=x account=$work/cfg-b avail=1MiB brief=NOT-DELIVERED"
+EOF
+LAUNCH="$work/launch-rel.sh" bash "$here/relaunch-fresh.sh" "$p" rel "$work/brief.src" "hint" >/dev/null 2>&1; rc=$?
+check "review 3: a relaunch whose brief never started keeps the old pane, points the row back and exits the new one" \
+  "$rc $(cut -f1,4,6 "$REGISTRY") $(grep -c 'SUBMIT /exit' "$work/relnew.log") $(grep -c '^SUBMIT' "$work/relold.log")" "1 $p	$SID	$work/cfg-a 1 0"
+t kill-window -t "$p"; : >"$REGISTRY"
+
 echo "two accounts: the second folder follows the first"
 src=$work/sync-src dst=$work/sync-dst
 mkdir -p "$src/plugins/data" "$src/skills/one" "$src/skills/synced" "$src/projects/p" "$src/agents" "$dst"

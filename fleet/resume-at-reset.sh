@@ -88,40 +88,6 @@ submit() { # PANE
   if wait_for "$1" "${FLEET_START_WAIT:-30}" started; then echo yes; else echo no; fi
 }
 
-# /exit the claude in PANE and close the pane once it has gone, or after 30 s.
-# With INTERRUPT (a pane this pass just launched, busy on its brief), its turn
-# is stopped first. A pane it cannot type /exit into is left running.
-retire() { # PANE [INTERRUPT]
-  if [[ ${2:-} == interrupt ]] && busy "$(screen "$1")"; then
-    t send-keys -t "$1" Escape
-    wait_for "$1" 15 not_busy || true
-    # Interrupted before any reply, Claude Code puts the brief back in the box;
-    # one C-c clears a box with text in it (an empty box would ask to exit).
-    holds_input "$(screen "$1")" && t send-keys -t "$1" C-c
-    wait_for "$1" 5 idle_empty || true
-  elif [[ ${2:-} == interrupt ]] && holds_input "$(screen "$1")"; then
-    # A brief that was pasted but never sent sits in the box: clear it, or /exit cannot go in.
-    t send-keys -t "$1" C-c
-    wait_for "$1" 5 idle_empty || true
-  fi
-  if ! type_exactly "$1" "/exit"; then
-    flog ERROR "could not type /exit; the pane is left running" pane="$1"
-    return 1
-  fi
-  t send-keys -t "$1" Enter
-  for _ in $(seq 30); do fleet_panes | grep -qx "$1" || return 0; sleep 1; done
-  t kill-pane -t "$1" 2>/dev/null
-}
-
-# Point the registry row launch.sh moved to NEW back at PANE, session SID
-# and config folder CFG (none: the column is left empty, the default).
-set_pane() { # NEW PANE SID CFG
-  local tmp
-  tmp=$(mktemp "$REGISTRY.XXXXXX") || return 1
-  awk -F'\t' -v OFS='\t' -v n="$1" -v p="$2" -v sid="$3" -v cfg="${4:-}" \
-    '$1 == n { $1 = p; $4 = sid; if (NF >= 6 || cfg != "") $6 = cfg } { print }' "$REGISTRY" >"$tmp" && mv -f -- "$tmp" "$REGISTRY"
-}
-
 # Replace PANE (registry NAME, BRIEF) with a fresh session from its brief,
 # on config folder ACCOUNT when given (else launch.sh's pick), WHY in its
 # preamble; prints the new pane. NOTE, what AJ typed at the pane, goes into the
@@ -206,18 +172,6 @@ sent_already() { # SCREEN LINE
 
 forget() { unset "due[$1]" "seen_on[$1]" "note[$1]"; }
 
-# The prompt the limit answered, when the limit is the only reply to it: the
-# "❯ ..." lines (a long one wraps) right above the limit message in SCREEN.
-# A line AJ sent between two passes is only ever seen here.
-answered_by_limit() { # SCREEN
-  split_screen "$1"
-  grep -v '^[[:space:]]*$' <<<"$ABOVE" | awk -v re="$LIMIT_RE" '
-    $0 ~ re { if (said != "") hit = said; said = ""; inp = 0; next }
-    /^❯ / { said = substr($0, length("❯ ") + 1); inp = 1; next }
-    inp && /^  [^ ⎿]/ { sub(/^ +/, ""); said = said " " $0; next }
-    { said = ""; inp = 0 }
-    END { if (hit != "") print hit }' | tail -1
-}
 
 one() { # PANE
   local p=$1 s ps typed orch=0 armed at limit reset reg name brief idle new got tmp

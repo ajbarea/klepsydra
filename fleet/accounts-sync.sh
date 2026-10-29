@@ -87,7 +87,7 @@ copy() { # SRC-FILE NAME
 [[ -d $SRC ]] || { err "no Claude Code config at $SRC"; exit 2; }
 for DST in "${dsts[@]}"; do
   d=$(readlink -f -- "$DST")
-  if [[ $d == "$SRC_REAL" || $d == "$SRC_REAL"/* || $SRC_REAL == "$d"/* ]]; then
+  if [[ $d == / || $d == "$SRC_REAL" || $d == "$SRC_REAL"/* || $SRC_REAL == "$d"/* ]]; then
     err "the second folder is, holds or sits in the first: $DST"
     exit 2
   fi
