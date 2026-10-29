@@ -40,6 +40,10 @@ fill_ids() {
 sc daemon-reload
 # One unit at a time, so a guard (wsl-mem-watch) is down only for its own swap.
 for u in "${UNITS[@]}"; do
+  # A service already running from its installed file runs the code it read at
+  # its start: after a pull it is restarted, or it would keep the old scripts.
+  installed_running=0
+  [[ $u == *.service && $(sc show -p Transient --value "$u" 2>/dev/null) != yes ]] && sc is-active --quiet "$u" 2>/dev/null && installed_running=1
   # A timer's service may be transient too; a failed transient one needs reset-failed.
   for part in "$u" "${u%.timer}.service"; do
     [[ $(sc show -p Transient --value "$part" 2>/dev/null) == yes ]] || continue
@@ -57,6 +61,9 @@ for u in "${UNITS[@]}"; do
     echo "FAIL $u: $out"
     failed=1
     continue
+  fi
+  if (( installed_running )); then
+    sc restart "$u" 2>/dev/null && flog INFO "unit restarted on the installed scripts" unit="$u"
   fi
   enabled=$(sc is-enabled "$u" 2>/dev/null) active=$(sc is-active "$u" 2>/dev/null)
   if [[ $enabled == enabled && $active == active ]]; then

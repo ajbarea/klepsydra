@@ -423,6 +423,12 @@ check "a name that is not a plain slug is refused" "$(bash "$here/brief.sh" '../
 check "--check passes a current brief" "$(bash "$here/brief.sh" --check "$out" 2>/dev/null; echo $?)" "0"
 sed 's/^Usage cap: run at most two/Usage cap: run at most three/' "$out" >"$FLEET_STATE/task-old.src"
 check "--check names a brief whose shared rules drifted" "$(bash "$here/brief.sh" --check "$FLEET_STATE/task-old.src" "$out" 2>/dev/null)" "stale: task-old.src"
+printf 'Last item (AJ 10-28): ship the thing.\n' >>"$FLEET_STATE/task-old.src"
+bash "$here/brief.sh" --refresh "$FLEET_STATE/task-old.src" >/dev/null 2>&1
+check "--refresh brings the rules up to date, keeping the body and a line added after them" \
+  "$(head -2 "$FLEET_STATE/task-old.src" | tr '\n' '|')$(grep -c '^Usage cap: run at most two' "$FLEET_STATE/task-old.src") $(grep -c 'at most three' "$FLEET_STATE/task-old.src") $(grep -c '^Last item (AJ 10-28): ship the thing.$' "$FLEET_STATE/task-old.src") $(bash "$here/brief.sh" --check "$FLEET_STATE/task-old.src" >/dev/null 2>&1; echo $?)" \
+  "Do X.|Then Y.|1 0 1 0"
+check "the tail carries the team-ceremony rule (AJ 10-29)" "$(grep -c '^Team ceremony in every repo' "$here/brief-tail.md")" "1"
 
 echo "doctor"
 mkdir -p "$KLEPSYDRA_DIR/fleet" "$work/bin"
@@ -538,7 +544,11 @@ case $cmd in
     fi
     ;;
   is-enabled) [[ -e $SC/$1.enabled ]] && echo enabled || echo disabled ;;
-  is-active) [[ -e $SC/$1.active ]] && echo active || echo inactive ;;
+  is-active) [[ $1 == --quiet ]] && shift && { [[ -e $SC/$1.active ]]; exit; }; [[ -e $SC/$1.active ]] && echo active || echo inactive ;;
+  restart)
+    touch "$SC/$1.active" "$SC/$1.restarted"
+    [[ $1 == fleet-resume-at-reset.service ]] && jq -nc --arg ts "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)" '{ts: $ts, level: "INFO", target: "fleet::resume", message: "resume service started"}' >>"$FLEET_LOG"
+    ;;
 esac
 SC
 chmod +x "$work/bin/systemctl"
@@ -559,6 +569,10 @@ ok   fleet-ci-watch.service: enabled and active
 ok   the resume service logged its start
 rc=0"
 check "no transient unit is left" "$(find "$SC" -name '*.transient' | wc -l)" "0"
+check "a first cut-over restarts nothing it just started" "$(find "$SC" -name '*.restarted' | wc -l)" "0"
+out=$(SC_SILENT=1 cutover); code=$?
+check "10-29: a second cut-over (after a pull) restarts the running installed services, and the resume service logs its start" \
+  "$code $(find "$SC" -name '*.restarted' -printf '%f\n' | sort | tr '\n' ' ')" "0 fleet-ci-watch.service.restarted fleet-resume-at-reset.service.restarted "
 check "each stop is logged" "$(jq -r 'select(.message | startswith("transient unit stopped")) | .unit' "$FLEET_LOG" | sort | tr '\n' ' ')" \
   "fleet-memfrag-log.service fleet-memfrag-log.timer fleet-resume-at-reset.service "
 rm -f -- "${SC:?}"/*
@@ -810,7 +824,11 @@ mkdir -p "$dst/agents"; printf 'its own\n' >"$dst/agents/x.md"
 acsync() { FLEET_DEFAULT_CONFIG="$src" FLEET_DEFAULT_JSON="$src/.claude.json-default" bash "$here/accounts-sync.sh" "$@" 2>/dev/null; }
 check "--check before the first sync finds differences" "$(acsync --check "$dst" >/dev/null; echo $?)" "1"
 acsync "$dst" >/dev/null
-check "settings.json is a copy, not a link" "$(find "$dst/settings.json" -type l | wc -l) $(cat "$dst/settings.json")" '0 {"statusLine":{"command":"x"}}'
+check "settings.json is a copy, not a link" "$(find "$dst/settings.json" -type l | wc -l) $(jq -c . "$dst/settings.json")" '0 {"statusLine":{"command":"x"}}'
+jq '.model = "opus[1m]"' "$dst/settings.json" >"$work/j" && mv "$work/j" "$dst/settings.json"
+jq '.model = "opus"' "$src/settings.json" >"$work/j" && mv "$work/j" "$src/settings.json"
+check "10-29: the second folder keeps the model Claude Code wrote for its account; no drift" "$(acsync --check "$dst"; echo $?) $(acsync "$dst" >/dev/null; jq -r .model "$dst/settings.json")" "0 opus[1m]"
+jq 'del(.model)' "$src/settings.json" >"$work/j" && mv "$work/j" "$src/settings.json"
 check "the plugin lists are copies and plugin data is shared" \
   "$(cmp -s "$src/plugins/installed_plugins.json" "$dst/plugins/installed_plugins.json" && echo same) $(readlink "$dst/plugins/data")" "same $src/plugins/data"
 check "CLAUDE.md, projects and each skill are links; claude.ai's synced skills are not" \

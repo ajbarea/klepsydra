@@ -1,4 +1,4 @@
-# IMPL: klepsydra fleet-module brief, resume state 2026-10-29 ~09:00
+# IMPL: klepsydra fleet-module brief, resume state 2026-10-29 ~10:40
 
 Order (AJ 10-28): #159 -> techne#227 -> #162 -> #161 -> two accounts -> #154 -> #158 -> #148 -> #149 -> #150.
 Fresh session 10-29 06:20 (the 05:00 one stopped at the usage limit).
@@ -10,26 +10,23 @@ Fresh session 10-29 06:20 (the 05:00 one stopped at the usage limit).
   `fleet cutover` ok). Old scripts in ~/.local/state/fleet-orchestrator/archive/fleet-scripts-20261029
   (delete after 11-05). Units installed: fleet-resume-at-reset, fleet-memfrag-log.timer, wsl-mem-watch.
 
-## Open PRs (stacked: #165 <- recover PR; #166 <- feat/cast-picks)
-- #165 two accounts (feat/two-accounts): review round 1 had 1 blocking + 6 should-fix, all fixed
-  with tests (fed7e6c, 8c259ad); round 2 running. Second folder is ~/.claude-rit (RIT), since
-  ~/.claude holds Personal. After merge: reinstall (`make install-fleet`, `fleet cutover` for the
-  new units: accounts-sync path+timer, ci-watch), then AJ runs
-  `CLAUDE_CONFIG_DIR=~/.claude-rit claude auth login` (in the queue's Needs you).
-- #166 card account chip + Remote Control link from bridge-session records (feat/card-account):
-  round 1 one should-fix (RC back on at its menu), fixed 694d306; round 2 running.
-  After merge: `cp hooks/klepsydra-fleet.sh ~/.claude/`; the chip needs a Windows build
-  (scripts/build-windows.sh from stage klepsydra-build-deploy).
-- feat/recover (this branch, on #165): `fleet recover` (#154), `fleet shots` (#158),
-  briefing sync as an installed 5-min timer (the old sync-briefing.sh was never installed),
-  doctor "agents" check, FLEET_SETTINGS. 168 + 5 tests. Needs its PR review.
-- feat/cast-picks (on #166): #148 castPicks in model.js, View.started_at, wall+strip wired;
-  model tests pass; needs browser suites, shots, PR, review.
+## Merged and deployed 10-29
+- #165 two accounts (e71984c): installed + cut over 10:11; resume and ci-watch restarted on it.
+  ~/.claude holds RIT since a /login at 09:23, so AJ signs ~/.claude-rit in with PERSONAL
+  (Heph told; queue Needs you). Doctor FAIL on ~/.claude-rit settings (model opus[1m]) is fixed
+  by this branch (the second folder keeps its own model).
+- #166 account chip + RC link from bridge records (189f895): hook copied to ~/.claude.
+
+## Open
+- feat/recover (this branch): fleet recover (#154), fleet shots (#158), briefing sync timer,
+  team-ceremony rule in brief-tail.md + `fleet brief --refresh`, cutover restarts running
+  installed services, second folder keeps its own model. After merge: `make install-fleet`,
+  `fleet cutover`, `fleet brief --refresh`, `fleet doctor`.
+- #168 (#148 characters): round 2 blocking (ceded order) + Ledger table fixed; needs round 3.
 
 ## Next
-1. Land #165, #166 (rounds clean), then the recover PR and #148, retargeting stacked PRs
-   to main BEFORE merging the lower one (memory feedback_stacked_pr_merge_dance).
-2. Deploy: install-fleet + cutover; copy the hook; Windows build for #166/#148.
+1. Land the recover PR and #168; Windows build for the #166 chip and #168 (scripts/build-windows.sh).
+2. Rewrite each open PR body to the team-ceremony format when touching it (AJ 10-29).
 3. Fleet health on the wall (4b): doctor --write health.json on a timer, crate follower like
    ci.rs, a bar button + popover with a Recover button (runs `fleet recover`).
 4. #162 follow-up (Heph 10-29): one Needs-you line per repo+branch/PR, updated in place,

@@ -4,6 +4,7 @@
 #   fleet log [N]         the last N decisions (default 30), as plain lines
 #   fleet brief NAME BODY write task-NAME.src: BODY plus the shared rules
 #   fleet brief --check   list briefs whose shared rules are out of date
+#   fleet brief --refresh rewrite them with the current shared rules
 #   fleet accounts        each config folder: its account and its room
 #   fleet accounts sync   make the second config folder behave like ~/.claude
 #   fleet recover         after a hard shutdown, relaunch every agent whose session is gone

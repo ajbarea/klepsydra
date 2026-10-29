@@ -4,9 +4,10 @@
 # ~/.claude while keeping its own login. Claude Code keeps one login per
 # folder (.credentials.json, and the account in its .claude.json), so both
 # folders stay logged in at once; this script never reads or writes a login.
-#   settings.json      a copy of ~/.claude's: hooks, statusLine, env and OTel,
-#                      plugins and their config, autoMemoryDirectory. A link
-#                      would be read as project settings when run from $HOME.
+#   settings.json      ~/.claude's: hooks, statusLine, env and OTel, plugins and
+#                      their config, autoMemoryDirectory; only its model is
+#                      the second folder's own. A link would be read as
+#                      project settings when run from $HOME.
 #   plugins/*.json     copies of the installed and known lists, which point at
 #                      ~/.claude's plugin cache, so both run the same plugins;
 #                      plugins/data links to ~/.claude's (plugin state shared)
@@ -84,6 +85,19 @@ copy() { # SRC-FILE NAME
   cp -- "$1" "$DST/$2.tmp.$$" && mv -f -- "$DST/$2.tmp.$$" "$DST/$2"
 }
 
+# settings.json: ~/.claude's, except the second folder's own model, which
+# Claude Code rewrites per account when it starts (opus to opus[1m]).
+settings() {
+  local src=$SRC/settings.json dst=$DST/settings.json own want tmp
+  [[ -r $src ]] || return 0
+  own=$(jq -c '{model} | with_entries(select(.value != null))' "$dst" 2>/dev/null) || own='{}'
+  want=$(jq -S --argjson own "${own:-{\}}" '. + $own' "$src") || return 0
+  [[ $want == "$(jq -S . "$dst" 2>/dev/null)" ]] && return 0
+  if (( check )); then differs "$dst is not ~/.claude's settings"; return 0; fi
+  inside_src settings.json && return 0
+  tmp=$(mktemp "$dst.XXXXXX") && printf '%s\n' "$want" >"$tmp" && mv -f -- "$tmp" "$dst"
+}
+
 [[ -d $SRC ]] || { err "no Claude Code config at $SRC"; exit 2; }
 for DST in "${dsts[@]}"; do
   d=$(readlink -f -- "$DST")
@@ -92,7 +106,7 @@ for DST in "${dsts[@]}"; do
     exit 2
   fi
   (( check )) || mkdir -p -- "$DST/plugins" "$DST/skills"
-  copy "$SRC/settings.json" settings.json
+  settings
   copy "$SRC/plugins/installed_plugins.json" plugins/installed_plugins.json
   copy "$SRC/plugins/known_marketplaces.json" plugins/known_marketplaces.json
   link "$SRC/plugins/data" plugins/data
