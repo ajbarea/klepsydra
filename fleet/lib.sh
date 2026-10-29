@@ -247,6 +247,29 @@ deliver() { # PANE FILE
 }
 sent_or_started() { started "$1" || { has_input_box "$1" && [[ -z $(input_text "$1") ]]; }; }
 
+# Take the alert WANT (whitespace removed) back off the end of PANE's box,
+# which held BOX, until only the line AJ began is left. One BSpace takes one
+# character, which may be several code points (an emoji, a letter and its
+# accent), so each batch is a twelfth of the code points left (at least one):
+# never more characters than remain. At most MAX presses.
+inbox_back_out() { # PANE BOX WANT MAX
+  local p=$1 keep=${2%"$3"} max=$4 got=$2 rest n
+  while (( max > 0 )); do
+    rest=${got#"$keep"}
+    n=$(( ${#rest} / 12 ))
+    (( n < 1 )) && n=1
+    (( n > max )) && n=$max
+    t send-keys -t "$p" -N "$n" BSpace
+    max=$(( max - n ))
+    sleep 0.1
+    got=$(input_text "$(screen "$p")")
+    got=${got//[[:space:]]/}
+    [[ $got == "$keep" ]] && return 0
+    [[ $got == "$keep"* ]] || return 1
+  done
+  return 1
+}
+
 # Paste inbox file FILE into PANE and send it, only while the box is empty and
 # no turn runs, right before the paste; it is sent only when the box then
 # holds the message alone (its text, or a paste's placeholder), never with a
@@ -262,11 +285,12 @@ inbox_deliver() { # PANE FILE
   t load-buffer -b "fleet-$$" "$file" && t paste-buffer -p -d -b "fleet-$$" -t "$p"
   wait_for "$p" 5 holds_input || { echo not-pasted; return; }
   box=$(input_text "$(screen "$p")")
-  want=$(tr -d '[:space:]' <"$file")
+  # Both sides lose their whitespace the same way: a long line wraps in the box.
+  text=$(<"$file")
+  want=${text//[[:space:]]/}
   if [[ ${box//[[:space:]]/} != "$want" && ! $box =~ ^\[Pasted\ text\ \#[0-9]+(\ \+[0-9]+\ lines)?\]$ ]]; then
-    text=$(<"$file")
     if [[ ${box//[[:space:]]/} == *"$want" && $box != *"[Pasted text #"* ]]; then
-      t send-keys -t "$p" -N "${#text}" BSpace
+      inbox_back_out "$p" "${box//[[:space:]]/}" "$want" "${#text}"
       echo backed-out
     else
       echo mixed

@@ -160,7 +160,7 @@ class Counts(unittest.TestCase):
 class OneLine(unittest.TestCase):
     def test_a_no_break_space_reads_as_a_space(self):
         # The pane shows it as a space, so the alert's text must match what the box shows.
-        self.assertEqual(ci_watch.one_line("a\u00a0b\nc"), "a b c")
+        self.assertEqual(ci_watch.one_line("a\u00a0b\u2009c\u3000d\ne"), "a b c d e")
 
 
 class Poll(unittest.TestCase):

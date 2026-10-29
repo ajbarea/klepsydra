@@ -297,7 +297,7 @@ def triage(user: str, repo: str, run_id: int) -> dict:
 
 def one_line(text: str, cap: int = 200) -> str:
     """TEXT as one plain line for the queue file: no newline, control character or leading #."""
-    flat = re.sub(r"[\x00-\x1f\x7f\u00a0]+", " ", text).strip().lstrip("#").strip()
+    flat = re.sub(r"[\s\x00-\x1f\x7f]+", " ", text).strip().lstrip("#").strip()
     return flat[:cap]
 
 
