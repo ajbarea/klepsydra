@@ -29,6 +29,11 @@ if [[ -z $new ]]; then
   flog ERROR "relaunch: the new session did not start; the old pane is kept" old_pane="$p" name="$name"
   exit 1
 fi
+got=$(sed -n 's/.*brief=\([A-Za-z-]*\).*/\1/p' <<<"$out" | head -1)
+if [[ $got != started ]]; then
+  flog ERROR "relaunch: the new session's brief did not start; both are left running" old_pane="$p" new_pane="$new" name="$name" brief="$got"
+  exit 1
+fi
 if pane_runs "$p" "$sid" && idle_empty "$(screen "$p")" && type_exactly "$p" "/exit"; then
   t send-keys -t "$p" Enter
   for _ in $(seq 30); do fleet_panes | grep -qx "$p" || break; sleep 1; done

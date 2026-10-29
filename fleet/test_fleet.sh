@@ -578,6 +578,10 @@ jq -n --argjson r "$((now + 3600))" '{label: "RIT", windows: {five_hour: {used_p
 check "on a five-hour tie the weekly window decides (a Team seat has none)" "$(best_account "$now")" "$work/cfg-b"
 reading a Personal 40 1000; reading b RIT 0 2000; logout b
 check "a folder not logged in is never picked" "$(best_account "$now")" "$work/cfg-a"
+jq -n --argjson r "$((now + 3600))" '{label: "RIT", windows: {five_hour: {used_percentage: 0, resets_at: $r}, seven_day: {used_percentage: 100, resets_at: ($r + 86400)}}}' >"$KLEPSYDRA_DIR/accounts/b/s.json"
+login b; jq -n --argjson r "$((now + 3600))" '{label: "Personal", windows: {five_hour: {used_percentage: 40, resets_at: $r}, seven_day: {used_percentage: 50, resets_at: $r}}}' >"$KLEPSYDRA_DIR/accounts/a/s.json"
+check "review 2B: an account whose week is spent is not picked over one with room" "$(best_account "$now")" "$work/cfg-a"
+logout b
 login b
 reading a Personal 100 1000; reading b RIT 10 2000
 check "room elsewhere: the other account, when it has room" "$(room_elsewhere "$work/cfg-a" "$now")" "$work/cfg-b"
@@ -720,6 +724,38 @@ t load-buffer -b x "$work/three.txt"; t paste-buffer -p -d -b x -t "$p"; settle
 mover "$noon"; mover "$((noon + 60))"
 check "review 4: a pasted block is not moved, and the log says why" "$(wc -c <"$work/moved") $(logged 'pasted block cannot be carried' | wc -w)" "0 1"
 t kill-window -t "$p"; : >"$REGISTRY"
+
+: >"$FLEET_LOG"; : >"$work/moved"
+p=$(pane between "{\"above\":[\"⏺ Done. done 11:50 AM\",\"❯ AJ: sent between two passes\",\"$LIMIT\"]}"); settle
+live "$p"
+printf '%s\tbetween\t%s\t%s\t/w\t%s\n' "$p" "$work/brief.src" "$SID" "$work/cfg-a" >"$REGISTRY"
+mover "$noon"
+check "review 2, 4: a line AJ sent between two passes, answered only by the limit, is carried" "$(grep -c '^AJ: sent between two passes$' "$work/moved-brief")" "1"
+t kill-window -t "$p" 2>/dev/null; : >"$REGISTRY"
+
+: >"$FLEET_LOG"; : >"$work/moved"
+p=$(pane midpaste "{\"above\":[\"⏺ Done. done 11:50 AM\",\"$LIMIT\"]}"); settle
+live "$p"
+printf '%s\tmidpaste\t%s\t%s\t/w\t%s\n' "$p" "$work/brief.src" "$SID" "$work/cfg-a" >"$REGISTRY"
+t send-keys -t "$p" -l "see "; t load-buffer -b x "$work/three.txt"; t paste-buffer -p -d -b x -t "$p"; settle
+mover "$noon"; mover "$((noon + 60))"
+check "review 2, 4: a paste in the middle of a line is not moved either" "$(wc -c <"$work/moved") $(logged 'pasted block cannot be carried' | wc -w)" "0 1"
+t kill-window -t "$p"; : >"$REGISTRY"
+
+: >"$FLEET_LOG"
+p=$(pane stuck "{\"above\":[\"⏺ Done. done 11:50 AM\",\"$LIMIT\"]}"); settle
+live "$p"
+printf '%s\tstuck\t%s\t%s\t/w\t%s\n' "$p" "$work/brief.src" "$SID" "$work/cfg-a" >"$REGISTRY"
+printf '%s' '{"above":["Claude Code"],"input":"the brief, pasted and never sent"}' >"$work/stucknew.json"; : >"$work/stucknew.log"
+cat >"$work/launch-stuck.sh" <<EOF
+#!/usr/bin/env bash
+new=\$(tmux -L "$FLEET_SOCK" new-window -d -P -F '#{pane_id}' -t fleet: "python3 -I $fake $work/stucknew.json $work/stucknew.log")
+sed -i "s|^$p\t\(.*\)\t$work/cfg-a\$|\$new\t\1\t$work/cfg-b|" "$REGISTRY"
+echo "pane=\$new session=x account=$work/cfg-b avail=1MiB brief=NOT-DELIVERED"
+EOF
+LAUNCH="$work/launch-stuck.sh" FLEET_NOW=$noon bash "$here/resume-at-reset.sh" --once 2>/dev/null
+check "review 2C: a new pane whose brief sits unsent in its box is cleared and exited, never left running" "$(grep -c 'SUBMIT /exit' "$work/stucknew.log") $(grep -c 'SUBMIT the brief' "$work/stucknew.log")" "1 0"
+t kill-window -t "$p"; : >"$REGISTRY"
 logout a; logout b; reading a Personal 40 1000; rm -f "$KLEPSYDRA_DIR/accounts/b/s.json"
 
 echo "two accounts: the second folder follows the first"
@@ -762,6 +798,10 @@ jq '.projects["/new"] = {hasTrustDialogAccepted: true}' "$src/.claude.json-defau
 acsync "$dst" >/dev/null
 check "review 7: a sync adds the first's trust and keeps the second's own" \
   "$(jq -c '[.projects["/new"].hasTrustDialogAccepted, .projects["/rit-only"].hasTrustDialogAccepted, .projects["/w"].lastCost]' "$dst/.claude.json")" "[true,true,null]"
+jq '.remoteDialogSeen = true | .projects["/w"].hasClaudeMdExternalIncludesApproved = true' "$dst/.claude.json" >"$work/j" && mv "$work/j" "$dst/.claude.json"
+touch -d '@1000' "$dst/.claude.json"
+check "review 2A: keys only the second holds are no drift, and nothing is rewritten" "$(acsync --check "$dst"; echo $?) $(acsync "$dst" >/dev/null; stat -c %Y "$dst/.claude.json")" "0 1000"
+check "review 2: a second folder that holds the first is refused" "$(acsync "$(dirname "$src")" >/dev/null; echo $?)" "2"
 : >"$dst/.claude.json"
 check "review 7: a second .claude.json that does not parse is left alone and the sync fails" "$(acsync "$dst" >/dev/null; echo $?) $(wc -c <"$dst/.claude.json")" "1 0"
 jq -n '{oauthAccount: {accountUuid: "b"}}' >"$dst/.claude.json"

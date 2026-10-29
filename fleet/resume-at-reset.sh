@@ -99,6 +99,10 @@ retire() { # PANE [INTERRUPT]
     # one C-c clears a box with text in it (an empty box would ask to exit).
     holds_input "$(screen "$1")" && t send-keys -t "$1" C-c
     wait_for "$1" 5 idle_empty || true
+  elif [[ ${2:-} == interrupt ]] && holds_input "$(screen "$1")"; then
+    # A brief that was pasted but never sent sits in the box: clear it, or /exit cannot go in.
+    t send-keys -t "$1" C-c
+    wait_for "$1" 5 idle_empty || true
   fi
   if ! type_exactly "$1" "/exit"; then
     flog ERROR "could not type /exit; the pane is left running" pane="$1"
@@ -202,6 +206,19 @@ sent_already() { # SCREEN LINE
 
 forget() { unset "due[$1]" "seen_on[$1]" "note[$1]"; }
 
+# The prompt the limit answered, when the limit is the only reply to it: the
+# "❯ ..." lines (a long one wraps) right above the limit message in SCREEN.
+# A line AJ sent between two passes is only ever seen here.
+answered_by_limit() { # SCREEN
+  split_screen "$1"
+  grep -v '^[[:space:]]*$' <<<"$ABOVE" | awk -v re="$LIMIT_RE" '
+    $0 ~ re { if (said != "") hit = said; said = ""; inp = 0; next }
+    /^❯ / { said = substr($0, length("❯ ") + 1); inp = 1; next }
+    inp && /^  [^ ⎿]/ { sub(/^ +/, ""); said = said " " $0; next }
+    { said = ""; inp = 0 }
+    END { if (hit != "") print hit }' | tail -1
+}
+
 one() { # PANE
   local p=$1 s ps typed orch=0 armed at limit reset reg name brief idle new got tmp
   [[ -n $ORCH && $p == "$ORCH" ]] && orch=1
@@ -286,13 +303,17 @@ one() { # PANE
     other=$(room_elsewhere "$cfg" "$NOW"); then
     # What AJ typed while it waited is carried even when he sent it: the
     # session answered only with the limit, so it never acted on it.
-    if [[ -n $typed && $typed != "[Pasted text #"* ]]; then
+    if [[ -n $typed ]]; then
       carry=$typed
-    elif [[ -z $typed && -n ${note[$p]:-} && ${note[$p]} != "[Pasted text #"* ]]; then
+    elif [[ -n ${note[$p]:-} ]]; then
       carry=${note[$p]}
+    else
+      carry=$(answered_by_limit "$s")
     fi
-    if [[ $typed == "[Pasted text #"* || ( -z $typed && ${note[$p]:-} == "[Pasted text #"* ) ]]; then
-      flog WARN "a pasted block cannot be carried to the other account; the pane waits for its reset" pane="$p" text="${typed:-${note[$p]}}"
+    # A pasted block or an image shows in the box only as its placeholder: its
+    # content cannot be carried, so the pane keeps it and waits for its reset.
+    if [[ $carry == *"[Pasted text #"* || $carry == *"[Image #"* ]]; then
+      flog WARN "a pasted block cannot be carried to the other account; the pane waits for its reset" pane="$p" text="$carry"
     elif [[ -z $typed || -n $carry ]]; then
       new=$(fresh "$p" "$name" "$brief" "stopped at a usage limit on one account, and you continue on the other, which has room" "$other" "$carry")
       rc=$?

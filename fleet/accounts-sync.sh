@@ -86,8 +86,9 @@ copy() { # SRC-FILE NAME
 
 [[ -d $SRC ]] || { err "no Claude Code config at $SRC"; exit 2; }
 for DST in "${dsts[@]}"; do
-  if [[ $(readlink -f -- "$DST") == "$(readlink -f -- "$SRC")" ]]; then
-    err "the second folder is the first: $DST"
+  d=$(readlink -f -- "$DST")
+  if [[ $d == "$SRC_REAL" || $d == "$SRC_REAL"/* || $SRC_REAL == "$d"/* ]]; then
+    err "the second folder is, holds or sits in the first: $DST"
     exit 2
   fi
   (( check )) || mkdir -p -- "$DST/plugins" "$DST/skills"
@@ -109,22 +110,27 @@ for DST in "${dsts[@]}"; do
   # is rewriting: it is left alone and the sync fails.
   if [[ -r $SRC_JSON ]]; then
     want=$(jq -cS --argjson k "$SHARED_KEYS" "$SHARED" "$SRC_JSON" 2>/dev/null)
+    # shellcheck disable=SC2016 # jq's own variables
+    MERGE='(. * $w) + ($w | del(.projects))'
     if [[ -e $DST/.claude.json ]] && ! jq -e 'type == "object"' "$DST/.claude.json" >/dev/null 2>&1; then
       err "$DST/.claude.json does not parse; left as it is"
       drift=1
-      have=$want
-    else
-      # Folders only the second account trusts are its own, never drift.
-      have=$(jq -cS --argjson k "$SHARED_KEYS" --argjson w "${want:-{\}}" "$SHARED"' | if (.projects | type) == "object"
-        then .projects |= with_entries(select(.key as $x | ($w.projects // {}) | has($x))) else . end' "$DST/.claude.json" 2>/dev/null || echo '{}')
-    fi
-    if [[ -n $want && $want != "$have" ]]; then
-      if (( check )); then
+    elif [[ -n $want ]]; then
+      # Drift is a merge that would change the file: keys only the second
+      # folder holds (its own trust, its own Remote Control flags) are kept.
+      if [[ -e $DST/.claude.json ]]; then
+        have=$(jq -cS . "$DST/.claude.json") merged=$(jq -cS --argjson w "$want" "$MERGE" "$DST/.claude.json")
+      else
+        have="" merged=$want
+      fi
+      if [[ $merged == "$have" ]]; then
+        :
+      elif (( check )); then
         differs "$DST/.claude.json's shared keys"
       else
         tmp=$(mktemp "$DST/.claude.json.XXXXXX")
-        # shellcheck disable=SC2016 # jq's own variables
-        if [[ -e $DST/.claude.json ]]; then merge=('(. * $w) + ($w | del(.projects))' "$DST/.claude.json"); else merge=(-n '$w'); fi
+        # shellcheck disable=SC2016 # jq's own variable
+        if [[ -e $DST/.claude.json ]]; then merge=("$MERGE" "$DST/.claude.json"); else merge=(-n '$w'); fi
         if jq --argjson w "$want" "${merge[@]}" >"$tmp" && [[ -s $tmp ]] && chmod 600 "$tmp"; then
           mv -f -- "$tmp" "$DST/.claude.json"
         else

@@ -306,6 +306,10 @@ pane_runs() { # PANE SESSION-ID
 FLEET_DEFAULT_CONFIG=${FLEET_DEFAULT_CONFIG:-$HOME/.claude}
 FLEET_ACCOUNTS=${FLEET_ACCOUNTS:-$FLEET_DEFAULT_CONFIG $HOME/.claude-rit}
 FLEET_ROOM_PCT=${FLEET_ROOM_PCT:-90} # a five-hour window used past this has no room
+# Folders compared as written: "~/.claude/" must read as the default.
+nodir() { local d=$1; while [[ $d == ?*/ ]]; do d=${d%/}; done; printf '%s' "$d"; }
+FLEET_DEFAULT_CONFIG=$(nodir "$FLEET_DEFAULT_CONFIG")
+FLEET_ACCOUNTS=$(for d in $FLEET_ACCOUNTS; do printf '%s ' "$(nodir "$d")"; done)
 
 # The global config file of config folder DIR.
 config_json() { # DIR
@@ -352,15 +356,18 @@ id_has_room() { # ID NOW
 }
 
 # The logged-in config folder with the most room, the five-hour window first,
-# then the weekly; the earlier folder in FLEET_ACCOUNTS wins a tie. Prints
-# nothing when none is logged in.
+# then the weekly; one with room (id_has_room: a spent weekly window reads as
+# a full five-hour one once that lapses) before one without; the earlier
+# folder in FLEET_ACCOUNTS wins a tie. Prints nothing when none is logged in.
 best_account() { # NOW
-  local dir id five seven best="" best_five=-1 best_seven=-1
+  local dir id five seven roomy best="" best_roomy=-1 best_five=-1 best_seven=-1
   for dir in $FLEET_ACCOUNTS; do
     id=$(account_of "$dir") || continue
     read -r five seven <<<"$(headroom "$id" "$1")"
-    if (( five > best_five || (five == best_five && seven > best_seven) )); then
-      best=$dir best_five=$five best_seven=$seven
+    roomy=0
+    id_has_room "$id" "$1" && roomy=1
+    if (( roomy > best_roomy || (roomy == best_roomy && (five > best_five || (five == best_five && seven > best_seven))) )); then
+      best=$dir best_roomy=$roomy best_five=$five best_seven=$seven
     fi
   done
   printf '%s' "$best"
