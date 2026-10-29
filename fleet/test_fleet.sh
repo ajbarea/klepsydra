@@ -312,11 +312,15 @@ check "the limit menu gets option 1" "$(events menu)" "LIMIT MENU STOP"
 t kill-window -t "$p"
 
 : >"$FLEET_LOG"
-p=$(pane orch "{\"above\":[\"work\",\"$LIMIT\"]}"); settle
+p=$(pane orchlim "{\"above\":[\"work\",\"$LIMIT\"]}"); settle
 printf '%s\n' "$p" >"$FLEET_STATE/orchestrator.pane"
-resume "$noon"; resume "$(( noon + 4330 ))"
-check "the orchestrator's limited pane is never typed into" "$(events orch)" ""
-state orch '{"above":["idle"]}'
+resume "$noon"
+check "the orchestrator's limited pane is not typed into before its reset" "$(events orchlim)" ""
+resume "$(( noon + 4330 ))"
+check "#175: with no other account, he is resumed at the reset like a worker" "$(has "$(events orchlim)" "SUBMIT The usage limit has reset.")" "yes"
+t kill-window -t "$p"
+p=$(pane orch '{"above":["idle"]}'); settle
+printf '%s\n' "$p" >"$FLEET_STATE/orchestrator.pane"
 resume "$(( noon + 4400 ))"
 check "but gets /remote-control once per account while idle at an empty prompt" "$(events orch)" $'RC REQUESTED\nRC ON'
 resume "$(( noon + 4460 ))"
@@ -681,6 +685,55 @@ check "no move when the other account is nearly full too" "$(wc -c <"$work/moved
 t kill-window -t "$p"; : >"$REGISTRY"
 logout a; logout b; reading a Personal 40 1000; rm -f "$KLEPSYDRA_DIR/accounts/b/s.json"
 
+echo "two accounts: the orchestrator at a limit (#175, #173)"
+cat >"$work/launch-heph.sh" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' "\$FLEET_ACCOUNT" "\$1" "settings=[\${FLEET_SETTINGS-unset}]" >"$work/moved"
+cp "\$2" "$work/moved-brief"
+echo "pane=%996 session=aaaaaaaa-0000-4000-8000-0000000000cc account=\$FLEET_ACCOUNT avail=1MiB brief=started"
+EOF
+hmove() { LAUNCH="$work/launch-heph.sh" FLEET_HEPH="$work/HEPH.md" FLEET_NOW=$1 bash "$here/resume-at-reset.sh" --once 2>/dev/null; } # NOW
+printf 'handoff\n' >"$work/HEPH.md"
+login a; login b; reading a Personal 100 5000; reading b RIT 10 4000
+: >"$FLEET_LOG"; : >"$work/moved"; : >"$REGISTRY"; rm -f "$FLEET_STATE/orchestrator.config" "$FLEET_STATE/orchestrator.session"
+h=$(pane heph "{\"above\":[\"⏺ ok\",\"$LIMIT\"]}"); settle
+printf '%s\n' "$h" >"$FLEET_STATE/orchestrator.pane"
+hmove "$noon"
+check "Heph at a limit moves to the other account at once, without worker settings" "$(tr '\n' ' ' <"$work/moved")" "$work/cfg-b heph settings=[] "
+check "from a note naming HEPH.md" "$(grep -c "^Fresh start: the orchestrator (Heph) stopped at a usage limit on one account, and moves to the other, which has room; you replace it. Read $work/HEPH.md first" "$work/moved-brief")" "1"
+check "the records follow him: pane, session and folder" \
+  "$(cat "$FLEET_STATE/orchestrator.pane" "$FLEET_STATE/orchestrator.session" "$FLEET_STATE/orchestrator.config" | tr '\n' ' ')" "%996 aaaaaaaa-0000-4000-8000-0000000000cc $work/cfg-b "
+check "the old pane exits" "$(events heph)" "SUBMIT /exit"
+check "logged as the orchestrator's move" "$(jq -r 'select(.message == "moved to the other account at a limit") | [.orchestrator, .from, .to] | join(" ")' "$FLEET_LOG")" "1 $work/cfg-a $work/cfg-b"
+t kill-window -t "$h" 2>/dev/null
+
+: >"$work/moved"; rm -f "$FLEET_STATE/orchestrator.config"
+h=$(pane hephtyped "{\"above\":[\"⏺ ok\",\"$LIMIT\"]}"); settle
+printf '%s\n' "$h" >"$FLEET_STATE/orchestrator.pane"
+t send-keys -t "$h" -l "AJ: hold the sphragis PR"; settle
+hmove "$noon"
+check "AJ's line at Heph's limit waits a pass, in case he is still typing" "$(wc -c <"$work/moved") $(events hephtyped)" "0 "
+hmove "$((noon + 60))"
+check "then goes with the move, never sent in the old pane" \
+  "$(grep -c '^AJ: hold the sphragis PR$' "$work/moved-brief") $(events hephtyped)" "1 SUBMIT /exit"
+t kill-window -t "$h" 2>/dev/null
+
+: >"$work/moved"; rm -f "$FLEET_STATE/orchestrator.config"
+cat >"$work/launch-heph-bad.sh" <<EOF
+#!/usr/bin/env bash
+echo try >>"$work/moved"
+echo "pane=%995 session=x account=\$FLEET_ACCOUNT avail=1MiB brief=NOT-DELIVERED"
+EOF
+h=$(pane hephbad "{\"above\":[\"⏺ ok\",\"$LIMIT\"]}"); settle
+printf '%s\n' "$h" >"$FLEET_STATE/orchestrator.pane"
+for at in "$noon" "$((noon + 60))" "$((noon + 120))"; do
+  LAUNCH="$work/launch-heph-bad.sh" FLEET_HEPH="$work/HEPH.md" FLEET_NOW=$at bash "$here/resume-at-reset.sh" --once 2>/dev/null
+done
+check "a move whose note never started keeps Heph's pane and records, and is not retried for 15 min" \
+  "$(wc -l <"$work/moved") $(cat "$FLEET_STATE/orchestrator.pane") $(events hephbad)" "1 $h "
+t kill-window -t "$h" 2>/dev/null; rm -f "$FLEET_STATE/orchestrator.pane" "$FLEET_STATE/orchestrator.session"
+logout a; logout b; reading a Personal 40 1000; rm -f "$KLEPSYDRA_DIR/accounts/b/s.json"
+
 echo "two accounts: review round 1"
 login a; login b; reading a Personal 100 5000; reading b RIT 10 4000
 : >"$FLEET_LOG"; : >"$work/moved"
@@ -909,6 +962,20 @@ printf '%s %s settings=%s account=%s\n' "\$(date +%s.%N)" "\$1" "\${FLEET_SETTIN
 cp "\$2" "$work/rec-\$1.txt"
 echo "pane=%\$n session=x account=x avail=1MiB brief=started"
 EOF
+echo "the orchestrator's config folder (#175)"
+SHC=aaaaaaaa-0000-4000-8000-0000000000dd
+printf '%%77\n' >"$FLEET_STATE/orchestrator.pane"; rm -f "$FLEET_STATE/orchestrator.config"
+check "no live Heph and no record: the default folder" "$(heph_config)" "$FLEET_DEFAULT_CONFIG"
+printf '%s/\n' "$work/cfg-b" >"$FLEET_STATE/orchestrator.config"
+check "no live Heph: orchestrator.config" "$(heph_config)" "$work/cfg-b"
+sfile "$SHC" 4242 777 "$NOWBOOT" %77
+printf 'HOME=/h\0CLAUDE_CONFIG_DIR=%s/\0' "$work/cfg-c" >"$FLEET_PROC/4242/environ"
+check "a live Heph: his process's CLAUDE_CONFIG_DIR, over the record (10-29: Heph ran on the second folder with no record)" "$(heph_config)" "$work/cfg-c"
+printf 'HOME=/h\0' >"$FLEET_PROC/4242/environ"
+check "a live Heph with none set: the default folder" "$(heph_config)" "$FLEET_DEFAULT_CONFIG"
+check "his account order is the workers' last first" "$FLEET_HEPH_ACCOUNTS" "$work/cfg-b $work/cfg-a "
+rm -f "$KLEPSYDRA_DIR/fleet/$SHC.json" "$FLEET_PROC/4242/environ" "$FLEET_STATE/orchestrator.pane" "$FLEET_STATE/orchestrator.config"
+
 rec() { LAUNCH="$work/launch-rec.sh" FLEET_STAGGER_S=${STAG:-0} bash "$here/recover.sh" "$@" 2>/dev/null; }
 out=$(rec --dry-run --no-orchestrator)
 check "a dry run names what it would recover and launches nothing" "$(grep -c '^would recover' <<<"$out") $(wc -l <"$work/rec.log" 2>/dev/null || echo 0)" "2 0"

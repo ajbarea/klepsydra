@@ -16,7 +16,6 @@ here=$(dirname "$(readlink -f "$0")")
 . "$here/lib.sh"
 LAUNCH=${LAUNCH:-$here/launch.sh}
 STAGGER=${FLEET_STAGGER_S:-60} # launches far apart: a burst of new sessions jams WSL's network
-HEPH=${FLEET_HEPH:-$FLEET_STATE/HEPH.md}
 dry=0 orch_too=1
 for a in "$@"; do
   case $a in --dry-run) dry=1 ;; --no-orchestrator) orch_too=0 ;; *) err "usage: recover.sh [--dry-run] [--no-orchestrator]"; exit 2 ;; esac
@@ -103,14 +102,6 @@ repair_to() { # PANE
     <(printf '%s\n' "$agents") <(printf '%s\n' "$live_now") | awk 'END { if (NR == 1) print prev } { prev = $0 }'
 }
 
-# The transcript of session SID, in any config folder's projects.
-transcript() { # SID
-  local dir
-  for dir in ${FLEET_PROJECTS:-$(for d in $FLEET_ACCOUNTS; do printf '%s/projects ' "$d"; done)}; do
-    find "$dir" -mindepth 2 -maxdepth 2 -name "$1.jsonl" -type f 2>/dev/null
-  done | head -1
-}
-
 # Its last two replies, each cut to 500 characters, as quoted lines.
 last_replies() { # TRANSCRIPT
   jq -r 'select(.type == "assistant") | [.message.content[]? | select(.type == "text") | .text] | join(" ") | select(length > 0)' "$1" 2>/dev/null |
@@ -195,27 +186,19 @@ elif (( orch_too )) && [[ -n $heph_pane ]]; then
   fi
 elif (( orch_too )) && [[ -n $orch$osid ]]; then
     lost=$((lost + 1))
-    tp=$(transcript "$osid")
-    since=$(stat -c %Y -- "$HEPH" 2>/dev/null || echo 0)
-    asks=""
-    [[ -n $tp ]] && asks=$(jq -r --argjson since "$since" '
-      select(.type == "user" and (.isMeta | not) and (.message.content | type) == "string")
-      | select((.timestamp // "" | sub("\\.[0-9]+Z$"; "Z") | try fromdateiso8601 catch 0) > $since)
-      | .message.content | select(startswith("<") | not) | gsub("\n"; " ") | .[0:1000]' "$tp" 2>/dev/null | tail -20 | sed 's/^/- /')
     if (( dry )); then
-      echo "would recover: orchestrator (session ${osid:-unknown}, $(grep -c . <<<"$asks") messages since HEPH.md)"
+      echo "would recover: orchestrator (session ${osid:-unknown}, $(heph_asks "$osid" "$HEPH" | grep -c .) messages since HEPH.md)"
     else
       txt="$FLEET_STATE/heph-recover-$(date +%Y%m%d-%H%M).md"
-      {
-        # shellcheck disable=SC2016 # `fleet recover` is a command named in the text
-        printf 'Fresh start: the orchestrator (Heph) was stopped by a hard shutdown of the PC; you replace it. Read %s first, then the "Running now" lines in /mnt/c/Users/ajbar/fleet-briefing/claude-queue.md; `fleet recover` has relaunched the agents in panes.tsv. Put anything below that changes the plan into HEPH.md now.\n\n' "$HEPH"
-        printf "AJ's messages to the last orchestrator after HEPH.md was last written:\n%s\n" "${asks:-- (none)}"
-      } >"$txt"
+      # shellcheck disable=SC2016 # `fleet recover` is a command named in the text
+      heph_note "was stopped by a hard shutdown of the PC" "$osid" "$HEPH" '`fleet recover` has relaunched the agents in panes.tsv.' >"$txt"
       stagger
-      new=$(launch heph "$txt" FLEET_SETTINGS= FLEET_ACCOUNT="$FLEET_DEFAULT_CONFIG")
+      heph_on=$(FLEET_ACCOUNTS=$FLEET_HEPH_ACCOUNTS best_account "$(date +%s)")
+      new=$(launch heph "$txt" FLEET_SETTINGS= FLEET_ACCOUNT="${heph_on:-$FLEET_DEFAULT_CONFIG}")
       if [[ -n $new ]]; then
         printf '%s\n' "${new%% *}" >"$FLEET_STATE/orchestrator.pane"
         [[ $new == *" "?* ]] && printf '%s\n' "${new#* }" >"$FLEET_STATE/orchestrator.session"
+        printf '%s\n' "${heph_on:-$FLEET_DEFAULT_CONFIG}" >"$FLEET_STATE/orchestrator.config"
         echo "recovered: orchestrator -> ${new%% *}"
       else
         flog ERROR "recovery launch failed" name=orchestrator brief="$txt"
