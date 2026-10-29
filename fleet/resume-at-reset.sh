@@ -22,8 +22,9 @@
 # FLEET_PREMOVE_PCT of a window moves to one with room at its next finished
 # turn, before the limit stops it mid-turn (#187). Each move runs in the
 # background, one per pane, so a slow launch never holds the others; the pass
-# after it ends applies its result, and a failed move is tried again at the
-# next pass once, then every 15 min. A CI red the CI watch routed to an agent
+# after it ends applies its result. A failed move at a limit or before it is
+# tried again at the next pass once, then every 15 min; a move back waits
+# 15 min; a failed fresh start is resumed in place. A CI red the CI watch routed to an agent
 # (inbox/NAME/*.txt) is typed into its pane at an idle, empty prompt, oldest
 # first. --once runs one pass (and waits for the moves it started). Each
 # decision is one line in the fleet log; each pass touches resume.beat for
@@ -344,10 +345,12 @@ spawn() { # PANE KIND CTX CMD...
   (
     new=$(FLEET_KEEP_MARK=1 MOVE_NEW=$out.new "$@")
     rc=$?
-    printf '%s\t%s\n' "$rc" "$new" >"$out.tmp" && mv -f -- "$out.tmp" "$out"
+    # The new pane's mark goes before the result shows, so a pass that reaps
+    # it and starts another move for the pane cannot strand the mark.
     if [[ -s $out.new ]]; then
       rm -f -- "$FLEET_STATE/launching/$(<"$out.new")" "$out.new"
     fi
+    printf '%s\t%s\n' "$rc" "$new" >"$out.tmp" && mv -f -- "$out.tmp" "$out"
   ) &
   job[$p]=$! job_kind[$p]=$kind job_ctx[$p]=$ctx
   flog INFO "move started" pane="$p" kind="$kind"
@@ -414,6 +417,8 @@ done_move() { # PANE KIND RC NEW CTX
         moved "$p" "$new"
       else
         (( rc == 1 )) || moved "$p"
+        # A launch AJ undid (4) cost a session: wait as after a second failure.
+        (( rc == 4 && move_tries[$p] < 2 )) && move_tries[$p]=2
         if [[ $kind == back ]]; then
           flog WARN "could not move back to the preferred account; trying again later" pane="$p" to="$b" orchestrator="$c" why="$rc" tries="${move_tries[$p]:-0}"
         else
@@ -635,7 +640,7 @@ one() { # PANE
 
   # Two accounts: a registered pane with a long wait (and no switch of its own) moves to the other one
   # now, if it has room, carrying what AJ typed (still in the box, or gone
-  # from it unsent). A failed move waits 15 min before the next try.
+  # from it unsent). A failed move is tried again at the next pass, then every 15 min.
   local other carry="" rc
   if (( !fresh_typing && !switched )) && { [[ -n $reg ]] || (( orch )); } && (( due[$p] - NOW >= MOVE_MIN_S )) && move_hold_ok "$p" &&
     other=$(if (( orch )); then FLEET_ACCOUNTS=$FLEET_HEPH_ACCOUNTS room_elsewhere "$cfg" "$NOW"; else room_elsewhere "$cfg" "$NOW"; fi) &&
