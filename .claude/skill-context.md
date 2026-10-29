@@ -47,7 +47,7 @@ belong here.
 
 ### Phase 3 — Lint
 
-- `shellcheck hooks/*.sh statusline/*.sh scripts/*.sh` (in WSL:
+- `shellcheck -x hooks/*.sh statusline/*.sh scripts/*.sh fleet/*.sh fleet/fleet` (in WSL:
   `uvx --from shellcheck-py shellcheck ...`)
 - `npm run lint`: Biome with only `noConsole` on (warn and error allowed);
   the pages log through `src/log.js`. `src/vendor/` is not linted.
@@ -77,6 +77,9 @@ files belong to: the JS guards scan hooks and scripts too.
 - `bash hooks/test_fleet.sh`: the fleet hook's states, where, identity,
   pruning (every refusal first) and the README settings block.
 - `bash scripts/test_measure_memory.sh`: the release memory rule.
+- `bash fleet/test_fleet.sh`: the fleet engine against fake Claude Code panes
+  on a private tmux socket (limits, reset parsing, typed lines, launch
+  delivery, doctor, install).
 - `python3 -I fleet/test_ci_watch.py`: the CI watch against a fake GitHub.
 - `python3 -I scripts/perf/test_fixture.py`: the perf harness's demo fleet
   writes only files it owns and no future times.
