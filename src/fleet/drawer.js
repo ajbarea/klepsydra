@@ -113,7 +113,8 @@ export function createDrawer({ dialog, button, tab, edge, sessions, cast, fetchT
     for (const s of sessions()) {
       const id = identity(s, cast());
       // What tells two cards of one character apart: the session's name, else its repo.
-      map.set(s.session_id, { name: id.name, accent: id.accent, label: s.name || s.where?.repo || null });
+      // A character the wall cast (castPicks) names no voice: the Ledger names the card's.
+      map.set(s.session_id, { name: id.name, accent: id.accent, label: s.name || s.where?.repo || null, cast: Boolean(s.pick) && id.voice === null });
     }
     return map;
   };
@@ -130,7 +131,8 @@ export function createDrawer({ dialog, button, tab, edge, sessions, cast, fetchT
     // Today's recorded voice names a session; the wall only when the day has none.
     const homes = day.home_voices;
     const labels = rowLabels([...names].map(([id, n]) => [id, n.label]), day.labels);
-    const nameOf = (id) => characterOf(id, day.voices, cast(), names.get(id), { homes, label: labels.get(id) })?.name;
+    const nameOf = (id) =>
+      names.get(id)?.cast ? names.get(id).name : characterOf(id, day.voices, cast(), names.get(id), { homes, label: labels.get(id) })?.name;
     const everyone = todaySessions(day);
     const shown = todaySessions(day, filter);
     const day_ = sumTotals(shown.map(([, t]) => t));

@@ -819,9 +819,22 @@ test("#148: a session with no character of its own gets one no live card shows, 
   const full = faces([at("x", "v1", 1), at("y", "v1", 2), at("z", "v2", 3), at("w", "v3", 4), at("n", null, 5)]);
   assert.ok(["Two", "Three"].includes(full.n), full.n);
 
-  // An ended card shows no one: its character is free for a live one.
+  // An ended card holds its face until it leaves the wall; its departure frees it.
   const ended = faces([at("old", "v1", 1, { status: "ended" }), at("p", "v2", 2), at("q", "v3", 3), at("r", null, 4)]);
-  assert.equal(ended.r, "One");
+  assert.ok(["One", "Two", "Three"].includes(ended.r));
+  assert.equal(faces([at("p", "v2", 2), at("q", "v3", 3), at("r", null, 4)]).r, "One");
+
+  // A newer session whose own voice is an older card's pick shares it; the older card keeps its face.
+  const olderPick = castPicks([at("o", null, 1)], cast)[0].pick;
+  const shared = faces([at("o", null, 1), at("n", olderPick, 2)]);
+  assert.equal(shared.o, shared.n, "the two share the character; the older one never moves");
+
+  // An older card ending never moves a newer one's face.
+  for (let i = 0; i < 200; i++) {
+    const list = [at(`a${i}`, null, 1), at(`b${i}`, null, 2)];
+    const live = faces(list)[`b${i}`];
+    assert.equal(faces([{ ...list[0], status: "ended" }, list[1]])[`b${i}`], live);
+  }
 
   // Stable: an older card keeps its face when a newer one arrives, whatever the order sessions come in.
   const before = faces([at("held", "v1", 1), at("older", null, 2)]);

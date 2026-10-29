@@ -471,7 +471,7 @@ def drawer_opens_and_returns_focus(wall):
         [named, docked, from_button],
     )
 
-    chip = page.locator(".card:has(.name:text-is('Kallos')) .chip")
+    chip = page.locator(".card[data-key='demo-2-af_bella'] .chip")
     chip.focus()
     page.keyboard.press("Enter")
     page.wait_for_selector("#ledger .scope")
@@ -504,7 +504,7 @@ def drawer_opens_and_returns_focus(wall):
     # card's note hides its ledger line) hands focus to the Ledger button.
     chip.click()
     page.wait_for_selector("#ledger .scope")
-    page.evaluate("[...document.querySelectorAll('.card')].find(c => c.querySelector('.name').textContent === 'Kallos').querySelector('.ledger-line').style.setProperty('display', 'none')")
+    page.evaluate("[...document.querySelectorAll('.card')].find(c => c.dataset.key === 'demo-2-af_bella').querySelector('.ledger-line').style.setProperty('display', 'none')")
     page.keyboard.press("Escape")
     page.wait_for_function(DRAWER_SHUT)
     fallback = page.evaluate(ACTIVE)
@@ -706,7 +706,7 @@ def drawer_states(wall):
 
     # A read that fails after Show all keeps focus in the dialog too.
     page = wall.open(1920, 1000, 16)
-    page.locator(".card:has(.name:text-is('Kallos')) .chip").click()
+    page.locator(".card[data-key='demo-2-af_bella'] .chip").click()
     page.wait_for_selector("#ledger-show-all")
     page.unroute("**/ledger-demo.json")
     page.route("**/ledger-demo.json", lambda r: r.abort())
@@ -739,7 +739,7 @@ def drawer_follows_snapshots(wall):
     page.wait_for_function(DRAWER_SHUT)
 
     # A repaint keeps focus where it was inside the drawer.
-    page.locator(".card:has(.name:text-is('Kallos')) .chip").click()
+    page.locator(".card[data-key='demo-2-af_bella'] .chip").click()
     page.wait_for_selector("#ledger-show-all")
     page.focus("#ledger-show-all")
     seen = wall.ledger_requests
@@ -3786,7 +3786,7 @@ def ledger_chip_opens_on_a_session(wall):
     while it is open turns it to that one; Close returns focus to the chip;
     the Ledger button shuts the open Ledger; a snapshot reads it again."""
     page = wall.open(1920, 1000, 16)
-    kallos = page.locator(".card:has(.name:text-is('Kallos')) .chip")
+    kallos = page.locator(".card[data-key='demo-2-af_bella'] .chip")
     kallos.click()
     page.wait_for_selector("#ledger .scope")
     st = page.evaluate(LEDGER_STATE)
@@ -3795,7 +3795,7 @@ def ledger_chip_opens_on_a_session(wall):
         "a chip opens the docked Ledger on its session, focus on the title",
         st,
     )
-    other = page.locator(".card:not(:has(.name:text-is('Kallos'))) .chip:not([hidden])").first
+    other = page.locator(".card:not([data-key='demo-2-af_bella']) .chip:not([hidden])").first
     who = other.evaluate("(c) => c.closest('.card').querySelector('.name').textContent")
     other.click()
     page.wait_for_function("(who) => document.querySelector('#ledger .scope')?.textContent.includes(`Showing ${who} only`)", arg=who)
@@ -3931,7 +3931,7 @@ def ledger_button_keeps_focus(wall):
     on the button; Close and Esc give it back to the chip, docked or as the
     narrow dialog."""
     page = wall.open(1920, 1000, 16)
-    chip = page.locator(".card:has(.name:text-is('Kallos')) .chip")
+    chip = page.locator(".card[data-key='demo-2-af_bella'] .chip")
     chip.click()
     page.wait_for_selector("#ledger .scope")
     page.click("#ledger-open")
@@ -3949,7 +3949,7 @@ def ledger_button_keeps_focus(wall):
     )
     page.close()
     page = wall.open(945, 1000, 8)
-    chip = page.locator(".card:has(.name:text-is('Kallos')) .chip")
+    chip = page.locator(".card[data-key='demo-2-af_bella'] .chip")
     chip.click()
     page.wait_for_selector("#ledger .scope")
     modal = page.evaluate("document.getElementById('ledger').matches(':modal')")

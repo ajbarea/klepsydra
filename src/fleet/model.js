@@ -91,7 +91,7 @@ const basename = (path) => (typeof path === "string" ? path.replace(/\/+$/, "").
  */
 export function identity(s, cast) {
   const own = typeof s.voice === "string" && s.voice ? s.voice : null;
-  const picked = !castCharacter(own, cast) && typeof s.pick === "string" ? s.pick : null;
+  const picked = !castFiles(castCharacter(own, cast), cast) && typeof s.pick === "string" ? s.pick : null;
   const voice = picked ?? own;
   const character = castCharacter(voice, cast);
   const base = character && castFiles(character, cast);
@@ -117,31 +117,35 @@ export function identity(s, cast) {
 
 /**
  * Every session a character from the theme `cast` wears (#148): one with no
- * character of its own (keryx muted, a repo with no home voice, or a home
- * voice another session keeps) gets `pick`, a character no live card shows,
- * or, when every one is showing, one of the least shown. Older sessions
- * choose first, each taking the free character its id hashes highest with,
- * so a card keeps its face when newer ones arrive, and the strip, the wall
- * and the phone, which see the same sessions, agree. With no theme loaded
- * nothing is picked and the cards wear medallions.
+ * character of its own (keryx muted, a repo with no home voice, a home voice
+ * another session keeps, or a voice the theme does not cast) gets `pick`, a
+ * character no older card on the wall shows, or, when every one is showing,
+ * one of the least shown. Sessions are taken oldest first and each sees only
+ * older ones, so a card keeps its face while it is on the wall: a newer
+ * session never takes it, even one whose own voice is that character (the two
+ * then share it), and an ended card holds its face until it leaves the wall.
+ * Of the free characters it takes the one its id hashes highest with. The
+ * strip, the wall and the phone see the same sessions, so they agree. With no
+ * theme loaded nothing is picked and the cards wear medallions.
  */
 export function castPicks(sessions, cast) {
   const chars = Object.keys(cast?.characters ?? {}).filter((k) => castFiles(castCharacter(k, cast), cast));
   if (!chars.length) return sessions;
-  const own = (s) => (castCharacter(s.voice, cast) && castFiles(castCharacter(s.voice, cast), cast) ? s.voice : null);
-  const live = (s) => s.status !== "ended";
+  const own = (s) => (castFiles(castCharacter(s.voice, cast), cast) ? s.voice : null);
   const shown = new Map(chars.map((c) => [c, 0]));
-  for (const s of sessions) if (live(s) && own(s) && shown.has(s.voice)) shown.set(s.voice, shown.get(s.voice) + 1);
-  const order = sessions
-    .filter((s) => !own(s))
-    .sort((a, b) => (a.started_at ?? Infinity) - (b.started_at ?? Infinity) || (a.session_id < b.session_id ? -1 : 1));
+  const order = [...sessions].sort(
+    (a, b) => (a.started_at ?? Infinity) - (b.started_at ?? Infinity) || (a.session_id < b.session_id ? -1 : 1),
+  );
   const pick = new Map();
   for (const s of order) {
-    const least = Math.min(...shown.values());
-    const pool = chars.filter((c) => shown.get(c) === least);
-    const c = pool.reduce((best, x) => (hash(`${s.session_id}:${x}`) > hash(`${s.session_id}:${best}`) ? x : best));
-    pick.set(s.session_id, c);
-    if (live(s)) shown.set(c, shown.get(c) + 1);
+    let c = own(s);
+    if (!c) {
+      const least = Math.min(...shown.values());
+      const pool = chars.filter((x) => shown.get(x) === least);
+      c = pool.reduce((best, x) => (hash(`${s.session_id}:${x}`) > hash(`${s.session_id}:${best}`) ? x : best));
+      pick.set(s.session_id, c);
+    }
+    if (shown.has(c)) shown.set(c, shown.get(c) + 1);
   }
   return sessions.map((s) => (pick.has(s.session_id) ? { ...s, pick: pick.get(s.session_id) } : s));
 }

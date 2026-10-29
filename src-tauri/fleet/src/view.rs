@@ -111,9 +111,10 @@ pub struct View {
     /// The Remote Control link that opens the session on claude.ai or in
     /// the Claude app; none while Remote Control is off or the session ended.
     pub remote_url: Option<String>,
-    /// When it started, skew-corrected; the wall casts a character for a
-    /// session with none of its own in this order, so an older card keeps its
-    /// face when a newer one arrives. None from a hook that never stamped it.
+    /// When it started, as the hook stamped it (not skew-corrected, so the
+    /// order never moves); the wall casts a character for a session with none
+    /// of its own oldest first, so a card keeps its face. None from a hook
+    /// that never stamped it.
     pub started_at: Option<i64>,
     /// The account it runs on; left out of the JSON when the hook never said.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -297,7 +298,7 @@ pub fn view(entry: &Entry, now: i64) -> Option<View> {
         } else {
             f.remote_url.clone()
         },
-        started_at: f.started_at.map(at),
+        started_at: f.started_at,
         account: f.account.clone(),
         reply_at: None,
         marks: Marks {
