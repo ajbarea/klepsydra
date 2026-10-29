@@ -746,19 +746,7 @@ LAUNCH="$work/launch-heph.sh" FLEET_NOW=$((noon + 1000)) bash "$here/resume-at-r
 check "review 1: a registered agent in the pane orchestrator.pane names is moved as a worker, not as Heph" "$(sed -n 2p "$work/moved")" "w"
 t kill-window -t "$h" 2>/dev/null; : >"$REGISTRY"
 
-: >"$work/moved"; rm -f "$FLEET_STATE/orchestrator.config"
-h=$(pane hephphone "{\"above\":[\"⏺ ok\",\"$LIMIT\"]}"); settle
-printf '%s\n' "$h" >"$FLEET_STATE/orchestrator.pane"; live "$h"
-printf '%s\n' "$SID" >"$FLEET_STATE/orchestrator.session"
-cat >"$work/launch-heph-phone.sh" <<EOF
-#!/usr/bin/env bash
-jq '.prompt.at = 5' "$KLEPSYDRA_DIR/fleet/$SID.json" >"$work/st.json" && mv "$work/st.json" "$KLEPSYDRA_DIR/fleet/$SID.json"
-echo "pane=%996 session=x account=\$FLEET_ACCOUNT avail=1MiB brief=started"
-EOF
-LAUNCH="$work/launch-heph-phone.sh" FLEET_HEPH="$work/HEPH.md" FLEET_NOW=$noon bash "$here/resume-at-reset.sh" --once 2>/dev/null
-check "review 2: a turn Heph took during the launch (a phone message) keeps him and his records" \
-  "$(cat "$FLEET_STATE/orchestrator.pane" "$FLEET_STATE/orchestrator.session" | tr '\n' ' ')$(events hephphone)" "$h $SID "
-t kill-window -t "$h" 2>/dev/null; rm -f "$FLEET_STATE/orchestrator.pane" "$FLEET_STATE/orchestrator.session" "$KLEPSYDRA_DIR/fleet/$SID.json"
+rm -f "$FLEET_STATE/orchestrator.pane" "$FLEET_STATE/orchestrator.session" "$KLEPSYDRA_DIR/fleet/$SID.json"
 logout a; logout b; reading a Personal 40 1000; rm -f "$KLEPSYDRA_DIR/accounts/b/s.json"
 
 echo "two accounts: review round 1"
@@ -1192,6 +1180,49 @@ sleep 0.3
 check "a second run while one holds the lock refuses" "$(bash "$here/recover.sh" --no-orchestrator 2>&1; echo "rc=$?")" $'error: another fleet recover is running\nrc=1'
 wait
 rm -f "$FLEET_STATE/orchestrator.pane" "$FLEET_STATE/orchestrator.session"; : >"$REGISTRY"; unset FLEET_BOOT_ID FLEET_PROC FLEET_PROJECTS
+
+echo "the orchestrator's identity across /clear and tmux restarts (#173 review)"
+# A fake /proc: process 4242 started at tick 777, after the server (tick 500).
+: >"$REGISTRY"; rm -f "$KLEPSYDRA_DIR"/fleet/*.json "$FLEET_STATE/resume-state"
+login a; login b; reading a Personal 100 5000; reading b RIT 10 4000
+OS=aaaaaaaa-0000-4000-8000-0000000000a1 CUR=aaaaaaaa-0000-4000-8000-0000000000a2
+hfile() { # SID PID START PANE [ENDED-AT]: a fleet file, ended when ENDED-AT is given
+  jq -n --argjson pid "$2" --argjson st "$3" --arg b "$NOWBOOT" --arg p "$4" --arg e "${5:-}" \
+    '{session_id: "x", started_at: 1, ended: (if $e == "" then null else {at: ($e | tonumber)} end),
+      claude: {pid: $pid, start: $st}, host: {boot: $b}, tmux: {pane: $p}}' >"$KLEPSYDRA_DIR/fleet/$1.json"
+}
+hcase() { # NAME OS-START: Heph's recorded session OS ended (started at OS-START); CUR, alive, in his pane
+  : >"$work/moved"; : >"$FLEET_LOG"; rm -f "$KLEPSYDRA_DIR"/fleet/*.json "$FLEET_STATE/resume-state"
+  h=$(pane "$1" "{\"above\":[\"⏺ ok\",\"$LIMIT\"]}"); settle
+  printf '%s\n' "$h" >"$FLEET_STATE/orchestrator.pane"; printf '%s\n' "$OS" >"$FLEET_STATE/orchestrator.session"
+  hfile "$OS" 4343 "$2" "$h" 5; hfile "$CUR" 4242 777 "$h"
+  hmove "$noon"
+}
+hcase hclear 600
+check "after a /clear (his recorded session ended on this server), the session in his pane is Heph: recorded, then moved" \
+  "$(head -2 "$work/moved" | tr '\n' ' ')$(jq -r 'select(.message == "orchestrator session recorded") | .session' "$FLEET_LOG")" "$work/cfg-b heph $CUR"
+t kill-window -t "$h" 2>/dev/null
+hcase hrestart 100
+check "after a tmux restart (his recorded session ended on an earlier server), another session in the reused pane id is not Heph" \
+  "$(wc -c <"$work/moved") $(events hrestart) $(cat "$FLEET_STATE/orchestrator.session")" "0  $OS"
+check "and it is logged" "$(jq -r 'select(.message | startswith("the orchestrator'"'"'s pane runs another session")) | .session' "$FLEET_LOG")" "$CUR"
+t kill-window -t "$h" 2>/dev/null
+
+: >"$work/moved"; rm -f "$KLEPSYDRA_DIR"/fleet/*.json "$FLEET_STATE/resume-state" "$FLEET_STATE/orchestrator.config"
+h=$(pane hephphone "{\"above\":[\"⏺ ok\",\"$LIMIT\"]}"); settle
+printf '%s\n' "$h" >"$FLEET_STATE/orchestrator.pane"; printf '%s\n' "$CUR" >"$FLEET_STATE/orchestrator.session"
+hfile "$CUR" 4242 777 "$h"
+cat >"$work/launch-heph-phone.sh" <<EOF
+#!/usr/bin/env bash
+jq '.prompt.at = 5' "$KLEPSYDRA_DIR/fleet/$CUR.json" >"$work/st.json" && mv "$work/st.json" "$KLEPSYDRA_DIR/fleet/$CUR.json"
+echo "pane=%996 session=x account=\$FLEET_ACCOUNT avail=1MiB brief=started"
+EOF
+LAUNCH="$work/launch-heph-phone.sh" FLEET_HEPH="$work/HEPH.md" FLEET_NOW=$noon bash "$here/resume-at-reset.sh" --once 2>/dev/null
+check "review 2: a prompt Heph took during the launch (a phone message) keeps him and his records" \
+  "$(cat "$FLEET_STATE/orchestrator.pane" "$FLEET_STATE/orchestrator.session" | tr '\n' ' ')$(events hephphone)" "$h $CUR "
+t kill-window -t "$h" 2>/dev/null
+rm -f "$KLEPSYDRA_DIR"/fleet/*.json "$FLEET_STATE/orchestrator."* "$FLEET_STATE/resume-state"
+logout a; logout b; reading a Personal 40 1000; rm -f "$KLEPSYDRA_DIR/accounts/b/s.json"
 
 echo "launch without worker settings"
 cat >"$work/launcher-rec.sh" <<EOF

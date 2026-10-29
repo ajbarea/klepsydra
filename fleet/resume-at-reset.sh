@@ -273,8 +273,11 @@ one() { # PANE
   local cur
   if [[ -n $ORCH && $p == "$ORCH" ]] && ! registered "$p"; then
     cur=$(live_session "$p")
-    if [[ -z $OSID || ( -n $cur && $cur == "$OSID" ) ]] || { ! session_alive "$OSID" && on_this_server "$OSID"; }; then
+    if [[ -z $OSID ]] || { [[ -n $cur && $cur == "$OSID" ]] && session_alive "$OSID"; } || { ! session_alive "$OSID" && on_this_server "$OSID"; }; then
       orch=1
+    elif [[ $HEPH_DOUBT != "$p $cur" ]]; then
+      HEPH_DOUBT="$p $cur"
+      flog WARN "the orchestrator's pane runs another session; it is not looked after as Heph until fleet recover or a new record" pane="$p" session="${cur:-none}" recorded="$OSID"
     fi
   fi
   # The pane's account: its config folder's login, named as the gauge names
@@ -481,7 +484,7 @@ doctor_after_switch() {
     fi
   fi
 }
-PREV_ACCT="" DOCTOR_DUE=0
+PREV_ACCT="" DOCTOR_DUE=0 HEPH_DOUBT=""
 
 pass() {
   NOW=$(clock) ACTIVE=$(active_account) ORCH=$(orchestrator) OSID=$(cat "$FLEET_STATE/orchestrator.session" 2>/dev/null)

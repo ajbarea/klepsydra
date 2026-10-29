@@ -137,7 +137,10 @@ window first, then the weekly) and, when an agent hits a limit with over 15
 minutes to wait, moves it to a fresh session on the other account if that one
 has room, carrying anything typed at the limited pane. `fleet accounts` shows
 each folder's account and room; `fleet doctor` checks both are logged in and in
-step. The orchestrator's pane stays on `~/.claude`.
+step. The orchestrator (Heph) is looked after too: at a limit he is resumed at
+the reset, or moved to the other account as a fresh session from `HEPH.md` when
+that one has room. His own account order is the workers' reversed
+(`FLEET_HEPH_ACCOUNTS`), so worker load never stalls him.
 
 ## Install
 
@@ -1345,7 +1348,7 @@ briefs, logs) stays in the state folder.
 | `fleet brief NAME BODY` | Writes `task-NAME.src`: BODY, then the shared rules in `fleet/brief-tail.md`. `--check` lists briefs whose rules drifted. |
 | `fleet cutover` | Restarts the resume service on the installed scripts and confirms its start is logged. |
 | `fleet/launch.sh NAME BRIEF` | Starts an agent with its own session id in a memory-capped scope. It turns Remote Control on and waits for it to settle, pastes the brief, checks the brief reached the prompt, then submits it. A retry never sends Escape. It records the pane, session id and folder in `panes.tsv`. |
-| `fleet/resume-at-reset.sh` | The resume service. It resumes a limited pane at the reset its banner names, or at once after a switch to an account with room. It starts a registered pane fresh from its brief after an hour idle. Whatever AJ typed at a limited pane is sent as typed; a line that left the prompt unsent is typed again. Each pane's state survives a restart of the service. |
+| `fleet/resume-at-reset.sh` | The resume service. It resumes a limited pane at the reset its banner names, or at once after a switch to an account with room; the orchestrator too, who moves to the other account as a fresh session from `HEPH.md` when that one has room. It starts a registered pane fresh from its brief after an hour idle. Whatever AJ typed at a limited pane is sent as typed; a line that left the prompt unsent is typed again. Each pane's state survives a restart of the service. |
 
 Every script logs each decision as one JSON line in `log/fleet.log` under the
 state folder, in the app log's shape (`ts`, `level`, `target`, `message`, then
