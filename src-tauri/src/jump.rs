@@ -134,6 +134,13 @@ pub(crate) fn fleet_window() -> Result<isize, JumpError> {
     uia::window(Lookup::Exact(crate::launch::FLEET_TAB))
 }
 
+/// The handle of the Windows Terminal window holding the fleet tab, leaving
+/// its tabs as they are: for watching, which must change nothing.
+#[cfg(windows)]
+pub(crate) fn fleet_window_quiet() -> Result<isize, JumpError> {
+    uia::find(Lookup::Exact(crate::launch::FLEET_TAB))
+}
+
 #[cfg(windows)]
 mod uia {
     use super::JumpError;
@@ -278,6 +285,11 @@ mod uia {
             select(tab)?;
             Ok(hwnd.0 as isize)
         })
+    }
+
+    /// The window holding the tab `lookup` picks, with no tab selected.
+    pub fn find(lookup: Lookup<'_>) -> Result<isize, JumpError> {
+        with_tab(lookup, |tab| Ok(window_of(tab)?.0 as isize))
     }
 
     pub fn jump(lookup: Lookup<'_>) -> Result<String, JumpError> {

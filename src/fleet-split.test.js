@@ -179,13 +179,31 @@ test("when a window leaves the split the toggle turns off, the note says why, an
   assert.deepEqual(calls.at(-1), ["set_split_mode", { on: true }]);
 });
 
-test("a message that is not a leave changes nothing, and outside Windows nothing subscribes", async () => {
+test("#182: when AJ snaps both windows into the split the toggle turns on and the note says so, with nothing called", async () => {
+  const button = control();
+  const note = { textContent: "", title: "" };
+  const { calls, invoke } = app({ saved: Promise.resolve(false) });
+  const f = follower();
+  await wireSplit({ button, note, invoke, app: true, follow: f.follow });
+  await settle();
+  assert.ok(!pressed(button));
+  const said = "Split on: the wall and the fleet terminal were snapped side by side.";
+  f.send({ on: true, note: said });
+  assert.ok(pressed(button), "checked");
+  assert.equal(note.textContent, said);
+  assert.deepEqual(calls.map(([c]) => c), ["get_split_mode"], "nothing moves: the app already watches the split");
+  button.click();
+  await settle();
+  assert.deepEqual(calls.at(-1), ["set_split_mode", { on: false }], "one click turns it off");
+});
+
+test("a message that is neither a leave nor a snap changes nothing, and outside Windows nothing subscribes", async () => {
   const button = control();
   const note = { textContent: "", title: "" };
   const f = follower();
   await wireSplit({ button, note, invoke: app({ saved: Promise.resolve(true) }).invoke, app: true, follow: f.follow });
   await settle();
-  for (const m of [null, {}, { on: true, note: "x" }, "off"]) f.send(m);
+  for (const m of [null, {}, { on: "no", note: "x" }, "off"]) f.send(m);
   assert.ok(pressed(button));
   const g = follower();
   await wireSplit({ button: control(), note, invoke: app({ saved: Promise.reject("Split mode works on Windows only.") }).invoke, app: true, follow: g.follow });
@@ -209,6 +227,17 @@ test("the app sends the leave the wall listens for, and saves split off", () => 
   const rs = read("../src-tauri/src/split.rs");
   assert.match(rs, /json!\(\{ "on": false, "note": note \}\)/);
   assert.match(rs, /crate::write_pref\(app, SPLIT_KEY, Value::Bool\(false\)\)/);
+});
+
+test("#182: while split is off the app watches for a hand-made split, sends the snap and saves split on", () => {
+  const rs = code(read("../src-tauri/src/split.rs"));
+  assert.match(rs, /json!\(\{ "on": true, "note": SNAPPED \}\)/);
+  assert.match(rs, /crate::write_pref\(app, SPLIT_KEY, Value::Bool\(true\)\)/);
+  assert.match(rs, /if !on \{\s*watch_for_snap\(&app\);\s*\}\s*Ok\(on\)/, "at the wall's load, when saved off");
+  assert.match(rs, /if !saved_on\(on, said\.is_ok\(\)\) \{\s*watch_for_snap\(&app\);\s*\}/, "after an unsplit or a split that failed");
+  assert.match(rs, /drop\(channel\);\s*#\[cfg\(windows\)\]\s*watch_for_snap\(app\);/, "after a window left the split");
+  assert.match(rs, /win::watch_split\(wall, terminal\);/, "a hand-made split is then watched like one the app made");
+  assert.match(rs, /crate::jump::fleet_window_quiet\(\)/, "the watch finds the terminal without selecting its tab");
 });
 
 /** Rust source with its comments removed. */

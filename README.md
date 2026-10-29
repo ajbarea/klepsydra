@@ -683,6 +683,13 @@ half a second of settling after them, never count. The watcher is a
 `SetWinEventHook` on the two windows' threads, served by a thread of its
 own, so the wall's UI thread does not wake for it.
 
+The other way round, while split is off: snap the wall into the left half
+and the fleet terminal into the right half of one monitor yourself (Windows
+11 snapping, Snap Layouts or dragging, within 8 px), and once both have sat
+still for a second Split checks itself and saves on, moving nothing. A
+reversed or uneven snap does not count, nor a layout already in place when
+split went off. Turning it off then leaves both windows where they are.
+
 Split is off by default. Turning it on saves `wall_split` in `prefs.json`,
 and the wall splits again the first time it opens after klepsydra starts. Where the windows sat before is
 kept in memory only: after klepsydra restarts, turning split off leaves both
