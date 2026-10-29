@@ -18,10 +18,29 @@ began=$(wc -l <"$FLEET_LOG" 2>/dev/null || echo 0)
 failed=0
 
 sc() { $SYSTEMCTL --user "$@"; }
+
+# Rows written before launch.sh recorded session ids get the live one now.
+if [[ -e $REGISTRY ]]; then
+  while IFS=$'\t' read -r p name _ sid _; do
+    [[ -n $p && -z $sid ]] || continue
+    if sid=$(live_session "$p"); then
+      set_session "$p" "$sid" && flog INFO "registry row given its live session id" pane="$p" name="$name" session_id="$sid"
+    else
+      flog WARN "registry row has no live session to record" pane="$p" name="$name"
+    fi
+  done < <(cat "$REGISTRY")
+fi
+
+# Not in the middle of a fresh session: the resume service holds this lock then.
+exec 7>>"$FLEET_STATE/.fresh.lock"
+flock -w 900 7 || flog WARN "a fresh session held its lock for 15 min; cutting over anyway"
+sc daemon-reload
+# One unit at a time, so a guard (wsl-mem-watch) is down only for its own swap.
 for u in "${UNITS[@]}"; do
-  # A timer's service may be transient too.
+  # A timer's service may be transient too; a failed transient one needs reset-failed.
   for part in "$u" "${u%.timer}.service"; do
     [[ $(sc show -p Transient --value "$part" 2>/dev/null) == yes ]] || continue
+    sc reset-failed "$part" 2>/dev/null
     if sc stop "$part" 2>/dev/null; then
       flog INFO "transient unit stopped for its installed file" unit="$part"
     else
@@ -29,9 +48,6 @@ for u in "${UNITS[@]}"; do
       failed=1
     fi
   done
-done
-sc daemon-reload
-for u in "${UNITS[@]}"; do
   if ! out=$(sc enable --now "$u" 2>&1); then
     flog ERROR "unit not enabled" unit="$u" said="$out"
     echo "FAIL $u: $out"

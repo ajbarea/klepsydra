@@ -258,6 +258,24 @@ reg_field() { awk -F'\t' -v p="$1" -v n="$2" '$1 == p { print $n; exit }' "$REGI
 orchestrator() { cat "$FLEET_STATE/orchestrator.pane" 2>/dev/null; }
 fleet_panes() { t list-panes -s -t "$FLEET_SESSION" -F '#{pane_id}' 2>/dev/null; }
 
+# The live session id klepsydra's fleet file shows in pane PANE, or nothing.
+live_session() { # PANE
+  local f
+  for f in "$KLEPSYDRA_DIR"/fleet/*.json; do
+    [[ -f $f && ! -L $f ]] || continue
+    jq -e --arg p "$1" '.tmux.pane == $p and .ended == null' "$f" >/dev/null 2>&1 && { basename "$f" .json; return 0; }
+  done
+  return 1
+}
+
+# Set the registry's session id for pane PANE (column 4) to SID.
+set_session() { # PANE SID
+  local tmp
+  [[ -e $REGISTRY ]] || return 1
+  tmp=$(mktemp "$REGISTRY.XXXXXX") || return 1
+  awk -F'\t' -v OFS='\t' -v p="$1" -v sid="$2" '$1 == p { $4 = sid } { print }' "$REGISTRY" >"$tmp" && mv -f -- "$tmp" "$REGISTRY"
+}
+
 # Whether pane PANE still runs the session registered for it: a live fleet
 # file (klepsydra's, written by the fleet hook) with that session id and pane.
 # After a tmux restart pane ids start over, so a stale panes.tsv row can name

@@ -201,6 +201,29 @@ check "S6: when the fresh launch fails, the old pane is kept and resumed" \
 check "and the failed launch is an error in the log" "$(jq -r 'select(.level == "ERROR") | .message' "$FLEET_LOG")" "fresh session not started; the old pane is kept"
 t kill-window -t "$p"; : >"$REGISTRY"
 
+echo "resume: review round 2 (B-1, B-2)"
+# shellcheck disable=SC2016 # a literal line of launch.sh
+check "B-1: the launcher, and a tmux server it starts, inherit neither lock" "$(grep -c 'new "$dir" 2>&1 7>&- 8>&-)' "$here/launch.sh")" "1"
+: >"$FLEET_LOG"
+p=$(pane changed "{\"above\":[\"⏺ Done. done 9:00 AM\",\"$LIMIT\"]}"); settle
+live "$p"
+printf '%s\tchanger\t%s\t%s\t/w\n' "$p" "$work/brief.src" "$SID" >"$REGISTRY"
+cat >"$work/launch-slow.sh" <<EOF
+#!/usr/bin/env bash
+# A launch during which AJ types into the old pane; it repoints the row as launch.sh does.
+tmux -L "$FLEET_SOCK" send-keys -t "$p" -l "AJ: wait, one more thing"
+sleep 1
+sed -i "s|^$p\t|%998\t|" "$REGISTRY"
+echo "pane=%998 session=x account=x avail=1MiB brief=started"
+EOF
+resume "$(TZ=America/New_York date -d '2026-10-28 09:00' +%s)"
+LAUNCH="$work/launch-slow.sh" FLEET_NOW=$(( noon + 4330 )) bash "$here/resume-at-reset.sh" --once 2>/dev/null
+check "B-2: AJ typed during the launch: the old pane stays, with his text, and nothing exits it" \
+  "$(fleet_panes | grep -cx "$p") $(grep -c 'SUBMIT /exit' "$work/changed.log") [$(input_text "$(screen "$p")")]" "1 0 [AJ: wait, one more thing]"
+check "and the registry points at it again" "$(cut -f1,4 "$REGISTRY")" "$p	$SID"
+check "logged as an error" "$(jq -r 'select(.level == "ERROR") | .message' "$FLEET_LOG")" "the old pane changed while its fresh session launched; the old one stays and the new one goes"
+t kill-window -t "$p"; : >"$REGISTRY"
+
 echo "resume: menus, the orchestrator and Remote Control"
 : >"$FLEET_LOG"
 p=$(pane menu '{"above":["work"],"menu":"limit"}'); settle

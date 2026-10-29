@@ -81,13 +81,33 @@ submit() { # PANE
   if wait_for "$1" "${FLEET_START_WAIT:-30}" started; then echo yes; else echo no; fi
 }
 
+# /exit the claude in PANE and close the pane once it has gone, or after 30 s.
+retire() { # PANE
+  if type_exactly "$1" "/exit"; then
+    t send-keys -t "$1" Enter
+    for _ in $(seq 30); do fleet_panes | grep -qx "$1" || return 0; sleep 1; done
+  fi
+  t kill-pane -t "$1" 2>/dev/null
+}
+
+# Point the registry row launch.sh moved to NEW back at PANE and session SID.
+set_pane() { # NEW PANE SID
+  local tmp
+  tmp=$(mktemp "$REGISTRY.XXXXXX") || return 1
+  awk -F'\t' -v OFS='\t' -v n="$1" -v p="$2" -v sid="$3" '$1 == n { $1 = p; $4 = sid } { print }' "$REGISTRY" >"$tmp" && mv -f -- "$tmp" "$REGISTRY"
+}
+
 # Replace PANE (registry NAME, BRIEF) with a fresh session from its brief;
 # prints the new pane. Gives up, typing nothing, if AJ has typed meanwhile.
 fresh() { # PANE NAME BRIEF
   local p=$1 name=$2 brief=$3 txt new
   [[ -z $(input_text "$(screen "$p")") ]] || return 1
-  if ! pane_runs "$p" "$(reg_field "$p" 4)"; then
-    flog WARN "fresh session refused: the pane no longer runs its registered session" pane="$p" name="$name" session_id="$(reg_field "$p" 4)"
+  local sid
+  exec 7>>"$FLEET_STATE/.fresh.lock"
+  flock 7
+  sid=$(reg_field "$p" 4)
+  if ! pane_runs "$p" "$sid"; then
+    flog WARN "fresh session refused: the pane no longer runs its registered session" pane="$p" name="$name" session_id="$sid"
     return 2
   fi
   txt="$FLEET_STATE/fresh-$name-$(date +%Y%m%d-%H%M).src"
@@ -98,12 +118,14 @@ fresh() { # PANE NAME BRIEF
     flog ERROR "fresh session not started; the old pane is kept" pane="$p" name="$name"
     return 3
   fi
-  if type_exactly "$p" "/exit"; then
-    t send-keys -t "$p" Enter
-    for _ in $(seq 30); do fleet_panes | grep -qx "$p" || break; sleep 1; done
+  # The launch took a while: AJ may have typed into the old pane or resumed it.
+  if ! pane_runs "$p" "$sid" || ! idle_empty "$(screen "$p")"; then
+    flog ERROR "the old pane changed while its fresh session launched; the old one stays and the new one goes" pane="$p" new_pane="$new" name="$name"
+    retire "$new"
+    set_pane "$new" "$p" "$sid"
+    return 4
   fi
-  # Checked at the top as this agent's own pane; gone already if /exit worked.
-  fleet_panes | grep -qx "$p" && t kill-pane -t "$p" 2>/dev/null
+  retire "$p"
   printf '%s' "$new"
 }
 
@@ -119,6 +141,15 @@ stopped_at() { # PANE PLAIN
   else
     t display-message -p -t "$1" '#{window_activity}'
   fi
+}
+
+# Whether the transcript above the box already shows LINE as sent ("❯ LINE"),
+# compared without whitespace, since a long line wraps there.
+sent_already() { # SCREEN LINE
+  local above want
+  split_screen "$1"
+  above=$(tr -d '[:space:]' <<<"$ABOVE") want=$(tr -d '[:space:]' <<<"❯$2")
+  [[ $above == *"$want"* ]]
 }
 
 forget() { unset "due[$1]" "seen_on[$1]" "note[$1]"; }
@@ -201,7 +232,7 @@ one() { # PANE
     flog WARN "a pasted block left the prompt unsent and cannot be typed again; resuming without it" pane="$p" text="${note[$p]}"
     unset "note[$p]"
     return
-  elif [[ -n ${note[$p]:-} ]] && { split_screen "$s"; ! grep -qF -- "❯ ${note[$p]}" <<<"$ABOVE"; }; then
+  elif [[ -n ${note[$p]:-} ]] && ! sent_already "$s" "${note[$p]}"; then
     # Typed, then gone from the prompt without being sent (not in the
     # transcript above it): type it again.
     tmp=$(mktemp)

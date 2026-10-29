@@ -26,9 +26,17 @@ while IFS=$'\t' read -r p name brief sid _; do
   fi
   txt="$FLEET_STATE/fresh-$name-$(date +%Y%m%d-%H%M).src"
   { fresh_preamble "had grown too large to keep resuming"; printf '\n\n'; cat "$brief"; } >"$txt"
-  t send-keys -t "$p" -l "/clear"
-  wait_for "$p" 5 holds_input && t send-keys -t "$p" Enter
+  if ! type_exactly "$p" "/clear"; then
+    flog WARN "fresh session skipped: AJ typed while /clear went in" pane="$p" name="$name"
+    continue
+  fi
+  t send-keys -t "$p" Enter
   wait_for "$p" 30 idle_empty || flog WARN "/clear did not come back to an empty prompt" pane="$p" name="$name"
+  # /clear starts a new session id in the same pane: the registry follows it.
+  for _ in $(seq 20); do
+    new_sid=$(live_session "$p") && [[ $new_sid != "$sid" ]] && { set_session "$p" "$new_sid"; break; }
+    sleep 0.5
+  done
   remote_control "$p" || flog WARN "remote control did not settle after /clear" pane="$p" name="$name"
   got=$(deliver "$p" "$txt")
   flog INFO "fresh session via /clear" pane="$p" name="$name" brief="$got"
