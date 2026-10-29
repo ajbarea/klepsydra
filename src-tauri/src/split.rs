@@ -686,9 +686,13 @@ mod win {
         /// End any watcher and start a new generation, returned.
         pub fn disarm() -> u64 {
             let generation = GENERATION.fetch_add(1, Ordering::SeqCst) + 1;
-            if let Some(thread) = watcher().take() {
+            // Posted under the lock: the watcher clears its id under it before
+            // exiting, so the id cannot pass to a new thread in between.
+            let mut w = watcher();
+            if let Some(thread) = w.take() {
                 let _ = unsafe { PostThreadMessageW(thread, WM_QUIT, WPARAM(0), LPARAM(0)) };
             }
+            drop(w);
             generation
         }
 
