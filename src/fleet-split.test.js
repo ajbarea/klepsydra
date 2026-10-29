@@ -237,6 +237,8 @@ test("#182: while split is off the app watches for a hand-made split, sends the 
   assert.match(rs, /if !saved_on\(on, said\.is_ok\(\)\) \{\s*watch_for_snap\(&app\);\s*\}/, "after an unsplit or a split that failed");
   assert.match(rs, /drop\(channel\);\s*#\[cfg\(windows\)\]\s*watch_for_snap\(app\);/, "after a window left the split");
   assert.match(rs, /win::watch_split\(wall, terminal\);/, "a hand-made split is then watched like one the app made");
+  assert.match(rs, /fn callbacks\(app: &tauri::AppHandle\) \{[^}]*win::when_left\(move \|note\| turned_off\(&to, note\)\);[^}]*win::when_snapped/, "both callbacks are set together");
+  assert.match(rs, /fn watch_for_snap\(app: &tauri::AppHandle\) \{[\s\S]*?callbacks\(app\);\s*win::watch_for_snap\(wall\);/, "so a hand-made split, the first since start, still turns off when left");
   assert.match(rs, /crate::jump::fleet_window_quiet\(\)/, "the watch finds the terminal without selecting its tab");
 });
 

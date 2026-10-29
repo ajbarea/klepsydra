@@ -70,14 +70,24 @@ fn wall_hwnd(app: &tauri::AppHandle) -> Option<isize> {
     Some(wall.hwnd().ok()?.0 as isize)
 }
 
+/// What the watchers do when a window leaves the split or both are snapped
+/// into it: set together, so a split AJ made by hand turns off as one the
+/// toggle made does.
+#[cfg(windows)]
+fn callbacks(app: &tauri::AppHandle) {
+    let to = app.clone();
+    win::when_left(move |note| turned_off(&to, note));
+    let to = app.clone();
+    win::when_snapped(move |wall, terminal| turned_on(&to, wall, terminal));
+}
+
 /// While split is off, watch for AJ snapping both windows into it (#182).
 #[cfg(windows)]
 fn watch_for_snap(app: &tauri::AppHandle) {
     let Some(wall) = wall_hwnd(app) else {
         return;
     };
-    let to = app.clone();
-    win::when_snapped(move |wall, terminal| turned_on(&to, wall, terminal));
+    callbacks(app);
     win::watch_for_snap(wall);
 }
 
@@ -158,8 +168,7 @@ pub async fn set_split_mode(app: tauri::AppHandle, on: bool) -> Result<String, S
             .get_webview_window(crate::fleet::WALL)
             .ok_or("The wall is not open.")?;
         let hwnd = wall.hwnd().map_err(|e| e.to_string())?.0 as isize;
-        let to = app.clone();
-        win::when_left(move |note| turned_off(&to, note));
+        callbacks(&app);
         let said = tauri::async_runtime::spawn_blocking(move || {
             if on {
                 win::split(hwnd)
@@ -703,7 +712,7 @@ mod win {
     pub use watch::{when_left, when_snapped};
 
     pub fn stop_watching() {
-        watch::disarm();
+        watch::quit();
     }
 
     /// While split is off: watch for AJ snapping the wall and the fleet
@@ -762,9 +771,11 @@ mod win {
     /// leaves its half. Each split or unsplit starts a new generation, which
     /// ends the last watcher, so the app's own moves are never seen as AJ's.
     mod watch {
-        use super::{exists, hwnd, in_split_now, left, left_note, saved, seen, snapped, Rect};
+        use super::{
+            exists, hwnd, in_split_now, is_terminal, left, left_note, saved, seen, snapped, Rect,
+        };
         use std::cell::{Cell, RefCell};
-        use std::sync::atomic::{AtomicU64, Ordering};
+        use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
         use std::sync::{Mutex, OnceLock};
         use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
         use windows::Win32::System::Threading::GetCurrentThreadId;
@@ -778,6 +789,7 @@ mod win {
         const EVENT_SYSTEM_MOVESIZEEND: u32 = 0x000B;
         const EVENT_SYSTEM_MINIMIZESTART: u32 = 0x0016;
         const EVENT_OBJECT_DESTROY: u32 = 0x8001;
+        const EVENT_OBJECT_SHOW: u32 = 0x8002;
         const EVENT_OBJECT_LOCATIONCHANGE: u32 = 0x800B;
         const WINEVENT_OUTOFCONTEXT: u32 = 0;
         const OBJID_WINDOW: i32 = 0;
@@ -791,6 +803,15 @@ mod win {
         static GENERATION: AtomicU64 = AtomicU64::new(0);
         /// The running watcher's thread, to end it.
         static WATCHER: Mutex<Option<u32>> = Mutex::new(None);
+        /// klepsydra is exiting: no watcher starts again (Tauri hides every
+        /// window on its way out, which a split watcher would read as closed).
+        static QUITTING: AtomicBool = AtomicBool::new(false);
+
+        /// End any watcher for good, before exit.
+        pub fn quit() {
+            QUITTING.store(true, Ordering::SeqCst);
+            disarm();
+        }
         type OnLeft = Box<dyn Fn(String) + Send + Sync>;
         static ON_LEFT: OnceLock<OnLeft> = OnceLock::new();
 
@@ -824,6 +845,10 @@ mod win {
             /// The threads whose windows' events are hooked.
             hooked: Vec<u32>,
             hooks: Vec<HWINEVENTHOOK>,
+            /// While the terminal is unknown: any Windows Terminal window shown
+            /// or moved, on every thread, starts a settle (a terminal opened
+            /// and snapped beside a wall already in place moves no wall).
+            any: Vec<HWINEVENTHOOK>,
             /// Whether the windows were in the split at the last look.
             was: bool,
         }
@@ -865,12 +890,66 @@ mod win {
             }
         }
 
+        /// Hook, or unhook, every thread's Windows Terminal windows being shown
+        /// or moved, as the terminal is unknown or known.
+        fn watch_any_terminal(snap: &mut Snap) {
+            if snap.terminal.is_some() {
+                for hook in snap.any.drain(..) {
+                    let _ = unsafe { UnhookWinEvent(hook) };
+                }
+                return;
+            }
+            if !snap.any.is_empty() {
+                return;
+            }
+            for event in [EVENT_OBJECT_SHOW, EVENT_OBJECT_LOCATIONCHANGE] {
+                let hook = unsafe {
+                    SetWinEventHook(
+                        event,
+                        event,
+                        None,
+                        Some(on_any_terminal),
+                        0,
+                        0,
+                        WINEVENT_OUTOFCONTEXT,
+                    )
+                };
+                if !hook.is_invalid() {
+                    snap.any.push(hook);
+                }
+            }
+        }
+
+        /// Start the settle again: each move replaces the same timer.
+        fn restart_settle() {
+            let id = TIMER.with(|t| t.get());
+            let id = unsafe { SetTimer(None, id, SNAP_SETTLE_MS, None) };
+            TIMER.with(|t| t.set(id));
+        }
+
+        unsafe extern "system" fn on_any_terminal(
+            _hook: HWINEVENTHOOK,
+            _event: u32,
+            h: HWND,
+            object: i32,
+            child: i32,
+            _thread: u32,
+            _ms: u32,
+        ) {
+            if object == OBJID_WINDOW && child == CHILDID_SELF && is_terminal(h) {
+                restart_settle();
+            }
+        }
+
         /// While split is off, watch the wall and the terminal `find` names
         /// (and names again once it is gone). Once both have sat still for
         /// `SNAP_SETTLE_MS` after a move, in the split's halves where they
         /// were not at the last look, split is on: `ON_SNAPPED`. Nothing
         /// moves. Ended, like the split watcher, by the next generation.
         pub fn arm_snap(generation: u64, wall: isize, find: Find) {
+            if QUITTING.load(Ordering::SeqCst) {
+                return;
+            }
             let spawned = std::thread::Builder::new()
                 .name("split-snap".into())
                 .spawn(move || run_snap(generation, wall, find));
@@ -888,6 +967,7 @@ mod win {
                 terminal,
                 hooked: Vec::new(),
                 hooks: Vec::new(),
+                any: Vec::new(),
                 was: terminal.is_some_and(|t| in_split_now(wall, t)),
             };
             let mut msg = MSG::default();
@@ -896,6 +976,7 @@ mod win {
             if let Some(t) = terminal {
                 hook_snap(&mut snap, t);
             }
+            watch_any_terminal(&mut snap);
             SNAP.with(|s| *s.borrow_mut() = Some(snap));
             let named = {
                 let mut w = watcher();
@@ -914,7 +995,7 @@ mod win {
                 }
             }
             let left = SNAP.with(|s| s.borrow_mut().take());
-            for hook in left.map(|s| s.hooks).unwrap_or_default() {
+            for hook in left.map(|s| [s.hooks, s.any].concat()).unwrap_or_default() {
                 let _ = unsafe { UnhookWinEvent(hook) };
             }
             let timer = TIMER.with(|t| t.replace(0));
@@ -943,11 +1024,11 @@ mod win {
                     .and_then(|s| s.as_ref().map(|s| raw == s.wall || s.terminal == Some(raw)))
                     .unwrap_or(false)
             });
+            // A move that comes while `settled` holds the state (if UI Automation
+            // pumps sent messages during its lookup) is dropped: the layout is
+            // read after the lookup anyway.
             if ours {
-                // Each move starts the settle again (the same timer, replaced).
-                let id = TIMER.with(|t| t.get());
-                let id = unsafe { SetTimer(None, id, SNAP_SETTLE_MS, None) };
-                TIMER.with(|t| t.set(id));
+                restart_settle();
             }
         }
 
@@ -966,6 +1047,7 @@ mod win {
                     if let Some(t) = snap.terminal {
                         hook_snap(snap, t);
                     }
+                    watch_any_terminal(snap);
                 }
                 let now = snap.terminal.is_some_and(|t| in_split_now(snap.wall, t));
                 let fire = snapped(snap.was, now);
@@ -1035,6 +1117,9 @@ mod win {
 
         /// Watch the split `generation` placed, once it has settled.
         pub fn arm(generation: u64, wall: isize, terminal: isize) {
+            if QUITTING.load(Ordering::SeqCst) {
+                return;
+            }
             let spawned = std::thread::Builder::new()
                 .name("split-watch".into())
                 .spawn(move || run(generation, wall, terminal));
@@ -1436,7 +1521,7 @@ mod win {
                 "the wall alone"
             );
             assert_eq!(
-                snap_watched(into_halves, |_, t| nudge(t, 0, 0)),
+                snap_watched(into_halves, |_, t| nudge(t, 3, 0)),
                 none,
                 "a split already there when watching began (put back by an unsplit)"
             );
