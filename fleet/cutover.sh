@@ -11,7 +11,7 @@ here=$(dirname "$(readlink -f "$0")")
 # shellcheck source=fleet/lib.sh
 . "$here/lib.sh"
 SYSTEMCTL=${FLEET_SYSTEMCTL:-systemctl}
-UNITS=(fleet-resume-at-reset.service fleet-memfrag-log.timer)
+UNITS=(fleet-resume-at-reset.service fleet-memfrag-log.timer fleet-accounts-sync.path fleet-accounts-sync.timer fleet-ci-watch.service)
 [[ -e ${FLEET_UNITS:-$HOME/.config/systemd/user}/wsl-mem-watch.service ]] && UNITS+=(wsl-mem-watch.service)
 # The log's length now: the resume service's start must come after it.
 began=$(wc -l <"$FLEET_LOG" 2>/dev/null || echo 0)
@@ -77,5 +77,5 @@ for _ in $(seq "${FLEET_CUTOVER_WAIT:-15}"); do
   sleep 1
 done
 flog ERROR "the resume service did not log its start after the cut-over"
-echo "FAIL the resume service did not log its start"
+echo "FAIL the resume service did not log its start" # logcheck: ignore[stderr-for-errors] # the report line, as each check prints
 exit 1

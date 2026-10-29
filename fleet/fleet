@@ -4,6 +4,8 @@
 #   fleet log [N]         the last N decisions (default 30), as plain lines
 #   fleet brief NAME BODY write task-NAME.src: BODY plus the shared rules
 #   fleet brief --check   list briefs whose shared rules are out of date
+#   fleet accounts        each config folder: its account and its room
+#   fleet accounts sync   make the second config folder behave like ~/.claude
 #   fleet install         link this checkout's scripts and units into place
 #   fleet cutover         restart the resume service on the installed scripts
 set -u
@@ -14,11 +16,27 @@ case $cmd in
   doctor) exec bash "$here/doctor.sh" "$@" ;;
   brief) exec bash "$here/brief.sh" "$@" ;;
   install) exec bash "$here/install.sh" "$@" ;;
+  accounts)
+    if [[ ${1:-} == sync ]]; then shift; exec bash "$here/accounts-sync.sh" "$@"; fi
+    # shellcheck source=fleet/lib.sh
+    . "$here/lib.sh"
+    now=$(date +%s) best=$(best_account "$now")
+    for dir in $FLEET_ACCOUNTS; do
+      if id=$(account_of "$dir"); then
+        read -r five seven <<<"$(headroom "$id" "$now")"
+        printf '%s %s: %s, five-hour room %s%%, weekly room %s%%\n' "$([[ $dir == "$best" ]] && echo '*' || echo ' ')" "$dir" "$(account_label "$id")" "$five" "$seven"
+      else
+        hint="claude auth login"
+        [[ $dir == "$FLEET_DEFAULT_CONFIG" ]] || hint="CLAUDE_CONFIG_DIR=$dir $hint"
+        printf '  %s: not logged in (%s)\n' "$dir" "$hint"
+      fi
+    done
+    ;;
   log)
     # shellcheck source=fleet/lib.sh
     . "$here/lib.sh"
     tail -n "${1:-30}" "$FLEET_LOG" | jq -r '[.ts[0:19], .level, .target, .message] + ([to_entries[] | select(.key | IN("ts","level","target","message","run_id") | not) | "\(.key)=\(.value)"]) | join(" ")'
     ;;
   cutover) exec bash "$here/cutover.sh" "$@" ;;
-  *) sed -n '2,9p' "$0" | sed 's/^# \{0,1\}//'; [[ -z $cmd ]] || exit 2 ;;
+  *) sed -n '2,11p' "$0" | sed 's/^# \{0,1\}//'; [[ -z $cmd ]] || exit 2 ;;
 esac

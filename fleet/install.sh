@@ -14,12 +14,12 @@ dry=0 force=0
 for a in "$@"; do
   case $a in --dry-run) dry=1 ;; --force) force=1 ;; esac
 done
-if (( !force )) && [[ $(git -C "$here" rev-parse --git-dir 2>/dev/null) != "$(git -C "$here" rev-parse --git-common-dir 2>/dev/null)" ]]; then
+if (( !force )) && [[ $(git -C "$here" rev-parse --path-format=absolute --git-dir 2>/dev/null) != "$(git -C "$here" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" ]]; then
   err "this checkout is a git worktree; links into it break when it is removed. Install from the main checkout, or pass --force."
   exit 2
 fi
 do_() { if (( dry )); then printf 'would: %s\n' "$*"; else "$@"; fi; }
-SCRIPTS=(launch.sh fresh-now.sh resume-at-reset.sh watch-panes.sh memfrag-log.sh relaunch-fresh.sh brief.sh doctor.sh cutover.sh worker-settings.json)
+SCRIPTS=(launch.sh fresh-now.sh resume-at-reset.sh watch-panes.sh memfrag-log.sh relaunch-fresh.sh brief.sh doctor.sh cutover.sh accounts-sync.sh ci_watch.py worker-settings.json)
 UNITS=${FLEET_UNITS:-$HOME/.config/systemd/user}
 BIN=${FLEET_BIN:-$HOME/.local/bin}
 archive=$FLEET_STATE/archive/fleet-scripts-$(date +%Y%m%d)
@@ -66,6 +66,48 @@ Persistent=true
 
 [Install]
 WantedBy=timers.target"
+# The second config folder follows ~/.claude: on every change to its settings
+# or plugin lists (systemd.path PathChanged), and hourly for .claude.json's
+# shared keys, which change too often to watch.
+unit fleet-accounts-sync.service "[Unit]
+Description=klepsydra fleet: keep the second Claude Code config folder like ~/.claude
+
+[Service]
+Type=oneshot
+Environment=\"PATH=$PATH\" \"HOME=$HOME\"
+ExecStart=/usr/bin/bash $FLEET_STATE/accounts-sync.sh"
+unit fleet-accounts-sync.path "[Unit]
+Description=klepsydra fleet: sync the second config folder when ~/.claude's settings change
+
+[Path]
+PathChanged=$HOME/.claude/settings.json
+PathChanged=$HOME/.claude/plugins/installed_plugins.json
+PathChanged=$HOME/.claude/plugins/known_marketplaces.json
+Unit=fleet-accounts-sync.service
+
+[Install]
+WantedBy=default.target"
+unit fleet-accounts-sync.timer "[Unit]
+Description=klepsydra fleet: sync the second config folder hourly
+
+[Timer]
+OnCalendar=hourly
+Persistent=true
+
+[Install]
+WantedBy=timers.target"
+# The CI watch (#162), with the ci-audit report script from techne's main checkout.
+unit fleet-ci-watch.service "[Unit]
+Description=klepsydra fleet: watch the sisters' CI for red runs
+
+[Service]
+Environment=\"PATH=$PATH\" \"HOME=$HOME\" \"TECHNE_CI_REPORT=${TECHNE_CI_REPORT:-$HOME/ajsoftworks/techne/plugins/techne/skills/ci-audit/scripts/report.sh}\" \"CI_SWEEP_HOUR=${CI_SWEEP_HOUR:-99}\"
+ExecStart=/usr/bin/python3 -I $FLEET_STATE/ci_watch.py
+Restart=always
+RestartSec=60
+
+[Install]
+WantedBy=default.target"
 mem_watch=$HOME/.local/state/wsl-mem-watch/watch.sh
 if [[ -r $mem_watch ]]; then
   unit wsl-mem-watch.service "[Unit]

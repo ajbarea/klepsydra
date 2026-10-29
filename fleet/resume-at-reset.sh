@@ -4,6 +4,10 @@
 # message names (+2 min), or at once when AJ has since switched to an account
 # with room; a registered pane (panes.tsv) idle past FRESH_AFTER_S is replaced
 # by a fresh session from its brief instead, since its prompt cache expired.
+# Each pane's account is its config folder's login (panes.tsv column 6, else
+# the default folder); with a second folder logged in, a registered pane that
+# hits a limit with over MOVE_MIN_S to wait moves at once: a fresh session from
+# its brief on the other account, when that one has room, carrying what AJ typed.
 # Whatever AJ typed at a limited pane is delivered, never typed over: still in
 # the prompt, it is sent as it is; gone from the prompt without being sent (a
 # /login redraws every session), it is typed again. Once per account, every
@@ -19,9 +23,11 @@ here=$(dirname "$(readlink -f "$0")")
 LAUNCH=${LAUNCH:-$here/launch.sh}
 FRESH_AFTER_S=${FRESH_AFTER_S:-3300} # Claude Code's prompt cache lives an hour
 POLL_S=${POLL_S:-60}
+MOVE_MIN_S=${MOVE_MIN_S:-900} # a nearer reset is waited for: a fresh start costs more than the wait
+DOCTOR=${DOCTOR:-$here/doctor.sh}
 MSG='The usage limit has reset. Continue from where you stopped: re-run a subagent that failed on the limit only if you still need its result (each re-run starts cold and costs a full context), then carry on with your queue. Re-read PR comments before any merge.'
 
-declare -A last due seen_on rc_on note
+declare -A last due seen_on rc_on note move_failed
 # What the service knows per pane survives its own restart (a cut-over, a
 # reboot's unit start), for as long as the same tmux server holds the panes.
 STATE_FILE=$FLEET_STATE/resume-state
@@ -65,11 +71,12 @@ active_account() {
   [[ -n $f ]] && jq -r '.label // empty' "$f" 2>/dev/null
 }
 
-# The active account's newest reading shows a window at 100% that has not
-# reset yet: switching to it brings no usage back.
+# The pane's account's newest reading (the newest of any account when the
+# pane's folder has no known login) shows a window at 100% that has not reset
+# yet: switching to it brings no usage back.
 exhausted() {
   local f
-  f=$(newest_reading)
+  if [[ -n $PANE_ID ]]; then f=$(reading_of "$PANE_ID"); else f=$(newest_reading); fi
   [[ -n $f ]] || return 1
   jq -e --argjson now "$NOW" '[.windows.five_hour, .windows.seven_day][]
     | select(. != null and (.used_percentage // 0) >= 100 and (.resets_at // 0) > $now)' "$f" >/dev/null 2>&1
@@ -81,63 +88,62 @@ submit() { # PANE
   if wait_for "$1" "${FLEET_START_WAIT:-30}" started; then echo yes; else echo no; fi
 }
 
-# /exit the claude in PANE and close the pane once it has gone, or after 30 s.
-# With INTERRUPT (a pane this pass just launched, busy on its brief), its turn
-# is stopped first. A pane it cannot type /exit into is left running.
-retire() { # PANE [INTERRUPT]
-  if [[ ${2:-} == interrupt ]] && busy "$(screen "$1")"; then
-    t send-keys -t "$1" Escape
-    wait_for "$1" 15 not_busy || true
-    # Interrupted before any reply, Claude Code puts the brief back in the box;
-    # one C-c clears a box with text in it (an empty box would ask to exit).
-    holds_input "$(screen "$1")" && t send-keys -t "$1" C-c
-    wait_for "$1" 5 idle_empty || true
-  fi
-  if ! type_exactly "$1" "/exit"; then
-    flog ERROR "could not type /exit; the pane is left running" pane="$1"
-    return 1
-  fi
-  t send-keys -t "$1" Enter
-  for _ in $(seq 30); do fleet_panes | grep -qx "$1" || return 0; sleep 1; done
-  t kill-pane -t "$1" 2>/dev/null
-}
-
-# Point the registry row launch.sh moved to NEW back at PANE and session SID.
-set_pane() { # NEW PANE SID
-  local tmp
-  tmp=$(mktemp "$REGISTRY.XXXXXX") || return 1
-  awk -F'\t' -v OFS='\t' -v n="$1" -v p="$2" -v sid="$3" '$1 == n { $1 = p; $4 = sid } { print }' "$REGISTRY" >"$tmp" && mv -f -- "$tmp" "$REGISTRY"
-}
-
-# Replace PANE (registry NAME, BRIEF) with a fresh session from its brief;
-# prints the new pane. Gives up, typing nothing, if AJ has typed meanwhile.
-fresh() { # PANE NAME BRIEF
+# Replace PANE (registry NAME, BRIEF) with a fresh session from its brief,
+# on config folder ACCOUNT when given (else launch.sh's pick), WHY in its
+# preamble; prints the new pane. NOTE, what AJ typed at the pane, goes into the
+# new brief, and the old box may hold exactly it. Gives up, typing nothing, if
+# AJ has typed anything else meanwhile.
+fresh() { # PANE NAME BRIEF [WHY] [ACCOUNT] [NOTE]
   local p=$1 name=$2 brief=$3 txt new
-  [[ -z $(input_text "$(screen "$p")") ]] || return 1
-  local sid
+  local why=${4:-stopped at a usage limit over an hour ago, so its cached conversation expired and resuming it would re-cache everything}
+  local account=${5:-} carried=${6:-} box
+  box=$(input_text "$(screen "$p")")
+  [[ -z $box || ( -n $carried && $box == "$carried" ) ]] || return 1
+  local sid cfg out got
   exec 7>>"$FLEET_STATE/.fresh.lock"
   flock 7
-  sid=$(reg_field "$p" 4)
+  sid=$(reg_field "$p" 4) cfg=$(reg_field "$p" 6)
   if ! pane_runs "$p" "$sid"; then
     flog WARN "fresh session refused: the pane no longer runs its registered session" pane="$p" name="$name" session_id="$sid"
     return 2
   fi
   txt="$FLEET_STATE/fresh-$name-$(date +%Y%m%d-%H%M).src"
-  { fresh_preamble "stopped at a usage limit over an hour ago, so its cached conversation expired and resuming it would re-cache everything"; printf '\n\n'; cat "$brief"; } >"$txt"
+  {
+    fresh_preamble "$why"
+    printf '\n\n'
+    [[ -n $carried ]] && printf 'AJ typed this to the previous agent while it waited at the limit; act on it:\n%s\n\n' "$carried"
+    cat "$brief"
+  } >"$txt"
   mkdir -p -- "$FLEET_STATE/log"
-  new=$(bash "$LAUNCH" "$name" "$txt" 2>>"$FLEET_STATE/log/launch.err" | grep -o 'pane=%[0-9]*' | head -1 | cut -d= -f2)
+  out=$(FLEET_ACCOUNT=$account bash "$LAUNCH" "$name" "$txt" 2>>"$FLEET_STATE/log/launch.err" | head -1)
+  new=$(grep -o 'pane=%[0-9]*' <<<"$out" | cut -d= -f2) got=$(grep -o 'brief=[A-Za-z-]*' <<<"$out" | cut -d= -f2)
   if [[ -z $new ]]; then
     flog ERROR "fresh session not started; the old pane is kept" pane="$p" name="$name"
     return 3
   fi
+  # The brief must have started a turn: not delivered, or (on a move to an
+  # account said to have room) stopped by a limit, the old pane stays.
+  if [[ $got == NOT-DELIVERED || ( -n $account && $got != started ) ]]; then
+    flog ERROR "fresh session's brief did not start; the old pane stays and the new one goes" pane="$p" new_pane="$new" name="$name" brief="$got"
+    retire "$new" interrupt
+    with_registry set_pane "$new" "$p" "$sid" "$cfg"
+    return 3
+  fi
   # The launch took a while: AJ may have typed into the old pane or resumed it.
-  if ! pane_runs "$p" "$sid" || ! idle_empty "$(screen "$p")"; then
+  local now_s
+  now_s=$(screen "$p")
+  if ! pane_runs "$p" "$sid" || busy "$now_s" || ! has_input_box "$now_s" || [[ $(input_text "$now_s") != "$box" ]]; then
     flog ERROR "the old pane changed while its fresh session launched; the old one stays and the new one goes" pane="$p" new_pane="$new" name="$name"
     retire "$new" interrupt
-    with_registry set_pane "$new" "$p" "$sid"
+    with_registry set_pane "$new" "$p" "$sid" "$cfg"
     return 4
   fi
-  retire "$p"
+  # The note went into the new brief; one C-c clears it from the old box.
+  if [[ -n $box ]]; then
+    t send-keys -t "$p" C-c
+    wait_for "$p" 5 idle_empty || true
+  fi
+  retire "$p" || flog WARN "the old pane is left running beside its fresh session" pane="$p" new_pane="$new" name="$name"
   printf '%s' "$new"
 }
 
@@ -166,9 +172,17 @@ sent_already() { # SCREEN LINE
 
 forget() { unset "due[$1]" "seen_on[$1]" "note[$1]"; }
 
+
 one() { # PANE
   local p=$1 s ps typed orch=0 armed at limit reset reg name brief idle new got tmp
   [[ -n $ORCH && $p == "$ORCH" ]] && orch=1
+  # The pane's account: its config folder's login, named as the gauge names
+  # it; a folder with no known login falls back to the newest reading's.
+  local cfg PANE_ID ACTIVE=$ACTIVE
+  cfg=$(pane_config "$p")
+  (( orch )) && cfg=$FLEET_DEFAULT_CONFIG
+  PANE_ID=${ACCT_ID[$cfg]:-}
+  [[ -n $PANE_ID ]] && ACTIVE=$(account_label "$PANE_ID")
   (( NOW - ${last[$p]:-0} < 900 )) && return
   s=$(screen "$p") || return
   ps=$(plain <<<"$s")
@@ -229,14 +243,60 @@ one() { # PANE
     due[$p]=$((reset + 120)) seen_on[$p]=${ACTIVE:-unknown}
     flog INFO "limit seen" pane="$p" account="${seen_on[$p]}" resets="$(date -d @"$reset" '+%a %F %H:%M')" message="$limit"
   fi
+  reg=$(awk -F'\t' -v p="$p" '$1 == p { print $2 "\t" $3 }' "$REGISTRY" 2>/dev/null)
+  name=${reg%%$'\t'*} brief=${reg#*$'\t'}
+
   local switched=0
   [[ ${seen_on[$p]} != "${ACTIVE:-unknown}" ]] && ! exhausted && switched=1
+
+  # Two accounts: a registered pane with a long wait (and no switch of its own) moves to the other one
+  # now, if it has room, carrying what AJ typed (still in the box, or gone
+  # from it unsent). A failed move waits 15 min before the next try.
+  local other carry="" rc
+  if (( !fresh_typing && !switched )) && [[ -n $reg ]] && (( due[$p] - NOW >= MOVE_MIN_S && NOW - ${move_failed[$p]:-0} >= 900 )) &&
+    other=$(room_elsewhere "$cfg" "$NOW"); then
+    # What AJ typed while it waited is carried even when he sent it: the
+    # session answered only with the limit, so it never acted on it.
+    if [[ -n $typed ]]; then
+      carry=$typed
+    elif [[ -n ${note[$p]:-} ]]; then
+      carry=${note[$p]}
+    else
+      carry=$(answered_by_limit "$s")
+    fi
+    # A pasted block or an image shows in the box only as its placeholder: its
+    # content cannot be carried, so the pane keeps it and waits for its reset.
+    if [[ $carry == *"[Pasted text #"* || $carry == *"[Image #"* ]]; then
+      flog WARN "a pasted block cannot be carried to the other account; the pane waits for its reset" pane="$p" text="$carry"
+    elif [[ -z $typed || -n $carry ]]; then
+      new=$(fresh "$p" "$name" "$brief" "stopped at a usage limit on one account, and you continue on the other, which has room" "$other" "$carry")
+      rc=$?
+      case $rc in
+        0)
+          flog INFO "moved to the other account at a limit" pane="$p" name="$name" from="$cfg" to="$other" new_pane="${new:-none}" carried_chars="${#carry}" resets="$(date -d @"$((due[$p] - 120))" '+%a %F %H:%M')"
+          [[ -n $new ]] && last[$new]=$NOW
+          last[$p]=$NOW
+          forget "$p"
+          return
+          ;;
+        1 | 4)
+          # A launch that AJ undid (4) cost a session: wait as after a failure.
+          (( rc == 4 )) && move_failed[$p]=$NOW
+          flog INFO "AJ has the pane; leaving it to the next pass" pane="$p" why="$rc"
+          return
+          ;;
+        *)
+          move_failed[$p]=$NOW
+          flog WARN "could not move to the other account; waiting for the reset" pane="$p" name="$name" to="$other" why="$rc"
+          ;;
+      esac
+    fi
+  fi
+
   (( NOW >= due[$p] || switched )) || return
   # AJ's line changed since the last pass: he may still be typing it.
   (( fresh_typing )) && return
 
-  reg=$(awk -F'\t' -v p="$p" '$1 == p { print $2 "\t" $3 }' "$REGISTRY" 2>/dev/null)
-  name=${reg%%$'\t'*} brief=${reg#*$'\t'}
   if [[ -n $typed ]]; then
     got=$(submit "$p")
     flog INFO "resumed: sent what AJ typed" pane="$p" account="${ACTIVE:-unknown}" switched="$switched" started="$got" text="${typed:0:200}"
@@ -279,10 +339,44 @@ one() { # PANE
   forget "$p"
 }
 
+# The account logged in at each config folder, for this pass.
+declare -A ACCT_ID
+accounts() {
+  local dir id
+  ACCT_ID=()
+  for dir in $FLEET_ACCOUNTS; do
+    id=$(account_of "$dir") && ACCT_ID[$dir]=$id
+  done
+}
+
+# An account switch (a /login in the default folder, the orchestrator's) ends
+# with `fleet doctor`, once the panes have had DOCTOR_AFTER_S to settle.
+doctor_after_switch() {
+  # The default folder's login only: a pass that cannot read it says nothing.
+  local now_acct=${ACCT_ID[$FLEET_DEFAULT_CONFIG]:-}
+  [[ -n $now_acct ]] || now_acct=$PREV_ACCT
+  if [[ -n $now_acct && -n $PREV_ACCT && $now_acct != "$PREV_ACCT" ]]; then
+    DOCTOR_DUE=$((NOW + ${DOCTOR_AFTER_S:-300}))
+    flog INFO "account switch seen; fleet doctor follows" from="$PREV_ACCT" to="$now_acct"
+  fi
+  PREV_ACCT=$now_acct
+  if (( DOCTOR_DUE && NOW >= DOCTOR_DUE )); then
+    DOCTOR_DUE=0
+    if bash "$DOCTOR" >/dev/null 2>&1; then
+      flog INFO "fleet doctor after the account switch: healthy"
+    else
+      flog ERROR "fleet doctor after the account switch found a failure (fleet doctor for the list)"
+    fi
+  fi
+}
+PREV_ACCT="" DOCTOR_DUE=0
+
 pass() {
   NOW=$(clock) ACTIVE=$(active_account) ORCH=$(orchestrator)
+  accounts
   local p
   for p in $(fleet_panes); do one "$p"; done
+  doctor_after_switch
   save_state
   : >>"$FLEET_STATE/resume.beat" && touch -- "$FLEET_STATE/resume.beat"
 }

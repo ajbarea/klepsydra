@@ -10,6 +10,16 @@ export TZ=America/New_York # the fixtures' times are AJ's
 export FLEET_SOCK="fleet-test-$$" FLEET_STATE="$work/state" FLEET_SESSION=fleet
 export KLEPSYDRA_DIR="$work/klepsydra" FLEET_TICK=0.1 FLEET_START_WAIT=4 FLEET_TURN_WAIT=6 FLEET_RC_WAIT=12
 mkdir -p "$FLEET_STATE" "$KLEPSYDRA_DIR/accounts/a" "$KLEPSYDRA_DIR/accounts/b"
+# Two config folders, logged out until a case logs one in (accounts a and b).
+export FLEET_DEFAULT_CONFIG="$work/cfg-a" FLEET_DEFAULT_JSON="$work/cfg-a.json" FLEET_ACCOUNTS="$work/cfg-a $work/cfg-b"
+unset CLAUDE_CONFIG_DIR
+login() { # a|b
+  local d=$work/cfg-$1 j=$work/cfg-$1/.claude.json
+  [[ $1 == a ]] && j=$FLEET_DEFAULT_JSON
+  mkdir -p "$d"; : >"$d/.credentials.json"
+  jq -n --arg u "$1" '{oauthAccount: {accountUuid: $u}}' >"$j"
+}
+logout() { rm -f -- "$work/cfg-${1:?}/.credentials.json"; }
 cleanup() {
   tmux -L "$FLEET_SOCK" kill-server 2>/dev/null
   rm -rf -- "${work:?}"
@@ -443,6 +453,7 @@ exit 0
 PS
 chmod +x "$work/bin/"*
 rm -f "$FLEET_STATE/resume.beat"
+login a
 doctor() { FLEET_PS="$work/bin/ps" FLEET_SYSTEMCTL="$work/bin/systemctl" FLEET_CURL="$work/bin/curl" FLEET_TAILSCALE="$work/bin/tailscale" \
   DOC_ACTIVE="$work/active" DOC_FLEET="$work/fleet.json" bash "$here/doctor.sh" 2>/dev/null; }
 w=$(pane wpane '{"above":["idle"]}'); o=$(pane opane '{"above":["idle"]}'); settle
@@ -465,15 +476,20 @@ check "and the exit is non-zero" "$code" "1"
 touch "$work/active" "$FLEET_STATE/resume.beat"
 session_file o1 "$o" https://claude.ai/code/session_01O
 out=$(DOC_UP=http DOC_SERVE="https://desk.tail1.ts.net (tailnet only)" doctor); code=$?
-check "all well but the watcher: a shell that names the script is not one" "$(grep -c '^ok ' <<<"$out") $(grep '^FAIL' <<<"$out" | cut -d: -f1)" "7 FAIL pane watcher"
+check "all well but the watcher: a shell that names the script is not one" "$(grep -c '^ok ' <<<"$out") $(grep '^FAIL' <<<"$out" | cut -d: -f1)" "8 FAIL pane watcher"
+check "the default account is logged in; the second, not yet, is a warning" \
+  "$(grep '^ok   account' <<<"$out" | cut -d: -f1) | $(grep '^warn account' <<<"$out" | cut -d: -f1)" "ok   account $work/cfg-a | warn account $work/cfg-b"
 check "with a watcher running, every check is ok and the exit is 0" \
-  "$(DOC_WATCH='%2 %5' DOC_UP=http DOC_SERVE=on doctor | grep -c '^ok '; echo "rc=${PIPESTATUS[0]}")" $'8\nrc=0'
+  "$(DOC_WATCH='%2 %5' DOC_UP=http DOC_SERVE=on doctor | grep -c '^ok '; echo "rc=${PIPESTATUS[0]}")" $'9\nrc=0'
 check "the watcher's panes are named" "$(DOC_WATCH='%2 %5' doctor | grep '^ok   pane watcher')" "ok   pane watcher: watching %2 %5"
 check "the phone wall and its Tailscale twin answer fresh" "$(grep -c 'fleet.json observed 3[0-9] s ago' <<<"$out")" "2"
 jq -n '{usage: [{observed_at: 1000}]}' >"$work/fleet.json"
 check "a stale fleet.json fails" "$(DOC_UP=http doctor | grep -c 'fleet.json is stale')" "1"
 touch -d '@1000' "$FLEET_STATE/resume.beat"
 check "a resume loop that stopped passing fails" "$(doctor | grep -c '^FAIL resume loop: last pass')" "1"
+logout a
+out=$(doctor)
+check "a default account not logged in fails" "$(grep -c "^FAIL account $work/cfg-a: not logged in: claude auth login" <<<"$out")" "1"
 t kill-window -t "$w"; t kill-window -t "$o"; rm -f "$FLEET_STATE/orchestrator.pane"; : >"$REGISTRY"
 
 echo "install"
@@ -491,6 +507,13 @@ check "the resume service is a unit that restarts and comes back at boot" \
 check "the memfrag timer too" "$(grep -c 'OnCalendar=\*:0/30' "$inst/units/fleet-memfrag-log.timer")" "1"
 FLEET_STATE="$inst/s2" FLEET_UNITS="$inst/u2" FLEET_BIN="$inst/b2" bash "$here/install.sh" --dry-run --force >"$work/dry" 2>/dev/null
 check "a dry run says what it would do and changes nothing" "$(grep -c '^would' "$work/dry" | sed 's/^[1-9][0-9]*$/some/') $(find "$inst" -mindepth 1 -maxdepth 1 -printf '%f\n' | sort | tr '\n' ' ')" "some bin state units "
+
+repo=$work/repo
+git init -q "$repo" && cp -r "$here" "$repo/fleet" && git -C "$repo" add -A && git -C "$repo" -c user.name=t -c user.email=t@t commit -qm x
+git -C "$repo" worktree add -q "$work/wt" 2>/dev/null
+guard() { FLEET_STATE="$inst/g" FLEET_UNITS="$inst/gu" FLEET_BIN="$inst/gb" bash "$1/fleet/install.sh" --dry-run >/dev/null 2>&1; echo $?; }
+check "the main checkout installs (10-29: from fleet/ git named its common dir relatively, so main read as a worktree)" "$(guard "$repo")" "0"
+check "a worktree is refused" "$(guard "$work/wt")" "2"
 
 echo "cut-over"
 export SC="$work/sc" FLEET_LOG
@@ -529,6 +552,9 @@ out=$(cutover); code=$?
 check "the cut-over stops each transient unit, then enables and starts the installed one" "$out
 rc=$code" "ok   fleet-resume-at-reset.service: enabled and active
 ok   fleet-memfrag-log.timer: enabled and active
+ok   fleet-accounts-sync.path: enabled and active
+ok   fleet-accounts-sync.timer: enabled and active
+ok   fleet-ci-watch.service: enabled and active
 ok   the resume service logged its start
 rc=0"
 check "no transient unit is left" "$(find "$SC" -name '*.transient' | wc -l)" "0"
@@ -540,6 +566,284 @@ out=$(SC_SILENT=1 cutover); code=$?
 check "a resume service that never logs its start fails the cut-over" "$code $(tail -1 <<<"$out")" "1 FAIL the resume service did not log its start"
 check "install writes the units but never enables them over a transient one" \
   "$(grep -c -- '--user enable' "$here/install.sh") $(grep -c -- '--user daemon-reload' "$here/install.sh")" "0 1"
+
+echo "two accounts: picking one"
+login a; login b
+reading a Personal 40 1000; reading b RIT 10 2000
+now=$(date +%s)
+check "the logged-in account with the most five-hour room" "$(best_account "$now")" "$work/cfg-b"
+reading b RIT 40 2000
+check "a tie goes to the default folder" "$(best_account "$now")" "$work/cfg-a"
+jq -n --argjson r "$((now + 3600))" '{label: "RIT", windows: {five_hour: {used_percentage: 40, resets_at: $r}, seven_day: {used_percentage: 20, resets_at: $r}}}' >"$KLEPSYDRA_DIR/accounts/a/s.json"
+check "on a five-hour tie the weekly window decides (a Team seat has none)" "$(best_account "$now")" "$work/cfg-b"
+reading a Personal 40 1000; reading b RIT 0 2000; logout b
+check "a folder not logged in is never picked" "$(best_account "$now")" "$work/cfg-a"
+jq -n --argjson r "$((now + 3600))" '{label: "RIT", windows: {five_hour: {used_percentage: 0, resets_at: $r}, seven_day: {used_percentage: 100, resets_at: ($r + 86400)}}}' >"$KLEPSYDRA_DIR/accounts/b/s.json"
+login b; jq -n --argjson r "$((now + 3600))" '{label: "Personal", windows: {five_hour: {used_percentage: 40, resets_at: $r}, seven_day: {used_percentage: 50, resets_at: $r}}}' >"$KLEPSYDRA_DIR/accounts/a/s.json"
+check "review 2B: an account whose week is spent is not picked over one with room" "$(best_account "$now")" "$work/cfg-a"
+logout b
+login b
+reading a Personal 100 1000; reading b RIT 10 2000
+check "room elsewhere: the other account, when it has room" "$(room_elsewhere "$work/cfg-a" "$now")" "$work/cfg-b"
+reading b RIT 95 2000
+check "and none when it is nearly full too" "$(room_elsewhere "$work/cfg-a" "$now" || echo none)" "none"
+check "the default folder unsets CLAUDE_CONFIG_DIR; the second sets it" "$(config_env "$work/cfg-a")| $(config_env "$work/cfg-b")" "-u CLAUDE_CONFIG_DIR | CLAUDE_CONFIG_DIR=$work/cfg-b "
+
+echo "two accounts: launch"
+: >"$REGISTRY"
+reading a Personal 40 1000; reading b RIT 10 2000
+cp "$work/task.src" "$FLEET_STATE/task-acct1.src"; cp "$work/task.src" "$FLEET_STATE/task-acct2.src"
+out=$(launch acct1 '{"above":["Claude Code"]}')
+check "launch starts the session on the account with the most room" "$(grep -c "^CONFIG $work/cfg-b$" "$work/acct1.log") $(grep -o 'account=[^ ]*' <<<"$out")" "1 account=$work/cfg-b"
+check "and records the folder in the registry" "$(awk -F'\t' '$2 == "acct1" { print $6 }' "$REGISTRY")" "$work/cfg-b"
+reading b RIT 60 2000
+t set-environment -g CLAUDE_CONFIG_DIR "$work/cfg-b"   # a tmux server started from the second folder's shell
+out=$(launch acct2 '{"above":["Claude Code"]}')
+t set-environment -gu CLAUDE_CONFIG_DIR
+check "on the default account, a CLAUDE_CONFIG_DIR in tmux's environment is not passed on" "$(grep -c '^CONFIG' "$work/acct2.log") ${out##* }" "0 brief=started"
+check "the brief still goes in" "$(grep -c '^SUBMIT Do the thing' "$work/acct2.log")" "1"
+t kill-window -t "$(awk -F'\t' '$2 == "acct1" { print $1 }' "$REGISTRY")"; t kill-window -t "$(awk -F'\t' '$2 == "acct2" { print $1 }' "$REGISTRY")"; : >"$REGISTRY"
+
+echo "two accounts: the resume service"
+: >"$FLEET_LOG"
+reading a Personal 100 5000; reading b RIT 10 4000
+p=$(pane own "{\"above\":[\"work\",\"$LIMIT\"]}"); settle
+resume "$noon"
+reading b RIT 10 6000   # both accounts publish: which reading is newest flips minute to minute
+resume "$(( noon + 60 ))"
+check "with both logged in, the other account's newer reading is no switch for a pane on the default" "$(events own)" ""
+check "the limit is logged with the pane's own account" "$(jq -r --arg p "$p" 'select(.message == "limit seen" and .pane == $p) | .account' "$FLEET_LOG")" "Personal"
+t kill-window -t "$p"
+
+cat >"$work/launch-move.sh" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' "\$FLEET_ACCOUNT" "\$@" >"$work/moved"
+cp "\$2" "$work/moved-brief"
+echo "pane=%997 session=x account=\$FLEET_ACCOUNT avail=1MiB brief=started"
+EOF
+mover() { LAUNCH="$work/launch-move.sh" FLEET_NOW=$1 bash "$here/resume-at-reset.sh" --once 2>/dev/null; } # NOW
+: >"$FLEET_LOG"; : >"$work/moved"
+p=$(pane mover "{\"above\":[\"⏺ Done. done 11:50 AM\",\"$LIMIT\"]}"); settle
+live "$p"
+printf '%s\tmover\t%s\t%s\t/w\t%s\n' "$p" "$work/brief.src" "$SID" "$work/cfg-a" >"$REGISTRY"
+mover "$noon"
+check "a registered pane at a limit moves to the other account at once" "$(head -2 "$work/moved" | tr '\n' ' ')" "$work/cfg-b mover "
+check "its old pane exits" "$(events mover)" "SUBMIT /exit"
+check "the fresh brief says why, then carries the brief" "$(grep -c 'continue on the other, which has room' "$work/moved-brief") $(tail -1 "$work/moved-brief")" "1 the brief body"
+check "logged with both folders and the new pane" \
+  "$(jq -r 'select(.message == "moved to the other account at a limit") | [.from, .to, .new_pane] | join(" ")' "$FLEET_LOG")" "$work/cfg-a $work/cfg-b %997"
+t kill-window -t "$p" 2>/dev/null; : >"$REGISTRY"
+
+: >"$FLEET_LOG"; : >"$work/moved"
+p=$(pane carrier "{\"above\":[\"⏺ Done. done 11:50 AM\",\"$LIMIT\"]}"); settle
+live "$p"
+printf '%s\tcarrier\t%s\t%s\t/w\t%s\n' "$p" "$work/brief.src" "$SID" "$work/cfg-a" >"$REGISTRY"
+t send-keys -t "$p" -l "AJ: and fix the footer"; settle
+mover "$noon"
+check "AJ's line is not moved while he may still be typing it" "$(wc -c <"$work/moved") $(events carrier)" "0 "
+mover "$(( noon + 60 ))"
+check "then the move carries it into the new brief" "$(grep -c '^AJ: and fix the footer$' "$work/moved-brief")" "1"
+check "and the old pane never sends it: its box is cleared, then /exit" "$(events carrier)" "SUBMIT /exit"
+t kill-window -t "$p" 2>/dev/null; : >"$REGISTRY"
+
+: >"$FLEET_LOG"; : >"$work/moved"
+SOON='  ⎿  You'"'"'ve hit your session limit · resets 12:10pm (America/New_York)'
+p=$(pane soon "{\"above\":[\"⏺ Done. done 11:50 AM\",\"$SOON\"]}"); settle
+live "$p"
+printf '%s\tsoon\t%s\t%s\t/w\t%s\n' "$p" "$work/brief.src" "$SID" "$work/cfg-a" >"$REGISTRY"
+mover "$noon"
+check "a reset under 15 min away is waited for, not moved" "$(wc -c <"$work/moved") $(events soon)" "0 "
+t kill-window -t "$p"; : >"$REGISTRY"
+
+: >"$work/moved"
+reading b RIT 95 4000
+p=$(pane full2 "{\"above\":[\"⏺ Done. done 11:50 AM\",\"$LIMIT\"]}"); settle
+live "$p"
+printf '%s\tfull2\t%s\t%s\t/w\t%s\n' "$p" "$work/brief.src" "$SID" "$work/cfg-a" >"$REGISTRY"
+mover "$noon"
+check "no move when the other account is nearly full too" "$(wc -c <"$work/moved") $(events full2)" "0 "
+t kill-window -t "$p"; : >"$REGISTRY"
+logout a; logout b; reading a Personal 40 1000; rm -f "$KLEPSYDRA_DIR/accounts/b/s.json"
+
+echo "two accounts: review round 1"
+login a; login b; reading a Personal 100 5000; reading b RIT 10 4000
+: >"$FLEET_LOG"; : >"$work/moved"
+p=$(pane rb "{\"above\":[\"⏺ Done. done 11:50 AM\",\"$LIMIT\"]}"); settle
+live "$p"
+printf '%s\trb\t%s\t%s\t/w\t%s\n' "$p" "$work/brief.src" "$SID" "$work/cfg-a" >"$REGISTRY"
+cat >"$work/launch-rb.sh" <<EOF
+#!/usr/bin/env bash
+# A move launch during which AJ types into the old pane; it repoints the row, account too, as launch.sh does.
+tmux -L "$FLEET_SOCK" send-keys -t "$p" -l "AJ: wait"
+sleep 1
+sed -i "s|^$p\t\(.*\)\t$work/cfg-a\$|%995\t\1\t$work/cfg-b|" "$REGISTRY"
+echo "pane=%995 session=x account=$work/cfg-b avail=1MiB brief=started"
+EOF
+LAUNCH="$work/launch-rb.sh" FLEET_NOW=$noon bash "$here/resume-at-reset.sh" --once 2>/dev/null
+check "review 2: a move AJ undid points the row back at the old pane and its own account" "$(cut -f1,4,6 "$REGISTRY")" "$p	$SID	$work/cfg-a"
+: >"$work/moved"
+LAUNCH="$work/launch-move.sh" FLEET_NOW=$((noon + 60)) bash "$here/resume-at-reset.sh" --once 2>/dev/null
+check "review 5: and it waits before launching again" "$(wc -c <"$work/moved")" "0"
+t kill-window -t "$p"; : >"$REGISTRY"
+
+: >"$FLEET_LOG"
+p=$(pane nd "{\"above\":[\"⏺ Done. done 11:50 AM\",\"$LIMIT\"]}"); settle
+live "$p"
+printf '%s\tnd\t%s\t%s\t/w\t%s\n' "$p" "$work/brief.src" "$SID" "$work/cfg-a" >"$REGISTRY"
+printf '%s' '{"above":["Claude Code"]}' >"$work/ndnew.json"; : >"$work/ndnew.log"
+cat >"$work/launch-nd.sh" <<EOF
+#!/usr/bin/env bash
+new=\$(tmux -L "$FLEET_SOCK" new-window -d -P -F '#{pane_id}' -t fleet: "python3 -I $fake $work/ndnew.json $work/ndnew.log")
+sed -i "s|^$p\t\(.*\)\t$work/cfg-a\$|\$new\t\1\t$work/cfg-b|" "$REGISTRY"
+echo "pane=\$new session=x account=$work/cfg-b avail=1MiB brief=NOT-DELIVERED"
+EOF
+t send-keys -t "$p" -l "AJ: keep this"; settle
+resume "$noon"
+LAUNCH="$work/launch-nd.sh" FLEET_NOW=$((noon + 60)) bash "$here/resume-at-reset.sh" --once 2>/dev/null
+check "review 3: a brief that never started leaves the old pane, AJ's line and the row as they were" \
+  "$(grep -c '^SUBMIT' "$work/nd.log") [$(input_text "$(screen "$p")")] $(cut -f1,6 "$REGISTRY")" "0 [AJ: keep this] $p	$work/cfg-a"
+check "and the new pane is exited" "$(grep -c 'SUBMIT /exit' "$work/ndnew.log")" "1"
+t kill-window -t "$p"; : >"$REGISTRY"
+
+: >"$FLEET_LOG"; : >"$work/moved"
+p=$(pane sentit "{\"above\":[\"⏺ Done. done 11:50 AM\",\"$LIMIT\"]}"); settle
+live "$p"
+printf '%s\tsentit\t%s\t%s\t/w\t%s\n' "$p" "$work/brief.src" "$SID" "$work/cfg-a" >"$REGISTRY"
+t send-keys -t "$p" -l "AJ: do the footer"; settle
+FLEET_NOW=$noon MOVE_MIN_S=999999 bash "$here/resume-at-reset.sh" --once 2>/dev/null
+state sentit "{\"above\":[\"⏺ Done. done 11:50 AM\",\"❯ AJ: do the footer\",\"$LIMIT\"],\"clear\":true}"
+mover "$((noon + 60))"
+check "review 4: a line AJ sent into the limit is carried: the session never acted on it" "$(grep -c '^AJ: do the footer$' "$work/moved-brief")" "1"
+t kill-window -t "$p" 2>/dev/null; : >"$REGISTRY"
+
+: >"$FLEET_LOG"; : >"$work/moved"
+p=$(pane pasted "{\"above\":[\"⏺ Done. done 11:50 AM\",\"$LIMIT\"]}"); settle
+live "$p"
+printf '%s\tpasted\t%s\t%s\t/w\t%s\n' "$p" "$work/brief.src" "$SID" "$work/cfg-a" >"$REGISTRY"
+t load-buffer -b x "$work/three.txt"; t paste-buffer -p -d -b x -t "$p"; settle
+mover "$noon"; mover "$((noon + 60))"
+check "review 4: a pasted block is not moved, and the log says why" "$(wc -c <"$work/moved") $(logged 'pasted block cannot be carried' | wc -w)" "0 1"
+t kill-window -t "$p"; : >"$REGISTRY"
+
+: >"$FLEET_LOG"; : >"$work/moved"
+p=$(pane between "{\"above\":[\"⏺ Done. done 11:50 AM\",\"❯ AJ: sent between two passes\",\"$LIMIT\"]}"); settle
+live "$p"
+printf '%s\tbetween\t%s\t%s\t/w\t%s\n' "$p" "$work/brief.src" "$SID" "$work/cfg-a" >"$REGISTRY"
+mover "$noon"
+check "review 2, 4: a line AJ sent between two passes, answered only by the limit, is carried" "$(grep -c '^AJ: sent between two passes$' "$work/moved-brief")" "1"
+t kill-window -t "$p" 2>/dev/null; : >"$REGISTRY"
+
+: >"$FLEET_LOG"; : >"$work/moved"
+p=$(pane midpaste "{\"above\":[\"⏺ Done. done 11:50 AM\",\"$LIMIT\"]}"); settle
+live "$p"
+printf '%s\tmidpaste\t%s\t%s\t/w\t%s\n' "$p" "$work/brief.src" "$SID" "$work/cfg-a" >"$REGISTRY"
+t send-keys -t "$p" -l "see "; t load-buffer -b x "$work/three.txt"; t paste-buffer -p -d -b x -t "$p"; settle
+mover "$noon"; mover "$((noon + 60))"
+check "review 2, 4: a paste in the middle of a line is not moved either" "$(wc -c <"$work/moved") $(logged 'pasted block cannot be carried' | wc -w)" "0 1"
+t kill-window -t "$p"; : >"$REGISTRY"
+
+: >"$FLEET_LOG"; : >"$work/moved"
+p=$(pane pastesent "{\"above\":[\"⏺ Done. done 11:50 AM\",\"❯ [Pasted text #1 +3 lines]\",\"$LIMIT\"]}"); settle
+live "$p"
+printf '%s\tpastesent\t%s\t%s\t/w\t%s\n' "$p" "$work/brief.src" "$SID" "$work/cfg-a" >"$REGISTRY"
+mover "$noon"
+check "review 4: a paste AJ sent into the limit keeps the pane for its reset" "$(wc -c <"$work/moved") $(events pastesent | grep -c 'SUBMIT /exit')" "0 0"
+t kill-window -t "$p"; : >"$REGISTRY"
+
+: >"$FLEET_LOG"
+p=$(pane stuck "{\"above\":[\"⏺ Done. done 11:50 AM\",\"$LIMIT\"]}"); settle
+live "$p"
+printf '%s\tstuck\t%s\t%s\t/w\t%s\n' "$p" "$work/brief.src" "$SID" "$work/cfg-a" >"$REGISTRY"
+printf '%s' '{"above":["Claude Code"],"input":"the brief, pasted and never sent"}' >"$work/stucknew.json"; : >"$work/stucknew.log"
+cat >"$work/launch-stuck.sh" <<EOF
+#!/usr/bin/env bash
+new=\$(tmux -L "$FLEET_SOCK" new-window -d -P -F '#{pane_id}' -t fleet: "python3 -I $fake $work/stucknew.json $work/stucknew.log")
+sed -i "s|^$p\t\(.*\)\t$work/cfg-a\$|\$new\t\1\t$work/cfg-b|" "$REGISTRY"
+echo "pane=\$new session=x account=$work/cfg-b avail=1MiB brief=NOT-DELIVERED"
+EOF
+LAUNCH="$work/launch-stuck.sh" FLEET_NOW=$noon bash "$here/resume-at-reset.sh" --once 2>/dev/null
+check "review 2C: a new pane whose brief sits unsent in its box is cleared and exited, never left running" "$(grep -c 'SUBMIT /exit' "$work/stucknew.log") $(grep -c 'SUBMIT the brief' "$work/stucknew.log")" "1 0"
+t kill-window -t "$p"; : >"$REGISTRY"
+logout a; logout b; reading a Personal 40 1000; rm -f "$KLEPSYDRA_DIR/accounts/b/s.json"
+
+echo "two accounts: review round 3"
+st() { state abl "{\"above\":$1}"; screen "$abl"; }
+abl=$(pane abl '{"above":["x"]}'); settle
+check "the line the last limit answered" "$(answered_by_limit "$(st "[\"⏺ ok\",\"❯ AJ: fix the README\",\"$LIMIT\"]")")" "AJ: fix the README"
+check "review 3: not a line an earlier limit answered and the session acted on since" \
+  "[$(answered_by_limit "$(st "[\"❯ AJ: fix the README\",\"$LIMIT\",\"❯ AJ: go on\",\"⏺ working on it\",\"$LIMIT\"]")")]" "[]"
+check "review 3: not the service's own continue message" \
+  "[$(answered_by_limit "$(st "[\"⏺ ok\",\"❯ The usage limit has reset. Continue from where you stopped\",\"$LIMIT\"]")")]" "[]"
+check "review 3: not a brief that hit the limit; a paste comes back as its placeholder, so the pane waits" \
+  "[$(answered_by_limit "$(st "[\"❯ Fresh start: a previous agent with the brief below\",\"$LIMIT\"]")")][$(answered_by_limit "$(st "[\"❯ [Pasted text #1 +40 lines]\",\"$LIMIT\"]")")]" "[][[Pasted text #1 +40 lines]]"
+t kill-window -t "$abl"
+
+: >"$FLEET_LOG"
+p=$(pane relold '{"above":["idle"]}'); settle
+live "$p"
+printf '%s\trel\t%s\t%s\t/w\t%s\n' "$p" "$work/brief.src" "$SID" "$work/cfg-a" >"$REGISTRY"
+printf '%s' '{"above":["Claude Code"],"input":"the brief, never sent"}' >"$work/relnew.json"; : >"$work/relnew.log"
+cat >"$work/launch-rel.sh" <<EOF
+#!/usr/bin/env bash
+new=\$(tmux -L "$FLEET_SOCK" new-window -d -P -F '#{pane_id}' -t fleet: "python3 -I $fake $work/relnew.json $work/relnew.log")
+sed -i "s|^$p\t\(.*\)\t$work/cfg-a\$|\$new\t\1\t$work/cfg-b|" "$REGISTRY"
+echo "pane=\$new session=x account=$work/cfg-b avail=1MiB brief=NOT-DELIVERED"
+EOF
+LAUNCH="$work/launch-rel.sh" bash "$here/relaunch-fresh.sh" "$p" rel "$work/brief.src" "hint" >/dev/null 2>&1; rc=$?
+check "review 3: a relaunch whose brief never started keeps the old pane, points the row back and exits the new one" \
+  "$rc $(cut -f1,4,6 "$REGISTRY") $(grep -c 'SUBMIT /exit' "$work/relnew.log") $(grep -c '^SUBMIT' "$work/relold.log")" "1 $p	$SID	$work/cfg-a 1 0"
+t kill-window -t "$p"; : >"$REGISTRY"
+
+echo "two accounts: the second folder follows the first"
+src=$work/sync-src dst=$work/sync-dst
+mkdir -p "$src/plugins/data" "$src/skills/one" "$src/skills/synced" "$src/projects/p" "$src/agents" "$dst"
+printf '{"statusLine":{"command":"x"}}\n' >"$src/settings.json"
+printf '{"plugins":{}}\n' >"$src/plugins/installed_plugins.json"
+printf '{}\n' >"$src/plugins/known_marketplaces.json"
+printf 'rules\n' >"$src/CLAUDE.md"
+jq -n '{mcpServers: {m: {command: "x"}}, projects: {"/w": {hasTrustDialogAccepted: true}}, hasCompletedOnboarding: true,
+  oauthAccount: {accountUuid: "a", emailAddress: "first@example.com"}, userID: "first"}' >"$src/.claude.json-default"
+jq -n '{oauthAccount: {accountUuid: "b"}, userID: "second", numStartups: 3}' >"$dst/.claude.json"
+printf 'secret' >"$dst/.credentials.json"; cp "$dst/.credentials.json" "$work/creds-before"
+mkdir -p "$dst/agents"; printf 'its own\n' >"$dst/agents/x.md"
+acsync() { FLEET_DEFAULT_CONFIG="$src" FLEET_DEFAULT_JSON="$src/.claude.json-default" bash "$here/accounts-sync.sh" "$@" 2>/dev/null; }
+check "--check before the first sync finds differences" "$(acsync --check "$dst" >/dev/null; echo $?)" "1"
+acsync "$dst" >/dev/null
+check "settings.json is a copy, not a link" "$(find "$dst/settings.json" -type l | wc -l) $(cat "$dst/settings.json")" '0 {"statusLine":{"command":"x"}}'
+check "the plugin lists are copies and plugin data is shared" \
+  "$(cmp -s "$src/plugins/installed_plugins.json" "$dst/plugins/installed_plugins.json" && echo same) $(readlink "$dst/plugins/data")" "same $src/plugins/data"
+check "CLAUDE.md, projects and each skill are links; claude.ai's synced skills are not" \
+  "$(readlink "$dst/CLAUDE.md") $(readlink "$dst/projects") $(readlink "$dst/skills/one") $( [[ -e $dst/skills/synced ]] && echo synced || echo none)" \
+  "$src/CLAUDE.md $src/projects $src/skills/one none"
+check "a folder in the way is moved aside, out of the folders Claude Code reads, never deleted" "$(cat "$dst"/.sync-bak/agents.*/x.md) $(find "$dst" -maxdepth 1 -name 'agents.bak*' | wc -l)" "its own 0"
+check ".claude.json gets the shared keys and keeps its own account" \
+  "$(jq -c '[.mcpServers.m.command, .projects["/w"].hasTrustDialogAccepted, .hasCompletedOnboarding, .oauthAccount.accountUuid, .userID, .numStartups]' "$dst/.claude.json")" \
+  '["x",true,true,"b","second",3]'
+check "and stays private" "$(stat -c %a "$dst/.claude.json")" "600"
+check "the login is never touched" "$(cmp -s "$dst/.credentials.json" "$work/creds-before" && echo same)" "same"
+check "--check after a sync is clean" "$(acsync --check "$dst"; echo $?)" "0"
+printf '{"statusLine":{"command":"y"}}\n' >"$src/settings.json"
+check "a change to ~/.claude's settings is drift" "$(acsync --check "$dst" | grep -c 'settings.json'; echo "rc=${PIPESTATUS[0]}")" $'1\nrc=1'
+check "the first folder is never its own second" "$(acsync "$src" >/dev/null; echo $?)" "2"
+jq '.projects["/w"].lastCost = 9 | .projects["/w"].lastSessionId = "s9"' "$src/.claude.json-default" >"$work/j" && mv "$work/j" "$src/.claude.json-default"
+printf '{"statusLine":{"command":"x"}}\n' >"$src/settings.json"; acsync "$dst" >/dev/null
+jq '.projects["/rit-only"] = {hasTrustDialogAccepted: true}' "$dst/.claude.json" >"$work/j" && mv "$work/j" "$dst/.claude.json"
+jq '.projects["/w"].lastCost = 1' "$src/.claude.json-default" >"$work/j" && mv "$work/j" "$src/.claude.json-default"
+check "review 7: a session's per-folder figures, and folders only the second trusts, are no drift" "$(acsync --check "$dst"; echo $?)" "0"
+jq '.projects["/new"] = {hasTrustDialogAccepted: true}' "$src/.claude.json-default" >"$work/j" && mv "$work/j" "$src/.claude.json-default"
+acsync "$dst" >/dev/null
+check "review 7: a sync adds the first's trust and keeps the second's own" \
+  "$(jq -c '[.projects["/new"].hasTrustDialogAccepted, .projects["/rit-only"].hasTrustDialogAccepted, .projects["/w"].lastCost]' "$dst/.claude.json")" "[true,true,null]"
+jq '.remoteDialogSeen = true | .projects["/w"].hasClaudeMdExternalIncludesApproved = true' "$dst/.claude.json" >"$work/j" && mv "$work/j" "$dst/.claude.json"
+touch -d '@1000' "$dst/.claude.json"
+check "review 2A: keys only the second holds are no drift, and nothing is rewritten" "$(acsync --check "$dst"; echo $?) $(acsync "$dst" >/dev/null; stat -c %Y "$dst/.claude.json")" "0 1000"
+check "review 2: a second folder that holds the first is refused" "$(acsync "$(dirname "$src")" >/dev/null; echo $?)" "2"
+: >"$dst/.claude.json"
+check "review 7: a second .claude.json that does not parse is left alone and the sync fails" "$(acsync "$dst" >/dev/null; echo $?) $(wc -c <"$dst/.claude.json")" "1 0"
+jq -n '{oauthAccount: {accountUuid: "b"}}' >"$dst/.claude.json"
+mkdir -p "$src/skills/two"; rm -rf -- "${dst:?}/skills"; ln -s "$src/skills" "$dst/skills"
+check "review 1: a second folder whose skills link into the first is refused, and the first's skills are untouched" \
+  "$(acsync "$dst" >/dev/null; echo $?) $(find "$src/skills" -mindepth 1 -maxdepth 1 | sort | sed "s|$src/skills/||" | tr '\n' ' ')" "1 one synced two "
 
 echo "the fleet log"
 check "every line is one JSON object with ts, level, target and message" \
