@@ -790,6 +790,7 @@ mod win {
         const EVENT_SYSTEM_MINIMIZESTART: u32 = 0x0016;
         const EVENT_OBJECT_DESTROY: u32 = 0x8001;
         const EVENT_OBJECT_SHOW: u32 = 0x8002;
+        const EVENT_OBJECT_HIDE: u32 = 0x8003;
         const EVENT_OBJECT_LOCATIONCHANGE: u32 = 0x800B;
         const WINEVENT_OUTOFCONTEXT: u32 = 0;
         const OBJID_WINDOW: i32 = 0;
@@ -865,8 +866,11 @@ mod win {
                 return;
             }
             snap.hooked.push(thread);
+            // A close (destroy, hide) starts a settle too, which finds the
+            // terminal gone and watches every thread for the next one.
             for (min, max) in [
                 (EVENT_SYSTEM_MOVESIZEEND, EVENT_SYSTEM_MOVESIZEEND),
+                (EVENT_OBJECT_DESTROY, EVENT_OBJECT_HIDE),
                 (EVENT_OBJECT_LOCATIONCHANGE, EVENT_OBJECT_LOCATIONCHANGE),
             ] {
                 let hook = unsafe {
@@ -1499,6 +1503,106 @@ mod win {
             let got = snap_watched(|_, _| {}, into_halves);
             assert_eq!(got.len(), 1, "turned on once");
             assert_ne!(got[0].1, 0, "with the terminal it found");
+        }
+
+        /// A Windows Terminal-class window on a thread of its own, pumping
+        /// messages until told to stop: a terminal the watcher's hooks on the
+        /// wall's thread cannot see.
+        fn terminal_on_its_own_thread() -> (isize, std::thread::JoinHandle<()>, u32) {
+            use std::sync::mpsc;
+            use windows::core::w;
+            use windows::Win32::UI::WindowsAndMessaging::{
+                DefWindowProcW, DispatchMessageW, GetMessageW, RegisterClassW, TranslateMessage,
+                MSG, SW_SHOWNOACTIVATE, WNDCLASSW,
+            };
+            let (tx, rx) = mpsc::channel();
+            let owner = std::thread::spawn(move || {
+                let class = WNDCLASSW {
+                    lpfnWndProc: Some(DefWindowProcW),
+                    lpszClassName: w!("CASCADIA_HOSTING_WINDOW_CLASS"),
+                    ..Default::default()
+                };
+                unsafe { RegisterClassW(&class) };
+                let h = unsafe {
+                    CreateWindowExW(
+                        WINDOW_EX_STYLE(0),
+                        w!("CASCADIA_HOSTING_WINDOW_CLASS"),
+                        w!("klepsydra snap test terminal"),
+                        WS_OVERLAPPEDWINDOW,
+                        900,
+                        200,
+                        400,
+                        300,
+                        None,
+                        None,
+                        None,
+                        None,
+                    )
+                }
+                .expect("a terminal-class window");
+                unsafe {
+                    let _ = ShowWindow(h, SW_SHOWNOACTIVATE);
+                }
+                let me = unsafe { windows::Win32::System::Threading::GetCurrentThreadId() };
+                tx.send((h.0 as isize, me)).unwrap();
+                let mut msg = MSG::default();
+                while unsafe { GetMessageW(&mut msg, None, 0, 0) }.0 > 0 {
+                    unsafe {
+                        let _ = TranslateMessage(&msg);
+                        DispatchMessageW(&msg);
+                    }
+                }
+                let _ = unsafe { DestroyWindow(h) };
+            });
+            let (h, thread) = rx.recv().unwrap();
+            (h, owner, thread)
+        }
+
+        #[test]
+        fn a_terminal_found_only_once_it_is_snapped_beside_the_wall_turns_split_on() {
+            use std::sync::atomic::{AtomicIsize, Ordering};
+            use std::sync::Arc;
+            use windows::Win32::Foundation::{LPARAM, WPARAM};
+            use windows::Win32::UI::WindowsAndMessaging::{PostThreadMessageW, WM_QUIT};
+            let _one = ONE.lock().unwrap_or_else(|e| e.into_inner());
+            unsafe {
+                SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+            }
+            watch::when_snapped(|w, t| SNAPS.lock().unwrap().push((w, t)));
+            SNAPS.lock().unwrap().clear();
+            let wall = throwaway(100);
+            let (l, r) = halves(work_area(wall.0).unwrap());
+            place(wall.0, l, None).unwrap();
+            let (term, owner, thread) = terminal_on_its_own_thread();
+            // The fleet tab is not found until the terminal holds it.
+            let found = Arc::new(AtomicIsize::new(0));
+            let seen = found.clone();
+            let generation = watch::disarm();
+            watch::arm_snap(
+                generation,
+                wall.0 .0 as isize,
+                Box::new(move || Some(seen.load(Ordering::SeqCst)).filter(|h| *h != 0)),
+            );
+            std::thread::sleep(std::time::Duration::from_millis(1200));
+            found.store(term, Ordering::SeqCst);
+            place(hwnd(term), r, None).unwrap();
+            let start = std::time::Instant::now();
+            while start.elapsed() < std::time::Duration::from_secs(4)
+                && SNAPS.lock().unwrap().is_empty()
+            {
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+            watch::disarm();
+            let got = std::mem::take(&mut *SNAPS.lock().unwrap());
+            unsafe {
+                let _ = PostThreadMessageW(thread, WM_QUIT, WPARAM(0), LPARAM(0));
+            }
+            owner.join().unwrap();
+            assert_eq!(
+                got,
+                vec![(wall.0 .0 as isize, term)],
+                "seen through every thread's hooks"
+            );
         }
 
         #[test]
