@@ -157,6 +157,12 @@ class Counts(unittest.TestCase):
         self.assertEqual(self.ids(Fake([fork])), [])
 
 
+class OneLine(unittest.TestCase):
+    def test_a_no_break_space_reads_as_a_space(self):
+        # The pane shows it as a space, so the alert's text must match what the box shows.
+        self.assertEqual(ci_watch.one_line("a\u00a0b\nc"), "a b c")
+
+
 class Poll(unittest.TestCase):
     def setUp(self):
         (TMP / "q.md").write_text(

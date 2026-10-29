@@ -1043,6 +1043,14 @@ state cib '{"above":["⏺ Done. done 11:50 AM"]}'
 t send-keys -t "$p" -l "AJ: half"; settle
 check "review 1: nor one where AJ has begun a line" "$(inbox_deliver "$p" "$work/alert3.txt") [$(input_text "$(screen "$p")")] $(grep -c '^SUBMIT' "$work/cib.log")" "not-pasted [AJ: half] 0"
 t kill-window -t "$p"
+p=$(pane cil '{"above":["⏺ Done. done 11:50 AM"]}'); settle
+head -c 900 /dev/zero | tr '\0' 'x' >"$work/alert-long.txt"
+check "review 2: an alert over 800 characters (shown as [Pasted text #1]) is sent" \
+  "$(inbox_deliver "$p" "$work/alert-long.txt") $(grep -c '^SUBMIT x' "$work/cil.log")" "sent 1"
+state cil '{"above":["⏺ Done. done 11:50 AM"],"paste_prefix":"AJ: "}'
+check "review 2: pasted as AJ began a line, it is taken back out and his line stays, unsent" \
+  "$(inbox_deliver "$p" "$work/alert3.txt") [$(input_text "$(screen "$p")")] $(grep -c '^SUBMIT' "$work/cil.log")" "backed-out [AJ:] 1"
+t kill-window -t "$p"
 check "review 1: the pane watcher is quiet while no alert has ever been written" \
   "$(FLEET_STATE="$work/noalerts" IDLE_S=1 timeout 2 bash "$here/watch-panes.sh" %999 2>&1 | grep -c 'No such file')" "0"
 

@@ -250,17 +250,27 @@ sent_or_started() { started "$1" || { has_input_box "$1" && [[ -z $(input_text "
 # Paste inbox file FILE into PANE and send it, only while the box is empty and
 # no turn runs, right before the paste; it is sent only when the box then
 # holds the message alone (its text, or a paste's placeholder), never with a
-# line AJ began meanwhile. Prints sent, not-pasted, mixed (in the box beside
-# other text, unsent) or held (still in the box after three Enters).
+# line AJ began meanwhile. Claude Code shows a paste over 800 characters, or
+# with more than two newlines, as "[Pasted text #N]" ("... +M lines]" when it
+# has newlines). Prints sent, not-pasted, backed-out (pasted beside a line AJ
+# began, and its own characters removed again, so it goes another time), mixed
+# (a placeholder beside other text, left unsent) or held (still in the box
+# after three Enters).
 inbox_deliver() { # PANE FILE
-  local p=$1 file=$2 box want
+  local p=$1 file=$2 box want text
   idle_empty "$(screen "$p")" || { echo not-pasted; return; }
   t load-buffer -b "fleet-$$" "$file" && t paste-buffer -p -d -b "fleet-$$" -t "$p"
   wait_for "$p" 5 holds_input || { echo not-pasted; return; }
   box=$(input_text "$(screen "$p")")
   want=$(tr -d '[:space:]' <"$file")
-  if [[ ${box//[[:space:]]/} != "$want" && ! $box =~ ^\[Pasted\ text\ \#[0-9]+\ \+[0-9]+\ lines\]$ ]]; then
-    echo mixed
+  if [[ ${box//[[:space:]]/} != "$want" && ! $box =~ ^\[Pasted\ text\ \#[0-9]+(\ \+[0-9]+\ lines)?\]$ ]]; then
+    text=$(<"$file")
+    if [[ ${box//[[:space:]]/} == *"$want" && $box != *"[Pasted text #"* ]]; then
+      t send-keys -t "$p" -N "${#text}" BSpace
+      echo backed-out
+    else
+      echo mixed
+    fi
     return
   fi
   for _ in 1 2 3; do
