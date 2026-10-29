@@ -247,38 +247,14 @@ deliver() { # PANE FILE
 }
 sent_or_started() { started "$1" || { has_input_box "$1" && [[ -z $(input_text "$1") ]]; }; }
 
-# Take the alert WANT (whitespace removed) back off the end of PANE's box,
-# which held BOX, until only the line AJ began is left. One BSpace takes one
-# character, which may be several code points (an emoji, a letter and its
-# accent), so each batch is a twelfth of the code points left (at least one):
-# never more characters than remain. At most MAX presses.
-inbox_back_out() { # PANE BOX WANT MAX
-  local p=$1 keep=${2%"$3"} max=$4 got=$2 rest n
-  while (( max > 0 )); do
-    rest=${got#"$keep"}
-    n=$(( ${#rest} / 12 ))
-    (( n < 1 )) && n=1
-    (( n > max )) && n=$max
-    t send-keys -t "$p" -N "$n" BSpace
-    max=$(( max - n ))
-    sleep 0.1
-    got=$(input_text "$(screen "$p")")
-    got=${got//[[:space:]]/}
-    [[ $got == "$keep" ]] && return 0
-    [[ $got == "$keep"* ]] || return 1
-  done
-  return 1
-}
-
 # Paste inbox file FILE into PANE and send it, only while the box is empty and
 # no turn runs, right before the paste; it is sent only when the box then
 # holds the message alone (its text, or a paste's placeholder), never with a
 # line AJ began meanwhile. Claude Code shows a paste over 800 characters, or
 # with more than two newlines, as "[Pasted text #N]" ("... +M lines]" when it
-# has newlines). Prints sent, not-pasted, backed-out (pasted beside a line AJ
-# began, and its own characters removed again, so it goes another time), mixed
-# (a placeholder beside other text, left unsent) or held (still in the box
-# after three Enters).
+# has newlines). Prints sent, not-pasted, mixed (pasted beside a line AJ
+# began: left in the box unsent, since taking it back out by keystrokes could
+# take his characters with it) or held (still in the box after three Enters).
 inbox_deliver() { # PANE FILE
   local p=$1 file=$2 box want text
   idle_empty "$(screen "$p")" || { echo not-pasted; return; }
@@ -289,12 +265,7 @@ inbox_deliver() { # PANE FILE
   text=$(<"$file")
   want=${text//[[:space:]]/}
   if [[ ${box//[[:space:]]/} != "$want" && ! $box =~ ^\[Pasted\ text\ \#[0-9]+(\ \+[0-9]+\ lines)?\]$ ]]; then
-    if [[ ${box//[[:space:]]/} == *"$want" && $box != *"[Pasted text #"* ]]; then
-      inbox_back_out "$p" "${box//[[:space:]]/}" "$want" "${#text}"
-      echo backed-out
-    else
-      echo mixed
-    fi
+    echo mixed
     return
   fi
   for _ in 1 2 3; do

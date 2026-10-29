@@ -393,7 +393,6 @@ one() { # PANE
     got=$(inbox_deliver "$p" "$msg")
     case $got in
       not-pasted) flog WARN "CI alert not delivered: the prompt was no longer idle and empty; trying again next pass" pane="$p" name="$inbox_name" alert="${msg##*/}" ;;
-      backed-out) flog WARN "CI alert taken back out: a line was typed as it went in; it goes once the prompt is empty" pane="$p" name="$inbox_name" alert="${msg##*/}" ;;
       mixed)
         flog WARN "CI alert pasted beside text typed meanwhile; left in the prompt unsent" pane="$p" name="$inbox_name" alert="${msg##*/}"
         rm -f -- "${msg:?}"
