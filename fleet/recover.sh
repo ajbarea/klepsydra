@@ -108,6 +108,7 @@ if (( orch_too )) && [[ -n $orch ]]; then
     else
       txt="$FLEET_STATE/heph-recover-$(date +%Y%m%d-%H%M).md"
       {
+        # shellcheck disable=SC2016 # `fleet recover` is a command named in the text
         printf 'Fresh start: the orchestrator (Heph) was stopped by a hard shutdown of the PC; you replace it. Read %s first, then the "Running now" lines in /mnt/c/Users/ajbar/fleet-briefing/claude-queue.md; `fleet recover` has relaunched the agents in panes.tsv. Put anything below that changes the plan into HEPH.md now.\n\n' "$HEPH"
         printf "AJ's messages to the last orchestrator after HEPH.md was last written:\n%s\n" "${asks:-- (none)}"
       } >"$txt"

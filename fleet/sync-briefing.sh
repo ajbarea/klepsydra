@@ -16,8 +16,14 @@ if ! out=$("$GITLEAKS" dir . --no-banner --exit-code 1 2>&1); then
   flog ERROR "briefing sync: gitleaks found something; not committed" dir="$R" said="$(tail -3 <<<"$out")"
   exit 1
 fi
-git add -A -- claude-morning.md claude-queue.md README.md shots 2>/dev/null
-git -c core.autocrlf=false commit -q -m "Update $(date '+%F %H:%M')" || exit 0
+# Only paths that exist or are tracked: git add stops at the first pathspec that matches nothing.
+paths=()
+for f in claude-morning.md claude-queue.md README.md shots; do
+  if [[ -e $f ]] || git ls-files --error-unmatch -- "$f" >/dev/null 2>&1; then paths+=("$f"); fi
+done
+git add -A -- "${paths[@]}"
+git diff --cached --quiet && exit 0
+git -c core.autocrlf=false commit -q -m "Update $(date '+%F %H:%M')" >/dev/null || { flog ERROR "briefing sync: commit failed"; exit 1; }
 if out=$(git push -q origin HEAD 2>&1); then
   flog INFO "briefing synced" commit="$(git rev-parse --short HEAD)"
 else
