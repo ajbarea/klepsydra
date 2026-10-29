@@ -133,8 +133,12 @@ export function castPicks(sessions, cast) {
   if (!chars.length) return sessions;
   const own = (s) => (castFiles(castCharacter(s.voice, cast), cast) ? s.voice : null);
   const shown = new Map(chars.map((c) => [c, 0]));
+  // An ended card that gave its voice to a live one (`ceded`) is cast last, so its new face moves no other card's.
   const order = [...sessions].sort(
-    (a, b) => (a.started_at ?? Infinity) - (b.started_at ?? Infinity) || (a.session_id < b.session_id ? -1 : 1),
+    (a, b) =>
+      (a.ceded === true) - (b.ceded === true) ||
+      (a.started_at ?? Infinity) - (b.started_at ?? Infinity) ||
+      (a.session_id < b.session_id ? -1 : 1),
   );
   const pick = new Map();
   for (const s of order) {

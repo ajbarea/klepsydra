@@ -116,6 +116,10 @@ pub struct View {
     /// of its own oldest first, so a card keeps its face. None from a hook
     /// that never stamped it.
     pub started_at: Option<i64>,
+    /// An ended session whose voice went to a live one (keep_faces_distinct);
+    /// left out of the JSON when not.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub ceded: bool,
     /// The account it runs on; left out of the JSON when the hook never said.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub account: Option<crate::session::Account>,
@@ -299,6 +303,7 @@ pub fn view(entry: &Entry, now: i64) -> Option<View> {
             f.remote_url.clone()
         },
         started_at: f.started_at,
+        ceded: false,
         account: f.account.clone(),
         reply_at: None,
         marks: Marks {
@@ -348,6 +353,10 @@ fn keep_faces_distinct(shown: &mut [(&SessionFile, View)]) {
             None => true,
         };
         if !keeps {
+            // An ended card that gave its voice to a live one: the wall casts
+            // it a character after every other card, so its new face moves no
+            // other card's (castPicks).
+            v.ceded = !live(v);
             v.voice = None;
         }
     }
@@ -1148,6 +1157,18 @@ mod tests {
         );
         assert_eq!(voice_of(&s, "new"), Some("bf_emma"));
         assert_eq!(voice_of(&s, "old"), None);
+        let ceded = |id: &str| {
+            s.sessions
+                .iter()
+                .find(|v| v.session_id == id)
+                .unwrap()
+                .ceded
+        };
+        assert!(
+            ceded("old"),
+            "the ended card that gave its voice is marked, so the wall casts it last"
+        );
+        assert!(!ceded("new"));
     }
 
     #[test]

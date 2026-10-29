@@ -223,6 +223,7 @@ mod tests {
             asked_after_turn: false,
             remote_url: None,
             started_at: None,
+            ceded: false,
             account: None,
             reply_at: None,
             marks: Default::default(),

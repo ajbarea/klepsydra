@@ -93,7 +93,7 @@ pub fn exact_assets<K: AsRef<str>>(
 /// (shown, never acted on: the phone has no wrap-up buttons). The rest (its
 /// tmux pane, Claude process, distro, full launch folder) serve the
 /// desktop's actions alone.
-const SESSION_FIELDS: [&str; 24] = [
+const SESSION_FIELDS: [&str; 25] = [
     "session_id",
     "name",
     "voice",
@@ -114,6 +114,7 @@ const SESSION_FIELDS: [&str; 24] = [
     "remote_url",
     "account",
     "started_at",
+    "ceded",
     "reply_at",
     "wrapup",
     "turn_at",
@@ -1082,7 +1083,7 @@ mod tests {
                 "background": {"agents": 1, "shells": 0, "tasks": 0},
                 "ledger": {"tokens": {"input": 1}}, "ledger_partial": true,
                 "remote_url": "https://claude.ai/code/session_01ABC",
-                "account": {"id": "a1", "label": "RIT-CS-DQL"}, "started_at": 1,
+                "account": {"id": "a1", "label": "RIT-CS-DQL"}, "started_at": 1, "ceded": true,
                 "wrapup": {"state": "blocked", "reason": "a review is running", "at": 5, "settled_at": 6},
                 "turn_at": 4, "asked_after_turn": true, "reply_at": 8
             }, {"session_id": "s2", "launch_dir": "C:\\Users\\aj\\proj", "status": "done"}, "junk"],

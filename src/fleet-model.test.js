@@ -829,6 +829,13 @@ test("#148: a session with no character of its own gets one no live card shows, 
   const shared = faces([at("o", null, 1), at("n", olderPick, 2)]);
   assert.equal(shared.o, shared.n, "the two share the character; the older one never moves");
 
+  // #148 round 2: the ended card that gave its voice to a live one (the crate's `ceded`) is cast last.
+  for (let i = 0; i < 200; i++) {
+    const before = faces([at(`B${i}`, "v1", 2), at(`C${i}`, null, 3)])[`C${i}`];
+    const after = faces([at(`A${i}`, null, 1, { status: "ended", ceded: true }), at(`B${i}`, "v1", 2), at(`C${i}`, null, 3)])[`C${i}`];
+    assert.equal(after, before, "A's new face moves no other card's");
+  }
+
   // An older card ending never moves a newer one's face.
   for (let i = 0; i < 200; i++) {
     const list = [at(`a${i}`, null, 1), at(`b${i}`, null, 2)];

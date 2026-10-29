@@ -180,7 +180,7 @@ export function createDrawer({ dialog, button, tab, edge, sessions, cast, fetchT
     } else if (filter !== null && totalTokens(day_.tokens) === 0) {
       out.push(el("p", "empty-state", "Nothing counted for this session today."));
     } else {
-      out.push(totalsSection(day_), charactersSection(day, shown, labels), modelsSection(day, shown), attributionSection(day, shown));
+      out.push(totalsSection(day_), charactersSection(day, shown, labels, names), modelsSection(day, shown), attributionSection(day, shown));
     }
     out.push(blockedSection(guardrails, total, nameOf), errorsSection(day_));
     const cost = costLine(day_.cost_usd_estimate_micros);
@@ -204,9 +204,9 @@ export function createDrawer({ dialog, button, tab, edge, sessions, cast, fetchT
     return span;
   }
 
-  function charactersSection(day, shown, labels) {
+  function charactersSection(day, shown, labels, names) {
     const s = section("ledger-characters", "Tokens by character");
-    const rows = tokensByCharacter(shown, day.voices, cast(), { homes: day.home_voices, labels });
+    const rows = tokensByCharacter(shown, day.voices, cast(), { homes: day.home_voices, labels, wall: names });
     const max = Math.max(1, ...rows.map((r) => r.tokens));
     // The bar is decoration: the name and the count beside it are the data.
     const bar = (row) => {

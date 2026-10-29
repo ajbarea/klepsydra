@@ -120,6 +120,12 @@ test("a character keeps its tokens after its card is cleared, and 'Earlier sessi
   assert.ok(!rows.some((r) => /Earlier/.test(r.name)));
   // Old day files have no voices at all: everything is Other sessions.
   assert.deepEqual(tokensByCharacter([["x", t(4)]], undefined, CAST).map((r) => [r.name, r.tokens]), [["Other sessions", 4]]);
+  // #148: a session the wall cast a character counts under its card's character, not its recorded voice or none.
+  const wall = new Map([["x", { name: "Aidos", accent: "#123456", cast: true }], ["y", { name: "Elpis", accent: null, cast: false }]]);
+  assert.deepEqual(
+    tokensByCharacter([["x", t(4)], ["y", t(2)]], { y: "af_heart" }, CAST, { wall }).map((r) => [r.name, r.tokens]),
+    [["Aidos", 4], [characterOf("y", { y: "af_heart" }, CAST).name, 2]],
+  );
   assert.deepEqual(tokensByCharacter([["x", t(0)]], {}, CAST), []);
   // A voice key that is an Object.prototype name is not a character.
   const proto = tokensByCharacter([["x", t(1)]], { x: "constructor" }, CAST)[0];
