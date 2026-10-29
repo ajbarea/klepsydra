@@ -11,6 +11,7 @@ pub mod logfmt;
 pub mod lookup;
 pub mod otel;
 pub mod phone;
+pub mod picks;
 pub mod queue;
 pub mod receiver;
 pub mod reconcile;

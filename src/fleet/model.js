@@ -116,19 +116,15 @@ export function identity(s, cast) {
 }
 
 /**
- * Every session a character from the theme `cast` wears (#148): one with no
- * character of its own (keryx muted, a repo with no home voice, a home voice
- * another session keeps, or a voice the theme does not cast) gets `pick`, a
- * character no older card on the wall shows, or, when every one is showing,
- * one of the least shown. Sessions are taken oldest first and each sees only
- * older ones, so a card keeps its face while it is on the wall: a newer
- * session never takes it, even one whose own voice is that character (the two
- * then share it), and an ended card holds its face until it leaves the wall.
- * A card that gave its voice to another (`ceded`) keeps that voice's count in
- * its own place, so newer faces never move; its new face may then match a
- * newer card's. Of the free characters it takes the one its id hashes highest with. The
- * strip, the wall and the phone see the same sessions, so they agree. With no
- * theme loaded nothing is picked and the cards wear medallions.
+ * Every session a character from the theme `cast` wears (#148). The app's
+ * crate assigns each session with no cast voice of its own a `pick` once and
+ * keeps it while the session stays on the wall (src-tauri/fleet/src/picks.rs),
+ * so faces never move; a crate pick is kept here like an own voice. A session
+ * without one (demo fixtures, an older app) gets a pick here the same way:
+ * oldest first, each seeing only older cards, the least shown character, a
+ * voice it gave up (`ceded`) counted in its own place and avoided, ties by the
+ * hash of its id. With no theme loaded nothing is picked and the cards wear
+ * medallions.
  */
 export function castPicks(sessions, cast) {
   const chars = Object.keys(cast?.characters ?? {}).filter((k) => castFiles(castCharacter(k, cast), cast));
@@ -140,10 +136,12 @@ export function castPicks(sessions, cast) {
   );
   const pick = new Map();
   for (const s of order) {
-    let c = own(s);
+    // The crate's pick (src-tauri/fleet/src/picks.rs) is kept like an own voice.
+    const kept = castFiles(castCharacter(s.pick, cast), cast) ? s.pick : null;
+    let c = own(s) ?? kept;
     // The voice this card gave up to another (the crate's `ceded`): it still counts in this
     // card's place, so newer cards see what they saw before; the card's new face avoids it.
-    const gave = own({ voice: s.ceded });
+    const gave = kept ? null : own({ voice: s.ceded });
     if (!c) {
       const free = chars.length > 1 && gave ? chars.filter((x) => x !== gave) : chars;
       const least = Math.min(...free.map((x) => shown.get(x)));

@@ -121,6 +121,10 @@ pub struct View {
     /// place so no other card's face moves (castPicks). Left out when none.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ceded: Option<String>,
+    /// The character the wall gives a session with no cast voice of its own
+    /// (crate::picks), kept while it stays on the wall. Left out when none.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pick: Option<String>,
     /// The account it runs on; left out of the JSON when the hook never said.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub account: Option<crate::session::Account>,
@@ -305,6 +309,7 @@ pub fn view(entry: &Entry, now: i64) -> Option<View> {
         },
         started_at: f.started_at,
         ceded: None,
+        pick: None,
         account: f.account.clone(),
         reply_at: None,
         marks: Marks {

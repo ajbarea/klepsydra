@@ -173,6 +173,7 @@ mod tests {
             remote_url: None,
             started_at: None,
             ceded: None,
+            pick: None,
             account: None,
             reply_at: None,
             marks: Marks {

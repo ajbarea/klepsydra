@@ -96,11 +96,9 @@ class Wall:
     def __init__(self, browser, port):
         self.browser, self.port, self.failed, self.passed = browser, port, 0, 0
 
-    def open(self, width, height, cards, fixture=None, ledger=None, query="", init=None):
+    def open(self, width, height, cards, fixture=None, ledger=None, query=""):
         page = self.browser.new_page(viewport={"width": width, "height": height})
         watch(page)
-        if init:
-            page.add_init_script(init)
         self.ledger_requests = 0
 
         def count(route):
@@ -643,27 +641,25 @@ def shared_home_voice(wall):
 
 def cast_pick_outlives_its_card(wall):
     """#148: a session the wall cast a character keeps that character's row in
-    Tokens by character after its card leaves the wall (the pick is remembered)."""
+    Tokens by character after its card leaves the wall (the crate records the
+    pick in today's file, day.picks)."""
     fleet = json.loads((ROOT / "scripts/fixtures/fleet-demo.json").read_text())
-    sid = fleet["sessions"][1]["session_id"]
-    fleet["sessions"][1]["voice"] = None
+    gone = fleet["sessions"][1]["session_id"]
     view = json.loads(ledger_view())
-    view["day"]["voices"].pop(sid, None)
-    rows = """() => [...document.querySelectorAll('#ledger-characters-table tbody tr')].map((r) =>
-      r.cells[0].querySelector('.visually-hidden')?.textContent ?? r.cells[0].textContent)"""
+    view["day"]["voices"].pop(gone, None)
+    # af_heart: a character no other session in the demo day wears.
+    view["day"]["picks"] = {gone: "af_heart"}
+    want = json.loads((ROOT / "src/fleet/themes/kourai.json").read_text())["characters"]["af_heart"]["name"]
+    fleet["sessions"] = [x for x in fleet["sessions"] if x["session_id"] != gone]
     page = wall.open(960, 1000, 8, fixture=json.dumps(fleet), ledger=json.dumps(view))
     open_drawer(page)
-    before = page.evaluate(rows)
-    picks = page.evaluate("localStorage.getItem('klepsydra.ledger.picks')")
+    rows = page.evaluate(
+        """() => [...document.querySelectorAll('#ledger-characters-table tbody tr')].map((r) =>
+      r.cells[0].querySelector('.visually-hidden')?.textContent ?? r.cells[0].textContent)"""
+    )
     page.close()
-    gone = fleet | {"sessions": [x for x in fleet["sessions"] if x["session_id"] != sid]}
-    init = f"localStorage.setItem('klepsydra.ledger.picks', {json.dumps(picks)})"
-    page = wall.open(960, 1000, 8, fixture=json.dumps(gone), ledger=json.dumps(view), init=init)
-    open_drawer(page)
-    after = page.evaluate(rows)
-    page.close()
-    ok = bool(picks) and sid in picks and sorted(before) == sorted(after)
-    wall.check(ok, "a cast session keeps its character's Ledger row after its card leaves", [before, after])
+    ok = want in rows
+    wall.check(ok, "a cast session keeps its character's Ledger row after its card leaves", [rows, want])
 
 
 def drawer_states(wall):

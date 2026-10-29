@@ -190,6 +190,11 @@ pub struct Day {
     /// repo), so its row keeps it after the card is gone.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub labels: BTreeMap<String, String>,
+    /// The character the wall cast each session with no cast voice of its own
+    /// (crate::picks), so its tokens stay with that character after its card
+    /// is gone.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub picks: BTreeMap<String, String>,
     /// Counted metric points that carried no `session.id`, and so no total.
     pub no_session: u64,
 }
@@ -794,6 +799,7 @@ impl Ledger {
             voices,
             home_voices,
             labels,
+            picks,
             no_session,
         } = &self.day;
         let day = if current {
@@ -808,6 +814,7 @@ impl Ledger {
                 // The drawer never merges home-voiced sessions into one row.
                 home_voices: home_voices.clone(),
                 labels: labels.clone(),
+                picks: picks.clone(),
                 no_session: *no_session,
             }
         } else {
@@ -885,6 +892,23 @@ impl Ledger {
         true
     }
 
+    /// Remember `pick` as the character the wall cast `session`, the latest
+    /// one winning, if `now`'s file has the session, moving to `now`'s day first.
+    pub fn note_pick(&mut self, session: &str, pick: &str, now: i64) -> bool {
+        if day_name(now, &self.tz) < self.day.day {
+            return false;
+        }
+        self.roll(now);
+        if pick.is_empty() || !self.day.sessions.contains_key(session) {
+            return false;
+        }
+        if self.day.picks.get(session).map(String::as_str) == Some(pick) {
+            return false;
+        }
+        self.day.picks.insert(session.into(), pick.into());
+        true
+    }
+
     /// A session's totals since its first export.
     pub fn session(&self, id: &str) -> Option<&Totals> {
         self.state.sessions.get(id)
@@ -917,6 +941,7 @@ impl Ledger {
             self.day.voices.remove(&id);
             self.day.home_voices.remove(&id);
             self.day.labels.remove(&id);
+            self.day.picks.remove(&id);
         }
         cap_sessions(&mut self.state.sessions, session);
     }
@@ -2509,6 +2534,35 @@ mod tests {
         let (again, _) = Ledger::open(dir.0.clone(), NOW, TimeZone::UTC);
         assert_eq!(again.day().voices["s1"], "am_michael");
         assert_eq!(again.day().labels["s1"], "Techne PR queue");
+    }
+
+    #[test]
+    fn a_cast_pick_is_kept_for_the_day_and_the_latest_wins() {
+        let mut l = Ledger::in_memory(NOW);
+        assert!(!l.note_pick("s1", "af_heart", NOW), "no session, no pick");
+        l.record_metrics(
+            &metrics(&tokens_at("s1", "output", 1, NOW as u64, &[])),
+            NOW,
+        );
+        assert!(!l.note_pick("s1", "", NOW));
+        assert!(l.note_pick("s1", "af_heart", NOW));
+        assert!(!l.note_pick("s1", "af_heart", NOW), "unchanged");
+        assert!(l.note_pick("s1", "am_puck", NOW), "the latest wins");
+        assert_eq!(l.today_view(NOW, None).day.picks["s1"], "am_puck");
+        let dir = Scratch::new("ledger-picks");
+        dir.write(
+            "2026-10-20.json",
+            r#"{"day":"2026-10-20","sessions":{"s1":{"tokens":{"output":5}}}}"#,
+        );
+        let (mut l, _) = Ledger::open(dir.0.clone(), NOW, TimeZone::UTC);
+        assert!(
+            l.day().picks.is_empty(),
+            "an older file without picks loads"
+        );
+        assert!(l.note_pick("s1", "af_heart", NOW));
+        l.save().unwrap();
+        let (again, _) = Ledger::open(dir.0.clone(), NOW, TimeZone::UTC);
+        assert_eq!(again.day().picks["s1"], "af_heart");
     }
 
     #[test]

@@ -79,6 +79,7 @@ pub struct Reader {
     reporter: Reporter,
     last: Option<Snapshot>,
     ledger: Option<Shared>,
+    picks: crate::picks::Picks,
 }
 
 impl Reader {
@@ -99,6 +100,7 @@ impl Reader {
             reporter: Reporter::default(),
             last: None,
             ledger: None,
+            picks: crate::picks::Picks::load(klepsydra_dir),
         }
     }
 
@@ -195,6 +197,14 @@ impl Reader {
         }
         let t = now();
         let mut snap = snapshot(&listing.entries, t);
+        if self.picks.assign(&mut snap.sessions) {
+            if let Err(e) = self.picks.save() {
+                broken.push(Problem {
+                    file: crate::picks::FILE.into(),
+                    what: format!("picks not saved: {e}"),
+                });
+            }
+        }
         let started: HashMap<&str, Option<i64>> = listing
             .entries
             .iter()
@@ -215,6 +225,9 @@ impl Reader {
             for v in &mut snap.sessions {
                 if let Some(&(voice, home)) = voices.get(v.session_id.as_str()) {
                     noted |= l.note_voice(&v.session_id, voice, home, t);
+                }
+                if let Some(pick) = &v.pick {
+                    noted |= l.note_pick(&v.session_id, pick, t);
                 }
                 // The wall's label for the card (drawer.js `who`).
                 let label = v.name.as_deref().filter(|n| !n.is_empty());

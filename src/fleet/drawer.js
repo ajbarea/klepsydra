@@ -108,37 +108,27 @@ export function createDrawer({ dialog, button, tab, edge, sessions, cast, fetchT
   let readDay = ""; // the local date the latest read started on
   let painted = ""; // what the body shows, so an unchanged snapshot leaves it (and focus) alone
 
-  // The character the wall cast each session (castPicks), kept after its card leaves the
-  // wall so its tokens stay on that character's row; by voice key, so a theme switch renames it.
-  const picks = new Map(readPicks());
-  const who = () => {
+  const who = (day) => {
     const map = new Map();
-    let changed = false;
     for (const s of sessions()) {
       const id = identity(s, cast());
       // What tells two cards of one character apart: the session's name, else its repo.
-      // A character the wall cast (castPicks) names no voice: the Ledger names the card's.
-      const wall = Boolean(s.pick) && id.voice === null;
-      map.set(s.session_id, { name: id.name, accent: id.accent, label: s.name || s.where?.repo || null, cast: wall });
-      if (wall && picks.get(s.session_id) !== s.pick) {
-        picks.delete(s.session_id);
-        picks.set(s.session_id, s.pick);
-        changed = true;
-      }
+      // A character the wall cast (crate picks) names no voice: the Ledger names the card's.
+      map.set(s.session_id, { name: id.name, accent: id.accent, label: s.name || s.where?.repo || null, cast: Boolean(s.pick) && id.voice === null });
     }
-    for (const [sid, pick] of picks) {
+    // A session gone from the wall keeps the character the crate recorded in today's file.
+    for (const [sid, pick] of Object.entries(day?.picks ?? {})) {
       if (map.has(sid)) continue;
       const id = identity({ session_id: sid, pick }, cast());
       if (id.voice === null && id.full) map.set(sid, { name: id.name, accent: id.accent, label: null, cast: true });
     }
-    if (changed) savePicks(picks);
     return map;
   };
 
   function paint() {
     // A fetch can land after the drawer shut: a shut drawer neither paints nor takes focus.
     if (!view || !panel.isOpen) return;
-    const names = who();
+    const names = who(view.day);
     // The theme too: a voice the wall no longer shows is still named by it.
     const key = JSON.stringify([view, filter, [...names], cast().label]);
     if (key === painted) return;
@@ -433,25 +423,4 @@ export function createDrawer({ dialog, button, tab, edge, sessions, cast, fetchT
       else later = setTimeout(refresh, wait);
     },
   };
-}
-
-const PICKS_KEY = "klepsydra.ledger.picks";
-const PICKS_KEPT = 300;
-
-function readPicks() {
-  try {
-    const rows = JSON.parse(localStorage.getItem(PICKS_KEY) ?? "[]");
-    return Array.isArray(rows) ? rows.filter((r) => Array.isArray(r) && typeof r[0] === "string" && typeof r[1] === "string") : [];
-  } catch {
-    return [];
-  }
-}
-
-function savePicks(picks) {
-  while (picks.size > PICKS_KEPT) picks.delete(picks.keys().next().value);
-  try {
-    localStorage.setItem(PICKS_KEY, JSON.stringify([...picks]));
-  } catch {
-    // Storage blocked: the picks last until the app closes.
-  }
 }

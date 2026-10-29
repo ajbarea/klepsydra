@@ -848,6 +848,11 @@ test("#148: a session with no character of its own gets one no live card shows, 
     assert.equal(faces([at(`A${i}`, null, 1, { ceded: "v1" }), at(`N${i}`, "v1", 10), at(`Z${i}`, null, 11), at(`Y${i}`, null, 12)])[`A${i}`], own);
   }
 
+  // The crate's pick (picks.rs) is kept as given, never recomputed here.
+  const kept = faces([at("a", null, 1, { pick: "v3" }), at("b", "v3", 2), at("c", null, 3)]);
+  assert.equal(kept.a, "Three", "the crate's pick stands even when a newer card wears it too");
+  assert.notEqual(kept.c, "Three");
+
   // An older card ending never moves a newer one's face.
   for (let i = 0; i < 200; i++) {
     const list = [at(`a${i}`, null, 1), at(`b${i}`, null, 2)];
