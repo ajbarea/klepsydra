@@ -37,7 +37,8 @@ while IFS=$'\t' read -r p name brief sid _; do
   for _ in $(seq 20); do
     if new_sid=$(live_session "$p") && [[ $new_sid != "$sid" ]]; then
       set_session "$p" "$new_sid" && break
-      flog WARN "the registry was busy; the new session id is not recorded" pane="$p" session_id="$new_sid"
+      flog WARN "the new session id could not be recorded in the registry" pane="$p" session_id="$new_sid"
+      break
     fi
     new_sid=""
     sleep 0.5

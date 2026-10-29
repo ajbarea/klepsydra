@@ -253,7 +253,7 @@ cat >"$work/launch-resumed.sh" <<EOF
 tmux -L "$FLEET_SOCK" send-keys -t "$p" -l "AJ: carry on"
 tmux -L "$FLEET_SOCK" send-keys -t "$p" Enter
 new=\$(tmux -L "$FLEET_SOCK" new-window -d -P -F '#{pane_id}' -t fleet: "python3 -I $fake $work/newp.json $work/newp.log")
-sleep 0.8
+for _ in \$(seq 50); do tmux -L "$FLEET_SOCK" capture-pane -t "\$new" -p | grep -q '❯' && break; sleep 0.1; done
 tmux -L "$FLEET_SOCK" send-keys -t "\$new" -l "the brief"
 tmux -L "$FLEET_SOCK" send-keys -t "\$new" Enter
 sleep 0.5
