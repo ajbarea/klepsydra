@@ -31,6 +31,8 @@ cmd="env CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS=2 ${FLEET_CLAUDE:-claude} --sessio
 if [[ ${FLEET_SCOPE:-1} != 0 ]]; then
   cmd="systemd-run --user --scope --collect --unit=fleet-$name-$(date +%s) -p MemoryHigh=${MEM_HIGH:-4G} -p MemoryMax=${MEM_MAX:-5G} -p MemorySwapMax=${MEM_SWAP:-1G} $cmd"
 fi
+exec 8>>"$FLEET_STATE/.launch.lock"
+flock -w 600 8 || { flog ERROR "launch held: another launch kept the lock for 10 min" name="$name"; exit 1; }
 before=$(fleet_panes | sort)
 if ! out=$(cd ~ && KLEPSYDRA_CLAUDE="$cmd" KLEPSYDRA_TMUX_SOCKET="$FLEET_SOCK" bash "${FLEET_LAUNCHER:-$HOME/.claude/klepsydra-launch.sh}" new "$dir" 2>&1); then
   flog ERROR "launch failed: the launcher refused" name="$name" said="$out"

@@ -10,8 +10,14 @@ FLEET_TARGET=fleet::install
 here=$(dirname "$(readlink -f "$0")")
 # shellcheck source=fleet/lib.sh
 . "$here/lib.sh"
-dry=0
-[[ ${1:-} == --dry-run ]] && dry=1
+dry=0 force=0
+for a in "$@"; do
+  case $a in --dry-run) dry=1 ;; --force) force=1 ;; esac
+done
+if (( !force )) && [[ $(git -C "$here" rev-parse --git-dir 2>/dev/null) != "$(git -C "$here" rev-parse --git-common-dir 2>/dev/null)" ]]; then
+  err "this checkout is a git worktree; links into it break when it is removed. Install from the main checkout, or pass --force."
+  exit 2
+fi
 do_() { if (( dry )); then printf 'would: %s\n' "$*"; else "$@"; fi; }
 SCRIPTS=(launch.sh fresh-now.sh resume-at-reset.sh watch-panes.sh memfrag-log.sh relaunch-fresh.sh brief.sh doctor.sh cutover.sh worker-settings.json)
 UNITS=${FLEET_UNITS:-$HOME/.config/systemd/user}

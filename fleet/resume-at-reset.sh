@@ -92,11 +92,18 @@ fresh() { # PANE NAME BRIEF
   fi
   txt="$FLEET_STATE/fresh-$name-$(date +%Y%m%d-%H%M).src"
   { fresh_preamble "stopped at a usage limit over an hour ago, so its cached conversation expired and resuming it would re-cache everything"; printf '\n\n'; cat "$brief"; } >"$txt"
-  t send-keys -t "$p" -l "/exit"
-  wait_for "$p" 5 holds_input && t send-keys -t "$p" Enter
-  for _ in $(seq 30); do fleet_panes | grep -qx "$p" || break; sleep 1; done
-  t kill-pane -t "$p" 2>/dev/null
-  new=$(bash "$LAUNCH" "$name" "$txt" 2>/dev/null | grep -o 'pane=%[0-9]*' | head -1 | cut -d= -f2)
+  mkdir -p -- "$FLEET_STATE/log"
+  new=$(bash "$LAUNCH" "$name" "$txt" 2>>"$FLEET_STATE/log/launch.err" | grep -o 'pane=%[0-9]*' | head -1 | cut -d= -f2)
+  if [[ -z $new ]]; then
+    flog ERROR "fresh session not started; the old pane is kept" pane="$p" name="$name"
+    return 3
+  fi
+  if type_exactly "$p" "/exit"; then
+    t send-keys -t "$p" Enter
+    for _ in $(seq 30); do fleet_panes | grep -qx "$p" || break; sleep 1; done
+  fi
+  # Checked at the top as this agent's own pane; gone already if /exit worked.
+  fleet_panes | grep -qx "$p" && t kill-pane -t "$p" 2>/dev/null
   printf '%s' "$new"
 }
 
@@ -126,7 +133,7 @@ one() { # PANE
 
   # Claude Code's limit menu: take option 1, "Stop and wait for limit to reset";
   # on the next pass the pane reads as an ordinary limited one.
-  if (( !orch )) && grep -q 'Stop and wait for limit to reset' <<<"$ps" && grep -q 'Enter to confirm' <<<"$ps"; then
+  if (( !orch )) && limit_menu "$s"; then
     t send-keys -t "$p" Enter
     flog INFO "limit menu: chose stop and wait" pane="$p" account="${ACTIVE:-unknown}"
     return
@@ -169,25 +176,32 @@ one() { # PANE
     forget "$p"
     return
   fi
+  local fresh_typing=0
   if [[ -n $typed && $typed != "${note[$p]:-}" ]]; then
-    note[$p]=$typed
+    note[$p]=$typed fresh_typing=1
     flog INFO "AJ typed at a limited pane; it goes out at the resume" pane="$p" chars="${#typed}" text="${typed:0:200}"
   fi
   if [[ -z ${due[$p]:-} ]]; then
-    if reset=$(reset_epoch "$ps" "$NOW"); then :; else reset=$((NOW + 1800)); fi
+    if reset=$(reset_epoch "$limit" "$NOW") || reset=$(reset_epoch "$ps" "$NOW"); then :; else reset=$((NOW + 1800)); fi
     due[$p]=$((reset + 120)) seen_on[$p]=${ACTIVE:-unknown}
     flog INFO "limit seen" pane="$p" account="${seen_on[$p]}" resets="$(date -d @"$reset" '+%a %F %H:%M')" message="$limit"
   fi
   local switched=0
   [[ ${seen_on[$p]} != "${ACTIVE:-unknown}" ]] && ! exhausted && switched=1
   (( NOW >= due[$p] || switched )) || return
+  # AJ's line changed since the last pass: he may still be typing it.
+  (( fresh_typing )) && return
 
   reg=$(awk -F'\t' -v p="$p" '$1 == p { print $2 "\t" $3 }' "$REGISTRY" 2>/dev/null)
   name=${reg%%$'\t'*} brief=${reg#*$'\t'}
   if [[ -n $typed ]]; then
     got=$(submit "$p")
     flog INFO "resumed: sent what AJ typed" pane="$p" account="${ACTIVE:-unknown}" switched="$switched" started="$got" text="${typed:0:200}"
-  elif [[ -n ${note[$p]:-} ]] && { split_screen "$s"; ! grep -qF -- "${note[$p]%%$'\n'*}" <<<"$ABOVE"; }; then
+  elif [[ ${note[$p]:-} == "[Pasted text #"* ]] && { split_screen "$s"; ! grep -qF -- "❯ ${note[$p]}" <<<"$ABOVE"; }; then
+    flog WARN "a pasted block left the prompt unsent and cannot be typed again; resuming without it" pane="$p" text="${note[$p]}"
+    unset "note[$p]"
+    return
+  elif [[ -n ${note[$p]:-} ]] && { split_screen "$s"; ! grep -qF -- "❯ ${note[$p]}" <<<"$ABOVE"; }; then
     # Typed, then gone from the prompt without being sent (not in the
     # transcript above it): type it again.
     tmp=$(mktemp)
@@ -213,8 +227,7 @@ one() { # PANE
         return
         ;;
       *)
-        t send-keys -t "$p" -l "$MSG"
-        if wait_for "$p" 5 holds_input; then got=$(submit "$p"); else got=no; fi
+        if type_exactly "$p" "$MSG"; then got=$(submit "$p"); else got="no: AJ typed meanwhile"; fi
         flog INFO "resumed with the continue message" pane="$p" account="${ACTIVE:-unknown}" switched="$switched" started="$got"
         ;;
     esac

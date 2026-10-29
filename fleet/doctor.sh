@@ -19,7 +19,7 @@ CURL=${FLEET_CURL:-curl.exe}
 TAILSCALE=${FLEET_TAILSCALE:-tailscale.exe}
 PS=${FLEET_PS:-ps}
 PHONE=${FLEET_PHONE:-http://127.0.0.1:8318}
-BEAT_MAX_S=${FLEET_BEAT_MAX_S:-180}
+BEAT_MAX_S=${FLEET_BEAT_MAX_S:-600}
 FRESH_MAX_S=120
 now=$(date +%s)
 failed=0
@@ -60,7 +60,11 @@ for p in $orch $panes; do
   who=$(reg_field "$p" 2)
   [[ $p == "$orch" ]] && who=orchestrator
   if ! fleet_panes | grep -qx "$p"; then
-    report FAIL "remote control $p ($who)" "the pane is gone"
+    if [[ $p == "$orch" ]]; then
+      report FAIL "remote control $p ($who)" "the orchestrator's pane is gone"
+    else
+      report warn "remote control $p ($who)" "the pane is gone: a finished agent's row in panes.tsv"
+    fi
     continue
   fi
   f=$(session_of "$p")

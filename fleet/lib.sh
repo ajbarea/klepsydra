@@ -71,7 +71,7 @@ input_text() {
       if (index(first, "❯") != 1) exit
       sub(/^❯(\xc2\xa0| )?/, "", first)
       out = first
-      for (i = r[n - 1] + 2; i < r[n]; i++) { l = line[i]; sub(/^  /, "", l); out = out "\n" l }
+      for (i = r[n - 1] + 2; i < r[n]; i++) { l = line[i]; sub(/^  /, "", l); out = out " " l }
       gsub(/\xc2\xa0/, " ", out); sub(/[ \n]+$/, "", out); sub(/^ +/, "", out)
       printf "%s", out
     }'
@@ -153,6 +153,34 @@ wait_for() { # PANE SECONDS CHECK
   done
 }
 
+# Claude Code's limit menu, standing where the input box was.
+limit_menu() {
+  local tail
+  has_input_box "$1" && return 1
+  tail=$(plain <<<"$1" | grep -v '^[[:space:]]*$' | tail -8)
+  grep -q 'Stop and wait for limit to reset' <<<"$tail" && grep -q 'Enter to confirm' <<<"$tail"
+}
+
+# Type TEXT into PANE's empty input box and wait until the box holds exactly
+# it. If it holds more (AJ typed meanwhile), the script's own characters are
+# backed out, leaving his, and it fails.
+type_exactly() { # PANE TEXT
+  local p=$1 text=$2 end got want
+  # Compared without whitespace: a long line wraps in the box.
+  want=${text//[[:space:]]/}
+  t send-keys -t "$p" -l "$text"
+  end=$((SECONDS + 5))
+  while (( SECONDS < end )); do
+    got=$(input_text "$(screen "$p")")
+    got=${got//[[:space:]]/}
+    [[ $got == "$want" ]] && return 0
+    [[ ${#got} -gt ${#want} ]] && break
+    sleep "${FLEET_TICK:-0.5}"
+  done
+  t send-keys -t "$p" -N "${#text}" BSpace
+  return 1
+}
+
 idle_empty() { has_input_box "$1" && [[ -z $(input_text "$1") ]] && ! busy "$1"; }
 holds_input() { [[ -n $(input_text "$1") ]]; }
 started() { busy "$1" || limit_line "$1" >/dev/null; }
@@ -172,8 +200,7 @@ remote_control() { # PANE
   local p=$1 s
   s=$(screen "$p")
   idle_empty "$s" || return 1
-  t send-keys -t "$p" -l "/remote-control"
-  wait_for "$p" 5 holds_input || return 1
+  type_exactly "$p" "/remote-control" || return 1
   t send-keys -t "$p" Enter
   wait_for "$p" "${FLEET_RC_WAIT:-20}" rc_settled || return 1
   s=$(screen "$p")

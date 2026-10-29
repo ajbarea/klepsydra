@@ -48,6 +48,10 @@ reading() { # DIR LABEL FIVE_HOUR_PCT MTIME: a usage reading for account DIR
   touch -d "@$4" "$KLEPSYDRA_DIR/accounts/$1/s.json"
 }
 resume() { FLEET_NOW=$1 bash "$here/resume-at-reset.sh" --once 2>/dev/null; } # NOW
+# A registered session, live in pane $1 by klepsydra's fleet file.
+SID=11111111-2222-4333-8444-555555555555
+mkdir -p "$KLEPSYDRA_DIR/fleet"
+live() { jq -n --arg p "$1" '{session_id: "x", ended: null, tmux: {pane: $p}}' >"$KLEPSYDRA_DIR/fleet/$SID.json"; }
 logged() { jq -r --arg m "$1" 'select(.message | contains($m)) | .pane' "$FLEET_LOG" 2>/dev/null | tr '\n' ' '; }
 
 echo "reset times"
@@ -161,6 +165,42 @@ resume "$(( noon + 4330 ))"
 check "a line AJ already sent is not sent twice; the continue message follows it" "$(has "$(events sent)" "SUBMIT The usage limit has reset.") $(grep -c 'AJ: sent' "$work/sent.log")" "yes 0"
 t kill-window -t "$p"
 
+echo "resume: review round 1 (S1, S2, S5, S6)"
+: >"$FLEET_LOG"
+p=$(pane menutext "{\"above\":[\"agent: the menu says Stop and wait for limit to reset · Enter to confirm\",\"x\",\"y\"]}"); settle
+t send-keys -t "$p" -l "AJ half-typed thou"; settle
+resume "$noon"
+check "S1: the limit menu's words in a transcript are not the menu; AJ's half line is left alone" "$(events menutext)" ""
+t kill-window -t "$p"
+
+p=$(pane short "{\"above\":[\"Build ok\",\"$LIMIT\"]}"); settle
+t send-keys -t "$p" -l "ok"; settle
+resume "$noon"
+state short "{\"above\":[\"Build ok\",\"$LIMIT\"],\"clear\":true}"
+reading b RIT 10 2000
+resume "$(( noon + 60 ))"
+check "S2: a short line that the transcript happens to contain is still typed again" "$(grep -c '^SUBMIT ok$' "$work/short.log")" "1"
+t kill-window -t "$p"; reading a Personal 40 1000; rm -f "$KLEPSYDRA_DIR/accounts/b/s.json"
+
+p=$(pane racer '{"above":["idle"],"input":"AJ!"}'); settle
+type_exactly "$p" "/remote-control"; rc=$?
+settle
+check "S5: typed into a box AJ was typing in, the script backs out its own characters and submits nothing" \
+  "$rc [$(input_text "$(screen "$p")")] $(grep -c '^SUBMIT\|RC REQUESTED' "$work/racer.log")" "1 [AJ!] 0"
+t kill-window -t "$p"
+
+: >"$FLEET_LOG"
+p=$(pane keep "{\"above\":[\"⏺ Done. done 9:00 AM\",\"$LIMIT\"]}"); settle
+live "$p"
+printf '%s\tkeeper\t%s\t%s\t/w\n' "$p" "$work/brief.src" "$SID" >"$REGISTRY"
+printf '#!/usr/bin/env bash\necho "HOLD: only 1 MiB available"\nexit 2\n' >"$work/launch-fails.sh"
+resume "$(TZ=America/New_York date -d '2026-10-28 09:00' +%s)"
+LAUNCH="$work/launch-fails.sh" FLEET_NOW=$(( noon + 4330 )) bash "$here/resume-at-reset.sh" --once 2>/dev/null
+check "S6: when the fresh launch fails, the old pane is kept and resumed" \
+  "$(fleet_panes | grep -cx "$p") $(grep -c 'SUBMIT /exit' "$work/keep.log") $(has "$(events keep)" "SUBMIT The usage limit has reset.")" "1 0 yes"
+check "and the failed launch is an error in the log" "$(jq -r 'select(.level == "ERROR") | .message' "$FLEET_LOG")" "fresh session not started; the old pane is kept"
+t kill-window -t "$p"; : >"$REGISTRY"
+
 echo "resume: menus, the orchestrator and Remote Control"
 : >"$FLEET_LOG"
 p=$(pane menu '{"above":["work"],"menu":"limit"}'); settle
@@ -197,9 +237,6 @@ echo "resume: a fresh session after a long idle"
 : >"$FLEET_LOG"
 p=$(pane idle "{\"above\":[\"⏺ Done. done 9:00 AM\",\"$LIMIT\"]}"); settle
 printf 'the brief body\n' >"$work/brief.src"
-SID=11111111-2222-4333-8444-555555555555
-mkdir -p "$KLEPSYDRA_DIR/fleet"
-live() { jq -n --arg p "$1" '{session_id: "x", ended: null, tmux: {pane: $p}}' >"$KLEPSYDRA_DIR/fleet/$SID.json"; }
 live "$p"
 printf '%s\tidler\t%s\t%s\t/w\n' "$p" "$work/brief.src" "$SID" >"$REGISTRY"
 cat >"$work/launch-stub.sh" <<EOF
@@ -351,7 +388,7 @@ inst=$work/inst
 mkdir -p "$inst/state"
 printf 'old copy\n' >"$inst/state/launch.sh"
 FLEET_STATE="$inst/state" FLEET_UNITS="$inst/units" FLEET_BIN="$inst/bin" PATH="$work/nosystemctl:/usr/bin:/bin" \
-  bash "$here/install.sh" >/dev/null 2>&1
+  bash "$here/install.sh" --force >/dev/null 2>&1
 check "each script is linked from the checkout" "$(readlink "$inst/state/resume-at-reset.sh")" "$here/resume-at-reset.sh"
 check "the copy a link replaced is archived" "$(cat "$inst/state/archive/fleet-scripts-$(date +%Y%m%d)/launch.sh")" "old copy"
 check "the fleet command is linked" "$(readlink "$inst/bin/fleet")" "$here/fleet"
@@ -359,7 +396,7 @@ check "the resume service is a unit that restarts and comes back at boot" \
   "$(grep -E '^(ExecStart|Restart|WantedBy)=' "$inst/units/fleet-resume-at-reset.service" | tr '\n' '|')" \
   "ExecStart=/usr/bin/bash $inst/state/resume-at-reset.sh|Restart=always|WantedBy=default.target|"
 check "the memfrag timer too" "$(grep -c 'OnCalendar=\*:0/30' "$inst/units/fleet-memfrag-log.timer")" "1"
-FLEET_STATE="$inst/s2" FLEET_UNITS="$inst/u2" FLEET_BIN="$inst/b2" bash "$here/install.sh" --dry-run >"$work/dry" 2>/dev/null
+FLEET_STATE="$inst/s2" FLEET_UNITS="$inst/u2" FLEET_BIN="$inst/b2" bash "$here/install.sh" --dry-run --force >"$work/dry" 2>/dev/null
 check "a dry run says what it would do and changes nothing" "$(grep -c '^would' "$work/dry" | sed 's/^[1-9][0-9]*$/some/') $(find "$inst" -mindepth 1 -maxdepth 1 -printf '%f\n' | sort | tr '\n' ' ')" "some bin state units "
 
 echo "cut-over"

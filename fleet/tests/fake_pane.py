@@ -167,6 +167,8 @@ class Pane:
                     self.submit()
             elif c == b"\x15":  # C-u
                 self.input = ""
+            elif c in (b"\x7f", b"\x08"):  # Backspace
+                self.input = self.input[:-1]
             elif c >= b" ":
                 rest = c
                 while self.buf and self.buf[:1] >= b" " and self.buf[:1] != b"\x7f":
