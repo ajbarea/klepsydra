@@ -462,9 +462,10 @@ def bg_drop($ids): ($ids | map(text | select(. != null))) as $gone | map(select(
 def rc_ok: if type == "string" and test("^https://claude\\.ai/code/[A-Za-z0-9_-]{1,128}$") then . else null end;
 def rc_time: .timestamp | strings | sub("\\.[0-9]+Z$"; "Z") | try fromdateiso8601 catch null;
 # What one transcript line says of Remote Control: {url} for on (null when its
-# link is not one to follow) or off, nothing when it says neither; a
-# bridge-session record is {url, weak}: its bridge's link, which counts only
-# when no other line since the process started has said anything. The
+# link is not one to follow) or off, {on} for "the bridge is up" with no link,
+# nothing when it says neither; a bridge-session record is {url, weak}: its
+# bridge's link, which counts while nothing since the process started has said
+# off, or when it follows an {on}. The
 # attachment's url is set only when Claude Code attributes the session (null
 # when attribution is off), so its sendUserFileHint, true
 # while a Remote Control bridge is up, is what says off.
@@ -520,11 +521,13 @@ def notified: if type == "string" then [scan("<task-notification>[\\s\\S]*?</tas
   # after Remote Control goes off too, so it never undoes an off; an
   # attachment saying the bridge is up ({on}) takes a record dated after it.
   | ([$words[] | select(.weak | not)] | last) as $said
+  | ([$words[] | select((.weak | not) and .on != true)] | last) as $before
   | ([$words[] | select(.weak)] | last) as $bridge
   | (if $fresh then del(.remote_heard) else . end)
   | (if $said != null then .remote_heard = ($said.on != true) else . end)
   | (if $said.on == true then
-       (if $bridge != null and $bridge.at >= $said.at then $bridge else null end)
+       (if $bridge != null and $bridge.at >= $said.at then $bridge
+        elif $before.url != null then $before else null end)
      elif $said != null then $said
      elif .remote_url == null and .remote_heard != true then $bridge
      else null end) as $rc
@@ -865,7 +868,7 @@ main() {
     account=$(jq -cn 'first(inputs) | (.oauthAccount | objects) // {}
       | select(.accountUuid | strings | test("^[0-9A-Za-z-]{1,64}$"))
       | {id: .accountUuid, label: (if .organizationType == "claude_team"
-          then ((.organizationName | strings | select(length > 0) | .[0:80]) // "Team") else "Personal" end)}' \
+          then ((.organizationName | strings | gsub("[\u0001-\u001f\u007f-\u009f]"; "") | select(length > 0) | .[0:80]) // "Team") else "Personal" end)}' \
       "${CLAUDE_CONFIG_DIR:-${HOME:-}}/.claude.json" 2>/dev/null) || account=""
     [[ -n $account ]] || account=null
   fi
