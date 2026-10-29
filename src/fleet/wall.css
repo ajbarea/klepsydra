@@ -313,7 +313,7 @@ button:focus-visible { outline: 2px solid var(--card-focus); outline-offset: 2px
 .card.dim .face { filter: grayscale(0.85) brightness(0.8); }
 .card.dim .figure { filter: grayscale(0.85) brightness(0.8); }
 .card.dim .name, .card.dim .where, .card.dim .reply { color: var(--text-dim); }
-.card.dim .prompt, .card.dim .repo .wt, .card.dim .branch { color: var(--text-quiet); }
+.card.dim .prompt, .card.dim .repo .wt, .card.dim .branch, .card.dim .acct { color: var(--text-quiet); }
 
 /* The actions menu button: three dots in the band's top right corner, a 24 px
    target on the pill's row, so it adds no height. The pill steps left of it. */
@@ -525,7 +525,7 @@ button.menu svg { width: 16px; height: 16px; fill: currentColor; }
 .served .wall:not([data-density="compact"]) .where { flex-wrap: wrap; white-space: normal; overflow-wrap: anywhere; }
 .repo { min-width: 0; overflow: hidden; text-overflow: ellipsis; font-weight: 600; }
 .repo .wt { color: var(--text-dim); font-weight: 500; }
-.branch {
+.branch, .acct {
   display: inline-flex;
   flex: 0 1 auto;
   min-width: 0;
@@ -537,8 +537,8 @@ button.menu svg { width: 16px; height: 16px; fill: currentColor; }
   border: 1px solid var(--card-line);
   border-radius: 6px;
 }
-.branch svg { width: 12px; height: 12px; flex: none; }
-.branch span { overflow: hidden; text-overflow: ellipsis; }
+.branch svg, .acct svg { width: 12px; height: 12px; flex: none; }
+.branch span, .acct span { overflow: hidden; text-overflow: ellipsis; }
 .also { display: flex; flex-wrap: wrap; gap: 4px 10px; list-style: none; margin-top: -4px; color: var(--text-quiet); font-size: 12.5px; }
 .also:empty { display: none; }
 .meta, .foot { display: contents; } /* rows of their own only on the compact card */
@@ -803,7 +803,7 @@ button.menu svg { width: 16px; height: 16px; fill: currentColor; }
   font-size: 13px;
 }
 [data-density="compact"] .where { flex: 0 1 auto; gap: var(--space-3); }
-[data-density="compact"] .branch { padding: 1px 6px; font-size: 12px; }
+[data-density="compact"] .branch, [data-density="compact"] .acct { padding: 1px 6px; font-size: 12px; }
 [data-density="compact"] .also { display: none; }
 [data-density="compact"] .also-more:not([hidden]) { display: inline-block; }
 [data-density="compact"] .crew-line { flex: none; margin-top: 0; font-size: 12px; }

@@ -1,6 +1,6 @@
 // The card wall: a card per Claude Code session, in the reader's order, with
 // a way back to its terminal.
-import { RINGS, announcements, card, identity, needsFirst, shouldSlide, showsRingKey, startedNeeding, transitionName, statuses, tally } from "./model.js";
+import { RINGS, accountsDiffer, announcements, card, identity, needsFirst, shouldSlide, showsRingKey, startedNeeding, transitionName, statuses, tally } from "./model.js";
 import { announcer, press, say, setOff, syncChildren } from "./dom.js";
 import { ARM_MS, confirmCopy, createEnder, endAllCopy, endingAnnouncement, endingText, withdrawnText } from "./end.js";
 import { askedNote, asking, isReady, readiness, wrapupAnnouncements, wrapupCopy, wrapupLines } from "./wrapup.js";
@@ -31,6 +31,9 @@ const MARK_ARC = "M 4.5 16 A 11.5 11.5 0 0 1 27.5 16"; // the ring key's arc (wa
 const RESIZE_SETTLE_MS = 100; // Auto measures once a drag pauses, not every frame of it
 const BRANCH_ICON =
   '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="4" cy="3.5" r="1.8"/><circle cx="4" cy="12.5" r="1.8"/><circle cx="12" cy="5" r="1.8"/><path d="M4 5.3v5.4M12 6.8c0 3-3.5 3-8 4.2"/></svg><span></span>';
+// A head and shoulders: the account a session runs on, told apart from the branch beside it.
+const ACCOUNT_ICON =
+  '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="8" cy="5.5" r="2.6"/><path d="M3 14c.6-2.8 2.6-4.2 5-4.2s4.4 1.4 5 4.2"/></svg><span class="visually-hidden">account </span><span></span>';
 const TALLY = [
   ["needs", "needs you"],
   ["working", "working"],
@@ -230,7 +233,12 @@ function paint(el, c) {
   branch.hidden = !c.place?.branch;
   if (!branch.firstChild) branch.innerHTML = BRANCH_ICON;
   setText(branch.lastChild, c.place?.branch);
-  el.querySelector(".where").title = [`${c.place?.repo ?? ""}${c.place?.worktree ? ` / ${c.place.worktree}` : ""}`, c.place?.branch].filter(Boolean).join(" \u00b7 ");
+  const acct = el.querySelector(".acct");
+  acct.hidden = !c.showAccount;
+  if (!acct.firstChild) acct.innerHTML = ACCOUNT_ICON;
+  setText(acct.lastChild, c.showAccount ? c.account : null);
+  acct.title = c.showAccount ? `Account: ${c.account}` : "";
+  el.querySelector(".where").title = [`${c.place?.repo ?? ""}${c.place?.worktree ? ` / ${c.place.worktree}` : ""}`, c.place?.branch, c.showAccount ? `on ${c.account}` : null].filter(Boolean).join(" \u00b7 ");
   const also = c.also.map((t) => Object.assign(document.createElement("li"), { textContent: t }));
   if (c.alsoRest) {
     // The repos past the named ones, as the compact chip names them; Full text names each instead.
@@ -462,6 +470,8 @@ function render(snapshot) {
   paintTally();
   paintLimits(now);
   const cards = sessions.map((s) => card(s, cast, now, request));
+  const twoAccounts = accountsDiffer(cards);
+  for (const c of cards) c.showAccount = twoAccounts && Boolean(c.account);
   const prior = new Set(cardOf.keys()); // a card for one of these is not new
   cardOf = new Map(cards.map((c) => [c.id, c]));
   replayer.keep(new Set(cardOf.keys()));

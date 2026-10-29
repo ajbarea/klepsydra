@@ -149,7 +149,7 @@ fire() { # fixture [filter] [VAR=value...]
   jq -c --arg cwd "$wt" "if .cwd then .cwd = \$cwd else . end | $filter" "$fixtures/$fixture" |
     env KLEPSYDRA_DIR="$dir" KLEPSYDRA_NOW="$now" KLEPSYDRA_PROC="$work/proc" KLEPSYDRA_PID=600 \
       KERYX_VOICES="$work/voices.json" XDG_RUNTIME_DIR="$work" KLEPSYDRA_CAST="$work/test-cast.json" \
-      KLEPSYDRA_BOOT_ID="$boot_file" TMUX= TMUX_PANE= WSL_DISTRO_NAME= "$@" bash "$hook"
+      KLEPSYDRA_BOOT_ID="$boot_file" TMUX= TMUX_PANE= WSL_DISTRO_NAME= CLAUDE_CONFIG_DIR="$work/nocfg" "$@" bash "$hook"
 }
 field() { jq -c "$1" "$file"; }
 mtime() { stat -c %Y "$file"; }
@@ -1425,6 +1425,34 @@ done <<<"$want"
 check "the hook's ink matches contrast.js for all seventeen" "$got" "$want"$'\n'
 check "all seventeen were compared" "$(wc -l <<<"$want")" "17"
 
+echo "account"
+mkdir -p "$work/cfg-team" "$work/cfg-me" "$work/cfg-bad"
+jq -n '{oauthAccount: {accountUuid: "96130a18-106b-49a2-9b8e-a0b4d52aa214", organizationType: "claude_team", organizationName: "RIT-CS-DQL"}}' >"$work/cfg-team/.claude.json"
+jq -n '{oauthAccount: {accountUuid: "6f5fe38b-9f23-4588-b57a-6efd1225cadd", organizationType: "claude_max"}}' >"$work/cfg-me/.claude.json"
+jq -n '{oauthAccount: {accountUuid: "../x"}}' >"$work/cfg-bad/.claude.json"
+A=44444444-4444-4555-8666-777777777777
+afile="$dir/fleet/$A.json"
+afire() { fire "$1" ".session_id = \"$A\"" "${@:2}" >/dev/null; }
+afire session-start.json CLAUDE_CONFIG_DIR="$work/cfg-team"
+check "account: a session names the account its config folder is logged in to" "$(jq -c .account "$afile")" '{"id":"96130a18-106b-49a2-9b8e-a0b4d52aa214","label":"RIT-CS-DQL"}'
+afire post-tool-bash.json CLAUDE_CONFIG_DIR="$work/nowhere"
+check "account: other events keep it without reading the config" "$(jq -r .account.label "$afile")" "RIT-CS-DQL"
+afire user-prompt.json CLAUDE_CONFIG_DIR="$work/cfg-me"
+check "account: a prompt reads it again" "$(jq -c .account "$afile")" '{"id":"6f5fe38b-9f23-4588-b57a-6efd1225cadd","label":"Personal"}'
+afire user-prompt.json CLAUDE_CONFIG_DIR="$work/nowhere"
+check "account: a config that cannot be read keeps the one it had" "$(jq -r .account.label "$afile")" "Personal"
+rm -f "$afile"; afire session-start.json CLAUDE_CONFIG_DIR="$work/cfg-bad"
+check "account: an id that is not a plain id is not written" "$(jq 'has("account")' "$afile")" "false"
+rm -f "$afile"; afire session-start.json
+check "account: no config, no account" "$(jq 'has("account")' "$afile")" "false"
+mkdir -p "$work/cfg-ctl"; jq -n '{oauthAccount: {accountUuid: "a1", organizationType: "claude_team", organizationName: "RIT\nCS\u0007"}}' >"$work/cfg-ctl/.claude.json"
+rm -f "$afile"; afire session-start.json CLAUDE_CONFIG_DIR="$work/cfg-ctl"
+check "account: control characters leave a Team name, as the crate requires" "$(jq -r .account.label "$afile")" "RITCS"
+mkdir -p "$work/cfg-two"; { cat "$work/cfg-team/.claude.json"; cat "$work/cfg-me/.claude.json"; } >"$work/cfg-two/.claude.json"
+rm -f "$afile"; afire session-start.json CLAUDE_CONFIG_DIR="$work/cfg-two"
+check "account: a config holding two documents is read by its first, and the event is still written" "$(jq -r .account.label "$afile") $(jq -r .state "$afile")" "RIT-CS-DQL new"
+rm -f "$afile"
+
 echo "remote control"
 
 # The transcript's Remote Control lines (fixtures/remote-control.jsonl, one of
@@ -1514,6 +1542,57 @@ jq -c 'del(.remote_since) | .remote_url = "https://evil.example/x"' "$rfile" >"$
 check "remote: a stored link off claude.ai is dropped" "$(rc_url)" "none"
 rc_line 1 >"$tp"; rc_fire post-tool-bash.json $((rnow + 3720))
 check "remote: an old file without remote_since reads every line" "$(rc_url)" "https://claude.ai/code/session_01PLACEHOLDERconnect"
+
+# Remote Control on from startup, or /remote-control answered at its menu,
+# writes no line of its own; Claude Code's bridge-session record (no
+# timestamp, re-appended every few lines) names the link instead.
+bridge() { jq -nc --arg id "$1" --arg s "$R" '{type: "bridge-session", sessionId: $s, bridgeSessionId: $id, lastSequenceNum: 0}'; }
+stamp() { jq -nc --arg at "$1" '{type: "user", message: {role: "user", content: "x"}, timestamp: $at}'; }
+rm -f "$rfile"; : >"$tp"
+rc_fire session-start.json $((rnow + 4000))
+{ stamp 2026-10-18T20:56:50.000Z; bridge cse_01PLACEHOLDERbridge; } >>"$tp"
+rc_fire post-tool-bash.json $((rnow + 4020))
+check "remote: with no line of its own, the bridge record names the link" "$(rc_url)" "https://claude.ai/code/session_01PLACEHOLDERbridge"
+rc_line 5 | jq -c '.timestamp = "2026-10-18T20:57:00.000Z"' >>"$tp"; bridge cse_01PLACEHOLDERbridge >>"$tp"
+rc_fire post-tool-bash.json $((rnow + 4040))
+check "remote: an off line wins over the record Claude Code re-appends after it" "$(rc_url)" "none"
+{ head -c 1100000 /dev/zero | tr '\0' 'x'; printf '\n'; } >>"$tp"
+{ stamp 2026-10-18T20:58:00.000Z; bridge cse_01PLACEHOLDERbridge; } >>"$tp"
+rc_fire post-tool-bash.json $((rnow + 4100))
+check "remote: past the tail, the off line still holds against the record" "$(rc_url)" "none"
+rc_fire session-start.json $((rnow + 5000)) '.source = "resume"'
+rc_fire user-prompt.json $((rnow + 5010))
+check "remote: a resumed session ignores the last process's record" "$(rc_url)" "none"
+{ stamp 2026-10-18T21:13:40.000Z; bridge cse_01PLACEHOLDERnew; } >>"$tp"
+rc_fire post-tool-bash.json $((rnow + 5050))
+check "remote: then its own record counts" "$(rc_url)" "https://claude.ai/code/session_01PLACEHOLDERnew"
+rc_line 1 | jq -c '.timestamp = "2026-10-18T21:14:00.000Z"' >>"$tp"
+rc_fire post-tool-bash.json $((rnow + 5070))
+check "remote: and a /remote-control line wins over it" "$(rc_url)" "https://claude.ai/code/session_01PLACEHOLDERconnect"
+rc_line 5 | jq -c '.timestamp = "2026-10-18T21:15:00.000Z"' >>"$tp"; bridge cse_01PLACEHOLDERnew >>"$tp"
+rc_fire post-tool-bash.json $((rnow + 5090))
+check "remote: (off again, the record still re-appended)" "$(rc_url)" "none"
+rc_line 2 | jq -c '.timestamp = "2026-10-18T21:16:00.000Z"' >>"$tp"
+rc_fire post-tool-bash.json $((rnow + 5100))
+check "remote: back on at the menu with no record after it yet: no link to give" "$(rc_url)" "none"
+bridge cse_01PLACEHOLDERback >>"$tp"
+rc_fire post-tool-bash.json $((rnow + 5110))
+check "remote: back on at the menu (only the bridge-up attachment), the next record names the link" "$(rc_url)" "https://claude.ai/code/session_01PLACEHOLDERback"
+rm -f "$rfile"; : >"$tp"
+rc_fire session-start.json $((rnow + 5200))
+{ rc_line 1 | jq -c '.timestamp = "2026-10-18T21:17:00.000Z"'; rc_line 2 | jq -c '.timestamp = "2026-10-18T21:17:01.000Z"'; } >>"$tp"
+rc_fire post-tool-bash.json $((rnow + 5210))
+check "remote: a bridge-up attachment right after /remote-control keeps its link" "$(rc_url)" "https://claude.ai/code/session_01PLACEHOLDERconnect"
+for bad in 'cse_01x/../evil' 'session_01x' 'cse_'; do
+  rm -f "$rfile"; : >"$tp"
+  rc_fire session-start.json $((rnow + 6000))
+  { stamp 2026-10-18T21:30:30.000Z; bridge "$bad"; } >>"$tp"
+  rc_fire post-tool-bash.json $((rnow + 6010))
+  check "remote: bridge id '$bad' makes no link" "$(rc_url)" "none"
+done
+: >"$tp"; bridge cse_01PLACEHOLDERnostamp >>"$tp"
+rm -f "$rfile"; rc_fire session-start.json $((rnow + 6100)); rc_fire post-tool-bash.json $((rnow + 6110))
+check "remote: a record with no stamped line before it in the tail is no link" "$(rc_url)" "none"
 
 # Only an absolute .jsonl path is read: a relative one would be read from
 # wherever the hook runs (here the repo root, where the fixture is).

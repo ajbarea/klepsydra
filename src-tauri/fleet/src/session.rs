@@ -146,6 +146,26 @@ fn lenient_remote_url<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<S
     })
 }
 
+/// The account a session runs on, as the hook read it from the config folder
+/// Claude Code was started with: the account id and the gauge's name for it.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub struct Account {
+    pub id: String,
+    pub label: String,
+}
+
+/// `account` when its id is a plain id and its label a short name; anything
+/// else is none rather than costing the file.
+fn lenient_account<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<Account>, D::Error> {
+    let a = serde_json::from_value::<Account>(serde_json::Value::deserialize(d)?).ok();
+    Ok(a.filter(|a| {
+        (1..=64).contains(&a.id.len())
+            && a.id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
+            && (1..=80).contains(&a.label.chars().count())
+            && !a.label.chars().any(char::is_control)
+    }))
+}
+
 /// The kernel boot and distro a session runs on.
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
 pub struct Host {
@@ -214,6 +234,9 @@ pub struct SessionFile {
     /// while Remote Control is off.
     #[serde(default, deserialize_with = "lenient_remote_url")]
     pub remote_url: Option<String>,
+    /// The account it runs on; none from a hook that never read it.
+    #[serde(default, deserialize_with = "lenient_account")]
+    pub account: Option<Account>,
 }
 
 /// Why a session file was skipped.
@@ -551,6 +574,34 @@ mod tests {
             f.background.iter().map(|b| b.kind).collect::<Vec<_>>(),
             vec![Kind::Task]
         );
+    }
+
+    #[test]
+    fn the_account_is_kept_only_when_it_is_a_plain_id_and_short_name() {
+        let account = |extra: &str| parse(&file(extra), ID).unwrap().account;
+        assert_eq!(
+            account(
+                r#","account":{"id":"96130a18-106b-49a2-9b8e-a0b4d52aa214","label":"RIT-CS-DQL"}"#
+            ),
+            Some(Account {
+                id: "96130a18-106b-49a2-9b8e-a0b4d52aa214".into(),
+                label: "RIT-CS-DQL".into()
+            })
+        );
+        assert_eq!(account(""), None);
+        for bad in [
+            r#","account":null"#,
+            r#","account":"Personal""#,
+            r#","account":{"id":"../x","label":"P"}"#,
+            r#","account":{"id":"a","label":""}"#,
+            r#","account":{"id":"a","label":"a\nb"}"#,
+            r#","account":{"id":"a"}"#,
+            r#","account":{"id":7,"label":"P"}"#,
+        ] {
+            assert_eq!(account(bad), None, "{bad}");
+        }
+        let long = format!(r#","account":{{"id":"a","label":"{}"}}"#, "x".repeat(81));
+        assert_eq!(account(&long), None);
     }
 
     #[test]

@@ -431,6 +431,11 @@ export const needsFirst = (sessions) => [
 /** How many other repos the full card names before a "+N" chip takes the rest. */
 export const ALSO_NAMED = 4;
 
+/** Whether the live cards run on more than one account: only then is a card's account worth a chip. */
+export function accountsDiffer(cards) {
+  return new Set(cards.filter((c) => c.accountId && c.status !== "ended").map((c) => c.accountId)).size > 1;
+}
+
 /** One card on the wall; `request` is the snapshot's wrap-up, when one is shown. */
 export function card(s, cast, nowMs, request = null) {
   const who = identity(s, cast);
@@ -489,6 +494,9 @@ export function card(s, cast, nowMs, request = null) {
     wrapupRoute: sessionRoute(s),
     wrapup,
     remote: remoteLink(s.remote_url),
+    // The account it runs on; the wall shows it only while cards differ in it (accountsDiffer).
+    account: s.account?.label ?? null,
+    accountId: s.account?.id ?? null,
     remoteLabel: `Open ${who.name}'s session in Claude`,
     // keryx's latest spoken reply, when it kept one (replay.js).
     clip: Number.isInteger(s.reply_at) ? s.reply_at : null,

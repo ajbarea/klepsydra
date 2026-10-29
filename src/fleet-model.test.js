@@ -5,7 +5,7 @@ import {
   STATUS, shortAge, longAge, statusParts, voiceName, identity, accessibleName,
   statuses, startedNeeding, orderChanged, shouldSlide, transitionName, announcements, updatedText, badgeSvg, stripItems, card,
   askText, askParts, plainText, tally, crewOf, crewText, crewRing, crewRings, crewMarks, RINGS, RING_MAX, showsRingKey, alsoChip, ALSO_NAMED, pillWhen,
-  BAND,
+  BAND, accountsDiffer,
 } from "./fleet/model.js";
 import { contrast } from "./fleet/contrast.js";
 import { TONES, hash, initialOf, medallion, medallionSvg, toneOf } from "./fleet/medallion.js";
@@ -779,4 +779,19 @@ test("Open terminal's accessible name carries the reason it is off", () => {
   assert.equal(unnamed.jumpLabel, "Open terminal, Hephaestus, unavailable: no session name yet");
   const ended = card(session({ status: "ended", reason: "closed" }), CAST, NOW);
   assert.equal(ended.jumpLabel, "Open terminal, Hephaestus, unavailable: session ended");
+});
+
+test("a card names its account, and the wall shows it only while live cards differ in it", () => {
+  const rit = { id: "96130a18-106b-49a2-9b8e-a0b4d52aa214", label: "RIT-CS-DQL" };
+  const me = { id: "6f5fe38b-9f23-4588-b57a-6efd1225cadd", label: "Personal" };
+  const a = card(session({ account: rit }), CAST, NOW);
+  assert.equal(a.account, "RIT-CS-DQL");
+  assert.equal(a.accountId, rit.id);
+  const b = card(session({ session_id: "b", account: me }), CAST, NOW);
+  const none = card(session({ session_id: "c" }), CAST, NOW);
+  assert.equal(none.account, null);
+  assert.equal(accountsDiffer([a, b]), true);
+  assert.equal(accountsDiffer([a, card(session({ session_id: "d", account: rit }), CAST, NOW)]), false, "one account: no chip");
+  assert.equal(accountsDiffer([a, none]), false, "a card with no account says nothing of a second");
+  assert.equal(accountsDiffer([a, card(session({ session_id: "e", account: me, status: "ended" }), CAST, NOW)]), false, "an ended card does not count");
 });

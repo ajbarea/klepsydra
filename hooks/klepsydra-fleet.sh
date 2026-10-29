@@ -391,14 +391,22 @@ prune_hourly() { # stamp prune dir now
 # line: `/remote-control` connecting (system bridge_status, with the session
 # URL), Claude Code's remote_session_change attachment, and its "Remote
 # Control disconnected" system notice (the phrase in a prompt or reply, its
-# quotes escaped there, takes no slot). A tail and one awk, never a full read; nothing
-# for a path that is not an absolute, readable .jsonl file.
+# quotes escaped there, takes no slot). Then the last bridge-session record,
+# which Claude Code re-appends every few lines with the bridge's id: it has no
+# timestamp, so it is given the one of the line before it. A tail and one awk,
+# never a full read; nothing for a path that is not an absolute, readable .jsonl file.
 remote_lines() { # transcript
   [[ $1 == /*.jsonl && -f $1 && -r $1 ]] || return 0
   tail -c "$REMOTE_TAIL" -- "$1" 2>/dev/null | LC_ALL=C awk -v keep="$REMOTE_LINES" -v max="$REMOTE_LINE_MAX" '
-    length($0) <= max && (index($0, "\"subtype\":\"bridge_status\"") || index($0, "\"type\":\"remote_session_change\"") \
-      || (index($0, "\"type\":\"system\"") && index($0, "\"content\":\"Remote Control disconnected"))) { seen[n++ % keep] = $0 }
-    END { for (i = (n > keep ? n - keep : 0); i < n; i++) print seen[i % keep] }'
+    length($0) > max { next }
+    index($0, "\"subtype\":\"bridge_status\"") || index($0, "\"type\":\"remote_session_change\"") \
+      || (index($0, "\"type\":\"system\"") && index($0, "\"content\":\"Remote Control disconnected")) { seen[n++ % keep] = $0 }
+    index($0, "{\"type\":\"bridge-session\"") == 1 { bridge = $0; bridge_at = at; next }
+    match($0, /"timestamp":"[0-9T:.Z-]+"/) { at = substr($0, RSTART + 13, RLENGTH - 14) }
+    END {
+      for (i = (n > keep ? n - keep : 0); i < n; i++) print seen[i % keep]
+      if (bridge != "" && bridge_at != "") { sub(/}[[:space:]]*$/, ",\"timestamp\":\"" bridge_at "\"}", bridge); print bridge }
+    }'
   return 0
 }
 
@@ -454,7 +462,10 @@ def bg_drop($ids): ($ids | map(text | select(. != null))) as $gone | map(select(
 def rc_ok: if type == "string" and test("^https://claude\\.ai/code/[A-Za-z0-9_-]{1,128}$") then . else null end;
 def rc_time: .timestamp | strings | sub("\\.[0-9]+Z$"; "Z") | try fromdateiso8601 catch null;
 # What one transcript line says of Remote Control: {url} for on (null when its
-# link is not one to follow) or off, nothing when it says neither. The
+# link is not one to follow) or off, {on} for "the bridge is up" with no link,
+# nothing when it says neither; a bridge-session record is {url, weak}: its
+# bridge's link, which counts while nothing since the process started has said
+# off, or when it follows an {on}. The
 # attachment's url is set only when Claude Code attributes the session (null
 # when attribution is off), so its sendUserFileHint, true
 # while a Remote Control bridge is up, is what says off.
@@ -462,8 +473,11 @@ def rc_word:
   if .type == "system" and .subtype == "bridge_status" then {url: (.url | rc_ok)}
   elif .type == "attachment" and (.attachment | objects | .type) == "remote_session_change" then
     (.attachment.url | rc_ok) as $u
-    | if $u != null then {url: $u} elif .attachment.sendUserFileHint == false then {url: null} else empty end
+    | if $u != null then {url: $u} elif .attachment.sendUserFileHint == false then {url: null}
+      elif .attachment.sendUserFileHint == true then {on: true} else empty end
   elif .type == "system" and (.content | strings | startswith("Remote Control disconnected")) then {url: null}
+  elif .type == "bridge-session" then
+    {url: (.bridgeSessionId | strings | select(test("^cse_[A-Za-z0-9]{1,100}$")) | "https://claude.ai/code/session_" + ltrimstr("cse_") | rc_ok), weak: true}
   else empty end;
 # The task and tool-use ids of every <task-notification> block in a prompt.
 def notified: if type == "string" then [scan("<task-notification>[\\s\\S]*?</task-notification>")
@@ -499,8 +513,24 @@ def notified: if type == "string" then [scan("<task-notification>[\\s\\S]*?</tas
   # and its transcript's older lines (a resumed session's) are the last one's.
   | (if $fresh then $now - 30 else (.remote_since | numbers) // 0 end) as $rc_since
   | (if $fresh then .remote_since = $rc_since else . end)
-  | ([$remote | split("\n")[] | try fromjson catch empty | objects
-      | select((rc_time // 0) >= $rc_since) | rc_word] | last) as $rc
+  | [$remote | split("\n")[] | try fromjson catch empty | objects
+      | select((rc_time // 0) >= $rc_since) | (rc_time // 0) as $at | rc_word + {at: $at}] as $words
+  # Remote Control on from startup and /remote-control answered at its menu
+  # write no link of their own; the bridge record then names it, until this
+  # process says otherwise (remote_heard). Claude Code re-appends the record
+  # after Remote Control goes off too, so it never undoes an off; an
+  # attachment saying the bridge is up ({on}) takes a record dated after it.
+  | ([$words[] | select(.weak | not)] | last) as $said
+  | ([$words[] | select((.weak | not) and .on != true)] | last) as $before
+  | ([$words[] | select(.weak)] | last) as $bridge
+  | (if $fresh then del(.remote_heard) else . end)
+  | (if $said != null then .remote_heard = ($said.on != true) else . end)
+  | (if $said.on == true then
+       (if $bridge != null and $bridge.at >= $said.at then $bridge
+        elif $before.url != null then $before else null end)
+     elif $said != null then $said
+     elif .remote_url == null and .remote_heard != true then $bridge
+     else null end) as $rc
   # /clear keeps the process and its Remote Control: the cleared session's
   # file keeps the link, and the next session takes it ($cleared).
   | .remote_url = (if $event == "SessionEnd" and $ev.reason != "clear" then null
@@ -508,6 +538,7 @@ def notified: if type == "string" then [scan("<task-notification>[\\s\\S]*?</tas
       elif $fresh then $cleared | rc_ok
       else .remote_url | rc_ok end)
   | if .remote_url == null then del(.remote_url) else . end
+  | (if $account != null then .account = $account else . end)
   # Where: the last edit's repo, or the cwd's until something is edited, or
   # once the edited checkout is gone (a removed worktree, its branch with it).
   # `git` is the checkout's git dir, kept only to tell that it is gone.
@@ -797,7 +828,7 @@ colour_window() { # voice
 }
 
 main() {
-  local input fields session event cwd edited transcript source now file old new lock voice="" cwd_repo by=cwd remote="" cleared="" homes='{}' old_git where_gone=false
+  local input fields session event cwd edited transcript source now file old new lock voice="" cwd_repo by=cwd remote="" cleared="" homes='{}' old_git where_gone=false account=null
   input=$(cat)
   fields=$(printf '%s' "$input" | jq -r '
     def s: if type == "string" then gsub("[\u001f\n]"; " ") else "" end;
@@ -831,6 +862,16 @@ main() {
   mkdir -p "$fleet" 2>/dev/null || return 0
   # Read before the lock: no other session waits on this one's transcript.
   [[ $event == SessionEnd ]] || remote=$(remote_lines "$transcript")
+  # The account the session runs on, named as the statusLine names it, from
+  # the global config CLAUDE_CONFIG_DIR picks: at its start and each prompt.
+  if [[ $event == SessionStart || $event == UserPromptSubmit ]]; then
+    account=$(jq -cn 'first(inputs) | (.oauthAccount | objects) // {}
+      | select(.accountUuid | strings | test("^[0-9A-Za-z-]{1,64}$"))
+      | {id: .accountUuid, label: (if .organizationType == "claude_team"
+          then ((.organizationName | strings | gsub("[\u0001-\u001f\u007f-\u009f]"; "") | select(length > 0) | .[0:80]) // "Team") else "Personal" end)}' \
+      "${CLAUDE_CONFIG_DIR:-${HOME:-}}/.claude.json" 2>/dev/null) || account=""
+    [[ -n $account ]] || account=null
+  fi
   { exec {lock}>>"$LOCK"; } 2>/dev/null || return 0
   flock -w 5 "$lock" || return 0
 
@@ -846,7 +887,7 @@ main() {
     --arg repo "$where_repo" --arg worktree "$where_worktree" --arg branch "$where_branch" \
     --arg git "$where_git" --argjson where_gone "$where_gone" --arg by "$by" \
     --arg tmux_socket "$tmux_socket" --arg tmux_pane "$tmux_pane" --arg boot "$host_boot" --arg distro "$host_distro" \
-    --arg voice "$voice" --argjson homes "$homes" --arg cwd_repo "$cwd_repo" --arg pid "$found_pid" --arg start "$found_start" --arg remote "$remote" --arg cleared "$cleared" \
+    --arg voice "$voice" --argjson homes "$homes" --arg cwd_repo "$cwd_repo" --arg pid "$found_pid" --arg start "$found_start" --arg remote "$remote" --arg cleared "$cleared" --argjson account "$account" \
     "$APPLY" 2>/dev/null) || new=""
   # A cast newer than this session's file: the theme changed under it. The
   # file's time is moved past the cast's, so one switch recolours it once.
