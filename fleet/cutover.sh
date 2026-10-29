@@ -19,21 +19,24 @@ failed=0
 
 sc() { $SYSTEMCTL --user "$@"; }
 
+# Not in the middle of a fresh session: the resume service holds this lock then.
+exec 7>>"$FLEET_STATE/.fresh.lock"
+flock -w 900 7 || flog WARN "a fresh session held its lock for 15 min; cutting over anyway"
 # Rows written before launch.sh recorded session ids get the live one now.
-if [[ -e $REGISTRY ]]; then
+# shellcheck disable=SC2329 # run through with_registry
+fill_ids() {
+  local p name sid
   while IFS=$'\t' read -r p name _ sid _; do
     [[ -n $p && -z $sid ]] || continue
     if sid=$(live_session "$p"); then
-      set_session "$p" "$sid" && flog INFO "registry row given its live session id" pane="$p" name="$name" session_id="$sid"
+      set_session_now "$p" "$sid" && flog INFO "registry row given its live session id" pane="$p" name="$name" session_id="$sid"
     else
       flog WARN "registry row has no live session to record" pane="$p" name="$name"
     fi
   done < <(cat "$REGISTRY")
-fi
+}
+[[ -e $REGISTRY ]] && with_registry fill_ids
 
-# Not in the middle of a fresh session: the resume service holds this lock then.
-exec 7>>"$FLEET_STATE/.fresh.lock"
-flock -w 900 7 || flog WARN "a fresh session held its lock for 15 min; cutting over anyway"
 sc daemon-reload
 # One unit at a time, so a guard (wsl-mem-watch) is down only for its own swap.
 for u in "${UNITS[@]}"; do
@@ -41,7 +44,8 @@ for u in "${UNITS[@]}"; do
   for part in "$u" "${u%.timer}.service"; do
     [[ $(sc show -p Transient --value "$part" 2>/dev/null) == yes ]] || continue
     sc reset-failed "$part" 2>/dev/null
-    if sc stop "$part" 2>/dev/null; then
+    sc stop "$part" 2>/dev/null
+    if [[ $(sc show -p Transient --value "$part" 2>/dev/null) != yes ]]; then
       flog INFO "transient unit stopped for its installed file" unit="$part"
     else
       flog ERROR "transient unit would not stop" unit="$part"

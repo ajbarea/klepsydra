@@ -82,11 +82,19 @@ submit() { # PANE
 }
 
 # /exit the claude in PANE and close the pane once it has gone, or after 30 s.
-retire() { # PANE
-  if type_exactly "$1" "/exit"; then
-    t send-keys -t "$1" Enter
-    for _ in $(seq 30); do fleet_panes | grep -qx "$1" || return 0; sleep 1; done
+# With INTERRUPT (a pane this pass just launched, busy on its brief), its turn
+# is stopped first. A pane it cannot type /exit into is left running.
+retire() { # PANE [INTERRUPT]
+  if [[ ${2:-} == interrupt ]] && busy "$(screen "$1")"; then
+    t send-keys -t "$1" Escape
+    wait_for "$1" 15 idle_empty || true
   fi
+  if ! type_exactly "$1" "/exit"; then
+    flog ERROR "could not type /exit; the pane is left running" pane="$1"
+    return 1
+  fi
+  t send-keys -t "$1" Enter
+  for _ in $(seq 30); do fleet_panes | grep -qx "$1" || return 0; sleep 1; done
   t kill-pane -t "$1" 2>/dev/null
 }
 
@@ -121,8 +129,8 @@ fresh() { # PANE NAME BRIEF
   # The launch took a while: AJ may have typed into the old pane or resumed it.
   if ! pane_runs "$p" "$sid" || ! idle_empty "$(screen "$p")"; then
     flog ERROR "the old pane changed while its fresh session launched; the old one stays and the new one goes" pane="$p" new_pane="$new" name="$name"
-    retire "$new"
-    set_pane "$new" "$p" "$sid"
+    retire "$new" interrupt
+    with_registry set_pane "$new" "$p" "$sid"
     return 4
   fi
   retire "$p"
@@ -253,8 +261,8 @@ one() { # PANE
         flog INFO "fresh session after a long idle" pane="$p" name="$name" new_pane="${new:-none}" idle_min="$((idle / 60))" account="${ACTIVE:-unknown}"
         [[ -n $new ]] && last[$new]=$NOW
         ;;
-      1)
-        flog INFO "AJ typed just now; leaving the pane to the next pass" pane="$p"
+      1 | 4)
+        flog INFO "AJ has the pane; leaving it to the next pass" pane="$p" why="$rc"
         return
         ;;
       *)

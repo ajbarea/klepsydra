@@ -202,8 +202,21 @@ check "and the failed launch is an error in the log" "$(jq -r 'select(.level == 
 t kill-window -t "$p"; : >"$REGISTRY"
 
 echo "resume: review round 2 (B-1, B-2)"
-# shellcheck disable=SC2016 # a literal line of launch.sh
-check "B-1: the launcher, and a tmux server it starts, inherit neither lock" "$(grep -c 'new "$dir" 2>&1 7>&- 8>&-)' "$here/launch.sh")" "1"
+cat >"$work/launcher-bg.sh" <<EOF
+#!/usr/bin/env bash
+# The launcher's "new", plus a long-lived child, as a tmux server it starts would be.
+sleep 300 &
+echo \$! >"$work/bg.pid"
+tmux -L "\$KLEPSYDRA_TMUX_SOCKET" new-window -d -t fleet: -c "\$3" "\$KLEPSYDRA_CLAUDE"
+EOF
+printf '%s' '{"above":["Claude Code"]}' >"$work/bgl.json"; : >"$work/bgl.log"
+( exec 7>>"$FLEET_STATE/.fresh.lock"; FLEET_SCOPE=0 FLEET_MIN_AVAIL_MB=0 FLEET_LAUNCHER="$work/launcher-bg.sh" FLEET_DIR="$work" \
+  FLEET_CLAUDE="python3 -I $fake $work/bgl.json $work/bgl.log" bash "$here/launch.sh" bgl "$work/task.src" >/dev/null 2>&1 )
+bg=$(cat "$work/bg.pid")
+check "B-1: a long-lived child of the launcher holds neither lock" \
+  "$(find "/proc/$bg/fd" -lname '*.launch.lock' -o -lname '*.fresh.lock' 2>/dev/null | wc -l) $(flock -n "$FLEET_STATE/.launch.lock" true && echo free)" "0 free"
+kill "$bg" 2>/dev/null
+
 : >"$FLEET_LOG"
 p=$(pane changed "{\"above\":[\"⏺ Done. done 9:00 AM\",\"$LIMIT\"]}"); settle
 live "$p"
@@ -221,7 +234,26 @@ LAUNCH="$work/launch-slow.sh" FLEET_NOW=$(( noon + 4330 )) bash "$here/resume-at
 check "B-2: AJ typed during the launch: the old pane stays, with his text, and nothing exits it" \
   "$(fleet_panes | grep -cx "$p") $(grep -c 'SUBMIT /exit' "$work/changed.log") [$(input_text "$(screen "$p")")]" "1 0 [AJ: wait, one more thing]"
 check "and the registry points at it again" "$(cut -f1,4 "$REGISTRY")" "$p	$SID"
-check "logged as an error" "$(jq -r 'select(.level == "ERROR") | .message' "$FLEET_LOG")" "the old pane changed while its fresh session launched; the old one stays and the new one goes"
+check "round 3: nothing is typed into the pane AJ took back" "$(grep -c '^SUBMIT' "$work/changed.log")" "0"
+check "logged as an error" "$(jq -r 'select(.level == "ERROR") | .message' "$FLEET_LOG" | grep -c 'the old pane changed while its fresh session launched')" "1"
+t kill-window -t "$p"; : >"$REGISTRY"
+
+echo "registry session ids (S-1, S-2)"
+p=$(pane clr '{"above":["idle"]}'); settle
+live "$p"
+printf '%s\tclr\t%s\t%s\t/w\n' "$p" "$work/brief.src" "$SID" >"$REGISTRY"
+NEW_SID=99999999-2222-4333-8444-555555555555
+( for _ in $(seq 50); do grep -q '^SUBMIT /clear' "$work/clr.log" 2>/dev/null && break; sleep 0.2; done
+  jq '.ended = {reason: "clear"}' "$KLEPSYDRA_DIR/fleet/$SID.json" >"$work/e.json" && mv "$work/e.json" "$KLEPSYDRA_DIR/fleet/$SID.json"
+  jq -n --arg p "$p" '{ended: null, tmux: {pane: $p}}' >"$KLEPSYDRA_DIR/fleet/$NEW_SID.json" ) &
+FLEET_START_WAIT=2 FLEET_TURN_WAIT=2 bash "$here/fresh-now.sh" "$p" >/dev/null 2>&1
+wait
+check "S-1: after /clear the registry follows the new session id" "$(cut -f4 "$REGISTRY")" "$NEW_SID"
+rm -f -- "${KLEPSYDRA_DIR:?}/fleet/$NEW_SID.json"
+live "$p"
+printf '%s\tclr\t%s\n' "$p" "$work/brief.src" >"$REGISTRY"
+FLEET_SYSTEMCTL="$work/bin/systemctl" FLEET_UNITS="$work/units" FLEET_CUTOVER_WAIT=1 bash "$here/cutover.sh" >/dev/null 2>&1
+check "S-2: the cut-over gives a row from before session ids its live one" "$(cut -f4 "$REGISTRY")" "$SID"
 t kill-window -t "$p"; : >"$REGISTRY"
 
 echo "resume: menus, the orchestrator and Remote Control"

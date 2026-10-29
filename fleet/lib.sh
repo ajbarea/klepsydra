@@ -259,17 +259,26 @@ orchestrator() { cat "$FLEET_STATE/orchestrator.pane" 2>/dev/null; }
 fleet_panes() { t list-panes -s -t "$FLEET_SESSION" -F '#{pane_id}' 2>/dev/null; }
 
 # The live session id klepsydra's fleet file shows in pane PANE, or nothing.
+# Two live files naming one pane (a killed pane never writes "ended", and
+# tmux reuses its id) is no answer at all.
 live_session() { # PANE
-  local f
+  local f found=()
   for f in "$KLEPSYDRA_DIR"/fleet/*.json; do
     [[ -f $f && ! -L $f ]] || continue
-    jq -e --arg p "$1" '.tmux.pane == $p and .ended == null' "$f" >/dev/null 2>&1 && { basename "$f" .json; return 0; }
+    jq -e --arg p "$1" '.tmux.pane == $p and .ended == null' "$f" >/dev/null 2>&1 && found+=("$(basename "$f" .json)")
   done
-  return 1
+  (( ${#found[@]} == 1 )) || return 1
+  printf '%s' "${found[0]}"
+}
+
+# Run COMMAND... holding the registry's lock: every writer of panes.tsv does.
+with_registry() {
+  ( flock -w 60 9 || exit 1; "$@" ) 9>>"$FLEET_STATE/.registry.lock"
 }
 
 # Set the registry's session id for pane PANE (column 4) to SID.
-set_session() { # PANE SID
+set_session() { with_registry set_session_now "$@"; }
+set_session_now() { # PANE SID
   local tmp
   [[ -e $REGISTRY ]] || return 1
   tmp=$(mktemp "$REGISTRY.XXXXXX") || return 1
