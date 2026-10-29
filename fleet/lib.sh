@@ -141,6 +141,18 @@ reset_epoch() { # TEXT NOW
   printf '%s\n' "$at"
 }
 
+# N seconds, or fewer when DELIVER_DEADLINE (a SECONDS value: launch.sh's
+# deadline) comes sooner, but never under MIN (default 0).
+capped() { # N [MIN]
+  local n=$1 min=${2:-0} left
+  if [[ -n ${DELIVER_DEADLINE:-} ]]; then
+    left=$((DELIVER_DEADLINE - SECONDS))
+    (( left < n )) && n=$left
+    (( n < min )) && n=$min
+  fi
+  printf '%s' "$n"
+}
+
 # Wait up to SECONDS for pane PANE's screen to satisfy CHECK (a function
 # given the screen); fails on time out.
 wait_for() { # PANE SECONDS CHECK
@@ -203,40 +215,51 @@ remote_control() { # PANE
   idle_empty "$s" || return 1
   type_exactly "$p" "/remote-control" || return 1
   t send-keys -t "$p" Enter
-  wait_for "$p" "${FLEET_RC_WAIT:-20}" rc_settled || return 1
+  if ! wait_for "$p" "$(capped "${FLEET_RC_WAIT:-20}")" rc_settled; then
+    # Its Enter never took (a session still starting): the command is backed
+    # out, so the brief that follows is not sent with it.
+    [[ $(input_text "$(screen "$p")") == "/remote-control" ]] && t send-keys -t "$p" -N 15 BSpace
+    return 1
+  fi
   s=$(screen "$p")
   if grep -q 'Enter to select · Esc to continue' <<<"$(plain <<<"$s")"; then
     # Continue is preselected the first time the menu shows; Esc also continues.
     if plain <<<"$s" | grep -Eq '^ *❯ Continue'; then t send-keys -t "$p" Enter; else t send-keys -t "$p" Escape; fi
-    wait_for "$p" 10 idle_empty || return 1
+    wait_for "$p" "$(capped 10)" idle_empty || return 1
   fi
 }
 
 # Put FILE's text in PANE's input box (a bracketed paste, so newlines do not
 # submit) and submit it once it shows there. Once the box has emptied the text
-# was sent, so it is never pasted again; while it still holds it, Enter is
-# pressed again. Never sends Escape, which would cancel a turn that started.
+# was sent, so it is never pasted again; while it still holds it (a pasted
+# block shows as "[Pasted text #1 +30 lines]", and an Enter right after a paste
+# can be lost), Enter is pressed again, three times in all. Never sends Escape,
+# which would cancel a turn that started. Every wait stops at DELIVER_DEADLINE.
 # Prints started, blocked-by-limit or not-delivered.
 deliver() { # PANE FILE
-  local p=$1 file=$2 s
+  local p=$1 file=$2 s try
   s=$(screen "$p")
   if busy "$s"; then echo started; return 0; fi
   if [[ -z $(input_text "$s") ]]; then
     for _ in 1 2 3; do
-      wait_for "$p" 10 idle_empty || continue
+      wait_for "$p" "$(capped 10)" idle_empty || continue
       t load-buffer -b "fleet-$$" "$file" && t paste-buffer -p -d -b "fleet-$$" -t "$p"
-      wait_for "$p" 10 holds_input && break
+      # A paste not yet drawn gets at least 3 s before another, whatever the deadline.
+      wait_for "$p" "$(capped 10 3)" holds_input && break
     done
     holds_input "$(screen "$p")" || { echo not-delivered; return 0; }
   fi
-  for _ in 1 2 3; do
+  for try in 1 2 3; do
     t send-keys -t "$p" Enter
-    wait_for "$p" "${FLEET_START_WAIT:-30}" sent_or_started || continue
+    if ! wait_for "$p" "$(capped "${FLEET_START_WAIT:-10}")" sent_or_started; then
+      flog WARN "the brief is still in the prompt after Enter; pressing it again" pane="$p" try="$try" box="$(input_text "$(screen "$p")" | cut -c1-60)"
+      continue
+    fi
     s=$(screen "$p")
     busy "$s" && { echo started; return 0; }
     holds_input "$s" && continue
     # Sent: wait for its turn, or the limit, without touching the pane.
-    if wait_for "$p" "${FLEET_TURN_WAIT:-60}" started; then
+    if wait_for "$p" "$(capped "${FLEET_TURN_WAIT:-60}")" started; then
       if busy "$(screen "$p")"; then echo started; else echo blocked-by-limit; fi
     else
       echo not-delivered
