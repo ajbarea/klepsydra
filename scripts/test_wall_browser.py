@@ -371,14 +371,15 @@ def receipt_text(wall):
     page.wait_for_timeout(SETTLE_MS)
     got = page.evaluate(
         """() => {
-      const find = (name) => [...document.querySelectorAll('.card')].find((c) => c.querySelector('.name').textContent === name);
+      // A card by its name, or by its session (a voiceless one is named for the character it was cast).
+      const find = (name) => [...document.querySelectorAll('.card')].find((c) => c.querySelector('.name').textContent === name || c.dataset.key === name);
       const text = (name) => find(name).querySelector('.r-full').textContent;
       const visible = (name) => !find(name).querySelector('.ledger-line').hidden && getComputedStyle(find(name).querySelector('.ledger-line')).display !== 'none';
       return {
         hephaestus: text('Hephaestus'),
         techne: text('Techne'),
         zero: visible('Dokimasia'),
-        none: visible('Nightly corpus rebuild'),
+        none: visible('demo-14-medallion'),
         shortHidden: getComputedStyle(find('Techne').querySelector('.r-short')).display,
       };
     }"""
