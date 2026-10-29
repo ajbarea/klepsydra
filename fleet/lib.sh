@@ -308,6 +308,13 @@ pane_runs() { # PANE SESSION-ID
 FLEET_DEFAULT_CONFIG=${FLEET_DEFAULT_CONFIG:-$HOME/.claude}
 FLEET_ACCOUNTS=${FLEET_ACCOUNTS:-$FLEET_DEFAULT_CONFIG $HOME/.claude-rit}
 FLEET_ROOM_PCT=${FLEET_ROOM_PCT:-90} # a five-hour window used past this has no room
+# FLEET_ACCOUNTS is also the workers' preference order (#175): the first folder
+# with room is used, whatever the others' room, so the RIT Team seat (no weekly
+# cap) is spent first. A pane moved off its role's first folder moves back once
+# that has FLEET_BACK_ROOM_PCT of its five-hour window free (well above the
+# move-away line, so a window near its limit is not trusted at once), at its
+# next finished turn, and never within 15 minutes of its last move.
+FLEET_BACK_ROOM_PCT=${FLEET_BACK_ROOM_PCT:-50}
 # Folders compared as written: "~/.claude/" must read as the default.
 nodir() { local d=$1; while [[ $d == ?*/ ]]; do d=${d%/}; done; printf '%s' "$d"; }
 FLEET_DEFAULT_CONFIG=$(nodir "$FLEET_DEFAULT_CONFIG")
@@ -362,38 +369,49 @@ id_has_room() { # ID NOW
   (( five > 100 - FLEET_ROOM_PCT && seven > 5 ))
 }
 
-# The logged-in config folder with the most room, the five-hour window first,
-# then the weekly; one with room (id_has_room: a spent weekly window reads as
-# a full five-hour one once that lapses) before one without; the earlier
-# folder in FLEET_ACCOUNTS wins a tie. Prints nothing when none is logged in.
+# The config folder to start on at NOW: the first logged-in folder in
+# FLEET_ACCOUNTS with room (id_has_room: a spent weekly window reads as a full
+# five-hour one once that lapses); when none has room, the one with the most,
+# the five-hour window first, then the weekly. Prints nothing when none is
+# logged in. Heph's order is FLEET_ACCOUNTS=$FLEET_HEPH_ACCOUNTS.
 best_account() { # NOW
-  local dir id five seven roomy best="" best_roomy=-1 best_five=-1 best_seven=-1
+  local dir id five seven best="" best_five=-1 best_seven=-1
   for dir in $FLEET_ACCOUNTS; do
     id=$(account_of "$dir") || continue
+    if id_has_room "$id" "$1"; then
+      printf '%s' "$dir"
+      return
+    fi
     read -r five seven <<<"$(headroom "$id" "$1")"
-    roomy=0
-    id_has_room "$id" "$1" && roomy=1
-    if (( roomy > best_roomy || (roomy == best_roomy && (five > best_five || (five == best_five && seven > best_seven))) )); then
-      best=$dir best_roomy=$roomy best_five=$five best_seven=$seven
+    if (( five > best_five || (five == best_five && seven > best_seven) )); then
+      best=$dir best_five=$five best_seven=$seven
     fi
   done
   printf '%s' "$best"
 }
 
 # A logged-in config folder other than DIR, on another account, with room at
-# NOW (the one with the most); fails when there is none.
+# NOW: the first such in FLEET_ACCOUNTS. Fails when there is none.
 room_elsewhere() { # DIR NOW
-  local dir id mine best="" best_five=-1 five seven
+  local dir id mine
   mine=$(account_of "$1")
   for dir in $FLEET_ACCOUNTS; do
     [[ $dir == "$1" ]] && continue
     id=$(account_of "$dir") || continue
     [[ $id == "$mine" ]] && continue
-    id_has_room "$id" "$2" || continue
-    read -r five seven <<<"$(headroom "$id" "$2")"
-    (( five > best_five )) && best=$dir best_five=$five
+    id_has_room "$id" "$2" && { printf '%s' "$dir"; return; }
   done
-  [[ -n $best ]] && printf '%s' "$best"
+  return 1
+}
+
+# Whether account ID has room enough at NOW for a pane to move back to it: a
+# reading at all (none says nothing), FLEET_BACK_ROOM_PCT of its five-hour
+# window free and its week not spent.
+back_room() { # ID NOW
+  local five seven
+  reading_of "$1" >/dev/null || return 1
+  read -r five seven <<<"$(headroom "$1" "$2")"
+  (( five >= FLEET_BACK_ROOM_PCT && seven > 5 ))
 }
 
 # The config folder the orchestrator runs on: his live session's process's
@@ -409,6 +427,17 @@ heph_config() {
     c=$(cat "$FLEET_STATE/orchestrator.config" 2>/dev/null)
   fi
   nodir "${c:-$FLEET_DEFAULT_CONFIG}"
+}
+
+# Whether the agent in PANE has finished its turn: its live fleet file
+# (klepsydra's) says done, or stopped with only background work, and lists no
+# background work still running. Prints the session's prompt.at from the same
+# read (empty when it has none), for prompt_stamp comparisons.
+turn_done() { # PANE
+  local sid
+  sid=$(live_session "$1") || return 1
+  jq -er 'select((.state == "done" or (.state == "working" and .reason == "background"))
+    and ((.background // []) | length) == 0) | .prompt.at // "" | tostring' "$KLEPSYDRA_DIR/fleet/$sid.json" 2>/dev/null
 }
 
 # The config folder pane PANE runs on: its registry row's (column 6), else the default.

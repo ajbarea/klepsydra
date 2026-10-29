@@ -487,11 +487,11 @@ check "and the exit is non-zero" "$code" "1"
 touch "$work/active" "$FLEET_STATE/resume.beat"
 session_file o1 "$o" https://claude.ai/code/session_01O
 out=$(DOC_UP=http DOC_SERVE="https://desk.tail1.ts.net (tailnet only)" doctor); code=$?
-check "all well but the watcher: a shell that names the script is not one" "$(grep -c '^ok ' <<<"$out") $(grep '^FAIL' <<<"$out" | cut -d: -f1)" "9 FAIL pane watcher"
+check "all well but the watcher: a shell that names the script is not one" "$(grep -c '^ok ' <<<"$out") $(grep '^FAIL' <<<"$out" | cut -d: -f1)" "10 FAIL pane watcher"
 check "the default account is logged in; the second, not yet, is a warning" \
   "$(grep '^ok   account' <<<"$out" | cut -d: -f1) | $(grep '^warn account' <<<"$out" | cut -d: -f1)" "ok   account $work/cfg-a | warn account $work/cfg-b"
 check "with a watcher running, every check is ok and the exit is 0" \
-  "$(DOC_WATCH='%2 %5' DOC_UP=http DOC_SERVE=on doctor | grep -c '^ok '; echo "rc=${PIPESTATUS[0]}")" $'10\nrc=0'
+  "$(DOC_WATCH='%2 %5' DOC_UP=http DOC_SERVE=on doctor | grep -c '^ok '; echo "rc=${PIPESTATUS[0]}")" $'11\nrc=0'
 check "the watcher's panes are named" "$(DOC_WATCH='%2 %5' doctor | grep '^ok   pane watcher')" "ok   pane watcher: watching %2 %5"
 check "the phone wall and its Tailscale twin answer fresh" "$(grep -c 'fleet.json observed 3[0-9] s ago' <<<"$out")" "2"
 jq -n '{usage: [{observed_at: 1000}]}' >"$work/fleet.json"
@@ -591,11 +591,15 @@ echo "two accounts: picking one"
 login a; login b
 reading a Personal 40 1000; reading b RIT 10 2000
 now=$(date +%s)
-check "the logged-in account with the most five-hour room" "$(best_account "$now")" "$work/cfg-b"
-reading b RIT 40 2000
-check "a tie goes to the default folder" "$(best_account "$now")" "$work/cfg-a"
-jq -n --argjson r "$((now + 3600))" '{label: "RIT", windows: {five_hour: {used_percentage: 40, resets_at: $r}, seven_day: {used_percentage: 20, resets_at: $r}}}' >"$KLEPSYDRA_DIR/accounts/a/s.json"
-check "on a five-hour tie the weekly window decides (a Team seat has none)" "$(best_account "$now")" "$work/cfg-b"
+check "#175: the first folder with room wins over one with more room" "$(best_account "$now")" "$work/cfg-a"
+check "Heph's order starts from the other end" "$(FLEET_ACCOUNTS=$FLEET_HEPH_ACCOUNTS best_account "$now")" "$work/cfg-b"
+reading a Personal 95 1000
+check "the first folder out of room gives way to the next with room" "$(best_account "$now")" "$work/cfg-b"
+reading b RIT 95 2000
+jq -n --argjson r "$((now + 3600))" '{label: "RIT", windows: {five_hour: {used_percentage: 95, resets_at: $r}, seven_day: {used_percentage: 20, resets_at: $r}}}' >"$KLEPSYDRA_DIR/accounts/a/s.json"
+check "with none in room, a five-hour tie goes to the weekly window (a Team seat has none)" "$(best_account "$now")" "$work/cfg-b"
+reading a Personal 98 1000
+check "with none in room, the most five-hour room" "$(best_account "$now")" "$work/cfg-b"
 reading a Personal 40 1000; reading b RIT 0 2000; logout b
 check "a folder not logged in is never picked" "$(best_account "$now")" "$work/cfg-a"
 jq -n --argjson r "$((now + 3600))" '{label: "RIT", windows: {five_hour: {used_percentage: 0, resets_at: $r}, seven_day: {used_percentage: 100, resets_at: ($r + 86400)}}}' >"$KLEPSYDRA_DIR/accounts/b/s.json"
@@ -607,16 +611,22 @@ reading a Personal 100 1000; reading b RIT 10 2000
 check "room elsewhere: the other account, when it has room" "$(room_elsewhere "$work/cfg-a" "$now")" "$work/cfg-b"
 reading b RIT 95 2000
 check "and none when it is nearly full too" "$(room_elsewhere "$work/cfg-a" "$now" || echo none)" "none"
+reading a Personal 60 1000
+check "back room: under FLEET_BACK_ROOM_PCT (50%) free is not enough to move back" "$(back_room a "$now" && echo yes || echo no)" "no"
+reading a Personal 50 1000
+check "at 50% free it is" "$(back_room a "$now" && echo yes || echo no)" "yes"
+rm -f "$KLEPSYDRA_DIR/accounts/a/s.json"
+check "and with no reading at all it is not" "$(back_room a "$now" && echo yes || echo no)" "no"
 check "the default folder unsets CLAUDE_CONFIG_DIR; the second sets it" "$(config_env "$work/cfg-a")| $(config_env "$work/cfg-b")" "-u CLAUDE_CONFIG_DIR | CLAUDE_CONFIG_DIR=$work/cfg-b "
 
 echo "two accounts: launch"
 : >"$REGISTRY"
-reading a Personal 40 1000; reading b RIT 10 2000
+reading a Personal 95 1000; reading b RIT 10 2000
 cp "$work/task.src" "$FLEET_STATE/task-acct1.src"; cp "$work/task.src" "$FLEET_STATE/task-acct2.src"
 out=$(launch acct1 '{"above":["Claude Code"]}')
-check "launch starts the session on the account with the most room" "$(grep -c "^CONFIG $work/cfg-b$" "$work/acct1.log") $(grep -o 'account=[^ ]*' <<<"$out")" "1 account=$work/cfg-b"
+check "launch starts the session on the first account with room" "$(grep -c "^CONFIG $work/cfg-b$" "$work/acct1.log") $(grep -o 'account=[^ ]*' <<<"$out")" "1 account=$work/cfg-b"
 check "and records the folder in the registry" "$(awk -F'\t' '$2 == "acct1" { print $6 }' "$REGISTRY")" "$work/cfg-b"
-reading b RIT 60 2000
+reading a Personal 40 1000; reading b RIT 10 2000
 t set-environment -g CLAUDE_CONFIG_DIR "$work/cfg-b"   # a tmux server started from the second folder's shell
 out=$(launch acct2 '{"above":["Claude Code"]}')
 t set-environment -gu CLAUDE_CONFIG_DIR
@@ -747,6 +757,135 @@ check "review 1: a registered agent in the pane orchestrator.pane names is moved
 t kill-window -t "$h" 2>/dev/null; : >"$REGISTRY"
 
 rm -f "$FLEET_STATE/orchestrator.pane" "$FLEET_STATE/orchestrator.session" "$KLEPSYDRA_DIR/fleet/$SID.json"
+logout a; logout b; reading a Personal 40 1000; rm -f "$KLEPSYDRA_DIR/accounts/b/s.json"
+
+echo "two accounts: back to the preferred account (#175)"
+# The live session in pane $1, at turn state $2 with background work $3.
+done_live() { jq -n --arg p "$1" --arg st "${2:-done}" --argjson bg "${3:-[]}" \
+  '{session_id: "x", ended: null, tmux: {pane: $p}, state: $st, reason: null, background: $bg}' >"$KLEPSYDRA_DIR/fleet/$SID.json"; }
+login a; login b; reading a Personal 10 5000; reading b RIT 10 4000
+backpane() { # NAME: a registered pane on the second folder, idle at a finished turn
+  local q
+  q=$(pane "$1" '{"above":["⏺ Done. done 11:50 AM"]}'); settle
+  done_live "$q"
+  printf '%s\t%s\t%s\t%s\t/w\t%s\n' "$q" "$1" "$work/brief.src" "$SID" "$work/cfg-b" >"$REGISTRY"
+  printf '%s' "$q"
+}
+: >"$FLEET_LOG"; : >"$work/moved"; rm -f "$FLEET_STATE/resume-state"
+p=$(backpane back)
+mover "$noon"; mover "$((noon + 60))"
+check "a worker on the second account moves back to the first once it has room, at a finished turn" \
+  "$(head -2 "$work/moved" | tr '\n' ' ')$(grep -c 'SUBMIT /exit' "$work/back.log")" "$work/cfg-a back 1"
+check "its fresh brief says why" "$(grep -c 'moved back to its preferred account, Personal, which has room again' "$work/moved-brief")" "1"
+check "logged with both folders" "$(jq -r 'select(.message == "moved back to the preferred account") | [.from, .to, .new_pane] | join(" ")' "$FLEET_LOG")" "$work/cfg-b $work/cfg-a %997"
+t kill-window -t "$p" 2>/dev/null; : >"$REGISTRY"
+
+: >"$work/moved"
+p=$(backpane bgwork); done_live "$p" working '[{"id": "t1", "kind": "agent"}]'
+mover "$noon"; mover "$((noon + 60))"
+check "not while background work still runs" "$(wc -c <"$work/moved")" "0"
+done_live "$p" working
+mover "$((noon + 120))"
+check "nor while the turn runs" "$(wc -c <"$work/moved")" "0"
+t send-keys -t "$p" -l "AJ: one more thing"; settle; done_live "$p" "done"
+mover "$((noon + 180))"
+check "nor over a line AJ is typing" "$(wc -c <"$work/moved") $(grep -c '^SUBMIT' "$work/bgwork.log")" "0 0"
+t kill-window -t "$p"; : >"$REGISTRY"
+
+reading a Personal 60 5000
+p=$(backpane low)
+mover "$noon"; mover "$((noon + 60))"
+check "not while the preferred account has under 50% room" "$(wc -c <"$work/moved")" "0"
+t kill-window -t "$p"; : >"$REGISTRY"
+reading a Personal 10 5000
+
+launcher() { # NAME BRIEF-RESULT: a launch that counts its tries in $work/tries
+  # shellcheck disable=SC2016 # $FLEET_ACCOUNT is the launcher's own, at its run
+  printf '#!/usr/bin/env bash\necho try >>"%s"\necho "pane=%%995 session=x account=$FLEET_ACCOUNT avail=1MiB brief=%s"\n' "$work/tries" "$2" >"$work/$1"
+}
+launcher launch-fail.sh NOT-DELIVERED; launcher launch-limit.sh blocked-by-limit
+failer() { LAUNCH="$work/${2:-launch-fail.sh}" FLEET_NOW=$1 bash "$here/resume-at-reset.sh" --once 2>/dev/null; } # NOW [LAUNCHER]
+: >"$work/tries"; rm -f "$FLEET_STATE/back-hold"
+p=$(backpane flaky)
+failer "$noon"; failer "$((noon + 60))"; failer "$((noon + 120))"
+check "a failed move back is not retried for 15 min, across service restarts" "$(wc -l <"$work/tries") $(grep -c '^SUBMIT' "$work/flaky.log")" "1 0"
+failer "$((noon + 60 + 900))"
+check "then it is, and a failure that is not a limit holds no account" "$(wc -l <"$work/tries") $([[ -e $FLEET_STATE/back-hold ]] && echo held)" "2 "
+t kill-window -t "$p"; : >"$REGISTRY"
+
+: >"$work/tries"; rm -f "$FLEET_STATE/resume-state"
+p=$(backpane limited1)
+failer "$noon" launch-limit.sh; failer "$((noon + 60))" launch-limit.sh
+check "a move back the account answers with a limit holds the account" "$(wc -l <"$work/tries") $(cut -d' ' -f1 "$FLEET_STATE/back-hold")" "1 a"
+t kill-window -t "$p"; : >"$REGISTRY"
+p=$(backpane limited2)
+failer "$((noon + 120))" launch-limit.sh; failer "$((noon + 180))" launch-limit.sh
+check "review 1: so another pane does not try it until the account publishes a newer reading" "$(wc -l <"$work/tries")" "1"
+reading a Personal 10 6000
+failer "$((noon + 240))" launch-limit.sh
+check "then it does" "$(wc -l <"$work/tries")" "2"
+t kill-window -t "$p"; : >"$REGISTRY"
+p=$(backpane limited3)
+failer "$((noon + 300))" launch-limit.sh; failer "$((noon + 360))" launch-limit.sh
+check "review 2: held again, with no newer reading" "$(wc -l <"$work/tries")" "2"
+failer "$((noon + 240 + 1800))" launch-limit.sh
+check "review 2: the hold lasts BACK_HOLD_S (30 min) at most, from its last refusal (noon + 240)" "$(wc -l <"$work/tries")" "3"
+t kill-window -t "$p"; : >"$REGISTRY"; rm -f "$FLEET_STATE/back-hold" "$FLEET_STATE/resume-state"
+
+: >"$work/tries"
+p=$(backpane lagging); state lagging '{"above":["⏺ Done. done 11:50 AM"],"busy":true}'
+failer "$noon"; failer "$((noon + 60))"
+check "review 2: not while the screen shows a turn running, even if the session's file says done" "$(wc -l <"$work/tries")" "0"
+t kill-window -t "$p"; : >"$REGISTRY"
+
+: >"$FLEET_LOG"; rm -f "$FLEET_STATE/resume-state"
+p=$(pane limback "{\"above\":[\"⏺ Done. done 11:50 AM\",\"$LIMIT\"]}"); settle
+done_live "$p"
+printf '%s\tlimback\t%s\t%s\t/w\t%s\n' "$p" "$work/brief.src" "$SID" "$work/cfg-b" >"$REGISTRY"
+reading b RIT 100 4000
+failer "$noon"
+check "review 2: a limited pane is not moved back, its limit path takes it" "$(jq -r --arg p "$p" 'select(.pane == $p and (.message == "moved back to the preferred account" or .message == "could not move back to the preferred account; trying again in 15 min")) | .pane' "$FLEET_LOG") $(jq -r --arg p "$p" 'select(.message == "limit seen" and .pane == $p) | .pane' "$FLEET_LOG")" " $p"
+t kill-window -t "$p"; : >"$REGISTRY"; reading b RIT 10 4000; rm -f "$FLEET_STATE/resume-state"
+
+p=$(backpane away)
+check "review 2: fleet doctor names a pane left away from its preferred account" \
+  "$(bash "$here/doctor.sh" 2>/dev/null | grep 'preferred accounts' | cut -c1-61)" "warn preferred accounts: on another account while their own h"
+reading a Personal 60 5000
+check "and not while that account is short of room" "$(bash "$here/doctor.sh" 2>/dev/null | grep -c '^ok *preferred accounts')" "1"
+reading a Personal 10 5000
+t kill-window -t "$p"; : >"$REGISTRY"
+
+: >"$FLEET_LOG"; rm -f "$FLEET_STATE/resume-state"
+p=$(backpane phoned)
+cat >"$work/launch-phoned.sh" <<EOF
+#!/usr/bin/env bash
+jq '.prompt.at = 5' "$KLEPSYDRA_DIR/fleet/$SID.json" >"$work/st.json" && mv "$work/st.json" "$KLEPSYDRA_DIR/fleet/$SID.json"
+echo "pane=%995 session=x account=\$FLEET_ACCOUNT avail=1MiB brief=started"
+EOF
+LAUNCH="$work/launch-phoned.sh" FLEET_NOW=$noon bash "$here/resume-at-reset.sh" --once 2>/dev/null
+LAUNCH="$work/launch-phoned.sh" FLEET_NOW=$((noon + 60)) bash "$here/resume-at-reset.sh" --once 2>/dev/null
+check "review 2: a prompt the worker took during its move back (a phone message) keeps the old pane" \
+  "$(grep -c 'SUBMIT /exit' "$work/phoned.log") $(jq -r --arg p "$p" 'select(.message | startswith("the old pane changed while")) | .pane' "$FLEET_LOG") $(cut -f1 "$REGISTRY")" "0 $p $p"
+t kill-window -t "$p"; : >"$REGISTRY"; rm -f "$FLEET_STATE/resume-state"
+
+echo "two accounts: Heph's preferred account is the other end (#175)"
+: >"$work/moved"; : >"$FLEET_LOG"; rm -f "$FLEET_STATE/orchestrator.session" "$FLEET_STATE/resume-state"
+printf '%s\n' "$work/cfg-a" >"$FLEET_STATE/orchestrator.config"
+h=$(pane hephback '{"above":["⏺ Done. done 11:50 AM"]}'); settle
+printf '%s\n' "$h" >"$FLEET_STATE/orchestrator.pane"; done_live "$h"
+hmove "$noon"; hmove "$((noon + 60))"
+check "Heph on the workers' first account moves back to his own, the last, once it has room, at a finished turn" \
+  "$(head -2 "$work/moved" | tr '\n' ' ')$(cat "$FLEET_STATE/orchestrator.config") $(grep -c 'moved back to its preferred account, RIT' "$work/moved-brief")" "$work/cfg-b heph $work/cfg-b 1"
+check "logged as the orchestrator's" "$(jq -r 'select(.message == "moved back to the preferred account") | .orchestrator' "$FLEET_LOG")" "1"
+t kill-window -t "$h" 2>/dev/null
+: >"$work/moved"; rm -f "$FLEET_STATE/orchestrator.session" "$FLEET_STATE/resume-state"
+printf '%s\n' "$work/cfg-b" >"$FLEET_STATE/orchestrator.config"
+h=$(pane hephhome '{"above":["⏺ Done. done 11:50 AM"]}'); settle
+printf '%s\n' "$h" >"$FLEET_STATE/orchestrator.pane"; done_live "$h"
+hmove "$noon"; hmove "$((noon + 60))"
+check "Heph already on his own account stays" "$(wc -c <"$work/moved")" "0"
+t kill-window -t "$h" 2>/dev/null
+rm -f "$FLEET_STATE/orchestrator."* "$FLEET_STATE/resume-state" "$KLEPSYDRA_DIR/fleet/$SID.json"
 logout a; logout b; reading a Personal 40 1000; rm -f "$KLEPSYDRA_DIR/accounts/b/s.json"
 
 echo "two accounts: review round 1"
