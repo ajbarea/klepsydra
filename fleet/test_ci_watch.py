@@ -206,7 +206,10 @@ class Poll(unittest.TestCase):
         with mock.patch.object(ci_watch, "triage", nasty):
             ci_watch.poll("o", ["r"], Fake([run(9)]), {})
         q = (TMP / "q.md").read_text()
-        self.assertEqual([ln for ln in q.splitlines() if ln.startswith("#")], ["# Queue", "## Needs you", "## Running now"])
+        self.assertEqual(
+            [ln for ln in q.splitlines() if ln.startswith("#")],
+            ["# Queue", "## Needs you", "## Running now"],
+        )
         self.assertEqual(
             len([ln for ln in q.splitlines() if "ci:r:9" in ln]), 1, "one line"
         )
@@ -258,6 +261,77 @@ class Poll(unittest.TestCase):
 
         got = ci_watch.poll("o", ["x"], Slow([]), {})
         self.assertEqual([e["repo"] for e in got["errors"]], ["x"])
+
+
+class Poll2(unittest.TestCase):
+    """Queue errors, runs that page out, forks and the sweep."""
+
+    setUp = Poll.setUp
+    tearDown = Poll.tearDown
+
+    def test_a_queue_file_that_cannot_be_changed_does_not_hide_the_red_run(self):
+        known = {}
+        with mock.patch.object(
+            ci_watch, "add_queue_line", side_effect=PermissionError("read-only")
+        ):
+            got = ci_watch.poll("o", ["r"], Fake([run(5)]), known)
+        self.assertEqual(
+            ([r["run_id"] for r in got["red"]], got["errors"], known["r:5"]["queued"]),
+            ([5], [], False),
+        )
+        self.assertEqual(
+            list(TMP.glob(".q.md.*.tmp")), [], "no temp file left beside the queue"
+        )
+
+    def test_a_red_run_that_paged_out_stays_red_until_a_green_run_of_its_workflow(self):
+        known = {}
+        ci_watch.poll("o", ["r"], Fake([run(5, workflow=3)]), known)
+        later = ci_watch.poll(
+            "o", ["r"], Fake([run(6, workflow=1, conclusion="success")]), known
+        )
+        self.assertEqual(
+            [r["run_id"] for r in later["red"]],
+            [5],
+            "weekly workflow 3 paged out: still red",
+        )
+        green = ci_watch.poll(
+            "o",
+            ["r"],
+            Fake([run(7, workflow=3, conclusion="success", at="2026-10-29T00:00:00Z")]),
+            known,
+        )
+        self.assertEqual(green["red"], [], "a green run of workflow 3 clears it")
+
+    def test_a_forks_pr_is_shown_but_never_triaged_or_queued(self):
+        fork = run(8, branch="patch-1", sha="f") | {
+            "head_repository": {"full_name": "someone/r"}
+        }
+        got = ci_watch.poll("o", ["r"], Fake([fork], pulls=[pr(4, "f", "someone")]), {})
+        self.assertEqual(
+            ([r["triage"]["state"] for r in got["red"]], self.triaged),
+            (["skipped"], []),
+        )
+        self.assertNotIn("ci:r:8", (TMP / "q.md").read_text())
+
+    def test_the_sweep_reads_default_branch_runs_once_and_no_pr_run(self):
+        runs = [
+            run(10, conclusion="success"),
+            run(11, workflow=2, branch="pr", sha="p", conclusion="success"),
+        ]
+        swept = set()
+        with mock.patch.object(
+            ci_watch,
+            "triage",
+            lambda u, r, i: (
+                self.triaged.append(i),
+                {"state": "done", "verdict": "clean"},
+            )[1],
+        ):
+            ci_watch.sweep("o", ["r"], Fake(runs, pulls=[pr(4, "p")]), swept)
+            ci_watch.sweep("o", ["r"], Fake(runs, pulls=[pr(4, "p")]), swept)
+        self.assertEqual(
+            self.triaged, [10], "the PR's run is not swept, and run 10 only once"
+        )
 
 
 class Triage(unittest.TestCase):

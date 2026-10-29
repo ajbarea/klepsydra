@@ -283,6 +283,20 @@ def needs_you(run: dict) -> bool:
         event(logging.WARNING, "queue line not written: no queue file", path=str(QUEUE))
         return False
     mark = f"<!-- ci:{run['repo']}:{run['run_id']} -->"
+    tmp = QUEUE.with_name(f".{QUEUE.name}.{os.getpid()}.tmp")
+    try:
+        return add_queue_line(run, mark, tmp)
+    except OSError as e:
+        tmp.unlink(missing_ok=True)
+        event(
+            logging.WARNING,
+            "queue line not written: the file could not be changed",
+            error=str(e)[:200],
+        )
+        return False
+
+
+def add_queue_line(run: dict, mark: str, tmp: Path) -> bool:
     for _ in range(3):
         before = QUEUE.stat().st_mtime_ns
         text = QUEUE.read_text(encoding="utf-8")
@@ -301,7 +315,6 @@ def needs_you(run: dict) -> bool:
         where = f" ({one_line(t['location'], 120)})" if t.get("location") else ""
         what = one_line(f"{run['workflow']} failed on {run['branch']}", 160)
         line = f"- 🔴 **CI {one_line(run['repo'], 60)}**: {what}: {cause}{where}. {run['url']} {mark}\n"
-        tmp = QUEUE.with_name(f".{QUEUE.name}.{os.getpid()}.tmp")
         tmp.write_text(text[: m.end()] + line + text[m.end() :], encoding="utf-8")
         if (
             QUEUE.stat().st_mtime_ns != before
@@ -354,7 +367,16 @@ def repo_pass(
     red, dependabot = [], []
     runs, _ = runs_that_count(user, repo, gh)
     for r in runs:
+        place = (r["workflow_id"], r["_pr"]["number"] if r["_pr"] else "default")
         if r.get("conclusion") not in RED:
+            for k in known.values():
+                held = k.get("item")
+                if (
+                    held
+                    and held["repo"] == repo
+                    and (held["workflow_id"], held["place"]) == place
+                ):
+                    k.pop("item")
             continue
         pr = r["_pr"]
         item = {
@@ -371,6 +393,17 @@ def repo_pass(
             dependabot.append(item)
             continue
         key = f"{repo}:{r['id']}"
+        fork = r.get("repo") not in (None, f"{user}/{repo}")
+        if key not in known and fork:
+            known[key] = {
+                "failing": {},
+                "triage": {
+                    "state": "skipped",
+                    "why": "a fork's PR: its logs are not triaged",
+                },
+                "queued": True,
+            }
+            save_known()
         if key not in known:
             item["failing"] = failing_step(user, repo, r["id"], gh)
             event(
@@ -400,16 +433,37 @@ def repo_pass(
                 "queued": False,
             }
             save_known()
+        known[key]["item"] = item | {
+            "workflow_id": r["workflow_id"],
+            "place": pr["number"] if pr else "default",
+        }
         if not known[key].get("queued"):
             known[key]["queued"] = needs_you(item | known[key])
             save_known()
+        known[key]["seen"] = int(time.time())
         item |= {k: known[key][k] for k in ("failing", "triage")}
         red.append(item)
+    # 2. A red run whose workflow ran no newer decisive run stays red even when it has
+    # paged out of the newest runs: only a newer run of the same workflow and place clears it.
+    places = {
+        (r["workflow_id"], r["_pr"]["number"] if r["_pr"] else "default") for r in runs
+    }
+    for key, k in known.items():
+        held = k.get("item")
+        if (
+            key.startswith(f"{repo}:")
+            and held
+            and (held["workflow_id"], held["place"]) not in places
+        ):
+            red.append(
+                {x: v for x, v in held.items() if x not in ("workflow_id", "place")}
+                | {"failing": k["failing"], "triage": k["triage"]}
+            )
     return red, dependabot
 
 
-def sweep(user: str, repos: list[str], gh: GitHub) -> list[dict]:
-    """Warnings on the latest green run of each default branch."""
+def sweep(user: str, repos: list[str], gh: GitHub, swept: set) -> list[dict]:
+    """Warnings on the latest green run of each default branch, each run read once."""
     found = []
     for repo in repos:
         try:
@@ -425,9 +479,13 @@ def sweep(user: str, repos: list[str], gh: GitHub) -> list[dict]:
         green = [
             r
             for r in runs
-            if r["head_branch"] == default and r["conclusion"] == "success"
+            if r["head_branch"] == default
+            and r["conclusion"] == "success"
+            and not r["_pr"]
+            and r["id"] not in swept
         ]
         for r in green:
+            swept.add(r["id"])
             t = triage(user, repo, r["id"])
             if t.get("state") == "done" and t["verdict"] != "clean":
                 found.append(
@@ -497,8 +555,11 @@ def main(argv: list[str]) -> int:
     def run_sweep(today: str) -> None:
         nonlocal last_sweep
         try:
-            items = sweep(user, repos, GitHub(token, STATE / "ci" / "sweep-etags.json"))
-            last_sweep = {"date": today, "items": items}
+            sweep_gh = GitHub(token, STATE / "ci" / "sweep-etags.json")
+            swept = set(last_sweep.get("swept", []))
+            items = sweep(user, repos, sweep_gh, swept)
+            sweep_gh.save()
+            last_sweep = {"date": today, "items": items, "swept": sorted(swept)[-2000:]}
             write_json(sweep_path, last_sweep)
             event(logging.INFO, "daily sweep", items=len(items))
         except Exception:  # noqa: BLE001 — logged; tomorrow's sweep tries again
@@ -522,12 +583,22 @@ def main(argv: list[str]) -> int:
                 )
                 sweeping.start()
             state |= {
-                "sweep": last_sweep,
+                "sweep": {k: v for k, v in last_sweep.items() if k != "swept"},
                 "v": 1,
                 "observed_at": int(time.time()),
                 "repos": len(repos),
             }
-            write_json(KLEPSYDRA_DIR / "ci.json", state)
+            try:
+                write_json(KLEPSYDRA_DIR / "ci.json", state)
+            except OSError:
+                log.exception("ci.json not written")
+            month = time.time() - 30 * 86400
+            for key in [
+                k
+                for k, v in known.items()
+                if v.get("seen", month + 1) < month and "item" not in v
+            ]:
+                del known[key]
             save_known()
             gh.save()
             prune_reports(STATE / "ci", time.time())
