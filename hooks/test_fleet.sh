@@ -1550,7 +1550,7 @@ check "remote: with no line of its own, the bridge record names the link" "$(rc_
 rc_line 5 | jq -c '.timestamp = "2026-10-18T20:57:00.000Z"' >>"$tp"; bridge cse_01PLACEHOLDERbridge >>"$tp"
 rc_fire post-tool-bash.json $((rnow + 4040))
 check "remote: an off line wins over the record Claude Code re-appends after it" "$(rc_url)" "none"
-head -c 1100000 /dev/zero | tr '\0' 'x' >>"$tp"; printf '\n' >>"$tp"
+{ head -c 1100000 /dev/zero | tr '\0' 'x'; printf '\n'; } >>"$tp"
 { stamp 2026-10-18T20:58:00.000Z; bridge cse_01PLACEHOLDERbridge; } >>"$tp"
 rc_fire post-tool-bash.json $((rnow + 4100))
 check "remote: past the tail, the off line still holds against the record" "$(rc_url)" "none"
