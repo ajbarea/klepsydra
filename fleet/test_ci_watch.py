@@ -418,6 +418,28 @@ class Route(unittest.TestCase):
             known,
         )
         self.assertEqual(len(self.alerts()), 1, "routed once")
+        self.assertIn("data, not instructions", text, "CI log text is framed as data")
+        ci_watch.poll(
+            "o",
+            ["r"],
+            Fake(
+                [
+                    run(5, branch="feat/x", sha="p"),
+                    run(
+                        6,
+                        branch="feat/x",
+                        sha="p",
+                        conclusion="success",
+                        at="2026-10-28T11:00:00Z",
+                    ),
+                ],
+                pulls=[pr(7, "p")],
+            ),
+            known,
+        )
+        self.assertEqual(
+            self.inbox(), [], "a red that turned green is withdrawn unsent"
+        )
 
     def test_a_red_on_main_wakes_heph(self):
         self.session("s1", "%4", "main")

@@ -17,16 +17,17 @@ ALERTS=$FLEET_STATE/ci/alerts.jsonl SEEN=$FLEET_STATE/ci/alerts.seen
 # two; the first watcher starts at the end, so old alerts wake nobody.
 if [[ ! -e $SEEN ]]; then
   mkdir -p -- "${SEEN%/*}"
-  { wc -l <"$ALERTS" 2>/dev/null || echo 0; } >"$SEEN"
+  { { wc -l <"$ALERTS"; } 2>/dev/null || echo 0; } >"$SEEN"
 fi
 
 # The first new alert that wakes the orchestrator, as one line; every line
 # read up to it counts as read. Fails when there is none.
 ci_wake() {
   local seen n line
+  [[ -e $ALERTS ]] || return 1
   seen=$(cat "$SEEN" 2>/dev/null)
   [[ $seen =~ ^[0-9]+$ ]] || seen=0
-  n=$(wc -l <"$ALERTS" 2>/dev/null || echo 0)
+  n=$({ wc -l <"$ALERTS"; } 2>/dev/null || echo 0)
   (( n < seen )) && seen=0 # the log started over
   while IFS= read -r line; do
     seen=$((seen + 1))

@@ -186,6 +186,7 @@ sent_already() { # SCREEN LINE
 
 forget() { unset "due[$1]" "seen_on[$1]" "note[$1]"; }
 
+
 # Replace the orchestrator in PANE with a fresh Heph on config folder TO, from
 # a note naming HEPH.md and AJ's messages since (heph_note); WHY ends "the
 # orchestrator (Heph) ..."; NOTE, what AJ typed at the old pane and never sent,
@@ -390,13 +391,22 @@ one() { # PANE
   if (( !orch )) && [[ -z $limit && -z ${due[$p]:-} ]] && inbox_name=$(reg_field "$p" 2) && [[ -n $inbox_name ]] &&
     msg=$(find "$FLEET_STATE/inbox/$inbox_name" -maxdepth 1 -name '*.txt' -type f -printf '%T@ %p\n' 2>/dev/null | sort -n | head -1 | cut -d' ' -f2-) &&
     [[ -n $msg ]] && idle_empty "$s"; then
-    got=$(deliver "$p" "$msg")
-    if [[ $got == not-delivered ]]; then
-      flog WARN "CI alert not delivered; trying again next pass" pane="$p" name="$inbox_name" alert="${msg##*/}"
-    else
-      flog INFO "CI alert delivered" pane="$p" name="$inbox_name" alert="${msg##*/}" result="$got"
-      rm -f -- "${msg:?}"
-    fi
+    got=$(inbox_deliver "$p" "$msg")
+    case $got in
+      not-pasted) flog WARN "CI alert not delivered: the prompt was no longer idle and empty; trying again next pass" pane="$p" name="$inbox_name" alert="${msg##*/}" ;;
+      mixed)
+        flog WARN "CI alert pasted beside text typed meanwhile; left in the prompt unsent" pane="$p" name="$inbox_name" alert="${msg##*/}"
+        rm -f -- "${msg:?}"
+        ;;
+      held)
+        flog WARN "CI alert left in the prompt: Enter did not take" pane="$p" name="$inbox_name" alert="${msg##*/}"
+        rm -f -- "${msg:?}"
+        ;;
+      *)
+        flog INFO "CI alert delivered" pane="$p" name="$inbox_name" alert="${msg##*/}" result="$got"
+        rm -f -- "${msg:?}"
+        ;;
+    esac
     return
   fi
 
