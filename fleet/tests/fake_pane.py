@@ -19,6 +19,10 @@ A test steers it through a JSON state file, re-read on every tick:
   menu       "limit" shows Claude Code's limit menu
   paste_prefix  text typed into the box just before the next paste (AJ
              typing as a paste goes in), then removed from the file
+  enter_ignore  Enters lost right after a paste (the next ones submit)
+  stall      seconds after start in which Enter does nothing (10-29: a new
+             session showed the pasted brief but took no Enter for 9 min)
+  exit_on_exit  /exit ends the process, so its pane closes as Claude Code's does
 
 Run: python3 -I fake_pane.py STATE LOG
 """
@@ -70,6 +74,8 @@ class Pane:
         self.last_submit = ""
         self.buf = b""
         self.shown = None
+        self.started = time.time()
+        self.lost_enters = 0
 
     def log(self, line):
         with open(self.log_path, "a", encoding="utf-8") as f:
@@ -108,6 +114,8 @@ class Pane:
             self.log("RC REQUESTED")
             return
         self.log("SUBMIT " + text.replace("\n", "\\n"))
+        if text.strip() == "/exit" and self.state.get("exit_on_exit"):
+            raise SystemExit(0)
         self.last_submit = text
         self.state.setdefault("above", []).append(
             "❯ " + text.splitlines()[0] if text else "❯"
@@ -164,7 +172,17 @@ class Pane:
                 else:
                     self.log("ESC")
             elif c in (b"\r", b"\n"):
-                if self.menu == "rc":
+                if time.time() - self.started < float(self.state.get("stall", 0)):
+                    self.log("KEY ENTER (stalled)")
+                elif (
+                    self.pastes
+                    and self.lost_enters < int(self.state.get("enter_ignore", 0))
+                    and self.menu is None
+                    and self.rc_at is None
+                ):
+                    self.lost_enters += 1
+                    self.log("KEY ENTER (lost after a paste)")
+                elif self.menu == "rc":
                     self.log("RC CONTINUE")
                     self.menu = None
                 elif self.menu == "limit":

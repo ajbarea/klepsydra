@@ -8,6 +8,9 @@
 # panes.tsv for NAME when NAME is a fleet agent (a row exists, or task-NAME.src).
 # The session runs on FLEET_ACCOUNT's config folder when set, else on the
 # first logged-in account with room in FLEET_ACCOUNTS order (best_account).
+# The whole launch has FLEET_LAUNCH_DEADLINE seconds (a session that takes no
+# keys, as on 10-29, fails in bounded time instead of holding its caller), and
+# only the window's creation is serialised with other launches.
 # Prints one line: pane=%N session=UUID account=DIR avail=MiB brief=started|blocked-by-limit|NOT-DELIVERED.
 set -u
 FLEET_TARGET=fleet::launch
@@ -39,8 +42,14 @@ cmd="env $(config_env "$account")CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS=2 ${FLEET_
 if [[ ${FLEET_SCOPE:-1} != 0 ]]; then
   cmd="systemd-run --user --scope --collect --unit=fleet-$name-$(date +%s) -p MemoryHigh=${MEM_HIGH:-4G} -p MemoryMax=${MEM_MAX:-5G} -p MemorySwapMax=${MEM_SWAP:-1G} $cmd"
 fi
+began=$SECONDS
+DELIVER_DEADLINE=$((SECONDS + ${FLEET_LAUNCH_DEADLINE:-120}))
+# Seconds since the launch began, for each line's timing.
+took() { printf '%s' "$((SECONDS - began))"; }
+# The lock covers only the window's creation, so the new pane is the one that
+# appeared; each launch then waits on its own session in parallel.
 exec 8>>"$FLEET_STATE/.launch.lock"
-flock -w 600 8 || { flog ERROR "launch held: another launch kept the lock for 10 min" name="$name"; exit 1; }
+flock -w 120 8 || { flog ERROR "launch held: another launch kept the lock for 2 min" name="$name"; exit 1; }
 before=$(fleet_panes | sort)
 if ! out=$(cd ~ && KLEPSYDRA_CLAUDE="$cmd" KLEPSYDRA_TMUX_SOCKET="$FLEET_SOCK" bash "${FLEET_LAUNCHER:-$HOME/.claude/klepsydra-launch.sh}" new "$dir" 2>&1 7>&- 8>&-); then
   flog ERROR "launch failed: the launcher refused" name="$name" said="$out"
@@ -53,22 +62,35 @@ if [[ -z $pane ]]; then
   echo "no new pane" # logcheck: ignore[stderr-for-errors] # the result line
   exit 1
 fi
+# The resume service leaves a pane alone while its launch runs.
+mkdir -p -- "$FLEET_STATE/launching"
+marker=$FLEET_STATE/launching/$pane
+: >"$marker"
+# A mover (the resume service) keeps the mark until it is done with the pane.
+[[ ${FLEET_KEEP_MARK:-0} == 1 ]] || trap 'rm -f -- "${marker:?}"' EXIT
+trap 'exit 143' TERM INT
+exec 8>&-
+flog INFO "window opened" name="$name" pane="$pane" account="$account" took_s="$(took)"
 ready() { idle_empty "$1" || limit_line "$1" >/dev/null; }
-wait_for "$pane" "${FLEET_READY_WAIT:-120}" ready || flog WARN "the prompt never showed; trying anyway" name="$name" pane="$pane"
+if wait_for "$pane" "$(capped "${FLEET_READY_WAIT:-60}")" ready; then
+  flog INFO "prompt showed" name="$name" pane="$pane" took_s="$(took)"
+else
+  flog WARN "the prompt never showed; trying anyway" name="$name" pane="$pane" took_s="$(took)"
+fi
 # Remote Control connects at startup, but the transcript records its link only
 # after an explicit /remote-control; without it the phone wall shows no Open in
 # Claude button. The brief waits until the command has settled, so the two
 # never interleave (10-28: "SE/remote-control" typed into the prompt).
 if remote_control "$pane"; then
-  flog INFO "remote control on" name="$name" pane="$pane"
+  flog INFO "remote control on" name="$name" pane="$pane" took_s="$(took)"
 else
-  flog WARN "remote control did not settle before the brief" name="$name" pane="$pane"
+  flog WARN "remote control did not settle before the brief" name="$name" pane="$pane" took_s="$(took)"
 fi
 brief=$(deliver "$pane" "$txt")
 case $brief in
-  started) flog INFO "brief delivered: a turn started" name="$name" pane="$pane" session_id="$sid" account="$account" ;;
-  blocked-by-limit) flog WARN "brief delivered, but the account is at its limit; the resume service takes it from here" name="$name" pane="$pane" session_id="$sid" account="$account" ;;
-  *) brief=NOT-DELIVERED; flog ERROR "brief not delivered" name="$name" pane="$pane" session_id="$sid" account="$account" screen="$(screen "$pane" | plain | grep -v '^[[:space:]]*$' | tail -6)" ;;
+  started) flog INFO "brief delivered: a turn started" name="$name" pane="$pane" session_id="$sid" account="$account" took_s="$(took)" ;;
+  blocked-by-limit) flog WARN "brief delivered, but the account is at its limit; the resume service takes it from here" name="$name" pane="$pane" session_id="$sid" account="$account" took_s="$(took)" ;;
+  *) brief=NOT-DELIVERED; flog ERROR "brief not delivered" name="$name" pane="$pane" session_id="$sid" account="$account" took_s="$(took)" screen="$(screen "$pane" | plain | grep -v '^[[:space:]]*$' | tail -6)" ;;
 esac
 
 # The registry row for NAME, repointed at this pane and session; a new row when

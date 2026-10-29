@@ -413,6 +413,38 @@ out=$(FLEET_START_WAIT=1 launch agent5 '{"above":["Claude Code"],"busy_delay":2}
 check "a turn whose spinner shows late is never interrupted by a retry" "$(grep -cE 'ESC|INTERRUPTED' "$work/agent5.log") ${out##* }" "0 brief=started"
 check "nor submitted twice" "$(grep -c '^SUBMIT' "$work/agent5.log")" "1"
 
+echo "launch.sh: a slow or stuck start (#187)"
+: >"$FLEET_LOG"
+out=$(launch agent6 '{"above":["Claude Code"],"enter_ignore":1}')
+check "#187: an Enter lost after the paste is pressed again, and the brief starts once" \
+  "${out##* } $(grep -c '^SUBMIT' "$work/agent6.log") $(grep -c 'lost after a paste' "$work/agent6.log")" "brief=started 1 1"
+check "the second press is logged" "$(jq -r 'select(.message | startswith("the brief is still in the prompt")) | .try' "$FLEET_LOG")" "1"
+: >"$FLEET_LOG"
+began=$SECONDS
+out=$(FLEET_LAUNCH_DEADLINE=8 launch agent7 '{"above":["Claude Code"],"stall":120}')
+check "#187: a session that takes no Enter fails within the launch's deadline, not 9 min later" \
+  "${out##* } $(( SECONDS - began < 25 ))" "brief=NOT-DELIVERED 1"
+check "with no Escape sent, and Remote Control's unsent command backed out before the paste" \
+  "$(grep -cE 'ESC|INTERRUPTED' "$work/agent7.log") $(grep -c '^PASTE' "$work/agent7.log")" "0 1"
+check "each step is logged with its time" \
+  "$(jq -r 'select(.target == "fleet::launch" and .took_s != null) | .message' "$FLEET_LOG" | tr '\n' '|')" \
+  "window opened|prompt showed|remote control did not settle before the brief|brief not delivered|"
+cat >"$work/launcher-hold.sh" <<EOF
+#!/usr/bin/env bash
+tmux -L "\$KLEPSYDRA_TMUX_SOCKET" new-window -d -t fleet: -c "\$3" "\$KLEPSYDRA_CLAUDE"
+EOF
+printf '%s' '{"above":["Claude Code"],"stall":120}' >"$work/slow1.json"; : >"$work/slow1.log"
+( FLEET_LAUNCH_DEADLINE=10 FLEET_SCOPE=0 FLEET_MIN_AVAIL_MB=0 FLEET_LAUNCHER="$work/launcher-hold.sh" FLEET_DIR="$work" \
+  FLEET_CLAUDE="python3 -I $fake $work/slow1.json $work/slow1.log" bash "$here/launch.sh" slow1 "$work/task.src" >/dev/null 2>&1 ) &
+slowjob=$!
+sleep 3
+began=$SECONDS
+out=$(launch agent8 '{"above":["Claude Code"]}')
+check "#187: a second launch runs beside a stuck one instead of waiting for it" "${out##* } $(( SECONDS - began < 8 ))" "brief=started 1"
+check "and the stuck launch marks its pane as starting" "$(find "$FLEET_STATE/launching" -mindepth 1 | wc -l)" "1"
+wait "$slowjob"
+check "the mark goes when the launch ends" "$(find "$FLEET_STATE/launching" -mindepth 1 | wc -l)" "0"
+
 echo "briefs"
 printf 'Do X.\nThen Y.' >"$work/body"
 out=$(bash "$here/brief.sh" demo "$work/body" 2>/dev/null)
@@ -844,7 +876,7 @@ done_live "$p"
 printf '%s\tlimback\t%s\t%s\t/w\t%s\n' "$p" "$work/brief.src" "$SID" "$work/cfg-b" >"$REGISTRY"
 reading b RIT 100 4000
 failer "$noon"
-check "review 2: a limited pane is not moved back, its limit path takes it" "$(jq -r --arg p "$p" 'select(.pane == $p and (.message == "moved back to the preferred account" or .message == "could not move back to the preferred account; trying again in 15 min")) | .pane' "$FLEET_LOG") $(jq -r --arg p "$p" 'select(.message == "limit seen" and .pane == $p) | .pane' "$FLEET_LOG")" " $p"
+check "review 2: a limited pane is not moved back, its limit path takes it" "$(jq -r --arg p "$p" 'select(.pane == $p and (.message == "moved back to the preferred account" or .message == "could not move back to the preferred account; trying again later")) | .pane' "$FLEET_LOG") $(jq -r --arg p "$p" 'select(.message == "limit seen" and .pane == $p) | .pane' "$FLEET_LOG")" " $p"
 t kill-window -t "$p"; : >"$REGISTRY"; reading b RIT 10 4000; rm -f "$FLEET_STATE/resume-state"
 
 p=$(backpane away)
@@ -987,6 +1019,164 @@ EOF
 LAUNCH="$work/launch-stuck.sh" FLEET_NOW=$noon bash "$here/resume-at-reset.sh" --once 2>/dev/null
 check "review 2C: a new pane whose brief sits unsent in its box is cleared and exited, never left running" "$(grep -c 'SUBMIT /exit' "$work/stucknew.log") $(grep -c 'SUBMIT the brief' "$work/stucknew.log")" "1 0"
 t kill-window -t "$p"; : >"$REGISTRY"
+logout a; logout b; reading a Personal 40 1000; rm -f "$KLEPSYDRA_DIR/accounts/b/s.json"
+
+echo "two accounts: moves side by side, retried, and before the limit (#187)"
+login a; login b; reading a Personal 100 5000; reading b RIT 10 4000
+: >"$FLEET_LOG"; : >"$work/par-starts"; rm -f "$FLEET_STATE/resume-state"
+SID2=22222222-2222-4333-8444-555555555555
+p1=$(pane par1 "{\"above\":[\"⏺ Done. done 11:50 AM\",\"$LIMIT\"]}"); p2=$(pane par2 "{\"above\":[\"⏺ Done. done 11:50 AM\",\"$LIMIT\"]}"); settle
+live "$p1"; jq -n --arg p "$p2" '{session_id: "y", ended: null, tmux: {pane: $p}}' >"$KLEPSYDRA_DIR/fleet/$SID2.json"
+printf '%s\tpar1\t%s\t%s\t/w\t%s\n%s\tpar2\t%s\t%s\t/w\t%s\n' "$p1" "$work/brief.src" "$SID" "$work/cfg-a" "$p2" "$work/brief.src" "$SID2" "$work/cfg-a" >"$REGISTRY"
+cat >"$work/launch-par.sh" <<EOF
+#!/usr/bin/env bash
+# A launch that takes 5 s, as a slow start would.
+date +%s.%N >>"$work/par-starts"
+sleep 5
+echo "pane=%99\$\$ session=x account=\$FLEET_ACCOUNT avail=1MiB brief=started"
+EOF
+LAUNCH="$work/launch-par.sh" FLEET_NOW=$noon bash "$here/resume-at-reset.sh" --once 2>/dev/null
+check "#187: two limited panes start their moves in one pass, side by side" \
+  "$(wc -l <"$work/par-starts") $(sort -n "$work/par-starts" | awk 'NR == 1 { a = $1 } END { print ($1 - a < 3) }')" "2 1"
+check "and both are moved" "$(logged 'moved to the other account at a limit' | wc -w)" "2"
+t kill-window -t "$p1" 2>/dev/null; t kill-window -t "$p2" 2>/dev/null; rm -f "$KLEPSYDRA_DIR/fleet/$SID2.json"; : >"$REGISTRY"
+
+: >"$FLEET_LOG"; : >"$work/moved"; : >"$work/nd2-calls"; rm -f "$FLEET_STATE/resume-state"
+p=$(pane retry "{\"above\":[\"⏺ Done. done 11:50 AM\",\"$LIMIT\"]}"); settle
+live "$p"
+printf '%s\tretry\t%s\t%s\t/w\t%s\n' "$p" "$work/brief.src" "$SID" "$work/cfg-a" >"$REGISTRY"
+printf '%s' '{"above":["Claude Code"]}' >"$work/ndnew.json"; : >"$work/ndnew.log"
+nd2() { # a launch for pane $p whose brief never starts: it opens a pane, repoints the row, says NOT-DELIVERED
+  cat >"$work/launch-nd2.sh" <<EOF
+#!/usr/bin/env bash
+echo x >>"$work/nd2-calls"
+new=\$(tmux -L "$FLEET_SOCK" new-window -d -P -F '#{pane_id}' -t fleet: "python3 -I $fake $work/ndnew.json $work/ndnew.log")
+sed -i "s|^$p\t\(.*\)\t$work/cfg-a\$|\$new\t\1\t$work/cfg-b|" "$REGISTRY"
+echo "pane=\$new session=x account=$work/cfg-b avail=1MiB brief=NOT-DELIVERED"
+EOF
+}
+nd2
+LAUNCH="$work/launch-nd2.sh" FLEET_NOW=$noon bash "$here/resume-at-reset.sh" --once 2>/dev/null
+check "#187: a move whose brief never started is tried again at the next pass" "$(logged 'trying again next pass' | wc -w)" "1"
+mover "$((noon + 60))"
+check "and that try moves it" "$(head -2 "$work/moved" | tr '\n' ' ')" "$work/cfg-b retry "
+t kill-window -t "$p" 2>/dev/null; : >"$REGISTRY"
+
+: >"$FLEET_LOG"; : >"$work/moved"; : >"$work/nd2-calls"; rm -f "$FLEET_STATE/resume-state"
+p=$(pane retry "{\"above\":[\"⏺ Done. done 11:50 AM\",\"$LIMIT\"]}"); settle
+live "$p"
+printf '%s\tretry\t%s\t%s\t/w\t%s\n' "$p" "$work/brief.src" "$SID" "$work/cfg-a" >"$REGISTRY"
+nd2
+LAUNCH="$work/launch-nd2.sh" FLEET_NOW=$noon bash "$here/resume-at-reset.sh" --once 2>/dev/null
+LAUNCH="$work/launch-nd2.sh" FLEET_NOW=$((noon + 60)) bash "$here/resume-at-reset.sh" --once 2>/dev/null
+mover "$((noon + 120))"
+check "two failures in a row wait 15 min before the next try" "$(wc -l <"$work/nd2-calls") $(wc -c <"$work/moved") $(logged 'trying again in 15 min' | wc -w)" "2 0 1"
+t kill-window -t "$p" 2>/dev/null; : >"$REGISTRY"
+
+: >"$FLEET_LOG"; : >"$work/moved"; rm -f "$FLEET_STATE/resume-state"
+reading a Personal 96 5000
+p=$(pane pre '{"above":["⏺ Done. done 11:50 AM"]}'); settle
+done_live "$p"
+printf '%s\tpre\t%s\t%s\t/w\t%s\n' "$p" "$work/brief.src" "$SID" "$work/cfg-a" >"$REGISTRY"
+mover "$noon"; mover "$((noon + 60))"
+check "#187: a worker whose account has used 96% moves at a finished turn, before the limit" "$(head -2 "$work/moved" | tr '\n' ' ')" "$work/cfg-b pre "
+check "its brief says why" "$(grep -c 'was near its usage limit on one account (4% of its five-hour window left)' "$work/moved-brief")" "1"
+check "logged" "$(logged 'moved before the limit')" "$p "
+t kill-window -t "$p" 2>/dev/null; : >"$REGISTRY"
+
+: >"$work/moved"; rm -f "$FLEET_STATE/resume-state"
+p=$(pane prebusy '{"above":["⏺ working"],"busy":true}'); settle
+done_live "$p" working
+printf '%s\tprebusy\t%s\t%s\t/w\t%s\n' "$p" "$work/brief.src" "$SID" "$work/cfg-a" >"$REGISTRY"
+mover "$noon"; mover "$((noon + 60))"
+check "not while its turn runs" "$(wc -c <"$work/moved") $(grep -cE 'ESC|INTERRUPTED|SUBMIT' "$work/prebusy.log")" "0 0"
+t kill-window -t "$p"; : >"$REGISTRY"
+
+: >"$work/moved"; rm -f "$FLEET_STATE/resume-state"
+p=$(pane pretyped '{"above":["⏺ Done. done 11:50 AM"]}'); settle
+done_live "$p"
+printf '%s\tpretyped\t%s\t%s\t/w\t%s\n' "$p" "$work/brief.src" "$SID" "$work/cfg-a" >"$REGISTRY"
+t send-keys -t "$p" -l "AJ: half a thought"; settle
+mover "$noon"; mover "$((noon + 60))"
+check "nor over a line AJ is typing" "$(wc -c <"$work/moved") [$(input_text "$(screen "$p")")]" "0 [AJ: half a thought]"
+t kill-window -t "$p"; : >"$REGISTRY"
+
+: >"$work/moved"; rm -f "$FLEET_STATE/resume-state"
+reading a Personal 90 5000
+p=$(pane prelow '{"above":["⏺ Done. done 11:50 AM"]}'); settle
+done_live "$p"
+printf '%s\tprelow\t%s\t%s\t/w\t%s\n' "$p" "$work/brief.src" "$SID" "$work/cfg-a" >"$REGISTRY"
+mover "$noon"; mover "$((noon + 60))"
+check "nor at 90% used" "$(wc -c <"$work/moved")" "0"
+t kill-window -t "$p"; : >"$REGISTRY"
+
+: >"$FLEET_LOG"; : >"$work/par-starts"; rm -f "$FLEET_STATE/resume-state"
+p=$(pane marked "{\"above\":[\"⏺ Done. done 11:50 AM\",\"$LIMIT\"],\"exit_on_exit\":true}"); settle
+live "$p"
+printf '%s\tmarked\t%s\t%s\t/w\t%s\n' "$p" "$work/brief.src" "$SID" "$work/cfg-a" >"$REGISTRY"
+mkdir -p "$FLEET_STATE/launching"; : >"$FLEET_STATE/launching/$p"
+LAUNCH="$work/launch-par.sh" FLEET_NOW=$noon bash "$here/resume-at-reset.sh" --once 2>/dev/null
+check "review 1: a pane still being started (launching/ mark) is left alone" "$(wc -l <"$work/par-starts") $(has " $(logged 'limit seen')" " $p ")" "0 no"
+rm -f "$FLEET_STATE/launching/$p"
+cat >"$work/launch-slow3.sh" <<EOF
+#!/usr/bin/env bash
+date +%s.%N >>"$work/par-starts"
+sleep 3
+echo "pane=%99\$\$ session=x account=\$FLEET_ACCOUNT avail=1MiB brief=started"
+EOF
+LAUNCH="$work/launch-slow3.sh" FLEET_NOW=$noon POLL_S=1 timeout 9 bash "$here/resume-at-reset.sh" 2>/dev/null
+check "review 1: passes while its move runs leave the pane alone: one launch, then moved" \
+  "$(wc -l <"$work/par-starts") $(logged 'moved to the other account at a limit' | wc -w)" "1 1"
+t kill-window -t "$p" 2>/dev/null; : >"$REGISTRY"
+
+: >"$FLEET_LOG"; : >"$work/par-starts"; rm -f "$FLEET_STATE/resume-state"
+SID3=33333333-2222-4333-8444-555555555555
+q1=$(pane cap1 "{\"above\":[\"⏺ Done. done 11:50 AM\",\"$LIMIT\"],\"exit_on_exit\":true}"); q2=$(pane cap2 "{\"above\":[\"⏺ Done. done 11:50 AM\",\"$LIMIT\"],\"exit_on_exit\":true}"); q3=$(pane cap3 "{\"above\":[\"⏺ Done. done 11:50 AM\",\"$LIMIT\"],\"exit_on_exit\":true}"); settle
+live "$q1"
+jq -n --arg p "$q2" '{session_id: "y", ended: null, tmux: {pane: $p}}' >"$KLEPSYDRA_DIR/fleet/$SID2.json"
+jq -n --arg p "$q3" '{session_id: "z", ended: null, tmux: {pane: $p}}' >"$KLEPSYDRA_DIR/fleet/$SID3.json"
+printf '%s\tcap1\t%s\t%s\t/w\t%s\n%s\tcap2\t%s\t%s\t/w\t%s\n%s\tcap3\t%s\t%s\t/w\t%s\n' \
+  "$q1" "$work/brief.src" "$SID" "$work/cfg-a" "$q2" "$work/brief.src" "$SID2" "$work/cfg-a" "$q3" "$work/brief.src" "$SID3" "$work/cfg-a" >"$REGISTRY"
+LAUNCH="$work/launch-slow3.sh" FLEET_NOW=$noon bash "$here/resume-at-reset.sh" --once 2>/dev/null
+check "review 1: at most two moves at once (each starts a session beside the old); the third waits a pass" \
+  "$(wc -l <"$work/par-starts") $(logged 'move put off to a later pass' | wc -w)" "2 1"
+for q in "$q1" "$q2" "$q3"; do t kill-window -t "$q" 2>/dev/null; done
+rm -f "$KLEPSYDRA_DIR/fleet/$SID2.json" "$KLEPSYDRA_DIR/fleet/$SID3.json"; : >"$REGISTRY"
+
+: >"$FLEET_LOG"; : >"$work/nd2-calls"; rm -f "$FLEET_STATE/resume-state"
+p=$(pane cadence "{\"above\":[\"⏺ Done. done 11:50 AM\",\"$LIMIT\"]}"); settle
+live "$p"
+printf '%s\tcadence\t%s\t%s\t/w\t%s\n' "$p" "$work/brief.src" "$SID" "$work/cfg-a" >"$REGISTRY"
+nd2
+for at in 0 60 120 960 1020 1080; do
+  LAUNCH="$work/launch-nd2.sh" FLEET_NOW=$((noon + at)) bash "$here/resume-at-reset.sh" --once 2>/dev/null
+done
+check "review 2: a move that keeps failing is tried, tried again the next pass, then once every 15 min" "$(wc -l <"$work/nd2-calls")" "3"
+t kill-window -t "$p" 2>/dev/null; : >"$REGISTRY"
+
+: >"$FLEET_LOG"; rm -f "$FLEET_STATE/resume-state"
+p=$(pane leftover '{"above":["⏺ Done. done 11:50 AM"]}'); settle
+mkdir -p "$FLEET_STATE/moves"
+server=$(t display-message -p '#{pid}')
+printf '3\t\n' >"$FLEET_STATE/moves/${p#%}.out"
+printf '%s\x1fidle\x1fleftover\x1f60\x1fPersonal\x1f\n' "999999$server" >"$FLEET_STATE/moves/${p#%}.ctx"
+FLEET_NOW=$noon bash "$here/resume-at-reset.sh" --once 2>/dev/null
+check "review 2: a move's result from another tmux server is dropped, its pane left alone" \
+  "$(grep -c '^SUBMIT' "$work/leftover.log") $(find "$FLEET_STATE/moves" -name "${p#%}.*" | wc -l) $(logged 'from another tmux server' | wc -w)" "0 0 1"
+printf '3\t\n' >"$FLEET_STATE/moves/${p#%}.out"
+printf '%s\x1fidle\x1fleftover\x1f60\x1fPersonal\x1f\n' "$server" >"$FLEET_STATE/moves/${p#%}.ctx"
+FLEET_NOW=$noon bash "$here/resume-at-reset.sh" --once 2>/dev/null
+check "and one from this server is applied: the failed fresh start is resumed in place" "$(has "$(events leftover)" "SUBMIT The usage limit has reset.")" "yes"
+t kill-window -t "$p" 2>/dev/null
+
+: >"$FLEET_LOG"; : >"$work/moved"; rm -f "$FLEET_STATE/resume-state"
+p=$(pane heldto "{\"above\":[\"⏺ Done. done 11:50 AM\",\"$LIMIT\"]}"); settle
+live "$p"
+printf '%s\theldto\t%s\t%s\t/w\t%s\n' "$p" "$work/brief.src" "$SID" "$work/cfg-a" >"$REGISTRY"
+printf 'b %s %s\n' "$(find "$KLEPSYDRA_DIR/accounts/b/s.json" -printf '%T@')" "$noon" >"$FLEET_STATE/back-hold"
+mover "$noon"
+check "review 2: an account held after it answered a move with a limit takes no limit move either" "$(wc -c <"$work/moved")" "0"
+rm -f "$FLEET_STATE/back-hold"; t kill-window -t "$p" 2>/dev/null; : >"$REGISTRY"
 logout a; logout b; reading a Personal 40 1000; rm -f "$KLEPSYDRA_DIR/accounts/b/s.json"
 
 echo "two accounts: review round 3"

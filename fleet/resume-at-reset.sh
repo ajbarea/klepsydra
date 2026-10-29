@@ -18,10 +18,16 @@
 # after a long idle. Each role prefers an account (#175): workers the first
 # folder in FLEET_ACCOUNTS, Heph the first in FLEET_HEPH_ACCOUNTS; a pane on
 # another moves back once its preferred one has FLEET_BACK_ROOM_PCT room, at a
-# finished turn and an empty prompt. A CI red the CI watch routed to an agent
+# finished turn and an empty prompt; a worker whose account has used
+# FLEET_PREMOVE_PCT of a window moves to one with room at its next finished
+# turn, before the limit stops it mid-turn (#187). Each move runs in the
+# background, one per pane, so a slow launch never holds the others; the pass
+# after it ends applies its result, and a failed move is tried again at the
+# next pass once, then every 15 min. A CI red the CI watch routed to an agent
 # (inbox/NAME/*.txt) is typed into its pane at an idle, empty prompt, oldest
-# first. --once runs one pass. Each decision is one line in the fleet log; each pass touches
-# resume.beat for `fleet doctor`.
+# first. --once runs one pass (and waits for the moves it started). Each
+# decision is one line in the fleet log; each pass touches resume.beat for
+# `fleet doctor`.
 set -u
 FLEET_TARGET=fleet::resume
 here=$(dirname "$(readlink -f "$0")")
@@ -31,21 +37,23 @@ LAUNCH=${LAUNCH:-$here/launch.sh}
 FRESH_AFTER_S=${FRESH_AFTER_S:-3300} # Claude Code's prompt cache lives an hour
 POLL_S=${POLL_S:-60}
 MOVE_MIN_S=${MOVE_MIN_S:-900} # a nearer reset is waited for: a fresh start costs more than the wait
+FLEET_PREMOVE_PCT=${FLEET_PREMOVE_PCT:-95} # a window used this far moves a worker at its next finished turn
 DOCTOR=${DOCTOR:-$here/doctor.sh}
 MSG='The usage limit has reset. Continue from where you stopped: re-run a subagent that failed on the limit only if you still need its result (each re-run starts cold and costs a full context), then carry on with your queue. Re-read PR comments before any merge.'
 
-declare -A last due seen_on rc_on note move_failed
+declare -A last due seen_on rc_on note move_failed move_tries fresh_failed job_kind job_ctx
+declare -A job=() # set, so ${#job[@]} reads 0 under set -u
 # What the service knows per pane survives its own restart (a cut-over, a
 # reboot's unit start), for as long as the same tmux server holds the panes.
 STATE_FILE=$FLEET_STATE/resume-state
 US=$'\x1f' # the field separator: a tab is IFS whitespace, so empty fields would collapse
 
 load_state() {
-  local server p d s r l n m
+  local server p d s r l n m k f
   [[ -r $STATE_FILE ]] || return 0
   server=$(t display-message -p '#{pid}' 2>/dev/null)
   [[ -n $server && $(head -1 "$STATE_FILE") == "#server $server" ]] || return 0
-  while IFS=$US read -r p d s r l n m; do
+  while IFS=$US read -r p d s r l n m k f; do
     [[ $p == %* ]] || continue
     [[ -n $d ]] && due[$p]=$d
     [[ -n $s ]] && seen_on[$p]=$s
@@ -53,6 +61,8 @@ load_state() {
     [[ -n $l ]] && last[$p]=$l
     [[ -n $n ]] && note[$p]=$(base64 -d <<<"$n")
     [[ -n $m ]] && move_failed[$p]=$m
+    [[ -n $k ]] && move_tries[$p]=$k
+    [[ -n $f ]] && fresh_failed[$p]=$f
   done <"$STATE_FILE"
 }
 
@@ -63,8 +73,8 @@ save_state() {
   {
     printf '#server %s\n' "$server"
     for p in $(fleet_panes); do
-      printf '%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\n' "$p" "${due[$p]:-}" "${seen_on[$p]:-}" "${rc_on[$p]:-}" "${last[$p]:-}" \
-        "$(printf '%s' "${note[$p]:-}" | base64 -w0)" "${move_failed[$p]:-}"
+      printf '%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\n' "$p" "${due[$p]:-}" "${seen_on[$p]:-}" "${rc_on[$p]:-}" "${last[$p]:-}" \
+        "$(printf '%s' "${note[$p]:-}" | base64 -w0)" "${move_failed[$p]:-}" "${move_tries[$p]:-}" "${fresh_failed[$p]:-}"
     done
   } >"$tmp"
   mv -f -- "$tmp" "$STATE_FILE"
@@ -111,8 +121,9 @@ fresh() { # PANE NAME BRIEF [WHY] [ACCOUNT] [NOTE] [STAMP]
   box=$(input_text "$(screen "$p")")
   [[ -z $box || ( -n $carried && $box == "$carried" ) ]] || return 1
   local sid cfg out got
+  # Shared: moves of different panes run side by side; a cut-over takes it alone.
   exec 7>>"$FLEET_STATE/.fresh.lock"
-  flock 7
+  flock -s 7
   sid=$(reg_field "$p" 4) cfg=$(reg_field "$p" 6)
   if ! pane_runs "$p" "$sid"; then
     flog WARN "fresh session refused: the pane no longer runs its registered session" pane="$p" name="$name" session_id="$sid"
@@ -130,6 +141,7 @@ fresh() { # PANE NAME BRIEF [WHY] [ACCOUNT] [NOTE] [STAMP]
   mkdir -p -- "$FLEET_STATE/log"
   out=$(FLEET_ACCOUNT=$account bash "$LAUNCH" "$name" "$txt" 2>>"$FLEET_STATE/log/launch.err" | head -1)
   new=$(grep -o 'pane=%[0-9]*' <<<"$out" | cut -d= -f2) got=$(grep -o 'brief=[A-Za-z-]*' <<<"$out" | cut -d= -f2)
+  [[ -n $new && -n ${MOVE_NEW:-} ]] && printf '%s\n' "$new" >"$MOVE_NEW"
   if [[ -z $new ]]; then
     flog ERROR "fresh session not started; the old pane is kept" pane="$p" name="$name"
     return 3
@@ -199,7 +211,7 @@ heph_move() { # PANE TO WHY [NOTE] [STAMP]
   box=$(input_text "$(screen "$p")")
   [[ -z $box || ( -n $carried && $box == "$carried" ) ]] || return 1
   exec 7>>"$FLEET_STATE/.fresh.lock"
-  flock 7
+  flock -s 7
   # Only Heph himself: a tmux restart reuses pane ids, so a registered agent or
   # a session other than the one on record in his pane is never replaced.
   osid=$(cat "$FLEET_STATE/orchestrator.session" 2>/dev/null)
@@ -217,6 +229,7 @@ heph_move() { # PANE TO WHY [NOTE] [STAMP]
   out=$(FLEET_SETTINGS='' FLEET_ACCOUNT=$to bash "$LAUNCH" heph "$txt" 2>>"$FLEET_STATE/log/launch.err" | head -1)
   new=$(grep -o 'pane=%[0-9]*' <<<"$out" | cut -d= -f2) got=$(grep -o 'brief=[A-Za-z-]*' <<<"$out" | cut -d= -f2)
   nsid=$(grep -o 'session=[0-9a-f-]*' <<<"$out" | cut -d= -f2)
+  [[ -n $new && -n ${MOVE_NEW:-} ]] && printf '%s\n' "$new" >"$MOVE_NEW"
   if [[ -z $new ]]; then
     flog ERROR "orchestrator not moved: the new session did not start" pane="$p" to="$to"
     return 3
@@ -272,12 +285,14 @@ BACK_HOLD=$FLEET_STATE/back-hold
 BACK_HOLD_S=${BACK_HOLD_S:-1800}
 reading_mtime() { local f; f=$(reading_of "$1") && find "$f" -maxdepth 0 -printf '%T@' 2>/dev/null || echo 0; } # ID
 back_hold() { # ID
+  [[ -n $1 ]] || return 0
   { grep -v "^$1 " "$BACK_HOLD" 2>/dev/null; printf '%s %s %s\n' "$1" "$(reading_mtime "$1")" "$NOW"; } >"$BACK_HOLD.tmp" &&
     mv -f -- "$BACK_HOLD.tmp" "$BACK_HOLD"
   flog WARN "moves back to the account held until its next usage reading" account="$(account_label "$1")" max_s="$BACK_HOLD_S"
 }
 back_held() { # ID
   local held at
+  [[ -n $1 ]] || return 1
   read -r held at < <(awk -v id="$1" '$1 == id { print $2, $3 }' "$BACK_HOLD" 2>/dev/null)
   [[ -n $held && -n $at ]] && (( NOW - at < BACK_HOLD_S )) && awk -v m="$(reading_mtime "$1")" -v h="$held" 'BEGIN { exit !(m <= h) }'
 }
@@ -286,10 +301,178 @@ back_held() { # ID
 moved() { # PANE [NEW]
   if [[ -n ${2:-} ]]; then
     last[$2]=$NOW last[$1]=$NOW
+    unset "move_tries[$1]" "fresh_failed[$1]"
     forget "$1"
   else
+    # A failure an hour after the last starts the count again (a new limit,
+    # not the same one still failing): the next pass may then try once more.
+    if (( NOW - ${move_failed[$1]:-0} >= MOVE_QUIET_S )); then move_tries[$1]=1; else move_tries[$1]=$((${move_tries[$1]:-0} + 1)); fi
     move_failed[$1]=$NOW
   fi
+}
+# Whether PANE may try a move now: none failed, or only one (tried again at
+# the next pass: a launch can fail once on a slow start), or the last failed
+# 15 min ago. Heph's failed moves always wait the 15 min: each try launches a
+# second Heph.
+move_hold_ok() { # PANE
+  (( ${move_tries[$1]:-0} <= 1 || NOW - ${move_failed[$1]:-0} >= 900 ))
+}
+
+# Moves run in the background, at most one per pane and FLEET_MAX_MOVES at
+# once (each starts a session beside the one it replaces, so memory bounds
+# them): CMD (fresh or heph_move) prints the new pane; its exit code and
+# output land in JOBS, and reap applies them to the records with done_move
+# KIND CTX (kept beside, so a restart still applies a move that finished).
+# A pane with a move in flight, or one being started (launching/<pane>), is
+# left alone meanwhile; the mover keeps the new pane's mark until its job
+# ends (FLEET_KEEP_MARK, MOVE_NEW), not just until launch.sh returns.
+JOBS=$FLEET_STATE/moves
+FLEET_MAX_MOVES=${FLEET_MAX_MOVES:-2}
+MOVE_QUIET_S=${MOVE_QUIET_S:-3600}
+spawn() { # PANE KIND CTX CMD...
+  local p=$1 kind=$2 ctx=$3 out
+  shift 3
+  if (( ${#job[@]} >= FLEET_MAX_MOVES )); then
+    flog INFO "move put off to a later pass: enough are running" pane="$p" kind="$kind" running="${#job[@]}"
+    return 1
+  fi
+  mkdir -p -- "$JOBS"
+  out=$JOBS/${p#%}.out
+  rm -f -- "$out" "$out.new"
+  # The tmux server it ran on: after a restart its pane ids belong to others.
+  printf '%s%s%s%s%s\n' "$(t display-message -p '#{pid}' 2>/dev/null)" "$US" "$kind" "$US" "$ctx" >"$JOBS/${p#%}.ctx"
+  (
+    new=$(FLEET_KEEP_MARK=1 MOVE_NEW=$out.new "$@")
+    rc=$?
+    printf '%s\t%s\n' "$rc" "$new" >"$out.tmp" && mv -f -- "$out.tmp" "$out"
+    if [[ -s $out.new ]]; then
+      rm -f -- "$FLEET_STATE/launching/$(<"$out.new")" "$out.new"
+    fi
+  ) &
+  job[$p]=$! job_kind[$p]=$kind job_ctx[$p]=$ctx
+  flog INFO "move started" pane="$p" kind="$kind"
+}
+reap() {
+  local p out rc new
+  for p in "${!job[@]}"; do
+    out=$JOBS/${p#%}.out
+    if [[ -f $out ]]; then
+      IFS=$'\t' read -r rc new <"$out"
+      rm -f -- "$out"
+    elif kill -0 "${job[$p]}" 2>/dev/null; then
+      continue
+    else
+      rc=3 new=""
+      flog ERROR "a move ended without a result" pane="$p" kind="${job_kind[$p]}"
+    fi
+    done_move "$p" "${job_kind[$p]}" "${rc:-3}" "$new" "${job_ctx[$p]}"
+    rm -f -- "$JOBS/${p#%}.ctx"
+    unset "job[$p]" "job_kind[$p]" "job_ctx[$p]"
+  done
+}
+# At start: moves that finished while the service was down (a cut-over waits
+# for running ones) are applied from their result and context, only on the
+# tmux server they ran on (a restart reuses pane ids).
+reap_left() {
+  local f p rc new kind ctx server now_server
+  now_server=$(t display-message -p '#{pid}' 2>/dev/null)
+  for f in "$JOBS"/*.out; do
+    [[ -f $f ]] || continue
+    p=%$(basename "$f" .out)
+    if [[ -f $JOBS/${p#%}.ctx ]] && IFS=$US read -r server kind ctx <"$JOBS/${p#%}.ctx" && IFS=$'\t' read -r rc new <"$f"; then
+      if [[ -n $server && $server == "$now_server" ]]; then
+        done_move "$p" "$kind" "${rc:-3}" "$new" "$ctx"
+      else
+        flog WARN "a move's result from another tmux server is dropped" pane="$p" kind="$kind"
+      fi
+    fi
+    rm -f -- "$f" "$JOBS/${p#%}.ctx"
+  done
+}
+# Wait for every move in flight, then apply them (--once).
+reap_all() {
+  local p
+  for p in "${!job[@]}"; do wait "${job[$p]}" 2>/dev/null; done
+  reap
+}
+launching() { # PANE: launch.sh is starting it (a marker under 15 min old)
+  [[ -n $(find "$FLEET_STATE/launching/$1" -maxdepth 0 -mmin -15 2>/dev/null) ]]
+}
+
+# Apply the result RC (and NEW pane) of PANE's move of KIND, CTX as spawn got it.
+done_move() { # PANE KIND RC NEW CTX
+  local p=$1 kind=$2 rc=$3 new=$4 a b c d got
+  IFS=$US read -r a b c d <<<"$5"
+  case $kind in
+    back | pre) # a=from b=to c=orch d=the preferred account's id (back)
+      if (( rc == 0 )); then
+        if [[ $kind == back ]]; then
+          flog INFO "moved back to the preferred account" pane="$p" new_pane="${new:-none}" from="$a" to="$b" orchestrator="$c"
+        else
+          flog INFO "moved before the limit" pane="$p" new_pane="${new:-none}" from="$a" to="$b"
+        fi
+        moved "$p" "$new"
+      else
+        (( rc == 1 )) || moved "$p"
+        if [[ $kind == back ]]; then
+          flog WARN "could not move back to the preferred account; trying again later" pane="$p" to="$b" orchestrator="$c" why="$rc" tries="${move_tries[$p]:-0}"
+        else
+          flog WARN "could not move before the limit; trying again later" pane="$p" to="$b" why="$rc" tries="${move_tries[$p]:-0}"
+        fi
+        (( rc == 5 )) && back_hold "${d:-${ACCT_ID[$b]:-}}"
+      fi
+      ;;
+    limit) # a=name b=orch c=from d=to
+      case $rc in
+        0)
+          flog INFO "moved to the other account at a limit" pane="$p" name="${a:-orchestrator}" orchestrator="$b" from="$c" to="$d" new_pane="${new:-none}" resets="$(date -d @"$((${due[$p]:-$((NOW + 120))} - 120))" '+%a %F %H:%M')"
+          moved "$p" "$new"
+          ;;
+        1 | 4)
+          # A launch that AJ undid (4) cost a session: wait as after a failure.
+          if (( rc == 4 )); then
+            moved "$p"
+            (( move_tries[$p] < 2 )) && move_tries[$p]=2
+          fi
+          flog INFO "AJ has the pane; leaving it to the next pass" pane="$p" why="$rc"
+          ;;
+        *)
+          moved "$p"
+          (( b == 1 && move_tries[$p] < 2 )) && move_tries[$p]=2
+          (( rc == 5 )) && back_hold "${ACCT_ID[$d]:-}"
+          if (( ${move_tries[$p]} <= 1 )); then
+            flog WARN "could not move to the other account; trying again next pass" pane="$p" name="$a" to="$d" why="$rc"
+          else
+            flog WARN "could not move to the other account; waiting for the reset, and trying again in 15 min" pane="$p" name="$a" to="$d" why="$rc" tries="${move_tries[$p]}"
+          fi
+          ;;
+      esac
+      ;;
+    idle) # a=name b=idle minutes c=account
+      case $rc in
+        0)
+          flog INFO "fresh session after a long idle" pane="$p" name="$a" new_pane="${new:-none}" idle_min="$b" account="$c"
+          [[ -n $new ]] && last[$new]=$NOW
+          last[$p]=$NOW
+          forget "$p"
+          ;;
+        1 | 4) flog INFO "AJ has the pane; leaving it to the next pass" pane="$p" why="$rc" ;;
+        *)
+          # Not started, or no longer its registered session (2): resumed in
+          # place, now while it still sits idle at an empty prompt, else at
+          # its next pass (never fresh again for this wait).
+          fresh_failed[$p]=1
+          if fleet_panes | grep -qx -- "$p" && idle_empty "$(screen "$p")"; then
+            if type_exactly "$p" "$MSG"; then got=$(submit "$p"); else got="no: AJ typed meanwhile"; fi
+            flog INFO "resumed with the continue message" pane="$p" account="$c" switched=0 started="$got"
+            last[$p]=$NOW
+            unset "fresh_failed[$p]"
+            forget "$p"
+          fi
+          ;;
+      esac
+      ;;
+  esac
 }
 
 
@@ -317,6 +500,8 @@ one() { # PANE
   PANE_ID=${ACCT_ID[$cfg]:-}
   [[ -n $PANE_ID ]] && ACTIVE=$(account_label "$PANE_ID")
   (( NOW - ${last[$p]:-0} < 900 )) && return
+  [[ -n ${job[$p]:-} ]] && return
+  launching "$p" && return
   s=$(screen "$p") || return
   ps=$(plain <<<"$s")
   typed=$(input_text "$s")
@@ -368,19 +553,25 @@ one() { # PANE
     ! back_held "$pref_id" && back_room "$pref_id" "$NOW" && idle_empty "$s" && idle_stamp=$(turn_done "$p"); then
     back_why="moved back to its preferred account, $(account_label "$pref_id"), which has room again"
     if (( orch )); then
-      new=$(heph_move "$p" "$pref" "$back_why" "" "$idle_stamp")
+      spawn "$p" back "$cfg$US$pref$US$orch$US$pref_id" heph_move "$p" "$pref" "$back_why" "" "$idle_stamp"
     else
-      new=$(fresh "$p" "$(reg_field "$p" 2)" "$(reg_field "$p" 3)" "was $back_why" "$pref" "" "$idle_stamp")
+      spawn "$p" back "$cfg$US$pref$US$orch$US$pref_id" fresh "$p" "$(reg_field "$p" 2)" "$(reg_field "$p" 3)" "was $back_why" "$pref" "" "$idle_stamp"
     fi
-    rc=$?
-    if (( rc == 0 )); then
-      flog INFO "moved back to the preferred account" pane="$p" new_pane="${new:-none}" from="$cfg" to="$pref" orchestrator="$orch"
-      moved "$p" "$new"
-    else
-      flog WARN "could not move back to the preferred account; trying again in 15 min" pane="$p" to="$pref" orchestrator="$orch" why="$rc"
-      (( rc == 1 )) || moved "$p"
-      (( rc == 5 )) && back_hold "$pref_id"
-    fi
+    return
+  fi
+  # Before the wall (#187): a worker on an account that has used
+  # FLEET_PREMOVE_PCT of a window moves to one with room at a finished turn and
+  # an empty prompt, rather than stopping at the limit mid-turn.
+  local five=100 seven=100 ahead
+  [[ -n ${PANE_ID:-} ]] && read -r five seven <<<"$(headroom "$PANE_ID" "$NOW")"
+  if (( !orch && (five <= 100 - FLEET_PREMOVE_PCT || seven <= 100 - FLEET_PREMOVE_PCT) )) &&
+    [[ -z $limit && -z ${due[$p]:-} && -n $(reg_field "$p" 2) ]] && move_hold_ok "$p" &&
+    ahead=$(room_elsewhere "$cfg" "$NOW") && ! back_held "${ACCT_ID[$ahead]:-}" && idle_empty "$s" && idle_stamp=$(turn_done "$p"); then
+    local left_txt="$five% of its five-hour window left"
+    (( seven <= 100 - FLEET_PREMOVE_PCT )) && left_txt="$seven% of its weekly window left"
+    spawn "$p" pre "$cfg$US$ahead$US$orch$US" fresh "$p" "$(reg_field "$p" 2)" "$(reg_field "$p" 3)" \
+      "was near its usage limit on one account ($left_txt), and you continue on the other, which has room" "$ahead" "" "$idle_stamp" &&
+      flog INFO "near the limit at a finished turn; moving before it" pane="$p" account="${ACTIVE:-unknown}" five_hour_left="$five" seven_day_left="$seven" to="$ahead"
     return
   fi
 
@@ -446,8 +637,9 @@ one() { # PANE
   # now, if it has room, carrying what AJ typed (still in the box, or gone
   # from it unsent). A failed move waits 15 min before the next try.
   local other carry="" rc
-  if (( !fresh_typing && !switched )) && { [[ -n $reg ]] || (( orch )); } && (( due[$p] - NOW >= MOVE_MIN_S && NOW - ${move_failed[$p]:-0} >= 900 )) &&
-    other=$(if (( orch )); then FLEET_ACCOUNTS=$FLEET_HEPH_ACCOUNTS room_elsewhere "$cfg" "$NOW"; else room_elsewhere "$cfg" "$NOW"; fi); then
+  if (( !fresh_typing && !switched )) && { [[ -n $reg ]] || (( orch )); } && (( due[$p] - NOW >= MOVE_MIN_S )) && move_hold_ok "$p" &&
+    other=$(if (( orch )); then FLEET_ACCOUNTS=$FLEET_HEPH_ACCOUNTS room_elsewhere "$cfg" "$NOW"; else room_elsewhere "$cfg" "$NOW"; fi) &&
+    ! back_held "${ACCT_ID[$other]:-}"; then
     # What AJ typed while it waited is carried even when he sent it: the
     # session answered only with the limit, so it never acted on it. (Heph's
     # note carries AJ's sent messages from his transcript itself.)
@@ -464,28 +656,11 @@ one() { # PANE
       flog WARN "a pasted block cannot be carried to the other account; the pane waits for its reset" pane="$p" text="$carry"
     elif [[ -z $typed || -n $carry ]]; then
       if (( orch )); then
-        new=$(heph_move "$p" "$other" "stopped at a usage limit on one account, and moves to the other, which has room" "$carry")
+        spawn "$p" limit "$name$US$orch$US$cfg$US$other" heph_move "$p" "$other" "stopped at a usage limit on one account, and moves to the other, which has room" "$carry"
       else
-        new=$(fresh "$p" "$name" "$brief" "stopped at a usage limit on one account, and you continue on the other, which has room" "$other" "$carry")
+        spawn "$p" limit "$name$US$orch$US$cfg$US$other" fresh "$p" "$name" "$brief" "stopped at a usage limit on one account, and you continue on the other, which has room" "$other" "$carry"
       fi
-      rc=$?
-      case $rc in
-        0)
-          flog INFO "moved to the other account at a limit" pane="$p" name="${name:-orchestrator}" orchestrator="$orch" from="$cfg" to="$other" new_pane="${new:-none}" carried_chars="${#carry}" resets="$(date -d @"$((due[$p] - 120))" '+%a %F %H:%M')"
-          moved "$p" "$new"
-          return
-          ;;
-        1 | 4)
-          # A launch that AJ undid (4) cost a session: wait as after a failure.
-          (( rc == 4 )) && move_failed[$p]=$NOW
-          flog INFO "AJ has the pane; leaving it to the next pass" pane="$p" why="$rc"
-          return
-          ;;
-        *)
-          move_failed[$p]=$NOW
-          flog WARN "could not move to the other account; waiting for the reset" pane="$p" name="$name" to="$other" why="$rc"
-          ;;
-      esac
+      return
     fi
   fi
 
@@ -511,25 +686,13 @@ one() { # PANE
   else
     # Past an hour idle a registered pane starts fresh from its brief; a pane
     # that no longer runs its registered session (2) is resumed in place instead.
-    rc=3
-    if [[ -n $reg ]] && idle=$((NOW - $(stopped_at "$p" "$ps"))) && (( idle >= FRESH_AFTER_S )); then
-      new=$(fresh "$p" "$name" "$brief")
-      rc=$?
+    if [[ -n $reg && -z ${fresh_failed[$p]:-} ]] && idle=$((NOW - $(stopped_at "$p" "$ps"))) && (( idle >= FRESH_AFTER_S )); then
+      spawn "$p" idle "$name$US$((idle / 60))$US${ACTIVE:-unknown}$US" fresh "$p" "$name" "$brief"
+      return
     fi
-    case $rc in
-      0)
-        flog INFO "fresh session after a long idle" pane="$p" name="$name" new_pane="${new:-none}" idle_min="$((idle / 60))" account="${ACTIVE:-unknown}"
-        [[ -n $new ]] && last[$new]=$NOW
-        ;;
-      1 | 4)
-        flog INFO "AJ has the pane; leaving it to the next pass" pane="$p" why="$rc"
-        return
-        ;;
-      *)
-        if type_exactly "$p" "$MSG"; then got=$(submit "$p"); else got="no: AJ typed meanwhile"; fi
-        flog INFO "resumed with the continue message" pane="$p" account="${ACTIVE:-unknown}" switched="$switched" started="$got"
-        ;;
-    esac
+    unset "fresh_failed[$p]"
+    if type_exactly "$p" "$MSG"; then got=$(submit "$p"); else got="no: AJ typed meanwhile"; fi
+    flog INFO "resumed with the continue message" pane="$p" account="${ACTIVE:-unknown}" switched="$switched" started="$got"
   fi
   last[$p]=$NOW
   forget "$p"
@@ -570,6 +733,7 @@ PREV_ACCT="" DOCTOR_DUE=0 HEPH_DOUBT=""
 pass() {
   NOW=$(clock) ACTIVE=$(active_account) ORCH=$(orchestrator) OSID=$(cat "$FLEET_STATE/orchestrator.session" 2>/dev/null)
   accounts
+  reap
   local p
   for p in $(fleet_panes); do one "$p"; done
   doctor_after_switch
@@ -578,11 +742,20 @@ pass() {
 }
 
 load_state
+NOW=$(clock)
+accounts
 if [[ ${1:-} == --once ]]; then
+  reap_left
   pass
+  # One pass's moves end with it: their results are applied and saved.
+  if (( ${#job[@]} )); then
+    reap_all
+    save_state
+  fi
   exit 0
 fi
 flog INFO "resume service started" poll_s="$POLL_S" fresh_after_s="$FRESH_AFTER_S" socket="$FLEET_SOCK"
+reap_left
 while :; do
   pass
   sleep "$POLL_S"
