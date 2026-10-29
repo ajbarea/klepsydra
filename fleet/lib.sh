@@ -455,14 +455,21 @@ answered_by_limit() { # SCREEN
 # hook's) names this boot and a process with the same start time. A tmux
 # restart reuses pane ids and a reboot reuses pids, so neither alone says so.
 session_alive() { # SID
-  local f pid start boot stat
+  local f pid start boot
   [[ $1 =~ ^[0-9a-f-]{36}$ ]] || return 1
   f=$KLEPSYDRA_DIR/fleet/$1.json
   [[ -f $f && ! -L $f ]] || return 1
   read -r pid start boot < <(jq -r 'select(.ended == null) | "\(.claude.pid // 0) \(.claude.start // 0) \(.host.boot // "")"' "$f" 2>/dev/null)
   [[ ${pid:-0} =~ ^[1-9][0-9]*$ && -n ${boot:-} && $boot == "$(cat "${FLEET_BOOT_ID:-/proc/sys/kernel/random/boot_id}" 2>/dev/null)" ]] || return 1
-  stat=$(cat "${FLEET_PROC:-/proc}/$pid/stat" 2>/dev/null) || return 1
-  stat=${stat##*) }
-  read -ra stat <<<"$stat"
-  [[ ${stat[19]:-} == "$start" ]]
+  [[ $(proc_start "$pid") == "$start" ]]
+}
+
+# When process PID started, in clock ticks since boot (/proc/PID/stat field 22,
+# read after the last ") " so a name with spaces or parentheses parses); fails
+# when there is no such process.
+proc_start() { # PID
+  local line fields
+  line=$(cat "${FLEET_PROC:-/proc}/$1/stat" 2>/dev/null) || return 1
+  read -ra fields <<<"${line##*) }"
+  [[ -n ${fields[19]:-} ]] && printf '%s' "${fields[19]}"
 }

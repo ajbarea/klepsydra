@@ -48,10 +48,7 @@ agents=$(cut -f4 "$REGISTRY" 2>/dev/null | grep .)
 this_boot=$(cat "${FLEET_BOOT_ID:-/proc/sys/kernel/random/boot_id}" 2>/dev/null)
 server_start=""
 spid=$(t display -p '#{pid}' 2>/dev/null)
-if [[ $spid =~ ^[0-9]+$ ]] && sline=$(cat "${FLEET_PROC:-/proc}/$spid/stat" 2>/dev/null); then
-  read -ra sfields <<<"${sline##*) }"
-  server_start=${sfields[19]:-}
-fi
+[[ $spid =~ ^[0-9]+$ ]] && server_start=$(proc_start "$spid")
 this_boot_row() { # SID
   local f=$KLEPSYDRA_DIR/fleet/$1.json
   [[ -n $this_boot && $server_start =~ ^[0-9]+$ && $(jq -r '.host.boot // ""' "$f" 2>/dev/null) == "$this_boot" ]] &&
