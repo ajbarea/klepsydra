@@ -31,7 +31,8 @@ account=${account:-$FLEET_DEFAULT_CONFIG}
 account=$(nodir "$account") # "~/.claude/" is the default too, which must not set CLAUDE_CONFIG_DIR
 # Workers bypass permissions and Heph does not, so Heph's SendMessage would wait
 # for AJ's approval; worker-settings.json accepts it (AJ approved 2026-10-27).
-# The subagent cap enforces the briefs' rule of at most two at a time.
+# The subagent cap enforces the briefs' rule of at most two at a time. Its env
+# turns keryx off, so only Heph speaks and no worker loads a voice model (#183).
 # FLEET_SETTINGS="" starts it without them (the orchestrator, fleet recover).
 settings=${FLEET_SETTINGS-$FLEET_STATE/worker-settings.json}
 cmd="env $(config_env "$account")CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS=2 ${FLEET_CLAUDE:-claude} --session-id $sid${settings:+ --settings $settings} $*"
