@@ -130,6 +130,15 @@ if [[ -n $watchers ]]; then
 else
   report FAIL "pane watcher" "none running: the orchestrator is not woken when an agent finishes"
 fi
+# Registered agents whose session no longer runs: after a hard shutdown, all of them.
+gone=$(while IFS=$'\t' read -r _ name _ sid _; do
+  [[ $sid =~ ^[0-9a-f-]{36}$ ]] && ! session_alive "$sid" && printf '%s ' "$name"
+done < <(cat "$REGISTRY" 2>/dev/null))
+if [[ -n $gone ]]; then
+  report FAIL "agents" "sessions gone: ${gone% }: fleet recover"
+else
+  report ok "agents" "every registered session runs"
+fi
 mapfile -t briefs < <(awk -F'\t' 'NF >= 3 { print $3 }' "$REGISTRY" 2>/dev/null)
 if (( ! ${#briefs[@]} )); then
   report ok "briefs" "no registered agents"

@@ -11,7 +11,7 @@ here=$(dirname "$(readlink -f "$0")")
 # shellcheck source=fleet/lib.sh
 . "$here/lib.sh"
 SYSTEMCTL=${FLEET_SYSTEMCTL:-systemctl}
-UNITS=(fleet-resume-at-reset.service fleet-memfrag-log.timer fleet-accounts-sync.path fleet-accounts-sync.timer fleet-ci-watch.service)
+UNITS=(fleet-resume-at-reset.service fleet-memfrag-log.timer fleet-accounts-sync.path fleet-accounts-sync.timer fleet-sync-briefing.timer fleet-ci-watch.service)
 [[ -e ${FLEET_UNITS:-$HOME/.config/systemd/user}/wsl-mem-watch.service ]] && UNITS+=(wsl-mem-watch.service)
 # The log's length now: the resume service's start must come after it.
 began=$(wc -l <"$FLEET_LOG" 2>/dev/null || echo 0)

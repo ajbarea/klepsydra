@@ -476,11 +476,11 @@ check "and the exit is non-zero" "$code" "1"
 touch "$work/active" "$FLEET_STATE/resume.beat"
 session_file o1 "$o" https://claude.ai/code/session_01O
 out=$(DOC_UP=http DOC_SERVE="https://desk.tail1.ts.net (tailnet only)" doctor); code=$?
-check "all well but the watcher: a shell that names the script is not one" "$(grep -c '^ok ' <<<"$out") $(grep '^FAIL' <<<"$out" | cut -d: -f1)" "8 FAIL pane watcher"
+check "all well but the watcher: a shell that names the script is not one" "$(grep -c '^ok ' <<<"$out") $(grep '^FAIL' <<<"$out" | cut -d: -f1)" "9 FAIL pane watcher"
 check "the default account is logged in; the second, not yet, is a warning" \
   "$(grep '^ok   account' <<<"$out" | cut -d: -f1) | $(grep '^warn account' <<<"$out" | cut -d: -f1)" "ok   account $work/cfg-a | warn account $work/cfg-b"
 check "with a watcher running, every check is ok and the exit is 0" \
-  "$(DOC_WATCH='%2 %5' DOC_UP=http DOC_SERVE=on doctor | grep -c '^ok '; echo "rc=${PIPESTATUS[0]}")" $'9\nrc=0'
+  "$(DOC_WATCH='%2 %5' DOC_UP=http DOC_SERVE=on doctor | grep -c '^ok '; echo "rc=${PIPESTATUS[0]}")" $'10\nrc=0'
 check "the watcher's panes are named" "$(DOC_WATCH='%2 %5' doctor | grep '^ok   pane watcher')" "ok   pane watcher: watching %2 %5"
 check "the phone wall and its Tailscale twin answer fresh" "$(grep -c 'fleet.json observed 3[0-9] s ago' <<<"$out")" "2"
 jq -n '{usage: [{observed_at: 1000}]}' >"$work/fleet.json"
@@ -554,6 +554,7 @@ rc=$code" "ok   fleet-resume-at-reset.service: enabled and active
 ok   fleet-memfrag-log.timer: enabled and active
 ok   fleet-accounts-sync.path: enabled and active
 ok   fleet-accounts-sync.timer: enabled and active
+ok   fleet-sync-briefing.timer: enabled and active
 ok   fleet-ci-watch.service: enabled and active
 ok   the resume service logged its start
 rc=0"
@@ -844,6 +845,108 @@ jq -n '{oauthAccount: {accountUuid: "b"}}' >"$dst/.claude.json"
 mkdir -p "$src/skills/two"; rm -rf -- "${dst:?}/skills"; ln -s "$src/skills" "$dst/skills"
 check "review 1: a second folder whose skills link into the first is refused, and the first's skills are untouched" \
   "$(acsync "$dst" >/dev/null; echo $?) $(find "$src/skills" -mindepth 1 -maxdepth 1 | sort | sed "s|$src/skills/||" | tr '\n' ' ')" "1 one synced two "
+
+echo "recover after a hard shutdown (#154)"
+: >"$FLEET_LOG"; : >"$REGISTRY"
+export FLEET_BOOT_ID="$work/boot_id" FLEET_PROC="$work/proc" FLEET_PROJECTS="$work/projects"
+echo 11111111-1111-4111-8111-111111111111 >"$FLEET_BOOT_ID"
+mkdir -p "$FLEET_PROC/4242"
+printf '4242 (claude code) S %s 777 1 2 3\n' "$(seq -s ' ' 1 18)" >"$FLEET_PROC/4242/stat"
+sfile() { # SID PID START BOOT PANE [STARTED_AT]
+  jq -n --argjson pid "$2" --argjson st "$3" --arg b "$4" --arg p "$5" --argjson at "${6:-1}" \
+    '{session_id: "x", started_at: $at, ended: null, claude: {pid: $pid, start: $st}, host: {boot: $b}, tmux: {pane: $p}}' >"$KLEPSYDRA_DIR/fleet/$1.json"
+}
+NOWBOOT=11111111-1111-4111-8111-111111111111 OLDBOOT=22222222-2222-4222-8222-222222222222
+SA=aaaaaaaa-0000-4000-8000-000000000001 SB=aaaaaaaa-0000-4000-8000-000000000002 SC=aaaaaaaa-0000-4000-8000-000000000003
+sfile "$SA" 4242 777 "$NOWBOOT" %1
+check "alive: this boot, and a process with the same start time" "$(session_alive "$SA" && echo yes)" "yes"
+sfile "$SB" 4242 777 "$OLDBOOT" %2
+check "dead: another boot (a reboot reuses pids)" "$(session_alive "$SB" || echo no)" "no"
+sfile "$SB" 4242 778 "$NOWBOOT" %2
+check "dead: the pid now runs another process" "$(session_alive "$SB" || echo no)" "no"
+sfile "$SB" 4243 777 "$NOWBOOT" %2
+check "dead: no such process" "$(session_alive "$SB" || echo no)" "no"
+jq '.ended = {reason: "other", at: 1}' "$KLEPSYDRA_DIR/fleet/$SA.json" >"$work/e.json"
+check "dead: it ended" "$(KLEPSYDRA_DIR="$work/x" session_alive "$SA" || echo no)" "no"
+sfile "$SB" 4242 777 "$OLDBOOT" %2; sfile "$SC" 4242 777 "$OLDBOOT" %3
+repo=$work/recrepo
+git init -q "$repo"; mkdir -p "$repo/.claude/worktrees/wt"
+printf 'old\n' >"$repo/IMPL.md"; touch -d '@1000' "$repo/IMPL.md"
+printf 'newest\n' >"$repo/.claude/worktrees/wt/IMPL.md"
+mkdir -p "$FLEET_PROJECTS/p"
+for r in "first reply" "second reply" "third reply"; do
+  jq -nc --arg t "$r" --arg c "$repo" '{type: "assistant", cwd: $c, message: {content: [{type: "text", text: $t}, {type: "tool_use", name: "Bash"}]}}'
+done >"$FLEET_PROJECTS/p/$SB.jsonl"
+printf 'brief A\n' >"$work/ba.src"; printf 'brief B\n' >"$work/bb.src"; printf 'brief C\n' >"$work/bc.src"
+printf '%s\ta\t%s\t%s\t/w\n%s\tb\t%s\t%s\t/w\n%s\tc\t%s\t%s\t/w\n' %1 "$work/ba.src" "$SA" %2 "$work/bb.src" "$SB" %3 "$work/bc.src" "$SC" >"$REGISTRY"
+cat >"$work/launch-rec.sh" <<EOF
+#!/usr/bin/env bash
+n=\$(( \$(cat "$work/rec.n" 2>/dev/null || echo 900) + 1 )); echo \$n >"$work/rec.n"
+printf '%s %s settings=%s account=%s\n' "\$(date +%s.%N)" "\$1" "\${FLEET_SETTINGS-UNSET}" "\${FLEET_ACCOUNT:-}" >>"$work/rec.log"
+cp "\$2" "$work/rec-\$1.txt"
+echo "pane=%\$n session=x account=x avail=1MiB brief=started"
+EOF
+rec() { LAUNCH="$work/launch-rec.sh" FLEET_STAGGER_S=${STAG:-0} bash "$here/recover.sh" "$@" 2>/dev/null; }
+out=$(rec --dry-run --no-orchestrator)
+check "a dry run names what it would recover and launches nothing" "$(grep -c '^would recover' <<<"$out") $(cat "$work/rec.log" 2>/dev/null | wc -l)" "2 0"
+check "the doctor names the agents whose sessions are gone" "$(bash "$here/doctor.sh" 2>/dev/null | grep '^FAIL agents')" "FAIL agents: sessions gone: b c: fleet recover"
+out=$(STAG=1 rec --no-orchestrator)
+check "a running agent is left alone; the others are launched fresh" "$out" $'running: a (%1)\nrecovered: b -> %901\nrecovered: c -> %902'
+check "the brief: why, its last two replies, its newest IMPL.md, then the brief" \
+  "$(grep -c 'stopped by a hard shutdown' "$work/rec-b.txt") $(grep -c '^> first reply' "$work/rec-b.txt") $(grep -c '^> second reply$' "$work/rec-b.txt") $(grep -c '^> third reply$' "$work/rec-b.txt") $(grep -o 'IMPL.md: .*' "$work/rec-b.txt") | $(tail -1 "$work/rec-b.txt")" \
+  "1 0 1 1 IMPL.md: $repo/.claude/worktrees/wt/IMPL.md | brief B"
+check "with no transcript it says so" "$(grep -c 'no transcript found' "$work/rec-c.txt")" "1"
+check "launches are staggered" "$(awk 'NR == 1 { a = $1 } NR == 2 { print ($1 - a >= 1) ? "apart" : "burst" }' "$work/rec.log")" "apart"
+: >"$work/rec.log"
+sfile "$SB" 4242 777 "$NOWBOOT" %2; sfile "$SC" 4242 777 "$NOWBOOT" %3
+check "once they run, a second run recovers nothing" "$(rec --no-orchestrator | tail -1) $(wc -l <"$work/rec.log")" "nothing to recover 0"
+
+echo "recover: the orchestrator"
+: >"$work/rec.log"; : >"$REGISTRY"
+SH=aaaaaaaa-0000-4000-8000-0000000000aa SN=aaaaaaaa-0000-4000-8000-0000000000bb
+printf '%%0\n' >"$FLEET_STATE/orchestrator.pane"
+sfile "$SN" 4242 777 "$OLDBOOT" %0 5   # an older session that also sat in %0
+sfile "$SH" 4242 777 "$OLDBOOT" %0 9
+printf 'handoff\n' >"$work/HEPH.md"; touch -d '2026-10-28 17:00 UTC' "$work/HEPH.md"
+{ jq -nc '{type: "user", message: {content: "before the handoff"}, timestamp: "2026-10-28T16:00:00.000Z"}'
+  jq -nc '{type: "user", message: {content: "AJ: move InteFL to Friday"}, timestamp: "2026-10-28T17:05:00.000Z"}'
+  jq -nc '{type: "user", message: {content: "<task-notification>x</task-notification>"}, timestamp: "2026-10-28T17:06:00.000Z"}'
+  jq -nc '{type: "user", isMeta: true, message: {content: "meta"}, timestamp: "2026-10-28T17:07:00.000Z"}'
+  jq -nc '{type: "user", message: {content: [{type: "tool_result"}]}, timestamp: "2026-10-28T17:08:00.000Z"}'
+  jq -nc '{type: "user", message: {content: "AJ: and ping Dima"}, timestamp: "2026-10-28T17:09:00.000Z"}'
+} >"$FLEET_PROJECTS/p/$SH.jsonl"
+out=$(FLEET_HEPH="$work/HEPH.md" rec)
+check "the orchestrator is relaunched without worker settings, on the default account" \
+  "$(cut -d' ' -f2- "$work/rec.log")" "heph settings= account=$FLEET_DEFAULT_CONFIG"
+check "its note names HEPH.md and holds AJ's messages since it was written, nothing else" \
+  "$(grep -c "Read $work/HEPH.md first" "$work/rec-heph.txt") $(grep '^- ' "$work/rec-heph.txt" | tr '\n' '|')" "1 - AJ: move InteFL to Friday|- AJ: and ping Dima|"
+check "and orchestrator.pane follows it" "$(cat "$FLEET_STATE/orchestrator.pane")" "$(tail -1 <<<"$out" | grep -o '%[0-9]*')"
+rm -f "$FLEET_STATE/orchestrator.pane"; unset FLEET_BOOT_ID FLEET_PROC FLEET_PROJECTS
+
+echo "launch without worker settings"
+cat >"$work/launcher-rec.sh" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' "\$KLEPSYDRA_CLAUDE" >"$work/cmd"
+tmux -L "\$KLEPSYDRA_TMUX_SOCKET" new-window -d -t fleet: -c "\$3" "\$KLEPSYDRA_CLAUDE"
+EOF
+printf '%s' '{"above":["Claude Code"]}' >"$work/nosettings.json"; : >"$work/nosettings.log"
+FLEET_SETTINGS= FLEET_SCOPE=0 FLEET_MIN_AVAIL_MB=0 FLEET_LAUNCHER="$work/launcher-rec.sh" FLEET_DIR="$work" \
+  FLEET_CLAUDE="python3 -I $fake $work/nosettings.json $work/nosettings.log" bash "$here/launch.sh" nosettings "$work/task.src" >/dev/null 2>&1
+check "FLEET_SETTINGS= starts claude with no --settings" "$(grep -c -- '--settings' "$work/cmd") $(grep -c -- '--session-id' "$work/cmd")" "0 1"
+
+echo "briefing sync"
+git init -q --bare "$work/brief-remote.git"
+git clone -q "$work/brief-remote.git" "$work/brief" 2>/dev/null
+git -C "$work/brief" -c user.name=t -c user.email=t@t commit -q --allow-empty -m init && git -C "$work/brief" push -q origin HEAD 2>/dev/null
+printf '#!/usr/bin/env bash\n[[ -e %s ]] && { echo "leak: token"; exit 1; }\nexit 0\n' "$work/leak" >"$work/bin/gitleaks"; chmod +x "$work/bin/gitleaks"
+bsync() { BRIEFING_DIR="$work/brief" FLEET_GITLEAKS="$work/bin/gitleaks" GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t bash "$here/sync-briefing.sh" 2>/dev/null; echo $?; }
+check "nothing changed: no commit" "$(bsync) $(git -C "$work/brief" rev-list --count HEAD)" "0 1"
+printf 'q\n' >"$work/brief/claude-queue.md"; printf 'x\n' >"$work/brief/notes.txt"
+touch "$work/leak"
+check "a gitleaks finding blocks the commit, and is logged" "$(bsync) $(git -C "$work/brief" rev-list --count HEAD) $(jq -r 'select(.message | contains("gitleaks found")) | .level' "$FLEET_LOG")" "1 1 ERROR"
+rm -f "$work/leak"
+check "a change is committed and pushed" "$(bsync) $(git -C "$work/brief-remote.git" rev-list --count HEAD)" "0 2"
+check "only the briefing's own files go in" "$(git -C "$work/brief" show --name-only --format= HEAD)" "claude-queue.md"
 
 echo "the fleet log"
 check "every line is one JSON object with ts, level, target and message" \
