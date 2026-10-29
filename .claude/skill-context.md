@@ -77,6 +77,7 @@ files belong to: the JS guards scan hooks and scripts too.
 - `bash hooks/test_fleet.sh`: the fleet hook's states, where, identity,
   pruning (every refusal first) and the README settings block.
 - `bash scripts/test_measure_memory.sh`: the release memory rule.
+- `python3 -I fleet/test_ci_watch.py`: the CI watch against a fake GitHub.
 - `python3 -I scripts/perf/test_fixture.py`: the perf harness's demo fleet
   writes only files it owns and no future times.
 - `bash hooks/test_wrapup.sh`: the wrap-up Stop hook (silent unless a live
