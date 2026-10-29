@@ -31,13 +31,19 @@ class Agora(unittest.TestCase):
                 }
             )
         )
-        self.live(fleet_name="techne-evals", voice=None)
-        (self.k / "picks.json").write_text(
-            json.dumps({"agent:techne-evals": "af_nova"})
-        )
+        (self.tmp / "state").mkdir()
+        self.live(voice=None)
+        self.register("%4", "techne-evals", SID)
+        (self.k / "picks.json").write_text(json.dumps({SID: "af_nova"}))
 
     def tearDown(self):
         shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def register(self, pane, name, sid):
+        rows = self.tmp / "state" / "panes.tsv"
+        old = rows.read_text() if rows.exists() else ""
+        kept = "".join(r + "\n" for r in old.splitlines() if r.split("\t")[1] != name)
+        rows.write_text(kept + f"{pane}\t{name}\t/b/task-{name}.src\t{sid}\t/w\t\n")
 
     def live(self, sid=SID, pane="%4", ended=None, **fields):
         s = {
@@ -55,6 +61,7 @@ class Agora(unittest.TestCase):
         pane="%4",
         socket="/tmp/tmux-1000/klepsydra",
         gitleaks="none",
+        skip="1",
     ):
         env = os.environ | {
             "KLEPSYDRA_DIR": str(self.k),
@@ -63,6 +70,7 @@ class Agora(unittest.TestCase):
             "TMUX": f"{socket},1,0",
             "TMUX_PANE": pane,
             "FLEET_GITLEAKS": gitleaks,
+            "AGORA_SKIP_PANE_CHECK": skip,
         }
         r = subprocess.run(
             [sys.executable, "-I", str(HERE / "agora.py"), *args],
@@ -122,12 +130,59 @@ class Agora(unittest.TestCase):
         self.assertIn("Metis (techne) [gripe] lock waits again", out)
 
     def test_the_orchestrator_signs_as_heph_and_an_own_voice_signs_as_itself(self):
-        self.live(orchestrator=True, voice="bf_emma")
+        (self.tmp / "state" / "orchestrator.session").write_text(SID + "\n")
+        self.live(voice="bf_emma")
         self.assertEqual(self.run_agora("post", "a win")[1], "Posted as Hephaestus.")
+        self.assertEqual(self.posts()[0]["who"], "heph")
+        (self.tmp / "state" / "orchestrator.session").unlink()
         self.live(
             sid="22222222-2222-4333-8444-555555555555", pane="%5", voice="bf_emma"
         )
         self.assertEqual(self.run_agora("post", "x", pane="%5")[1], "Posted as Mneme.")
+
+    def test_a_relaunched_agent_is_still_held_to_one_post_an_hour(self):
+        self.assertEqual(self.run_agora("post", "first")[0], 0)
+        (self.k / "fleet" / f"{SID}.json").unlink()
+        new = "33333333-2222-4333-8444-555555555555"
+        self.live(sid=new, pane="%9")
+        self.register("%9", "techne-evals", new)
+        self.assertEqual(self.run_agora("post", "again", pane="%9", now=NOW + 60)[0], 4)
+
+    def test_a_post_from_outside_the_pane_it_names_is_refused(self):
+        self.assertEqual(self.run_agora("post", "spoofed", skip="0")[0], 2)
+        self.assertEqual(self.posts(), [])
+
+    def test_a_scan_with_no_verdict_refuses_and_says_why_in_the_log(self):
+        fake = self.tmp / "gitleaks"
+        fake.write_text("#!/usr/bin/env bash\necho 'unknown flag' >&2\nexit 126\n")
+        fake.chmod(0o755)
+        self.assertEqual(self.run_agora("post", "fine text", gitleaks=str(fake))[0], 3)
+        log = (self.tmp / "state" / "log" / "agora.log").read_text()
+        self.assertIn('"rc": 126', log)
+        self.assertNotIn("fine text", log)
+
+    def test_a_malformed_line_is_skipped_and_controls_are_stripped(self):
+        (self.k / "agora").mkdir()
+        (self.k / "agora" / "posts.jsonl").write_text(
+            '{"at":"yesterday","who":"x","text":"t"}\n[1]\n'
+        )
+        self.assertEqual(self.run_agora("list")[0], 0)
+        self.assertEqual(
+            self.run_agora(
+                "post", "abc\u202edef\u2028x\x9by \U0001f468\u200d\U0001f469"
+            )[0],
+            0,
+        )
+        self.assertEqual(
+            self.posts()[-1]["text"], "abc def x y \U0001f468\u200d\U0001f469"
+        )
+        (self.k / "agora" / "posts.jsonl").write_text(
+            json.dumps({"at": NOW + 10**8, "who": "techne-evals", "text": "t"}) + "\n"
+        )
+        self.assertEqual(
+            self.run_agora("post", "a clock step holds nobody back", now=NOW + 9000)[0],
+            0,
+        )
 
     def test_one_post_an_hour_per_agent(self):
         self.assertEqual(self.run_agora("post", "first")[0], 0)

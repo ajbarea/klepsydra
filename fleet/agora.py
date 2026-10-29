@@ -25,6 +25,7 @@ import shutil
 import subprocess
 import sys
 import time
+import unicodedata
 from pathlib import Path
 
 HOME = Path.home()
@@ -90,11 +91,80 @@ def say(text: str) -> None:
     print(text)
 
 
+def in_pane(pane: str) -> bool:
+    """Whether this process runs inside tmux pane PANE of the fleet's server:
+    the pane's own process is one of its ancestors (TMUX_PANE alone can be set
+    by hand)."""
+    try:
+        got = subprocess.run(
+            [
+                "tmux",
+                "-L",
+                FLEET_SOCK,
+                "display-message",
+                "-p",
+                "-t",
+                pane,
+                "#{pane_pid}",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        root = int(got.stdout.strip())
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        return False
+    pid = os.getpid()
+    for _ in range(64):
+        if pid == root:
+            return True
+        try:
+            stat = Path(f"/proc/{pid}/stat").read_text()
+            pid = int(stat.rsplit(") ", 1)[1].split()[1])
+        except (OSError, ValueError, IndexError):
+            return False
+        if pid <= 1:
+            return False
+    return False
+
+
+def read_line(path: Path) -> str:
+    try:
+        return path.read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
+
+
+def fleet_name(pane: str, sid: str) -> str | None:
+    """The agent the fleet registry (panes.tsv) names for this pane and session,
+    or "heph" for the orchestrator's session on record."""
+    if sid and read_line(STATE / "orchestrator.session") == sid:
+        return "heph"
+    if (
+        not read_line(STATE / "orchestrator.session")
+        and read_line(STATE / "orchestrator.pane") == pane
+    ):
+        return "heph"
+    for row in read_line(STATE / "panes.tsv").splitlines():
+        cols = row.split("\t")
+        if (
+            len(cols) >= 4
+            and cols[0] == pane
+            and cols[3] == sid
+            and re.fullmatch(r"[\w.-]{1,64}", cols[1])
+        ):
+            return cols[1]
+    return None
+
+
 def session() -> dict | None:
-    """The live klepsydra fleet file of the session in this tmux pane."""
+    """The live klepsydra fleet file of the session in this tmux pane, with its
+    agent's name (fleet_name) from the fleet's registry."""
     pane = os.environ.get("TMUX_PANE", "")
     socket = os.environ.get("TMUX", "").split(",")[0]
     if not re.fullmatch(r"%\d{1,9}", pane) or Path(socket).name != FLEET_SOCK:
+        return None
+    if os.environ.get("AGORA_SKIP_PANE_CHECK") != "1" and not in_pane(pane):
         return None
     found = []
     for f in (KLEPSYDRA_DIR / "fleet").glob("*.json"):
@@ -105,7 +175,12 @@ def session() -> dict | None:
         tmux = s.get("tmux") or {}
         if tmux.get("pane") == pane and s.get("ended") is None:
             found.append(s)
-    return found[0] if len(found) == 1 else None
+    if len(found) != 1:
+        return None
+    s = found[0]
+    s["fleet_name"] = fleet_name(pane, str(s.get("session_id", "")))
+    s["orchestrator"] = s["fleet_name"] == "heph"
+    return s
 
 
 def character(s: dict) -> tuple[str | None, str]:
@@ -147,9 +222,23 @@ def secret_in(text: str) -> bool:
                 text=True,
                 timeout=20,
             )
-        except (OSError, subprocess.TimeoutExpired):
-            return False
-        return r.returncode == 1
+        except (OSError, subprocess.TimeoutExpired) as e:
+            event(
+                logging.WARNING,
+                "secret check gave no verdict; post refused",
+                error=type(e).__name__,
+            )
+            return True
+        if r.returncode in (0, 1):
+            return r.returncode == 1
+        # No verdict (a bad flag or config): refused, as the phylax secret gate does.
+        event(
+            logging.WARNING,
+            "secret check gave no verdict; post refused",
+            rc=r.returncode,
+            said=(r.stderr.strip().splitlines() or [""])[0][:200],
+        )
+        return True
     return False
 
 
@@ -164,13 +253,30 @@ def read_posts() -> list[dict]:
             p = json.loads(line)
         except ValueError:
             continue
-        if isinstance(p, dict):
+        if (
+            isinstance(p, dict)
+            and isinstance(p.get("at"), int)
+            and isinstance(p.get("who"), str)
+            and isinstance(p.get("text"), str)
+        ):
             out.append(p)
     return out
 
 
+def flatten(text: str) -> str:
+    """TEXT as one plain line: control, format and line-separator characters
+    (a terminal escape, a bidi override) become spaces; the emoji joiner stays."""
+    kept = (
+        c
+        if c == "\u200d" or unicodedata.category(c) not in ("Cc", "Cf", "Zl", "Zp")
+        else " "
+        for c in text
+    )
+    return re.sub(r"\s+", " ", "".join(kept)).strip()
+
+
 def post(kind: str, text: str, link: str | None) -> int:
-    flat = re.sub(r"[\x00-\x1f\x7f ]+", " ", text).strip()
+    flat = flatten(text)
     if not flat:
         say("Nothing to post.")
         return 2
@@ -198,8 +304,9 @@ def post(kind: str, text: str, link: str | None) -> int:
     AGORA.mkdir(parents=True, exist_ok=True)
     with open(AGORA / ".lock", "a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
+        # A post dated after now (a clock step) holds nobody back.
         last = max(
-            (p.get("at", 0) for p in read_posts() if p.get("who") == who),
+            (p["at"] for p in read_posts() if p["who"] == who and p["at"] <= NOW),
             default=0,
         )
         if NOW - last < EVERY_S:
@@ -230,7 +337,7 @@ def post(kind: str, text: str, link: str | None) -> int:
 
 
 def show(n: int) -> int:
-    for p in reversed(read_posts()[-n:]):
+    for p in reversed(read_posts()[-max(n, 1) :]):
         when = time.strftime("%m-%d %H:%M", time.localtime(p.get("at", 0)))
         link = f" {p['link']}" if p.get("link") else ""
         say(
@@ -248,7 +355,9 @@ def main(argv: list[str]) -> int:
     p = sub.add_parser("post", help="post one line, signed with your character")
     p.add_argument("--kind", choices=KINDS, default="idea")
     p.add_argument("--link", help="a GitHub pull request or issue the post is about")
-    p.add_argument("text", nargs="+")
+    p.add_argument(
+        "text", nargs="+", help=f"at most {POST_MAX} characters (code points)"
+    )
     ls = sub.add_parser("list", help="the newest posts first")
     ls.add_argument("n", nargs="?", type=int, default=20)
     a = ap.parse_args(argv)
