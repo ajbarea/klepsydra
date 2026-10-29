@@ -1,20 +1,22 @@
-# IMPL: feat/fleet-module (PR #161, draft)
+# IMPL: klepsydra fleet-module brief, resume state 2026-10-29 ~05:00
 
-AJ's order (10-28): #159 (done, deployed da83e7b) -> techne#227 (merged #232) ->
-#162 (PR #164) -> this branch -> two accounts (feat/two-accounts WIP) -> #154 -> #158
--> #148 -> #149 -> #150.
+Order (AJ 10-28): #159 -> techne#227 -> #162 -> this (#161) -> two accounts -> #154 -> #158 -> #148 -> #149 -> #150.
 
 ## Done
-- Fleet engine: lib.sh, resume service, launch, fresh-now, relaunch, watch, doctor,
-  brief tail and generator, install, cutover; 98 tests against fake panes.
-- Review round 1: B1 (cutover replaces transient units; install no longer enables),
-  B2 (pane identity via the registry's session id before /exit, kill or /clear),
-  S1-S8 and nits fixed with tests.
+- #159 Split auto-uncheck: PR #160 merged and deployed (da83e7b).
+- techne#227 ci-audit report mode: techne #232 merged. Follow-up: techne#233 (eval skill load).
+- #162 CI watch: PR #164 merged and deployed (0240820, 04:15). Unit `fleet-ci-watch` is live:
+  transient, Restart=always, TECHNE_CI_REPORT=techne main checkout, CI_SWEEP_HOUR=99 (sweep off, AJ decides).
+  #163 phone push waits on AJ (it needs the phone wall's first write route).
+- #161 fleet engine: review rounds 1-4 done, final verify clean, 111 tests. Un-drafted;
+  CI was starting when the session stopped.
 
 ## Next
-1. Review round 2 (fresh Opus reviewer, given this diff and round 1's findings).
-2. Un-draft, CI, merge; then cut-over on this PC: `make install-fleet` from the
-   main checkout, `fleet cutover`, `fleet doctor`; old scripts stay in
-   archive/fleet-scripts-<date>/ for a week. Never restart or message other panes.
-3. Rebase feat/two-accounts onto main and finish 4c (test it; AJ logs in once per
-   folder: `CLAUDE_CONFIG_DIR=~/.claude-personal claude auth login`).
+1. #161: re-read comments, check CI is green, squash-merge. Then the cut-over on this PC, from
+   the main checkout (ff it first): `make install-fleet`, `fleet cutover`, `fleet doctor`.
+   Old scripts go to archive/fleet-scripts-<date>/ for a week. Make the CI watch an installed
+   unit too. Never restart or message other panes.
+2. feat/two-accounts (WIP 1218281): rebase on main, finish 4c with tests. AJ runs once:
+   `CLAUDE_CONFIG_DIR=~/.claude-personal claude auth login`.
+3. #154, #158 (shots prune, dry-run default), then #148, #149, #150.
+4. klepsydra main IMPL.md: rewrite from this file after #161 merges.
