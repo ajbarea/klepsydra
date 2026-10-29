@@ -429,6 +429,7 @@ check "--refresh brings the rules up to date, keeping the body and a line added 
   "$(head -2 "$FLEET_STATE/task-old.src" | tr '\n' '|')$(grep -c '^Usage cap: run at most two' "$FLEET_STATE/task-old.src") $(grep -c 'at most three' "$FLEET_STATE/task-old.src") $(grep -c '^Last item (AJ 10-28): ship the thing.$' "$FLEET_STATE/task-old.src") $(bash "$here/brief.sh" --check "$FLEET_STATE/task-old.src" >/dev/null 2>&1; echo $?)" \
   "Do X.|Then Y.|1 0 1 0"
 check "the tail carries the team-ceremony rule (AJ 10-29)" "$(grep -c '^Team ceremony in every repo' "$here/brief-tail.md")" "1"
+check "the tail keeps asks for AJ out of public issues and PRs (AJ 10-29)" "$(grep -c '^Asks for AJ stay private' "$here/brief-tail.md")" "1"
 
 echo "doctor"
 mkdir -p "$KLEPSYDRA_DIR/fleet" "$work/bin"
