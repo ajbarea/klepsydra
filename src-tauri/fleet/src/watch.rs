@@ -984,6 +984,40 @@ mod tests {
     }
 
     #[test]
+    fn a_pick_leaves_todays_ledger_once_its_session_wears_its_own_voice_again() {
+        use crate::ledger::Ledger;
+        use std::sync::{Arc, Mutex};
+        let root = Scratch::new("ledger-pick-back");
+        std::fs::create_dir_all(root.0.join("fleet")).unwrap();
+        let t = unix_now();
+        for id in [A, B] {
+            root.write(&format!("fleet/{id}.json"), &homed(id, "bf_emma"));
+        }
+        let ledger = Arc::new(Mutex::new(Ledger::in_memory(t)));
+        for id in [A, B] {
+            ledger
+                .lock()
+                .unwrap()
+                .record_metrics(&commit_export(id, t), t);
+        }
+        let mut r = Reader::new(&root.0).with_ledger(ledger.clone());
+        r.step(Duration::ZERO, || t);
+        let picked: Vec<String> = ledger.lock().unwrap().day().picks.keys().cloned().collect();
+        assert_eq!(
+            picked.len(),
+            1,
+            "one of the two shares-a-voice cards wears a pick"
+        );
+        let keeper = if picked[0] == A { B } else { A };
+        std::fs::remove_file(root.0.join(format!("fleet/{keeper}.json"))).unwrap();
+        r.step(Duration::ZERO, || t + 1);
+        assert!(
+            ledger.lock().unwrap().day().picks.is_empty(),
+            "its own voice is back, so its tokens follow that character"
+        );
+    }
+
+    #[test]
     fn a_recorded_voice_is_on_disk_before_the_next_export() {
         use crate::ledger::Ledger;
         use std::sync::{Arc, Mutex};
