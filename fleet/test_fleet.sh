@@ -1380,6 +1380,8 @@ printf '%s' '{"above":["Claude Code"]}' >"$work/nosettings.json"; : >"$work/nose
 FLEET_SETTINGS='' FLEET_SCOPE=0 FLEET_MIN_AVAIL_MB=0 FLEET_LAUNCHER="$work/launcher-rec.sh" FLEET_DIR="$work" \
   FLEET_CLAUDE="python3 -I $fake $work/nosettings.json $work/nosettings.log" bash "$here/launch.sh" nosettings "$work/task.src" >/dev/null 2>&1
 check "FLEET_SETTINGS= starts claude with no --settings" "$(grep -c -- '--settings' "$work/cmd") $(grep -c -- '--session-id' "$work/cmd")" "0 1"
+check "#183: workers run keryx off (only Heph speaks), from the installed worker settings" \
+  "$(jq -r '.env.KERYX_ENABLED' "$here/worker-settings.json")" "false"
 
 echo "briefing sync"
 git init -q --bare "$work/brief-remote.git"
