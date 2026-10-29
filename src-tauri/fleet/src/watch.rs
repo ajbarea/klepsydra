@@ -79,6 +79,7 @@ pub struct Reader {
     reporter: Reporter,
     last: Option<Snapshot>,
     ledger: Option<Shared>,
+    picks: crate::picks::Picks,
 }
 
 impl Reader {
@@ -99,6 +100,7 @@ impl Reader {
             reporter: Reporter::default(),
             last: None,
             ledger: None,
+            picks: crate::picks::Picks::load(klepsydra_dir),
         }
     }
 
@@ -195,6 +197,14 @@ impl Reader {
         }
         let t = now();
         let mut snap = snapshot(&listing.entries, t);
+        if self.picks.assign(&mut snap.sessions) {
+            if let Err(e) = self.picks.save() {
+                broken.push(Problem {
+                    file: crate::picks::FILE.into(),
+                    what: format!("picks not saved: {e}"),
+                });
+            }
+        }
         let started: HashMap<&str, Option<i64>> = listing
             .entries
             .iter()
@@ -216,6 +226,10 @@ impl Reader {
                 if let Some(&(voice, home)) = voices.get(v.session_id.as_str()) {
                     noted |= l.note_voice(&v.session_id, voice, home, t);
                 }
+                noted |= match &v.pick {
+                    Some(pick) => l.note_pick(&v.session_id, pick, t),
+                    None => l.forget_pick(&v.session_id),
+                };
                 // The wall's label for the card (drawer.js `who`).
                 let label = v.name.as_deref().filter(|n| !n.is_empty());
                 if let Some(label) = label.or(v.place.as_ref().map(|p| p.repo.as_str())) {
@@ -967,6 +981,40 @@ mod tests {
     fn day_voices(dir: &Path, day: &str) -> serde_json::Value {
         let bytes = std::fs::read(dir.join(format!("{day}.json"))).unwrap();
         serde_json::from_slice::<serde_json::Value>(&bytes).unwrap()["voices"].clone()
+    }
+
+    #[test]
+    fn a_pick_leaves_todays_ledger_once_its_session_wears_its_own_voice_again() {
+        use crate::ledger::Ledger;
+        use std::sync::{Arc, Mutex};
+        let root = Scratch::new("ledger-pick-back");
+        std::fs::create_dir_all(root.0.join("fleet")).unwrap();
+        let t = unix_now();
+        for id in [A, B] {
+            root.write(&format!("fleet/{id}.json"), &homed(id, "bf_emma"));
+        }
+        let ledger = Arc::new(Mutex::new(Ledger::in_memory(t)));
+        for id in [A, B] {
+            ledger
+                .lock()
+                .unwrap()
+                .record_metrics(&commit_export(id, t), t);
+        }
+        let mut r = Reader::new(&root.0).with_ledger(ledger.clone());
+        r.step(Duration::ZERO, || t);
+        let picked: Vec<String> = ledger.lock().unwrap().day().picks.keys().cloned().collect();
+        assert_eq!(
+            picked.len(),
+            1,
+            "one of the two shares-a-voice cards wears a pick"
+        );
+        let keeper = if picked[0] == A { B } else { A };
+        std::fs::remove_file(root.0.join(format!("fleet/{keeper}.json"))).unwrap();
+        r.step(Duration::ZERO, || t + 1);
+        assert!(
+            ledger.lock().unwrap().day().picks.is_empty(),
+            "its own voice is back, so its tokens follow that character"
+        );
     }
 
     #[test]

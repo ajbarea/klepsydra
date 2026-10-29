@@ -111,6 +111,20 @@ pub struct View {
     /// The Remote Control link that opens the session on claude.ai or in
     /// the Claude app; none while Remote Control is off or the session ended.
     pub remote_url: Option<String>,
+    /// When it started, as the hook stamped it (not skew-corrected, so the
+    /// order never moves); the wall casts a character for a session with none
+    /// of its own oldest first, so a card keeps its face. None from a hook
+    /// that never stamped it.
+    pub started_at: Option<i64>,
+    /// The voice this card gave up to another card that keeps it
+    /// (keep_faces_distinct), live or ended; the wall counts it in this card's
+    /// place so no other card's face moves (castPicks). Left out when none.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ceded: Option<String>,
+    /// The character the wall gives a session with no cast voice of its own
+    /// (crate::picks), kept while it stays on the wall. Left out when none.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pick: Option<String>,
     /// The account it runs on; left out of the JSON when the hook never said.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub account: Option<crate::session::Account>,
@@ -293,6 +307,9 @@ pub fn view(entry: &Entry, now: i64) -> Option<View> {
         } else {
             f.remote_url.clone()
         },
+        started_at: f.started_at,
+        ceded: None,
+        pick: None,
         account: f.account.clone(),
         reply_at: None,
         marks: Marks {
@@ -342,7 +359,7 @@ fn keep_faces_distinct(shown: &mut [(&SessionFile, View)]) {
             None => true,
         };
         if !keeps {
-            v.voice = None;
+            v.ceded = v.voice.take();
         }
     }
 }
@@ -1142,6 +1159,20 @@ mod tests {
         );
         assert_eq!(voice_of(&s, "new"), Some("bf_emma"));
         assert_eq!(voice_of(&s, "old"), None);
+        let ceded = |id: &str| {
+            s.sessions
+                .iter()
+                .find(|v| v.session_id == id)
+                .unwrap()
+                .ceded
+                .clone()
+        };
+        assert_eq!(
+            ceded("old").as_deref(),
+            Some("bf_emma"),
+            "the card that gave its voice names it, so the wall counts it in that card's place"
+        );
+        assert_eq!(ceded("new"), None);
     }
 
     #[test]

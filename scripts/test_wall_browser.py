@@ -371,14 +371,15 @@ def receipt_text(wall):
     page.wait_for_timeout(SETTLE_MS)
     got = page.evaluate(
         """() => {
-      const find = (name) => [...document.querySelectorAll('.card')].find((c) => c.querySelector('.name').textContent === name);
+      // A card by its name, or by its session (a voiceless one is named for the character it was cast).
+      const find = (name) => [...document.querySelectorAll('.card')].find((c) => c.querySelector('.name').textContent === name || c.dataset.key === name);
       const text = (name) => find(name).querySelector('.r-full').textContent;
       const visible = (name) => !find(name).querySelector('.ledger-line').hidden && getComputedStyle(find(name).querySelector('.ledger-line')).display !== 'none';
       return {
         hephaestus: text('Hephaestus'),
         techne: text('Techne'),
         zero: visible('Dokimasia'),
-        none: visible('Nightly corpus rebuild'),
+        none: visible('demo-14-medallion'),
         shortHidden: getComputedStyle(find('Techne').querySelector('.r-short')).display,
       };
     }"""
@@ -470,7 +471,7 @@ def drawer_opens_and_returns_focus(wall):
         [named, docked, from_button],
     )
 
-    chip = page.locator(".card:has(.name:text-is('Kallos')) .chip")
+    chip = page.locator(".card[data-key='demo-2-af_bella'] .chip")
     chip.focus()
     page.keyboard.press("Enter")
     page.wait_for_selector("#ledger .scope")
@@ -503,7 +504,7 @@ def drawer_opens_and_returns_focus(wall):
     # card's note hides its ledger line) hands focus to the Ledger button.
     chip.click()
     page.wait_for_selector("#ledger .scope")
-    page.evaluate("[...document.querySelectorAll('.card')].find(c => c.querySelector('.name').textContent === 'Kallos').querySelector('.ledger-line').style.setProperty('display', 'none')")
+    page.evaluate("[...document.querySelectorAll('.card')].find(c => c.dataset.key === 'demo-2-af_bella').querySelector('.ledger-line').style.setProperty('display', 'none')")
     page.keyboard.press("Escape")
     page.wait_for_function(DRAWER_SHUT)
     fallback = page.evaluate(ACTIVE)
@@ -565,7 +566,9 @@ def drawer_tables(wall):
       return [c.querySelector('.visually-hidden')?.textContent ?? c.textContent, shown ? shown.textContent : c.textContent, c.querySelector('[title]')?.title ?? null];
     })"""
     )
-    other = "Other sessions: 2 (1 with no voice, 1 with a voice outside the cast)"
+    # demo-15's voice is outside the cast, but its card wears a picked character (#148), so its
+    # tokens count under that row; only the earlier session with no voice and no card is Other.
+    other = "Other sessions: 1 (with no voice)"
     names = [r[0] for r in rows]
     cdp = page.context.new_cdp_session(page)
     tree = [n for n in cdp.send("Accessibility.getFullAXTree")["nodes"] if not n.get("ignored")]
@@ -634,6 +637,29 @@ def shared_home_voice(wall):
     ok = [n for n in names if n.startswith("Hephaestus")] == want and blocked == [want[1]]
     wall.check(ok, "sessions sharing a home voice keep a row each, named for its card", [names, blocked])
     page.close()
+
+
+def cast_pick_outlives_its_card(wall):
+    """#148: a session the wall cast a character keeps that character's row in
+    Tokens by character after its card leaves the wall (the crate records the
+    pick in today's file, day.picks)."""
+    fleet = json.loads((ROOT / "scripts/fixtures/fleet-demo.json").read_text())
+    gone = fleet["sessions"][1]["session_id"]
+    view = json.loads(ledger_view())
+    view["day"]["voices"].pop(gone, None)
+    # af_heart: a character no other session in the demo day wears.
+    view["day"]["picks"] = {gone: "af_heart"}
+    want = json.loads((ROOT / "src/fleet/themes/kourai.json").read_text())["characters"]["af_heart"]["name"]
+    fleet["sessions"] = [x for x in fleet["sessions"] if x["session_id"] != gone]
+    page = wall.open(960, 1000, 8, fixture=json.dumps(fleet), ledger=json.dumps(view))
+    open_drawer(page)
+    rows = page.evaluate(
+        """() => [...document.querySelectorAll('#ledger-characters-table tbody tr')].map((r) =>
+      r.cells[0].querySelector('.visually-hidden')?.textContent ?? r.cells[0].textContent)"""
+    )
+    page.close()
+    ok = want in rows
+    wall.check(ok, "a cast session keeps its character's Ledger row after its card leaves", [rows, want])
 
 
 def drawer_states(wall):
@@ -705,7 +731,7 @@ def drawer_states(wall):
 
     # A read that fails after Show all keeps focus in the dialog too.
     page = wall.open(1920, 1000, 16)
-    page.locator(".card:has(.name:text-is('Kallos')) .chip").click()
+    page.locator(".card[data-key='demo-2-af_bella'] .chip").click()
     page.wait_for_selector("#ledger-show-all")
     page.unroute("**/ledger-demo.json")
     page.route("**/ledger-demo.json", lambda r: r.abort())
@@ -738,7 +764,7 @@ def drawer_follows_snapshots(wall):
     page.wait_for_function(DRAWER_SHUT)
 
     # A repaint keeps focus where it was inside the drawer.
-    page.locator(".card:has(.name:text-is('Kallos')) .chip").click()
+    page.locator(".card[data-key='demo-2-af_bella'] .chip").click()
     page.wait_for_selector("#ledger-show-all")
     page.focus("#ledger-show-all")
     seen = wall.ledger_requests
@@ -3785,7 +3811,7 @@ def ledger_chip_opens_on_a_session(wall):
     while it is open turns it to that one; Close returns focus to the chip;
     the Ledger button shuts the open Ledger; a snapshot reads it again."""
     page = wall.open(1920, 1000, 16)
-    kallos = page.locator(".card:has(.name:text-is('Kallos')) .chip")
+    kallos = page.locator(".card[data-key='demo-2-af_bella'] .chip")
     kallos.click()
     page.wait_for_selector("#ledger .scope")
     st = page.evaluate(LEDGER_STATE)
@@ -3794,7 +3820,7 @@ def ledger_chip_opens_on_a_session(wall):
         "a chip opens the docked Ledger on its session, focus on the title",
         st,
     )
-    other = page.locator(".card:not(:has(.name:text-is('Kallos'))) .chip:not([hidden])").first
+    other = page.locator(".card:not([data-key='demo-2-af_bella']) .chip:not([hidden])").first
     who = other.evaluate("(c) => c.closest('.card').querySelector('.name').textContent")
     other.click()
     page.wait_for_function("(who) => document.querySelector('#ledger .scope')?.textContent.includes(`Showing ${who} only`)", arg=who)
@@ -3930,7 +3956,7 @@ def ledger_button_keeps_focus(wall):
     on the button; Close and Esc give it back to the chip, docked or as the
     narrow dialog."""
     page = wall.open(1920, 1000, 16)
-    chip = page.locator(".card:has(.name:text-is('Kallos')) .chip")
+    chip = page.locator(".card[data-key='demo-2-af_bella'] .chip")
     chip.click()
     page.wait_for_selector("#ledger .scope")
     page.click("#ledger-open")
@@ -3948,7 +3974,7 @@ def ledger_button_keeps_focus(wall):
     )
     page.close()
     page = wall.open(945, 1000, 8)
-    chip = page.locator(".card:has(.name:text-is('Kallos')) .chip")
+    chip = page.locator(".card[data-key='demo-2-af_bella'] .chip")
     chip.click()
     page.wait_for_selector("#ledger .scope")
     modal = page.evaluate("document.getElementById('ledger').matches(':modal')")
@@ -4969,6 +4995,7 @@ def main() -> int:
             drawer_tables,
             drawer_states,
             shared_home_voice,
+            cast_pick_outlives_its_card,
             drawer_follows_snapshots,
             portrait_dialog,
             band_clear,

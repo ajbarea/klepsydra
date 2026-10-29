@@ -1,6 +1,6 @@
 // The fleet strip: a portrait per Claude Code session beside the gauge, each
 // with its status badge. A click opens the card wall at that session.
-import { statuses, stripItems } from "./model.js";
+import { castPicks, statuses, stripItems } from "./model.js";
 import { showFace } from "./face.js";
 import { syncChildren } from "./dom.js";
 
@@ -28,7 +28,8 @@ export function mountStrip(el, { open, cast }) {
     return b;
   };
 
-  return function render(sessions, nowMs, fromReader = true, speaking = null) {
+  return function render(all, nowMs, fromReader = true, speaking = null) {
+    const sessions = castPicks(all, cast());
     const items = stripItems(sessions, cast(), nowMs, fromReader ? before : statuses(sessions), speaking);
     if (fromReader) before = statuses(sessions);
     el.hidden = items.length === 0;

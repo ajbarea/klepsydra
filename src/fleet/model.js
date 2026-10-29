@@ -2,7 +2,7 @@
 // so it can be unit tested. Sessions arrive from the reader already ordered.
 
 import { markerWidth, mix, mixOklab, readableOn } from "./contrast.js";
-import { medallion } from "./medallion.js";
+import { hash, medallion } from "./medallion.js";
 import { castAccent, castCharacter, castFiles, voiceName } from "./cast.js";
 import { ledgerLine } from "./ledger.js";
 
@@ -85,10 +85,14 @@ const basename = (path) => (typeof path === "string" ? path.replace(/\/+$/, "").
  * the theme (`cast`) casts for its keryx voice; else a medallion bearing the
  * initial of the voice's name, or of the session's name or folder when it has
  * no voice, in a metal picked by the voice, or by the session id when it has
- * none. A character whose face files cannot be named is a medallion too.
+ * none. A character whose face files cannot be named is a medallion too. A
+ * session with no character of its own wears the one castPicks gave it
+ * (`pick`), with no keryx voice to name.
  */
 export function identity(s, cast) {
-  const voice = typeof s.voice === "string" && s.voice ? s.voice : null;
+  const own = typeof s.voice === "string" && s.voice ? s.voice : null;
+  const picked = !castFiles(castCharacter(own, cast), cast) && typeof s.pick === "string" ? s.pick : null;
+  const voice = picked ?? own;
   const character = castCharacter(voice, cast);
   const base = character && castFiles(character, cast);
   if (base) {
@@ -97,7 +101,7 @@ export function identity(s, cast) {
     const placed = Array.isArray(head) && head.length === 3 && head.every((v) => typeof v === "number" && v > 0 && v < 1);
     return {
       name: character.name,
-      voice: voiceName(voice),
+      voice: picked ? null : voiceName(voice),
       face: `${base}-96.webp`,
       face2x: `${base}-192.webp`,
       full: `${base}-full.webp`,
@@ -106,9 +110,49 @@ export function identity(s, cast) {
       figure: placed ? { src: `${base}-figure.webp`, head } : null,
     };
   }
-  const name = voice ? voiceName(voice) : s.name || basename(s.launch_dir) || s.session_id.slice(0, 8);
-  const face = medallion(name, voice ?? s.session_id);
+  const name = own ? voiceName(own) : s.name || basename(s.launch_dir) || s.session_id.slice(0, 8);
+  const face = medallion(name, own ?? s.session_id);
   return { name, voice: null, face, face2x: face, full: null, accent: null, epithet: null, figure: null };
+}
+
+/**
+ * Every session a character from the theme `cast` wears (#148). The app's
+ * crate assigns each session with no cast voice of its own a `pick` once and
+ * keeps it while the session stays on the wall (src-tauri/fleet/src/picks.rs),
+ * so faces never move; a crate pick is kept here like an own voice. A session
+ * without one (demo fixtures, an older app) gets a pick here the same way:
+ * oldest first, each seeing only older cards, the least shown character, a
+ * voice it gave up (`ceded`) counted in its own place and avoided, ties by the
+ * hash of its id. With no theme loaded nothing is picked and the cards wear
+ * medallions.
+ */
+export function castPicks(sessions, cast) {
+  const chars = Object.keys(cast?.characters ?? {}).filter((k) => castFiles(castCharacter(k, cast), cast));
+  if (!chars.length) return sessions;
+  const own = (s) => (castFiles(castCharacter(s.voice, cast), cast) ? s.voice : null);
+  const shown = new Map(chars.map((c) => [c, 0]));
+  const order = [...sessions].sort(
+    (a, b) => (a.started_at ?? Infinity) - (b.started_at ?? Infinity) || (a.session_id < b.session_id ? -1 : 1),
+  );
+  const pick = new Map();
+  for (const s of order) {
+    // The crate's pick (src-tauri/fleet/src/picks.rs) is kept like an own voice.
+    const kept = castFiles(castCharacter(s.pick, cast), cast) ? s.pick : null;
+    let c = own(s) ?? kept;
+    // The voice this card gave up to another (the crate's `ceded`): it still counts in this
+    // card's place, so newer cards see what they saw before; the card's new face avoids it.
+    const gave = kept ? null : own({ voice: s.ceded });
+    if (!c) {
+      const free = chars.length > 1 && gave ? chars.filter((x) => x !== gave) : chars;
+      const least = Math.min(...free.map((x) => shown.get(x)));
+      const pool = free.filter((x) => shown.get(x) === least);
+      c = pool.reduce((best, x) => (hash(`${s.session_id}:${x}`) > hash(`${s.session_id}:${best}`) ? x : best));
+      pick.set(s.session_id, c);
+    }
+    const counted = gave ?? c;
+    if (shown.has(counted)) shown.set(counted, shown.get(counted) + 1);
+  }
+  return sessions.map((s) => (pick.has(s.session_id) ? { ...s, pick: pick.get(s.session_id) } : s));
 }
 
 /** "Hermes, 2 agents and 1 shell running in background, working, prompt free, 2 minutes" */

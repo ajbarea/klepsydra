@@ -194,16 +194,19 @@ export function rowLabels(cards, recorded) {
  * home-voiced session has a row of its own, named from `labels` (session id
  * to what tells its card apart). Every other session lands in one "Other
  * sessions" row, always last, whose label counts the sessions with no voice
- * and those with a voice outside the cast.
+ * and those with a voice outside the cast. `wall` (session id to its card's
+ * { name, accent, cast }) names a session the wall cast a character by it.
  */
-export function tokensByCharacter(sessions, voices, cast, { homes = null, labels = null } = {}) {
+export function tokensByCharacter(sessions, voices, cast, { homes = null, labels = null, wall = null } = {}) {
   const rows = new Map();
   const other = { name: "Other sessions", accent: null, tokens: 0, other: true, count: 0 };
   let voiceless = 0;
   for (const [id, totals] of sessions) {
     const tokens = totalTokens(totals.tokens);
     if (!tokens) continue;
-    const who = characterOf(id, voices, cast, null, { homes, label: labels?.get(id) });
+    // A session the wall cast a character (castPicks) counts under its card's character.
+    const card = wall?.get(id);
+    const who = card?.cast ? { name: card.name, accent: card.accent, character: true } : characterOf(id, voices, cast, null, { homes, label: labels?.get(id) });
     if (who?.character) {
       const key = who.own ? `session:${id}` : `character:${who.name}`;
       const row = rows.get(key) ?? { name: who.name, accent: who.accent, tokens: 0 };

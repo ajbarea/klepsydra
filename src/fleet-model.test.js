@@ -5,7 +5,7 @@ import {
   STATUS, shortAge, longAge, statusParts, voiceName, identity, accessibleName,
   statuses, startedNeeding, orderChanged, shouldSlide, transitionName, announcements, updatedText, badgeSvg, stripItems, card,
   askText, askParts, plainText, tally, crewOf, crewText, crewRing, crewRings, crewMarks, RINGS, RING_MAX, showsRingKey, alsoChip, ALSO_NAMED, pillWhen,
-  BAND, accountsDiffer,
+  BAND, accountsDiffer, castPicks,
 } from "./fleet/model.js";
 import { contrast } from "./fleet/contrast.js";
 import { TONES, hash, initialOf, medallion, medallionSvg, toneOf } from "./fleet/medallion.js";
@@ -794,4 +794,88 @@ test("a card names its account, and the wall shows it only while live cards diff
   assert.equal(accountsDiffer([a, card(session({ session_id: "d", account: rit }), CAST, NOW)]), false, "one account: no chip");
   assert.equal(accountsDiffer([a, none]), false, "a card with no account says nothing of a second");
   assert.equal(accountsDiffer([a, card(session({ session_id: "e", account: me, status: "ended" }), CAST, NOW)]), false, "an ended card does not count");
+});
+
+test("#148: a session with no character of its own gets one no live card shows, never a medallion while the theme loads", () => {
+  const cast = {
+    faces: "kourai",
+    characters: { v1: { name: "One", face: "one" }, v2: { name: "Two", face: "two" }, v3: { name: "Three", face: "three" } },
+  };
+  const at = (id, voice, started, over = {}) => session({ session_id: id, voice, started_at: started, ...over });
+  const faces = (list) => Object.fromEntries(castPicks(list, cast).map((s) => [s.session_id, identity(s, cast).name]));
+
+  // keryx muted, no home voice: a free character, and no keryx voice to name.
+  const muted = castPicks([at("held", "v1", 1), at("cv", null, 2)], cast);
+  assert.notEqual(identity(muted[1], cast).name, "One");
+  assert.ok(["Two", "Three"].includes(identity(muted[1], cast).name));
+  assert.equal(identity(muted[1], cast).voice, null);
+  assert.equal(identity(muted[0], cast).voice, voiceName("v1"), "an own voice is still named");
+
+  // Free characters go first; a second voiceless session takes the other one.
+  const two = faces([at("held", "v1", 1), at("a", null, 2), at("b", null, 3)]);
+  assert.deepEqual(new Set([two.a, two.b]), new Set(["Two", "Three"]));
+
+  // Every character showing: one of the least shown is reused, not a medallion.
+  const full = faces([at("x", "v1", 1), at("y", "v1", 2), at("z", "v2", 3), at("w", "v3", 4), at("n", null, 5)]);
+  assert.ok(["Two", "Three"].includes(full.n), full.n);
+
+  // An ended card holds its face until it leaves the wall; its departure frees it.
+  const ended = faces([at("old", "v1", 1, { status: "ended" }), at("p", "v2", 2), at("q", "v3", 3), at("r", null, 4)]);
+  assert.ok(["One", "Two", "Three"].includes(ended.r));
+  assert.equal(faces([at("p", "v2", 2), at("q", "v3", 3), at("r", null, 4)]).r, "One");
+
+  // A newer session whose own voice is an older card's pick shares it; the older card keeps its face.
+  const olderPick = castPicks([at("o", null, 1)], cast)[0].pick;
+  const shared = faces([at("o", null, 1), at("n", olderPick, 2)]);
+  assert.equal(shared.o, shared.n, "the two share the character; the older one never moves");
+
+  // #148 round 3: a card that gives its voice to another (the crate's `ceded`) moves no other card's face,
+  // whether an older card ended (a), a newcomer took it (b) or a hold beat a live card's home voice (c).
+  for (let i = 0; i < 500; i++) {
+    const B = `B${i}`;
+    const a1 = faces([at(`A${i}`, "v1", 1), at(B, null, 2), at(`N${i}`, "v1", 10)])[B];
+    const a2 = faces([at(`A${i}`, null, 1, { status: "ended", ceded: "v1" }), at(B, null, 2), at(`N${i}`, "v1", 10)])[B];
+    assert.equal(a2, a1, "(a) an older card ending moves no newer face");
+    const b1 = faces([at(`A${i}`, "v1", 1, { status: "ended" }), at(B, null, 2)])[B];
+    const b2 = faces([at(`A${i}`, null, 1, { status: "ended", ceded: "v1" }), at(B, null, 2), at(`N${i}`, "v1", 10)])[B];
+    assert.equal(b2, b1, "(b) a newcomer taking an ended card's voice moves no other face");
+    const c1 = faces([at(`A${i}`, "v1", 1), at(B, null, 2)])[B];
+    const c2 = faces([at(`A${i}`, null, 1, { ceded: "v1" }), at(B, null, 2), at(`N${i}`, "v1", 10)])[B];
+    assert.equal(c2, c1, "(c) a live card losing its home voice moves no other face");
+    // The card that gave its voice wears another character, and keeps it as newer cards come and go.
+    const own = faces([at(`A${i}`, null, 1, { ceded: "v1" }), at(`N${i}`, "v1", 10)])[`A${i}`];
+    assert.notEqual(own, "One");
+    assert.equal(faces([at(`A${i}`, null, 1, { ceded: "v1" }), at(`N${i}`, "v1", 10), at(`Z${i}`, null, 11), at(`Y${i}`, null, 12)])[`A${i}`], own);
+  }
+
+  // The crate's pick (picks.rs) is kept as given, never recomputed here.
+  const kept = faces([at("a", null, 1, { pick: "v3" }), at("b", "v3", 2), at("c", null, 3)]);
+  assert.equal(kept.a, "Three", "the crate's pick stands even when a newer card wears it too");
+  assert.notEqual(kept.c, "Three");
+
+  // An older card ending never moves a newer one's face.
+  for (let i = 0; i < 200; i++) {
+    const list = [at(`a${i}`, null, 1), at(`b${i}`, null, 2)];
+    const live = faces(list)[`b${i}`];
+    assert.equal(faces([{ ...list[0], status: "ended" }, list[1]])[`b${i}`], live);
+  }
+
+  // Stable: an older card keeps its face when a newer one arrives, whatever the order sessions come in.
+  const before = faces([at("held", "v1", 1), at("older", null, 2)]);
+  const after = faces([at("newer", null, 9), at("older", null, 2), at("held", "v1", 1)]);
+  assert.equal(after.older, before.older);
+  assert.notEqual(after.newer, after.older);
+
+  // A voice the theme does not cast counts as none.
+  assert.ok(["One", "Two", "Three"].includes(faces([at("odd", "zz_nobody", 1)]).odd));
+});
+
+test("#148: the medallion is only for a theme that did not load", () => {
+  const s = session({ voice: null, name: "CV audit" });
+  for (const none of [null, undefined, {}, { faces: "kourai", characters: {} }]) {
+    const [picked] = castPicks([s], none);
+    assert.equal(picked.pick, undefined);
+    assert.equal(identity(picked, none).face, identity(s, null).face);
+    assert.match(identity(picked, none).face, /^data:image\/svg\+xml/);
+  }
 });

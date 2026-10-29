@@ -108,12 +108,19 @@ export function createDrawer({ dialog, button, tab, edge, sessions, cast, fetchT
   let readDay = ""; // the local date the latest read started on
   let painted = ""; // what the body shows, so an unchanged snapshot leaves it (and focus) alone
 
-  const who = () => {
+  const who = (day) => {
     const map = new Map();
     for (const s of sessions()) {
       const id = identity(s, cast());
       // What tells two cards of one character apart: the session's name, else its repo.
-      map.set(s.session_id, { name: id.name, accent: id.accent, label: s.name || s.where?.repo || null });
+      // A character the wall cast (crate picks) names no voice: the Ledger names the card's.
+      map.set(s.session_id, { name: id.name, accent: id.accent, label: s.name || s.where?.repo || null, cast: Boolean(s.pick) && id.voice === null });
+    }
+    // A session gone from the wall keeps the character the crate recorded in today's file.
+    for (const [sid, pick] of Object.entries(day?.picks ?? {})) {
+      if (map.has(sid)) continue;
+      const id = identity({ session_id: sid, pick }, cast());
+      if (id.voice === null && id.full) map.set(sid, { name: id.name, accent: id.accent, label: null, cast: true });
     }
     return map;
   };
@@ -121,7 +128,7 @@ export function createDrawer({ dialog, button, tab, edge, sessions, cast, fetchT
   function paint() {
     // A fetch can land after the drawer shut: a shut drawer neither paints nor takes focus.
     if (!view || !panel.isOpen) return;
-    const names = who();
+    const names = who(view.day);
     // The theme too: a voice the wall no longer shows is still named by it.
     const key = JSON.stringify([view, filter, [...names], cast().label]);
     if (key === painted) return;
@@ -130,7 +137,8 @@ export function createDrawer({ dialog, button, tab, edge, sessions, cast, fetchT
     // Today's recorded voice names a session; the wall only when the day has none.
     const homes = day.home_voices;
     const labels = rowLabels([...names].map(([id, n]) => [id, n.label]), day.labels);
-    const nameOf = (id) => characterOf(id, day.voices, cast(), names.get(id), { homes, label: labels.get(id) })?.name;
+    const nameOf = (id) =>
+      names.get(id)?.cast ? names.get(id).name : characterOf(id, day.voices, cast(), names.get(id), { homes, label: labels.get(id) })?.name;
     const everyone = todaySessions(day);
     const shown = todaySessions(day, filter);
     const day_ = sumTotals(shown.map(([, t]) => t));
@@ -178,7 +186,7 @@ export function createDrawer({ dialog, button, tab, edge, sessions, cast, fetchT
     } else if (filter !== null && totalTokens(day_.tokens) === 0) {
       out.push(el("p", "empty-state", "Nothing counted for this session today."));
     } else {
-      out.push(totalsSection(day_), charactersSection(day, shown, labels), modelsSection(day, shown), attributionSection(day, shown));
+      out.push(totalsSection(day_), charactersSection(day, shown, labels, names), modelsSection(day, shown), attributionSection(day, shown));
     }
     out.push(blockedSection(guardrails, total, nameOf), errorsSection(day_));
     const cost = costLine(day_.cost_usd_estimate_micros);
@@ -202,9 +210,9 @@ export function createDrawer({ dialog, button, tab, edge, sessions, cast, fetchT
     return span;
   }
 
-  function charactersSection(day, shown, labels) {
+  function charactersSection(day, shown, labels, names) {
     const s = section("ledger-characters", "Tokens by character");
-    const rows = tokensByCharacter(shown, day.voices, cast(), { homes: day.home_voices, labels });
+    const rows = tokensByCharacter(shown, day.voices, cast(), { homes: day.home_voices, labels, wall: names });
     const max = Math.max(1, ...rows.map((r) => r.tokens));
     // The bar is decoration: the name and the count beside it are the data.
     const bar = (row) => {

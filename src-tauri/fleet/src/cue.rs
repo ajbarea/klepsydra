@@ -171,6 +171,9 @@ mod tests {
             turn_at: None,
             asked_after_turn: false,
             remote_url: None,
+            started_at: None,
+            ceded: None,
+            pick: None,
             account: None,
             reply_at: None,
             marks: Marks {

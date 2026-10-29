@@ -539,8 +539,10 @@ def main() -> int:
                               f"{want}: the open portrait shows the theme's {michael['name']}", shown)
                 page.keyboard.press("Escape")
                 wait_until(page, "!document.getElementById('portrait').open", 5)
-                plain = {t: [c["accent"] for c in v["cards"] if voices.get(c["key"]) not in THEMES["kourai"]["characters"]] for t, v in looks.items()}
-                run.check(len({json.dumps(a) for a in plain.values()}) == 1, "a card no theme casts keeps its look", plain)
+                # A card no theme casts wears one of each theme's characters (#148), never a medallion.
+                plain = {t: [c["face"] for c in v["cards"] if voices.get(c["key"]) not in THEMES["kourai"]["characters"]] for t, v in looks.items()}
+                run.check(all(f.startswith(f"fleet/faces/{THEMES.get(t, THEMES['kourai'])['faces']}/") for t, fs in plain.items() for f in fs) and all(plain.values()),
+                          "a card no theme casts wears a character of the theme, not a medallion", plain)
                 keys = {t: [c["key"] for c in v["cards"]] for t, v in looks.items()}
                 run.check(len({json.dumps(k) for k in keys.values()}) == 1 and len(keys["kourai"]) == 16, "nor which cards show, or their order", keys)
                 # A phone opened with a theme saved paints its first card in that theme, no other first.

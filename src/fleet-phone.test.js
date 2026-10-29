@@ -106,7 +106,8 @@ test("needs-you cards come first, each group in the reader's order", () => {
   const order = needsFirst([s("a", "working"), s("b", "needs_you"), s("c", "done"), s("d", "needs_you"), s("e", "error")]);
   assert.deepEqual(order.map((x) => x.session_id), ["b", "d", "a", "c", "e"]);
   assert.deepEqual(needsFirst([]), []);
-  assert.match(read("src/fleet/wall.js"), /sessions = served \? needsFirst\(message\.sessions\) : message\.sessions;/);
+  assert.match(read("src/fleet/wall.js"), /const fresh = castPicks\(message\.sessions, cast\);/);
+  assert.match(read("src/fleet/wall.js"), /sessions = served \? needsFirst\(fresh\) : fresh;/);
 });
 
 test("only a claude.ai Claude Code session link becomes the card's link", () => {
