@@ -431,12 +431,13 @@ heph_config() {
 
 # Whether the agent in PANE has finished its turn: its live fleet file
 # (klepsydra's) says done, or stopped with only background work, and lists no
-# background work still running.
+# background work still running. Prints the session's prompt.at from the same
+# read (empty when it has none), for prompt_stamp comparisons.
 turn_done() { # PANE
   local sid
   sid=$(live_session "$1") || return 1
-  jq -e '(.state == "done" or (.state == "working" and .reason == "background"))
-    and ((.background // []) | length) == 0' "$KLEPSYDRA_DIR/fleet/$sid.json" >/dev/null 2>&1
+  jq -er 'select((.state == "done" or (.state == "working" and .reason == "background"))
+    and ((.background // []) | length) == 0) | .prompt.at // "" | tostring' "$KLEPSYDRA_DIR/fleet/$sid.json" 2>/dev/null
 }
 
 # The config folder pane PANE runs on: its registry row's (column 6), else the default.

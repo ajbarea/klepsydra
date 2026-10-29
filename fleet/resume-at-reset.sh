@@ -358,15 +358,13 @@ one() { # PANE
   # Back to the role's preferred account: at a finished turn (no background
   # work) and an empty prompt, so nothing in flight is lost; the 15 min
   # hold-down above and after a failed try keeps a pane from flapping.
-  local pref pref_id back_why
+  local pref pref_id back_why idle_stamp
   if (( orch )); then pref=${FLEET_HEPH_ACCOUNTS%% *}; else pref=${FLEET_ACCOUNTS%% *}; fi
   pref_id=${ACCT_ID[$pref]:-}
   if [[ -z $limit && -z ${due[$p]:-} && -n $pref_id && $cfg != "$pref" && $pref_id != "${PANE_ID:-}" ]] &&
     { (( orch )) || [[ -n $(reg_field "$p" 2) ]]; } && (( NOW - ${move_failed[$p]:-0} >= 900 )) &&
-    ! back_held "$pref_id" && back_room "$pref_id" "$NOW" && idle_empty "$s" && turn_done "$p"; then
+    ! back_held "$pref_id" && back_room "$pref_id" "$NOW" && idle_empty "$s" && idle_stamp=$(turn_done "$p"); then
     back_why="moved back to its preferred account, $(account_label "$pref_id"), which has room again"
-    local idle_stamp
-    idle_stamp=$(prompt_stamp "$p")
     if (( orch )); then
       new=$(heph_move "$p" "$pref" "$back_why" "" "$idle_stamp")
     else
