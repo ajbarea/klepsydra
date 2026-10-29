@@ -66,6 +66,8 @@ jobs:
         run: |
           command -v tmux >/dev/null || { sudo apt-get update && sudo apt-get install -y tmux; }
           bash hooks/test_launch.sh
+      - name: Fleet engine tests
+        run: bash fleet/test_fleet.sh
       - name: Release memory check tests
         run: bash scripts/test_measure_memory.sh
       - name: Windows build stage check tests
@@ -73,7 +75,7 @@ jobs:
       - name: Perf fixture tests
         run: python3 -I scripts/perf/test_fixture.py
       - name: Shell lint
-        run: shellcheck hooks/*.sh statusline/*.sh scripts/*.sh
+        run: shellcheck -x hooks/*.sh statusline/*.sh scripts/*.sh fleet/*.sh fleet/fleet
       # The install dir is writable only because the NSIS mode is currentUser;
       # a perMachine build puts it under Program Files. Readings and harness
       # output go to the app data dir and to temp respectively.

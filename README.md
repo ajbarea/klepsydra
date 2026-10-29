@@ -1261,12 +1261,40 @@ the app to change it; an unknown value is logged and info used. In a page,
 debug lines also need localStorage's `klepsydra.debug` set to `1`. Builds
 before the log moved wrote `fleet.log` in the app data dir; it can be deleted.
 
+## Fleet engine
+
+<!-- budget: 450 words -->
+`fleet/` holds the scripts that run an orchestrated fleet of Claude Code
+sessions in the `fleet` tmux session: they start agents, resume them after a
+usage limit, and check the fleet's health. `make install-fleet` links each one
+from this checkout into the fleet's state folder (`~/.local/state/fleet-orchestrator`,
+or `FLEET_STATE`), so pulling main updates the fleet. It also links the `fleet`
+command into `~/.local/bin` and writes the services as user units in
+`~/.config/systemd/user`, which start again after a reboot. A copy a link
+replaces goes to `archive/fleet-scripts-<date>/`. Runtime state (`panes.tsv`,
+briefs, logs) stays in the state folder.
+
+| Command | What it does |
+|---|---|
+| `fleet doctor` | One line per check: the resume service, its last pass, Remote Control on every registered pane and the orchestrator's, the phone wall locally and over Tailscale Serve with a fresh `fleet.json`, a pane watcher, and briefs' shared rules. Exits non-zero on any failure. |
+| `fleet log [N]` | The last N decisions as plain lines. |
+| `fleet brief NAME BODY` | Writes `task-NAME.src`: BODY, then the shared rules in `fleet/brief-tail.md`. `--check` lists briefs whose rules drifted. |
+| `fleet cutover` | Restarts the resume service on the installed scripts and confirms its start is logged. |
+| `fleet/launch.sh NAME BRIEF` | Starts an agent with its own session id in a memory-capped scope. It turns Remote Control on and waits for it to settle, pastes the brief, checks the brief reached the prompt, then submits it. A retry never sends Escape. It records the pane, session id and folder in `panes.tsv`. |
+| `fleet/resume-at-reset.sh` | The resume service. It resumes a limited pane at the reset its banner names, or at once after a switch to an account with room. It starts a registered pane fresh from its brief after an hour idle. Whatever AJ typed at a limited pane is sent as typed; a line that left the prompt unsent is typed again. Each pane's state survives a restart of the service. |
+
+Every script logs each decision as one JSON line in `log/fleet.log` under the
+state folder, in the app log's shape (`ts`, `level`, `target`, `message`, then
+the event's own fields: pane, account, reason). The file rotates past 1 MiB
+and keeps four old files. `jq 'select(.level == "ERROR")'` lists failures.
+
 ## Tests
 
 ```bash
 bash statusline/test_statusline.sh       # usage hook and heartbeat, against recorded payloads
 bash hooks/test_fleet.sh                 # fleet hook: states, where, identity, pruning, gone, settings, window colours
 bash hooks/test_launch.sh                # launcher: new, jump, tab reuse, against a private tmux socket
+bash fleet/test_fleet.sh                 # fleet engine: limits, resets, typed lines, launch delivery, doctor, against fake panes
 bash scripts/test_measure_memory.sh      # the release memory check
 node --test src/*.test.js                # ramp, countdown, reconciliation, fleet model, faces, guards, logger
 npm run lint                             # Biome: no console.log, info or debug; pages log through src/log.js
