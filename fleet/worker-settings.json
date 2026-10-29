@@ -1,0 +1,4 @@
+{
+  "crossSessionInbound": "accept",
+  "subagentPromptCacheTtl": "1h"
+}
