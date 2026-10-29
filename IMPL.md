@@ -14,12 +14,15 @@ feat/two-accounts).
   log at <state>/log/ci.log (rotating). Live --once pass: 14 repos, 0 red, 2 Dependabot.
 - fleet/test_ci_watch.py: 8 cases (fake GitHub + a local 304 server); CI step.
 
-## Next (part 2, same issue)
-1. Wall + phone: fleet crate reads <data>/ci.json each poll and adds `ci` to the
-   snapshot (phone.rs Feed parts like `usage`); wall summary bar CI badge (red count,
-   popover: repo, workflow, branch, failing step, cause, file:line, link); phone same.
-   Browser tests + shots (demo data).
-2. Phone push for a new red: research first. Web Push to the phone wall PWA over
+- Part 2 (same branch): fleet crate `ci.rs` (capped read, 300-char fields, GitHub run
+  links only, stale after 15 min, Follower); app `CiFeed` + `ci_subscribe` + `start_ci`
+  (5 s look at ci.json); phone Feed part `ci` (example server follows ci.json too);
+  wall: bar button `#ci-open` (data-phone, 44 px on phone) + native popover `#ci`;
+  `src/fleet/ci.js` view. Tests: ci.rs 5, fleet-ci.test.js 6, wall browser ci_watch 9,
+  phone suite +2.
+
+## Next
+1. Phone push for a new red: research first. Web Push to the phone wall PWA over
    Tailscale Serve (iOS 16.4+ home-screen PWAs; VAPID; payload encrypted end to end)
    vs anything that sends repo names to a third party (private repos: avoid).
 3. Install as a user unit with the fleet engine (#161 install.sh) once that merges.

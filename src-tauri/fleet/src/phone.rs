@@ -421,13 +421,14 @@ struct Shared {
 }
 
 /// The parts of the phone's snapshot: the fleet's phone view, the usage
-/// readings' once a usage source has been read, and the character theme once
-/// the app has named one.
+/// readings' once a usage source has been read, the character theme once
+/// the app has named one, and the CI watch's view once `ci.json` was read.
 #[derive(Default)]
 struct Parts {
     fleet: Option<Value>,
     usage: Option<Value>,
     theme: Option<&'static str>,
+    ci: Option<Value>,
 }
 
 /// The snapshot every phone gets, made from its parts.
@@ -451,6 +452,9 @@ impl Feed {
             }
             if let Some(theme) = parts.theme {
                 map.insert("theme".into(), Value::from(theme));
+            }
+            if let Some(ci) = parts.ci.as_ref().filter(|c| !c.is_null()) {
+                map.insert("ci".into(), ci.clone());
             }
         }
         let Ok(json) = serde_json::to_vec(&view) else {
@@ -753,6 +757,12 @@ impl Server {
     pub fn set_theme(&self, id: &str) {
         let theme = crate::theme::known(Some(id));
         self.feed.update(|p| p.theme = Some(theme));
+    }
+
+    /// Show every phone the CI watch's view (`ci::view`); null clears it.
+    pub fn set_ci(&self, view: &Value) {
+        let view = view.clone();
+        self.feed.update(|p| p.ci = Some(view));
     }
 
     /// Close the port and every connection, and return once they are closed.

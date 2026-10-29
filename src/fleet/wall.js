@@ -15,6 +15,7 @@ import { parseDensity, resolveDensity } from "./density.js";
 import { clearAll, clearLabel, endedIds, startLabel, wallState } from "./empty.js";
 import { wireSplit } from "./split.js";
 import { follow } from "../ipc.js";
+import { ciView } from "./ci.js";
 import { createReplayer } from "./replay.js";
 import { cutsText } from "./fulltext.js";
 import { WAITING, usageRows } from "../gauge.js";
@@ -653,7 +654,36 @@ function notShown(message, err) {
   log.errorRepeat("snapshot", `a fleet snapshot (${n} sessions, theme ${message?.theme}) could not be shown`, err);
 }
 
+// CI watch: the bar's CI button and its popover (ci.js). The phone's view
+// comes with each snapshot; the app's through ci_subscribe.
+const ciButton = document.getElementById("ci-open");
+const ciPanel = document.getElementById("ci");
+function showCi(view) {
+  const v = ciView(view);
+  ciButton.hidden = v.hidden;
+  ciButton.textContent = v.label;
+  ciButton.title = v.title;
+  ciButton.dataset.tone = v.tone;
+  ciPanel.querySelector(".ci-title").textContent = v.title;
+  ciPanel.querySelector(".ci-note").textContent = v.note;
+  ciPanel.querySelector(".ci-runs").replaceChildren(
+    ...v.rows.map((r) => {
+      const li = document.createElement("li");
+      const head = document.createElement(r.url ? "a" : "span");
+      head.className = "ci-head";
+      head.textContent = r.head;
+      if (r.url) Object.assign(head, { href: r.url, target: "_blank", rel: "noopener noreferrer" });
+      const step = Object.assign(document.createElement("span"), { className: "ci-step", textContent: r.step });
+      const cause = Object.assign(document.createElement("span"), { className: "ci-cause", textContent: r.cause });
+      li.append(head, step, cause);
+      return li;
+    }),
+  );
+}
+if (inTauri) follow("ci_subscribe", showCi).catch(() => {});
+
 function take(message) {
+  if (served && "ci" in (message ?? {})) showCi(message.ci);
   if (Array.isArray(message?.sessions)) {
     const said = announcements(before, message.sessions, cast, Date.now());
     const speaking = speaker.update(message.speaking ?? null, Date.now());

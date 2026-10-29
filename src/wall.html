@@ -15,6 +15,7 @@
   <header class="bar">
     <div class="lead">
       <div class="tally" role="group" aria-label="Session counts"></div>
+      <button type="button" id="ci-open" popovertarget="ci" data-phone hidden>CI</button>
       <p class="ring-key" hidden>
         <span class="visually-hidden">Ring key: thick arc, subagent; thin arc, background shell.</span>
         <span class="key" aria-hidden="true"><svg viewBox="0 0 32 18"><path class="agent" d="M 4.5 16 A 11.5 11.5 0 0 1 27.5 16"/></svg>agent</span>
@@ -209,5 +210,10 @@
   </template>
 
   <script type="module" src="fleet/wall.js"></script>
+  <section id="ci" popover aria-label="CI runs">
+    <h2 class="ci-title"></h2>
+    <ul class="ci-runs"></ul>
+    <p class="ci-note"></p>
+  </section>
 </body>
 </html>

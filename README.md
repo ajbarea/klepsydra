@@ -1246,7 +1246,17 @@ for the morning instead. Once a day (after `CI_SWEEP_HOUR`, default 6) the
 latest green run on each default branch is read for warnings. The watcher
 pushes, merges and re-runs nothing.
 
-It writes `ci.json` to the app data folder for the wall and the phone, and logs
+It writes `ci.json` to the app data folder, which the wall and the phone show
+as a **CI** button in the bar: hidden without a CI watch, `CI ok` when every
+repo is green, red with a count when a run is red, and `CI ?` when the watch
+has not reported for 15 minutes. It opens a list of the red runs: repo,
+workflow, branch or PR, the failing step, the triaged cause with its
+file:line, and a link to the run on GitHub. On the phone it is a full 44 px
+touch target. The app reads the file capped, cuts each text to 300
+characters and keeps a link only when it is a GitHub Actions run, so a
+local path never reaches the phone.
+
+The watcher logs
 one JSON line per decision to `log/ci.log` in the fleet's state folder (rotated
 past 1 MiB, four kept). Run it as a user service:
 

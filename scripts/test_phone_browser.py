@@ -365,6 +365,25 @@ def main() -> int:
                 run.check(tools == "none", "the desktop tool group takes no room on the phone", tools)
                 run.check(s["remotes"] == [REMOTE], "only the claude.ai link is a link", s["remotes"])
 
+                # The CI watch: its button shows on the phone, a full touch target, and opens the red runs.
+                (pathlib.Path(tmp) / "klepsydra" / "ci.json").write_text(json.dumps({
+                    "v": 1, "observed_at": int(time.time()), "repos": 14, "dependabot": [], "errors": [],
+                    "red": [{"repo": "pharos", "workflow": "CI", "branch": "main", "pr": None, "conclusion": "failure",
+                             "url": "https://github.com/ajbarea/pharos/actions/runs/5",
+                             "failing": {"job": "test", "step": "pytest"},
+                             "triage": {"state": "done", "cause": "a test fails", "location": "tests/test_a.py:3"}}],
+                }))
+                shown = wait_until(page, "!document.getElementById('ci-open').hidden", 10)
+                ci = page.evaluate("""() => { const b = document.getElementById('ci-open'), r = b.getBoundingClientRect();
+                  return { label: b.textContent, h: r.height, w: r.width }; }""")
+                run.check(shown and ci["label"] == "CI 1 red" and ci["h"] >= 44 and ci["w"] >= 44,
+                          "the CI button shows on the phone, red, at least 44 px", ci)
+                page.click("#ci-open")
+                page.wait_for_timeout(150)
+                rows = page.evaluate("[...document.querySelectorAll('#ci .ci-runs li')].map((li) => li.innerText)")
+                run.check(len(rows) == 1 and "tests/test_a.py:3" in rows[0], "it opens the red run with its cause", rows)
+                page.keyboard.press("Escape")
+
                 # The usage-limit gauges: every account and window, in the gauge's words and order.
                 wait_until(page, "document.querySelectorAll('.limit-rows > li').length === 3", 10)
                 g = page.evaluate(GAUGES)
