@@ -487,11 +487,11 @@ check "and the exit is non-zero" "$code" "1"
 touch "$work/active" "$FLEET_STATE/resume.beat"
 session_file o1 "$o" https://claude.ai/code/session_01O
 out=$(DOC_UP=http DOC_SERVE="https://desk.tail1.ts.net (tailnet only)" doctor); code=$?
-check "all well but the watcher: a shell that names the script is not one" "$(grep -c '^ok ' <<<"$out") $(grep '^FAIL' <<<"$out" | cut -d: -f1)" "9 FAIL pane watcher"
+check "all well but the watcher: a shell that names the script is not one" "$(grep -c '^ok ' <<<"$out") $(grep '^FAIL' <<<"$out" | cut -d: -f1)" "10 FAIL pane watcher"
 check "the default account is logged in; the second, not yet, is a warning" \
   "$(grep '^ok   account' <<<"$out" | cut -d: -f1) | $(grep '^warn account' <<<"$out" | cut -d: -f1)" "ok   account $work/cfg-a | warn account $work/cfg-b"
 check "with a watcher running, every check is ok and the exit is 0" \
-  "$(DOC_WATCH='%2 %5' DOC_UP=http DOC_SERVE=on doctor | grep -c '^ok '; echo "rc=${PIPESTATUS[0]}")" $'10\nrc=0'
+  "$(DOC_WATCH='%2 %5' DOC_UP=http DOC_SERVE=on doctor | grep -c '^ok '; echo "rc=${PIPESTATUS[0]}")" $'11\nrc=0'
 check "the watcher's panes are named" "$(DOC_WATCH='%2 %5' doctor | grep '^ok   pane watcher')" "ok   pane watcher: watching %2 %5"
 check "the phone wall and its Tailscale twin answer fresh" "$(grep -c 'fleet.json observed 3[0-9] s ago' <<<"$out")" "2"
 jq -n '{usage: [{observed_at: 1000}]}' >"$work/fleet.json"
@@ -828,8 +828,8 @@ t kill-window -t "$p"; : >"$REGISTRY"
 p=$(backpane limited3)
 failer "$((noon + 300))" launch-limit.sh; failer "$((noon + 360))" launch-limit.sh
 check "review 2: held again, with no newer reading" "$(wc -l <"$work/tries")" "2"
-failer "$((noon + 60 + 1800))" launch-limit.sh
-check "review 2: the hold lasts BACK_HOLD_S (30 min) at most" "$(wc -l <"$work/tries")" "3"
+failer "$((noon + 240 + 1800))" launch-limit.sh
+check "review 2: the hold lasts BACK_HOLD_S (30 min) at most, from its last refusal (noon + 240)" "$(wc -l <"$work/tries")" "3"
 t kill-window -t "$p"; : >"$REGISTRY"; rm -f "$FLEET_STATE/back-hold" "$FLEET_STATE/resume-state"
 
 : >"$work/tries"
@@ -844,16 +844,29 @@ done_live "$p"
 printf '%s\tlimback\t%s\t%s\t/w\t%s\n' "$p" "$work/brief.src" "$SID" "$work/cfg-b" >"$REGISTRY"
 reading b RIT 100 4000
 failer "$noon"
-check "review 2: a limited pane is not moved back, its limit path takes it" "$(jq -r 'select(.message == "moved back to the preferred account" or .message == "could not move back to the preferred account; trying again in 15 min") | .pane' "$FLEET_LOG") $(jq -r 'select(.message == "limit seen") | .pane' "$FLEET_LOG")" " $p"
+check "review 2: a limited pane is not moved back, its limit path takes it" "$(jq -r --arg p "$p" 'select(.pane == $p and (.message == "moved back to the preferred account" or .message == "could not move back to the preferred account; trying again in 15 min")) | .pane' "$FLEET_LOG") $(jq -r --arg p "$p" 'select(.message == "limit seen" and .pane == $p) | .pane' "$FLEET_LOG")" " $p"
 t kill-window -t "$p"; : >"$REGISTRY"; reading b RIT 10 4000; rm -f "$FLEET_STATE/resume-state"
 
 p=$(backpane away)
 check "review 2: fleet doctor names a pane left away from its preferred account" \
-  "$(bash "$here/doctor.sh" 2>/dev/null | grep 'preferred accounts' | cut -c1-60)" "warn preferred accounts: on another account while their own h"
+  "$(bash "$here/doctor.sh" 2>/dev/null | grep 'preferred accounts' | cut -c1-61)" "warn preferred accounts: on another account while their own h"
 reading a Personal 60 5000
 check "and not while that account is short of room" "$(bash "$here/doctor.sh" 2>/dev/null | grep -c '^ok *preferred accounts')" "1"
 reading a Personal 10 5000
 t kill-window -t "$p"; : >"$REGISTRY"
+
+: >"$FLEET_LOG"; rm -f "$FLEET_STATE/resume-state"
+p=$(backpane phoned)
+cat >"$work/launch-phoned.sh" <<EOF
+#!/usr/bin/env bash
+jq '.prompt.at = 5' "$KLEPSYDRA_DIR/fleet/$SID.json" >"$work/st.json" && mv "$work/st.json" "$KLEPSYDRA_DIR/fleet/$SID.json"
+echo "pane=%995 session=x account=\$FLEET_ACCOUNT avail=1MiB brief=started"
+EOF
+LAUNCH="$work/launch-phoned.sh" FLEET_NOW=$noon bash "$here/resume-at-reset.sh" --once 2>/dev/null
+LAUNCH="$work/launch-phoned.sh" FLEET_NOW=$((noon + 60)) bash "$here/resume-at-reset.sh" --once 2>/dev/null
+check "review 2: a prompt the worker took during its move back (a phone message) keeps the old pane" \
+  "$(grep -c 'SUBMIT /exit' "$work/phoned.log") $(jq -r --arg p "$p" 'select(.message | startswith("the old pane changed while")) | .pane' "$FLEET_LOG") $(cut -f1 "$REGISTRY")" "0 $p $p"
+t kill-window -t "$p"; : >"$REGISTRY"; rm -f "$FLEET_STATE/resume-state"
 
 echo "two accounts: Heph's preferred account is the other end (#175)"
 : >"$work/moved"; : >"$FLEET_LOG"; rm -f "$FLEET_STATE/orchestrator.session" "$FLEET_STATE/resume-state"
