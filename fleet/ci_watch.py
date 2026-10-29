@@ -171,7 +171,9 @@ def slim_pulls(body: list) -> list[dict]:
     ]
 
 
-def runs_that_count(user: str, repo: str, gh: GitHub) -> tuple[list[dict], str]:
+def runs_that_count(
+    user: str, repo: str, gh: GitHub
+) -> tuple[list[dict], str, set[int]]:
     """The decisive run (succeeded or failed) newest per workflow and branch, on
     the default branch or at an open PR's head, and the default branch. Each is
     asked for by branch or by head, so a busy repo cannot page one out."""
@@ -210,16 +212,7 @@ def runs_that_count(user: str, repo: str, gh: GitHub) -> tuple[list[dict], str]:
         key = (r["workflow_id"], pr["number"] if pr else default)
         if key not in newest or r["created_at"] > newest[key]["created_at"]:
             newest[key] = r | {"_pr": pr}
-    return list(newest.values()), default
-
-
-def pr_numbers(user: str, repo: str, gh) -> list[int]:
-    return [
-        p["number"]
-        for p in gh.get(
-            f"/repos/{user}/{repo}/pulls?state=open&per_page=100", keep=slim_pulls
-        )
-    ]
+    return list(newest.values()), default, {p["number"] for p in pulls}
 
 
 def workflow_ids(user: str, repo: str, gh) -> list[int]:
@@ -389,7 +382,9 @@ def repo_pass(
     user: str, repo: str, gh: GitHub, known: dict, save_known
 ) -> tuple[list, list]:
     red, dependabot = [], []
-    runs, _ = runs_that_count(user, repo, gh)
+    # Read before anything is triaged, so a failed read changes nothing.
+    runs, _, open_prs = runs_that_count(user, repo, gh)
+    workflows = set(workflow_ids(user, repo, gh))
     for r in runs:
         place = (r["workflow_id"], r["_pr"]["number"] if r["_pr"] else "default")
         if r.get("conclusion") not in RED:
@@ -474,8 +469,6 @@ def repo_pass(
         (r["workflow_id"], r["_pr"]["number"] if r["_pr"] else "default"): r["id"]
         for r in runs
     }
-    open_prs = set(pr_numbers(user, repo, gh))
-    workflows = set(workflow_ids(user, repo, gh))
     month = time.time() - 30 * 86400
     for key, k in known.items():
         held = k.get("item")
@@ -502,7 +495,7 @@ def sweep(user: str, repos: list[str], gh: GitHub, swept: set) -> list[dict]:
     found = []
     for repo in repos:
         try:
-            runs, default = runs_that_count(user, repo, gh)
+            runs, default, _ = runs_that_count(user, repo, gh)
         except Exception as e:  # noqa: BLE001 — the sweep skips what it cannot read
             event(
                 logging.WARNING,

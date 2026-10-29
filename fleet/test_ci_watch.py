@@ -19,6 +19,7 @@ os.environ |= {
     "KLEPSYDRA_DIR": str(TMP / "k"),
     "FLEET_QUEUE": str(TMP / "q.md"),
 }
+(TMP / "k").mkdir()
 sys.path.insert(0, str(HERE))
 import ci_watch  # noqa: E402
 
@@ -383,6 +384,36 @@ class Held(unittest.TestCase):
         self.assertEqual(
             [(r["run_id"], r["triage"]["state"]) for r in got["red"]], [(5, "done")]
         )
+
+    def test_a_held_red_a_month_old_goes(self):
+        known = {}
+        ci_watch.poll("o", ["r"], Fake([run(5, workflow=3)]), known)
+        known["r:5"]["seen"] = int(time.time()) - 31 * 86400
+        got = ci_watch.poll("o", ["r"], Fake([run(6, conclusion="success")]), known)
+        self.assertEqual(got["red"], [])
+
+    def test_entries_from_before_seen_existed_count_as_seen_at_load(self):
+        state = Path(os.environ["FLEET_STATE"]) / "ci"
+        state.mkdir(parents=True, exist_ok=True)
+        (state / "known.json").write_text(
+            '{"r:1": {"failing": {}, "triage": {}, "queued": true}}'
+        )
+        seen = {}
+        with (
+            mock.patch.object(
+                ci_watch,
+                "poll",
+                side_effect=lambda u, r, gh, known, save: (
+                    seen.update(known) or {"red": [], "dependabot": [], "errors": []}
+                ),
+            ),
+            mock.patch.object(
+                ci_watch.subprocess, "run", return_value=mock.Mock(stdout="t0ken")
+            ),
+            mock.patch.object(ci_watch, "sisters", return_value=("o", ["r"])),
+        ):
+            ci_watch.main(["ci_watch.py", "--once"])
+        self.assertGreater(seen["r:1"]["seen"], time.time() - 60)
 
     def test_a_queue_file_that_will_not_decode_hides_no_red(self):
         (TMP / "q.md").write_bytes(b"\xff\xfe## Needs you\n")
