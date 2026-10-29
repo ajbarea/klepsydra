@@ -909,6 +909,13 @@ impl Ledger {
         true
     }
 
+    /// Forget the pick recorded for `session` once it wears its own voice
+    /// again, so its tokens follow the character it wears. Returns whether
+    /// one was recorded.
+    pub fn forget_pick(&mut self, session: &str) -> bool {
+        self.day.picks.remove(session).is_some()
+    }
+
     /// A session's totals since its first export.
     pub fn session(&self, id: &str) -> Option<&Totals> {
         self.state.sessions.get(id)
@@ -2561,8 +2568,11 @@ mod tests {
         );
         assert!(l.note_pick("s1", "af_heart", NOW));
         l.save().unwrap();
-        let (again, _) = Ledger::open(dir.0.clone(), NOW, TimeZone::UTC);
+        let (mut again, _) = Ledger::open(dir.0.clone(), NOW, TimeZone::UTC);
         assert_eq!(again.day().picks["s1"], "af_heart");
+        assert!(again.forget_pick("s1"), "its own voice is back");
+        assert!(again.day().picks.is_empty());
+        assert!(!again.forget_pick("s1"));
     }
 
     #[test]

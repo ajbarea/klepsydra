@@ -51,12 +51,18 @@ pub struct Picks {
 }
 
 impl Picks {
-    /// The picks saved in `dir`, or none.
+    /// The picks saved in `dir`, or none. A file that does not parse is set
+    /// aside as `picks.json.bad`, as the Ledger does, so the next save keeps it.
     pub fn load(dir: &Path) -> Self {
         let path = dir.join(FILE);
-        let held = std::fs::read(&path)
+        let parsed = std::fs::read(&path)
             .ok()
-            .and_then(|b| serde_json::from_slice::<BTreeMap<String, String>>(&b).ok())
+            .map(|b| serde_json::from_slice::<BTreeMap<String, String>>(&b));
+        if let Some(Err(_)) = parsed {
+            let _ = std::fs::rename(&path, dir.join(format!("{FILE}.bad")));
+        }
+        let held = parsed
+            .and_then(Result::ok)
             .map(|m| {
                 m.into_iter()
                     .filter(|(_, v)| CAST.contains(&v.as_str()))
@@ -285,7 +291,11 @@ mod tests {
         std::fs::write(dir.join(FILE), b"{\"z\": \"not_a_voice\"").unwrap();
         assert!(
             Picks::load(&dir).held.is_empty(),
-            "a corrupt or foreign file reads as none"
+            "a corrupt file reads as none"
+        );
+        assert!(
+            dir.join(format!("{FILE}.bad")).exists(),
+            "and is set aside, not overwritten"
         );
         let _ = std::fs::remove_dir_all(&dir);
     }

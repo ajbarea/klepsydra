@@ -226,9 +226,10 @@ impl Reader {
                 if let Some(&(voice, home)) = voices.get(v.session_id.as_str()) {
                     noted |= l.note_voice(&v.session_id, voice, home, t);
                 }
-                if let Some(pick) = &v.pick {
-                    noted |= l.note_pick(&v.session_id, pick, t);
-                }
+                noted |= match &v.pick {
+                    Some(pick) => l.note_pick(&v.session_id, pick, t),
+                    None => l.forget_pick(&v.session_id),
+                };
                 // The wall's label for the card (drawer.js `who`).
                 let label = v.name.as_deref().filter(|n| !n.is_empty());
                 if let Some(label) = label.or(v.place.as_ref().map(|p| p.repo.as_str())) {
