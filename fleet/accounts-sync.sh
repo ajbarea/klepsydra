@@ -29,6 +29,7 @@ SRC=${FLEET_CLAUDE_SRC:-$FLEET_DEFAULT_CONFIG}
 SRC_JSON=$(config_json "$SRC")
 LINKS=(CLAUDE.md agents commands rules output-styles keybindings.json techne.toml hooks projects)
 # What of .claude.json both folders share: SHARED_KEYS, and of each projects entry its trust and tool grants.
+# shellcheck disable=SC2016 # a jq program
 SHARED='with_entries(select(.key as $x | $k | index($x)))
   | if (.projects | type) == "object" then .projects |= map_values(with_entries(select(.key | IN("hasTrustDialogAccepted", "allowedTools", "hasClaudeMdExternalIncludesApproved")))) else . end'
 SHARED_KEYS='["mcpServers","projects","githubRepoPaths","hasCompletedOnboarding","lastOnboardingVersion","lastReleaseNotesSeen","installMethod","autoUpdates","autoUpdatesProtectedForNative","shiftEnterKeyBindingInstalled","remoteDialogSeen","hasUsedRemoteControl","effortCalloutV2Dismissed","hasSeenAutoModeEntryWarning"]'
