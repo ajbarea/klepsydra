@@ -205,14 +205,17 @@ echo "resume: review round 2 (B-1, B-2)"
 cat >"$work/launcher-bg.sh" <<EOF
 #!/usr/bin/env bash
 # The launcher's "new", plus a long-lived child, as a tmux server it starts would be.
-sleep 300 &
+sleep 300 >/dev/null 2>&1 &
 echo \$! >"$work/bg.pid"
 tmux -L "\$KLEPSYDRA_TMUX_SOCKET" new-window -d -t fleet: -c "\$3" "\$KLEPSYDRA_CLAUDE"
 EOF
 printf '%s' '{"above":["Claude Code"]}' >"$work/bgl.json"; : >"$work/bgl.log"
+printf 'A brief.\n' >"$work/bgl.src"
 ( exec 7>>"$FLEET_STATE/.fresh.lock"; FLEET_SCOPE=0 FLEET_MIN_AVAIL_MB=0 FLEET_LAUNCHER="$work/launcher-bg.sh" FLEET_DIR="$work" \
-  FLEET_CLAUDE="python3 -I $fake $work/bgl.json $work/bgl.log" bash "$here/launch.sh" bgl "$work/task.src" >/dev/null 2>&1 )
-bg=$(cat "$work/bg.pid")
+  FLEET_CLAUDE="python3 -I $fake $work/bgl.json $work/bgl.log" bash "$here/launch.sh" bgl "$work/bgl.src" >"$work/bgl.out" 2>&1 )
+bg=$(cat "$work/bg.pid" 2>/dev/null)
+if [[ -n $bg && -d /proc/$bg ]]; then ran=yes; else ran=$(tail -3 "$work/bgl.out"); fi
+check "B-1: the launcher really ran (its child is alive)" "$ran" "yes"
 check "B-1: a long-lived child of the launcher holds neither lock" \
   "$(find "/proc/$bg/fd" -lname '*.launch.lock' -o -lname '*.fresh.lock' 2>/dev/null | wc -l) $(flock -n "$FLEET_STATE/.launch.lock" true && echo free)" "0 free"
 kill "$bg" 2>/dev/null
@@ -237,6 +240,41 @@ check "and the registry points at it again" "$(cut -f1,4 "$REGISTRY")" "$p	$SID"
 check "round 3: nothing is typed into the pane AJ took back" "$(grep -c '^SUBMIT' "$work/changed.log")" "0"
 check "logged as an error" "$(jq -r 'select(.level == "ERROR") | .message' "$FLEET_LOG" | grep -c 'the old pane changed while its fresh session launched')" "1"
 t kill-window -t "$p"; : >"$REGISTRY"
+
+echo "round 4: AJ resumed the old pane during the launch"
+: >"$FLEET_LOG"
+p=$(pane resumed "{\"above\":[\"⏺ Done. done 9:00 AM\",\"$LIMIT\"]}"); settle
+live "$p"
+printf '%s\tresumer\t%s\t%s\t/w\n' "$p" "$work/brief.src" "$SID" >"$REGISTRY"
+printf '%s' '{"above":["Claude Code"]}' >"$work/newp.json"; : >"$work/newp.log"
+cat >"$work/launch-resumed.sh" <<EOF
+#!/usr/bin/env bash
+# AJ resumes the old pane while the new one starts on its brief, as launch.sh would leave it.
+tmux -L "$FLEET_SOCK" send-keys -t "$p" -l "AJ: carry on"
+tmux -L "$FLEET_SOCK" send-keys -t "$p" Enter
+new=\$(tmux -L "$FLEET_SOCK" new-window -d -P -F '#{pane_id}' -t fleet: "python3 -I $fake $work/newp.json $work/newp.log")
+sleep 0.8
+tmux -L "$FLEET_SOCK" send-keys -t "\$new" -l "the brief"
+tmux -L "$FLEET_SOCK" send-keys -t "\$new" Enter
+sleep 0.5
+sed -i "s|^$p\t|\$new\t|" "$REGISTRY"
+echo "pane=\$new session=x account=x avail=1MiB brief=started"
+EOF
+resume "$(TZ=America/New_York date -d '2026-10-28 09:00' +%s)"
+LAUNCH="$work/launch-resumed.sh" FLEET_NOW=$(( noon + 4330 )) bash "$here/resume-at-reset.sh" --once 2>/dev/null
+check "rc 4: nothing is typed into the pane AJ resumed" "$(grep -c '^SUBMIT' "$work/resumed.log") $(grep -c 'The usage limit' "$work/resumed.log")" "1 0"
+check "the new pane: its turn stopped, its returned brief cleared, then /exit" "$(grep -E '^(SUBMIT|INTERRUPTED|CTRL)' "$work/newp.log" | tr '\n' '|')" "SUBMIT the brief|INTERRUPTED|SUBMIT /exit|"
+check "and the registry points at the old pane again" "$(cut -f1,4 "$REGISTRY")" "$p	$SID"
+t kill-window -t "$p"; : >"$REGISTRY"
+
+echo "live_session"
+p=$(pane two '{"above":["idle"]}'); settle
+live "$p"
+jq -n --arg p "$p" '{ended: null, tmux: {pane: $p}}' >"$KLEPSYDRA_DIR/fleet/88888888-2222-4333-8444-555555555555.json"
+check "two live files naming one pane are no answer" "$(live_session "$p" || echo none)" "none"
+rm -f -- "${KLEPSYDRA_DIR:?}/fleet/88888888-2222-4333-8444-555555555555.json"
+check "one is the answer" "$(live_session "$p")" "$SID"
+t kill-window -t "$p"
 
 echo "registry session ids (S-1, S-2)"
 p=$(pane clr '{"above":["idle"]}'); settle

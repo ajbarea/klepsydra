@@ -64,6 +64,7 @@ class Pane:
         self.rc_at = None  # when /remote-control's answer shows
         self.rc_was_on = False
         self.busy_at = None
+        self.last_submit = ""
         self.buf = b""
         self.shown = None
 
@@ -104,6 +105,7 @@ class Pane:
             self.log("RC REQUESTED")
             return
         self.log("SUBMIT " + text.replace("\n", "\\n"))
+        self.last_submit = text
         self.state.setdefault("above", []).append(
             "❯ " + text.splitlines()[0] if text else "❯"
         )
@@ -144,6 +146,8 @@ class Pane:
                 if self.state.get("busy") or self.busy_at is not None:
                     self.busy_at = None
                     self.state["busy"] = False
+                    # Claude Code 2.1: an interrupt before any reply puts the prompt back.
+                    self.input = self.last_submit
                     self.save()
                     self.log("INTERRUPTED")
                 elif self.menu:
@@ -165,6 +169,11 @@ class Pane:
                     self.log("KEY ENTER (while /remote-control answers)")
                 else:
                     self.submit()
+            elif c == b"\x03":  # C-c: clears a box with text in it
+                if self.input:
+                    self.input = ""
+                else:
+                    self.log("CTRL-C ON AN EMPTY BOX")
             elif c == b"\x15":  # C-u
                 self.input = ""
             elif c in (b"\x7f", b"\x08"):  # Backspace

@@ -68,7 +68,10 @@ esac
 row_brief=$(awk -F'\t' -v n="$name" '$2 == n { print $3; exit }' "$REGISTRY" 2>/dev/null)
 [[ -z $row_brief && -f $FLEET_STATE/task-$name.src ]] && row_brief=$FLEET_STATE/task-$name.src
 exec 9>>"$FLEET_STATE/.registry.lock"
-flock -w 60 9
+if ! flock -w 60 9; then
+  flog ERROR "registry not updated: its lock was held for a minute" name="$name" pane="$pane" session_id="$sid"
+  row_brief=""
+fi
 if [[ -n $row_brief ]]; then
   [[ -e $REGISTRY ]] || : >"$REGISTRY"
   tmp=$(mktemp "$REGISTRY.XXXXXX")

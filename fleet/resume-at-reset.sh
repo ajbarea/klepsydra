@@ -87,7 +87,11 @@ submit() { # PANE
 retire() { # PANE [INTERRUPT]
   if [[ ${2:-} == interrupt ]] && busy "$(screen "$1")"; then
     t send-keys -t "$1" Escape
-    wait_for "$1" 15 idle_empty || true
+    wait_for "$1" 15 not_busy || true
+    # Interrupted before any reply, Claude Code puts the brief back in the box;
+    # one C-c clears a box with text in it (an empty box would ask to exit).
+    holds_input "$(screen "$1")" && t send-keys -t "$1" C-c
+    wait_for "$1" 5 idle_empty || true
   fi
   if ! type_exactly "$1" "/exit"; then
     flog ERROR "could not type /exit; the pane is left running" pane="$1"

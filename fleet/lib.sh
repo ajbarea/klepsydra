@@ -181,6 +181,7 @@ type_exactly() { # PANE TEXT
   return 1
 }
 
+not_busy() { has_input_box "$1" && ! busy "$1"; }
 idle_empty() { has_input_box "$1" && [[ -z $(input_text "$1") ]] && ! busy "$1"; }
 holds_input() { [[ -n $(input_text "$1") ]]; }
 started() { busy "$1" || limit_line "$1" >/dev/null; }
