@@ -1101,6 +1101,7 @@ window.__TAURI__ = { core: {
       return Promise.resolve();
     }
     if (cmd === 'queue_subscribe') { window.__queue = args.onMessage; return Promise.resolve(); }
+    if (cmd === 'ci_subscribe') { window.__ci = args.onMessage; return Promise.resolve(); }
     if (cmd === 'split_subscribe') { window.__split = args.onMessage; return Promise.resolve(); }
     if (cmd === 'theme_subscribe') {
       window.__theme = args.onMessage;
@@ -4224,6 +4225,70 @@ def split_toggle(wall):
     page.close()
 
 
+CI_RED = {
+    "observed_at": 1800000000, "stale": False, "repos": 14, "dependabot": 2, "unread": 0,
+    "red": [
+        {"repo": "pharos", "workflow": "CI", "branch": "main", "pr": None, "conclusion": "failure",
+         "at": "2026-10-29T03:00:00Z", "url": "https://github.com/ajbarea/pharos/actions/runs/5",
+         "failing": {"job": "lint-and-test (3.12)", "step": "pytest"},
+         "triage": {"state": "done", "cause": "test_the_validator_resolves_the_distribution fails: the distribution URL 404s",
+                    "location": "tests/test_croissant_validation.py:41"}},
+        {"repo": "klepsydra", "workflow": "CI Pipeline", "branch": "fix/split", "pr": 160, "conclusion": "failure",
+         "at": "2026-10-29T03:05:00Z", "url": "https://github.com/ajbarea/klepsydra/actions/runs/7",
+         "failing": {"job": "Rust (windows-latest)", "step": "cargo test"},
+         "triage": {"state": "pending", "cause": None, "location": None}},
+    ],
+}
+
+
+def ci_watch(wall):
+    """The bar's CI button: hidden with no CI watch, green when all is, red with
+    a popover naming each red run's repo, step and cause, and a link to the run."""
+    page = open_app(wall, 1920, 1000)
+    state = """() => { const b = document.getElementById('ci-open'), p = document.getElementById('ci');
+      return { hidden: b.hidden, label: b.textContent, tone: b.dataset.tone ?? null, open: p.matches(':popover-open'),
+               rows: [...p.querySelectorAll('.ci-runs li')].map((li) => li.innerText.replace(/\\s+/g, ' ').trim()),
+               links: [...p.querySelectorAll('.ci-runs a')].map((a) => [a.href, a.rel]),
+               note: p.querySelector('.ci-note').textContent }; }"""
+    got = page.evaluate(state)
+    wall.check(got["hidden"], "no CI watch, no button", got)
+    page.evaluate("(v) => window.__ci.onmessage(v)", {**CI_RED, "red": []})
+    got = page.evaluate(state)
+    wall.check([got["hidden"], got["label"], got["tone"]] == [False, "CI ok", "ok"], "all green reads CI ok", got)
+    page.evaluate("(v) => window.__ci.onmessage(v)", CI_RED)
+    page.click("#ci-open")
+    page.wait_for_timeout(150)
+    got = page.evaluate(state)
+    ok = got["label"] == "CI 2 red" and got["tone"] == "red" and got["open"] and len(got["rows"]) == 2
+    wall.check(ok, "red runs turn the button red and it opens their list", got)
+    wall.check(
+        "tests/test_croissant_validation.py:41" in got["rows"][0] and "pytest" in got["rows"][0]
+        and "PR #160" in got["rows"][1] and "pending" in got["rows"][1],
+        "each row names repo, branch or PR, failing step and the triaged cause",
+        got["rows"],
+    )
+    titles = page.evaluate("[...document.querySelectorAll('#ci .ci-head')].map((h) => h.title)")
+    wall.check(
+        got["links"] == [] and titles == ["https://github.com/ajbarea/pharos/actions/runs/5", "https://github.com/ajbarea/klepsydra/actions/runs/7"],
+        "on the desktop, which cannot open a link yet, each run's address is its tooltip",
+        [got["links"], titles],
+    )
+    shot = os.environ.get("KLEPSYDRA_CI_SHOT")
+    if shot:
+        page.screenshot(path=f"{shot}-red.png", clip={"x": 0, "y": 0, "width": 1920, "height": 420})
+    page.keyboard.press("Escape")
+    page.wait_for_timeout(100)
+    wall.check(not page.evaluate(state)["open"], "Escape closes it", None)
+    page.evaluate("(v) => window.__ci.onmessage(v)", {**CI_RED, "stale": True})
+    got = page.evaluate(state)
+    wall.check([got["label"], got["tone"]] == ["CI ?", "stale"], "a watch that stopped reporting says so", got)
+    page.evaluate("() => window.__ci.onmessage(null)")
+    wall.check(page.evaluate(state)["hidden"], "the file gone hides the button again", None)
+    calls = page.evaluate("window.__calls.filter(([c]) => c === 'ci_subscribe')")
+    wall.check(calls == [], "subscribing is a read, not an action", calls)
+    page.close()
+
+
 THEMES = {t: json.loads((ROOT / f"src/fleet/themes/{t}.json").read_text()) for t in ("kourai", "professions", "dicebear")}
 # Each card's voice key, name, face, epithet and accent; the picker; the keeper.
 LOOKS = """() => ({
@@ -4980,6 +5045,7 @@ def main() -> int:
             ledger_reads_bounded,
             ledger_rolls_over_at_midnight,
             split_toggle,
+            ci_watch,
             themes_switch_live,
             themes_keeper_and_portrait,
             themes_fit,

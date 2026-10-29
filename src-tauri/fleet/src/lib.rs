@@ -2,6 +2,7 @@
 //! out. Kept free of Tauri so its tests run on any machine.
 
 pub mod bounded;
+pub mod ci;
 pub mod clear;
 pub mod cue;
 pub mod hub;
