@@ -1,38 +1,39 @@
-# IMPL: klepsydra fleet-module brief, resume state 2026-10-29 ~15:00
+# IMPL: klepsydra fleet-module brief, resume state 2026-10-29 19:45
 
-Order (brief): #159 -> techne#227 -> #162 -> #161 -> two accounts -> techne#241 -> techne#229
--> #154/#158 -> #148 -> #149 -> #150; plus #157, #167, #173.
-Session 3 (10-29 10:30, Personal account) replaced the one that hit the RIT limit.
+Session 5 (Personal) ends here for the move back to RIT; the next session resumes from this file,
+`git log`, the PRs below and their comments. Brief: task-fleet-module.src.
 
-## Merged and deployed
-- #159 (#160), techne#227 (#232), #162 parts 1-2 (#164), #161 fleet engine, #165 two accounts,
-  #166 account chip. Cut over 10:11; old scripts in archive/fleet-scripts-20261029 (delete after 11-05).
+## Merged and live (main checkout pulled, `fleet cutover` run, doctor clean)
+- #186 (#180) CI reds to the agent on the branch and to Heph; HEPH.md explains the `CI HEPH` / `CI ESCALATE` watcher lines.
+- #188 (#183 part) workers start with keryx off (worker-settings env). The wall's Voices setting on #183 is still open.
+- #189 (#187 P0) moves side by side (two at a time), 120 s launch cap, failed move retried next pass, pre-move at 95%.
 
-## Open PRs (all in review; each round is a fresh opus reviewer given the diff + open findings)
-- techne #247 secret gate (#241 part 1), branch feat/secret-gate: rounds 1-4 fixed, round 5
-  verify clean; nit fixes 87d3b3f+815d567 in a last verify pass. Then merge, update the plugin,
-  switch `block_secrets` on in both config folders (accounts-sync keeps them equal).
-- techne #248 security floor, sisters check 17 (#241 part 2), branch feat/security-floor: needs
-  review round 1. After merge: one PR per repo for the gaps it reports (10 repos lack zizmor;
-  ajbarea.github.io ci.yml lacks permissions:). papers/askesis private scanning = AJ's call.
-- klepsydra #171 recover/shots/sync (part of #154, #158), branch feat/recover: rounds 1-4 fixed
-  (b057b9a, 223 fleet checks); round 5 next. After merge: `make install-fleet`, `fleet cutover`,
-  `fleet brief --refresh`, `fleet doctor`.
-- klepsydra #168 characters (#148), branch feat/cast-picks: round 4 redesign 0cd0a6e (the crate's
-  picks.rs assigns and keeps picks; Ledger day.picks); round 5 (last) running. After merge:
-  Windows build (scripts/build-windows.sh) for #166 + #168.
+## Open PRs (each review round is a fresh opus reviewer given the diff + open findings)
+| PR | Issue | Branch / worktree (.claude/worktrees/) | Next |
+|---|---|---|---|
+| #197 | #187 nits | fix/move-nits-187 / move-fix | verify pass was running at handoff; merge when clean + CI green |
+| #190 | #182 Split on a hand snap | feat/split-autocheck-182 / split-182 | round 2 fixed (c593cf5); verify pass was running |
+| #191 | #172 Heph's face reserved | fix/heph-face-172 / heph-face-172 | round 2 fixed + rebased (fbbb274); verify pass was running |
+| #192 | #185 Agora part 1 | feat/agora-185 / agora-185 | round 2 fixed (a06d2d1); needs round 3 |
+| #194 | #167 shell count | fix/shells-167 / shells-167 | round 2 fixed (1fe822f); needs round 3 |
+| #195 | #149 folder + GitHub links | feat/card-links-149 / links-149 | round 1 review was running |
+| #196 | #170 CI triage on the account with room | fix/triage-account-170 / triage-170 | round 1 fixed (622d9ea); needs round 2 |
+| techne#251 | techne#229 body budget gate | techne feat/body-gate / techne worktrees/body-gate | round 1 fixed (553df87, CI clean); needs round 2 |
 
-## Next
-1. #173 Heph moves at a limit (AJ 10-29): the resume service moves Heph FIRST (fresh session on
-   the other account from HEPH.md + AJ's messages, recover's handoff), then the workers itself;
-   Heph's note lists what moved (from the log). Design + sources on the issue comment. Needs #171.
-   Warm standby Heph held: only if move timings show cold starts are slow.
-2. techne#229 length + plain-language gate on issue/PR bodies.
-3. Fleet health on the wall (4b), #162 follow-up (one CI line per branch), #149, #150 (research UX
-   first), #157 part 3 (Heph rotation), #167 (bash counted as shells).
-4. Follow-ups from reviews: recover launches Heph last (memory HOLD risk, consider first);
-   #154 wall Recover button; #158 next Review issue + `fleet shots --apply` at the morning rewrite.
+Reviewer results that arrive after this file are appended below under "Late results".
+
+## After merges (deploy)
+1. `git pull` in the main checkout, `fleet cutover` (resume-at-reset changed: #197), `make install-fleet` (agora.py in #192), `fleet brief --refresh` (#192 adds a brief-tail line), `fleet doctor`.
+2. Windows build (scripts/build-windows.sh) for #190, #191, #194, #195 (Rust and hook changes); reinstall.
+3. techne#251: update the plugin, switch `block_long_bodies` on in both config folders.
+
+## Next after the open PRs
+#185 parts 2-3 (wall/phone Agora panel with reactions; Ledger measured friction), Fleet health on the wall, #150 (research UX first), #157 part 3, the #183 Voices setting.
 
 ## Notes
 - PRs on klepsydra: `gh pr edit` fails (Projects classic); use `gh api -X PATCH repos/.../pulls/N -F body=@file`.
-- Heavy runs under `flock /tmp/fleet-heavy.lock`; never edit test_fleet.sh while it runs (bash reads it live).
+- Heavy runs under `flock /tmp/fleet-heavy.lock`; another agent's pytest held it for long stretches on 10-29, so CI carried the suites.
+- 10-29 16:50 incident (#187): the new session drew the pasted brief but took no key for 9 min; launch.sh now logs took_s per step.
+- The launcher test "end: the process is gone" flakes in CI under load (#134); rerun the failed job.
+
+## Late results
