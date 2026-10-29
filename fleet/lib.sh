@@ -230,3 +230,15 @@ registered() { awk -F'\t' -v p="$1" '$1 == p { f = 1 } END { exit !f }' "$REGIST
 reg_field() { awk -F'\t' -v p="$1" -v n="$2" '$1 == p { print $n; exit }' "$REGISTRY" 2>/dev/null; }
 orchestrator() { cat "$FLEET_STATE/orchestrator.pane" 2>/dev/null; }
 fleet_panes() { t list-panes -s -t "$FLEET_SESSION" -F '#{pane_id}' 2>/dev/null; }
+
+# Whether pane PANE still runs the session registered for it: a live fleet
+# file (klepsydra's, written by the fleet hook) with that session id and pane.
+# After a tmux restart pane ids start over, so a stale panes.tsv row can name
+# another agent's pane; nothing is exited, killed or cleared without this.
+pane_runs() { # PANE SESSION-ID
+  local f
+  [[ $2 =~ ^[0-9a-f-]{36}$ ]] || return 1
+  f=$KLEPSYDRA_DIR/fleet/$2.json
+  [[ -f $f && ! -L $f ]] || return 1
+  jq -e --arg p "$1" '.tmux.pane == $p and .ended == null' "$f" >/dev/null 2>&1
+}

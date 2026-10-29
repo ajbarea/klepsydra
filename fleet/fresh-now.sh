@@ -10,9 +10,14 @@ here=$(dirname "$(readlink -f "$0")")
 # shellcheck source=fleet/lib.sh
 . "$here/lib.sh"
 want=" $* "
-while IFS=$'\t' read -r p name brief _; do
+while IFS=$'\t' read -r p name brief sid _; do
   [[ -n $p && -n $name && -n $brief ]] || continue
   [[ $# -gt 0 && $want != *" $p "* ]] && continue
+  if ! pane_runs "$p" "$sid"; then
+    flog WARN "fresh session skipped: the pane no longer runs its registered session" pane="$p" name="$name" session_id="$sid"
+    echo "skipped: $name in $p (not its registered session)"
+    continue
+  fi
   s=$(screen "$p")
   if ! idle_empty "$s"; then
     flog WARN "fresh session skipped: the pane is busy or holds typed text" pane="$p" name="$name"

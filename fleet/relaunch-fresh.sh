@@ -9,6 +9,11 @@ here=$(dirname "$(readlink -f "$0")")
 . "$here/lib.sh"
 (( $# == 4 )) || { err "usage: relaunch-fresh.sh PANE NAME BRIEF HINT"; exit 2; }
 p=$1 name=$2 brief=$3 hint=$4
+if ! pane_runs "$p" "$(reg_field "$p" 4)"; then
+  flog WARN "relaunch refused: the pane no longer runs its registered session" pane="$p" name="$name"
+  err "$p does not run $name's registered session (a stale panes.tsv row?)"
+  exit 1
+fi
 if [[ -n $(input_text "$(screen "$p")") ]]; then
   flog WARN "relaunch refused: AJ's typed text is in the prompt" pane="$p" name="$name"
   err "$p holds typed text; send or clear it first"

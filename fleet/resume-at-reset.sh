@@ -86,6 +86,10 @@ submit() { # PANE
 fresh() { # PANE NAME BRIEF
   local p=$1 name=$2 brief=$3 txt new
   [[ -z $(input_text "$(screen "$p")") ]] || return 1
+  if ! pane_runs "$p" "$(reg_field "$p" 4)"; then
+    flog WARN "fresh session refused: the pane no longer runs its registered session" pane="$p" name="$name" session_id="$(reg_field "$p" 4)"
+    return 2
+  fi
   txt="$FLEET_STATE/fresh-$name-$(date +%Y%m%d-%H%M).src"
   { fresh_preamble "stopped at a usage limit over an hour ago, so its cached conversation expired and resuming it would re-cache everything"; printf '\n\n'; cat "$brief"; } >"$txt"
   t send-keys -t "$p" -l "/exit"
@@ -191,18 +195,29 @@ one() { # PANE
     got=$(deliver "$p" "$tmp")
     rm -f -- "${tmp:?}"
     flog WARN "resumed: AJ's line had left the prompt unsent, so it was typed again" pane="$p" account="${ACTIVE:-unknown}" switched="$switched" delivered="$got" text="${note[$p]:0:200}"
-  elif [[ -n $reg ]] && idle=$((NOW - $(stopped_at "$p" "$ps"))) && (( idle >= FRESH_AFTER_S )); then
-    if new=$(fresh "$p" "$name" "$brief"); then
-      flog INFO "fresh session after a long idle" pane="$p" name="$name" new_pane="${new:-none}" idle_min="$((idle / 60))" account="${ACTIVE:-unknown}"
-      [[ -n $new ]] && last[$new]=$NOW
-    else
-      flog INFO "AJ typed just now; leaving the pane to the next pass" pane="$p"
-      return
-    fi
   else
-    t send-keys -t "$p" -l "$MSG"
-    if wait_for "$p" 5 holds_input; then got=$(submit "$p"); else got=no; fi
-    flog INFO "resumed with the continue message" pane="$p" account="${ACTIVE:-unknown}" switched="$switched" started="$got"
+    # Past an hour idle a registered pane starts fresh from its brief; a pane
+    # that no longer runs its registered session (2) is resumed in place instead.
+    local rc=3
+    if [[ -n $reg ]] && idle=$((NOW - $(stopped_at "$p" "$ps"))) && (( idle >= FRESH_AFTER_S )); then
+      new=$(fresh "$p" "$name" "$brief")
+      rc=$?
+    fi
+    case $rc in
+      0)
+        flog INFO "fresh session after a long idle" pane="$p" name="$name" new_pane="${new:-none}" idle_min="$((idle / 60))" account="${ACTIVE:-unknown}"
+        [[ -n $new ]] && last[$new]=$NOW
+        ;;
+      1)
+        flog INFO "AJ typed just now; leaving the pane to the next pass" pane="$p"
+        return
+        ;;
+      *)
+        t send-keys -t "$p" -l "$MSG"
+        if wait_for "$p" 5 holds_input; then got=$(submit "$p"); else got=no; fi
+        flog INFO "resumed with the continue message" pane="$p" account="${ACTIVE:-unknown}" switched="$switched" started="$got"
+        ;;
+    esac
   fi
   last[$p]=$NOW
   forget "$p"

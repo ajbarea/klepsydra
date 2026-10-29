@@ -197,7 +197,11 @@ echo "resume: a fresh session after a long idle"
 : >"$FLEET_LOG"
 p=$(pane idle "{\"above\":[\"⏺ Done. done 9:00 AM\",\"$LIMIT\"]}"); settle
 printf 'the brief body\n' >"$work/brief.src"
-printf '%s\tidler\t%s\n' "$p" "$work/brief.src" >"$REGISTRY"
+SID=11111111-2222-4333-8444-555555555555
+mkdir -p "$KLEPSYDRA_DIR/fleet"
+live() { jq -n --arg p "$1" '{session_id: "x", ended: null, tmux: {pane: $p}}' >"$KLEPSYDRA_DIR/fleet/$SID.json"; }
+live "$p"
+printf '%s\tidler\t%s\t%s\t/w\n' "$p" "$work/brief.src" "$SID" >"$REGISTRY"
 cat >"$work/launch-stub.sh" <<EOF
 #!/usr/bin/env bash
 printf '%s\n' "\$@" >"$work/launched"
@@ -211,6 +215,18 @@ check "and launch.sh starts its brief fresh" "$(head -1 "$work/launched")" "idle
 check "the fresh brief starts with the preamble and ends with the brief" \
   "$(head -c 61 "$(sed -n 2p "$work/launched")") | $(tail -1 "$(sed -n 2p "$work/launched")")" "Fresh start: a previous agent with the brief below stopped at | the brief body"
 check "logged with the new pane" "$(jq -r 'select(.message == "fresh session after a long idle") | .new_pane' "$FLEET_LOG")" "%999"
+t kill-window -t "$p" 2>/dev/null; : >"$REGISTRY"
+
+: >"$FLEET_LOG"
+p=$(pane reused "{\"above\":[\"⏺ Done. done 9:00 AM\",\"$LIMIT\"]}"); settle
+live "%0"   # a tmux restart: the registered session now sits elsewhere; this pane id is another agent's
+printf '%s\tidler\t%s\t%s\t/w\n' "$p" "$work/brief.src" "$SID" >"$REGISTRY"
+: >"$work/launched"
+resume "$morning"
+LAUNCH="$work/launch-stub.sh" FLEET_NOW=$(( noon + 4330 )) bash "$here/resume-at-reset.sh" --once 2>/dev/null
+check "B2: a reused pane id is never exited; it is resumed in place" \
+  "$(grep -c 'SUBMIT /exit' "$work/reused.log") $(has "$(events reused)" "SUBMIT The usage limit has reset.") $(wc -c <"$work/launched")" "0 yes 0"
+check "and the refusal is logged" "$(logged "fresh session refused")" "$p "
 t kill-window -t "$p" 2>/dev/null; : >"$REGISTRY"
 
 echo "launch.sh"
