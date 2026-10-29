@@ -1,6 +1,6 @@
 // The card wall: a card per Claude Code session, in the reader's order, with
 // a way back to its terminal.
-import { RINGS, accountsDiffer, announcements, card, identity, needsFirst, shouldSlide, showsRingKey, startedNeeding, transitionName, statuses, tally } from "./model.js";
+import { RINGS, accountsDiffer, announcements, card, castPicks, identity, needsFirst, shouldSlide, showsRingKey, startedNeeding, transitionName, statuses, tally } from "./model.js";
 import { announcer, press, say, setOff, syncChildren } from "./dom.js";
 import { ARM_MS, confirmCopy, createEnder, endAllCopy, endingAnnouncement, endingText, withdrawnText } from "./end.js";
 import { askedNote, asking, isReady, readiness, wrapupAnnouncements, wrapupCopy, wrapupLines } from "./wrapup.js";
@@ -698,13 +698,14 @@ if (inTauri) follow("ci_subscribe", showCi).catch(() => {});
 function take(message) {
   if (served && "ci" in (message ?? {})) showCi(message.ci);
   if (Array.isArray(message?.sessions)) {
-    const said = announcements(before, message.sessions, cast, Date.now());
+    const fresh = castPicks(message.sessions, cast);
+    const said = announcements(before, fresh, cast, Date.now());
     const speaking = speaker.update(message.speaking ?? null, Date.now());
-    const who = speaking && message.sessions.find((s) => s.session_id === speaking);
+    const who = speaking && fresh.find((s) => s.session_id === speaking);
     if (who) said.push(`${identity(who, cast).name} speaking`);
-    const started = startedNeeding(before, message.sessions);
-    before = statuses(message.sessions);
-    sessions = served ? needsFirst(message.sessions) : message.sessions;
+    const started = startedNeeding(before, fresh);
+    before = statuses(fresh);
+    sessions = served ? needsFirst(fresh) : fresh;
     request = message.wrapup ?? null;
     latestSnapshot = message;
     said.push(...render(started));
@@ -1310,6 +1311,7 @@ function put(next, theme, paint) {
 }
 /** Paint every surface again in the theme worn: the cards, an open portrait, the Ledger, the Queue's keeper. */
 function repaintTheme() {
+  sessions = castPicks(sessions, cast);
   if (latestSnapshot) {
     const said = render();
     if (said.length) announce(said.join(". "));

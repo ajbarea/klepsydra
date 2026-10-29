@@ -5,7 +5,7 @@ import {
   STATUS, shortAge, longAge, statusParts, voiceName, identity, accessibleName,
   statuses, startedNeeding, orderChanged, shouldSlide, transitionName, announcements, updatedText, badgeSvg, stripItems, card,
   askText, askParts, plainText, tally, crewOf, crewText, crewRing, crewRings, crewMarks, RINGS, RING_MAX, showsRingKey, alsoChip, ALSO_NAMED, pillWhen,
-  BAND, accountsDiffer,
+  BAND, accountsDiffer, castPicks,
 } from "./fleet/model.js";
 import { contrast } from "./fleet/contrast.js";
 import { TONES, hash, initialOf, medallion, medallionSvg, toneOf } from "./fleet/medallion.js";
@@ -794,4 +794,51 @@ test("a card names its account, and the wall shows it only while live cards diff
   assert.equal(accountsDiffer([a, card(session({ session_id: "d", account: rit }), CAST, NOW)]), false, "one account: no chip");
   assert.equal(accountsDiffer([a, none]), false, "a card with no account says nothing of a second");
   assert.equal(accountsDiffer([a, card(session({ session_id: "e", account: me, status: "ended" }), CAST, NOW)]), false, "an ended card does not count");
+});
+
+test("#148: a session with no character of its own gets one no live card shows, never a medallion while the theme loads", () => {
+  const cast = {
+    faces: "kourai",
+    characters: { v1: { name: "One", face: "one" }, v2: { name: "Two", face: "two" }, v3: { name: "Three", face: "three" } },
+  };
+  const at = (id, voice, started, over = {}) => session({ session_id: id, voice, started_at: started, ...over });
+  const faces = (list) => Object.fromEntries(castPicks(list, cast).map((s) => [s.session_id, identity(s, cast).name]));
+
+  // keryx muted, no home voice: a free character, and no keryx voice to name.
+  const muted = castPicks([at("held", "v1", 1), at("cv", null, 2)], cast);
+  assert.notEqual(identity(muted[1], cast).name, "One");
+  assert.ok(["Two", "Three"].includes(identity(muted[1], cast).name));
+  assert.equal(identity(muted[1], cast).voice, null);
+  assert.equal(identity(muted[0], cast).voice, voiceName("v1"), "an own voice is still named");
+
+  // Free characters go first; a second voiceless session takes the other one.
+  const two = faces([at("held", "v1", 1), at("a", null, 2), at("b", null, 3)]);
+  assert.deepEqual(new Set([two.a, two.b]), new Set(["Two", "Three"]));
+
+  // Every character showing: one of the least shown is reused, not a medallion.
+  const full = faces([at("x", "v1", 1), at("y", "v1", 2), at("z", "v2", 3), at("w", "v3", 4), at("n", null, 5)]);
+  assert.ok(["Two", "Three"].includes(full.n), full.n);
+
+  // An ended card shows no one: its character is free for a live one.
+  const ended = faces([at("old", "v1", 1, { status: "ended" }), at("p", "v2", 2), at("q", "v3", 3), at("r", null, 4)]);
+  assert.equal(ended.r, "One");
+
+  // Stable: an older card keeps its face when a newer one arrives, whatever the order sessions come in.
+  const before = faces([at("held", "v1", 1), at("older", null, 2)]);
+  const after = faces([at("newer", null, 9), at("older", null, 2), at("held", "v1", 1)]);
+  assert.equal(after.older, before.older);
+  assert.notEqual(after.newer, after.older);
+
+  // A voice the theme does not cast counts as none.
+  assert.ok(["One", "Two", "Three"].includes(faces([at("odd", "zz_nobody", 1)]).odd));
+});
+
+test("#148: the medallion is only for a theme that did not load", () => {
+  const s = session({ voice: null, name: "CV audit" });
+  for (const none of [null, undefined, {}, { faces: "kourai", characters: {} }]) {
+    const [picked] = castPicks([s], none);
+    assert.equal(picked.pick, undefined);
+    assert.equal(identity(picked, none).face, identity(s, null).face);
+    assert.match(identity(picked, none).face, /^data:image\/svg\+xml/);
+  }
 });

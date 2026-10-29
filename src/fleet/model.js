@@ -2,7 +2,7 @@
 // so it can be unit tested. Sessions arrive from the reader already ordered.
 
 import { markerWidth, mix, mixOklab, readableOn } from "./contrast.js";
-import { medallion } from "./medallion.js";
+import { hash, medallion } from "./medallion.js";
 import { castAccent, castCharacter, castFiles, voiceName } from "./cast.js";
 import { ledgerLine } from "./ledger.js";
 
@@ -85,10 +85,14 @@ const basename = (path) => (typeof path === "string" ? path.replace(/\/+$/, "").
  * the theme (`cast`) casts for its keryx voice; else a medallion bearing the
  * initial of the voice's name, or of the session's name or folder when it has
  * no voice, in a metal picked by the voice, or by the session id when it has
- * none. A character whose face files cannot be named is a medallion too.
+ * none. A character whose face files cannot be named is a medallion too. A
+ * session with no character of its own wears the one castPicks gave it
+ * (`pick`), with no keryx voice to name.
  */
 export function identity(s, cast) {
-  const voice = typeof s.voice === "string" && s.voice ? s.voice : null;
+  const own = typeof s.voice === "string" && s.voice ? s.voice : null;
+  const picked = !castCharacter(own, cast) && typeof s.pick === "string" ? s.pick : null;
+  const voice = picked ?? own;
   const character = castCharacter(voice, cast);
   const base = character && castFiles(character, cast);
   if (base) {
@@ -97,7 +101,7 @@ export function identity(s, cast) {
     const placed = Array.isArray(head) && head.length === 3 && head.every((v) => typeof v === "number" && v > 0 && v < 1);
     return {
       name: character.name,
-      voice: voiceName(voice),
+      voice: picked ? null : voiceName(voice),
       face: `${base}-96.webp`,
       face2x: `${base}-192.webp`,
       full: `${base}-full.webp`,
@@ -106,9 +110,40 @@ export function identity(s, cast) {
       figure: placed ? { src: `${base}-figure.webp`, head } : null,
     };
   }
-  const name = voice ? voiceName(voice) : s.name || basename(s.launch_dir) || s.session_id.slice(0, 8);
-  const face = medallion(name, voice ?? s.session_id);
+  const name = own ? voiceName(own) : s.name || basename(s.launch_dir) || s.session_id.slice(0, 8);
+  const face = medallion(name, own ?? s.session_id);
   return { name, voice: null, face, face2x: face, full: null, accent: null, epithet: null, figure: null };
+}
+
+/**
+ * Every session a character from the theme `cast` wears (#148): one with no
+ * character of its own (keryx muted, a repo with no home voice, or a home
+ * voice another session keeps) gets `pick`, a character no live card shows,
+ * or, when every one is showing, one of the least shown. Older sessions
+ * choose first, each taking the free character its id hashes highest with,
+ * so a card keeps its face when newer ones arrive, and the strip, the wall
+ * and the phone, which see the same sessions, agree. With no theme loaded
+ * nothing is picked and the cards wear medallions.
+ */
+export function castPicks(sessions, cast) {
+  const chars = Object.keys(cast?.characters ?? {}).filter((k) => castFiles(castCharacter(k, cast), cast));
+  if (!chars.length) return sessions;
+  const own = (s) => (castCharacter(s.voice, cast) && castFiles(castCharacter(s.voice, cast), cast) ? s.voice : null);
+  const live = (s) => s.status !== "ended";
+  const shown = new Map(chars.map((c) => [c, 0]));
+  for (const s of sessions) if (live(s) && own(s) && shown.has(s.voice)) shown.set(s.voice, shown.get(s.voice) + 1);
+  const order = sessions
+    .filter((s) => !own(s))
+    .sort((a, b) => (a.started_at ?? Infinity) - (b.started_at ?? Infinity) || (a.session_id < b.session_id ? -1 : 1));
+  const pick = new Map();
+  for (const s of order) {
+    const least = Math.min(...shown.values());
+    const pool = chars.filter((c) => shown.get(c) === least);
+    const c = pool.reduce((best, x) => (hash(`${s.session_id}:${x}`) > hash(`${s.session_id}:${best}`) ? x : best));
+    pick.set(s.session_id, c);
+    if (live(s)) shown.set(c, shown.get(c) + 1);
+  }
+  return sessions.map((s) => (pick.has(s.session_id) ? { ...s, pick: pick.get(s.session_id) } : s));
 }
 
 /** "Hermes, 2 agents and 1 shell running in background, working, prompt free, 2 minutes" */
