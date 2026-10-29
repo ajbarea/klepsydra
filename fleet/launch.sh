@@ -35,7 +35,9 @@ account=$(nodir "$account") # "~/.claude/" is the default too, which must not se
 # turns keryx off, so only Heph speaks and no worker loads a voice model (#183).
 # FLEET_SETTINGS="" starts it without them (the orchestrator, fleet recover).
 settings=${FLEET_SETTINGS-$FLEET_STATE/worker-settings.json}
-cmd="env $(config_env "$account")CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS=2 ${FLEET_CLAUDE:-claude} --session-id $sid${settings:+ --settings $settings} $*"
+# KLEPSYDRA_AGENT names the session's agent to the fleet hook, so its card keeps
+# its face across relaunches (#172).
+cmd="env $(config_env "$account")KLEPSYDRA_AGENT=$(printf '%q' "$name") CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS=2 ${FLEET_CLAUDE:-claude} --session-id $sid${settings:+ --settings $settings} $*"
 if [[ ${FLEET_SCOPE:-1} != 0 ]]; then
   cmd="systemd-run --user --scope --collect --unit=fleet-$name-$(date +%s) -p MemoryHigh=${MEM_HIGH:-4G} -p MemoryMax=${MEM_MAX:-5G} -p MemorySwapMax=${MEM_SWAP:-1G} $cmd"
 fi
