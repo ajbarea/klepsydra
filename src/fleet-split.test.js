@@ -192,6 +192,19 @@ test("a message that is not a leave changes nothing, and outside Windows nothing
   assert.deepEqual(g.subs, [], "the toggle stays hidden, so nothing listens");
 });
 
+test("the app watches from each split, stops at each unsplit and at exit, and wires the leave to the wall", () => {
+  const rs = code(read("../src-tauri/src/split.rs"));
+  const fn = (name) => rs.slice(rs.indexOf(`pub fn ${name}(`), rs.indexOf("\n    }\n", rs.indexOf(`pub fn ${name}(`)));
+  const split = fn("split");
+  assert.match(split, /^pub fn split\(wall: isize\) -> Result<String, String> \{\s*let generation = watch::disarm\(\);/, "a split ends the last watch before it moves anything");
+  assert.match(split, /watch::arm\(generation, wall, terminal\);\s*Ok\(ON\.into\(\)\)/, "and watches only once it has landed");
+  assert.match(fn("unsplit"), /^pub fn unsplit\(wall: isize\) -> String \{\s*watch::disarm\(\);\s*if restore\(take\(\), wall\)/, "an unsplit stops watching before it puts anything back");
+  assert.match(rs, /win::when_left\(move \|note\| turned_off\(&to, note\)\);/, "a leave reaches the wall and prefs.json");
+  const main = code(read("../src-tauri/src/main.rs"));
+  assert.match(main, /if let tauri::RunEvent::Exit = event \{\s*split::quitting\(\);\s*\}/, "quitting stops the watch before Tauri hides the windows");
+  assert.match(rs, /pub fn quitting\(\) \{\s*#\[cfg\(windows\)\]\s*win::stop_watching\(\);\s*\}/);
+});
+
 test("the app sends the leave the wall listens for, and saves split off", () => {
   const rs = read("../src-tauri/src/split.rs");
   assert.match(rs, /json!\(\{ "on": false, "note": note \}\)/);

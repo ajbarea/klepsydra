@@ -85,6 +85,13 @@ fn turned_off(app: &tauri::AppHandle, note: String) {
     }
 }
 
+/// Stop watching before klepsydra exits: Tauri hides every window on its way
+/// out, which would read as the wall closed and save split off.
+pub fn quitting() {
+    #[cfg(windows)]
+    win::stop_watching();
+}
+
 /// Split (`on`) or put both windows back, and say what happened. Off the
 /// main thread, as Jump is: UI Automation lists every top-level window,
 /// the wall's own among them.
@@ -259,6 +266,7 @@ fn left(held: Rect, seen: Seen) -> Option<Left> {
 fn left_note(who: &str, how: Left) -> String {
     let did = match how {
         Left::Closed => "was closed",
+        // A closing window is hidden before it is destroyed, so hidden reads as closed.
         Left::Hidden => "was closed",
         Left::Minimized => "was minimized",
         Left::Maximized => "was maximized",
@@ -600,6 +608,10 @@ mod win {
 
     pub use watch::when_left;
 
+    pub fn stop_watching() {
+        watch::disarm();
+    }
+
     /// A window as it is now.
     fn seen(h: HWND) -> Seen {
         use windows::Win32::UI::WindowsAndMessaging::IsWindowVisible;
@@ -751,6 +763,17 @@ mod win {
             for hook in hooks {
                 let _ = unsafe { UnhookWinEvent(hook) };
             }
+            forget_me();
+        }
+
+        /// Clear the watcher's thread id if it is this thread's: a stale id
+        /// would have the next disarm post WM_QUIT to whichever thread reuses it.
+        fn forget_me() {
+            let me = unsafe { GetCurrentThreadId() };
+            let mut w = watcher();
+            if *w == Some(me) {
+                *w = None;
+            }
         }
 
         unsafe extern "system" fn on_event(
@@ -810,12 +833,16 @@ mod win {
                 }
                 current
             };
-            HELD.with(|held| *held.borrow_mut() = None);
+            HELD.with(|held| {
+                if let Ok(mut held) = held.try_borrow_mut() {
+                    *held = None;
+                }
+            });
             unsafe { PostQuitMessage(0) };
             if !current {
                 return;
             }
-            watcher().take();
+            forget_me();
             log::info!(window = who, how = format!("{how:?}"); "split: off, a window left its half; both stay where they are");
             if let Some(f) = ON_LEFT.get() {
                 f(left_note(who, how));
@@ -902,7 +929,7 @@ mod win {
             let generation = watch::disarm();
             watch::arm(generation, wall.0 .0 as isize, terminal.0 .0 as isize);
             // Past the settle and the hooks going in.
-            std::thread::sleep(std::time::Duration::from_millis(900));
+            std::thread::sleep(std::time::Duration::from_millis(1200));
             leave(wall.0, terminal.0);
             let said = notes_within(2000);
             watch::disarm();

@@ -1034,8 +1034,14 @@ fn main() {
             fleet::start_queue(app.handle());
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while running klepsydra");
+        .build(tauri::generate_context!())
+        .expect("error while building klepsydra")
+        .run(|_, event| {
+            // Before Tauri hides every window on its way out.
+            if let tauri::RunEvent::Exit = event {
+                split::quitting();
+            }
+        });
 }
 
 #[cfg(test)]
