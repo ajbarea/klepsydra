@@ -42,5 +42,5 @@ case $cmd in
     tail -n "${1:-30}" "$FLEET_LOG" | jq -r '[.ts[0:19], .level, .target, .message] + ([to_entries[] | select(.key | IN("ts","level","target","message","run_id") | not) | "\(.key)=\(.value)"]) | join(" ")'
     ;;
   cutover) exec bash "$here/cutover.sh" "$@" ;;
-  *) sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'; [[ -z $cmd ]] || exit 2 ;;
+  *) sed -n '2,/^set -u/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//'; [[ -z $cmd ]] || exit 2 ;;
 esac
