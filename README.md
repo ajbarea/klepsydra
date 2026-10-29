@@ -140,8 +140,8 @@ pane. Once the preferred account has half its five-hour window free again, each
 moved agent goes back at its next finished turn, never mid-turn. A worker whose
 account has used 95% of a window (`FLEET_PREMOVE_PCT`) moves at its next
 finished turn too, before the limit can stop it mid-turn. Moves run side by
-side (two at a time), each launch has 120 seconds, and a failed move is tried
-again at the next pass, then every 15 minutes. `fleet accounts` shows
+side (two at a time), each launch has 120 seconds, and a failed move at a limit
+or before it is tried again at the next pass, then every 15 minutes. `fleet accounts` shows
 each folder's account and room; `fleet doctor` checks both are logged in and in
 step. The orchestrator (Heph) is looked after too: at a limit he is resumed at
 the reset, or moved to the other account as a fresh session from `HEPH.md` when
