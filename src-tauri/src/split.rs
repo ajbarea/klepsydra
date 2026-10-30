@@ -3,8 +3,9 @@
 //! toggle turns it on, and prefs.json remembers it as `wall_split` (written
 //! true only once a split lands). Turning it off puts both windows back where
 //! they were. While on, a watcher turns it off as soon as either window leaves
-//! its half, leaving both where they are. The arithmetic is `geometry`'s; the
-//! win32 calls here stay thin.
+//! its half, leaving both where they are; while off, another turns it on once
+//! AJ snaps both into those halves himself (#182), moving nothing. The
+//! arithmetic is `geometry`'s; the win32 calls here stay thin.
 
 use crate::geometry::Rect;
 use serde_json::{Map, Value};
@@ -49,10 +50,69 @@ fn split_of(prefs: Option<&Map<String, Value>>) -> bool {
 #[tauri::command]
 pub fn get_split_mode(app: tauri::AppHandle) -> Result<bool, String> {
     if cfg!(windows) {
-        Ok(split_of(crate::read_prefs(&app).as_ref()))
+        let on = split_of(crate::read_prefs(&app).as_ref());
+        // Saved off: Split turns on when AJ snaps the windows himself.
+        #[cfg(windows)]
+        if !on {
+            watch_for_snap(&app);
+        }
+        Ok(on)
     } else {
         Err(WINDOWS_ONLY.into())
     }
+}
+
+/// The wall's window handle.
+#[cfg(windows)]
+fn wall_hwnd(app: &tauri::AppHandle) -> Option<isize> {
+    use tauri::Manager;
+    let wall = app.get_webview_window(crate::fleet::WALL)?;
+    Some(wall.hwnd().ok()?.0 as isize)
+}
+
+/// What the watchers do when a window leaves the split or both are snapped
+/// into it: set together, so a split AJ made by hand turns off as one the
+/// toggle made does.
+#[cfg(windows)]
+fn callbacks(app: &tauri::AppHandle) {
+    let to = app.clone();
+    win::when_left(move |note| turned_off(&to, note));
+    let to = app.clone();
+    win::when_snapped(move |wall, terminal| turned_on(&to, wall, terminal));
+}
+
+/// While split is off, watch for AJ snapping both windows into it (#182).
+#[cfg(windows)]
+fn watch_for_snap(app: &tauri::AppHandle) {
+    let Some(wall) = wall_hwnd(app) else {
+        return;
+    };
+    callbacks(app);
+    win::watch_for_snap(wall);
+}
+
+/// AJ snapped both windows into the split: saved on, the wall told, and the
+/// split watched from now on as one klepsydra made. Nothing moves.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn turned_on(app: &tauri::AppHandle, wall: isize, terminal: isize) {
+    use tauri::Manager;
+    crate::write_pref(app, SPLIT_KEY, Value::Bool(true));
+    let follow = app.state::<Follow>();
+    let channel = follow.0.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(c) = channel.as_ref() {
+        if c.send(serde_json::json!({ "on": true, "note": SNAPPED }))
+            .is_err()
+        {
+            log::warn!(
+                "split: on, but the wall did not hear it; its toggle shows off until it reloads"
+            );
+        }
+    }
+    drop(channel);
+    #[cfg(windows)]
+    win::watch_split(wall, terminal);
+    #[cfg(not(windows))]
+    let _ = (wall, terminal);
 }
 
 /// The wall's end of the split: told when a window left it. One window, the
@@ -67,7 +127,8 @@ pub fn split_subscribe(follow: tauri::State<'_, Follow>, on_message: Channel<Val
 }
 
 /// A window left the split, so it is off: saved off and the wall told why.
-/// Nothing is put back; both windows stay where AJ put them.
+/// Nothing is put back; both windows stay where AJ put them, and snapping
+/// them back turns it on again.
 #[cfg_attr(not(windows), allow(dead_code))]
 fn turned_off(app: &tauri::AppHandle, note: String) {
     use tauri::Manager;
@@ -83,6 +144,9 @@ fn turned_off(app: &tauri::AppHandle, note: String) {
             );
         }
     }
+    drop(channel);
+    #[cfg(windows)]
+    watch_for_snap(app);
 }
 
 /// Stop watching before klepsydra exits: Tauri hides every window on its way
@@ -104,8 +168,7 @@ pub async fn set_split_mode(app: tauri::AppHandle, on: bool) -> Result<String, S
             .get_webview_window(crate::fleet::WALL)
             .ok_or("The wall is not open.")?;
         let hwnd = wall.hwnd().map_err(|e| e.to_string())?.0 as isize;
-        let to = app.clone();
-        win::when_left(move |note| turned_off(&to, note));
+        callbacks(&app);
         let said = tauri::async_runtime::spawn_blocking(move || {
             if on {
                 win::split(hwnd)
@@ -117,6 +180,9 @@ pub async fn set_split_mode(app: tauri::AppHandle, on: bool) -> Result<String, S
         .map_err(|e| format!("Could not split: {e}"))
         .and_then(|said| said);
         crate::write_pref(&app, SPLIT_KEY, Value::Bool(saved_on(on, said.is_ok())));
+        if !saved_on(on, said.is_ok()) {
+            watch_for_snap(&app);
+        }
         said
     }
     #[cfg(not(windows))]
@@ -209,6 +275,43 @@ fn restore_placement(flags: u32) -> (u32, u32) {
 #[cfg_attr(not(windows), allow(dead_code))]
 const DRIFT_PX: i32 = 4;
 
+/// How far (physical px) a window snapped by hand may sit from its half and
+/// still count as in the split: Windows 11 snaps the visible frames edge to
+/// edge, but rounds them by a few pixels at some scales.
+#[cfg_attr(not(windows), allow(dead_code))]
+const SNAP_PX: i32 = 8;
+
+/// Whether visible frames `wall` and `terminal` sit as Split places them in
+/// `work`: the wall on the left half, the terminal on the right, each edge
+/// within `SNAP_PX`. A reversed or uneven snap is not the split.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn in_split(work: Rect, wall: Rect, terminal: Rect) -> bool {
+    let (left, right) = crate::geometry::halves(work);
+    let near = |f: Rect, half: Rect| {
+        [
+            (f.x, half.x),
+            (f.y, half.y),
+            (f.right(), half.right()),
+            (f.bottom(), half.bottom()),
+        ]
+        .iter()
+        .all(|(a, b)| (a - b).abs() <= SNAP_PX)
+    };
+    near(wall, left) && near(terminal, right)
+}
+
+/// Whether a settled look at the windows turns split on: they are in the
+/// split now and were not at the last look, so a layout already there when
+/// watching began (or put back by turning split off) never counts.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn snapped(was: bool, now: bool) -> bool {
+    now && !was
+}
+
+/// The wall's note when AJ snapped both windows into the split.
+#[cfg_attr(not(windows), allow(dead_code))]
+const SNAPPED: &str = "Split on: the wall and the fleet terminal were snapped side by side.";
+
 /// How a window left the split.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(not(windows), allow(dead_code))]
@@ -286,8 +389,8 @@ fn give_focus_back(before: isize, after: isize, moved: isize) -> bool {
 #[cfg(windows)]
 mod win {
     use super::{
-        give_focus_back, left, left_note, lookup_error, moves, put_back_activates, quiet_show,
-        restore_placement, terminal_pos_flags, wall_pos_flags, Seen,
+        give_focus_back, in_split, left, left_note, lookup_error, moves, put_back_activates,
+        quiet_show, restore_placement, snapped, terminal_pos_flags, wall_pos_flags, Seen,
     };
     use crate::geometry::{frame_insets, widen, Insets, Rect};
     use std::sync::Mutex;
@@ -606,10 +709,46 @@ mod win {
         }
     }
 
-    pub use watch::when_left;
+    pub use watch::{when_left, when_snapped};
 
     pub fn stop_watching() {
-        watch::disarm();
+        watch::quit();
+    }
+
+    /// While split is off: watch for AJ snapping the wall and the fleet
+    /// terminal into the split himself (`watch::arm_snap`).
+    pub fn watch_for_snap(wall: isize) {
+        let generation = watch::disarm();
+        watch::arm_snap(
+            generation,
+            wall,
+            Box::new(|| crate::jump::fleet_window_quiet().ok()),
+        );
+    }
+
+    /// Watch a split AJ made himself, as one klepsydra made: nothing is saved
+    /// to put back, so turning it off later moves nothing.
+    pub fn watch_split(wall: isize, terminal: isize) {
+        let generation = watch::disarm();
+        watch::arm(generation, wall, terminal);
+    }
+
+    /// Whether `wall` and `terminal` are both shown normal on one monitor, in
+    /// the split's halves of its work area.
+    fn in_split_now(wall: isize, terminal: isize) -> bool {
+        let (w, t) = (seen(hwnd(wall)), seen(hwnd(terminal)));
+        let normal = |s: &Seen| s.exists && s.visible && !s.iconic && !s.zoomed;
+        if !(normal(&w) && normal(&t)) {
+            return false;
+        }
+        let (Some(fw), Some(ft)) = (w.frame, t.frame) else {
+            return false;
+        };
+        let monitor = |h: isize| unsafe { MonitorFromWindow(hwnd(h), MONITOR_DEFAULTTONEAREST) };
+        if monitor(wall) != monitor(terminal) {
+            return false;
+        }
+        work_area(hwnd(wall)).is_ok_and(|work| in_split(work, fw, ft))
     }
 
     /// A window as it is now.
@@ -632,21 +771,28 @@ mod win {
     /// leaves its half. Each split or unsplit starts a new generation, which
     /// ends the last watcher, so the app's own moves are never seen as AJ's.
     mod watch {
-        use super::{hwnd, left, left_note, saved, seen, Rect};
-        use std::cell::RefCell;
-        use std::sync::atomic::{AtomicU64, Ordering};
+        use super::{
+            exists, hwnd, in_split_now, is_terminal, left, left_note, per_monitor_aware, saved,
+            seen, snapped, Rect,
+        };
+        use std::cell::{Cell, RefCell};
+        use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
         use std::sync::{Mutex, OnceLock};
+        use windows::core::BOOL;
         use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
         use windows::Win32::System::Threading::GetCurrentThreadId;
         use windows::Win32::UI::Accessibility::{SetWinEventHook, UnhookWinEvent, HWINEVENTHOOK};
         use windows::Win32::UI::WindowsAndMessaging::{
-            GetMessageW, GetWindowThreadProcessId, PeekMessageW, PostQuitMessage,
-            PostThreadMessageW, MSG, PM_NOREMOVE, WM_QUIT,
+            EnumWindows, GetMessageW, GetWindowThreadProcessId, KillTimer, PeekMessageW,
+            PostQuitMessage, PostThreadMessageW, SetTimer, MSG, PM_NOREMOVE, WM_QUIT, WM_TIMER,
         };
 
         // WinEvents (winuser.h).
+        const EVENT_SYSTEM_MOVESIZEEND: u32 = 0x000B;
         const EVENT_SYSTEM_MINIMIZESTART: u32 = 0x0016;
         const EVENT_OBJECT_DESTROY: u32 = 0x8001;
+        const EVENT_OBJECT_SHOW: u32 = 0x8002;
+        const EVENT_OBJECT_HIDE: u32 = 0x8003;
         const EVENT_OBJECT_LOCATIONCHANGE: u32 = 0x800B;
         const WINEVENT_OUTOFCONTEXT: u32 = 0;
         const OBJID_WINDOW: i32 = 0;
@@ -660,12 +806,337 @@ mod win {
         static GENERATION: AtomicU64 = AtomicU64::new(0);
         /// The running watcher's thread, to end it.
         static WATCHER: Mutex<Option<u32>> = Mutex::new(None);
+        /// klepsydra is exiting: no watcher starts again (Tauri hides every
+        /// window on its way out, which a split watcher would read as closed).
+        static QUITTING: AtomicBool = AtomicBool::new(false);
+
+        /// End any watcher for good, before exit.
+        pub fn quit() {
+            QUITTING.store(true, Ordering::SeqCst);
+            disarm();
+        }
         type OnLeft = Box<dyn Fn(String) + Send + Sync>;
         static ON_LEFT: OnceLock<OnLeft> = OnceLock::new();
 
         /// Set once what to do when a window leaves the split.
         pub fn when_left(f: impl Fn(String) + Send + Sync + 'static) {
             let _ = ON_LEFT.set(Box::new(f));
+        }
+
+        type OnSnapped = Box<dyn Fn(isize, isize) + Send + Sync>;
+        static ON_SNAPPED: OnceLock<OnSnapped> = OnceLock::new();
+
+        /// Set once what to do when AJ snaps both windows into the split
+        /// (given the wall and the terminal).
+        pub fn when_snapped(f: impl Fn(isize, isize) + Send + Sync + 'static) {
+            let _ = ON_SNAPPED.set(Box::new(f));
+        }
+
+        /// How long (ms) both windows must sit still after a move before the
+        /// layout is read: a snap animates, and Snap Assist places the second
+        /// window a moment after the first.
+        const SNAP_SETTLE_MS: u32 = 1000;
+
+        type Find = Box<dyn Fn() -> Option<isize> + Send>;
+
+        /// The snap watcher's state, on its own thread.
+        struct Snap {
+            generation: u64,
+            wall: isize,
+            /// The fleet terminal, looked up again at a settle when unknown or gone.
+            terminal: Option<isize>,
+            /// The threads whose windows' events are hooked.
+            hooked: Vec<u32>,
+            hooks: Vec<HWINEVENTHOOK>,
+            /// While the terminal is unknown: a window shown on any thread. A
+            /// Windows Terminal window shown, or moved on a thread hooked for
+            /// one, starts a settle (a terminal opened and snapped beside a
+            /// wall already in place moves no wall). Moves are hooked per
+            /// thread only: on every thread they fire for each cursor move.
+            any: Vec<HWINEVENTHOOK>,
+            /// Whether the windows were in the split at the last look.
+            was: bool,
+        }
+
+        thread_local! {
+            static SNAP: RefCell<Option<Snap>> = const { RefCell::new(None) };
+            static TIMER: Cell<usize> = const { Cell::new(0) };
+        }
+
+        /// Hook the move and resize events of the windows on `h`'s thread.
+        fn hook_snap(snap: &mut Snap, h: isize) {
+            let thread = unsafe { GetWindowThreadProcessId(hwnd(h), None) };
+            if thread == 0 || snap.hooked.contains(&thread) {
+                return;
+            }
+            snap.hooked.push(thread);
+            // A close (destroy, hide) starts a settle too, which finds the
+            // terminal gone and watches every thread for the next one.
+            for (min, max) in [
+                (EVENT_SYSTEM_MOVESIZEEND, EVENT_SYSTEM_MOVESIZEEND),
+                (EVENT_OBJECT_DESTROY, EVENT_OBJECT_HIDE),
+                (EVENT_OBJECT_LOCATIONCHANGE, EVENT_OBJECT_LOCATIONCHANGE),
+            ] {
+                let hook = unsafe {
+                    SetWinEventHook(
+                        min,
+                        max,
+                        None,
+                        Some(on_snap_event),
+                        0,
+                        thread,
+                        WINEVENT_OUTOFCONTEXT,
+                    )
+                };
+                if hook.is_invalid() {
+                    log::warn!(
+                        "split: could not hook a window's moves, so a hand-made split is not seen"
+                    );
+                } else {
+                    snap.hooks.push(hook);
+                }
+            }
+        }
+
+        /// Hook, or unhook, windows being shown on every thread, as the
+        /// terminal is unknown or known; the Windows Terminal windows open
+        /// now have their threads' moves hooked.
+        fn watch_any_terminal(snap: &mut Snap) {
+            if snap.terminal.is_some() {
+                for hook in snap.any.drain(..) {
+                    let _ = unsafe { UnhookWinEvent(hook) };
+                }
+                return;
+            }
+            if !snap.any.is_empty() {
+                return;
+            }
+            let hook = unsafe {
+                SetWinEventHook(
+                    EVENT_OBJECT_SHOW,
+                    EVENT_OBJECT_SHOW,
+                    None,
+                    Some(on_any_terminal),
+                    0,
+                    0,
+                    WINEVENT_OUTOFCONTEXT,
+                )
+            };
+            if !hook.is_invalid() {
+                snap.any.push(hook);
+            }
+            for t in open_terminals() {
+                hook_snap(snap, t);
+            }
+        }
+
+        /// The top-level Windows Terminal windows open now.
+        fn open_terminals() -> Vec<isize> {
+            unsafe extern "system" fn each(h: HWND, found: LPARAM) -> BOOL {
+                if is_terminal(h) {
+                    let found = unsafe { &mut *(found.0 as *mut Vec<isize>) };
+                    found.push(h.0 as isize);
+                }
+                BOOL(1)
+            }
+            let mut found: Vec<isize> = Vec::new();
+            let _ =
+                unsafe { EnumWindows(Some(each), LPARAM(&mut found as *mut Vec<isize> as isize)) };
+            found
+        }
+
+        /// Start the settle again: each move replaces the same timer.
+        fn restart_settle() {
+            let id = TIMER.with(|t| t.get());
+            let id = unsafe { SetTimer(None, id, SNAP_SETTLE_MS, None) };
+            TIMER.with(|t| t.set(id));
+        }
+
+        unsafe extern "system" fn on_any_terminal(
+            _hook: HWINEVENTHOOK,
+            _event: u32,
+            h: HWND,
+            object: i32,
+            child: i32,
+            _thread: u32,
+            _ms: u32,
+        ) {
+            if object == OBJID_WINDOW && child == CHILDID_SELF && is_terminal(h) {
+                SNAP.with(|s| {
+                    if let Ok(mut s) = s.try_borrow_mut() {
+                        if let Some(snap) = s.as_mut() {
+                            hook_snap(snap, h.0 as isize);
+                        }
+                    }
+                });
+                restart_settle();
+            }
+        }
+
+        /// While split is off, watch the wall and the terminal `find` names
+        /// (and names again once it is gone). Once both have sat still for
+        /// `SNAP_SETTLE_MS` after a move, in the split's halves where they
+        /// were not at the last look, split is on: `ON_SNAPPED`. Nothing
+        /// moves. Ended, like the split watcher, by the next generation.
+        pub fn arm_snap(generation: u64, wall: isize, find: Find) {
+            if QUITTING.load(Ordering::SeqCst) {
+                return;
+            }
+            let spawned = std::thread::Builder::new()
+                .name("split-snap".into())
+                .spawn(move || run_snap(generation, wall, find));
+            if let Err(e) = spawned {
+                log::warn!("split: not watching for a hand-made split: {e}");
+            }
+        }
+
+        fn run_snap(generation: u64, wall: isize, find: Find) {
+            std::thread::sleep(std::time::Duration::from_millis(ARM_AFTER_MS));
+            // The frames and work areas compared agree only in physical pixels:
+            // this thread sees them so, whatever the process's awareness.
+            unsafe {
+                windows::Win32::UI::HiDpi::SetThreadDpiAwarenessContext(
+                    windows::Win32::UI::HiDpi::DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2,
+                );
+            }
+            if let Err(e) = per_monitor_aware() {
+                log::warn!("split: not watching for a hand-made split: {e}");
+                return;
+            }
+            let terminal = find();
+            let mut snap = Snap {
+                generation,
+                wall,
+                terminal,
+                hooked: Vec::new(),
+                hooks: Vec::new(),
+                any: Vec::new(),
+                was: terminal.is_some_and(|t| in_split_now(wall, t)),
+            };
+            let mut msg = MSG::default();
+            let _ = unsafe { PeekMessageW(&mut msg, None, 0, 0, PM_NOREMOVE) };
+            hook_snap(&mut snap, wall);
+            if let Some(t) = terminal {
+                hook_snap(&mut snap, t);
+            }
+            watch_any_terminal(&mut snap);
+            SNAP.with(|s| *s.borrow_mut() = Some(snap));
+            let named = {
+                let mut w = watcher();
+                let current = GENERATION.load(Ordering::SeqCst) == generation;
+                if current {
+                    *w = Some(unsafe { GetCurrentThreadId() });
+                }
+                current
+            };
+            if named {
+                log::debug!("split: watching for a hand-made split");
+                while unsafe { GetMessageW(&mut msg, None, 0, 0) }.0 > 0 {
+                    if msg.message == WM_TIMER && msg.hwnd.is_invalid() {
+                        settled(&find);
+                    }
+                }
+            }
+            let left = SNAP.with(|s| s.borrow_mut().take());
+            for hook in left.map(|s| [s.hooks, s.any].concat()).unwrap_or_default() {
+                let _ = unsafe { UnhookWinEvent(hook) };
+            }
+            let timer = TIMER.with(|t| t.replace(0));
+            if timer != 0 {
+                let _ = unsafe { KillTimer(None, timer) };
+            }
+            forget_me();
+        }
+
+        unsafe extern "system" fn on_snap_event(
+            _hook: HWINEVENTHOOK,
+            _event: u32,
+            h: HWND,
+            object: i32,
+            child: i32,
+            _thread: u32,
+            _ms: u32,
+        ) {
+            if object != OBJID_WINDOW || child != CHILDID_SELF {
+                return;
+            }
+            let raw = h.0 as isize;
+            let ours = SNAP.with(|s| {
+                s.try_borrow()
+                    .ok()
+                    .and_then(|s| {
+                        s.as_ref().map(|s| {
+                            raw == s.wall
+                                || s.terminal == Some(raw)
+                                || (s.terminal.is_none() && is_terminal(h))
+                        })
+                    })
+                    .unwrap_or(false)
+            });
+            // A move that comes while `settled` holds the state (if UI Automation
+            // pumps sent messages during its lookup) is dropped: the layout is
+            // read after the lookup anyway.
+            if ours {
+                restart_settle();
+            }
+        }
+
+        /// The windows have sat still: read the layout, and turn split on if
+        /// they have just come into it.
+        fn settled(find: &Find) {
+            let id = TIMER.with(|t| t.replace(0));
+            if id != 0 {
+                let _ = unsafe { KillTimer(None, id) };
+            }
+            let fire = SNAP.with(|s| {
+                let mut s = s.try_borrow_mut().ok()?;
+                let snap = s.as_mut()?;
+                if !snap
+                    .terminal
+                    .is_some_and(|t| exists(t) && is_terminal(hwnd(t)))
+                {
+                    snap.terminal = find();
+                    if let Some(t) = snap.terminal {
+                        hook_snap(snap, t);
+                    }
+                    watch_any_terminal(snap);
+                }
+                let now = snap.terminal.is_some_and(|t| in_split_now(snap.wall, t));
+                let fire = snapped(snap.was, now);
+                snap.was = now;
+                fire.then(|| (snap.generation, snap.wall, snap.terminal.unwrap_or(0)))
+            });
+            let Some((generation, wall, terminal)) = fire else {
+                return;
+            };
+            // A split or unsplit that starts now either ends this generation
+            // first or comes after it.
+            let current = {
+                let mut s = saved();
+                let current = GENERATION
+                    .compare_exchange(
+                        generation,
+                        generation + 1,
+                        Ordering::SeqCst,
+                        Ordering::SeqCst,
+                    )
+                    .is_ok();
+                if current {
+                    // AJ placed them: turning split off puts nothing back.
+                    s.wall = None;
+                    s.terminal = None;
+                }
+                current
+            };
+            unsafe { PostQuitMessage(0) };
+            if !current {
+                return;
+            }
+            forget_me();
+            log::info!("split: on, the wall and the fleet terminal were snapped into its halves");
+            if let Some(f) = ON_SNAPPED.get() {
+                f(wall, terminal);
+            }
         }
 
         /// The two windows and where the split left them, on the watcher's
@@ -698,6 +1169,9 @@ mod win {
 
         /// Watch the split `generation` placed, once it has settled.
         pub fn arm(generation: u64, wall: isize, terminal: isize) {
+            if QUITTING.load(Ordering::SeqCst) {
+                return;
+            }
             let spawned = std::thread::Builder::new()
                 .name("split-watch".into())
                 .spawn(move || run(generation, wall, terminal));
@@ -1033,6 +1507,182 @@ mod win {
             watch::disarm();
         }
 
+        /// What the snap watcher reported, in order.
+        static SNAPS: Mutex<Vec<(isize, isize)>> = Mutex::new(Vec::new());
+
+        /// Two windows, watched for a hand-made split from where `start`
+        /// leaves them, then `snap` done to them; what the watcher reported
+        /// within 3 s.
+        fn snap_watched(
+            start: impl FnOnce(HWND, HWND),
+            snap: impl FnOnce(HWND, HWND),
+        ) -> Vec<(isize, isize)> {
+            let _one = ONE.lock().unwrap_or_else(|e| e.into_inner());
+            unsafe {
+                SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+            }
+            watch::when_snapped(|w, t| SNAPS.lock().unwrap().push((w, t)));
+            SNAPS.lock().unwrap().clear();
+            let (wall, terminal) = (throwaway(100), throwaway(520));
+            start(wall.0, terminal.0);
+            let t = terminal.0 .0 as isize;
+            let generation = watch::disarm();
+            watch::arm_snap(generation, wall.0 .0 as isize, Box::new(move || Some(t)));
+            std::thread::sleep(std::time::Duration::from_millis(1200));
+            snap(wall.0, terminal.0);
+            let start = std::time::Instant::now();
+            while start.elapsed() < std::time::Duration::from_secs(3)
+                && SNAPS.lock().unwrap().is_empty()
+            {
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+            watch::disarm();
+            std::mem::take(&mut *SNAPS.lock().unwrap())
+        }
+
+        fn into_halves(w: HWND, t: HWND) {
+            let (l, r) = halves(work_area(w).unwrap());
+            place(w, l, None).unwrap();
+            place(t, r, None).unwrap();
+        }
+
+        #[test]
+        fn snapping_both_windows_into_the_split_turns_it_on_once_moving_nothing() {
+            let got = snap_watched(|_, _| {}, into_halves);
+            assert_eq!(got.len(), 1, "turned on once");
+            assert_ne!(got[0].1, 0, "with the terminal it found");
+        }
+
+        /// A Windows Terminal-class window on a thread of its own, pumping
+        /// messages until told to stop: a terminal the watcher's hooks on the
+        /// wall's thread cannot see.
+        fn terminal_on_its_own_thread() -> (isize, std::thread::JoinHandle<()>, u32) {
+            use std::sync::mpsc;
+            use windows::core::w;
+            use windows::Win32::Foundation::{LPARAM, LRESULT, WPARAM};
+            use windows::Win32::UI::WindowsAndMessaging::{
+                DefWindowProcW, DispatchMessageW, GetMessageW, RegisterClassW, TranslateMessage,
+                MSG, SW_SHOWNOACTIVATE, WNDCLASSW,
+            };
+            unsafe extern "system" fn proc_(h: HWND, m: u32, w: WPARAM, l: LPARAM) -> LRESULT {
+                unsafe { DefWindowProcW(h, m, w, l) }
+            }
+            let (tx, rx) = mpsc::channel();
+            let owner = std::thread::spawn(move || {
+                let class = WNDCLASSW {
+                    lpfnWndProc: Some(proc_),
+                    lpszClassName: w!("CASCADIA_HOSTING_WINDOW_CLASS"),
+                    ..Default::default()
+                };
+                unsafe { RegisterClassW(&class) };
+                let h = unsafe {
+                    CreateWindowExW(
+                        WINDOW_EX_STYLE(0),
+                        w!("CASCADIA_HOSTING_WINDOW_CLASS"),
+                        w!("klepsydra snap test terminal"),
+                        WS_OVERLAPPEDWINDOW,
+                        900,
+                        200,
+                        400,
+                        300,
+                        None,
+                        None,
+                        None,
+                        None,
+                    )
+                }
+                .expect("a terminal-class window");
+                unsafe {
+                    let _ = ShowWindow(h, SW_SHOWNOACTIVATE);
+                }
+                let me = unsafe { windows::Win32::System::Threading::GetCurrentThreadId() };
+                tx.send((h.0 as isize, me)).unwrap();
+                let mut msg = MSG::default();
+                while unsafe { GetMessageW(&mut msg, None, 0, 0) }.0 > 0 {
+                    unsafe {
+                        let _ = TranslateMessage(&msg);
+                        DispatchMessageW(&msg);
+                    }
+                }
+                let _ = unsafe { DestroyWindow(h) };
+            });
+            let (h, thread) = rx.recv().unwrap();
+            (h, owner, thread)
+        }
+
+        #[test]
+        fn a_terminal_found_only_once_it_is_snapped_beside_the_wall_turns_split_on() {
+            use std::sync::atomic::{AtomicIsize, Ordering};
+            use std::sync::Arc;
+            use windows::Win32::Foundation::{LPARAM, WPARAM};
+            use windows::Win32::UI::WindowsAndMessaging::{PostThreadMessageW, WM_QUIT};
+            let _one = ONE.lock().unwrap_or_else(|e| e.into_inner());
+            unsafe {
+                SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+            }
+            watch::when_snapped(|w, t| SNAPS.lock().unwrap().push((w, t)));
+            SNAPS.lock().unwrap().clear();
+            let wall = throwaway(100);
+            let (l, r) = halves(work_area(wall.0).unwrap());
+            place(wall.0, l, None).unwrap();
+            let (term, owner, thread) = terminal_on_its_own_thread();
+            // The fleet tab is not found until the terminal holds it.
+            let found = Arc::new(AtomicIsize::new(0));
+            let seen = found.clone();
+            let generation = watch::disarm();
+            watch::arm_snap(
+                generation,
+                wall.0 .0 as isize,
+                Box::new(move || Some(seen.load(Ordering::SeqCst)).filter(|h| *h != 0)),
+            );
+            std::thread::sleep(std::time::Duration::from_millis(1200));
+            found.store(term, Ordering::SeqCst);
+            place(hwnd(term), r, None).unwrap();
+            let start = std::time::Instant::now();
+            while start.elapsed() < std::time::Duration::from_secs(4)
+                && SNAPS.lock().unwrap().is_empty()
+            {
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+            watch::disarm();
+            let got = std::mem::take(&mut *SNAPS.lock().unwrap());
+            unsafe {
+                let _ = PostThreadMessageW(thread, WM_QUIT, WPARAM(0), LPARAM(0));
+            }
+            owner.join().unwrap();
+            assert_eq!(
+                got,
+                vec![(wall.0 .0 as isize, term)],
+                "seen through every thread's hooks"
+            );
+        }
+
+        #[test]
+        fn a_reversed_snap_one_window_alone_or_a_split_already_there_does_not() {
+            let none = Vec::<(isize, isize)>::new();
+            assert_eq!(
+                snap_watched(|_, _| {}, |w, t| into_halves(t, w)),
+                none,
+                "reversed"
+            );
+            assert_eq!(
+                snap_watched(
+                    |_, _| {},
+                    |w, _| {
+                        let (l, _) = halves(work_area(w).unwrap());
+                        place(w, l, None).unwrap();
+                    }
+                ),
+                none,
+                "the wall alone"
+            );
+            assert_eq!(
+                snap_watched(into_halves, |_, t| nudge(t, 3, 0)),
+                none,
+                "a split already there when watching began (put back by an unsplit)"
+            );
+        }
+
         #[test]
         fn a_maximized_then_minimized_window_is_placed_normal_without_the_focus() {
             // The watcher tests' windows come and go; one of them could hold the
@@ -1146,6 +1796,48 @@ mod win {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_hand_made_split_is_the_wall_left_and_the_terminal_right_within_a_few_pixels() {
+        let work = Rect::new(0, 0, 2560, 1392);
+        let (l, r) = crate::geometry::halves(work);
+        assert!(in_split(work, l, r), "exactly on the halves");
+        let off = |f: Rect, dx: i32, dw: i32| Rect::new(f.x + dx, f.y, f.w + dw, f.h);
+        assert!(
+            in_split(work, off(l, 0, -7), off(r, 7, -7)),
+            "a snap's rounding"
+        );
+        assert!(!in_split(work, r, l), "reversed");
+        let sixty = (work.w * 3) / 5;
+        assert!(
+            !in_split(
+                work,
+                Rect::new(0, 0, sixty, work.h),
+                Rect::new(sixty, 0, work.w - sixty, work.h)
+            ),
+            "60/40"
+        );
+        assert!(
+            !in_split(work, l, off(r, 40, -40)),
+            "the terminal not to the edge"
+        );
+        assert!(
+            !in_split(work, Rect::new(0, 0, l.w, 700), r),
+            "the wall half height"
+        );
+        let second = Rect::new(-1920, 0, 1920, 1040);
+        let (sl, sr) = crate::geometry::halves(second);
+        assert!(in_split(second, sl, sr), "on a monitor left of the primary");
+        assert!(!in_split(work, sl, sr), "halves of another monitor");
+    }
+
+    #[test]
+    fn only_coming_into_the_split_turns_it_on() {
+        assert!(snapped(false, true), "snapped into it");
+        assert!(!snapped(true, true), "already there when watching began");
+        assert!(!snapped(false, false));
+        assert!(!snapped(true, false), "left it");
+    }
 
     fn prefs(v: Value) -> Map<String, Value> {
         v.as_object().cloned().unwrap()
