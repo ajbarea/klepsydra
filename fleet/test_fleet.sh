@@ -384,6 +384,22 @@ check "a done time later in the day than now is the night before: idle since the
   "$(grep -c 'SUBMIT /exit' "$work/late.log") $(head -1 "$work/launched")" "1 idler"
 t kill-window -t "$p" 2>/dev/null; : >"$REGISTRY"
 
+# Stopped 22 min ago, or in a minute after the pass began (NOW is its start):
+# neither is idle, so each gets the continue message.
+for cell in "recent12:50 PM" "racing1:13 PM"; do
+  name=${cell%%[0-9]*} done_at=${cell#"$name"}
+  : >"$FLEET_LOG"
+  p=$(pane "$name" "{\"above\":[\"⏺ Done. done $done_at\",\"$LIMIT\"]}"); settle
+  live "$p"
+  printf '%s\tidler\t%s\t%s\t/w\n' "$p" "$work/brief.src" "$SID" >"$REGISTRY"
+  : >"$work/launched"
+  resume "$morning"
+  LAUNCH="$work/launch-stub.sh" FLEET_NOW=$(( noon + 4330 )) bash "$here/resume-at-reset.sh" --once 2>/dev/null
+  check "done $done_at at 1:12 PM is not idle: no fresh session, the continue message" \
+    "$(grep -c 'SUBMIT /exit' "$work/$name.log") $(wc -c <"$work/launched") $(has "$(events "$name")" "SUBMIT The usage limit has reset.")" "0 0 yes"
+  t kill-window -t "$p" 2>/dev/null; : >"$REGISTRY"
+done
+
 echo "launch.sh"
 cat >"$work/launcher.sh" <<EOF
 #!/usr/bin/env bash
