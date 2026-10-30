@@ -10,6 +10,7 @@ mod phone;
 mod ping;
 mod split;
 mod theme;
+mod voices;
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -822,6 +823,7 @@ fn with_state<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R
         .manage(phone::Phone::default())
         .manage(theme::Themes::default())
         .manage(theme::ThemeMenu::default())
+        .manage(voices::VoicesMenu::default())
         .manage(split::Follow::default())
 }
 
@@ -950,6 +952,7 @@ fn main() {
             let phone_item =
                 CheckMenuItem::with_id(app, "phone", "Phone wall", true, phone_on, None::<&str>)?;
             let characters = theme::menu(app.handle())?;
+            let voices_menu = voices::menu(app.handle())?;
             let queue_item =
                 MenuItem::with_id(app, "queue", "Choose queue file...", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
@@ -963,6 +966,7 @@ fn main() {
                     &start_item,
                     &phone_item,
                     &characters,
+                    &voices_menu,
                     &queue_item,
                     &PredefinedMenuItem::separator(app)?,
                     &quit,
@@ -1025,7 +1029,9 @@ fn main() {
                     "queue" => fleet::choose_queue(app),
                     "quit" => app.exit(0),
                     other => {
-                        theme::on_menu(app, other);
+                        if !theme::on_menu(app, other) {
+                            voices::on_menu(app, other);
+                        }
                     }
                 })
                 .build(app)?;

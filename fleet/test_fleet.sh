@@ -1614,6 +1614,27 @@ check "FLEET_SETTINGS= starts claude with no --settings" "$(grep -c -- '--settin
 check "#183: workers run keryx off (only Heph speaks), from the installed worker settings" \
   "$(jq -r '.env.KERYX_ENABLED' "$here/worker-settings.json")" "false"
 check "#172: the session is told its agent's name, so its card keeps its face across a move" "$(grep -c 'KLEPSYDRA_AGENT=nosettings ' "$work/cmd")" "1"
+voiced() { # VOICES SETTINGS: the command launch.sh builds with the wall's Voices set to VOICES ("-": prefs as they are)
+  [[ $1 == - ]] || jq -n --arg v "$1" 'if $v == "" then {} else {voices: $v} end' >"$KLEPSYDRA_DIR/prefs.json"
+  : >"$work/nosettings.log"
+  FLEET_SETTINGS=$2 FLEET_SCOPE=0 FLEET_MIN_AVAIL_MB=0 FLEET_LAUNCHER="$work/launcher-rec.sh" FLEET_DIR="$work" \
+    FLEET_CLAUDE="python3 -I $fake $work/nosettings.json $work/nosettings.log" bash "$here/launch.sh" nosettings "$work/task.src" >/dev/null 2>&1
+  cat "$work/cmd"
+}
+cmd=$(voiced "" "$here/worker-settings.json")
+check "#183: by default a worker starts with the worker settings, keryx off" "$(grep -c -- "--settings $here/worker-settings.json" <<<"$cmd")" "1"
+cmd=$(voiced everyone "$here/worker-settings.json")
+settings_arg=$(sed -E 's/.*--settings ([^ ]+).*/\1/' <<<"$cmd")
+check "#183: Everyone starts it with the same settings less keryx's line" \
+  "$(eval "printf '%s' $settings_arg" | jq -c '[.env, .crossSessionInbound]')" '[null,"accept"]'
+check "#183: and the launch log names the mode" "$(jq -r 'select(.message == "window opened") | .voices' "$FLEET_LOG" | tail -1)" "everyone"
+cmd=$(voiced off "")
+check "#183: Off turns keryx off for a session started without worker settings (Heph)" "$(grep -c 'KERYX_ENABLED=false ' <<<"$cmd")" "1"
+cmd=$(voiced heph "")
+check "#183: Heph only leaves Heph's keryx alone" "$(grep -c 'KERYX_ENABLED' <<<"$cmd")" "0"
+printf 'not json' >"$KLEPSYDRA_DIR/prefs.json"
+check "#183: an unreadable prefs file is the default" "$(voiced - "$here/worker-settings.json" >/dev/null; jq -r 'select(.message == "window opened") | .voices' "$FLEET_LOG" | tail -1)" "heph"
+rm -f "$KLEPSYDRA_DIR/prefs.json"
 
 echo "briefing sync"
 git init -q --bare "$work/brief-remote.git"

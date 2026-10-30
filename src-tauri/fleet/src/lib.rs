@@ -23,5 +23,6 @@ pub mod tabs;
 pub mod theme;
 pub mod usage;
 pub mod view;
+pub mod voices;
 pub mod watch;
 pub mod wrapup;

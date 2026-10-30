@@ -812,6 +812,15 @@ newer figures are cut from their painted backdrops by `scripts/cutout-portraits.
 an SVG drawn in `src/fleet/medallion.js`. The overlay loads no library and
 fetches nothing.
 
+### Voices
+
+The tray's **Voices** menu says who speaks through keryx: **Heph only** (the
+default), **Everyone** or **Off**. It is kept in `prefs.json` (`"voices"`),
+where `fleet/launch.sh` reads it, so each session takes it at its next fresh
+start. Heph only starts workers with keryx off (`KERYX_ENABLED=false` in
+`fleet/worker-settings.json`), so a worker loads no summarizer or voice model;
+Everyone starts them without that line; Off also starts Heph with keryx off.
+
 ### Character themes
 
 The cast wears one of three themes, all full and equal, chosen in the tray's
