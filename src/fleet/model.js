@@ -127,7 +127,8 @@ export function identity(s, cast) {
  * medallions.
  */
 export function castPicks(sessions, cast) {
-  const chars = Object.keys(cast?.characters ?? {}).filter((k) => castFiles(castCharacter(k, cast), cast));
+  // Heph's character (am_michael) is the orchestrator's alone (#172): never a pick here.
+  const chars = Object.keys(cast?.characters ?? {}).filter((k) => k !== "am_michael" && castFiles(castCharacter(k, cast), cast));
   if (!chars.length) return sessions;
   const own = (s) => (castFiles(castCharacter(s.voice, cast), cast) ? s.voice : null);
   const shown = new Map(chars.map((c) => [c, 0]));

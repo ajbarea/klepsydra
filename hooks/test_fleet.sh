@@ -149,7 +149,8 @@ fire() { # fixture [filter] [VAR=value...]
   jq -c --arg cwd "$wt" "if .cwd then .cwd = \$cwd else . end | $filter" "$fixtures/$fixture" |
     env KLEPSYDRA_DIR="$dir" KLEPSYDRA_NOW="$now" KLEPSYDRA_PROC="$work/proc" KLEPSYDRA_PID=600 \
       KERYX_VOICES="$work/voices.json" XDG_RUNTIME_DIR="$work" KLEPSYDRA_CAST="$work/test-cast.json" \
-      KLEPSYDRA_BOOT_ID="$boot_file" TMUX= TMUX_PANE= WSL_DISTRO_NAME= CLAUDE_CONFIG_DIR="$work/nocfg" "$@" bash "$hook"
+      KLEPSYDRA_BOOT_ID="$boot_file" TMUX= TMUX_PANE= WSL_DISTRO_NAME= CLAUDE_CONFIG_DIR="$work/nocfg" \
+      FLEET_STATE="$work/fleet-state" KLEPSYDRA_AGENT= "$@" bash "$hook"
 }
 field() { jq -c "$1" "$file"; }
 mtime() { stat -c %Y "$file"; }
@@ -1315,6 +1316,8 @@ check "all three kept their bytes" "$(cat "$g5/fleet/$A1.json"; jq -c .v "$g5/fl
 echo "window colours"
 
 printf '{"holders":{"500:8717628":{"voice":"am_michael","seen":1},"700:9000000":{"voice":"af_heart(0.5)+af_bella(0.5)","seen":1}}}\n' >"$work/win-voices.json"
+# The colour cases hold Chronos's voice: Heph's (am_michael) colours only the orchestrator's window (#172).
+sed 's/"am_michael"/"bm_george"/' "$work/win-voices.json" >"$work/win-voices-colour.json"
 cast_src="$here/../src/fleet/themes/kourai.json"
 fsock=$work/sock/klepsydra
 C1=aaaaaaaa-2222-4333-8444-555555555551
@@ -1325,13 +1328,13 @@ cfire() { # fixture session [VAR=value...]; a pane on the fleet socket unless TM
   local fx=$1 id=$2
   shift 2
   : >"$tlog"
-  fire "$fx" ".session_id = \"$id\"" KLEPSYDRA_CAST="$cast_src" KERYX_VOICES="$work/win-voices.json" TMUX="$fsock,1,0" TMUX_PANE=%3 "$@"
+  fire "$fx" ".session_id = \"$id\"" KLEPSYDRA_CAST="$cast_src" KERYX_VOICES="$work/win-voices-colour.json" TMUX="$fsock,1,0" TMUX_PANE=%3 "$@"
 }
 
 cfire session-start.json $C1
 check "a kourai voice sets both options" "$(cat "$tlog")" \
-  "-S $fsock set-option -w -t %3 window-status-style fg=#DA8C20
--S $fsock set-option -w -t %3 window-status-current-style bg=#DA8C20,fg=#000000,bold"
+  "-S $fsock set-option -w -t %3 window-status-style fg=#F0E442
+-S $fsock set-option -w -t %3 window-status-current-style bg=#F0E442,fg=#000000,bold"
 
 cfire user-prompt.json $C1
 check "an unchanged voice on a later event: no tmux call" "$(cat "$tlog")" ""
@@ -1351,7 +1354,7 @@ check "a changed voice recolours" "$(cat "$tlog")" \
 -S $fsock set-option -w -u -t %3 window-status-current-style"
 
 for bad in "#DA8C20; run-shell x" $'#DA8C20\n' "red" "#DA8C2" 5; do
-  jq --arg a "$bad" '.characters.am_michael.accent = $a' "$cast_src" >"$work/bad-cast.json"
+  jq --arg a "$bad" '.characters.bm_george.accent = $a' "$cast_src" >"$work/bad-cast.json"
   cfire session-start.json $C4 KLEPSYDRA_CAST="$work/bad-cast.json"
   check "a bad accent ($(printf %q "$bad")): no tmux call" "$(cat "$tlog")" ""
 done
@@ -1362,7 +1365,7 @@ check "no cast: no tmux call" "$(cat "$tlog")" ""
 # every switch): the hook reads it there before ~/.claude's copy, and a cast
 # newer than a session's file recolours that window at its next event, once.
 themes="$here/../src/fleet/themes"
-accent_of() { jq -r --arg v am_michael '.characters[$v].accent' "$themes/$1.json"; }
+accent_of() { jq -r --arg v bm_george '.characters[$v].accent' "$themes/$1.json"; }
 cp "$themes/professions.json" "$dir/cast.json"
 touch -d '-20 min' "$dir/cast.json"
 cfire session-start.json $C1 KLEPSYDRA_CAST=
@@ -1419,11 +1422,57 @@ got=""
 while read -r v acc ink; do
   : >"$tlog"
   printf '{"holders":{"500:8717628":{"voice":"%s","seen":1}}}\n' "$v" >"$work/ink-voices.json"
+  # Heph's colour is worn only by the orchestrator's window (#172).
+  mkdir -p "$work/fleet-state"
+  if [[ $v == am_michael ]]; then printf '%s\n' "$C4" >"$work/fleet-state/orchestrator.session"; else rm -f "$work/fleet-state/orchestrator.session"; fi
   fire session-start.json ".session_id = \"$C4\"" KLEPSYDRA_CAST="$work/parity-cast.json" TMUX="$fsock,1,0" TMUX_PANE=%3 KERYX_VOICES="$work/ink-voices.json" >/dev/null
   got+="$v $acc $(sed -n 's/.*current-style bg=#[0-9A-Fa-f]*,fg=\(#[0-9a-f]*\),bold/\1/p' "$tlog")"$'\n'
 done <<<"$want"
 check "the hook's ink matches contrast.js for all seventeen" "$got" "$want"$'\n'
+rm -f "$work/fleet-state/orchestrator.session"
 check "all seventeen were compared" "$(wc -l <<<"$want")" "17"
+
+echo "fleet identity (#172)"
+mkdir -p "$work/fleet-state" "$work/sock"
+printf '%%7\n' >"$work/fleet-state/orchestrator.pane"
+H=55555555-4444-4555-8666-777777777777
+hfile="$dir/fleet/$H.json"
+hfire() { fire "$1" ".session_id = \"$H\"" "${@:2}" >/dev/null; }
+hfire session-start.json "TMUX=$work/sock/klepsydra,1,0" TMUX_PANE=%7
+check "the session in the orchestrator's pane on the fleet's server is Heph" "$(jq -c '[.orchestrator, .fleet_name]' "$hfile")" '[true,null]'
+rm -f "$hfile"; hfire session-start.json "TMUX=$work/sock/default,1,0" TMUX_PANE=%7
+check "the same pane id on another tmux server is not" "$(jq -c .orchestrator "$hfile")" "false"
+rm -f "$hfile"; hfire session-start.json "TMUX=$work/sock/klepsydra,1,0" TMUX_PANE=%8 KLEPSYDRA_AGENT=techne-evals
+check "a worker names its agent and is not Heph" "$(jq -c '[.orchestrator, .fleet_name]' "$hfile")" '[false,"techne-evals"]'
+hfire post-tool-bash.json "TMUX=$work/sock/klepsydra,1,0" TMUX_PANE=%8
+check "its agent stays through later events" "$(jq -r .fleet_name "$hfile")" "techne-evals"
+rm -f "$hfile"; hfire session-start.json KLEPSYDRA_AGENT='../evil name'
+check "an agent name that is not a plain name is not written" "$(jq -c .fleet_name "$hfile")" "null"
+printf '%s\n' "$H" >"$work/fleet-state/orchestrator.session"
+rm -f "$hfile"; hfire session-start.json "TMUX=$work/sock/klepsydra,1,0" TMUX_PANE=%9
+check "review 1: with a session on record, that session is Heph wherever its pane" "$(jq -c .orchestrator "$hfile")" "true"
+W=66666666-4444-4555-8666-777777777777
+wfile="$dir/fleet/$W.json"
+fire session-start.json ".session_id = \"$W\"" "TMUX=$work/sock/klepsydra,1,0" TMUX_PANE=%7 KLEPSYDRA_AGENT=sphragis >/dev/null
+check "review 1: a worker relaunched into the old orchestrator pane after a tmux restart is not Heph" "$(jq -c .orchestrator "$wfile")" "false"
+check "review 1: a worker's window never wears Heph's colour; Heph's always does" \
+  "[$(window_face '{"voice":"am_michael","orchestrator":false}')] [$(window_face '{"voice":"am_puck","orchestrator":true}')] [$(window_face '{"voice":"bf_emma"}')]" \
+  "[] [am_michael] [bf_emma]"
+fire session-start.json ".session_id = \"$W\" | .source = \"clear\"" "TMUX=$work/sock/klepsydra,1,0" TMUX_PANE=%7 >/dev/null
+check "review 2: a /clear in the orchestrator's pane is Heph before the new session is recorded" "$(jq -c .orchestrator "$wfile")" "true"
+fire post-tool-bash.json ".session_id = \"$W\"" "TMUX=$work/sock/klepsydra,1,0" TMUX_PANE=%7 >/dev/null
+check "review 3: and stays Heph on its later events" "$(jq -c .orchestrator "$wfile")" "true"
+fire post-tool-bash.json ".session_id = \"$W\"" "TMUX=$work/sock/klepsydra,1,0" TMUX_PANE=%7 KLEPSYDRA_AGENT=sphragis >/dev/null
+check "review 3: but not under a worker's agent name" "$(jq -c .orchestrator "$wfile")" "false"
+fire post-tool-bash.json ".session_id = \"$W\"" "TMUX=$work/sock/klepsydra,1,0" TMUX_PANE=%8 >/dev/null
+check "review 3: but not once it is in another pane" "$(jq -c .orchestrator "$wfile")" "false"
+rm -f "$wfile"
+fire session-start.json ".session_id = \"$W\"" "TMUX=$work/sock/klepsydra,1,0" TMUX_PANE=%3 KLEPSYDRA_AGENT=heph >/dev/null
+check "review 2: a session launched as heph (a move, a recovery) is Heph at once" "$(jq -c .orchestrator "$wfile")" "true"
+rm -f "$work/fleet-state/orchestrator.session" "$wfile"
+fire session-start.json ".session_id = \"$W\"" "TMUX=$work/sock/klepsydra,1,0" TMUX_PANE=%7 KLEPSYDRA_AGENT=sphragis >/dev/null
+check "review 2: an agent launched under another name is never Heph, even in the orchestrator's pane" "$(jq -c .orchestrator "$wfile")" "false"
+rm -f "$wfile"
 
 echo "account"
 mkdir -p "$work/cfg-team" "$work/cfg-me" "$work/cfg-bad"

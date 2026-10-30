@@ -5,7 +5,9 @@
 //! faces showing then (own voices and picks already held), and kept while the
 //! session stays on the wall, so no card's face moves when another comes or
 //! goes. Saved in `picks.json`, so a restart keeps every face. The wall, the
-//! strip and the phone all read it from the snapshot.
+//! strip and the phone all read it from the snapshot. A fleet agent's pick is
+//! kept by its name, so an agent relaunched on the other account keeps its
+//! face; Heph's face (`HEPH`) is the orchestrator's alone (#172).
 
 use crate::view::View;
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -32,6 +34,19 @@ pub const CAST: [&str; 15] = [
 ];
 
 pub const FILE: &str = "picks.json";
+
+/// Hephaestus in the kourai theme (each theme's orchestrator): only the
+/// session in the orchestrator's pane wears it, never a pick.
+pub const HEPH: &str = "am_michael";
+
+/// Where a session's pick is kept: by its fleet agent's name when it has
+/// one, so a relaunch keeps the face, else by its session id.
+fn key(v: &View) -> String {
+    match &v.fleet_name {
+        Some(name) => format!("agent:{name}"),
+        None => v.session_id.clone(),
+    }
+}
 
 fn cast(voice: Option<&str>) -> Option<&str> {
     voice.filter(|v| CAST.contains(v))
@@ -65,7 +80,7 @@ impl Picks {
             .and_then(Result::ok)
             .map(|m| {
                 m.into_iter()
-                    .filter(|(_, v)| CAST.contains(&v.as_str()))
+                    .filter(|(_, v)| CAST.contains(&v.as_str()) && v != HEPH)
                     .collect()
             })
             .unwrap_or_default();
@@ -77,31 +92,33 @@ impl Picks {
 
     /// Give each session in `sessions` without a cast voice its pick, making
     /// one where it has none; drop the picks of sessions gone from the wall
-    /// and of those that have a cast voice again. Returns whether a pick
+    /// and of those that have a cast voice again. The orchestrator wears
+    /// `HEPH`, and no one else is ever given it. Returns whether a pick
     /// changed (the caller saves).
     pub fn assign(&mut self, sessions: &mut [View]) -> bool {
         let before = self.held.clone();
-        let here: HashSet<&str> = sessions.iter().map(|v| v.session_id.as_str()).collect();
-        self.held.retain(|id, _| here.contains(id.as_str()));
-        for v in sessions.iter() {
+        let workers = || sessions.iter().filter(|v| !v.orchestrator);
+        let here: HashSet<String> = workers().map(key).collect();
+        self.held.retain(|k, _| here.contains(k));
+        for v in workers() {
             if cast(v.voice.as_deref()).is_some() {
-                self.held.remove(&v.session_id);
+                self.held.remove(&key(v));
             }
         }
         let mut shown: HashMap<&str, usize> = CAST.iter().map(|c| (*c, 0)).collect();
         for v in sessions.iter() {
-            let face = cast(v.voice.as_deref())
-                .or_else(|| self.held.get(&v.session_id).map(String::as_str));
+            let face = if v.orchestrator {
+                Some(HEPH)
+            } else {
+                cast(v.voice.as_deref()).or_else(|| self.held.get(&key(v)).map(String::as_str))
+            };
             if let Some(f) = face.and_then(|f| CAST.iter().find(|c| **c == f)) {
                 *shown.entry(f).or_default() += 1;
             }
         }
         // Oldest first, so when several need a pick at once the older chooses first.
-        let mut need: Vec<&View> = sessions
-            .iter()
-            .filter(|v| {
-                cast(v.voice.as_deref()).is_none() && !self.held.contains_key(&v.session_id)
-            })
+        let mut need: Vec<&View> = workers()
+            .filter(|v| cast(v.voice.as_deref()).is_none() && !self.held.contains_key(&key(v)))
             .collect();
         need.sort_by(|a, b| {
             a.started_at
@@ -111,8 +128,15 @@ impl Picks {
         });
         for v in need {
             // The voice it just gave up shows on another card; avoid it while any other is free.
+            if self.held.contains_key(&key(v)) {
+                continue; // another session of the same agent chose it this pass
+            }
             let gave = cast(v.ceded.as_deref());
-            let free: Vec<&str> = CAST.iter().copied().filter(|c| Some(*c) != gave).collect();
+            let free: Vec<&str> = CAST
+                .iter()
+                .copied()
+                .filter(|c| Some(*c) != gave && *c != HEPH)
+                .collect();
             let least = free.iter().map(|c| shown[c]).min().unwrap_or(0);
             let pick = free
                 .iter()
@@ -121,10 +145,14 @@ impl Picks {
                 .max_by_key(|c| hash(&format!("{}:{c}", v.session_id)))
                 .unwrap_or(CAST[0]);
             *shown.entry(pick).or_default() += 1;
-            self.held.insert(v.session_id.clone(), pick.to_string());
+            self.held.insert(key(v), pick.to_string());
         }
         for v in sessions.iter_mut() {
-            v.pick = self.held.get(&v.session_id).cloned();
+            v.pick = if v.orchestrator {
+                (v.voice.as_deref() != Some(HEPH)).then(|| HEPH.to_string())
+            } else {
+                self.held.get(&key(v)).cloned()
+            };
         }
         self.held != before
     }
@@ -173,6 +201,8 @@ mod tests {
             ceded: None,
             pick: None,
             account: None,
+            fleet_name: None,
+            orchestrator: false,
             reply_at: None,
             marks: Default::default(),
         }
@@ -244,15 +274,100 @@ mod tests {
     }
 
     #[test]
-    fn picks_stay_distinct_until_every_face_shows_then_the_least_shown_is_reused() {
+    fn picks_stay_distinct_until_every_face_but_hephs_shows_then_the_least_shown_is_reused() {
         let mut p = Picks::default();
-        let mut cards: Vec<View> = (0..15).map(|i| card(&format!("x{i}"), None, i)).collect();
+        let mut cards: Vec<View> = (0..14).map(|i| card(&format!("x{i}"), None, i)).collect();
         let got = picks_of(&mut p, &mut cards);
         let distinct: HashSet<&String> = got.values().collect();
-        assert_eq!(distinct.len(), 15);
+        assert_eq!(distinct.len(), 14);
+        assert!(
+            !distinct.contains(&HEPH.to_string()),
+            "Heph's face is never a pick"
+        );
         cards.push(card("y", None, 20));
         let got = picks_of(&mut p, &mut cards);
-        assert!(CAST.contains(&got["y"].as_str()));
+        assert!(CAST.contains(&got["y"].as_str()) && got["y"] != HEPH);
+    }
+
+    fn heph(id: &str, voice: Option<&str>, started: i64) -> View {
+        View {
+            orchestrator: true,
+            ..card(id, voice, started)
+        }
+    }
+
+    fn agent(id: &str, name: &str, started: i64) -> View {
+        View {
+            fleet_name: Some(name.into()),
+            ..card(id, None, started)
+        }
+    }
+
+    #[test]
+    fn the_orchestrator_wears_hephs_face_whatever_its_voice_and_no_worker_ever_does() {
+        let mut p = Picks::default();
+        let mut cards = vec![heph("h", None, 5), card("w", None, 1)];
+        let got = picks_of(&mut p, &mut cards);
+        assert_eq!(got["h"], HEPH, "no voice: Heph by its pick");
+        assert_ne!(got["w"], HEPH);
+        let mut cards = vec![heph("h", Some(HEPH), 5)];
+        assert_eq!(
+            picks_of(&mut p, &mut cards)["h"],
+            "",
+            "its own voice already is Heph's"
+        );
+        // Every other face taken: a worker still never gets Heph's.
+        let mut cards: Vec<View> = (0..20).map(|i| card(&format!("z{i}"), None, i)).collect();
+        cards.push(heph("h", None, 0));
+        let got = picks_of(&mut p, &mut cards);
+        assert!(
+            got.iter().all(|(id, f)| (id == "h") == (f == HEPH)),
+            "{got:?}"
+        );
+    }
+
+    #[test]
+    fn a_relaunched_agent_keeps_its_face() {
+        let mut p = Picks::default();
+        let mut cards = vec![agent("old", "techne-evals", 1), agent("k", "klepsydra", 2)];
+        let first = picks_of(&mut p, &mut cards);
+        // Moved to the other account: a new session of the same agent, the old one gone.
+        let mut cards = vec![agent("k", "klepsydra", 2), agent("new", "techne-evals", 9)];
+        let second = picks_of(&mut p, &mut cards);
+        assert_eq!(first["old"], second["new"]);
+        assert_eq!(first["k"], second["k"]);
+        // Both on the wall at once while the move finishes: one face for the agent.
+        let mut cards = vec![
+            agent("old", "techne-evals", 1),
+            agent("new", "techne-evals", 9),
+        ];
+        let both = picks_of(&mut p, &mut cards);
+        assert_eq!(both["old"], both["new"]);
+        // Two sessions of one agent that both need a pick in one pass share it.
+        let mut fresh = Picks::default();
+        let mut cards = vec![agent("a1", "sphragis", 1), agent("a2", "sphragis", 2)];
+        let got = picks_of(&mut fresh, &mut cards);
+        assert_eq!(got["a1"], got["a2"]);
+        assert_eq!(fresh.held.len(), 1);
+    }
+
+    #[test]
+    fn a_saved_pick_of_hephs_face_is_dropped_on_load() {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("klepsydra-picks-heph-{nanos}"));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join(FILE),
+            format!("{{\"agent:techne-evals\": \"{HEPH}\", \"w\": \"af_nova\"}}"),
+        )
+        .unwrap();
+        let p = Picks::load(&dir);
+        assert_eq!(p.held.len(), 1);
+        assert_eq!(p.held.get("w").map(String::as_str), Some("af_nova"));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

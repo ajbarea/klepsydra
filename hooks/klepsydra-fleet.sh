@@ -499,6 +499,8 @@ def notified: if type == "string" then [scan("<task-notification>[\\s\\S]*?</tas
             ended: null, turns: 0, written_at: $now}) as $s
   | $s
   | .name = (($ev.session_title | text) // .name)
+  | .fleet_name = (($fleet_agent | text) // .fleet_name)
+  | .orchestrator = $orchestrator
   | (if $pid != "" then {pid: ($pid | tonumber), start: ($start | tonumber)} else null end) as $me
   # A new process (any start but a compaction) replaces what the file knew of
   # the old one: its pid, pane and host, unknowns included.
@@ -792,6 +794,17 @@ file_voice() { # text
   return 0
 }
 
+# The voice whose colour a session file's window wears (#172): Heph's for the
+# orchestrator, none for a worker holding Heph's voice, else its own.
+HEPH_VOICE=am_michael
+window_face() { # text
+  local v
+  if [[ $1 == *'"orchestrator":true'* ]]; then printf '%s' "$HEPH_VOICE"; return 0; fi
+  v=$(file_voice "$1")
+  [[ $v == "$HEPH_VOICE" ]] || printf '%s' "$v"
+  return 0
+}
+
 # Marks the session's tmux window with its character's colour, on the
 # launcher's own socket only, and clears it for a voice with no character.
 # The accent and its ink come from the cast: the theme worn, which the
@@ -857,6 +870,28 @@ main() {
 
   host_facts
   tmux_facts
+  # Who the session is in the fleet (#172): the agent name launch.sh starts it
+  # with, and whether it is Heph, whom only Heph's face is ever given. Started
+  # as "heph" (a move, a recovery) it is; started as any other agent it is
+  # not. Otherwise it is the session on record in orchestrator.session, or a
+  # /clear in the orchestrator's pane; a tmux restart reuses pane ids, so the
+  # pane alone says so only while no session is on record.
+  local agent=${KLEPSYDRA_AGENT:-} orchestrator=false orch_pane="" orch_sid=""
+  local orch_state=${FLEET_STATE:-${HOME:-}/.local/state/fleet-orchestrator}
+  [[ $agent =~ ^[A-Za-z0-9._-]{1,64}$ ]] || agent=""
+  if [[ ${tmux_socket##*/} == "${KLEPSYDRA_TMUX_SOCKET:-klepsydra}" && -n $tmux_pane ]]; then
+    { read -r orch_sid <"$orch_state/orchestrator.session"; } 2>/dev/null
+    { read -r orch_pane <"$orch_state/orchestrator.pane"; } 2>/dev/null
+    if [[ $agent == heph ]]; then
+      orchestrator=true
+    elif [[ -n $agent ]]; then
+      orchestrator=false
+    elif [[ -n $orch_sid ]]; then
+      [[ $orch_sid == "$session" || ($event == SessionStart && $source == clear && $orch_pane == "$tmux_pane") ]] && orchestrator=true
+    else
+      [[ $orch_pane == "$tmux_pane" ]] && orchestrator=true
+    fi
+  fi
   [[ -n ${KLEPSYDRA_DIR:-} ]] || return 0
   local fleet=$KLEPSYDRA_DIR/fleet
   mkdir -p "$fleet" 2>/dev/null || return 0
@@ -879,6 +914,9 @@ main() {
   file=$fleet/$session.json
   old=""
   [[ -f $file ]] && { old=$(<"$file"); } 2>/dev/null
+  # Heph by a /clear stays Heph on later events in the orchestrator's pane,
+  # before orchestrator.session names the new session.
+  [[ $orchestrator == false && -z $agent && -n $orch_sid && $orch_pane == "$tmux_pane" && $old == *'"orchestrator":true'* ]] && orchestrator=true
   # The git dir the file last named (an escaped path is not read): gone means the checkout was removed.
   old_git=""
   [[ $old =~ \"git\":\"(/[^\"\\]*)\" ]] && old_git=${BASH_REMATCH[1]}
@@ -888,6 +926,7 @@ main() {
     --arg git "$where_git" --argjson where_gone "$where_gone" --arg by "$by" \
     --arg tmux_socket "$tmux_socket" --arg tmux_pane "$tmux_pane" --arg boot "$host_boot" --arg distro "$host_distro" \
     --arg voice "$voice" --argjson homes "$homes" --arg cwd_repo "$cwd_repo" --arg pid "$found_pid" --arg start "$found_start" --arg remote "$remote" --arg cleared "$cleared" --argjson account "$account" \
+    --arg fleet_agent "$agent" --argjson orchestrator "$orchestrator" \
     "$APPLY" 2>/dev/null) || new=""
   # A cast newer than this session's file: the theme changed under it. The
   # file's time is moved past the cast's, so one switch recolours it once.
@@ -895,9 +934,10 @@ main() {
   if [[ ${tmux_socket##*/} == klepsydra && -n $tmux_pane && -f $file && -n $CAST && $CAST -nt $file ]]; then recolour=1; fi
   [[ -n $new ]] && write_atomic "$file" "$new"
   (( recolour )) && touch -c -- "$file" 2>/dev/null
-  # Only a start, a changed voice or a new theme touches the window.
+  # Only a start, a changed face or a new theme touches the window. The face
+  # follows the wall's rule: Heph's for the orchestrator, never for a worker.
   local was_voice now_voice
-  was_voice=$(file_voice "$old") now_voice=$(file_voice "${new:-$old}")
+  was_voice=$(window_face "$old") now_voice=$(window_face "${new:-$old}")
   if [[ $event == SessionStart || $was_voice != "$now_voice" ]]; then recolour=1; fi
   [[ $event == SessionStart ]] && mark_gone "$KLEPSYDRA_DIR" "$now" "$session"
   [[ $event == SessionStart ]] && prune_hourly "$PRUNE_STAMP" prune_fleet "$KLEPSYDRA_DIR" "$now"

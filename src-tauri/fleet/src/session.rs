@@ -237,6 +237,14 @@ pub struct SessionFile {
     /// The account it runs on; none from a hook that never read it.
     #[serde(default, deserialize_with = "lenient_account")]
     pub account: Option<Account>,
+    /// The fleet agent launch.sh started it as (its registry name), the same
+    /// across the agent's relaunches; none outside the fleet.
+    #[serde(default)]
+    pub fleet_name: Option<String>,
+    /// It runs in the orchestrator's pane on the fleet's tmux server: Heph,
+    /// the only session that wears Heph's face (#172).
+    #[serde(default)]
+    pub orchestrator: bool,
 }
 
 /// Why a session file was skipped.

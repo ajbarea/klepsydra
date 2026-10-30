@@ -175,6 +175,8 @@ mod tests {
             ceded: None,
             pick: None,
             account: None,
+            fleet_name: None,
+            orchestrator: false,
             reply_at: None,
             marks: Marks {
                 state_at: START + at,

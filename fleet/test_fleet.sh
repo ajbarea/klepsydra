@@ -1612,6 +1612,7 @@ FLEET_SETTINGS='' FLEET_SCOPE=0 FLEET_MIN_AVAIL_MB=0 FLEET_LAUNCHER="$work/launc
 check "FLEET_SETTINGS= starts claude with no --settings" "$(grep -c -- '--settings' "$work/cmd") $(grep -c -- '--session-id' "$work/cmd")" "0 1"
 check "#183: workers run keryx off (only Heph speaks), from the installed worker settings" \
   "$(jq -r '.env.KERYX_ENABLED' "$here/worker-settings.json")" "false"
+check "#172: the session is told its agent's name, so its card keeps its face across a move" "$(grep -c 'KLEPSYDRA_AGENT=nosettings ' "$work/cmd")" "1"
 
 echo "briefing sync"
 git init -q --bare "$work/brief-remote.git"

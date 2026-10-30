@@ -128,6 +128,14 @@ pub struct View {
     /// The account it runs on; left out of the JSON when the hook never said.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub account: Option<crate::session::Account>,
+    /// The fleet agent it was started as: its pick follows the agent across
+    /// a relaunch (crate::picks). Left out when none.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fleet_name: Option<String>,
+    /// Heph, the orchestrator: the only session wearing Heph's face. Left
+    /// out when false.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub orchestrator: bool,
     /// When keryx last kept this session's spoken reply (`reply::written_at`),
     /// so the card can play it; left out of the JSON without one.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -311,12 +319,37 @@ pub fn view(entry: &Entry, now: i64) -> Option<View> {
         ceded: None,
         pick: None,
         account: f.account.clone(),
+        fleet_name: f.fleet_name.clone(),
+        orchestrator: f.orchestrator,
         reply_at: None,
         marks: Marks {
             state_at: f.state_at,
             turns: f.counted_turns(),
         },
     })
+}
+
+/// Heph's face is the orchestrator's alone (#172): a worker holding its voice
+/// gives it up, and the orchestrator gives up any other, so it wears Heph's
+/// face by its pick (crate::picks) whatever voice keryx gave it. Runs before
+/// keep_faces_distinct, so a worker's claim on Heph's voice never costs him it.
+fn reserve_heph(shown: &mut [(&SessionFile, View)]) {
+    // Heph is the newest live session flagged so: an ended old Heph (after a
+    // /clear or a move) and any other flagged one are workers here.
+    let heph = shown
+        .iter()
+        .filter(|(_, v)| v.orchestrator && v.status != Status::Ended)
+        .max_by_key(|(f, v)| (f.started_at.unwrap_or(0), v.session_id.clone()))
+        .map(|(_, v)| v.session_id.clone());
+    for (_, v) in shown.iter_mut() {
+        v.orchestrator = heph.as_deref() == Some(v.session_id.as_str());
+    }
+    for (_, v) in shown.iter_mut() {
+        let heph = v.voice.as_deref() == Some(crate::picks::HEPH);
+        if v.voice.is_some() && heph != v.orchestrator {
+            v.ceded = v.voice.take();
+        }
+    }
 }
 
 /// A face follows a voice, so sessions sharing one keep it by claim: a session
@@ -372,6 +405,7 @@ pub fn snapshot(entries: &[Entry], now: i64) -> Snapshot {
         .iter()
         .filter_map(|e| view(e, now).map(|v| (&e.file, v)))
         .collect();
+    reserve_heph(&mut shown);
     keep_faces_distinct(&mut shown);
     let mut sessions: Vec<View> = shown.into_iter().map(|(_, v)| v).collect();
     sessions.sort_by(|a, b| {
@@ -405,7 +439,7 @@ mod tests {
             name: None,
             launch_dir: Some("/home/aj/ajsoftworks".into()),
             started_at: Some(state_at),
-            voice: Some("am_michael".into()),
+            voice: Some("am_fenrir".into()),
             voice_from: None,
             state,
             reason: None,
@@ -427,6 +461,8 @@ mod tests {
             needs: None,
             remote_url: None,
             account: None,
+            fleet_name: None,
+            orchestrator: false,
         }
     }
 
@@ -1121,6 +1157,63 @@ mod tests {
     }
 
     #[test]
+    fn hephs_voice_is_the_orchestrators_alone() {
+        let mut worker = voiced("w", NOW - 900, crate::picks::HEPH, "hold");
+        worker.file.fleet_name = Some("techne-evals".into());
+        let mut orch = voiced("h", NOW - 100, "am_puck", "hold");
+        orch.file.orchestrator = true;
+        let s = snapshot(&[worker, orch], NOW);
+        let card = |id: &str| s.sessions.iter().find(|v| v.session_id == id).unwrap();
+        assert_eq!(
+            voice_of(&s, "w"),
+            None,
+            "a worker gives Heph's voice up, however early"
+        );
+        assert_eq!(card("w").ceded.as_deref(), Some(crate::picks::HEPH));
+        assert_eq!(card("w").fleet_name.as_deref(), Some("techne-evals"));
+        assert_eq!(voice_of(&s, "h"), None, "Heph gives up any other voice");
+        assert!(card("h").orchestrator);
+        let mut orch = voiced("h", NOW - 100, crate::picks::HEPH, "hold");
+        orch.file.orchestrator = true;
+        let s = snapshot(&[orch], NOW);
+        assert_eq!(
+            voice_of(&s, "h"),
+            Some(crate::picks::HEPH),
+            "and keeps his own"
+        );
+    }
+
+    #[test]
+    fn only_the_newest_live_orchestrator_is_heph() {
+        let mut old = gone("old", NOW - 900, crate::picks::HEPH, "hold", true);
+        old.file.orchestrator = true;
+        let mut new = voiced("new", NOW - 30, "am_puck", "hold");
+        new.file.orchestrator = true;
+        let s = snapshot(&[old, new], NOW);
+        let card = |id: &str| s.sessions.iter().find(|v| v.session_id == id).unwrap();
+        assert!(
+            card("new").orchestrator && !card("old").orchestrator,
+            "an ended Heph is not Heph"
+        );
+        assert_eq!(voice_of(&s, "old"), None, "so it gives up Heph's voice");
+        // An ended one started later than the live one, and two live ones: the newest live.
+        let mut late_end = gone("late", NOW - 10, crate::picks::HEPH, "hold", true);
+        late_end.file.orchestrator = true;
+        let mut live_old = voiced("live1", NOW - 600, "am_puck", "hold");
+        live_old.file.orchestrator = true;
+        let mut live_new = voiced("live2", NOW - 60, "am_puck", "hold");
+        live_new.file.orchestrator = true;
+        let s = snapshot(&[late_end, live_old, live_new], NOW);
+        let heph: Vec<&str> = s
+            .sessions
+            .iter()
+            .filter(|v| v.orchestrator)
+            .map(|v| v.session_id.as_str())
+            .collect();
+        assert_eq!(heph, ["live2"]);
+    }
+
+    #[test]
     fn a_hold_beats_a_home_however_late_it_started() {
         let s = snapshot(
             &[
@@ -1204,25 +1297,25 @@ mod tests {
     fn a_silent_hold_keeps_its_face_beside_a_live_hold() {
         let s = snapshot(
             &[
-                gone("quiet", NOW - 900, "am_michael", "hold", false),
-                voiced("busy", NOW - 30, "am_michael", "hold"),
+                gone("quiet", NOW - 900, "am_fenrir", "hold", false),
+                voiced("busy", NOW - 30, "am_fenrir", "hold"),
             ],
             NOW,
         );
-        assert_eq!(voice_of(&s, "quiet"), Some("am_michael"));
-        assert_eq!(voice_of(&s, "busy"), Some("am_michael"));
+        assert_eq!(voice_of(&s, "quiet"), Some("am_fenrir"));
+        assert_eq!(voice_of(&s, "busy"), Some("am_fenrir"));
     }
 
     #[test]
     fn an_ended_hold_gives_way_to_the_live_hold_of_its_terminal() {
         let s = snapshot(
             &[
-                gone("old", NOW - 900, "am_michael", "hold", true),
-                voiced("new", NOW - 30, "am_michael", "hold"),
+                gone("old", NOW - 900, "am_fenrir", "hold", true),
+                voiced("new", NOW - 30, "am_fenrir", "hold"),
             ],
             NOW,
         );
-        assert_eq!(voice_of(&s, "new"), Some("am_michael"));
+        assert_eq!(voice_of(&s, "new"), Some("am_fenrir"));
         assert_eq!(voice_of(&s, "old"), None);
     }
 
@@ -1230,15 +1323,15 @@ mod tests {
     fn two_holds_of_one_voice_both_stay() {
         let s = snapshot(
             &[
-                voiced("a", NOW - 200, "am_michael", "hold"),
-                voiced("b", NOW - 100, "am_michael", "hold"),
+                voiced("a", NOW - 200, "am_fenrir", "hold"),
+                voiced("b", NOW - 100, "am_fenrir", "hold"),
             ],
             NOW,
         );
-        assert_eq!(voice_of(&s, "a"), Some("am_michael"));
+        assert_eq!(voice_of(&s, "a"), Some("am_fenrir"));
         assert_eq!(
             voice_of(&s, "b"),
-            Some("am_michael"),
+            Some("am_fenrir"),
             "keryx repeats a voice once all are in use"
         );
     }
