@@ -29,5 +29,6 @@ export function ciView(view) {
 function triageNote(state) {
   if (state === "unavailable") return "Not triaged: ci-audit's report mode is not installed.";
   if (state === "failed") return "Triage failed; open the run.";
+  if (state === "waiting") return "Triage waits for an account with room; it runs again then.";
   return "Triage pending.";
 }

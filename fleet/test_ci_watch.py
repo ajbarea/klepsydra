@@ -399,6 +399,38 @@ class Route(unittest.TestCase):
             for p in (TMP / "state" / "inbox").glob("*/*.txt")
         )
 
+    def test_a_red_waiting_for_its_triage_is_routed_once_it_has_its_cause(self):
+        self.session("s1", "%4", "feat/x")
+        known = {}
+        reply = {"state": "waiting", "at": 0, "since": time.time()}
+        with mock.patch.object(ci_watch, "triage", lambda u, r, i: dict(reply)):
+            ci_watch.poll(
+                "o",
+                ["r"],
+                Fake([run(5, branch="feat/x", sha="p")], pulls=[pr(7, "p")]),
+                known,
+            )
+        self.assertEqual(
+            (self.inbox(), self.alerts()), ([], []), "not routed without a cause"
+        )
+        done = {
+            "state": "done",
+            "verdict": "x",
+            "cause": "test_y fails",
+            "summary": "s",
+        }
+        with mock.patch.object(ci_watch, "triage", lambda u, r, i: dict(done)):
+            ci_watch.poll(
+                "o",
+                ["r"],
+                Fake([run(5, branch="feat/x", sha="p")], pulls=[pr(7, "p")]),
+                known,
+            )
+        self.assertEqual(self.inbox(), ["klep/r-5.txt"])
+        self.assertIn(
+            "test_y fails", (TMP / "state" / "inbox" / "klep" / "r-5.txt").read_text()
+        )
+
     def test_a_red_on_an_agents_pr_branch_goes_to_its_inbox_and_heph_log_not_aj(self):
         self.session("s1", "%4", "feat/x")
         known = {}
@@ -446,6 +478,22 @@ class Route(unittest.TestCase):
         self.assertEqual(
             self.inbox(), [], "a red that turned green is withdrawn unsent"
         )
+
+    def test_a_red_that_pages_out_while_its_triage_waits_is_routed_once_triaged(self):
+        known = {}
+        wait = {"state": "waiting", "at": 0, "since": time.time()}
+        with mock.patch.object(ci_watch, "triage", lambda u, r, i: dict(wait)):
+            ci_watch.poll("o", ["r"], Fake([run(5, workflow=3)]), known)
+        self.assertEqual(self.alerts(), [], "not routed without a cause")
+        done = {"state": "done", "verdict": "x", "cause": "c", "summary": "s"}
+        with (
+            mock.patch.object(ci_watch, "triage", lambda u, r, i: dict(done)),
+            mock.patch.object(ci_watch, "RETRIAGE_S", 0),
+        ):
+            ci_watch.poll(
+                "o", ["r"], Fake([run(6, workflow=1, conclusion="success")]), known
+            )
+        self.assertEqual([a["kind"] for a in self.alerts()], ["heph"])
 
     def test_a_red_on_main_wakes_heph(self):
         self.session("s1", "%4", "main")
@@ -673,6 +721,137 @@ class Triage(unittest.TestCase):
                 got = ci_watch.triage("o", "r", 2)
         self.assertEqual(got["state"], "failed")
         self.assertIsInstance(got["why"], str)
+
+    def test_a_limited_triage_waits_runs_on_the_account_with_room_and_is_tried_again(
+        self,
+    ):
+        script = TMP / "report.sh"
+        script.write_text(
+            '#!/bin/bash\nmkdir -p "$3"\nprintf \'%s\' "${CLAUDE_CONFIG_DIR:-default}" >"$3/config"\n'
+            'echo \'{"is_error":true,"result":"You have hit your session limit"}\' >"$3/claude.json"\n'
+            "exit 1\n"
+        )
+        with (
+            mock.patch.dict(os.environ, {"TECHNE_CI_REPORT": str(script)}),
+            mock.patch.object(
+                ci_watch, "triage_accounts", return_value=["/x/.claude-rit"]
+            ),
+        ):
+            got = ci_watch.triage("o", "r", 3)
+        self.assertEqual(got["state"], "waiting")
+        self.assertEqual(
+            (ci_watch.STATE / "ci" / "r-3" / "config").read_text(), "/x/.claude-rit"
+        )
+        known = {
+            "r:5": {
+                "failing": {},
+                "triage": {"state": "waiting", "at": 0, "since": time.time()},
+                "queued": False,
+            }
+        }
+        calls = []
+        with mock.patch.object(
+            ci_watch,
+            "triage",
+            lambda u, r, i: calls.append(i) or {"state": "done", "verdict": "x"},
+        ):
+            ci_watch.poll("o", ["r"], Fake([run(5)]), known)
+            self.assertEqual((calls, known["r:5"]["triage"]["state"]), ([5], "done"))
+            ci_watch.poll("o", ["r"], Fake([run(5)]), known)
+        self.assertEqual(calls, [5], "a done triage is not run again")
+
+    def test_a_limit_is_read_from_the_replys_api_error_and_a_stale_reply_is_not_read(
+        self,
+    ):
+        out = TMP / "lim"
+        out.mkdir(exist_ok=True)
+        for reply, want in [
+            (
+                {
+                    "is_error": True,
+                    "api_error": "usage_limit_reached",
+                    "result": "You've hit your team's shared budget",
+                },
+                True,
+            ),
+            ({"is_error": True, "result": "You're out of usage credits"}, True),
+            ({"is_error": True, "result": "HTTP 500"}, False),
+            ({"is_error": False, "result": "usage limit discussed"}, False),
+        ]:
+            (out / "claude.json").write_text(json.dumps(reply))
+            self.assertEqual(ci_watch.limited(out), want, reply)
+        script = TMP / "report.sh"
+        script.write_text("#!/bin/bash\necho 'HTTP 410 logs gone' >&2\nexit 1\n")
+        stale = ci_watch.STATE / "ci" / "r-6"
+        stale.mkdir(parents=True, exist_ok=True)
+        (stale / "claude.json").write_text(
+            json.dumps({"is_error": True, "api_error": "usage_limit_reached"})
+        )
+        with mock.patch.dict(os.environ, {"TECHNE_CI_REPORT": str(script)}):
+            got = ci_watch.triage("o", "r", 6)
+        self.assertEqual((got["state"], got["why"]), ("failed", "HTTP 410 logs gone"))
+
+    def test_a_limit_on_one_account_tries_the_next_and_names_each(self):
+        script = TMP / "report.sh"
+        script.write_text(
+            '#!/bin/bash\nmkdir -p "$3"\n'
+            "if [[ ${CLAUDE_CONFIG_DIR:-default} == default ]]; then\n"
+            '  echo \'{"is_error":true,"api_error":"usage_limit_reached"}\' >"$3/claude.json"; exit 1\nfi\n'
+            'echo \'{"verdict":"fix","summary":"s","failing_step":{"root_cause":"c","location":"f:1"}}\' >"$3/report.json"\n'
+        )
+        with (
+            mock.patch.dict(os.environ, {"TECHNE_CI_REPORT": str(script)}),
+            mock.patch.object(
+                ci_watch, "triage_accounts", return_value=[None, "/x/.claude-rit"]
+            ),
+        ):
+            got = ci_watch.triage("o", "r", 8)
+            self.assertEqual((got["state"], got["account"]), ("done", ".claude-rit"))
+        with (
+            mock.patch.dict(os.environ, {"TECHNE_CI_REPORT": str(script)}),
+            mock.patch.object(ci_watch, "triage_accounts", return_value=[None]),
+        ):
+            got = ci_watch.triage("o", "r", 9)
+        self.assertEqual(
+            (got["state"], got["why"]),
+            ("waiting", "at its usage limit on default; tried again later"),
+        )
+
+    def test_the_accounts_are_the_best_first_then_each_logged_in_folder(self):
+        cfg = TMP / "accts"
+        for d in ("a", "b", "c"):
+            (cfg / d).mkdir(parents=True, exist_ok=True)
+        (cfg / "a" / ".credentials.json").write_text("")
+        (cfg / "b" / ".credentials.json").write_text("")
+        lib = TMP / "fakelib"
+        lib.mkdir(exist_ok=True)
+        (lib / "lib.sh").write_text(f'best_account() {{ printf %s "{cfg}/b"; }}\n')
+        env = {
+            "FLEET_ACCOUNTS": f"{cfg}/a {cfg}/b {cfg}/c",
+            "FLEET_DEFAULT_CONFIG": str(cfg / "a"),
+        }
+        with (
+            mock.patch.dict(os.environ, env),
+            mock.patch.object(ci_watch, "__file__", str(lib / "ci_watch.py")),
+        ):
+            self.assertEqual(ci_watch.triage_accounts(), [str(cfg / "b"), None])
+
+    def test_a_waiting_triage_gives_up_after_a_day(self):
+        k = {
+            "triage": {
+                "state": "waiting",
+                "at": 0,
+                "since": time.time() - ci_watch.WAIT_MAX_S,
+            }
+        }
+        ci_watch.retriage("o", "r", 7, k, lambda: None)
+        self.assertEqual(k["triage"]["state"], "failed")
+
+    def test_a_triage_that_fails_for_another_reason_still_fails(self):
+        script = TMP / "report.sh"
+        script.write_text("#!/bin/bash\necho 'error: boom' >&2\nexit 1\n")
+        with mock.patch.dict(os.environ, {"TECHNE_CI_REPORT": str(script)}):
+            self.assertEqual(ci_watch.triage("o", "r", 4)["state"], "failed")
 
 
 class Prune(unittest.TestCase):

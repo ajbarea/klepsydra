@@ -56,3 +56,8 @@ test("the wall wires the button to the app and the phone, and the app registers 
   assert.match(read("../src-tauri/src/main.rs"), /fleet::queue_subscribe,\s*fleet::ci_subscribe,/);
   assert.match(read("../src-tauri/src/main.rs"), /fleet::start_ci\(app\.handle\(\), klepsydra_dir\(app\.handle\(\)\)\);/);
 });
+
+test("a triage waiting for an account with room says so", () => {
+  const v = ciView({ repos: 1, red: [red({ triage: { state: "waiting" } })] });
+  assert.match(v.rows[0].cause, /waits for an account with room/);
+});
