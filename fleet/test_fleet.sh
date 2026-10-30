@@ -399,16 +399,21 @@ t kill-window -t "$p" 2>/dev/null; : >"$REGISTRY"
 
 # Stopped 22 min ago; in a minute after the pass began (NOW is its start),
 # also across midnight; or 5 min ago in the hour that repeats when clocks go
-# back: none is idle, so each gets the continue message.
+# back (an hour in London, two in Troll, half an hour on Lord Howe): none is
+# idle, so each gets the continue message.
 # Each cell: pane name, stamp, NOW, time zone, and the pass that first sees the limit.
 london=$(TZ=Europe/London date -d '2026-10-25 01:20 BST' +%s)
+troll=$(TZ=Antarctica/Troll date -d '2026-10-25 01:40 +02' +%s)
+lhi=$(TZ=Australia/Lord_Howe date -d '2027-04-04 01:45 +11' +%s)
 for cell in "recent|12:50 PM|$(( noon + 4330 ))" "racing|1:13 PM|$(( noon + 4330 ))" \
   "minuteend|12:17 PM|$(( noon + 4330 ))" \
   "midnight|12:00 AM|$(TZ=America/New_York date -d '2026-10-28 23:59:30' +%s)" \
   "springnight|12:00 AM|$(TZ=America/New_York date -d '2027-03-14 23:59:30' +%s)" \
   "fallback|1:45 AM|$(TZ=America/New_York date -d '2026-11-01 01:50 EST' +%s)" \
   "firsthour|1:45 AM|$(TZ=America/New_York date -d '2026-11-01 01:50 EDT' +%s)" \
-  "london|1:10 AM|$london|Europe/London|$(( london - 43200 ))"; do
+  "london|1:10 AM|$london|Europe/London|$(( london - 43200 ))" \
+  "troll|1:30 AM|$troll|Antarctica/Troll|$(( troll - 43200 ))" \
+  "lordhowe|1:35 AM|$lhi|Australia/Lord_Howe|$(( lhi - 86400 ))"; do
   IFS='|' read -r name done_at at zone first <<<"$cell"
   : >"$FLEET_LOG"
   p=$(pane "$name" "{\"above\":[\"⏺ Done. done $done_at\",\"$LIMIT\"]}"); settle
