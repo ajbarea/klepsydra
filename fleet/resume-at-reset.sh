@@ -175,13 +175,14 @@ fresh() { # PANE NAME BRIEF [WHY] [ACCOUNT] [NOTE] [STAMP]
 }
 
 # When the agent in PANE (screen PLAIN) stopped: the "done 4:21 PM" its last
-# turn printed (more than 12 h ahead means yesterday), else the window's last
-# activity, which status line redraws keep fresh, so it under-counts.
+# turn printed, read on NOW's day (later than NOW means the day before), else
+# the window's last activity, which status line redraws keep fresh, so it
+# under-counts.
 stopped_at() { # PANE PLAIN
   local at stopped
   at=$(grep -o 'done [0-9]\{1,2\}:[0-9][0-9] [AP]M' <<<"$2" | tail -1 | cut -c6-)
-  if [[ -n $at ]] && stopped=$(date -d "$at" +%s 2>/dev/null); then
-    (( stopped - NOW > 43200 )) && stopped=$((stopped - 86400))
+  if [[ -n $at ]] && stopped=$(date -d "$(date -d "@$NOW" +%F) $at" +%s 2>/dev/null); then
+    (( stopped > NOW )) && stopped=$((stopped - 86400))
     printf '%s' "$stopped"
   else
     t display-message -p -t "$1" '#{window_activity}'

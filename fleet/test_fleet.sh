@@ -373,6 +373,17 @@ check "B2: a reused pane id is never exited; it is resumed in place" \
 check "and the refusal is logged" "$(logged "fresh session refused")" "$p "
 t kill-window -t "$p" 2>/dev/null; : >"$REGISTRY"
 
+: >"$FLEET_LOG"
+p=$(pane late "{\"above\":[\"⏺ Done. done 11:50 PM\",\"$LIMIT\"]}"); settle
+live "$p"
+printf '%s\tidler\t%s\t%s\t/w\n' "$p" "$work/brief.src" "$SID" >"$REGISTRY"
+: >"$work/launched"
+resume "$morning"
+LAUNCH="$work/launch-stub.sh" FLEET_NOW=$(( noon + 4330 )) bash "$here/resume-at-reset.sh" --once 2>/dev/null
+check "a done time later in the day than now is the night before: idle since then, it starts fresh" \
+  "$(grep -c 'SUBMIT /exit' "$work/late.log") $(head -1 "$work/launched")" "1 idler"
+t kill-window -t "$p" 2>/dev/null; : >"$REGISTRY"
+
 echo "launch.sh"
 cat >"$work/launcher.sh" <<EOF
 #!/usr/bin/env bash
