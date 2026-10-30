@@ -175,23 +175,30 @@ fresh() { # PANE NAME BRIEF [WHY] [ACCOUNT] [NOTE] [STAMP]
 }
 
 # When the agent in PANE (screen PLAIN) stopped: the "done 4:21 PM" its last
-# turn printed, read on NOW's day; more than 15 min past NOW means the day
-# before, and less is a turn that ended during this pass (NOW is the pass's
-# start), so now. Else the window's last activity, which status line redraws
-# keep fresh, so it under-counts.
+# turn printed, read on NOW's day. More than 15 min past NOW is the day before;
+# a turn that ended during this pass (NOW is its start) reads up to 15 min
+# past NOW, or, across midnight, nearly a day back: that is now. In the hour
+# that repeats when clocks go back, date reads the first; the second is taken
+# when it is not ahead. Else the window's last activity, which status line
+# redraws keep fresh, so it under-counts. Always a number: when unsure, NOW.
 stopped_at() { # PANE PLAIN
-  local at day stopped
+  local at day stopped later
   at=$(grep -o 'done [0-9]\{1,2\}:[0-9][0-9] [AP]M' <<<"$2" | tail -1 | cut -c6-)
   if [[ -n $at ]] && day=$(date -d "@$NOW" +%F) && stopped=$(date -d "$day $at" +%s 2>/dev/null); then
+    later=$((stopped + 3600))
+    if [[ $(date -d "@$later" '+%F %R') == "$(date -d "@$stopped" '+%F %R')" ]] && (( later <= NOW + 900 )); then
+      stopped=$later
+    fi
     if (( stopped > NOW + 900 )); then
-      stopped=$(date -d "$day $at -1 day" +%s)
-    elif (( stopped > NOW )); then
+      stopped=$(date -d "$day $at -1 day" +%s 2>/dev/null) || stopped=$NOW
+    elif (( stopped <= NOW + 900 - 86400 )); then
       stopped=$NOW
     fi
-    printf '%s' "$stopped"
   else
-    t display-message -p -t "$1" '#{window_activity}'
+    stopped=$(t display-message -p -t "$1" '#{window_activity}' 2>/dev/null)
   fi
+  [[ $stopped =~ ^[0-9]+$ ]] || stopped=$NOW
+  printf '%s' "$stopped"
 }
 
 # Whether the transcript above the box already shows LINE as sent ("❯ LINE"),
