@@ -772,17 +772,19 @@ mod win {
     /// ends the last watcher, so the app's own moves are never seen as AJ's.
     mod watch {
         use super::{
-            exists, hwnd, in_split_now, is_terminal, left, left_note, saved, seen, snapped, Rect,
+            exists, hwnd, in_split_now, is_terminal, left, left_note, per_monitor_aware, saved,
+            seen, snapped, Rect,
         };
         use std::cell::{Cell, RefCell};
         use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
         use std::sync::{Mutex, OnceLock};
+        use windows::core::BOOL;
         use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
         use windows::Win32::System::Threading::GetCurrentThreadId;
         use windows::Win32::UI::Accessibility::{SetWinEventHook, UnhookWinEvent, HWINEVENTHOOK};
         use windows::Win32::UI::WindowsAndMessaging::{
-            GetMessageW, GetWindowThreadProcessId, KillTimer, PeekMessageW, PostQuitMessage,
-            PostThreadMessageW, SetTimer, MSG, PM_NOREMOVE, WM_QUIT, WM_TIMER,
+            EnumWindows, GetMessageW, GetWindowThreadProcessId, KillTimer, PeekMessageW,
+            PostQuitMessage, PostThreadMessageW, SetTimer, MSG, PM_NOREMOVE, WM_QUIT, WM_TIMER,
         };
 
         // WinEvents (winuser.h).
@@ -846,9 +848,11 @@ mod win {
             /// The threads whose windows' events are hooked.
             hooked: Vec<u32>,
             hooks: Vec<HWINEVENTHOOK>,
-            /// While the terminal is unknown: any Windows Terminal window shown
-            /// or moved, on every thread, starts a settle (a terminal opened
-            /// and snapped beside a wall already in place moves no wall).
+            /// While the terminal is unknown: a window shown on any thread. A
+            /// Windows Terminal window shown, or moved on a thread hooked for
+            /// one, starts a settle (a terminal opened and snapped beside a
+            /// wall already in place moves no wall). Moves are hooked per
+            /// thread only: on every thread they fire for each cursor move.
             any: Vec<HWINEVENTHOOK>,
             /// Whether the windows were in the split at the last look.
             was: bool,
@@ -894,8 +898,9 @@ mod win {
             }
         }
 
-        /// Hook, or unhook, every thread's Windows Terminal windows being shown
-        /// or moved, as the terminal is unknown or known.
+        /// Hook, or unhook, windows being shown on every thread, as the
+        /// terminal is unknown or known; the Windows Terminal windows open
+        /// now have their threads' moves hooked.
         fn watch_any_terminal(snap: &mut Snap) {
             if snap.terminal.is_some() {
                 for hook in snap.any.drain(..) {
@@ -906,22 +911,38 @@ mod win {
             if !snap.any.is_empty() {
                 return;
             }
-            for event in [EVENT_OBJECT_SHOW, EVENT_OBJECT_LOCATIONCHANGE] {
-                let hook = unsafe {
-                    SetWinEventHook(
-                        event,
-                        event,
-                        None,
-                        Some(on_any_terminal),
-                        0,
-                        0,
-                        WINEVENT_OUTOFCONTEXT,
-                    )
-                };
-                if !hook.is_invalid() {
-                    snap.any.push(hook);
-                }
+            let hook = unsafe {
+                SetWinEventHook(
+                    EVENT_OBJECT_SHOW,
+                    EVENT_OBJECT_SHOW,
+                    None,
+                    Some(on_any_terminal),
+                    0,
+                    0,
+                    WINEVENT_OUTOFCONTEXT,
+                )
+            };
+            if !hook.is_invalid() {
+                snap.any.push(hook);
             }
+            for t in open_terminals() {
+                hook_snap(snap, t);
+            }
+        }
+
+        /// The top-level Windows Terminal windows open now.
+        fn open_terminals() -> Vec<isize> {
+            unsafe extern "system" fn each(h: HWND, found: LPARAM) -> BOOL {
+                if is_terminal(h) {
+                    let found = unsafe { &mut *(found.0 as *mut Vec<isize>) };
+                    found.push(h.0 as isize);
+                }
+                BOOL(1)
+            }
+            let mut found: Vec<isize> = Vec::new();
+            let _ =
+                unsafe { EnumWindows(Some(each), LPARAM(&mut found as *mut Vec<isize> as isize)) };
+            found
         }
 
         /// Start the settle again: each move replaces the same timer.
@@ -941,6 +962,13 @@ mod win {
             _ms: u32,
         ) {
             if object == OBJID_WINDOW && child == CHILDID_SELF && is_terminal(h) {
+                SNAP.with(|s| {
+                    if let Ok(mut s) = s.try_borrow_mut() {
+                        if let Some(snap) = s.as_mut() {
+                            hook_snap(snap, h.0 as isize);
+                        }
+                    }
+                });
                 restart_settle();
             }
         }
@@ -964,6 +992,17 @@ mod win {
 
         fn run_snap(generation: u64, wall: isize, find: Find) {
             std::thread::sleep(std::time::Duration::from_millis(ARM_AFTER_MS));
+            // The frames and work areas compared agree only in physical pixels:
+            // this thread sees them so, whatever the process's awareness.
+            unsafe {
+                windows::Win32::UI::HiDpi::SetThreadDpiAwarenessContext(
+                    windows::Win32::UI::HiDpi::DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2,
+                );
+            }
+            if let Err(e) = per_monitor_aware() {
+                log::warn!("split: not watching for a hand-made split: {e}");
+                return;
+            }
             let terminal = find();
             let mut snap = Snap {
                 generation,
@@ -1025,7 +1064,13 @@ mod win {
             let ours = SNAP.with(|s| {
                 s.try_borrow()
                     .ok()
-                    .and_then(|s| s.as_ref().map(|s| raw == s.wall || s.terminal == Some(raw)))
+                    .and_then(|s| {
+                        s.as_ref().map(|s| {
+                            raw == s.wall
+                                || s.terminal == Some(raw)
+                                || (s.terminal.is_none() && is_terminal(h))
+                        })
+                    })
                     .unwrap_or(false)
             });
             // A move that comes while `settled` holds the state (if UI Automation
@@ -1046,7 +1091,10 @@ mod win {
             let fire = SNAP.with(|s| {
                 let mut s = s.try_borrow_mut().ok()?;
                 let snap = s.as_mut()?;
-                if !snap.terminal.is_some_and(exists) {
+                if !snap
+                    .terminal
+                    .is_some_and(|t| exists(t) && is_terminal(hwnd(t)))
+                {
                     snap.terminal = find();
                     if let Some(t) = snap.terminal {
                         hook_snap(snap, t);
