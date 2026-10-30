@@ -1462,6 +1462,8 @@ fire session-start.json ".session_id = \"$W\" | .source = \"clear\"" "TMUX=$work
 check "review 2: a /clear in the orchestrator's pane is Heph before the new session is recorded" "$(jq -c .orchestrator "$wfile")" "true"
 fire post-tool-bash.json ".session_id = \"$W\"" "TMUX=$work/sock/klepsydra,1,0" TMUX_PANE=%7 >/dev/null
 check "review 3: and stays Heph on its later events" "$(jq -c .orchestrator "$wfile")" "true"
+fire post-tool-bash.json ".session_id = \"$W\"" "TMUX=$work/sock/klepsydra,1,0" TMUX_PANE=%7 KLEPSYDRA_AGENT=sphragis >/dev/null
+check "review 3: but not under a worker's agent name" "$(jq -c .orchestrator "$wfile")" "false"
 fire post-tool-bash.json ".session_id = \"$W\"" "TMUX=$work/sock/klepsydra,1,0" TMUX_PANE=%8 >/dev/null
 check "review 3: but not once it is in another pane" "$(jq -c .orchestrator "$wfile")" "false"
 rm -f "$wfile"
