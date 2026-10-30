@@ -137,7 +137,12 @@ agent on the first account with room (RIT, `~/.claude`, by default) and, when an
 agent hits a limit with over 15 minutes to wait, moves it to a fresh session on
 the other account if that one has room, carrying anything typed at the limited
 pane. Once the preferred account has half its five-hour window free again, each
-moved agent goes back at its next finished turn, never mid-turn. A worker whose
+moved agent goes back at its next finished turn, never mid-turn. A worker that
+keeps background work past its turns (a job watcher, a CI monitor) is asked,
+once that account has had room for 5 minutes, to save, stop it and reply with
+`READY-TO-MOVE` alone on the first line, and moves on that reply; a turn after
+that reply (a task notification) voids it, and it is asked again each hour.
+Heph is never asked. A worker whose
 account has used 95% of a window (`FLEET_PREMOVE_PCT`) moves at its next
 finished turn too, before the limit can stop it mid-turn. Moves run side by
 side (two at a time), each launch has 120 seconds, and a failed move at a limit
@@ -1293,7 +1298,11 @@ closes, its workflow is deleted, or a month passes.
 
 Each new red run gets one unattended, read-only triage by techne ci-audit's
 report mode (`report.sh`, from the installed techne plugin or
-`TECHNE_CI_REPORT`): the failing step, its cause and its file:line. It also
+`TECHNE_CI_REPORT`): the failing step, its cause and its file:line. The triage
+runs on the first account with room, in the fleet's order, then on each other logged-in account
+when one is at its usage limit. If any account was at its limit, the triage
+waits and is tried again every 10 minutes, for up to a day, and the red is
+routed once it has its cause or has waited 30 minutes. It also
 gets one line under "Needs you" in the queue file. Dependabot's reds are kept
 for the morning instead. Once a day (after `CI_SWEEP_HOUR`, default 6) the
 latest green run on each default branch is read for warnings. The watcher

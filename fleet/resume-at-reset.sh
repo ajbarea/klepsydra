@@ -18,7 +18,10 @@
 # after a long idle. Each role prefers an account (#175): workers the first
 # folder in FLEET_ACCOUNTS, Heph the first in FLEET_HEPH_ACCOUNTS; a pane on
 # another moves back once its preferred one has FLEET_BACK_ROOM_PCT room, at a
-# finished turn and an empty prompt; a worker whose account has used
+# finished turn and an empty prompt; a worker whose turn ends with background
+# work still running is asked, once its preferred account has had room for
+# BACK_ASK_AFTER_S, to save, stop that work and answer READY-TO-MOVE (#198),
+# and moves on that answer; a worker whose account has used
 # FLEET_PREMOVE_PCT of a window moves to one with room at its next finished
 # turn, before the limit stops it mid-turn (#187). Each move runs in the
 # background, one per pane, so a slow launch never holds the others; the pass
@@ -42,7 +45,7 @@ FLEET_PREMOVE_PCT=${FLEET_PREMOVE_PCT:-95} # a window used this far moves a work
 DOCTOR=${DOCTOR:-$here/doctor.sh}
 MSG='The usage limit has reset. Continue from where you stopped: re-run a subagent that failed on the limit only if you still need its result (each re-run starts cold and costs a full context), then carry on with your queue. Re-read PR comments before any merge.'
 
-declare -A last due seen_on rc_on note move_failed move_tries fresh_failed job_kind job_ctx
+declare -A last due seen_on rc_on note move_failed move_tries fresh_failed asked job_kind job_ctx
 declare -A job=() # set, so ${#job[@]} reads 0 under set -u
 # What the service knows per pane survives its own restart (a cut-over, a
 # reboot's unit start), for as long as the same tmux server holds the panes.
@@ -50,11 +53,11 @@ STATE_FILE=$FLEET_STATE/resume-state
 US=$'\x1f' # the field separator: a tab is IFS whitespace, so empty fields would collapse
 
 load_state() {
-  local server p d s r l n m k f
+  local server p d s r l n m k f a
   [[ -r $STATE_FILE ]] || return 0
   server=$(t display-message -p '#{pid}' 2>/dev/null)
   [[ -n $server && $(head -1 "$STATE_FILE") == "#server $server" ]] || return 0
-  while IFS=$US read -r p d s r l n m k f; do
+  while IFS=$US read -r p d s r l n m k f a; do
     [[ $p == %* ]] || continue
     [[ -n $d ]] && due[$p]=$d
     [[ -n $s ]] && seen_on[$p]=$s
@@ -64,6 +67,7 @@ load_state() {
     [[ -n $m ]] && move_failed[$p]=$m
     [[ -n $k ]] && move_tries[$p]=$k
     [[ -n $f ]] && fresh_failed[$p]=$f
+    [[ -n $a ]] && asked[$p]=$a
   done <"$STATE_FILE"
 }
 
@@ -74,8 +78,8 @@ save_state() {
   {
     printf '#server %s\n' "$server"
     for p in $(fleet_panes); do
-      printf '%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\n' "$p" "${due[$p]:-}" "${seen_on[$p]:-}" "${rc_on[$p]:-}" "${last[$p]:-}" \
-        "$(printf '%s' "${note[$p]:-}" | base64 -w0)" "${move_failed[$p]:-}" "${move_tries[$p]:-}" "${fresh_failed[$p]:-}"
+      printf '%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\n' "$p" "${due[$p]:-}" "${seen_on[$p]:-}" "${rc_on[$p]:-}" "${last[$p]:-}" \
+        "$(printf '%s' "${note[$p]:-}" | base64 -w0)" "${move_failed[$p]:-}" "${move_tries[$p]:-}" "${fresh_failed[$p]:-}" "${asked[$p]:-}"
     done
   } >"$tmp"
   mv -f -- "$tmp" "$STATE_FILE"
@@ -112,9 +116,10 @@ submit() { # PANE
 # preamble; prints the new pane. NOTE, what AJ typed at the pane, goes into the
 # new brief, and the old box may hold exactly it. Gives up, typing nothing, if
 # AJ has typed anything else meanwhile.
-# (STAMP: the session's prompt.at when the caller judged the pane idle, so a
-# prompt taken since, even one already answered, keeps the old pane.) Returns
-# 5 when the new session's brief met a limit on ACCOUNT.
+# (STAMP: the session's stamp when the caller judged the pane idle, so a
+# prompt or turn taken since, even one already over, keeps the old pane; at a
+# limit, STAMP_KIND=prompt, a prompt only.) Returns 5 when the new session's
+# brief met a limit on ACCOUNT.
 fresh() { # PANE NAME BRIEF [WHY] [ACCOUNT] [NOTE] [STAMP]
   local p=$1 name=$2 brief=$3 txt new
   local why=${4:-stopped at a usage limit over an hour ago, so its cached conversation expired and resuming it would re-cache everything}
@@ -217,6 +222,51 @@ sent_already() { # SCREEN LINE
 
 forget() { unset "due[$1]" "seen_on[$1]" "note[$1]"; }
 
+# Since when account ID has had room to move back to (back_room), kept across
+# passes and restarts in back-room-since; an account without room is dropped.
+BACK_ASK_AFTER_S=${BACK_ASK_AFTER_S:-300}
+BACK_SINCE=$FLEET_STATE/back-room-since
+room_since() { # ID
+  local at
+  if ! back_room "$1" "$NOW"; then
+    grep -q "^$1 " "$BACK_SINCE" 2>/dev/null && { grep -v "^$1 " "$BACK_SINCE" >"$BACK_SINCE.tmp"; mv -f -- "$BACK_SINCE.tmp" "$BACK_SINCE"; }
+    return 1
+  fi
+  at=$(awk -v id="$1" '$1 == id { print $2; exit }' "$BACK_SINCE" 2>/dev/null)
+  [[ -n $at ]] || { at=$NOW; printf '%s %s\n' "$1" "$at" >>"$BACK_SINCE"; }
+  printf '%s' "$at"
+}
+
+# Ask the worker in PANE, on account ID FROM, to get ready to move back to its
+# preferred account TO (an id): save, stop background work, answer READY-TO-MOVE.
+# Urgent while FROM is the account Heph runs on and has under 30% of its
+# five-hour window left: the card shows the line, so the wall shows it too.
+ask_back() { # PANE FROM TO
+  local p=$1 f five seven urgent=0 hcur text got
+  hcur=${ACCT_ID[$(heph_config)]:-}
+  if [[ -n $2 && $2 == "$hcur" ]]; then
+    read -r five seven <<<"$(headroom "$2" "$NOW")"
+    (( five < 30 )) && urgent=1
+  fi
+  text="Your preferred account, $(account_label "$3"), has room again, and the fleet moves you back to it as a fresh session from your brief. Save your resume state (IMPL.md, commit, push), stop your background shells and monitors, then end your turn with a reply whose first line is READY-TO-MOVE alone. If something must keep running, say why instead; you are asked again in an hour."
+  (( urgent )) && text="Urgent: Heph's account has under 30% room left. $text"
+  f=$FLEET_STATE/ask-back-${p#%}.txt
+  printf '%s' "$text" >"$f"
+  got=$(inbox_deliver "$p" "$f")
+  rm -f -- "${f:?}"
+  case $got in
+    not-pasted) flog WARN "move-back request not delivered: the prompt was no longer idle and empty; trying again next pass" pane="$p" to="$(account_label "$3")" ;;
+    mixed | held)
+      asked[$p]=$NOW
+      flog WARN "move-back request left in the prompt unsent; asked again in an hour" pane="$p" to="$(account_label "$3")" delivery="$got"
+      ;;
+    *)
+      asked[$p]=$NOW
+      flog INFO "asked to save, stop background work and move back to the preferred account" pane="$p" from="$(account_label "$2")" to="$(account_label "$3")" urgent="$urgent" delivery="$got"
+      ;;
+  esac
+}
+
 # Replace the orchestrator in PANE with a fresh Heph on config folder TO, from
 # a note naming HEPH.md and AJ's messages since (heph_note); WHY ends "the
 # orchestrator (Heph) ..."; NOTE, what AJ typed at the old pane and never sent,
@@ -284,12 +334,14 @@ heph_move() { # PANE TO WHY [NOTE] [STAMP]
   printf '%s' "$new"
 }
 
-# When the live session in PANE last took a prompt (klepsydra's fleet file sets
-# prompt.at for typed and phone prompts, not task notifications), or nothing.
+# The live session in PANE's stamp, or nothing: STAMP_JQ (its last prompt and
+# turn), or with STAMP_KIND=prompt its last typed or phone prompt alone, for a
+# move at a limit, where a turn a task notification starts fails at once.
 prompt_stamp() { # PANE
-  local sid
+  local sid of=$STAMP_JQ
+  [[ ${STAMP_KIND:-} == prompt ]] && of='.prompt.at // ""'
   sid=$(live_session "$1") || return 0
-  jq -r '.prompt.at // ""' "$KLEPSYDRA_DIR/fleet/$sid.json" 2>/dev/null
+  jq -r "$of" "$KLEPSYDRA_DIR/fleet/$sid.json" 2>/dev/null
 }
 
 # Retire a pane this pass launched, interrupting its turn; kill it if it will not exit.
@@ -320,7 +372,7 @@ back_held() { # ID
 moved() { # PANE [NEW]
   if [[ -n ${2:-} ]]; then
     last[$2]=$NOW last[$1]=$NOW
-    unset "move_tries[$1]" "fresh_failed[$1]"
+    unset "move_tries[$1]" "fresh_failed[$1]" "asked[$1]"
     forget "$1"
   else
     # A failure an hour after the last starts the count again (a new limit,
@@ -567,19 +619,29 @@ one() { # PANE
   fi
   # Back to the role's preferred account: at a finished turn (no background
   # work) and an empty prompt, so nothing in flight is lost; the 15 min
-  # hold-down above and after a failed try keeps a pane from flapping.
-  local pref pref_id back_why idle_stamp
+  # hold-down above and after a failed try keeps a pane from flapping. A worker
+  # that keeps background work past its turns is asked to stop it (ask_back)
+  # once the account has had room for BACK_ASK_AFTER_S, again an hour later,
+  # and moves when it answers READY-TO-MOVE.
+  local pref pref_id back_why idle_stamp since back_ok=0
   if (( orch )); then pref=${FLEET_HEPH_ACCOUNTS%% *}; else pref=${FLEET_ACCOUNTS%% *}; fi
   pref_id=${ACCT_ID[$pref]:-}
-  if [[ -z $limit && -z ${due[$p]:-} && -n $pref_id && $cfg != "$pref" && $pref_id != "${PANE_ID:-}" ]] &&
-    { (( orch )) || [[ -n $(reg_field "$p" 2) ]]; } && (( NOW - ${move_failed[$p]:-0} >= 900 )) &&
-    ! back_held "$pref_id" && back_room "$pref_id" "$NOW" && idle_empty "$s" && idle_stamp=$(turn_done "$p"); then
+  [[ -n $pref_id ]] && since=$(room_since "$pref_id")
+  if [[ -z $limit && -z ${due[$p]:-} && -n $pref_id && -n ${since:-} && $cfg != "$pref" && $pref_id != "${PANE_ID:-}" ]] &&
+    { (( orch )) || [[ -n $(reg_field "$p" 2) ]]; } && (( NOW - ${move_failed[$p]:-0} >= 900 )) && ! back_held "$pref_id"; then
+    back_ok=1
+  fi
+  if (( back_ok )) && idle_empty "$s" && { idle_stamp=$(turn_done "$p") || { (( !orch )) && idle_stamp=$(ready_to_move "$p" "${asked[$p]:-}"); }; }; then
     back_why="moved back to its preferred account, $(account_label "$pref_id"), which has room again"
     if (( orch )); then
       spawn "$p" back "$cfg$US$pref$US$orch$US$pref_id" heph_move "$p" "$pref" "$back_why" "" "$idle_stamp"
     else
       spawn "$p" back "$cfg$US$pref$US$orch$US$pref_id" fresh "$p" "$(reg_field "$p" 2)" "$(reg_field "$p" 3)" "was $back_why" "$pref" "" "$idle_stamp"
     fi
+    return
+  fi
+  if (( back_ok && !orch && NOW - since >= BACK_ASK_AFTER_S && NOW - ${asked[$p]:-0} >= 3600 )) && idle_empty "$s" && turn_settled "$p"; then
+    ask_back "$p" "${PANE_ID:-}" "$pref_id"
     return
   fi
   # Before the wall (#187): a worker on an account that has used
@@ -679,9 +741,9 @@ one() { # PANE
       flog WARN "a pasted block cannot be carried to the other account; the pane waits for its reset" pane="$p" text="$carry"
     elif [[ -z $typed || -n $carry ]]; then
       if (( orch )); then
-        spawn "$p" limit "$name$US$orch$US$cfg$US$other" heph_move "$p" "$other" "stopped at a usage limit on one account, and moves to the other, which has room" "$carry"
+        STAMP_KIND=prompt spawn "$p" limit "$name$US$orch$US$cfg$US$other" heph_move "$p" "$other" "stopped at a usage limit on one account, and moves to the other, which has room" "$carry"
       else
-        spawn "$p" limit "$name$US$orch$US$cfg$US$other" fresh "$p" "$name" "$brief" "stopped at a usage limit on one account, and you continue on the other, which has room" "$other" "$carry"
+        STAMP_KIND=prompt spawn "$p" limit "$name$US$orch$US$cfg$US$other" fresh "$p" "$name" "$brief" "stopped at a usage limit on one account, and you continue on the other, which has room" "$other" "$carry"
       fi
       return
     fi

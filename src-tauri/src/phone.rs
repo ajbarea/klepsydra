@@ -66,6 +66,9 @@ pub fn set(app: &AppHandle, on: bool) -> bool {
             app.state::<crate::fleet::CiFeed>()
                 .0
                 .with_latest(|v| server.set_ci(v));
+            app.state::<crate::fleet::AgoraFeed>()
+                .0
+                .with_latest(|v| server.set_agora(v));
             log::info!("phone: wall serving on {ADDR}");
             *slot = Some(server);
             true
@@ -91,6 +94,15 @@ pub fn set_ci(app: &AppHandle, view: &serde_json::Value) {
     if let Ok(slot) = app.state::<Phone>().0.lock() {
         if let Some(server) = slot.as_ref() {
             server.set_ci(view);
+        }
+    }
+}
+
+/// Show a running server's phones the Agora's view.
+pub fn set_agora(app: &AppHandle, view: &serde_json::Value) {
+    if let Ok(slot) = app.state::<Phone>().0.lock() {
+        if let Some(server) = slot.as_ref() {
+            server.set_agora(view);
         }
     }
 }
