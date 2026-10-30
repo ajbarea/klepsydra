@@ -1,31 +1,35 @@
-# IMPL: klepsydra fleet-module brief, resume state 2026-10-29 20:45
+# IMPL: klepsydra fleet-module brief, resume state 2026-10-29 23:05
 
-Session 6 (RIT) picked up at 19:52 from session 5. Resume from this file, `git log`, the PRs
-below and their comments. Brief: task-fleet-module.src. Doctor clean at 19:57.
+Session 7 (the account with room) took over at 21:11 from session 6, which stopped at a usage limit.
+Resume from this file, `git log`, the PRs below and their comments. Brief: task-fleet-module.src.
+
+## Merged this session
+- #191 (#172 Heph's face is his alone), #190 (#182 Split checks itself on a hand snap), #192 (#185 Agora part 1, installed + briefs refreshed), #194 (#167 shell count). Lows filed: #205 (Split), #185 comment (Agora, fixed in #207), #167 comment (shell count).
 
 ## Open PRs (each review round is a fresh opus reviewer given the diff + open findings)
 | PR | Issue | Worktree (.claude/worktrees/) | Next |
 |---|---|---|---|
-| #190 | #182 Split on a hand snap | split-182 | Windows build fixed (e8049c7, CI green); verify pass running |
-| #191 | #172 Heph's face reserved | heph-face-172 | /clear rule kept on later events (dedfa8f, mutation-checked); verify running; CI rerun (midnight flake #201) |
-| #192 | #185 Agora part 1 | agora-185 | round 3 fixed (identity guards tested, all 8 mutation-red); needs round 4 |
-| #194 | #167 shell count | shells-167 | round 3 fixed (268536d: sh/dash wrappers and zombies not counted, Stop's list stands); needs round 4 |
-| #195 | #149 folder + GitHub links | links-149 | round 1 fixed (ad374a5); needs round 2 |
-| #196 | #170 CI triage on the account with room | triage-170 | round 1 fixed (622d9ea); needs round 2 |
-| #202 | #201 ledger test fails at UTC midnight | flake-201 | test-only; reproduced at 23:59:06 and fixed; merge on green |
-| (to open) | #198 move-back with background work | moveback-198 | ask READY-TO-MOVE, move on the reply; fleet suite running; body in scratch |
-| techne#251 | techne#229 body budget gate | techne worktrees/body-gate | round 1 fixed (553df87, CI clean); needs round 2 |
+| #195 | #149 folder + GitHub links | links-149 | round 3 fixed (01340bb; real wsl.exe/explorer chain run on this PC); needs round 4 |
+| #196 | #170 CI triage on the account with room | triage-170 | round 3 fixed (4018a5e; limited-then-failed waits, 5 guards mutation-killed); needs round 4 |
+| #206 | #198 move-back with background work | moveback-198 | SC1010 fixed (41eaedc); round 1 running |
+| #207 | #185 Agora part 2 (wall + phone feed, reactions) | agora-wall | needs round 1; shot in shots/2026-10-29 |
+| techne#251 | techne#229 body budget gate | techne worktrees/body-gate | round 5 fixed (ddad535: one rule for every `$(...)`); round 6 running; governance code, review until clean |
+| (to open) | #208 Fleet health on the wall | health-208 | doctor `--json` + fleet-doctor timer + crate health.rs + wall Fleet button written; run fleet suite + crate tests, then PR |
+
+Review notes per round: /tmp/claude-1001/-home-ajbar-ajsoftworks/7ca80650-7c23-4a2a-9c12-f369616daae2/scratchpad/ (rev/, r3/, r4/, r5b/, r195/, r196/).
 
 ## After merges (deploy)
-1. `git pull` in the main checkout, `fleet cutover` (resume-at-reset changes in #197, #198), `make install-fleet` (agora.py in #192), `fleet brief --refresh` (#192 adds a brief-tail line), `fleet doctor`.
-2. Windows build (scripts/build-windows.sh) for #190, #191, #194, #195; reinstall.
+1. `git pull` in the main checkout, `fleet cutover` (#206 resume-at-reset, #208 new fleet-doctor timer), `make install-fleet`, `fleet doctor`.
+2. Windows build (scripts/build-windows.sh) for #190, #191, #194, #195, #207, #208; reinstall; click a card's GitHub mark once and check the `open github` log line (#195).
 3. techne#251: update the plugin, switch `block_long_bodies` on in both config folders.
 
 ## Next after the open PRs
-#185 parts 2-3, Fleet health on the wall, #154's wall Recover button, #158 `--apply` at the morning rewrite, #150 (research UX first), #157 part 3, the #183 Voices setting, #163 phone push.
+#185 part 3 (Ledger measured friction), #154's wall Recover button, #158 `--apply`, #150 (research UX first), #157 part 3, the #183 Voices setting, #163 phone push, #204 demo mode.
 
 ## Notes
-- PRs on klepsydra: `gh pr edit` fails (Projects classic); use `gh api -X PATCH repos/.../pulls/N -F body=@file`. Issue types do not exist on this user-owned repo; labels carry the type.
-- `fleet/test_fleet.sh` takes over 15 min: give it `timeout 1800`.
-- Squash with `git reset --soft $(git merge-base HEAD origin/main)`, never onto origin/main directly (#195 round 1 reverted #188 that way).
-- Heavy runs under `flock /tmp/fleet-heavy.lock`.
+- PRs on klepsydra: `gh pr edit` fails (Projects classic); use `gh api -X PATCH repos/.../pulls/N -F body=@file`.
+- `fleet/test_fleet.sh` takes over 15 min: `timeout 1800`. The app crate needs GTK headers WSL lacks: lint/test `-p klepsydra-fleet` locally, CI covers the app.
+- shellcheck is not installed: `uvx --from shellcheck-py shellcheck -x hooks/*.sh statusline/*.sh scripts/*.sh fleet/*.sh fleet/fleet`.
+- Squash with `git reset --soft $(git merge-base HEAD origin/main)` before a rebase over many review commits.
+- Heavy runs under `flock /tmp/fleet-heavy.lock`. `receiver::bad_paths_bodies_and_sizes_get_their_status` flakes under load (#174).
+- The pane watcher was not running at 21:12 (doctor FAIL); that is Heph's to start.
