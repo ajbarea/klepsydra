@@ -194,6 +194,19 @@ class Agora(unittest.TestCase):
         self.assertEqual(self.run_agora("post", "who")[0], 2, "nor makes it Heph")
         self.assertEqual(self.posts(), [])
 
+    def test_a_worker_resumed_in_hephs_pane_is_not_heph(self):
+        self.register("%5", "techne-evals", SID)
+        self.live(pane="%0")
+        (self.tmp / "state" / "orchestrator.pane").write_text("%0\n")
+        self.assertEqual(self.run_agora("post", "x", pane="%0")[0], 2)
+        self.assertEqual(self.posts(), [])
+
+    def test_two_live_sessions_in_one_pane_name_no_one(self):
+        other = "77777777-2222-4333-8444-555555555555"
+        self.live(sid=other)
+        self.register("%4", "sphragis", other)
+        self.assertEqual(self.run_agora("post", "x")[0], 2)
+
     def test_a_worker_with_hephs_voice_is_not_signed_as_heph(self):
         self.live(voice="am_michael")
         self.assertEqual(self.run_agora("post", "x")[1], "Posted as Metis.")
@@ -216,8 +229,21 @@ class Agora(unittest.TestCase):
         self.assertEqual(self.run_agora("post", "x", pane="%7")[0], 2)
 
     def test_a_cast_or_picks_file_of_the_wrong_shape_signs_with_the_name(self):
-        (self.k / "cast.json").write_text(json.dumps({"characters": ["am_michael"]}))
         (self.k / "picks.json").write_text(json.dumps([SID]))
+        for i, cast in enumerate(
+            ([], {"characters": ["am_michael"]}, {"characters": "x"})
+        ):
+            (self.k / "cast.json").write_text(json.dumps(cast))
+            self.assertEqual(
+                self.run_agora("post", "x", now=NOW + i * 3600)[1],
+                "Posted as techne-evals.",
+                cast,
+            )
+
+    def test_a_character_entry_of_the_wrong_shape_signs_with_the_name(self):
+        (self.k / "cast.json").write_text(
+            json.dumps({"characters": {"af_nova": "Metis"}})
+        )
         self.assertEqual(self.run_agora("post", "x")[1], "Posted as techne-evals.")
 
     def test_a_malformed_line_is_skipped_and_controls_are_stripped(self):
@@ -302,9 +328,15 @@ class Agora(unittest.TestCase):
         (self.k / "agora").mkdir()
         old = json.dumps({"at": 1, "who": "old", "text": "z" * 200}) + "\n"
         mine = json.dumps({"at": NOW - 60, "who": "sphragis", "text": "recent"}) + "\n"
-        (self.k / "agora" / "posts.jsonl").write_text(old * 1400 + mine)
+        ahead = json.dumps({"at": NOW + 600, "who": "x", "text": "dated ahead"}) + "\n"
+        (self.k / "agora" / "posts.jsonl").write_text(old * 1400 + mine + ahead)
         self.assertEqual(self.run_agora("post", "fresh")[0], 0)
         self.assertEqual([p["text"] for p in self.posts()], ["recent", "fresh"])
+        (kept,) = (self.k / "agora" / "archive").glob("posts-*.jsonl")
+        archived = kept.read_text()
+        self.assertNotIn("recent", archived, "each post in one file only")
+        self.assertIn("dated ahead", archived)
+        self.assertEqual(archived.count("\n"), 1401)
 
     def test_control_characters_are_flattened(self):
         self.run_agora("post", "two\nlines\x1b[31m")

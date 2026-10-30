@@ -143,9 +143,9 @@ def read_line(path: Path) -> str:
 
 def fleet_name(pane: str, sid: str) -> str | None:
     """The agent the fleet registry (panes.tsv) names for this pane and session,
-    or "heph": the orchestrator's session on record, or (as fleet recover
-    decides) a session in the orchestrator's pane that no registry row names,
-    which a new Heph is until the resume service records him. None for a
+    or "heph": the orchestrator's session on record, or a session in the
+    orchestrator's pane that no registry row names, which a new Heph is until
+    the resume service records him. None for a
     session the fleet does not know. A pane some registry row names is never
     taken for Heph's by orchestrator.pane alone: after a tmux restart that file
     can name a worker's pane before the registry has its new session."""
@@ -252,25 +252,46 @@ def secret_in(text: str) -> bool:
     return False
 
 
+def archive(lines: list[str]) -> None:
+    """Move LINES, the full posts file, to agora/archive/, all but the last
+    hour's posts, which stay so the hourly limit still sees them; each post is
+    in one file only. The archive is written first and the live file replaced
+    whole, so a crash between them loses no post."""
+    keep, old = [], []
+    for line in lines:
+        p = as_post(line)
+        (keep if p and NOW - EVERY_S < p["at"] <= NOW else old).append(line)
+    (AGORA / "archive").mkdir(exist_ok=True)
+    (AGORA / "archive" / f"posts-{int(NOW)}.jsonl").write_text(
+        "".join(old), encoding="utf-8"
+    )
+    tmp = POSTS.with_suffix(".tmp")
+    tmp.write_text("".join(keep), encoding="utf-8")
+    os.replace(tmp, POSTS)
+
+
+def as_post(line: str) -> dict | None:
+    """LINE as a post, or None for a line that is not one."""
+    try:
+        p = json.loads(line)
+    except ValueError:
+        return None
+    if (
+        isinstance(p, dict)
+        and isinstance(p.get("at"), int)
+        and isinstance(p.get("who"), str)
+        and isinstance(p.get("text"), str)
+    ):
+        return p
+    return None
+
+
 def read_posts() -> list[dict]:
     try:
         lines = POSTS.read_text(encoding="utf-8").splitlines()
     except OSError:
         return []
-    out = []
-    for line in lines:
-        try:
-            p = json.loads(line)
-        except ValueError:
-            continue
-        if (
-            isinstance(p, dict)
-            and isinstance(p.get("at"), int)
-            and isinstance(p.get("who"), str)
-            and isinstance(p.get("text"), str)
-        ):
-            out.append(p)
-    return out
+    return [p for p in map(as_post, lines) if p]
 
 
 def flatten(text: str) -> str:
@@ -342,12 +363,7 @@ def post(kind: str, text: str, link: str | None) -> int:
             "link": link,
         }
         if POSTS.exists() and POSTS.stat().st_size > FILE_MAX:
-            # The last hour's posts stay, so the hourly limit still sees them.
-            recent = [p for p in read_posts() if NOW - EVERY_S < p["at"] <= NOW]
-            (AGORA / "archive").mkdir(exist_ok=True)
-            POSTS.rename(AGORA / "archive" / f"posts-{int(NOW)}.jsonl")
-            with POSTS.open("w", encoding="utf-8") as f:
-                f.writelines(json.dumps(p) + "\n" for p in recent)
+            archive(POSTS.read_text(encoding="utf-8").splitlines(keepends=True))
         with POSTS.open("a", encoding="utf-8") as f:
             f.write(json.dumps(line) + "\n")
     event(logging.INFO, "posted", who=who, kind=kind, chars=len(flat))
