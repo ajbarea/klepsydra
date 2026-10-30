@@ -355,6 +355,20 @@ class Poll2(unittest.TestCase):
             self.triaged, [10], "the PR's run is not swept, and run 10 only once"
         )
 
+    def test_a_sweep_met_at_every_limit_reads_the_run_again_next_time(self):
+        runs = [run(12, conclusion="success")]
+        swept = set()
+        answers = [{"state": "waiting"}, {"state": "done", "verdict": "clean"}]
+        with mock.patch.object(
+            ci_watch,
+            "triage",
+            lambda u, r, i: (self.triaged.append(i), answers.pop(0))[1],
+        ):
+            ci_watch.sweep("o", ["r"], Fake(runs), swept)
+            self.assertEqual(swept, set(), "a waiting run is not marked swept")
+            ci_watch.sweep("o", ["r"], Fake(runs), swept)
+        self.assertEqual((self.triaged, swept), ([12, 12], {12}))
+
 
 class Route(unittest.TestCase):
     """Reds go to the agent on the branch or to Heph; AJ only on escalation (#180)."""
@@ -792,6 +806,7 @@ class Triage(unittest.TestCase):
                 True,
             ),
             ({"is_error": True, "result": "You're out of usage credits"}, True),
+            ({"is_error": True, "api_error_status": 429, "result": "x"}, True),
             ({"is_error": True, "result": "HTTP 500"}, False),
             ({"is_error": False, "result": "usage limit discussed"}, False),
         ]:
@@ -804,7 +819,10 @@ class Triage(unittest.TestCase):
         (stale / "claude.json").write_text(
             json.dumps({"is_error": True, "api_error": "usage_limit_reached"})
         )
-        with mock.patch.dict(os.environ, {"TECHNE_CI_REPORT": str(script)}):
+        with (
+            mock.patch.dict(os.environ, {"TECHNE_CI_REPORT": str(script)}),
+            mock.patch.object(ci_watch, "triage_accounts", return_value=[None]),
+        ):
             got = ci_watch.triage("o", "r", 6)
         self.assertEqual((got["state"], got["why"]), ("failed", "HTTP 410 logs gone"))
 
@@ -883,22 +901,47 @@ class Triage(unittest.TestCase):
         self.assertEqual(len(ran), 1, "no retry inside RETRIAGE_S")
 
     def test_a_limit_then_another_failure_on_the_next_account_still_waits(self):
-        script = TMP / "report.sh"
-        script.write_text(
-            '#!/bin/bash\nmkdir -p "$3"\n'
-            "if [[ ${CLAUDE_CONFIG_DIR:-default} == default ]]; then\n"
-            '  echo \'{"is_error":true,"api_error":"usage_limit_reached"}\' >"$3/claude.json"; exit 1\nfi\n'
-            "echo 'Invalid API key' >&2; exit 1\n"
-        )
+        limit = """echo \'{"is_error":true,"api_error":"usage_limit_reached"}\' >"$3/claude.json"; exit 1"""
+        for n, rest, want in [
+            (10, "echo 'Invalid API key' >&2; exit 1", ".claude-rit: Invalid API key"),
+            (
+                13,
+                "echo '{not json' >\"$3/report.json\"",
+                ".claude-rit: JSONDecodeError",
+            ),
+        ]:
+            script = TMP / "report.sh"
+            script.write_text(
+                '#!/bin/bash\nmkdir -p "$3"\n'
+                f"if [[ ${{CLAUDE_CONFIG_DIR:-default}} == default ]]; then\n  {limit}\nfi\n{rest}\n"
+            )
+            with (
+                mock.patch.dict(os.environ, {"TECHNE_CI_REPORT": str(script)}),
+                mock.patch.object(
+                    ci_watch, "triage_accounts", return_value=[None, "/x/.claude-rit"]
+                ),
+            ):
+                got = ci_watch.triage("o", "r", n)
+            self.assertEqual(got["state"], "waiting", rest)
+            self.assertIn(want, got["why"])
+        real = subprocess.run
+
+        def timed_out(args, **kw):
+            if kw["env"].get("CLAUDE_CONFIG_DIR"):
+                raise subprocess.TimeoutExpired(args, 900)
+            return real(args, **kw)
+
+        script.write_text(f'#!/bin/bash\nmkdir -p "$3"\n{limit}\n')
         with (
             mock.patch.dict(os.environ, {"TECHNE_CI_REPORT": str(script)}),
             mock.patch.object(
                 ci_watch, "triage_accounts", return_value=[None, "/x/.claude-rit"]
             ),
+            mock.patch.object(ci_watch.subprocess, "run", timed_out),
         ):
-            got = ci_watch.triage("o", "r", 10)
+            got = ci_watch.triage("o", "r", 14)
         self.assertEqual(got["state"], "waiting")
-        self.assertIn(".claude-rit: Invalid API key", got["why"])
+        self.assertIn(".claude-rit: TimeoutExpired", got["why"])
 
     def test_the_default_folder_runs_without_a_config_dir_set_around_it(self):
         script = TMP / "report.sh"
@@ -916,10 +959,28 @@ class Triage(unittest.TestCase):
             (ci_watch.STATE / "ci" / "r-11" / "config").read_text(), "unset"
         )
 
+    def test_a_linked_run_folder_is_left_and_its_target_kept(self):
+        target = TMP / "elsewhere"
+        target.mkdir(exist_ok=True)
+        (target / "claude.json").write_text("keep")
+        (ci_watch.STATE / "ci").mkdir(parents=True, exist_ok=True)
+        (ci_watch.STATE / "ci" / "r-15").symlink_to(target)
+        script = TMP / "report.sh"
+        script.write_text("#!/bin/bash\necho 'refused: a link' >&2\nexit 1\n")
+        with (
+            mock.patch.dict(os.environ, {"TECHNE_CI_REPORT": str(script)}),
+            mock.patch.object(ci_watch, "triage_accounts", return_value=[None]),
+        ):
+            ci_watch.triage("o", "r", 15)
+        self.assertEqual((target / "claude.json").read_text(), "keep")
+
     def test_a_triage_that_fails_for_another_reason_still_fails(self):
         script = TMP / "report.sh"
         script.write_text("#!/bin/bash\necho 'error: boom' >&2\nexit 1\n")
-        with mock.patch.dict(os.environ, {"TECHNE_CI_REPORT": str(script)}):
+        with (
+            mock.patch.dict(os.environ, {"TECHNE_CI_REPORT": str(script)}),
+            mock.patch.object(ci_watch, "triage_accounts", return_value=[None]),
+        ):
             self.assertEqual(ci_watch.triage("o", "r", 4)["state"], "failed")
 
 

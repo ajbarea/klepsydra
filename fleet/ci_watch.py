@@ -10,8 +10,9 @@ on the repo's default branch or at the head of an open pull request. The newest
 completed run per workflow and branch that succeeded or failed decides
 (a cancelled, skipped or neutral run decides nothing): failure, timed_out or
 startup_failure is red; a later green run clears it. Each new red run that is
-not Dependabot's is triaged once by techne ci-audit's report mode (read-only),
-then routed to whoever can fix it: on an open PR's branch a live fleet agent is
+not Dependabot's is triaged by techne ci-audit's report mode (read-only), on
+the first account with room, once (a red met at every account's limit waits
+and is tried again every RETRIAGE_S for a day), then routed to whoever can fix it: on an open PR's branch a live fleet agent is
 working on, that agent's inbox (the resume service types it in at its next
 idle prompt); otherwise Heph, whose pane watcher wakes on it. Every routed red
 is one line in ci/alerts.jsonl. A red still red ESCALATE_S after it was routed
@@ -23,7 +24,8 @@ pushed, merged or re-run.
 ci.json (in klepsydra's data folder) is what the wall and the phone show. The
 log is JSON lines in the fleet log folder, one per decision. No error stops
 the watch: a repo that cannot be read is skipped for the pass and logged, and
-what it has triaged is saved as soon as it is, so a restart triages nothing twice.
+what it has triaged is saved as soon as it is, so a restart triages no finished
+red twice.
 """
 
 import json
@@ -354,8 +356,10 @@ def triage(user: str, repo: str, run_id: int) -> dict:
         else:
             env.pop("CLAUDE_CONFIG_DIR", None)
         account = account_name(folder)
-        # A reply left from the last try must not stand for this one.
-        (out / "claude.json").unlink(missing_ok=True)
+        # A reply left from the last try must not stand for this one; a linked
+        # folder is left for report.sh to refuse.
+        if not out.is_symlink():
+            (out / "claude.json").unlink(missing_ok=True)
         try:
             got = subprocess.run(
                 ["bash", str(script), f"{user}/{repo}", str(run_id), str(out)],
@@ -369,18 +373,14 @@ def triage(user: str, repo: str, run_id: int) -> dict:
                 continue
             if got.returncode:
                 why = (got.stderr.strip().splitlines() or ["exit"])[-1][:300]
-                if tried:
-                    others.append(f"{account}: {why}")
-                    continue
-                return {"state": "failed", "account": account, "why": why}
-            r = json.loads((out / "report.json").read_text())
+            else:
+                r = json.loads((out / "report.json").read_text())
+                break
         except (subprocess.TimeoutExpired, OSError, ValueError) as e:
             why = f"{type(e).__name__}: {e}"[:300]
-            if tried:
-                others.append(f"{account}: {why}")
-                continue
+        if not tried:
             return {"state": "failed", "account": account, "why": why}
-        break
+        others.append(f"{account}: {why}")
     else:
         # A limit seen on any account is waited out, whatever failed on the next.
         return {
@@ -814,8 +814,10 @@ def sweep(user: str, repos: list[str], gh: GitHub, swept: set) -> list[dict]:
             and r["id"] not in swept
         ]
         for r in green:
-            swept.add(r["id"])
             t = triage(user, repo, r["id"])
+            # A run met at every account's limit is read again at the next sweep.
+            if t.get("state") != "waiting":
+                swept.add(r["id"])
             if t.get("state") == "done" and t["verdict"] != "clean":
                 found.append(
                     {

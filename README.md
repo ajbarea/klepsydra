@@ -1281,7 +1281,7 @@ closes, its workflow is deleted, or a month passes.
 Each new red run gets one unattended, read-only triage by techne ci-audit's
 report mode (`report.sh`, from the installed techne plugin or
 `TECHNE_CI_REPORT`): the failing step, its cause and its file:line. The triage
-runs on the account with the most room, then on each other logged-in account
+runs on the first account with room, in the fleet's order, then on each other logged-in account
 when one is at its usage limit. If any account was at its limit, the triage
 waits and is tried again every 10 minutes, for up to a day, and the red is
 routed once it has its cause or has waited 30 minutes. It also
