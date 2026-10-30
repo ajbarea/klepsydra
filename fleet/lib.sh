@@ -494,6 +494,26 @@ turn_done() { # PANE
     and ((.background // []) | length) == 0) | .prompt.at // "" | tostring' "$KLEPSYDRA_DIR/fleet/$sid.json" 2>/dev/null
 }
 
+# Whether the agent in PANE has finished its turn but keeps background work
+# running (a job watcher, a CI monitor): turn_done waits on it forever (#198).
+turn_settled() { # PANE
+  local sid
+  sid=$(live_session "$1") || return 1
+  jq -e '(.state == "done" or (.state == "working" and .reason == "background"))
+    and ((.background // []) | length) > 0' "$KLEPSYDRA_DIR/fleet/$sid.json" >/dev/null 2>&1
+}
+
+# Whether the agent in PANE answered a move-back request sent at ASKED with
+# READY-TO-MOVE and finished that turn. Prints its prompt.at, as turn_done does.
+ready_to_move() { # PANE ASKED
+  local sid
+  [[ $2 =~ ^[0-9]+$ ]] || return 1
+  sid=$(live_session "$1") || return 1
+  jq -er --argjson asked "$2" 'select((.state == "done" or (.state == "working" and .reason == "background"))
+    and (.reply.at // 0) >= $asked and ((.reply.text // "") | contains("READY-TO-MOVE")))
+    | .prompt.at // "" | tostring' "$KLEPSYDRA_DIR/fleet/$sid.json" 2>/dev/null
+}
+
 # The config folder pane PANE runs on: its registry row's (column 6), else the default.
 pane_config() { # PANE
   local c
