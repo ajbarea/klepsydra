@@ -711,7 +711,15 @@ function showAgora(view) {
   agoraButton.textContent = v.label;
   agoraButton.title = v.title;
   agoraPanel.querySelector(".agora-title").textContent = v.title;
-  agoraPanel.querySelector(".agora-posts").replaceChildren(...v.rows.map((r) => agoraPost(r, v.emoji)));
+  // A redraw replaces the buttons: the focused reaction keeps the focus.
+  const had = document.activeElement?.closest?.(".agora-react");
+  const list = agoraPanel.querySelector(".agora-posts");
+  list.replaceChildren(...v.rows.map((r) => agoraPost(r, v.emoji)));
+  if (had) {
+    for (const b of list.querySelectorAll(".agora-react")) {
+      if (b.dataset.id === had.dataset.id && b.dataset.emoji === had.dataset.emoji) b.focus();
+    }
+  }
 }
 function agoraPost(r, emoji) {
   const li = Object.assign(document.createElement("li"), { className: "agora-post" });

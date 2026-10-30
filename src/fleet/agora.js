@@ -13,7 +13,8 @@ export const EMOJI_NAMES = { "👍": "thumbs up", "❤️": "heart", "🎉": "ho
 const LINK = /^https:\/\/github\.com\/([\w.-]+)\/([\w.-]+)\/(pull|issues)\/(\d{1,7})$/;
 const DAY_MS = 86_400_000;
 
-const text = (v, max) => (typeof v === "string" && v && v.length <= max ? v : null);
+// Counted in code points, as agora.py and agora.rs count them.
+const text = (v, max) => (typeof v === "string" && v && [...v].length <= max ? v : null);
 
 /** "klepsydra #192" for a GitHub pull request or issue address; null for anything else. */
 export function linkLabel(url) {
@@ -27,7 +28,7 @@ export function linkLabel(url) {
  */
 export function agoraView(view, cast, now) {
   const posts = (Array.isArray(view?.posts) ? view.posts : []).filter(
-    (p) => p && text(p.id, 200) && Number.isInteger(p.at) && text(p.text, 400),
+    (p) => p && text(p.id, 200) && Number.isInteger(p.at) && text(p.text, 280),
   );
   if (!posts.length) return { hidden: true, label: "Agora", title: "", rows: [], emoji: [] };
   const emoji = (Array.isArray(view.emoji) ? view.emoji : []).filter((e) => Object.hasOwn(EMOJI_NAMES, e));

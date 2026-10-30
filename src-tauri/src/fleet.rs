@@ -141,6 +141,9 @@ pub async fn agora_react(
             let message = match why {
                 Refused::NotAPost => "That is not an Agora post.".to_string(),
                 Refused::NotOffered => "That reaction is not offered.".to_string(),
+                Refused::Unreadable(e) => {
+                    format!("Could not read the saved reactions, so none were changed: {e}")
+                }
                 Refused::Unwritable(e) => format!("Could not save the reaction: {e}"),
             };
             log::warn!(post = id.as_str(), emoji = emoji.as_str(); "agora: reaction not saved: {message}");

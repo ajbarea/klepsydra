@@ -46,6 +46,11 @@ test("odd fields fall back, and only a GitHub pull or issue address is a link", 
   ]) assert.equal(linkLabel(url), label, url);
 });
 
+test("the text cap counts code points: 280 emoji show, 281 do not", () => {
+  assert.equal(agoraView({ posts: [post({ text: "🎉".repeat(280) })] }, cast, NOW).rows.length, 1);
+  assert.equal(agoraView({ posts: [post({ text: "🎉".repeat(281) })] }, cast, NOW).hidden, true);
+});
+
 test("an older post still shows, but only today's count on the button", () => {
   const v = agoraView({ posts: [post({ at: 1_799_000_000 })] }, cast, NOW);
   assert.deepEqual([v.hidden, v.label], [false, "Agora"]);

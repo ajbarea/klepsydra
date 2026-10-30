@@ -47,7 +47,9 @@ EVERY_S = 3600
 HEPH = "am_michael"
 FLEET_SOCK = os.environ.get("FLEET_SOCK", "klepsydra")
 GITLEAKS = os.environ.get("FLEET_GITLEAKS", "gitleaks")
-LINK = re.compile(r"https://github\.com/[\w.-]+/[\w.-]+/(?:pull|issues)/\d{1,7}")
+LINK = re.compile(
+    r"https://github\.com/[\w.-]+/[\w.-]+/(?:pull|issues)/\d{1,7}", re.ASCII
+)
 # Token shapes gitleaks may miss on a short line, or when it is not installed.
 SECRET = re.compile(
     r"gh[pousr]_[A-Za-z0-9]{20,}|github_pat_\w{20,}|sk-ant-[\w-]{20,}|sk-(?:proj|svcacct|admin)-[\w-]{20,}|sk-[A-Za-z0-9]{32,}"

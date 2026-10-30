@@ -311,7 +311,13 @@ class Agora(unittest.TestCase):
             self.run_agora("post", "x", "--link", "https://evil.example/x")[0], 2
         )
         pr = "https://github.com/ajbarea/klepsydra/pull/192"
-        for around in (f"javascript:x//{pr}", f"{pr}#x", f" {pr}"):
+        for around in (
+            f"javascript:x//{pr}",
+            f"{pr}#x",
+            f" {pr}",
+            "https://github.com/\u00f3wner/r/pull/1",
+            "https://github.com/o/r/issues/\u0661\u0662",
+        ):
             self.assertEqual(
                 self.run_agora("post", "x", "--link", around)[0], 2, around
             )
@@ -371,11 +377,15 @@ class Agora(unittest.TestCase):
         (self.k / "agora").mkdir()
         far = json.dumps({"at": 10**20, "who": "x", "text": "far"}) + "\n"
         true = json.dumps({"at": True, "who": "x", "text": "bool"}) + "\n"
-        (self.k / "agora" / "posts.jsonl").write_text(far + true)
+        zero = json.dumps({"at": 0, "who": "x", "text": "zero"}) + "\n"
+        neg = json.dumps({"at": -5, "who": "x", "text": "negative"}) + "\n"
+        (self.k / "agora" / "posts.jsonl").write_text(far + true + zero + neg)
         code, out = self.run_agora("list")[:2]
         self.assertEqual(code, 0)
         self.assertNotIn("far", out)
         self.assertNotIn("bool", out, "a JSON true is no time")
+        self.assertNotIn("zero", out)
+        self.assertNotIn("negative", out)
 
     def test_control_characters_are_flattened(self):
         self.run_agora("post", "two\nlines\x1b[31m")

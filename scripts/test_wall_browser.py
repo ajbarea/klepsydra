@@ -4388,6 +4388,10 @@ def agora_feed(wall):
     page.wait_for_timeout(150)
     got = page.evaluate(state)
     wall.check("disk full" in got["note"] and got["pressed"][0] == "❤️", "a refused reaction says why and changes nothing", got)
+    page.locator("#agora .agora-post").first.locator(".agora-react").nth(3).focus()
+    page.evaluate("(v) => window.__agora.onmessage(v)", agora_board(now))
+    focused = page.evaluate("() => { const a = document.activeElement; return [a.classList.contains('agora-react'), a.dataset.emoji, a.closest('.agora-post') === document.querySelector('#agora .agora-post')]; }")
+    wall.check(focused == [True, "👀", True], "a redraw keeps the focus on the reaction it was on", focused)
     page.close()
 
 
