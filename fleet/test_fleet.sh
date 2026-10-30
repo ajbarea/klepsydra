@@ -384,6 +384,19 @@ check "a done time later in the day than now is the night before: idle since the
   "$(grep -c 'SUBMIT /exit' "$work/late.log") $(head -1 "$work/launched")" "1 idler"
 t kill-window -t "$p" 2>/dev/null; : >"$REGISTRY"
 
+# 55 min 10 s from the start of its minute, 54 min 11 s from the end: past an
+# hour by the cache's measure, so it starts fresh (12:17 PM, below, does not).
+: >"$FLEET_LOG"
+p=$(pane sixteen "{\"above\":[\"⏺ Done. done 12:16 PM\",\"$LIMIT\"]}"); settle
+live "$p"
+printf '%s\tidler\t%s\t%s\t/w\n' "$p" "$work/brief.src" "$SID" >"$REGISTRY"
+: >"$work/launched"
+resume "$morning"
+LAUNCH="$work/launch-stub.sh" FLEET_NOW=$(( noon + 4330 )) bash "$here/resume-at-reset.sh" --once 2>/dev/null
+check "done 12:16 PM at 1:12:10 PM is past the hour: it starts fresh" \
+  "$(grep -c 'SUBMIT /exit' "$work/sixteen.log") $(head -1 "$work/launched")" "1 idler"
+t kill-window -t "$p" 2>/dev/null; : >"$REGISTRY"
+
 # Stopped 22 min ago; in a minute after the pass began (NOW is its start),
 # also across midnight; or 5 min ago in the hour that repeats when clocks go
 # back: none is idle, so each gets the continue message.
