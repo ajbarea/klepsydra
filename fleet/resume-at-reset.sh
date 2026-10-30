@@ -174,18 +174,36 @@ fresh() { # PANE NAME BRIEF [WHY] [ACCOUNT] [NOTE] [STAMP]
   printf '%s' "$new"
 }
 
-# When the agent in PANE (screen PLAIN) stopped: the "done 4:21 PM" its last
-# turn printed (more than 12 h ahead means yesterday), else the window's last
-# activity, which status line redraws keep fresh, so it under-counts.
+# When the agent in PANE (screen PLAIN) stopped: the last moment, at most 15
+# min past the clock now (a turn can end while a pass runs), whose local time
+# reads the "done 4:21 PM" its last turn printed, at the end of that minute.
+# The moments tried are that time yesterday, today and tomorrow, each also 30,
+# 60 and 120 min either side, so whichever of a repeated hour's (or two hours')
+# two times date returns, the right one is found. Else the window's last activity, which
+# status line redraws keep fresh, so it under-counts. Always a number: when
+# unsure, NOW.
 stopped_at() { # PANE PLAIN
-  local at stopped
+  local at day now d c k best="" stopped
   at=$(grep -o 'done [0-9]\{1,2\}:[0-9][0-9] [AP]M' <<<"$2" | tail -1 | cut -c6-)
-  if [[ -n $at ]] && stopped=$(date -d "$at" +%s 2>/dev/null); then
-    (( stopped - NOW > 43200 )) && stopped=$((stopped - 86400))
-    printf '%s' "$stopped"
-  else
-    t display-message -p -t "$1" '#{window_activity}'
+  at=${at#0}
+  now=$(clock)
+  if [[ -n $at ]] && day=$(date -d "@$now" +%F); then
+    for d in -1 0 1; do
+      # Noon is never skipped or repeated, so the day before and after are sure.
+      c=$(date -d "$(date -d "$day 12:00 PM $d day" +%F) $at" +%s 2>/dev/null) || continue
+      for k in -7200 -3600 -1800 0 1800 3600 7200; do
+        (( c + k <= now + 900 && c + k > ${best:-0} )) || continue
+        [[ $(LC_ALL=C date -d "@$((c + k))" '+%-I:%M %p') == "$at" ]] && best=$((c + k))
+      done
+    done
   fi
+  if [[ -n $best ]]; then
+    stopped=$((best + 59))
+  else
+    stopped=$(t display-message -p -t "$1" '#{window_activity}' 2>/dev/null)
+  fi
+  [[ $stopped =~ ^[0-9]+$ ]] || stopped=$NOW
+  printf '%s' "$stopped"
 }
 
 # Whether the transcript above the box already shows LINE as sent ("❯ LINE"),
