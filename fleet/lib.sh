@@ -516,7 +516,7 @@ ready_to_move() { # PANE ASKED
   [[ $2 =~ ^[0-9]+$ ]] || return 1
   sid=$(live_session "$1") || return 1
   jq -er --argjson asked "$2" 'select((.state == "done" or (.state == "working" and .reason == "background"))
-    and (.reply.at // 0) >= $asked
+    and (.reply.at // 0) >= $asked and (.reply.at // 0) >= (.turn_at // 0)
     and ((.reply.text // "") | split("\n") | map(select(test("\\S"))) | (.[0] // "")
       | gsub("[*`]"; "") | gsub("^\\s+|\\s+$"; "")) == "READY-TO-MOVE")
     | '"$STAMP_JQ" "$KLEPSYDRA_DIR/fleet/$sid.json" 2>/dev/null

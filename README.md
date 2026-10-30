@@ -137,7 +137,11 @@ agent on the first account with room (RIT, `~/.claude`, by default) and, when an
 agent hits a limit with over 15 minutes to wait, moves it to a fresh session on
 the other account if that one has room, carrying anything typed at the limited
 pane. Once the preferred account has half its five-hour window free again, each
-moved agent goes back at its next finished turn, never mid-turn. A worker whose
+moved agent goes back at its next finished turn, never mid-turn. A worker that
+keeps background work past its turns (a job watcher, a CI monitor) is asked,
+once that account has had room for 5 minutes, to save, stop it and reply with
+`READY-TO-MOVE` alone on the first line, and moves on that reply; it is asked
+again each hour. Heph is never asked. A worker whose
 account has used 95% of a window (`FLEET_PREMOVE_PCT`) moves at its next
 finished turn too, before the limit can stop it mid-turn. Moves run side by
 side (two at a time), each launch has 120 seconds, and a failed move at a limit
