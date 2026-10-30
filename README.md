@@ -1357,7 +1357,7 @@ briefs, logs) stays in the state folder.
 
 | Command | What it does |
 |---|---|
-| `fleet doctor` | One line per check: the resume service, its last pass, Remote Control on every registered pane and the orchestrator's, the phone wall locally and over Tailscale Serve with a fresh `fleet.json`, a pane watcher, and briefs' shared rules. Exits non-zero on any failure. |
+| `fleet doctor` | One line per check: the resume service, its last pass, Remote Control on every registered pane and the orchestrator's, the phone wall locally and over Tailscale Serve with a fresh `fleet.json`, a pane watcher, and briefs' shared rules. Exits non-zero on any failure. `--json FILE` also writes the checks as a report, and logs only a check that changed status (a recovery without its detail). The `fleet-doctor.timer` runs it every 5 min into the data folder's `fleet-health.json`, which the wall and the phone show as a **Fleet** button beside **CI**: failing checks first, `Fleet ?` when the report is over 15 minutes old, no links and `~` for the home folder. |
 | `fleet log [N]` | The last N decisions as plain lines. |
 | `fleet brief NAME BODY` | Writes `task-NAME.src`: BODY, then the shared rules in `fleet/brief-tail.md`. `--check` lists briefs whose rules drifted. |
 | `fleet cutover` | Restarts the resume service on the installed scripts and confirms its start is logged. |

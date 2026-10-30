@@ -543,14 +543,26 @@ check "#208: --json writes each check with its status and detail, and exits as d
 check "#208: and its time is now" "$(( $(date +%s) - $(jq .observed_at "$work/health.json") < 30 ))" "1"
 fails=$(jq -c 'select(.level == "ERROR" and (.message | startswith("doctor: ")))' "$FLEET_LOG" | wc -l)
 check "#208: the first --json run logs each failing check" "$(( fails > 0 ))" "1"
-logged=$(jq -c 'select(.message | startswith("doctor"))' "$FLEET_LOG" | wc -l)
+# The second folder's settings drift from the first's (accounts-sync --check).
+mkdir -p "$work/cfg-b"; printf '{"x":1}\n' >"$work/cfg-a/settings.json"
 djson >/dev/null
-check "#208: a second run with nothing changed logs nothing more" \
-  "$(jq -c 'select(.message | startswith("doctor"))' "$FLEET_LOG" | wc -l)" "$logged"
+logged=$(jq -c 'select(.message | startswith("doctor"))' "$FLEET_LOG" | wc -l)
+all=$(wc -l <"$FLEET_LOG")
+djson >/dev/null
+check "#208: a second run with nothing changed logs nothing more, the settings drift included" \
+  "$(jq -c 'select(.message | startswith("doctor"))' "$FLEET_LOG" | wc -l) $(wc -l <"$FLEET_LOG") $(jq -r '[.checks[] | select(.check | startswith("settings ")) | .status] | join(",")' "$work/health.json")" "$logged $all FAIL"
 login a
 djson >/dev/null
-check "#208: a check that recovers logs once that it did" \
-  "$(jq -r 'select(.message | endswith("recovered")) | .message' "$FLEET_LOG")" "doctor: account $work/cfg-a recovered"
+check "#208: a check that recovers logs once that it did, without its detail" \
+  "$(jq -r 'select(.message | endswith("recovered")) | [.message, .detail // "none"] | join(" | ")' "$FLEET_LOG")" "doctor: account $work/cfg-a recovered | none"
+rm -f "$work/cfg-a/settings.json"; rm -rf -- "${work:?}/cfg-b"
+session_file w1 "$w" $'https://claude.ai/code/session_01W\tx\ny'
+djson >/dev/null
+check "#208 review 1: a tab or newline in a detail stays inside its check" \
+  "$(jq -r --arg c "remote control $w (worker)" '.checks[] | select(.check == $c) | .detail' "$work/health.json")" "https://claude.ai/code/session_01W x y"
+session_file w1 "$w" https://claude.ai/code/session_01W
+check "#208 review 1: the home folder reads as ~" \
+  "$(HOME=$work djson >/dev/null; jq -r '.checks[] | select(.check | startswith("account ")) | .check' "$work/health.json" | head -1)" "account ~/cfg-a"
 printf 'not json' >"$work/health.json"
 check "#208: a report it cannot read is a first run" "$(djson) $(jq -r '.checks | length > 0' "$work/health.json")" "1 true"
 chmod a-w "$work"; touch "$work/x" 2>/dev/null || {
@@ -576,6 +588,7 @@ check "the memfrag timer too" "$(grep -c 'OnCalendar=\*:0/30' "$inst/units/fleet
 check "#208: the doctor timer runs every 5 min into the data folder, and a failing check is no failed run" \
   "$(grep -c 'OnUnitActiveSec=5min' "$inst/units/fleet-doctor.timer") $(grep -E '^(ExecStart|SuccessExitStatus)=' "$inst/units/fleet-doctor.service" | tr '\n' '|')" \
   "1 SuccessExitStatus=1|ExecStart=/usr/bin/bash $inst/state/doctor.sh --json \"$KLEPSYDRA_DIR/fleet-health.json\"|"
+check "#208 review 1: and what it prints stays out of the journal" "$(grep -c '^StandardOutput=null$' "$inst/units/fleet-doctor.service")" "1"
 FLEET_STATE="$inst/s2" FLEET_UNITS="$inst/u2" FLEET_BIN="$inst/b2" bash "$here/install.sh" --dry-run --force >"$work/dry" 2>/dev/null
 check "a dry run says what it would do and changes nothing" "$(grep -c '^would' "$work/dry" | sed 's/^[1-9][0-9]*$/some/') $(find "$inst" -mindepth 1 -maxdepth 1 -printf '%f\n' | sort | tr '\n' ' ')" "some bin state units "
 

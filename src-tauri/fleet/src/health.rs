@@ -41,10 +41,11 @@ pub fn view(raw: &str, now: i64) -> Option<Value> {
                 json!({"status": status, "check": check, "detail": unlinked(&capped(&c["detail"]))})
             })
         })
-        .take(MAX_CHECKS)
         .collect();
+    // Sorted before the cap, so a failing check is never the one cut.
     let rank = |c: &Value| STATUSES.iter().position(|s| c["status"] == *s);
     checks.sort_by_key(rank);
+    checks.truncate(MAX_CHECKS);
     let count = |s: &str| checks.iter().filter(|c| c["status"] == s).count();
     Some(json!({
         "observed_at": observed,
@@ -119,6 +120,21 @@ mod tests {
         ] {
             assert!(view(bad, 5).is_none(), "{bad}");
         }
+    }
+
+    #[test]
+    fn a_failing_check_past_the_cap_still_shows() {
+        let mut checks: Vec<Value> = (0..MAX_CHECKS + 1)
+            .map(|i| json!({"status": "ok", "check": format!("c{i}"), "detail": ""}))
+            .collect();
+        checks.push(json!({"status": "FAIL", "check": "pane watcher", "detail": "none"}));
+        let raw = json!({"observed_at": 5, "checks": checks}).to_string();
+        let v = view(&raw, 5).unwrap();
+        assert_eq!(v["checks"].as_array().unwrap().len(), MAX_CHECKS);
+        assert_eq!(
+            (v["failed"].as_u64(), v["checks"][0]["check"].as_str()),
+            (Some(1), Some("pane watcher"))
+        );
     }
 
     #[test]

@@ -37,15 +37,22 @@ if [[ -n $json && -f $json ]]; then
 fi
 results=()
 
+# The home folder reads as ~, in what doctor prints and in the report the
+# phone gets.
+home() { local s=${1//"$HOME/"/\~/}; [[ $s == "$HOME" ]] && s="~"; printf '%s' "$s"; }
+
 report() { # ok|warn|FAIL CHECK DETAIL
-  printf '%-4s %s: %s\n' "$1" "$2" "$3"
-  results+=("$1"$'\t'"$2"$'\t'"${3//[$'\t\n']/ }")
+  local check detail
+  check=$(home "$2") detail=$(home "$3")
+  printf '%-4s %s: %s\n' "$1" "$check" "$detail"
+  results+=("$1"$'\t'"${check//[$'\t\n']/ }"$'\t'"${detail//[$'\t\n']/ }")
   [[ $1 == FAIL ]] && failed=1
-  [[ -n $json && ${was[$2]-} == "$1" ]] && return
+  [[ -n $json && ${was[${check//[$'\t\n']/ }]-} == "$1" ]] && return
   case $1 in
-    FAIL) flog ERROR "doctor: $2" detail="$3" ;;
-    warn) flog WARN "doctor: $2" detail="$3" ;;
-    ok) [[ -n ${was[$2]-} ]] && flog INFO "doctor: $2 recovered" detail="$3" ;;
+    FAIL) flog ERROR "doctor: $check" detail="$detail" ;;
+    warn) flog WARN "doctor: $check" detail="$detail" ;;
+    # An ok detail can be a Remote Control link, which opens a session: not logged.
+    ok) [[ -n ${was[${check//[$'\t\n']/ }]-} ]] && flog INFO "doctor: $check recovered" ;;
   esac
 }
 

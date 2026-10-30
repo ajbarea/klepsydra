@@ -18,7 +18,8 @@
 #                      keybindings.json, techne.toml, hooks, projects (one
 #                      session history, so a session resumes on either
 #                      account) and each skill folder but claude.ai's synced ones
-# --check prints what differs and fails if anything does; nothing is written.
+# --check prints what differs and fails if anything does; nothing is written
+# or logged (fleet doctor reports it).
 set -u
 FLEET_TARGET=fleet::accounts
 here=$(dirname "$(readlink -f "$0")")
@@ -158,10 +159,7 @@ for DST in "${dsts[@]}"; do
   (( check )) || flog INFO "second config folder synced" folder="$DST" from="$SRC"
 done
 
-if (( check )); then
-  (( drift )) && flog WARN "a second config folder differs from the first" folders="${dsts[*]}"
-  exit "$drift"
-fi
+(( check )) && exit "$drift"
 if (( drift )); then
   flog ERROR "second config folder sync failed" folders="${dsts[*]}"
   exit 1

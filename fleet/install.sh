@@ -123,6 +123,8 @@ Description=klepsydra fleet: fleet doctor for the wall's Fleet health
 Type=oneshot
 TimeoutStartSec=120
 SuccessExitStatus=1
+# What it prints is in the report; the journal would keep a Remote Control link each run.
+StandardOutput=null
 Environment=\"PATH=$PATH\" \"HOME=$HOME\"
 ExecStart=/usr/bin/bash $FLEET_STATE/doctor.sh --json \"$KLEPSYDRA_DIR/fleet-health.json\""
 unit fleet-doctor.timer "[Unit]
