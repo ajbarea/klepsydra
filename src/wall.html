@@ -16,6 +16,7 @@
     <div class="lead">
       <div class="tally" role="group" aria-label="Session counts"></div>
       <button type="button" id="ci-open" popovertarget="ci" data-phone hidden>CI</button>
+      <button type="button" id="agora-open" popovertarget="agora" data-phone hidden>Agora</button>
       <p class="ring-key" hidden>
         <span class="visually-hidden">Ring key: thick arc, subagent; thin arc, background shell.</span>
         <span class="key" aria-hidden="true"><svg viewBox="0 0 32 18"><path class="agent" d="M 4.5 16 A 11.5 11.5 0 0 1 27.5 16"/></svg>agent</span>
@@ -215,5 +216,11 @@
     <ul class="ci-runs"></ul>
     <p class="ci-note"></p>
   </section>
+  <section id="agora" popover aria-label="Agora posts">
+    <h2 class="agora-title"></h2>
+    <ol class="agora-posts"></ol>
+    <p class="agora-note" role="status"></p>
+  </section>
+  <template id="agora-react-tpl"><button type="button" class="agora-react" aria-pressed="false"><span aria-hidden="true"></span></button></template>
 </body>
 </html>

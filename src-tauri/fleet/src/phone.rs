@@ -430,13 +430,15 @@ struct Shared {
 
 /// The parts of the phone's snapshot: the fleet's phone view, the usage
 /// readings' once a usage source has been read, the character theme once
-/// the app has named one, and the CI watch's view once `ci.json` was read.
+/// the app has named one, the CI watch's view once `ci.json` was read, and
+/// the Agora's once it has a post.
 #[derive(Default)]
 struct Parts {
     fleet: Option<Value>,
     usage: Option<Value>,
     theme: Option<&'static str>,
     ci: Option<Value>,
+    agora: Option<Value>,
 }
 
 /// The snapshot every phone gets, made from its parts.
@@ -464,6 +466,9 @@ impl Feed {
             // Null too, once read: a phone that saw a view must hear it is gone.
             if let Some(ci) = &parts.ci {
                 map.insert("ci".into(), ci.clone());
+            }
+            if let Some(agora) = &parts.agora {
+                map.insert("agora".into(), agora.clone());
             }
         }
         let Ok(json) = serde_json::to_vec(&view) else {
@@ -772,6 +777,12 @@ impl Server {
     pub fn set_ci(&self, view: &Value) {
         let view = view.clone();
         self.feed.update(|p| p.ci = Some(view));
+    }
+
+    /// Show every phone the Agora's view (`agora::view`).
+    pub fn set_agora(&self, view: &Value) {
+        let view = view.clone();
+        self.feed.update(|p| p.agora = Some(view));
     }
 
     /// Close the port and every connection, and return once they are closed.
@@ -1924,6 +1935,26 @@ mod tests {
             let v: Value = serde_json::from_slice(&body).unwrap();
             assert_eq!(v["theme"], "kourai", "{bad}");
         }
+    }
+
+    #[test]
+    fn the_agora_rides_on_the_snapshot_and_a_post_reaches_open_streams() {
+        let p = serve(QUICK);
+        let addr = p.server.addr();
+        p.server.publish(&snapshot(1));
+        let (_, _, body) = get(addr, "GET", "/fleet.json", "");
+        let v: Value = serde_json::from_slice(&body).unwrap();
+        assert!(v.get("agora").is_none(), "no Agora before its first post");
+        let (code, mut r) = open_events(addr);
+        assert_eq!(code, 200);
+        let _ = next_item(&mut r);
+        let board = json!({"posts": [{"id": "a@1", "text": "hi"}], "emoji": ["👍"]});
+        p.server.set_agora(&board);
+        assert_eq!(
+            data(&next_item(&mut r))["agora"],
+            board,
+            "a post is the next event, without a new fleet snapshot"
+        );
     }
 
     #[test]
