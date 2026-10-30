@@ -117,6 +117,76 @@ pub fn start_health(app: &AppHandle, dir: Option<PathBuf>) {
     });
 }
 
+/// Who follows the Agora (`agora/` in the data folder), managed as app state.
+#[derive(Default)]
+pub struct AgoraFeed(pub Hub<Webview>);
+
+/// A window follows the Agora from now on, starting with its latest view.
+#[tauri::command]
+pub fn agora_subscribe(
+    window: tauri::WebviewWindow,
+    feed: tauri::State<'_, AgoraFeed>,
+    on_message: Channel<Value>,
+) {
+    feed.0.subscribe(window.label(), Webview(on_message));
+}
+
+/// Follow the Agora's posts and reactions for as long as the app runs,
+/// sending each change to the wall and the phone.
+pub fn start_agora(app: &AppHandle, dir: Option<PathBuf>) {
+    let Some(dir) = dir else {
+        return;
+    };
+    let app = app.clone();
+    std::thread::spawn(move || {
+        let mut follower = klepsydra_fleet::agora::Follower::default();
+        loop {
+            if let Some(view) = follower.step(&dir, unix_now()) {
+                app.state::<AgoraFeed>().0.publish(view.clone());
+                crate::phone::set_agora(&app, &view);
+            }
+            std::thread::sleep(AGORA_POLL);
+        }
+    });
+}
+
+/// How often the Agora's files are looked at: an agent posts once an hour at most.
+const AGORA_POLL: Duration = Duration::from_secs(5);
+
+/// AJ's reaction on Agora post `id`: set to `emoji`, or cleared when it is
+/// that one already. Returns the reaction the post now has.
+#[tauri::command]
+pub async fn agora_react(
+    app: AppHandle,
+    id: String,
+    emoji: String,
+) -> Result<Option<String>, String> {
+    use klepsydra_fleet::agora::{react, Refused};
+    let dir = crate::klepsydra_dir(&app).ok_or("klepsydra has no data folder.")?;
+    let (post, picked) = (id.clone(), emoji.clone());
+    let saved = tauri::async_runtime::spawn_blocking(move || react(&dir, &post, &picked))
+        .await
+        .map_err(|e| format!("Could not save the reaction: {e}"))?;
+    match saved {
+        Ok(now) => {
+            log::info!(post = id.as_str(), reaction = now.as_deref().unwrap_or(""); "agora: reaction saved");
+            Ok(now)
+        }
+        Err(why) => {
+            let message = match why {
+                Refused::NotAPost => "That is not an Agora post.".to_string(),
+                Refused::NotOffered => "That reaction is not offered.".to_string(),
+                Refused::Unreadable(e) => {
+                    format!("Could not read the saved reactions, so none were changed: {e}")
+                }
+                Refused::Unwritable(e) => format!("Could not save the reaction: {e}"),
+            };
+            log::warn!(post = id.as_str(), emoji = emoji.as_str(); "agora: reaction not saved: {message}");
+            Err(message)
+        }
+    }
+}
+
 /// A webview asks for snapshots: the latest at once, then each new one.
 #[tauri::command]
 pub fn fleet_subscribe(

@@ -10,8 +10,9 @@ on the repo's default branch or at the head of an open pull request. The newest
 completed run per workflow and branch that succeeded or failed decides
 (a cancelled, skipped or neutral run decides nothing): failure, timed_out or
 startup_failure is red; a later green run clears it. Each new red run that is
-not Dependabot's is triaged once by techne ci-audit's report mode (read-only),
-then routed to whoever can fix it: on an open PR's branch a live fleet agent is
+not Dependabot's is triaged by techne ci-audit's report mode (read-only), on
+the first account with room, once (a red met at every account's limit waits
+and is tried again every RETRIAGE_S for a day), then routed to whoever can fix it: on an open PR's branch a live fleet agent is
 working on, that agent's inbox (the resume service types it in at its next
 idle prompt); otherwise Heph, whose pane watcher wakes on it. Every routed red
 is one line in ci/alerts.jsonl. A red still red ESCALATE_S after it was routed
@@ -23,7 +24,8 @@ pushed, merged or re-run.
 ci.json (in klepsydra's data folder) is what the wall and the phone show. The
 log is JSON lines in the fleet log folder, one per decision. No error stops
 the watch: a repo that cannot be read is skipped for the pass and logged, and
-what it has triaged is saved as soon as it is, so a restart triages nothing twice.
+what it has triaged is saved as soon as it is, so a restart triages no finished
+red twice.
 """
 
 import json
@@ -260,8 +262,84 @@ def report_script() -> Path | None:
     return found[-1] if found else None
 
 
+# A run whose triage met a usage limit on every account is tried again this
+# often, for at most WAIT_MAX_S; then it is a failed triage.
+RETRIAGE_S = 600
+WAIT_MAX_S = 86400
+
+
+def triage_accounts() -> list[str | None]:
+    """The Claude Code config folders to triage on, in order: the fleet's
+    best_account (fleet/lib.sh) first, then every other logged-in folder in
+    FLEET_ACCOUNTS (a reading can be missing or miss a team's shared budget).
+    None stands for the default folder."""
+    lib = Path(__file__).resolve().parent / "lib.sh"
+    try:
+        got = subprocess.run(
+            [
+                "bash",
+                "-c",
+                '. "$1" && best_account "$(date +%s)"; echo; '
+                'for d in $FLEET_ACCOUNTS; do [[ -e $d/.credentials.json ]] && printf "%s\\n" "$d"; done',
+                "_",
+                str(lib),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        lines = got.stdout.splitlines()
+    except (OSError, subprocess.TimeoutExpired) as e:
+        event(
+            logging.WARNING,
+            "triage account not read; the default folder is used",
+            why=type(e).__name__,
+        )
+        lines = []
+    default = os.environ.get("FLEET_DEFAULT_CONFIG", str(HOME / ".claude")).rstrip("/")
+    out: list[str | None] = []
+    for line in lines or [""]:
+        folder = line.strip().rstrip("/")
+        pick = None if not folder or folder == default else folder
+        if pick not in out:
+            out.append(pick)
+    return out
+
+
+def account_name(folder: str | None) -> str:
+    """A config folder as the log names it: its folder name, or "default"."""
+    return Path(folder).name if folder else "default"
+
+
+def limited(out: Path) -> bool:
+    """Whether the headless session's reply in OUT was a usage limit: its
+    api_error says so (the text has many wordings), else its text does."""
+    try:
+        reply = json.loads((out / "claude.json").read_text())
+    except (OSError, ValueError):
+        return False
+    if not isinstance(reply, dict) or not reply.get("is_error"):
+        return False
+    if (
+        reply.get("api_error") == "usage_limit_reached"
+        or reply.get("api_error_status") == 429
+    ):
+        return True
+    text = str(reply.get("result", ""))
+    return (
+        re.search(
+            r"(hit|reached) your .{0,40}(limit|budget)|out of usage|usage limit",
+            text,
+            re.I,
+        )
+        is not None
+    )
+
+
 def triage(user: str, repo: str, run_id: int) -> dict:
-    """ci-audit's read-only report for one run, or why there is none."""
+    """ci-audit's read-only report for one run, or why there is none. It runs
+    on the account with room; when every account is at its limit it waits
+    (state "waiting") and is tried again (RETRIAGE_S)."""
     script = report_script()
     if not script or not script.exists():
         return {
@@ -269,24 +347,58 @@ def triage(user: str, repo: str, run_id: int) -> dict:
             "why": "techne's ci-audit report mode is not installed",
         }
     out = STATE / "ci" / f"{repo}-{run_id}"
-    try:
-        got = subprocess.run(
-            ["bash", str(script), f"{user}/{repo}", str(run_id), str(out)],
-            capture_output=True,
-            text=True,
-            timeout=900,
-        )
-        if got.returncode:
-            return {
-                "state": "failed",
-                "why": (got.stderr.strip().splitlines() or ["exit"])[-1][:300],
-            }
-        r = json.loads((out / "report.json").read_text())
-    except (subprocess.TimeoutExpired, OSError, ValueError) as e:
-        return {"state": "failed", "why": f"{type(e).__name__}: {e}"[:300]}
+    tried = []
+    others = []  # failures on an account after another met its limit
+    for folder in triage_accounts():
+        env = dict(os.environ)
+        if folder:
+            env["CLAUDE_CONFIG_DIR"] = folder
+        else:
+            env.pop("CLAUDE_CONFIG_DIR", None)
+        account = account_name(folder)
+        # A reply left from the last try must not stand for this one; a linked
+        # folder is left for report.sh to refuse.
+        if not out.is_symlink():
+            (out / "claude.json").unlink(missing_ok=True)
+        try:
+            got = subprocess.run(
+                ["bash", str(script), f"{user}/{repo}", str(run_id), str(out)],
+                capture_output=True,
+                text=True,
+                timeout=900,
+                env=env,
+            )
+            if got.returncode and limited(out):
+                tried.append(account)
+                continue
+            if got.returncode:
+                why = (got.stderr.strip().splitlines() or ["exit"])[-1][:300]
+            else:
+                r = json.loads((out / "report.json").read_text())
+                break
+        except (subprocess.TimeoutExpired, OSError, ValueError) as e:
+            why = f"{type(e).__name__}: {e}"[:300]
+        if not tried:
+            return {"state": "failed", "account": account, "why": why}
+        others.append(f"{account}: {why}")
+    else:
+        # A limit seen on any account is waited out, whatever failed on the next.
+        return {
+            "state": "waiting",
+            "why": "; ".join(
+                [
+                    f"at its usage limit on {', '.join(tried)}",
+                    *others,
+                    "tried again later",
+                ]
+            )[:300],
+            "at": int(time.time()),
+            "since": int(time.time()),
+        }
     f = r.get("failing_step") or {}
     return {
         "state": "done",
+        "account": account,
         "verdict": r["verdict"],
         "cause": f.get("root_cause") or r["summary"],
         "location": f.get("location"),
@@ -467,10 +579,79 @@ def drop_inbox(repo: str, run_id: object) -> None:
         )
 
 
+def retriage(user: str, repo: str, run_id: int, k: dict, save_known) -> None:
+    """Triage red run RUN_ID again when its last try met a usage limit on every
+    account (state "waiting") RETRIAGE_S ago; past WAIT_MAX_S it has failed."""
+    held = k.get("triage", {})
+    if held.get("state") != "waiting" or time.time() - held.get("at", 0) < RETRIAGE_S:
+        return
+    since = held.get("since", held.get("at", time.time()))
+    if time.time() - since >= WAIT_MAX_S:
+        k["triage"] = {
+            "state": "failed",
+            "why": "no account had room to triage it for a day",
+        }
+    else:
+        k["triage"] = triage(user, repo, run_id)
+        if k["triage"].get("state") == "waiting":
+            k["triage"]["since"] = since
+    event(
+        logging.INFO,
+        "triaged again",
+        repo=repo,
+        run_id=run_id,
+        **{
+            x: v
+            for x, v in k["triage"].items()
+            if x in ("state", "account", "verdict", "location", "why")
+        },
+    )
+    save_known()
+
+
 def write_json(path: Path, data: dict) -> None:
     tmp = path.with_name(path.name + f".{os.getpid()}.tmp")
     tmp.write_text(json.dumps(data, indent=1))
     tmp.replace(path)
+
+
+def route_and_escalate(repo: str, run_id: int, item: dict, k: dict, save_known) -> None:
+    """Route red run ITEM (its record K) once; escalate it once it stays red
+    ESCALATE_S after routing. An entry queued before routing existed was
+    already AJ's. A red waiting for its triage is routed once it has a cause,
+    or once it has waited ESCALATE_S, so the agent is sent the diagnosis."""
+    waiting = k.get("triage", {}).get("state") == "waiting"
+    waited = time.time() - k.get("triage", {}).get("since", time.time())
+    if (
+        "routed" not in k
+        and not k.get("queued")
+        and (not waiting or waited >= ESCALATE_S)
+    ):
+        k["routed"] = route(item | k)
+        save_known()
+    if (
+        "routed" in k
+        and not k.get("queued")
+        and time.time() - k["routed"]["at"] >= ESCALATE_S
+    ):
+        if not k.get("escalated"):
+            alert(
+                "escalate",
+                True,
+                item | k,
+                taken_by=k["routed"]["to"],
+                ask=f"still red {ESCALATE_S // 60} min after it was routed: push AJ once with this diagnosis",
+            )
+            k["escalated"] = int(time.time())
+            event(
+                logging.WARNING,
+                "red run escalated",
+                repo=repo,
+                run_id=run_id,
+                taken_by=k["routed"]["to"],
+            )
+        k["queued"] = needs_you(item | k)
+        save_known()
 
 
 def poll(
@@ -540,6 +721,8 @@ def repo_pass(
                 "queued": True,
             }
             save_known()
+        if key in known:
+            retriage(user, repo, r["id"], known[key], save_known)
         if key not in known:
             item["failing"] = failing_step(user, repo, r["id"], gh)
             event(
@@ -560,7 +743,7 @@ def repo_pass(
                 **{
                     k: v
                     for k, v in item["triage"].items()
-                    if k in ("state", "verdict", "location", "why")
+                    if k in ("state", "account", "verdict", "location", "why")
                 },
             )
             known[key] = {
@@ -573,34 +756,7 @@ def repo_pass(
             "workflow_id": r["workflow_id"],
             "place": pr["number"] if pr else "default",
         }
-        k = known[key]
-        # Routed once; an entry queued before routing existed was already AJ's.
-        if "routed" not in k and not k.get("queued"):
-            k["routed"] = route(item | k)
-            save_known()
-        if (
-            "routed" in k
-            and not k.get("queued")
-            and time.time() - k["routed"]["at"] >= ESCALATE_S
-        ):
-            if not k.get("escalated"):
-                alert(
-                    "escalate",
-                    True,
-                    item | k,
-                    taken_by=k["routed"]["to"],
-                    ask=f"still red {ESCALATE_S // 60} min after it was routed: push AJ once with this diagnosis",
-                )
-                k["escalated"] = int(time.time())
-                event(
-                    logging.WARNING,
-                    "red run escalated",
-                    repo=repo,
-                    run_id=r["id"],
-                    taken_by=k["routed"]["to"],
-                )
-            k["queued"] = needs_you(item | k)
-            save_known()
+        route_and_escalate(repo, r["id"], item, known[key], save_known)
         known[key]["seen"] = int(time.time())
         item |= {k: known[key][k] for k in ("failing", "triage")}
         red.append(item)
@@ -626,6 +782,8 @@ def repo_pass(
             drop_inbox(repo, k.pop("item")["run_id"])
             continue
         if place not in places:
+            retriage(user, repo, held["run_id"], k, save_known)
+            route_and_escalate(repo, held["run_id"], held, k, save_known)
             red.append(
                 {x: v for x, v in held.items() if x not in ("workflow_id", "place")}
                 | {"failing": k["failing"], "triage": k["triage"]}
@@ -656,8 +814,10 @@ def sweep(user: str, repos: list[str], gh: GitHub, swept: set) -> list[dict]:
             and r["id"] not in swept
         ]
         for r in green:
-            swept.add(r["id"])
             t = triage(user, repo, r["id"])
+            # A run met at every account's limit is read again at the next sweep.
+            if t.get("state") != "waiting":
+                swept.add(r["id"])
             if t.get("state") == "done" and t["verdict"] != "clean":
                 found.append(
                     {

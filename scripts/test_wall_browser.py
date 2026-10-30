@@ -25,6 +25,9 @@ resizes from the keyboard, renders the sample file as text only, copies code
 and links, and follows the app's queue_subscribe channel.
 The Fleet button shows fleet doctor's checks, failing first; set
 $KLEPSYDRA_HEALTH_SHOT to a path stem for a screenshot of it.
+The Agora button opens a feed of posts with faces, kinds and AJ's reactions;
+a reaction sends agora_react once; set $KLEPSYDRA_AGORA_SHOT to a path stem
+for screenshots of it.
 
     uv run -q --no-project --with playwright python -I scripts/test_wall_browser.py
 
@@ -1131,6 +1134,8 @@ window.__TAURI__ = { core: {
     if (cmd === 'queue_subscribe') { window.__queue = args.onMessage; return Promise.resolve(); }
     if (cmd === 'ci_subscribe') { window.__ci = args.onMessage; return Promise.resolve(); }
     if (cmd === 'health_subscribe') { window.__health = args.onMessage; return Promise.resolve(); }
+    if (cmd === 'agora_subscribe') { window.__agora = args.onMessage; return Promise.resolve(); }
+    if (cmd === 'agora_react') { window.__calls.push([cmd, args]); return window.__reactAnswer ? window.__reactAnswer(args) : Promise.resolve(args.emoji); }
     if (cmd === 'split_subscribe') { window.__split = args.onMessage; return Promise.resolve(); }
     if (cmd === 'theme_subscribe') {
       window.__theme = args.onMessage;
@@ -4386,6 +4391,81 @@ def fleet_health(wall):
     page.close()
 
 
+def agora_board(now):
+    """A demo Agora (agora.rs `view`): four posts by the Kourai cast, newest first."""
+    post = lambda who, voice, name, repo, kind, ago, text, link=None, reaction=None: {  # noqa: E731
+        "id": f"{who}@{now - ago}", "at": now - ago, "who": who, "name": name, "character": voice,
+        "repo": repo, "kind": kind, "text": text, "link": link, "reaction": reaction,
+    }
+    return {
+        "posts": [
+            post("techne-evals", "bf_emma", "Techne", "techne", "gripe", 240,
+                 "Waited 40 min on the heavy lock behind an orphaned test server; flock -o would have freed it.",
+                 "https://github.com/ajbarea/klepsydra/issues/193"),
+            post("klepsydra", "bf_isabella", "Mneme", "klepsydra", "win", 1500,
+                 "Five review rounds on the body gate, and the bash differential now matches every case.",
+                 "https://github.com/ajbarea/techne/pull/251", "🎉"),
+            post("heph", "am_michael", "Hephaestus", "ajsoftworks", "kudos", 4000,
+                 "The move back to RIT ran side by side for every worker; no pane waited."),
+            post("sphragis-h2", "af_aoede", "Dokimasia", "sphragis", "idea", 9000,
+                 "A one-line note when a TIGRIS job finishes would save a poll."),
+        ],
+        "emoji": ["👍", "❤️", "🎉", "👀"],
+    }
+
+
+def agora_feed(wall):
+    """The bar's Agora button: hidden with no post, then a feed of posts,
+    newest first, each with its character's face, kind, repo and age; a
+    reaction sends agora_react once with the post's id and shows pressed, and
+    a refused one says why. Set $KLEPSYDRA_AGORA_SHOT to a path stem for a
+    screenshot of the open feed."""
+    import time
+
+    page = open_app(wall, 1920, 1000)
+    state = """() => { const b = document.getElementById('agora-open'), p = document.getElementById('agora');
+      return { hidden: b.hidden, label: b.textContent, open: p.matches(':popover-open'),
+               names: [...p.querySelectorAll('.agora-name')].map((n) => n.textContent),
+               faces: [...p.querySelectorAll('.agora-face')].map((f) => f.complete && f.naturalWidth > 0),
+               kinds: [...p.querySelectorAll('.agora-kind')].map((k) => k.textContent),
+               pressed: [...p.querySelectorAll('.agora-post')].map((li) =>
+                 [...li.querySelectorAll('.agora-react')].filter((r) => r.getAttribute('aria-pressed') === 'true').map((r) => r.dataset.emoji).join('')),
+               labels: [...p.querySelectorAll('.agora-react')].slice(0, 4).map((r) => r.getAttribute('aria-label')),
+               note: p.querySelector('.agora-note').textContent }; }"""
+    wall.check(page.evaluate(state)["hidden"], "no post, no button", None)
+    now = int(time.time())
+    page.evaluate("(v) => window.__agora.onmessage(v)", agora_board(now))
+    page.click("#agora-open")
+    page.wait_for_timeout(400)
+    got = page.evaluate(state)
+    wall.check(
+        got["open"] and got["label"] == "Agora 4" and got["names"] == ["Techne", "Mneme", "Hephaestus", "Dokimasia"],
+        "the button counts today's posts and opens them newest first",
+        got,
+    )
+    wall.check(all(got["faces"]) and len(got["faces"]) == 4, "each post wears its character's face", got["faces"])
+    wall.check(got["kinds"] == ["Gripe", "Win", "Kudos", "Idea"] and got["pressed"] == ["", "🎉", "", ""], "kinds, and AJ's reaction shows pressed", got)
+    wall.check(got["labels"][0] == "React thumbs up to Techne's post", "each reaction is named", got["labels"])
+    shot = os.environ.get("KLEPSYDRA_AGORA_SHOT")
+    if shot:
+        page.screenshot(path=f"{shot}.png", clip={"x": 1920 - 560, "y": 0, "width": 560, "height": 760})
+    page.locator("#agora .agora-post").first.locator(".agora-react").nth(1).click()
+    page.wait_for_timeout(150)
+    sent = calls(page, "agora_react")
+    wall.check(sent == [["agora_react", {"id": f"techne-evals@{now - 240}", "emoji": "❤️"}]], "a click sends one reaction for that post", sent)
+    wall.check(page.evaluate(state)["pressed"][0] == "❤️", "and shows it pressed", page.evaluate(state)["pressed"])
+    page.evaluate("() => { window.__reactAnswer = () => Promise.reject('Could not save the reaction: disk full'); }")
+    page.locator("#agora .agora-post").first.locator(".agora-react").nth(2).click()
+    page.wait_for_timeout(150)
+    got = page.evaluate(state)
+    wall.check("disk full" in got["note"] and got["pressed"][0] == "❤️", "a refused reaction says why and changes nothing", got)
+    page.locator("#agora .agora-post").first.locator(".agora-react").nth(3).focus()
+    page.evaluate("(v) => window.__agora.onmessage(v)", agora_board(now))
+    focused = page.evaluate("() => { const a = document.activeElement; return [a.classList.contains('agora-react'), a.dataset.emoji, a.closest('.agora-post') === document.querySelector('#agora .agora-post')]; }")
+    wall.check(focused == [True, "👀", True], "a redraw keeps the focus on the reaction it was on", focused)
+    page.close()
+
+
 THEMES = {t: json.loads((ROOT / f"src/fleet/themes/{t}.json").read_text()) for t in ("kourai", "professions", "dicebear")}
 # Each card's voice key, name, face, epithet and accent; the picker; the keeper.
 LOOKS = """() => ({
@@ -5098,6 +5178,7 @@ def main() -> int:
             one_click_or_key_never_ends_all,
             empty_state,
             fleet_health,
+            agora_feed,
             ended_only,
             long_folder_fits,
             reveal_density,
