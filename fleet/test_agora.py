@@ -187,6 +187,39 @@ class Agora(unittest.TestCase):
             self.run_agora("post", "back", pane="%0")[1], "Posted as Hephaestus."
         )
 
+    def test_a_stale_registry_row_for_this_pane_names_no_one(self):
+        self.register("%4", "techne-evals", "66666666-2222-4333-8444-555555555555")
+        self.assertEqual(self.run_agora("post", "who")[0], 2)
+        (self.tmp / "state" / "orchestrator.pane").write_text("%4\n")
+        self.assertEqual(self.run_agora("post", "who")[0], 2, "nor makes it Heph")
+        self.assertEqual(self.posts(), [])
+
+    def test_a_worker_with_hephs_voice_is_not_signed_as_heph(self):
+        self.live(voice="am_michael")
+        self.assertEqual(self.run_agora("post", "x")[1], "Posted as Metis.")
+
+    def test_a_registered_session_in_the_orchestrators_pane_is_not_heph(self):
+        (self.tmp / "state" / "orchestrator.pane").write_text("%4\n")
+        self.assertEqual(self.run_agora("post", "x")[1], "Posted as Metis.")
+        self.assertEqual(self.posts()[0]["who"], "techne-evals")
+
+    def test_an_agent_name_that_is_not_a_plain_name_cannot_post(self):
+        (self.tmp / "state" / "panes.tsv").write_text(f"%4\t../evil\t/b\t{SID}\t/w\t\n")
+        self.assertEqual(self.run_agora("post", "x")[0], 2)
+
+    def test_a_session_with_no_id_is_never_heph(self):
+        (self.k / "fleet" / f"{SID}.json").unlink()
+        (self.k / "fleet" / "x.json").write_text(
+            json.dumps({"tmux": {"pane": "%7"}, "ended": None})
+        )
+        (self.tmp / "state" / "orchestrator.session").write_text("\n")
+        self.assertEqual(self.run_agora("post", "x", pane="%7")[0], 2)
+
+    def test_a_cast_or_picks_file_of_the_wrong_shape_signs_with_the_name(self):
+        (self.k / "cast.json").write_text(json.dumps({"characters": ["am_michael"]}))
+        (self.k / "picks.json").write_text(json.dumps([SID]))
+        self.assertEqual(self.run_agora("post", "x")[1], "Posted as techne-evals.")
+
     def test_a_malformed_line_is_skipped_and_controls_are_stripped(self):
         (self.k / "agora").mkdir()
         (self.k / "agora" / "posts.jsonl").write_text(
@@ -226,6 +259,11 @@ class Agora(unittest.TestCase):
         self.assertEqual(self.posts(), [])
         self.assertNotIn(token, (self.tmp / "state" / "log" / "agora.log").read_text())
 
+    def test_current_openai_key_shapes_are_refused(self):
+        for key in ("sk-proj-" + "Ab1_" * 12, "sk-svcacct-" + "Zx9-" * 12):
+            self.assertEqual(self.run_agora("post", f"key {key}")[0], 3, key)
+        self.assertEqual(self.posts(), [])
+
     def test_gitleaks_is_asked_when_installed(self):
         fake = self.tmp / "gitleaks"
         fake.write_text("#!/usr/bin/env bash\ngrep -q LEAKY && exit 1\nexit 0\n")
@@ -259,6 +297,14 @@ class Agora(unittest.TestCase):
         self.assertEqual(
             len(list((self.k / "agora" / "archive").glob("posts-*.jsonl"))), 1
         )
+
+    def test_the_archive_keeps_the_last_hours_posts_for_the_limit(self):
+        (self.k / "agora").mkdir()
+        old = json.dumps({"at": 1, "who": "old", "text": "z" * 200}) + "\n"
+        mine = json.dumps({"at": NOW - 60, "who": "sphragis", "text": "recent"}) + "\n"
+        (self.k / "agora" / "posts.jsonl").write_text(old * 1400 + mine)
+        self.assertEqual(self.run_agora("post", "fresh")[0], 0)
+        self.assertEqual([p["text"] for p in self.posts()], ["recent", "fresh"])
 
     def test_control_characters_are_flattened(self):
         self.run_agora("post", "two\nlines\x1b[31m")

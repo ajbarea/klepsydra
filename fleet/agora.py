@@ -48,7 +48,7 @@ GITLEAKS = os.environ.get("FLEET_GITLEAKS", "gitleaks")
 LINK = re.compile(r"https://github\.com/[\w.-]+/[\w.-]+/(?:pull|issues)/\d{1,7}")
 # Token shapes gitleaks may miss on a short line, or when it is not installed.
 SECRET = re.compile(
-    r"gh[pousr]_[A-Za-z0-9]{20,}|github_pat_\w{20,}|sk-ant-[\w-]{20,}|sk-[A-Za-z0-9]{32,}"
+    r"gh[pousr]_[A-Za-z0-9]{20,}|github_pat_\w{20,}|sk-ant-[\w-]{20,}|sk-(?:proj|svcacct|admin)-[\w-]{20,}|sk-[A-Za-z0-9]{32,}"
     r"|AKIA[0-9A-Z]{16}|xox[abprs]-[\w-]{10,}|-----BEGIN [A-Z ]*PRIVATE KEY-----"
     r"|AIza[\w-]{35}|hf_[A-Za-z0-9]{30,}"
 )
@@ -146,7 +146,9 @@ def fleet_name(pane: str, sid: str) -> str | None:
     or "heph": the orchestrator's session on record, or (as fleet recover
     decides) a session in the orchestrator's pane that no registry row names,
     which a new Heph is until the resume service records him. None for a
-    session the fleet does not know."""
+    session the fleet does not know. A pane some registry row names is never
+    taken for Heph's by orchestrator.pane alone: after a tmux restart that file
+    can name a worker's pane before the registry has its new session."""
     if sid and read_line(STATE / "orchestrator.session") == sid:
         return "heph"
     rows = [r.split("\t") for r in read_line(STATE / "panes.tsv").splitlines()]
@@ -158,7 +160,7 @@ def fleet_name(pane: str, sid: str) -> str | None:
             and re.fullmatch(r"[\w.-]{1,64}", cols[1])
         ):
             return cols[1]
-    named = any(len(c) >= 4 and c[3] == sid for c in rows)
+    named = any(len(c) >= 4 and (c[3] == sid or c[0] == pane) for c in rows)
     if not named and read_line(STATE / "orchestrator.pane") == pane:
         return "heph"
     return None
@@ -195,8 +197,10 @@ def character(s: dict) -> tuple[str | None, str]:
     the orchestrator, its own cast voice, else its pick (picks.json)."""
     try:
         cast = json.loads((KLEPSYDRA_DIR / "cast.json").read_text(encoding="utf-8"))
-        chars = cast.get("characters") or {}
-    except (OSError, ValueError, AttributeError):
+        chars = cast.get("characters") if isinstance(cast, dict) else None
+    except (OSError, ValueError):
+        chars = None
+    if not isinstance(chars, dict):
         chars = {}
     if s.get("orchestrator"):
         key = HEPH
@@ -209,10 +213,9 @@ def character(s: dict) -> tuple[str | None, str]:
             )
         except (OSError, ValueError):
             picks = {}
-        name = s.get("fleet_name")
-        key = picks.get(f"agent:{name}") if name else None
-        key = key or picks.get(s.get("session_id", ""))
-    named = (chars.get(key) or {}).get("name") if key else None
+        key = picks.get(s.get("session_id", "")) if isinstance(picks, dict) else None
+    entry = chars.get(key) if isinstance(key, str) else None
+    named = entry.get("name") if isinstance(entry, dict) else None
     return key, named or s.get("fleet_name") or "an agent"
 
 
@@ -339,8 +342,12 @@ def post(kind: str, text: str, link: str | None) -> int:
             "link": link,
         }
         if POSTS.exists() and POSTS.stat().st_size > FILE_MAX:
+            # The last hour's posts stay, so the hourly limit still sees them.
+            recent = [p for p in read_posts() if NOW - EVERY_S < p["at"] <= NOW]
             (AGORA / "archive").mkdir(exist_ok=True)
             POSTS.rename(AGORA / "archive" / f"posts-{int(NOW)}.jsonl")
+            with POSTS.open("w", encoding="utf-8") as f:
+                f.writelines(json.dumps(p) + "\n" for p in recent)
         with POSTS.open("a", encoding="utf-8") as f:
             f.write(json.dumps(line) + "\n")
     event(logging.INFO, "posted", who=who, kind=kind, chars=len(flat))
