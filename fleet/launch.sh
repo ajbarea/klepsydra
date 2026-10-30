@@ -38,21 +38,20 @@ account=$(nodir "$account") # "~/.claude/" is the default too, which must not se
 # turns keryx off, so only Heph speaks and no worker loads a voice model (#183).
 # FLEET_SETTINGS="" starts it without them (the orchestrator, fleet recover).
 settings=${FLEET_SETTINGS-$FLEET_STATE/worker-settings.json}
-# The wall's Voices setting (#183), from klepsydra's prefs.json: "heph" (the
-# default) keeps the worker settings' keryx off, "everyone" drops that line, and
-# "off" turns keryx off for a session started without them (Heph) too.
-voices=$(jq -r '.voices // empty' "$KLEPSYDRA_DIR/prefs.json" 2>/dev/null)
-case $voices in everyone | off) ;; *) voices=heph ;; esac
-quiet=""
+# The tray's Voices setting (#183), from klepsydra's prefs.json: "heph" (the
+# default, and anything else) keeps the worker settings' keryx off, "everyone"
+# drops that line, and "off" gives a session started without them (Heph) keryx
+# off too. --settings takes a JSON string as well as a file, and outranks the
+# user's and the project's settings.
+voices=$(jq -er '.voices | select(. == "everyone" or . == "off")' "$KLEPSYDRA_DIR/prefs.json" 2>/dev/null) || voices=heph
 if [[ -n $settings && $voices == everyone ]]; then
-  # --settings takes a JSON string as well as a file.
   settings=$(jq -c 'del(.env.KERYX_ENABLED) | if .env == {} then del(.env) else . end' "$settings" 2>/dev/null) || settings=${FLEET_SETTINGS-$FLEET_STATE/worker-settings.json}
 elif [[ -z $settings && $voices == off ]]; then
-  quiet="KERYX_ENABLED=false "
+  settings='{"env":{"KERYX_ENABLED":"false"}}'
 fi
 # KLEPSYDRA_AGENT names the session's agent to the fleet hook, so its card keeps
 # its face across relaunches (#172).
-cmd="env $(config_env "$account")${quiet}KLEPSYDRA_AGENT=$(printf '%q' "$name") CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS=2 ${FLEET_CLAUDE:-claude} --session-id $sid${settings:+ --settings $(printf '%q' "$settings")} $*"
+cmd="env $(config_env "$account")KLEPSYDRA_AGENT=$(printf '%q' "$name") CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS=2 ${FLEET_CLAUDE:-claude} --session-id $sid${settings:+ --settings $(printf '%q' "$settings")} $*"
 if [[ ${FLEET_SCOPE:-1} != 0 ]]; then
   cmd="systemd-run --user --scope --collect --unit=fleet-$name-$(date +%s) -p MemoryHigh=${MEM_HIGH:-4G} -p MemoryMax=${MEM_MAX:-5G} -p MemorySwapMax=${MEM_SWAP:-1G} $cmd"
 fi

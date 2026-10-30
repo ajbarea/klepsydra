@@ -816,10 +816,14 @@ fetches nothing.
 
 The tray's **Voices** menu says who speaks through keryx: **Heph only** (the
 default), **Everyone** or **Off**. It is kept in `prefs.json` (`"voices"`),
-where `fleet/launch.sh` reads it, so each session takes it at its next fresh
-start. Heph only starts workers with keryx off (`KERYX_ENABLED=false` in
-`fleet/worker-settings.json`), so a worker loads no summarizer or voice model;
-Everyone starts them without that line; Off also starts Heph with keryx off.
+where `fleet/launch.sh` reads it, so it applies to each session launch.sh
+starts from then on: a relaunch, a move to the other account, `fleet recover`.
+A session keeps its mode through `/clear`, and one started from the tray's
+Start is not covered. Heph only starts workers with keryx off
+(`KERYX_ENABLED=false` in `fleet/worker-settings.json`), so a worker loads no
+summarizer or voice model; Everyone starts them without that line; Off also
+starts Heph with keryx off, through `--settings`, which outranks the user's and
+the project's settings.
 
 ### Character themes
 

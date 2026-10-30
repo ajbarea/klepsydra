@@ -1,5 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod choice;
 mod fleet;
 mod geometry;
 mod jump;
@@ -108,8 +109,8 @@ fn read_usage(app: tauri::AppHandle) -> serde_json::Value {
 const PREFS_FILE: &str = "prefs.json";
 
 /// Small settings the gauge keeps for itself: the zoom level, the saved home,
-/// where the window last sat, the wall's card density, split mode and
-/// the character theme.
+/// where the window last sat, the wall's card density, split mode, the
+/// character theme and the Voices mode.
 fn prefs_path(app: &tauri::AppHandle) -> Option<PathBuf> {
     klepsydra_dir(app).map(|d| d.join(PREFS_FILE))
 }

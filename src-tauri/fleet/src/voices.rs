@@ -16,25 +16,12 @@ pub const VOICES: [(&str, &str); 3] = [
 
 /// The saved mode, or the default for a missing or unknown one.
 pub fn of(prefs: Option<&Map<String, Value>>) -> &'static str {
-    let saved = prefs.and_then(|p| p.get(KEY)?.as_str());
-    VOICES
-        .iter()
-        .map(|(id, _)| *id)
-        .find(|id| Some(*id) == saved)
-        .unwrap_or(VOICES[0].0)
+    crate::choice::of(&VOICES, KEY, prefs)
 }
 
 /// The value to save for mode `id`, or an error naming the modes.
 pub fn value(id: &str) -> Result<Value, String> {
-    if VOICES.iter().any(|(v, _)| *v == id) {
-        Ok(Value::from(id))
-    } else {
-        let all: Vec<&str> = VOICES.iter().map(|(v, _)| *v).collect();
-        Err(format!(
-            "unknown voices mode {id:?}; one of {}",
-            all.join(", ")
-        ))
-    }
+    crate::choice::value(&VOICES, "voices mode", id)
 }
 
 #[cfg(test)]
@@ -60,7 +47,15 @@ mod tests {
     #[test]
     fn the_modes_are_the_ones_launch_sh_reads() {
         let launch = include_str!("../../../fleet/launch.sh");
-        assert!(launch.contains("case $voices in everyone | off) ;; *) voices=heph ;; esac"));
-        assert!(launch.contains(".voices // empty"), "the same key");
+        let others: Vec<String> = VOICES[1..]
+            .iter()
+            .map(|(id, _)| format!(". == \"{id}\""))
+            .collect();
+        let read = format!(
+            "voices=$(jq -er '.{KEY} | select({})' \"$KLEPSYDRA_DIR/prefs.json\" 2>/dev/null) || voices={}",
+            others.join(" or "),
+            VOICES[0].0
+        );
+        assert!(launch.contains(&read), "launch.sh reads: {read}");
     }
 }
