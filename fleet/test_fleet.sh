@@ -373,6 +373,60 @@ check "B2: a reused pane id is never exited; it is resumed in place" \
 check "and the refusal is logged" "$(logged "fresh session refused")" "$p "
 t kill-window -t "$p" 2>/dev/null; : >"$REGISTRY"
 
+: >"$FLEET_LOG"
+p=$(pane late "{\"above\":[\"⏺ Done. done 11:50 PM\",\"$LIMIT\"]}"); settle
+live "$p"
+printf '%s\tidler\t%s\t%s\t/w\n' "$p" "$work/brief.src" "$SID" >"$REGISTRY"
+: >"$work/launched"
+resume "$morning"
+LAUNCH="$work/launch-stub.sh" FLEET_NOW=$(( noon + 4330 )) bash "$here/resume-at-reset.sh" --once 2>/dev/null
+check "a done time later in the day than now is the night before: idle since then, it starts fresh" \
+  "$(grep -c 'SUBMIT /exit' "$work/late.log") $(head -1 "$work/launched")" "1 idler"
+t kill-window -t "$p" 2>/dev/null; : >"$REGISTRY"
+
+# 55 min 10 s from the start of its minute, 54 min 11 s from the end: past an
+# hour by the cache's measure, so it starts fresh (12:17 PM, below, does not).
+: >"$FLEET_LOG"
+p=$(pane sixteen "{\"above\":[\"⏺ Done. done 12:16 PM\",\"$LIMIT\"]}"); settle
+live "$p"
+printf '%s\tidler\t%s\t%s\t/w\n' "$p" "$work/brief.src" "$SID" >"$REGISTRY"
+: >"$work/launched"
+resume "$morning"
+LAUNCH="$work/launch-stub.sh" FLEET_NOW=$(( noon + 4330 )) bash "$here/resume-at-reset.sh" --once 2>/dev/null
+check "done 12:16 PM at 1:12:10 PM is past the hour: it starts fresh" \
+  "$(grep -c 'SUBMIT /exit' "$work/sixteen.log") $(head -1 "$work/launched")" "1 idler"
+t kill-window -t "$p" 2>/dev/null; : >"$REGISTRY"
+
+# Stopped 22 min ago; in a minute after the pass began (NOW is its start),
+# also across midnight; or 5 min ago in the hour that repeats when clocks go
+# back (an hour in London, two in Troll, half an hour on Lord Howe): none is
+# idle, so each gets the continue message.
+# Each cell: pane name, stamp, NOW, time zone, and the pass that first sees the limit.
+london=$(TZ=Europe/London date -d '2026-10-25 01:20 BST' +%s)
+troll=$(TZ=Antarctica/Troll date -d '2026-10-25 01:40 +02' +%s)
+lhi=$(TZ=Australia/Lord_Howe date -d '2027-04-04 01:45 +11' +%s)
+for cell in "recent|12:50 PM|$(( noon + 4330 ))" "racing|1:13 PM|$(( noon + 4330 ))" \
+  "minuteend|12:17 PM|$(( noon + 4330 ))" \
+  "midnight|12:00 AM|$(TZ=America/New_York date -d '2026-10-28 23:59:30' +%s)" \
+  "springnight|12:00 AM|$(TZ=America/New_York date -d '2027-03-14 23:59:30' +%s)" \
+  "fallback|1:45 AM|$(TZ=America/New_York date -d '2026-11-01 01:50 EST' +%s)" \
+  "firsthour|1:45 AM|$(TZ=America/New_York date -d '2026-11-01 01:50 EDT' +%s)" \
+  "london|1:10 AM|$london|Europe/London|$(( london - 43200 ))" \
+  "troll|1:30 AM|$troll|Antarctica/Troll|$(( troll - 43200 ))" \
+  "lordhowe|1:35 AM|$lhi|Australia/Lord_Howe|$(( lhi - 86400 ))"; do
+  IFS='|' read -r name done_at at zone first <<<"$cell"
+  : >"$FLEET_LOG"
+  p=$(pane "$name" "{\"above\":[\"⏺ Done. done $done_at\",\"$LIMIT\"]}"); settle
+  live "$p"
+  printf '%s\tidler\t%s\t%s\t/w\n' "$p" "$work/brief.src" "$SID" >"$REGISTRY"
+  : >"$work/launched"
+  TZ=${zone:-$TZ} resume "${first:-$morning}"
+  TZ=${zone:-$TZ} LAUNCH="$work/launch-stub.sh" FLEET_NOW=$at bash "$here/resume-at-reset.sh" --once 2>/dev/null
+  check "done $done_at at $(TZ=${zone:-$TZ} date -d "@$at" '+%F %R %Z') is not idle: no fresh session, the continue message" \
+    "$(grep -c 'SUBMIT /exit' "$work/$name.log") $(wc -c <"$work/launched") $(has "$(events "$name")" "SUBMIT The usage limit has reset.")" "0 0 yes"
+  t kill-window -t "$p" 2>/dev/null; : >"$REGISTRY"
+done
+
 echo "launch.sh"
 cat >"$work/launcher.sh" <<EOF
 #!/usr/bin/env bash

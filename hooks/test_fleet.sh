@@ -71,6 +71,26 @@ check "outside any repo" "$(where "$repos/loose/notes")" "notes||"
 check "filesystem root" "$(where /)" "||"
 check "a CRLF .git file" "$(where "$repos/crlf")" "klepsydra|crlf|feat/fleet-visualizer"
 
+# #149: the folder the session works in, and its GitHub page from origin.
+dirgh() { git_where "$1"; printf '%s|%s' "$where_dir" "$where_remote"; }
+g -C "$repos/klepsydra" remote add origin https://github.com/ajbarea/klepsydra.git
+g -C "$repos/ideas" remote add origin git@github.com:ajbarea/ideas.git
+g -C "$repos/subsrc" remote add origin https://gitlab.com/x/subsrc.git
+check "#149: a repo's folder and its GitHub page (https origin)" "$(dirgh "$repos/klepsydra/src/deep")" "$repos/klepsydra|https://github.com/ajbarea/klepsydra"
+check "#149: a worktree's own folder, the main checkout's origin" "$(dirgh "$repos/klepsydra/.claude/worktrees/fleet/src")" \
+  "$repos/klepsydra/.claude/worktrees/fleet|https://github.com/ajbarea/klepsydra"
+check "#149: an ssh origin" "$(dirgh "$repos/ideas")" "$repos/ideas|https://github.com/ajbarea/ideas"
+check "#149: another host's origin, no page" "$(dirgh "$repos/subsrc")" "$repos/subsrc|"
+check "#149: outside any repo, neither" "$(dirgh "$repos/loose/notes")" "|"
+g -C "$repos/klepsydra" config --add remote.upstream.url https://github.com/someone/else
+g -C "$repos/klepsydra" remote set-url origin 'https://github.com/a/b;rm -rf ~'
+check "#149: an origin that is not a plain owner/repo gives no page" "$(dirgh "$repos/klepsydra")" "$repos/klepsydra|"
+for odd in https://github.com/a/b/c https://github.com/a/b+c 'https://github.com/a/b%20c' ../sibling /srv/git/k.git; do
+  g -C "$repos/klepsydra" remote set-url origin "$odd"
+  check "#149: origin $odd gives no page" "$(dirgh "$repos/klepsydra")" "$repos/klepsydra|"
+done
+g -C "$repos/klepsydra" remote set-url origin https://github.com/ajbarea/klepsydra.git
+
 # keryx names the same repos; when its source is here, ask it directly. A
 # KERYX_SRC that names no source fails, so CI cannot skip the parity.
 keryx_src=${KERYX_SRC:-$HOME/ajsoftworks/keryx/src}
@@ -164,6 +184,7 @@ check "start: claude" "$(field .claude)" '{"pid":500,"start":8717628}'
 check "start: voice" "$(field .voice)" '"am_michael"'
 check "start: where" "$(field '.where | [.repo, .worktree, .branch, .by, .at]')" \
   "[\"klepsydra\",\"fleet\",\"feat/fleet-visualizer\",\"cwd\",$now]"
+check "#149: where names the folder and its GitHub page" "$(field '.where | [.dir, .github]')" "[\"$wt\",\"https://github.com/ajbarea/klepsydra\"]"
 check "start: nothing asked yet" "$(field '[.prompt, .reply, .needs, .error, .ended]')" "[null,null,null,null,null]"
 check "start: no turn yet" "$(field .turn_at)" "null"
 
@@ -797,6 +818,57 @@ fire post-tool-bash-background.json
 now=1792356440 fire session-start.json '.source = "resume"'
 check "a new process starts with none" "$(field 'has("background")')" "false"
 
+
+# #167: the shells Claude Code still runs cap the set. The hook's own sh (550)
+# is a child too, and never counts; MCP servers are not shells.
+kids() { mkdir -p "$work/proc/500/task/500"; printf '%s\n' "$*" >"$work/proc/500/task/500/children"; }
+mkproc 901 500 bash 8717800 S /bin/bash -c "make test"
+mkproc 902 500 bash 8717801 S /bin/bash -c "sleep 60"
+mkproc 903 500 node 8717802 S node mcp-server.js
+fire user-prompt.json
+now=1792356450 fire post-tool-bash-background.json '.tool_response.backgroundTaskId = "s1"'
+now=1792356451 fire post-tool-bash-background.json '.tool_response.backgroundTaskId = "s2"'
+now=1792356452 fire post-tool-bash-background.json '.tool_response.backgroundTaskId = "s3"'
+check "#167: without /proc's children list the set stands" "$(bg)" '"shell:s1,shell:s2,shell:s3"'
+kids 550 901 902 903
+fire post-tool-bash.json
+check "#167: three background runs, two shells alive: all kept (a count cannot say which ended), two recorded live (the hook's sh and an MCP server do not count)" "$(bg) $(field .shells_live)" '"shell:s1,shell:s2,shell:s3" 2'
+fire subagent-start.json
+kids 550 903
+fire post-tool-bash.json
+check "#167: none alive: every shell goes, an agent stays" "$(bg) $(field .shells_live)" "\"agent:$A\" 0"
+kids 550 901 902
+now=1792356460 fire post-tool-bash-background.json '.tool_response.backgroundTaskId = "s4"'
+check "#167: more shells alive than the set names (a foreground call) adds none" "$(bg)" "\"agent:$A,shell:s4\""
+kids 550 903
+fire stop-background.json
+check "#167 review 2: a Stop's own list stands even when no shell runs (a job exec'd into a program)" "$(field '[.background[] | select(.kind == "shell")] | length > 0')" "true"
+check "#167 review 3: and no live count caps it on the card" "$(field 'has("shells_live")')" "false"
+mkproc 904 500 bash 8717803 Z bash
+mkproc 905 500 bwrap 8717804 S bwrap --ro-bind / / bash -c "make test"
+mkproc 906 500 dash 8717805 S /bin/sh -c "keryx hook"
+mkproc 907 500 sh 8717808 S /bin/sh -c "poll-loop hook"
+kids 550 901 904 905 906 907
+fire post-tool-bash.json
+check "#167 review 3: a sandboxed call counts; a zombie and another hook's sh or dash wrapper do not" "$(field .shells_live)" "2"
+mkproc 908 500 bash-5.2 8717809 S /opt/bin/bash-5.2 -c "make test"
+kids 550 901 907 908
+fire post-tool-bash.json . CLAUDE_CODE_SHELL=/opt/bin/bash-5.2
+check "#167 review 4: the shell CLAUDE_CODE_SHELL names counts" "$(field .shells_live)" "2"
+fire post-tool-bash.json . CLAUDE_CODE_SHELL=/bin/sh
+check "#167 review 4: but never sh, which Claude Code will not run calls in" "$(field .shells_live)" "1"
+fire post-tool-bash.json . CLAUDE_CODE_SHELL_PREFIX=/usr/local/bin/audit
+check "#167 review 4: under a shell prefix the count is unknown" "$(field 'has("shells_live")')" "false"
+mkproc 560 500 bash 8717806 S bash -c "$hook"
+mkproc 561 560 klepsydra-fleet 8717807 S bash "$hook"
+kids 560 901
+fire post-tool-bash.json . KLEPSYDRA_PID=561
+check "#167 review 3: the hook's own wrapper, a bash, is not counted" "$(field .shells_live)" "1"
+fire post-tool-task-stop.json '.tool_input = {task_id: "biwpk3ab6"} | .tool_response = {task_id: "biwpk3ab6"}'
+fire post-tool-task-stop.json '.tool_input = {task_id: "abd38d40cac785715"} | .tool_response = {task_id: "abd38d40cac785715"}'
+rm -rf -- "${work:?}/proc/500/task"
+fire post-tool-bash.json
+check "#167: without the children list no live count is kept" "$(field 'has("shells_live")')" "false"
 # Stop's own list of running tasks is the truth.
 fire user-prompt.json
 now=1792356450 fire subagent-start.json

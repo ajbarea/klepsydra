@@ -14,7 +14,9 @@
     "repo": "klepsydra",
     "worktree": "fleet-launch",
     "branch": "feat/fleet-launch",
-    "at": 1792497000
+    "at": 1792497000,
+    "dir": "/home/aj/ajsoftworks/klepsydra/.claude/worktrees/fleet-launch",
+    "github": "https://github.com/ajbarea/klepsydra"
    },
    "touched": [
     {
@@ -227,7 +229,9 @@
     "repo": "keryx",
     "worktree": "kourai-first",
     "branch": "feat/kourai-first",
-    "at": 1792497000
+    "at": 1792497000,
+    "dir": "/home/aj/ajsoftworks/keryx/.claude/worktrees/kourai-first",
+    "github": "https://github.com/ajbarea/keryx"
    },
    "touched": [],
    "prompt": {
@@ -296,7 +300,9 @@
     "repo": "klepsydra",
     "worktree": "kourai-faces",
     "branch": "feat/kourai-faces",
-    "at": 1792499800
+    "at": 1792499800,
+    "dir": "/home/aj/ajsoftworks/klepsydra/.claude/worktrees/kourai-faces",
+    "github": "https://github.com/ajbarea/klepsydra"
    },
    "touched": [
     {
@@ -620,7 +626,9 @@
     "repo": "klepsydra",
     "worktree": null,
     "branch": "main",
-    "at": 1792497000
+    "at": 1792497000,
+    "dir": "/home/aj/ajsoftworks/klepsydra",
+    "github": "https://github.com/ajbarea/klepsydra"
    },
    "touched": [],
    "prompt": {
@@ -689,7 +697,9 @@
     "repo": "klepsydra",
     "worktree": "hook-audit",
     "branch": "chore/hook-audit",
-    "at": 1792497000
+    "at": 1792497000,
+    "dir": "/home/aj/ajsoftworks/klepsydra/.claude/worktrees/hook-audit",
+    "github": "https://github.com/ajbarea/klepsydra"
    },
    "touched": [],
    "prompt": {
@@ -758,7 +768,9 @@
     "repo": "klepsydra",
     "worktree": null,
     "branch": "main",
-    "at": 1792497000
+    "at": 1792497000,
+    "dir": "/home/aj/ajsoftworks/klepsydra",
+    "github": "https://github.com/ajbarea/klepsydra"
    },
    "touched": [],
    "prompt": {
@@ -823,7 +835,9 @@
     "repo": "klepsydra",
     "worktree": null,
     "branch": "main",
-    "at": 1792497000
+    "at": 1792497000,
+    "dir": "/home/aj/ajsoftworks/klepsydra",
+    "github": "https://github.com/ajbarea/klepsydra"
    },
    "touched": [],
    "prompt": {
