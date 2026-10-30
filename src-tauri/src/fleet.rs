@@ -59,28 +59,63 @@ pub fn ci_subscribe(
     feed.0.subscribe(window.label(), Webview(on_message));
 }
 
-/// Follow the CI watch's `ci.json` in the data folder for as long as the app
-/// runs, sending each change to the wall and the phone.
-pub fn start_ci(app: &AppHandle, dir: Option<PathBuf>) {
+/// Follow a report file in the data folder for as long as the app runs,
+/// handing each change of its view to `send`.
+fn follow_report(
+    app: &AppHandle,
+    dir: Option<PathBuf>,
+    mut follower: klepsydra_fleet::ci::Follower,
+    send: fn(&AppHandle, &Value),
+) {
     let Some(dir) = dir else {
         return;
     };
     let app = app.clone();
-    std::thread::spawn(move || {
-        let mut follower = klepsydra_fleet::ci::Follower::default();
-        loop {
-            if let Some(view) = follower.step(&dir, unix_now()) {
-                // The hub first: a phone server starting now begins from its latest.
-                app.state::<CiFeed>().0.publish(view.clone());
-                crate::phone::set_ci(&app, &view);
-            }
-            std::thread::sleep(CI_POLL);
+    std::thread::spawn(move || loop {
+        if let Some(view) = follower.step(&dir, unix_now()) {
+            send(&app, &view);
         }
+        std::thread::sleep(REPORT_POLL);
     });
 }
 
-/// How often `ci.json` is looked at: the watch writes it every 2 minutes.
-const CI_POLL: Duration = Duration::from_secs(5);
+/// How often a report file is looked at: the CI watch writes `ci.json` every
+/// 2 minutes, the doctor timer `fleet-health.json` every 5.
+const REPORT_POLL: Duration = Duration::from_secs(5);
+
+/// Follow the CI watch's `ci.json`, sending each change to the wall and the phone.
+pub fn start_ci(app: &AppHandle, dir: Option<PathBuf>) {
+    let follower = klepsydra_fleet::ci::Follower::default();
+    follow_report(app, dir, follower, |app, view| {
+        // The hub first: a phone server starting now begins from its latest.
+        app.state::<CiFeed>().0.publish(view.clone());
+        crate::phone::set_ci(app, view);
+    });
+}
+
+/// Who follows the fleet's health (`fleet-health.json`), managed as app state.
+#[derive(Default)]
+pub struct HealthFeed(pub Hub<Webview>);
+
+/// A window follows the fleet's health from now on, starting with its latest view.
+#[tauri::command]
+pub fn health_subscribe(
+    window: tauri::WebviewWindow,
+    feed: tauri::State<'_, HealthFeed>,
+    on_message: Channel<Value>,
+) {
+    feed.0.subscribe(window.label(), Webview(on_message));
+}
+
+/// Follow the doctor timer's `fleet-health.json`, sending each change to the wall and the phone.
+pub fn start_health(app: &AppHandle, dir: Option<PathBuf>) {
+    use klepsydra_fleet::health;
+    let follower = klepsydra_fleet::ci::Follower::of(health::FILE, health::view);
+    follow_report(app, dir, follower, |app, view| {
+        app.state::<HealthFeed>().0.publish(view.clone());
+        crate::phone::set_health(app, view);
+    });
+}
 
 /// A webview asks for snapshots: the latest at once, then each new one.
 #[tauri::command]

@@ -114,6 +114,26 @@ Persistent=true
 
 [Install]
 WantedBy=timers.target"
+# Fleet health on the wall (#208): doctor every 5 min into the data folder. Exit 1 is
+# a failing check, which the wall shows, not a failed run.
+unit fleet-doctor.service "[Unit]
+Description=klepsydra fleet: fleet doctor for the wall's Fleet health
+
+[Service]
+Type=oneshot
+TimeoutStartSec=120
+SuccessExitStatus=1
+Environment=\"PATH=$PATH\" \"HOME=$HOME\"
+ExecStart=/usr/bin/bash $FLEET_STATE/doctor.sh --json \"$KLEPSYDRA_DIR/fleet-health.json\""
+unit fleet-doctor.timer "[Unit]
+Description=klepsydra fleet: fleet doctor every 5 min
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=5min
+
+[Install]
+WantedBy=timers.target"
 # The CI watch (#162), with the ci-audit report script from techne's main checkout.
 unit fleet-ci-watch.service "[Unit]
 Description=klepsydra fleet: watch the sisters' CI for red runs

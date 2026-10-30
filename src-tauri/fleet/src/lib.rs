@@ -5,6 +5,7 @@ pub mod bounded;
 pub mod ci;
 pub mod clear;
 pub mod cue;
+pub mod health;
 pub mod hub;
 pub mod ledger;
 pub mod logfmt;

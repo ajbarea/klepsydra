@@ -534,6 +534,30 @@ check "a resume loop that stopped passing fails" "$(doctor | grep -c '^FAIL resu
 logout a
 out=$(doctor)
 check "a default account not logged in fails" "$(grep -c "^FAIL account $work/cfg-a: not logged in: claude auth login" <<<"$out")" "1"
+djson() { FLEET_PS="$work/bin/ps" FLEET_SYSTEMCTL="$work/bin/systemctl" FLEET_CURL="$work/bin/curl" FLEET_TAILSCALE="$work/bin/tailscale" \
+  DOC_ACTIVE="$work/active" DOC_FLEET="$work/fleet.json" bash "$here/doctor.sh" --json "$work/health.json" >/dev/null 2>&1; echo $?; }
+: >"$FLEET_LOG"; rm -f "$work/health.json"
+check "#208: --json writes each check with its status and detail, and exits as doctor does" \
+  "$(djson) $(jq -r --arg a "account $work/cfg-a" '[.v, .failed, (.checks | length), (.checks[] | select(.check == $a) | .status)] | map(tostring) | join(" ")' "$work/health.json")" \
+  "1 1 1 $(grep -c . <<<"$out") FAIL"
+check "#208: and its time is now" "$(( $(date +%s) - $(jq .observed_at "$work/health.json") < 30 ))" "1"
+fails=$(jq -c 'select(.level == "ERROR" and (.message | startswith("doctor: ")))' "$FLEET_LOG" | wc -l)
+check "#208: the first --json run logs each failing check" "$(( fails > 0 ))" "1"
+logged=$(jq -c 'select(.message | startswith("doctor"))' "$FLEET_LOG" | wc -l)
+djson >/dev/null
+check "#208: a second run with nothing changed logs nothing more" \
+  "$(jq -c 'select(.message | startswith("doctor"))' "$FLEET_LOG" | wc -l)" "$logged"
+login a
+djson >/dev/null
+check "#208: a check that recovers logs once that it did" \
+  "$(jq -r 'select(.message | endswith("recovered")) | .message' "$FLEET_LOG")" "doctor: account $work/cfg-a recovered"
+printf 'not json' >"$work/health.json"
+check "#208: a report it cannot read is a first run" "$(djson) $(jq -r '.checks | length > 0' "$work/health.json")" "1 true"
+chmod a-w "$work"; touch "$work/x" 2>/dev/null || {
+  check "#208: a report it cannot write is logged, and nothing half-written is left" \
+    "$(djson; jq -r 'select(.message == "doctor: could not write its report") | .level' "$FLEET_LOG"; find "$work" -maxdepth 1 -name 'health.json.tmp.*' | wc -l)" $'1\nERROR\n0'
+}
+chmod u+w "$work"; rm -f "$work/x"
 t kill-window -t "$w"; t kill-window -t "$o"; rm -f "$FLEET_STATE/orchestrator.pane"; : >"$REGISTRY"
 
 echo "install"
@@ -549,6 +573,9 @@ check "the resume service is a unit that restarts and comes back at boot" \
   "$(grep -E '^(ExecStart|Restart|WantedBy)=' "$inst/units/fleet-resume-at-reset.service" | tr '\n' '|')" \
   "ExecStart=/usr/bin/bash $inst/state/resume-at-reset.sh|Restart=always|WantedBy=default.target|"
 check "the memfrag timer too" "$(grep -c 'OnCalendar=\*:0/30' "$inst/units/fleet-memfrag-log.timer")" "1"
+check "#208: the doctor timer runs every 5 min into the data folder, and a failing check is no failed run" \
+  "$(grep -c 'OnUnitActiveSec=5min' "$inst/units/fleet-doctor.timer") $(grep -E '^(ExecStart|SuccessExitStatus)=' "$inst/units/fleet-doctor.service" | tr '\n' '|')" \
+  "1 SuccessExitStatus=1|ExecStart=/usr/bin/bash $inst/state/doctor.sh --json \"$KLEPSYDRA_DIR/fleet-health.json\"|"
 FLEET_STATE="$inst/s2" FLEET_UNITS="$inst/u2" FLEET_BIN="$inst/b2" bash "$here/install.sh" --dry-run --force >"$work/dry" 2>/dev/null
 check "a dry run says what it would do and changes nothing" "$(grep -c '^would' "$work/dry" | sed 's/^[1-9][0-9]*$/some/') $(find "$inst" -mindepth 1 -maxdepth 1 -printf '%f\n' | sort | tr '\n' ' ')" "some bin state units "
 
@@ -604,6 +631,7 @@ ok   fleet-accounts-sync.path: enabled and active
 ok   fleet-accounts-sync.timer: enabled and active
 ok   fleet-sync-briefing.timer: enabled and active
 ok   fleet-ci-watch.service: enabled and active
+ok   fleet-doctor.timer: enabled and active
 ok   the resume service logged its start
 rc=0"
 check "no transient unit is left" "$(find "$SC" -name '*.transient' | wc -l)" "0"

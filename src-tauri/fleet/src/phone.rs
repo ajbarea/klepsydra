@@ -426,13 +426,15 @@ struct Shared {
 
 /// The parts of the phone's snapshot: the fleet's phone view, the usage
 /// readings' once a usage source has been read, the character theme once
-/// the app has named one, and the CI watch's view once `ci.json` was read.
+/// the app has named one, the CI watch's view once `ci.json` was read, and
+/// the fleet's health once `fleet-health.json` was.
 #[derive(Default)]
 struct Parts {
     fleet: Option<Value>,
     usage: Option<Value>,
     theme: Option<&'static str>,
     ci: Option<Value>,
+    health: Option<Value>,
 }
 
 /// The snapshot every phone gets, made from its parts.
@@ -460,6 +462,9 @@ impl Feed {
             // Null too, once read: a phone that saw a view must hear it is gone.
             if let Some(ci) = &parts.ci {
                 map.insert("ci".into(), ci.clone());
+            }
+            if let Some(health) = &parts.health {
+                map.insert("health".into(), health.clone());
             }
         }
         let Ok(json) = serde_json::to_vec(&view) else {
@@ -768,6 +773,12 @@ impl Server {
     pub fn set_ci(&self, view: &Value) {
         let view = view.clone();
         self.feed.update(|p| p.ci = Some(view));
+    }
+
+    /// Show every phone the fleet's health (`health::view`); null clears it.
+    pub fn set_health(&self, view: &Value) {
+        let view = view.clone();
+        self.feed.update(|p| p.health = Some(view));
     }
 
     /// Close the port and every connection, and return once they are closed.
@@ -1911,6 +1922,26 @@ mod tests {
             let v: Value = serde_json::from_slice(&body).unwrap();
             assert_eq!(v["theme"], "kourai", "{bad}");
         }
+    }
+
+    #[test]
+    fn the_fleets_health_rides_on_the_snapshot_and_a_change_reaches_open_streams() {
+        let p = serve(QUICK);
+        let addr = p.server.addr();
+        p.server.publish(&snapshot(1));
+        let (code, mut r) = open_events(addr);
+        assert_eq!(code, 200);
+        assert!(
+            data(&next_item(&mut r)).get("health").is_none(),
+            "no health before a reading"
+        );
+        let health = json!({"failed": 1, "warned": 0, "stale": false, "checks": []});
+        p.server.set_health(&health);
+        assert_eq!(
+            data(&next_item(&mut r))["health"],
+            health,
+            "a change is the next event"
+        );
     }
 
     #[test]

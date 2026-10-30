@@ -23,6 +23,8 @@ screenshot of it.
 The Queue panel docks beside the wall at 1920 and is a modal dialog at 945,
 resizes from the keyboard, renders the sample file as text only, copies code
 and links, and follows the app's queue_subscribe channel.
+The Fleet button shows fleet doctor's checks, failing first; set
+$KLEPSYDRA_HEALTH_SHOT to a path stem for a screenshot of it.
 
     uv run -q --no-project --with playwright python -I scripts/test_wall_browser.py
 
@@ -1128,6 +1130,7 @@ window.__TAURI__ = { core: {
     }
     if (cmd === 'queue_subscribe') { window.__queue = args.onMessage; return Promise.resolve(); }
     if (cmd === 'ci_subscribe') { window.__ci = args.onMessage; return Promise.resolve(); }
+    if (cmd === 'health_subscribe') { window.__health = args.onMessage; return Promise.resolve(); }
     if (cmd === 'split_subscribe') { window.__split = args.onMessage; return Promise.resolve(); }
     if (cmd === 'theme_subscribe') {
       window.__theme = args.onMessage;
@@ -4315,6 +4318,54 @@ def ci_watch(wall):
     page.close()
 
 
+HEALTH = {
+    "observed_at": 0, "stale": False, "failed": 1, "warned": 1,
+    "checks": [
+        {"status": "FAIL", "check": "pane watcher", "detail": "none running: the orchestrator is not woken when an agent finishes"},
+        {"status": "warn", "check": "briefs", "detail": "stale: task-demo.src (fleet brief --check)"},
+        {"status": "ok", "check": "resume service", "detail": "active"},
+        {"status": "ok", "check": "remote control %0 (orchestrator)", "detail": "(link)"},
+        {"status": "ok", "check": "phone wall", "detail": "fleet.json observed 4 s ago"},
+    ],
+}
+
+
+def fleet_health(wall):
+    """The bar's Fleet button: hidden with no doctor reading, "Fleet ok" when
+    every check is, red with a popover listing each check, failing first, and
+    "Fleet ?" once the reading is stale. Set $KLEPSYDRA_HEALTH_SHOT to a path
+    stem for a screenshot of the open list."""
+    page = open_app(wall, 1920, 1000)
+    state = """() => { const b = document.getElementById('health-open'), p = document.getElementById('health');
+      return { hidden: b.hidden, label: b.textContent, tone: b.dataset.tone ?? null, open: p.matches(':popover-open'),
+               rows: [...p.querySelectorAll('.health-checks li')].map((li) => li.innerText.replace(/\\s+/g, ' ').trim()) }; }"""
+    wall.check(page.evaluate(state)["hidden"], "no reading, no button", None)
+    ok = {**HEALTH, "failed": 0, "warned": 0, "checks": [c for c in HEALTH["checks"] if c["status"] == "ok"]}
+    page.evaluate("(v) => window.__health.onmessage(v)", ok)
+    got = page.evaluate(state)
+    wall.check([got["hidden"], got["label"], got["tone"]] == [False, "Fleet ok", "ok"], "all ok reads Fleet ok", got)
+    page.evaluate("(v) => window.__health.onmessage(v)", HEALTH)
+    page.click("#health-open")
+    page.wait_for_timeout(150)
+    got = page.evaluate(state)
+    wall.check(
+        got["label"] == "Fleet 1 failing" and got["tone"] == "red" and got["open"] and len(got["rows"]) == 5,
+        "a failing check turns it red and it opens the list",
+        got,
+    )
+    wall.check(got["rows"][0].startswith("Failing pane watcher"), "failing checks first", got["rows"])
+    shot = os.environ.get("KLEPSYDRA_HEALTH_SHOT")
+    if shot:
+        page.screenshot(path=f"{shot}.png", clip={"x": 1920 - 600, "y": 0, "width": 600, "height": 420})
+    page.keyboard.press("Escape")
+    page.evaluate("(v) => window.__health.onmessage(v)", {**HEALTH, "stale": True})
+    got = page.evaluate(state)
+    wall.check([got["label"], got["tone"]] == ["Fleet ?", "stale"], "a doctor that stopped running says so", got)
+    calls = page.evaluate("window.__calls.filter(([c]) => c === 'health_subscribe')")
+    wall.check(calls == [], "subscribing is a read, not an action", calls)
+    page.close()
+
+
 THEMES = {t: json.loads((ROOT / f"src/fleet/themes/{t}.json").read_text()) for t in ("kourai", "professions", "dicebear")}
 # Each card's voice key, name, face, epithet and accent; the picker; the keeper.
 LOOKS = """() => ({
@@ -5026,6 +5077,7 @@ def main() -> int:
             wrapup_dialogs_close_on_change,
             one_click_or_key_never_ends_all,
             empty_state,
+            fleet_health,
             ended_only,
             long_folder_fits,
             reveal_density,
