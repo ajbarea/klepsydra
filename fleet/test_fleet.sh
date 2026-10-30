@@ -831,7 +831,7 @@ reply_live() { jq -n --arg p "$1" --arg st "$2" --argjson bg "$3" --arg r "$4" -
   '{session_id: "x", ended: null, tmux: {pane: $p}, state: $st, reason: null, background: $bg, reply: {text: $r, at: $at}, prompt: {at: 1}}' >"$KLEPSYDRA_DIR/fleet/$SID.json"; }
 : >"$FLEET_LOG"; : >"$work/moved"; rm -f "$FLEET_STATE/resume-state" "$FLEET_STATE/back-room-since"
 p=$(backpane keeper); state keeper '{"above":["⏺ Done. done 11:50 AM"],"on_submit":"none"}'
-reply_live "$p" done '[{"id": "w1", "kind": "bash"}]' "Watching the TIGRIS job." "$noon"
+reply_live "$p" "done" '[{"id": "w1", "kind": "bash"}]' "Watching the TIGRIS job." "$noon"
 mover "$noon"
 check "#198: a finished turn with a background shell is not moved at once" "$(wc -c <"$work/moved") $(grep -c '^SUBMIT' "$work/keeper.log")" "0 0"
 mover "$((noon + 240))"
@@ -843,13 +843,13 @@ check "#198: the request is logged, not urgent while Heph's account has room" \
   "$(jq -r 'select(.message | startswith("asked to save")) | [.pane, .from, .to, .urgent, .delivery] | join(" ")' "$FLEET_LOG")" "$p RIT Personal 0 sent"
 mover "$((noon + 360))"
 check "#198: asked once, not every pass" "$(wc -c <"$work/moved") $(grep -c '^SUBMIT' "$work/keeper.log")" "0 1"
-reply_live "$p" done '[{"id": "w1", "kind": "bash"}]' "Earlier: READY-TO-MOVE" "$((noon + 200))"
+reply_live "$p" "done" '[{"id": "w1", "kind": "bash"}]' "Earlier: READY-TO-MOVE" "$((noon + 200))"
 mover "$((noon + 420))"
 check "#198: a READY-TO-MOVE from before the request does not move it" "$(wc -c <"$work/moved")" "0"
 reply_live "$p" working '[{"id": "w1", "kind": "bash"}]' "Saved and pushed. READY-TO-MOVE" "$((noon + 430))"
 mover "$((noon + 440))"
 check "#198: nor one whose turn still runs" "$(wc -c <"$work/moved")" "0"
-reply_live "$p" done '[{"id": "w1", "kind": "bash"}]' "Saved and pushed. READY-TO-MOVE" "$((noon + 430))"
+reply_live "$p" "done" '[{"id": "w1", "kind": "bash"}]' "Saved and pushed. READY-TO-MOVE" "$((noon + 430))"
 mover "$((noon + 480))"
 check "#198: it moves on its READY-TO-MOVE at a finished turn" "$(head -2 "$work/moved" | tr '\n' ' ')" "$work/cfg-a keeper "
 t kill-window -t "$p" 2>/dev/null; : >"$REGISTRY"
@@ -857,7 +857,7 @@ t kill-window -t "$p" 2>/dev/null; : >"$REGISTRY"
 : >"$FLEET_LOG"; : >"$work/moved"; rm -f "$FLEET_STATE/resume-state" "$FLEET_STATE/back-room-since"
 reading b RIT 80 4000
 p=$(backpane hurry); state hurry '{"above":["⏺ Done. done 11:50 AM"],"on_submit":"none"}'
-reply_live "$p" done '[{"id": "w1", "kind": "agent"}]' "Waiting on a subagent." "$noon"
+reply_live "$p" "done" '[{"id": "w1", "kind": "agent"}]' "Waiting on a subagent." "$noon"
 mover "$noon"; mover "$((noon + 300))"
 check "#198: urgent while it borrows Heph's account and that one has under 30% room" \
   "$(grep -c '^SUBMIT Urgent: Heph' "$work/hurry.log") $(jq -r 'select(.message | startswith("asked to save")) | .urgent' "$FLEET_LOG")" "1 1"
@@ -866,7 +866,7 @@ reading b RIT 10 4000
 
 : >"$work/moved"; rm -f "$FLEET_STATE/resume-state" "$FLEET_STATE/back-room-since"
 p=$(backpane typing); state typing '{"above":["⏺ Done. done 11:50 AM"],"on_submit":"none"}'
-reply_live "$p" done '[{"id": "w1", "kind": "bash"}]' "Watching." "$noon"
+reply_live "$p" "done" '[{"id": "w1", "kind": "bash"}]' "Watching." "$noon"
 t send-keys -t "$p" -l "AJ: hold on"; settle
 mover "$noon"; mover "$((noon + 300))"
 check "#198: never asked over a line AJ is typing" "$(grep -c '^SUBMIT' "$work/typing.log")" "0"
