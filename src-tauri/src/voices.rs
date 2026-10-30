@@ -34,8 +34,14 @@ pub fn on_menu(app: &AppHandle, menu_id: &str) -> bool {
     };
     if let Ok(v) = voices::value(id) {
         crate::write_pref(app, voices::KEY, v);
-        log::info!(voices = id; "voices: saved; sessions fleet/launch.sh starts from now on take it");
     }
-    app.state::<VoicesMenu>().0.tick(saved(app));
+    // write_pref logs its own failure; this says which mode holds now.
+    let now = saved(app);
+    if now == id {
+        log::info!(voices = id; "voices: saved; sessions fleet/launch.sh starts from now on take it");
+    } else {
+        log::warn!(voices = id, saved = now; "voices: not saved; the mode is still the saved one");
+    }
+    app.state::<VoicesMenu>().0.tick(now);
     true
 }

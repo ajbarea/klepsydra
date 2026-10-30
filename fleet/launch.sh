@@ -43,7 +43,7 @@ settings=${FLEET_SETTINGS-$FLEET_STATE/worker-settings.json}
 # drops that line, and "off" gives a session started without them (Heph) keryx
 # off too. --settings takes a JSON string as well as a file, and outranks the
 # user's and the project's settings.
-voices=$(jq -er '.voices | select(. == "everyone" or . == "off")' "$KLEPSYDRA_DIR/prefs.json" 2>/dev/null) || voices=heph
+voices=$(jq -ser 'if length == 1 then .[0].voices else empty end | select(. == "everyone" or . == "off")' "$KLEPSYDRA_DIR/prefs.json" 2>/dev/null) || voices=heph
 if [[ -n $settings && $voices == everyone ]]; then
   settings=$(jq -c 'del(.env.KERYX_ENABLED) | if .env == {} then del(.env) else . end' "$settings" 2>/dev/null) || settings=${FLEET_SETTINGS-$FLEET_STATE/worker-settings.json}
 elif [[ -z $settings && $voices == off ]]; then
@@ -51,7 +51,9 @@ elif [[ -z $settings && $voices == off ]]; then
 fi
 # KLEPSYDRA_AGENT names the session's agent to the fleet hook, so its card keeps
 # its face across relaunches (#172).
-cmd="env $(config_env "$account")KLEPSYDRA_AGENT=$(printf '%q' "$name") CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS=2 ${FLEET_CLAUDE:-claude} --session-id $sid${settings:+ --settings $(printf '%q' "$settings")} $*"
+# keryx's switch comes from --settings alone, never from the tmux server's
+# environment (a server started from a session with keryx off would pass it on).
+cmd="env -u KERYX_ENABLED $(config_env "$account")KLEPSYDRA_AGENT=$(printf '%q' "$name") CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS=2 ${FLEET_CLAUDE:-claude} --session-id $sid${settings:+ --settings $(printf '%q' "$settings")} $*"
 if [[ ${FLEET_SCOPE:-1} != 0 ]]; then
   cmd="systemd-run --user --scope --collect --unit=fleet-$name-$(date +%s) -p MemoryHigh=${MEM_HIGH:-4G} -p MemoryMax=${MEM_MAX:-5G} -p MemorySwapMax=${MEM_SWAP:-1G} $cmd"
 fi

@@ -1,5 +1,5 @@
 //! The Voices setting (#183): who speaks through keryx. prefs.json keeps it
-//! under `voices`, where `fleet/launch.sh` reads it at each fresh start:
+//! under `voices`, where `fleet/launch.sh` reads it each time it starts a session:
 //! "heph" (the default) starts workers with keryx off, "everyone" leaves it on
 //! for them, "off" turns it off for Heph too.
 
@@ -52,7 +52,7 @@ mod tests {
             .map(|(id, _)| format!(". == \"{id}\""))
             .collect();
         let read = format!(
-            "voices=$(jq -er '.{KEY} | select({})' \"$KLEPSYDRA_DIR/prefs.json\" 2>/dev/null) || voices={}",
+            "voices=$(jq -ser 'if length == 1 then .[0].{KEY} else empty end | select({})' \"$KLEPSYDRA_DIR/prefs.json\" 2>/dev/null) || voices={}",
             others.join(" or "),
             VOICES[0].0
         );

@@ -1630,7 +1630,7 @@ check "#183: Everyone starts it with the same settings less keryx's line" \
   "$(settings_of "$cmd" | jq -c '[.env, .crossSessionInbound]')" '[null,"accept"]'
 check "#183: and the launch log names the mode" "$(jq -r 'select(.message == "window opened") | .voices' "$FLEET_LOG" | tail -1)" "everyone"
 cmd=$(voiced everyone "")
-check "#183 review 1: Everyone leaves a session without worker settings (Heph) as it is" "$(grep -c -- '--settings\|KERYX' <<<"$cmd")" "0"
+check "#183 review 1: Everyone leaves a session without worker settings (Heph) as it is" "$(grep -c -- '--settings\|KERYX_ENABLED=' <<<"$cmd")" "0"
 cmd=$(voiced everyone "$work/no-such-settings.json")
 check "#183 review 1: worker settings it cannot read are passed on as they are" "$(settings_of "$cmd")" "$work/no-such-settings.json"
 cmd=$(voiced off "")
@@ -1639,8 +1639,9 @@ check "#183: Off gives a session started without worker settings (Heph) keryx of
 cmd=$(voiced off "$here/worker-settings.json")
 check "#183 review 1: Off keeps a worker's own settings, keryx off in them" "$(settings_of "$cmd")" "$here/worker-settings.json"
 cmd=$(voiced heph "")
-check "#183: Heph only leaves Heph's keryx alone" "$(grep -c 'KERYX_ENABLED\|--settings' <<<"$cmd")" "0"
-for odd in 'not json' '{"voices":"everyone"} x' '{"voices":"everyone\n"}' '{"voices":["off"]}'; do
+check "#183: Heph only leaves Heph's keryx alone" "$(grep -c 'KERYX_ENABLED=\|--settings' <<<"$cmd")" "0"
+check "#183 review 2: and keryx's switch is never inherited from tmux's environment" "$(grep -c '^env -u KERYX_ENABLED ' <<<"$cmd")" "1"
+for odd in 'not json' '{"voices":"everyone"} x' '{"voices":"everyone\n"}' '{"voices":["off"]}' '{"voices":"heph"} {"voices":"off"}' '{"voices":"off"}{"voices":"everyone"}'; do
   printf '%s' "$odd" >"$KLEPSYDRA_DIR/prefs.json"
   check "#183: a prefs file reading $odd is the default" "$(voiced - "$here/worker-settings.json" >/dev/null; jq -r 'select(.message == "window opened") | .voices' "$FLEET_LOG" | tail -1)" "heph"
 done
