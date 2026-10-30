@@ -116,8 +116,8 @@ submit() { # PANE
 # preamble; prints the new pane. NOTE, what AJ typed at the pane, goes into the
 # new brief, and the old box may hold exactly it. Gives up, typing nothing, if
 # AJ has typed anything else meanwhile.
-# (STAMP: the session's prompt.at when the caller judged the pane idle, so a
-# prompt taken since, even one already answered, keeps the old pane.) Returns
+# (STAMP: the session's stamp when the caller judged the pane idle, so a
+# prompt or turn taken since, even one already over, keeps the old pane.) Returns
 # 5 when the new session's brief met a limit on ACCOUNT.
 fresh() { # PANE NAME BRIEF [WHY] [ACCOUNT] [NOTE] [STAMP]
   local p=$1 name=$2 brief=$3 txt new
@@ -220,16 +220,16 @@ room_since() { # ID
 
 # Ask the worker in PANE, on account ID FROM, to get ready to move back to its
 # preferred account TO (an id): save, stop background work, answer READY-TO-MOVE.
-# Urgent while FROM is Heph's preferred account and has under 30% of its
+# Urgent while FROM is the account Heph runs on and has under 30% of its
 # five-hour window left: the card shows the line, so the wall shows it too.
 ask_back() { # PANE FROM TO
-  local p=$1 f five seven urgent=0 hpref text got
-  hpref=${ACCT_ID[${FLEET_HEPH_ACCOUNTS%% *}]:-}
-  if [[ -n $2 && $2 == "$hpref" ]]; then
+  local p=$1 f five seven urgent=0 hcur text got
+  hcur=${ACCT_ID[$(heph_config)]:-}
+  if [[ -n $2 && $2 == "$hcur" ]]; then
     read -r five seven <<<"$(headroom "$2" "$NOW")"
     (( five < 30 )) && urgent=1
   fi
-  text="Your preferred account, $(account_label "$3"), has room again, and the fleet moves you back to it as a fresh session from your brief. Save your resume state (IMPL.md, commit, push), stop your background shells and monitors, then reply READY-TO-MOVE and end your turn."
+  text="Your preferred account, $(account_label "$3"), has room again, and the fleet moves you back to it as a fresh session from your brief. Save your resume state (IMPL.md, commit, push), stop your background shells and monitors, then end your turn with a reply whose first line is READY-TO-MOVE alone. If something must keep running, say why instead; you are asked again in an hour."
   (( urgent )) && text="Urgent: Heph's account has under 30% room left. $text"
   f=$FLEET_STATE/ask-back-${p#%}.txt
   printf '%s' "$text" >"$f"
@@ -237,6 +237,10 @@ ask_back() { # PANE FROM TO
   rm -f -- "${f:?}"
   case $got in
     not-pasted) flog WARN "move-back request not delivered: the prompt was no longer idle and empty; trying again next pass" pane="$p" to="$(account_label "$3")" ;;
+    mixed | held)
+      asked[$p]=$NOW
+      flog WARN "move-back request left in the prompt unsent; asked again in an hour" pane="$p" to="$(account_label "$3")" delivery="$got"
+      ;;
     *)
       asked[$p]=$NOW
       flog INFO "asked to save, stop background work and move back to the preferred account" pane="$p" from="$(account_label "$2")" to="$(account_label "$3")" urgent="$urgent" delivery="$got"
@@ -311,12 +315,11 @@ heph_move() { # PANE TO WHY [NOTE] [STAMP]
   printf '%s' "$new"
 }
 
-# When the live session in PANE last took a prompt (klepsydra's fleet file sets
-# prompt.at for typed and phone prompts, not task notifications), or nothing.
+# The live session in PANE's stamp (STAMP_JQ: its last prompt and turn), or nothing.
 prompt_stamp() { # PANE
   local sid
   sid=$(live_session "$1") || return 0
-  jq -r '.prompt.at // ""' "$KLEPSYDRA_DIR/fleet/$sid.json" 2>/dev/null
+  jq -r "$STAMP_JQ" "$KLEPSYDRA_DIR/fleet/$sid.json" 2>/dev/null
 }
 
 # Retire a pane this pass launched, interrupting its turn; kill it if it will not exit.

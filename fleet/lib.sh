@@ -483,15 +483,20 @@ heph_config() {
   nodir "${c:-$FLEET_DEFAULT_CONFIG}"
 }
 
+# A session's stamp in its live fleet file: when it last took a typed or phone
+# prompt (prompt.at) and when its last turn started (turn_at, a task
+# notification's too), so a turn begun since the stamp was read shows.
+STAMP_JQ='"\(.prompt.at // "")/\(.turn_at // "")"'
+
 # Whether the agent in PANE has finished its turn: its live fleet file
 # (klepsydra's) says done, or stopped with only background work, and lists no
-# background work still running. Prints the session's prompt.at from the same
-# read (empty when it has none), for prompt_stamp comparisons.
+# background work still running. Prints the session's stamp from the same
+# read, for prompt_stamp comparisons.
 turn_done() { # PANE
   local sid
   sid=$(live_session "$1") || return 1
   jq -er 'select((.state == "done" or (.state == "working" and .reason == "background"))
-    and ((.background // []) | length) == 0) | .prompt.at // "" | tostring' "$KLEPSYDRA_DIR/fleet/$sid.json" 2>/dev/null
+    and ((.background // []) | length) == 0) | '"$STAMP_JQ" "$KLEPSYDRA_DIR/fleet/$sid.json" 2>/dev/null
 }
 
 # Whether the agent in PANE has finished its turn but keeps background work
@@ -503,15 +508,18 @@ turn_settled() { # PANE
     and ((.background // []) | length) > 0' "$KLEPSYDRA_DIR/fleet/$sid.json" >/dev/null 2>&1
 }
 
-# Whether the agent in PANE answered a move-back request sent at ASKED with
-# READY-TO-MOVE and finished that turn. Prints its prompt.at, as turn_done does.
+# Whether the agent in PANE answered a move-back request sent at ASKED with a
+# reply whose first line is READY-TO-MOVE alone (bold or code marks aside), and
+# finished that turn. Prints its stamp, as turn_done does.
 ready_to_move() { # PANE ASKED
   local sid
   [[ $2 =~ ^[0-9]+$ ]] || return 1
   sid=$(live_session "$1") || return 1
   jq -er --argjson asked "$2" 'select((.state == "done" or (.state == "working" and .reason == "background"))
-    and (.reply.at // 0) >= $asked and ((.reply.text // "") | contains("READY-TO-MOVE")))
-    | .prompt.at // "" | tostring' "$KLEPSYDRA_DIR/fleet/$sid.json" 2>/dev/null
+    and (.reply.at // 0) >= $asked
+    and ((.reply.text // "") | split("\n") | map(select(test("\\S"))) | (.[0] // "")
+      | gsub("[*`]"; "") | gsub("^\\s+|\\s+$"; "")) == "READY-TO-MOVE")
+    | '"$STAMP_JQ" "$KLEPSYDRA_DIR/fleet/$sid.json" 2>/dev/null
 }
 
 # The config folder pane PANE runs on: its registry row's (column 6), else the default.
