@@ -1026,14 +1026,18 @@ mod tests {
         root.write(&format!("fleet/{A}.json"), &homed(A, "af_heart"));
         let dir = root.0.join("ledger");
         let t = unix_now();
-        let (mut l, _) = Ledger::open(dir.clone(), t, jiff::tz::TimeZone::UTC);
+        // A zone where t is midday: the restart a minute on is the same day
+        // at any hour the test runs.
+        let midday = i32::try_from(43_200 - t.rem_euclid(86_400)).unwrap();
+        let tz = jiff::tz::TimeZone::fixed(jiff::tz::Offset::from_seconds(midday).unwrap());
+        let (mut l, _) = Ledger::open(dir.clone(), t, tz.clone());
         l.record_metrics(&commit_export(A, t), t);
         l.save().unwrap(); // as the receiver does after a counted export
         let mut r = Reader::new(&root.0).with_ledger(Arc::new(Mutex::new(l)));
         let (_, problems) = r.step(Duration::ZERO, || t);
         assert!(problems.is_empty(), "{problems:?}");
         // A restart before any later export keeps the voice.
-        let (again, _) = Ledger::open(dir, t + 60, jiff::tz::TimeZone::UTC);
+        let (again, _) = Ledger::open(dir, t + 60, tz);
         assert_eq!(
             again.day().voices.get(A).map(String::as_str),
             Some("af_heart")
