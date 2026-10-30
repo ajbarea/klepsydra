@@ -1172,7 +1172,11 @@ date +%s.%N >>"$work/par-starts"
 sleep 3
 echo "pane=%99\$\$ session=x account=\$FLEET_ACCOUNT avail=1MiB brief=started"
 EOF
-LAUNCH="$work/launch-slow3.sh" FLEET_NOW=$noon POLL_S=1 timeout 9 bash "$here/resume-at-reset.sh" 2>/dev/null
+LAUNCH="$work/launch-slow3.sh" FLEET_NOW=$noon POLL_S=1 timeout 40 bash "$here/resume-at-reset.sh" 2>/dev/null &
+svc=$!
+for _ in $(seq 60); do [[ -n $(logged 'moved to the other account at a limit') ]] && break; sleep 0.5; done
+sleep 2.5 # two more passes, which must not launch again
+kill "$svc" 2>/dev/null; wait "$svc" 2>/dev/null
 check "review 1: passes while its move runs leave the pane alone: one launch, then moved" \
   "$(wc -l <"$work/par-starts") $(logged 'moved to the other account at a limit' | wc -w)" "1 1"
 t kill-window -t "$p" 2>/dev/null; : >"$REGISTRY"
