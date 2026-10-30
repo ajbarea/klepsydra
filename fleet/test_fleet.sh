@@ -768,6 +768,23 @@ check "the old pane exits" "$(events heph)" "SUBMIT /exit"
 check "logged as the orchestrator's move" "$(jq -r 'select(.message == "moved to the other account at a limit") | [.orchestrator, .from, .to] | join(" ")' "$FLEET_LOG")" "1 $work/cfg-a $work/cfg-b"
 t kill-window -t "$h" 2>/dev/null
 
+# A background task's notification starts a turn during his launch; at the
+# limit it fails at once, so he still moves.
+cat >"$work/launch-hturn.sh" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' "\$FLEET_ACCOUNT" "\$1" >"$work/moved"
+jq '.turn_at = 999999999999' "$KLEPSYDRA_DIR/fleet/$SID.json" >"$work/st.json" && mv "$work/st.json" "$KLEPSYDRA_DIR/fleet/$SID.json"
+echo "pane=%993 session=aaaaaaaa-0000-4000-8000-0000000000cd account=\$FLEET_ACCOUNT avail=1MiB brief=started"
+EOF
+chmod +x "$work/launch-hturn.sh"
+: >"$FLEET_LOG"; : >"$work/moved"; rm -f "$FLEET_STATE/orchestrator.config" "$FLEET_STATE/orchestrator.session"
+h=$(pane hturn "{\"above\":[\"⏺ ok\",\"$LIMIT\"]}"); settle
+printf '%s\n' "$h" >"$FLEET_STATE/orchestrator.pane"; live "$h"
+LAUNCH="$work/launch-hturn.sh" FLEET_HEPH="$work/HEPH.md" FLEET_NOW=$noon bash "$here/resume-at-reset.sh" --once 2>/dev/null
+check "#198 review 4: a notification's turn during Heph's move at a limit does not keep him" \
+  "$(events hturn) $(cat "$FLEET_STATE/orchestrator.pane")" "SUBMIT /exit %993"
+t kill-window -t "$h" 2>/dev/null; rm -f "$KLEPSYDRA_DIR/fleet/$SID.json" "$FLEET_STATE/resume-state"
+
 : >"$work/moved"; rm -f "$FLEET_STATE/orchestrator.config" "$FLEET_STATE/orchestrator.session"
 h=$(pane hephtyped "{\"above\":[\"⏺ ok\",\"$LIMIT\"]}"); settle
 printf '%s\n' "$h" >"$FLEET_STATE/orchestrator.pane"

@@ -117,8 +117,9 @@ submit() { # PANE
 # new brief, and the old box may hold exactly it. Gives up, typing nothing, if
 # AJ has typed anything else meanwhile.
 # (STAMP: the session's stamp when the caller judged the pane idle, so a
-# prompt or turn taken since, even one already over, keeps the old pane.) Returns
-# 5 when the new session's brief met a limit on ACCOUNT.
+# prompt or turn taken since, even one already over, keeps the old pane; at a
+# limit, STAMP_KIND=prompt, a prompt only.) Returns 5 when the new session's
+# brief met a limit on ACCOUNT.
 fresh() { # PANE NAME BRIEF [WHY] [ACCOUNT] [NOTE] [STAMP]
   local p=$1 name=$2 brief=$3 txt new
   local why=${4:-stopped at a usage limit over an hour ago, so its cached conversation expired and resuming it would re-cache everything}
