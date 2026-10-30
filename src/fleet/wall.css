@@ -525,6 +525,14 @@ button.menu svg { width: 16px; height: 16px; fill: currentColor; }
 .served .wall:not([data-density="compact"]) .where { flex-wrap: wrap; white-space: normal; overflow-wrap: anywhere; }
 .repo { min-width: 0; overflow: hidden; text-overflow: ellipsis; font-weight: 600; }
 .repo .wt { color: var(--text-dim); font-weight: 500; }
+/* #149: the folder name opens the folder (the phone: GitHub); the mark opens the repo. */
+.repo[role] { cursor: pointer; border-radius: 4px; }
+.repo[role]:hover, .repo[role]:focus-visible { text-decoration: underline; text-underline-offset: 3px; }
+.gh { display: inline-flex; flex: none; color: var(--text-dim); border-radius: 4px; }
+.gh svg { width: 14px; height: 14px; }
+.gh:hover, .gh:focus-visible { color: var(--text); }
+a.branch { text-decoration: none; }
+a.branch[href]:hover, a.branch[href]:focus-visible { color: var(--text); }
 .branch, .acct {
   display: inline-flex;
   flex: 0 1 auto;

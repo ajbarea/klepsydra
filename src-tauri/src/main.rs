@@ -1,6 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod fleet;
+mod folder;
 mod geometry;
 mod jump;
 mod launch;
@@ -863,6 +864,8 @@ fn main() {
             fleet::agora_subscribe,
             fleet::agora_react,
             fleet::open_wall,
+            launch::open_folder,
+            launch::open_github,
             split::get_split_mode,
             split::set_split_mode,
             split::split_subscribe,

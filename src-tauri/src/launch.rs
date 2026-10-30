@@ -495,6 +495,110 @@ async fn to_pane(app: tauri::AppHandle, id: String, verb: PaneVerb) -> Result<St
     .map_err(|e| format!("Could not reach the session: {e}"))?
 }
 
+/// wsl.exe's arguments to show folder `dir` of `distro` in the file manager:
+/// Explorer, started from WSL there (interop) through env, which finds it on
+/// the login PATH (wsl.exe -e looks only on its relay's, without /mnt/c) and
+/// fails (125) on a folder that is gone, where --cd would fall back to /.
+/// Only the folder, one argument, comes from the session's record.
+pub fn folder_args(dir: &str, distro: &str) -> Result<Vec<String>, String> {
+    if !(distro_ok(distro) && crate::folder::plain_dir(dir)) {
+        return Err("This session's folder cannot be named safely.".into());
+    }
+    Ok([
+        "-d",
+        distro,
+        "--cd",
+        "/",
+        "-e",
+        "env",
+        "-C",
+        dir,
+        "explorer.exe",
+        ".",
+    ]
+    .map(String::from)
+    .to_vec())
+}
+
+/// explorer.exe exits 1 even when it opened the folder: that status, with
+/// nothing on stderr, is its success.
+fn explorer_opened(said: Result<String, String>) -> Result<String, String> {
+    match said {
+        Err(e) if e == "wsl.exe exited with exit code: 1." => Ok(String::new()),
+        other => other,
+    }
+}
+
+/// Show session `id`'s work folder in the file manager (#149).
+#[tauri::command]
+pub async fn open_folder(app: tauri::AppHandle, id: String) -> Result<String, String> {
+    let (dir, distro) = app
+        .state::<crate::fleet::Fleet>()
+        .with_latest(|v| crate::folder::folder_of(v, &id))
+        .flatten()
+        .ok_or("klepsydra does not know this session's folder.")?;
+    let args = folder_args(&dir, &distro)?;
+    let shown = dir.rsplit('/').next().unwrap_or(&dir).to_string();
+    tauri::async_runtime::spawn_blocking(move || {
+        logged("open folder", Some(&id), || {
+            explorer_opened(run(&args, JUMP_TIMEOUT, jump_timed_out))
+        })
+    })
+    .await
+    .map_err(|e| format!("Could not open the folder: {e}"))??;
+    Ok(format!("Opened {shown}."))
+}
+
+/// wsl.exe's arguments that hand GitHub page `url` to Windows, whose
+/// explorer.exe opens a URL in the default browser. Only an https
+/// github.com address of plain and percent-encoded characters is passed.
+pub fn github_args(url: &str, distro: &str) -> Result<Vec<String>, String> {
+    let plain = url.len() <= 600
+        && url.strip_prefix("https://github.com/").is_some_and(|rest| {
+            !rest.is_empty()
+                && rest
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b"-._~%/!*'()".contains(&b))
+        });
+    if !(distro_ok(distro) && plain) {
+        return Err("This session's GitHub page cannot be named safely.".into());
+    }
+    Ok(
+        ["-d", distro, "--cd", "/", "-e", "env", "explorer.exe", url]
+            .map(String::from)
+            .to_vec(),
+    )
+}
+
+/// Open session `id`'s GitHub page, or with `branch` its branch's page, in
+/// the default browser (#149): the wall's webview opens no new window.
+#[tauri::command]
+pub async fn open_github(
+    app: tauri::AppHandle,
+    id: String,
+    branch: bool,
+) -> Result<String, String> {
+    let (url, distro) = app
+        .state::<crate::fleet::Fleet>()
+        .with_latest(|v| crate::folder::github_of(v, &id, branch))
+        .flatten()
+        .ok_or("klepsydra does not know this session's GitHub page.")?;
+    let args = github_args(&url, &distro)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        logged("open github", Some(&id), || {
+            explorer_opened(run(&args, JUMP_TIMEOUT, jump_timed_out))
+        })
+    })
+    .await
+    .map_err(|e| format!("Could not open GitHub: {e}"))??;
+    Ok(if branch {
+        "Opened the branch on GitHub."
+    } else {
+        "Opened GitHub."
+    }
+    .into())
+}
+
 /// End session `id` as if /exit were typed in its terminal. The wall asks
 /// first and waits out its undo window before calling this.
 #[tauri::command]
@@ -807,6 +911,70 @@ mod tests {
         assert!(!is_fleet(&t("/tmp/tmux-1001/default")));
         assert!(!is_fleet(&t("/tmp/klepsydra/default")));
         assert!(!is_fleet(&t("/tmp/tmux-1001/klepsydra2")));
+    }
+
+    #[test]
+    fn a_folder_opens_through_wsl_with_only_its_path_from_the_record() {
+        assert_eq!(
+            folder_args("/home/aj/ajsoftworks/cv", "Ubuntu").unwrap(),
+            [
+                "-d",
+                "Ubuntu",
+                "--cd",
+                "/",
+                "-e",
+                "env",
+                "-C",
+                "/home/aj/ajsoftworks/cv",
+                "explorer.exe",
+                "."
+            ]
+        );
+        assert!(
+            explorer_opened(Err(
+                "env: cannot change directory to '/gone': No such file or directory".into()
+            ))
+            .is_err(),
+            "a folder that is gone is said, not opened"
+        );
+        assert_eq!(
+            explorer_opened(Err("wsl.exe exited with exit code: 1.".into())),
+            Ok(String::new())
+        );
+        assert!(explorer_opened(Err("wsl.exe exited with exit code: 2.".into())).is_err());
+        assert!(explorer_opened(Err("Could not start wsl.exe".into())).is_err());
+        assert!(folder_args("/home/aj/../x", "Ubuntu").is_err());
+        assert!(folder_args("/home/aj", "Ubuntu;rm").is_err());
+    }
+
+    #[test]
+    fn a_github_page_opens_through_wsl_and_only_a_plain_github_address() {
+        let page = "https://github.com/ajbarea/klepsydra/tree/feat/a%20b%231";
+        assert_eq!(
+            github_args(page, "Ubuntu").unwrap(),
+            [
+                "-d",
+                "Ubuntu",
+                "--cd",
+                "/",
+                "-e",
+                "env",
+                "explorer.exe",
+                page
+            ]
+        );
+        for bad in [
+            "https://github.com/",
+            "http://github.com/a/b",
+            "https://github.com.evil.example/a/b",
+            "https://github.com/a/b?x=1",
+            "https://github.com/a/b c",
+            "https://github.com/a/b\"&calc",
+            "file:///C:/Windows",
+        ] {
+            assert!(github_args(bad, "Ubuntu").is_err(), "{bad}");
+        }
+        assert!(github_args("https://github.com/a/b", "Ubuntu;rm").is_err());
     }
 
     #[test]

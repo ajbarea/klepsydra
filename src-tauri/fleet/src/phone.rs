@@ -138,6 +138,10 @@ pub fn phone_view(snapshot: &Value) -> Value {
                         .iter()
                         .filter_map(|k| s.get(*k).map(|v| (k.to_string(), v.clone())))
                         .collect();
+                    // The work folder's full path stays home too; the phone links GitHub only.
+                    if let Some(place) = out.get_mut("where").and_then(Value::as_object_mut) {
+                        place.remove("dir");
+                    }
                     if let Some(dir) = s.get("launch_dir").and_then(Value::as_str) {
                         let base = dir.trim_end_matches(['/', '\\']);
                         let base = base.rsplit(['/', '\\']).next().unwrap_or("");
@@ -854,6 +858,15 @@ mod tests {
     use std::io::{BufRead, BufReader, Read, Write};
     use std::net::TcpStream;
     use std::sync::Mutex;
+
+    #[test]
+    fn the_phone_gets_a_cards_github_page_but_not_its_folder() {
+        let snap = serde_json::json!({"sessions": [{"session_id": "s",
+            "where": {"repo": "k", "dir": "/home/aj/ajsoftworks/k", "github": "https://github.com/a/k"}}]});
+        let place = &phone_view(&snap)["sessions"][0]["where"];
+        assert_eq!(place["github"], "https://github.com/a/k");
+        assert!(place.get("dir").is_none());
+    }
 
     #[test]
     fn the_server_listens_on_loopback_port_8318() {

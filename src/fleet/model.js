@@ -78,6 +78,14 @@ export function statusParts(s, nowMs, age = shortAge) {
   return [statusOf(s.status).label, reasonText(s), a].filter(Boolean);
 }
 
+/** A GitHub repo page as the hook writes one, or null: the walls link only these. */
+export const githubPage = (url) =>
+  typeof url === "string" && /^https:\/\/github\.com\/[\w.-]{1,100}\/[\w.-]{1,100}$/.test(url) && !/\/\.{1,2}(\/|$)/.test(url) ? url : null;
+
+/** The page of BRANCH in the repo at GITHUB, its slashes kept as GitHub's tree paths have them. */
+export const branchPage = (github, branch) =>
+  github && branch ? `${github}/tree/${branch.split("/").map(encodeURIComponent).join("/")}` : null;
+
 const basename = (path) => (typeof path === "string" ? path.replace(/\/+$/, "").split("/").pop() : "");
 
 /**
@@ -89,6 +97,21 @@ const basename = (path) => (typeof path === "string" ? path.replace(/\/+$/, "").
  * session with no character of its own wears the one castPicks gave it
  * (`pick`), with no keryx voice to name.
  */
+/** A folder the app will open (folder.rs `plain_dir`): absolute, no empty, "." or ".." part, no control character. */
+export function plainDir(dir) {
+  return (
+    typeof dir === "string" &&
+    dir.length > 1 &&
+    dir.length <= 1024 &&
+    dir.startsWith("/") &&
+    !/[\u0000-\u001f\u007f-\u009f]/.test(dir) &&
+    dir
+      .slice(1)
+      .split("/")
+      .every((part) => part !== "" && part !== "." && part !== "..")
+  );
+}
+
 export function identity(s, cast) {
   const own = typeof s.voice === "string" && s.voice ? s.voice : null;
   const picked = !castFiles(castCharacter(own, cast), cast) && typeof s.pick === "string" ? s.pick : null;
@@ -509,7 +532,15 @@ export function card(s, cast, nowMs, request = null) {
     // Only once Stop fired with work out (the hook's reason "background"), never mid-turn.
     promptFree: reasonText(s) === PROMPT_FREE && crewSize(crew) > 0,
     dim: DIM.has(s.status),
-    place: s.where ? { repo: s.where.repo, worktree: s.where.worktree ?? null, branch: s.where.branch ?? null } : null,
+    place: s.where
+      ? {
+          repo: s.where.repo,
+          worktree: s.where.worktree ?? null,
+          branch: s.where.branch ?? null,
+          folder: plainDir(s.where.dir),
+          github: githubPage(s.where.github),
+        }
+      : null,
     also: also.slice(0, ALSO_NAMED).map((r) => `also in ${r}`),
     alsoRest: alsoChip(also.slice(ALSO_NAMED)),
     alsoPast: also.slice(ALSO_NAMED).map((r) => `also in ${r}`), // named only while a phone card shows its full text

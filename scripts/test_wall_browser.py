@@ -4071,6 +4071,26 @@ def ctrl_alt_b_over_any_ledger(wall):
     )
 
 
+def github_links_open_through_the_app(wall):
+    """On the desktop a card's GitHub mark and branch chip ask the app to open
+    the page it has on record (the webview opens no new window); no popup."""
+    page = open_app(wall)
+    popups = []
+    page.on("popup", lambda p: popups.append(p.url))
+    card = page.locator(".card:has(.gh[href]):has(.branch[href])").first
+    key = card.get_attribute("data-key")
+    card.locator(".gh").click()
+    card.locator(".branch").click()
+    page.wait_for_timeout(300)
+    calls = page.evaluate("window.__calls.filter(([c]) => c === 'open_github')")
+    wall.check(
+        calls == [["open_github", {"id": key, "branch": False}], ["open_github", {"id": key, "branch": True}]] and popups == [],
+        "on the desktop the GitHub mark and the branch chip open through the app, with no new window",
+        {"calls": calls, "popups": popups},
+    )
+    page.close()
+
+
 def ledger_reads_bounded(wall):
     """An open Ledger reads the ledger at most once every 5 s however fast
     snapshots come, and catches up once after a burst."""
@@ -5150,6 +5170,7 @@ def main() -> int:
             ledger_button_keeps_focus,
             ledger_reflows_at_every_size,
             ctrl_alt_b_over_any_ledger,
+            github_links_open_through_the_app,
             ledger_reads_bounded,
             ledger_rolls_over_at_midnight,
             split_toggle,
