@@ -66,20 +66,21 @@ STOPPED_TTL=60
 # and a path outside any repo by its own name.
 git_where() { # path
   local here=${1%/} folder dotgit link gitdir common main
-  where_repo="" where_worktree="" where_branch="" where_git="" where_bare=0
+  where_repo="" where_worktree="" where_branch="" where_git="" where_bare=0 where_dir="" where_remote=""
   [[ -n $here ]] || here=/
   if [[ $here != /* ]]; then where_repo=${here##*/} where_bare=1; return; fi
   folder=$here
   while :; do
     dotgit=$folder/.git
     if [[ -d $dotgit ]]; then
-      where_repo=${folder##*/} where_git=$dotgit
+      where_repo=${folder##*/} where_git=$dotgit where_dir=$folder
       branch_of "$dotgit"
+      remote_of "$dotgit/config"
       return
     elif [[ -f $dotgit ]]; then
       link=""
       { IFS= read -r link <"$dotgit"; } 2>/dev/null
-      where_repo=${folder##*/}
+      where_repo=${folder##*/} common=""
       [[ $link == gitdir:* ]] || return
       gitdir=${link#gitdir:}
       gitdir=${gitdir#"${gitdir%%[![:space:]]*}"}
@@ -97,8 +98,9 @@ git_where() { # path
           where_worktree=${folder##*/}
         fi
       fi
-      where_git=$gitdir
+      where_git=$gitdir where_dir=$folder
       branch_of "$gitdir"
+      remote_of "${common:-$gitdir}/config"
       return
     fi
     [[ $folder == / ]] && break
@@ -106,6 +108,28 @@ git_where() { # path
     [[ -n $folder ]] || folder=/
   done
   where_repo=${here##*/} where_bare=1
+}
+
+# Sets where_remote to the GitHub page of the repo whose git config is
+# `config` (its origin, by https or ssh), or nothing for another host or none.
+remote_of() { # config
+  local line url="" in=0
+  # Braced, so a missing config's error goes too: on the loop the redirect opens before 2> applies.
+  { while IFS= read -r line; do
+    line=${line#"${line%%[![:space:]]*}"}
+    case $line in
+      '[remote "origin"]'*) in=1 ;;
+      '['*) in=0 ;;
+      url*=*) (( in )) && { url=${line#*=}; url=${url#"${url%%[![:space:]]*}"}; url=${url%"${url##*[![:space:]]}"}; break; } ;;
+    esac
+  done <"$1"; } 2>/dev/null
+  url=${url%.git}
+  case $url in
+    https://github.com/* | http://github.com/*) url=${url#*github.com/} ;;
+    git@github.com:* | ssh://git@github.com/*) url=${url#*github.com[:/]} ;;
+    *) return ;;
+  esac
+  [[ $url =~ ^[A-Za-z0-9._-]{1,100}/[A-Za-z0-9._-]{1,100}$ ]] && where_remote=https://github.com/$url
 }
 
 # Sets where_branch from a git dir's HEAD: the branch, else a detached commit's
@@ -174,6 +198,45 @@ claude_ancestor() { # pid
     (( pid >= 1 )) || return 1
   done
   return 1
+}
+
+# How many Bash tool calls Claude Code process `pid` runs now: its child
+# shells, one per call however many subshells or pipes the call starts, less
+# the one running this hook (`me` and its parents). Claude Code's footer counts
+# them so; the hook events cannot, since none fires when a background shell
+# ends mid-turn. A zombie has ended; sh and dash are hook wrappers (dash keeps
+# its process for `sh -c CMD`), never a Bash tool call: Claude Code runs those
+# in bash or zsh, or the CLAUDE_CODE_SHELL it names. Where /bin/sh is bash, a
+# hook wrapper can briefly count; the card's min with its set bounds that.
+# Prints nothing when no children list is readable, 0 for an empty one, and
+# nothing under CLAUDE_CODE_SHELL_PREFIX, whose wrapper hides the shell.
+live_shells() { # pid me
+  local pid=$1 p=$2 f child comm n=0 listed=0 i own=${CLAUDE_CODE_SHELL:-}
+  local -a stat=() mine=()
+  [[ -n ${CLAUDE_CODE_SHELL_PREFIX:-} ]] && return 0
+  own=${own##*/}
+  [[ $own == sh || $own == dash ]] && own=""
+  for ((i = 0; i < 32; i++)); do
+    [[ $p == "$pid" ]] && break
+    mine+=("$p")
+    proc_stat "$p" || break
+    p=${stat[1]}
+    (( p >= 1 )) || break
+  done
+  for f in "$PROC_ROOT/$pid"/task/*/children; do
+    [[ -r $f ]] || continue
+    listed=1
+    for child in $(<"$f"); do
+      [[ $child =~ ^[0-9]+$ ]] || continue
+      [[ " ${mine[*]} " == *" $child "* ]] && continue
+      proc_stat "$child" && [[ ${stat[0]} == Z ]] && continue
+      comm=""
+      { IFS= read -r comm <"$PROC_ROOT/$child/comm"; } 2>/dev/null
+      # bwrap: a call in Claude Code's sandbox.
+      [[ $comm == bash || $comm == zsh || $comm == bwrap || (-n $own && $comm == "${own:0:15}") ]] && n=$((n + 1))
+    done
+  done
+  (( listed )) && printf '%s' "$n"
 }
 
 # The voice keryx holds for a terminal, or nothing without keryx or a hold.
@@ -550,14 +613,17 @@ def notified: if type == "string" then [scan("<task-notification>[\\s\\S]*?</tas
   | if $w == null then .
     elif .where != null and (.where | {repo, worktree, branch}) == $w
     then .where.by = (if $by == "edit" then "edit" else .where.by end) | .where.git = ($git | text)
+      | .where.dir = ($dir | text) | .where.github = ($gh | text)
     else
       (if .where != null and .where.repo != $w.repo
        then .touched = ([{repo: .where.repo, at: $now}]
                         + (.touched | map(select(.repo != $s.where.repo and .repo != $w.repo))))[0:6]
        else . end)
-      | .where = $w + {by: $by, at: $now, git: ($git | text)}
+      | .where = $w + {by: $by, at: $now, git: ($git | text), dir: ($dir | text), github: ($gh | text)}
     end
   | if .where.git == null then del(.where.git) else . end
+  | if .where != null and .where.dir == null then del(.where.dir) else . end
+  | if .where != null and .where.github == null then del(.where.github) else . end
 
   # A hold always applies. Without one a session takes a repo's home voice:
   # the repo it works in, else the one it started in, and the home of each
@@ -647,6 +713,18 @@ def notified: if type == "string" then [scan("<task-notification>[\\s\\S]*?</tas
   | if $adopt then .background |= (bg_add($agent; "agent") | .[-$bg_max:]
       | map(if .id == $agent then .adopted = true | (if $over then .async = true else . end) else . end))
     else . end
+  # No event says a background shell ended mid-turn, so the set keeps it until
+  # Stop (#167). The shells Claude Code still runs (live_shells) are kept as
+  # shells_live, which caps the card's count; a count cannot say which entry
+  # ended, so entries go only once no shell runs at all.
+  | if ($live | test("^[0-9]+$")) then
+      ($live | tonumber) as $n
+      # A Stop's own task list is the truth (a job that exec'd into a
+      # non-shell program counts as no shell, but the list still names it).
+      | if $event == "Stop" and ($ev.background_tasks | type) == "array" then del(.shells_live)
+        else .shells_live = $n
+          | if $n == 0 then .background |= map(select(.kind != "shell")) else . end end
+    else del(.shells_live) end
 
   # State, with what it needs from AJ and who asked.
   | (if $event == "SessionStart" then
@@ -863,8 +941,10 @@ main() {
     # A memory or plan file outside every repo says nothing about where work is.
     (( where_bare )) && where_repo=""
   fi
+  local live=""
   if claude_ancestor "${KLEPSYDRA_PID:-$$}"; then
     voice=$(holder_voice "$found_pid" "$found_start") || voice=""
+    live=$(live_shells "$found_pid" "${KLEPSYDRA_PID:-$$}")
   fi
   [[ -n $voice ]] || homes=$(home_voices "$now")
 
@@ -923,9 +1003,9 @@ main() {
   [[ -n $old_git && ! -e $old_git ]] && where_gone=true
   new=$(printf '%s' "$input" | jq -c --arg old "$old" --argjson now "$now" --argjson chars "$PROMPT_CHARS" --argjson bg_max "$BACKGROUND_MAX" --argjson stopped_ttl "$STOPPED_TTL" \
     --arg repo "$where_repo" --arg worktree "$where_worktree" --arg branch "$where_branch" \
-    --arg git "$where_git" --argjson where_gone "$where_gone" --arg by "$by" \
+    --arg git "$where_git" --argjson where_gone "$where_gone" --arg by "$by" --arg dir "$where_dir" --arg gh "$where_remote" \
     --arg tmux_socket "$tmux_socket" --arg tmux_pane "$tmux_pane" --arg boot "$host_boot" --arg distro "$host_distro" \
-    --arg voice "$voice" --argjson homes "$homes" --arg cwd_repo "$cwd_repo" --arg pid "$found_pid" --arg start "$found_start" --arg remote "$remote" --arg cleared "$cleared" --argjson account "$account" \
+    --arg voice "$voice" --argjson homes "$homes" --arg cwd_repo "$cwd_repo" --arg pid "$found_pid" --arg start "$found_start" --arg remote "$remote" --arg cleared "$cleared" --argjson account "$account" --arg live "$live" \
     --arg fleet_agent "$agent" --argjson orchestrator "$orchestrator" \
     "$APPLY" 2>/dev/null) || new=""
   # A cast newer than this session's file: the theme changed under it. The

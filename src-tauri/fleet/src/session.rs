@@ -33,6 +33,33 @@ pub struct Place {
     #[serde(default)]
     pub branch: Option<String>,
     pub at: i64,
+    /// The folder the session works in: its repo's top, or its worktree's
+    /// (#149). Left out when the hook did not say.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dir: Option<String>,
+    /// The repo's GitHub page, from its origin. Left out for another host or none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub github: Option<String>,
+}
+
+/// Whether `url` is a GitHub repo page as the hook writes one
+/// (`https://github.com/OWNER/REPO`), so the walls may link it.
+pub fn is_github(url: &str) -> bool {
+    let plain = |s: &str| {
+        !s.is_empty()
+            && s.len() <= 100
+            && s.chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
+            && s != "."
+            && s != ".."
+    };
+    match url
+        .strip_prefix("https://github.com/")
+        .map(|r| r.split('/').collect::<Vec<_>>())
+    {
+        Some(parts) => parts.len() == 2 && parts.iter().all(|p| plain(p)),
+        None => false,
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -107,6 +134,13 @@ fn lenient_turns<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<u64>, 
     Ok(Some(
         serde_json::Value::deserialize(d)?.as_u64().unwrap_or(0),
     ))
+}
+
+/// A live shell count, or none for a value that is not one (the file still reads).
+fn lenient_shells<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<u32>, D::Error> {
+    Ok(serde_json::Value::deserialize(d)?
+        .as_u64()
+        .and_then(|n| u32::try_from(n).ok()))
 }
 
 /// What a session waiting on AJ needs. Only whether the ask came after its
@@ -217,6 +251,10 @@ pub struct SessionFile {
     /// Subagents and background shells still running; none when absent.
     #[serde(default, deserialize_with = "lenient_background")]
     pub background: Vec<Background>,
+    /// The shells Claude Code ran at the hook's last event, its Bash calls
+    /// foreground and background (#167); none when /proc could not say.
+    #[serde(default, deserialize_with = "lenient_shells")]
+    pub shells_live: Option<u32>,
     /// How many turns have ended (Stops); None from a hook that never counted.
     #[serde(default, deserialize_with = "lenient_turns")]
     pub turns: Option<u64>,
@@ -358,6 +396,29 @@ pub fn is_session_id(stem: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_github_page_is_a_plain_owner_and_repo() {
+        let long = format!("https://github.com/a/{}", "b".repeat(101));
+        let longest = format!("https://github.com/a/{}", "b".repeat(100));
+        for (url, ok) in [
+            ("https://github.com/ajbarea/klepsydra", true),
+            ("https://github.com/a.b/c_d-e", true),
+            (longest.as_str(), true),
+            (long.as_str(), false),
+            ("https://github.com/a/b/c", false),
+            ("https://github.com/a", false),
+            ("https://github.com/../b", false),
+            ("https://github.com/a/.", false),
+            ("https://github.com/a/b c", false),
+            ("https://github.com/a/b%20c", false),
+            ("https://github.com//b", false),
+            ("http://github.com/a/b", false),
+            ("https://github.com.evil/a/b", false),
+        ] {
+            assert_eq!(is_github(url), ok, "{url}");
+        }
+    }
 
     const ID: &str = "cb9fa591-1514-44d1-a31c-eba4a7cb41ed";
     /// When the test files last changed, by the reader's clock.
