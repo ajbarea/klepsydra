@@ -346,6 +346,7 @@ def triage(user: str, repo: str, run_id: int) -> dict:
         }
     out = STATE / "ci" / f"{repo}-{run_id}"
     tried = []
+    others = []  # failures on an account after another met its limit
     for folder in triage_accounts():
         env = dict(os.environ)
         if folder:
@@ -367,23 +368,30 @@ def triage(user: str, repo: str, run_id: int) -> dict:
                 tried.append(account)
                 continue
             if got.returncode:
-                return {
-                    "state": "failed",
-                    "account": account,
-                    "why": (got.stderr.strip().splitlines() or ["exit"])[-1][:300],
-                }
+                why = (got.stderr.strip().splitlines() or ["exit"])[-1][:300]
+                if tried:
+                    others.append(f"{account}: {why}")
+                    continue
+                return {"state": "failed", "account": account, "why": why}
             r = json.loads((out / "report.json").read_text())
         except (subprocess.TimeoutExpired, OSError, ValueError) as e:
-            return {
-                "state": "failed",
-                "account": account,
-                "why": f"{type(e).__name__}: {e}"[:300],
-            }
+            why = f"{type(e).__name__}: {e}"[:300]
+            if tried:
+                others.append(f"{account}: {why}")
+                continue
+            return {"state": "failed", "account": account, "why": why}
         break
     else:
+        # A limit seen on any account is waited out, whatever failed on the next.
         return {
             "state": "waiting",
-            "why": f"at its usage limit on {', '.join(tried)}; tried again later",
+            "why": "; ".join(
+                [
+                    f"at its usage limit on {', '.join(tried)}",
+                    *others,
+                    "tried again later",
+                ]
+            )[:300],
             "at": int(time.time()),
             "since": int(time.time()),
         }

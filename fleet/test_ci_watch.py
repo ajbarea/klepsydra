@@ -431,6 +431,23 @@ class Route(unittest.TestCase):
             "test_y fails", (TMP / "state" / "inbox" / "klep" / "r-5.txt").read_text()
         )
 
+    def test_a_red_that_has_waited_its_escalation_time_is_routed_without_a_cause(self):
+        self.session("s1", "%4", "feat/x")
+        known = {}
+        long_ago = {
+            "state": "waiting",
+            "at": time.time(),
+            "since": time.time() - ci_watch.ESCALATE_S,
+        }
+        with mock.patch.object(ci_watch, "triage", lambda u, r, i: dict(long_ago)):
+            ci_watch.poll(
+                "o",
+                ["r"],
+                Fake([run(5, branch="feat/x", sha="p")], pulls=[pr(7, "p")]),
+                known,
+            )
+        self.assertEqual(self.inbox(), ["klep/r-5.txt"])
+
     def test_a_red_on_an_agents_pr_branch_goes_to_its_inbox_and_heph_log_not_aj(self):
         self.session("s1", "%4", "feat/x")
         known = {}
@@ -844,8 +861,60 @@ class Triage(unittest.TestCase):
                 "since": time.time() - ci_watch.WAIT_MAX_S,
             }
         }
-        ci_watch.retriage("o", "r", 7, k, lambda: None)
-        self.assertEqual(k["triage"]["state"], "failed")
+        ran = []
+        with mock.patch.object(ci_watch, "triage", lambda *a: ran.append(a) or {}):
+            ci_watch.retriage("o", "r", 7, k, lambda: None)
+        self.assertEqual((k["triage"]["state"], ran), ("failed", []))
+
+    def test_a_retry_keeps_when_the_wait_began_and_waits_its_gap(self):
+        began = time.time() - 3600
+        k = {"triage": {"state": "waiting", "at": 0, "since": began}}
+        waiting = {"state": "waiting", "at": 0, "since": time.time()}
+        ran = []
+        with mock.patch.object(
+            ci_watch, "triage", lambda *a: ran.append(a) or dict(waiting)
+        ):
+            ci_watch.retriage("o", "r", 7, k, lambda: None)
+            self.assertEqual(
+                k["triage"]["since"], began, "the day counts from the first limit"
+            )
+            k["triage"]["at"] = time.time()
+            ci_watch.retriage("o", "r", 7, k, lambda: None)
+        self.assertEqual(len(ran), 1, "no retry inside RETRIAGE_S")
+
+    def test_a_limit_then_another_failure_on_the_next_account_still_waits(self):
+        script = TMP / "report.sh"
+        script.write_text(
+            '#!/bin/bash\nmkdir -p "$3"\n'
+            "if [[ ${CLAUDE_CONFIG_DIR:-default} == default ]]; then\n"
+            '  echo \'{"is_error":true,"api_error":"usage_limit_reached"}\' >"$3/claude.json"; exit 1\nfi\n'
+            "echo 'Invalid API key' >&2; exit 1\n"
+        )
+        with (
+            mock.patch.dict(os.environ, {"TECHNE_CI_REPORT": str(script)}),
+            mock.patch.object(
+                ci_watch, "triage_accounts", return_value=[None, "/x/.claude-rit"]
+            ),
+        ):
+            got = ci_watch.triage("o", "r", 10)
+        self.assertEqual(got["state"], "waiting")
+        self.assertIn(".claude-rit: Invalid API key", got["why"])
+
+    def test_the_default_folder_runs_without_a_config_dir_set_around_it(self):
+        script = TMP / "report.sh"
+        script.write_text(
+            '#!/bin/bash\nmkdir -p "$3"\nprintf \'%s\' "${CLAUDE_CONFIG_DIR-unset}" >"$3/config"\n'
+            'echo \'{"verdict":"fix","summary":"s"}\' >"$3/report.json"\n'
+        )
+        env = {"TECHNE_CI_REPORT": str(script), "CLAUDE_CONFIG_DIR": "/elsewhere"}
+        with (
+            mock.patch.dict(os.environ, env),
+            mock.patch.object(ci_watch, "triage_accounts", return_value=[None]),
+        ):
+            ci_watch.triage("o", "r", 11)
+        self.assertEqual(
+            (ci_watch.STATE / "ci" / "r-11" / "config").read_text(), "unset"
+        )
 
     def test_a_triage_that_fails_for_another_reason_still_fails(self):
         script = TMP / "report.sh"
