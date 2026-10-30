@@ -245,6 +245,7 @@ pub fn view(entry: &Entry, now: i64) -> Option<View> {
     };
     let place = f.place.as_ref().map(|p| Place {
         at: at(p.at),
+        github: p.github.clone().filter(|g| crate::session::is_github(g)),
         ..p.clone()
     });
     let prompt = shift_said(&f.prompt);
@@ -1080,6 +1081,8 @@ mod tests {
             worktree: None,
             branch: None,
             at: NOW - 300 + 600,
+            dir: None,
+            github: None,
         });
         e.file.touched = vec![Touched {
             repo: "t".into(),
@@ -1116,6 +1119,8 @@ mod tests {
                     worktree: None,
                     branch: None,
                     at: t,
+                    dir: None,
+                    github: None,
                 });
                 e.beat = Some((t, None));
                 let _ = view(&e, NOW);

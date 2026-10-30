@@ -78,6 +78,14 @@ export function statusParts(s, nowMs, age = shortAge) {
   return [statusOf(s.status).label, reasonText(s), a].filter(Boolean);
 }
 
+/** A GitHub repo page as the hook writes one, or null: the walls link only these. */
+export const githubPage = (url) =>
+  typeof url === "string" && /^https:\/\/github\.com\/[\w.-]{1,100}\/[\w.-]{1,100}$/.test(url) && !/\/\.{1,2}(\/|$)/.test(url) ? url : null;
+
+/** The page of BRANCH in the repo at GITHUB, its slashes kept as GitHub's tree paths have them. */
+export const branchPage = (github, branch) =>
+  github && branch ? `${github}/tree/${branch.split("/").map(encodeURIComponent).join("/")}` : null;
+
 const basename = (path) => (typeof path === "string" ? path.replace(/\/+$/, "").split("/").pop() : "");
 
 /**
@@ -509,7 +517,15 @@ export function card(s, cast, nowMs, request = null) {
     // Only once Stop fired with work out (the hook's reason "background"), never mid-turn.
     promptFree: reasonText(s) === PROMPT_FREE && crewSize(crew) > 0,
     dim: DIM.has(s.status),
-    place: s.where ? { repo: s.where.repo, worktree: s.where.worktree ?? null, branch: s.where.branch ?? null } : null,
+    place: s.where
+      ? {
+          repo: s.where.repo,
+          worktree: s.where.worktree ?? null,
+          branch: s.where.branch ?? null,
+          folder: typeof s.where.dir === "string" && s.where.dir.startsWith("/"),
+          github: githubPage(s.where.github),
+        }
+      : null,
     also: also.slice(0, ALSO_NAMED).map((r) => `also in ${r}`),
     alsoRest: alsoChip(also.slice(ALSO_NAMED)),
     alsoPast: also.slice(ALSO_NAMED).map((r) => `also in ${r}`), // named only while a phone card shows its full text

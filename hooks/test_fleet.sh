@@ -71,6 +71,22 @@ check "outside any repo" "$(where "$repos/loose/notes")" "notes||"
 check "filesystem root" "$(where /)" "||"
 check "a CRLF .git file" "$(where "$repos/crlf")" "klepsydra|crlf|feat/fleet-visualizer"
 
+# #149: the folder the session works in, and its GitHub page from origin.
+dirgh() { git_where "$1"; printf '%s|%s' "$where_dir" "$where_remote"; }
+g -C "$repos/klepsydra" remote add origin https://github.com/ajbarea/klepsydra.git
+g -C "$repos/ideas" remote add origin git@github.com:ajbarea/ideas.git
+g -C "$repos/subsrc" remote add origin https://gitlab.com/x/subsrc.git
+check "#149: a repo's folder and its GitHub page (https origin)" "$(dirgh "$repos/klepsydra/src/deep")" "$repos/klepsydra|https://github.com/ajbarea/klepsydra"
+check "#149: a worktree's own folder, the main checkout's origin" "$(dirgh "$repos/klepsydra/.claude/worktrees/fleet/src")" \
+  "$repos/klepsydra/.claude/worktrees/fleet|https://github.com/ajbarea/klepsydra"
+check "#149: an ssh origin" "$(dirgh "$repos/ideas")" "$repos/ideas|https://github.com/ajbarea/ideas"
+check "#149: another host's origin, no page" "$(dirgh "$repos/subsrc")" "$repos/subsrc|"
+check "#149: outside any repo, neither" "$(dirgh "$repos/loose/notes")" "|"
+g -C "$repos/klepsydra" config --add remote.upstream.url https://github.com/someone/else
+g -C "$repos/klepsydra" remote set-url origin 'https://github.com/a/b;rm -rf ~'
+check "#149: an origin that is not a plain owner/repo gives no page" "$(dirgh "$repos/klepsydra")" "$repos/klepsydra|"
+g -C "$repos/klepsydra" remote set-url origin https://github.com/ajbarea/klepsydra.git
+
 # keryx names the same repos; when its source is here, ask it directly. A
 # KERYX_SRC that names no source fails, so CI cannot skip the parity.
 keryx_src=${KERYX_SRC:-$HOME/ajsoftworks/keryx/src}
@@ -164,6 +180,7 @@ check "start: claude" "$(field .claude)" '{"pid":500,"start":8717628}'
 check "start: voice" "$(field .voice)" '"am_michael"'
 check "start: where" "$(field '.where | [.repo, .worktree, .branch, .by, .at]')" \
   "[\"klepsydra\",\"fleet\",\"feat/fleet-visualizer\",\"cwd\",$now]"
+check "#149: where names the folder and its GitHub page" "$(field '.where | [.dir, .github]')" "[\"$wt\",\"https://github.com/ajbarea/klepsydra\"]"
 check "start: nothing asked yet" "$(field '[.prompt, .reply, .needs, .error, .ended]')" "[null,null,null,null,null]"
 check "start: no turn yet" "$(field .turn_at)" "null"
 

@@ -6,6 +6,8 @@ import {
   statuses, startedNeeding, orderChanged, shouldSlide, transitionName, announcements, updatedText, badgeSvg, stripItems, card,
   askText, askParts, plainText, tally, crewOf, crewText, crewRing, crewRings, crewMarks, RINGS, RING_MAX, showsRingKey, alsoChip, ALSO_NAMED, pillWhen,
   BAND, accountsDiffer, castPicks,
+  branchPage,
+  githubPage,
 } from "./fleet/model.js";
 import { contrast } from "./fleet/contrast.js";
 import { TONES, hash, initialOf, medallion, medallionSvg, toneOf } from "./fleet/medallion.js";
@@ -607,7 +609,7 @@ test("a card carries pill, ask, tone, dim, place and its voice as a tooltip", ()
   assert.equal(c.tone, "needs");
   assert.equal(c.dim, false);
   assert.equal(c.task, "Plan the fleet visualizer");
-  assert.deepEqual(c.place, { repo: "klepsydra", worktree: "fleet", branch: "feat/fleet-visualizer" });
+  assert.deepEqual(c.place, { repo: "klepsydra", worktree: "fleet", branch: "feat/fleet-visualizer", folder: false, github: null });
   assert.deepEqual(c.also, ["also in ideas"]);
   assert.equal(c.voiceTitle, "Voice: Michael");
   const quiet = card(session({ status: "silent", status_at: ago(360), name: null }), CAST, NOW);
@@ -878,4 +880,23 @@ test("#148: the medallion is only for a theme that did not load", () => {
     assert.equal(identity(picked, none).face, identity(s, null).face);
     assert.match(identity(picked, none).face, /^data:image\/svg\+xml/);
   }
+});
+
+test("#149: a card's folder opens when the hook named it, and only a plain GitHub repo page is linked", () => {
+  const at = { repo: "klepsydra", worktree: "fleet", branch: "feat/x", at: 1 };
+  const place = (where) => card({ session_id: "s", status: "working", status_at: 1, where }, NOW).place;
+  assert.deepEqual(place({ ...at, dir: "/home/aj/ajsoftworks/klepsydra/.claude/worktrees/fleet", github: "https://github.com/ajbarea/klepsydra" }), {
+    repo: "klepsydra",
+    worktree: "fleet",
+    branch: "feat/x",
+    folder: true,
+    github: "https://github.com/ajbarea/klepsydra",
+  });
+  for (const bad of ["https://evil.example/ajbarea/klepsydra", "https://github.com/a/b/c", "javascript:alert(1)", "https://github.com/../x", 7]) {
+    assert.equal(githubPage(bad), null, String(bad));
+  }
+  assert.equal(place({ ...at, dir: "relative" }).folder, false);
+  assert.equal(branchPage("https://github.com/a/b", "feat/x y"), "https://github.com/a/b/tree/feat/x%20y");
+  assert.equal(branchPage(null, "main"), null);
+  assert.equal(branchPage("https://github.com/a/b", null), null);
 });

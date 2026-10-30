@@ -33,6 +33,33 @@ pub struct Place {
     #[serde(default)]
     pub branch: Option<String>,
     pub at: i64,
+    /// The folder the session works in: its repo's top, or its worktree's
+    /// (#149). Left out when the hook did not say.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dir: Option<String>,
+    /// The repo's GitHub page, from its origin. Left out for another host or none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub github: Option<String>,
+}
+
+/// Whether `url` is a GitHub repo page as the hook writes one
+/// (`https://github.com/OWNER/REPO`), so the walls may link it.
+pub fn is_github(url: &str) -> bool {
+    let plain = |s: &str| {
+        !s.is_empty()
+            && s.len() <= 100
+            && s.chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
+            && s != "."
+            && s != ".."
+    };
+    match url
+        .strip_prefix("https://github.com/")
+        .map(|r| r.split('/').collect::<Vec<_>>())
+    {
+        Some(parts) => parts.len() == 2 && parts.iter().all(|p| plain(p)),
+        None => false,
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]

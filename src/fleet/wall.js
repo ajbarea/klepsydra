@@ -1,6 +1,6 @@
 // The card wall: a card per Claude Code session, in the reader's order, with
 // a way back to its terminal.
-import { RINGS, accountsDiffer, announcements, card, castPicks, identity, needsFirst, shouldSlide, showsRingKey, startedNeeding, transitionName, statuses, tally } from "./model.js";
+import { RINGS, accountsDiffer, branchPage, announcements, card, castPicks, identity, needsFirst, shouldSlide, showsRingKey, startedNeeding, transitionName, statuses, tally } from "./model.js";
 import { announcer, press, say, setOff, syncChildren } from "./dom.js";
 import { ARM_MS, confirmCopy, createEnder, endAllCopy, endingAnnouncement, endingText, withdrawnText } from "./end.js";
 import { askedNote, asking, isReady, readiness, wrapupAnnouncements, wrapupCopy, wrapupLines } from "./wrapup.js";
@@ -29,6 +29,9 @@ const SVG_NS = "http://www.w3.org/2000/svg";
 const SEGMENT_FADE_MS = 200; // wall.css .seg.leave
 const MARK_ARC = "M 4.5 16 A 11.5 11.5 0 0 1 27.5 16"; // the ring key's arc (wall.html)
 const RESIZE_SETTLE_MS = 100; // Auto measures once a drag pauses, not every frame of it
+// GitHub's mark (octicon mark-github, 16 px).
+const GITHUB_ICON =
+  '<svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>';
 const BRANCH_ICON =
   '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="4" cy="3.5" r="1.8"/><circle cx="4" cy="12.5" r="1.8"/><circle cx="12" cy="5" r="1.8"/><path d="M4 5.3v5.4M12 6.8c0 3-3.5 3-8 4.2"/></svg><span></span>';
 // A head and shoulders: the account a session runs on, told apart from the branch beside it.
@@ -229,10 +232,36 @@ function paint(el, c) {
   const repo = el.querySelector(".repo");
   const worktree = c.place?.worktree ? [Object.assign(document.createElement("span"), { className: "wt", textContent: ` / ${c.place.worktree}` })] : [];
   repo.replaceChildren(c.place?.repo ?? "", ...worktree);
+  // #149: on the desktop the folder name opens the folder; on the phone, its GitHub page.
+  const page = c.place?.github ?? null;
+  const opens = inTauri && !served && c.place?.folder ? "button" : served && page ? "link" : null;
+  if (opens) {
+    repo.setAttribute("role", opens);
+    repo.tabIndex = 0;
+    repo.setAttribute("aria-label", opens === "button" ? `Open ${c.place.repo} folder` : `Open ${c.place.repo} on GitHub`);
+  } else {
+    for (const a of ["role", "tabindex", "aria-label"]) repo.removeAttribute(a);
+  }
+  const gh = el.querySelector(".gh");
+  gh.hidden = !page;
+  if (!gh.firstChild) gh.innerHTML = GITHUB_ICON;
+  if (page) {
+    gh.href = page;
+    gh.setAttribute("aria-label", `Open ${c.place.repo} on GitHub`);
+    gh.title = `${c.place.repo} on GitHub`;
+  } else gh.removeAttribute("href");
   const branch = el.querySelector(".branch");
   branch.hidden = !c.place?.branch;
   if (!branch.firstChild) branch.innerHTML = BRANCH_ICON;
   setText(branch.lastChild, c.place?.branch);
+  const tree = branchPage(page, c.place?.branch);
+  if (tree) {
+    branch.href = tree;
+    branch.setAttribute("aria-label", `Open branch ${c.place.branch} on GitHub`);
+  } else {
+    branch.removeAttribute("href");
+    branch.removeAttribute("aria-label");
+  }
   const acct = el.querySelector(".acct");
   acct.hidden = !c.showAccount;
   if (!acct.firstChild) acct.innerHTML = ACCOUNT_ICON;
@@ -719,6 +748,14 @@ function take(message) {
 }
 
 wall.addEventListener("click", (e) => {
+  // The desktop webview opens no new window: the app opens the page it has on record.
+  const ghLink = inTauri && !served ? e.target.closest(".gh[href], .branch[href]") : null;
+  if (ghLink) {
+    e.preventDefault();
+    const card = ghLink.closest(".card");
+    press(ghLink, card.querySelector(".note"), () => tauri("open_github", { id: card.dataset.key, branch: ghLink.classList.contains("branch") }));
+    return;
+  }
   const menuButton = e.target.closest(".menu");
   if (menuButton) {
     toggleMenu(menuButton);
@@ -755,6 +792,11 @@ wall.addEventListener("click", (e) => {
     card.classList.toggle("open-text", openText.has(id));
     unfold.setAttribute("aria-expanded", String(openText.has(id)));
     syncFullText();
+    return;
+  }
+  const repoName = e.target.closest(".repo[role]");
+  if (repoName) {
+    openRepo(repoName);
     return;
   }
   // On the phone a tap anywhere on a card with a Remote Control link opens it.
@@ -833,7 +875,23 @@ function openMenu(button, last = false) {
 
 const toggleMenu = (button) => (menuFor?.button === button ? closeMenu(true) : openMenu(button));
 
+// A card's folder name (#149): the folder in the file manager, or on the phone its GitHub page.
+function openRepo(name) {
+  const card = name.closest(".card");
+  if (name.getAttribute("role") === "link") {
+    card.querySelector(".gh[href]")?.click();
+    return;
+  }
+  press(name, card.querySelector(".note"), () => tauri("open_folder", { id: card.dataset.key }));
+}
+
 wall.addEventListener("keydown", (e) => {
+  const name = e.target.closest?.(".repo[role]");
+  if (name && (e.key === "Enter" || e.key === " ")) {
+    e.preventDefault();
+    openRepo(name);
+    return;
+  }
   const button = e.target.closest?.(".menu");
   if (button && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
     e.preventDefault();
