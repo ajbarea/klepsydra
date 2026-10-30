@@ -812,6 +812,7 @@ fn with_state<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R
         .manage(fleet::Fleet::default())
         .manage(fleet::QueueFeed::default())
         .manage(fleet::CiFeed::default())
+        .manage(fleet::AgoraFeed::default())
         .manage(Moved::default())
         .manage(Sized::default())
         .manage(Requested::default())
@@ -859,6 +860,8 @@ fn main() {
             fleet::fleet_subscribe,
             fleet::queue_subscribe,
             fleet::ci_subscribe,
+            fleet::agora_subscribe,
+            fleet::agora_react,
             fleet::open_wall,
             split::get_split_mode,
             split::set_split_mode,
@@ -1035,6 +1038,7 @@ fn main() {
             fleet::start(app.handle(), klepsydra_dir(app.handle()));
             fleet::start_queue(app.handle());
             fleet::start_ci(app.handle(), klepsydra_dir(app.handle()));
+            fleet::start_agora(app.handle(), klepsydra_dir(app.handle()));
             Ok(())
         })
         .build(tauri::generate_context!())

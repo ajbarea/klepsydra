@@ -9,7 +9,7 @@ session's character, its agent, its repo and the time. It is found from the
 session's tmux pane (TMUX_PANE) in klepsydra's fleet files, so it runs from
 inside a fleet session's own shell. Posts are one JSON line each in
 klepsydra's data folder (agora/posts.jsonl), where the wall and the phone wall
-read them; past FILE_MAX the file is moved to agora/archive/. One post per
+read them; past FILE_MAX its posts older than an hour move to agora/archive/. One post per
 agent per hour. A post that looks like it holds a secret (gitleaks, when
 installed, and the token shapes below) is refused. No model is called.
 """
@@ -40,6 +40,8 @@ POSTS = AGORA / "posts.jsonl"
 NOW = float(os.environ.get("FLEET_NOW", time.time()))
 KINDS = ("gripe", "win", "idea", "wish", "kudos")
 POST_MAX = 280
+# The last second time.localtime can show (9999-12-31): a later `at` is no post.
+AT_MAX = 253_402_300_799
 FILE_MAX = 256 * 1024
 EVERY_S = 3600
 HEPH = "am_michael"
@@ -254,17 +256,26 @@ def secret_in(text: str) -> bool:
 
 def archive(lines: list[str]) -> None:
     """Move LINES, the full posts file, to agora/archive/, all but the last
-    hour's posts, which stay so the hourly limit still sees them; each post is
-    in one file only. The archive is written first and the live file replaced
-    whole, so a crash between them loses no post."""
+    hour's posts, which stay so the hourly limit still sees them. The archive
+    is written first, in a file of its own, and the live file replaced whole:
+    a crash between the two leaves the moved posts in both, and loses none."""
     keep, old = [], []
     for line in lines:
         p = as_post(line)
         (keep if p and NOW - EVERY_S < p["at"] <= NOW else old).append(line)
+    if not old:
+        return
     (AGORA / "archive").mkdir(exist_ok=True)
-    (AGORA / "archive" / f"posts-{int(NOW)}.jsonl").write_text(
-        "".join(old), encoding="utf-8"
-    )
+    for n in range(100):
+        name = f"posts-{int(NOW)}{f'-{n}' if n else ''}.jsonl"
+        try:
+            with (AGORA / "archive" / name).open("x", encoding="utf-8") as f:
+                f.write("".join(old))
+            break
+        except FileExistsError:
+            continue
+    else:
+        raise OSError("no free archive name in agora/archive/")
     tmp = POSTS.with_suffix(".tmp")
     tmp.write_text("".join(keep), encoding="utf-8")
     os.replace(tmp, POSTS)
@@ -278,7 +289,8 @@ def as_post(line: str) -> dict | None:
         return None
     if (
         isinstance(p, dict)
-        and isinstance(p.get("at"), int)
+        and type(p.get("at")) is int
+        and 0 < p["at"] <= AT_MAX
         and isinstance(p.get("who"), str)
         and isinstance(p.get("text"), str)
     ):

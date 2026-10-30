@@ -310,6 +310,11 @@ class Agora(unittest.TestCase):
         self.assertEqual(
             self.run_agora("post", "x", "--link", "https://evil.example/x")[0], 2
         )
+        pr = "https://github.com/ajbarea/klepsydra/pull/192"
+        for around in (f"javascript:x//{pr}", f"{pr}#x", f" {pr}"):
+            self.assertEqual(
+                self.run_agora("post", "x", "--link", around)[0], 2, around
+            )
         self.live(ended={"at": 1})
         self.assertEqual(self.run_agora("post", "x")[0], 2, "an ended session")
         self.assertEqual(self.posts(), [])
@@ -337,6 +342,40 @@ class Agora(unittest.TestCase):
         self.assertNotIn("recent", archived, "each post in one file only")
         self.assertIn("dated ahead", archived)
         self.assertEqual(archived.count("\n"), 1401)
+
+    def test_two_archives_in_one_second_are_both_kept(self):
+        (self.k / "agora" / "archive").mkdir(parents=True)
+        (self.k / "agora" / "archive" / f"posts-{int(NOW)}.jsonl").write_text(
+            "earlier\n"
+        )
+        big = json.dumps({"at": 1, "who": "old", "text": "z" * 200}) + "\n"
+        (self.k / "agora" / "posts.jsonl").write_text(big * 1400)
+        self.assertEqual(self.run_agora("post", "fresh")[0], 0)
+        archive = self.k / "agora" / "archive"
+        self.assertEqual(len(list(archive.glob("posts-*.jsonl"))), 2)
+        self.assertEqual(
+            (archive / f"posts-{int(NOW)}.jsonl").read_text(),
+            "earlier\n",
+            "the earlier archive is not overwritten",
+        )
+        self.assertIn("zzz", (archive / f"posts-{int(NOW)}-1.jsonl").read_text())
+
+    def test_a_full_file_of_the_last_hours_posts_writes_no_empty_archive(self):
+        (self.k / "agora").mkdir()
+        recent = json.dumps({"at": NOW - 60, "who": "a", "text": "z" * 200}) + "\n"
+        (self.k / "agora" / "posts.jsonl").write_text(recent * 1400)
+        self.assertEqual(self.run_agora("post", "fresh")[0], 0)
+        self.assertEqual(list((self.k / "agora").glob("archive/*")), [])
+
+    def test_a_line_dated_past_any_clock_is_no_post(self):
+        (self.k / "agora").mkdir()
+        far = json.dumps({"at": 10**20, "who": "x", "text": "far"}) + "\n"
+        true = json.dumps({"at": True, "who": "x", "text": "bool"}) + "\n"
+        (self.k / "agora" / "posts.jsonl").write_text(far + true)
+        code, out = self.run_agora("list")[:2]
+        self.assertEqual(code, 0)
+        self.assertNotIn("far", out)
+        self.assertNotIn("bool", out, "a JSON true is no time")
 
     def test_control_characters_are_flattened(self):
         self.run_agora("post", "two\nlines\x1b[31m")
