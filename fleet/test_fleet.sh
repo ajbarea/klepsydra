@@ -751,6 +751,24 @@ check "logged with both folders and the new pane" \
   "$(jq -r 'select(.message == "moved to the other account at a limit") | [.from, .to, .new_pane] | join(" ")' "$FLEET_LOG")" "$work/cfg-a $work/cfg-b %997"
 t kill-window -t "$p" 2>/dev/null; : >"$REGISTRY"
 
+# A background task's notification starts a turn during the launch; at the
+# limit it fails at once, so the move goes on.
+cat >"$work/launch-limturn.sh" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' "\$FLEET_ACCOUNT" "\$@" >"$work/moved"
+jq '.turn_at = 999999999999' "$KLEPSYDRA_DIR/fleet/$SID.json" >"$work/st.json" && mv "$work/st.json" "$KLEPSYDRA_DIR/fleet/$SID.json"
+echo "pane=%995 session=x account=\$FLEET_ACCOUNT avail=1MiB brief=started"
+EOF
+chmod +x "$work/launch-limturn.sh"
+: >"$FLEET_LOG"; : >"$work/moved"
+p=$(pane limturn "{\"above\":[\"⏺ Done. done 11:50 AM\",\"$LIMIT\"]}"); settle
+live "$p"
+printf '%s\tlimturn\t%s\t%s\t/w\t%s\n' "$p" "$work/brief.src" "$SID" "$work/cfg-a" >"$REGISTRY"
+LAUNCH="$work/launch-limturn.sh" FLEET_NOW=$noon bash "$here/resume-at-reset.sh" --once 2>/dev/null
+check "#198 review 3: a notification's turn during a move at a limit does not keep the old pane" \
+  "$(events limturn) $(logged 'moved to the other account at a limit')" "SUBMIT /exit $p "
+t kill-window -t "$p" 2>/dev/null; : >"$REGISTRY"
+
 : >"$FLEET_LOG"; : >"$work/moved"
 p=$(pane carrier "{\"above\":[\"⏺ Done. done 11:50 AM\",\"$LIMIT\"]}"); settle
 live "$p"
@@ -803,6 +821,23 @@ check "the records follow him: pane, session and folder" \
 check "the old pane exits" "$(events heph)" "SUBMIT /exit"
 check "logged as the orchestrator's move" "$(jq -r 'select(.message == "moved to the other account at a limit") | [.orchestrator, .from, .to] | join(" ")' "$FLEET_LOG")" "1 $work/cfg-a $work/cfg-b"
 t kill-window -t "$h" 2>/dev/null
+
+# A background task's notification starts a turn during his launch; at the
+# limit it fails at once, so he still moves.
+cat >"$work/launch-hturn.sh" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' "\$FLEET_ACCOUNT" "\$1" >"$work/moved"
+jq '.turn_at = 999999999999' "$KLEPSYDRA_DIR/fleet/$SID.json" >"$work/st.json" && mv "$work/st.json" "$KLEPSYDRA_DIR/fleet/$SID.json"
+echo "pane=%993 session=aaaaaaaa-0000-4000-8000-0000000000cd account=\$FLEET_ACCOUNT avail=1MiB brief=started"
+EOF
+chmod +x "$work/launch-hturn.sh"
+: >"$FLEET_LOG"; : >"$work/moved"; rm -f "$FLEET_STATE/orchestrator.config" "$FLEET_STATE/orchestrator.session"
+h=$(pane hturn "{\"above\":[\"⏺ ok\",\"$LIMIT\"]}"); settle
+printf '%s\n' "$h" >"$FLEET_STATE/orchestrator.pane"; live "$h"
+LAUNCH="$work/launch-hturn.sh" FLEET_HEPH="$work/HEPH.md" FLEET_NOW=$noon bash "$here/resume-at-reset.sh" --once 2>/dev/null
+check "#198 review 4: a notification's turn during Heph's move at a limit does not keep him" \
+  "$(events hturn) $(cat "$FLEET_STATE/orchestrator.pane")" "SUBMIT /exit %993"
+t kill-window -t "$h" 2>/dev/null; rm -f "$KLEPSYDRA_DIR/fleet/$SID.json" "$FLEET_STATE/resume-state"
 
 : >"$work/moved"; rm -f "$FLEET_STATE/orchestrator.config" "$FLEET_STATE/orchestrator.session"
 h=$(pane hephtyped "{\"above\":[\"⏺ ok\",\"$LIMIT\"]}"); settle
@@ -878,6 +913,120 @@ t send-keys -t "$p" -l "AJ: one more thing"; settle; done_live "$p" "done"
 mover "$((noon + 180))"
 check "nor over a line AJ is typing" "$(wc -c <"$work/moved") $(grep -c '^SUBMIT' "$work/bgwork.log")" "0 0"
 t kill-window -t "$p"; : >"$REGISTRY"
+
+echo "two accounts: a worker that keeps background work is asked to move back (#198)"
+# The live session in pane $1, as the hook writes it: its turn $2 (settled:
+# over, with background work left; running), background $3, last reply $4 at
+# $5 (the turn started a little before it).
+reply_live() { jq -n --arg p "$1" --arg turn "$2" --argjson bg "$3" --arg r "$4" --argjson at "$5" \
+  '{session_id: "x", ended: null, tmux: {pane: $p}, state: "working", reason: (if $turn == "settled" then "background" else null end),
+    background: $bg, reply: {text: $r, at: $at}, prompt: {at: 1}, turn_at: ($at - 5)}' >"$KLEPSYDRA_DIR/fleet/$SID.json"; }
+: >"$FLEET_LOG"; : >"$work/moved"; rm -f "$FLEET_STATE/resume-state" "$FLEET_STATE/back-room-since"
+p=$(backpane keeper); state keeper '{"above":["⏺ Done. done 11:50 AM"],"on_submit":"none"}'
+reply_live "$p" settled '[{"id": "w1", "kind": "bash"}]' "Watching the TIGRIS job." "$noon"
+mover "$noon"
+check "#198: a finished turn with a background shell is not moved at once" "$(wc -c <"$work/moved") $(grep -c '^SUBMIT' "$work/keeper.log")" "0 0"
+mover "$((noon + 240))"
+check "#198: nor asked before the preferred account has had room for 5 min" "$(grep -c '^SUBMIT' "$work/keeper.log")" "0"
+mover "$((noon + 300))"
+check "#198: then it is asked to save, stop its background work and answer READY-TO-MOVE" \
+  "$(grep -c '^SUBMIT Your preferred account, Personal, has room again.*first line is READY-TO-MOVE alone' "$work/keeper.log")" "1"
+check "#198: the request is logged, not urgent while Heph's account has room" \
+  "$(jq -r 'select(.message | startswith("asked to save")) | [.pane, .from, .to, .urgent, .delivery] | join(" ")' "$FLEET_LOG")" "$p RIT Personal 0 sent"
+mover "$((noon + 360))"
+check "#198: asked once, not every pass" "$(wc -c <"$work/moved") $(grep -c '^SUBMIT' "$work/keeper.log")" "0 1"
+reply_live "$p" settled '[{"id": "w1", "kind": "bash"}]' "READY-TO-MOVE" "$((noon + 200))"
+mover "$((noon + 420))"
+check "#198: a READY-TO-MOVE from before the request does not move it" "$(wc -c <"$work/moved")" "0"
+reply_live "$p" settled '[{"id": "w1", "kind": "bash"}]' "READY-TO-MOVE" "$((noon + 410))"
+jq ".turn_at = $((noon + 415))" "$KLEPSYDRA_DIR/fleet/$SID.json" >"$work/st.json" && mv "$work/st.json" "$KLEPSYDRA_DIR/fleet/$SID.json"
+mover "$((noon + 425))"
+check "#198 review 2: nor one a later turn, ended with no reply, left standing" "$(wc -c <"$work/moved")" "0"
+reply_live "$p" running '[{"id": "w1", "kind": "bash"}]' "READY-TO-MOVE" "$((noon + 430))"
+mover "$((noon + 440))"
+check "#198: nor one whose turn still runs" "$(wc -c <"$work/moved")" "0"
+reply_live "$p" settled '[{"id": "w1", "kind": "bash"}]' "Saved and pushed. READY-TO-MOVE" "$((noon + 430))"
+mover "$((noon + 435))"
+check "#198: a READY-TO-MOVE that ends a line, not alone on the first, does not move it" "$(wc -c <"$work/moved")" "0"
+reply_live "$p" settled '[{"id": "w1", "kind": "bash"}]' "Not yet: the TIGRIS job still runs, so I am not READY-TO-MOVE." "$((noon + 430))"
+mover "$((noon + 440))"
+check "#198: a reply that only mentions READY-TO-MOVE does not move it" "$(wc -c <"$work/moved")" "0"
+reply_live "$p" settled '[{"id": "w1", "kind": "bash"}]' $'READY-TO-MOVE once job 4411 ends.\nIt has an hour left.' "$((noon + 430))"
+mover "$((noon + 450))"
+check "#198: nor a first line that goes on past it" "$(wc -c <"$work/moved")" "0"
+reply_live "$p" settled '[{"id": "w1", "kind": "bash"}]' $'**READY-TO-MOVE**\nSaved IMPL.md and pushed; stopped w1.' "$((noon + 430))"
+mover "$((noon + 480))"
+check "#198: it moves on a first line of READY-TO-MOVE at a finished turn" "$(head -2 "$work/moved" | tr '\n' ' ')" "$work/cfg-a keeper "
+t kill-window -t "$p" 2>/dev/null; : >"$REGISTRY"
+
+# A turn that starts while the fresh session launches (a background task's
+# notification) keeps the old pane.
+cat >"$work/launch-turn.sh" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' "\$FLEET_ACCOUNT" "\$@" >"$work/moved"
+jq '.turn_at = 999999999999' "$KLEPSYDRA_DIR/fleet/$SID.json" >"$work/st.json" && mv "$work/st.json" "$KLEPSYDRA_DIR/fleet/$SID.json"
+echo "pane=%996 session=x account=\$FLEET_ACCOUNT avail=1MiB brief=started"
+EOF
+chmod +x "$work/launch-turn.sh"
+: >"$FLEET_LOG"; : >"$work/moved"; rm -f "$FLEET_STATE/resume-state" "$FLEET_STATE/back-room-since"
+p=$(backpane notified); state notified '{"above":["⏺ Done. done 11:50 AM"],"on_submit":"none"}'
+reply_live "$p" settled '[{"id": "w1", "kind": "bash"}]' "Watching." "$noon"
+mover "$noon"; mover "$((noon + 300))"
+reply_live "$p" settled '[{"id": "w1", "kind": "bash"}]' "READY-TO-MOVE" "$((noon + 330))"
+LAUNCH="$work/launch-turn.sh" FLEET_NOW=$((noon + 360)) bash "$here/resume-at-reset.sh" --once 2>/dev/null
+check "#198 review 1: a turn begun during the launch keeps the old pane" \
+  "$(logged "the old pane changed while its fresh session launched")$(grep -c 'SUBMIT /exit' "$work/notified.log")" "$p 0"
+t kill-window -t "$p" 2>/dev/null; : >"$REGISTRY"
+
+# Room that goes away while the worker waits starts its 5 min again.
+: >"$FLEET_LOG"; : >"$work/moved"; rm -f "$FLEET_STATE/resume-state" "$FLEET_STATE/back-room-since"
+p=$(backpane flap); state flap '{"above":["⏺ Done. done 11:50 AM"],"on_submit":"none"}'
+reply_live "$p" settled '[{"id": "w1", "kind": "bash"}]' "Watching." "$noon"
+mover "$noon"
+reading a Personal 60 5000; mover "$((noon + 100))"
+reading a Personal 10 5000; mover "$((noon + 200))"; mover "$((noon + 320))"
+check "#198 review 1: room that went away starts the 5 min again" "$(grep -c '^SUBMIT' "$work/flap.log")" "0"
+mover "$((noon + 500))"
+check "#198 review 1: and it is asked 5 min after room came back" "$(grep -c '^SUBMIT' "$work/flap.log")" "1"
+t kill-window -t "$p" 2>/dev/null; : >"$REGISTRY"
+
+# Heph keeps his background work: he is never asked.
+: >"$FLEET_LOG"; : >"$work/moved"; rm -f "$FLEET_STATE/resume-state" "$FLEET_STATE/back-room-since"
+q=$(pane hephbg '{"above":["⏺ Done. done 11:50 AM"],"on_submit":"none","rc":"on"}'); settle
+reply_live "$q" settled '[{"id": "w1", "kind": "bash"}]' "Watching." "$noon"
+printf '%s\n' "$q" >"$FLEET_STATE/orchestrator.pane"; printf '%s\n' "$work/cfg-a" >"$FLEET_STATE/orchestrator.config"
+# The first pass turns Remote Control on; the 5 min count from the second.
+mover "$noon"; mover "$((noon + 300))"; mover "$((noon + 700))"; mover "$((noon + 800))"
+check "#198 review 1: Heph with background work is never asked, once Remote Control is on" \
+  "$(grep -c 'RC REQUESTED' "$work/hephbg.log") $(grep '^SUBMIT' "$work/hephbg.log" | grep -vc remote-control) $(wc -c <"$work/moved")" "1 0 0"
+t kill-window -t "$q" 2>/dev/null; rm -f "$FLEET_STATE/orchestrator.pane" "$FLEET_STATE/orchestrator.config"
+
+: >"$FLEET_LOG"; : >"$work/moved"; rm -f "$FLEET_STATE/resume-state" "$FLEET_STATE/back-room-since"
+reading b RIT 80 4000
+printf '%s\n' "$work/cfg-b" >"$FLEET_STATE/orchestrator.config"
+p=$(backpane hurry); state hurry '{"above":["⏺ Done. done 11:50 AM"],"on_submit":"none"}'
+reply_live "$p" settled '[{"id": "w1", "kind": "agent"}]' "Waiting on a subagent." "$noon"
+mover "$noon"; mover "$((noon + 300))"
+check "#198: urgent while it borrows Heph's account and that one has under 30% room" \
+  "$(grep -c '^SUBMIT Urgent: Heph' "$work/hurry.log") $(jq -r 'select(.message | startswith("asked to save")) | .urgent' "$FLEET_LOG")" "1 1"
+t kill-window -t "$p" 2>/dev/null; : >"$REGISTRY"
+: >"$FLEET_LOG"; rm -f "$FLEET_STATE/resume-state" "$FLEET_STATE/back-room-since"
+printf '%s\n' "$work/cfg-a" >"$FLEET_STATE/orchestrator.config"
+p=$(backpane calm); state calm '{"above":["⏺ Done. done 11:50 AM"],"on_submit":"none"}'
+reply_live "$p" settled '[{"id": "w1", "kind": "agent"}]' "Waiting on a subagent." "$noon"
+mover "$noon"; mover "$((noon + 300))"
+check "#198 review 1: not urgent once Heph runs on the other account" \
+  "$(grep -c '^SUBMIT Your preferred' "$work/calm.log") $(jq -r 'select(.message | startswith("asked to save")) | .urgent' "$FLEET_LOG")" "1 0"
+t kill-window -t "$p" 2>/dev/null; : >"$REGISTRY"; rm -f "$FLEET_STATE/orchestrator.config"
+reading b RIT 10 4000
+
+: >"$work/moved"; rm -f "$FLEET_STATE/resume-state" "$FLEET_STATE/back-room-since"
+p=$(backpane typing); state typing '{"above":["⏺ Done. done 11:50 AM"],"on_submit":"none"}'
+reply_live "$p" settled '[{"id": "w1", "kind": "bash"}]' "Watching." "$noon"
+t send-keys -t "$p" -l "AJ: hold on"; settle
+mover "$noon"; mover "$((noon + 300))"
+check "#198: never asked over a line AJ is typing" "$(grep -c '^SUBMIT' "$work/typing.log")" "0"
+t kill-window -t "$p" 2>/dev/null; : >"$REGISTRY"
 
 reading a Personal 60 5000
 p=$(backpane low)
@@ -1179,7 +1328,11 @@ date +%s.%N >>"$work/par-starts"
 sleep 3
 echo "pane=%99\$\$ session=x account=\$FLEET_ACCOUNT avail=1MiB brief=started"
 EOF
-LAUNCH="$work/launch-slow3.sh" FLEET_NOW=$noon POLL_S=1 timeout 9 bash "$here/resume-at-reset.sh" 2>/dev/null
+LAUNCH="$work/launch-slow3.sh" FLEET_NOW=$noon POLL_S=1 timeout 40 bash "$here/resume-at-reset.sh" 2>/dev/null &
+svc=$!
+for _ in $(seq 60); do [[ -n $(logged 'moved to the other account at a limit') ]] && break; sleep 0.5; done
+sleep 2.5 # two more passes, which must not launch again
+kill "$svc" 2>/dev/null; wait "$svc" 2>/dev/null
 check "review 1: passes while its move runs leave the pane alone: one launch, then moved" \
   "$(wc -l <"$work/par-starts") $(logged 'moved to the other account at a limit' | wc -w)" "1 1"
 t kill-window -t "$p" 2>/dev/null; : >"$REGISTRY"
