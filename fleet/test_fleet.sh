@@ -697,6 +697,24 @@ check "logged with both folders and the new pane" \
   "$(jq -r 'select(.message == "moved to the other account at a limit") | [.from, .to, .new_pane] | join(" ")' "$FLEET_LOG")" "$work/cfg-a $work/cfg-b %997"
 t kill-window -t "$p" 2>/dev/null; : >"$REGISTRY"
 
+# A background task's notification starts a turn during the launch; at the
+# limit it fails at once, so the move goes on.
+cat >"$work/launch-limturn.sh" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' "\$FLEET_ACCOUNT" "\$@" >"$work/moved"
+jq '.turn_at = 999999999999' "$KLEPSYDRA_DIR/fleet/$SID.json" >"$work/st.json" && mv "$work/st.json" "$KLEPSYDRA_DIR/fleet/$SID.json"
+echo "pane=%995 session=x account=\$FLEET_ACCOUNT avail=1MiB brief=started"
+EOF
+chmod +x "$work/launch-limturn.sh"
+: >"$FLEET_LOG"; : >"$work/moved"
+p=$(pane limturn "{\"above\":[\"⏺ Done. done 11:50 AM\",\"$LIMIT\"]}"); settle
+live "$p"
+printf '%s\tlimturn\t%s\t%s\t/w\t%s\n' "$p" "$work/brief.src" "$SID" "$work/cfg-a" >"$REGISTRY"
+LAUNCH="$work/launch-limturn.sh" FLEET_NOW=$noon bash "$here/resume-at-reset.sh" --once 2>/dev/null
+check "#198 review 3: a notification's turn during a move at a limit does not keep the old pane" \
+  "$(events limturn) $(logged 'moved to the other account at a limit')" "SUBMIT /exit $p "
+t kill-window -t "$p" 2>/dev/null; : >"$REGISTRY"
+
 : >"$FLEET_LOG"; : >"$work/moved"
 p=$(pane carrier "{\"above\":[\"⏺ Done. done 11:50 AM\",\"$LIMIT\"]}"); settle
 live "$p"

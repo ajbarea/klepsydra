@@ -315,11 +315,14 @@ heph_move() { # PANE TO WHY [NOTE] [STAMP]
   printf '%s' "$new"
 }
 
-# The live session in PANE's stamp (STAMP_JQ: its last prompt and turn), or nothing.
+# The live session in PANE's stamp, or nothing: STAMP_JQ (its last prompt and
+# turn), or with STAMP_KIND=prompt its last typed or phone prompt alone, for a
+# move at a limit, where a turn a task notification starts fails at once.
 prompt_stamp() { # PANE
-  local sid
+  local sid of=$STAMP_JQ
+  [[ ${STAMP_KIND:-} == prompt ]] && of='.prompt.at // ""'
   sid=$(live_session "$1") || return 0
-  jq -r "$STAMP_JQ" "$KLEPSYDRA_DIR/fleet/$sid.json" 2>/dev/null
+  jq -r "$of" "$KLEPSYDRA_DIR/fleet/$sid.json" 2>/dev/null
 }
 
 # Retire a pane this pass launched, interrupting its turn; kill it if it will not exit.
@@ -719,9 +722,9 @@ one() { # PANE
       flog WARN "a pasted block cannot be carried to the other account; the pane waits for its reset" pane="$p" text="$carry"
     elif [[ -z $typed || -n $carry ]]; then
       if (( orch )); then
-        spawn "$p" limit "$name$US$orch$US$cfg$US$other" heph_move "$p" "$other" "stopped at a usage limit on one account, and moves to the other, which has room" "$carry"
+        STAMP_KIND=prompt spawn "$p" limit "$name$US$orch$US$cfg$US$other" heph_move "$p" "$other" "stopped at a usage limit on one account, and moves to the other, which has room" "$carry"
       else
-        spawn "$p" limit "$name$US$orch$US$cfg$US$other" fresh "$p" "$name" "$brief" "stopped at a usage limit on one account, and you continue on the other, which has room" "$other" "$carry"
+        STAMP_KIND=prompt spawn "$p" limit "$name$US$orch$US$cfg$US$other" fresh "$p" "$name" "$brief" "stopped at a usage limit on one account, and you continue on the other, which has room" "$other" "$carry"
       fi
       return
     fi

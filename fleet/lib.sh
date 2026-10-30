@@ -510,7 +510,8 @@ turn_settled() { # PANE
 
 # Whether the agent in PANE answered a move-back request sent at ASKED with a
 # reply whose first line is READY-TO-MOVE alone (bold or code marks aside), and
-# finished that turn. Prints its stamp, as turn_done does.
+# finished that turn, with no turn since (a later one, a task notification's,
+# voids it until the next ask). Prints its stamp, as turn_done does.
 ready_to_move() { # PANE ASKED
   local sid
   [[ $2 =~ ^[0-9]+$ ]] || return 1
