@@ -209,6 +209,11 @@ pub fn view(entry: &Entry, now: i64) -> Option<View> {
                 }
             }
         }
+        // A finished background run stays in the set until Stop; fewer shells
+        // running than it names means some have ended.
+        if let Some(live) = f.shells_live {
+            crew.shells = crew.shells.min(live);
+        }
     }
     // A turn that ended with work out: once all of it is stale, it is done.
     let after_turn = f.state == State::Working && f.reason.as_deref() == Some("background");
@@ -455,6 +460,7 @@ mod tests {
             host: None,
             claude: None,
             background: vec![],
+            shells_live: None,
             turns: None,
             turns_at: None,
             turn_at: None,
@@ -1141,6 +1147,35 @@ mod tests {
     fn voice_of<'a>(s: &'a Snapshot, id: &str) -> Option<&'a str> {
         let v = s.sessions.iter().find(|v| v.session_id == id).unwrap();
         v.voice.as_deref()
+    }
+
+    #[test]
+    fn fewer_shells_running_than_the_set_names_caps_the_count() {
+        let mut e = entry("s", State::Working, NOW - 10, NOW - 5);
+        e.file.background = (1..=3)
+            .map(|i| Background {
+                id: format!("s{i}"),
+                kind: Kind::Shell,
+                at: NOW - 20,
+            })
+            .collect();
+        e.file.shells_live = Some(1);
+        assert_eq!(view(&e, NOW).unwrap().background.shells, 1);
+        e.file.shells_live = None;
+        assert_eq!(
+            view(&e, NOW).unwrap().background.shells,
+            3,
+            "unknown: the set stands"
+        );
+        e.file.shells_live = Some(5);
+        assert_eq!(
+            view(&e, NOW).unwrap().background.shells,
+            3,
+            "more running than named (foreground calls) adds none"
+        );
+        e.file.background.clear();
+        e.file.shells_live = Some(2);
+        assert_eq!(view(&e, NOW).unwrap().background.shells, 0);
     }
 
     #[test]

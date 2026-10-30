@@ -176,6 +176,45 @@ claude_ancestor() { # pid
   return 1
 }
 
+# How many Bash tool calls Claude Code process `pid` runs now: its child
+# shells, one per call however many subshells or pipes the call starts, less
+# the one running this hook (`me` and its parents). Claude Code's footer counts
+# them so; the hook events cannot, since none fires when a background shell
+# ends mid-turn. A zombie has ended; sh and dash are hook wrappers (dash keeps
+# its process for `sh -c CMD`), never a Bash tool call: Claude Code runs those
+# in bash or zsh, or the CLAUDE_CODE_SHELL it names. Where /bin/sh is bash, a
+# hook wrapper can briefly count; the card's min with its set bounds that.
+# Prints nothing when no children list is readable, 0 for an empty one, and
+# nothing under CLAUDE_CODE_SHELL_PREFIX, whose wrapper hides the shell.
+live_shells() { # pid me
+  local pid=$1 p=$2 f child comm n=0 listed=0 i own=${CLAUDE_CODE_SHELL:-}
+  local -a stat=() mine=()
+  [[ -n ${CLAUDE_CODE_SHELL_PREFIX:-} ]] && return 0
+  own=${own##*/}
+  [[ $own == sh || $own == dash ]] && own=""
+  for ((i = 0; i < 32; i++)); do
+    [[ $p == "$pid" ]] && break
+    mine+=("$p")
+    proc_stat "$p" || break
+    p=${stat[1]}
+    (( p >= 1 )) || break
+  done
+  for f in "$PROC_ROOT/$pid"/task/*/children; do
+    [[ -r $f ]] || continue
+    listed=1
+    for child in $(<"$f"); do
+      [[ $child =~ ^[0-9]+$ ]] || continue
+      [[ " ${mine[*]} " == *" $child "* ]] && continue
+      proc_stat "$child" && [[ ${stat[0]} == Z ]] && continue
+      comm=""
+      { IFS= read -r comm <"$PROC_ROOT/$child/comm"; } 2>/dev/null
+      # bwrap: a call in Claude Code's sandbox.
+      [[ $comm == bash || $comm == zsh || $comm == bwrap || (-n $own && $comm == "${own:0:15}") ]] && n=$((n + 1))
+    done
+  done
+  (( listed )) && printf '%s' "$n"
+}
+
 # The voice keryx holds for a terminal, or nothing without keryx or a hold.
 holder_voice() { # pid start
   [[ -n $VOICES && -r $VOICES ]] || return 0
@@ -647,6 +686,18 @@ def notified: if type == "string" then [scan("<task-notification>[\\s\\S]*?</tas
   | if $adopt then .background |= (bg_add($agent; "agent") | .[-$bg_max:]
       | map(if .id == $agent then .adopted = true | (if $over then .async = true else . end) else . end))
     else . end
+  # No event says a background shell ended mid-turn, so the set keeps it until
+  # Stop (#167). The shells Claude Code still runs (live_shells) are kept as
+  # shells_live, which caps the card's count; a count cannot say which entry
+  # ended, so entries go only once no shell runs at all.
+  | if ($live | test("^[0-9]+$")) then
+      ($live | tonumber) as $n
+      # A Stop's own task list is the truth (a job that exec'd into a
+      # non-shell program counts as no shell, but the list still names it).
+      | if $event == "Stop" and ($ev.background_tasks | type) == "array" then del(.shells_live)
+        else .shells_live = $n
+          | if $n == 0 then .background |= map(select(.kind != "shell")) else . end end
+    else del(.shells_live) end
 
   # State, with what it needs from AJ and who asked.
   | (if $event == "SessionStart" then
@@ -863,8 +914,10 @@ main() {
     # A memory or plan file outside every repo says nothing about where work is.
     (( where_bare )) && where_repo=""
   fi
+  local live=""
   if claude_ancestor "${KLEPSYDRA_PID:-$$}"; then
     voice=$(holder_voice "$found_pid" "$found_start") || voice=""
+    live=$(live_shells "$found_pid" "${KLEPSYDRA_PID:-$$}")
   fi
   [[ -n $voice ]] || homes=$(home_voices "$now")
 
@@ -925,7 +978,7 @@ main() {
     --arg repo "$where_repo" --arg worktree "$where_worktree" --arg branch "$where_branch" \
     --arg git "$where_git" --argjson where_gone "$where_gone" --arg by "$by" \
     --arg tmux_socket "$tmux_socket" --arg tmux_pane "$tmux_pane" --arg boot "$host_boot" --arg distro "$host_distro" \
-    --arg voice "$voice" --argjson homes "$homes" --arg cwd_repo "$cwd_repo" --arg pid "$found_pid" --arg start "$found_start" --arg remote "$remote" --arg cleared "$cleared" --argjson account "$account" \
+    --arg voice "$voice" --argjson homes "$homes" --arg cwd_repo "$cwd_repo" --arg pid "$found_pid" --arg start "$found_start" --arg remote "$remote" --arg cleared "$cleared" --argjson account "$account" --arg live "$live" \
     --arg fleet_agent "$agent" --argjson orchestrator "$orchestrator" \
     "$APPLY" 2>/dev/null) || new=""
   # A cast newer than this session's file: the theme changed under it. The

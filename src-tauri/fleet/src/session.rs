@@ -109,6 +109,13 @@ fn lenient_turns<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<u64>, 
     ))
 }
 
+/// A live shell count, or none for a value that is not one (the file still reads).
+fn lenient_shells<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<u32>, D::Error> {
+    Ok(serde_json::Value::deserialize(d)?
+        .as_u64()
+        .and_then(|n| u32::try_from(n).ok()))
+}
+
 /// What a session waiting on AJ needs. Only whether the ask came after its
 /// turn had ended (a background subagent's) is read.
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq)]
@@ -217,6 +224,10 @@ pub struct SessionFile {
     /// Subagents and background shells still running; none when absent.
     #[serde(default, deserialize_with = "lenient_background")]
     pub background: Vec<Background>,
+    /// The shells Claude Code ran at the hook's last event, its Bash calls
+    /// foreground and background (#167); none when /proc could not say.
+    #[serde(default, deserialize_with = "lenient_shells")]
+    pub shells_live: Option<u32>,
     /// How many turns have ended (Stops); None from a hook that never counted.
     #[serde(default, deserialize_with = "lenient_turns")]
     pub turns: Option<u64>,
