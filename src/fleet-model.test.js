@@ -8,6 +8,7 @@ import {
   BAND, accountsDiffer, castPicks,
   branchPage,
   githubPage,
+  plainDir,
 } from "./fleet/model.js";
 import { contrast } from "./fleet/contrast.js";
 import { TONES, hash, initialOf, medallion, medallionSvg, toneOf } from "./fleet/medallion.js";
@@ -896,6 +897,10 @@ test("#149: a card's folder opens when the hook named it, and only a plain GitHu
     assert.equal(githubPage(bad), null, String(bad));
   }
   assert.equal(place({ ...at, dir: "relative" }).folder, false);
+  for (const dir of ["/", "/home/aj/../etc", "/home//aj", "/home/aj/.", "/home/a\nj", `/${"a".repeat(1024)}`, null]) {
+    assert.equal(plainDir(dir), false, String(dir));
+  }
+  assert.equal(plainDir("/home/aj/ajsoftworks/klepsydra"), true, "the same rule as folder.rs plain_dir");
   assert.equal(branchPage("https://github.com/a/b", "feat/x y"), "https://github.com/a/b/tree/feat/x%20y");
   assert.equal(branchPage(null, "main"), null);
   assert.equal(branchPage("https://github.com/a/b", null), null);

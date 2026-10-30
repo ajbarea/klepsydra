@@ -1107,6 +1107,28 @@ mod tests {
     }
 
     #[test]
+    fn only_a_plain_github_repo_page_reaches_the_walls() {
+        for (github, shown) in [
+            ("https://github.com/ajbarea/klepsydra", true),
+            ("https://github.com/a/b/c", false),
+            ("https://github.com/../etc", false),
+            ("https://example.com/a/b", false),
+        ] {
+            let mut e = entry("a", State::Done, NOW - 10, NOW - 5);
+            e.file.place = Some(Place {
+                repo: "r".into(),
+                worktree: None,
+                branch: None,
+                at: NOW - 10,
+                dir: None,
+                github: Some(github.into()),
+            });
+            let v = view(&e, NOW).unwrap();
+            assert_eq!(v.place.unwrap().github.is_some(), shown, "{github}");
+        }
+    }
+
+    #[test]
     fn extreme_times_never_panic() {
         for t in [i64::MIN, i64::MAX, 0] {
             for state in [State::Working, State::Ended, State::Done] {

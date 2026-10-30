@@ -386,6 +386,29 @@ pub fn is_session_id(stem: &str) -> bool {
 mod tests {
     use super::*;
 
+    #[test]
+    fn a_github_page_is_a_plain_owner_and_repo() {
+        let long = format!("https://github.com/a/{}", "b".repeat(101));
+        let longest = format!("https://github.com/a/{}", "b".repeat(100));
+        for (url, ok) in [
+            ("https://github.com/ajbarea/klepsydra", true),
+            ("https://github.com/a.b/c_d-e", true),
+            (longest.as_str(), true),
+            (long.as_str(), false),
+            ("https://github.com/a/b/c", false),
+            ("https://github.com/a", false),
+            ("https://github.com/../b", false),
+            ("https://github.com/a/.", false),
+            ("https://github.com/a/b c", false),
+            ("https://github.com/a/b%20c", false),
+            ("https://github.com//b", false),
+            ("http://github.com/a/b", false),
+            ("https://github.com.evil/a/b", false),
+        ] {
+            assert_eq!(is_github(url), ok, "{url}");
+        }
+    }
+
     const ID: &str = "cb9fa591-1514-44d1-a31c-eba4a7cb41ed";
     /// When the test files last changed, by the reader's clock.
     const MODIFIED: i64 = 1_800_000_110;

@@ -708,7 +708,7 @@ function showCi(view) {
   ciPanel.querySelector(".ci-runs").replaceChildren(
     ...v.rows.map((r) => {
       const li = document.createElement("li");
-      // A link on the phone; on the desktop the app cannot open one yet (#149), so the run's address is its tooltip.
+      // A link on the phone; on the desktop a run's address is its tooltip (the app opens only a session's own GitHub pages).
       const link = r.url && served;
       const head = document.createElement(link ? "a" : "span");
       head.className = "ci-head";

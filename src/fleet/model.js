@@ -97,6 +97,21 @@ const basename = (path) => (typeof path === "string" ? path.replace(/\/+$/, "").
  * session with no character of its own wears the one castPicks gave it
  * (`pick`), with no keryx voice to name.
  */
+/** A folder the app will open (folder.rs `plain_dir`): absolute, no empty, "." or ".." part, no control character. */
+export function plainDir(dir) {
+  return (
+    typeof dir === "string" &&
+    dir.length > 1 &&
+    dir.length <= 1024 &&
+    dir.startsWith("/") &&
+    !/[\u0000-\u001f\u007f-\u009f]/.test(dir) &&
+    dir
+      .slice(1)
+      .split("/")
+      .every((part) => part !== "" && part !== "." && part !== "..")
+  );
+}
+
 export function identity(s, cast) {
   const own = typeof s.voice === "string" && s.voice ? s.voice : null;
   const picked = !castFiles(castCharacter(own, cast), cast) && typeof s.pick === "string" ? s.pick : null;
@@ -522,7 +537,7 @@ export function card(s, cast, nowMs, request = null) {
           repo: s.where.repo,
           worktree: s.where.worktree ?? null,
           branch: s.where.branch ?? null,
-          folder: typeof s.where.dir === "string" && s.where.dir.startsWith("/"),
+          folder: plainDir(s.where.dir),
           github: githubPage(s.where.github),
         }
       : null,

@@ -85,6 +85,10 @@ check "#149: outside any repo, neither" "$(dirgh "$repos/loose/notes")" "|"
 g -C "$repos/klepsydra" config --add remote.upstream.url https://github.com/someone/else
 g -C "$repos/klepsydra" remote set-url origin 'https://github.com/a/b;rm -rf ~'
 check "#149: an origin that is not a plain owner/repo gives no page" "$(dirgh "$repos/klepsydra")" "$repos/klepsydra|"
+for odd in https://github.com/a/b/c https://github.com/a/b+c 'https://github.com/a/b%20c' ../sibling /srv/git/k.git; do
+  g -C "$repos/klepsydra" remote set-url origin "$odd"
+  check "#149: origin $odd gives no page" "$(dirgh "$repos/klepsydra")" "$repos/klepsydra|"
+done
 g -C "$repos/klepsydra" remote set-url origin https://github.com/ajbarea/klepsydra.git
 
 # keryx names the same repos; when its source is here, ask it directly. A

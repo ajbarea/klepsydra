@@ -114,14 +114,15 @@ git_where() { # path
 # `config` (its origin, by https or ssh), or nothing for another host or none.
 remote_of() { # config
   local line url="" in=0
-  while IFS= read -r line; do
+  # Braced, so a missing config's error goes too: on the loop the redirect opens before 2> applies.
+  { while IFS= read -r line; do
     line=${line#"${line%%[![:space:]]*}"}
     case $line in
       '[remote "origin"]'*) in=1 ;;
       '['*) in=0 ;;
       url*=*) (( in )) && { url=${line#*=}; url=${url#"${url%%[![:space:]]*}"}; url=${url%"${url##*[![:space:]]}"}; break; } ;;
     esac
-  done <"$1" 2>/dev/null
+  done <"$1"; } 2>/dev/null
   url=${url%.git}
   case $url in
     https://github.com/* | http://github.com/*) url=${url#*github.com/} ;;
