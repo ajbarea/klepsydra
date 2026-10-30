@@ -68,10 +68,13 @@ attach() { # a real client on a pty, like the tab would be
   for _ in $(seq 50); do [[ -n $(t list-clients -t =fleet 2>/dev/null) ]] && return; sleep 0.1; done
 }
 pane_pid() { t display -p -t "$1" '#{pane_pid}'; }
-pstart() { # pid: /proc/PID/stat field 22, as proc_stat in the launcher's proc stat block reads it
-  local raw; raw=$(cat "/proc/$1/stat" 2>/dev/null) || return 1
-  read -r -a st <<<"${raw##*") "}"; echo "${st[19]}"
+stat_fields() { # pid index...: /proc/PID/stat fields after the command name (index 0 is field 3)
+  local raw st i vals=(); raw=$(cat "/proc/$1/stat" 2>/dev/null) || return 1
+  read -r -a st <<<"${raw##*") "}"; shift
+  for i; do vals+=("${st[i]}"); done
+  echo "${vals[*]}"
 }
+pstart() { stat_fields "$1" 19; } # pid: field 22, as proc_stat in the launcher's proc stat block reads it
 jmp() { bash "$launch" jump "$socket" "$1" "$2" "$3"; } # pane pid start
 detach_all() {
   for p in "${clients[@]}" $(cat "$WT_PIDS" 2>/dev/null); do kill "$p" 2>/dev/null; done
@@ -271,15 +274,19 @@ gone() { # pane pid start
   echo "alive ($why; pid $2 $(proc_state "$2" "$3"))"
 }
 ended() { # pane pid start
+  # The process first: one tmux reaps after this read shows its status below.
+  local proc; proc=$(proc_state "$2" "$3")
   is_gone "$1" && return 0
   [[ $(t display -p -t "$1" '#{pane_dead}:#{pane_dead_status}' 2>/dev/null) == 1: ]] || return 1
-  [[ $(proc_state "$2" "$3") != running ]]
+  [[ $proc == exited || $proc == zombie:0 ]]
 }
-proc_state() { # pid start: exited, zombie or running
-  local raw st; raw=$(cat "/proc/$1/stat" 2>/dev/null) || { echo exited; return; }
-  read -r -a st <<<"${raw##*") "}"
-  [[ ${st[19]} == "$2" ]] || { echo exited; return; }
-  [[ ${st[0]} == Z ]] && echo zombie || echo running
+proc_state() { # pid start: exited, running, or zombie:N with N its wait status (field 52)
+  [[ $2 =~ ^[0-9]+$ ]] || { echo "no start time"; return; }
+  local f start state code
+  f=$(stat_fields "$1" 19 0 49) || { echo exited; return; }
+  read -r start state code <<<"$f"
+  [[ $start == "$2" ]] || { echo exited; return; }
+  [[ $state == Z ]] && echo "zombie:$code" || echo running
 }
 is_gone() { [[ $(alive "$1") == gone ]]; }
 # The fake logs a key when it reads it, which can be after the launch script
