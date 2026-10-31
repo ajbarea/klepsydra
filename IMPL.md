@@ -1,30 +1,22 @@
-# IMPL: klepsydra fleet-module brief, resume state 2026-10-30 20:25
+# IMPL: klepsydra fleet-module brief, resume state 2026-10-31 00:35
 
-Session 8 (fresh start on RIT, 10-30 evening) went idle at Heph's ask: moved to Personal (14% weekly room), waiting for RIT's 23:40 reset.
+Session 9b (fresh start on Personal after RIT's limit) parked at Athena's ask: Personal has 9% weekly room until Mon 11-02 13:00. RIT resets 04:40; the resume service moves this agent back there.
 Resume from this file, `git log`, open PRs and their comments. Brief: task-fleet-module.src.
 
-## Done this session
-- Merged, each review-clean with green CI and no new comments: #196, #206, #207 (earlier in session 8), then #218 (#134 launch end case), #210 (#208 Fleet health), #211 (#183 Voices).
-- Deployed from the main checkout at 73a49d9: `make install-fleet` (old scripts in archive/fleet-scripts-20261030), `fleet cutover` (all units enabled and active, fleet-doctor.timer new, resume service logged its start). The #214 clock fix is live before 2026-11-01's clock change.
-- `fleet doctor` after the cutover: two FAILs, neither from the deploy:
-  - phone wall over Tailscale: Windows Tailscale was still starting ("NoState", coordination server unreachable).
-  - agents: finished agents youtube, cisc810, bonsai-prs still have rows in panes.tsv. The remote-control check calls the same rows a warn ("a finished agent's row"), the agents check a FAIL, so the wall's Fleet health shows red until Heph prunes them. Candidate small fix: tell finished rows apart from a hard shutdown in doctor.sh's agents check.
+## In flight (in order)
+1. **#225 Play button (#223):** review clean (session 9). CI's "Gauge logic + statusLine hook" job was still running at 00:30. When green and no new comments: merge, Windows build (`flock /tmp/fleet-heavy.lock bash scripts/build-windows.sh`), reinstall.
+2. **#226 Athena (#222):** needs an independent review. Two reviewers were cut off (the first by the 04:40 limit, the second stopped at the park). The brief is in session 48c3c56a's scratchpad `review226.txt`; if that is gone, rebuild it: the three passes, plus every consumer of CAST (16), HEPH, ATHENA, ORCHESTRATORS, orchestrator_face, View/SessionFile fields, phone.rs, agora.rs, the ledger, the keeper, fleet/*.sh and *.py, and the app crate; migration of picks.json and session files on disk; a /clear in the orchestrator pane.
+3. **#220 doctor one verdict + `--prune`:** branch fix/doctor-220, commit c258a07 (WIP: the code and tests are written, shellcheck clean, but the fleet suite has not been rerun). Next: `flock /tmp/fleet-heavy.lock timeout 1800 bash fleet/test_fleet.sh`, squash the WIP message, PR (assignee ajbarea, closes #220), review.
+4. **#216 launches open behind:** branch fix/focus-216, commit b5ed15c, pushed. hooks/test_launch.sh 191/191, shellcheck clean. Every fleet path (fresh, move, resume, recover) goes through launch.sh, and every orchestrator relaunch uses the name `heph`, so Heph and Athena both come forward. Next: PR (closes #216), review, merge. The timers' trailing `select-window -t fleet:0` can go once this is live.
+5. Then #217 needs-you lingering, #157 part 3 rotation, #221 Heph terminal, #150, #154 wall Recover, #158 `--apply`, #185 part 3, #204 demo mode, #215, #163.
 
-## Next (in order)
-1. Windows build (`flock /tmp/fleet-heavy.lock bash scripts/build-windows.sh`) for #190, #191, #194, #195, #207, #210, #211; reinstall; click a card's GitHub mark once and check the `open github` log line (#195).
-2. #216 launches must not steal focus (new-window -d), #217 needs-you lingering after a permission answer.
-3. #150 (research done: portable-pty + xterm.js, a grouped tmux session), #154 wall Recover button, #158 `--apply`, #157 part 3, #185 part 3, #204 demo mode, #215, #163.
-
-## Cleanup held (not removed; check each before deleting)
-- worktree impl-1029: tip differs from merged #212's head (2b9ca17, "session 7 moving to RIT"): superseded by this file.
-- worktree recover: #171 merged, 1 uncommitted change.
-- worktree split-182: #190 merged; holds src-tauri/target used as CARGO_TARGET_DIR for `-p klepsydra-fleet`, plus src-tauri/gen/.
-- branch docs/impl-late-1029 (local + remote): 1 commit after #200 merged.
-- remote branch docs/brief-no-public-asks: #179 closed as #178's duplicate.
+## Cleanup held (check each before deleting)
+- Orphan tmux servers `fleet-test-271533`, `-1318791`, `-3176838`, `-4149558` (6 h to 27 h old at 00:35) from earlier killed suites. They do not hold the heavy lock. Owner unknown, so left alone (#193 covers the cause).
+- worktree impl-1029, worktree recover (1 uncommitted change), worktree split-182 (its src-tauri/target is the CARGO_TARGET_DIR for `-p klepsydra-fleet`), branch docs/impl-late-1029, remote branch docs/brief-no-public-asks: see the session 8 notes in git history (#219).
 
 ## Notes
 - `gh pr edit` fails on klepsydra (Projects classic): `gh api -X PATCH repos/ajbarea/klepsydra/pulls/N -F body=@file`. Issue Types are not enabled here; labels stand in.
 - `fleet/test_fleet.sh` takes about 19 min: `flock /tmp/fleet-heavy.lock timeout 1800`.
-- The app crate needs GTK headers WSL lacks: lint/test `-p klepsydra-fleet` with CARGO_TARGET_DIR=.claude/worktrees/split-182/src-tauri/target; CI builds the app.
+- The app crate needs GTK headers WSL lacks: lint and test `-p klepsydra-fleet` with CARGO_TARGET_DIR=.claude/worktrees/split-182/src-tauri/target; CI builds the app.
 - shellcheck: `uvx --from shellcheck-py shellcheck -x fleet/*.sh fleet/fleet hooks/*.sh`. `receiver::bad_paths_bodies_and_sizes_get_their_status` flakes under load (#174).
 - Install before cutover: `make install-fleet`, then `fleet cutover`, then `fleet doctor` (doctor's exit code is lost behind a pipe; read the FAIL lines).
