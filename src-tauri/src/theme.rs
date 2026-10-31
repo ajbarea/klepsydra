@@ -2,13 +2,11 @@
 //! wall's picker, kept in prefs.json, and sent to every window that follows
 //! it and to the phone wall, so a switch applies without a restart.
 
-use std::sync::Mutex;
-
 use klepsydra_fleet::hub::Hub;
 use klepsydra_fleet::theme::{self, THEMES};
 use serde_json::Value;
 use tauri::ipc::Channel;
-use tauri::menu::{CheckMenuItem, Submenu};
+use tauri::menu::Submenu;
 use tauri::{AppHandle, Manager, Wry};
 
 /// The tray's id for each theme's item.
@@ -22,7 +20,7 @@ pub struct Themes(Hub<crate::fleet::Webview>);
 
 /// The tray's theme items, ticked to match the saved theme after any change.
 #[derive(Default)]
-pub struct ThemeMenu(Mutex<Vec<(&'static str, CheckMenuItem<Wry>)>>);
+pub struct ThemeMenu(crate::choice::ChoiceItems);
 
 /// The saved theme, or the default.
 pub fn saved(app: &AppHandle) -> &'static str {
@@ -81,36 +79,16 @@ pub fn publish(app: &AppHandle) {
     write_hook_cast(app, now);
     app.state::<Themes>().0.publish(Value::from(now));
     crate::phone::set_theme(app, now);
-    if let Ok(items) = app.state::<ThemeMenu>().0.lock() {
-        for (id, item) in items.iter() {
-            let _ = item.set_checked(*id == now);
-        }
-    }
+    app.state::<ThemeMenu>().0.tick(now);
 }
 
 /// The tray's Characters submenu, one ticked item per theme.
 pub fn menu(app: &AppHandle) -> tauri::Result<Submenu<Wry>> {
     let now = saved(app);
-    let mut items = Vec::new();
-    for (id, label) in THEMES {
-        let item = CheckMenuItem::with_id(
-            app,
-            format!("{MENU_PREFIX}{id}"),
-            label,
-            true,
-            id == now,
-            None::<&str>,
-        )?;
-        items.push((id, item));
-    }
-    let refs: Vec<&dyn tauri::menu::IsMenuItem<Wry>> = items
-        .iter()
-        .map(|(_, i)| i as &dyn tauri::menu::IsMenuItem<Wry>)
-        .collect();
-    let submenu = Submenu::with_items(app, "Characters", true, &refs)?;
-    if let Ok(mut held) = app.state::<ThemeMenu>().0.lock() {
-        *held = items;
-    }
+    let submenu = app
+        .state::<ThemeMenu>()
+        .0
+        .build(app, "Characters", MENU_PREFIX, &THEMES, now)?;
     app.state::<Themes>().0.publish(Value::from(now));
     write_hook_cast(app, now);
     Ok(submenu)
@@ -120,10 +98,7 @@ pub fn menu(app: &AppHandle) -> tauri::Result<Submenu<Wry>> {
 /// everywhere (a click on the ticked item unticks it; `publish` ticks it
 /// again). False for any other item.
 pub fn on_menu(app: &AppHandle, menu_id: &str) -> bool {
-    let Some(id) = menu_id
-        .strip_prefix(MENU_PREFIX)
-        .and_then(|w| THEMES.iter().map(|(t, _)| *t).find(|t| *t == w))
-    else {
+    let Some(id) = crate::choice::picked(menu_id, MENU_PREFIX, &THEMES) else {
         return false;
     };
     if let Ok(v) = theme::value(id) {

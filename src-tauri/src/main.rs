@@ -1,5 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod choice;
 mod fleet;
 mod folder;
 mod geometry;
@@ -11,6 +12,7 @@ mod phone;
 mod ping;
 mod split;
 mod theme;
+mod voices;
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -108,8 +110,8 @@ fn read_usage(app: tauri::AppHandle) -> serde_json::Value {
 const PREFS_FILE: &str = "prefs.json";
 
 /// Small settings the gauge keeps for itself: the zoom level, the saved home,
-/// where the window last sat, the wall's card density, split mode and
-/// the character theme.
+/// where the window last sat, the wall's card density, split mode, the
+/// character theme and the Voices mode.
 fn prefs_path(app: &tauri::AppHandle) -> Option<PathBuf> {
     klepsydra_dir(app).map(|d| d.join(PREFS_FILE))
 }
@@ -825,6 +827,7 @@ fn with_state<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R
         .manage(phone::Phone::default())
         .manage(theme::Themes::default())
         .manage(theme::ThemeMenu::default())
+        .manage(voices::VoicesMenu::default())
         .manage(split::Follow::default())
 }
 
@@ -958,6 +961,7 @@ fn main() {
             let phone_item =
                 CheckMenuItem::with_id(app, "phone", "Phone wall", true, phone_on, None::<&str>)?;
             let characters = theme::menu(app.handle())?;
+            let voices_menu = voices::menu(app.handle())?;
             let queue_item =
                 MenuItem::with_id(app, "queue", "Choose queue file...", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
@@ -971,6 +975,7 @@ fn main() {
                     &start_item,
                     &phone_item,
                     &characters,
+                    &voices_menu,
                     &queue_item,
                     &PredefinedMenuItem::separator(app)?,
                     &quit,
@@ -1033,7 +1038,9 @@ fn main() {
                     "queue" => fleet::choose_queue(app),
                     "quit" => app.exit(0),
                     other => {
-                        theme::on_menu(app, other);
+                        if !theme::on_menu(app, other) {
+                            voices::on_menu(app, other);
+                        }
                     }
                 })
                 .build(app)?;

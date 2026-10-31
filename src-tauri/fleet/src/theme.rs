@@ -19,25 +19,17 @@ pub const THEMES: [(&str, &str); 3] = [
 
 /// `id` when it names a theme; else the default.
 pub fn known(id: Option<&str>) -> &'static str {
-    THEMES
-        .iter()
-        .find(|(t, _)| Some(*t) == id)
-        .map_or(THEMES[0].0, |(t, _)| t)
+    crate::choice::known(&THEMES, id)
 }
 
 /// The saved theme, or the default for a missing, unknown or unreadable one.
 pub fn of(prefs: Option<&Map<String, Value>>) -> &'static str {
-    known(prefs.and_then(|p| p.get(KEY)?.as_str()))
+    crate::choice::of(&THEMES, KEY, prefs)
 }
 
 /// The value to save for `id`, or an error naming the choices.
 pub fn value(id: &str) -> Result<Value, String> {
-    if THEMES.iter().any(|(t, _)| *t == id) {
-        Ok(Value::from(id))
-    } else {
-        let ids: Vec<&str> = THEMES.iter().map(|(t, _)| *t).collect();
-        Err(format!("unknown theme {id:?}; one of {}", ids.join(", ")))
-    }
+    crate::choice::value(&THEMES, "theme", id)
 }
 
 /// The file in the data folder the fleet hook reads its tmux window colours
