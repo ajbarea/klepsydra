@@ -432,8 +432,10 @@ echo "launch.sh"
 cat >"$work/launcher.sh" <<EOF
 #!/usr/bin/env bash
 # The launcher's "new": one more fleet window running KLEPSYDRA_CLAUDE.
+printf '%s\n' "\${KLEPSYDRA_BACKGROUND-unset}" >>"$work/launcher-bg"
 tmux -L "\$KLEPSYDRA_TMUX_SOCKET" new-window -d -t fleet: -c "\$3" "\$KLEPSYDRA_CLAUDE"
 EOF
+: >"$work/launcher-bg"
 printf 'Do the thing.\nThen the other thing.\n' >"$work/task.src"
 launch() { # NAME STATE-JSON: launch.sh with a fake claude starting from STATE
   printf '%s' "$2" >"$work/$1.json"; : >"$work/$1.log"
@@ -445,6 +447,7 @@ out=$(launch agent1 '{"above":["Claude Code"]}')
 check "delivered: Remote Control settles first, then the brief goes in whole and a turn starts" \
   "$(events agent1)" $'RC REQUESTED\nRC ON\nPASTE 36\nSUBMIT Do the thing.\\nThen the other thing.\\n'
 check "reported started" "${out##* }" "brief=started"
+check "#216: it asks the launcher to open behind the window in view" "$(cat "$work/launcher-bg")" "1"
 sid=$(sed -E 's/.*session=([^ ]+).*/\1/' <<<"$out")
 check "registered with its session id and folder" "$(cut -f2,3,4,5 "$REGISTRY")" "agent1	$FLEET_STATE/task-agent1.src	$sid	$work"
 out=$(launch agent1 '{"above":["Claude Code"]}')
@@ -936,6 +939,22 @@ check "the records follow him: pane, session and folder" \
 check "the old pane exits" "$(events heph)" "SUBMIT /exit"
 check "logged as the orchestrator's move" "$(jq -r 'select(.message == "moved to the other account at a limit") | [.orchestrator, .from, .to] | join(" ")' "$FLEET_LOG")" "1 $work/cfg-a $work/cfg-b"
 t kill-window -t "$h" 2>/dev/null
+
+# #216: the new Heph opens behind, and comes forward once the old one has gone.
+cat >"$work/launch-hfwd.sh" <<EOF
+#!/usr/bin/env bash
+np=\$(tmux -L "$FLEET_SOCK" new-window -d -P -F '#{pane_id}' -t fleet: 'sleep 600')
+echo "pane=\$np session=aaaaaaaa-0000-4000-8000-0000000000ce account=\$FLEET_ACCOUNT avail=1MiB brief=started"
+EOF
+chmod +x "$work/launch-hfwd.sh"
+: >"$work/moved"; rm -f "$FLEET_STATE/orchestrator.config" "$FLEET_STATE/orchestrator.session" "$FLEET_STATE/resume-state"
+h=$(pane hfwd "{\"above\":[\"⏺ ok\",\"$LIMIT\"]}"); settle
+printf '%s\n' "$h" >"$FLEET_STATE/orchestrator.pane"
+t select-window -t "$h"
+LAUNCH="$work/launch-hfwd.sh" FLEET_HEPH="$work/HEPH.md" FLEET_NOW=$noon bash "$here/resume-at-reset.sh" --once 2>/dev/null
+nh=$(cat "$FLEET_STATE/orchestrator.pane")
+check "#216: after the move the new Heph is the window in view" "$(events hfwd) $(t display -p -t fleet: '#{pane_id}')" "SUBMIT /exit $nh"
+t kill-window -t "$nh" 2>/dev/null; t kill-window -t "$h" 2>/dev/null
 
 # A background task's notification starts a turn during his launch; at the
 # limit it fails at once, so he still moves.
@@ -1772,6 +1791,18 @@ check "its note names HEPH.md and holds AJ's messages since it was written, noth
   "$(grep -c "Read $work/HEPH.md first" "$work/rec-heph.txt") $(grep '^- ' "$work/rec-heph.txt" | tr '\n' '|')" "1 - AJ: move InteFL to Friday|- AJ: and ping Dima|"
 check "and orchestrator.pane follows it" "$(cat "$FLEET_STATE/orchestrator.pane")" "$(tail -1 <<<"$out" | grep -o '%[0-9]*')"
 check "and orchestrator.session records its session" "$(cat "$FLEET_STATE/orchestrator.session")" "x"
+# #216: the relaunched Heph opens behind; recover brings him forward.
+cat >"$work/launch-recfwd.sh" <<EOF
+#!/usr/bin/env bash
+np=\$(tmux -L "$FLEET_SOCK" new-window -d -P -F '#{pane_id}' -t fleet: 'sleep 600')
+echo "pane=\$np session=x account=x avail=1MiB brief=started"
+EOF
+chmod +x "$work/launch-recfwd.sh"
+printf '%%0\n' >"$FLEET_STATE/orchestrator.pane"; rm -f "$FLEET_STATE/orchestrator.session"
+LAUNCH="$work/launch-recfwd.sh" FLEET_STAGGER_S=0 FLEET_HEPH="$work/HEPH.md" bash "$here/recover.sh" >/dev/null 2>&1
+nh=$(cat "$FLEET_STATE/orchestrator.pane")
+check "#216: the recovered Heph is the window in view" "$(t display -p -t fleet: '#{pane_id}')" "$nh"
+t kill-window -t "$nh" 2>/dev/null
 
 echo "recover: a relaunched worker that takes the old orchestrator pane is not Heph"
 SW=aaaaaaaa-0000-4000-8000-0000000000c1 SNEW=aaaaaaaa-0000-4000-8000-0000000000c2
