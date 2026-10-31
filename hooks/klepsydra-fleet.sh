@@ -498,9 +498,18 @@ cleared_link() { # fleet pid start self
   return 0
 }
 
+# State rules the hook and the ask watcher share.
+read -r -d '' STATE_DEFS <<'JQ' || true  # read returns 1 at the end of input
+# The session's turn is over: Stop ran (or the prompt sat idle) with work still out.
+def turn_over: .reason == "background" or (.needs.turn_over // false) == true;
+# AJ answered the ask: working, or after the turn ended working in background, or done.
+def answered: if turn_over | not then {state: "working", reason: null}
+  elif .background != [] then {state: "working", reason: "background"} else {state: "done", reason: null} end;
+JQ
+
 # The session file after one event, as compact JSON, or nothing when no field
 # changed. `$old` is the current file's text (empty for none).
-read -r -d '' APPLY <<'JQ' || true  # read returns 1 at the end of input
+read -r -d '' APPLY <<'JQ' || true
 def clip: if type == "string" and length > 0 then .[0:$chars] else null end;
 def text: if type == "string" and length > 0 then . else null end;
 def need_reason($tool): if $tool == "AskUserQuestion" then "question"
@@ -514,8 +523,6 @@ def bg_add($id; $kind): if ($id | text) == null then . elif any(.[]; .id == $id)
 def bg_kind: {subagent: "agent", shell: "shell"}[.type | strings] // "task";
 # A status that means the task is over; any other, or none, still runs.
 def finished: IN("completed", "finished", "failed", "killed", "stopped", "cancelled", "canceled");
-# The session's turn is over: Stop ran (or the prompt sat idle) with work still out.
-def turn_over: .reason == "background" or (.needs.turn_over // false) == true;
 # Needs you, asked by a subagent still out: nothing but its answer ends that.
 # Who asks AJ and for what; a request made once the turn is over remembers that.
 def asked($by; $tool): {by: $by, tool: $tool} + (if turn_over then {turn_over: true} else {} end);
@@ -739,10 +746,9 @@ def notified: if type == "string" then [scan("<task-notification>[\\s\\S]*?</tas
      elif $event == "Notification" and ($ev.notification_type | IN("elicitation_dialog", "elicitation_url_dialog")) then
        {state: "needs_you", reason: "question", needs: asked($agent; null)}
      elif ($event | IN("PostToolUse", "PostToolUseFailure")) and .state == "needs_you" and (.needs.by // "") == $agent
-          and (.needs.tool == null or .needs.tool == $ev.tool_name) then
-       # Answered after the turn ended: back to working in background, or done.
-       if turn_over | not then {state: "working", reason: null}
-       elif .background != [] then {state: "working", reason: "background"} else {state: "done", reason: null} end
+          and (.needs.tool == null or .needs.tool == $ev.tool_name) then answered
+     # A subagent that stops has no ask left, answered or denied (#217).
+     elif $event == "SubagentStop" and ($agent | text) != null and .state == "needs_you" and .needs.by == $agent then answered
      # A subagent still waiting on AJ outranks the turn's end, by Stop or by the idle prompt.
      elif ($event == "Stop" or ($event == "Notification" and $ev.notification_type == "idle_prompt")) and crew_asks then
        {state: .state, reason: .reason, needs: (.needs + {turn_over: true})}
@@ -793,6 +799,7 @@ def notified: if type == "string" then [scan("<task-notification>[\\s\\S]*?</tas
     else .written_at = $now | .turns_at = $now end
   end
 JQ
+APPLY=$STATE_DEFS$'\n'$APPLY
 
 # Replace the file with `text` through a temp file in the same directory, so a
 # reader never sees half of it.
@@ -918,6 +925,64 @@ colour_window() { # voice
   return 0
 }
 
+# Claude Code's permission dialog (2.1.302, hooks/fixtures/pane-permission-*):
+# its question, and its first option. Both, so a reply quoting one is not it.
+ASK_QUESTION=$'(^|\n)[[:space:]]*Do you want to [^\n]*\?'
+ASK_OPTION=$'\n[[:space:]]*(❯[[:space:]]*)?1\. Yes'
+ASK_TICK=${KLEPSYDRA_ASK_TICK:-2}
+# A watcher gives up after this long, whatever the ask.
+ASK_MAX=${KLEPSYDRA_ASK_MAX:-43200}
+
+# `klepsydra-fleet.sh watch-ask SID`: no hook fires when AJ answers a
+# permission prompt (#217), so this watches the session's tmux pane while its
+# file says it waits on AJ for a tool. A dialog it saw, then missed on two looks
+# in a row, was answered: the file gets the change a PostToolUse would make. A
+# dialog it never saw (another wording) is never cleared. One watcher per
+# session, following each new ask; it ends when no ask is left or the pane goes.
+watch_ask() { # sid
+  local sid=$1 file lock text row at socket pane screen asked="" seen=0 misses=0 began now
+  [[ $sid =~ $UUID_RE && -n ${KLEPSYDRA_DIR:-} ]] || return 0
+  file=$KLEPSYDRA_DIR/fleet/$sid.json
+  { exec {lock}>>"${XDG_RUNTIME_DIR:-/tmp}/klepsydra-ask-$UID-$sid.lock"; } 2>/dev/null || return 0
+  # A watcher on its way out still holds the lock; one still watching keeps it.
+  flock -w 10 "$lock" || return 0
+  began=$SECONDS
+  while (( SECONDS - began < ASK_MAX )); do
+    text=""
+    { text=$(<"$file"); } 2>/dev/null
+    row=$(jq -r 'select(.state == "needs_you" and (.needs.tool | type) == "string"
+        and (.needs.tool | IN("AskUserQuestion", "ExitPlanMode") | not))
+      | [.state_at, .tmux.socket, .tmux.pane] | map(tostring) | join("\t")' <<<"$text" 2>/dev/null) || row=""
+    IFS=$'\t' read -r at socket pane <<<"$row"
+    [[ $at =~ ^[0-9]+$ && $socket =~ ^/[A-Za-z0-9._/-]{1,255}$ && $pane =~ ^%[0-9]{1,9}$ ]] || break
+    [[ $at == "$asked" ]] || { asked=$at seen=0 misses=0; }
+    screen=$(timeout 2 tmux -S "$socket" capture-pane -p -J -t "$pane" 2>/dev/null) || break
+    if [[ $screen =~ $ASK_QUESTION && $screen =~ $ASK_OPTION ]]; then
+      seen=1 misses=0
+    elif (( seen )) && (( ++misses >= 2 )); then
+      now=${KLEPSYDRA_NOW:-}
+      [[ $now =~ ^[0-9]+$ ]] || printf -v now '%(%s)T' -1
+      ask_answered "$file" "$asked" "$now"
+      seen=0 misses=0
+    fi
+    sleep "$ASK_TICK"
+  done
+  return 0
+}
+
+# The ask made at ASKED_AT, if the file still waits on it, is answered.
+ask_answered() { # file asked_at now
+  local lock new
+  { exec {lock}>>"$LOCK"; } 2>/dev/null || return 0
+  flock -w 5 "$lock" || return 0
+  new=$(jq -c --argjson asked "$2" --argjson now "$3" "$STATE_DEFS"'
+    select(.state == "needs_you" and .state_at == $asked) | answered as $t
+    | .state = $t.state | .reason = $t.reason | .needs = null | .state_at = $now | .written_at = $now' "$1" 2>/dev/null) || new=""
+  [[ -n $new ]] && write_atomic "$1" "$new"
+  { exec {lock}>&-; } 2>/dev/null
+  return 0
+}
+
 main() {
   local input fields session event cwd edited transcript source now file old new lock voice="" cwd_repo by=cwd remote="" cleared="" homes='{}' old_git where_gone=false account=null
   input=$(cat)
@@ -1014,6 +1079,10 @@ main() {
   if [[ ${tmux_socket##*/} == klepsydra && -n $tmux_pane && -f $file && -n $CAST && $CAST -nt $file ]]; then recolour=1; fi
   [[ -n $new ]] && write_atomic "$file" "$new"
   (( recolour )) && touch -c -- "$file" 2>/dev/null
+  # A permission prompt in a tmux pane gets a watcher for its answer (#217).
+  if [[ $event == PermissionRequest && -n $tmux_pane && ${KLEPSYDRA_ASK_WATCH:-1} == 1 && ${new:-$old} == *'"state":"needs_you"'* ]]; then
+    setsid -f bash "${BASH_SOURCE[0]}" watch-ask "$session" </dev/null >/dev/null 2>&1
+  fi
   # Only a start, a changed face or a new theme touches the window. The face
   # follows the wall's rule: Heph's for the orchestrator, never for a worker.
   local was_voice now_voice
@@ -1031,6 +1100,10 @@ if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
   if [[ ${1:-} == queue ]]; then
     queue_cmd "${@:2}"
     exit
+  fi
+  if [[ ${1:-} == watch-ask ]]; then
+    (watch_ask "${2:-}") >/dev/null 2>&1
+    exit 0
   fi
   (main) >/dev/null 2>&1 # a subshell, so no failure inside can end this shell non-zero
   exit 0
