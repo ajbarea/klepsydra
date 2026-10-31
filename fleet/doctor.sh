@@ -12,6 +12,8 @@
 # are out of date, and a second folder not logged in, are warnings.
 # With `--json FILE` (the fleet-doctor timer) it also writes the checks to FILE
 # for the wall, and logs a check only when its status changed since FILE's run.
+# `--prune` instead removes finished agents' rows from panes.tsv (#220), with a
+# backup beside it, and runs no checks.
 set -u
 FLEET_TARGET=fleet::doctor
 here=$(dirname "$(readlink -f "$0")")
@@ -31,6 +33,7 @@ json=""
 if [[ ${1:-} == --json ]]; then
   json=${2:?--json takes a file}
 fi
+
 # Each check's status at the last --json run.
 declare -A was=()
 if [[ -n $json && -f $json ]]; then
@@ -53,6 +56,44 @@ report() { # ok|warn|FAIL CHECK DETAIL
     ok) [[ -n ${was[${check//[$'\t\n']/ }]-} ]] && flog INFO "doctor: $check recovered" ;;
   esac
 }
+
+# Rows whose agent finished, as "PANE/SID<TAB>NAME" lines. A pane id alone is
+# not a key: a restarted tmux server hands out %N again.
+finished_rows() {
+  local p name sid
+  while IFS=$'\t' read -r p name _ sid _; do
+    [[ -n $p && -n $name ]] && [[ $(row_state "$p" "$sid") == finished ]] && printf '%s/%s\t%s\n' "$p" "$sid" "$name"
+  done < <(cat "$REGISTRY" 2>/dev/null)
+}
+# Drop the rows finished_rows named from panes.tsv, keeping a backup.
+# shellcheck disable=SC2329 # run through with_registry
+prune_now() { # PANE/SID...
+  local tmp bak
+  bak=$REGISTRY.bak-$(date +%Y%m%d-%H%M%S)
+  cp -p -- "$REGISTRY" "$bak" || return 1
+  tmp=$(mktemp "$REGISTRY.XXXXXX") || return 1
+  awk -F'\t' -v drop="$*" 'BEGIN { n = split(drop, d, " "); for (i = 1; i <= n; i++) gone[d[i]] = 1 } !(($1 "/" $4) in gone)' "$REGISTRY" >"$tmp" &&
+    mv -f -- "$tmp" "$REGISTRY" && printf '%s' "$bak"
+}
+if [[ ${1:-} == --prune ]]; then
+  mapfile -t rows < <(finished_rows)
+  if (( ! ${#rows[@]} )); then
+    echo "nothing to prune: no finished agent's row in panes.tsv"
+    exit 0
+  fi
+  if ! bak=$(with_registry prune_now "${rows[@]%%$'\t'*}"); then
+    flog ERROR "doctor: prune failed" registry="$REGISTRY"
+    echo "could not prune $REGISTRY" >&2
+    exit 1
+  fi
+  for r in "${rows[@]}"; do
+    key=${r%%$'\t'*}
+    echo "pruned: ${r#*$'\t'} (${key%%/*})"
+    flog INFO "doctor: pruned a finished agent's row" pane="${key%%/*}" session="${key#*/}" name="${r#*$'\t'}"
+  done
+  echo "backup: $(home "$bak")"
+  exit 0
+fi
 
 if $SYSTEMCTL --user is-active --quiet fleet-resume-at-reset.service 2>/dev/null; then
   report ok "resume service" "active"
@@ -82,11 +123,8 @@ for p in $orch $panes; do
   who=$(reg_field "$p" 2)
   [[ $p == "$orch" ]] && who=orchestrator
   if ! fleet_panes | grep -qx "$p"; then
-    if [[ $p == "$orch" ]]; then
-      report FAIL "remote control $p ($who)" "the orchestrator's pane is gone"
-    else
-      report warn "remote control $p ($who)" "the pane is gone: a finished agent's row in panes.tsv"
-    fi
+    # A worker's gone pane gets its one verdict from the agents check (#220).
+    [[ $p == "$orch" ]] && report FAIL "remote control $p ($who)" "the orchestrator's pane is gone"
     continue
   fi
   f=$(session_of "$p")
@@ -177,15 +215,25 @@ if [[ -n $watchers ]]; then
 else
   report FAIL "pane watcher" "none running: the orchestrator is not woken when an agent finishes"
 fi
-# Registered agents whose session no longer runs: after a hard shutdown, all of them.
-gone=$(while IFS=$'\t' read -r _ name _ sid _; do
-  [[ $sid =~ ^[0-9a-f-]{36}$ ]] && ! session_alive "$sid" && printf '%s ' "$name"
-done < <(cat "$REGISTRY" 2>/dev/null))
+# Registered agents, one verdict per row (#220): a session gone without an end
+# (after a hard shutdown, all of them) is a FAIL for `fleet recover`; one that
+# finished cleanly is a warn until its row is pruned.
+gone="" done_=""
+while IFS=$'\t' read -r p name _ sid _; do
+  [[ -n $p && -n $name ]] || continue
+  case $(row_state "$p" "$sid") in
+    finished) done_+="$name " ;;
+    gone) gone+="$name " ;;
+  esac
+done < <(cat "$REGISTRY" 2>/dev/null)
 if [[ -n $gone ]]; then
   report FAIL "agents" "sessions gone: ${gone% }: fleet recover"
+elif [[ -n $done_ ]]; then
+  report warn "agents" "finished, still in panes.tsv: ${done_% }: fleet doctor --prune"
 else
   report ok "agents" "every registered session runs"
 fi
+[[ -n $gone && -n $done_ ]] && report warn "finished agents" "still in panes.tsv: ${done_% }: fleet doctor --prune"
 mapfile -t briefs < <(awk -F'\t' 'NF >= 3 { print $3 }' "$REGISTRY" 2>/dev/null)
 if (( ! ${#briefs[@]} )); then
   report ok "briefs" "no registered agents"

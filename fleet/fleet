@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # fleet COMMAND: the klepsydra fleet's own commands.
 #   fleet doctor [--json FILE]  check the fleet's health, one line per check (and a report)
+#   fleet doctor --prune        drop finished agents' rows from panes.tsv (a backup beside it)
 #   fleet log [N]         the last N decisions (default 30), as plain lines
 #   fleet brief NAME BODY write task-NAME.src: BODY plus the shared rules
 #   fleet brief --check   list briefs whose shared rules are out of date
