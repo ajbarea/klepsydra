@@ -1619,6 +1619,29 @@ check "the brief: why, its last two replies, its newest IMPL.md, then the brief"
   "$(grep -c 'stopped by a hard shutdown' "$work/rec-b.txt") $(grep -c '^> first reply' "$work/rec-b.txt") $(grep -c '^> second reply$' "$work/rec-b.txt") $(grep -c '^> third reply$' "$work/rec-b.txt") $(grep -o 'IMPL.md: .*' "$work/rec-b.txt") | $(tail -1 "$work/rec-b.txt")" \
   "1 0 1 1 IMPL.md: $repo/.claude/worktrees/wt/IMPL.md | brief B"
 check "with no transcript it says so" "$(grep -c 'no transcript found' "$work/rec-c.txt")" "1"
+
+echo "an agent's own IMPL.md (#233)"
+ir=$work/implrepo
+git init -q "$ir"; git -C "$ir" -c user.name=t -c user.email=t@t commit -q --allow-empty -m init
+git -C "$ir" worktree add -q "$ir/.claude/worktrees/mine" -b mine; git -C "$ir" worktree add -q "$ir/.claude/worktrees/sib" -b sib
+mkdir -p "$ir/.claude/worktrees/mine/docs" "$work/norepo/x"
+printf 'mine\n' >"$ir/.claude/worktrees/mine/IMPL.md"; touch -d '@1000' "$ir/.claude/worktrees/mine/IMPL.md"
+printf 'sib\n' >"$ir/.claude/worktrees/sib/IMPL.md"; printf 'x\n' >"$work/norepo/x/IMPL.md"
+tx() { # CWD [TOOL INPUT JSON]...: a transcript of one call per input, run from CWD
+  local c=$1; shift
+  (($#)) || set -- '{}'
+  for i in "$@"; do jq -nc --arg c "$c" --argjson i "$i" '{type: "assistant", cwd: $c, message: {content: [{type: "tool_use", name: "Bash", input: $i}]}}'; done >"$work/t.jsonl"
+  newest_impl "$work/t.jsonl" || echo none
+}
+check "working inside its worktree: that worktree's, not a newer sibling's" "$(tx "$ir/.claude/worktrees/mine/docs")" "$ir/.claude/worktrees/mine/IMPL.md"
+check "the main checkout and no named file: the repo's newest" "$(tx "$ir")" "$ir/.claude/worktrees/sib/IMPL.md"
+check "a path its calls named wins over the newest" \
+  "$(tx "$ir" "{\"command\": \"cat >$ir/.claude/worktrees/mine/IMPL.md <<'E'\"}")" "$ir/.claude/worktrees/mine/IMPL.md"
+check "a relative path is read against that call's folder; the last one counts" \
+  "$(tx "$ir" '{"file_path": "/nowhere/IMPL.md"}' '{"command": "git add .claude/worktrees/mine/IMPL.md && git commit"}' '{"command": "git show origin/main:IMPL.md"}')" \
+  "$ir/.claude/worktrees/mine/IMPL.md"
+check "a named file that is gone falls through" "$(tx "$ir/.claude/worktrees/mine" '{"file_path": "/nowhere/IMPL.md"}')" "$ir/.claude/worktrees/mine/IMPL.md"
+check "a folder outside any repo: none, not a neighbour's" "$(tx "$work/norepo")" "none"
 check "launches are staggered" "$(awk 'NR == 1 { a = $1 } NR == 2 { print ($1 - a >= 1) ? "apart" : "burst" }' "$work/rec.log")" "apart"
 : >"$work/rec.log"
 sfile "$SB" 4242 777 "$NOWBOOT" %2; sfile "$SC" 4242 777 "$NOWBOOT" %3

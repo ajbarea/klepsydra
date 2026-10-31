@@ -100,17 +100,6 @@ last_replies() { # TRANSCRIPT
     tail -2 | cut -c1-500 | sed 's/^/> /'
 }
 
-# The newest IMPL.md of the repo the transcript last worked in: its folder's
-# own and its worktrees'.
-newest_impl() { # TRANSCRIPT
-  local cwd top
-  cwd=$(jq -r 'select(.cwd != null) | .cwd' "$1" 2>/dev/null | tail -1)
-  [[ -n $cwd && -d $cwd ]] || return 1
-  top=$(git -C "$cwd" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) && top=${top%/.git}
-  find "$cwd" "${top:-$cwd}" "${top:-$cwd}/.claude/worktrees" -maxdepth 2 -name IMPL.md -type f -printf '%T@ %p\n' 2>/dev/null |
-    sort -rn | head -1 | cut -d' ' -f2- | grep .
-}
-
 launched=0
 # Wait out the stagger before every launch but the first.
 stagger() { (( launched++ )) && sleep "$STAGGER"; return 0; }

@@ -588,6 +588,30 @@ answered_by_limit() { # SCREEN
 # Whether session SID's Claude Code process still runs: its fleet file (the
 # hook's) names this boot and a process with the same start time. A tmux
 # restart reuses pane ids and a reboot reuses pids, so neither alone says so.
+# The agent's own IMPL.md, in order: the last one its tool calls named with a
+# folder (a relative path read against that call's folder) that still exists;
+# the IMPL.md of the worktree it last worked in; the newest of that repo's and
+# its worktrees'. Its folder outside any repo gives none: the newest in a
+# folder of repos is some other agent's.
+newest_impl() { # TRANSCRIPT
+  local cwd top own="" p
+  while IFS=$'\t' read -r cwd p; do
+    [[ $p == /* ]] || p=$cwd/$p
+    [[ -f $p && ! -L $p ]] && own=$p
+  done < <(jq -r 'select(.type == "assistant" and .cwd != null) | .cwd as $c | .message.content[]?
+      | select(.type == "tool_use") | (.input.file_path, .input.command) | strings
+      | scan("[^\\s\"'"'"'=:;|&<>()]*/IMPL\\.md(?![\\w.])") | [$c, .] | @tsv' "$1" 2>/dev/null)
+  [[ -n $own ]] && { realpath -s "$own"; return; }
+  cwd=$(jq -r 'select(.cwd != null) | .cwd' "$1" 2>/dev/null | tail -1)
+  [[ -n $cwd && -d $cwd ]] || return 1
+  own=$(git -C "$cwd" rev-parse --show-toplevel 2>/dev/null) || return 1
+  [[ -f $own/IMPL.md && $(git -C "$cwd" rev-parse --path-format=absolute --git-dir) != $(git -C "$cwd" rev-parse --path-format=absolute --git-common-dir) ]] &&
+    { echo "$own/IMPL.md"; return; }
+  top=$(git -C "$cwd" rev-parse --path-format=absolute --git-common-dir) && top=${top%/.git}
+  find "$cwd" "$top" "$top/.claude/worktrees" -maxdepth 2 -name IMPL.md -type f -printf '%T@ %p\n' 2>/dev/null |
+    sort -rn | head -1 | cut -d' ' -f2- | grep .
+}
+
 session_alive() { # SID
   local f pid start boot
   [[ $1 =~ ^[0-9a-f-]{36}$ ]] || return 1
