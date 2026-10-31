@@ -120,8 +120,12 @@ new() { # dir
   (( exists )) && has_client "$target" "${t[@]}" && shown=1
   (( shown )) || tab_preflight
   # The tmux server must not inherit the lock fd, or it holds the lock for good.
+  # A fleet launch (KLEPSYDRA_BACKGROUND=1) opens behind the window in view,
+  # so AJ keeps typing where he was (#216); the wall's New session comes forward.
+  local -a behind=()
+  [[ ${KLEPSYDRA_BACKGROUND:-} == 1 ]] && behind=(-d)
   if (( exists )); then
-    win=$(tmux "${t[@]}" new-window -P -F '#{window_id}' -t "$target:" -c "$dir" "$CLAUDE" {LOCKFD}>&- 2>/dev/null) ||
+    win=$(tmux "${t[@]}" new-window "${behind[@]}" -P -F '#{window_id}' -t "$target:" -c "$dir" "$CLAUDE" {LOCKFD}>&- 2>/dev/null) ||
       fail "tmux could not open a window."
     UNDO=(tmux "${t[@]}" kill-window -t "$win")
   else
