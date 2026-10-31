@@ -449,6 +449,12 @@ shape, symbol and colour, from the Okabe-Ito palette:
 | grey ring `–` | ended | the session ended; it leaves after 10 minutes |
 | grey ring `–` | ended · gone | the session's Claude process is gone (a reboot or `wsl --shutdown`); it leaves after 10 minutes |
 
+No hook fires when you answer a permission prompt, so for a session in tmux
+the hook starts a watcher on its pane at each prompt. Within a few seconds of
+the dialog closing (Yes or No, typed or from Remote Control) the card is
+working again; a denied turn then settles to done at its idle prompt. A
+subagent's ask also ends when that subagent stops.
+
 On a card, an ended or error pill names its reason: "ended · exited",
 "ended · gone", "error · rate limit".
 

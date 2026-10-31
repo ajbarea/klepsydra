@@ -13,8 +13,10 @@ stub="$work/stubbin"
 mkdir -p "$stub"
 # $work/tmux.mode: "fail" exits 1, "hang" sleeps past the hook's timeout; else it succeeds.
 # shellcheck disable=SC2016 # the stub script expands its own variables
-printf '#!/bin/sh\necho "$*" >>"%s/tmux.log"\ncase $(cat "%s/tmux.mode" 2>/dev/null) in fail) exit 1;; hang) exec sleep 30;; esac\n' "$work" "$work" >"$stub/tmux"
-chmod +x "$stub/tmux"
+# capture-pane prints $work/screen. setsid only logs, so no test starts a real watcher.
+printf '#!/bin/sh\necho "$*" >>"%s/tmux.log"\ncase $(cat "%s/tmux.mode" 2>/dev/null) in fail) exit 1;; hang) exec sleep 30;; esac\ncase "$*" in *capture-pane*) cat "%s/screen" 2>/dev/null;; esac\n' "$work" "$work" "$work" >"$stub/tmux"
+printf '#!/bin/sh\necho "$*" >>"%s/setsid.log"\n' "$work" >"$stub/setsid"
+chmod +x "$stub/tmux" "$stub/setsid"
 export PATH="$stub:$PATH"
 tlog="$work/tmux.log"
 
@@ -170,7 +172,7 @@ fire() { # fixture [filter] [VAR=value...]
     env KLEPSYDRA_DIR="$dir" KLEPSYDRA_NOW="$now" KLEPSYDRA_PROC="$work/proc" KLEPSYDRA_PID=600 \
       KERYX_VOICES="$work/voices.json" XDG_RUNTIME_DIR="$work" KLEPSYDRA_CAST="$work/test-cast.json" \
       KLEPSYDRA_BOOT_ID="$boot_file" TMUX= TMUX_PANE= WSL_DISTRO_NAME= CLAUDE_CONFIG_DIR="$work/nocfg" \
-      FLEET_STATE="$work/fleet-state" KLEPSYDRA_AGENT= "$@" bash "$hook"
+      FLEET_STATE="$work/fleet-state" KLEPSYDRA_AGENT= KLEPSYDRA_ASK_WATCH=0 "$@" bash "$hook"
 }
 field() { jq -c "$1" "$file"; }
 mtime() { stat -c %Y "$file"; }
@@ -1869,6 +1871,78 @@ check "queue clear: the default again" "$rc|$out|$([[ -e $qdir/queue.json ]] && 
 check "queue show: none" "$(queue show)" "No queue.json: the Queue panel reads its default file."
 out=$(KLEPSYDRA_DIR=""; queue_cmd show 2>&1); rc=$? # the sourced hook's: a run would find the real folder
 check "queue: no data folder is an error" "$rc|$out" "1|klepsydra: no data folder (set KLEPSYDRA_DIR)"
+
+echo "#217: an answer no hook reports"
+A=21700000-0000-4000-8000-000000000217
+afile="$dir/fleet/$A.json"
+afield() { jq -c "$1" "$afile"; }
+askfire() { # fixture [filter] [VAR=value...]; in pane %7 of the fleet socket
+  local fx=$1 f=${2:-.}
+  shift; (( $# )) && shift
+  fire "$fx" ".session_id = \"$A\" | $f" TMUX="$work/sock/klepsydra,1,0" TMUX_PANE=%7 "$@"
+}
+watch_ask_run() { # [max seconds]
+  env KLEPSYDRA_DIR="$dir" XDG_RUNTIME_DIR="$work" KLEPSYDRA_NOW="$now" KLEPSYDRA_ASK_TICK=0.05 \
+    KLEPSYDRA_ASK_MAX="${1:-20}" bash "$hook" watch-ask "$A"
+}
+now=1792360000 askfire session-start.json
+now=1792360010 askfire user-prompt.json
+: >"$work/setsid.log"
+now=1792360020 fire permission-request.json ".session_id = \"$A\"" KLEPSYDRA_ASK_WATCH=1
+check "outside tmux: no watcher" "$(cat "$work/setsid.log")" ""
+now=1792360020 askfire permission-request.json . KLEPSYDRA_ASK_WATCH=1
+check "a permission prompt in a pane starts its watcher" "$(cat "$work/setsid.log")" "-f bash $hook watch-ask $A"
+check "the file names the pane the watcher reads" "$(afield .tmux)" "{\"socket\":\"$work/sock/klepsydra\",\"pane\":\"%7\"}"
+# With a real setsid, the watcher runs and the fleet-wide lock is free (#230
+# review: a watcher that kept the hook's lock fd froze every card).
+cp "$stub/setsid" "$work/setsid.stub"
+printf '#!/bin/sh\nexec /usr/bin/setsid "$@"\n' >"$stub/setsid"
+cp "$fixtures/pane-permission-2.1.302.txt" "$work/screen"
+now=1792360025 askfire permission-request.json . KLEPSYDRA_ASK_WATCH=1 KLEPSYDRA_ASK_MAX=2 KLEPSYDRA_ASK_TICK=0.05
+sleep 0.5
+check "a real watcher leaves the fleet lock free" \
+  "$(pgrep -f "watch-ask $A" >/dev/null && echo running) $(flock -w 0 "$work/klepsydra-fleet-$UID.lock" true && echo free)" "running free"
+for _ in $(seq 40); do pgrep -f "watch-ask $A" >/dev/null || break; sleep 0.1; done
+check "and it ends at its time limit" "$(pgrep -f "watch-ask $A" >/dev/null && echo running || echo ended)" "ended"
+mv -f -- "$work/setsid.stub" "$stub/setsid"
+
+cp "$fixtures/pane-permission-2.1.302.txt" "$work/screen"
+now=1792360030
+watch_ask_run & wpid=$!
+sleep 0.5
+check "the dialog on screen: still needs you" "$(afield .state)" '"needs_you"'
+cp "$fixtures/pane-working-tool-2.1.302.txt" "$work/screen"
+timeout 10 tail --pid="$wpid" -f /dev/null
+check "the dialog gone (approved): working, and the watcher ends" \
+  "$(afield '[.state, .reason, .needs, .state_at]')|$(kill -0 "$wpid" 2>/dev/null && echo running || echo ended)" '["working",null,null,1792360030]|ended'
+
+now=1792360040 askfire permission-request.json
+cp "$fixtures/pane-idle-2.1.302.txt" "$work/screen"
+now=1792360045 watch_ask_run 1
+check "a dialog never seen on screen is never cleared" "$(afield '[.state, .reason]')" '["needs_you","approve Bash"]'
+cp "$fixtures/pane-permission-2.1.302.txt" "$work/screen"
+echo fail >"$work/tmux.mode"
+now=1792360046 watch_ask_run 5
+rm -f "$work/tmux.mode"
+check "the pane gone: the watcher ends, the ask stays" "$(afield .state)" '"needs_you"'
+before=$(<"$afile")
+ask_answered "$afile" 1792360001 1792360047
+check "an answer to an earlier ask changes nothing" "$(<"$afile")" "$before"
+ask_answered "$afile" 1792360040 1792360047
+check "the answer to this ask" "$(afield '[.state, .needs, .state_at]')" '["working",null,1792360047]'
+
+now=1792360050 askfire pre-tool-question.json
+cp "$fixtures/pane-idle-2.1.302.txt" "$work/screen"
+now=1792360051 watch_ask_run 5
+check "a question is not a permission: the watcher leaves it" "$(afield '[.state, .reason]')" '["needs_you","question"]'
+
+echo "#217: a subagent's ask ends with it"
+now=1792360060 askfire subagent-start.json '.agent_id = "agent-217"'
+now=1792360061 askfire permission-request.json '.agent_id = "agent-217"'
+now=1792360062 askfire subagent-stop.json '.agent_id = "agent-other"'
+check "another subagent stopping leaves the ask" "$(afield '[.state, .needs.by]')" '["needs_you","agent-217"]'
+now=1792360063 askfire subagent-stop.json '.agent_id = "agent-217"'
+check "the asker stopping (denied, or done) ends its ask" "$(afield '[.state, .reason, .needs]')" '["working",null,null]'
 
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [[ $fail -eq 0 ]]
