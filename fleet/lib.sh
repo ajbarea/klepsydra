@@ -594,7 +594,7 @@ answered_by_limit() { # SCREEN
 # never count: a recovered agent reads every worktree's. A folder outside any
 # repo with nothing written gives none.
 newest_impl() { # TRANSCRIPT
-  local cwd dir base p own=""
+  local cwd dir base p own="" roots
   cwd=$(jq -r 'select(.cwd != null) | .cwd' "$1" 2>/dev/null | tail -1)
   [[ -n $cwd && -d $cwd ]] || return 1
   dir=$(git -C "$cwd" rev-parse --show-toplevel 2>/dev/null)
@@ -614,8 +614,11 @@ newest_impl() { # TRANSCRIPT
         end | @tsv' "$1" 2>/dev/null)
   [[ -n $own ]] && { realpath -s "$own"; return; }
   [[ -n $dir ]] || return 1
-  find "$dir" "$dir/.claude/worktrees" -maxdepth 2 -name IMPL.md -type f -printf '%T@ %p\n' 2>/dev/null |
-    sort -rn | head -1 | cut -d' ' -f2- | grep .
+  # Only folders that exist: under pipefail a find over a missing one fails the pick.
+  roots=("$dir")
+  [[ -d $dir/.claude/worktrees ]] && roots+=("$dir/.claude/worktrees")
+  find "${roots[@]}" -maxdepth 2 -name IMPL.md -type f -printf '%T@ %p\n' 2>/dev/null |
+    sort -rn | sed -n '1s/^[^ ]* //p' | grep .
 }
 
 # Whether session SID's Claude Code process still runs: its fleet file (the
