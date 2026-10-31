@@ -66,7 +66,11 @@ took() { printf '%s' "$((SECONDS - began))"; }
 exec 8>>"$FLEET_STATE/.launch.lock"
 flock -w 120 8 || { flog ERROR "launch held: another launch kept the lock for 2 min" name="$name"; exit 1; }
 before=$(fleet_panes | sort)
-if ! out=$(cd ~ && KLEPSYDRA_CLAUDE="$cmd" KLEPSYDRA_TMUX_SOCKET="$FLEET_SOCK" bash "${FLEET_LAUNCHER:-$HOME/.claude/klepsydra-launch.sh}" new "$dir" 2>&1 7>&- 8>&-); then
+# Agents open behind the window in view (#216); a relaunched orchestrator comes
+# forward, since the window he replaces is gone.
+behind=1
+[[ $name == heph ]] && behind=0
+if ! out=$(cd ~ && KLEPSYDRA_CLAUDE="$cmd" KLEPSYDRA_TMUX_SOCKET="$FLEET_SOCK" KLEPSYDRA_BACKGROUND=$behind bash "${FLEET_LAUNCHER:-$HOME/.claude/klepsydra-launch.sh}" new "$dir" 2>&1 7>&- 8>&-); then
   flog ERROR "launch failed: the launcher refused" name="$name" said="$out"
   echo "launch failed: $out" # logcheck: ignore[stderr-for-errors] # the result line
   exit 1
