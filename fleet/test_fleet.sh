@@ -1627,21 +1627,34 @@ git -C "$ir" worktree add -q "$ir/.claude/worktrees/mine" -b mine; git -C "$ir" 
 mkdir -p "$ir/.claude/worktrees/mine/docs" "$work/norepo/x"
 printf 'mine\n' >"$ir/.claude/worktrees/mine/IMPL.md"; touch -d '@1000' "$ir/.claude/worktrees/mine/IMPL.md"
 printf 'sib\n' >"$ir/.claude/worktrees/sib/IMPL.md"; printf 'x\n' >"$work/norepo/x/IMPL.md"
-tx() { # CWD [TOOL INPUT JSON]...: a transcript of one call per input, run from CWD
+tx() { # CWD [TOOL INPUT JSON]...: a transcript of one call per input ("name" the tool, Bash by default), run from CWD
   local c=$1; shift
   (($#)) || set -- '{}'
-  for i in "$@"; do jq -nc --arg c "$c" --argjson i "$i" '{type: "assistant", cwd: $c, message: {content: [{type: "tool_use", name: "Bash", input: $i}]}}'; done >"$work/t.jsonl"
+  for i in "$@"; do
+    jq -nc --arg c "$c" --argjson i "$i" '{type: "assistant", cwd: $c, message: {content: [{type: "tool_use", name: ($i.name // "Bash"), input: ($i | del(.name))}]}}'
+  done >"$work/t.jsonl"
   newest_impl "$work/t.jsonl" || echo none
 }
 check "working inside its worktree: that worktree's, not a newer sibling's" "$(tx "$ir/.claude/worktrees/mine/docs")" "$ir/.claude/worktrees/mine/IMPL.md"
-check "the main checkout and no named file: the repo's newest" "$(tx "$ir")" "$ir/.claude/worktrees/sib/IMPL.md"
-check "a path its calls named wins over the newest" \
-  "$(tx "$ir" "{\"command\": \"cat >$ir/.claude/worktrees/mine/IMPL.md <<'E'\"}")" "$ir/.claude/worktrees/mine/IMPL.md"
-check "a relative path is read against that call's folder; the last one counts" \
-  "$(tx "$ir" '{"file_path": "/nowhere/IMPL.md"}' '{"command": "git add .claude/worktrees/mine/IMPL.md && git commit"}' '{"command": "git show origin/main:IMPL.md"}')" \
+check "inside its worktree, reading a sibling's last does not hand it over" \
+  "$(tx "$ir/.claude/worktrees/mine" "{\"command\": \"cat $ir/.claude/worktrees/sib/IMPL.md\"}" "{\"name\": \"Read\", \"file_path\": \"$ir/.claude/worktrees/sib/IMPL.md\"}")" \
   "$ir/.claude/worktrees/mine/IMPL.md"
-check "a named file that is gone falls through" "$(tx "$ir/.claude/worktrees/mine" '{"file_path": "/nowhere/IMPL.md"}')" "$ir/.claude/worktrees/mine/IMPL.md"
+git -C "$ir" worktree add -q "$ir/.claude/worktrees/bare" -b bare
+check "a worktree with no IMPL.md: none, not a sibling's" "$(tx "$ir/.claude/worktrees/bare")" "none"
+check "the main checkout and nothing written: the repo's newest" "$(tx "$ir")" "$ir/.claude/worktrees/sib/IMPL.md"
+check "from the main checkout, the last one it wrote wins over the newest" \
+  "$(tx "$ir" "{\"command\": \"cat >$ir/.claude/worktrees/mine/IMPL.md <<'E'\"}")" "$ir/.claude/worktrees/mine/IMPL.md"
+check "a relative write is read against that call's folder or its cd; a later read does not count" \
+  "$(tx "$ir" '{"command": "date | tee -a .claude/worktrees/mine/IMPL.md"}' '{"command": "cd .claude/worktrees/sib && printf x >> IMPL.md"}' \
+    '{"command": "cat .claude/worktrees/mine/IMPL.md; git show origin/main:IMPL.md"}' "{\"name\": \"Read\", \"file_path\": \"$ir/.claude/worktrees/mine/IMPL.md\"}")" \
+  "$ir/.claude/worktrees/sib/IMPL.md"
+check "a Write or Edit counts" "$(tx "$ir" "{\"name\": \"Edit\", \"file_path\": \"$ir/.claude/worktrees/mine/IMPL.md\"}")" "$ir/.claude/worktrees/mine/IMPL.md"
+check "a write through ~ is read against HOME" \
+  "$(HOME=$ir tx "$ir" '{"command": "printf x > ~/.claude/worktrees/mine/IMPL.md"}')" "$ir/.claude/worktrees/mine/IMPL.md"
+check "a written file that is gone falls through to the newest" "$(tx "$ir" '{"name": "Write", "file_path": "/nowhere/IMPL.md"}')" "$ir/.claude/worktrees/sib/IMPL.md"
 check "a folder outside any repo: none, not a neighbour's" "$(tx "$work/norepo")" "none"
+check "a folder outside any repo: the IMPL.md it wrote by full path" \
+  "$(tx "$work/norepo" "{\"command\": \"cat >> $ir/.claude/worktrees/mine/IMPL.md\"}")" "$ir/.claude/worktrees/mine/IMPL.md"
 check "launches are staggered" "$(awk 'NR == 1 { a = $1 } NR == 2 { print ($1 - a >= 1) ? "apart" : "burst" }' "$work/rec.log")" "apart"
 : >"$work/rec.log"
 sfile "$SB" 4242 777 "$NOWBOOT" %2; sfile "$SC" 4242 777 "$NOWBOOT" %3

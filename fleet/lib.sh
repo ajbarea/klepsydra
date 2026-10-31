@@ -585,33 +585,42 @@ answered_by_limit() { # SCREEN
     END { if (hit != "") print hit }' | tail -1 | grep -v -e '^The usage limit has reset\.' -e '^Fresh start:'
 }
 
-# Whether session SID's Claude Code process still runs: its fleet file (the
-# hook's) names this boot and a process with the same start time. A tmux
-# restart reuses pane ids and a reboot reuses pids, so neither alone says so.
-# The agent's own IMPL.md, in order: the last one its tool calls named with a
-# folder (a relative path read against that call's folder) that still exists;
-# the IMPL.md of the worktree it last worked in; the newest of that repo's and
-# its worktrees'. Its folder outside any repo gives none: the newest in a
-# folder of repos is some other agent's.
+# The agent's own IMPL.md. With its last folder in a linked worktree: that
+# worktree's, or none (a sibling's belongs to another agent). Otherwise the
+# last IMPL.md it wrote that still exists (Write or Edit, or a shell redirect
+# or tee, read against that call's folder or its leading `cd DIR &&`), else,
+# from a main checkout, the newest of the repo's and its worktrees'. Reads
+# never count: a recovered agent reads every worktree's. A folder outside any
+# repo with nothing written gives none.
 newest_impl() { # TRANSCRIPT
-  local cwd top own="" p
-  while IFS=$'\t' read -r cwd p; do
-    [[ $p == /* ]] || p=$cwd/$p
-    [[ -f $p && ! -L $p ]] && own=$p
-  done < <(jq -r 'select(.type == "assistant" and .cwd != null) | .cwd as $c | .message.content[]?
-      | select(.type == "tool_use") | (.input.file_path, .input.command) | strings
-      | scan("[^\\s\"'"'"'=:;|&<>()]*/IMPL\\.md(?![\\w.])") | [$c, .] | @tsv' "$1" 2>/dev/null)
-  [[ -n $own ]] && { realpath -s "$own"; return; }
+  local cwd top dir base p own=""
   cwd=$(jq -r 'select(.cwd != null) | .cwd' "$1" 2>/dev/null | tail -1)
   [[ -n $cwd && -d $cwd ]] || return 1
-  own=$(git -C "$cwd" rev-parse --show-toplevel 2>/dev/null) || return 1
-  [[ -f $own/IMPL.md && $(git -C "$cwd" rev-parse --path-format=absolute --git-dir) != $(git -C "$cwd" rev-parse --path-format=absolute --git-common-dir) ]] &&
-    { echo "$own/IMPL.md"; return; }
+  dir=$(git -C "$cwd" rev-parse --show-toplevel 2>/dev/null)
+  if [[ -n $dir && $(git -C "$cwd" rev-parse --path-format=absolute --git-dir) != $(git -C "$cwd" rev-parse --path-format=absolute --git-common-dir) ]]; then
+    [[ -f $dir/IMPL.md && ! -L $dir/IMPL.md ]] || return 1
+    echo "$dir/IMPL.md"; return
+  fi
+  while IFS=$'\t' read -r base p; do
+    # shellcheck disable=SC2088,SC2016 # the transcript's text: a literal ~ or $HOME to expand here
+    case $p in '~/'*) p=$HOME/${p#'~/'} ;; '$HOME/'*) p=$HOME/${p#'$HOME/'} ;; '${HOME}/'*) p=$HOME/${p#'${HOME}/'} ;; /*) ;; *) p=$base/$p ;; esac
+    [[ -f $p && ! -L $p ]] && own=$p
+  done < <(jq -r 'select(.type == "assistant" and .cwd != null) | .cwd as $c | .message.content[]? | select(.type == "tool_use")
+      | if (.name | IN("Write", "Edit", "MultiEdit")) then (.input.file_path | strings | select(test("(^|/)IMPL\\.md$")) | [$c, .])
+        else (.input.command | strings | ((capture("^\\s*cd\\s+(?<d>[^\\s;&|]+)\\s*&&") | .d
+            | if startswith("/") then . elif startswith("~/") then env.HOME + .[1:] else $c + "/" + . end) // $c) as $b
+          | scan("(?:>>?|\\btee(?:\\s+-a)?)\\s*((?:[^\\s\"'"'"';|&<>()]*/)?IMPL\\.md)(?![\\w.])") | [$b, .[0]])
+        end | @tsv' "$1" 2>/dev/null)
+  [[ -n $own ]] && { realpath -s "$own"; return; }
+  [[ -n $dir ]] || return 1
   top=$(git -C "$cwd" rev-parse --path-format=absolute --git-common-dir) && top=${top%/.git}
-  find "$cwd" "$top" "$top/.claude/worktrees" -maxdepth 2 -name IMPL.md -type f -printf '%T@ %p\n' 2>/dev/null |
+  find "$top" "$top/.claude/worktrees" -maxdepth 2 -name IMPL.md -type f -printf '%T@ %p\n' 2>/dev/null |
     sort -rn | head -1 | cut -d' ' -f2- | grep .
 }
 
+# Whether session SID's Claude Code process still runs: its fleet file (the
+# hook's) names this boot and a process with the same start time. A tmux
+# restart reuses pane ids and a reboot reuses pids, so neither alone says so.
 session_alive() { # SID
   local f pid start boot
   [[ $1 =~ ^[0-9a-f-]{36}$ ]] || return 1
