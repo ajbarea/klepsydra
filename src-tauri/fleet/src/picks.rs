@@ -7,7 +7,8 @@
 //! goes. Saved in `picks.json`, so a restart keeps every face. The wall, the
 //! strip and the phone all read it from the snapshot. A fleet agent's pick is
 //! kept by its name, so an agent relaunched on the other account keeps its
-//! face; Heph's face (`HEPH`) is the orchestrator's alone (#172).
+//! face; the orchestrator's faces (`ORCHESTRATORS`: Hephaestus, Athena) are
+//! its alone (#172, #222).
 
 use crate::view::View;
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -15,7 +16,7 @@ use std::path::{Path, PathBuf};
 
 /// The voice keys every theme casts (src/fleet/themes/*.json; a test holds
 /// them equal).
-pub const CAST: [&str; 15] = [
+pub const CAST: [&str; 16] = [
     "af_alloy",
     "af_aoede",
     "af_bella",
@@ -27,6 +28,7 @@ pub const CAST: [&str; 15] = [
     "am_fenrir",
     "am_michael",
     "am_puck",
+    "bf_alice",
     "bf_emma",
     "bf_isabella",
     "bm_fable",
@@ -38,6 +40,20 @@ pub const FILE: &str = "picks.json";
 /// Hephaestus in the kourai theme (each theme's orchestrator): only the
 /// session in the orchestrator's pane wears it, never a pick.
 pub const HEPH: &str = "am_michael";
+/// Athena, the orchestrator's other face (#222); outside keryx's pool, so no
+/// worker is ever given her voice.
+pub const ATHENA: &str = "bf_alice";
+/// The faces only the orchestrator wears, one per session.
+pub const ORCHESTRATORS: [&str; 2] = [HEPH, ATHENA];
+
+/// The face orchestrator session `v` wears: the one its session chose
+/// (`orchestrator_face`), else Hephaestus.
+pub fn orchestrator_face(v: &View) -> &'static str {
+    ORCHESTRATORS
+        .into_iter()
+        .find(|f| v.orchestrator_face.as_deref() == Some(*f))
+        .unwrap_or(HEPH)
+}
 
 /// Where a session's pick is kept: by its fleet agent's name when it has
 /// one, so a relaunch keeps the face, else by its session id.
@@ -80,7 +96,9 @@ impl Picks {
             .and_then(Result::ok)
             .map(|m| {
                 m.into_iter()
-                    .filter(|(_, v)| CAST.contains(&v.as_str()) && v != HEPH)
+                    .filter(|(_, v)| {
+                        CAST.contains(&v.as_str()) && !ORCHESTRATORS.contains(&v.as_str())
+                    })
                     .collect()
             })
             .unwrap_or_default();
@@ -92,8 +110,8 @@ impl Picks {
 
     /// Give each session in `sessions` without a cast voice its pick, making
     /// one where it has none; drop the picks of sessions gone from the wall
-    /// and of those that have a cast voice again. The orchestrator wears
-    /// `HEPH`, and no one else is ever given it. Returns whether a pick
+    /// and of those that have a cast voice again. The orchestrator wears its
+    /// face (`orchestrator_face`), and no one is ever given an orchestrator's. Returns whether a pick
     /// changed (the caller saves).
     pub fn assign(&mut self, sessions: &mut [View]) -> bool {
         let before = self.held.clone();
@@ -108,7 +126,7 @@ impl Picks {
         let mut shown: HashMap<&str, usize> = CAST.iter().map(|c| (*c, 0)).collect();
         for v in sessions.iter() {
             let face = if v.orchestrator {
-                Some(HEPH)
+                Some(orchestrator_face(v))
             } else {
                 cast(v.voice.as_deref()).or_else(|| self.held.get(&key(v)).map(String::as_str))
             };
@@ -135,7 +153,7 @@ impl Picks {
             let free: Vec<&str> = CAST
                 .iter()
                 .copied()
-                .filter(|c| Some(*c) != gave && *c != HEPH)
+                .filter(|c| Some(*c) != gave && !ORCHESTRATORS.contains(c))
                 .collect();
             let least = free.iter().map(|c| shown[c]).min().unwrap_or(0);
             let pick = free
@@ -149,7 +167,8 @@ impl Picks {
         }
         for v in sessions.iter_mut() {
             v.pick = if v.orchestrator {
-                (v.voice.as_deref() != Some(HEPH)).then(|| HEPH.to_string())
+                let face = orchestrator_face(v);
+                (v.voice.as_deref() != Some(face)).then(|| face.to_string())
             } else {
                 self.held.get(&key(v)).cloned()
             };
@@ -203,6 +222,7 @@ mod tests {
             account: None,
             fleet_name: None,
             orchestrator: false,
+            orchestrator_face: None,
             reply_at: None,
             marks: Default::default(),
         }
@@ -292,6 +312,7 @@ mod tests {
     fn heph(id: &str, voice: Option<&str>, started: i64) -> View {
         View {
             orchestrator: true,
+            orchestrator_face: None,
             ..card(id, voice, started)
         }
     }
@@ -324,6 +345,63 @@ mod tests {
             got.iter().all(|(id, f)| (id == "h") == (f == HEPH)),
             "{got:?}"
         );
+    }
+
+    #[test]
+    fn the_orchestrator_wears_the_face_its_session_chose_and_no_worker_ever_wears_either() {
+        let athena = |id: &str, voice: Option<&str>, face: &str| View {
+            orchestrator_face: Some(face.into()),
+            ..heph(id, voice, 0)
+        };
+        let mut p = Picks::default();
+        let mut cards = vec![athena("a", Some("am_puck"), ATHENA)];
+        assert_eq!(
+            picks_of(&mut p, &mut cards)["a"],
+            ATHENA,
+            "Athena by her pick"
+        );
+        let mut cards = vec![athena("a", Some(ATHENA), ATHENA)];
+        assert_eq!(
+            picks_of(&mut p, &mut cards)["a"],
+            "",
+            "her own voice already is hers"
+        );
+        let mut cards = vec![athena("a", Some(HEPH), ATHENA)];
+        assert_eq!(
+            picks_of(&mut p, &mut cards)["a"],
+            ATHENA,
+            "Heph's voice is not her face"
+        );
+        for bogus in ["af_heart", "nobody", ""] {
+            let mut cards = vec![athena("a", None, bogus)];
+            assert_eq!(
+                picks_of(&mut p, &mut cards)["a"],
+                HEPH,
+                "{bogus:?}: Heph by default"
+            );
+        }
+        // Every worker face taken, twice over: neither orchestrator face is ever a pick.
+        let mut cards: Vec<View> = (0..40).map(|i| card(&format!("z{i}"), None, i)).collect();
+        cards.push(athena("a", None, ATHENA));
+        let got = picks_of(&mut p, &mut cards);
+        assert_eq!(got["a"], ATHENA);
+        assert!(
+            got.iter()
+                .all(|(id, f)| id == "a" || !ORCHESTRATORS.contains(&f.as_str())),
+            "{got:?}"
+        );
+    }
+
+    #[test]
+    fn a_saved_pick_of_an_orchestrator_face_is_dropped_on_load() {
+        let dir = crate::scan::tests::Scratch::new("picks-orchestrators");
+        std::fs::write(
+            dir.0.join(FILE),
+            format!("{{\"w\": \"{ATHENA}\", \"x\": \"{HEPH}\", \"y\": \"af_nova\"}}"),
+        )
+        .unwrap();
+        let p = Picks::load(&dir.0);
+        assert_eq!(p.held.keys().collect::<Vec<_>>(), ["y"]);
     }
 
     #[test]

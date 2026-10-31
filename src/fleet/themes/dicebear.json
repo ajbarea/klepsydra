@@ -6,6 +6,7 @@
   "characters": {
     "af_heart": {"name": "Rosa", "face": "af-heart", "accent": "#00D7CE", "gender": "f", "epithet": "Cheers Everyone On"},
     "am_michael": {"name": "Max", "face": "am-michael", "accent": "#00F8FF", "gender": "m", "epithet": "Runs the Show"},
+    "bf_alice": {"name": "Gwen", "face": "bf-alice", "accent": "#FCFC00", "gender": "f", "epithet": "Calls the Plays"},
     "bf_emma": {"name": "Ivy", "face": "bf-emma", "accent": "#009DE7", "gender": "f", "epithet": "Ships the Code"},
     "af_bella": {"name": "Bea", "face": "af-bella", "accent": "#7EB5FF", "gender": "f", "epithet": "Spots the Rough Edges"},
     "bf_isabella": {"name": "Wren", "face": "bf-isabella", "accent": "#D5CDFF", "gender": "f", "epithet": "Writes It All Down"},

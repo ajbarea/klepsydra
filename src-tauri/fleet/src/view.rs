@@ -136,6 +136,10 @@ pub struct View {
     /// out when false.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub orchestrator: bool,
+    /// The orchestrator's chosen face (crate::picks::orchestrator_face); the
+    /// wall reads the result as `pick`, so it stays out of the JSON.
+    #[serde(skip)]
+    pub orchestrator_face: Option<String>,
     /// When keryx last kept this session's spoken reply (`reply::written_at`),
     /// so the card can play it; left out of the JSON without one.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -327,6 +331,7 @@ pub fn view(entry: &Entry, now: i64) -> Option<View> {
         account: f.account.clone(),
         fleet_name: f.fleet_name.clone(),
         orchestrator: f.orchestrator,
+        orchestrator_face: f.orchestrator_face.clone(),
         reply_at: None,
         marks: Marks {
             state_at: f.state_at,
@@ -335,10 +340,11 @@ pub fn view(entry: &Entry, now: i64) -> Option<View> {
     })
 }
 
-/// Heph's face is the orchestrator's alone (#172): a worker holding its voice
-/// gives it up, and the orchestrator gives up any other, so it wears Heph's
-/// face by its pick (crate::picks) whatever voice keryx gave it. Runs before
-/// keep_faces_distinct, so a worker's claim on Heph's voice never costs him it.
+/// The orchestrator's faces are its alone (#172, #222): a worker holding
+/// Hephaestus's or Athena's voice gives it up, and the orchestrator gives up
+/// any voice but its own face's, so it wears that face by its pick
+/// (crate::picks) whatever voice keryx gave it. Runs before
+/// keep_faces_distinct, so a worker's claim on those voices never costs it.
 fn reserve_heph(shown: &mut [(&SessionFile, View)]) {
     // Heph is the newest live session flagged so: an ended old Heph (after a
     // /clear or a move) and any other flagged one are workers here.
@@ -351,8 +357,12 @@ fn reserve_heph(shown: &mut [(&SessionFile, View)]) {
         v.orchestrator = heph.as_deref() == Some(v.session_id.as_str());
     }
     for (_, v) in shown.iter_mut() {
-        let heph = v.voice.as_deref() == Some(crate::picks::HEPH);
-        if v.voice.is_some() && heph != v.orchestrator {
+        let keep = match v.voice.as_deref() {
+            None => true,
+            Some(voice) if v.orchestrator => voice == crate::picks::orchestrator_face(v),
+            Some(voice) => !crate::picks::ORCHESTRATORS.contains(&voice),
+        };
+        if !keep {
             v.ceded = v.voice.take();
         }
     }
@@ -470,6 +480,7 @@ mod tests {
             account: None,
             fleet_name: None,
             orchestrator: false,
+            orchestrator_face: None,
         }
     }
 
@@ -1242,6 +1253,28 @@ mod tests {
             voice_of(&s, "h"),
             Some(crate::picks::HEPH),
             "and keeps his own"
+        );
+    }
+
+    #[test]
+    fn athenas_voice_is_the_orchestrators_alone_and_athena_gives_up_hephs() {
+        let worker = voiced("w", NOW - 900, crate::picks::ATHENA, "hold");
+        let mut orch = voiced("a", NOW - 100, crate::picks::HEPH, "hold");
+        orch.file.orchestrator = true;
+        orch.file.orchestrator_face = Some(crate::picks::ATHENA.into());
+        let s = snapshot(&[worker, orch], NOW);
+        let card = |id: &str| s.sessions.iter().find(|v| v.session_id == id).unwrap();
+        assert_eq!(voice_of(&s, "w"), None, "a worker gives Athena's voice up");
+        assert_eq!(card("w").ceded.as_deref(), Some(crate::picks::ATHENA));
+        assert_eq!(voice_of(&s, "a"), None, "Athena gives up Heph's voice");
+        let mut orch = voiced("a", NOW - 100, crate::picks::ATHENA, "hold");
+        orch.file.orchestrator = true;
+        orch.file.orchestrator_face = Some(crate::picks::ATHENA.into());
+        let s = snapshot(&[orch], NOW);
+        assert_eq!(
+            voice_of(&s, "a"),
+            Some(crate::picks::ATHENA),
+            "and keeps her own"
         );
     }
 

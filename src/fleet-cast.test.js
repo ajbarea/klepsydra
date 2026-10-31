@@ -15,18 +15,21 @@ const POOL = [
   "bm_fable", "am_puck", "af_aoede", "af_kore", "af_sarah", "af_alloy", "af_nova",
 ];
 const KOURAI = ["aidos", "aletheia", "cupid", "dokimasia", "hephaestus", "kallos", "metis", "mneme", "puck", "techne"];
-const NEW = ["argos", "chronos", "elpis", "hermes", "hesychia"];
+const NEW = ["argos", "athena", "chronos", "elpis", "hermes", "hesychia"];
 // keryx's specialty voice, handed out after the pool and before any blend (keryx 0.9.3).
 const SPECIALTY = "af_nicole";
+// Athena's voice: outside keryx's pool and specialty, so only the orchestrator wears her (#222).
+const ORCHESTRATOR_ONLY = "bf_alice";
 const PORTRAITS = [...KOURAI, ...NEW].sort();
 
-test("the fifteen characters each have one voice of their gender: every pool voice, and af_nicole", () => {
+test("the sixteen characters each have one voice of their gender: every pool voice, af_nicole, and Athena's bf_alice", () => {
   const entries = Object.entries(cast.characters);
   assert.deepEqual(entries.map(([, c]) => c.face).sort(), PORTRAITS);
-  assert.equal(new Set(entries.map(([, c]) => c.name)).size, 15);
-  assert.deepEqual(Object.keys(cast.characters).sort(), [...POOL, SPECIALTY].sort(), "every pool voice has a character, and af_nicole is cast too");
+  assert.equal(new Set(entries.map(([, c]) => c.name)).size, 16);
+  assert.deepEqual(Object.keys(cast.characters).sort(), [...POOL, SPECIALTY, ORCHESTRATOR_ONLY].sort(), "every pool voice has a character; af_nicole and bf_alice are cast too");
+  assert.equal(cast.characters[ORCHESTRATOR_ONLY].name, "Athena");
   for (const [voice, c] of entries) {
-    assert.ok(POOL.includes(voice) || voice === SPECIALTY, `${voice} is neither in keryx's pool nor its specialty voice`);
+    assert.ok(POOL.includes(voice) || voice === SPECIALTY || voice === ORCHESTRATOR_ONLY, `${voice} is not a keryx voice or Athena's`);
     assert.equal(voice[1], c.gender, `${c.name} cast against gender`);
   }
 });
@@ -50,10 +53,10 @@ const CANON = {
   mneme: "#B496DC", puck: "#009E73", cupid: "#D55E00", aidos: "#56B4E9", aletheia: "#0072B2",
 };
 
-// The five new accents: Okabe-Ito yellow and reddish purple, kourai cream-gold, moonlit silver-blue
-// (Hesychia, from her brief), and a burnt orange sampled from Hermes's cloak edge (portrait-briefs.md named #E69F00,
-// which is the needs-you amber).
-const ADDED = { chronos: "#F0E442", argos: "#CC79A7", hermes: "#E07B39", elpis: "#F1D2A1", hesychia: "#A9B8D0" };
+// The six new accents: Okabe-Ito yellow and reddish purple, kourai cream-gold, moonlit silver-blue
+// (Hesychia, from her brief), a burnt orange sampled from Hermes's cloak edge (portrait-briefs.md named #E69F00,
+// which is the needs-you amber), and Athena's olive (her brief, klepsydra#222).
+const ADDED = { chronos: "#F0E442", argos: "#CC79A7", hermes: "#E07B39", elpis: "#F1D2A1", hesychia: "#A9B8D0", athena: "#7A8B3C" };
 
 test("every character has its accent, and nothing else is in an entry", () => {
   for (const c of Object.values(cast.characters)) {
@@ -152,7 +155,7 @@ const EPITHETS = {
   dokimasia: "Guardian of Standards", kallos: "Eye of Elegance", mneme: "Keeper of Memory",
   puck: "Spirit of Mischief", cupid: "Arrow of the Heart", aidos: "Mirror of Honesty", aletheia: "Witness to Truth",
   chronos: "Keeper of the Hours", argos: "The Hundred-Eyed Watch", hermes: "Herald of the Gods",
-  elpis: "Hope That Stayed", hesychia: "Keeper of Quiet",
+  elpis: "Hope That Stayed", hesychia: "Keeper of Quiet", athena: "Strategist of the Forge",
 };
 
 test("every character has its canon epithet and a head to place its figure by", () => {

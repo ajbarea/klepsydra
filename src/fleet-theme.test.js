@@ -105,7 +105,7 @@ test("each theme has its own accents; Professions' and DiceBear's clear 3:1 on e
   assert.notDeepEqual(accents("dicebear"), accents("professions"));
   for (const id of ["professions", "dicebear"]) {
     const list = accents(id);
-    assert.equal(new Set(list).size, 15, `${id}: fifteen accents`);
+    assert.equal(new Set(list).size, 16, `${id}: sixteen accents`);
     for (const a of list) {
       for (const bg of surfaces) assert.ok(contrast(a, bg) >= 3, `${id} ${a} on ${bg}: ${contrast(a, bg).toFixed(2)} (WCAG 1.4.11)`);
       assert.equal(markerWidth(a, BUTTON_BGS), MARKER_PX, `${id} ${a}: the plain marker`);
