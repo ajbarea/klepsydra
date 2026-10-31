@@ -27,6 +27,7 @@ class Agora(unittest.TestCase):
                         "am_michael": {"name": "Hephaestus"},
                         "af_nova": {"name": "Metis"},
                         "bf_emma": {"name": "Mneme"},
+                        "bf_alice": {"name": "Athena"},
                     }
                 }
             )
@@ -150,6 +151,16 @@ class Agora(unittest.TestCase):
         )
         self.register("%5", "sphragis", "22222222-2222-4333-8444-555555555555")
         self.assertEqual(self.run_agora("post", "x", pane="%5")[1], "Posted as Mneme.")
+
+    def test_an_orchestrator_wearing_athena_signs_as_athena_and_no_worker_does(self):
+        (self.tmp / "state" / "orchestrator.session").write_text(SID + "\n")
+        self.live(voice="am_puck", orchestrator_face="bf_alice")
+        self.assertEqual(self.run_agora("post", "a win")[1], "Posted as Athena.")
+        (self.tmp / "state" / "orchestrator.session").unlink()
+        self.live(voice="bf_alice")
+        self.assertEqual(
+            self.run_agora("post", "x", now=NOW + 3601)[1], "Posted as Metis."
+        )
 
     def test_a_relaunched_agent_is_still_held_to_one_post_an_hour(self):
         self.assertEqual(self.run_agora("post", "first")[0], 0)

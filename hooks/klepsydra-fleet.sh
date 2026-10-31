@@ -564,7 +564,9 @@ def notified: if type == "string" then [scan("<task-notification>[\\s\\S]*?</tas
   | .name = (($ev.session_title | text) // .name)
   | .fleet_name = (($fleet_agent | text) // .fleet_name)
   | .orchestrator = $orchestrator
-  | if $orchestrator then .orchestrator_face = ((.orchestrator_face | strings) // $orch_face) else del(.orchestrator_face) end
+  # An orchestrator file written before faces (#222) is Hephaestus's: it keeps him.
+  | if $orchestrator then .orchestrator_face = ((.orchestrator_face | strings)
+      // (if $was.orchestrator == true then $heph_face else $orch_face end)) else del(.orchestrator_face) end
   | (if $pid != "" then {pid: ($pid | tonumber), start: ($start | tonumber)} else null end) as $me
   # A new process (any start but a compaction) replaces what the file knew of
   # the old one: its pid, pane and host, unknowns included.
@@ -966,7 +968,8 @@ main() {
   local agent=${KLEPSYDRA_AGENT:-} orchestrator=false orch_pane="" orch_sid="" orch_name=""
   local orch_state=${FLEET_STATE:-${HOME:-}/.local/state/fleet-orchestrator}
   # The face a new orchestrator session wears (#222): orchestrator.face names
-  # athena or hephaestus (the default); a session keeps the one it started with.
+  # athena or hephaestus (the default), matched exactly. A session reads it at
+  # its first event and keeps that face, so write it before the launch.
   { read -r orch_name <"$orch_state/orchestrator.face"; } 2>/dev/null
   local orch_face=$HEPH_VOICE
   [[ $orch_name == athena ]] && orch_face=$ATHENA_VOICE
@@ -1018,7 +1021,7 @@ main() {
     --arg git "$where_git" --argjson where_gone "$where_gone" --arg by "$by" --arg dir "$where_dir" --arg gh "$where_remote" \
     --arg tmux_socket "$tmux_socket" --arg tmux_pane "$tmux_pane" --arg boot "$host_boot" --arg distro "$host_distro" \
     --arg voice "$voice" --argjson homes "$homes" --arg cwd_repo "$cwd_repo" --arg pid "$found_pid" --arg start "$found_start" --arg remote "$remote" --arg cleared "$cleared" --argjson account "$account" --arg live "$live" \
-    --arg fleet_agent "$agent" --argjson orchestrator "$orchestrator" --arg orch_face "$orch_face" \
+    --arg fleet_agent "$agent" --argjson orchestrator "$orchestrator" --arg orch_face "$orch_face" --arg heph_face "$HEPH_VOICE" \
     "$APPLY" 2>/dev/null) || new=""
   # A cast newer than this session's file: the theme changed under it. The
   # file's time is moved past the cast's, so one switch recolours it once.
