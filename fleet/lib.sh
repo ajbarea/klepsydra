@@ -651,6 +651,31 @@ session_alive() { # SID
   [[ $(proc_start "$pid") == "$start" ]]
 }
 
+# Whether session SID ended cleanly: its fleet file is marked ended, which
+# only Claude Code's SessionEnd writes; a hard shutdown or a killed pane never
+# does. klepsydra keeps an ended file a day, so a row older than that is not
+# known to have finished.
+session_finished() { # SID
+  local f
+  [[ $1 =~ ^[0-9a-f-]{36}$ ]] || return 1
+  f=$KLEPSYDRA_DIR/fleet/$1.json
+  [[ -f $f && ! -L $f ]] || return 1
+  jq -e '.ended != null' "$f" >/dev/null 2>&1
+}
+
+# A registry row's state (#220): "running" (its session, or a live session in
+# its pane after a /clear the row never recorded), "finished" (its session
+# ended cleanly), or "gone" (no end recorded: a hard shutdown, a killed pane).
+row_state() { # PANE SID
+  if session_alive "$2" || { fleet_panes | grep -qx -- "$1" && live_session "$1" >/dev/null; }; then
+    echo running
+  elif session_finished "$2"; then
+    echo finished
+  else
+    echo gone
+  fi
+}
+
 # Whether session SID started on the running fleet tmux server: its fleet file
 # names this boot and a process start (/proc ticks since boot, so a WSL clock
 # step cannot skew it) no earlier than the server's. A tmux restart reuses pane

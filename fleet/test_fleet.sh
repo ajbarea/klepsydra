@@ -1709,6 +1709,37 @@ check "launches are staggered" "$(awk 'NR == 1 { a = $1 } NR == 2 { print ($1 - 
 sfile "$SB" 4242 777 "$NOWBOOT" %2; sfile "$SC" 4242 777 "$NOWBOOT" %3
 check "once they run, a second run recovers nothing" "$(rec --no-orchestrator | tail -1) $(wc -l <"$work/rec.log")" "nothing to recover 0"
 
+echo "finished agents: one verdict per row, and --prune (#220)"
+SF=aaaaaaaa-0000-4000-8000-0000000000f1 SL=aaaaaaaa-0000-4000-8000-0000000000f2 SR=aaaaaaaa-0000-4000-8000-0000000000f3
+ended() { jq '.ended = 1792520221' "$KLEPSYDRA_DIR/fleet/$1.json" >"$work/ended.tmp" && mv -f -- "$work/ended.tmp" "$KLEPSYDRA_DIR/fleet/$1.json"; }
+sfile "$SF" 4242 777 "$NOWBOOT" %4; ended "$SF"   # finished cleanly
+cp -p -- "$REGISTRY" "$work/reg-before-220"
+printf '%s\td\t%s\t%s\t/w\n%s\te\t%s\t%s\t/w\n' %4 "$work/bc.src" "$SF" %5 "$work/bc.src" "$SL" >>"$REGISTRY"
+check "row states: running, finished, gone (no end recorded)" "$(row_state %1 "$SA") $(row_state %4 "$SF") $(row_state %5 "$SL")" "running finished gone"
+sfile "$SR" 4242 777 "$NOWBOOT" %6; sfile "$SL" 4242 777 "$NOWBOOT" %9; ended "$SL"
+check "a /clear: the row's session ended but its pane runs a new one, so it is running" "$( fleet_panes() { echo %6; }; row_state %6 "$SL" )" "running"
+rm -f "$KLEPSYDRA_DIR/fleet/$SL.json" "$KLEPSYDRA_DIR/fleet/$SR.json"
+doc=$(bash "$here/doctor.sh" 2>/dev/null)
+check "a lost row is one FAIL, a finished one one warn, and neither gets a remote control line" \
+  "$(grep '^FAIL agents' <<<"$doc") | $(grep '^warn finished agents' <<<"$doc") | $(grep -c 'remote control %[45] ' <<<"$doc")" \
+  "FAIL agents: sessions gone: e: fleet recover | warn finished agents: still in panes.tsv: d: fleet doctor --prune | 0"
+check "recover leaves a finished agent alone and relaunches the lost one" \
+  "$(rec --dry-run --no-orchestrator | grep -E '^(finished|would recover)' | cut -d' ' -f1-2)" $'finished: d\nwould recover: e'
+awk -F'\t' '$2 != "e"' "$REGISTRY" >"$work/reg.tmp" && mv -f -- "$work/reg.tmp" "$REGISTRY"
+# A restarted tmux server hands out %4 again: a running agent's row on the finished row's pane id.
+SG=aaaaaaaa-0000-4000-8000-0000000000f4
+sfile "$SG" 4242 777 "$NOWBOOT" %4
+printf '%s\tg\t%s\t%s\t/w\n' %4 "$work/bc.src" "$SG" >>"$REGISTRY"
+check "with only finished rows: a warn, no FAIL" "$(bash "$here/doctor.sh" 2>/dev/null | grep -E '^(FAIL|warn) (finished )?agents')" "warn agents: finished, still in panes.tsv: d: fleet doctor --prune"
+out=$(bash "$here/doctor.sh" --prune 2>/dev/null); rc=$?
+check "--prune drops only the finished row and keeps a backup" \
+  "$rc|$(head -1 <<<"$out")|$(cut -f2 "$REGISTRY" | tr '\n' ' ')|$(find "$FLEET_STATE" -maxdepth 1 -name 'panes.tsv.bak-*' | wc -l)|$(grep -c $'\td\t' "$(find "$FLEET_STATE" -maxdepth 1 -name 'panes.tsv.bak-*' | head -1)")" \
+  "0|pruned: d (%4)|a b c g |1|1"
+check "a second --prune finds nothing" "$(bash "$here/doctor.sh" --prune 2>/dev/null)" "nothing to prune: no finished agent's row in panes.tsv"
+check "--prune never touches a lost or running row" "$(diff <(cut -f1-4 "$work/reg-before-220") <(awk -F'\t' '$2 != "g"' "$REGISTRY" | cut -f1-4) && echo same)" "same"
+awk -F'\t' '$2 != "g"' "$REGISTRY" >"$work/reg.tmp" && mv -f -- "$work/reg.tmp" "$REGISTRY"
+find "$FLEET_STATE" -maxdepth 1 -name 'panes.tsv.bak-*' -delete; rm -f "$KLEPSYDRA_DIR/fleet/$SF.json" "$KLEPSYDRA_DIR/fleet/$SG.json"
+
 echo "recover: the orchestrator"
 # After a power cut nothing runs: the earlier checks' live sessions go.
 rm -f "$KLEPSYDRA_DIR/fleet/$SA.json" "$KLEPSYDRA_DIR/fleet/$SB.json" "$KLEPSYDRA_DIR/fleet/$SC.json"
