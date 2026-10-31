@@ -16,6 +16,7 @@ import { clearAll, clearLabel, endedIds, startLabel, wallState } from "./empty.j
 import { wireSplit } from "./split.js";
 import { follow } from "../ipc.js";
 import { ciView } from "./ci.js";
+import { healthView } from "./health.js";
 import { agoraView, reactLabel, reactedLabel } from "./agora.js";
 import { createReplayer } from "./replay.js";
 import { cutsText } from "./fulltext.js";
@@ -725,6 +726,33 @@ function showCi(view) {
 }
 if (inTauri) follow("ci_subscribe", showCi).catch(() => {});
 
+// Fleet health: the bar's Fleet button and its popover of fleet doctor's checks
+// (health.js). The phone's view comes with each snapshot; the app's through health_subscribe.
+const healthButton = document.getElementById("health-open");
+const healthPanel = document.getElementById("health");
+function showHealth(view) {
+  const v = healthView(view);
+  healthButton.hidden = v.hidden;
+  healthButton.textContent = v.label;
+  healthButton.title = v.title;
+  healthButton.dataset.tone = v.tone;
+  healthPanel.querySelector(".health-title").textContent = v.title;
+  healthPanel.querySelector(".health-note").textContent = v.note;
+  healthPanel.querySelector(".health-checks").replaceChildren(
+    ...v.rows.map((r) => {
+      const li = document.createElement("li");
+      li.dataset.status = r.status;
+      li.append(
+        Object.assign(document.createElement("span"), { className: "health-status", textContent: r.statusLabel }),
+        Object.assign(document.createElement("span"), { className: "health-check", textContent: r.check }),
+        Object.assign(document.createElement("span"), { className: "health-detail", textContent: r.detail }),
+      );
+      return li;
+    }),
+  );
+}
+if (inTauri) follow("health_subscribe", showHealth).catch(() => {});
+
 // The Agora: the bar's Agora button and its feed of posts (agora.js). The
 // phone's view comes with each snapshot and is read-only; the app's comes
 // through agora_subscribe, and AJ reacts there.
@@ -812,6 +840,7 @@ if (inTauri) follow("agora_subscribe", showAgora).catch(() => {});
 function take(message) {
   if (served && "ci" in (message ?? {})) showCi(message.ci);
   if (served && "agora" in (message ?? {})) showAgora(message.agora);
+  if (served && "health" in (message ?? {})) showHealth(message.health);
   if (Array.isArray(message?.sessions)) {
     const fresh = castPicks(message.sessions, cast);
     const said = announcements(before, fresh, cast, Date.now());

@@ -90,20 +90,40 @@ pub fn view(raw: &str, now: i64) -> Option<Value> {
     }))
 }
 
-/// Follows `ci.json`, reading it again only when its modified time changes;
-/// in between, only its staleness is worked out again.
-#[derive(Default)]
+/// Follows a report file in the data folder that carries an `observed_at`
+/// (`ci.json` by default, `fleet-health.json` for the fleet's health),
+/// reading it again only when its modified time changes; in between, only its
+/// staleness is worked out again.
 pub struct Follower {
+    file: &'static str,
+    make: fn(&str, i64) -> Option<Value>,
     seen: Option<SystemTime>,
     read_once: bool,
     view: Option<Value>,
 }
 
+impl Default for Follower {
+    fn default() -> Self {
+        Self::of(FILE, view)
+    }
+}
+
 impl Follower {
+    /// A follower of `file`, whose text `make` turns into the view at a time.
+    pub fn of(file: &'static str, make: fn(&str, i64) -> Option<Value>) -> Self {
+        Follower {
+            file,
+            make,
+            seen: None,
+            read_once: false,
+            view: None,
+        }
+    }
+
     /// The view when the file or its staleness changed since the last step;
     /// null once the file is gone or unreadable after a view was sent.
     pub fn step(&mut self, dir: &Path, now: i64) -> Option<Value> {
-        let path = dir.join(FILE);
+        let path = dir.join(self.file);
         let modified = std::fs::symlink_metadata(&path)
             .and_then(|m| m.modified())
             .ok();
@@ -121,7 +141,7 @@ impl Follower {
         self.seen = modified;
         let view = crate::bounded::read_text(&path, MAX_BYTES)
             .ok()
-            .and_then(|raw| view(&raw, now));
+            .and_then(|raw| (self.make)(&raw, now));
         let changed = view != self.view;
         self.view = view.clone();
         // Nothing to say before anything was ever shown.

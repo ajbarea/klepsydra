@@ -66,6 +66,9 @@ pub fn set(app: &AppHandle, on: bool) -> bool {
             app.state::<crate::fleet::CiFeed>()
                 .0
                 .with_latest(|v| server.set_ci(v));
+            app.state::<crate::fleet::HealthFeed>()
+                .0
+                .with_latest(|v| server.set_health(v));
             app.state::<crate::fleet::AgoraFeed>()
                 .0
                 .with_latest(|v| server.set_agora(v));
@@ -94,6 +97,15 @@ pub fn set_ci(app: &AppHandle, view: &serde_json::Value) {
     if let Ok(slot) = app.state::<Phone>().0.lock() {
         if let Some(server) = slot.as_ref() {
             server.set_ci(view);
+        }
+    }
+}
+
+/// Show a running server's phones the fleet's health.
+pub fn set_health(app: &AppHandle, view: &serde_json::Value) {
+    if let Ok(slot) = app.state::<Phone>().0.lock() {
+        if let Some(server) = slot.as_ref() {
+            server.set_health(view);
         }
     }
 }

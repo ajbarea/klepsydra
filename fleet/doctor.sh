@@ -9,6 +9,8 @@
 # 2 minutes); a pane watcher is running; each config folder in FLEET_ACCOUNTS
 # is logged in and the second ones match the first. Briefs whose shared rules
 # are out of date, and a second folder not logged in, are warnings.
+# With `--json FILE` (the fleet-doctor timer) it also writes the checks to FILE
+# for the wall, and logs a check only when its status changed since FILE's run.
 set -u
 FLEET_TARGET=fleet::doctor
 here=$(dirname "$(readlink -f "$0")")
@@ -24,12 +26,33 @@ BEAT_MAX_S=${FLEET_BEAT_MAX_S:-600}
 FRESH_MAX_S=120
 now=$(date +%s)
 failed=0
+json=""
+if [[ ${1:-} == --json ]]; then
+  json=${2:?--json takes a file}
+fi
+# Each check's status at the last --json run.
+declare -A was=()
+if [[ -n $json && -f $json ]]; then
+  while IFS=$'\t' read -r c s; do [[ -n $c ]] && was[$c]=$s; done < <(jq -r '.checks[]? | [.check, .status] | @tsv' "$json" 2>/dev/null)
+fi
+results=()
+
+# The home folder reads as ~, in what doctor prints and in the report the
+# phone gets.
+home() { local s=${1//"$HOME/"/\~/}; [[ $s == "$HOME" ]] && s="~"; printf '%s' "$s"; }
 
 report() { # ok|warn|FAIL CHECK DETAIL
-  printf '%-4s %s: %s\n' "$1" "$2" "$3"
+  local check detail
+  check=$(home "$2") detail=$(home "$3")
+  printf '%-4s %s: %s\n' "$1" "$check" "$detail"
+  results+=("$1"$'\t'"${check//[$'\t\n']/ }"$'\t'"${detail//[$'\t\n']/ }")
+  [[ $1 == FAIL ]] && failed=1
+  [[ -n $json && ${was[${check//[$'\t\n']/ }]-} == "$1" ]] && return
   case $1 in
-    FAIL) failed=1; flog ERROR "doctor: $2" detail="$3" ;;
-    warn) flog WARN "doctor: $2" detail="$3" ;;
+    FAIL) flog ERROR "doctor: $check" detail="$detail" ;;
+    warn) flog WARN "doctor: $check" detail="$detail" ;;
+    # An ok detail can be a Remote Control link, which opens a session: not logged.
+    ok) [[ -n ${was[${check//[$'\t\n']/ }]-} ]] && flog INFO "doctor: $check recovered" ;;
   esac
 }
 
@@ -173,5 +196,16 @@ elif stale=$(bash "$here/brief.sh" --check "${briefs[@]}" 2>/dev/null); then
 else
   report warn "briefs" "$(tr '\n' ' ' <<<"$stale")(fleet brief --check)"
 fi
-flog INFO "doctor ran" failed="$failed"
+if [[ -n $json ]]; then
+  tmp=$json.tmp.$$
+  if printf '%s\n' "${results[@]}" | jq -R -s --argjson at "$now" --argjson failed "$failed" \
+    '{v: 1, observed_at: $at, failed: $failed, checks: [split("\n")[] | select(length > 0) | split("\t") | {status: .[0], check: .[1], detail: .[2]}]}' >"$tmp"; then
+    mv -f -- "$tmp" "$json"
+  else
+    rm -f -- "${tmp:?}"
+    flog ERROR "doctor: could not write its report" path="$json"
+  fi
+else
+  flog INFO "doctor ran" failed="$failed"
+fi
 exit "$failed"
