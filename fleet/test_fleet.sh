@@ -402,7 +402,7 @@ t kill-window -t "$p" 2>/dev/null; : >"$REGISTRY"
 # back (an hour in London, two in Troll, half an hour on Lord Howe): none is
 # idle, so each gets the continue message.
 # Each cell: pane name, stamp, NOW, time zone, and the pass that first sees the limit.
-london=$(TZ=Europe/London date -d '2026-10-25 01:20 BST' +%s)
+london=$(TZ=Europe/London date -d '2026-10-25 01:20 +01:00' +%s)
 troll=$(TZ=Antarctica/Troll date -d '2026-10-25 01:40 +02' +%s)
 lhi=$(TZ=Australia/Lord_Howe date -d '2027-04-04 01:45 +11' +%s)
 for cell in "recent|12:50 PM|$(( noon + 4330 ))" "racing|1:13 PM|$(( noon + 4330 ))" \
