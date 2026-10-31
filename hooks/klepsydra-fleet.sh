@@ -1079,10 +1079,6 @@ main() {
   if [[ ${tmux_socket##*/} == klepsydra && -n $tmux_pane && -f $file && -n $CAST && $CAST -nt $file ]]; then recolour=1; fi
   [[ -n $new ]] && write_atomic "$file" "$new"
   (( recolour )) && touch -c -- "$file" 2>/dev/null
-  # A permission prompt in a tmux pane gets a watcher for its answer (#217).
-  if [[ $event == PermissionRequest && -n $tmux_pane && ${KLEPSYDRA_ASK_WATCH:-1} == 1 && ${new:-$old} == *'"state":"needs_you"'* ]]; then
-    setsid -f bash "${BASH_SOURCE[0]}" watch-ask "$session" </dev/null >/dev/null 2>&1
-  fi
   # Only a start, a changed face or a new theme touches the window. The face
   # follows the wall's rule: Heph's for the orchestrator, never for a worker.
   local was_voice now_voice
@@ -1092,6 +1088,11 @@ main() {
   [[ $event == SessionStart ]] && prune_hourly "$PRUNE_STAMP" prune_fleet "$KLEPSYDRA_DIR" "$now"
   # tmux can hang for its timeout; no other hook waits on it, so drop the lock first.
   { exec {lock}>&-; } 2>/dev/null
+  # A permission prompt in a tmux pane gets a watcher for its answer (#217),
+  # started after the lock is let go: a child holding its fd would keep it.
+  if [[ $event == PermissionRequest && -n $tmux_pane && ${KLEPSYDRA_ASK_WATCH:-1} == 1 && ${new:-$old} == *'"state":"needs_you"'* ]]; then
+    setsid -f bash "${BASH_SOURCE[0]}" watch-ask "$session" </dev/null >/dev/null 2>&1
+  fi
   (( recolour )) && colour_window "$now_voice"
   return 0
 }
