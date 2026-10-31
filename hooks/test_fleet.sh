@@ -1876,7 +1876,7 @@ echo "#217: an answer no hook reports"
 A=21700000-0000-4000-8000-000000000217
 afile="$dir/fleet/$A.json"
 afield() { jq -c "$1" "$afile"; }
-afire() { # fixture [filter] [VAR=value...]; in pane %7 of the fleet socket
+askfire() { # fixture [filter] [VAR=value...]; in pane %7 of the fleet socket
   local fx=$1 f=${2:-.}
   shift; (( $# )) && shift
   fire "$fx" ".session_id = \"$A\" | $f" TMUX="$work/sock/klepsydra,1,0" TMUX_PANE=%7 "$@"
@@ -1885,12 +1885,12 @@ watch_ask_run() { # [max seconds]
   env KLEPSYDRA_DIR="$dir" XDG_RUNTIME_DIR="$work" KLEPSYDRA_NOW="$now" KLEPSYDRA_ASK_TICK=0.05 \
     KLEPSYDRA_ASK_MAX="${1:-20}" bash "$hook" watch-ask "$A"
 }
-now=1792360000 afire session-start.json
-now=1792360010 afire user-prompt.json
+now=1792360000 askfire session-start.json
+now=1792360010 askfire user-prompt.json
 : >"$work/setsid.log"
 now=1792360020 fire permission-request.json ".session_id = \"$A\"" KLEPSYDRA_ASK_WATCH=1
 check "outside tmux: no watcher" "$(cat "$work/setsid.log")" ""
-now=1792360020 afire permission-request.json . KLEPSYDRA_ASK_WATCH=1
+now=1792360020 askfire permission-request.json . KLEPSYDRA_ASK_WATCH=1
 check "a permission prompt in a pane starts its watcher" "$(cat "$work/setsid.log")" "-f bash $hook watch-ask $A"
 check "the file names the pane the watcher reads" "$(afield .tmux)" "{\"socket\":\"$work/sock/klepsydra\",\"pane\":\"%7\"}"
 
@@ -1904,7 +1904,7 @@ timeout 10 tail --pid="$wpid" -f /dev/null
 check "the dialog gone (approved): working, and the watcher ends" \
   "$(afield '[.state, .reason, .needs, .state_at]')|$(kill -0 "$wpid" 2>/dev/null && echo running || echo ended)" '["working",null,null,1792360030]|ended'
 
-now=1792360040 afire permission-request.json
+now=1792360040 askfire permission-request.json
 cp "$fixtures/pane-idle-2.1.302.txt" "$work/screen"
 now=1792360045 watch_ask_run 1
 check "a dialog never seen on screen is never cleared" "$(afield '[.state, .reason]')" '["needs_you","approve Bash"]'
@@ -1919,17 +1919,17 @@ check "an answer to an earlier ask changes nothing" "$(<"$afile")" "$before"
 ask_answered "$afile" 1792360040 1792360047
 check "the answer to this ask" "$(afield '[.state, .needs, .state_at]')" '["working",null,1792360047]'
 
-now=1792360050 afire pre-tool-question.json
+now=1792360050 askfire pre-tool-question.json
 cp "$fixtures/pane-idle-2.1.302.txt" "$work/screen"
 now=1792360051 watch_ask_run 5
 check "a question is not a permission: the watcher leaves it" "$(afield '[.state, .reason]')" '["needs_you","question"]'
 
 echo "#217: a subagent's ask ends with it"
-now=1792360060 afire subagent-start.json '.agent_id = "agent-217"'
-now=1792360061 afire permission-request.json '.agent_id = "agent-217"'
-now=1792360062 afire subagent-stop.json '.agent_id = "agent-other"'
+now=1792360060 askfire subagent-start.json '.agent_id = "agent-217"'
+now=1792360061 askfire permission-request.json '.agent_id = "agent-217"'
+now=1792360062 askfire subagent-stop.json '.agent_id = "agent-other"'
 check "another subagent stopping leaves the ask" "$(afield '[.state, .needs.by]')" '["needs_you","agent-217"]'
-now=1792360063 afire subagent-stop.json '.agent_id = "agent-217"'
+now=1792360063 askfire subagent-stop.json '.agent_id = "agent-217"'
 check "the asker stopping (denied, or done) ends its ask" "$(afield '[.state, .reason, .needs]')" '["working",null,null]'
 
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
