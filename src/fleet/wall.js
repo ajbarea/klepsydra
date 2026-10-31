@@ -895,7 +895,11 @@ wall.addEventListener("click", (e) => {
   if (play) {
     const id = play.closest(".card").dataset.key;
     const note = play.closest(".card").querySelector(".note");
-    replayer.toggle(id, cardOf.get(id)?.clip).then((why) => why && say(note, why));
+    replayer.toggle(id, cardOf.get(id)?.clip).then((why) => {
+      if (!why) return;
+      say(note, why);
+      log.warn(`a reply clip did not play: ${why}`, undefined, { session_id: id });
+    });
     return;
   }
   // Full text opens or shuts in place; nothing else.

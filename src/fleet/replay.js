@@ -4,6 +4,20 @@
 // its server's /audio/<id> directly, its source set and play() called in the
 // press itself, since Safari allows play() only there (WebKit bug 259925).
 
+/**
+ * reply_clip's answer as bytes, or null when it is no WAV. Through Tauri's
+ * custom-protocol IPC it arrives as an ArrayBuffer; through its postMessage
+ * fallback, as an array of numbers, which a Blob would turn into text.
+ */
+export function wavBytes(answer) {
+  let bytes = null;
+  if (answer instanceof ArrayBuffer) bytes = new Uint8Array(answer);
+  else if (ArrayBuffer.isView(answer)) bytes = new Uint8Array(answer.buffer, answer.byteOffset, answer.byteLength);
+  else if (Array.isArray(answer) && answer.every((b) => Number.isInteger(b) && b >= 0 && b < 256)) bytes = Uint8Array.from(answer);
+  const tag = (from) => (bytes ? String.fromCharCode(...bytes.subarray(from, from + 4)) : "");
+  return tag(0) === "RIFF" && tag(8) === "WAVE" ? bytes : null;
+}
+
 /** The phone server's address for session `id`'s clip, `at` (its reply_at) keeping a newer clip from an older copy. */
 export const clipUrl = (id, at) => `/audio/${encodeURIComponent(id)}?at=${encodeURIComponent(String(at))}`;
 
@@ -43,8 +57,9 @@ export function createReplayer({ audio, app, invoke, onChange, objectUrl = URL.c
     onChange(id);
     try {
       if (app) {
-        const bytes = await invoke("reply_clip", { id });
+        const bytes = wavBytes(await invoke("reply_clip", { id }));
         if (current !== mine) return null; // another press came first
+        if (!bytes) throw new Error("the clip is not a WAV file.");
         mine.url = objectUrl(new Blob([bytes], { type: "audio/wav" }));
         audio.src = mine.url;
       } else {
