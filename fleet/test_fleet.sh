@@ -1619,6 +1619,52 @@ check "the brief: why, its last two replies, its newest IMPL.md, then the brief"
   "$(grep -c 'stopped by a hard shutdown' "$work/rec-b.txt") $(grep -c '^> first reply' "$work/rec-b.txt") $(grep -c '^> second reply$' "$work/rec-b.txt") $(grep -c '^> third reply$' "$work/rec-b.txt") $(grep -o 'IMPL.md: .*' "$work/rec-b.txt") | $(tail -1 "$work/rec-b.txt")" \
   "1 0 1 1 IMPL.md: $repo/.claude/worktrees/wt/IMPL.md | brief B"
 check "with no transcript it says so" "$(grep -c 'no transcript found' "$work/rec-c.txt")" "1"
+
+echo "an agent's own IMPL.md (#233)"
+ir=$work/implrepo
+git init -q "$ir"; git -C "$ir" -c user.name=t -c user.email=t@t commit -q --allow-empty -m init
+git -C "$ir" worktree add -q "$ir/.claude/worktrees/mine" -b mine; git -C "$ir" worktree add -q "$ir/.claude/worktrees/sib" -b sib
+mkdir -p "$ir/.claude/worktrees/mine/docs" "$work/norepo/x"
+printf 'mine\n' >"$ir/.claude/worktrees/mine/IMPL.md"; touch -d '@1000' "$ir/.claude/worktrees/mine/IMPL.md"
+printf 'sib\n' >"$ir/.claude/worktrees/sib/IMPL.md"; printf 'x\n' >"$work/norepo/x/IMPL.md"
+printf 'top\n' >"$ir/IMPL.md"; touch -d '@1000' "$ir/IMPL.md"
+tx() { # CWD [TOOL INPUT JSON]...: a transcript of one call per input ("name" the tool, Bash by default), run from CWD
+  local c=$1; shift
+  (($#)) || set -- '{}'
+  for i in "$@"; do
+    jq -nc --arg c "$c" --argjson i "$i" '{type: "assistant", cwd: $c, message: {content: [{type: "tool_use", name: ($i.name // "Bash"), input: ($i | del(.name))}]}}'
+  done >"$work/t.jsonl"
+  newest_impl "$work/t.jsonl" || echo none
+}
+check "working inside its worktree: that worktree's, not a newer sibling's" "$(tx "$ir/.claude/worktrees/mine/docs")" "$ir/.claude/worktrees/mine/IMPL.md"
+check "inside its worktree, reading a sibling's last does not hand it over" \
+  "$(tx "$ir/.claude/worktrees/mine" "{\"command\": \"cat $ir/.claude/worktrees/sib/IMPL.md\"}" "{\"name\": \"Read\", \"file_path\": \"$ir/.claude/worktrees/sib/IMPL.md\"}")" \
+  "$ir/.claude/worktrees/mine/IMPL.md"
+git -C "$ir" worktree add -q "$ir/.claude/worktrees/bare" -b bare
+check "a worktree with no IMPL.md: none, not a sibling's" "$(tx "$ir/.claude/worktrees/bare")" "none"
+check "the main checkout and nothing written: the repo's newest" "$(tx "$ir")" "$ir/.claude/worktrees/sib/IMPL.md"
+check "from the main checkout, the last one it wrote wins over the newest" \
+  "$(tx "$ir" "{\"command\": \"cat >$ir/.claude/worktrees/mine/IMPL.md <<'E'\"}")" "$ir/.claude/worktrees/mine/IMPL.md"
+check "a relative write is read against that call's folder or its cd; a later read does not count" \
+  "$(tx "$ir" '{"command": "date | tee -a .claude/worktrees/mine/IMPL.md"}' '{"command": "cd .claude/worktrees/sib && printf x >> IMPL.md"}' \
+    '{"command": "cat .claude/worktrees/mine/IMPL.md; git show origin/main:IMPL.md"}' "{\"name\": \"Read\", \"file_path\": \"$ir/.claude/worktrees/mine/IMPL.md\"}")" \
+  "$ir/.claude/worktrees/sib/IMPL.md"
+check "a Write or Edit counts" "$(tx "$ir" "{\"name\": \"Edit\", \"file_path\": \"$ir/.claude/worktrees/mine/IMPL.md\"}")" "$ir/.claude/worktrees/mine/IMPL.md"
+check "a cd ending in ; and a quoted path count; a heredoc body's > IMPL.md does not" \
+  "$(tx "$ir" "{\"command\": \"printf x > \\\"$ir/.claude/worktrees/sib/IMPL.md\\\"\"}" '{"command": "cd .claude/worktrees/mine; printf x >> IMPL.md"}' \
+    "{\"command\": \"git commit -F - <<'E'\\nnotes > IMPL.md\\nE\"}")" "$ir/.claude/worktrees/mine/IMPL.md"
+check "a quoted absolute path counts" "$(tx "$ir" "{\"command\": \"printf x > \\\"$ir/.claude/worktrees/mine/IMPL.md\\\"\"}")" "$ir/.claude/worktrees/mine/IMPL.md"
+git -C "$ir" worktree add -q "$ir/.claude/worktrees/link" -b link; ln -s "$ir/.claude/worktrees/sib/IMPL.md" "$ir/.claude/worktrees/link/IMPL.md"
+check "a worktree whose IMPL.md is a symlink: none" "$(tx "$ir/.claude/worktrees/link")" "none"
+sg=$work/sepgit
+git init -q --separate-git-dir "$work/sepgit.git" "$sg"; printf 's\n' >"$sg/IMPL.md"
+check "a checkout with its git folder elsewhere: its own IMPL.md" "$(tx "$sg")" "$sg/IMPL.md"
+check "a write through ~ is read against HOME" \
+  "$(HOME=$ir tx "$ir" '{"command": "printf x > ~/.claude/worktrees/mine/IMPL.md"}')" "$ir/.claude/worktrees/mine/IMPL.md"
+check "a written file that is gone falls through to the newest" "$(tx "$ir" '{"name": "Write", "file_path": "/nowhere/IMPL.md"}')" "$ir/.claude/worktrees/sib/IMPL.md"
+check "a folder outside any repo: none, not a neighbour's" "$(tx "$work/norepo")" "none"
+check "a folder outside any repo: the IMPL.md it wrote by full path" \
+  "$(tx "$work/norepo" "{\"command\": \"cat >> $ir/.claude/worktrees/mine/IMPL.md\"}")" "$ir/.claude/worktrees/mine/IMPL.md"
 check "launches are staggered" "$(awk 'NR == 1 { a = $1 } NR == 2 { print ($1 - a >= 1) ? "apart" : "burst" }' "$work/rec.log")" "apart"
 : >"$work/rec.log"
 sfile "$SB" 4242 777 "$NOWBOOT" %2; sfile "$SC" 4242 777 "$NOWBOOT" %3

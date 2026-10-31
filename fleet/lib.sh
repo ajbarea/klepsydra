@@ -585,6 +585,42 @@ answered_by_limit() { # SCREEN
     END { if (hit != "") print hit }' | tail -1 | grep -v -e '^The usage limit has reset\.' -e '^Fresh start:'
 }
 
+# The agent's own IMPL.md. With its last folder in a linked worktree: that
+# worktree's, or none (a sibling's belongs to another agent). Otherwise the
+# last IMPL.md it wrote that still exists (Write or Edit, or a shell redirect
+# or tee on a command's first line, read against that call's folder or its
+# leading `cd DIR &&` or `cd DIR;`), else,
+# from a main checkout, the newest of the repo's and its worktrees'. Reads
+# never count: a recovered agent reads every worktree's. A folder outside any
+# repo with nothing written gives none.
+newest_impl() { # TRANSCRIPT
+  local cwd dir base p own="" roots
+  cwd=$(jq -r 'select(.cwd != null) | .cwd' "$1" 2>/dev/null | tail -1)
+  [[ -n $cwd && -d $cwd ]] || return 1
+  dir=$(git -C "$cwd" rev-parse --show-toplevel 2>/dev/null)
+  if [[ -n $dir && $(git -C "$cwd" rev-parse --path-format=absolute --git-dir) != $(git -C "$cwd" rev-parse --path-format=absolute --git-common-dir) ]]; then
+    [[ -f $dir/IMPL.md && ! -L $dir/IMPL.md ]] || return 1
+    echo "$dir/IMPL.md"; return
+  fi
+  while IFS=$'\t' read -r base p; do
+    # shellcheck disable=SC2088,SC2016 # the transcript's text: a literal ~ or $HOME to expand here
+    case $p in '~/'*) p=$HOME/${p#'~/'} ;; '$HOME/'*) p=$HOME/${p#'$HOME/'} ;; '${HOME}/'*) p=$HOME/${p#'${HOME}/'} ;; /*) ;; *) p=$base/$p ;; esac
+    [[ -f $p && ! -L $p ]] && own=$p
+  done < <(jq -r 'select(.type == "assistant" and .cwd != null) | .cwd as $c | .message.content[]? | select(.type == "tool_use")
+      | if (.name | IN("Write", "Edit", "MultiEdit")) then (.input.file_path | strings | select(test("(^|/)IMPL\\.md$")) | [$c, .])
+        else (.input.command | strings | split("\n")[0] | ((capture("^\\s*cd\\s+[\"\\x27]?(?<d>[^\\s;&|\"\\x27]+)[\"\\x27]?\\s*(&&|;)") | .d
+            | if startswith("/") then . elif startswith("~/") then env.HOME + .[1:] else $c + "/" + . end) // $c) as $b
+          | scan("(?:>>?|\\btee(?:\\s+(?:-a|--append))?)\\s*[\"\\x27]?((?:[^\\s\"'"'"';|&<>()]*/)?IMPL\\.md)(?![\\w.])") | [$b, .[0]])
+        end | @tsv' "$1" 2>/dev/null)
+  [[ -n $own ]] && { realpath -s "$own"; return; }
+  [[ -n $dir ]] || return 1
+  # Only folders that exist: under pipefail a find over a missing one fails the pick.
+  roots=("$dir")
+  [[ -d $dir/.claude/worktrees ]] && roots+=("$dir/.claude/worktrees")
+  find "${roots[@]}" -maxdepth 2 -name IMPL.md -type f -printf '%T@ %p\n' 2>/dev/null |
+    sort -rn | sed -n '1s/^[^ ]* //p' | grep .
+}
+
 # Whether session SID's Claude Code process still runs: its fleet file (the
 # hook's) names this boot and a process with the same start time. A tmux
 # restart reuses pane ids and a reboot reuses pids, so neither alone says so.
