@@ -68,10 +68,13 @@ attach() { # a real client on a pty, like the tab would be
   for _ in $(seq 50); do [[ -n $(t list-clients -t =fleet 2>/dev/null) ]] && return; sleep 0.1; done
 }
 pane_pid() { t display -p -t "$1" '#{pane_pid}'; }
-pstart() { # pid: /proc/PID/stat field 22, as proc_stat in the launcher's proc stat block reads it
-  local raw; raw=$(cat "/proc/$1/stat" 2>/dev/null) || return 1
-  read -r -a st <<<"${raw##*") "}"; echo "${st[19]}"
+stat_fields() { # pid index...: /proc/PID/stat fields after the command name (index 0 is field 3)
+  local raw st i vals=(); raw=$(cat "/proc/$1/stat" 2>/dev/null) || return 1
+  read -r -a st <<<"${raw##*") "}"; shift
+  for i; do vals+=("${st[i]}"); done
+  echo "${vals[*]}"
 }
+pstart() { stat_fields "$1" 19; } # pid: field 22, as proc_stat in the launcher's proc stat block reads it
 jmp() { bash "$launch" jump "$socket" "$1" "$2" "$3"; } # pane pid start
 detach_all() {
   for p in "${clients[@]}" $(cat "$WT_PIDS" 2>/dev/null); do kill "$p" 2>/dev/null; done
@@ -259,15 +262,31 @@ fake() { # [env...]: a fleet window running the fake; prints its pane id
 }
 send() { bash "$launch" "$1" "$socket" "$2" "$(pane_pid "$2")" "$(pstart "$(pane_pid "$2")")"; } # verb pane
 alive() { [[ -n $(t display -p -t "$1" '#{pane_id}' 2>/dev/null) ]] && echo alive || echo gone; }
-# tmux closes a pane a moment after its process exits; at most 10 s. A pane
-# still there says how its process ended (remain-on-exit keeps a failed one).
-gone() {
+# The session is gone once its process is: tmux closes the pane, or, under
+# load, has seen the terminal close but not yet reaped the process (#134: dead=1
+# and no status after 10 s). A non-zero exit keeps the pane (remain-on-exit
+# failed) and is not gone. Waits up to 20 s; a pane still there says why.
+gone() { # pane pid start
   local why
-  until_true is_gone "$1" && { echo gone; return; }
+  { until_true ended "$@" || until_true ended "$@"; } && { echo gone; return; }
   why=$(t display -p -t "$1" 'dead=#{pane_dead} status=#{pane_dead_status} signal=#{pane_dead_signal}')
-  # tmux shows empty fields for a pane that closed meanwhile.
-  is_gone "$1" && { echo gone; return; }
-  echo "alive ($why)"
+  ended "$@" && { echo gone; return; }
+  echo "alive ($why; pid $2 $(proc_state "$2" "$3"))"
+}
+ended() { # pane pid start
+  # The process first: one tmux reaps after this read shows its status below.
+  local proc; proc=$(proc_state "$2" "$3")
+  is_gone "$1" && return 0
+  [[ $(t display -p -t "$1" '#{pane_dead}:#{pane_dead_status}' 2>/dev/null) == 1: ]] || return 1
+  [[ $proc == exited || $proc == zombie:0 ]]
+}
+proc_state() { # pid start: exited, running, or zombie:N with N its wait status (field 52)
+  [[ $2 =~ ^[0-9]+$ ]] || { echo "no start time"; return; }
+  local f start state code
+  f=$(stat_fields "$1" 19 0 49) || { echo exited; return; }
+  read -r start state code <<<"$f"
+  [[ $start == "$2" ]] || { echo exited; return; }
+  [[ $state == Z ]] && echo "zombie:$code" || echo running
 }
 is_gone() { [[ $(alive "$1") == gone ]]; }
 # The fake logs a key when it reads it, which can be after the launch script
@@ -281,11 +300,12 @@ detach_all; tabs0=$(tabs)
 
 : >"$work/fake.log"; p=$(fake)
 t send-keys -t "$p" -l 'half a draft'; sleep 0.2
+pid=$(pane_pid "$p"); start=$(pstart "$pid")
 out=$(send end "$p" 2>&1); rc=$?
 check "end: exit 0" "$rc" "0"
 check "end: says so" "$out" "Ended the session."
 check_keys "end: Esc, Ctrl+C, then /exit alone" "esc ctrl-c submit:/exit"
-check "end: the process is gone" "$(gone "$p")" "gone"
+check "end: the process is gone" "$(gone "$p" "$pid" "$start")" "gone"
 
 : >"$work/fake.log"; p=$(fake FAKE_DROP=x)
 out=$(send end "$p" 2>&1); rc=$?
