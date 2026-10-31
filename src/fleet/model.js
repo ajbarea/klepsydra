@@ -138,6 +138,9 @@ export function identity(s, cast) {
   return { name, voice: null, face, face2x: face, full: null, accent: null, epithet: null, figure: null };
 }
 
+/** The voice keys of the orchestrator's faces, Hephaestus and Athena (src-tauri/fleet/src/picks.rs ORCHESTRATORS). */
+export const ORCHESTRATOR_VOICES = ["am_michael", "bf_alice"];
+
 /**
  * Every session a character from the theme `cast` wears (#148). The app's
  * crate assigns each session with no cast voice of its own a `pick` once and
@@ -150,8 +153,8 @@ export function identity(s, cast) {
  * medallions.
  */
 export function castPicks(sessions, cast) {
-  // Heph's character (am_michael) is the orchestrator's alone (#172): never a pick here.
-  const chars = Object.keys(cast?.characters ?? {}).filter((k) => k !== "am_michael" && castFiles(castCharacter(k, cast), cast));
+  // The orchestrator's characters (Hephaestus, Athena) are its alone (#172, #222): never a pick here.
+  const chars = Object.keys(cast?.characters ?? {}).filter((k) => !ORCHESTRATOR_VOICES.includes(k) && castFiles(castCharacter(k, cast), cast));
   if (!chars.length) return sessions;
   const own = (s) => (castFiles(castCharacter(s.voice, cast), cast) ? s.voice : null);
   const shown = new Map(chars.map((c) => [c, 0]));

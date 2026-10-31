@@ -6,6 +6,7 @@
   "characters": {
     "af_heart": {"name": "Counsellor", "face": "counsellor", "accent": "#E1627C", "gender": "f", "epithet": "Looks After the Team"},
     "am_michael": {"name": "Foreman", "face": "foreman", "accent": "#FF8D70", "gender": "m", "epithet": "Runs the Workshop"},
+    "bf_alice": {"name": "Strategist", "face": "strategist", "accent": "#F808B8", "gender": "f", "epithet": "Sets the Course"},
     "bf_emma": {"name": "Engineer", "face": "engineer", "accent": "#FFC16A", "gender": "f", "epithet": "Writes the Code"},
     "af_bella": {"name": "Reviewer", "face": "reviewer", "accent": "#C28500", "gender": "f", "epithet": "Reviews the Style"},
     "bf_isabella": {"name": "Archivist", "face": "archivist", "accent": "#C5BD1E", "gender": "f", "epithet": "Keeps the Record"},

@@ -5,7 +5,7 @@ import {
   STATUS, shortAge, longAge, statusParts, voiceName, identity, accessibleName,
   statuses, startedNeeding, orderChanged, shouldSlide, transitionName, announcements, updatedText, badgeSvg, stripItems, card,
   askText, askParts, plainText, tally, crewOf, crewText, crewRing, crewRings, crewMarks, RINGS, RING_MAX, showsRingKey, alsoChip, ALSO_NAMED, pillWhen,
-  BAND, accountsDiffer, castPicks,
+  BAND, ORCHESTRATOR_VOICES, accountsDiffer, castPicks,
   branchPage,
   githubPage,
   plainDir,
@@ -904,4 +904,13 @@ test("#149: a card's folder opens when the hook named it, and only a plain GitHu
   assert.equal(branchPage("https://github.com/a/b", "feat/x y"), "https://github.com/a/b/tree/feat/x%20y");
   assert.equal(branchPage(null, "main"), null);
   assert.equal(branchPage("https://github.com/a/b", null), null);
+});
+
+test("#222: the page's fallback pick never gives a session Hephaestus or Athena, the orchestrator's faces", () => {
+  const cast = JSON.parse(readFileSync(new URL("./fleet/themes/kourai.json", import.meta.url), "utf8"));
+  assert.deepEqual(ORCHESTRATOR_VOICES.map((v) => cast.characters[v].name), ["Hephaestus", "Athena"]);
+  const many = Array.from({ length: 60 }, (_, i) => session({ session_id: `s${i}`, voice: null, started_at: i }));
+  const picked = castPicks(many, cast).map((s) => s.pick);
+  assert.equal(picked.filter(Boolean).length, 60, "everyone got a character");
+  assert.deepEqual(picked.filter((p) => ORCHESTRATOR_VOICES.includes(p)), []);
 });
