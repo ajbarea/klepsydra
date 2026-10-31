@@ -588,12 +588,13 @@ answered_by_limit() { # SCREEN
 # The agent's own IMPL.md. With its last folder in a linked worktree: that
 # worktree's, or none (a sibling's belongs to another agent). Otherwise the
 # last IMPL.md it wrote that still exists (Write or Edit, or a shell redirect
-# or tee, read against that call's folder or its leading `cd DIR &&`), else,
+# or tee on a command's first line, read against that call's folder or its
+# leading `cd DIR &&` or `cd DIR;`), else,
 # from a main checkout, the newest of the repo's and its worktrees'. Reads
 # never count: a recovered agent reads every worktree's. A folder outside any
 # repo with nothing written gives none.
 newest_impl() { # TRANSCRIPT
-  local cwd top dir base p own=""
+  local cwd dir base p own=""
   cwd=$(jq -r 'select(.cwd != null) | .cwd' "$1" 2>/dev/null | tail -1)
   [[ -n $cwd && -d $cwd ]] || return 1
   dir=$(git -C "$cwd" rev-parse --show-toplevel 2>/dev/null)
@@ -607,14 +608,13 @@ newest_impl() { # TRANSCRIPT
     [[ -f $p && ! -L $p ]] && own=$p
   done < <(jq -r 'select(.type == "assistant" and .cwd != null) | .cwd as $c | .message.content[]? | select(.type == "tool_use")
       | if (.name | IN("Write", "Edit", "MultiEdit")) then (.input.file_path | strings | select(test("(^|/)IMPL\\.md$")) | [$c, .])
-        else (.input.command | strings | ((capture("^\\s*cd\\s+(?<d>[^\\s;&|]+)\\s*&&") | .d
+        else (.input.command | strings | split("\n")[0] | ((capture("^\\s*cd\\s+[\"\\x27]?(?<d>[^\\s;&|\"\\x27]+)[\"\\x27]?\\s*(&&|;)") | .d
             | if startswith("/") then . elif startswith("~/") then env.HOME + .[1:] else $c + "/" + . end) // $c) as $b
-          | scan("(?:>>?|\\btee(?:\\s+-a)?)\\s*((?:[^\\s\"'"'"';|&<>()]*/)?IMPL\\.md)(?![\\w.])") | [$b, .[0]])
+          | scan("(?:>>?|\\btee(?:\\s+(?:-a|--append))?)\\s*[\"\\x27]?((?:[^\\s\"'"'"';|&<>()]*/)?IMPL\\.md)(?![\\w.])") | [$b, .[0]])
         end | @tsv' "$1" 2>/dev/null)
   [[ -n $own ]] && { realpath -s "$own"; return; }
   [[ -n $dir ]] || return 1
-  top=$(git -C "$cwd" rev-parse --path-format=absolute --git-common-dir) && top=${top%/.git}
-  find "$top" "$top/.claude/worktrees" -maxdepth 2 -name IMPL.md -type f -printf '%T@ %p\n' 2>/dev/null |
+  find "$dir" "$dir/.claude/worktrees" -maxdepth 2 -name IMPL.md -type f -printf '%T@ %p\n' 2>/dev/null |
     sort -rn | head -1 | cut -d' ' -f2- | grep .
 }
 

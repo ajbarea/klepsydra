@@ -1627,6 +1627,7 @@ git -C "$ir" worktree add -q "$ir/.claude/worktrees/mine" -b mine; git -C "$ir" 
 mkdir -p "$ir/.claude/worktrees/mine/docs" "$work/norepo/x"
 printf 'mine\n' >"$ir/.claude/worktrees/mine/IMPL.md"; touch -d '@1000' "$ir/.claude/worktrees/mine/IMPL.md"
 printf 'sib\n' >"$ir/.claude/worktrees/sib/IMPL.md"; printf 'x\n' >"$work/norepo/x/IMPL.md"
+printf 'top\n' >"$ir/IMPL.md"; touch -d '@1000' "$ir/IMPL.md"
 tx() { # CWD [TOOL INPUT JSON]...: a transcript of one call per input ("name" the tool, Bash by default), run from CWD
   local c=$1; shift
   (($#)) || set -- '{}'
@@ -1649,6 +1650,15 @@ check "a relative write is read against that call's folder or its cd; a later re
     '{"command": "cat .claude/worktrees/mine/IMPL.md; git show origin/main:IMPL.md"}' "{\"name\": \"Read\", \"file_path\": \"$ir/.claude/worktrees/mine/IMPL.md\"}")" \
   "$ir/.claude/worktrees/sib/IMPL.md"
 check "a Write or Edit counts" "$(tx "$ir" "{\"name\": \"Edit\", \"file_path\": \"$ir/.claude/worktrees/mine/IMPL.md\"}")" "$ir/.claude/worktrees/mine/IMPL.md"
+check "a cd ending in ; and a quoted path count; a heredoc body's > IMPL.md does not" \
+  "$(tx "$ir" "{\"command\": \"printf x > \\\"$ir/.claude/worktrees/sib/IMPL.md\\\"\"}" '{"command": "cd .claude/worktrees/mine; printf x >> IMPL.md"}' \
+    "{\"command\": \"git commit -F - <<'E'\\nnotes > IMPL.md\\nE\"}")" "$ir/.claude/worktrees/mine/IMPL.md"
+check "a quoted absolute path counts" "$(tx "$ir" "{\"command\": \"printf x > \\\"$ir/.claude/worktrees/mine/IMPL.md\\\"\"}")" "$ir/.claude/worktrees/mine/IMPL.md"
+git -C "$ir" worktree add -q "$ir/.claude/worktrees/link" -b link; ln -s "$ir/.claude/worktrees/sib/IMPL.md" "$ir/.claude/worktrees/link/IMPL.md"
+check "a worktree whose IMPL.md is a symlink: none" "$(tx "$ir/.claude/worktrees/link")" "none"
+sg=$work/sepgit
+git init -q --separate-git-dir "$work/sepgit.git" "$sg"; printf 's\n' >"$sg/IMPL.md"
+check "a checkout with its git folder elsewhere: its own IMPL.md" "$(tx "$sg")" "$sg/IMPL.md"
 check "a write through ~ is read against HOME" \
   "$(HOME=$ir tx "$ir" '{"command": "printf x > ~/.claude/worktrees/mine/IMPL.md"}')" "$ir/.claude/worktrees/mine/IMPL.md"
 check "a written file that is gone falls through to the newest" "$(tx "$ir" '{"name": "Write", "file_path": "/nowhere/IMPL.md"}')" "$ir/.claude/worktrees/sib/IMPL.md"
