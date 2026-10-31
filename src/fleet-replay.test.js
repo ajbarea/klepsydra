@@ -1,10 +1,19 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { clipUrl, createReplayer } from "./fleet/replay.js";
+import { clipUrl, createReplayer, wavBytes } from "./fleet/replay.js";
 import { card } from "./fleet/model.js";
 
 const A = "cb9fa591-1514-44d1-a31c-eba4a7cb41ed";
 const B = "0b6e1c5a-1111-4222-8333-444455556666";
+
+/** A 44-byte RIFF/WAVE header and two silent samples, as reply_clip sends it. */
+function wav() {
+  const b = new Uint8Array(48);
+  b.set([..."RIFF"].map((c) => c.charCodeAt(0)), 0);
+  b.set([..."WAVEfmt "].map((c) => c.charCodeAt(0)), 8);
+  b.set([..."data"].map((c) => c.charCodeAt(0)), 36);
+  return b.buffer;
+}
 
 /** Just enough of an HTMLAudioElement: records what it was given and played. */
 class FakeAudio {
@@ -45,7 +54,7 @@ function setup({ app = true, invoke, audio = new FakeAudio() } = {}) {
   const r = createReplayer({
     audio,
     app,
-    invoke: invoke ?? (async (cmd, args) => (cmd === "reply_clip" ? new Uint8Array([82, 73, 70, 70]).buffer : Promise.reject(new Error(`${cmd} ${args}`)))),
+    invoke: invoke ?? (async (cmd, args) => (cmd === "reply_clip" ? wav() : Promise.reject(new Error(`${cmd} ${args}`)))),
     onChange: (id) => changes.push(id),
     objectUrl: (blob) => {
       urls.push(blob);
@@ -63,7 +72,7 @@ test("the phone plays a clip from its own server, by session and reply time", ()
 
 test("in the app a press reads the clip through reply_clip and plays it as a WAV object URL", async () => {
   const asked = [];
-  const { r, audio, urls, changes } = setup({ invoke: async (cmd, args) => (asked.push([cmd, args]), new ArrayBuffer(8)) });
+  const { r, audio, urls, changes } = setup({ invoke: async (cmd, args) => (asked.push([cmd, args]), wav()) });
   assert.equal(await r.toggle(A, 5), null);
   assert.deepEqual(asked, [["reply_clip", { id: A }]]);
   assert.equal(urls[0].type, "audio/wav");
@@ -119,7 +128,7 @@ test("a press while the last read is pending wins; the stale read plays nothing"
         first = false;
         await slow;
       }
-      return new ArrayBuffer(8);
+      return wav();
     },
   });
   const pending = r.toggle(A, 5);
@@ -164,4 +173,26 @@ test("a clip that fails before it plays keeps its note; one that fails while pla
   await late.r.toggle(A, 5);
   late.audio.fail();
   assert.ok(!late.r.playing(A));
+});
+
+test("a clip plays whichever way Tauri's IPC delivers its bytes", async () => {
+  // Custom protocol: an ArrayBuffer. postMessage fallback: an array of numbers.
+  for (const answer of [wav(), new Uint8Array(wav()), [...new Uint8Array(wav())]]) {
+    const { r, audio, urls } = setup({ invoke: async () => answer });
+    assert.equal(await r.toggle(A, 5), null);
+    assert.deepEqual(audio.played, ["blob:1"]);
+    const sent = new Uint8Array(await urls[0].arrayBuffer());
+    assert.deepEqual([...sent], [...new Uint8Array(wav())], "the Blob holds the WAV bytes, not their text");
+  }
+});
+
+test("an answer that is not a WAV says so and plays nothing", async () => {
+  const text = [...new TextEncoder().encode("82,73,70,70,0,0,0,0,87,65,86,69")];
+  for (const answer of [new ArrayBuffer(48), text, "RIFF", null, [300, 1], new Uint8Array([82, 73, 70, 70])]) {
+    const { r, audio, urls } = setup({ invoke: async () => answer });
+    assert.equal(await r.toggle(A, 5), "Could not play the reply: the clip is not a WAV file.");
+    assert.ok(!r.playing(A));
+    assert.deepEqual([audio.played, urls], [[], []]);
+  }
+  assert.ok(wavBytes([...new Uint8Array(wav())]) instanceof Uint8Array);
 });

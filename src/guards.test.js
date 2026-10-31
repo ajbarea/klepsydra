@@ -616,6 +616,8 @@ test("the CSP lets images, and nothing else, come from a data URL", () => {
   for (const [k, v] of Object.entries(directives)) if (k !== "img-src") assert.ok(!v.includes("data:"), k);
   assert.deepEqual(directives["media-src"], ["'self'", "blob:"], "a reply clip plays from an object URL");
   for (const [k, v] of Object.entries(directives)) if (k !== "media-src") assert.ok(!v.includes("blob:"), k);
+  // Without these, Tauri's IPC falls back to postMessage and reply_clip's bytes arrive as numbers.
+  assert.deepEqual(directives["connect-src"], ["'self'", "ipc:", "http://ipc.localhost"], "Tauri's IPC endpoints, from its CSP docs");
 });
 
 test("the demo feed is never reachable inside the app", async () => {
