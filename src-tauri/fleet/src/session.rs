@@ -283,6 +283,25 @@ pub struct SessionFile {
     /// the only session that wears Heph's face (#172).
     #[serde(default)]
     pub orchestrator: bool,
+    /// The orchestrator's face for this session, as a cast voice key: the hook
+    /// sets it from orchestrator.face at the session's first event (#222).
+    /// crate::picks keeps it only when it is one of `picks::ORCHESTRATORS`.
+    #[serde(default, deserialize_with = "lenient_face")]
+    pub orchestrator_face: Option<String>,
+}
+
+/// `orchestrator_face` when it is a short plain voice key; anything else is
+/// none rather than costing the file.
+fn lenient_face<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<String>, D::Error> {
+    Ok(match serde_json::Value::deserialize(d)? {
+        serde_json::Value::String(k)
+            if (1..=32).contains(&k.len())
+                && k.bytes().all(|b| b.is_ascii_lowercase() || b == b'_') =>
+        {
+            Some(k)
+        }
+        _ => None,
+    })
 }
 
 /// Why a session file was skipped.
@@ -759,5 +778,27 @@ mod tests {
         assert!(!is_session_id("cb9fa591-1514-44d1-a31c-eba4a7cb41ed.json"));
         assert!(!is_session_id("cb9fa591x1514-44d1-a31c-eba4a7cb41ed"));
         assert!(!is_session_id("../../../../../../../../../../../etc"));
+    }
+    #[test]
+    fn an_orchestrator_face_is_read_only_when_it_is_a_plain_voice_key() {
+        let base = |face: &str| {
+            format!(
+                r#"{{"v":1,"session_id":"{id}","state":"working","state_at":1,"written_at":1,"orchestrator":true,"orchestrator_face":{face}}}"#,
+                id = crate::scan::tests::A
+            )
+        };
+        let face =
+            |f: &str| serde_json::from_str::<SessionFile>(&base(f)).map(|s| s.orchestrator_face);
+        assert_eq!(face(r#""bf_alice""#).unwrap().as_deref(), Some("bf_alice"));
+        for bad in [
+            r#""../x""#,
+            r#""BF_ALICE""#,
+            r#""""#,
+            "7",
+            "null",
+            r#"["bf_alice"]"#,
+        ] {
+            assert_eq!(face(bad).unwrap(), None, "{bad}");
+        }
     }
 }

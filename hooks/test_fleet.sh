@@ -1494,15 +1494,17 @@ got=""
 while read -r v acc ink; do
   : >"$tlog"
   printf '{"holders":{"500:8717628":{"voice":"%s","seen":1}}}\n' "$v" >"$work/ink-voices.json"
-  # Heph's colour is worn only by the orchestrator's window (#172).
+  # Heph's and Athena's colours are worn only by the orchestrator's window (#172, #222).
   mkdir -p "$work/fleet-state"
-  if [[ $v == am_michael ]]; then printf '%s\n' "$C4" >"$work/fleet-state/orchestrator.session"; else rm -f "$work/fleet-state/orchestrator.session"; fi
+  rm -f "$work/fleet-state/orchestrator.session" "$work/fleet-state/orchestrator.face" "$dir/fleet/$C4.json"
+  if [[ $v == am_michael || $v == bf_alice ]]; then printf '%s\n' "$C4" >"$work/fleet-state/orchestrator.session"; fi
+  if [[ $v == bf_alice ]]; then printf 'athena\n' >"$work/fleet-state/orchestrator.face"; fi
   fire session-start.json ".session_id = \"$C4\"" KLEPSYDRA_CAST="$work/parity-cast.json" TMUX="$fsock,1,0" TMUX_PANE=%3 KERYX_VOICES="$work/ink-voices.json" >/dev/null
   got+="$v $acc $(sed -n 's/.*current-style bg=#[0-9A-Fa-f]*,fg=\(#[0-9a-f]*\),bold/\1/p' "$tlog")"$'\n'
 done <<<"$want"
-check "the hook's ink matches contrast.js for all seventeen" "$got" "$want"$'\n'
-rm -f "$work/fleet-state/orchestrator.session"
-check "all seventeen were compared" "$(wc -l <<<"$want")" "17"
+check "the hook's ink matches contrast.js for all eighteen" "$got" "$want"$'\n'
+rm -f "$work/fleet-state/orchestrator.session" "$work/fleet-state/orchestrator.face"
+check "all eighteen were compared" "$(wc -l <<<"$want")" "18"
 
 echo "fleet identity (#172)"
 mkdir -p "$work/fleet-state" "$work/sock"
@@ -1530,6 +1532,9 @@ check "review 1: a worker relaunched into the old orchestrator pane after a tmux
 check "review 1: a worker's window never wears Heph's colour; Heph's always does" \
   "[$(window_face '{"voice":"am_michael","orchestrator":false}')] [$(window_face '{"voice":"am_puck","orchestrator":true}')] [$(window_face '{"voice":"bf_emma"}')]" \
   "[] [am_michael] [bf_emma]"
+check "#222: Athena's colour is the orchestrator's alone too, and only when its session chose her" \
+  "[$(window_face '{"voice":"bf_alice","orchestrator":false}')] [$(window_face '{"voice":"am_puck","orchestrator":true,"orchestrator_face":"bf_alice"}')] [$(window_face '{"voice":"bf_alice","orchestrator":true,"orchestrator_face":"am_michael"}')]" \
+  "[] [bf_alice] [am_michael]"
 fire session-start.json ".session_id = \"$W\" | .source = \"clear\"" "TMUX=$work/sock/klepsydra,1,0" TMUX_PANE=%7 >/dev/null
 check "review 2: a /clear in the orchestrator's pane is Heph before the new session is recorded" "$(jq -c .orchestrator "$wfile")" "true"
 fire post-tool-bash.json ".session_id = \"$W\"" "TMUX=$work/sock/klepsydra,1,0" TMUX_PANE=%7 >/dev/null
@@ -1544,7 +1549,29 @@ check "review 2: a session launched as heph (a move, a recovery) is Heph at once
 rm -f "$work/fleet-state/orchestrator.session" "$wfile"
 fire session-start.json ".session_id = \"$W\"" "TMUX=$work/sock/klepsydra,1,0" TMUX_PANE=%7 KLEPSYDRA_AGENT=sphragis >/dev/null
 check "review 2: an agent launched under another name is never Heph, even in the orchestrator's pane" "$(jq -c .orchestrator "$wfile")" "false"
+check "#222: a worker's file names no orchestrator face" "$(jq -c 'has("orchestrator_face")' "$wfile")" "false"
 rm -f "$wfile"
+
+echo "the orchestrator's face (#222)"
+rm -f "$hfile"; hfire session-start.json "TMUX=$work/sock/klepsydra,1,0" TMUX_PANE=%7
+check "no orchestrator.face: the orchestrator wears Hephaestus" "$(jq -r .orchestrator_face "$hfile")" "am_michael"
+printf 'athena\n' >"$work/fleet-state/orchestrator.face"
+hfire post-tool-bash.json "TMUX=$work/sock/klepsydra,1,0" TMUX_PANE=%7
+check "a session keeps the face it started with when the file changes" "$(jq -r .orchestrator_face "$hfile")" "am_michael"
+rm -f "$hfile"; hfire session-start.json "TMUX=$work/sock/klepsydra,1,0" TMUX_PANE=%7
+check "a new session reads athena: Athena" "$(jq -r .orchestrator_face "$hfile")" "bf_alice"
+printf 'hephaestus\n' >"$work/fleet-state/orchestrator.face"
+hfire post-tool-bash.json "TMUX=$work/sock/klepsydra,1,0" TMUX_PANE=%7
+check "and stays Athena through its later events" "$(jq -r .orchestrator_face "$hfile")" "bf_alice"
+printf 'zeus\n' >"$work/fleet-state/orchestrator.face"
+rm -f "$hfile"; hfire session-start.json "TMUX=$work/sock/klepsydra,1,0" TMUX_PANE=%7
+check "an unknown name is Hephaestus" "$(jq -r .orchestrator_face "$hfile")" "am_michael"
+printf 'athena\n' >"$work/fleet-state/orchestrator.face"
+rm -f "$hfile"; hfire session-start.json "TMUX=$work/sock/klepsydra,1,0" TMUX_PANE=%7
+jq -c 'del(.orchestrator_face)' "$hfile" >"$work/n" && mv "$work/n" "$hfile"
+hfire post-tool-bash.json "TMUX=$work/sock/klepsydra,1,0" TMUX_PANE=%7
+check "a running orchestrator from before faces stays Hephaestus" "$(jq -r .orchestrator_face "$hfile")" "am_michael"
+rm -f "$hfile" "$work/fleet-state/orchestrator.face"
 
 echo "account"
 mkdir -p "$work/cfg-team" "$work/cfg-me" "$work/cfg-bad"
