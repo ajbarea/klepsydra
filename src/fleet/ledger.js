@@ -83,13 +83,15 @@ export function compactPick(parts, max = COMPACT_PARTS) {
 
 export const receiptText = (parts) => parts.map((p) => p.text).join(" · ");
 
-/** The guardrail chip: its short visible text and its full accessible name. null with none blocked. */
+/** The guardrail chip: its short visible text, its full accessible name and its hover text. null with none blocked. */
 export function chipLabel(count) {
   const blocked = n(count);
   if (!blocked) return null;
-  // The name starts with the visible words, so speaking them finds the button (WCAG 2.5.3).
-  const calls = blocked === 1 ? "tool call" : "tool calls";
-  return { short: `${blocked} blocked`, full: `${blocked} blocked: ${calls} a hook or config rule turned down` };
+  // The visible words say what was blocked (#246); the name starts with them,
+  // so speaking them finds the button (WCAG 2.5.3).
+  const short = `${blocked} ${blocked === 1 ? "call" : "calls"} blocked`;
+  const full = `${short}: ${blocked === 1 ? "a tool call" : "tool calls"} a hook or config rule turned down`;
+  return { short, full, title: `${full}. Opens the ledger, which names each one.` };
 }
 
 /** The partial mark's reason, in full: the mark itself is one word. */
