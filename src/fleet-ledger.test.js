@@ -47,8 +47,13 @@ test("the compact receipt keeps the three most informative parts in reading orde
 test("the guardrail chip counts blocked calls and names them in full", () => {
   assert.equal(chipLabel(0), null);
   assert.equal(chipLabel(undefined), null);
-  assert.deepEqual(chipLabel(1), { short: "1 blocked", full: "1 blocked: tool call a hook or config rule turned down" });
-  assert.deepEqual(chipLabel(3), { short: "3 blocked", full: "3 blocked: tool calls a hook or config rule turned down" });
+  assert.deepEqual(chipLabel(1), {
+    short: "1 call blocked",
+    full: "1 call blocked: a tool call a hook or config rule turned down",
+    title: "1 call blocked: a tool call a hook or config rule turned down. Opens the ledger, which names each one.",
+  });
+  assert.equal(chipLabel(3).short, "3 calls blocked", "#246: the chip says what was blocked");
+  assert.equal(chipLabel(3).full, "3 calls blocked: tool calls a hook or config rule turned down");
   for (const n of [1, 2, 40]) assert.ok(chipLabel(n).full.startsWith(chipLabel(n).short), "label in name");
 });
 
@@ -57,7 +62,7 @@ test("a card's ledger line is absent when all zero, and shows a chip with no rec
   assert.equal(ledgerLine({ tokens: {}, guardrail_rejects: 0, commits: 0 }), null);
   const chipOnly = ledgerLine({ guardrail_rejects: 2 });
   assert.equal(chipOnly.full, "");
-  assert.equal(chipOnly.chip.short, "2 blocked");
+  assert.equal(chipOnly.chip.short, "2 calls blocked");
   const both = ledgerLine({ commits: 2, pull_requests: 1, lines_added: 1, tokens: { input: 1 }, guardrail_rejects: 1 });
   assert.equal(both.short, "+1 \u22120 lines \u00b7 2 commits \u00b7 1 PR");
 });

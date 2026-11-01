@@ -382,6 +382,7 @@ function paintLedger(el, c) {
   chip.dataset.id = c.id;
   setText(chip.querySelector(".c-short"), c.ledger?.chip?.short);
   setText(chip.querySelector(".c-full"), c.ledger?.chip?.full);
+  chip.title = c.ledger?.chip?.title ?? "";
 }
 
 // The header band: the character's light and figure, epithet, and the crew
