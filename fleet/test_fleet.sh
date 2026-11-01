@@ -436,7 +436,7 @@ EOF
 printf 'Do the thing.\nThen the other thing.\n' >"$work/task.src"
 launch() { # NAME STATE-JSON: launch.sh with a fake claude starting from STATE
   printf '%s' "$2" >"$work/$1.json"; : >"$work/$1.log"
-  FLEET_SCOPE=0 FLEET_MIN_AVAIL_MB=0 FLEET_LAUNCHER="$work/launcher.sh" FLEET_DIR="$work" \
+  FLEET_SCOPE=0 FLEET_MIN_AVAIL_MB=0 FLEET_LAUNCHER="${LAUNCHER:-$work/launcher.sh}" FLEET_DIR="$work" \
     FLEET_CLAUDE="python3 -I $fake $work/$1.json $work/$1.log" bash "$here/launch.sh" "$1" "$work/task.src" 2>/dev/null | head -1
 }
 cp "$work/task.src" "$FLEET_STATE/task-agent1.src"
@@ -498,6 +498,14 @@ check "#187: a second launch runs beside a stuck one instead of waiting for it" 
 check "and the stuck launch marks its pane as starting" "$(find "$FLEET_STATE/launching" -mindepth 1 | wc -l)" "1"
 wait "$slowjob"
 check "the mark goes when the launch ends" "$(find "$FLEET_STATE/launching" -mindepth 1 | wc -l)" "0"
+cat >"$work/launcher-drain.sh" <<EOF
+#!/usr/bin/env bash
+# wt.exe drains whatever stdin WSL interop hands it (10-31): so does this.
+cat >/dev/null
+tmux -L "\$KLEPSYDRA_TMUX_SOCKET" new-window -d -t fleet: -c "\$3" "\$KLEPSYDRA_CLAUDE"
+EOF
+got=$(printf 'row 2\nrow 3\n' | { LAUNCHER="$work/launcher-drain.sh" launch agent9 '{"above":["Claude Code"]}' >/dev/null; cat; })
+check "#242: a launch from a loop reading rows on stdin leaves the rest of the rows" "$got" $'row 2\nrow 3'
 
 echo "briefs"
 printf 'Do X.\nThen Y.' >"$work/body"
@@ -739,6 +747,29 @@ reading a Personal 100 1000; reading b RIT 10 2000
 check "room elsewhere: the other account, when it has room" "$(room_elsewhere "$work/cfg-a" "$now")" "$work/cfg-b"
 reading b RIT 95 2000
 check "and none when it is nearly full too" "$(room_elsewhere "$work/cfg-a" "$now" || echo none)" "none"
+
+echo "fresh-now moves every row, even when a launch reads stdin (#242)"
+reading a Personal 95 1000; reading b RIT 10 2000
+S2=22222222-2222-4333-8444-555555555555
+fa=$(pane fma '{"above":["idle"],"exit_on_exit":true}'); fb=$(pane fmb '{"above":["idle"],"exit_on_exit":true}'); settle
+live "$fa"; jq -n --arg p "$fb" '{session_id: "x", ended: null, tmux: {pane: $p}}' >"$KLEPSYDRA_DIR/fleet/$S2.json"
+printf '%s\tfma\t%s\t%s\t/w\t%s\n%s\tfmb\t%s\t%s\t/w\t%s\n' "$fa" "$work/brief.src" "$SID" "$work/cfg-a" "$fb" "$work/brief.src" "$S2" "$work/cfg-a" >"$REGISTRY"
+: >"$work/fm.log"
+cat >"$work/launch-fm.sh" <<EOF
+#!/usr/bin/env bash
+# wt.exe drains whatever stdin its caller hands it (10-31): so does this.
+cat >/dev/null
+echo "\$1 \${FLEET_ACCOUNT:-}" >>"$work/fm.log"
+new=\$(tmux -L "$FLEET_SOCK" new-window -d -P -F '#{pane_id}' -t fleet: "sleep 600")
+echo "\$new" >>"$work/fm.panes"
+echo "pane=\$new session=x account=\${FLEET_ACCOUNT:-} avail=1MiB brief=started"
+EOF
+out=$(LAUNCH="$work/launch-fm.sh" bash "$here/fresh-now.sh" 2>/dev/null)
+check "both rows are moved to the account with room, not just the first" "$(sort "$work/fm.log" | tr '\n' '|')" "fma $work/cfg-b|fmb $work/cfg-b|"
+check "and each says so" "$(grep -c '^fresh: fm[ab] moved to' <<<"$out")" "2"
+rm -f -- "${KLEPSYDRA_DIR:?}/fleet/$S2.json" "${KLEPSYDRA_DIR:?}/fleet/$SID.json"
+xargs -r -n1 tmux -L "$FLEET_SOCK" kill-pane -t <"$work/fm.panes" 2>/dev/null
+: >"$REGISTRY"
 reading a Personal 60 1000
 check "back room: under FLEET_BACK_ROOM_PCT (50%) free is not enough to move back" "$(back_room a "$now" && echo yes || echo no)" "no"
 reading a Personal 50 1000
@@ -1590,6 +1621,8 @@ printf 'brief A\n' >"$work/ba.src"; printf 'brief B\n' >"$work/bb.src"; printf '
 printf '%s\ta\t%s\t%s\t/w\n%s\tb\t%s\t%s\t/w\n%s\tc\t%s\t%s\t/w\n' %1 "$work/ba.src" "$SA" %2 "$work/bb.src" "$SB" %3 "$work/bc.src" "$SC" >"$REGISTRY"
 cat >"$work/launch-rec.sh" <<EOF
 #!/usr/bin/env bash
+# The real launcher (tmux, claude) can read stdin; reading it here proves recover gives it none.
+cat >/dev/null
 n=\$(( \$(cat "$work/rec.n" 2>/dev/null || echo 900) + 1 )); echo \$n >"$work/rec.n"
 printf '%s %s settings=%s account=%s\n' "\$(date +%s.%N)" "\$1" "\${FLEET_SETTINGS-UNSET}" "\${FLEET_ACCOUNT:-}" >>"$work/rec.log"
 cp "\$2" "$work/rec-\$1.txt"

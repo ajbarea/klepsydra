@@ -35,7 +35,9 @@ cat >"$work/bin/wt.exe" <<'EOF'
 # Logs its argv, then attaches like the real tab: WT_DELAY seconds after returning,
 # with Windows Terminal's TERM, whatever the runner has (CI sets none).
 # WT_DELAY=never is a tab that never attaches.
+# WT_DRAIN=1 reads stdin dry, as WSL interop lets the real wt.exe do (#242).
 printf '%s\n' "$*" >>"$WT_LOG"
+[[ -n ${WT_DRAIN:-} ]] && cat >/dev/null
 [[ ${WT_DELAY:-} == never ]] && exit 0
 args=("$@")
 for i in "${!args[@]}"; do [[ ${args[i]} == -e ]] && { cmd=("${args[@]:i+1}"); break; }; done
@@ -112,6 +114,9 @@ check "missing folder: says so" "$out" "The folder $work/nowhere does not exist.
 out=$(KLEPSYDRA_CLAUDE=no-such-claude bash "$launch" new "$work/repos" 2>&1); rc=$?
 check "no claude: exit 1" "$rc" "1"
 check "no claude: says so" "$out" "claude was not found on PATH."
+detach_all
+got=$(printf 'row 2\nrow 3\n' | { WT_DRAIN=1 bash "$launch" new "$work/repos" >/dev/null 2>&1; cat; })
+check "#242: a tab opened from a loop leaves the loop's stdin alone" "$(tabs) $got" $'3 row 2\nrow 3'
 
 stop_server; : >"$WT_LOG"
 bash "$launch" new "$work/repos" >/dev/null 2>&1 &

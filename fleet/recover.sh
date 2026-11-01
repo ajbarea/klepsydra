@@ -106,14 +106,17 @@ stagger() { (( launched++ )) && sleep "$STAGGER"; return 0; }
 launch() { # NAME TEXTFILE [env...]: one launch; prints "PANE SESSION"
   local name=$1 txt=$2 out
   shift 2
-  out=$(env "$@" bash "$LAUNCH" "$name" "$txt" 2>/dev/null | head -1)
+  # No stdin (wt.exe drains it, #242), and no fd 9: the launch may start the
+  # fleet's tmux server, which would keep the recover lock forever.
+  out=$(env "$@" bash "$LAUNCH" "$name" "$txt" </dev/null 3<&- 9>&- 2>/dev/null | head -1)
   flog INFO "recovered" name="$name" result="$out"
   grep -q 'pane=%[0-9]' <<<"$out" || return 0
   printf '%s %s' "$(grep -o 'pane=%[0-9]*' <<<"$out" | cut -d= -f2)" "$(grep -o 'session=[^ ]*' <<<"$out" | cut -d= -f2)"
 }
 
 lost=0
-while IFS=$'\t' read -r p name brief sid _; do
+# The registry comes in on fd 3, so nothing in the loop can read its rows away (#242).
+while IFS=$'\t' read -r -u 3 p name brief sid _; do
   [[ -n $p && -n $name && -n $brief ]] || continue
   if session_alive "$sid"; then
     echo "running: $name ($p)"
@@ -152,7 +155,7 @@ while IFS=$'\t' read -r p name brief sid _; do
   new=${new%% *}
   echo "recovered: $name -> ${new:-NOT STARTED}"
   [[ -n $new ]] || flog ERROR "recovery launch failed" name="$name" brief="$txt"
-done < <(cat "$REGISTRY" 2>/dev/null)
+done 3< <(cat "$REGISTRY" 2>/dev/null)
 
 # The orchestrator, by what was alive before the launches.
 if (( orch_too && heph_unsure )); then
