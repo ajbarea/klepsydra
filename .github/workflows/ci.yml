@@ -68,6 +68,8 @@ jobs:
           bash hooks/test_launch.sh
       - name: Fleet engine tests
         run: bash fleet/test_fleet.sh
+      - name: Heavy lock release tests
+        run: bash fleet/test_heavy_lock.sh
       - name: Release memory check tests
         run: bash scripts/test_measure_memory.sh
       - name: Windows build stage check tests
