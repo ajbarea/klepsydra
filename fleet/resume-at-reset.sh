@@ -331,6 +331,8 @@ heph_move() { # PANE TO WHY [NOTE] [STAMP]
   printf '%s\n' "$new" >"$FLEET_STATE/orchestrator.pane"
   [[ -n $nsid ]] && printf '%s\n' "$nsid" >"$FLEET_STATE/orchestrator.session"
   printf '%s\n' "$to" >"$FLEET_STATE/orchestrator.config"
+  # He opened behind (#216); with the old pane gone, AJ's typing goes to him.
+  t select-window -t "$new" 2>/dev/null || true
   printf '%s' "$new"
 }
 

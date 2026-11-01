@@ -99,6 +99,11 @@ attach
 bash "$launch" new "$work/repos" >/dev/null 2>&1
 check "second: two windows" "$(windows)" "2"
 check "second: no new tab" "$(tabs)" "1"
+check "second: the new window comes forward" "$(t display -p -t =fleet: '#{window_index}')" "1"
+t select-window -t =fleet:0
+KLEPSYDRA_BACKGROUND=1 bash "$launch" new "$work/repos" >/dev/null 2>&1
+check "#216: a fleet launch opens behind, the window in view keeps focus" "$(windows) $(t display -p -t =fleet: '#{window_index}')" "3 0"
+t kill-window -t "=fleet:$(t list-windows -t =fleet -F '#{window_index}' | tail -1)"
 detach_all
 check "closed tab: sessions survive" "$(windows)" "2"
 bash "$launch" new "$work/repos" >/dev/null 2>&1
