@@ -308,10 +308,23 @@ session_rows() { # fields file...
     def last_active: [.started_at, .state_at, .where.at, .prompt.at, .reply.at, .ended.at, .written_at]
       | map(numbers) | max // 0 | floor;
     def or_q: if type == "string" and length > 0 then . else "?" end;
+    # The face of an orchestrator file, as the crate reads it: Athena, else Hephaestus.
+    def orch_face: if .orchestrator_face == "bf_alice" then "bf_alice" else "am_michael" end;
     (index("\t")) as $i | .[:$i] as $f
     | (try (.[$i + 1:] | fromjson) catch empty) | select(type == "object" and .v == 1)
     | try ([$f] + ('"$fields"')) catch empty
     | @tsv' 2>/dev/null
+}
+
+# session_rows FIELDS over every session file in FOLDER (<uuid>.json, a file,
+# never a link), read from inside it, where every name is short.
+fleet_rows() { # folder fields
+  ( cd -- "$1" 2>/dev/null || exit 0
+    local f names=()
+    for f in *.json; do
+      [[ ${f%.json} =~ $UUID_RE && -f $f && ! -L $f ]] && names+=("$f")
+    done
+    session_rows "$2" "${names[@]}" )
 }
 
 # Delete the files of sessions whose Claude Code process is gone and whose
@@ -411,13 +424,8 @@ mark_gone() { # dir now self
       '.state = "ended" | .reason = "gone" | .needs = null | .ended = {reason: "gone", at: $now} | .state_at = $now | .written_at = $now' \
       "$dir/fleet/$f" 2>/dev/null) || continue
     [[ -n $new ]] && write_atomic "$dir/fleet/$f" "$new"
-  done < <(cd -- "$dir/fleet" 2>/dev/null || exit 0
-    names=()
-    for f in *.json; do
-      [[ ${f%.json} =~ $UUID_RE && -f $f && ! -L $f ]] && names+=("$f")
-    done
-    session_rows '[(.state | or_q), (.host.boot | or_q), (.host.distro | or_q),
-      ((.claude.pid | numbers) // 0 | floor), ((.claude.start | numbers) // 0 | floor), last_active]' "${names[@]}")
+  done < <(fleet_rows "$dir/fleet" '[(.state | or_q), (.host.boot | or_q), (.host.distro | or_q),
+      ((.claude.pid | numbers) // 0 | floor), ((.claude.start | numbers) // 0 | floor), last_active]')
 }
 
 # --- prune helpers: identical in hooks/klepsydra-fleet.sh and statusline/klepsydra-statusline.sh ---
@@ -477,25 +485,59 @@ remote_lines() { # transcript
 # another id in the same Claude process, whose Remote Control stays up, and the
 # new transcript never names the link. It is the link, or none, of the latest
 # active other session of Claude process `pid` started at `start` on this boot
-# and distro; empty for none. Reads as mark_gone does, from inside the folder.
+# and distro; empty for none. Then, after a \x1f, that session's orchestrator
+# face ("?" when it was no orchestrator, empty when none was found), which a
+# /clear keeps (#244). Reads as mark_gone does, from inside the folder.
 cleared_link() { # fleet pid start self
-  local f pid start boot distro last began url best=-1 best_began=-1 link=""
+  local f pid start boot distro last began url face best=-1 best_began=-1 link="" kept=""
   [[ $2 =~ ^[1-9][0-9]*$ && $3 =~ ^[0-9]+$ && -n $host_boot ]] || return 0
-  while IFS=$'\t' read -r f pid start boot distro last began url; do
+  while IFS=$'\t' read -r f pid start boot distro last began url face; do
     [[ $f != "$4.json" && $pid == "$2" && $start == "$3" && $boot == "$host_boot" \
       && $distro == "${host_distro:-?}" && $last =~ ^[0-9]+$ && $began =~ ^[0-9]+$ ]] || continue
     # The later started breaks a tie within one second.
-    (( last > best || (last == best && began > best_began) )) && best=$last best_began=$began link=$url
-  done < <(cd -- "$1" 2>/dev/null || exit 0
-    names=()
-    for f in *.json; do
-      [[ ${f%.json} =~ $UUID_RE && -f $f && ! -L $f ]] && names+=("$f")
-    done
-    session_rows '[((.claude.pid | numbers) // 0 | floor), ((.claude.start | numbers) // 0 | floor),
+    (( last > best || (last == best && began > best_began) )) && best=$last best_began=$began link=$url kept=$face
+  done < <(fleet_rows "$1" '[((.claude.pid | numbers) // 0 | floor), ((.claude.start | numbers) // 0 | floor),
       (.host.boot | or_q), (.host.distro | or_q), last_active, ((.started_at | numbers) // 0 | floor),
-      (.remote_url | or_q)]' "${names[@]}")
-  [[ $link != "?" ]] && printf '%s' "$link"
+      (.remote_url | or_q), (if .orchestrator == true then orch_face else "?" end)]')
+  [[ $link == "?" ]] && link=""
+  printf '%s\x1f%s' "$link" "$kept"
   return 0
+}
+
+# The face a new orchestrator session wears (#244): Hephaestus and Athena are
+# equal, so it is the one no other orchestrator on the wall wears, live ones
+# (open, with their Claude process running on this boot) first, then any
+# shown. With both shown it is the one seen least recently (HINT on a tie);
+# with neither, HINT (orchestrator.face's). A /clear keeps CLEARED, the
+# cleared session's face, or when that session was not found, the face of the
+# newest orchestrator card of this boot in CLEAR_PANE, the pane it was cleared in.
+free_face() { # fleet self cleared hint [clear_pane]
+  local f face open boot pid start pane last set h=0 a=0 h_last=-1 a_last=-1 live="" shown="" in_pane="" pane_last=-1
+  case $3 in "$HEPH_VOICE" | "$ATHENA_VOICE") printf '%s' "$3"; return 0 ;; esac
+  while IFS=$'\t' read -r f face open boot pid start pane last; do
+    [[ $f != "$2.json" && ( $face == "$HEPH_VOICE" || $face == "$ATHENA_VOICE" ) ]] || continue
+    [[ $last =~ ^[0-9]+$ ]] || last=0
+    [[ $open == open && $boot == "$host_boot" && $pid =~ ^[1-9][0-9]*$ ]] && claude_alive "$pid" "$start" && live+=" $face"
+    shown+=" $face"
+    if [[ $face == "$HEPH_VOICE" ]]; then (( last > h_last )) && h_last=$last; else (( last > a_last )) && a_last=$last; fi
+    [[ -n ${5:-} && $pane == "$5" && $boot == "$host_boot" ]] && (( last > pane_last )) && pane_last=$last in_pane=$face
+  done < <(fleet_rows "$1" '[(if .orchestrator == true then orch_face else "?" end),
+      (if .ended == null then "open" else "ended" end), (.host.boot | or_q),
+      ((.claude.pid | numbers) // 0 | floor), ((.claude.start | numbers) // 0 | floor), (.tmux.pane | or_q), last_active]')
+  [[ -n $in_pane ]] && { printf '%s' "$in_pane"; return 0; }
+  for set in "$live" "$shown"; do
+    h=0 a=0
+    [[ $set == *"$HEPH_VOICE"* ]] && h=1
+    [[ $set == *"$ATHENA_VOICE"* ]] && a=1
+    (( h && !a )) && { printf '%s' "$ATHENA_VOICE"; return 0; }
+    (( a && !h )) && { printf '%s' "$HEPH_VOICE"; return 0; }
+    (( h && a )) && break
+  done
+  if (( h_last >= 0 && a_last >= 0 )); then
+    if (( h_last < a_last )); then printf '%s' "$HEPH_VOICE"; elif (( a_last < h_last )); then printf '%s' "$ATHENA_VOICE"; else printf '%s' "$4"; fi
+    return 0
+  fi
+  printf '%s' "$4"
 }
 
 # The session file after one event, as compact JSON, or nothing when no field
@@ -564,6 +606,9 @@ def notified: if type == "string" then [scan("<task-notification>[\\s\\S]*?</tas
   | .name = (($ev.session_title | text) // .name)
   | .fleet_name = (($fleet_agent | text) // .fleet_name)
   | .orchestrator = $orchestrator
+  # An orchestrator file written before faces (#222) is Hephaestus's: it keeps him.
+  | if $orchestrator then .orchestrator_face = ((.orchestrator_face | strings)
+      // (if $was.orchestrator == true then $heph_face else $orch_face end)) else del(.orchestrator_face) end
   | (if $pid != "" then {pid: ($pid | tonumber), start: ($start | tonumber)} else null end) as $me
   # A new process (any start but a compaction) replaces what the file knew of
   # the old one: its pid, pane and host, unknowns included.
@@ -833,12 +878,17 @@ queue_cmd() { # args...
       if [[ $osrelease == *[Mm]icrosoft* ]] && command -v wslpath >/dev/null; then
         path=$(wslpath -w -- "$path" 2>/dev/null) || { echo "klepsydra: $2 has no Windows path" >&2; return 1; }
       fi
-      local tmp=$keeper.$$.tmp voice=""
+      local tmp=$keeper.$$.tmp voice="" face=""
       # A keeper typed with --by is kept as typed. Without one, the session
-      # running this names itself: the voice keryx holds for it, and that
-      # character's name in the theme worn, which the panel then follows.
+      # running this names itself: the voice keryx holds for it (the
+      # orchestrator's face for the orchestrator), and that character's name
+      # in the theme worn, which the panel then follows.
       if [[ -z $by ]] && claude_ancestor "${KLEPSYDRA_PID:-$$}"; then
         voice=$(holder_voice "$found_pid" "$found_start") || voice=""
+        face=$(fleet_rows "$KLEPSYDRA_DIR/fleet" '[((.claude.pid | numbers) // 0 | floor), ((.claude.start | numbers) // 0 | floor),
+          (if .orchestrator == true and .ended == null then orch_face else "?" end)]' |
+          awk -F'\t' -v p="$found_pid" -v s="$found_start" '$2 == p && $3 == s && $4 != "?" { print $4; exit }')
+        [[ -n $face ]] && voice=$face
         if [[ -n $voice ]]; then
           by=$(jq -r --arg v "$voice" '.characters[$v].name // empty | strings' "$CAST" 2>/dev/null) || by=""
           [[ -n $by ]] || by=$voice
@@ -872,14 +922,20 @@ file_voice() { # text
   return 0
 }
 
-# The voice whose colour a session file's window wears (#172): Heph's for the
-# orchestrator, none for a worker holding Heph's voice, else its own.
-HEPH_VOICE=am_michael
+# The voice whose colour a session file's window wears (#172, #222): the
+# orchestrator's face (Hephaestus's or Athena's) for the orchestrator, none for
+# a worker holding either, else its own.
+HEPH_VOICE=am_michael ATHENA_VOICE=bf_alice
 window_face() { # text
   local v
-  if [[ $1 == *'"orchestrator":true'* ]]; then printf '%s' "$HEPH_VOICE"; return 0; fi
+  if [[ $1 == *'"orchestrator":true'* ]]; then
+    v=$HEPH_VOICE
+    [[ $1 == *"\"orchestrator_face\":\"$ATHENA_VOICE\""* ]] && v=$ATHENA_VOICE
+    printf '%s' "$v"
+    return 0
+  fi
   v=$(file_voice "$1")
-  [[ $v == "$HEPH_VOICE" ]] || printf '%s' "$v"
+  [[ $v == "$HEPH_VOICE" || $v == "$ATHENA_VOICE" ]] || printf '%s' "$v"
   return 0
 }
 
@@ -956,8 +1012,15 @@ main() {
   # not. Otherwise it is the session on record in orchestrator.session, or a
   # /clear in the orchestrator's pane; a tmux restart reuses pane ids, so the
   # pane alone says so only while no session is on record.
-  local agent=${KLEPSYDRA_AGENT:-} orchestrator=false orch_pane="" orch_sid=""
+  local agent=${KLEPSYDRA_AGENT:-} orchestrator=false orch_pane="" orch_sid="" orch_name=""
   local orch_state=${FLEET_STATE:-${HOME:-}/.local/state/fleet-orchestrator}
+  # orchestrator.face (athena or hephaestus, any case) names the face only
+  # while no orchestrator is on the wall (free_face). A session chooses at its
+  # first event and keeps that face.
+  { read -r orch_name <"$orch_state/orchestrator.face"; } 2>/dev/null
+  orch_name=${orch_name//[$'\r\t ']/}
+  local orch_face=$HEPH_VOICE cleared_face=""
+  [[ ${orch_name,,} == athena ]] && orch_face=$ATHENA_VOICE
   [[ $agent =~ ^[A-Za-z0-9._-]{1,64}$ ]] || agent=""
   if [[ ${tmux_socket##*/} == "${KLEPSYDRA_TMUX_SOCKET:-klepsydra}" && -n $tmux_pane ]]; then
     { read -r orch_sid <"$orch_state/orchestrator.session"; } 2>/dev/null
@@ -990,13 +1053,19 @@ main() {
   { exec {lock}>>"$LOCK"; } 2>/dev/null || return 0
   flock -w 5 "$lock" || return 0
 
-  [[ $event == SessionStart && $source == clear ]] && cleared=$(cleared_link "$fleet" "$found_pid" "$found_start" "$session")
+  [[ $event == SessionStart && $source == clear ]] && IFS=$'\x1f' read -r cleared cleared_face < <(cleared_link "$fleet" "$found_pid" "$found_start" "$session")
   file=$fleet/$session.json
   old=""
   [[ -f $file ]] && { old=$(<"$file"); } 2>/dev/null
   # Heph by a /clear stays Heph on later events in the orchestrator's pane,
   # before orchestrator.session names the new session.
   [[ $orchestrator == false && -z $agent && -n $orch_sid && $orch_pane == "$tmux_pane" && $old == *'"orchestrator":true'* ]] && orchestrator=true
+  # Under the lock, so two orchestrators starting together never take one face.
+  if [[ $orchestrator == true && $old != *'"orchestrator_face"'* ]]; then
+    local clear_pane=""
+    [[ $event == SessionStart && $source == clear && -z $cleared_face ]] && clear_pane=$tmux_pane
+    orch_face=$(free_face "$fleet" "$session" "$cleared_face" "$orch_face" "$clear_pane")
+  fi
   # The git dir the file last named (an escaped path is not read): gone means the checkout was removed.
   old_git=""
   [[ $old =~ \"git\":\"(/[^\"\\]*)\" ]] && old_git=${BASH_REMATCH[1]}
@@ -1006,7 +1075,7 @@ main() {
     --arg git "$where_git" --argjson where_gone "$where_gone" --arg by "$by" --arg dir "$where_dir" --arg gh "$where_remote" \
     --arg tmux_socket "$tmux_socket" --arg tmux_pane "$tmux_pane" --arg boot "$host_boot" --arg distro "$host_distro" \
     --arg voice "$voice" --argjson homes "$homes" --arg cwd_repo "$cwd_repo" --arg pid "$found_pid" --arg start "$found_start" --arg remote "$remote" --arg cleared "$cleared" --argjson account "$account" --arg live "$live" \
-    --arg fleet_agent "$agent" --argjson orchestrator "$orchestrator" \
+    --arg fleet_agent "$agent" --argjson orchestrator "$orchestrator" --arg orch_face "$orch_face" --arg heph_face "$HEPH_VOICE" \
     "$APPLY" 2>/dev/null) || new=""
   # A cast newer than this session's file: the theme changed under it. The
   # file's time is moved past the cast's, so one switch recolours it once.

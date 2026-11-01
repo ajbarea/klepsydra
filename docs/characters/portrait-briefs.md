@@ -1,9 +1,9 @@
-<!-- budget: 1300 words -->
+<!-- budget: 1700 words -->
 # Five new kourai portraits: generation briefs
 
 **Done.** The art exists as `assets/portraits/{chronos,argos,hermes,elpis,hesychia}.jpg`
 (1024 px), `scripts/cut-portraits.py` cuts the faces, and `src/fleet/themes/kourai.json` holds all
-fifteen characters. Hermes's accent is the burnt orange `#E07B39`, not the
+sixteen characters. Hermes's accent is the burnt orange `#E07B39`, not the
 `#E69F00` below, which is the needs-you amber. The briefs are kept as the record.
 
 These five characters give the four keryx pool voices that had no portrait,
@@ -17,7 +17,8 @@ Fifteen: one per voice in keryx's rotation pool (fourteen), plus Hesychia. The t
 kourai characters cover the first ten voices; these four cover the rest. Hesychia
 is for `af_nicole`, which keryx hands out after the pool voices and before any
 blend (keryx 0.9.3). Sessions past the fifteenth get blended voices and show a
-medallion.
+medallion. A sixteenth, Athena (`bf_alice`, outside keryx's pool), is the
+orchestrator's second face (#222): only the orchestrator wears her or Hephaestus.
 
 ## Reference portraits
 
@@ -144,6 +145,19 @@ one the same way.
 > A woman of quiet, settled calm, with dark hair loosely bound low at the nape, eyes half-lowered, and a faint, closed-lipped smile, as if she has just heard a room fall silent. She wears a deep night-blue peplos edged in pale silver, with a fine silver-and-gold clasp at one shoulder. In one hand she holds a ring of two old golden keys on a dark cord, resting against her palm (the keys of counsel and war). Cool moonlit rim light on one side meets the warm gold glow behind her shoulders. Silver-blue accent (#A9B8D0) in the fabric's edge and the light on the keys. Still, attentive, unhurried.
 
 - **Avoid:** a finger to the lips ("shh"), sleepiness, a halo, dark or gloomy styling.
+
+## Athena, Strategist of the Forge
+
+- **Upload with the prompt:** `hephaestus_neutral.png` (framing), `metis_neutral.png`, `mneme_neutral.png` (the golden automaton maidens set the look)
+- **Voice:** `bf_alice` (outside keryx's pool, so no worker collides with her; `bf_lily` was the other candidate, both Kokoro grade D)
+- **Accent:** olive `#7A8B3C` (the olive tree she gave Athens)
+- **Role:** the orchestrator's other face: she and Hephaestus take turns as the orchestrator rotates (#157).
+- **Original:** kourai-khryseai `assets/avatars/originals/athena.png` (1254 px, chosen 2026-10-30); `assets/portraits/athena.jpg` is it at 1024 px.
+- **Character block:**
+
+> A strikingly beautiful goddess-automaton in her late twenties, one of Hephaestus's golden maidens: smooth burnished-gold skin with fine filigree seams at the jaw, collarbone and wrists, and elegant mechanical joints at the elbows and fingers, like the attached Metis and Mneme. Sharp luminous grey eyes with a smouldering, direct gaze at the viewer, a sly confident half-smile, one brow faintly raised, head tilted slightly. High sculpted cheekbones. Long glossy black hair, half up under a slim gold olive-leaf circlet, the rest falling in loose waves over the near shoulder. A fitted one-shoulder peplos of deep olive (#7A8B3C) silk with gold meander trim, baring the near shoulder and collarbone, a gold cuff on the upper arm, and a cream himation draped low across the back. Athena is the goddess of weaving and strategy: from the fingertips of her raised hand run fine glowing olive threads that weave between three small floating translucent panels, star charts of the forge's plan, like Metis's floating blueprints. A small silver owl perches on a gold perch-ring at her far shoulder. Graceful, poised, in command, a little dangerous.
+
+- **Avoid:** matronly, severe, stern, older, plain human skin, stiff pose, large flat tablet or board, helmet, spear, shield, aegis, armour, battle pose, nudity.
 
 ## Sources
 

@@ -177,6 +177,7 @@ mod tests {
             account: None,
             fleet_name: None,
             orchestrator: false,
+            orchestrator_face: None,
             reply_at: None,
             marks: Marks {
                 state_at: START + at,
