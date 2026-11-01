@@ -1,4 +1,4 @@
-<!-- budget: 1300 words -->
+<!-- budget: 1700 words -->
 # Five new kourai portraits: generation briefs
 
 **Done.** The art exists as `assets/portraits/{chronos,argos,hermes,elpis,hesychia}.jpg`

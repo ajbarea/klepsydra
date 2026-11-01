@@ -314,6 +314,17 @@ session_rows() { # fields file...
     | @tsv' 2>/dev/null
 }
 
+# session_rows FIELDS over every session file in FOLDER (<uuid>.json, a file,
+# never a link), read from inside it, where every name is short.
+fleet_rows() { # folder fields
+  ( cd -- "$1" 2>/dev/null || exit 0
+    local f names=()
+    for f in *.json; do
+      [[ ${f%.json} =~ $UUID_RE && -f $f && ! -L $f ]] && names+=("$f")
+    done
+    session_rows "$2" "${names[@]}" )
+}
+
 # Delete the files of sessions whose Claude Code process is gone and whose
 # last activity is more than a day old, heartbeats a day old with no session
 # file, and write litter a day old. Only <uuid>.json, <uuid>.beat and
@@ -411,13 +422,8 @@ mark_gone() { # dir now self
       '.state = "ended" | .reason = "gone" | .needs = null | .ended = {reason: "gone", at: $now} | .state_at = $now | .written_at = $now' \
       "$dir/fleet/$f" 2>/dev/null) || continue
     [[ -n $new ]] && write_atomic "$dir/fleet/$f" "$new"
-  done < <(cd -- "$dir/fleet" 2>/dev/null || exit 0
-    names=()
-    for f in *.json; do
-      [[ ${f%.json} =~ $UUID_RE && -f $f && ! -L $f ]] && names+=("$f")
-    done
-    session_rows '[(.state | or_q), (.host.boot | or_q), (.host.distro | or_q),
-      ((.claude.pid | numbers) // 0 | floor), ((.claude.start | numbers) // 0 | floor), last_active]' "${names[@]}")
+  done < <(fleet_rows "$dir/fleet" '[(.state | or_q), (.host.boot | or_q), (.host.distro | or_q),
+      ((.claude.pid | numbers) // 0 | floor), ((.claude.start | numbers) // 0 | floor), last_active]')
 }
 
 # --- prune helpers: identical in hooks/klepsydra-fleet.sh and statusline/klepsydra-statusline.sh ---
@@ -488,14 +494,9 @@ cleared_link() { # fleet pid start self
       && $distro == "${host_distro:-?}" && $last =~ ^[0-9]+$ && $began =~ ^[0-9]+$ ]] || continue
     # The later started breaks a tie within one second.
     (( last > best || (last == best && began > best_began) )) && best=$last best_began=$began link=$url kept=$face
-  done < <(cd -- "$1" 2>/dev/null || exit 0
-    names=()
-    for f in *.json; do
-      [[ ${f%.json} =~ $UUID_RE && -f $f && ! -L $f ]] && names+=("$f")
-    done
-    session_rows '[((.claude.pid | numbers) // 0 | floor), ((.claude.start | numbers) // 0 | floor),
+  done < <(fleet_rows "$1" '[((.claude.pid | numbers) // 0 | floor), ((.claude.start | numbers) // 0 | floor),
       (.host.boot | or_q), (.host.distro | or_q), last_active, ((.started_at | numbers) // 0 | floor),
-      (.remote_url | or_q), (if .orchestrator == true then (.orchestrator_face | or_q | sub("^\\?$"; "am_michael")) else "?" end)]' "${names[@]}")
+      (.remote_url | or_q), (if .orchestrator == true then (.orchestrator_face | or_q | sub("^\\?$"; "am_michael")) else "?" end)]')
   [[ $link == "?" ]] && link=""
   printf '%s\x1f%s' "$link" "$kept"
   return 0
@@ -515,13 +516,8 @@ free_face() { # fleet self cleared hint
     [[ $open == open && $boot == "$host_boot" ]] && live+=" $face"
     shown+=" $face"
     if [[ $face == "$HEPH_VOICE" ]]; then (( last > h_last )) && h_last=$last; else (( last > a_last )) && a_last=$last; fi
-  done < <(cd -- "$1" 2>/dev/null || exit 0
-    names=()
-    for f in *.json; do
-      [[ ${f%.json} =~ $UUID_RE && -f $f && ! -L $f ]] && names+=("$f")
-    done
-    session_rows '[(if .orchestrator == true then (.orchestrator_face | or_q | sub("^\\?$"; "am_michael")) else "?" end),
-      (if .ended == null then "open" else "ended" end), (.host.boot | or_q), last_active]' "${names[@]}")
+  done < <(fleet_rows "$1" '[(if .orchestrator == true then (.orchestrator_face | or_q | sub("^\\?$"; "am_michael")) else "?" end),
+      (if .ended == null then "open" else "ended" end), (.host.boot | or_q), last_active]')
   for set in "$live" "$shown"; do
     h=0 a=0
     [[ $set == *"$HEPH_VOICE"* ]] && h=1
@@ -875,12 +871,17 @@ queue_cmd() { # args...
       if [[ $osrelease == *[Mm]icrosoft* ]] && command -v wslpath >/dev/null; then
         path=$(wslpath -w -- "$path" 2>/dev/null) || { echo "klepsydra: $2 has no Windows path" >&2; return 1; }
       fi
-      local tmp=$keeper.$$.tmp voice=""
+      local tmp=$keeper.$$.tmp voice="" face=""
       # A keeper typed with --by is kept as typed. Without one, the session
-      # running this names itself: the voice keryx holds for it, and that
-      # character's name in the theme worn, which the panel then follows.
+      # running this names itself: the voice keryx holds for it (the
+      # orchestrator's face for the orchestrator), and that character's name
+      # in the theme worn, which the panel then follows.
       if [[ -z $by ]] && claude_ancestor "${KLEPSYDRA_PID:-$$}"; then
         voice=$(holder_voice "$found_pid" "$found_start") || voice=""
+        face=$(fleet_rows "$KLEPSYDRA_DIR/fleet" '[((.claude.pid | numbers) // 0 | floor), ((.claude.start | numbers) // 0 | floor),
+          (if .orchestrator == true and .ended == null then (.orchestrator_face | or_q | sub("^\\?$"; "am_michael")) else "?" end)]' |
+          awk -F'\t' -v p="$found_pid" -v s="$found_start" '$2 == p && $3 == s && $4 != "?" { print $4; exit }')
+        [[ -n $face ]] && voice=$face
         if [[ -n $voice ]]; then
           by=$(jq -r --arg v "$voice" '.characters[$v].name // empty | strings' "$CAST" 2>/dev/null) || by=""
           [[ -n $by ]] || by=$voice
