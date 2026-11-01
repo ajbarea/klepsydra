@@ -1894,6 +1894,12 @@ check "queue set in a session: the hook names the keeper" "$(jq -c '[.by, .voice
 check "queue set in a session: and says so" "$out" "The Queue panel now reads /home/aj/q.md, kept by Hephaestus."
 out=$(THEME=professions insession /home/aj/q.md)
 check "queue set in a session: named in the theme worn" "$(jq -c '[.by, .voice]' "$qdir/queue.json")|$out" '["Foreman","am_michael"]|The Queue panel now reads /home/aj/q.md, kept by Foreman.'
+mkdir -p "$qdir/fleet"; QO="$qdir/fleet/99999999-4444-4555-8666-777777777779.json"
+jq -nc '{v: 1, session_id: "x", orchestrator: true, orchestrator_face: "bf_alice", ended: null, claude: {pid: 500, start: 8717628}}' >"$QO"
+out=$(insession /home/aj/q.md)
+check "#226 review: the orchestrator is named by its face, whatever voice keryx holds for it" "$(jq -c '[.by, .voice]' "$qdir/queue.json")|$out" \
+  '["Athena","bf_alice"]|The Queue panel now reads /home/aj/q.md, kept by Athena.'
+rm -f "$QO"
 out=$(PID=810 insession /home/aj/q.md)
 check "queue set outside any session: no keeper" "$(jq -c '[.by, .voice]' "$qdir/queue.json")|$out" '[null,null]|The Queue panel now reads /home/aj/q.md.'
 ( cd "$work" && queue set rel.md >/dev/null )

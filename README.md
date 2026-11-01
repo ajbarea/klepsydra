@@ -765,9 +765,12 @@ session moves between repos. Fifteen voices, all fourteen in keryx's rotation po
 and `af_nicole` (keryx's fifteenth, before any blend), are cast as characters and
 show their portraits: ten from kourai-khryseai and five (Chronos, Argos, Hermes,
 Elpis, Hesychia) painted for this app. The orchestrator wears Hephaestus or
-Athena (`bf_alice`, outside keryx's pool), one per session: a new orchestrator
-session wears the face `~/.local/state/fleet-orchestrator/orchestrator.face`
-names (`athena`, else Hephaestus) and keeps it; no worker ever wears either.
+Athena (`bf_alice`, outside keryx's pool), equals, one per session: a new
+orchestrator session takes the one no other orchestrator card on the wall
+wears (a live one first), keeps it, and a `/clear` passes it on. With both
+shown it is the one seen least recently; with neither, the one
+`~/.local/state/fleet-orchestrator/orchestrator.face` names (`athena`, else
+Hephaestus). No worker ever wears either.
 Any other voice shows the voice's name
 and a forge medallion: a laurel ring on a dark disc around the name's
 initial, struck in one of six kourai metals (gold, bronze, copper, rose gold,
