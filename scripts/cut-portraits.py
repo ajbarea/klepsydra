@@ -26,10 +26,11 @@ NAMES = tuple(sorted(KOURAI + NEW))
 # stands right of centre at his anvil. The five new boxes are in the 1024 px
 # JPEGs, framed like Hephaestus: head and beard in the upper middle, one
 # shoulder entering the circle. Hermes's hat wings clip; his face and brim stay.
+# Refit 2026-11-01 for the five redrawn portraits.
 HEAD = (
     {name: (180, 20, 460, 300) for name in KOURAI}
     | {"hephaestus": (250, 20, 530, 300)}
-    | {"chronos": (330, 20, 970, 660), "argos": (200, 20, 700, 520), "hermes": (330, 30, 850, 550), "elpis": (300, 20, 780, 500), "hesychia": (250, 40, 810, 600)}
+    | {"chronos": (242, 20, 842, 620), "argos": (268, 20, 768, 520), "hermes": (266, 30, 786, 550), "elpis": (270, 20, 750, 500), "hesychia": (212, 20, 772, 580)}
 )
 SIZES = (96, 192)
 # (left, top, right, bottom) of the square half-figure: the head in the upper
