@@ -516,6 +516,10 @@ def bg_kind: {subagent: "agent", shell: "shell"}[.type | strings] // "task";
 def finished: IN("completed", "finished", "failed", "killed", "stopped", "cancelled", "canceled");
 # The session's turn is over: Stop ran (or the prompt sat idle) with work still out.
 def turn_over: .reason == "background" or (.needs.turn_over // false) == true;
+# A reply whose last line asks AJ to decide: it ends on a question mark, or
+# hands him the call ("Your call: ..."), markdown aside (#246).
+def ends_on_question: (text // "") | [split("\n")[] | gsub("^[\\s>*_#-]+|[\\s*_`]+$"; "") | select(length > 0)] | last
+  | . != null and (test("\\?[)\"'\u201d\u2019]*$") or test("^(your (call|pick|decision)|over to you|you decide)\\b"; "i"));
 # Needs you, asked by a subagent still out: nothing but its answer ends that.
 # Who asks AJ and for what; a request made once the turn is over remembers that.
 def asked($by; $tool): {by: $by, tool: $tool} + (if turn_over then {turn_over: true} else {} end);
@@ -747,9 +751,12 @@ def notified: if type == "string" then [scan("<task-notification>[\\s\\S]*?</tas
      elif ($event == "Stop" or ($event == "Notification" and $ev.notification_type == "idle_prompt")) and crew_asks then
        {state: .state, reason: .reason, needs: (.needs + {turn_over: true})}
      elif $event == "Notification" and $ev.notification_type == "idle_prompt"
-          and (.state == "working" or .state == "needs_you") and $now - .state_at >= 30 then
+          and (.state == "working" or (.state == "needs_you" and (.needs.at_end // false | not))) and $now - .state_at >= 30 then
        # The prompt is free; work still out keeps the session working.
        if .background != [] then {state: "working", reason: "background"} else {state: "done", reason: null} end
+     # A turn that ends asking AJ to decide waits on him, whatever still runs.
+     elif $event == "Stop" and ($ev.last_assistant_message | ends_on_question) then
+       {state: "needs_you", reason: "question", needs: {at_end: true}}
      elif $event == "Stop" then
        if .background != [] then {state: "working", reason: "background"} else {state: "done", reason: null} end
      elif $event == "StopFailure" then {state: "error", reason: (($ev.error // "unknown") | gsub("_"; " "))}

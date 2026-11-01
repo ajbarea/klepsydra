@@ -780,6 +780,21 @@ check "a shell's notification removes it" "$(field 'has("background")')" "false"
 now=1792356340 fire stop.json '.background_tasks = null'
 check "stop with nothing out: done" "$(field '[.state, .reason]')" '["done",null]'
 
+# #246: a turn that ends asking AJ to decide needs him, whatever still runs.
+now=1792356341 fire user-prompt.json
+fire post-tool-bash-background.json
+now=1792356350 fire stop.json '.background_tasks = null | .last_assistant_message = "Tests pass.\n\n**Your call:** the commit"'
+check "#246: a turn ending on his call needs AJ, though a shell runs" "$(field '[.state, .reason, .needs.at_end]') $(bg)" "[\"needs_you\",\"question\",true] \"shell:$B\""
+now=1792356450 fire notification-idle.json
+check "#246: and the idle prompt leaves it waiting on him" "$(field '[.state, .reason]')" '["needs_you","question"]'
+now=1792356460 fire user-prompt.json
+check "#246: his answer starts a turn" "$(field '[.state, .needs]')" '["working",null]'
+now=1792356470 fire stop.json '.background_tasks = null | .last_assistant_message = "Pushed. See https://x.y/?q=1"'
+check "#246: a turn ending on a statement with a shell out is working in background" "$(field '[.state, .reason]')" '["working","background"]'
+now=1792356480 fire user-prompt.json ".prompt = \"<task-notification>\n<task-id>$B</task-id>\n<status>completed</status>\n</task-notification>\""
+now=1792356490 fire stop.json '.background_tasks = null | .last_assistant_message = "Shall I merge it (yes/no)?**"'
+check "#246: with nothing out, a question needs AJ too" "$(field '[.state, .reason]') $(bg)" '["needs_you","question"] ""'
+
 # Every removal path, one entry at a time.
 now=1792356400 fire user-prompt.json
 fire post-tool-bash-background.json
