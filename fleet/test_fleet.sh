@@ -62,7 +62,7 @@ resume() { FLEET_NOW=$1 bash "$here/resume-at-reset.sh" --once 2>/dev/null; } # 
 # A registered session, live in pane $1 by klepsydra's fleet file.
 SID=11111111-2222-4333-8444-555555555555
 mkdir -p "$KLEPSYDRA_DIR/fleet"
-live() { jq -n --arg p "$1" '{session_id: "x", ended: null, tmux: {pane: $p}}' >"$KLEPSYDRA_DIR/fleet/$SID.json"; }
+live() { jq -n --arg p "$1" '{session_id: "x", ended: null, tmux: {pane: $p}}' >"$KLEPSYDRA_DIR/fleet/${2:-$SID}.json"; }
 logged() { jq -r --arg m "$1" 'select(.message | contains($m)) | .pane' "$FLEET_LOG" 2>/dev/null | tr '\n' ' '; }
 
 echo "reset times"
@@ -437,7 +437,7 @@ EOF
 printf 'Do the thing.\nThen the other thing.\n' >"$work/task.src"
 launch() { # NAME STATE-JSON: launch.sh with a fake claude starting from STATE
   printf '%s' "$2" >"$work/$1.json"; : >"$work/$1.log"
-  FLEET_SCOPE=0 FLEET_MIN_AVAIL_MB=0 FLEET_LAUNCHER="$work/launcher.sh" FLEET_DIR="$work" \
+  FLEET_SCOPE=0 FLEET_MIN_AVAIL_MB=0 FLEET_LAUNCHER="${LAUNCHER:-$work/launcher.sh}" FLEET_DIR="$work" \
     FLEET_CLAUDE="python3 -I $fake $work/$1.json $work/$1.log" bash "$here/launch.sh" "$1" "$work/task.src" 2>/dev/null | head -1
 }
 cp "$work/task.src" "$FLEET_STATE/task-agent1.src"
@@ -499,6 +499,14 @@ check "#187: a second launch runs beside a stuck one instead of waiting for it" 
 check "and the stuck launch marks its pane as starting" "$(find "$FLEET_STATE/launching" -mindepth 1 | wc -l)" "1"
 wait "$slowjob"
 check "the mark goes when the launch ends" "$(find "$FLEET_STATE/launching" -mindepth 1 | wc -l)" "0"
+cat >"$work/launcher-drain.sh" <<EOF
+#!/usr/bin/env bash
+# wt.exe drains whatever stdin WSL interop hands it (10-31): so does this.
+cat >/dev/null
+tmux -L "\$KLEPSYDRA_TMUX_SOCKET" new-window -d -t fleet: -c "\$3" "\$KLEPSYDRA_CLAUDE"
+EOF
+got=$(printf 'row 2\nrow 3\n' | { LAUNCHER="$work/launcher-drain.sh" launch agent9 '{"above":["Claude Code"]}' >/dev/null; cat; })
+check "#242: a launch from a loop reading rows on stdin leaves the rest of the rows" "$got" $'row 2\nrow 3'
 
 echo "briefs"
 printf 'Do X.\nThen Y.' >"$work/body"
@@ -778,6 +786,33 @@ reading a Personal 100 1000; reading b RIT 10 2000
 check "room elsewhere: the other account, when it has room" "$(room_elsewhere "$work/cfg-a" "$now")" "$work/cfg-b"
 reading b RIT 95 2000
 check "and none when it is nearly full too" "$(room_elsewhere "$work/cfg-a" "$now" || echo none)" "none"
+
+echo "fresh-now moves every row, even when a launch reads stdin (#242)"
+reading a Personal 95 1000; reading b RIT 10 2000
+S2=22222222-2222-4333-8444-555555555555
+fa=$(pane fma '{"above":["idle"],"exit_on_exit":true}'); fb=$(pane fmb '{"above":["idle"],"exit_on_exit":true}'); settle
+live "$fa"; live "$fb" "$S2"
+printf '%s\tfma\t%s\t%s\t/w\t%s\n%s\tfmb\t%s\t%s\t/w\t%s\n' "$fa" "$work/brief.src" "$SID" "$work/cfg-a" "$fb" "$work/brief.src" "$S2" "$work/cfg-a" >"$REGISTRY"
+: >"$work/fm.log"
+cat >"$work/launch-fm.sh" <<EOF
+#!/usr/bin/env bash
+# wt.exe drains whatever stdin its caller hands it (10-31): this records what it was handed.
+# Checked before any command substitution, whose pipe would take fd 3.
+[[ -e /proc/\$\$/fd/3 ]] && fd3=open || fd3=closed
+echo "\$(readlink /proc/\$\$/fd/0) fd3=\$fd3" >>"$work/fm.fds"
+echo "\$1 \${FLEET_ACCOUNT:-}" >>"$work/fm.log"
+new=\$(tmux -L "$FLEET_SOCK" new-window -d -P -F '#{pane_id}' -t fleet: "sleep 600")
+echo "\$new" >>"$work/fm.panes"
+echo "pane=\$new session=x account=\${FLEET_ACCOUNT:-} avail=1MiB brief=started"
+EOF
+# A pipe on stdin, not the runner's /dev/null, so the launch's own </dev/null is what the stub sees.
+out=$(printf 'stdin\n' | LAUNCH="$work/launch-fm.sh" bash "$here/fresh-now.sh" 2>/dev/null)
+check "both rows are moved to the account with room, not just the first" "$(sort "$work/fm.log" | tr '\n' '|')" "fma $work/cfg-b|fmb $work/cfg-b|"
+check "and each says so" "$(grep -c '^fresh: fm[ab] moved to' <<<"$out")" "2"
+check "each launch gets no stdin and not the registry's fd 3" "$(sort -u "$work/fm.fds")" "/dev/null fd3=closed"
+rm -f -- "${KLEPSYDRA_DIR:?}/fleet/$S2.json" "${KLEPSYDRA_DIR:?}/fleet/$SID.json"
+xargs -r -n1 tmux -L "$FLEET_SOCK" kill-pane -t <"$work/fm.panes" 2>/dev/null
+: >"$REGISTRY"
 reading a Personal 60 1000
 check "back room: under FLEET_BACK_ROOM_PCT (50%) free is not enough to move back" "$(back_room a "$now" && echo yes || echo no)" "no"
 reading a Personal 50 1000
@@ -1629,6 +1664,10 @@ printf 'brief A\n' >"$work/ba.src"; printf 'brief B\n' >"$work/bb.src"; printf '
 printf '%s\ta\t%s\t%s\t/w\n%s\tb\t%s\t%s\t/w\n%s\tc\t%s\t%s\t/w\n' %1 "$work/ba.src" "$SA" %2 "$work/bb.src" "$SB" %3 "$work/bc.src" "$SC" >"$REGISTRY"
 cat >"$work/launch-rec.sh" <<EOF
 #!/usr/bin/env bash
+# wt.exe drains whatever stdin its caller hands it (10-31): this records what recover hands it.
+# Checked before any command substitution, whose pipe would take fd 3.
+fds=; for f in 3 9; do [[ -e /proc/\$\$/fd/\$f ]] && fds+=" fd\$f=open" || fds+=" fd\$f=closed"; done
+echo "\$(readlink /proc/\$\$/fd/0)\$fds" >>"$work/rec.fds"
 n=\$(( \$(cat "$work/rec.n" 2>/dev/null || echo 900) + 1 )); echo \$n >"$work/rec.n"
 printf '%s %s settings=%s account=%s\n' "\$(date +%s.%N)" "\$1" "\${FLEET_SETTINGS-UNSET}" "\${FLEET_ACCOUNT:-}" >>"$work/rec.log"
 cp "\$2" "$work/rec-\$1.txt"
@@ -1652,8 +1691,9 @@ rec() { LAUNCH="$work/launch-rec.sh" FLEET_STAGGER_S=${STAG:-0} bash "$here/reco
 out=$(rec --dry-run --no-orchestrator)
 check "a dry run names what it would recover and launches nothing" "$(grep -c '^would recover' <<<"$out") $(wc -l <"$work/rec.log" 2>/dev/null || echo 0)" "2 0"
 check "the doctor names the agents whose sessions are gone" "$(bash "$here/doctor.sh" 2>/dev/null | grep '^FAIL agents')" "FAIL agents: sessions gone: b c: fleet recover"
-out=$(STAG=1 rec --no-orchestrator)
+out=$(printf 'stdin\n' | STAG=1 rec --no-orchestrator) # a pipe, so the launch's own </dev/null is checked
 check "a running agent is left alone; the others are launched fresh" "$out" $'running: a (%1)\nrecovered: b -> %901\nrecovered: c -> %902'
+check "#242: each launch gets no stdin, nor the registry's fd 3 or the recover lock's fd 9" "$(sort -u "$work/rec.fds")" "/dev/null fd3=closed fd9=closed"
 check "the brief: why, its last two replies, its newest IMPL.md, then the brief" \
   "$(grep -c 'stopped by a hard shutdown' "$work/rec-b.txt") $(grep -c '^> first reply' "$work/rec-b.txt") $(grep -c '^> second reply$' "$work/rec-b.txt") $(grep -c '^> third reply$' "$work/rec-b.txt") $(grep -o 'IMPL.md: .*' "$work/rec-b.txt") | $(tail -1 "$work/rec-b.txt")" \
   "1 0 1 1 IMPL.md: $repo/.claude/worktrees/wt/IMPL.md | brief B"

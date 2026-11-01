@@ -66,7 +66,8 @@ took() { printf '%s' "$((SECONDS - began))"; }
 exec 8>>"$FLEET_STATE/.launch.lock"
 flock -w 120 8 || { flog ERROR "launch held: another launch kept the lock for 2 min" name="$name"; exit 1; }
 before=$(fleet_panes | sort)
-if ! out=$(cd ~ && KLEPSYDRA_CLAUDE="$cmd" KLEPSYDRA_TMUX_SOCKET="$FLEET_SOCK" bash "${FLEET_LAUNCHER:-$HOME/.claude/klepsydra-launch.sh}" new "$dir" 2>&1 7>&- 8>&-); then
+# No stdin for the launcher: a caller reading a list on it would lose the rest (#242).
+if ! out=$(cd ~ && KLEPSYDRA_CLAUDE="$cmd" KLEPSYDRA_TMUX_SOCKET="$FLEET_SOCK" bash "${FLEET_LAUNCHER:-$HOME/.claude/klepsydra-launch.sh}" new "$dir" </dev/null 2>&1 7>&- 8>&-); then
   flog ERROR "launch failed: the launcher refused" name="$name" said="$out"
   echo "launch failed: $out" # logcheck: ignore[stderr-for-errors] # the result line
   exit 1

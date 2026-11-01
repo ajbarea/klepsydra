@@ -82,9 +82,10 @@ open_tab() { # target tmux-socket-args...
   key="$* $target"
   ATTACHED=0
   tab_pending "$key" && return 0
-  # The lock fd is closed for wt.exe so a tab never outlives the lock.
+  # The lock fd is closed for wt.exe so a tab never outlives the lock; its
+  # stdin is /dev/null, since WSL interop hands stdin to wt.exe, which drains it (#242).
   "$WT" -w fleet new-tab "${TITLE_ARGS[@]}" wsl.exe -d "$WSL_DISTRO_NAME" -e tmux "$@" attach -t "$target" \
-    >/dev/null 2>&1 {LOCKFD}>&- || {
+    </dev/null >/dev/null 2>&1 {LOCKFD}>&- || {
     undo
     fail "Windows Terminal did not open a tab."
   }
