@@ -1,0 +1,115 @@
+/* Design prototype for #247 and #248 (design-247.js loads it with ?design=b|c).
+   B: each card wears its character's colour; status lives in the pill; a card
+   that needs you is loud amber; the bar groups status left and tools right;
+   done cards shrink to a slim row; one line says what the card is doing.
+   C: B, and the figure breaks the frame. */
+
+/* ---- #248: the bar ---- */
+[data-design] .bar { gap: 20px; }
+[data-design] .bar > .lead { margin-right: auto; }
+[data-design] .bar-right { display: flex; align-items: center; gap: 12px; }
+[data-design] .ring-key { display: none !important; } /* the arcs carry a count instead */
+[data-design] .gear { position: relative; }
+[data-design] .gear summary {
+  list-style: none;
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+[data-design] .gear summary::-webkit-details-marker { display: none; }
+[data-design] .gear summary:hover, [data-design] .gear[open] summary { background: var(--button-bg); color: var(--text); }
+[data-design] .gear summary:focus-visible { outline: 2px solid var(--card-focus); outline-offset: 2px; }
+[data-design] .gear svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.6; }
+[data-design] .gear .view {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 6px);
+  right: 0;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  background: var(--card-bg);
+  border: 1px solid var(--card-line);
+  border-radius: 10px;
+  box-shadow: 0 12px 32px -12px rgb(0 0 0 / 0.7);
+}
+
+/* ---- #248: order and weight ---- */
+[data-design] .card.tone-needs { order: -3; }
+[data-design] .card.tone-error { order: -2; }
+[data-design] .card.tone-working { order: -1; }
+/* Not data at a glance: the relay prompt, the other repos, the shell count,
+   the receipt and "updated" (the Ledger and the card's title keep them). */
+[data-design] .said p.prompt,
+[data-design] .also,
+[data-design] .also-more,
+[data-design] .crew-line,
+[data-design] .ledger-line,
+[data-design] .updated { display: none !important; }
+/* One "now" line: what the card is doing, then the latest result. */
+[data-design] .said p.reply { -webkit-line-clamp: 2; }
+
+/* ---- #247: the character's colour ---- */
+[data-design] .card {
+  --edge: var(--accent, var(--card-line));
+  border-color: color-mix(in oklab, var(--edge) 55%, var(--card-line));
+}
+/* The edge stripe is the character's, not the status's: status is the pill. */
+[data-design] .card::before { border-left-color: var(--edge); }
+[data-design] .card:hover { box-shadow: 0 0 0 1px color-mix(in oklab, var(--edge) 45%, transparent), 0 10px 30px -16px color-mix(in oklab, var(--edge) 70%, transparent); }
+[data-design] .card:focus { outline-color: var(--edge); }
+[data-design] .card header {
+  border-bottom: 2px solid var(--accent, var(--band-line));
+  background:
+    /* Strong behind the figure, 6% from the text's edge (154 px) on, so the task keeps 4.5:1 (fleet-design-247.test.js). */
+    linear-gradient(90deg, color-mix(in oklab, var(--accent, var(--band-gold)) 24%, transparent), color-mix(in oklab, var(--accent, var(--band-gold)) 6%, transparent) 150px, color-mix(in oklab, var(--accent, var(--band-gold)) 3%, transparent)),
+    var(--plate-bg);
+}
+[data-design] .actions .jump[data-kind="accent"] {
+  border-color: var(--accent);
+  background: color-mix(in oklab, var(--accent) 12%, var(--button-bg));
+  box-shadow: none;
+}
+[data-design] .branch { border-color: color-mix(in oklab, var(--accent, var(--card-line)) 50%, var(--card-line)); }
+[data-design] .actions { border-top-color: color-mix(in oklab, var(--accent, var(--card-line)) 30%, var(--card-line)); }
+
+/* Needs you is the one loud thing on the wall: an amber frame and a filled pill. */
+[data-design] .card.tone-needs {
+  --edge: var(--tone-needs);
+  border: 2px solid var(--tone-needs);
+  box-shadow: 0 0 0 4px color-mix(in oklab, var(--tone-needs) 22%, transparent), 0 14px 36px -12px color-mix(in oklab, var(--tone-needs) 60%, transparent);
+}
+[data-design] .card.tone-needs .pill { background: var(--tone-needs); color: var(--needs-ink); }
+[data-design] .card.tone-needs .pill .age, [data-design] .card.tone-needs .pill .when { color: var(--needs-ink); }
+[data-design] .card.tone-needs .pill .badge { --badge-ring: var(--tone-needs); }
+[data-design] .card.tone-needs .ask { background: color-mix(in oklab, var(--tone-needs) 22%, transparent); color: var(--text); }
+
+/* A done card is a slim row: who, where, and its actions. */
+[data-design] .card.tone-done, [data-design] .card.dim { align-self: start; }
+[data-design] .card.tone-done .said,
+[data-design] .card.tone-done .ask,
+[data-design] .card.dim .said { display: none; }
+[data-design] .wall:not([data-density="compact"]) .card.tone-done { --band-h: 72px; }
+[data-design] .wall:not([data-density="compact"]) .card.tone-done header { --fig: 84px; padding-left: 104px; grid-template-areas: "name" "task"; }
+[data-design] .wall:not([data-density="compact"]) .card.tone-done .epithet { display: none; }
+[data-design] .wall:not([data-density="compact"]) .card.tone-done .stage { background: var(--grain); }
+[data-design] .wall:not([data-density="compact"]) .card.tone-done .marks { display: none; }
+[data-design] .wall[data-density="compact"] .card.tone-done { grid-template-rows: auto auto; }
+[data-design] .wall[data-density="compact"] { grid-auto-rows: auto; }
+
+/* ---- C: the figure breaks the frame ---- */
+[data-design="c"] .wall:not([data-density="compact"]) { row-gap: 60px; padding-top: 56px; }
+[data-design="c"] .wall:not([data-density="compact"]) .card:not(.tone-done) header { --fig: 176px; --fig-left: -6px; padding-left: 176px; }
+[data-design="c"] .wall:not([data-density="compact"]) .card:not(.tone-done) .stage {
+  background:
+    radial-gradient(closest-side, color-mix(in oklab, var(--light) var(--glow-alpha), transparent), transparent) -30px 0 / 260px 200px no-repeat,
+    var(--grain);
+}
+/* The figure's own top edge is the art's: no fade where it leaves the card. */
+[data-design="c"] .wall:not([data-density="compact"]) .has-figure .figure { -webkit-mask-image: none; mask-image: none; }
+/* Cupid's wings reach the edges of her portrait: a full-width cut keeps them whole. */
+[data-design="c"] .card[data-face="cupid"] .figure { content: url("faces/kourai/cupid-figure-wide.webp"); }

@@ -1,30 +1,23 @@
-# IMPL: klepsydra fleet-module brief, resume state 2026-10-30 20:25
+# IMPL: klepsydra card and cast design pass (AJ 11-01), resume state 2026-11-01 evening
 
-Session 8 (fresh start on RIT, 10-30 evening) went idle at Heph's ask: moved to Personal (14% weekly room), waiting for RIT's 23:40 reset.
-Resume from this file, `git log`, open PRs and their comments. Brief: task-fleet-module.src.
+Paused at Heph's ask (RIT ~78%, CISC-810 A6 tonight). Brief: `~/.local/state/fleet-orchestrator/task-card-design.src`.
+Resume from this file, `git log`, and the open PRs' comments (re-read them first).
 
-## Done this session
-- Merged, each review-clean with green CI and no new comments: #196, #206, #207 (earlier in session 8), then #218 (#134 launch end case), #210 (#208 Fleet health), #211 (#183 Voices).
-- Deployed from the main checkout at 73a49d9: `make install-fleet` (old scripts in archive/fleet-scripts-20261030), `fleet cutover` (all units enabled and active, fleet-doctor.timer new, resume service logged its start). The #214 clock fix is live before 2026-11-01's clock change.
-- `fleet doctor` after the cutover: two FAILs, neither from the deploy:
-  - phone wall over Tailscale: Windows Tailscale was still starting ("NoState", coordination server unreachable).
-  - agents: finished agents youtube, cisc810, bonsai-prs still have rows in panes.tsv. The remote-control check calls the same rows a warn ("a finished agent's row"), the agents check a FAIL, so the wall's Fleet health shows red until Heph prunes them. Candidate small fix: tell finished rows apart from a hard shutdown in doctor.sh's agents check.
+## Done
+- ✅ Step 1, Hesychia + the four re-prompts (issue #252):
+  - kourai-khryseai #301 (branch art/portraits-1101): five new originals, old ones kept as `<name>-2026-10-20.jpg`, prompts appended. SHA-256 vs staged: 5/5.
+  - klepsydra #255 (branch feat/portraits-1101, worktree portraits-1101): 1024 crops (q88, optimised; the recipe reproduces the old Hesychia crop byte for byte), cut-outs from TIGRIS job 716141 (`~/klepsydra-cutout` on tigris), faces re-cut, HEAD boxes + theme `head` refit. 151/151 cast/theme/style/speaking/model tests.
+- ✅ Step 2 + 4, #249 kits + cast canon: klepsydra #253 (branch docs/briefs-249). Review round 1 (2 blocking, 6 should-fix) fixed in 2f9e899; PR body states the merge order.
+- 🔄 Step 3, #247 + #248 prototype on this branch (design/cards-247, no PR yet): `src/fleet/design-247.{js,css}` worn with `?design=b|c` in a browser only; `src/fleet-design-247.test.js` contrast check, 4/4 pass (worst: Aletheia's edge 3.16:1; task on the washed band 4.72:1 after fading the wash to 6% from 150 px); `faces/kourai/cupid-figure-wide.webp` (full-width cut of the 640 px transparent PNG: no 1254 px Cupid original exists).
 
 ## Next (in order)
-1. Windows build (`flock /tmp/fleet-heavy.lock bash scripts/build-windows.sh`) for #190, #191, #194, #195, #207, #210, #211; reinstall; click a card's GitHub mark once and check the `open github` log line (#195).
-2. #216 launches must not steal focus (new-window -d), #217 needs-you lingering after a permission answer.
-3. #150 (research done: portable-pty + xterm.js, a grouped tmux session), #154 wall Recover button, #158 `--apply`, #157 part 3, #185 part 3, #204 demo mode, #215, #163.
-
-## Cleanup held (not removed; check each before deleting)
-- worktree impl-1029: tip differs from merged #212's head (2b9ca17, "session 7 moving to RIT"): superseded by this file.
-- worktree recover: #171 merged, 1 uncommitted change.
-- worktree split-182: #190 merged; holds src-tauri/target used as CARGO_TARGET_DIR for `-p klepsydra-fleet`, plus src-tauri/gen/.
-- branch docs/impl-late-1029 (local + remote): 1 commit after #200 merged.
-- remote branch docs/brief-no-public-asks: #179 closed as #178's duplicate.
+1. Re-run reviews (fresh opus reviewers, round prompts as before): #255 + kourai #301 (round 1; the stopped run found nothing reported), #253 round 2 (verify the round-1 fixes).
+2. Shots: `uv run --no-project python scripts/design-247/make-fixture.py`, then `flock /tmp/fleet-heavy.lock timeout 400 uv run -q --no-project --with playwright python -I scripts/design-247/shots.py . <out> a,b,c`. Look at every shot, iterate the CSS, then copy to `/mnt/c/Users/ajbar/fleet-briefing/shots/2026-11-01/klepsydra-247-<variant>-<density>-dark.png` + one line each in shots/README.md.
+3. Measure: `flock /tmp/fleet-heavy.lock timeout 900 uv run -q --no-project --with playwright python -I scripts/design-247/measure.py . <out>` (idle ms/s over 30 s, median of 15 refreshes, a trace per variant; headless Chromium, relative only). The Windows WebView2 run (`scripts/perf/run.ps1`, docs/perf/2026-10-28) comes after the build.
+4. Review issue in ajbarea/fleet-briefing for AJ's pick (A/B/C; the wall has one dark scheme, so no light shots; Athena's portrait is gold, the canon says flesh: ask whether to redraw from her kit). Add the ask to claude-queue.md "Needs you". Public issues stay neutral.
+5. After AJ picks: fold the chosen CSS into wall.css, delete the prototype files, build, measure before/after on Windows.
+6. Cleanup after #301 and #255 merge: hash-check `assets/portraits` and kourai originals against `kourai-khryseai/assets/avatars/incoming-2026-11-01/`, then `rm -rf -- "${D:?}"` that staging folder.
 
 ## Notes
-- `gh pr edit` fails on klepsydra (Projects classic): `gh api -X PATCH repos/ajbarea/klepsydra/pulls/N -F body=@file`. Issue Types are not enabled here; labels stand in.
-- `fleet/test_fleet.sh` takes about 19 min: `flock /tmp/fleet-heavy.lock timeout 1800`.
-- The app crate needs GTK headers WSL lacks: lint/test `-p klepsydra-fleet` with CARGO_TARGET_DIR=.claude/worktrees/split-182/src-tauri/target; CI builds the app.
-- shellcheck: `uvx --from shellcheck-py shellcheck -x fleet/*.sh fleet/fleet hooks/*.sh`. `receiver::bad_paths_bodies_and_sizes_get_their_status` flakes under load (#174).
-- Install before cutover: `make install-fleet`, then `fleet cutover`, then `fleet doctor` (doctor's exit code is lost behind a pipe; read the FAIL lines).
+- Merge order: kourai #301 → klepsydra #255; kourai #300 + klepsydra #226 → #253. #226 and #255 both edit the `HEAD` line in cut-portraits.py (mechanical merge).
+- Light Pillow scripts run without the heavy lock (friction.md line, 11-01).
