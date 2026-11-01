@@ -1,6 +1,6 @@
 // The card wall: a card per Claude Code session, in the reader's order, with
 // a way back to its terminal.
-import { RINGS, accountsDiffer, branchPage, announcements, card, castPicks, identity, needsFirst, shouldSlide, showsRingKey, startedNeeding, transitionName, statuses, tally } from "./model.js";
+import { RINGS, accountsDiffer, branchPage, announcements, card, castPicks, identity, needsFirst, senderNames, shouldSlide, showsRingKey, startedNeeding, transitionName, statuses, tally } from "./model.js";
 import { announcer, press, say, setOff, syncChildren } from "./dom.js";
 import { ARM_MS, confirmCopy, createEnder, endAllCopy, endingAnnouncement, endingText, withdrawnText } from "./end.js";
 import { askedNote, asking, isReady, readiness, wrapupAnnouncements, wrapupCopy, wrapupLines } from "./wrapup.js";
@@ -500,7 +500,8 @@ function render(snapshot) {
   wasState = state;
   paintTally();
   paintLimits(now);
-  const cards = sessions.map((s) => card(s, cast, now, request));
+  const senders = senderNames(sessions, cast);
+  const cards = sessions.map((s) => card(s, cast, now, request, senders));
   const twoAccounts = accountsDiffer(cards);
   for (const c of cards) c.showAccount = twoAccounts && Boolean(c.account);
   const prior = new Set(cardOf.keys()); // a card for one of these is not new
