@@ -7,7 +7,8 @@
 # Claude uses); the phone wall answers on 127.0.0.1:8318 and through
 # Tailscale Serve with a fresh fleet.json (a usage reading observed in the last
 # 2 minutes); a pane watcher is running; each config folder in FLEET_ACCOUNTS
-# is logged in and the second ones match the first. Briefs whose shared rules
+# is logged in and the second ones match the first; the copies in ~/.claude
+# (hooks, status line, launcher, cast) match the checkout. Briefs whose shared rules
 # are out of date, and a second folder not logged in, are warnings.
 # With `--json FILE` (the fleet-doctor timer) it also writes the checks to FILE
 # for the wall, and logs a check only when its status changed since FILE's run.
@@ -195,6 +196,17 @@ elif stale=$(bash "$here/brief.sh" --check "${briefs[@]}" 2>/dev/null); then
   report ok "briefs" "every registered brief has the shared rules"
 else
   report warn "briefs" "$(tr '\n' ' ' <<<"$stale")(fleet brief --check)"
+fi
+# A hook or cast copy older than the checkout gives every session old behaviour (#244).
+root=${here%/fleet} differ=
+for c in "${HOOK_COPIES[@]}"; do
+  [[ -e $root/${c%% *} ]] || continue
+  cmp -s -- "$root/${c%% *}" "$FLEET_HOOK_DIR/${c#* }" || differ+="${c#* } "
+done
+if [[ -n $differ ]]; then
+  report FAIL "installed copies" "differ from $root: ${differ% }: make install-fleet"
+else
+  report ok "installed copies" "the hooks, status line, launcher and cast match $root"
 fi
 if [[ -n $json ]]; then
   tmp=$json.tmp.$$

@@ -13,6 +13,20 @@ FLEET_TARGET=${FLEET_TARGET:-fleet::$(basename "${0%.sh}")}
 # A fleet-wide id for the lines of one run (a launch, one resume pass).
 FLEET_RUN_ID=${FLEET_RUN_ID:-$(od -An -N6 -tx1 /dev/urandom | tr -d ' \n')}
 export FLEET_RUN_ID
+# What every session reads from ~/.claude (both config folders' hooks point
+# there): "repo path, installed name" per entry. install.sh copies them, and
+# doctor checks the copies still match the checkout.
+FLEET_HOOK_DIR=${FLEET_HOOK_DIR:-$HOME/.claude}
+# shellcheck disable=SC2034 # read by install.sh and doctor.sh
+HOOK_COPIES=(
+  "hooks/klepsydra-fleet.sh klepsydra-fleet.sh"
+  "hooks/klepsydra-launch.sh klepsydra-launch.sh"
+  "hooks/klepsydra-tmux.conf klepsydra-tmux.conf"
+  "hooks/klepsydra-wrapup.sh klepsydra-wrapup.sh"
+  "hooks/klepsydra-wrapup.md skills/klepsydra-wrapup/SKILL.md"
+  "statusline/klepsydra-statusline.sh klepsydra-statusline.sh"
+  "src/fleet/themes/kourai.json klepsydra-cast.json"
+)
 
 # The preamble a fresh session's brief starts with; WHY says why it replaces the last one.
 fresh_preamble() { # WHY

@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # install.sh [--dry-run]: install the fleet from this checkout. Each script is
 # linked into the state folder (so a pull updates the fleet), the `fleet`
-# command into ~/.local/bin, and the fleet's services into
+# command into ~/.local/bin, the hooks, status line, launcher and cast copied
+# into ~/.claude (FLEET_HOOK_DIR), and the fleet's services into
 # ~/.config/systemd/user as enabled user units, which come back after a
 # restart. A copy a link replaces is kept in archive/fleet-scripts-<date>/.
 # Starts nothing: `fleet cutover` swaps the running services onto the units.
@@ -35,6 +36,26 @@ for f in "${SCRIPTS[@]}"; do
   do_ ln -sfn -- "$here/$f" "$dest"
 done
 do_ ln -sfn -- "$here/fleet" "$BIN/fleet"
+
+# The hooks, status line, launcher and cast are copies, not links: each is
+# swapped in by a rename in its own folder, so a session never reads one half
+# written (#244). A copy that differs is archived first.
+root=${here%/fleet}
+for c in "${HOOK_COPIES[@]}"; do
+  src=$root/${c%% *} name=${c#* }
+  dest=$FLEET_HOOK_DIR/$name
+  [[ -e $src ]] || continue
+  cmp -s -- "$src" "$dest" && continue
+  do_ mkdir -p -- "${dest%/*}"
+  if [[ -e $dest ]]; then
+    do_ mkdir -p -- "$archive/claude"
+    do_ cp -p -- "$dest" "$archive/claude/${name//\//_}"
+  fi
+  mode=644; [[ $src == *.sh ]] && mode=755
+  do_ install -m "$mode" -- "$src" "$dest.new.$$"
+  do_ mv -f -- "$dest.new.$$" "$dest"
+  (( dry )) || flog INFO "installed a copy" file="$dest" from="$src"
+done
 
 # The PATH the services run with: this shell's, as `systemd-run -E PATH` gave them.
 unit() { # NAME BODY
