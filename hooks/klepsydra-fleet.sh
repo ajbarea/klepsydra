@@ -308,6 +308,8 @@ session_rows() { # fields file...
     def last_active: [.started_at, .state_at, .where.at, .prompt.at, .reply.at, .ended.at, .written_at]
       | map(numbers) | max // 0 | floor;
     def or_q: if type == "string" and length > 0 then . else "?" end;
+    # The face of an orchestrator file, as the crate reads it: Athena, else Hephaestus.
+    def orch_face: if .orchestrator_face == "bf_alice" then "bf_alice" else "am_michael" end;
     (index("\t")) as $i | .[:$i] as $f
     | (try (.[$i + 1:] | fromjson) catch empty) | select(type == "object" and .v == 1)
     | try ([$f] + ('"$fields"')) catch empty
@@ -484,10 +486,10 @@ remote_lines() { # transcript
 # new transcript never names the link. It is the link, or none, of the latest
 # active other session of Claude process `pid` started at `start` on this boot
 # and distro; empty for none. Then, after a \x1f, that session's orchestrator
-# face ("?" when it was no orchestrator), which a /clear keeps (#244). Reads as
-# mark_gone does, from inside the folder.
+# face ("?" when it was no orchestrator, empty when none was found), which a
+# /clear keeps (#244). Reads as mark_gone does, from inside the folder.
 cleared_link() { # fleet pid start self
-  local f pid start boot distro last began url face best=-1 best_began=-1 link="" kept="?"
+  local f pid start boot distro last began url face best=-1 best_began=-1 link="" kept=""
   [[ $2 =~ ^[1-9][0-9]*$ && $3 =~ ^[0-9]+$ && -n $host_boot ]] || return 0
   while IFS=$'\t' read -r f pid start boot distro last began url face; do
     [[ $f != "$4.json" && $pid == "$2" && $start == "$3" && $boot == "$host_boot" \
@@ -496,7 +498,7 @@ cleared_link() { # fleet pid start self
     (( last > best || (last == best && began > best_began) )) && best=$last best_began=$began link=$url kept=$face
   done < <(fleet_rows "$1" '[((.claude.pid | numbers) // 0 | floor), ((.claude.start | numbers) // 0 | floor),
       (.host.boot | or_q), (.host.distro | or_q), last_active, ((.started_at | numbers) // 0 | floor),
-      (.remote_url | or_q), (if .orchestrator == true then (.orchestrator_face | or_q | sub("^\\?$"; "am_michael")) else "?" end)]')
+      (.remote_url | or_q), (if .orchestrator == true then orch_face else "?" end)]')
   [[ $link == "?" ]] && link=""
   printf '%s\x1f%s' "$link" "$kept"
   return 0
@@ -505,10 +507,10 @@ cleared_link() { # fleet pid start self
 # The face a new orchestrator session wears (#244): Hephaestus and Athena are
 # equal, so it is the one no other orchestrator on the wall wears, live ones
 # (open, with their Claude process running on this boot) first, then any
-# shown. With both shown it is the one seen least recently; with neither, HINT
-# (orchestrator.face's). A /clear keeps CLEARED, the cleared session's face, or
-# when that session was not found, the face of the newest orchestrator card in
-# CLEAR_PANE, the pane it was cleared in.
+# shown. With both shown it is the one seen least recently (HINT on a tie);
+# with neither, HINT (orchestrator.face's). A /clear keeps CLEARED, the
+# cleared session's face, or when that session was not found, the face of the
+# newest orchestrator card of this boot in CLEAR_PANE, the pane it was cleared in.
 free_face() { # fleet self cleared hint [clear_pane]
   local f face open boot pid start pane last set h=0 a=0 h_last=-1 a_last=-1 live="" shown="" in_pane="" pane_last=-1
   case $3 in "$HEPH_VOICE" | "$ATHENA_VOICE") printf '%s' "$3"; return 0 ;; esac
@@ -518,8 +520,8 @@ free_face() { # fleet self cleared hint [clear_pane]
     [[ $open == open && $boot == "$host_boot" && $pid =~ ^[1-9][0-9]*$ ]] && claude_alive "$pid" "$start" && live+=" $face"
     shown+=" $face"
     if [[ $face == "$HEPH_VOICE" ]]; then (( last > h_last )) && h_last=$last; else (( last > a_last )) && a_last=$last; fi
-    [[ -n ${5:-} && $pane == "$5" ]] && (( last > pane_last )) && pane_last=$last in_pane=$face
-  done < <(fleet_rows "$1" '[(if .orchestrator == true then (.orchestrator_face | or_q | sub("^\\?$"; "am_michael")) else "?" end),
+    [[ -n ${5:-} && $pane == "$5" && $boot == "$host_boot" ]] && (( last > pane_last )) && pane_last=$last in_pane=$face
+  done < <(fleet_rows "$1" '[(if .orchestrator == true then orch_face else "?" end),
       (if .ended == null then "open" else "ended" end), (.host.boot | or_q),
       ((.claude.pid | numbers) // 0 | floor), ((.claude.start | numbers) // 0 | floor), (.tmux.pane | or_q), last_active]')
   [[ -n $in_pane ]] && { printf '%s' "$in_pane"; return 0; }
@@ -532,7 +534,7 @@ free_face() { # fleet self cleared hint [clear_pane]
     (( h && a )) && break
   done
   if (( h_last >= 0 && a_last >= 0 )); then
-    if (( h_last <= a_last )); then printf '%s' "$HEPH_VOICE"; else printf '%s' "$ATHENA_VOICE"; fi
+    if (( h_last < a_last )); then printf '%s' "$HEPH_VOICE"; elif (( a_last < h_last )); then printf '%s' "$ATHENA_VOICE"; else printf '%s' "$4"; fi
     return 0
   fi
   printf '%s' "$4"
@@ -884,7 +886,7 @@ queue_cmd() { # args...
       if [[ -z $by ]] && claude_ancestor "${KLEPSYDRA_PID:-$$}"; then
         voice=$(holder_voice "$found_pid" "$found_start") || voice=""
         face=$(fleet_rows "$KLEPSYDRA_DIR/fleet" '[((.claude.pid | numbers) // 0 | floor), ((.claude.start | numbers) // 0 | floor),
-          (if .orchestrator == true and .ended == null then (.orchestrator_face | or_q | sub("^\\?$"; "am_michael")) else "?" end)]' |
+          (if .orchestrator == true and .ended == null then orch_face else "?" end)]' |
           awk -F'\t' -v p="$found_pid" -v s="$found_start" '$2 == p && $3 == s && $4 != "?" { print $4; exit }')
         [[ -n $face ]] && voice=$face
         if [[ -n $voice ]]; then

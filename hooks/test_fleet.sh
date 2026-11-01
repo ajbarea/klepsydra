@@ -1599,12 +1599,18 @@ card "$O1" bf_alice ended "$B1" $((now - 500)); card "$O2" am_michael ended "$B1
 check "both shown, neither live: the face seen least recently" "$(newface)" "bf_alice"
 card "$O1" worker open "$B1" $((now - 60))
 check "a worker in Hephaestus's voice never counts" "$(newface)" "am_michael"
-card "$O1" am_michael open "$B1" $((now - 900)) 0; card "$O2" bf_alice ended "$B1" $((now - 30))
+card "$O1" am_michael open "$B1" $((now - 900)) 4242; card "$O2" bf_alice ended "$B1" $((now - 30))
 check "review: an open card whose Claude process is gone (a crash) is shown, not live" "$(newface)" "am_michael"
 card "$O1" bf_alice open "$B0" $((now - 900)); card "$O2" am_michael ended "$B1" $((now - 60))
 check "review: an open card from the last boot is shown, not live" "$(newface)" "bf_alice"
 card "$O1" bf_alice ended "$B1" $((now - 300)); card "$O2" am_michael ended "$B1" $((now - 300))
-check "review: seen at the same time: Hephaestus" "$(newface)" "am_michael"
+check "review: seen at the same time: orchestrator.face's, Hephaestus with none" "$(newface)" "am_michael"
+printf 'athena\n' >"$work/fleet-state/orchestrator.face"
+card "$O1" bf_alice ended "$B1" $((now - 300)); card "$O2" am_michael ended "$B1" $((now - 300))
+check "review 2: seen at the same time, orchestrator.face says athena: Athena" "$(newface)" "bf_alice"
+rm -f "$work/fleet-state/orchestrator.face"
+card "$O1" af_heart open "$B1" $((now - 60))
+check "review 2: a face it cannot read is Hephaestus's, as the crate reads it" "$(newface)" "bf_alice"
 printf 'Athena\r\n' >"$work/fleet-state/orchestrator.face"
 check "none shown: orchestrator.face, read in any case and with a Windows line end" "$(newface)" "bf_alice"
 rm -f "$work/fleet-state/orchestrator.face"
@@ -1632,7 +1638,16 @@ card "$O1" bf_alice ended "$B1" $((now - 30)) 0 %7
 fire session-start.json ".session_id = \"$X2\" | .source = \"clear\"" "TMUX=$work/sock/klepsydra,1,0" TMUX_PANE=%7 KLEPSYDRA_PID=810 >/dev/null
 check "review: a /clear whose cleared session is not found keeps the face of its pane's newest orchestrator card" \
   "$(jq -r .orchestrator_face "$dir/fleet/$X2.json")" "bf_alice"
-rm -f "$dir/fleet/$X2.json" "$dir/fleet/$O1.json"
+rm -f "$dir/fleet/$X2.json"
+fire session-start.json ".session_id = \"$X2\" | .source = \"clear\"" "TMUX=$work/sock/klepsydra,1,0" TMUX_PANE=%7 KLEPSYDRA_PID=1610 >/dev/null
+check "review 2: and so does one whose Claude process is known but matches no card" \
+  "$(jq -r .orchestrator_face "$dir/fleet/$X2.json")" "bf_alice"
+rm -f "$dir/fleet/$X2.json"
+card "$O1" am_michael ended "$B0" $((now - 30)) 0 %7; card "$O2" am_michael open "$B1" $((now - 60))
+fire session-start.json ".session_id = \"$X2\" | .source = \"clear\"" "TMUX=$work/sock/klepsydra,1,0" TMUX_PANE=%7 KLEPSYDRA_PID=1610 >/dev/null
+check "review 2: a card from the last boot in that pane is not its face; the free one is" \
+  "$(jq -r .orchestrator_face "$dir/fleet/$X2.json")" "bf_alice"
+rm -f "$dir/fleet/$X2.json" "$dir/fleet/$O1.json" "$dir/fleet/$O2.json"
 
 echo "account"
 mkdir -p "$work/cfg-team" "$work/cfg-me" "$work/cfg-bad"
