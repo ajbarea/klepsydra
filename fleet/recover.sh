@@ -106,8 +106,9 @@ stagger() { (( launched++ )) && sleep "$STAGGER"; return 0; }
 launch() { # NAME TEXTFILE [env...]: one launch; prints "PANE SESSION"
   local name=$1 txt=$2 out
   shift 2
-  # No stdin (wt.exe drains it, #242), and no fd 9: the launch may start the
-  # fleet's tmux server, which would keep the recover lock forever.
+  # No stdin and no fd 3: the registry loop reads fd 3, and wt.exe drains
+  # whatever it is handed (#242). No fd 9: the launch may start the fleet's
+  # tmux server, which would keep the recover lock forever.
   out=$(env "$@" bash "$LAUNCH" "$name" "$txt" </dev/null 3<&- 9>&- 2>/dev/null | head -1)
   flog INFO "recovered" name="$name" result="$out"
   grep -q 'pane=%[0-9]' <<<"$out" || return 0

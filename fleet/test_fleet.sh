@@ -766,7 +766,8 @@ new=\$(tmux -L "$FLEET_SOCK" new-window -d -P -F '#{pane_id}' -t fleet: "sleep 6
 echo "\$new" >>"$work/fm.panes"
 echo "pane=\$new session=x account=\${FLEET_ACCOUNT:-} avail=1MiB brief=started"
 EOF
-out=$(LAUNCH="$work/launch-fm.sh" bash "$here/fresh-now.sh" 2>/dev/null)
+# A pipe on stdin, not the runner's /dev/null, so the launch's own </dev/null is what the stub sees.
+out=$(printf 'stdin\n' | LAUNCH="$work/launch-fm.sh" bash "$here/fresh-now.sh" 2>/dev/null)
 check "both rows are moved to the account with room, not just the first" "$(sort "$work/fm.log" | tr '\n' '|')" "fma $work/cfg-b|fmb $work/cfg-b|"
 check "and each says so" "$(grep -c '^fresh: fm[ab] moved to' <<<"$out")" "2"
 check "each launch gets no stdin and not the registry's fd 3" "$(sort -u "$work/fm.fds")" "/dev/null fd3=closed"
@@ -1651,7 +1652,7 @@ rec() { LAUNCH="$work/launch-rec.sh" FLEET_STAGGER_S=${STAG:-0} bash "$here/reco
 out=$(rec --dry-run --no-orchestrator)
 check "a dry run names what it would recover and launches nothing" "$(grep -c '^would recover' <<<"$out") $(wc -l <"$work/rec.log" 2>/dev/null || echo 0)" "2 0"
 check "the doctor names the agents whose sessions are gone" "$(bash "$here/doctor.sh" 2>/dev/null | grep '^FAIL agents')" "FAIL agents: sessions gone: b c: fleet recover"
-out=$(STAG=1 rec --no-orchestrator)
+out=$(printf 'stdin\n' | STAG=1 rec --no-orchestrator) # a pipe, so the launch's own </dev/null is checked
 check "a running agent is left alone; the others are launched fresh" "$out" $'running: a (%1)\nrecovered: b -> %901\nrecovered: c -> %902'
 check "#242: each launch gets no stdin, nor the registry's fd 3 or the recover lock's fd 9" "$(sort -u "$work/rec.fds")" "/dev/null fd3=closed fd9=closed"
 check "the brief: why, its last two replies, its newest IMPL.md, then the brief" \
