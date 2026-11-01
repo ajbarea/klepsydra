@@ -4,8 +4,9 @@
 One kit per character painted for this app, for ChatGPT or Gemini: attach
 the files in section 1, then paste sections 2, 3 and 4 as one message. Each
 kit starts from the current portrait, so a redraw keeps the face. The other
-ten characters come from kourai-khryseai, whose
-`assets/avatars/originals/portrait-prompts.md` keeps every prompt verbatim.
+ten characters come from kourai-khryseai; its
+`assets/avatars/originals/portrait-prompts.md` keeps the verbatim prompts
+that made these six.
 
 ## Cast canon
 
@@ -18,7 +19,7 @@ Adopted by AJ on 2026-11-01. Who a character is decides how they are drawn.
 | Visitors to the forge | Hermes, Chronos, Argos, Elpis, Hesychia, Aletheia, Cupid, Puck | as themselves |
 
 All share one rendering. A golden maiden attached as a reference lends
-only her rendering and background, and the paste says so. Athena's
+only her rendering, and the paste says so. Athena's
 2026-10-30 portrait shows her in gold; her kit follows the canon.
 
 ## How the kits are built
@@ -49,15 +50,15 @@ god, keeper of every session's time.
 
 - `chronos.jpg`, his current portrait: keep his face.
 - `hephaestus_neutral.png`: framing only.
-- `metis_neutral.png`: rendering and background only.
-- Do not attach: Hephaestus's or Argos's portrait as a face reference (two
-  more bearded men pull the faces together).
+- `metis_neutral.png`: rendering only.
+- Do not attach: Argos's portrait. Two bearded men pull the faces together,
+  which is why Hephaestus is attached for framing only.
 
 ### 2. Paste: style block
 
 > Image 1 is Chronos: keep his face, hair and beard exactly. Image 2
 > (Hephaestus at his anvil) is for framing only, not his face. Image 3 (a
-> golden maiden) is for rendering and background only, not her gold skin.
+> golden maiden) is for rendering only, not her gold skin or her background.
 > Painterly, semi-realistic character portrait: confident thick brushwork,
 > ink-like outlines, bold clean silhouette, expressive face, soft rim
 > light. Square bust portrait, mid-torso up, three-quarter turn, the figure
@@ -101,15 +102,16 @@ watchman who never sleeps; he watches the fleet.
 
 - `argos.jpg`, his current portrait: keep his face.
 - `hephaestus_neutral.png`: framing only.
-- `puck_neutral.png`: rendering and background only.
+- `puck_neutral.png`: rendering only.
 - Do not attach: Chronos as a face reference, or the 2026-10-20 Argos (he
   read as a second Hephaestus).
 
 ### 2. Paste: style block
 
 > Image 1 is Argos: keep his face, hair and beard exactly. Image 2
-> (Hephaestus at his anvil) is for framing only, not his face. Image 3 is
-> for rendering and background only.
+> (Hephaestus at his anvil) is for framing only, not his face. Image 3
+> (Puck) is for rendering only, not his face, gold skin, wings, glow or
+> background.
 > Painterly, semi-realistic character portrait: confident thick brushwork,
 > ink-like outlines, bold clean silhouette, expressive face, soft rim
 > light. Square bust portrait, mid-torso up, three-quarter turn, the figure
@@ -126,7 +128,7 @@ watchman who never sleeps; he watches the fleet.
 > leather jerkin with a strap across the chest, bare muscular arms, and over
 > his far shoulder a mantle of peacock feathers in iridescent reddish
 > purple (#CC79A7) and teal, Hera's tribute to him. He holds a bronze
-> lantern low at his side, lit warm. Vigilant, steady, says little, notices
+> lantern by its ring at his waist, lit warm. Vigilant, steady, says little, notices
 > everything.
 
 ### 4. Paste: negative prompt
@@ -158,14 +160,14 @@ staff is the *kerykeion*.
 
 - `hermes.jpg`, his current portrait: keep his face.
 - `hephaestus_neutral.png`: framing only.
-- `techne_neutral.png`: rendering and background only.
+- `techne_neutral.png`: rendering only.
 - Do not attach: Puck as a face reference (two sly young men merge).
 
 ### 2. Paste: style block
 
 > Image 1 is Hermes: keep his face, curls and grin exactly. Image 2
 > (Hephaestus at his anvil) is for framing only, not his face. Image 3 (a
-> golden maiden) is for rendering and background only, not her gold skin.
+> golden maiden) is for rendering only, not her gold skin or her background.
 > Painterly, semi-realistic character portrait: confident thick brushwork,
 > ink-like outlines, bold clean silhouette, expressive face, soft rim
 > light. Square bust portrait, mid-torso up, three-quarter turn, the figure
@@ -210,15 +212,16 @@ stayed in Pandora's jar; the steady encouragement when a long run stalls.
 
 - `elpis.jpg`, her current portrait: keep her face.
 - `hephaestus_neutral.png`: framing only.
-- `kallos_neutral.png`: rendering and background only.
-- Do not attach: Hesychia, old or new, or Aletheia (the 2026-10-20 Elpis and
-  Hesychia shared one face through these).
+- `kallos_neutral.png`: rendering only.
+- Do not attach: Hesychia, old or new, or Aletheia. The 2026-10-20 Elpis and
+  Hesychia were both made from Aletheia and Kallos and came out with one
+  face.
 
 ### 2. Paste: style block
 
 > Image 1 is Elpis: keep her face, hair and smile exactly. Image 2
 > (Hephaestus at his anvil) is for framing only, not his face. Image 3 (a
-> golden maiden) is for rendering and background only, not her gold skin.
+> golden maiden) is for rendering only, not her gold skin or her background.
 > Painterly, semi-realistic character portrait: confident thick brushwork,
 > ink-like outlines, bold clean silhouette, expressive face, soft rim
 > light. Square bust portrait, mid-torso up, three-quarter turn, the figure
@@ -232,10 +235,10 @@ stayed in Pandora's jar; the steady encouragement when a long run stalls.
 
 > A young woman with dark hair gathered up, small white flowers and a blue
 > ribbon woven through it, and a gentle, confident smile. She wears a
-> cream-and-gold peplos with a meander border and a blue sash. In one arm
-> she holds a bronze pithos, a tall Greek storage jar, tilted open, with
-> soft cream-gold (#F1D2A1) motes rising from inside it. White flowers rest
-> in the crook of her other arm. Warm, steady, quietly bright.
+> cream-and-gold peplos with a meander border and a blue sash. She cradles
+> a rounded bronze pithos, a Greek storage jar, against her side, its mouth
+> tilted open, with soft cream-gold (#F1D2A1) motes rising from inside it.
+> White flowers rest in the crook of her other arm. Warm, steady, quietly bright.
 
 ### 4. Paste: negative prompt
 
@@ -247,8 +250,8 @@ stayed in Pandora's jar; the steady encouragement when a long run stalls.
 
 ### 5. Tips
 
-- The jar is a pithos; if a box appears, paste: "A tall clay-and-bronze jar,
-  not a box."
+- The jar is a pithos; if a box appears, paste: "A rounded bronze jar, not a
+  box."
 
 ### 6. When you have one
 
@@ -278,15 +281,16 @@ moonlit silver-blue `#A9B8D0` · the spirit of stillness and rest; in Pindar
 > charcoal background (#1A1A1A). Cool moonlight from the upper left is the
 > main light; only a faint warm glow sits low behind the shoulders. Palette:
 > moonlit silver-blue (#A9B8D0), night blue and pale silver, with small
-> touches of honeyed gold (#C9944A).
+> touches of honeyed gold (#C9944A). Natural skin: she visits the forge and
+> is not one of its golden maidens.
 
 ### 3. Paste: character block
 
 > A woman in her thirties with a long, calm face, a straight nose, level
 > dark brows and dark hair worn up. She wears a silver-blue silk night
 > chiton in a slip style, with thin straps and bare shoulders and arms, the
-> silk catching the moonlight. A pale gauze veil has slipped back off her
-> hair and drapes loosely from one shoulder. Her gaze is half-lidded and
+> silk catching the moonlight. A pale gauze veil is pinned at the back of
+> her hair and falls loosely behind her shoulders. Her gaze is half-lidded and
 > knowing, with a slow, faint smile. One hand rests at her collarbone,
 > holding a ring of two old golden keys on a dark cord. Languid, elegant,
 > unhurried.
@@ -296,7 +300,8 @@ moonlit silver-blue `#A9B8D0` · the spirit of stillness and rest; in Pindar
 > anime, large eyes, chibi, pastel colour wash, photorealistic, real person
 > likeness, 3D render, CGI, grimdark, armour, weapons, text, watermark,
 > logo, signature, border, frame, multiple characters, cropped head, full
-> body, busy background, nudity, see-through fabric, explicit pose, a
+> body, busy background, gold skin, nudity, sheer clothing on the body,
+> explicit pose, a
 > finger to the lips, flowers, a jar, loose hair framing the face, a halo
 
 ### 5. Tips
@@ -346,8 +351,8 @@ face: she and Hephaestus run the fleet in turn (#222).
 > peplos of deep olive (#7A8B3C) silk with gold meander trim, a gold cuff on
 > the upper arm, and a cream himation draped low across the back. From the
 > fingertips of her raised hand run fine glowing olive threads that weave
-> between three small floating translucent star charts, the forge's plan. A
-> small silver owl perches on her far shoulder. Graceful, poised, in
+> between three small floating translucent panels, star charts and a temple
+> plan, the forge's plan. A small grey owl perches on her far shoulder. Graceful, poised, in
 > command, a little dangerous.
 
 ### 4. Paste: negative prompt
@@ -361,6 +366,7 @@ face: she and Hephaestus run the fleet in turn (#222).
 
 ### 5. Tips
 
+- If a generator refuses, drop "a little dangerous" first.
 - If gold creeps back into her skin, paste: "Natural skin everywhere; gold
   only in the circlet, cuff and trim."
 

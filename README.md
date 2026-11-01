@@ -764,12 +764,13 @@ A session's face follows its keryx voice, so it stays the same while the
 session moves between repos. Fifteen voices, all fourteen in keryx's rotation pool
 and `af_nicole` (keryx's fifteenth, before any blend), are cast as characters and
 show their portraits: ten from kourai-khryseai and five (Chronos, Argos, Hermes,
-Elpis, Hesychia) painted for this app. The cast follows one canon: the gods
-who run the forge (Hephaestus, Athena) are drawn in flesh, the golden maidens
-Hephaestus forged (Techne, Metis, Mneme, Kallos, Dokimasia, Aidos) in gold or
-metal, and the visitors (Hermes, Chronos, Argos, Elpis, Hesychia, Aletheia,
-Cupid, Puck) as themselves. `docs/characters/portrait-briefs.md` holds a
-paste-ready kit for each painted character. Any other voice shows the voice's name
+Elpis, Hesychia) painted for this app. Each portrait follows one canon: the
+gods who run the forge (Hephaestus, Athena) are drawn in flesh, the golden
+maidens Hephaestus forged (Techne, Metis, Mneme, Kallos, Dokimasia, Aidos) in
+gold or metal, and the visitors (Hermes, Chronos, Argos, Elpis, Hesychia,
+Aletheia, Cupid, Puck) as themselves. Athena's first portrait, in gold,
+predates the canon. `docs/characters/portrait-briefs.md` holds a paste-ready
+kit for each painted character. Any other voice shows the voice's name
 and a forge medallion: a laurel ring on a dark disc around the name's
 initial, struck in one of six kourai metals (gold, bronze, copper, rose gold,
 pale gold, verdigris) picked by the voice, so two voices with one initial
