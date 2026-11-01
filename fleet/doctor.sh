@@ -7,7 +7,8 @@
 # Claude uses); the phone wall answers on 127.0.0.1:8318 and through
 # Tailscale Serve with a fresh fleet.json (a usage reading observed in the last
 # 2 minutes); a pane watcher is running; each config folder in FLEET_ACCOUNTS
-# is logged in and the second ones match the first. Briefs whose shared rules
+# is logged in and the second ones match the first; the copies in ~/.claude
+# (hooks, status line, launcher, cast) match the checkout. Briefs whose shared rules
 # are out of date, and a second folder not logged in, are warnings.
 # With `--json FILE` (the fleet-doctor timer) it also writes the checks to FILE
 # for the wall, and logs a check only when its status changed since FILE's run.
@@ -37,13 +38,10 @@ if [[ -n $json && -f $json ]]; then
 fi
 results=()
 
-# The home folder reads as ~, in what doctor prints and in the report the
-# phone gets.
-home() { local s=${1//"$HOME/"/\~/}; [[ $s == "$HOME" ]] && s="~"; printf '%s' "$s"; }
 
 report() { # ok|warn|FAIL CHECK DETAIL
   local check detail
-  check=$(home "$2") detail=$(home "$3")
+  check=$(tilde "$2") detail=$(tilde "$3")
   printf '%-4s %s: %s\n' "$1" "$check" "$detail"
   results+=("$1"$'\t'"${check//[$'\t\n']/ }"$'\t'"${detail//[$'\t\n']/ }")
   [[ $1 == FAIL ]] && failed=1
@@ -195,6 +193,19 @@ elif stale=$(bash "$here/brief.sh" --check "${briefs[@]}" 2>/dev/null); then
   report ok "briefs" "every registered brief has the shared rules"
 else
   report warn "briefs" "$(tr '\n' ' ' <<<"$stale")(fleet brief --check)"
+fi
+# A hook or cast copy older than the checkout gives every session old behaviour (#244).
+root=${here%/fleet} differ="" missing=""
+for c in "${HOOK_COPIES[@]}"; do
+  if [[ ! -f $root/${c%% *} ]]; then missing+="${c%% *} "; continue; fi
+  cmp -s -- "$root/${c%% *}" "$FLEET_HOOK_DIR/${c#* }" || differ+="${c#* } "
+done
+if [[ -n $missing ]]; then
+  report FAIL "installed copies" "missing from $root: ${missing% }"
+elif [[ -n $differ ]]; then
+  report FAIL "installed copies" "make install-fleet: differ from $root: ${differ% }"
+else
+  report ok "installed copies" "the hooks, status line, launcher and cast match $root"
 fi
 if [[ -n $json ]]; then
   tmp=$json.tmp.$$

@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
-# install.sh [--dry-run]: install the fleet from this checkout. Each script is
+# install.sh [--dry-run] [--hooks]: install the fleet from this checkout (with
+# --hooks, only the copies in ~/.claude, which the gauge alone needs). Each script is
 # linked into the state folder (so a pull updates the fleet), the `fleet`
-# command into ~/.local/bin, and the fleet's services into
+# command into ~/.local/bin, the hooks, status line, launcher and cast copied
+# into ~/.claude (FLEET_HOOK_DIR), and the fleet's services into
 # ~/.config/systemd/user as enabled user units, which come back after a
 # restart. A copy a link replaces is kept in archive/fleet-scripts-<date>/.
 # Starts nothing: `fleet cutover` swaps the running services onto the units.
@@ -10,9 +12,9 @@ FLEET_TARGET=fleet::install
 here=$(dirname "$(readlink -f "$0")")
 # shellcheck source=fleet/lib.sh
 . "$here/lib.sh"
-dry=0 force=0
+dry=0 force=0 hooks_only=0
 for a in "$@"; do
-  case $a in --dry-run) dry=1 ;; --force) force=1 ;; esac
+  case $a in --dry-run) dry=1 ;; --force) force=1 ;; --hooks) hooks_only=1 ;; esac
 done
 if (( !force )) && [[ $(git -C "$here" rev-parse --path-format=absolute --git-dir 2>/dev/null) != "$(git -C "$here" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" ]]; then
   err "this checkout is a git worktree; links into it break when it is removed. Install from the main checkout, or pass --force."
@@ -23,6 +25,41 @@ SCRIPTS=(launch.sh fresh-now.sh resume-at-reset.sh watch-panes.sh memfrag-log.sh
 UNITS=${FLEET_UNITS:-$HOME/.config/systemd/user}
 BIN=${FLEET_BIN:-$HOME/.local/bin}
 archive=$FLEET_STATE/archive/fleet-scripts-$(date +%Y%m%d)
+
+# The hooks, status line, launcher and cast are copies, not links: each is
+# swapped in by a rename in its own folder, only once written whole, so a
+# session never reads one half written (#244). A copy that differs is archived
+# first, under the time and this run's pid, so a later install keeps the first.
+root=${here%/fleet} failed=0 stamp=$(date +%H%M%S).$$
+for c in "${HOOK_COPIES[@]}"; do
+  src=$root/${c%% *} name=${c#* }
+  dest=$FLEET_HOOK_DIR/$name tmp=$FLEET_HOOK_DIR/$name.new.$$
+  if [[ ! -f $src ]]; then
+    flog ERROR "a copy's source is missing from this checkout; not installed" file="$dest" from="$src"; failed=1; continue
+  fi
+  if [[ -e $dest && ! -f $dest ]]; then
+    flog ERROR "a copy's place is not a file; left alone" file="$dest"; failed=1; continue
+  fi
+  cmp -s -- "$src" "$dest" && continue
+  mode=644; [[ $src == *.sh ]] && mode=755
+  if (( dry )); then
+    printf 'would: install %s to %s\n' "$src" "$dest"; continue
+  fi
+  if mkdir -p -- "${dest%/*}" &&
+     { [[ ! -e $dest ]] || { mkdir -p -- "$archive/claude" && cp -p -- "$dest" "$archive/claude/${name//\//_}.$stamp"; }; } &&
+     install -m "$mode" -- "$src" "$tmp" && mv -f -- "$tmp" "$dest"; then
+    flog INFO "installed a copy" file="$dest" from="$src"
+  else
+    rm -f -- "$tmp"
+    flog ERROR "a copy was not installed; the old one stays" file="$dest" from="$src"
+    failed=1
+  fi
+done
+if (( hooks_only )); then
+  (( failed )) && exit 1
+  (( dry )) || echo "hooks installed from $root into $FLEET_HOOK_DIR"
+  exit 0
+fi
 
 do_ mkdir -p -- "$FLEET_STATE" "$UNITS" "$BIN"
 for f in "${SCRIPTS[@]}"; do
@@ -35,6 +72,7 @@ for f in "${SCRIPTS[@]}"; do
   do_ ln -sfn -- "$here/$f" "$dest"
 done
 do_ ln -sfn -- "$here/fleet" "$BIN/fleet"
+
 
 # The PATH the services run with: this shell's, as `systemd-run -E PATH` gave them.
 unit() { # NAME BODY
@@ -168,4 +206,6 @@ if (( ! dry )) && command -v "${FLEET_SYSTEMCTL:-systemctl}" >/dev/null; then
   "${FLEET_SYSTEMCTL:-systemctl}" --user daemon-reload
 fi
 (( dry )) || flog INFO "fleet installed" from="$here" state="$FLEET_STATE" archive="$archive"
-echo "installed from $here; run fleet cutover to start the services on it"
+(( failed )) && exit 1
+(( dry )) || echo "installed from $here; run fleet cutover to start the services on it"
+exit 0

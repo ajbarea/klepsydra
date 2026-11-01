@@ -257,8 +257,8 @@ check "settings: Stop only" "$(jq -c '.hooks | keys' <<<"$settings")" '["Stop"]'
 check "settings: not async, so its output is read" "$(jq '[.hooks.Stop[].hooks[] | has("async")] | any' <<<"$settings")" "false"
 check "settings: the wrap-up script" "$(jq -r '.hooks.Stop[0].hooks[0].command | ltrimstr("~")' <<<"$settings")" "/.claude/klepsydra-wrapup.sh"
 check "settings: a short timeout" "$(jq '.hooks.Stop[0].hooks[0].timeout <= 10' <<<"$settings")" "true"
-check "README installs the skill where the script reads it" \
-  "$(grep -c 'cp hooks/klepsydra-wrapup.md ~/.claude/skills/klepsydra-wrapup/SKILL.md' "$here/../README.md")" "1"
+check "make install-hooks installs the skill where the script reads it" \
+  "$(grep -c '"hooks/klepsydra-wrapup.md skills/klepsydra-wrapup/SKILL.md"' "$here/../fleet/lib.sh") $(grep -c '^make install-hooks' "$here/../README.md")" "1 1"
 # shellcheck disable=SC2016 # the script's literal text, not an expansion
 check "the script's default skill path is that one" \
   "$(grep -cF -- '${CLAUDE_CONFIG_DIR:-${HOME:-}/.claude}/skills/klepsydra-wrapup/SKILL.md}' "$hook")" "1"

@@ -164,10 +164,15 @@ the wall needs tmux 3.3 or later (`remain-on-exit failed`); Ubuntu 24.04's 3.4
 is the tested version.
 
 ```bash
-cp statusline/klepsydra-statusline.sh hooks/klepsydra-fleet.sh hooks/klepsydra-launch.sh hooks/klepsydra-tmux.conf ~/.claude/
-cp src/fleet/themes/kourai.json ~/.claude/klepsydra-cast.json
-chmod +x ~/.claude/klepsydra-statusline.sh ~/.claude/klepsydra-fleet.sh ~/.claude/klepsydra-launch.sh
+make install-hooks   # from the main checkout
 ```
+
+It copies the status line, hooks, launcher, tmux settings, wrap-up hook and
+skill, and the cast (as `klepsydra-cast.json`) into `~/.claude`, and archives a
+copy it replaces. `make install-fleet` (see [Fleet engine](#fleet-engine)) does
+the same on every deploy, so a fleet never runs an old hook, and `fleet doctor`
+fails while a copy differs from the checkout. The list is `HOOK_COPIES` in
+`fleet/lib.sh`.
 
 Then merge this into `~/.claude/settings.json` (into each config dir's
 `settings.json` if you run two logins):
@@ -210,17 +215,11 @@ with subagents or background shells still running stays working. A subagent
 whose start was missed is picked up from its own tool events.
 For the gauge alone, keep `statusLine` and leave out `hooks`.
 
-For Wrap up (see [Wrapping up](#wrapping-up)), also copy its script and its
-skill, and register the script as a second `Stop` hook. Unlike the fleet
+For Wrap up (see [Wrapping up](#wrapping-up)), step 1 installs its script and
+skill; register the script as a second `Stop` hook. Unlike the fleet
 hook it is not `async`: Claude Code reads what it prints, which is nothing
 unless the wall has asked for a wrap-up and this session has not yet been
 asked.
-
-```bash
-cp hooks/klepsydra-wrapup.sh ~/.claude/ && chmod +x ~/.claude/klepsydra-wrapup.sh
-mkdir -p ~/.claude/skills/klepsydra-wrapup
-cp hooks/klepsydra-wrapup.md ~/.claude/skills/klepsydra-wrapup/SKILL.md
-```
 
 A second Claude Code config folder (another `CLAUDE_CONFIG_DIR`) needs the
 skill too, at `skills/klepsydra-wrapup/SKILL.md` inside it: a typed
@@ -345,7 +344,7 @@ are small, and rewritten on the next render.
 copy in your `~/.claude`, so an upgraded overlay meets a hook still publishing
 to the previous location, `%LOCALAPPDATA%\klepsydra`. The overlay reads both, so
 the gauge keeps working either way; once the hook is re-copied, that folder
-holds nothing current and can be deleted. Re-copy `klepsydra-cast.json` too: a
+holds nothing current and can be deleted. Step 1 re-copies `klepsydra-cast.json` too: a
 cast from before the character colours has no accents, so the buttons would
 lack markers while their tmux windows stay plain. The same holds whenever the cast
 grows: a voice missing from the installed copy gets no window colour. A fleet
@@ -1373,7 +1372,8 @@ usage limit, and check the fleet's health. `make install-fleet` links each one
 from this checkout into the fleet's state folder (`~/.local/state/fleet-orchestrator`,
 or `FLEET_STATE`), so pulling main updates the fleet. It also links the `fleet`
 command into `~/.local/bin` and writes the services as user units in
-`~/.config/systemd/user`, which start again after a reboot. A copy a link
+`~/.config/systemd/user`, which start again after a reboot, and makes step 1's
+copies into `~/.claude`. A copy a link
 replaces goes to `archive/fleet-scripts-<date>/`. Runtime state (`panes.tsv`,
 briefs, logs) stays in the state folder.
 

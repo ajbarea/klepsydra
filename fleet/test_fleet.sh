@@ -8,6 +8,7 @@ fake="$here/tests/fake_pane.py"
 work=$(mktemp -d)
 export TZ=America/New_York # the fixtures' times are AJ's
 export FLEET_SOCK="fleet-test-$$" FLEET_STATE="$work/state" FLEET_SESSION=fleet
+export FLEET_HOOK_DIR="$work/claude" # never the real ~/.claude
 export KLEPSYDRA_DIR="$work/klepsydra" FLEET_TICK=0.1 FLEET_START_WAIT=4 FLEET_TURN_WAIT=6 FLEET_RC_WAIT=12
 mkdir -p "$FLEET_STATE" "$KLEPSYDRA_DIR/accounts/a" "$KLEPSYDRA_DIR/accounts/b"
 # Two config folders, logged out until a case logs one in (accounts a and b).
@@ -571,15 +572,22 @@ check "the orchestrator without it fails (Heph's must always be on)" "$(grep -c 
 check "no phone wall fails" "$(grep -c '^FAIL phone wall: no answer' <<<"$out")" "1"
 check "no Tailscale Serve fails" "$(grep -c '^FAIL phone wall over Tailscale: Tailscale Serve is not set up' <<<"$out")" "1"
 check "and the exit is non-zero" "$code" "1"
+check "#244: hooks and cast never installed fail, named" "$(grep '^FAIL installed copies' <<<"$out" | grep -c 'make install-fleet: differ from .*: klepsydra-fleet.sh .*klepsydra-cast.json$')" "1"
+root=${here%/fleet}
+for c in "${HOOK_COPIES[@]}"; do mkdir -p "$(dirname "$FLEET_HOOK_DIR/${c#* }")"; cp "$root/${c%% *}" "$FLEET_HOOK_DIR/${c#* }"; done
 touch "$work/active" "$FLEET_STATE/resume.beat"
 session_file o1 "$o" https://claude.ai/code/session_01O
 out=$(DOC_UP=http DOC_SERVE="https://desk.tail1.ts.net (tailnet only)" doctor); code=$?
-check "all well but the watcher: a shell that names the script is not one" "$(grep -c '^ok ' <<<"$out") $(grep '^FAIL' <<<"$out" | cut -d: -f1)" "11 FAIL pane watcher"
+check "all well but the watcher: a shell that names the script is not one" "$(grep -c '^ok ' <<<"$out") $(grep '^FAIL' <<<"$out" | cut -d: -f1)" "12 FAIL pane watcher"
 check "the default account is logged in; the second, not yet, is a warning" \
   "$(grep '^ok   account' <<<"$out" | cut -d: -f1) | $(grep '^warn account' <<<"$out" | cut -d: -f1)" "ok   account $work/cfg-a | warn account $work/cfg-b"
 check "with a watcher running, every check is ok and the exit is 0" \
-  "$(DOC_WATCH='%2 %5' DOC_UP=http DOC_SERVE=on doctor | grep -c '^ok '; echo "rc=${PIPESTATUS[0]}")" $'12\nrc=0'
+  "$(DOC_WATCH='%2 %5' DOC_UP=http DOC_SERVE=on doctor | grep -c '^ok '; echo "rc=${PIPESTATUS[0]}")" $'13\nrc=0'
 check "the watcher's panes are named" "$(DOC_WATCH='%2 %5' doctor | grep '^ok   pane watcher')" "ok   pane watcher: watching %2 %5"
+printf '# 10-29 copy\n' >>"$FLEET_HOOK_DIR/klepsydra-fleet.sh"
+check "#244: a hook copy older than the checkout fails, and only it is named" \
+  "$(doctor | grep '^FAIL installed copies')" "FAIL installed copies: make install-fleet: differ from $(tilde "$root"): klepsydra-fleet.sh"
+cp "$root/hooks/klepsydra-fleet.sh" "$FLEET_HOOK_DIR/klepsydra-fleet.sh"
 check "the phone wall and its Tailscale twin answer fresh" "$(grep -c 'fleet.json observed 3[0-9] s ago' <<<"$out")" "2"
 jq -n '{usage: [{observed_at: 1000}]}' >"$work/fleet.json"
 check "a stale fleet.json fails" "$(DOC_UP=http doctor | grep -c 'fleet.json is stale')" "1"
@@ -628,10 +636,36 @@ t kill-window -t "$w"; t kill-window -t "$o"; rm -f "$FLEET_STATE/orchestrator.p
 
 echo "install"
 inst=$work/inst
-mkdir -p "$inst/state"
+mkdir -p "$inst/state" "$inst/claude"
 printf 'old copy\n' >"$inst/state/launch.sh"
-FLEET_STATE="$inst/state" FLEET_UNITS="$inst/units" FLEET_BIN="$inst/bin" PATH="$work/nosystemctl:/usr/bin:/bin" \
+printf 'old hook\n' >"$inst/claude/klepsydra-fleet.sh"
+FLEET_STATE="$inst/state" FLEET_UNITS="$inst/units" FLEET_BIN="$inst/bin" FLEET_HOOK_DIR="$inst/claude" PATH="$work/nosystemctl:/usr/bin:/bin" \
   bash "$here/install.sh" --force >/dev/null 2>&1
+check "#244: the hooks, status line, launcher, tmux conf, wrap-up and cast are copied in, each matching the checkout" \
+  "$(for c in "${HOOK_COPIES[@]}"; do cmp -s "${here%/fleet}/${c%% *}" "$inst/claude/${c#* }" && [[ ! -L $inst/claude/${c#* } ]] && echo same; done | wc -l)" "${#HOOK_COPIES[@]}"
+check "#244: the scripts are executable, the cast is not, and no temp file is left" \
+  "$(stat -c %a "$inst/claude/klepsydra-fleet.sh" "$inst/claude/klepsydra-cast.json" | tr '\n' ' ')$(find "$inst/claude" -name '*.new.*' | wc -l)" "755 644 0"
+check "#244: the hook copy it replaced is archived" "$(cat "$inst/state/archive/fleet-scripts-$(date +%Y%m%d)/claude/klepsydra-fleet.sh".*)" "old hook"
+hinst() { FLEET_STATE="$inst/state" FLEET_HOOK_DIR="$inst/claude" bash "$here/install.sh" --hooks --force >/dev/null 2>&1; echo $?; }
+printf 'a second local edit\n' >"$inst/claude/klepsydra-fleet.sh"; sleep 1
+check "#244 review: a second install the same day keeps both archived copies" \
+  "$(hinst) $(cat "$inst/state/archive/fleet-scripts-$(date +%Y%m%d)/claude/klepsydra-fleet.sh".* | sort | tr '\n' '|')" "0 a second local edit|old hook|"
+printf 'the old hook\n' >"$inst/claude/klepsydra-fleet.sh"
+# A disk that fills mid-copy: the hook (over 12 KiB) is cut short in its temp file.
+check "#244 review 2: a copy cut short leaves the old one whole, and the install fails" \
+  "$( (ulimit -f 12; FLEET_LOG="$work/instlog/short.log" hinst) ) $(cat "$inst/claude/klepsydra-fleet.sh") $(find "$inst/claude" -name '*.new.*' | wc -l) $(grep -c 'klepsydra-fleet.sh' <(jq -r 'select(.message | startswith("a copy was not installed")) | .file' "$work/instlog/short.log"))" \
+  "1 the old hook 0 1"
+chmod a-w "$inst/claude"
+check "#244 review 2: a full install with a copy it cannot write fails too" \
+  "$(FLEET_STATE="$inst/state" FLEET_UNITS="$inst/units" FLEET_BIN="$inst/bin" FLEET_HOOK_DIR="$inst/claude" PATH="$work/nosystemctl:/usr/bin:/bin" bash "$here/install.sh" --force >/dev/null 2>&1; echo $?) $(cat "$inst/claude/klepsydra-fleet.sh")" "1 the old hook"
+chmod u+w "$inst/claude"; rm -f "$inst/claude/klepsydra-tmux.conf"; mkdir "$inst/claude/klepsydra-tmux.conf"
+check "#244 review: a folder where a copy goes is left alone, said so, and the install fails" \
+  "$(FLEET_LOG="$work/instlog/dir.log" hinst) $(find "$inst/claude/klepsydra-tmux.conf" -mindepth 1 | wc -l) $(grep -c "is not a file" "$work/instlog/dir.log")" "1 0 1"
+rmdir "$inst/claude/klepsydra-tmux.conf"
+check "#244: --hooks installs only the copies: no scripts, units or command" \
+  "$(FLEET_STATE="$inst/h" FLEET_UNITS="$inst/hu" FLEET_BIN="$inst/hb" FLEET_HOOK_DIR="$inst/hc" bash "$here/install.sh" --hooks --force >/dev/null 2>&1; echo $?) $(find "$inst/hc" -type f | wc -l) $(find "$inst" -mindepth 1 -maxdepth 1 \( -name hu -o -name hb \) | wc -l) $(find "$inst/h" -mindepth 1 -not -path "$inst/h/log*" 2>/dev/null | wc -l)" "0 ${#HOOK_COPIES[@]} 0 0"
+rm -rf -- "${inst:?}/hc" "${inst:?}/h"
+check "#244: the wrap-up skill lands in its skill folder" "$(cmp -s "${here%/fleet}/hooks/klepsydra-wrapup.md" "$inst/claude/skills/klepsydra-wrapup/SKILL.md" && echo same)" "same"
 check "each script is linked from the checkout" "$(readlink "$inst/state/resume-at-reset.sh")" "$here/resume-at-reset.sh"
 check "the copy a link replaced is archived" "$(cat "$inst/state/archive/fleet-scripts-$(date +%Y%m%d)/launch.sh")" "old copy"
 check "the fleet command is linked" "$(readlink "$inst/bin/fleet")" "$here/fleet"
@@ -643,15 +677,20 @@ check "#208: the doctor timer runs every 5 min into the data folder, and a faili
   "$(grep -c 'OnUnitActiveSec=5min' "$inst/units/fleet-doctor.timer") $(grep -E '^(ExecStart|SuccessExitStatus)=' "$inst/units/fleet-doctor.service" | tr '\n' '|')" \
   "1 SuccessExitStatus=1|ExecStart=/usr/bin/bash $inst/state/doctor.sh --json \"$KLEPSYDRA_DIR/fleet-health.json\"|"
 check "#208 review 1: and what it prints stays out of the journal" "$(grep -c '^StandardOutput=null$' "$inst/units/fleet-doctor.service")" "1"
-FLEET_STATE="$inst/s2" FLEET_UNITS="$inst/u2" FLEET_BIN="$inst/b2" bash "$here/install.sh" --dry-run --force >"$work/dry" 2>/dev/null
-check "a dry run says what it would do and changes nothing" "$(grep -c '^would' "$work/dry" | sed 's/^[1-9][0-9]*$/some/') $(find "$inst" -mindepth 1 -maxdepth 1 -printf '%f\n' | sort | tr '\n' ' ')" "some bin state units "
+FLEET_STATE="$inst/s2" FLEET_UNITS="$inst/u2" FLEET_BIN="$inst/b2" FLEET_HOOK_DIR="$inst/c2" bash "$here/install.sh" --dry-run --force >"$work/dry" 2>/dev/null
+check "a dry run says what it would do and changes nothing" "$(grep -c '^would' "$work/dry" | sed 's/^[1-9][0-9]*$/some/') $(find "$inst" -mindepth 1 -maxdepth 1 -printf '%f\n' | sort | tr '\n' ' ')" "some bin claude state units "
 
 repo=$work/repo
-git init -q "$repo" && cp -r "$here" "$repo/fleet" && git -C "$repo" add -A && git -C "$repo" -c user.name=t -c user.email=t@t commit -qm x
+git init -q "$repo" && cp -r "$here" "$repo/fleet"
+for c in "${HOOK_COPIES[@]}"; do mkdir -p "$(dirname "$repo/${c%% *}")"; cp "${here%/fleet}/${c%% *}" "$repo/${c%% *}"; done
+git -C "$repo" add -A && git -C "$repo" -c user.name=t -c user.email=t@t commit -qm x
 git -C "$repo" worktree add -q "$work/wt" 2>/dev/null
 guard() { FLEET_STATE="$inst/g" FLEET_UNITS="$inst/gu" FLEET_BIN="$inst/gb" bash "$1/fleet/install.sh" --dry-run >/dev/null 2>&1; echo $?; }
 check "the main checkout installs (10-29: from fleet/ git named its common dir relatively, so main read as a worktree)" "$(guard "$repo")" "0"
 check "a worktree is refused" "$(guard "$work/wt")" "2"
+mkdir -p "$work/onlyfleet" && cp -r "$here" "$work/onlyfleet/fleet"
+check "#244 review: a copy missing from the checkout fails the doctor, never an ok over nothing" \
+  "$(bash "$work/onlyfleet/fleet/doctor.sh" 2>/dev/null | grep -c "^FAIL installed copies: missing from $(tilde "$work/onlyfleet"): hooks/klepsydra-fleet.sh ")" "1"
 
 echo "cut-over"
 export SC="$work/sc" FLEET_LOG
