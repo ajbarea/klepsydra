@@ -278,7 +278,13 @@ sent_or_started() { started "$1" || { has_input_box "$1" && [[ -z $(input_text "
 # has newlines). Prints sent, not-pasted, mixed (pasted beside a line AJ
 # began: left in the box unsent, since taking it back out by keystrokes could
 # take his characters with it) or held (still in the box after three Enters).
+# One sender types into a pane at a time (a lock per pane), so two never meet
+# in one box (#246).
 inbox_deliver() { # PANE FILE
+  local lock=$FLEET_STATE/.type-${1#%}.lock
+  ( flock -w 30 7 || { echo not-pasted; exit 0; }; inbox_paste "$@" ) 7>>"$lock"
+}
+inbox_paste() { # PANE FILE: inbox_deliver, under its lock
   local p=$1 file=$2 box want text
   idle_empty "$(screen "$p")" || { echo not-pasted; return; }
   t load-buffer -b "fleet-$$" "$file" && t paste-buffer -p -d -b "fleet-$$" -t "$p"

@@ -28,7 +28,8 @@
 # after it ends applies its result. A failed move at a limit or before it is
 # tried again at the next pass once, then every 15 min; a move back waits
 # 15 min; a failed fresh start is resumed in place. A CI red the CI watch routed to an agent
-# (inbox/NAME/*.txt) is typed into its pane at an idle, empty prompt, oldest
+# (inbox/NAME/*.txt), or a report to the orchestrator (inbox/orchestrator/*.txt,
+# `fleet report`), is typed into its pane at an idle, empty prompt, oldest
 # first. --once runs one pass (and waits for the moves it started). Each
 # decision is one line in the fleet log; each pass touches resume.beat for
 # `fleet doctor`.
@@ -660,25 +661,27 @@ one() { # PANE
     return
   fi
 
-  # A CI red on this agent's branch (#180): its inbox, typed in at an idle,
-  # empty prompt (never over AJ's line or into a running turn), oldest first.
+  # A CI red on this agent's branch (#180), or a worker's report to the
+  # orchestrator (#246): its inbox, typed in at an idle, empty prompt (never
+  # over AJ's line or into a running turn), oldest first.
   local inbox_name msg
-  if (( !orch )) && [[ -z $limit && -z ${due[$p]:-} ]] && inbox_name=$(reg_field "$p" 2) && [[ -n $inbox_name ]] &&
+  if (( orch )); then inbox_name=orchestrator; else inbox_name=$(reg_field "$p" 2); fi
+  if [[ -z $limit && -z ${due[$p]:-} && -n $inbox_name ]] &&
     msg=$(find "$FLEET_STATE/inbox/$inbox_name" -maxdepth 1 -name '*.txt' -type f -printf '%T@ %p\n' 2>/dev/null | sort -n | head -1 | cut -d' ' -f2-) &&
     [[ -n $msg ]] && idle_empty "$s"; then
     got=$(inbox_deliver "$p" "$msg")
     case $got in
-      not-pasted) flog WARN "CI alert not delivered: the prompt was no longer idle and empty; trying again next pass" pane="$p" name="$inbox_name" alert="${msg##*/}" ;;
+      not-pasted) flog WARN "inbox message not delivered: the prompt was no longer idle and empty; trying again next pass" pane="$p" name="$inbox_name" alert="${msg##*/}" ;;
       mixed)
-        flog WARN "CI alert pasted beside text typed meanwhile; left in the prompt unsent" pane="$p" name="$inbox_name" alert="${msg##*/}"
+        flog WARN "inbox message pasted beside text typed meanwhile; left in the prompt unsent" pane="$p" name="$inbox_name" alert="${msg##*/}"
         rm -f -- "${msg:?}"
         ;;
       held)
-        flog WARN "CI alert left in the prompt: Enter did not take" pane="$p" name="$inbox_name" alert="${msg##*/}"
+        flog WARN "inbox message left in the prompt: Enter did not take" pane="$p" name="$inbox_name" alert="${msg##*/}"
         rm -f -- "${msg:?}"
         ;;
       *)
-        flog INFO "CI alert delivered" pane="$p" name="$inbox_name" alert="${msg##*/}" result="$got"
+        flog INFO "inbox message delivered" pane="$p" name="$inbox_name" alert="${msg##*/}" result="$got"
         rm -f -- "${msg:?}"
         ;;
     esac

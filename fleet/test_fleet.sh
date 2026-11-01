@@ -521,6 +521,7 @@ check "--refresh brings the rules up to date, keeping the body and a line added 
 check "the tail carries the team-ceremony rule (AJ 10-29)" "$(grep -c '^Team ceremony in every repo' "$here/brief-tail.md")" "1"
 check "the tail keeps asks for AJ out of public issues and PRs (AJ 10-29)" "$(grep -c '^Asks for AJ stay private' "$here/brief-tail.md")" "1"
 check "#185: the tail offers the Agora as optional and asks a post to name something real" "$(grep -c '^Agora (AJ 10-29, optional, never a task).*names something real' "$here/brief-tail.md")" "1"
+check "#246: the tail sends reports through fleet report, never send-keys" "$(grep -c '^Reporting to the orchestrator.*`fleet report.*never tmux send-keys' "$here/brief-tail.md")" "1"
 
 echo "doctor"
 mkdir -p "$KLEPSYDRA_DIR/fleet" "$work/bin"
@@ -1473,7 +1474,7 @@ state cia '{"above":["⏺ Done. done 11:50 AM"],"rc":"on","clear":true}'
 resume "$((noon + 180))"; resume "$((noon + 240))"
 check "at an idle, empty prompt the oldest goes in, and its file goes" \
   "$(grep '^SUBMIT' "$work/cia.log") $(ls "$FLEET_STATE/inbox/cia")" "SUBMIT CI red in r: wf1 failed on feat/x: boom. https://x/1 r-2.txt"
-check "logged with the pane and the agent" "$(jq -r 'select(.message == "CI alert delivered") | [.pane, .name, .alert, .result] | join(" ")' "$FLEET_LOG")" "$p cia r-1.txt sent"
+check "logged with the pane and the agent" "$(jq -r 'select(.message == "inbox message delivered") | [.pane, .name, .alert, .result] | join(" ")' "$FLEET_LOG")" "$p cia r-1.txt sent"
 t kill-window -t "$p"; : >"$REGISTRY"; rm -rf -- "${FLEET_STATE:?}/inbox"
 printf 'CI red in r: wf3 failed. https://x/3' >"$work/alert3.txt"
 p=$(pane cib '{"above":["⏺ working"],"busy":true}'); settle
@@ -1493,6 +1494,27 @@ state cil '{"above":["⏺ Done. done 11:50 AM"],"paste_prefix":"AJ: ","clear":tr
 check "review 4: pasted as AJ began a line, nothing is sent and none of his line is taken" \
   "$(inbox_deliver "$p" "$work/alert3.txt") [$(input_text "$(screen "$p")")] $(grep -c '^SUBMIT' "$work/cil.log")" "mixed [AJ: $(<"$work/alert3.txt")] 1"
 t kill-window -t "$p"
+echo "reports to the orchestrator (#246)"
+: >"$FLEET_LOG"
+h=$(pane orep '{"above":["⏺ Done. done 11:50 AM"],"rc":"on","on_submit":"none"}'); settle
+printf '%s\n' "$h" >"$FLEET_STATE/orchestrator.pane"
+printf '%%77\twkr\t%s\n' "$work/brief.src" >"$REGISTRY"
+rep() { TMUX_PANE=%77 bash "$here/report.sh" "$@" 2>/dev/null; }
+check "#246: at his idle, empty prompt a report goes in now, named for its sender" "$(rep "PR 1 merged.") $(grep '^SUBMIT' "$work/orep.log")" "sent SUBMIT [from wkr] PR 1 merged."
+t send-keys -t "$h" -l "AJ: half a thought"; settle
+check "#246: while AJ types, it waits, and his line is left as it was" \
+  "$(rep "PR 2 merged.") $(grep -c '^SUBMIT' "$work/orep.log") [$(input_text "$(screen "$h")")] $(find "$FLEET_STATE/inbox/orchestrator" -name '*.txt' | wc -l)" "queued 1 [AJ: half a thought] 1"
+state orep '{"above":["⏺ Done. done 11:50 AM"],"rc":"on","on_submit":"none","clear":true}'
+check "#246: and a later one waits behind it, though the prompt is free" "$(rep "PR 3 merged.") $(grep -c '^SUBMIT' "$work/orep.log")" "queued 1"
+for i in 1 2 3 4; do resume "$((noon + 300 + 60 * i))"; done
+check "#246: the resume service types them in at his idle, empty prompt, oldest first" \
+  "$(grep '^SUBMIT \[' "$work/orep.log" | tr '\n' '|') $(find "$FLEET_STATE/inbox/orchestrator" -name '*.txt' | wc -l)" \
+  "SUBMIT [from wkr] PR 1 merged.|SUBMIT [from wkr] PR 2 merged.|SUBMIT [from wkr] PR 3 merged.| 0"
+: >"$work/orep.log"
+rep "A at once." >/dev/null & rep "B at once." >/dev/null & wait
+check "#246: two senders at once never meet in one box" "$(grep -c '^SUBMIT \[from wkr\] [AB] at once\.$' "$work/orep.log") $(grep -c 'pasted beside' "$FLEET_LOG")" "2 0"
+check "#246: a report with nothing in it is refused" "$(rep "  "; echo "rc=$?")" "rc=2"
+t kill-window -t "$h"; rm -f "$FLEET_STATE/orchestrator.pane"; : >"$REGISTRY"; rm -rf -- "${FLEET_STATE:?}/inbox"
 check "review 1: the pane watcher is quiet while no alert has ever been written" \
   "$(FLEET_STATE="$work/noalerts" IDLE_S=1 timeout 2 bash "$here/watch-panes.sh" %999 2>&1 | grep -c 'No such file')" "0"
 

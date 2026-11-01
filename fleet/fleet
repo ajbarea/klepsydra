@@ -10,6 +10,7 @@
 #   fleet accounts sync   make the second config folder behave like ~/.claude
 #   fleet recover         after a hard shutdown, relaunch every agent whose session is gone
 #   fleet shots [--apply] prune the briefing's decided and old screenshots (dry run without --apply)
+#   fleet report TEXT     tell the orchestrator, only at his idle, empty prompt (else queued for it)
 #   fleet agora post [--kind K] TEXT  post one line on the Agora, as your character (optional)
 #   fleet agora list [N]  the newest Agora posts
 #   fleet install         link this checkout's scripts and units into place
@@ -23,6 +24,7 @@ case $cmd in
   brief) exec bash "$here/brief.sh" "$@" ;;
   install) exec bash "$here/install.sh" "$@" ;;
   recover) exec bash "$here/recover.sh" "$@" ;;
+  report) exec bash "$here/report.sh" "$@" ;;
   shots) exec python3 -I "$here/prune_shots.py" "$@" ;;
   agora) exec python3 -I "$here/agora.py" "$@" ;;
   accounts)
