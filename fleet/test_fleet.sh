@@ -650,12 +650,17 @@ hinst() { FLEET_STATE="$inst/state" FLEET_HOOK_DIR="$inst/claude" bash "$here/in
 printf 'a second local edit\n' >"$inst/claude/klepsydra-fleet.sh"; sleep 1
 check "#244 review: a second install the same day keeps both archived copies" \
   "$(hinst) $(cat "$inst/state/archive/fleet-scripts-$(date +%Y%m%d)/claude/klepsydra-fleet.sh".* | sort | tr '\n' '|')" "0 a second local edit|old hook|"
-printf 'the old hook\n' >"$inst/claude/klepsydra-fleet.sh"; chmod a-w "$inst/claude"
-check "#244 review: a copy that cannot be written leaves the old one whole, and the install fails" \
-  "$(hinst) $(cat "$inst/claude/klepsydra-fleet.sh") $(find "$inst/claude" -name '*.new.*' | wc -l)" "1 the old hook 0"
+printf 'the old hook\n' >"$inst/claude/klepsydra-fleet.sh"
+# A disk that fills mid-copy: the hook (over 12 KiB) is cut short in its temp file.
+check "#244 review 2: a copy cut short leaves the old one whole, and the install fails" \
+  "$( (ulimit -f 12; FLEET_LOG="$inst/short.log" hinst) ) $(cat "$inst/claude/klepsydra-fleet.sh") $(find "$inst/claude" -name '*.new.*' | wc -l) $(grep -c 'klepsydra-fleet.sh' <(jq -r 'select(.message | startswith("a copy was not installed")) | .file' "$inst/short.log"))" \
+  "1 the old hook 0 1"
+chmod a-w "$inst/claude"
+check "#244 review 2: a full install with a copy it cannot write fails too" \
+  "$(FLEET_STATE="$inst/state" FLEET_UNITS="$inst/units" FLEET_BIN="$inst/bin" FLEET_HOOK_DIR="$inst/claude" PATH="$work/nosystemctl:/usr/bin:/bin" bash "$here/install.sh" --force >/dev/null 2>&1; echo $?) $(cat "$inst/claude/klepsydra-fleet.sh")" "1 the old hook"
 chmod u+w "$inst/claude"; rm -f "$inst/claude/klepsydra-tmux.conf"; mkdir "$inst/claude/klepsydra-tmux.conf"
-check "#244 review: a folder where a copy goes is left alone, and the install fails" \
-  "$(hinst) $(find "$inst/claude/klepsydra-tmux.conf" -mindepth 1 | wc -l)" "1 0"
+check "#244 review: a folder where a copy goes is left alone, said so, and the install fails" \
+  "$(FLEET_LOG="$inst/dir.log" hinst) $(find "$inst/claude/klepsydra-tmux.conf" -mindepth 1 | wc -l) $(grep -c "is not a file" "$inst/dir.log")" "1 0 1"
 rmdir "$inst/claude/klepsydra-tmux.conf"
 check "#244: --hooks installs only the copies: no scripts, units or command" \
   "$(FLEET_STATE="$inst/h" FLEET_UNITS="$inst/hu" FLEET_BIN="$inst/hb" FLEET_HOOK_DIR="$inst/hc" bash "$here/install.sh" --hooks --force >/dev/null 2>&1; echo $?) $(find "$inst/hc" -type f | wc -l) $(find "$inst" -mindepth 1 -maxdepth 1 \( -name h -o -name hu -o -name hb \) | wc -l)" "0 ${#HOOK_COPIES[@]} 0"

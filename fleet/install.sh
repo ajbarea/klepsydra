@@ -29,8 +29,8 @@ archive=$FLEET_STATE/archive/fleet-scripts-$(date +%Y%m%d)
 # The hooks, status line, launcher and cast are copies, not links: each is
 # swapped in by a rename in its own folder, only once written whole, so a
 # session never reads one half written (#244). A copy that differs is archived
-# first, under the time, so a second install the same day keeps the first.
-root=${here%/fleet} failed=0 stamp=$(date +%H%M%S)
+# first, under the time and this run's pid, so a later install keeps the first.
+root=${here%/fleet} failed=0 stamp=$(date +%H%M%S).$$
 for c in "${HOOK_COPIES[@]}"; do
   src=$root/${c%% *} name=${c#* }
   dest=$FLEET_HOOK_DIR/$name tmp=$FLEET_HOOK_DIR/$name.new.$$
@@ -57,7 +57,7 @@ for c in "${HOOK_COPIES[@]}"; do
 done
 if (( hooks_only )); then
   (( failed )) && exit 1
-  echo "hooks installed from $root into $FLEET_HOOK_DIR"
+  (( dry )) || echo "hooks installed from $root into $FLEET_HOOK_DIR"
   exit 0
 fi
 
@@ -206,6 +206,6 @@ if (( ! dry )) && command -v "${FLEET_SYSTEMCTL:-systemctl}" >/dev/null; then
   "${FLEET_SYSTEMCTL:-systemctl}" --user daemon-reload
 fi
 (( dry )) || flog INFO "fleet installed" from="$here" state="$FLEET_STATE" archive="$archive"
-echo "installed from $here; run fleet cutover to start the services on it"
 (( failed )) && exit 1
+(( dry )) || echo "installed from $here; run fleet cutover to start the services on it"
 exit 0
