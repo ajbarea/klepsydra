@@ -379,6 +379,7 @@ class Route(unittest.TestCase):
         self.escalate = mock.patch.object(ci_watch, "ESCALATE_S", 1800)
         self.escalate.start()
         state = TMP / "state"
+        state.mkdir(parents=True, exist_ok=True)
         for f in (state / "ci" / "alerts.jsonl", state / "orchestrator.pane"):
             f.unlink(missing_ok=True)
         shutil.rmtree(state / "inbox", ignore_errors=True)
@@ -614,21 +615,37 @@ class Route(unittest.TestCase):
         )
 
         def watch():
-            return subprocess.run(
-                ["bash", str(HERE / "watch-panes.sh")],
-                env=env,
-                capture_output=True,
-                text=True,
-                timeout=10,
-            ).stdout.strip()
+            try:
+                return subprocess.run(
+                    ["bash", str(HERE / "watch-panes.sh")],
+                    env=env,
+                    capture_output=True,
+                    text=True,
+                    timeout=60,
+                ).stdout.strip()
+            except subprocess.TimeoutExpired as e:
+                self.fail(f"the watcher never woke: stderr {e.stderr!r}")
 
-        with self.assertRaises(subprocess.TimeoutExpired):
-            subprocess.run(
-                ["bash", str(HERE / "watch-panes.sh")],
-                env=env,
-                capture_output=True,
-                timeout=1.5,
-            )
+        # The first watcher marks the old line read and wakes on nothing; it is
+        # stopped once alerts.seen exists, not after a fixed wait.
+        seen = state / "ci" / "alerts.seen"
+        first = subprocess.Popen(
+            ["bash", str(HERE / "watch-panes.sh")],
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+        )
+        try:
+            deadline = time.monotonic() + 60
+            while not seen.exists() and time.monotonic() < deadline:
+                self.assertIsNone(first.poll(), "the first watcher woke")
+                time.sleep(0.05)
+            time.sleep(0.5)  # a few ticks past the old line
+            self.assertIsNone(first.poll(), "the first watcher woke on the old line")
+        finally:
+            first.kill()
+            out, _ = first.communicate()
+        self.assertEqual((seen.read_text().strip(), out), ("1", b""))
         self.session("s1", "%4", "feat/x")
         known = {}
         ci_watch.poll(
