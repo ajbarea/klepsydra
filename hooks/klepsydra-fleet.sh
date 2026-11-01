@@ -477,15 +477,17 @@ remote_lines() { # transcript
 # another id in the same Claude process, whose Remote Control stays up, and the
 # new transcript never names the link. It is the link, or none, of the latest
 # active other session of Claude process `pid` started at `start` on this boot
-# and distro; empty for none. Reads as mark_gone does, from inside the folder.
+# and distro; empty for none. Then, after a \x1f, that session's orchestrator
+# face ("?" when it was no orchestrator), which a /clear keeps (#244). Reads as
+# mark_gone does, from inside the folder.
 cleared_link() { # fleet pid start self
-  local f pid start boot distro last began url best=-1 best_began=-1 link=""
+  local f pid start boot distro last began url face best=-1 best_began=-1 link="" kept="?"
   [[ $2 =~ ^[1-9][0-9]*$ && $3 =~ ^[0-9]+$ && -n $host_boot ]] || return 0
-  while IFS=$'\t' read -r f pid start boot distro last began url; do
+  while IFS=$'\t' read -r f pid start boot distro last began url face; do
     [[ $f != "$4.json" && $pid == "$2" && $start == "$3" && $boot == "$host_boot" \
       && $distro == "${host_distro:-?}" && $last =~ ^[0-9]+$ && $began =~ ^[0-9]+$ ]] || continue
     # The later started breaks a tie within one second.
-    (( last > best || (last == best && began > best_began) )) && best=$last best_began=$began link=$url
+    (( last > best || (last == best && began > best_began) )) && best=$last best_began=$began link=$url kept=$face
   done < <(cd -- "$1" 2>/dev/null || exit 0
     names=()
     for f in *.json; do
@@ -493,9 +495,46 @@ cleared_link() { # fleet pid start self
     done
     session_rows '[((.claude.pid | numbers) // 0 | floor), ((.claude.start | numbers) // 0 | floor),
       (.host.boot | or_q), (.host.distro | or_q), last_active, ((.started_at | numbers) // 0 | floor),
-      (.remote_url | or_q)]' "${names[@]}")
-  [[ $link != "?" ]] && printf '%s' "$link"
+      (.remote_url | or_q), (if .orchestrator == true then (.orchestrator_face | or_q | sub("^\\?$"; "am_michael")) else "?" end)]' "${names[@]}")
+  [[ $link == "?" ]] && link=""
+  printf '%s\x1f%s' "$link" "$kept"
   return 0
+}
+
+# The face a new orchestrator session wears (#244): Hephaestus and Athena are
+# equal, so it is the one no other orchestrator on the wall wears, live ones
+# (open on this boot) first, then any shown. With both shown it is the one
+# seen least recently; with neither, HINT (orchestrator.face's). A /clear
+# keeps CLEARED, the cleared session's face.
+free_face() { # fleet self cleared hint
+  local f face open boot last set h=0 a=0 h_last=-1 a_last=-1 live="" shown=""
+  case $3 in "$HEPH_VOICE" | "$ATHENA_VOICE") printf '%s' "$3"; return 0 ;; esac
+  while IFS=$'\t' read -r f face open boot last; do
+    [[ $f != "$2.json" && ( $face == "$HEPH_VOICE" || $face == "$ATHENA_VOICE" ) ]] || continue
+    [[ $last =~ ^[0-9]+$ ]] || last=0
+    [[ $open == open && $boot == "$host_boot" ]] && live+=" $face"
+    shown+=" $face"
+    if [[ $face == "$HEPH_VOICE" ]]; then (( last > h_last )) && h_last=$last; else (( last > a_last )) && a_last=$last; fi
+  done < <(cd -- "$1" 2>/dev/null || exit 0
+    names=()
+    for f in *.json; do
+      [[ ${f%.json} =~ $UUID_RE && -f $f && ! -L $f ]] && names+=("$f")
+    done
+    session_rows '[(if .orchestrator == true then (.orchestrator_face | or_q | sub("^\\?$"; "am_michael")) else "?" end),
+      (if .ended == null then "open" else "ended" end), (.host.boot | or_q), last_active]' "${names[@]}")
+  for set in "$live" "$shown"; do
+    h=0 a=0
+    [[ $set == *"$HEPH_VOICE"* ]] && h=1
+    [[ $set == *"$ATHENA_VOICE"* ]] && a=1
+    (( h && !a )) && { printf '%s' "$ATHENA_VOICE"; return 0; }
+    (( a && !h )) && { printf '%s' "$HEPH_VOICE"; return 0; }
+    (( h && a )) && break
+  done
+  if (( h_last >= 0 && a_last >= 0 )); then
+    if (( h_last <= a_last )); then printf '%s' "$HEPH_VOICE"; else printf '%s' "$ATHENA_VOICE"; fi
+    return 0
+  fi
+  printf '%s' "$4"
 }
 
 # The session file after one event, as compact JSON, or nothing when no field
@@ -967,12 +1006,13 @@ main() {
   # pane alone says so only while no session is on record.
   local agent=${KLEPSYDRA_AGENT:-} orchestrator=false orch_pane="" orch_sid="" orch_name=""
   local orch_state=${FLEET_STATE:-${HOME:-}/.local/state/fleet-orchestrator}
-  # The face a new orchestrator session wears (#222): orchestrator.face names
-  # athena or hephaestus (the default), matched exactly. A session reads it at
-  # its first event and keeps that face, so write it before the launch.
+  # orchestrator.face (athena or hephaestus, any case) names the face only
+  # while no orchestrator is on the wall (free_face). A session chooses at its
+  # first event and keeps that face.
   { read -r orch_name <"$orch_state/orchestrator.face"; } 2>/dev/null
-  local orch_face=$HEPH_VOICE
-  [[ $orch_name == athena ]] && orch_face=$ATHENA_VOICE
+  orch_name=${orch_name//[$'\r\t ']/}
+  local orch_face=$HEPH_VOICE cleared_face=""
+  [[ ${orch_name,,} == athena ]] && orch_face=$ATHENA_VOICE
   [[ $agent =~ ^[A-Za-z0-9._-]{1,64}$ ]] || agent=""
   if [[ ${tmux_socket##*/} == "${KLEPSYDRA_TMUX_SOCKET:-klepsydra}" && -n $tmux_pane ]]; then
     { read -r orch_sid <"$orch_state/orchestrator.session"; } 2>/dev/null
@@ -1005,13 +1045,15 @@ main() {
   { exec {lock}>>"$LOCK"; } 2>/dev/null || return 0
   flock -w 5 "$lock" || return 0
 
-  [[ $event == SessionStart && $source == clear ]] && cleared=$(cleared_link "$fleet" "$found_pid" "$found_start" "$session")
+  [[ $event == SessionStart && $source == clear ]] && IFS=$'\x1f' read -r cleared cleared_face < <(cleared_link "$fleet" "$found_pid" "$found_start" "$session")
   file=$fleet/$session.json
   old=""
   [[ -f $file ]] && { old=$(<"$file"); } 2>/dev/null
   # Heph by a /clear stays Heph on later events in the orchestrator's pane,
   # before orchestrator.session names the new session.
   [[ $orchestrator == false && -z $agent && -n $orch_sid && $orch_pane == "$tmux_pane" && $old == *'"orchestrator":true'* ]] && orchestrator=true
+  # Under the lock, so two orchestrators starting together never take one face.
+  [[ $orchestrator == true && $old != *'"orchestrator_face"'* ]] && orch_face=$(free_face "$fleet" "$session" "$cleared_face" "$orch_face")
   # The git dir the file last named (an escaped path is not read): gone means the checkout was removed.
   old_git=""
   [[ $old =~ \"git\":\"(/[^\"\\]*)\" ]] && old_git=${BASH_REMATCH[1]}
