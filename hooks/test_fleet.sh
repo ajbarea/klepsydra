@@ -1573,6 +1573,46 @@ hfire post-tool-bash.json "TMUX=$work/sock/klepsydra,1,0" TMUX_PANE=%7
 check "a running orchestrator from before faces stays Hephaestus" "$(jq -r .orchestrator_face "$hfile")" "am_michael"
 rm -f "$hfile" "$work/fleet-state/orchestrator.face"
 
+echo "equal orchestrators (#244)"
+B1=0b6e1c5a-1111-4222-8333-444455556666 B0=0b6e1c5a-0000-4222-8333-444455556666
+O1=77777777-4444-4555-8666-777777777771 O2=77777777-4444-4555-8666-777777777772
+card() { # ID FACE open|ended BOOT LAST: another orchestrator's card ("pre": written before faces, "worker": a worker in that voice)
+  jq -nc --arg f "$2" --arg e "$3" --arg b "$4" --argjson last "$5" '{v: 1, session_id: "x", orchestrator: ($f != "worker"),
+    started_at: $last, state_at: $last, host: {boot: $b, distro: null}, ended: (if $e == "ended" then {reason: "other", at: $last} else null end)}
+    + (if $f == "pre" then {} elif $f == "worker" then {voice: "am_michael"} else {orchestrator_face: $f} end)' >"$dir/fleet/$1.json"
+}
+newface() { rm -f "$hfile"; hfire session-start.json "TMUX=$work/sock/klepsydra,1,0" TMUX_PANE=%7; jq -r .orchestrator_face "$hfile"; rm -f "$hfile" "$dir/fleet/$O1.json" "$dir/fleet/$O2.json"; }
+card "$O1" am_michael open "$B1" $((now - 60))
+check "a live Hephaestus on the wall: the new orchestrator is Athena" "$(newface)" "bf_alice"
+printf 'athena\n' >"$work/fleet-state/orchestrator.face"; card "$O1" bf_alice open "$B1" $((now - 60))
+check "a live Athena: Hephaestus, whatever orchestrator.face says" "$(newface)" "am_michael"
+rm -f "$work/fleet-state/orchestrator.face"
+card "$O1" am_michael open "$B0" $((now - 600))
+check "after a reboot, Hephaestus's card from the last boot still shown: Athena" "$(newface)" "bf_alice"
+card "$O1" pre open "$B1" $((now - 60))
+check "a card from before faces is Hephaestus's" "$(newface)" "bf_alice"
+card "$O1" bf_alice open "$B1" $((now - 60)); card "$O2" am_michael ended "$B1" $((now - 10))
+check "a live one counts before an ended one" "$(newface)" "am_michael"
+card "$O1" bf_alice ended "$B1" $((now - 500)); card "$O2" am_michael ended "$B1" $((now - 50))
+check "both shown, neither live: the face seen least recently" "$(newface)" "bf_alice"
+card "$O1" worker open "$B1" $((now - 60))
+check "a worker in Hephaestus's voice never counts" "$(newface)" "am_michael"
+printf 'Athena\r\n' >"$work/fleet-state/orchestrator.face"
+check "none shown: orchestrator.face, read in any case and with a Windows line end" "$(newface)" "bf_alice"
+rm -f "$work/fleet-state/orchestrator.face"
+# A /clear: the same Claude process (its own, as the remote-link fixtures do) starts another id.
+mkproc 1600 1 claude 9300000 S claude
+mkproc 1610 1600 klepsydra-fleet 9300001 S bash "$hook"
+X1=88888888-4444-4555-8666-777777777771 X2=88888888-4444-4555-8666-777777777772
+card "$O1" am_michael open "$B1" $((now - 60))
+fire session-start.json ".session_id = \"$X1\"" "TMUX=$work/sock/klepsydra,1,0" TMUX_PANE=%7 KLEPSYDRA_PID=1610 >/dev/null
+fire session-end.json ".session_id = \"$X1\" | .reason = \"clear\"" "TMUX=$work/sock/klepsydra,1,0" TMUX_PANE=%7 KLEPSYDRA_PID=1610 >/dev/null
+rm -f "$dir/fleet/$O1.json"
+fire session-start.json ".session_id = \"$X2\" | .source = \"clear\"" "TMUX=$work/sock/klepsydra,1,0" TMUX_PANE=%7 KLEPSYDRA_PID=1610 >/dev/null
+check "a /clear keeps the cleared session's face, though that card still shows it" \
+  "$(jq -r .orchestrator_face "$dir/fleet/$X1.json") $(jq -r .orchestrator_face "$dir/fleet/$X2.json")" "bf_alice bf_alice"
+rm -f "$dir/fleet/$X1.json" "$dir/fleet/$X2.json"
+
 echo "account"
 mkdir -p "$work/cfg-team" "$work/cfg-me" "$work/cfg-bad"
 jq -n '{oauthAccount: {accountUuid: "96130a18-106b-49a2-9b8e-a0b4d52aa214", organizationType: "claude_team", organizationName: "RIT-CS-DQL"}}' >"$work/cfg-team/.claude.json"
