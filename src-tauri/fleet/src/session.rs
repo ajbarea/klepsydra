@@ -284,7 +284,8 @@ pub struct SessionFile {
     #[serde(default)]
     pub orchestrator: bool,
     /// The orchestrator's face for this session, as a cast voice key: the hook
-    /// sets it from orchestrator.face at the session's first event (#222).
+    /// sets it at the session's first event to the face no other orchestrator
+    /// wears (#222, #244).
     /// crate::picks keeps it only when it is one of `picks::ORCHESTRATORS`.
     #[serde(default, deserialize_with = "lenient_face")]
     pub orchestrator_face: Option<String>,
