@@ -18,6 +18,11 @@ cleanup() {
   rm -rf "$work"
 }
 trap cleanup EXIT
+# A signal ends the run through exit, so the EXIT trap still stops the server (#239).
+trap 'exit 129' HUP; trap 'exit 130' INT; trap 'exit 143' TERM
+# No inherited descriptor past stderr: a tmux server started here would keep a
+# caller's lock, such as flock's /tmp/fleet-heavy.lock, after the run (#193).
+for fd in "/proc/$$/fd"/*; do n=${fd##*/}; (( n > 2 && n < 255 )) && eval "exec $n>&-"; done
 
 pass=0 fail=0
 check() {
