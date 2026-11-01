@@ -504,8 +504,40 @@ export function accountsDiffer(cards) {
   return new Set(cards.filter((c) => c.accountId && c.status !== "ended").map((c) => c.accountId)).size > 1;
 }
 
-/** One card on the wall; `request` is the snapshot's wrap-up, when one is shown. */
-export function card(s, cast, nowMs, request = null) {
+// Claude Code's wrapper on a message one session sends another; the socket is
+// named for the sender's Claude process id.
+const CROSS_SESSION = /^\s*<cross-session-message\b([^>]*)(?:>([\s\S]*?))?(?:<\/cross-session-message>\s*)?$/;
+
+/** A prompt that is another session's message: {pid, name, text}; null for any other prompt. */
+export function crossMessage(text) {
+  const m = typeof text === "string" ? CROSS_SESSION.exec(text) : null;
+  if (!m) return null;
+  const attr = (k) => new RegExp(`(?:^|\\s)${k}="([^"]*)"`).exec(m[1])?.[1] ?? null;
+  const pid = Number(/\/(\d+)\.sock$/.exec(attr("from") ?? "")?.[1]);
+  return { pid: pid > 0 ? pid : null, name: attr("from-name"), text: (m[2] ?? "").trim() };
+}
+
+/** Each live session's character name by its Claude process id, so a message names who sent it. */
+export function senderNames(sessions, cast) {
+  const names = new Map();
+  for (const s of sessions) {
+    const pid = s.claude?.pid;
+    if (Number.isInteger(pid) && pid > 0 && s.status !== "ended") names.set(pid, identity(s, cast).name);
+  }
+  return names;
+}
+
+/** What a card shows of its prompt: another session's message says whose it is, never its tag. */
+export function promptText(text, senders = new Map()) {
+  const msg = crossMessage(text);
+  if (!msg) return plainText(text);
+  const who = (msg.pid !== null && senders.get(msg.pid)) || msg.name || "another session";
+  const body = plainText(msg.text);
+  return body ? `Message from ${who}: ${body}` : `Message from ${who}`;
+}
+
+/** One card on the wall; `request` is the snapshot's wrap-up, when one is shown; `senders`, senderNames'. */
+export function card(s, cast, nowMs, request = null, senders = new Map()) {
   const who = identity(s, cast);
   const wrapup = wrapupLine(s, request, nowMs);
   const st = statusOf(s.status, isQuiet(s));
@@ -559,7 +591,7 @@ export function card(s, cast, nowMs, request = null) {
     status: s.status,
     quiet: isQuiet(s),
     badge: badgeSvg(s.status, isQuiet(s)),
-    prompt: plainText(s.prompt?.text ?? null),
+    prompt: promptText(s.prompt?.text ?? null, senders),
     reply: plainText(s.reply?.text ?? null),
     error: s.status === "error" ? s.error ?? null : null,
     ledger: ledgerLine(s.ledger, s.ledger_partial === true),

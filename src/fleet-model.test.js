@@ -9,6 +9,9 @@ import {
   branchPage,
   githubPage,
   plainDir,
+  crossMessage,
+  promptText,
+  senderNames,
 } from "./fleet/model.js";
 import { contrast } from "./fleet/contrast.js";
 import { TONES, hash, initialOf, medallion, medallionSvg, toneOf } from "./fleet/medallion.js";
@@ -904,4 +907,21 @@ test("#149: a card's folder opens when the hook named it, and only a plain GitHu
   assert.equal(branchPage("https://github.com/a/b", "feat/x y"), "https://github.com/a/b/tree/feat/x%20y");
   assert.equal(branchPage(null, "main"), null);
   assert.equal(branchPage("https://github.com/a/b", null), null);
+});
+
+test("#246: a message from another session names its sender, never its tag", () => {
+  const cast = { faces: "kourai", characters: { am_michael: { name: "Hermes", face: "hermes", accent: "#3a7bd5" } } };
+  const tag = '<cross-session-message from="uds:/run/user/1001/cc-socks/1594096.sock" from-name="ajsoftworks-0f" from-mode="bypass">';
+  const msg = `${tag}\n**Done**: #243 merged.\n</cross-session-message>`;
+  assert.deepEqual(crossMessage(msg), { pid: 1594096, name: "ajsoftworks-0f", text: "**Done**: #243 merged." });
+  const sender = session({ session_id: "s-1", claude: { pid: 1594096, start: 1 } });
+  const senders = senderNames([sender, session({ session_id: "s-2", status: "ended", claude: { pid: 7, start: 1 } })], cast);
+  assert.deepEqual([...senders], [[1594096, "Hermes"]], "only live sessions send");
+  const got = card(session({ prompt: { text: msg, at: ago(5) } }), cast, NOW, null, senders);
+  assert.equal(got.prompt, "Message from Hermes: Done: #243 merged.");
+  assert.doesNotMatch(got.prompt, /cross-session/);
+  assert.equal(promptText(msg), "Message from ajsoftworks-0f: Done: #243 merged.", "its session name when no card has the process");
+  assert.equal(promptText('<cross-session-message from="x"'), "Message from another session", "a tag the hook cut short");
+  assert.equal(promptText("Fix **it**"), "Fix it", "any other prompt as before");
+  assert.equal(crossMessage("see <cross-session-message from=...> below"), null, "only a prompt that is the message");
 });
