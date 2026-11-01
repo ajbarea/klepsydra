@@ -15,9 +15,12 @@ declare -A since
 ALERTS=$FLEET_STATE/ci/alerts.jsonl SEEN=$FLEET_STATE/ci/alerts.seen
 # The alert lines read so far, kept across watchers so none is missed between
 # two; the first watcher starts at the end, so old alerts wake nobody.
+# Written whole (temp file, then rename): a watcher killed mid-write must not
+# leave an empty count that replays every old alert.
+put_seen() { printf '%s\n' "$1" >"$SEEN.$$" && mv -f -- "$SEEN.$$" "$SEEN"; }
 if [[ ! -e $SEEN ]]; then
   mkdir -p -- "${SEEN%/*}"
-  { { wc -l <"$ALERTS"; } 2>/dev/null || echo 0; } >"$SEEN"
+  put_seen "$({ wc -l <"$ALERTS"; } 2>/dev/null || echo 0)"
 fi
 
 # The first new alert that wakes the orchestrator, as one line; every line
@@ -32,14 +35,14 @@ ci_wake() {
   while IFS= read -r line; do
     seen=$((seen + 1))
     if jq -e '.wake == true' <<<"$line" >/dev/null 2>&1; then
-      printf '%s\n' "$seen" >"$SEEN"
+      put_seen "$seen"
       jq -r '"CI \(.kind | ascii_upcase) \(.repo) \(.branch): \(.text)"
         + (if .taken_by then " Taken by \(.taken_by)." else "" end)
         + (if .ask then " Next: \(.ask)." else "" end)' <<<"$line"
       return 0
     fi
   done < <(tail -n +"$((seen + 1))" "$ALERTS" 2>/dev/null)
-  printf '%s\n' "$seen" >"$SEEN"
+  put_seen "$seen"
   return 1
 }
 flog INFO "watching" panes="$*" idle_s="$IDLE_S"
