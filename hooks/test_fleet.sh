@@ -1600,10 +1600,18 @@ check "a worker in Hephaestus's voice never counts" "$(newface)" "am_michael"
 printf 'Athena\r\n' >"$work/fleet-state/orchestrator.face"
 check "none shown: orchestrator.face, read in any case and with a Windows line end" "$(newface)" "bf_alice"
 rm -f "$work/fleet-state/orchestrator.face"
+X1=88888888-4444-4555-8666-777777777771 X2=88888888-4444-4555-8666-777777777772
+# fleet recover after a power cut: last boot's Hephaestus card still shows; Heph comes back as "heph", a worker as itself.
+card "$O1" am_michael open "$B0" $((now - 900))
+fire session-start.json ".session_id = \"$X1\"" "TMUX=$work/sock/klepsydra,1,0" TMUX_PANE=%3 KLEPSYDRA_AGENT=heph >/dev/null
+fire session-start.json ".session_id = \"$X2\"" "TMUX=$work/sock/klepsydra,1,0" TMUX_PANE=%4 KLEPSYDRA_AGENT=sphragis >/dev/null
+check "a recovery: the orchestrator wears the face that is free, the worker neither" \
+  "$(jq -c '[.orchestrator, .orchestrator_face]' "$dir/fleet/$X1.json") $(jq -c '[.orchestrator, has("orchestrator_face")]' "$dir/fleet/$X2.json") [$(window_face "$(jq -c '.voice = "am_michael"' "$dir/fleet/$X2.json")")]" \
+  '[true,"bf_alice"] [false,false] []'
+rm -f "$dir/fleet/$X1.json" "$dir/fleet/$X2.json" "$dir/fleet/$O1.json"
 # A /clear: the same Claude process (its own, as the remote-link fixtures do) starts another id.
 mkproc 1600 1 claude 9300000 S claude
 mkproc 1610 1600 klepsydra-fleet 9300001 S bash "$hook"
-X1=88888888-4444-4555-8666-777777777771 X2=88888888-4444-4555-8666-777777777772
 card "$O1" am_michael open "$B1" $((now - 60))
 fire session-start.json ".session_id = \"$X1\"" "TMUX=$work/sock/klepsydra,1,0" TMUX_PANE=%7 KLEPSYDRA_PID=1610 >/dev/null
 fire session-end.json ".session_id = \"$X1\" | .reason = \"clear\"" "TMUX=$work/sock/klepsydra,1,0" TMUX_PANE=%7 KLEPSYDRA_PID=1610 >/dev/null
