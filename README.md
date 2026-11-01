@@ -164,14 +164,15 @@ the wall needs tmux 3.3 or later (`remain-on-exit failed`); Ubuntu 24.04's 3.4
 is the tested version.
 
 ```bash
-make install-fleet   # from the main checkout
+make install-hooks   # from the main checkout
 ```
 
 It copies the status line, hooks, launcher, tmux settings, wrap-up hook and
-skill, and the cast (as `klepsydra-cast.json`) into `~/.claude`, archives a copy
-it replaces, and does the same on every later run, so a deploy never leaves an
-old hook; `fleet doctor` fails while a copy differs from the checkout. The
-list is `HOOK_COPIES` in `fleet/lib.sh`.
+skill, and the cast (as `klepsydra-cast.json`) into `~/.claude`, and archives a
+copy it replaces. `make install-fleet` (see [Fleet engine](#fleet-engine)) does
+the same on every deploy, so a fleet never runs an old hook, and `fleet doctor`
+fails while a copy differs from the checkout. The list is `HOOK_COPIES` in
+`fleet/lib.sh`.
 
 Then merge this into `~/.claude/settings.json` (into each config dir's
 `settings.json` if you run two logins):
@@ -1371,7 +1372,8 @@ usage limit, and check the fleet's health. `make install-fleet` links each one
 from this checkout into the fleet's state folder (`~/.local/state/fleet-orchestrator`,
 or `FLEET_STATE`), so pulling main updates the fleet. It also links the `fleet`
 command into `~/.local/bin` and writes the services as user units in
-`~/.config/systemd/user`, which start again after a reboot. A copy a link
+`~/.config/systemd/user`, which start again after a reboot, and makes step 1's
+copies into `~/.claude`. A copy a link
 replaces goes to `archive/fleet-scripts-<date>/`. Runtime state (`panes.tsv`,
 briefs, logs) stays in the state folder.
 

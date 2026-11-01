@@ -198,13 +198,15 @@ else
   report warn "briefs" "$(tr '\n' ' ' <<<"$stale")(fleet brief --check)"
 fi
 # A hook or cast copy older than the checkout gives every session old behaviour (#244).
-root=${here%/fleet} differ=
+root=${here%/fleet} differ="" missing=""
 for c in "${HOOK_COPIES[@]}"; do
-  [[ -e $root/${c%% *} ]] || continue
+  if [[ ! -f $root/${c%% *} ]]; then missing+="${c%% *} "; continue; fi
   cmp -s -- "$root/${c%% *}" "$FLEET_HOOK_DIR/${c#* }" || differ+="${c#* } "
 done
-if [[ -n $differ ]]; then
-  report FAIL "installed copies" "differ from $root: ${differ% }: make install-fleet"
+if [[ -n $missing ]]; then
+  report FAIL "installed copies" "missing from $root: ${missing% }"
+elif [[ -n $differ ]]; then
+  report FAIL "installed copies" "make install-fleet: differ from $root: ${differ% }"
 else
   report ok "installed copies" "the hooks, status line, launcher and cast match $root"
 fi
