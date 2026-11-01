@@ -38,13 +38,10 @@ if [[ -n $json && -f $json ]]; then
 fi
 results=()
 
-# The home folder reads as ~, in what doctor prints and in the report the
-# phone gets.
-home() { local s=${1//"$HOME/"/\~/}; [[ $s == "$HOME" ]] && s="~"; printf '%s' "$s"; }
 
 report() { # ok|warn|FAIL CHECK DETAIL
   local check detail
-  check=$(home "$2") detail=$(home "$3")
+  check=$(tilde "$2") detail=$(tilde "$3")
   printf '%-4s %s: %s\n' "$1" "$check" "$detail"
   results+=("$1"$'\t'"${check//[$'\t\n']/ }"$'\t'"${detail//[$'\t\n']/ }")
   [[ $1 == FAIL ]] && failed=1

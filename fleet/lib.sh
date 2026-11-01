@@ -37,6 +37,9 @@ t() { tmux -L "$FLEET_SOCK" "$@"; }
 
 err() { printf 'error: %s\n' "$*" >&2; }
 
+# tilde TEXT: TEXT with the home folder read as ~, as doctor prints it and as
+# the phone's report shows it.
+tilde() { local s=${1//"$HOME/"/\~/}; [[ $s == "$HOME" ]] && s="~"; printf '%s' "$s"; }
 # flog LEVEL MESSAGE [KEY=VALUE...]: one JSON line in the fleet log (the
 # klepsydra log's fields: ts, level, target, message, then the event's own),
 # and the same as a plain line on stderr.
