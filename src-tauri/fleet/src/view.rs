@@ -340,21 +340,33 @@ pub fn view(entry: &Entry, now: i64) -> Option<View> {
     })
 }
 
-/// The orchestrator's faces are its alone (#172, #222): a worker holding
+/// The orchestrator's faces are its alone (#172, #222, #244): a worker holding
 /// Hephaestus's or Athena's voice gives it up, and the orchestrator gives up
 /// any voice but its own face's, so it wears that face by its pick
 /// (crate::picks) whatever voice keryx gave it. Runs before
 /// keep_faces_distinct, so a worker's claim on those voices never costs it.
 fn reserve_heph(shown: &mut [(&SessionFile, View)]) {
-    // Heph is the newest live session flagged so: an ended old Heph (after a
-    // /clear or a move) and any other flagged one are workers here.
-    let heph = shown
-        .iter()
-        .filter(|(_, v)| v.orchestrator && v.status != Status::Ended)
-        .max_by_key(|(f, v)| (f.started_at.unwrap_or(0), v.session_id.clone()))
-        .map(|(_, v)| v.session_id.clone());
+    // Each face's orchestrator is the newest live session flagged so that wears
+    // it, so an active one and its warm backup show side by side (#244); an
+    // ended old one (after a /clear or a move) and any other are workers here.
+    let mut newest: HashMap<&'static str, (i64, String)> = HashMap::new();
+    for (f, v) in shown.iter() {
+        if v.orchestrator && v.status != Status::Ended {
+            let key = (f.started_at.unwrap_or(0), v.session_id.clone());
+            let best = newest
+                .entry(crate::picks::orchestrator_face(v))
+                .or_insert_with(|| key.clone());
+            if key > *best {
+                *best = key;
+            }
+        }
+    }
     for (_, v) in shown.iter_mut() {
-        v.orchestrator = heph.as_deref() == Some(v.session_id.as_str());
+        v.orchestrator = v.orchestrator
+            && v.status != Status::Ended
+            && newest
+                .get(crate::picks::orchestrator_face(v))
+                .is_some_and(|(_, id)| *id == v.session_id);
     }
     for (_, v) in shown.iter_mut() {
         let keep = match v.voice.as_deref() {
@@ -1306,6 +1318,24 @@ mod tests {
             .map(|v| v.session_id.as_str())
             .collect();
         assert_eq!(heph, ["live2"]);
+    }
+
+    #[test]
+    fn hephaestus_and_athena_each_keep_a_live_orchestrator_card() {
+        let mut heph = voiced("h", NOW - 600, crate::picks::HEPH, "hold");
+        heph.file.orchestrator = true;
+        heph.file.orchestrator_face = Some(crate::picks::HEPH.into());
+        let mut athena = voiced("a", NOW - 30, crate::picks::ATHENA, "hold");
+        athena.file.orchestrator = true;
+        athena.file.orchestrator_face = Some(crate::picks::ATHENA.into());
+        let s = snapshot(&[heph, athena], NOW);
+        let card = |id: &str| s.sessions.iter().find(|v| v.session_id == id).unwrap();
+        assert!(
+            card("h").orchestrator && card("a").orchestrator,
+            "the active one and its backup are both orchestrators (#244)"
+        );
+        assert_eq!(voice_of(&s, "h"), Some(crate::picks::HEPH));
+        assert_eq!(voice_of(&s, "a"), Some(crate::picks::ATHENA));
     }
 
     #[test]

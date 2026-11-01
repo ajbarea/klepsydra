@@ -504,20 +504,25 @@ cleared_link() { # fleet pid start self
 
 # The face a new orchestrator session wears (#244): Hephaestus and Athena are
 # equal, so it is the one no other orchestrator on the wall wears, live ones
-# (open on this boot) first, then any shown. With both shown it is the one
-# seen least recently; with neither, HINT (orchestrator.face's). A /clear
-# keeps CLEARED, the cleared session's face.
-free_face() { # fleet self cleared hint
-  local f face open boot last set h=0 a=0 h_last=-1 a_last=-1 live="" shown=""
+# (open, with their Claude process running on this boot) first, then any
+# shown. With both shown it is the one seen least recently; with neither, HINT
+# (orchestrator.face's). A /clear keeps CLEARED, the cleared session's face, or
+# when that session was not found, the face of the newest orchestrator card in
+# CLEAR_PANE, the pane it was cleared in.
+free_face() { # fleet self cleared hint [clear_pane]
+  local f face open boot pid start pane last set h=0 a=0 h_last=-1 a_last=-1 live="" shown="" in_pane="" pane_last=-1
   case $3 in "$HEPH_VOICE" | "$ATHENA_VOICE") printf '%s' "$3"; return 0 ;; esac
-  while IFS=$'\t' read -r f face open boot last; do
+  while IFS=$'\t' read -r f face open boot pid start pane last; do
     [[ $f != "$2.json" && ( $face == "$HEPH_VOICE" || $face == "$ATHENA_VOICE" ) ]] || continue
     [[ $last =~ ^[0-9]+$ ]] || last=0
-    [[ $open == open && $boot == "$host_boot" ]] && live+=" $face"
+    [[ $open == open && $boot == "$host_boot" && $pid =~ ^[1-9][0-9]*$ ]] && claude_alive "$pid" "$start" && live+=" $face"
     shown+=" $face"
     if [[ $face == "$HEPH_VOICE" ]]; then (( last > h_last )) && h_last=$last; else (( last > a_last )) && a_last=$last; fi
+    [[ -n ${5:-} && $pane == "$5" ]] && (( last > pane_last )) && pane_last=$last in_pane=$face
   done < <(fleet_rows "$1" '[(if .orchestrator == true then (.orchestrator_face | or_q | sub("^\\?$"; "am_michael")) else "?" end),
-      (if .ended == null then "open" else "ended" end), (.host.boot | or_q), last_active]')
+      (if .ended == null then "open" else "ended" end), (.host.boot | or_q),
+      ((.claude.pid | numbers) // 0 | floor), ((.claude.start | numbers) // 0 | floor), (.tmux.pane | or_q), last_active]')
+  [[ -n $in_pane ]] && { printf '%s' "$in_pane"; return 0; }
   for set in "$live" "$shown"; do
     h=0 a=0
     [[ $set == *"$HEPH_VOICE"* ]] && h=1
@@ -1054,7 +1059,11 @@ main() {
   # before orchestrator.session names the new session.
   [[ $orchestrator == false && -z $agent && -n $orch_sid && $orch_pane == "$tmux_pane" && $old == *'"orchestrator":true'* ]] && orchestrator=true
   # Under the lock, so two orchestrators starting together never take one face.
-  [[ $orchestrator == true && $old != *'"orchestrator_face"'* ]] && orch_face=$(free_face "$fleet" "$session" "$cleared_face" "$orch_face")
+  if [[ $orchestrator == true && $old != *'"orchestrator_face"'* ]]; then
+    local clear_pane=""
+    [[ $event == SessionStart && $source == clear && -z $cleared_face ]] && clear_pane=$tmux_pane
+    orch_face=$(free_face "$fleet" "$session" "$cleared_face" "$orch_face" "$clear_pane")
+  fi
   # The git dir the file last named (an escaped path is not read): gone means the checkout was removed.
   old_git=""
   [[ $old =~ \"git\":\"(/[^\"\\]*)\" ]] && old_git=${BASH_REMATCH[1]}
