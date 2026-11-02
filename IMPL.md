@@ -1,5 +1,7 @@
 # IMPL: klepsydra card and cast design pass (AJ 11-01), resume state 2026-11-02
 
+> **Superseded 11-02 18:15:** AJ picked C. Resume from `IMPL.md` on `feat/cards-247` (worktree `.claude/worktrees/cards-247`). This branch is the prototype only.
+
 Brief: `~/.local/state/fleet-orchestrator/task-card-design.src`. Resume from this file, `git log`, and the open PRs' and Review issue's comments (re-read them first).
 
 ## Done
