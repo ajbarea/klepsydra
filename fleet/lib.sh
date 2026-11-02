@@ -118,7 +118,10 @@ near() { grep -v '^[[:space:]]*$' <<<"$ABOVE" | tail -"${1:-6}"; }
 # interrupt") sits just above the input box.
 busy() { split_screen "$1"; near 4 | grep -Eq '… \(|esc to interrupt'; }
 
-LIMIT_RE='hit your (session|weekly|usage) limit|Usage limit reached'
+# Claude Code names the window in its message ("You've hit your 5-hour
+# limit", "... weekly limit", "... Fable limit", earlier "session limit"), and
+# renamed it once already (2.1.316, #263): any one- or two-word name matches.
+LIMIT_RE="You've hit your ([A-Za-z0-9-]+ ){0,2}limit([^A-Za-z]|$)|Usage limit reached"
 
 # The limit message nearest the input box: Claude Code's "hit your ... limit"
 # as the last thing the session printed, or the status line's "Usage limit

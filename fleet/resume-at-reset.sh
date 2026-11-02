@@ -30,8 +30,8 @@
 # 15 min; a failed fresh start is resumed in place. A CI red the CI watch routed to an agent
 # (inbox/NAME/*.txt) is typed into its pane at an idle, empty prompt, oldest
 # first. --once runs one pass (and waits for the moves it started). Each
-# decision is one line in the fleet log; each pass touches resume.beat for
-# `fleet doctor`.
+# decision is one line in the fleet log; each pass writes what it saw (panes,
+# limited panes) to resume.beat for `fleet doctor`, and logs it when it changes.
 set -u
 FLEET_TARGET=fleet::resume
 here=$(dirname "$(readlink -f "$0")")
@@ -604,6 +604,7 @@ one() { # PANE
   fi
 
   limit=$(limit_line "$s")
+  [[ -n $limit ]] && PASS_LIMITED+=("$p")
   # Remote Control: a /login disconnects it in every session, and the RIT
   # account never starts it on its own, so once per account each registered
   # pane and the orchestrator's get /remote-control while idle at an empty
@@ -814,16 +815,29 @@ doctor_after_switch() {
   fi
 }
 PREV_ACCT="" DOCTOR_DUE=0 HEPH_DOUBT=""
+# The last pass's summary, from resume.beat: a --once run or a restart logs
+# only a change.
+PASS_SEEN=$(head -1 "$FLEET_STATE/resume.beat" 2>/dev/null | sed 's/ at=.*//')
+PASS_LIMITED=()
 
 pass() {
   NOW=$(clock) ACTIVE=$(active_account) ORCH=$(orchestrator) OSID=$(cat "$FLEET_STATE/orchestrator.session" 2>/dev/null)
   accounts
   reap
-  local p
-  for p in $(fleet_panes); do one "$p"; done
+  local p panes seen
+  PASS_LIMITED=()
+  panes=$(fleet_panes)
+  for p in $panes; do one "$p"; done
   doctor_after_switch
   save_state
-  : >>"$FLEET_STATE/resume.beat" && touch -- "$FLEET_STATE/resume.beat"
+  # What the pass saw, written whole each pass for `fleet doctor`, and logged
+  # when it changes, so a service that stops seeing limits shows (#263).
+  seen="panes=$(wc -w <<<"$panes") limited=${#PASS_LIMITED[@]} limited_panes=${PASS_LIMITED[*]}"
+  printf '%s at=%s\n' "$seen" "$NOW" >"$FLEET_STATE/resume.beat.$$" && mv -f -- "$FLEET_STATE/resume.beat.$$" "$FLEET_STATE/resume.beat"
+  if [[ $seen != "$PASS_SEEN" ]]; then
+    flog INFO "pass" panes="$(tr '\n' ' ' <<<"$panes" | sed 's/ $//')" limited="${PASS_LIMITED[*]}" limited_count="${#PASS_LIMITED[@]}"
+    PASS_SEEN=$seen
+  fi
 }
 
 load_state

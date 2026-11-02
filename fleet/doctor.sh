@@ -60,8 +60,9 @@ else
   report FAIL "resume service" "not active: systemctl --user start fleet-resume-at-reset"
 fi
 beat=$(stat -c %Y -- "$FLEET_STATE/resume.beat" 2>/dev/null || echo 0)
+saw=$(head -1 "$FLEET_STATE/resume.beat" 2>/dev/null | sed 's/ at=.*//')
 if (( now - beat <= BEAT_MAX_S )); then
-  report ok "resume loop" "last pass $((now - beat)) s ago"
+  report ok "resume loop" "last pass $((now - beat)) s ago${saw:+: $saw}"
 else
   report FAIL "resume loop" "$( ((beat)) && echo "last pass $((now - beat)) s ago" || echo "no pass recorded")"
 fi
@@ -78,6 +79,33 @@ session_of() {
 }
 orch=$(orchestrator)
 panes=$(awk -F'\t' 'NF >= 3 { print $1 }' "$REGISTRY" 2>/dev/null)
+
+# Limits as the panes show them (#263): one still showing OVERDUE_S past the
+# reset it names was missed by the resume service; a reset time beside a limit
+# wording LIMIT_RE does not know means Claude Code renamed its message again.
+overdue="" unknown="" resets=""
+for p in $orch $panes; do
+  fleet_panes | grep -qx -- "$p" || continue
+  s=$(screen "$p")
+  busy "$s" && continue
+  if l=$(limit_line "$s"); then
+    lnow=${FLEET_NOW:-$now} # tests set the clock
+    r=$(reset_epoch "$l" "$lnow") || continue
+    if (( lnow - r > ${FLEET_OVERDUE_S:-600} )); then
+      overdue+="$p " resets+="$p:$(date -d "@$r" '+%H:%M') "
+    fi
+  else
+    split_screen "$s"
+    { near 6; printf '%s\n' "$BELOW"; } | grep -iE 'limit' | grep -qE 'resets [A-Za-z0-9]' && unknown+="$p "
+  fi
+done
+if [[ -n $overdue ]]; then
+  report FAIL "limits" "still at a limit past its reset: ${overdue% } (the resume service missed it)" panes="${overdue% }" resets="${resets% }" overdue_s="${FLEET_OVERDUE_S:-600}"
+elif [[ -n $unknown ]]; then
+  report warn "limits" "a reset time shows beside a limit message the fleet does not recognise: ${unknown% } (LIMIT_RE in fleet/lib.sh)" panes="${unknown% }"
+else
+  report ok "limits" "no pane waits past its reset"
+fi
 for p in $orch $panes; do
   who=$(reg_field "$p" 2)
   [[ $p == "$orch" ]] && who=orchestrator
