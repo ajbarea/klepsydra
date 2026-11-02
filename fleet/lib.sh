@@ -129,14 +129,16 @@ unset W
 # The limit message nearest the input box: Claude Code's "hit your ... limit"
 # as the last thing the session printed, or the status line's "Usage limit
 # reached" banner below the box. A message followed by a prompt sent after it
-# (the resume service's continue, or AJ's line) is past; "hit your fast limit"
-# is the /fast dialog's, not a usage limit. Prints it; fails when there is none.
+# (the resume service's continue, or AJ's line) is past, but not by a slash
+# command's echo: Claude Code sends /rate-limit-options itself at a limit, and
+# /usage or /login answer nothing. "hit your fast limit" is the /fast dialog's,
+# not a usage limit. Prints it; fails when there is none.
 limit_line() {
   split_screen "$1"
   { near 6 | awk -v re="$LIMIT_RE" '
       /hit your fast limit/ { next }
       $0 ~ re { l = $0; next }
-      /^❯ / { l = "" }
+      /^❯ / && !/^❯ \// { l = "" }
       END { if (l != "") print l }'
     printf '%s\n' "$BELOW" | grep -E "$LIMIT_RE"; } | tail -1 | grep .
 }
@@ -144,8 +146,8 @@ limit_line() {
 # The epoch at which the reset in TEXT falls, from NOW: "resets 1:10pm",
 # "resets 4:10am", "resets Nov 2, 1pm" or "resets Nov 2, 1:30pm", each with an
 # optional "(Area/City)" zone (else local time). A time-only reset more than
-# ROLL_S (default 6 h) past is tomorrow's and one more than 24 h - ROLL_S ahead
-# yesterday's, at the same wall-clock time across a DST change; a dated
+# ROLL_S (default 6 h) past is tomorrow's, at the same wall-clock time across a
+# DST change (Claude Code dates a reset only when it is over 24 h away); a dated
 # one more than 180 days past is next year's, and more than 180 days ahead last year's.
 # Fails when TEXT names none.
 reset_epoch() { # TEXT NOW [ROLL_S]
@@ -171,9 +173,6 @@ reset_epoch() { # TEXT NOW [ROLL_S]
     at=$(date -d "$tz$date $hour:$min$ampm" +%s 2>/dev/null) || return 1
     if (( now - at > roll )); then
       date=$(date -d "$date 12:00 tomorrow" +%F)
-      at=$(date -d "$tz$date $hour:$min$ampm" +%s)
-    elif (( at - now > 86400 - roll )); then
-      date=$(date -d "$date 12:00 yesterday" +%F)
       at=$(date -d "$tz$date $hour:$min$ampm" +%s)
     fi
   fi

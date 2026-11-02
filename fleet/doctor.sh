@@ -90,16 +90,27 @@ for p in $orch $panes; do
   busy "$s" && continue
   if l=$(limit_line "$s"); then
     lnow=${FLEET_NOW:-$now} # tests set the clock
-    # A time-only reset is at most a 5-hour window ahead, so today's is
-    # tomorrow's only when it is more than 19 h past.
-    r=$(reset_epoch "$l" "$lnow" 68400) || continue
+    # A dated reset is exact. A time-only one can be up to 24 h ahead, so it is
+    # placed only for the 5-hour window, whose reset is at most 5 h ahead: today's
+    # is tomorrow's when over 19 h past, yesterday's when over 5.5 h ahead.
+    # Any other time-only reset cannot tell a missed reset from a later one.
+    if grep -qE 'resets [A-Z][a-z]{2} [0-9]' <<<"$l"; then
+      r=$(reset_epoch "$l" "$lnow") || continue
+    elif grep -qE "hit your (5-hour|session) limit" <<<"$l"; then
+      r=$(reset_epoch "$l" "$lnow" 68400) || continue
+      if (( r - lnow > 19800 )); then
+        r=$(reset_epoch "$l" "$(date -d "$(date -d "@$lnow" +%F) 12:00 yesterday" +%s)" 86400) || continue
+      fi
+    else
+      continue
+    fi
     if (( lnow - r > ${FLEET_OVERDUE_S:-600} )); then
       overdue+="$p " resets+="$p:$(date -d "@$r" '+%H:%M') "
     fi
   else
     # Only what came after the last prompt sent: an answered limit is past.
     split_screen "$s"
-    { near 6 | awk '/^❯ / { b = ""; next } { b = b $0 "\n" } END { printf "%s", b }'; printf '%s\n' "$BELOW"; } |
+    { near 6 | awk '/^❯ / && !/^❯ \// { b = ""; next } { b = b $0 "\n" } END { printf "%s", b }'; printf '%s\n' "$BELOW"; } |
       grep -iE 'limit' | grep -qE 'resets [A-Za-z0-9]' && unknown+="$p "
   fi
 done

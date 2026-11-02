@@ -94,7 +94,7 @@ check "#265 review: a dated reset just before the new year, read after it, is la
 now=$(TZ=America/New_York date -d '2026-10-31 22:00' +%s)
 check "#265 review: tomorrow across the clock change keeps the wall-clock time" "$(TZ=America/New_York at 'resets 2am')" "2026-11-01 02:00"
 now=$(TZ=America/New_York date -d '2026-11-03 01:00' +%s)
-check "#265 review: a time-only reset far ahead is yesterday's" "$(TZ=America/New_York at 'resets 11pm')" "2026-11-02 23:00"
+check "#265 review 2: a time-only reset up to a day ahead stays ahead (a weekly one is dated only past 24 h)" "$(TZ=America/New_York at 'resets 11pm')" "2026-11-03 23:00"
 now=$(TZ=America/New_York date -d '2026-11-02 18:50' +%s)
 check "#265 review: with a 19 h roll (the doctor's), a reset 6 h past is today's" \
   "$(TZ=America/New_York date -d "@$(reset_epoch 'resets 12:40pm' "$now" 68400)" '+%F %H:%M')" "2026-11-02 12:40"
@@ -129,6 +129,8 @@ state read '{"above":["  ⎿  You'"'"'ve hit your 5-hour limit · resets 12:40pm
 check "#265 review: a limit followed by a prompt sent after it is past" "$(limit_line "$(screen "$p")" || echo none)" "none"
 state read '{"above":["❯ a note","  ⎿  You'"'"'ve hit your 5-hour limit · resets 12:40pm"]}'
 check "#265 review: a limit that answered the last prompt is current" "$(limit_line "$(screen "$p")" | grep -c '5-hour limit')" "1"
+state read '{"above":["  ⎿  You'"'"'ve hit your session limit · resets 1:10pm (America/New_York)","❯ /rate-limit-options","  ⎿  Claude Code will continue automatically at 1:10pm"]}'
+check "#265 review 2: Claude Code's own /rate-limit-options after the limit leaves it current" "$(limit_line "$(screen "$p")" | grep -c 'session limit')" "1"
 state read '{"above":["  ⎿  You'"'"'ve hit your fast limit · resets in 3m","",""]}'
 check "#265 review: the /fast dialog's limit is no usage limit" "$(limit_line "$(screen "$p")" || echo none)" "none"
 state read '{"above":["  ⎿  You'"'"'ve hit your org'"'"'s monthly spend limit · your 5-hour limit resets 1pm","",""]}'
@@ -654,6 +656,10 @@ check "#265 review: still failing 7 h past the reset (time-only resets once roll
   "$(FLEET_NOW=$((noon + 25200)) doctor | grep -c '^FAIL limits')" "1"
 state wpane '{"above":["  ⎿  You'"'"'ve hit your 5-hour limit · resets 11:30am (America/New_York)","❯ The usage limit has reset. Please continue.","● Queue is empty"]}'
 check "#265 review: a limit the resume service answered is not missed" "$(FLEET_NOW=$noon doctor | grep -c '^ok   limits')" "1"
+state wpane '{"above":["  ⎿  You'"'"'ve hit your weekly limit · resets 8pm (America/New_York)","",""]}'
+check "#265 review 2: a time-only weekly reset 10 h ahead is not read as yesterday's, so no false FAIL" "$(FLEET_NOW=$((noon - 7200)) doctor | grep -c '^ok   limits')" "1"
+state wpane '{"above":["  ⎿  You'"'"'ve hit your 5-hour limit · resets 11pm (America/New_York)","",""]}'
+check "#265 review 2: a 5-hour reset just before midnight, still shown after it, fails" "$(FLEET_NOW=$((noon + 46800)) doctor | grep -c '^FAIL limits')" "1"
 state wpane '{"above":["  ⎿  Limit hit for this window · resets 11:30am","",""]}'
 check "#263: a reset beside a limit wording the fleet does not know is a warning" \
   "$(doctor | grep '^warn limits')" "warn limits: a reset time shows beside a limit message the fleet does not recognise: $w (LIMIT_RE in fleet/lib.sh)"
