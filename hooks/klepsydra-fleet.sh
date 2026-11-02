@@ -498,6 +498,30 @@ cleared_link() { # fleet pid start self
   return 0
 }
 
+# A card turning to needs you, leaving it, or to error, as one line in the
+# fleet log with what set it (#246), so a wrong card is traceable from the log
+# alone. The fleet's scripts rotate that log; past twice its cap (none came
+# by) nothing more is added.
+log_state() { # state-dir old new event session pane
+  local log=$1/log/fleet.log line size
+  [[ -d ${log%/*} ]] || return 0
+  size=$(stat -c %s -- "$log" 2>/dev/null || echo 0)
+  (( size < 2 * ${FLEET_LOG_MAX:-1048576} )) || return 0
+  line=$(jq -nc --arg old "$2" --arg new "$3" --arg event "$4" --arg session "$5" --arg pane "$6" \
+    --arg ts "$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ)" '
+    ($old | fromjson? // {}) as $o | ($new | fromjson? // {}) as $n
+    | select([$o.state, $o.reason] != [$n.state, $n.reason])
+    | select($n.state == "needs_you" or $n.state == "error" or $o.state == "needs_you")
+    | {ts: $ts, level: (if $n.state == "error" then "WARN" else "INFO" end), target: "fleet::hook",
+       message: (if $n.state == "needs_you" then "card needs you" elif $n.state == "error" then "card in error"
+                 else "card no longer needs you" end),
+       session: $session, pane: $pane, event: $event, from: ($o.state // "new"), state: $n.state,
+       reason: ($n.reason // null), asked: ($n.needs.tool // null), at_end: ($n.needs.at_end // false),
+       error: (if $n.state == "error" then $n.error // null else null end)}' 2>/dev/null) || return 0
+  [[ -n $line ]] && printf '%s\n' "$line" >>"$log" 2>/dev/null
+  return 0
+}
+
 # The session file after one event, as compact JSON, or nothing when no field
 # changed. `$old` is the current file's text (empty for none).
 read -r -d '' APPLY <<'JQ' || true  # read returns 1 at the end of input
@@ -1020,6 +1044,7 @@ main() {
   local recolour=0
   if [[ ${tmux_socket##*/} == klepsydra && -n $tmux_pane && -f $file && -n $CAST && $CAST -nt $file ]]; then recolour=1; fi
   [[ -n $new ]] && write_atomic "$file" "$new"
+  [[ -n $new ]] && log_state "$orch_state" "$old" "$new" "$event" "$session" "$tmux_pane"
   (( recolour )) && touch -c -- "$file" 2>/dev/null
   # Only a start, a changed face or a new theme touches the window. The face
   # follows the wall's rule: Heph's for the orchestrator, never for a worker.
