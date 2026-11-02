@@ -75,5 +75,7 @@ while :; do
       echo "IDLE $p $done_at"; exit 0
     fi
   done
-  sleep "${WATCH_TICK:-30}"
+  # In the background, so a TERM is acted on at once, not after the tick.
+  sleep "${WATCH_TICK:-30}" &
+  wait $!
 done

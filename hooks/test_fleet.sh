@@ -1612,15 +1612,18 @@ rm -f "$work/fleet-state/orchestrator.face"
 card "$O1" af_heart open "$B1" $((now - 60))
 check "review 2: a face it cannot read is Hephaestus's, as the crate reads it" "$(newface)" "bf_alice"
 # A move (heph_move): the new session starts while the old active one and the warm backup both run.
-mv_face() { # RECORDED-SID: a new "heph" session's face, orchestrator.session naming RECORDED
-  printf '%s\n' "$1" >"$work/fleet-state/orchestrator.session"
-  rm -f "$hfile"; hfire session-start.json "TMUX=$work/sock/klepsydra,1,0" TMUX_PANE=%7 KLEPSYDRA_AGENT=heph
-  jq -r .orchestrator_face "$hfile"; rm -f "$hfile" "$work/fleet-state/orchestrator.session"
+mv_face() { # SUCCEEDS-SID: a new "heph" session's face, the move naming the session it replaces
+  rm -f "$hfile"; hfire session-start.json "TMUX=$work/sock/klepsydra,1,0" TMUX_PANE=%7 KLEPSYDRA_AGENT=heph ${1:+KLEPSYDRA_SUCCEEDS=$1}
+  jq -r .orchestrator_face "$hfile"; rm -f "$hfile"
 }
 card "$O1" am_michael open "$B1" $((now - 5)); card "$O2" bf_alice open "$B1" $((now - 600))
 check "review 3: a move from a busy Hephaestus, Athena the idle backup: the new one is Hephaestus" "$(mv_face "$O1")" "am_michael"
 card "$O1" am_michael open "$B1" $((now - 600)); card "$O2" bf_alice open "$B1" $((now - 5))
 check "review 3: and from a busy Athena, Hephaestus the backup: Athena" "$(mv_face "$O2")" "bf_alice"
+card "$O1" am_michael open "$B1" $((now - 5)); card "$O2" bf_alice open "$B1" $((now - 600))
+printf '%s\n' "$O1" >"$work/fleet-state/orchestrator.session"
+check "review 4: a new backup started while both run (no move) is no successor: the face seen least recently" "$(mv_face "")" "bf_alice"
+rm -f "$work/fleet-state/orchestrator.session"
 rm -f "$dir/fleet/$O2.json"; card "$O1" am_michael open "$B1" $((now - 60))
 check "review 3: with no backup, a move still takes the face that is free" "$(mv_face "$O1")" "bf_alice"
 rm -f "$dir/fleet/$O1.json" "$dir/fleet/$O2.json"

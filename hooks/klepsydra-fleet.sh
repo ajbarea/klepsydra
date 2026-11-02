@@ -511,10 +511,10 @@ cleared_link() { # fleet pid start self
 # with neither, HINT (orchestrator.face's). A /clear keeps CLEARED, the
 # cleared session's face, or when that session was not found, the face of the
 # newest orchestrator card of this boot in CLEAR_PANE, the pane it was cleared in.
-# With both faces live and one of them RECORDED (orchestrator.session: the
-# orchestrator a move is replacing), the new session is its successor and
-# takes its face, the one freed when it retires; never the backup's.
-free_face() { # fleet self cleared hint [clear_pane] [recorded]
+# With both faces live and one of them SUCCEEDS (the session a move is
+# replacing, named by the move itself), the new session takes its face, the
+# one freed when it retires; never the backup's.
+free_face() { # fleet self cleared hint [clear_pane] [succeeds]
   local f face open boot pid start pane last set h=0 a=0 h_last=-1 a_last=-1 live="" shown="" in_pane="" pane_last=-1 succeeds=""
   case $3 in "$HEPH_VOICE" | "$ATHENA_VOICE") printf '%s' "$3"; return 0 ;; esac
   while IFS=$'\t' read -r f face open boot pid start pane last; do
@@ -1073,7 +1073,9 @@ main() {
   if [[ $orchestrator == true && $old != *'"orchestrator_face"'* ]]; then
     local clear_pane=""
     [[ $event == SessionStart && $source == clear && -z $cleared_face ]] && clear_pane=$tmux_pane
-    orch_face=$(free_face "$fleet" "$session" "$cleared_face" "$orch_face" "$clear_pane" "$orch_sid")
+    local succeeds=""
+    [[ $agent == heph && ${KLEPSYDRA_SUCCEEDS:-} =~ ^[0-9a-f-]{36}$ ]] && succeeds=$KLEPSYDRA_SUCCEEDS
+    orch_face=$(free_face "$fleet" "$session" "$cleared_face" "$orch_face" "$clear_pane" "$succeeds")
   fi
   # The git dir the file last named (an escaped path is not read): gone means the checkout was removed.
   old_git=""
