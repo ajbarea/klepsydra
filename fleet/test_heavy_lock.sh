@@ -9,7 +9,9 @@ set -uo pipefail
 root=$(cd "$(dirname "$0")/.." && pwd)
 work=$(mktemp -d)
 export TMUX_TMPDIR="$work/tmux" # every -L socket the suites make lands here
-mkdir -p "$TMUX_TMPDIR"
+# A suite killed by KILL never removes its own mktemp folder: it lands here.
+export TMPDIR="$work/t"
+mkdir -p "$TMUX_TMPDIR" "$TMPDIR"
 sockdir="$TMUX_TMPDIR/tmux-$(id -u)"
 lock="$work/heavy.lock"
 RUN_S=${RUN_S:-6}
