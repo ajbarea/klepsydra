@@ -1847,7 +1847,7 @@ check "a lost row is one FAIL, a finished one one warn, and neither gets a remot
   "$(grep '^FAIL agents' <<<"$doc") | $(grep '^warn finished agents' <<<"$doc") | $(grep -c 'remote control %[45] ' <<<"$doc")" \
   "FAIL agents: sessions gone: e: fleet recover | warn finished agents: still in panes.tsv: d: fleet doctor --prune | 0"
 check "recover leaves a finished agent alone and relaunches the lost one" \
-  "$(rec --dry-run --no-orchestrator | grep -E '^(finished|would recover)' | cut -d' ' -f1-2)" $'finished: d\nwould recover: e'
+  "$(rec --dry-run --no-orchestrator | grep -E '^(finished|would recover)' | sed 's/ (.*//')" $'finished: d\nwould recover: e'
 awk -F'\t' '$2 != "e"' "$REGISTRY" >"$work/reg.tmp" && mv -f -- "$work/reg.tmp" "$REGISTRY"
 # A restarted tmux server hands out %4 again: a running agent's row on the finished row's pane id.
 SG=aaaaaaaa-0000-4000-8000-0000000000f4
