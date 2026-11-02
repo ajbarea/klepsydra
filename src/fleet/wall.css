@@ -57,7 +57,7 @@
   --title: "Cinzel", "Trajan Pro", Georgia, serif;
   /* The comfortable card's header band (#62); model.js BAND holds the same numbers. */
   --band-h: 120px;
-  --fig-over: 60px; /* the figure's 56 px over the card's top edge, and a hairline */
+  --fig-over: 60px; /* the figure's 52 px over the card's top edge, and 8 px clear */
   --plate-bg: #141820;
   --plinth-bg: #0d1016;
   --band-line: #6f5a2c; /* the band's gilded rule */
@@ -348,20 +348,25 @@ button:focus-visible { outline: 2px solid var(--card-focus); outline-offset: 2px
    reply). The relay prompt, the other repos, the receipt and "updated" wait
    for Full text or the Ledger; the crew line stays for screen readers, as
    the ring's own title explains the arcs on hover. What a guardrail turned
-   down is an exception: its chip stays. */
+   down, and telemetry that was missed, are exceptions: their marks stay. */
 .card:not(.open-text) .said p.prompt,
 .card:not(.open-text) .also,
 .card:not(.open-text) .also-more,
 .ledger-line .receipt,
-.ledger-line .partial,
 .updated { display: none !important; }
-.ledger-line:not(:has(.chip:not([hidden]))) { display: none; }
+.ledger-line:not(:has(.chip:not([hidden]), .partial:not([hidden]))) { display: none; }
 .card:not(.open-text) .crew-line { position: absolute; top: 0; left: 0; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
-/* A done, not started, silent or ended card is a slim row: who, where and its actions. */
-.card:is(.tone-done, .dim) { align-self: start; }
-.card:is(.tone-done, .dim):not(.open-text) :is(.said, .ask) { display: none; }
+/* A done, not started, silent or ended card is a slim row: who, where, its
+   latest reply on one line (with its play button) and its actions. */
+.wall:not([data-density="compact"]) .card:is(.tone-done, .dim) { align-self: start; } /* Compact is already the slim form: its cards keep one height */
+.card:is(.tone-done, .dim):not(.open-text) .ask { display: none; }
+.card:is(.tone-done, .dim):not(.open-text) .said p.reply { -webkit-line-clamp: 1; }
 .wall:not([data-density="compact"]) .card:is(.tone-done, .dim) { --band-h: 72px; }
-.wall:not([data-density="compact"]) .card:is(.tone-done, .dim) header { --fig: 84px; --fig-left: 4px; --fade-from: 60px; --fade-to: 96px; padding-left: 104px; grid-template-areas: "name" "task"; }
+.wall:not([data-density="compact"]) .card:is(.tone-done, .dim) header { --fig: 84px; --fig-left: 4px; --fade-from: 60px; --fade-to: 96px; padding-left: 104px; grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "name pill" "task task"; column-gap: var(--space-3); }
+/* The slim band puts the name in the pill's row, so the pill joins the grid
+   there (a long name ellipsizes before it) at the corner it rides elsewhere. */
+.wall:not([data-density="compact"]) .card:is(.tone-done, .dim) .pill { position: static; grid-area: pill; align-self: center; margin-right: calc(var(--space-6) - var(--space-8)); }
+.wall:not([data-density="compact"]) .card.has-menu:is(.tone-done, .dim) .pill { margin-right: calc(var(--space-3) + 24px + var(--space-2) - var(--space-8)); }
 .wall:not([data-density="compact"]) .card:is(.tone-done, .dim) :is(.epithet, .marks) { display: none; }
 .wall:not([data-density="compact"]) .card:is(.tone-done, .dim) .stage { background: var(--grain); }
 
@@ -395,7 +400,7 @@ button.menu svg { width: 16px; height: 16px; fill: currentColor; }
    the pill rides the corner. Past the figure only --under-text of the light
    reaches the text, so it reads at 4.5:1 in every light (fleet-style test). */
 .card header {
-  --fig: 176px; /* breaks the frame: 56 px over the card's top edge, into the wall's taller row gap (#247) */
+  --fig: 172px; /* breaks the frame: 52 px over the card's top edge, 8 px clear of the row above (#247) */
   --fig-left: -6px;
   --fade-from: 115px;
   --fade-to: 155px;

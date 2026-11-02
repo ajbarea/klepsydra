@@ -509,8 +509,9 @@ Each card wears its character's colour: its edge, the line under its header,
 a wash behind the figure and its chips (#247). Status is the pill's. Only the
 exceptions are loud: a card that needs you takes an amber frame and a filled
 amber pill, and an error card a vermillion frame. A done, not-started, silent
-or ended card shrinks to a slim row (its name, where it worked and its
-buttons), and ended, silent and not-started ones are dimmer. The grid uses
+or ended card shrinks to a slim row (its name, where it worked, its latest
+reply on one line and its buttons), and ended, silent and not-started ones are
+dimmer. The grid uses
 columns at least 420 px wide: four at 1920 px, two at 1280, one at 800.
 
 While keryx plays a line, the speaking session's portrait shows it. keryx
@@ -793,7 +794,7 @@ session on a repo's voice also changes face when an edit takes it to another
 repo's.
 
 On a Comfortable card the character arrives in a header band. Their cut-out
-half-figure stands on the band's foot and breaks the card's frame, rising 56 px
+half-figure stands on the band's foot and breaks the card's frame, rising 52 px
 over its top edge into the wall's taller row gap, lit from behind in their
 colour: a glow and rays over a dark, grained stage, with a wash of their colour
 behind the figure and a rule in it under the band. Beside it
