@@ -29,7 +29,7 @@ NAMES = tuple(sorted(KOURAI + NEW))
 HEAD = (
     {name: (180, 20, 460, 300) for name in KOURAI}
     | {"hephaestus": (250, 20, 530, 300)}
-    | {"chronos": (330, 20, 970, 660), "argos": (200, 20, 700, 520), "hermes": (330, 30, 850, 550), "elpis": (300, 20, 780, 500), "hesychia": (250, 40, 810, 600)}
+    | {"chronos": (242, 20, 842, 620), "argos": (268, 20, 768, 520), "hermes": (266, 30, 786, 550), "elpis": (270, 20, 750, 500), "hesychia": (212, 20, 772, 580)}
 )
 SIZES = (96, 192)
 # (left, top, right, bottom) of the square half-figure: the head in the upper
@@ -48,7 +48,7 @@ SOURCE = (
 )
 LICENSE = "MIT (kourai-khryseai LICENSE, Copyright (c) 2026 AJ Barea)"
 NEW_SOURCE = (
-    "AJ Barea, generated from the briefs in docs/characters/portrait-briefs.md "
+    "AJ Barea, generated from the prompts in kourai-khryseai assets/avatars/originals/portrait-prompts.md "
     "(assets/portraits/{name}.jpg), head cropped and scaled to {size} px"
 )
 NEW_LICENSE = "MIT (Copyright (c) 2026 AJ Barea)"
@@ -57,12 +57,12 @@ FIGURE_SOURCE = (
     "half-figure cropped and scaled to {size} px"
 )
 NEW_FIGURE_SOURCE = (
-    "AJ Barea, generated from the briefs in docs/characters/portrait-briefs.md; cut out of its backdrop "
+    "AJ Barea, generated from the prompts in kourai-khryseai assets/avatars/originals/portrait-prompts.md; cut out of its backdrop "
     "by scripts/cutout-portraits.py (rembg isnet-anime, Apache-2.0) as assets/portraits/{name}-cutout.webp, "
     "scaled to {size} px"
 )
 FULL_SOURCE = "kourai-khryseai assets/avatars/vn/{name}_neutral.png (https://github.com/ajbarea/kourai-khryseai), whole, {size} px"
-NEW_FULL_SOURCE = "AJ Barea, generated from the briefs in docs/characters/portrait-briefs.md (assets/portraits/{name}.jpg), whole, {size} px"
+NEW_FULL_SOURCE = "AJ Barea, generated from the prompts in kourai-khryseai assets/avatars/originals/portrait-prompts.md (assets/portraits/{name}.jpg), whole, {size} px"
 
 
 def main(kourai: Path, faces: Path) -> None:

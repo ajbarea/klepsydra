@@ -14,10 +14,10 @@
     "af_kore": {"name": "Aidos", "face": "aidos", "accent": "#56B4E9", "gender": "f", "epithet": "Mirror of Honesty", "head": [0.44, 0.28, 0.17]},
     "af_sarah": {"name": "Metis", "face": "metis", "accent": "#C8B464", "gender": "f", "epithet": "Architect of Intent", "head": [0.27, 0.27, 0.14]},
     "af_nova": {"name": "Aletheia", "face": "aletheia", "accent": "#0072B2", "gender": "f", "epithet": "Witness to Truth", "head": [0.49, 0.25, 0.16]},
-    "bm_george": {"name": "Chronos", "face": "chronos", "accent": "#F0E442", "gender": "m", "epithet": "Keeper of the Hours", "head": [0.51, 0.31, 0.2]},
-    "am_fenrir": {"name": "Argos", "face": "argos", "accent": "#CC79A7", "gender": "m", "epithet": "The Hundred-Eyed Watch", "head": [0.5, 0.27, 0.2]},
-    "bm_fable": {"name": "Hermes", "face": "hermes", "accent": "#E07B39", "gender": "m", "epithet": "Herald of the Gods", "head": [0.49, 0.25, 0.2]},
-    "af_alloy": {"name": "Elpis", "face": "elpis", "accent": "#F1D2A1", "gender": "f", "epithet": "Hope That Stayed", "head": [0.45, 0.25, 0.19]},
+    "bm_george": {"name": "Chronos", "face": "chronos", "accent": "#F0E442", "gender": "m", "epithet": "Keeper of the Hours", "head": [0.53, 0.26, 0.2]},
+    "am_fenrir": {"name": "Argos", "face": "argos", "accent": "#CC79A7", "gender": "m", "epithet": "The Hundred-Eyed Watch", "head": [0.5, 0.21, 0.18]},
+    "bm_fable": {"name": "Hermes", "face": "hermes", "accent": "#E07B39", "gender": "m", "epithet": "Herald of the Gods", "head": [0.51, 0.25, 0.2]},
+    "af_alloy": {"name": "Elpis", "face": "elpis", "accent": "#F1D2A1", "gender": "f", "epithet": "Hope That Stayed", "head": [0.51, 0.21, 0.17]},
     "af_nicole": {"name": "Hesychia", "face": "hesychia", "accent": "#A9B8D0", "gender": "f", "epithet": "Keeper of Quiet", "head": [0.48, 0.25, 0.19]}
   }
 }
