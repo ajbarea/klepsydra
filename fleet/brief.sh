@@ -16,6 +16,13 @@ here=$(dirname "$(readlink -f "$0")")
 # shellcheck source=fleet/lib.sh
 . "$here/lib.sh"
 TAIL=$here/brief-tail.md
+# Every mode writes the tail: a missing or empty one (a checkout mid-switch, an
+# editor's rewrite) would strip every brief's rules, so nothing runs without it.
+if ! grep -q '^Resources: ' "$TAIL" 2>/dev/null; then
+  flog ERROR "brief refused: the shared rules file is missing, empty or has no Resources: line" tail="$TAIL"
+  err "no shared rules at $TAIL; nothing written"
+  exit 2
+fi
 # A brief's shared rules: from its "Resources:" line on.
 rules() { sed -n '/^Resources: /,$p' "$1"; }
 # Every line of the current tail and of each committed version of it (from
@@ -65,18 +72,25 @@ fi
 if [[ ${1:-} == --refresh ]]; then
   shift
   (( $# )) || set -- "$FLEET_STATE"/task-*.src
+  failed=0
   for f in "$@"; do
     [[ -e $f ]] || continue
     fresh "$f" && continue
     mkdir -p -- "$FLEET_STATE/archive/briefs"
     cp -- "$f" "$FLEET_STATE/archive/briefs/${f##*/}.$(date +%Y%m%d-%H%M%S)"
     tmp=$(mktemp "$f.XXXXXX")
-    current "$f" >"$tmp"
+    if ! current "$f" >"$tmp" || ! grep -q '^Resources: ' "$tmp"; then
+      rm -f -- "${tmp:?}"
+      flog ERROR "brief not refreshed: building it failed; the old one stays" path="$f"
+      err "could not refresh ${f##*/}; left as it was"
+      failed=1
+      continue
+    fi
     mv -f -- "$tmp" "$f"
     flog INFO "brief refreshed with the current shared rules" path="$f" lines="$(wc -l <"$f")"
     echo "refreshed: ${f##*/}"
   done
-  exit 0
+  exit "$failed"
 fi
 (( $# == 2 )) || { err "usage: brief.sh NAME BODY-FILE | brief.sh --check | brief.sh --refresh"; exit 2; }
 name=$1 body=$2
