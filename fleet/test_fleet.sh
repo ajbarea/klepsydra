@@ -571,6 +571,16 @@ check "#275: an empty tail: --refresh refuses (2) and the brief is left as it wa
 rm -f -- "$hist/fleet/brief-tail.md"
 check "#275: a missing tail: --refresh, --check and a new brief all refuse" \
   "$(for a in --refresh --check; do bash "$hist/fleet/brief.sh" "$a" "$FLEET_STATE/task-hist.src" >/dev/null 2>&1; printf '%s ' $?; done; bash "$hist/fleet/brief.sh" demo2 "$work/body" >/dev/null 2>&1; echo $?) $(cmp -s "$work/hist.stale" "$FLEET_STATE/task-hist.src" && echo same) $([[ -e $FLEET_STATE/task-demo2.src ]] && echo written)" "2 2 2 same "
+# #275 review: an unreadable brief is never rebuilt as the tail alone.
+git -C "$hist" checkout -q -- fleet/brief-tail.md
+cp "$work/hist.stale" "$FLEET_STATE/task-hist.src"; chmod 000 "$FLEET_STATE/task-hist.src"
+if [[ -r $FLEET_STATE/task-hist.src ]]; then
+  check "#275: an unreadable brief (skipped: running as root)" "skip" "skip"
+else
+  check "#275: an unreadable brief is left as it was and the refresh exits 1" \
+    "$(bash "$hist/fleet/brief.sh" --refresh "$FLEET_STATE/task-hist.src" >/dev/null 2>&1; echo $?) $(chmod 600 "$FLEET_STATE/task-hist.src"; cmp -s "$work/hist.stale" "$FLEET_STATE/task-hist.src" && echo same)" "1 same"
+fi
+chmod 600 "$FLEET_STATE/task-hist.src"
 rm -rf -- "${hist:?}" "${FLEET_STATE:?}/task-hist.src"
 check "the tail carries the friction-log rule (AJ 11-01)" "$(grep -c '^Friction log (AJ 11-01, every agent): read ~/.local/state/fleet-orchestrator/friction.md' "$here/brief-tail.md")" "1"
 check "the tail says performance wins over security above the floor (AJ 11-01)" "$(grep -c '^Quality (AJ 11-01): when performance and security trade off, performance wins, above the security floor.$' "$here/brief-tail.md")" "1"

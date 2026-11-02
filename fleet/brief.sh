@@ -75,10 +75,22 @@ if [[ ${1:-} == --refresh ]]; then
   failed=0
   for f in "$@"; do
     [[ -e $f ]] || continue
+    # An unreadable brief would rebuild as the tail alone: its body is lost.
+    if [[ ! -r $f ]]; then
+      flog ERROR "brief not refreshed: it cannot be read; the old one stays" path="$f"
+      err "cannot read ${f##*/}; left as it was"
+      failed=1
+      continue
+    fi
     fresh "$f" && continue
-    mkdir -p -- "$FLEET_STATE/archive/briefs"
-    cp -- "$f" "$FLEET_STATE/archive/briefs/${f##*/}.$(date +%Y%m%d-%H%M%S)"
-    tmp=$(mktemp "$f.XXXXXX")
+    # No archive copy, no rewrite; nor without a temp file beside it.
+    if ! mkdir -p -- "$FLEET_STATE/archive/briefs" || ! cp -- "$f" "$FLEET_STATE/archive/briefs/${f##*/}.$(date +%Y%m%d-%H%M%S)" ||
+      ! tmp=$(mktemp "$f.XXXXXX"); then
+      flog ERROR "brief not refreshed: its archive copy or temp file could not be written; the old one stays" path="$f"
+      err "could not archive ${f##*/}; left as it was"
+      failed=1
+      continue
+    fi
     if ! current "$f" >"$tmp" || ! grep -q '^Resources: ' "$tmp"; then
       rm -f -- "${tmp:?}"
       flog ERROR "brief not refreshed: building it failed; the old one stays" path="$f"
