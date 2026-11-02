@@ -175,7 +175,13 @@ fresh() { # PANE NAME BRIEF [WHY] [ACCOUNT] [NOTE] [STAMP]
     t send-keys -t "$p" C-c
     wait_for "$p" 5 idle_empty || true
   fi
-  retire "$p" || flog WARN "the old pane is left running beside its fresh session" pane="$p" new_pane="$new" name="$name"
+  local viewed=0
+  in_view "$p" && viewed=1
+  if retire "$p"; then
+    (( viewed )) && t select-window -t "$new" 2>/dev/null
+  else
+    flog WARN "the old pane is left running beside its fresh session" pane="$p" new_pane="$new" name="$name"
+  fi
   printf '%s' "$new"
 }
 
@@ -323,6 +329,8 @@ heph_move() { # PANE TO WHY [NOTE] [STAMP]
   fi
   # Two Hephs never run: the old one goes first, or the new one does (a pane
   # that exited just as retire gave up has gone all the same).
+  local viewed=0
+  in_view "$p" && viewed=1
   if ! retire "$p" && fleet_panes | grep -qx -- "$p"; then
     flog ERROR "the old orchestrator pane would not exit; it stays and its successor goes" pane="$p" new_pane="$new"
     drop "$new"
@@ -331,8 +339,9 @@ heph_move() { # PANE TO WHY [NOTE] [STAMP]
   printf '%s\n' "$new" >"$FLEET_STATE/orchestrator.pane"
   [[ -n $nsid ]] && printf '%s\n' "$nsid" >"$FLEET_STATE/orchestrator.session"
   printf '%s\n' "$to" >"$FLEET_STATE/orchestrator.config"
-  # He opened behind (#216); with the old pane gone, AJ's typing goes to him.
-  t select-window -t "$new" 2>/dev/null || true
+  # He opened behind (#216); with the old pane gone, he comes forward if AJ
+  # was looking at the old one.
+  (( viewed )) && t select-window -t "$new" 2>/dev/null
   printf '%s' "$new"
 }
 

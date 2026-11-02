@@ -332,6 +332,10 @@ orchestrator() { cat "$FLEET_STATE/orchestrator.pane" 2>/dev/null; }
 # shellcheck disable=SC2034 # read by recover.sh and resume-at-reset.sh
 HEPH=${FLEET_HEPH:-$FLEET_STATE/HEPH.md}
 fleet_panes() { t list-panes -s -t "$FLEET_SESSION" -F '#{pane_id}' 2>/dev/null; }
+# Whether PANE's window is the one its tmux session shows (#216). A pane's
+# successor opens behind and comes forward only in place of a window AJ was
+# looking at, so a replacement never moves him off the agent he is watching.
+in_view() { [[ $(t display-message -p -t "$1" '#{window_active}' 2>/dev/null) == 1 ]]; }
 
 # The live session id klepsydra's fleet file shows in pane PANE, or nothing.
 # Two live files naming one pane (a killed pane never writes "ended", and

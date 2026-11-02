@@ -955,6 +955,36 @@ LAUNCH="$work/launch-hfwd.sh" FLEET_HEPH="$work/HEPH.md" FLEET_NOW=$noon bash "$
 nh=$(cat "$FLEET_STATE/orchestrator.pane")
 check "#216: after the move the new Heph is the window in view" "$(events hfwd) $(t display -p -t fleet: '#{pane_id}')" "SUBMIT /exit $nh"
 t kill-window -t "$nh" 2>/dev/null; t kill-window -t "$h" 2>/dev/null
+# AJ watching a worker while Heph moves stays on the worker.
+: >"$work/moved"; rm -f "$FLEET_STATE/orchestrator.config" "$FLEET_STATE/orchestrator.session" "$FLEET_STATE/resume-state"
+h=$(pane hfwd "{\"above\":[\"⏺ ok\",\"$LIMIT\"]}"); wv=$(pane watched '{"above":["idle"]}'); settle
+printf '%s\n' "$h" >"$FLEET_STATE/orchestrator.pane"
+t select-window -t "$wv"
+LAUNCH="$work/launch-hfwd.sh" FLEET_HEPH="$work/HEPH.md" FLEET_NOW=$noon bash "$here/resume-at-reset.sh" --once 2>/dev/null
+nh=$(cat "$FLEET_STATE/orchestrator.pane")
+check "#229 review: a move while AJ watches another window leaves him there" "$(events hfwd) $([[ $nh != "$h" ]] && echo moved) $(t display -p -t fleet: '#{pane_id}')" "SUBMIT /exit moved $wv"
+t kill-window -t "$nh" 2>/dev/null; t kill-window -t "$h" 2>/dev/null; t kill-window -t "$wv" 2>/dev/null
+# A worker replaced at a limit: its successor takes its place in view only if it was in view.
+cat >"$work/launch-wfwd.sh" <<EOF
+#!/usr/bin/env bash
+np=\$(tmux -L "$FLEET_SOCK" new-window -d -P -F '#{pane_id}' -t fleet: 'sleep 600')
+echo "\$np" >"$work/wfwd.new"
+echo "pane=\$np session=x account=\$FLEET_ACCOUNT avail=1MiB brief=started"
+EOF
+chmod +x "$work/launch-wfwd.sh"
+for view in self other; do
+  : >"$FLEET_LOG"; rm -f "$FLEET_STATE/resume-state"
+  p=$(pane wfwd "{\"above\":[\"⏺ Done. done 11:50 AM\",\"$LIMIT\"]}"); wv=$(pane wother '{"above":["idle"]}'); settle
+  live "$p"
+  printf '%s\twfwd\t%s\t%s\t/w\t%s\n' "$p" "$work/brief.src" "$SID" "$work/cfg-a" >"$REGISTRY"
+  if [[ $view == self ]]; then t select-window -t "$p"; else t select-window -t "$wv"; fi
+  LAUNCH="$work/launch-wfwd.sh" FLEET_NOW=$noon bash "$here/resume-at-reset.sh" --once 2>/dev/null
+  np=$(cat "$work/wfwd.new" 2>/dev/null)
+  want=$np; [[ $view == other ]] && want=$wv
+  check "#229 review: a worker moved while $([[ $view == self ]] && echo "AJ watched it: its successor is in view" || echo "AJ watched another: he stays there")" \
+    "$(events wfwd) $(t display -p -t fleet: '#{pane_id}')" "SUBMIT /exit $want"
+  t kill-window -t "$np" 2>/dev/null; t kill-window -t "$p" 2>/dev/null; t kill-window -t "$wv" 2>/dev/null; : >"$REGISTRY"
+done
 
 # A background task's notification starts a turn during his launch; at the
 # limit it fails at once, so he still moves.
@@ -1548,6 +1578,31 @@ LAUNCH="$work/launch-rel.sh" bash "$here/relaunch-fresh.sh" "$p" rel "$work/brie
 check "review 3: a relaunch whose brief never started keeps the old pane, points the row back and exits the new one" \
   "$rc $(cut -f1,4,6 "$REGISTRY") $(grep -c 'SUBMIT /exit' "$work/relnew.log") $(grep -c '^SUBMIT' "$work/relold.log")" "1 $p	$SID	$work/cfg-a 1 0"
 t kill-window -t "$p"; : >"$REGISTRY"
+# #229 review: a relaunch whose old pane AJ was watching puts the new one in view.
+p=$(pane relview '{"above":["idle"],"exit_on_exit":true}'); settle
+live "$p"
+printf '%s\trelv\t%s\t%s\t/w\t%s\n' "$p" "$work/brief.src" "$SID" "$work/cfg-a" >"$REGISTRY"
+cat >"$work/launch-relv.sh" <<EOF
+#!/usr/bin/env bash
+new=\$(tmux -L "$FLEET_SOCK" new-window -d -P -F '#{pane_id}' -t fleet: 'sleep 600')
+echo "\$new" >"$work/relv.new"
+echo "pane=\$new session=x account=$work/cfg-a avail=1MiB brief=started"
+EOF
+t select-window -t "$p"
+LAUNCH="$work/launch-relv.sh" bash "$here/relaunch-fresh.sh" "$p" relv "$work/brief.src" "hint" >/dev/null 2>&1
+check "#229 review: a relaunch of the window AJ watched leaves its successor in view" \
+  "$(fleet_panes | grep -cx -- "$p") $(t display -p -t fleet: '#{pane_id}')" "0 $(cat "$work/relv.new")"
+t kill-window -t "$(cat "$work/relv.new")" 2>/dev/null; rm -f -- "${KLEPSYDRA_DIR:?}/fleet/$SID.json"; : >"$REGISTRY"
+# ...and one while AJ watched another window leaves him there.
+p=$(pane relview2 '{"above":["idle"],"exit_on_exit":true}'); settle
+live "$p"
+printf '%s\trelv\t%s\t%s\t/w\t%s\n' "$p" "$work/brief.src" "$SID" "$work/cfg-a" >"$REGISTRY"
+other=$(t new-window -P -F '#{pane_id}' -t fleet: 'sleep 600')
+LAUNCH="$work/launch-relv.sh" bash "$here/relaunch-fresh.sh" "$p" relv "$work/brief.src" "hint" >/dev/null 2>&1
+check "#229 review: a relaunch while AJ watched another window leaves him there" \
+  "$(fleet_panes | grep -cx -- "$p") $(fleet_panes | grep -cx -- "$(cat "$work/relv.new")") $(t display -p -t fleet: '#{pane_id}')" "0 1 $other"
+t kill-window -t "$(cat "$work/relv.new")" 2>/dev/null; t kill-window -t "$other" 2>/dev/null
+rm -f -- "${KLEPSYDRA_DIR:?}/fleet/$SID.json"; : >"$REGISTRY"
 
 echo "CI reds typed into the agent on the branch (#180)"
 : >"$FLEET_LOG"; mkdir -p "$FLEET_STATE/inbox/cia"

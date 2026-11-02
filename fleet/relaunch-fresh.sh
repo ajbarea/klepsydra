@@ -37,10 +37,14 @@ if [[ $got != started ]]; then
   with_registry set_pane "$new" "$p" "$sid" "$cfg"
   exit 1
 fi
+viewed=0
+in_view "$p" && viewed=1
 if pane_runs "$p" "$sid" && idle_empty "$(screen "$p")" && type_exactly "$p" "/exit"; then
   t send-keys -t "$p" Enter
   for _ in $(seq 30); do fleet_panes | grep -qx "$p" || break; sleep 1; done
   fleet_panes | grep -qx "$p" && t kill-pane -t "$p" 2>/dev/null
+  # The new one opened behind (#216): it takes the old one's place in view.
+  (( viewed )) && t select-window -t "$new" 2>/dev/null
 else
   flog ERROR "relaunch: the old pane changed while the new one started; both are left running" old_pane="$p" new_pane="$new" name="$name"
 fi
