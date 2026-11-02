@@ -90,13 +90,17 @@ for p in $orch $panes; do
   busy "$s" && continue
   if l=$(limit_line "$s"); then
     lnow=${FLEET_NOW:-$now} # tests set the clock
-    r=$(reset_epoch "$l" "$lnow") || continue
+    # A time-only reset is at most a 5-hour window ahead, so today's is
+    # tomorrow's only when it is more than 19 h past.
+    r=$(reset_epoch "$l" "$lnow" 68400) || continue
     if (( lnow - r > ${FLEET_OVERDUE_S:-600} )); then
       overdue+="$p " resets+="$p:$(date -d "@$r" '+%H:%M') "
     fi
   else
+    # Only what came after the last prompt sent: an answered limit is past.
     split_screen "$s"
-    { near 6; printf '%s\n' "$BELOW"; } | grep -iE 'limit' | grep -qE 'resets [A-Za-z0-9]' && unknown+="$p "
+    { near 6 | awk '/^❯ / { b = ""; next } { b = b $0 "\n" } END { printf "%s", b }'; printf '%s\n' "$BELOW"; } |
+      grep -iE 'limit' | grep -qE 'resets [A-Za-z0-9]' && unknown+="$p "
   fi
 done
 if [[ -n $overdue ]]; then

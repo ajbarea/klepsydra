@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
-# install.sh [--dry-run] [--hooks]: install the fleet from this checkout (with
+# install.sh [--dry-run] [--hooks] [--no-cutover]: install the fleet from this checkout (with
 # --hooks, only the copies in ~/.claude, which the gauge alone needs). Each script is
 # linked into the state folder (so a pull updates the fleet), the `fleet`
 # command into ~/.local/bin, the hooks, status line, launcher and cast copied
 # into ~/.claude (FLEET_HOOK_DIR), and the fleet's services into
 # ~/.config/systemd/user as enabled user units, which come back after a
 # restart. A copy a link replaces is kept in archive/fleet-scripts-<date>/.
-# Starts nothing: `fleet cutover` swaps the running services onto the units.
+# When the resume service is running, ends with `fleet cutover`, so the
+# services run the new scripts (--no-cutover leaves that to you).
 set -u
 FLEET_TARGET=fleet::install
 here=$(dirname "$(readlink -f "$0")")
