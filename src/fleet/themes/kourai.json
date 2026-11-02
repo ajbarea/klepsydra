@@ -4,7 +4,7 @@
   "faces": "kourai",
   "keeper": "af_nicole",
   "characters": {
-    "af_heart": {"name": "Cupid", "face": "cupid", "accent": "#D55E00", "gender": "f", "epithet": "Arrow of the Heart", "head": [0.5, 0.31, 0.15]},
+    "af_heart": {"name": "Cupid", "face": "cupid", "accent": "#D55E00", "gender": "f", "epithet": "Arrow of the Heart", "head": [0.5, 0.22, 0.11]},
     "am_michael": {"name": "Hephaestus", "face": "hephaestus", "accent": "#DA8C20", "gender": "m", "epithet": "Master of the Forge", "head": [0.5, 0.21, 0.15]},
     "bf_emma": {"name": "Techne", "face": "techne", "accent": "#FFC832", "gender": "f", "epithet": "Artisan of Code", "head": [0.5, 0.23, 0.15]},
     "af_bella": {"name": "Kallos", "face": "kallos", "accent": "#FFDCA0", "gender": "f", "epithet": "Eye of Elegance", "head": [0.48, 0.29, 0.16]},

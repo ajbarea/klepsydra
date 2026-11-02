@@ -306,7 +306,7 @@ test("the wall, the strip and the drawer read the theme now worn, not a fixed ca
   assert.match(drawer, /repaint: \(\) => paint\(\),/);
   assert.match(read("src/fleet/queuepanel.js"), /const name = keeperName\(keptBy, keptVoice, cast\(\)\);/);
   assert.match(wall, /if \(said\.length\) announce\(said\.join\("\. "\)\);\n    refillPortrait\(\);/, "and so does a snapshot, the phone's theme with it");
-  assert.match(read("src/fleet/wall.css"), /\.served \.theme-pick,/, "no picker on the phone");
+  assert.match(read("src/fleet/wall.css"), /\.served \.gear,/, "no picker on the phone");
 });
 
 test("each profession's glyph carries its own licence: Feather's MIT where Lucide's LICENSE says it derives from Feather", () => {

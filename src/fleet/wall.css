@@ -57,6 +57,7 @@
   --title: "Cinzel", "Trajan Pro", Georgia, serif;
   /* The comfortable card's header band (#62); model.js BAND holds the same numbers. */
   --band-h: 120px;
+  --fig-over: 60px; /* the figure's 56 px over the card's top edge, and a hairline */
   --plate-bg: #141820;
   --plinth-bg: #0d1016;
   --band-line: #6f5a2c; /* the band's gilded rule */
@@ -111,18 +112,13 @@ html, body { background: var(--wall-bg); color: var(--text); font: 14px/1.45 var
 .bar { display: flex; align-items: center; gap: 28px; padding: 20px var(--wall-pad) 8px; }
 /* At the window's narrowest (420 px) the density choice and + New session take a line of their own. */
 @media (max-width: 480px) { .bar { flex-wrap: wrap; } }
-/* The tally, and the ring key beside it, or on a quieter line under it when the bar is narrow. */
+/* The tally and what needs a look: CI or Fleet when not ok, a wrap-up in progress. */
 .lead { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 20px; margin-right: auto; min-width: 0; }
-/* Split, Ledger, Queue and Wrap up… sit closer to each other than to the key, so the half-screen bar keeps them on one line. */
+/* The bar's right: the panels, + New session and the view settings behind one gear (#248). */
+.bar-right { order: 2; display: flex; align-items: center; gap: var(--space-5); }
+/* Split, Ledger, Queue and Wrap up… sit close together, so the half-screen bar keeps them on one line. */
 .tools { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; }
 .tally { display: flex; flex-wrap: wrap; gap: 8px 22px; align-items: baseline; color: var(--text-dim); }
-.ring-key { display: flex; gap: 16px; align-items: center; color: var(--text-dim); font-size: 12.5px; }
-.ring-key .key { display: inline-flex; align-items: center; gap: 6px; }
-.ring-key svg { width: 32px; height: 18px; overflow: visible; } /* 1:1, so the widths are the real ring's px */
-/* The real ring's comfortable widths (model.js RINGS), in the neutral text colour: a ring's colour is its character's. */
-.ring-key path { fill: none; stroke: var(--text-dim); stroke-linecap: butt; }
-.ring-key path.agent { stroke-width: 7px; }
-.ring-key path.shell { stroke-width: 3px; }
 .tally b { font: 600 28px/1 var(--display); font-variant-numeric: tabular-nums; margin-right: 2px; color: var(--text-faint); }
 .tally .t-needs b { color: var(--tone-needs); }
 .tally .t-working b { color: var(--tone-working); }
@@ -130,7 +126,6 @@ html, body { background: var(--wall-bg); color: var(--text); font: 14px/1.45 var
 .tally .t-error b { color: var(--tone-error); }
 #new-note { order: 1; color: var(--text-dim); font-size: 12.5px; }
 #new-note:empty { display: none; }
-#new-session { order: 3; }
 /* Split with terminal: a toggle on the ring key's line, sized as Ledger so a
    half-screen bar grows no taller. Pressed fills its box as well as
    brightening, so the state is not colour alone. */
@@ -158,7 +153,37 @@ html, body { background: var(--wall-bg); color: var(--text); font: 14px/1.45 var
 /* The view: density, with the Characters picker set above it in the bar's
    top padding, so the picker takes no room in the bar's row: the bar never
    wraps or grows for it. */
-.view { order: 2; position: relative; display: flex; }
+.gear { position: relative; }
+.gear summary {
+  list-style: none;
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.gear summary::-webkit-details-marker { display: none; }
+.gear summary:hover, .gear[open] summary { background: var(--button-bg); color: var(--text); }
+.gear summary:focus-visible { outline: 2px solid var(--card-focus); outline-offset: 2px; }
+.gear svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.6; }
+/* The menu: density, then the Characters picker. */
+.view {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 6px);
+  right: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--space-4);
+  padding: var(--space-5);
+  background: var(--card-bg);
+  border: 1px solid var(--card-line);
+  border-radius: 10px;
+  box-shadow: 0 12px 32px -12px rgb(0 0 0 / 0.7);
+}
 /* Density: a quiet segmented control. */
 .density { display: inline-flex; gap: 2px; padding: 1px; border: 1px solid var(--card-line); border-radius: 8px; }
 .density label {
@@ -175,26 +200,21 @@ html, body { background: var(--wall-bg); color: var(--text); font: 14px/1.45 var
 .density label:has(input:checked) { background: var(--button-bg); color: var(--text); }
 .density label:has(input:focus-visible) { outline: 2px solid var(--card-focus); outline-offset: 2px; }
 .density input { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
-/* Characters: a quiet line over the density choice's right end, 16 px tall
-   and 12 px clear of every other control: the spacing exception to the
-   24 px target size (WCAG 2.2, 2.5.8). */
+/* Characters: a 28 px select, over the 24 px target size (WCAG 2.2, 2.5.8). */
 .theme-pick {
-  position: absolute;
-  right: 0;
-  bottom: calc(100% + 4.5px); /* inside the bar's 20 px top padding */
   display: inline-flex;
   align-items: center;
-  gap: var(--space-2);
+  gap: var(--space-3);
   color: var(--text-dim);
-  font: 600 11.5px/1 var(--font);
+  font: 600 12.5px/1 var(--font);
   white-space: nowrap;
 }
 .theme-pick select {
-  height: 16px;
-  padding: 0 2px;
-  border: 0;
-  border-radius: 4px;
-  background: var(--wall-bg); /* the bar's own: never transparent, see below */
+  height: 28px;
+  padding: 0 var(--space-3);
+  border: 1px solid var(--card-line);
+  border-radius: 6px;
+  background: var(--card-bg); /* the menu's own: never transparent, see below */
   color: var(--text);
   color-scheme: dark;
   font: inherit;
@@ -241,6 +261,8 @@ button:focus-visible { outline: 2px solid var(--card-focus); outline-offset: 2px
   gap: var(--card-gap);
   padding: var(--card-gap) var(--wall-pad) var(--wall-pad);
 }
+/* Comfortable rows leave room for the figures that break the frame (#247). */
+.wall:not([data-density="compact"]) { row-gap: var(--fig-over); padding-top: var(--fig-over); }
 
 /* Focused only when a portrait's card has gone (wall.js); the wall itself is no control. */
 .wall:focus { outline: none; }
@@ -269,6 +291,7 @@ button:focus-visible { outline: 2px solid var(--card-focus); outline-offset: 2px
 .card {
   --tone: var(--tone-quiet);
   --light: var(--accent, var(--band-gold));
+  --edge: var(--accent, var(--card-line)); /* the character's colour; an exception's takes over (#247) */
   --badge-ring: var(--card-bg);
   position: relative;
   isolation: isolate; /* the waves sit behind the card's text, above its fill */
@@ -279,29 +302,35 @@ button:focus-visible { outline: 2px solid var(--card-focus); outline-offset: 2px
   padding: var(--card-pad);
   border-radius: 14px;
   background: var(--card-bg);
-  border: 1px solid var(--card-line);
+  border: 1px solid color-mix(in oklab, var(--edge) 55%, var(--card-line));
   outline: 2px solid transparent;
   outline-offset: 2px;
 }
 .card:focus { outline-color: var(--card-focus); }
-/* Live state rides on the card's edge; quiet states step back. */
+.card:hover { box-shadow: 0 0 0 1px color-mix(in oklab, var(--edge) 45%, transparent), 0 10px 30px -16px color-mix(in oklab, var(--edge) 70%, transparent); }
+/* The card's edge wears its character (#247); status is the pill's. Quiet states step back. */
 /* A card-shaped box below the band whose left border curves with the card's corner. */
 .card::before {
   content: "";
   position: absolute;
   inset: var(--band-h) -1px -1px -1px;
-  border-left: 3px solid var(--tone);
+  border-left: 3px solid var(--edge);
   border-radius: 0 0 13px 13px;
   pointer-events: none;
 }
 .card.tone-needs {
   --tone: var(--tone-needs);
   --light: var(--tone-needs);
-  border-color: color-mix(in oklab, var(--tone-needs) 45%, var(--card-line));
-  box-shadow: 0 0 0 1px color-mix(in oklab, var(--tone-needs) 25%, transparent),
-    0 8px 28px -12px color-mix(in oklab, var(--tone-needs) 55%, transparent);
+  --edge: var(--tone-needs);
+  border: 2px solid var(--tone-needs); /* the one loud thing on the wall (#248) */
+  box-shadow: 0 0 0 4px color-mix(in oklab, var(--tone-needs) 22%, transparent),
+    0 14px 36px -12px color-mix(in oklab, var(--tone-needs) 60%, transparent);
 }
-.card.tone-error { --tone: var(--tone-error); }
+.card.tone-needs .pill { background: var(--tone-needs); color: var(--needs-ink); }
+.card.tone-needs .pill :is(.age, .when) { color: var(--needs-ink); }
+.card.tone-needs .pill .badge { --badge-ring: var(--tone-needs); }
+/* An error is the other exception: its frame turns the error tone. */
+.card.tone-error { --tone: var(--tone-error); --edge: var(--tone-error); border: 2px solid var(--tone-error); }
 .card.tone-working { --tone: var(--tone-working); }
 .card.tone-done { --tone: var(--tone-done); }
 .card.dim {
@@ -314,6 +343,27 @@ button:focus-visible { outline: 2px solid var(--card-focus); outline-offset: 2px
 .card.dim .figure { filter: grayscale(0.85) brightness(0.8); }
 .card.dim .name, .card.dim .where, .card.dim .reply { color: var(--text-dim); }
 .card.dim .prompt, .card.dim .repo .wt, .card.dim .branch, .card.dim .acct { color: var(--text-quiet); }
+
+/* At a glance (#248): one line says what the card is doing (its latest
+   reply). The relay prompt, the other repos, the receipt and "updated" wait
+   for Full text or the Ledger; the crew line stays for screen readers, as
+   the ring's own title explains the arcs on hover. What a guardrail turned
+   down is an exception: its chip stays. */
+.card:not(.open-text) .said p.prompt,
+.card:not(.open-text) .also,
+.card:not(.open-text) .also-more,
+.ledger-line .receipt,
+.ledger-line .partial,
+.updated { display: none !important; }
+.ledger-line:not(:has(.chip:not([hidden]))) { display: none; }
+.card:not(.open-text) .crew-line { position: absolute; top: 0; left: 0; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+/* A done, not started, silent or ended card is a slim row: who, where and its actions. */
+.card:is(.tone-done, .dim) { align-self: start; }
+.card:is(.tone-done, .dim):not(.open-text) :is(.said, .ask) { display: none; }
+.wall:not([data-density="compact"]) .card:is(.tone-done, .dim) { --band-h: 72px; }
+.wall:not([data-density="compact"]) .card:is(.tone-done, .dim) header { --fig: 84px; --fig-left: 4px; --fade-from: 60px; --fade-to: 96px; padding-left: 104px; grid-template-areas: "name" "task"; }
+.wall:not([data-density="compact"]) .card:is(.tone-done, .dim) :is(.epithet, .marks) { display: none; }
+.wall:not([data-density="compact"]) .card:is(.tone-done, .dim) .stage { background: var(--grain); }
 
 /* The actions menu button: three dots in the band's top right corner, a 24 px
    target on the pill's row, so it adds no height. The pill steps left of it. */
@@ -345,10 +395,10 @@ button.menu svg { width: 16px; height: 16px; fill: currentColor; }
    the pill rides the corner. Past the figure only --under-text of the light
    reaches the text, so it reads at 4.5:1 in every light (fleet-style test). */
 .card header {
-  --fig: 130px; /* 10 px over the card's top edge, clear of the 16 px gap above it */
-  --fig-left: 4px;
-  --fade-from: 93px;
-  --fade-to: 133px;
+  --fig: 176px; /* breaks the frame: 56 px over the card's top edge, into the wall's taller row gap (#247) */
+  --fig-left: -6px;
+  --fade-from: 115px;
+  --fade-to: 155px;
   position: relative;
   isolation: isolate;
   display: grid;
@@ -358,10 +408,14 @@ button.menu svg { width: 16px; height: 16px; fill: currentColor; }
   row-gap: var(--space-1);
   height: var(--band-h);
   margin: 0 calc(-1 * var(--space-8));
-  padding: 0 var(--space-8) var(--space-4) 154px; /* clear of the widest plinth */
+  padding: 0 var(--space-8) var(--space-4) 176px; /* clear of the figure and the widest plinth */
   border-radius: 13px 13px 0 0;
-  border-bottom: 1px solid var(--band-line);
-  background: var(--plate-bg);
+  border-bottom: 2px solid var(--accent, var(--band-line));
+  /* A wash of the character's colour, strong behind the figure and 6% from
+     150 px on, so the task keeps 4.5:1 (fleet-accent.test.js). */
+  background:
+    linear-gradient(90deg, color-mix(in oklab, var(--accent, var(--band-gold)) 24%, transparent), color-mix(in oklab, var(--accent, var(--band-gold)) 6%, transparent) 150px, color-mix(in oklab, var(--accent, var(--band-gold)) 3%, transparent)),
+    var(--plate-bg);
 }
 .stage {
   position: absolute;
@@ -369,8 +423,8 @@ button.menu svg { width: 16px; height: 16px; fill: currentColor; }
   inset: 0;
   border-radius: inherit;
   background:
-    radial-gradient(closest-side, color-mix(in oklab, var(--light) var(--glow-alpha), transparent), transparent) -34px 0 / 228px 194px no-repeat,
-    repeating-conic-gradient(from 180deg at 69px 120%, color-mix(in oklab, var(--light) var(--rays-alpha), transparent) 0deg 3deg, transparent 3deg 10deg),
+    radial-gradient(closest-side, color-mix(in oklab, var(--light) var(--glow-alpha), transparent), transparent) -30px 0 / 260px 200px no-repeat,
+    repeating-conic-gradient(from 180deg at 82px 120%, color-mix(in oklab, var(--light) var(--rays-alpha), transparent) 0deg 3deg, transparent 3deg 10deg),
     var(--grain);
   -webkit-mask-image: linear-gradient(90deg, #000 var(--fade-from), rgb(0 0 0 / var(--under-text)) var(--fade-to));
   mask-image: linear-gradient(90deg, #000 var(--fade-from), rgb(0 0 0 / var(--under-text)) var(--fade-to));
@@ -394,10 +448,8 @@ button.menu svg { width: 16px; height: 16px; fill: currentColor; }
   height: var(--fig);
 }
 .figure { display: block; width: 100%; height: 100%; object-fit: contain; }
-/* The art's own top edge fades rather than cutting off where it breaks the card's edge. */
+/* The figure breaks the card's edge whole: the art's own top edge is the cut-out's. */
 .has-figure .figure {
-  -webkit-mask-image: linear-gradient(transparent, #000 3px);
-  mask-image: linear-gradient(transparent, #000 3px);
   filter: drop-shadow(0 0 1px color-mix(in oklab, var(--light) 70%, transparent)) drop-shadow(0 6px 14px rgb(0 0 0 / 0.55));
 }
 .card:not(.has-figure) .figure { display: none; }
@@ -542,7 +594,7 @@ a.branch[href]:hover, a.branch[href]:focus-visible { color: var(--text); }
   color: var(--text-dim);
   font-size: 12.5px;
   padding: 2px 8px;
-  border: 1px solid var(--card-line);
+  border: 1px solid color-mix(in oklab, var(--accent, var(--card-line)) 50%, var(--card-line));
   border-radius: 6px;
 }
 .branch svg, .acct svg { width: 12px; height: 12px; flex: none; }
@@ -658,7 +710,7 @@ a.branch[href]:hover, a.branch[href]:focus-visible { color: var(--text); }
 }
 .chip::after { content: ""; position: absolute; inset: -4px 0; }
 
-.actions { display: flex; align-items: center; gap: 8px; border-top: 1px solid var(--card-line); padding-top: var(--space-3); }
+.actions { display: flex; align-items: center; gap: 8px; border-top: 1px solid color-mix(in oklab, var(--accent, var(--card-line)) 30%, var(--card-line)); padding-top: var(--space-3); }
 /* 28 px tall, over the 24x24 minimum (WCAG 2.2, 2.5.8); compact sets its own. */
 .actions .jump, .actions .clear, .actions .undo { min-height: 28px; padding: 0 var(--space-5); }
 .actions .note { color: var(--text-dim); font-size: 12.5px; margin-right: auto; overflow-wrap: anywhere; }
@@ -1071,8 +1123,7 @@ body:is(.queue-tabbed, .ledger-tabbed) .wall { padding-right: max(var(--wall-pad
    or any added later) can be reached from a phone. A card with a Remote
    Control link opens it. */
 .served button:not([data-phone]),
-.served .density,
-.served .theme-pick,
+.served .gear,
 .served .tools { display: none !important; }
 a.remote {
   display: inline-flex;
@@ -1180,7 +1231,6 @@ a.remote:focus-visible { outline: 2px solid var(--card-focus); outline-offset: 2
   .served .lead { gap: var(--space-2) var(--space-7); }
   .served .tally { gap: var(--space-1) var(--space-6); }
   .served .tally b { font-size: 22px; }
-  .served .ring-key { display: none; }
   .served .wall { padding-bottom: calc(var(--wall-pad) + env(safe-area-inset-bottom)); }
   .served a.remote { min-height: 44px; min-width: 44px; }
   .served .card .look { min-width: 44px; min-height: 44px; }

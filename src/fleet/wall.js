@@ -1,6 +1,6 @@
 // The card wall: a card per Claude Code session, in the reader's order, with
 // a way back to its terminal.
-import { RINGS, accountsDiffer, branchPage, announcements, card, castPicks, identity, needsFirst, shouldSlide, showsRingKey, startedNeeding, transitionName, statuses, tally } from "./model.js";
+import { RINGS, accountsDiffer, branchPage, announcements, card, castPicks, identity, needsFirst, shouldSlide, startedNeeding, transitionName, statuses, tally } from "./model.js";
 import { announcer, press, say, setOff, syncChildren } from "./dom.js";
 import { ARM_MS, confirmCopy, createEnder, endAllCopy, endingAnnouncement, endingText, withdrawnText } from "./end.js";
 import { askedNote, asking, isReady, readiness, wrapupAnnouncements, wrapupCopy, wrapupLines } from "./wrapup.js";
@@ -58,7 +58,6 @@ const newButton = document.getElementById("new-session");
 const newNote = document.getElementById("new-note");
 const bar = document.querySelector(".bar");
 const densityPicker = document.querySelector(".density");
-const ringKey = document.querySelector(".ring-key");
 const startButton = document.getElementById("start-session");
 const clearNote = document.getElementById("clear-note");
 const clearEnded = document.getElementById("clear-ended");
@@ -509,7 +508,6 @@ function render(snapshot) {
   latest = { state, cards };
   cleared = new Set([...cleared].filter((id) => cardOf.has(id)));
   openText = new Set([...openText].filter((id) => cardOf.has(id)));
-  ringKey.hidden = !showsRingKey(visibleCards());
   const said = wrapupAnnouncements(wrapupBefore, cards);
   wrapupBefore = wrapupLines(cards);
   const r = readiness(sessions, request);

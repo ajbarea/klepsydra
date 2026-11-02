@@ -146,11 +146,6 @@ test("an agent's arc differs from a shell's by width alone: solid, one colour, n
   assert.doesNotMatch(css, /stroke-dasharray/, "no dashes anywhere on the wall");
   assert.match(rule(".ring .seg"), /stroke: var\(--crew\)/, "one colour for both kinds");
   assert.doesNotMatch(css, /\.ring \.seg\.(agent|shell)/, "no rule tells the kinds apart but their width");
-  // The key draws the same two widths as the comfortable ring.
-  const px = (sel) => parseFloat(rule(sel).match(/stroke-width: ([\d.]+)px/)[1]);
-  assert.deepEqual([px(".ring-key path.agent"), px(".ring-key path.shell")], [RINGS.comfortable.agent, RINGS.comfortable.shell]);
-  assert.match(css, /\.ring-key svg \{ width: 32px; height: 18px;/, "drawn 1:1 with its 32x18 viewBox");
-  assert.match(read("./wall.html"), /<svg viewBox="0 0 32 18"><path class="agent"/);
 });
 
 test("an agent with no character is gold, not the needs-you amber, and reads on the card", () => {
@@ -346,7 +341,7 @@ test("text on the band reads at 4.5:1 under every light that can reach it", () =
 
 test("the band caps its light under text with the mask, and lights needs-you amber and a quiet card dim", () => {
   const css = wallCss();
-  const stage = css.match(/\.stage \{([^}]*)\}/)?.[1] ?? "";
+  const stage = css.match(/\n\.stage \{([^}]*)\}/)?.[1] ?? "";
   assert.match(stage, /mask-image: linear-gradient\(90deg, #000 var\(--fade-from\), rgb\(0 0 0 \/ var\(--under-text\)\) var\(--fade-to\)\)/);
   assert.match(css, /\.card\.tone-needs \{[^}]*--light: var\(--tone-needs\)/);
   assert.match(css, /\.card\.dim \{[^}]*--light: color-mix\(in oklab, var\(--accent, var\(--band-gold\)\) var\(--dim-light-share\), var\(--dim-light-with\)\)/);
@@ -386,10 +381,13 @@ test("the nameplate's face is bundled, with its licence", () => {
   assert.match(read("./fleet/fonts/OFL.txt"), /SIL Open Font License, Version 1\.1/);
 });
 
-test("the tone stripe follows the card's rounded corners, now that the card no longer clips", () => {
+test("the edge stripe wears the character (#247) and follows the card's rounded corners", () => {
   const css = wallCss();
   const stripe = css.match(/\n\.card::before \{([^}]*)\}/)?.[1] ?? "";
-  assert.match(stripe, /border-left: 3px solid var\(--tone\)/, "a border on the card-shaped box curves with the corner");
+  assert.match(stripe, /border-left: 3px solid var\(--edge\)/, "a border on the card-shaped box curves with the corner");
+  assert.match(css, /\n\.card \{[^}]*--edge: var\(--accent, var\(--card-line\)\)/, "the character's colour, else the card's line");
+  assert.match(css, /\.card\.tone-needs \{[^}]*--edge: var\(--tone-needs\)/, "needs you takes the edge");
+  assert.match(css, /\.card\.tone-error \{[^}]*--edge: var\(--tone-error\)/, "and so does an error");
   assert.match(stripe, /border-radius: 0 0 13px 13px/);
   assert.match(stripe, /pointer-events: none/);
   assert.match(css, /\[data-density="compact"\] \.card::before \{ border-radius: 13px; \}/);

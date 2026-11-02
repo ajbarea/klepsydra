@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import {
   STATUS, shortAge, longAge, statusParts, voiceName, identity, accessibleName,
   statuses, startedNeeding, orderChanged, shouldSlide, transitionName, announcements, updatedText, badgeSvg, stripItems, card,
-  askText, askParts, plainText, tally, crewOf, crewText, crewRing, crewRings, crewMarks, RINGS, RING_MAX, showsRingKey, alsoChip, ALSO_NAMED, pillWhen,
+  askText, askParts, plainText, tally, crewOf, crewText, crewRing, crewRings, crewMarks, RINGS, RING_MAX, alsoChip, ALSO_NAMED, pillWhen,
   BAND, accountsDiffer, castPicks,
   branchPage,
   githubPage,
@@ -511,12 +511,7 @@ test("arcs sit on the ring with even gaps of a fixed length on the page, a lone 
   }
 });
 
-test("the ring key shows while any card has background work, and only then", () => {
-  const withCrew = (background) => card(session({ background }), CAST, NOW);
-  assert.equal(showsRingKey([]), false, "an empty wall");
-  assert.equal(showsRingKey([withCrew({ agents: 0, shells: 0 }), withCrew(undefined)]), false, "a quiet wall stays clean");
-  assert.equal(showsRingKey([withCrew({ agents: 0, shells: 0 }), withCrew({ agents: 0, shells: 1 })]), true);
-  assert.equal(showsRingKey([withCrew({ agents: 0, shells: 0, tasks: 1 })]), true, "another task draws a thin arc");
+test("a ring is drawn for each density", () => {
   assert.deepEqual(Object.keys(crewRings({ agents: 1, shells: 0 })), ["comfortable", "compact"]);
 });
 

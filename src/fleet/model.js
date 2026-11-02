@@ -411,8 +411,6 @@ export function crewRing(crew, g = RINGS.comfortable, marks = crewMarks(crew)) {
 export const crewRings = (crew, marks = crewMarks(crew)) =>
   Object.fromEntries(Object.entries(RINGS).map(([density, g]) => [density, crewRing(crew, g, marks)]));
 
-/** Whether the wall's ring key shows: while any card has background work out. */
-export const showsRingKey = (cards) => cards.some((c) => c.rings.comfortable.segments.length > 0);
 
 /**
  * The needs-you line as [lead, keep]: `keep` is the end a card holds in view

@@ -34,8 +34,9 @@ HEAD = (
 SIZES = (96, 192)
 # (left, top, right, bottom) of the square half-figure: the head in the upper
 # middle, cut at the waist. The five newer portraits are already half-figures.
+# Cupid's wings reach her portrait's edges, so she is cut whole: the figure breaks the card's frame (#247).
 FIGURE = {
-    "aidos": (110, 13, 558, 461), "aletheia": (90, 17, 538, 465), "cupid": (95, 0, 543, 448),
+    "aidos": (110, 13, 558, 461), "aletheia": (90, 17, 538, 465), "cupid": (0, 0, 640, 640),
     "dokimasia": (103, 14, 551, 462), "hephaestus": (102, 15, 550, 463), "kallos": (109, 10, 557, 458),
     "metis": (189, 0, 637, 448), "mneme": (101, 14, 549, 462), "puck": (105, 31, 553, 479),
     "techne": (110, 0, 558, 448),

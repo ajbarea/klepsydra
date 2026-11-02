@@ -10,11 +10,11 @@ test("without a reading the button stays hidden", () => {
   for (const v of [null, undefined, "x", 3, {}, { checks: "no" }]) assert.equal(healthView(v).hidden, true);
 });
 
-test("all ok says so; warnings keep it ok but mark it and are counted", () => {
+test("all ok keeps the bar quiet (#248); warnings show it, marked and counted", () => {
   const ok = healthView({ checks: [check("ok", "resume service", "active")], stale: false });
-  assert.deepEqual([ok.hidden, ok.label, ok.tone, ok.title], [false, "Fleet ok", "ok", "fleet doctor: every check ok"]);
+  assert.deepEqual([ok.hidden, ok.label, ok.tone, ok.title], [true, "Fleet ok", "ok", "fleet doctor: every check ok"]);
   const warn = healthView({ checks: [check("ok", "a"), check("warn", "briefs", "stale: task-x.src")] });
-  assert.deepEqual([warn.label, warn.tone, warn.note], ["Fleet ok", "warn", "1 warning"]);
+  assert.deepEqual([warn.hidden, warn.label, warn.tone, warn.note], [false, "Fleet ok", "warn", "1 warning"]);
 });
 
 test("a failing check turns it red and names each check with its status and detail", () => {

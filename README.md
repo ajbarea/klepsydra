@@ -467,9 +467,12 @@ shows its age, in the portrait's tooltip and on its card. A ring around each
 badge keeps it at 3:1 contrast against the strip's backdrop.
 
 Click a portrait to open the card wall at that session. It is an ordinary
-window, made on the first click and only hidden after that. A summary bar
-counts the sessions that need you, work, are done, and are idle or ended, with
-an error count only when one exists. Each card shows:
+window, made on the first click and only hidden after that. The bar keeps
+status on the left: the counts of sessions that need you, work, are done, and
+are idle or ended (an error count only when one exists), then **CI** and
+**Fleet** only while something there needs a look. The panels (Split, Ledger,
+Queue, Wrap up), **+ New session** and a gear for the view settings sit on the
+right. Each card shows:
 
 - the session's face in a ring showing its background crew: one solid arc per
   piece of work, agents first, clockwise from 12 o'clock, in the character's
@@ -478,33 +481,36 @@ an error count only when one exists. Each card shows:
   are kept apart by a fixed 14 px gap (11 px on a compact card), a lone arc
   keeps its gap at 12 o'clock, at most five show with "+N" beside the ring for
   the rest (a shell keeps at least one), and the ring is plain with none out.
-  While any card has work out, a key beside the tally draws the two arcs,
-  "agent" and "shell"; on a narrow wall it takes a second line under the tally;
+  The ring's tooltip names the two kinds;
 - a status pill, top right, with the badge, label and age, and the reason on
   an ended or error card;
-- under where it works, what is out ("2 agents, 1 shell, 1 task") and, once the turn
-  has ended with that work still running, "prompt free": the session takes a
-  new prompt meanwhile;
+- what is out ("2 agents, 1 shell, 1 task") and, once the turn has ended with
+  that work still running, "prompt free": the session takes a new prompt
+  meanwhile. Screen readers hear it; **Full text** shows it;
 - the session's name, where it works now (repo, worktree, branch chip: the
   repo of its last edit, else its folder's, and its folder's again once that
   worktree is removed; one line, cut short with all of it on hover, wrapped
-  instead on the phone wall) and the other repos it touched: up to four by
-  name, then a "+N" chip naming the rest on hover;
+  instead on the phone wall), and under **Full text** the other repos it
+  touched: up to four by name, then a "+N" chip naming the rest on hover;
 - for a session that needs you, a line saying what it waits for, on one
   line with all of it on hover; cut short, it loses its middle, so the tool's
   own name stays in view ("approve mcp__plugin_pl…browser_navigate");
-- the last prompt on one line in a quoted block and the reply on two under
-  it, one while the card asks or shows an error (hover either for all of
-  it); an error takes two lines, with all of it on hover; a play
+- one line of what it is doing: the reply on two lines, one while the card
+  asks or shows an error (hover for all of it), with the last prompt above it
+  in a quoted block under **Full text**; an error takes two lines, with all of
+  it on hover; a play
   button beside the reply when keryx kept that reply's audio (keryx's
   `reply_clips`, on by default). It plays the session's latest spoken reply on
   this machine, one card at a time; press it again to stop. keryx writes the
   clip to `replies/<session id>.wav` beside the fleet folder;
-- "updated 7m ago" beside **Open terminal** once the card's newest field is
-  over five minutes old.
+- a chip counting the tool calls a guardrail turned down, when there are any.
 
-A left edge in the status tone marks each card, and a needs-you card adds an
-amber border. Ended, silent and not-started cards are dimmer. The grid uses
+Each card wears its character's colour: its edge, the line under its header,
+a wash behind the figure and its chips (#247). Status is the pill's. Only the
+exceptions are loud: a card that needs you takes an amber frame and a filled
+amber pill, and an error card a vermillion frame. A done, not-started, silent
+or ended card shrinks to a slim row (its name, where it worked and its
+buttons), and ended, silent and not-started ones are dimmer. The grid uses
 columns at least 420 px wide: four at 1920 px, two at 1280, one at 800.
 
 While keryx plays a line, the speaking session's portrait shows it. keryx
@@ -627,22 +633,22 @@ klepsydra's tmux, which you end yourself.
 
 ### Card density
 
-The control beside **+ New session** picks the card density: **Auto** (the
+The gear at the bar's right end picks the card density: **Auto** (the
 default), **Comfortable** or **Compact**. Comfortable is the wall at the top of this page:
 four fit the wall in split mode (2x2, about 945 to 958x1000 of content) and
 eight fit it maximised (4x2, about 1920x1000) with no scrollbar, as the
 browser test measures them: every card waiting on you to approve a long
 MCP tool, or every card ending on a long API error, each with a long session
 name, place and branch, twelve other repos, a crew, a long prompt and reply,
-a two-line receipt and "updated". A wrap-up line or a long note under a
+and a guardrail chip. A wrap-up line or a long note under a
 button can still make a forced Comfortable wall scroll; Auto turns compact
 then.
 Compact keeps three short rows: the header, with a 56 px portrait (crew ring
 and speaking waves included), the name and session name, the pill and a
 smaller **Open terminal**; one line for where it works, the crew and a "+N" chip
 for the other repos it touched (hover it for their names); and the exchange,
-the prompt on one line and the reply on two. "updated 7m ago" joins the
-pill's time ("30m · 7m ago"), and Clear sits beside Open terminal and takes
+the reply on two lines. "updated 7m ago" joins the pill's time ("30m · 7m
+ago"), and Clear sits beside Open terminal and takes
 its place when it is off. A line at the foot of each compact card is kept for
 a button's note, or the reason Open terminal is off, so neither covers the
 card's text; a note cut short shows in full on hover. An off button's name
@@ -787,8 +793,10 @@ session on a repo's voice also changes face when an edit takes it to another
 repo's.
 
 On a Comfortable card the character arrives in a header band. Their cut-out
-half-figure stands on the band's foot and breaks the card's top edge, lit from
-behind in their colour: a glow and rays over a dark, grained stage. Beside it
+half-figure stands on the band's foot and breaks the card's frame, rising 56 px
+over its top edge into the wall's taller row gap, lit from behind in their
+colour: a glow and rays over a dark, grained stage, with a wash of their colour
+behind the figure and a rule in it under the band. Beside it
 sits the nameplate: the name in classical capitals (Cinzel, bundled under the
 SIL Open Font License), their epithet ("Master of the Forge") in their colour
 with a laurel sprig, then the task; the status pill rides the corner. Only 15%
@@ -832,7 +840,7 @@ the project's settings.
 ### Character themes
 
 The cast wears one of three themes, all full and equal, chosen in the tray's
-**Characters** menu or the wall's Characters picker over its density choice.
+**Characters** menu or the wall's Characters picker, under the gear beside its density choice.
 The choice is kept in `prefs.json` (`"theme"`) and applies at once, without a
 restart: every card's name, epithet, face and colour (Comfortable and
 Compact), the strip beside the gauge, an open portrait, the Ledger's
@@ -1311,8 +1319,9 @@ is done, so a restart triages nothing twice. Its triage folders are removed afte
 two weeks.
 
 It writes `ci.json` to the app data folder, which the wall and the phone show
-as a **CI** button in the bar: hidden without a CI watch, `CI ok` when every
-repo is green, red with a count when a run is red, and `CI ?` when the watch
+as a **CI** button in the bar: hidden without a CI watch and while every
+repo is green with nothing to note, `CI ok` when green with Dependabot runs
+kept for the morning or repos not read, red with a count when a run is red, and `CI ?` when the watch
 has not reported for 15 minutes. It opens a list of the red runs: repo,
 workflow, branch or PR, the failing step, the triaged cause with its
 file:line, and the run on GitHub: a link on the phone, its address as a
@@ -1379,7 +1388,7 @@ briefs, logs) stays in the state folder.
 
 | Command | What it does |
 |---|---|
-| `fleet doctor` | One line per check: the resume service, its last pass, Remote Control on every registered pane and the orchestrator's, the phone wall locally and over Tailscale Serve with a fresh `fleet.json`, a pane watcher, and briefs' shared rules. Exits non-zero on any failure. `--json FILE` also writes the checks as a report, and logs only a check that changed status (a recovery without its detail). The `fleet-doctor.timer` runs it every 5 min into the data folder's `fleet-health.json`, which the wall and the phone show as a **Fleet** button beside **CI**: failing checks first, `Fleet ?` when the report is over 15 minutes old, no links and `~` for the home folder. |
+| `fleet doctor` | One line per check: the resume service, its last pass, Remote Control on every registered pane and the orchestrator's, the phone wall locally and over Tailscale Serve with a fresh `fleet.json`, a pane watcher, and briefs' shared rules. Exits non-zero on any failure. `--json FILE` also writes the checks as a report, and logs only a check that changed status (a recovery without its detail). The `fleet-doctor.timer` runs it every 5 min into the data folder's `fleet-health.json`, which the wall and the phone show as a **Fleet** button beside **CI** while any check warns or fails: failing checks first, `Fleet ?` when the report is over 15 minutes old, no links and `~` for the home folder. |
 | `fleet log [N]` | The last N decisions as plain lines. |
 | `fleet brief NAME BODY` | Writes `task-NAME.src`: BODY, then the shared rules in `fleet/brief-tail.md`. `--check` lists briefs whose rules drifted. |
 | `fleet cutover` | Restarts the resume service on the installed scripts and confirms its start is logged. |

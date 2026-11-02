@@ -5,7 +5,7 @@
 
 const STATUS = { FAIL: "Failing", warn: "Warning", ok: "OK" };
 
-/** What the bar button and its popover show for health VIEW (health.rs `view`); hidden without one. */
+/** What the bar button and its popover show for health VIEW (health.rs `view`); hidden without one, and while every check is ok (#248). */
 export function healthView(view) {
   const checks = Array.isArray(view?.checks) ? view.checks : null;
   if (!checks) return { hidden: true, label: "", tone: "", title: "", rows: [], note: "" };
@@ -21,5 +21,5 @@ export function healthView(view) {
   if (failed) {
     return { hidden: false, label: `Fleet ${failed} failing`, tone: "red", title: `fleet doctor: ${failed} ${failed === 1 ? "check" : "checks"} failing`, rows, note: warnings };
   }
-  return { hidden: false, label: "Fleet ok", tone: warned ? "warn" : "ok", title: warned ? `fleet doctor: ${warnings}` : "fleet doctor: every check ok", rows, note: warnings };
+  return { hidden: !warned, label: "Fleet ok", tone: warned ? "warn" : "ok", title: warned ? `fleet doctor: ${warnings}` : "fleet doctor: every check ok", rows, note: warnings };
 }
