@@ -151,6 +151,8 @@ phone() { # CHECK BASE
       report FAIL "$1" "no answer from $2/fleet.json (tried twice)" url="$2/fleet.json"
       return
     fi
+    # A miss the FAIL above does not cover: logged each time, to show how often.
+    flog WARN "doctor: $1 answered only on the second try" url="$2/fleet.json" curl="$CURL"
   fi
   [[ -n $phone_body ]] || phone_body=$body
   report ok "$1" "answers at $2"

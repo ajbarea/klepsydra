@@ -23,6 +23,11 @@ esac
 
 # A refusal: logged with its reason, and said on stderr.
 refuse() { flog WARN "fleet $cmd refused" name="$name" reason="$*"; err "fleet $cmd: $*"; }
+# A write that failed: the work did not happen.
+failed() { # FILE WHAT
+  flog ERROR "fleet $cmd failed: $2" name="$name" file="$1"
+  err "fleet $cmd: $2 ($1)"
+}
 
 # Writes FILE from awk's output on stdin, whole (temp file, then rename).
 put() { # FILE
@@ -46,11 +51,12 @@ pause_now() {
   fi
   awk -F'\t' -v n="$name" '$1 == n { f = 1 } END { exit !f }' "$PAUSED" 2>/dev/null &&
     { refuse "$name is already in paused.tsv"; return 1; }
-  printf '%s\tPAUSED %s: %s\t%s\n' "$name" "$(date '+%m-%d %H:%M')" "${why//[$'\t\n']/ }" "$row" >>"$PAUSED" || return 1
+  printf '%s\tPAUSED %s: %s\t%s\n' "$name" "$(date '+%m-%d %H:%M')" "${why//[$'\t\n']/ }" "$row" >>"$PAUSED" ||
+    { failed "$PAUSED" "could not add the row to paused.tsv; nothing changed"; return 1; }
   if ! awk -F'\t' -v n="$name" '$2 != n' "$REGISTRY" | put "$REGISTRY"; then
     # Never in both files: take the line just added back out.
     awk -F'\t' -v n="$name" '$1 != n' "$PAUSED" | put "$PAUSED"
-    refuse "could not rewrite panes.tsv; nothing changed"
+    failed "$REGISTRY" "could not rewrite panes.tsv; nothing changed"
     return 1
   fi
   flog INFO "agent paused" name="$name" pane="$p" session="$sid" why="$why"
@@ -69,8 +75,12 @@ unpause_now() {
   fi
   awk -F'\t' -v n="$name" '$2 == n { f = 1 } END { exit !f }' "$REGISTRY" 2>/dev/null &&
     { refuse "panes.tsv already has a row named $name"; return 1; }
-  printf '%s\n' "$row" >>"$REGISTRY" || return 1
-  awk -F'\t' -v n="$name" '$1 != n' "$PAUSED" | put "$PAUSED" || return 1
+  printf '%s\n' "$row" >>"$REGISTRY" ||
+    { failed "$REGISTRY" "could not add the row back to panes.tsv; nothing changed"; return 1; }
+  if ! awk -F'\t' -v n="$name" '$1 != n' "$PAUSED" | put "$PAUSED"; then
+    failed "$PAUSED" "the row is back in panes.tsv but still in paused.tsv; remove its paused.tsv line by hand"
+    return 1
+  fi
   flog INFO "agent unpaused" name="$name" pane="$(cut -f1 <<<"$row")"
   echo "unpaused: $name: fleet recover launches it fresh from its brief"
 }
