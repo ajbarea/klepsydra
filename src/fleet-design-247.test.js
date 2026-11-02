@@ -48,9 +48,11 @@ test("#247: the name, the task and the button label hold 4.5:1 on the washed ban
   }
 });
 
-test("#247: needs you stays loud: amber frame at 3:1, ink on the filled pill at 4.5:1", () => {
+test("#247/#248: the exceptions stay loud: amber and error frames at 3:1, ink on the amber pill at 4.5:1", () => {
   check("needs", "amber frame on the wall", BAND.needs, token("--wall-bg"), 3);
   check("needs", "ink on the amber pill", token("--needs-ink"), BAND.needs, 4.5);
+  check("error", "error frame on the wall", "#d55e00", token("--wall-bg"), 3); // badge.css --badge-error
+  check("error", "error frame on the card", "#d55e00", token("--card-bg"), 3);
 });
 
 test("#247: the closest call for each tone, for the Review issue", (t) => {

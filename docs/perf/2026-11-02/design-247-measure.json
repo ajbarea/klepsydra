@@ -1,0 +1,86 @@
+[
+ {
+  "size": "3 cards",
+  "variant": "a",
+  "idle_ms_per_s": 0.838,
+  "refresh_TaskDuration": 6.65,
+  "refresh_ScriptDuration": 0.17,
+  "refresh_LayoutDuration": 1.39,
+  "refresh_RecalcStyleDuration": 0.65,
+  "refresh_task_range": [
+   5.73,
+   10.66
+  ],
+  "nodes": 2408
+ },
+ {
+  "size": "3 cards",
+  "variant": "b",
+  "idle_ms_per_s": 0.9,
+  "refresh_TaskDuration": 5.72,
+  "refresh_ScriptDuration": 0.17,
+  "refresh_LayoutDuration": 0.92,
+  "refresh_RecalcStyleDuration": 0.52,
+  "refresh_task_range": [
+   5.41,
+   12.28
+  ],
+  "nodes": 2423
+ },
+ {
+  "size": "3 cards",
+  "variant": "c",
+  "idle_ms_per_s": 0.849,
+  "refresh_TaskDuration": 5.8,
+  "refresh_ScriptDuration": 0.17,
+  "refresh_LayoutDuration": 0.93,
+  "refresh_RecalcStyleDuration": 0.54,
+  "refresh_task_range": [
+   5.32,
+   12.37
+  ],
+  "nodes": 2423
+ },
+ {
+  "size": "16 cards",
+  "variant": "a",
+  "idle_ms_per_s": 2.098,
+  "refresh_TaskDuration": 15.98,
+  "refresh_ScriptDuration": 0.25,
+  "refresh_LayoutDuration": 4.13,
+  "refresh_RecalcStyleDuration": 1.62,
+  "refresh_task_range": [
+   14.43,
+   37.35
+  ],
+  "nodes": 5136
+ },
+ {
+  "size": "16 cards",
+  "variant": "b",
+  "idle_ms_per_s": 2.147,
+  "refresh_TaskDuration": 14.48,
+  "refresh_ScriptDuration": 0.26,
+  "refresh_LayoutDuration": 2.85,
+  "refresh_RecalcStyleDuration": 1.55,
+  "refresh_task_range": [
+   12.93,
+   25.08
+  ],
+  "nodes": 4652
+ },
+ {
+  "size": "16 cards",
+  "variant": "c",
+  "idle_ms_per_s": 1.916,
+  "refresh_TaskDuration": 14.8,
+  "refresh_ScriptDuration": 0.26,
+  "refresh_LayoutDuration": 2.89,
+  "refresh_RecalcStyleDuration": 1.59,
+  "refresh_task_range": [
+   12.56,
+   25.9
+  ],
+  "nodes": 4652
+ }
+]

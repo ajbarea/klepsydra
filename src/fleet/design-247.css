@@ -48,8 +48,11 @@
 [data-design] .also,
 [data-design] .also-more,
 [data-design] .crew-line,
-[data-design] .ledger-line,
+[data-design] .ledger-line .receipt,
+[data-design] .ledger-line .partial,
 [data-design] .updated { display: none !important; }
+/* What a guardrail turned down is an exception: its chip stays, alone on its line. */
+[data-design] .ledger-line:not(:has(.chip:not([hidden]))) { display: none; }
 /* One "now" line: what the card is doing, then the latest result. */
 [data-design] .said p.reply { -webkit-line-clamp: 2; }
 
@@ -88,23 +91,27 @@
 [data-design] .card.tone-needs .pill .badge { --badge-ring: var(--tone-needs); }
 [data-design] .card.tone-needs .ask { background: color-mix(in oklab, var(--tone-needs) 22%, transparent); color: var(--text); }
 
+/* An error is the other exception: its edge and frame turn the error tone. */
+[data-design] .card.tone-error {
+  --edge: var(--tone-error);
+  border: 2px solid var(--tone-error);
+}
+
 /* A done card is a slim row: who, where, and its actions. */
 [data-design] .card.tone-done, [data-design] .card.dim { align-self: start; }
-[data-design] .card.tone-done .said,
-[data-design] .card.tone-done .ask,
-[data-design] .card.dim .said { display: none; }
-[data-design] .wall:not([data-density="compact"]) .card.tone-done { --band-h: 72px; }
-[data-design] .wall:not([data-density="compact"]) .card.tone-done header { --fig: 84px; padding-left: 104px; grid-template-areas: "name" "task"; }
-[data-design] .wall:not([data-density="compact"]) .card.tone-done .epithet { display: none; }
-[data-design] .wall:not([data-density="compact"]) .card.tone-done .stage { background: var(--grain); }
-[data-design] .wall:not([data-density="compact"]) .card.tone-done .marks { display: none; }
-[data-design] .wall[data-density="compact"] .card.tone-done { grid-template-rows: auto auto; }
+[data-design] .card:is(.tone-done, .dim) :is(.said, .ask) { display: none; }
+[data-design] .wall:not([data-density="compact"]) .card:is(.tone-done, .dim) { --band-h: 72px; }
+[data-design] .wall:not([data-density="compact"]) .card:is(.tone-done, .dim) header { --fig: 84px; padding-left: 104px; grid-template-areas: "name" "task"; }
+[data-design] .wall:not([data-density="compact"]) .card:is(.tone-done, .dim) .epithet { display: none; }
+[data-design] .wall:not([data-density="compact"]) .card:is(.tone-done, .dim) .stage { background: var(--grain); }
+[data-design] .wall:not([data-density="compact"]) .card:is(.tone-done, .dim) .marks { display: none; }
+[data-design] .wall[data-density="compact"] .card:is(.tone-done, .dim) { grid-template-rows: auto auto; }
 [data-design] .wall[data-density="compact"] { grid-auto-rows: auto; }
 
 /* ---- C: the figure breaks the frame ---- */
 [data-design="c"] .wall:not([data-density="compact"]) { row-gap: 60px; padding-top: 56px; }
-[data-design="c"] .wall:not([data-density="compact"]) .card:not(.tone-done) header { --fig: 176px; --fig-left: -6px; padding-left: 176px; }
-[data-design="c"] .wall:not([data-density="compact"]) .card:not(.tone-done) .stage {
+[data-design="c"] .wall:not([data-density="compact"]) .card:not(.tone-done, .dim) header { --fig: 176px; --fig-left: -6px; padding-left: 176px; }
+[data-design="c"] .wall:not([data-density="compact"]) .card:not(.tone-done, .dim) .stage {
   background:
     radial-gradient(closest-side, color-mix(in oklab, var(--light) var(--glow-alpha), transparent), transparent) -30px 0 / 260px 200px no-repeat,
     var(--grain);
