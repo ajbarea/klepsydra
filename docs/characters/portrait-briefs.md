@@ -230,8 +230,8 @@ stayed in Pandora's jar; the steady encouragement when a long run stalls.
 ### 3. Paste: character block
 
 > A young woman with dark hair gathered up, small white flowers and a blue
-> ribbon woven through it, and a gentle, confident smile. She wears a cream-
-> and-gold peplos with a meander border and a blue sash. She cradles a
+> ribbon woven through it, and a gentle, confident smile. She wears a
+> cream-and-gold peplos with a meander border and a blue sash. She cradles a
 > rounded bronze pithos, a Greek storage jar, against her side, its mouth
 > tilted open, with soft cream-gold (#F1D2A1) motes rising from inside it.
 > White flowers rest in the crook of her other arm. Warm, steady, quietly
@@ -272,11 +272,11 @@ moonlit silver-blue `#A9B8D0` · the spirit of stillness and rest; in Pindar
 > Image 1 is Hesychia: keep her face, hair and veil exactly. Image 2
 > (Hephaestus at his anvil) is for framing only, not his face. Painterly,
 > semi-realistic character portrait: confident thick brushwork, bold clean
-> silhouette, expressive face. Square bust portrait, mid-torso up, three-
-> quarter turn, the figure slightly right of centre with the near shoulder
-> toward the viewer, the head in the upper middle. Plain deep charcoal
-> background (#1A1A1A). Cool moonlight from the upper left is the main
-> light; only a faint warm glow sits low behind the shoulders. Palette:
+> silhouette, expressive face. Square bust portrait, mid-torso up,
+> three-quarter turn, the figure slightly right of centre with the near
+> shoulder toward the viewer, the head in the upper middle. Plain deep
+> charcoal background (#1A1A1A). Cool moonlight from the upper left is the
+> main light; only a faint warm glow sits low behind the shoulders. Palette:
 > moonlit silver-blue (#A9B8D0), night blue and pale silver, with small
 > touches of honeyed gold (#C9944A). Natural skin: she visits the forge and
 > is not one of its golden maidens.
