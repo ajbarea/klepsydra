@@ -12,7 +12,7 @@
 #   fleet shots [--apply] prune the briefing's decided and old screenshots (dry run without --apply)
 #   fleet agora post [--kind K] TEXT  post one line on the Agora, as your character (optional)
 #   fleet agora list [N]  the newest Agora posts
-#   fleet install         link this checkout's scripts and units into place
+#   fleet install         link this checkout's scripts and units into place, copy the hooks and cast
 #   fleet cutover         restart the resume service on the installed scripts
 set -u
 here=$(dirname "$(readlink -f "$0")")

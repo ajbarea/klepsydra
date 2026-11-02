@@ -674,6 +674,14 @@ check "#244: --hooks installs only the copies: no scripts, units or command" \
   "$(FLEET_STATE="$inst/h" FLEET_UNITS="$inst/hu" FLEET_BIN="$inst/hb" FLEET_HOOK_DIR="$inst/hc" bash "$here/install.sh" --hooks --force >/dev/null 2>&1; echo $?) $(find "$inst/hc" -type f | wc -l) $(find "$inst" -mindepth 1 -maxdepth 1 \( -name hu -o -name hb \) | wc -l) $(find "$inst/h" -mindepth 1 -not -path "$inst/h/log*" 2>/dev/null | wc -l)" "0 ${#HOOK_COPIES[@]} 0 0"
 rm -rf -- "${inst:?}/hc" "${inst:?}/h"
 check "#244: the wrap-up skill lands in its skill folder" "$(cmp -s "${here%/fleet}/hooks/klepsydra-wrapup.md" "$inst/claude/skills/klepsydra-wrapup/SKILL.md" && echo same)" "same"
+hinst >/dev/null # the tmux conf the folder case removed comes back first
+before=$(find "$inst/state/archive" -type f | wc -l)
+check "#244 nit: an install with nothing changed copies and archives nothing" \
+  "$(FLEET_LOG="$work/instlog/same.log" hinst) $(( $(find "$inst/state/archive" -type f | wc -l) - before )) $(grep -c 'installed a copy' "$work/instlog/same.log" 2>/dev/null || echo 0)" "0 0 0"
+mkdir -p "$work/dryfail" && cp -r "$here" "$work/dryfail/fleet"
+check "#244 nit: a dry run that meets an error writes no log, and says it on stderr" \
+  "$(FLEET_STATE="$inst/dl" FLEET_HOOK_DIR="$inst/dc" bash "$work/dryfail/fleet/install.sh" --dry-run --hooks --force 2>&1 >/dev/null | grep -c "ERROR a copy's source is missing") $(find "$inst/dl" "$inst/dc" -mindepth 1 2>/dev/null | wc -l)" "${#HOOK_COPIES[@]} 0"
+rm -rf -- "${work:?}/dryfail" "${inst:?}/dl" "${inst:?}/dc"
 check "each script is linked from the checkout" "$(readlink "$inst/state/resume-at-reset.sh")" "$here/resume-at-reset.sh"
 check "the copy a link replaced is archived" "$(cat "$inst/state/archive/fleet-scripts-$(date +%Y%m%d)/launch.sh")" "old copy"
 check "the fleet command is linked" "$(readlink "$inst/bin/fleet")" "$here/fleet"
