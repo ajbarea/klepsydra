@@ -109,9 +109,12 @@ for p in $orch $panes; do
     fi
   else
     # Only what came after the last prompt sent: an answered limit is past.
+    # A stop's shape only ("hit ... limit", "limit reached"): Claude Code's
+    # near-limit notices and the /fast dialog's limit also print a reset.
     split_screen "$s"
     { near 6 | awk '/^❯ / && !/^❯ \// { b = ""; next } { b = b $0 "\n" } END { printf "%s", b }'; printf '%s\n' "$BELOW"; } |
-      grep -iE 'limit' | grep -qE 'resets [A-Za-z0-9]' && unknown+="$p "
+      grep -iE '(hit|reached)[^·]*limit|limit (hit|reached)' |
+      grep -viE 'fast limit|used [0-9]+% of|approaching|now using' | grep -qE 'resets [A-Za-z0-9]' && unknown+="$p "
   fi
 done
 if [[ -n $overdue ]]; then

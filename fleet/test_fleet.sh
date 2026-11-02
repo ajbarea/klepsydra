@@ -95,6 +95,9 @@ now=$(TZ=America/New_York date -d '2026-10-31 22:00' +%s)
 check "#265 review: tomorrow across the clock change keeps the wall-clock time" "$(TZ=America/New_York at 'resets 2am')" "2026-11-01 02:00"
 now=$(TZ=America/New_York date -d '2026-11-03 01:00' +%s)
 check "#265 review 2: a time-only reset up to a day ahead stays ahead (a weekly one is dated only past 24 h)" "$(TZ=America/New_York at 'resets 11pm')" "2026-11-03 23:00"
+now=$(TZ=America/New_York date -d '2026-03-07 21:00' +%s)
+check "#265 review 3: tomorrow's 2:30am, which the spring-forward skips, fails rather than reading as now" \
+  "$(TZ=America/New_York reset_epoch 'resets 2:30am' "$now"; echo "rc=$?")" "rc=1"
 now=$(TZ=America/New_York date -d '2026-11-02 18:50' +%s)
 check "#265 review: with a 19 h roll (the doctor's), a reset 6 h past is today's" \
   "$(TZ=America/New_York date -d "@$(reset_epoch 'resets 12:40pm' "$now" 68400)" '+%F %H:%M')" "2026-11-02 12:40"
@@ -663,6 +666,11 @@ check "#265 review 2: a 5-hour reset just before midnight, still shown after it,
 state wpane '{"above":["  ⎿  Limit hit for this window · resets 11:30am","",""]}'
 check "#263: a reset beside a limit wording the fleet does not know is a warning" \
   "$(doctor | grep '^warn limits')" "warn limits: a reset time shows beside a limit message the fleet does not recognise: $w (LIMIT_RE in fleet/lib.sh)"
+for notice in "You've used 90% of your 5-hour limit · resets 3pm" "Approaching weekly limit · resets Nov 9, 1pm" \
+  "Now using usage credits for Opus · Your Opus limit resets 3pm" "You've hit your fast limit · resets in 3m"; do
+  state wpane "{\"above\":[\"  ⎿  $notice\",\"\",\"\"]}"
+  check "#265 review 3: not a stop, so no unknown-wording warning: $notice" "$(doctor | grep -c '^ok   limits')" "1"
+done
 state wpane '{"above":["idle"]}'
 printf 'panes=3 limited=1 limited_panes=%%9 at=5\n' >"$FLEET_STATE/resume.beat"
 check "#263: the resume loop line says what its last pass saw" "$(doctor | grep '^ok   resume loop' | sed 's/.*: //')" "panes=3 limited=1 limited_panes=%9"

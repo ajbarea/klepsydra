@@ -149,7 +149,7 @@ limit_line() {
 # ROLL_S (default 6 h) past is tomorrow's, at the same wall-clock time across a
 # DST change (Claude Code dates a reset only when it is over 24 h away); a dated
 # one more than 180 days past is next year's, and more than 180 days ahead last year's.
-# Fails when TEXT names none.
+# Fails when TEXT names none, or a time that does not exist that day.
 reset_epoch() { # TEXT NOW [ROLL_S]
   local text=$1 now=$2 roll=${3:-21600} m
   m=$(grep -oE 'resets ([A-Z][a-z]{2} [0-9]{1,2}, )?[0-9]{1,2}(:[0-9]{2})? ?[ap]m( \([A-Za-z0-9_+/-]+\))?' <<<"$text" | tail -1)
@@ -167,13 +167,14 @@ reset_epoch() { # TEXT NOW [ROLL_S]
   fi
   if [[ -n $mon ]]; then
     at=$(date -d "$tz$mon $day $year $hour:$min$ampm" +%s 2>/dev/null) || return 1
-    (( now - at > 180 * 86400 )) && at=$(date -d "$tz$mon $day $((year + 1)) $hour:$min$ampm" +%s)
-    (( at - now > 180 * 86400 )) && at=$(date -d "$tz$mon $day $((year - 1)) $hour:$min$ampm" +%s)
+    if (( now - at > 180 * 86400 )); then at=$(date -d "$tz$mon $day $((year + 1)) $hour:$min$ampm" +%s 2>/dev/null) || return 1; fi
+    if (( at - now > 180 * 86400 )); then at=$(date -d "$tz$mon $day $((year - 1)) $hour:$min$ampm" +%s 2>/dev/null) || return 1; fi
   else
     at=$(date -d "$tz$date $hour:$min$ampm" +%s 2>/dev/null) || return 1
     if (( now - at > roll )); then
-      date=$(date -d "$date 12:00 tomorrow" +%F)
-      at=$(date -d "$tz$date $hour:$min$ampm" +%s)
+      date=$(date -d "$date 12:00 tomorrow" +%F) || return 1
+      # A wall-clock time tomorrow's DST change skips names no instant: fail.
+      at=$(date -d "$tz$date $hour:$min$ampm" +%s 2>/dev/null) || return 1
     fi
   fi
   printf '%s\n' "$at"
