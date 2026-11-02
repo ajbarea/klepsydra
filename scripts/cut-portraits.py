@@ -29,7 +29,7 @@ NAMES = tuple(sorted(KOURAI + NEW))
 HEAD = (
     {name: (180, 20, 460, 300) for name in KOURAI}
     | {"hephaestus": (250, 20, 530, 300)}
-    | {"chronos": (242, 20, 842, 620), "argos": (268, 20, 768, 520), "hermes": (266, 30, 786, 550), "elpis": (270, 20, 750, 500), "hesychia": (212, 20, 772, 580), "athena": (300, 0, 820, 520)}
+    | {"chronos": (242, 20, 842, 620), "argos": (268, 20, 768, 520), "hermes": (266, 30, 786, 550), "elpis": (270, 20, 750, 500), "hesychia": (212, 20, 772, 580), "athena": (290, 10, 870, 590)}
 )
 SIZES = (96, 192)
 # (left, top, right, bottom) of the square half-figure: the head in the upper

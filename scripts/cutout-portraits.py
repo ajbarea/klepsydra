@@ -4,7 +4,7 @@ The ten kourai portraits ship with transparent cut-outs; the newer ones are
 painted on a dark backdrop. This runs rembg's `isnet-anime` model (IS-Net
 trained on illustrated characters, SkyTNT/anime-segmentation, Apache-2.0)
 once on kourai-khryseai's original (assets/avatars/originals/<name>.jpg or
-.png, square: 2048 px for most, 1254 px for Athena) scaled to 1024 px, and
+.png, square, 2048 px) scaled to 1024 px, and
 writes assets/portraits/<name>-cutout.webp, which is committed, so scripts/cut-portraits.py needs no model. About 3 s and 1.2 GB a
 portrait on CPU; BiRefNet cut as cleanly but needed over 3.5 GB.
 

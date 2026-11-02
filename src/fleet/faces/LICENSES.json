@@ -240,19 +240,19 @@
     "license": "MIT (Copyright (c) 2026 AJ Barea)"
   },
   "kourai/athena-192.webp": {
-    "source": "AJ Barea, generated from the briefs in docs/characters/portrait-briefs.md (assets/portraits/athena.jpg), head cropped and scaled to 192 px",
+    "source": "AJ Barea, generated from the prompts in kourai-khryseai assets/avatars/originals/portrait-prompts.md (assets/portraits/athena.jpg), head cropped and scaled to 192 px",
     "license": "MIT (Copyright (c) 2026 AJ Barea)"
   },
   "kourai/athena-96.webp": {
-    "source": "AJ Barea, generated from the briefs in docs/characters/portrait-briefs.md (assets/portraits/athena.jpg), head cropped and scaled to 96 px",
+    "source": "AJ Barea, generated from the prompts in kourai-khryseai assets/avatars/originals/portrait-prompts.md (assets/portraits/athena.jpg), head cropped and scaled to 96 px",
     "license": "MIT (Copyright (c) 2026 AJ Barea)"
   },
   "kourai/athena-figure.webp": {
-    "source": "AJ Barea, generated from the briefs in docs/characters/portrait-briefs.md; cut out of its backdrop by scripts/cutout-portraits.py (rembg isnet-anime, Apache-2.0) as assets/portraits/athena-cutout.webp, scaled to 384 px",
+    "source": "AJ Barea, generated from the prompts in kourai-khryseai assets/avatars/originals/portrait-prompts.md; cut out of its backdrop by scripts/cutout-portraits.py (rembg isnet-anime, Apache-2.0) as assets/portraits/athena-cutout.webp, scaled to 384 px",
     "license": "MIT (Copyright (c) 2026 AJ Barea)"
   },
   "kourai/athena-full.webp": {
-    "source": "AJ Barea, generated from the briefs in docs/characters/portrait-briefs.md (assets/portraits/athena.jpg), whole, 768 px",
+    "source": "AJ Barea, generated from the prompts in kourai-khryseai assets/avatars/originals/portrait-prompts.md (assets/portraits/athena.jpg), whole, 768 px",
     "license": "MIT (Copyright (c) 2026 AJ Barea)"
   },
   "kourai/chronos-192.webp": {
