@@ -83,10 +83,16 @@ if [[ ${1:-} == --refresh ]]; then
       continue
     fi
     fresh "$f" && continue
-    # No archive copy, no rewrite; nor without a temp file beside it.
-    if ! mkdir -p -- "$FLEET_STATE/archive/briefs" || ! cp -- "$f" "$FLEET_STATE/archive/briefs/${f##*/}.$(date +%Y%m%d-%H%M%S)" ||
-      ! tmp=$(mktemp "$f.XXXXXX"); then
-      flog ERROR "brief not refreshed: its archive copy or temp file could not be written; the old one stays" path="$f"
+    # No temp file beside it, or no archive copy: no rewrite.
+    if ! tmp=$(mktemp "$f.XXXXXX"); then
+      flog ERROR "brief not refreshed: no temp file could be made beside it; the old one stays" path="$f"
+      err "cannot write beside ${f##*/}; left as it was"
+      failed=1
+      continue
+    fi
+    if ! mkdir -p -- "$FLEET_STATE/archive/briefs" || ! cp -- "$f" "$FLEET_STATE/archive/briefs/${f##*/}.$(date +%Y%m%d-%H%M%S.%N)-$$"; then
+      rm -f -- "${tmp:?}"
+      flog ERROR "brief not refreshed: its archive copy could not be written; the old one stays" path="$f"
       err "could not archive ${f##*/}; left as it was"
       failed=1
       continue
@@ -112,7 +118,7 @@ if grep -q '^Resources: ' "$body"; then err "$body already has the shared rules;
 out=$FLEET_STATE/task-$name.src
 if [[ -e $out ]]; then
   mkdir -p -- "$FLEET_STATE/archive/briefs"
-  cp -- "$out" "$FLEET_STATE/archive/briefs/task-$name.$(date +%Y%m%d-%H%M%S).src"
+  cp -- "$out" "$FLEET_STATE/archive/briefs/task-$name.$(date +%Y%m%d-%H%M%S.%N)-$$.src"
 fi
 tmp=$(mktemp "$out.XXXXXX")
 {

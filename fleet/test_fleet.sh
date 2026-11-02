@@ -581,6 +581,19 @@ else
     "$(bash "$hist/fleet/brief.sh" --refresh "$FLEET_STATE/task-hist.src" >/dev/null 2>&1; echo $?) $(chmod 600 "$FLEET_STATE/task-hist.src"; cmp -s "$work/hist.stale" "$FLEET_STATE/task-hist.src" && echo same)" "1 same"
 fi
 chmod 600 "$FLEET_STATE/task-hist.src"
+# Each guard alone: a stale, readable brief whose archive folder, or own folder, is read-only.
+printf 'Do Z.\n\nResources: old wording.\n' >"$work/hist.old"
+if [[ $(id -u) != 0 ]]; then
+  cp "$work/hist.old" "$FLEET_STATE/task-hist.src"
+  mkdir -p "$FLEET_STATE/archive/briefs"; chmod 555 "$FLEET_STATE/archive/briefs"
+  check "#275: no archive copy, no rewrite: the brief stays and the refresh exits 1" \
+    "$(bash "$hist/fleet/brief.sh" --refresh "$FLEET_STATE/task-hist.src" >/dev/null 2>&1; echo $?) $(cmp -s "$work/hist.old" "$FLEET_STATE/task-hist.src" && echo same) $(find "$FLEET_STATE" -maxdepth 1 -name 'task-hist.src.*' | wc -l)" "1 same 0"
+  chmod 755 "$FLEET_STATE/archive/briefs"
+  mkdir -p "$work/ro"; cp "$work/hist.old" "$work/ro/task-ro.src"; chmod 555 "$work/ro"
+  check "#275: no temp file beside it: the brief stays, nothing is archived, and the refresh exits 1" \
+    "$(n=$(find "$FLEET_STATE/archive/briefs" -name 'task-ro.src.*' | wc -l); bash "$hist/fleet/brief.sh" --refresh "$work/ro/task-ro.src" >/dev/null 2>&1; echo "$? $n $(find "$FLEET_STATE/archive/briefs" -name 'task-ro.src.*' | wc -l)") $(cmp -s "$work/hist.old" "$work/ro/task-ro.src" && echo same)" "1 0 0 same"
+  chmod 755 "$work/ro"
+fi
 rm -rf -- "${hist:?}" "${FLEET_STATE:?}/task-hist.src"
 check "the tail carries the friction-log rule (AJ 11-01)" "$(grep -c '^Friction log (AJ 11-01, every agent): read ~/.local/state/fleet-orchestrator/friction.md' "$here/brief-tail.md")" "1"
 check "the tail says performance wins over security above the floor (AJ 11-01)" "$(grep -c '^Quality (AJ 11-01): when performance and security trade off, performance wins, above the security floor.$' "$here/brief-tail.md")" "1"
