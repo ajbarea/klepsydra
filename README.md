@@ -1302,7 +1302,8 @@ runs on the first account with room, in the fleet's order, then on each other lo
 when one is at its usage limit. If any account was at its limit, the triage
 waits and is tried again every 10 minutes, for up to a day, and the red is
 routed once it has its cause or has waited 30 minutes. It also
-gets one line under "Needs you" in the queue file. Dependabot's reds are kept
+gets one line under "Needs you" in the file `FLEET_QUEUE` names (default
+`fleet-briefing/needs-you.md`, AJ's to-do file). Dependabot's reds are kept
 for the morning instead. Once a day (after `CI_SWEEP_HOUR`, default 6) the
 latest green run on each default branch is read for warnings. The watcher
 pushes, merges and re-runs nothing. No error stops it: a repo that cannot be
