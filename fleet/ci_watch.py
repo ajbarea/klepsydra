@@ -16,8 +16,8 @@ and is tried again every RETRIAGE_S for a day), then routed to whoever can fix i
 working on, that agent's inbox (the resume service types it in at its next
 idle prompt); otherwise Heph, whose pane watcher wakes on it. Every routed red
 is one line in ci/alerts.jsonl. A red still red ESCALATE_S after it was routed
-wakes Heph to push AJ once, and gets one line under "Needs you" in the queue
-file. Dependabot's reds are listed for the morning instead. Once a day the
+wakes Heph to push AJ once, and gets one line under "Needs you" in AJ's to-do
+file (needs-you.md). Dependabot's reds are listed for the morning instead. Once a day the
 latest green run on each default branch is read for warnings. Nothing is
 pushed, merged or re-run.
 
@@ -57,7 +57,7 @@ KLEPSYDRA_DIR = Path(
 )
 TECHNE_TOML = Path(os.environ.get("TECHNE_TOML", HOME / ".claude/techne.toml"))
 QUEUE = Path(
-    os.environ.get("FLEET_QUEUE", "/mnt/c/Users/ajbar/fleet-briefing/claude-queue.md")
+    os.environ.get("FLEET_QUEUE", "/mnt/c/Users/ajbar/fleet-briefing/needs-you.md")
 )
 SWEEP_HOUR = int(os.environ.get("CI_SWEEP_HOUR", "6"))
 ESCALATE_S = int(os.environ.get("CI_ESCALATE_S", "1800"))

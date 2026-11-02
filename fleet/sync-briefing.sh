@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# sync-briefing.sh: commit and push the private fleet-briefing repo (AJ's queue,
-# morning file, shots and review drafts) when anything in it changed or a commit waits to be
+# sync-briefing.sh: commit and push the private fleet-briefing repo (AJ's to-do
+# file, the fleet queue, the morning file, shots and review drafts) when anything in it changed or a commit waits to be
 # pushed. The staged content is scanned by gitleaks before it is committed, so
 # what is scanned is what is committed; a finding unstages it and blocks the
 # commit. A rejected push rebases once onto the remote and retries; nothing is
@@ -25,7 +25,7 @@ fi
 
 # Only paths that exist or are tracked: git add stops at the first pathspec that matches nothing.
 paths=()
-for f in claude-morning.md claude-queue.md README.md shots review; do
+for f in claude-morning.md claude-queue.md needs-you.md README.md shots review; do
   if [[ -e $f ]] || git ls-files --error-unmatch -- "$f" >/dev/null 2>&1; then paths+=("$f"); fi
 done
 if [[ -n $(git status --porcelain -- "${paths[@]}") ]]; then
