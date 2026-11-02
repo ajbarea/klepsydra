@@ -541,6 +541,8 @@ cat >"$work/bin/curl" <<'EOF'
 #!/usr/bin/env bash
 # The phone wall: answers with $DOC_FLEET for the URL named in $DOC_UP.
 for a; do url=$a; done
+# DOC_FLAKY: a file whose presence fails one call, as Windows interop now and then does.
+[[ -n ${DOC_FLAKY:-} && -e $DOC_FLAKY ]] && { rm -f -- "$DOC_FLAKY"; exit 7; }
 [[ -n ${DOC_UP:-} && $url == "$DOC_UP"* ]] || exit 7
 cat "$DOC_FLEET"
 EOF
@@ -562,7 +564,7 @@ chmod +x "$work/bin/"*
 rm -f "$FLEET_STATE/resume.beat"
 login a
 doctor() { FLEET_PS="$work/bin/ps" FLEET_SYSTEMCTL="$work/bin/systemctl" FLEET_CURL="$work/bin/curl" FLEET_TAILSCALE="$work/bin/tailscale" \
-  DOC_ACTIVE="$work/active" DOC_FLEET="$work/fleet.json" bash "$here/doctor.sh" 2>/dev/null; }
+  DOC_ACTIVE="$work/active" DOC_FLEET="$work/fleet.json" FLEET_RETRY_S=0 bash "$here/doctor.sh" 2>/dev/null; }
 w=$(pane wpane '{"above":["idle"]}'); o=$(pane opane '{"above":["idle"]}'); settle
 printf '%s\tworker\t%s\n' "$w" "$FLEET_STATE/task-demo.src" >"$REGISTRY"
 printf '%s\n' "$o" >"$FLEET_STATE/orchestrator.pane"
@@ -577,7 +579,7 @@ check "a stopped resume service fails" "$(grep -c '^FAIL resume service' <<<"$ou
 check "a resume loop that never ran fails" "$(grep '^FAIL resume loop' <<<"$out")" "FAIL resume loop: no pass recorded"
 check "a worker with Remote Control is ok" "$(grep -c "^ok   remote control $w (worker)" <<<"$out")" "1"
 check "the orchestrator without it fails (Heph's must always be on)" "$(grep -c "^FAIL remote control $o (orchestrator): off" <<<"$out")" "1"
-check "no phone wall fails" "$(grep -c '^FAIL phone wall: no answer' <<<"$out")" "1"
+check "no phone wall fails, after a second try" "$(grep -c '^FAIL phone wall: no answer from http://127.0.0.1:8318/fleet.json (tried twice)' <<<"$out")" "1"
 check "no Tailscale Serve fails" "$(grep -c '^FAIL phone wall over Tailscale: Tailscale Serve is not set up' <<<"$out")" "1"
 check "and the exit is non-zero" "$code" "1"
 check "#244: hooks and cast never installed fail, named" "$(grep '^FAIL installed copies' <<<"$out" | grep -c 'make install-fleet: differ from .*: klepsydra-fleet.sh .*klepsydra-cast.json$')" "1"
@@ -586,19 +588,51 @@ for c in "${HOOK_COPIES[@]}"; do mkdir -p "$(dirname "$FLEET_HOOK_DIR/${c#* }")"
 touch "$work/active" "$FLEET_STATE/resume.beat"
 session_file o1 "$o" https://claude.ai/code/session_01O
 out=$(DOC_UP=http DOC_SERVE="https://desk.tail1.ts.net (tailnet only)" doctor); code=$?
-check "all well but the watcher: a shell that names the script is not one" "$(grep -c '^ok ' <<<"$out") $(grep '^FAIL' <<<"$out" | cut -d: -f1)" "12 FAIL pane watcher"
+check "all well but the watcher: a shell that names the script is not one" "$(grep -c '^ok ' <<<"$out") $(grep '^FAIL' <<<"$out" | cut -d: -f1)" "13 FAIL pane watcher"
 check "the default account is logged in; the second, not yet, is a warning" \
   "$(grep '^ok   account' <<<"$out" | cut -d: -f1) | $(grep '^warn account' <<<"$out" | cut -d: -f1)" "ok   account $work/cfg-a | warn account $work/cfg-b"
 check "with a watcher running, every check is ok and the exit is 0" \
-  "$(DOC_WATCH='%2 %5' DOC_UP=http DOC_SERVE=on doctor | grep -c '^ok '; echo "rc=${PIPESTATUS[0]}")" $'13\nrc=0'
+  "$(DOC_WATCH='%2 %5' DOC_UP=http DOC_SERVE=on doctor | grep -c '^ok '; echo "rc=${PIPESTATUS[0]}")" $'14\nrc=0'
 check "the watcher's panes are named" "$(DOC_WATCH='%2 %5' doctor | grep '^ok   pane watcher')" "ok   pane watcher: watching %2 %5"
 printf '# 10-29 copy\n' >>"$FLEET_HOOK_DIR/klepsydra-fleet.sh"
 check "#244: a hook copy older than the checkout fails, and only it is named" \
   "$(doctor | grep '^FAIL installed copies')" "FAIL installed copies: make install-fleet: differ from $(tilde "$root"): klepsydra-fleet.sh"
 cp "$root/hooks/klepsydra-fleet.sh" "$FLEET_HOOK_DIR/klepsydra-fleet.sh"
-check "the phone wall and its Tailscale twin answer fresh" "$(grep -c 'fleet.json observed 3[0-9] s ago' <<<"$out")" "2"
+check "the phone wall and its Tailscale twin answer" "$(grep -c '^ok   phone wall.*: answers at ' <<<"$out")" "2"
+check "#246: and the usage readings are fresh" "$(grep -c '^ok   usage readings: observed 3[0-9] s ago' <<<"$out")" "1"
+: >"$work/flaky"
+check "#246: a wall that misses once and then answers is ok" "$(DOC_FLAKY="$work/flaky" DOC_UP=http doctor | grep -c '^ok   phone wall: answers')" "1"
+jq -n '{usage: [{observed_at: 1000, label: "RIT"}]}' >"$work/fleet.json"
+: >"$FLEET_LOG"
+out=$(DOC_UP=http doctor)
+check "#246: old readings with no turn running are not a failure: the wall answers" \
+  "$(grep -c '^ok   phone wall: answers' <<<"$out") $(grep '^ok   usage readings' <<<"$out" | grep -c 'no pane runs a turn')" "1 1"
+state wpane '{"above":["⏺ working"],"busy":true}'
+out=$(DOC_UP=http doctor)
+check "#246: while a pane runs a turn, old readings are a warning naming it" "$(grep '^warn usage readings' <<<"$out" | grep -c "while $w runs a turn")" "1"
+check "#246: logged with the values it was decided on" \
+  "$(jq -r 'select(.message == "doctor: usage readings") | [.observed_at, .max_s, .account, .mid_turn] | join(" ")' "$FLEET_LOG" | tail -1)" "1000 120 RIT $w"
+state wpane '{"above":["idle"]}'
+jq -n '{usage: []}' >"$work/fleet.json"
+check "#246: no readings at all are unknown, a warning" "$(DOC_UP=http doctor | grep -c '^warn usage readings: fleet.json holds none')" "1"
+jq -n --argjson at "$(( $(date +%s) - 30 ))" '{usage: [{observed_at: $at}]}' >"$work/fleet.json"
+state wpane '{"above":["  ⎿  You'"'"'ve hit your session limit · resets 1:10pm (America/New_York)","",""]}'
+: >"$FLEET_LOG"
+out=$(doctor)
+check "#246: no watcher while every agent waits out a limit is a warning with the reset" \
+  "$(grep '^warn pane watcher' <<<"$out")" "warn pane watcher: none running while every agent waits out a usage limit (resets 1:10pm): start one after the reset"
+check "#246: logged with the limited panes and the reset" \
+  "$(jq -r 'select(.message == "doctor: pane watcher") | [.limited, .resets] | join(" | ")' "$FLEET_LOG")" "$w | 1:10pm"
+w2=$(pane wpane2 '{"above":["idle"]}'); settle
+printf '%s\tworker2\t%s\n' "$w2" "$FLEET_STATE/task-demo.src" >>"$REGISTRY"; session_file w2 "$w2" https://claude.ai/code/session_01X
+check "#246: with one agent free, no watcher still fails" "$(doctor | grep -c '^FAIL pane watcher: none running')" "1"
+t kill-window -t "$w2"; rm -f "$KLEPSYDRA_DIR/fleet/w2.json"
+printf '%s\tworker\t%s\n' "$w" "$FLEET_STATE/task-demo.src" >"$REGISTRY"
+state wpane '{"above":["idle"]}'
+printf 'parked\tPAUSED 11-01 07:16: no room\n' >"$FLEET_STATE/paused.tsv"
+check "#246: paused agents are listed, never a failure" "$(doctor | grep '^ok   paused agents')" "ok   paused agents: parked: fleet unpause NAME brings one back"
+rm -f "$FLEET_STATE/paused.tsv"
 jq -n '{usage: [{observed_at: 1000}]}' >"$work/fleet.json"
-check "a stale fleet.json fails" "$(DOC_UP=http doctor | grep -c 'fleet.json is stale')" "1"
 touch -d '@1000' "$FLEET_STATE/resume.beat"
 check "a resume loop that stopped passing fails" "$(doctor | grep -c '^FAIL resume loop: last pass')" "1"
 logout a
@@ -1567,6 +1601,55 @@ state cil '{"above":["⏺ Done. done 11:50 AM"],"paste_prefix":"AJ: ","clear":tr
 check "review 4: pasted as AJ began a line, nothing is sent and none of his line is taken" \
   "$(inbox_deliver "$p" "$work/alert3.txt") [$(input_text "$(screen "$p")")] $(grep -c '^SUBMIT' "$work/cil.log")" "mixed [AJ: $(<"$work/alert3.txt")] 1"
 t kill-window -t "$p"
+echo "the watcher holds panes limited when it starts (#246)"
+: >"$FLEET_LOG"
+lp=$(pane wlim '{"above":["  ⎿  You'"'"'ve hit your session limit · resets 1:10pm (America/New_York)","",""]}'); settle
+IDLE_S=0 WATCH_TICK=0.1 timeout 60 bash "$here/watch-panes.sh" "$lp" >"$work/wlim.out" 2>/dev/null &
+wjob=$!
+sleep 1.5
+check "#246: a pane limited at start wakes nobody" "$(kill -0 "$wjob" 2>/dev/null && echo watching || echo "woke: $(cat "$work/wlim.out")")" "watching"
+check "#246: logged as limited at start, with the reset" \
+  "$(jq -r 'select(.message == "watching") | [.limited_at_start, .resets] | join(" | ")' "$FLEET_LOG")" "$lp | 1:10pm"
+state wlim '{"above":["⏺ Done. done 11:50 AM"]}'
+wait "$wjob"
+check "#246: once its limit clears it is watched again, and wakes on its finish" "$(cut -d' ' -f1,2 "$work/wlim.out")" "IDLE $lp"
+state wlim '{"above":["  ⎿  You'"'"'ve hit your session limit · resets 1:10pm (America/New_York)","",""]}'
+IDLE_S=0 WATCH_TICK=0.1 timeout 60 bash "$here/watch-panes.sh" "$lp" >"$work/wlim.out" 2>/dev/null &
+wjob=$!; sleep 1; state wlim '{"above":["⏺ working"],"busy":true}'; sleep 1
+state wlim '{"above":["  ⎿  You'"'"'ve hit your session limit · resets 6:10pm (America/New_York)","",""]}'
+wait "$wjob"
+check "#246: a limit hit after it cleared still wakes" "$(cut -d' ' -f1,2 "$work/wlim.out")" "LIMIT $lp"
+t kill-window -t "$lp"
+
+echo "fleet pause and unpause (#246)"
+: >"$FLEET_LOG"; rm -f "$FLEET_STATE/paused.tsv"
+SG=33333333-2222-4333-8444-555555555555
+printf '%%41\tgone1\t%s\t%s\t/w\t%s\n%%42\tother\t/b.src\n' "$work/brief.src" "$SG" "$work/cfg-a" >"$REGISTRY"
+row1=$(head -1 "$REGISTRY")
+fp() { # what fleet pause says: its result, then any error line (not its log lines)
+  local rc
+  bash "$here/pause.sh" "$@" 2>"$work/fp.err"; rc=$?
+  grep '^error:' "$work/fp.err"
+  return "$rc"
+}
+check "#246: pause sets a gone agent aside, keeping its row" \
+  "$(fp pause gone1 no room yet) | $(cut -f2- "$REGISTRY") | $(cut -f1 "$FLEET_STATE/paused.tsv") $(cut -f3- "$FLEET_STATE/paused.tsv")" \
+  "paused: gone1 (%41): fleet unpause gone1 brings it back | other	/b.src | gone1 $row1"
+check "#246: and the note says why" "$(cut -f2 "$FLEET_STATE/paused.tsv" | grep -c 'PAUSED .*: no room yet$')" "1"
+check "#246: pausing it twice is refused" "$(fp pause gone1 again; echo "rc=$?")" $'error: fleet pause: no agent named gone1 in panes.tsv\nrc=1'
+check "#246: a pause needs a reason" "$(fp pause other; echo "rc=$?")" $'error: usage: fleet pause NAME WHY...\nrc=2'
+check "#246: unpause puts the row back as it was" \
+  "$(fp unpause gone1) | $(grep -c . "$FLEET_STATE/paused.tsv") | $(grep -c -xF "$row1" "$REGISTRY")" \
+  "unpaused: gone1: fleet recover launches it fresh from its brief | 0 | 1"
+printf 'byhand\tPAUSED 10-28 by Heph\n' >"$FLEET_STATE/paused.tsv"
+check "#246: a row paused by hand, with nothing saved, is refused, not invented" \
+  "$(fp unpause byhand | grep -c 'paused by hand, with no saved row'; grep -c . "$FLEET_STATE/paused.tsv")" $'1\n1'
+lv=$(pane plive '{"above":["idle"]}'); settle
+printf '%s\tlive1\t%s\t%s\t/w\n' "$lv" "$work/brief.src" "$SID" >"$REGISTRY"; live "$lv"
+check "#246: an agent whose session still runs is never paused" \
+  "$(fp pause live1 because | grep -c "live1 still runs in $lv"; grep -c . "$REGISTRY")" $'1\n1'
+check "#246: each refusal is logged with its reason" "$(jq -r 'select(.message | startswith("fleet pause refused")) | .reason' "$FLEET_LOG" | grep -c .)" "2"
+t kill-window -t "$lv"; rm -f -- "${KLEPSYDRA_DIR:?}/fleet/$SID.json" "$FLEET_STATE/paused.tsv"; : >"$REGISTRY"
 check "review 1: the pane watcher is quiet while no alert has ever been written" \
   "$(FLEET_STATE="$work/noalerts" IDLE_S=1 timeout 2 bash "$here/watch-panes.sh" %999 2>&1 | grep -c 'No such file')" "0"
 

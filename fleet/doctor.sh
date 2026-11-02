@@ -5,8 +5,10 @@
 # registered pane and the orchestrator's has Remote Control on (the link its
 # live session's fleet file holds, which is what the phone wall's Open in
 # Claude uses); the phone wall answers on 127.0.0.1:8318 and through
-# Tailscale Serve with a fresh fleet.json (a usage reading observed in the last
-# 2 minutes); a pane watcher is running; each config folder in FLEET_ACCOUNTS
+# Tailscale Serve; its usage readings are fresh (observed in the last 2
+# minutes) while some pane is mid-turn, the only time a session refreshes them;
+# a pane watcher is running, unless every live agent waits out a usage limit;
+# paused agents (paused.tsv) are listed; each config folder in FLEET_ACCOUNTS
 # is logged in and the second ones match the first; the copies in ~/.claude
 # (hooks, status line, launcher, cast) match the checkout. Briefs whose shared rules
 # are out of date, and a second folder not logged in, are warnings.
@@ -42,18 +44,19 @@ fi
 results=()
 
 
-report() { # ok|warn|FAIL CHECK DETAIL
+report() { # ok|warn|FAIL CHECK DETAIL [KEY=VALUE...]: the values are logged with it
   local check detail
   check=$(tilde "$2") detail=$(tilde "$3")
+  local -a vals=("${@:4}")
   printf '%-4s %s: %s\n' "$1" "$check" "$detail"
   results+=("$1"$'\t'"${check//[$'\t\n']/ }"$'\t'"${detail//[$'\t\n']/ }")
   [[ $1 == FAIL ]] && failed=1
   [[ -n $json && ${was[${check//[$'\t\n']/ }]-} == "$1" ]] && return
   case $1 in
-    FAIL) flog ERROR "doctor: $check" detail="$detail" ;;
-    warn) flog WARN "doctor: $check" detail="$detail" ;;
+    FAIL) flog ERROR "doctor: $check" detail="$detail" "${vals[@]}" ;;
+    warn) flog WARN "doctor: $check" detail="$detail" "${vals[@]}" ;;
     # An ok detail can be a Remote Control link, which opens a session: not logged.
-    ok) [[ -n ${was[${check//[$'\t\n']/ }]-} ]] && flog INFO "doctor: $check recovered" ;;
+    ok) [[ -n ${was[${check//[$'\t\n']/ }]-} ]] && flog INFO "doctor: $check recovered" "${vals[@]}" ;;
   esac
 }
 
@@ -137,21 +140,20 @@ for p in $orch $panes; do
   fi
 done
 
-# fleet.json at BASE: whether it answers and its newest usage reading's age.
+# Whether the wall at BASE answers (#246): the pass or fail. A Windows program
+# run from WSL now and then fails once at start, so a miss is tried again.
+phone_body=""
 phone() { # CHECK BASE
-  local body newest
+  local body
   if ! body=$($CURL -fsS --max-time 5 "$2/fleet.json" 2>/dev/null); then
-    report FAIL "$1" "no answer from $2/fleet.json"
-    return
+    sleep "${FLEET_RETRY_S:-2}"
+    if ! body=$($CURL -fsS --max-time 5 "$2/fleet.json" 2>/dev/null); then
+      report FAIL "$1" "no answer from $2/fleet.json (tried twice)" url="$2/fleet.json"
+      return
+    fi
   fi
-  newest=$(jq -r '[.usage[]?.observed_at // empty] | max // empty' <<<"$body" 2>/dev/null)
-  if [[ -z $newest ]]; then
-    report FAIL "$1" "answers, but fleet.json holds no usage reading"
-  elif (( now - ${newest%.*} <= FRESH_MAX_S )); then
-    report ok "$1" "fleet.json observed $((now - ${newest%.*})) s ago"
-  else
-    report FAIL "$1" "fleet.json is stale: observed $((now - ${newest%.*})) s ago"
-  fi
+  [[ -n $phone_body ]] || phone_body=$body
+  report ok "$1" "answers at $2"
 }
 phone "phone wall" "$PHONE"
 dns=$($TAILSCALE status --json 2>/dev/null | jq -r '.Self.DNSName // empty' | sed 's/\.$//')
@@ -162,6 +164,35 @@ elif [[ -z $serve || $serve == *"No serve config"* ]]; then
   report FAIL "phone wall over Tailscale" "Tailscale Serve is not set up (README: Phone wall)"
 else
   phone "phone wall over Tailscale" "https://$dns"
+fi
+
+# The usage readings' age (#246). Only a session's status line refreshes them,
+# so they age while no turn runs (every agent limited, Heph between turns) and
+# nothing is broken: stale is a warning only while some pane is mid-turn.
+# Missing readings are unknown, never fresh.
+if [[ -n $phone_body ]]; then
+  newest=$(jq -r '[.usage[]?.observed_at // empty] | max // empty' <<<"$phone_body" 2>/dev/null)
+  by=$(jq -r '[.usage[]? | select(.observed_at != null)] | max_by(.observed_at) | .label // .account // "" ' <<<"$phone_body" 2>/dev/null)
+  mid=""
+  for p in $orch $panes; do
+    fleet_panes | grep -qx -- "$p" && busy "$(screen "$p")" && mid+="$p "
+  done
+  mid=${mid% }
+  if [[ -z $newest ]]; then
+    report warn "usage readings" "fleet.json holds none: their age is unknown" now="$now" mid_turn="$mid"
+  else
+    age=$((now - ${newest%.*}))
+    vals=(observed_at="${newest%.*}" now="$now" max_s="$FRESH_MAX_S" account="$by" mid_turn="$mid")
+    if (( age < -FRESH_MAX_S )); then
+      report warn "usage readings" "observed $((-age)) s in the future: a clock is off" "${vals[@]}"
+    elif (( age <= FRESH_MAX_S )); then
+      report ok "usage readings" "observed $age s ago ($by)" "${vals[@]}"
+    elif [[ -n $mid ]]; then
+      report warn "usage readings" "stale: observed $age s ago while $mid runs a turn" "${vals[@]}"
+    else
+      report ok "usage readings" "observed $age s ago; no pane runs a turn, so none refreshes them" "${vals[@]}"
+    fi
+  fi
 fi
 
 # Two accounts: each config folder logged in, the second ones in step with the first.
@@ -210,10 +241,29 @@ fi
 
 # Processes running watch-panes.sh itself (bash, then the script), not a shell that names it.
 watchers=$($PS -eo args= 2>/dev/null | awk '$1 ~ /(^|\/)bash$/ && $2 ~ /(^|\/)watch-panes\.sh$/ { $1 = $2 = ""; sub(/^ +/, ""); printf "%s;", $0 }')
+# None running is expected while every live agent waits out a usage limit
+# (#246): a watcher would wake at once on each limited pane.
 if [[ -n $watchers ]]; then
   report ok "pane watcher" "watching ${watchers%;}"
 else
-  report FAIL "pane watcher" "none running: the orchestrator is not woken when an agent finishes"
+  limited="" resets="" free=""
+  for p in $panes; do
+    fleet_panes | grep -qx -- "$p" || continue
+    s=$(screen "$p")
+    if ! busy "$s" && l=$(limit_line "$s"); then
+      limited+="$p "
+      r=$(grep -oE 'resets [^(]*[ap]m' <<<"$l" | tail -1)
+      [[ -n $r && $resets != *"$r"* ]] && resets+="${r#resets }, "
+    else
+      free+="$p "
+    fi
+  done
+  limited=${limited% } resets=${resets%, } free=${free% }
+  if [[ -n $limited && -z $free ]]; then
+    report warn "pane watcher" "none running while every agent waits out a usage limit (resets ${resets:-at an unknown time}): start one after the reset" limited="$limited" resets="$resets"
+  else
+    report FAIL "pane watcher" "none running: the orchestrator is not woken when an agent finishes" limited="$limited" not_limited="$free"
+  fi
 fi
 # Registered agents, one verdict per row (#220): a session gone without an end
 # (after a hard shutdown, all of them) is a FAIL for `fleet recover`; one that
@@ -234,6 +284,9 @@ else
   report ok "agents" "every registered session runs"
 fi
 [[ -n $gone && -n $done_ ]] && report warn "finished agents" "still in panes.tsv: ${done_% }: fleet doctor --prune"
+# Agents set aside (paused.tsv, `fleet pause`): listed, never a failure (#246).
+paused=$(awk -F'\t' '$1 != "" && $1 !~ /^#/ { printf "%s, ", $1 }' "${FLEET_PAUSED:-$FLEET_STATE/paused.tsv}" 2>/dev/null)
+[[ -n $paused ]] && report ok "paused agents" "${paused%, }: fleet unpause NAME brings one back" paused="${paused%, }"
 mapfile -t briefs < <(awk -F'\t' 'NF >= 3 { print $3 }' "$REGISTRY" 2>/dev/null)
 if (( ! ${#briefs[@]} )); then
   report ok "briefs" "no registered agents"
