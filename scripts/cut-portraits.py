@@ -26,7 +26,6 @@ NAMES = tuple(sorted(KOURAI + NEW))
 # stands right of centre at his anvil. The five new boxes are in the 1024 px
 # JPEGs, framed like Hephaestus: head and beard in the upper middle, one
 # shoulder entering the circle. Hermes's hat wings clip; his face and brim stay.
-# Refit 2026-11-01 for the five redrawn portraits.
 HEAD = (
     {name: (180, 20, 460, 300) for name in KOURAI}
     | {"hephaestus": (250, 20, 530, 300)}
@@ -49,7 +48,7 @@ SOURCE = (
 )
 LICENSE = "MIT (kourai-khryseai LICENSE, Copyright (c) 2026 AJ Barea)"
 NEW_SOURCE = (
-    "AJ Barea, generated from the briefs in docs/characters/portrait-briefs.md "
+    "AJ Barea, generated from the prompts in kourai-khryseai assets/avatars/originals/portrait-prompts.md "
     "(assets/portraits/{name}.jpg), head cropped and scaled to {size} px"
 )
 NEW_LICENSE = "MIT (Copyright (c) 2026 AJ Barea)"
@@ -58,12 +57,12 @@ FIGURE_SOURCE = (
     "half-figure cropped and scaled to {size} px"
 )
 NEW_FIGURE_SOURCE = (
-    "AJ Barea, generated from the briefs in docs/characters/portrait-briefs.md; cut out of its backdrop "
+    "AJ Barea, generated from the prompts in kourai-khryseai assets/avatars/originals/portrait-prompts.md; cut out of its backdrop "
     "by scripts/cutout-portraits.py (rembg isnet-anime, Apache-2.0) as assets/portraits/{name}-cutout.webp, "
     "scaled to {size} px"
 )
 FULL_SOURCE = "kourai-khryseai assets/avatars/vn/{name}_neutral.png (https://github.com/ajbarea/kourai-khryseai), whole, {size} px"
-NEW_FULL_SOURCE = "AJ Barea, generated from the briefs in docs/characters/portrait-briefs.md (assets/portraits/{name}.jpg), whole, {size} px"
+NEW_FULL_SOURCE = "AJ Barea, generated from the prompts in kourai-khryseai assets/avatars/originals/portrait-prompts.md (assets/portraits/{name}.jpg), whole, {size} px"
 
 
 def main(kourai: Path, faces: Path) -> None:

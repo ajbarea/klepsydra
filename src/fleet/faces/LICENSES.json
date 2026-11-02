@@ -212,35 +212,35 @@
     "license": "MIT (kourai-khryseai LICENSE, Copyright (c) 2026 AJ Barea)"
   },
   "kourai/argos-192.webp": {
-    "source": "AJ Barea, generated from the briefs in docs/characters/portrait-briefs.md (assets/portraits/argos.jpg), head cropped and scaled to 192 px",
+    "source": "AJ Barea, generated from the prompts in kourai-khryseai assets/avatars/originals/portrait-prompts.md (assets/portraits/argos.jpg), head cropped and scaled to 192 px",
     "license": "MIT (Copyright (c) 2026 AJ Barea)"
   },
   "kourai/argos-96.webp": {
-    "source": "AJ Barea, generated from the briefs in docs/characters/portrait-briefs.md (assets/portraits/argos.jpg), head cropped and scaled to 96 px",
+    "source": "AJ Barea, generated from the prompts in kourai-khryseai assets/avatars/originals/portrait-prompts.md (assets/portraits/argos.jpg), head cropped and scaled to 96 px",
     "license": "MIT (Copyright (c) 2026 AJ Barea)"
   },
   "kourai/argos-figure.webp": {
-    "source": "AJ Barea, generated from the briefs in docs/characters/portrait-briefs.md; cut out of its backdrop by scripts/cutout-portraits.py (rembg isnet-anime, Apache-2.0) as assets/portraits/argos-cutout.webp, scaled to 384 px",
+    "source": "AJ Barea, generated from the prompts in kourai-khryseai assets/avatars/originals/portrait-prompts.md; cut out of its backdrop by scripts/cutout-portraits.py (rembg isnet-anime, Apache-2.0) as assets/portraits/argos-cutout.webp, scaled to 384 px",
     "license": "MIT (Copyright (c) 2026 AJ Barea)"
   },
   "kourai/argos-full.webp": {
-    "source": "AJ Barea, generated from the briefs in docs/characters/portrait-briefs.md (assets/portraits/argos.jpg), whole, 768 px",
+    "source": "AJ Barea, generated from the prompts in kourai-khryseai assets/avatars/originals/portrait-prompts.md (assets/portraits/argos.jpg), whole, 768 px",
     "license": "MIT (Copyright (c) 2026 AJ Barea)"
   },
   "kourai/chronos-192.webp": {
-    "source": "AJ Barea, generated from the briefs in docs/characters/portrait-briefs.md (assets/portraits/chronos.jpg), head cropped and scaled to 192 px",
+    "source": "AJ Barea, generated from the prompts in kourai-khryseai assets/avatars/originals/portrait-prompts.md (assets/portraits/chronos.jpg), head cropped and scaled to 192 px",
     "license": "MIT (Copyright (c) 2026 AJ Barea)"
   },
   "kourai/chronos-96.webp": {
-    "source": "AJ Barea, generated from the briefs in docs/characters/portrait-briefs.md (assets/portraits/chronos.jpg), head cropped and scaled to 96 px",
+    "source": "AJ Barea, generated from the prompts in kourai-khryseai assets/avatars/originals/portrait-prompts.md (assets/portraits/chronos.jpg), head cropped and scaled to 96 px",
     "license": "MIT (Copyright (c) 2026 AJ Barea)"
   },
   "kourai/chronos-figure.webp": {
-    "source": "AJ Barea, generated from the briefs in docs/characters/portrait-briefs.md; cut out of its backdrop by scripts/cutout-portraits.py (rembg isnet-anime, Apache-2.0) as assets/portraits/chronos-cutout.webp, scaled to 384 px",
+    "source": "AJ Barea, generated from the prompts in kourai-khryseai assets/avatars/originals/portrait-prompts.md; cut out of its backdrop by scripts/cutout-portraits.py (rembg isnet-anime, Apache-2.0) as assets/portraits/chronos-cutout.webp, scaled to 384 px",
     "license": "MIT (Copyright (c) 2026 AJ Barea)"
   },
   "kourai/chronos-full.webp": {
-    "source": "AJ Barea, generated from the briefs in docs/characters/portrait-briefs.md (assets/portraits/chronos.jpg), whole, 768 px",
+    "source": "AJ Barea, generated from the prompts in kourai-khryseai assets/avatars/originals/portrait-prompts.md (assets/portraits/chronos.jpg), whole, 768 px",
     "license": "MIT (Copyright (c) 2026 AJ Barea)"
   },
   "kourai/cupid-192.webp": {
@@ -276,19 +276,19 @@
     "license": "MIT (kourai-khryseai LICENSE, Copyright (c) 2026 AJ Barea)"
   },
   "kourai/elpis-192.webp": {
-    "source": "AJ Barea, generated from the briefs in docs/characters/portrait-briefs.md (assets/portraits/elpis.jpg), head cropped and scaled to 192 px",
+    "source": "AJ Barea, generated from the prompts in kourai-khryseai assets/avatars/originals/portrait-prompts.md (assets/portraits/elpis.jpg), head cropped and scaled to 192 px",
     "license": "MIT (Copyright (c) 2026 AJ Barea)"
   },
   "kourai/elpis-96.webp": {
-    "source": "AJ Barea, generated from the briefs in docs/characters/portrait-briefs.md (assets/portraits/elpis.jpg), head cropped and scaled to 96 px",
+    "source": "AJ Barea, generated from the prompts in kourai-khryseai assets/avatars/originals/portrait-prompts.md (assets/portraits/elpis.jpg), head cropped and scaled to 96 px",
     "license": "MIT (Copyright (c) 2026 AJ Barea)"
   },
   "kourai/elpis-figure.webp": {
-    "source": "AJ Barea, generated from the briefs in docs/characters/portrait-briefs.md; cut out of its backdrop by scripts/cutout-portraits.py (rembg isnet-anime, Apache-2.0) as assets/portraits/elpis-cutout.webp, scaled to 384 px",
+    "source": "AJ Barea, generated from the prompts in kourai-khryseai assets/avatars/originals/portrait-prompts.md; cut out of its backdrop by scripts/cutout-portraits.py (rembg isnet-anime, Apache-2.0) as assets/portraits/elpis-cutout.webp, scaled to 384 px",
     "license": "MIT (Copyright (c) 2026 AJ Barea)"
   },
   "kourai/elpis-full.webp": {
-    "source": "AJ Barea, generated from the briefs in docs/characters/portrait-briefs.md (assets/portraits/elpis.jpg), whole, 768 px",
+    "source": "AJ Barea, generated from the prompts in kourai-khryseai assets/avatars/originals/portrait-prompts.md (assets/portraits/elpis.jpg), whole, 768 px",
     "license": "MIT (Copyright (c) 2026 AJ Barea)"
   },
   "kourai/hephaestus-192.webp": {
@@ -308,35 +308,35 @@
     "license": "MIT (kourai-khryseai LICENSE, Copyright (c) 2026 AJ Barea)"
   },
   "kourai/hermes-192.webp": {
-    "source": "AJ Barea, generated from the briefs in docs/characters/portrait-briefs.md (assets/portraits/hermes.jpg), head cropped and scaled to 192 px",
+    "source": "AJ Barea, generated from the prompts in kourai-khryseai assets/avatars/originals/portrait-prompts.md (assets/portraits/hermes.jpg), head cropped and scaled to 192 px",
     "license": "MIT (Copyright (c) 2026 AJ Barea)"
   },
   "kourai/hermes-96.webp": {
-    "source": "AJ Barea, generated from the briefs in docs/characters/portrait-briefs.md (assets/portraits/hermes.jpg), head cropped and scaled to 96 px",
+    "source": "AJ Barea, generated from the prompts in kourai-khryseai assets/avatars/originals/portrait-prompts.md (assets/portraits/hermes.jpg), head cropped and scaled to 96 px",
     "license": "MIT (Copyright (c) 2026 AJ Barea)"
   },
   "kourai/hermes-figure.webp": {
-    "source": "AJ Barea, generated from the briefs in docs/characters/portrait-briefs.md; cut out of its backdrop by scripts/cutout-portraits.py (rembg isnet-anime, Apache-2.0) as assets/portraits/hermes-cutout.webp, scaled to 384 px",
+    "source": "AJ Barea, generated from the prompts in kourai-khryseai assets/avatars/originals/portrait-prompts.md; cut out of its backdrop by scripts/cutout-portraits.py (rembg isnet-anime, Apache-2.0) as assets/portraits/hermes-cutout.webp, scaled to 384 px",
     "license": "MIT (Copyright (c) 2026 AJ Barea)"
   },
   "kourai/hermes-full.webp": {
-    "source": "AJ Barea, generated from the briefs in docs/characters/portrait-briefs.md (assets/portraits/hermes.jpg), whole, 768 px",
+    "source": "AJ Barea, generated from the prompts in kourai-khryseai assets/avatars/originals/portrait-prompts.md (assets/portraits/hermes.jpg), whole, 768 px",
     "license": "MIT (Copyright (c) 2026 AJ Barea)"
   },
   "kourai/hesychia-192.webp": {
-    "source": "AJ Barea, generated from the briefs in docs/characters/portrait-briefs.md (assets/portraits/hesychia.jpg), head cropped and scaled to 192 px",
+    "source": "AJ Barea, generated from the prompts in kourai-khryseai assets/avatars/originals/portrait-prompts.md (assets/portraits/hesychia.jpg), head cropped and scaled to 192 px",
     "license": "MIT (Copyright (c) 2026 AJ Barea)"
   },
   "kourai/hesychia-96.webp": {
-    "source": "AJ Barea, generated from the briefs in docs/characters/portrait-briefs.md (assets/portraits/hesychia.jpg), head cropped and scaled to 96 px",
+    "source": "AJ Barea, generated from the prompts in kourai-khryseai assets/avatars/originals/portrait-prompts.md (assets/portraits/hesychia.jpg), head cropped and scaled to 96 px",
     "license": "MIT (Copyright (c) 2026 AJ Barea)"
   },
   "kourai/hesychia-figure.webp": {
-    "source": "AJ Barea, generated from the briefs in docs/characters/portrait-briefs.md; cut out of its backdrop by scripts/cutout-portraits.py (rembg isnet-anime, Apache-2.0) as assets/portraits/hesychia-cutout.webp, scaled to 384 px",
+    "source": "AJ Barea, generated from the prompts in kourai-khryseai assets/avatars/originals/portrait-prompts.md; cut out of its backdrop by scripts/cutout-portraits.py (rembg isnet-anime, Apache-2.0) as assets/portraits/hesychia-cutout.webp, scaled to 384 px",
     "license": "MIT (Copyright (c) 2026 AJ Barea)"
   },
   "kourai/hesychia-full.webp": {
-    "source": "AJ Barea, generated from the briefs in docs/characters/portrait-briefs.md (assets/portraits/hesychia.jpg), whole, 768 px",
+    "source": "AJ Barea, generated from the prompts in kourai-khryseai assets/avatars/originals/portrait-prompts.md (assets/portraits/hesychia.jpg), whole, 768 px",
     "license": "MIT (Copyright (c) 2026 AJ Barea)"
   },
   "kourai/kallos-192.webp": {
