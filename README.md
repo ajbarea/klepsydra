@@ -764,7 +764,7 @@ A session's face follows its keryx voice, so it stays the same while the
 session moves between repos. Fifteen voices, all fourteen in keryx's rotation pool
 and `af_nicole` (keryx's fifteenth, before any blend), are cast as characters and
 show their portraits: ten from kourai-khryseai and five (Chronos, Argos, Hermes,
-Elpis, Hesychia) painted for this app. Each portrait follows one canon: the
+Elpis, Hesychia) painted for this app. Portraits are drawn to one canon: the
 gods who run the forge (Hephaestus, Athena) are drawn in flesh, the golden
 maidens Hephaestus forged (Techne, Metis, Mneme, Kallos, Dokimasia, Aidos) in
 gold or metal, and the visitors (Hermes, Chronos, Argos, Elpis, Hesychia,

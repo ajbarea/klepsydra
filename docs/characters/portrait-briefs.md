@@ -60,13 +60,12 @@ god, keeper of every session's time.
 > (Hephaestus at his anvil) is for framing only, not his face. Image 3 (a
 > golden maiden) is for rendering only, not her gold skin or her background.
 > Painterly, semi-realistic character portrait: confident thick brushwork,
-> ink-like outlines, bold clean silhouette, expressive face, soft rim
-> light. Square bust portrait, mid-torso up, three-quarter turn, the figure
+> ink-like outlines, bold clean silhouette, expressive face, soft rim light.
+> Square bust portrait, mid-torso up, three-quarter turn, the figure
 > slightly right of centre with the near shoulder toward the viewer, the
-> head in the upper middle. Plain warm mid-grey background with soft
-> visible brush texture, no glow behind the figure, nothing in the
-> background. Natural skin: he visits the forge and is not one of its
-> golden maidens.
+> head in the upper middle. Plain warm mid-grey background with soft visible
+> brush texture, no glow behind the figure, nothing in the background.
+> Natural skin: he visits the forge and is not one of its golden maidens.
 
 ### 3. Paste: character block
 
@@ -111,24 +110,23 @@ watchman who never sleeps; he watches the fleet.
 > Image 1 is Argos: keep his face, hair and beard exactly. Image 2
 > (Hephaestus at his anvil) is for framing only, not his face. Image 3
 > (Puck) is for rendering only, not his face, gold skin, wings, glow or
-> background.
-> Painterly, semi-realistic character portrait: confident thick brushwork,
-> ink-like outlines, bold clean silhouette, expressive face, soft rim
-> light. Square bust portrait, mid-torso up, three-quarter turn, the figure
-> slightly right of centre with the near shoulder toward the viewer, the
-> head in the upper middle. Plain warm mid-grey background with soft
+> background. Painterly, semi-realistic character portrait: confident thick
+> brushwork, ink-like outlines, bold clean silhouette, expressive face, soft
+> rim light. Square bust portrait, mid-torso up, three-quarter turn, the
+> figure slightly right of centre with the near shoulder toward the viewer,
+> the head in the upper middle. Plain warm mid-grey background with soft
 > visible brush texture, no glow behind the figure, nothing in the
-> background. Natural skin: he visits the forge and is not one of its
-> golden maidens.
+> background. Natural skin: he visits the forge and is not one of its golden
+> maidens.
 
 ### 3. Paste: character block
 
-> A lean, watchful man in his early thirties with short dark hair, a
-> trimmed dark beard and steady attentive eyes. He wears a sleeveless brown
-> leather jerkin with a strap across the chest, bare muscular arms, and over
-> his far shoulder a mantle of peacock feathers in iridescent reddish
-> purple (#CC79A7) and teal, Hera's tribute to him. He holds a bronze
-> lantern by its ring at his waist, lit warm. Vigilant, steady, says little, notices
+> A lean, watchful man in his early thirties with short dark hair, a trimmed
+> dark beard and steady attentive eyes. He wears a sleeveless brown leather
+> jerkin with a strap across the chest, bare muscular arms, and over his far
+> shoulder a mantle of peacock feathers in iridescent reddish purple
+> (#CC79A7) and teal, Hera's tribute to him. He holds a bronze lantern by
+> its ring at his waist, lit warm. Vigilant, steady, says little, notices
 > everything.
 
 ### 4. Paste: negative prompt
@@ -169,13 +167,12 @@ staff is the *kerykeion*.
 > (Hephaestus at his anvil) is for framing only, not his face. Image 3 (a
 > golden maiden) is for rendering only, not her gold skin or her background.
 > Painterly, semi-realistic character portrait: confident thick brushwork,
-> ink-like outlines, bold clean silhouette, expressive face, soft rim
-> light. Square bust portrait, mid-torso up, three-quarter turn, the figure
+> ink-like outlines, bold clean silhouette, expressive face, soft rim light.
+> Square bust portrait, mid-torso up, three-quarter turn, the figure
 > slightly right of centre with the near shoulder toward the viewer, the
-> head in the upper middle. Plain warm mid-grey background with soft
-> visible brush texture, no glow behind the figure, nothing in the
-> background. Natural skin: he visits the forge and is not one of its
-> golden maidens.
+> head in the upper middle. Plain warm mid-grey background with soft visible
+> brush texture, no glow behind the figure, nothing in the background.
+> Natural skin: he visits the forge and is not one of its golden maidens.
 
 ### 3. Paste: character block
 
@@ -215,7 +212,7 @@ stayed in Pandora's jar; the steady encouragement when a long run stalls.
 - `kallos_neutral.png`: rendering only.
 - Do not attach: Hesychia, old or new, or Aletheia. The 2026-10-20 Elpis and
   Hesychia were both made from Aletheia and Kallos and came out with one
-  face.
+  face; Kallos is safe here now that Hesychia's kit leaves her out.
 
 ### 2. Paste: style block
 
@@ -223,22 +220,22 @@ stayed in Pandora's jar; the steady encouragement when a long run stalls.
 > (Hephaestus at his anvil) is for framing only, not his face. Image 3 (a
 > golden maiden) is for rendering only, not her gold skin or her background.
 > Painterly, semi-realistic character portrait: confident thick brushwork,
-> ink-like outlines, bold clean silhouette, expressive face, soft rim
-> light. Square bust portrait, mid-torso up, three-quarter turn, the figure
+> ink-like outlines, bold clean silhouette, expressive face, soft rim light.
+> Square bust portrait, mid-torso up, three-quarter turn, the figure
 > slightly right of centre with the near shoulder toward the viewer, the
-> head in the upper middle. Plain warm mid-grey background with soft
-> visible brush texture, no glow behind the figure, nothing in the
-> background. Natural skin: she visits the forge and is not one of its
-> golden maidens.
+> head in the upper middle. Plain warm mid-grey background with soft visible
+> brush texture, no glow behind the figure, nothing in the background.
+> Natural skin: she visits the forge and is not one of its golden maidens.
 
 ### 3. Paste: character block
 
 > A young woman with dark hair gathered up, small white flowers and a blue
-> ribbon woven through it, and a gentle, confident smile. She wears a
-> cream-and-gold peplos with a meander border and a blue sash. She cradles
-> a rounded bronze pithos, a Greek storage jar, against her side, its mouth
+> ribbon woven through it, and a gentle, confident smile. She wears a cream-
+> and-gold peplos with a meander border and a blue sash. She cradles a
+> rounded bronze pithos, a Greek storage jar, against her side, its mouth
 > tilted open, with soft cream-gold (#F1D2A1) motes rising from inside it.
-> White flowers rest in the crook of her other arm. Warm, steady, quietly bright.
+> White flowers rest in the crook of her other arm. Warm, steady, quietly
+> bright.
 
 ### 4. Paste: negative prompt
 
@@ -273,13 +270,13 @@ moonlit silver-blue `#A9B8D0` · the spirit of stillness and rest; in Pindar
 ### 2. Paste: style block
 
 > Image 1 is Hesychia: keep her face, hair and veil exactly. Image 2
-> (Hephaestus at his anvil) is for framing only, not his face.
-> Painterly, semi-realistic character portrait: confident thick brushwork,
-> bold clean silhouette, expressive face. Square bust portrait, mid-torso
-> up, three-quarter turn, the figure slightly right of centre with the near
-> shoulder toward the viewer, the head in the upper middle. Plain deep
-> charcoal background (#1A1A1A). Cool moonlight from the upper left is the
-> main light; only a faint warm glow sits low behind the shoulders. Palette:
+> (Hephaestus at his anvil) is for framing only, not his face. Painterly,
+> semi-realistic character portrait: confident thick brushwork, bold clean
+> silhouette, expressive face. Square bust portrait, mid-torso up, three-
+> quarter turn, the figure slightly right of centre with the near shoulder
+> toward the viewer, the head in the upper middle. Plain deep charcoal
+> background (#1A1A1A). Cool moonlight from the upper left is the main
+> light; only a faint warm glow sits low behind the shoulders. Palette:
 > moonlit silver-blue (#A9B8D0), night blue and pale silver, with small
 > touches of honeyed gold (#C9944A). Natural skin: she visits the forge and
 > is not one of its golden maidens.
@@ -290,8 +287,8 @@ moonlit silver-blue `#A9B8D0` · the spirit of stillness and rest; in Pindar
 > dark brows and dark hair worn up. She wears a silver-blue silk night
 > chiton in a slip style, with thin straps and bare shoulders and arms, the
 > silk catching the moonlight. A pale gauze veil is pinned at the back of
-> her hair and falls loosely behind her shoulders. Her gaze is half-lidded and
-> knowing, with a slow, faint smile. One hand rests at her collarbone,
+> her hair and falls loosely behind her shoulders. Her gaze is half-lidded
+> and knowing, with a slow, faint smile. One hand rests at her collarbone,
 > holding a ring of two old golden keys on a dark cord. Languid, elegant,
 > unhurried.
 
@@ -301,8 +298,8 @@ moonlit silver-blue `#A9B8D0` · the spirit of stillness and rest; in Pindar
 > likeness, 3D render, CGI, grimdark, armour, weapons, text, watermark,
 > logo, signature, border, frame, multiple characters, cropped head, full
 > body, busy background, gold skin, nudity, sheer clothing on the body,
-> explicit pose, a
-> finger to the lips, flowers, a jar, loose hair framing the face, a halo
+> explicit pose, a finger to the lips, flowers, a jar, loose hair framing
+> the face, a halo
 
 ### 5. Tips
 
@@ -329,17 +326,16 @@ face: she and Hephaestus run the fleet in turn (#222).
 
 ### 2. Paste: style block
 
-> Image 1 is Athena: keep her face, hair, olive-leaf circlet, peplos and
-> owl exactly, and change her skin to natural skin. Image 2 is Hephaestus,
-> the other god who runs the forge: match his rendering and framing, not
-> his face.
-> Painterly, semi-realistic character portrait: confident thick brushwork,
-> ink-like outlines, bold clean silhouette, expressive face, soft rim
-> light. Square bust portrait, mid-torso up, three-quarter turn, the figure
-> slightly right of centre with the near shoulder toward the viewer, the
-> head in the upper middle. Plain dark charcoal-grey background with soft
-> visible brush texture, like Image 2. She is a goddess in flesh, not one
-> of the golden maidens: natural skin, no metal seams or joints.
+> Image 1 is Athena: keep her face, hair, olive-leaf circlet, peplos and owl
+> exactly, and change her skin to natural skin. Image 2 is Hephaestus, the
+> other god who runs the forge: match his rendering and framing, not his
+> face. Painterly, semi-realistic character portrait: confident thick
+> brushwork, ink-like outlines, bold clean silhouette, expressive face, soft
+> rim light. Square bust portrait, mid-torso up, three-quarter turn, the
+> figure slightly right of centre with the near shoulder toward the viewer,
+> the head in the upper middle. Plain dark charcoal-grey background with
+> soft visible brush texture, like Image 2. She is a goddess in flesh, not
+> one of the golden maidens: natural skin, no metal seams or joints.
 
 ### 3. Paste: character block
 
@@ -352,8 +348,8 @@ face: she and Hephaestus run the fleet in turn (#222).
 > the upper arm, and a cream himation draped low across the back. From the
 > fingertips of her raised hand run fine glowing olive threads that weave
 > between three small floating translucent panels, star charts and a temple
-> plan, the forge's plan. A small grey owl perches on her far shoulder. Graceful, poised, in
-> command, a little dangerous.
+> plan, the forge's plan. A small grey owl perches on her far shoulder.
+> Graceful, poised, in command, a little dangerous.
 
 ### 4. Paste: negative prompt
 
@@ -368,7 +364,7 @@ face: she and Hephaestus run the fleet in turn (#222).
 
 - If a generator refuses, drop "a little dangerous" first.
 - If gold creeps back into her skin, paste: "Natural skin everywhere; gold
-  only in the circlet, cuff and trim."
+  only in her jewellery and trim."
 
 ### 6. When you have one
 
