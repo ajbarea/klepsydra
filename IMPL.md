@@ -1,23 +1,18 @@
-# IMPL: klepsydra card and cast design pass (AJ 11-01), resume state 2026-11-01 evening
+# IMPL: klepsydra card and cast design pass (AJ 11-01), resume state 2026-11-02
 
-Paused at Heph's ask (RIT ~78%, CISC-810 A6 tonight). Brief: `~/.local/state/fleet-orchestrator/task-card-design.src`.
-Resume from this file, `git log`, and the open PRs' comments (re-read them first).
+Brief: `~/.local/state/fleet-orchestrator/task-card-design.src`. Resume from this file, `git log`, and the open PRs' and Review issue's comments (re-read them first).
 
 ## Done
-- ✅ Step 1, Hesychia + the four re-prompts (issue #252):
-  - kourai-khryseai #301 (branch art/portraits-1101): five new originals, old ones kept as `<name>-2026-10-20.jpg`, prompts appended. SHA-256 vs staged: 5/5.
-  - klepsydra #255 (branch feat/portraits-1101, worktree portraits-1101): 1024 crops (q88, optimised; the recipe reproduces the old Hesychia crop byte for byte), cut-outs from TIGRIS job 716141 (`~/klepsydra-cutout` on tigris), faces re-cut, HEAD boxes + theme `head` refit. 151/151 cast/theme/style/speaking/model tests.
-- ✅ Step 2 + 4, #249 kits + cast canon: klepsydra #253 (branch docs/briefs-249). Review round 1 (2 blocking, 6 should-fix) fixed in 2f9e899; PR body states the merge order.
-- 🔄 Step 3, #247 + #248 prototype on this branch (design/cards-247, no PR yet): `src/fleet/design-247.{js,css}` worn with `?design=b|c` in a browser only; `src/fleet-design-247.test.js` contrast check, 4/4 pass (worst: Aletheia's edge 3.16:1; task on the washed band 4.72:1 after fading the wash to 6% from 150 px); `faces/kourai/cupid-figure-wide.webp` (full-width cut of the 640 px transparent PNG: no 1254 px Cupid original exists).
+- ✅ Step 1, five redrawn portraits (#252): kourai-khryseai #301 merged (54be27b). klepsydra #255: review clean (round 1 + verify), CI was finishing at last write; merge it once green, then retarget nothing (no dependents).
+- ✅ Steps 2 + 4, kits + cast canon (#249): #253, review rounds 1-2 + verify clean. Merges after #226 (Athena) and kourai #300; when resolving, keep #253's `portrait-briefs.md` and hand-merge the README paragraph.
+- ✅ Step 3 shots (#247 + #248): prototype on this branch behind `?design=b|c` (browser only). Shots in fleet-briefing `shots/2026-11-02/klepsydra-247-*` and Review issue fleet-briefing #4 (pick A/B/C; Athena redraw). Readings in `docs/perf/2026-11-02/design-247-measure.json` (16 cards: refresh 16.0 / 14.5 / 14.8 ms, idle 2.10 / 2.15 / 1.92 ms/s). Contrast test `src/fleet-design-247.test.js` 4/4.
 
 ## Next (in order)
-1. Re-run reviews (fresh opus reviewers, round prompts as before): #255 + kourai #301 (round 1; the stopped run found nothing reported), #253 round 2 (verify the round-1 fixes).
-2. Shots: `uv run --no-project python scripts/design-247/make-fixture.py`, then `flock /tmp/fleet-heavy.lock timeout 400 uv run -q --no-project --with playwright python -I scripts/design-247/shots.py . <out> a,b,c`. Look at every shot, iterate the CSS, then copy to `/mnt/c/Users/ajbar/fleet-briefing/shots/2026-11-01/klepsydra-247-<variant>-<density>-dark.png` + one line each in shots/README.md.
-3. Measure: `flock /tmp/fleet-heavy.lock timeout 900 uv run -q --no-project --with playwright python -I scripts/design-247/measure.py . <out>` (idle ms/s over 30 s, median of 15 refreshes, a trace per variant; headless Chromium, relative only). The Windows WebView2 run (`scripts/perf/run.ps1`, docs/perf/2026-10-28) comes after the build.
-4. Review issue in ajbarea/fleet-briefing for AJ's pick (A/B/C; the wall has one dark scheme, so no light shots; Athena's portrait is gold, the canon says flesh: ask whether to redraw from her kit). Add the ask to claude-queue.md "Needs you". Public issues stay neutral.
-5. After AJ picks: fold the chosen CSS into wall.css, delete the prototype files, build, measure before/after on Windows.
-6. Cleanup after #301 and #255 merge: hash-check `assets/portraits` and kourai originals against `kourai-khryseai/assets/avatars/incoming-2026-11-01/`, then `rm -rf -- "${D:?}"` that staging folder.
+1. Merge #255 when CI is green (comments re-read first).
+2. Wait for AJ's pick in fleet-briefing #4 (Heph relays). Then: fold the chosen rules from `src/fleet/design-247.css` into `wall.css` (drop the `[data-design]` scoping), move the bar regrouping from `design-247.js` into `wall.html`, delete the prototype files, keep the contrast test as part of `fleet-style`/`fleet-theme`, run every suite in AGENTS.md, build Windows (`--check` here; AJ's build), measure before/after with `scripts/perf/run.ps1`. PR closes #247 and #248.
+3. If AJ says redraw Athena: hand him the kit (Athena section of portrait-briefs.md) as a Desktop paste kit; on his pick run the step-1 asset flow (kourai originals + klepsydra crops).
+4. Cleanup after #255 merges: hash-check every file in `kourai-khryseai/assets/avatars/incoming-2026-11-01/` against kourai main's originals (images) and portrait-prompts.md (text), then `rm -rf -- "${D:?}"` that folder. Remove worktrees portraits-1101 (both repos) once merged.
 
 ## Notes
-- Merge order: kourai #301 → klepsydra #255; kourai #300 + klepsydra #226 → #253. #226 and #255 both edit the `HEAD` line in cut-portraits.py (mechanical merge).
-- Light Pillow scripts run without the heavy lock (friction.md line, 11-01).
+- AGENTS.md lists cut-portraits.py as not-to-run; the brief named it for this job, and it ran without the heavy lock (seconds of Pillow).
+- In served mode (wall at `/`) the density picker is hidden; scripts set it by script.
