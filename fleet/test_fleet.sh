@@ -1723,6 +1723,51 @@ check "review 3: a relaunch whose brief never started keeps the old pane, points
   "$rc $(cut -f1,4,6 "$REGISTRY") $(grep -c 'SUBMIT /exit' "$work/relnew.log") $(grep -c '^SUBMIT' "$work/relold.log")" "1 $p	$SID	$work/cfg-a 1 0"
 t kill-window -t "$p"; : >"$REGISTRY"
 
+echo "relaunch never leaves two agents on one row (#274)"
+relpane() { # STATE-JSON: a registered pane rb2 on cfg-a; prints its id
+  local q
+  q=$(pane rb2 "$1"); settle
+  live "$q"
+  printf '%s\trb2\t%s\t%s\t/w\t%s\n' "$q" "$work/brief.src" "$SID" "$work/cfg-a" >"$REGISTRY"
+  printf '%s' "$q"
+}
+# A launch that starts a pane whose brief started, repointing the row as launch.sh
+# does; BEFORE runs first (to change the old pane mid-launch).
+cat >"$work/launch-rb2.sh" <<EOF
+#!/usr/bin/env bash
+date +%s.%N >>"$work/rb2-launched"
+[[ -n \${BEFORE:-} ]] && eval "\$BEFORE"
+printf '%s' '{"above":["⏺ on it"]}' >"$work/rb2new.json"; : >"$work/rb2new.log"
+new=\$(tmux -L "$FLEET_SOCK" new-window -d -P -F '#{pane_id}' -t fleet: "python3 -I $fake $work/rb2new.json $work/rb2new.log")
+sed -i "s|^\$OLD\t\(.*\)\t$work/cfg-a\$|\$new\t\1\t$work/cfg-a|" "$REGISTRY"
+echo "pane=\$new session=x account=$work/cfg-a avail=1MiB brief=started"
+EOF
+: >"$FLEET_LOG"; rm -f "$work/rb2-launched"
+p=$(relpane '{"above":["⏺ working"],"busy":true}')
+RELAUNCH_WAIT_S=2 OLD=$p LAUNCH="$work/launch-rb2.sh" bash "$here/relaunch-fresh.sh" "$p" rb2 "$work/brief.src" "hint" >/dev/null 2>&1; rc=$?
+check "#274: a pane still in a turn after the wait is refused and nothing launches" \
+  "$rc $([[ -e $work/rb2-launched ]] && echo launched) $(cut -f1 "$REGISTRY") $(grep -c 'SUBMIT /exit' "$work/rb2.log")" "1  $p 0"
+check "#274: logged with how long it waited" "$(jq -r 'select(.message == "relaunch refused: the old pane was still busy; nothing launched") | "\(.pane) \(.waited_s)"' "$FLEET_LOG")" "$p 2"
+t kill-window -t "$p"
+: >"$FLEET_LOG"; rm -f "$work/rb2-launched"
+p=$(relpane '{"above":["⏺ working"],"busy":true}')
+( sleep 1.5; printf '%s' '{"above":["⏺ Done. done 11:50 AM"]}' >"$work/rb2.json" ) &
+RELAUNCH_WAIT_S=20 OLD=$p LAUNCH="$work/launch-rb2.sh" bash "$here/relaunch-fresh.sh" "$p" rb2 "$work/brief.src" "carry on" >"$work/rb2.out" 2>/dev/null; rc=$?
+wait
+newp=$(cut -f1 "$REGISTRY")
+check "#274: a turn that ends within the wait: one launch, the old pane exits, the row moves" \
+  "$rc $(wc -l <"$work/rb2-launched") $(grep -c 'SUBMIT /exit' "$work/rb2.log") $([[ $newp != "$p" ]] && echo moved) $(cat "$work/rb2.out")" "0 1 1 moved pane=$newp name=rb2"
+check "#274: the new brief carries the resume hint" "$(grep -c '^Resume hint: carry on$' "$(ls -t "$FLEET_STATE"/fresh-rb2-*.src | head -1)")" "1"
+t kill-window -t "$newp" 2>/dev/null; t kill-window -t "$p" 2>/dev/null
+: >"$FLEET_LOG"; rm -f "$work/rb2-launched"
+p=$(relpane '{"above":["⏺ Done. done 11:50 AM"]}')
+BEFORE="printf '%s' '{\"above\":[\"⏺ working\"],\"busy\":true}' >$work/rb2.json; sleep 0.6" \
+  OLD=$p LAUNCH="$work/launch-rb2.sh" bash "$here/relaunch-fresh.sh" "$p" rb2 "$work/brief.src" "hint" >/dev/null 2>&1; rc=$?
+check "#274: the old pane starts a turn while the new one launches: the new one goes, the old one stays, the row points back" \
+  "$rc $(cut -f1,4 "$REGISTRY") $(grep -c 'SUBMIT /exit' "$work/rb2new.log") $(grep -c 'SUBMIT /exit' "$work/rb2.log") $(t list-panes -a -F '#{pane_id}' | grep -cx "$p")" "1 $p	$SID 1 0 1"
+check "#274: never logged as both left running" "$(grep -c 'both are left running' "$FLEET_LOG")" "0"
+t kill-window -t "$p"; : >"$REGISTRY"
+
 echo "CI reds typed into the agent on the branch (#180)"
 : >"$FLEET_LOG"; mkdir -p "$FLEET_STATE/inbox/cia"
 printf 'CI red in r: wf1 failed on feat/x: boom. https://x/1' >"$FLEET_STATE/inbox/cia/r-1.txt"
