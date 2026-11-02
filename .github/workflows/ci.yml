@@ -14,10 +14,15 @@ env:
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   test:
     name: Gauge logic + statusLine hook
     runs-on: ubuntu-latest
+    timeout-minutes: 75
     steps:
       # actions/checkout runs `git init`, which prints a hint while Git's
       # default branch name is unset.
@@ -116,6 +121,7 @@ jobs:
       matrix:
         os: [windows-latest, ubuntu-latest]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     steps:
       # actions/checkout runs `git init`, which prints a hint while Git's
       # default branch name is unset.
@@ -133,6 +139,11 @@ jobs:
             libayatana-appindicator3-dev librsvg2-dev
       - name: Add toolchain components
         run: rustup component add clippy rustfmt
+      - name: Cache cargo registry and build output
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: src-tauri -> target
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: cargo fmt
         working-directory: src-tauri
         run: cargo fmt --all --check
