@@ -18,6 +18,9 @@ ALERTS=$FLEET_STATE/ci/alerts.jsonl SEEN=$FLEET_STATE/ci/alerts.seen
 # Written whole (temp file, then rename): a watcher killed mid-write must not
 # leave an empty count that replays every old alert.
 put_seen() { printf '%s\n' "$1" >"$SEEN.$$" && mv -f -- "$SEEN.$$" "$SEEN"; }
+# A watcher stopped mid-write leaves no temp file behind.
+trap 'rm -f -- "${SEEN:?}.$$"' EXIT
+trap 'exit 129' HUP; trap 'exit 130' INT; trap 'exit 143' TERM
 if [[ ! -e $SEEN ]]; then
   mkdir -p -- "${SEEN%/*}"
   put_seen "$({ wc -l <"$ALERTS"; } 2>/dev/null || echo 0)"

@@ -511,13 +511,19 @@ cleared_link() { # fleet pid start self
 # with neither, HINT (orchestrator.face's). A /clear keeps CLEARED, the
 # cleared session's face, or when that session was not found, the face of the
 # newest orchestrator card of this boot in CLEAR_PANE, the pane it was cleared in.
-free_face() { # fleet self cleared hint [clear_pane]
-  local f face open boot pid start pane last set h=0 a=0 h_last=-1 a_last=-1 live="" shown="" in_pane="" pane_last=-1
+# With both faces live and one of them RECORDED (orchestrator.session: the
+# orchestrator a move is replacing), the new session is its successor and
+# takes its face, the one freed when it retires; never the backup's.
+free_face() { # fleet self cleared hint [clear_pane] [recorded]
+  local f face open boot pid start pane last set h=0 a=0 h_last=-1 a_last=-1 live="" shown="" in_pane="" pane_last=-1 succeeds=""
   case $3 in "$HEPH_VOICE" | "$ATHENA_VOICE") printf '%s' "$3"; return 0 ;; esac
   while IFS=$'\t' read -r f face open boot pid start pane last; do
     [[ $f != "$2.json" && ( $face == "$HEPH_VOICE" || $face == "$ATHENA_VOICE" ) ]] || continue
     [[ $last =~ ^[0-9]+$ ]] || last=0
-    [[ $open == open && $boot == "$host_boot" && $pid =~ ^[1-9][0-9]*$ ]] && claude_alive "$pid" "$start" && live+=" $face"
+    if [[ $open == open && $boot == "$host_boot" && $pid =~ ^[1-9][0-9]*$ ]] && claude_alive "$pid" "$start"; then
+      live+=" $face"
+      [[ -n ${6:-} && $f == "$6.json" ]] && succeeds=$face
+    fi
     shown+=" $face"
     if [[ $face == "$HEPH_VOICE" ]]; then (( last > h_last )) && h_last=$last; else (( last > a_last )) && a_last=$last; fi
     [[ -n ${5:-} && $pane == "$5" && $boot == "$host_boot" ]] && (( last > pane_last )) && pane_last=$last in_pane=$face
@@ -525,6 +531,9 @@ free_face() { # fleet self cleared hint [clear_pane]
       (if .ended == null then "open" else "ended" end), (.host.boot | or_q),
       ((.claude.pid | numbers) // 0 | floor), ((.claude.start | numbers) // 0 | floor), (.tmux.pane | or_q), last_active]')
   [[ -n $in_pane ]] && { printf '%s' "$in_pane"; return 0; }
+  if [[ -n $succeeds && $live == *"$HEPH_VOICE"* && $live == *"$ATHENA_VOICE"* ]]; then
+    printf '%s' "$succeeds"; return 0
+  fi
   for set in "$live" "$shown"; do
     h=0 a=0
     [[ $set == *"$HEPH_VOICE"* ]] && h=1
@@ -1064,7 +1073,7 @@ main() {
   if [[ $orchestrator == true && $old != *'"orchestrator_face"'* ]]; then
     local clear_pane=""
     [[ $event == SessionStart && $source == clear && -z $cleared_face ]] && clear_pane=$tmux_pane
-    orch_face=$(free_face "$fleet" "$session" "$cleared_face" "$orch_face" "$clear_pane")
+    orch_face=$(free_face "$fleet" "$session" "$cleared_face" "$orch_face" "$clear_pane" "$orch_sid")
   fi
   # The git dir the file last named (an escaped path is not read): gone means the checkout was removed.
   old_git=""
