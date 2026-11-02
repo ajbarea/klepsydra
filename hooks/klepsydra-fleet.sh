@@ -309,7 +309,7 @@ session_rows() { # fields file...
       | map(numbers) | max // 0 | floor;
     def or_q: if type == "string" and length > 0 then . else "?" end;
     # The face of an orchestrator file, as the crate reads it: Athena, else Hephaestus.
-    def orch_face: if .orchestrator_face == "bf_alice" then "bf_alice" else "am_michael" end;
+    def orch_face: if .orchestrator_face == "bf_emma" then "bf_emma" else "am_michael" end;
     (index("\t")) as $i | .[:$i] as $f
     | (try (.[$i + 1:] | fromjson) catch empty) | select(type == "object" and .v == 1)
     | try ([$f] + ('"$fields"')) catch empty
@@ -616,7 +616,8 @@ def notified: if type == "string" then [scan("<task-notification>[\\s\\S]*?</tas
   | .fleet_name = (($fleet_agent | text) // .fleet_name)
   | .orchestrator = $orchestrator
   # An orchestrator file written before faces (#222) is Hephaestus's: it keeps him.
-  | if $orchestrator then .orchestrator_face = ((.orchestrator_face | strings)
+  # One written while Athena wore bf_alice (before 11-02) keeps her on her voice now.
+  | if $orchestrator then .orchestrator_face = ((.orchestrator_face | strings | if . == "bf_alice" then $athena_face else . end)
       // (if $was.orchestrator == true then $heph_face else $orch_face end)) else del(.orchestrator_face) end
   | (if $pid != "" then {pid: ($pid | tonumber), start: ($start | tonumber)} else null end) as $me
   # A new process (any start but a compaction) replaces what the file knew of
@@ -934,7 +935,7 @@ file_voice() { # text
 # The voice whose colour a session file's window wears (#172, #222): the
 # orchestrator's face (Hephaestus's or Athena's) for the orchestrator, none for
 # a worker holding either, else its own.
-HEPH_VOICE=am_michael ATHENA_VOICE=bf_alice
+HEPH_VOICE=am_michael ATHENA_VOICE=bf_emma
 window_face() { # text
   local v
   if [[ $1 == *'"orchestrator":true'* ]]; then
@@ -1086,7 +1087,7 @@ main() {
     --arg git "$where_git" --argjson where_gone "$where_gone" --arg by "$by" --arg dir "$where_dir" --arg gh "$where_remote" \
     --arg tmux_socket "$tmux_socket" --arg tmux_pane "$tmux_pane" --arg boot "$host_boot" --arg distro "$host_distro" \
     --arg voice "$voice" --argjson homes "$homes" --arg cwd_repo "$cwd_repo" --arg pid "$found_pid" --arg start "$found_start" --arg remote "$remote" --arg cleared "$cleared" --argjson account "$account" --arg live "$live" \
-    --arg fleet_agent "$agent" --argjson orchestrator "$orchestrator" --arg orch_face "$orch_face" --arg heph_face "$HEPH_VOICE" \
+    --arg fleet_agent "$agent" --argjson orchestrator "$orchestrator" --arg orch_face "$orch_face" --arg heph_face "$HEPH_VOICE" --arg athena_face "$ATHENA_VOICE" \
     "$APPLY" 2>/dev/null) || new=""
   # A cast newer than this session's file: the theme changed under it. The
   # file's time is moved past the cast's, so one switch recolours it once.

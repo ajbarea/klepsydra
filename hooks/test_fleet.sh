@@ -1497,8 +1497,8 @@ while read -r v acc ink; do
   # Heph's and Athena's colours are worn only by the orchestrator's window (#172, #222).
   mkdir -p "$work/fleet-state"
   rm -f "$work/fleet-state/orchestrator.session" "$work/fleet-state/orchestrator.face" "$dir/fleet/$C4.json"
-  if [[ $v == am_michael || $v == bf_alice ]]; then printf '%s\n' "$C4" >"$work/fleet-state/orchestrator.session"; fi
-  if [[ $v == bf_alice ]]; then printf 'athena\n' >"$work/fleet-state/orchestrator.face"; fi
+  if [[ $v == am_michael || $v == bf_emma ]]; then printf '%s\n' "$C4" >"$work/fleet-state/orchestrator.session"; fi
+  if [[ $v == bf_emma ]]; then printf 'athena\n' >"$work/fleet-state/orchestrator.face"; fi
   fire session-start.json ".session_id = \"$C4\"" KLEPSYDRA_CAST="$work/parity-cast.json" TMUX="$fsock,1,0" TMUX_PANE=%3 KERYX_VOICES="$work/ink-voices.json" >/dev/null
   got+="$v $acc $(sed -n 's/.*current-style bg=#[0-9A-Fa-f]*,fg=\(#[0-9a-f]*\),bold/\1/p' "$tlog")"$'\n'
 done <<<"$want"
@@ -1530,11 +1530,11 @@ wfile="$dir/fleet/$W.json"
 fire session-start.json ".session_id = \"$W\"" "TMUX=$work/sock/klepsydra,1,0" TMUX_PANE=%7 KLEPSYDRA_AGENT=sphragis >/dev/null
 check "review 1: a worker relaunched into the old orchestrator pane after a tmux restart is not Heph" "$(jq -c .orchestrator "$wfile")" "false"
 check "review 1: a worker's window never wears Heph's colour; Heph's always does" \
-  "[$(window_face '{"voice":"am_michael","orchestrator":false}')] [$(window_face '{"voice":"am_puck","orchestrator":true}')] [$(window_face '{"voice":"bf_emma"}')]" \
-  "[] [am_michael] [bf_emma]"
+  "[$(window_face '{"voice":"am_michael","orchestrator":false}')] [$(window_face '{"voice":"am_puck","orchestrator":true}')] [$(window_face '{"voice":"bf_isabella"}')]" \
+  "[] [am_michael] [bf_isabella]"
 check "#222: Athena's colour is the orchestrator's alone too, and only when its session chose her" \
-  "[$(window_face '{"voice":"bf_alice","orchestrator":false}')] [$(window_face '{"voice":"am_puck","orchestrator":true,"orchestrator_face":"bf_alice"}')] [$(window_face '{"voice":"bf_alice","orchestrator":true,"orchestrator_face":"am_michael"}')]" \
-  "[] [bf_alice] [am_michael]"
+  "[$(window_face '{"voice":"bf_emma","orchestrator":false}')] [$(window_face '{"voice":"am_puck","orchestrator":true,"orchestrator_face":"bf_emma"}')] [$(window_face '{"voice":"bf_emma","orchestrator":true,"orchestrator_face":"am_michael"}')]" \
+  "[] [bf_emma] [am_michael]"
 fire session-start.json ".session_id = \"$W\" | .source = \"clear\"" "TMUX=$work/sock/klepsydra,1,0" TMUX_PANE=%7 >/dev/null
 check "review 2: a /clear in the orchestrator's pane is Heph before the new session is recorded" "$(jq -c .orchestrator "$wfile")" "true"
 fire post-tool-bash.json ".session_id = \"$W\"" "TMUX=$work/sock/klepsydra,1,0" TMUX_PANE=%7 >/dev/null
@@ -1559,10 +1559,13 @@ printf 'athena\n' >"$work/fleet-state/orchestrator.face"
 hfire post-tool-bash.json "TMUX=$work/sock/klepsydra,1,0" TMUX_PANE=%7
 check "a session keeps the face it started with when the file changes" "$(jq -r .orchestrator_face "$hfile")" "am_michael"
 rm -f "$hfile"; hfire session-start.json "TMUX=$work/sock/klepsydra,1,0" TMUX_PANE=%7
-check "a new session reads athena: Athena" "$(jq -r .orchestrator_face "$hfile")" "bf_alice"
+check "a new session reads athena: Athena" "$(jq -r .orchestrator_face "$hfile")" "bf_emma"
 printf 'hephaestus\n' >"$work/fleet-state/orchestrator.face"
 hfire post-tool-bash.json "TMUX=$work/sock/klepsydra,1,0" TMUX_PANE=%7
-check "and stays Athena through its later events" "$(jq -r .orchestrator_face "$hfile")" "bf_alice"
+check "and stays Athena through its later events" "$(jq -r .orchestrator_face "$hfile")" "bf_emma"
+jq '.orchestrator_face = "bf_alice"' "$hfile" >"$hfile.tmp" && mv -- "$hfile.tmp" "$hfile"
+hfire post-tool-bash.json "TMUX=$work/sock/klepsydra,1,0" TMUX_PANE=%7
+check "AJ 11-02: a file from when Athena wore bf_alice keeps her, on bf_emma now" "$(jq -r .orchestrator_face "$hfile")" "bf_emma"
 printf 'zeus\n' >"$work/fleet-state/orchestrator.face"
 rm -f "$hfile"; hfire session-start.json "TMUX=$work/sock/klepsydra,1,0" TMUX_PANE=%7
 check "an unknown name is Hephaestus" "$(jq -r .orchestrator_face "$hfile")" "am_michael"
@@ -1585,50 +1588,50 @@ card() { # ID FACE open|ended BOOT LAST [PID] [PANE]: another orchestrator's car
 }
 newface() { rm -f "$hfile"; hfire session-start.json "TMUX=$work/sock/klepsydra,1,0" TMUX_PANE=%7; jq -r .orchestrator_face "$hfile"; rm -f "$hfile" "$dir/fleet/$O1.json" "$dir/fleet/$O2.json"; }
 card "$O1" am_michael open "$B1" $((now - 60))
-check "a live Hephaestus on the wall: the new orchestrator is Athena" "$(newface)" "bf_alice"
-printf 'athena\n' >"$work/fleet-state/orchestrator.face"; card "$O1" bf_alice open "$B1" $((now - 60))
+check "a live Hephaestus on the wall: the new orchestrator is Athena" "$(newface)" "bf_emma"
+printf 'athena\n' >"$work/fleet-state/orchestrator.face"; card "$O1" bf_emma open "$B1" $((now - 60))
 check "a live Athena: Hephaestus, whatever orchestrator.face says" "$(newface)" "am_michael"
 rm -f "$work/fleet-state/orchestrator.face"
 card "$O1" am_michael open "$B0" $((now - 600))
-check "after a reboot, Hephaestus's card from the last boot still shown: Athena" "$(newface)" "bf_alice"
+check "after a reboot, Hephaestus's card from the last boot still shown: Athena" "$(newface)" "bf_emma"
 card "$O1" pre open "$B1" $((now - 60))
-check "a card from before faces is Hephaestus's" "$(newface)" "bf_alice"
-card "$O1" bf_alice open "$B1" $((now - 60)); card "$O2" am_michael ended "$B1" $((now - 10))
+check "a card from before faces is Hephaestus's" "$(newface)" "bf_emma"
+card "$O1" bf_emma open "$B1" $((now - 60)); card "$O2" am_michael ended "$B1" $((now - 10))
 check "a live one counts before an ended one" "$(newface)" "am_michael"
-card "$O1" bf_alice ended "$B1" $((now - 500)); card "$O2" am_michael ended "$B1" $((now - 50))
-check "both shown, neither live: the face seen least recently" "$(newface)" "bf_alice"
+card "$O1" bf_emma ended "$B1" $((now - 500)); card "$O2" am_michael ended "$B1" $((now - 50))
+check "both shown, neither live: the face seen least recently" "$(newface)" "bf_emma"
 card "$O1" worker open "$B1" $((now - 60))
 check "a worker in Hephaestus's voice never counts" "$(newface)" "am_michael"
-card "$O1" am_michael open "$B1" $((now - 900)) 4242; card "$O2" bf_alice ended "$B1" $((now - 30))
+card "$O1" am_michael open "$B1" $((now - 900)) 4242; card "$O2" bf_emma ended "$B1" $((now - 30))
 check "review: an open card whose Claude process is gone (a crash) is shown, not live" "$(newface)" "am_michael"
-card "$O1" bf_alice open "$B0" $((now - 900)); card "$O2" am_michael ended "$B1" $((now - 60))
-check "review: an open card from the last boot is shown, not live" "$(newface)" "bf_alice"
-card "$O1" bf_alice ended "$B1" $((now - 300)); card "$O2" am_michael ended "$B1" $((now - 300))
+card "$O1" bf_emma open "$B0" $((now - 900)); card "$O2" am_michael ended "$B1" $((now - 60))
+check "review: an open card from the last boot is shown, not live" "$(newface)" "bf_emma"
+card "$O1" bf_emma ended "$B1" $((now - 300)); card "$O2" am_michael ended "$B1" $((now - 300))
 check "review: seen at the same time: orchestrator.face's, Hephaestus with none" "$(newface)" "am_michael"
 printf 'athena\n' >"$work/fleet-state/orchestrator.face"
-card "$O1" bf_alice ended "$B1" $((now - 300)); card "$O2" am_michael ended "$B1" $((now - 300))
-check "review 2: seen at the same time, orchestrator.face says athena: Athena" "$(newface)" "bf_alice"
+card "$O1" bf_emma ended "$B1" $((now - 300)); card "$O2" am_michael ended "$B1" $((now - 300))
+check "review 2: seen at the same time, orchestrator.face says athena: Athena" "$(newface)" "bf_emma"
 rm -f "$work/fleet-state/orchestrator.face"
 card "$O1" af_heart open "$B1" $((now - 60))
-check "review 2: a face it cannot read is Hephaestus's, as the crate reads it" "$(newface)" "bf_alice"
+check "review 2: a face it cannot read is Hephaestus's, as the crate reads it" "$(newface)" "bf_emma"
 # A move (heph_move): the new session starts while the old active one and the warm backup both run.
 mv_face() { # SUCCEEDS-SID: a new "heph" session's face, the move naming the session it replaces
   rm -f "$hfile"; hfire session-start.json "TMUX=$work/sock/klepsydra,1,0" TMUX_PANE=%7 KLEPSYDRA_AGENT=heph ${1:+KLEPSYDRA_SUCCEEDS=$1}
   jq -r .orchestrator_face "$hfile"; rm -f "$hfile"
 }
-card "$O1" am_michael open "$B1" $((now - 5)); card "$O2" bf_alice open "$B1" $((now - 600))
+card "$O1" am_michael open "$B1" $((now - 5)); card "$O2" bf_emma open "$B1" $((now - 600))
 check "review 3: a move from a busy Hephaestus, Athena the idle backup: the new one is Hephaestus" "$(mv_face "$O1")" "am_michael"
-card "$O1" am_michael open "$B1" $((now - 600)); card "$O2" bf_alice open "$B1" $((now - 5))
-check "review 3: and from a busy Athena, Hephaestus the backup: Athena" "$(mv_face "$O2")" "bf_alice"
-card "$O1" am_michael open "$B1" $((now - 5)); card "$O2" bf_alice open "$B1" $((now - 600))
+card "$O1" am_michael open "$B1" $((now - 600)); card "$O2" bf_emma open "$B1" $((now - 5))
+check "review 3: and from a busy Athena, Hephaestus the backup: Athena" "$(mv_face "$O2")" "bf_emma"
+card "$O1" am_michael open "$B1" $((now - 5)); card "$O2" bf_emma open "$B1" $((now - 600))
 printf '%s\n' "$O1" >"$work/fleet-state/orchestrator.session"
-check "review 4: a new backup started while both run (no move) is no successor: the face seen least recently" "$(mv_face "")" "bf_alice"
+check "review 4: a new backup started while both run (no move) is no successor: the face seen least recently" "$(mv_face "")" "bf_emma"
 rm -f "$work/fleet-state/orchestrator.session"
 rm -f "$dir/fleet/$O2.json"; card "$O1" am_michael open "$B1" $((now - 60))
-check "review 3: with no backup, a move still takes the face that is free" "$(mv_face "$O1")" "bf_alice"
+check "review 3: with no backup, a move still takes the face that is free" "$(mv_face "$O1")" "bf_emma"
 rm -f "$dir/fleet/$O1.json" "$dir/fleet/$O2.json"
 printf 'Athena\r\n' >"$work/fleet-state/orchestrator.face"
-check "none shown: orchestrator.face, read in any case and with a Windows line end" "$(newface)" "bf_alice"
+check "none shown: orchestrator.face, read in any case and with a Windows line end" "$(newface)" "bf_emma"
 rm -f "$work/fleet-state/orchestrator.face"
 X1=88888888-4444-4555-8666-777777777771 X2=88888888-4444-4555-8666-777777777772
 # fleet recover after a power cut: last boot's Hephaestus card still shows; Heph comes back as "heph", a worker as itself.
@@ -1637,7 +1640,7 @@ fire session-start.json ".session_id = \"$X1\"" "TMUX=$work/sock/klepsydra,1,0" 
 fire session-start.json ".session_id = \"$X2\"" "TMUX=$work/sock/klepsydra,1,0" TMUX_PANE=%4 KLEPSYDRA_AGENT=sphragis >/dev/null
 check "a recovery: the orchestrator wears the face that is free, the worker neither" \
   "$(jq -c '[.orchestrator, .orchestrator_face]' "$dir/fleet/$X1.json") $(jq -c '[.orchestrator, has("orchestrator_face")]' "$dir/fleet/$X2.json") [$(window_face "$(jq -c '.voice = "am_michael"' "$dir/fleet/$X2.json")")]" \
-  '[true,"bf_alice"] [false,false] []'
+  '[true,"bf_emma"] [false,false] []'
 rm -f "$dir/fleet/$X1.json" "$dir/fleet/$X2.json" "$dir/fleet/$O1.json"
 # A /clear: the same Claude process (its own, as the remote-link fixtures do) starts another id.
 mkproc 1600 1 claude 9300000 S claude
@@ -1648,21 +1651,21 @@ fire session-end.json ".session_id = \"$X1\" | .reason = \"clear\"" "TMUX=$work/
 rm -f "$dir/fleet/$O1.json"
 fire session-start.json ".session_id = \"$X2\" | .source = \"clear\"" "TMUX=$work/sock/klepsydra,1,0" TMUX_PANE=%7 KLEPSYDRA_PID=1610 >/dev/null
 check "a /clear keeps the cleared session's face, though that card still shows it" \
-  "$(jq -r .orchestrator_face "$dir/fleet/$X1.json") $(jq -r .orchestrator_face "$dir/fleet/$X2.json")" "bf_alice bf_alice"
+  "$(jq -r .orchestrator_face "$dir/fleet/$X1.json") $(jq -r .orchestrator_face "$dir/fleet/$X2.json")" "bf_emma bf_emma"
 rm -f "$dir/fleet/$X1.json" "$dir/fleet/$X2.json"
-card "$O1" bf_alice ended "$B1" $((now - 30)) 0 %7
+card "$O1" bf_emma ended "$B1" $((now - 30)) 0 %7
 fire session-start.json ".session_id = \"$X2\" | .source = \"clear\"" "TMUX=$work/sock/klepsydra,1,0" TMUX_PANE=%7 KLEPSYDRA_PID=810 >/dev/null
 check "review: a /clear whose cleared session is not found keeps the face of its pane's newest orchestrator card" \
-  "$(jq -r .orchestrator_face "$dir/fleet/$X2.json")" "bf_alice"
+  "$(jq -r .orchestrator_face "$dir/fleet/$X2.json")" "bf_emma"
 rm -f "$dir/fleet/$X2.json"
 fire session-start.json ".session_id = \"$X2\" | .source = \"clear\"" "TMUX=$work/sock/klepsydra,1,0" TMUX_PANE=%7 KLEPSYDRA_PID=1610 >/dev/null
 check "review 2: and so does one whose Claude process is known but matches no card" \
-  "$(jq -r .orchestrator_face "$dir/fleet/$X2.json")" "bf_alice"
+  "$(jq -r .orchestrator_face "$dir/fleet/$X2.json")" "bf_emma"
 rm -f "$dir/fleet/$X2.json"
 card "$O1" am_michael ended "$B0" $((now - 30)) 0 %7; card "$O2" am_michael open "$B1" $((now - 60))
 fire session-start.json ".session_id = \"$X2\" | .source = \"clear\"" "TMUX=$work/sock/klepsydra,1,0" TMUX_PANE=%7 KLEPSYDRA_PID=1610 >/dev/null
 check "review 2: a card from the last boot in that pane is not its face; the free one is" \
-  "$(jq -r .orchestrator_face "$dir/fleet/$X2.json")" "bf_alice"
+  "$(jq -r .orchestrator_face "$dir/fleet/$X2.json")" "bf_emma"
 rm -f "$dir/fleet/$X2.json" "$dir/fleet/$O1.json" "$dir/fleet/$O2.json"
 
 echo "account"
@@ -1947,10 +1950,10 @@ check "queue set in a session: and says so" "$out" "The Queue panel now reads /h
 out=$(THEME=professions insession /home/aj/q.md)
 check "queue set in a session: named in the theme worn" "$(jq -c '[.by, .voice]' "$qdir/queue.json")|$out" '["Foreman","am_michael"]|The Queue panel now reads /home/aj/q.md, kept by Foreman.'
 mkdir -p "$qdir/fleet"; QO="$qdir/fleet/99999999-4444-4555-8666-777777777779.json"
-jq -nc '{v: 1, session_id: "x", orchestrator: true, orchestrator_face: "bf_alice", ended: null, claude: {pid: 500, start: 8717628}}' >"$QO"
+jq -nc '{v: 1, session_id: "x", orchestrator: true, orchestrator_face: "bf_emma", ended: null, claude: {pid: 500, start: 8717628}}' >"$QO"
 out=$(insession /home/aj/q.md)
 check "#226 review: the orchestrator is named by its face, whatever voice keryx holds for it" "$(jq -c '[.by, .voice]' "$qdir/queue.json")|$out" \
-  '["Athena","bf_alice"]|The Queue panel now reads /home/aj/q.md, kept by Athena.'
+  '["Athena","bf_emma"]|The Queue panel now reads /home/aj/q.md, kept by Athena.'
 jq -c '.ended = {reason: "clear", at: 5}' "$QO" >"$QO.n" && mv "$QO.n" "$QO"
 insession /home/aj/q.md >/dev/null
 check "#226 review: an ended orchestrator file of the same process names no one" "$(jq -r .by "$qdir/queue.json")" "Hephaestus"

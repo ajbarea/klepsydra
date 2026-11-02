@@ -17,8 +17,11 @@ Fifteen: one per voice in keryx's rotation pool (fourteen), plus Hesychia. The t
 kourai characters cover the first ten voices; these four cover the rest. Hesychia
 is for `af_nicole`, which keryx hands out after the pool voices and before any
 blend (keryx 0.9.3). Sessions past the fifteenth get blended voices and show a
-medallion. A sixteenth, Athena (`bf_alice`, outside keryx's pool), is the
-orchestrator's second face (#222): only the orchestrator wears her or Hephaestus.
+medallion. A sixteenth, Athena, is the orchestrator's second face (#222): she
+wears `bf_emma`, reserved for the orchestrator like Hephaestus's `am_michael`,
+so only the orchestrator wears her or Hephaestus. Techne, `bf_emma`'s face
+before, keeps her portrait on `bf_alice`, outside keryx's pool, where a pick
+lands for a worker keryx gave a reserved voice.
 
 ## Reference portraits
 

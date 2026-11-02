@@ -40,9 +40,9 @@ pub const FILE: &str = "picks.json";
 /// Hephaestus in the kourai theme (each theme's orchestrator): only the
 /// session in the orchestrator's pane wears it, never a pick.
 pub const HEPH: &str = "am_michael";
-/// Athena, the orchestrator's other face (#222); outside keryx's pool, so no
-/// worker is ever given her voice.
-pub const ATHENA: &str = "bf_alice";
+/// Athena, the orchestrator's other face (#222): reserved like Hephaestus, so
+/// no pick lands on it and a worker keryx gives it cedes it.
+pub const ATHENA: &str = "bf_emma";
 /// The faces only the orchestrator wears, one per session.
 pub const ORCHESTRATORS: [&str; 2] = [HEPH, ATHENA];
 
@@ -452,11 +452,11 @@ mod tests {
     fn a_card_that_gave_up_its_voice_avoids_it_and_one_that_regains_it_drops_its_pick() {
         let mut p = Picks::default();
         let mut gave = card("a", None, 1);
-        gave.ceded = Some("bf_emma".into());
-        let mut cards = vec![gave, card("n", Some("bf_emma"), 9)];
+        gave.ceded = Some("bf_isabella".into());
+        let mut cards = vec![gave, card("n", Some("bf_isabella"), 9)];
         let got = picks_of(&mut p, &mut cards);
-        assert!(!got["a"].is_empty() && got["a"] != "bf_emma");
-        let mut back = vec![card("a", Some("bf_emma"), 1)];
+        assert!(!got["a"].is_empty() && got["a"] != "bf_isabella");
+        let mut back = vec![card("a", Some("bf_isabella"), 1)];
         p.assign(&mut back);
         assert_eq!(back[0].pick, None);
         assert!(

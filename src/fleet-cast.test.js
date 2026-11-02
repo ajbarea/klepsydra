@@ -18,18 +18,22 @@ const KOURAI = ["aidos", "aletheia", "cupid", "dokimasia", "hephaestus", "kallos
 const NEW = ["argos", "athena", "chronos", "elpis", "hermes", "hesychia"];
 // keryx's specialty voice, handed out after the pool and before any blend (keryx 0.9.3).
 const SPECIALTY = "af_nicole";
-// Athena's voice: outside keryx's pool and specialty, so only the orchestrator wears her (#222).
-const ORCHESTRATOR_ONLY = "bf_alice";
+// Athena wears bf_emma, a pool voice reserved for the orchestrator like Hephaestus's am_michael
+// (#222, AJ 11-02); Techne, its face before, keeps her portrait on bf_alice, a voice outside
+// keryx's pool that only a pick ever lands on.
+const ATHENA = "bf_emma";
+const PICK_ONLY = "bf_alice";
 const PORTRAITS = [...KOURAI, ...NEW].sort();
 
-test("the sixteen characters each have one voice of their gender: every pool voice, af_nicole, and Athena's bf_alice", () => {
+test("the sixteen characters each have one voice of their gender: every pool voice, af_nicole, and Techne on bf_alice", () => {
   const entries = Object.entries(cast.characters);
   assert.deepEqual(entries.map(([, c]) => c.face).sort(), PORTRAITS);
   assert.equal(new Set(entries.map(([, c]) => c.name)).size, 16);
-  assert.deepEqual(Object.keys(cast.characters).sort(), [...POOL, SPECIALTY, ORCHESTRATOR_ONLY].sort(), "every pool voice has a character; af_nicole and bf_alice are cast too");
-  assert.equal(cast.characters[ORCHESTRATOR_ONLY].name, "Athena");
+  assert.deepEqual(Object.keys(cast.characters).sort(), [...POOL, SPECIALTY, PICK_ONLY].sort(), "every pool voice has a character; af_nicole and bf_alice are cast too");
+  assert.equal(cast.characters[ATHENA].name, "Athena");
+  assert.equal(cast.characters[PICK_ONLY].name, "Techne");
   for (const [voice, c] of entries) {
-    assert.ok(POOL.includes(voice) || voice === SPECIALTY || voice === ORCHESTRATOR_ONLY, `${voice} is not a keryx voice or Athena's`);
+    assert.ok(POOL.includes(voice) || voice === SPECIALTY || voice === PICK_ONLY, `${voice} is not a keryx voice or bf_alice`);
     assert.equal(voice[1], c.gender, `${c.name} cast against gender`);
   }
 });

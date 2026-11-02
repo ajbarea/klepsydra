@@ -139,7 +139,7 @@ export function identity(s, cast) {
 }
 
 /** The voice keys of the orchestrator's faces, Hephaestus and Athena (src-tauri/fleet/src/picks.rs ORCHESTRATORS). */
-export const ORCHESTRATOR_VOICES = ["am_michael", "bf_alice"];
+export const ORCHESTRATOR_VOICES = ["am_michael", "bf_emma"];
 
 /**
  * Every session a character from the theme `cast` wears (#148). The app's

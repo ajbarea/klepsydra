@@ -1232,12 +1232,12 @@ mod tests {
     fn two_homes_of_one_voice_the_first_started_keeps_it() {
         let s = snapshot(
             &[
-                voiced("b", NOW - 100, "bf_emma", "home"),
-                voiced("a", NOW - 200, "bf_emma", "home"),
+                voiced("b", NOW - 100, "bf_isabella", "home"),
+                voiced("a", NOW - 200, "bf_isabella", "home"),
             ],
             NOW,
         );
-        assert_eq!(voice_of(&s, "a"), Some("bf_emma"));
+        assert_eq!(voice_of(&s, "a"), Some("bf_isabella"));
         assert_eq!(voice_of(&s, "b"), None, "the later one shows a medallion");
     }
 
@@ -1342,12 +1342,12 @@ mod tests {
     fn a_hold_beats_a_home_however_late_it_started() {
         let s = snapshot(
             &[
-                voiced("home", NOW - 900, "bf_emma", "home"),
-                voiced("held", NOW - 100, "bf_emma", "hold"),
+                voiced("home", NOW - 900, "bf_isabella", "home"),
+                voiced("held", NOW - 100, "bf_isabella", "hold"),
             ],
             NOW,
         );
-        assert_eq!(voice_of(&s, "held"), Some("bf_emma"));
+        assert_eq!(voice_of(&s, "held"), Some("bf_isabella"));
         assert_eq!(voice_of(&s, "home"), None);
     }
 
@@ -1370,12 +1370,12 @@ mod tests {
     fn after_clear_the_live_session_keeps_the_face_not_the_ended_one() {
         let s = snapshot(
             &[
-                gone("old", NOW - 900, "bf_emma", "home", true),
-                voiced("new", NOW - 30, "bf_emma", "home"),
+                gone("old", NOW - 900, "bf_isabella", "home", true),
+                voiced("new", NOW - 30, "bf_isabella", "home"),
             ],
             NOW,
         );
-        assert_eq!(voice_of(&s, "new"), Some("bf_emma"));
+        assert_eq!(voice_of(&s, "new"), Some("bf_isabella"));
         assert_eq!(voice_of(&s, "old"), None);
         let ceded = |id: &str| {
             s.sessions
@@ -1387,7 +1387,7 @@ mod tests {
         };
         assert_eq!(
             ceded("old").as_deref(),
-            Some("bf_emma"),
+            Some("bf_isabella"),
             "the card that gave its voice names it, so the wall counts it in that card's place"
         );
         assert_eq!(ceded("new"), None);
@@ -1399,11 +1399,11 @@ mod tests {
         // session missing beats does not swap faces back and forth.
         for quiet in [false, true] {
             let first = if quiet {
-                gone("a", NOW - 900, "bf_emma", "home", false)
+                gone("a", NOW - 900, "bf_isabella", "home", false)
             } else {
-                voiced("a", NOW - 900, "bf_emma", "home")
+                voiced("a", NOW - 900, "bf_isabella", "home")
             };
-            let s = snapshot(&[first, voiced("b", NOW - 30, "bf_emma", "home")], NOW);
+            let s = snapshot(&[first, voiced("b", NOW - 30, "bf_isabella", "home")], NOW);
             let a = s.sessions.iter().find(|v| v.session_id == "a").unwrap();
             assert_eq!(
                 a.status,
@@ -1413,7 +1413,7 @@ mod tests {
                     Status::Working
                 }
             );
-            assert_eq!(voice_of(&s, "a"), Some("bf_emma"), "silent: {quiet}");
+            assert_eq!(voice_of(&s, "a"), Some("bf_isabella"), "silent: {quiet}");
             assert_eq!(voice_of(&s, "b"), None, "silent: {quiet}");
         }
     }
@@ -1465,12 +1465,12 @@ mod tests {
     fn homes_of_different_voices_both_stay() {
         let s = snapshot(
             &[
-                voiced("a", NOW - 200, "bf_emma", "home"),
+                voiced("a", NOW - 200, "bf_isabella", "home"),
                 voiced("b", NOW - 100, "am_adam", "home"),
             ],
             NOW,
         );
-        assert_eq!(voice_of(&s, "a"), Some("bf_emma"));
+        assert_eq!(voice_of(&s, "a"), Some("bf_isabella"));
         assert_eq!(voice_of(&s, "b"), Some("am_adam"));
     }
 
@@ -1478,12 +1478,12 @@ mod tests {
     fn a_tie_on_start_goes_to_the_lower_session_id() {
         let s = snapshot(
             &[
-                voiced("b", NOW - 100, "bf_emma", "home"),
-                voiced("a", NOW - 100, "bf_emma", "home"),
+                voiced("b", NOW - 100, "bf_isabella", "home"),
+                voiced("a", NOW - 100, "bf_isabella", "home"),
             ],
             NOW,
         );
-        assert_eq!(voice_of(&s, "a"), Some("bf_emma"));
+        assert_eq!(voice_of(&s, "a"), Some("bf_isabella"));
         assert_eq!(voice_of(&s, "b"), None);
     }
 }

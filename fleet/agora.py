@@ -46,7 +46,7 @@ FILE_MAX = 256 * 1024
 EVERY_S = 3600
 HEPH = "am_michael"
 # The orchestrator's faces (#222); a worker never wears either.
-ORCHESTRATORS = (HEPH, "bf_alice")
+ORCHESTRATORS = (HEPH, "bf_emma")
 FLEET_SOCK = os.environ.get("FLEET_SOCK", "klepsydra")
 GITLEAKS = os.environ.get("FLEET_GITLEAKS", "gitleaks")
 LINK = re.compile(

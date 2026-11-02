@@ -761,10 +761,10 @@ another character theme.
 
 A session's face follows its keryx voice, so it stays the same while the
 session moves between repos. Sixteen voices, all fourteen in keryx's rotation pool,
-`af_nicole` (keryx's fifteenth, before any blend) and Athena's `bf_alice`, are cast
+`af_nicole` (keryx's fifteenth, before any blend) and `bf_alice` (Techne's, which only a pick lands on), are cast
 as characters and show their portraits: ten from kourai-khryseai and six (Chronos,
 Argos, Hermes, Elpis, Hesychia, Athena) painted for this app. The orchestrator wears Hephaestus or
-Athena (`bf_alice`, outside keryx's pool), equals, one per session: a new
+Athena (`bf_emma`), equals, one per session: a new
 orchestrator session takes the one no other orchestrator card on the wall
 wears (a live one first), keeps it, and a `/clear` passes it on. With both
 shown it is the one seen least recently; on a tie or with neither, the one

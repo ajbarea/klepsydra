@@ -26,8 +26,9 @@ class Agora(unittest.TestCase):
                     "characters": {
                         "am_michael": {"name": "Hephaestus"},
                         "af_nova": {"name": "Metis"},
-                        "bf_emma": {"name": "Mneme"},
-                        "bf_alice": {"name": "Athena"},
+                        "bf_isabella": {"name": "Mneme"},
+                        "bf_emma": {"name": "Athena"},
+                        "bf_alice": {"name": "Techne"},
                     }
                 }
             )
@@ -142,22 +143,22 @@ class Agora(unittest.TestCase):
 
     def test_the_orchestrator_signs_as_heph_and_an_own_voice_signs_as_itself(self):
         (self.tmp / "state" / "orchestrator.session").write_text(SID + "\n")
-        self.live(voice="bf_emma")
+        self.live(voice="bf_isabella")
         self.assertEqual(self.run_agora("post", "a win")[1], "Posted as Hephaestus.")
         self.assertEqual(self.posts()[0]["who"], "heph")
         (self.tmp / "state" / "orchestrator.session").unlink()
         self.live(
-            sid="22222222-2222-4333-8444-555555555555", pane="%5", voice="bf_emma"
+            sid="22222222-2222-4333-8444-555555555555", pane="%5", voice="bf_isabella"
         )
         self.register("%5", "sphragis", "22222222-2222-4333-8444-555555555555")
         self.assertEqual(self.run_agora("post", "x", pane="%5")[1], "Posted as Mneme.")
 
     def test_an_orchestrator_wearing_athena_signs_as_athena_and_no_worker_does(self):
         (self.tmp / "state" / "orchestrator.session").write_text(SID + "\n")
-        self.live(voice="am_puck", orchestrator_face="bf_alice")
+        self.live(voice="am_puck", orchestrator_face="bf_emma")
         self.assertEqual(self.run_agora("post", "a win")[1], "Posted as Athena.")
         (self.tmp / "state" / "orchestrator.session").unlink()
-        self.live(voice="bf_alice")
+        self.live(voice="bf_emma")
         self.assertEqual(
             self.run_agora("post", "x", now=NOW + 3601)[1], "Posted as Metis."
         )
