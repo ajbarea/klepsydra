@@ -21,6 +21,8 @@ if (( !force )) && [[ $(git -C "$here" rev-parse --path-format=absolute --git-di
   exit 2
 fi
 do_() { if (( dry )); then printf 'would: %s\n' "$*"; else "$@"; fi; }
+# A dry run writes nothing, its log included: its events go to stderr only.
+ilog() { if (( dry )); then printf '%s %s %s\n' "$(date '+%F %T')" "$1" "${*:2}" >&2; else flog "$@"; fi; }
 SCRIPTS=(launch.sh fresh-now.sh resume-at-reset.sh watch-panes.sh memfrag-log.sh relaunch-fresh.sh brief.sh doctor.sh cutover.sh accounts-sync.sh recover.sh sync-briefing.sh ci_watch.py agora.py worker-settings.json)
 UNITS=${FLEET_UNITS:-$HOME/.config/systemd/user}
 BIN=${FLEET_BIN:-$HOME/.local/bin}
@@ -35,10 +37,10 @@ for c in "${HOOK_COPIES[@]}"; do
   src=$root/${c%% *} name=${c#* }
   dest=$FLEET_HOOK_DIR/$name tmp=$FLEET_HOOK_DIR/$name.new.$$
   if [[ ! -f $src ]]; then
-    flog ERROR "a copy's source is missing from this checkout; not installed" file="$dest" from="$src"; failed=1; continue
+    ilog ERROR "a copy's source is missing from this checkout; not installed" file="$dest" from="$src"; failed=1; continue
   fi
   if [[ -e $dest && ! -f $dest ]]; then
-    flog ERROR "a copy's place is not a file; left alone" file="$dest"; failed=1; continue
+    ilog ERROR "a copy's place is not a file; left alone" file="$dest"; failed=1; continue
   fi
   cmp -s -- "$src" "$dest" && continue
   mode=644; [[ $src == *.sh ]] && mode=755
@@ -48,10 +50,10 @@ for c in "${HOOK_COPIES[@]}"; do
   if mkdir -p -- "${dest%/*}" &&
      { [[ ! -e $dest ]] || { mkdir -p -- "$archive/claude" && cp -p -- "$dest" "$archive/claude/${name//\//_}.$stamp"; }; } &&
      install -m "$mode" -- "$src" "$tmp" && mv -f -- "$tmp" "$dest"; then
-    flog INFO "installed a copy" file="$dest" from="$src"
+    ilog INFO "installed a copy" file="$dest" from="$src"
   else
-    rm -f -- "$tmp"
-    flog ERROR "a copy was not installed; the old one stays" file="$dest" from="$src"
+    rm -f -- "${tmp:?}"
+    ilog ERROR "a copy was not installed; the old one stays" file="$dest" from="$src"
     failed=1
   fi
 done
