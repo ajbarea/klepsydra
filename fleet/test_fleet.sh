@@ -738,11 +738,13 @@ for c in "${HOOK_COPIES[@]}"; do mkdir -p "$(dirname "$FLEET_HOOK_DIR/${c#* }")"
 touch "$work/active" "$FLEET_STATE/resume.beat"
 session_file o1 "$o" https://claude.ai/code/session_01O
 out=$(DOC_UP=http DOC_SERVE="https://desk.tail1.ts.net (tailnet only)" doctor); code=$?
-check "all well but the watcher: a shell that names the script is not one" "$(grep -c '^ok ' <<<"$out") $(grep '^FAIL' <<<"$out" | cut -d: -f1)" "13 FAIL pane watcher"
+# Which rows are not ok, not how many are: a new check that passes here breaks no case.
+notok() { grep -v '^ok ' | cut -d: -f1 | paste -sd'|'; }
+check "all well but the watcher: a shell that names the script is not one" "$(notok <<<"$out")" "warn account $work/cfg-b|FAIL pane watcher|warn voices"
 check "the default account is logged in; the second, not yet, is a warning" \
   "$(grep '^ok   account' <<<"$out" | cut -d: -f1) | $(grep '^warn account' <<<"$out" | cut -d: -f1)" "ok   account $work/cfg-a | warn account $work/cfg-b"
-check "with a watcher running, every check is ok and the exit is 0" \
-  "$(DOC_WATCH='%2 %5' DOC_UP=http DOC_SERVE=on doctor | grep -c '^ok '; echo "rc=${PIPESTATUS[0]}")" $'14\nrc=0'
+check "with a watcher running, nothing fails and the exit is 0 (the second account and voices warn here)" \
+  "$(DOC_WATCH='%2 %5' DOC_UP=http DOC_SERVE=on doctor | notok; echo "rc=${PIPESTATUS[0]}")" "warn account $work/cfg-b|warn voices"$'\nrc=0'
 check "the watcher's panes are named" "$(DOC_WATCH='%2 %5' doctor | grep '^ok   pane watcher')" "ok   pane watcher: watching %2 %5"
 state wpane '{"above":["  ⎿  You'"'"'ve hit your 5-hour limit · resets 11:30am (America/New_York)","",""]}'
 check "#263: a pane still at its limit well past the reset fails, named with its reset" \
