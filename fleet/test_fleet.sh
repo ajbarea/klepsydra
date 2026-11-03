@@ -1211,7 +1211,14 @@ p=$(backpane finished)
 printf '%s\tother\t%s\tsid-o\t/w\t%s\n' "%9999" "$work/brief.src" "$work/cfg-a" >>"$REGISTRY"
 check "#269: fleet done outside a pane, with no name, is refused" "$(TMUX_PANE='' bash "$here/fleet" done >/dev/null 2>&1; echo $?) $(wc -l <"$REGISTRY")" "2 2"
 check "#269: an unknown name is refused and changes nothing" "$(bash "$here/fleet" done nobody >/dev/null 2>&1; echo $?) $(wc -l <"$REGISTRY")" "1 2"
-out=$(TMUX_PANE=$p bash "$here/fleet" done 2>/dev/null); rc=$?
+check "#269 review: a pane id from another tmux server (AJ's terminal) is refused, and nothing moves" \
+  "$(TMUX=/tmp/tmux-1/default,1,0 TMUX_PANE=$p bash "$here/fleet" done >/dev/null 2>&1; echo $?) $(wc -l <"$REGISTRY")" "2 2"
+fsock="TMUX=/tmp/tmux-1/$FLEET_SOCK,1,0"
+jq --arg p "%9998" '.tmux.pane = $p' "$KLEPSYDRA_DIR/fleet/$SID.json" >"$work/st.json" && mv "$work/st.json" "$KLEPSYDRA_DIR/fleet/$SID.json"
+check "#269 review: a stale row whose session runs in another pane is refused" \
+  "$(env "$fsock" TMUX_PANE=$p bash "$here/fleet" done >/dev/null 2>&1; echo $?) $(wc -l <"$REGISTRY")" "1 2"
+done_live "$p"
+out=$(env "$fsock" TMUX_PANE=$p bash "$here/fleet" done 2>/dev/null); rc=$?
 check "#269: fleet done in the agent's own pane moves its row, and only its row, to finished.tsv" \
   "$rc $(cut -f1,2 "$REGISTRY") | $(cut -f1,2 "$FLEET_STATE/finished.tsv")" "0 %9999	other | $p	finished"
 check "#269: with the time it finished, and says so" "$(awk -F'\t' '{ print ($7 ~ /^20[0-9][0-9]-/) }' "$FLEET_STATE/finished.tsv") $out" "1 finished: $p (1 row); it will not be relaunched"
@@ -1221,6 +1228,9 @@ check "#269: the resume service never moves a finished agent back, nor types int
   "$(wc -c <"$work/moved") $(grep -c '^SUBMIT' "$work/finished.log")" "0 0"
 printf '%s\tfinished\t%s\t%s\t/w\t%s\n' "$p" "$work/brief.src" "$SID" "$work/cfg-b" >>"$REGISTRY"
 check "#269: fleet done NAME works from any pane, for Heph" "$(TMUX_PANE=%1 bash "$here/fleet" done finished >/dev/null 2>&1; echo $?) $(cut -f2 "$REGISTRY" | tr '\n' ' ')$(wc -l <"$FLEET_STATE/finished.tsv")" "0 other 2"
+check "#269 review: a second fleet done NAME says it already finished" "$(bash "$here/fleet" done finished 2>/dev/null; echo "rc=$?")" $'already finished: finished\nrc=0'
+printf '%s\t01\t%s\tsid-1\t/w\t%s\n' "%9997" "$work/brief.src" "$work/cfg-a" >>"$REGISTRY"
+check "#269 review: names compare as text: fleet done 1 leaves the agent named 01" "$(bash "$here/fleet" done 1 >/dev/null 2>&1; echo $?) $(cut -f2 "$REGISTRY" | tr '\n' ' ')" "1 other 01 "
 t kill-window -t "$p" 2>/dev/null; : >"$REGISTRY"; rm -f "$FLEET_STATE/finished.tsv"
 
 : >"$work/moved"
