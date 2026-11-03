@@ -92,15 +92,12 @@ findings=$(printf '%s' "$cmd" | python3 -I "$here/orch_guard_parse.py" 2>/dev/nu
   exit 0
 }
 [[ -n $findings ]] || exit 0
-if [[ $findings == UNPARSED ]]; then
-  glog INFO "orchestrator guard: the command does not split (an unclosed quote); call let through" command="${cmd:0:300}"
-  exit 0
-fi
 
 orch=$(orchestrator)
 balance_log=$state/api-balance.log
-typed=() # panes this command types into with an empty box: its own text, once sent
+socks=() typed=() # panes this command types into with an empty box: its own text, once sent
 while IFS=$'\t' read -r kind a b; do
+  # SOCKET lines come first, so each SEND is read on the servers its command names.
   case $kind in
     REGISTRY) registry_guard "$a" ;;
     CLAUDE)
@@ -119,23 +116,29 @@ while IFS=$'\t' read -r kind a b; do
       deny target "this sends keys to $a, which the command does not set, so the guard cannot read that pane first. Name the pane (tmux send-keys -t %N ...), or set it in the same command (p=%N; ... or for p in %N %M; do ...)." \
         target="$a"
       ;;
+    SOCKET) socks+=("$a") ;;
     SEND)
-      case $a in
-        "-L "* | "-S "*) TM=("${a%% *}" "${a#* }") ;;
-        t) TM=(-L "$FLEET_SOCK") ;;
-        *) if [[ -n ${TMUX:-} ]]; then TM=(); else TM=(-L "$FLEET_SOCK"); fi ;;
-      esac
-      t() { tmux "${TM[@]}" "$@"; }
-      if ! p=$(t display-message -p -t "$b" '#{pane_id}' 2>/dev/null) || [[ -z $p ]]; then
-        glog INFO "orchestrator guard: the target is no pane tmux knows; call let through" target="$b" socket="${TM[*]:-env}"
+      p=""
+      for sk in "${socks[@]}"; do
+        case $sk in
+          "-L "* | "-S "*) TM=("${sk%% *}" "${sk#* }") ;;
+          t) TM=(-L "$FLEET_SOCK") ;;
+          *) if [[ -n ${TMUX:-} ]]; then TM=(); else TM=(-L "$FLEET_SOCK"); fi ;;
+        esac
+        p=$(tmux "${TM[@]}" display-message -p -t "$a" '#{pane_id}' 2>/dev/null) && [[ -n $p ]] && break
+        p=""
+      done
+      if [[ -z $p ]]; then
+        glog INFO "orchestrator guard: the target is no pane tmux knows; call let through" target="$a" sockets="${socks[*]}"
         continue
       fi
+      t() { tmux "${TM[@]}" "$@"; }
       [[ $p == "$orch" ]] && continue
       s=$(screen "$p")
       if lim=$(limit_line "$s"); then
         idle=$((now - $(stopped_at "$p" "$(plain <<<"$s")")))
         if (( idle >= FRESH_AFTER_S )); then
-          deny cold-limit "pane $p stopped at a usage limit $((idle / 60)) min ago (\"${lim#"${lim%%[![:space:]]*}"}\"). Its prompt cache lives an hour, so typing into it now re-caches its whole transcript: five such nudges took 38% of a five-hour window on 11-02. Relaunch it fresh from its brief instead: bash $state/fresh-now.sh $p" \
+          deny cold-limit "pane $p stopped at a usage limit $((idle / 60)) min ago (\"${lim#"${lim%%[![:space:]]*}"}\"). Its prompt cache lives an hour, so typing into it now re-caches its whole transcript: five such nudges took 38% of a five-hour window on 11-02. Relaunch it fresh from its brief instead: bash $state/fresh-now.sh $p (a command that only names the pane counts too: leave its id out)" \
             pane="$p" idle_min="$((idle / 60))" limit="$lim"
         fi
       fi
@@ -148,7 +151,7 @@ while IFS=$'\t' read -r kind a b; do
         elif allowed pending-input; then
           glog WARN "orchestrator guard: send to a box holding text, allowed by ORCH_GUARD_ALLOW" guard=pending-input pane="$p" box="${box:0:200}"
         else
-          deny pending-input "pane $p's input line already holds text (\"${box:0:80}\"), typed by AJ (phone or terminal) or a report. Typing now merges your text into it (11-01 07:30). Wait until it is sent or cleared, then try again. If AJ asked you to replace it, add ORCH_GUARD_ALLOW=pending-input to the command." \
+          deny pending-input "pane $p's input line already holds text (\"${box:0:80}\"), typed by AJ (phone or terminal) or a report. Typing now merges your text into it (11-01 07:30). Wait until it is sent or cleared, then try again. If AJ asked you to replace it, add ORCH_GUARD_ALLOW=pending-input to the command (a command that only names the pane counts too: leave its id out)." \
             pane="$p" box="${box:0:200}"
         fi
       else

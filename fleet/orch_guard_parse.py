@@ -1,242 +1,182 @@
-"""What an orchestrator's Bash command does, for orch-guard.sh (#264).
+"""What an orchestrator's Bash command may do, for orch-guard.sh (#264).
 
 Reads the command on stdin and prints one line per finding, tab-separated:
-  SEND <socket> <target>   tmux send-keys or paste-buffer to a pane; socket is
-                           "-L NAME", "-S PATH", "t" (lib.sh's t: the fleet
-                           socket) or "env" (the tmux the session runs in)
-  UNRESOLVED <raw>         a send whose target is a variable this command does
-                           not set
-  REGISTRY <word>          a command that can write panes.tsv (WORD: what writes)
-  CLAUDE <mode> <signal>   claude started (interactive or headless) with an
-                           API key; SIGNAL names how the key reaches it
-  UNPARSED                 the command does not split (an unclosed quote)
+  SOCKET <socket>        a tmux server a send may reach, in the order to try:
+                         "-L NAME", "-S PATH", "t" (lib.sh's t, the fleet
+                         socket), then "env" (the tmux the session runs in)
+  SEND <target>          a pane a send may reach
+  UNRESOLVED <raw>       a send target this command does not spell out
+  REGISTRY <why>         a command that names panes.tsv and is not read-only
+  CLAUDE <mode> <signal> claude started (interactive or headless) with an
+                         API key; SIGNAL names how the key reaches it
 
-Tokens come from shlex in POSIX mode, which reads quotes, comments and the
-;|&<>() operators as bash does. A newline separates commands in bash but not
-in shlex, so each line is split on its own unless a quote spans it.
+It never models bash's grammar (a parser of bash that is not bash disagrees
+with it on some corner: comments, continuations, subshells, quotes). It
+over-approximates instead, so every doubt lands on the refusing side: a
+command that sends keys at all has every pane it mentions checked (echoed or
+commented ones too), a -t it cannot resolve is UNRESOLVED, a command naming
+panes.tsv is a write unless each of its pieces starts with a read-only
+program, and a launch is interactive unless it says -p. The differential test
+(tests/orch_parse_differential.py) runs generated commands in bash and fails
+on any send or write bash makes that this misses.
 Run: python3 -I orch_guard_parse.py < command
 """
 
 import json
 import os
 import re
-import shlex
 import sys
 
-SENDS = {"send-keys", "send", "paste-buffer", "pasteb"}
-OPS = {";", "&&", "||", "|", "&", ";;", "(", ")", "|&", "\n"}
-# send-keys and paste-buffer options that take a value.
-VALUED = {"-N", "-c", "-b", "-s", "-T"}
-WRITERS = {
-    "tee",
-    "rm",
-    "truncate",
-    "python",
-    "python3",
-    "perl",
-    "ed",
-    "ex",
-    "vi",
-    "vim",
-    "sponge",
-    "dd",
-}
-COPIERS = {"mv", "cp", "install", "rsync", "ln"}
-PREFIX = {"sudo", "env", "command", "exec", "nohup", "time", "timeout", "flock"}
-KEY_ENV = re.compile(r"^(ANTHROPIC_API_KEY|ANTHROPIC_AUTH_TOKEN)=")
+SEND_WORD = re.compile(r"(?<![\w-])(send-keys|send|paste-buffer|pasteb)(?![\w-])")
+TMUX_WORD = re.compile(r"(?<![\w.-])tmux(?![\w-])")
+# lib.sh's t as a program: at a command's start or after a keyword.
+T_FUNC = re.compile(
+    r"(?:^|[;&|(\n`]|\b(?:then|do|else)\b)\s*t\s+(?:send-keys|send|paste-buffer|pasteb)\b"
+)
+SOCK = re.compile(r"(?<![\w-])-([LS])\s*['\"]?([^\s'\";&|)]+)")
+PANE = re.compile(r"(?<![\w%])%[0-9]+(?!\w)")
+TARGET = re.compile(r"(?<![\w-])-t\s*(['\"]?)([^\s'\";&|)]+)")
 VAR = re.compile(r"^\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?$")
-LAUNCHERS = ("launch.sh", "fresh-now.sh", "relaunch-fresh.sh")
+PANE_LIKE = re.compile(r"^[%@]?[A-Za-z0-9_.:=+-]+$")
+
+REGISTRY = re.compile(r"(?:^|[\s/'\"=<>])panes\.tsv(?=$|[\s'\";|&)<>])")
+READ_ONLY = {
+    "cat", "grep", "egrep", "fgrep", "rg", "cut", "head", "tail", "column", "wc", "less", "more", "sort",
+    "jq", "diff", "cmp", "stat", "ls", "test", "[", "[[", "echo", "printf", "true", "false", "nl",
+    "awk", "gawk", "mawk", "sed", "tr", "file", "md5sum", "sha256sum", "date",
+}  # fmt: skip
+KEYWORDS = {
+    "then",
+    "do",
+    "else",
+    "elif",
+    "if",
+    "while",
+    "until",
+    "!",
+    "{",
+    "}",
+    "time",
+    "fi",
+    "done",
+}
+SPLIT = re.compile(r"[;&|\n()`]+|\$\(")
+
+KEY_ENV = re.compile(r"(?<!\w)(ANTHROPIC_API_KEY|ANTHROPIC_AUTH_TOKEN)=")
+CLAUDE_WORD = re.compile(r"(?:^|[\s;&|(/'\"`])claude(?=$|[\s;&|)'\"`])")
+LAUNCHER = re.compile(
+    r"(?:^|[\s/'\"])(launch|fresh-now|relaunch-fresh)\.sh(?=$|[\s'\";&|)])"
+)
+HEADLESS = re.compile(r"(?:^|\s)(-p|--print)(?=$|\s)")
+SETTINGS = re.compile(r"--settings[=\s]+(['\"]?)([^\s'\";&|)]+)")
 
 
-def tokens(cmd):
-    """The command's tokens, with "\\n" for each line break outside quotes."""
-    out = []
-    pending = ""
-    for line in cmd.split("\n"):
-        pending = f"{pending}\n{line}" if pending else line
-        lex = shlex.shlex(pending, posix=True, punctuation_chars=True)
-        lex.whitespace_split = True
-        try:
-            out.extend(lex)
-        except ValueError:  # a quote still open: it spans the next line
-            continue
-        out.append("\n")
-        pending = ""
-    if pending:
-        raise ValueError("unclosed quote")
-    return out
+def values(cmd, name):
+    """NAME's values as this command sets them: NAME=VALUE, for NAME in WORDS."""
+    got = [
+        m.group(2)
+        for m in re.finditer(rf"(?:^|[\s;&|(`]){name}=(['\"]?)([^\s'\";&|)`]*)", cmd)
+    ]
+    for m in re.finditer(rf"\bfor\s+{name}\s+in\s+(.*?)\s*(?:;|\n|\bdo\b)", cmd):
+        got.extend(m.group(1).split())
+    return got
 
 
-def segments(toks):
-    seg = []
-    for tok in toks:
-        if tok in OPS:
-            if seg:
-                yield seg
-            seg = []
+def sends(cmd, out):
+    if not SEND_WORD.search(cmd):
+        return
+    t_func = bool(T_FUNC.search(cmd))
+    if not (TMUX_WORD.search(cmd) or t_func):
+        return
+    socks = [f"-{m.group(1)} {m.group(2)}" for m in SOCK.finditer(cmd)]
+    if t_func:
+        socks.append("t")
+    socks.append("env")
+    for s in dict.fromkeys(socks):
+        print(f"SOCKET\t{s}", file=out)
+    targets = [m.group(0) for m in PANE.finditer(cmd)]
+    for m in TARGET.finditer(cmd):
+        raw = m.group(2)
+        v = VAR.match(raw)
+        if v:
+            vals = values(cmd, v.group(1))
+            good = [x for x in vals if PANE_LIKE.match(x)]
+            if not good or len(good) < len(vals):
+                print(f"UNRESOLVED\t{raw}", file=out)
+            targets.extend(good)
+        elif "$" in raw or "`" in raw:
+            print(f"UNRESOLVED\t{raw}", file=out)
         else:
-            seg.append(tok)
-    if seg:
-        yield seg
+            targets.append(raw)
+    for target in dict.fromkeys(targets):
+        print(f"SEND\t{target}", file=out)
 
 
-def values(toks):
-    """Each variable's values: from NAME=VALUE and from for NAME in WORDS."""
-    vals = {}
-    for i, tok in enumerate(toks):
-        m = re.match(r"^([A-Za-z_][A-Za-z0-9_]*)=(.*)$", tok)
-        if m:
-            vals.setdefault(m.group(1), []).append(m.group(2))
-        if tok == "for" and i + 2 < len(toks) and toks[i + 2] == "in":
-            words = []
-            for w in toks[i + 3 :]:
-                if w in OPS or w == "do":
-                    break
-                words.append(w)
-            vals.setdefault(toks[i + 1], []).extend(words)
-    return vals
-
-
-def command_word(seg):
-    """The index of the program a segment runs, past assignments and
-    wrappers (sudo, env, timeout DURATION, flock LOCKFILE, ...)."""
+def program(piece):
+    """The first word of a piece of a command, past keywords and assignments."""
+    words = piece.split()
     i = 0
-    while i < len(seg):
-        tok = seg[i]
-        if re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", tok):
-            i += 1
-        elif tok in PREFIX:
-            i += 1
-            while i < len(seg) and seg[i].startswith("-"):
-                i += 1
-            if tok in ("timeout", "flock") and i < len(seg):
-                i += 1  # the duration or the lock file
-        else:
-            return i
-    return None
-
-
-def sends(seg, vals, out):
-    for i, tok in enumerate(seg):
-        if tok not in SENDS:
-            continue
-        # The program before it: tmux (with -L/-S) or lib.sh's t.
-        sock = None
-        for j in range(i - 1, -1, -1):
-            if seg[j] == "t" and j == command_word(seg):
-                sock = "t"
-                break
-            if os.path.basename(seg[j]) == "tmux":
-                sock = "env"
-                k = j + 1
-                while k < i:
-                    if seg[k] in ("-L", "-S") and k + 1 < i:
-                        sock = f"{seg[k]} {seg[k + 1]}"
-                        k += 2
-                    elif seg[k].startswith(("-L", "-S")) and len(seg[k]) > 2:
-                        sock = f"{seg[k][:2]} {seg[k][2:]}"
-                        k += 1
-                    else:
-                        k += 1
-                break
-        if sock is None:
-            continue
-        target = None
-        k = i + 1
-        while k < len(seg) and seg[k].startswith("-") and seg[k] != "-":
-            opt = seg[k]
-            if opt == "-t" and k + 1 < len(seg):
-                target = seg[k + 1]
-                k += 2
-            elif opt.startswith("-t") and len(opt) > 2:
-                target = opt[2:]
-                k += 1
-            elif opt in VALUED:
-                k += 2
-            else:
-                k += 1
-        if target is None:
-            continue  # no -t: the session's own pane
-        m = VAR.match(target)
-        if m:
-            got = [v for v in vals.get(m.group(1), []) if not v.startswith("$")]
-            if not got:
-                print(f"UNRESOLVED\t{target}", file=out)
-                continue
-            for v in got:
-                print(f"SEND\t{sock}\t{v}", file=out)
-        elif "$" in target or "`" in target:
-            print(f"UNRESOLVED\t{target}", file=out)
-        else:
-            print(f"SEND\t{sock}\t{target}", file=out)
-
-
-def is_registry(tok):
-    return os.path.basename(tok) == "panes.tsv"
-
-
-def registry(seg, out):
-    if not any(is_registry(tok) for tok in seg):
-        return
-    for i, tok in enumerate(seg[:-1]):
-        if tok in (">", ">>", ">|", "<>") and is_registry(seg[i + 1]):
-            print(f"REGISTRY\t{tok}", file=out)
-            return
-    c = command_word(seg)
-    if c is None:
-        return
-    word = os.path.basename(seg[c])
-    args = [a for a in seg[c + 1 :] if not a.startswith("-")]
-    if word in COPIERS:
-        # A copy writes only its destination; a move also takes its source away.
-        hit = (
-            bool(args)
-            and is_registry(args[-1])
-            or (word == "mv" and any(is_registry(a) for a in args))
-        )
-    elif word == "sed":
-        hit = any(a.startswith(("-i", "--in-place")) for a in seg[c + 1 :])
-    elif word in ("awk", "gawk"):
-        hit = "inplace" in seg[c + 1 :]
-    else:
-        hit = word in WRITERS
-    if hit:
-        print(f"REGISTRY\t{word}", file=out)
-
-
-def claude(seg, toks, out):
-    c = command_word(seg)
-    if c is None:
-        return
-    word = os.path.basename(seg[c])
-    if (
-        word != "claude"
-        and not (
-            word in ("bash", "sh")
-            and c + 1 < len(seg)
-            and os.path.basename(seg[c + 1]) in LAUNCHERS
-        )
-        and word not in LAUNCHERS
+    while i < len(words) and (
+        words[i] in KEYWORDS or re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", words[i])
     ):
+        i += 1
+    return os.path.basename(words[i].strip("'\"")) if i < len(words) else None
+
+
+def copies_onto_registry(piece):
+    """Whether a cp piece may write panes.tsv: its last word is panes.tsv, or it
+    names a target folder (-t), which may hold one."""
+    words = piece.split()
+    if any(
+        w in ("-t", "-T") or w.startswith(("--target-directory", "-t"))
+        for w in words[1:]
+    ):
+        return True
+    return not words or os.path.basename(words[-1].strip("'\"")) == "panes.tsv"
+
+
+def registry(cmd, out):
+    if not REGISTRY.search(cmd):
         return
-    args = seg[c + 1 :]
-    headless = word == "claude" and any(a in ("-p", "--print") for a in args)
+    if re.search(r">\|?\s*['\"]?[^\s'\";&|]*panes\.tsv", cmd):
+        print("REGISTRY\tredirect", file=out)
+        return
+    # In-place edits and the read-only programs' own ways to write: sort -o, sed's w.
+    if re.search(
+        r"(?<![\w-])(-i|--in-place|-o|--output)\b|\binplace\b|\bw\s*['\"]?[^\s'\"]*panes\.tsv",
+        cmd,
+    ):
+        print("REGISTRY\tin-place", file=out)
+        return
+    for piece in SPLIT.split(cmd.replace("\\\n", " ")):
+        word = program(piece)
+        if word == "cp" and not copies_onto_registry(piece):
+            continue  # a backup: panes.tsv is only read
+        if word is not None and word not in READ_ONLY:
+            print(f"REGISTRY\t{word}", file=out)
+            return
+
+
+def claude(cmd, out):
+    launcher = LAUNCHER.search(cmd)
+    if not (CLAUDE_WORD.search(cmd) or launcher):
+        return
     signal = None
-    for tok in toks:  # an export earlier in the command reaches it too
-        if KEY_ENV.match(tok):
-            signal = tok.split("=", 1)[0]
-        elif "apiKeyHelper" in tok:
-            signal = "apiKeyHelper"
-    for k, tok in enumerate(args[:-1]):
-        if tok == "--settings":
-            path = os.path.expanduser(args[k + 1])
-            try:
-                with open(path, encoding="utf-8") as f:
-                    if "apiKeyHelper" in json.dumps(json.load(f)):
-                        signal = f"apiKeyHelper in {args[k + 1]}"
-            except (OSError, ValueError):
-                pass
+    m = KEY_ENV.search(cmd)
+    if m:
+        signal = m.group(1)
+    elif "apiKeyHelper" in cmd:
+        signal = "apiKeyHelper"
+    for m in SETTINGS.finditer(cmd):
+        path = os.path.expanduser(m.group(2))
+        try:
+            with open(path, encoding="utf-8") as f:
+                if "apiKeyHelper" in json.dumps(json.load(f)):
+                    signal = f"apiKeyHelper in {m.group(2)}"
+        except (OSError, ValueError):
+            pass
     if signal:
+        headless = bool(HEADLESS.search(cmd)) and not launcher
         print(
             f"CLAUDE\t{'headless' if headless else 'interactive'}\t{signal}", file=out
         )
@@ -244,16 +184,9 @@ def claude(seg, toks, out):
 
 def main():
     cmd = sys.stdin.read()
-    try:
-        toks = tokens(cmd)
-    except ValueError:
-        print("UNPARSED")
-        return
-    vals = values(toks)
-    for seg in segments(toks):
-        sends(seg, vals, sys.stdout)
-        registry(seg, sys.stdout)
-        claude(seg, toks, sys.stdout)
+    sends(cmd, sys.stdout)
+    registry(cmd, sys.stdout)
+    claude(cmd, sys.stdout)
 
 
 if __name__ == "__main__":

@@ -79,7 +79,10 @@ check "another tool passes" "$(call "$OSID" Read '{"file_path":"/x/panes.tsv"}')
 : >"$FLEET_LOG"
 check "an ordinary command passes" "$(run 'git status && ls -la')" "allow"
 check "an ordinary command logs nothing" "$(wc -c <"$FLEET_LOG" | tr -d ' ')" "0"
-check "text that only mentions a send passes" "$(run "gh pr comment 1 --body 'tmux send-keys -t $cold go'")" "allow"
+check "text naming no tmux send passes" "$(run "gh pr comment 1 --body 'send the report to $cold'")" "allow"
+# The parser over-approximates (it never models bash): a command that sends
+# keys has every pane it names checked, quoted ones too.
+check "a quoted send naming a cold pane is checked too" "$(run "gh pr comment 1 --body 'tmux send-keys -t $cold go'")" "deny:cold-limit"
 
 echo "cold-limit"
 check "a pane at a limit for 89 min (done 9:00, now 10:30): refused" "$(run "tmux -L $FLEET_SOCK send-keys -t $cold 'continue' Enter")" "deny:cold-limit"
@@ -169,6 +172,11 @@ for _ in {1..20}; do bash "$GUARD" <<<"$payload" >/dev/null; done
 per=$(( ($(date +%s%N) - start) / 20000000 ))
 echo "  (another session's call: ${per} ms each)"
 check "another session's call costs under 40 ms" "$(( per < 40 ))" "1"
+
+echo "differential against bash"
+diff_out=$(timeout 600 python3 -I "$here/tests/orch_parse_differential.py" 300 264 2>&1)
+echo "  ${diff_out##*$'\n'}"
+check "no send or registry write bash makes is missed by the parser" "$(grep -c MISSED <<<"$diff_out")" "0"
 
 echo "mutation checks"
 # Each guard's refusal removed in turn: its firing case must then pass.
