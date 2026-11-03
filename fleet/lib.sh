@@ -400,13 +400,21 @@ with_registry() {
   ( flock -w 60 9 || exit 1; "$@" ) 9>>"$FLEET_STATE/.registry.lock"
 }
 
-# Set the registry's session id for pane PANE (column 4) to SID.
+# Set the session id (column 4) of the registry row in pane PANE that names
+# session OLD (empty: a row with none) to NEW. The pane alone is no key: a
+# restarted tmux server hands out %N again, so finished or lost rows can share
+# one with a running agent (#261 review 7). Fails when no row matches.
 set_session() { with_registry set_session_now "$@"; }
-set_session_now() { # PANE SID
+set_session_now() { # PANE OLD NEW
   local tmp
-  [[ -e $REGISTRY ]] || return 1
+  [[ -e $REGISTRY && -n ${3:-} ]] || return 1
+  awk -F'\t' -v p="$1" -v o="$2" '$1 == p && $4 == o { f = 1 } END { exit !f }' "$REGISTRY" || return 1
   tmp=$(mktemp "$REGISTRY.XXXXXX") || return 1
-  awk -F'\t' -v OFS='\t' -v p="$1" -v sid="$2" '$1 == p { $4 = sid } { print }' "$REGISTRY" >"$tmp" && mv -f -- "$tmp" "$REGISTRY"
+  if ! awk -F'\t' -v OFS='\t' -v p="$1" -v o="$2" -v sid="$3" '!done && $1 == p && $4 == o { $4 = sid; done = 1 } { print }' "$REGISTRY" >"$tmp" ||
+    ! mv -f -- "$tmp" "$REGISTRY"; then
+    rm -f -- "${tmp:?}"
+    return 1
+  fi
 }
 
 # Whether pane PANE still runs the session registered for it: a live fleet

@@ -32,10 +32,13 @@ on_event() {
       [[ $why != compact ]] || return 0
       if [[ $why == clear && $cleared =~ ^[0-9a-f-]{36}$ && $pane =~ ^%[0-9]+$ ]]; then
         name=$(awk -F'\t' -v p="$pane" -v s="$cleared" '$1 == p && $4 == s { print $2; exit }' "$REGISTRY")
-        if [[ -n $name ]] && set_session_now "$pane" "$sid"; then
+        if [[ -n $name ]] && set_session_now "$pane" "$cleared" "$sid"; then
           flog INFO "registry follows a /clear" name="$name" pane="$pane" from="$cleared" session="$sid"
         fi
       fi
+      # Only an agent's row: a `fleet done` record (its row gone) stays, so a
+      # done agent resumed by hand is still never typed into or relaunched.
+      awk -F'\t' -v s="$sid" '$4 == s { f = 1 } END { exit !f }' "$REGISTRY" || return 0
       n=$(forget_finished "$sid") && (( n > 0 )) && flog INFO "recorded finish dropped: the session started again" session="$sid" source="$why" lines="$n"
       if unpaused "$sid" && drop_unpaused "$sid"; then
         flog INFO "unpause dropped: the session started again" session="$sid" source="$why"

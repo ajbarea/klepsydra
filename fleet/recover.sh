@@ -132,7 +132,7 @@ while IFS=$'\t' read -r -u 3 p name brief sid _; do
   # new id was never recorded): repair the row, never start a second agent.
   if this_boot_row "$sid" && now=$(repair_to "$p") && [[ -n $now ]]; then
     echo "running: $name ($p, now session $now)"
-    (( dry )) || { set_session "$p" "$now"; flog INFO "registry repaired" pane="$p" name="$name" session="$now"; }
+    (( dry )) || { set_session "$p" "$sid" "$now"; flog INFO "registry repaired" pane="$p" name="$name" session="$now"; }
     continue
   fi
   # It ended cleanly before the shutdown: its work is done, not lost (#220).

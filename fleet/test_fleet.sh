@@ -2321,7 +2321,7 @@ check "#261 review 6: a /clear in another pane leaves the row alone" "$(awk -F'\
 rev SessionStart "$SN" clear %4 "$SF"
 check "#261 review 6: a /clear repoints the row that named the cleared session in its pane, logged" \
   "$(awk -F'\t' '$2 == "d" { print $1, $4 }' "$REGISTRY") $(jq -r 'select(.message == "registry follows a /clear") | .name' "$FLEET_LOG")" "%4 $SN d"
-with_registry set_session_now %4 "$SF"
+with_registry set_session_now %4 "$SN" "$SF"
 # The doctor repairs a row to its /clear successor as recover does, so the
 # successor's own /exit is a finish, not a loss.
 with_registry forget_finished "$SF" >/dev/null
@@ -2332,7 +2332,7 @@ check "#261 review 6: the doctor repoints a row running as its /clear successor,
   "$(awk -F'\t' '$2 == "d" { print $4 }' "$REGISTRY") $(jq -r 'select(.message == "registry repaired") | .by' "$FLEET_LOG")" "$SN doctor"
 ended "$SN"
 check "#261 review 6: then the successor's /exit is a finish" "$(row_state %4 "$SN")" "finished"
-rm -f -- "$KLEPSYDRA_DIR/fleet/$SN.json"; with_registry set_session_now %4 "$SF"; with_registry forget_finished "$SN" >/dev/null
+rm -f -- "$KLEPSYDRA_DIR/fleet/$SN.json"; with_registry set_session_now %4 "$SN" "$SF"; with_registry forget_finished "$SN" >/dev/null
 rm -f -- "$KLEPSYDRA_DIR/fleet/$SF.json"; sfile "$SF" 4242 777 "$NOWBOOT" %4; ended "$SF"
 # Pause after a reboot: a lost agent's old pane id now holds another agent
 # that recover started there; pause sets the lost one aside, never naming it.
@@ -2343,6 +2343,26 @@ check "#261 review 6: pause sets aside a lost row whose reused pane id runs anot
   "$(FLEET_PAUSED=$work/p6.tsv bash "$here/pause.sh" pause lostx because 2>&1 | grep -c '^paused: lostx') $(cut -f1 "$work/p6.tsv" 2>/dev/null)" "1 lostx"
 awk -F'\t' '$2 != "newy"' "$REGISTRY" >"$work/reg.tmp" && mv -f -- "$work/reg.tmp" "$REGISTRY"
 rm -f -- "$work/p6.tsv" "$KLEPSYDRA_DIR/fleet/$SX.json" "$KLEPSYDRA_DIR/fleet/$SY.json" "$FLEET_STATE/unpaused.tsv"
+# #261 review 7: a pane id alone is no key. Rows from an earlier tmux server
+# keep pane ids the running server hands out again; a repoint names the row by
+# its pane and its old session, and leaves every other row alone.
+cp -p -- "$REGISTRY" "$work/reg-before-261r7"
+S1=aaaaaaaa-0000-4000-8000-0000000000c1 S2=aaaaaaaa-0000-4000-8000-0000000000c2 SC2=aaaaaaaa-0000-4000-8000-0000000000c3
+printf '%s\tfin1\t%s\t%s\t/w\n%s\tlost1\t%s\t%s\t/w\n%s\twork1\t%s\t%s\t/w\n' %3 "$work/bc.src" "$S1" %3 "$work/bc.src" "" %3 "$work/bc.src" "$S2" >"$REGISTRY"
+rev SessionStart "$SC2" clear %3 "$S2"
+check "#261 review 7: a /clear repoints only the row naming the cleared session, never others on its pane id" \
+  "$(cut -f2,4 "$REGISTRY" | tr '\t\n' ': ')" "fin1:$S1 lost1: work1:$SC2 "
+check "#261 review 7: a repoint naming a session no row on that pane names changes nothing" \
+  "$(set_session %3 "$S2" "$S1"; echo "rc=$?") $(cut -f4 "$REGISTRY" | tr '\n' ' ')" "rc=1 $S1  $SC2 "
+check "#261 review 7: a row with no session gets one only by its own empty key" \
+  "$(set_session %3 "" "$S2"; cut -f2,4 "$REGISTRY" | tr '\t\n' ': ')" "fin1:$S1 lost1:$S2 work1:$SC2 "
+cp -p -- "$work/reg-before-261r7" "$REGISTRY"
+# A `fleet done` record has no row; a hand resume of that session keeps it.
+SDN=aaaaaaaa-0000-4000-8000-0000000000c4
+printf '%s\tdonex\t%s\t%s\t/w\t%s\n' %9 "$work/bc.src" "$SDN" "$(date -Is)" >>"$FLEET_STATE/finished.tsv"
+rev SessionStart "$SDN" resume
+check "#261 review 7: a resumed session no row names keeps its fleet done record" "$(grep -c -- "$SDN" "$FLEET_STATE/finished.tsv")" "1"
+awk -F'\t' -v s="$SDN" '$4 != s' "$FLEET_STATE/finished.tsv" >"$work/fin.tmp" && mv -f -- "$work/fin.tmp" "$FLEET_STATE/finished.tsv"
 # A fleet file that will not read says nothing: the recorded finish stays.
 with_registry record_finished "$(awk -F'\t' -v s="$SF" '$4 == s { print; exit }' "$REGISTRY")"
 cp -p -- "$KLEPSYDRA_DIR/fleet/$SF.json" "$work/sf.bak"; : >"$KLEPSYDRA_DIR/fleet/$SF.json"

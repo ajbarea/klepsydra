@@ -348,7 +348,7 @@ while IFS= read -r row; do
   # Running as its /clear successor: the row names that session from now on,
   # as recover's repair does, so the successor's own end decides (#261 review 6).
   if [[ $state == running ]] && ! session_alive "$sid" && succ=$(row_successor "$p" "$sid") && [[ -n $succ ]]; then
-    if set_session "$p" "$succ"; then
+    if set_session "$p" "$sid" "$succ"; then
       flog INFO "registry repaired" pane="$p" name="$name" session="$succ" by=doctor
     fi
   fi
