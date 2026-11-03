@@ -1,27 +1,24 @@
-# IMPL: klepsydra fleet-module brief, resume state 2026-11-03 10:30 (EST)
+# IMPL: klepsydra fleet-module brief, resume state 2026-11-03 11:10 (EST)
 
-Session 19 (Chronos, relaunched after the 11-03 hard shutdown) replaced session 18. Resume from this
-file, `git log`, open PRs and their comments, and the klepsydra line under "Running now" in
-/mnt/c/Users/ajbar/fleet-briefing/queue.md. Order (Heph 11-03 09:50): #287 #261 #229, then #288 #289
-#290, then #271 #270 #272.
+Session 20 (Chronos, relaunched 10:33 on the other account after a usage limit) replaced session 19.
+Resume from this file, `git log`, open PRs and their comments, and the klepsydra line under "Running
+now" in /mnt/c/Users/ajbar/fleet-briefing/queue.md. Order (Heph 11-03 09:50): #287 #261 #229, then
+#288 #289 #290, then #271 #270 #272.
 
 ## In flight
 | PR / branch (worktree) | Issue | State |
 |---|---|---|
-| #287 feat/orch-guard-264 (guard-264) | #264 | round 6 reader dispatched 09:40 on 4412d8a; findings land in ~/.local/state/elenchus/findings.jsonl (pr 287 round 6). Deploy after merge: install, PreToolUse entry in ~/.claude/settings.json, `fleet accounts sync`. |
-| #261 fix/doctor-truth-246 (doctor-246) | #220 #246 | round 4 reader dispatched 09:40 on e763a09 (ledger: pr 261 round 4). Merge only after a clean round. |
-| #229 fix/focus-216 (focus-216) | #216 | verify round still owed on 2dc9d6c. |
-| fix/watch-dead-288 (dead-288), STACKED on #261 | #288 | pane_dead_why in lib.sh; watcher DEAD; doctor gone-with-pane. Pushed; CI by `gh workflow run ci.yml --ref fix/watch-dead-288`. No PR yet (opens against main once #261 merges: rebase onto main). |
-| #291 fix/tasks-max-289 (tasks-289) | #289 | TasksMax = tightest pids.max above / 3 (8745 here); doctor 80% warn; make test-fleet/shellcheck under the lock; brief tail. CI running. Peak sampler: scratchpad tasks.log(.max), 119-126 so far. |
-| fix/tmux-dead-pane-290 (tmux-290), not pushed | #290 | Backtrace on #290 (comment): 3.4 focus-out to an exited pane. pane-died hook (hooks/klepsydra-pane-died.sh) respawns the dead pane on its saved screen + @klepsydra_dead mark; fleet/tmux-watch.sh + fleet-tmux-watch.timer run fleet recover on a crash record (WSL dump or kernel line for the server's pid). Tests: watchdog section in test_fleet.sh; crash repro scratch/crash290.sh (hook vs nohook) to turn into a test. |
+| #287 feat/orch-guard-264 (guard-264) | #264 | round 7 reader running on 67c40e0 (ledger: pr 287 round 7). Deploy after merge: install, PreToolUse entry in ~/.claude/settings.json, `fleet accounts sync`. |
+| #261 fix/doctor-truth-246 (doctor-246) | #220 #246 | round 5 found sticky-recorded-finish a third time (+ unpause twin); structural fix 9e0ea59 (forget_resumed reconciles finished.tsv + unpaused.tsv with the fleet file on every read, in doctor, --prune and recover; prune re-checks under the lock; pause refuses a row with no sid). CI running; round 6 reader next. |
+| #229 fix/focus-216 (focus-216) | #216 | main merged (3bbc6d2); verify round 3 reader running. |
+| fix/watch-dead-288 (dead-288), STACKED on #261 | #288 | no PR yet: rebase onto main once #261 merges, then PR + review. |
+| #291 fix/tasks-max-289 (tasks-289) | #289 | CI green; review round 1 owed. |
+| #292 fix/tmux-dead-pane-290 (tmux-290) | #290 | pane-died hook + watchdog; review round 1 owed. |
+| feat/resume-now-271 (resume-271), uncommitted | #271 | written: fleet resume now (resume-now.sh: request file + SIGUSR1, re-signal every 5 s, else --once), service pid file + `sleep & wait` + USR1 trap, pass lock via flock -o re-exec (--once exits 75 while held), prefs.json heph_account -> lib.sh heph_pick (picked folder first in FLEET_HEPH_ACCOUNTS; explicit pick needs only room to work), tray "Run resume pass now" + status line + "Heph's account" submenu (src/heph.rs, fleet crate heph_account.rs), launcher resume-now, README. Tests written: test_fleet.sh "Heph's account as AJ picked it" + "fleet resume now"; hooks/test_launch.sh pass (199); fleet crate tests pass. Next: run section runner scratch/t271now.sh (queued), fleet-crate clippy, commit, PR, review. Phone half waits on #163. |
 
 ## Parked
-- #271 (worktree resume-271, branch feat/resume-now-271, clean): design: service records its pid, USR1 trap +
-  `sleep & wait`, `fleet resume now` writes a request token and waits for resume-now.done; `--once` refuses
-  while the service lives; Heph's account = prefs.json `heph_account` (account uuid or auto) put first in
-  FLEET_HEPH_ACCOUNTS by lib.sh each pass, so the existing move-back path moves him; tray: "Run resume pass
-  now" + status line, "Heph's account" radio submenu built from account readings. Phone half waits on #163.
 - #230 (#217, conflicting) after #229 lands.
+- #270, #272 after #271.
 
 ## Notes
 - Rule (#289, 11-03): tmux-spawning tests and multi-file shellcheck run under the heavy lock, timeout inside it.
