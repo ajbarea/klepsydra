@@ -20,7 +20,14 @@ at most two at a time.
    checks the socket; mutants of the 3 checks each fail). Dispatch r10. No rerun was made (Heph 11-03): that alert
    was for an older run; 5a68e40's own CI is 41697027451. Act only if it fails. Body's test counts are stale (section now 112). Deferred #294.
 3. #230 fix/ask-217 (ask-217), head bd3e51a (main merged, hook suite 569): r1 reader running. Body says 515.
-4. #287 feat/orch-guard-264 (guard-264), head 3c5822e (main merged): r9. Deploy after merge: install, PreToolUse in
+4. #287 feat/orch-guard-264 (guard-264), head 3c5822e: PAUSED after r9 (elenchus pause rule: r8 and r9 each
+   found bugs the previous fix made; awaiting go-ahead). r9 Should-fix (unsure-default-wrong-direction, 5th
+   round): stop_from_transcript takes the LAST rate_limit entry, and each rejected prompt writes a new one, so a
+   nudge re-dates the stop (repro /tmp/claude-1001/r9/probe.sh: ok at HEAD, cold-limit at 5fd44a8). Proposed
+   approach: date the stop by cache warmth = last main-chain assistant entry without isApiErrorMessage and
+   model != <synthetic>; take the earliest of that, the screen's done time, and the first limit after it; no
+   good reply = unknown refusal. Minors: format oracle asserts only ran>0 (pin 30 on tmux 3.4); tac|jq slow on
+   huge transcripts (grep prefilter); body count 214 -> 218. Deploy after merge: install, PreToolUse in
    ~/.claude/settings.json, `fleet accounts sync`.
 5. #291 fix/tasks-max-289 (tasks-289), head f64796b: r3 verify.
 6. #292 fix/tmux-dead-pane-290 (tmux-290), head 427822d: r3 (body rewritten). needs-you has AJ's .wslconfig line.
