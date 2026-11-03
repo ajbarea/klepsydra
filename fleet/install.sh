@@ -53,7 +53,7 @@ for c in "${HOOK_COPIES[@]}"; do
      install -m "$mode" -- "$src" "$tmp" && mv -f -- "$tmp" "$dest"; then
     ilog INFO "installed a copy" file="$dest" from="$src"
   else
-    rm -f -- "${tmp:?}"
+    rm -f -- "${FLEET_HOOK_DIR:?}/${name:?}.new.$$"
     ilog ERROR "a copy was not installed; the old one stays" file="$dest" from="$src"
     failed=1
   fi
