@@ -6,26 +6,28 @@ Readers: opus, dispatched with the elenchus SKILL at ~/ajsoftworks/techne/.claud
 (has ledger.py); at most two at a time; each brief carries the guarded-rm and heavy-lock rules and writes its
 report to /tmp/claude-1001/<round>/report.md.
 
-## Done (session 22)
-- ✅ #296 merged (9c4c79e) and installed from main (`make install-fleet`, cutover clean). Heph not yet told
-  (his prompt held text all session): tell him when it is empty.
-- ✅ #230: body 515 -> 573, main merged (fa08b9b), r2 reader running (/tmp/claude-1001/r2-230/report.md).
-- ✅ #291: main merged (781f093), r4 reader running (/tmp/claude-1001/r4-291/report.md).
-- ✅ #261: main merged (845c448), pushed; r10 waits for a reader slot.
-- ✅ #288 (dead-288): #261's branch merged in (2da8b64); doctor keeps a finished agent in a dead pane as
-  finished (new test). CI dispatched by hand (PRs to non-main bases run no CI): run 41719993651.
-  Open its PR against main after #261 merges (no PR yet).
-- ✅ #298 / PR #299: brief-tail.md carries the 11-03 Quality rule (Heph 15:05 ask).
-- ✅ #272 design / PR #300: docs/superpowers/specs/2026-11-03-resume-method-experiment-design.md. Needs one reader.
+## FEATURE FREEZE (AJ via Heph, 11-03 evening)
+Until AJ approves the independent klepsydra bloat audit (read-only, running): finish and merge only the
+bug-fix PRs in review (#261, #287, #291, #230, #292), CI fixes, and #305 (brief-tail waiting rule).
+Prefer deleting or consolidating code over new special cases.
+HELD (no code): #293, #295, #302, #271, #270, #272 (design PR #300), any new feature; also #303 and #301
+(bugs filed today, not yet in review) until Heph says.
 
-## Done (session 21, Chronos, Personal)
-- ✅ Dependabot #268 merged (notify/tokio patch, lockfile only).
-- ✅ #296 (watcher race, Fixes #297): r1 + r2 Should-fix (alert marked read before delivered; recurrence)
-  fixed structurally in 0a10fe1: marking read is the watcher's last act before exit. r3 CLEAN.
-- ✅ #291 r3 (unmirrored-parallel-guard, 3rd round): structural fix de9671c (make test-launch; docs
-  name make targets only; the doc guard sweeps every tracked *.md). Section 32/32; red on main's AGENTS.md.
-- ✅ #230 r1 fixes pushed a7ea3c5: hook suite 573/573, all five mutants fail their tests.
-- ✅ RIT draft to Reznik (IAAI-27 accept) left in AJ's drafts.
+## Done (session 22)
+- ✅ Merged + installed: #296 (watcher race, 9c4c79e), #299 (11-03 Quality rule, ce20046).
+- ✅ Filed #298 (done), #301 (doctor scan cost), #303 (panes.tsv loses rows: launch.sh writes no row
+  without task-NAME.src; unlogged rewrites; unlocked hand edits), #304 (wait rule).
+- #291 (tasks-289): r4, r5, r6 fixes; r7 final verify CLEAN. m1 + m4 follow-ups (test env, ppid without
+  awk) uncommitted in the worktree, mutants rerunning; then commit, CI, merge, make install-fleet.
+- #261 (doctor-246): r10 Blocking fixed (a8bbe24), CI 19-red fixed (5cdd429: fresh() registers a row its
+  launch left unregistered). r11 reviewer running (/tmp/claude-1001/r11-261/report.md).
+- #230 (ask-217): r2 + r3 fixes pushed (7339b19); needs r4 reader.
+- #287 (guard-264): Heph's go-ahead implemented (7bd0020 + main merged c83583c): stop dated by the last
+  good main-chain reply, tail-only read (7 ms vs 727 ms on 48 MB). Suite 222/223 (strict local 60 ms
+  budget on a sends-nothing call read 64 ms under load). Needs a fresh r10 reader (ceiling 5 more).
+- #288 (dead-288): merged #261's branch; CI green on 41725667867. PR against main after #261 merges.
+- #305 (wait-rule): brief-tail long-runs rule + brief.sh --check of a missing brief fails. CI pending.
+- #292 (tmux-290): r3 still owed.
 
 ## Next, in order (session 21 list; items 1-3 moved above)
 1. (done) #296 fix/watch-alert-race (watch-race), head 0a10fe1, review-clean r3. CI run 41702648814 was still in
