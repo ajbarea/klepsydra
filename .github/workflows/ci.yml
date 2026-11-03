@@ -72,7 +72,7 @@ jobs:
           command -v tmux >/dev/null || { sudo apt-get update && sudo apt-get install -y tmux; }
           bash hooks/test_launch.sh
       - name: Fleet engine tests
-        run: bash fleet/test_fleet.sh
+        run: make test-fleet FLEET_HEAVY_HELD=1
       - name: Heavy lock release tests
         run: bash fleet/test_heavy_lock.sh
       - name: Release memory check tests

@@ -712,7 +712,10 @@ check "the tail keeps asks for AJ out of public issues and PRs (AJ 10-29)" "$(gr
 check "#239: the tail has heavy commands take the lock with flock -o, so nothing they leave running keeps it" "$(grep -c 'flock -o /tmp/fleet-heavy.lock' "$here/brief-tail.md")" "1"
 check "#291 review: the tail says the make targets take the lock themselves and run bare" "$(grep -c 'make shellcheck. in klepsydra take the lock themselves: run them bare' "$here/brief-tail.md")" "1"
 check "#291 review: make takes the heavy lock, unless the caller says it holds it" \
-  "$(make -s -n -C "$here/.." test-fleet | grep -c 'flock -o /tmp/fleet-heavy.lock') $(make -s -n -C "$here/.." test-fleet FLEET_HEAVY_HELD=1 | grep -c flock)" "1 0"
+  "$(make -s -n -C "$here/.." test-fleet FLEET_HEAVY_HELD= | grep -c 'flock -o /tmp/fleet-heavy.lock') $(make -s -n -C "$here/.." test-fleet FLEET_HEAVY_HELD=0 | grep -c 'flock -o') $(make -s -n -C "$here/.." test-fleet FLEET_HEAVY_HELD=1 | grep -c flock)" "1 1 0"
+bare_re="(^|[\`(] *)(uvx --from shellcheck-py )?shellcheck (-x )?(hooks|fleet|statusline|scripts)/|^- \`bash (fleet/test_fleet|hooks/test_launch)[.]sh\`"
+check "#291 review 2: the agent instructions name the make targets, never a bare tree-wide shellcheck or an unlocked suite" \
+  "$(cat "$here/../AGENTS.md" "$here/../.claude/skill-context.md" "$here/brief-tail.md" | grep -cE "$bare_re") $(grep -c "make shellcheck" "$here/../AGENTS.md") $(grep -c "make test-fleet" "$here/../.claude/skill-context.md")" "0 1 2"
 check "#291 review: make shellcheck lints what CI lints, with -x" \
   "$(make -s -n -C "$here/.." shellcheck SHELLCHECK=sc FLEET_HEAVY_HELD=1)" "sc -x hooks/*.sh statusline/*.sh scripts/*.sh fleet/*.sh fleet/fleet"
 check "#185: the tail offers the Agora as optional and asks a post to name something real" "$(grep -c '^Agora (AJ 10-29, optional, never a task).*names something real' "$here/brief-tail.md")" "1"
