@@ -733,7 +733,13 @@ the [log](#logs) with its verb, its session, how long it took and its outcome.
 distro. tmux loads `~/.claude/klepsydra-tmux.conf`, which turns on focus
 events so Claude Code can track terminal focus, then `~/.tmux.conf`, which can
 turn them back off. The klepsydra file then names each window after its Claude
-session and keeps a window open when `claude` exits with an error. This is the
+session. When a pane's process ends with an error, its `pane-died` hook
+(`klepsydra-pane-died.sh`) starts the pane again on its saved last screen until
+Enter closes it, since tmux 3.4 crashes on a focus event to a dead pane (#290);
+`fleet install` has a running server read the conf, so it takes the hook at
+once. The `fleet-tmux-watch.timer` runs `fleet recover` when the fleet's server
+dies with a crash record (WSL's crash dump or journal line), also on the next
+boot when WSL shut down after the crash. This is the
 one place the overlay starts a process: `wsl.exe`, from a click, one call at a
 time.
 
@@ -1420,7 +1426,7 @@ briefs, logs) stays in the state folder.
 
 | Command | What it does |
 |---|---|
-| `fleet doctor` | One line per check: the resume service, its last pass and what that pass saw (panes, limited panes), limits as the panes show them (a pane still showing a limit 10 min past its reset, with nothing sent since, fails; a reset time beside a limit message the fleet does not recognise warns), Remote Control on every registered pane and the orchestrator's, the phone wall locally and over Tailscale Serve with a fresh `fleet.json`, a pane watcher, briefs' shared rules, and whether keryx holds the tray's Voices mode. Exits non-zero on any failure. `--json FILE` also writes the checks as a report, and logs only a check that changed status (a recovery without its detail). The `fleet-doctor.timer` runs it every 5 min into the data folder's `fleet-health.json`, which the wall and the phone show as a **Fleet** button beside **CI**: failing checks first, `Fleet ?` when the report is over 15 minutes old, no links and `~` for the home folder. |
+| `fleet doctor` | One line per check: the resume service, its last pass and what that pass saw (panes, limited panes), limits as the panes show them (a pane still showing a limit 10 min past its reset, with nothing sent since, fails; a reset time beside a limit message the fleet does not recognise warns), Remote Control on every registered pane and the orchestrator's, the phone wall locally and over Tailscale Serve with a fresh `fleet.json`, a pane watcher, the pane-died hook on the fleet's tmux server (and its script), whether `.wslconfig` keeps WSL up after a crash (`instanceIdleTimeout=-1` under `[general]`), briefs' shared rules, and whether keryx holds the tray's Voices mode. Exits non-zero on any failure. `--json FILE` also writes the checks as a report, and logs only a check that changed status (a recovery without its detail). The `fleet-doctor.timer` runs it every 5 min into the data folder's `fleet-health.json`, which the wall and the phone show as a **Fleet** button beside **CI**: failing checks first, `Fleet ?` when the report is over 15 minutes old, no links and `~` for the home folder. |
 | `fleet log [N]` | The last N decisions as plain lines. |
 | `fleet brief NAME BODY` | Writes `task-NAME.src`: BODY, then the shared rules in `fleet/brief-tail.md`. `--check` lists briefs whose rules drifted; `--refresh` rewrites them with the current rules, dropping any rule an earlier tail held (word for word or by its label) and keeping lines added after them. |
 | `fleet cutover` | Restarts the resume service on the installed scripts and confirms its start is logged. |

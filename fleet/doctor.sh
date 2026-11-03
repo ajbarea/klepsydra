@@ -265,9 +265,24 @@ fi
 # carry the pane-died hook, which a server reads from its conf only at start.
 if t has-session 2>/dev/null; then
   if t show-hooks -g pane-died 2>/dev/null | grep -q 'klepsydra-pane-died\.sh'; then
-    report ok "pane-died hook" "set on the fleet's tmux server"
+    if [[ -f $FLEET_HOOK_DIR/klepsydra-pane-died.sh ]]; then
+      report ok "pane-died hook" "set on the fleet's tmux server"
+    else
+      report warn "pane-died hook" "set, but $(tilde "$FLEET_HOOK_DIR")/klepsydra-pane-died.sh is missing, so a dead pane stays dead: fleet install"
+    fi
   else
     report warn "pane-died hook" "not set on the fleet's tmux server, which tmux 3.4 lets a dead pane crash: fleet install sets it" socket="$FLEET_SOCK"
+  fi
+fi
+# A crash ends the fleet's tab, and WSL then shuts down within 15 s unless
+# .wslconfig keeps the distro up ([general] instanceIdleTimeout=-1): the tmux
+# watchdog can only recover after a crash that WSL stays up through (#292).
+wslconfig=${FLEET_WSLCONFIG:-${KLEPSYDRA_DIR%/AppData/*}/.wslconfig}
+if [[ -n ${FLEET_WSLCONFIG:-} || ${WSL_DISTRO_NAME:-} ]]; then
+  if awk 'BEGIN { IGNORECASE = 1 } /^[[:space:]]*\[/ { g = (tolower($0) ~ /^[[:space:]]*\[general\]/) } g && tolower($0) ~ /^[[:space:]]*instanceidletimeout[[:space:]]*=[[:space:]]*-1[[:space:]]*$/ { f = 1 } END { exit !f }' "$wslconfig" 2>/dev/null; then
+    report ok "WSL stays up" "instanceIdleTimeout=-1 in .wslconfig"
+  else
+    report warn "WSL stays up" "add instanceIdleTimeout=-1 under [general] in $wslconfig: without it WSL shuts down 15 s after a crash ends the fleet's tab, and the fleet comes back only when WSL next starts" wslconfig="$wslconfig"
   fi
 fi
 if [[ -n $json ]]; then

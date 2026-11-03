@@ -199,6 +199,7 @@ Description=klepsydra fleet: check the fleet's tmux server every minute
 [Timer]
 OnBootSec=1min
 OnUnitActiveSec=1min
+AccuracySec=1s
 
 [Install]
 WantedBy=timers.target"

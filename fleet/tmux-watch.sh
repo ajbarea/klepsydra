@@ -85,9 +85,22 @@ was=$(cat "$STATE_F" 2>/dev/null)
 [[ $was == "$now_line" ]] && exit 0
 if [[ -z $was ]]; then record; exit 0; fi
 read -r was_pid was_start was_boot <<<"$was"
+# A crash takes the fleet's tab with it, and with nothing else holding it WSL
+# shuts down within seconds (instanceIdleTimeout, 15 s by default): the crash
+# is then found on the next boot, in the previous boot's journal, and recovered
+# there, every session being gone. A server from an earlier boot with no crash
+# record ended with a shutdown: #154's `fleet recover` by hand.
 if [[ $was_boot != "$boot" ]]; then
-  flog INFO "the fleet's tmux server was from an earlier boot; fleet recover brings the agents back" pid="$was_pid"
-  record; exit 0
+  record
+  prev=$($JOURNAL -b "${was_boot//-/}" --no-pager -q 2>/dev/null | grep -E "CaptureCrash\): Capturing crash for pid: $was_pid, executable: !usr!bin!tmux," | tail -1)
+  if [[ -n $prev ]]; then
+    flog ERROR "the fleet's tmux server crashed before the last shutdown; running fleet recover" pid="$was_pid" boot="$was_boot" journal="$prev"
+    rm -f -- "$PENDING"
+    run_recover "$was_pid" || exit 1
+    exit 0
+  fi
+  flog INFO "the fleet's tmux server was from an earlier boot and no crash ended it; fleet recover brings the agents back by hand" pid="$was_pid"
+  exit 0
 fi
 # The recorded server still runs (it did not answer this once): nothing yet.
 if [[ -n $was_start && $(proc_start "$was_pid") == "$was_start" ]]; then exit 0; fi
@@ -100,7 +113,7 @@ since=$(( ${btime:-0} + ${was_start:-0} / $(getconf CLK_TCK 2>/dev/null || echo 
 dump=$(find "$CRASH_DIR" -maxdepth 1 -name "wsl-crash-*-$was_pid-*tmux-*.dmp" -printf '%f\n' 2>/dev/null | awk -F- -v s="$since" '$3 ~ /^[0-9]+$/ && $3 >= s' | head -1)
 # WSL's own line names the pid tmux reports (the kernel's segfault line, in
 # another pid namespace, names another); -b keeps it to this boot.
-kernel=$($JOURNAL -b --no-pager -q 2>/dev/null | grep -E "CaptureCrash\): Capturing crash for pid: $was_pid, executable: !usr!bin!tmux," | tail -1)
+kernel=$($JOURNAL -b --since "@$since" --no-pager -q 2>/dev/null | grep -E "CaptureCrash\): Capturing crash for pid: $was_pid, executable: !usr!bin!tmux," | tail -1)
 if [[ -z $dump && -z $kernel ]]; then
   flog WARN "the fleet's tmux server ended with no crash record (kill-server, or its last pane closed); not recovering" pid="$was_pid" new_pid="${now_line%% *}" crash_dir="$CRASH_DIR"
   exit 0

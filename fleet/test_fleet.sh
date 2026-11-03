@@ -2577,6 +2577,14 @@ gone_server; : >"$tw/crashes/wsl-crash-1-7001-_usr_bin_tmux-11.dmp"; echo "7001 
 WSOCK=gone-$$ WPROC="$tw/proc" W
 check "#290: a server from an earlier boot is left to fleet recover by hand" \
   "$(cat "$tw/recover.calls" 2>/dev/null || echo none) $(grep -c 'from an earlier boot' "$FLEET_LOG")" "none 1"
+# #292 review 2: on 11-03 WSL shut down 17 s after the crash took the fleet's
+# tab, before the watchdog's next minute; the next boot finds the crash in the
+# previous boot's journal and recovers.
+gone_server; echo "7001 555 22222222-2222-4222-8222-222222222222" >"$FLEET_STATE/tmux-server"
+echo "Nov 03 06:02:27 host unknown: WSL (1291 - CaptureCrash): Capturing crash for pid: 7001, executable: !usr!bin!tmux, signal: 11, port: 50005" >"$tw/kernel"
+: >"$FLEET_LOG"; WSOCK=gone-$$ WPROC="$tw/proc" W
+check "#292 review 2: a crash before the last shutdown, in the previous boot's journal: fleet recover runs on this boot" \
+  "$(cat "$tw/recover.calls" 2>/dev/null || echo none) $(grep -c 'crashed before the last shutdown' "$FLEET_LOG")" "recover 1"
 # #292 review: a recover that cannot reach Windows, or leaves an agent NOT
 # STARTED, is tried again each minute, then given up and said so.
 crash() { gone_server; : >"$tw/crashes/wsl-crash-1793703747-7001-_usr_bin_tmux-11.dmp"; rm -f -- "$FLEET_STATE/tmux-recover.pending"; : >"$FLEET_LOG"; }
@@ -2611,7 +2619,18 @@ FLEET_SOCK=$cs KLEPSYDRA_DEAD_DIR="$work/dead290" bash "$here/tmux-conf.sh" "$cd
 check "tmux-conf.sh: the running server takes the hook, and a pane already dead there is started again" \
   "$rc $(tmux -L "$cs" show-hooks -g pane-died | grep -c 'klepsydra-pane-died.sh') $(tmux -L "$cs" display -p -t "$dp" '#{pane_dead}') $(tmux -L "$cs" show -pqv -t "$dp" @klepsydra_dead)" \
   "0 1 0 its process exited with status 3"
-check "and the doctor sees the hook" "$(FLEET_SOCK=$cs bash "$here/doctor.sh" 2>/dev/null | grep -c '^ok *pane-died hook')" "1"
+check "and the doctor sees the hook" "$(FLEET_SOCK=$cs FLEET_HOOK_DIR=$cdir bash "$here/doctor.sh" 2>/dev/null | grep -c '^ok *pane-died hook')" "1"
+check "#292 review 2: the hook set but its script missing: a warning" \
+  "$(FLEET_SOCK=$cs FLEET_HOOK_DIR=$work/nohooks bash "$here/doctor.sh" 2>/dev/null | grep -c '^warn *pane-died hook: set, but .*klepsydra-pane-died.sh is missing')" "1"
+printf '[wsl2]\nmemory=8GB\n' >"$work/wslconfig"
+check "#292 review 2: a .wslconfig that lets WSL shut down when idle: a warning naming the setting" \
+  "$(FLEET_SOCK=$cs FLEET_WSLCONFIG=$work/wslconfig bash "$here/doctor.sh" 2>/dev/null | grep -c '^warn *WSL stays up: add instanceIdleTimeout=-1 under \[general\]')" "1"
+printf '[wsl2]\nmemory=8GB\n[General]\n instanceIdleTimeout = -1\n' >"$work/wslconfig"
+check "#292 review 2: with instanceIdleTimeout=-1 under [general]: ok" \
+  "$(FLEET_SOCK=$cs FLEET_WSLCONFIG=$work/wslconfig bash "$here/doctor.sh" 2>/dev/null | grep -c '^ok *WSL stays up')" "1"
+printf '[wsl2]\ninstanceIdleTimeout=-1\n' >"$work/wslconfig"
+check "#292 review 2: the setting under [wsl2] does nothing, so still a warning" \
+  "$(FLEET_SOCK=$cs FLEET_WSLCONFIG=$work/wslconfig bash "$here/doctor.sh" 2>/dev/null | grep -c '^warn *WSL stays up')" "1"
 tmux -L "$cs" kill-server 2>/dev/null
 check "tmux-conf.sh with no server running does nothing" "$(FLEET_SOCK=$cs bash "$here/tmux-conf.sh" "$cdir" 2>/dev/null; echo $?)" "0"
 

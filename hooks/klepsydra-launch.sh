@@ -126,8 +126,9 @@ new() { # dir
       fail "tmux could not open a window."
     UNDO=(tmux "${t[@]}" kill-window -t "$win")
   else
-    # Started from a systemd unit (the tmux watchdog's recover), the server gets
-    # a scope of its own: a oneshot unit's end kills what it leaves in its cgroup.
+    # Started from inside any systemd unit or scope (the tmux watchdog's recover,
+    # the resume service, an agent's own scope), the server gets a scope of its
+    # own: a oneshot unit's end kills what it leaves in its cgroup.
     local -a scope=()
     if [[ -n ${INVOCATION_ID:-} ]] && command -v "${KLEPSYDRA_SYSTEMD_RUN:-systemd-run}" >/dev/null 2>&1; then
       scope=("${KLEPSYDRA_SYSTEMD_RUN:-systemd-run}" --user --scope --quiet --collect --unit="klepsydra-tmux-$$" --)

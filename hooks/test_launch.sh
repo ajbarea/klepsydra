@@ -56,6 +56,12 @@ chmod +x "$work/bin/wt.exe"
 export WT_LOG="$work/wt.log" WT_PIDS="$work/stub-pids" HOME="$work/home" XDG_RUNTIME_DIR="$work" WSL_DISTRO_NAME=Test
 export KLEPSYDRA_TMUX_SOCKET="$sock" KLEPSYDRA_TMUX_CONF="$here/klepsydra-tmux.conf"
 export KLEPSYDRA_CLAUDE="sleep 600" KLEPSYDRA_WT="$work/bin/wt.exe"
+# Never the host's systemd: an agent's own scope sets INVOCATION_ID, which
+# would put every test server in a real scope (#292 review 2). Cases that want
+# the scope path pass their own stub; any other call is recorded and fails.
+unset INVOCATION_ID
+printf '#!/usr/bin/env bash\necho "$*" >>%q\nexit 1\n' "$work/systemd-run-guard.calls" >"$work/bin/systemd-run-guard"; chmod +x "$work/bin/systemd-run-guard"
+export KLEPSYDRA_SYSTEMD_RUN="$work/bin/systemd-run-guard"
 : >"$WT_LOG"
 
 t() { tmux -L "$sock" "$@"; }
@@ -671,5 +677,6 @@ echo "cleanup"
 cleanup; trap - EXIT
 check "no socket files left" "$(find "$sockdir" -maxdepth 1 \( -name "$sock" -o -name "$sock2" -o -name "$sock3" \) 2>/dev/null)" ""
 
+check "#292 review 2: no case reached the host's systemd-run" "$(cat "$work/systemd-run-guard.calls" 2>/dev/null)" ""
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [[ $fail -eq 0 ]]
