@@ -51,6 +51,8 @@ check() {
 cp "$here/../src/fleet/themes/kourai.json" "$work/test-cast.json"
 # shellcheck source=hooks/klepsydra-fleet.sh
 source "$hook"
+# Sourced, the hook would take the caller's live fleet lock (#230 review 2).
+LOCK=$work/klepsydra-fleet-$UID.lock
 
 echo "where"
 
@@ -2124,15 +2126,49 @@ now=1792360045 watch_ask_run 1
 check "a dialog never seen on screen is never cleared" "$(afield '[.state, .reason]')" '["needs_you","approve Bash"]'
 cp "$fixtures/pane-permission-2.1.302.txt" "$work/screen"
 echo fail >"$work/tmux.mode"
-now=1792360046 watch_ask_run 5
+now=1792360046 watch_ask_run 5 & wpid=$!
+timeout 2 tail --pid="$wpid" -f /dev/null
 rm -f "$work/tmux.mode"
-check "the pane gone: the watcher ends, the ask stays" "$(afield .state)" '"needs_you"'
+check "the pane gone: the watcher ends at once, the ask stays" \
+  "$(kill -0 "$wpid" 2>/dev/null && echo running || echo ended) $(afield .state)" 'ended "needs_you"'
+wait "$wpid" 2>/dev/null
 before=$(<"$afile")
 ask_answered "$afile" 1792360001 1792360047
 check "an answer to an earlier ask changes nothing" "$(<"$afile")" "$before"
 ask_answered "$afile" 1792360040 1792360047
 check "the answer to this ask" "$(afield '[.state, .needs, .state_at]')" '["working",null,1792360047]'
 check "and its turn count stamped with the write, as the hook stamps it" "$(afield '.turns_at == .written_at')" "true"
+check "#230 review 2: the sourced hook's lock is the suite's own" "$([[ $LOCK == "$work"/* ]] && echo own)" "own"
+# An ask after the turn ended with nothing left running, its file holding no
+# .background key (the hook deletes an empty one): done, as the hook reads it.
+jq -c '.state = "needs_you" | .state_at = 1792360060 | .needs = {tool: "Bash", turn_over: true} | del(.background)' "$afile" >"$work/a.tmp" && mv -f -- "$work/a.tmp" "$afile"
+ask_answered "$afile" 1792360060 1792360061
+check "#230 review 2: answered after the turn, no background key: done" "$(afield '[.state, .reason]')" '["done",null]'
+# A busy fleet lock when the answer is seen: the watcher tries again and the
+# answer lands once the lock is free, never lost (#230 review 2).
+now=1792360062 askfire permission-request.json
+cp "$fixtures/pane-permission-2.1.302.txt" "$work/screen"
+now=1792360063 watch_ask_run 30 & wpid=$!
+sleep 0.4
+flock "$LOCK" sleep 6.5 & lpid=$!
+sleep 0.2
+cp "$fixtures/pane-working-tool-2.1.302.txt" "$work/screen"
+sleep 2
+check "#230 review 2: while the fleet lock is busy, the ask still waits" "$(afield .state)" '"needs_you"'
+timeout 20 tail --pid="$wpid" -f /dev/null
+wait "$lpid" 2>/dev/null
+check "#230 review 2: once it is free, the answer lands" "$(afield '[.state, .needs]')" '["working",null]'
+# The dialog is both lines: the question alone, or the option alone, then gone,
+# was never a dialog, so the ask stays.
+grep -v '1\. Yes' "$fixtures/pane-permission-2.1.302.txt" >"$work/q-only.txt"
+grep -v 'Do you want to proceed' "$fixtures/pane-permission-2.1.302.txt" >"$work/o-only.txt"
+for half in q-only o-only; do
+  now=1792360070 askfire permission-request.json
+  printf '%s\n' "$work/$half.txt" "$fixtures/pane-idle-2.1.302.txt" "$fixtures/pane-idle-2.1.302.txt" "$fixtures/pane-idle-2.1.302.txt" >"$work/screens"
+  now=1792360071 watch_ask_run 1
+  rm -f -- "$work/screens"
+  check "#230 review 2: $half on screen, then gone: never a dialog, the ask stays" "$(afield .state)" '"needs_you"'
+done
 
 pscreen=$fixtures/pane-permission-2.1.302.txt iscreen=$fixtures/pane-idle-2.1.302.txt
 now=1792360048 askfire permission-request.json

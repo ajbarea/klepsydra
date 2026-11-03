@@ -511,7 +511,7 @@ read -r -d '' STATE_DEFS <<'JQ' || true  # read returns 1 at the end of input
 def turn_over: .reason == "background" or (.needs.turn_over // false) == true;
 # AJ answered the ask: working, or after the turn ended working in background, or done.
 def answered: if turn_over | not then {state: "working", reason: null}
-  elif .background != [] then {state: "working", reason: "background"} else {state: "done", reason: null} end;
+  elif (.background // []) != [] then {state: "working", reason: "background"} else {state: "done", reason: null} end;
 JQ
 
 # The face a new orchestrator session wears (#244): Hephaestus and Athena are
