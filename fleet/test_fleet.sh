@@ -3308,6 +3308,10 @@ check "#288: a shell seen once, then the agent's command, wakes nobody" \
   "$(grep -c 'looking again next tick' "$FLEET_LOG") $(kill -0 "$wjob" 2>/dev/null && echo watching || echo "woke: $(cat "$work/wdead.out")")" "1 watching"
 kill "$wjob" 2>/dev/null; wait "$wjob" 2>/dev/null
 check "#288: a live pane and a gone one are not dead" "$(pane_dead_why "$gp" || echo alive) $(pane_dead_why %9999 || echo none)" "alive none"
+# #290's pane-died hook starts a dead pane again on its saved screen and marks it.
+t set -p -t "$gp" @klepsydra_dead "its process ended on signal 6"
+IDLE_S=600 WATCH_TICK=0.1 timeout 20 bash "$here/watch-panes.sh" "$gp" >"$work/wdead.out" 2>/dev/null
+check "#288: a pane the pane-died hook marked is dead at once, with the hook's reason" "$(cat "$work/wdead.out")" "DEAD $gp (its process ended on signal 6)"
 # The doctor: a row whose session file still reads alive, in a dead pane, is
 # gone with the pane named; Heph dead in his pane is his remote control FAIL.
 SD=aaaaaaaa-0000-4000-8000-0000000000d1

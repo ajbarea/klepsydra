@@ -377,13 +377,16 @@ in_view() { [[ $(t display-message -p -t "$1" '#{window_active}' 2>/dev/null) ==
 
 # Why PANE is open with no agent in it (#288): its process ended and tmux kept
 # the pane (remain-on-exit failed keeps a crash on screen), or a shell is in
-# front where claude ran. Prints the reason; fails while the pane looks alive
-# or is gone. A shell in front is also what a pane shows for a moment while its
-# command starts, so callers confirm that one on a second look.
+# front where claude ran, or the pane-died hook (#290) marked it. Prints the
+# reason; fails while the pane looks alive or is gone. A shell in front is also
+# what a pane shows for a moment while its command starts, so callers confirm
+# that one on a second look.
 SHELLS=" sh bash dash zsh fish ksh "
 pane_dead_why() { # PANE
-  local dead st sig cmd
-  IFS=$'\x1f' read -r dead st sig cmd < <(t display-message -p -t "$1" $'#{pane_dead}\x1f#{pane_dead_status}\x1f#{pane_dead_signal}\x1f#{pane_current_command}' 2>/dev/null) || return 1
+  local dead st sig cmd mark
+  IFS=$'\x1f' read -r dead st sig cmd mark < <(t display-message -p -t "$1" $'#{pane_dead}\x1f#{pane_dead_status}\x1f#{pane_dead_signal}\x1f#{pane_current_command}\x1f#{@klepsydra_dead}' 2>/dev/null) || return 1
+  # Started again on its saved screen by the pane-died hook (#290), which notes why.
+  [[ -n $mark ]] && { printf '%s' "$mark"; return 0; }
   if [[ $dead == 1 ]]; then
     if [[ -n $sig ]]; then printf 'its process ended on signal %s' "$sig"; else printf 'its process exited with status %s' "${st:-unknown}"; fi
     return 0
