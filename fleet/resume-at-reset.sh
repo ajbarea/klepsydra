@@ -849,6 +849,9 @@ PASS_LIMITED=()
 pass() {
   NOW=$(clock) ACTIVE=$(active_account) ORCH=$(orchestrator) OSID=$(cat "$FLEET_STATE/orchestrator.session" 2>/dev/null)
   accounts
+  # keryx follows the tray's Voices mode once it changes (#273); a manual
+  # `keryx off` between changes is left alone.
+  [[ ${FLEET_VOICES:-1} == 0 ]] || bash "$here/voices.sh" --if-changed >/dev/null 2>&1 </dev/null
   reap
   local p panes seen
   PASS_LIMITED=()
