@@ -6,7 +6,8 @@ set -uo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
 launch="$here/klepsydra-launch.sh"
 work=$(mktemp -d)
-sock="kl-test-$$" sock2="kl-test2-$$" sock3="kl-test3-$$"
+unset KLEPSYDRA_BACKGROUND # a fleet pane's own, never this suite's
+sock="kl-test-$$" sock2="kl-test2-$$" sock3="kl-test3-$$" sock4="kl-test4-$$"
 sockdir="${TMUX_TMPDIR:-/tmp}/tmux-$(id -u)" # where tmux puts a -L socket
 clients=()
 cleanup() {
@@ -14,7 +15,8 @@ cleanup() {
   tmux -L "$sock" kill-server 2>/dev/null
   tmux -L "$sock2" kill-server 2>/dev/null
   tmux -L "$sock3" kill-server 2>/dev/null
-  rm -f -- "$sockdir/$sock" "$sockdir/$sock2" "$sockdir/$sock3"
+  tmux -L "$sock4" kill-server 2>/dev/null
+  rm -f -- "$sockdir/$sock" "$sockdir/$sock2" "$sockdir/$sock3" "$sockdir/$sock4"
   rm -rf "$work"
 }
 trap cleanup EXIT
@@ -104,6 +106,18 @@ attach
 bash "$launch" new "$work/repos" >/dev/null 2>&1
 check "second: two windows" "$(windows)" "2"
 check "second: no new tab" "$(tabs)" "1"
+check "second: the new window comes forward" "$(t display -p -t =fleet: '#{window_index}')" "1"
+t select-window -t =fleet:0
+KLEPSYDRA_BACKGROUND=1 bash "$launch" new "$work/repos" >/dev/null 2>&1
+check "#216: a fleet launch opens behind, the window in view keeps focus" "$(windows) $(t display -p -t =fleet: '#{window_index}')" "3 0"
+# A fleet launch that starts the server (a cold recover) must not hand the flag
+# to the server's environment, or every later pane, the wall's included, opens behind.
+# Its own stub log: the tab it opens is not one of the fleet socket's tabs counted below.
+WT_LOG="$work/wt4.log" KLEPSYDRA_TMUX_SOCKET="$sock4" KLEPSYDRA_BACKGROUND=1 bash "$launch" new "$work/repos" >/dev/null 2>&1
+check "#229 review: a flagged launch that starts the server keeps the flag out of its environment" \
+  "$(tmux -L "$sock4" has-session -t =fleet 2>/dev/null && echo up) $(tmux -L "$sock4" show-environment -g 2>/dev/null | grep -c '^KLEPSYDRA_BACKGROUND=')" "up 0"
+tmux -L "$sock4" kill-server 2>/dev/null
+t kill-window -t "=fleet:$(t list-windows -t =fleet -F '#{window_index}' | tail -1)"
 detach_all
 check "closed tab: sessions survive" "$(windows)" "2"
 bash "$launch" new "$work/repos" >/dev/null 2>&1

@@ -406,6 +406,10 @@ orchestrator() { cat "$FLEET_STATE/orchestrator.pane" 2>/dev/null; }
 # shellcheck disable=SC2034 # read by recover.sh and resume-at-reset.sh
 HEPH=${FLEET_HEPH:-$FLEET_STATE/HEPH.md}
 fleet_panes() { t list-panes -s -t "$FLEET_SESSION" -F '#{pane_id}' 2>/dev/null; }
+# Whether PANE's window is the one its tmux session shows (#216). A pane's
+# successor opens behind and comes forward only in place of a window AJ was
+# looking at, so a replacement never moves him off the agent he is watching.
+in_view() { [[ $(t display-message -p -t "$1" '#{window_active}' 2>/dev/null) == 1 ]]; }
 
 # Whether the session live in PANE is one `fleet done` marked finished
 # (finished.tsv: the registry's columns, pane first, session fourth).
@@ -690,6 +694,22 @@ retire() { # PANE [INTERRUPT]
   t kill-pane -t "$1" 2>/dev/null
 }
 
+# Retire OLD for its successor NEW, which opened behind (#216): when AJ is
+# watching OLD, NEW comes into view first, before OLD closes, since tmux then
+# makes another window active, and a sibling replacement would read that one
+# as watched (#229 review). An OLD that will not exit is put back in view, only
+# while NEW still is: AJ may have moved on during retire's wait. Fails only when
+# OLD still runs; one that exited as retire gave up is gone all the same.
+retire_into() { # OLD NEW
+  local viewed=0
+  in_view "$1" && viewed=1
+  (( viewed )) && t select-window -t "$2" 2>/dev/null
+  retire "$1" && return 0
+  fleet_panes | grep -qx -- "$1" || return 0
+  (( viewed )) && in_view "$2" && t select-window -t "$1" 2>/dev/null
+  return 1
+}
+
 LAUNCH=${LAUNCH:-$(dirname "${BASH_SOURCE[0]}")/launch.sh}
 
 # The live session in PANE's stamp, or nothing: STAMP_JQ (its last prompt and
@@ -773,7 +793,8 @@ fresh() { # PANE NAME BRIEF [WHY] [ACCOUNT] [NOTE] [STAMP]
     t send-keys -t "$p" C-c
     wait_for "$p" 5 idle_empty || true
   fi
-  retire "$p" || flog WARN "the old pane is left running beside its fresh session" pane="$p" new_pane="$new" name="$name"
+  retire_into "$p" "$new" ||
+    flog WARN "the old pane is left running beside its fresh session" pane="$p" new_pane="$new" name="$name"
   printf '%s' "$new"
 }
 
