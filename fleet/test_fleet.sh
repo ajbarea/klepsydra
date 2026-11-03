@@ -679,6 +679,10 @@ fi
 rm -rf -- "${hist:?}" "${FLEET_STATE:?}/task-hist.src"
 check "the tail carries the friction-log rule (AJ 11-01)" "$(grep -c '^Friction log (AJ 11-01, every agent): read ~/.local/state/fleet-orchestrator/friction.md' "$here/brief-tail.md")" "1"
 check "the tail puts performance first, above the security floor, and asks for DS&A checks (AJ 11-01, 11-03)" "$(grep -c '^Quality (AJ 11-01, 11-03): performance is AJ.s #1 quality attribute; when it trades off with security, performance wins, above the security floor. In every workflow, check the data structures and algorithms' "$here/brief-tail.md")" "1"
+check "#304: --check and --refresh of a brief that is not there fail, never pass having checked nothing" \
+  "$(bash "$here/brief.sh" --check fleet-module 2>&1; echo "rc=$?") | $(bash "$here/brief.sh" --refresh "$FLEET_STATE/task-none.src" >/dev/null 2>&1; echo "rc=$?")" \
+  $'error: no brief at fleet-module (give its path)\nrc=2 | rc=1'
+check "the tail has long runs wait on their completion notification (Heph 11-03)" "$(grep -c '^Long runs (Heph 11-03, every agent and subagent): start each test suite.*run_in_background: true, then wait for its completion notification' "$here/brief-tail.md")" "1"
 check "the tail carries the team-ceremony rule (AJ 10-29)" "$(grep -c '^Team ceremony in every repo' "$here/brief-tail.md")" "1"
 check "the tail keeps asks for AJ out of public issues and PRs (AJ 10-29)" "$(grep -c '^Asks for AJ stay private' "$here/brief-tail.md")" "1"
 check "#239: the tail has heavy commands take the lock with flock -o, so nothing they leave running keeps it" "$(grep -c 'flock -o /tmp/fleet-heavy.lock' "$here/brief-tail.md")" "1"

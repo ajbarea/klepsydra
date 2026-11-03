@@ -63,10 +63,12 @@ up_to_date() { cmp -s <(grep . "$1") <(current "$1" | grep .); }
 
 if [[ ${1:-} == --check ]]; then
   shift
-  stale=0
+  stale=0 given=$#
   (( $# )) || set -- "$FLEET_STATE"/task-*.src
   for f in "$@"; do
-    [[ -e $f ]] || continue
+    # A brief named on the line that is not there fails: a typo or a bare name
+    # would pass having checked nothing. The default glob may match none.
+    [[ -e $f ]] || { (( given )) && { err "no brief at $f (give its path)"; stale=2; }; continue; }
     # A tail rule it lacks, an old rule it still carries, or one twice.
     if ! up_to_date "$f"; then
       echo "stale: ${f##*/}"
@@ -77,10 +79,11 @@ if [[ ${1:-} == --check ]]; then
 fi
 if [[ ${1:-} == --refresh ]]; then
   shift
+  given=$#
   (( $# )) || set -- "$FLEET_STATE"/task-*.src
   failed=0
   for f in "$@"; do
-    [[ -e $f ]] || continue
+    [[ -e $f ]] || { (( given )) && { err "no brief at $f (give its path)"; failed=1; }; continue; }
     # An unreadable brief would rebuild as the tail alone: its body is lost.
     if [[ ! -r $f ]]; then
       flog ERROR "brief not refreshed: it cannot be read; the old one stays" path="$f"
