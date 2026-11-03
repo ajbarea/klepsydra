@@ -2033,7 +2033,7 @@ git -C "$work/brief" -c user.name=t -c user.email=t@t commit -q --allow-empty -m
 printf '#!/usr/bin/env bash\n[[ -e %s ]] && { echo "leak: token"; exit 1; }\nexit 0\n' "$work/leak" >"$work/bin/gitleaks"; chmod +x "$work/bin/gitleaks"
 bsync() { BRIEFING_DIR="$work/brief" FLEET_GITLEAKS="$work/bin/gitleaks" GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t bash "$here/sync-briefing.sh" 2>/dev/null; echo $?; }
 check "nothing changed: no commit" "$(bsync) $(git -C "$work/brief" rev-list --count HEAD)" "0 1"
-printf 'q\n' >"$work/brief/claude-queue.md"; printf 'n\n' >"$work/brief/needs-you.md"; printf 'x\n' >"$work/brief/notes.txt"
+printf 'q\n' >"$work/brief/queue.md"; printf 'n\n' >"$work/brief/needs-you.md"; printf 'x\n' >"$work/brief/notes.txt"
 touch "$work/leak"
 check "a gitleaks finding blocks the commit, and is logged" "$(bsync) $(git -C "$work/brief" rev-list --count HEAD) $(jq -r 'select(.message | contains("gitleaks found")) | .level' "$FLEET_LOG")" "1 1 ERROR"
 check "and leaves nothing staged" "$(git -C "$work/brief" diff --cached --name-only | wc -l)" "0"
@@ -2042,7 +2042,7 @@ printf '#!/usr/bin/env bash\necho "ERR [git] fatal: bad object" >&2\nexit 0\n' >
 check "a scanner that exits 0 with an error is no verdict" \
   "$(BRIEFING_DIR="$work/brief" FLEET_GITLEAKS="$work/bin/gitleaks-err" bash "$here/sync-briefing.sh" 2>/dev/null; echo $?) $(git -C "$work/brief" rev-list --count HEAD)" "1 1"
 check "a change is committed and pushed" "$(bsync) $(git -C "$work/brief-remote.git" rev-list --count HEAD)" "0 2"
-check "only the briefing's own files go in, AJ's needs-you.md included" "$(git -C "$work/brief" show --name-only --format= HEAD | paste -sd' ')" "claude-queue.md needs-you.md"
+check "only the briefing's own files go in, AJ's needs-you.md included" "$(git -C "$work/brief" show --name-only --format= HEAD | paste -sd' ')" "needs-you.md queue.md"
 git -C "$work/brief" -c user.name=t -c user.email=t@t commit -q --allow-empty -m "a prune commit"
 touch "$work/leak"
 check "a commit about to be pushed is scanned first" "$(bsync) $(git -C "$work/brief-remote.git" rev-list --count HEAD)" "1 2"
@@ -2053,12 +2053,12 @@ check "a commit made while the tree is clean is still pushed" "$(bsync) $(git -C
 git clone -q "$work/brief-remote.git" "$work/brief-phone" 2>/dev/null
 printf 'ticked\n' >"$work/brief-phone/README.md"
 git -C "$work/brief-phone" add README.md && git -C "$work/brief-phone" -c user.name=t -c user.email=t@t commit -q -m phone && git -C "$work/brief-phone" push -q origin HEAD 2>/dev/null
-printf 'q2\n' >"$work/brief/claude-queue.md"
+printf 'q2\n' >"$work/brief/queue.md"
 check "a push the remote rejects rebases once and lands both" "$(bsync) $(git -C "$work/brief-remote.git" rev-list --count HEAD)" "0 5"
 printf 'o\n' >"$work/brief/other.md"; git -C "$work/brief" add other.md && git -C "$work/brief" -c user.name=t -c user.email=t@t commit -q -m other && git -C "$work/brief" push -q origin HEAD 2>/dev/null
 git -C "$work/brief-phone" pull -q 2>/dev/null; printf 'ticked again\n' >"$work/brief-phone/README.md"
 git -C "$work/brief-phone" -c user.name=t -c user.email=t@t commit -qam phone2 && git -C "$work/brief-phone" push -q origin HEAD 2>/dev/null
-printf 'o\nan edit in progress\n' >"$work/brief/other.md"; printf 'q3\n' >"$work/brief/claude-queue.md"
+printf 'o\nan edit in progress\n' >"$work/brief/other.md"; printf 'q3\n' >"$work/brief/queue.md"
 check "a rejected push with edits in the tree waits rather than rebasing over them" \
   "$(bsync) $(tail -1 "$work/brief/other.md") $(git -C "$work/brief" ls-files -u | wc -l)" "1 an edit in progress 0"
 git -C "$work/brief" checkout -q -- other.md
