@@ -102,24 +102,18 @@ pub fn new_args(dir: &str, distro: Option<&str>) -> Result<Vec<String>, String> 
     Ok(a)
 }
 
-/// wsl.exe's arguments to make keryx follow Voices mode `mode` now (#273):
-/// the launcher runs the installed `fleet voices`. Only a known mode passes.
-pub fn voices_args(mode: &str) -> Result<Vec<String>, String> {
-    if !klepsydra_fleet::voices::VOICES
-        .iter()
-        .any(|(id, _)| *id == mode)
-    {
-        return Err(format!("not a Voices mode: {mode}"));
-    }
-    Ok(["--cd", "~", "-e", "bash", "-l", SCRIPT, "voices", mode]
+/// wsl.exe's arguments to make keryx follow the Voices mode just saved (#273):
+/// the launcher runs the installed `fleet voices`, which reads prefs.json.
+pub fn voices_args() -> Vec<String> {
+    ["--cd", "~", "-e", "bash", "-l", SCRIPT, "voices"]
         .map(String::from)
-        .to_vec())
+        .to_vec()
 }
 
-/// Apply Voices mode `mode` to keryx now, off the tray's thread, logged like
-/// every call. The resume service applies the saved mode each pass as well.
-pub fn apply_voices(mode: &'static str) {
-    let Ok(args) = voices_args(mode) else { return };
+/// Make keryx follow the saved Voices mode now, off the tray's thread, logged
+/// like every call. The resume service applies a changed mode as well.
+pub fn apply_voices() {
+    let args = voices_args();
     tauri::async_runtime::spawn_blocking(move || {
         let _ = logged("voices", None, || run(&args, TIMEOUT, timed_out));
     });
@@ -971,14 +965,11 @@ mod tests {
     }
 
     #[test]
-    fn voices_runs_the_launcher_with_a_known_mode_only() {
+    fn voices_runs_the_launcher_with_no_mode() {
         assert_eq!(
-            voices_args("everyone").unwrap(),
-            ["--cd", "~", "-e", "bash", "-l", SCRIPT, "voices", "everyone"]
+            voices_args(),
+            ["--cd", "~", "-e", "bash", "-l", SCRIPT, "voices"]
         );
-        for bad in ["loud", "", "heph;rm", "Off"] {
-            assert!(voices_args(bad).is_err(), "{bad}");
-        }
     }
 
     #[test]

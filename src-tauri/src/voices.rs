@@ -39,7 +39,7 @@ pub fn on_menu(app: &AppHandle, menu_id: &str) -> bool {
     let now = saved(app);
     if now == id {
         log::info!(voices = id; "voices: saved; keryx follows it now (fleet voices)");
-        crate::launch::apply_voices(now);
+        crate::launch::apply_voices();
     } else {
         log::warn!(voices = id, saved = now; "voices: not saved; the mode is still the saved one");
     }

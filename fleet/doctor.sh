@@ -241,12 +241,12 @@ else
   report warn "briefs" "$(tr '\n' ' ' <<<"$stale")(fleet brief --check)"
 fi
 
-# Voices (#273): keryx holds the tray's mode, which the resume service applies
-# every pass; a difference that outlasts a pass means it cannot.
+# Voices (#273): the tray's mode has been applied to keryx (the resume service
+# applies a change within a pass; a mode left unapplied says why).
 if v=$(bash "$here/voices.sh" --check 2>/dev/null); then
   report ok "voices" "$v"
 else
-  report warn "voices" "${v:-could not compare}: fleet voices sets it" detail="$v"
+  report warn "voices" "${v:-could not compare}"
 fi
 # A hook or cast copy older than the checkout gives every session old behaviour (#244).
 root=${here%/fleet} differ="" missing=""
