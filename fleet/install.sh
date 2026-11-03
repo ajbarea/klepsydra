@@ -24,7 +24,7 @@ fi
 do_() { if (( dry )); then printf 'would: %s\n' "$*"; else "$@"; fi; }
 # A dry run writes nothing, its log included: its events go to stderr only.
 ilog() { if (( dry )); then printf '%s %s %s\n' "$(date '+%F %T')" "$1" "${*:2}" >&2; else flog "$@"; fi; }
-SCRIPTS=(launch.sh fresh-now.sh resume-at-reset.sh watch-panes.sh memfrag-log.sh relaunch-fresh.sh done.sh voices.sh brief.sh doctor.sh cutover.sh accounts-sync.sh recover.sh sync-briefing.sh ci_watch.py agora.py worker-settings.json)
+SCRIPTS=(launch.sh fresh-now.sh resume-at-reset.sh watch-panes.sh tmux-watch.sh memfrag-log.sh relaunch-fresh.sh done.sh voices.sh brief.sh doctor.sh cutover.sh accounts-sync.sh recover.sh sync-briefing.sh ci_watch.py agora.py worker-settings.json)
 UNITS=${FLEET_UNITS:-$HOME/.config/systemd/user}
 BIN=${FLEET_BIN:-$HOME/.local/bin}
 archive=$FLEET_STATE/archive/fleet-scripts-$(date +%Y%m%d)
@@ -174,6 +174,24 @@ Description=klepsydra fleet: fleet doctor every 5 min
 [Timer]
 OnBootSec=2min
 OnUnitActiveSec=5min
+
+[Install]
+WantedBy=timers.target"
+# The tmux server watchdog (#290): fleet recover once a crash ends the server.
+unit fleet-tmux-watch.service "[Unit]
+Description=klepsydra fleet: fleet recover when the fleet's tmux server crashes
+
+[Service]
+Type=oneshot
+TimeoutStartSec=900
+Environment=\"PATH=$PATH\" \"HOME=$HOME\"
+ExecStart=/usr/bin/bash $FLEET_STATE/tmux-watch.sh"
+unit fleet-tmux-watch.timer "[Unit]
+Description=klepsydra fleet: check the fleet's tmux server every minute
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=1min
 
 [Install]
 WantedBy=timers.target"

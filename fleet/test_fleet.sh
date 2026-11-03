@@ -945,6 +945,7 @@ ok   fleet-accounts-sync.timer: enabled and active
 ok   fleet-sync-briefing.timer: enabled and active
 ok   fleet-ci-watch.service: enabled and active
 ok   fleet-doctor.timer: enabled and active
+ok   fleet-tmux-watch.timer: enabled and active
 ok   the resume service logged its start
 rc=0"
 check "no transient unit is left" "$(find "$SC" -name '*.transient' | wc -l)" "0"
@@ -2522,6 +2523,51 @@ check "#277: a file under its old name is still committed" "$(bsync) $(git -C "$
 mv "$work/brief/claude-morning.md" "$work/brief/morning.md"
 check "#277: a plain mv to the new name commits as one rename and leaves neither name behind" \
   "$(bsync) $(git -C "$work/brief" show -M --name-status --format= HEAD | tr '\t' ' ' | paste -sd' ') $(git -C "$work/brief" status --porcelain -- claude-morning.md morning.md | wc -l)" "0 R100 claude-morning.md morning.md 0"
+
+echo "the tmux server watchdog (#290)"
+: >"$FLEET_LOG"
+tw="$work/tw"; mkdir -p "$tw/proc/7001" "$tw/crashes"
+echo 33333333-3333-4333-8333-333333333333 >"$tw/boot"
+printf '#!/usr/bin/env bash\necho recover >>%q\necho "recovered: x -> %%%%9"\n' "$tw/recover.calls" >"$tw/recover"; chmod +x "$tw/recover"
+printf '#!/usr/bin/env bash\ncat %q 2>/dev/null\n' "$tw/kernel" >"$tw/journal"; chmod +x "$tw/journal"
+stat7001() { printf '7001 (tmux: server) S 1 1 1 0 -1 0 0 0 0 0 0 0 0 0 20 0 1 0 %s 0 0\n' "$1" >"$tw/proc/7001/stat"; }
+# W: the watchdog against a socket that answers (FLEET_SOCK) or none (WSOCK=gone).
+W() { FLEET_SOCK=${WSOCK:-$FLEET_SOCK} FLEET_PROC=${WPROC:-/proc} FLEET_BOOT_ID="$tw/boot" FLEET_CRASH_DIR="$tw/crashes" \
+  FLEET_JOURNAL="$tw/journal" FLEET_RECOVER="$tw/recover" bash "$here/tmux-watch.sh" 2>/dev/null; }
+rm -f -- "$FLEET_STATE/tmux-server"
+W
+check "#290: the answering server is recorded with its pid and this boot" \
+  "$(cut -d' ' -f1,3 "$FLEET_STATE/tmux-server")" "$(t display -p '#{pid}') 33333333-3333-4333-8333-333333333333"
+W
+check "#290: an unchanged server is logged once" "$(grep -c "watching the fleet's tmux server" "$FLEET_LOG")" "1"
+# A recorded server 7001 (start 555) that has since gone.
+gone_server() { echo "7001 555 $(cat "$tw/boot")" >"$FLEET_STATE/tmux-server"; rm -f -- "$tw/proc/7001/stat" "$tw/recover.calls" "$tw/kernel" "$tw"/crashes/*; }
+gone_server
+WSOCK=gone-$$ WPROC="$tw/proc" W
+check "#290: gone with no crash record: logged, never recovered" \
+  "$(grep -c 'ended with no crash record' "$FLEET_LOG") $(cat "$tw/recover.calls" 2>/dev/null || echo none) $(test -e "$FLEET_STATE/tmux-server" && echo kept || echo cleared)" "1 none cleared"
+gone_server; : >"$tw/crashes/wsl-crash-1793703747-7001-_usr_bin_tmux-11.dmp"
+WSOCK=gone-$$ WPROC="$tw/proc" W
+check "#290: WSL's crash dump for its pid: fleet recover runs once, logged with the signal" \
+  "$(cat "$tw/recover.calls") $(jq -r 'select(.message | startswith("the fleet'"'"'s tmux server crashed")) | .signal' "$FLEET_LOG")" "recover 11"
+WSOCK=gone-$$ WPROC="$tw/proc" W
+check "#290: the next minute does not recover again" "$(wc -l <"$tw/recover.calls")" "1"
+gone_server; echo "Nov 03 06:02:27 host kernel: tmux: server[7001]: segfault at 118 ip 00007d65 sp 00007ffd error 4 in libevent_core-2.1.so.7" >"$tw/kernel"
+WSOCK=gone-$$ WPROC="$tw/proc" W
+check "#290: the kernel's segfault line alone is a crash record" "$(cat "$tw/recover.calls")" "recover"
+gone_server; : >"$tw/crashes/wsl-crash-1-7001-_usr_bin_tmux-11.dmp"
+W
+check "#290: a new server started before the watchdog looked: the old one's crash still recovers, and the new one is recorded" \
+  "$(cat "$tw/recover.calls") $(cut -d' ' -f1 "$FLEET_STATE/tmux-server")" "recover $(t display -p '#{pid}')"
+gone_server; : >"$tw/crashes/wsl-crash-1-7001-_usr_bin_tmux-11.dmp"; stat7001 555
+WSOCK=gone-$$ WPROC="$tw/proc" W
+check "#290: the recorded server still runs (it did not answer once): nothing yet" \
+  "$(cat "$tw/recover.calls" 2>/dev/null || echo none) $(cut -d' ' -f1 "$FLEET_STATE/tmux-server")" "none 7001"
+gone_server; : >"$tw/crashes/wsl-crash-1-7001-_usr_bin_tmux-11.dmp"; echo "7001 555 22222222-2222-4222-8222-222222222222" >"$FLEET_STATE/tmux-server"
+WSOCK=gone-$$ WPROC="$tw/proc" W
+check "#290: a server from an earlier boot is left to fleet recover by hand" \
+  "$(cat "$tw/recover.calls" 2>/dev/null || echo none) $(grep -c 'from an earlier boot' "$FLEET_LOG")" "none 1"
+rm -f -- "$FLEET_STATE/tmux-server"
 
 echo "the fleet log"
 check "every line is one JSON object with ts, level, target and message" \

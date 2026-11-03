@@ -602,6 +602,45 @@ check "a socket path wt.exe would split: says so" "$out" \
 check "a socket path wt.exe would split: nothing running, no tab" \
   "$(TMUX_TMPDIR="$odd" tmux -L "$sock" list-sessions 2>/dev/null | wc -l)|$(tabs)" "0|0"
 
+echo "the pane-died hook (#290)"
+# The 11-03 crash: tmux 3.4 sent focus-out to a pane whose process had ended
+# (kept by remain-on-exit failed) and died. The hook starts such a pane again.
+# The client runs in an outer server's pane, so send-keys there types focus
+# reports into it the way a terminal does.
+mkdir -p "$HOME/.claude"; cp "$here/klepsydra-pane-died.sh" "$HOME/.claude/"
+in4="kl-test4-$$" out4="kl-test5-$$"
+ti() { tmux -L "$in4" "$@"; }
+to() { tmux -L "$out4" "$@"; }
+KLEPSYDRA_DEAD_DIR="$work/dead" FLEET_BIN="$work/nobin" ti -f "$KLEPSYDRA_TMUX_CONF" new-session -d -s s -x 80 -y 24 \
+  "printf 'last words\n\033[?1004h'; until [ -e $work/die4 ]; do sleep 0.1; done; kill -ABRT \$\$"
+spid=$(ti display -p '#{pid}')
+to -f /dev/null new-session -d -s o -x 80 -y 24 "TERM=xterm-256color tmux -L $in4 attach -t s"
+sleep 1
+to send-keys -t o -l $'\033[I'; sleep 0.5
+touch "$work/die4"
+for _ in $(seq 50); do [[ -n $(ti show -pqv -t s @klepsydra_dead 2>/dev/null) ]] && break; sleep 0.1; done
+check "#290: a pane whose process aborted is started again at once, marked with why" \
+  "$(ti display -p -t s '#{pane_dead}') $(ti show -pqv -t s @klepsydra_dead)" "0 its process ended on signal 6"
+check "#290: its last screen is saved" "$(cat "$work"/dead/*.txt 2>/dev/null | grep -c '^last words$')" "1"
+to send-keys -t o -l $'\033[O'; sleep 0.5
+to send-keys -t o -l $'\033[I'; sleep 0.5
+check "#290: focus moving off it and back leaves the server running (tmux 3.4 died here)" "$(kill -0 "$spid" 2>/dev/null && echo alive || echo died)" "alive"
+shown=$(ti capture-pane -p -J -S - -t s)
+check "#290: the pane shows its saved screen and how to close it" \
+  "$(grep -q '^last words *$' <<<"$shown" && echo screen) $(grep -q 'process ended on signal 6\. .*Press Enter to close\.' <<<"$shown" && echo note)" "screen note"
+# A viewer killed instead of closed with Enter is closed, never started again.
+w2=$(ti new-window -d -P -F '#{pane_id}' -t s: "sh -c 'sleep 0.3; exit 3'")
+for _ in $(seq 50); do [[ -n $(ti show -pqv -t "$w2" @klepsydra_dead 2>/dev/null) ]] && break; sleep 0.1; done
+check "#290: a non-zero exit is marked with its status" "$(ti show -pqv -t "$w2" @klepsydra_dead)" "its process exited with status 3"
+kill -TERM "$(ti display -p -t "$w2" '#{pane_pid}')"; sleep 1
+# (display -t names a gone pane with empty fields and exit 0 in tmux 3.4, so the list decides.)
+check "#290: its viewer killed: the pane is closed" "$(ti list-panes -a -F '#{pane_id}' | grep -cx -- "$w2")" "0"
+ti send-keys -t s Enter
+for _ in $(seq 50); do [[ -z $(ti list-panes -t s -F '#{pane_id}' 2>/dev/null) ]] && break; sleep 0.1; done
+check "#290: Enter closes a dead pane's viewer" "$(ti list-panes -t s -F '#{pane_id}' 2>/dev/null | wc -l)" "0"
+ti kill-server 2>/dev/null; to kill-server 2>/dev/null
+rm -f -- "$sockdir/${in4:?}" "$sockdir/${out4:?}"
+
 echo "cleanup"
 cleanup; trap - EXIT
 check "no socket files left" "$(find "$sockdir" -maxdepth 1 \( -name "$sock" -o -name "$sock2" -o -name "$sock3" \) 2>/dev/null)" ""
