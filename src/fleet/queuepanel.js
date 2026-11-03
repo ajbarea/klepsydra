@@ -127,6 +127,8 @@ export function createQueuePanel({ dialog, button, tab, edge, cast = () => null,
     const scroller = part.querySelector(".list-scroll");
     // The Needs you list's title, path and keeper sit in the panel's own header.
     const head = list === "needs" ? dialog.querySelector(".queue-head") : part;
+    // Where focus goes when the control it was on is gone: this list's own heading.
+    const heading = list === "needs" ? title : part.querySelector("h2");
     const pathLine = head.querySelector(".list-path");
     const keeper = head.querySelector(".list-kept");
     const problem = part.querySelector(".list-problem");
@@ -163,7 +165,7 @@ export function createQueuePanel({ dialog, button, tab, edge, cast = () => null,
       for (const child of shown.children) fragment.append(child);
       content.replaceChildren(fragment);
       scroller.scrollTop = scroll;
-      if (at >= 0) (controls()[at] ?? title).focus();
+      if (at >= 0) (controls()[at] ?? heading).focus();
     }
     followList(LISTS[list], paint);
     return paintKeeper;

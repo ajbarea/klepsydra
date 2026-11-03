@@ -284,10 +284,11 @@ export function render(text, opened) {
   return { nodes, count: needsYouCount(nodes) };
 }
 
-/** The Needs you file's markdown as its panel shows it: its nodes and its open asks. */
+/** The Needs you file's markdown as its panel shows it: its nodes and its open asks (0 with no list). */
 export function renderAsks(text, opened) {
   const nodes = sections(toTree(parse(text)), opened);
-  return { nodes, count: asksCount(nodes) };
+  // A Needs you file with no list asks nothing of you.
+  return { nodes, count: asksCount(nodes) ?? 0 };
 }
 
 /** The empty state's line: a path with no file yet is not a fault. */

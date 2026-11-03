@@ -240,12 +240,16 @@ fn queue_source(app: &AppHandle) -> (Result<PathBuf, String>, Option<String>, Op
 }
 
 /// The Needs you file, who keeps it and their voice: `needs.json`'s in the
-/// data folder, else `needs-you.md` beside the queue file, kept by no one.
+/// data folder, else `needs-you.md` beside the queue file, kept by no one;
+/// never the queue file itself.
 fn needs_source(app: &AppHandle) -> (Result<PathBuf, String>, Option<String>, Option<String>) {
-    match queue::kept_in(crate::klepsydra_dir(app).as_deref(), queue::List::Needs) {
-        Some(kept) => (kept.path, kept.by, kept.voice),
-        None => (queue::needs_beside(&queue_source(app).0), None, None),
-    }
+    let queue = queue_source(app).0;
+    let (path, by, voice) =
+        match queue::kept_in(crate::klepsydra_dir(app).as_deref(), queue::List::Needs) {
+            Some(kept) => (kept.path, kept.by, kept.voice),
+            None => (queue::needs_beside(&queue), None, None),
+        };
+    (queue::not_the_queue(path, &queue), by, voice)
 }
 
 /// The tray's "Choose queue file...": the file picked goes to `queue.json`,

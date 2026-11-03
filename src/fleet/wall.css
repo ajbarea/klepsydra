@@ -1030,8 +1030,10 @@ body:is(.queue-tabbed, .ledger-tabbed) .wall { padding-right: max(var(--wall-pad
 .list-problem { padding: 10px 12px; border-left: 3px solid var(--tone-error); background: var(--card-quiet); border-radius: 0 8px 8px 0; }
 .list-problem.empty { border-left-color: var(--card-line); color: var(--text-dim); }
 /* Two lists, Needs you over Queue, each scrolled on its own; the split
-   between them sets the Needs you list's share of the height. */
-.lists { --needs-share: 40%; flex: 1 1 auto; min-height: 0; display: grid; grid-template-rows: minmax(0, var(--needs-share)) 13px minmax(0, 1fr); }
+   between them sets the Needs you list's share of the height, and neither
+   row drops below 120px (its title and a line or two) while the panel has
+   room for both. */
+.lists { --needs-share: 40%; flex: 1 1 auto; min-height: 0; display: grid; grid-template-rows: minmax(min(120px, 45%), var(--needs-share)) 13px minmax(min(120px, 45%), 1fr); }
 .list { min-height: 0; display: flex; flex-direction: column; gap: 12px; }
 .list-scroll { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding-right: 4px; }
 .list-head { display: flex; flex-direction: column; gap: 2px; min-width: 0; }

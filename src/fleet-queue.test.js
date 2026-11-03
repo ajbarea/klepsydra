@@ -429,7 +429,7 @@ test("#276: the Needs you file counts its section's asks, else every top-level l
   const asks = (text) => renderAsks(text).count;
   assert.equal(asks("# Needs you\n\nIntro.\n\n## Needs you\n- a\n- ✅ b\n- c\n\n## Later\n- d\n"), 2, "its section only");
   assert.equal(asks("- a\n- b\n  - nested\n- ✅ c\n\n1. d\n"), 3, "no section: every top-level list");
-  assert.equal(asks("# Title\n\nJust words.\n"), null, "no list, no count");
+  assert.equal(asks("# Title\n\nNothing waiting.\n"), 0, "a file with no list asks nothing");
   assert.equal(asksCount([]), null);
   assert.equal(asks(readFileSync(new URL("../scripts/fixtures/needs-demo.md", import.meta.url), "utf8")), 3, "the sample");
 });

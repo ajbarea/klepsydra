@@ -237,6 +237,27 @@ pub fn needs_beside(queue: &Result<PathBuf, String>) -> Result<PathBuf, String> 
     }
 }
 
+/// `needs` unless it names the queue file itself (as a `queue.json` that
+/// pointed at needs-you.md before the two lists would): then one list would
+/// show twice and the queue not at all, so the Needs you list says why
+/// instead. Paths match without case, as NTFS names do.
+pub fn not_the_queue(
+    needs: Result<PathBuf, String>,
+    queue: &Result<PathBuf, String>,
+) -> Result<PathBuf, String> {
+    let same = |a: &Path, b: &Path| {
+        a.to_string_lossy().to_lowercase() == b.to_string_lossy().to_lowercase()
+    };
+    match (needs, queue) {
+        (Ok(n), Ok(q)) if same(&n, q) => Err(format!(
+            "The Needs you file is the queue file itself ({}): point the queue at the agents' list \
+             (queue set) or name another Needs you file (needs set).",
+            n.display()
+        )),
+        (needs, _) => needs,
+    }
+}
+
 /// Read the queue file at `path`, or say why there is nothing to show.
 pub fn view(path: &Result<PathBuf, String>) -> QueueView {
     view_of(path, List::Queue)
@@ -859,5 +880,24 @@ mod tests {
                 .contains("No queue file"),
             "the queue's lines are unchanged"
         );
+    }
+
+    #[test]
+    fn the_needs_you_list_never_shows_the_queue_file_twice() {
+        let q = PathBuf::from("/briefing/needs-you.md");
+        let err =
+            not_the_queue(Ok(PathBuf::from("/briefing/Needs-You.MD")), &Ok(q.clone())).unwrap_err();
+        assert!(
+            err.starts_with("The Needs you file is the queue file itself"),
+            "{err}"
+        );
+        let other = PathBuf::from("/briefing/asks.md");
+        assert_eq!(not_the_queue(Ok(other.clone()), &Ok(q.clone())), Ok(other));
+        assert_eq!(
+            not_the_queue(Ok(q.clone()), &Err("unknown".into())),
+            Ok(q.clone()),
+            "an unknown queue path is no clash"
+        );
+        assert_eq!(not_the_queue(Err("x".into()), &Ok(q)), Err("x".into()));
     }
 }

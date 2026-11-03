@@ -1152,8 +1152,9 @@ its own, so the asks waiting on you never scroll away behind the agents' plan,
 the way VS Code stacks views in its side bar. The bar between them moves the
 split: drag it, or focus it and use the Up and Down arrows (Page Up and Page
 Down for bigger steps, Home and End for the bounds); a double click puts it
-back at 40% for Needs you. Neither list can be squeezed below 15% of the
-height, and the split is remembered. The files stay the source of truth:
+back at 40% for Needs you. The split stays between 15% and 85%, neither list
+drops below 120 px while the panel has room for both, and the split is
+remembered. The files stay the source of truth:
 agents and you keep editing them with any editor, and the panel only reads
 them.
 
@@ -1177,7 +1178,9 @@ worn, "kept by Hephaestus"), and the panel renames it when the theme
 changes. `needs set`, `needs show` and `needs clear` do the same for the
 Needs you list, in `needs.json`; without one, the Needs you list reads
 `needs-you.md` in the queue file's folder, so pointing the queue at a folder
-of lists sets both. A
+of lists sets both. A Needs you file that is the queue file itself is not
+shown twice: the Needs you list says so and names the two commands that fix
+it. A
 file kept inside WSL (`\\wsl.localhost\...`) sends Windows no change
 notices, so its edits show on the five-second re-read rather than at once;
 one on a Windows drive (`/mnt/c/...`) shows within a second or two. An older `queue_path` in `prefs.json` still
@@ -1237,9 +1240,10 @@ works when there is no `queue.json`.
   remembered.
 - **The header count.** The button reads "Queue · 3 for you": the Needs you
   file's open asks (the items in its "Needs you" section, or in its lists when
-  it has no such section), less those marked ✅. Without a Needs you file, a
-  queue file's own "Needs you" section is counted, as before the two lists. It
-  names the files' asks, not the sessions the tally counts as needing you.
+  it has no such section; none for a file with no list), less those marked ✅.
+  While no Needs you file can be shown, a queue file's own "Needs you" section
+  is counted, as before the two lists. It names the files' asks, not the
+  sessions the tally counts as needing you.
 - **Reading aids.** Each `##` section folds, with Needs you open. Lines
   starting with ✅ read quieter, as done; 📋 lines carry a pending mark.
   Every code block has a **Copy** button.

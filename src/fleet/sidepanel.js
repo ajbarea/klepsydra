@@ -207,8 +207,9 @@ export function wireListSplit(lists, split, key = "klepsydra.queue.split") {
     e.preventDefault();
     split.setPointerCapture(e.pointerId);
     split.classList.add("dragging");
-    const box = lists.getBoundingClientRect();
     const move = (m) => {
+      if (m.pointerId !== e.pointerId) return; // only the pointer that took the split steers it
+      const box = lists.getBoundingClientRect(); // measured each move: the window may resize mid-drag
       if (box.height > 0) setShare(((m.clientY - box.top) / box.height) * 100, false);
     };
     const end = () => {

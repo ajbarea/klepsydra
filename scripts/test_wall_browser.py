@@ -2473,7 +2473,7 @@ def queue_docks_wide_and_is_a_dialog_narrow(wall):
             and st["active"] == "queue-title"
             and not st["hscroll"]
             and named == 1
-            and st["label"] == "Queue \u00b7 4 for you"
+            and st["label"] == "Queue \u00b7 3 for you"  # the Needs you sample's open asks (#276)
             and (modal or (st["wallRight"] <= st["left"] and st["barRight"] <= st["left"]))
         )
         wall.check(ok, f"at {width} px the Queue panel opens {'as a modal dialog' if modal else 'docked beside the wall'}", st)
@@ -2608,7 +2608,7 @@ def queue_text_size(wall):
     least = page.evaluate(TEXT_STATE)
     wall.check(least["zoom"] == "0.75" and least["smallerOff"] == "true", "A- stops at 75%", least)
     page.click("#queue .queue-reset")
-    box = page.locator("#queue .queue-content").bounding_box()
+    box = page.locator("#queue .list-queue .queue-content").bounding_box()
     page.mouse.move(box["x"] + box["width"] / 2, box["y"] + 40)
     page.keyboard.down("Control")
     page.mouse.wheel(0, -100)
@@ -2659,11 +2659,12 @@ def queue_renders_as_text_and_copies(wall):
     page = wall.browser.new_page(viewport={"width": 1920, "height": 1000}, permissions=["clipboard-read", "clipboard-write"])
     page.goto(f"http://127.0.0.1:{wall.port}/src/wall.html?demo=8")
     page.click("#queue-open")
-    page.wait_for_selector("#queue .queue-content details")
+    page.wait_for_selector("#queue .list-queue .queue-content details")
     got = page.evaluate("""() => {
-      const c = document.querySelector('#queue .queue-content');
+      const c = document.querySelector('#queue .list-queue .queue-content');
       return {
-        unsafe: c.querySelectorAll('a, img, script, iframe, [href], [src], [style], [onclick], [onerror]').length,
+        unsafe: document.querySelectorAll('#queue .queue-content :is(a, img, script, iframe, [href], [src], [onclick], [onerror])').length
+          + c.querySelectorAll('[style]').length,
         html: [...c.querySelectorAll('.q-html')].map((e) => e.textContent),
         open: [...c.querySelectorAll('details')].map((d) => d.open),
         done: c.querySelectorAll('.q-done').length,
@@ -2788,6 +2789,19 @@ def needs_and_queue_both_in_view(wall):
             "#276 a double click resets the split, a drag moves it, and a reload keeps it",
             [reset["now"], dragged["now"], dragged["stored"], kept["now"]],
         )
+        # A short window: neither list's row drops below its title and a line or two.
+        page.set_viewport_size({"width": 1280, "height": 520})
+        page.wait_for_timeout(SETTLE_MS)
+        rows = {}
+        for key in ("End", "Home"):
+            page.focus("#queue .lists-split")
+            page.keyboard.press(key)
+            rows[key] = page.evaluate("""() => [...document.querySelectorAll('#queue .list')].map((l) => Math.round(l.getBoundingClientRect().height))""")
+        wall.check(
+            min(rows["End"]) >= 119 and min(rows["Home"]) >= 119,
+            "#276 in a 520 px window each list keeps at least 120 px at either end of the split",
+            rows,
+        )
         page.close()
 
 
@@ -2886,7 +2900,7 @@ def queue_follows_the_app(wall):
     gone = page.evaluate("""() => ({
       problem: document.querySelector('#queue .list-queue .list-problem').textContent,
       shown: !document.querySelector('#queue .list-queue .list-problem').hidden,
-      blocks: document.querySelector('#queue .queue-content').children.length,
+      blocks: document.querySelector('#queue .list-queue .queue-content').children.length,
     })""")
     keeper = "#queue .list-queue .list-kept"
     unkept = page.evaluate(f"() => document.querySelector('{keeper}').hidden")
