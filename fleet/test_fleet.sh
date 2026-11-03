@@ -850,7 +850,7 @@ check "#244: the wrap-up skill lands in its skill folder" "$(cmp -s "${here%/fle
 hinst >/dev/null # the tmux conf the folder case removed comes back first
 before=$(find "$inst/state/archive" -type f | wc -l)
 check "#244 nit: an install with nothing changed copies and archives nothing" \
-  "$(FLEET_LOG="$work/instlog/same.log" hinst) $(( $(find "$inst/state/archive" -type f | wc -l) - before )) $(grep -s -c 'installed a copy' "$work/instlog/same.log" || true)" "0 0 0"
+  "$(FLEET_LOG="$work/instlog/same.log" hinst) $(( $(find "$inst/state/archive" -type f | wc -l) - before )) $(cat "$work/instlog/same.log" 2>/dev/null | grep -c 'installed a copy')" "0 0 0"
 mkdir -p "$work/dryfail" && cp -r "$here" "$work/dryfail/fleet"
 check "#244 nit: a dry run that meets an error writes no log, and says it on stderr" \
   "$(FLEET_STATE="$inst/dl" FLEET_HOOK_DIR="$inst/dc" bash "$work/dryfail/fleet/install.sh" --dry-run --hooks --force 2>&1 >/dev/null | grep -c "ERROR a copy's source is missing") $(find "$inst/dl" "$inst/dc" -mindepth 1 2>/dev/null | wc -l)" "${#HOOK_COPIES[@]} 0"
