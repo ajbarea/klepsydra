@@ -3,16 +3,17 @@
 Sends: generates commands from shell pieces the orchestrator writes (tmux
 sends with literal, assigned, looped and piped targets, tmux's abbreviations
 and combined flags, quotes holding separators, comments, echoed look-alikes,
-line breaks, continuations, subshells, if/then, { }, !, time), runs each in
-bash as the orchestrator (orch-tmux.sh first on PATH) against a real private
-tmux server whose panes record every byte they receive, and compares the
-panes that got keys with the panes orch-tmux.sh checked (its trace).
+line breaks, continuations, subshells, if/then, { }, !, time, and tmux
+commands that run other commands), runs each in bash as the orchestrator
+(under a process named claude in orchestrator.pane, orch-tmux.sh ahead on
+PATH) against a real private tmux server whose panes record every byte they
+receive, and compares the panes that got keys with the panes orch-tmux.sh
+checked (its trace). Keys that reach a pane unchecked are a miss.
 Registry: generates commands that read or write panes.tsv and runs each in
-bash in a scratch folder holding one. A send bash makes that the parser
-neither reports nor marks unresolved, or a write to panes.tsv it does not
-report, is a guard bypass: printed, and the run exits 1. A pane the parser
-checks that bash never sends to (it only mentions it) is the parser's chosen
-over-approximation, counted but allowed.
+bash in a scratch folder holding one; a write orch_guard_parse.py does not
+report is a miss. Misses are printed and the run exits 1. A pane checked
+that got no keys, or a read flagged as a write, is the guard leaning towards
+refusing: counted, not failed. "0 missed" holds over the generated grammar.
 Run: python3 -I orch_parse_differential.py [N] [SEED]
 """
 
@@ -106,7 +107,23 @@ def send(r):
     return f"{prog} {sub} \\\n  -t {t} {text(r)}"
 
 
+# tmux commands that run other commands: the guard refuses them, so any keys
+# they deliver unchecked are a miss.
+HIDDEN = [
+    "pipe-pane -o -t {t} 'tmux -L {sock} send-keys -t {u} go'",
+    "display-message -p '#(tmux -L {sock} send-keys -t {u} go)'",
+    "run-shell 'tmux -L {sock} send-keys -t {u} go'",
+    "if-shell true 'send-keys -t {u} go'",
+    "new-window -d 'tmux -L {sock} send-keys -t {u} go'",
+    "set-hook -g pane-focus-in 'send-keys -t {u} go' \\; select-pane -t {t}",
+]
+
+
 def piece(r):
+    if r.random() < 0.1:
+        return "tmux -L {sock} " + r.choice(HIDDEN).replace("{t}", target(r)).replace(
+            "{u}", target(r)
+        )
     k = r.randrange(10)
     if k < 4:
         return send(r)
@@ -222,8 +239,10 @@ class Server:
             "FLEET_STATE": self.state, "ORCH_TMUX_TRACE": self.trace, "FLEET_SOCK": self.sock,
         }  # fmt: skip
         script = f't() {{ tmux -L {self.sock} "$@"; }}\n' + cmd + "\n"
+        # As the orchestrator's Bash tool runs it: under a process named claude.
+        parent = """exec -a claude bash -c 'bash -c "$0"; exit $?' "$1\""""
         subprocess.run(
-            ["bash", "-c", script],
+            ["bash", "-c", parent, "_", script],
             env=env,
             capture_output=True,
             timeout=20,

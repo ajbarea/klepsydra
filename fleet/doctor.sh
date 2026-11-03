@@ -272,18 +272,25 @@ else
   report warn "orchestrator guard" "not registered for Bash, Edit and Write in $(tilde "$FLEET_DEFAULT_CONFIG")/settings.json: add the PreToolUse entry in README (Orchestrator guard), then fleet accounts sync"
 fi
 # The orchestrator's tmux guard (#264) acts only where its session started with
-# orch-bin first on PATH (launch.sh, for heph); one started before that has none.
+# orch-bin on PATH ahead of the real tmux (launch.sh, for heph; the login
+# profile prepends its own folders, none of which holds a tmux).
 orch_path=""
 if op=$(orchestrator) && [[ -n $op ]] && pp=$(t display-message -p -t "$op" '#{pane_pid}' 2>/dev/null); then
   for q in $pp $(pgrep -P "$pp" 2>/dev/null) $(for c in $(pgrep -P "$pp" 2>/dev/null); do pgrep -P "$c"; done); do
     orch_path=$(tr '\0' '\n' <"/proc/$q/environ" 2>/dev/null | sed -n 's/^PATH=//p')
-    [[ $orch_path == "$FLEET_STATE/orch-bin:"* ]] && break
+    [[ ":$orch_path:" == *":$FLEET_STATE/orch-bin:"* ]] && break
   done
 fi
-if [[ $orch_path == "$FLEET_STATE/orch-bin:"* && -x $FLEET_STATE/orch-bin/tmux ]]; then
-  report ok "orchestrator tmux guard" "its session's tmux is $(tilde "$FLEET_STATE")/orch-bin/tmux"
+ahead=0
+if [[ ":$orch_path:" == *":$FLEET_STATE/orch-bin:"* ]]; then
+  ahead=1
+  IFS=: read -ra dirs <<<"${orch_path%%"$FLEET_STATE/orch-bin"*}"
+  for d in "${dirs[@]}"; do [[ -n $d && -x $d/tmux ]] && ahead=0; done
+fi
+if (( ahead )) && [[ -x $FLEET_STATE/orch-bin/tmux ]]; then
+  report ok "orchestrator tmux guard" "its session's tmux is $(tilde "$FLEET_STATE")/orch-bin/tmux, ahead of the real one"
 else
-  report warn "orchestrator tmux guard" "the orchestrator's session did not start with $(tilde "$FLEET_STATE")/orch-bin first on PATH: its next move or recover starts it so"
+  report warn "orchestrator tmux guard" "the orchestrator's session did not start with $(tilde "$FLEET_STATE")/orch-bin ahead of tmux on PATH: its next move or recover starts it so"
 fi
 if [[ -n $json ]]; then
   tmp=$json.tmp.$$

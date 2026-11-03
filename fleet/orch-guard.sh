@@ -12,7 +12,8 @@
 # guard cannot work out lets the call through (exit 0, no output) and is logged.
 # ORCH_GUARD_ALLOW=registry in a command lets that guard pass, when AJ asked
 # for it; the pass is logged. Every other session leaves at once, in bash
-# alone: this runs on every call.
+# alone: this runs on every call. Bypass detection is best effort: the tmux
+# guard acts on whatever tmux the session's PATH reaches.
 # Settings (each config folder): PreToolUse, matcher "Bash|Edit|Write", command
 # "bash ~/.local/state/fleet-orchestrator/orch-guard.sh".
 set -u
@@ -25,7 +26,7 @@ osid=""
 
 tool=$(jq -r '.tool_name // ""' <<<"$payload" 2>/dev/null) || exit 0
 case $tool in
-  Bash) cmd=$(jq -r '.tool_input.command // ""' <<<"$payload") file="" ;;
+  Bash) cmd=$(jq -r '.tool_input.command // ""' <<<"$payload") file="" cwd=$(jq -r '.cwd // ""' <<<"$payload") ;;
   Edit | Write) cmd="" file=$(jq -r '.tool_input.file_path // ""' <<<"$payload") ;;
   *) exit 0 ;;
 esac
@@ -103,7 +104,7 @@ if [[ $tool != Bash ]]; then
   exit 0
 fi
 
-findings=$(printf '%s' "$cmd" | ORCH_ACCOUNTS=$FLEET_ACCOUNTS python3 -I "$here/orch_guard_parse.py" 2>/dev/null) || {
+findings=$(printf '%s' "$cmd" | ORCH_ACCOUNTS=$FLEET_ACCOUNTS ORCH_CWD=$cwd python3 -I "$here/orch_guard_parse.py" 2>/dev/null) || {
   glog WARN "orchestrator guard: the command parser failed; call let through" command="${cmd:0:300}"
   exit 0
 }

@@ -26,12 +26,11 @@ import os
 import re
 import sys
 
-TMUX_PATH = re.compile(
-    r"(?:^|[\s;&|(`'\"=])(?:\\|/)[^\s;&|()`'\"]*tmux(?=$|[\s;&|)`'\"])"
-)
+# Best effort: the ways a command reaches a tmux other than the one on PATH.
+TMUX_PATH = re.compile(r"/tmux(?=$|[\s;&|)`'\"])|(?<![\w-])command\s+(?:-\S+\s+)*-p\b")
 TMUX_WORD = re.compile(r"(?<![\w.-])tmux(?![\w-])")
 PATH_SET = re.compile(
-    r"(?<![\w-])(PATH=|env\s+(?:-\S+\s+)*-i\b|env\s+(?:-\S+\s+)*--ignore-environment)"
+    r"(?<![\w-])(PATH=|env\s+(?:-\S+\s+)*-i\b|env\s+(?:-\S+\s+)*--ignore-environment|env\s+(?:-\S+\s+)*-u\s*PATH\b|hash\s+-p)"
 )
 
 REGISTRY = re.compile(r"(?:panes\.tsv|\$\{?REGISTRY\b)")
@@ -65,7 +64,11 @@ SPLIT = re.compile(r"[;&|\n()`]+|\$\(|<\(|>\(")
 KEY_ENV = re.compile(
     r"(?<!\w)(ANTHROPIC_API_KEY|ANTHROPIC_AUTH_TOKEN)=(?!['\"]{2}|\s|$|;)"
 )
-CLAUDE_WORD = re.compile(r"(?:^|[\s;&|(/'\"`])claude(?=$|[\s;&|)'\"`])")
+CLAUDE_WORD = re.compile(
+    r"(?:^|[\s;&|(/'\"`])claude(?=$|[\s;&|)'\"`])|@anthropic-ai/claude-code"
+)
+# Settings every session on this machine reads (managed, then the project's).
+MANAGED = ("/etc/claude-code/managed-settings.json",)
 LAUNCHER = re.compile(
     r"(?:^|[\s/'\"])(launch|fresh-now|relaunch-fresh)\.sh(?=$|[\s'\";&|)])"
 )
@@ -74,7 +77,7 @@ CONFIG = re.compile(r"(?<!\w)(CLAUDE_CONFIG_DIR|FLEET_ACCOUNT)=(['\"]?)([^\s'\";
 
 
 def bypass(cmd, out):
-    if TMUX_PATH.search(cmd):
+    if TMUX_PATH.search(cmd) and (TMUX_WORD.search(cmd) or "/tmux" in cmd):
         print("BYPASS\ttmux called by a path", file=out)
     elif TMUX_WORD.search(cmd) and PATH_SET.search(cmd):
         print("BYPASS\tPATH changed in a command that calls tmux", file=out)
@@ -111,14 +114,23 @@ def expand(path):
 
 
 def holds_helper(path, missing_is_key):
-    """Whether a settings file names an apiKeyHelper; None when it cannot be read."""
+    """Whether a settings file holds a key: an apiKeyHelper, or ANTHROPIC_API_KEY
+    or ANTHROPIC_AUTH_TOKEN in its env block. None when it cannot be read."""
     try:
         with open(path, encoding="utf-8") as f:
-            return "apiKeyHelper" in json.dumps(json.load(f))
+            data = json.load(f)
     except FileNotFoundError:
         return None if missing_is_key else False
     except (OSError, ValueError):
         return None
+    if not isinstance(data, dict):
+        return None
+    env = data.get("env") if isinstance(data.get("env"), dict) else {}
+    return bool(
+        data.get("apiKeyHelper")
+        or env.get("ANTHROPIC_API_KEY")
+        or env.get("ANTHROPIC_AUTH_TOKEN")
+    )
 
 
 def headless(cmd):
@@ -148,7 +160,7 @@ def claude(cmd, out):
         if held is None:
             signal = f"a --settings file the guard cannot read: {m.group(2)}"
         elif held:
-            signal = f"apiKeyHelper in {m.group(2)}"
+            signal = f"a key in {m.group(2)}"
     # The config folder the session starts on: named, or where launch.sh may pick.
     dirs = [m.group(3) for m in CONFIG.finditer(cmd)]
     if not dirs:
@@ -167,7 +179,24 @@ def claude(cmd, out):
         if held is None:
             signal = f"a settings.json the guard cannot read in {d}"
         elif held:
-            signal = f"apiKeyHelper in {d}/settings.json"
+            signal = f"a key in {d}/settings.json"
+    # The project's settings where the session starts (the call's folder, and
+    # launch.sh's FLEET_DIR), and managed settings.
+    folders = [os.environ.get("ORCH_CWD", "")]
+    if launcher:
+        folders.append(
+            os.environ.get("FLEET_DIR")
+            or os.path.join(os.path.expanduser("~"), "ajsoftworks")
+        )
+    files = [
+        os.path.join(f, ".claude", n)
+        for f in folders
+        if f
+        for n in ("settings.json", "settings.local.json")
+    ]
+    for path in [*files, *MANAGED]:
+        if holds_helper(path, missing_is_key=False):
+            signal = f"a key in {path}"
     if signal:
         mode = "headless" if headless(cmd) and not launcher else "interactive"
         print(f"CLAUDE\t{mode}\t{signal}", file=out)

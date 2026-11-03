@@ -58,11 +58,16 @@ orchp=$(t new-window -d -P -F '#{pane_id}' -t fleet: 'sleep 100000')
 printf '%s\n' "$orchp" >"$FLEET_STATE/orchestrator.pane"
 mkdir -p "$work/orch-bin"
 ln -s "$here/orch-tmux.sh" "$work/orch-bin/tmux"
+# A Claude Code session in pane PANE runs COMMAND as its Bash tool does: a
+# process named claude, with TMUX_PANE in its own environment, is the parent.
+in_claude() { # PANE BIN COMMAND
+  PATH="$2:$PATH" TMUX_PANE=$1 bash -c 'exec -a claude bash -c '"'"'bash -c "$0"; exit $?'"'"' "$1"' _ "$3"
+}
 # as_heph COMMAND: COMMAND run as the orchestrator's Bash runs it; prints ok
 # or refused:<guard>, with the refusal's text in $(why).
 as_heph() {
   local rc
-  PATH="$work/orch-bin:$PATH" TMUX_PANE=$orchp bash -c "$1" >/dev/null 2>"$work/err"; rc=$?
+  in_claude "$orchp" "$work/orch-bin" "$1" >/dev/null 2>"$work/err"; rc=$?
   if grep -q '^orch-guard (' "$work/err"; then
     sed -n 's/^orch-guard (\([a-z-]*\)).*/refused:\1/p' "$work/err" | head -1
   elif (( rc == 0 )); then echo ok
@@ -88,10 +93,11 @@ check "and the keys arrive" "$(got_keys young)" "1"
 check "an idle pane at no limit: allowed" "$(as_heph "$T send-keys -t $warm 'next item' Enter")" "ok"
 check "the send check is logged" "$(jq -r 'select(.message | contains("send checked")) | .pane' "$FLEET_LOG" | tail -1)" "$warm"
 for shape in "send -t $cold go" "send-k -t $cold go" "send-keys -lt $cold go" "send-keys -Rt$cold go" "paste -t $cold" "pa -t $cold" \
-  "pasteb -b x -t $cold" "pipe-pane -I -t $cold 'printf go'" "send-keys -t $warm hi \\; send-keys -t $cold go" "send-prefix -t $cold"; do
+  "pasteb -b x -t $cold" "send-keys -t $warm hi \\; send-keys -t $cold go" "send-prefix -t $cold"; do
   check "tmux $shape: refused" "$(as_heph "$T $shape")" "refused:cold-limit"
 done
-check "pipe-pane without -I (output only): allowed" "$(as_heph "$T pipe-pane -O -t $warm 'cat >/dev/null'")" "ok"
+check "pipe-pane -I with a command: refused (the command could call tmux)" "$(as_heph "$T pipe-pane -I -t $cold 'printf go'")" "refused:hidden"
+check "pipe-pane -O with a command: refused too" "$(as_heph "$T pipe-pane -O -t $warm 'cat >/dev/null'")" "refused:hidden"
 t pipe-pane -t "$warm" 2>/dev/null
 for wrap in "for p in $warm $cold; do $T send-keys -t \$p go; done" "echo $cold | xargs -I{} $T send-keys -t {} go" \
   "printf '%s\\n' $cold | while read -r p; do $T send-keys -t \"\$p\" go; done" "eval '$T send-keys -t $cold go'" \
@@ -109,8 +115,11 @@ check "a limit that appears during a wait is seen at the send" "$(as_heph "sleep
 wait
 check "a target tmux does not know goes to tmux, which fails" "$(as_heph "$T send-keys -t %9999 hi" | cut -c1-4)" "rc=1"
 check "no -t is the orchestrator's own pane" "$(as_heph "$T send-keys -t $orchp hi")" "ok"
-check "another pane's calls are never checked" \
-  "$(PATH="$work/orch-bin:$PATH" TMUX_PANE=$warm bash -c "$T send-keys -t $cold x" 2>&1 && echo ok)" "ok"
+check "another session's calls are never checked" "$(in_claude "$warm" "$work/orch-bin" "$T send-keys -t $cold x" 2>&1 && echo ok)" "ok"
+t send-keys -t "$cold" C-u
+check "no Claude Code session above: never checked" "$(PATH="$work/orch-bin:$PATH" TMUX_PANE=$orchp bash -c "$T display -p -t $cold '#{pane_id}'" 2>&1)" "$cold"
+check "the orchestrator setting TMUX_PANE does not make it another session" "$(as_heph "TMUX_PANE=$warm $T send-keys -t $cold go")" "refused:cold-limit"
+check "nor does unsetting it" "$(as_heph "env -u TMUX_PANE $T send-keys -t $cold go")" "refused:cold-limit"
 check "read-only tmux commands pass" "$(as_heph "$T capture-pane -p -t $cold >/dev/null && $T list-panes -a >/dev/null")" "ok"
 
 echo "pending input"
@@ -123,6 +132,13 @@ check "typing into an empty box: allowed" "$(as_heph "$T send-keys -t $two -l 'y
 check "its own Enter after typing: allowed" "$(as_heph "$T send-keys -t $two Enter")" "ok"
 printf '%s' '{"above":["⏺ Done. done 10:20 AM"],"input":"your next item"}' >"$work/two.json"; settle
 check "the same box two minutes later is no longer its own" "$(FLEET_NOW=$((FLEET_NOW + 200)) as_heph "$T send-keys -t $two Enter")" "refused:pending-input"
+# Own text is the exact text typed, not any text within two minutes (round 3:
+# AJ's line arriving after the orchestrator's first send was then merged).
+mix=$(pane mix '{"above":["⏺ Done. done 10:20 AM"]}'); settle
+check "a first task into an empty box: allowed" "$(as_heph "$T send-keys -t $mix -l 'first task'")" "ok"
+printf '%s' '{"above":["⏺ Done. done 10:20 AM"],"input":"AJ: wait, stop"}' >"$work/mix.json"; settle
+check "AJ's line replacing it 90 s later is not the orchestrator's own" "$(FLEET_NOW=$((FLEET_NOW + 90)) as_heph "$T send-keys -t $mix 'second task' Enter")" "refused:pending-input"
+check "and nothing merged into it" "$(got_keys mix)" "0"
 # A pane only named in a message is not typed into, so it is not stamped own.
 named=$(pane named '{"above":["⏺ Done. done 10:20 AM"]}'); settle
 as_heph "$T send-keys -t $warm 'Hermes in $named is done' Enter" >/dev/null
@@ -135,11 +151,13 @@ check "a refused call stamps nothing as its own" \
 echo "commands the guard cannot read"
 printf 'send-keys -t %s go\n' "$cold" >"$work/x.conf"
 for hidden in "source-file $work/x.conf" "source $work/x.conf" "run-shell '$T send-keys -t $cold go'" "if-shell true 'send-keys -t $cold go'" \
-  "new-window -d '$T send-keys -t $cold go'" "-f $work/x.conf list-sessions"; do
+  "new-window -d '$T send-keys -t $cold go'" "-f $work/x.conf list-sessions" "pipe-pane -o -t $warm '$T send-keys -t $cold go'" \
+  "display-message -p '#($T send-keys -t $cold go)'" "set-hook -g pane-focus-in 'send-keys -t $cold go'" \
+  "set -s command-alias[90] zz=send-keys" "new-window -d 'sleep 1'" "kill-server"; do
   check "tmux $hidden: refused" "$(as_heph "$T $hidden")" "refused:hidden"
 done
 check "and nothing reached the pane" "$(got_keys cold)" "0"
-check "a new window running no tmux: allowed" "$(as_heph "$T new-window -d -t fleet: 'sleep 1'")" "ok"
+check "pipe-pane with no command (it stops a pipe): allowed" "$(as_heph "$T pipe-pane -t $warm")" "ok"
 
 echo "fleet scripts send with their own checks"
 mkdir -p "$work/fleetcopy" "$work/elsewhere"
@@ -148,8 +166,8 @@ mkdir -p "$work/orch-bin2"
 ln -s "$work/fleetcopy/orch-tmux.sh" "$work/orch-bin2/tmux"
 cold2=$(pane cold2 "{\"above\":[\"⏺ Done. done 9:00 AM\",\"$LIMIT\"]}"); settle
 printf '#!/usr/bin/env bash\n%s send-keys -t %s /clear\n' "$T" "$cold2" | tee "$work/fleetcopy/fresh-now.sh" >"$work/elsewhere/fresh-now.sh"
-check "the script outside the fleet folder is checked" "$(PATH="$work/orch-bin2:$PATH" TMUX_PANE=$orchp bash "$work/elsewhere/fresh-now.sh" 2>&1 | grep -o 'orch-guard (cold-limit)')" "orch-guard (cold-limit)"
-check "the same script in the fleet folder passes" "$(PATH="$work/orch-bin2:$PATH" TMUX_PANE=$orchp bash "$work/fleetcopy/fresh-now.sh" 2>&1 && echo ok)" "ok"
+check "the script outside the fleet folder is checked" "$(in_claude "$orchp" "$work/orch-bin2" "bash $work/elsewhere/fresh-now.sh" 2>&1 | grep -o 'orch-guard (cold-limit)')" "orch-guard (cold-limit)"
+check "the same script in the fleet folder passes" "$(in_claude "$orchp" "$work/orch-bin2" "bash $work/fleetcopy/fresh-now.sh" 2>&1 && echo ok)" "ok"
 
 echo "before the call (orch-guard.sh, PreToolUse)"
 OSID=aaaaaaaa-0000-4000-8000-000000000001 WSID=bbbbbbbb-0000-4000-8000-000000000002
@@ -182,6 +200,10 @@ check "an ordinary command logs nothing" "$(wc -c <"$FLEET_LOG" | tr -d ' ')" "0
 check "tmux by its path skips the guard's tmux: refused" "$(run "/usr/bin/tmux send-keys -t $cold go")" "deny:bypass"
 check "tmux with a new PATH: refused" "$(run "PATH=/usr/bin tmux send-keys -t $cold go")" "deny:bypass"
 check "env -i tmux: refused" "$(run "env -i tmux send-keys -t $cold go")" "deny:bypass"
+for b in "command -p tmux send-keys -t $cold go" "env -u PATH tmux send-keys -t $cold go" "cd /usr/bin && ./tmux send-keys -t $cold go" \
+  "p=/usr/bin; \$p/tmux send-keys -t $cold go"; do
+  check "a bypass ($b): refused" "$(run "$b")" "deny:bypass"
+done
 check "plain tmux passes here (orch-tmux.sh checks it)" "$(run "tmux send-keys -t $cold go")" "allow"
 
 printf '%s' '{"apiKeyHelper":"op read op://Fleet/key/credential","env":{}}' >"$work/key-settings.json"
@@ -214,6 +236,15 @@ cp -- "$work/key-settings.json" "$work/cfg-b/settings.json"
 check "launch.sh where it may pick a folder that uses a key" "$(run "bash fleet/launch.sh x $work/brief.src")" "deny:api-key"
 rm -f -- "$work/cfg-b/settings.json"
 check "clearing the key is no key" "$(run 'ANTHROPIC_API_KEY= claude --model opus')" "allow"
+printf '%s' '{"env":{"ANTHROPIC_API_KEY":"sk-x"}}' >"$work/envkey.json"
+check "a settings file whose env holds a key" "$(run "claude --settings $work/envkey.json")" "deny:api-key"
+cp -- "$work/envkey.json" "$work/cfg-a/settings.json"
+check "a config folder whose env holds a key" "$(run "CLAUDE_CONFIG_DIR=$work/cfg-a claude")" "deny:api-key"
+rm -f -- "$work/cfg-a/settings.json"
+mkdir -p "$work/proj/.claude"; cp -- "$work/key-settings.json" "$work/proj/.claude/settings.local.json"
+check "the project's settings.local.json in the call's folder holds a key" \
+  "$(jq -nc --arg s "$OSID" --arg d "$work/proj" '{session_id: $s, cwd: $d, hook_event_name: "PreToolUse", tool_name: "Bash", tool_input: {command: "claude --model opus"}}' | bash "$GUARD" | jq -r .hookSpecificOutput.permissionDecision)" "deny"
+check "the npm package name is claude too" "$(run 'ANTHROPIC_API_KEY=sk npx @anthropic-ai/claude-code')" "deny:api-key"
 
 reg=$FLEET_STATE/panes.tsv
 check "an edit with no loop running: allowed" "$(run "sed -i '/old/d' $reg")" "allow"
@@ -278,7 +309,7 @@ for g in cold-limit pending-input hidden; do
     pending-input) cmd="$T send-keys -t $typing2 go" ;;
     hidden) cmd="$T source-file $work/x.conf" ;;
   esac
-  check "mutant $g: the case it guards now passes" "$(PATH="$work/orch-bin-mut:$PATH" TMUX_PANE=$orchp bash -c "$cmd" 2>&1 | grep '^orch-guard (')" ""
+  check "mutant $g: the case it guards now passes" "$(in_claude "$orchp" "$work/orch-bin-mut" "$cmd" 2>&1 | grep '^orch-guard (')" ""
   check "unmutated: the same case is refused" "$(as_heph "$cmd")" "refused:$g"
 done
 cp -- "$here/orch-tmux.sh" "$mut/orch-tmux.sh"
