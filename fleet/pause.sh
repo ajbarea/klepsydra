@@ -89,7 +89,11 @@ unpause_now() {
     { refuse "panes.tsv already has a row named $name"; return 1; }
   # Back as it was, and named in unpaused.tsv: its old session ended (pause
   # wants it ended), and fleet recover launches it fresh, with that session's
-  # last replies as its hint.
+  # last replies as its hint. Its pane id is a past server's, so it holds none
+  # (#261 review 10: a stale id named a live agent's pane twice).
+  local old_pane
+  old_pane=$(cut -f1 <<<"$row")
+  row="-${row#"$old_pane"}"
   printf '%s\t%s\t%s\n' "$name" "$(cut -f4 <<<"$row")" "$(date -Is)" >>"${FLEET_UNPAUSED:-$FLEET_STATE/unpaused.tsv}" ||
     { failed "${FLEET_UNPAUSED:-$FLEET_STATE/unpaused.tsv}" "could not record the unpause; nothing changed"; return 1; }
   printf '%s\n' "$row" >>"$REGISTRY" ||
@@ -98,7 +102,7 @@ unpause_now() {
     failed "$PAUSED" "the row is back in panes.tsv but still in paused.tsv; remove its paused.tsv line by hand"
     return 1
   fi
-  flog INFO "agent unpaused" name="$name" pane="$(cut -f1 <<<"$row")"
+  flog INFO "agent unpaused" name="$name" old_pane="$old_pane"
   echo "unpaused: $name: fleet recover launches it fresh from its brief"
 }
 

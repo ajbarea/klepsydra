@@ -760,8 +760,10 @@ fresh() { # PANE NAME BRIEF [WHY] [ACCOUNT] [NOTE] [STAMP]
   # account said to have room) stopped by a limit, the old pane stays.
   if [[ $got == NOT-DELIVERED || ( -n $account && $got != started ) ]]; then
     flog ERROR "fresh session's brief did not start; the old pane stays and the new one goes" pane="$p" new_pane="$new" name="$name" brief="$got"
-    retire "$new" interrupt
+    # The row first: the new session's /exit ends it, and the fleet hook records
+    # a finish for whichever row names it at that moment (#261 review 10).
     with_registry set_pane "$new" "$p" "$sid" "$cfg"
+    retire "$new" interrupt
     [[ $got == blocked-by-limit ]] && return 5
     return 3
   fi
@@ -770,14 +772,21 @@ fresh() { # PANE NAME BRIEF [WHY] [ACCOUNT] [NOTE] [STAMP]
   now_s=$(screen "$p")
   if ! pane_runs "$p" "$sid" || busy "$now_s" || ! has_input_box "$now_s" || [[ $(input_text "$now_s") != "$box" || $(prompt_stamp "$p") != "$stamp" ]]; then
     flog ERROR "the old pane changed while its fresh session launched; the old one stays and the new one goes" pane="$p" new_pane="$new" name="$name"
-    retire "$new" interrupt
     with_registry set_pane "$new" "$p" "$sid" "$cfg"
+    retire "$new" interrupt
     return 4
   fi
   # The note went into the new brief; one C-c clears it from the old box.
   if [[ -n $box ]]; then
     t send-keys -t "$p" C-c
     wait_for "$p" 5 idle_empty || true
+  fi
+  # The old session ends only once its row names the new one, or its /exit
+  # would record the agent itself as finished (#261 review 10).
+  if ! awk -F'\t' -v n="$new" '$1 == n { f = 1 } END { exit !f }' "$REGISTRY"; then
+    flog ERROR "the fresh session's row was not registered; the old pane stays and the new one goes" pane="$p" new_pane="$new" name="$name"
+    retire "$new" interrupt
+    return 3
   fi
   retire_into "$p" "$new" ||
     flog WARN "the old pane is left running beside its fresh session" pane="$p" new_pane="$new" name="$name"

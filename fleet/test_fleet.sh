@@ -327,6 +327,73 @@ check "round 3: nothing is typed into the pane AJ took back" "$(grep -c '^SUBMIT
 check "logged as an error" "$(jq -r 'select(.level == "ERROR") | .message' "$FLEET_LOG" | grep -c 'the old pane changed while its fresh session launched')" "1"
 t kill-window -t "$p"; : >"$REGISTRY"
 
+# #261 review 10: the new session's /exit runs the fleet hook's SessionEnd,
+# which records a finish for the row naming that session. The rollback points
+# the row back first, so the agent itself is never recorded finished.
+: >"$FLEET_LOG"; rm -f -- "$FLEET_STATE/finished.tsv"
+p=$(pane rolled "{\"above\":[\"⏺ Done. done 9:00 AM\",\"$LIMIT\"]}"); settle
+live "$p"
+printf '%s\trolled\t%s\t%s\t/w\n' "$p" "$work/brief.src" "$SID" >"$REGISTRY"
+NSID=bbbbbbbb-0000-4000-8000-0000000000e1
+cat >"$work/launch-undelivered.sh" <<EOF
+#!/usr/bin/env bash
+# A launch whose brief never starts a turn: a new pane, the row repointed at it
+# and its session as launch.sh does, then NOT-DELIVERED.
+printf '%s' '{"exit_on_exit": true, "on_exit": "bash $here/registry-event.sh SessionEnd $NSID prompt_input_exit"}' >"$work/rolled-new.json"
+: >"$work/rolled-new.log"
+n=\$(tmux -L "$FLEET_SOCK" new-window -d -P -F '#{pane_id}' -t fleet: "python3 -I $fake $work/rolled-new.json $work/rolled-new.log")
+sleep 0.6
+sed -i "s|^$p\t\([^\t]*\)\t\([^\t]*\)\t$SID|\$n\t\1\t\2\t$NSID|" "$REGISTRY"
+echo "pane=\$n session=$NSID account=x avail=1MiB brief=NOT-DELIVERED"
+EOF
+resume "$(TZ=America/New_York date -d '2026-10-28 09:00' +%s)"
+LAUNCH="$work/launch-undelivered.sh" FLEET_NOW=$(( noon + 4330 )) bash "$here/resume-at-reset.sh" --once 2>/dev/null
+check "#261 review 10: an undelivered brief's rollback: the new pane got /exit, and its end ran the hook" \
+  "$(grep -c 'SUBMIT /exit' "$work/rolled-new.log") $(jq -r 'select(.message == "fresh session'"'"'s brief did not start; the old pane stays and the new one goes") | .name' "$FLEET_LOG")" "1 rolled"
+check "#261 review 10: the row names the old pane and session again, and no finish is recorded" \
+  "$(cut -f1,4 "$REGISTRY") | $(cat "$FLEET_STATE/finished.tsv" 2>/dev/null | grep -c .) | $(session_finished "$SID" && echo finished || echo not-finished)" "$p	$SID | 0 | not-finished"
+t kill-window -t "$p" 2>/dev/null; : >"$REGISTRY"; rm -f -- "$FLEET_STATE/finished.tsv"
+# A launch that started its session but never repointed the row (it could not
+# take the registry lock): the old session must not be retired, or its own
+# /exit would record the agent finished.
+: >"$FLEET_LOG"
+p=$(pane unpointed "{\"above\":[\"⏺ Done. done 9:00 AM\",\"$LIMIT\"],\"exit_on_exit\":true,\"on_exit\":\"bash $here/registry-event.sh SessionEnd $SID prompt_input_exit\"}"); settle
+live "$p"
+printf '%s\tunpointed\t%s\t%s\t/w\n' "$p" "$work/brief.src" "$SID" >"$REGISTRY"
+cat >"$work/launch-unpointed.sh" <<EOF
+#!/usr/bin/env bash
+: >"$work/unpointed-new.log"
+n=\$(tmux -L "$FLEET_SOCK" new-window -d -P -F '#{pane_id}' -t fleet: "python3 -I $fake $work/rolled-new.json $work/unpointed-new.log")
+sleep 0.6
+echo "pane=\$n session=$NSID account=x avail=1MiB brief=started"
+EOF
+resume "$(TZ=America/New_York date -d '2026-10-28 09:00' +%s)"
+LAUNCH="$work/launch-unpointed.sh" FLEET_NOW=$(( noon + 4330 )) bash "$here/resume-at-reset.sh" --once 2>/dev/null
+check "#261 review 10: a row the launch never repointed: the old session stays, the new one goes, no finish" \
+  "$(fleet_panes | grep -cx "$p") $(grep -c 'SUBMIT /exit' "$work/unpointed.log") $(grep -c 'SUBMIT /exit' "$work/unpointed-new.log") | $(cut -f1,4 "$REGISTRY") | $(cat "$FLEET_STATE/finished.tsv" 2>/dev/null | grep -c .)" \
+  "1 0 1 | $p	$SID | 0"
+check "#261 review 10: logged as an error" "$(jq -r 'select(.level == "ERROR") | .message' "$FLEET_LOG" | grep -c "the fresh session's row was not registered")" "1"
+t kill-window -t "$p" 2>/dev/null; : >"$REGISTRY"; rm -f -- "$FLEET_STATE/finished.tsv"
+# The other rollback, AJ typing into the old pane during the launch, in the same order.
+: >"$FLEET_LOG"
+p=$(pane typedin "{\"above\":[\"⏺ Done. done 9:00 AM\",\"$LIMIT\"]}"); settle
+live "$p"
+printf '%s\ttypedin\t%s\t%s\t/w\n' "$p" "$work/brief.src" "$SID" >"$REGISTRY"
+cat >"$work/launch-typedin.sh" <<EOF
+#!/usr/bin/env bash
+: >"$work/typedin-new.log"
+n=\$(tmux -L "$FLEET_SOCK" new-window -d -P -F '#{pane_id}' -t fleet: "python3 -I $fake $work/rolled-new.json $work/typedin-new.log")
+tmux -L "$FLEET_SOCK" send-keys -t "$p" -l "AJ: hold on"
+sleep 1
+sed -i "s|^$p\t\([^\t]*\)\t\([^\t]*\)\t$SID|\$n\t\1\t\2\t$NSID|" "$REGISTRY"
+echo "pane=\$n session=$NSID account=x avail=1MiB brief=started"
+EOF
+resume "$(TZ=America/New_York date -d '2026-10-28 09:00' +%s)"
+LAUNCH="$work/launch-typedin.sh" FLEET_NOW=$(( noon + 4330 )) bash "$here/resume-at-reset.sh" --once 2>/dev/null
+check "#261 review 10: AJ typed during the launch: the new session's end leaves the restored row alone" \
+  "$(grep -c 'SUBMIT /exit' "$work/typedin-new.log") | $(cut -f1,4 "$REGISTRY") | $(cat "$FLEET_STATE/finished.tsv" 2>/dev/null | grep -c .)" "1 | $p	$SID | 0"
+t kill-window -t "$p" 2>/dev/null; : >"$REGISTRY"; rm -f -- "$FLEET_STATE/finished.tsv"
+
 echo "round 4: AJ resumed the old pane during the launch"
 : >"$FLEET_LOG"
 p=$(pane resumed "{\"above\":[\"⏺ Done. done 9:00 AM\",\"$LIMIT\"]}"); settle
@@ -2107,9 +2174,9 @@ check "#246: pause sets a gone agent aside, keeping its row" \
 check "#246: and the note says why" "$(cut -f2 "$FLEET_STATE/paused.tsv" | grep -c 'PAUSED .*: no room yet$')" "1"
 check "#246: pausing it twice is refused" "$(fp pause gone1 again; echo "rc=$?")" $'error: fleet pause: no agent named gone1 in panes.tsv\nrc=1'
 check "#246: a pause needs a reason" "$(fp pause other; echo "rc=$?")" $'error: usage: fleet pause NAME WHY...\nrc=2'
-check "#246: unpause puts the row back as it was, and records the unpause" \
-  "$(fp unpause gone1) | $(grep -c . "$FLEET_STATE/paused.tsv") | $(grep -c -xF "$row1" "$REGISTRY") | $(cut -f1,2 "$FLEET_STATE/unpaused.tsv")" \
-  "unpaused: gone1: fleet recover launches it fresh from its brief | 0 | 1 | gone1	$SG"
+check "#246: unpause puts the row back, its past pane id parked, and records the unpause (#261 review 10)" \
+  "$(fp unpause gone1) | $(grep -c . "$FLEET_STATE/paused.tsv") | $(grep -c -xF -- "-${row1#%41}" "$REGISTRY") $(grep -c '^%41' "$REGISTRY") | $(cut -f1,2 "$FLEET_STATE/unpaused.tsv")" \
+  "unpaused: gone1: fleet recover launches it fresh from its brief | 0 | 1 0 | gone1	$SG"
 rm -f -- "$FLEET_STATE/unpaused.tsv"
 printf '%%43\t01\t/b.src\t%s\n%%44\t1\t/c.src\t%s\n' 33333333-2222-4333-8444-000000000043 33333333-2222-4333-8444-000000000044 >>"$REGISTRY"
 check "#261 review: a name is matched as text, so 1 is not 01" \
