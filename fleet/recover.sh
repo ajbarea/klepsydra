@@ -49,7 +49,7 @@ this_boot_row() { on_this_server "$1"; } # SID
 # worst outcome.
 orch=$(orchestrator) rec=$(cat "$FLEET_STATE/orchestrator.session" 2>/dev/null)
 grep -qxF -- "${rec:-x}" <<<"$agents" && rec="" # a record naming an agent is no Heph's
-# Nor is one naming an agent that ran `fleet done` (its row left panes.tsv, #269).
+# Nor is one finished.tsv names (`fleet done`, #269, or a finish the doctor recorded).
 fin=${FLEET_FINISHED:-$FLEET_STATE/finished.tsv}
 [[ -n $rec ]] && awk -F'\t' -v r="$rec" '$4 == r { f = 1 } END { exit !f }' "$fin" 2>/dev/null && rec=""
 heph_pane="" osid="" heph_unsure=0
@@ -165,13 +165,15 @@ while IFS=$'\t' read -r -u 3 p name brief sid _; do
     cat "$brief"
   } >"$txt"
   stagger
-  new=$(launch "$name" "$txt")
-  new=${new%% *}
+  got=$(launch "$name" "$txt")
+  new=${got%% *}
   echo "recovered: $name -> ${new:-NOT STARTED}"
   [[ -n $new ]] || flog ERROR "recovery launch failed" name="$name" brief="$txt"
-  if [[ -n $new ]] && (( was_paused )); then
-    un=${FLEET_UNPAUSED:-$FLEET_STATE/unpaused.tsv}
-    awk -F'\t' -v s="$sid" '$2 != s' "$un" >"$un.tmp.$$" 2>/dev/null && mv -f -- "$un.tmp.$$" "$un"
+  # The unpause is done once panes.tsv names the new session for the agent
+  # (a launch that could not update the row leaves it to be recovered again).
+  if (( was_paused )) && [[ -n $new && $got == *" "?* ]] &&
+    awk -F'\t' -v n="$name" -v s="${got#* }" '$2 "" == n "" && $4 == s { f = 1 } END { exit !f }' "$REGISTRY" 2>/dev/null; then
+    with_registry drop_unpaused "$sid" || flog WARN "recover: could not clear the unpause record" name="$name" session="$sid"
   fi
 done 3< <(cat "$REGISTRY" 2>/dev/null)
 

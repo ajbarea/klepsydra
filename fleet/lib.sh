@@ -371,8 +371,9 @@ orchestrator() { cat "$FLEET_STATE/orchestrator.pane" 2>/dev/null; }
 HEPH=${FLEET_HEPH:-$FLEET_STATE/HEPH.md}
 fleet_panes() { t list-panes -s -t "$FLEET_SESSION" -F '#{pane_id}' 2>/dev/null; }
 
-# Whether the session live in PANE is one `fleet done` marked finished
-# (finished.tsv: the registry's columns, pane first, session fourth).
+# Whether the session live in PANE is one finished.tsv names (`fleet done`,
+# or a finish the doctor or recover recorded; the registry's columns, pane
+# first, session fourth). The resume service asks it of panes with no row.
 finished_here() { # PANE
   local fin=${FLEET_FINISHED:-$FLEET_STATE/finished.tsv} sid
   # The pane alone first: reading every session file costs far more.
@@ -814,19 +815,24 @@ session_alive() { # SID
   [[ $(proc_start "$pid") == "$start" ]]
 }
 
-# Whether session SID ended cleanly: finished.tsv holds it (`fleet done`, or a
-# finish the doctor or recover recorded on first sight, so it outlives the
-# fleet file, which klepsydra keeps a day), or Claude Code's SessionEnd named a
-# final end: the user's /exit or ctrl-d at the prompt (prompt_input_exit) or a
-# logout (code.claude.com/docs/en/hooks, SessionEnd). The fleet hook also marks
+# Whether session SID ended cleanly. While its fleet file exists, the file
+# decides: Claude Code's SessionEnd named a final end, the user's /exit or
+# ctrl-d at the prompt (prompt_input_exit) or a logout (code.claude.com/docs/
+# en/hooks, SessionEnd), so a session resumed under the same id after a
+# recorded finish is no longer finished. Once klepsydra drops the file (a day
+# after the end), finished.tsv decides: `fleet done`, or a finish the doctor or
+# recover recorded on first sight. The fleet hook also marks
 # ended a session it finds dead ("gone", on every SessionStart after a hard
 # shutdown), and SessionEnd says "clear" and "resume" for a session that goes
 # on under a new id; those, "other" and any reason unknown here are no finish.
 session_finished() { # SID
   local f
   [[ $1 =~ ^[0-9a-f-]{36}$ ]] || return 1
-  awk -F'\t' -v s="$1" '$4 == s { f = 1 } END { exit !f }' "${FLEET_FINISHED:-$FLEET_STATE/finished.tsv}" 2>/dev/null && return 0
   f=$KLEPSYDRA_DIR/fleet/$1.json
+  if [[ ! -e $f ]]; then
+    awk -F'\t' -v s="$1" '$4 == s { f = 1 } END { exit !f }' "${FLEET_FINISHED:-$FLEET_STATE/finished.tsv}" 2>/dev/null
+    return
+  fi
   [[ -f $f && ! -L $f ]] || return 1
   jq -e '(.ended | type) == "object" and ((.ended.reason // "") | IN("prompt_input_exit", "logout"))' "$f" >/dev/null 2>&1
 }
@@ -843,9 +849,21 @@ record_finished() { # ROW
 }
 
 # Whether `fleet unpause` put the row with session SID back: it is to be
-# launched again, whatever its old session's end said.
+# launched again, whatever its old session's end said. unpaused.tsv: name,
+# session, time; written and rewritten under the registry lock.
 unpaused() { # SID
   [[ -n $1 ]] && awk -F'\t' -v s="$1" '$2 == s { f = 1 } END { exit !f }' "${FLEET_UNPAUSED:-$FLEET_STATE/unpaused.tsv}" 2>/dev/null
+}
+
+# Forget the unpause of session SID once its agent runs again (under the
+# registry lock: with_registry drop_unpaused SID).
+drop_unpaused() { # SID
+  local un=${FLEET_UNPAUSED:-$FLEET_STATE/unpaused.tsv} tmp
+  [[ -e $un ]] || return 0
+  tmp=$(mktemp "$un.XXXXXX") || return 1
+  if awk -F'\t' -v s="$1" '$2 != s' "$un" >"$tmp" && mv -f -- "$tmp" "$un"; then return 0; fi
+  rm -f -- "${tmp:?}"
+  return 1
 }
 
 # The live fleet sessions, one "PANE<tab>SID<tab>ON_FLEET" each: alive by

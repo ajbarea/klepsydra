@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # done.sh [NAME]: mark a fleet agent finished. Its row leaves panes.tsv for
-# finished.tsv (with the time), so no relaunch path takes it again: the resume
+# finished.tsv (with the time; the doctor and recover also record there a
+# finish they see, while the row stays until `fleet doctor --prune`), so no
+# relaunch path takes it again: the resume
 # service, fleet recover, fresh-now and the doctor all need a panes.tsv row
 # before they act, and an expected exit is never restarted (#269). With no
 # NAME, the row of the fleet pane it runs in (TMUX_PANE on the fleet's tmux

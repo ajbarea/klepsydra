@@ -2005,6 +2005,7 @@ printf '%%43\t01\t/b.src\n%%44\t1\t/c.src\n' >>"$REGISTRY"
 check "#261 review: a name is matched as text, so 1 is not 01" \
   "$(fp pause 1 numbers; cut -f2 "$REGISTRY" | grep -cx 01; cut -f1 "$FLEET_STATE/paused.tsv")" $'paused: 1 (%44): fleet unpause 1 brings it back\n1\n1'
 fp unpause 1 >/dev/null; awk -F'\t' '$2 "" != "01" && $2 "" != "1"' "$REGISTRY" >"$work/reg.tmp" && mv -f -- "$work/reg.tmp" "$REGISTRY"
+rm -f -- "$FLEET_STATE/unpaused.tsv"
 printf 'byhand\tPAUSED 10-28 by Heph\n' >"$FLEET_STATE/paused.tsv"
 check "#246: a row paused by hand, with nothing saved, is refused, not invented" \
   "$(fp unpause byhand | grep -c 'paused by hand, with no saved row'; grep -c . "$FLEET_STATE/paused.tsv")" $'1\n1'
@@ -2247,6 +2248,7 @@ out=$(bash "$here/doctor.sh" --prune 2>/dev/null); rc=$?
 check "--prune drops only the finished row and keeps a backup" \
   "$rc|$(head -1 <<<"$out")|$(cut -f2 "$REGISTRY" | tr '\n' ' ')|$(find "$FLEET_STATE" -maxdepth 1 -name 'panes.tsv.bak-*' | wc -l)|$(grep -c $'\td\t' "$(find "$FLEET_STATE" -maxdepth 1 -name 'panes.tsv.bak-*' | head -1)")" \
   "0|pruned: d (%4)|a b c g |1|1"
+check "#261 review 3: --prune records each finish before its row goes" "$(grep -c "$SF" "$FLEET_STATE/finished.tsv" 2>/dev/null)" "1"
 check "#261 review: --prune says where the backup is" "$(grep -c '^backup: .*panes.tsv.bak-' <<<"$out") $(grep -c 'command not found' <<<"$out")" "1 0"
 check "a second --prune finds nothing" "$(bash "$here/doctor.sh" --prune 2>/dev/null)" "nothing to prune: no finished agent's row in panes.tsv"
 check "--prune never touches a lost or running row" "$(diff <(cut -f1-4 "$work/reg-before-220") <(awk -F'\t' '$2 != "g"' "$REGISTRY" | cut -f1-4) && echo same)" "same"
@@ -2261,11 +2263,41 @@ bash "$here/doctor.sh" >/dev/null 2>&1
 rm -f -- "$KLEPSYDRA_DIR/fleet/$SD.json"
 check "#261 review 2: a finished row stays finished once its session's file is gone" \
   "$(row_state %7 "$SD") | $(rec --dry-run --no-orchestrator | grep -E '^(finished|would recover): fin' | sed 's/ (.*//')" "finished | finished: fin"
+# A recorded finish gives way to the session's own file while it exists: one
+# resumed under the same id, then stopped by a shutdown, is gone, not finished.
+SRS=aaaaaaaa-0000-4000-8000-0000000000e8
+sfile "$SRS" 4242 777 "$NOWBOOT" %6; ended "$SRS"
+printf '%s\tres\t%s\t%s\t/w\n' %6 "$work/bc.src" "$SRS" >>"$REGISTRY"
+bash "$here/doctor.sh" >/dev/null 2>&1
+sfile "$SRS" 4242 777 "$NOWBOOT" %6; ended "$SRS" gone
+check "#261 review 3: a resumed session that a shutdown stopped is gone, though its finish was recorded" \
+  "$(grep -c "$SRS" "$FLEET_STATE/finished.tsv") $(row_state %6 "$SRS") | $(rec --dry-run --no-orchestrator | grep -E '^(finished|would recover): res' | sed 's/ (.*//')" "1 gone | would recover: res"
+awk -F'\t' '$2 != "res"' "$REGISTRY" >"$work/reg.tmp" && mv -f -- "$work/reg.tmp" "$REGISTRY"
+rm -f -- "$KLEPSYDRA_DIR/fleet/$SRS.json"
 # Paused when its session had ended with /exit, then unpaused: recover launches it.
 FLEET_PAUSED=$work/p2.tsv bash "$here/pause.sh" pause fin because >/dev/null 2>&1
 FLEET_PAUSED=$work/p2.tsv bash "$here/pause.sh" unpause fin >/dev/null 2>&1
 check "#261 review 2: a paused, then unpaused, finished agent is relaunched by recover" \
   "$(row_state %7 "$SD") | $(rec --dry-run --no-orchestrator | grep -E '^(finished|would recover): fin' | sed 's/ (.*//')" "gone | would recover: fin"
+# The real recover of that unpaused agent, with a stub launch: a launch that
+# fails keeps the unpause, one that starts the agent (and repoints its row, as
+# launch.sh does) clears it, and its brief says it was paused.
+NEWS=aaaaaaaa-0000-4000-8000-0000000000e9
+cat >"$work/launch-up.sh" <<EOF
+#!/usr/bin/env bash
+cp -- "\$2" "$work/up-brief"
+[[ -e "$work/up-fail" ]] && exit 1
+awk -F'\t' -v OFS='\t' '\$2 == "fin" { \$1 = "%95"; \$4 = "$NEWS" } 1' "$REGISTRY" >"$work/up.tmp" && mv -f -- "$work/up.tmp" "$REGISTRY"
+echo "pane=%95 session=$NEWS account=x avail=1MiB brief=started"
+EOF
+chmod +x "$work/launch-up.sh"
+touch "$work/up-fail"
+LAUNCH="$work/launch-up.sh" FLEET_STAGGER_S=0 bash "$here/recover.sh" --no-orchestrator >/dev/null 2>&1
+check "#261 review 3: a failed relaunch of an unpaused agent keeps its unpause" "$(cut -f1 "$FLEET_STATE/unpaused.tsv")" "fin"
+rm -f -- "$work/up-fail"
+LAUNCH="$work/launch-up.sh" FLEET_STAGGER_S=0 bash "$here/recover.sh" --no-orchestrator >/dev/null 2>&1
+check "#261 review 3: a relaunch that starts it clears the unpause, and its brief says it was paused" \
+  "$(grep -c . "$FLEET_STATE/unpaused.tsv") $(grep -c 'set aside with fleet pause' "$work/up-brief") $(awk -F'\t' '$2 == "fin" { print $4 }' "$REGISTRY")" "0 1 $NEWS"
 awk -F'\t' '$2 != "fin"' "$REGISTRY" >"$work/reg.tmp" && mv -f -- "$work/reg.tmp" "$REGISTRY"
 rm -f -- "$FLEET_STATE/finished.tsv" "$FLEET_STATE/unpaused.tsv" "$work/p2.tsv"
 # The successor is read from the fleet's own sessions: one with the same pane

@@ -8,7 +8,9 @@
 # Tailscale Serve; its usage readings are fresh (observed in the last 2
 # minutes) while some pane is mid-turn, the only time a session refreshes them;
 # a pane watcher is running, unless every live agent waits out a usage limit;
-# paused agents (paused.tsv) are listed; each config folder in FLEET_ACCOUNTS
+# paused agents (paused.tsv) are listed; each registered agent gets one verdict
+# (running, finished, gone), and a finish is recorded in finished.tsv the first
+# time it is seen, while the row stays until --prune; each config folder in FLEET_ACCOUNTS
 # is logged in and the second ones match the first; the copies in ~/.claude
 # (hooks, status line, launcher, cast) match the checkout. Briefs whose shared rules
 # are out of date, and a second folder not logged in, are warnings.
@@ -71,7 +73,12 @@ finished_rows() {
 # Drop the rows finished_rows named from panes.tsv, keeping a backup.
 # shellcheck disable=SC2329 # run through with_registry
 prune_now() { # PANE/SID...
-  local tmp bak
+  local tmp bak key row
+  # Each finish is recorded before its row goes, as on a plain run.
+  for key in "$@"; do
+    row=$(awk -F'\t' -v p="${key%%/*}" -v s="${key#*/}" '$1 == p && $4 == s { print; exit }' "$REGISTRY")
+    [[ -n $row ]] && { record_finished "$row" || return 1; }
+  done
   bak=$REGISTRY.bak-$(date +%Y%m%d-%H%M%S)
   cp -p -- "$REGISTRY" "$bak" || return 1
   tmp=$(mktemp "$REGISTRY.XXXXXX") || return 1
