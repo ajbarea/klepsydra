@@ -621,6 +621,12 @@ tmux -L "$ss" kill-server 2>/dev/null; : >"$work/systemd-run.calls"
 out=$(env -u INVOCATION_ID KLEPSYDRA_SYSTEMD_RUN="$work/bin/systemd-run" KLEPSYDRA_TMUX_SOCKET="$ss" bash "$launch" new "$work/repos" 2>&1); rc=$?
 check "#292 review: from a terminal, as before: no scope" "$rc $(wc -l <"$work/systemd-run.calls")" "0 0"
 tmux -L "$ss" kill-server 2>/dev/null
+# A CI runner is a systemd service with no user manager: systemd-run fails.
+printf '#!/usr/bin/env bash\necho "Failed to connect to bus" >&2\nexit 1\n' >"$work/bin/systemd-run-nobus"; chmod +x "$work/bin/systemd-run-nobus"
+out=$(INVOCATION_ID=abc KLEPSYDRA_SYSTEMD_RUN="$work/bin/systemd-run-nobus" KLEPSYDRA_TMUX_SOCKET="$ss" bash "$launch" new "$work/repos" 2>&1); rc=$?
+check "#292 review: with no user manager to make a scope, the server starts as from a terminal" \
+  "$rc $(tmux -L "$ss" list-sessions -F '#{session_name}' 2>/dev/null)" "0 fleet"
+tmux -L "$ss" kill-server 2>/dev/null
 
 echo "the pane-died hook (#290)"
 # The 11-03 crash: tmux 3.4 sent focus-out to a pane whose process had ended

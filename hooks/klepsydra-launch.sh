@@ -132,8 +132,13 @@ new() { # dir
     if [[ -n ${INVOCATION_ID:-} ]] && command -v "${KLEPSYDRA_SYSTEMD_RUN:-systemd-run}" >/dev/null 2>&1; then
       scope=("${KLEPSYDRA_SYSTEMD_RUN:-systemd-run}" --user --scope --quiet --collect --unit="klepsydra-tmux-$$" --)
     fi
-    "${scope[@]}" tmux "${t[@]}" "${conf[@]}" new-session -d -s "$SESSION" -c "$dir" "$CLAUDE" {LOCKFD}>&- 2>/dev/null ||
-      fail "tmux could not start the fleet session."
+    # A unit with no user manager to ask (a CI runner sets INVOCATION_ID too)
+    # makes no scope: the server then starts as from a terminal.
+    if ! { (( ${#scope[@]} )) && "${scope[@]}" tmux "${t[@]}" "${conf[@]}" new-session -d -s "$SESSION" -c "$dir" "$CLAUDE" {LOCKFD}>&- 2>/dev/null; } &&
+      ! tmux "${t[@]}" has-session -t "$target" 2>/dev/null; then
+      tmux "${t[@]}" "${conf[@]}" new-session -d -s "$SESSION" -c "$dir" "$CLAUDE" {LOCKFD}>&- 2>/dev/null ||
+        fail "tmux could not start the fleet session."
+    fi
     UNDO=(tmux "${t[@]}" kill-session -t "$target")
   fi
   if (( ! shown )); then
