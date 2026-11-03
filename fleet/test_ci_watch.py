@@ -3,7 +3,9 @@
 import http.server
 import json
 import os
+import shlex
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -602,10 +604,10 @@ class Route(unittest.TestCase):
         ci_watch.poll("o", ["r"], Fake([run(5)]), known)
         self.assertEqual((self.alerts(), self.triaged), ([], []))
 
-    def test_a_watcher_killed_while_waking_loses_no_alert(self):
-        """A watcher killed as it formats a wake line must leave the line unread,
-        so the next watcher is woken by it (main red, 11-03: a $(ci_wake)
-        subshell outlived its killed watcher and marked the alert read)."""
+    def _kill_watcher_inside(self, stall):
+        """Run a watcher on one waking alert, kill its bash once a jq call whose
+        arguments hold `stall` has started (a shim stalls it 3 s and touches a
+        marker first), and return (what it printed, the seen count left)."""
         state = TMP / "state"
         (state / "ci").mkdir(parents=True, exist_ok=True)
         (state / "ci" / "alerts.seen").write_text("0\n")
@@ -614,11 +616,12 @@ class Route(unittest.TestCase):
         )
         slow = TMP / "slowbin"
         slow.mkdir(exist_ok=True)
-        real = shutil.which("jq")
+        marker = TMP / "stalled"
+        marker.unlink(missing_ok=True)
         (slow / "jq").write_text(
             "#!/usr/bin/env bash\n"
-            'case "$*" in *ascii_upcase*) sleep 3 ;; esac\n'
-            f'exec {real} "$@"\n'
+            f'case "$*" in *{shlex.quote(stall)}*) touch {shlex.quote(str(marker))}; sleep 3 ;; esac\n'
+            f'exec {shlex.quote(shutil.which("jq"))} "$@"\n'
         )
         (slow / "jq").chmod(0o755)
         env = os.environ | {"FLEET_SOCK": f"ci-kill-{os.getpid()}", "WATCH_TICK": "0.1"}
@@ -629,15 +632,67 @@ class Route(unittest.TestCase):
             stderr=subprocess.DEVNULL,
             start_new_session=True,
         )
-        time.sleep(1.5)  # inside the slow format of the wake line
-        first.kill()
-        first.communicate()
-        time.sleep(3)  # anything it left behind has finished by now
-        self.assertEqual((state / "ci" / "alerts.seen").read_text().strip(), "0", "the line stays unread")
-        got = subprocess.run(
-            ["bash", str(HERE / "watch-panes.sh")], env=env, capture_output=True, text=True, timeout=30
+        try:
+            deadline = time.monotonic() + 30
+            while not marker.exists():
+                self.assertIsNone(first.poll(), "the watcher ended before the stall")
+                self.assertLess(
+                    time.monotonic(), deadline, "the watcher never reached the stall"
+                )
+                time.sleep(0.05)
+            first.kill()  # bash only: a subshell it forked would live on, as in the fleet
+            out = first.communicate()[0].decode().strip()
+            time.sleep(3.5)  # anything it left behind has finished by now
+        finally:
+            try:
+                os.killpg(first.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        self.env = env
+        return out, (state / "ci" / "alerts.seen").read_text().strip()
+
+    def _next_watcher(self):
+        return subprocess.run(
+            ["bash", str(HERE / "watch-panes.sh")],
+            env=self.env,
+            capture_output=True,
+            text=True,
+            timeout=30,
         ).stdout.strip()
-        self.assertEqual(got, "CI HEPH r main: red", "the next watcher is woken by it")
+
+    def test_a_watcher_killed_while_waking_loses_no_alert(self):
+        """A watcher killed as it formats a wake line must leave the line unread,
+        so the next watcher is woken by it (main red, 11-03: a $(ci_wake)
+        subshell outlived its killed watcher and marked the alert read)."""
+        out, seen = self._kill_watcher_inside("ascii_upcase")
+        self.assertEqual(
+            (out, seen), ("", "0"), "nothing printed, and the line stays unread"
+        )
+        self.assertEqual(
+            self._next_watcher(),
+            "CI HEPH r main: red",
+            "the next watcher is woken by it",
+        )
+
+    def test_a_watcher_killed_after_waking_has_printed_its_alert(self):
+        """Killed while it logs the wake, the watcher has already printed it: an
+        alert is printed before it is marked read, never the other way round."""
+        out, seen = self._kill_watcher_inside("CI alert for the orchestrator")
+        self.assertEqual(out, "CI HEPH r main: red", "printed before the kill")
+        self.assertEqual(seen, "1", "and then marked read, so it wakes nobody twice")
+
+    def test_an_alert_with_no_kind_still_wakes_with_text(self):
+        state = TMP / "state"
+        (state / "ci").mkdir(parents=True, exist_ok=True)
+        (state / "ci" / "alerts.seen").write_text("0\n")
+        (state / "ci" / "alerts.jsonl").write_text(
+            '{"wake": true, "repo": "r", "branch": "b", "text": "red"}\n'
+        )
+        self.env = os.environ | {
+            "FLEET_SOCK": f"ci-nokind-{os.getpid()}",
+            "WATCH_TICK": "0.1",
+        }
+        self.assertEqual(self._next_watcher(), "CI ALERT r b: red")
 
     def test_the_watcher_wakes_on_heph_lines_only_and_never_twice(self):
         state = TMP / "state"
