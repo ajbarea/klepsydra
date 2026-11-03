@@ -143,9 +143,27 @@ def headless(cmd):
     return False
 
 
+# Programs that name claude without running it.
+READERS = {"grep", "egrep", "fgrep", "rg", "pgrep", "pkill", "ps", "cat", "less", "echo", "printf", "man", "which",
+           "type", "ls", "find", "head", "tail", "wc", "jq", "awk", "sed", "git", "gh"}  # fmt: skip
+
+
+def runs_claude(cmd):
+    """Whether a piece of the command may run claude: claude is one of its words
+    (behind any wrapper, such as timeout or nice) and its program is no reader
+    (a grep or pgrep naming it), or it runs the claude-code package."""
+    for piece in SPLIT.split(cmd.replace("\\\n", " ")):
+        words = [os.path.basename(w.strip("'\"\\")) for w in piece.split()]
+        if "@anthropic-ai/claude-code" in piece or (
+            "claude" in words and program(piece) not in READERS
+        ):
+            return True
+    return False
+
+
 def claude(cmd, out):
     launcher = LAUNCHER.search(cmd)
-    if not (CLAUDE_WORD.search(cmd) or launcher):
+    if not (runs_claude(cmd) or launcher):
         return
     signal = None
     m = KEY_ENV.search(cmd)

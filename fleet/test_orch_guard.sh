@@ -56,8 +56,9 @@ export FLEET_NOW
 # The orchestrator: its pane on record, and its PATH with the guard's tmux first.
 orchp=$(t new-window -d -P -F '#{pane_id}' -t fleet: 'sleep 100000')
 printf '%s\n' "$orchp" >"$FLEET_STATE/orchestrator.pane"
-mkdir -p "$work/orch-bin"
-ln -s "$here/orch-tmux.sh" "$work/orch-bin/tmux"
+# The guard's tmux sits in the state folder's orch-bin/, as install.sh puts it.
+mkdir -p "$FLEET_STATE/orch-bin" "$FLEET_STATE/guard"
+ln -s "$here/orch-tmux.sh" "$FLEET_STATE/orch-bin/tmux"
 # A Claude Code session in pane PANE runs COMMAND as its Bash tool does: a
 # process named claude, with TMUX_PANE in its own environment, is the parent.
 in_claude() { # PANE BIN COMMAND
@@ -65,9 +66,12 @@ in_claude() { # PANE BIN COMMAND
 }
 # as_heph COMMAND: COMMAND run as the orchestrator's Bash runs it; prints ok
 # or refused:<guard>, with the refusal's text in $(why).
+# The guard reads its clock only from its own folder (FLEET_NOW in the
+# environment moves nothing), so each call writes the test's time there.
 as_heph() {
   local rc
-  in_claude "$orchp" "$work/orch-bin" "$1" >/dev/null 2>"$work/err"; rc=$?
+  printf '%s\n' "$FLEET_NOW" >"$FLEET_STATE/guard/test-now"
+  in_claude "$orchp" "$FLEET_STATE/orch-bin" "$1" >/dev/null 2>"$work/err"; rc=$?
   if grep -q '^orch-guard (' "$work/err"; then
     sed -n 's/^orch-guard (\([a-z-]*\)).*/refused:\1/p' "$work/err" | head -1
   elif (( rc == 0 )); then echo ok
@@ -115,13 +119,15 @@ check "a limit that appears during a wait is seen at the send" "$(as_heph "sleep
 wait
 check "a target no pane answers to: refused" "$(as_heph "$T send-keys -t %9999 hi")" "refused:unknown"
 check "no -t is the orchestrator's own pane" "$(as_heph "$T send-keys -t $orchp hi")" "ok"
-check "another session's calls are never checked" "$(in_claude "$warm" "$work/orch-bin" "$T send-keys -t $cold x" 2>&1 && echo ok)" "ok"
-t send-keys -t "$cold" C-u
-check "no Claude Code session and no orchestrator pane: never checked" "$(PATH="$work/orch-bin:$PATH" TMUX_PANE=$warm bash -c "$T display -p -t $cold '#{pane_id}'" 2>&1)" "$cold"
+# Only the orchestrator's PATH holds orch-bin (launch.sh, for heph): whatever
+# reaches it is the orchestrator's, whatever its environment says.
+for e in "FRESH_AFTER_S=999999" "FLEET_NOW=0" "FLEET_STATE=/nonexistent" "TMUX_PANE=$warm" "ORCH_GUARD_OWN_S=99999"; do
+  check "the guard's own settings hold ($e in front): refused" "$(as_heph "$e $T send-keys -t $cold go")" "refused:cold-limit"
+done
 # Round 4: a job left running in the background loses its Claude Code parent,
 # but keeps the orchestrator's TMUX_PANE, so it is still the orchestrator's.
-check "with the orchestrator's pane and no Claude Code above (a background job): checked" \
-  "$(PATH="$work/orch-bin:$PATH" TMUX_PANE=$orchp bash -c "$T send-keys -t $cold go" 2>&1 | grep -o 'orch-guard (cold-limit)')" "orch-guard (cold-limit)"
+check "with no Claude Code above (a background job): checked" \
+  "$(PATH="$FLEET_STATE/orch-bin:$PATH" env -u TMUX_PANE bash -c "$T send-keys -t $cold go" 2>&1 | grep -o 'orch-guard (cold-limit)')" "orch-guard (cold-limit)"
 for bg in "( sleep 0.3; $T send-keys -t $cold orphan Enter ) &" "nohup sh -c 'sleep 0.3; $T send-keys -t $cold orphan Enter' >/dev/null 2>&1 &" \
   "setsid -f sh -c 'sleep 0.3; $T send-keys -t $cold orphan Enter' >/dev/null 2>&1"; do
   as_heph "$bg" >/dev/null; sleep 1.2
@@ -151,6 +157,17 @@ check "a first task into an empty box: allowed" "$(as_heph "$T send-keys -t $mix
 printf '%s' '{"above":["⏺ Done. done 10:20 AM"],"input":"AJ: wait, stop"}' >"$work/mix.json"; settle
 check "AJ's line replacing it 90 s later is not the orchestrator's own" "$(FLEET_NOW=$((FLEET_NOW + 90)) as_heph "$T send-keys -t $mix 'second task' Enter")" "refused:pending-input"
 check "and nothing merged into it" "$(got_keys mix)" "0"
+# A paste is the orchestrator's own text: its own Enter after it is allowed,
+# also when Claude Code shows the paste as a placeholder.
+pst=$(pane pst '{"above":["⏺ Done. done 10:20 AM"]}'); settle
+t set-buffer -b brief 'line one of the brief'
+check "a paste into an empty box: allowed" "$(as_heph "$T paste-buffer -p -b brief -t $pst")" "ok"
+printf '%s' '{"above":["⏺ Done. done 10:20 AM"],"input":"[Pasted text #1 +3 lines]"}' >"$work/pst.json"; settle
+check "its own Enter on the paste's placeholder: allowed" "$(as_heph "$T send-keys -t $pst Enter")" "ok"
+rep2=$(pane rep2 '{"above":["⏺ Done. done 10:20 AM"]}'); settle
+as_heph "$T send-keys -N 3 -t $rep2 ab" >/dev/null
+printf '%s' '{"above":["⏺ Done. done 10:20 AM"],"input":"ababab"}' >"$work/rep2.json"; settle
+check "keys repeated with -N are its own: allowed" "$(as_heph "$T send-keys -t $rep2 Enter")" "ok"
 # A pane only named in a message is not typed into, so it is not stamped own.
 named=$(pane named '{"above":["⏺ Done. done 10:20 AM"]}'); settle
 as_heph "$T send-keys -t $warm 'Hermes in $named is done' Enter" >/dev/null
@@ -170,6 +187,16 @@ for hidden in "source-file $work/x.conf" "source $work/x.conf" "run-shell '$T se
 done
 check "and nothing reached the pane" "$(got_keys cold)" "0"
 check "pipe-pane with no command (it stops a pipe): allowed" "$(as_heph "$T pipe-pane -t $warm")" "ok"
+nodone=$(pane nodone "{\"above\":[\"⏺ Working on it\",\"$LIMIT\"]}")
+shell=$(t new-window -d -P -F '#{pane_id}' -t fleet: 'sleep 100000'); settle
+check "a pane at a limit with no stop time on screen: refused" "$(as_heph "$T send-keys -t $nodone go")" "refused:unknown"
+check "a pane with no input line: refused" "$(as_heph "$T send-keys -t $shell ls Enter")" "refused:unknown"
+check "a pane with no input line, when AJ asked: allowed" "$(as_heph "ORCH_GUARD_ALLOW=pending-input $T send-keys -t $shell true Enter")" "ok"
+check "#( in the keys send-keys types is text: allowed" "$(as_heph "$T send-keys -t $warm -l 'look #(here)'")" "ok"
+t send-keys -t "$warm" C-u
+t set -s 'command-alias[99]' 'zzz=run-shell' 2>/dev/null
+check "a name the server aliases: refused" "$(as_heph "$T zzz true")" "refused:unknown"
+t set -su 'command-alias[99]' 2>/dev/null
 sock_path=$(t display -p '#{socket_path}')
 for f in "send-keys -K -t $warm x" "send-keys -X cancel -t $warm" "send-keys -c /dev/pts/0 -t $warm x" "send-keys -M -t $warm" \
   "display-message -I -t $warm" "kill-pane -a -t $warm" "kill-window -a -t $warm"; do
@@ -179,14 +206,16 @@ check "split-pane (a default alias): refused as unknown" "$(as_heph "$T split-pa
 check "-S to the real server and -L to none: checked where tmux sends" "$(as_heph "tmux -S $sock_path -L bogus-$$ send-keys -t $cold go")" "refused:cold-limit"
 
 echo "fleet scripts send with their own checks"
-mkdir -p "$work/fleetcopy" "$work/elsewhere"
+mkdir -p "$work/fleetcopy" "$work/elsewhere" "$work/state2/orch-bin" "$work/state2/guard"
 cp -- "$here/orch-tmux.sh" "$here/lib.sh" "$work/fleetcopy/"
-mkdir -p "$work/orch-bin2"
-ln -s "$work/fleetcopy/orch-tmux.sh" "$work/orch-bin2/tmux"
+ln -s "$work/fleetcopy/orch-tmux.sh" "$work/state2/orch-bin/tmux"
+printf '%s\n' "$orchp" >"$work/state2/orchestrator.pane"; printf '%s\n' "$FLEET_NOW" >"$work/state2/guard/test-now"
 cold2=$(pane cold2 "{\"above\":[\"⏺ Done. done 9:00 AM\",\"$LIMIT\"]}"); settle
 printf '#!/usr/bin/env bash\n%s send-keys -t %s /clear\n' "$T" "$cold2" | tee "$work/fleetcopy/fresh-now.sh" >"$work/elsewhere/fresh-now.sh"
-check "the script outside the fleet folder is checked" "$(in_claude "$orchp" "$work/orch-bin2" "bash $work/elsewhere/fresh-now.sh" 2>&1 | grep -o 'orch-guard (cold-limit)')" "orch-guard (cold-limit)"
-check "the same script in the fleet folder passes" "$(in_claude "$orchp" "$work/orch-bin2" "bash $work/fleetcopy/fresh-now.sh" 2>&1 && echo ok)" "ok"
+check "the script outside the fleet folder is checked" "$(in_claude "$orchp" "$work/state2/orch-bin" "bash $work/elsewhere/fresh-now.sh" 2>&1 | grep -o 'orch-guard (cold-limit)')" "orch-guard (cold-limit)"
+printf 'import subprocess\nsubprocess.run(["tmux", "-L", "%s", "send-keys", "-t", "%s", "x"], check=True)\n' "$FLEET_SOCK" "$cold2" >"$work/fleetcopy/note.py"
+check "a python script in the fleet folder passes too" "$(in_claude "$orchp" "$work/state2/orch-bin" "python3 $work/fleetcopy/note.py" 2>&1 && echo ok)" "ok"
+check "the same script in the fleet folder passes" "$(in_claude "$orchp" "$work/state2/orch-bin" "bash $work/fleetcopy/fresh-now.sh" 2>&1 && echo ok)" "ok"
 
 echo "before the call (orch-guard.sh, PreToolUse)"
 OSID=aaaaaaaa-0000-4000-8000-000000000001 WSID=bbbbbbbb-0000-4000-8000-000000000002
@@ -301,10 +330,10 @@ per=$(( ($(date +%s%N) - start) / 20000000 ))
 echo "  (the hook on another session's call: ${per} ms each)"
 check "the hook costs another session under 40 ms" "$(( per < 40 ))" "1"
 start=$(date +%s%N)
-for _ in {1..20}; do PATH="$work/orch-bin:$PATH" TMUX_PANE=$warm tmux -L "$FLEET_SOCK" display -p '#{pid}' >/dev/null; done
+for _ in {1..20}; do PATH="$FLEET_STATE/orch-bin:$PATH" tmux -L "$FLEET_SOCK" display -p '#{pid}' >/dev/null; done
 per=$(( ($(date +%s%N) - start) / 20000000 ))
-echo "  (the orchestrator's tmux, another pane's call: ${per} ms each)"
-check "the guard's tmux adds under 40 ms to another pane's call" "$(( per < 40 ))" "1"
+echo "  (the orchestrator's tmux, a call that sends nothing: ${per} ms each)"
+check "the guard's tmux keeps a call that sends nothing under 60 ms" "$(( per < 60 ))" "1"
 
 echo "differential against tmux and bash"
 diff_out=$(timeout 900 python3 -I "$here/tests/orch_parse_differential.py" 200 264 2>&1)
@@ -336,7 +365,8 @@ while read -r name rest; do
   for nm in "$name" $alias_; do
     swept=$((swept + 1))
     got=$(as_heph "$T $nm $tgt")
-    if [[ -n ${want[$name]+x} ]]; then [[ $got != refused:hidden && $got != refused:unknown ]] || ok=0
+    # An allowed name is never refused as hidden (the pane's state may still refuse it).
+    if [[ -n ${want[$name]+x} ]]; then [[ $got != refused:hidden ]] || ok=0
     else [[ $got == refused:hidden ]] || ok=0; fi
     if [[ ${ok:-1} == 0 ]]; then sweep_bad=$((sweep_bad + 1)); echo "  sweep: tmux $nm -> $got"; fi
     unset ok
@@ -364,8 +394,9 @@ echo "mutation checks"
 mut=$work/mut
 mkdir -p "$mut"
 cp -- "$here/lib.sh" "$here/orch_guard_parse.py" "$here/orch-guard.sh" "$here/orch-tmux.sh" "$mut/"
-mkdir -p "$work/orch-bin-mut"
-ln -s "$mut/orch-tmux.sh" "$work/orch-bin-mut/tmux"
+mkdir -p "$work/state-mut/orch-bin" "$work/state-mut/guard"
+ln -s "$mut/orch-tmux.sh" "$work/state-mut/orch-bin/tmux"
+printf '%s\n' "$orchp" >"$work/state-mut/orchestrator.pane"; printf '%s\n' "$FLEET_NOW" >"$work/state-mut/guard/test-now"
 printf 'bash\0launch.sh\0x\0' >"$FLEET_PROC/4242/cmdline"
 typing2=$(pane typing2 '{"above":["⏺ Done. done 10:20 AM"],"input":"AJ: one more thing"}')
 cold3=$(pane cold3 "{\"above\":[\"⏺ Done. done 9:00 AM\",\"$LIMIT\"]}"); settle
@@ -378,7 +409,7 @@ for g in cold-limit pending-input hidden unknown; do
     hidden) cmd="$T source-file $work/x.conf" ;;
     unknown) cmd="$T send-keys -t %9999 go" ;;
   esac
-  check "mutant $g: the case it guards now passes" "$(in_claude "$orchp" "$work/orch-bin-mut" "$cmd" 2>&1 | grep '^orch-guard (')" ""
+  check "mutant $g: the case it guards now passes" "$(in_claude "$orchp" "$work/state-mut/orch-bin" "$cmd" 2>&1 | grep '^orch-guard (')" ""
   check "unmutated: the same case is refused" "$(as_heph "$cmd")" "refused:$g"
 done
 cp -- "$here/orch-tmux.sh" "$mut/orch-tmux.sh"

@@ -1,27 +1,29 @@
 #!/usr/bin/env bash
 # orch-tmux.sh: the run-time half of the orchestrator guard (#264). Installed
 # as $FLEET_STATE/orch-bin/tmux, ahead of the real tmux on PATH in the
-# orchestrator's session only (launch.sh puts it there for heph). It reads
-# tmux's real arguments, after the shell expanded them, at the moment of the
-# call, so no shell grammar, wait or script stands between the check and the
-# keys. In the orchestrator's session it runs only a known set of commands
-# and flags (FLAGS), and refuses:
+# orchestrator's session only (launch.sh puts it there for heph), so a call
+# that reaches it is the orchestrator's (or a job it started), unless a fleet
+# script makes it: a bash or python running a file in fleet/ (fresh-now.sh,
+# relaunch-fresh.sh, the resume service) sends with the fleet's own checks.
+# It reads tmux's real arguments, after the shell expanded them, at the
+# moment of the call, so no shell grammar, wait or script stands between the
+# check and the keys. It runs only listed tmux commands and flags (FLAGS) that
+# run no other command, and refuses:
 #   cold-limit     keys or a paste into a pane that stopped at a usage limit
 #                  FRESH_AFTER_S ago or more (fresh-now.sh relaunches it)
 #   pending-input  keys into an input line holding anything but the exact text
-#                  the orchestrator typed there in the last ORCH_GUARD_OWN_S seconds
+#                  the orchestrator typed or pasted there in the last two minutes
 #   hidden         any other command or flag, a #() format (it runs a shell), and
 #                  the -C, -c and -f options: each can run commands the guard never reads
-#   unknown        what it cannot work out: a name tmux's list does not hold (an
-#                  alias may stand for anything), a target no pane answers to, an
-#                  unreadable command list
-# The call is the orchestrator's when its own TMUX_PANE, or its nearest Claude
-# Code ancestor's, is orchestrator.pane. Commands resolve as tmux resolves
-# them (name, alias, unique prefix, from tmux list-commands), and flags are read
-# from tmux's usage text. A refusal runs none of the invocation's commands,
-# prints its reason and exits 1. Every other call, and one from a fleet script (a bash running a file in fleet/:
-# fresh-now.sh, relaunch-fresh.sh, the resume service) go straight to tmux.
-# ORCH_GUARD_ALLOW=pending-input in the environment lets that guard pass, logged.
+#   unknown        whatever it cannot work out: a name tmux's list does not hold
+#                  or the server aliases, a target no pane answers to, a pane at a
+#                  limit with no stop time on screen, a pane with no input line
+# Its state folder is the one above orch-bin/, and its clock and thresholds
+# are its own: nothing in the caller's environment moves them. Commands resolve
+# as tmux resolves them (name, alias, unique prefix, from tmux list-commands),
+# and flags are read from tmux's usage text. A refusal runs none of the
+# invocation's commands, prints its reason and exits 1. ORCH_GUARD_ALLOW=
+# pending-input in the environment lets that guard pass, logged.
 self=$(readlink -f "$0")
 here=$(dirname "$self")
 real=""
@@ -32,53 +34,58 @@ done
 [[ -n $real ]] || real=/usr/bin/tmux
 pass() { exec "$real" "$@"; }
 
-state=${FLEET_STATE:-$HOME/.local/state/fleet-orchestrator}
+# Installed as <state>/orch-bin/tmux; run any other way, it is on no one's PATH.
+bin=$(cd -- "$(dirname -- "$0")" 2>/dev/null && pwd)
+[[ ${bin##*/} == orch-bin ]] || pass "$@"
+state=${bin%/orch-bin}
 orch=""
 { read -r orch <"$state/orchestrator.pane"; } 2>/dev/null
-[[ -n $orch ]] || pass "$@"
 
-# Whether this call is the orchestrator's: its own TMUX_PANE (which a job left
-# running in the background keeps after the Bash call that started it ends) or
-# its nearest Claude Code ancestor's (from that process's own environment,
-# which no child can change) names orchestrator.pane. A fleet script on the way
-# up sends with the fleet's own checks; the fleet's test suites are no senders.
-# The walk runs to pid 1.
-whose() {
-  local pid=$PPID n a f cwd p mine=0
+# A fleet script on the way up to pid 1 sends with the fleet's own checks; the
+# fleet's test suites are no senders.
+from_fleet_script() {
+  local pid=$PPID n a f cwd j
   local -a argv
-  [[ ${TMUX_PANE:-} == "$orch" ]] && mine=1
   for (( n = 0; n < 512; n++ )); do
-    { [[ $pid =~ ^[0-9]+$ ]] && (( pid > 1 )); } || break
-    mapfile -d '' -t argv <"/proc/$pid/cmdline" 2>/dev/null || break
+    { [[ $pid =~ ^[0-9]+$ ]] && (( pid > 1 )); } || return 1
+    mapfile -d '' -t argv <"/proc/$pid/cmdline" 2>/dev/null || return 1
     a=${argv[0]##*/}
-    if [[ $a == claude || ( $a == node && ${argv[1]:-} == */claude* ) ]]; then
-      p=$(tr '\0' '\n' <"/proc/$pid/environ" 2>/dev/null | sed -n 's/^TMUX_PANE=//p' | head -1)
-      [[ $p == "$orch" ]] && mine=1
-      break
-    fi
-    if [[ $a =~ ^(bash|sh)$ ]] && (( ${#argv[@]} > 1 )) && [[ ${argv[1]} != -* ]]; then
-      f=${argv[1]}
-      cwd=$(readlink -f "/proc/$pid/cwd" 2>/dev/null)
-      [[ $f == /* ]] || f=$cwd/$f
-      f=$(readlink -f -- "$f" 2>/dev/null)
-      [[ -n $f && ${f%/*} == "$here" && $f == *.sh && ${f##*/} != test_* ]] && return 1
+    if [[ $a =~ ^(bash|sh|python3?(\.[0-9]+)?)$ ]]; then
+      for (( j = 1; j < ${#argv[@]} && j < 4; j++ )); do
+        f=${argv[j]}
+        [[ $f == -* ]] && continue
+        cwd=$(readlink -f "/proc/$pid/cwd" 2>/dev/null)
+        [[ $f == /* ]] || f=$cwd/$f
+        f=$(readlink -f -- "$f" 2>/dev/null)
+        [[ -n $f && ${f%/*} == "$here" && $f =~ \.(sh|py)$ && ${f##*/} != test_* ]] && return 0
+        break
+      done
     fi
     pid=$(awk '{ print $4 }' "/proc/$pid/stat" 2>/dev/null)
   done
-  (( mine ))
+  return 1
 }
-whose || pass "$@"
+from_fleet_script && pass "$@"
 
-# lib.sh (16 ms) loads only when a send is checked or a refusal logged.
+# lib.sh (16 ms) loads only when a send is checked or a refusal logged, with
+# the guard's own state folder, log and thresholds, whatever the caller set.
 loaded=0
 need_lib() {
   (( loaded )) && return 0
-  FLEET_TARGET=fleet::orch-tmux
+  unset FLEET_LOG FLEET_NOW FRESH_AFTER_S FLEET_LOG_MAX FLEET_RUN_ID
+  FLEET_STATE=$state FLEET_TARGET=fleet::orch-tmux
   # shellcheck source=fleet/lib.sh
   . "$here/lib.sh" 2>/dev/null || return 1
   loaded=1
+  # The tests' clock: a file in the guard's own folder, logged when used.
+  local at=""
+  { read -r at <"$state/guard/test-now"; } 2>/dev/null
+  if [[ $at =~ ^[0-9]+$ ]]; then
+    FLEET_NOW=$at
+    flog WARN "orchestrator guard: the clock is the test file's" now="$at" 2>/dev/null
+  fi
 }
-OWN_S=${ORCH_GUARD_OWN_S:-120}
+OWN_S=120 # the orchestrator's own typing is still its own this long
 glog() { need_lib && flog "$@" 2>/dev/null; }
 argv_text="$*"
 refuse() { # GUARD REASON [KEY=VALUE...]
@@ -89,13 +96,16 @@ refuse() { # GUARD REASON [KEY=VALUE...]
   exit 1
 }
 hidden_why="it can run commands the guard never reads. The orchestrator's tmux runs only capture, list, display, select, kill-pane, buffers and sends; launch agents with fleet/launch.sh, and run anything else from AJ's terminal."
+format_check() { # ARG...: a #() format runs a shell command
+  local a
+  for a in "$@"; do
+    [[ $a == *'#('* ]] && refuse hidden "a #() format runs a shell command, so $hidden_why" argument="${a:0:120}"
+  done
+  return 0
+}
 
-# A #() format runs a shell command, in any tmux command.
-for a in "$@"; do
-  [[ $a == *'#('* ]] && refuse hidden "a #() format runs a shell command, so $hidden_why" argument="${a:0:120}"
-done
-
-# tmux's global options: -L and -S pick the server; -C, -c and -f run commands.
+# tmux's global options: every -L and -S picks the server as tmux reads them;
+# -C, -c and -f run commands.
 G=()
 args=("$@")
 i=0
@@ -123,6 +133,7 @@ while (( i < ${#args[@]} )); do
 done
 [[ ${args[i]:-} == -- ]] && i=$((i + 1))
 (( i < ${#args[@]} )) || pass "$@"
+t() { "$real" "${G[@]}" "$@"; }
 
 # The command table: name, alias, usage, cached per tmux binary. The probe
 # starts no server it leaves behind and reads no config.
@@ -145,12 +156,14 @@ fi
 resolve() { # WORD: the command tmux runs for WORD, or nothing
   awk -v w="$1" 'NR > 1 {
       name = $1; alias = ($2 ~ /^\(.*\)$/) ? substr($2, 2, length($2) - 2) : ""
-      if (w == name || w == alias) { exact = name }
-      else if (index(name, w) == 1) { n++; pre = name }
+      if (w != "" && (w == name || w == alias)) { exact = name }
+      else if (w != "" && index(name, w) == 1) { n++; pre = name }
     }
     END { if (exact != "") print exact; else if (n == 1) print pre }' "$table"
 }
 usage_of() { awk -v c="$1" 'NR > 1 && $1 == c { print; exit }' "$table"; }
+# The server's own command aliases (command-alias), which tmux reads before names.
+aliases=" $(t show-options -sv command-alias 2>/dev/null | sed -E 's/^"//; s/=.*//' | tr '\n' ' ') "
 
 # The commands the orchestrator's tmux runs, each with the flags it may take:
 # none of them runs another command. Left out on purpose: send-keys -K and -c
@@ -174,9 +187,9 @@ checks=() # "COMMAND|TARGET|ENTER|EXACT|TEXT": ENTER 1 when it submits; EXACT 0 
 cmd=()
 flush() {
   (( ${#cmd[@]} )) || return 0
-  local name usage valued k opt v c target="" lit=0 hex=0 tail_args=()
+  local name usage valued k opt v c target="" lit=0 hex=0 reps=1 buf="" tail_args=() vals=()
+  [[ $aliases == *" ${cmd[0]} "* ]] && refuse unknown "tmux ${cmd[0]}: this server aliases that name (command-alias), so it could stand for any command. Use the command's full name." command="${cmd[0]}"
   name=$(resolve "${cmd[0]}")
-  # A name tmux may still resolve (its command-alias option) is not guessed at.
   [[ -n $name ]] || refuse unknown "tmux ${cmd[0]}: no command of that name in tmux's list, and an alias could stand for any command. Use the command's full name." command="${cmd[0]}"
   [[ -n ${FLAGS[$name]+x} ]] || refuse hidden "tmux $name: $hidden_why" command="$name"
   usage=$(usage_of "$name")
@@ -193,7 +206,8 @@ flush() {
       if [[ $valued == *"$c"* ]]; then
         v=${opt:m+1}
         if [[ -z $v ]]; then k=$((k + 1)); v=${cmd[k]:-}; fi
-        [[ $c == t ]] && target=$v
+        vals+=("$v")
+        case $c in t) target=$v ;; N) reps=$v ;; b) buf=$v ;; esac
         break
       fi
       [[ $c == l ]] && lit=1
@@ -203,11 +217,16 @@ flush() {
     k=$((k + 1))
   done
   tail_args=("${cmd[@]:k}")
+  # Formats are expanded in option values and in most operands, not in the
+  # keys send-keys types or the data set-buffer stores.
+  format_check "${vals[@]}"
+  [[ $name == send-keys || $name == set-buffer ]] || format_check "${tail_args[@]}"
   target=${target:-$TMUX_PANE}
-  local text="" enter=0 exact=1 key
+  local text="" enter=0 exact=1 key r
   case $name in
     send-keys)
       (( hex )) && exact=0
+      [[ $reps =~ ^[0-9]+$ ]] || exact=0
       for key in "${tail_args[@]}"; do
         if (( lit )); then text+=$key
         elif [[ $key =~ ^(Enter|C-m|C-j|KPEnter)$ ]]; then enter=1 text=""
@@ -215,9 +234,22 @@ flush() {
         elif [[ $key =~ $special_key ]]; then exact=0
         else text+=$key; fi
       done
+      if (( exact && reps > 1 )); then
+        (( enter )) && exact=0
+        local one=$text
+        for (( r = 1; r < reps; r++ )); do text+=$one; done
+      fi
       checks+=("$name|$target|$enter|$exact|$text")
       ;;
-    send-prefix | paste-buffer) checks+=("$name|$target|0|0|") ;;
+    paste-buffer)
+      # What it pastes is the buffer's text: the orchestrator's own once pasted.
+      if text=$(t show-buffer ${buf:+-b "$buf"} 2>/dev/null); then
+        checks+=("$name|$target|0|1|${text//[$'\n|']/ }")
+      else
+        checks+=("$name|$target|0|0|")
+      fi
+      ;;
+    send-prefix) checks+=("$name|$target|0|0|") ;;
     pipe-pane)
       # With a shell command, pipe-pane runs it; without one it stops a pipe.
       (( ${#tail_args[@]} )) && refuse hidden "tmux pipe-pane with a shell command: $hidden_why" command="$name"
@@ -235,8 +267,9 @@ flush
 
 need_lib || refuse unknown "the guard could not load fleet/lib.sh, so it cannot read the pane." here="$here"
 now=$(clock)
-t() { "$real" "${G[@]}" "$@"; }
+t() { "$real" "${G[@]}" "$@"; } # again: lib.sh's t is the fleet socket's
 squash() { tr -d '[:space:]' <<<"$1"; }
+placeholder='^\[Pasted text #[0-9]+( \+[0-9]+ lines?)?\]$'
 stamps=() # "PANE|TEXT": what this call leaves typed in each box, once every check passes
 for ch in "${checks[@]}"; do
   IFS='|' read -r name target enter exact text <<<"$ch"
@@ -245,19 +278,33 @@ for ch in "${checks[@]}"; do
   [[ ${ORCH_TMUX_TRACE:-} ]] && printf '%s\n' "$p" >>"$ORCH_TMUX_TRACE"
   [[ $p == "$orch" ]] && continue
   s=$(screen "$p")
+  ps=$(plain <<<"$s")
   lim="" idle=""
   if lim=$(limit_line "$s"); then
-    idle=$((now - $(stopped_at "$p" "$(plain <<<"$s")")))
+    grep -q 'done [0-9]\{1,2\}:[0-9][0-9] [AP]M' <<<"$ps" ||
+      refuse unknown "pane $p is at a usage limit and shows no time it stopped, so the guard cannot tell whether its cache is still warm. The resume service sends at the reset; relaunch it fresh now with: bash $state/fresh-now.sh $p" \
+        pane="$p" command="$name" limit="$lim"
+    idle=$((now - $(stopped_at "$p" "$ps")))
     if (( idle >= FRESH_AFTER_S )); then
       refuse cold-limit "pane $p stopped at a usage limit $((idle / 60)) min ago (\"${lim#"${lim%%[![:space:]]*}"}\"). Its prompt cache lives an hour, so keys typed into it now re-cache its whole transcript: five such nudges took 38% of a five-hour window on 11-02. Relaunch it fresh from its brief instead: bash $state/fresh-now.sh $p" \
         pane="$p" command="$name" idle_min="$((idle / 60))" limit="$lim"
     fi
   fi
-  box=$(input_text "$s") before=""
+  before=""
+  if ! has_input_box "$s"; then
+    if [[ ${ORCH_GUARD_ALLOW:-} == pending-input ]]; then
+      glog WARN "orchestrator guard: keys into a pane with no input line, allowed by ORCH_GUARD_ALLOW" pane="$p"
+      exact=0
+    else
+      refuse unknown "pane $p shows no input line (a menu, a dialog, or not Claude Code), so the guard cannot see what is typed there. Answer it from AJ's terminal, or, if AJ asked for these keys, run the command with ORCH_GUARD_ALLOW=pending-input in front." pane="$p" command="$name"
+    fi
+  fi
+  box=$(input_text "$s")
   if [[ -n $box ]]; then
     own_at="" own_text=""
     { IFS=$'\t' read -r own_at own_text <"$state/guard/typed-${p#%}"; } 2>/dev/null
-    if [[ $own_at =~ ^[0-9]+$ ]] && (( now - own_at <= OWN_S )) && [[ -n $own_text && $(squash "$box") == "$(squash "$own_text")" ]]; then
+    if [[ $own_at =~ ^[0-9]+$ ]] && (( now - own_at <= OWN_S )) && [[ -n $own_text ]] &&
+      [[ $(squash "$box") == "$(squash "$own_text")" || $box =~ $placeholder ]]; then
       glog INFO "orchestrator guard: keys into a box holding exactly the orchestrator's own text" pane="$p" typed_s_ago="$((now - own_at))"
       before=$own_text
     elif [[ ${ORCH_GUARD_ALLOW:-} == pending-input ]]; then

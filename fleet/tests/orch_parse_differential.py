@@ -215,7 +215,7 @@ class Server:
         os.makedirs(os.path.join(self.state, "log"))
         with open(os.path.join(self.state, "orchestrator.pane"), "w") as f:
             f.write(self.orch + "\n")
-        self.bin = os.path.join(work, "orch-bin")
+        self.bin = os.path.join(self.state, "orch-bin")
         os.makedirs(self.bin)
         os.symlink(SHIM, os.path.join(self.bin, "tmux"))
         self.trace = os.path.join(work, "trace")
