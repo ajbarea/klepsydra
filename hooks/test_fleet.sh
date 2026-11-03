@@ -898,6 +898,12 @@ fire stop.json; fire user-prompt.json
 fire post-tool-bash-background.json '.tool_input.command = "watch-panes.sh $(make test)"'
 check "#215 review: so is a command substitution in its arguments" "$(wflag)" '"biwpk3ab6:false"'
 fire stop.json; fire user-prompt.json
+fire post-tool-bash-background.json '.tool_input.command = "BASH_ENV=/tmp/e.sh bash /x/watch-panes.sh %1"'
+check "#215 verify: so is one whose prefix runs a file first" "$(wflag)" '"biwpk3ab6:false"'
+fire stop.json; fire user-prompt.json
+fire post-tool-bash-background.json '.tool_input.command = "FLEET_SOCK=%5 IDLE_S=300 bash /x/watch-panes.sh %1"'
+check "#215 verify: the panes come from its arguments, not its prefixes" "$(wflag) $(field '[.background[].watch]')" '"biwpk3ab6:true" [["%1"]]'
+fire stop.json; fire user-prompt.json
 fire post-tool-bash-background.json '.tool_input.command = "grep watch-panes.sh notes.md"'
 check "#215: a command that only names it is not" "$(wflag)" '"biwpk3ab6:false"'
 fire stop.json; fire user-prompt.json
@@ -906,6 +912,7 @@ check "#215: nor one that runs more after it" "$(wflag)" '"biwpk3ab6:false"'
 fire stop.json; fire user-prompt.json
 fire stop-background.json '.background_tasks[0].command = "/home/aj/.local/state/fleet-orchestrator/watch-panes.sh %20 %21" | .background_tasks[1].command = "watch-panes.sh"'
 check "#215: Stop's list marks a watcher shell, never a subagent" "$(wflag)" "\"$B:true,$A:false\""
+check "#215 verify: and records the panes it watches" "$(field '[.background[].watch]')" '[["%20","%21"],null]'
 fire stop.json; fire user-prompt.json
 fire stop-background.json '.background_tasks[0].command = null'
 check "#215: a shell with no command is other work" "$(wflag)" "\"$B:false,$A:false\""

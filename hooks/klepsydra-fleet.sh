@@ -564,14 +564,14 @@ def bg_add($id; $kind): if ($id | text) == null then . elif any(.[]; .id == $id)
   else . + [{id: $id, kind: $kind, at: $now}] end;
 # A Stop list's task as an entry: subagents are agents, shells shells, any other type a task.
 def bg_kind: {subagent: "agent", shell: "shell"}[.type | strings] // "task";
-# A shell command that is the fleet's pane watcher alone: VAR=x prefixes,
+# A shell command that is the fleet's pane watcher alone: IDLE_S= or FLEET_*= prefixes,
 # bash, a path ending in watch-panes.sh, then pane ids (%N) and nothing else,
 # so no second command can ride along (newline, ; & | $( ` < >). A new
 # orchestrator starts it again, so it never holds a move back (#215).
 def watcher: type == "string"
-  and test("\\A[ \\t]*([A-Za-z_][A-Za-z0-9_]*=[A-Za-z0-9_./%:-]*[ \\t]+)*(bash[ \\t]+)?([A-Za-z0-9_./~-]*/)?watch-panes\\.sh([ \\t]+%[0-9]+)*[ \\t]*\\z");
+  and test("\\A[ \\t]*((IDLE_S|FLEET_[A-Z0-9_]+)=[A-Za-z0-9_./%:-]*[ \\t]+)*(bash[ \\t]+)?([A-Za-z0-9_./~-]*/)?watch-panes\\.sh([ \\t]+%[0-9]+)*[ \\t]*\\z");
 # The panes a watcher command watches, in order.
-def watched: [scan("%[0-9]+")];
+def watched: [sub("\\A.*watch-panes\\.sh"; "") | scan("%[0-9]+")];
 # A status that means the task is over; any other, or none, still runs.
 def finished: IN("completed", "finished", "failed", "killed", "stopped", "cancelled", "canceled");
 # The session's turn is over: Stop ran (or the prompt sat idle) with work still out.
