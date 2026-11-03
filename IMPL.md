@@ -13,6 +13,14 @@ Prefer deleting or consolidating code over new special cases.
 HELD (no code): #293, #295, #302, #271, #270, #272 (design PR #300), any new feature; also #303 and #301
 (bugs filed today, not yet in review) until Heph says.
 
+## Audit cuts (Heph 11-03, fleet-briefing/review/klepsydra-bloat-audit-2026-11-03.md, last section)
+After the bug-fix PRs: 1 (poll guard: claude-prefs #41/PR #42 open, 91/91 + 7 mutants; needs an
+independent reviewer, then merge and `git -C ~/claude-prefs pull`), 3 (hooks/common.sh), 4 (no stale-PR
+SessionStart in workers), 2 (limits from StopFailure + resets_at, staged), 5 (experiment:
+claude --remote-control NAME "brief"), 6 (--append-system-prompt-file, tail ~260 words), 7 (friction.md
+triage + inject last 10), then the #8 trial. #9 deferred, #10 denied. #304/#305 closed (withdrawn).
+Each cut: a small PR with the proof test the report names.
+
 ## Done (session 22)
 - ✅ Merged + installed: #296 (watcher race, 9c4c79e), #299 (11-03 Quality rule, ce20046).
 - ✅ Filed #298 (done), #301 (doctor scan cost), #303 (panes.tsv loses rows: launch.sh writes no row
