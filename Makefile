@@ -13,8 +13,9 @@ install-fleet:
 # These targets take it themselves, so run them bare: inside another flock on the
 # same file the inner one would wait on the outer forever. FLEET_HEAVY_HELD=1 says
 # the caller holds it already (or, in CI, that there is none to take); any other
-# value takes it.
-HEAVY = $(if $(filter 1,$(FLEET_HEAVY_HELD)),,FLEET_HEAVY_HELD=1 flock -o /tmp/fleet-heavy.lock timeout 3600)
+# value takes it. fleet/heavy.sh says when it waits, refuses a lock its caller
+# holds, and keeps the timeout in the caller's process group (Ctrl-C ends the run).
+HEAVY = $(if $(filter 1,$(FLEET_HEAVY_HELD)),,FLEET_HEAVY_HELD=1 bash fleet/heavy.sh)
 # The files and flags CI's shell lint uses.
 SHELLCHECK ?= uvx --from shellcheck-py shellcheck
 SHELL_FILES = hooks/*.sh statusline/*.sh scripts/*.sh fleet/*.sh fleet/fleet

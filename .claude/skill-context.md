@@ -28,8 +28,9 @@ belong here.
   Jump to terminal (UI Automation) also compiles only for Windows, and WSL
   has no WebKitGTK headers, so the app crate is checked with
   `bash scripts/build-windows.sh --check`; the fleet crate tests anywhere.
-- runner: a small Makefile: `make test-fleet` and `make shellcheck` take the
-  fleet's heavy lock themselves (run them bare), `make install-fleet`. No
+- runner: a small Makefile: `make test-fleet`, `make test-launch` and
+  `make shellcheck` take the fleet's heavy lock themselves (run them bare),
+  `make install-fleet`. No
   `logs/dev-<ts>-*.log` archive convention, so the audit's log-reconciliation phase is N/A.
 - data flow: Claude Code pipes a JSON blob to the `statusLine` command on every
   render; `statusline/klepsydra-statusline.sh` prints the compact readout and

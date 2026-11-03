@@ -62,6 +62,35 @@ for suite in fleet/test_fleet.sh hooks/test_launch.sh; do
   for s in $left; do tmux -S "$sockdir/$s" kill-server 2>/dev/null; done
 done
 
+echo "fleet/heavy.sh (#291 review 4)"
+hl="$work/heavy-sh.lock"; : >"$hl"
+hv() { FLEET_HEAVY_LOCK=$hl "$root/fleet/heavy.sh" "$@"; }
+check "a free lock: the command runs, quietly" "$(hv echo ran 2>&1)" "ran"
+flock -o "$hl" sleep 1.5 &
+holder=$!
+sleep 0.3
+check "a held lock: it says who holds it, then runs once the lock is free" \
+  "$(hv echo ran 2>&1 | sed "s/pid $holder/pid HOLDER/")" $'heavy.sh: waiting for '"$hl"$' (held by pid HOLDER)\nran'
+wait "$holder"
+out=$(timeout 10 flock -o "$hl" bash -c "FLEET_HEAVY_LOCK='$hl' '$root/fleet/heavy.sh' echo ran" 2>&1)
+check "inside an outer flock on the same file: refused at once, not a wait until the timeout" \
+  "$? $(grep -c 'already holds' <<<"$out") $(grep -c '^ran$' <<<"$out")" "2 1 0"
+check "the timeout stops the command" "$(FLEET_HEAVY_TIMEOUT=1 hv sleep 5; echo $?)" "124"
+# Ctrl-C reaches the whole process group: with timeout's own group (no
+# --foreground) the command outlived it with the lock already free.
+# A script's & job starts with SIGINT ignored; a terminal's Ctrl-C finds it at its default.
+setsid env --default-signal=INT FLEET_HEAVY_LOCK="$hl" "$root/fleet/heavy.sh" sleep 31.7 &
+sj=$!
+# Found by its own command line: without --foreground it sits in another group.
+for _ in $(seq 50); do pgrep -fx 'sleep 31.7' >/dev/null && break; sleep 0.05; done
+check "a run in progress holds the lock" "$(flock -n "$hl" true && echo free || echo held)" "held"
+kill -INT -- "-$sj" 2>/dev/null
+wait "$sj" 2>/dev/null
+sleep 0.3
+check "Ctrl-C to its group: the command is gone and the lock is free" \
+  "$(pgrep -fx 'sleep 31.7' >/dev/null && echo running || echo gone) $(flock -n "$hl" true && echo free || echo held)" "gone free"
+pkill -fx 'sleep 31.7' 2>/dev/null
+
 echo
 echo "$pass passed, $fail failed"
 (( fail == 0 ))
