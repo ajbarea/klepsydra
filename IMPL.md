@@ -17,8 +17,8 @@ HELD (no code): #293, #295, #302, #271, #270, #272 (design PR #300), any new fea
 - ✅ Merged + installed: #296 (watcher race, 9c4c79e), #299 (11-03 Quality rule, ce20046).
 - ✅ Filed #298 (done), #301 (doctor scan cost), #303 (panes.tsv loses rows: launch.sh writes no row
   without task-NAME.src; unlogged rewrites; unlocked hand edits), #304 (wait rule).
-- #291 (tasks-289): r4, r5, r6 fixes; r7 final verify CLEAN. m1 + m4 follow-ups (test env, ppid without
-  awk) uncommitted in the worktree, mutants rerunning; then commit, CI, merge, make install-fleet.
+- #291 (tasks-289): r4, r5, r6 fixes; r7 final verify CLEAN; m1 + m4 follow-ups pushed (2cbd85f, all 9
+  heavy.sh mutants killed with FLEET_HEAVY_HELD=1 set). Next: CI green -> squash merge -> make install-fleet.
 - #261 (doctor-246): r10 Blocking fixed (a8bbe24), CI 19-red fixed (5cdd429: fresh() registers a row its
   launch left unregistered). r11 reviewer running (/tmp/claude-1001/r11-261/report.md).
 - #230 (ask-217): r2 + r3 fixes pushed (7339b19); needs r4 reader.
@@ -26,6 +26,8 @@ HELD (no code): #293, #295, #302, #271, #270, #272 (design PR #300), any new fea
   good main-chain reply, tail-only read (7 ms vs 727 ms on 48 MB). Suite 222/223 (strict local 60 ms
   budget on a sends-nothing call read 64 ms under load). Needs a fresh r10 reader (ceiling 5 more).
 - #288 (dead-288): merged #261's branch; CI green on 41725667867. PR against main after #261 merges.
+- Reviewers in flight (reports land in these files; if the session ended first, re-dispatch fresh):
+  #261 r11 -> /tmp/claude-1001/r11-261/report.md ; #287 r10 -> /tmp/claude-1001/r10-287/report.md.
 - #305 (wait-rule): brief-tail long-runs rule + brief.sh --check of a missing brief fails. CI pending.
 - #292 (tmux-290): r3 still owed.
 
