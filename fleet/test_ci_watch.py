@@ -642,7 +642,13 @@ class Route(unittest.TestCase):
                 time.sleep(0.05)
             first.kill()  # bash only: a subshell it forked would live on, as in the fleet
             out = first.communicate()[0].decode().strip()
-            time.sleep(3.5)  # anything it left behind has finished by now
+            while True:  # until anything it left behind has finished
+                try:
+                    os.killpg(first.pid, 0)
+                except ProcessLookupError:
+                    break
+                self.assertLess(time.monotonic(), deadline, "its leftovers never ended")
+                time.sleep(0.05)
         finally:
             try:
                 os.killpg(first.pid, signal.SIGKILL)
@@ -661,25 +667,21 @@ class Route(unittest.TestCase):
         ).stdout.strip()
 
     def test_a_watcher_killed_while_waking_loses_no_alert(self):
-        """A watcher killed as it formats a wake line must leave the line unread,
-        so the next watcher is woken by it (main red, 11-03: a $(ci_wake)
-        subshell outlived its killed watcher and marked the alert read)."""
-        out, seen = self._kill_watcher_inside("ascii_upcase")
-        self.assertEqual(
-            (out, seen), ("", "0"), "nothing printed, and the line stays unread"
-        )
-        self.assertEqual(
-            self._next_watcher(),
-            "CI HEPH r main: red",
-            "the next watcher is woken by it",
-        )
-
-    def test_a_watcher_killed_after_waking_has_printed_its_alert(self):
-        """Killed while it logs the wake, the watcher has already printed it: an
-        alert is printed before it is marked read, never the other way round."""
-        out, seen = self._kill_watcher_inside("CI alert for the orchestrator")
-        self.assertEqual(out, "CI HEPH r main: red", "printed before the kill")
-        self.assertEqual(seen, "1", "and then marked read, so it wakes nobody twice")
+        """A watcher killed anywhere before it exits leaves the alert unread, so
+        the next watcher is woken by it: while it formats the line (main red,
+        11-03: a $(ci_wake) subshell outlived its killed watcher and marked it
+        read) or while it logs, which waits on the fleet log's lock."""
+        for stall in ("ascii_upcase", "CI alert for the orchestrator"):
+            with self.subTest(stall=stall):
+                out, seen = self._kill_watcher_inside(stall)
+                self.assertEqual(
+                    (out, seen), ("", "0"), "nothing printed, and the line stays unread"
+                )
+                self.assertEqual(
+                    self._next_watcher(),
+                    "CI HEPH r main: red",
+                    "the next watcher is woken by it",
+                )
 
     def test_an_alert_with_no_kind_still_wakes_with_text(self):
         state = TMP / "state"

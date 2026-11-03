@@ -27,11 +27,12 @@ if [[ ! -e $SEEN ]]; then
 fi
 
 # The first new alert that wakes the orchestrator, as one line in WAKE, and the
-# count of lines read through it in WAKE_SEEN; the caller marks them read only
-# after printing WAKE, so a watcher killed in between wakes the next one again
-# rather than losing the alert. Lines read with no wake are marked read here.
-# Fails when there is none. It runs in the watcher's own shell, never a $( )
-# subshell: a subshell outlives a killed watcher.
+# count of lines read through it in WAKE_SEEN. Lines read with no wake are
+# marked read here; the caller marks a wake read as its last act before exit,
+# after logging and printing it (at least once: a watcher killed before that
+# leaves the alert for the next one, which may print it again). Fails when
+# there is none. It runs in the watcher's own shell, never a $( ) subshell: a
+# subshell outlives a killed watcher.
 ci_wake() {
   local seen n line
   [[ -e $ALERTS ]] || return 1
@@ -45,7 +46,6 @@ ci_wake() {
       WAKE=$(jq -r '"CI \(.kind // "alert" | tostring | ascii_upcase) \(.repo) \(.branch): \(.text)"
         + (if .taken_by then " Taken by \(.taken_by)." else "" end)
         + (if .ask then " Next: \(.ask)." else "" end)' <<<"$line")
-      [[ -n $WAKE ]] || WAKE="CI ALERT: $line"
       WAKE_SEEN=$seen
       return 0
     fi
@@ -57,9 +57,9 @@ flog INFO "watching" panes="$*" idle_s="$IDLE_S"
 while :; do
   now=$(date +%s)
   if ci_wake; then
+    flog INFO "CI alert for the orchestrator" alert="$WAKE"
     echo "$WAKE"
     put_seen "$WAKE_SEEN"
-    flog INFO "CI alert for the orchestrator" alert="$WAKE"
     exit 0
   fi
   for p in "$@"; do
