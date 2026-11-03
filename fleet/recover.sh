@@ -55,12 +55,14 @@ this_boot_row() { on_this_server "$1"; } # SID
 # worst outcome.
 orch=$(orchestrator) rec=$(cat "$FLEET_STATE/orchestrator.session" 2>/dev/null)
 grep -qxF -- "${rec:-x}" <<<"$agents" && rec="" # a record naming an agent is no Heph's
+# Nor is one naming an agent that ran `fleet done` (its row left panes.tsv, #269).
+fin=${FLEET_FINISHED:-$FLEET_STATE/finished.tsv}
+[[ -n $rec ]] && awk -F'\t' -v r="$rec" '$4 == r { f = 1 } END { exit !f }' "$fin" 2>/dev/null && rec=""
 heph_pane="" osid="" heph_unsure=0
 unreg=$(awk -F'\t' 'NR == FNR { if ($0 != "") a[$0] = 1; next } $3 == 1 && !($2 in a)' <(printf '%s\n' "$agents") <(printf '%s\n' "$live_now"))
 # A finished agent's pane stays open with its session (`fleet done`, #269): it
 # is no stranger, so it never leaves Heph unsure.
 # (Only when it has rows: an empty first file would make awk read the second as it.)
-fin=${FLEET_FINISHED:-$FLEET_STATE/finished.tsv}
 if [[ -s $fin ]]; then
   unreg=$(awk -F'\t' 'NR == FNR { f[$1 "\t" $4] = 1; next } $0 != "" && !(($1 "\t" $2) in f)' "$fin" <(printf '%s\n' "$unreg"))
 fi
@@ -74,7 +76,10 @@ if [[ -z $onrec && -n $orch ]] && ! grep -qxF -- "$orch" <<<"$rows" && { [[ -z $
 fi
 [[ $(grep -c . <<<"$onrec") == 1 ]] || onrec=""
 caller=""
-if [[ -n ${CLAUDECODE:-} && -n ${TMUX_PANE:-} && ${TMUX:-} == *"/$FLEET_SOCK,"* ]] && ! grep -qxF -- "$TMUX_PANE" <<<"$rows"; then
+# The caller is Heph only when its pane is no agent's: neither a row's nor a
+# finished agent's (whose row `fleet done` took out, #269).
+if [[ -n ${CLAUDECODE:-} && -n ${TMUX_PANE:-} && ${TMUX:-} == *"/$FLEET_SOCK,"* ]] && ! grep -qxF -- "$TMUX_PANE" <<<"$rows" &&
+  ! finished_here "$TMUX_PANE"; then
   caller=$TMUX_PANE
 fi
 if [[ -n $onrec ]]; then

@@ -1237,7 +1237,7 @@ mkdir -p "$work/rofin"; chmod 555 "$work/rofin"
 check "#269 verify: a finished.tsv that cannot be written fails the run and the row stays" \
   "$(FLEET_FINISHED=$work/rofin/finished.tsv bash "$here/fleet" "done" keep >/dev/null 2>&1; echo $?) $(cut -f2 "$REGISTRY")" "1 keep"
 cp "$REGISTRY" "$work/reg.before"
-check "#269 verify: an append that fails after the probe (a full disk) puts the row back as it was" \
+check "#269 verify: an append that fails after the probe (a full disk) puts the row back (one row: unchanged)" \
   "$(FLEET_FINISHED=/dev/full bash "$here/fleet" "done" keep >/dev/null 2>&1; echo $?) $(cmp -s "$work/reg.before" "$REGISTRY" && echo same)" "1 same"
 chmod 755 "$work/rofin"
 t kill-window -t "$p" 2>/dev/null; : >"$REGISTRY"; rm -f "$FLEET_STATE/finished.tsv" "$FLEET_STATE/resume-state"
@@ -1252,6 +1252,13 @@ check "#269 verify: a finished agent at a limit gets no continue message, nor is
 rm -f "$FLEET_STATE/finished.tsv" "$FLEET_STATE/resume-state"
 resume "$noon"; resume "$(( noon + 3600 + 600 + 130 ))"
 check "#269 verify: the same pane not in finished.tsv is resumed (the control)" "$(has "$(events finlim)" "SUBMIT The usage limit has reset.")" "yes"
+t kill-window -t "$p" 2>/dev/null; rm -f "$FLEET_STATE/resume-state"; : >"$FLEET_LOG"
+p=$(pane finlim2 "{\"above\":[\"work\",\"$LIMIT\"],\"on_submit\":\"busy\"}"); settle
+live "$p"
+printf '%s\tfinlim\t%s\t%s\t/w\t%s\t2026-11-02T20:00:00-05:00\n' "$p" "$work/brief.src" "99999999-0000-4000-8000-000000000000" "$work/cfg-a" >"$FLEET_STATE/finished.tsv"
+resume "$noon"; resume "$(( noon + 3600 + 600 + 130 ))"
+check "#269 verify 3: a new session in a finished agent's reused pane is looked after as usual" "$(has "$(events finlim2)" "SUBMIT The usage limit has reset.")" "yes"
+rm -f "$FLEET_STATE/finished.tsv"
 t kill-window -t "$p" 2>/dev/null; rm -f "$KLEPSYDRA_DIR/fleet/$SID.json"
 
 : >"$work/moved"
@@ -2089,9 +2096,19 @@ check "two live sessions that are no agent's: Heph is not launched" \
 rm -f "$KLEPSYDRA_DIR/fleet/$SHEPH.json"
 check "#269 verify: without finished.tsv, the finished agent's live session leaves Heph unsure (the control)" \
   "$(rec --dry-run | grep -c '^not recovered: orchestrator')" "1"
+: >"$FLEET_STATE/finished.tsv"
+check "#269 verify 3: an empty finished.tsv (the probe makes one) changes nothing" \
+  "$(rec --dry-run | grep -c '^not recovered: orchestrator')" "1"
 printf '%%5\tdone-agent\t%s\t%s\t/w\t\t2026-11-02T20:00:00-05:00\n' "$work/brief.src" "$SOTHER" >"$FLEET_STATE/finished.tsv"
 check "#269 verify: listed in finished.tsv, it no longer does, and Heph would be recovered" \
   "$(rec --dry-run | grep -c '^not recovered: orchestrator') $(rec --dry-run | grep -c 'orchestrator')" "0 1"
+printf '%%3\n' >"$FLEET_STATE/orchestrator.pane"; printf '%s\n' "$SH" >"$FLEET_STATE/orchestrator.session"
+check "#269 verify 3: the finished agent running fleet recover in its own pane is not taken for Heph" \
+  "$(CLAUDECODE=1 TMUX_PANE=%5 TMUX="/tmp/tmux-1/$FLEET_SOCK,1,0" rec --dry-run | grep -c 'running: orchestrator (%5)') $(cat "$FLEET_STATE/orchestrator.session")" "0 $SH"
+printf '%s\n' "$SOTHER" >"$FLEET_STATE/orchestrator.session"
+check "#269 verify 3: nor is a record naming the finished agent's session" \
+  "$(rec --dry-run | grep -c "session $SOTHER")" "0"
+printf '%s\n' "$SH" >"$FLEET_STATE/orchestrator.session"
 rm -f "$FLEET_STATE/finished.tsv"
 rm -f "$KLEPSYDRA_DIR/fleet/$SOTHER.json"
 
