@@ -18,7 +18,7 @@
 #   fleet balance [ORG AMOUNT]  log an API balance checked in the Console today (the
 #                         orchestrator guard wants one before a headless API-key job);
 #                         no arguments: the last checks
-#   fleet install         link this checkout's scripts and units into place
+#   fleet install         link this checkout's scripts and units into place, copy the hooks, status line, launcher and cast
 #   fleet cutover         restart the resume service on the installed scripts
 set -u
 here=$(dirname "$(readlink -f "$0")")
