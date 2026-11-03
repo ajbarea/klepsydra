@@ -23,6 +23,7 @@ A test steers it through a JSON state file, re-read on every tick:
   stall      seconds after start in which Enter does nothing (10-29: a new
              session showed the pasted brief but took no Enter for 9 min)
   exit_on_exit  /exit ends the process, so its pane closes as Claude Code's does
+  exit_delay seconds /exit takes before the process ends (with exit_on_exit)
 
 Run: python3 -I fake_pane.py STATE LOG
 """
@@ -115,6 +116,7 @@ class Pane:
             return
         self.log("SUBMIT " + text.replace("\n", "\\n"))
         if text.strip() == "/exit" and self.state.get("exit_on_exit"):
+            time.sleep(float(self.state.get("exit_delay", 0)))
             raise SystemExit(0)
         self.last_submit = text
         self.state.setdefault("above", []).append(

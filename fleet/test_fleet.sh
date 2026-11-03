@@ -1897,6 +1897,22 @@ check "#229 review: a relaunch while AJ watched another window leaves him there"
 t kill-window -t "$(cat "$work/relv.new")" 2>/dev/null; t kill-window -t "$other" 2>/dev/null
 rm -f -- "${KLEPSYDRA_DIR:?}/fleet/$SID.json"; : >"$REGISTRY"
 
+# #229 review 2: the successor is in view before the old window closes, so a
+# sibling replacement never reads the window tmux falls back to as watched.
+p=$(pane relview3 '{"above":["idle"],"exit_on_exit":true,"exit_delay":3}'); settle
+live "$p"
+printf '%s\trelv\t%s\t%s\t/w\t%s\n' "$p" "$work/brief.src" "$SID" "$work/cfg-a" >"$REGISTRY"
+t select-window -t "$p"
+rm -f -- "$work/relv.new"
+( LAUNCH="$work/launch-relv.sh" bash "$here/relaunch-fresh.sh" "$p" relv "$work/brief.src" "hint" >/dev/null 2>&1 ) &
+relpid=$!
+for _ in $(seq 100); do grep -q 'SUBMIT /exit' "$work/relview3.log" 2>/dev/null && break; sleep 0.1; done
+check "#229 review 2: while the old pane is still exiting, its successor is already in view" \
+  "$(fleet_panes | grep -cx -- "$p") $(t display -p -t fleet: '#{pane_id}')" "1 $(cat "$work/relv.new" 2>/dev/null)"
+wait "$relpid"
+t kill-window -t "$(cat "$work/relv.new")" 2>/dev/null
+rm -f -- "${KLEPSYDRA_DIR:?}/fleet/$SID.json"; : >"$REGISTRY"
+
 echo "relaunch never leaves two agents on one row (#274)"
 relpane() { # STATE-JSON: a registered pane rb2 on cfg-a; prints its id
   local q

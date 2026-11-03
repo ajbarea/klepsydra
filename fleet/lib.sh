@@ -658,6 +658,21 @@ retire() { # PANE [INTERRUPT]
   t kill-pane -t "$1" 2>/dev/null
 }
 
+# Retire OLD for its successor NEW, which opened behind (#216): when AJ is
+# watching OLD, NEW comes into view first, before OLD closes, since tmux then
+# makes another window active, and a sibling replacement would read that one
+# as watched (#229 review). An OLD that will not exit is put back in view. Fails
+# only when OLD still runs; one that exited as retire gave up is gone all the same.
+retire_into() { # OLD NEW
+  local viewed=0
+  in_view "$1" && viewed=1
+  (( viewed )) && t select-window -t "$2" 2>/dev/null
+  retire "$1" && return 0
+  fleet_panes | grep -qx -- "$1" || return 0
+  (( viewed )) && t select-window -t "$1" 2>/dev/null
+  return 1
+}
+
 LAUNCH=${LAUNCH:-$(dirname "${BASH_SOURCE[0]}")/launch.sh}
 
 # The live session in PANE's stamp, or nothing: STAMP_JQ (its last prompt and
@@ -741,15 +756,8 @@ fresh() { # PANE NAME BRIEF [WHY] [ACCOUNT] [NOTE] [STAMP]
     t send-keys -t "$p" C-c
     wait_for "$p" 5 idle_empty || true
   fi
-  # The new pane opened behind (#216): it takes the old one's place in view
-  # only when AJ was watching the old one (#229 review).
-  local viewed=0
-  in_view "$p" && viewed=1
-  if retire "$p"; then
-    (( viewed )) && t select-window -t "$new" 2>/dev/null
-  else
+  retire_into "$p" "$new" ||
     flog WARN "the old pane is left running beside its fresh session" pane="$p" new_pane="$new" name="$name"
-  fi
   printf '%s' "$new"
 }
 

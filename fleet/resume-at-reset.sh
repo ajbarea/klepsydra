@@ -269,11 +269,9 @@ heph_move() { # PANE TO WHY [NOTE] [STAMP]
     t send-keys -t "$p" C-c
     wait_for "$p" 5 idle_empty || true
   fi
-  # Two Hephs never run: the old one goes first, or the new one does (a pane
-  # that exited just as retire gave up has gone all the same).
-  local viewed=0
-  in_view "$p" && viewed=1
-  if ! retire "$p" && fleet_panes | grep -qx -- "$p"; then
+  # Two Hephs never run: the old one goes first, or the new one does. He
+  # takes the old pane's place in view when AJ was looking at it (#216).
+  if ! retire_into "$p" "$new"; then
     flog ERROR "the old orchestrator pane would not exit; it stays and its successor goes" pane="$p" new_pane="$new"
     drop "$new"
     return 3
@@ -281,9 +279,6 @@ heph_move() { # PANE TO WHY [NOTE] [STAMP]
   printf '%s\n' "$new" >"$FLEET_STATE/orchestrator.pane"
   [[ -n $nsid ]] && printf '%s\n' "$nsid" >"$FLEET_STATE/orchestrator.session"
   printf '%s\n' "$to" >"$FLEET_STATE/orchestrator.config"
-  # He opened behind (#216); with the old pane gone, he comes forward if AJ
-  # was looking at the old one.
-  (( viewed )) && t select-window -t "$new" 2>/dev/null
   printf '%s' "$new"
 }
 
