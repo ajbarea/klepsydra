@@ -1,27 +1,28 @@
-# IMPL: klepsydra fleet-module brief, resume state 2026-11-03 15:40 (EST)
+# IMPL: klepsydra fleet-module brief, resume state 2026-11-03 17:30 (EST)
 
-Session 20 (Chronos, relaunched 10:33 on the other account). Resume from this file, `git log`, open
-PRs and their comments, and the klepsydra line under "Running now" in
-/mnt/c/Users/ajbar/fleet-briefing/queue.md. Review readers: opus, dispatched with the elenchus SKILL
-at ~/ajsoftworks/techne/.claude/worktrees/leak-audit/plugins/techne/skills/elenchus/ (has ledger.py).
+Session 20 (Chronos, relaunched 10:33). Resume from this file, `git log`, open PRs and their
+comments, and the klepsydra line under "Running now" in /mnt/c/Users/ajbar/fleet-briefing/queue.md.
+Readers: opus, dispatched with the elenchus SKILL at
+~/ajsoftworks/techne/.claude/worktrees/leak-audit/plugins/techne/skills/elenchus/ (has ledger.py).
 
 ## Done this session
-- ✅ #229 merged (a1f045c) + installed + cut over (fleet install from the main checkout).
+- ✅ #229 merged (a1f045c), installed, cut over.
 
-## In flight
-| PR / branch (worktree) | Issue | State |
+## In flight (worktree)
+| PR | Issue | State |
 |---|---|---|
-| #287 feat/orch-guard-264 (guard-264) | #264 | r7 fixes 5fd44a8 (send alone in its call; any #{ + E/T refused, differential vs real tmux; undated limit = unknown). r8 reader running. Deploy after merge: install, PreToolUse entry in ~/.claude/settings.json, `fleet accounts sync`. |
-| #261 fix/doctor-truth-246 (doctor-246) | #220 #246 | r8 fix uncommitted: a recorded finish parks the row's pane ("-"), restore_pane on start (hook event / doctor sees alive); main merged (recover.sh conflict kept both sides, 0ec62a2); recover logs a repair only when it happened. Section 89/89. Next: mutant + shellcheck + hook suite (running), commit, push, r9. Hook change (registry-event.sh) deploys with install. |
-| #291 fix/tasks-max-289 (tasks-289) | #289 | r1 fixes 362d4ef (Makefile lock once via FLEET_HEAVY_HELD, make shellcheck = CI's). r2 verify reader running. |
-| #292 fix/tmux-dead-pane-290 (tmux-290) | #290 | r1 fixes 7623bb5 (interop + WSL_DISTRO_NAME for the unit, retry pending, scope for a unit-started server, dated dumps, CaptureCrash line, tmux-conf.sh for the live server, doctor hook check, TERM test). r2 next. |
-| #293 feat/resume-now-271 (resume-271) | #271 | open, review r1 not yet run. |
-| feat/agora-270 (agora-270), pushed 86e4677, no PR | #270 | design posted on #270; agora.py replies/react, fleet done invite, brief tail drop, agora.rs view, wall replies/accent/counts; tests pass (py 34, rust 16, js 488). Owed: README rows, browser test run, demo screenshot to shots/2026-11-03/, PR, review. |
-| fix/watch-dead-288 (dead-288), STACKED on #261 | #288 | rebase onto main once #261 merges, then PR + review. |
+| #296 fix/watch-alert-race (watch-race) | main red | MAIN IS RED (watcher test) after a1f045c: real race, a killed watcher's $(ci_wake) subshell marks an alert read. Fix + deterministic test pushed f135d80; r1 reader running. Merge first, before any other merge. |
+| #261 fix/doctor-truth-246 (doctor-246) | #220 #246 | r8 fix 3ec064d (finished rows park their pane "-", restore on start), main merged; r9 reader running (waiting on CI). Deferred: #294. |
+| #287 feat/orch-guard-264 (guard-264) | #264 | r8 fixes 0852f9c (stop dated by transcript entries; oracle waits on its job); r9 next. Deploy after merge: install, PreToolUse in ~/.claude/settings.json, `fleet accounts sync`. |
+| #291 fix/tasks-max-289 (tasks-289) | #289 | r2 fixes f64796b (FLEET_HEAVY_HELD on make's command line; AGENTS.md + skill-context name make targets; sweep check; CI runs make test-fleet); r3 verify next. |
+| #292 fix/tmux-dead-pane-290 (tmux-290) | #290 | r2 fixes 427822d (previous-boot crash recovery, doctor .wslconfig + hook-script checks, launcher suite stubs systemd-run, AccuracySec); body rewritten; r3 next. needs-you has AJ's .wslconfig line. |
+| #293 feat/resume-now-271 (resume-271) | #271 | r1 review not yet run. |
+| #295 feat/agora-270 (agora-270) | #270 | r1 review not yet run; shot in shots/2026-11-03. |
+| #230 fix/ask-217 (ask-217) | #217 | main merged (bd3e51a, hook conflict kept both); hook suite 569; needs a review round (none in the ledger); body says 515. |
+| fix/watch-dead-288 (dead-288), stacked on #261 | #288 | after #261 merges: rebase, PR; note #296 also changes watch-panes.sh. |
 
 ## Parked
-- #230 (#217, conflicting): rebase on main now that #229 landed.
-- #272 after #270.
+- #272 (resume-method experiment, design first).
 
 ## Notes
 - Rule (#289, 11-03): tmux-spawning tests and multi-file shellcheck run under the heavy lock, timeout inside it.
