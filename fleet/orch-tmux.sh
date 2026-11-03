@@ -10,14 +10,17 @@
 # check and the keys. It runs only listed tmux commands and flags (FLAGS) that
 # run no other command, and refuses:
 #   cold-limit     keys or a paste into a pane that stopped at a usage limit
-#                  FRESH_AFTER_S ago or more (fresh-now.sh relaunches it)
+#                  FRESH_AFTER_S ago or more, dated by its transcript's entries
+#                  (fresh-now.sh relaunches it)
 #   pending-input  keys into an input line holding anything but the exact text
 #                  the orchestrator typed or pasted there in the last two minutes
-#   hidden         any other command or flag, a #() format (it runs a shell), and
-#                  the -C, -c and -f options: each can run commands the guard never reads
+#   hidden         any other command or flag, a #() format (it runs a shell), an
+#                  E or T format modifier (it expands a value as a format again),
+#                  and the -C, -c and -f options: each can run commands the guard never reads
 #   unknown        whatever it cannot work out: a name tmux's list does not hold
-#                  or the server aliases, a target no pane answers to, a pane at a
-#                  limit with no stop time on screen, a pane with no input line
+#                  or the server aliases, a target no pane answers to, a send that
+#                  is not the only command of its call, a pane at a limit whose
+#                  stop no transcript dates, a pane with no input line
 # Its state folder is the one above orch-bin/, and its clock and thresholds
 # are its own: nothing in the caller's environment moves them. Commands resolve
 # as tmux resolves them (name, alias, unique prefix, from tmux list-commands),
@@ -292,6 +295,15 @@ need_lib || refuse unknown "the guard could not load fleet/lib.sh, so it cannot 
 now=$(clock)
 t() { "$real" "${G[@]}" "$@"; } # again: lib.sh's t is the fleet socket's
 squash() { tr -d '[:space:]' <<<"$1"; }
+# When the session in transcript TP stopped, in epoch seconds: Claude Code
+# writes the limit that stops a turn as an assistant entry with error
+# rate_limit, so its last one's timestamp; else the last assistant entry's.
+stop_from_transcript() { # TP
+  local ts=""
+  ts=$(tac -- "$1" 2>/dev/null | jq -Rr 'fromjson? | select(.type == "assistant" and .error == "rate_limit") | .timestamp | strings' 2>/dev/null | head -1)
+  [[ -n $ts ]] || ts=$(tac -- "$1" 2>/dev/null | jq -Rr 'fromjson? | select(.type == "assistant") | .timestamp | strings' 2>/dev/null | head -1)
+  [[ -n $ts ]] && date -u -d "$ts" +%s 2>/dev/null
+}
 placeholder='^\[Pasted text #[0-9]+( \+[0-9]+ lines?)?\]$'
 stamps=() # "PANE|TEXT": what this call leaves typed in each box, once every check passes
 for ch in "${checks[@]}"; do
@@ -309,15 +321,13 @@ for ch in "${checks[@]}"; do
         pane="$p" command="$name" limit="$lim"
     stop=$(stopped_at "$p" "$ps")
     # "done H:MM" has no date, so a pane stopped days ago reads as minutes:
-    # the time shown is the latest it can be. The session's transcript, last
-    # written as it stopped, dates the stop; with none, a stop the screen
-    # alone puts an hour back is cold for sure, and any other is unknown.
-    sid="" tp="" dated=0
-    if sid=$(live_session "$p") && tp=$(transcript "$sid") && [[ -n $tp ]] && mt=$(stat -c %Y -- "$tp" 2>/dev/null) && [[ $mt =~ ^[0-9]+$ ]]; then
-      (( mt < stop )) && stop=$mt
-      dated=1
-    else
-      mt=""
+    # the time shown is the latest it can be. The session's transcript dates
+    # the stop by its entries' own times (the limit's entry, else the last
+    # reply; never the file's mtime, a later write); with none, a screen time
+    # an hour back is cold for sure, and any other stop is unknown.
+    sid="" tp="" dated=0 ts=""
+    if sid=$(live_session "$p") && tp=$(transcript "$sid") && [[ -n $tp ]] && ts=$(stop_from_transcript "$tp") && [[ $ts =~ ^[0-9]+$ ]]; then
+      stop=$ts dated=1 mt=$ts
     fi
     idle=$((now - stop))
     if (( idle >= FRESH_AFTER_S )); then
