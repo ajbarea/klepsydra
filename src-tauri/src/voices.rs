@@ -1,6 +1,6 @@
-//! The tray's Voices submenu (#183): who speaks through keryx, kept in
-//! prefs.json where `fleet/launch.sh` reads it, so a change applies to each
-//! session launch.sh starts from then on.
+//! The tray's Voices submenu (#183, #273): who speaks through keryx, kept in
+//! prefs.json; a change runs `fleet voices` at once, so keryx follows it for
+//! running sessions too (the resume service re-applies it every pass).
 
 use klepsydra_fleet::voices::{self, VOICES};
 use tauri::menu::Submenu;
@@ -38,7 +38,8 @@ pub fn on_menu(app: &AppHandle, menu_id: &str) -> bool {
     // write_pref logs its own failure; this says which mode holds now.
     let now = saved(app);
     if now == id {
-        log::info!(voices = id; "voices: saved; sessions fleet/launch.sh starts from now on take it");
+        log::info!(voices = id; "voices: saved; keryx follows it now (fleet voices)");
+        crate::launch::apply_voices(now);
     } else {
         log::warn!(voices = id, saved = now; "voices: not saved; the mode is still the saved one");
     }

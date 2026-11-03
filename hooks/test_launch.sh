@@ -465,8 +465,18 @@ t kill-pane -t "$p"
 
 out=$(bash "$launch" bogus 2>&1); rc=$?
 check "unknown command: exit 1" "$rc" "1"
-check "unknown command: says so" "$out" "usage: klepsydra-launch.sh new DIR | jump|end|interrupt|wrapup SOCKET PANE PID START"
+check "unknown command: says so" "$out" "usage: klepsydra-launch.sh new DIR | voices MODE | jump|end|interrupt|wrapup SOCKET PANE PID START"
 check "unknown command: no tab" "$(tabs)" "1"
+
+# #273: the tray's Voices change runs the installed fleet voices at once.
+mkdir -p "$work/fbin"
+printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >>"%s/fleet.calls"\n' "$work" >"$work/fbin/fleet"; chmod +x "$work/fbin/fleet"
+out=$(FLEET_BIN="$work/fbin" bash "$launch" voices everyone 2>&1); rc=$?
+check "#273: voices runs fleet voices with the mode, and opens no tab" "$rc $(cat "$work/fleet.calls") $(tabs)" "0 voices everyone 1"
+out=$(FLEET_BIN="$work/fbin" bash "$launch" voices loud 2>&1); rc=$?
+check "#273: an unknown mode is refused before anything runs" "$rc $(wc -l <"$work/fleet.calls") $out" "1 1 Voices is heph, everyone or off."
+out=$(FLEET_BIN="$work/nofleet" bash "$launch" voices off 2>&1); rc=$?
+check "#273: without the fleet installed it says so" "$rc $out" "1 The fleet commands are not installed (make install-fleet)."
 
 # Another click holding the lock past its 10 s: the window is selected anyway.
 detach_all; : >"$WT_LOG"

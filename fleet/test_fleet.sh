@@ -9,6 +9,11 @@ work=$(mktemp -d)
 export TZ=America/New_York # the fixtures' times are AJ's
 export FLEET_SOCK="fleet-test-$$" FLEET_STATE="$work/state" FLEET_SESSION=fleet
 export FLEET_HOOK_DIR="$work/claude" # never the real ~/.claude
+# Never AJ's keryx: the resume service skips voices, and voices.sh finds no keryx
+# and reads a private keryx config, unless a case hands it a stub (#273).
+export FLEET_VOICES=0 FLEET_KERYX="$work/no-keryx" XDG_CONFIG_HOME="$work/xdg"
+real_keryx_config=${HOME}/.config/keryx/config.json
+real_keryx_sum=$(sha256sum "$real_keryx_config" 2>/dev/null | cut -d' ' -f1)
 export KLEPSYDRA_DIR="$work/klepsydra" FLEET_TICK=0.1 FLEET_START_WAIT=4 FLEET_TURN_WAIT=6 FLEET_RC_WAIT=12
 mkdir -p "$FLEET_STATE" "$KLEPSYDRA_DIR/accounts/a" "$KLEPSYDRA_DIR/accounts/b"
 # Two config folders, logged out until a case logs one in (accounts a and b).
@@ -2177,46 +2182,61 @@ printf '%s' '{"above":["Claude Code"]}' >"$work/nosettings.json"; : >"$work/nose
 FLEET_SETTINGS='' FLEET_SCOPE=0 FLEET_MIN_AVAIL_MB=0 FLEET_LAUNCHER="$work/launcher-rec.sh" FLEET_DIR="$work" \
   FLEET_CLAUDE="python3 -I $fake $work/nosettings.json $work/nosettings.log" bash "$here/launch.sh" nosettings "$work/task.src" >/dev/null 2>&1
 check "FLEET_SETTINGS= starts claude with no --settings" "$(grep -c -- '--settings' "$work/cmd") $(grep -c -- '--session-id' "$work/cmd")" "0 1"
-check "#183: workers run keryx off (only Heph speaks), from the installed worker settings" \
-  "$(jq -r '.env.KERYX_ENABLED' "$here/worker-settings.json")" "false"
+check "#273: no session starts with KERYX_ENABLED: keryx's own setting decides, live" \
+  "$(jq -r '.env.KERYX_ENABLED // "unset"' "$here/worker-settings.json") $(grep -c 'KERYX_ENABLED=' "$work/cmd")" "unset 0"
 check "#172: the session is told its agent's name, so its card keeps its face across a move" "$(grep -c 'KLEPSYDRA_AGENT=nosettings ' "$work/cmd")" "1"
 check "#226: and no successor unless a move names one" "$(grep -c 'KLEPSYDRA_SUCCEEDS' "$work/cmd")" "0"
 FLEET_SUCCEEDS=11111111-2222-4333-8444-555555555555 FLEET_SETTINGS='' FLEET_SCOPE=0 FLEET_MIN_AVAIL_MB=0 FLEET_LAUNCHER="$work/launcher-rec.sh" FLEET_DIR="$work" \
   FLEET_CLAUDE="python3 -I $fake $work/nosettings.json $work/nosettings.log" bash "$here/launch.sh" nosettings "$work/task.src" >/dev/null 2>&1
 check "#226: a move's successor id reaches the session; anything else is dropped" \
   "$(grep -c 'KLEPSYDRA_SUCCEEDS=11111111-2222-4333-8444-555555555555 ' "$work/cmd")" "1"
-voiced() { # VOICES SETTINGS: the command launch.sh builds with the wall's Voices set to VOICES ("-": prefs as they are)
-  [[ $1 == - ]] || jq -n --arg v "$1" 'if $v == "" then {} else {voices: $v} end' >"$KLEPSYDRA_DIR/prefs.json"
-  : >"$work/nosettings.log"
-  FLEET_SETTINGS=$2 FLEET_SCOPE=0 FLEET_MIN_AVAIL_MB=0 FLEET_LAUNCHER="$work/launcher-rec.sh" FLEET_DIR="$work" \
-    FLEET_CLAUDE="python3 -I $fake $work/nosettings.json $work/nosettings.log" bash "$here/launch.sh" nosettings "$work/task.src" >/dev/null 2>&1
-  cat "$work/cmd"
-}
-cmd=$(voiced "" "$here/worker-settings.json")
-check "#183: by default a worker starts with the worker settings, keryx off" "$(grep -c -- "--settings $here/worker-settings.json" <<<"$cmd")" "1"
-# The --settings argument as launch.sh quoted it (printf %q: a space is "\ ").
-settings_of() { local a; a=$(sed -nE 's/.*--settings ((\\.|[^ \\])+).*/\1/p' <<<"$1"); [[ -n $a ]] && eval "printf '%s' $a"; }
-cmd=$(voiced everyone "$here/worker-settings.json")
-check "#183: Everyone starts it with the same settings less keryx's line" \
-  "$(settings_of "$cmd" | jq -c '[.env, .crossSessionInbound]')" '[null,"accept"]'
-check "#183: and the launch log names the mode" "$(jq -r 'select(.message == "window opened") | .voices' "$FLEET_LOG" | tail -1)" "everyone"
-cmd=$(voiced everyone "")
-check "#183 review 1: Everyone leaves a session without worker settings (Heph) as it is" "$(grep -c -- '--settings\|KERYX_ENABLED=' <<<"$cmd")" "0"
-cmd=$(voiced everyone "$work/no-such-settings.json")
-check "#183 review 1: worker settings it cannot read are passed on as they are" "$(settings_of "$cmd")" "$work/no-such-settings.json"
-cmd=$(voiced off "")
-check "#183: Off gives a session started without worker settings (Heph) keryx off, through --settings" \
-  "$(settings_of "$cmd" | jq -c .)" '{"env":{"KERYX_ENABLED":"false"}}'
-cmd=$(voiced off "$here/worker-settings.json")
-check "#183 review 1: Off keeps a worker's own settings, keryx off in them" "$(settings_of "$cmd")" "$here/worker-settings.json"
-cmd=$(voiced heph "")
-check "#183: Heph only leaves Heph's keryx alone" "$(grep -c 'KERYX_ENABLED=\|--settings' <<<"$cmd")" "0"
-check "#183 review 2: and keryx's switch is never inherited from tmux's environment" "$(grep -c '^env -u KERYX_ENABLED ' <<<"$cmd")" "1"
-for odd in 'not json' '{"voices":"everyone"} x' '{"voices":"everyone\n"}' '{"voices":["off"]}' '{"voices":"heph"} {"voices":"off"}' '{"voices":"off"}{"voices":"everyone"}'; do
+check "#183 review 2: keryx's switch is never inherited from tmux's environment" "$(grep -c '^env -u KERYX_ENABLED ' "$work/cmd")" "1"
+
+echo "fleet voices: keryx follows the tray's mode, live (#273)"
+# A stub keryx that keeps its settings where keryx does and records each call.
+mkdir -p "$work/xdg/keryx"
+cat >"$work/keryx-stub" <<'EOF'
+#!/usr/bin/env bash
+c=${XDG_CONFIG_HOME}/keryx/config.json
+[[ -s $c ]] || echo '{}' >"$c"
+printf '%s\n' "$*" >>"${XDG_CONFIG_HOME}/keryx/calls"
+case $1 in
+  on) jq '.enabled = true' "$c" >"$c.t" && mv "$c.t" "$c" ;;
+  off) jq '.enabled = false' "$c" >"$c.t" && mv "$c.t" "$c" ;;
+  speak-only) shift; if [[ $1 == --everyone ]]; then jq '.speak_only = []' "$c" >"$c.t"; else jq --args '.speak_only = $ARGS.positional' "$@" <"$c" >"$c.t"; fi && mv "$c.t" "$c" ;;
+esac
+EOF
+chmod +x "$work/keryx-stub"
+kc="$work/xdg/keryx/config.json"; kcalls="$work/xdg/keryx/calls"
+fv() { : >"$kcalls"; FLEET_KERYX="$work/keryx-stub" bash "$here/fleet" voices "$@" 2>&1; }
+rm -f "$kc" "$KLEPSYDRA_DIR/prefs.json"
+check "#273: with no saved mode, Heph only: keryx on, speaking only for the orchestrator's session" \
+  "$(fv) | $(jq -c '[.enabled // true, .speak_only]' "$kc")" "voices: heph (changed: speak_only) | [true,[\"$FLEET_STATE/orchestrator.session\"]]"
+check "#273: run again, nothing changes and keryx is not called" "$(fv) $(wc -l <"$kcalls")" "voices: heph (keryx already matches) 0"
+check "#273: fleet voices off saves the mode and turns keryx off" \
+  "$(fv off) | $(jq -r .voices "$KLEPSYDRA_DIR/prefs.json") $(jq -c .enabled "$kc")" "voices: off (changed: enabled) | off false"
+check "#273: Everyone turns it on for every session" \
+  "$(fv everyone) | $(jq -c '[.enabled, .speak_only]' "$kc")" "voices: everyone (changed: speak_only enabled) | [true,[]]"
+check "#273: each change is logged with the values decided on" \
+  "$(jq -r 'select(.message == "voices: keryx set to the tray'"'"'s mode") | "\(.mode) \(.enabled) \(.was_enabled)"' "$FLEET_LOG" | tail -1)" "everyone true false"
+printf '{"voices":"heph","theme":"kourai"}' >"$KLEPSYDRA_DIR/prefs.json"
+check "#273: the tray's own save (prefs.json) is what a bare run applies, other prefs kept" \
+  "$(fv) | $(jq -c .speak_only "$kc") $(jq -r .theme "$KLEPSYDRA_DIR/prefs.json")" "voices: heph (changed: speak_only) | [\"$FLEET_STATE/orchestrator.session\"] kourai"
+for odd in 'not json' '{"voices":"loud"}' '{"voices":["off"]}'; do
   printf '%s' "$odd" >"$KLEPSYDRA_DIR/prefs.json"
-  check "#183: a prefs file reading $odd is the default" "$(voiced - "$here/worker-settings.json" >/dev/null; jq -r 'select(.message == "window opened") | .voices' "$FLEET_LOG" | tail -1)" "heph"
+  check "#273: a prefs file reading $odd is Heph only" "$(fv | cut -d' ' -f2)" "heph"
 done
-rm -f "$KLEPSYDRA_DIR/prefs.json"
+check "#273: an unknown mode is refused" "$(fv loud >/dev/null 2>&1; echo $?)" "2"
+check "#273: no keryx installed: said, and nothing fails" "$(FLEET_KERYX="$work/no-keryx" bash "$here/fleet" voices 2>&1; echo "rc=$?")" $'keryx is not installed\nrc=0'
+cat >"$work/keryx-old" <<'EOF'
+#!/usr/bin/env bash
+[[ $1 == speak-only ]] && { echo "unknown command: speak-only" >&2; exit 2; }
+exit 0
+EOF
+chmod +x "$work/keryx-old"; echo '{}' >"$kc"
+check "#273: a keryx older than 0.12.0 fails loudly, logged" \
+  "$(FLEET_KERYX="$work/keryx-old" bash "$here/fleet" voices heph >/dev/null 2>&1; echo $?) $(jq -r 'select(.message | startswith("voices: keryx refused")) | .mode' "$FLEET_LOG" | tail -1)" "1 heph"
+rm -f "$KLEPSYDRA_DIR/prefs.json" "$kc" "$kcalls"
 
 echo "briefing sync"
 git init -q --bare "$work/brief-remote.git"
@@ -2270,6 +2290,7 @@ check "past its cap the log is renamed, and only the newest four are kept" \
 
 echo "the suite's own isolation"
 check "#265 review: no case reached a systemctl it did not stub" "$(cat "$work/guard.calls" 2>/dev/null)" ""
+check "#273: no case touched AJ's own keryx config" "$(sha256sum "$real_keryx_config" 2>/dev/null | cut -d' ' -f1)" "$real_keryx_sum"
 
 echo
 echo "$pass passed, $fail failed"
