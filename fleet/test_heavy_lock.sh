@@ -91,7 +91,7 @@ ln -sf -- "$hl" "$work/heavy-sh.link"
 out=$(timeout 10 flock -o "$hl" bash -c "FLEET_HEAVY_LOCK='$work/heavy-sh.link' '$root/fleet/heavy.sh' echo ran" 2>&1)
 check "the same lock through a symlinked name: refused at once" "$? $(grep -c 'already holds' <<<"$out")" "2 1"
 # shellcheck disable=SC2016 # expanded by the command's shell
-check "the command is told the lock is held, so a make target in it takes no second one" "$(hv bash -c 'echo "$FLEET_HEAVY_HELD"')" "1"
+check "the command is told the lock is held, so a make target in it takes no second one" "$(env -u FLEET_HEAVY_HELD FLEET_HEAVY_LOCK="$hl" "$root/fleet/heavy.sh" bash -c 'echo "${FLEET_HEAVY_HELD:-unset}"')" "1"
 out=$(timeout 10 flock -o "$hl" bash -c "FLEET_HEAVY_LOCK='$hl' '$root/fleet/heavy.sh' echo ran" 2>&1)
 check "inside an outer flock on the same file: refused at once, not a wait until the timeout" \
   "$? $(grep -c 'already holds' <<<"$out") $(grep -c '^ran$' <<<"$out")" "2 1 0"

@@ -28,16 +28,22 @@ openers() {
     mine=0 a=$q
     while [[ $a =~ ^[0-9]+$ ]] && (( a > 1 )); do
       [[ $a == "$$" ]] && { mine=1; break; }
-      a=$(awk '/^PPid:/ { print $2 }' "/proc/$a/status" 2>/dev/null) || break
+      a=$(ppid "$a") || break
     done
     (( mine )) || [[ ! -d /proc/$q ]] || out+=("$q")
   done
   printf '%s' "${out[*]}"
 }
+ppid() { # PID: its parent's pid, read with no process spawned
+  local k v
+  [[ -r /proc/$1/status ]] || return 1
+  { while read -r k v; do [[ $k == PPid: ]] && { printf '%s' "$v"; return 0; }; done <"/proc/$1/status"; } 2>/dev/null
+  return 1
+}
 ancestors() { # this shell's parent chain, one pid per line
   local p=$$
   while [[ $p =~ ^[0-9]+$ ]] && (( p > 1 )); do
-    p=$(awk '/^PPid:/ { print $2 }' "/proc/$p/status" 2>/dev/null) || break
+    p=$(ppid "$p") || break
     [[ -n $p ]] && echo "$p"
   done
 }
