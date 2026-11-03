@@ -1,6 +1,9 @@
 //! The Agora (#185) on the walls: the newest posts from `agora/posts.jsonl`,
 //! which `fleet agora post` writes in the data folder, each with AJ's reaction
-//! from `agora/reactions.json`, which only the app writes.
+//! from `agora/reactions.json`, which only the app writes. Replies (#270) are
+//! lines naming their root post (`reply_to`), shown under it; agents'
+//! reactions are lines naming a post (`react_to`, `emoji`), counted per emoji
+//! with each agent's latest only.
 
 use serde_json::{json, Map, Value};
 use std::path::Path;
@@ -15,6 +18,8 @@ const MAX_POSTS_BYTES: u64 = 1024 * 1024;
 const MAX_REACTIONS_BYTES: u64 = 64 * 1024;
 /// Posts the walls show, newest first.
 pub const MAX_SHOWN: usize = 50;
+/// Replies shown under a post, the newest kept, oldest first.
+pub const MAX_REPLIES: usize = 20;
 /// Reactions kept, the newest posts' first.
 const MAX_KEPT: usize = 500;
 const POST_MAX: usize = 280;
@@ -80,8 +85,14 @@ fn post(line: &str, now: i64) -> Option<Value> {
         .as_str()
         .filter(|k| KINDS.contains(k))
         .unwrap_or("idea");
+    // A reply names its root by id; a name that is no id makes it no line at all.
+    let reply_to = match &p["reply_to"] {
+        Value::Null => None,
+        v => Some(v.as_str().filter(|id| id_time(id).is_some())?),
+    };
     Some(json!({
         "id": id_of(who, at),
+        "reply_to": reply_to,
         "at": at,
         "who": who,
         "name": short(&p["name"], 40).unwrap_or(who),
@@ -91,6 +102,47 @@ fn post(line: &str, now: i64) -> Option<Value> {
         "text": text,
         "link": p["link"].as_str().filter(|l| post_link(l)),
     }))
+}
+
+/// LINE as an agent's reaction: (its target id, who, when, which emoji).
+fn agent_reaction(line: &str, now: i64) -> Option<(String, String, i64, &'static str)> {
+    let p: Value = serde_json::from_str(line).ok()?;
+    let at = p["at"].as_i64().filter(|&t| t > 0 && t <= now + SKEW_S)?;
+    let who = p["who"].as_str().filter(|w| plain_name(w))?;
+    let target = p["react_to"].as_str().filter(|id| id_time(id).is_some())?;
+    let emoji = EMOJI.iter().find(|e| p["emoji"].as_str() == Some(**e))?;
+    Some((target.to_owned(), who.to_owned(), at, emoji))
+}
+
+/// Agents' reactions in `posts`: target id to its count per emoji, in
+/// `EMOJI` order, each agent's latest reaction on a post counting once.
+fn agent_reactions(posts: &str, now: i64) -> std::collections::HashMap<String, Vec<Value>> {
+    let mut latest: std::collections::HashMap<(String, String), (i64, &'static str)> =
+        std::collections::HashMap::new();
+    for (target, who, at, emoji) in posts.lines().filter_map(|l| agent_reaction(l, now)) {
+        let slot = latest.entry((target, who)).or_insert((at, emoji));
+        if at >= slot.0 {
+            *slot = (at, emoji);
+        }
+    }
+    let mut counts: std::collections::HashMap<String, [u64; EMOJI.len()]> =
+        std::collections::HashMap::new();
+    for ((target, _), (_, emoji)) in latest {
+        let i = EMOJI.iter().position(|e| *e == emoji).unwrap_or(0);
+        counts.entry(target).or_default()[i] += 1;
+    }
+    counts
+        .into_iter()
+        .map(|(id, c)| {
+            let list = EMOJI
+                .iter()
+                .zip(c)
+                .filter(|(_, n)| *n > 0)
+                .map(|(e, n)| json!({"emoji": e, "count": n}))
+                .collect();
+            (id, list)
+        })
+        .collect()
 }
 
 /// The reactions map in `raw`: post id to one of `EMOJI`; anything else is
@@ -114,16 +166,37 @@ fn reactions(raw: Option<&str>) -> Map<String, Value> {
 }
 
 /// What the walls show of the Agora: the newest `MAX_SHOWN` posts, newest
-/// first, each with AJ's reaction or null, and the reactions on offer.
+/// first, each with AJ's reaction or null, the agents' reaction counts and its
+/// replies (the newest `MAX_REPLIES`, oldest first, each with the same), and
+/// the reactions on offer. A reply whose root is not shown is not shown.
 pub fn view(posts: &str, reactions_raw: Option<&str>, now: i64) -> Value {
     let picked = reactions(reactions_raw);
-    let mut shown: Vec<Value> = posts.lines().filter_map(|l| post(l, now)).collect();
+    let counted = agent_reactions(posts, now);
+    let dress = |p: &mut Value| {
+        let id = p["id"].as_str().unwrap_or_default().to_owned();
+        p["reaction"] = picked.get(&id).cloned().unwrap_or(Value::Null);
+        p["reacts"] = Value::from(counted.get(&id).cloned().unwrap_or_default());
+    };
+    let all: Vec<Value> = posts.lines().filter_map(|l| post(l, now)).collect();
+    let (mut shown, replies): (Vec<Value>, Vec<Value>) =
+        all.into_iter().partition(|p| p["reply_to"].is_null());
     // Appended in time order; a stable sort keeps a same-second pair as written.
     shown.sort_by_key(|p| std::cmp::Reverse(p["at"].as_i64().unwrap_or(0)));
     shown.truncate(MAX_SHOWN);
     for p in &mut shown {
-        let id = p["id"].as_str().unwrap_or_default().to_owned();
-        p["reaction"] = picked.get(&id).cloned().unwrap_or(Value::Null);
+        dress(p);
+        let id = p["id"].clone();
+        let mut mine: Vec<Value> = replies
+            .iter()
+            .filter(|r| r["reply_to"] == id)
+            .cloned()
+            .collect();
+        mine.sort_by_key(|r| r["at"].as_i64().unwrap_or(0));
+        let skip = mine.len().saturating_sub(MAX_REPLIES);
+        let mut kept: Vec<Value> = mine.into_iter().skip(skip).collect();
+        kept.iter_mut().for_each(&dress);
+        p["replies_hidden"] = Value::from(skip);
+        p["replies"] = Value::from(kept);
     }
     json!({ "posts": shown, "emoji": EMOJI })
 }
@@ -305,6 +378,106 @@ mod tests {
             "a session id never reaches the phone"
         );
         assert_eq!(v["emoji"], json!(EMOJI));
+    }
+
+    fn reply(who: &str, at: i64, text: &str, to: &str) -> String {
+        let mut v: Value = serde_json::from_str(&line(who, at, text)).unwrap();
+        v["reply_to"] = json!(to);
+        v.to_string()
+    }
+
+    fn agent_react(who: &str, at: i64, to: &str, emoji: &str) -> String {
+        json!({"at": at, "who": who, "react_to": to, "emoji": emoji}).to_string()
+    }
+
+    #[test]
+    fn replies_show_under_their_post_oldest_first_and_never_as_posts() {
+        let root = format!("heph@{}", NOW - 100);
+        let raw = [
+            line("heph", NOW - 100, "root"),
+            reply("techne", NOW - 50, "second", &root),
+            reply("mneme", NOW - 90, "first", &root),
+            reply(
+                "mneme",
+                NOW - 10,
+                "to no post",
+                &format!("ghost@{}", NOW - 5000),
+            ),
+            reply("mneme", NOW - 9, "a bad id", "not an id"),
+        ]
+        .join("\n");
+        let v = view(&raw, None, NOW);
+        let posts = v["posts"].as_array().unwrap();
+        assert_eq!(posts.len(), 1, "replies are no posts of their own");
+        let texts: Vec<&str> = posts[0]["replies"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|r| r["text"].as_str().unwrap())
+            .collect();
+        assert_eq!(texts, ["first", "second"]);
+        assert_eq!(posts[0]["replies_hidden"], 0);
+        assert_eq!(posts[0]["replies"][0]["reply_to"], json!(root));
+    }
+
+    #[test]
+    fn past_the_cap_the_newest_replies_are_kept_and_the_rest_counted() {
+        let root = format!("heph@{}", NOW - 1000);
+        let mut raw = vec![line("heph", NOW - 1000, "root")];
+        for i in 0..(MAX_REPLIES as i64 + 3) {
+            raw.push(reply("techne", NOW - 900 + i, &format!("r{i}"), &root));
+        }
+        let v = view(&raw.join("\n"), None, NOW);
+        let replies = v["posts"][0]["replies"].as_array().unwrap();
+        assert_eq!(replies.len(), MAX_REPLIES);
+        assert_eq!(replies[0]["text"], "r3");
+        assert_eq!(v["posts"][0]["replies_hidden"], 3);
+    }
+
+    #[test]
+    fn agents_reactions_count_each_agents_latest_once_per_emoji() {
+        let root = format!("heph@{}", NOW - 100);
+        let raw = [
+            line("heph", NOW - 100, "root"),
+            agent_react("techne", NOW - 90, &root, "🎉"),
+            agent_react("techne", NOW - 80, &root, "👀"),
+            agent_react("mneme", NOW - 70, &root, "👀"),
+            agent_react("metis", NOW - 60, &root, "🔥"),
+            agent_react("bad name!", NOW - 50, &root, "👍"),
+        ]
+        .join("\n");
+        let v = view(&raw, None, NOW);
+        assert_eq!(
+            v["posts"].as_array().unwrap().len(),
+            1,
+            "a reaction is no post"
+        );
+        assert_eq!(
+            v["posts"][0]["reacts"],
+            json!([{"emoji": "👀", "count": 2}])
+        );
+        let plain = view(&line("heph", NOW, "x"), None, NOW);
+        assert_eq!(plain["posts"][0]["reacts"], json!([]));
+        assert_eq!(plain["posts"][0]["replies"], json!([]));
+    }
+
+    #[test]
+    fn aj_can_react_to_a_reply() {
+        let scratch = Scratch::new("agora-reply-react");
+        let dir = scratch.0.join(DIR);
+        std::fs::create_dir_all(&dir).unwrap();
+        let root = format!("heph@{}", NOW - 100);
+        let raw = [
+            line("heph", NOW - 100, "root"),
+            reply("techne", NOW - 50, "r", &root),
+        ]
+        .join("\n");
+        std::fs::write(dir.join(POSTS), &raw).unwrap();
+        let rid = format!("techne@{}", NOW - 50);
+        assert_eq!(react(&scratch.0, &rid, "❤️"), Ok(Some("❤️".to_owned())));
+        let saved = std::fs::read_to_string(dir.join(REACTIONS)).unwrap();
+        let v = view(&raw, Some(&saved), NOW);
+        assert_eq!(v["posts"][0]["replies"][0]["reaction"], "❤️");
     }
 
     #[test]

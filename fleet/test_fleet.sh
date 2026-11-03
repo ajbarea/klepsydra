@@ -682,7 +682,7 @@ check "the tail says performance wins over security above the floor (AJ 11-01)" 
 check "the tail carries the team-ceremony rule (AJ 10-29)" "$(grep -c '^Team ceremony in every repo' "$here/brief-tail.md")" "1"
 check "the tail keeps asks for AJ out of public issues and PRs (AJ 10-29)" "$(grep -c '^Asks for AJ stay private' "$here/brief-tail.md")" "1"
 check "#239: the tail has heavy commands take the lock with flock -o, so nothing they leave running keeps it" "$(grep -c 'flock -o /tmp/fleet-heavy.lock' "$here/brief-tail.md")" "1"
-check "#185: the tail offers the Agora as optional and asks a post to name something real" "$(grep -c '^Agora (AJ 10-29, optional, never a task).*names something real' "$here/brief-tail.md")" "1"
+check "#270: the Agora is offered at the end (fleet done), not in the opening rules" "$(grep -ci 'agora' "$here/brief-tail.md")" "0"
 
 echo "doctor"
 mkdir -p "$KLEPSYDRA_DIR/fleet" "$work/bin"
@@ -1283,7 +1283,8 @@ done_live "$p"
 out=$(env "$fsock" TMUX_PANE="$p" bash "$here/fleet" "done" 2>/dev/null); rc=$?
 check "#269: fleet done in the agent's own pane moves its row, and only its row, to finished.tsv" \
   "$rc $(cut -f1,2 "$REGISTRY") | $(cut -f1,2 "$FLEET_STATE/finished.tsv")" "0 %9999	other | $p	finished"
-check "#269: with the time it finished, and says so" "$(awk -F'\t' '{ print ($7 ~ /^20[0-9][0-9]-/) }' "$FLEET_STATE/finished.tsv") $out" "1 finished: $p (1 row); it will not be relaunched"
+check "#269: with the time it finished, and says so" "$(awk -F'\t' '{ print ($7 ~ /^20[0-9][0-9]-/) }' "$FLEET_STATE/finished.tsv") $(head -1 <<<"$out")" "1 finished: $p (1 row); it will not be relaunched"
+check "#270: then it invites one optional Agora post about the session" "$(sed -n 2p <<<"$out" | grep -c '^Optional, never a task: .*fleet agora post .*--reply-to ID.*fleet agora react ID.*Skipping is fine\.$')" "1"
 check "#269: logged" "$(jq -r 'select(.message | startswith("agent marked finished")) | .pane' "$FLEET_LOG")" "$p"
 mover "$noon"; mover "$((noon + 60))"
 check "#269: the resume service never moves a finished agent back, nor types into it" \

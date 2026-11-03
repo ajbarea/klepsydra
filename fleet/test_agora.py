@@ -409,5 +409,71 @@ class Agora(unittest.TestCase):
         self.assertEqual(self.posts()[0]["text"], "two lines [31m")
 
 
+    # #270: replies one level deep and agents' reactions, in the same file.
+    SID2 = "22222222-2222-4333-8444-555555555555"
+
+    def second_agent(self):
+        self.live(sid=self.SID2, pane="%5")
+        self.register("%5", "mneme-p4", self.SID2)
+
+    def test_a_reply_names_its_root_and_a_reply_to_a_reply_joins_it(self):
+        self.second_agent()
+        self.assertEqual(self.run_agora("post", "the lock waits")[0], 0)
+        root = f"techne-evals@{NOW}"
+        rc, out = self.run_agora("post", "--reply-to", root, "same here", pane="%5", now=NOW + 60)
+        self.assertEqual((rc, out), (0, "Replied as mneme-p4."))
+        reply = f"mneme-p4@{NOW + 60}"
+        rc, _ = self.run_agora("post", "--reply-to", reply, "fixed in #261", now=NOW + 120)
+        self.assertEqual(rc, 0)
+        self.assertEqual([p.get("reply_to") for p in self.posts()], [None, root, root])
+        rc, out = self.run_agora("list")
+        lines = out.splitlines()
+        self.assertIn(f"id={root}", lines[0])
+        self.assertTrue(lines[1].startswith("    ↳ ") and "same here" in lines[1])
+        self.assertTrue(lines[2].startswith("    ↳ ") and "fixed in #261" in lines[2])
+
+    def test_a_reply_to_no_post_or_a_bad_id_is_refused_and_not_written(self):
+        rc, out = self.run_agora("post", "--reply-to", f"nobody@{NOW}", "hello")
+        self.assertEqual(rc, 2)
+        self.assertIn("No post nobody@", out)
+        rc, out = self.run_agora("post", "--reply-to", "not an id", "hello")
+        self.assertEqual(rc, 2)
+        self.assertEqual(self.posts(), [])
+
+    def test_replies_have_their_own_limit_and_never_share_a_second(self):
+        self.second_agent()
+        self.run_agora("post", "root", pane="%5")
+        root = f"mneme-p4@{NOW}"
+        self.assertEqual(self.run_agora("post", "my own post", now=NOW + 10)[0], 0)
+        rc, out = self.run_agora("post", "--reply-to", root, "a reply", now=NOW + 10)
+        self.assertEqual(rc, 4)
+        self.assertIn("this second", out)
+        self.assertEqual(self.run_agora("post", "--reply-to", root, "a reply", now=NOW + 11)[0], 0)
+        rc, out = self.run_agora("post", "--reply-to", root, "another", now=NOW + 300)
+        self.assertEqual(rc, 4)
+        self.assertIn("One reply every 15 min", out)
+        self.assertEqual(self.run_agora("post", "--reply-to", root, "later", now=NOW + 11 + 900)[0], 0)
+
+    def test_an_agent_reacts_once_per_post_from_the_walls_set(self):
+        self.second_agent()
+        self.run_agora("post", "a win", pane="%5")
+        pid = f"mneme-p4@{NOW}"
+        self.assertEqual(self.run_agora("react", pid, "🎉", now=NOW + 5), (0, "Reacted 🎉 as Metis."))
+        self.assertEqual(self.run_agora("react", pid, "🎉", now=NOW + 6), (0, "Already reacted 🎉."))
+        self.assertEqual(self.run_agora("react", pid, "👀", now=NOW + 7)[0], 0)
+        self.assertEqual(self.run_agora("react", pid, "🔥", now=NOW + 8)[0], 2)
+        self.assertEqual(self.run_agora("react", f"x@{NOW}", "👍", now=NOW + 9)[0], 2)
+        rc, out = self.run_agora("react", pid, "👍", pane="%5", now=NOW + 10)
+        self.assertEqual((rc, out), (2, "Your own post takes no reaction from you."))
+        reacts = [(p["react_to"], p["emoji"]) for p in self.posts() if "react_to" in p]
+        self.assertEqual(reacts, [(pid, "🎉"), (pid, "👀")])
+
+    def test_a_reaction_holds_no_post_back(self):
+        self.second_agent()
+        self.run_agora("post", "a win", pane="%5")
+        self.run_agora("react", f"mneme-p4@{NOW}", "👍", now=NOW + 5)
+        self.assertEqual(self.run_agora("post", "my own", now=NOW + 6)[0], 0)
+
+
 if __name__ == "__main__":
     unittest.main()

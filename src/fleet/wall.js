@@ -17,7 +17,7 @@ import { wireSplit } from "./split.js";
 import { follow } from "../ipc.js";
 import { ciView } from "./ci.js";
 import { healthView } from "./health.js";
-import { agoraView, reactLabel, reactedLabel } from "./agora.js";
+import { REPLIES_SHOWN, agoraView, reactLabel, reactedLabel } from "./agora.js";
 import { createReplayer } from "./replay.js";
 import { cutsText } from "./fulltext.js";
 import { WAITING, usageRows } from "../gauge.js";
@@ -778,11 +778,14 @@ function showAgora(view) {
     }
   }
 }
-function agoraPost(r, emoji) {
-  const li = Object.assign(document.createElement("li"), { className: "agora-post" });
+function agoraPost(r, emoji, reply = false) {
+  const li = Object.assign(document.createElement("li"), { className: reply ? "agora-post agora-reply" : "agora-post" });
   li.dataset.kind = r.kind;
-  const face = Object.assign(document.createElement("img"), { className: "agora-face", alt: "", width: 32, height: 32, decoding: "async" });
-  showFace(face, r.face, r.face2x, 32);
+  // The author's character colour (#270), as its card wears it.
+  if (r.accent) li.style.setProperty("--post-accent", r.accent);
+  const size = reply ? 24 : 32;
+  const face = Object.assign(document.createElement("img"), { className: "agora-face", alt: "", width: size, height: size, decoding: "async" });
+  showFace(face, r.face, r.face2x, size);
   const head = Object.assign(document.createElement("p"), { className: "agora-head" });
   const meta = Object.assign(document.createElement("span"), { className: "agora-meta", textContent: [r.repo, r.when].filter(Boolean).join(" \u00b7 "), title: r.whenLong });
   head.append(
@@ -818,6 +821,38 @@ function agoraPost(r, emoji) {
     shown.setAttribute("role", "img");
     shown.setAttribute("aria-label", reactedLabel(r.reaction));
     li.append(shown);
+  }
+  // The agents' own reactions, counted (#270).
+  if (r.reacts.length) {
+    const counts = Object.assign(document.createElement("p"), { className: "agora-agent-reacts" });
+    for (const a of r.reacts) {
+      const chip = Object.assign(document.createElement("span"), { className: "agora-count", textContent: `${a.emoji} ${a.count}` });
+      chip.setAttribute("role", "img");
+      chip.setAttribute("aria-label", a.label);
+      counts.append(chip);
+    }
+    li.append(counts);
+  }
+  if (!reply && r.replies.length) {
+    // One level deep; the newest REPLIES_SHOWN stay in view, the rest fold.
+    const shownReplies = r.replies.slice(-REPLIES_SHOWN);
+    const folded = r.replies.slice(0, r.replies.length - shownReplies.length);
+    const box = Object.assign(document.createElement("div"), { className: "agora-thread" });
+    if (r.repliesFolded) {
+      const more = Object.assign(document.createElement("details"), { className: "agora-more" });
+      const n = r.repliesFolded;
+      more.append(Object.assign(document.createElement("summary"), { textContent: `${n} earlier ${n === 1 ? "reply" : "replies"}` }));
+      const list = Object.assign(document.createElement("ol"), { className: "agora-replies" });
+      list.append(...folded.map((x) => agoraPost(x, emoji, true)));
+      if (r.earlierReplies) list.append(Object.assign(document.createElement("li"), { className: "agora-note-line", textContent: `${r.earlierReplies} older not kept on the board` }));
+      more.append(list);
+      box.append(more);
+    }
+    const list = Object.assign(document.createElement("ol"), { className: "agora-replies" });
+    list.setAttribute("aria-label", `Replies to ${r.name}`);
+    list.append(...shownReplies.map((x) => agoraPost(x, emoji, true)));
+    box.append(list);
+    li.append(box);
   }
   return li;
 }

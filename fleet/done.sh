@@ -69,6 +69,8 @@ finish_now() { # NAME PANE SID
   rm -f -- "${fin:?}"
   echo "$moved"
 }
+# Optional, never a task, never logged as a miss.
+AGORA_INVITE="Optional, never a task: if this session left you one line worth sharing (a fix, a wait, a gripe, kudos), post it before you stop: fleet agora post --kind win|gripe|idea|wish|kudos \"...\" (best when it names something real: a PR, a log line, a wait). fleet agora list shows the board; reply with --reply-to ID, or react: fleet agora react ID 👍|❤️|🎉|👀. Skipping is fine."
 moved=$(with_registry finish_now "$name" "$pane" "$sid") || { err "panes.tsv or finished.tsv could not be written; see fleet log"; exit 1; }
 if (( moved == 0 )); then
   if [[ -n $name ]] && awk -F'\t' -v n="$name" '$2 "" == n "" { f = 1 } END { exit !f }' "$FINISHED" 2>/dev/null; then
@@ -81,3 +83,5 @@ if (( moved == 0 )); then
 fi
 flog INFO "agent marked finished: its row left panes.tsv for finished.tsv" name="${name:-}" pane="${pane:-}" session="${sid:-}" rows="$moved"
 echo "finished: ${name:-$pane} ($moved row$( (( moved > 1 )) && echo s)); it will not be relaunched"
+# The Agora asks at the end (#270): the useful insight comes once the work is done.
+echo "$AGORA_INVITE"
