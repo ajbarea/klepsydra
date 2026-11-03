@@ -895,6 +895,7 @@ fire stop.json; fire user-prompt.json
 fire post-tool-bash-background.json '.tool_input.command = "watch-panes.sh %1\nnpm test"'
 check "#215 review: a second command on a new line is other work" "$(wflag)" '"biwpk3ab6:false"'
 fire stop.json; fire user-prompt.json
+# shellcheck disable=SC2016 # the command text holds a literal $( ), unexpanded on purpose
 fire post-tool-bash-background.json '.tool_input.command = "watch-panes.sh $(make test)"'
 check "#215 review: so is a command substitution in its arguments" "$(wflag)" '"biwpk3ab6:false"'
 fire stop.json; fire user-prompt.json
