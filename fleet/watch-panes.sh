@@ -2,7 +2,8 @@
 # watch-panes.sh PANE...: exit with a reason once any pane sits at its prompt
 # with no turn running for IDLE_S (default 300) after printing a "done" line,
 # stops on a usage limit (a pane already limited when the watcher starts is
-# watched once its limit clears), or is gone, or once the CI watch logs a red run for
+# watched once its limit clears), is gone, or is open with its agent dead
+# (DEAD: the process ended, or a shell is in front), or once the CI watch logs a red run for
 # the orchestrator (ci/alerts.jsonl: main, a branch no agent is on, or one
 # still red 30 min after it was routed). Run it in the background so the
 # orchestrator is woken when an agent finishes or CI needs him.
@@ -12,7 +13,7 @@ here=$(dirname "$(readlink -f "$0")")
 # shellcheck source=fleet/lib.sh
 . "$here/lib.sh"
 IDLE_S=${IDLE_S:-300}
-declare -A since
+declare -A since shell_seen
 ALERTS=$FLEET_STATE/ci/alerts.jsonl SEEN=$FLEET_STATE/ci/alerts.seen
 # The alert lines read so far, kept across watchers so none is missed between
 # two; the first watcher starts at the end, so old alerts wake nobody.
@@ -80,6 +81,18 @@ while :; do
     if ! fleet_panes | grep -qx "$p"; then
       flog INFO "watched pane gone" pane="$p"; echo "GONE $p"; exit 0
     fi
+    # Open but with no agent in it (#288): a crash at once, a shell in front on
+    # the second look in a row (a starting command shows one for a moment).
+    if why=$(pane_dead_why "$p"); then
+      if [[ $why == *prompt* && -z ${shell_seen[$p]:-} ]]; then
+        shell_seen[$p]=1
+        flog INFO "watched pane shows a shell in front; looking again next tick" pane="$p" reason="$why"
+        continue
+      fi
+      flog WARN "watched pane's agent is dead: the pane is open with nothing running" pane="$p" reason="$why"
+      echo "DEAD $p ($why)"; exit 0
+    fi
+    unset "shell_seen[$p]"
     s=$(screen "$p") ps=$(plain <<<"$s")
     if [[ -n ${held[$p]:-} ]]; then
       if ! busy "$s" && limit_line "$s" >/dev/null; then continue; fi

@@ -3280,6 +3280,54 @@ mv "$work/brief/claude-morning.md" "$work/brief/morning.md"
 check "#277: a plain mv to the new name commits as one rename and leaves neither name behind" \
   "$(bsync) $(git -C "$work/brief" show -M --name-status --format= HEAD | tr '\t' ' ' | paste -sd' ') $(git -C "$work/brief" status --porcelain -- claude-morning.md morning.md | wc -l)" "0 R100 claude-morning.md morning.md 0"
 
+echo "a pane open with its agent dead (#288)"
+: >"$FLEET_LOG"
+# A crash: tmux keeps the pane (the fleet's remain-on-exit failed) once its process aborts.
+dp=$(t new-window -d -P -F '#{pane_id}' -t fleet: "sh -c 'sleep 0.5; kill -ABRT \$\$'")
+t set -p -t "$dp" remain-on-exit failed
+sleep 1.5
+check "#288: a crashed pane is open and dead, with its signal" "$(pane_dead_why "$dp")" "its process ended on signal 6"
+IDLE_S=0 WATCH_TICK=0.1 timeout 20 bash "$here/watch-panes.sh" "$dp" >"$work/wdead.out" 2>/dev/null
+check "#288: the watcher wakes on it at once (03:07 on 11-03 woke nobody)" "$(cat "$work/wdead.out")" "DEAD $dp (its process ended on signal 6)"
+check "#288: logged with its reason" "$(jq -r 'select(.message | startswith("watched pane'"'"'s agent is dead")) | .pane + " " + .reason' "$FLEET_LOG")" "$dp its process ended on signal 6"
+# A shell in front where claude ran: dead on the second look in a row.
+sp=$(t new-window -d -P -F '#{pane_id}' -t fleet: "bash --norc --noprofile -i"); sleep 0.5
+check "#288: a shell in front reads as dead" "$(pane_dead_why "$sp")" "a bash prompt is in front where its claude ran"
+IDLE_S=0 WATCH_TICK=0.1 timeout 20 bash "$here/watch-panes.sh" "$sp" >"$work/wdead.out" 2>/dev/null
+check "#288: the watcher wakes on a shell in front after a second look" \
+  "$(cat "$work/wdead.out") | $(grep -c 'looking again next tick' "$FLEET_LOG")" "DEAD $sp (a bash prompt is in front where its claude ran) | 1"
+# A command that shows a shell for a moment as it starts wakes nobody.
+rm -f -- "$work/gate288"
+gp=$(t new-window -d -P -F '#{pane_id}' -t fleet: "bash --norc --noprofile -c 'until [ -e $work/gate288 ]; do read -rt 0.05 _; done; exec sleep 600'")
+: >"$FLEET_LOG"
+IDLE_S=600 WATCH_TICK=0.4 timeout 20 bash "$here/watch-panes.sh" "$gp" >"$work/wdead.out" 2>/dev/null &
+wjob=$!
+for _ in $(seq 50); do grep -q 'looking again next tick' "$FLEET_LOG" 2>/dev/null && break; sleep 0.05; done
+touch "$work/gate288"; sleep 1.5
+check "#288: a shell seen once, then the agent's command, wakes nobody" \
+  "$(grep -c 'looking again next tick' "$FLEET_LOG") $(kill -0 "$wjob" 2>/dev/null && echo watching || echo "woke: $(cat "$work/wdead.out")")" "1 watching"
+kill "$wjob" 2>/dev/null; wait "$wjob" 2>/dev/null
+check "#288: a live pane and a gone one are not dead" "$(pane_dead_why "$gp" || echo alive) $(pane_dead_why %9999 || echo none)" "alive none"
+# The doctor: a row whose session file still reads alive, in a dead pane, is
+# gone with the pane named; Heph dead in his pane is his remote control FAIL.
+SD=aaaaaaaa-0000-4000-8000-0000000000d1
+sfile "$SD" 4242 777 "$NOWBOOT" "$dp"
+cp -p -- "$REGISTRY" "$work/reg-before-288"
+printf '%s\tdeadone\t%s\t%s\t/w\n' "$dp" "$work/bc.src" "$SD" >>"$REGISTRY"
+check "#288: the row's own session reads alive by its file" "$(row_state "$dp" "$SD")" "running"
+cp -p -- "$FLEET_STATE/orchestrator.pane" "$work/orch-before-288" 2>/dev/null
+printf '%s\n' "$sp" >"$FLEET_STATE/orchestrator.pane"
+doc=$(FLEET_DEAD_RECHECK_S=0 bash "$here/doctor.sh" 2>/dev/null)
+check "#288: doctor counts the dead pane's agent as gone, naming the pane" \
+  "$(grep '^FAIL agents' <<<"$doc" | grep -o "deadone (pane $dp open, its process ended on signal 6)")" "deadone (pane $dp open, its process ended on signal 6)"
+check "#288: Heph dead in his pane fails his remote control check; the worker gets no remote control line" \
+  "$(grep "^FAIL remote control $sp (orchestrator)" <<<"$doc") | $(grep -c "remote control $dp " <<<"$doc")" \
+  "FAIL remote control $sp (orchestrator): the pane is open but its agent is dead: a bash prompt is in front where its claude ran | 0"
+rm -f -- "$FLEET_STATE/orchestrator.pane" "$KLEPSYDRA_DIR/fleet/$SD.json"
+[[ -e $work/orch-before-288 ]] && cp -p -- "$work/orch-before-288" "$FLEET_STATE/orchestrator.pane"
+cp -p -- "$work/reg-before-288" "$REGISTRY"
+for w in "$dp" "$sp" "$gp"; do t kill-pane -t "$w" 2>/dev/null; done
+
 echo "the fleet log"
 check "every line is one JSON object with ts, level, target and message" \
   "$(jq -s 'all(has("ts") and has("level") and has("target") and has("message"))' "$FLEET_LOG")" "true"
