@@ -3,9 +3,9 @@
 # set an agent aside without losing it (#246). Pause moves its panes.tsv row to
 # paused.tsv (name, note, then the row itself), so `fleet recover` and the
 # doctor leave it alone; only an agent whose session no longer runs can be
-# paused. Unpause puts the row back, and the next `fleet recover` launches it
-# fresh from its brief. Both run under the registry lock.
-set -u
+# paused. Unpause puts the row back with no session id, and the next
+# `fleet recover` launches it fresh from its brief. Both run under the registry lock.
+set -uo pipefail
 FLEET_TARGET=fleet::pause
 here=$(dirname "$(readlink -f "$0")")
 # shellcheck source=fleet/lib.sh
@@ -41,7 +41,7 @@ put() { # FILE
 # shellcheck disable=SC2329 # run through with_registry
 pause_now() {
   local rows row p sid
-  rows=$(awk -F'\t' -v n="$name" '$2 == n' "$REGISTRY" 2>/dev/null)
+  rows=$(awk -F'\t' -v n="$name" '$2 "" == n ""' "$REGISTRY" 2>/dev/null)
   [[ -n $rows ]] || { refuse "no agent named $name in panes.tsv"; return 1; }
   (( $(grep -c . <<<"$rows") == 1 )) || { refuse "more than one row is named $name"; return 1; }
   row=$rows p=$(cut -f1 <<<"$row") sid=$(cut -f4 <<<"$row")
@@ -49,13 +49,13 @@ pause_now() {
     refuse "$name still runs in $p; end its session first"
     return 1
   fi
-  awk -F'\t' -v n="$name" '$1 == n { f = 1 } END { exit !f }' "$PAUSED" 2>/dev/null &&
+  awk -F'\t' -v n="$name" '$1 "" == n "" { f = 1 } END { exit !f }' "$PAUSED" 2>/dev/null &&
     { refuse "$name is already in paused.tsv"; return 1; }
   printf '%s\tPAUSED %s: %s\t%s\n' "$name" "$(date '+%m-%d %H:%M')" "${why//[$'\t\n']/ }" "$row" >>"$PAUSED" ||
     { failed "$PAUSED" "could not add the row to paused.tsv; nothing changed"; return 1; }
-  if ! awk -F'\t' -v n="$name" '$2 != n' "$REGISTRY" | put "$REGISTRY"; then
+  if ! awk -F'\t' -v n="$name" '$2 "" != n ""' "$REGISTRY" | put "$REGISTRY"; then
     # Never in both files: take the line just added back out.
-    awk -F'\t' -v n="$name" '$1 != n' "$PAUSED" | put "$PAUSED"
+    awk -F'\t' -v n="$name" '$1 "" != n ""' "$PAUSED" | put "$PAUSED"
     failed "$REGISTRY" "could not rewrite panes.tsv; nothing changed"
     return 1
   fi
@@ -66,18 +66,21 @@ pause_now() {
 # shellcheck disable=SC2329 # run through with_registry
 unpause_now() {
   local line row
-  line=$(awk -F'\t' -v n="$name" '$1 == n' "$PAUSED" 2>/dev/null | head -1)
+  line=$(awk -F'\t' -v n="$name" '$1 "" == n ""' "$PAUSED" 2>/dev/null | head -1)
   [[ -n $line ]] || { refuse "no agent named $name in paused.tsv"; return 1; }
   row=$(cut -f3- <<<"$line")
   if [[ $(cut -f2 <<<"$row") != "$name" ]]; then
     refuse "$name was paused by hand, with no saved row; relaunch it from its brief (launch.sh)"
     return 1
   fi
-  awk -F'\t' -v n="$name" '$2 == n { f = 1 } END { exit !f }' "$REGISTRY" 2>/dev/null &&
+  awk -F'\t' -v n="$name" '$2 "" == n "" { f = 1 } END { exit !f }' "$REGISTRY" 2>/dev/null &&
     { refuse "panes.tsv already has a row named $name"; return 1; }
+  # Back with no session id: its old session ended (pause wants it ended), and
+  # a row with none is one fleet recover launches fresh from its brief.
+  row=$(awk -F'\t' -v OFS='\t' '{ $4 = "" } 1' <<<"$row")
   printf '%s\n' "$row" >>"$REGISTRY" ||
     { failed "$REGISTRY" "could not add the row back to panes.tsv; nothing changed"; return 1; }
-  if ! awk -F'\t' -v n="$name" '$1 != n' "$PAUSED" | put "$PAUSED"; then
+  if ! awk -F'\t' -v n="$name" '$1 "" != n ""' "$PAUSED" | put "$PAUSED"; then
     failed "$PAUSED" "the row is back in panes.tsv but still in paused.tsv; remove its paused.tsv line by hand"
     return 1
   fi

@@ -814,23 +814,45 @@ session_alive() { # SID
   [[ $(proc_start "$pid") == "$start" ]]
 }
 
-# Whether session SID ended cleanly: its fleet file is marked ended, which
-# only Claude Code's SessionEnd writes; a hard shutdown or a killed pane never
-# does. klepsydra keeps an ended file a day, so a row older than that is not
-# known to have finished.
+# Whether session SID ended cleanly: Claude Code's SessionEnd named a final
+# end, the user's /exit or ctrl-d at the prompt (prompt_input_exit) or a
+# logout (code.claude.com/docs/en/hooks, SessionEnd). The fleet hook also marks
+# ended a session it finds dead ("gone", on every SessionStart after a hard
+# shutdown), and SessionEnd says "clear" and "resume" for a session that goes
+# on under a new id; those, "other" and any reason unknown here are no finish.
+# klepsydra keeps an ended file a day, so a row older than that is not known to
+# have finished.
 session_finished() { # SID
   local f
   [[ $1 =~ ^[0-9a-f-]{36}$ ]] || return 1
   f=$KLEPSYDRA_DIR/fleet/$1.json
   [[ -f $f && ! -L $f ]] || return 1
-  jq -e '.ended != null' "$f" >/dev/null 2>&1
+  jq -e '(.ended | type) == "object" and ((.ended.reason // "") | IN("prompt_input_exit", "logout"))' "$f" >/dev/null 2>&1
 }
 
-# A registry row's state (#220): "running" (its session, or a live session in
-# its pane after a /clear the row never recorded), "finished" (its session
-# ended cleanly), or "gone" (no end recorded: a hard shutdown, a killed pane).
+# The live session in PANE that a row whose own session SID is gone may count
+# as its successor (a /clear the row never recorded): the row's session (when
+# it names one) started on the running tmux server (a pane id from an earlier server means nothing
+# now), and the live one is neither the orchestrator's nor another row's. The
+# same guards as recover's repair (#261 review).
+row_successor() { # PANE SID
+  local now osid=""
+  # A row with no session id (written by hand) has nothing to date by.
+  [[ -z $2 ]] || on_this_server "$2" || return 1
+  fleet_panes | grep -qx -- "$1" || return 1
+  now=$(live_session "$1") || return 1
+  { read -r osid <"$FLEET_STATE/orchestrator.session"; } 2>/dev/null
+  [[ $now != "$osid" ]] || return 1
+  awk -F'\t' -v s="$now" -v own="$2" '$4 == s && s != own { f = 1 } END { exit f }' "$REGISTRY" 2>/dev/null || return 1
+  printf '%s' "$now"
+}
+
+# A registry row's state (#220): "running" (its session, live in its pane, or
+# its successor after a /clear), "finished" (its session ended cleanly), or "gone" (anything
+# else: a hard shutdown, a killed pane, an end that was no finish).
 row_state() { # PANE SID
-  if session_alive "$2" || { fleet_panes | grep -qx -- "$1" && live_session "$1" >/dev/null; }; then
+  if session_alive "$2" || { [[ -n $2 ]] && fleet_panes | grep -qx -- "$1" && [[ $(live_session "$1") == "$2" ]]; } ||
+    row_successor "$1" "$2" >/dev/null; then
     echo running
   elif session_finished "$2"; then
     echo finished

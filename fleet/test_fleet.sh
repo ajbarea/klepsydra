@@ -1993,9 +1993,13 @@ check "#246: pause sets a gone agent aside, keeping its row" \
 check "#246: and the note says why" "$(cut -f2 "$FLEET_STATE/paused.tsv" | grep -c 'PAUSED .*: no room yet$')" "1"
 check "#246: pausing it twice is refused" "$(fp pause gone1 again; echo "rc=$?")" $'error: fleet pause: no agent named gone1 in panes.tsv\nrc=1'
 check "#246: a pause needs a reason" "$(fp pause other; echo "rc=$?")" $'error: usage: fleet pause NAME WHY...\nrc=2'
-check "#246: unpause puts the row back as it was" \
-  "$(fp unpause gone1) | $(grep -c . "$FLEET_STATE/paused.tsv") | $(grep -c -xF "$row1" "$REGISTRY")" \
+check "#246: unpause puts the row back, with no session id, so recover launches it" \
+  "$(fp unpause gone1) | $(grep -c . "$FLEET_STATE/paused.tsv") | $(grep -c -xF "$(awk -F'\t' -v OFS='\t' '{ $4 = "" } 1' <<<"$row1")" "$REGISTRY")" \
   "unpaused: gone1: fleet recover launches it fresh from its brief | 0 | 1"
+printf '%%43\t01\t/b.src\n%%44\t1\t/c.src\n' >>"$REGISTRY"
+check "#261 review: a name is matched as text, so 1 is not 01" \
+  "$(fp pause 1 numbers; cut -f2 "$REGISTRY" | grep -cx 01; cut -f1 "$FLEET_STATE/paused.tsv")" $'paused: 1 (%44): fleet unpause 1 brings it back\n1\n1'
+fp unpause 1 >/dev/null; awk -F'\t' '$2 "" != "01" && $2 "" != "1"' "$REGISTRY" >"$work/reg.tmp" && mv -f -- "$work/reg.tmp" "$REGISTRY"
 printf 'byhand\tPAUSED 10-28 by Heph\n' >"$FLEET_STATE/paused.tsv"
 check "#246: a row paused by hand, with nothing saved, is refused, not invented" \
   "$(fp unpause byhand | grep -c 'paused by hand, with no saved row'; grep -c . "$FLEET_STATE/paused.tsv")" $'1\n1'
@@ -2189,13 +2193,33 @@ check "once they run, a second run recovers nothing" "$(rec --no-orchestrator | 
 
 echo "finished agents: one verdict per row, and --prune (#220)"
 SF=aaaaaaaa-0000-4000-8000-0000000000f1 SL=aaaaaaaa-0000-4000-8000-0000000000f2 SR=aaaaaaaa-0000-4000-8000-0000000000f3
-ended() { jq '.ended = 1792520221' "$KLEPSYDRA_DIR/fleet/$1.json" >"$work/ended.tmp" && mv -f -- "$work/ended.tmp" "$KLEPSYDRA_DIR/fleet/$1.json"; }
+# The hook's own shape: SessionEnd's reason (prompt_input_exit, a /exit), or "gone".
+ended() { jq --arg r "${2:-prompt_input_exit}" '.ended = {reason: $r, at: 1792520221}' "$KLEPSYDRA_DIR/fleet/$1.json" >"$work/ended.tmp" && mv -f -- "$work/ended.tmp" "$KLEPSYDRA_DIR/fleet/$1.json"; }
 sfile "$SF" 4242 777 "$NOWBOOT" %4; ended "$SF"   # finished cleanly
 cp -p -- "$REGISTRY" "$work/reg-before-220"
 printf '%s\td\t%s\t%s\t/w\n%s\te\t%s\t%s\t/w\n' %4 "$work/bc.src" "$SF" %5 "$work/bc.src" "$SL" >>"$REGISTRY"
 check "row states: running, finished, gone (no end recorded)" "$(row_state %1 "$SA") $(row_state %4 "$SF") $(row_state %5 "$SL")" "running finished gone"
+# #261 review: only a final end is a finish. The hook marks a dead session
+# "gone" on the next SessionStart (as after a hard shutdown), and /clear and
+# /resume end a session that goes on under a new id.
+for r in gone clear resume other logout prompt_input_exit; do
+  sfile "$SL" 4242 777 "$NOWBOOT" %5; ended "$SL" "$r"
+  printf '%s=%s ' "$r" "$(row_state %5 "$SL")"
+done >"$work/reasons"
+check "#261 review: the end reasons that are a finish" "$(cat "$work/reasons")" \
+  "gone=gone clear=gone resume=gone other=gone logout=finished prompt_input_exit=finished "
+sfile "$SL" 4242 777 "$NOWBOOT" %5; ended "$SL" gone
+check "#261 review: a row the hook marked gone is recovered, not called finished" \
+  "$(rec --dry-run --no-orchestrator | grep -E '^(finished|would recover): e' | sed 's/ (.*//')" "would recover: e"
+rm -f "$KLEPSYDRA_DIR/fleet/$SL.json"
 sfile "$SR" 4242 777 "$NOWBOOT" %6; sfile "$SL" 4242 777 "$NOWBOOT" %9; ended "$SL"
 check "a /clear: the row's session ended but its pane runs a new one, so it is running" "$( fleet_panes() { echo %6; }; row_state %6 "$SL" )" "running"
+printf '%s\n' "$SR" >"$FLEET_STATE/orchestrator.session"
+check "#261 review: the orchestrator in a row's pane is never its successor" "$( fleet_panes() { echo %6; }; row_state %6 "$SL" )" "finished"
+rm -f "$FLEET_STATE/orchestrator.session"
+sfile "$SL" 4242 777 "$OLDBOOT" %9; ended "$SL" gone
+check "#261 review: a row from an earlier server is not running in its reused pane id" "$( fleet_panes() { echo %6; }; row_state %6 "$SL" )" "gone"
+sfile "$SL" 4242 777 "$NOWBOOT" %9; ended "$SL"
 rm -f "$KLEPSYDRA_DIR/fleet/$SL.json" "$KLEPSYDRA_DIR/fleet/$SR.json"
 doc=$(bash "$here/doctor.sh" 2>/dev/null)
 check "a lost row is one FAIL, a finished one one warn, and neither gets a remote control line" \
@@ -2213,6 +2237,7 @@ out=$(bash "$here/doctor.sh" --prune 2>/dev/null); rc=$?
 check "--prune drops only the finished row and keeps a backup" \
   "$rc|$(head -1 <<<"$out")|$(cut -f2 "$REGISTRY" | tr '\n' ' ')|$(find "$FLEET_STATE" -maxdepth 1 -name 'panes.tsv.bak-*' | wc -l)|$(grep -c $'\td\t' "$(find "$FLEET_STATE" -maxdepth 1 -name 'panes.tsv.bak-*' | head -1)")" \
   "0|pruned: d (%4)|a b c g |1|1"
+check "#261 review: --prune says where the backup is" "$(grep -c '^backup: .*panes.tsv.bak-' <<<"$out") $(grep -c 'command not found' <<<"$out")" "1 0"
 check "a second --prune finds nothing" "$(bash "$here/doctor.sh" --prune 2>/dev/null)" "nothing to prune: no finished agent's row in panes.tsv"
 check "--prune never touches a lost or running row" "$(diff <(cut -f1-4 "$work/reg-before-220") <(awk -F'\t' '$2 != "g"' "$REGISTRY" | cut -f1-4) && echo same)" "same"
 awk -F'\t' '$2 != "g"' "$REGISTRY" >"$work/reg.tmp" && mv -f -- "$work/reg.tmp" "$REGISTRY"

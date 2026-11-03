@@ -94,7 +94,7 @@ if [[ ${1:-} == --prune ]]; then
     echo "pruned: ${r#*$'\t'} (${key%%/*})"
     flog INFO "doctor: pruned a finished agent's row" pane="${key%%/*}" session="${key#*/}" name="${r#*$'\t'}"
   done
-  echo "backup: $(home "$bak")"
+  echo "backup: $(tilde "$bak")"
   exit 0
 fi
 
@@ -301,7 +301,7 @@ else
     if ! busy "$s" && l=$(limit_line "$s"); then
       limited+="$p "
       r=$(grep -oE 'resets [^(]*[ap]m' <<<"$l" | tail -1)
-      [[ -n $r && $resets != *"$r"* ]] && resets+="${r#resets }, "
+      [[ -n $r && ", $resets" != *", ${r#resets }, "* ]] && resets+="${r#resets }, "
     else
       free+="$p "
     fi

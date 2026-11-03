@@ -135,16 +135,16 @@ while IFS=$'\t' read -r -u 3 p name brief sid _; do
     echo "running: $name ($p)"
     continue
   fi
-  # It ended cleanly before the shutdown: its work is done, not lost (#220).
-  if session_finished "$sid"; then
-    echo "finished: $name ($p): not relaunched (fleet doctor --prune drops its row)"
-    continue
-  fi
   # The pane still runs a live session the row does not name (a /clear whose
   # new id was never recorded): repair the row, never start a second agent.
   if this_boot_row "$sid" && now=$(repair_to "$p") && [[ -n $now ]]; then
     echo "running: $name ($p, now session $now)"
     (( dry )) || { set_session "$p" "$now"; flog INFO "registry repaired" pane="$p" name="$name" session="$now"; }
+    continue
+  fi
+  # It ended cleanly before the shutdown: its work is done, not lost (#220).
+  if session_finished "$sid"; then
+    echo "finished: $name ($p): not relaunched (fleet doctor --prune drops its row)"
     continue
   fi
   if [[ ! -r $brief ]]; then
