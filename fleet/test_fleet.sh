@@ -2271,6 +2271,16 @@ t0=$(date +%s)
 fv --check >/dev/null; fv --if-changed >/dev/null
 check "#273 verify 2: --check and an idle service pass never wait behind a running apply" "$(( $(date +%s) - t0 < 2 ))" "1"
 wait
+# A service pass that waited behind a failing run does not try keryx again.
+vreset; echo '{"speak_only":[]}' >"$kc"; : >"$kcalls"; : >"$FLEET_LOG"
+mkdir -p "$work/kxfail/bin" "$work/kxfail/src/keryx"; cp "$work/kx/src/keryx/__main__.py" "$work/kxfail/src/keryx/"
+printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >>"%s"\nsleep 1; exit 1\n' "$kcalls" >"$work/kxfail/bin/keryx"; chmod +x "$work/kxfail/bin/keryx"
+FLEET_KERYX="$work/kxfail/bin/keryx" bash "$here/fleet" voices >/dev/null 2>&1 &
+sleep 0.3
+FLEET_KERYX="$work/kxfail/bin/keryx" bash "$here/fleet" voices --if-changed >/dev/null 2>&1
+wait
+check "#273 verify 3: a pass that waited behind a failing run does not try keryx again, nor log it twice" \
+  "$(grep -c speak-only "$kcalls") $(jq -r 'select(.message == "voices: keryx could not be set to the tray'"'"'s mode") | .mode' "$FLEET_LOG" | wc -l)" "1 1"
 # A keryx without speak_only (0.11.0): keryx is still turned on, the rest is said once.
 vreset; echo '{"enabled": false}' >"$kc"
 check "#273 review: a keryx without speak_only still turns keryx on, never runs speak-only, and fails" \

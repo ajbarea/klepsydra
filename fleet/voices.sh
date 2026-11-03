@@ -57,9 +57,19 @@ if [[ -n $mode ]]; then
   [[ $mode == heph || $mode == everyone || $mode == off ]] || { err "usage: fleet voices [heph|everyone|off|--if-changed|--check]"; exit 2; }
 fi
 FAILED=$FLEET_STATE/voices.failed
-# Read-only first, without the lock (prefs.json and voices.applied change only
-# under it): --check, and the service's pass when nothing is to be done, never
-# wait behind an apply.
+# Whether the service should leave MODE alone after a failure: a keryx without
+# speak_only (or none) until another is installed, any other failure for 15
+# min, so a fault is logged once. (The path comes last: one with spaces reads whole.)
+wait_after_failure() {
+  local f_mode f_at f_kind f_bin
+  [[ -f $FAILED ]] && read -r f_mode f_at f_kind f_bin <"$FAILED" && [[ $f_mode == "$mode" && $f_bin == "$(keryx_bin)" ]] &&
+    { [[ $f_kind == old || $f_kind == missing ]] || (( $(date +%s) - ${f_at:-0} < 900 )); }
+}
+# Record MODE as applied in one step (a lock-free --check never reads it half-written).
+record_applied() { printf '%s\n' "$1" >"$APPLIED.tmp" && mv -f -- "$APPLIED.tmp" "$APPLIED"; }
+# Read-only first, without the lock (voices.applied changes only under it, and
+# prefs.json, the tray's too, by an atomic rename): --check, and the service's
+# pass when nothing is to be done, never wait behind an apply.
 if [[ -z $mode ]]; then
   mode=$(saved_mode) applied=$(cat "$APPLIED" 2>/dev/null)
   if [[ $run == check ]]; then
@@ -84,13 +94,7 @@ if [[ -z $mode ]]; then
     exit 1
   fi
   [[ $run == if-changed && $applied == "$mode" ]] && exit 0
-  # The service does not retry a keryx without speak_only until another is
-  # installed, nor any other failure for 15 min, so a fault is logged once.
-  # (The binary path comes last, so one with spaces reads back whole.)
-  if [[ $run == if-changed && -f $FAILED ]] && read -r f_mode f_at f_kind f_bin <"$FAILED" && [[ $f_mode == "$mode" && $f_bin == "$(keryx_bin)" ]] &&
-    { [[ $f_kind == old || $f_kind == missing ]] || (( $(date +%s) - ${f_at:-0} < 900 )); }; then
-    exit 0
-  fi
+  [[ $run == if-changed ]] && wait_after_failure && exit 0
   mode=""
 fi
 
@@ -113,7 +117,10 @@ else
   mode=$(saved_mode)
 fi
 applied=$(cat "$APPLIED" 2>/dev/null)
-[[ $run == if-changed && $applied == "$mode" ]] && exit 0
+if [[ $run == if-changed ]]; then
+  [[ $applied == "$mode" ]] && exit 0
+  wait_after_failure && exit 0
+fi
 
 # What keryx should hold for MODE, and what it holds now (its own file; a key
 # it lacks is its default: enabled, every session).
@@ -127,7 +134,7 @@ have_only=$(jq -c '.speak_only // [] | if type == "string" then [.] else . end' 
 need_only=0
 [[ $want_on == true && $have_only != "$want_only" ]] && need_only=1
 if [[ $have_on == "$want_on" ]] && (( !need_only )); then
-  printf '%s\n' "$mode" >"$APPLIED"
+  record_applied "$mode"
   echo "voices: $mode (keryx already matches)"
   exit 0
 fi
@@ -164,7 +171,7 @@ if [[ -n $failed ]]; then
   echo "voices: $mode not fully applied (failed: ${failed% })"
   exit 1
 fi
-printf '%s\n' "$mode" >"$APPLIED"
+record_applied "$mode"
 rm -f -- "${FAILED:?}"
 flog INFO "voices: keryx set to the tray's mode" mode="$mode" changed="${changed% }" enabled="$want_on" speak_only="$want_only" was_enabled="$have_on" was_speak_only="$have_only"
 echo "voices: $mode (changed: ${changed% })"
