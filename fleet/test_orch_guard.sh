@@ -26,6 +26,7 @@ trap 'exit 129' HUP; trap 'exit 130' INT; trap 'exit 143' TERM
 # No inherited descriptor past stderr: the tmux server would keep a caller's lock (#193).
 for fd in "/proc/$$/fd"/*; do n=${fd##*/}; (( n > 2 && n < 255 )) && eval "exec $n>&-"; done
 
+CI_SCALE=1; [[ -n ${GITHUB_ACTIONS:-} ]] && CI_SCALE=2 # timing budgets: twice as long on a shared runner
 pass=0 fail=0
 check() {
   local name=$1 got=$2 want=$3
@@ -84,12 +85,14 @@ as_heph() {
 }
 why() { cat "$work/err"; }
 # A transcript's entries as Claude Code writes them: the limit that stopped a
-# turn (an assistant entry with error rate_limit), or a plain reply, at EPOCH.
+# turn (an assistant API-error entry, error rate_limit, model <synthetic>), or
+# a reply that succeeded, at EPOCH.
 tx_limit() { # FILE EPOCH
-  jq -nc --arg t "$(date -u -d "@$2" +%Y-%m-%dT%H:%M:%S.000Z)" '{type: "assistant", timestamp: $t, isApiErrorMessage: true, error: "rate_limit", message: {content: [{type: "text", text: "You have hit your 5-hour limit"}]}}' >>"$1"
+  jq -nc --arg t "$(date -u -d "@$2" +%Y-%m-%dT%H:%M:%S.000Z)" '{type: "assistant", timestamp: $t, isApiErrorMessage: true, error: "rate_limit", message: {model: "<synthetic>", content: [{type: "text", text: "You have hit your 5-hour limit"}]}}' >>"$1"
 }
-tx_reply() { # FILE EPOCH
-  jq -nc --arg t "$(date -u -d "@$2" +%Y-%m-%dT%H:%M:%S.000Z)" '{type: "assistant", timestamp: $t, message: {content: [{type: "text", text: "done"}]}}' >>"$1"
+tx_reply() { # FILE EPOCH [EXTRA-JSON]: EXTRA merged in (isSidechain, an API error, a model)
+  local x=${3:-}; [[ -n $x ]] || x='{}'
+  jq -nc --arg t "$(date -u -d "@$2" +%Y-%m-%dT%H:%M:%S.000Z)" --argjson x "$x" '{type: "assistant", timestamp: $t, message: {model: "claude-opus-5-5", content: [{type: "text", text: "done"}]}} * $x' >>"$1"
 }
 T="tmux -L $FLEET_SOCK"
 
@@ -107,11 +110,11 @@ check "and the pane took nothing" "$(got_keys cold)" "0"
 check "it is logged with the pane" "$(jq -r 'select(.message | contains("refused a tmux call")) | "\(.guard) \(.pane)"' "$FLEET_LOG" | tail -1)" "cold-limit $cold"
 check "round 7: a limit no transcript dates: refused as unknown, never read as minutes" \
   "$(as_heph "$T send-keys -t $young go Enter")" "refused:unknown"
-check "round 7: the refusal says the stop has no date" "$(has "$(why)" "no transcript of its session dates")" "yes"
+check "round 7: the refusal says no reply dates the stop" "$(has "$(why)" "no transcript of its session holds a reply that succeeded")" "yes"
 YS=aaaaaaaa-0000-4000-8000-0000000000e0
 jq -n --arg p "$young" '{session_id: "x", ended: null, tmux: {pane: $p}}' >"$KLEPSYDRA_DIR/fleet/$YS.json"
-: >"$work/projects/p/$YS.jsonl"; tx_limit "$work/projects/p/$YS.jsonl" "$(( FLEET_NOW - 600 ))"
-check "a limit its transcript dates 10 min old: allowed" "$(as_heph "$T send-keys -t $young go Enter")" "ok"
+: >"$work/projects/p/$YS.jsonl"; tx_reply "$work/projects/p/$YS.jsonl" "$(( FLEET_NOW - 660 ))"; tx_limit "$work/projects/p/$YS.jsonl" "$(( FLEET_NOW - 600 ))"
+check "a limit 10 min old after a reply 11 min old: allowed" "$(as_heph "$T send-keys -t $young go Enter")" "ok"
 check "and the keys arrive" "$(got_keys young)" "1"
 rm -f -- "$KLEPSYDRA_DIR/fleet/$YS.json" "$work/projects/p/$YS.jsonl"
 check "an idle pane at no limit: allowed" "$(as_heph "$T send-keys -t $warm 'next item' Enter")" "ok"
@@ -189,7 +192,9 @@ for m in "${mods[@]}"; do
     done
   done
 done
-check "round 7: some generated formats run the buffer's #() on real tmux (the oracle works)" "$(( ran > 0 ))" "1"
+# On tmux 3.4 (this PC's) the same seed runs 30 of them; another version needs only some.
+if [[ $(tmux -V) == "tmux 3.4" ]]; then oracle_want=30 oracle_got=$ran; else oracle_want=1 oracle_got=$(( ran > 0 )); fi
+check "round 7: generated formats run the buffer's #() on real tmux (the oracle works: $ran)" "$oracle_got" "$oracle_want"
 check "round 7: every one of them is refused, and none runs through the guard" "$missed" ""
 rm -f -- "$work/fmt-ran"; t set-buffer -b z 'plain text'
 # Round 6: "done 10:20 AM" has no date; the session's transcript dates the stop.
@@ -198,14 +203,26 @@ TS=aaaaaaaa-0000-4000-8000-0000000000e1
 dated=$(pane dated "{\"above\":[\"⏺ Done. done 10:20 AM\",\"$LIMIT\"]}"); settle
 jq -n --arg p "$dated" '{session_id: "x", ended: null, tmux: {pane: $p}}' >"$KLEPSYDRA_DIR/fleet/$TS.json"
 : >"$work/projects/p/$TS.jsonl"
-tx_limit "$work/projects/p/$TS.jsonl" "$(( FLEET_NOW - 86400 - 600 ))"
-check "round 6: done 10:20 AM, but its transcript's limit entry is from yesterday: refused as cold" \
+tx_reply "$work/projects/p/$TS.jsonl" "$(( FLEET_NOW - 86400 - 700 ))"; tx_limit "$work/projects/p/$TS.jsonl" "$(( FLEET_NOW - 86400 - 600 ))"
+check "round 6: done 10:20 AM, but its transcript's reply and limit are from yesterday: refused as cold" \
   "$(as_heph "$T send-keys -t $dated continue Enter")" "refused:cold-limit"
 touch -d "@$(( FLEET_NOW - 300 ))" "$work/projects/p/$TS.jsonl"
 check "round 8: a day-old limit entry in a file written 5 min ago is still cold (mtime is a later write)" \
   "$(as_heph "$T send-keys -t $dated continue Enter")" "refused:cold-limit"
 : >"$work/projects/p/$TS.jsonl"; tx_reply "$work/projects/p/$TS.jsonl" "$(( FLEET_NOW - 86400 ))"; tx_limit "$work/projects/p/$TS.jsonl" "$(( FLEET_NOW - 600 ))"
-check "round 6: its limit entry 10 min old: allowed" "$(as_heph "$T send-keys -t $dated go Enter")" "ok"
+check "round 10: a limit 10 min old after a day-old reply is cold: the cache ages from the last good reply" \
+  "$(as_heph "$T send-keys -t $dated go Enter")" "refused:cold-limit"
+: >"$work/projects/p/$TS.jsonl"; tx_limit "$work/projects/p/$TS.jsonl" "$(( FLEET_NOW - 900 ))"; tx_limit "$work/projects/p/$TS.jsonl" "$(( FLEET_NOW - 600 ))"
+check "round 10: limits and no reply that succeeded: unknown (fail closed)" "$(as_heph "$T send-keys -t $dated go Enter")" "refused:unknown"
+: >"$work/projects/p/$TS.jsonl"; tx_reply "$work/projects/p/$TS.jsonl" "$(( FLEET_NOW - 86400 ))"
+tx_reply "$work/projects/p/$TS.jsonl" "$(( FLEET_NOW - 700 ))" '{"isSidechain": true}'
+tx_reply "$work/projects/p/$TS.jsonl" "$(( FLEET_NOW - 680 ))" '{"isApiErrorMessage": true}'
+tx_reply "$work/projects/p/$TS.jsonl" "$(( FLEET_NOW - 660 ))" '{"message": {"model": "<synthetic>"}}'
+tx_limit "$work/projects/p/$TS.jsonl" "$(( FLEET_NOW - 600 ))"
+check "round 10: a sidechain reply, an API error and a <synthetic> entry are no good reply: dated by yesterday's" \
+  "$(as_heph "$T send-keys -t $dated go Enter")" "refused:cold-limit"
+: >"$work/projects/p/$TS.jsonl"; tx_reply "$work/projects/p/$TS.jsonl" "$(( FLEET_NOW - 720 ))"; tx_limit "$work/projects/p/$TS.jsonl" "$(( FLEET_NOW - 600 ))"
+check "round 6: a reply 12 min old and its limit 10 min old: allowed" "$(as_heph "$T send-keys -t $dated go Enter")" "ok"
 check "round 6: the check logs where the stop came from" \
   "$(jq -r 'select(.message | contains("send checked")) | .stop_from' "$FLEET_LOG" | tail -1)" "transcript"
 dated2=$(pane dated2 "{\"above\":[\"⏺ Done. done 10:20 AM\",\"$LIMIT\"]}"); settle
@@ -214,6 +231,34 @@ jq -n --arg p "$dated2" '{session_id: "x", ended: null, tmux: {pane: $p}}' >"$KL
 check "round 8: no limit entry: the last reply dates the stop (yesterday: cold)" "$(as_heph "$T send-keys -t $dated2 go Enter")" "refused:cold-limit"
 printf '{"type":"user"}\nnot json\n' >"$work/projects/p/$TS.jsonl"
 check "round 8: a transcript with no dated entry: unknown" "$(as_heph "$T send-keys -t $dated2 go Enter")" "refused:unknown"
+# Round 10 (Heph 11-03): a long session's transcript is never read whole.
+# A reply 3 MB from the end (past the first 2 MB window) is found by widening;
+# a 48 MB file whose reply is near its end costs one small window.
+big=$(pane big "{\"above\":[\"⏺ Done. done 10:20 AM\",\"$LIMIT\"]}"); settle
+jq -n --arg p "$big" '{session_id: "x", ended: null, tmux: {pane: $p}}' >"$KLEPSYDRA_DIR/fleet/$TS.json"
+filler() { python3 -I -c 'import sys; line = "{\"type\":\"user\",\"message\":{\"content\":\"" + "x" * 1000 + "\"}}\n"; sys.stdout.write(line * (int(sys.argv[1]) // len(line)))' "$1"; }
+: >"$work/projects/p/$TS.jsonl"; tx_reply "$work/projects/p/$TS.jsonl" "$(( FLEET_NOW - 720 ))"
+filler 3000000 >>"$work/projects/p/$TS.jsonl"; tx_limit "$work/projects/p/$TS.jsonl" "$(( FLEET_NOW - 600 ))"
+check "round 10: a reply 3 MB from the end is found by widening the window" "$(as_heph "$T send-keys -t $big go Enter")" "ok"
+# The same limit pane with a small transcript and with a 48 MB one: the big
+# file costs next to nothing more, since only its tail is read (the old
+# tac|jq of the whole file took 727 ms on it, on this PC).
+TB=aaaaaaaa-0000-4000-8000-0000000000e4
+small2=$(pane small2 "{\"above\":[\"⏺ Done. done 10:20 AM\",\"$LIMIT\"]}")
+big2=$(pane big2 "{\"above\":[\"⏺ Done. done 10:20 AM\",\"$LIMIT\"]}"); settle
+jq -n --arg p "$small2" '{session_id: "x", ended: null, tmux: {pane: $p}}' >"$KLEPSYDRA_DIR/fleet/$TS.json"
+jq -n --arg p "$big2" '{session_id: "x", ended: null, tmux: {pane: $p}}' >"$KLEPSYDRA_DIR/fleet/$TB.json"
+: >"$work/projects/p/$TS.jsonl"; tx_reply "$work/projects/p/$TS.jsonl" "$(( FLEET_NOW - 720 ))"; tx_limit "$work/projects/p/$TS.jsonl" "$(( FLEET_NOW - 600 ))"
+filler 48000000 >"$work/projects/p/$TB.jsonl"; tx_reply "$work/projects/p/$TB.jsonl" "$(( FLEET_NOW - 720 ))"; tx_limit "$work/projects/p/$TB.jsonl" "$(( FLEET_NOW - 600 ))"
+send_ms() { # PANE: the median of 5 sends of nothing to PANE, in ms
+  local ms=() a b
+  for _ in 1 2 3 4 5; do a=$(date +%s%N); as_heph "$T send-keys -t $1 ''" >/dev/null; b=$(date +%s%N); ms+=($(( (b - a) / 1000000 ))); done
+  printf '%s\n' "${ms[@]}" | sort -n | sed -n 3p
+}
+ms_small=$(send_ms "$small2") ms_big=$(send_ms "$big2")
+echo "  (a send to a limit pane: ${ms_small} ms with a small transcript, ${ms_big} ms with a 48 MB one; medians of 5)"
+check "round 10: a 48 MB transcript adds under $(( 40 * ${CI_SCALE:-1} )) ms to a send (read from its tail)" "$(( ms_big - ms_small < 40 * ${CI_SCALE:-1} ))" "1"
+rm -f -- "$KLEPSYDRA_DIR/fleet/$TB.json" "$work/projects/p/$TB.jsonl"
 rm -f -- "$KLEPSYDRA_DIR/fleet/$TS.json" "$work/projects/p/$TS.jsonl"
 weekly=$(pane weekly '{"above":["⏺ Done. done 10:20 AM","  ⎿  You'"'"'ve hit your weekly limit · resets Nov 4, 1pm (America/New_York)","",""]}'); settle
 check "round 6: a dated (weekly) reset and no transcript: refused as unknown" \
@@ -424,17 +469,23 @@ for c in 'launch.sh\0card' 'bash\0/x/relaunch-fresh.sh\0%3' 'sh\0-c\0sleep 9; ba
 done
 
 echo "cost"
+# A median of single calls, and CI runners get twice the local budget (11-03:
+# one run read 68 ms against 60 on a shared runner); the local budget stays strict.
+median_ms() { # N COMMAND...: the median wall time of N runs, in ms
+  local n=$1 a b; shift
+  local ms=()
+  for (( i = 0; i < n; i++ )); do a=$(date +%s%N); "$@" >/dev/null 2>&1; b=$(date +%s%N); ms+=($(( (b - a) / 1000000 ))); done
+  printf '%s\n' "${ms[@]}" | sort -n | sed -n "$(( n / 2 + 1 ))p"
+}
 payload=$(jq -nc --arg s "$WSID" '{session_id: $s, transcript_path: "/home/x/.claude/p.jsonl", hook_event_name: "PreToolUse", tool_name: "Bash", tool_input: {command: "tmux send-keys -t %1 hi"}}')
-start=$(date +%s%N)
-for _ in {1..20}; do bash "$GUARD" <<<"$payload" >/dev/null; done
-per=$(( ($(date +%s%N) - start) / 20000000 ))
-echo "  (the hook on another session's call: ${per} ms each)"
-check "the hook costs another session under 40 ms" "$(( per < 40 ))" "1"
-start=$(date +%s%N)
-for _ in {1..20}; do PATH="$FLEET_STATE/orch-bin:$PATH" tmux -L "$FLEET_SOCK" display -p '#{pid}' >/dev/null; done
-per=$(( ($(date +%s%N) - start) / 20000000 ))
-echo "  (the orchestrator's tmux, a call that sends nothing: ${per} ms each)"
-check "the guard's tmux keeps a call that sends nothing under 60 ms" "$(( per < 60 ))" "1"
+hook_once() { bash "$GUARD" <<<"$payload"; }
+per=$(median_ms 21 hook_once)
+echo "  (the hook on another session's call: ${per} ms, median of 21)"
+check "the hook costs another session under $(( 40 * ${CI_SCALE:-1} )) ms" "$(( per < 40 * ${CI_SCALE:-1} ))" "1"
+tmux_once() { PATH="$FLEET_STATE/orch-bin:$PATH" tmux -L "$FLEET_SOCK" display -p '#{pid}'; }
+per=$(median_ms 21 tmux_once)
+echo "  (the orchestrator's tmux, a call that sends nothing: ${per} ms, median of 21)"
+check "the guard's tmux keeps a call that sends nothing under $(( 60 * ${CI_SCALE:-1} )) ms" "$(( per < 60 * ${CI_SCALE:-1} ))" "1"
 
 echo "differential against tmux and bash"
 diff_out=$(timeout 900 python3 -I "$here/tests/orch_parse_differential.py" 200 264 2>&1)
@@ -504,7 +555,7 @@ cold3=$(pane cold3 "{\"above\":[\"⏺ Done. done 9:00 AM\",\"$LIMIT\"]}"); settl
 # Its transcript dates the stop, so only the cold-limit refusal guards it.
 C3=aaaaaaaa-0000-4000-8000-0000000000e3
 jq -n --arg p "$cold3" '{session_id: "x", ended: null, tmux: {pane: $p}}' >"$KLEPSYDRA_DIR/fleet/$C3.json"
-: >"$work/projects/p/$C3.jsonl"; tx_limit "$work/projects/p/$C3.jsonl" "$(( FLEET_NOW - 5400 ))"
+: >"$work/projects/p/$C3.jsonl"; tx_reply "$work/projects/p/$C3.jsonl" "$(( FLEET_NOW - 5500 ))"; tx_limit "$work/projects/p/$C3.jsonl" "$(( FLEET_NOW - 5400 ))"
 for g in cold-limit pending-input hidden unknown; do
   sed "s/refuse $g /true $g /g" "$here/orch-tmux.sh" >"$mut/orch-tmux.sh"
   check "mutant $g: its refusals removed" "$(grep -c "refuse $g " "$mut/orch-tmux.sh")" "0"

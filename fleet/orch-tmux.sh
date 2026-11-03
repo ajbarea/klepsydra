@@ -295,14 +295,34 @@ need_lib || refuse unknown "the guard could not load fleet/lib.sh, so it cannot 
 now=$(clock)
 t() { "$real" "${G[@]}" "$@"; } # again: lib.sh's t is the fleet socket's
 squash() { tr -d '[:space:]' <<<"$1"; }
-# When the session in transcript TP stopped, in epoch seconds: Claude Code
-# writes the limit that stops a turn as an assistant entry with error
-# rate_limit, so its last one's timestamp; else the last assistant entry's.
+# The prompt cache's lifetime runs from the last request that succeeded (#264,
+# Heph 11-03), so a stop is dated by the session's last good reply: a main-chain
+# assistant entry that is no API error and no <synthetic> one (Claude Code writes
+# a limit as an assistant entry with isApiErrorMessage, error rate_limit and
+# model <synthetic>). Prints "GOOD LIMIT": that reply's epoch and the first limit
+# entry's after it ("-" when none). Fails when no good reply is found.
+read -r -d '' STOP_JQ <<'JQ' || true
+def epoch: sub("[.][0-9]+Z$"; "Z") | fromdateiso8601;
+def good: .isSidechain != true and .isApiErrorMessage != true and ((.message.model? // "") != "<synthetic>");
+reduce (inputs | fromjson? | objects | select(.type == "assistant" and (.timestamp | type) == "string")) as $e
+  ({g: null, l: null};
+   if ($e | good) then {g: (($e.timestamp | epoch)? // null), l: null}
+   elif $e.error == "rate_limit" and .g != null and .l == null then .l = (($e.timestamp | epoch)? // null)
+   else . end)
+| select(.g != null) | "\(.g) \(.l // "-")"
+JQ
+# Only the transcript's tail is read, through a grep prefilter (a long session's
+# file runs to tens of MB, and the guard sits in front of every send); the
+# window grows eightfold until a good reply is in it, up to the whole file.
 stop_from_transcript() { # TP
-  local ts=""
-  ts=$(tac -- "$1" 2>/dev/null | jq -Rr 'fromjson? | select(.type == "assistant" and .error == "rate_limit") | .timestamp | strings' 2>/dev/null | head -1)
-  [[ -n $ts ]] || ts=$(tac -- "$1" 2>/dev/null | jq -Rr 'fromjson? | select(.type == "assistant") | .timestamp | strings' 2>/dev/null | head -1)
-  [[ -n $ts ]] && date -u -d "$ts" +%s 2>/dev/null
+  local tp=$1 size n=${ORCH_TAIL_BYTES:-2097152} out
+  size=$(stat -L -c %s -- "$tp" 2>/dev/null) || return 1
+  while :; do
+    out=$(tail -c "$n" -- "$tp" 2>/dev/null | grep -F '"type":"assistant"' | jq -nRr "$STOP_JQ" 2>/dev/null)
+    [[ $out =~ ^[0-9]+\ ([0-9]+|-)$ ]] && { printf '%s\n' "$out"; return 0; }
+    (( n >= size )) && return 1
+    n=$(( n * 8 ))
+  done
 }
 placeholder='^\[Pasted text #[0-9]+( \+[0-9]+ lines?)?\]$'
 stamps=() # "PANE|TEXT": what this call leaves typed in each box, once every check passes
@@ -322,12 +342,17 @@ for ch in "${checks[@]}"; do
     stop=$(stopped_at "$p" "$ps")
     # "done H:MM" has no date, so a pane stopped days ago reads as minutes:
     # the time shown is the latest it can be. The session's transcript dates
-    # the stop by its entries' own times (the limit's entry, else the last
-    # reply; never the file's mtime, a later write); with none, a screen time
-    # an hour back is cold for sure, and any other stop is unknown.
-    sid="" tp="" dated=0 ts=""
-    if sid=$(live_session "$p") && tp=$(transcript "$sid") && [[ -n $tp ]] && ts=$(stop_from_transcript "$tp") && [[ $ts =~ ^[0-9]+$ ]]; then
-      stop=$ts dated=1 mt=$ts
+    # the stop by its entries' own times, never the file's mtime (a later
+    # write): the earliest of its last good reply, the screen's time and the
+    # first limit after that reply. With no good reply, a screen time an hour
+    # back is cold for sure, and any other stop is unknown (fail closed: the
+    # way out is a fresh relaunch, which is safe).
+    sid="" tp="" dated=0 good="" first=""
+    if sid=$(live_session "$p") && tp=$(transcript "$sid") && [[ -n $tp ]] &&
+      read -r good first < <(stop_from_transcript "$tp") && [[ $good =~ ^[0-9]+$ ]]; then
+      (( good < stop )) && stop=$good
+      [[ $first =~ ^[0-9]+$ ]] && (( first < stop )) && stop=$first
+      dated=1 mt=$good
     fi
     idle=$((now - stop))
     if (( idle >= FRESH_AFTER_S )); then
@@ -335,7 +360,7 @@ for ch in "${checks[@]}"; do
         pane="$p" command="$name" idle_min="$((idle / 60))" limit="$lim"
     fi
     (( dated )) ||
-      refuse unknown "pane $p is at a usage limit and no transcript of its session dates the time it stopped (\"done H:MM\" has no date), so the guard cannot tell how long its cache has been cold. The resume service sends at the reset; relaunch it fresh now with: bash $state/fresh-now.sh $p" \
+      refuse unknown "pane $p is at a usage limit and no transcript of its session holds a reply that succeeded, the time its cache started to age (\"done H:MM\" has no date), so the guard cannot tell how long its cache has been cold. The resume service sends at the reset; relaunch it fresh now with: bash $state/fresh-now.sh $p" \
         pane="$p" command="$name" limit="$lim"
   fi
   before=""
