@@ -661,15 +661,16 @@ retire() { # PANE [INTERRUPT]
 # Retire OLD for its successor NEW, which opened behind (#216): when AJ is
 # watching OLD, NEW comes into view first, before OLD closes, since tmux then
 # makes another window active, and a sibling replacement would read that one
-# as watched (#229 review). An OLD that will not exit is put back in view. Fails
-# only when OLD still runs; one that exited as retire gave up is gone all the same.
+# as watched (#229 review). An OLD that will not exit is put back in view, only
+# while NEW still is: AJ may have moved on during retire's wait. Fails only when
+# OLD still runs; one that exited as retire gave up is gone all the same.
 retire_into() { # OLD NEW
   local viewed=0
   in_view "$1" && viewed=1
   (( viewed )) && t select-window -t "$2" 2>/dev/null
   retire "$1" && return 0
   fleet_panes | grep -qx -- "$1" || return 0
-  (( viewed )) && t select-window -t "$1" 2>/dev/null
+  (( viewed )) && in_view "$2" && t select-window -t "$1" 2>/dev/null
   return 1
 }
 

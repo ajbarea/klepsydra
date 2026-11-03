@@ -1921,6 +1921,26 @@ wait "$relpid"
 t kill-window -t "$(cat "$work/relv.new")" 2>/dev/null
 rm -f -- "${KLEPSYDRA_DIR:?}/fleet/$SID.json"; : >"$REGISTRY"
 
+# #229 review 3: an OLD that will not exit comes back into view only while its
+# successor still is: AJ who moved on meanwhile stays where he went.
+stuck() { # MOVE(0|1): retire_into a pane that never takes /exit, AJ moving away after 1 s or not
+  local o n c rp
+  o=$(t new-window -d -P -F '#{pane_id}' -t fleet: 'sleep 600')
+  n=$(t new-window -d -P -F '#{pane_id}' -t fleet: 'sleep 600')
+  c=$(t new-window -d -P -F '#{pane_id}' -t fleet: 'sleep 600')
+  t select-window -t "$o"
+  ( retire_into "$o" "$n"; echo "$?" >"$work/stuck.rc" ) & rp=$!
+  if (( $1 )); then sleep 1; t select-window -t "$c"; fi
+  wait "$rp"
+  printf '%s %s' "$(cat "$work/stuck.rc")" "$(t display -p -t fleet: '#{pane_id}')"
+  printf ' %s %s %s' "$o" "$n" "$c" >"$work/stuck.ids"
+  t kill-window -t "$o"; t kill-window -t "$n"; t kill-window -t "$c"
+}
+got=$(stuck 1); read -r _ _ c <"$work/stuck.ids"
+check "#229 review 3: AJ who moved on while the old pane would not exit stays where he went" "$got" "1 $c"
+got=$(stuck 0); read -r o _ _ <"$work/stuck.ids"
+check "#229 review 3: AJ who stayed gets the old pane back when it will not exit" "$got" "1 $o"
+
 echo "relaunch never leaves two agents on one row (#274)"
 relpane() { # STATE-JSON: a registered pane rb2 on cfg-a; prints its id
   local q
