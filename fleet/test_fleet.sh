@@ -47,7 +47,11 @@ check() {
   else
     fail=$((fail + 1)); printf '  FAIL %s\n       want: %s\n       got:  %s\n' "$name" "$want" "$got"
     # On GitHub Actions, an annotation names the failing case on the run's page.
-    [[ -n ${GITHUB_ACTIONS:-} ]] && printf '::error file=fleet/test_fleet.sh,title=fleet test failed::%s\n' "${name//$'\n'/ }"
+    if [[ -n ${GITHUB_ACTIONS:-} ]]; then
+      local msg=${name//%/%25}
+      msg=${msg//$'\r'/%0D}
+      printf '::error file=fleet/test_fleet.sh,title=fleet test failed::%s\n' "${msg//$'\n'/%0A}"
+    fi
   fi
 }
 has() { grep -qF -- "$2" <<<"$1" && echo yes || echo no; } # TEXT NEEDLE
@@ -100,6 +104,11 @@ check "#265 review 2: a time-only reset up to a day ahead stays ahead (a weekly 
 now=$(TZ=America/New_York date -d '2026-03-07 21:00' +%s)
 check "#265 review 3: tomorrow's 2:30am, which the spring-forward skips, fails rather than reading as now" \
   "$(TZ=America/New_York reset_epoch 'resets 2:30am' "$now"; echo "rc=$?")" "rc=1"
+check "#265 review 4: a dated reset at a skipped time fails too" \
+  "$(TZ=America/New_York reset_epoch 'resets Mar 8, 2:30am (America/New_York)' "$now"; echo "rc=$?")" "rc=1"
+now=$(TZ=America/New_York date -d '2026-03-08 00:30' +%s)
+check "#265 review 4: and so does today's, read before the clock change" \
+  "$(TZ=America/New_York reset_epoch 'resets 2am' "$now"; echo "rc=$?")" "rc=1"
 now=$(TZ=America/New_York date -d '2026-11-02 18:50' +%s)
 check "#265 review: with a 19 h roll (the doctor's), a reset 6 h past is today's" \
   "$(TZ=America/New_York date -d "@$(reset_epoch 'resets 12:40pm' "$now" 68400)" '+%F %H:%M')" "2026-11-02 12:40"

@@ -143,6 +143,15 @@ limit_line() {
     printf '%s\n' "$BELOW" | grep -E "$LIMIT_RE"; } | tail -1 | grep .
 }
 
+# Whether EPOCH reads as HH:MM on the clock in ZONE (empty: local time). GNU
+# date refuses a time a DST change skips; uutils date (Ubuntu 26.04) moves it
+# forward by the DST shift. The round trip tells them apart on both.
+reads_as() { # EPOCH ZONE HH:MM
+  local got
+  if [[ -n $2 ]]; then got=$(TZ=$2 date -d "@$1" +%H:%M 2>/dev/null); else got=$(date -d "@$1" +%H:%M 2>/dev/null); fi
+  [[ -n $got && $got == "$3" ]]
+}
+
 # The epoch at which the reset in TEXT falls, from NOW: "resets 1:10pm",
 # "resets 4:10am", "resets Nov 2, 1pm" or "resets Nov 2, 1:30pm", each with an
 # optional "(Area/City)" zone (else local time). A time-only reset more than
@@ -150,15 +159,6 @@ limit_line() {
 # DST change (Claude Code dates a reset only when it is over 24 h away); a dated
 # one more than 180 days past is next year's, and more than 180 days ahead last year's.
 # Fails when TEXT names none, or a time that does not exist that day.
-# Whether EPOCH reads as HH:MM on the clock in ZONE (empty: local time). GNU
-# date refuses a time a DST change skips; uutils date (Ubuntu 26.04) moves it
-# an hour on. The round trip tells them apart on both.
-reads_as() { # EPOCH ZONE HH:MM
-  local got
-  if [[ -n $2 ]]; then got=$(TZ=$2 date -d "@$1" +%H:%M 2>/dev/null); else got=$(date -d "@$1" +%H:%M 2>/dev/null); fi
-  [[ -n $got && $got == "$3" ]]
-}
-
 reset_epoch() { # TEXT NOW [ROLL_S]
   local text=$1 now=$2 roll=${3:-21600} m
   m=$(grep -oE 'resets ([A-Z][a-z]{2} [0-9]{1,2}, )?[0-9]{1,2}(:[0-9]{2})? ?[ap]m( \([A-Za-z0-9_+/-]+\))?' <<<"$text" | tail -1)
