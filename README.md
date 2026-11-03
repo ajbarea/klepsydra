@@ -1139,14 +1139,28 @@ the fleet make it read the ledger again, at most once every 5 seconds.
 
 ### Queue panel
 
-The **Queue** button beside **Ledger** shows your to-do file inside the wall,
-in a side panel the Ledger shares (`src/fleet/sidepanel.js`):
-by default `claude-queue.md` on your Desktop (the Desktop known folder, so a
-redirected Desktop is found too). The file stays the source of truth: agents
-and you keep editing it with any editor, and the panel only reads it.
+The **Queue** button beside **Ledger** shows two lists inside the wall, one
+over the other, in a side panel the Ledger shares (`src/fleet/sidepanel.js`):
 
-To read another file, pick it with the tray's **Choose queue file...**, or
-let a session own it: an orchestrator that keeps the queue runs
+| List | File | Shows |
+|---|---|---|
+| **Needs you**, on top | `needs-you.md` beside the queue file | your to-do list: what the agents need from you |
+| **Queue**, below | `claude-queue.md` on your Desktop (the Desktop known folder, so a redirected Desktop is found too) | the agents' to-do list |
+
+Both are in view whenever the panel is open, each live, folded and scrolled on
+its own, so the asks waiting on you never scroll away behind the agents' plan,
+the way VS Code stacks views in its side bar. The bar between them moves the
+split: drag it, or focus it and use the Up and Down arrows (Page Up and Page
+Down for bigger steps, Home and End for the bounds); a double click puts it
+back at 40% for Needs you. The split stays between 15% and 85%, neither list
+drops below 120 px while the panel has room for both, and the split is
+remembered. The files stay the source of truth:
+agents and you keep editing them with any editor, and the panel only reads
+them.
+
+To read another file, pick it with the tray's **Choose queue file...** or
+**Choose Needs you file...**, or let a session own it: an orchestrator that
+keeps the queue runs
 
 ```bash
 bash ~/.claude/klepsydra-fleet.sh queue set ~/fleet/queue.md --by "Hermes (orchestrator)"
@@ -1161,7 +1175,12 @@ applies within five seconds. `--by` takes a name of 1 to 80 characters,
 always shown as typed. Without `--by`, from a session keryx holds a voice
 for, the hook names the keeper itself (the voice's character in the theme
 worn, "kept by Hephaestus"), and the panel renames it when the theme
-changes. A
+changes. `needs set`, `needs show` and `needs clear` do the same for the
+Needs you list, in `needs.json`; without one, the Needs you list reads
+`needs-you.md` in the queue file's folder, so pointing the queue at a folder
+of lists sets both. A Needs you file that is the queue file itself is not
+shown twice: the Needs you list says so and names the two commands that fix
+it. A
 file kept inside WSL (`\\wsl.localhost\...`) sends Windows no change
 notices, so its edits show on the five-second re-read rather than at once;
 one on a Windows drive (`/mnt/c/...`) shows within a second or two. An older `queue_path` in `prefs.json` still
@@ -1219,9 +1238,12 @@ works when there is no `queue.json`.
   resets, and Ctrl with the mouse wheel over the panel steps it a notch at a
   time. Only the panel's text changes, never the cards, and the size is
   remembered.
-- **The header count.** The button reads "Queue · 3 for you": the items in
-  the file's "Needs you" section, less those marked ✅. It names the file's
-  asks, not the sessions the tally counts as needing you.
+- **The header count.** The button reads "Queue · 3 for you": the Needs you
+  file's open asks (the items in its "Needs you" section, or in its lists when
+  it has no such section; none for a file with no list), less those marked ✅.
+  While no Needs you file can be shown, a queue file's own "Needs you" section
+  is counted, as before the two lists. It names the files' asks, not the
+  sessions the tally counts as needing you.
 - **Reading aids.** Each `##` section folds, with Needs you open. Lines
   starting with ✅ read quieter, as done; 📋 lines carry a pending mark.
   Every code block has a **Copy** button.
