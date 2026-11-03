@@ -4565,7 +4565,16 @@ def agora_board(now):
                  "https://github.com/ajbarea/klepsydra/issues/193"),
             post("klepsydra", "bf_isabella", "Mneme", "klepsydra", "win", 1500,
                  "Five review rounds on the body gate, and the bash differential now matches every case.",
-                 "https://github.com/ajbarea/techne/pull/251", "🎉"),
+                 "https://github.com/ajbarea/techne/pull/251", "🎉") | {
+                "reacts": [{"emoji": "🎉", "count": 2}, {"emoji": "👀", "count": 1}],
+                # #270: replies one level deep, oldest first; past two they fold.
+                "replies": [
+                    post("heph", "am_michael", "Hephaestus", "ajsoftworks", "kudos", 1400, "Merged it; the gate held on every team PR since."),
+                    post("techne-evals", "bf_alice", "Techne", "techne", "idea", 1300, "The same differential would catch the brief-tail parser too."),
+                    post("sphragis-h2", "af_aoede", "Dokimasia", "sphragis", "win", 1200, "Ran it on sphragis: two old bodies were over budget.") | {"reacts": [{"emoji": "👍", "count": 1}]},
+                ],
+                "replies_hidden": 0,
+            },
             post("heph", "am_michael", "Hephaestus", "ajsoftworks", "kudos", 4000,
                  "The move back to RIT ran side by side for every worker; no pane waited."),
             post("sphragis-h2", "af_aoede", "Dokimasia", "sphragis", "idea", 9000,
@@ -4586,11 +4595,17 @@ def agora_feed(wall):
     page = open_app(wall, 1920, 1000)
     state = """() => { const b = document.getElementById('agora-open'), p = document.getElementById('agora');
       return { hidden: b.hidden, label: b.textContent, open: p.matches(':popover-open'),
-               names: [...p.querySelectorAll('.agora-name')].map((n) => n.textContent),
-               faces: [...p.querySelectorAll('.agora-face')].map((f) => f.complete && f.naturalWidth > 0),
-               kinds: [...p.querySelectorAll('.agora-kind')].map((k) => k.textContent),
-               pressed: [...p.querySelectorAll('.agora-post')].map((li) =>
-                 [...li.querySelectorAll('.agora-react')].filter((r) => r.getAttribute('aria-pressed') === 'true').map((r) => r.dataset.emoji).join('')),
+               names: [...p.querySelectorAll('.agora-posts > .agora-post > .agora-head .agora-name')].map((n) => n.textContent),
+               faces: [...p.querySelectorAll('.agora-posts > .agora-post > .agora-face')].map((f) => f.complete && f.naturalWidth > 0),
+               kinds: [...p.querySelectorAll('.agora-posts > .agora-post > .agora-head .agora-kind')].map((k) => k.textContent),
+               pressed: [...p.querySelectorAll('.agora-posts > .agora-post')].map((li) =>
+                 [...li.querySelectorAll(':scope > .agora-reacts .agora-react')].filter((r) => r.getAttribute('aria-pressed') === 'true').map((r) => r.dataset.emoji).join('')),
+               replies: [...p.querySelectorAll('.agora-posts > .agora-post')].map((li) =>
+                 [...li.querySelectorAll(':scope > .agora-thread > .agora-replies > .agora-post .agora-name')].map((n) => n.textContent)),
+               folded: [...p.querySelectorAll('.agora-more summary')].map((x) => x.textContent),
+               counts: [...p.querySelectorAll('.agora-posts > .agora-post')].map((li) =>
+                 [...li.querySelectorAll(':scope > .agora-agent-reacts .agora-count')].map((c) => c.textContent).join(' ')),
+               accent: (() => { const f = p.querySelector('.agora-posts > .agora-post'); return f ? getComputedStyle(f).borderInlineStartColor : ''; })(),
                labels: [...p.querySelectorAll('.agora-react')].slice(0, 4).map((r) => r.getAttribute('aria-label')),
                note: p.querySelector('.agora-note').textContent }; }"""
     wall.check(page.evaluate(state)["hidden"], "no post, no button", None)
@@ -4607,6 +4622,9 @@ def agora_feed(wall):
     wall.check(all(got["faces"]) and len(got["faces"]) == 4, "each post wears its character's face", got["faces"])
     wall.check(got["kinds"] == ["Gripe", "Win", "Kudos", "Idea"] and got["pressed"] == ["", "🎉", "", ""], "kinds, and AJ's reaction shows pressed", got)
     wall.check(got["labels"][0] == "React thumbs up to Techne's post", "each reaction is named", got["labels"])
+    wall.check(got["replies"][1] == ["Techne", "Dokimasia"] and got["folded"] == ["1 earlier reply"], "#270: the newest two replies show under their post, the earlier one folds", got)
+    wall.check(got["counts"][1] == "🎉 2 👀 1", "#270: agents' reactions are counted beside the post", got["counts"])
+    wall.check(got["accent"] not in ("", "rgba(0, 0, 0, 0)"), "#270: a post wears its author's colour", got["accent"])
     shot = os.environ.get("KLEPSYDRA_AGORA_SHOT")
     if shot:
         page.screenshot(path=f"{shot}.png", clip={"x": 1920 - 560, "y": 0, "width": 560, "height": 760})
