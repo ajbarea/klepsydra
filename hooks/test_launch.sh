@@ -6,7 +6,8 @@ set -uo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
 launch="$here/klepsydra-launch.sh"
 work=$(mktemp -d)
-sock="kl-test-$$" sock2="kl-test2-$$" sock3="kl-test3-$$"
+unset KLEPSYDRA_BACKGROUND # a fleet pane's own, never this suite's
+sock="kl-test-$$" sock2="kl-test2-$$" sock3="kl-test3-$$" sock4="kl-test4-$$"
 sockdir="${TMUX_TMPDIR:-/tmp}/tmux-$(id -u)" # where tmux puts a -L socket
 clients=()
 cleanup() {
@@ -14,10 +15,16 @@ cleanup() {
   tmux -L "$sock" kill-server 2>/dev/null
   tmux -L "$sock2" kill-server 2>/dev/null
   tmux -L "$sock3" kill-server 2>/dev/null
-  rm -f -- "$sockdir/$sock" "$sockdir/$sock2" "$sockdir/$sock3"
+  tmux -L "$sock4" kill-server 2>/dev/null
+  rm -f -- "$sockdir/$sock" "$sockdir/$sock2" "$sockdir/$sock3" "$sockdir/$sock4"
   rm -rf "$work"
 }
 trap cleanup EXIT
+# A signal ends the run through exit, so the EXIT trap still stops the server (#239).
+trap 'exit 129' HUP; trap 'exit 130' INT; trap 'exit 143' TERM
+# No inherited descriptor past stderr: a tmux server started here would keep a
+# caller's lock, such as flock's /tmp/fleet-heavy.lock, after the run (#193).
+for fd in "/proc/$$/fd"/*; do n=${fd##*/}; (( n > 2 && n < 255 )) && eval "exec $n>&-"; done
 
 pass=0 fail=0
 check() {
@@ -35,7 +42,9 @@ cat >"$work/bin/wt.exe" <<'EOF'
 # Logs its argv, then attaches like the real tab: WT_DELAY seconds after returning,
 # with Windows Terminal's TERM, whatever the runner has (CI sets none).
 # WT_DELAY=never is a tab that never attaches.
+# WT_DRAIN=1 reads stdin dry, as WSL interop lets the real wt.exe do (#242).
 printf '%s\n' "$*" >>"$WT_LOG"
+[[ -n ${WT_DRAIN:-} ]] && cat >/dev/null
 [[ ${WT_DELAY:-} == never ]] && exit 0
 args=("$@")
 for i in "${!args[@]}"; do [[ ${args[i]} == -e ]] && { cmd=("${args[@]:i+1}"); break; }; done
@@ -97,6 +106,18 @@ attach
 bash "$launch" new "$work/repos" >/dev/null 2>&1
 check "second: two windows" "$(windows)" "2"
 check "second: no new tab" "$(tabs)" "1"
+check "second: the new window comes forward" "$(t display -p -t =fleet: '#{window_index}')" "1"
+t select-window -t =fleet:0
+KLEPSYDRA_BACKGROUND=1 bash "$launch" new "$work/repos" >/dev/null 2>&1
+check "#216: a fleet launch opens behind, the window in view keeps focus" "$(windows) $(t display -p -t =fleet: '#{window_index}')" "3 0"
+# A fleet launch that starts the server (a cold recover) must not hand the flag
+# to the server's environment, or every later pane, the wall's included, opens behind.
+# Its own stub log: the tab it opens is not one of the fleet socket's tabs counted below.
+WT_LOG="$work/wt4.log" KLEPSYDRA_TMUX_SOCKET="$sock4" KLEPSYDRA_BACKGROUND=1 bash "$launch" new "$work/repos" >/dev/null 2>&1
+check "#229 review: a flagged launch that starts the server keeps the flag out of its environment" \
+  "$(tmux -L "$sock4" has-session -t =fleet 2>/dev/null && echo up) $(tmux -L "$sock4" show-environment -g 2>/dev/null | grep -c '^KLEPSYDRA_BACKGROUND=')" "up 0"
+tmux -L "$sock4" kill-server 2>/dev/null
+t kill-window -t "=fleet:$(t list-windows -t =fleet -F '#{window_index}' | tail -1)"
 detach_all
 check "closed tab: sessions survive" "$(windows)" "2"
 bash "$launch" new "$work/repos" >/dev/null 2>&1
@@ -112,6 +133,9 @@ check "missing folder: says so" "$out" "The folder $work/nowhere does not exist.
 out=$(KLEPSYDRA_CLAUDE=no-such-claude bash "$launch" new "$work/repos" 2>&1); rc=$?
 check "no claude: exit 1" "$rc" "1"
 check "no claude: says so" "$out" "claude was not found on PATH."
+detach_all
+got=$(printf 'row 2\nrow 3\n' | { WT_DRAIN=1 bash "$launch" new "$work/repos" >/dev/null 2>&1; cat; })
+check "#242: a tab opened from a loop leaves the loop's stdin alone" "$(tabs) $got" $'3 row 2\nrow 3'
 
 stop_server; : >"$WT_LOG"
 bash "$launch" new "$work/repos" >/dev/null 2>&1 &
@@ -455,8 +479,19 @@ t kill-pane -t "$p"
 
 out=$(bash "$launch" bogus 2>&1); rc=$?
 check "unknown command: exit 1" "$rc" "1"
-check "unknown command: says so" "$out" "usage: klepsydra-launch.sh new DIR | jump|end|interrupt|wrapup SOCKET PANE PID START"
+check "unknown command: says so" "$out" "usage: klepsydra-launch.sh new DIR | voices | jump|end|interrupt|wrapup SOCKET PANE PID START"
 check "unknown command: no tab" "$(tabs)" "1"
+
+# #273: the tray's Voices change runs the installed fleet voices at once, with
+# no mode: the tray has saved it, and fleet voices reads it.
+mkdir -p "$work/fbin"
+printf '#!/usr/bin/env bash\nprintf "[%%s]\\n" "$*" >>"%s/fleet.calls"\n' "$work" >"$work/fbin/fleet"; chmod +x "$work/fbin/fleet"
+out=$(FLEET_BIN="$work/fbin" bash "$launch" voices 2>&1); rc=$?
+check "#273: voices runs fleet voices with no mode, and opens no tab" "$rc $(cat "$work/fleet.calls") $(tabs)" "0 [voices] 1"
+out=$(FLEET_BIN="$work/fbin" bash "$launch" voices everyone 2>&1); rc=$?
+check "#273: a mode argument is refused before anything runs" "$rc $(wc -l <"$work/fleet.calls")" "1 1"
+out=$(FLEET_BIN="$work/nofleet" bash "$launch" voices 2>&1); rc=$?
+check "#273: without the fleet installed it says so" "$rc $out" "1 The fleet commands are not installed (make install-fleet)."
 
 # Another click holding the lock past its 10 s: the window is selected anyway.
 detach_all; : >"$WT_LOG"

@@ -1,7 +1,7 @@
-//! The Voices setting (#183): who speaks through keryx. prefs.json keeps it
-//! under `voices`, where `fleet/launch.sh` reads it each time it starts a session:
-//! "heph" (the default) starts workers with keryx off, "everyone" leaves it on
-//! for them, "off" turns it off for Heph too.
+//! The Voices setting (#183, #273): who speaks through keryx. prefs.json keeps
+//! it under `voices`, where `fleet voices` (fleet/voices.sh) reads it and sets
+//! keryx to match, for running sessions too: "heph" (the default) lets only the
+//! orchestrator's session speak, "everyone" every session, "off" none.
 
 use serde_json::{Map, Value};
 
@@ -45,17 +45,17 @@ mod tests {
     }
 
     #[test]
-    fn the_modes_are_the_ones_launch_sh_reads() {
-        let launch = include_str!("../../../fleet/launch.sh");
-        let others: Vec<String> = VOICES[1..]
+    fn the_modes_are_the_ones_fleet_voices_reads() {
+        let script = include_str!("../../../fleet/voices.sh");
+        let all: Vec<String> = VOICES
             .iter()
             .map(|(id, _)| format!(". == \"{id}\""))
             .collect();
         let read = format!(
-            "voices=$(jq -ser 'if length == 1 then .[0].{KEY} else empty end | select({})' \"$KLEPSYDRA_DIR/prefs.json\" 2>/dev/null) || voices={}",
-            others.join(" or "),
+            "jq -ser 'if length == 1 then .[0].{KEY} else empty end | select({})' \"$PREFS\" 2>/dev/null || echo {}",
+            all.join(" or "),
             VOICES[0].0
         );
-        assert!(launch.contains(&read), "launch.sh reads: {read}");
+        assert!(script.contains(&read), "voices.sh reads: {read}");
     }
 }

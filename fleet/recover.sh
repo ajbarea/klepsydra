@@ -55,8 +55,17 @@ this_boot_row() { on_this_server "$1"; } # SID
 # worst outcome.
 orch=$(orchestrator) rec=$(cat "$FLEET_STATE/orchestrator.session" 2>/dev/null)
 grep -qxF -- "${rec:-x}" <<<"$agents" && rec="" # a record naming an agent is no Heph's
+# Nor is one naming an agent that ran `fleet done` (its row left panes.tsv, #269).
+fin=${FLEET_FINISHED:-$FLEET_STATE/finished.tsv}
+[[ -n $rec ]] && awk -F'\t' -v r="$rec" '$4 == r { f = 1 } END { exit !f }' "$fin" 2>/dev/null && rec=""
 heph_pane="" osid="" heph_unsure=0
 unreg=$(awk -F'\t' 'NR == FNR { if ($0 != "") a[$0] = 1; next } $3 == 1 && !($2 in a)' <(printf '%s\n' "$agents") <(printf '%s\n' "$live_now"))
+# A finished agent's pane stays open with its session (`fleet done`, #269): it
+# is no stranger, so it never leaves Heph unsure.
+# (Only when it has rows: an empty first file would make awk read the second as it.)
+if [[ -s $fin ]]; then
+  unreg=$(awk -F'\t' 'NR == FNR { f[$1 "\t" $4] = 1; next } $0 != "" && !(($1 "\t" $2) in f)' "$fin" <(printf '%s\n' "$unreg"))
+fi
 # A worker's new session after a /clear sits in its this-boot row's pane: no Heph.
 rows=$(while IFS=$'\t' read -r rp _ _ rsid _; do [[ -n $rp ]] && this_boot_row "$rsid" && printf '%s\n' "$rp"; done <"$REGISTRY" 2>/dev/null)
 loose=$(awk -F'\t' 'NR == FNR { if ($0 != "") r[$0] = 1; next } $0 != "" && !($1 in r)' <(printf '%s\n' "$rows") <(printf '%s\n' "$unreg"))
@@ -67,7 +76,10 @@ if [[ -z $onrec && -n $orch ]] && ! grep -qxF -- "$orch" <<<"$rows" && { [[ -z $
 fi
 [[ $(grep -c . <<<"$onrec") == 1 ]] || onrec=""
 caller=""
-if [[ -n ${CLAUDECODE:-} && -n ${TMUX_PANE:-} && ${TMUX:-} == *"/$FLEET_SOCK,"* ]] && ! grep -qxF -- "$TMUX_PANE" <<<"$rows"; then
+# The caller is Heph only when its pane is no agent's: neither a row's nor a
+# finished agent's (whose row `fleet done` took out, #269).
+if [[ -n ${CLAUDECODE:-} && -n ${TMUX_PANE:-} && ${TMUX:-} == *"/$FLEET_SOCK,"* ]] && ! grep -qxF -- "$TMUX_PANE" <<<"$rows" &&
+  ! finished_here "$TMUX_PANE"; then
   caller=$TMUX_PANE
 fi
 if [[ -n $onrec ]]; then
@@ -100,31 +112,31 @@ last_replies() { # TRANSCRIPT
     tail -2 | cut -c1-500 | sed 's/^/> /'
 }
 
-# The newest IMPL.md of the repo the transcript last worked in: its folder's
-# own and its worktrees'.
-newest_impl() { # TRANSCRIPT
-  local cwd top
-  cwd=$(jq -r 'select(.cwd != null) | .cwd' "$1" 2>/dev/null | tail -1)
-  [[ -n $cwd && -d $cwd ]] || return 1
-  top=$(git -C "$cwd" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) && top=${top%/.git}
-  find "$cwd" "${top:-$cwd}" "${top:-$cwd}/.claude/worktrees" -maxdepth 2 -name IMPL.md -type f -printf '%T@ %p\n' 2>/dev/null |
-    sort -rn | head -1 | cut -d' ' -f2- | grep .
-}
-
 launched=0
 # Wait out the stagger before every launch but the first.
 stagger() { (( launched++ )) && sleep "$STAGGER"; return 0; }
+# The recovered Heph comes forward (#216) only when recover started the fleet's
+# session itself and the window in view is still the one its first launch
+# opened: a session already running, or a move since, means AJ is working in
+# another agent, and launches never take him away from it (#229 review).
+in_view_pane() { t display-message -p -t "$FLEET_SESSION:" '#{pane_id}' 2>/dev/null; }
+cold=1 first_view=""
+t has-session -t "$FLEET_SESSION" 2>/dev/null && cold=0
 launch() { # NAME TEXTFILE [env...]: one launch; prints "PANE SESSION"
   local name=$1 txt=$2 out
   shift 2
-  out=$(env "$@" bash "$LAUNCH" "$name" "$txt" 2>/dev/null | head -1)
+  # No stdin and no fd 3: the registry loop reads fd 3, and wt.exe drains
+  # whatever it is handed (#242). No fd 9: the launch may start the fleet's
+  # tmux server, which would keep the recover lock forever.
+  out=$(env "$@" bash "$LAUNCH" "$name" "$txt" </dev/null 3<&- 9>&- 2>/dev/null | head -1)
   flog INFO "recovered" name="$name" result="$out"
   grep -q 'pane=%[0-9]' <<<"$out" || return 0
   printf '%s %s' "$(grep -o 'pane=%[0-9]*' <<<"$out" | cut -d= -f2)" "$(grep -o 'session=[^ ]*' <<<"$out" | cut -d= -f2)"
 }
 
 lost=0
-while IFS=$'\t' read -r p name brief sid _; do
+# The registry comes in on fd 3, so nothing in the loop can read its rows away (#242).
+while IFS=$'\t' read -r -u 3 p name brief sid _; do
   [[ -n $p && -n $name && -n $brief ]] || continue
   if session_alive "$sid"; then
     echo "running: $name ($p)"
@@ -161,9 +173,10 @@ while IFS=$'\t' read -r p name brief sid _; do
   stagger
   new=$(launch "$name" "$txt")
   new=${new%% *}
+  (( cold )) && [[ -z $first_view ]] && first_view=$(in_view_pane)
   echo "recovered: $name -> ${new:-NOT STARTED}"
   [[ -n $new ]] || flog ERROR "recovery launch failed" name="$name" brief="$txt"
-done < <(cat "$REGISTRY" 2>/dev/null)
+done 3< <(cat "$REGISTRY" 2>/dev/null)
 
 # The orchestrator, by what was alive before the launches.
 if (( orch_too && heph_unsure )); then
@@ -191,6 +204,9 @@ elif (( orch_too )) && [[ -n $orch$osid ]]; then
         printf '%s\n' "${new%% *}" >"$FLEET_STATE/orchestrator.pane"
         [[ $new == *" "?* ]] && printf '%s\n' "${new#* }" >"$FLEET_STATE/orchestrator.session"
         printf '%s\n' "${heph_on:-$FLEET_DEFAULT_CONFIG}" >"$FLEET_STATE/orchestrator.config"
+        if (( cold )) && [[ -n $first_view && $(in_view_pane) == "$first_view" ]]; then
+          t select-window -t "${new%% *}" 2>/dev/null # he opened behind (#216)
+        fi
         echo "recovered: orchestrator -> ${new%% *}"
       else
         flog ERROR "recovery launch failed" name=orchestrator brief="$txt"

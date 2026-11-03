@@ -136,6 +136,10 @@ pub struct View {
     /// out when false.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub orchestrator: bool,
+    /// The orchestrator's chosen face (crate::picks::orchestrator_face); the
+    /// wall reads the result as `pick`, so it stays out of the JSON.
+    #[serde(skip)]
+    pub orchestrator_face: Option<String>,
     /// When keryx last kept this session's spoken reply (`reply::written_at`),
     /// so the card can play it; left out of the JSON without one.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -327,6 +331,7 @@ pub fn view(entry: &Entry, now: i64) -> Option<View> {
         account: f.account.clone(),
         fleet_name: f.fleet_name.clone(),
         orchestrator: f.orchestrator,
+        orchestrator_face: f.orchestrator_face.clone(),
         reply_at: None,
         marks: Marks {
             state_at: f.state_at,
@@ -335,24 +340,41 @@ pub fn view(entry: &Entry, now: i64) -> Option<View> {
     })
 }
 
-/// Heph's face is the orchestrator's alone (#172): a worker holding its voice
-/// gives it up, and the orchestrator gives up any other, so it wears Heph's
-/// face by its pick (crate::picks) whatever voice keryx gave it. Runs before
-/// keep_faces_distinct, so a worker's claim on Heph's voice never costs him it.
+/// The orchestrator's faces are its alone (#172, #222, #244): a worker holding
+/// Hephaestus's or Athena's voice gives it up, and the orchestrator gives up
+/// any voice but its own face's, so it wears that face by its pick
+/// (crate::picks) whatever voice keryx gave it. Runs before
+/// keep_faces_distinct, so a worker's claim on those voices never costs it.
 fn reserve_heph(shown: &mut [(&SessionFile, View)]) {
-    // Heph is the newest live session flagged so: an ended old Heph (after a
-    // /clear or a move) and any other flagged one are workers here.
-    let heph = shown
-        .iter()
-        .filter(|(_, v)| v.orchestrator && v.status != Status::Ended)
-        .max_by_key(|(f, v)| (f.started_at.unwrap_or(0), v.session_id.clone()))
-        .map(|(_, v)| v.session_id.clone());
-    for (_, v) in shown.iter_mut() {
-        v.orchestrator = heph.as_deref() == Some(v.session_id.as_str());
+    // Each face's orchestrator is the newest live session flagged so that wears
+    // it, so an active one and its warm backup show side by side (#244); an
+    // ended old one (after a /clear or a move) and any other are workers here.
+    let mut newest: HashMap<&'static str, (i64, String)> = HashMap::new();
+    for (f, v) in shown.iter() {
+        if v.orchestrator && v.status != Status::Ended {
+            let key = (f.started_at.unwrap_or(0), v.session_id.clone());
+            let best = newest
+                .entry(crate::picks::orchestrator_face(v))
+                .or_insert_with(|| key.clone());
+            if key > *best {
+                *best = key;
+            }
+        }
     }
     for (_, v) in shown.iter_mut() {
-        let heph = v.voice.as_deref() == Some(crate::picks::HEPH);
-        if v.voice.is_some() && heph != v.orchestrator {
+        v.orchestrator = v.orchestrator
+            && v.status != Status::Ended
+            && newest
+                .get(crate::picks::orchestrator_face(v))
+                .is_some_and(|(_, id)| *id == v.session_id);
+    }
+    for (_, v) in shown.iter_mut() {
+        let keep = match v.voice.as_deref() {
+            None => true,
+            Some(voice) if v.orchestrator => voice == crate::picks::orchestrator_face(v),
+            Some(voice) => !crate::picks::ORCHESTRATORS.contains(&voice),
+        };
+        if !keep {
             v.ceded = v.voice.take();
         }
     }
@@ -470,6 +492,7 @@ mod tests {
             account: None,
             fleet_name: None,
             orchestrator: false,
+            orchestrator_face: None,
         }
     }
 
@@ -1209,12 +1232,12 @@ mod tests {
     fn two_homes_of_one_voice_the_first_started_keeps_it() {
         let s = snapshot(
             &[
-                voiced("b", NOW - 100, "bf_emma", "home"),
-                voiced("a", NOW - 200, "bf_emma", "home"),
+                voiced("b", NOW - 100, "bf_isabella", "home"),
+                voiced("a", NOW - 200, "bf_isabella", "home"),
             ],
             NOW,
         );
-        assert_eq!(voice_of(&s, "a"), Some("bf_emma"));
+        assert_eq!(voice_of(&s, "a"), Some("bf_isabella"));
         assert_eq!(voice_of(&s, "b"), None, "the later one shows a medallion");
     }
 
@@ -1242,6 +1265,28 @@ mod tests {
             voice_of(&s, "h"),
             Some(crate::picks::HEPH),
             "and keeps his own"
+        );
+    }
+
+    #[test]
+    fn athenas_voice_is_the_orchestrators_alone_and_athena_gives_up_hephs() {
+        let worker = voiced("w", NOW - 900, crate::picks::ATHENA, "hold");
+        let mut orch = voiced("a", NOW - 100, crate::picks::HEPH, "hold");
+        orch.file.orchestrator = true;
+        orch.file.orchestrator_face = Some(crate::picks::ATHENA.into());
+        let s = snapshot(&[worker, orch], NOW);
+        let card = |id: &str| s.sessions.iter().find(|v| v.session_id == id).unwrap();
+        assert_eq!(voice_of(&s, "w"), None, "a worker gives Athena's voice up");
+        assert_eq!(card("w").ceded.as_deref(), Some(crate::picks::ATHENA));
+        assert_eq!(voice_of(&s, "a"), None, "Athena gives up Heph's voice");
+        let mut orch = voiced("a", NOW - 100, crate::picks::ATHENA, "hold");
+        orch.file.orchestrator = true;
+        orch.file.orchestrator_face = Some(crate::picks::ATHENA.into());
+        let s = snapshot(&[orch], NOW);
+        assert_eq!(
+            voice_of(&s, "a"),
+            Some(crate::picks::ATHENA),
+            "and keeps her own"
         );
     }
 
@@ -1276,15 +1321,33 @@ mod tests {
     }
 
     #[test]
+    fn hephaestus_and_athena_each_keep_a_live_orchestrator_card() {
+        let mut heph = voiced("h", NOW - 600, crate::picks::HEPH, "hold");
+        heph.file.orchestrator = true;
+        heph.file.orchestrator_face = Some(crate::picks::HEPH.into());
+        let mut athena = voiced("a", NOW - 30, crate::picks::ATHENA, "hold");
+        athena.file.orchestrator = true;
+        athena.file.orchestrator_face = Some(crate::picks::ATHENA.into());
+        let s = snapshot(&[heph, athena], NOW);
+        let card = |id: &str| s.sessions.iter().find(|v| v.session_id == id).unwrap();
+        assert!(
+            card("h").orchestrator && card("a").orchestrator,
+            "the active one and its backup are both orchestrators (#244)"
+        );
+        assert_eq!(voice_of(&s, "h"), Some(crate::picks::HEPH));
+        assert_eq!(voice_of(&s, "a"), Some(crate::picks::ATHENA));
+    }
+
+    #[test]
     fn a_hold_beats_a_home_however_late_it_started() {
         let s = snapshot(
             &[
-                voiced("home", NOW - 900, "bf_emma", "home"),
-                voiced("held", NOW - 100, "bf_emma", "hold"),
+                voiced("home", NOW - 900, "bf_isabella", "home"),
+                voiced("held", NOW - 100, "bf_isabella", "hold"),
             ],
             NOW,
         );
-        assert_eq!(voice_of(&s, "held"), Some("bf_emma"));
+        assert_eq!(voice_of(&s, "held"), Some("bf_isabella"));
         assert_eq!(voice_of(&s, "home"), None);
     }
 
@@ -1307,12 +1370,12 @@ mod tests {
     fn after_clear_the_live_session_keeps_the_face_not_the_ended_one() {
         let s = snapshot(
             &[
-                gone("old", NOW - 900, "bf_emma", "home", true),
-                voiced("new", NOW - 30, "bf_emma", "home"),
+                gone("old", NOW - 900, "bf_isabella", "home", true),
+                voiced("new", NOW - 30, "bf_isabella", "home"),
             ],
             NOW,
         );
-        assert_eq!(voice_of(&s, "new"), Some("bf_emma"));
+        assert_eq!(voice_of(&s, "new"), Some("bf_isabella"));
         assert_eq!(voice_of(&s, "old"), None);
         let ceded = |id: &str| {
             s.sessions
@@ -1324,7 +1387,7 @@ mod tests {
         };
         assert_eq!(
             ceded("old").as_deref(),
-            Some("bf_emma"),
+            Some("bf_isabella"),
             "the card that gave its voice names it, so the wall counts it in that card's place"
         );
         assert_eq!(ceded("new"), None);
@@ -1336,11 +1399,11 @@ mod tests {
         // session missing beats does not swap faces back and forth.
         for quiet in [false, true] {
             let first = if quiet {
-                gone("a", NOW - 900, "bf_emma", "home", false)
+                gone("a", NOW - 900, "bf_isabella", "home", false)
             } else {
-                voiced("a", NOW - 900, "bf_emma", "home")
+                voiced("a", NOW - 900, "bf_isabella", "home")
             };
-            let s = snapshot(&[first, voiced("b", NOW - 30, "bf_emma", "home")], NOW);
+            let s = snapshot(&[first, voiced("b", NOW - 30, "bf_isabella", "home")], NOW);
             let a = s.sessions.iter().find(|v| v.session_id == "a").unwrap();
             assert_eq!(
                 a.status,
@@ -1350,7 +1413,7 @@ mod tests {
                     Status::Working
                 }
             );
-            assert_eq!(voice_of(&s, "a"), Some("bf_emma"), "silent: {quiet}");
+            assert_eq!(voice_of(&s, "a"), Some("bf_isabella"), "silent: {quiet}");
             assert_eq!(voice_of(&s, "b"), None, "silent: {quiet}");
         }
     }
@@ -1402,12 +1465,12 @@ mod tests {
     fn homes_of_different_voices_both_stay() {
         let s = snapshot(
             &[
-                voiced("a", NOW - 200, "bf_emma", "home"),
+                voiced("a", NOW - 200, "bf_isabella", "home"),
                 voiced("b", NOW - 100, "am_adam", "home"),
             ],
             NOW,
         );
-        assert_eq!(voice_of(&s, "a"), Some("bf_emma"));
+        assert_eq!(voice_of(&s, "a"), Some("bf_isabella"));
         assert_eq!(voice_of(&s, "b"), Some("am_adam"));
     }
 
@@ -1415,12 +1478,12 @@ mod tests {
     fn a_tie_on_start_goes_to_the_lower_session_id() {
         let s = snapshot(
             &[
-                voiced("b", NOW - 100, "bf_emma", "home"),
-                voiced("a", NOW - 100, "bf_emma", "home"),
+                voiced("b", NOW - 100, "bf_isabella", "home"),
+                voiced("a", NOW - 100, "bf_isabella", "home"),
             ],
             NOW,
         );
-        assert_eq!(voice_of(&s, "a"), Some("bf_emma"));
+        assert_eq!(voice_of(&s, "a"), Some("bf_isabella"));
         assert_eq!(voice_of(&s, "b"), None);
     }
 }

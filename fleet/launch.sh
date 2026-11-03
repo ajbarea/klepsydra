@@ -34,26 +34,20 @@ account=${account:-$FLEET_DEFAULT_CONFIG}
 account=$(nodir "$account") # "~/.claude/" is the default too, which must not set CLAUDE_CONFIG_DIR
 # Workers bypass permissions and Heph does not, so Heph's SendMessage would wait
 # for AJ's approval; worker-settings.json accepts it (AJ approved 2026-10-27).
-# The subagent cap enforces the briefs' rule of at most two at a time. Its env
-# turns keryx off, so only Heph speaks and no worker loads a voice model (#183).
+# The subagent cap enforces the briefs' rule of at most two at a time.
 # FLEET_SETTINGS="" starts it without them (the orchestrator, fleet recover).
+# Who speaks is keryx's own setting, which `fleet voices` keeps in line with
+# the tray's Voices mode for running sessions too (#273), so no session is
+# started with KERYX_ENABLED.
 settings=${FLEET_SETTINGS-$FLEET_STATE/worker-settings.json}
-# The tray's Voices setting (#183), from klepsydra's prefs.json: "heph" (the
-# default, and anything else) keeps the worker settings' keryx off, "everyone"
-# drops that line, and "off" gives a session started without them (Heph) keryx
-# off too. --settings takes a JSON string as well as a file, and outranks the
-# user's and the project's settings.
-voices=$(jq -ser 'if length == 1 then .[0].voices else empty end | select(. == "everyone" or . == "off")' "$KLEPSYDRA_DIR/prefs.json" 2>/dev/null) || voices=heph
-if [[ -n $settings && $voices == everyone ]]; then
-  settings=$(jq -c 'del(.env.KERYX_ENABLED) | if .env == {} then del(.env) else . end' "$settings" 2>/dev/null) || settings=${FLEET_SETTINGS-$FLEET_STATE/worker-settings.json}
-elif [[ -z $settings && $voices == off ]]; then
-  settings='{"env":{"KERYX_ENABLED":"false"}}'
-fi
 # KLEPSYDRA_AGENT names the session's agent to the fleet hook, so its card keeps
 # its face across relaunches (#172).
-# keryx's switch comes from --settings alone, never from the tmux server's
-# environment (a server started from a session with keryx off would pass it on).
-cmd="env -u KERYX_ENABLED $(config_env "$account")KLEPSYDRA_AGENT=$(printf '%q' "$name") CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS=2 ${FLEET_CLAUDE:-claude} --session-id $sid${settings:+ --settings $(printf '%q' "$settings")} $*"
+# No KERYX_ENABLED from the tmux server's environment either (a server started
+# from a session with keryx off would pass it on and outrank keryx's setting).
+# FLEET_SUCCEEDS (a session id) names the orchestrator a move replaces (#226).
+succeeds=""
+[[ ${FLEET_SUCCEEDS:-} =~ ^[0-9a-f-]{36}$ ]] && succeeds="KLEPSYDRA_SUCCEEDS=$FLEET_SUCCEEDS "
+cmd="env -u KERYX_ENABLED $(config_env "$account")KLEPSYDRA_AGENT=$(printf '%q' "$name") ${succeeds}CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS=2 ${FLEET_CLAUDE:-claude} --session-id $sid${settings:+ --settings $(printf '%q' "$settings")} $*"
 if [[ ${FLEET_SCOPE:-1} != 0 ]]; then
   cmd="systemd-run --user --scope --collect --unit=fleet-$name-$(date +%s) -p MemoryHigh=${MEM_HIGH:-4G} -p MemoryMax=${MEM_MAX:-5G} -p MemorySwapMax=${MEM_SWAP:-1G} $cmd"
 fi
@@ -66,7 +60,11 @@ took() { printf '%s' "$((SECONDS - began))"; }
 exec 8>>"$FLEET_STATE/.launch.lock"
 flock -w 120 8 || { flog ERROR "launch held: another launch kept the lock for 2 min" name="$name"; exit 1; }
 before=$(fleet_panes | sort)
-if ! out=$(cd ~ && KLEPSYDRA_CLAUDE="$cmd" KLEPSYDRA_TMUX_SOCKET="$FLEET_SOCK" bash "${FLEET_LAUNCHER:-$HOME/.claude/klepsydra-launch.sh}" new "$dir" 2>&1 7>&- 8>&-); then
+# Every fleet launch opens behind the window in view (#216). Its caller brings
+# a replacement forward only where AJ was watching the window it replaces
+# (fresh, heph_move, relaunch-fresh) or nothing has moved since a cold recover.
+# No stdin for the launcher: a caller reading a list on it would lose the rest (#242).
+if ! out=$(cd ~ && KLEPSYDRA_CLAUDE="$cmd" KLEPSYDRA_TMUX_SOCKET="$FLEET_SOCK" KLEPSYDRA_BACKGROUND=1 bash "${FLEET_LAUNCHER:-$HOME/.claude/klepsydra-launch.sh}" new "$dir" </dev/null 2>&1 7>&- 8>&-); then
   flog ERROR "launch failed: the launcher refused" name="$name" said="$out"
   echo "launch failed: $out" # logcheck: ignore[stderr-for-errors] # the result line
   exit 1
@@ -85,7 +83,7 @@ marker=$FLEET_STATE/launching/$pane
 [[ ${FLEET_KEEP_MARK:-0} == 1 ]] || trap 'rm -f -- "${marker:?}"' EXIT
 trap 'exit 143' TERM INT
 exec 8>&-
-flog INFO "window opened" name="$name" pane="$pane" account="$account" voices="$voices" took_s="$(took)"
+flog INFO "window opened" name="$name" pane="$pane" account="$account" took_s="$(took)"
 ready() { idle_empty "$1" || limit_line "$1" >/dev/null; }
 if wait_for "$pane" "$(capped "${FLEET_READY_WAIT:-60}")" ready; then
   flog INFO "prompt showed" name="$name" pane="$pane" took_s="$(took)"

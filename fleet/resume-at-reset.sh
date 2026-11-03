@@ -30,8 +30,8 @@
 # 15 min; a failed fresh start is resumed in place. A CI red the CI watch routed to an agent
 # (inbox/NAME/*.txt) is typed into its pane at an idle, empty prompt, oldest
 # first. --once runs one pass (and waits for the moves it started). Each
-# decision is one line in the fleet log; each pass touches resume.beat for
-# `fleet doctor`.
+# decision is one line in the fleet log; each pass writes what it saw (panes,
+# limited panes) to resume.beat for `fleet doctor`, and logs it when it changes.
 set -u
 FLEET_TARGET=fleet::resume
 here=$(dirname "$(readlink -f "$0")")
@@ -45,7 +45,7 @@ FLEET_PREMOVE_PCT=${FLEET_PREMOVE_PCT:-95} # a window used this far moves a work
 DOCTOR=${DOCTOR:-$here/doctor.sh}
 MSG='The usage limit has reset. Continue from where you stopped: re-run a subagent that failed on the limit only if you still need its result (each re-run starts cold and costs a full context), then carry on with your queue. Re-read PR comments before any merge.'
 
-declare -A last due seen_on rc_on note move_failed move_tries fresh_failed asked job_kind job_ctx
+declare -A last due seen_on rc_on note move_failed move_tries fresh_failed asked job_kind job_ctx held_said
 declare -A job=() # set, so ${#job[@]} reads 0 under set -u
 # What the service knows per pane survives its own restart (a cut-over, a
 # reboot's unit start), for as long as the same tmux server holds the panes.
@@ -53,11 +53,11 @@ STATE_FILE=$FLEET_STATE/resume-state
 US=$'\x1f' # the field separator: a tab is IFS whitespace, so empty fields would collapse
 
 load_state() {
-  local server p d s r l n m k f a
+  local server p d s r l n m k f a h
   [[ -r $STATE_FILE ]] || return 0
   server=$(t display-message -p '#{pid}' 2>/dev/null)
   [[ -n $server && $(head -1 "$STATE_FILE") == "#server $server" ]] || return 0
-  while IFS=$US read -r p d s r l n m k f a; do
+  while IFS=$US read -r p d s r l n m k f a h; do
     [[ $p == %* ]] || continue
     [[ -n $d ]] && due[$p]=$d
     [[ -n $s ]] && seen_on[$p]=$s
@@ -68,6 +68,7 @@ load_state() {
     [[ -n $k ]] && move_tries[$p]=$k
     [[ -n $f ]] && fresh_failed[$p]=$f
     [[ -n $a ]] && asked[$p]=$a
+    [[ -n $h ]] && held_said[$p]=$h
   done <"$STATE_FILE"
 }
 
@@ -78,8 +79,8 @@ save_state() {
   {
     printf '#server %s\n' "$server"
     for p in $(fleet_panes); do
-      printf '%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\n' "$p" "${due[$p]:-}" "${seen_on[$p]:-}" "${rc_on[$p]:-}" "${last[$p]:-}" \
-        "$(printf '%s' "${note[$p]:-}" | base64 -w0)" "${move_failed[$p]:-}" "${move_tries[$p]:-}" "${fresh_failed[$p]:-}" "${asked[$p]:-}"
+      printf '%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\n' "$p" "${due[$p]:-}" "${seen_on[$p]:-}" "${rc_on[$p]:-}" "${last[$p]:-}" \
+        "$(printf '%s' "${note[$p]:-}" | base64 -w0)" "${move_failed[$p]:-}" "${move_tries[$p]:-}" "${fresh_failed[$p]:-}" "${asked[$p]:-}" "${held_said[$p]:-}"
     done
   } >"$tmp"
   mv -f -- "$tmp" "$STATE_FILE"
@@ -109,74 +110,6 @@ exhausted() {
 submit() { # PANE
   t send-keys -t "$1" Enter
   if wait_for "$1" "${FLEET_START_WAIT:-30}" started; then echo yes; else echo no; fi
-}
-
-# Replace PANE (registry NAME, BRIEF) with a fresh session from its brief,
-# on config folder ACCOUNT when given (else launch.sh's pick), WHY in its
-# preamble; prints the new pane. NOTE, what AJ typed at the pane, goes into the
-# new brief, and the old box may hold exactly it. Gives up, typing nothing, if
-# AJ has typed anything else meanwhile.
-# (STAMP: the session's stamp when the caller judged the pane idle, so a
-# prompt or turn taken since, even one already over, keeps the old pane; at a
-# limit, STAMP_KIND=prompt, a prompt only.) Returns 5 when the new session's
-# brief met a limit on ACCOUNT.
-fresh() { # PANE NAME BRIEF [WHY] [ACCOUNT] [NOTE] [STAMP]
-  local p=$1 name=$2 brief=$3 txt new
-  local why=${4:-stopped at a usage limit over an hour ago, so its cached conversation expired and resuming it would re-cache everything}
-  local account=${5:-} carried=${6:-} box
-  box=$(input_text "$(screen "$p")")
-  [[ -z $box || ( -n $carried && $box == "$carried" ) ]] || return 1
-  local sid cfg out got
-  # Shared: moves of different panes run side by side; a cut-over takes it alone.
-  exec 7>>"$FLEET_STATE/.fresh.lock"
-  flock -s 7
-  sid=$(reg_field "$p" 4) cfg=$(reg_field "$p" 6)
-  if ! pane_runs "$p" "$sid"; then
-    flog WARN "fresh session refused: the pane no longer runs its registered session" pane="$p" name="$name" session_id="$sid"
-    return 2
-  fi
-  local stamp
-  if (( $# >= 7 )); then stamp=$7; else stamp=$(prompt_stamp "$p"); fi
-  txt="$FLEET_STATE/fresh-$name-$(date +%Y%m%d-%H%M).src"
-  {
-    fresh_preamble "$why"
-    printf '\n\n'
-    [[ -n $carried ]] && printf 'AJ typed this to the previous agent while it waited at the limit; act on it:\n%s\n\n' "$carried"
-    cat "$brief"
-  } >"$txt"
-  mkdir -p -- "$FLEET_STATE/log"
-  out=$(FLEET_ACCOUNT=$account bash "$LAUNCH" "$name" "$txt" 2>>"$FLEET_STATE/log/launch.err" | head -1)
-  new=$(grep -o 'pane=%[0-9]*' <<<"$out" | cut -d= -f2) got=$(grep -o 'brief=[A-Za-z-]*' <<<"$out" | cut -d= -f2)
-  [[ -n $new && -n ${MOVE_NEW:-} ]] && printf '%s\n' "$new" >"$MOVE_NEW"
-  if [[ -z $new ]]; then
-    flog ERROR "fresh session not started; the old pane is kept" pane="$p" name="$name"
-    return 3
-  fi
-  # The brief must have started a turn: not delivered, or (on a move to an
-  # account said to have room) stopped by a limit, the old pane stays.
-  if [[ $got == NOT-DELIVERED || ( -n $account && $got != started ) ]]; then
-    flog ERROR "fresh session's brief did not start; the old pane stays and the new one goes" pane="$p" new_pane="$new" name="$name" brief="$got"
-    retire "$new" interrupt
-    with_registry set_pane "$new" "$p" "$sid" "$cfg"
-    [[ $got == blocked-by-limit ]] && return 5
-    return 3
-  fi
-  # The launch took a while: AJ may have typed into the old pane or resumed it.
-  local now_s
-  now_s=$(screen "$p")
-  if ! pane_runs "$p" "$sid" || busy "$now_s" || ! has_input_box "$now_s" || [[ $(input_text "$now_s") != "$box" || $(prompt_stamp "$p") != "$stamp" ]]; then
-    flog ERROR "the old pane changed while its fresh session launched; the old one stays and the new one goes" pane="$p" new_pane="$new" name="$name"
-    retire "$new" interrupt
-    with_registry set_pane "$new" "$p" "$sid" "$cfg"
-    return 4
-  fi
-  # The note went into the new brief; one C-c clears it from the old box.
-  if [[ -n $box ]]; then
-    t send-keys -t "$p" C-c
-    wait_for "$p" 5 idle_empty || true
-  fi
-  retire "$p" || flog WARN "the old pane is left running beside its fresh session" pane="$p" new_pane="$new" name="$name"
-  printf '%s' "$new"
 }
 
 # When the agent in PANE (screen PLAIN) stopped: the last moment, at most 15
@@ -290,12 +223,27 @@ heph_move() { # PANE TO WHY [NOTE] [STAMP]
   fi
   if (( $# >= 5 )); then stamp=$5; else stamp=$(prompt_stamp "$p"); fi
   txt="$FLEET_STATE/heph-move-$(date +%Y%m%d-%H%M).md"
+  local watchers live_panes from=watched
+  watchers=$(watcher_count "$p")
+  # The panes the old watchers watched (Heph trims them as he goes), still
+  # live; with none recorded, every live registered pane.
+  if ! live_panes=$(watched_panes "$p"); then
+    from=registered
+    live_panes=$(awk -F'\t' '$1 ~ /^%[0-9]+$/ { print $1 }' "$REGISTRY" 2>/dev/null)
+  fi
+  live_panes=$(grep -xF -f <(fleet_panes) <<<"$live_panes" | tr '\n' ' ')
   {
     heph_note "$why" "$osid" "$HEPH" "the resume service started you on $to and the agents run on meanwhile."
+    if (( watchers > 0 )); then
+      printf '\nThe last orchestrator'"'"'s pane watcher stopped with its session. Start it again in the background now: bash %s/watch-panes.sh %s\n' "$FLEET_STATE" "${live_panes% }"
+    fi
     [[ -n $carried ]] && printf '\nAJ typed this to the last orchestrator and it was never sent; act on it:\n%s\n' "$carried"
   } >"$txt"
+  flog INFO "orchestrator move note written" pane="$p" to="$to" watchers="$watchers" watch_panes="${live_panes% }" panes_from="$from" carried_chars="${#carried}"
   mkdir -p -- "$FLEET_STATE/log"
-  out=$(FLEET_SETTINGS='' FLEET_ACCOUNT=$to bash "$LAUNCH" heph "$txt" 2>>"$FLEET_STATE/log/launch.err" | head -1)
+  # The new session succeeds the one live in this pane: it takes that one's
+  # face, never the warm backup's (#226).
+  out=$(FLEET_SETTINGS='' FLEET_ACCOUNT=$to FLEET_SUCCEEDS=$(live_session "$p") bash "$LAUNCH" heph "$txt" 2>>"$FLEET_STATE/log/launch.err" | head -1)
   new=$(grep -o 'pane=%[0-9]*' <<<"$out" | cut -d= -f2) got=$(grep -o 'brief=[A-Za-z-]*' <<<"$out" | cut -d= -f2)
   nsid=$(grep -o 'session=[0-9a-f-]*' <<<"$out" | cut -d= -f2)
   [[ -n $new && -n ${MOVE_NEW:-} ]] && printf '%s\n' "$new" >"$MOVE_NEW"
@@ -321,9 +269,9 @@ heph_move() { # PANE TO WHY [NOTE] [STAMP]
     t send-keys -t "$p" C-c
     wait_for "$p" 5 idle_empty || true
   fi
-  # Two Hephs never run: the old one goes first, or the new one does (a pane
-  # that exited just as retire gave up has gone all the same).
-  if ! retire "$p" && fleet_panes | grep -qx -- "$p"; then
+  # Two Hephs never run: the old one goes first, or the new one does. He
+  # takes the old pane's place in view when AJ was looking at it (#216).
+  if ! retire_into "$p" "$new"; then
     flog ERROR "the old orchestrator pane would not exit; it stays and its successor goes" pane="$p" new_pane="$new"
     drop "$new"
     return 3
@@ -332,21 +280,6 @@ heph_move() { # PANE TO WHY [NOTE] [STAMP]
   [[ -n $nsid ]] && printf '%s\n' "$nsid" >"$FLEET_STATE/orchestrator.session"
   printf '%s\n' "$to" >"$FLEET_STATE/orchestrator.config"
   printf '%s' "$new"
-}
-
-# The live session in PANE's stamp, or nothing: STAMP_JQ (its last prompt and
-# turn), or with STAMP_KIND=prompt its last typed or phone prompt alone, for a
-# move at a limit, where a turn a task notification starts fails at once.
-prompt_stamp() { # PANE
-  local sid of=$STAMP_JQ
-  [[ ${STAMP_KIND:-} == prompt ]] && of='.prompt.at // ""'
-  sid=$(live_session "$1") || return 0
-  jq -r "$of" "$KLEPSYDRA_DIR/fleet/$sid.json" 2>/dev/null
-}
-
-# Retire a pane this pass launched, interrupting its turn; kill it if it will not exit.
-drop() { # PANE
-  retire "$1" interrupt || t kill-pane -t "$1" 2>/dev/null
 }
 
 # Moves back to an account that answered one with a limit its gauge did not
@@ -558,6 +491,11 @@ one() { # PANE
   # ended on this same server (a /clear or a restart in place), or none is
   # recorded; a registered agent there never is.
   local cur
+  # An agent that ran `fleet done` (its pane and session in finished.tsv) is
+  # never typed into again, not even the continue message at a limit (#269).
+  if ! registered "$p" && [[ $p != "${ORCH:-}" ]] && finished_here "$p"; then
+    return
+  fi
   if [[ -n $ORCH && $p == "$ORCH" ]] && ! registered "$p"; then
     cur=$(live_session "$p")
     if [[ -z $OSID ]] || { [[ -n $cur && $cur == "$OSID" ]] && session_alive "$OSID"; } || { ! session_alive "$OSID" && on_this_server "$OSID"; }; then
@@ -604,6 +542,7 @@ one() { # PANE
   fi
 
   limit=$(limit_line "$s")
+  [[ -n $limit ]] && PASS_LIMITED+=("$p")
   # Remote Control: a /login disconnects it in every session, and the RIT
   # account never starts it on its own, so once per account each registered
   # pane and the orchestrator's get /remote-control while idle at an empty
@@ -631,7 +570,11 @@ one() { # PANE
     { (( orch )) || [[ -n $(reg_field "$p" 2) ]]; } && (( NOW - ${move_failed[$p]:-0} >= 900 )) && ! back_held "$pref_id"; then
     back_ok=1
   fi
-  if (( back_ok )) && idle_empty "$s" && { idle_stamp=$(turn_done "$p") || { (( !orch )) && idle_stamp=$(ready_to_move "$p" "${asked[$p]:-}"); }; }; then
+  # Heph's pane watcher runs past every turn: a turn that ended with only
+  # watchers out counts as finished for him, since his successor restarts them.
+  if (( back_ok )) && idle_empty "$s" && { idle_stamp=$(turn_done "$p") ||
+    { (( orch )) && idle_stamp=$(watchers_only "$p"); } ||
+    { (( !orch )) && idle_stamp=$(ready_to_move "$p" "${asked[$p]:-}"); }; }; then
     back_why="moved back to its preferred account, $(account_label "$pref_id"), which has room again"
     if (( orch )); then
       spawn "$p" back "$cfg$US$pref$US$orch$US$pref_id" heph_move "$p" "$pref" "$back_why" "" "$idle_stamp"
@@ -639,6 +582,12 @@ one() { # PANE
       spawn "$p" back "$cfg$US$pref$US$orch$US$pref_id" fresh "$p" "$(reg_field "$p" 2)" "$(reg_field "$p" 3)" "was $back_why" "$pref" "" "$idle_stamp"
     fi
     return
+  fi
+  # Heph is never asked (AJ talks with him): background work other than
+  # watchers keeps him where he is, logged once an hour so it can be found.
+  if (( back_ok && orch && NOW - ${held_said[$p]:-0} >= 3600 )) && idle_empty "$s" && turn_settled "$p"; then
+    held_said[$p]=$NOW
+    flog INFO "orchestrator stays: background work other than pane watchers is running" pane="$p" from="$(account_label "${PANE_ID:-}")" to="$(account_label "$pref_id")" watchers="$(watcher_count "$p")" room_since_s="$((NOW - since))"
   fi
   if (( back_ok && !orch && NOW - since >= BACK_ASK_AFTER_S && NOW - ${asked[$p]:-0} >= 3600 )) && idle_empty "$s" && turn_settled "$p"; then
     ask_back "$p" "${PANE_ID:-}" "$pref_id"
@@ -814,16 +763,32 @@ doctor_after_switch() {
   fi
 }
 PREV_ACCT="" DOCTOR_DUE=0 HEPH_DOUBT=""
+# The last pass's summary, from resume.beat: a --once run or a restart logs
+# only a change.
+PASS_SEEN=$(head -1 "$FLEET_STATE/resume.beat" 2>/dev/null | sed 's/ at=.*//')
+PASS_LIMITED=()
 
 pass() {
   NOW=$(clock) ACTIVE=$(active_account) ORCH=$(orchestrator) OSID=$(cat "$FLEET_STATE/orchestrator.session" 2>/dev/null)
   accounts
+  # keryx follows the tray's Voices mode once it changes (#273); a manual
+  # `keryx off` between changes is left alone.
+  [[ ${FLEET_VOICES:-1} == 0 ]] || bash "$here/voices.sh" --if-changed >/dev/null 2>&1 </dev/null
   reap
-  local p
-  for p in $(fleet_panes); do one "$p"; done
+  local p panes seen
+  PASS_LIMITED=()
+  panes=$(fleet_panes)
+  for p in $panes; do one "$p"; done
   doctor_after_switch
   save_state
-  : >>"$FLEET_STATE/resume.beat" && touch -- "$FLEET_STATE/resume.beat"
+  # What the pass saw, written whole each pass for `fleet doctor`, and logged
+  # when it changes, so a service that stops seeing limits shows (#263).
+  seen="panes=$(wc -w <<<"$panes") limited=${#PASS_LIMITED[@]} limited_panes=${PASS_LIMITED[*]}"
+  printf '%s at=%s\n' "$seen" "$NOW" >"$FLEET_STATE/resume.beat.$$" && mv -f -- "$FLEET_STATE/resume.beat.$$" "$FLEET_STATE/resume.beat"
+  if [[ $seen != "$PASS_SEEN" ]]; then
+    flog INFO "pass" panes="$(tr '\n' ' ' <<<"$panes" | sed 's/ $//')" limited="${PASS_LIMITED[*]}" limited_count="${#PASS_LIMITED[@]}"
+    PASS_SEEN=$seen
+  fi
 }
 
 load_state

@@ -82,9 +82,10 @@ open_tab() { # target tmux-socket-args...
   key="$* $target"
   ATTACHED=0
   tab_pending "$key" && return 0
-  # The lock fd is closed for wt.exe so a tab never outlives the lock.
+  # The lock fd is closed for wt.exe so a tab never outlives the lock; its
+  # stdin is /dev/null, since WSL interop hands stdin to wt.exe, which drains it (#242).
   "$WT" -w fleet new-tab "${TITLE_ARGS[@]}" wsl.exe -d "$WSL_DISTRO_NAME" -e tmux "$@" attach -t "$target" \
-    >/dev/null 2>&1 {LOCKFD}>&- || {
+    </dev/null >/dev/null 2>&1 {LOCKFD}>&- || {
     undo
     fail "Windows Terminal did not open a tab."
   }
@@ -120,8 +121,14 @@ new() { # dir
   (( exists )) && has_client "$target" "${t[@]}" && shown=1
   (( shown )) || tab_preflight
   # The tmux server must not inherit the lock fd, or it holds the lock for good.
+  # A fleet launch (KLEPSYDRA_BACKGROUND=1) opens behind the window in view,
+  # so AJ keeps typing where he was (#216); the wall's New session comes forward.
+  local -a behind=()
+  [[ ${KLEPSYDRA_BACKGROUND:-} == 1 ]] && behind=(-d)
+  # Read once: a server this launch starts copies its environment into every pane.
+  unset KLEPSYDRA_BACKGROUND
   if (( exists )); then
-    win=$(tmux "${t[@]}" new-window -P -F '#{window_id}' -t "$target:" -c "$dir" "$CLAUDE" {LOCKFD}>&- 2>/dev/null) ||
+    win=$(tmux "${t[@]}" new-window "${behind[@]}" -P -F '#{window_id}' -t "$target:" -c "$dir" "$CLAUDE" {LOCKFD}>&- 2>/dev/null) ||
       fail "tmux could not open a window."
     UNDO=(tmux "${t[@]}" kill-window -t "$win")
   else
@@ -356,11 +363,21 @@ interrupt() { # socket pane pid start
   printf 'Sent Esc to the session.\n'
 }
 
+# The tray's Voices change (#273): keryx follows the mode the tray just saved,
+# at once, through the installed `fleet voices` (no mode: it reads prefs.json,
+# so two quick clicks never race on saving it).
+voices() {
+  local fleet=${FLEET_BIN:-$HOME/.local/bin}/fleet
+  [[ -x $fleet ]] || fail "The fleet commands are not installed (make install-fleet)."
+  "$fleet" voices || fail "fleet voices failed; see fleet log."
+}
+
 case ${1:-} in
   new) (( $# == 2 )) || fail "usage: klepsydra-launch.sh new DIR"; new "$2" ;;
+  voices) (( $# == 1 )) || fail "usage: klepsydra-launch.sh voices"; voices ;;
   jump) (( $# == 5 )) || fail "usage: klepsydra-launch.sh jump SOCKET PANE PID START"; jump "$2" "$3" "$4" "$5" ;;
   end) (( $# == 5 )) || fail "usage: klepsydra-launch.sh end SOCKET PANE PID START"; end_session "$2" "$3" "$4" "$5" ;;
   wrapup) (( $# == 5 )) || fail "usage: klepsydra-launch.sh wrapup SOCKET PANE PID START"; wrapup "$2" "$3" "$4" "$5" ;;
   interrupt) (( $# == 5 )) || fail "usage: klepsydra-launch.sh interrupt SOCKET PANE PID START"; interrupt "$2" "$3" "$4" "$5" ;;
-  *) fail "usage: klepsydra-launch.sh new DIR | jump|end|interrupt|wrapup SOCKET PANE PID START" ;;
+  *) fail "usage: klepsydra-launch.sh new DIR | voices | jump|end|interrupt|wrapup SOCKET PANE PID START" ;;
 esac

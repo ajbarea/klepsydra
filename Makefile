@@ -1,6 +1,10 @@
-.PHONY: install-fleet test-fleet
+.PHONY: install-hooks install-fleet test-fleet
 
-# Link the fleet scripts and user units into place (fleet/install.sh).
+# Copy the hooks, status line, launcher and cast into ~/.claude (fleet/install.sh --hooks).
+install-hooks:
+	bash fleet/install.sh --hooks
+
+# Those copies, then link the fleet scripts and user units into place (fleet/install.sh).
 install-fleet:
 	bash fleet/install.sh
 

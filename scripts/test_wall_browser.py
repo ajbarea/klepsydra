@@ -1132,6 +1132,7 @@ window.__TAURI__ = { core: {
       return Promise.resolve();
     }
     if (cmd === 'queue_subscribe') { window.__queue = args.onMessage; return Promise.resolve(); }
+    if (cmd === 'needs_subscribe') { window.__needs = args.onMessage; return Promise.resolve(); }
     if (cmd === 'ci_subscribe') { window.__ci = args.onMessage; return Promise.resolve(); }
     if (cmd === 'health_subscribe') { window.__health = args.onMessage; return Promise.resolve(); }
     if (cmd === 'agora_subscribe') { window.__agora = args.onMessage; return Promise.resolve(); }
@@ -2008,7 +2009,7 @@ BY_HAND = "Ask by hand: type /klepsydra-wrapup in its terminal"
 # demo-8 has ended. Working with work out after its turn (9, 13, 14) sits idle at its prompt: typed now.
 ROUTED = [
     ("Typed now", ["demo-9-bm_fable", "demo-5-bf_isabella", "demo-13-af_nicole", "demo-14-medallion"]),
-    ("At the end of its turn", ["demo-2-af_bella", "demo-3-af_sarah", "demo-4-bf_emma", "demo-10-bm_george", "demo-16-af_kore"]),
+    ("At the end of its turn", ["demo-2-af_bella", "demo-3-af_sarah", "demo-4-bf_alice", "demo-10-bm_george", "demo-16-af_kore"]),
     ("After you answer", ["demo-1-am_michael", "demo-11-am_fenrir", "demo-15-am_onyx"]),
     (BY_HAND, ["demo-6-af_nova", "demo-7-af_aoede", "demo-12-af_alloy"]),
 ]
@@ -2174,20 +2175,20 @@ def wrapup_cards_and_bar(wall):
     page = open_app(wall)
     feed(page, with_wrapup(page.snapshot, WRAPUP_SAMPLE["answers"]))
     lines = page.evaluate(SHOWN)
-    reason = WRAPUP_SAMPLE["answers"]["demo-4-bf_emma"]["reason"]
+    reason = WRAPUP_SAMPLE["answers"]["demo-4-bf_alice"]["reason"]
     want = {
         "demo-5-bf_isabella": "Ready",
         "demo-2-af_bella": "Finishing its turn",
         "demo-9-bm_fable": "Ready once its background work ends",
         "demo-3-af_sarah": "Wrapping up…",
-        "demo-4-bf_emma": f"Not ready: {reason}",
+        "demo-4-bf_alice": f"Not ready: {reason}",
         "demo-1-am_michael": "Answer it first; it wraps up after",
         "demo-10-bm_george": "Wraps up when this turn ends",
         "demo-6-af_nova": "Ask by hand: /klepsydra-wrapup",
         "demo-8-am_puck": None,
     }
     wall.check(all(lines[k] == v for k, v in want.items()), "each card reads its answer, its route or nothing once ended", {k: lines[k] for k in want})
-    label = page.evaluate("document.querySelector('.card[data-key=\"demo-4-bf_emma\"]').getAttribute('aria-label')")
+    label = page.evaluate("document.querySelector('.card[data-key=\"demo-4-bf_alice\"]').getAttribute('aria-label')")
     wall.check(label.endswith(f"Not ready: {reason}"), "the line is in the card's accessible name", label)
     bar = page.evaluate(BAR)
     wall.check(bar == {"bar": True, "count": "1 of 15 ready", "safe": False, "stop": True, "endAll": False}, "the bar counts only settled, idle sessions and offers Stop wrap-up only", bar)
@@ -2245,7 +2246,7 @@ def wrapup_demo_in_browser(wall):
     page = wall.open(1920, 1000, 16, query="&wrapup")
     bar = page.evaluate(BAR)
     lines = page.evaluate(SHOWN)
-    wall.check(bar["count"] == "1 of 15 ready" and not bar["stop"] and lines["demo-4-bf_emma"].startswith("Not ready: ") and lines["demo-5-bf_isabella"] == "Ready", "the demo carries a request and its answers", [bar, lines["demo-4-bf_emma"]])
+    wall.check(bar["count"] == "1 of 15 ready" and not bar["stop"] and lines["demo-4-bf_alice"].startswith("Not ready: ") and lines["demo-5-bf_isabella"] == "Ready", "the demo carries a request and its answers", [bar, lines["demo-4-bf_alice"]])
     page.close()
 
 
@@ -2472,7 +2473,7 @@ def queue_docks_wide_and_is_a_dialog_narrow(wall):
             and st["active"] == "queue-title"
             and not st["hscroll"]
             and named == 1
-            and st["label"] == "Queue \u00b7 4 for you"
+            and st["label"] == "Queue \u00b7 3 for you"  # the Needs you sample's open asks (#276)
             and (modal or (st["wallRight"] <= st["left"] and st["barRight"] <= st["left"]))
         )
         wall.check(ok, f"at {width} px the Queue panel opens {'as a modal dialog' if modal else 'docked beside the wall'}", st)
@@ -2510,7 +2511,7 @@ def queue_resizes_by_keyboard_and_remembers(wall):
     page = wall.open(1920, 1000, 8)
     page.click("#queue-open")
     page.wait_for_selector("#queue .queue-content details")
-    sep = page.locator("#queue [role=separator]")
+    sep = page.locator("#queue .queue-resize")
     start = int(sep.get_attribute("aria-valuenow"))
     sep.focus()
     page.keyboard.press("ArrowLeft")
@@ -2543,6 +2544,7 @@ def queue_resizes_by_keyboard_and_remembers(wall):
 TEXT_STATE = """() => {
   const c = document.querySelector('#queue .queue-content');
   const body = document.querySelector('#queue .queue-body');
+  const list = document.querySelector('#queue .list-queue .list-scroll');
   const q = document.getElementById('queue').getBoundingClientRect();
   const inside = [...document.querySelectorAll('#queue .queue-tools button')].every((b) => {
     const r = b.getBoundingClientRect();
@@ -2561,8 +2563,8 @@ TEXT_STATE = """() => {
     cards: Math.round(document.querySelector('#wall .card .name').getBoundingClientRect().height * 10),
     title: [Math.round(h.width), document.getElementById('queue-title').scrollWidth <= Math.ceil(h.width)],
     apart,
-    share: Math.round(body.scrollTop / Math.max(1, body.scrollHeight - body.clientHeight) * 100),
-    hscroll: document.documentElement.scrollWidth > innerWidth || body.scrollWidth > body.clientWidth,
+    share: Math.round(list.scrollTop / Math.max(1, list.scrollHeight - list.clientHeight) * 100),
+    hscroll: document.documentElement.scrollWidth > innerWidth || [body, ...document.querySelectorAll('#queue .list-scroll')].some((e) => e.scrollWidth > e.clientWidth),
     inside,
   };
 }"""
@@ -2606,7 +2608,7 @@ def queue_text_size(wall):
     least = page.evaluate(TEXT_STATE)
     wall.check(least["zoom"] == "0.75" and least["smallerOff"] == "true", "A- stops at 75%", least)
     page.click("#queue .queue-reset")
-    box = page.locator("#queue .queue-content").bounding_box()
+    box = page.locator("#queue .list-queue .queue-content").bounding_box()
     page.mouse.move(box["x"] + box["width"] / 2, box["y"] + 40)
     page.keyboard.down("Control")
     page.mouse.wheel(0, -100)
@@ -2619,12 +2621,12 @@ def queue_text_size(wall):
     page.wait_for_timeout(100)
     plain = page.evaluate(TEXT_STATE)["zoom"]
     wall.check(wheeled == "1.25" and plain == "1.25", "Ctrl+wheel over the panel steps a notch at a time; a plain wheel only scrolls", [wheeled, plain])
-    page.locator("#queue [role=separator]").focus()
+    page.locator("#queue .queue-resize").focus()
     page.keyboard.press("Home")
     narrow = page.evaluate(TEXT_STATE)
     wall.check(narrow["inside"] and narrow["apart"] and narrow["title"][1] and not narrow["hscroll"], "at its narrowest the header's buttons stay inside the panel, clear of the whole title", narrow)
     page.evaluate("document.querySelectorAll('#queue details').forEach((d) => { d.open = true; })")
-    page.evaluate("(b => { b.scrollTop = (b.scrollHeight - b.clientHeight) / 2; })(document.querySelector('#queue .queue-body'))")
+    page.evaluate("(b => { b.scrollTop = (b.scrollHeight - b.clientHeight) / 2; })(document.querySelector('#queue .list-queue .list-scroll'))")
     before = page.evaluate(TEXT_STATE)["share"]
     page.keyboard.press("Control+Equal")  # a click would scroll the header into view
     after = page.evaluate(TEXT_STATE)["share"]
@@ -2657,11 +2659,12 @@ def queue_renders_as_text_and_copies(wall):
     page = wall.browser.new_page(viewport={"width": 1920, "height": 1000}, permissions=["clipboard-read", "clipboard-write"])
     page.goto(f"http://127.0.0.1:{wall.port}/src/wall.html?demo=8")
     page.click("#queue-open")
-    page.wait_for_selector("#queue .queue-content details")
+    page.wait_for_selector("#queue .list-queue .queue-content details")
     got = page.evaluate("""() => {
-      const c = document.querySelector('#queue .queue-content');
+      const c = document.querySelector('#queue .list-queue .queue-content');
       return {
-        unsafe: c.querySelectorAll('a, img, script, iframe, [href], [src], [style], [onclick], [onerror]').length,
+        unsafe: document.querySelectorAll('#queue .queue-content :is(a, img, script, iframe, [href], [src], [onclick], [onerror])').length
+          + c.querySelectorAll('[style]').length,
         html: [...c.querySelectorAll('.q-html')].map((e) => e.textContent),
         open: [...c.querySelectorAll('details')].map((d) => d.open),
         done: c.querySelectorAll('.q-done').length,
@@ -2689,6 +2692,164 @@ def queue_renders_as_text_and_copies(wall):
         and said == "Copied"
     )
     wall.check(ok, "the queue renders as text only, and Copy copies code and links", [got, bad, code[:30], link, said])
+    page.close()
+
+
+LISTS_STATE = """() => {
+  const box = (sel) => {
+    const r = document.querySelector(sel).getBoundingClientRect();
+    return { top: Math.round(r.top), bottom: Math.round(r.bottom), h: Math.round(r.height) };
+  };
+  const split = document.querySelector('#queue .lists-split');
+  return {
+    needs: box('#queue .list-needs .list-scroll'),
+    queue: box('#queue .list-queue .list-scroll'),
+    panel: box('#queue'),
+    needsPath: document.querySelector('#queue .queue-head .list-path').textContent,
+    queuePath: document.querySelector('#queue .list-queue .list-path').textContent,
+    label: document.getElementById('queue-open').textContent,
+    now: split.getAttribute('aria-valuenow'),
+    text: split.getAttribute('aria-valuetext'),
+    stored: localStorage.getItem('klepsydra.queue.split'),
+    needsTop: document.querySelector('#queue .list-needs .list-scroll').scrollTop,
+    queueTop: document.querySelector('#queue .list-queue .list-scroll').scrollTop,
+    hscroll: document.documentElement.scrollWidth > innerWidth,
+  };
+}"""
+
+
+def needs_and_queue_both_in_view(wall):
+    """#276: the panel holds two lists, Needs you over Queue, both in view at
+    once: each reads its own file and scrolls on its own, the header counts the
+    Needs you file's asks, and the split between them moves by keys and drag,
+    stays inside its bounds, and is remembered."""
+    for width, height in ((1920, 1080), (1280, 800)):
+        page = wall.open(width, height, 8)
+        page.evaluate("localStorage.removeItem('klepsydra.queue.split')")
+        page.reload()
+        page.wait_for_selector("#wall .card")
+        page.click("#queue-open")
+        page.wait_for_selector("#queue .list-needs .queue-content details")
+        page.wait_for_selector("#queue .list-queue .queue-content details")
+        page.wait_for_timeout(SETTLE_MS)
+        st = page.evaluate(LISTS_STATE)
+        both = st["needs"]["h"] > 80 and st["queue"]["h"] > 80 and st["needs"]["bottom"] <= st["queue"]["top"]
+        inside = st["queue"]["bottom"] <= st["panel"]["bottom"]
+        wall.check(
+            both and inside and not st["hscroll"],
+            f"#276 at {width}x{height} both lists are in view, Needs you over Queue, inside the panel",
+            st,
+        )
+        wall.check(
+            st["needsPath"].endswith("needs-demo.md") and st["queuePath"].endswith("queue-demo.md"),
+            f"#276 at {width} each list names its own file",
+            [st["needsPath"], st["queuePath"]],
+        )
+        wall.check(st["label"] == "Queue · 3 for you", f"#276 at {width} the header counts the Needs you file's open asks", st["label"])
+        if width == 1920 and (stem := os.environ.get("KLEPSYDRA_LISTS_SHOT")):
+            page.screenshot(path=f"{stem}-1920.png")
+        # Each list scrolls on its own.
+        page.evaluate("document.querySelectorAll('#queue .list-queue details').forEach((d) => { d.open = true; })")
+        page.evaluate("(e => { e.scrollTop = e.scrollHeight; })(document.querySelector('#queue .list-queue .list-scroll'))")
+        scrolled = page.evaluate(LISTS_STATE)
+        wall.check(scrolled["queueTop"] > 0 and scrolled["needsTop"] == 0, f"#276 at {width} scrolling the Queue leaves Needs you where it was", [scrolled["queueTop"], scrolled["needsTop"]])
+        if width != 1920:
+            page.close()
+            continue
+        # The split: keys, bounds, double click, drag, and a reload.
+        start = st["needs"]["h"]
+        page.focus("#queue .lists-split")
+        page.keyboard.press("ArrowDown")
+        down = page.evaluate(LISTS_STATE)
+        page.keyboard.press("End")
+        page.keyboard.press("PageDown")
+        end = page.evaluate(LISTS_STATE)
+        page.keyboard.press("Home")
+        home = page.evaluate(LISTS_STATE)
+        wall.check(
+            down["now"] == "45" and down["needs"]["h"] > start and end["now"] == "85" and home["now"] == "15"
+            and end["queue"]["h"] > 40 and home["needs"]["h"] > 40 and home["text"] == "Needs you 15%, Queue 85%",
+            "#276 the split steps by keys and stops short of closing either list",
+            [start, down["now"], down["needs"]["h"], end["now"], end["queue"]["h"], home["now"], home["needs"]["h"], home["text"]],
+        )
+        page.dblclick("#queue .lists-split")
+        reset = page.evaluate(LISTS_STATE)
+        box = page.locator("#queue .lists-split").bounding_box()
+        lists = page.locator("#queue .lists").bounding_box()
+        page.mouse.move(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
+        page.mouse.down()
+        page.mouse.move(box["x"] + box["width"] / 2, lists["y"] + lists["height"] * 0.6, steps=6)
+        page.mouse.up()
+        dragged = page.evaluate(LISTS_STATE)
+        page.reload()
+        page.wait_for_selector("#queue[open] .list-queue .queue-content details")
+        kept = page.evaluate(LISTS_STATE)
+        wall.check(
+            reset["now"] == "40" and 57 <= int(dragged["now"]) <= 63 and dragged["stored"] == dragged["now"] and kept["now"] == dragged["now"],
+            "#276 a double click resets the split, a drag moves it, and a reload keeps it",
+            [reset["now"], dragged["now"], dragged["stored"], kept["now"]],
+        )
+        # A short window: neither list's row drops below its title and a line or two.
+        page.set_viewport_size({"width": 1280, "height": 520})
+        page.wait_for_timeout(SETTLE_MS)
+        rows = {}
+        for key in ("End", "Home"):
+            page.focus("#queue .lists-split")
+            page.keyboard.press(key)
+            rows[key] = page.evaluate("""() => [...document.querySelectorAll('#queue .list')].map((l) => Math.round(l.getBoundingClientRect().height))""")
+        wall.check(
+            min(rows["End"]) >= 119 and min(rows["Home"]) >= 119,
+            "#276 in a 520 px window each list keeps at least 120 px at either end of the split",
+            rows,
+        )
+        page.close()
+
+
+def needs_follows_the_app(wall):
+    """#276: in the app the Needs you list follows needs_subscribe on its own:
+    its asks set the header count over the queue file's own section, a missing
+    file is its empty state while the queue stays, and its keeper and path
+    show in the panel's header."""
+    import time
+
+    fixture = json.loads((ROOT / "scripts/fixtures/fleet-demo.json").read_text())
+    at = fixture.pop("at")
+    snapshot = shifted(fixture, int(time.time()) - at)
+    text = (ROOT / "scripts/fixtures/queue-demo.md").read_text()
+    first = {"path": "C:\\Users\\you\\fleet\\queue.md", "text": text, "problem": None}
+    page = wall.browser.new_page(viewport={"width": 1920, "height": 1000})
+    page.add_init_script(TAURI_STUB % json.dumps(snapshot))
+    page.add_init_script(QUEUE_STUB % json.dumps(first))
+    page.goto(f"http://127.0.0.1:{wall.port}/src/wall.html")
+    page.wait_for_function("document.getElementById('queue-open').textContent === 'Queue \u00b7 4 for you'")
+    alone = page.inner_text("#queue-open")
+    page.wait_for_function("typeof window.__needs === 'object'")
+    asks = {"path": "C:\\Users\\you\\fleet\\needs-you.md", "text": "## Needs you\n- one\n- ✅ two\n", "problem": None, "kept_by": "Athena (orchestrator)", "kept_voice": None}
+    page.evaluate("(v) => window.__needs.onmessage(v)", asks)
+    page.wait_for_function("document.getElementById('queue-open').textContent === 'Queue \u00b7 1 for you'")
+    page.click("#queue-open")
+    page.wait_for_selector("#queue .list-needs .queue-content details")
+    head = page.evaluate("""() => ({
+      path: document.querySelector('#queue .queue-head .list-path').textContent,
+      kept: document.querySelector('#queue .queue-head .list-kept').textContent,
+      queueKept: document.querySelector('#queue .list-queue .list-kept').hidden,
+    })""")
+    page.evaluate("(v) => window.__needs.onmessage(v)", {"path": asks["path"], "text": None, "problem": "No Needs you file at this path.", "missing": True})
+    page.wait_for_function("!document.querySelector('#queue .list-needs .list-problem').hidden")
+    gone = page.evaluate("""() => ({
+      line: document.querySelector('#queue .list-needs .list-problem').textContent,
+      empty: document.querySelector('#queue .list-needs .list-problem').classList.contains('empty'),
+      label: document.getElementById('queue-open').textContent,
+      queueItems: document.querySelectorAll('#queue .list-queue details').length,
+    })""")
+    wall.check(
+        alone == "Queue · 4 for you"
+        and head == {"path": asks["path"], "kept": "Kept by Athena (orchestrator)", "queueKept": True}
+        and gone["line"].startswith("Nothing needs you yet") and gone["empty"]
+        and gone["label"] == "Queue · 4 for you" and gone["queueItems"] > 0,
+        "#276 the Needs you list follows its own channel; without its file the count falls back to the queue's section",
+        [alone, head, gone],
+    )
     page.close()
 
 
@@ -2732,16 +2893,16 @@ def queue_follows_the_app(wall):
     after = page.evaluate("""() => ({
       open: [...document.querySelectorAll('#queue details')].map((d) => d.open),
       asks: document.querySelectorAll('#queue details.q-needs > ol > li').length,
-      path: document.querySelector('#queue .queue-path').textContent,
+      path: document.querySelector('#queue .list-queue .list-path').textContent,
     })""")
     page.evaluate("(v) => window.__queue.onmessage(v)", {"path": first["path"], "text": None, "problem": "No queue file at this path."})
     page.wait_for_function("document.getElementById('queue-open').textContent === 'Queue'")
     gone = page.evaluate("""() => ({
-      problem: document.querySelector('#queue .queue-problem').textContent,
-      shown: !document.querySelector('#queue .queue-problem').hidden,
-      blocks: document.querySelector('#queue .queue-content').children.length,
+      problem: document.querySelector('#queue .list-queue .list-problem').textContent,
+      shown: !document.querySelector('#queue .list-queue .list-problem').hidden,
+      blocks: document.querySelector('#queue .list-queue .queue-content').children.length,
     })""")
-    keeper = "#queue .queue-kept"
+    keeper = "#queue .list-queue .list-kept"
     unkept = page.evaluate(f"() => document.querySelector('{keeper}').hidden")
     page.evaluate(
         "(v) => window.__queue.onmessage(v)",
@@ -2750,8 +2911,8 @@ def queue_follows_the_app(wall):
     page.wait_for_function(f"document.querySelector('{keeper}').textContent !== ''")
     empty = page.evaluate(f"""() => ({{
       kept: document.querySelector('{keeper}').hidden ? null : document.querySelector('{keeper}').textContent,
-      problem: document.querySelector('#queue .queue-problem').textContent,
-      empty: document.querySelector('#queue .queue-problem').classList.contains('empty'),
+      problem: document.querySelector('#queue .list-queue .list-problem').textContent,
+      empty: document.querySelector('#queue .list-queue .list-problem').classList.contains('empty'),
     }})""")
     ok = (
         after["open"] == [True, True, False, False]
@@ -2837,8 +2998,8 @@ def queue_says_when_it_cannot_follow(wall):
     page.goto(f"http://127.0.0.1:{wall.port}/src/wall.html")
     page.click("#queue-open")
     page.wait_for_timeout(SETTLE_MS)
-    shown = page.evaluate("!document.querySelector('#queue .queue-problem').hidden")
-    said = page.inner_text("#queue .queue-problem") if shown else None
+    shown = page.evaluate("!document.querySelector('#queue .list-queue .list-problem').hidden")
+    said = page.inner_text("#queue .list-queue .list-problem") if shown else None
     wall.check(said == "The queue file could not be followed: no such command", "a failed queue_subscribe shows on the problem line", said)
     page.close()
 
@@ -3145,7 +3306,7 @@ def queue_separator_snaps_by_keyboard(wall):
     page = wall.open(1920, 1000, 8)
     page.click("#queue-open")
     page.wait_for_selector("#queue .queue-content details")
-    sep = page.locator("#queue [role=separator]")
+    sep = page.locator("#queue .queue-resize")
     sep.focus()
     page.keyboard.press("Enter")
     page.wait_for_timeout(SETTLE_MS)
@@ -4399,7 +4560,7 @@ def agora_board(now):
     }
     return {
         "posts": [
-            post("techne-evals", "bf_emma", "Techne", "techne", "gripe", 240,
+            post("techne-evals", "bf_alice", "Techne", "techne", "gripe", 240,
                  "Waited 40 min on the heavy lock behind an orphaned test server; flock -o would have freed it.",
                  "https://github.com/ajbarea/klepsydra/issues/193"),
             post("klepsydra", "bf_isabella", "Mneme", "klepsydra", "win", 1500,
@@ -4694,7 +4855,7 @@ def theme_renames_the_queue_keeper(wall):
         page.evaluate("([k, v]) => window.__queue.onmessage({path: 'C:/q.md', text: '# Q', problem: null, kept_by: k, kept_voice: v})", [kept, voice])
         page.evaluate("(t) => window.__theme.onmessage(t)", theme)
         page.wait_for_timeout(SETTLE_MS)
-        got = page.evaluate("document.querySelector('#queue .queue-kept').textContent")
+        got = page.evaluate("document.querySelector('#queue .list-queue .list-kept').textContent")
         wall.check(got == want, f"{theme}: {want}", got)
     page.close()
 
@@ -5209,6 +5370,8 @@ def main() -> int:
             queue_full_beside_a_classic_scrollbar,
             queue_shortcut_waits_behind_another_dialog,
             queue_lost_drag_restores,
+            needs_and_queue_both_in_view,
+            needs_follows_the_app,
             ledger_docks_wide_and_is_a_dialog_narrow,
             ledger_gives_auto_its_room,
             ledger_snaps_by_drag,

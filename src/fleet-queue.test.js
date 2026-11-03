@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { build, EMPTY, parse, present, queueLabel, render, safeHref, sections, textOf, toTree } from "./fleet/queue.js";
+import { asksCount, build, EMPTY, EMPTY_NEEDS, headerCount, parse, present, queueLabel, render, renderAsks, safeHref, sections, textOf, toTree } from "./fleet/queue.js";
 
 const FIXTURE = readFileSync(new URL("../scripts/fixtures/queue-demo.md", import.meta.url), "utf8");
 
@@ -423,4 +423,49 @@ test("Ctrl+Alt+B toggles the panel, as VS Code's secondary side bar; nothing els
   assert.equal(key("b", "KeyB", { shiftKey: true }), false);
   assert.equal(key("b", "KeyB", { metaKey: true }), false);
   assert.equal(key("n", "KeyN"), false);
+});
+
+test("#276: the Needs you file counts its section's asks, else every top-level list's, less done", () => {
+  const asks = (text) => renderAsks(text).count;
+  assert.equal(asks("# Needs you\n\nIntro.\n\n## Needs you\n- a\n- ✅ b\n- c\n\n## Later\n- d\n"), 2, "its section only");
+  assert.equal(asks("- a\n- b\n  - nested\n- ✅ c\n\n1. d\n"), 3, "no section: every top-level list");
+  assert.equal(asks("# Title\n\nNothing waiting.\n"), 0, "a file with no list asks nothing");
+  assert.equal(asksCount([]), null);
+  assert.equal(asks(readFileSync(new URL("../scripts/fixtures/needs-demo.md", import.meta.url), "utf8")), 3, "the sample");
+});
+
+test("#276: the header counts the Needs you file's asks, else the queue file's own section", () => {
+  assert.equal(headerCount(2, 5), 2);
+  assert.equal(headerCount(0, 5), 0, "none for you is a count, not a fallback");
+  assert.equal(headerCount(null, 5), 5, "no Needs you file shown: one file held both");
+  assert.equal(headerCount(undefined, null), null);
+  assert.equal(queueLabel(headerCount(null, null)), "Queue");
+});
+
+test("#276: the Needs you list names its own file in its empty and fault lines", () => {
+  const doc = { createElement: () => ({ append() {}, setAttribute() {}, addEventListener() {}, dataset: {} }), createTextNode: (t) => t };
+  const opt = { empty: EMPTY_NEEDS, what: "Needs you file" };
+  const missing = present({ path: "/n.md", text: null, problem: "No Needs you file at this path.", missing: true }, () => undefined, doc, () => {}, renderAsks, opt);
+  assert.deepEqual([missing.problem, missing.empty], [EMPTY_NEEDS, true]);
+  const boom = () => {
+    throw new Error("x");
+  };
+  assert.equal(present({ path: "/n.md", text: "a", problem: null }, () => undefined, doc, () => {}, boom, opt).problem, "The Needs you file could not be shown: x");
+  assert.equal(present({ path: "/q.md", text: "a", problem: null }, () => undefined, doc, () => {}, boom).problem, "The queue file could not be shown: x", "the queue's line unchanged");
+});
+
+test("#276: the split between the lists keeps both in view and moves by the APG splitter keys", async () => {
+  const { SPLIT, clampShare, splitKey } = await import("./fleet/queuepanel.js");
+  assert.ok(SPLIT.min > 0 && SPLIT.max < 100 && SPLIT.min < SPLIT.start && SPLIT.start < SPLIT.max, "neither list can close");
+  assert.equal(clampShare(NaN), SPLIT.start, "a stored value that is no number");
+  assert.equal(clampShare(-20), SPLIT.min);
+  assert.equal(clampShare(140), SPLIT.max);
+  assert.equal(clampShare(42.4), 42);
+  assert.equal(splitKey("ArrowDown", 40), 40 + SPLIT.step);
+  assert.equal(splitKey("ArrowUp", 40), 40 - SPLIT.step);
+  assert.equal(splitKey("PageDown", 40), 40 + SPLIT.page);
+  assert.equal(splitKey("ArrowUp", SPLIT.min), SPLIT.min, "held at the bound");
+  assert.equal(splitKey("Home", 50), SPLIT.min);
+  assert.equal(splitKey("End", 50), SPLIT.max);
+  for (const k of ["ArrowLeft", "Enter", "a", "Tab"]) assert.equal(splitKey(k, 40), null, k);
 });

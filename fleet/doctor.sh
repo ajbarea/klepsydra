@@ -7,7 +7,8 @@
 # Claude uses); the phone wall answers on 127.0.0.1:8318 and through
 # Tailscale Serve with a fresh fleet.json (a usage reading observed in the last
 # 2 minutes); a pane watcher is running; each config folder in FLEET_ACCOUNTS
-# is logged in and the second ones match the first. Briefs whose shared rules
+# is logged in and the second ones match the first; the copies in ~/.claude
+# (hooks, status line, launcher, cast) match the checkout. Briefs whose shared rules
 # are out of date, and a second folder not logged in, are warnings.
 # With `--json FILE` (the fleet-doctor timer) it also writes the checks to FILE
 # for the wall, and logs a check only when its status changed since FILE's run.
@@ -37,13 +38,10 @@ if [[ -n $json && -f $json ]]; then
 fi
 results=()
 
-# The home folder reads as ~, in what doctor prints and in the report the
-# phone gets.
-home() { local s=${1//"$HOME/"/\~/}; [[ $s == "$HOME" ]] && s="~"; printf '%s' "$s"; }
 
 report() { # ok|warn|FAIL CHECK DETAIL
   local check detail
-  check=$(home "$2") detail=$(home "$3")
+  check=$(tilde "$2") detail=$(tilde "$3")
   printf '%-4s %s: %s\n' "$1" "$check" "$detail"
   results+=("$1"$'\t'"${check//[$'\t\n']/ }"$'\t'"${detail//[$'\t\n']/ }")
   [[ $1 == FAIL ]] && failed=1
@@ -62,8 +60,9 @@ else
   report FAIL "resume service" "not active: systemctl --user start fleet-resume-at-reset"
 fi
 beat=$(stat -c %Y -- "$FLEET_STATE/resume.beat" 2>/dev/null || echo 0)
+saw=$(head -1 "$FLEET_STATE/resume.beat" 2>/dev/null | sed 's/ at=.*//')
 if (( now - beat <= BEAT_MAX_S )); then
-  report ok "resume loop" "last pass $((now - beat)) s ago"
+  report ok "resume loop" "last pass $((now - beat)) s ago${saw:+: $saw}"
 else
   report FAIL "resume loop" "$( ((beat)) && echo "last pass $((now - beat)) s ago" || echo "no pass recorded")"
 fi
@@ -80,6 +79,51 @@ session_of() {
 }
 orch=$(orchestrator)
 panes=$(awk -F'\t' 'NF >= 3 { print $1 }' "$REGISTRY" 2>/dev/null)
+
+# Limits as the panes show them (#263): one still showing OVERDUE_S past the
+# reset it names was missed by the resume service; a reset time beside a limit
+# wording LIMIT_RE does not know means Claude Code renamed its message again.
+overdue="" unknown="" resets=""
+for p in $orch $panes; do
+  fleet_panes | grep -qx -- "$p" || continue
+  s=$(screen "$p")
+  busy "$s" && continue
+  if l=$(limit_line "$s"); then
+    lnow=${FLEET_NOW:-$now} # tests set the clock
+    # A dated reset is exact. A time-only one can be up to 24 h ahead, so it is
+    # placed only for the 5-hour window, whose reset is at most 5 h ahead: today's
+    # is tomorrow's when over 19 h past, yesterday's when over 5.5 h ahead.
+    # Any other time-only reset cannot tell a missed reset from a later one.
+    if grep -qE 'resets [A-Z][a-z]{2} [0-9]' <<<"$l"; then
+      r=$(reset_epoch "$l" "$lnow") || continue
+    elif grep -qE "hit your (5-hour|session) limit" <<<"$l"; then
+      r=$(reset_epoch "$l" "$lnow" 68400) || continue
+      if (( r - lnow > 19800 )); then
+        r=$(reset_epoch "$l" "$(date -d "$(date -d "@$lnow" +%F) 12:00 yesterday" +%s)" 86400) || continue
+      fi
+    else
+      continue
+    fi
+    if (( lnow - r > ${FLEET_OVERDUE_S:-600} )); then
+      overdue+="$p " resets+="$p:$(date -d "@$r" '+%H:%M') "
+    fi
+  else
+    # Only what came after the last prompt sent: an answered limit is past.
+    # A stop's shape only ("hit ... limit", "limit reached"): Claude Code's
+    # near-limit notices and the /fast dialog's limit also print a reset.
+    split_screen "$s"
+    { near 6 | awk '/^❯ / && !/^❯ \// { b = ""; next } { b = b $0 "\n" } END { printf "%s", b }'; printf '%s\n' "$BELOW"; } |
+      grep -iE '(hit|reached)[^·]*limit|limit (hit|reached)' |
+      grep -viE 'fast limit|used [0-9]+% of|approaching|now using' | grep -qE 'resets [A-Za-z0-9]' && unknown+="$p "
+  fi
+done
+if [[ -n $overdue ]]; then
+  report FAIL "limits" "still at a limit past its reset: ${overdue% } (the resume service missed it)" panes="${overdue% }" resets="${resets% }" overdue_s="${FLEET_OVERDUE_S:-600}"
+elif [[ -n $unknown ]]; then
+  report warn "limits" "a reset time shows beside a limit message the fleet does not recognise: ${unknown% } (LIMIT_RE in fleet/lib.sh)" panes="${unknown% }"
+else
+  report ok "limits" "no pane waits past its reset"
+fi
 for p in $orch $panes; do
   who=$(reg_field "$p" 2)
   [[ $p == "$orch" ]] && who=orchestrator
@@ -195,6 +239,27 @@ elif stale=$(bash "$here/brief.sh" --check "${briefs[@]}" 2>/dev/null); then
   report ok "briefs" "every registered brief has the shared rules"
 else
   report warn "briefs" "$(tr '\n' ' ' <<<"$stale")(fleet brief --check)"
+fi
+
+# Voices (#273): the tray's mode has been applied to keryx (the resume service
+# applies a change within a pass; a mode left unapplied says why).
+if v=$(bash "$here/voices.sh" --check 2>/dev/null); then
+  report ok "voices" "$v"
+else
+  report warn "voices" "${v:-could not compare}"
+fi
+# A hook or cast copy older than the checkout gives every session old behaviour (#244).
+root=${here%/fleet} differ="" missing=""
+for c in "${HOOK_COPIES[@]}"; do
+  if [[ ! -f $root/${c%% *} ]]; then missing+="${c%% *} "; continue; fi
+  cmp -s -- "$root/${c%% *}" "$FLEET_HOOK_DIR/${c#* }" || differ+="${c#* } "
+done
+if [[ -n $missing ]]; then
+  report FAIL "installed copies" "missing from $root: ${missing% }"
+elif [[ -n $differ ]]; then
+  report FAIL "installed copies" "make install-fleet: differ from $root: ${differ% }"
+else
+  report ok "installed copies" "the hooks, status line, launcher and cast match $root"
 fi
 if [[ -n $json ]]; then
   tmp=$json.tmp.$$

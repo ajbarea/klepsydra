@@ -8,7 +8,7 @@
       "demo-1-am_michael",
       "demo-2-af_bella",
       "demo-3-af_sarah",
-      "demo-4-bf_emma",
+      "demo-4-bf_alice",
       "demo-9-bm_fable",
       "demo-5-bf_isabella",
       "demo-6-af_nova",
@@ -41,7 +41,7 @@
       "state": "asked",
       "at": 1792499820
     },
-    "demo-4-bf_emma": {
+    "demo-4-bf_alice": {
       "state": "blocked",
       "reason": "a review agent on PR #70 is still running, about 20 min; it would have to start over",
       "at": 1792499940,
