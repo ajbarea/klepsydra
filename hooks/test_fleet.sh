@@ -15,8 +15,10 @@ mkdir -p "$stub"
 # shellcheck disable=SC2016 # the stub script expands its own variables
 # capture-pane prints $work/screen, or, while $work/screens lists any, the next
 # of them in turn (the last one stays): each line is a screen file and,
-# optionally, a script run before it is shown. setsid only logs, so no test
-# starts a real watcher.
+# optionally, a script run before it is shown; a line GONE fails the capture,
+# as a closed pane does, so a watcher ends after a known number of looks
+# (#230 review 3: a 1 s limit gave it anywhere from 0 to 1 s). setsid only
+# logs, so no test starts a real watcher.
 cat >"$stub/tmux" <<STUB
 #!/bin/sh
 echo "\$*" >>"$work/tmux.log"
@@ -25,6 +27,7 @@ case "\$*" in *capture-pane*)
   if [ -s "$work/screens" ]; then
     set -- \$(head -n 1 "$work/screens")
     [ "\$(wc -l <"$work/screens")" -gt 1 ] && sed -i 1d "$work/screens"
+    [ "\$1" = GONE ] && exit 1
     [ -n "\${2:-}" ] && sh "\$2"
     cat "\$1"
   else
@@ -49,10 +52,10 @@ check() {
 }
 
 cp "$here/../src/fleet/themes/kourai.json" "$work/test-cast.json"
+# Sourced with the suite's runtime folder, so its LOCK and PRUNE_STAMP are the
+# suite's, never the caller's live ones (#230 reviews 2 and 3).
 # shellcheck source=hooks/klepsydra-fleet.sh
-source "$hook"
-# Sourced, the hook would take the caller's live fleet lock (#230 review 2).
-LOCK=$work/klepsydra-fleet-$UID.lock
+XDG_RUNTIME_DIR=$work source "$hook"
 
 echo "where"
 
@@ -2121,8 +2124,10 @@ check "the dialog gone (approved): working, and the watcher ends" \
   "$(afield '[.state, .reason, .needs, .state_at]')|$(kill -0 "$wpid" 2>/dev/null && echo running || echo ended)" '["working",null,null,1792360030]|ended'
 
 now=1792360040 askfire permission-request.json
-cp "$fixtures/pane-idle-2.1.302.txt" "$work/screen"
-now=1792360045 watch_ask_run 1
+iscreen=$fixtures/pane-idle-2.1.302.txt
+printf '%s\n' "$iscreen" "$iscreen" "$iscreen" GONE >"$work/screens"
+now=1792360045 watch_ask_run 20
+rm -f -- "$work/screens"
 check "a dialog never seen on screen is never cleared" "$(afield '[.state, .reason]')" '["needs_you","approve Bash"]'
 cp "$fixtures/pane-permission-2.1.302.txt" "$work/screen"
 echo fail >"$work/tmux.mode"
@@ -2138,7 +2143,7 @@ check "an answer to an earlier ask changes nothing" "$(<"$afile")" "$before"
 ask_answered "$afile" 1792360040 1792360047
 check "the answer to this ask" "$(afield '[.state, .needs, .state_at]')" '["working",null,1792360047]'
 check "and its turn count stamped with the write, as the hook stamps it" "$(afield '.turns_at == .written_at')" "true"
-check "#230 review 2: the sourced hook's lock is the suite's own" "$([[ $LOCK == "$work"/* ]] && echo own)" "own"
+check "#230 review 2: the sourced hook's lock and prune stamp are the suite's own" "$([[ $LOCK == "$work"/* && $PRUNE_STAMP == "$work"/* ]] && echo own)" "own"
 # An ask after the turn ended with nothing left running, its file holding no
 # .background key (the hook deletes an empty one): done, as the hook reads it.
 jq -c '.state = "needs_you" | .state_at = 1792360060 | .needs = {tool: "Bash", turn_over: true} | del(.background)' "$afile" >"$work/a.tmp" && mv -f -- "$work/a.tmp" "$afile"
@@ -2148,7 +2153,7 @@ check "#230 review 2: answered after the turn, no background key: done" "$(afiel
 # answer lands once the lock is free, never lost (#230 review 2).
 now=1792360062 askfire permission-request.json
 cp "$fixtures/pane-permission-2.1.302.txt" "$work/screen"
-now=1792360063 watch_ask_run 30 & wpid=$!
+now=1792360063 watch_ask_run 15 & wpid=$!
 sleep 0.4
 flock "$LOCK" sleep 6.5 & lpid=$!
 sleep 0.2
@@ -2156,7 +2161,7 @@ cp "$fixtures/pane-working-tool-2.1.302.txt" "$work/screen"
 sleep 2
 check "#230 review 2: while the fleet lock is busy, the ask still waits" "$(afield .state)" '"needs_you"'
 timeout 20 tail --pid="$wpid" -f /dev/null
-wait "$lpid" 2>/dev/null
+kill "$wpid" 2>/dev/null; wait "$wpid" "$lpid" 2>/dev/null # a failed case leaves no watcher to act on later asks
 check "#230 review 2: once it is free, the answer lands" "$(afield '[.state, .needs]')" '["working",null]'
 # The dialog is both lines: the question alone, or the option alone, then gone,
 # was never a dialog, so the ask stays.
@@ -2164,26 +2169,26 @@ grep -v '1\. Yes' "$fixtures/pane-permission-2.1.302.txt" >"$work/q-only.txt"
 grep -v 'Do you want to proceed' "$fixtures/pane-permission-2.1.302.txt" >"$work/o-only.txt"
 for half in q-only o-only; do
   now=1792360070 askfire permission-request.json
-  printf '%s\n' "$work/$half.txt" "$fixtures/pane-idle-2.1.302.txt" "$fixtures/pane-idle-2.1.302.txt" "$fixtures/pane-idle-2.1.302.txt" >"$work/screens"
-  now=1792360071 watch_ask_run 1
+  printf '%s\n' "$work/$half.txt" "$iscreen" "$iscreen" "$iscreen" GONE >"$work/screens"
+  now=1792360071 watch_ask_run 20
   rm -f -- "$work/screens"
   check "#230 review 2: $half on screen, then gone: never a dialog, the ask stays" "$(afield .state)" '"needs_you"'
 done
 
 pscreen=$fixtures/pane-permission-2.1.302.txt iscreen=$fixtures/pane-idle-2.1.302.txt
 now=1792360048 askfire permission-request.json
-printf '%s\n' "$pscreen" "$iscreen" "$pscreen" >"$work/screens"
-now=1792360049 watch_ask_run 1
+printf '%s\n' "$pscreen" "$iscreen" "$pscreen" GONE >"$work/screens"
+now=1792360049 watch_ask_run 20
 check "one look without the dialog is not an answer" "$(afield '[.state, .reason]')" '["needs_you","approve Bash"]'
 printf 'jq -c ".state_at = 1792360099" "%s" >"%s.new" && mv -f "%s.new" "%s"\n' "$afile" "$afile" "$afile" "$afile" >"$work/new-ask.sh"
-printf '%s\n' "$pscreen $work/new-ask.sh" "$iscreen" >"$work/screens"
-now=1792360100 watch_ask_run 1
+printf '%s\n' "$pscreen $work/new-ask.sh" "$iscreen" "$iscreen" GONE >"$work/screens"
+now=1792360100 watch_ask_run 20
 check "a dialog seen for one ask is not seen for the next" "$(afield '[.state, .state_at]')" '["needs_you",1792360099]'
 rm -f "$work/screens"
 
 now=1792360110 askfire pre-tool-question.json
-printf '%s\n' "$pscreen" "$iscreen" >"$work/screens"
-now=1792360111 watch_ask_run 2
+printf '%s\n' "$pscreen" "$iscreen" "$iscreen" GONE >"$work/screens"
+now=1792360111 watch_ask_run 20
 check "a question is not a permission: the watcher leaves it" "$(afield '[.state, .reason]')" '["needs_you","question"]'
 rm -f "$work/screens"
 
