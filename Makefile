@@ -1,4 +1,4 @@
-.PHONY: install-hooks install-fleet test-fleet shellcheck
+.PHONY: install-hooks install-fleet test-fleet test-launch shellcheck
 
 # Copy the hooks, status line, launcher and cast into ~/.claude (fleet/install.sh --hooks).
 install-hooks:
@@ -21,6 +21,9 @@ SHELL_FILES = hooks/*.sh statusline/*.sh scripts/*.sh fleet/*.sh fleet/fleet
 
 test-fleet:
 	$(HEAVY) bash fleet/test_fleet.sh
+
+test-launch:
+	$(HEAVY) bash hooks/test_launch.sh
 
 shellcheck:
 	$(HEAVY) $(SHELLCHECK) -x $(SHELL_FILES)

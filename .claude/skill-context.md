@@ -86,7 +86,7 @@ files belong to: the JS guards scan hooks and scripts too.
   writes only files it owns and no future times.
 - `bash hooks/test_wrapup.sh`: the wrap-up Stop hook (silent unless a live
   request is unasked, never blocks a stop, fails open) and its reporter.
-- `flock -o /tmp/fleet-heavy.lock timeout 1800 bash hooks/test_launch.sh`: the tmux launcher against a private tmux server
+- `make test-launch` (takes the heavy lock itself: run it bare): the tmux launcher against a private tmux server
   and a stub `wt.exe` (one tab per fleet, a failed launch starts nothing).
 - `bash scripts/test_build_windows.sh`: the Windows build's stage-name check.
 - `cd src-tauri && cargo test -p klepsydra-fleet`: the fleet reader, the OTLP
