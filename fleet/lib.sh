@@ -371,6 +371,14 @@ orchestrator() { cat "$FLEET_STATE/orchestrator.pane" 2>/dev/null; }
 HEPH=${FLEET_HEPH:-$FLEET_STATE/HEPH.md}
 fleet_panes() { t list-panes -s -t "$FLEET_SESSION" -F '#{pane_id}' 2>/dev/null; }
 
+# Whether the session live in PANE is one `fleet done` marked finished
+# (finished.tsv: the registry's columns, pane first, session fourth).
+finished_here() { # PANE
+  local sid
+  sid=$(live_session "$1") || return 1
+  awk -F'\t' -v p="$1" -v s="$sid" '$1 == p && $4 == s { f = 1 } END { exit !f }' "${FLEET_FINISHED:-$FLEET_STATE/finished.tsv}" 2>/dev/null
+}
+
 # The live session id klepsydra's fleet file shows in pane PANE, or nothing.
 # Two live files naming one pane (a killed pane never writes "ended", and
 # tmux reuses its id) is no answer at all.

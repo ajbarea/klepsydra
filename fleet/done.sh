@@ -33,10 +33,12 @@ if [[ -z $name ]]; then
 fi
 
 # Move the matching rows; prints how many moved. finished.tsv gets them only
-# once panes.tsv is replaced, so a failure leaves both as they were.
+# once panes.tsv is replaced, and a row finished.tsv refuses goes back.
 finish_now() { # NAME PANE SID
   local tmp fin moved
   [[ -e $REGISTRY ]] || { echo 0; return; }
+  # finished.tsv must take the rows before panes.tsv gives them up.
+  : >>"$FINISHED" || return 1
   tmp=$(mktemp "$REGISTRY.XXXXXX") || return 1
   fin=$(mktemp "$REGISTRY.XXXXXX") || { rm -f -- "${tmp:?}"; return 1; }
   # Names compare as strings ("1" is not "01").
@@ -46,14 +48,24 @@ finish_now() { # NAME PANE SID
     END { close(out); close(fo); print c + 0 }' "$REGISTRY") || { rm -f -- "${tmp:?}" "${fin:?}"; return 1; }
   if (( moved > 0 )); then
     mv -f -- "$tmp" "$REGISTRY" || { rm -f -- "${tmp:?}" "${fin:?}"; return 1; }
-    cat -- "$fin" >>"$FINISHED"
+    if ! cat -- "$fin" >>"$FINISHED"; then
+      # finished.tsv refused them: they go back to panes.tsv (the lock is
+      # still held), less the time column, and the run fails.
+      if sed 's/\t[^\t]*$//' -- "$fin" >>"$REGISTRY"; then
+        flog ERROR "done: finished.tsv could not be written; the rows stay in panes.tsv" file="$FINISHED"
+      else
+        flog ERROR "done: rows left panes.tsv and could not be written anywhere" rows="$(tr '\n' ';' <"$fin")"
+      fi
+      rm -f -- "${fin:?}"
+      return 1
+    fi
   else
     rm -f -- "${tmp:?}"
   fi
   rm -f -- "${fin:?}"
   echo "$moved"
 }
-moved=$(with_registry finish_now "$name" "$pane" "$sid") || { err "panes.tsv is locked or could not be rewritten; nothing changed"; exit 1; }
+moved=$(with_registry finish_now "$name" "$pane" "$sid") || { err "panes.tsv or finished.tsv could not be written; see fleet log"; exit 1; }
 if (( moved == 0 )); then
   if [[ -n $name ]] && awk -F'\t' -v n="$name" '$2 "" == n "" { f = 1 } END { exit !f }' "$FINISHED" 2>/dev/null; then
     echo "already finished: $name"

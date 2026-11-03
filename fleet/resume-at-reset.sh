@@ -560,6 +560,11 @@ one() { # PANE
   # ended on this same server (a /clear or a restart in place), or none is
   # recorded; a registered agent there never is.
   local cur
+  # An agent that ran `fleet done` (its pane and session in finished.tsv) is
+  # never typed into again, not even the continue message at a limit (#269).
+  if ! registered "$p" && [[ $p != "${ORCH:-}" ]] && finished_here "$p"; then
+    return
+  fi
   if [[ -n $ORCH && $p == "$ORCH" ]] && ! registered "$p"; then
     cur=$(live_session "$p")
     if [[ -z $OSID ]] || { [[ -n $cur && $cur == "$OSID" ]] && session_alive "$OSID"; } || { ! session_alive "$OSID" && on_this_server "$OSID"; }; then

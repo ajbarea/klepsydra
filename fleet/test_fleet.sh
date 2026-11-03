@@ -1231,7 +1231,25 @@ check "#269: fleet done NAME works from any pane, for Heph" "$(TMUX_PANE=%1 bash
 check "#269 review: a second fleet done NAME says it already finished" "$(bash "$here/fleet" done finished 2>/dev/null; echo "rc=$?")" $'already finished: finished\nrc=0'
 printf '%s\t01\t%s\tsid-1\t/w\t%s\n' "%9997" "$work/brief.src" "$work/cfg-a" >>"$REGISTRY"
 check "#269 review: names compare as text: fleet done 1 leaves the agent named 01" "$(bash "$here/fleet" done 1 >/dev/null 2>&1; echo $?) $(cut -f2 "$REGISTRY" | tr '\n' ' ')" "1 other 01 "
-t kill-window -t "$p" 2>/dev/null; : >"$REGISTRY"; rm -f "$FLEET_STATE/finished.tsv"
+# #269 verify: finished.tsv that cannot be written keeps the row in panes.tsv.
+printf '%s\tkeep\t%s\t%s\t/w\t%s\n' "$p" "$work/brief.src" "$SID" "$work/cfg-b" >"$REGISTRY"
+mkdir -p "$work/rofin"; chmod 555 "$work/rofin"
+check "#269 verify: a finished.tsv that cannot be written fails the run and the row stays" \
+  "$(FLEET_FINISHED=$work/rofin/finished.tsv bash "$here/fleet" done keep >/dev/null 2>&1; echo $?) $(cut -f2 "$REGISTRY")" "1 keep"
+chmod 755 "$work/rofin"
+t kill-window -t "$p" 2>/dev/null; : >"$REGISTRY"; rm -f "$FLEET_STATE/finished.tsv" "$FLEET_STATE/resume-state"
+# #269 verify: a finished agent whose pane sits at a limit is not told to carry on.
+: >"$FLEET_LOG"
+p=$(pane finlim "{\"above\":[\"work\",\"$LIMIT\"],\"on_submit\":\"busy\"}"); settle
+live "$p"
+printf '%s\tfinlim\t%s\t%s\t/w\t%s\t2026-11-02T20:00:00-05:00\n' "$p" "$work/brief.src" "$SID" "$work/cfg-a" >"$FLEET_STATE/finished.tsv"
+resume "$noon"; resume "$(( noon + 3600 + 600 + 130 ))"
+check "#269 verify: a finished agent at a limit gets no continue message, nor is its limit logged" \
+  "$(grep -c '^SUBMIT' "$work/finlim.log") $(jq -r --arg p "$p" 'select(.pane == $p) | .message' "$FLEET_LOG" | wc -l)" "0 0"
+rm -f "$FLEET_STATE/finished.tsv" "$FLEET_STATE/resume-state"
+resume "$noon"; resume "$(( noon + 3600 + 600 + 130 ))"
+check "#269 verify: the same pane not in finished.tsv is resumed (the control)" "$(has "$(events finlim)" "SUBMIT The usage limit has reset.")" "yes"
+t kill-window -t "$p" 2>/dev/null; rm -f "$KLEPSYDRA_DIR/fleet/$SID.json"
 
 : >"$work/moved"
 p=$(backpane bgwork); done_live "$p" working '[{"id": "t1", "kind": "agent"}]'
