@@ -57,6 +57,13 @@ orch=$(orchestrator) rec=$(cat "$FLEET_STATE/orchestrator.session" 2>/dev/null)
 grep -qxF -- "${rec:-x}" <<<"$agents" && rec="" # a record naming an agent is no Heph's
 heph_pane="" osid="" heph_unsure=0
 unreg=$(awk -F'\t' 'NR == FNR { if ($0 != "") a[$0] = 1; next } $3 == 1 && !($2 in a)' <(printf '%s\n' "$agents") <(printf '%s\n' "$live_now"))
+# A finished agent's pane stays open with its session (`fleet done`, #269): it
+# is no stranger, so it never leaves Heph unsure.
+# (Only when it has rows: an empty first file would make awk read the second as it.)
+fin=${FLEET_FINISHED:-$FLEET_STATE/finished.tsv}
+if [[ -s $fin ]]; then
+  unreg=$(awk -F'\t' 'NR == FNR { f[$1 "\t" $4] = 1; next } $0 != "" && !(($1 "\t" $2) in f)' "$fin" <(printf '%s\n' "$unreg"))
+fi
 # A worker's new session after a /clear sits in its this-boot row's pane: no Heph.
 rows=$(while IFS=$'\t' read -r rp _ _ rsid _; do [[ -n $rp ]] && this_boot_row "$rsid" && printf '%s\n' "$rp"; done <"$REGISTRY" 2>/dev/null)
 loose=$(awk -F'\t' 'NR == FNR { if ($0 != "") r[$0] = 1; next } $0 != "" && !($1 in r)' <(printf '%s\n' "$rows") <(printf '%s\n' "$unreg"))

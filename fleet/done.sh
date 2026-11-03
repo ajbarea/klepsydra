@@ -38,7 +38,10 @@ finish_now() { # NAME PANE SID
   local tmp fin moved
   [[ -e $REGISTRY ]] || { echo 0; return; }
   # finished.tsv must take the rows before panes.tsv gives them up.
-  : >>"$FINISHED" || return 1
+  if ! : >>"$FINISHED"; then
+    flog ERROR "done: finished.tsv cannot be written; nothing changed" file="$FINISHED"
+    return 1
+  fi
   tmp=$(mktemp "$REGISTRY.XXXXXX") || return 1
   fin=$(mktemp "$REGISTRY.XXXXXX") || { rm -f -- "${tmp:?}"; return 1; }
   # Names compare as strings ("1" is not "01").
@@ -55,6 +58,7 @@ finish_now() { # NAME PANE SID
         flog ERROR "done: finished.tsv could not be written; the rows stay in panes.tsv" file="$FINISHED"
       else
         flog ERROR "done: rows left panes.tsv and could not be written anywhere" rows="$(tr '\n' ';' <"$fin")"
+        cat -- "$fin" >&2
       fi
       rm -f -- "${fin:?}"
       return 1
