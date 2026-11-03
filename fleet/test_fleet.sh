@@ -1492,6 +1492,33 @@ h=$(pane hephhome '{"above":["⏺ Done. done 11:50 AM"]}'); settle
 printf '%s\n' "$h" >"$FLEET_STATE/orchestrator.pane"; done_live "$h"
 hmove "$noon"; hmove "$((noon + 60))"
 check "Heph already on his own account stays" "$(wc -c <"$work/moved")" "0"
+
+echo "two accounts: Heph's account as AJ picked it on the wall (#271)"
+hp() { printf '%s' "$1" >"$KLEPSYDRA_DIR/prefs.json"; bash -c ". '$here/lib.sh'; printf '%s|%s|%s' \"\$HEPH_PICK_STATE\" \"\${FLEET_HEPH_ACCOUNTS% }\" \"\$HEPH_PICK\""; }
+check "no pick, auto, or an odd value: the fleet's order" \
+  "$(hp '{}') $(hp '{"heph_account":"auto"}') $(hp '{"heph_account":3}') $(hp '{"heph_account":"../a"}') $(hp 'not json') $(hp '{}{}')" \
+  "$(printf 'auto|%s|' "$work/cfg-b $work/cfg-a"; for _ in 1 2 3 4 5; do printf ' auto|%s|' "$work/cfg-b $work/cfg-a"; done)"
+check "an account's id puts the folder logged in to it first" \
+  "$(hp '{"heph_account":"a"}') $(hp '{"heph_account":"b"}')" "picked|$work/cfg-a $work/cfg-b|$work/cfg-a picked|$work/cfg-b $work/cfg-a|$work/cfg-b"
+check "an account no folder holds: missing, the fleet's order" "$(hp '{"heph_account":"zz"}')" "missing|$work/cfg-b $work/cfg-a|"
+logout a
+check "a picked account logged out of its folder: missing" "$(hp '{"heph_account":"a"}')" "missing|$work/cfg-b $work/cfg-a|"
+login a
+# Personal at 70%: 30% room is under the 50% a move back needs, but room to work.
+reading a Personal 70 5000; rm -f -- "$KLEPSYDRA_DIR/prefs.json"
+: >"$FLEET_LOG"; rm -f "$FLEET_STATE/resume-state" "$FLEET_STATE/heph-pick.said"
+hmove "$((noon + 120))"; hmove "$((noon + 180))"
+check "without a pick, Heph on his own account stays" "$(wc -c <"$work/moved")" "0"
+printf '{"heph_account":"a"}' >"$KLEPSYDRA_DIR/prefs.json"
+hmove "$((noon + 240))"; hmove "$((noon + 300))"
+check "with Personal picked, he moves to it at a finished turn, on 30% room" \
+  "$(head -2 "$work/moved" | tr '\n' ' ')$(cat "$FLEET_STATE/orchestrator.config") $(grep -c 'moved to the account AJ picked for Heph on the wall, Personal' "$work/moved-brief")" "$work/cfg-a heph $work/cfg-a 1"
+check "the pick is logged once across passes, with the order it gives" \
+  "$(jq -r 'select(.message | startswith("Heph'\''s account: AJ'\''s pick")) | "\(.account) \(.order)"' "$FLEET_LOG")" "Personal $work/cfg-a $work/cfg-b"
+printf '{"heph_account":"zz"}' >"$KLEPSYDRA_DIR/prefs.json"; hmove "$((noon + 360))"
+check "a pick no folder holds is a warning, logged once" \
+  "$(jq -r 'select(.message | startswith("Heph'\''s account: the account picked")) | "\(.level) \(.account)"' "$FLEET_LOG")" "WARN zz"
+rm -f -- "$KLEPSYDRA_DIR/prefs.json" "$FLEET_STATE/heph-pick.said"; reading a Personal 10 5000
 t kill-window -t "$h" 2>/dev/null
 
 echo "two accounts: Heph's pane watcher never holds his move back (#215)"
@@ -2522,6 +2549,51 @@ check "#277: a file under its old name is still committed" "$(bsync) $(git -C "$
 mv "$work/brief/claude-morning.md" "$work/brief/morning.md"
 check "#277: a plain mv to the new name commits as one rename and leaves neither name behind" \
   "$(bsync) $(git -C "$work/brief" show -M --name-status --format= HEAD | tr '\t' ' ' | paste -sd' ') $(git -C "$work/brief" status --porcelain -- claude-morning.md morning.md | wc -l)" "0 R100 claude-morning.md morning.md 0"
+
+echo "fleet resume now (#271)"
+rnow() { RESUME_NOW_WAIT_S=${1:-20} RESUME_NOW_SIGNAL_S=1 bash "$here/resume-now.sh" 2>/dev/null; } # [WAIT_S]
+said() { jq -r --arg m "$1" 'select(.message == $m) | .message' "$FLEET_LOG" | grep -c .; }
+: >"$FLEET_LOG"; rm -f -- "$FLEET_STATE/resume.pid" "$FLEET_STATE"/resume-now.* "$FLEET_STATE/resume.beat"
+out=$(rnow); rc=$?
+check "with no service, one pass runs here, and it prints what the pass logged" \
+  "$rc $(said 'resume pass run here: no resume service is running') $(grep -c 'INFO pass' <<<"$out")" "0 1 1"
+flock -o "$FLEET_STATE/.pass.lock" sleep 30 & lk=$!
+for _ in $(seq 50); do flock -n "$FLEET_STATE/.pass.lock" true || break; sleep 0.1; done
+t0=$SECONDS; FLEET_NOW=$noon bash "$here/resume-at-reset.sh" --once 2>/dev/null; rc=$?
+check "--once while another pass holds the lock runs nothing, at once, and logs why" \
+  "$rc $(( SECONDS - t0 < 5 )) $(said '--once ran nothing: another resume pass holds the pass lock (the service, or another --once)')" "75 1 1"
+kill "$lk" 2>/dev/null; wait "$lk" 2>/dev/null
+: >"$FLEET_LOG"
+POLL_S=3600 bash "$here/resume-at-reset.sh" 2>/dev/null & svc=$!
+for _ in $(seq 100); do [[ -s $FLEET_STATE/resume.pid ]] && grep -q 'resume service started' "$FLEET_LOG" 2>/dev/null && break; sleep 0.1; done
+spid=$(cat "$FLEET_STATE/resume.pid" 2>/dev/null)
+svpid() { bash -c '. "$1/lib.sh"; service_pid || echo none' _ "$here"; }
+check "the service records its pid, and fleet resume now reads it" "$(svpid)" "$spid"
+check "the lock is flock's, never held by the service or what it starts" \
+  "$(find "/proc/$spid/fd" -lname "*/.pass.lock" 2>/dev/null | wc -l) $(flock -n "$FLEET_STATE/.pass.lock" true && echo free || echo held)" "0 held"
+t0=$SECONDS; out=$(rnow); rc=$?
+check "with the service running (an hour between passes), it runs one at once" "$rc $(( SECONDS - t0 < 15 ))" "0 1"
+check "logged by the service with the request, and printed" \
+  "$(said 'resume pass run at once, as asked') $(grep -c 'resume pass run at once, as asked' <<<"$out")" "1 1"
+FLEET_NOW=$noon bash "$here/resume-at-reset.sh" --once 2>/dev/null; rc=$?
+check "--once while the service runs: refused" "$rc" "75"
+( rnow >/dev/null; echo "$?" >"$work/rn1" ) & r1=$!
+( rnow >/dev/null; echo "$?" >"$work/rn2" ) & r2=$!
+wait "$r1" "$r2"
+check "two asked at once both see a pass" "$(cat "$work/rn1") $(cat "$work/rn2")" "0 0"
+kill -STOP "$spid"
+t0=$SECONDS; rnow 3 >/dev/null; rc=$?
+check "a service that does not answer: exit 1 after the wait, logged" "$rc $(said 'resume pass not run: the service did not answer in time')" "1 1"
+kill -CONT "$spid"; sleep 1
+kids=$(pgrep -P "$spid" | tr '\n' ' ')
+kill "$spid" 2>/dev/null; wait "$svc" 2>/dev/null
+for _ in $(seq 50); do kill -0 "$spid" 2>/dev/null || break; sleep 0.1; done
+left=0; for k in $kids; do kill -0 "$k" 2>/dev/null && left=$((left + 1)); done
+check "a stopped service leaves no sleep behind (it held the pass between waits)" "$([[ -n $kids ]] && echo had) $left" "had 0"
+check "a stale pid file is not taken for the service" "$(svpid)" "none"
+out=$(rnow); rc=$?
+check "so the pass runs here" "$rc $(said 'resume pass run here: no resume service is running')" "0 1"
+rm -f -- "$FLEET_STATE/resume.pid" "$FLEET_STATE"/resume-now.*
 
 echo "the fleet log"
 check "every line is one JSON object with ts, level, target and message" \

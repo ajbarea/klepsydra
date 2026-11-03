@@ -8,6 +8,7 @@
 #   fleet accounts        each config folder: its account and its room (* where a
 #                         new worker starts; workers prefer the first, Heph the last)
 #   fleet accounts sync   make the second config folder behave like ~/.claude
+#   fleet resume now      run one resume pass at once (the service's, when it runs) and print its decisions
 #   fleet recover         after a hard shutdown, relaunch every agent whose session is gone
 #   fleet done [NAME]     mark an agent finished (default: this pane's), so nothing relaunches it
 #   fleet voices [MODE]   make keryx follow the tray's Voices mode (heph, everyone, off) now;
@@ -26,6 +27,10 @@ case $cmd in
   brief) exec bash "$here/brief.sh" "$@" ;;
   install) exec bash "$here/install.sh" "$@" ;;
   recover) exec bash "$here/recover.sh" "$@" ;;
+  resume)
+    [[ ${1:-} == now && $# == 1 ]] || { echo "usage: fleet resume now" >&2; exit 2; }
+    exec bash "$here/resume-now.sh"
+    ;;
   done) exec bash "$here/done.sh" "$@" ;;
   voices) exec bash "$here/voices.sh" "$@" ;;
   shots) exec python3 -I "$here/prune_shots.py" "$@" ;;

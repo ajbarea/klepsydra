@@ -465,7 +465,7 @@ t kill-pane -t "$p"
 
 out=$(bash "$launch" bogus 2>&1); rc=$?
 check "unknown command: exit 1" "$rc" "1"
-check "unknown command: says so" "$out" "usage: klepsydra-launch.sh new DIR | voices | jump|end|interrupt|wrapup SOCKET PANE PID START"
+check "unknown command: says so" "$out" "usage: klepsydra-launch.sh new DIR | voices | resume-now | jump|end|interrupt|wrapup SOCKET PANE PID START"
 check "unknown command: no tab" "$(tabs)" "1"
 
 # #273: the tray's Voices change runs the installed fleet voices at once, with
@@ -478,6 +478,19 @@ out=$(FLEET_BIN="$work/fbin" bash "$launch" voices everyone 2>&1); rc=$?
 check "#273: a mode argument is refused before anything runs" "$rc $(wc -l <"$work/fleet.calls")" "1 1"
 out=$(FLEET_BIN="$work/nofleet" bash "$launch" voices 2>&1); rc=$?
 check "#273: without the fleet installed it says so" "$rc $out" "1 The fleet commands are not installed (make install-fleet)."
+
+# #271: the tray's "Run resume pass now" runs the installed fleet resume now,
+# passes its decisions through, and says so when the pass did not run.
+: >"$work/fleet.calls"
+out=$(FLEET_BIN="$work/fbin" bash "$launch" resume-now 2>&1); rc=$?
+check "#271: resume-now runs fleet resume now, and opens no tab" "$rc $(cat "$work/fleet.calls") $(tabs)" "0 [resume now] 1"
+out=$(FLEET_BIN="$work/fbin" bash "$launch" resume-now extra 2>&1); rc=$?
+check "#271: an argument is refused before anything runs" "$rc $(wc -l <"$work/fleet.calls")" "1 1"
+printf '#!/usr/bin/env bash\necho "10:41:02 INFO resumed pane=%%9"\nexit 1\n' >"$work/fbin/fleet"
+out=$(FLEET_BIN="$work/fbin" bash "$launch" resume-now 2>&1); rc=$?
+check "#271: a failed pass says so, after what it printed" "$rc $out" "1 10:41:02 INFO resumed pane=%9
+The resume pass did not run; see fleet log."
+printf '#!/usr/bin/env bash\nprintf "[%%s]\\n" "$*" >>"%s/fleet.calls"\n' "$work" >"$work/fbin/fleet"
 
 # Another click holding the lock past its 10 s: the window is selected anyway.
 detach_all; : >"$WT_LOG"

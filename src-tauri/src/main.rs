@@ -4,6 +4,7 @@ mod choice;
 mod fleet;
 mod folder;
 mod geometry;
+mod heph;
 mod jump;
 mod launch;
 mod logging;
@@ -829,6 +830,7 @@ fn with_state<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R
         .manage(theme::Themes::default())
         .manage(theme::ThemeMenu::default())
         .manage(voices::VoicesMenu::default())
+        .manage(heph::HephMenu::default())
         .manage(split::Follow::default())
 }
 
@@ -964,6 +966,7 @@ fn main() {
                 CheckMenuItem::with_id(app, "phone", "Phone wall", true, phone_on, None::<&str>)?;
             let characters = theme::menu(app.handle())?;
             let voices_menu = voices::menu(app.handle())?;
+            let (resume_item, resume_status, heph_menu) = heph::items(app.handle())?;
             let queue_item =
                 MenuItem::with_id(app, "queue", "Choose queue file...", true, None::<&str>)?;
             let needs_item =
@@ -980,6 +983,11 @@ fn main() {
                     &phone_item,
                     &characters,
                     &voices_menu,
+                    &heph_menu,
+                    &PredefinedMenuItem::separator(app)?,
+                    &resume_item,
+                    &resume_status,
+                    &PredefinedMenuItem::separator(app)?,
                     &queue_item,
                     &needs_item,
                     &PredefinedMenuItem::separator(app)?,
@@ -1044,8 +1052,8 @@ fn main() {
                     "needs" => fleet::choose_needs(app),
                     "quit" => app.exit(0),
                     other => {
-                        if !theme::on_menu(app, other) {
-                            voices::on_menu(app, other);
+                        if !theme::on_menu(app, other) && !voices::on_menu(app, other) {
+                            heph::on_menu(app, other);
                         }
                     }
                 })
@@ -1058,6 +1066,7 @@ fn main() {
             fleet::start_ci(app.handle(), klepsydra_dir(app.handle()));
             fleet::start_health(app.handle(), klepsydra_dir(app.handle()));
             fleet::start_agora(app.handle(), klepsydra_dir(app.handle()));
+            heph::start(app.handle());
             Ok(())
         })
         .build(tauri::generate_context!())

@@ -29,7 +29,9 @@
 # tried again at the next pass once, then every 15 min; a move back waits
 # 15 min; a failed fresh start is resumed in place. A CI red the CI watch routed to an agent
 # (inbox/NAME/*.txt) is typed into its pane at an idle, empty prompt, oldest
-# first. --once runs one pass (and waits for the moves it started). Each
+# first. Heph's account picked on the wall (prefs.json heph_account, #271) is
+# his preferred one while it is logged in. --once runs one pass (and waits for
+# the moves it started); SIGUSR1 (`fleet resume now`) runs one at once. Each
 # decision is one line in the fleet log; each pass writes what it saw (panes,
 # limited panes) to resume.beat for `fleet doctor`, and logs it when it changes.
 set -u
@@ -37,6 +39,25 @@ FLEET_TARGET=fleet::resume
 here=$(dirname "$(readlink -f "$0")")
 # shellcheck source=fleet/lib.sh
 . "$here/lib.sh"
+# One pass at a time (#271): the service and a --once run each hold the pass
+# lock while they run, through flock -o, so nothing they start (a move's tmux
+# server, keryx) keeps it after them. A --once run while another holds it runs
+# nothing and says so (`fleet resume now` asks the service instead); the
+# service waits its turn.
+if [[ -z ${FLEET_PASS_LOCKED:-} ]]; then
+  mkdir -p -- "$FLEET_STATE"
+  export FLEET_PASS_LOCKED=1
+  if [[ ${1:-} == --once ]]; then
+    flock -n -E 75 -o "$FLEET_STATE/.pass.lock" bash "$0" "$@"
+    rc=$?
+    if (( rc == 75 )); then
+      flog WARN "--once ran nothing: another resume pass holds the pass lock (the service, or another --once)"
+      err "a resume pass is running already; fleet resume now asks the service for one"
+    fi
+    exit "$rc"
+  fi
+  exec flock -o "$FLEET_STATE/.pass.lock" bash "$0" "$@"
+fi
 LAUNCH=${LAUNCH:-$here/launch.sh}
 FRESH_AFTER_S=${FRESH_AFTER_S:-3300} # Claude Code's prompt cache lives an hour
 POLL_S=${POLL_S:-60}
@@ -562,10 +583,16 @@ one() { # PANE
   # that keeps background work past its turns is asked to stop it (ask_back)
   # once the account has had room for BACK_ASK_AFTER_S, again an hour later,
   # and moves when it answers READY-TO-MOVE.
-  local pref pref_id back_why idle_stamp since back_ok=0
+  local pref pref_id back_why idle_stamp since back_ok=0 picked=0
   if (( orch )); then pref=${FLEET_HEPH_ACCOUNTS%% *}; else pref=${FLEET_ACCOUNTS%% *}; fi
   pref_id=${ACCT_ID[$pref]:-}
   [[ -n $pref_id ]] && since=$(room_since "$pref_id")
+  # The account AJ picked for Heph on the wall (#271) needs only room to work,
+  # not FLEET_BACK_ROOM_PCT: the pick says he wants him there.
+  if (( orch )) && [[ $HEPH_PICK_STATE == picked && $pref == "$HEPH_PICK" && -n $pref_id ]]; then
+    picked=1
+    [[ -z ${since:-} ]] && id_has_room "$pref_id" "$NOW" && since=$NOW
+  fi
   if [[ -z $limit && -z ${due[$p]:-} && -n $pref_id && -n ${since:-} && $cfg != "$pref" && $pref_id != "${PANE_ID:-}" ]] &&
     { (( orch )) || [[ -n $(reg_field "$p" 2) ]]; } && (( NOW - ${move_failed[$p]:-0} >= 900 )) && ! back_held "$pref_id"; then
     back_ok=1
@@ -576,6 +603,7 @@ one() { # PANE
     { (( orch )) && idle_stamp=$(watchers_only "$p"); } ||
     { (( !orch )) && idle_stamp=$(ready_to_move "$p" "${asked[$p]:-}"); }; }; then
     back_why="moved back to its preferred account, $(account_label "$pref_id"), which has room again"
+    (( picked )) && back_why="moved to the account AJ picked for Heph on the wall, $(account_label "$pref_id")"
     if (( orch )); then
       spawn "$p" back "$cfg$US$pref$US$orch$US$pref_id" heph_move "$p" "$pref" "$back_why" "" "$idle_stamp"
     else
@@ -763,6 +791,23 @@ doctor_after_switch() {
   fi
 }
 PREV_ACCT="" DOCTOR_DUE=0 HEPH_DOUBT=""
+
+# Heph's account as picked on the wall (#271), read each pass; a change is
+# logged once (across restarts and --once runs), with the order it gives.
+PICK_SAID_FILE=$FLEET_STATE/heph-pick.said
+PICK_SAID=$(cat "$PICK_SAID_FILE" 2>/dev/null)
+heph_picked() {
+  heph_pick
+  local seen="$HEPH_PICK_STATE ${HEPH_PICK_ID:-}"
+  [[ $seen == "$PICK_SAID" ]] && return 0
+  PICK_SAID=$seen
+  printf '%s\n' "$seen" >"$PICK_SAID_FILE.$$" && mv -f -- "$PICK_SAID_FILE.$$" "$PICK_SAID_FILE"
+  case $HEPH_PICK_STATE in
+    picked) flog INFO "Heph's account: AJ's pick; he moves to it at a finished turn while it has room" account="$(account_label "$HEPH_PICK_ID")" config="$HEPH_PICK" order="${FLEET_HEPH_ACCOUNTS% }" ;;
+    missing) flog WARN "Heph's account: the account picked is logged in at no config folder; the fleet's order holds" account="$HEPH_PICK_ID" order="${FLEET_HEPH_ACCOUNTS% }" ;;
+    *) flog INFO "Heph's account: the fleet's order" order="${FLEET_HEPH_ACCOUNTS% }" ;;
+  esac
+}
 # The last pass's summary, from resume.beat: a --once run or a restart logs
 # only a change.
 PASS_SEEN=$(head -1 "$FLEET_STATE/resume.beat" 2>/dev/null | sed 's/ at=.*//')
@@ -771,6 +816,7 @@ PASS_LIMITED=()
 pass() {
   NOW=$(clock) ACTIVE=$(active_account) ORCH=$(orchestrator) OSID=$(cat "$FLEET_STATE/orchestrator.session" 2>/dev/null)
   accounts
+  heph_picked
   # keryx follows the tray's Voices mode once it changes (#273); a manual
   # `keryx off` between changes is left alone.
   [[ ${FLEET_VOICES:-1} == 0 ]] || bash "$here/voices.sh" --if-changed >/dev/null 2>&1 </dev/null
@@ -804,9 +850,32 @@ if [[ ${1:-} == --once ]]; then
   fi
   exit 0
 fi
-flog INFO "resume service started" poll_s="$POLL_S" fresh_after_s="$FRESH_AFTER_S" socket="$FLEET_SOCK"
+# `fleet resume now` (#271) writes a request to REQ and sends SIGUSR1: the
+# signal ends the wait between passes at once (a trapped signal ends `wait`,
+# never a foreground sleep), and the pass that follows records the request it
+# saw in DONE with its start time. The request file is the record, the signal
+# only the wake: a request seen after a pass runs another at once.
+PID_FILE=$FLEET_STATE/resume.pid REQ=$FLEET_STATE/resume-now.req DONE=$FLEET_STATE/resume-now.done
+trap ':' USR1
+# Stopped between passes, the wait's sleep goes with the service.
+trap 'kill "${SLEEP_PID:-}" 2>/dev/null; exit 143' TERM INT
+printf '%s\n' "$$" >"$PID_FILE.$$" && mv -f -- "$PID_FILE.$$" "$PID_FILE"
+handled=$(cut -d' ' -f2 "$DONE" 2>/dev/null)
+flog INFO "resume service started" poll_s="$POLL_S" fresh_after_s="$FRESH_AFTER_S" socket="$FLEET_SOCK" pid="$$"
 reap_left
 while :; do
+  req=$(cat "$REQ" 2>/dev/null) started=$(date +%s%N)
+  [[ $req == "$handled" ]] && req=""
   pass
-  sleep "$POLL_S"
+  if [[ -n $req ]]; then
+    printf '%s %s\n' "$started" "$req" >"$DONE.$$" && mv -f -- "$DONE.$$" "$DONE"
+    handled=$req
+    flog INFO "resume pass run at once, as asked" request="$req"
+  fi
+  next=$(cat "$REQ" 2>/dev/null)
+  [[ -n $next && $next != "$handled" ]] && continue
+  sleep "$POLL_S" &
+  SLEEP_PID=$!
+  wait "$SLEEP_PID"
+  kill "$SLEEP_PID" 2>/dev/null
 done

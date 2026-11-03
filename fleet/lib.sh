@@ -456,6 +456,40 @@ account_of() { # DIR
   jq -er '.oauthAccount.accountUuid // empty' "$(config_json "$1")" 2>/dev/null
 }
 
+# Heph's account as AJ picked it on the wall (#271): prefs.json's heph_account,
+# an account id, puts the folder logged in to it first in FLEET_HEPH_ACCOUNTS,
+# so he moves there at a finished turn and goes back to it after a limit. Sets
+# HEPH_PICK_STATE: auto (no pick, "auto", or an odd value: the fleet's order),
+# picked (HEPH_PICK is that folder) or missing (no folder holds the account
+# HEPH_PICK_ID; the fleet's order holds).
+FLEET_HEPH_BASE=$FLEET_HEPH_ACCOUNTS
+# shellcheck disable=SC2034 # HEPH_PICK_STATE is read by the scripts that source this
+heph_pick() {
+  local d rest=""
+  FLEET_HEPH_ACCOUNTS=$FLEET_HEPH_BASE HEPH_PICK="" HEPH_PICK_STATE=auto
+  HEPH_PICK_ID=$(jq -ser 'if length == 1 then .[0].heph_account else empty end | strings' "$KLEPSYDRA_DIR/prefs.json" 2>/dev/null) || HEPH_PICK_ID=""
+  [[ $HEPH_PICK_ID != auto && $HEPH_PICK_ID =~ ^[0-9A-Za-z][0-9A-Za-z-]*$ ]] || { HEPH_PICK_ID=""; return 0; }
+  for d in $FLEET_HEPH_BASE; do
+    if [[ -z $HEPH_PICK && $(account_of "$d") == "$HEPH_PICK_ID" ]]; then HEPH_PICK=$d; else rest+="$d "; fi
+  done
+  if [[ -n $HEPH_PICK ]]; then
+    FLEET_HEPH_ACCOUNTS="$HEPH_PICK $rest" HEPH_PICK_STATE=picked
+  else
+    HEPH_PICK_STATE=missing
+  fi
+}
+heph_pick
+
+# The running resume service's pid (#271), from resume.pid, when that process
+# is still the service's loop (not a --once run, not a reused pid).
+service_pid() {
+  local pid cmd
+  read -r pid <"$FLEET_STATE/resume.pid" 2>/dev/null && [[ $pid =~ ^[0-9]+$ ]] || return 1
+  { cmd=$(tr '\0' ' ' <"/proc/$pid/cmdline"); } 2>/dev/null || return 1
+  [[ $cmd == *resume-at-reset.sh* && $cmd != *--once* ]] || return 1
+  printf '%s' "$pid"
+}
+
 # klepsydra's newest usage reading of account ID.
 reading_of() { # ID
   [[ $1 =~ ^[0-9A-Za-z][0-9A-Za-z-]*$ ]] || return 1

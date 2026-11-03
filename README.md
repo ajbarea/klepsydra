@@ -845,6 +845,18 @@ Sessions are started with no `KERYX_ENABLED`, which would outrank keryx's own
 setting; a worker launched before 11-02 still carries `KERYX_ENABLED=false`
 until its next launch.
 
+### Resume pass and Heph's account
+
+The tray's **Run resume pass now** runs one pass of the resume service at once
+(`fleet resume now`) and shows its result on the line beneath it. **Heph's
+account** picks the account the orchestrator runs on: **Fleet's order (auto)**,
+or one account, each shown with its 5-hour and weekly room. The pick is kept in
+`prefs.json` (`"heph_account"`, the account's id) and runs a pass at once; the
+service moves Heph to that account at his next finished turn while it has room
+(any room, not the 50% a move back needs), and back to it after a limit moves
+him off. A pick no logged-in folder holds is logged as a warning and the
+fleet's order holds.
+
 ### Character themes
 
 The cast wears one of three themes, all full and equal, chosen in the tray's
@@ -1422,6 +1434,7 @@ briefs, logs) stays in the state folder.
 |---|---|
 | `fleet doctor` | One line per check: the resume service, its last pass and what that pass saw (panes, limited panes), limits as the panes show them (a pane still showing a limit 10 min past its reset, with nothing sent since, fails; a reset time beside a limit message the fleet does not recognise warns), Remote Control on every registered pane and the orchestrator's, the phone wall locally and over Tailscale Serve with a fresh `fleet.json`, a pane watcher, briefs' shared rules, and whether keryx holds the tray's Voices mode. Exits non-zero on any failure. `--json FILE` also writes the checks as a report, and logs only a check that changed status (a recovery without its detail). The `fleet-doctor.timer` runs it every 5 min into the data folder's `fleet-health.json`, which the wall and the phone show as a **Fleet** button beside **CI**: failing checks first, `Fleet ?` when the report is over 15 minutes old, no links and `~` for the home folder. |
 | `fleet log [N]` | The last N decisions as plain lines. |
+| `fleet resume now` | One pass of the resume service at once, then the decisions it logged and a summary line. With the service running it is asked (a request file, then `SIGUSR1`, which ends its wait between passes); with none, one `--once` pass runs here. Every pass holds the pass lock through `flock -o`, so a `--once` while another pass runs exits 75 having done nothing. |
 | `fleet brief NAME BODY` | Writes `task-NAME.src`: BODY, then the shared rules in `fleet/brief-tail.md`. `--check` lists briefs whose rules drifted; `--refresh` rewrites them with the current rules, dropping any rule an earlier tail held (word for word or by its label) and keeping lines added after them. |
 | `fleet cutover` | Restarts the resume service on the installed scripts and confirms its start is logged. |
 | `fleet done [NAME]` | Marks an agent finished: its row moves from `panes.tsv` to `finished.tsv` with the time, so nothing relaunches it or types into it: the resume service, `fleet recover` and the doctor act only on registered rows, and the service also leaves alone any pane whose session is in `finished.tsv`. With no NAME, the row of the fleet pane it runs in, when its registered session runs there; each brief's shared rules end with it. The pane stays open with its final report. |
