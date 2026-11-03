@@ -1,40 +1,32 @@
-# IMPL: klepsydra fleet-module brief, resume state 2026-11-03 07:30 (EST)
+# IMPL: klepsydra fleet-module brief, resume state 2026-11-03 10:30 (EST)
 
-Session 18 (Chronos, fresh on Personal = `~/.claude-rit`) replaced session 17. Resume from this file,
-`git log`, open PRs and their comments, and the klepsydra line under "Running now" in
-/mnt/c/Users/ajbar/fleet-briefing/queue.md. Brief: task-fleet-module.src (its last "11-02 18:00 Heph"
-line sets the order).
-
-## Merged and deployed (session 18)
-#283, #285, #286, #257: `make install-fleet` (cut over), `fleet brief --refresh`, queue file set (#286), doctor
-green except Windows Tailscale (down since 11-02 20:27). #286's Windows app build is AJ's app update.
+Session 19 (Chronos, relaunched after the 11-03 hard shutdown) replaced session 18. Resume from this
+file, `git log`, open PRs and their comments, and the klepsydra line under "Running now" in
+/mnt/c/Users/ajbar/fleet-briefing/queue.md. Order (Heph 11-03 09:50): #287 #261 #229, then #288 #289
+#290, then #271 #270 #272.
 
 ## In flight
-| PR / branch | Issue | State |
+| PR / branch (worktree) | Issue | State |
 |---|---|---|
-| #287 feat/orch-guard-264 (worktree guard-264) | #264 | 5 review rounds; redesigned twice: sends checked at run time by fleet/orch-tmux.sh (Heph's tmux, orch-bin first on PATH via launch.sh), refusing whatever it cannot work out, (command, flag) allow-list, sweep of all 285 tmux names/aliases/flags; hook keeps bypass / api-key / registry-by-shape. test_orch_guard.sh 191/0 at 4412d8a. Round 6 reader running. Deploy after merge: install, PreToolUse entry in ~/.claude/settings.json, `fleet accounts sync`; the shim reaches Heph at his next move. |
-| #261 fix/doctor-truth-246 | #220, #246 | 3 review rounds (r1 blocker: any ended file counted as finished, so recover skipped lost agents and --prune dropped them; fixed). e763a09: sections 85/0 + doctor 50/1 (setup-only). Round 4 next. Heph told not to merge before a clean round. |
-| #229 fix/focus-216 | #216 | retire_into fix 2dc9d6c; slice + mutant verified; CI pass; verify round running. |
+| #287 feat/orch-guard-264 (guard-264) | #264 | round 6 reader dispatched 09:40 on 4412d8a; findings land in ~/.local/state/elenchus/findings.jsonl (pr 287 round 6). Deploy after merge: install, PreToolUse entry in ~/.claude/settings.json, `fleet accounts sync`. |
+| #261 fix/doctor-truth-246 (doctor-246) | #220 #246 | round 4 reader dispatched 09:40 on e763a09 (ledger: pr 261 round 4). Merge only after a clean round. |
+| #229 fix/focus-216 (focus-216) | #216 | verify round still owed on 2dc9d6c. |
+| fix/watch-dead-288 (dead-288), STACKED on #261 | #288 | pane_dead_why in lib.sh; watcher DEAD; doctor gone-with-pane. Pushed; CI by `gh workflow run ci.yml --ref fix/watch-dead-288`. No PR yet (opens against main once #261 merges: rebase onto main). |
+| #291 fix/tasks-max-289 (tasks-289) | #289 | TasksMax = tightest pids.max above / 3 (8745 here); doctor 80% warn; make test-fleet/shellcheck under the lock; brief tail. CI running. Peak sampler: scratchpad tasks.log(.max), 119-126 so far. |
+| fix/tmux-dead-pane-290 (tmux-290), not pushed | #290 | Backtrace on #290 (comment): 3.4 focus-out to an exited pane. pane-died hook (hooks/klepsydra-pane-died.sh) respawns the dead pane on its saved screen + @klepsydra_dead mark; fleet/tmux-watch.sh + fleet-tmux-watch.timer run fleet recover on a crash record (WSL dump or kernel line for the server's pid). Tests: watchdog section in test_fleet.sh; crash repro scratch/crash290.sh (hook vs nohook) to turn into a test. |
 
-## Next (in order, from the brief)
-#271 (wall: resume pass now + Heph's account; the phone half waits on AJ's #163 decision), #270 (Agora, design first),
-#272 (resume experiment, design first).
+## Parked
+- #271 (worktree resume-271, branch feat/resume-now-271, clean): design: service records its pid, USR1 trap +
+  `sleep & wait`, `fleet resume now` writes a request token and waits for resume-now.done; `--once` refuses
+  while the service lives; Heph's account = prefs.json `heph_account` (account uuid or auto) put first in
+  FLEET_HEPH_ACCOUNTS by lib.sh each pass, so the existing move-back path moves him; tray: "Run resume pass
+  now" + status line, "Heph's account" radio submenu built from account readings. Phone half waits on #163.
+- #230 (#217, conflicting) after #229 lands.
 
 ## Notes
-- #264 design: the guard never models bash (a shlex reading disagreed with bash on 72/300 generated
-  commands); it over-approximates so doubt lands on refusing. The two "ask first" guards deny with an
-  ORCH_GUARD_ALLOW override instead of a prompt: a prompt in an unattended orchestrator stalls the fleet.
-- `stopped_at`, `clock` and `FRESH_AFTER_S` moved from resume-at-reset.sh to lib.sh (shared by the guard).
-- Running only part of fleet/test_fleet.sh: lines 1..N plus the summary under `flock -o /tmp/fleet-heavy.lock`;
-  standalone sections: briefs, reset times, doctor, recover, fleet voices, relaunch.
-- CI runs `ruff check` only; shellcheck covers fleet/*.sh fleet/fleet hooks/*.sh (WSL: `uvx --from shellcheck-py shellcheck`).
-- Subagent briefs must state: any rm with a variable uses `rm -rf -- "${S:?}/${m:?}"`.
-- `gh pr edit` fails here (Projects classic): `gh api -X PATCH repos/ajbarea/klepsydra/pulls/N -F body=@file`.
-- App crate needs GTK headers WSL lacks: test `-p klepsydra-fleet` with
-  CARGO_TARGET_DIR=.claude/worktrees/split-182/src-tauri/target; CI builds the app.
-- Plugin marketplace refresh fails under CLAUDE_CONFIG_DIR=~/.claude-rit: refresh with `env -u CLAUDE_CONFIG_DIR`.
-
-## Cleanup held (check each before deleting)
-- worktrees impl-1029, recover (1 uncommitted change), split-182 (cargo target dir); branch
-  docs/impl-late-1029; remote branch docs/brief-no-public-asks. Merged this session: done-269, relaunch-274,
-  panels-276 (remove after checking nothing unpushed). IMPL branches impl-s9..s17 superseded by this one.
+- Rule (#289, 11-03): tmux-spawning tests and multi-file shellcheck run under the heavy lock, timeout inside it.
+- A suite section run alone: lines 1..91 + the section + the summary line (scratch t288.sh, t290.sh).
+- Never nest a heredoc inside a python <<'EOF' edit: write the edit script with Write and run it.
+- `gh pr edit` fails (Projects classic): `gh api -X PATCH repos/ajbarea/klepsydra/pulls/N -F body=@file`.
+- App crate needs GTK headers WSL lacks: test `-p klepsydra-fleet` with CARGO_TARGET_DIR=.claude/worktrees/split-182/src-tauri/target.
+- Cleaned 11-03: worktrees recover, impl-1029, impl-s9/s14/s16/s17; PR #228 closed (superseded).
