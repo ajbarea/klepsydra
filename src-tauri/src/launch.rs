@@ -19,7 +19,8 @@ const SCRIPT: &str = ".claude/klepsydra-launch.sh";
 /// Longest wait for wsl.exe to finish: a cold WSL start alone can take 20 s.
 const TIMEOUT: Duration = Duration::from_secs(45);
 /// Longest wait for `fleet voices`: two keryx calls of up to 120 s each (a new
-/// keryx's first run syncs its environment), behind another run's lock.
+/// keryx's first run syncs its environment). Behind another run's lock it can
+/// take longer; the run goes on, and the next resume pass applies what it misses.
 const VOICES_TIMEOUT: Duration = Duration::from_secs(300);
 /// Longest wait for a Jump, whose session already runs in a started WSL: long
 /// enough for a refused interop connection to report its own error.

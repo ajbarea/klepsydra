@@ -2265,6 +2265,12 @@ FLEET_KERYX="$work/kxslow/bin/keryx" bash "$here/fleet" voices heph >/dev/null 2
 wait
 check "#273 verify: Off then Heph clicked together ends as Heph, keryx on, as recorded" \
   "$(jq -r .voices "$KLEPSYDRA_DIR/prefs.json") $(cat "$FLEET_STATE/voices.applied") $(jq -c '[.enabled, (.speak_only | length)]' "$kc")" "heph heph [true,1]"
+flock "$FLEET_STATE/voices.lock" sleep 4 &
+sleep 0.3
+t0=$(date +%s)
+fv --check >/dev/null; fv --if-changed >/dev/null
+check "#273 verify 2: --check and an idle service pass never wait behind a running apply" "$(( $(date +%s) - t0 < 2 ))" "1"
+wait
 # A keryx without speak_only (0.11.0): keryx is still turned on, the rest is said once.
 vreset; echo '{"enabled": false}' >"$kc"
 check "#273 review: a keryx without speak_only still turns keryx on, never runs speak-only, and fails" \
