@@ -1,4 +1,4 @@
-# IMPL: klepsydra fleet-module brief, resume state 2026-11-03 03:00 (EST)
+# IMPL: klepsydra fleet-module brief, resume state 2026-11-03 07:30 (EST)
 
 Session 18 (Chronos, fresh on Personal = `~/.claude-rit`) replaced session 17. Resume from this file,
 `git log`, open PRs and their comments, and the klepsydra line under "Running now" in
@@ -12,9 +12,9 @@ green except Windows Tailscale (down since 11-02 20:27). #286's Windows app buil
 ## In flight
 | PR / branch | Issue | State |
 |---|---|---|
-| #287 feat/orch-guard-264 (worktree guard-264) | #264 | redesigned after review rounds 1 and 2 (shell parsing kept missing shapes): sends checked at run time by fleet/orch-tmux.sh (Heph's tmux, orch-bin first on PATH via launch.sh), the hook keeps bypass / api-key / registry-by-shape. test_orch_guard.sh 140/0, differential 0 missed. Round 3 reader running; then /code-review medium, CI, merge, deploy (install + settings.json PreToolUse entry + `fleet accounts sync`; the shim reaches Heph at his next move). |
-| #229 fix/focus-216 | #216 | verify pass: both fixes confirmed; 2 new Should-fix fixed (body rewritten; retire_into selects the successor before the old window closes, shared by fresh() and heph_move, test with exit_delay). Partial suite + mutant run under the lock (scratchpad run229.sh). Then CI, merge. |
-| #261 fix/doctor-truth-246 | #220, #246 | main merged in (4 conflicts); CI running; never reviewed: needs a reader round before merge. |
+| #287 feat/orch-guard-264 (worktree guard-264) | #264 | 5 review rounds; redesigned twice: sends checked at run time by fleet/orch-tmux.sh (Heph's tmux, orch-bin first on PATH via launch.sh), refusing whatever it cannot work out, (command, flag) allow-list, sweep of all 285 tmux names/aliases/flags; hook keeps bypass / api-key / registry-by-shape. test_orch_guard.sh 191/0 at 4412d8a. Round 6 reader running. Deploy after merge: install, PreToolUse entry in ~/.claude/settings.json, `fleet accounts sync`; the shim reaches Heph at his next move. |
+| #261 fix/doctor-truth-246 | #220, #246 | 3 review rounds (r1 blocker: any ended file counted as finished, so recover skipped lost agents and --prune dropped them; fixed). e763a09: sections 85/0 + doctor 50/1 (setup-only). Round 4 next. Heph told not to merge before a clean round. |
+| #229 fix/focus-216 | #216 | retire_into fix 2dc9d6c; slice + mutant verified; CI pass; verify round running. |
 
 ## Next (in order, from the brief)
 #271 (wall: resume pass now + Heph's account; the phone half waits on AJ's #163 decision), #270 (Agora, design first),
