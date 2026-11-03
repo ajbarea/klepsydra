@@ -261,6 +261,13 @@ elif [[ -n $differ ]]; then
 else
   report ok "installed copies" "the hooks, status line, launcher and cast match $root"
 fi
+# The orchestrator guard (#264) acts only where settings.json registers it.
+if jq -e '[.hooks.PreToolUse[]? | select((.matcher // "") | split("|") | index("Bash")) | .hooks[]?.command | strings | select(test("orch-guard\\.sh"))] | length > 0' \
+  "$FLEET_DEFAULT_CONFIG/settings.json" >/dev/null 2>&1; then
+  report ok "orchestrator guard" "registered in $(tilde "$FLEET_DEFAULT_CONFIG")/settings.json"
+else
+  report warn "orchestrator guard" "not registered in $(tilde "$FLEET_DEFAULT_CONFIG")/settings.json: add the PreToolUse entry in README (Orchestrator guard), then fleet accounts sync"
+fi
 if [[ -n $json ]]; then
   tmp=$json.tmp.$$
   if printf '%s\n' "${results[@]}" | jq -R -s --argjson at "$now" --argjson failed "$failed" \

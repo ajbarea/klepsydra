@@ -75,6 +75,8 @@ jobs:
         run: bash fleet/test_fleet.sh
       - name: Heavy lock release tests
         run: bash fleet/test_heavy_lock.sh
+      - name: Orchestrator guard tests
+        run: bash fleet/test_orch_guard.sh
       - name: Release memory check tests
         run: bash scripts/test_measure_memory.sh
       - name: Windows build stage check tests

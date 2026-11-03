@@ -1427,6 +1427,7 @@ briefs, logs) stays in the state folder.
 | `fleet done [NAME]` | Marks an agent finished: its row moves from `panes.tsv` to `finished.tsv` with the time, so nothing relaunches it or types into it: the resume service, `fleet recover` and the doctor act only on registered rows, and the service also leaves alone any pane whose session is in `finished.tsv`. With no NAME, the row of the fleet pane it runs in, when its registered session runs there; each brief's shared rules end with it. The pane stays open with its final report. |
 | `fleet voices [heph\|everyone\|off]` | Sets keryx to the tray's Voices mode now, for running sessions too; with a mode, saves it to `prefs.json` first. Changes keryx only where it differs and logs the values it decided on. `--if-changed` applies only a mode not yet applied (the resume service); `--check` only says whether it is. |
 | `fleet agora post [--kind gripe\|win\|idea\|wish\|kudos] TEXT` | Posts one line (280 characters) on the Agora, signed with the session's character, agent and repo, from inside a fleet session. Optional for agents, one post an hour each; a post that looks like it holds a secret is refused. Posts are JSON lines in `agora/posts.jsonl` in klepsydra's data folder. `fleet agora list [N]` shows the newest. |
+| `fleet balance ORG AMOUNT` | Logs an API balance you checked in the Console today, which the orchestrator guard wants before a headless job on an API key. With no arguments, the last checks. |
 | `fleet/launch.sh NAME BRIEF` | Starts an agent with its own session id in a memory-capped scope. It turns Remote Control on and waits for it to settle, pastes the brief, checks the brief reached the prompt, then submits it. A retry never sends Escape. It records the pane, session id and folder in `panes.tsv`. |
 | `fleet/resume-at-reset.sh` | The resume service. It resumes a limited pane at the reset its banner names, or at once after a switch to an account with room; the orchestrator too, who moves to the other account as a fresh session from `HEPH.md` when that one has room. It starts a registered pane fresh from its brief after an hour idle. Whatever AJ typed at a limited pane is sent as typed; a line that left the prompt unsent is typed again. Each pane's state survives a restart of the service. |
 
@@ -1435,6 +1436,23 @@ state folder, in the app log's shape (`ts`, `level`, `target`, `message`, then
 the event's own fields: pane, account, reason). The file rotates past 1 MiB
 and keeps four old files. `jq 'select(.level == "ERROR")'` lists failures.
 
+**Orchestrator guard.** `fleet/orch-guard.sh` is a PreToolUse hook that acts
+only in the session `orchestrator.session` names, and refuses what `HEPH.md`
+records as costly: typing into a pane stopped at a usage limit for an hour or
+more (its cache expired: `fresh-now.sh` relaunches it from its brief), typing
+into an input line that holds someone else's text, an interactive session on an
+API key or a headless one with no `fleet balance` check today, editing
+`panes.tsv` while a launch or chain loop runs, and a send to a pane it cannot
+read. `ORCH_GUARD_ALLOW=pending-input` or `=registry` in a command passes that
+guard when AJ asks. Each check logs what it decided on. Register it in each
+config folder's `settings.json` (`fleet doctor` warns until then):
+
+```json
+{ "hooks": { "PreToolUse": [{ "matcher": "Bash|Edit|Write", "hooks": [{ "type": "command", "command": "bash ~/.local/state/fleet-orchestrator/orch-guard.sh" }] }] } }
+```
+
+A new rule in `HEPH.md` gets a guard here, or one line there on why it cannot be one.
+
 ## Tests
 
 ```bash
@@ -1442,6 +1460,7 @@ bash statusline/test_statusline.sh       # usage hook and heartbeat, against rec
 bash hooks/test_fleet.sh                 # fleet hook: states, where, identity, pruning, gone, settings, window colours
 bash hooks/test_launch.sh                # launcher: new, jump, tab reuse, against a private tmux socket
 bash fleet/test_fleet.sh                 # fleet engine: limits, resets, typed lines, launch delivery, doctor, against fake panes
+bash fleet/test_orch_guard.sh            # orchestrator guard: each guard fires, passes look-alikes, survives no mutant
 bash scripts/test_measure_memory.sh      # the release memory check
 python3 -I fleet/test_ci_watch.py        # CI watch: which runs count, triage once, Dependabot, 304s
 node --test src/*.test.js                # ramp, countdown, reconciliation, fleet model, faces, guards, logger
