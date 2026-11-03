@@ -75,7 +75,7 @@ def send(r):
             "paste",
         ]
     )
-    shape = r.randrange(10)
+    shape = r.randrange(12)
     t = target(r)
     if shape == 0:
         return f"{prog} {sub} -t {t} {text(r)}"
@@ -104,6 +104,19 @@ def send(r):
         inner = f"{prog} {sub} -t {t} go"
         w = r.choice(["brace", "! ", "time "])
         return "{ " + inner + "; }" if w == "brace" else w + inner
+    if shape == 10:
+        # Round 6: an earlier command of the sequence moves what rec: names.
+        w = r.randint(1, PANES - 1)
+        mover = r.choice(
+            [
+                f"select-window -t rec:{w}",
+                "last-window -t rec:",
+                f"select-pane -t {pane(r)}",
+            ]
+        )
+        return f"{prog} {mover} \\; {sub} -t {r.choice(['rec:', '{last}', '!'])} go"
+    if shape == 11:
+        return f"{prog} select-window -t rec:{r.randint(1, PANES - 1)} \\; {sub} go"
     return f"{prog} {sub} \\\n  -t {t} {text(r)}"
 
 
@@ -116,6 +129,9 @@ HIDDEN = [
     "if-shell true 'send-keys -t {u} go'",
     "new-window -d 'tmux -L {sock} send-keys -t {u} go'",
     "set-hook -g pane-focus-in 'send-keys -t {u} go' \\; select-pane -t {t}",
+    # Round 6: E and T expand a value as a format again.
+    "set-buffer -b z '#(tmux -L {sock} send-keys -t {u} go)' \\; list-buffers -F '#{E:buffer_sample}'",
+    "set-buffer -b z '#(tmux -L {sock} send-keys -t {u} go)' \\; display-message -p '#{l;E:buffer_sample}'",
 ]
 
 

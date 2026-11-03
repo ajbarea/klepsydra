@@ -59,6 +59,11 @@ printf '%s\n' "$orchp" >"$FLEET_STATE/orchestrator.pane"
 # The guard's tmux sits in the state folder's orch-bin/, as install.sh puts it.
 mkdir -p "$FLEET_STATE/orch-bin" "$FLEET_STATE/guard"
 ln -s "$here/orch-tmux.sh" "$FLEET_STATE/orch-bin/tmux"
+# The guard reads sessions and transcripts from lib.sh's own folders, whatever
+# the caller's environment says; the tests' come from guard/test-env.
+test_env() { printf 'KLEPSYDRA_DIR=%s\nFLEET_PROJECTS=%s\n' "$KLEPSYDRA_DIR" "$work/projects" >"$1/guard/test-env"; }
+test_env "$FLEET_STATE"
+mkdir -p "$KLEPSYDRA_DIR/fleet" "$work/projects/p"
 # A Claude Code session in pane PANE runs COMMAND as its Bash tool does: a
 # process named claude, with TMUX_PANE in its own environment, is the parent.
 in_claude() { # PANE BIN COMMAND
@@ -119,6 +124,42 @@ check "a limit that appears during a wait is seen at the send" "$(as_heph "sleep
 wait
 check "a target no pane answers to: refused" "$(as_heph "$T send-keys -t %9999 hi")" "refused:unknown"
 check "no -t is the orchestrator's own pane" "$(as_heph "$T send-keys -t $orchp hi")" "ok"
+# Round 6: in a sequence, tmux resolves each target as it reaches it, so an
+# earlier command can move what fleet: or {last} name; only a pane id holds.
+cwin=$(t display -p -t "$cold" '#{window_id}')
+check "round 6: select-window, then a send to fleet: (the cold pane by then): refused" \
+  "$(as_heph "$T select-window -t $cwin \\; send-keys -t fleet: go Enter")" "refused:unknown"
+check "round 6: the refusal asks for the pane id" "$(has "$(why)" "(-t %N)")" "yes"
+check "round 6: and the cold pane took nothing" "$(got_keys cold)" "0"
+check "round 6: a sequence with no -t on its send: refused" "$(as_heph "$T select-window -t $cwin \\; send-keys hi")" "refused:unknown"
+check "round 6: a sequence naming every send by its id: checked as usual" \
+  "$(as_heph "$T select-window -t $cwin \\; send-keys -t $warm 'seq ok' Enter")" "ok"
+t select-window -t "$(t display -p -t "$orchp" '#{window_id}')"
+# Round 6: E and T modifiers expand a value as a format again.
+t set-buffer -b z 'plain text'
+for f in '#{E:buffer_sample}' '#{T:pane_title}' '#{l;E:buffer_sample}' '#{=10;T:pane_title}'; do
+  check "round 6: the format $f: refused" "$(as_heph "$T list-buffers -F '$f'")" "refused:hidden"
+done
+check "round 6: plain formats with a colon between them: allowed" "$(as_heph "$T list-panes -F '#{pane_id}:#{pane_current_command}'")" "ok"
+# Round 6: "done 10:20 AM" has no date; the session's transcript dates the stop.
+TS=aaaaaaaa-0000-4000-8000-0000000000e1
+# A pane of its own: young took keys above, so its limit is gone.
+dated=$(pane dated "{\"above\":[\"⏺ Done. done 10:20 AM\",\"$LIMIT\"]}"); settle
+jq -n --arg p "$dated" '{session_id: "x", ended: null, tmux: {pane: $p}}' >"$KLEPSYDRA_DIR/fleet/$TS.json"
+: >"$work/projects/p/$TS.jsonl"
+touch -d "@$(( FLEET_NOW - 86400 - 600 ))" "$work/projects/p/$TS.jsonl"
+check "round 6: done 10:20 AM, but its transcript last written yesterday: refused as cold" \
+  "$(as_heph "$T send-keys -t $dated continue Enter")" "refused:cold-limit"
+touch -d "@$(( FLEET_NOW - 600 ))" "$work/projects/p/$TS.jsonl"
+check "round 6: its transcript written 10 min ago: allowed" "$(as_heph "$T send-keys -t $dated go Enter")" "ok"
+check "round 6: the check logs where the stop came from" \
+  "$(jq -r 'select(.message | contains("send checked")) | .stop_from' "$FLEET_LOG" | tail -1)" "transcript"
+rm -f -- "$KLEPSYDRA_DIR/fleet/$TS.json" "$work/projects/p/$TS.jsonl"
+weekly=$(pane weekly '{"above":["⏺ Done. done 10:20 AM","  ⎿  You'"'"'ve hit your weekly limit · resets Nov 4, 1pm (America/New_York)","",""]}'); settle
+check "round 6: a dated (weekly) reset and no transcript: refused as unknown" \
+  "$(as_heph "$T send-keys -t $weekly continue Enter")" "refused:unknown"
+check "round 6: the environment cannot point the guard at other folders" \
+  "$(as_heph "KLEPSYDRA_DIR=/nonexistent FLEET_PROJECTS=/nonexistent $T send-keys -t $weekly continue Enter")" "refused:unknown"
 # Only the orchestrator's PATH holds orch-bin (launch.sh, for heph): whatever
 # reaches it is the orchestrator's, whatever its environment says.
 for e in "FRESH_AFTER_S=999999" "FLEET_NOW=0" "FLEET_STATE=/nonexistent" "TMUX_PANE=$warm" "ORCH_GUARD_OWN_S=99999"; do
@@ -209,7 +250,7 @@ echo "fleet scripts send with their own checks"
 mkdir -p "$work/fleetcopy" "$work/elsewhere" "$work/state2/orch-bin" "$work/state2/guard"
 cp -- "$here/orch-tmux.sh" "$here/lib.sh" "$work/fleetcopy/"
 ln -s "$work/fleetcopy/orch-tmux.sh" "$work/state2/orch-bin/tmux"
-printf '%s\n' "$orchp" >"$work/state2/orchestrator.pane"; printf '%s\n' "$FLEET_NOW" >"$work/state2/guard/test-now"
+printf '%s\n' "$orchp" >"$work/state2/orchestrator.pane"; printf '%s\n' "$FLEET_NOW" >"$work/state2/guard/test-now"; test_env "$work/state2"
 cold2=$(pane cold2 "{\"above\":[\"⏺ Done. done 9:00 AM\",\"$LIMIT\"]}"); settle
 printf '#!/usr/bin/env bash\n%s send-keys -t %s /clear\n' "$T" "$cold2" | tee "$work/fleetcopy/fresh-now.sh" >"$work/elsewhere/fresh-now.sh"
 check "the script outside the fleet folder is checked" "$(in_claude "$orchp" "$work/state2/orch-bin" "bash $work/elsewhere/fresh-now.sh" 2>&1 | grep -o 'orch-guard (cold-limit)')" "orch-guard (cold-limit)"
@@ -396,7 +437,7 @@ mkdir -p "$mut"
 cp -- "$here/lib.sh" "$here/orch_guard_parse.py" "$here/orch-guard.sh" "$here/orch-tmux.sh" "$mut/"
 mkdir -p "$work/state-mut/orch-bin" "$work/state-mut/guard"
 ln -s "$mut/orch-tmux.sh" "$work/state-mut/orch-bin/tmux"
-printf '%s\n' "$orchp" >"$work/state-mut/orchestrator.pane"; printf '%s\n' "$FLEET_NOW" >"$work/state-mut/guard/test-now"
+printf '%s\n' "$orchp" >"$work/state-mut/orchestrator.pane"; printf '%s\n' "$FLEET_NOW" >"$work/state-mut/guard/test-now"; test_env "$work/state-mut"
 printf 'bash\0launch.sh\0x\0' >"$FLEET_PROC/4242/cmdline"
 typing2=$(pane typing2 '{"above":["⏺ Done. done 10:20 AM"],"input":"AJ: one more thing"}')
 cold3=$(pane cold3 "{\"above\":[\"⏺ Done. done 9:00 AM\",\"$LIMIT\"]}"); settle

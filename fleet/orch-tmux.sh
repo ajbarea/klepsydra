@@ -73,10 +73,18 @@ loaded=0
 need_lib() {
   (( loaded )) && return 0
   unset FLEET_LOG FLEET_NOW FRESH_AFTER_S FLEET_LOG_MAX FLEET_RUN_ID
+  # Where a pane's session and transcript are read (its stop time): lib.sh's
+  # own folders, or the tests' (guard/test-env, KEY=VALUE lines), logged.
+  unset KLEPSYDRA_DIR FLEET_ACCOUNTS FLEET_DEFAULT_CONFIG FLEET_PROJECTS
+  local k v test_env=""
+  while IFS='=' read -r k v; do
+    case $k in KLEPSYDRA_DIR | FLEET_PROJECTS) export "$k=$v" && test_env+="$k " ;; esac
+  done <"$state/guard/test-env" 2>/dev/null
   FLEET_STATE=$state FLEET_TARGET=fleet::orch-tmux
   # shellcheck source=fleet/lib.sh
   . "$here/lib.sh" 2>/dev/null || return 1
   loaded=1
+  [[ -n $test_env ]] && flog WARN "orchestrator guard: folders from the test file" set="${test_env% }" 2>/dev/null
   # The tests' clock: a file in the guard's own folder, logged when used.
   local at=""
   { read -r at <"$state/guard/test-now"; } 2>/dev/null
@@ -97,9 +105,20 @@ refuse() { # GUARD REASON [KEY=VALUE...]
 }
 hidden_why="it can run commands the guard never reads. The orchestrator's tmux runs only capture, list, display, select, kill-pane, buffers and sends; launch agents with fleet/launch.sh, and run anything else from AJ's terminal."
 format_check() { # ARG...: a #() format runs a shell command
-  local a
+  local a rest mods
   for a in "$@"; do
     [[ $a == *'#('* ]] && refuse hidden "a #() format runs a shell command, so $hidden_why" argument="${a:0:120}"
+    # #{E:...} and #{T:...} expand a value (a buffer, a title) as a format
+    # again, so a #() inside it runs. Every #{ is read up to the first ":"
+    # after it, and E or T anywhere there is refused.
+    rest=$a
+    while [[ $rest == *'#{'*:* ]]; do
+      rest=${rest#*'#{'}
+      [[ $rest == *:* ]] || break
+      mods=${rest%%:*}
+      [[ $mods == *[ET]* ]] &&
+        refuse hidden "a #{E:...} or #{T:...} format expands a value as a format again, so a #() in a buffer or a title runs: $hidden_why" argument="${a:0:120}"
+    done
   done
   return 0
 }
@@ -185,8 +204,11 @@ special_key='^([CMS]-.+|Escape|Tab|BTab|BSpace|Up|Down|Left|Right|Home|End|PageU
 # Each command of the sequence (split at ";" as tmux does): what it sends where.
 checks=() # "COMMAND|TARGET|ENTER|EXACT|TEXT": ENTER 1 when it submits; EXACT 0 when TEXT is unknown
 cmd=()
+ncmds=0
+raw_targets=() # each send's -t as written ("" for none)
 flush() {
   (( ${#cmd[@]} )) || return 0
+  ncmds=$((ncmds + 1))
   local name usage valued k opt v c target="" lit=0 hex=0 reps=1 buf="" tail_args=() vals=()
   [[ $aliases == *" ${cmd[0]} "* ]] && refuse unknown "tmux ${cmd[0]}: this server aliases that name (command-alias), so it could stand for any command. Use the command's full name." command="${cmd[0]}"
   name=$(resolve "${cmd[0]}")
@@ -221,6 +243,7 @@ flush() {
   # keys send-keys types or the data set-buffer stores.
   format_check "${vals[@]}"
   [[ $name == send-keys || $name == set-buffer ]] || format_check "${tail_args[@]}"
+  [[ $name == send-keys || $name == paste-buffer || $name == send-prefix ]] && raw_targets+=("$target")
   target=${target:-$TMUX_PANE}
   local text="" enter=0 exact=1 key r
   case $name in
@@ -264,6 +287,16 @@ for a in "${args[@]:i}"; do
 done
 flush
 (( ${#checks[@]} )) || pass "$@"
+# tmux resolves each command's target only when it runs it, so in a sequence an
+# earlier command (select-window, kill-pane, rename-window) can change what
+# fleet:, {last}, ! or no -t mean by the time a send runs. Only a pane id
+# names the same pane throughout.
+if (( ncmds > 1 )); then
+  for rt in "${raw_targets[@]}"; do
+    [[ $rt =~ ^%[0-9]+$ ]] ||
+      refuse unknown "a send in a sequence of tmux commands names its pane by ${rt:-the current pane}: an earlier command in the sequence can change which pane that is before tmux reaches the send. Name it by its id (-t %N), or send in a call of its own." target="${rt:-none}" commands="$ncmds"
+  done
+fi
 
 need_lib || refuse unknown "the guard could not load fleet/lib.sh, so it cannot read the pane." here="$here"
 now=$(clock)
@@ -284,7 +317,21 @@ for ch in "${checks[@]}"; do
     grep -q 'done [0-9]\{1,2\}:[0-9][0-9] [AP]M' <<<"$ps" ||
       refuse unknown "pane $p is at a usage limit and shows no time it stopped, so the guard cannot tell whether its cache is still warm. The resume service sends at the reset; relaunch it fresh now with: bash $state/fresh-now.sh $p" \
         pane="$p" command="$name" limit="$lim"
-    idle=$((now - $(stopped_at "$p" "$ps")))
+    stop=$(stopped_at "$p" "$ps")
+    # "done H:MM" has no date, so a pane stopped days ago reads as minutes. The
+    # session's transcript, last written as it stopped, dates the stop; with
+    # none, a dated reset (a weekly limit) or one already past is a doubt.
+    sid="" tp="" mt=""
+    if sid=$(live_session "$p") && tp=$(transcript "$sid") && [[ -n $tp ]] && mt=$(stat -c %Y -- "$tp" 2>/dev/null) && [[ $mt =~ ^[0-9]+$ ]]; then
+      (( mt < stop )) && stop=$mt
+    else
+      r=$(reset_epoch "$lim" "$now") || r=""
+      if [[ $lim =~ resets\ [A-Z][a-z]{2}\ [0-9] ]] || { [[ -n $r ]] && (( r <= now )); }; then
+        refuse unknown "pane $p is at a usage limit whose reset is dated or already past, and no transcript of its session dates the time it stopped, so the guard cannot tell how long its cache has been cold. Relaunch it fresh with: bash $state/fresh-now.sh $p" \
+          pane="$p" command="$name" limit="$lim"
+      fi
+    fi
+    idle=$((now - stop))
     if (( idle >= FRESH_AFTER_S )); then
       refuse cold-limit "pane $p stopped at a usage limit $((idle / 60)) min ago (\"${lim#"${lim%%[![:space:]]*}"}\"). Its prompt cache lives an hour, so keys typed into it now re-cache its whole transcript: five such nudges took 38% of a five-hour window on 11-02. Relaunch it fresh from its brief instead: bash $state/fresh-now.sh $p" \
         pane="$p" command="$name" idle_min="$((idle / 60))" limit="$lim"
@@ -320,7 +367,7 @@ for ch in "${checks[@]}"; do
   else
     stamps+=("$p|")
   fi
-  glog INFO "orchestrator guard: tmux send checked" pane="$p" command="$name" limit="${lim:+yes}" idle_min="${idle:+$((idle / 60))}" box_chars="${#box}"
+  glog INFO "orchestrator guard: tmux send checked" pane="$p" command="$name" limit="${lim:+yes}" idle_min="${idle:+$((idle / 60))}" stop_from="${mt:+transcript}" box_chars="${#box}"
 done
 # Every check passed: record what this call leaves in each box as the
 # orchestrator's own text, so its own follow-up Enter is no collision.

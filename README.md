@@ -1439,17 +1439,20 @@ and keeps four old files. `jq 'select(.level == "ERROR")'` lists failures.
 **Orchestrator guard.** Two parts refuse, in the orchestrator's session only,
 what `HEPH.md` records as costly. `fleet/orch-tmux.sh` is the session's
 `tmux`: `launch.sh` puts `orch-bin/` (in the state folder) ahead of the real
-one on its PATH, so each send is checked when it is made, on tmux's real
-arguments. A call is the orchestrator's when its own `TMUX_PANE`, or its
-Claude Code process's, is `orchestrator.pane`, so a background job counts too.
-It runs only a listed set of tmux commands and flags that run no other command
-(capture, list, display, select, kill-pane, buffers, sends), and refuses keys
-or a paste into a pane stopped at a usage limit 55 minutes or more ago
-(`FRESH_AFTER_S`: its cache expired, and `fresh-now.sh` relaunches it from its
-brief), keys into an input line holding anything but the text the
-orchestrator typed there, and whatever it cannot work out (a name tmux does not
-list, a target no pane answers to). The fleet's own scripts send with their
-own checks. `fleet/orch-guard.sh`, a PreToolUse hook, refuses before the call a
+one on the orchestrator's PATH only, so whatever reaches it is the
+orchestrator's, a background job included, and each send is checked when it is
+made, on tmux's real arguments. The fleet's own scripts send with their own
+checks. Its state folder, clock and thresholds are its own: nothing in the
+caller's environment moves them. It runs only a listed set of tmux commands and
+flags that run no other command (capture, list, display, select, kill-pane,
+buffers, sends), and refuses keys or a paste into a pane stopped at a usage
+limit 55 minutes or more ago (its cache expired, and `fresh-now.sh` relaunches
+it from its brief; the session's transcript dates the stop), keys into an
+input line holding anything but the text the orchestrator typed there, a
+format that runs a command (`#()`) or expands a value again (`#{E:…}`,
+`#{T:…}`), a send in a sequence of commands that names its pane other than by
+id (`-t %N`), and whatever it cannot work out (a name tmux does not list, a
+target no pane answers to, a limit it cannot date). `fleet/orch-guard.sh`, a PreToolUse hook, refuses before the call a
 tmux called by path or with a new PATH (best effort), an interactive session
 on an API key or a headless one with no `fleet balance` check today, and
 editing `panes.tsv` while a launch or chain loop runs (reading it with `cat`,
