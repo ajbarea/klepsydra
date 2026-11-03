@@ -77,11 +77,19 @@ if [[ -z $bin ]]; then
   echo "keryx is not installed"
   exit 0
 fi
+# A keryx that refused speak-only (older than 0.12.0) is not asked again every
+# pass: the refusal is kept against its path until another keryx is installed.
+REFUSED=$FLEET_STATE/voices.refused
+if [[ $want_on == true && $have_only != "$want_only" && -f $REFUSED && $(cat "$REFUSED" 2>/dev/null) == "$bin" ]]; then
+  echo "keryx at $bin has no speak-only; update the keryx plugin to 0.12.0 or later"
+  exit 1
+fi
 changed=""
 # Off leaves speak_only as it is: keryx off silences every session anyway.
 if [[ $want_on == true && $have_only != "$want_only" ]]; then
   if [[ $want_only == '[]' ]]; then out=$("$bin" speak-only --everyone 2>&1); else out=$("$bin" speak-only "$ORCH_SESSION" 2>&1); fi || {
-    flog ERROR "voices: keryx refused speak-only (older than 0.12.0?)" mode="$mode" keryx="$bin" said="${out:0:200}"
+    flog ERROR "voices: keryx refused speak-only (older than 0.12.0?); not asked again until another keryx is installed" mode="$mode" keryx="$bin" said="${out:0:200}"
+    printf '%s\n' "$bin" >"$REFUSED"
     err "keryx could not set speak-only: $out"
     exit 1
   }

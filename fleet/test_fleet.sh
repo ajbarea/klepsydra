@@ -2208,7 +2208,7 @@ esac
 EOF
 chmod +x "$work/keryx-stub"
 kc="$work/xdg/keryx/config.json"; kcalls="$work/xdg/keryx/calls"
-fv() { : >"$kcalls"; FLEET_KERYX="$work/keryx-stub" bash "$here/fleet" voices "$@" 2>&1; }
+fv() { : >"$kcalls"; FLEET_KERYX="$work/keryx-stub" bash "$here/fleet" voices "$@" 2>/dev/null; }
 rm -f "$kc" "$KLEPSYDRA_DIR/prefs.json"
 check "#273: with no saved mode, Heph only: keryx on, speaking only for the orchestrator's session" \
   "$(fv) | $(jq -c '[.enabled // true, .speak_only]' "$kc")" "voices: heph (changed: speak_only) | [true,[\"$FLEET_STATE/orchestrator.session\"]]"
@@ -2227,7 +2227,7 @@ for odd in 'not json' '{"voices":"loud"}' '{"voices":["off"]}'; do
   check "#273: a prefs file reading $odd is Heph only" "$(fv | cut -d' ' -f2)" "heph"
 done
 check "#273: an unknown mode is refused" "$(fv loud >/dev/null 2>&1; echo $?)" "2"
-check "#273: no keryx installed: said, and nothing fails" "$(FLEET_KERYX="$work/no-keryx" bash "$here/fleet" voices 2>&1; echo "rc=$?")" $'keryx is not installed\nrc=0'
+check "#273: no keryx installed: said, and nothing fails" "$(FLEET_KERYX="$work/no-keryx" bash "$here/fleet" voices 2>/dev/null; echo "rc=$?")" $'keryx is not installed\nrc=0'
 cat >"$work/keryx-old" <<'EOF'
 #!/usr/bin/env bash
 [[ $1 == speak-only ]] && { echo "unknown command: speak-only" >&2; exit 2; }
@@ -2236,6 +2236,10 @@ EOF
 chmod +x "$work/keryx-old"; echo '{}' >"$kc"
 check "#273: a keryx older than 0.12.0 fails loudly, logged" \
   "$(FLEET_KERYX="$work/keryx-old" bash "$here/fleet" voices heph >/dev/null 2>&1; echo $?) $(jq -r 'select(.message | startswith("voices: keryx refused")) | .mode' "$FLEET_LOG" | tail -1)" "1 heph"
+FLEET_KERYX="$work/keryx-old" bash "$here/fleet" voices heph >/dev/null 2>&1
+check "#273: and is not asked again each pass, nor logged again, until another keryx is installed" \
+  "$(jq -r 'select(.message | startswith("voices: keryx refused")) | .mode' "$FLEET_LOG" | wc -l) $(fv | grep -c 'changed')" "1 1"
+rm -f "$FLEET_STATE/voices.refused"
 rm -f "$KLEPSYDRA_DIR/prefs.json" "$kc" "$kcalls"
 
 echo "briefing sync"
