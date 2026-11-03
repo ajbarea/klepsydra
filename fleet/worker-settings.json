@@ -1,7 +1,4 @@
 {
   "crossSessionInbound": "accept",
-  "subagentPromptCacheTtl": "1h",
-  "env": {
-    "KERYX_ENABLED": "false"
-  }
+  "subagentPromptCacheTtl": "1h"
 }

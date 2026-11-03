@@ -18,6 +18,10 @@ pub const WSL_EXE: &str = r"C:\Windows\System32\wsl.exe";
 const SCRIPT: &str = ".claude/klepsydra-launch.sh";
 /// Longest wait for wsl.exe to finish: a cold WSL start alone can take 20 s.
 const TIMEOUT: Duration = Duration::from_secs(45);
+/// Longest wait for `fleet voices`: two keryx calls of up to 120 s each (a new
+/// keryx's first run syncs its environment). Behind another run's lock it can
+/// take longer; the run goes on, and the next resume pass applies what it misses.
+const VOICES_TIMEOUT: Duration = Duration::from_secs(300);
 /// Longest wait for a Jump, whose session already runs in a started WSL: long
 /// enough for a refused interop connection to report its own error.
 const JUMP_TIMEOUT: Duration = Duration::from_secs(15);
@@ -100,6 +104,23 @@ pub fn new_args(dir: &str, distro: Option<&str>) -> Result<Vec<String>, String> 
     }
     a.extend(["--cd", "~", "-e", "bash", "-l", SCRIPT, "new", dir].map(String::from));
     Ok(a)
+}
+
+/// wsl.exe's arguments to make keryx follow the Voices mode just saved (#273):
+/// the launcher runs the installed `fleet voices`, which reads prefs.json.
+pub fn voices_args() -> Vec<String> {
+    ["--cd", "~", "-e", "bash", "-l", SCRIPT, "voices"]
+        .map(String::from)
+        .to_vec()
+}
+
+/// Make keryx follow the saved Voices mode now, off the tray's thread, logged
+/// like every call. The resume service applies a changed mode as well.
+pub fn apply_voices() {
+    let args = voices_args();
+    tauri::async_runtime::spawn_blocking(move || {
+        let _ = logged("voices", None, || run(&args, VOICES_TIMEOUT, timed_out));
+    });
 }
 
 /// What the launcher does to a session's tmux pane.
@@ -945,6 +966,14 @@ mod tests {
         assert!(explorer_opened(Err("Could not start wsl.exe".into())).is_err());
         assert!(folder_args("/home/aj/../x", "Ubuntu").is_err());
         assert!(folder_args("/home/aj", "Ubuntu;rm").is_err());
+    }
+
+    #[test]
+    fn voices_runs_the_launcher_with_no_mode() {
+        assert_eq!(
+            voices_args(),
+            ["--cd", "~", "-e", "bash", "-l", SCRIPT, "voices"]
+        );
     }
 
     #[test]

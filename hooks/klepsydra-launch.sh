@@ -363,11 +363,21 @@ interrupt() { # socket pane pid start
   printf 'Sent Esc to the session.\n'
 }
 
+# The tray's Voices change (#273): keryx follows the mode the tray just saved,
+# at once, through the installed `fleet voices` (no mode: it reads prefs.json,
+# so two quick clicks never race on saving it).
+voices() {
+  local fleet=${FLEET_BIN:-$HOME/.local/bin}/fleet
+  [[ -x $fleet ]] || fail "The fleet commands are not installed (make install-fleet)."
+  "$fleet" voices || fail "fleet voices failed; see fleet log."
+}
+
 case ${1:-} in
   new) (( $# == 2 )) || fail "usage: klepsydra-launch.sh new DIR"; new "$2" ;;
+  voices) (( $# == 1 )) || fail "usage: klepsydra-launch.sh voices"; voices ;;
   jump) (( $# == 5 )) || fail "usage: klepsydra-launch.sh jump SOCKET PANE PID START"; jump "$2" "$3" "$4" "$5" ;;
   end) (( $# == 5 )) || fail "usage: klepsydra-launch.sh end SOCKET PANE PID START"; end_session "$2" "$3" "$4" "$5" ;;
   wrapup) (( $# == 5 )) || fail "usage: klepsydra-launch.sh wrapup SOCKET PANE PID START"; wrapup "$2" "$3" "$4" "$5" ;;
   interrupt) (( $# == 5 )) || fail "usage: klepsydra-launch.sh interrupt SOCKET PANE PID START"; interrupt "$2" "$3" "$4" "$5" ;;
-  *) fail "usage: klepsydra-launch.sh new DIR | jump|end|interrupt|wrapup SOCKET PANE PID START" ;;
+  *) fail "usage: klepsydra-launch.sh new DIR | voices | jump|end|interrupt|wrapup SOCKET PANE PID START" ;;
 esac

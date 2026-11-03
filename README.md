@@ -760,10 +760,22 @@ wall with only an ended card, and `&theme=professions` or `&theme=dicebear`
 another character theme.
 
 A session's face follows its keryx voice, so it stays the same while the
-session moves between repos. Fifteen voices, all fourteen in keryx's rotation pool
-and `af_nicole` (keryx's fifteenth, before any blend), are cast as characters and
-show their portraits: ten from kourai-khryseai and five (Chronos, Argos, Hermes,
-Elpis, Hesychia) painted for this app. Any other voice shows the voice's name
+session moves between repos. Sixteen voices, all fourteen in keryx's rotation pool,
+`af_nicole` (keryx's fifteenth, before any blend) and `bf_alice` (Techne's, which only a pick lands on), are cast
+as characters and show their portraits: ten from kourai-khryseai and six (Chronos,
+Argos, Hermes, Elpis, Hesychia, Athena) painted for this app. Portraits are drawn to one canon: the
+gods who run the forge (Hephaestus, Athena) are drawn in flesh, the golden
+maidens Hephaestus forged (Techne, Metis, Mneme, Kallos, Dokimasia, Aidos) in
+gold or metal, and the visitors (Hermes, Chronos, Argos, Elpis, Hesychia,
+Aletheia, Cupid, Puck) as themselves. `docs/characters/portrait-briefs.md` holds a paste-ready
+kit for each painted character. The orchestrator wears Hephaestus or
+Athena (`bf_emma`), equals, one per session: a new
+orchestrator session takes the one no other orchestrator card on the wall
+wears (a live one first), keeps it, and a `/clear` passes it on. With both
+shown it is the one seen least recently; on a tie or with neither, the one
+`~/.local/state/fleet-orchestrator/orchestrator.face` names (`athena`, else
+Hephaestus). No worker ever wears either.
+Any other voice shows the voice's name
 and a forge medallion: a laurel ring on a dark disc around the name's
 initial, struck in one of six kourai metals (gold, bronze, copper, rose gold,
 pale gold, verdigris) picked by the voice, so two voices with one initial
@@ -819,15 +831,19 @@ fetches nothing.
 ### Voices
 
 The tray's **Voices** menu says who speaks through keryx: **Heph only** (the
-default), **Everyone** or **Off**. It is kept in `prefs.json` (`"voices"`),
-where `fleet/launch.sh` reads it, so it applies to each session launch.sh
-starts from then on: a relaunch, a move to the other account, `fleet recover`.
-A session keeps its mode through `/clear`, and one started from the tray's
-Start is not covered. Heph only starts workers with keryx off
-(`KERYX_ENABLED=false` in `fleet/worker-settings.json`), so a worker loads no
-summarizer or voice model; Everyone starts them without that line; Off also
-starts Heph with keryx off, through `--settings`, which outranks the user's and
-the project's settings.
+default), **Everyone** or **Off**. It is kept in `prefs.json` (`"voices"`), and
+a change runs `fleet voices` at once, which sets keryx itself, so it reaches
+running sessions too, including ones started from the tray's Start: Heph only
+sets keryx's `speak_only` to `orchestrator.session` (keryx 0.12.0 or later), so
+only the orchestrator's session speaks and every other session's hook stops
+before keryx's daemon; Everyone lets every session speak; Off runs `keryx off`,
+which stops its daemon and frees the GPU. The resume service applies a changed
+mode within a pass (`fleet voices --if-changed`), so a `keryx off` of your own
+between changes stays, and `fleet doctor` warns while the saved mode is not
+applied, naming why (a keryx without `speak_only` on either account).
+Sessions are started with no `KERYX_ENABLED`, which would outrank keryx's own
+setting; a worker launched before 11-02 still carries `KERYX_ENABLED=false`
+until its next launch.
 
 ### Character themes
 
@@ -1123,14 +1139,28 @@ the fleet make it read the ledger again, at most once every 5 seconds.
 
 ### Queue panel
 
-The **Queue** button beside **Ledger** shows your to-do file inside the wall,
-in a side panel the Ledger shares (`src/fleet/sidepanel.js`):
-by default `claude-queue.md` on your Desktop (the Desktop known folder, so a
-redirected Desktop is found too). The file stays the source of truth: agents
-and you keep editing it with any editor, and the panel only reads it.
+The **Queue** button beside **Ledger** shows two lists inside the wall, one
+over the other, in a side panel the Ledger shares (`src/fleet/sidepanel.js`):
 
-To read another file, pick it with the tray's **Choose queue file...**, or
-let a session own it: an orchestrator that keeps the queue runs
+| List | File | Shows |
+|---|---|---|
+| **Needs you**, on top | `needs-you.md` beside the queue file | your to-do list: what the agents need from you |
+| **Queue**, below | `claude-queue.md` on your Desktop (the Desktop known folder, so a redirected Desktop is found too) | the agents' to-do list |
+
+Both are in view whenever the panel is open, each live, folded and scrolled on
+its own, so the asks waiting on you never scroll away behind the agents' plan,
+the way VS Code stacks views in its side bar. The bar between them moves the
+split: drag it, or focus it and use the Up and Down arrows (Page Up and Page
+Down for bigger steps, Home and End for the bounds); a double click puts it
+back at 40% for Needs you. The split stays between 15% and 85%, neither list
+drops below 120 px while the panel has room for both, and the split is
+remembered. The files stay the source of truth:
+agents and you keep editing them with any editor, and the panel only reads
+them.
+
+To read another file, pick it with the tray's **Choose queue file...** or
+**Choose Needs you file...**, or let a session own it: an orchestrator that
+keeps the queue runs
 
 ```bash
 bash ~/.claude/klepsydra-fleet.sh queue set ~/fleet/queue.md --by "Hermes (orchestrator)"
@@ -1145,7 +1175,12 @@ applies within five seconds. `--by` takes a name of 1 to 80 characters,
 always shown as typed. Without `--by`, from a session keryx holds a voice
 for, the hook names the keeper itself (the voice's character in the theme
 worn, "kept by Hephaestus"), and the panel renames it when the theme
-changes. A
+changes. `needs set`, `needs show` and `needs clear` do the same for the
+Needs you list, in `needs.json`; without one, the Needs you list reads
+`needs-you.md` in the queue file's folder, so pointing the queue at a folder
+of lists sets both. A Needs you file that is the queue file itself is not
+shown twice: the Needs you list says so and names the two commands that fix
+it. A
 file kept inside WSL (`\\wsl.localhost\...`) sends Windows no change
 notices, so its edits show on the five-second re-read rather than at once;
 one on a Windows drive (`/mnt/c/...`) shows within a second or two. An older `queue_path` in `prefs.json` still
@@ -1203,9 +1238,12 @@ works when there is no `queue.json`.
   resets, and Ctrl with the mouse wheel over the panel steps it a notch at a
   time. Only the panel's text changes, never the cards, and the size is
   remembered.
-- **The header count.** The button reads "Queue · 3 for you": the items in
-  the file's "Needs you" section, less those marked ✅. It names the file's
-  asks, not the sessions the tally counts as needing you.
+- **The header count.** The button reads "Queue · 3 for you": the Needs you
+  file's open asks (the items in its "Needs you" section, or in its lists when
+  it has no such section; none for a file with no list), less those marked ✅.
+  While no Needs you file can be shown, a queue file's own "Needs you" section
+  is counted, as before the two lists. It names the files' asks, not the
+  sessions the tally counts as needing you.
 - **Reading aids.** Each `##` section folds, with Needs you open. Lines
   starting with ✅ read quieter, as done; 📋 lines carry a pending mark.
   Every code block has a **Copy** button.
@@ -1302,7 +1340,8 @@ runs on the first account with room, in the fleet's order, then on each other lo
 when one is at its usage limit. If any account was at its limit, the triage
 waits and is tried again every 10 minutes, for up to a day, and the red is
 routed once it has its cause or has waited 30 minutes. It also
-gets one line under "Needs you" in the queue file. Dependabot's reds are kept
+gets one line under "Needs you" in the file `FLEET_QUEUE` names (default
+`fleet-briefing/needs-you.md`, AJ's to-do file). Dependabot's reds are kept
 for the morning instead. Once a day (after `CI_SWEEP_HOUR`, default 6) the
 latest green run on each default branch is read for warnings. The watcher
 pushes, merges and re-runs nothing. No error stops it: a repo that cannot be
@@ -1374,15 +1413,19 @@ or `FLEET_STATE`), so pulling main updates the fleet. It also links the `fleet`
 command into `~/.local/bin` and writes the services as user units in
 `~/.config/systemd/user`, which start again after a reboot, and makes step 1's
 copies into `~/.claude`. A copy a link
-replaces goes to `archive/fleet-scripts-<date>/`. Runtime state (`panes.tsv`,
+replaces goes to `archive/fleet-scripts-<date>/`. When the resume service is
+running, the install then runs `fleet cutover`, since a running service keeps
+the code it started with (`--no-cutover` skips it). Runtime state (`panes.tsv`,
 briefs, logs) stays in the state folder.
 
 | Command | What it does |
 |---|---|
-| `fleet doctor` | One line per check: the resume service, its last pass, Remote Control on every registered pane and the orchestrator's, the phone wall locally and over Tailscale Serve with a fresh `fleet.json`, a pane watcher, and briefs' shared rules. Exits non-zero on any failure. `--json FILE` also writes the checks as a report, and logs only a check that changed status (a recovery without its detail). The `fleet-doctor.timer` runs it every 5 min into the data folder's `fleet-health.json`, which the wall and the phone show as a **Fleet** button beside **CI**: failing checks first, `Fleet ?` when the report is over 15 minutes old, no links and `~` for the home folder. |
+| `fleet doctor` | One line per check: the resume service, its last pass and what that pass saw (panes, limited panes), limits as the panes show them (a pane still showing a limit 10 min past its reset, with nothing sent since, fails; a reset time beside a limit message the fleet does not recognise warns), Remote Control on every registered pane and the orchestrator's, the phone wall locally and over Tailscale Serve with a fresh `fleet.json`, a pane watcher, briefs' shared rules, and whether keryx holds the tray's Voices mode. Exits non-zero on any failure. `--json FILE` also writes the checks as a report, and logs only a check that changed status (a recovery without its detail). The `fleet-doctor.timer` runs it every 5 min into the data folder's `fleet-health.json`, which the wall and the phone show as a **Fleet** button beside **CI**: failing checks first, `Fleet ?` when the report is over 15 minutes old, no links and `~` for the home folder. |
 | `fleet log [N]` | The last N decisions as plain lines. |
-| `fleet brief NAME BODY` | Writes `task-NAME.src`: BODY, then the shared rules in `fleet/brief-tail.md`. `--check` lists briefs whose rules drifted. |
+| `fleet brief NAME BODY` | Writes `task-NAME.src`: BODY, then the shared rules in `fleet/brief-tail.md`. `--check` lists briefs whose rules drifted; `--refresh` rewrites them with the current rules, dropping any rule an earlier tail held (word for word or by its label) and keeping lines added after them. |
 | `fleet cutover` | Restarts the resume service on the installed scripts and confirms its start is logged. |
+| `fleet done [NAME]` | Marks an agent finished: its row moves from `panes.tsv` to `finished.tsv` with the time, so nothing relaunches it or types into it: the resume service, `fleet recover` and the doctor act only on registered rows, and the service also leaves alone any pane whose session is in `finished.tsv`. With no NAME, the row of the fleet pane it runs in, when its registered session runs there; each brief's shared rules end with it. The pane stays open with its final report. |
+| `fleet voices [heph\|everyone\|off]` | Sets keryx to the tray's Voices mode now, for running sessions too; with a mode, saves it to `prefs.json` first. Changes keryx only where it differs and logs the values it decided on. `--if-changed` applies only a mode not yet applied (the resume service); `--check` only says whether it is. |
 | `fleet agora post [--kind gripe\|win\|idea\|wish\|kudos] TEXT` | Posts one line (280 characters) on the Agora, signed with the session's character, agent and repo, from inside a fleet session. Optional for agents, one post an hour each; a post that looks like it holds a secret is refused. Posts are JSON lines in `agora/posts.jsonl` in klepsydra's data folder. `fleet agora list [N]` shows the newest. |
 | `fleet/launch.sh NAME BRIEF` | Starts an agent with its own session id in a memory-capped scope. It turns Remote Control on and waits for it to settle, pastes the brief, checks the brief reached the prompt, then submits it. A retry never sends Escape. It records the pane, session id and folder in `panes.tsv`. |
 | `fleet/resume-at-reset.sh` | The resume service. It resumes a limited pane at the reset its banner names, or at once after a switch to an account with room; the orchestrator too, who moves to the other account as a fresh session from `HEPH.md` when that one has room. It starts a registered pane fresh from its brief after an hour idle. Whatever AJ typed at a limited pane is sent as typed; a line that left the prompt unsent is typed again. Each pane's state survives a restart of the service. |

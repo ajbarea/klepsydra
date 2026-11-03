@@ -1,7 +1,12 @@
 #!/usr/bin/env bash
-# relaunch-fresh.sh PANE NAME BRIEF HINT: /exit the pane's claude, then launch
-# a new window with the fresh preamble, a resume hint and the brief; launch.sh
-# repoints panes.tsv at the new pane.
+# relaunch-fresh.sh PANE NAME BRIEF HINT: replace the agent in PANE with a
+# fresh session from its brief, the fresh preamble and a resume hint, on
+# FLEET_ACCOUNT when set (else launch.sh's pick); FLEET_WHY says why. It goes
+# through the resume service's fresh(), so two agents never run on one row: a
+# pane in a turn is waited on for RELAUNCH_WAIT_S (default 120) and refused if
+# it is still busy, launching nothing; if the old pane takes a prompt or a turn
+# while the new one starts, the new one goes and the old one stays (#274).
+# Prints pane=NEW on success. Exits 1 when refused or failed, 2 on bad usage.
 set -u
 FLEET_TARGET=fleet::relaunch
 here=$(dirname "$(readlink -f "$0")")
@@ -9,43 +14,46 @@ here=$(dirname "$(readlink -f "$0")")
 . "$here/lib.sh"
 (( $# == 4 )) || { err "usage: relaunch-fresh.sh PANE NAME BRIEF HINT"; exit 2; }
 p=$1 name=$2 brief=$3 hint=$4
-sid=$(reg_field "$p" 4) cfg=$(reg_field "$p" 6)
+wait_s=${RELAUNCH_WAIT_S:-120}
+sid=$(reg_field "$p" 4)
 if ! pane_runs "$p" "$sid"; then
   flog WARN "relaunch refused: the pane no longer runs its registered session" pane="$p" name="$name"
   err "$p does not run $name's registered session (a stale panes.tsv row?)"
   exit 1
 fi
-if [[ -n $(input_text "$(screen "$p")") ]]; then
+s=$(screen "$p")
+if [[ -n $(input_text "$s") ]]; then
   flog WARN "relaunch refused: AJ's typed text is in the prompt" pane="$p" name="$name"
   err "$p holds typed text; send or clear it first"
   exit 1
 fi
-txt="$FLEET_STATE/fresh-$name-$(date +%Y%m%d-%H%M).src"
-{ fresh_preamble "${FLEET_WHY:-saved its state and stopped so another brief could use its slot}"; printf '\n\nResume hint: %s\n\n' "$hint"; cat "$brief"; } >"$txt"
-out=$(bash "${LAUNCH:-$here/launch.sh}" "$name" "$txt")
-echo "$out"
-new=$(sed -n 's/^pane=\(%[0-9]*\).*/\1/p' <<<"$out" | head -1)
-if [[ -z $new ]]; then
-  flog ERROR "relaunch: the new session did not start; the old pane is kept" old_pane="$p" name="$name"
+if ! idle_empty "$s"; then
+  flog INFO "relaunch waits for the old pane's turn to end" pane="$p" name="$name" wait_s="$wait_s"
+  if ! wait_for "$p" "$wait_s" idle_empty; then
+    if ! fleet_panes | grep -qx -- "$p"; then
+      flog WARN "relaunch refused: the old pane closed while it waited; nothing launched" pane="$p" name="$name"
+      err "$p closed while waiting; nothing launched"
+    elif [[ -n $(input_text "$(screen "$p")") ]]; then
+      flog WARN "relaunch refused: AJ typed into the old pane while it waited; nothing launched" pane="$p" name="$name"
+      err "$p holds typed text; send or clear it first"
+    else
+      flog WARN "relaunch refused: the old pane was still busy; nothing launched" pane="$p" name="$name" waited_s="$wait_s"
+      err "$p is still in a turn after ${wait_s}s; nothing launched"
+    fi
+    exit 1
+  fi
+fi
+why=${FLEET_WHY:-saved its state and stopped so another brief could use its slot}
+# The account named, as launch.sh would pick it: fresh() then keeps the new
+# pane only if its brief started a turn (a brief at a limit leaves the old pane).
+account=${FLEET_ACCOUNT:-$(best_account "$(date +%s)")}
+account=${account:-$FLEET_DEFAULT_CONFIG}
+new=$(FRESH_HINT=$hint fresh "$p" "$name" "$brief" "$why" "$account")
+rc=$?
+if (( rc != 0 )) || [[ -z $new ]]; then
+  flog ERROR "relaunch failed; the old pane is kept and no second one runs" pane="$p" name="$name" rc="$rc"
+  err "relaunch of $name in $p failed (fresh: $rc); the old pane is kept"
   exit 1
 fi
-got=$(sed -n 's/.*brief=\([A-Za-z-]*\).*/\1/p' <<<"$out" | head -1)
-if [[ $got != started ]]; then
-  # As the resume service's fresh(): the new pane goes and the row points at the old one again.
-  flog ERROR "relaunch: the new session's brief did not start; the old pane stays and the new one goes" old_pane="$p" new_pane="$new" name="$name" brief="$got"
-  retire "$new" interrupt
-  with_registry set_pane "$new" "$p" "$sid" "$cfg"
-  exit 1
-fi
-viewed=0
-in_view "$p" && viewed=1
-if pane_runs "$p" "$sid" && idle_empty "$(screen "$p")" && type_exactly "$p" "/exit"; then
-  t send-keys -t "$p" Enter
-  for _ in $(seq 30); do fleet_panes | grep -qx "$p" || break; sleep 1; done
-  fleet_panes | grep -qx "$p" && t kill-pane -t "$p" 2>/dev/null
-  # The new one opened behind (#216): it takes the old one's place in view.
-  (( viewed )) && t select-window -t "$new" 2>/dev/null
-else
-  flog ERROR "relaunch: the old pane changed while the new one started; both are left running" old_pane="$p" new_pane="$new" name="$name"
-fi
-flog INFO "relaunched" old_pane="$p" new_pane="$new" name="$name"
+flog INFO "relaunched" old_pane="$p" new_pane="$new" name="$name" account="$account"
+echo "pane=$new name=$name"
