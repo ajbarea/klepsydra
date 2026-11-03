@@ -1766,6 +1766,13 @@ BEFORE="printf '%s' '{\"above\":[\"⏺ working\"],\"busy\":true}' >$work/rb2.jso
 check "#274: the old pane starts a turn while the new one launches: the new one goes, the old one stays, the row points back" \
   "$rc $(cut -f1,4 "$REGISTRY") $(grep -c 'SUBMIT /exit' "$work/rb2new.log") $(grep -c 'SUBMIT /exit' "$work/rb2.log") $(t list-panes -a -F '#{pane_id}' | grep -cx "$p")" "1 $p	$SID 1 0 1"
 check "#274: never logged as both left running" "$(grep -c 'both are left running' "$FLEET_LOG")" "0"
+t kill-window -t "$p" 2>/dev/null
+# #274 review: with no account named, a new pane whose brief met a limit is not kept.
+p=$(relpane '{"above":["⏺ Done. done 11:50 AM"]}')
+sed 's/brief=started/brief=blocked-by-limit/' "$work/launch-rb2.sh" >"$work/launch-rb2-lim.sh"; chmod +x "$work/launch-rb2-lim.sh"
+env -u FLEET_ACCOUNT OLD="$p" LAUNCH="$work/launch-rb2-lim.sh" bash "$here/relaunch-fresh.sh" "$p" rb2 "$work/brief.src" "hint" >/dev/null 2>&1; rc=$?
+check "#274 review: a relaunch whose new brief met a limit is refused, the old pane kept and never sent /exit" \
+  "$rc $(cut -f1 "$REGISTRY") $(grep -c 'SUBMIT /exit' "$work/rb2.log")" "1 $p 0"
 t kill-window -t "$p"; : >"$REGISTRY"
 
 echo "CI reds typed into the agent on the branch (#180)"

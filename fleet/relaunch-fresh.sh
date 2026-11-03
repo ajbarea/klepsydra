@@ -30,18 +30,30 @@ fi
 if ! idle_empty "$s"; then
   flog INFO "relaunch waits for the old pane's turn to end" pane="$p" name="$name" wait_s="$wait_s"
   if ! wait_for "$p" "$wait_s" idle_empty; then
-    flog WARN "relaunch refused: the old pane was still busy; nothing launched" pane="$p" name="$name" waited_s="$wait_s"
-    err "$p is still in a turn after ${wait_s}s; nothing launched"
+    if ! fleet_panes | grep -qx -- "$p"; then
+      flog WARN "relaunch refused: the old pane closed while it waited; nothing launched" pane="$p" name="$name"
+      err "$p closed while waiting; nothing launched"
+    elif [[ -n $(input_text "$(screen "$p")") ]]; then
+      flog WARN "relaunch refused: AJ typed into the old pane while it waited; nothing launched" pane="$p" name="$name"
+      err "$p holds typed text; send or clear it first"
+    else
+      flog WARN "relaunch refused: the old pane was still busy; nothing launched" pane="$p" name="$name" waited_s="$wait_s"
+      err "$p is still in a turn after ${wait_s}s; nothing launched"
+    fi
     exit 1
   fi
 fi
 why=${FLEET_WHY:-saved its state and stopped so another brief could use its slot}
-new=$(FRESH_HINT=$hint fresh "$p" "$name" "$brief" "$why" "${FLEET_ACCOUNT:-}")
+# The account named, as launch.sh would pick it: fresh() then keeps the new
+# pane only if its brief started a turn (a brief at a limit leaves the old pane).
+account=${FLEET_ACCOUNT:-$(best_account "$(date +%s)")}
+account=${account:-$FLEET_DEFAULT_CONFIG}
+new=$(FRESH_HINT=$hint fresh "$p" "$name" "$brief" "$why" "$account")
 rc=$?
 if (( rc != 0 )) || [[ -z $new ]]; then
   flog ERROR "relaunch failed; the old pane is kept and no second one runs" pane="$p" name="$name" rc="$rc"
   err "relaunch of $name in $p failed (fresh: $rc); the old pane is kept"
   exit 1
 fi
-flog INFO "relaunched" old_pane="$p" new_pane="$new" name="$name" account="${FLEET_ACCOUNT:-launch pick}"
+flog INFO "relaunched" old_pane="$p" new_pane="$new" name="$name" account="$account"
 echo "pane=$new name=$name"
