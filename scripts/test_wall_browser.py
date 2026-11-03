@@ -2008,7 +2008,7 @@ BY_HAND = "Ask by hand: type /klepsydra-wrapup in its terminal"
 # demo-8 has ended. Working with work out after its turn (9, 13, 14) sits idle at its prompt: typed now.
 ROUTED = [
     ("Typed now", ["demo-9-bm_fable", "demo-5-bf_isabella", "demo-13-af_nicole", "demo-14-medallion"]),
-    ("At the end of its turn", ["demo-2-af_bella", "demo-3-af_sarah", "demo-4-bf_emma", "demo-10-bm_george", "demo-16-af_kore"]),
+    ("At the end of its turn", ["demo-2-af_bella", "demo-3-af_sarah", "demo-4-bf_alice", "demo-10-bm_george", "demo-16-af_kore"]),
     ("After you answer", ["demo-1-am_michael", "demo-11-am_fenrir", "demo-15-am_onyx"]),
     (BY_HAND, ["demo-6-af_nova", "demo-7-af_aoede", "demo-12-af_alloy"]),
 ]
@@ -2174,20 +2174,20 @@ def wrapup_cards_and_bar(wall):
     page = open_app(wall)
     feed(page, with_wrapup(page.snapshot, WRAPUP_SAMPLE["answers"]))
     lines = page.evaluate(SHOWN)
-    reason = WRAPUP_SAMPLE["answers"]["demo-4-bf_emma"]["reason"]
+    reason = WRAPUP_SAMPLE["answers"]["demo-4-bf_alice"]["reason"]
     want = {
         "demo-5-bf_isabella": "Ready",
         "demo-2-af_bella": "Finishing its turn",
         "demo-9-bm_fable": "Ready once its background work ends",
         "demo-3-af_sarah": "Wrapping up…",
-        "demo-4-bf_emma": f"Not ready: {reason}",
+        "demo-4-bf_alice": f"Not ready: {reason}",
         "demo-1-am_michael": "Answer it first; it wraps up after",
         "demo-10-bm_george": "Wraps up when this turn ends",
         "demo-6-af_nova": "Ask by hand: /klepsydra-wrapup",
         "demo-8-am_puck": None,
     }
     wall.check(all(lines[k] == v for k, v in want.items()), "each card reads its answer, its route or nothing once ended", {k: lines[k] for k in want})
-    label = page.evaluate("document.querySelector('.card[data-key=\"demo-4-bf_emma\"]').getAttribute('aria-label')")
+    label = page.evaluate("document.querySelector('.card[data-key=\"demo-4-bf_alice\"]').getAttribute('aria-label')")
     wall.check(label.endswith(f"Not ready: {reason}"), "the line is in the card's accessible name", label)
     bar = page.evaluate(BAR)
     wall.check(bar == {"bar": True, "count": "1 of 15 ready", "safe": False, "stop": True, "endAll": False}, "the bar counts only settled, idle sessions and offers Stop wrap-up only", bar)
@@ -2245,7 +2245,7 @@ def wrapup_demo_in_browser(wall):
     page = wall.open(1920, 1000, 16, query="&wrapup")
     bar = page.evaluate(BAR)
     lines = page.evaluate(SHOWN)
-    wall.check(bar["count"] == "1 of 15 ready" and not bar["stop"] and lines["demo-4-bf_emma"].startswith("Not ready: ") and lines["demo-5-bf_isabella"] == "Ready", "the demo carries a request and its answers", [bar, lines["demo-4-bf_emma"]])
+    wall.check(bar["count"] == "1 of 15 ready" and not bar["stop"] and lines["demo-4-bf_alice"].startswith("Not ready: ") and lines["demo-5-bf_isabella"] == "Ready", "the demo carries a request and its answers", [bar, lines["demo-4-bf_alice"]])
     page.close()
 
 
@@ -4399,7 +4399,7 @@ def agora_board(now):
     }
     return {
         "posts": [
-            post("techne-evals", "bf_emma", "Techne", "techne", "gripe", 240,
+            post("techne-evals", "bf_alice", "Techne", "techne", "gripe", 240,
                  "Waited 40 min on the heavy lock behind an orphaned test server; flock -o would have freed it.",
                  "https://github.com/ajbarea/klepsydra/issues/193"),
             post("klepsydra", "bf_isabella", "Mneme", "klepsydra", "win", 1500,

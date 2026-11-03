@@ -1023,6 +1023,7 @@ t kill-window -t "$h" 2>/dev/null
 cat >"$work/launch-hturn.sh" <<EOF
 #!/usr/bin/env bash
 printf '%s\n' "\$FLEET_ACCOUNT" "\$1" >"$work/moved"
+printf '%s\n' "\${FLEET_SUCCEEDS-unset}" >"$work/succeeds"
 jq '.turn_at = 999999999999' "$KLEPSYDRA_DIR/fleet/$SID.json" >"$work/st.json" && mv "$work/st.json" "$KLEPSYDRA_DIR/fleet/$SID.json"
 echo "pane=%993 session=aaaaaaaa-0000-4000-8000-0000000000cd account=\$FLEET_ACCOUNT avail=1MiB brief=started"
 EOF
@@ -1033,6 +1034,7 @@ printf '%s\n' "$h" >"$FLEET_STATE/orchestrator.pane"; live "$h"
 LAUNCH="$work/launch-hturn.sh" FLEET_HEPH="$work/HEPH.md" FLEET_NOW=$noon bash "$here/resume-at-reset.sh" --once 2>/dev/null
 check "#198 review 4: a notification's turn during Heph's move at a limit does not keep him" \
   "$(events hturn) $(cat "$FLEET_STATE/orchestrator.pane")" "SUBMIT /exit %993"
+check "#226: the move names the session it replaces, so the new one takes its face" "$(cat "$work/succeeds")" "$SID"
 t kill-window -t "$h" 2>/dev/null; rm -f "$KLEPSYDRA_DIR/fleet/$SID.json" "$FLEET_STATE/resume-state"
 
 : >"$work/moved"; rm -f "$FLEET_STATE/orchestrator.config" "$FLEET_STATE/orchestrator.session"
@@ -2068,6 +2070,11 @@ check "FLEET_SETTINGS= starts claude with no --settings" "$(grep -c -- '--settin
 check "#183: workers run keryx off (only Heph speaks), from the installed worker settings" \
   "$(jq -r '.env.KERYX_ENABLED' "$here/worker-settings.json")" "false"
 check "#172: the session is told its agent's name, so its card keeps its face across a move" "$(grep -c 'KLEPSYDRA_AGENT=nosettings ' "$work/cmd")" "1"
+check "#226: and no successor unless a move names one" "$(grep -c 'KLEPSYDRA_SUCCEEDS' "$work/cmd")" "0"
+FLEET_SUCCEEDS=11111111-2222-4333-8444-555555555555 FLEET_SETTINGS='' FLEET_SCOPE=0 FLEET_MIN_AVAIL_MB=0 FLEET_LAUNCHER="$work/launcher-rec.sh" FLEET_DIR="$work" \
+  FLEET_CLAUDE="python3 -I $fake $work/nosettings.json $work/nosettings.log" bash "$here/launch.sh" nosettings "$work/task.src" >/dev/null 2>&1
+check "#226: a move's successor id reaches the session; anything else is dropped" \
+  "$(grep -c 'KLEPSYDRA_SUCCEEDS=11111111-2222-4333-8444-555555555555 ' "$work/cmd")" "1"
 voiced() { # VOICES SETTINGS: the command launch.sh builds with the wall's Voices set to VOICES ("-": prefs as they are)
   [[ $1 == - ]] || jq -n --arg v "$1" 'if $v == "" then {} else {voices: $v} end' >"$KLEPSYDRA_DIR/prefs.json"
   : >"$work/nosettings.log"
