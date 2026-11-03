@@ -763,7 +763,12 @@ A session's face follows its keryx voice, so it stays the same while the
 session moves between repos. Sixteen voices, all fourteen in keryx's rotation pool,
 `af_nicole` (keryx's fifteenth, before any blend) and `bf_alice` (Techne's, which only a pick lands on), are cast
 as characters and show their portraits: ten from kourai-khryseai and six (Chronos,
-Argos, Hermes, Elpis, Hesychia, Athena) painted for this app. The orchestrator wears Hephaestus or
+Argos, Hermes, Elpis, Hesychia, Athena) painted for this app. Portraits are drawn to one canon: the
+gods who run the forge (Hephaestus, Athena) are drawn in flesh, the golden
+maidens Hephaestus forged (Techne, Metis, Mneme, Kallos, Dokimasia, Aidos) in
+gold or metal, and the visitors (Hermes, Chronos, Argos, Elpis, Hesychia,
+Aletheia, Cupid, Puck) as themselves. `docs/characters/portrait-briefs.md` holds a paste-ready
+kit for each painted character. The orchestrator wears Hephaestus or
 Athena (`bf_emma`), equals, one per session: a new
 orchestrator session takes the one no other orchestrator card on the wall
 wears (a live one first), keeps it, and a `/clear` passes it on. With both
