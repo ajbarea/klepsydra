@@ -97,12 +97,19 @@ check "the refusal names fresh-now.sh and the pane" "$(has "$(why)" "fresh-now.s
 check "the refusal says how long" "$(has "$(why)" "89 min ago")" "yes"
 check "and the pane took nothing" "$(got_keys cold)" "0"
 check "it is logged with the pane" "$(jq -r 'select(.message | contains("refused a tmux call")) | "\(.guard) \(.pane)"' "$FLEET_LOG" | tail -1)" "cold-limit $cold"
-check "a limit 10 min old: allowed" "$(as_heph "$T send-keys -t $young go Enter")" "ok"
+check "round 7: a limit no transcript dates: refused as unknown, never read as minutes" \
+  "$(as_heph "$T send-keys -t $young go Enter")" "refused:unknown"
+check "round 7: the refusal says the stop has no date" "$(has "$(why)" "no transcript of its session dates")" "yes"
+YS=aaaaaaaa-0000-4000-8000-0000000000e0
+jq -n --arg p "$young" '{session_id: "x", ended: null, tmux: {pane: $p}}' >"$KLEPSYDRA_DIR/fleet/$YS.json"
+: >"$work/projects/p/$YS.jsonl"; touch -d "@$(( FLEET_NOW - 600 ))" "$work/projects/p/$YS.jsonl"
+check "a limit its transcript dates 10 min old: allowed" "$(as_heph "$T send-keys -t $young go Enter")" "ok"
 check "and the keys arrive" "$(got_keys young)" "1"
+rm -f -- "$KLEPSYDRA_DIR/fleet/$YS.json" "$work/projects/p/$YS.jsonl"
 check "an idle pane at no limit: allowed" "$(as_heph "$T send-keys -t $warm 'next item' Enter")" "ok"
 check "the send check is logged" "$(jq -r 'select(.message | contains("send checked")) | .pane' "$FLEET_LOG" | tail -1)" "$warm"
 for shape in "send -t $cold go" "send-k -t $cold go" "send-keys -lt $cold go" "send-keys -Rt$cold go" "paste -t $cold" "pa -t $cold" \
-  "pasteb -b x -t $cold" "send-keys -t $warm hi \\; send-keys -t $cold go" "send-prefix -t $cold"; do
+  "pasteb -b x -t $cold" "send-prefix -t $cold"; do
   check "tmux $shape: refused" "$(as_heph "$T $shape")" "refused:cold-limit"
 done
 check "pipe-pane -I with a command: refused (the command could call tmux)" "$(as_heph "$T pipe-pane -I -t $cold 'printf go'")" "refused:hidden"
@@ -129,18 +136,51 @@ check "no -t is the orchestrator's own pane" "$(as_heph "$T send-keys -t $orchp 
 cwin=$(t display -p -t "$cold" '#{window_id}')
 check "round 6: select-window, then a send to fleet: (the cold pane by then): refused" \
   "$(as_heph "$T select-window -t $cwin \\; send-keys -t fleet: go Enter")" "refused:unknown"
-check "round 6: the refusal asks for the pane id" "$(has "$(why)" "(-t %N)")" "yes"
+check "round 7: the refusal asks for a send in a call of its own" "$(has "$(why)" "Send in a tmux call of its own")" "yes"
 check "round 6: and the cold pane took nothing" "$(got_keys cold)" "0"
 check "round 6: a sequence with no -t on its send: refused" "$(as_heph "$T select-window -t $cwin \\; send-keys hi")" "refused:unknown"
-check "round 6: a sequence naming every send by its id: checked as usual" \
-  "$(as_heph "$T select-window -t $cwin \\; send-keys -t $warm 'seq ok' Enter")" "ok"
+check "round 7: a sequence naming its send by its id: refused too, send alone" \
+  "$(as_heph "$T select-window -t $cwin \\; send-keys -t $warm 'seq ok' Enter")" "refused:unknown"
+check "two sends in one call: refused, the cold one never reached" "$(as_heph "$T send-keys -t $warm hi \\; send-keys -t $cold go")" "refused:unknown"
+# Round 7: an earlier command can hold a send back past the check (wait-for, a
+# load-buffer from a FIFO) while AJ types into the pane.
+wk=$(got_keys warm)
+( sleep 1.5; t wait-for -S orchtest ) & ww=$!
+check "round 7: wait-for, then a send: refused before anything waits" "$(as_heph "$T wait-for orchtest \\; send-keys -t $warm 'report' Enter")" "refused:unknown"
+wait "$ww"
+mkfifo "$work/fifo"; ( sleep 1.5; printf 'x' >"$work/fifo" ) & fw=$!
+check "round 7: a load-buffer from a FIFO, then a send: refused" "$(as_heph "$T load-buffer -b f $work/fifo \\; send-keys -t $warm 'report' Enter")" "refused:unknown"
+timeout 5 cat "$work/fifo" >/dev/null 2>&1; wait "$fw" 2>/dev/null; rm -f -- "$work/fifo"
+check "round 7: and the pane took none of them" "$(got_keys warm)" "$wk"
 t select-window -t "$(t display -p -t "$orchp" '#{window_id}')"
 # Round 6: E and T modifiers expand a value as a format again.
 t set-buffer -b z 'plain text'
-for f in '#{E:buffer_sample}' '#{T:pane_title}' '#{l;E:buffer_sample}' '#{=10;T:pane_title}'; do
+for f in '#{E:buffer_sample}' '#{T:pane_title}' '#{l;E:buffer_sample}' '#{=10;T:pane_title}' '#{s/#{l:x}/y/;E:buffer_sample}' '#{s/#{pane_id}/y/;E:buffer_sample}'; do
   check "round 6: the format $f: refused" "$(as_heph "$T list-buffers -F '$f'")" "refused:hidden"
 done
 check "round 6: plain formats with a colon between them: allowed" "$(as_heph "$T list-panes -F '#{pane_id}:#{pane_current_command}'")" "ok"
+# Round 7: a differential against real tmux 3.4, its oracle the marker a #()
+# in the buffer leaves. Every format that runs it on real tmux must be refused
+# (and must not run through the guard).
+t set-buffer -b z "#(touch $work/fmt-ran)"
+mods=('' 'l;' 'b;' 'd;' '=10;' 's/a/b/;' 's/:/x/;' 's/#{l:x}/y/;' 's/#{pane_id}/y/;' 's|:|x|;' 'm/r:a,b/;' '=/9/#{l:x}/;' 'l;s/a/b/;' 'q;')
+ran=0 missed=""
+for m in "${mods[@]}"; do
+  for e in E T; do
+    for name in buffer_sample 'l:#{buffer_sample}'; do
+      f="#{${m}${e}:${name}}"
+      rm -f -- "$work/fmt-ran"
+      t list-buffers -F "$f" >/dev/null 2>&1; sleep 0.2
+      [[ -e $work/fmt-ran ]] || continue
+      ran=$((ran + 1)); rm -f -- "$work/fmt-ran"
+      got=$(as_heph "$T list-buffers -F '$f'"); sleep 0.2
+      [[ $got == refused:hidden && ! -e $work/fmt-ran ]] || missed+="$f=$got "
+    done
+  done
+done
+check "round 7: some generated formats run the buffer's #() on real tmux (the oracle works)" "$(( ran > 0 ))" "1"
+check "round 7: every one of them is refused, and none runs through the guard" "$missed" ""
+rm -f -- "$work/fmt-ran"; t set-buffer -b z 'plain text'
 # Round 6: "done 10:20 AM" has no date; the session's transcript dates the stop.
 TS=aaaaaaaa-0000-4000-8000-0000000000e1
 # A pane of its own: young took keys above, so its limit is gone.
@@ -441,6 +481,10 @@ printf '%s\n' "$orchp" >"$work/state-mut/orchestrator.pane"; printf '%s\n' "$FLE
 printf 'bash\0launch.sh\0x\0' >"$FLEET_PROC/4242/cmdline"
 typing2=$(pane typing2 '{"above":["⏺ Done. done 10:20 AM"],"input":"AJ: one more thing"}')
 cold3=$(pane cold3 "{\"above\":[\"⏺ Done. done 9:00 AM\",\"$LIMIT\"]}"); settle
+# Its transcript dates the stop, so only the cold-limit refusal guards it.
+C3=aaaaaaaa-0000-4000-8000-0000000000e3
+jq -n --arg p "$cold3" '{session_id: "x", ended: null, tmux: {pane: $p}}' >"$KLEPSYDRA_DIR/fleet/$C3.json"
+: >"$work/projects/p/$C3.jsonl"; touch -d "@$(( FLEET_NOW - 5400 ))" "$work/projects/p/$C3.jsonl"
 for g in cold-limit pending-input hidden unknown; do
   sed "s/refuse $g /true $g /g" "$here/orch-tmux.sh" >"$mut/orch-tmux.sh"
   check "mutant $g: its refusals removed" "$(grep -c "refuse $g " "$mut/orch-tmux.sh")" "0"

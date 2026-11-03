@@ -105,20 +105,15 @@ refuse() { # GUARD REASON [KEY=VALUE...]
 }
 hidden_why="it can run commands the guard never reads. The orchestrator's tmux runs only capture, list, display, select, kill-pane, buffers and sends; launch agents with fleet/launch.sh, and run anything else from AJ's terminal."
 format_check() { # ARG...: a #() format runs a shell command
-  local a rest mods
+  local a
   for a in "$@"; do
     [[ $a == *'#('* ]] && refuse hidden "a #() format runs a shell command, so $hidden_why" argument="${a:0:120}"
     # #{E:...} and #{T:...} expand a value (a buffer, a title) as a format
-    # again, so a #() inside it runs. Every #{ is read up to the first ":"
-    # after it, and E or T anywhere there is refused.
-    rest=$a
-    while [[ $rest == *'#{'*:* ]]; do
-      rest=${rest#*'#{'}
-      [[ $rest == *:* ]] || break
-      mods=${rest%%:*}
-      [[ $mods == *[ET]* ]] &&
-        refuse hidden "a #{E:...} or #{T:...} format expands a value as a format again, so a #() in a buffer or a title runs: $hidden_why" argument="${a:0:120}"
-    done
+    # again, so a #() inside it runs. tmux's modifier grammar nests (#{s/#{l:x}/y/;E:...}),
+    # so it is not modelled: in a format, an E or T followed by ; or : anywhere is
+    # refused (an E or T modifier is always followed by one), plain text too.
+    [[ $a == *'#{'* && $a =~ [ET][\;:] ]] &&
+      refuse hidden "a format holding an E or T modifier (#{E:...}, #{T:...}) expands a value as a format again, so a #() in a buffer or a title runs: $hidden_why" argument="${a:0:120}"
   done
   return 0
 }
@@ -205,7 +200,6 @@ special_key='^([CMS]-.+|Escape|Tab|BTab|BSpace|Up|Down|Left|Right|Home|End|PageU
 checks=() # "COMMAND|TARGET|ENTER|EXACT|TEXT": ENTER 1 when it submits; EXACT 0 when TEXT is unknown
 cmd=()
 ncmds=0
-raw_targets=() # each send's -t as written ("" for none)
 flush() {
   (( ${#cmd[@]} )) || return 0
   ncmds=$((ncmds + 1))
@@ -243,7 +237,6 @@ flush() {
   # keys send-keys types or the data set-buffer stores.
   format_check "${vals[@]}"
   [[ $name == send-keys || $name == set-buffer ]] || format_check "${tail_args[@]}"
-  [[ $name == send-keys || $name == paste-buffer || $name == send-prefix ]] && raw_targets+=("$target")
   target=${target:-$TMUX_PANE}
   local text="" enter=0 exact=1 key r
   case $name in
@@ -287,16 +280,13 @@ for a in "${args[@]:i}"; do
 done
 flush
 (( ${#checks[@]} )) || pass "$@"
-# tmux resolves each command's target only when it runs it, so in a sequence an
-# earlier command (select-window, kill-pane, rename-window) can change what
-# fleet:, {last}, ! or no -t mean by the time a send runs. Only a pane id
-# names the same pane throughout.
-if (( ncmds > 1 )); then
-  for rt in "${raw_targets[@]}"; do
-    [[ $rt =~ ^%[0-9]+$ ]] ||
-      refuse unknown "a send in a sequence of tmux commands names its pane by ${rt:-the current pane}: an earlier command in the sequence can change which pane that is before tmux reaches the send. Name it by its id (-t %N), or send in a call of its own." target="${rt:-none}" commands="$ncmds"
-  done
-fi
+# A send is the only command of its call. In a sequence, an earlier command
+# can move what its target names (select-window: fleet:, {last}, no -t) or
+# hold it back past the check (wait-for, a load-buffer from a FIFO) while AJ
+# types into the pane or it reaches a limit; the guard checks the pane as it
+# is now, so nothing may come between the check and the keys.
+(( ncmds > 1 )) &&
+  refuse unknown "a send in a sequence of tmux commands: an earlier command in the sequence can change which pane it reaches or hold it back after the guard read the pane. Send in a tmux call of its own." commands="$ncmds"
 
 need_lib || refuse unknown "the guard could not load fleet/lib.sh, so it cannot read the pane." here="$here"
 now=$(clock)
@@ -312,30 +302,31 @@ for ch in "${checks[@]}"; do
   [[ $p == "$orch" ]] && continue
   s=$(screen "$p")
   ps=$(plain <<<"$s")
-  lim="" idle=""
+  lim="" idle="" mt=""
   if lim=$(limit_line "$s"); then
     grep -q 'done [0-9]\{1,2\}:[0-9][0-9] [AP]M' <<<"$ps" ||
       refuse unknown "pane $p is at a usage limit and shows no time it stopped, so the guard cannot tell whether its cache is still warm. The resume service sends at the reset; relaunch it fresh now with: bash $state/fresh-now.sh $p" \
         pane="$p" command="$name" limit="$lim"
     stop=$(stopped_at "$p" "$ps")
-    # "done H:MM" has no date, so a pane stopped days ago reads as minutes. The
-    # session's transcript, last written as it stopped, dates the stop; with
-    # none, a dated reset (a weekly limit) or one already past is a doubt.
-    sid="" tp="" mt=""
+    # "done H:MM" has no date, so a pane stopped days ago reads as minutes:
+    # the time shown is the latest it can be. The session's transcript, last
+    # written as it stopped, dates the stop; with none, a stop the screen
+    # alone puts an hour back is cold for sure, and any other is unknown.
+    sid="" tp="" dated=0
     if sid=$(live_session "$p") && tp=$(transcript "$sid") && [[ -n $tp ]] && mt=$(stat -c %Y -- "$tp" 2>/dev/null) && [[ $mt =~ ^[0-9]+$ ]]; then
       (( mt < stop )) && stop=$mt
+      dated=1
     else
-      r=$(reset_epoch "$lim" "$now") || r=""
-      if [[ $lim =~ resets\ [A-Z][a-z]{2}\ [0-9] ]] || { [[ -n $r ]] && (( r <= now )); }; then
-        refuse unknown "pane $p is at a usage limit whose reset is dated or already past, and no transcript of its session dates the time it stopped, so the guard cannot tell how long its cache has been cold. Relaunch it fresh with: bash $state/fresh-now.sh $p" \
-          pane="$p" command="$name" limit="$lim"
-      fi
+      mt=""
     fi
     idle=$((now - stop))
     if (( idle >= FRESH_AFTER_S )); then
       refuse cold-limit "pane $p stopped at a usage limit $((idle / 60)) min ago (\"${lim#"${lim%%[![:space:]]*}"}\"). Its prompt cache lives an hour, so keys typed into it now re-cache its whole transcript: five such nudges took 38% of a five-hour window on 11-02. Relaunch it fresh from its brief instead: bash $state/fresh-now.sh $p" \
         pane="$p" command="$name" idle_min="$((idle / 60))" limit="$lim"
     fi
+    (( dated )) ||
+      refuse unknown "pane $p is at a usage limit and no transcript of its session dates the time it stopped (\"done H:MM\" has no date), so the guard cannot tell how long its cache has been cold. The resume service sends at the reset; relaunch it fresh now with: bash $state/fresh-now.sh $p" \
+        pane="$p" command="$name" limit="$lim"
   fi
   before=""
   if ! has_input_box "$s"; then

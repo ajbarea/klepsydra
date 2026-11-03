@@ -1447,12 +1447,13 @@ caller's environment moves them. It runs only a listed set of tmux commands and
 flags that run no other command (capture, list, display, select, kill-pane,
 buffers, sends), and refuses keys or a paste into a pane stopped at a usage
 limit 55 minutes or more ago (its cache expired, and `fresh-now.sh` relaunches
-it from its brief; the session's transcript dates the stop), keys into an
-input line holding anything but the text the orchestrator typed there, a
-format that runs a command (`#()`) or expands a value again (`#{E:…}`,
-`#{T:…}`), a send in a sequence of commands that names its pane other than by
-id (`-t %N`), and whatever it cannot work out (a name tmux does not list, a
-target no pane answers to, a limit it cannot date). `fleet/orch-guard.sh`, a PreToolUse hook, refuses before the call a
+it from its brief; only the session's transcript dates the stop, since `done
+H:MM` has no day), keys into an input line holding anything but the text the
+orchestrator typed there, a format that runs a command (`#()`) or holds an E or
+T modifier, which expands a value again (`#{E:…}`, `#{T:…}`), a send that is not
+the only command of its tmux call (an earlier command can move or hold it back
+past the check), and whatever it cannot work out (a name tmux does not list, a
+target no pane answers to, a limited pane no transcript dates). `fleet/orch-guard.sh`, a PreToolUse hook, refuses before the call a
 tmux called by path or with a new PATH (best effort), an interactive session
 on an API key or a headless one with no `fleet balance` check today, and
 editing `panes.tsv` while a launch or chain loop runs (reading it with `cat`,
