@@ -83,7 +83,8 @@ prune_now() { # PANE/SID...
     row=$(awk -F'\t' -v p="${key%%/*}" -v s="${key#*/}" '$1 == p && $4 == s { print; exit }' "$REGISTRY")
     [[ -n $row && $(row_state "${key%%/*}" "${key#*/}") == finished ]] || continue
     record_finished "$row" || return 1
-    sure+=("$key")
+    # Recorded, the row holds no pane ("-").
+    sure+=("-/${key#*/}")
   done
   (( ${#sure[@]} )) || { echo none; return 0; }
   set -- "${sure[@]}"
@@ -108,11 +109,12 @@ if [[ ${1:-} == --prune ]]; then
   bak=${done_keys[0]}
   for r in "${rows[@]}"; do
     key=${r%%$'\t'*}
-    if printf '%s\n' "${done_keys[@]:1}" | grep -qxF -- "$key"; then
-      echo "pruned: ${r#*$'\t'} (${key%%/*})"
+    where=" (${key%%/*})"; [[ ${key%%/*} == - ]] && where=""
+    if printf '%s\n' "${done_keys[@]:1}" | grep -qxF -- "-/${key#*/}"; then
+      echo "pruned: ${r#*$'\t'}$where"
       flog INFO "doctor: pruned a finished agent's row" pane="${key%%/*}" session="${key#*/}" name="${r#*$'\t'}"
     else
-      echo "kept: ${r#*$'\t'} (${key%%/*}): it runs again"
+      echo "kept: ${r#*$'\t'}$where: it runs again"
       flog INFO "doctor: a row to prune runs again; kept" pane="${key%%/*}" session="${key#*/}" name="${r#*$'\t'}"
     fi
   done

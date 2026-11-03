@@ -39,6 +39,10 @@ on_event() {
       # Only an agent's row: a `fleet done` record (its row gone) stays, so a
       # done agent resumed by hand is still never typed into or relaunched.
       awk -F'\t' -v s="$sid" '$4 == s { f = 1 } END { exit !f }' "$REGISTRY" || return 0
+      # A finished row runs again: it takes its pane back.
+      if [[ $pane =~ ^%[0-9]+$ ]] && restore_pane "$sid" "$pane"; then
+        flog INFO "a finished agent's session started again; its row takes its pane back" session="$sid" pane="$pane"
+      fi
       n=$(forget_finished "$sid") && (( n > 0 )) && flog INFO "recorded finish dropped: the session started again" session="$sid" source="$why" lines="$n"
       if unpaused "$sid" && drop_unpaused "$sid"; then
         flog INFO "unpause dropped: the session started again" session="$sid" source="$why"

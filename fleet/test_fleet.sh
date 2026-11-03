@@ -2425,6 +2425,11 @@ check "#261 review 6: a start of the same id drops its finish and its unpause at
 rev SessionEnd "$SF" prompt_input_exit
 check "#261 review 6: resumed by hand and /exited between polls: finished, never relaunched" \
   "$(row_state %4 "$SF") $(rec --dry-run --no-orchestrator | grep -E '^(finished|would recover): d' | sed 's/ (.*//')" "finished finished: d"
+# #261 review 8: a recorded finish parks the row's pane; its session starting again takes it back.
+check "#261 review 8: a finished row holds no pane" "$(awk -F'\t' '$2 == "d" { print $1 }' "$REGISTRY")" "-"
+rev SessionStart "$SF" resume %4
+check "#261 review 8: a hand resume in its pane gives the row its pane back, logged" \
+  "$(awk -F'\t' '$2 == "d" { print $1 }' "$REGISTRY") $(jq -r 'select(.message | contains("takes its pane back")) | .pane' "$FLEET_LOG" | tail -1)" "%4 %4"
 SN=aaaaaaaa-0000-4000-8000-0000000000f9
 rev SessionStart "$SN" clear %5 "$SF"
 check "#261 review 6: a /clear in another pane leaves the row alone" "$(awk -F'\t' '$2 == "d" { print $1, $4 }' "$REGISTRY")" "%4 $SF"
@@ -2467,6 +2472,24 @@ check "#261 review 7: a repoint naming a session no row on that pane names chang
 check "#261 review 7: a row with no session gets one only by its own empty key" \
   "$(set_session %3 "" "$S2"; cut -f2,4 "$REGISTRY" | tr '\t\n' ': ')" "fin1:$S1 lost1:$S2 work1:$SC2 "
 cp -p -- "$work/reg-before-261r7" "$REGISTRY"
+# #261 review 8: a pane id the running server hands out again never finds a
+# finished row: recorded, it is parked ("-"), so every pane-keyed lookup finds
+# the live agent alone, in either row order.
+cp -p -- "$REGISTRY" "$work/reg-before-261r8"
+for order in fin-first live-first; do
+  if [[ $order == fin-first ]]; then
+    printf '%s\tfinx\t%s\t%s\t/w\n%s\tlivey\t%s\t%s\t/w\n' %2 "$work/bc.src" "$S1" %2 "$work/bc.src" "$S2" >"$REGISTRY"
+  else
+    printf '%s\tlivey\t%s\t%s\t/w\n%s\tfinx\t%s\t%s\t/w\n' %2 "$work/bc.src" "$S2" %2 "$work/bc.src" "$S1" >"$REGISTRY"
+  fi
+  with_registry record_finished "$(awk -F'\t' '$2 == "finx"' "$REGISTRY")"
+  check "#261 review 8 ($order): reg_field and registered find only the live agent on the reused pane id" \
+    "$(reg_field %2 2) $(reg_field %2 4) $(awk -F'\t' '$1 == "%2"' "$REGISTRY" | wc -l)" "livey $S2 1"
+  with_registry set_pane %2 %7 "$S2"
+  check "#261 review 8 ($order): a rollback's set_pane moves only the live row" \
+    "$(awk -F'\t' '{ print $2 ":" $1 ":" $4 }' "$REGISTRY" | sort | tr '\n' ' ')" "finx:-:$S1 livey:%7:$S2 "
+done
+cp -p -- "$work/reg-before-261r8" "$REGISTRY"; with_registry forget_finished "$S1" >/dev/null
 # A `fleet done` record has no row; a hand resume of that session keeps it.
 SDN=aaaaaaaa-0000-4000-8000-0000000000c4
 printf '%s\tdonex\t%s\t%s\t/w\t%s\n' %9 "$work/bc.src" "$SDN" "$(date -Is)" >>"$FLEET_STATE/finished.tsv"
@@ -2487,7 +2510,7 @@ check "with only finished rows: a warn, no FAIL" "$(bash "$here/doctor.sh" 2>/de
 out=$(bash "$here/doctor.sh" --prune 2>/dev/null); rc=$?
 check "--prune drops only the finished row and keeps a backup" \
   "$rc|$(head -1 <<<"$out")|$(cut -f2 "$REGISTRY" | tr '\n' ' ')|$(find "$FLEET_STATE" -maxdepth 1 -name 'panes.tsv.bak-*' | wc -l)|$(grep -c $'\td\t' "$(find "$FLEET_STATE" -maxdepth 1 -name 'panes.tsv.bak-*' | head -1)")" \
-  "0|pruned: d (%4)|a b c g |1|1"
+  "0|pruned: d|a b c g |1|1"
 check "#261 review 3: --prune records each finish before its row goes" "$(grep -c "$SF" "$FLEET_STATE/finished.tsv" 2>/dev/null)" "1"
 check "#261 review: --prune says where the backup is" "$(grep -c '^backup: .*panes.tsv.bak-' <<<"$out") $(grep -c 'command not found' <<<"$out")" "1 0"
 check "a second --prune finds nothing" "$(bash "$here/doctor.sh" --prune 2>/dev/null)" "nothing to prune: no finished agent's row in panes.tsv"

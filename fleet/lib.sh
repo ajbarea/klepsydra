@@ -869,13 +869,42 @@ session_finished() { # SID
 
 # Record a finished row in finished.tsv (the registry's columns, then the
 # time), once: what `fleet done` writes, so the finish holds after the fleet
-# file is gone. The row stays in panes.tsv until `fleet doctor --prune`.
+# file is gone. The row stays in panes.tsv until `fleet doctor --prune`, but
+# holds no pane (column 1 becomes "-", #261 review 8): a restarted tmux server
+# hands its pane id out again, and every pane-keyed lookup (reg_field, the
+# resume service, fresh, done, relaunch) would then find the finished row
+# beside the live agent's. A start of its session puts the pane back
+# (restore_pane). Under the registry lock.
 record_finished() { # ROW
-  local fin=${FLEET_FINISHED:-$FLEET_STATE/finished.tsv} sid
-  sid=$(cut -f4 <<<"$1")
+  local fin=${FLEET_FINISHED:-$FLEET_STATE/finished.tsv} sid p
+  sid=$(cut -f4 <<<"$1") p=$(cut -f1 <<<"$1")
   [[ -n $sid ]] || return 0
-  awk -F'\t' -v s="$sid" '$4 == s { f = 1 } END { exit !f }' "$fin" 2>/dev/null && return 0
-  printf '%s\t%s\n' "$1" "$(date -Is)" >>"$fin"
+  if ! awk -F'\t' -v s="$sid" '$4 == s { f = 1 } END { exit !f }' "$fin" 2>/dev/null; then
+    printf '%s\t%s\n' "$1" "$(date -Is)" >>"$fin" || return 1
+  fi
+  [[ $p =~ ^%[0-9]+$ ]] || return 0
+  set_pane_of "$p" "$sid" -
+}
+
+# Set the pane (column 1) of the registry row that names pane FROM and session
+# SID to TO. Under the registry lock. Fails when no row matches.
+set_pane_of() { # FROM SID TO
+  local tmp
+  [[ -e $REGISTRY && -n $2 ]] || return 1
+  awk -F'\t' -v p="$1" -v s="$2" '$1 == p && $4 == s { f = 1 } END { exit !f }' "$REGISTRY" || return 1
+  tmp=$(mktemp "$REGISTRY.XXXXXX") || return 1
+  if ! awk -F'\t' -v OFS='\t' -v p="$1" -v s="$2" -v to="$3" '!done && $1 == p && $4 == s { $1 = to; done = 1 } { print }' "$REGISTRY" >"$tmp" ||
+    ! mv -f -- "$tmp" "$REGISTRY"; then
+    rm -f -- "${tmp:?}"
+    return 1
+  fi
+}
+
+# A parked row's pane back, once its session SID runs again in PANE (a hand
+# resume of a finished agent). Under the registry lock.
+restore_pane() { # SID PANE
+  [[ $2 =~ ^%[0-9]+$ ]] || return 1
+  set_pane_of - "$1" "$2"
 }
 
 # Drop session SID's recorded finish (under the registry lock): a row still in
@@ -905,6 +934,12 @@ forget_resumed() { # SID NAME
   jq -e 'type == "object"' "$f" >/dev/null 2>&1 || return 0
   if session_alive "$1"; then
     unpaused "$1" && { with_registry drop_unpaused "$1" && flog INFO "unpause dropped: the session runs again" session="$1" name="$2"; }
+    local live_pane
+    live_pane=$(jq -r '.tmux.pane // empty' "$f" 2>/dev/null)
+    if [[ $live_pane =~ ^%[0-9]+$ ]] && awk -F'\t' -v s="$1" '$1 == "-" && $4 == s { f = 1 } END { exit !f }' "$REGISTRY" 2>/dev/null &&
+      with_registry restore_pane "$1" "$live_pane"; then
+      flog INFO "a finished agent's session runs again; its row takes its pane back" session="$1" name="$2" pane="$live_pane"
+    fi
   elif session_finished "$1"; then
     return 0
   else
