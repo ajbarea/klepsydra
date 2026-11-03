@@ -444,6 +444,32 @@ FLEET_ACCOUNTS=$(for d in $FLEET_ACCOUNTS; do printf '%s ' "$(nodir "$d")"; done
 FLEET_HEPH_ACCOUNTS=${FLEET_HEPH_ACCOUNTS:-$(printf '%s\n' $FLEET_ACCOUNTS | tac | tr '\n' ' ')}
 FLEET_HEPH_ACCOUNTS=$(for d in $FLEET_HEPH_ACCOUNTS; do printf '%s ' "$(nodir "$d")"; done)
 
+# The task cap for a fleet session's scope (#289): the tightest pids.max above
+# the caller's own cgroup (on AJ's PC the user slice's), split over
+# FLEET_TASK_SHARES scopes, the two workers and Heph that run at once, so two
+# runaway workers still leave Heph room. Without it a scope inherits
+# DefaultTasksMax, and two such scopes can fill the slice. FLEET_TASKS_MAX sets
+# it outright. Fails when no cap is readable.
+FLEET_TASK_SHARES=${FLEET_TASK_SHARES:-3}
+fleet_tasks_max() {
+  local root=${FLEET_CGROUP_ROOT:-/sys/fs/cgroup} cg d m min=""
+  if [[ -n ${FLEET_TASKS_MAX:-} ]]; then
+    [[ $FLEET_TASKS_MAX =~ ^[1-9][0-9]*$ ]] && printf '%s' "$FLEET_TASKS_MAX"
+    return
+  fi
+  [[ $FLEET_TASK_SHARES =~ ^[1-9][0-9]*$ ]] || return 1
+  cg=${FLEET_CGROUP:-$(awk -F: '$1 == "0" { print $3 }' /proc/self/cgroup 2>/dev/null)}
+  [[ $cg == /* ]] || return 1
+  d=${cg%/*}
+  while [[ -n $d ]]; do
+    m=$(cat "$root$d/pids.max" 2>/dev/null)
+    [[ $m =~ ^[0-9]+$ ]] && { [[ -z $min ]] || (( m < min )); } && min=$m
+    d=${d%/*}
+  done
+  [[ -n $min ]] && (( min / FLEET_TASK_SHARES > 0 )) || return 1
+  printf '%s' "$((min / FLEET_TASK_SHARES))"
+}
+
 # The global config file of config folder DIR.
 config_json() { # DIR
   if [[ $1 == "$FLEET_DEFAULT_CONFIG" ]]; then printf '%s' "${FLEET_DEFAULT_JSON:-$HOME/.claude.json}"; else printf '%s' "$1/.claude.json"; fi

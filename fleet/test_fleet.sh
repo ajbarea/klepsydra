@@ -527,6 +527,33 @@ p=${out%% *}; p=${p#pane=}
 check "a relaunch repoints the same row" "$(wc -l <"$REGISTRY") $(cut -f1 "$REGISTRY")" "1 $p"
 check "the fleet log has the launch" "$(jq -r 'select(.target == "fleet::launch" and .pane == "'"$p"'") | .message' "$FLEET_LOG" | tail -1)" "brief delivered: a turn started"
 
+# #289: the scope's task cap, from the tightest pids.max above the caller's own
+# cgroup, split over the two workers and Heph.
+cgr="$work/cg"; leaf=/user.slice/user-1.slice/user@1.service/app.slice/me.scope
+mkdir -p "$cgr$leaf"
+echo 11926 >"$cgr$leaf/pids.max"; echo max >"$cgr${leaf%/*}/pids.max"; echo 26237 >"$cgr/user.slice/user-1.slice/pids.max"; echo max >"$cgr/user.slice/pids.max"
+tm() { FLEET_CGROUP_ROOT="$cgr" FLEET_CGROUP=$leaf fleet_tasks_max; }
+check "#289: the user slice's cap over three, never the caller's own scope's" "$(tm)" "8745"
+echo 9000 >"$cgr${leaf%/*}/pids.max"
+check "#289: a tighter cap higher up wins" "$(tm)" "3000"
+echo max >"$cgr${leaf%/*}/pids.max"; echo max >"$cgr/user.slice/user-1.slice/pids.max"
+check "#289: no cap readable: fails (the scope then inherits)" "$(tm || echo none)" "none"
+check "#289: FLEET_TASKS_MAX sets it, and a bad one is refused" "$(FLEET_TASKS_MAX=500 tm) $(FLEET_TASKS_MAX=5x tm || echo refused)" "500 refused"
+echo 26237 >"$cgr/user.slice/user-1.slice/pids.max"
+# A systemd-run that records its arguments and runs the command after its options.
+printf '%s\n' '#!/usr/bin/env bash' "printf '%s\\n' \"\$*\" >>$work/sdrun.calls" \
+  'while [[ $1 == --* || $1 == -p ]]; do [[ $1 == -p ]] && shift; shift; done' 'exec "$@"' >"$work/systemd-run"
+chmod +x "$work/systemd-run"; : >"$work/sdrun.calls"
+printf '%s' '{"above":["Claude Code"]}' >"$work/scoped.json"; : >"$work/scoped.log"
+out=$(FLEET_SCOPE=1 FLEET_SYSTEMD_RUN="$work/systemd-run" FLEET_CGROUP_ROOT="$cgr" FLEET_CGROUP=$leaf FLEET_MIN_AVAIL_MB=0 \
+  FLEET_LAUNCHER="$work/launcher.sh" FLEET_DIR="$work" FLEET_CLAUDE="python3 -I $fake $work/scoped.json $work/scoped.log" \
+  bash "$here/launch.sh" scoped "$work/task.src" 2>/dev/null | head -1)
+check "#289: the session's scope gets its own task cap beside the memory caps" \
+  "$(grep -o 'MemorySwapMax=[^ ]* -p TasksMax=[0-9]*' "$work/sdrun.calls")" "MemorySwapMax=1G -p TasksMax=8745"
+check "#289: the launch logs the cap it set" "$(jq -r 'select(.message == "window opened" and .name == "scoped") | .tasks_max' "$FLEET_LOG")" "8745"
+check "#289: the scoped launch still delivers" "${out##* }" "brief=started"
+t kill-pane -t "$(sed -E 's/^pane=([^ ]+).*/\1/' <<<"$out")" 2>/dev/null
+
 out=$(launch agent2 '{"above":["Claude Code"],"on_submit":"limit"}')
 check "blocked by a limit" "${out##* }" "brief=blocked-by-limit"
 
@@ -685,6 +712,11 @@ echo "doctor"
 mkdir -p "$KLEPSYDRA_DIR/fleet" "$work/bin"
 cat >"$work/bin/systemctl" <<'EOF'
 #!/usr/bin/env bash
+# DOC_SCOPES (#289): one "UNIT TASKS_CURRENT TASKS_MAX" line per fleet scope.
+case $* in
+  *list-units*) [[ -n ${DOC_SCOPES:-} ]] && awk '{ print $1 " loaded active running x" }' "$DOC_SCOPES"; exit 0 ;;
+  *" show "*) [[ -n ${DOC_SCOPES:-} ]] && awk -v u="${*: -1}" '$1 == u { print "TasksCurrent=" $2; print "TasksMax=" $3 }' "$DOC_SCOPES"; exit 0 ;;
+esac
 [[ $* == *is-active* && -e $DOC_ACTIVE ]]
 EOF
 cat >"$work/bin/curl" <<'EOF'
@@ -728,6 +760,13 @@ check "a resume loop that never ran fails" "$(grep '^FAIL resume loop' <<<"$out"
 check "a worker with Remote Control is ok" "$(grep -c "^ok   remote control $w (worker)" <<<"$out")" "1"
 check "the orchestrator without it fails (Heph's must always be on)" "$(grep -c "^FAIL remote control $o (orchestrator): off" <<<"$out")" "1"
 check "no phone wall fails" "$(grep -c '^FAIL phone wall: no answer' <<<"$out")" "1"
+check "#289: with no fleet scope there is no task caps line" "$(grep -c 'task caps' <<<"$out")" "0"
+printf 'fleet-a-1.scope 7000 8745\nfleet-b-2.scope 100 8745\nnot-fleet.scope 9 10\n' >"$work/scopes"
+check "#289: a scope past 80% of its task cap warns, naming it" "$(DOC_SCOPES="$work/scopes" doctor | grep 'task caps')" \
+  "warn task caps: past 80% of the cap: fleet-a-1 7000/8745 (its next forks fail at the cap)"
+printf 'fleet-a-1.scope 6900 8745\nfleet-b-2.scope 100 8745\nfleet-c-3.scope 50 infinity\n' >"$work/scopes"
+check "#289: under the line: ok, the fullest named, and a scope from before the cap listed" "$(DOC_SCOPES="$work/scopes" doctor | grep 'task caps')" \
+  "ok   task caps: fullest scope: fleet-a-1 6900/8745; no cap of its own (started before #289): fleet-c-3"
 check "no Tailscale Serve fails" "$(grep -c '^FAIL phone wall over Tailscale: Tailscale Serve is not set up' <<<"$out")" "1"
 check "and the exit is non-zero" "$code" "1"
 check "#244: hooks and cast never installed fail, named" "$(grep '^FAIL installed copies' <<<"$out" | grep -c 'make install-fleet: differ from .*: klepsydra-fleet.sh .*klepsydra-cast.json$')" "1"

@@ -248,6 +248,29 @@ if v=$(bash "$here/voices.sh" --check 2>/dev/null); then
 else
   report warn "voices" "${v:-could not compare}"
 fi
+# Each fleet session's scope against its task cap (#289): past TASKS_WARN_PCT
+# its next forks fail and its claude aborts, as on 11-03.
+TASKS_WARN_PCT=${TASKS_WARN_PCT:-80}
+near="" fullest="" fullest_pct=-1 uncapped=""
+while read -r unit; do
+  [[ $unit == fleet-*.scope ]] || continue
+  cur="" max=""
+  while IFS='=' read -r k v; do
+    case $k in TasksCurrent) cur=$v ;; TasksMax) max=$v ;; esac
+  done < <($SYSTEMCTL --user show -p TasksCurrent -p TasksMax "$unit" 2>/dev/null)
+  [[ $cur =~ ^[0-9]+$ ]] || continue
+  if ! [[ $max =~ ^[1-9][0-9]*$ ]]; then uncapped+="${unit%.scope} "; continue; fi
+  pct=$((cur * 100 / max))
+  (( pct > fullest_pct )) && fullest_pct=$pct fullest="${unit%.scope} $cur/$max"
+  (( pct >= TASKS_WARN_PCT )) && near+="${unit%.scope} $cur/$max, "
+done < <($SYSTEMCTL --user list-units --type=scope --no-legend --plain 'fleet-*' 2>/dev/null | awk '{ print $1 }')
+if [[ -n $near ]]; then
+  report warn "task caps" "past ${TASKS_WARN_PCT}% of the cap: ${near%, } (its next forks fail at the cap)" scopes="${near%, }"
+elif [[ -n $fullest ]]; then
+  report ok "task caps" "fullest scope: $fullest${uncapped:+; no cap of its own (started before #289): ${uncapped% }}" fullest="$fullest" uncapped="${uncapped% }"
+elif [[ -n $uncapped ]]; then
+  report ok "task caps" "no cap of their own (started before #289): ${uncapped% }" uncapped="${uncapped% }"
+fi
 # A hook or cast copy older than the checkout gives every session old behaviour (#244).
 root=${here%/fleet} differ="" missing=""
 for c in "${HOOK_COPIES[@]}"; do
