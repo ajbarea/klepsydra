@@ -261,6 +261,15 @@ elif [[ -n $differ ]]; then
 else
   report ok "installed copies" "the hooks, status line, launcher and cast match $root"
 fi
+# tmux 3.4 dies on a focus event to a dead pane (#290): the fleet's server must
+# carry the pane-died hook, which a server reads from its conf only at start.
+if t has-session 2>/dev/null; then
+  if t show-hooks -g pane-died 2>/dev/null | grep -q 'klepsydra-pane-died\.sh'; then
+    report ok "pane-died hook" "set on the fleet's tmux server"
+  else
+    report warn "pane-died hook" "not set on the fleet's tmux server, which tmux 3.4 lets a dead pane crash: fleet install sets it" socket="$FLEET_SOCK"
+  fi
+fi
 if [[ -n $json ]]; then
   tmp=$json.tmp.$$
   if printf '%s\n' "${results[@]}" | jq -R -s --argjson at "$now" --argjson failed "$failed" \

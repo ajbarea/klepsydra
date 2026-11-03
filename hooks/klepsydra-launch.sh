@@ -126,7 +126,13 @@ new() { # dir
       fail "tmux could not open a window."
     UNDO=(tmux "${t[@]}" kill-window -t "$win")
   else
-    tmux "${t[@]}" "${conf[@]}" new-session -d -s "$SESSION" -c "$dir" "$CLAUDE" {LOCKFD}>&- 2>/dev/null ||
+    # Started from a systemd unit (the tmux watchdog's recover), the server gets
+    # a scope of its own: a oneshot unit's end kills what it leaves in its cgroup.
+    local -a scope=()
+    if [[ -n ${INVOCATION_ID:-} ]] && command -v "${KLEPSYDRA_SYSTEMD_RUN:-systemd-run}" >/dev/null 2>&1; then
+      scope=("${KLEPSYDRA_SYSTEMD_RUN:-systemd-run}" --user --scope --quiet --collect --unit="klepsydra-tmux-$$" --)
+    fi
+    "${scope[@]}" tmux "${t[@]}" "${conf[@]}" new-session -d -s "$SESSION" -c "$dir" "$CLAUDE" {LOCKFD}>&- 2>/dev/null ||
       fail "tmux could not start the fleet session."
     UNDO=(tmux "${t[@]}" kill-session -t "$target")
   fi

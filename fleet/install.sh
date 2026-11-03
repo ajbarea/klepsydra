@@ -58,6 +58,12 @@ for c in "${HOOK_COPIES[@]}"; do
     failed=1
   fi
 done
+# A running fleet server read its conf when it started, so it never sees a new
+# hook: tmux-conf.sh has it read the installed conf now (#290). Off in the
+# suite, which tests the script itself (FLEET_LIVE_CONF=0).
+if (( !dry )) && [[ ${FLEET_LIVE_CONF:-1} == 1 ]]; then
+  bash "$here/tmux-conf.sh" "$FLEET_HOOK_DIR" || failed=1
+fi
 if (( hooks_only )); then
   (( failed )) && exit 1
   (( dry )) || echo "hooks installed from $root into $FLEET_HOOK_DIR"
@@ -183,8 +189,9 @@ Description=klepsydra fleet: fleet recover when the fleet's tmux server crashes
 
 [Service]
 Type=oneshot
-TimeoutStartSec=900
-Environment=\"PATH=$PATH\" \"HOME=$HOME\"
+# A recover staggers its launches a minute apart, so a fleet takes a while.
+TimeoutStartSec=3600
+Environment=\"PATH=$PATH\" \"HOME=$HOME\"${WSL_DISTRO_NAME:+ \"WSL_DISTRO_NAME=$WSL_DISTRO_NAME\"}
 ExecStart=/usr/bin/bash $FLEET_STATE/tmux-watch.sh"
 unit fleet-tmux-watch.timer "[Unit]
 Description=klepsydra fleet: check the fleet's tmux server every minute

@@ -4,8 +4,9 @@
 # reaches a pane whose process has ended (fixed in 3.5a), and remain-on-exit
 # failed keeps such a pane, so it is started again at once: its last screen is
 # saved to a file and shown again, with the reason, until Enter closes it. The
-# pane option @klepsydra_dead holds the reason, so the fleet still reads the
-# pane as dead (pane_dead_why). Logged to the fleet log when the fleet is installed.
+# pane option @klepsydra_dead holds the reason (the hook reads it to close a
+# killed viewer). Saved screens older than a week are removed. Logged to the
+# fleet log when the fleet is installed.
 set -u
 sock=${1:?usage: klepsydra-pane-died.sh SOCKET PANE} pane=${2:?usage: klepsydra-pane-died.sh SOCKET PANE}
 lib=${KLEPSYDRA_FLEET_LIB:-$(dirname "$(readlink -f "${FLEET_BIN:-$HOME/.local/bin}/fleet" 2>/dev/null || echo /nonexistent/fleet)")/lib.sh}
@@ -38,12 +39,14 @@ if mkdir -p -- "$dir" && { printf 'Pane %s: %s at %s.\nCommand: %s\n\n' "$pane" 
 else
   saved="" show=":"
 fi
+find "${dir:?}" -maxdepth 1 -name '*.txt' -mtime +7 -delete 2>/dev/null
 note="[klepsydra] This pane's process ${why#its process }.${saved:+ Its last screen is saved in $saved.} Press Enter to close."
 if t respawn-pane -t "$pane" "$show; printf '\\n%s\\n' $(printf '%q' "$note"); read -r _"; then
   t set -p -t "$pane" @klepsydra_dead "$why"
   flog WARN "pane died; started again on its saved screen so tmux 3.4 cannot crash on it" pane="$pane" reason="$why" saved="$saved"
 else
-  # Never left exited: a focus event on it would take the server down.
-  t kill-pane -t "$pane" 2>/dev/null
+  # Never left exited: a focus event on it would take the server down. Only a
+  # pane still dead: one started again meanwhile is someone's, and stays.
+  [[ $(t display-message -p -t "$pane" '#{pane_dead}' 2>/dev/null) == 1 ]] && t kill-pane -t "$pane" 2>/dev/null
   flog ERROR "pane died and could not be started again; closed it" pane="$pane" reason="$why" saved="$saved"
 fi
