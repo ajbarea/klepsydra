@@ -122,18 +122,29 @@ name=$1 body=$2
 [[ -r $body ]] || { err "no body at $body"; exit 2; }
 if grep -q '^Resources: ' "$body"; then err "$body already has the shared rules; give the body only"; exit 2; fi
 out=$FLEET_STATE/task-$name.src
+# As the refresh: a temp file first, then the archive copy, then a checked write.
+if ! tmp=$(mktemp "$out.XXXXXX"); then
+  flog ERROR "brief not written: no temp file could be made beside it" name="$name" path="$out"
+  err "cannot write beside ${out##*/}; nothing written"
+  exit 1
+fi
 if [[ -e $out ]] && ! archive "$out" "task-$name.$(stamp).src"; then
+  rm -f -- "${tmp:?}"
   flog ERROR "brief not written: the one it replaces could not be archived" name="$name" path="$out"
   err "could not archive ${out##*/}; nothing written"
   exit 1
 fi
-tmp=$(mktemp "$out.XXXXXX") || { err "cannot write beside ${out##*/}; nothing written"; exit 1; }
-{
+if ! {
   cat -- "$body"
   [[ -n $(tail -c1 -- "$body") ]] && printf '\n'
   printf '\n'
   cat -- "$TAIL"
-} >"$tmp"
+} >"$tmp" || ! grep -q '^Resources: ' "$tmp"; then
+  rm -f -- "${tmp:?}"
+  flog ERROR "brief not written: building it failed" name="$name" path="$out"
+  err "could not write ${out##*/}; nothing written"
+  exit 1
+fi
 mv -f -- "$tmp" "$out"
 flog INFO "brief written" name="$name" path="$out" lines="$(wc -l <"$out")"
 echo "$out"

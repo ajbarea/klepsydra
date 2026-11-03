@@ -594,6 +594,11 @@ if [[ $(id -u) != 0 ]]; then
     "$(bash "$hist/fleet/brief.sh" demo3 "$work/body" >/dev/null 2>&1; echo $?) $(cat "$FLEET_STATE/task-demo3.src")" "1 old brief"
   chmod 755 "$FLEET_STATE/archive/briefs"
   rm -f -- "$FLEET_STATE/task-demo3.src"
+  # Its archive folder stays writable, so only the temp-file guard can stop it.
+  mkdir -p "$work/rostate/archive/briefs"; printf 'old brief\n' >"$work/rostate/task-demo4.src"; chmod 555 "$work/rostate"
+  check "#275 review 5: a new brief with no room for its temp file is refused, archives nothing, and the old one stays" \
+    "$(FLEET_STATE=$work/rostate bash "$hist/fleet/brief.sh" demo4 "$work/body" >/dev/null 2>&1; echo $?) $(cat "$work/rostate/task-demo4.src") $(find "$work/rostate/archive/briefs" -type f | wc -l)" "1 old brief 0"
+  chmod 755 "$work/rostate"
   mkdir -p "$work/ro"; cp "$work/hist.old" "$work/ro/task-ro.src"; chmod 555 "$work/ro"
   check "#275: no temp file beside it: the brief stays, nothing is archived, and the refresh exits 1" \
     "$(n=$(find "$FLEET_STATE/archive/briefs" -name 'task-ro.src.*' | wc -l); bash "$hist/fleet/brief.sh" --refresh "$work/ro/task-ro.src" >/dev/null 2>&1; echo "$? $n $(find "$FLEET_STATE/archive/briefs" -name 'task-ro.src.*' | wc -l)") $(cmp -s "$work/hist.old" "$work/ro/task-ro.src" && echo same)" "1 0 0 same"
