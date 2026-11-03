@@ -2111,6 +2111,7 @@ check "#269 verify 3: nor is a record naming the finished agent's session" \
 printf '%s\n' "$SH" >"$FLEET_STATE/orchestrator.session"
 rm -f "$FLEET_STATE/finished.tsv"
 rm -f "$KLEPSYDRA_DIR/fleet/$SOTHER.json"
+sfile "$SHEPH" 4242 777 "$NOWBOOT" %0 # live again, as the cases below expect
 
 echo "recover: a row is repaired only to a session alive before any launch"
 SA1=aaaaaaaa-0000-4000-8000-0000000000d3 SB1=aaaaaaaa-0000-4000-8000-0000000000d4 SNEWA=aaaaaaaa-0000-4000-8000-0000000000d5
