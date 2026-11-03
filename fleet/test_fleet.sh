@@ -23,6 +23,7 @@ login() { # a|b
 logout() { rm -f -- "$work/cfg-${1:?}/.credentials.json"; }
 cleanup() {
   tmux -L "$FLEET_SOCK" kill-server 2>/dev/null
+  chmod -R u+w -- "${work:?}" 2>/dev/null
   rm -rf -- "${work:?}"
 }
 trap cleanup EXIT
@@ -532,6 +533,80 @@ bash "$here/brief.sh" --refresh "$FLEET_STATE/task-old.src" >/dev/null 2>&1
 check "--refresh brings the rules up to date, keeping the body and a line added after them" \
   "$(head -2 "$FLEET_STATE/task-old.src" | tr '\n' '|')$(grep -c '^Usage cap: run at most two' "$FLEET_STATE/task-old.src") $(grep -c 'at most three' "$FLEET_STATE/task-old.src") $(grep -c '^Last item (AJ 10-28): ship the thing.$' "$FLEET_STATE/task-old.src") $(bash "$here/brief.sh" --check "$FLEET_STATE/task-old.src" >/dev/null 2>&1; echo $?)" \
   "Do X.|Then Y.|1 0 1 0"
+# #262: a rule without a colon, or under a label the tail has since renamed, is
+# still an old rule. A throwaway repo holds an old tail and the current one, so
+# the history is there however shallow this checkout is.
+hist=$work/briefhist
+mkdir -p "$hist/fleet"
+cp "$here/brief.sh" "$here/lib.sh" "$hist/fleet/"
+git -C "$hist" init -q && git -C "$hist" config user.email t@t && git -C "$hist" config user.name t
+{ printf 'Resources: old wording.\n'; printf 'Keep AJ'"'"'s to-do list current: the old label.\n'; printf 'Engage full auto mode (memory x). Stop when done.\n'; } >"$hist/fleet/brief-tail.md"
+git -C "$hist" add fleet && git -C "$hist" commit -qm old
+{ printf 'Resources: new wording.\n'; printf 'Keep the fleet queue current: the new label.\n'; printf 'Engage full auto mode (memory x). Stop when done.\n'; } >"$hist/fleet/brief-tail.md"
+git -C "$hist" commit -qam new
+{ printf 'Do Z.\n\n'
+  printf 'Resources: old wording.\n'; printf 'Keep AJ'"'"'s to-do list current: the old label.\n'
+  printf 'Engage full auto mode (memory x). Stop when done.\n'; printf 'Also (AJ 10-28): a real added line.\n'
+  printf 'Engage full auto mode (memory x). Stop when done.\n'; printf 'Engage full auto mode (memory x). Stop when done.\n'
+} >"$FLEET_STATE/task-hist.src"
+bash "$hist/fleet/brief.sh" --refresh "$FLEET_STATE/task-hist.src" >/dev/null 2>&1
+check "#262: a colon-less rule is kept once, a renamed label's old line goes, an added line stays" \
+  "$(grep -c '^Engage full auto' "$FLEET_STATE/task-hist.src") $(grep -c "^Keep AJ's to-do" "$FLEET_STATE/task-hist.src") $(grep -c '^Keep the fleet queue current' "$FLEET_STATE/task-hist.src") $(grep -c '^Also (AJ 10-28): a real added line.$' "$FLEET_STATE/task-hist.src")" "1 0 1 1"
+check "#262: the refreshed brief is the body, the tail, then the added line" \
+  "$(tr '\n' '|' <"$FLEET_STATE/task-hist.src")" "Do Z.||Resources: new wording.|Keep the fleet queue current: the new label.|Engage full auto mode (memory x). Stop when done.|Also (AJ 10-28): a real added line.|"
+cp "$FLEET_STATE/task-hist.src" "$work/hist.once"
+bash "$hist/fleet/brief.sh" --refresh "$FLEET_STATE/task-hist.src" >/dev/null 2>&1
+check "#262: a second refresh leaves it byte for byte" "$(cmp -s "$work/hist.once" "$FLEET_STATE/task-hist.src" && echo same)" "same"
+printf 'Engage full auto mode (memory x). Stop when done.\n' >>"$FLEET_STATE/task-hist.src"
+check "#262: --check names a brief that has every rule but carries one twice" \
+  "$(bash "$hist/fleet/brief.sh" --check "$FLEET_STATE/task-hist.src" 2>/dev/null; echo "rc=$?")" $'stale: task-hist.src\nrc=1'
+bash "$hist/fleet/brief.sh" --refresh "$FLEET_STATE/task-hist.src" >/dev/null 2>&1
+check "#262: and --refresh drops the second copy" "$(cmp -s "$work/hist.once" "$FLEET_STATE/task-hist.src" && echo same)" "same"
+# #275 review: with the tail missing or empty, old rules still come from the
+# history, so a refresh would strip every rule: every mode refuses instead.
+printf 'Usage cap: stale.\n' >>"$FLEET_STATE/task-hist.src"
+cp "$FLEET_STATE/task-hist.src" "$work/hist.stale"
+: >"$hist/fleet/brief-tail.md"
+check "#275: an empty tail: --refresh refuses (2) and the brief is left as it was" \
+  "$(bash "$hist/fleet/brief.sh" --refresh "$FLEET_STATE/task-hist.src" >/dev/null 2>&1; echo $?) $(cmp -s "$work/hist.stale" "$FLEET_STATE/task-hist.src" && echo same)" "2 same"
+rm -f -- "$hist/fleet/brief-tail.md"
+check "#275: a missing tail: --refresh, --check and a new brief all refuse" \
+  "$(for a in --refresh --check; do bash "$hist/fleet/brief.sh" "$a" "$FLEET_STATE/task-hist.src" >/dev/null 2>&1; printf '%s ' $?; done; bash "$hist/fleet/brief.sh" demo2 "$work/body" >/dev/null 2>&1; echo $?) $(cmp -s "$work/hist.stale" "$FLEET_STATE/task-hist.src" && echo same) $([[ -e $FLEET_STATE/task-demo2.src ]] && echo written)" "2 2 2 same "
+# #275 review: an unreadable brief is never rebuilt as the tail alone.
+git -C "$hist" checkout -q -- fleet/brief-tail.md
+cp "$work/hist.stale" "$FLEET_STATE/task-hist.src"; chmod 000 "$FLEET_STATE/task-hist.src"
+if [[ -r $FLEET_STATE/task-hist.src ]]; then
+  check "#275: an unreadable brief (skipped: running as root)" "skip" "skip"
+else
+  check "#275: an unreadable brief is left as it was and the refresh exits 1" \
+    "$(bash "$hist/fleet/brief.sh" --refresh "$FLEET_STATE/task-hist.src" >/dev/null 2>&1; echo $?) $(chmod 600 "$FLEET_STATE/task-hist.src"; cmp -s "$work/hist.stale" "$FLEET_STATE/task-hist.src" && echo same)" "1 same"
+fi
+chmod 600 "$FLEET_STATE/task-hist.src"
+# Each guard alone: a stale, readable brief whose archive folder, or own folder, is read-only.
+printf 'Do Z.\n\nResources: old wording.\n' >"$work/hist.old"
+if [[ $(id -u) != 0 ]]; then
+  cp "$work/hist.old" "$FLEET_STATE/task-hist.src"
+  mkdir -p "$FLEET_STATE/archive/briefs"; chmod 555 "$FLEET_STATE/archive/briefs"
+  check "#275: no archive copy, no rewrite: the brief stays and the refresh exits 1" \
+    "$(bash "$hist/fleet/brief.sh" --refresh "$FLEET_STATE/task-hist.src" >/dev/null 2>&1; echo $?) $(cmp -s "$work/hist.old" "$FLEET_STATE/task-hist.src" && echo same) $(find "$FLEET_STATE" -maxdepth 1 -name 'task-hist.src.*' | wc -l)" "1 same 0"
+  printf 'old brief\n' >"$FLEET_STATE/task-demo3.src"
+  check "#275 review 4: a new brief over one it cannot archive is refused and the old one stays" \
+    "$(bash "$hist/fleet/brief.sh" demo3 "$work/body" >/dev/null 2>&1; echo $?) $(cat "$FLEET_STATE/task-demo3.src")" "1 old brief"
+  chmod 755 "$FLEET_STATE/archive/briefs"
+  rm -f -- "$FLEET_STATE/task-demo3.src"
+  # Its archive folder stays writable, so only the temp-file guard can stop it.
+  mkdir -p "$work/rostate/archive/briefs"; printf 'old brief\n' >"$work/rostate/task-demo4.src"; chmod 555 "$work/rostate"
+  check "#275 review 5: a new brief with no room for its temp file is refused, archives nothing, and the old one stays" \
+    "$(FLEET_STATE=$work/rostate bash "$hist/fleet/brief.sh" demo4 "$work/body" >/dev/null 2>&1; echo $?) $(cat "$work/rostate/task-demo4.src") $(find "$work/rostate/archive/briefs" -type f | wc -l)" "1 old brief 0"
+  chmod 755 "$work/rostate"
+  mkdir -p "$work/ro"; cp "$work/hist.old" "$work/ro/task-ro.src"; chmod 555 "$work/ro"
+  check "#275: no temp file beside it: the brief stays, nothing is archived, and the refresh exits 1" \
+    "$(n=$(find "$FLEET_STATE/archive/briefs" -name 'task-ro.src.*' | wc -l); bash "$hist/fleet/brief.sh" --refresh "$work/ro/task-ro.src" >/dev/null 2>&1; echo "$? $n $(find "$FLEET_STATE/archive/briefs" -name 'task-ro.src.*' | wc -l)") $(cmp -s "$work/hist.old" "$work/ro/task-ro.src" && echo same)" "1 0 0 same"
+  chmod 755 "$work/ro"
+fi
+rm -rf -- "${hist:?}" "${FLEET_STATE:?}/task-hist.src"
+check "the tail carries the friction-log rule (AJ 11-01)" "$(grep -c '^Friction log (AJ 11-01, every agent): read ~/.local/state/fleet-orchestrator/friction.md' "$here/brief-tail.md")" "1"
+check "the tail says performance wins over security above the floor (AJ 11-01)" "$(grep -c '^Quality (AJ 11-01): when performance and security trade off, performance wins, above the security floor.$' "$here/brief-tail.md")" "1"
 check "the tail carries the team-ceremony rule (AJ 10-29)" "$(grep -c '^Team ceremony in every repo' "$here/brief-tail.md")" "1"
 check "the tail keeps asks for AJ out of public issues and PRs (AJ 10-29)" "$(grep -c '^Asks for AJ stay private' "$here/brief-tail.md")" "1"
 check "#239: the tail has heavy commands take the lock with flock -o, so nothing they leave running keeps it" "$(grep -c 'flock -o /tmp/fleet-heavy.lock' "$here/brief-tail.md")" "1"
