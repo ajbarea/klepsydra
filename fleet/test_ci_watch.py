@@ -602,6 +602,43 @@ class Route(unittest.TestCase):
         ci_watch.poll("o", ["r"], Fake([run(5)]), known)
         self.assertEqual((self.alerts(), self.triaged), ([], []))
 
+    def test_a_watcher_killed_while_waking_loses_no_alert(self):
+        """A watcher killed as it formats a wake line must leave the line unread,
+        so the next watcher is woken by it (main red, 11-03: a $(ci_wake)
+        subshell outlived its killed watcher and marked the alert read)."""
+        state = TMP / "state"
+        (state / "ci").mkdir(parents=True, exist_ok=True)
+        (state / "ci" / "alerts.seen").write_text("0\n")
+        (state / "ci" / "alerts.jsonl").write_text(
+            '{"wake": true, "kind": "heph", "repo": "r", "branch": "main", "text": "red"}\n'
+        )
+        slow = TMP / "slowbin"
+        slow.mkdir(exist_ok=True)
+        real = shutil.which("jq")
+        (slow / "jq").write_text(
+            "#!/usr/bin/env bash\n"
+            'case "$*" in *ascii_upcase*) sleep 3 ;; esac\n'
+            f'exec {real} "$@"\n'
+        )
+        (slow / "jq").chmod(0o755)
+        env = os.environ | {"FLEET_SOCK": f"ci-kill-{os.getpid()}", "WATCH_TICK": "0.1"}
+        first = subprocess.Popen(
+            ["bash", str(HERE / "watch-panes.sh")],
+            env=env | {"PATH": f"{slow}:{env['PATH']}"},
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+        time.sleep(1.5)  # inside the slow format of the wake line
+        first.kill()
+        first.communicate()
+        time.sleep(3)  # anything it left behind has finished by now
+        self.assertEqual((state / "ci" / "alerts.seen").read_text().strip(), "0", "the line stays unread")
+        got = subprocess.run(
+            ["bash", str(HERE / "watch-panes.sh")], env=env, capture_output=True, text=True, timeout=30
+        ).stdout.strip()
+        self.assertEqual(got, "CI HEPH r main: red", "the next watcher is woken by it")
+
     def test_the_watcher_wakes_on_heph_lines_only_and_never_twice(self):
         state = TMP / "state"
         env = os.environ | {
