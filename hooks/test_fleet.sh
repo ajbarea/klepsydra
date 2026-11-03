@@ -13,8 +13,25 @@ stub="$work/stubbin"
 mkdir -p "$stub"
 # $work/tmux.mode: "fail" exits 1, "hang" sleeps past the hook's timeout; else it succeeds.
 # shellcheck disable=SC2016 # the stub script expands its own variables
-# capture-pane prints $work/screen. setsid only logs, so no test starts a real watcher.
-printf '#!/bin/sh\necho "$*" >>"%s/tmux.log"\ncase $(cat "%s/tmux.mode" 2>/dev/null) in fail) exit 1;; hang) exec sleep 30;; esac\ncase "$*" in *capture-pane*) cat "%s/screen" 2>/dev/null;; esac\n' "$work" "$work" "$work" >"$stub/tmux"
+# capture-pane prints $work/screen, or, while $work/screens lists any, the next
+# of them in turn (the last one stays): each line is a screen file and,
+# optionally, a script run before it is shown. setsid only logs, so no test
+# starts a real watcher.
+cat >"$stub/tmux" <<STUB
+#!/bin/sh
+echo "\$*" >>"$work/tmux.log"
+case \$(cat "$work/tmux.mode" 2>/dev/null) in fail) exit 1;; hang) exec sleep 30;; esac
+case "\$*" in *capture-pane*)
+  if [ -s "$work/screens" ]; then
+    set -- \$(head -n 1 "$work/screens")
+    [ "\$(wc -l <"$work/screens")" -gt 1 ] && sed -i 1d "$work/screens"
+    [ -n "\${2:-}" ] && sh "\$2"
+    cat "\$1"
+  else
+    cat "$work/screen" 2>/dev/null
+  fi;;
+esac
+STUB
 printf '#!/bin/sh\necho "$*" >>"%s/setsid.log"\n' "$work" >"$stub/setsid"
 chmod +x "$stub/tmux" "$stub/setsid"
 export PATH="$stub:$PATH"
@@ -2057,7 +2074,8 @@ out=$(KLEPSYDRA_DIR=""; queue_cmd show 2>&1); rc=$? # the sourced hook's: a run 
 check "queue: no data folder is an error" "$rc|$out" "1|klepsydra: no data folder (set KLEPSYDRA_DIR)"
 
 echo "#217: an answer no hook reports"
-A=21700000-0000-4000-8000-000000000217
+# Its own per run, so two suites at once never see each other's watcher.
+A=$(printf '21700000-0000-4000-8000-%012d' "$$")
 afile="$dir/fleet/$A.json"
 afield() { jq -c "$1" "$afile"; }
 askfire() { # fixture [filter] [VAR=value...]; in pane %7 of the fleet socket
@@ -2114,19 +2132,35 @@ ask_answered "$afile" 1792360001 1792360047
 check "an answer to an earlier ask changes nothing" "$(<"$afile")" "$before"
 ask_answered "$afile" 1792360040 1792360047
 check "the answer to this ask" "$(afield '[.state, .needs, .state_at]')" '["working",null,1792360047]'
+check "and its turn count stamped with the write, as the hook stamps it" "$(afield '.turns_at == .written_at')" "true"
 
-now=1792360050 askfire pre-tool-question.json
-cp "$fixtures/pane-idle-2.1.302.txt" "$work/screen"
-now=1792360051 watch_ask_run 5
+pscreen=$fixtures/pane-permission-2.1.302.txt iscreen=$fixtures/pane-idle-2.1.302.txt
+now=1792360048 askfire permission-request.json
+printf '%s\n' "$pscreen" "$iscreen" "$pscreen" >"$work/screens"
+now=1792360049 watch_ask_run 1
+check "one look without the dialog is not an answer" "$(afield '[.state, .reason]')" '["needs_you","approve Bash"]'
+printf 'jq -c ".state_at = 1792360099" "%s" >"%s.new" && mv -f "%s.new" "%s"\n' "$afile" "$afile" "$afile" "$afile" >"$work/new-ask.sh"
+printf '%s\n' "$pscreen $work/new-ask.sh" "$iscreen" >"$work/screens"
+now=1792360100 watch_ask_run 1
+check "a dialog seen for one ask is not seen for the next" "$(afield '[.state, .state_at]')" '["needs_you",1792360099]'
+rm -f "$work/screens"
+
+now=1792360110 askfire pre-tool-question.json
+printf '%s\n' "$pscreen" "$iscreen" >"$work/screens"
+now=1792360111 watch_ask_run 2
 check "a question is not a permission: the watcher leaves it" "$(afield '[.state, .reason]')" '["needs_you","question"]'
+rm -f "$work/screens"
 
 echo "#217: a subagent's ask ends with it"
-now=1792360060 askfire subagent-start.json '.agent_id = "agent-217"'
-now=1792360061 askfire permission-request.json '.agent_id = "agent-217"'
-now=1792360062 askfire subagent-stop.json '.agent_id = "agent-other"'
+now=1792360160 askfire subagent-start.json '.agent_id = "agent-217"'
+now=1792360161 askfire permission-request.json '.agent_id = "agent-217"'
+now=1792360162 askfire subagent-stop.json '.agent_id = "agent-other"'
 check "another subagent stopping leaves the ask" "$(afield '[.state, .needs.by]')" '["needs_you","agent-217"]'
-now=1792360063 askfire subagent-stop.json '.agent_id = "agent-217"'
+now=1792360163 askfire subagent-stop.json '.agent_id = "agent-217"'
 check "the asker stopping (denied, or done) ends its ask" "$(afield '[.state, .reason, .needs]')" '["working",null,null]'
+now=1792360170 askfire permission-request.json
+now=1792360171 askfire subagent-stop.json '.agent_id = null'
+check "a subagent stop naming no agent leaves the session's own ask" "$(afield '[.state, .needs.by]')" '["needs_you",""]'
 
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [[ $fail -eq 0 ]]

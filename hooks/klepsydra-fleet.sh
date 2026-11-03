@@ -1048,22 +1048,22 @@ watch_ask() { # sid
     elif (( seen )) && (( ++misses >= 2 )); then
       now=${KLEPSYDRA_NOW:-}
       [[ $now =~ ^[0-9]+$ ]] || printf -v now '%(%s)T' -1
-      ask_answered "$file" "$asked" "$now"
-      seen=0 misses=0
+      ask_answered "$file" "$asked" "$now" && seen=0 misses=0
     fi
     sleep "$ASK_TICK"
   done
   return 0
 }
 
-# The ask made at ASKED_AT, if the file still waits on it, is answered.
+# The ask made at ASKED_AT, if the file still waits on it, is answered. Fails
+# when the fleet lock stays busy, so the watcher tries again on its next look.
 ask_answered() { # file asked_at now
   local lock new
   { exec {lock}>>"$LOCK"; } 2>/dev/null || return 0
-  flock -w 5 "$lock" || return 0
+  flock -w 5 "$lock" || { exec {lock}>&-; return 1; }
   new=$(jq -c --argjson asked "$2" --argjson now "$3" "$STATE_DEFS"'
     select(.state == "needs_you" and .state_at == $asked) | answered as $t
-    | .state = $t.state | .reason = $t.reason | .needs = null | .state_at = $now | .written_at = $now' "$1" 2>/dev/null) || new=""
+    | .state = $t.state | .reason = $t.reason | .needs = null | .state_at = $now | .written_at = $now | .turns_at = $now' "$1" 2>/dev/null) || new=""
   [[ -n $new ]] && write_atomic "$1" "$new"
   { exec {lock}>&-; } 2>/dev/null
   return 0
