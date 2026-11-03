@@ -1,20 +1,21 @@
 #!/usr/bin/env bash
-# install.sh [--dry-run] [--hooks]: install the fleet from this checkout (with
+# install.sh [--dry-run] [--hooks] [--no-cutover]: install the fleet from this checkout (with
 # --hooks, only the copies in ~/.claude, which the gauge alone needs). Each script is
 # linked into the state folder (so a pull updates the fleet), the `fleet`
 # command into ~/.local/bin, the hooks, status line, launcher and cast copied
 # into ~/.claude (FLEET_HOOK_DIR), and the fleet's services into
 # ~/.config/systemd/user as enabled user units, which come back after a
 # restart. A copy a link replaces is kept in archive/fleet-scripts-<date>/.
-# Starts nothing: `fleet cutover` swaps the running services onto the units.
+# When the resume service is running, ends with `fleet cutover`, so the
+# services run the new scripts (--no-cutover leaves that to you).
 set -u
 FLEET_TARGET=fleet::install
 here=$(dirname "$(readlink -f "$0")")
 # shellcheck source=fleet/lib.sh
 . "$here/lib.sh"
-dry=0 force=0 hooks_only=0
+dry=0 force=0 hooks_only=0 cut=1
 for a in "$@"; do
-  case $a in --dry-run) dry=1 ;; --force) force=1 ;; --hooks) hooks_only=1 ;; esac
+  case $a in --dry-run) dry=1 ;; --force) force=1 ;; --hooks) hooks_only=1 ;; --no-cutover) cut=0 ;; esac
 done
 if (( !force )) && [[ $(git -C "$here" rev-parse --path-format=absolute --git-dir 2>/dev/null) != "$(git -C "$here" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" ]]; then
   err "this checkout is a git worktree; links into it break when it is removed. Install from the main checkout, or pass --force."
@@ -207,5 +208,20 @@ if (( ! dry )) && command -v "${FLEET_SYSTEMCTL:-systemctl}" >/dev/null; then
 fi
 (( dry )) || flog INFO "fleet installed" from="$here" state="$FLEET_STATE" archive="$archive"
 (( failed )) && exit 1
-(( dry )) || echo "installed from $here; run fleet cutover to start the services on it"
+(( dry )) && exit 0
+# A running service keeps the code it read at its start (#263): an install
+# onto a live fleet cuts over at once, so the new scripts are the ones running.
+sc=${FLEET_SYSTEMCTL:-systemctl}
+if (( cut )) && command -v "$sc" >/dev/null && "$sc" --user is-active --quiet fleet-resume-at-reset.service 2>/dev/null; then
+  flog INFO "install cuts the running fleet over to the new scripts" from="$here"
+  if bash "$here/cutover.sh"; then
+    echo "installed from $here and cut over: the services run the new scripts"
+  else
+    flog ERROR "install: the cut-over failed; the services may still run the old scripts" from="$here"
+    err "installed, but the cut-over failed: run fleet cutover and read its log"
+    exit 1
+  fi
+else
+  echo "installed from $here; run fleet cutover to start the services on it"
+fi
 exit 0

@@ -118,23 +118,49 @@ near() { grep -v '^[[:space:]]*$' <<<"$ABOVE" | tail -"${1:-6}"; }
 # interrupt") sits just above the input box.
 busy() { split_screen "$1"; near 4 | grep -Eq '… \(|esc to interrupt'; }
 
-LIMIT_RE='hit your (session|weekly|usage) limit|Usage limit reached'
+# Claude Code names the window in its message ("You've hit your 5-hour
+# limit", "... weekly limit", "... Fable limit", "... org's monthly spend
+# limit", earlier "session limit"), and renamed it once already (2.1.316,
+# #263): any name of up to three words matches. No {m,n}: mawk ignores it.
+W="[A-Za-z0-9'-]+ "
+LIMIT_RE="You've hit your ($W)?($W)?($W)?limit([^A-Za-z]|$)|Usage limit reached"
+unset W
 
 # The limit message nearest the input box: Claude Code's "hit your ... limit"
 # as the last thing the session printed, or the status line's "Usage limit
-# reached" banner below the box. Prints it; fails when there is none.
+# reached" banner below the box. A message followed by a prompt sent after it
+# (the resume service's continue, or AJ's line) is past, but not by a slash
+# command's echo: Claude Code sends /rate-limit-options itself at a limit, and
+# /usage or /login answer nothing. "hit your fast limit" is the /fast dialog's,
+# not a usage limit. Prints it; fails when there is none.
 limit_line() {
   split_screen "$1"
-  { near 6; printf '%s\n' "$BELOW"; } | grep -E "$LIMIT_RE" | tail -1 | grep .
+  { near 6 | awk -v re="$LIMIT_RE" '
+      /hit your fast limit/ { next }
+      $0 ~ re { l = $0; next }
+      /^❯ / && !/^❯ \// { l = "" }
+      END { if (l != "") print l }'
+    printf '%s\n' "$BELOW" | grep -E "$LIMIT_RE"; } | tail -1 | grep .
+}
+
+# Whether EPOCH reads as HH:MM on the clock in ZONE (empty: local time). GNU
+# date refuses a time a DST change skips; uutils date (Ubuntu 26.04) moves it
+# forward by the DST shift. The round trip tells them apart on both.
+reads_as() { # EPOCH ZONE HH:MM
+  local got
+  if [[ -n $2 ]]; then got=$(TZ=$2 date -d "@$1" +%H:%M 2>/dev/null); else got=$(date -d "@$1" +%H:%M 2>/dev/null); fi
+  [[ -n $got && $got == "$3" ]]
 }
 
 # The epoch at which the reset in TEXT falls, from NOW: "resets 1:10pm",
 # "resets 4:10am", "resets Nov 2, 1pm" or "resets Nov 2, 1:30pm", each with an
-# optional "(Area/City)" zone (else local time). A time-only reset more than 6 h
-# past is tomorrow's; a dated one more than 180 days past is next year's.
-# Fails when TEXT names none.
-reset_epoch() { # TEXT NOW
-  local text=$1 now=$2 m
+# optional "(Area/City)" zone (else local time). A time-only reset more than
+# ROLL_S (default 6 h) past is tomorrow's, at the same wall-clock time across a
+# DST change (Claude Code dates a reset only when it is over 24 h away); a dated
+# one more than 180 days past is next year's, and more than 180 days ahead last year's.
+# Fails when TEXT names none, or a time that does not exist that day.
+reset_epoch() { # TEXT NOW [ROLL_S]
+  local text=$1 now=$2 roll=${3:-21600} m
   m=$(grep -oE 'resets ([A-Z][a-z]{2} [0-9]{1,2}, )?[0-9]{1,2}(:[0-9]{2})? ?[ap]m( \([A-Za-z0-9_+/-]+\))?' <<<"$text" | tail -1)
   local re='^resets (([A-Z][a-z]{2}) ([0-9]{1,2}), )?([0-9]{1,2})(:([0-9]{2}))? ?([ap]m)( \(([A-Za-z0-9_+/-]+)\))?$'
   [[ $m =~ $re ]] || return 1
@@ -142,6 +168,10 @@ reset_epoch() { # TEXT NOW
   local ampm=${BASH_REMATCH[7]} zone=${BASH_REMATCH[9]} tz="" year date at
   [[ -n $zone && -e /usr/share/zoneinfo/$zone ]] || zone=""
   [[ -n $zone ]] && tz="TZ=\"$zone\" "
+  local h24 want
+  h24=$((10#$hour % 12))
+  [[ $ampm == pm ]] && h24=$((h24 + 12))
+  printf -v want '%02d:%s' "$h24" "$min"
   # The day and year NOW falls on where the reset is said, so the parse never reads the clock.
   if [[ -n $zone ]]; then
     year=$(TZ=$zone date -d "@$now" +%Y) date=$(TZ=$zone date -d "@$now" +%F)
@@ -150,10 +180,18 @@ reset_epoch() { # TEXT NOW
   fi
   if [[ -n $mon ]]; then
     at=$(date -d "$tz$mon $day $year $hour:$min$ampm" +%s 2>/dev/null) || return 1
-    (( now - at > 180 * 86400 )) && at=$(date -d "$tz$mon $day $((year + 1)) $hour:$min$ampm" +%s)
+    if (( now - at > 180 * 86400 )); then at=$(date -d "$tz$mon $day $((year + 1)) $hour:$min$ampm" +%s 2>/dev/null) || return 1; fi
+    if (( at - now > 180 * 86400 )); then at=$(date -d "$tz$mon $day $((year - 1)) $hour:$min$ampm" +%s 2>/dev/null) || return 1; fi
+    reads_as "$at" "$zone" "$want" || return 1
   else
     at=$(date -d "$tz$date $hour:$min$ampm" +%s 2>/dev/null) || return 1
-    (( now - at > 21600 )) && at=$((at + 86400))
+    reads_as "$at" "$zone" "$want" || return 1
+    if (( now - at > roll )); then
+      date=$(date -d "$date 12:00 tomorrow" +%F) || return 1
+      # A wall-clock time tomorrow's DST change skips names no instant: fail.
+      at=$(date -d "$tz$date $hour:$min$ampm" +%s 2>/dev/null) || return 1
+      reads_as "$at" "$zone" "$want" || return 1
+    fi
   fi
   printf '%s\n' "$at"
 }

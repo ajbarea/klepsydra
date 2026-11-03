@@ -14,6 +14,13 @@ mkdir -p "$FLEET_STATE" "$KLEPSYDRA_DIR/accounts/a" "$KLEPSYDRA_DIR/accounts/b"
 # Two config folders, logged out until a case logs one in (accounts a and b).
 export FLEET_DEFAULT_CONFIG="$work/cfg-a" FLEET_DEFAULT_JSON="$work/cfg-a.json" FLEET_ACCOUNTS="$work/cfg-a $work/cfg-b"
 unset CLAUDE_CONFIG_DIR
+# Never AJ's user manager (#265 review): a case that wants systemctl passes its
+# own stub; a bare `systemctl` lands on a guard that records the call.
+export FLEET_SYSTEMCTL="$work/no-systemctl"
+mkdir -p "$work/guard"
+printf '#!/usr/bin/env bash\necho "$*" >>%q\nexit 1\n' "$work/guard.calls" >"$work/guard/systemctl"
+chmod +x "$work/guard/systemctl"
+export PATH="$work/guard:$PATH"
 login() { # a|b
   local d=$work/cfg-$1 j=$work/cfg-$1/.claude.json
   [[ $1 == a ]] && j=$FLEET_DEFAULT_JSON
@@ -40,6 +47,12 @@ check() {
     pass=$((pass + 1)); printf '  ok   %s\n' "$name"
   else
     fail=$((fail + 1)); printf '  FAIL %s\n       want: %s\n       got:  %s\n' "$name" "$want" "$got"
+    # On GitHub Actions, an annotation names the failing case on the run's page.
+    if [[ -n ${GITHUB_ACTIONS:-} ]]; then
+      local msg=${name//%/%25}
+      msg=${msg//$'\r'/%0D}
+      printf '::error file=fleet/test_fleet.sh,title=fleet test failed::%s\n' "${msg//$'\n'/%0A}"
+    fi
   fi
 }
 has() { grep -qF -- "$2" <<<"$1" && echo yes || echo no; } # TEXT NEEDLE
@@ -83,6 +96,24 @@ check "another zone (London is GMT again on Nov 2; New York is EST)" "$(at 'rese
 now=$(TZ=America/New_York date -d '2026-12-30 10:00' +%s)
 check "a date past the new year" "$(at 'resets Jan 3, 9am (America/New_York)')" "2027-01-03 09:00"
 check "no reset named" "$(reset_epoch 'nothing here' "$now" || echo none)" "none"
+now=$(TZ=America/New_York date -d '2027-01-01 00:30' +%s)
+check "#265 review: a dated reset just before the new year, read after it, is last year's" "$(at 'resets Dec 31, 11pm (America/New_York)')" "2026-12-31 23:00"
+now=$(TZ=America/New_York date -d '2026-10-31 22:00' +%s)
+check "#265 review: tomorrow across the clock change keeps the wall-clock time" "$(TZ=America/New_York at 'resets 2am')" "2026-11-01 02:00"
+now=$(TZ=America/New_York date -d '2026-11-03 01:00' +%s)
+check "#265 review 2: a time-only reset up to a day ahead stays ahead (a weekly one is dated only past 24 h)" "$(TZ=America/New_York at 'resets 11pm')" "2026-11-03 23:00"
+now=$(TZ=America/New_York date -d '2026-03-07 21:00' +%s)
+check "#265 review 3: tomorrow's 2:30am, which the spring-forward skips, fails rather than reading as now" \
+  "$(TZ=America/New_York reset_epoch 'resets 2:30am' "$now"; echo "rc=$?")" "rc=1"
+check "#265 review 4: a dated reset at a skipped time fails too" \
+  "$(TZ=America/New_York reset_epoch 'resets Mar 8, 2:30am (America/New_York)' "$now"; echo "rc=$?")" "rc=1"
+now=$(TZ=America/New_York date -d '2026-03-08 00:30' +%s)
+check "#265 review 4: and so does today's, read before the clock change" \
+  "$(TZ=America/New_York reset_epoch 'resets 2am' "$now"; echo "rc=$?")" "rc=1"
+now=$(TZ=America/New_York date -d '2026-11-02 18:50' +%s)
+check "#265 review: with a 19 h roll (the doctor's), a reset 6 h past is today's" \
+  "$(TZ=America/New_York date -d "@$(reset_epoch 'resets 12:40pm' "$now" 68400)" '+%F %H:%M')" "2026-11-02 12:40"
+now=$(TZ=America/New_York date -d '2026-12-30 10:00' +%s)
 check "the last reset on screen wins" "$(TZ=America/New_York date -d "@$(reset_epoch $'resets 1pm\nresets 3pm' "$now")" +%H:%M)" "15:00"
 
 echo "reading the screen"
@@ -104,6 +135,26 @@ state read '{"above":["  ⎿  You'"'"'ve hit your session limit · resets 1:10pm
 check "an old limit far above the prompt is not one" "$(limit_line "$(screen "$p")" || echo none)" "none"
 state read '{"above":["x"],"below":["  ⚠ Usage limit reached · limit resets 4:10am"]}'
 check "the status line banner" "$(limit_line "$(screen "$p")")" "  ⚠ Usage limit reached · limit resets 4:10am"
+# Claude Code 2.1.316 names the window (#263): each name in its label map, and near misses.
+for w in "5-hour limit" "weekly limit" "Opus limit" "Sonnet limit" "Fable limit" "usage credit limit" "limit"; do
+  state read "{\"above\":[\"  ⎿  You've hit your $w · resets 12:40pm\",\"\",\"\"]}"
+  check "#263: \"You've hit your $w\" is a limit" "$(limit_line "$(screen "$p")" | grep -c "hit your $w")" "1"
+done
+state read '{"above":["  ⎿  You'"'"'ve hit your 5-hour limit · resets 12:40pm","❯ The usage limit has reset. Please continue.","● Queue is empty"]}'
+check "#265 review: a limit followed by a prompt sent after it is past" "$(limit_line "$(screen "$p")" || echo none)" "none"
+state read '{"above":["❯ a note","  ⎿  You'"'"'ve hit your 5-hour limit · resets 12:40pm"]}'
+check "#265 review: a limit that answered the last prompt is current" "$(limit_line "$(screen "$p")" | grep -c '5-hour limit')" "1"
+state read '{"above":["  ⎿  You'"'"'ve hit your session limit · resets 1:10pm (America/New_York)","❯ /rate-limit-options","  ⎿  Claude Code will continue automatically at 1:10pm"]}'
+check "#265 review 2: Claude Code's own /rate-limit-options after the limit leaves it current" "$(limit_line "$(screen "$p")" | grep -c 'session limit')" "1"
+state read '{"above":["  ⎿  You'"'"'ve hit your fast limit · resets in 3m","",""]}'
+check "#265 review: the /fast dialog's limit is no usage limit" "$(limit_line "$(screen "$p")" || echo none)" "none"
+state read '{"above":["  ⎿  You'"'"'ve hit your org'"'"'s monthly spend limit · your 5-hour limit resets 1pm","",""]}'
+check "#265 review: a three-word name with an apostrophe is a limit" "$(limit_line "$(screen "$p")" | grep -c 'spend limit')" "1"
+check "#265 review: LIMIT_RE has no {m,n} interval (mawk ignores one)" "$(grep -c '[{][0-9]' <<<"$LIMIT_RE")" "0"
+for w in "I think you hit your stride on the limits" "You've hit your limits page" "Then you've hit your weekly limits"; do
+  state read "{\"above\":[\"$w\",\"\",\"\"]}"
+  check "#263: \"$w\" is no limit" "$(limit_line "$(screen "$p")" || echo none)" "none"
+done
 state read '{"above":["x"],"menu":"limit"}'
 check "a menu hides the input box" "$(has_input_box "$(screen "$p")" && echo box || echo none)" "none"
 t kill-window -t "$p"
@@ -120,6 +171,19 @@ check "nothing is typed before the reset" "$(events lim)" ""
 resume "$(( noon + 3600 + 600 + 130 ))"
 check "after the reset, the continue message goes in and starts a turn" "$(has "$(events lim)" "SUBMIT The usage limit has reset.")" "yes"
 check "logged as resumed, with the turn started" "$(jq -r 'select(.message == "resumed with the continue message") | .started' "$FLEET_LOG")" "yes"
+t kill-window -t "$p"
+: >"$FLEET_LOG"
+LIMIT5='  ⎿  You'"'"'ve hit your 5-hour limit · resets 1:10pm (America/New_York)'
+p=$(pane lim5 "{\"above\":[\"work\",\"$LIMIT5\"],\"on_submit\":\"busy\"}"); settle
+resume "$noon"
+check "#263: the 2.1.316 wording is seen as a limit, with its reset" \
+  "$(jq -r 'select(.message == "limit seen") | [.pane, .resets] | join(" ")' "$FLEET_LOG")" "$p Wed 2026-10-28 13:10"
+check "#263: each pass says what it saw, in resume.beat for the doctor" "$(sed 's/ at=.*//' "$FLEET_STATE/resume.beat")" "panes=2 limited=1 limited_panes=$p"
+check "#263: and logs it when it changes" "$(jq -r 'select(.message == "pass") | [.limited_count, .limited] | join(" ")' "$FLEET_LOG" | tail -1)" "1 $p"
+resume "$noon"
+check "#263: an unchanged pass is not logged again" "$(jq -c 'select(.message == "pass")' "$FLEET_LOG" | wc -l)" "1"
+resume "$(( noon + 3600 + 600 + 130 ))"
+check "#263: and it is resumed after the reset" "$(has "$(events lim5)" "SUBMIT The usage limit has reset.")" "yes"
 t kill-window -t "$p"
 
 : >"$FLEET_LOG"
@@ -667,12 +731,35 @@ for c in "${HOOK_COPIES[@]}"; do mkdir -p "$(dirname "$FLEET_HOOK_DIR/${c#* }")"
 touch "$work/active" "$FLEET_STATE/resume.beat"
 session_file o1 "$o" https://claude.ai/code/session_01O
 out=$(DOC_UP=http DOC_SERVE="https://desk.tail1.ts.net (tailnet only)" doctor); code=$?
-check "all well but the watcher: a shell that names the script is not one" "$(grep -c '^ok ' <<<"$out") $(grep '^FAIL' <<<"$out" | cut -d: -f1)" "12 FAIL pane watcher"
+check "all well but the watcher: a shell that names the script is not one" "$(grep -c '^ok ' <<<"$out") $(grep '^FAIL' <<<"$out" | cut -d: -f1)" "13 FAIL pane watcher"
 check "the default account is logged in; the second, not yet, is a warning" \
   "$(grep '^ok   account' <<<"$out" | cut -d: -f1) | $(grep '^warn account' <<<"$out" | cut -d: -f1)" "ok   account $work/cfg-a | warn account $work/cfg-b"
 check "with a watcher running, every check is ok and the exit is 0" \
-  "$(DOC_WATCH='%2 %5' DOC_UP=http DOC_SERVE=on doctor | grep -c '^ok '; echo "rc=${PIPESTATUS[0]}")" $'13\nrc=0'
+  "$(DOC_WATCH='%2 %5' DOC_UP=http DOC_SERVE=on doctor | grep -c '^ok '; echo "rc=${PIPESTATUS[0]}")" $'14\nrc=0'
 check "the watcher's panes are named" "$(DOC_WATCH='%2 %5' doctor | grep '^ok   pane watcher')" "ok   pane watcher: watching %2 %5"
+state wpane '{"above":["  ⎿  You'"'"'ve hit your 5-hour limit · resets 11:30am (America/New_York)","",""]}'
+check "#263: a pane still at its limit well past the reset fails, named with its reset" \
+  "$(FLEET_NOW=$noon doctor | grep '^FAIL limits')" "FAIL limits: still at a limit past its reset: $w (the resume service missed it)"
+check "#263: one whose reset is near is not" "$(FLEET_NOW=$((noon - 2400)) doctor | grep -c '^ok   limits')" "1"
+check "#265 review: still failing 7 h past the reset (time-only resets once rolled to tomorrow at 6 h)" \
+  "$(FLEET_NOW=$((noon + 25200)) doctor | grep -c '^FAIL limits')" "1"
+state wpane '{"above":["  ⎿  You'"'"'ve hit your 5-hour limit · resets 11:30am (America/New_York)","❯ The usage limit has reset. Please continue.","● Queue is empty"]}'
+check "#265 review: a limit the resume service answered is not missed" "$(FLEET_NOW=$noon doctor | grep -c '^ok   limits')" "1"
+state wpane '{"above":["  ⎿  You'"'"'ve hit your weekly limit · resets 8pm (America/New_York)","",""]}'
+check "#265 review 2: a time-only weekly reset 10 h ahead is not read as yesterday's, so no false FAIL" "$(FLEET_NOW=$((noon - 7200)) doctor | grep -c '^ok   limits')" "1"
+state wpane '{"above":["  ⎿  You'"'"'ve hit your 5-hour limit · resets 11pm (America/New_York)","",""]}'
+check "#265 review 2: a 5-hour reset just before midnight, still shown after it, fails" "$(FLEET_NOW=$((noon + 46800)) doctor | grep -c '^FAIL limits')" "1"
+state wpane '{"above":["  ⎿  Limit hit for this window · resets 11:30am","",""]}'
+check "#263: a reset beside a limit wording the fleet does not know is a warning" \
+  "$(doctor | grep '^warn limits')" "warn limits: a reset time shows beside a limit message the fleet does not recognise: $w (LIMIT_RE in fleet/lib.sh)"
+for notice in "You've used 90% of your 5-hour limit · resets 3pm" "Approaching weekly limit · resets Nov 9, 1pm" \
+  "Now using usage credits for Opus · Your Opus limit resets 3pm" "You've hit your fast limit · resets in 3m"; do
+  state wpane "{\"above\":[\"  ⎿  $notice\",\"\",\"\"]}"
+  check "#265 review 3: not a stop, so no unknown-wording warning: $notice" "$(doctor | grep -c '^ok   limits')" "1"
+done
+state wpane '{"above":["idle"]}'
+printf 'panes=3 limited=1 limited_panes=%%9 at=5\n' >"$FLEET_STATE/resume.beat"
+check "#263: the resume loop line says what its last pass saw" "$(doctor | grep '^ok   resume loop' | sed 's/.*: //')" "panes=3 limited=1 limited_panes=%9"
 printf '# 10-29 copy\n' >>"$FLEET_HOOK_DIR/klepsydra-fleet.sh"
 check "#244: a hook copy older than the checkout fails, and only it is named" \
   "$(doctor | grep '^FAIL installed copies')" "FAIL installed copies: make install-fleet: differ from $(tilde "$root"): klepsydra-fleet.sh"
@@ -728,7 +815,7 @@ inst=$work/inst
 mkdir -p "$inst/state" "$inst/claude"
 printf 'old copy\n' >"$inst/state/launch.sh"
 printf 'old hook\n' >"$inst/claude/klepsydra-fleet.sh"
-FLEET_STATE="$inst/state" FLEET_UNITS="$inst/units" FLEET_BIN="$inst/bin" FLEET_HOOK_DIR="$inst/claude" PATH="$work/nosystemctl:/usr/bin:/bin" \
+FLEET_STATE="$inst/state" FLEET_UNITS="$inst/units" FLEET_BIN="$inst/bin" FLEET_HOOK_DIR="$inst/claude" \
   bash "$here/install.sh" --force >/dev/null 2>&1
 check "#244: the hooks, status line, launcher, tmux conf, wrap-up and cast are copied in, each matching the checkout" \
   "$(for c in "${HOOK_COPIES[@]}"; do cmp -s "${here%/fleet}/${c%% *}" "$inst/claude/${c#* }" && [[ ! -L $inst/claude/${c#* } ]] && echo same; done | wc -l)" "${#HOOK_COPIES[@]}"
@@ -746,7 +833,7 @@ check "#244 review 2: a copy cut short leaves the old one whole, and the install
   "1 the old hook 0 1"
 chmod a-w "$inst/claude"
 check "#244 review 2: a full install with a copy it cannot write fails too" \
-  "$(FLEET_STATE="$inst/state" FLEET_UNITS="$inst/units" FLEET_BIN="$inst/bin" FLEET_HOOK_DIR="$inst/claude" PATH="$work/nosystemctl:/usr/bin:/bin" bash "$here/install.sh" --force >/dev/null 2>&1; echo $?) $(cat "$inst/claude/klepsydra-fleet.sh")" "1 the old hook"
+  "$(FLEET_STATE="$inst/state" FLEET_UNITS="$inst/units" FLEET_BIN="$inst/bin" FLEET_HOOK_DIR="$inst/claude" bash "$here/install.sh" --force >/dev/null 2>&1; echo $?) $(cat "$inst/claude/klepsydra-fleet.sh")" "1 the old hook"
 chmod u+w "$inst/claude"; rm -f "$inst/claude/klepsydra-tmux.conf"; mkdir "$inst/claude/klepsydra-tmux.conf"
 check "#244 review: a folder where a copy goes is left alone, said so, and the install fails" \
   "$(FLEET_LOG="$work/instlog/dir.log" hinst) $(find "$inst/claude/klepsydra-tmux.conf" -mindepth 1 | wc -l) $(grep -c "is not a file" "$work/instlog/dir.log")" "1 0 1"
@@ -768,6 +855,24 @@ check "#208: the doctor timer runs every 5 min into the data folder, and a faili
 check "#208 review 1: and what it prints stays out of the journal" "$(grep -c '^StandardOutput=null$' "$inst/units/fleet-doctor.service")" "1"
 FLEET_STATE="$inst/s2" FLEET_UNITS="$inst/u2" FLEET_BIN="$inst/b2" FLEET_HOOK_DIR="$inst/c2" bash "$here/install.sh" --dry-run --force >"$work/dry" 2>/dev/null
 check "a dry run says what it would do and changes nothing" "$(grep -c '^would' "$work/dry" | sed 's/^[1-9][0-9]*$/some/') $(find "$inst" -mindepth 1 -maxdepth 1 -printf '%f\n' | sort | tr '\n' ' ')" "some bin claude state units "
+cat >"$work/sc-live" <<'EOF'
+#!/usr/bin/env bash
+# systemctl with the resume service running: logs each call.
+printf '%s\n' "$*" >>"$SC_CALLS"
+[[ $* == *"is-active --quiet fleet-resume-at-reset.service"* ]] && exit 0
+[[ $* == *"show -p Transient"* ]] && { echo no; exit 0; }
+exit 0
+EOF
+chmod +x "$work/sc-live"
+inst2() { FLEET_STATE="$inst/state" FLEET_UNITS="$inst/units" FLEET_BIN="$inst/bin" FLEET_HOOK_DIR="$inst/claude" FLEET_SYSTEMCTL="$work/sc-live" SC_CALLS="$work/sc.calls" \
+  FLEET_LOG="$work/instlog/cut.log" bash "$here/install.sh" --force "$@" 2>/dev/null; echo "rc=$?"; }
+: >"$work/sc.calls"
+out=$(inst2)
+check "#263: an install onto a running fleet cuts over, so the new scripts run" \
+  "$(grep -c 'enable --now fleet-resume-at-reset.service' "$work/sc.calls") $(grep -c 'install cuts the running fleet over' "$work/instlog/cut.log")" "1 1"
+check "#263: and a cut-over that cannot confirm the service's start fails the install, saying so" "$(tail -1 <<<"$out")" "rc=1"
+: >"$work/sc.calls"
+check "#263: --no-cutover installs only" "$(inst2 --no-cutover | tail -1) $(grep -c 'enable --now' "$work/sc.calls")" "rc=0 0"
 
 repo=$work/repo
 git init -q "$repo" && cp -r "$here" "$repo/fleet"
@@ -1595,6 +1700,11 @@ check "review 3: not the service's own continue message" \
   "[$(answered_by_limit "$(st "[\"⏺ ok\",\"❯ The usage limit has reset. Continue from where you stopped\",\"$LIMIT\"]")")]" "[]"
 check "review 3: not a brief that hit the limit; a paste comes back as its placeholder, so the pane waits" \
   "[$(answered_by_limit "$(st "[\"❯ Fresh start: a previous agent with the brief below\",\"$LIMIT\"]")")][$(answered_by_limit "$(st "[\"❯ [Pasted text #1 +40 lines]\",\"$LIMIT\"]")")]" "[][[Pasted text #1 +40 lines]]"
+if command -v mawk >/dev/null; then
+  mkdir -p "$work/mawk"; ln -sf "$(command -v mawk)" "$work/mawk/awk"
+  check "#265 review: under mawk too, the line the 5-hour limit answered" \
+    "$(PATH="$work/mawk:$PATH" answered_by_limit "$(st '["❯ please fix the bug","  ⎿  You'"'"'ve hit your 5-hour limit · resets 12:40pm"]')")" "please fix the bug"
+fi
 t kill-window -t "$abl"
 
 : >"$FLEET_LOG"
@@ -2157,6 +2267,9 @@ check "every line is one JSON object with ts, level, target and message" \
 FLEET_LOG_MAX=200 FLEET_TARGET=fleet::test bash -c ". '$here/lib.sh'; for i in 1 2 3 4 5 6 7 8; do flog INFO line\$i; done"
 check "past its cap the log is renamed, and only the newest four are kept" \
   "$(find "${FLEET_LOG%/*}" -name 'fleet_*.log' | wc -l)" "4"
+
+echo "the suite's own isolation"
+check "#265 review: no case reached a systemctl it did not stub" "$(cat "$work/guard.calls" 2>/dev/null)" ""
 
 echo
 echo "$pass passed, $fail failed"
