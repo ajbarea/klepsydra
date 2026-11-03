@@ -317,10 +317,15 @@ fi
 # (after a hard shutdown, all of them) is a FAIL for `fleet recover`; one that
 # finished cleanly is a warn until its row is pruned.
 gone="" done_=""
-while IFS=$'\t' read -r p name _ sid _; do
+while IFS= read -r row; do
+  IFS=$'\t' read -r p name _ sid _ <<<"$row"
   [[ -n $p && -n $name ]] || continue
   case $(row_state "$p" "$sid") in
-    finished) done_+="$name " ;;
+    finished)
+      done_+="$name "
+      # Recorded on first sight, so the finish outlives the session's file.
+      with_registry record_finished "$row" || flog WARN "doctor: could not record a finished row" name="$name"
+      ;;
     gone) gone+="$name " ;;
   esac
 done < <(cat "$REGISTRY" 2>/dev/null)

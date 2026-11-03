@@ -814,47 +814,82 @@ session_alive() { # SID
   [[ $(proc_start "$pid") == "$start" ]]
 }
 
-# Whether session SID ended cleanly: Claude Code's SessionEnd named a final
-# end, the user's /exit or ctrl-d at the prompt (prompt_input_exit) or a
+# Whether session SID ended cleanly: finished.tsv holds it (`fleet done`, or a
+# finish the doctor or recover recorded on first sight, so it outlives the
+# fleet file, which klepsydra keeps a day), or Claude Code's SessionEnd named a
+# final end: the user's /exit or ctrl-d at the prompt (prompt_input_exit) or a
 # logout (code.claude.com/docs/en/hooks, SessionEnd). The fleet hook also marks
 # ended a session it finds dead ("gone", on every SessionStart after a hard
 # shutdown), and SessionEnd says "clear" and "resume" for a session that goes
 # on under a new id; those, "other" and any reason unknown here are no finish.
-# klepsydra keeps an ended file a day, so a row older than that is not known to
-# have finished.
 session_finished() { # SID
   local f
   [[ $1 =~ ^[0-9a-f-]{36}$ ]] || return 1
+  awk -F'\t' -v s="$1" '$4 == s { f = 1 } END { exit !f }' "${FLEET_FINISHED:-$FLEET_STATE/finished.tsv}" 2>/dev/null && return 0
   f=$KLEPSYDRA_DIR/fleet/$1.json
   [[ -f $f && ! -L $f ]] || return 1
   jq -e '(.ended | type) == "object" and ((.ended.reason // "") | IN("prompt_input_exit", "logout"))' "$f" >/dev/null 2>&1
 }
 
-# The live session in PANE that a row whose own session SID is gone may count
-# as its successor (a /clear the row never recorded): the row's session (when
-# it names one) started on the running tmux server (a pane id from an earlier server means nothing
-# now), and the live one is neither the orchestrator's nor another row's. The
-# same guards as recover's repair (#261 review).
-row_successor() { # PANE SID
-  local now osid=""
-  # A row with no session id (written by hand) has nothing to date by.
-  [[ -z $2 ]] || on_this_server "$2" || return 1
-  fleet_panes | grep -qx -- "$1" || return 1
-  now=$(live_session "$1") || return 1
-  { read -r osid <"$FLEET_STATE/orchestrator.session"; } 2>/dev/null
-  [[ $now != "$osid" ]] || return 1
-  awk -F'\t' -v s="$now" -v own="$2" '$4 == s && s != own { f = 1 } END { exit f }' "$REGISTRY" 2>/dev/null || return 1
-  printf '%s' "$now"
+# Record a finished row in finished.tsv (the registry's columns, then the
+# time), once: what `fleet done` writes, so the finish holds after the fleet
+# file is gone. The row stays in panes.tsv until `fleet doctor --prune`.
+record_finished() { # ROW
+  local fin=${FLEET_FINISHED:-$FLEET_STATE/finished.tsv} sid
+  sid=$(cut -f4 <<<"$1")
+  [[ -n $sid ]] || return 0
+  awk -F'\t' -v s="$sid" '$4 == s { f = 1 } END { exit !f }' "$fin" 2>/dev/null && return 0
+  printf '%s\t%s\n' "$1" "$(date -Is)" >>"$fin"
 }
 
-# A registry row's state (#220): "running" (its session, live in its pane, or
-# its successor after a /clear), "finished" (its session ended cleanly), or "gone" (anything
-# else: a hard shutdown, a killed pane, an end that was no finish).
+# Whether `fleet unpause` put the row with session SID back: it is to be
+# launched again, whatever its old session's end said.
+unpaused() { # SID
+  [[ -n $1 ]] && awk -F'\t' -v s="$1" '$2 == s { f = 1 } END { exit !f }' "${FLEET_UNPAUSED:-$FLEET_STATE/unpaused.tsv}" 2>/dev/null
+}
+
+# The live fleet sessions, one "PANE<tab>SID<tab>ON_FLEET" each: alive by
+# session_alive (this boot, the same process), ON_FLEET 1 when its socket is
+# the fleet's (or not recorded).
+live_fleet_sessions() {
+  local f id row
+  for f in "$KLEPSYDRA_DIR"/fleet/*.json; do
+    [[ -f $f && ! -L $f ]] || continue
+    id=$(basename "$f" .json)
+    row=$(jq -r --arg s "/$FLEET_SOCK" 'select(.ended == null and .tmux.pane != null)
+      | [.tmux.pane, (if .tmux.socket == null or (.tmux.socket | endswith($s)) then 1 else 0 end)] | @tsv' "$f" 2>/dev/null) || continue
+    [[ -n $row ]] && session_alive "$id" && printf '%s\t%s\t%s\n' "${row%%$'\t'*}" "$id" "${row##*$'\t'}"
+  done
+}
+
+# The one live fleet session in PANE that is neither OSID nor in AGENTS (the
+# registry's session ids, one per line), from LIVE (live_fleet_sessions): what
+# a row whose own session is gone may count as its successor (a /clear the row
+# never recorded). recover's repair and row_state both ask this.
+successor_in() { # PANE OSID LIVE AGENTS
+  awk -F'\t' -v p="$1" -v h="$2" 'NR == FNR { if ($0 != "") a[$0] = 1; next } $1 == p && $3 == 1 && $2 != h && !($2 in a) { print $2 }' \
+    <(printf '%s\n' "$4") <(printf '%s\n' "$3") | awk 'END { if (NR == 1) print prev } { prev = $0 }'
+}
+
+# The successor of the row in PANE with session SID: only for a row that names
+# a session that started on the running tmux server (as recover's
+# this_boot_row: a pane id from an earlier server, or a row with no session,
+# means nothing).
+row_successor() { # PANE SID
+  local osid=""
+  [[ -n $2 ]] && on_this_server "$2" || return 1
+  { read -r osid <"$FLEET_STATE/orchestrator.session"; } 2>/dev/null
+  successor_in "$1" "$osid" "$(live_fleet_sessions)" "$(cut -f4 "$REGISTRY" 2>/dev/null | grep .)" | grep .
+}
+
+# A registry row's state (#220): "running" (its session, or its successor
+# after a /clear), "finished" (its session ended cleanly, and no unpause put
+# it back), or "gone" (anything else: a hard shutdown, a killed pane, an end
+# that was no finish, an unpaused agent waiting for fleet recover).
 row_state() { # PANE SID
-  if session_alive "$2" || { [[ -n $2 ]] && fleet_panes | grep -qx -- "$1" && [[ $(live_session "$1") == "$2" ]]; } ||
-    row_successor "$1" "$2" >/dev/null; then
+  if session_alive "$2" || row_successor "$1" "$2" >/dev/null; then
     echo running
-  elif session_finished "$2"; then
+  elif ! unpaused "$2" && session_finished "$2"; then
     echo finished
   else
     echo gone

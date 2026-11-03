@@ -713,14 +713,18 @@ PS
 chmod +x "$work/bin/"*
 rm -f "$FLEET_STATE/resume.beat"
 login a
+# The section's sessions are alive by recover's test (this boot, the same process).
+mkdir -p "$work/dproc/4242"; printf '4242 (claude) S %s 777 1 2 3\n' "$(seq -s ' ' 1 18)" >"$work/dproc/4242/stat"
+echo 44444444-4444-4444-8444-444444444444 >"$work/dboot"
 doctor() { FLEET_PS="$work/bin/ps" FLEET_SYSTEMCTL="$work/bin/systemctl" FLEET_CURL="$work/bin/curl" FLEET_TAILSCALE="$work/bin/tailscale" \
-  DOC_ACTIVE="$work/active" DOC_FLEET="$work/fleet.json" FLEET_RETRY_S=0 bash "$here/doctor.sh" 2>/dev/null; }
+  DOC_ACTIVE="$work/active" DOC_FLEET="$work/fleet.json" FLEET_RETRY_S=0 FLEET_PROC="$work/dproc" FLEET_BOOT_ID="$work/dboot" bash "$here/doctor.sh" 2>/dev/null; }
+sid_of() { case $1 in w1) echo dddddddd-0000-4000-8000-000000000001 ;; w2) echo dddddddd-0000-4000-8000-000000000002 ;; *) echo dddddddd-0000-4000-8000-0000000000"${1#o}"0 ;; esac; }
 w=$(pane wpane '{"above":["idle"]}'); o=$(pane opane '{"above":["idle"]}'); settle
-printf '%s\tworker\t%s\n' "$w" "$FLEET_STATE/task-demo.src" >"$REGISTRY"
+printf '%s\tworker\t%s\t%s\n' "$w" "$FLEET_STATE/task-demo.src" "$(sid_of w1)" >"$REGISTRY"
 printf '%s\n' "$o" >"$FLEET_STATE/orchestrator.pane"
 session_file() { # ID PANE [URL]
-  jq -n --arg p "$2" --arg u "${3:-}" '{session_id: "x", started_at: 5, ended: null, tmux: {pane: $p}} + (if $u == "" then {} else {remote_url: $u} end)' \
-    >"$KLEPSYDRA_DIR/fleet/$1.json"
+  jq -n --arg p "$2" --arg u "${3:-}" '{session_id: "x", started_at: 5, ended: null, claude: {pid: 4242, start: 777}, host: {boot: "44444444-4444-4444-8444-444444444444"}, tmux: {pane: $p}} + (if $u == "" then {} else {remote_url: $u} end)' \
+    >"$KLEPSYDRA_DIR/fleet/$(sid_of "$1").json"
 }
 session_file w1 "$w" https://claude.ai/code/session_01W; session_file o1 "$o"
 jq -n --argjson at "$(( $(date +%s) - 30 ))" '{usage: [{observed_at: $at}]}' >"$work/fleet.json"
@@ -799,10 +803,10 @@ check "#246: no watcher while every agent waits out a limit is a warning with th
 check "#246: logged with the limited panes and the reset" \
   "$(jq -r 'select(.message == "doctor: pane watcher") | [.limited, .resets] | join(" | ")' "$FLEET_LOG")" "$w | 1:10pm"
 w2=$(pane wpane2 '{"above":["idle"]}'); settle
-printf '%s\tworker2\t%s\n' "$w2" "$FLEET_STATE/task-demo.src" >>"$REGISTRY"; session_file w2 "$w2" https://claude.ai/code/session_01X
+printf '%s\tworker2\t%s\t%s\n' "$w2" "$FLEET_STATE/task-demo.src" "$(sid_of w2)" >>"$REGISTRY"; session_file w2 "$w2" https://claude.ai/code/session_01X
 check "#246: with one agent free, no watcher still fails" "$(doctor | grep -c '^FAIL pane watcher: none running')" "1"
 t kill-window -t "$w2"; rm -f "$KLEPSYDRA_DIR/fleet/w2.json"
-printf '%s\tworker\t%s\n' "$w" "$FLEET_STATE/task-demo.src" >"$REGISTRY"
+printf '%s\tworker\t%s\t%s\n' "$w" "$FLEET_STATE/task-demo.src" "$(sid_of w1)" >"$REGISTRY"
 state wpane '{"above":["idle"]}'
 printf 'parked\tPAUSED 11-01 07:16: no room\n' >"$FLEET_STATE/paused.tsv"
 check "#246: paused agents are listed, never a failure" "$(doctor | grep '^ok   paused agents')" "ok   paused agents: parked: fleet unpause NAME brings one back"
@@ -1993,9 +1997,10 @@ check "#246: pause sets a gone agent aside, keeping its row" \
 check "#246: and the note says why" "$(cut -f2 "$FLEET_STATE/paused.tsv" | grep -c 'PAUSED .*: no room yet$')" "1"
 check "#246: pausing it twice is refused" "$(fp pause gone1 again; echo "rc=$?")" $'error: fleet pause: no agent named gone1 in panes.tsv\nrc=1'
 check "#246: a pause needs a reason" "$(fp pause other; echo "rc=$?")" $'error: usage: fleet pause NAME WHY...\nrc=2'
-check "#246: unpause puts the row back, with no session id, so recover launches it" \
-  "$(fp unpause gone1) | $(grep -c . "$FLEET_STATE/paused.tsv") | $(grep -c -xF "$(awk -F'\t' -v OFS='\t' '{ $4 = "" } 1' <<<"$row1")" "$REGISTRY")" \
-  "unpaused: gone1: fleet recover launches it fresh from its brief | 0 | 1"
+check "#246: unpause puts the row back as it was, and records the unpause" \
+  "$(fp unpause gone1) | $(grep -c . "$FLEET_STATE/paused.tsv") | $(grep -c -xF "$row1" "$REGISTRY") | $(cut -f1,2 "$FLEET_STATE/unpaused.tsv")" \
+  "unpaused: gone1: fleet recover launches it fresh from its brief | 0 | 1 | gone1	$SG"
+rm -f -- "$FLEET_STATE/unpaused.tsv"
 printf '%%43\t01\t/b.src\n%%44\t1\t/c.src\n' >>"$REGISTRY"
 check "#261 review: a name is matched as text, so 1 is not 01" \
   "$(fp pause 1 numbers; cut -f2 "$REGISTRY" | grep -cx 01; cut -f1 "$FLEET_STATE/paused.tsv")" $'paused: 1 (%44): fleet unpause 1 brings it back\n1\n1'
@@ -2004,9 +2009,14 @@ printf 'byhand\tPAUSED 10-28 by Heph\n' >"$FLEET_STATE/paused.tsv"
 check "#246: a row paused by hand, with nothing saved, is refused, not invented" \
   "$(fp unpause byhand | grep -c 'paused by hand, with no saved row'; grep -c . "$FLEET_STATE/paused.tsv")" $'1\n1'
 lv=$(pane plive '{"above":["idle"]}'); settle
-printf '%s\tlive1\t%s\t%s\t/w\n' "$lv" "$work/brief.src" "$SID" >"$REGISTRY"; live "$lv"
+printf '%s\tlive1\t%s\t%s\t/w\n' "$lv" "$work/brief.src" "$SID" >"$REGISTRY"
+# A session alive by the same test as recover's: this boot, the same process.
+mkdir -p "$work/pproc/4242"; printf '4242 (claude) S %s 777 1 2 3\n' "$(seq -s ' ' 1 18)" >"$work/pproc/4242/stat"
+echo 33333333-3333-4333-8333-333333333333 >"$work/pboot"
+jq -n --arg p "$lv" '{session_id: "x", ended: null, claude: {pid: 4242, start: 777}, host: {boot: "33333333-3333-4333-8333-333333333333"}, tmux: {pane: $p}}' >"$KLEPSYDRA_DIR/fleet/$SID.json"
 check "#246: an agent whose session still runs is never paused" \
-  "$(fp pause live1 because | grep -c "live1 still runs in $lv"; grep -c . "$REGISTRY")" $'1\n1'
+  "$(FLEET_PROC=$work/pproc FLEET_BOOT_ID=$work/pboot fp pause live1 because | grep -c "live1 still runs in $lv"; grep -c . "$REGISTRY")" $'1\n1'
+rm -f -- "$KLEPSYDRA_DIR/fleet/$SID.json"
 check "#246: each refusal is logged with its reason" "$(jq -r 'select(.message | startswith("fleet pause refused")) | .reason' "$FLEET_LOG" | grep -c .)" "2"
 t kill-window -t "$lv"; rm -f -- "${KLEPSYDRA_DIR:?}/fleet/$SID.json" "$FLEET_STATE/paused.tsv"; : >"$REGISTRY"
 check "review 1: the pane watcher is quiet while no alert has ever been written" \
@@ -2213,12 +2223,12 @@ check "#261 review: a row the hook marked gone is recovered, not called finished
   "$(rec --dry-run --no-orchestrator | grep -E '^(finished|would recover): e' | sed 's/ (.*//')" "would recover: e"
 rm -f "$KLEPSYDRA_DIR/fleet/$SL.json"
 sfile "$SR" 4242 777 "$NOWBOOT" %6; sfile "$SL" 4242 777 "$NOWBOOT" %9; ended "$SL"
-check "a /clear: the row's session ended but its pane runs a new one, so it is running" "$( fleet_panes() { echo %6; }; row_state %6 "$SL" )" "running"
+check "a /clear: the row's session ended but its pane runs a new one, so it is running" "$(row_state %6 "$SL")" "running"
 printf '%s\n' "$SR" >"$FLEET_STATE/orchestrator.session"
-check "#261 review: the orchestrator in a row's pane is never its successor" "$( fleet_panes() { echo %6; }; row_state %6 "$SL" )" "finished"
+check "#261 review: the orchestrator in a row's pane is never its successor" "$(row_state %6 "$SL")" "finished"
 rm -f "$FLEET_STATE/orchestrator.session"
 sfile "$SL" 4242 777 "$OLDBOOT" %9; ended "$SL" gone
-check "#261 review: a row from an earlier server is not running in its reused pane id" "$( fleet_panes() { echo %6; }; row_state %6 "$SL" )" "gone"
+check "#261 review: a row from an earlier server is not running in its reused pane id" "$(row_state %6 "$SL")" "gone"
 sfile "$SL" 4242 777 "$NOWBOOT" %9; ended "$SL"
 rm -f "$KLEPSYDRA_DIR/fleet/$SL.json" "$KLEPSYDRA_DIR/fleet/$SR.json"
 doc=$(bash "$here/doctor.sh" 2>/dev/null)
@@ -2242,6 +2252,38 @@ check "a second --prune finds nothing" "$(bash "$here/doctor.sh" --prune 2>/dev/
 check "--prune never touches a lost or running row" "$(diff <(cut -f1-4 "$work/reg-before-220") <(awk -F'\t' '$2 != "g"' "$REGISTRY" | cut -f1-4) && echo same)" "same"
 awk -F'\t' '$2 != "g"' "$REGISTRY" >"$work/reg.tmp" && mv -f -- "$work/reg.tmp" "$REGISTRY"
 find "$FLEET_STATE" -maxdepth 1 -name 'panes.tsv.bak-*' -delete; rm -f "$KLEPSYDRA_DIR/fleet/$SF.json" "$KLEPSYDRA_DIR/fleet/$SG.json"
+# #261 review 2: a finish is recorded on first sight, so it holds after the
+# session's file is gone (klepsydra keeps an ended file a day).
+SD=aaaaaaaa-0000-4000-8000-0000000000f5
+sfile "$SD" 4242 777 "$NOWBOOT" %7; ended "$SD"
+printf '%s\tfin\t%s\t%s\t/w\n' %7 "$work/bc.src" "$SD" >>"$REGISTRY"
+bash "$here/doctor.sh" >/dev/null 2>&1
+rm -f -- "$KLEPSYDRA_DIR/fleet/$SD.json"
+check "#261 review 2: a finished row stays finished once its session's file is gone" \
+  "$(row_state %7 "$SD") | $(rec --dry-run --no-orchestrator | grep -E '^(finished|would recover): fin' | sed 's/ (.*//')" "finished | finished: fin"
+# Paused when its session had ended with /exit, then unpaused: recover launches it.
+FLEET_PAUSED=$work/p2.tsv bash "$here/pause.sh" pause fin because >/dev/null 2>&1
+FLEET_PAUSED=$work/p2.tsv bash "$here/pause.sh" unpause fin >/dev/null 2>&1
+check "#261 review 2: a paused, then unpaused, finished agent is relaunched by recover" \
+  "$(row_state %7 "$SD") | $(rec --dry-run --no-orchestrator | grep -E '^(finished|would recover): fin' | sed 's/ (.*//')" "gone | would recover: fin"
+awk -F'\t' '$2 != "fin"' "$REGISTRY" >"$work/reg.tmp" && mv -f -- "$work/reg.tmp" "$REGISTRY"
+rm -f -- "$FLEET_STATE/finished.tsv" "$FLEET_STATE/unpaused.tsv" "$work/p2.tsv"
+# The successor is read from the fleet's own sessions: one with the same pane
+# id on another tmux server neither hides it nor stands in for it.
+SX=aaaaaaaa-0000-4000-8000-0000000000f6 SY=aaaaaaaa-0000-4000-8000-0000000000f7 SZ=aaaaaaaa-0000-4000-8000-0000000000f8
+sfile "$SX" 4242 777 "$NOWBOOT" %8; ended "$SX" clear
+sfile "$SY" 4242 777 "$NOWBOOT" %8
+jq -n '{session_id: "x", ended: null, claude: {pid: 4242, start: 777}, host: {boot: "11111111-1111-4111-8111-111111111111"}, tmux: {pane: "%8", socket: "/tmp/tmux-1/default"}}' >"$KLEPSYDRA_DIR/fleet/$SZ.json"
+printf '%s\tcl\t%s\t%s\t/w\n' %8 "$work/bc.src" "$SX" >>"$REGISTRY"
+check "#261 review 2: a /clear's successor is found beside a same-id pane on another server" "$(row_state %8 "$SX")" "running"
+check "#261 review 2: and the row is never paused while it runs" "$(bash "$here/pause.sh" pause cl x 2>&1 | grep -c '^error:.*still runs')" "1"
+rm -f -- "$KLEPSYDRA_DIR/fleet/$SY.json"
+check "#261 review 2: the other server's session alone is no successor" "$(row_state %8 "$SX")" "gone"
+printf '%s\tnosid\t%s\n' %8 "$work/bc.src" >>"$REGISTRY"
+sfile "$SY" 4242 777 "$NOWBOOT" %8
+check "#261 review 2: a row with no session id has no successor" "$(row_state %8 "")" "gone"
+awk -F'\t' '$2 != "cl" && $2 != "nosid"' "$REGISTRY" >"$work/reg.tmp" && mv -f -- "$work/reg.tmp" "$REGISTRY"
+rm -f -- "$KLEPSYDRA_DIR/fleet/$SX.json" "$KLEPSYDRA_DIR/fleet/$SY.json" "$KLEPSYDRA_DIR/fleet/$SZ.json"
 
 echo "recover: the orchestrator"
 # After a power cut nothing runs: the earlier checks' live sessions go.

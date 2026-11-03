@@ -29,13 +29,7 @@ fi
 # lines: what recover decides from, so a launch never changes who is who.
 # In-fleet: on the fleet's tmux server (a file without a socket counts, so a
 # live Heph is never missed).
-live_now=$(for f in "$KLEPSYDRA_DIR"/fleet/*.json; do
-  [[ -f $f && ! -L $f ]] || continue
-  id=$(basename "$f" .json)
-  row=$(jq -r --arg s "/$FLEET_SOCK" 'select(.ended == null and .tmux.pane != null)
-    | [.tmux.pane, (if .tmux.socket == null or (.tmux.socket | endswith($s)) then 1 else 0 end)] | @tsv' "$f" 2>/dev/null) || continue
-  [[ -n $row ]] && session_alive "$id" && printf '%s\t%s\t%s\n' "${row%%$'\t'*}" "$id" "${row##*$'\t'}"
-done)
+live_now=$(live_fleet_sessions)
 agents=$(cut -f4 "$REGISTRY" 2>/dev/null | grep .)
 # A row whose own session's process started after the running fleet tmux
 # server did: a live session in its pane is its successor (a /clear). A row
@@ -101,10 +95,7 @@ fi
 
 # The one session that was alive in PANE before any launch, is not Heph's and
 # no other row's: what a row whose own session is gone may be repaired to.
-repair_to() { # PANE
-  awk -F'\t' -v p="$1" -v h="$osid" 'NR == FNR { if ($0 != "") a[$0] = 1; next } $1 == p && $3 == 1 && $2 != h && !($2 in a) { print $2 }' \
-    <(printf '%s\n' "$agents") <(printf '%s\n' "$live_now") | awk 'END { if (NR == 1) print prev } { prev = $0 }'
-}
+repair_to() { successor_in "$1" "$osid" "$live_now" "$agents"; } # PANE
 
 # Its last two replies, each cut to 500 characters, as quoted lines.
 last_replies() { # TRANSCRIPT
@@ -143,8 +134,12 @@ while IFS=$'\t' read -r -u 3 p name brief sid _; do
     continue
   fi
   # It ended cleanly before the shutdown: its work is done, not lost (#220).
-  if session_finished "$sid"; then
+  # An unpaused agent is launched again, whatever its old session's end said.
+  was_paused=0
+  unpaused "$sid" && was_paused=1
+  if (( ! was_paused )) && session_finished "$sid"; then
     echo "finished: $name ($p): not relaunched (fleet doctor --prune drops its row)"
+    (( dry )) || with_registry record_finished "$(awk -F'\t' -v p="$p" -v s="$sid" '$1 == p && $4 == s { print; exit }' "$REGISTRY")"
     continue
   fi
   if [[ ! -r $brief ]]; then
@@ -162,7 +157,8 @@ while IFS=$'\t' read -r -u 3 p name brief sid _; do
   fi
   txt="$FLEET_STATE/fresh-$name-$(date +%Y%m%d-%H%M)-recover.src"
   {
-    fresh_preamble "was stopped by a hard shutdown of the PC"
+    if (( was_paused )); then fresh_preamble "was set aside with fleet pause and is now back"
+    else fresh_preamble "was stopped by a hard shutdown of the PC"; fi
     printf '\n\nWhere it was, its last replies:\n%s\n' "${replies:-> (no transcript found)}"
     [[ -n $impl ]] && printf '\nIts newest IMPL.md: %s\n' "$impl"
     printf '\n'
@@ -173,6 +169,10 @@ while IFS=$'\t' read -r -u 3 p name brief sid _; do
   new=${new%% *}
   echo "recovered: $name -> ${new:-NOT STARTED}"
   [[ -n $new ]] || flog ERROR "recovery launch failed" name="$name" brief="$txt"
+  if [[ -n $new ]] && (( was_paused )); then
+    un=${FLEET_UNPAUSED:-$FLEET_STATE/unpaused.tsv}
+    awk -F'\t' -v s="$sid" '$2 != s' "$un" >"$un.tmp.$$" 2>/dev/null && mv -f -- "$un.tmp.$$" "$un"
+  fi
 done 3< <(cat "$REGISTRY" 2>/dev/null)
 
 # The orchestrator, by what was alive before the launches.

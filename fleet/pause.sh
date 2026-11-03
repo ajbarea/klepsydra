@@ -3,7 +3,7 @@
 # set an agent aside without losing it (#246). Pause moves its panes.tsv row to
 # paused.tsv (name, note, then the row itself), so `fleet recover` and the
 # doctor leave it alone; only an agent whose session no longer runs can be
-# paused. Unpause puts the row back with no session id, and the next
+# paused. Unpause puts the row back (and in unpaused.tsv), and the next
 # `fleet recover` launches it fresh from its brief. Both run under the registry lock.
 set -uo pipefail
 FLEET_TARGET=fleet::pause
@@ -45,7 +45,8 @@ pause_now() {
   [[ -n $rows ]] || { refuse "no agent named $name in panes.tsv"; return 1; }
   (( $(grep -c . <<<"$rows") == 1 )) || { refuse "more than one row is named $name"; return 1; }
   row=$rows p=$(cut -f1 <<<"$row") sid=$(cut -f4 <<<"$row")
-  if [[ $(row_state "$p" "$sid") == running ]]; then
+  # Any live fleet session in its pane may be the agent under a new id.
+  if [[ $(row_state "$p" "$sid") == running ]] || live_fleet_sessions | awk -F'\t' -v p="$p" '$1 == p && $3 == 1 { f = 1 } END { exit !f }'; then
     refuse "$name still runs in $p; end its session first"
     return 1
   fi
@@ -75,9 +76,11 @@ unpause_now() {
   fi
   awk -F'\t' -v n="$name" '$2 "" == n "" { f = 1 } END { exit !f }' "$REGISTRY" 2>/dev/null &&
     { refuse "panes.tsv already has a row named $name"; return 1; }
-  # Back with no session id: its old session ended (pause wants it ended), and
-  # a row with none is one fleet recover launches fresh from its brief.
-  row=$(awk -F'\t' -v OFS='\t' '{ $4 = "" } 1' <<<"$row")
+  # Back as it was, and named in unpaused.tsv: its old session ended (pause
+  # wants it ended), and fleet recover launches it fresh, with that session's
+  # last replies as its hint.
+  printf '%s\t%s\t%s\n' "$name" "$(cut -f4 <<<"$row")" "$(date -Is)" >>"${FLEET_UNPAUSED:-$FLEET_STATE/unpaused.tsv}" ||
+    { failed "${FLEET_UNPAUSED:-$FLEET_STATE/unpaused.tsv}" "could not record the unpause; nothing changed"; return 1; }
   printf '%s\n' "$row" >>"$REGISTRY" ||
     { failed "$REGISTRY" "could not add the row back to panes.tsv; nothing changed"; return 1; }
   if ! awk -F'\t' -v n="$name" '$1 "" != n ""' "$PAUSED" | put "$PAUSED"; then
