@@ -1757,7 +1757,7 @@ wait
 newp=$(cut -f1 "$REGISTRY")
 check "#274: a turn that ends within the wait: one launch, the old pane exits, the row moves" \
   "$rc $(wc -l <"$work/rb2-launched") $(grep -c 'SUBMIT /exit' "$work/rb2.log") $([[ $newp != "$p" ]] && echo moved) $(cat "$work/rb2.out")" "0 1 1 moved pane=$newp name=rb2"
-check "#274: the new brief carries the resume hint" "$(grep -c '^Resume hint: carry on$' "$(ls -t "$FLEET_STATE"/fresh-rb2-*.src | head -1)")" "1"
+check "#274: the new brief carries the resume hint" "$(grep -c '^Resume hint: carry on$' "$(find "$FLEET_STATE" -maxdepth 1 -name 'fresh-rb2-*.src' -printf '%T@ %p\n' | sort -n | tail -1 | cut -d' ' -f2-)")" "1"
 t kill-window -t "$newp" 2>/dev/null; t kill-window -t "$p" 2>/dev/null
 : >"$FLEET_LOG"; rm -f "$work/rb2-launched"
 p=$(relpane '{"above":["⏺ Done. done 11:50 AM"]}')
