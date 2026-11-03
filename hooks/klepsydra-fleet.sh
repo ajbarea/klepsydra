@@ -564,6 +564,14 @@ def bg_add($id; $kind): if ($id | text) == null then . elif any(.[]; .id == $id)
   else . + [{id: $id, kind: $kind, at: $now}] end;
 # A Stop list's task as an entry: subagents are agents, shells shells, any other type a task.
 def bg_kind: {subagent: "agent", shell: "shell"}[.type | strings] // "task";
+# A shell command that is the fleet's pane watcher alone: IDLE_S= or FLEET_*= prefixes,
+# bash, a path ending in watch-panes.sh, then pane ids (%N) and nothing else,
+# so no second command can ride along (newline, ; & | $( ` < >). A new
+# orchestrator starts it again, so it never holds a move back (#215).
+def watcher: type == "string"
+  and test("\\A[ \\t]*((IDLE_S|FLEET_[A-Z0-9_]+)=[A-Za-z0-9_./%:-]*[ \\t]+)*(bash[ \\t]+)?([A-Za-z0-9_./~-]*/)?watch-panes\\.sh([ \\t]+%[0-9]+)*[ \\t]*\\z");
+# The panes a watcher command watches, in order.
+def watched: [sub("\\A.*watch-panes\\.sh"; "") | scan("%[0-9]+")];
 # A status that means the task is over; any other, or none, still runs.
 def finished: IN("completed", "finished", "failed", "killed", "stopped", "cancelled", "canceled");
 # The session's turn is over: Stop ran (or the prompt sat idle) with work still out.
@@ -725,7 +733,9 @@ def notified: if type == "string" then [scan("<task-notification>[\\s\\S]*?</tas
       elif $event == "PostToolUse" and $ev.tool_name == "Bash"
            and ($in.run_in_background == true
                 or (if ($out | type) == "object" then $out.backgroundTaskId | text else null end) != null) then
-        $bg | bg_add(($out | objects | .backgroundTaskId | text) // ($ev.tool_use_id | text); "shell")
+        (($out | objects | .backgroundTaskId | text) // ($ev.tool_use_id | text)) as $sid
+        | $bg | bg_add($sid; "shell")
+        | map(if .id == $sid and ($in.command | watcher) then .watcher = true | .watch = ($in.command | watched) else . end)
       # Only an async launch says an agent outlives the turn; SubagentStart cannot tell.
       elif $event == "PostToolUse" and $ev.tool_name == "Agent" and ($out | objects | .isAsync) == true
            and ($out.agentId | IN($dead[]) | not) then
@@ -746,6 +756,7 @@ def notified: if type == "string" then [scan("<task-notification>[\\s\\S]*?</tas
       elif $event == "Stop" and ($ev.background_tasks | type) == "array" then
         [$ev.background_tasks[] | objects | select((.id | text) != null and (.status | finished | not))
          | .id as $id | {id: $id, kind: bg_kind, at: ([$bg[] | select(.id == $id) | .at][0] // $now)}
+           + (if .type == "shell" and (.command | watcher) then {watcher: true, watch: (.command | watched)} else {} end)
          | if .kind == "agent" then .async = true else . end]
       # With no list, an agent adopted in the turn and never seen async ended with it;
       # a real background one is adopted again, async, at its next event.
