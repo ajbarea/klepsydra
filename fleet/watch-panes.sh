@@ -27,8 +27,13 @@ if [[ ! -e $SEEN ]]; then
   put_seen "$({ wc -l <"$ALERTS"; } 2>/dev/null || echo 0)"
 fi
 
-# The first new alert that wakes the orchestrator, as one line; every line
-# read up to it counts as read. Fails when there is none.
+# The first new alert that wakes the orchestrator, as one line in WAKE, and the
+# count of lines read through it in WAKE_SEEN. Lines read with no wake are
+# marked read here; the caller marks a wake read as its last act before exit,
+# after logging and printing it (at least once: a watcher killed before that
+# leaves the alert for the next one, which may print it again). Fails when
+# there is none. It runs in the watcher's own shell, never a $( ) subshell: a
+# subshell outlives a killed watcher.
 ci_wake() {
   local seen n line
   [[ -e $ALERTS ]] || return 1
@@ -39,10 +44,10 @@ ci_wake() {
   while IFS= read -r line; do
     seen=$((seen + 1))
     if jq -e '.wake == true' <<<"$line" >/dev/null 2>&1; then
-      put_seen "$seen"
-      jq -r '"CI \(.kind | ascii_upcase) \(.repo) \(.branch): \(.text)"
+      WAKE=$(jq -r '"CI \(.kind // "alert" | tostring | ascii_upcase) \(.repo) \(.branch): \(.text)"
         + (if .taken_by then " Taken by \(.taken_by)." else "" end)
-        + (if .ask then " Next: \(.ask)." else "" end)' <<<"$line"
+        + (if .ask then " Next: \(.ask)." else "" end)' <<<"$line")
+      WAKE_SEEN=$seen
       return 0
     fi
   done < <(tail -n +"$((seen + 1))" "$ALERTS" 2>/dev/null)
@@ -65,9 +70,11 @@ done
 flog INFO "watching" panes="$*" idle_s="$IDLE_S" limited_at_start="${!held[*]}" resets="${resets%, }"
 while :; do
   now=$(date +%s)
-  if wake=$(ci_wake); then
-    flog INFO "CI alert for the orchestrator" alert="$wake"
-    echo "$wake"; exit 0
+  if ci_wake; then
+    flog INFO "CI alert for the orchestrator" alert="$WAKE"
+    echo "$WAKE"
+    put_seen "$WAKE_SEEN"
+    exit 0
   fi
   for p in "$@"; do
     if ! fleet_panes | grep -qx "$p"; then
