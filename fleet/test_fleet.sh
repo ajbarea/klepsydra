@@ -2065,9 +2065,9 @@ git -C "$work/brief" checkout -q -- other.md
 check "once the tree is clean it rebases and pushes" "$(bsync) $(git -C "$work/brief" rev-list --count '@{u}..HEAD')" "0 0"
 printf 'm\n' >"$work/brief/claude-morning.md"
 check "#277: a file under its old name is still committed" "$(bsync) $(git -C "$work/brief" show --name-only --format= HEAD)" "0 claude-morning.md"
-git -C "$work/brief" mv claude-morning.md morning.md
-check "#277: a git mv to the new name commits as a rename and leaves the tree clean" \
-  "$(bsync) $(git -C "$work/brief" show -M --name-status --format= HEAD | tr '\t' ' ' | paste -sd' ') $(git -C "$work/brief" status --porcelain | wc -l)" "0 R100 claude-morning.md morning.md 0"
+mv "$work/brief/claude-morning.md" "$work/brief/morning.md"
+check "#277: a plain mv to the new name commits as one rename and leaves neither name behind" \
+  "$(bsync) $(git -C "$work/brief" show -M --name-status --format= HEAD | tr '\t' ' ' | paste -sd' ') $(git -C "$work/brief" status --porcelain -- claude-morning.md morning.md | wc -l)" "0 R100 claude-morning.md morning.md 0"
 
 echo "the fleet log"
 check "every line is one JSON object with ts, level, target and message" \
