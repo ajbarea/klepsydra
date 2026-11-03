@@ -17,8 +17,8 @@ at most two at a time.
 1. #296 fix/watch-alert-race (watch-race), r2 verify on be2b89b. Real race behind
    the watcher flake (main, athena-222, #261 CI). Merge first once clean; then merge main into #261.
 2. #261 fix/doctor-truth-246 (doctor-246), head 5a68e40: r9 fix (pane on the fleet's socket only; pane_runs
-   checks the socket; mutants of the 3 checks each fail). Dispatch r10. Its CI 41690357522 failed only on
-   the watcher flake; failed job rerun requested. Body's test counts are stale (section now 112). Deferred #294.
+   checks the socket; mutants of the 3 checks each fail). Dispatch r10. No rerun was made (Heph 11-03): that alert
+   was for an older run; 5a68e40's own CI is 41697027451. Act only if it fails. Body's test counts are stale (section now 112). Deferred #294.
 3. #230 fix/ask-217 (ask-217), head bd3e51a (main merged, hook suite 569): r1 reader running. Body says 515.
 4. #287 feat/orch-guard-264 (guard-264), head 3c5822e (main merged): r9. Deploy after merge: install, PreToolUse in
    ~/.claude/settings.json, `fleet accounts sync`.
