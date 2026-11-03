@@ -60,7 +60,8 @@ while :; do
       flog INFO "watched pane gone" pane="$p"; echo "GONE $p"; exit 0
     fi
     s=$(screen "$p") ps=$(plain <<<"$s")
-    # A usage limit wakes the orchestrator too; the resume service restarts the pane.
+    # A usage limit wakes the orchestrator too; the resume service restarts the
+    # pane, unless its agent ran `fleet done`.
     if ! busy "$s" && limit=$(limit_line "$s"); then
       flog INFO "watched pane limited" pane="$p" message="$limit"
       echo "LIMIT $p $(grep -oE 'resets [^(]*[ap]m' <<<"$limit" | tail -1)"; exit 0
