@@ -1205,6 +1205,24 @@ check "its fresh brief says why" "$(grep -c 'moved back to its preferred account
 check "logged with both folders" "$(jq -r 'select(.message == "moved back to the preferred account") | [.from, .to, .new_pane] | join(" ")' "$FLEET_LOG")" "$work/cfg-b $work/cfg-a %997"
 t kill-window -t "$p" 2>/dev/null; : >"$REGISTRY"
 
+echo "a finished agent is never relaunched (#269)"
+: >"$FLEET_LOG"; : >"$work/moved"; rm -f "$FLEET_STATE/resume-state" "$FLEET_STATE/finished.tsv"
+p=$(backpane finished)
+printf '%s\tother\t%s\tsid-o\t/w\t%s\n' "%9999" "$work/brief.src" "$work/cfg-a" >>"$REGISTRY"
+check "#269: fleet done outside a pane, with no name, is refused" "$(TMUX_PANE='' bash "$here/fleet" done >/dev/null 2>&1; echo $?) $(wc -l <"$REGISTRY")" "2 2"
+check "#269: an unknown name is refused and changes nothing" "$(bash "$here/fleet" done nobody >/dev/null 2>&1; echo $?) $(wc -l <"$REGISTRY")" "1 2"
+out=$(TMUX_PANE=$p bash "$here/fleet" done 2>/dev/null); rc=$?
+check "#269: fleet done in the agent's own pane moves its row, and only its row, to finished.tsv" \
+  "$rc $(cut -f1,2 "$REGISTRY") | $(cut -f1,2 "$FLEET_STATE/finished.tsv")" "0 %9999	other | $p	finished"
+check "#269: with the time it finished, and says so" "$(awk -F'\t' '{ print ($7 ~ /^20[0-9][0-9]-/) }' "$FLEET_STATE/finished.tsv") $out" "1 finished: $p (1 row); it will not be relaunched"
+check "#269: logged" "$(jq -r 'select(.message | startswith("agent marked finished")) | .pane' "$FLEET_LOG")" "$p"
+mover "$noon"; mover "$((noon + 60))"
+check "#269: the resume service never moves a finished agent back, nor types into it" \
+  "$(wc -c <"$work/moved") $(grep -c '^SUBMIT' "$work/finished.log")" "0 0"
+printf '%s\tfinished\t%s\t%s\t/w\t%s\n' "$p" "$work/brief.src" "$SID" "$work/cfg-b" >>"$REGISTRY"
+check "#269: fleet done NAME works from any pane, for Heph" "$(TMUX_PANE=%1 bash "$here/fleet" done finished >/dev/null 2>&1; echo $?) $(cut -f2 "$REGISTRY" | tr '\n' ' ')$(wc -l <"$FLEET_STATE/finished.tsv")" "0 other 2"
+t kill-window -t "$p" 2>/dev/null; : >"$REGISTRY"; rm -f "$FLEET_STATE/finished.tsv"
+
 : >"$work/moved"
 p=$(backpane bgwork); done_live "$p" working '[{"id": "t1", "kind": "agent"}]'
 mover "$noon"; mover "$((noon + 60))"
