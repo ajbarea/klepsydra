@@ -2063,6 +2063,11 @@ check "a rejected push with edits in the tree waits rather than rebasing over th
   "$(bsync) $(tail -1 "$work/brief/other.md") $(git -C "$work/brief" ls-files -u | wc -l)" "1 an edit in progress 0"
 git -C "$work/brief" checkout -q -- other.md
 check "once the tree is clean it rebases and pushes" "$(bsync) $(git -C "$work/brief" rev-list --count '@{u}..HEAD')" "0 0"
+printf 'm\n' >"$work/brief/claude-morning.md"
+check "#277: a file under its old name is still committed" "$(bsync) $(git -C "$work/brief" show --name-only --format= HEAD)" "0 claude-morning.md"
+git -C "$work/brief" mv claude-morning.md morning.md
+check "#277: a git mv to the new name commits as a rename and leaves the tree clean" \
+  "$(bsync) $(git -C "$work/brief" show -M --name-status --format= HEAD | tr '\t' ' ' | paste -sd' ') $(git -C "$work/brief" status --porcelain | wc -l)" "0 R100 claude-morning.md morning.md 0"
 
 echo "the fleet log"
 check "every line is one JSON object with ts, level, target and message" \
