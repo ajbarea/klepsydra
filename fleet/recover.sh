@@ -106,6 +106,13 @@ last_replies() { # TRANSCRIPT
 launched=0
 # Wait out the stagger before every launch but the first.
 stagger() { (( launched++ )) && sleep "$STAGGER"; return 0; }
+# The recovered Heph comes forward (#216) only when recover started the fleet's
+# session itself and the window in view is still the one its first launch
+# opened: a session already running, or a move since, means AJ is working in
+# another agent, and launches never take him away from it (#229 review).
+in_view_pane() { t display-message -p -t "$FLEET_SESSION:" '#{pane_id}' 2>/dev/null; }
+cold=1 first_view=""
+t has-session -t "$FLEET_SESSION" 2>/dev/null && cold=0
 launch() { # NAME TEXTFILE [env...]: one launch; prints "PANE SESSION"
   local name=$1 txt=$2 out
   shift 2
@@ -169,6 +176,7 @@ while IFS=$'\t' read -r -u 3 p name brief sid _; do
   stagger
   got=$(launch "$name" "$txt")
   new=${got%% *}
+  (( cold )) && [[ -z $first_view ]] && first_view=$(in_view_pane)
   echo "recovered: $name -> ${new:-NOT STARTED}"
   [[ -n $new ]] || flog ERROR "recovery launch failed" name="$name" brief="$txt"
   # The unpause is done once panes.tsv names the new session for the agent
@@ -205,6 +213,9 @@ elif (( orch_too )) && [[ -n $orch$osid ]]; then
         printf '%s\n' "${new%% *}" >"$FLEET_STATE/orchestrator.pane"
         [[ $new == *" "?* ]] && printf '%s\n' "${new#* }" >"$FLEET_STATE/orchestrator.session"
         printf '%s\n' "${heph_on:-$FLEET_DEFAULT_CONFIG}" >"$FLEET_STATE/orchestrator.config"
+        if (( cold )) && [[ -n $first_view && $(in_view_pane) == "$first_view" ]]; then
+          t select-window -t "${new%% *}" 2>/dev/null # he opened behind (#216)
+        fi
         echo "recovered: orchestrator -> ${new%% *}"
       else
         flog ERROR "recovery launch failed" name=orchestrator brief="$txt"
