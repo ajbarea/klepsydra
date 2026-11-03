@@ -678,7 +678,7 @@ if [[ $(id -u) != 0 ]]; then
 fi
 rm -rf -- "${hist:?}" "${FLEET_STATE:?}/task-hist.src"
 check "the tail carries the friction-log rule (AJ 11-01)" "$(grep -c '^Friction log (AJ 11-01, every agent): read ~/.local/state/fleet-orchestrator/friction.md' "$here/brief-tail.md")" "1"
-check "the tail says performance wins over security above the floor (AJ 11-01)" "$(grep -c '^Quality (AJ 11-01): when performance and security trade off, performance wins, above the security floor.$' "$here/brief-tail.md")" "1"
+check "the tail puts performance first, above the security floor, and asks for DS&A checks (AJ 11-01, 11-03)" "$(grep -c '^Quality (AJ 11-01, 11-03): performance is AJ.s #1 quality attribute; when it trades off with security, performance wins, above the security floor. In every workflow, check the data structures and algorithms' "$here/brief-tail.md")" "1"
 check "the tail carries the team-ceremony rule (AJ 10-29)" "$(grep -c '^Team ceremony in every repo' "$here/brief-tail.md")" "1"
 check "the tail keeps asks for AJ out of public issues and PRs (AJ 10-29)" "$(grep -c '^Asks for AJ stay private' "$here/brief-tail.md")" "1"
 check "#239: the tail has heavy commands take the lock with flock -o, so nothing they leave running keeps it" "$(grep -c 'flock -o /tmp/fleet-heavy.lock' "$here/brief-tail.md")" "1"
