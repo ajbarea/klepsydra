@@ -112,7 +112,8 @@ KLEPSYDRA_BACKGROUND=1 bash "$launch" new "$work/repos" >/dev/null 2>&1
 check "#216: a fleet launch opens behind, the window in view keeps focus" "$(windows) $(t display -p -t =fleet: '#{window_index}')" "3 0"
 # A fleet launch that starts the server (a cold recover) must not hand the flag
 # to the server's environment, or every later pane, the wall's included, opens behind.
-KLEPSYDRA_TMUX_SOCKET="$sock4" KLEPSYDRA_BACKGROUND=1 bash "$launch" new "$work/repos" >/dev/null 2>&1
+# Its own stub log: the tab it opens is not one of the fleet socket's tabs counted below.
+WT_LOG="$work/wt4.log" KLEPSYDRA_TMUX_SOCKET="$sock4" KLEPSYDRA_BACKGROUND=1 bash "$launch" new "$work/repos" >/dev/null 2>&1
 check "#229 review: a flagged launch that starts the server keeps the flag out of its environment" \
   "$(tmux -L "$sock4" has-session -t =fleet 2>/dev/null && echo up) $(tmux -L "$sock4" show-environment -g 2>/dev/null | grep -c '^KLEPSYDRA_BACKGROUND=')" "up 0"
 tmux -L "$sock4" kill-server 2>/dev/null
