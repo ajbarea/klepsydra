@@ -1,21 +1,18 @@
 #!/usr/bin/env bash
 # orch-guard.sh: a PreToolUse hook (Bash, Edit, Write) that refuses, in the
-# orchestrator's session only, the mistakes HEPH.md records (#264):
-#   cold-limit     typing into a pane that stopped at a usage limit FRESH_AFTER_S
-#                  ago or more: its prompt cache expired, so a nudge re-caches its
-#                  whole transcript (fresh-now.sh relaunches it from its brief)
-#   pending-input  typing into a pane whose input line holds text the orchestrator
-#                  did not type there (AJ's line, a worker's report)
-#   api-key        an interactive session on an API key (#260: keys are for headless
-#                  jobs), or a headless one with no balance check logged today
-#   registry       writing panes.tsv while a launch or chain loop runs, which reads
-#                  it to see its pane exit
-#   target         a send whose pane the guard cannot read before it runs
+# orchestrator's session only, the mistakes HEPH.md records (#264). Its
+# run-time half, orch-tmux.sh, checks every tmux send on the orchestrator's
+# PATH; this half refuses what can be judged before a call runs:
+#   bypass     a tmux call that would skip orch-tmux.sh (a path, a new PATH)
+#   api-key    an interactive session on an API key (#260: keys are for headless
+#              jobs), or a headless one with no balance check logged today
+#   registry   writing panes.tsv while a launch or chain loop runs, which reads
+#              it to see its pane exit
 # A refusal is a JSON "deny", which holds under bypass permissions; anything the
 # guard cannot work out lets the call through (exit 0, no output) and is logged.
-# ORCH_GUARD_ALLOW=pending-input or ORCH_GUARD_ALLOW=registry anywhere in a
-# command lets that guard pass, when AJ asked for it; the pass is logged.
-# Every other session leaves at once, in bash alone: this runs on every call.
+# ORCH_GUARD_ALLOW=registry in a command lets that guard pass, when AJ asked
+# for it; the pass is logged. Every other session leaves at once, in bash
+# alone: this runs on every call.
 # Settings (each config folder): PreToolUse, matcher "Bash|Edit|Write", command
 # "bash ~/.local/state/fleet-orchestrator/orch-guard.sh".
 set -u
@@ -33,9 +30,7 @@ case $tool in
   *) exit 0 ;;
 esac
 if [[ $tool == Bash ]]; then
-  # The words any guard acts on; lib.sh's senders (type_exactly, deliver, ...) included.
-  [[ $cmd == *send* || $cmd == *paste* || $cmd == *deliver* || $cmd == *type_exactly* || $cmd == *submit* ||
-    $cmd == *remote_control* || $cmd == *retire* || $cmd == *panes.tsv* || $cmd == *claude* ||
+  [[ $cmd == *tmux* || $cmd == *panes.tsv* || $cmd == *REGISTRY* || $cmd == *claude* ||
     $cmd == *launch.sh* || $cmd == *fresh-now.sh* ]] || exit 0
 else
   [[ ${file##*/} == panes.tsv ]] || exit 0
@@ -45,7 +40,6 @@ FLEET_TARGET=fleet::orch-guard
 here=$(dirname "$(readlink -f "$0")")
 # shellcheck source=fleet/lib.sh
 . "$here/lib.sh"
-OWN_S=${ORCH_GUARD_OWN_S:-120} # an orchestrator's own typing is still its own this long
 now=$(clock)
 glog() { flog "$@" 2>/dev/null; }
 deny() { # GUARD REASON [KEY=VALUE...]
@@ -89,8 +83,7 @@ loops() {
 }
 
 registry_guard() { # WHAT
-  local running
-  local how="If AJ asked for this edit now, add ORCH_GUARD_ALLOW=registry to the command."
+  local running how="If AJ asked for this edit now, add ORCH_GUARD_ALLOW=registry to the command."
   [[ $tool == Bash ]] || how="If AJ asked for this edit now, make it in Bash with ORCH_GUARD_ALLOW=registry in the command."
   running=$(loops | head -3)
   if [[ -z $running ]]; then
@@ -101,7 +94,7 @@ registry_guard() { # WHAT
     glog WARN "orchestrator guard: registry write while a loop runs, allowed by ORCH_GUARD_ALLOW" guard=registry writer="$1" loops="${running//$'\n'/; }"
     return
   fi
-  deny registry "panes.tsv is the registry that a running launch or chain loop reads to see its pane exit (${running//$'\n'/; }). Editing it now can leave that loop spinning for hours (11-01 11:31). Wait until it ends, or stop it first, then edit. $how" \
+  deny registry "panes.tsv is the registry that a running launch or chain loop reads to see its pane exit (${running//$'\n'/; }). Editing it now can leave that loop spinning for hours (11-01 11:31). Wait until it ends, or stop it first, then edit; reading it with cat, grep, cut or column is fine. $how" \
     writer="$1" loops="${running//$'\n'/; }"
 }
 
@@ -116,12 +109,13 @@ findings=$(printf '%s' "$cmd" | ORCH_ACCOUNTS=$FLEET_ACCOUNTS python3 -I "$here/
 }
 [[ -n $findings ]] || exit 0
 
-orch=$(orchestrator)
 balance_log=$state/api-balance.log
-socks=() delay="" typed=() # panes this command types into with an empty box: its own text, once sent
 while IFS=$'\t' read -r kind a b; do
-  # SOCKET lines come first, so each SEND is read on the servers its command names.
   case $kind in
+    BYPASS)
+      deny bypass "this calls tmux in a way that skips the guard's tmux ($a), which checks every send to a pane at the moment it is made. Call it as plain tmux, on the PATH the session started with." \
+        how="$a"
+      ;;
     REGISTRY) registry_guard "$a" ;;
     CLAUDE)
       if [[ $a == interactive ]]; then
@@ -135,65 +129,6 @@ while IFS=$'\t' read -r kind a b; do
       fi
       glog INFO "orchestrator guard: headless API-key job, balance checked today" guard=api-key signal="$b" balance="$line"
       ;;
-    UNRESOLVED)
-      deny target "this sends keys to $a, which the command does not set, so the guard cannot read that pane first. Name the pane (tmux send-keys -t %N ...), or set it in the same command (p=%N; ... or for p in %N %M; do ...)." \
-        target="$a"
-      ;;
-    SOCKET) socks+=("$a") ;;
-    DELAY) delay=$a ;;
-    SEND)
-      p=""
-      for sk in "${socks[@]}"; do
-        case $sk in
-          "-L "* | "-S "*) TM=("${sk%% *}" "${sk#* }") ;;
-          t) TM=(-L "$FLEET_SOCK") ;;
-          *) if [[ -n ${TMUX:-} ]]; then TM=(); else TM=(-L "$FLEET_SOCK"); fi ;;
-        esac
-        p=$(tmux "${TM[@]}" display-message -p -t "$a" '#{pane_id}' 2>/dev/null) && [[ -n $p ]] && break
-        p=""
-      done
-      if [[ -z $p ]]; then
-        glog INFO "orchestrator guard: the target is no pane tmux knows; call let through" target="$a" sockets="${socks[*]}"
-        continue
-      fi
-      t() { tmux "${TM[@]}" "$@"; }
-      [[ $p == "$orch" ]] && continue
-      s=$(screen "$p")
-      if lim=$(limit_line "$s"); then
-        idle=$((now - $(stopped_at "$p" "$(plain <<<"$s")")))
-        if [[ -n $delay ]]; then
-          deny cold-limit "pane $p is at a usage limit and this command waits ($delay) before it sends, so the keys may land after its cache expired. The resume service sends at the reset; past an hour it relaunches the pane fresh from its brief. Leave it to the service, or relaunch it now: bash $state/fresh-now.sh $p" \
-            pane="$p" delay="$delay" idle_min="$((idle / 60))" limit="$lim"
-        fi
-        if (( idle >= FRESH_AFTER_S )); then
-          deny cold-limit "pane $p stopped at a usage limit $((idle / 60)) min ago (\"${lim#"${lim%%[![:space:]]*}"}\"). Its prompt cache lives an hour, so typing into it now re-caches its whole transcript: five such nudges took 38% of a five-hour window on 11-02. Relaunch it fresh from its brief instead: bash $state/fresh-now.sh $p (a command that only names the pane counts too: leave its id out)" \
-            pane="$p" idle_min="$((idle / 60))" limit="$lim"
-        fi
-      fi
-      box=$(input_text "$s")
-      if [[ -n $box ]]; then
-        own=""
-        { read -r own <"$state/guard/typed-${p#%}"; } 2>/dev/null
-        if [[ $own =~ ^[0-9]+$ ]] && (( now - own <= OWN_S )); then
-          glog INFO "orchestrator guard: send to a box holding the orchestrator's own text" guard=pending-input pane="$p" typed_s_ago="$((now - own))"
-        elif allowed pending-input; then
-          glog WARN "orchestrator guard: send to a box holding text, allowed by ORCH_GUARD_ALLOW" guard=pending-input pane="$p" box="${box:0:200}"
-        else
-          deny pending-input "pane $p's input line already holds text (\"${box:0:80}\"), typed by AJ (phone or terminal) or a report. Typing now merges your text into it (11-01 07:30). Wait until it is sent or cleared, then try again. If AJ asked you to replace it, add ORCH_GUARD_ALLOW=pending-input to the command (a command that only names the pane counts too: leave its id out)." \
-            pane="$p" box="${box:0:200}"
-        fi
-      else
-        typed+=("$p")
-      fi
-      glog INFO "orchestrator guard: send checked" pane="$p" limit="${lim:+yes}" idle_min="${idle:+$((idle / 60))}" box_chars="${#box}"
-      unset lim idle
-      ;;
   esac
 done <<<"$findings"
-
-# Every check passed: the text this command types into an empty box is the
-# orchestrator's own, so its own follow-up Enter is no collision.
-if (( ${#typed[@]} )) && mkdir -p -- "$state/guard" 2>/dev/null; then
-  for p in "${typed[@]}"; do printf '%s\n' "$now" >"$state/guard/typed-${p#%}"; done
-fi
 exit 0

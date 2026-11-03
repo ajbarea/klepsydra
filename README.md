@@ -1436,17 +1436,24 @@ state folder, in the app log's shape (`ts`, `level`, `target`, `message`, then
 the event's own fields: pane, account, reason). The file rotates past 1 MiB
 and keeps four old files. `jq 'select(.level == "ERROR")'` lists failures.
 
-**Orchestrator guard.** `fleet/orch-guard.sh` is a PreToolUse hook that acts
-only in the session `orchestrator.session` names, and refuses what `HEPH.md`
-records as costly: typing into a pane stopped at a usage limit 55 minutes or
-more ago (`FRESH_AFTER_S`: its cache expired, and `fresh-now.sh` relaunches it
-from its brief) or into a limited pane after a wait, typing
-into an input line that holds someone else's text, an interactive session on an
-API key or a headless one with no `fleet balance` check today, editing
-`panes.tsv` while a launch or chain loop runs, and a send to a pane it cannot
-read. `ORCH_GUARD_ALLOW=pending-input` or `=registry` in a command passes that
-guard when AJ asks. Each check logs what it decided on. Register it in each
-config folder's `settings.json` (`fleet doctor` warns until then):
+**Orchestrator guard.** Two parts refuse, in the orchestrator's session only,
+what `HEPH.md` records as costly. `fleet/orch-tmux.sh` is the session's
+`tmux`: `launch.sh` puts `orch-bin/` (in the state folder) first on its PATH, so
+each send is checked when it is made, on tmux's real arguments. It refuses keys
+or a paste into a pane stopped at a usage limit 55 minutes or more ago
+(`FRESH_AFTER_S`: its cache expired, and `fresh-now.sh` relaunches it from its
+brief), keys into an input line holding text the orchestrator did not type
+there, and tmux commands that run others it cannot read (`source-file`,
+`run-shell`, `if-shell`, a new pane's shell command calling tmux). The fleet's
+own scripts send with their own checks. `fleet/orch-guard.sh`, a PreToolUse
+hook, refuses before the call a tmux called by path or with a new PATH, an
+interactive session on an API key or a headless one with no `fleet balance`
+check today, and editing `panes.tsv` while a launch or chain loop runs (reading
+it with `cat`, `grep`, `cut` or `column` is fine). `ORCH_GUARD_ALLOW=pending-input`
+or `=registry` passes that guard when AJ asks. Each check logs what it decided
+on. Register the hook in each config folder's `settings.json`; `fleet doctor`
+warns until then, and while the orchestrator's session started without the
+guard's tmux:
 
 ```json
 { "hooks": { "PreToolUse": [{ "matcher": "Bash|Edit|Write", "hooks": [{ "type": "command", "command": "bash ~/.local/state/fleet-orchestrator/orch-guard.sh" }] }] } }
@@ -1461,7 +1468,7 @@ bash statusline/test_statusline.sh       # usage hook and heartbeat, against rec
 bash hooks/test_fleet.sh                 # fleet hook: states, where, identity, pruning, gone, settings, window colours
 bash hooks/test_launch.sh                # launcher: new, jump, tab reuse, against a private tmux socket
 bash fleet/test_fleet.sh                 # fleet engine: limits, resets, typed lines, launch delivery, doctor, against fake panes
-bash fleet/test_orch_guard.sh            # orchestrator guard: each guard fires, look-alikes pass, a mutant of each fails, a differential against tmux and bash
+bash fleet/test_orch_guard.sh            # orchestrator guard: each refusal fires, look-alikes pass, a mutant of each fails, a differential against tmux and bash
 bash scripts/test_measure_memory.sh      # the release memory check
 python3 -I fleet/test_ci_watch.py        # CI watch: which runs count, triage once, Dependabot, 304s
 node --test src/*.test.js                # ramp, countdown, reconciliation, fleet model, faces, guards, logger

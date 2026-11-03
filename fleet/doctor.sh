@@ -271,6 +271,20 @@ if jq -e '[.hooks.PreToolUse[]? | select(.hooks[]?.command | strings | test("orc
 else
   report warn "orchestrator guard" "not registered for Bash, Edit and Write in $(tilde "$FLEET_DEFAULT_CONFIG")/settings.json: add the PreToolUse entry in README (Orchestrator guard), then fleet accounts sync"
 fi
+# The orchestrator's tmux guard (#264) acts only where its session started with
+# orch-bin first on PATH (launch.sh, for heph); one started before that has none.
+orch_path=""
+if op=$(orchestrator) && [[ -n $op ]] && pp=$(t display-message -p -t "$op" '#{pane_pid}' 2>/dev/null); then
+  for q in $pp $(pgrep -P "$pp" 2>/dev/null) $(for c in $(pgrep -P "$pp" 2>/dev/null); do pgrep -P "$c"; done); do
+    orch_path=$(tr '\0' '\n' <"/proc/$q/environ" 2>/dev/null | sed -n 's/^PATH=//p')
+    [[ $orch_path == "$FLEET_STATE/orch-bin:"* ]] && break
+  done
+fi
+if [[ $orch_path == "$FLEET_STATE/orch-bin:"* && -x $FLEET_STATE/orch-bin/tmux ]]; then
+  report ok "orchestrator tmux guard" "its session's tmux is $(tilde "$FLEET_STATE")/orch-bin/tmux"
+else
+  report warn "orchestrator tmux guard" "the orchestrator's session did not start with $(tilde "$FLEET_STATE")/orch-bin first on PATH: its next move or recover starts it so"
+fi
 if [[ -n $json ]]; then
   tmp=$json.tmp.$$
   if printf '%s\n' "${results[@]}" | jq -R -s --argjson at "$now" --argjson failed "$failed" \

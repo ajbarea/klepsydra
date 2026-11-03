@@ -73,6 +73,9 @@ for f in "${SCRIPTS[@]}"; do
   do_ ln -sfn -- "$here/$f" "$dest"
 done
 do_ ln -sfn -- "$here/fleet" "$BIN/fleet"
+# The orchestrator's tmux (#264): launch.sh puts this folder first on its PATH.
+do_ mkdir -p -- "$FLEET_STATE/orch-bin"
+do_ ln -sfn -- "$here/orch-tmux.sh" "$FLEET_STATE/orch-bin/tmux"
 
 
 # The PATH the services run with: this shell's, as `systemd-run -E PATH` gave them.

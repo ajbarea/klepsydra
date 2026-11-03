@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-# Tests for orch-guard.sh (#264) against a private tmux server, fake Claude
-# Code panes (tests/fake_pane.py) and a fake /proc, with no real Claude.
-# Each guard has a case where it fires and a mutation check: the guard with
-# its refusal removed must fail that case.
+# Tests for the orchestrator guard (#264): orch-tmux.sh, the tmux on the
+# orchestrator's PATH that checks each send when it is made, and orch-guard.sh,
+# the PreToolUse hook. Against a private tmux server, fake Claude Code panes
+# (tests/fake_pane.py) and a fake /proc, with no real Claude. Each refusal has
+# a case where it fires and a mutant without it that must fail that case.
 # Run: bash fleet/test_orch_guard.sh
 set -uo pipefail
 
@@ -12,7 +13,7 @@ work=$(mktemp -d)
 export TZ=America/New_York
 export FLEET_SOCK="orch-guard-test-$$" FLEET_STATE="$work/state" FLEET_SESSION=fleet
 export FLEET_LOG="$work/state/log/fleet.log" FLEET_PROC="$work/proc" KLEPSYDRA_DIR="$work/klepsydra"
-unset TMUX CLAUDE_CONFIG_DIR
+unset TMUX TMUX_PANE CLAUDE_CONFIG_DIR ORCH_GUARD_ALLOW
 # Never AJ's config folders: the parser reads the settings a launch would use.
 export HOME="$work/home" FLEET_DEFAULT_CONFIG="$work/cfg-a" FLEET_ACCOUNTS="$work/cfg-a $work/cfg-b"
 mkdir -p "$FLEET_STATE/log" "$FLEET_PROC" "$HOME/.claude" "$work/cfg-a" "$work/cfg-b"
@@ -45,13 +46,116 @@ pane() { # NAME STATE-JSON: a fake pane; prints its id
   t new-window -d -P -F '#{pane_id}' -t fleet: "python3 -I $fake $work/$1.json $work/$1.log"
 }
 settle() { sleep 0.8; }
+got_keys() { grep -c '^SUBMIT' "$work/$1.log"; } # NAME: lines the pane took
 
+LIMIT='  ⎿  You'"'"'ve hit your 5-hour limit · resets 1:10pm (America/New_York)'
+at() { date -d "2026-11-02 $1" +%s; } # HH:MM AM|PM, the fixtures' day
+FLEET_NOW=$(at '10:30 AM')
+export FLEET_NOW
+
+# The orchestrator: its pane on record, and its PATH with the guard's tmux first.
+orchp=$(t new-window -d -P -F '#{pane_id}' -t fleet: 'sleep 100000')
+printf '%s\n' "$orchp" >"$FLEET_STATE/orchestrator.pane"
+mkdir -p "$work/orch-bin"
+ln -s "$here/orch-tmux.sh" "$work/orch-bin/tmux"
+# as_heph COMMAND: COMMAND run as the orchestrator's Bash runs it; prints ok
+# or refused:<guard>, with the refusal's text in $(why).
+as_heph() {
+  local rc
+  PATH="$work/orch-bin:$PATH" TMUX_PANE=$orchp bash -c "$1" >/dev/null 2>"$work/err"; rc=$?
+  if grep -q '^orch-guard (' "$work/err"; then
+    sed -n 's/^orch-guard (\([a-z-]*\)).*/refused:\1/p' "$work/err" | head -1
+  elif (( rc == 0 )); then echo ok
+  else echo "rc=$rc $(head -c 200 "$work/err")"; fi
+}
+why() { cat "$work/err"; }
+T="tmux -L $FLEET_SOCK"
+
+echo "sends, checked when made (orch-tmux.sh)"
+cold=$(pane cold "{\"above\":[\"⏺ Done. done 9:00 AM\",\"$LIMIT\"]}")
+warm=$(pane warm '{"above":["⏺ Done. done 10:00 AM","idle"]}')
+young=$(pane young "{\"above\":[\"⏺ Done. done 10:20 AM\",\"$LIMIT\"]}")
+typing=$(pane typing '{"above":["⏺ Done. done 10:20 AM"],"input":"AJ: also check the phone wall"}')
+settle
+t set-buffer -b x hi
+check "a pane at a limit since 9:00 (now 10:30): refused" "$(as_heph "$T send-keys -t $cold continue Enter")" "refused:cold-limit"
+check "the refusal names fresh-now.sh and the pane" "$(has "$(why)" "fresh-now.sh $cold")" "yes"
+check "the refusal says how long" "$(has "$(why)" "89 min ago")" "yes"
+check "and the pane took nothing" "$(got_keys cold)" "0"
+check "it is logged with the pane" "$(jq -r 'select(.message | contains("refused a tmux call")) | "\(.guard) \(.pane)"' "$FLEET_LOG" | tail -1)" "cold-limit $cold"
+check "a limit 10 min old: allowed" "$(as_heph "$T send-keys -t $young go Enter")" "ok"
+check "and the keys arrive" "$(got_keys young)" "1"
+check "an idle pane at no limit: allowed" "$(as_heph "$T send-keys -t $warm 'next item' Enter")" "ok"
+check "the send check is logged" "$(jq -r 'select(.message | contains("send checked")) | .pane' "$FLEET_LOG" | tail -1)" "$warm"
+for shape in "send -t $cold go" "send-k -t $cold go" "send-keys -lt $cold go" "send-keys -Rt$cold go" "paste -t $cold" "pa -t $cold" \
+  "pasteb -b x -t $cold" "pipe-pane -I -t $cold 'printf go'" "send-keys -t $warm hi \\; send-keys -t $cold go" "send-prefix -t $cold"; do
+  check "tmux $shape: refused" "$(as_heph "$T $shape")" "refused:cold-limit"
+done
+check "pipe-pane without -I (output only): allowed" "$(as_heph "$T pipe-pane -O -t $warm 'cat >/dev/null'")" "ok"
+t pipe-pane -t "$warm" 2>/dev/null
+for wrap in "for p in $warm $cold; do $T send-keys -t \$p go; done" "echo $cold | xargs -I{} $T send-keys -t {} go" \
+  "printf '%s\\n' $cold | while read -r p; do $T send-keys -t \"\$p\" go; done" "eval '$T send-keys -t $cold go'" \
+  "x=\$($T send-keys -t $cold go)" "{ sleep 0.1; $T send-keys -t $cold go; }" "bash -c '$T send-keys -t $cold go'" \
+  ". $here/lib.sh; FLEET_SOCK=$FLEET_SOCK; t send-keys -t $cold go" ". $here/lib.sh; FLEET_SOCK=$FLEET_SOCK; type_exactly $cold go"; do
+  check "through the shell ($wrap): refused" "$(as_heph "$wrap")" "refused:cold-limit"
+done
+printf '#!/usr/bin/env bash\n%s send-keys -t %s go\n' "$T" "$cold" >"$work/nudge.sh"
+check "from a script of its own: refused" "$(as_heph "bash $work/nudge.sh")" "refused:cold-limit"
+# The check happens at the send, not when the command starts: a pane that
+# reaches a long-past limit while the command sleeps is refused.
+late=$(pane late '{"above":["⏺ Done. done 9:00 AM","idle"]}'); settle
+( sleep 1; printf '%s' "{\"above\":[\"⏺ Done. done 9:00 AM\",\"$LIMIT\"]}" >"$work/late.json" ) &
+check "a limit that appears during a wait is seen at the send" "$(as_heph "sleep 2.5; $T send-keys -t $late continue Enter")" "refused:cold-limit"
+wait
+check "a target tmux does not know goes to tmux, which fails" "$(as_heph "$T send-keys -t %9999 hi" | cut -c1-4)" "rc=1"
+check "no -t is the orchestrator's own pane" "$(as_heph "$T send-keys -t $orchp hi")" "ok"
+check "another pane's calls are never checked" \
+  "$(PATH="$work/orch-bin:$PATH" TMUX_PANE=$warm bash -c "$T send-keys -t $cold x" 2>&1 && echo ok)" "ok"
+check "read-only tmux commands pass" "$(as_heph "$T capture-pane -p -t $cold >/dev/null && $T list-panes -a >/dev/null")" "ok"
+
+echo "pending input"
+check "a box holding AJ's text: refused" "$(as_heph "$T send-keys -t $typing 'report?' Enter")" "refused:pending-input"
+check "the refusal quotes the text" "$(has "$(why)" "also check the phone wall")" "yes"
+check "ORCH_GUARD_ALLOW=pending-input lets it through" "$(as_heph "ORCH_GUARD_ALLOW=pending-input $T send-keys -t $typing C-u")" "ok"
+check "the override is logged" "$(jq -r 'select(.message | contains("allowed by ORCH_GUARD_ALLOW")) | .pane' "$FLEET_LOG" | tail -1)" "$typing"
+two=$(pane two '{"above":["⏺ Done. done 10:20 AM"]}'); settle
+check "typing into an empty box: allowed" "$(as_heph "$T send-keys -t $two -l 'your next item'")" "ok"
+check "its own Enter after typing: allowed" "$(as_heph "$T send-keys -t $two Enter")" "ok"
+printf '%s' '{"above":["⏺ Done. done 10:20 AM"],"input":"your next item"}' >"$work/two.json"; settle
+check "the same box two minutes later is no longer its own" "$(FLEET_NOW=$((FLEET_NOW + 200)) as_heph "$T send-keys -t $two Enter")" "refused:pending-input"
+# A pane only named in a message is not typed into, so it is not stamped own.
+named=$(pane named '{"above":["⏺ Done. done 10:20 AM"]}'); settle
+as_heph "$T send-keys -t $warm 'Hermes in $named is done' Enter" >/dev/null
+printf '%s' '{"above":["⏺ Done. done 10:20 AM"],"input":"AJ is typing"}' >"$work/named.json"; settle
+check "a pane named in a message is not the orchestrator's own" "$(as_heph "$T send-keys -t $named 'new task' Enter")" "refused:pending-input"
+rm -f -- "$FLEET_STATE/guard/typed-${warm#%}"
+check "a refused call stamps nothing as its own" \
+  "$(as_heph "$T send-keys -t $warm hi \\; send-keys -t $cold hi" >/dev/null; [[ -e $FLEET_STATE/guard/typed-${warm#%} ]] && echo stamped || echo none)" "none"
+
+echo "commands the guard cannot read"
+printf 'send-keys -t %s go\n' "$cold" >"$work/x.conf"
+for hidden in "source-file $work/x.conf" "source $work/x.conf" "run-shell '$T send-keys -t $cold go'" "if-shell true 'send-keys -t $cold go'" \
+  "new-window -d '$T send-keys -t $cold go'" "-f $work/x.conf list-sessions"; do
+  check "tmux $hidden: refused" "$(as_heph "$T $hidden")" "refused:hidden"
+done
+check "and nothing reached the pane" "$(got_keys cold)" "0"
+check "a new window running no tmux: allowed" "$(as_heph "$T new-window -d -t fleet: 'sleep 1'")" "ok"
+
+echo "fleet scripts send with their own checks"
+mkdir -p "$work/fleetcopy" "$work/elsewhere"
+cp -- "$here/orch-tmux.sh" "$here/lib.sh" "$work/fleetcopy/"
+mkdir -p "$work/orch-bin2"
+ln -s "$work/fleetcopy/orch-tmux.sh" "$work/orch-bin2/tmux"
+cold2=$(pane cold2 "{\"above\":[\"⏺ Done. done 9:00 AM\",\"$LIMIT\"]}"); settle
+printf '#!/usr/bin/env bash\n%s send-keys -t %s /clear\n' "$T" "$cold2" | tee "$work/fleetcopy/fresh-now.sh" >"$work/elsewhere/fresh-now.sh"
+check "the script outside the fleet folder is checked" "$(PATH="$work/orch-bin2:$PATH" TMUX_PANE=$orchp bash "$work/elsewhere/fresh-now.sh" 2>&1 | grep -o 'orch-guard (cold-limit)')" "orch-guard (cold-limit)"
+check "the same script in the fleet folder passes" "$(PATH="$work/orch-bin2:$PATH" TMUX_PANE=$orchp bash "$work/fleetcopy/fresh-now.sh" 2>&1 && echo ok)" "ok"
+
+echo "before the call (orch-guard.sh, PreToolUse)"
 OSID=aaaaaaaa-0000-4000-8000-000000000001 WSID=bbbbbbbb-0000-4000-8000-000000000002
 printf '%s\n' "$OSID" >"$FLEET_STATE/orchestrator.session"
 GUARD=$here/orch-guard.sh
-# The decision on one call: allow, or deny:<guard>; $(reason) is the refusal text.
-reason() { cat "$work/reason"; }
-call() { # SESSION TOOL INPUT-JSON
+call() { # SESSION TOOL INPUT-JSON: allow, or deny:<guard>; $(reason) is the text
   local out
   out=$(jq -nc --arg s "$1" --arg t "$2" --argjson i "$3" \
     '{session_id: $s, transcript_path: "/home/x/.claude/projects/p/s.jsonl", cwd: "/home/x", permission_mode: "bypassPermissions", hook_event_name: "PreToolUse", tool_name: $t, tool_input: $i, tool_use_id: "toolu_1"}' |
@@ -62,135 +166,74 @@ call() { # SESSION TOOL INPUT-JSON
     sed -E 's/^orch-guard \(([a-z-]+)\).*/deny:\1/' "$work/reason"
   else echo "other: $out"; fi
 }
+reason() { cat "$work/reason"; }
 run() { call "$OSID" Bash "$(jq -nc --arg c "$1" '{command: $c}')"; } # COMMAND
 edit() { call "$OSID" "$1" "$(jq -nc --arg f "$2" '{file_path: $f, content: "x"}')"; } # TOOL FILE
-logged() { jq -r --arg m "$1" 'select(.message | contains($m)) | [.guard // "", .pane // ""] | join(" ")' "$FLEET_LOG" 2>/dev/null | tail -1; }
 
-LIMIT='  ⎿  You'"'"'ve hit your 5-hour limit · resets 1:10pm (America/New_York)'
-at() { date -d "2026-11-02 $1" +%s; } # HH:MM AM|PM, the fixtures' day
-
-echo "scope"
-cold=$(pane cold "{\"above\":[\"⏺ Done. done 9:00 AM\",\"$LIMIT\"]}"); settle
-FLEET_NOW=$(at '10:30 AM')
-export FLEET_NOW
-check "a worker's session is never guarded" "$(call "$WSID" Bash "$(jq -nc --arg c "tmux -L $FLEET_SOCK send-keys -t $cold go Enter" '{command: $c}')")" "allow"
+check "a worker's session is never guarded" "$(call "$WSID" Bash '{"command":"ANTHROPIC_API_KEY=sk claude"}')" "allow"
 mv "$FLEET_STATE/orchestrator.session" "$work/osid"
-check "no orchestrator on record: nothing is guarded" "$(run "tmux -L $FLEET_SOCK send-keys -t $cold go Enter")" "allow"
+check "no orchestrator on record: nothing is guarded" "$(run 'ANTHROPIC_API_KEY=sk claude')" "allow"
 mv "$work/osid" "$FLEET_STATE/orchestrator.session"
 check "another tool passes" "$(call "$OSID" Read '{"file_path":"/x/panes.tsv"}')" "allow"
 : >"$FLEET_LOG"
 check "an ordinary command passes" "$(run 'git status && ls -la')" "allow"
 check "an ordinary command logs nothing" "$(wc -c <"$FLEET_LOG" | tr -d ' ')" "0"
-check "text naming no tmux send passes" "$(run "gh pr comment 1 --body 'send the report to $cold'")" "allow"
-# The parser over-approximates (it never models bash): a command that sends
-# keys has every pane it names checked, quoted ones too.
-check "a quoted send naming a cold pane is checked too" "$(run "gh pr comment 1 --body 'tmux send-keys -t $cold go'")" "deny:cold-limit"
 
-echo "cold-limit"
-check "a pane at a limit for 89 min (done 9:00, now 10:30): refused" "$(run "tmux -L $FLEET_SOCK send-keys -t $cold 'continue' Enter")" "deny:cold-limit"
-check "the refusal names fresh-now.sh and the pane" "$(has "$(reason)" "fresh-now.sh $cold")" "yes"
-check "the refusal says how long" "$(has "$(reason)" "89 min ago")" "yes"
-check "it is logged with the pane" "$(logged "guard refused")" "cold-limit $cold"
-check "a pane at a limit for 40 min: allowed" "$(FLEET_NOW=$(at '9:40 AM') run "tmux -L $FLEET_SOCK send-keys -t $cold 'continue' Enter")" "allow"
-check "the send check is logged" "$(logged "send checked")" " $cold"
-warm=$(pane warm '{"above":["⏺ Done. done 10:00 AM","idle"]}'); settle
-check "an idle pane with no limit: allowed" "$(run "tmux -L $FLEET_SOCK send-keys -t $warm 'next item' Enter")" "allow"
-check "a loop over panes reaches the cold one" "$(run "for p in $warm $cold; do tmux -L $FLEET_SOCK send-keys -t \$p go Enter; done")" "deny:cold-limit"
-check "lib.sh's t reaches the fleet socket" "$(run ". fleet/lib.sh; t send-keys -t $cold go Enter")" "deny:cold-limit"
-check "a pane id set earlier in the command" "$(run "p=$cold; tmux -L $FLEET_SOCK send-keys -t \"\$p\" go")" "deny:cold-limit"
-check "a paste into the cold pane" "$(run "tmux -L $FLEET_SOCK paste-buffer -b b1 -t $cold")" "deny:cold-limit"
-check "on a later line of the command" "$(run $'echo hi\ntmux -L '"$FLEET_SOCK send-keys -t $cold go")" "deny:cold-limit"
-resumed=$(pane resumed "{\"above\":[\"⏺ Done. done 9:00 AM\",\"$LIMIT\",\"❯ The usage limit has reset. Continue\",\"⏺ On it.\"]}"); settle
-check "a limit a prompt already followed is past" "$(run "tmux -L $FLEET_SOCK send-keys -t $resumed more Enter")" "allow"
-printf '%s\n' "$cold" >"$FLEET_STATE/orchestrator.pane"
-check "the orchestrator's own pane is left alone" "$(run "tmux -L $FLEET_SOCK send-keys -t $cold x")" "allow"
-rm -f -- "$FLEET_STATE/orchestrator.pane"
+check "tmux by its path skips the guard's tmux: refused" "$(run "/usr/bin/tmux send-keys -t $cold go")" "deny:bypass"
+check "tmux with a new PATH: refused" "$(run "PATH=/usr/bin tmux send-keys -t $cold go")" "deny:bypass"
+check "env -i tmux: refused" "$(run "env -i tmux send-keys -t $cold go")" "deny:bypass"
+check "plain tmux passes here (orch-tmux.sh checks it)" "$(run "tmux send-keys -t $cold go")" "allow"
 
-echo "target"
-# shellcheck disable=SC2016 # the literal $x is the case
-check "a variable the command never sets: refused" "$(run 'tmux send-keys -t "$x" hi Enter')" "deny:target"
-check "a command substitution: refused" "$(run "tmux send-keys -t \"\$(cat $FLEET_STATE/orchestrator.pane)\" hi")" "deny:target"
-check "no -t is the session's own pane" "$(run 'tmux send-keys hi')" "allow"
-check "a target tmux does not know passes" "$(run "tmux -L $FLEET_SOCK send-keys -t %9999 hi")" "allow"
-
-echo "pending-input"
-typing=$(pane typing '{"above":["⏺ Done. done 10:20 AM"],"input":"AJ: also check the phone wall"}'); settle
-check "a box holding AJ's text: refused" "$(run "tmux -L $FLEET_SOCK send-keys -t $typing 'report?' Enter")" "deny:pending-input"
-check "the refusal quotes the text" "$(has "$(reason)" "also check the phone wall")" "yes"
-check "ORCH_GUARD_ALLOW=pending-input lets it through" "$(run "ORCH_GUARD_ALLOW=pending-input tmux -L $FLEET_SOCK send-keys -t $typing C-u")" "allow"
-check "the override is logged" "$(logged "allowed by ORCH_GUARD_ALLOW")" "pending-input $typing"
-two=$(pane two '{"above":["⏺ Done. done 10:20 AM"]}'); settle
-check "typing into an empty box: allowed" "$(run "tmux -L $FLEET_SOCK send-keys -t $two -l 'your next item'")" "allow"
-printf '%s' '{"above":["⏺ Done. done 10:20 AM"],"input":"your next item"}' >"$work/two.json"; settle
-check "its own Enter after typing: allowed" "$(run "tmux -L $FLEET_SOCK send-keys -t $two Enter")" "allow"
-check "the same box two minutes later is no longer its own" "$(FLEET_NOW=$((FLEET_NOW + 200)) run "tmux -L $FLEET_SOCK send-keys -t $two Enter")" "deny:pending-input"
-rm -f -- "$FLEET_STATE/guard/typed-${warm#%}"
-check "a refused command records nothing as its own" \
-  "$(run "tmux -L $FLEET_SOCK send-keys -t $warm hi; tmux -L $FLEET_SOCK send-keys -t $cold hi" >/dev/null; [[ -e $FLEET_STATE/guard/typed-${warm#%} ]] && echo recorded || echo none)" "none"
-
-echo "api-key"
 printf '%s' '{"apiKeyHelper":"op read op://Fleet/key/credential","env":{}}' >"$work/key-settings.json"
 printf '%s' '{"env":{"KERYX_ENABLED":"false"}}' >"$work/plain-settings.json"
 check "an interactive session on a key: refused" "$(run 'ANTHROPIC_API_KEY=sk-x claude --model opus')" "deny:api-key"
 check "the refusal says keys are for headless jobs" "$(has "$(reason)" "only for headless jobs")" "yes"
 check "a launch with key settings: refused" "$(run "bash fleet/launch.sh review $work/brief.src --settings $work/key-settings.json")" "deny:api-key"
 check "an exported key reaches a later claude" "$(run 'export ANTHROPIC_API_KEY=sk-x; timeout 60 claude')" "deny:api-key"
+check "mkdir -p is no headless claude" "$(run 'mkdir -p /tmp/w && ANTHROPIC_API_KEY=sk-x claude --model opus')" "deny:api-key"
 check "a launch on plain settings passes" "$(run "bash fleet/launch.sh review $work/brief.src --settings $work/plain-settings.json")" "allow"
 check "a headless job on the subscription passes" "$(run 'claude -p "summarise" --model haiku')" "allow"
 check "a headless key job, no balance logged: refused" "$(run "claude -p hi --settings $work/key-settings.json")" "deny:api-key"
 check "the refusal names fleet balance" "$(has "$(reason)" "fleet balance ORG AMOUNT")" "yes"
+check "a settings file the command makes first counts as a key" "$(run "cp $work/key-settings.json /tmp/s-$$.json && claude --settings /tmp/s-$$.json")" "deny:api-key"
 printf '%s org=lab balance=98.50 by=heph\n' "$(date -d "@$((FLEET_NOW - 86400))" '+%F %H:%M')" >"$FLEET_STATE/api-balance.log"
 check "a check logged yesterday is not today's" "$(run "claude -p hi --settings $work/key-settings.json")" "deny:api-key"
 check "fleet balance refuses a bad amount" "$(bash "$here/fleet" balance lab lots >/dev/null 2>&1; echo $?)" "2"
 check "fleet balance logs a check" "$(bash "$here/fleet" balance lab 98.50 | grep -c "org=lab balance=98.50")" "1"
 check "after today's check: allowed" "$(FLEET_NOW=$(date +%s) run "claude -p hi --settings $work/key-settings.json")" "allow"
+cp -- "$work/key-settings.json" "$HOME/key.json"
+# shellcheck disable=SC2016 # the literal $HOME is the case
+check 'a --settings file under $HOME' "$(run 'claude --settings $HOME/key.json')" "deny:api-key"
+# shellcheck disable=SC2016 # the literal $S is the case
+check "a --settings path the guard cannot read: refused" "$(run 'claude --settings "$S/x.json"')" "deny:api-key"
+mkdir -p "$work/keycfg"; cp -- "$work/key-settings.json" "$work/keycfg/settings.json"
+check "a config folder whose settings use a key" "$(run "CLAUDE_CONFIG_DIR=$work/keycfg claude --model opus")" "deny:api-key"
+check "launch.sh on such a folder" "$(run "FLEET_ACCOUNT=$work/keycfg bash fleet/launch.sh x $work/brief.src")" "deny:api-key"
+check "launch.sh on the fleet's own folders passes" "$(run "bash fleet/launch.sh x $work/brief.src")" "allow"
+cp -- "$work/key-settings.json" "$work/cfg-b/settings.json"
+check "launch.sh where it may pick a folder that uses a key" "$(run "bash fleet/launch.sh x $work/brief.src")" "deny:api-key"
+rm -f -- "$work/cfg-b/settings.json"
+check "clearing the key is no key" "$(run 'ANTHROPIC_API_KEY= claude --model opus')" "allow"
 
-echo "registry"
 reg=$FLEET_STATE/panes.tsv
 check "an edit with no loop running: allowed" "$(run "sed -i '/old/d' $reg")" "allow"
-mkdir -p "$FLEET_PROC/4242" "$FLEET_PROC/77" "$FLEET_PROC/78"
-printf 'cargo\0build\0--target-dir\0toolchain\0' >"$FLEET_PROC/77/cmdline"
-printf 'bash\0-c\0sleep 5\0' >"$FLEET_PROC/78/cmdline"
-check "a toolchain build is no loop" "$(run "sed -i '/old/d' $reg")" "allow"
+mkdir -p "$FLEET_PROC/4242"
 printf 'bash\0-c\0until ! tmux has -t %%9; do sleep 30; done; bash ~/.local/state/fleet-orchestrator/launch.sh card brief\0' >"$FLEET_PROC/4242/cmdline"
 check "an edit while a chain launch waits: refused" "$(run "sed -i '/old/d' $reg")" "deny:registry"
 check "the refusal names the loop's pid" "$(has "$(reason)" "4242 bash -c until")" "yes"
-check "a rewrite by redirect: refused" "$(run "grep -v old $reg > $reg")" "deny:registry"
-check "a move into place: refused" "$(run "mv /tmp/new $reg")" "deny:registry"
+for w in "sed -ri '/x/d' $reg" "sed -Ei '/x/d' $reg" "sed -n '1w $reg' bak" "sort -ro $reg x" "cp src/panes.tsv $FLEET_STATE/" \
+  "grep x $reg >&$reg" "grep -v old $reg > $reg" "mv /tmp/new $reg" "reg=$reg; grep -v x \"\$reg\" > p.new && cat p.new > \"\$reg\"" \
+  "cp p.new \"\$REGISTRY\"" "awk -i inplace 1 $reg" "python3 - $reg" "tee -a $reg" "cp $reg $reg.bak"; do
+  check "a write ($w): refused" "$(run "$w")" "deny:registry"
+done
 check "the Edit tool: refused" "$(edit Edit "$reg")" "deny:registry"
-check "the Write tool: refused" "$(edit Write "$reg")" "deny:registry"
-check "reading it passes" "$(run "cat $reg | cut -f1")" "allow"
-check "a backup copy passes" "$(run "cp $reg $reg.bak-0655")" "allow"
+check "the Write tool: refused, saying to use Bash" "$(edit Write "$reg"; has "$(reason)" "make it in Bash")" "deny:registry
+yes"
+for r in "cat $reg | cut -f1" "grep x $reg >/dev/null 2>&1" "grep x < $reg" "cat \${REGISTRY}" "column -t $reg" "wc -l $reg"; do
+  check "a read ($r): passes" "$(run "$r")" "allow"
+done
 check "editing another file passes" "$(edit Edit "$FLEET_STATE/HEPH.md")" "allow"
 check "ORCH_GUARD_ALLOW=registry lets it through" "$(run "ORCH_GUARD_ALLOW=registry sed -i '/old/d' $reg")" "allow"
-printf 'bash\0/home/x/.local/state/fleet-orchestrator/dependabot-chain.sh\0' >"$FLEET_PROC/4242/cmdline"
-check "a *-chain.sh script is a loop" "$(run "sed -i '/old/d' $reg")" "deny:registry"
-rm -rf -- "${FLEET_PROC:?}/4242"
-
-echo "round 1: shapes the first parser missed"
-check "tmux's combined flags (-lt)" "$(run "tmux -L $FLEET_SOCK send-keys -lt $cold go")" "deny:cold-limit"
-check "tmux's abbreviation paste" "$(run "tmux -L $FLEET_SOCK paste -t $cold")" "deny:cold-limit"
-check "tmux's abbreviation send-k" "$(run "tmux -L $FLEET_SOCK send-k -t $cold go")" "deny:cold-limit"
-check "lib.sh's t inside braces" "$(run ". fleet/lib.sh; { t send-keys -t $cold go; }")" "deny:cold-limit"
-check "lib.sh's t after !" "$(run "! t send-keys -t $cold go")" "deny:cold-limit"
-check "lib.sh's t after time" "$(run "time t send-keys -t $cold go")" "deny:cold-limit"
-check "lib.sh's type_exactly" "$(run ". fleet/lib.sh; type_exactly $cold go")" "deny:cold-limit"
-check "lib.sh's deliver" "$(run ". fleet/lib.sh; deliver $cold /tmp/note")" "deny:cold-limit"
-check "targets fed by xargs: refused" "$(run "echo fleet:1 | xargs -I{} tmux -L $FLEET_SOCK send-keys -t {} go")" "deny:target"
-check "a pane id passed through xargs is still checked first" "$(run "echo $cold | tmux -L $FLEET_SOCK send-keys -t $warm go")" "deny:cold-limit"
-young=$(pane young "{\"above\":[\"⏺ Done. done 10:20 AM\",\"$LIMIT\"]}"); settle
-check "a send to a limit 10 min old: allowed" "$(run "tmux -L $FLEET_SOCK send-keys -t $young go")" "allow"
-check "the same send after a sleep: refused" "$(run "sleep 3600; tmux -L $FLEET_SOCK send-keys -t $young continue Enter")" "deny:cold-limit"
-check "the refusal points to the resume service" "$(has "$(reason)" "resume service sends at the reset")" "yes"
-check "a delayed send to a pane at no limit: allowed" "$(run "sleep 5; tmux -L $FLEET_SOCK send-keys -t $warm go")" "allow"
-
-mkdir -p "$FLEET_PROC/4242"
-printf 'bash\0launch.sh\0x\0' >"$FLEET_PROC/4242/cmdline"
-check "a registry path in a variable, written by a redirect" \
-  "$(run "reg=$reg; grep -v x \"\$reg\" > p.new && cat p.new > \"\$reg\"")" "deny:registry"
-check "a copy onto a registry path in a variable" "$(run "reg=$reg; cp p.new \"\$reg\"")" "deny:registry"
-check "a read whose output goes to /dev/null passes" "$(run "grep x $reg >/dev/null 2>&1")" "allow"
-check "the Edit tool's refusal says to use Bash" "$(edit Edit "$reg" >/dev/null; has "$(reason)" "make it in Bash with ORCH_GUARD_ALLOW=registry")" "yes"
 for c in 'shellcheck\0fleet/launch.sh' 'vim\0launch.sh' 'bash\0fleet/test_fleet.sh' 'less\0x-chain.sh'; do
   printf '%b\0' "$c" >"$FLEET_PROC/4242/cmdline"
   check "no loop: a process that only names a script ($(tr '\0' ' ' <"$FLEET_PROC/4242/cmdline"))" "$(run "sed -i '/old/d' $reg")" "allow"
@@ -199,68 +242,58 @@ for c in 'launch.sh\0card' 'bash\0/x/relaunch-fresh.sh\0%3' 'sh\0-c\0sleep 9; ba
   printf '%b\0' "$c" >"$FLEET_PROC/4242/cmdline"
   check "a loop: $(tr '\0' ' ' <"$FLEET_PROC/4242/cmdline")" "$(run "sed -i '/old/d' $reg")" "deny:registry"
 done
-rm -rf -- "${FLEET_PROC:?}/4242"
-
-printf '%s' '{"apiKeyHelper":"op read op://Fleet/key/credential"}' >"$HOME/key.json"
-# shellcheck disable=SC2016 # the literal $HOME is the case
-check 'a --settings file under $HOME' "$(run 'claude --settings $HOME/key.json')" "deny:api-key"
-# shellcheck disable=SC2016 # the literal $S is the case
-check "a --settings path the guard cannot read: refused" "$(run 'claude --settings "$S/x.json"')" "deny:api-key"
-mkdir -p "$work/keycfg"; cp -- "$HOME/key.json" "$work/keycfg/settings.json"
-check "a config folder whose settings use a key" "$(run "CLAUDE_CONFIG_DIR=$work/keycfg claude --model opus")" "deny:api-key"
-check "launch.sh on such a folder" "$(run "FLEET_ACCOUNT=$work/keycfg bash fleet/launch.sh x $work/brief.src")" "deny:api-key"
-check "launch.sh on the fleet's own folders passes" "$(run "bash fleet/launch.sh x $work/brief.src")" "allow"
-cp -- "$HOME/key.json" "$work/cfg-b/settings.json"
-check "launch.sh where it may pick a folder that uses a key" "$(run "bash fleet/launch.sh x $work/brief.src")" "deny:api-key"
-rm -f -- "$work/cfg-b/settings.json"
-check "clearing the key is no key" "$(run 'ANTHROPIC_API_KEY= claude --model opus')" "allow"
 
 echo "cost"
 payload=$(jq -nc --arg s "$WSID" '{session_id: $s, transcript_path: "/home/x/.claude/p.jsonl", hook_event_name: "PreToolUse", tool_name: "Bash", tool_input: {command: "tmux send-keys -t %1 hi"}}')
 start=$(date +%s%N)
 for _ in {1..20}; do bash "$GUARD" <<<"$payload" >/dev/null; done
 per=$(( ($(date +%s%N) - start) / 20000000 ))
-echo "  (another session's call: ${per} ms each)"
-check "another session's call costs under 40 ms" "$(( per < 40 ))" "1"
+echo "  (the hook on another session's call: ${per} ms each)"
+check "the hook costs another session under 40 ms" "$(( per < 40 ))" "1"
+start=$(date +%s%N)
+for _ in {1..20}; do PATH="$work/orch-bin:$PATH" TMUX_PANE=$warm tmux -L "$FLEET_SOCK" display -p '#{pid}' >/dev/null; done
+per=$(( ($(date +%s%N) - start) / 20000000 ))
+echo "  (the orchestrator's tmux, another pane's call: ${per} ms each)"
+check "the guard's tmux adds under 40 ms to another pane's call" "$(( per < 40 ))" "1"
 
-echo "differential against bash"
-diff_out=$(timeout 600 python3 -I "$here/tests/orch_parse_differential.py" 300 264 2>&1)
+echo "differential against tmux and bash"
+diff_out=$(timeout 900 python3 -I "$here/tests/orch_parse_differential.py" 200 264 2>&1)
 echo "  ${diff_out##*$'\n'}"
-check "no send or registry write bash makes is missed by the parser" "$(grep -c MISSED <<<"$diff_out")" "0"
+check "no send tmux delivers and no registry write bash makes is missed" "$(grep -c MISSED <<<"$diff_out")" "0"
 
 echo "mutation checks"
-# Each guard's refusal removed in turn: its firing case must then pass.
 mut=$work/mut
 mkdir -p "$mut"
-cp -- "$here/lib.sh" "$here/orch_guard_parse.py" "$mut/"
-mutate() { # GUARD: orch-guard.sh with GUARD's refusals removed, at $mut
-  sed "s/^\([[:space:]]*\)deny $1 /\1true $1 /" "$here/orch-guard.sh" >"$mut/orch-guard.sh"
-  grep -c "deny $1 " "$mut/orch-guard.sh"
-}
-mkdir -p "$FLEET_PROC/4242"
+cp -- "$here/lib.sh" "$here/orch_guard_parse.py" "$here/orch-guard.sh" "$here/orch-tmux.sh" "$mut/"
+mkdir -p "$work/orch-bin-mut"
+ln -s "$mut/orch-tmux.sh" "$work/orch-bin-mut/tmux"
 printf 'bash\0launch.sh\0x\0' >"$FLEET_PROC/4242/cmdline"
-# shellcheck disable=SC2016 # the literal $x is the case
-unset_var_send='tmux send-keys -t "$x" hi'
-for g in cold-limit pending-input api-key registry target; do
-  check "mutant $g: its refusals removed" "$(mutate "$g")" "0"
+typing2=$(pane typing2 '{"above":["⏺ Done. done 10:20 AM"],"input":"AJ: one more thing"}')
+cold3=$(pane cold3 "{\"above\":[\"⏺ Done. done 9:00 AM\",\"$LIMIT\"]}"); settle
+for g in cold-limit pending-input hidden; do
+  sed "s/refuse $g /true $g /g" "$here/orch-tmux.sh" >"$mut/orch-tmux.sh"
+  check "mutant $g: its refusals removed" "$(grep -c "refuse $g " "$mut/orch-tmux.sh")" "0"
   case $g in
-    cold-limit) cmd="tmux -L $FLEET_SOCK send-keys -t $cold go" ;;
-    pending-input) cmd="tmux -L $FLEET_SOCK send-keys -t $typing go" ;;
+    cold-limit) cmd="$T send-keys -t $cold3 go" ;;
+    pending-input) cmd="$T send-keys -t $typing2 go" ;;
+    hidden) cmd="$T source-file $work/x.conf" ;;
+  esac
+  check "mutant $g: the case it guards now passes" "$(PATH="$work/orch-bin-mut:$PATH" TMUX_PANE=$orchp bash -c "$cmd" 2>&1 | grep '^orch-guard (')" ""
+  check "unmutated: the same case is refused" "$(as_heph "$cmd")" "refused:$g"
+done
+cp -- "$here/orch-tmux.sh" "$mut/orch-tmux.sh"
+for g in bypass api-key registry; do
+  sed "s/deny $g /true $g /g" "$here/orch-guard.sh" >"$mut/orch-guard.sh"
+  check "mutant $g: its refusals removed" "$(grep -c "deny $g " "$mut/orch-guard.sh")" "0"
+  case $g in
+    bypass) cmd="/usr/bin/tmux send-keys -t $cold go" ;;
     api-key) cmd='ANTHROPIC_API_KEY=sk-x claude' ;;
     registry) cmd="sed -i '/old/d' $reg" ;;
-    target) cmd=$unset_var_send ;;
   esac
-  check "mutant $g: the case it guards now passes, so the test catches its removal" "$(GUARD=$mut/orch-guard.sh run "$cmd")" "allow"
+  check "mutant $g: the case it guards now passes" "$(GUARD=$mut/orch-guard.sh run "$cmd")" "allow"
   check "unmutated: the same case is refused" "$(run "$cmd")" "deny:$g"
 done
-
-# The parser's scan for every pane a send command names, removed: the case
-# only it catches (the pane id piped elsewhere) must then pass.
-sed 's/^    targets = \[m.group(0) for m in PANE.finditer(cmd)\]$/    targets = []/' "$here/orch_guard_parse.py" >"$mut/orch_guard_parse.py"
-cp -- "$here/orch-guard.sh" "$mut/orch-guard.sh"
-check "mutant pane-scan: its scan removed" "$(grep -c 'targets = \[\]' "$mut/orch_guard_parse.py")" "1"
-check "mutant pane-scan: the case only it catches now passes" "$(GUARD=$mut/orch-guard.sh run "echo $cold | tmux -L $FLEET_SOCK send-keys -t $warm go")" "allow"
-cp -- "$here/orch_guard_parse.py" "$mut/orch_guard_parse.py"
+rm -rf -- "${FLEET_PROC:?}/4242"
 
 echo
 echo "orch guard: $pass passed, $fail failed"

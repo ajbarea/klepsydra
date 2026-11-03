@@ -47,7 +47,11 @@ settings=${FLEET_SETTINGS-$FLEET_STATE/worker-settings.json}
 # FLEET_SUCCEEDS (a session id) names the orchestrator a move replaces (#226).
 succeeds=""
 [[ ${FLEET_SUCCEEDS:-} =~ ^[0-9a-f-]{36}$ ]] && succeeds="KLEPSYDRA_SUCCEEDS=$FLEET_SUCCEEDS "
-cmd="env -u KERYX_ENABLED $(config_env "$account")KLEPSYDRA_AGENT=$(printf '%q' "$name") ${succeeds}CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS=2 ${FLEET_CLAUDE:-claude} --session-id $sid${settings:+ --settings $(printf '%q' "$settings")} $*"
+# The orchestrator's tmux is the guard's (#264): orch-bin first on its PATH,
+# which the pane's shell expands, so every send it makes is checked when made.
+guard=""
+[[ $name == heph ]] && guard="PATH=$(printf '%q' "$FLEET_STATE/orch-bin"):\$PATH "
+cmd="env -u KERYX_ENABLED ${guard}$(config_env "$account")KLEPSYDRA_AGENT=$(printf '%q' "$name") ${succeeds}CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS=2 ${FLEET_CLAUDE:-claude} --session-id $sid${settings:+ --settings $(printf '%q' "$settings")} $*"
 if [[ ${FLEET_SCOPE:-1} != 0 ]]; then
   cmd="systemd-run --user --scope --collect --unit=fleet-$name-$(date +%s) -p MemoryHigh=${MEM_HIGH:-4G} -p MemoryMax=${MEM_MAX:-5G} -p MemorySwapMax=${MEM_SWAP:-1G} $cmd"
 fi

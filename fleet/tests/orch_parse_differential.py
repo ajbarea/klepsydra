@@ -1,12 +1,12 @@
-"""Differential test of orch_guard_parse.py against bash (#264).
+"""Differential test of the orchestrator guard against tmux and bash (#264).
 
 Sends: generates commands from shell pieces the orchestrator writes (tmux
 sends with literal, assigned, looped and piped targets, tmux's abbreviations
 and combined flags, quotes holding separators, comments, echoed look-alikes,
 line breaks, continuations, subshells, if/then, { }, !, time), runs each in
-bash against a real private tmux server whose panes record every byte they
-receive, and compares the panes that got keys with the panes the parser
-names (resolved on that server).
+bash as the orchestrator (orch-tmux.sh first on PATH) against a real private
+tmux server whose panes record every byte they receive, and compares the
+panes that got keys with the panes orch-tmux.sh checked (its trace).
 Registry: generates commands that read or write panes.tsv and runs each in
 bash in a scratch folder holding one. A send bash makes that the parser
 neither reports nor marks unresolved, or a write to panes.tsv it does not
@@ -23,7 +23,9 @@ import sys
 import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-PARSER = os.path.join(HERE, "..", "orch_guard_parse.py")
+FLEET = os.path.normpath(os.path.join(HERE, ".."))
+PARSER = os.path.join(FLEET, "orch_guard_parse.py")
+SHIM = os.path.join(FLEET, "orch-tmux.sh")
 
 # Each pane records the bytes it receives, unbuffered, in raw mode.
 RECORDER = (
@@ -59,7 +61,8 @@ def text(r):
 
 def send(r):
     """One send to a pane of the private server."""
-    prog = r.choice(["tmux", "tmux -L {sock}", "t", "/usr/bin/tmux", "command tmux"])
+    # /usr/bin/tmux skips orch-tmux.sh; orch-guard.sh refuses it before the call.
+    prog = r.choice(["tmux", "tmux -L {sock}", "t", "command tmux"])
     sub = r.choice(
         [
             "send-keys",
@@ -153,6 +156,12 @@ class Server:
             ],
             check=True,
         )
+        self.orch = subprocess.run(
+            [*self.tm, "display-message", "-p", "-t", "rec:0", "#{pane_id}"],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
         for i in range(1, PANES):
             log = os.path.join(work, f"p{i}.log")
             pid = subprocess.run(
@@ -184,6 +193,15 @@ class Server:
             capture_output=True,
             text=True,
         ).stdout.strip()
+        # The orchestrator's state and PATH: orch-tmux.sh first, as launch.sh sets it.
+        self.state = os.path.join(work, "state")
+        os.makedirs(os.path.join(self.state, "log"))
+        with open(os.path.join(self.state, "orchestrator.pane"), "w") as f:
+            f.write(self.orch + "\n")
+        self.bin = os.path.join(work, "orch-bin")
+        os.makedirs(self.bin)
+        os.symlink(SHIM, os.path.join(self.bin, "tmux"))
+        self.trace = os.path.join(work, "trace")
 
     def pane_of(self, t):
         got = subprocess.run(
@@ -194,44 +212,32 @@ class Server:
         return got.stdout.strip() if got.returncode == 0 else None
 
     def run(self, cmd):
-        """The panes that received bytes while bash ran CMD."""
+        """The panes that received bytes while bash ran CMD as the orchestrator,
+        and the panes orch-tmux.sh checked."""
         for log in self.logs.values():
             open(log, "wb").close()
-        env = {"PATH": "/usr/bin:/bin", "HOME": self.work, "TMUX": f"{self.path},0,0"}
+        open(self.trace, "w").close()
+        env = {
+            "PATH": f"{self.bin}:/usr/bin:/bin", "HOME": self.work, "TMUX": f"{self.path},0,0", "TMUX_PANE": self.orch,
+            "FLEET_STATE": self.state, "ORCH_TMUX_TRACE": self.trace, "FLEET_SOCK": self.sock,
+        }  # fmt: skip
         script = f't() {{ tmux -L {self.sock} "$@"; }}\n' + cmd + "\n"
         subprocess.run(
             ["bash", "-c", script],
             env=env,
             capture_output=True,
-            timeout=10,
+            timeout=20,
             check=False,
             cwd=self.work,
         )
         subprocess.run(["sleep", "0.15"], check=False)
-        return sorted(p for p, log in self.logs.items() if os.path.getsize(log) > 0)
+        got = sorted(p for p, log in self.logs.items() if os.path.getsize(log) > 0)
+        with open(self.trace) as f:
+            checked = sorted({line.strip() for line in f if line.strip()})
+        return got, checked
 
     def close(self):
         subprocess.run([*self.tm, "kill-server"], capture_output=True, check=False)
-
-
-def by_parser(cmd, server):
-    out = subprocess.run(
-        [sys.executable, "-I", PARSER],
-        input=cmd,
-        capture_output=True,
-        text=True,
-        check=True,
-    ).stdout
-    sends, unresolved = set(), 0
-    for line in out.splitlines():
-        f = line.split("\t")
-        if f[0] == "SEND":
-            p = server.pane_of(f[1])
-            if p:
-                sends.add(p)
-        elif f[0] == "UNRESOLVED":
-            unresolved += 1
-    return sorted(sends), unresolved
 
 
 REG_PIECES = [
@@ -322,15 +328,14 @@ def main():
         try:
             for i in range(n):
                 cmd = command(r).replace("{sock}", server.sock)
-                want = server.run(cmd)
-                got, unresolved = by_parser(cmd, server)
-                missed = sorted(set(want) - set(got))
-                if missed and not unresolved:
+                want, checked = server.run(cmd)
+                missed = sorted(set(want) - set(checked))
+                if missed:
                     bad += 1
                     print(
-                        f"SEND MISSED #{i}: keys reached {want}, parser named {got}\n{cmd}\n"
+                        f"SEND MISSED #{i}: keys reached {want}, orch-tmux.sh checked {checked}\n{cmd}\n"
                     )
-                over += bool(set(got) - set(want))
+                over += bool(set(checked) - set(want))
         finally:
             server.close()
     reg_bad = reg_over = 0
