@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# registry-event.sh EVENT SID WHY [PANE] [CLEARED_SID]: the fleet hook's call
+# registry-event.sh EVENT SID WHY [PANE] [CLEARED_SID] [SOCKET]: the fleet hook's call
 # at a session's start or end (#261), so panes.tsv, finished.tsv and
 # unpaused.tsv follow a session when it happens, not when a later poll reads a
 # file that the wall's Clear or the day's prune may already have removed.
@@ -14,7 +14,9 @@ FLEET_TARGET=fleet::registry-event
 here=$(dirname "$(readlink -f "$0")")
 # shellcheck source=fleet/lib.sh
 . "$here/lib.sh"
-event=${1:-} sid=${2:-} why=${3:-} pane=${4:-} cleared=${5:-}
+event=${1:-} sid=${2:-} why=${3:-} pane=${4:-} cleared=${5:-} socket=${6:-}
+# A pane id means something here only on the fleet's own server (#261 review 9).
+fleet_socket "$socket" || pane=""
 [[ $sid =~ ^[0-9a-f-]{36}$ && -s $REGISTRY ]] || exit 0
 
 # shellcheck disable=SC2329 # run through with_registry

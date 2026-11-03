@@ -2065,10 +2065,10 @@ fire session-end.json ".session_id = \"$R\" | .reason = \"clear\"" KLEPSYDRA_NOW
 c2fire session-start.json $((rnow + 11)) '.source = "clear"' "TMUX=$work/sock/klepsydra,1,0" TMUX_PANE=%7
 c2fire session-start.json $((rnow + 12)) '.source = "compact"'
 c2fire session-end.json $((rnow + 13)) '.reason = "prompt_input_exit"' "TMUX=$work/sock/klepsydra,1,0" TMUX_PANE=%7
-check "an end with its reason, a /clear with the session it cleared and its pane, no compact" "$(cat "$work/reg-events")" \
-"SessionEnd|$R|clear|%7||
-SessionStart|$R2|clear|%7|$R|
-SessionEnd|$R2|prompt_input_exit|%7||"
+check "an end with its reason, a /clear with the session it cleared, its pane and its server, no compact" "$(cat "$work/reg-events")" \
+"SessionEnd|$R|clear|%7||$work/sock/klepsydra|
+SessionStart|$R2|clear|%7|$R|$work/sock/klepsydra|
+SessionEnd|$R2|prompt_input_exit|%7||$work/sock/klepsydra|"
 rm -f "$work/fleet-state/registry-event.sh" "$work/fleet-state/panes.tsv" "$work/reg-events" "$rfile" "$rfile2"
 
 printf '\n%d passed, %d failed\n' "$pass" "$fail"

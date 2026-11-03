@@ -2427,13 +2427,15 @@ check "#261 review 6: resumed by hand and /exited between polls: finished, never
   "$(row_state %4 "$SF") $(rec --dry-run --no-orchestrator | grep -E '^(finished|would recover): d' | sed 's/ (.*//')" "finished finished: d"
 # #261 review 8: a recorded finish parks the row's pane; its session starting again takes it back.
 check "#261 review 8: a finished row holds no pane" "$(awk -F'\t' '$2 == "d" { print $1 }' "$REGISTRY")" "-"
-rev SessionStart "$SF" resume %4
+rev SessionStart "$SF" resume %4 "" "/tmp/tmux-1/$FLEET_SOCK"
 check "#261 review 8: a hand resume in its pane gives the row its pane back, logged" \
   "$(awk -F'\t' '$2 == "d" { print $1 }' "$REGISTRY") $(jq -r 'select(.message | contains("takes its pane back")) | .pane' "$FLEET_LOG" | tail -1)" "%4 %4"
 SN=aaaaaaaa-0000-4000-8000-0000000000f9
-rev SessionStart "$SN" clear %5 "$SF"
+rev SessionStart "$SN" clear %4 "$SF" "/tmp/tmux-1/default"
+check "#261 review 9: a /clear in another tmux server's pane of the same id leaves the row alone" "$(awk -F'\t' '$2 == "d" { print $1, $4 }' "$REGISTRY")" "%4 $SF"
+rev SessionStart "$SN" clear %5 "$SF" "/tmp/tmux-1/$FLEET_SOCK"
 check "#261 review 6: a /clear in another pane leaves the row alone" "$(awk -F'\t' '$2 == "d" { print $1, $4 }' "$REGISTRY")" "%4 $SF"
-rev SessionStart "$SN" clear %4 "$SF"
+rev SessionStart "$SN" clear %4 "$SF" "/tmp/tmux-1/$FLEET_SOCK"
 check "#261 review 6: a /clear repoints the row that named the cleared session in its pane, logged" \
   "$(awk -F'\t' '$2 == "d" { print $1, $4 }' "$REGISTRY") $(jq -r 'select(.message == "registry follows a /clear") | .name' "$FLEET_LOG")" "%4 $SN d"
 with_registry set_session_now %4 "$SN" "$SF"
@@ -2464,7 +2466,7 @@ rm -f -- "$work/p6.tsv" "$KLEPSYDRA_DIR/fleet/$SX.json" "$KLEPSYDRA_DIR/fleet/$S
 cp -p -- "$REGISTRY" "$work/reg-before-261r7"
 S1=aaaaaaaa-0000-4000-8000-0000000000c1 S2=aaaaaaaa-0000-4000-8000-0000000000c2 SC2=aaaaaaaa-0000-4000-8000-0000000000c3
 printf '%s\tfin1\t%s\t%s\t/w\n%s\tlost1\t%s\t%s\t/w\n%s\twork1\t%s\t%s\t/w\n' %3 "$work/bc.src" "$S1" %3 "$work/bc.src" "" %3 "$work/bc.src" "$S2" >"$REGISTRY"
-rev SessionStart "$SC2" clear %3 "$S2"
+rev SessionStart "$SC2" clear %3 "$S2" "/tmp/tmux-1/$FLEET_SOCK"
 check "#261 review 7: a /clear repoints only the row naming the cleared session, never others on its pane id" \
   "$(cut -f2,4 "$REGISTRY" | tr '\t\n' ': ')" "fin1:$S1 lost1: work1:$SC2 "
 check "#261 review 7: a repoint naming a session no row on that pane names changes nothing" \
@@ -2489,6 +2491,34 @@ for order in fin-first live-first; do
   check "#261 review 8 ($order): a rollback's set_pane moves only the live row" \
     "$(awk -F'\t' '{ print $2 ":" $1 ":" $4 }' "$REGISTRY" | sort | tr '\n' ' ')" "finx:-:$S1 livey:%7:$S2 "
 done
+cp -p -- "$work/reg-before-261r8" "$REGISTRY"; with_registry forget_finished "$S1" >/dev/null
+# #261 review 9: a pane id names something only on the fleet's own server. A
+# parked finished row resumed by hand in another tmux, in a pane with the same
+# id as a live agent's, never takes that pane, by either restore path.
+fsock="/tmp/tmux-1/$FLEET_SOCK"
+for path in hook poll; do
+  for sock in fleet foreign none; do
+    for order in parked-first live-first; do
+      if [[ $order == parked-first ]]; then
+        printf '%s\tfinx\t%s\t%s\t/w\n%s\tlivey\t%s\t%s\t/w\n' - "$work/bc.src" "$S1" %2 "$work/bc.src" "$S2" >"$REGISTRY"
+      else
+        printf '%s\tlivey\t%s\t%s\t/w\n%s\tfinx\t%s\t%s\t/w\n' %2 "$work/bc.src" "$S2" - "$work/bc.src" "$S1" >"$REGISTRY"
+      fi
+      case $sock in fleet) sp=$fsock ;; foreign) sp=/tmp/tmux-1/default ;; none) sp="" ;; esac
+      jq -n --arg s "$sp" '{session_id: "x", ended: null, claude: {pid: 4242, start: 777}, host: {boot: "'"$NOWBOOT"'"}, tmux: ({pane: "%2"} + (if $s == "" then {} else {socket: $s} end))}' >"$KLEPSYDRA_DIR/fleet/$S1.json"
+      if [[ $path == hook ]]; then rev SessionStart "$S1" resume %2 "" "$sp"; else forget_resumed "$S1" finx; fi
+      want="-"; [[ $sock == fleet ]] && want="%2"
+      check "#261 review 9 ($path, $sock server, $order): the finished row takes the pane only on the fleet's server" \
+        "$(awk -F'\t' '$2 == "finx" { print $1 }' "$REGISTRY")" "$want"
+      [[ $sock == fleet ]] || check "#261 review 9 ($path, $sock server, $order): the live pane still names the live agent" "$(reg_field %2 2)" "livey"
+    done
+  done
+done
+sfile "$S1" 4242 777 "$NOWBOOT" %2; jq '.tmux.socket = "/tmp/tmux-1/default"' "$KLEPSYDRA_DIR/fleet/$S1.json" >"$work/s1.tmp" && mv -f -- "$work/s1.tmp" "$KLEPSYDRA_DIR/fleet/$S1.json"
+check "#261 review 9: pane_runs refuses a session in another tmux server's pane of the same id" "$(pane_runs %2 "$S1" && echo runs || echo refused)" "refused"
+jq ".tmux.socket = \"$fsock\"" "$KLEPSYDRA_DIR/fleet/$S1.json" >"$work/s1.tmp" && mv -f -- "$work/s1.tmp" "$KLEPSYDRA_DIR/fleet/$S1.json"
+check "#261 review 9: and accepts it on the fleet's own server" "$(pane_runs %2 "$S1" && echo runs || echo refused)" "runs"
+rm -f -- "$KLEPSYDRA_DIR/fleet/$S1.json"
 cp -p -- "$work/reg-before-261r8" "$REGISTRY"; with_registry forget_finished "$S1" >/dev/null
 # A `fleet done` record has no row; a hand resume of that session keeps it.
 SDN=aaaaaaaa-0000-4000-8000-0000000000c4

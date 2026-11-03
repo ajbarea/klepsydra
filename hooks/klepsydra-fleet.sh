@@ -1016,7 +1016,7 @@ fleet_registry_event() { # state event session source input cleared_sid
   [[ $2 == SessionEnd || ($2 == SessionStart && $4 != compact) ]] || return 0
   [[ -f $1/registry-event.sh && -s $1/panes.tsv ]] || return 0
   [[ $2 == SessionEnd ]] && why=$(printf '%s' "$5" | jq -r '.reason // "other" | strings' 2>/dev/null)
-  FLEET_STATE=$1 bash "$1/registry-event.sh" "$2" "$3" "${why:-other}" "${tmux_pane:-}" "$6" </dev/null >/dev/null 2>&1
+  FLEET_STATE=$1 bash "$1/registry-event.sh" "$2" "$3" "${why:-other}" "${tmux_pane:-}" "$6" "${tmux_socket:-}" </dev/null >/dev/null 2>&1
   return 0
 }
 

@@ -430,7 +430,20 @@ pane_runs() { # PANE SESSION-ID
   [[ $2 =~ ^[0-9a-f-]{36}$ ]] || return 1
   f=$KLEPSYDRA_DIR/fleet/$2.json
   [[ -f $f && ! -L $f ]] || return 1
-  jq -e --arg p "$1" '.tmux.pane == $p and .ended == null' "$f" >/dev/null 2>&1
+  # On the fleet's own server: AJ's own tmux hands out the same pane ids (#261 review 9).
+  jq -e --arg p "$1" --arg s "/$FLEET_SOCK" '.tmux.pane == $p and .ended == null
+    and (.tmux.socket == null or (.tmux.socket | strings | endswith($s)))' "$f" >/dev/null 2>&1
+}
+
+# Whether tmux socket path SOCK is the fleet's own server.
+fleet_socket() { [[ -n $1 && ${1##*/} == "$FLEET_SOCK" ]]; } # SOCK
+
+# The pane session SID runs in, from its fleet file, only when that is on the
+# fleet's own server: a pane id from another tmux server names nothing here.
+fleet_pane_of() { # SID
+  local f=$KLEPSYDRA_DIR/fleet/$1.json
+  [[ $1 =~ ^[0-9a-f-]{36}$ && -f $f && ! -L $f ]] || return 1
+  jq -r --arg s "/$FLEET_SOCK" '.tmux | select((.socket | strings | endswith($s)) and (.pane | strings | test("^%[0-9]+$"))) | .pane' "$f" 2>/dev/null | grep .
 }
 
 # Accounts: Claude Code keeps one login per config folder (CLAUDE_CONFIG_DIR),
@@ -935,7 +948,7 @@ forget_resumed() { # SID NAME
   if session_alive "$1"; then
     unpaused "$1" && { with_registry drop_unpaused "$1" && flog INFO "unpause dropped: the session runs again" session="$1" name="$2"; }
     local live_pane
-    live_pane=$(jq -r '.tmux.pane // empty' "$f" 2>/dev/null)
+    live_pane=$(fleet_pane_of "$1") || live_pane=""
     if [[ $live_pane =~ ^%[0-9]+$ ]] && awk -F'\t' -v s="$1" '$1 == "-" && $4 == s { f = 1 } END { exit !f }' "$REGISTRY" 2>/dev/null &&
       with_registry restore_pane "$1" "$live_pane"; then
       flog INFO "a finished agent's session runs again; its row takes its pane back" session="$1" name="$2" pane="$live_pane"
