@@ -710,6 +710,11 @@ check "the tail says performance wins over security above the floor (AJ 11-01)" 
 check "the tail carries the team-ceremony rule (AJ 10-29)" "$(grep -c '^Team ceremony in every repo' "$here/brief-tail.md")" "1"
 check "the tail keeps asks for AJ out of public issues and PRs (AJ 10-29)" "$(grep -c '^Asks for AJ stay private' "$here/brief-tail.md")" "1"
 check "#239: the tail has heavy commands take the lock with flock -o, so nothing they leave running keeps it" "$(grep -c 'flock -o /tmp/fleet-heavy.lock' "$here/brief-tail.md")" "1"
+check "#291 review: the tail says the make targets take the lock themselves and run bare" "$(grep -c 'make shellcheck. in klepsydra take the lock themselves: run them bare' "$here/brief-tail.md")" "1"
+check "#291 review: make takes the heavy lock, unless the caller says it holds it" \
+  "$(make -s -n -C "$here/.." test-fleet | grep -c 'flock -o /tmp/fleet-heavy.lock') $(make -s -n -C "$here/.." test-fleet FLEET_HEAVY_HELD=1 | grep -c flock)" "1 0"
+check "#291 review: make shellcheck lints what CI lints, with -x" \
+  "$(make -s -n -C "$here/.." shellcheck SHELLCHECK=sc FLEET_HEAVY_HELD=1)" "sc -x hooks/*.sh statusline/*.sh scripts/*.sh fleet/*.sh fleet/fleet"
 check "#185: the tail offers the Agora as optional and asks a post to name something real" "$(grep -c '^Agora (AJ 10-29, optional, never a task).*names something real' "$here/brief-tail.md")" "1"
 
 echo "doctor"
@@ -770,7 +775,7 @@ check "#289: a scope past 80% of its task cap warns, naming it" "$(DOC_SCOPES="$
   "warn task caps: past 80% of the cap: fleet-a-1 7000/8745 (its next forks fail at the cap)"
 printf 'fleet-a-1.scope 6900 8745\nfleet-b-2.scope 100 8745\nfleet-c-3.scope 50 infinity\n' >"$work/scopes"
 check "#289: under the line: ok, the fullest named, and a scope from before the cap listed" "$(DOC_SCOPES="$work/scopes" doctor | grep 'task caps')" \
-  "ok   task caps: fullest scope: fleet-a-1 6900/8745; no cap of its own (started before #289): fleet-c-3"
+  "ok   task caps: fullest scope: fleet-a-1 6900/8745; no task cap: fleet-c-3"
 check "no Tailscale Serve fails" "$(grep -c '^FAIL phone wall over Tailscale: Tailscale Serve is not set up' <<<"$out")" "1"
 check "and the exit is non-zero" "$code" "1"
 check "#244: hooks and cast never installed fail, named" "$(grep '^FAIL installed copies' <<<"$out" | grep -c 'make install-fleet: differ from .*: klepsydra-fleet.sh .*klepsydra-cast.json$')" "1"

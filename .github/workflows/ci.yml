@@ -88,7 +88,7 @@ jobs:
       - name: Agora tests
         run: python3 -I fleet/test_agora.py
       - name: Shell lint
-        run: shellcheck -x hooks/*.sh statusline/*.sh scripts/*.sh fleet/*.sh fleet/fleet
+        run: make shellcheck SHELLCHECK=shellcheck FLEET_HEAVY_HELD=1
       # The install dir is writable only because the NSIS mode is currentUser;
       # a perMachine build puts it under Program Files. Readings and harness
       # output go to the app data dir and to temp respectively.

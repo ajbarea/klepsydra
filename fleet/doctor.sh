@@ -267,9 +267,9 @@ done < <($SYSTEMCTL --user list-units --type=scope --no-legend --plain 'fleet-*'
 if [[ -n $near ]]; then
   report warn "task caps" "past ${TASKS_WARN_PCT}% of the cap: ${near%, } (its next forks fail at the cap)" scopes="${near%, }"
 elif [[ -n $fullest ]]; then
-  report ok "task caps" "fullest scope: $fullest${uncapped:+; no cap of its own (started before #289): ${uncapped% }}" fullest="$fullest" uncapped="${uncapped% }"
+  report ok "task caps" "fullest scope: $fullest${uncapped:+; no task cap: ${uncapped% }}" fullest="$fullest" uncapped="${uncapped% }"
 elif [[ -n $uncapped ]]; then
-  report ok "task caps" "no cap of their own (started before #289): ${uncapped% }" uncapped="${uncapped% }"
+  report ok "task caps" "no task cap: ${uncapped% }" uncapped="${uncapped% }"
 fi
 # A hook or cast copy older than the checkout gives every session old behaviour (#244).
 root=${here%/fleet} differ="" missing=""

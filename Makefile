@@ -10,10 +10,16 @@ install-fleet:
 
 # The heavy lock (#289): the suite starts tmux servers, and shellcheck over the tree
 # took 1.7 GB on 11-03, when a worker's scope filled its task cap with both running.
-HEAVY = flock -o /tmp/fleet-heavy.lock timeout 3600
+# These targets take it themselves, so run them bare: inside another flock on the
+# same file the inner one would wait on the outer forever. FLEET_HEAVY_HELD=1 says
+# the caller holds it already (or, in CI, that there is none to take).
+HEAVY = $(if $(FLEET_HEAVY_HELD),,FLEET_HEAVY_HELD=1 flock -o /tmp/fleet-heavy.lock timeout 3600)
+# The files and flags CI's shell lint uses.
+SHELLCHECK ?= uvx --from shellcheck-py shellcheck
+SHELL_FILES = hooks/*.sh statusline/*.sh scripts/*.sh fleet/*.sh fleet/fleet
 
 test-fleet:
 	$(HEAVY) bash fleet/test_fleet.sh
 
 shellcheck:
-	$(HEAVY) uvx --from shellcheck-py shellcheck fleet/*.sh fleet/fleet hooks/*.sh
+	$(HEAVY) $(SHELLCHECK) -x $(SHELL_FILES)
