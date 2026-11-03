@@ -47,8 +47,17 @@ pause_now() {
   row=$rows p=$(cut -f1 <<<"$row") sid=$(cut -f4 <<<"$row")
   # Unpause and recover follow an agent by its session id.
   [[ -n $sid ]] || { refuse "$name's row names no session, so it could not be followed back; fleet done ends it"; return 1; }
-  # Any live fleet session in its pane may be the agent under a new id.
-  if [[ $(row_state "$p" "$sid") == running ]] || live_fleet_sessions | awk -F'\t' -v p="$p" '$1 == p && $3 == 1 { f = 1 } END { exit !f }'; then
+  # A live fleet session in its pane may be the agent under a new id, but only
+  # while the row is from this tmux server and the session is no other row's
+  # nor the orchestrator's (after a reboot the pane id is another agent's).
+  local osid="" others strangers=""
+  { read -r osid <"$FLEET_STATE/orchestrator.session"; } 2>/dev/null
+  others=$(cut -f4 "$REGISTRY" 2>/dev/null | grep . | grep -vxF -- "$sid")
+  if on_this_server "$sid"; then
+    strangers=$(live_fleet_sessions | awk -F'\t' -v p="$p" -v h="$osid" 'NR == FNR { if ($0 != "") a[$0] = 1; next }
+      $1 == p && $3 == 1 && $2 != h && !($2 in a) { print $2 }' <(printf '%s\n' "$others") -)
+  fi
+  if [[ $(row_state "$p" "$sid") == running || -n $strangers ]]; then
     refuse "$name still runs in $p; end its session first"
     return 1
   fi

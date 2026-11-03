@@ -56,7 +56,7 @@ check() {
     if [[ -n ${GITHUB_ACTIONS:-} ]]; then
       local msg=${name//%/%25}
       msg=${msg//$'\r'/%0D}
-      printf '::error file=fleet/test_fleet.sh,title=fleet test failed::%s\n' "${msg//$'\n'/%0A}"
+      printf '::error file=fleet/test_fleet.sh,line=%s,title=fleet test failed::%s\n' "${BASH_LINENO[0]}" "${msg//$'\n'/%0A}"
     fi
   fi
 }
@@ -2001,7 +2001,7 @@ check "#246: unpause puts the row back as it was, and records the unpause" \
   "$(fp unpause gone1) | $(grep -c . "$FLEET_STATE/paused.tsv") | $(grep -c -xF "$row1" "$REGISTRY") | $(cut -f1,2 "$FLEET_STATE/unpaused.tsv")" \
   "unpaused: gone1: fleet recover launches it fresh from its brief | 0 | 1 | gone1	$SG"
 rm -f -- "$FLEET_STATE/unpaused.tsv"
-printf '%%43\t01\t/b.src\n%%44\t1\t/c.src\n' >>"$REGISTRY"
+printf '%%43\t01\t/b.src\t%s\n%%44\t1\t/c.src\t%s\n' 33333333-2222-4333-8444-000000000043 33333333-2222-4333-8444-000000000044 >>"$REGISTRY"
 check "#261 review: a name is matched as text, so 1 is not 01" \
   "$(fp pause 1 numbers; cut -f2 "$REGISTRY" | grep -cx 01; cut -f1 "$FLEET_STATE/paused.tsv")" $'paused: 1 (%44): fleet unpause 1 brings it back\n1\n1'
 fp unpause 1 >/dev/null; awk -F'\t' '$2 "" != "01" && $2 "" != "1"' "$REGISTRY" >"$work/reg.tmp" && mv -f -- "$work/reg.tmp" "$REGISTRY"
@@ -2292,9 +2292,63 @@ rm -f -- "$KLEPSYDRA_DIR/fleet/$SL.json" "$FLEET_STATE/unpaused.tsv"
 # #261 review 5: a row with no session id cannot be followed back, so it is never paused.
 printf '%s\tnosid\t%s\t\t/w\n' %7 "$work/bc.src" >>"$REGISTRY"
 check "#261 review 5: pause refuses a row that names no session" \
-  "$(bash "$here/pause.sh" pause nosid because 2>&1 | grep -c 'names no session') $(grep -c $'\tnosid\t' "$REGISTRY")" "1 1"
+  "$(bash "$here/pause.sh" pause nosid because 2>&1 | grep -c '^error: .*names no session') $(grep -c $'\tnosid\t' "$REGISTRY")" "1 1"
 awk -F'\t' '$2 != "nosid"' "$REGISTRY" >"$work/reg.tmp" && mv -f -- "$work/reg.tmp" "$REGISTRY"
 awk -F'\t' '$2 != "e"' "$REGISTRY" >"$work/reg.tmp" && mv -f -- "$work/reg.tmp" "$REGISTRY"
+# #261 review 6: the registry follows a session at the event (registry-event.sh,
+# called by the fleet hook), so neither order of a poll and a delete loses it.
+rev() { bash "$here/registry-event.sh" "$@" 2>/dev/null; }
+with_registry forget_finished "$SF" >/dev/null; rm -f -- "$FLEET_STATE/unpaused.tsv"; : >"$FLEET_LOG"
+rev SessionEnd "$SF" clear
+check "#261 review 6: an end that is no finish records nothing" "$(fin_d)" "0"
+rev SessionEnd "$SF" prompt_input_exit
+check "#261 review 6: a final end records the finish of the row naming it, at once, logged" \
+  "$(fin_d) $(jq -r 'select(.message == "finish recorded at the session'\''s end") | .name' "$FLEET_LOG")" "1 d"
+rm -f -- "$KLEPSYDRA_DIR/fleet/$SF.json"
+check "#261 review 6: the wall's Clear before any poll leaves it finished, never relaunched" \
+  "$(row_state %4 "$SF") $(rec --dry-run --no-orchestrator | grep -E '^(finished|would recover): d' | sed 's/ (.*//')" "finished finished: d"
+rev SessionStart "$SF" compact
+check "#261 review 6: a compact is no new start" "$(fin_d)" "1"
+printf 'd\t%s\t%s\n' "$SF" "$(date -Is)" >>"$FLEET_STATE/unpaused.tsv"
+rev SessionStart "$SF" resume
+check "#261 review 6: a start of the same id drops its finish and its unpause at once" "$(fin_d) $(grep -c -- "$SF" "$FLEET_STATE/unpaused.tsv")" "0 0"
+rev SessionEnd "$SF" prompt_input_exit
+check "#261 review 6: resumed by hand and /exited between polls: finished, never relaunched" \
+  "$(row_state %4 "$SF") $(rec --dry-run --no-orchestrator | grep -E '^(finished|would recover): d' | sed 's/ (.*//')" "finished finished: d"
+SN=aaaaaaaa-0000-4000-8000-0000000000f9
+rev SessionStart "$SN" clear %5 "$SF"
+check "#261 review 6: a /clear in another pane leaves the row alone" "$(awk -F'\t' '$2 == "d" { print $1, $4 }' "$REGISTRY")" "%4 $SF"
+rev SessionStart "$SN" clear %4 "$SF"
+check "#261 review 6: a /clear repoints the row that named the cleared session in its pane, logged" \
+  "$(awk -F'\t' '$2 == "d" { print $1, $4 }' "$REGISTRY") $(jq -r 'select(.message == "registry follows a /clear") | .name' "$FLEET_LOG")" "%4 $SN d"
+with_registry set_session_now %4 "$SF"
+# The doctor repairs a row to its /clear successor as recover does, so the
+# successor's own /exit is a finish, not a loss.
+with_registry forget_finished "$SF" >/dev/null
+sfile "$SF" 4242 777 "$NOWBOOT" %4; ended "$SF" clear; sfile "$SN" 4242 777 "$NOWBOOT" %4
+: >"$FLEET_LOG"
+bash "$here/doctor.sh" >/dev/null 2>&1
+check "#261 review 6: the doctor repoints a row running as its /clear successor, logged" \
+  "$(awk -F'\t' '$2 == "d" { print $4 }' "$REGISTRY") $(jq -r 'select(.message == "registry repaired") | .by' "$FLEET_LOG")" "$SN doctor"
+ended "$SN"
+check "#261 review 6: then the successor's /exit is a finish" "$(row_state %4 "$SN")" "finished"
+rm -f -- "$KLEPSYDRA_DIR/fleet/$SN.json"; with_registry set_session_now %4 "$SF"; with_registry forget_finished "$SN" >/dev/null
+rm -f -- "$KLEPSYDRA_DIR/fleet/$SF.json"; sfile "$SF" 4242 777 "$NOWBOOT" %4; ended "$SF"
+# Pause after a reboot: a lost agent's old pane id now holds another agent
+# that recover started there; pause sets the lost one aside, never naming it.
+SX=aaaaaaaa-0000-4000-8000-0000000000fa SY=aaaaaaaa-0000-4000-8000-0000000000fb
+sfile "$SX" 4242 777 "$OLDBOOT" %8; ended "$SX" gone; sfile "$SY" 4242 777 "$NOWBOOT" %8
+printf '%s\tlostx\t%s\t%s\t/w\n%s\tnewy\t%s\t%s\t/w\n' %8 "$work/bc.src" "$SX" %8 "$work/bc.src" "$SY" >>"$REGISTRY"
+check "#261 review 6: pause sets aside a lost row whose reused pane id runs another row's agent" \
+  "$(FLEET_PAUSED=$work/p6.tsv bash "$here/pause.sh" pause lostx because 2>&1 | grep -c '^paused: lostx') $(cut -f1 "$work/p6.tsv" 2>/dev/null)" "1 lostx"
+awk -F'\t' '$2 != "newy"' "$REGISTRY" >"$work/reg.tmp" && mv -f -- "$work/reg.tmp" "$REGISTRY"
+rm -f -- "$work/p6.tsv" "$KLEPSYDRA_DIR/fleet/$SX.json" "$KLEPSYDRA_DIR/fleet/$SY.json" "$FLEET_STATE/unpaused.tsv"
+# A fleet file that will not read says nothing: the recorded finish stays.
+with_registry record_finished "$(awk -F'\t' -v s="$SF" '$4 == s { print; exit }' "$REGISTRY")"
+cp -p -- "$KLEPSYDRA_DIR/fleet/$SF.json" "$work/sf.bak"; : >"$KLEPSYDRA_DIR/fleet/$SF.json"
+forget_resumed "$SF" d
+check "#261 review 6: an empty fleet file never drops a recorded finish" "$(fin_d)" "1"
+mv -f -- "$work/sf.bak" "$KLEPSYDRA_DIR/fleet/$SF.json"
 # A restarted tmux server hands out %4 again: a running agent's row on the finished row's pane id.
 SG=aaaaaaaa-0000-4000-8000-0000000000f4
 sfile "$SG" 4242 777 "$NOWBOOT" %4

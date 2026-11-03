@@ -2054,5 +2054,22 @@ check "queue show: none" "$(queue show)" "No queue.json: the Queue panel reads i
 out=$(KLEPSYDRA_DIR=""; queue_cmd show 2>&1); rc=$? # the sourced hook's: a run would find the real folder
 check "queue: no data folder is an error" "$rc|$out" "1|klepsydra: no data folder (set KLEPSYDRA_DIR)"
 
+echo "the fleet registry follows a session at the event (#261)"
+mkdir -p "$work/fleet-state"
+printf '#!/usr/bin/env bash\nprintf "%%s|" "$@" >>"%s/reg-events"; echo >>"%s/reg-events"\n' "$work" "$work" >"$work/fleet-state/registry-event.sh"
+rm -f "$work/reg-events" "$rfile" "$rfile2" "$rfile3"
+r1fire session-start.json "$rnow"
+check "with no agent registered, the registry is not called" "$(cat "$work/reg-events" 2>/dev/null)" ""
+printf '%%7\tw\t/b.src\t%s\t/w\n' "$R" >"$work/fleet-state/panes.tsv"
+fire session-end.json ".session_id = \"$R\" | .reason = \"clear\"" KLEPSYDRA_NOW=$((rnow + 10)) KLEPSYDRA_PID=1510 "TMUX=$work/sock/klepsydra,1,0" TMUX_PANE=%7 >/dev/null
+c2fire session-start.json $((rnow + 11)) '.source = "clear"' "TMUX=$work/sock/klepsydra,1,0" TMUX_PANE=%7
+c2fire session-start.json $((rnow + 12)) '.source = "compact"'
+c2fire session-end.json $((rnow + 13)) '.reason = "prompt_input_exit"' "TMUX=$work/sock/klepsydra,1,0" TMUX_PANE=%7
+check "an end with its reason, a /clear with the session it cleared and its pane, no compact" "$(cat "$work/reg-events")" \
+"SessionEnd|$R|clear|%7||
+SessionStart|$R2|clear|%7|$R|
+SessionEnd|$R2|prompt_input_exit|%7||"
+rm -f "$work/fleet-state/registry-event.sh" "$work/fleet-state/panes.tsv" "$work/reg-events" "$rfile" "$rfile2"
+
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [[ $fail -eq 0 ]]

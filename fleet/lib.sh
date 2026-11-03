@@ -819,9 +819,10 @@ session_alive() { # SID
 # decides: Claude Code's SessionEnd named a final end, the user's /exit or
 # ctrl-d at the prompt (prompt_input_exit) or a logout (code.claude.com/docs/
 # en/hooks, SessionEnd), so a session resumed under the same id after a
-# recorded finish is no longer finished. Once klepsydra drops the file (a day
-# after the end), finished.tsv decides: `fleet done`, or a finish the doctor or
-# recover recorded on first sight. The fleet hook also marks
+# recorded finish is no longer finished. Once the file is gone (klepsydra drops
+# it a day after the end; the wall's Clear at once), finished.tsv decides: the
+# finish the fleet hook recorded at the end (registry-event.sh), `fleet done`,
+# or one the doctor or recover recorded on first sight. The fleet hook also marks
 # ended a session it finds dead ("gone", on every SessionStart after a hard
 # shutdown), and SessionEnd says "clear" and "resume" for a session that goes
 # on under a new id; those, "other" and any reason unknown here are no finish.
@@ -871,6 +872,8 @@ forget_finished() { # SID
 forget_resumed() { # SID NAME
   local n why="the session runs again" f=$KLEPSYDRA_DIR/fleet/$1.json
   [[ $1 =~ ^[0-9a-f-]{36}$ && -f $f && ! -L $f ]] || return 0
+  # Only a file that reads: an empty or broken one says nothing of the session.
+  jq -e 'type == "object"' "$f" >/dev/null 2>&1 || return 0
   if session_alive "$1"; then
     unpaused "$1" && { with_registry drop_unpaused "$1" && flog INFO "unpause dropped: the session runs again" session="$1" name="$2"; }
   elif session_finished "$1"; then
