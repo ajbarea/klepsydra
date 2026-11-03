@@ -865,11 +865,21 @@ forget_finished() { # SID
   echo "$n"
 }
 
-# A running row's own session (SID, agent NAME): any recorded finish goes, logged.
+# Reconcile a row's side records (SID, NAME) with its own session's fleet
+# file while the file exists: alive drops its finish and its unpause; a file
+# that names no final end drops its finish.
 forget_resumed() { # SID NAME
-  local n
-  n=$(with_registry forget_finished "$1") || { flog WARN "a resumed session's recorded finish could not be dropped" session="$1" name="$2"; return 0; }
-  (( n > 0 )) && flog INFO "recorded finish dropped: the session runs again" session="$1" name="$2" lines="$n"
+  local n why="the session runs again" f=$KLEPSYDRA_DIR/fleet/$1.json
+  [[ $1 =~ ^[0-9a-f-]{36}$ && -f $f && ! -L $f ]] || return 0
+  if session_alive "$1"; then
+    unpaused "$1" && { with_registry drop_unpaused "$1" && flog INFO "unpause dropped: the session runs again" session="$1" name="$2"; }
+  elif session_finished "$1"; then
+    return 0
+  else
+    why="the session's file names no final end"
+  fi
+  n=$(with_registry forget_finished "$1") || { flog WARN "a recorded finish could not be dropped" session="$1" name="$2"; return 0; }
+  (( n > 0 )) && flog INFO "recorded finish dropped: $why" session="$1" name="$2" lines="$n"
   return 0
 }
 

@@ -122,9 +122,10 @@ lost=0
 # The registry comes in on fd 3, so nothing in the loop can read its rows away (#242).
 while IFS=$'\t' read -r -u 3 p name brief sid _; do
   [[ -n $p && -n $name && -n $brief ]] || continue
+  # The row's finish and unpause records follow its session's own file (#261).
+  (( dry )) || forget_resumed "$sid" "$name"
   if session_alive "$sid"; then
     echo "running: $name ($p)"
-    (( dry )) || forget_resumed "$sid" "$name"
     continue
   fi
   # The pane still runs a live session the row does not name (a /clear whose

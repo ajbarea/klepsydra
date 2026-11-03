@@ -67,23 +67,31 @@ report() { # ok|warn|FAIL CHECK DETAIL [KEY=VALUE...]: the values are logged wit
 finished_rows() {
   local p name sid
   while IFS=$'\t' read -r p name _ sid _; do
-    [[ -n $p && -n $name ]] && [[ $(row_state "$p" "$sid") == finished ]] && printf '%s/%s\t%s\n' "$p" "$sid" "$name"
+    [[ -n $p && -n $name ]] || continue
+    forget_resumed "$sid" "$name"
+    [[ $(row_state "$p" "$sid") == finished ]] && printf '%s/%s\t%s\n' "$p" "$sid" "$name"
   done < <(cat "$REGISTRY" 2>/dev/null)
 }
 # Drop the rows finished_rows named from panes.tsv, keeping a backup.
 # shellcheck disable=SC2329 # run through with_registry
 prune_now() { # PANE/SID...
   local tmp bak key row
-  # Each finish is recorded before its row goes, as on a plain run.
+  local -a sure=()
+  # Each finish is recorded before its row goes, as on a plain run; a row is
+  # read again under the lock, so one resumed since finished_rows stays.
   for key in "$@"; do
     row=$(awk -F'\t' -v p="${key%%/*}" -v s="${key#*/}" '$1 == p && $4 == s { print; exit }' "$REGISTRY")
-    [[ -n $row ]] && { record_finished "$row" || return 1; }
+    [[ -n $row && $(row_state "${key%%/*}" "${key#*/}") == finished ]] || continue
+    record_finished "$row" || return 1
+    sure+=("$key")
   done
+  (( ${#sure[@]} )) || { echo none; return 0; }
+  set -- "${sure[@]}"
   bak=$REGISTRY.bak-$(date +%Y%m%d-%H%M%S)
   cp -p -- "$REGISTRY" "$bak" || return 1
   tmp=$(mktemp "$REGISTRY.XXXXXX") || return 1
   awk -F'\t' -v drop="$*" 'BEGIN { n = split(drop, d, " "); for (i = 1; i <= n; i++) gone[d[i]] = 1 } !(($1 "/" $4) in gone)' "$REGISTRY" >"$tmp" &&
-    mv -f -- "$tmp" "$REGISTRY" && printf '%s' "$bak"
+    mv -f -- "$tmp" "$REGISTRY" && printf '%s\n' "$bak" "$@"
 }
 if [[ ${1:-} == --prune ]]; then
   mapfile -t rows < <(finished_rows)
@@ -91,17 +99,24 @@ if [[ ${1:-} == --prune ]]; then
     echo "nothing to prune: no finished agent's row in panes.tsv"
     exit 0
   fi
-  if ! bak=$(with_registry prune_now "${rows[@]%%$'\t'*}"); then
+  if ! out=$(with_registry prune_now "${rows[@]%%$'\t'*}"); then
     flog ERROR "doctor: prune failed" registry="$REGISTRY"
     echo "could not prune $REGISTRY" >&2
     exit 1
   fi
+  mapfile -t done_keys <<<"$out"
+  bak=${done_keys[0]}
   for r in "${rows[@]}"; do
     key=${r%%$'\t'*}
-    echo "pruned: ${r#*$'\t'} (${key%%/*})"
-    flog INFO "doctor: pruned a finished agent's row" pane="${key%%/*}" session="${key#*/}" name="${r#*$'\t'}"
+    if printf '%s\n' "${done_keys[@]:1}" | grep -qxF -- "$key"; then
+      echo "pruned: ${r#*$'\t'} (${key%%/*})"
+      flog INFO "doctor: pruned a finished agent's row" pane="${key%%/*}" session="${key#*/}" name="${r#*$'\t'}"
+    else
+      echo "kept: ${r#*$'\t'} (${key%%/*}): it runs again"
+      flog INFO "doctor: a row to prune runs again; kept" pane="${key%%/*}" session="${key#*/}" name="${r#*$'\t'}"
+    fi
   done
-  echo "backup: $(tilde "$bak")"
+  [[ $bak == none ]] || echo "backup: $(tilde "$bak")"
   exit 0
 fi
 
@@ -327,8 +342,9 @@ gone="" done_=""
 while IFS= read -r row; do
   IFS=$'\t' read -r p name _ sid _ <<<"$row"
   [[ -n $p && -n $name ]] || continue
+  # The row's finish and unpause records follow its session's own file first (#261).
+  forget_resumed "$sid" "$name"
   state=$(row_state "$p" "$sid")
-  [[ $state == running ]] && session_alive "$sid" && forget_resumed "$sid" "$name"
   case $state in
     finished)
       done_+="$name "

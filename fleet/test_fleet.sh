@@ -2259,7 +2259,41 @@ awk -F'\t' '$2 == "d"' "$REGISTRY" >"$work/reg.tmp" && mv -f -- "$work/reg.tmp" 
 check "#261 review 4: recover, seeing the resumed session run, drops its recorded finish" \
   "$(rec --no-orchestrator | grep -c '^running: d') $(fin_d)" "1 0"
 cp -p -- "$work/reg-before-261r4" "$REGISTRY"
+# #261 review 5: a resume never seen alive. d's finish is recorded; AJ resumes
+# it (the same id), and a shutdown loses it before any doctor tick, so the hook
+# marks it gone on a later boot. Its file names no final end: the record goes
+# on the next read, before the file does.
+sfile "$SF" 4242 777 "$NOWBOOT" %4; ended "$SF"
+bash "$here/doctor.sh" >/dev/null 2>&1
+check "#261 review 5: d's finish is recorded again" "$(fin_d)" "1"
+sfile "$SF" 4242 777 "$OLDBOOT" %4; ended "$SF" gone
+: >"$FLEET_LOG"
+bash "$here/doctor.sh" >/dev/null 2>&1
+check "#261 review 5: a file that names no final end drops the recorded finish, logged" \
+  "$(fin_d) $(jq -r 'select(.message == "recorded finish dropped: the session'\''s file names no final end") | .name' "$FLEET_LOG")" "0 d"
+rm -f -- "$KLEPSYDRA_DIR/fleet/$SF.json"
+check "#261 review 5: once its file is gone too, d is lost and recover relaunches it" \
+  "$(row_state %4 "$SF") $(rec --dry-run --no-orchestrator | grep -E '^(finished|would recover): d' | sed 's/ (.*//')" "gone would recover: d"
 rm -f -- "$KLEPSYDRA_DIR/fleet/$SF.json"; sfile "$SF" 4242 777 "$NOWBOOT" %4; ended "$SF"
+# #261 review 5: an unpaused agent AJ resumed by hand rather than by recover:
+# the unpause goes once its session is seen running, so a later /exit is a finish.
+printf 'e\t%s\t%s\n' "$SL" "$(date -Is)" >>"$FLEET_STATE/unpaused.tsv"
+sfile "$SL" 4242 777 "$NOWBOOT" %5
+check "#261 review 5: recover sees the unpaused agent run and drops its unpause" \
+  "$(rec --no-orchestrator | grep -c '^running: e') $(grep -c -- "$SL" "$FLEET_STATE/unpaused.tsv")" "1 0"
+ended "$SL"
+check "#261 review 5: its later /exit is a finish, never relaunched" \
+  "$(row_state %5 "$SL") $(rec --dry-run --no-orchestrator | grep -E '^(finished|would recover): e' | sed 's/ (.*//')" "finished finished: e"
+printf 'e\t%s\t%s\n' "$SL" "$(date -Is)" >>"$FLEET_STATE/unpaused.tsv"
+sfile "$SL" 4242 777 "$NOWBOOT" %5
+bash "$here/doctor.sh" >/dev/null 2>&1
+check "#261 review 5: the doctor drops it too, seeing the session run" "$(grep -c -- "$SL" "$FLEET_STATE/unpaused.tsv")" "0"
+rm -f -- "$KLEPSYDRA_DIR/fleet/$SL.json" "$FLEET_STATE/unpaused.tsv"
+# #261 review 5: a row with no session id cannot be followed back, so it is never paused.
+printf '%s\tnosid\t%s\t\t/w\n' %7 "$work/bc.src" >>"$REGISTRY"
+check "#261 review 5: pause refuses a row that names no session" \
+  "$(bash "$here/pause.sh" pause nosid because 2>&1 | grep -c 'names no session') $(grep -c $'\tnosid\t' "$REGISTRY")" "1 1"
+awk -F'\t' '$2 != "nosid"' "$REGISTRY" >"$work/reg.tmp" && mv -f -- "$work/reg.tmp" "$REGISTRY"
 awk -F'\t' '$2 != "e"' "$REGISTRY" >"$work/reg.tmp" && mv -f -- "$work/reg.tmp" "$REGISTRY"
 # A restarted tmux server hands out %4 again: a running agent's row on the finished row's pane id.
 SG=aaaaaaaa-0000-4000-8000-0000000000f4
