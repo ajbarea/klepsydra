@@ -214,6 +214,30 @@ export function needsYouCount(nodes) {
   return count;
 }
 
+/**
+ * The Needs you file's open asks: its Needs you section's, as
+ * `needsYouCount`, else the visible top-level items of every top-level list,
+ * less those done. Null when it has neither.
+ */
+export function asksCount(nodes) {
+  const inSection = needsYouCount(nodes);
+  if (inSection !== null) return inSection;
+  let count = null;
+  for (const list of nodes) {
+    if (typeof list === "string" || (list.tag !== "ol" && list.tag !== "ul")) continue;
+    count ??= 0;
+    for (const item of list.kids) if (typeof item !== "string" && item.tag === "li" && item.cls !== "q-done") count++;
+  }
+  return count;
+}
+
+/**
+ * The header count: the Needs you file's asks while it is shown, else the
+ * queue file's own Needs you section, as one file held both before the two
+ * panels.
+ */
+export const headerCount = (needs, queue) => (needs === null || needs === undefined ? queue ?? null : needs);
+
 /** The header button's text: never "needs you", which the session tally owns. */
 export const queueLabel = (count) => (count === null || count === undefined ? "Queue" : `Queue · ${count} for you`);
 
@@ -260,21 +284,30 @@ export function render(text, opened) {
   return { nodes, count: needsYouCount(nodes) };
 }
 
+/** The Needs you file's markdown as its panel shows it: its nodes and its open asks (0 with no list). */
+export function renderAsks(text, opened) {
+  const nodes = sections(toTree(parse(text)), opened);
+  // A Needs you file with no list asks nothing of you.
+  return { nodes, count: asksCount(nodes) ?? 0 };
+}
+
 /** The empty state's line: a path with no file yet is not a fault. */
 export const EMPTY = "No queue yet. It shows here once this file is written.";
+/** The Needs you panel's: nothing asked of you yet. */
+export const EMPTY_NEEDS = "Nothing needs you yet. Asks show here once this file is written.";
 
 /**
  * What the panel shows for `view`: its elements, the count, and the problem
  * or empty-state line (`empty` true for the latter). A file that cannot be
  * shown says so rather than leaving the last one up.
  */
-export function present(view, opened, doc, copy, renderWith = render) {
-  if (view.missing === true) return { children: [], count: null, problem: EMPTY, empty: true };
+export function present(view, opened, doc, copy, renderWith = render, { empty = EMPTY, what = "queue file" } = {}) {
+  if (view.missing === true) return { children: [], count: null, problem: empty, empty: true };
   if (view.text === null || view.text === undefined) return { children: [], count: null, problem: view.problem ?? null };
   try {
     const { nodes, count } = renderWith(view.text, opened);
     return { children: build(nodes, doc, { copy }), count, problem: view.problem ?? null };
   } catch (err) {
-    return { children: [], count: null, problem: `The queue file could not be shown: ${err?.message ?? err}` };
+    return { children: [], count: null, problem: `The ${what} could not be shown: ${err?.message ?? err}` };
   }
 }

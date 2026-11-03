@@ -26,7 +26,9 @@ class Agora(unittest.TestCase):
                     "characters": {
                         "am_michael": {"name": "Hephaestus"},
                         "af_nova": {"name": "Metis"},
-                        "bf_emma": {"name": "Mneme"},
+                        "bf_isabella": {"name": "Mneme"},
+                        "bf_emma": {"name": "Athena"},
+                        "bf_alice": {"name": "Techne"},
                     }
                 }
             )
@@ -141,15 +143,30 @@ class Agora(unittest.TestCase):
 
     def test_the_orchestrator_signs_as_heph_and_an_own_voice_signs_as_itself(self):
         (self.tmp / "state" / "orchestrator.session").write_text(SID + "\n")
-        self.live(voice="bf_emma")
+        self.live(voice="bf_isabella")
         self.assertEqual(self.run_agora("post", "a win")[1], "Posted as Hephaestus.")
         self.assertEqual(self.posts()[0]["who"], "heph")
         (self.tmp / "state" / "orchestrator.session").unlink()
         self.live(
-            sid="22222222-2222-4333-8444-555555555555", pane="%5", voice="bf_emma"
+            sid="22222222-2222-4333-8444-555555555555", pane="%5", voice="bf_isabella"
         )
         self.register("%5", "sphragis", "22222222-2222-4333-8444-555555555555")
         self.assertEqual(self.run_agora("post", "x", pane="%5")[1], "Posted as Mneme.")
+
+    def test_an_orchestrator_wearing_athena_signs_as_athena_and_no_worker_does(self):
+        (self.tmp / "state" / "orchestrator.session").write_text(SID + "\n")
+        self.live(voice="am_puck", orchestrator_face="bf_emma")
+        self.assertEqual(self.run_agora("post", "a win")[1], "Posted as Athena.")
+        # A file from when Athena wore bf_alice (before 11-02) is still hers.
+        self.live(voice="am_puck", orchestrator_face="bf_alice")
+        self.assertEqual(
+            self.run_agora("post", "again", now=NOW + 3601)[1], "Posted as Athena."
+        )
+        (self.tmp / "state" / "orchestrator.session").unlink()
+        self.live(voice="bf_emma")
+        self.assertEqual(
+            self.run_agora("post", "x", now=NOW + 3601)[1], "Posted as Metis."
+        )
 
     def test_a_relaunched_agent_is_still_held_to_one_post_an_hour(self):
         self.assertEqual(self.run_agora("post", "first")[0], 0)

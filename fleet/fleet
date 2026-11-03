@@ -10,6 +10,9 @@
 #                         new worker starts; workers prefer the first, Heph the last)
 #   fleet accounts sync   make the second config folder behave like ~/.claude
 #   fleet recover         after a hard shutdown, relaunch every agent whose session is gone
+#   fleet done [NAME]     mark an agent finished (default: this pane's), so nothing relaunches it
+#   fleet voices [MODE]   make keryx follow the tray's Voices mode (heph, everyone, off) now;
+#                         --if-changed only a mode not yet applied, --check only report
 #   fleet pause NAME WHY  set aside an agent whose session is gone (paused.tsv keeps its row)
 #   fleet unpause NAME    put it back; the next fleet recover launches it
 #   fleet shots [--apply] prune the briefing's decided and old screenshots (dry run without --apply)
@@ -26,6 +29,8 @@ case $cmd in
   brief) exec bash "$here/brief.sh" "$@" ;;
   install) exec bash "$here/install.sh" "$@" ;;
   recover) exec bash "$here/recover.sh" "$@" ;;
+  done) exec bash "$here/done.sh" "$@" ;;
+  voices) exec bash "$here/voices.sh" "$@" ;;
   pause | unpause) exec bash "$here/pause.sh" "$cmd" "$@" ;;
   shots) exec python3 -I "$here/prune_shots.py" "$@" ;;
   agora) exec python3 -I "$here/agora.py" "$@" ;;

@@ -30,7 +30,7 @@ HOOK_COPIES=(
 
 # The preamble a fresh session's brief starts with; WHY says why it replaces the last one.
 fresh_preamble() { # WHY
-  printf 'Fresh start: a previous agent with the brief below %s; you replace it. Before acting, rebuild state from disk and GitHub: IMPL.md in the repo and in each worktree, git log and git status per worktree, open PRs with their comments and reviews, and your repo'"'"'s lines under "Running now" in /mnt/c/Users/ajbar/fleet-briefing/claude-queue.md. Where those are newer than the brief, they win; never redo merged work. No /code-review high (nor xhigh or max); low or medium is fine.' "$1"
+  printf 'Fresh start: a previous agent with the brief below %s; you replace it. Before acting, rebuild state from disk and GitHub: IMPL.md in the repo and in each worktree, git log and git status per worktree, open PRs with their comments and reviews, and your repo'"'"'s lines under "Running now" in /mnt/c/Users/ajbar/fleet-briefing/queue.md. Where those are newer than the brief, they win; never redo merged work. No /code-review high (nor xhigh or max); low or medium is fine.' "$1"
 }
 
 t() { tmux -L "$FLEET_SOCK" "$@"; }
@@ -118,23 +118,49 @@ near() { grep -v '^[[:space:]]*$' <<<"$ABOVE" | tail -"${1:-6}"; }
 # interrupt") sits just above the input box.
 busy() { split_screen "$1"; near 4 | grep -Eq '… \(|esc to interrupt'; }
 
-LIMIT_RE='hit your (session|weekly|usage) limit|Usage limit reached'
+# Claude Code names the window in its message ("You've hit your 5-hour
+# limit", "... weekly limit", "... Fable limit", "... org's monthly spend
+# limit", earlier "session limit"), and renamed it once already (2.1.316,
+# #263): any name of up to three words matches. No {m,n}: mawk ignores it.
+W="[A-Za-z0-9'-]+ "
+LIMIT_RE="You've hit your ($W)?($W)?($W)?limit([^A-Za-z]|$)|Usage limit reached"
+unset W
 
 # The limit message nearest the input box: Claude Code's "hit your ... limit"
 # as the last thing the session printed, or the status line's "Usage limit
-# reached" banner below the box. Prints it; fails when there is none.
+# reached" banner below the box. A message followed by a prompt sent after it
+# (the resume service's continue, or AJ's line) is past, but not by a slash
+# command's echo: Claude Code sends /rate-limit-options itself at a limit, and
+# /usage or /login answer nothing. "hit your fast limit" is the /fast dialog's,
+# not a usage limit. Prints it; fails when there is none.
 limit_line() {
   split_screen "$1"
-  { near 6; printf '%s\n' "$BELOW"; } | grep -E "$LIMIT_RE" | tail -1 | grep .
+  { near 6 | awk -v re="$LIMIT_RE" '
+      /hit your fast limit/ { next }
+      $0 ~ re { l = $0; next }
+      /^❯ / && !/^❯ \// { l = "" }
+      END { if (l != "") print l }'
+    printf '%s\n' "$BELOW" | grep -E "$LIMIT_RE"; } | tail -1 | grep .
+}
+
+# Whether EPOCH reads as HH:MM on the clock in ZONE (empty: local time). GNU
+# date refuses a time a DST change skips; uutils date (Ubuntu 26.04) moves it
+# forward by the DST shift. The round trip tells them apart on both.
+reads_as() { # EPOCH ZONE HH:MM
+  local got
+  if [[ -n $2 ]]; then got=$(TZ=$2 date -d "@$1" +%H:%M 2>/dev/null); else got=$(date -d "@$1" +%H:%M 2>/dev/null); fi
+  [[ -n $got && $got == "$3" ]]
 }
 
 # The epoch at which the reset in TEXT falls, from NOW: "resets 1:10pm",
 # "resets 4:10am", "resets Nov 2, 1pm" or "resets Nov 2, 1:30pm", each with an
-# optional "(Area/City)" zone (else local time). A time-only reset more than 6 h
-# past is tomorrow's; a dated one more than 180 days past is next year's.
-# Fails when TEXT names none.
-reset_epoch() { # TEXT NOW
-  local text=$1 now=$2 m
+# optional "(Area/City)" zone (else local time). A time-only reset more than
+# ROLL_S (default 6 h) past is tomorrow's, at the same wall-clock time across a
+# DST change (Claude Code dates a reset only when it is over 24 h away); a dated
+# one more than 180 days past is next year's, and more than 180 days ahead last year's.
+# Fails when TEXT names none, or a time that does not exist that day.
+reset_epoch() { # TEXT NOW [ROLL_S]
+  local text=$1 now=$2 roll=${3:-21600} m
   m=$(grep -oE 'resets ([A-Z][a-z]{2} [0-9]{1,2}, )?[0-9]{1,2}(:[0-9]{2})? ?[ap]m( \([A-Za-z0-9_+/-]+\))?' <<<"$text" | tail -1)
   local re='^resets (([A-Z][a-z]{2}) ([0-9]{1,2}), )?([0-9]{1,2})(:([0-9]{2}))? ?([ap]m)( \(([A-Za-z0-9_+/-]+)\))?$'
   [[ $m =~ $re ]] || return 1
@@ -142,6 +168,10 @@ reset_epoch() { # TEXT NOW
   local ampm=${BASH_REMATCH[7]} zone=${BASH_REMATCH[9]} tz="" year date at
   [[ -n $zone && -e /usr/share/zoneinfo/$zone ]] || zone=""
   [[ -n $zone ]] && tz="TZ=\"$zone\" "
+  local h24 want
+  h24=$((10#$hour % 12))
+  [[ $ampm == pm ]] && h24=$((h24 + 12))
+  printf -v want '%02d:%s' "$h24" "$min"
   # The day and year NOW falls on where the reset is said, so the parse never reads the clock.
   if [[ -n $zone ]]; then
     year=$(TZ=$zone date -d "@$now" +%Y) date=$(TZ=$zone date -d "@$now" +%F)
@@ -150,10 +180,18 @@ reset_epoch() { # TEXT NOW
   fi
   if [[ -n $mon ]]; then
     at=$(date -d "$tz$mon $day $year $hour:$min$ampm" +%s 2>/dev/null) || return 1
-    (( now - at > 180 * 86400 )) && at=$(date -d "$tz$mon $day $((year + 1)) $hour:$min$ampm" +%s)
+    if (( now - at > 180 * 86400 )); then at=$(date -d "$tz$mon $day $((year + 1)) $hour:$min$ampm" +%s 2>/dev/null) || return 1; fi
+    if (( at - now > 180 * 86400 )); then at=$(date -d "$tz$mon $day $((year - 1)) $hour:$min$ampm" +%s 2>/dev/null) || return 1; fi
+    reads_as "$at" "$zone" "$want" || return 1
   else
     at=$(date -d "$tz$date $hour:$min$ampm" +%s 2>/dev/null) || return 1
-    (( now - at > 21600 )) && at=$((at + 86400))
+    reads_as "$at" "$zone" "$want" || return 1
+    if (( now - at > roll )); then
+      date=$(date -d "$date 12:00 tomorrow" +%F) || return 1
+      # A wall-clock time tomorrow's DST change skips names no instant: fail.
+      at=$(date -d "$tz$date $hour:$min$ampm" +%s 2>/dev/null) || return 1
+      reads_as "$at" "$zone" "$want" || return 1
+    fi
   fi
   printf '%s\n' "$at"
 }
@@ -332,6 +370,16 @@ orchestrator() { cat "$FLEET_STATE/orchestrator.pane" 2>/dev/null; }
 # shellcheck disable=SC2034 # read by recover.sh and resume-at-reset.sh
 HEPH=${FLEET_HEPH:-$FLEET_STATE/HEPH.md}
 fleet_panes() { t list-panes -s -t "$FLEET_SESSION" -F '#{pane_id}' 2>/dev/null; }
+
+# Whether the session live in PANE is one `fleet done` marked finished
+# (finished.tsv: the registry's columns, pane first, session fourth).
+finished_here() { # PANE
+  local fin=${FLEET_FINISHED:-$FLEET_STATE/finished.tsv} sid
+  # The pane alone first: reading every session file costs far more.
+  awk -F'\t' -v p="$1" '$1 == p { f = 1 } END { exit !f }' "$fin" 2>/dev/null || return 1
+  sid=$(live_session "$1") || return 1
+  awk -F'\t' -v p="$1" -v s="$sid" '$1 == p && $4 == s { f = 1 } END { exit !f }' "$fin" 2>/dev/null
+}
 
 # The live session id klepsydra's fleet file shows in pane PANE, or nothing.
 # Two live files naming one pane (a killed pane never writes "ended", and
@@ -525,6 +573,34 @@ turn_settled() { # PANE
     and ((.background // []) | length) > 0' "$KLEPSYDRA_DIR/fleet/$sid.json" >/dev/null 2>&1
 }
 
+# Whether the orchestrator in PANE has finished its turn with only pane
+# watchers (watch-panes.sh) in the background: a successor starts them again,
+# so they never hold a move back (#215). Prints its stamp, as turn_done does.
+watchers_only() { # PANE
+  local sid
+  sid=$(live_session "$1") || return 1
+  jq -er 'select((.state == "done" or (.state == "working" and .reason == "background"))
+    and ((.background // []) | length) > 0
+    and all(.background[]; .kind == "shell" and .watcher == true)) | '"$STAMP_JQ" "$KLEPSYDRA_DIR/fleet/$sid.json" 2>/dev/null
+}
+
+# The panes the watchers of the session in PANE watch (the hook's `watch`),
+# one a line; fails when no watcher recorded them (an entry from before #215).
+watched_panes() { # PANE
+  local sid
+  sid=$(live_session "$1") || return 1
+  jq -er '[(.background // [])[] | select(.watcher == true)] as $w
+    | if ($w | length) > 0 and all($w[]; .watch | type == "array") then [$w[].watch[]] | unique | .[] else error("none") end' \
+    "$KLEPSYDRA_DIR/fleet/$sid.json" 2>/dev/null || [[ $? == 4 ]]
+}
+
+# How many pane watchers the session in PANE runs in the background.
+watcher_count() { # PANE
+  local sid
+  sid=$(live_session "$1") || { echo 0; return; }
+  jq -r '[(.background // [])[] | select(.watcher == true)] | length' "$KLEPSYDRA_DIR/fleet/$sid.json" 2>/dev/null || echo 0
+}
+
 # Whether the agent in PANE answered a move-back request sent at ASKED with a
 # reply whose first line is READY-TO-MOVE alone (bold or code marks aside), and
 # finished that turn, with no turn since (a later one, a task notification's,
@@ -576,6 +652,93 @@ retire() { # PANE [INTERRUPT]
   t send-keys -t "$1" Enter
   for _ in $(seq 30); do fleet_panes | grep -qx "$1" || return 0; sleep 1; done
   t kill-pane -t "$1" 2>/dev/null
+}
+
+LAUNCH=${LAUNCH:-$(dirname "${BASH_SOURCE[0]}")/launch.sh}
+
+# The live session in PANE's stamp, or nothing: STAMP_JQ (its last prompt and
+# turn), or with STAMP_KIND=prompt its last typed or phone prompt alone, for a
+# move at a limit, where a turn a task notification starts fails at once.
+prompt_stamp() { # PANE
+  local sid of=$STAMP_JQ
+  [[ ${STAMP_KIND:-} == prompt ]] && of='.prompt.at // ""'
+  sid=$(live_session "$1") || return 0
+  jq -r "$of" "$KLEPSYDRA_DIR/fleet/$sid.json" 2>/dev/null
+}
+
+# Retire a pane this pass launched, interrupting its turn; kill it if it will not exit.
+drop() { # PANE
+  retire "$1" interrupt || t kill-pane -t "$1" 2>/dev/null
+}
+
+# Replace PANE (registry NAME, BRIEF) with a fresh session from its brief,
+# on config folder ACCOUNT when given (else launch.sh's pick), WHY in its
+# preamble; prints the new pane. NOTE, what AJ typed at the pane, goes into the
+# new brief, and the old box may hold exactly it. Gives up, typing nothing, if
+# AJ has typed anything else meanwhile.
+# (STAMP: the session's stamp when the caller judged the pane idle, so a
+# prompt or turn taken since, even one already over, keeps the old pane; at a
+# limit, STAMP_KIND=prompt, a prompt only.) Returns 5 when the new session's
+# brief met a limit on ACCOUNT. FRESH_HINT, when set, goes in as a resume hint.
+# Shared by the resume service and relaunch-fresh.sh (#274).
+fresh() { # PANE NAME BRIEF [WHY] [ACCOUNT] [NOTE] [STAMP]
+  local p=$1 name=$2 brief=$3 txt new
+  local why=${4:-stopped at a usage limit over an hour ago, so its cached conversation expired and resuming it would re-cache everything}
+  local account=${5:-} carried=${6:-} box
+  box=$(input_text "$(screen "$p")")
+  [[ -z $box || ( -n $carried && $box == "$carried" ) ]] || return 1
+  local sid cfg out got
+  # Shared: moves of different panes run side by side; a cut-over takes it alone.
+  exec 7>>"$FLEET_STATE/.fresh.lock"
+  flock -s 7
+  sid=$(reg_field "$p" 4) cfg=$(reg_field "$p" 6)
+  if ! pane_runs "$p" "$sid"; then
+    flog WARN "fresh session refused: the pane no longer runs its registered session" pane="$p" name="$name" session_id="$sid"
+    return 2
+  fi
+  local stamp
+  if (( $# >= 7 )); then stamp=$7; else stamp=$(prompt_stamp "$p"); fi
+  txt="$FLEET_STATE/fresh-$name-$(date +%Y%m%d-%H%M).src"
+  {
+    fresh_preamble "$why"
+    printf '\n\n'
+    [[ -n ${FRESH_HINT:-} ]] && printf 'Resume hint: %s\n\n' "$FRESH_HINT"
+    [[ -n $carried ]] && printf 'AJ typed this to the previous agent while it waited at the limit; act on it:\n%s\n\n' "$carried"
+    cat "$brief"
+  } >"$txt"
+  mkdir -p -- "$FLEET_STATE/log"
+  out=$(FLEET_ACCOUNT=$account bash "$LAUNCH" "$name" "$txt" 2>>"$FLEET_STATE/log/launch.err" | head -1)
+  new=$(grep -o 'pane=%[0-9]*' <<<"$out" | cut -d= -f2) got=$(grep -o 'brief=[A-Za-z-]*' <<<"$out" | cut -d= -f2)
+  [[ -n $new && -n ${MOVE_NEW:-} ]] && printf '%s\n' "$new" >"$MOVE_NEW"
+  if [[ -z $new ]]; then
+    flog ERROR "fresh session not started; the old pane is kept" pane="$p" name="$name"
+    return 3
+  fi
+  # The brief must have started a turn: not delivered, or (on a move to an
+  # account said to have room) stopped by a limit, the old pane stays.
+  if [[ $got == NOT-DELIVERED || ( -n $account && $got != started ) ]]; then
+    flog ERROR "fresh session's brief did not start; the old pane stays and the new one goes" pane="$p" new_pane="$new" name="$name" brief="$got"
+    retire "$new" interrupt
+    with_registry set_pane "$new" "$p" "$sid" "$cfg"
+    [[ $got == blocked-by-limit ]] && return 5
+    return 3
+  fi
+  # The launch took a while: AJ may have typed into the old pane or resumed it.
+  local now_s
+  now_s=$(screen "$p")
+  if ! pane_runs "$p" "$sid" || busy "$now_s" || ! has_input_box "$now_s" || [[ $(input_text "$now_s") != "$box" || $(prompt_stamp "$p") != "$stamp" ]]; then
+    flog ERROR "the old pane changed while its fresh session launched; the old one stays and the new one goes" pane="$p" new_pane="$new" name="$name"
+    retire "$new" interrupt
+    with_registry set_pane "$new" "$p" "$sid" "$cfg"
+    return 4
+  fi
+  # The note went into the new brief; one C-c clears it from the old box.
+  if [[ -n $box ]]; then
+    t send-keys -t "$p" C-c
+    wait_for "$p" 5 idle_empty || true
+  fi
+  retire "$p" || flog WARN "the old pane is left running beside its fresh session" pane="$p" new_pane="$new" name="$name"
+  printf '%s' "$new"
 }
 
 # Point the registry row launch.sh moved to NEW back at PANE, session SID
@@ -726,6 +889,6 @@ heph_asks() { # SID HEPH
 heph_note() { # WHY SID HEPH DOING
   local asks
   asks=$(heph_asks "$2" "$3")
-  printf 'Fresh start: the orchestrator (Heph) %s; you replace it. Read %s first, then the "Running now" lines in /mnt/c/Users/ajbar/fleet-briefing/claude-queue.md; %s Put anything below that changes the plan into HEPH.md now.\n\n' "$1" "$3" "$4"
+  printf 'Fresh start: the orchestrator (Heph) %s; you replace it. Read %s first, then the "Running now" lines in /mnt/c/Users/ajbar/fleet-briefing/queue.md; %s Put anything below that changes the plan into HEPH.md now.\n\n' "$1" "$3" "$4"
   printf "AJ's messages to the last orchestrator after HEPH.md was last written:\n%s\n" "${asks:-- (none)}"
 }

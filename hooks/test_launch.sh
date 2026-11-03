@@ -18,6 +18,11 @@ cleanup() {
   rm -rf "$work"
 }
 trap cleanup EXIT
+# A signal ends the run through exit, so the EXIT trap still stops the server (#239).
+trap 'exit 129' HUP; trap 'exit 130' INT; trap 'exit 143' TERM
+# No inherited descriptor past stderr: a tmux server started here would keep a
+# caller's lock, such as flock's /tmp/fleet-heavy.lock, after the run (#193).
+for fd in "/proc/$$/fd"/*; do n=${fd##*/}; (( n > 2 && n < 255 )) && eval "exec $n>&-"; done
 
 pass=0 fail=0
 check() {
@@ -460,8 +465,19 @@ t kill-pane -t "$p"
 
 out=$(bash "$launch" bogus 2>&1); rc=$?
 check "unknown command: exit 1" "$rc" "1"
-check "unknown command: says so" "$out" "usage: klepsydra-launch.sh new DIR | jump|end|interrupt|wrapup SOCKET PANE PID START"
+check "unknown command: says so" "$out" "usage: klepsydra-launch.sh new DIR | voices | jump|end|interrupt|wrapup SOCKET PANE PID START"
 check "unknown command: no tab" "$(tabs)" "1"
+
+# #273: the tray's Voices change runs the installed fleet voices at once, with
+# no mode: the tray has saved it, and fleet voices reads it.
+mkdir -p "$work/fbin"
+printf '#!/usr/bin/env bash\nprintf "[%%s]\\n" "$*" >>"%s/fleet.calls"\n' "$work" >"$work/fbin/fleet"; chmod +x "$work/fbin/fleet"
+out=$(FLEET_BIN="$work/fbin" bash "$launch" voices 2>&1); rc=$?
+check "#273: voices runs fleet voices with no mode, and opens no tab" "$rc $(cat "$work/fleet.calls") $(tabs)" "0 [voices] 1"
+out=$(FLEET_BIN="$work/fbin" bash "$launch" voices everyone 2>&1); rc=$?
+check "#273: a mode argument is refused before anything runs" "$rc $(wc -l <"$work/fleet.calls")" "1 1"
+out=$(FLEET_BIN="$work/nofleet" bash "$launch" voices 2>&1); rc=$?
+check "#273: without the fleet installed it says so" "$rc $out" "1 The fleet commands are not installed (make install-fleet)."
 
 # Another click holding the lock past its 10 s: the window is selected anyway.
 detach_all; : >"$WT_LOG"
