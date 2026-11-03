@@ -13,7 +13,7 @@ export KLEPSYDRA_DIR="$work/klepsydra" FLEET_TICK=0.1 FLEET_START_WAIT=4 FLEET_T
 mkdir -p "$FLEET_STATE" "$KLEPSYDRA_DIR/accounts/a" "$KLEPSYDRA_DIR/accounts/b"
 # Two config folders, logged out until a case logs one in (accounts a and b).
 export FLEET_DEFAULT_CONFIG="$work/cfg-a" FLEET_DEFAULT_JSON="$work/cfg-a.json" FLEET_ACCOUNTS="$work/cfg-a $work/cfg-b"
-unset CLAUDE_CONFIG_DIR
+unset CLAUDE_CONFIG_DIR KLEPSYDRA_BACKGROUND
 login() { # a|b
   local d=$work/cfg-$1 j=$work/cfg-$1/.claude.json
   [[ $1 == a ]] && j=$FLEET_DEFAULT_JSON
@@ -1846,7 +1846,8 @@ check "its note names HEPH.md and holds AJ's messages since it was written, noth
   "$(grep -c "Read $work/HEPH.md first" "$work/rec-heph.txt") $(grep '^- ' "$work/rec-heph.txt" | tr '\n' '|')" "1 - AJ: move InteFL to Friday|- AJ: and ping Dima|"
 check "and orchestrator.pane follows it" "$(cat "$FLEET_STATE/orchestrator.pane")" "$(tail -1 <<<"$out" | grep -o '%[0-9]*')"
 check "and orchestrator.session records its session" "$(cat "$FLEET_STATE/orchestrator.session")" "x"
-# #216: the relaunched Heph opens behind; recover brings him forward.
+# #216, #229 review: with the fleet's session already running, the relaunched
+# Heph opens behind and AJ stays where he is.
 cat >"$work/launch-recfwd.sh" <<EOF
 #!/usr/bin/env bash
 np=\$(tmux -L "$FLEET_SOCK" new-window -d -P -F '#{pane_id}' -t fleet: 'sleep 600')
@@ -1854,10 +1855,37 @@ echo "pane=\$np session=x account=x avail=1MiB brief=started"
 EOF
 chmod +x "$work/launch-recfwd.sh"
 printf '%%0\n' >"$FLEET_STATE/orchestrator.pane"; rm -f "$FLEET_STATE/orchestrator.session"
+seen=$(t display -p -t fleet: '#{pane_id}')
 LAUNCH="$work/launch-recfwd.sh" FLEET_STAGGER_S=0 FLEET_HEPH="$work/HEPH.md" bash "$here/recover.sh" >/dev/null 2>&1
 nh=$(cat "$FLEET_STATE/orchestrator.pane")
-check "#216: the recovered Heph is the window in view" "$(t display -p -t fleet: '#{pane_id}')" "$nh"
+check "#229 review: a recover into a running session leaves AJ's window in view" "$(t display -p -t fleet: '#{pane_id}')" "$seen"
 t kill-window -t "$nh" 2>/dev/null
+# From a cold start (no fleet session) Heph comes forward, unless AJ moved meanwhile.
+cat >"$work/launch-cold.sh" <<EOF
+#!/usr/bin/env bash
+if tmux -L "$FLEET_SOCK" has-session -t coldrec 2>/dev/null; then
+  [[ -e "$work/cold.move" ]] && tmux -L "$FLEET_SOCK" new-window -t coldrec: 'sleep 600' # AJ opens another
+  np=\$(tmux -L "$FLEET_SOCK" new-window -d -P -F '#{pane_id}' -t coldrec: 'sleep 600')
+else
+  np=\$(tmux -L "$FLEET_SOCK" new-session -d -s coldrec -P -F '#{pane_id}' 'sleep 600')
+fi
+echo "pane=\$np session=x account=x avail=1MiB brief=started"
+EOF
+chmod +x "$work/launch-cold.sh"
+for moved in 0 1; do
+  (( moved )) && touch "$work/cold.move"
+  printf '%s\tcw\t%s\t%s\t/w\n' %990 "$work/ba.src" "$SB" >"$REGISTRY"
+  printf '%%989\n' >"$FLEET_STATE/orchestrator.pane"; rm -f "$FLEET_STATE/orchestrator.session"
+  FLEET_SESSION=coldrec LAUNCH="$work/launch-cold.sh" FLEET_STAGGER_S=0 FLEET_HEPH="$work/HEPH.md" bash "$here/recover.sh" >/dev/null 2>&1
+  nh=$(cat "$FLEET_STATE/orchestrator.pane")
+  if (( moved )); then
+    check "#229 review: from a cold start, a move during recover keeps Heph behind" "$(t display -p -t coldrec: '#{pane_id}' | grep -cx -- "$nh") $(t list-windows -t coldrec | wc -l)" "0 3"
+  else
+    check "#229 review: from a cold start, nothing moved: the recovered Heph is the window in view" "$(t display -p -t coldrec: '#{pane_id}')" "$nh"
+  fi
+  t kill-session -t coldrec 2>/dev/null
+done
+rm -f "$work/cold.move"; : >"$REGISTRY"
 
 echo "recover: a relaunched worker that takes the old orchestrator pane is not Heph"
 SW=aaaaaaaa-0000-4000-8000-0000000000c1 SNEW=aaaaaaaa-0000-4000-8000-0000000000c2

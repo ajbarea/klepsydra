@@ -125,6 +125,8 @@ new() { # dir
   # so AJ keeps typing where he was (#216); the wall's New session comes forward.
   local -a behind=()
   [[ ${KLEPSYDRA_BACKGROUND:-} == 1 ]] && behind=(-d)
+  # Read once: a server this launch starts copies its environment into every pane.
+  unset KLEPSYDRA_BACKGROUND
   if (( exists )); then
     win=$(tmux "${t[@]}" new-window "${behind[@]}" -P -F '#{window_id}' -t "$target:" -c "$dir" "$CLAUDE" {LOCKFD}>&- 2>/dev/null) ||
       fail "tmux could not open a window."
