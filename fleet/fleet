@@ -10,6 +10,8 @@
 #   fleet accounts sync   make the second config folder behave like ~/.claude
 #   fleet recover         after a hard shutdown, relaunch every agent whose session is gone
 #   fleet done [NAME]     mark an agent finished (default: this pane's), so nothing relaunches it
+#   fleet voices [MODE]   make keryx follow the tray's Voices mode (heph, everyone, off) now;
+#                         --if-changed only a mode not yet applied, --check only report
 #   fleet shots [--apply] prune the briefing's decided and old screenshots (dry run without --apply)
 #   fleet agora post [--kind K] TEXT  post one line on the Agora, as your character (optional)
 #   fleet agora list [N]  the newest Agora posts
@@ -25,6 +27,7 @@ case $cmd in
   install) exec bash "$here/install.sh" "$@" ;;
   recover) exec bash "$here/recover.sh" "$@" ;;
   done) exec bash "$here/done.sh" "$@" ;;
+  voices) exec bash "$here/voices.sh" "$@" ;;
   shots) exec python3 -I "$here/prune_shots.py" "$@" ;;
   agora) exec python3 -I "$here/agora.py" "$@" ;;
   accounts)

@@ -831,15 +831,19 @@ fetches nothing.
 ### Voices
 
 The tray's **Voices** menu says who speaks through keryx: **Heph only** (the
-default), **Everyone** or **Off**. It is kept in `prefs.json` (`"voices"`),
-where `fleet/launch.sh` reads it, so it applies to each session launch.sh
-starts from then on: a relaunch, a move to the other account, `fleet recover`.
-A session keeps its mode through `/clear`, and one started from the tray's
-Start is not covered. Heph only starts workers with keryx off
-(`KERYX_ENABLED=false` in `fleet/worker-settings.json`), so a worker loads no
-summarizer or voice model; Everyone starts them without that line; Off also
-starts Heph with keryx off, through `--settings`, which outranks the user's and
-the project's settings.
+default), **Everyone** or **Off**. It is kept in `prefs.json` (`"voices"`), and
+a change runs `fleet voices` at once, which sets keryx itself, so it reaches
+running sessions too, including ones started from the tray's Start: Heph only
+sets keryx's `speak_only` to `orchestrator.session` (keryx 0.12.0 or later), so
+only the orchestrator's session speaks and every other session's hook stops
+before keryx's daemon; Everyone lets every session speak; Off runs `keryx off`,
+which stops its daemon and frees the GPU. The resume service applies a changed
+mode within a pass (`fleet voices --if-changed`), so a `keryx off` of your own
+between changes stays, and `fleet doctor` warns while the saved mode is not
+applied, naming why (a keryx without `speak_only` on either account).
+Sessions are started with no `KERYX_ENABLED`, which would outrank keryx's own
+setting; a worker launched before 11-02 still carries `KERYX_ENABLED=false`
+until its next launch.
 
 ### Character themes
 
@@ -1394,11 +1398,12 @@ briefs, logs) stays in the state folder.
 
 | Command | What it does |
 |---|---|
-| `fleet doctor` | One line per check: the resume service, its last pass and what that pass saw (panes, limited panes), limits as the panes show them (a pane still showing a limit 10 min past its reset, with nothing sent since, fails; a reset time beside a limit message the fleet does not recognise warns), Remote Control on every registered pane and the orchestrator's, the phone wall locally and over Tailscale Serve with a fresh `fleet.json`, a pane watcher, and briefs' shared rules. Exits non-zero on any failure. `--json FILE` also writes the checks as a report, and logs only a check that changed status (a recovery without its detail). The `fleet-doctor.timer` runs it every 5 min into the data folder's `fleet-health.json`, which the wall and the phone show as a **Fleet** button beside **CI**: failing checks first, `Fleet ?` when the report is over 15 minutes old, no links and `~` for the home folder. |
+| `fleet doctor` | One line per check: the resume service, its last pass and what that pass saw (panes, limited panes), limits as the panes show them (a pane still showing a limit 10 min past its reset, with nothing sent since, fails; a reset time beside a limit message the fleet does not recognise warns), Remote Control on every registered pane and the orchestrator's, the phone wall locally and over Tailscale Serve with a fresh `fleet.json`, a pane watcher, briefs' shared rules, and whether keryx holds the tray's Voices mode. Exits non-zero on any failure. `--json FILE` also writes the checks as a report, and logs only a check that changed status (a recovery without its detail). The `fleet-doctor.timer` runs it every 5 min into the data folder's `fleet-health.json`, which the wall and the phone show as a **Fleet** button beside **CI**: failing checks first, `Fleet ?` when the report is over 15 minutes old, no links and `~` for the home folder. |
 | `fleet log [N]` | The last N decisions as plain lines. |
 | `fleet brief NAME BODY` | Writes `task-NAME.src`: BODY, then the shared rules in `fleet/brief-tail.md`. `--check` lists briefs whose rules drifted; `--refresh` rewrites them with the current rules, dropping any rule an earlier tail held (word for word or by its label) and keeping lines added after them. |
 | `fleet cutover` | Restarts the resume service on the installed scripts and confirms its start is logged. |
 | `fleet done [NAME]` | Marks an agent finished: its row moves from `panes.tsv` to `finished.tsv` with the time, so nothing relaunches it or types into it: the resume service, `fleet recover` and the doctor act only on registered rows, and the service also leaves alone any pane whose session is in `finished.tsv`. With no NAME, the row of the fleet pane it runs in, when its registered session runs there; each brief's shared rules end with it. The pane stays open with its final report. |
+| `fleet voices [heph\|everyone\|off]` | Sets keryx to the tray's Voices mode now, for running sessions too; with a mode, saves it to `prefs.json` first. Changes keryx only where it differs and logs the values it decided on. `--if-changed` applies only a mode not yet applied (the resume service); `--check` only says whether it is. |
 | `fleet agora post [--kind gripe\|win\|idea\|wish\|kudos] TEXT` | Posts one line (280 characters) on the Agora, signed with the session's character, agent and repo, from inside a fleet session. Optional for agents, one post an hour each; a post that looks like it holds a secret is refused. Posts are JSON lines in `agora/posts.jsonl` in klepsydra's data folder. `fleet agora list [N]` shows the newest. |
 | `fleet/launch.sh NAME BRIEF` | Starts an agent with its own session id in a memory-capped scope. It turns Remote Control on and waits for it to settle, pastes the brief, checks the brief reached the prompt, then submits it. A retry never sends Escape. It records the pane, session id and folder in `panes.tsv`. |
 | `fleet/resume-at-reset.sh` | The resume service. It resumes a limited pane at the reset its banner names, or at once after a switch to an account with room; the orchestrator too, who moves to the other account as a fresh session from `HEPH.md` when that one has room. It starts a registered pane fresh from its brief after an hour idle. Whatever AJ typed at a limited pane is sent as typed; a line that left the prompt unsent is typed again. Each pane's state survives a restart of the service. |

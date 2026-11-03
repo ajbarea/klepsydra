@@ -240,6 +240,14 @@ elif stale=$(bash "$here/brief.sh" --check "${briefs[@]}" 2>/dev/null); then
 else
   report warn "briefs" "$(tr '\n' ' ' <<<"$stale")(fleet brief --check)"
 fi
+
+# Voices (#273): the tray's mode has been applied to keryx (the resume service
+# applies a change within a pass; a mode left unapplied says why).
+if v=$(bash "$here/voices.sh" --check 2>/dev/null); then
+  report ok "voices" "$v"
+else
+  report warn "voices" "${v:-could not compare}"
+fi
 # A hook or cast copy older than the checkout gives every session old behaviour (#244).
 root=${here%/fleet} differ="" missing=""
 for c in "${HOOK_COPIES[@]}"; do

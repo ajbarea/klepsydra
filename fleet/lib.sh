@@ -573,6 +573,34 @@ turn_settled() { # PANE
     and ((.background // []) | length) > 0' "$KLEPSYDRA_DIR/fleet/$sid.json" >/dev/null 2>&1
 }
 
+# Whether the orchestrator in PANE has finished its turn with only pane
+# watchers (watch-panes.sh) in the background: a successor starts them again,
+# so they never hold a move back (#215). Prints its stamp, as turn_done does.
+watchers_only() { # PANE
+  local sid
+  sid=$(live_session "$1") || return 1
+  jq -er 'select((.state == "done" or (.state == "working" and .reason == "background"))
+    and ((.background // []) | length) > 0
+    and all(.background[]; .kind == "shell" and .watcher == true)) | '"$STAMP_JQ" "$KLEPSYDRA_DIR/fleet/$sid.json" 2>/dev/null
+}
+
+# The panes the watchers of the session in PANE watch (the hook's `watch`),
+# one a line; fails when no watcher recorded them (an entry from before #215).
+watched_panes() { # PANE
+  local sid
+  sid=$(live_session "$1") || return 1
+  jq -er '[(.background // [])[] | select(.watcher == true)] as $w
+    | if ($w | length) > 0 and all($w[]; .watch | type == "array") then [$w[].watch[]] | unique | .[] else error("none") end' \
+    "$KLEPSYDRA_DIR/fleet/$sid.json" 2>/dev/null || [[ $? == 4 ]]
+}
+
+# How many pane watchers the session in PANE runs in the background.
+watcher_count() { # PANE
+  local sid
+  sid=$(live_session "$1") || { echo 0; return; }
+  jq -r '[(.background // [])[] | select(.watcher == true)] | length' "$KLEPSYDRA_DIR/fleet/$sid.json" 2>/dev/null || echo 0
+}
+
 # Whether the agent in PANE answered a move-back request sent at ASKED with a
 # reply whose first line is READY-TO-MOVE alone (bold or code marks aside), and
 # finished that turn, with no turn since (a later one, a task notification's,
