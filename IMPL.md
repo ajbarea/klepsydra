@@ -1,10 +1,22 @@
-# IMPL: klepsydra fleet-module brief, resume state 2026-11-03 15:05 (EST)
+# IMPL: klepsydra fleet-module brief, resume state 2026-11-03 17:00 (EST)
 
-PARKED 11-03 ~15:00 at Heph's request (AJ priority: makesense IAAI-27 camera-ready took the slot).
-Resume with the same brief from this file, `git log`, open PRs and their comments, and the klepsydra
-line under "Running now" in /mnt/c/Users/ajbar/fleet-briefing/queue.md. Readers: opus, dispatched
-with the elenchus SKILL at ~/ajsoftworks/techne/.claude/worktrees/leak-audit/plugins/techne/skills/elenchus/
-(has ledger.py); at most two at a time; each brief carries the guarded-rm and heavy-lock rules.
+Session 22 (Chronos) resumed 16:09 after the IAAI-27 park. Resume with the same brief from this file, `git log`,
+open PRs and their comments, and the klepsydra line under "Running now" in /mnt/c/Users/ajbar/fleet-briefing/queue.md.
+Readers: opus, dispatched with the elenchus SKILL at ~/ajsoftworks/techne/.claude/worktrees/leak-audit/plugins/techne/skills/elenchus/
+(has ledger.py); at most two at a time; each brief carries the guarded-rm and heavy-lock rules and writes its
+report to /tmp/claude-1001/<round>/report.md.
+
+## Done (session 22)
+- ✅ #296 merged (9c4c79e) and installed from main (`make install-fleet`, cutover clean). Heph not yet told
+  (his prompt held text all session): tell him when it is empty.
+- ✅ #230: body 515 -> 573, main merged (fa08b9b), r2 reader running (/tmp/claude-1001/r2-230/report.md).
+- ✅ #291: main merged (781f093), r4 reader running (/tmp/claude-1001/r4-291/report.md).
+- ✅ #261: main merged (845c448), pushed; r10 waits for a reader slot.
+- ✅ #288 (dead-288): #261's branch merged in (2da8b64); doctor keeps a finished agent in a dead pane as
+  finished (new test). CI dispatched by hand (PRs to non-main bases run no CI): run 41719993651.
+  Open its PR against main after #261 merges (no PR yet).
+- ✅ #298 / PR #299: brief-tail.md carries the 11-03 Quality rule (Heph 15:05 ask).
+- ✅ #272 design / PR #300: docs/superpowers/specs/2026-11-03-resume-method-experiment-design.md. Needs one reader.
 
 ## Done (session 21, Chronos, Personal)
 - ✅ Dependabot #268 merged (notify/tokio patch, lockfile only).
@@ -15,8 +27,8 @@ with the elenchus SKILL at ~/ajsoftworks/techne/.claude/worktrees/leak-audit/plu
 - ✅ #230 r1 fixes pushed a7ea3c5: hook suite 573/573, all five mutants fail their tests.
 - ✅ RIT draft to Reznik (IAAI-27 accept) left in AJ's drafts.
 
-## Next, in order
-1. #296 fix/watch-alert-race (watch-race), head 0a10fe1, review-clean r3. CI run 41702648814 was still in
+## Next, in order (session 21 list; items 1-3 moved above)
+1. (done) #296 fix/watch-alert-race (watch-race), head 0a10fe1, review-clean r3. CI run 41702648814 was still in
    its Fleet engine step at park. If green: merge (squash), `make install-fleet` from main, then tell
    Heph the watcher fix is live. If red: read the log; a red outside test_ci_watch.py is not this PR.
 2. #230 fix/ask-217 (ask-217), head a7ea3c5: r1 fixes pushed (turns_at stamped in ask_answered; a busy
