@@ -384,8 +384,13 @@ in_view() { [[ $(t display-message -p -t "$1" '#{window_active}' 2>/dev/null) ==
 SHELLS=" sh bash dash zsh fish ksh "
 pane_dead_why() { # PANE
   local dead st sig cmd mark
-  IFS=$'\x1f' read -r dead st sig cmd mark < <(t display-message -p -t "$1" $'#{pane_dead}\x1f#{pane_dead_status}\x1f#{pane_dead_signal}\x1f#{pane_current_command}\x1f#{@klepsydra_dead}' 2>/dev/null) || return 1
+  # Tab-separated (tmux prints other control characters as octal), "-" for an
+  # empty field, the command last.
+  IFS=$'\t' read -r dead st sig cmd < <(t display-message -p -t "$1" $'#{pane_dead}\t#{?pane_dead_status,#{pane_dead_status},-}\t#{?pane_dead_signal,#{pane_dead_signal},-}\t#{pane_current_command}' 2>/dev/null) || return 1
+  [[ $st == - ]] && st=""
+  [[ $sig == - ]] && sig=""
   # Started again on its saved screen by the pane-died hook (#290), which notes why.
+  mark=$(t show -pqv -t "$1" @klepsydra_dead 2>/dev/null)
   [[ -n $mark ]] && { printf '%s' "$mark"; return 0; }
   if [[ $dead == 1 ]]; then
     if [[ -n $sig ]]; then printf 'its process ended on signal %s' "$sig"; else printf 'its process exited with status %s' "${st:-unknown}"; fi
