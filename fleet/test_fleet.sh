@@ -23,6 +23,7 @@ login() { # a|b
 logout() { rm -f -- "$work/cfg-${1:?}/.credentials.json"; }
 cleanup() {
   tmux -L "$FLEET_SOCK" kill-server 2>/dev/null
+  chmod -R u+w -- "${work:?}" 2>/dev/null
   rm -rf -- "${work:?}"
 }
 trap cleanup EXIT
@@ -588,7 +589,11 @@ if [[ $(id -u) != 0 ]]; then
   mkdir -p "$FLEET_STATE/archive/briefs"; chmod 555 "$FLEET_STATE/archive/briefs"
   check "#275: no archive copy, no rewrite: the brief stays and the refresh exits 1" \
     "$(bash "$hist/fleet/brief.sh" --refresh "$FLEET_STATE/task-hist.src" >/dev/null 2>&1; echo $?) $(cmp -s "$work/hist.old" "$FLEET_STATE/task-hist.src" && echo same) $(find "$FLEET_STATE" -maxdepth 1 -name 'task-hist.src.*' | wc -l)" "1 same 0"
+  printf 'old brief\n' >"$FLEET_STATE/task-demo3.src"
+  check "#275 review 4: a new brief over one it cannot archive is refused and the old one stays" \
+    "$(bash "$hist/fleet/brief.sh" demo3 "$work/body" >/dev/null 2>&1; echo $?) $(cat "$FLEET_STATE/task-demo3.src")" "1 old brief"
   chmod 755 "$FLEET_STATE/archive/briefs"
+  rm -f -- "$FLEET_STATE/task-demo3.src"
   mkdir -p "$work/ro"; cp "$work/hist.old" "$work/ro/task-ro.src"; chmod 555 "$work/ro"
   check "#275: no temp file beside it: the brief stays, nothing is archived, and the refresh exits 1" \
     "$(n=$(find "$FLEET_STATE/archive/briefs" -name 'task-ro.src.*' | wc -l); bash "$hist/fleet/brief.sh" --refresh "$work/ro/task-ro.src" >/dev/null 2>&1; echo "$? $n $(find "$FLEET_STATE/archive/briefs" -name 'task-ro.src.*' | wc -l)") $(cmp -s "$work/hist.old" "$work/ro/task-ro.src" && echo same)" "1 0 0 same"

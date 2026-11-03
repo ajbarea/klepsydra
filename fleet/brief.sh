@@ -23,6 +23,12 @@ if ! grep -q '^Resources: ' "$TAIL" 2>/dev/null; then
   err "no shared rules at $TAIL; nothing written"
   exit 2
 fi
+# Copy brief FILE into archive/briefs/ as NAME; fails when the copy is not made.
+archive() { # FILE NAME
+  mkdir -p -- "$FLEET_STATE/archive/briefs" && cp -- "$1" "$FLEET_STATE/archive/briefs/$2"
+}
+# A unique archive stamp: two writes in one second never share a name.
+stamp() { printf '%s-%s' "$(date +%Y%m%d-%H%M%S.%N)" "$$"; }
 # A brief's shared rules: from its "Resources:" line on.
 rules() { sed -n '/^Resources: /,$p' "$1"; }
 # Every line of the current tail and of each committed version of it (from
@@ -90,7 +96,7 @@ if [[ ${1:-} == --refresh ]]; then
       failed=1
       continue
     fi
-    if ! mkdir -p -- "$FLEET_STATE/archive/briefs" || ! cp -- "$f" "$FLEET_STATE/archive/briefs/${f##*/}.$(date +%Y%m%d-%H%M%S.%N)-$$"; then
+    if ! archive "$f" "${f##*/}.$(stamp)"; then
       rm -f -- "${tmp:?}"
       flog ERROR "brief not refreshed: its archive copy could not be written; the old one stays" path="$f"
       err "could not archive ${f##*/}; left as it was"
@@ -116,11 +122,12 @@ name=$1 body=$2
 [[ -r $body ]] || { err "no body at $body"; exit 2; }
 if grep -q '^Resources: ' "$body"; then err "$body already has the shared rules; give the body only"; exit 2; fi
 out=$FLEET_STATE/task-$name.src
-if [[ -e $out ]]; then
-  mkdir -p -- "$FLEET_STATE/archive/briefs"
-  cp -- "$out" "$FLEET_STATE/archive/briefs/task-$name.$(date +%Y%m%d-%H%M%S.%N)-$$.src"
+if [[ -e $out ]] && ! archive "$out" "task-$name.$(stamp).src"; then
+  flog ERROR "brief not written: the one it replaces could not be archived" name="$name" path="$out"
+  err "could not archive ${out##*/}; nothing written"
+  exit 1
 fi
-tmp=$(mktemp "$out.XXXXXX")
+tmp=$(mktemp "$out.XXXXXX") || { err "cannot write beside ${out##*/}; nothing written"; exit 1; }
 {
   cat -- "$body"
   [[ -n $(tail -c1 -- "$body") ]] && printf '\n'
