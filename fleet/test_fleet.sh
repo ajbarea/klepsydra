@@ -3314,6 +3314,8 @@ IDLE_S=600 WATCH_TICK=0.1 timeout 20 bash "$here/watch-panes.sh" "$gp" >"$work/w
 check "#288: a pane the pane-died hook marked is dead at once, with the hook's reason" "$(cat "$work/wdead.out")" "DEAD $gp (its process ended on signal 6)"
 # The doctor: a row whose session file still reads alive, in a dead pane, is
 # gone with the pane named; Heph dead in his pane is his remote control FAIL.
+# The recover section's fake /proc and boot id: process 4242 started at tick 777.
+export FLEET_BOOT_ID="$work/boot_id" FLEET_PROC="$work/proc"
 SD=aaaaaaaa-0000-4000-8000-0000000000d1
 sfile "$SD" 4242 777 "$NOWBOOT" "$dp"
 cp -p -- "$REGISTRY" "$work/reg-before-288"
@@ -3327,10 +3329,20 @@ check "#288: doctor counts the dead pane's agent as gone, naming the pane" \
 check "#288: Heph dead in his pane fails his remote control check; the worker gets no remote control line" \
   "$(grep "^FAIL remote control $sp (orchestrator)" <<<"$doc") | $(grep -c "remote control $dp " <<<"$doc")" \
   "FAIL remote control $sp (orchestrator): the pane is open but its agent is dead: a bash prompt is in front where its claude ran | 0"
+# An agent that finished and then exited leaves a dead pane too: still finished, never gone.
+SF=aaaaaaaa-0000-4000-8000-0000000000d2
+sfile "$SF" 4243 778 "$NOWBOOT" "$dp"
+jq '. + {ended: {reason: "prompt_input_exit"}}' "$KLEPSYDRA_DIR/fleet/$SF.json" >"$work/sf.json" && mv -- "$work/sf.json" "$KLEPSYDRA_DIR/fleet/$SF.json"
+printf '%s\tdoneone\t%s\t%s\t/w\n' "$dp" "$work/bc.src" "$SF" >>"$REGISTRY"
+doc=$(FLEET_DEAD_RECHECK_S=0 bash "$here/doctor.sh" 2>/dev/null)
+check "#288: a finished agent in a dead pane is a finished warn, not a gone FAIL" \
+  "$(grep '^FAIL agents' <<<"$doc" | grep -c doneone) $(grep -cE '^warn (finished )?agents: .*doneone' <<<"$doc")" "0 1"
+rm -f -- "$KLEPSYDRA_DIR/fleet/$SF.json"
 rm -f -- "$FLEET_STATE/orchestrator.pane" "$KLEPSYDRA_DIR/fleet/$SD.json"
 [[ -e $work/orch-before-288 ]] && cp -p -- "$work/orch-before-288" "$FLEET_STATE/orchestrator.pane"
 cp -p -- "$work/reg-before-288" "$REGISTRY"
 for w in "$dp" "$sp" "$gp"; do t kill-pane -t "$w" 2>/dev/null; done
+unset FLEET_BOOT_ID FLEET_PROC
 
 echo "the fleet log"
 check "every line is one JSON object with ts, level, target and message" \
