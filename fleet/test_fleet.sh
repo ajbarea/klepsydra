@@ -46,6 +46,8 @@ check() {
     pass=$((pass + 1)); printf '  ok   %s\n' "$name"
   else
     fail=$((fail + 1)); printf '  FAIL %s\n       want: %s\n       got:  %s\n' "$name" "$want" "$got"
+    # On GitHub Actions, an annotation names the failing case on the run's page.
+    [[ -n ${GITHUB_ACTIONS:-} ]] && printf '::error file=fleet/test_fleet.sh,title=fleet test failed::%s\n' "${name//$'\n'/ }"
   fi
 }
 has() { grep -qF -- "$2" <<<"$1" && echo yes || echo no; } # TEXT NEEDLE

@@ -150,6 +150,15 @@ limit_line() {
 # DST change (Claude Code dates a reset only when it is over 24 h away); a dated
 # one more than 180 days past is next year's, and more than 180 days ahead last year's.
 # Fails when TEXT names none, or a time that does not exist that day.
+# Whether EPOCH reads as HH:MM on the clock in ZONE (empty: local time). GNU
+# date refuses a time a DST change skips; uutils date (Ubuntu 26.04) moves it
+# an hour on. The round trip tells them apart on both.
+reads_as() { # EPOCH ZONE HH:MM
+  local got
+  if [[ -n $2 ]]; then got=$(TZ=$2 date -d "@$1" +%H:%M 2>/dev/null); else got=$(date -d "@$1" +%H:%M 2>/dev/null); fi
+  [[ -n $got && $got == "$3" ]]
+}
+
 reset_epoch() { # TEXT NOW [ROLL_S]
   local text=$1 now=$2 roll=${3:-21600} m
   m=$(grep -oE 'resets ([A-Z][a-z]{2} [0-9]{1,2}, )?[0-9]{1,2}(:[0-9]{2})? ?[ap]m( \([A-Za-z0-9_+/-]+\))?' <<<"$text" | tail -1)
@@ -159,6 +168,10 @@ reset_epoch() { # TEXT NOW [ROLL_S]
   local ampm=${BASH_REMATCH[7]} zone=${BASH_REMATCH[9]} tz="" year date at
   [[ -n $zone && -e /usr/share/zoneinfo/$zone ]] || zone=""
   [[ -n $zone ]] && tz="TZ=\"$zone\" "
+  local h24 want
+  h24=$((10#$hour % 12))
+  [[ $ampm == pm ]] && h24=$((h24 + 12))
+  printf -v want '%02d:%s' "$h24" "$min"
   # The day and year NOW falls on where the reset is said, so the parse never reads the clock.
   if [[ -n $zone ]]; then
     year=$(TZ=$zone date -d "@$now" +%Y) date=$(TZ=$zone date -d "@$now" +%F)
@@ -169,12 +182,15 @@ reset_epoch() { # TEXT NOW [ROLL_S]
     at=$(date -d "$tz$mon $day $year $hour:$min$ampm" +%s 2>/dev/null) || return 1
     if (( now - at > 180 * 86400 )); then at=$(date -d "$tz$mon $day $((year + 1)) $hour:$min$ampm" +%s 2>/dev/null) || return 1; fi
     if (( at - now > 180 * 86400 )); then at=$(date -d "$tz$mon $day $((year - 1)) $hour:$min$ampm" +%s 2>/dev/null) || return 1; fi
+    reads_as "$at" "$zone" "$want" || return 1
   else
     at=$(date -d "$tz$date $hour:$min$ampm" +%s 2>/dev/null) || return 1
+    reads_as "$at" "$zone" "$want" || return 1
     if (( now - at > roll )); then
       date=$(date -d "$date 12:00 tomorrow" +%F) || return 1
       # A wall-clock time tomorrow's DST change skips names no instant: fail.
       at=$(date -d "$tz$date $hour:$min$ampm" +%s 2>/dev/null) || return 1
+      reads_as "$at" "$zone" "$want" || return 1
     fi
   fi
   printf '%s\n' "$at"
