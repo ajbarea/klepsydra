@@ -1438,8 +1438,9 @@ and keeps four old files. `jq 'select(.level == "ERROR")'` lists failures.
 
 **Orchestrator guard.** `fleet/orch-guard.sh` is a PreToolUse hook that acts
 only in the session `orchestrator.session` names, and refuses what `HEPH.md`
-records as costly: typing into a pane stopped at a usage limit for an hour or
-more (its cache expired: `fresh-now.sh` relaunches it from its brief), typing
+records as costly: typing into a pane stopped at a usage limit 55 minutes or
+more ago (`FRESH_AFTER_S`: its cache expired, and `fresh-now.sh` relaunches it
+from its brief) or into a limited pane after a wait, typing
 into an input line that holds someone else's text, an interactive session on an
 API key or a headless one with no `fleet balance` check today, editing
 `panes.tsv` while a launch or chain loop runs, and a send to a pane it cannot
@@ -1460,7 +1461,7 @@ bash statusline/test_statusline.sh       # usage hook and heartbeat, against rec
 bash hooks/test_fleet.sh                 # fleet hook: states, where, identity, pruning, gone, settings, window colours
 bash hooks/test_launch.sh                # launcher: new, jump, tab reuse, against a private tmux socket
 bash fleet/test_fleet.sh                 # fleet engine: limits, resets, typed lines, launch delivery, doctor, against fake panes
-bash fleet/test_orch_guard.sh            # orchestrator guard: each guard fires, passes look-alikes, survives no mutant
+bash fleet/test_orch_guard.sh            # orchestrator guard: each guard fires, look-alikes pass, a mutant of each fails, a differential against tmux and bash
 bash scripts/test_measure_memory.sh      # the release memory check
 python3 -I fleet/test_ci_watch.py        # CI watch: which runs count, triage once, Dependabot, 304s
 node --test src/*.test.js                # ramp, countdown, reconciliation, fleet model, faces, guards, logger

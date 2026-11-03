@@ -13,7 +13,9 @@ export TZ=America/New_York
 export FLEET_SOCK="orch-guard-test-$$" FLEET_STATE="$work/state" FLEET_SESSION=fleet
 export FLEET_LOG="$work/state/log/fleet.log" FLEET_PROC="$work/proc" KLEPSYDRA_DIR="$work/klepsydra"
 unset TMUX CLAUDE_CONFIG_DIR
-mkdir -p "$FLEET_STATE/log" "$FLEET_PROC"
+# Never AJ's config folders: the parser reads the settings a launch would use.
+export HOME="$work/home" FLEET_DEFAULT_CONFIG="$work/cfg-a" FLEET_ACCOUNTS="$work/cfg-a $work/cfg-b"
+mkdir -p "$FLEET_STATE/log" "$FLEET_PROC" "$HOME/.claude" "$work/cfg-a" "$work/cfg-b"
 cleanup() {
   tmux -L "$FLEET_SOCK" kill-server 2>/dev/null
   rm -rf -- "${work:?}"
@@ -165,6 +167,54 @@ printf 'bash\0/home/x/.local/state/fleet-orchestrator/dependabot-chain.sh\0' >"$
 check "a *-chain.sh script is a loop" "$(run "sed -i '/old/d' $reg")" "deny:registry"
 rm -rf -- "${FLEET_PROC:?}/4242"
 
+echo "round 1: shapes the first parser missed"
+check "tmux's combined flags (-lt)" "$(run "tmux -L $FLEET_SOCK send-keys -lt $cold go")" "deny:cold-limit"
+check "tmux's abbreviation paste" "$(run "tmux -L $FLEET_SOCK paste -t $cold")" "deny:cold-limit"
+check "tmux's abbreviation send-k" "$(run "tmux -L $FLEET_SOCK send-k -t $cold go")" "deny:cold-limit"
+check "lib.sh's t inside braces" "$(run ". fleet/lib.sh; { t send-keys -t $cold go; }")" "deny:cold-limit"
+check "lib.sh's t after !" "$(run "! t send-keys -t $cold go")" "deny:cold-limit"
+check "lib.sh's t after time" "$(run "time t send-keys -t $cold go")" "deny:cold-limit"
+check "lib.sh's type_exactly" "$(run ". fleet/lib.sh; type_exactly $cold go")" "deny:cold-limit"
+check "lib.sh's deliver" "$(run ". fleet/lib.sh; deliver $cold /tmp/note")" "deny:cold-limit"
+check "targets fed by xargs: refused" "$(run "echo fleet:1 | xargs -I{} tmux -L $FLEET_SOCK send-keys -t {} go")" "deny:target"
+check "a pane id passed through xargs is still checked first" "$(run "echo $cold | tmux -L $FLEET_SOCK send-keys -t $warm go")" "deny:cold-limit"
+young=$(pane young "{\"above\":[\"⏺ Done. done 10:20 AM\",\"$LIMIT\"]}"); settle
+check "a send to a limit 10 min old: allowed" "$(run "tmux -L $FLEET_SOCK send-keys -t $young go")" "allow"
+check "the same send after a sleep: refused" "$(run "sleep 3600; tmux -L $FLEET_SOCK send-keys -t $young continue Enter")" "deny:cold-limit"
+check "the refusal points to the resume service" "$(has "$(reason)" "resume service sends at the reset")" "yes"
+check "a delayed send to a pane at no limit: allowed" "$(run "sleep 5; tmux -L $FLEET_SOCK send-keys -t $warm go")" "allow"
+
+mkdir -p "$FLEET_PROC/4242"
+printf 'bash\0launch.sh\0x\0' >"$FLEET_PROC/4242/cmdline"
+check "a registry path in a variable, written by a redirect" \
+  "$(run "reg=$reg; grep -v x \"\$reg\" > p.new && cat p.new > \"\$reg\"")" "deny:registry"
+check "a copy onto a registry path in a variable" "$(run "reg=$reg; cp p.new \"\$reg\"")" "deny:registry"
+check "a read whose output goes to /dev/null passes" "$(run "grep x $reg >/dev/null 2>&1")" "allow"
+check "the Edit tool's refusal says to use Bash" "$(edit Edit "$reg" >/dev/null; has "$(reason)" "make it in Bash with ORCH_GUARD_ALLOW=registry")" "yes"
+for c in 'shellcheck\0fleet/launch.sh' 'vim\0launch.sh' 'bash\0fleet/test_fleet.sh' 'less\0x-chain.sh'; do
+  printf '%b\0' "$c" >"$FLEET_PROC/4242/cmdline"
+  check "no loop: a process that only names a script ($(tr '\0' ' ' <"$FLEET_PROC/4242/cmdline"))" "$(run "sed -i '/old/d' $reg")" "allow"
+done
+for c in 'launch.sh\0card' 'bash\0/x/relaunch-fresh.sh\0%3' 'sh\0-c\0sleep 9; bash recover.sh' 'bash\0dependabot-chain.sh'; do
+  printf '%b\0' "$c" >"$FLEET_PROC/4242/cmdline"
+  check "a loop: $(tr '\0' ' ' <"$FLEET_PROC/4242/cmdline")" "$(run "sed -i '/old/d' $reg")" "deny:registry"
+done
+rm -rf -- "${FLEET_PROC:?}/4242"
+
+printf '%s' '{"apiKeyHelper":"op read op://Fleet/key/credential"}' >"$HOME/key.json"
+# shellcheck disable=SC2016 # the literal $HOME is the case
+check 'a --settings file under $HOME' "$(run 'claude --settings $HOME/key.json')" "deny:api-key"
+# shellcheck disable=SC2016 # the literal $S is the case
+check "a --settings path the guard cannot read: refused" "$(run 'claude --settings "$S/x.json"')" "deny:api-key"
+mkdir -p "$work/keycfg"; cp -- "$HOME/key.json" "$work/keycfg/settings.json"
+check "a config folder whose settings use a key" "$(run "CLAUDE_CONFIG_DIR=$work/keycfg claude --model opus")" "deny:api-key"
+check "launch.sh on such a folder" "$(run "FLEET_ACCOUNT=$work/keycfg bash fleet/launch.sh x $work/brief.src")" "deny:api-key"
+check "launch.sh on the fleet's own folders passes" "$(run "bash fleet/launch.sh x $work/brief.src")" "allow"
+cp -- "$HOME/key.json" "$work/cfg-b/settings.json"
+check "launch.sh where it may pick a folder that uses a key" "$(run "bash fleet/launch.sh x $work/brief.src")" "deny:api-key"
+rm -f -- "$work/cfg-b/settings.json"
+check "clearing the key is no key" "$(run 'ANTHROPIC_API_KEY= claude --model opus')" "allow"
+
 echo "cost"
 payload=$(jq -nc --arg s "$WSID" '{session_id: $s, transcript_path: "/home/x/.claude/p.jsonl", hook_event_name: "PreToolUse", tool_name: "Bash", tool_input: {command: "tmux send-keys -t %1 hi"}}')
 start=$(date +%s%N)
@@ -203,6 +253,14 @@ for g in cold-limit pending-input api-key registry target; do
   check "mutant $g: the case it guards now passes, so the test catches its removal" "$(GUARD=$mut/orch-guard.sh run "$cmd")" "allow"
   check "unmutated: the same case is refused" "$(run "$cmd")" "deny:$g"
 done
+
+# The parser's scan for every pane a send command names, removed: the case
+# only it catches (the pane id piped elsewhere) must then pass.
+sed 's/^    targets = \[m.group(0) for m in PANE.finditer(cmd)\]$/    targets = []/' "$here/orch_guard_parse.py" >"$mut/orch_guard_parse.py"
+cp -- "$here/orch-guard.sh" "$mut/orch-guard.sh"
+check "mutant pane-scan: its scan removed" "$(grep -c 'targets = \[\]' "$mut/orch_guard_parse.py")" "1"
+check "mutant pane-scan: the case only it catches now passes" "$(GUARD=$mut/orch-guard.sh run "echo $cold | tmux -L $FLEET_SOCK send-keys -t $warm go")" "allow"
+cp -- "$here/orch_guard_parse.py" "$mut/orch_guard_parse.py"
 
 echo
 echo "orch guard: $pass passed, $fail failed"

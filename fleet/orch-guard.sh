@@ -33,7 +33,10 @@ case $tool in
   *) exit 0 ;;
 esac
 if [[ $tool == Bash ]]; then
-  [[ $cmd == *send* || $cmd == *paste* || $cmd == *panes.tsv* || $cmd == *claude* || $cmd == *launch.sh* || $cmd == *fresh-now.sh* ]] || exit 0
+  # The words any guard acts on; lib.sh's senders (type_exactly, deliver, ...) included.
+  [[ $cmd == *send* || $cmd == *paste* || $cmd == *deliver* || $cmd == *type_exactly* || $cmd == *submit* ||
+    $cmd == *remote_control* || $cmd == *retire* || $cmd == *panes.tsv* || $cmd == *claude* ||
+    $cmd == *launch.sh* || $cmd == *fresh-now.sh* ]] || exit 0
 else
   [[ ${file##*/} == panes.tsv ]] || exit 0
 fi
@@ -55,13 +58,31 @@ deny() { # GUARD REASON [KEY=VALUE...]
 }
 allowed() { [[ $cmd == *"ORCH_GUARD_ALLOW=$1"* ]]; }
 
-# The launch, relaunch, recover and chain loops running now, one "PID COMMAND" each.
+# The launch, relaunch, recover and chain loops running now, one "PID COMMAND"
+# each: a process whose program is such a script, or a shell running one (as a
+# file, or in its -c script). A process that only names one (an editor, a
+# linter, a test suite reading it) is none.
+loop_script='(launch|relaunch-fresh|fresh-now|recover)\.sh|[A-Za-z0-9_.-]*[A-Za-z0-9_]-chain(\.sh)?'
 loops() {
-  local f c
+  local f c a
+  local -a argv
   shopt -s nullglob
   for f in "${FLEET_PROC:-/proc}"/[0-9]*/cmdline; do
-    c=$(tr '\0' ' ' <"$f" 2>/dev/null) || continue
-    [[ $c =~ (^|[/ \;\&\'\"])(launch|relaunch-fresh|fresh-now|recover)\.sh([ \;\&\'\"]|$) || $c =~ [A-Za-z0-9]-chain(\.sh)?([ \;\&\'\"]|$) ]] || continue
+    mapfile -d '' -t argv <"$f" 2>/dev/null || continue
+    (( ${#argv[@]} )) || continue
+    a=${argv[0]##*/}
+    if [[ $a =~ ^($loop_script)$ ]]; then
+      :
+    elif [[ $a =~ ^(bash|sh|dash|zsh)$ ]] && (( ${#argv[@]} > 1 )); then
+      if [[ ${argv[1]} == -c ]]; then
+        [[ ${argv[2]:-} =~ (^|[/ \;\&\'\"])($loop_script)([ \;\&\'\"]|$) ]] || continue
+      else
+        [[ ${argv[1]##*/} =~ ^($loop_script)$ ]] || continue
+      fi
+    else
+      continue
+    fi
+    c=${argv[*]}
     f=${f%/cmdline}
     printf '%s %s\n' "${f##*/}" "${c:0:120}"
   done
@@ -69,6 +90,8 @@ loops() {
 
 registry_guard() { # WHAT
   local running
+  local how="If AJ asked for this edit now, add ORCH_GUARD_ALLOW=registry to the command."
+  [[ $tool == Bash ]] || how="If AJ asked for this edit now, make it in Bash with ORCH_GUARD_ALLOW=registry in the command."
   running=$(loops | head -3)
   if [[ -z $running ]]; then
     glog INFO "orchestrator guard: registry write, no loop running" guard=registry writer="$1"
@@ -78,7 +101,7 @@ registry_guard() { # WHAT
     glog WARN "orchestrator guard: registry write while a loop runs, allowed by ORCH_GUARD_ALLOW" guard=registry writer="$1" loops="${running//$'\n'/; }"
     return
   fi
-  deny registry "panes.tsv is the registry that a running launch or chain loop reads to see its pane exit (${running//$'\n'/; }). Editing it now can leave that loop spinning for hours (11-01 11:31). Wait until it ends, or stop it first, then edit. If AJ asked for this edit now, add ORCH_GUARD_ALLOW=registry to the command." \
+  deny registry "panes.tsv is the registry that a running launch or chain loop reads to see its pane exit (${running//$'\n'/; }). Editing it now can leave that loop spinning for hours (11-01 11:31). Wait until it ends, or stop it first, then edit. $how" \
     writer="$1" loops="${running//$'\n'/; }"
 }
 
@@ -87,7 +110,7 @@ if [[ $tool != Bash ]]; then
   exit 0
 fi
 
-findings=$(printf '%s' "$cmd" | python3 -I "$here/orch_guard_parse.py" 2>/dev/null) || {
+findings=$(printf '%s' "$cmd" | ORCH_ACCOUNTS=$FLEET_ACCOUNTS python3 -I "$here/orch_guard_parse.py" 2>/dev/null) || {
   glog WARN "orchestrator guard: the command parser failed; call let through" command="${cmd:0:300}"
   exit 0
 }
@@ -95,7 +118,7 @@ findings=$(printf '%s' "$cmd" | python3 -I "$here/orch_guard_parse.py" 2>/dev/nu
 
 orch=$(orchestrator)
 balance_log=$state/api-balance.log
-socks=() typed=() # panes this command types into with an empty box: its own text, once sent
+socks=() delay="" typed=() # panes this command types into with an empty box: its own text, once sent
 while IFS=$'\t' read -r kind a b; do
   # SOCKET lines come first, so each SEND is read on the servers its command names.
   case $kind in
@@ -117,6 +140,7 @@ while IFS=$'\t' read -r kind a b; do
         target="$a"
       ;;
     SOCKET) socks+=("$a") ;;
+    DELAY) delay=$a ;;
     SEND)
       p=""
       for sk in "${socks[@]}"; do
@@ -137,6 +161,10 @@ while IFS=$'\t' read -r kind a b; do
       s=$(screen "$p")
       if lim=$(limit_line "$s"); then
         idle=$((now - $(stopped_at "$p" "$(plain <<<"$s")")))
+        if [[ -n $delay ]]; then
+          deny cold-limit "pane $p is at a usage limit and this command waits ($delay) before it sends, so the keys may land after its cache expired. The resume service sends at the reset; past an hour it relaunches the pane fresh from its brief. Leave it to the service, or relaunch it now: bash $state/fresh-now.sh $p" \
+            pane="$p" delay="$delay" idle_min="$((idle / 60))" limit="$lim"
+        fi
         if (( idle >= FRESH_AFTER_S )); then
           deny cold-limit "pane $p stopped at a usage limit $((idle / 60)) min ago (\"${lim#"${lim%%[![:space:]]*}"}\"). Its prompt cache lives an hour, so typing into it now re-caches its whole transcript: five such nudges took 38% of a five-hour window on 11-02. Relaunch it fresh from its brief instead: bash $state/fresh-now.sh $p (a command that only names the pane counts too: leave its id out)" \
             pane="$p" idle_min="$((idle / 60))" limit="$lim"

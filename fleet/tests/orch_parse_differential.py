@@ -1,10 +1,12 @@
 """Differential test of orch_guard_parse.py against bash (#264).
 
 Sends: generates commands from shell pieces the orchestrator writes (tmux
-sends with literal, assigned and looped targets, quotes holding separators,
-comments, echoed look-alikes, line breaks, continuations, subshells,
-if/then), runs each in real bash with a stub tmux on PATH that records every
-send's target, and compares that with the targets the parser reports.
+sends with literal, assigned, looped and piped targets, tmux's abbreviations
+and combined flags, quotes holding separators, comments, echoed look-alikes,
+line breaks, continuations, subshells, if/then, { }, !, time), runs each in
+bash against a real private tmux server whose panes record every byte they
+receive, and compares the panes that got keys with the panes the parser
+names (resolved on that server).
 Registry: generates commands that read or write panes.tsv and runs each in
 bash in a scratch folder holding one. A send bash makes that the parser
 neither reports nor marks unresolved, or a write to panes.tsv it does not
@@ -23,27 +25,20 @@ import tempfile
 HERE = os.path.dirname(os.path.abspath(__file__))
 PARSER = os.path.join(HERE, "..", "orch_guard_parse.py")
 
-STUB = r"""#!/usr/bin/env bash
-# Records the target of each send-keys/send/paste-buffer/pasteb it is given.
-while (( $# )); do
-  case $1 in -L | -S | -f) shift 2 ;; -*) shift ;; *) break ;; esac
-done
-case ${1:-} in send-keys | send | paste-buffer | pasteb) ;; *) exit 0 ;; esac
-shift
-while (( $# )); do
-  case $1 in
-    -t) printf '%s\n' "$2" >>"$TMUX_LOG"; exit 0 ;;
-    -t*) printf '%s\n' "${1#-t}" >>"$TMUX_LOG"; exit 0 ;;
-    -N | -c | -b | -s | -T) shift 2 ;;
-    -*) shift ;;
-    *) exit 0 ;;
-  esac
-done
-"""
+# Each pane records the bytes it receives, unbuffered, in raw mode.
+RECORDER = (
+    "import os,sys,tty;tty.setraw(0);f=open(sys.argv[1],'ab',0)\n"
+    "while True:\n b=os.read(0,4096)\n if not b: break\n f.write(b)"
+)
+PANES = 8
 
 
 def pane(r):
-    return f"%{r.randint(1, 30)}"
+    return f"%{r.randint(1, PANES - 1)}"
+
+
+def target(r):
+    return pane(r) if r.random() < 0.8 else f"rec:{r.randint(1, PANES - 1)}"
 
 
 def text(r):
@@ -63,31 +58,53 @@ def text(r):
 
 
 def send(r):
-    """One send and the prelude it needs; returns (code, var-free targets wanted)."""
-    prog = r.choice(["tmux", "tmux -L s", "t", "/usr/bin/tmux"])
-    sub = r.choice(["send-keys", "send-keys", "send", "paste-buffer -b b1", "pasteb"])
-    shape = r.randrange(6)
+    """One send to a pane of the private server."""
+    prog = r.choice(["tmux", "tmux -L {sock}", "t", "/usr/bin/tmux", "command tmux"])
+    sub = r.choice(
+        [
+            "send-keys",
+            "send-keys",
+            "send",
+            "send-k",
+            "paste-buffer -b b1",
+            "pasteb",
+            "paste",
+        ]
+    )
+    shape = r.randrange(10)
+    t = target(r)
     if shape == 0:
-        p = pane(r)
-        return f"{prog} {sub} -t {p} {text(r)}"
+        return f"{prog} {sub} -t {t} {text(r)}"
     if shape == 1:
-        p = pane(r)
-        return f"{prog} {sub} -t{p} {text(r)}"
+        return f"{prog} {sub} -t{t} {text(r)}"
     if shape == 2:
-        p = pane(r)
-        return f'p={p}; {prog} {sub} -t "$p" {text(r)}'
+        return f'p={t}; {prog} {sub} -t "$p" {text(r)}'
     if shape == 3:
-        a, b = pane(r), pane(r)
-        return f"for q in {a} {b}; do {prog} {sub} -t $q {text(r)}; done"
+        return f"for q in {t} {target(r)}; do {prog} {sub} -t $q {text(r)}; done"
     if shape == 4:
-        p = pane(r)
-        return f"{prog} {sub} -N 2 -t {p} Enter"
-    p = pane(r)
-    return f"{prog} {sub} \\\n  -t {p} {text(r)}"
+        return (
+            f"{prog} {sub} -N 2 -t {t} Enter"
+            if "send" in sub
+            else f"{prog} {sub} -t {t}"
+        )
+    if shape == 5:
+        flags = "-lt" if "send" in sub else "-dt"
+        return f"{prog} {sub} {flags} {t} go"
+    if shape == 6:
+        return f"echo {t} | xargs -I{{}} {prog.replace('t', 'tmux') if prog == 't' else prog} {sub} -t {{}} go"
+    if shape == 7:
+        return (
+            f"printf '%s\\n' {t} | while read -r w; do {prog} {sub} -t \"$w\" go; done"
+        )
+    if shape == 8:
+        inner = f"{prog} {sub} -t {t} go"
+        w = r.choice(["brace", "! ", "time "])
+        return "{ " + inner + "; }" if w == "brace" else w + inner
+    return f"{prog} {sub} \\\n  -t {t} {text(r)}"
 
 
 def piece(r):
-    k = r.randrange(9)
+    k = r.randrange(10)
     if k < 4:
         return send(r)
     if k == 4:
@@ -98,6 +115,8 @@ def piece(r):
         return f"if true; then {send(r)}; fi"
     if k == 7:
         return f"x=$({send(r)})"
+    if k == 8:
+        return "{ " + send(r) + "; }"
     return r.choice(["true", "echo done", "ls >/dev/null"])
 
 
@@ -109,21 +128,93 @@ def command(r):
     return out
 
 
-def by_bash(cmd, stubdir):
-    with tempfile.NamedTemporaryFile("r", delete=False) as log:
-        path = log.name
-    env = {"PATH": f"{stubdir}:/usr/bin:/bin", "TMUX_LOG": path, "HOME": stubdir}
-    script = 't() { tmux -L fleet "$@"; }\n' + cmd + "\n"
-    subprocess.run(
-        ["bash", "-c", script], env=env, capture_output=True, timeout=10, check=False
-    )
-    with open(path) as f:
-        got = sorted(line.strip() for line in f if line.strip())
-    os.unlink(path)
-    return got
+class Server:
+    """A private tmux server with PANES windows, each pane a byte recorder."""
+
+    def __init__(self, work):
+        self.work = work
+        self.sock = f"orch-diff-{os.getpid()}"
+        self.tm = ["tmux", "-L", self.sock]
+        self.logs = {}
+        subprocess.run(
+            [
+                *self.tm,
+                "-f",
+                "/dev/null",
+                "new-session",
+                "-d",
+                "-s",
+                "rec",
+                "-x",
+                "80",
+                "-y",
+                "20",
+                "sleep 100000",
+            ],
+            check=True,
+        )
+        for i in range(1, PANES):
+            log = os.path.join(work, f"p{i}.log")
+            pid = subprocess.run(
+                [
+                    *self.tm,
+                    "new-window",
+                    "-d",
+                    "-P",
+                    "-F",
+                    "#{pane_id}",
+                    "-t",
+                    f"rec:{i}",
+                    sys.executable,
+                    "-I",
+                    "-c",
+                    RECORDER,
+                    log,
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.strip()
+            self.logs[pid] = log
+        subprocess.run([*self.tm, "set-buffer", "-b", "b1", "x"], check=True)
+        subprocess.run([*self.tm, "set-buffer", "x"], check=True)
+        self.path = subprocess.run(
+            [*self.tm, "display-message", "-p", "#{socket_path}"],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+
+    def pane_of(self, t):
+        got = subprocess.run(
+            [*self.tm, "display-message", "-p", "-t", t, "#{pane_id}"],
+            capture_output=True,
+            text=True,
+        )
+        return got.stdout.strip() if got.returncode == 0 else None
+
+    def run(self, cmd):
+        """The panes that received bytes while bash ran CMD."""
+        for log in self.logs.values():
+            open(log, "wb").close()
+        env = {"PATH": "/usr/bin:/bin", "HOME": self.work, "TMUX": f"{self.path},0,0"}
+        script = f't() {{ tmux -L {self.sock} "$@"; }}\n' + cmd + "\n"
+        subprocess.run(
+            ["bash", "-c", script],
+            env=env,
+            capture_output=True,
+            timeout=10,
+            check=False,
+            cwd=self.work,
+        )
+        subprocess.run(["sleep", "0.15"], check=False)
+        return sorted(p for p, log in self.logs.items() if os.path.getsize(log) > 0)
+
+    def close(self):
+        subprocess.run([*self.tm, "kill-server"], capture_output=True, check=False)
 
 
-def by_parser(cmd):
+def by_parser(cmd, server):
     out = subprocess.run(
         [sys.executable, "-I", PARSER],
         input=cmd,
@@ -131,17 +222,24 @@ def by_parser(cmd):
         text=True,
         check=True,
     ).stdout
-    sends, unresolved = [], 0
+    sends, unresolved = set(), 0
     for line in out.splitlines():
         f = line.split("\t")
         if f[0] == "SEND":
-            sends.append(f[1])
+            p = server.pane_of(f[1])
+            if p:
+                sends.add(p)
         elif f[0] == "UNRESOLVED":
             unresolved += 1
     return sorted(sends), unresolved
 
 
 REG_PIECES = [
+    'reg=panes.tsv; grep -v x "$reg" > p.new && cat p.new > "$reg"',
+    'reg=./panes.tsv; cp bak "$reg"',
+    'r=panes.tsv; sed -n 1p "$r" >/dev/null',
+    "grep x panes.tsv >/dev/null 2>&1",
+    'f=panes.tsv; printf "x\\n" >> "$f"',
     "sed -i '/old/d' panes.tsv",
     "cat panes.tsv",
     "grep x panes.tsv > out",
@@ -219,21 +317,22 @@ def main():
     n = int(sys.argv[1]) if len(sys.argv) > 1 else 300
     r = random.Random(int(sys.argv[2]) if len(sys.argv) > 2 else 264)
     bad = over = 0
-    with tempfile.TemporaryDirectory() as stubdir:
-        stub = os.path.join(stubdir, "tmux")
-        with open(stub, "w") as f:
-            f.write(STUB)
-        os.chmod(stub, 0o755)
-        for i in range(n):
-            cmd = command(r)
-            # /usr/bin/tmux in a generated command must reach the stub too.
-            want = by_bash(cmd.replace("/usr/bin/tmux", "tmux"), stubdir)
-            got, unresolved = by_parser(cmd)
-            missed = sorted(set(want) - set(got))
-            if missed and not unresolved:
-                bad += 1
-                print(f"SEND MISSED #{i}: bash sent {want}, parser {got}\n{cmd}\n")
-            over += bool(set(got) - set(want))
+    with tempfile.TemporaryDirectory() as work:
+        server = Server(work)
+        try:
+            for i in range(n):
+                cmd = command(r).replace("{sock}", server.sock)
+                want = server.run(cmd)
+                got, unresolved = by_parser(cmd, server)
+                missed = sorted(set(want) - set(got))
+                if missed and not unresolved:
+                    bad += 1
+                    print(
+                        f"SEND MISSED #{i}: keys reached {want}, parser named {got}\n{cmd}\n"
+                    )
+                over += bool(set(got) - set(want))
+        finally:
+            server.close()
     reg_bad = reg_over = 0
     for i in range(n):
         cmd = reg_command(r)

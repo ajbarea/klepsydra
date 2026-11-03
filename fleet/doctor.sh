@@ -261,12 +261,15 @@ elif [[ -n $differ ]]; then
 else
   report ok "installed copies" "the hooks, status line, launcher and cast match $root"
 fi
-# The orchestrator guard (#264) acts only where settings.json registers it.
-if jq -e '[.hooks.PreToolUse[]? | select((.matcher // "") | split("|") | index("Bash")) | .hooks[]?.command | strings | select(test("orch-guard\\.sh"))] | length > 0' \
+# The orchestrator guard (#264) acts only where settings.json registers it,
+# for Bash, Edit and Write ("*" or no matcher covers every tool).
+if jq -e '[.hooks.PreToolUse[]? | select(.hooks[]?.command | strings | test("orch-guard\\.sh"))
+    | (.matcher // "*") | if . == "*" or . == "" then ["Bash", "Edit", "Write"] else split("|") end] | add // []
+    | (index("Bash") != null and index("Edit") != null and index("Write") != null)' \
   "$FLEET_DEFAULT_CONFIG/settings.json" >/dev/null 2>&1; then
-  report ok "orchestrator guard" "registered in $(tilde "$FLEET_DEFAULT_CONFIG")/settings.json"
+  report ok "orchestrator guard" "registered for Bash, Edit and Write in $(tilde "$FLEET_DEFAULT_CONFIG")/settings.json"
 else
-  report warn "orchestrator guard" "not registered in $(tilde "$FLEET_DEFAULT_CONFIG")/settings.json: add the PreToolUse entry in README (Orchestrator guard), then fleet accounts sync"
+  report warn "orchestrator guard" "not registered for Bash, Edit and Write in $(tilde "$FLEET_DEFAULT_CONFIG")/settings.json: add the PreToolUse entry in README (Orchestrator guard), then fleet accounts sync"
 fi
 if [[ -n $json ]]; then
   tmp=$json.tmp.$$
