@@ -113,11 +113,23 @@ late=$(pane late '{"above":["⏺ Done. done 9:00 AM","idle"]}'); settle
 ( sleep 1; printf '%s' "{\"above\":[\"⏺ Done. done 9:00 AM\",\"$LIMIT\"]}" >"$work/late.json" ) &
 check "a limit that appears during a wait is seen at the send" "$(as_heph "sleep 2.5; $T send-keys -t $late continue Enter")" "refused:cold-limit"
 wait
-check "a target tmux does not know goes to tmux, which fails" "$(as_heph "$T send-keys -t %9999 hi" | cut -c1-4)" "rc=1"
+check "a target no pane answers to: refused" "$(as_heph "$T send-keys -t %9999 hi")" "refused:unknown"
 check "no -t is the orchestrator's own pane" "$(as_heph "$T send-keys -t $orchp hi")" "ok"
 check "another session's calls are never checked" "$(in_claude "$warm" "$work/orch-bin" "$T send-keys -t $cold x" 2>&1 && echo ok)" "ok"
 t send-keys -t "$cold" C-u
-check "no Claude Code session above: never checked" "$(PATH="$work/orch-bin:$PATH" TMUX_PANE=$orchp bash -c "$T display -p -t $cold '#{pane_id}'" 2>&1)" "$cold"
+check "no Claude Code session and no orchestrator pane: never checked" "$(PATH="$work/orch-bin:$PATH" TMUX_PANE=$warm bash -c "$T display -p -t $cold '#{pane_id}'" 2>&1)" "$cold"
+# Round 4: a job left running in the background loses its Claude Code parent,
+# but keeps the orchestrator's TMUX_PANE, so it is still the orchestrator's.
+check "with the orchestrator's pane and no Claude Code above (a background job): checked" \
+  "$(PATH="$work/orch-bin:$PATH" TMUX_PANE=$orchp bash -c "$T send-keys -t $cold go" 2>&1 | grep -o 'orch-guard (cold-limit)')" "orch-guard (cold-limit)"
+for bg in "( sleep 0.3; $T send-keys -t $cold orphan Enter ) &" "nohup sh -c 'sleep 0.3; $T send-keys -t $cold orphan Enter' >/dev/null 2>&1 &" \
+  "setsid -f sh -c 'sleep 0.3; $T send-keys -t $cold orphan Enter' >/dev/null 2>&1"; do
+  as_heph "$bg" >/dev/null; sleep 1.2
+  check "a send that outlives its Bash call ($bg): refused" "$(got_keys cold)" "0"
+done
+# shellcheck disable=SC2016 # the script's own $1 and $0
+printf '#!/usr/bin/env bash\nif (( $1 > 0 )); then bash "$0" $(( $1 - 1 )); else %s send-keys -t %s deep; fi\n' "$T" "$cold" >"$work/nest.sh"
+check "a send under 14 nested shells: refused" "$(as_heph "bash $work/nest.sh 14")" "refused:cold-limit"
 check "the orchestrator setting TMUX_PANE does not make it another session" "$(as_heph "TMUX_PANE=$warm $T send-keys -t $cold go")" "refused:cold-limit"
 check "nor does unsetting it" "$(as_heph "env -u TMUX_PANE $T send-keys -t $cold go")" "refused:cold-limit"
 check "read-only tmux commands pass" "$(as_heph "$T capture-pane -p -t $cold >/dev/null && $T list-panes -a >/dev/null")" "ok"
@@ -158,6 +170,13 @@ for hidden in "source-file $work/x.conf" "source $work/x.conf" "run-shell '$T se
 done
 check "and nothing reached the pane" "$(got_keys cold)" "0"
 check "pipe-pane with no command (it stops a pipe): allowed" "$(as_heph "$T pipe-pane -t $warm")" "ok"
+sock_path=$(t display -p '#{socket_path}')
+for f in "send-keys -K -t $warm x" "send-keys -X cancel -t $warm" "send-keys -c /dev/pts/0 -t $warm x" "send-keys -M -t $warm" \
+  "display-message -I -t $warm" "kill-pane -a -t $warm" "kill-window -a -t $warm"; do
+  check "tmux $f: refused (the flag reaches what the guard does not check)" "$(as_heph "$T $f")" "refused:hidden"
+done
+check "split-pane (a default alias): refused as unknown" "$(as_heph "$T split-pane -d 'sleep 1'")" "refused:unknown"
+check "-S to the real server and -L to none: checked where tmux sends" "$(as_heph "tmux -S $sock_path -L bogus-$$ send-keys -t $cold go")" "refused:cold-limit"
 
 echo "fleet scripts send with their own checks"
 mkdir -p "$work/fleetcopy" "$work/elsewhere"
@@ -292,6 +311,55 @@ diff_out=$(timeout 900 python3 -I "$here/tests/orch_parse_differential.py" 200 2
 echo "  ${diff_out##*$'\n'}"
 check "no send tmux delivers and no registry write bash makes is missed" "$(grep -c MISSED <<<"$diff_out")" "0"
 
+echo "sweep: every tmux command, alias and flag against the expected table"
+# The expected table, written apart from orch-tmux.sh's: commands that run no
+# other command, with the flags they may take.
+declare -A want=(
+  [capture-pane]=aCeJNpPqTbESt [clear-history]=Ht [delete-buffer]=b [display-message]=alNpvcdFt
+  [has-session]=t [kill-pane]=t [kill-window]=t [last-pane]=deZt [last-window]=t
+  [list-buffers]=Ff [list-clients]=Fft [list-commands]=F [list-keys]=1aNPT [list-panes]=asFft
+  [list-sessions]=Ff [list-windows]=aFft [load-buffer]=bt [paste-buffer]=dprsbt [pipe-pane]=IOot
+  [rename-window]=t [resize-pane]=DLMRTUZxyt [save-buffer]=ab [select-pane]=DdeLlMmRUZTt
+  [select-window]=lnpTt [send-keys]=FHlRNt [send-prefix]=2t [set-buffer]=awbnt [show-buffer]=b
+  [show-environment]=hgst [show-hooks]=gpwt [show-messages]=JTt [show-options]=AgHpqsvwt
+  [show-window-options]=gvt [wait-for]=LSU
+)
+sweepp=$(pane sweep '{"above":["⏺ Done. done 10:20 AM"]}'); settle
+listing=$(tmux -f /dev/null -L "sweep-$$" list-commands); tmux -L "sweep-$$" kill-server 2>/dev/null
+rm -f -- "${TMUX_TMPDIR:-/tmp}/tmux-$(id -u)/sweep-$$"
+swept=0 sweep_bad=0
+while read -r name rest; do
+  alias_="" usage=$rest
+  [[ $rest == \(* ]] && { alias_=${rest%%)*}; alias_=${alias_#(}; usage=${rest#*) }; }
+  case $name in send-keys | send-prefix | paste-buffer) tgt="-t $sweepp" ;; *) tgt="-t %9999" ;; esac
+  [[ $usage == *"[-t "* ]] || tgt=""
+  for nm in "$name" $alias_; do
+    swept=$((swept + 1))
+    got=$(as_heph "$T $nm $tgt")
+    if [[ -n ${want[$name]+x} ]]; then [[ $got != refused:hidden && $got != refused:unknown ]] || ok=0
+    else [[ $got == refused:hidden ]] || ok=0; fi
+    if [[ ${ok:-1} == 0 ]]; then sweep_bad=$((sweep_bad + 1)); echo "  sweep: tmux $nm -> $got"; fi
+    unset ok
+  done
+  [[ -n ${want[$name]+x} ]] || continue
+  valued=$(grep -oE '\[-[A-Za-z] [^]]+\]' <<<"$usage" | cut -c3 | tr -d '\n')
+  letters=$(grep -oE '\[-[A-Za-z0-9|-]+\]' <<<"$usage" | tr -d '[]|-' | tr -d '\n')$valued
+  for (( k = 0; k < ${#letters}; k++ )); do
+    c=${letters:k:1}
+    [[ $c == t ]] && continue
+    arg="-$c"; [[ $valued == *"$c"* ]] && arg="-$c 1"
+    swept=$((swept + 1))
+    got=$(as_heph "$T $name $arg $tgt")
+    if [[ ${want[$name]} == *"$c"* ]]; then [[ $got != refused:hidden ]] || ok=0
+    else [[ $got == refused:hidden ]] || ok=0; fi
+    if [[ ${ok:-1} == 0 ]]; then sweep_bad=$((sweep_bad + 1)); echo "  sweep: tmux $name $arg -> $got"; fi
+    unset ok
+  done
+done <<<"$listing"
+echo "  ($swept names, aliases and flags swept)"
+check "the sweep reached every command tmux lists" "$(( swept > 250 ))" "1"
+check "every command, alias and flag matches the expected table" "$sweep_bad" "0"
+
 echo "mutation checks"
 mut=$work/mut
 mkdir -p "$mut"
@@ -301,13 +369,14 @@ ln -s "$mut/orch-tmux.sh" "$work/orch-bin-mut/tmux"
 printf 'bash\0launch.sh\0x\0' >"$FLEET_PROC/4242/cmdline"
 typing2=$(pane typing2 '{"above":["⏺ Done. done 10:20 AM"],"input":"AJ: one more thing"}')
 cold3=$(pane cold3 "{\"above\":[\"⏺ Done. done 9:00 AM\",\"$LIMIT\"]}"); settle
-for g in cold-limit pending-input hidden; do
+for g in cold-limit pending-input hidden unknown; do
   sed "s/refuse $g /true $g /g" "$here/orch-tmux.sh" >"$mut/orch-tmux.sh"
   check "mutant $g: its refusals removed" "$(grep -c "refuse $g " "$mut/orch-tmux.sh")" "0"
   case $g in
     cold-limit) cmd="$T send-keys -t $cold3 go" ;;
     pending-input) cmd="$T send-keys -t $typing2 go" ;;
     hidden) cmd="$T source-file $work/x.conf" ;;
+    unknown) cmd="$T send-keys -t %9999 go" ;;
   esac
   check "mutant $g: the case it guards now passes" "$(in_claude "$orchp" "$work/orch-bin-mut" "$cmd" 2>&1 | grep '^orch-guard (')" ""
   check "unmutated: the same case is refused" "$(as_heph "$cmd")" "refused:$g"

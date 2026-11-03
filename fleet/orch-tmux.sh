@@ -5,20 +5,21 @@
 # tmux's real arguments, after the shell expanded them, at the moment of the
 # call, so no shell grammar, wait or script stands between the check and the
 # keys. In the orchestrator's session it runs only a known set of commands
-# (ALLOWED), and refuses:
+# and flags (FLAGS), and refuses:
 #   cold-limit     keys or a paste into a pane that stopped at a usage limit
 #                  FRESH_AFTER_S ago or more (fresh-now.sh relaunches it)
 #   pending-input  keys into an input line holding anything but the exact text
 #                  the orchestrator typed there in the last ORCH_GUARD_OWN_S seconds
-#   hidden         any other command, a #() format (it runs a shell), and the
-#                  -C, -c and -f options: each can run commands the guard never reads
-# The session is the orchestrator's when its Claude Code process (the nearest
-# claude ancestor) runs in orchestrator.pane, read from that process's own
-# environment, which no child can change. Commands resolve as tmux resolves
+#   hidden         any other command or flag, a #() format (it runs a shell), and
+#                  the -C, -c and -f options: each can run commands the guard never reads
+#   unknown        what it cannot work out: a name tmux's list does not hold (an
+#                  alias may stand for anything), a target no pane answers to, an
+#                  unreadable command list
+# The call is the orchestrator's when its own TMUX_PANE, or its nearest Claude
+# Code ancestor's, is orchestrator.pane. Commands resolve as tmux resolves
 # them (name, alias, unique prefix, from tmux list-commands), and flags are read
 # from tmux's usage text. A refusal runs none of the invocation's commands,
-# prints its reason and exits 1. Calls from other sessions, from no Claude Code
-# session, and from a fleet script (a bash running a file in fleet/:
+# prints its reason and exits 1. Every other call, and one from a fleet script (a bash running a file in fleet/:
 # fresh-now.sh, relaunch-fresh.sh, the resume service) go straight to tmux.
 # ORCH_GUARD_ALLOW=pending-input in the environment lets that guard pass, logged.
 self=$(readlink -f "$0")
@@ -36,20 +37,24 @@ orch=""
 { read -r orch <"$state/orchestrator.pane"; } 2>/dev/null
 [[ -n $orch ]] || pass "$@"
 
-# Walk up to the nearest Claude Code process: a fleet script on the way sends
-# with the fleet's own checks; the session is the orchestrator's when that
-# process runs in orchestrator.pane. The fleet's test suites are no senders.
+# Whether this call is the orchestrator's: its own TMUX_PANE (which a job left
+# running in the background keeps after the Bash call that started it ends) or
+# its nearest Claude Code ancestor's (from that process's own environment,
+# which no child can change) names orchestrator.pane. A fleet script on the way
+# up sends with the fleet's own checks; the fleet's test suites are no senders.
+# The walk runs to pid 1.
 whose() {
-  local pid=$PPID n a f cwd p
+  local pid=$PPID n a f cwd p mine=0
   local -a argv
-  for n in 1 2 3 4 5 6 7 8 9 10 11 12; do
-    [[ $pid =~ ^[0-9]+$ ]] && (( pid > 1 )) || return 1
-    mapfile -d '' -t argv <"/proc/$pid/cmdline" 2>/dev/null || return 1
+  [[ ${TMUX_PANE:-} == "$orch" ]] && mine=1
+  for (( n = 0; n < 512; n++ )); do
+    { [[ $pid =~ ^[0-9]+$ ]] && (( pid > 1 )); } || break
+    mapfile -d '' -t argv <"/proc/$pid/cmdline" 2>/dev/null || break
     a=${argv[0]##*/}
     if [[ $a == claude || ( $a == node && ${argv[1]:-} == */claude* ) ]]; then
       p=$(tr '\0' '\n' <"/proc/$pid/environ" 2>/dev/null | sed -n 's/^TMUX_PANE=//p' | head -1)
-      [[ -n $p && $p == "$orch" ]]
-      return
+      [[ $p == "$orch" ]] && mine=1
+      break
     fi
     if [[ $a =~ ^(bash|sh)$ ]] && (( ${#argv[@]} > 1 )) && [[ ${argv[1]} != -* ]]; then
       f=${argv[1]}
@@ -60,7 +65,7 @@ whose() {
     fi
     pid=$(awk '{ print $4 }' "/proc/$pid/stat" 2>/dev/null)
   done
-  return 1
+  (( mine ))
 }
 whose || pass "$@"
 
@@ -105,7 +110,7 @@ while (( i < ${#args[@]} )); do
         v=${a:j+1}
         if [[ -z $v ]]; then i=$((i + 1)); v=${args[i]:-}; fi
         case $c in
-          L | S) G=(-"$c" "$v") ;;
+          L | S) G+=(-"$c" "$v") ;;
           c | f) [[ $c == f && $v == /dev/null ]] || refuse hidden "tmux -$c: $hidden_why" option="-$c" ;;
         esac
         break
@@ -136,7 +141,7 @@ if [[ $(head -1 "$table" 2>/dev/null) != "$stamp" ]]; then
   fi
 fi
 [[ $(wc -l <"$table" 2>/dev/null) -gt 10 ]] ||
-  refuse hidden "tmux's command list could not be read, so the guard cannot tell what this call does." table="$table"
+  refuse unknown "tmux's command list could not be read, so the guard cannot tell what this call does." table="$table"
 resolve() { # WORD: the command tmux runs for WORD, or nothing
   awk -v w="$1" 'NR > 1 {
       name = $1; alias = ($2 ~ /^\(.*\)$/) ? substr($2, 2, length($2) - 2) : ""
@@ -147,8 +152,21 @@ resolve() { # WORD: the command tmux runs for WORD, or nothing
 }
 usage_of() { awk -v c="$1" 'NR > 1 && $1 == c { print; exit }' "$table"; }
 
-# Commands that run no other command (sends are checked below).
-ALLOWED=" capture-pane display-message has-session list-buffers list-clients list-commands list-keys list-panes list-sessions list-windows show-buffer show-environment show-hooks show-messages show-options show-window-options select-pane select-window last-pane last-window kill-pane kill-window set-buffer delete-buffer load-buffer save-buffer rename-window resize-pane clear-history wait-for send-keys send-prefix paste-buffer pipe-pane "
+# The commands the orchestrator's tmux runs, each with the flags it may take:
+# none of them runs another command. Left out on purpose: send-keys -K and -c
+# (keys through a client's bindings, into whatever pane it shows), -X (a
+# copy-mode command, which can pipe to a shell) and -M; display-message -I
+# (its input into a pane); kill-pane -a and kill-window -a (every other one).
+declare -A FLAGS=(
+  [capture-pane]=aCeJNpPqTbESt [clear-history]=Ht [delete-buffer]=b [display-message]=alNpvcdFt
+  [has-session]=t [kill-pane]=t [kill-window]=t [last-pane]=deZt [last-window]=t
+  [list-buffers]=Ff [list-clients]=Fft [list-commands]=F [list-keys]=1aNPT [list-panes]=asFft
+  [list-sessions]=Ff [list-windows]=aFft [load-buffer]=bt [paste-buffer]=dprsbt [pipe-pane]=IOot
+  [rename-window]=t [resize-pane]=DLMRTUZxyt [save-buffer]=ab [select-pane]=DdeLlMmRUZTt
+  [select-window]=lnpTt [send-keys]=FHlRNt [send-prefix]=2t [set-buffer]=awbnt [show-buffer]=b
+  [show-environment]=hgst [show-hooks]=gpwt [show-messages]=JTt [show-options]=AgHpqsvwt
+  [show-window-options]=gvt [wait-for]=LSU
+)
 special_key='^([CMS]-.+|Escape|Tab|BTab|BSpace|Up|Down|Left|Right|Home|End|PageUp|PageDown|PgUp|PgDn|PPage|NPage|DC|IC|Delete|Insert|F[0-9]+|KP.*)$'
 
 # Each command of the sequence (split at ";" as tmux does): what it sends where.
@@ -158,8 +176,9 @@ flush() {
   (( ${#cmd[@]} )) || return 0
   local name usage valued k opt v c target="" lit=0 hex=0 tail_args=()
   name=$(resolve "${cmd[0]}")
-  if [[ -z $name ]]; then cmd=(); return 0; fi # tmux itself refuses an unknown command
-  [[ $ALLOWED == *" $name "* ]] || refuse hidden "tmux $name: $hidden_why" command="$name"
+  # A name tmux may still resolve (its command-alias option) is not guessed at.
+  [[ -n $name ]] || refuse unknown "tmux ${cmd[0]}: no command of that name in tmux's list, and an alias could stand for any command. Use the command's full name." command="${cmd[0]}"
+  [[ -n ${FLAGS[$name]+x} ]] || refuse hidden "tmux $name: $hidden_why" command="$name"
   usage=$(usage_of "$name")
   valued=$(grep -oE '\[-[A-Za-z] [^]]+\]' <<<"$usage" | cut -c3 | tr -d '\n')
   k=1
@@ -170,6 +189,7 @@ flush() {
     local m=1
     while (( m < ${#opt} )); do
       c=${opt:m:1}
+      [[ ${FLAGS[$name]} == *"$c"* ]] || refuse hidden "tmux $name -$c: that flag can reach commands or panes the guard does not check. $hidden_why" command="$name" flag="-$c"
       if [[ $valued == *"$c"* ]]; then
         v=${opt:m+1}
         if [[ -z $v ]]; then k=$((k + 1)); v=${cmd[k]:-}; fi
@@ -177,7 +197,7 @@ flush() {
         break
       fi
       [[ $c == l ]] && lit=1
-      [[ $c == H ]] && hex=1
+      [[ $c == H || $c == F ]] && hex=1
       m=$((m + 1))
     done
     k=$((k + 1))
@@ -213,7 +233,7 @@ done
 flush
 (( ${#checks[@]} )) || pass "$@"
 
-need_lib || refuse hidden "the guard could not load fleet/lib.sh, so it cannot read the pane." here="$here"
+need_lib || refuse unknown "the guard could not load fleet/lib.sh, so it cannot read the pane." here="$here"
 now=$(clock)
 t() { "$real" "${G[@]}" "$@"; }
 squash() { tr -d '[:space:]' <<<"$1"; }
@@ -221,10 +241,7 @@ stamps=() # "PANE|TEXT": what this call leaves typed in each box, once every che
 for ch in "${checks[@]}"; do
   IFS='|' read -r name target enter exact text <<<"$ch"
   p=$(t display-message -p -t "$target" '#{pane_id}' 2>/dev/null)
-  if [[ -z $p ]]; then
-    glog INFO "orchestrator guard: the target is no pane tmux knows; passed to tmux" command="$name" target="$target"
-    continue
-  fi
+  [[ -n $p ]] || refuse unknown "tmux $name -t ${target:-(none)}: no such pane on the server this call names, so the guard cannot read it first." command="$name" target="$target"
   [[ ${ORCH_TMUX_TRACE:-} ]] && printf '%s\n' "$p" >>"$ORCH_TMUX_TRACE"
   [[ $p == "$orch" ]] && continue
   s=$(screen "$p")

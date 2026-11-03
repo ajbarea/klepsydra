@@ -1438,19 +1438,23 @@ and keeps four old files. `jq 'select(.level == "ERROR")'` lists failures.
 
 **Orchestrator guard.** Two parts refuse, in the orchestrator's session only,
 what `HEPH.md` records as costly. `fleet/orch-tmux.sh` is the session's
-`tmux`: `launch.sh` puts `orch-bin/` (in the state folder) first on its PATH, so
-each send is checked when it is made, on tmux's real arguments. It refuses keys
+`tmux`: `launch.sh` puts `orch-bin/` (in the state folder) ahead of the real
+one on its PATH, so each send is checked when it is made, on tmux's real
+arguments. A call is the orchestrator's when its own `TMUX_PANE`, or its
+Claude Code process's, is `orchestrator.pane`, so a background job counts too.
+It runs only a listed set of tmux commands and flags that run no other command
+(capture, list, display, select, kill-pane, buffers, sends), and refuses keys
 or a paste into a pane stopped at a usage limit 55 minutes or more ago
 (`FRESH_AFTER_S`: its cache expired, and `fresh-now.sh` relaunches it from its
-brief), keys into an input line holding text the orchestrator did not type
-there, and tmux commands that run others it cannot read (`source-file`,
-`run-shell`, `if-shell`, a new pane's shell command calling tmux). The fleet's
-own scripts send with their own checks. `fleet/orch-guard.sh`, a PreToolUse
-hook, refuses before the call a tmux called by path or with a new PATH, an
-interactive session on an API key or a headless one with no `fleet balance`
-check today, and editing `panes.tsv` while a launch or chain loop runs (reading
-it with `cat`, `grep`, `cut` or `column` is fine). `ORCH_GUARD_ALLOW=pending-input`
-or `=registry` passes that guard when AJ asks. Each check logs what it decided
+brief), keys into an input line holding anything but the text the
+orchestrator typed there, and whatever it cannot work out (a name tmux does not
+list, a target no pane answers to). The fleet's own scripts send with their
+own checks. `fleet/orch-guard.sh`, a PreToolUse hook, refuses before the call a
+tmux called by path or with a new PATH (best effort), an interactive session
+on an API key or a headless one with no `fleet balance` check today, and
+editing `panes.tsv` while a launch or chain loop runs (reading it with `cat`,
+`grep`, `cut` or `column` is fine). `ORCH_GUARD_ALLOW=pending-input` or
+`=registry` passes that guard when AJ asks. Each check logs what it decided
 on. Register the hook in each config folder's `settings.json`; `fleet doctor`
 warns until then, and while the orchestrator's session started without the
 guard's tmux:
