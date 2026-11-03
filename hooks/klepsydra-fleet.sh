@@ -3,8 +3,8 @@
 # session in <KLEPSYDRA_DIR>/fleet: its state, where it works, and what it was
 # last asked and last said. Registered with "async": true on the events listed
 # in README.md, so Claude Code never waits for it. As a hook it prints nothing
-# and always exits 0; run as `klepsydra-fleet.sh queue ...` it is a command
-# (queue_cmd below).
+# and always exits 0; run as `klepsydra-fleet.sh queue ...` or `needs ...` it
+# is a command (queue_cmd below).
 
 set -uo pipefail
 
@@ -872,15 +872,23 @@ write_atomic() { # file text
   fi
 }
 
-# `klepsydra-fleet.sh queue set PATH [--by NAME] | clear | show`: name the
-# Queue panel's file in <KLEPSYDRA_DIR>/queue.json, and who keeps it, so a
-# session can own the queue AJ reads. Under WSL the overlay is a Windows app,
-# so the path goes across as a Windows one. Unlike the hook it says what it did
-# and exits non-zero on a mistake.
-queue_cmd() { # args...
-  local keeper path by="" osrelease="" usage="usage: klepsydra-fleet.sh queue set PATH [--by NAME] | clear | show"
+# `klepsydra-fleet.sh queue|needs set PATH [--by NAME] | clear | show`: name
+# the file of the panel's Queue list (queue.json) or Needs you list
+# (needs.json) in <KLEPSYDRA_DIR>, and who keeps it, so a session can own a
+# list AJ reads. Under WSL the overlay is a Windows app, so the path goes
+# across as a Windows one. Unlike the hook it says what it did and exits
+# non-zero on a mistake.
+queue_cmd() { # queue|needs args...
+  local list=$1 keeper path by="" osrelease="" name default noun usage
+  shift
+  usage="usage: klepsydra-fleet.sh $list set PATH [--by NAME] | clear | show"
+  if [[ $list == needs ]]; then
+    name="Needs you panel" default="needs-you.md beside the queue file" noun="Needs you file"
+  else
+    name="Queue panel" default="its default file" noun="queue file"
+  fi
   [[ -n ${KLEPSYDRA_DIR:-} ]] || { echo "klepsydra: no data folder (set KLEPSYDRA_DIR)" >&2; return 1; }
-  keeper=$KLEPSYDRA_DIR/queue.json
+  keeper=$KLEPSYDRA_DIR/$list.json
   case ${1:-} in
     set)
       [[ -n ${2:-} ]] || { echo "$usage" >&2; return 2; }
@@ -895,7 +903,7 @@ queue_cmd() { # args...
       fi
       [[ $path != -* ]] || { echo "$usage" >&2; return 2; }
       [[ $path == /* ]] || path=$PWD/$path
-      [[ ! -d $path ]] || { echo "klepsydra: $2 is a folder; name the queue file" >&2; return 2; }
+      [[ ! -d $path ]] || { echo "klepsydra: $2 is a folder; name the $noun" >&2; return 2; }
       { read -r osrelease <"$PROC_ROOT/sys/kernel/osrelease"; } 2>/dev/null
       if [[ $osrelease == *[Mm]icrosoft* ]] && command -v wslpath >/dev/null; then
         path=$(wslpath -w -- "$path" 2>/dev/null) || { echo "klepsydra: $2 has no Windows path" >&2; return 1; }
@@ -925,14 +933,14 @@ queue_cmd() { # args...
         echo "klepsydra: could not write $keeper" >&2
         return 1
       fi
-      echo "The Queue panel now reads $path${by:+, kept by $by}."
+      echo "The $name now reads $path${by:+, kept by $by}."
       ;;
     clear)
       rm -f -- "$keeper" || return 1
-      echo "The Queue panel reads its default file again."
+      echo "The $name reads $default again."
       ;;
     show)
-      if [[ -f $keeper ]]; then cat -- "$keeper"; else echo "No queue.json: the Queue panel reads its default file."; fi
+      if [[ -f $keeper ]]; then cat -- "$keeper"; else echo "No $list.json: the $name reads $default."; fi
       ;;
     *) echo "$usage" >&2; return 2 ;;
   esac
@@ -1121,8 +1129,8 @@ main() {
 }
 
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
-  if [[ ${1:-} == queue ]]; then
-    queue_cmd "${@:2}"
+  if [[ ${1:-} == queue || ${1:-} == needs ]]; then
+    queue_cmd "$@"
     exit
   fi
   (main) >/dev/null 2>&1 # a subshell, so no failure inside can end this shell non-zero

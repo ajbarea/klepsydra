@@ -814,6 +814,7 @@ fn with_state<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R
         .manage(fleet::Strip::default())
         .manage(fleet::Fleet::default())
         .manage(fleet::QueueFeed::default())
+        .manage(fleet::NeedsFeed::default())
         .manage(fleet::CiFeed::default())
         .manage(fleet::HealthFeed::default())
         .manage(fleet::AgoraFeed::default())
@@ -864,6 +865,7 @@ fn main() {
             set_tray_level,
             fleet::fleet_subscribe,
             fleet::queue_subscribe,
+            fleet::needs_subscribe,
             fleet::ci_subscribe,
             fleet::health_subscribe,
             fleet::agora_subscribe,
@@ -964,6 +966,8 @@ fn main() {
             let voices_menu = voices::menu(app.handle())?;
             let queue_item =
                 MenuItem::with_id(app, "queue", "Choose queue file...", true, None::<&str>)?;
+            let needs_item =
+                MenuItem::with_id(app, "needs", "Choose Needs you file...", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
             let menu = Menu::with_items(
                 app,
@@ -977,6 +981,7 @@ fn main() {
                     &characters,
                     &voices_menu,
                     &queue_item,
+                    &needs_item,
                     &PredefinedMenuItem::separator(app)?,
                     &quit,
                 ],
@@ -1036,6 +1041,7 @@ fn main() {
                         }
                     }
                     "queue" => fleet::choose_queue(app),
+                    "needs" => fleet::choose_needs(app),
                     "quit" => app.exit(0),
                     other => {
                         if !theme::on_menu(app, other) {

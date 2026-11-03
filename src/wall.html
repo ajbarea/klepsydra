@@ -103,14 +103,14 @@
   </dialog>
   <button type="button" id="ledger-tab" class="ledger-tab" aria-label="Open Ledger" aria-controls="ledger" aria-expanded="false" title="Open Ledger" hidden>Ledger</button>
 
-  <dialog id="queue" class="queue" aria-labelledby="queue-title">
+  <dialog id="queue" class="queue" aria-label="Needs you and Queue">
     <div class="queue-resize" role="separator" aria-orientation="vertical" aria-label="Queue panel width" aria-controls="queue" tabindex="0"></div>
     <div class="queue-body">
       <header class="queue-head">
         <div>
-          <h2 id="queue-title" tabindex="-1">Queue</h2>
-          <p class="queue-path"></p>
-          <p class="queue-kept" hidden></p>
+          <h2 id="queue-title" tabindex="-1">Needs you</h2>
+          <p class="list-path"></p>
+          <p class="list-kept" hidden></p>
         </div>
         <div class="queue-tools">
           <div class="queue-text" role="group" aria-label="Text size">
@@ -122,8 +122,22 @@
           <button type="button" class="queue-close">Close</button>
         </div>
       </header>
-      <p class="queue-problem" role="status" hidden></p>
-      <div class="queue-content"></div>
+      <div class="lists">
+        <section id="needs-list" class="list list-needs" aria-labelledby="queue-title">
+          <p class="list-problem" role="status" hidden></p>
+          <div class="list-scroll"><div class="queue-content"></div></div>
+        </section>
+        <div class="lists-split" role="separator" aria-orientation="horizontal" aria-label="Split between Needs you and Queue" aria-controls="needs-list queue-list" tabindex="0" title="Drag, or use the arrow keys; double-click to reset"></div>
+        <section id="queue-list" class="list list-queue" aria-labelledby="queue-list-title">
+          <header class="list-head">
+            <h2 id="queue-list-title">Queue</h2>
+            <p class="list-path"></p>
+            <p class="list-kept" hidden></p>
+          </header>
+          <p class="list-problem" role="status" hidden></p>
+          <div class="list-scroll"><div class="queue-content"></div></div>
+        </section>
+      </div>
       <p class="queue-live visually-hidden" role="status"></p>
     </div>
   </dialog>

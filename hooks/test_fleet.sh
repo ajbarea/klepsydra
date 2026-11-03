@@ -2020,6 +2020,23 @@ check "queue set: a folder is refused" "$rc|${out##* is }" "2|a folder; name the
 mkdir -p "$work/qblock/queue.json"
 out=$(KLEPSYDRA_DIR=$work/qblock KLEPSYDRA_PROC=$qproc bash "$hook" queue set /home/aj/q.md 2>&1); rc=$?
 check "queue set: an unwritable queue.json says so, and leaves nothing" "$rc|${out%%:*}|$(find "$work/qblock" -mindepth 1 | wc -l)" "1|klepsydra|1"
+# The Needs you panel's file goes in needs.json the same way (#276), and never
+# touches queue.json.
+needs() { KLEPSYDRA_DIR=$qdir KLEPSYDRA_PROC=$qproc bash "$hook" needs "$@"; }
+qbefore=$(cat "$qdir/queue.json")
+out=$(needs show)
+check "#276 needs show: none yet, says where the panel reads" "$out" "No needs.json: the Needs you panel reads needs-you.md beside the queue file."
+out=$(needs set /home/aj/asks.md --by "Athena"); rc=$?
+check "#276 needs set: says so" "$rc|$out" "0|The Needs you panel now reads /home/aj/asks.md, kept by Athena."
+check "#276 needs set: path and keeper in needs.json" "$(jq -c . "$qdir/needs.json")" '{"path":"/home/aj/asks.md","by":"Athena","voice":null}'
+check "#276 needs set: queue.json untouched" "$(cat "$qdir/queue.json")" "$qbefore"
+out=$(needs set "$work" 2>&1); rc=$?
+check "#276 needs set: a folder is refused" "$rc|${out##* is }" "2|a folder; name the Needs you file"
+out=$(needs set 2>&1); rc=$?
+check "#276 needs: its own usage" "$rc|$out" "2|usage: klepsydra-fleet.sh needs set PATH [--by NAME] | clear | show"
+out=$(needs clear)
+check "#276 needs clear: back to the default, queue.json kept" "$out|$([[ -e $qdir/needs.json ]] && echo kept || echo gone)|$(cat "$qdir/queue.json")" \
+  "The Needs you panel reads needs-you.md beside the queue file again.|gone|$qbefore"
 # shellcheck disable=SC2016 # the stub script expands its own arguments
 printf '#!/bin/sh\n[ "$1" = -w ] && [ "$2" = -- ] && printf "C:%%s\\n" "$3"\n' >"$work/wslbin/wslpath"
 chmod +x "$work/wslbin/wslpath"

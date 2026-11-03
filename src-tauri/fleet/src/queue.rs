@@ -1,8 +1,10 @@
-//! The queue file: a markdown to-do list the fleet's agents keep, read for the
-//! wall's Queue panel. Its path is `queue.json`'s in the data folder (set from
-//! the tray or by a session, which may name who keeps the file), else the
-//! `queue_path` pref, else `claude-queue.md` on the Desktop. The app only
-//! reads the queue file.
+//! The wall's two lists, each a markdown file read for its panel: the queue
+//! file, the agents' to-do list, and the Needs you file, AJ's. The queue
+//! file's path is `queue.json`'s in the data folder (set from the tray or by a
+//! session, which may name who keeps the file), else the `queue_path` pref,
+//! else `claude-queue.md` on the Desktop. The Needs you file's is
+//! `needs.json`'s, else `needs-you.md` beside the queue file. The app only
+//! reads them.
 
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{channel, Receiver, Sender};
@@ -21,6 +23,42 @@ pub const FILE_NAME: &str = "claude-queue.md";
 pub const PREF: &str = "queue_path";
 /// The data folder's file naming the queue file and who keeps it.
 pub const KEEPER: &str = "queue.json";
+/// The Needs you file's default name, beside the queue file.
+pub const NEEDS_FILE_NAME: &str = "needs-you.md";
+
+/// Which of the wall's two lists a file is.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum List {
+    #[default]
+    Queue,
+    Needs,
+}
+
+impl List {
+    /// The data folder's file naming this list's file and who keeps it.
+    pub const fn keeper(self) -> &'static str {
+        match self {
+            List::Queue => KEEPER,
+            List::Needs => "needs.json",
+        }
+    }
+
+    /// The list's file as its panel's lines name it.
+    const fn noun(self) -> &'static str {
+        match self {
+            List::Queue => "queue file",
+            List::Needs => "Needs you file",
+        }
+    }
+
+    /// The list's path as its panel's lines name it.
+    const fn path_noun(self) -> &'static str {
+        match self {
+            List::Queue => "queue path",
+            List::Needs => "Needs you path",
+        }
+    }
+}
 /// A path and a name; more than this is not that file.
 const KEEPER_MAX_BYTES: u64 = 4 * 1024;
 /// The longest keeper's name shown; a longer one is dropped, not cut.
@@ -95,14 +133,23 @@ fn is_voice(v: &str) -> bool {
         })
 }
 
-/// The `queue.json` in the data folder `dir`, or None when there is none. One
-/// that will not read or parse names no file, so the panel says so rather
-/// than quietly following another. A `by` that is not a short plain name is
-/// dropped.
+/// The `queue.json` in the data folder `dir`, or None when there is none.
 pub fn kept(dir: Option<&Path>) -> Option<Kept> {
-    let file = dir?.join(KEEPER);
+    kept_in(dir, List::Queue)
+}
+
+/// `list`'s keeper file (`queue.json`, `needs.json`) in the data folder `dir`,
+/// or None when there is none. One that will not read or parse names no file,
+/// so the panel says so rather than quietly following another. A `by` that is
+/// not a short plain name is dropped.
+pub fn kept_in(dir: Option<&Path>, list: List) -> Option<Kept> {
+    let keeper = list.keeper();
+    let file = dir?.join(keeper);
     let broken = |why: &str| Kept {
-        path: Err(format!("{KEEPER} {why}, so the queue path is unknown.")),
+        path: Err(format!(
+            "{keeper} {why}, so the {} is unknown.",
+            list.path_noun()
+        )),
         by: None,
         voice: None,
     };
@@ -127,8 +174,8 @@ pub fn kept(dir: Option<&Path>) -> Option<Kept> {
         .filter(|v| is_voice(v))
         .map(str::to_owned);
     let path = match map.get("path") {
-        Some(v) => absolute(v, &format!("path in {KEEPER}")),
-        None => Err(format!("{KEEPER} names no path.")),
+        Some(v) => absolute(v, &format!("path in {keeper}")),
+        None => Err(format!("{keeper} names no path.")),
     };
     Some(Kept { path, by, voice })
 }
@@ -136,11 +183,17 @@ pub fn kept(dir: Option<&Path>) -> Option<Kept> {
 /// Write `queue.json` in `dir` naming `path`, kept by `by`: a new file renamed
 /// over the old, so a reader never sees half of one.
 pub fn keep(dir: &Path, path: &Path, by: Option<&str>) -> std::io::Result<()> {
+    keep_in(dir, path, by, List::Queue)
+}
+
+/// Write `list`'s keeper file in `dir` naming `path`, kept by `by`.
+pub fn keep_in(dir: &Path, path: &Path, by: Option<&str>, list: List) -> std::io::Result<()> {
+    let keeper = list.keeper();
     let body = serde_json::json!({ "path": path, "by": by });
     std::fs::create_dir_all(dir)?;
-    let tmp = dir.join(format!("{KEEPER}.tmp"));
+    let tmp = dir.join(format!("{keeper}.tmp"));
     std::fs::write(&tmp, format!("{body}\n"))?;
-    std::fs::rename(&tmp, dir.join(KEEPER))
+    std::fs::rename(&tmp, dir.join(keeper))
 }
 
 /// The `queue_path` pref from the prefs.json at `prefs`, or None when there
@@ -171,8 +224,26 @@ pub fn pref(prefs: Option<&Path>) -> Result<Option<Value>, String> {
     }
 }
 
+/// The Needs you file's default: `needs-you.md` beside the queue file, so a
+/// folder of lists needs one choice. A queue path that is unknown leaves it
+/// unknown too.
+pub fn needs_beside(queue: &Result<PathBuf, String>) -> Result<PathBuf, String> {
+    match queue {
+        Ok(q) => q
+            .parent()
+            .map(|d| d.join(NEEDS_FILE_NAME))
+            .ok_or_else(|| "The queue file has no folder to find needs-you.md in.".into()),
+        Err(why) => Err(format!("{why} The Needs you file sits beside it.")),
+    }
+}
+
 /// Read the queue file at `path`, or say why there is nothing to show.
 pub fn view(path: &Result<PathBuf, String>) -> QueueView {
+    view_of(path, List::Queue)
+}
+
+/// Read `list`'s file at `path`, or say why there is nothing to show.
+pub fn view_of(path: &Result<PathBuf, String>, list: List) -> QueueView {
     let path = match path {
         Ok(p) => p,
         Err(why) => {
@@ -195,7 +266,7 @@ pub fn view(path: &Result<PathBuf, String>) -> QueueView {
         ),
         Err(why) => {
             missing = matches!(why, Refused::Missing);
-            (None, Some(say(&why)))
+            (None, Some(say(&why, list)))
         }
     };
     QueueView {
@@ -208,19 +279,19 @@ pub fn view(path: &Result<PathBuf, String>) -> QueueView {
     }
 }
 
-fn say(why: &Refused) -> String {
+fn say(why: &Refused, list: List) -> String {
+    let (file, path) = (list.noun(), list.path_noun());
     match why {
-        Refused::Missing => "No queue file at this path.".into(),
+        Refused::Missing => format!("No {file} at this path."),
         Refused::NotFile => {
-            "The queue path is not a regular file (a folder, link or pipe), so it is not read."
-                .into()
+            format!("The {path} is not a regular file (a folder, link or pipe), so it is not read.")
         }
         Refused::TooLarge => format!(
-            "The queue file is over {} KB, so it is not read.",
+            "The {file} is over {} KB, so it is not read.",
             MAX_BYTES / 1024
         ),
-        Refused::Unreadable(e) => format!("The queue file could not be read: {e}."),
-        Refused::NotUtf8 => "The queue file is not UTF-8 text, so it is not read.".into(),
+        Refused::Unreadable(e) => format!("The {file} could not be read: {e}."),
+        Refused::NotUtf8 => format!("The {file} is not UTF-8 text, so it is not read."),
     }
 }
 
@@ -242,9 +313,10 @@ fn touches(name: &str, res: &notify::Result<notify::Event>) -> bool {
     })
 }
 
-/// Follows the queue file: a watch on its folder for prompt updates, and a
+/// Follows one list's file: a watch on its folder for prompt updates, and a
 /// re-read every time `step` times out, for a folder the watcher cannot see.
 pub struct Follower {
+    list: List,
     tx: Sender<()>,
     rx: Receiver<()>,
     watcher: Option<RecommendedWatcher>,
@@ -262,6 +334,7 @@ impl Default for Follower {
     fn default() -> Self {
         let (tx, rx) = channel();
         Follower {
+            list: List::Queue,
             tx,
             rx,
             watcher: None,
@@ -275,6 +348,14 @@ impl Default for Follower {
 }
 
 impl Follower {
+    /// A follower of `list`'s file, whose lines name that file.
+    pub fn new(list: List) -> Self {
+        Follower {
+            list,
+            ..Follower::default()
+        }
+    }
+
     /// Name who keeps the file, and their voice, in the views from the next
     /// `step` on.
     pub fn keep(&mut self, by: Option<String>, voice: Option<String>) {
@@ -328,7 +409,7 @@ impl Follower {
         let next = QueueView {
             kept_by: self.kept_by.clone(),
             kept_voice: self.kept_voice.clone(),
-            ..view(path)
+            ..view_of(path, self.list)
         };
         if self.last.as_ref() == Some(&next) {
             return None;
@@ -692,5 +773,91 @@ mod tests {
             "claude-queue.md",
             &Err(notify::Error::generic("lost"))
         ));
+    }
+
+    #[test]
+    fn the_needs_you_file_sits_beside_the_queue_file_unless_needs_json_names_one() {
+        let dir = Scratch::new("needs-beside");
+        let queue = Ok(dir.0.join("queue.md"));
+        assert_eq!(needs_beside(&queue), Ok(dir.0.join("needs-you.md")));
+        let unknown = needs_beside(&Err(
+            "prefs.json could not be parsed, so the queue path is unknown.".into(),
+        ));
+        let why = unknown.unwrap_err();
+        assert!(
+            why.contains("queue path is unknown") && why.contains("beside"),
+            "{why}"
+        );
+        assert!(
+            needs_beside(&Ok(PathBuf::from("/"))).is_err(),
+            "a root has no folder"
+        );
+
+        assert_eq!(kept_in(Some(&dir.0), List::Needs), None, "no needs.json");
+        let elsewhere = dir.0.join("asks.md");
+        dir.write(
+            "needs.json",
+            &json!({ "path": elsewhere, "by": "Athena" }).to_string(),
+        );
+        let k = kept_in(Some(&dir.0), List::Needs).unwrap();
+        assert_eq!((k.path, k.by.as_deref()), (Ok(elsewhere), Some("Athena")));
+        assert_eq!(
+            kept(Some(&dir.0)),
+            None,
+            "needs.json never names the queue file"
+        );
+        dir.write("needs.json", "{");
+        let err = kept_in(Some(&dir.0), List::Needs)
+            .unwrap()
+            .path
+            .unwrap_err();
+        assert_eq!(
+            err,
+            "needs.json could not be parsed, so the Needs you path is unknown."
+        );
+    }
+
+    #[test]
+    fn the_needs_you_panel_names_its_own_file_in_every_line() {
+        let dir = Scratch::new("needs-lines");
+        let mut f = Follower::new(List::Needs);
+        let none = f
+            .step(&Ok(dir.0.join("needs-you.md")), Duration::ZERO)
+            .unwrap();
+        assert!(none.missing);
+        assert_eq!(
+            none.problem.as_deref(),
+            Some("No Needs you file at this path.")
+        );
+        std::fs::create_dir(dir.0.join("folder.md")).unwrap();
+        let folder = view_of(&Ok(dir.0.join("folder.md")), List::Needs)
+            .problem
+            .unwrap();
+        assert!(
+            folder.starts_with("The Needs you path is not a regular file"),
+            "{folder}"
+        );
+        dir.write("big.md", &"x".repeat(MAX_BYTES as usize + 1));
+        let big = view_of(&Ok(dir.0.join("big.md")), List::Needs)
+            .problem
+            .unwrap();
+        assert!(big.starts_with("The Needs you file is over"), "{big}");
+        std::fs::write(dir.0.join("bad.md"), b"\xff\xfe").unwrap();
+        let bad = view_of(&Ok(dir.0.join("bad.md")), List::Needs)
+            .problem
+            .unwrap();
+        assert!(bad.starts_with("The Needs you file is not UTF-8"), "{bad}");
+        dir.write("needs-you.md", "## Needs you\n- one\n");
+        let got = f
+            .step(&Ok(dir.0.join("needs-you.md")), Duration::from_secs(30))
+            .unwrap();
+        assert_eq!(got.text.as_deref(), Some("## Needs you\n- one\n"));
+        assert!(
+            view(&Ok(dir.0.join("none.md")))
+                .problem
+                .unwrap()
+                .contains("No queue file"),
+            "the queue's lines are unchanged"
+        );
     }
 }
