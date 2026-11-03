@@ -369,10 +369,12 @@ echo "pane=\$n session=$NSID account=x avail=1MiB brief=started"
 EOF
 resume "$(TZ=America/New_York date -d '2026-10-28 09:00' +%s)"
 LAUNCH="$work/launch-unpointed.sh" FLEET_NOW=$(( noon + 4330 )) bash "$here/resume-at-reset.sh" --once 2>/dev/null
-check "#261 review 10: a row the launch never repointed: the old session stays, the new one goes, no finish" \
-  "$(fleet_panes | grep -cx "$p") $(grep -c 'SUBMIT /exit' "$work/unpointed.log") $(grep -c 'SUBMIT /exit' "$work/unpointed-new.log") | $(cut -f1,4 "$REGISTRY") | $(cat "$FLEET_STATE/finished.tsv" 2>/dev/null | grep -c .)" \
-  "1 0 1 | $p	$SID | 0"
-check "#261 review 10: logged as an error" "$(jq -r 'select(.level == "ERROR") | .message' "$FLEET_LOG" | grep -c "the fresh session's row was not registered")" "1"
+new_unp=$(jq -r 'select(.message | startswith("the launch left its row unregistered")) | .new_pane' "$FLEET_LOG")
+check "#261 review 10: a row the launch never repointed: fresh repoints it to the new session, then retires the old, and no finish is recorded" \
+  "$(grep -c 'SUBMIT /exit' "$work/unpointed.log") $(grep -c 'SUBMIT /exit' "$work/unpointed-new.log") | $(cut -f1,4 "$REGISTRY") | $(cat "$FLEET_STATE/finished.tsv" 2>/dev/null | grep -c .)" \
+  "1 0 | $new_unp	$NSID | 0"
+check "#261 review 10: logged as a warning" "$(jq -r 'select(.level == "WARN") | .message' "$FLEET_LOG" | grep -c "the launch left its row unregistered")" "1"
+t kill-window -t "$new_unp" 2>/dev/null
 t kill-window -t "$p" 2>/dev/null; : >"$REGISTRY"; rm -f -- "$FLEET_STATE/finished.tsv"
 # The other rollback, AJ typing into the old pane during the launch, in the same order.
 : >"$FLEET_LOG"

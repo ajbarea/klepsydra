@@ -782,15 +782,36 @@ fresh() { # PANE NAME BRIEF [WHY] [ACCOUNT] [NOTE] [STAMP]
     wait_for "$p" 5 idle_empty || true
   fi
   # The old session ends only once its row names the new one, or its /exit
-  # would record the agent itself as finished (#261 review 10).
+  # would record the agent itself as finished (#261 review 10). A launch that
+  # could not register the row (its lock busy) leaves that to this step.
   if ! awk -F'\t' -v n="$new" '$1 == n { f = 1 } END { exit !f }' "$REGISTRY"; then
-    flog ERROR "the fresh session's row was not registered; the old pane stays and the new one goes" pane="$p" new_pane="$new" name="$name"
-    retire "$new" interrupt
-    return 3
+    local nsid
+    nsid=$(grep -o 'session=[^ ]*' <<<"$out" | head -1 | cut -d= -f2)
+    if with_registry repoint_row "$p" "$sid" "$new" "$nsid"; then
+      flog WARN "the launch left its row unregistered; the fresh session's row now names it" pane="$p" new_pane="$new" name="$name" session="$nsid"
+    else
+      flog ERROR "the fresh session's row could not be registered; the old pane stays and the new one goes" pane="$p" new_pane="$new" name="$name"
+      retire "$new" interrupt
+      return 3
+    fi
   fi
   retire_into "$p" "$new" ||
     flog WARN "the old pane is left running beside its fresh session" pane="$p" new_pane="$new" name="$name"
   printf '%s' "$new"
+}
+
+# Point the row naming PANE and session SID at NEW, and at session NSID when
+# that is a session id (launch.sh prints it), as launch.sh would have; fails
+# when no row names them.
+repoint_row() { # PANE SID NEW NSID
+  local tmp
+  tmp=$(mktemp "$REGISTRY.XXXXXX") || return 1
+  if awk -F'\t' -v OFS='\t' -v p="$1" -v s="$2" -v n="$3" -v ns="${4:-}" '
+      $1 == p && $4 == s && !f { $1 = n; if (ns ~ /^[0-9a-f-]{36}$/) $4 = ns; f = 1 } { print } END { exit !f }' "$REGISTRY" >"$tmp"; then
+    mv -f -- "$tmp" "$REGISTRY"
+  else
+    rm -f -- "$tmp"; return 1
+  fi
 }
 
 # Point the registry row launch.sh moved to NEW back at PANE, session SID
