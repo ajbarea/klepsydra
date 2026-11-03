@@ -2239,6 +2239,9 @@ check "#273 review: --check names a saved mode not yet applied" "$(fv --check; e
 check "#273: a changed mode the tray saved applies at the next pass, other prefs kept" \
   "$(fv --if-changed) | $(jq -c '[.enabled, .speak_only]' "$kc") $(jq -r .theme "$KLEPSYDRA_DIR/prefs.json")" "voices: heph (changed: enabled speak_only) | [true,[\"$orch_rec\"]] kourai"
 check "#273: and --check then says so" "$(fv --check; echo "rc=$?")" $'applied heph\nrc=0'
+"$work/kx/bin/keryx" off
+check "#273 verify: --check names keryx turned off by hand since, still ok" "$(fv --check; echo "rc=$?")" $'applied heph; keryx is off now (turned off by hand?)\nrc=0'
+"$work/kx/bin/keryx" on
 for odd in 'not json' '{"voices":"loud"}' '{"voices":["off"]}'; do
   printf '%s' "$odd" >"$KLEPSYDRA_DIR/prefs.json"
   check "#273: a prefs file reading $odd is Heph only" "$(fv | cut -d' ' -f2)" "heph"
@@ -2246,6 +2249,22 @@ done
 check "#273: an unknown mode is refused" "$(fv loud >/dev/null 2>&1; echo $?)" "2"
 vreset
 check "#273: no keryx installed: said, and nothing fails" "$(FLEET_KERYX="$work/no-keryx" bash "$here/fleet" voices 2>/dev/null; echo "rc=$?")" $'keryx is not installed\nrc=0'
+FLEET_KERYX="$work/no-keryx" bash "$here/fleet" voices --if-changed >/dev/null 2>&1; FLEET_KERYX="$work/no-keryx" bash "$here/fleet" voices --if-changed >/dev/null 2>&1
+check "#273 verify: and the service says it once, and --check names it" \
+  "$(jq -r 'select(.message | startswith("voices: keryx is not installed")) | .mode' "$FLEET_LOG" | wc -l) $(FLEET_KERYX="$work/no-keryx" bash "$here/fleet" voices --check 2>/dev/null | grep -c 'keryx is not installed')" "1 1"
+# Two runs at once never interleave: a slow keryx (uv's start) holds the first.
+vreset; echo '{"speak_only":[]}' >"$kc"
+cat >"$work/kxslow-wrap" <<EOF
+#!/usr/bin/env bash
+sleep 1; exec "$work/kx/bin/keryx" "\$@"
+EOF
+chmod +x "$work/kxslow-wrap"; mkdir -p "$work/kxslow/bin" "$work/kxslow/src/keryx"; cp "$work/kx/src/keryx/__main__.py" "$work/kxslow/src/keryx/"; cp "$work/kxslow-wrap" "$work/kxslow/bin/keryx"
+FLEET_KERYX="$work/kxslow/bin/keryx" bash "$here/fleet" voices off >/dev/null 2>&1 &
+sleep 0.3
+FLEET_KERYX="$work/kxslow/bin/keryx" bash "$here/fleet" voices heph >/dev/null 2>&1
+wait
+check "#273 verify: Off then Heph clicked together ends as Heph, keryx on, as recorded" \
+  "$(jq -r .voices "$KLEPSYDRA_DIR/prefs.json") $(cat "$FLEET_STATE/voices.applied") $(jq -c '[.enabled, (.speak_only | length)]' "$kc")" "heph heph [true,1]"
 # A keryx without speak_only (0.11.0): keryx is still turned on, the rest is said once.
 vreset; echo '{"enabled": false}' >"$kc"
 check "#273 review: a keryx without speak_only still turns keryx on, never runs speak-only, and fails" \
@@ -2259,9 +2278,9 @@ check "#273 review: a newer keryx is tried at once" "$(fv --if-changed)" "voices
 vreset
 fvk "$work/kxflaky" >/dev/null
 check "#273 review: a passing failure is not taken for an old keryx, and is not recorded as applied" \
-  "$(cut -d' ' -f4 "$FLEET_STATE/voices.failed") [$(cat "$FLEET_STATE/voices.applied" 2>/dev/null)]" "other []"
+  "$(cut -d' ' -f3 "$FLEET_STATE/voices.failed") [$(cat "$FLEET_STATE/voices.applied" 2>/dev/null)]" "other []"
 check "#273 review: the service waits before trying again" "$(fvk "$work/kxflaky" --if-changed; wc -l <"$kcalls")" "0"
-sed -i 's/ [0-9]* other$/ 1000 other/' "$FLEET_STATE/voices.failed"
+sed -i 's/^heph [0-9]* other /heph 1000 other /' "$FLEET_STATE/voices.failed"
 check "#273 review: then tries again, and succeeds" "$(fvk "$work/kxflaky" --if-changed)" "voices: heph (changed: speak_only)"
 # Which keryx: the newest version across both accounts' plugin caches.
 vreset

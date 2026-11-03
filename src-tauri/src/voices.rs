@@ -1,6 +1,6 @@
 //! The tray's Voices submenu (#183, #273): who speaks through keryx, kept in
 //! prefs.json; a change runs `fleet voices` at once, so keryx follows it for
-//! running sessions too (the resume service re-applies it every pass).
+//! running sessions too (the resume service applies a change it missed).
 
 use klepsydra_fleet::voices::{self, VOICES};
 use tauri::menu::Submenu;

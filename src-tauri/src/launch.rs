@@ -18,6 +18,9 @@ pub const WSL_EXE: &str = r"C:\Windows\System32\wsl.exe";
 const SCRIPT: &str = ".claude/klepsydra-launch.sh";
 /// Longest wait for wsl.exe to finish: a cold WSL start alone can take 20 s.
 const TIMEOUT: Duration = Duration::from_secs(45);
+/// Longest wait for `fleet voices`: two keryx calls of up to 120 s each (a new
+/// keryx's first run syncs its environment), behind another run's lock.
+const VOICES_TIMEOUT: Duration = Duration::from_secs(300);
 /// Longest wait for a Jump, whose session already runs in a started WSL: long
 /// enough for a refused interop connection to report its own error.
 const JUMP_TIMEOUT: Duration = Duration::from_secs(15);
@@ -115,7 +118,7 @@ pub fn voices_args() -> Vec<String> {
 pub fn apply_voices() {
     let args = voices_args();
     tauri::async_runtime::spawn_blocking(move || {
-        let _ = logged("voices", None, || run(&args, TIMEOUT, timed_out));
+        let _ = logged("voices", None, || run(&args, VOICES_TIMEOUT, timed_out));
     });
 }
 

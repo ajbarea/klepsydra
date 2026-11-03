@@ -48,6 +48,11 @@ saved_mode() {
   jq -ser 'if length == 1 then .[0].voices else empty end | select(. == "heph" or . == "everyone" or . == "off")' "$PREFS" 2>/dev/null || echo heph
 }
 
+# One run at a time (two tray clicks, a click during a service pass): each
+# reads the saved mode, sets keryx and records it as one step.
+exec 8>>"$FLEET_STATE/voices.lock"
+flock -w $((KERYX_WAIT_S * 2 + 30)) 8 || { err "another fleet voices run holds the lock"; exit 1; }
+
 run=apply mode=${1:-}
 case $mode in
   --check) run=check mode="" ;;
@@ -70,12 +75,21 @@ applied=$(cat "$APPLIED" 2>/dev/null)
 
 if [[ $run == check ]]; then
   if [[ $applied == "$mode" ]]; then
-    echo "applied $mode"
+    # Applied; keryx turned off by hand since is AJ's choice, named, not a fault.
+    if [[ $mode != off && $(jq -r 'if .enabled == false then "off" else "on" end' "$KERYX_CONFIG" 2>/dev/null) == off ]]; then
+      echo "applied $mode; keryx is off now (turned off by hand?)"
+    else
+      echo "applied $mode"
+    fi
     exit 0
   fi
-  why="fleet voices applies it"
-  if b=$(keryx_bin) && [[ -n $b ]] && [[ $mode == heph ]] && ! has_speak_only "$b"; then
+  b=$(keryx_bin)
+  if [[ -z $b ]]; then
+    why="keryx is not installed"
+  elif [[ $mode == heph ]] && ! has_speak_only "$b"; then
     why="keryx at $b has no speak_only: update the keryx plugin to 0.12.0 or later on both accounts"
+  else
+    why="fleet voices applies it"
   fi
   echo "$mode not applied (last applied: ${applied:-none}): $why"
   exit 1
@@ -84,8 +98,9 @@ fi
 # The service does not retry a keryx without speak_only until another is
 # installed, nor any other failure for 15 min, so a fault is logged once.
 FAILED=$FLEET_STATE/voices.failed
-if [[ $run == if-changed ]] && read -r f_mode f_bin f_at f_kind <"$FAILED" 2>/dev/null && [[ $f_mode == "$mode" && $f_bin == "$(keryx_bin)" ]] &&
-  { [[ $f_kind == old ]] || (( $(date +%s) - ${f_at:-0} < 900 )); }; then
+# (The binary path comes last, so one with spaces reads back whole.)
+if [[ $run == if-changed && -f $FAILED ]] && read -r f_mode f_at f_kind f_bin <"$FAILED" && [[ $f_mode == "$mode" && $f_bin == "$(keryx_bin)" ]] &&
+  { [[ $f_kind == old || $f_kind == missing ]] || (( $(date +%s) - ${f_at:-0} < 900 )); }; then
   exit 0
 fi
 
@@ -108,6 +123,8 @@ fi
 
 bin=$(keryx_bin)
 if [[ -z $bin ]]; then
+  # Said once: the service does not ask again until a keryx is installed.
+  printf '%s %s missing \n' "$mode" "$(date +%s)" >"$FAILED"
   flog WARN "voices: keryx is not installed; nothing to change" mode="$mode"
   echo "keryx is not installed"
   exit 0
@@ -131,7 +148,7 @@ if [[ -n $failed ]]; then
   # Not recorded as applied; the service tries again later (see FAILED).
   kind=other
   [[ $failed == "speak_only(keryx<0.12.0) " ]] && kind=old
-  printf '%s %s %s %s\n' "$mode" "$bin" "$(date +%s)" "$kind" >"$FAILED"
+  printf '%s %s %s %s\n' "$mode" "$(date +%s)" "$kind" "$bin" >"$FAILED"
   flog ERROR "voices: keryx could not be set to the tray's mode" mode="$mode" failed="${failed% }" changed="${changed% }" keryx="$bin" timeout_s="$KERYX_WAIT_S"
   echo "voices: $mode not fully applied (failed: ${failed% })"
   exit 1
