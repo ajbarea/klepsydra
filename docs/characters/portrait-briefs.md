@@ -20,7 +20,7 @@ Adopted by AJ on 2026-11-01. Who a character is decides how they are drawn.
 
 All share one rendering. A golden maiden attached as a reference lends
 only her rendering, and the paste says so. Athena's
-2026-10-30 portrait shows her in gold; her kit follows the canon.
+2026-11-02 portrait is the first drawn to the canon, in flesh.
 
 ## How the kits are built
 
@@ -39,7 +39,7 @@ only her rendering, and the paste says so. Athena's
   `<name>-<date>`, and the crops go to the app.
 
 Files to attach are in kourai-khryseai: `assets/avatars/vn/<name>_neutral.png`
-and `assets/avatars/originals/<name>.jpg` (Athena's is a `.png`).
+and `assets/avatars/originals/<name>.jpg`.
 
 ## Chronos, Keeper of the Hours (visitor)
 
@@ -312,22 +312,22 @@ Save it to `Downloads\hesychia\` and tell Heph.
 
 ## Athena, Strategist of the Forge (god of the forge)
 
-Voice `bf_alice` (outside keryx's pool, so no worker shares it) · accent
-olive `#7A8B3C` (the olive tree she gave Athens) · the orchestrator's second
-face: she and Hephaestus run the fleet in turn (#222).
+Voice `bf_emma`, reserved for her as `am_michael` is for Hephaestus · accent
+olive `#7A8B3C` (the olive tree she gave Athens) · the orchestrator's other
+face: she and Hephaestus are equal orchestrators, one running, one a warm backup (#222, #244).
 
 ### 1. Attach
 
-- `athena.png`, her 2026-10-30 portrait: keep her face, hair, circlet,
-  peplos and owl, not her gold skin.
+- `athena.jpg`, her 2026-11-02 portrait in flesh: keep her face, hair,
+  circlet, peplos, owl and plans.
 - `hephaestus_neutral.png`: framing, and the other god of the forge in
   flesh. Not his face.
 - Do not attach: Metis or Mneme. They made her a golden maiden.
 
 ### 2. Paste: style block
 
-> Image 1 is Athena: keep her face, hair, olive-leaf circlet, peplos and owl
-> exactly, and change her skin to natural skin. Image 2 is Hephaestus, the
+> Image 1 is Athena: keep her face, hair, olive-leaf circlet, peplos, owl and
+> floating plans exactly, with natural skin. Image 2 is Hephaestus, the
 > other god who runs the forge: match his rendering and framing, not his
 > face. Painterly, semi-realistic character portrait: confident thick
 > brushwork, ink-like outlines, bold clean silhouette, expressive face, soft

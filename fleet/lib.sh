@@ -13,6 +13,20 @@ FLEET_TARGET=${FLEET_TARGET:-fleet::$(basename "${0%.sh}")}
 # A fleet-wide id for the lines of one run (a launch, one resume pass).
 FLEET_RUN_ID=${FLEET_RUN_ID:-$(od -An -N6 -tx1 /dev/urandom | tr -d ' \n')}
 export FLEET_RUN_ID
+# What every session reads from ~/.claude (both config folders' hooks point
+# there): "repo path, installed name" per entry. install.sh copies them, and
+# doctor checks the copies still match the checkout.
+FLEET_HOOK_DIR=${FLEET_HOOK_DIR:-$HOME/.claude}
+# shellcheck disable=SC2034 # read by install.sh and doctor.sh
+HOOK_COPIES=(
+  "hooks/klepsydra-fleet.sh klepsydra-fleet.sh"
+  "hooks/klepsydra-launch.sh klepsydra-launch.sh"
+  "hooks/klepsydra-tmux.conf klepsydra-tmux.conf"
+  "hooks/klepsydra-wrapup.sh klepsydra-wrapup.sh"
+  "hooks/klepsydra-wrapup.md skills/klepsydra-wrapup/SKILL.md"
+  "statusline/klepsydra-statusline.sh klepsydra-statusline.sh"
+  "src/fleet/themes/kourai.json klepsydra-cast.json"
+)
 
 # The preamble a fresh session's brief starts with; WHY says why it replaces the last one.
 fresh_preamble() { # WHY
@@ -23,6 +37,9 @@ t() { tmux -L "$FLEET_SOCK" "$@"; }
 
 err() { printf 'error: %s\n' "$*" >&2; }
 
+# tilde TEXT: TEXT with the home folder read as ~, as doctor prints it and as
+# the phone's report shows it.
+tilde() { local s=${1//"$HOME/"/\~/}; [[ $s == "$HOME" ]] && s="~"; printf '%s' "$s"; }
 # flog LEVEL MESSAGE [KEY=VALUE...]: one JSON line in the fleet log (the
 # klepsydra log's fields: ts, level, target, message, then the event's own),
 # and the same as a plain line on stderr.

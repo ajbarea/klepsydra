@@ -45,6 +45,10 @@ AT_MAX = 253_402_300_799
 FILE_MAX = 256 * 1024
 EVERY_S = 3600
 HEPH = "am_michael"
+# The orchestrator's faces (#222); a worker never wears either.
+ORCHESTRATORS = (HEPH, "bf_emma")
+# Athena's voice key before 11-02, still in session files written then.
+ATHENA_BEFORE = "bf_alice"
 FLEET_SOCK = os.environ.get("FLEET_SOCK", "klepsydra")
 GITLEAKS = os.environ.get("FLEET_GITLEAKS", "gitleaks")
 LINK = re.compile(
@@ -197,8 +201,9 @@ def session() -> dict | None:
 
 
 def character(s: dict) -> tuple[str | None, str]:
-    """The session's character key and name, as the wall gives it: Heph's for
-    the orchestrator, its own cast voice, else its pick (picks.json)."""
+    """The session's character key and name, as the wall gives it: the face
+    the orchestrator's file records (Hephaestus by default), its own cast voice,
+    else its pick (picks.json)."""
     try:
         cast = json.loads((KLEPSYDRA_DIR / "cast.json").read_text(encoding="utf-8"))
         chars = cast.get("characters") if isinstance(cast, dict) else None
@@ -207,8 +212,11 @@ def character(s: dict) -> tuple[str | None, str]:
     if not isinstance(chars, dict):
         chars = {}
     if s.get("orchestrator"):
-        key = HEPH
-    elif s.get("voice") in chars and s.get("voice") != HEPH:
+        face = s.get("orchestrator_face")
+        if face == ATHENA_BEFORE:
+            face = ORCHESTRATORS[1]
+        key = face if face in ORCHESTRATORS else HEPH
+    elif s.get("voice") in chars and s.get("voice") not in ORCHESTRATORS:
         key = s["voice"]
     else:
         try:

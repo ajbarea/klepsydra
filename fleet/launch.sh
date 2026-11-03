@@ -53,7 +53,10 @@ fi
 # its face across relaunches (#172).
 # keryx's switch comes from --settings alone, never from the tmux server's
 # environment (a server started from a session with keryx off would pass it on).
-cmd="env -u KERYX_ENABLED $(config_env "$account")KLEPSYDRA_AGENT=$(printf '%q' "$name") CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS=2 ${FLEET_CLAUDE:-claude} --session-id $sid${settings:+ --settings $(printf '%q' "$settings")} $*"
+# FLEET_SUCCEEDS (a session id) names the orchestrator a move replaces (#226).
+succeeds=""
+[[ ${FLEET_SUCCEEDS:-} =~ ^[0-9a-f-]{36}$ ]] && succeeds="KLEPSYDRA_SUCCEEDS=$FLEET_SUCCEEDS "
+cmd="env -u KERYX_ENABLED $(config_env "$account")KLEPSYDRA_AGENT=$(printf '%q' "$name") ${succeeds}CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS=2 ${FLEET_CLAUDE:-claude} --session-id $sid${settings:+ --settings $(printf '%q' "$settings")} $*"
 if [[ ${FLEET_SCOPE:-1} != 0 ]]; then
   cmd="systemd-run --user --scope --collect --unit=fleet-$name-$(date +%s) -p MemoryHigh=${MEM_HIGH:-4G} -p MemoryMax=${MEM_MAX:-5G} -p MemorySwapMax=${MEM_SWAP:-1G} $cmd"
 fi
@@ -66,7 +69,8 @@ took() { printf '%s' "$((SECONDS - began))"; }
 exec 8>>"$FLEET_STATE/.launch.lock"
 flock -w 120 8 || { flog ERROR "launch held: another launch kept the lock for 2 min" name="$name"; exit 1; }
 before=$(fleet_panes | sort)
-if ! out=$(cd ~ && KLEPSYDRA_CLAUDE="$cmd" KLEPSYDRA_TMUX_SOCKET="$FLEET_SOCK" bash "${FLEET_LAUNCHER:-$HOME/.claude/klepsydra-launch.sh}" new "$dir" 2>&1 7>&- 8>&-); then
+# No stdin for the launcher: a caller reading a list on it would lose the rest (#242).
+if ! out=$(cd ~ && KLEPSYDRA_CLAUDE="$cmd" KLEPSYDRA_TMUX_SOCKET="$FLEET_SOCK" bash "${FLEET_LAUNCHER:-$HOME/.claude/klepsydra-launch.sh}" new "$dir" </dev/null 2>&1 7>&- 8>&-); then
   flog ERROR "launch failed: the launcher refused" name="$name" said="$out"
   echo "launch failed: $out" # logcheck: ignore[stderr-for-errors] # the result line
   exit 1

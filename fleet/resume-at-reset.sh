@@ -295,7 +295,9 @@ heph_move() { # PANE TO WHY [NOTE] [STAMP]
     [[ -n $carried ]] && printf '\nAJ typed this to the last orchestrator and it was never sent; act on it:\n%s\n' "$carried"
   } >"$txt"
   mkdir -p -- "$FLEET_STATE/log"
-  out=$(FLEET_SETTINGS='' FLEET_ACCOUNT=$to bash "$LAUNCH" heph "$txt" 2>>"$FLEET_STATE/log/launch.err" | head -1)
+  # The new session succeeds the one live in this pane: it takes that one's
+  # face, never the warm backup's (#226).
+  out=$(FLEET_SETTINGS='' FLEET_ACCOUNT=$to FLEET_SUCCEEDS=$(live_session "$p") bash "$LAUNCH" heph "$txt" 2>>"$FLEET_STATE/log/launch.err" | head -1)
   new=$(grep -o 'pane=%[0-9]*' <<<"$out" | cut -d= -f2) got=$(grep -o 'brief=[A-Za-z-]*' <<<"$out" | cut -d= -f2)
   nsid=$(grep -o 'session=[0-9a-f-]*' <<<"$out" | cut -d= -f2)
   [[ -n $new && -n ${MOVE_NEW:-} ]] && printf '%s\n' "$new" >"$MOVE_NEW"

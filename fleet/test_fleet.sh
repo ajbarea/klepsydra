@@ -8,6 +8,7 @@ fake="$here/tests/fake_pane.py"
 work=$(mktemp -d)
 export TZ=America/New_York # the fixtures' times are AJ's
 export FLEET_SOCK="fleet-test-$$" FLEET_STATE="$work/state" FLEET_SESSION=fleet
+export FLEET_HOOK_DIR="$work/claude" # never the real ~/.claude
 export KLEPSYDRA_DIR="$work/klepsydra" FLEET_TICK=0.1 FLEET_START_WAIT=4 FLEET_TURN_WAIT=6 FLEET_RC_WAIT=12
 mkdir -p "$FLEET_STATE" "$KLEPSYDRA_DIR/accounts/a" "$KLEPSYDRA_DIR/accounts/b"
 # Two config folders, logged out until a case logs one in (accounts a and b).
@@ -22,9 +23,15 @@ login() { # a|b
 logout() { rm -f -- "$work/cfg-${1:?}/.credentials.json"; }
 cleanup() {
   tmux -L "$FLEET_SOCK" kill-server 2>/dev/null
+  chmod -R u+w -- "${work:?}" 2>/dev/null
   rm -rf -- "${work:?}"
 }
 trap cleanup EXIT
+# A signal ends the run through exit, so the EXIT trap still stops the server (#239).
+trap 'exit 129' HUP; trap 'exit 130' INT; trap 'exit 143' TERM
+# No inherited descriptor past stderr: a tmux server started here would keep a
+# caller's lock, such as flock's /tmp/fleet-heavy.lock, after the run (#193).
+for fd in "/proc/$$/fd"/*; do n=${fd##*/}; (( n > 2 && n < 255 )) && eval "exec $n>&-"; done
 
 pass=0 fail=0
 check() {
@@ -61,7 +68,7 @@ resume() { FLEET_NOW=$1 bash "$here/resume-at-reset.sh" --once 2>/dev/null; } # 
 # A registered session, live in pane $1 by klepsydra's fleet file.
 SID=11111111-2222-4333-8444-555555555555
 mkdir -p "$KLEPSYDRA_DIR/fleet"
-live() { jq -n --arg p "$1" '{session_id: "x", ended: null, tmux: {pane: $p}}' >"$KLEPSYDRA_DIR/fleet/$SID.json"; }
+live() { jq -n --arg p "$1" '{session_id: "x", ended: null, tmux: {pane: $p}}' >"$KLEPSYDRA_DIR/fleet/${2:-$SID}.json"; }
 logged() { jq -r --arg m "$1" 'select(.message | contains($m)) | .pane' "$FLEET_LOG" 2>/dev/null | tr '\n' ' '; }
 
 echo "reset times"
@@ -436,7 +443,7 @@ EOF
 printf 'Do the thing.\nThen the other thing.\n' >"$work/task.src"
 launch() { # NAME STATE-JSON: launch.sh with a fake claude starting from STATE
   printf '%s' "$2" >"$work/$1.json"; : >"$work/$1.log"
-  FLEET_SCOPE=0 FLEET_MIN_AVAIL_MB=0 FLEET_LAUNCHER="$work/launcher.sh" FLEET_DIR="$work" \
+  FLEET_SCOPE=0 FLEET_MIN_AVAIL_MB=0 FLEET_LAUNCHER="${LAUNCHER:-$work/launcher.sh}" FLEET_DIR="$work" \
     FLEET_CLAUDE="python3 -I $fake $work/$1.json $work/$1.log" bash "$here/launch.sh" "$1" "$work/task.src" 2>/dev/null | head -1
 }
 cp "$work/task.src" "$FLEET_STATE/task-agent1.src"
@@ -498,6 +505,14 @@ check "#187: a second launch runs beside a stuck one instead of waiting for it" 
 check "and the stuck launch marks its pane as starting" "$(find "$FLEET_STATE/launching" -mindepth 1 | wc -l)" "1"
 wait "$slowjob"
 check "the mark goes when the launch ends" "$(find "$FLEET_STATE/launching" -mindepth 1 | wc -l)" "0"
+cat >"$work/launcher-drain.sh" <<EOF
+#!/usr/bin/env bash
+# wt.exe drains whatever stdin WSL interop hands it (10-31): so does this.
+cat >/dev/null
+tmux -L "\$KLEPSYDRA_TMUX_SOCKET" new-window -d -t fleet: -c "\$3" "\$KLEPSYDRA_CLAUDE"
+EOF
+got=$(printf 'row 2\nrow 3\n' | { LAUNCHER="$work/launcher-drain.sh" launch agent9 '{"above":["Claude Code"]}' >/dev/null; cat; })
+check "#242: a launch from a loop reading rows on stdin leaves the rest of the rows" "$got" $'row 2\nrow 3'
 
 echo "briefs"
 printf 'Do X.\nThen Y.' >"$work/body"
@@ -518,8 +533,83 @@ bash "$here/brief.sh" --refresh "$FLEET_STATE/task-old.src" >/dev/null 2>&1
 check "--refresh brings the rules up to date, keeping the body and a line added after them" \
   "$(head -2 "$FLEET_STATE/task-old.src" | tr '\n' '|')$(grep -c '^Usage cap: run at most two' "$FLEET_STATE/task-old.src") $(grep -c 'at most three' "$FLEET_STATE/task-old.src") $(grep -c '^Last item (AJ 10-28): ship the thing.$' "$FLEET_STATE/task-old.src") $(bash "$here/brief.sh" --check "$FLEET_STATE/task-old.src" >/dev/null 2>&1; echo $?)" \
   "Do X.|Then Y.|1 0 1 0"
+# #262: a rule without a colon, or under a label the tail has since renamed, is
+# still an old rule. A throwaway repo holds an old tail and the current one, so
+# the history is there however shallow this checkout is.
+hist=$work/briefhist
+mkdir -p "$hist/fleet"
+cp "$here/brief.sh" "$here/lib.sh" "$hist/fleet/"
+git -C "$hist" init -q && git -C "$hist" config user.email t@t && git -C "$hist" config user.name t
+{ printf 'Resources: old wording.\n'; printf 'Keep AJ'"'"'s to-do list current: the old label.\n'; printf 'Engage full auto mode (memory x). Stop when done.\n'; } >"$hist/fleet/brief-tail.md"
+git -C "$hist" add fleet && git -C "$hist" commit -qm old
+{ printf 'Resources: new wording.\n'; printf 'Keep the fleet queue current: the new label.\n'; printf 'Engage full auto mode (memory x). Stop when done.\n'; } >"$hist/fleet/brief-tail.md"
+git -C "$hist" commit -qam new
+{ printf 'Do Z.\n\n'
+  printf 'Resources: old wording.\n'; printf 'Keep AJ'"'"'s to-do list current: the old label.\n'
+  printf 'Engage full auto mode (memory x). Stop when done.\n'; printf 'Also (AJ 10-28): a real added line.\n'
+  printf 'Engage full auto mode (memory x). Stop when done.\n'; printf 'Engage full auto mode (memory x). Stop when done.\n'
+} >"$FLEET_STATE/task-hist.src"
+bash "$hist/fleet/brief.sh" --refresh "$FLEET_STATE/task-hist.src" >/dev/null 2>&1
+check "#262: a colon-less rule is kept once, a renamed label's old line goes, an added line stays" \
+  "$(grep -c '^Engage full auto' "$FLEET_STATE/task-hist.src") $(grep -c "^Keep AJ's to-do" "$FLEET_STATE/task-hist.src") $(grep -c '^Keep the fleet queue current' "$FLEET_STATE/task-hist.src") $(grep -c '^Also (AJ 10-28): a real added line.$' "$FLEET_STATE/task-hist.src")" "1 0 1 1"
+check "#262: the refreshed brief is the body, the tail, then the added line" \
+  "$(tr '\n' '|' <"$FLEET_STATE/task-hist.src")" "Do Z.||Resources: new wording.|Keep the fleet queue current: the new label.|Engage full auto mode (memory x). Stop when done.|Also (AJ 10-28): a real added line.|"
+cp "$FLEET_STATE/task-hist.src" "$work/hist.once"
+bash "$hist/fleet/brief.sh" --refresh "$FLEET_STATE/task-hist.src" >/dev/null 2>&1
+check "#262: a second refresh leaves it byte for byte" "$(cmp -s "$work/hist.once" "$FLEET_STATE/task-hist.src" && echo same)" "same"
+printf 'Engage full auto mode (memory x). Stop when done.\n' >>"$FLEET_STATE/task-hist.src"
+check "#262: --check names a brief that has every rule but carries one twice" \
+  "$(bash "$hist/fleet/brief.sh" --check "$FLEET_STATE/task-hist.src" 2>/dev/null; echo "rc=$?")" $'stale: task-hist.src\nrc=1'
+bash "$hist/fleet/brief.sh" --refresh "$FLEET_STATE/task-hist.src" >/dev/null 2>&1
+check "#262: and --refresh drops the second copy" "$(cmp -s "$work/hist.once" "$FLEET_STATE/task-hist.src" && echo same)" "same"
+# #275 review: with the tail missing or empty, old rules still come from the
+# history, so a refresh would strip every rule: every mode refuses instead.
+printf 'Usage cap: stale.\n' >>"$FLEET_STATE/task-hist.src"
+cp "$FLEET_STATE/task-hist.src" "$work/hist.stale"
+: >"$hist/fleet/brief-tail.md"
+check "#275: an empty tail: --refresh refuses (2) and the brief is left as it was" \
+  "$(bash "$hist/fleet/brief.sh" --refresh "$FLEET_STATE/task-hist.src" >/dev/null 2>&1; echo $?) $(cmp -s "$work/hist.stale" "$FLEET_STATE/task-hist.src" && echo same)" "2 same"
+rm -f -- "$hist/fleet/brief-tail.md"
+check "#275: a missing tail: --refresh, --check and a new brief all refuse" \
+  "$(for a in --refresh --check; do bash "$hist/fleet/brief.sh" "$a" "$FLEET_STATE/task-hist.src" >/dev/null 2>&1; printf '%s ' $?; done; bash "$hist/fleet/brief.sh" demo2 "$work/body" >/dev/null 2>&1; echo $?) $(cmp -s "$work/hist.stale" "$FLEET_STATE/task-hist.src" && echo same) $([[ -e $FLEET_STATE/task-demo2.src ]] && echo written)" "2 2 2 same "
+# #275 review: an unreadable brief is never rebuilt as the tail alone.
+git -C "$hist" checkout -q -- fleet/brief-tail.md
+cp "$work/hist.stale" "$FLEET_STATE/task-hist.src"; chmod 000 "$FLEET_STATE/task-hist.src"
+if [[ -r $FLEET_STATE/task-hist.src ]]; then
+  check "#275: an unreadable brief (skipped: running as root)" "skip" "skip"
+else
+  check "#275: an unreadable brief is left as it was and the refresh exits 1" \
+    "$(bash "$hist/fleet/brief.sh" --refresh "$FLEET_STATE/task-hist.src" >/dev/null 2>&1; echo $?) $(chmod 600 "$FLEET_STATE/task-hist.src"; cmp -s "$work/hist.stale" "$FLEET_STATE/task-hist.src" && echo same)" "1 same"
+fi
+chmod 600 "$FLEET_STATE/task-hist.src"
+# Each guard alone: a stale, readable brief whose archive folder, or own folder, is read-only.
+printf 'Do Z.\n\nResources: old wording.\n' >"$work/hist.old"
+if [[ $(id -u) != 0 ]]; then
+  cp "$work/hist.old" "$FLEET_STATE/task-hist.src"
+  mkdir -p "$FLEET_STATE/archive/briefs"; chmod 555 "$FLEET_STATE/archive/briefs"
+  check "#275: no archive copy, no rewrite: the brief stays and the refresh exits 1" \
+    "$(bash "$hist/fleet/brief.sh" --refresh "$FLEET_STATE/task-hist.src" >/dev/null 2>&1; echo $?) $(cmp -s "$work/hist.old" "$FLEET_STATE/task-hist.src" && echo same) $(find "$FLEET_STATE" -maxdepth 1 -name 'task-hist.src.*' | wc -l)" "1 same 0"
+  printf 'old brief\n' >"$FLEET_STATE/task-demo3.src"
+  check "#275 review 4: a new brief over one it cannot archive is refused and the old one stays" \
+    "$(bash "$hist/fleet/brief.sh" demo3 "$work/body" >/dev/null 2>&1; echo $?) $(cat "$FLEET_STATE/task-demo3.src")" "1 old brief"
+  chmod 755 "$FLEET_STATE/archive/briefs"
+  rm -f -- "$FLEET_STATE/task-demo3.src"
+  # Its archive folder stays writable, so only the temp-file guard can stop it.
+  mkdir -p "$work/rostate/archive/briefs"; printf 'old brief\n' >"$work/rostate/task-demo4.src"; chmod 555 "$work/rostate"
+  check "#275 review 5: a new brief with no room for its temp file is refused, archives nothing, and the old one stays" \
+    "$(FLEET_STATE=$work/rostate bash "$hist/fleet/brief.sh" demo4 "$work/body" >/dev/null 2>&1; echo $?) $(cat "$work/rostate/task-demo4.src") $(find "$work/rostate/archive/briefs" -type f | wc -l)" "1 old brief 0"
+  chmod 755 "$work/rostate"
+  mkdir -p "$work/ro"; cp "$work/hist.old" "$work/ro/task-ro.src"; chmod 555 "$work/ro"
+  check "#275: no temp file beside it: the brief stays, nothing is archived, and the refresh exits 1" \
+    "$(n=$(find "$FLEET_STATE/archive/briefs" -name 'task-ro.src.*' | wc -l); bash "$hist/fleet/brief.sh" --refresh "$work/ro/task-ro.src" >/dev/null 2>&1; echo "$? $n $(find "$FLEET_STATE/archive/briefs" -name 'task-ro.src.*' | wc -l)") $(cmp -s "$work/hist.old" "$work/ro/task-ro.src" && echo same)" "1 0 0 same"
+  chmod 755 "$work/ro"
+fi
+rm -rf -- "${hist:?}" "${FLEET_STATE:?}/task-hist.src"
+check "the tail carries the friction-log rule (AJ 11-01)" "$(grep -c '^Friction log (AJ 11-01, every agent): read ~/.local/state/fleet-orchestrator/friction.md' "$here/brief-tail.md")" "1"
+check "the tail says performance wins over security above the floor (AJ 11-01)" "$(grep -c '^Quality (AJ 11-01): when performance and security trade off, performance wins, above the security floor.$' "$here/brief-tail.md")" "1"
 check "the tail carries the team-ceremony rule (AJ 10-29)" "$(grep -c '^Team ceremony in every repo' "$here/brief-tail.md")" "1"
 check "the tail keeps asks for AJ out of public issues and PRs (AJ 10-29)" "$(grep -c '^Asks for AJ stay private' "$here/brief-tail.md")" "1"
+check "#239: the tail has heavy commands take the lock with flock -o, so nothing they leave running keeps it" "$(grep -c 'flock -o /tmp/fleet-heavy.lock' "$here/brief-tail.md")" "1"
 check "#185: the tail offers the Agora as optional and asks a post to name something real" "$(grep -c '^Agora (AJ 10-29, optional, never a task).*names something real' "$here/brief-tail.md")" "1"
 
 echo "doctor"
@@ -571,15 +661,22 @@ check "the orchestrator without it fails (Heph's must always be on)" "$(grep -c 
 check "no phone wall fails" "$(grep -c '^FAIL phone wall: no answer' <<<"$out")" "1"
 check "no Tailscale Serve fails" "$(grep -c '^FAIL phone wall over Tailscale: Tailscale Serve is not set up' <<<"$out")" "1"
 check "and the exit is non-zero" "$code" "1"
+check "#244: hooks and cast never installed fail, named" "$(grep '^FAIL installed copies' <<<"$out" | grep -c 'make install-fleet: differ from .*: klepsydra-fleet.sh .*klepsydra-cast.json$')" "1"
+root=${here%/fleet}
+for c in "${HOOK_COPIES[@]}"; do mkdir -p "$(dirname "$FLEET_HOOK_DIR/${c#* }")"; cp "$root/${c%% *}" "$FLEET_HOOK_DIR/${c#* }"; done
 touch "$work/active" "$FLEET_STATE/resume.beat"
 session_file o1 "$o" https://claude.ai/code/session_01O
 out=$(DOC_UP=http DOC_SERVE="https://desk.tail1.ts.net (tailnet only)" doctor); code=$?
-check "all well but the watcher: a shell that names the script is not one" "$(grep -c '^ok ' <<<"$out") $(grep '^FAIL' <<<"$out" | cut -d: -f1)" "11 FAIL pane watcher"
+check "all well but the watcher: a shell that names the script is not one" "$(grep -c '^ok ' <<<"$out") $(grep '^FAIL' <<<"$out" | cut -d: -f1)" "12 FAIL pane watcher"
 check "the default account is logged in; the second, not yet, is a warning" \
   "$(grep '^ok   account' <<<"$out" | cut -d: -f1) | $(grep '^warn account' <<<"$out" | cut -d: -f1)" "ok   account $work/cfg-a | warn account $work/cfg-b"
 check "with a watcher running, every check is ok and the exit is 0" \
-  "$(DOC_WATCH='%2 %5' DOC_UP=http DOC_SERVE=on doctor | grep -c '^ok '; echo "rc=${PIPESTATUS[0]}")" $'12\nrc=0'
+  "$(DOC_WATCH='%2 %5' DOC_UP=http DOC_SERVE=on doctor | grep -c '^ok '; echo "rc=${PIPESTATUS[0]}")" $'13\nrc=0'
 check "the watcher's panes are named" "$(DOC_WATCH='%2 %5' doctor | grep '^ok   pane watcher')" "ok   pane watcher: watching %2 %5"
+printf '# 10-29 copy\n' >>"$FLEET_HOOK_DIR/klepsydra-fleet.sh"
+check "#244: a hook copy older than the checkout fails, and only it is named" \
+  "$(doctor | grep '^FAIL installed copies')" "FAIL installed copies: make install-fleet: differ from $(tilde "$root"): klepsydra-fleet.sh"
+cp "$root/hooks/klepsydra-fleet.sh" "$FLEET_HOOK_DIR/klepsydra-fleet.sh"
 check "the phone wall and its Tailscale twin answer fresh" "$(grep -c 'fleet.json observed 3[0-9] s ago' <<<"$out")" "2"
 jq -n '{usage: [{observed_at: 1000}]}' >"$work/fleet.json"
 check "a stale fleet.json fails" "$(DOC_UP=http doctor | grep -c 'fleet.json is stale')" "1"
@@ -628,10 +725,36 @@ t kill-window -t "$w"; t kill-window -t "$o"; rm -f "$FLEET_STATE/orchestrator.p
 
 echo "install"
 inst=$work/inst
-mkdir -p "$inst/state"
+mkdir -p "$inst/state" "$inst/claude"
 printf 'old copy\n' >"$inst/state/launch.sh"
-FLEET_STATE="$inst/state" FLEET_UNITS="$inst/units" FLEET_BIN="$inst/bin" PATH="$work/nosystemctl:/usr/bin:/bin" \
+printf 'old hook\n' >"$inst/claude/klepsydra-fleet.sh"
+FLEET_STATE="$inst/state" FLEET_UNITS="$inst/units" FLEET_BIN="$inst/bin" FLEET_HOOK_DIR="$inst/claude" PATH="$work/nosystemctl:/usr/bin:/bin" \
   bash "$here/install.sh" --force >/dev/null 2>&1
+check "#244: the hooks, status line, launcher, tmux conf, wrap-up and cast are copied in, each matching the checkout" \
+  "$(for c in "${HOOK_COPIES[@]}"; do cmp -s "${here%/fleet}/${c%% *}" "$inst/claude/${c#* }" && [[ ! -L $inst/claude/${c#* } ]] && echo same; done | wc -l)" "${#HOOK_COPIES[@]}"
+check "#244: the scripts are executable, the cast is not, and no temp file is left" \
+  "$(stat -c %a "$inst/claude/klepsydra-fleet.sh" "$inst/claude/klepsydra-cast.json" | tr '\n' ' ')$(find "$inst/claude" -name '*.new.*' | wc -l)" "755 644 0"
+check "#244: the hook copy it replaced is archived" "$(cat "$inst/state/archive/fleet-scripts-$(date +%Y%m%d)/claude/klepsydra-fleet.sh".*)" "old hook"
+hinst() { FLEET_STATE="$inst/state" FLEET_HOOK_DIR="$inst/claude" bash "$here/install.sh" --hooks --force >/dev/null 2>&1; echo $?; }
+printf 'a second local edit\n' >"$inst/claude/klepsydra-fleet.sh"; sleep 1
+check "#244 review: a second install the same day keeps both archived copies" \
+  "$(hinst) $(cat "$inst/state/archive/fleet-scripts-$(date +%Y%m%d)/claude/klepsydra-fleet.sh".* | sort | tr '\n' '|')" "0 a second local edit|old hook|"
+printf 'the old hook\n' >"$inst/claude/klepsydra-fleet.sh"
+# A disk that fills mid-copy: the hook (over 12 KiB) is cut short in its temp file.
+check "#244 review 2: a copy cut short leaves the old one whole, and the install fails" \
+  "$( (ulimit -f 12; FLEET_LOG="$work/instlog/short.log" hinst) ) $(cat "$inst/claude/klepsydra-fleet.sh") $(find "$inst/claude" -name '*.new.*' | wc -l) $(grep -c 'klepsydra-fleet.sh' <(jq -r 'select(.message | startswith("a copy was not installed")) | .file' "$work/instlog/short.log"))" \
+  "1 the old hook 0 1"
+chmod a-w "$inst/claude"
+check "#244 review 2: a full install with a copy it cannot write fails too" \
+  "$(FLEET_STATE="$inst/state" FLEET_UNITS="$inst/units" FLEET_BIN="$inst/bin" FLEET_HOOK_DIR="$inst/claude" PATH="$work/nosystemctl:/usr/bin:/bin" bash "$here/install.sh" --force >/dev/null 2>&1; echo $?) $(cat "$inst/claude/klepsydra-fleet.sh")" "1 the old hook"
+chmod u+w "$inst/claude"; rm -f "$inst/claude/klepsydra-tmux.conf"; mkdir "$inst/claude/klepsydra-tmux.conf"
+check "#244 review: a folder where a copy goes is left alone, said so, and the install fails" \
+  "$(FLEET_LOG="$work/instlog/dir.log" hinst) $(find "$inst/claude/klepsydra-tmux.conf" -mindepth 1 | wc -l) $(grep -c "is not a file" "$work/instlog/dir.log")" "1 0 1"
+rmdir "$inst/claude/klepsydra-tmux.conf"
+check "#244: --hooks installs only the copies: no scripts, units or command" \
+  "$(FLEET_STATE="$inst/h" FLEET_UNITS="$inst/hu" FLEET_BIN="$inst/hb" FLEET_HOOK_DIR="$inst/hc" bash "$here/install.sh" --hooks --force >/dev/null 2>&1; echo $?) $(find "$inst/hc" -type f | wc -l) $(find "$inst" -mindepth 1 -maxdepth 1 \( -name hu -o -name hb \) | wc -l) $(find "$inst/h" -mindepth 1 -not -path "$inst/h/log*" 2>/dev/null | wc -l)" "0 ${#HOOK_COPIES[@]} 0 0"
+rm -rf -- "${inst:?}/hc" "${inst:?}/h"
+check "#244: the wrap-up skill lands in its skill folder" "$(cmp -s "${here%/fleet}/hooks/klepsydra-wrapup.md" "$inst/claude/skills/klepsydra-wrapup/SKILL.md" && echo same)" "same"
 check "each script is linked from the checkout" "$(readlink "$inst/state/resume-at-reset.sh")" "$here/resume-at-reset.sh"
 check "the copy a link replaced is archived" "$(cat "$inst/state/archive/fleet-scripts-$(date +%Y%m%d)/launch.sh")" "old copy"
 check "the fleet command is linked" "$(readlink "$inst/bin/fleet")" "$here/fleet"
@@ -643,15 +766,20 @@ check "#208: the doctor timer runs every 5 min into the data folder, and a faili
   "$(grep -c 'OnUnitActiveSec=5min' "$inst/units/fleet-doctor.timer") $(grep -E '^(ExecStart|SuccessExitStatus)=' "$inst/units/fleet-doctor.service" | tr '\n' '|')" \
   "1 SuccessExitStatus=1|ExecStart=/usr/bin/bash $inst/state/doctor.sh --json \"$KLEPSYDRA_DIR/fleet-health.json\"|"
 check "#208 review 1: and what it prints stays out of the journal" "$(grep -c '^StandardOutput=null$' "$inst/units/fleet-doctor.service")" "1"
-FLEET_STATE="$inst/s2" FLEET_UNITS="$inst/u2" FLEET_BIN="$inst/b2" bash "$here/install.sh" --dry-run --force >"$work/dry" 2>/dev/null
-check "a dry run says what it would do and changes nothing" "$(grep -c '^would' "$work/dry" | sed 's/^[1-9][0-9]*$/some/') $(find "$inst" -mindepth 1 -maxdepth 1 -printf '%f\n' | sort | tr '\n' ' ')" "some bin state units "
+FLEET_STATE="$inst/s2" FLEET_UNITS="$inst/u2" FLEET_BIN="$inst/b2" FLEET_HOOK_DIR="$inst/c2" bash "$here/install.sh" --dry-run --force >"$work/dry" 2>/dev/null
+check "a dry run says what it would do and changes nothing" "$(grep -c '^would' "$work/dry" | sed 's/^[1-9][0-9]*$/some/') $(find "$inst" -mindepth 1 -maxdepth 1 -printf '%f\n' | sort | tr '\n' ' ')" "some bin claude state units "
 
 repo=$work/repo
-git init -q "$repo" && cp -r "$here" "$repo/fleet" && git -C "$repo" add -A && git -C "$repo" -c user.name=t -c user.email=t@t commit -qm x
+git init -q "$repo" && cp -r "$here" "$repo/fleet"
+for c in "${HOOK_COPIES[@]}"; do mkdir -p "$(dirname "$repo/${c%% *}")"; cp "${here%/fleet}/${c%% *}" "$repo/${c%% *}"; done
+git -C "$repo" add -A && git -C "$repo" -c user.name=t -c user.email=t@t commit -qm x
 git -C "$repo" worktree add -q "$work/wt" 2>/dev/null
 guard() { FLEET_STATE="$inst/g" FLEET_UNITS="$inst/gu" FLEET_BIN="$inst/gb" bash "$1/fleet/install.sh" --dry-run >/dev/null 2>&1; echo $?; }
 check "the main checkout installs (10-29: from fleet/ git named its common dir relatively, so main read as a worktree)" "$(guard "$repo")" "0"
 check "a worktree is refused" "$(guard "$work/wt")" "2"
+mkdir -p "$work/onlyfleet" && cp -r "$here" "$work/onlyfleet/fleet"
+check "#244 review: a copy missing from the checkout fails the doctor, never an ok over nothing" \
+  "$(bash "$work/onlyfleet/fleet/doctor.sh" 2>/dev/null | grep -c "^FAIL installed copies: missing from $(tilde "$work/onlyfleet"): hooks/klepsydra-fleet.sh ")" "1"
 
 echo "cut-over"
 export SC="$work/sc" FLEET_LOG
@@ -739,6 +867,33 @@ reading a Personal 100 1000; reading b RIT 10 2000
 check "room elsewhere: the other account, when it has room" "$(room_elsewhere "$work/cfg-a" "$now")" "$work/cfg-b"
 reading b RIT 95 2000
 check "and none when it is nearly full too" "$(room_elsewhere "$work/cfg-a" "$now" || echo none)" "none"
+
+echo "fresh-now moves every row, even when a launch reads stdin (#242)"
+reading a Personal 95 1000; reading b RIT 10 2000
+S2=22222222-2222-4333-8444-555555555555
+fa=$(pane fma '{"above":["idle"],"exit_on_exit":true}'); fb=$(pane fmb '{"above":["idle"],"exit_on_exit":true}'); settle
+live "$fa"; live "$fb" "$S2"
+printf '%s\tfma\t%s\t%s\t/w\t%s\n%s\tfmb\t%s\t%s\t/w\t%s\n' "$fa" "$work/brief.src" "$SID" "$work/cfg-a" "$fb" "$work/brief.src" "$S2" "$work/cfg-a" >"$REGISTRY"
+: >"$work/fm.log"
+cat >"$work/launch-fm.sh" <<EOF
+#!/usr/bin/env bash
+# wt.exe drains whatever stdin its caller hands it (10-31): this records what it was handed.
+# Checked before any command substitution, whose pipe would take fd 3.
+[[ -e /proc/\$\$/fd/3 ]] && fd3=open || fd3=closed
+echo "\$(readlink /proc/\$\$/fd/0) fd3=\$fd3" >>"$work/fm.fds"
+echo "\$1 \${FLEET_ACCOUNT:-}" >>"$work/fm.log"
+new=\$(tmux -L "$FLEET_SOCK" new-window -d -P -F '#{pane_id}' -t fleet: "sleep 600")
+echo "\$new" >>"$work/fm.panes"
+echo "pane=\$new session=x account=\${FLEET_ACCOUNT:-} avail=1MiB brief=started"
+EOF
+# A pipe on stdin, not the runner's /dev/null, so the launch's own </dev/null is what the stub sees.
+out=$(printf 'stdin\n' | LAUNCH="$work/launch-fm.sh" bash "$here/fresh-now.sh" 2>/dev/null)
+check "both rows are moved to the account with room, not just the first" "$(sort "$work/fm.log" | tr '\n' '|')" "fma $work/cfg-b|fmb $work/cfg-b|"
+check "and each says so" "$(grep -c '^fresh: fm[ab] moved to' <<<"$out")" "2"
+check "each launch gets no stdin and not the registry's fd 3" "$(sort -u "$work/fm.fds")" "/dev/null fd3=closed"
+rm -f -- "${KLEPSYDRA_DIR:?}/fleet/$S2.json" "${KLEPSYDRA_DIR:?}/fleet/$SID.json"
+xargs -r -n1 tmux -L "$FLEET_SOCK" kill-pane -t <"$work/fm.panes" 2>/dev/null
+: >"$REGISTRY"
 reading a Personal 60 1000
 check "back room: under FLEET_BACK_ROOM_PCT (50%) free is not enough to move back" "$(back_room a "$now" && echo yes || echo no)" "no"
 reading a Personal 50 1000
@@ -868,6 +1023,7 @@ t kill-window -t "$h" 2>/dev/null
 cat >"$work/launch-hturn.sh" <<EOF
 #!/usr/bin/env bash
 printf '%s\n' "\$FLEET_ACCOUNT" "\$1" >"$work/moved"
+printf '%s\n' "\${FLEET_SUCCEEDS-unset}" >"$work/succeeds"
 jq '.turn_at = 999999999999' "$KLEPSYDRA_DIR/fleet/$SID.json" >"$work/st.json" && mv "$work/st.json" "$KLEPSYDRA_DIR/fleet/$SID.json"
 echo "pane=%993 session=aaaaaaaa-0000-4000-8000-0000000000cd account=\$FLEET_ACCOUNT avail=1MiB brief=started"
 EOF
@@ -878,6 +1034,7 @@ printf '%s\n' "$h" >"$FLEET_STATE/orchestrator.pane"; live "$h"
 LAUNCH="$work/launch-hturn.sh" FLEET_HEPH="$work/HEPH.md" FLEET_NOW=$noon bash "$here/resume-at-reset.sh" --once 2>/dev/null
 check "#198 review 4: a notification's turn during Heph's move at a limit does not keep him" \
   "$(events hturn) $(cat "$FLEET_STATE/orchestrator.pane")" "SUBMIT /exit %993"
+check "#226: the move names the session it replaces, so the new one takes its face" "$(cat "$work/succeeds")" "$SID"
 t kill-window -t "$h" 2>/dev/null; rm -f "$KLEPSYDRA_DIR/fleet/$SID.json" "$FLEET_STATE/resume-state"
 
 : >"$work/moved"; rm -f "$FLEET_STATE/orchestrator.config" "$FLEET_STATE/orchestrator.session"
@@ -1590,6 +1747,10 @@ printf 'brief A\n' >"$work/ba.src"; printf 'brief B\n' >"$work/bb.src"; printf '
 printf '%s\ta\t%s\t%s\t/w\n%s\tb\t%s\t%s\t/w\n%s\tc\t%s\t%s\t/w\n' %1 "$work/ba.src" "$SA" %2 "$work/bb.src" "$SB" %3 "$work/bc.src" "$SC" >"$REGISTRY"
 cat >"$work/launch-rec.sh" <<EOF
 #!/usr/bin/env bash
+# wt.exe drains whatever stdin its caller hands it (10-31): this records what recover hands it.
+# Checked before any command substitution, whose pipe would take fd 3.
+fds=; for f in 3 9; do [[ -e /proc/\$\$/fd/\$f ]] && fds+=" fd\$f=open" || fds+=" fd\$f=closed"; done
+echo "\$(readlink /proc/\$\$/fd/0)\$fds" >>"$work/rec.fds"
 n=\$(( \$(cat "$work/rec.n" 2>/dev/null || echo 900) + 1 )); echo \$n >"$work/rec.n"
 printf '%s %s settings=%s account=%s\n' "\$(date +%s.%N)" "\$1" "\${FLEET_SETTINGS-UNSET}" "\${FLEET_ACCOUNT:-}" >>"$work/rec.log"
 cp "\$2" "$work/rec-\$1.txt"
@@ -1613,8 +1774,9 @@ rec() { LAUNCH="$work/launch-rec.sh" FLEET_STAGGER_S=${STAG:-0} bash "$here/reco
 out=$(rec --dry-run --no-orchestrator)
 check "a dry run names what it would recover and launches nothing" "$(grep -c '^would recover' <<<"$out") $(wc -l <"$work/rec.log" 2>/dev/null || echo 0)" "2 0"
 check "the doctor names the agents whose sessions are gone" "$(bash "$here/doctor.sh" 2>/dev/null | grep '^FAIL agents')" "FAIL agents: sessions gone: b c: fleet recover"
-out=$(STAG=1 rec --no-orchestrator)
+out=$(printf 'stdin\n' | STAG=1 rec --no-orchestrator) # a pipe, so the launch's own </dev/null is checked
 check "a running agent is left alone; the others are launched fresh" "$out" $'running: a (%1)\nrecovered: b -> %901\nrecovered: c -> %902'
+check "#242: each launch gets no stdin, nor the registry's fd 3 or the recover lock's fd 9" "$(sort -u "$work/rec.fds")" "/dev/null fd3=closed fd9=closed"
 check "the brief: why, its last two replies, its newest IMPL.md, then the brief" \
   "$(grep -c 'stopped by a hard shutdown' "$work/rec-b.txt") $(grep -c '^> first reply' "$work/rec-b.txt") $(grep -c '^> second reply$' "$work/rec-b.txt") $(grep -c '^> third reply$' "$work/rec-b.txt") $(grep -o 'IMPL.md: .*' "$work/rec-b.txt") | $(tail -1 "$work/rec-b.txt")" \
   "1 0 1 1 IMPL.md: $repo/.claude/worktrees/wt/IMPL.md | brief B"
@@ -1908,6 +2070,11 @@ check "FLEET_SETTINGS= starts claude with no --settings" "$(grep -c -- '--settin
 check "#183: workers run keryx off (only Heph speaks), from the installed worker settings" \
   "$(jq -r '.env.KERYX_ENABLED' "$here/worker-settings.json")" "false"
 check "#172: the session is told its agent's name, so its card keeps its face across a move" "$(grep -c 'KLEPSYDRA_AGENT=nosettings ' "$work/cmd")" "1"
+check "#226: and no successor unless a move names one" "$(grep -c 'KLEPSYDRA_SUCCEEDS' "$work/cmd")" "0"
+FLEET_SUCCEEDS=11111111-2222-4333-8444-555555555555 FLEET_SETTINGS='' FLEET_SCOPE=0 FLEET_MIN_AVAIL_MB=0 FLEET_LAUNCHER="$work/launcher-rec.sh" FLEET_DIR="$work" \
+  FLEET_CLAUDE="python3 -I $fake $work/nosettings.json $work/nosettings.log" bash "$here/launch.sh" nosettings "$work/task.src" >/dev/null 2>&1
+check "#226: a move's successor id reaches the session; anything else is dropped" \
+  "$(grep -c 'KLEPSYDRA_SUCCEEDS=11111111-2222-4333-8444-555555555555 ' "$work/cmd")" "1"
 voiced() { # VOICES SETTINGS: the command launch.sh builds with the wall's Voices set to VOICES ("-": prefs as they are)
   [[ $1 == - ]] || jq -n --arg v "$1" 'if $v == "" then {} else {voices: $v} end' >"$KLEPSYDRA_DIR/prefs.json"
   : >"$work/nosettings.log"
@@ -1948,7 +2115,7 @@ git -C "$work/brief" -c user.name=t -c user.email=t@t commit -q --allow-empty -m
 printf '#!/usr/bin/env bash\n[[ -e %s ]] && { echo "leak: token"; exit 1; }\nexit 0\n' "$work/leak" >"$work/bin/gitleaks"; chmod +x "$work/bin/gitleaks"
 bsync() { BRIEFING_DIR="$work/brief" FLEET_GITLEAKS="$work/bin/gitleaks" GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t bash "$here/sync-briefing.sh" 2>/dev/null; echo $?; }
 check "nothing changed: no commit" "$(bsync) $(git -C "$work/brief" rev-list --count HEAD)" "0 1"
-printf 'q\n' >"$work/brief/claude-queue.md"; printf 'x\n' >"$work/brief/notes.txt"
+printf 'q\n' >"$work/brief/claude-queue.md"; printf 'n\n' >"$work/brief/needs-you.md"; printf 'x\n' >"$work/brief/notes.txt"
 touch "$work/leak"
 check "a gitleaks finding blocks the commit, and is logged" "$(bsync) $(git -C "$work/brief" rev-list --count HEAD) $(jq -r 'select(.message | contains("gitleaks found")) | .level' "$FLEET_LOG")" "1 1 ERROR"
 check "and leaves nothing staged" "$(git -C "$work/brief" diff --cached --name-only | wc -l)" "0"
@@ -1957,7 +2124,7 @@ printf '#!/usr/bin/env bash\necho "ERR [git] fatal: bad object" >&2\nexit 0\n' >
 check "a scanner that exits 0 with an error is no verdict" \
   "$(BRIEFING_DIR="$work/brief" FLEET_GITLEAKS="$work/bin/gitleaks-err" bash "$here/sync-briefing.sh" 2>/dev/null; echo $?) $(git -C "$work/brief" rev-list --count HEAD)" "1 1"
 check "a change is committed and pushed" "$(bsync) $(git -C "$work/brief-remote.git" rev-list --count HEAD)" "0 2"
-check "only the briefing's own files go in" "$(git -C "$work/brief" show --name-only --format= HEAD)" "claude-queue.md"
+check "only the briefing's own files go in, AJ's needs-you.md included" "$(git -C "$work/brief" show --name-only --format= HEAD | paste -sd' ')" "claude-queue.md needs-you.md"
 git -C "$work/brief" -c user.name=t -c user.email=t@t commit -q --allow-empty -m "a prune commit"
 touch "$work/leak"
 check "a commit about to be pushed is scanned first" "$(bsync) $(git -C "$work/brief-remote.git" rev-list --count HEAD)" "1 2"

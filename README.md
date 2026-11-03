@@ -164,10 +164,15 @@ the wall needs tmux 3.3 or later (`remain-on-exit failed`); Ubuntu 24.04's 3.4
 is the tested version.
 
 ```bash
-cp statusline/klepsydra-statusline.sh hooks/klepsydra-fleet.sh hooks/klepsydra-launch.sh hooks/klepsydra-tmux.conf ~/.claude/
-cp src/fleet/themes/kourai.json ~/.claude/klepsydra-cast.json
-chmod +x ~/.claude/klepsydra-statusline.sh ~/.claude/klepsydra-fleet.sh ~/.claude/klepsydra-launch.sh
+make install-hooks   # from the main checkout
 ```
+
+It copies the status line, hooks, launcher, tmux settings, wrap-up hook and
+skill, and the cast (as `klepsydra-cast.json`) into `~/.claude`, and archives a
+copy it replaces. `make install-fleet` (see [Fleet engine](#fleet-engine)) does
+the same on every deploy, so a fleet never runs an old hook, and `fleet doctor`
+fails while a copy differs from the checkout. The list is `HOOK_COPIES` in
+`fleet/lib.sh`.
 
 Then merge this into `~/.claude/settings.json` (into each config dir's
 `settings.json` if you run two logins):
@@ -210,17 +215,11 @@ with subagents or background shells still running stays working. A subagent
 whose start was missed is picked up from its own tool events.
 For the gauge alone, keep `statusLine` and leave out `hooks`.
 
-For Wrap up (see [Wrapping up](#wrapping-up)), also copy its script and its
-skill, and register the script as a second `Stop` hook. Unlike the fleet
+For Wrap up (see [Wrapping up](#wrapping-up)), step 1 installs its script and
+skill; register the script as a second `Stop` hook. Unlike the fleet
 hook it is not `async`: Claude Code reads what it prints, which is nothing
 unless the wall has asked for a wrap-up and this session has not yet been
 asked.
-
-```bash
-cp hooks/klepsydra-wrapup.sh ~/.claude/ && chmod +x ~/.claude/klepsydra-wrapup.sh
-mkdir -p ~/.claude/skills/klepsydra-wrapup
-cp hooks/klepsydra-wrapup.md ~/.claude/skills/klepsydra-wrapup/SKILL.md
-```
 
 A second Claude Code config folder (another `CLAUDE_CONFIG_DIR`) needs the
 skill too, at `skills/klepsydra-wrapup/SKILL.md` inside it: a typed
@@ -345,7 +344,7 @@ are small, and rewritten on the next render.
 copy in your `~/.claude`, so an upgraded overlay meets a hook still publishing
 to the previous location, `%LOCALAPPDATA%\klepsydra`. The overlay reads both, so
 the gauge keeps working either way; once the hook is re-copied, that folder
-holds nothing current and can be deleted. Re-copy `klepsydra-cast.json` too: a
+holds nothing current and can be deleted. Step 1 re-copies `klepsydra-cast.json` too: a
 cast from before the character colours has no accents, so the buttons would
 lack markers while their tmux windows stay plain. The same holds whenever the cast
 grows: a voice missing from the installed copy gets no window colour. A fleet
@@ -761,16 +760,22 @@ wall with only an ended card, and `&theme=professions` or `&theme=dicebear`
 another character theme.
 
 A session's face follows its keryx voice, so it stays the same while the
-session moves between repos. Fifteen voices, all fourteen in keryx's rotation pool
-and `af_nicole` (keryx's fifteenth, before any blend), are cast as characters and
-show their portraits: ten from kourai-khryseai and five (Chronos, Argos, Hermes,
-Elpis, Hesychia) painted for this app. Portraits are drawn to one canon: the
+session moves between repos. Sixteen voices, all fourteen in keryx's rotation pool,
+`af_nicole` (keryx's fifteenth, before any blend) and `bf_alice` (Techne's, which only a pick lands on), are cast
+as characters and show their portraits: ten from kourai-khryseai and six (Chronos,
+Argos, Hermes, Elpis, Hesychia, Athena) painted for this app. Portraits are drawn to one canon: the
 gods who run the forge (Hephaestus, Athena) are drawn in flesh, the golden
 maidens Hephaestus forged (Techne, Metis, Mneme, Kallos, Dokimasia, Aidos) in
 gold or metal, and the visitors (Hermes, Chronos, Argos, Elpis, Hesychia,
-Aletheia, Cupid, Puck) as themselves. Athena's first portrait, in gold,
-predates the canon. `docs/characters/portrait-briefs.md` holds a paste-ready
-kit for each painted character. Any other voice shows the voice's name
+Aletheia, Cupid, Puck) as themselves. `docs/characters/portrait-briefs.md` holds a paste-ready
+kit for each painted character. The orchestrator wears Hephaestus or
+Athena (`bf_emma`), equals, one per session: a new
+orchestrator session takes the one no other orchestrator card on the wall
+wears (a live one first), keeps it, and a `/clear` passes it on. With both
+shown it is the one seen least recently; on a tie or with neither, the one
+`~/.local/state/fleet-orchestrator/orchestrator.face` names (`athena`, else
+Hephaestus). No worker ever wears either.
+Any other voice shows the voice's name
 and a forge medallion: a laurel ring on a dark disc around the name's
 initial, struck in one of six kourai metals (gold, bronze, copper, rose gold,
 pale gold, verdigris) picked by the voice, so two voices with one initial
@@ -1309,7 +1314,8 @@ runs on the first account with room, in the fleet's order, then on each other lo
 when one is at its usage limit. If any account was at its limit, the triage
 waits and is tried again every 10 minutes, for up to a day, and the red is
 routed once it has its cause or has waited 30 minutes. It also
-gets one line under "Needs you" in the queue file. Dependabot's reds are kept
+gets one line under "Needs you" in the file `FLEET_QUEUE` names (default
+`fleet-briefing/needs-you.md`, AJ's to-do file). Dependabot's reds are kept
 for the morning instead. Once a day (after `CI_SWEEP_HOUR`, default 6) the
 latest green run on each default branch is read for warnings. The watcher
 pushes, merges and re-runs nothing. No error stops it: a repo that cannot be
@@ -1379,7 +1385,8 @@ usage limit, and check the fleet's health. `make install-fleet` links each one
 from this checkout into the fleet's state folder (`~/.local/state/fleet-orchestrator`,
 or `FLEET_STATE`), so pulling main updates the fleet. It also links the `fleet`
 command into `~/.local/bin` and writes the services as user units in
-`~/.config/systemd/user`, which start again after a reboot. A copy a link
+`~/.config/systemd/user`, which start again after a reboot, and makes step 1's
+copies into `~/.claude`. A copy a link
 replaces goes to `archive/fleet-scripts-<date>/`. Runtime state (`panes.tsv`,
 briefs, logs) stays in the state folder.
 
@@ -1387,7 +1394,7 @@ briefs, logs) stays in the state folder.
 |---|---|
 | `fleet doctor` | One line per check: the resume service, its last pass, Remote Control on every registered pane and the orchestrator's, the phone wall locally and over Tailscale Serve with a fresh `fleet.json`, a pane watcher, and briefs' shared rules. Exits non-zero on any failure. `--json FILE` also writes the checks as a report, and logs only a check that changed status (a recovery without its detail). The `fleet-doctor.timer` runs it every 5 min into the data folder's `fleet-health.json`, which the wall and the phone show as a **Fleet** button beside **CI**: failing checks first, `Fleet ?` when the report is over 15 minutes old, no links and `~` for the home folder. |
 | `fleet log [N]` | The last N decisions as plain lines. |
-| `fleet brief NAME BODY` | Writes `task-NAME.src`: BODY, then the shared rules in `fleet/brief-tail.md`. `--check` lists briefs whose rules drifted. |
+| `fleet brief NAME BODY` | Writes `task-NAME.src`: BODY, then the shared rules in `fleet/brief-tail.md`. `--check` lists briefs whose rules drifted; `--refresh` rewrites them with the current rules, dropping any rule an earlier tail held (word for word or by its label) and keeping lines added after them. |
 | `fleet cutover` | Restarts the resume service on the installed scripts and confirms its start is logged. |
 | `fleet agora post [--kind gripe\|win\|idea\|wish\|kudos] TEXT` | Posts one line (280 characters) on the Agora, signed with the session's character, agent and repo, from inside a fleet session. Optional for agents, one post an hour each; a post that looks like it holds a secret is refused. Posts are JSON lines in `agora/posts.jsonl` in klepsydra's data folder. `fleet agora list [N]` shows the newest. |
 | `fleet/launch.sh NAME BRIEF` | Starts an agent with its own session id in a memory-capped scope. It turns Remote Control on and waits for it to settle, pastes the brief, checks the brief reached the prompt, then submits it. A retry never sends Escape. It records the pane, session id and folder in `panes.tsv`. |

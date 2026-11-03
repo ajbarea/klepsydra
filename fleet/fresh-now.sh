@@ -12,7 +12,8 @@ here=$(dirname "$(readlink -f "$0")")
 # shellcheck source=fleet/lib.sh
 . "$here/lib.sh"
 want=" $* "
-while IFS=$'\t' read -r p name brief sid _ account; do
+# The registry comes in on fd 3: a launch (wt.exe) drains stdin (#242).
+while IFS=$'\t' read -r -u 3 p name brief sid _ account; do
   [[ -n $p && -n $name && -n $brief ]] || continue
   [[ $# -gt 0 && $want != *" $p "* ]] && continue
   if ! pane_runs "$p" "$sid"; then
@@ -30,7 +31,7 @@ while IFS=$'\t' read -r p name brief sid _ account; do
   best=$(best_account "$(date +%s)")
   if [[ -n $best && $best != "$account" && $(account_of "$best") != "$(account_of "$account")" ]]; then
     out=$(FLEET_ACCOUNT=$best FLEET_WHY="had grown too large to keep resuming, and starts again on the preferred account with room" \
-      bash "$here/relaunch-fresh.sh" "$p" "$name" "$brief" "none: carry on from the brief" 2>/dev/null | head -1)
+      bash "$here/relaunch-fresh.sh" "$p" "$name" "$brief" "none: carry on from the brief" </dev/null 3<&- 2>/dev/null | head -1)
     flog INFO "fresh session on the preferred account with room" pane="$p" name="$name" from="$account" to="$best" result="$out"
     echo "fresh: $name moved to $best: $out"
     continue
@@ -59,4 +60,4 @@ while IFS=$'\t' read -r p name brief sid _ account; do
   got=$(deliver "$p" "$txt")
   flog INFO "fresh session via /clear" pane="$p" name="$name" brief="$got"
   echo "fresh: $name in $p: $got"
-done < <(cat "$REGISTRY" 2>/dev/null)
+done 3< <(cat "$REGISTRY" 2>/dev/null)
