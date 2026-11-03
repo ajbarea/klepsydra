@@ -3,7 +3,7 @@
 # Each suite runs under flock on a private lock and is stopped after a few
 # seconds: by TERM, its trap stops its tmux server; by KILL, no trap runs and
 # the server outlives it, but holds no descriptor of the lock.
-# Run: bash fleet/test_heavy_lock.sh
+# Run: make test-heavy-lock (it takes the heavy lock)
 set -uo pipefail
 
 root=$(cd "$(dirname "$0")/.." && pwd)
@@ -62,34 +62,51 @@ for suite in fleet/test_fleet.sh hooks/test_launch.sh; do
   for s in $left; do tmux -S "$sockdir/$s" kill-server 2>/dev/null; done
 done
 
-echo "fleet/heavy.sh (#291 review 4)"
+echo "fleet/heavy.sh (#291 reviews 4 and 5)"
 hl="$work/heavy-sh.lock"; : >"$hl"
 hv() { FLEET_HEAVY_LOCK=$hl "$root/fleet/heavy.sh" "$@"; }
+gone() { # pattern: wait up to 5 s for no process with that exact command line
+  for _ in $(seq 50); do pgrep -fx "$1" >/dev/null || { echo gone; return; }; sleep 0.1; done
+  echo running; pkill -fx "$1" 2>/dev/null
+}
+held() { flock -n "$hl" true && echo free || echo held; }
 check "a free lock: the command runs, quietly" "$(hv echo ran 2>&1)" "ran"
+check "the caller's stdin reaches the command" "$(echo hi | hv cat)" "hi"
 flock -o "$hl" sleep 1.5 &
 holder=$!
-sleep 0.3
+for _ in $(seq 50); do [[ $(held) == held ]] && break; sleep 0.05; done
 check "a held lock: it says who holds it, then runs once the lock is free" \
   "$(hv echo ran 2>&1 | sed "s/pid $holder/pid HOLDER/")" $'heavy.sh: waiting for '"$hl"$' (held by pid HOLDER)\nran'
 wait "$holder"
 out=$(timeout 10 flock -o "$hl" bash -c "FLEET_HEAVY_LOCK='$hl' '$root/fleet/heavy.sh' echo ran" 2>&1)
 check "inside an outer flock on the same file: refused at once, not a wait until the timeout" \
   "$? $(grep -c 'already holds' <<<"$out") $(grep -c '^ran$' <<<"$out")" "2 1 0"
+check "a lock file it cannot open: refused, not a wait" \
+  "$(FLEET_HEAVY_LOCK=$work/no-such-dir/l "$root/fleet/heavy.sh" echo ran 2>&1; echo "rc=$?")" $'heavy.sh: cannot open '"$work"$'/no-such-dir/l\nrc=2'
 check "the timeout stops the command" "$(FLEET_HEAVY_TIMEOUT=1 hv sleep 5; echo $?)" "124"
-# Ctrl-C reaches the whole process group: with timeout's own group (no
-# --foreground) the command outlived it with the lock already free.
-# A script's & job starts with SIGINT ignored; a terminal's Ctrl-C finds it at its default.
-setsid env --default-signal=INT FLEET_HEAVY_LOCK="$hl" "$root/fleet/heavy.sh" sleep 31.7 &
-sj=$!
-# Found by its own command line: without --foreground it sits in another group.
-for _ in $(seq 50); do pgrep -fx 'sleep 31.7' >/dev/null && break; sleep 0.05; done
-check "a run in progress holds the lock" "$(flock -n "$hl" true && echo free || echo held)" "held"
-kill -INT -- "-$sj" 2>/dev/null
-wait "$sj" 2>/dev/null
-sleep 0.3
-check "Ctrl-C to its group: the command is gone and the lock is free" \
-  "$(pgrep -fx 'sleep 31.7' >/dev/null && echo running || echo gone) $(flock -n "$hl" true && echo free || echo held)" "gone free"
-pkill -fx 'sleep 31.7' 2>/dev/null
+# The limit bounds every process the command started (review 5: under
+# --foreground a suite's TERM trap waited on its stuck child, and a
+# background grandchild outlived the run with the lock already free).
+s0=$SECONDS
+FLEET_HEAVY_TIMEOUT=1 hv bash -c 'trap "exit 143" TERM; sleep 30.1'
+check "a suite that traps TERM, stuck in a child: ended at the limit" "$(( SECONDS - s0 < 5 )) $(gone 'sleep 30.1')" "1 gone"
+FLEET_HEAVY_TIMEOUT=1 hv bash -c 'sleep 30.2 & wait'
+check "a background grandchild: ended with it" "$(gone 'sleep 30.2') $(held)" "gone free"
+s0=$SECONDS
+FLEET_HEAVY_TIMEOUT=1 FLEET_HEAVY_KILL_S=1 hv bash -c 'trap "" TERM; sleep 30.3'
+check "a command that ignores TERM: killed after the grace" "$(( SECONDS - s0 < 6 )) $(gone 'sleep 30.3') $(held)" "1 gone free"
+# Ctrl-C, or a tool call stopped, signals heavy.sh's group; the command runs in
+# timeout's own group, so heavy.sh passes it on. A script's & job starts with
+# SIGINT ignored; a terminal's Ctrl-C finds it at its default.
+for sig in INT TERM; do
+  setsid env --default-signal=INT FLEET_HEAVY_LOCK="$hl" "$root/fleet/heavy.sh" sleep 31.7 &
+  sj=$!
+  for _ in $(seq 50); do pgrep -fx 'sleep 31.7' >/dev/null && break; sleep 0.05; done
+  check "a run in progress holds the lock" "$(held)" "held"
+  kill -"$sig" -- "-$sj" 2>/dev/null
+  wait "$sj" 2>/dev/null
+  check "$sig to its group: the command is gone and the lock is free" "$(gone 'sleep 31.7') $(held)" "gone free"
+done
 
 echo
 echo "$pass passed, $fail failed"

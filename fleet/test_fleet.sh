@@ -713,27 +713,25 @@ check "the tail says performance wins over security above the floor (AJ 11-01)" 
 check "the tail carries the team-ceremony rule (AJ 10-29)" "$(grep -c '^Team ceremony in every repo' "$here/brief-tail.md")" "1"
 check "the tail keeps asks for AJ out of public issues and PRs (AJ 10-29)" "$(grep -c '^Asks for AJ stay private' "$here/brief-tail.md")" "1"
 check "#239: the tail has heavy commands take the lock with flock -o, so nothing they leave running keeps it" "$(grep -c 'flock -o /tmp/fleet-heavy.lock' "$here/brief-tail.md")" "1"
-check "#291 review: the tail says the make targets take the lock themselves and run bare" "$(grep -c 'make test-fleet., .make test-launch. and .make shellcheck. in klepsydra take the lock themselves: run them bare' "$here/brief-tail.md")" "1"
-check "#291 review 4: the tail's hand form keeps the timeout in the caller's group" "$(grep -c 'flock -o /tmp/fleet-heavy.lock timeout --foreground 1800 <command>' "$here/brief-tail.md")" "1"
+check "#291 review: the tail says the make targets take the lock themselves and run bare" "$(grep -c 'make test-fleet., .make test-launch., .make test-heavy-lock. and .make shellcheck. in klepsydra take the lock themselves: run them bare' "$here/brief-tail.md")" "1"
+check "#291 review 5: the tail's hand form puts a group-wide timeout inside the lock (no --foreground)" "$(grep -c 'flock -o /tmp/fleet-heavy.lock timeout 1800 <command>' "$here/brief-tail.md") $(grep -c -- '--foreground' "$here/brief-tail.md")" "1 0"
 # Every target whose recipe runs $(HEAVY) (#291 review 4): it takes the lock
 # unless the caller says it holds it, a test target runs a file that exists,
 # and the brief tail, the skill context and CI each name it.
-heavy_targets=$(awk '/^[A-Za-z][A-Za-z0-9_-]*:/ { t = $1; sub(/:.*/, "", t) } /^\t\$\(HEAVY\)/ { print t }' "$here/../Makefile" | paste -sd ' ' -)
-check "#291 review 4: the Makefile's heavy targets" "$heavy_targets" "test-fleet test-launch shellcheck"
+heavy_targets=$(awk '/^[A-Za-z][A-Za-z0-9_-]*:/ { t = $1; sub(/:.*/, "", t) } /^\t@?\$\(HEAVY\)/ { print t }' "$here/../Makefile" | paste -sd ' ' -)
+check "#291 review 4: the Makefile's heavy targets" "$heavy_targets" "test-fleet test-launch test-heavy-lock shellcheck"
+# What each runs, exactly (review 5: "a file that exists" passed a swapped suite).
+declare -A heavy_runs=([test-fleet]="bash fleet/test_fleet.sh" [test-launch]="bash hooks/test_launch.sh"
+  [test-heavy-lock]="bash fleet/test_heavy_lock.sh" [shellcheck]="sc -x hooks/*.sh statusline/*.sh scripts/*.sh fleet/*.sh fleet/fleet")
 for ht in $heavy_targets; do
-  hf=-
-  if [[ $ht == test-* ]]; then
-    hf=$(make -s -n -C "$here/.." "$ht" FLEET_HEAVY_HELD=1 | grep -oE '[A-Za-z0-9_/]+[.]sh' | head -1)
-    [[ -f $here/../$hf ]] && hf=exists || hf="missing: $hf"
-  fi
-  check "#291 review 4: make $ht takes the lock unless held, runs what it names, and the tail, skill context and CI name it" \
-    "$(make -s -n -C "$here/.." "$ht" FLEET_HEAVY_HELD= | grep -c 'bash fleet/heavy.sh') $(make -s -n -C "$here/.." "$ht" FLEET_HEAVY_HELD=0 | grep -c 'fleet/heavy.sh') $(make -s -n -C "$here/.." "$ht" FLEET_HEAVY_HELD=1 | grep -c 'heavy.sh') $hf $(grep -c "make $ht" "$here/brief-tail.md") $(grep -c "make $ht" "$here/../.claude/skill-context.md" | sed 's/^[1-9][0-9]*$/1/') $(grep -c "make $ht .*FLEET_HEAVY_HELD=1" "$here/../.github/workflows/ci.yml")" \
-    "1 1 0 $([[ $ht == test-* ]] && echo exists || echo -) 1 1 1"
+  check "#291 review 4: make $ht takes the lock unless held, runs its own suite, and the tail, skill context and CI name it" \
+    "$(make -s -n -C "$here/.." "$ht" FLEET_HEAVY_HELD= SHELLCHECK=sc | grep -cxF "FLEET_HEAVY_HELD=1 bash fleet/heavy.sh ${heavy_runs[$ht]:-?}") $(make -s -n -C "$here/.." "$ht" FLEET_HEAVY_HELD=0 | grep -c 'fleet/heavy.sh') | $(make -s -n -C "$here/.." "$ht" FLEET_HEAVY_HELD=1 SHELLCHECK=sc) | $(grep -c "make $ht" "$here/brief-tail.md") $(grep -c "make $ht" "$here/../.claude/skill-context.md" | sed 's/^[1-9][0-9]*$/1/') $(grep -c "make $ht .*FLEET_HEAVY_HELD=1" "$here/../.github/workflows/ci.yml")" \
+    "1 1 | ${heavy_runs[$ht]:-?} | 1 1 1"
 done
 # Any doc, anywhere on a line: a heavy suite or the tree's shellcheck run by
 # hand, or the heavy lock taken without -o (#291 reviews 2 to 4). Plans are
 # history, so they are left out. A sweep with no docs to read says so.
-bare_re="((^|[ \`(;&|])(ba)?sh( +-[a-z]+)* +|(^|[ \`(;&|])[.]/)((([^ \`]*/)?fleet/)?test_fleet|([^ \`]*/)?test_launch)[.]sh|shellcheck( +-[-A-Za-z=]+)* +[^ \`]*(hooks|fleet|statusline|scripts)/[^ \`]*[*]"
+bare_re="((^|[ \`(;&|])(ba)?sh( +-[a-z]+)* +|(^|[ \`(;&|])[.]/)((([^ \`]*/)?fleet/)?test_fleet|([^ \`]*/)?(fleet/)?test_heavy_lock|([^ \`]*/)?test_launch)[.]sh|shellcheck( +-[-A-Za-z=]+)* +[^ \`]*(hooks|fleet|statusline|scripts)/[^ \`]*[*]"
 docs_bare() { # repo
   local docs
   docs=$(git -C "$1" ls-files -- '*.md' ':!docs/superpowers/plans/' 2>/dev/null)
@@ -741,7 +739,8 @@ docs_bare() { # repo
   (
     cd "$1" || exit
     git ls-files -z -- '*.md' ':!docs/superpowers/plans/' | xargs -0 grep -nE "$bare_re"
-    git ls-files -z -- '*.md' ':!docs/superpowers/plans/' | xargs -0 grep -nE 'flock[^|;&`]*/tmp/fleet-heavy[.]lock' | grep -vE 'flock +-o +/tmp/fleet-heavy[.]lock'
+    # Each flock on the lock, not each line: a line may hold a good form and a bad one.
+    git ls-files -z -- '*.md' ':!docs/superpowers/plans/' | xargs -0 grep -noE 'flock( +-[^ `]+( +[0-9]+)?)* +/tmp/fleet-heavy[.]lock' | grep -vE ':flock( +[^ ]+)* +-o( |$)'
   ) | sort -u
 }
 check "#291 review 3: no doc runs a heavy suite or the tree's shellcheck by hand; the make targets do" \
@@ -754,17 +753,15 @@ git -C "$sw" init -q
 # shellcheck disable=SC2016 # the backticks are the doc's, not a command
 printf '%s\n' 'Run `bash hooks/test_launch.sh` first.' 'then (shellcheck -x fleet/*.sh).' 'Or: flock /tmp/fleet-heavy.lock make x' './fleet/test_fleet.sh' \
   'cd fleet && bash test_fleet.sh' 'bash -x fleet/test_fleet.sh' 'sh hooks/test_launch.sh' 'shellcheck --external-sources hooks/*.sh' \
-  'flock -w 60 /tmp/fleet-heavy.lock make y' >"$sw/bare.md"
+  'flock -w 60 /tmp/fleet-heavy.lock make y' 'Good: `flock -o /tmp/fleet-heavy.lock x`, bad: flock /tmp/fleet-heavy.lock y' 'bash fleet/test_heavy_lock.sh' >"$sw/bare.md"
 # shellcheck disable=SC2016
 printf '%s\n' 'Run `make test-fleet` bare; the hook suite runs bare too: `bash hooks/test_fleet.sh`.' 'One file: `uvx --from shellcheck-py shellcheck -x fleet/lib.sh`.' 'See [the suite](../fleet/test_fleet.sh); `fleet/test_fleet.sh` takes 19 min.' \
-  'Hand form: `flock -o /tmp/fleet-heavy.lock timeout --foreground 1800 <command>`.' >"$sw/ok.md"
+  'Hand form: `flock -o /tmp/fleet-heavy.lock timeout 1800 <command>`, or flock -w 60 -o /tmp/fleet-heavy.lock z.' >"$sw/ok.md"
 printf '%s\n' 'bash fleet/test_fleet.sh' >"$sw/docs/superpowers/plans/old.md"
 git -C "$sw" add -A
-check "#291 review 4: the sweep finds each of 9 bare forms, only in bare.md" \
-  "$(docs_bare "$sw" | wc -l) $(docs_bare "$sw" | grep -vc '^bare[.]md:')" "9 0"
+check "#291 review 4: the sweep finds each of 11 bare forms, only in bare.md" \
+  "$(docs_bare "$sw" | wc -l) $(docs_bare "$sw" | grep -vc '^bare[.]md:')" "11 0"
 check "#291 review 4: a sweep with no docs to read fails" "$(docs_bare "$work/sweep291-none" | wc -l) $(docs_bare "$work/sweep291-none" | grep -c 'no docs to sweep')" "1 1"
-check "#291 review: make shellcheck lints what CI lints, with -x" \
-  "$(make -s -n -C "$here/.." shellcheck SHELLCHECK=sc FLEET_HEAVY_HELD=1)" "sc -x hooks/*.sh statusline/*.sh scripts/*.sh fleet/*.sh fleet/fleet"
 check "#185: the tail offers the Agora as optional and asks a post to name something real" "$(grep -c '^Agora (AJ 10-29, optional, never a task).*names something real' "$here/brief-tail.md")" "1"
 
 echo "doctor"

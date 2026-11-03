@@ -11,7 +11,7 @@ Resume from this file, `git log`, open PRs and their comments. Brief: task-fleet
   - agents: finished agents youtube, cisc810, bonsai-prs still have rows in panes.tsv. The remote-control check calls the same rows a warn ("a finished agent's row"), the agents check a FAIL, so the wall's Fleet health shows red until Heph prunes them. Candidate small fix: tell finished rows apart from a hard shutdown in doctor.sh's agents check.
 
 ## Next (in order)
-1. Windows build (`flock -o /tmp/fleet-heavy.lock timeout --foreground 3600 bash scripts/build-windows.sh`) for #190, #191, #194, #195, #207, #210, #211; reinstall; click a card's GitHub mark once and check the `open github` log line (#195).
+1. Windows build (`flock -o /tmp/fleet-heavy.lock timeout 3600 bash scripts/build-windows.sh`) for #190, #191, #194, #195, #207, #210, #211; reinstall; click a card's GitHub mark once and check the `open github` log line (#195).
 2. #216 launches must not steal focus (new-window -d), #217 needs-you lingering after a permission answer.
 3. #150 (research done: portable-pty + xterm.js, a grouped tmux session), #154 wall Recover button, #158 `--apply`, #157 part 3, #185 part 3, #204 demo mode, #215, #163.
 

@@ -28,8 +28,9 @@ belong here.
   Jump to terminal (UI Automation) also compiles only for Windows, and WSL
   has no WebKitGTK headers, so the app crate is checked with
   `bash scripts/build-windows.sh --check`; the fleet crate tests anywhere.
-- runner: a small Makefile: `make test-fleet`, `make test-launch` and
-  `make shellcheck` take the fleet's heavy lock themselves (run them bare),
+- runner: a small Makefile: `make test-fleet`, `make test-launch`,
+  `make test-heavy-lock` and `make shellcheck` take the fleet's heavy lock
+  themselves (run them bare),
   `make install-fleet`. No
   `logs/dev-<ts>-*.log` archive convention, so the audit's log-reconciliation phase is N/A.
 - data flow: Claude Code pipes a JSON blob to the `statusLine` command on every
@@ -89,6 +90,7 @@ files belong to: the JS guards scan hooks and scripts too.
   request is unasked, never blocks a stop, fails open) and its reporter.
 - `make test-launch` (takes the heavy lock itself: run it bare): the tmux launcher against a private tmux server
   and a stub `wt.exe` (one tab per fleet, a failed launch starts nothing).
+- `make test-heavy-lock` (takes the heavy lock itself): a stopped suite keeps no lock, and fleet/heavy.sh's waits, refusals and limits.
 - `bash scripts/test_build_windows.sh`: the Windows build's stage-name check.
 - `cd src-tauri && cargo test -p klepsydra-fleet`: the fleet reader, the OTLP
   receiver and the phone wall server (each spawned on a free loopback port)

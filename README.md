@@ -1437,7 +1437,7 @@ and keeps four old files. `jq 'select(.level == "ERROR")'` lists failures.
 
 ## Tests
 
-The three `make` targets start tmux servers or lint the whole tree, so each
+The four `make` targets start tmux servers or lint the whole tree, so each
 takes the fleet's heavy lock (`/tmp/fleet-heavy.lock`) itself: run them bare.
 
 ```bash
@@ -1445,6 +1445,7 @@ bash statusline/test_statusline.sh       # usage hook and heartbeat, against rec
 bash hooks/test_fleet.sh                 # fleet hook: states, where, identity, pruning, gone, settings, window colours
 make test-launch                         # launcher: new, jump, tab reuse, against a private tmux socket
 make test-fleet                          # fleet engine: limits, resets, typed lines, launch delivery, doctor, against fake panes
+make test-heavy-lock                     # a stopped suite keeps no lock; heavy.sh waits, refuses and limits
 make shellcheck                          # CI's shell lint, with -x
 bash scripts/test_measure_memory.sh      # the release memory check
 python3 -I fleet/test_ci_watch.py        # CI watch: which runs count, triage once, Dependabot, 304s

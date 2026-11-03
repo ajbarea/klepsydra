@@ -1,4 +1,4 @@
-.PHONY: install-hooks install-fleet test-fleet test-launch shellcheck
+.PHONY: install-hooks install-fleet test-fleet test-launch test-heavy-lock shellcheck
 
 # Copy the hooks, status line, launcher and cast into ~/.claude (fleet/install.sh --hooks).
 install-hooks:
@@ -14,7 +14,7 @@ install-fleet:
 # same file the inner one would wait on the outer forever. FLEET_HEAVY_HELD=1 says
 # the caller holds it already (or, in CI, that there is none to take); any other
 # value takes it. fleet/heavy.sh says when it waits, refuses a lock its caller
-# holds, and keeps the timeout in the caller's process group (Ctrl-C ends the run).
+# holds, and ends every process the run started at its limit or on Ctrl-C.
 HEAVY = $(if $(filter 1,$(FLEET_HEAVY_HELD)),,FLEET_HEAVY_HELD=1 bash fleet/heavy.sh)
 # The files and flags CI's shell lint uses.
 SHELLCHECK ?= uvx --from shellcheck-py shellcheck
@@ -25,6 +25,9 @@ test-fleet:
 
 test-launch:
 	$(HEAVY) bash hooks/test_launch.sh
+
+test-heavy-lock:
+	$(HEAVY) bash fleet/test_heavy_lock.sh
 
 shellcheck:
 	$(HEAVY) $(SHELLCHECK) -x $(SHELL_FILES)

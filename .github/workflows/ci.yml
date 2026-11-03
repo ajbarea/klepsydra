@@ -74,7 +74,7 @@ jobs:
       - name: Fleet engine tests
         run: make test-fleet FLEET_HEAVY_HELD=1
       - name: Heavy lock release tests
-        run: bash fleet/test_heavy_lock.sh
+        run: make test-heavy-lock FLEET_HEAVY_HELD=1
       - name: Release memory check tests
         run: bash scripts/test_measure_memory.sh
       - name: Windows build stage check tests
