@@ -2238,6 +2238,28 @@ check "a lost row is one FAIL, a finished one one warn, and neither gets a remot
   "FAIL agents: sessions gone: e: fleet recover | warn finished agents: still in panes.tsv: d: fleet doctor --prune | 0"
 check "recover leaves a finished agent alone and relaunches the lost one" \
   "$(rec --dry-run --no-orchestrator | grep -E '^(finished|would recover)' | sed 's/ (.*//')" $'finished: d\nwould recover: e'
+# #261 review 4: d's finish is recorded; AJ resumes it in its pane (the same id,
+# a new process), then a shutdown and the hook's prune drop its file. The record
+# must not outlive the resume, or recover skips a lost agent.
+fin_d() { awk -F'\t' -v s="$SF" '$4 == s' "$FLEET_STATE/finished.tsv" 2>/dev/null | wc -l; }
+check "#261 review 4: the doctor recorded d's finish" "$(fin_d)" "1"
+sfile "$SF" 4242 777 "$NOWBOOT" %4
+: >"$FLEET_LOG"
+bash "$here/doctor.sh" >/dev/null 2>&1
+check "#261 review 4: the doctor drops a recorded finish whose own session runs again, and logs it" \
+  "$(fin_d) $(jq -r 'select(.message == "recorded finish dropped: the session runs again") | .name' "$FLEET_LOG")" "0 d"
+rm -f -- "$KLEPSYDRA_DIR/fleet/$SF.json"
+check "#261 review 4: after the shutdown and the prune, d is lost, not finished" \
+  "$(row_state %4 "$SF") $(rec --dry-run --no-orchestrator | grep -E '^(finished|would recover): d' | sed 's/ (.*//')" "gone would recover: d"
+# recover's running branch drops it too (a recover run while the resumed session runs).
+cp -p -- "$REGISTRY" "$work/reg-before-261r4"
+printf '%s\t%s\n' "$(awk -F'\t' -v s="$SF" '$4 == s { print; exit }' "$REGISTRY")" "$(date -Is)" >>"$FLEET_STATE/finished.tsv"
+sfile "$SF" 4242 777 "$NOWBOOT" %4
+awk -F'\t' '$2 == "d"' "$REGISTRY" >"$work/reg.tmp" && mv -f -- "$work/reg.tmp" "$REGISTRY"
+check "#261 review 4: recover, seeing the resumed session run, drops its recorded finish" \
+  "$(rec --no-orchestrator | grep -c '^running: d') $(fin_d)" "1 0"
+cp -p -- "$work/reg-before-261r4" "$REGISTRY"
+rm -f -- "$KLEPSYDRA_DIR/fleet/$SF.json"; sfile "$SF" 4242 777 "$NOWBOOT" %4; ended "$SF"
 awk -F'\t' '$2 != "e"' "$REGISTRY" >"$work/reg.tmp" && mv -f -- "$work/reg.tmp" "$REGISTRY"
 # A restarted tmux server hands out %4 again: a running agent's row on the finished row's pane id.
 SG=aaaaaaaa-0000-4000-8000-0000000000f4

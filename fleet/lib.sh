@@ -848,6 +848,31 @@ record_finished() { # ROW
   printf '%s\t%s\n' "$1" "$(date -Is)" >>"$fin"
 }
 
+# Drop session SID's recorded finish (under the registry lock): a row still in
+# panes.tsv whose own session runs again was resumed after its finish, so the
+# record must not outlive that run once klepsydra drops the session's file
+# (#261 review 4). `fleet done` rows leave panes.tsv, so they never meet this.
+# Prints how many lines it dropped.
+forget_finished() { # SID
+  local fin=${FLEET_FINISHED:-$FLEET_STATE/finished.tsv} n
+  [[ -n $1 && -e $fin ]] || { echo 0; return 0; }
+  n=$(awk -F'\t' -v s="$1" '$4 == s { n++ } END { print n + 0 }' "$fin")
+  (( n )) || { echo 0; return 0; }
+  if ! { awk -F'\t' -v s="$1" '$4 != s' "$fin" >"$fin.$$" && mv -f -- "$fin.$$" "$fin"; }; then
+    rm -f -- "$fin.$$"
+    return 1
+  fi
+  echo "$n"
+}
+
+# A running row's own session (SID, agent NAME): any recorded finish goes, logged.
+forget_resumed() { # SID NAME
+  local n
+  n=$(with_registry forget_finished "$1") || { flog WARN "a resumed session's recorded finish could not be dropped" session="$1" name="$2"; return 0; }
+  (( n > 0 )) && flog INFO "recorded finish dropped: the session runs again" session="$1" name="$2" lines="$n"
+  return 0
+}
+
 # Whether `fleet unpause` put the row with session SID back: it is to be
 # launched again, whatever its old session's end said. unpaused.tsv: name,
 # session, time; written and rewritten under the registry lock.

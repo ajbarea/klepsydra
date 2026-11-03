@@ -327,7 +327,9 @@ gone="" done_=""
 while IFS= read -r row; do
   IFS=$'\t' read -r p name _ sid _ <<<"$row"
   [[ -n $p && -n $name ]] || continue
-  case $(row_state "$p" "$sid") in
+  state=$(row_state "$p" "$sid")
+  [[ $state == running ]] && session_alive "$sid" && forget_resumed "$sid" "$name"
+  case $state in
     finished)
       done_+="$name "
       # Recorded on first sight, so the finish outlives the session's file.

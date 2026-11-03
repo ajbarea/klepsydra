@@ -124,6 +124,7 @@ while IFS=$'\t' read -r -u 3 p name brief sid _; do
   [[ -n $p && -n $name && -n $brief ]] || continue
   if session_alive "$sid"; then
     echo "running: $name ($p)"
+    (( dry )) || forget_resumed "$sid" "$name"
     continue
   fi
   # The pane still runs a live session the row does not name (a /clear whose
