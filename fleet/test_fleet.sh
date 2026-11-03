@@ -30,6 +30,7 @@ login() { # a|b
 logout() { rm -f -- "$work/cfg-${1:?}/.credentials.json"; }
 cleanup() {
   tmux -L "$FLEET_SOCK" kill-server 2>/dev/null
+  chmod -R u+w -- "${work:?}" 2>/dev/null
   rm -rf -- "${work:?}"
 }
 trap cleanup EXIT
@@ -596,6 +597,80 @@ bash "$here/brief.sh" --refresh "$FLEET_STATE/task-old.src" >/dev/null 2>&1
 check "--refresh brings the rules up to date, keeping the body and a line added after them" \
   "$(head -2 "$FLEET_STATE/task-old.src" | tr '\n' '|')$(grep -c '^Usage cap: run at most two' "$FLEET_STATE/task-old.src") $(grep -c 'at most three' "$FLEET_STATE/task-old.src") $(grep -c '^Last item (AJ 10-28): ship the thing.$' "$FLEET_STATE/task-old.src") $(bash "$here/brief.sh" --check "$FLEET_STATE/task-old.src" >/dev/null 2>&1; echo $?)" \
   "Do X.|Then Y.|1 0 1 0"
+# #262: a rule without a colon, or under a label the tail has since renamed, is
+# still an old rule. A throwaway repo holds an old tail and the current one, so
+# the history is there however shallow this checkout is.
+hist=$work/briefhist
+mkdir -p "$hist/fleet"
+cp "$here/brief.sh" "$here/lib.sh" "$hist/fleet/"
+git -C "$hist" init -q && git -C "$hist" config user.email t@t && git -C "$hist" config user.name t
+{ printf 'Resources: old wording.\n'; printf 'Keep AJ'"'"'s to-do list current: the old label.\n'; printf 'Engage full auto mode (memory x). Stop when done.\n'; } >"$hist/fleet/brief-tail.md"
+git -C "$hist" add fleet && git -C "$hist" commit -qm old
+{ printf 'Resources: new wording.\n'; printf 'Keep the fleet queue current: the new label.\n'; printf 'Engage full auto mode (memory x). Stop when done.\n'; } >"$hist/fleet/brief-tail.md"
+git -C "$hist" commit -qam new
+{ printf 'Do Z.\n\n'
+  printf 'Resources: old wording.\n'; printf 'Keep AJ'"'"'s to-do list current: the old label.\n'
+  printf 'Engage full auto mode (memory x). Stop when done.\n'; printf 'Also (AJ 10-28): a real added line.\n'
+  printf 'Engage full auto mode (memory x). Stop when done.\n'; printf 'Engage full auto mode (memory x). Stop when done.\n'
+} >"$FLEET_STATE/task-hist.src"
+bash "$hist/fleet/brief.sh" --refresh "$FLEET_STATE/task-hist.src" >/dev/null 2>&1
+check "#262: a colon-less rule is kept once, a renamed label's old line goes, an added line stays" \
+  "$(grep -c '^Engage full auto' "$FLEET_STATE/task-hist.src") $(grep -c "^Keep AJ's to-do" "$FLEET_STATE/task-hist.src") $(grep -c '^Keep the fleet queue current' "$FLEET_STATE/task-hist.src") $(grep -c '^Also (AJ 10-28): a real added line.$' "$FLEET_STATE/task-hist.src")" "1 0 1 1"
+check "#262: the refreshed brief is the body, the tail, then the added line" \
+  "$(tr '\n' '|' <"$FLEET_STATE/task-hist.src")" "Do Z.||Resources: new wording.|Keep the fleet queue current: the new label.|Engage full auto mode (memory x). Stop when done.|Also (AJ 10-28): a real added line.|"
+cp "$FLEET_STATE/task-hist.src" "$work/hist.once"
+bash "$hist/fleet/brief.sh" --refresh "$FLEET_STATE/task-hist.src" >/dev/null 2>&1
+check "#262: a second refresh leaves it byte for byte" "$(cmp -s "$work/hist.once" "$FLEET_STATE/task-hist.src" && echo same)" "same"
+printf 'Engage full auto mode (memory x). Stop when done.\n' >>"$FLEET_STATE/task-hist.src"
+check "#262: --check names a brief that has every rule but carries one twice" \
+  "$(bash "$hist/fleet/brief.sh" --check "$FLEET_STATE/task-hist.src" 2>/dev/null; echo "rc=$?")" $'stale: task-hist.src\nrc=1'
+bash "$hist/fleet/brief.sh" --refresh "$FLEET_STATE/task-hist.src" >/dev/null 2>&1
+check "#262: and --refresh drops the second copy" "$(cmp -s "$work/hist.once" "$FLEET_STATE/task-hist.src" && echo same)" "same"
+# #275 review: with the tail missing or empty, old rules still come from the
+# history, so a refresh would strip every rule: every mode refuses instead.
+printf 'Usage cap: stale.\n' >>"$FLEET_STATE/task-hist.src"
+cp "$FLEET_STATE/task-hist.src" "$work/hist.stale"
+: >"$hist/fleet/brief-tail.md"
+check "#275: an empty tail: --refresh refuses (2) and the brief is left as it was" \
+  "$(bash "$hist/fleet/brief.sh" --refresh "$FLEET_STATE/task-hist.src" >/dev/null 2>&1; echo $?) $(cmp -s "$work/hist.stale" "$FLEET_STATE/task-hist.src" && echo same)" "2 same"
+rm -f -- "$hist/fleet/brief-tail.md"
+check "#275: a missing tail: --refresh, --check and a new brief all refuse" \
+  "$(for a in --refresh --check; do bash "$hist/fleet/brief.sh" "$a" "$FLEET_STATE/task-hist.src" >/dev/null 2>&1; printf '%s ' $?; done; bash "$hist/fleet/brief.sh" demo2 "$work/body" >/dev/null 2>&1; echo $?) $(cmp -s "$work/hist.stale" "$FLEET_STATE/task-hist.src" && echo same) $([[ -e $FLEET_STATE/task-demo2.src ]] && echo written)" "2 2 2 same "
+# #275 review: an unreadable brief is never rebuilt as the tail alone.
+git -C "$hist" checkout -q -- fleet/brief-tail.md
+cp "$work/hist.stale" "$FLEET_STATE/task-hist.src"; chmod 000 "$FLEET_STATE/task-hist.src"
+if [[ -r $FLEET_STATE/task-hist.src ]]; then
+  check "#275: an unreadable brief (skipped: running as root)" "skip" "skip"
+else
+  check "#275: an unreadable brief is left as it was and the refresh exits 1" \
+    "$(bash "$hist/fleet/brief.sh" --refresh "$FLEET_STATE/task-hist.src" >/dev/null 2>&1; echo $?) $(chmod 600 "$FLEET_STATE/task-hist.src"; cmp -s "$work/hist.stale" "$FLEET_STATE/task-hist.src" && echo same)" "1 same"
+fi
+chmod 600 "$FLEET_STATE/task-hist.src"
+# Each guard alone: a stale, readable brief whose archive folder, or own folder, is read-only.
+printf 'Do Z.\n\nResources: old wording.\n' >"$work/hist.old"
+if [[ $(id -u) != 0 ]]; then
+  cp "$work/hist.old" "$FLEET_STATE/task-hist.src"
+  mkdir -p "$FLEET_STATE/archive/briefs"; chmod 555 "$FLEET_STATE/archive/briefs"
+  check "#275: no archive copy, no rewrite: the brief stays and the refresh exits 1" \
+    "$(bash "$hist/fleet/brief.sh" --refresh "$FLEET_STATE/task-hist.src" >/dev/null 2>&1; echo $?) $(cmp -s "$work/hist.old" "$FLEET_STATE/task-hist.src" && echo same) $(find "$FLEET_STATE" -maxdepth 1 -name 'task-hist.src.*' | wc -l)" "1 same 0"
+  printf 'old brief\n' >"$FLEET_STATE/task-demo3.src"
+  check "#275 review 4: a new brief over one it cannot archive is refused and the old one stays" \
+    "$(bash "$hist/fleet/brief.sh" demo3 "$work/body" >/dev/null 2>&1; echo $?) $(cat "$FLEET_STATE/task-demo3.src")" "1 old brief"
+  chmod 755 "$FLEET_STATE/archive/briefs"
+  rm -f -- "$FLEET_STATE/task-demo3.src"
+  # Its archive folder stays writable, so only the temp-file guard can stop it.
+  mkdir -p "$work/rostate/archive/briefs"; printf 'old brief\n' >"$work/rostate/task-demo4.src"; chmod 555 "$work/rostate"
+  check "#275 review 5: a new brief with no room for its temp file is refused, archives nothing, and the old one stays" \
+    "$(FLEET_STATE=$work/rostate bash "$hist/fleet/brief.sh" demo4 "$work/body" >/dev/null 2>&1; echo $?) $(cat "$work/rostate/task-demo4.src") $(find "$work/rostate/archive/briefs" -type f | wc -l)" "1 old brief 0"
+  chmod 755 "$work/rostate"
+  mkdir -p "$work/ro"; cp "$work/hist.old" "$work/ro/task-ro.src"; chmod 555 "$work/ro"
+  check "#275: no temp file beside it: the brief stays, nothing is archived, and the refresh exits 1" \
+    "$(n=$(find "$FLEET_STATE/archive/briefs" -name 'task-ro.src.*' | wc -l); bash "$hist/fleet/brief.sh" --refresh "$work/ro/task-ro.src" >/dev/null 2>&1; echo "$? $n $(find "$FLEET_STATE/archive/briefs" -name 'task-ro.src.*' | wc -l)") $(cmp -s "$work/hist.old" "$work/ro/task-ro.src" && echo same)" "1 0 0 same"
+  chmod 755 "$work/ro"
+fi
+rm -rf -- "${hist:?}" "${FLEET_STATE:?}/task-hist.src"
+check "the tail carries the friction-log rule (AJ 11-01)" "$(grep -c '^Friction log (AJ 11-01, every agent): read ~/.local/state/fleet-orchestrator/friction.md' "$here/brief-tail.md")" "1"
+check "the tail says performance wins over security above the floor (AJ 11-01)" "$(grep -c '^Quality (AJ 11-01): when performance and security trade off, performance wins, above the security floor.$' "$here/brief-tail.md")" "1"
 check "the tail carries the team-ceremony rule (AJ 10-29)" "$(grep -c '^Team ceremony in every repo' "$here/brief-tail.md")" "1"
 check "the tail keeps asks for AJ out of public issues and PRs (AJ 10-29)" "$(grep -c '^Asks for AJ stay private' "$here/brief-tail.md")" "1"
 check "#239: the tail has heavy commands take the lock with flock -o, so nothing they leave running keeps it" "$(grep -c 'flock -o /tmp/fleet-heavy.lock' "$here/brief-tail.md")" "1"
@@ -1053,6 +1128,7 @@ t kill-window -t "$h" 2>/dev/null
 cat >"$work/launch-hturn.sh" <<EOF
 #!/usr/bin/env bash
 printf '%s\n' "\$FLEET_ACCOUNT" "\$1" >"$work/moved"
+printf '%s\n' "\${FLEET_SUCCEEDS-unset}" >"$work/succeeds"
 jq '.turn_at = 999999999999' "$KLEPSYDRA_DIR/fleet/$SID.json" >"$work/st.json" && mv "$work/st.json" "$KLEPSYDRA_DIR/fleet/$SID.json"
 echo "pane=%993 session=aaaaaaaa-0000-4000-8000-0000000000cd account=\$FLEET_ACCOUNT avail=1MiB brief=started"
 EOF
@@ -1063,6 +1139,7 @@ printf '%s\n' "$h" >"$FLEET_STATE/orchestrator.pane"; live "$h"
 LAUNCH="$work/launch-hturn.sh" FLEET_HEPH="$work/HEPH.md" FLEET_NOW=$noon bash "$here/resume-at-reset.sh" --once 2>/dev/null
 check "#198 review 4: a notification's turn during Heph's move at a limit does not keep him" \
   "$(events hturn) $(cat "$FLEET_STATE/orchestrator.pane")" "SUBMIT /exit %993"
+check "#226: the move names the session it replaces, so the new one takes its face" "$(cat "$work/succeeds")" "$SID"
 t kill-window -t "$h" 2>/dev/null; rm -f "$KLEPSYDRA_DIR/fleet/$SID.json" "$FLEET_STATE/resume-state"
 
 : >"$work/moved"; rm -f "$FLEET_STATE/orchestrator.config" "$FLEET_STATE/orchestrator.session"
@@ -2103,6 +2180,11 @@ check "FLEET_SETTINGS= starts claude with no --settings" "$(grep -c -- '--settin
 check "#183: workers run keryx off (only Heph speaks), from the installed worker settings" \
   "$(jq -r '.env.KERYX_ENABLED' "$here/worker-settings.json")" "false"
 check "#172: the session is told its agent's name, so its card keeps its face across a move" "$(grep -c 'KLEPSYDRA_AGENT=nosettings ' "$work/cmd")" "1"
+check "#226: and no successor unless a move names one" "$(grep -c 'KLEPSYDRA_SUCCEEDS' "$work/cmd")" "0"
+FLEET_SUCCEEDS=11111111-2222-4333-8444-555555555555 FLEET_SETTINGS='' FLEET_SCOPE=0 FLEET_MIN_AVAIL_MB=0 FLEET_LAUNCHER="$work/launcher-rec.sh" FLEET_DIR="$work" \
+  FLEET_CLAUDE="python3 -I $fake $work/nosettings.json $work/nosettings.log" bash "$here/launch.sh" nosettings "$work/task.src" >/dev/null 2>&1
+check "#226: a move's successor id reaches the session; anything else is dropped" \
+  "$(grep -c 'KLEPSYDRA_SUCCEEDS=11111111-2222-4333-8444-555555555555 ' "$work/cmd")" "1"
 voiced() { # VOICES SETTINGS: the command launch.sh builds with the wall's Voices set to VOICES ("-": prefs as they are)
   [[ $1 == - ]] || jq -n --arg v "$1" 'if $v == "" then {} else {voices: $v} end' >"$KLEPSYDRA_DIR/prefs.json"
   : >"$work/nosettings.log"
@@ -2143,7 +2225,7 @@ git -C "$work/brief" -c user.name=t -c user.email=t@t commit -q --allow-empty -m
 printf '#!/usr/bin/env bash\n[[ -e %s ]] && { echo "leak: token"; exit 1; }\nexit 0\n' "$work/leak" >"$work/bin/gitleaks"; chmod +x "$work/bin/gitleaks"
 bsync() { BRIEFING_DIR="$work/brief" FLEET_GITLEAKS="$work/bin/gitleaks" GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t bash "$here/sync-briefing.sh" 2>/dev/null; echo $?; }
 check "nothing changed: no commit" "$(bsync) $(git -C "$work/brief" rev-list --count HEAD)" "0 1"
-printf 'q\n' >"$work/brief/claude-queue.md"; printf 'n\n' >"$work/brief/needs-you.md"; printf 'x\n' >"$work/brief/notes.txt"
+printf 'q\n' >"$work/brief/queue.md"; printf 'n\n' >"$work/brief/needs-you.md"; printf 'x\n' >"$work/brief/notes.txt"
 touch "$work/leak"
 check "a gitleaks finding blocks the commit, and is logged" "$(bsync) $(git -C "$work/brief" rev-list --count HEAD) $(jq -r 'select(.message | contains("gitleaks found")) | .level' "$FLEET_LOG")" "1 1 ERROR"
 check "and leaves nothing staged" "$(git -C "$work/brief" diff --cached --name-only | wc -l)" "0"
@@ -2152,7 +2234,7 @@ printf '#!/usr/bin/env bash\necho "ERR [git] fatal: bad object" >&2\nexit 0\n' >
 check "a scanner that exits 0 with an error is no verdict" \
   "$(BRIEFING_DIR="$work/brief" FLEET_GITLEAKS="$work/bin/gitleaks-err" bash "$here/sync-briefing.sh" 2>/dev/null; echo $?) $(git -C "$work/brief" rev-list --count HEAD)" "1 1"
 check "a change is committed and pushed" "$(bsync) $(git -C "$work/brief-remote.git" rev-list --count HEAD)" "0 2"
-check "only the briefing's own files go in, AJ's needs-you.md included" "$(git -C "$work/brief" show --name-only --format= HEAD | paste -sd' ')" "claude-queue.md needs-you.md"
+check "only the briefing's own files go in, AJ's needs-you.md included" "$(git -C "$work/brief" show --name-only --format= HEAD | paste -sd' ')" "needs-you.md queue.md"
 git -C "$work/brief" -c user.name=t -c user.email=t@t commit -q --allow-empty -m "a prune commit"
 touch "$work/leak"
 check "a commit about to be pushed is scanned first" "$(bsync) $(git -C "$work/brief-remote.git" rev-list --count HEAD)" "1 2"
@@ -2163,16 +2245,21 @@ check "a commit made while the tree is clean is still pushed" "$(bsync) $(git -C
 git clone -q "$work/brief-remote.git" "$work/brief-phone" 2>/dev/null
 printf 'ticked\n' >"$work/brief-phone/README.md"
 git -C "$work/brief-phone" add README.md && git -C "$work/brief-phone" -c user.name=t -c user.email=t@t commit -q -m phone && git -C "$work/brief-phone" push -q origin HEAD 2>/dev/null
-printf 'q2\n' >"$work/brief/claude-queue.md"
+printf 'q2\n' >"$work/brief/queue.md"
 check "a push the remote rejects rebases once and lands both" "$(bsync) $(git -C "$work/brief-remote.git" rev-list --count HEAD)" "0 5"
 printf 'o\n' >"$work/brief/other.md"; git -C "$work/brief" add other.md && git -C "$work/brief" -c user.name=t -c user.email=t@t commit -q -m other && git -C "$work/brief" push -q origin HEAD 2>/dev/null
 git -C "$work/brief-phone" pull -q 2>/dev/null; printf 'ticked again\n' >"$work/brief-phone/README.md"
 git -C "$work/brief-phone" -c user.name=t -c user.email=t@t commit -qam phone2 && git -C "$work/brief-phone" push -q origin HEAD 2>/dev/null
-printf 'o\nan edit in progress\n' >"$work/brief/other.md"; printf 'q3\n' >"$work/brief/claude-queue.md"
+printf 'o\nan edit in progress\n' >"$work/brief/other.md"; printf 'q3\n' >"$work/brief/queue.md"
 check "a rejected push with edits in the tree waits rather than rebasing over them" \
   "$(bsync) $(tail -1 "$work/brief/other.md") $(git -C "$work/brief" ls-files -u | wc -l)" "1 an edit in progress 0"
 git -C "$work/brief" checkout -q -- other.md
 check "once the tree is clean it rebases and pushes" "$(bsync) $(git -C "$work/brief" rev-list --count '@{u}..HEAD')" "0 0"
+printf 'm\n' >"$work/brief/claude-morning.md"
+check "#277: a file under its old name is still committed" "$(bsync) $(git -C "$work/brief" show --name-only --format= HEAD)" "0 claude-morning.md"
+mv "$work/brief/claude-morning.md" "$work/brief/morning.md"
+check "#277: a plain mv to the new name commits as one rename and leaves neither name behind" \
+  "$(bsync) $(git -C "$work/brief" show -M --name-status --format= HEAD | tr '\t' ' ' | paste -sd' ') $(git -C "$work/brief" status --porcelain -- claude-morning.md morning.md | wc -l)" "0 R100 claude-morning.md morning.md 0"
 
 echo "the fleet log"
 check "every line is one JSON object with ts, level, target and message" \

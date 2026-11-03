@@ -16,7 +16,7 @@ export const GLYPHS = {
   counsellor: "heart", foreman: "hammer", engineer: "wrench", reviewer: "eye", archivist: "archive",
   guide: "compass", inspector: "clipboard-check", editor: "pen-line", architect: "drafting-compass",
   researcher: "search", timekeeper: "clock", guard: "shield", messenger: "send", mentor: "sprout",
-  librarian: "book-open",
+  librarian: "book-open", strategist: "map",
 };
 
 // The ground DiceBear's Lorelei faces had before #37 (render-lorelei.mjs at 7976bf9^), seeded by the voice id.

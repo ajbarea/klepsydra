@@ -760,10 +760,17 @@ wall with only an ended card, and `&theme=professions` or `&theme=dicebear`
 another character theme.
 
 A session's face follows its keryx voice, so it stays the same while the
-session moves between repos. Fifteen voices, all fourteen in keryx's rotation pool
-and `af_nicole` (keryx's fifteenth, before any blend), are cast as characters and
-show their portraits: ten from kourai-khryseai and five (Chronos, Argos, Hermes,
-Elpis, Hesychia) painted for this app. Any other voice shows the voice's name
+session moves between repos. Sixteen voices, all fourteen in keryx's rotation pool,
+`af_nicole` (keryx's fifteenth, before any blend) and `bf_alice` (Techne's, which only a pick lands on), are cast
+as characters and show their portraits: ten from kourai-khryseai and six (Chronos,
+Argos, Hermes, Elpis, Hesychia, Athena) painted for this app. The orchestrator wears Hephaestus or
+Athena (`bf_emma`), equals, one per session: a new
+orchestrator session takes the one no other orchestrator card on the wall
+wears (a live one first), keeps it, and a `/clear` passes it on. With both
+shown it is the one seen least recently; on a tie or with neither, the one
+`~/.local/state/fleet-orchestrator/orchestrator.face` names (`athena`, else
+Hephaestus). No worker ever wears either.
+Any other voice shows the voice's name
 and a forge medallion: a laurel ring on a dark disc around the name's
 initial, struck in one of six kourai metals (gold, bronze, copper, rose gold,
 pale gold, verdigris) picked by the voice, so two voices with one initial
@@ -1384,7 +1391,7 @@ briefs, logs) stays in the state folder.
 |---|---|
 | `fleet doctor` | One line per check: the resume service, its last pass and what that pass saw (panes, limited panes), limits as the panes show them (a pane still showing a limit 10 min past its reset, with nothing sent since, fails; a reset time beside a limit message the fleet does not recognise warns), Remote Control on every registered pane and the orchestrator's, the phone wall locally and over Tailscale Serve with a fresh `fleet.json`, a pane watcher, and briefs' shared rules. Exits non-zero on any failure. `--json FILE` also writes the checks as a report, and logs only a check that changed status (a recovery without its detail). The `fleet-doctor.timer` runs it every 5 min into the data folder's `fleet-health.json`, which the wall and the phone show as a **Fleet** button beside **CI**: failing checks first, `Fleet ?` when the report is over 15 minutes old, no links and `~` for the home folder. |
 | `fleet log [N]` | The last N decisions as plain lines. |
-| `fleet brief NAME BODY` | Writes `task-NAME.src`: BODY, then the shared rules in `fleet/brief-tail.md`. `--check` lists briefs whose rules drifted. |
+| `fleet brief NAME BODY` | Writes `task-NAME.src`: BODY, then the shared rules in `fleet/brief-tail.md`. `--check` lists briefs whose rules drifted; `--refresh` rewrites them with the current rules, dropping any rule an earlier tail held (word for word or by its label) and keeping lines added after them. |
 | `fleet cutover` | Restarts the resume service on the installed scripts and confirms its start is logged. |
 | `fleet agora post [--kind gripe\|win\|idea\|wish\|kudos] TEXT` | Posts one line (280 characters) on the Agora, signed with the session's character, agent and repo, from inside a fleet session. Optional for agents, one post an hour each; a post that looks like it holds a secret is refused. Posts are JSON lines in `agora/posts.jsonl` in klepsydra's data folder. `fleet agora list [N]` shows the newest. |
 | `fleet/launch.sh NAME BRIEF` | Starts an agent with its own session id in a memory-capped scope. It turns Remote Control on and waits for it to settle, pastes the brief, checks the brief reached the prompt, then submits it. A retry never sends Escape. It records the pane, session id and folder in `panes.tsv`. |
