@@ -151,16 +151,16 @@ one the same way.
 
 ## Athena, Strategist of the Forge
 
-- **Upload with the prompt:** `hephaestus_neutral.png` (framing), `metis_neutral.png`, `mneme_neutral.png` (the golden automaton maidens set the look)
-- **Voice:** `bf_alice` (outside keryx's pool, so no worker collides with her; `bf_lily` was the other candidate, both Kokoro grade D)
+- **Upload with the prompt:** her current portrait (keep face, hair, circlet, peplos, owl and plans) and `hephaestus_neutral.png` (framing, and the other god of the forge in flesh); neither Metis nor Mneme, who made her a golden maiden
+- **Voice:** `bf_emma` (AJ's pick, 11-02), reserved for her like `am_michael` for Hephaestus: no pick lands on it and a worker keryx gives it cedes it
 - **Accent:** olive `#7A8B3C` (the olive tree she gave Athens)
-- **Role:** the orchestrator's other face: she and Hephaestus take turns as the orchestrator rotates (#157).
-- **Original:** kourai-khryseai `assets/avatars/originals/athena.png` (1254 px, chosen 2026-10-30); `assets/portraits/athena.jpg` is it at 1024 px.
+- **Role:** the orchestrator's other face: she and Hephaestus are equal orchestrators, one running and one a warm backup (#244, #157).
+- **Original:** kourai-khryseai `assets/avatars/originals/athena.jpg` (2048 px, Gemini, 2026-11-02: a goddess in flesh); the 2026-10-30 golden maiden is kept as `athena-2026-10-30.png`. `assets/portraits/athena.jpg` is the current one at 1024 px. The full prompt is in kourai-khryseai's `portrait-prompts.md`.
 - **Character block:**
 
-> A strikingly beautiful goddess-automaton in her late twenties, one of Hephaestus's golden maidens: smooth burnished-gold skin with fine filigree seams at the jaw, collarbone and wrists, and elegant mechanical joints at the elbows and fingers, like the attached Metis and Mneme. Sharp luminous grey eyes with a smouldering, direct gaze at the viewer, a sly confident half-smile, one brow faintly raised, head tilted slightly. High sculpted cheekbones. Long glossy black hair, half up under a slim gold olive-leaf circlet, the rest falling in loose waves over the near shoulder. A fitted one-shoulder peplos of deep olive (#7A8B3C) silk with gold meander trim, baring the near shoulder and collarbone, a gold cuff on the upper arm, and a cream himation draped low across the back. Athena is the goddess of weaving and strategy: from the fingertips of her raised hand run fine glowing olive threads that weave between three small floating translucent panels, star charts of the forge's plan, like Metis's floating blueprints. A small silver owl perches on a gold perch-ring at her far shoulder. Graceful, poised, in command, a little dangerous.
+> A strikingly beautiful goddess in her late twenties with sharp luminous grey eyes, a direct gaze at the viewer, a sly confident half-smile, one brow faintly raised and her head tilted slightly. High cheekbones. Long glossy black hair, half up under a slim gold olive-leaf circlet, the rest falling in loose waves over the near shoulder. A fitted one-shoulder peplos of deep olive (#7A8B3C) silk with gold meander trim, a gold cuff on the upper arm, and a cream himation draped low across the back. From the fingertips of her raised hand run fine glowing olive threads that weave between three small floating translucent panels, star charts and a temple plan, the forge's plan. A small grey owl perches on her far shoulder. Graceful, poised, in command, a little dangerous.
 
-- **Avoid:** matronly, severe, stern, older, plain human skin, stiff pose, large flat tablet or board, helmet, spear, shield, aegis, armour, battle pose, nudity.
+- **Avoid:** gold skin, metal seams, mechanical joints, robotic hand, matronly, stern, helmet, spear, shield, aegis, armour, battle pose, large flat tablet, nudity.
 
 ## Sources
 

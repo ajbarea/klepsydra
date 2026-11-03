@@ -47,6 +47,8 @@ EVERY_S = 3600
 HEPH = "am_michael"
 # The orchestrator's faces (#222); a worker never wears either.
 ORCHESTRATORS = (HEPH, "bf_emma")
+# Athena's voice key before 11-02, still in session files written then.
+ATHENA_BEFORE = "bf_alice"
 FLEET_SOCK = os.environ.get("FLEET_SOCK", "klepsydra")
 GITLEAKS = os.environ.get("FLEET_GITLEAKS", "gitleaks")
 LINK = re.compile(
@@ -211,6 +213,8 @@ def character(s: dict) -> tuple[str | None, str]:
         chars = {}
     if s.get("orchestrator"):
         face = s.get("orchestrator_face")
+        if face == ATHENA_BEFORE:
+            face = ORCHESTRATORS[1]
         key = face if face in ORCHESTRATORS else HEPH
     elif s.get("voice") in chars and s.get("voice") not in ORCHESTRATORS:
         key = s["voice"]

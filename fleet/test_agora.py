@@ -157,6 +157,11 @@ class Agora(unittest.TestCase):
         (self.tmp / "state" / "orchestrator.session").write_text(SID + "\n")
         self.live(voice="am_puck", orchestrator_face="bf_emma")
         self.assertEqual(self.run_agora("post", "a win")[1], "Posted as Athena.")
+        # A file from when Athena wore bf_alice (before 11-02) is still hers.
+        self.live(voice="am_puck", orchestrator_face="bf_alice")
+        self.assertEqual(
+            self.run_agora("post", "again", now=NOW + 3601)[1], "Posted as Athena."
+        )
         (self.tmp / "state" / "orchestrator.session").unlink()
         self.live(voice="bf_emma")
         self.assertEqual(

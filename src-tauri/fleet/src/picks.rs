@@ -46,13 +46,19 @@ pub const ATHENA: &str = "bf_emma";
 /// The faces only the orchestrator wears, one per session.
 pub const ORCHESTRATORS: [&str; 2] = [HEPH, ATHENA];
 
+/// Athena's voice key before 11-02: a session file written then still names her.
+pub const ATHENA_BEFORE: &str = "bf_alice";
+
 /// The face orchestrator session `v` wears: the one its session chose
-/// (`orchestrator_face`), else Hephaestus.
+/// (`orchestrator_face`, Athena's old key read as hers), else Hephaestus.
 pub fn orchestrator_face(v: &View) -> &'static str {
-    ORCHESTRATORS
-        .into_iter()
-        .find(|f| v.orchestrator_face.as_deref() == Some(*f))
-        .unwrap_or(HEPH)
+    match v.orchestrator_face.as_deref() {
+        Some(ATHENA_BEFORE) => ATHENA,
+        chosen => ORCHESTRATORS
+            .into_iter()
+            .find(|f| chosen == Some(*f))
+            .unwrap_or(HEPH),
+    }
 }
 
 /// Where a session's pick is kept: by its fleet agent's name when it has
@@ -371,6 +377,12 @@ mod tests {
             picks_of(&mut p, &mut cards)["a"],
             ATHENA,
             "Heph's voice is not her face"
+        );
+        let mut cards = vec![athena("a", None, ATHENA_BEFORE)];
+        assert_eq!(
+            picks_of(&mut p, &mut cards)["a"],
+            ATHENA,
+            "a file from when Athena wore bf_alice is still hers"
         );
         for bogus in ["af_heart", "nobody", ""] {
             let mut cards = vec![athena("a", None, bogus)];

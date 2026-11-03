@@ -308,8 +308,9 @@ session_rows() { # fields file...
     def last_active: [.started_at, .state_at, .where.at, .prompt.at, .reply.at, .ended.at, .written_at]
       | map(numbers) | max // 0 | floor;
     def or_q: if type == "string" and length > 0 then . else "?" end;
-    # The face of an orchestrator file, as the crate reads it: Athena, else Hephaestus.
-    def orch_face: if .orchestrator_face == "bf_emma" then "bf_emma" else "am_michael" end;
+    # The face of an orchestrator file, as the crate reads it: Athena (bf_alice
+    # was her key before 11-02), else Hephaestus.
+    def orch_face: if (.orchestrator_face | IN("bf_emma", "bf_alice")) then "bf_emma" else "am_michael" end;
     (index("\t")) as $i | .[:$i] as $f
     | (try (.[$i + 1:] | fromjson) catch empty) | select(type == "object" and .v == 1)
     | try ([$f] + ('"$fields"')) catch empty

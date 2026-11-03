@@ -1591,6 +1591,8 @@ card "$O1" am_michael open "$B1" $((now - 60))
 check "a live Hephaestus on the wall: the new orchestrator is Athena" "$(newface)" "bf_emma"
 printf 'athena\n' >"$work/fleet-state/orchestrator.face"; card "$O1" bf_emma open "$B1" $((now - 60))
 check "a live Athena: Hephaestus, whatever orchestrator.face says" "$(newface)" "am_michael"
+card "$O1" bf_alice open "$B1" $((now - 60))
+check "#226 review 5: a live Athena whose file still says bf_alice (before 11-02) is Athena: Hephaestus" "$(newface)" "am_michael"
 rm -f "$work/fleet-state/orchestrator.face"
 card "$O1" am_michael open "$B0" $((now - 600))
 check "after a reboot, Hephaestus's card from the last boot still shown: Athena" "$(newface)" "bf_emma"
