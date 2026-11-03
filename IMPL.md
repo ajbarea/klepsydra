@@ -1,24 +1,24 @@
-# IMPL: klepsydra fleet-module brief, resume state 2026-11-03 01:00 (EST)
+# IMPL: klepsydra fleet-module brief, resume state 2026-11-03 03:00 (EST)
 
 Session 18 (Chronos, fresh on Personal = `~/.claude-rit`) replaced session 17. Resume from this file,
 `git log`, open PRs and their comments, and the klepsydra line under "Running now" in
 /mnt/c/Users/ajbar/fleet-briefing/queue.md. Brief: task-fleet-module.src (its last "11-02 18:00 Heph"
 line sets the order).
 
-## Merged (session 18, not yet deployed)
-#283 (#269 `fleet done`), #285 (#274), #286 (#276 Needs you + Queue). Deploy once #257 merges:
-`git -C ~/ajsoftworks/klepsydra pull`, `make install-fleet`, `fleet brief --refresh` (#283's tail rule),
-`fleet doctor`; then `bash ~/.claude/klepsydra-fleet.sh queue set /mnt/c/Users/ajbar/fleet-briefing/queue.md --by "Heph (orchestrator)"` (#286).
-#286's Windows app build is AJ's app update (`scripts/build-windows.sh` is not for agents).
+## Merged and deployed (session 18)
+#283, #285, #286, #257: `make install-fleet` (cut over), `fleet brief --refresh`, queue file set (#286), doctor
+green except Windows Tailscale (down since 11-02 20:27). #286's Windows app build is AJ's app update.
 
 ## In flight
 | PR / branch | Issue | State |
 |---|---|---|
-| #257 fix/install-nits-244 | #244 nits | rebased on #283 + #285 (install.sh SCRIPTS conflict: kept done.sh and voices.sh); CI running. Merge on green. |
-| feat/orch-guard-264 (worktree guard-264) | #264 | built: fleet/orch-guard.sh + orch_guard_parse.py + test_orch_guard.sh (75/0) + tests/orch_parse_differential.py (0 missed). Opus reader round 1 running; full fleet suite running (scratchpad fleet-264.log). Then /code-review medium, PR, CI, merge. Deploy adds the PreToolUse entry (README "Orchestrator guard") to ~/.claude/settings.json, then `fleet accounts sync`. |
+| #287 feat/orch-guard-264 (worktree guard-264) | #264 | redesigned after review rounds 1 and 2 (shell parsing kept missing shapes): sends checked at run time by fleet/orch-tmux.sh (Heph's tmux, orch-bin first on PATH via launch.sh), the hook keeps bypass / api-key / registry-by-shape. test_orch_guard.sh 140/0, differential 0 missed. Round 3 reader running; then /code-review medium, CI, merge, deploy (install + settings.json PreToolUse entry + `fleet accounts sync`; the shim reaches Heph at his next move). |
+| #229 fix/focus-216 | #216 | verify pass: both fixes confirmed; 2 new Should-fix fixed (body rewritten; retire_into selects the successor before the old window closes, shared by fresh() and heph_move, test with exit_delay). Partial suite + mutant run under the lock (scratchpad run229.sh). Then CI, merge. |
+| #261 fix/doctor-truth-246 | #220, #246 | main merged in (4 conflicts); CI running; never reviewed: needs a reader round before merge. |
 
 ## Next (in order, from the brief)
-#261 (PR, CONFLICTING: rebase), #229 (uncommitted review fixes in worktree focus-216); then #271, #270, #272.
+#271 (wall: resume pass now + Heph's account; the phone half waits on AJ's #163 decision), #270 (Agora, design first),
+#272 (resume experiment, design first).
 
 ## Notes
 - #264 design: the guard never models bash (a shlex reading disagreed with bash on 72/300 generated
