@@ -890,6 +890,13 @@ wflag() { field '[(.background // [])[] | "\(.id):\(.watcher // false)"] | join(
 fire stop.json; fire user-prompt.json
 fire post-tool-bash-background.json '.tool_input.command = "IDLE_S=300 bash /home/aj/.local/state/fleet-orchestrator/watch-panes.sh %3 %4"'
 check "#215: a background watch-panes.sh is a watcher" "$(wflag)" '"biwpk3ab6:true"'
+check "#215 review: with the panes it watches" "$(field '[.background[].watch]')" '[["%3","%4"]]'
+fire stop.json; fire user-prompt.json
+fire post-tool-bash-background.json '.tool_input.command = "watch-panes.sh %1\nnpm test"'
+check "#215 review: a second command on a new line is other work" "$(wflag)" '"biwpk3ab6:false"'
+fire stop.json; fire user-prompt.json
+fire post-tool-bash-background.json '.tool_input.command = "watch-panes.sh $(make test)"'
+check "#215 review: so is a command substitution in its arguments" "$(wflag)" '"biwpk3ab6:false"'
 fire stop.json; fire user-prompt.json
 fire post-tool-bash-background.json '.tool_input.command = "grep watch-panes.sh notes.md"'
 check "#215: a command that only names it is not" "$(wflag)" '"biwpk3ab6:false"'

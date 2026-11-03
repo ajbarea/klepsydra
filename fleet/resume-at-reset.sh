@@ -291,9 +291,15 @@ heph_move() { # PANE TO WHY [NOTE] [STAMP]
   fi
   if (( $# >= 5 )); then stamp=$5; else stamp=$(prompt_stamp "$p"); fi
   txt="$FLEET_STATE/heph-move-$(date +%Y%m%d-%H%M).md"
-  local watchers live_panes
+  local watchers live_panes from=watched
   watchers=$(watcher_count "$p")
-  live_panes=$(awk -F'\t' '$1 ~ /^%[0-9]+$/ { print $1 }' "$REGISTRY" 2>/dev/null | grep -xF -f <(fleet_panes) | tr '\n' ' ')
+  # The panes the old watchers watched (Heph trims them as he goes), still
+  # live; with none recorded, every live registered pane.
+  if ! live_panes=$(watched_panes "$p"); then
+    from=registered
+    live_panes=$(awk -F'\t' '$1 ~ /^%[0-9]+$/ { print $1 }' "$REGISTRY" 2>/dev/null)
+  fi
+  live_panes=$(grep -xF -f <(fleet_panes) <<<"$live_panes" | tr '\n' ' ')
   {
     heph_note "$why" "$osid" "$HEPH" "the resume service started you on $to and the agents run on meanwhile."
     if (( watchers > 0 )); then
@@ -301,7 +307,7 @@ heph_move() { # PANE TO WHY [NOTE] [STAMP]
     fi
     [[ -n $carried ]] && printf '\nAJ typed this to the last orchestrator and it was never sent; act on it:\n%s\n' "$carried"
   } >"$txt"
-  flog INFO "orchestrator move note written" pane="$p" to="$to" watchers="$watchers" watch_panes="${live_panes% }" carried_chars="${#carried}"
+  flog INFO "orchestrator move note written" pane="$p" to="$to" watchers="$watchers" watch_panes="${live_panes% }" panes_from="$from" carried_chars="${#carried}"
   mkdir -p -- "$FLEET_STATE/log"
   # The new session succeeds the one live in this pane: it takes that one's
   # face, never the warm backup's (#226).

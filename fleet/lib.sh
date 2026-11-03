@@ -574,6 +574,16 @@ watchers_only() { # PANE
     and all(.background[]; .kind == "shell" and .watcher == true)) | '"$STAMP_JQ" "$KLEPSYDRA_DIR/fleet/$sid.json" 2>/dev/null
 }
 
+# The panes the watchers of the session in PANE watch (the hook's `watch`),
+# one a line; fails when no watcher recorded them (an entry from before #215).
+watched_panes() { # PANE
+  local sid
+  sid=$(live_session "$1") || return 1
+  jq -er '[(.background // [])[] | select(.watcher == true)] as $w
+    | if ($w | length) > 0 and all($w[]; .watch | type == "array") then [$w[].watch[]] | unique | .[] else error("none") end' \
+    "$KLEPSYDRA_DIR/fleet/$sid.json" 2>/dev/null || [[ $? == 4 ]]
+}
+
 # How many pane watchers the session in PANE runs in the background.
 watcher_count() { # PANE
   local sid
