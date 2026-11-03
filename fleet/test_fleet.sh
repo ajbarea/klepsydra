@@ -740,7 +740,7 @@ docs_bare() { # repo
     cd "$1" || exit
     git ls-files -z -- '*.md' ':!docs/superpowers/plans/' | xargs -0 grep -nE "$bare_re"
     # Each flock on the lock, not each line: a line may hold a good form and a bad one.
-    git ls-files -z -- '*.md' ':!docs/superpowers/plans/' | xargs -0 grep -noE 'flock( +-[^ `]+( +[0-9]+)?)* +/tmp/fleet-heavy[.]lock' | grep -vE ':flock( +[^ ]+)* +-o( |$)'
+    git ls-files -z -- '*.md' ':!docs/superpowers/plans/' | xargs -0 grep -noE 'flock( +-[^ `]+( +[0-9.]+)?)* +/tmp/fleet-heavy[.]lock' | grep -vE ':flock( +[^ ]+)* +-o( |$)'
   ) | sort -u
 }
 check "#291 review 3: no doc runs a heavy suite or the tree's shellcheck by hand; the make targets do" \
@@ -753,14 +753,14 @@ git -C "$sw" init -q
 # shellcheck disable=SC2016 # the backticks are the doc's, not a command
 printf '%s\n' 'Run `bash hooks/test_launch.sh` first.' 'then (shellcheck -x fleet/*.sh).' 'Or: flock /tmp/fleet-heavy.lock make x' './fleet/test_fleet.sh' \
   'cd fleet && bash test_fleet.sh' 'bash -x fleet/test_fleet.sh' 'sh hooks/test_launch.sh' 'shellcheck --external-sources hooks/*.sh' \
-  'flock -w 60 /tmp/fleet-heavy.lock make y' 'Good: `flock -o /tmp/fleet-heavy.lock x`, bad: flock /tmp/fleet-heavy.lock y' 'bash fleet/test_heavy_lock.sh' >"$sw/bare.md"
+  'flock -w 60 /tmp/fleet-heavy.lock make y' 'flock -w 0.5 /tmp/fleet-heavy.lock make w' 'Good: `flock -o /tmp/fleet-heavy.lock x`, bad: flock /tmp/fleet-heavy.lock y' 'bash fleet/test_heavy_lock.sh' >"$sw/bare.md"
 # shellcheck disable=SC2016
 printf '%s\n' 'Run `make test-fleet` bare; the hook suite runs bare too: `bash hooks/test_fleet.sh`.' 'One file: `uvx --from shellcheck-py shellcheck -x fleet/lib.sh`.' 'See [the suite](../fleet/test_fleet.sh); `fleet/test_fleet.sh` takes 19 min.' \
   'Hand form: `flock -o /tmp/fleet-heavy.lock timeout 1800 <command>`, or flock -w 60 -o /tmp/fleet-heavy.lock z.' >"$sw/ok.md"
 printf '%s\n' 'bash fleet/test_fleet.sh' >"$sw/docs/superpowers/plans/old.md"
 git -C "$sw" add -A
-check "#291 review 4: the sweep finds each of 11 bare forms, only in bare.md" \
-  "$(docs_bare "$sw" | wc -l) $(docs_bare "$sw" | grep -vc '^bare[.]md:')" "11 0"
+check "#291 review 4: the sweep finds each of 12 bare forms, only in bare.md" \
+  "$(docs_bare "$sw" | wc -l) $(docs_bare "$sw" | grep -vc '^bare[.]md:')" "12 0"
 check "#291 review 4: a sweep with no docs to read fails" "$(docs_bare "$work/sweep291-none" | wc -l) $(docs_bare "$work/sweep291-none" | grep -c 'no docs to sweep')" "1 1"
 check "#185: the tail offers the Agora as optional and asks a post to name something real" "$(grep -c '^Agora (AJ 10-29, optional, never a task).*names something real' "$here/brief-tail.md")" "1"
 

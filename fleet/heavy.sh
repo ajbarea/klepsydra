@@ -15,11 +15,24 @@ grace=${FLEET_HEAVY_KILL_S:-30}
 (( $# )) || { echo "usage: fleet/heavy.sh COMMAND [ARGS...]" >&2; exit 2; }
 { exec {fd}>>"$lock"; } 2>/dev/null || { echo "heavy.sh: cannot open $lock" >&2; exit 2; }
 
-# The pids holding a flock on $lock, from /proc/locks (field 5 pid, field 6 dev:inode).
-holders() {
-  local ino
-  ino=$(stat -L -c %i -- "$lock" 2>/dev/null) || return 0
-  awk -v i=":$ino" '$2 == "FLOCK" && substr($6, length($6) - length(i) + 1) == i { print $5 }' /proc/locks 2>/dev/null | sort -u
+# The pids other than this one with $lock open (its real path, so a symlinked
+# name counts too). A flock belongs to the open file, not to the process that
+# called flock(2) (a heavy.sh's own lock is taken by a flock(1) that exits at
+# once), so the holder is found by its open file: the run holding it, or a run
+# waiting on it. Read only when the lock is busy.
+openers() {
+  local real q a mine out=()
+  real=$(readlink -f -- "$lock") || return 0
+  for q in $(find /proc/[0-9]*/fd -maxdepth 1 -lname "$real" -printf '%h\n' 2>/dev/null | cut -d/ -f3 | sort -un); do
+    # Not this script, nor its own short-lived helpers (they inherit the file).
+    mine=0 a=$q
+    while [[ $a =~ ^[0-9]+$ ]] && (( a > 1 )); do
+      [[ $a == "$$" ]] && { mine=1; break; }
+      a=$(awk '/^PPid:/ { print $2 }' "/proc/$a/status" 2>/dev/null) || break
+    done
+    (( mine )) || [[ ! -d /proc/$q ]] || out+=("$q")
+  done
+  printf '%s' "${out[*]}"
 }
 ancestors() { # this shell's parent chain, one pid per line
   local p=$$
@@ -30,23 +43,29 @@ ancestors() { # this shell's parent chain, one pid per line
 }
 
 if ! flock -n "$fd"; then
-  held=$(holders | paste -sd " " -)
+  open=$(openers)
+  # A caller with the lock open is past its own flock on it, so it holds it.
   for a in $(ancestors); do
-    if [[ " $held " == *" $a "* ]]; then
+    if [[ " $open " == *" $a "* ]]; then
       echo "heavy.sh: a caller (pid $a) already holds $lock; run the make target bare, or pass FLEET_HEAVY_HELD=1" >&2
       exit 2
     fi
   done
-  echo "heavy.sh: waiting for $lock (held by pid ${held:-unknown})" >&2
+  echo "heavy.sh: waiting for $lock (open in pid ${open:-unknown}: the run holding it, and any others waiting)" >&2
   flock "$fd" || { echo "heavy.sh: could not lock $lock" >&2; exit 2; }
 fi
+# A make target COMMAND runs takes no second lock.
+export FLEET_HEAVY_HELD=1
 
 # Without job control a background job's stdin is /dev/null: keep the caller's.
+# The trap is set first, so a signal before the job starts still stops it.
+job="" stopping=0
+# shellcheck disable=SC2329 # run by the trap below
+stop() { stopping=1; [[ -n $job ]] && kill -TERM -- "$job" 2>/dev/null; }
+trap stop INT TERM HUP
 timeout -k "$grace" "$limit" "$@" 0<&0 {fd}>&- &
 job=$!
-# shellcheck disable=SC2329 # run by the trap below
-stop() { kill -TERM -- "$job" 2>/dev/null; }
-trap stop INT TERM HUP
+(( stopping )) && kill -TERM -- "$job" 2>/dev/null
 rc=0
 while :; do
   wait "$job"; rc=$?
