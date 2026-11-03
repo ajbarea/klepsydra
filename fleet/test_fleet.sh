@@ -541,8 +541,12 @@ check "#289: no cap readable: fails (the scope then inherits)" "$(tm || echo non
 check "#289: FLEET_TASKS_MAX sets it, and a bad one is refused" "$(FLEET_TASKS_MAX=500 tm) $(FLEET_TASKS_MAX=5x tm || echo refused)" "500 refused"
 echo 26237 >"$cgr/user.slice/user-1.slice/pids.max"
 # A systemd-run that records its arguments and runs the command after its options.
-printf '%s\n' '#!/usr/bin/env bash' "printf '%s\\n' \"\$*\" >>$work/sdrun.calls" \
-  'while [[ $1 == --* || $1 == -p ]]; do [[ $1 == -p ]] && shift; shift; done' 'exec "$@"' >"$work/systemd-run"
+cat >"$work/systemd-run" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >>"$work/sdrun.calls"
+while [[ \$1 == --* || \$1 == -p ]]; do [[ \$1 == -p ]] && shift; shift; done
+exec "\$@"
+EOF
 chmod +x "$work/systemd-run"; : >"$work/sdrun.calls"
 printf '%s' '{"above":["Claude Code"]}' >"$work/scoped.json"; : >"$work/scoped.log"
 out=$(FLEET_SCOPE=1 FLEET_SYSTEMD_RUN="$work/systemd-run" FLEET_CGROUP_ROOT="$cgr" FLEET_CGROUP=$leaf FLEET_MIN_AVAIL_MB=0 \
