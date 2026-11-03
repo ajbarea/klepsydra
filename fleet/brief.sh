@@ -59,7 +59,7 @@ if [[ ${1:-} == --check || ${1:-} == --refresh ]]; then
   tail_labels=$(grep ':' <<<"$tail_old" | sed 's/:.*//' | sort -u)
 fi
 # Whether BRIEF already reads as current() would write it (blank lines aside).
-fresh() { cmp -s <(grep . "$1") <(current "$1" | grep .); }
+up_to_date() { cmp -s <(grep . "$1") <(current "$1" | grep .); }
 
 if [[ ${1:-} == --check ]]; then
   shift
@@ -68,7 +68,7 @@ if [[ ${1:-} == --check ]]; then
   for f in "$@"; do
     [[ -e $f ]] || continue
     # A tail rule it lacks, an old rule it still carries, or one twice.
-    if ! fresh "$f"; then
+    if ! up_to_date "$f"; then
       echo "stale: ${f##*/}"
       stale=1
     fi
@@ -88,7 +88,7 @@ if [[ ${1:-} == --refresh ]]; then
       failed=1
       continue
     fi
-    fresh "$f" && continue
+    up_to_date "$f" && continue
     # No temp file beside it, or no archive copy: no rewrite.
     if ! tmp=$(mktemp "$f.XXXXXX"); then
       flog ERROR "brief not refreshed: no temp file could be made beside it; the old one stays" path="$f"

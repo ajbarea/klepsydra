@@ -654,6 +654,93 @@ retire() { # PANE [INTERRUPT]
   t kill-pane -t "$1" 2>/dev/null
 }
 
+LAUNCH=${LAUNCH:-$(dirname "${BASH_SOURCE[0]}")/launch.sh}
+
+# The live session in PANE's stamp, or nothing: STAMP_JQ (its last prompt and
+# turn), or with STAMP_KIND=prompt its last typed or phone prompt alone, for a
+# move at a limit, where a turn a task notification starts fails at once.
+prompt_stamp() { # PANE
+  local sid of=$STAMP_JQ
+  [[ ${STAMP_KIND:-} == prompt ]] && of='.prompt.at // ""'
+  sid=$(live_session "$1") || return 0
+  jq -r "$of" "$KLEPSYDRA_DIR/fleet/$sid.json" 2>/dev/null
+}
+
+# Retire a pane this pass launched, interrupting its turn; kill it if it will not exit.
+drop() { # PANE
+  retire "$1" interrupt || t kill-pane -t "$1" 2>/dev/null
+}
+
+# Replace PANE (registry NAME, BRIEF) with a fresh session from its brief,
+# on config folder ACCOUNT when given (else launch.sh's pick), WHY in its
+# preamble; prints the new pane. NOTE, what AJ typed at the pane, goes into the
+# new brief, and the old box may hold exactly it. Gives up, typing nothing, if
+# AJ has typed anything else meanwhile.
+# (STAMP: the session's stamp when the caller judged the pane idle, so a
+# prompt or turn taken since, even one already over, keeps the old pane; at a
+# limit, STAMP_KIND=prompt, a prompt only.) Returns 5 when the new session's
+# brief met a limit on ACCOUNT. FRESH_HINT, when set, goes in as a resume hint.
+# Shared by the resume service and relaunch-fresh.sh (#274).
+fresh() { # PANE NAME BRIEF [WHY] [ACCOUNT] [NOTE] [STAMP]
+  local p=$1 name=$2 brief=$3 txt new
+  local why=${4:-stopped at a usage limit over an hour ago, so its cached conversation expired and resuming it would re-cache everything}
+  local account=${5:-} carried=${6:-} box
+  box=$(input_text "$(screen "$p")")
+  [[ -z $box || ( -n $carried && $box == "$carried" ) ]] || return 1
+  local sid cfg out got
+  # Shared: moves of different panes run side by side; a cut-over takes it alone.
+  exec 7>>"$FLEET_STATE/.fresh.lock"
+  flock -s 7
+  sid=$(reg_field "$p" 4) cfg=$(reg_field "$p" 6)
+  if ! pane_runs "$p" "$sid"; then
+    flog WARN "fresh session refused: the pane no longer runs its registered session" pane="$p" name="$name" session_id="$sid"
+    return 2
+  fi
+  local stamp
+  if (( $# >= 7 )); then stamp=$7; else stamp=$(prompt_stamp "$p"); fi
+  txt="$FLEET_STATE/fresh-$name-$(date +%Y%m%d-%H%M).src"
+  {
+    fresh_preamble "$why"
+    printf '\n\n'
+    [[ -n ${FRESH_HINT:-} ]] && printf 'Resume hint: %s\n\n' "$FRESH_HINT"
+    [[ -n $carried ]] && printf 'AJ typed this to the previous agent while it waited at the limit; act on it:\n%s\n\n' "$carried"
+    cat "$brief"
+  } >"$txt"
+  mkdir -p -- "$FLEET_STATE/log"
+  out=$(FLEET_ACCOUNT=$account bash "$LAUNCH" "$name" "$txt" 2>>"$FLEET_STATE/log/launch.err" | head -1)
+  new=$(grep -o 'pane=%[0-9]*' <<<"$out" | cut -d= -f2) got=$(grep -o 'brief=[A-Za-z-]*' <<<"$out" | cut -d= -f2)
+  [[ -n $new && -n ${MOVE_NEW:-} ]] && printf '%s\n' "$new" >"$MOVE_NEW"
+  if [[ -z $new ]]; then
+    flog ERROR "fresh session not started; the old pane is kept" pane="$p" name="$name"
+    return 3
+  fi
+  # The brief must have started a turn: not delivered, or (on a move to an
+  # account said to have room) stopped by a limit, the old pane stays.
+  if [[ $got == NOT-DELIVERED || ( -n $account && $got != started ) ]]; then
+    flog ERROR "fresh session's brief did not start; the old pane stays and the new one goes" pane="$p" new_pane="$new" name="$name" brief="$got"
+    retire "$new" interrupt
+    with_registry set_pane "$new" "$p" "$sid" "$cfg"
+    [[ $got == blocked-by-limit ]] && return 5
+    return 3
+  fi
+  # The launch took a while: AJ may have typed into the old pane or resumed it.
+  local now_s
+  now_s=$(screen "$p")
+  if ! pane_runs "$p" "$sid" || busy "$now_s" || ! has_input_box "$now_s" || [[ $(input_text "$now_s") != "$box" || $(prompt_stamp "$p") != "$stamp" ]]; then
+    flog ERROR "the old pane changed while its fresh session launched; the old one stays and the new one goes" pane="$p" new_pane="$new" name="$name"
+    retire "$new" interrupt
+    with_registry set_pane "$new" "$p" "$sid" "$cfg"
+    return 4
+  fi
+  # The note went into the new brief; one C-c clears it from the old box.
+  if [[ -n $box ]]; then
+    t send-keys -t "$p" C-c
+    wait_for "$p" 5 idle_empty || true
+  fi
+  retire "$p" || flog WARN "the old pane is left running beside its fresh session" pane="$p" new_pane="$new" name="$name"
+  printf '%s' "$new"
+}
+
 # Point the registry row launch.sh moved to NEW back at PANE, session SID
 # and config folder CFG (none: the column is left empty, the default).
 set_pane() { # NEW PANE SID CFG
