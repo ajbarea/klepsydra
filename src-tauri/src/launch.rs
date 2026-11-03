@@ -22,6 +22,9 @@ const TIMEOUT: Duration = Duration::from_secs(45);
 /// keryx's first run syncs its environment). Behind another run's lock it can
 /// take longer; the run goes on, and the next resume pass applies what it misses.
 const VOICES_TIMEOUT: Duration = Duration::from_secs(300);
+/// Longest wait for `fleet resume now` (#271): it waits up to 180 s for the
+/// resume service's pass (RESUME_NOW_WAIT_S), plus a cold WSL start.
+const RESUME_TIMEOUT: Duration = Duration::from_secs(240);
 /// Longest wait for a Jump, whose session already runs in a started WSL: long
 /// enough for a refused interop connection to report its own error.
 const JUMP_TIMEOUT: Duration = Duration::from_secs(15);
@@ -112,6 +115,30 @@ pub fn voices_args() -> Vec<String> {
     ["--cd", "~", "-e", "bash", "-l", SCRIPT, "voices"]
         .map(String::from)
         .to_vec()
+}
+
+/// wsl.exe's arguments for the tray's "Run resume pass now" (#271): the
+/// launcher runs the installed `fleet resume now`.
+pub fn resume_now_args() -> Vec<String> {
+    ["--cd", "~", "-e", "bash", "-l", SCRIPT, "resume-now"]
+        .map(String::from)
+        .to_vec()
+}
+
+fn resume_timed_out() -> String {
+    format!(
+        "WSL did not answer within {} seconds; the pass may still run (fleet log).",
+        RESUME_TIMEOUT.as_secs()
+    )
+}
+
+/// One resume pass now, blocking, logged like every call: its summary line
+/// (`fleet resume now`'s last), or why it did not run.
+pub fn resume_now() -> Result<String, String> {
+    let args = resume_now_args();
+    logged("resume-now", None, || {
+        run(&args, RESUME_TIMEOUT, resume_timed_out)
+    })
 }
 
 /// Make keryx follow the saved Voices mode now, off the tray's thread, logged
@@ -966,6 +993,19 @@ mod tests {
         assert!(explorer_opened(Err("Could not start wsl.exe".into())).is_err());
         assert!(folder_args("/home/aj/../x", "Ubuntu").is_err());
         assert!(folder_args("/home/aj", "Ubuntu;rm").is_err());
+    }
+
+    #[test]
+    fn resume_now_runs_the_launcher_with_no_argument() {
+        assert_eq!(
+            resume_now_args(),
+            ["--cd", "~", "-e", "bash", "-l", SCRIPT, "resume-now"]
+        );
+        let launcher = include_str!("../../hooks/klepsydra-launch.sh");
+        assert!(
+            launcher.contains("  resume-now) (( $# == 1 ))"),
+            "the launcher takes it"
+        );
     }
 
     #[test]
