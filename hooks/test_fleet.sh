@@ -884,6 +884,25 @@ fire user-prompt.json
 fire stop-background.json '.background_tasks[0].status = "completed" | .background_tasks[1].status = "killed"'
 check "finished tasks in the list do not count" "$(field '[has("background"), .state]')" '[false,"done"]'
 
+# #215: a background shell that is the fleet's pane watcher alone is marked, so
+# the orchestrator's move back is not held by it; anything else is other work.
+wflag() { field '[(.background // [])[] | "\(.id):\(.watcher // false)"] | join(",")'; }
+fire stop.json; fire user-prompt.json
+fire post-tool-bash-background.json '.tool_input.command = "IDLE_S=300 bash /home/aj/.local/state/fleet-orchestrator/watch-panes.sh %3 %4"'
+check "#215: a background watch-panes.sh is a watcher" "$(wflag)" '"biwpk3ab6:true"'
+fire stop.json; fire user-prompt.json
+fire post-tool-bash-background.json '.tool_input.command = "grep watch-panes.sh notes.md"'
+check "#215: a command that only names it is not" "$(wflag)" '"biwpk3ab6:false"'
+fire stop.json; fire user-prompt.json
+fire post-tool-bash-background.json '.tool_input.command = "/x/watch-panes.sh %1; rm -rf /tmp/y"'
+check "#215: nor one that runs more after it" "$(wflag)" '"biwpk3ab6:false"'
+fire stop.json; fire user-prompt.json
+fire stop-background.json '.background_tasks[0].command = "/home/aj/.local/state/fleet-orchestrator/watch-panes.sh %20 %21" | .background_tasks[1].command = "watch-panes.sh"'
+check "#215: Stop's list marks a watcher shell, never a subagent" "$(wflag)" "\"$B:true,$A:false\""
+fire stop.json; fire user-prompt.json
+fire stop-background.json '.background_tasks[0].command = null'
+check "#215: a shell with no command is other work" "$(wflag)" "\"$B:false,$A:false\""
+
 # Malformed and absent fields change nothing and never abort.
 fire user-prompt.json
 fire subagent-start.json '.agent_id = null'

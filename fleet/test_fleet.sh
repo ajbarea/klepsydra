@@ -1424,6 +1424,36 @@ printf '%s\n' "$h" >"$FLEET_STATE/orchestrator.pane"; done_live "$h"
 hmove "$noon"; hmove "$((noon + 60))"
 check "Heph already on his own account stays" "$(wc -c <"$work/moved")" "0"
 t kill-window -t "$h" 2>/dev/null
+
+echo "two accounts: Heph's pane watcher never holds his move back (#215)"
+heph_away() { # BACKGROUND-JSON: Heph on the workers' account, his turn over with that background work
+  : >"$work/moved"; : >"$FLEET_LOG"; rm -f "$FLEET_STATE/orchestrator.session" "$FLEET_STATE/resume-state"
+  printf '%s\n' "$work/cfg-a" >"$FLEET_STATE/orchestrator.config"
+  h=$(pane hephwatch '{"above":["⏺ Done. done 11:50 AM"]}'); settle
+  printf '%s\n' "$h" >"$FLEET_STATE/orchestrator.pane"; done_live "$h" working "$1"
+  jq '.reason = "background"' "$KLEPSYDRA_DIR/fleet/$SID.json" >"$work/st.json" && mv "$work/st.json" "$KLEPSYDRA_DIR/fleet/$SID.json"
+}
+w=$(pane watched '{"above":["⏺ ok"]}'); settle
+printf '%s\tw\t%s\tsid-w\t/w\t%s\n' "$w" "$work/brief.src" "$work/cfg-b" >"$REGISTRY"
+heph_away '[{"id":"b1","kind":"shell","at":1,"watcher":true}]'
+hmove "$noon"; hmove "$((noon + 60))"
+check "Heph whose only background work is his pane watcher moves back at a finished turn" \
+  "$(head -2 "$work/moved" | tr '\n' ' ')$(cat "$FLEET_STATE/orchestrator.config")" "$work/cfg-b heph $work/cfg-b"
+check "and his successor is told to start the watcher again on the live registered panes" \
+  "$(grep -c "^The last orchestrator's pane watcher stopped with its session. Start it again in the background now: bash $FLEET_STATE/watch-panes.sh $w\$" "$work/moved-brief")" "1"
+check "the note's watcher line is logged with its panes" \
+  "$(jq -r 'select(.message == "orchestrator move note written") | "\(.watchers) \(.watch_panes)"' "$FLEET_LOG" | head -1)" "1 $w"
+t kill-window -t "$h" 2>/dev/null
+heph_away '[{"id":"b1","kind":"shell","at":1,"watcher":true},{"id":"b2","kind":"shell","at":2}]'
+hmove "$noon"; hmove "$((noon + 60))"; hmove "$((noon + 120))"
+check "a watcher beside other background work keeps Heph where he is" "$(wc -c <"$work/moved") $(cat "$FLEET_STATE/orchestrator.config")" "0 $work/cfg-a"
+check "logged once an hour, with what held him" \
+  "$(jq -r 'select(.message == "orchestrator stays: background work other than pane watchers is running") | "\(.watchers) \(.to)"' "$FLEET_LOG")" "1 RIT"
+t kill-window -t "$h" 2>/dev/null
+heph_away '[{"id":"a1","kind":"agent","at":1,"async":true,"watcher":true}]'
+hmove "$noon"; hmove "$((noon + 60))"
+check "a background agent is never taken for a watcher" "$(wc -c <"$work/moved")" "0"
+t kill-window -t "$h" 2>/dev/null; t kill-window -t "$w" 2>/dev/null; : >"$REGISTRY"
 rm -f "$FLEET_STATE/orchestrator."* "$FLEET_STATE/resume-state" "$KLEPSYDRA_DIR/fleet/$SID.json"
 logout a; logout b; reading a Personal 40 1000; rm -f "$KLEPSYDRA_DIR/accounts/b/s.json"
 

@@ -45,7 +45,7 @@ FLEET_PREMOVE_PCT=${FLEET_PREMOVE_PCT:-95} # a window used this far moves a work
 DOCTOR=${DOCTOR:-$here/doctor.sh}
 MSG='The usage limit has reset. Continue from where you stopped: re-run a subagent that failed on the limit only if you still need its result (each re-run starts cold and costs a full context), then carry on with your queue. Re-read PR comments before any merge.'
 
-declare -A last due seen_on rc_on note move_failed move_tries fresh_failed asked job_kind job_ctx
+declare -A last due seen_on rc_on note move_failed move_tries fresh_failed asked job_kind job_ctx held_said
 declare -A job=() # set, so ${#job[@]} reads 0 under set -u
 # What the service knows per pane survives its own restart (a cut-over, a
 # reboot's unit start), for as long as the same tmux server holds the panes.
@@ -53,11 +53,11 @@ STATE_FILE=$FLEET_STATE/resume-state
 US=$'\x1f' # the field separator: a tab is IFS whitespace, so empty fields would collapse
 
 load_state() {
-  local server p d s r l n m k f a
+  local server p d s r l n m k f a h
   [[ -r $STATE_FILE ]] || return 0
   server=$(t display-message -p '#{pid}' 2>/dev/null)
   [[ -n $server && $(head -1 "$STATE_FILE") == "#server $server" ]] || return 0
-  while IFS=$US read -r p d s r l n m k f a; do
+  while IFS=$US read -r p d s r l n m k f a h; do
     [[ $p == %* ]] || continue
     [[ -n $d ]] && due[$p]=$d
     [[ -n $s ]] && seen_on[$p]=$s
@@ -68,6 +68,7 @@ load_state() {
     [[ -n $k ]] && move_tries[$p]=$k
     [[ -n $f ]] && fresh_failed[$p]=$f
     [[ -n $a ]] && asked[$p]=$a
+    [[ -n $h ]] && held_said[$p]=$h
   done <"$STATE_FILE"
 }
 
@@ -78,8 +79,8 @@ save_state() {
   {
     printf '#server %s\n' "$server"
     for p in $(fleet_panes); do
-      printf '%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\n' "$p" "${due[$p]:-}" "${seen_on[$p]:-}" "${rc_on[$p]:-}" "${last[$p]:-}" \
-        "$(printf '%s' "${note[$p]:-}" | base64 -w0)" "${move_failed[$p]:-}" "${move_tries[$p]:-}" "${fresh_failed[$p]:-}" "${asked[$p]:-}"
+      printf '%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\n' "$p" "${due[$p]:-}" "${seen_on[$p]:-}" "${rc_on[$p]:-}" "${last[$p]:-}" \
+        "$(printf '%s' "${note[$p]:-}" | base64 -w0)" "${move_failed[$p]:-}" "${move_tries[$p]:-}" "${fresh_failed[$p]:-}" "${asked[$p]:-}" "${held_said[$p]:-}"
     done
   } >"$tmp"
   mv -f -- "$tmp" "$STATE_FILE"
@@ -290,10 +291,17 @@ heph_move() { # PANE TO WHY [NOTE] [STAMP]
   fi
   if (( $# >= 5 )); then stamp=$5; else stamp=$(prompt_stamp "$p"); fi
   txt="$FLEET_STATE/heph-move-$(date +%Y%m%d-%H%M).md"
+  local watchers live_panes
+  watchers=$(watcher_count "$p")
+  live_panes=$(awk -F'\t' '$1 ~ /^%[0-9]+$/ { print $1 }' "$REGISTRY" 2>/dev/null | grep -xF -f <(fleet_panes) | tr '\n' ' ')
   {
     heph_note "$why" "$osid" "$HEPH" "the resume service started you on $to and the agents run on meanwhile."
+    if (( watchers > 0 )); then
+      printf '\nThe last orchestrator'"'"'s pane watcher stopped with its session. Start it again in the background now: bash %s/watch-panes.sh %s\n' "$FLEET_STATE" "${live_panes% }"
+    fi
     [[ -n $carried ]] && printf '\nAJ typed this to the last orchestrator and it was never sent; act on it:\n%s\n' "$carried"
   } >"$txt"
+  flog INFO "orchestrator move note written" pane="$p" to="$to" watchers="$watchers" watch_panes="${live_panes% }" carried_chars="${#carried}"
   mkdir -p -- "$FLEET_STATE/log"
   # The new session succeeds the one live in this pane: it takes that one's
   # face, never the warm backup's (#226).
@@ -634,7 +642,11 @@ one() { # PANE
     { (( orch )) || [[ -n $(reg_field "$p" 2) ]]; } && (( NOW - ${move_failed[$p]:-0} >= 900 )) && ! back_held "$pref_id"; then
     back_ok=1
   fi
-  if (( back_ok )) && idle_empty "$s" && { idle_stamp=$(turn_done "$p") || { (( !orch )) && idle_stamp=$(ready_to_move "$p" "${asked[$p]:-}"); }; }; then
+  # Heph's pane watcher runs past every turn: a turn that ended with only
+  # watchers out counts as finished for him, since his successor restarts them.
+  if (( back_ok )) && idle_empty "$s" && { idle_stamp=$(turn_done "$p") ||
+    { (( orch )) && idle_stamp=$(watchers_only "$p"); } ||
+    { (( !orch )) && idle_stamp=$(ready_to_move "$p" "${asked[$p]:-}"); }; }; then
     back_why="moved back to its preferred account, $(account_label "$pref_id"), which has room again"
     if (( orch )); then
       spawn "$p" back "$cfg$US$pref$US$orch$US$pref_id" heph_move "$p" "$pref" "$back_why" "" "$idle_stamp"
@@ -642,6 +654,12 @@ one() { # PANE
       spawn "$p" back "$cfg$US$pref$US$orch$US$pref_id" fresh "$p" "$(reg_field "$p" 2)" "$(reg_field "$p" 3)" "was $back_why" "$pref" "" "$idle_stamp"
     fi
     return
+  fi
+  # Heph is never asked (AJ talks with him): background work other than
+  # watchers keeps him where he is, logged once an hour so it can be found.
+  if (( back_ok && orch && NOW - ${held_said[$p]:-0} >= 3600 )) && idle_empty "$s" && turn_settled "$p"; then
+    held_said[$p]=$NOW
+    flog INFO "orchestrator stays: background work other than pane watchers is running" pane="$p" from="$(account_label "${PANE_ID:-}")" to="$(account_label "$pref_id")" watchers="$(watcher_count "$p")" room_since_s="$((NOW - since))"
   fi
   if (( back_ok && !orch && NOW - since >= BACK_ASK_AFTER_S && NOW - ${asked[$p]:-0} >= 3600 )) && idle_empty "$s" && turn_settled "$p"; then
     ask_back "$p" "${PANE_ID:-}" "$pref_id"
