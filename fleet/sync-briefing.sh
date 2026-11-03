@@ -25,7 +25,8 @@ fi
 
 # Only paths that exist or are tracked: git add stops at the first pathspec that matches nothing.
 paths=()
-for f in claude-morning.md claude-queue.md needs-you.md README.md shots review; do
+# The old names stay until #276 so a rename commits both sides (#277).
+for f in morning.md queue.md claude-morning.md claude-queue.md needs-you.md README.md shots review; do
   if [[ -e $f ]] || git ls-files --error-unmatch -- "$f" >/dev/null 2>&1; then paths+=("$f"); fi
 done
 if [[ -n $(git status --porcelain -- "${paths[@]}") ]]; then
