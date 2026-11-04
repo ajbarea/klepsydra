@@ -23,15 +23,15 @@ Each cut: a small PR with the proof test the report names.
 
 ## Resume here (session 26, replacement on ~/.claude-rit, from 11-04 morning; replaced session 25)
 Reports: /tmp/claude-1001/<round>/report.md. Heavy runs: never wrap a lock-taking make target in an outer timeout.
-Order (Heph 11-04): bug queue #313, #292, #322 (#319), #320 (PR #325), #321; then #326 (remove the Agora, a cut;
+Order (Heph 11-04): bug queue #292, #322 (#319), #320 (PR #325), #321, #328 (doctor's false phone-wall FAIL when
+prefs.json phone_wall=false); then #326 (remove the Agora, a cut;
 also drop the tail's Agora line from #318 and test #185); then #323 (AJ-approved freeze exception, one PR
 per stage: agy sessions from + New session, then wall, gauge, hooks, keryx); then the reader backlog and cuts 7, #8.
 - ✅ #230 merged 09:57 (r5 verify CLEAN), installed, doctor clean.
 - 🔄 #287 head 1ffb001: r13 B1/S1/B2 fixed, ancestry walk forks nothing for a non-sender; CI green; local
   orch-guard 229/229. r14 verify reader running (/tmp/claude-1001/r14-287). Then merge; deploy: install-fleet,
   PreToolUse hook in ~/.claude settings, `fleet accounts sync`.
-- 🔄 #313 head feca856: r1 S1/S2/M1 fixed, main merged (db6cddd), doctor fixture fixed after the merge (two live
-  files named one pane). r2 reader running (/tmp/claude-1001/r2-313). CI on feca856.
+- ✅ #313 merged (5 rounds; r5 clean in code; two deferred items in its body), installed.
 - 🔄 #292 head 80f34de: r3 all fixed (B1, S1 with 5/5 mutants red, m1-m3, m5-m7; m4 lower bound only, age bound
   deferred: needs journal epochs). Next: CI green, body results to whole-suite numbers, r4 reader.
 - 🔄 #322 (#319) head 004c3a3: limit mark per account (headroom reads it; a newer reading decides), carry-on note
