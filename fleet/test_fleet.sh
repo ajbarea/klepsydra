@@ -1208,9 +1208,11 @@ check "#208: the doctor timer runs every 5 min into the data folder, and a faili
   "1 SuccessExitStatus=1|ExecStart=/usr/bin/bash $inst/state/doctor.sh --json \"$KLEPSYDRA_DIR/fleet-health.json\"|"
 check "#208 review 1: and what it prints stays out of the journal" "$(grep -c '^StandardOutput=null$' "$inst/units/fleet-doctor.service")" "1"
 # #292 review 4: on WSL both the doctor's unit and the watchdog's get the distro's name.
-WSL_DISTRO_NAME=Test FLEET_STATE="$inst/s3" FLEET_UNITS="$inst/u3" FLEET_BIN="$inst/b3" FLEET_HOOK_DIR="$inst/c3" bash "$here/install.sh" --force >/dev/null 2>&1
+# In a folder of its own: the dry-run case below lists what $inst holds.
+iw=$work/inst-wsl
+WSL_DISTRO_NAME=Test FLEET_STATE="$iw/s" FLEET_UNITS="$iw/u" FLEET_BIN="$iw/b" FLEET_HOOK_DIR="$iw/c" bash "$here/install.sh" --force >/dev/null 2>&1
 check "#292 review 4: an install on WSL passes WSL_DISTRO_NAME to the doctor's and the watchdog's units" \
-  "$(grep -c '^Environment=.*"WSL_DISTRO_NAME=Test"' "$inst/u3/fleet-doctor.service" "$inst/u3/fleet-tmux-watch.service" | cut -d: -f2 | paste -sd' ')" "1 1"
+  "$(grep -c '^Environment=.*"WSL_DISTRO_NAME=Test"' "$iw/u/fleet-doctor.service" "$iw/u/fleet-tmux-watch.service" | cut -d: -f2 | paste -sd' ')" "1 1"
 FLEET_STATE="$inst/s2" FLEET_UNITS="$inst/u2" FLEET_BIN="$inst/b2" FLEET_HOOK_DIR="$inst/c2" bash "$here/install.sh" --dry-run --force >"$work/dry" 2>/dev/null
 check "a dry run says what it would do and changes nothing" "$(grep -c '^would' "$work/dry" | sed 's/^[1-9][0-9]*$/some/') $(find "$inst" -mindepth 1 -maxdepth 1 -printf '%f\n' | sort | tr '\n' ' ')" "some bin claude state units "
 cat >"$work/sc-live" <<'EOF'
