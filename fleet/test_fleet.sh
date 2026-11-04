@@ -2648,7 +2648,7 @@ for order in fin-first live-first; do
   with_registry record_finished "$(awk -F'\t' '$2 == "finx"' "$REGISTRY")"
   check "#261 review 8 ($order): reg_field and registered find only the live agent on the reused pane id" \
     "$(reg_field %2 2) $(reg_field %2 4) $(awk -F'\t' '$1 == "%2"' "$REGISTRY" | wc -l)" "livey $S2 1"
-  with_registry set_pane %2 %7 "$S2"
+  with_registry set_pane %2 %7 "$S2" "" livey
   check "#261 review 8 ($order): a rollback's set_pane moves only the live row" \
     "$(awk -F'\t' '{ print $2 ":" $1 ":" $4 }' "$REGISTRY" | sort | tr '\n' ' ')" "finx:-:$S1 livey:%7:$S2 "
 done
