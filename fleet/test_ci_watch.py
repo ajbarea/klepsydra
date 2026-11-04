@@ -596,7 +596,11 @@ class Route(unittest.TestCase):
             Fake([run(5), run(6, conclusion="success", at="2026-10-28T11:00:00Z")]),
             known,
         )
-        self.assertEqual([a["kind"] for a in self.alerts()], ["heph"])
+        self.assertEqual(
+            [(a["kind"], a["wake"]) for a in self.alerts()],
+            [("heph", True), ("withdrawn", False)],
+            "no escalation; the unread heph line is withdrawn (#321)",
+        )
         self.assertNotIn("ci:r:5", (TMP / "q.md").read_text())
 
     def test_a_red_queued_before_routing_existed_is_not_routed_again(self):
@@ -768,6 +772,65 @@ class Route(unittest.TestCase):
             out,
         )
 
+    def test_a_red_let_go_after_routing_withdraws_its_unread_wake_lines(self):
+        """#321 (PR #308, 11-04): a red was routed and escalated on its PR's
+        head, the PR moved on minutes later, and both wake lines reached Heph
+        7.5 h after, when a watcher next read the backlog. Letting the red go
+        writes a withdrawn line; the watcher skips the lines it cancels and
+        still wakes on a later red."""
+        known = {}
+        head = Fake([run(5, branch="b", sha="p1")], pulls=[pr(4, "p1")])
+        ci_watch.poll("o", ["r"], head, known)
+        known["r:5"]["routed"]["at"] -= 1801
+        ci_watch.poll("o", ["r"], Fake([], pulls=[pr(4, "p1")]), known)
+        ci_watch.poll("o", ["r"], Fake([], pulls=[pr(4, "p2")]), known)
+        self.assertEqual(
+            [(a["kind"], a["wake"], a["run_id"]) for a in self.alerts()],
+            [("heph", True, 5), ("escalate", True, 5), ("withdrawn", False, 5)],
+        )
+        self.assertEqual(
+            self.alerts()[-1]["text"],
+            "red run withdrawn: its PR's head moved past its commit",
+        )
+        ci_watch.poll(
+            "o", ["r"], Fake([run(6, workflow=2)], pulls=[pr(4, "p2")]), known
+        )
+        seen = TMP / "state" / "ci" / "alerts.seen"
+        seen.write_text("0\n")
+        self.env = os.environ | {
+            "FLEET_SOCK": f"ci-withdrawn-{os.getpid()}",
+            "WATCH_TICK": "0.1",
+        }
+        self.assertTrue(
+            self._next_watcher().startswith("CI HEPH r main: CI red in r: wf2"),
+            "run 5's two wake lines wake nobody; run 6's does",
+        )
+        self.assertEqual(seen.read_text().strip(), "4")
+
+    def test_a_withdrawal_cancels_only_the_lines_before_it(self):
+        """A run that goes red again after it was let go (a force-push back to
+        its commit) wakes the watcher with its new line."""
+        state = TMP / "state" / "ci"
+        state.mkdir(parents=True, exist_ok=True)
+        (state / "alerts.seen").write_text("0\n")
+        line = {"repo": "r", "branch": "b", "run_id": 5}
+        (state / "alerts.jsonl").write_text(
+            "".join(
+                json.dumps(line | x) + "\n"
+                for x in (
+                    {"wake": True, "kind": "heph", "text": "first"},
+                    {"wake": False, "kind": "withdrawn", "text": "let go"},
+                    {"wake": True, "kind": "escalate", "text": "again"},
+                )
+            )
+        )
+        self.env = os.environ | {
+            "FLEET_SOCK": f"ci-rewake-{os.getpid()}",
+            "WATCH_TICK": "0.1",
+        }
+        self.assertEqual(self._next_watcher(), "CI ESCALATE r b: again")
+        self.assertEqual((state / "alerts.seen").read_text().strip(), "3")
+
 
 class Held(unittest.TestCase):
     """A red run held after it paged out, and what lets it go."""
@@ -805,6 +868,35 @@ class Held(unittest.TestCase):
         self.assertNotIn("item", k)
         self.assertEqual((TMP / "q.md").read_text(), queue, "no needs-you line")
         self.assertTrue(any("red run superseded" in m for m in logs.output))
+
+    def test_a_red_held_before_its_commit_was_recorded_keeps_the_old_rule(self):
+        """A red held from before #321 has no commit: a moved head does not let
+        it go (a newer run, a closed PR or its age still do)."""
+        known = {}
+        ci_watch.poll(
+            "o", ["r"], Fake([run(5, branch="b", sha="p1")], pulls=[pr(4, "p1")]), known
+        )
+        del known["r:5"]["item"]["sha"]
+        got = ci_watch.poll("o", ["r"], Fake([], pulls=[pr(4, "p2")]), known)
+        self.assertEqual([r["run_id"] for r in got["red"]], [5])
+
+    def test_a_pr_closed_while_red_is_let_go_as_closed_not_superseded(self):
+        known = {}
+        ci_watch.poll(
+            "o", ["r"], Fake([run(5, branch="b", sha="p1")], pulls=[pr(4, "p1")]), known
+        )
+        with self.assertLogs(ci_watch.log, "INFO") as logs:
+            got = ci_watch.poll("o", ["r"], Fake([], pulls=[]), known)
+        self.assertEqual(got["red"], [])
+        self.assertFalse(any("superseded" in m for m in logs.output), logs.output)
+        self.assertEqual(
+            [
+                r.fields["why"]
+                for r in logs.records
+                if r.getMessage() == "held red let go"
+            ],
+            ["its PR closed or its workflow is gone"],
+        )
 
     def test_a_held_red_at_its_prs_head_still_escalates(self):
         known = {}

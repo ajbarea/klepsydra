@@ -580,6 +580,24 @@ def drop_inbox(repo: str, run_id: object) -> None:
         )
 
 
+def drop_held(repo: str, k: dict, why: str) -> None:
+    """Let held red K go: its undelivered inbox file goes, and once routed, a
+    withdrawn line (no wake) tells the pane watcher to skip the run's unread
+    wake lines, so a red that went stale waiting for Heph is never replayed (#321)."""
+    item = k.pop("item")
+    event(
+        logging.INFO,
+        "held red let go",
+        repo=repo,
+        run_id=item["run_id"],
+        why=why,
+        withdrawn="routed" in k,
+    )
+    drop_inbox(repo, item["run_id"])
+    if "routed" in k:
+        alert("withdrawn", False, item | k, text=f"red run withdrawn: {why}")
+
+
 def retriage(user: str, repo: str, run_id: int, k: dict, save_known) -> None:
     """Triage red run RUN_ID again when its last try met a usage limit on every
     account (state "waiting") RETRIAGE_S ago; past WAIT_MAX_S it has failed."""
@@ -695,7 +713,7 @@ def repo_pass(
                     and held["repo"] == repo
                     and (held["workflow_id"], held["place"]) == place
                 ):
-                    drop_inbox(repo, k.pop("item")["run_id"])
+                    drop_held(repo, k, "a newer run in its place did not fail")
             continue
         pr = r["_pr"]
         item = {
@@ -782,10 +800,9 @@ def repo_pass(
         gone = (held["place"] != "default" and held["place"] not in open_prs) or held[
             "workflow_id"
         ] not in workflows
-        superseded = (
-            held["place"] != "default"
-            and bool(held.get("sha"))
-            and open_prs.get(held["place"]) not in (None, held["sha"])
+        superseded = bool(held.get("sha")) and open_prs.get(held["place"]) not in (
+            None,
+            held["sha"],
         )
         if superseded:
             event(
@@ -797,8 +814,14 @@ def repo_pass(
                 sha=held["sha"],
                 head=open_prs.get(held["place"]),
             )
-        if newer or gone or superseded or k.get("seen", 0) < month:
-            drop_inbox(repo, k.pop("item")["run_id"])
+        why = (
+            (newer and "a newer run took its place")
+            or (gone and "its PR closed or its workflow is gone")
+            or (superseded and "its PR's head moved past its commit")
+            or (k.get("seen", 0) < month and "a month old")
+        )
+        if why:
+            drop_held(repo, k, why)
             continue
         if place not in places:
             retriage(user, repo, held["run_id"], k, save_known)
