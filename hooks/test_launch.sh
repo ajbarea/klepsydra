@@ -58,6 +58,12 @@ chmod +x "$work/bin/wt.exe"
 export WT_LOG="$work/wt.log" WT_PIDS="$work/stub-pids" HOME="$work/home" XDG_RUNTIME_DIR="$work" WSL_DISTRO_NAME=Test
 export KLEPSYDRA_TMUX_SOCKET="$sock" KLEPSYDRA_TMUX_CONF="$here/klepsydra-tmux.conf"
 export KLEPSYDRA_CLAUDE="sleep 600" KLEPSYDRA_WT="$work/bin/wt.exe"
+# Never the host's systemd: an agent's own scope sets INVOCATION_ID, which
+# would put every test server in a real scope (#292 review 2). Cases that want
+# the scope path pass their own stub; any other call is recorded and fails.
+unset INVOCATION_ID
+printf '#!/usr/bin/env bash\necho "$*" >>%q\nexit 1\n' "$work/systemd-run-guard.calls" >"$work/bin/systemd-run-guard"; chmod +x "$work/bin/systemd-run-guard"
+export KLEPSYDRA_SYSTEMD_RUN="$work/bin/systemd-run-guard"
 : >"$WT_LOG"
 
 t() { tmux -L "$sock" "$@"; }
@@ -616,9 +622,87 @@ check "a socket path wt.exe would split: says so" "$out" \
 check "a socket path wt.exe would split: nothing running, no tab" \
   "$(TMUX_TMPDIR="$odd" tmux -L "$sock" list-sessions 2>/dev/null | wc -l)|$(tabs)" "0|0"
 
+echo "a server started from a systemd unit gets its own scope (#292 review)"
+# A oneshot unit's end kills what it leaves in its cgroup: the tmux watchdog's
+# recover starts the fleet's server from one, so the launcher wraps it.
+cat >"$work/bin/systemd-run" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >>"$work/systemd-run.calls"
+while [[ \$# -gt 0 && \$1 != -- ]]; do shift; done
+shift
+exec "\$@"
+EOF
+chmod +x "$work/bin/systemd-run"
+ss="kl-scope-$$"
+out=$(INVOCATION_ID=abc KLEPSYDRA_SYSTEMD_RUN="$work/bin/systemd-run" KLEPSYDRA_TMUX_SOCKET="$ss" bash "$launch" new "$work/repos" 2>&1); rc=$?
+check "#292 review: from a unit, the new server starts inside systemd-run --user --scope" \
+  "$rc $(grep -c -- '--user --scope --quiet --collect --unit=klepsydra-tmux-[0-9]* -- tmux -L '"$ss" "$work/systemd-run.calls") $(tmux -L "$ss" list-sessions -F '#{session_name}' 2>/dev/null)" "0 1 fleet"
+tmux -L "$ss" kill-server 2>/dev/null; : >"$work/systemd-run.calls"
+out=$(env -u INVOCATION_ID KLEPSYDRA_SYSTEMD_RUN="$work/bin/systemd-run" KLEPSYDRA_TMUX_SOCKET="$ss" bash "$launch" new "$work/repos" 2>&1); rc=$?
+check "#292 review: from a terminal, as before: no scope" "$rc $(wc -l <"$work/systemd-run.calls")" "0 0"
+tmux -L "$ss" kill-server 2>/dev/null
+# A CI runner is a systemd service with no user manager: systemd-run fails.
+printf '#!/usr/bin/env bash\necho "Failed to connect to bus" >&2\nexit 1\n' >"$work/bin/systemd-run-nobus"; chmod +x "$work/bin/systemd-run-nobus"
+out=$(INVOCATION_ID=abc KLEPSYDRA_SYSTEMD_RUN="$work/bin/systemd-run-nobus" KLEPSYDRA_TMUX_SOCKET="$ss" bash "$launch" new "$work/repos" 2>&1); rc=$?
+check "#292 review: with no user manager to make a scope, the server starts as from a terminal" \
+  "$rc $(tmux -L "$ss" list-sessions -F '#{session_name}' 2>/dev/null)" "0 fleet"
+tmux -L "$ss" kill-server 2>/dev/null
+
+echo "the pane-died hook (#290)"
+# The 11-03 crash: tmux 3.4 sent focus-out to a pane whose process had ended
+# (kept by remain-on-exit failed) and died. The hook starts such a pane again.
+# The client runs in an outer server's pane, so send-keys there types focus
+# reports into it the way a terminal does.
+mkdir -p "$HOME/.claude"; cp "$here/klepsydra-pane-died.sh" "$HOME/.claude/"
+in4="kl-test4-$$" out4="kl-test5-$$"
+ti() { tmux -L "$in4" "$@"; }
+to() { tmux -L "$out4" "$@"; }
+KLEPSYDRA_DEAD_DIR="$work/dead" FLEET_BIN="$work/nobin" ti -f "$KLEPSYDRA_TMUX_CONF" new-session -d -s s -x 80 -y 24 \
+  "printf 'last words\n\033[?1004h'; until [ -e $work/die4 ]; do sleep 0.1; done; kill -TERM \$\$"
+spid=$(ti display -p '#{pid}')
+v0=$(ti display -p -t s '#{pane_id}') # the first viewer's pane, whatever window is current later
+to -f /dev/null new-session -d -s o -x 80 -y 24 "TERM=xterm-256color tmux -L $in4 attach -t s"
+sleep 1
+to send-keys -t o -l $'\033[I'; sleep 0.5
+touch "$work/die4"
+for _ in $(seq 50); do [[ -n $(ti show -pqv -t s @klepsydra_dead 2>/dev/null) ]] && break; sleep 0.1; done
+check "#290: a pane whose process was killed is started again at once, marked with why" \
+  "$(ti display -p -t s '#{pane_dead}') $(ti show -pqv -t s @klepsydra_dead | cut -d' ' -f2-)" "0 its process ended on signal 15"
+check "#292 review 3: the mark names the viewer's own pid" "$(ti show -pqv -t s @klepsydra_dead | cut -d' ' -f1)" "$(ti display -p -t s '#{pane_pid}')"
+check "#290: its last screen is saved" "$(cat "$work"/dead/*.txt 2>/dev/null | grep -c '^last words$')" "1"
+to send-keys -t o -l $'\033[O'; sleep 0.5
+to send-keys -t o -l $'\033[I'; sleep 0.5
+check "#290: focus moving off it and back leaves the server running (tmux 3.4 died here)" "$(kill -0 "$spid" 2>/dev/null && echo alive || echo died)" "alive"
+shown=$(ti capture-pane -p -J -S - -t s)
+check "#290: the pane shows its saved screen and how to close it" \
+  "$(grep -q '^last words *$' <<<"$shown" && echo screen) $(grep -q 'process ended on signal 15\. .*Press Enter to close\.' <<<"$shown" && echo note)" "screen note"
+# A viewer killed instead of closed with Enter is closed, never started again.
+w2=$(ti new-window -d -P -F '#{pane_id}' -t s: "sh -c 'sleep 0.3; exit 3'")
+for _ in $(seq 50); do [[ -n $(ti show -pqv -t "$w2" @klepsydra_dead 2>/dev/null) ]] && break; sleep 0.1; done
+check "#290: a non-zero exit is marked with its status" "$(ti show -pqv -t "$w2" @klepsydra_dead | cut -d' ' -f2-)" "its process exited with status 3"
+kill -TERM "$(ti display -p -t "$w2" '#{pane_pid}')"; sleep 1
+# (display -t names a gone pane with empty fields and exit 0 in tmux 3.4, so the list decides.)
+check "#290: its viewer killed: the pane is closed" "$(ti list-panes -a -F '#{pane_id}' | grep -cx -- "$w2")" "0"
+# #292 review 3 (m2): a viewer's pane started again by hand keeps the old mark;
+# the program there dying is a new death, saved and shown, never closed unsaved.
+w3=$(ti new-window -d -P -F '#{pane_id}' -t s: "sh -c 'sleep 0.3; exit 3'")
+for _ in $(seq 50); do [[ -n $(ti show -pqv -t "$w3" @klepsydra_dead 2>/dev/null) ]] && break; sleep 0.1; done
+ti respawn-pane -k -t "$w3" "sh -c 'echo second words; sleep 0.3; exit 4'"
+for _ in $(seq 50); do [[ $(ti show -pqv -t "$w3" @klepsydra_dead 2>/dev/null) == *"status 4" ]] && break; sleep 0.1; done
+check "#292 review 3: a program started by hand in a viewer's pane dies: shown again, marked anew, its screen saved" \
+  "$(ti list-panes -a -F '#{pane_id}' | grep -cx -- "$w3") $(ti show -pqv -t "$w3" @klepsydra_dead | cut -d' ' -f2-) $(cat "$work"/dead/*.txt 2>/dev/null | grep -c '^second words$')" \
+  "1 its process exited with status 4 1"
+ti kill-pane -t "$w3" 2>/dev/null
+ti send-keys -t "$v0" Enter
+for _ in $(seq 50); do ti list-panes -a -F '#{pane_id}' 2>/dev/null | grep -qx -- "$v0" || break; sleep 0.1; done
+check "#290: Enter closes a dead pane's viewer" "$(ti list-panes -a -F '#{pane_id}' 2>/dev/null | grep -cx -- "$v0") (left: $(ti list-panes -a -F '#{pane_id}:#{pane_start_command}' 2>/dev/null | tr '\n' ' '))" "0 (left: )"
+ti kill-server 2>/dev/null; to kill-server 2>/dev/null
+rm -f -- "$sockdir/${in4:?}" "$sockdir/${out4:?}"
+
 echo "cleanup"
 cleanup; trap - EXIT
 check "no socket files left" "$(find "$sockdir" -maxdepth 1 \( -name "$sock" -o -name "$sock2" -o -name "$sock3" \) 2>/dev/null)" ""
 
+check "#292 review 2: no case reached the host's systemd-run" "$(cat "$work/systemd-run-guard.calls" 2>/dev/null)" ""
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [[ $fail -eq 0 ]]
