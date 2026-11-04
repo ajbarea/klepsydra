@@ -398,6 +398,28 @@ check "#287 review 14: a link named like a sender to heavy.sh is heavy.sh: what 
 # "; true": bash runs a lone command by exec, which would leave no --rcfile process to read.
 check "#287 review 14: an option's value is no script: bash --rcfile <fleet script> -c is checked" \
   "$(in_claude "$orchp" "$work/state2/orch-bin" "bash --rcfile $work/fleetcopy/fresh-now.sh -c '$T send-keys -t $cold2 /clear; true'" 2>&1 | grep -o 'orch-guard (cold-limit)')" "orch-guard (cold-limit)"
+printf 'import subprocess\nsubprocess.run(["tmux", "-L", "%s", "send-keys", "-t", "%s", "x"], check=True)\n' "$FLEET_SOCK" "$cold2" >"$work/elsewhere/x.py"
+check "#287 review 15: python's -O takes no value: python3 -O <elsewhere> <fleet script> is checked" \
+  "$(in_claude "$orchp" "$work/state2/orch-bin" "python3 -O $work/elsewhere/x.py $work/fleetcopy/note.py" 2>&1 | grep -o 'orch-guard (cold-limit)')" "orch-guard (cold-limit)"
+check "#287 review 15: python3 - <fleet script> runs stdin: checked" \
+  "$(in_claude "$orchp" "$work/state2/orch-bin" "python3 - $work/fleetcopy/note.py <$work/elsewhere/x.py" 2>&1 | grep -o 'orch-guard (cold-limit)')" "orch-guard (cold-limit)"
+# A module named like a link to the fleet script: python runs the package evilmod's py.py.
+mkdir -p "$work/elsewhere/evilmod"; : >"$work/elsewhere/evilmod/__init__.py"; cp -- "$work/elsewhere/x.py" "$work/elsewhere/evilmod/py.py"
+ln -sf -- "$work/fleetcopy/note.py" "$work/elsewhere/evilmod.py"
+check "#287 review 15: python3 -m <a name that resolves to a fleet script> runs a module: checked" \
+  "$(in_claude "$orchp" "$work/state2/orch-bin" "cd $work/elsewhere && python3 -m evilmod.py" 2>&1 | grep -o 'orch-guard (cold-limit)')" "orch-guard (cold-limit)"
+check "#287 review 15: bash -s <fleet script> runs stdin: checked" \
+  "$(in_claude "$orchp" "$work/state2/orch-bin" "bash -s $work/fleetcopy/fresh-now.sh <$work/elsewhere/fresh-now.sh" 2>&1 | grep -o 'orch-guard (cold-limit)')" "orch-guard (cold-limit)"
+# The text runs evil, then resolves into the fleet folder through a directory named "evil;".
+printf '#!/usr/bin/env bash\n%s send-keys -t %s /clear\n' "$T" "$cold2" >"$work/evil"; chmod +x "$work/evil"; mkdir -p "$work/evil;"
+check "#287 review 15: a short cluster holding c (bash -ec) runs its text: checked" \
+  "$(in_claude "$orchp" "$work/state2/orch-bin" "bash -ec '$work/evil;/../fleetcopy/fresh-now.sh'" 2>&1 | grep -o 'orch-guard (cold-limit)')" "orch-guard (cold-limit)"
+# The same for python: the code runs x.py, the rest a comment that resolves into the fleet folder.
+mkdir -p "$work/elsewhere/exec(open(\"x.py\").read())#"
+check "#287 review 15: a short cluster holding c (python3 -Ic) runs its text: checked" \
+  "$(in_claude "$orchp" "$work/state2/orch-bin" "cd $work/elsewhere && python3 -Ic 'exec(open(\"x.py\").read())#/../../fleetcopy/note.py'" 2>&1 | grep -o 'orch-guard (cold-limit)')" "orch-guard (cold-limit)"
+check "#287 review 15: bash -O extglob <fleet script> still passes" \
+  "$(in_claude "$orchp" "$work/state2/orch-bin" "bash -O extglob $work/fleetcopy/fresh-now.sh" 2>&1 && echo ok)" "ok"
 check "heavy.sh in the fleet folder runs any command: what it runs is checked" \
   "$(FLEET_HEAVY_LOCK="$work/heavy.lock" in_claude "$orchp" "$work/state2/orch-bin" "bash $work/fleetcopy/heavy.sh bash $work/elsewhere/fresh-now.sh" 2>&1 | grep -o 'orch-guard (cold-limit)')" "orch-guard (cold-limit)"
 

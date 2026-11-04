@@ -59,10 +59,12 @@ from_fleet_script() {
     if [[ $a =~ ^(bash|sh|python3?(\.[0-9]+)?)$ ]]; then
       for (( j = 1; j < ${#argv[@]} && j < 4; j++ )); do
         f=${argv[j]}
-        # An option's value is no script; -c and -m run no script file at all.
+        # -c, -m, -s and python's - run no script file (alone or in a short-option
+        # cluster); a value-taking option's value is no script. Options are per
+        # interpreter: python's -O takes no value.
         case $a:$f in
-          *:-c | python*:-m) break ;;
-          *:--rcfile | *:--init-file | *:-o | *:+o | *:-O | *:+O | python*:-W | python*:-X) (( j++ )); continue ;;
+          *:-c | python*:- | python*:-m | python*:-[!-]*[cm]* | bash:-s | sh:-s | bash:-[!-]*[cs]* | sh:-[!-]*[cs]*) break ;;
+          bash:[-+][oO] | sh:[-+][oO] | bash:--rcfile | bash:--init-file | python*:-[WX]) (( j++ )); continue ;;
         esac
         [[ $f == -* ]] && continue
         nonsender "$f" && break
