@@ -27,14 +27,12 @@ to a suite before queuing it. The heavy lock is shared with other agents and que
 Order (Heph 11-04): bug queue -> #326 (PR #331) -> #323 stage 1 (PR #332) -> #327 Agora v2 -> #324 -> #323 later
 stages; reader backlog (#318, #316, #314, #308, #310) and cuts 7, #8 between.
 All open PRs below are green in CI (11-04 afternoon).
-- ✅ merged + installed: #230, #313.
-- 🔄 #292 head a86065d: r4 fixed (S1 epoch value, m1 WSL gate, S2 merge, m3, m4), r5 B1 (WSL install case in its own
-  folder) and m5 (fixed-btime /proc) fixed; r5 verify reader finishing (/tmp/claude-1001/r5-292). Round 5 is the
-  ceiling: then merge, install (`fleet install` re-reads the tmux conf), check doctor.
-- 🔄 #322 head b0be1e0: r1 fixed (merge, per-window marks with the reading clock, blocked() marks, carry-on only after
-  READY-TO-MOVE via ctx field e, asked=NOW, delivery logged); r2 reader running (/tmp/claude-1001/r2-322).
+- ✅ merged + installed: #230, #313, #292 (pane-died hook live on the fleet server; doctor: only #328's phone-wall FAIL,
+  AJ's .wslconfig line, and this session's own move pending).
+- 🔄 #322: r2 fixed (G1 stopped from ready_to_move, G2 log, G4 tests: weekly mark, limit-kind mark, rc 3 note, hour gate,
+  undelivered note; body rewritten); local suite 716/0. r3 reader running (/tmp/claude-1001/r3-322).
 - 🔄 #287 head 62a0d0d: r14 fixed (option values, whole-stat read, resolved-name test, PATH quoting, rcfile case made
-  non-vacuous: both mutants killed, guard 231/0, 34 ms). Next: r15 verify.
+  non-vacuous: both mutants killed, guard 231/0, 34 ms). r15 verify running (/tmp/claude-1001/r15-287).
 - 📋 r1 owed, all green: #325 (#320 fleet send), #329 (#321), #330 (#328), #331 (#326 Agora removal; after merge:
   install, brief --refresh, close #185 #270 #295 with notes, edit #237), #332 (#323 stage 1; browser 403/0, shots in
   briefing), #318 (cut 6; UNKNOWN merge state: merge main; drop its Agora line once #331 lands). #325 also UNKNOWN.
