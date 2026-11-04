@@ -1649,7 +1649,8 @@ reply_live "$p" settled '[{"id": "w1", "kind": "bash"}]' "READY-TO-MOVE" "$((noo
 LAUNCH="$work/launch-limited.sh" FLEET_NOW=$((noon + 960)) bash "$here/resume-at-reset.sh" --once 2>/dev/null
 check "#319: a move back whose brief meets the limit tells the stopped worker to carry on where it is" \
   "$(grep -c '^SUBMIT The move back to Personal did not happen: its brief met the usage limit there. Carry on here' "$work/stale.log") $(logged "told the worker to carry on after a failed move back")" "1 $p "
-t kill-window -t "$p" 2>/dev/null; : >"$REGISTRY"
+# The limit hold and the pass's state go with it, as the cases below expect a fresh start.
+t kill-window -t "$p" 2>/dev/null; : >"$REGISTRY"; rm -f -- "$FLEET_STATE/back-hold" "$FLEET_STATE/resume-state" "$FLEET_STATE/back-room-since"
 
 # A turn that starts while the fresh session launches (a background task's
 # notification) keeps the old pane.
