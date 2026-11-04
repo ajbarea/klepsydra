@@ -299,27 +299,21 @@ squash() { tr -d '[:space:]' <<<"$1"; }
 # Heph 11-03), so a stop is dated by the session's last good reply: a main-chain
 # assistant entry that is no API error and no <synthetic> one (Claude Code writes
 # a limit as an assistant entry with isApiErrorMessage, error rate_limit and
-# model <synthetic>). Prints "GOOD LIMIT": that reply's epoch and the first limit
-# entry's after it ("-" when none). Fails when no good reply is found.
+# model <synthetic>). Prints that reply's epoch; fails when there is none.
 read -r -d '' STOP_JQ <<'JQ' || true
-def epoch: sub("[.][0-9]+Z$"; "Z") | fromdateiso8601;
 def good: .isSidechain != true and .isApiErrorMessage != true and ((.message.model? // "") != "<synthetic>");
-reduce (inputs | fromjson? | objects | select(.type == "assistant" and (.timestamp | type) == "string")) as $e
-  ({g: null, l: null};
-   if ($e | good) then {g: (($e.timestamp | epoch)? // null), l: null}
-   elif $e.error == "rate_limit" and .g != null and .l == null then .l = (($e.timestamp | epoch)? // null)
-   else . end)
-| select(.g != null) | "\(.g) \(.l // "-")"
+[inputs | fromjson? | objects | select(.type == "assistant" and (.timestamp | type) == "string" and good)]
+| last | select(. != null) | .timestamp | sub("[.][0-9]+Z$"; "Z") | fromdateiso8601
 JQ
 # Only the transcript's tail is read, through a grep prefilter (a long session's
 # file runs to tens of MB, and the guard sits in front of every send); the
 # window grows eightfold until a good reply is in it, up to the whole file.
 stop_from_transcript() { # TP
-  local tp=$1 size n=${ORCH_TAIL_BYTES:-2097152} out
+  local tp=$1 size n=2097152 out
   size=$(stat -L -c %s -- "$tp" 2>/dev/null) || return 1
   while :; do
-    out=$(tail -c "$n" -- "$tp" 2>/dev/null | grep -F '"type":"assistant"' | jq -nRr "$STOP_JQ" 2>/dev/null)
-    [[ $out =~ ^[0-9]+\ ([0-9]+|-)$ ]] && { printf '%s\n' "$out"; return 0; }
+    out=$(tail -c "$n" -- "$tp" 2>/dev/null | LC_ALL=C grep -aF '"type":"assistant"' | jq -nRr "$STOP_JQ" 2>/dev/null)
+    [[ $out =~ ^[0-9]+$ ]] && { printf '%s\n' "$out"; return 0; }
     (( n >= size )) && return 1
     n=$(( n * 8 ))
   done
@@ -333,35 +327,24 @@ for ch in "${checks[@]}"; do
   [[ ${ORCH_TMUX_TRACE:-} ]] && printf '%s\n' "$p" >>"$ORCH_TMUX_TRACE"
   [[ $p == "$orch" ]] && continue
   s=$(screen "$p")
-  ps=$(plain <<<"$s")
   lim="" idle="" mt=""
   if lim=$(limit_line "$s"); then
-    grep -q 'done [0-9]\{1,2\}:[0-9][0-9] [AP]M' <<<"$ps" ||
-      refuse unknown "pane $p is at a usage limit and shows no time it stopped, so the guard cannot tell whether its cache is still warm. The resume service sends at the reset; relaunch it fresh now with: bash $state/fresh-now.sh $p" \
+    # Only the session's transcript dates the stop, by its last good reply
+    # (never the file's mtime, a later write; never "done H:MM", which has no
+    # date). With none, the stop is unknown, a refusal: the way out is a fresh
+    # relaunch, which is safe.
+    sid="" tp="" stop=""
+    if ! { sid=$(live_session "$p") && tp=$(transcript "$sid") && [[ -n $tp ]] &&
+      read -r stop < <(stop_from_transcript "$tp") && [[ $stop =~ ^[0-9]+$ ]]; }; then
+      refuse unknown "pane $p is at a usage limit and no transcript of its session holds a reply that succeeded, the time its cache started to age, so the guard cannot tell how long its cache has been cold. The resume service sends at the reset; relaunch it fresh now with: bash $state/fresh-now.sh $p" \
         pane="$p" command="$name" limit="$lim"
-    stop=$(stopped_at "$p" "$ps")
-    # "done H:MM" has no date, so a pane stopped days ago reads as minutes:
-    # the time shown is the latest it can be. The session's transcript dates
-    # the stop by its entries' own times, never the file's mtime (a later
-    # write): the earliest of its last good reply, the screen's time and the
-    # first limit after that reply. With no good reply, a screen time an hour
-    # back is cold for sure, and any other stop is unknown (fail closed: the
-    # way out is a fresh relaunch, which is safe).
-    sid="" tp="" dated=0 good="" first=""
-    if sid=$(live_session "$p") && tp=$(transcript "$sid") && [[ -n $tp ]] &&
-      read -r good first < <(stop_from_transcript "$tp") && [[ $good =~ ^[0-9]+$ ]]; then
-      (( good < stop )) && stop=$good
-      [[ $first =~ ^[0-9]+$ ]] && (( first < stop )) && stop=$first
-      dated=1 mt=$good
     fi
+    mt=$stop
     idle=$((now - stop))
     if (( idle >= FRESH_AFTER_S )); then
       refuse cold-limit "pane $p stopped at a usage limit $((idle / 60)) min ago (\"${lim#"${lim%%[![:space:]]*}"}\"). Its prompt cache lives an hour, so keys typed into it now re-cache its whole transcript: five such nudges took 38% of a five-hour window on 11-02. Relaunch it fresh from its brief instead: bash $state/fresh-now.sh $p" \
         pane="$p" command="$name" idle_min="$((idle / 60))" limit="$lim"
     fi
-    (( dated )) ||
-      refuse unknown "pane $p is at a usage limit and no transcript of its session holds a reply that succeeded, the time its cache started to age (\"done H:MM\" has no date), so the guard cannot tell how long its cache has been cold. The resume service sends at the reset; relaunch it fresh now with: bash $state/fresh-now.sh $p" \
-        pane="$p" command="$name" limit="$lim"
   fi
   before=""
   if ! has_input_box "$s"; then

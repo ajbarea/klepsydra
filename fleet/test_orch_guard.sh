@@ -102,6 +102,12 @@ warm=$(pane warm '{"above":["⏺ Done. done 10:00 AM","idle"]}')
 young=$(pane young "{\"above\":[\"⏺ Done. done 10:20 AM\",\"$LIMIT\"]}")
 typing=$(pane typing '{"above":["⏺ Done. done 10:20 AM"],"input":"AJ: also check the phone wall"}')
 settle
+# A session of its own for a pane, its transcript holding one good reply at EPOCH.
+dated_by() { # PANE SID EPOCH
+  jq -n --arg p "$1" '{session_id: "x", ended: null, tmux: {pane: $p}}' >"$KLEPSYDRA_DIR/fleet/$2.json"
+  : >"$work/projects/p/$2.jsonl"; tx_reply "$work/projects/p/$2.jsonl" "$3"; tx_limit "$work/projects/p/$2.jsonl" "$(( $3 + 30 ))"
+}
+dated_by "$cold" aaaaaaaa-0000-4000-8000-0000000000c0 "$(( FLEET_NOW - 5340 ))"
 t set-buffer -b x hi
 check "a pane at a limit since 9:00 (now 10:30): refused" "$(as_heph "$T send-keys -t $cold continue Enter")" "refused:cold-limit"
 check "the refusal names fresh-now.sh and the pane" "$(has "$(why)" "fresh-now.sh $cold")" "yes"
@@ -137,6 +143,7 @@ check "from a script of its own: refused" "$(as_heph "bash $work/nudge.sh")" "re
 # The check happens at the send, not when the command starts: a pane that
 # reaches a long-past limit while the command sleeps is refused.
 late=$(pane late '{"above":["⏺ Done. done 9:00 AM","idle"]}'); settle
+dated_by "$late" aaaaaaaa-0000-4000-8000-0000000000c1 "$(( FLEET_NOW - 5340 ))"
 ( sleep 1; printf '%s' "{\"above\":[\"⏺ Done. done 9:00 AM\",\"$LIMIT\"]}" >"$work/late.json" ) &
 check "a limit that appears during a wait is seen at the send" "$(as_heph "sleep 2.5; $T send-keys -t $late continue Enter")" "refused:cold-limit"
 wait
@@ -231,12 +238,33 @@ jq -n --arg p "$dated2" '{session_id: "x", ended: null, tmux: {pane: $p}}' >"$KL
 check "round 8: no limit entry: the last reply dates the stop (yesterday: cold)" "$(as_heph "$T send-keys -t $dated2 go Enter")" "refused:cold-limit"
 printf '{"type":"user"}\nnot json\n' >"$work/projects/p/$TS.jsonl"
 check "round 8: a transcript with no dated entry: unknown" "$(as_heph "$T send-keys -t $dated2 go Enter")" "refused:unknown"
+# Round 10 review: the screen's day-less time no longer decides. A warm reply
+# 30 min old under a stale "done 9:00 AM" is allowed; so is one with no done line.
+stale=$(pane stale "{\"above\":[\"⏺ Done. done 9:00 AM\",\"$LIMIT\"]}")
+nodone=$(pane nodone "{\"above\":[\"⏺ working\",\"$LIMIT\"]}"); settle
+dated_by "$stale" aaaaaaaa-0000-4000-8000-0000000000c2 "$(( FLEET_NOW - 1800 ))"
+dated_by "$nodone" aaaaaaaa-0000-4000-8000-0000000000c3 "$(( FLEET_NOW - 1800 ))"
+check "round 10 review: a reply 30 min old under a stale done 9:00 AM: allowed (the cache is warm)" "$(as_heph "$T send-keys -t $stale go Enter")" "ok"
+check "round 10 review: a reply 30 min old and no done line on screen: allowed" "$(as_heph "$T send-keys -t $nodone go Enter")" "ok"
+# A NUL-padded line (a crash) hides nothing after it, and prints nothing.
+nul=$(pane nul "{\"above\":[\"⏺ Done. done 10:20 AM\",\"$LIMIT\"]}"); settle
+dated_by "$nul" aaaaaaaa-0000-4000-8000-0000000000c4 "$(( FLEET_NOW - 86400 ))"
+printf '{"type":"assistant","x":"\0\0\0"}\n' >>"$work/projects/p/aaaaaaaa-0000-4000-8000-0000000000c4.jsonl"
+tx_reply "$work/projects/p/aaaaaaaa-0000-4000-8000-0000000000c4.jsonl" "$(( FLEET_NOW - 720 ))"
+check "round 10 review: a reply after a NUL-padded line still dates the stop, with nothing on stderr" \
+  "$(as_heph "$T send-keys -t $nul go Enter") [$(cat "$work/err")]" "ok []"
+# A bare value on a line (not an object) is skipped, not fatal.
+bare=$(pane bare "{\"above\":[\"⏺ Done. done 10:20 AM\",\"$LIMIT\"]}"); settle
+dated_by "$bare" aaaaaaaa-0000-4000-8000-0000000000c5 "$(( FLEET_NOW - 720 ))"
+printf '5\n"x"\n' >>"$work/projects/p/aaaaaaaa-0000-4000-8000-0000000000c5.jsonl"
+check "round 10 review: a bare number or string line is skipped" "$(as_heph "$T send-keys -t $bare go Enter")" "ok"
 # Round 10 (Heph 11-03): a long session's transcript is never read whole.
 # A reply 3 MB from the end (past the first 2 MB window) is found by widening;
 # a 48 MB file whose reply is near its end costs one small window.
 big=$(pane big "{\"above\":[\"⏺ Done. done 10:20 AM\",\"$LIMIT\"]}"); settle
 jq -n --arg p "$big" '{session_id: "x", ended: null, tmux: {pane: $p}}' >"$KLEPSYDRA_DIR/fleet/$TS.json"
-filler() { python3 -I -c 'import sys; line = "{\"type\":\"user\",\"message\":{\"content\":\"" + "x" * 1000 + "\"}}\n"; sys.stdout.write(line * (int(sys.argv[1]) // len(line)))' "$1"; }
+# Filler the prefilter keeps (assistant API errors), so only the tail window keeps the read cheap.
+filler() { python3 -I -c 'import sys; line = "{\"type\":\"assistant\",\"timestamp\":\"2026-01-01T00:00:00.000Z\",\"isApiErrorMessage\":true,\"message\":{\"model\":\"<synthetic>\",\"content\":\"" + "x" * 1000 + "\"}}\n"; sys.stdout.write(line * (int(sys.argv[1]) // len(line)))' "$1"; }
 : >"$work/projects/p/$TS.jsonl"; tx_reply "$work/projects/p/$TS.jsonl" "$(( FLEET_NOW - 720 ))"
 filler 3000000 >>"$work/projects/p/$TS.jsonl"; tx_limit "$work/projects/p/$TS.jsonl" "$(( FLEET_NOW - 600 ))"
 check "round 10: a reply 3 MB from the end is found by widening the window" "$(as_heph "$T send-keys -t $big go Enter")" "ok"
@@ -357,6 +385,7 @@ cp -- "$here/orch-tmux.sh" "$here/lib.sh" "$work/fleetcopy/"
 ln -s "$work/fleetcopy/orch-tmux.sh" "$work/state2/orch-bin/tmux"
 printf '%s\n' "$orchp" >"$work/state2/orchestrator.pane"; printf '%s\n' "$FLEET_NOW" >"$work/state2/guard/test-now"; test_env "$work/state2"
 cold2=$(pane cold2 "{\"above\":[\"⏺ Done. done 9:00 AM\",\"$LIMIT\"]}"); settle
+dated_by "$cold2" aaaaaaaa-0000-4000-8000-0000000000c6 "$(( FLEET_NOW - 5340 ))"
 printf '#!/usr/bin/env bash\n%s send-keys -t %s /clear\n' "$T" "$cold2" | tee "$work/fleetcopy/fresh-now.sh" >"$work/elsewhere/fresh-now.sh"
 check "the script outside the fleet folder is checked" "$(in_claude "$orchp" "$work/state2/orch-bin" "bash $work/elsewhere/fresh-now.sh" 2>&1 | grep -o 'orch-guard (cold-limit)')" "orch-guard (cold-limit)"
 printf 'import subprocess\nsubprocess.run(["tmux", "-L", "%s", "send-keys", "-t", "%s", "x"], check=True)\n' "$FLEET_SOCK" "$cold2" >"$work/fleetcopy/note.py"
