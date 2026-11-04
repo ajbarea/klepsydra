@@ -24,23 +24,22 @@ Each cut: a small PR with the proof test the report names.
 ## Resume here (session 26, replacement on ~/.claude-rit, from 11-04 morning; replaced session 25)
 Reports: /tmp/claude-1001/<round>/report.md. Never wrap a lock-taking make target in an outer timeout; finish edits
 to a suite before queuing it. The heavy lock is shared with other agents and queues for long stretches.
-Order (Heph 11-04): bug queue (#292, #322, #325, #329, #330, #287) -> #326 (PR #331) -> #323 stage 1 (PR #332) -> #327
-Agora v2 -> #324 -> #323's later stages; reader backlog (#318, #316, #314, #308, #310) and cuts 7, #8 between.
+Order (Heph 11-04): bug queue -> #326 (PR #331) -> #323 stage 1 (PR #332) -> #327 Agora v2 -> #324 -> #323 later
+stages; reader backlog (#318, #316, #314, #308, #310) and cuts 7, #8 between.
+All open PRs below are green in CI (11-04 afternoon).
 - ✅ merged + installed: #230, #313.
-- 🔄 #287 head 1ffb001 (green): r14 found B1 (fixture PATH unquoted: AJ's PATH has spaces), S1 (resolved-name check
-  untested), M1 (newline in comm), M2 (option values read as script); M3 (allowlist) deferred. Fixes UNCOMMITTED in
-  guard-264 (orch-tmux.sh case/options + whole-stat read; test_fleet.sh printf %q PATH; 2 new guard tests); guard
-  suite + 2 mutants queued (scratchpad m287/results.txt). Then commit, r15.
-- 🔄 #292 head 80f34de (green): r4 reader running (/tmp/claude-1001/r4-292).
-- 🔄 #322 head 80abe87 (green): r1 reader running (/tmp/claude-1001/r1-322).
-- 🔄 #325 (#320 fleet send, green), #329 (#321 superseded reds, green), #330 (#328 phone wall off, CI): r1 each owed.
-- 🔄 #331 (#326 Agora removal; fleet crate clippy + 420 tests; JS 475): CI, r1 (elenchus) owed. After merge: install
-  (retires agora.py link), brief --refresh, close #185 #270 #295 with notes, edit #237 (issue notes).
-- 🔄 #332 (#323 stage 1: split button, agy launcher, rules as always-on agy rule; JS 483; image smoke done, shot in
-  briefing): launcher + browser runs queued (agy-323 logs/s323.*). Then body result, r1.
-- 🔄 Cut 6 = PR #318 (green): r1 owed; drop its Agora line once #331 lands.
+- 🔄 #292 head a86065d: r4 fixed (S1 epoch value, m1 WSL gate, S2 merge, m3, m4), r5 B1 (WSL install case in its own
+  folder) and m5 (fixed-btime /proc) fixed; r5 verify reader finishing (/tmp/claude-1001/r5-292). Round 5 is the
+  ceiling: then merge, install (`fleet install` re-reads the tmux conf), check doctor.
+- 🔄 #322 head b0be1e0: r1 fixed (merge, per-window marks with the reading clock, blocked() marks, carry-on only after
+  READY-TO-MOVE via ctx field e, asked=NOW, delivery logged); r2 reader running (/tmp/claude-1001/r2-322).
+- 🔄 #287 head 62a0d0d: r14 fixed (option values, whole-stat read, resolved-name test, PATH quoting, rcfile case made
+  non-vacuous: both mutants killed, guard 231/0, 34 ms). Next: r15 verify.
+- 📋 r1 owed, all green: #325 (#320 fleet send), #329 (#321), #330 (#328), #331 (#326 Agora removal; after merge:
+  install, brief --refresh, close #185 #270 #295 with notes, edit #237), #332 (#323 stage 1; browser 403/0, shots in
+  briefing), #318 (cut 6; UNKNOWN merge state: merge main; drop its Agora line once #331 lands). #325 also UNKNOWN.
 - 📋 Readers: #316 r1, #314 r1, #308 r2, #310 verify (+ mutant harness), claude-prefs#42 r2 + #43 r1.
-- 📋 Cut 7 (friction triage + SessionStart last 10 lines), then the #8 trial.
+- 📋 Cut 7 (friction triage + SessionStart last 10 lines), then the #8 trial; #327; #324.
 
 ## Next, in order (session 21 list; items 1-3 moved above)
 1. (done) #296 fix/watch-alert-race (watch-race), head 0a10fe1, review-clean r3. CI run 41702648814 was still in
