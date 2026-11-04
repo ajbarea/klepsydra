@@ -24,10 +24,21 @@ A test steers it through a JSON state file, re-read on every tick:
              session showed the pasted brief but took no Enter for 9 min)
   exit_on_exit  /exit ends the process, so its pane closes as Claude Code's does
   exit_delay seconds /exit takes before the process ends (with exit_on_exit)
+  meta_first a meta prompt record (isMeta, as Claude Code writes for a local
+             command's caveat) is in the transcript before anything else
   on_exit    a command /exit runs first, as Claude Code's SessionEnd hook
              (prompt_input_exit) runs the fleet hook on a real /exit
 
-Run: python3 -I fake_pane.py STATE LOG
+Claude Code's own arguments follow STATE and LOG. With --session-id it keeps
+a transcript as Claude Code does (CONFIG/projects/fake/SID.jsonl, CONFIG being
+CLAUDE_CONFIG_DIR, else FLEET_DEFAULT_CONFIG): a prompt record per submitted
+line, an assistant record when a turn starts, and a bridge_status record when
+Remote Control comes up. --remote-control NAME turns it on at start (after
+rc_delay; logged "RC ARG NAME"), and a last argument that is no option's value
+is submitted at start as the first prompt, as `claude "query"` does (after
+stall, when set).
+
+Run: python3 -I fake_pane.py STATE LOG [claude args...]
 """
 
 import json
@@ -80,6 +91,52 @@ class Pane:
         self.shown = None
         self.started = time.time()
         self.lost_enters = 0
+        self.transcript = None
+        self.rc_name = None
+        self.first_prompt = None
+
+    def args(self, argv):
+        """Claude Code's arguments: the session id, Remote Control's name, the prompt."""
+        sid, valued, i = (
+            None,
+            ("--session-id", "--settings", "--remote-control", "--resume", "--model"),
+            0,
+        )
+        while i < len(argv):
+            a = argv[i]
+            if a in valued and i + 1 < len(argv):
+                if a == "--session-id":
+                    sid = argv[i + 1]
+                elif a == "--remote-control":
+                    self.rc_name = argv[i + 1]
+                i += 2
+                continue
+            if i == len(argv) - 1 and not a.startswith("-"):
+                self.first_prompt = a
+            i += 1
+        config = os.environ.get("CLAUDE_CONFIG_DIR") or os.environ.get(
+            "FLEET_DEFAULT_CONFIG"
+        )
+        if sid and config:
+            os.makedirs(os.path.join(config, "projects", "fake"), exist_ok=True)
+            self.transcript = os.path.join(config, "projects", "fake", sid + ".jsonl")
+        if self.state.get("meta_first"):
+            self.record(
+                {
+                    "type": "user",
+                    "isMeta": True,
+                    "message": {"role": "user", "content": "caveat"},
+                }
+            )
+        if self.rc_name is not None:
+            self.log("RC ARG " + self.rc_name)
+            self.rc_was_on = False
+            self.rc_at = time.time() + float(self.state.get("rc_delay", 0))
+
+    def record(self, rec):
+        if self.transcript:
+            with open(self.transcript, "a", encoding="utf-8") as f:
+                f.write(json.dumps(rec, separators=(",", ":")) + "\n")
 
     def log(self, line):
         with open(self.log_path, "a", encoding="utf-8") as f:
@@ -128,6 +185,8 @@ class Pane:
             "❯ " + text.splitlines()[0] if text else "❯"
         )
         then = self.state.get("on_submit", "busy")
+        if then != "none":
+            self.record({"type": "user", "message": {"role": "user", "content": text}})
         if then == "busy":
             self.busy_at = time.time() + float(self.state.get("busy_delay", 0))
         elif then == "limit":
@@ -223,6 +282,9 @@ class Pane:
             self.busy_at = None
             self.state["busy"] = True
             self.save()
+            self.record(
+                {"type": "assistant", "message": {"role": "assistant", "content": []}}
+            )
         if self.rc_at is not None and time.time() >= self.rc_at:
             self.rc_at = None
             if self.rc_was_on:
@@ -232,6 +294,18 @@ class Pane:
                 self.state.setdefault("above", []).extend(RC_ACTIVE)
                 self.save()
                 self.log("RC ON")
+                self.record(
+                    {
+                        "type": "system",
+                        "subtype": "bridge_status",
+                        "url": RC_ACTIVE[1].strip(),
+                    }
+                )
+        if self.first_prompt is not None and time.time() - self.started >= float(
+            self.state.get("stall", 0)
+        ):
+            self.input, self.first_prompt = self.first_prompt, None
+            self.submit()
 
     def lines(self):
         above = list(self.state.get("above", []))
@@ -273,6 +347,8 @@ class Pane:
 
 def main():
     pane = Pane(sys.argv[1], sys.argv[2])
+    pane.load()
+    pane.args(sys.argv[3:])
     if os.environ.get("CLAUDE_CONFIG_DIR"):
         pane.log("CONFIG " + os.environ["CLAUDE_CONFIG_DIR"])
     fd = sys.stdin.fileno()
