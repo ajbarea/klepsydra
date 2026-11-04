@@ -1,4 +1,4 @@
-# IMPL: klepsydra fleet-module brief, resume state 2026-11-04 00:40 (EST)
+# IMPL: klepsydra fleet-module brief, resume state 2026-11-04 (session 26)
 
 Session 22 (Chronos) resumed 16:09 after the IAAI-27 park. Resume with the same brief from this file, `git log`,
 open PRs and their comments, and the klepsydra line under "Running now" in /mnt/c/Users/ajbar/fleet-briefing/queue.md.
@@ -21,25 +21,27 @@ claude --remote-control NAME "brief"), 6 (--append-system-prompt-file, tail ~260
 triage + inject last 10), then the #8 trial. #9 deferred, #10 denied. #304/#305 closed (withdrawn).
 Each cut: a small PR with the proof test the report names.
 
-## Resume here (session 25 on RIT, from 11-04 00:07; replaced session 24)
-Readers die with their session: re-dispatch fresh (opus, one change each, report under /tmp/claude-1001/<round>/report.md,
-findings appended as confirmed). RIT weekly read 93% at 00:12: keep subagents lean.
-- 📋 #287 head 531e87d: main merged again (install.sh SCRIPTS union). r13 verify reader running
-  (/tmp/claude-1001/r13-287/report.md). Merge on CLEAN + green pull_request run. Deploy: install-fleet,
-  PreToolUse hook in ~/.claude settings, `fleet accounts sync`, `fleet brief --refresh`.
-- 📋 #313 r1 reader running (/tmp/claude-1001/r1-313/report.md).
-- 📋 #310 head fad130d: mutants rerunning (scratchpad of session 899189da, m310/results.txt); then verify reader on
-  /tmp/claude-1001/r1-310/report.md. claude-prefs#43 r1 owed.
-- 📋 #230 (ask-217): main merged locally (union of #217 watcher + #261 registry event; NOT yet committed until the hook
-  suite passes: scratchpad/hooks230-merge.log). Then r4 reader on /tmp/claude-1001/r3-230/report.md.
-- ✅ #292 (tmux-290): main merged (a1fcdce, README doctor row + install.sh union), pushed; r3 owed.
-- 📋 #308 r2 re-dispatch (old dir /tmp/claude-1001/r2-308 partial), #314 r1, claude-prefs#42 r2.
-- 🔄 Cut 5 = issue #315, worktree launch-315 (feat/launch-rc-arg-315): experiment PASSED (bridge_status link + brief as
-  first prompt, see issue). launch.sh passes `--remote-control NAME "$(cat brief)"`, result from the transcript;
-  fake_pane.py parses claude args and writes transcript records; cut harness fleet/test_s315.sh (untracked).
-  deliver/remote_control stay in lib.sh (fresh-now /clear path and the resume service type into live panes).
-- 📋 Cuts 6 (note: --system-prompt-snapshot records an appended prompt per conversation; a resumed session keeps the
-  old tail until compaction), 7, then the #8 trial.
+## Resume here (session 26, replacement on ~/.claude-rit, from 11-04 morning; replaced session 25)
+Reports: /tmp/claude-1001/<round>/report.md. Heavy runs: never wrap a lock-taking make target in an outer timeout.
+- 🔄 #287 head 1ffb001: r13 B1 (doctor fixture), S1 (guard rows reach ok/warn), B2 (heavy.sh is no fleet sender) fixed;
+  the ancestry walk forks nothing for a non-sender (timing check had read 83 ms). Local orch-guard + fleet suites queued
+  (guard-264 logs/s26c.*). Next: r14 verify reader, merge, deploy (install-fleet, PreToolUse hook, accounts sync).
+- 🔄 #313 head db6cddd (main merged): r1 S1 (/login since the stop: text dates it), S2 (text reset never before the
+  stop), M1 docs fixed; local suite 576/576 before the merge; CI on db6cddd running. M2 left (PLAUSIBLE). Next: r2 reader.
+- 🔄 #230 head e10b5bc: r4 S1 (miss-count reset test) fixed with the reader's p i p i case; M4 listed as deferred in
+  the body. r5 verify reader running (/tmp/claude-1001/r5-230). Then merge (bug fix).
+- 🔄 #292 r3 (/tmp/claude-1001/r3-292): B1 (doctor fixture needs the hook; WSL_DISTRO_NAME unset in the suite), S1
+  (journal stub honours -b/--since; 6 negative cases; mutants M1 M4 M6 M9 red, M7 rerun pending), m1 (doctor unit gets
+  WSL_DISTRO_NAME), m2 (mark holds the viewer pid), m3/m5/m7 wording, m4 lower bound only (age bound deferred), m6
+  (dead panes listed before source-file). UNCOMMITTED in tmux-290 until the mutant rerun and reader's final report.
+  Then whole-suite run, PR body results table to whole-suite numbers, r4.
+- 🔄 Cut 6 = #317 / PR #318 (tail-cut6, head f606054): tail 297 words in the system prompt; CI red 41791557560 fixed
+  (12 wording checks, and a rule added to a stripped brief is now caught). Next: CI green, r1 reader. Deploy: install,
+  `fleet brief --refresh`.
+- 📋 Readers owed: #313 r2, #287 r14, #318 r1, #316 r1, #314 r1, #308 r2, #310 verify (+ its mutant harness: base was
+  never green), claude-prefs#42 r2 + #43 r1.
+- 📋 Cut 7: triage all 77 friction.md lines (a read-only reader classifies: fixed / needs issue / delete), then a
+  SessionStart hook in worker-settings.json printing the last 10 lines for the repo; tail line changes. Then #8 trial.
 
 ## Next, in order (session 21 list; items 1-3 moved above)
 1. (done) #296 fix/watch-alert-race (watch-race), head 0a10fe1, review-clean r3. CI run 41702648814 was still in
