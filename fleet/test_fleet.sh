@@ -3497,7 +3497,7 @@ FLEET_SUCCEEDS=11111111-2222-4333-8444-555555555555 FLEET_SETTINGS='' FLEET_SCOP
 check "#226: a move's successor id reaches the session; anything else is dropped" \
   "$(grep -c 'KLEPSYDRA_SUCCEEDS=11111111-2222-4333-8444-555555555555 ' "$work/cmd")" "1"
 check "#183 review 2: keryx's switch is never inherited from tmux's environment" "$(grep -c '^env -u KERYX_ENABLED ' "$work/cmd")" "1"
-check "#309: the orchestrator's launch (no worker settings) carries no worker mark" "$(grep -c 'KLEPSYDRA_WORKER' "$work/cmd")" "0"
+check "#309: the orchestrator's launch (no worker settings) sets no worker mark, and drops an inherited one" "$(grep -c 'KLEPSYDRA_WORKER=' "$work/cmd") $(grep -c -- '-u KLEPSYDRA_WORKER ' "$work/cmd")" "0 1"
 check "#310 review 1: the launcher gets none of the launch's FLEET_* settings, so a server it starts hands them to no later pane" \
   "$(cat "$work/launcher-env")" ""
 # A real worker launch: FLEET_SETTINGS unset (worker-settings.json), claude's own
