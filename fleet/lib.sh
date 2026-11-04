@@ -367,6 +367,11 @@ REGISTRY=${REGISTRY:-$FLEET_STATE/panes.tsv}
 registered() { awk -F'\t' -v p="$1" '$1 == p { f = 1 } END { exit !f }' "$REGISTRY" 2>/dev/null; }
 reg_field() { awk -F'\t' -v p="$1" -v n="$2" '$1 == p { print $n; exit }' "$REGISTRY" 2>/dev/null; }
 orchestrator() { cat "$FLEET_STATE/orchestrator.pane" 2>/dev/null; }
+# The config folder PANE's session runs on: Heph's own (heph_config) for the
+# orchestrator's pane when no row names it, else its row's (pane_config).
+pane_folder() { # PANE
+  if [[ $1 == "$(orchestrator)" ]] && ! registered "$1"; then heph_config; else pane_config "$1"; fi
+}
 # shellcheck disable=SC2034 # read by recover.sh and resume-at-reset.sh
 HEPH=${FLEET_HEPH:-$FLEET_STATE/HEPH.md}
 fleet_panes() { t list-panes -s -t "$FLEET_SESSION" -F '#{pane_id}' 2>/dev/null; }
@@ -391,12 +396,60 @@ finished_here() { # PANE
 # tmux reuses its id) is no answer at all.
 live_session() { # PANE
   local f found=()
-  for f in "$KLEPSYDRA_DIR"/fleet/*.json; do
+  # Only files that name the pane at all: one grep over the folder costs a
+  # third of a stat and a jq per file on the Windows mount (#311).
+  while IFS= read -r f; do
     [[ -f $f && ! -L $f ]] || continue
     jq -e --arg p "$1" '.tmux.pane == $p and .ended == null' "$f" >/dev/null 2>&1 && found+=("$(basename "$f" .json)")
-  done
+  done < <(grep -l -F -- "\"$1\"" "$KLEPSYDRA_DIR"/fleet/*.json 2>/dev/null)
   (( ${#found[@]} == 1 )) || return 1
   printf '%s' "${found[0]}"
+}
+
+# The usage limit PANE's live session stopped at, from the fleet hook's
+# StopFailure record (error rate_limit; a prompt since clears it), as
+# "RESET<TAB>MESSAGE" (#311). RESET is the latest resets_at among the
+# account's spent windows the stop fell in, else the end of the window the
+# message names (only when it agrees with a reset the message dates itself, to
+# the hour: a model's own weekly limit is no window the readings show), else
+# the message's own reset read from the stop's time (a reset never precedes
+# the stop), else 0. The readings count only while the pane's folder (Heph's
+# own for his pane) still holds the account the session recorded: after a
+# /login there, the stop was the new account's, and its text says when.
+# A rate_limit error counts only when its text is a limit message or a window
+# is spent: a passing "API Error: Rate limit reached" parks no pane for hours.
+# Fails when there is none.
+limit_event() { # PANE
+  local sid f at id msg rd spent=0 named_at=0 r now_id text_at=0
+  sid=$(live_session "$1") || return 1
+  f=$KLEPSYDRA_DIR/fleet/$sid.json
+  { read -r at id && IFS= read -r msg; } < <(jq -r 'select(.state == "error" and .reason == "rate limit")
+    | "\(.state_at) \(.account.id // "-")", (.error // "" | tostring | gsub("[\t\r\n]"; " "))' "$f" 2>/dev/null) || return 1
+  [[ $at =~ ^[0-9]+$ ]] || return 1
+  [[ $msg == *"hit your fast limit"* ]] && return 1
+  now_id=$(account_of "$(pane_folder "$1")") && [[ $now_id != "$id" ]] && id=-
+  if [[ $id != - ]] && rd=$(reading_of "$id"); then
+    read -r spent named_at < <(jq -r --argjson at "$at" --arg msg "$msg" '
+      def span: {five_hour: 18000, seven_day: 604800};
+      def holds(k): .windows[k] as $w | $w != null and ($w.resets_at | type) == "number"
+        and $w.resets_at > $at and $w.resets_at - span[k] <= $at;
+      ([("five_hour", "seven_day") as $k | select(holds($k) and (.windows[$k].used_percentage // 0) >= 100)
+        | .windows[$k].resets_at] | max // 0) as $spent
+      | (if ($msg | test("weekly"; "i")) then "seven_day" elif ($msg | test("5-hour|session"; "i")) then "five_hour" else null end) as $k
+      | "\($spent) \(if $k != null and holds($k) then .windows[$k].resets_at else 0 end)"' "$rd" 2>/dev/null)
+  fi
+  [[ $spent =~ ^[0-9]+$ && $named_at =~ ^[0-9]+$ ]] || spent=0 named_at=0
+  (( spent > 0 )) || grep -qE "$LIMIT_RE" <<<"$msg" || return 1
+  text_at=$(reset_epoch "$msg" "$at" 1800) || text_at=0
+  if (( named_at > 0 && text_at > 0 )); then
+    local gap=$(( named_at - text_at ))
+    (( gap < 0 )) && gap=$(( -gap ))
+    (( gap <= 3600 )) || named_at=0
+  fi
+  r=$spent
+  (( r > 0 )) || r=$named_at
+  (( r > 0 )) || r=$text_at
+  printf '%s\t%s\n' "$r" "${msg:-StopFailure rate_limit}"
 }
 
 # Run COMMAND... holding the registry's lock: every writer of panes.tsv does.
@@ -517,26 +570,40 @@ reading_of() { # ID
     awk '$1 + 0 > m || f == "" { m = $1 + 0; f = substr($0, index($0, " ") + 1) } END { if (f == "") exit 1; print f }'
 }
 
-# A usage limit seen on account ID that resets at RESET (#319): until then the
-# account has no room by any reading taken before it was seen, since a request
-# the limit refuses writes no reading. A reading taken since is news, and
-# decides. A later reset for the same account wins.
+# The newest reading's time for account ID (its file's, as Windows stamps it), 0 with none.
+reading_mtime() { local f; f=$(reading_of "$1") && find "$f" -maxdepth 0 -printf '%T@' 2>/dev/null || echo 0; } # ID
+
+# The window a limit message names: seven for a weekly one, else five.
+limit_window() { if [[ $1 =~ [Ww]eekly ]]; then echo seven; else echo five; fi; } # TEXT
+
+# A usage limit seen on account ID's WINDOW (five or seven) that resets at RESET
+# (#319): until then that window has no room by any reading the account had at
+# the sighting, since a request the limit refuses writes no reading. Each
+# sighting keeps the later reset and the newest reading's time then, so only a
+# reading taken after the latest sighting is news (both times Windows').
 LIMITED_DIR=${FLEET_LIMITED_DIR:-$FLEET_STATE/limited}
-mark_limited() { # ID RESET
-  local was=0
-  [[ $1 =~ ^[0-9A-Za-z][0-9A-Za-z-]*$ && $2 =~ ^[0-9]+$ ]] || return 1
-  { read -r was <"$LIMITED_DIR/$1"; } 2>/dev/null
-  [[ $was =~ ^[0-9]+$ ]] && (( was >= $2 )) && return 0
-  mkdir -p -- "$LIMITED_DIR" && printf '%s\n' "$2" >"$LIMITED_DIR/$1.$$" && mv -f -- "$LIMITED_DIR/$1.$$" "$LIMITED_DIR/$1"
+mark_limited() { # ID RESET [WINDOW]
+  local w=${3:-five} was="" f
+  [[ $1 =~ ^[0-9A-Za-z][0-9A-Za-z-]*$ && $2 =~ ^[0-9]+$ && $w =~ ^(five|seven)$ ]] || return 1
+  f=$LIMITED_DIR/$1.$w
+  { read -r was _ <"$f"; } 2>/dev/null
+  { [[ $was =~ ^[0-9]+$ ]] && (( was > $2 )); } || was=$2
+  mkdir -p -- "$LIMITED_DIR" && printf '%s %s\n' "$was" "$(reading_mtime "$1")" >"$f.$$" && mv -f -- "$f.$$" "$f"
 }
-# Whether account ID is still at a limit seen on it, at NOW, with no reading since.
+# The windows of account ID still at a limit seen on it at NOW, with no reading
+# since, one a line (five, seven); fails with none. No mark costs no process.
 limited_until() { # ID NOW
-  local at=0 mark rd
+  local w reset seen cur="" any=1
   [[ $1 =~ ^[0-9A-Za-z][0-9A-Za-z-]*$ ]] || return 1
-  mark=$LIMITED_DIR/$1
-  { read -r at <"$mark"; } 2>/dev/null || return 1
-  [[ $at =~ ^[0-9]+$ ]] && (( at > $2 )) || return 1
-  ! { rd=$(reading_of "$1") && [[ $rd -nt $mark ]]; }
+  for w in five seven; do
+    [[ -e $LIMITED_DIR/$1.$w ]] || continue
+    { read -r reset seen <"$LIMITED_DIR/$1.$w"; } 2>/dev/null || continue
+    { [[ $reset =~ ^[0-9]+$ ]] && (( reset > $2 )); } || continue
+    [[ -n $cur ]] || cur=$(reading_mtime "$1")
+    awk -v c="$cur" -v s="${seen:-0}" 'BEGIN { exit !(c + 0 <= s + 0) }' || continue
+    echo "$w"; any=0
+  done
+  return "$any"
 }
 
 # Account ID's name as its readings give it (the gauge's), else its id.
@@ -549,13 +616,19 @@ account_label() { # ID
 # Account ID's room from its newest reading, as "FIVE SEVEN": 100 less the
 # percentage used, or 100 for a window that has reset, that the account does
 # not have (a Team seat has no weekly window), or with no reading at all.
-headroom() { # ID NOW
-  local f
-  limited_until "$1" "$2" && { echo "0 0"; return; }
-  f=$(reading_of "$1") || { echo "100 100"; return; }
-  jq -r --argjson now "$2" 'def room(w): if w == null or (w.resets_at // 0) <= $now then 100
-      else 100 - (w.used_percentage // 0) end;
-    "\(room(.windows.five_hour) | floor) \(room(.windows.seven_day) | floor)"' "$f" 2>/dev/null || echo "100 100"
+headroom() { # ID NOW (a window at a limit seen on it is 0, #319)
+  local f five=100 seven=100 marked
+  if f=$(reading_of "$1"); then
+    read -r five seven < <(jq -r --argjson now "$2" 'def room(w): if w == null or (w.resets_at // 0) <= $now then 100
+        else 100 - (w.used_percentage // 0) end;
+      "\(room(.windows.five_hour) | floor) \(room(.windows.seven_day) | floor)"' "$f" 2>/dev/null)
+    [[ $five =~ ^-?[0-9]+$ && $seven =~ ^-?[0-9]+$ ]] || five=100 seven=100
+  fi
+  if marked=$(limited_until "$1" "$2"); then
+    [[ $marked == *five* ]] && five=0
+    [[ $marked == *seven* ]] && seven=0
+  fi
+  echo "$five $seven"
 }
 
 # Whether account ID has room to work at NOW: its five-hour window under

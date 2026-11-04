@@ -79,7 +79,7 @@ events() { cat "$work/$1.log"; }
 settle() { sleep 0.6; }
 reading() { # DIR LABEL FIVE_HOUR_PCT MTIME: a usage reading for account DIR
   # A case that sets an account's reading starts with no limit seen on it (#319).
-  rm -f -- "$FLEET_STATE/limited/${1:?}"
+  rm -f -- "$FLEET_STATE/limited/${1:?}".five "$FLEET_STATE/limited/${1:?}".seven
   jq -n --arg l "$2" --argjson u "$3" --argjson r "$(( $(date +%s) + 3600 ))" \
     '{label: $l, windows: {five_hour: {used_percentage: $u, resets_at: $r}}}' >"$KLEPSYDRA_DIR/accounts/$1/s.json"
   touch -d "@$4" "$KLEPSYDRA_DIR/accounts/$1/s.json"
@@ -165,6 +165,99 @@ done
 state read '{"above":["x"],"menu":"limit"}'
 check "a menu hides the input box" "$(has_input_box "$(screen "$p")" && echo box || echo none)" "none"
 t kill-window -t "$p"
+
+echo "limits from events (#311)"
+# A session the fleet hook recorded at STATE (default: a StopFailure rate_limit), in pane PANE.
+stop_file() { # SID PANE STATE_AT ACCOUNT MESSAGE [STATE REASON]
+  jq -n --arg p "$2" --argjson at "$3" --arg a "$4" --arg m "$5" --arg st "${6:-error}" --arg r "${7:-rate limit}" \
+    '{session_id: "x", ended: null, tmux: {pane: $p}, state: $st, reason: $r, state_at: $at, error: $m}
+     + (if $a == "" then {} else {account: {id: $a, label: "Ev"}} end)' >"$KLEPSYDRA_DIR/fleet/$1.json"
+}
+# A usage reading for account ID: each window's percentage used and reset.
+win() { # ID FIVE_PCT FIVE_RESET [SEVEN_PCT SEVEN_RESET]
+  mkdir -p "$KLEPSYDRA_DIR/accounts/$1"
+  jq -n --argjson fp "$2" --argjson fr "$3" --arg sp "${4:-}" --arg sr "${5:-}" \
+    '{label: "Ev", windows: ({five_hour: {used_percentage: $fp, resets_at: $fr}}
+      + (if $sp == "" then {} else {seven_day: {used_percentage: ($sp | tonumber), resets_at: ($sr | tonumber)}} end))}' \
+    >"$KLEPSYDRA_DIR/accounts/$1/ev.json"
+}
+evn=$(TZ=America/New_York date -d '2026-10-28 12:00' +%s)
+E1=aaaaaaaa-0000-4000-8000-000000000311
+L5='  ⎿  You'"'"'ve hit your 5-hour limit · resets 1:10pm (America/New_York)'
+LW='  ⎿  You'"'"'ve hit your weekly limit · resets Nov 2, 1pm (America/New_York)'
+ev() { limit_event %9001 || echo none; }
+stop_file "$E1" %9001 "$evn" ev1 "$L5"; win ev1 100 $((evn + 4000))
+check "a spent window's resets_at dates the stop, not the message's text" "$(ev)" "$((evn + 4000))"$'\t'"$L5"
+win ev1 60 $((evn + 4000))
+check "a window not yet shown spent: the one the message names" "$(ev)" "$((evn + 4000))"$'\t'"$L5"
+stop_file "$E1" %9001 "$evn" ev1 "$LW"; win ev1 30 $((evn + 4000)) 100 $((evn + 200000))
+check "a weekly stop: the weekly window's reset" "$(ev | cut -f1)" "$((evn + 200000))"
+win ev1 100 $((evn + 4000)) 100 $((evn + 200000))
+check "both spent: the later reset" "$(ev | cut -f1)" "$((evn + 200000))"
+stop_file "$E1" %9001 "$evn" ev1 "API Error: Rate limit reached"; win ev1 60 $((evn + 4000))
+check "a passing API rate limit with room left parks nothing" "$(ev)" "none"
+win ev1 100 $((evn + 4000))
+check "the same error with the window spent is a limit" "$(ev | cut -f1)" "$((evn + 4000))"
+old=$((evn - 3 * 86400))
+stop_file "$E1" %9001 "$old" ev1 "$L5"
+check "a stop older than the account's window: its own text, read from the stop's day" \
+  "$(TZ=America/New_York date -d "@$(ev | cut -f1)" '+%F %H:%M')" "2026-10-25 13:10"
+stop_file "$E1" %9001 "$evn" ev1 '  ⎿  You'"'"'ve hit your fast limit · resets in 3m'
+check "the /fast limit is no usage limit" "$(ev)" "none"
+stop_file "$E1" %9001 "$evn" ev1 "$L5" working null
+check "a prompt since (working) clears it" "$(ev)" "none"
+eve=$(TZ=America/New_York date -d '2026-10-28 19:00' +%s)
+stop_file "$E1" %9001 "$eve" ev-none '  ⎿  You'"'"'ve hit your weekly limit · resets 3pm (America/New_York)'
+check "a time-only reset 20 h after the stop is the next day's, never before the stop" \
+  "$(TZ=America/New_York date -d "@$(ev | cut -f1)" '+%F %H:%M')" "2026-10-29 15:00"
+login a; printf '{"oauthAccount":{"accountUuid":"ev-new"}}\n' >"$FLEET_DEFAULT_JSON"
+stop_file "$E1" %9001 "$evn" ev1 "$L5"; win ev1 100 $((evn + 4000))
+check "a /login in the pane's folder since: the old account's readings date nothing, the text does" "$(ev | cut -f1)" "$((evn + 4200))"
+printf '{"oauthAccount":{"accountUuid":"ev1"}}\n' >"$FLEET_DEFAULT_JSON"
+check "the same account still logged in: its reading dates it" "$(ev | cut -f1)" "$((evn + 4000))"
+logout a; rm -f -- "${FLEET_DEFAULT_JSON:?}" # as before this case: never logged in
+# #313 review 2: a model's own weekly limit dates itself; the all-models week, not spent, is another window.
+stop_file "$E1" %9001 "$evn" ev1 '  ⎿  You'"'"'ve hit your Opus weekly limit · resets Oct 30, 1pm (America/New_York)'
+win ev1 30 $((evn + 4000)) 61 $((evn + 200000))
+check "#313 review 2: a weekly window that disagrees with the stop's own dated reset does not date it" \
+  "$(TZ=America/New_York date -d "@$(ev | cut -f1)" '+%F %H:%M')" "2026-10-30 13:00"
+stop_file "$E1" %9001 "$evn" ev1 '  ⎿  You'"'"'ve hit your Opus weekly limit · resets Nov 2, 1pm (America/New_York)'
+win ev1 30 $((evn + 4000)) 61 $((evn + 172800))
+check "#313 review 3: nor one that ends days before it" "$(TZ=America/New_York date -d "@$(ev | cut -f1)" '+%F %H:%M')" "2026-11-02 13:00"
+# #313 review 2: Heph's pane is no row; its folder is his own (orchestrator.config), not the default.
+had_b=0; [[ -d $work/cfg-b ]] && had_b=1
+login a; login b; printf '{"oauthAccount":{"accountUuid":"ev1"}}\n' >"$work/cfg-b/.claude.json"
+printf '%%9001\n' >"$FLEET_STATE/orchestrator.pane"; printf '%s\n' "$work/cfg-b" >"$FLEET_STATE/orchestrator.config"
+stop_file "$E1" %9001 "$evn" ev1 "$L5"; win ev1 100 $((evn + 4000))
+check "#313 review 2: Heph's stop is dated by the account on his own folder" "$(ev | cut -f1)" "$((evn + 4000))"
+logout a; logout b; rm -f -- "${FLEET_DEFAULT_JSON:?}" "$work/cfg-b/.claude.json" "$FLEET_STATE/orchestrator.pane" "$FLEET_STATE/orchestrator.config"
+# The second folder as it was: a folder login made would be one the doctor checks.
+(( had_b )) || rm -rf -- "${work:?}/cfg-b"
+stop_file "$E1" %9001 "$evn" ev-none "$L5"
+check "no reading: the message's reset" "$(ev | cut -f1)" "$((evn + 4200))"
+stop_file "$E1" %90010 "$evn" ev1 "$L5"
+check "a file naming pane %90010 is no session of pane %9001" "$(ev)" "none"
+stop_file "$E1" %9001 "$evn" ev1 "$L5"
+ln -s "$KLEPSYDRA_DIR/fleet/$E1.json" "$KLEPSYDRA_DIR/fleet/link.json"
+check "a link to a session file is no second session" "$(ev | cut -f1)" "$((evn + 4000))"
+cp "$KLEPSYDRA_DIR/fleet/$E1.json" "$KLEPSYDRA_DIR/fleet/copy.json"
+check "two live files naming the pane are no answer" "$(ev)" "none"
+rm -f -- "$KLEPSYDRA_DIR/fleet/link.json" "$KLEPSYDRA_DIR/fleet/copy.json" "$KLEPSYDRA_DIR/fleet/${E1:?}.json"
+
+: >"$FLEET_LOG"
+p=$(pane evlim '{"above":["work"],"on_submit":"busy"}'); settle
+stop_file "$E1" "$p" "$evn" ev1 "$L5"; win ev1 100 $((evn + 4000))
+resume "$evn"
+check "a limit the screen no longer shows is seen from the hook's record, dated by resets_at" \
+  "$(jq -r 'select(.message == "limit seen") | [.pane, .from, .resets] | join(" ")' "$FLEET_LOG")" \
+  "$p event $(date -d "@$((evn + 4000))" '+%a %F %H:%M')"
+check "nothing is typed before that reset" "$(events evlim)" ""
+resume "$((evn + 4000 + 130))"
+check "and it resumes at the reading's reset, before the message's 1:10pm" "$(has "$(events evlim)" "SUBMIT The usage limit has reset.")" "yes"
+t kill-window -t "$p"
+rm -f -- "$KLEPSYDRA_DIR/fleet/${E1:?}.json"
+rm -rf -- "${KLEPSYDRA_DIR:?}/accounts/ev1"
+: >"$FLEET_LOG"
 
 echo "resume: limits, resets and accounts"
 reading a Personal 40 1000
@@ -964,6 +1057,23 @@ for notice in "You've used 90% of your 5-hour limit · resets 3pm" "Approaching 
   check "#265 review 3: not a stop, so no unknown-wording warning: $notice" "$(doctor | grep -c '^ok   limits')" "1"
 done
 state wpane '{"above":["idle"]}'
+# Recorded on the account the pane's folder holds (a): a stop on another one is
+# dated by its own text (the /login case above).
+# In the pane's own session file: a second live file naming the pane is no answer.
+stop_file "$(sid_of w1)" "$w" "$noon" a "$L5"; win a 100 $((noon + 600))
+check "#311: a pane the hook recorded at a limit, past its resets_at, fails though its screen shows none" \
+  "$(FLEET_NOW=$((noon + 1300)) doctor | grep '^FAIL limits')" "FAIL limits: still at a limit past its reset: $w (the resume service missed it)"
+check "#311: before then it is ok" "$(FLEET_NOW=$((noon + 900)) doctor | grep -c '^ok   limits')" "1"
+check "#313 review 2: and with no watcher, the watcher check holds it limited too: a warning, no FAIL" \
+  "$(FLEET_NOW=$((noon + 900)) doctor | grep -c '^warn pane watcher: none running while every agent waits out a usage limit')" "1"
+check "#313 review 3: the warning gives the account's reset (12:10pm), not the stop's text (1:10pm)" \
+  "$(FLEET_NOW=$((noon + 900)) doctor | grep -c '^warn pane watcher: none running while every agent waits out a usage limit (resets 12:10pm)')" "1"
+stop_file "$(sid_of w1)" "$w" "$noon" a "API Error: Rate limit reached"; win a 30 $((noon + 600)) 100 $((noon + 3 * 86400))
+check "#313 review 4: a reset days away names its day" \
+  "$(FLEET_NOW=$((noon + 900)) doctor | grep -c '^warn pane watcher: none running while every agent waits out a usage limit (resets Sat 12:00pm)')" "1"
+session_file w1 "$w" https://claude.ai/code/session_01W
+rm -f -- "${KLEPSYDRA_DIR:?}/accounts/a/ev.json"
+state wpane '{"above":["idle"]}'
 printf 'panes=3 limited=1 limited_panes=%%9 at=5\n' >"$FLEET_STATE/resume.beat"
 check "#263: the resume loop line says what its last pass saw" "$(doctor | grep '^ok   resume loop' | sed 's/.*: //')" "panes=3 limited=1 limited_panes=%9"
 printf '# 10-29 copy\n' >>"$FLEET_HOOK_DIR/klepsydra-fleet.sh"
@@ -1252,12 +1362,22 @@ check "at 50% free it is" "$(back_room a "$now" && echo yes || echo no)" "yes"
 # #319: a limit seen on the account outranks a reading the limit kept from refreshing.
 mark_limited a $((now + 3600))
 check "#319: an account at a limit seen on it has no room to move back to, whatever its reading says" \
-  "$(back_room a "$now" && echo yes || echo no) $(headroom a "$now") $(id_has_room a "$now" && echo room || echo full)" "no 0 0 full"
+  "$(back_room a "$now" && echo yes || echo no) $(headroom a "$now") $(id_has_room a "$now" && echo room || echo full)" "no 0 100 full"
 mark_limited a $((now + 60))
-check "#319: an earlier reset never shortens a later one" "$(cat "$FLEET_STATE/limited/a")" "$((now + 3600))"
+check "#319: an earlier reset never shortens a later one" "$(cut -d' ' -f1 "$FLEET_STATE/limited/a.five")" "$((now + 3600))"
+mark_limited a $((now + 3600)) seven
+check "#322 review 1: a weekly limit zeroes the weekly window, a 5-hour one the 5-hour window" "$(headroom a "$now")" "0 0"
+rm -f -- "$FLEET_STATE/limited/a.five"
+check "#322 review 1: the weekly mark alone leaves the 5-hour window to the reading" "$(headroom a "$now")" "50 0"
+rm -f -- "$FLEET_STATE/limited/a.seven"; mark_limited a $((now + 3600))
 check "#319: past its reset the reading decides again" "$(back_room a $((now + 3601)) && echo yes || echo no)" "yes"
 touch -d "@$(( $(date +%s) + 120 ))" "$KLEPSYDRA_DIR/accounts/a/s.json"
 check "#319: and so does a reading taken after the limit was seen" "$(back_room a "$now" && echo yes || echo no)" "yes"
+mark_limited a $((now + 3600))
+check "#322 review 1: the same limit seen again after that reading holds again, its newest reading no news" "$(back_room a "$now" && echo yes || echo no)" "no"
+mark_limited a $((now + 60))
+check "#322 review 1: so does a sighting with an earlier reset, keeping the later one" \
+  "$(back_room a "$now" && echo yes || echo no) $(cut -d' ' -f1 "$FLEET_STATE/limited/a.five")" "no $((now + 3600))"
 check "#319: a malformed id or reset marks nothing" "$(mark_limited '../x' 5 || echo refused) $(mark_limited a soon || echo refused)" "refused refused"
 rm -rf -- "${FLEET_STATE:?}/limited"
 mkdir -p "$KLEPSYDRA_DIR/accounts/rd"; printf '{}' >"$KLEPSYDRA_DIR/accounts/rd/old.json"; printf '{}' >"$KLEPSYDRA_DIR/accounts/rd/new.json"
@@ -1308,7 +1428,7 @@ live "$p"
 printf '%s\tmover\t%s\t%s\t/w\t%s\n' "$p" "$work/brief.src" "$SID" "$work/cfg-a" >"$REGISTRY"
 mover "$noon"
 check "a registered pane at a limit moves to the other account at once" "$(head -2 "$work/moved" | tr '\n' ' ')" "$work/cfg-b mover "
-check "#319: and the limit is marked on its account until the reset" "$(cat "$FLEET_STATE/limited/a" 2>/dev/null)" "$(TZ=America/New_York date -d '2026-10-28 13:10' +%s)"
+check "#319: and the limit is marked on its account's 5-hour window until the reset" "$(cut -d' ' -f1 "$FLEET_STATE/limited/a.five" 2>/dev/null)" "$(TZ=America/New_York date -d '2026-10-28 13:10' +%s)"
 rm -rf -- "${FLEET_STATE:?}/limited"
 check "its old pane exits" "$(events mover)" "SUBMIT /exit"
 check "the fresh brief says why, then carries the brief" "$(grep -c 'continue on the other, which has room' "$work/moved-brief") $(tail -1 "$work/moved-brief")" "1 the brief body"
@@ -1649,8 +1769,24 @@ reply_live "$p" settled '[{"id": "w1", "kind": "bash"}]' "READY-TO-MOVE" "$((noo
 LAUNCH="$work/launch-limited.sh" FLEET_NOW=$((noon + 960)) bash "$here/resume-at-reset.sh" --once 2>/dev/null
 check "#319: a move back whose brief meets the limit tells the stopped worker to carry on where it is" \
   "$(grep -c '^SUBMIT The move back to Personal did not happen: its brief met the usage limit there. Carry on here' "$work/stale.log") $(logged "told the worker to carry on after a failed move back")" "1 $p "
+check "#322 review 1: and the account it met the limit on reads full for new launches too" \
+  "$([[ -e $FLEET_STATE/limited/a.five ]] && echo marked) $(best_account "$((noon + 1000))")" "marked $work/cfg-b"
+t kill-window -t "$p" 2>/dev/null; : >"$REGISTRY"
+# #322 review 1: a worker asked, that declined, then finished a turn of its own,
+# was never stopped for the move: a failed move back sends it no note.
+rm -rf -- "${FLEET_STATE:?}/limited"; rm -f -- "$FLEET_STATE/back-hold" "$FLEET_STATE/resume-state" "$FLEET_STATE/back-room-since"; : >"$work/moved"
+reading a Personal 10 5000
+p=$(backpane dec); state dec '{"above":["⏺ Done. done 11:50 AM"],"on_submit":"none"}'
+reply_live "$p" settled '[{"id": "w1", "kind": "bash"}]' "Watching." "$noon"
+mover "$noon"; mover "$((noon + 300))"
+reply_live "$p" settled '[{"id": "w1", "kind": "bash"}]' "Not yet: the TIGRIS job still runs." "$((noon + 310))"
+mover "$((noon + 320))"
+done_live "$p" "done" '[]'
+LAUNCH="$work/launch-limited.sh" FLEET_NOW=$((noon + 1500)) bash "$here/resume-at-reset.sh" --once 2>/dev/null
+check "#322 review 1: a worker that declined and later finished a turn gets no carry-on note when the move fails" \
+  "$(head -1 "$work/moved") $(grep -c '^SUBMIT The move back' "$work/dec.log")" "$work/cfg-a 0"
 # The limit hold and the pass's state go with it, as the cases below expect a fresh start.
-t kill-window -t "$p" 2>/dev/null; : >"$REGISTRY"; rm -f -- "$FLEET_STATE/back-hold" "$FLEET_STATE/resume-state" "$FLEET_STATE/back-room-since"
+t kill-window -t "$p" 2>/dev/null; : >"$REGISTRY"; rm -rf -- "${FLEET_STATE:?}/limited"; rm -f -- "$FLEET_STATE/back-hold" "$FLEET_STATE/resume-state" "$FLEET_STATE/back-room-since"
 
 # A turn that starts while the fresh session launches (a background task's
 # notification) keeps the old pane.

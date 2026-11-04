@@ -148,16 +148,22 @@ session_of() {
 orch=$(orchestrator)
 panes=$(awk -F'\t' 'NF >= 3 { print $1 }' "$REGISTRY" 2>/dev/null)
 
-# Limits as the panes show them (#263): one still showing OVERDUE_S past the
-# reset it names was missed by the resume service; a reset time beside a limit
+# Limits as the fleet hook's StopFailure record dates them (#311), else as the
+# panes show them (#263): one still at a limit OVERDUE_S past its reset was
+# missed by the resume service; a reset time beside a limit
 # wording LIMIT_RE does not know means Claude Code renamed its message again.
 overdue="" unknown="" resets=""
 for p in $orch $panes; do
   fleet_panes | grep -qx -- "$p" || continue
   s=$(screen "$p")
   busy "$s" && continue
-  if l=$(limit_line "$s"); then
-    lnow=${FLEET_NOW:-$now} # tests set the clock
+  lnow=${FLEET_NOW:-$now} # tests set the clock
+  # The fleet hook's StopFailure record dates the reset exactly (#311).
+  if ev=$(limit_event "$p") && r=${ev%%$'\t'*} && (( r > 0 )); then
+    if (( lnow - r > ${FLEET_OVERDUE_S:-600} )); then
+      overdue+="$p " resets+="$p:$(date -d "@$r" '+%H:%M') "
+    fi
+  elif l=$(limit_line "$s"); then
     # A dated reset is exact. A time-only one can be up to 24 h ahead, so it is
     # placed only for the 5-hour window, whose reset is at most 5 h ahead: today's
     # is tomorrow's when over 19 h past, yesterday's when over 5.5 h ahead.
@@ -322,9 +328,15 @@ else
   for p in $panes; do
     fleet_panes | grep -qx -- "$p" || continue
     s=$(screen "$p")
-    if ! busy "$s" && l=$(limit_line "$s"); then
+    # Limited as the limits check holds it: the screen's limit line, else the
+    # hook's StopFailure record, whose reset is then its own epoch.
+    at=""
+    if ! busy "$s" && { l=$(limit_line "$s") || { ev=$(limit_event "$p") && l=${ev#*$'\t'} && at=${ev%%$'\t'*}; }; }; then
       limited+="$p "
-      r=$(grep -oE 'resets [^(]*[ap]m' <<<"$l" | tail -1)
+      if [[ $at =~ ^[1-9][0-9]*$ ]]; then
+        # Its day too, unless it is today: a weekly reset can be days away.
+        if [[ $(date -d "@$at" +%F) == "$(date -d "@${FLEET_NOW:-$now}" +%F)" ]]; then r="resets $(date -d "@$at" '+%-I:%M%P')"; else r="resets $(date -d "@$at" '+%a %-I:%M%P')"; fi
+      else r=$(grep -oE 'resets [^(]*[ap]m' <<<"$l" | tail -1); fi
       [[ -n $r && ", $resets" != *", ${r#resets }, "* ]] && resets+="${r#resets }, "
     else
       free+="$p "

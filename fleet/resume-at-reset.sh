@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # resume-at-reset.sh [--once]: every POLL_S seconds, look after the fleet's
-# panes. A pane stopped on a usage limit is resumed after the reset its own
-# message names (+2 min), or at once when AJ has since switched to an account
+# panes. A pane stopped on a usage limit is resumed after its reset (+2 min):
+# the account's resets_at for the hook's StopFailure record, else the time its
+# own message names; or at once when AJ has since switched to an account
 # with room; a registered pane (panes.tsv) idle past FRESH_AFTER_S is replaced
 # by a fresh session from its brief instead, since its prompt cache expired.
 # Each pane's account is its config folder's login (panes.tsv column 6, else
@@ -210,8 +211,13 @@ carry_on() { # PANE TO RC
     "$(account_label "${ACCT_ID[$2]:-$2}")" "$why" >"$f"
   got=$(inbox_deliver "$p" "$f")
   rm -f -- "${f:?}"
-  unset "asked[$p]"
-  flog INFO "told the worker to carry on after a failed move back" pane="$p" to="$2" why="$3" delivery="$got"
+  # Asked again in an hour, as the ask itself says, not at the next 15-min try.
+  asked[$p]=$NOW
+  if [[ $got == sent ]]; then
+    flog INFO "told the worker to carry on after a failed move back" pane="$p" to="$2" why="$3" delivery="$got"
+  else
+    flog WARN "the carry-on note after a failed move back was not delivered" pane="$p" to="$2" why="$3" delivery="$got"
+  fi
 }
 
 # Replace the orchestrator in PANE with a fresh Heph on config folder TO, from
@@ -301,7 +307,6 @@ heph_move() { # PANE TO WHY [NOTE] [STAMP]
 # one session, not one per pane.
 BACK_HOLD=$FLEET_STATE/back-hold
 BACK_HOLD_S=${BACK_HOLD_S:-1800}
-reading_mtime() { local f; f=$(reading_of "$1") && find "$f" -maxdepth 0 -printf '%T@' 2>/dev/null || echo 0; } # ID
 back_hold() { # ID
   [[ -n $1 ]] || return 0
   { grep -v "^$1 " "$BACK_HOLD" 2>/dev/null; printf '%s %s %s\n' "$1" "$(reading_mtime "$1")" "$NOW"; } >"$BACK_HOLD.tmp" &&
@@ -313,6 +318,15 @@ back_held() { # ID
   [[ -n $1 ]] || return 1
   read -r held at < <(awk -v id="$1" '$1 == id { print $2, $3 }' "$BACK_HOLD" 2>/dev/null)
   [[ -n $held && -n $at ]] && (( NOW - at < BACK_HOLD_S )) && awk -v m="$(reading_mtime "$1")" -v h="$held" 'BEGIN { exit !(m <= h) }'
+}
+
+# A move's brief met a limit on account ID: moves there wait for its next
+# reading (back_hold), and new launches see it full too (#319: the limit's
+# reset is not known here, so its window is the five-hour one for 30 min).
+blocked() { # ID
+  [[ -n $1 ]] || return 0
+  back_hold "$1"
+  mark_limited "$1" "$((NOW + 1800))" five
 }
 
 # Record a move PANE -> NEW (or a failed try, with no NEW) for the hold-downs.
@@ -422,9 +436,10 @@ launching() { # PANE: launch.sh is starting it (a marker under 15 min old)
 # Apply the result RC (and NEW pane) of PANE's move of KIND, CTX as spawn got it.
 done_move() { # PANE KIND RC NEW CTX
   local p=$1 kind=$2 rc=$3 new=$4 a b c d got
-  IFS=$US read -r a b c d <<<"$5"
+  local e
+  IFS=$US read -r a b c d e <<<"$5"
   case $kind in
-    back | pre) # a=from b=to c=orch d=the preferred account's id (back)
+    back | pre) # a=from b=to c=orch d=the preferred account's id e=stopped for it (back)
       if (( rc == 0 )); then
         if [[ $kind == back ]]; then
           flog INFO "moved back to the preferred account" pane="$p" new_pane="${new:-none}" from="$a" to="$b" orchestrator="$c"
@@ -438,14 +453,13 @@ done_move() { # PANE KIND RC NEW CTX
         (( rc == 4 && move_tries[$p] < 2 )) && move_tries[$p]=2
         if [[ $kind == back ]]; then
           flog WARN "could not move back to the preferred account; trying again later" pane="$p" to="$b" orchestrator="$c" why="$rc" tries="${move_tries[$p]:-0}"
-          # A worker asked to save and stop for the move (READY-TO-MOVE) waits on
-          # nothing: it carries on here (#319), unless AJ typed or resumed it
-          # meanwhile (1, 4). One merely idle at a finished turn was never stopped.
-          if (( !c )) && [[ -n ${asked[$p]:-} && ( $rc == 3 || $rc == 5 ) ]]; then carry_on "$p" "$b" "$rc"; fi
+          # A worker that stopped for the move (READY-TO-MOVE) waits on nothing:
+          # it carries on here (#319), unless AJ typed or resumed it meanwhile (1, 4).
+          if (( !c )) && [[ ${e:-0} == 1 && ( $rc == 3 || $rc == 5 ) ]]; then carry_on "$p" "$b" "$rc"; fi
         else
           flog WARN "could not move before the limit; trying again later" pane="$p" to="$b" why="$rc" tries="${move_tries[$p]:-0}"
         fi
-        (( rc == 5 )) && back_hold "${d:-${ACCT_ID[$b]:-}}"
+        (( rc == 5 )) && blocked "${d:-${ACCT_ID[$b]:-}}"
       fi
       ;;
     limit) # a=name b=orch c=from d=to
@@ -465,7 +479,7 @@ done_move() { # PANE KIND RC NEW CTX
         *)
           moved "$p"
           (( b == 1 && move_tries[$p] < 2 )) && move_tries[$p]=2
-          (( rc == 5 )) && back_hold "${ACCT_ID[$d]:-}"
+          (( rc == 5 )) && blocked "${ACCT_ID[$d]:-}"
           if (( ${move_tries[$p]} <= 1 )); then
             flog WARN "could not move to the other account; trying again next pass" pane="$p" name="$a" to="$d" why="$rc"
           else
@@ -559,7 +573,13 @@ one() { # PANE
     fi
   fi
 
-  limit=$(limit_line "$s")
+  # The fleet hook's StopFailure record first (#311); the screen until it goes.
+  local ev limit_at=0 limit_from=screen
+  if ev=$(limit_event "$p"); then
+    limit=${ev#*$'\t'} limit_at=${ev%%$'\t'*} limit_from=event
+  else
+    limit=$(limit_line "$s")
+  fi
   [[ -n $limit ]] && PASS_LIMITED+=("$p")
   # Remote Control: a /login disconnects it in every session, and the RIT
   # account never starts it on its own, so once per account each registered
@@ -590,14 +610,17 @@ one() { # PANE
   fi
   # Heph's pane watcher runs past every turn: a turn that ended with only
   # watchers out counts as finished for him, since his successor restarts them.
+  # A worker that answered READY-TO-MOVE stopped for the move (stopped=1): a
+  # move that fails tells it to carry on (#319); one idle at a finished turn was never stopped.
+  local stopped=0
   if (( back_ok )) && idle_empty "$s" && { idle_stamp=$(turn_done "$p") ||
     { (( orch )) && idle_stamp=$(watchers_only "$p"); } ||
-    { (( !orch )) && idle_stamp=$(ready_to_move "$p" "${asked[$p]:-}"); }; }; then
+    { (( !orch )) && idle_stamp=$(ready_to_move "$p" "${asked[$p]:-}") && stopped=1; }; }; then
     back_why="moved back to its preferred account, $(account_label "$pref_id"), which has room again"
     if (( orch )); then
-      spawn "$p" back "$cfg$US$pref$US$orch$US$pref_id" heph_move "$p" "$pref" "$back_why" "" "$idle_stamp"
+      spawn "$p" back "$cfg$US$pref$US$orch$US$pref_id$US$stopped" heph_move "$p" "$pref" "$back_why" "" "$idle_stamp"
     else
-      spawn "$p" back "$cfg$US$pref$US$orch$US$pref_id" fresh "$p" "$(reg_field "$p" 2)" "$(reg_field "$p" 3)" "was $back_why" "$pref" "" "$idle_stamp"
+      spawn "$p" back "$cfg$US$pref$US$orch$US$pref_id$US$stopped" fresh "$p" "$(reg_field "$p" 2)" "$(reg_field "$p" 3)" "was $back_why" "$pref" "" "$idle_stamp"
     fi
     return
   fi
@@ -675,12 +698,14 @@ one() { # PANE
     flog INFO "AJ typed at a limited pane; it goes out at the resume" pane="$p" chars="${#typed}" text="${typed:0:200}"
   fi
   if [[ -z ${due[$p]:-} ]]; then
-    if reset=$(reset_epoch "$limit" "$NOW") || reset=$(reset_epoch "$ps" "$NOW"); then :; else reset=$((NOW + 1800)); fi
+    if (( limit_at > 0 )); then
+      reset=$limit_at
+    elif reset=$(reset_epoch "$limit" "$NOW") || reset=$(reset_epoch "$ps" "$NOW"); then :; else reset=$((NOW + 1800)); fi
     due[$p]=$((reset + 120)) seen_on[$p]=${ACTIVE:-unknown}
-    # The account has no room until then, whatever a stale reading says (#319).
-    # Only where the folder is known (a row's, or Heph's): another pane's is a guess.
-    [[ -n $PANE_ID ]] && { (( orch )) || registered "$p"; } && mark_limited "$PANE_ID" "$reset"
-    flog INFO "limit seen" pane="$p" account="${seen_on[$p]}" resets="$(date -d @"$reset" '+%a %F %H:%M')" message="$limit" marked="${PANE_ID:+$PANE_ID}"
+    # The account has no room in that window until then, whatever a stale
+    # reading says (#319). Only where the folder is known (a row's, or Heph's).
+    [[ -n $PANE_ID ]] && { (( orch )) || registered "$p"; } && mark_limited "$PANE_ID" "$reset" "$(limit_window "$limit")"
+    flog INFO "limit seen" pane="$p" account="${seen_on[$p]}" resets="$(date -d @"$reset" '+%a %F %H:%M')" from="$limit_from" message="$limit" marked="${PANE_ID:+$PANE_ID}"
   fi
   reg=$(awk -F'\t' -v p="$p" '$1 == p { print $2 "\t" $3 }' "$REGISTRY" 2>/dev/null)
   name=${reg%%$'\t'*} brief=${reg#*$'\t'}
