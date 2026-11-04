@@ -438,9 +438,10 @@ done_move() { # PANE KIND RC NEW CTX
         (( rc == 4 && move_tries[$p] < 2 )) && move_tries[$p]=2
         if [[ $kind == back ]]; then
           flog WARN "could not move back to the preferred account; trying again later" pane="$p" to="$b" orchestrator="$c" why="$rc" tries="${move_tries[$p]:-0}"
-          # A worker that saved and stopped for the move waits on nothing: it
-          # carries on here (#319), unless AJ typed or resumed it meanwhile (1, 4).
-          if (( !c )) && [[ $rc == 3 || $rc == 5 ]]; then carry_on "$p" "$b" "$rc"; fi
+          # A worker asked to save and stop for the move (READY-TO-MOVE) waits on
+          # nothing: it carries on here (#319), unless AJ typed or resumed it
+          # meanwhile (1, 4). One merely idle at a finished turn was never stopped.
+          if (( !c )) && [[ -n ${asked[$p]:-} && ( $rc == 3 || $rc == 5 ) ]]; then carry_on "$p" "$b" "$rc"; fi
         else
           flog WARN "could not move before the limit; trying again later" pane="$p" to="$b" why="$rc" tries="${move_tries[$p]:-0}"
         fi
