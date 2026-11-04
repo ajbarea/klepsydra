@@ -78,6 +78,8 @@ state() { printf '%s' "$2" >"$work/$1.json"; sleep 0.4; } # NAME STATE-JSON
 events() { cat "$work/$1.log"; }
 settle() { sleep 0.6; }
 reading() { # DIR LABEL FIVE_HOUR_PCT MTIME: a usage reading for account DIR
+  # A case that sets an account's reading starts with no limit seen on it (#319).
+  rm -f -- "$FLEET_STATE/limited/${1:?}"
   jq -n --arg l "$2" --argjson u "$3" --argjson r "$(( $(date +%s) + 3600 ))" \
     '{label: $l, windows: {five_hour: {used_percentage: $u, resets_at: $r}}}' >"$KLEPSYDRA_DIR/accounts/$1/s.json"
   touch -d "@$4" "$KLEPSYDRA_DIR/accounts/$1/s.json"
