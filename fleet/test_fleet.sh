@@ -220,11 +220,14 @@ win ev1 30 $((evn + 4000)) 61 $((evn + 200000))
 check "#313 review 2: a weekly window that disagrees with the stop's own dated reset does not date it" \
   "$(TZ=America/New_York date -d "@$(ev | cut -f1)" '+%F %H:%M')" "2026-10-30 13:00"
 # #313 review 2: Heph's pane is no row; its folder is his own (orchestrator.config), not the default.
+had_b=0; [[ -d $work/cfg-b ]] && had_b=1
 login a; login b; printf '{"oauthAccount":{"accountUuid":"ev1"}}\n' >"$work/cfg-b/.claude.json"
 printf '%%9001\n' >"$FLEET_STATE/orchestrator.pane"; printf '%s\n' "$work/cfg-b" >"$FLEET_STATE/orchestrator.config"
 stop_file "$E1" %9001 "$evn" ev1 "$L5"; win ev1 100 $((evn + 4000))
 check "#313 review 2: Heph's stop is dated by the account on his own folder" "$(ev | cut -f1)" "$((evn + 4000))"
 logout a; logout b; rm -f -- "${FLEET_DEFAULT_JSON:?}" "$work/cfg-b/.claude.json" "$FLEET_STATE/orchestrator.pane" "$FLEET_STATE/orchestrator.config"
+# The second folder as it was: a folder login made would be one the doctor checks.
+(( had_b )) || rm -rf -- "${work:?}/cfg-b"
 stop_file "$E1" %9001 "$evn" ev-none "$L5"
 check "no reading: the message's reset" "$(ev | cut -f1)" "$((evn + 4200))"
 stop_file "$E1" %90010 "$evn" ev1 "$L5"
