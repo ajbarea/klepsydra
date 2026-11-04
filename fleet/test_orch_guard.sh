@@ -144,9 +144,9 @@ check "from a script of its own: refused" "$(as_heph "bash $work/nudge.sh")" "re
 # reaches a long-past limit while the command sleeps is refused.
 late=$(pane late '{"above":["⏺ Done. done 9:00 AM","idle"]}'); settle
 dated_by "$late" aaaaaaaa-0000-4000-8000-0000000000c1 "$(( FLEET_NOW - 5340 ))"
-( sleep 1; printf '%s' "{\"above\":[\"⏺ Done. done 9:00 AM\",\"$LIMIT\"]}" >"$work/late.json" ) &
+( sleep 1; printf '%s' "{\"above\":[\"⏺ Done. done 9:00 AM\",\"$LIMIT\"]}" >"$work/late.json" ) & latew=$!
 check "a limit that appears during a wait is seen at the send" "$(as_heph "sleep 2.5; $T send-keys -t $late continue Enter")" "refused:cold-limit"
-wait
+wait "$latew"
 check "a target no pane answers to: refused" "$(as_heph "$T send-keys -t %9999 hi")" "refused:unknown"
 check "no -t is the orchestrator's own pane" "$(as_heph "$T send-keys -t $orchp hi")" "ok"
 # Round 6: in a sequence, tmux resolves each target as it reaches it, so an
@@ -256,8 +256,8 @@ check "round 10 review: a reply after a NUL-padded line still dates the stop, wi
 # A bare value on a line (not an object) is skipped, not fatal.
 bare=$(pane bare "{\"above\":[\"⏺ Done. done 10:20 AM\",\"$LIMIT\"]}"); settle
 dated_by "$bare" aaaaaaaa-0000-4000-8000-0000000000c5 "$(( FLEET_NOW - 720 ))"
-printf '5\n"x"\n' >>"$work/projects/p/aaaaaaaa-0000-4000-8000-0000000000c5.jsonl"
-check "round 10 review: a bare number or string line is skipped" "$(as_heph "$T send-keys -t $bare go Enter")" "ok"
+printf '5\n"x"\n[{"type":"assistant","timestamp":"2026-01-01T00:00:00.000Z"}]\n' >>"$work/projects/p/aaaaaaaa-0000-4000-8000-0000000000c5.jsonl"
+check "round 10 review: a bare number, string or array line is skipped" "$(as_heph "$T send-keys -t $bare go Enter")" "ok"
 # Round 10 (Heph 11-03): a long session's transcript is never read whole.
 # A reply 3 MB from the end (past the first 2 MB window) is found by widening;
 # a 48 MB file whose reply is near its end costs one small window.
@@ -285,7 +285,7 @@ send_ms() { # PANE: the median of 5 sends of nothing to PANE, in ms
 }
 ms_small=$(send_ms "$small2") ms_big=$(send_ms "$big2")
 echo "  (a send to a limit pane: ${ms_small} ms with a small transcript, ${ms_big} ms with a 48 MB one; medians of 5)"
-check "round 10: a 48 MB transcript adds under $(( 40 * ${CI_SCALE:-1} )) ms to a send (read from its tail)" "$(( ms_big - ms_small < 40 * ${CI_SCALE:-1} ))" "1"
+check "round 10: a 48 MB transcript adds under $(( 200 * ${CI_SCALE:-1} )) ms to a send (read from its tail; a whole read takes ~700)" "$(( ms_big - ms_small < 200 * ${CI_SCALE:-1} ))" "1"
 rm -f -- "$KLEPSYDRA_DIR/fleet/$TB.json" "$work/projects/p/$TB.jsonl"
 rm -f -- "$KLEPSYDRA_DIR/fleet/$TS.json" "$work/projects/p/$TS.jsonl"
 weekly=$(pane weekly '{"above":["⏺ Done. done 10:20 AM","  ⎿  You'"'"'ve hit your weekly limit · resets Nov 4, 1pm (America/New_York)","",""]}'); settle
@@ -295,8 +295,8 @@ check "round 6: the environment cannot point the guard at other folders" \
   "$(as_heph "KLEPSYDRA_DIR=/nonexistent FLEET_PROJECTS=/nonexistent $T send-keys -t $weekly continue Enter")" "refused:unknown"
 # Only the orchestrator's PATH holds orch-bin (launch.sh, for heph): whatever
 # reaches it is the orchestrator's, whatever its environment says.
-for e in "FRESH_AFTER_S=999999" "FLEET_NOW=0" "FLEET_STATE=/nonexistent" "TMUX_PANE=$warm" "ORCH_GUARD_OWN_S=99999"; do
-  check "the guard's own settings hold ($e in front): refused" "$(as_heph "$e $T send-keys -t $cold go")" "refused:cold-limit"
+for e in "FRESH_AFTER_S=999999" "FLEET_NOW=0" "FLEET_STATE=/nonexistent" "TMUX_PANE=$warm" "ORCH_GUARD_OWN_S=99999" "ORCH_TAIL_BYTES=0"; do
+  check "the guard's own settings hold ($e in front): refused" "$(as_heph "$e timeout 20 $T send-keys -t $cold go")" "refused:cold-limit"
 done
 # Round 4: a job left running in the background loses its Claude Code parent,
 # but keeps the orchestrator's TMUX_PANE, so it is still the orchestrator's.

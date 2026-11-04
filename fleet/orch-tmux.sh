@@ -302,8 +302,8 @@ squash() { tr -d '[:space:]' <<<"$1"; }
 # model <synthetic>). Prints that reply's epoch; fails when there is none.
 read -r -d '' STOP_JQ <<'JQ' || true
 def good: .isSidechain != true and .isApiErrorMessage != true and ((.message.model? // "") != "<synthetic>");
-[inputs | fromjson? | objects | select(.type == "assistant" and (.timestamp | type) == "string" and good)]
-| last | select(. != null) | .timestamp | sub("[.][0-9]+Z$"; "Z") | fromdateiso8601
+last(inputs | fromjson? | objects | select(.type == "assistant" and (.timestamp | type) == "string" and good))
+| select(. != null) | .timestamp | sub("[.][0-9]+Z$"; "Z") | fromdateiso8601
 JQ
 # Only the transcript's tail is read, through a grep prefilter (a long session's
 # file runs to tens of MB, and the guard sits in front of every send); the
