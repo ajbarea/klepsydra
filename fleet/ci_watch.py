@@ -417,29 +417,11 @@ def one_line(text: str, cap: int = 200) -> str:
 def needs_you(run: dict) -> bool:
     """One line under the queue file's "Needs you" for a new red run, once.
     True when the line is there (written now or before)."""
-    if not QUEUE.exists():
-        event(logging.WARNING, "queue line not written: no queue file", path=str(QUEUE))
-        return False
-    mark = f"<!-- ci:{run['repo']}:{run['run_id']} -->"
-    tmp = QUEUE.with_name(f".{QUEUE.name}.{os.getpid()}.tmp")
-    try:
-        return add_queue_line(run, mark, tmp)
-    except (OSError, ValueError) as e:
-        tmp.unlink(missing_ok=True)
-        event(
-            logging.WARNING,
-            "queue line not written: the file could not be changed",
-            error=str(e)[:200],
-        )
-        return False
+    mark = queue_mark(run["repo"], run["run_id"])
 
-
-def add_queue_line(run: dict, mark: str, tmp: Path) -> bool:
-    for _ in range(3):
-        before = QUEUE.stat().st_mtime_ns
-        text = QUEUE.read_text(encoding="utf-8")
+    def add(text: str) -> str | None:
         if mark in text:
-            return True
+            return text
         m = re.search(r"^## Needs you[^\n]*\n", text, re.M)
         if not m:
             event(
@@ -447,26 +429,70 @@ def add_queue_line(run: dict, mark: str, tmp: Path) -> bool:
                 "queue line not written: no Needs you heading",
                 path=str(QUEUE),
             )
-            return False
+            return None
         t = run.get("triage", {})
         cause = one_line(t.get("cause") or "triage pending")
         where = f" ({one_line(t['location'], 120)})" if t.get("location") else ""
         what = one_line(f"{run['workflow']} failed on {run['branch']}", 160)
         line = f"- 🔴 **CI {one_line(run['repo'], 60)}**: {what}: {cause}{where}. {run['url']} {mark}\n"
-        tmp.write_text(text[: m.end()] + line + text[m.end() :], encoding="utf-8")
-        if (
-            QUEUE.stat().st_mtime_ns != before
-        ):  # someone saved it meanwhile: read it again
-            tmp.unlink(missing_ok=True)
-            continue
-        tmp.replace(QUEUE)
-        event(logging.INFO, "queue line added", repo=run["repo"], run_id=run["run_id"])
-        return True
-    event(
-        logging.WARNING,
-        "queue line not written: the file kept changing",
-        repo=run["repo"],
+        return text[: m.end()] + line + text[m.end() :]
+
+    return rewrite_queue(
+        add, "written", "queue line added", repo=run["repo"], run_id=run["run_id"]
     )
+
+
+def drop_queue_line(repo: str, run_id: object) -> bool:
+    """Remove red run RUN_ID's line from the queue file once it no longer needs
+    AJ (#321). True when no such line is left."""
+    mark = queue_mark(repo, run_id)
+    return rewrite_queue(
+        lambda text: "".join(ln for ln in text.splitlines(True) if mark not in ln),
+        "removed",
+        "queue line removed",
+        repo=repo,
+        run_id=run_id,
+    )
+
+
+def queue_mark(repo: str, run_id: object) -> str:
+    return f"<!-- ci:{repo}:{run_id} -->"
+
+
+def rewrite_queue(change, verb: str, done: str, **fields: object) -> bool:
+    """Apply CHANGE (the queue file's text to its new text; the same text when
+    there is nothing to do, None to give up) through a temp file, read again
+    when someone saved the file meanwhile. True when the file holds the change."""
+    if not QUEUE.exists():
+        event(logging.WARNING, f"queue line not {verb}: no queue file", path=str(QUEUE))
+        return False
+    tmp = QUEUE.with_name(f".{QUEUE.name}.{os.getpid()}.tmp")
+    try:
+        for _ in range(3):
+            before = QUEUE.stat().st_mtime_ns
+            text = QUEUE.read_text(encoding="utf-8")
+            new = change(text)
+            if new is None:
+                return False
+            if new == text:
+                return True
+            tmp.write_text(new, encoding="utf-8")
+            if QUEUE.stat().st_mtime_ns != before:  # saved meanwhile: read it again
+                tmp.unlink(missing_ok=True)
+                continue
+            tmp.replace(QUEUE)
+            event(logging.INFO, done, **fields)
+            return True
+        event(
+            logging.WARNING, f"queue line not {verb}: the file kept changing", **fields
+        )
+    except (OSError, ValueError) as e:
+        tmp.unlink(missing_ok=True)
+        event(
+            logging.WARNING,
+            f"queue line not {verb}: the file could not be changed",
+            error=str(e)[:200],
+        )
     return False
 
 
@@ -585,6 +611,8 @@ def drop_held(repo: str, k: dict, why: str) -> None:
     withdrawn line (no wake) tells the pane watcher to skip the run's unread
     wake lines, so a red that went stale waiting for Heph is never replayed (#321)."""
     item = k.pop("item")
+    if k.pop("queued", False) is True:
+        drop_queue_line(repo, item["run_id"])
     event(
         logging.INFO,
         "held red let go",
@@ -594,7 +622,9 @@ def drop_held(repo: str, k: dict, why: str) -> None:
         withdrawn="routed" in k,
     )
     drop_inbox(repo, item["run_id"])
-    if "routed" in k:
+    # Routed again from scratch should the run go red again (a force-push back).
+    k.pop("escalated", None)
+    if k.pop("routed", None):
         alert("withdrawn", False, item | k, text=f"red run withdrawn: {why}")
 
 
