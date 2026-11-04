@@ -368,6 +368,11 @@ REGISTRY=${REGISTRY:-$FLEET_STATE/panes.tsv}
 registered() { awk -F'\t' -v p="$1" '$1 == p { f = 1 } END { exit !f }' "$REGISTRY" 2>/dev/null; }
 reg_field() { awk -F'\t' -v p="$1" -v n="$2" '$1 == p { print $n; exit }' "$REGISTRY" 2>/dev/null; }
 orchestrator() { cat "$FLEET_STATE/orchestrator.pane" 2>/dev/null; }
+# The config folder PANE's session runs on: Heph's own (heph_config) for the
+# orchestrator's pane when no row names it, else its row's (pane_config).
+pane_folder() { # PANE
+  if [[ $1 == "$(orchestrator)" ]] && ! registered "$1"; then heph_config; else pane_config "$1"; fi
+}
 # shellcheck disable=SC2034 # read by recover.sh and resume-at-reset.sh
 HEPH=${FLEET_HEPH:-$FLEET_STATE/HEPH.md}
 fleet_panes() { t list-panes -s -t "$FLEET_SESSION" -F '#{pane_id}' 2>/dev/null; }
@@ -392,12 +397,60 @@ finished_here() { # PANE
 # tmux reuses its id) is no answer at all.
 live_session() { # PANE
   local f found=()
-  for f in "$KLEPSYDRA_DIR"/fleet/*.json; do
+  # Only files that name the pane at all: one grep over the folder costs a
+  # third of a stat and a jq per file on the Windows mount (#311).
+  while IFS= read -r f; do
     [[ -f $f && ! -L $f ]] || continue
     jq -e --arg p "$1" '.tmux.pane == $p and .ended == null' "$f" >/dev/null 2>&1 && found+=("$(basename "$f" .json)")
-  done
+  done < <(grep -l -F -- "\"$1\"" "$KLEPSYDRA_DIR"/fleet/*.json 2>/dev/null)
   (( ${#found[@]} == 1 )) || return 1
   printf '%s' "${found[0]}"
+}
+
+# The usage limit PANE's live session stopped at, from the fleet hook's
+# StopFailure record (error rate_limit; a prompt since clears it), as
+# "RESET<TAB>MESSAGE" (#311). RESET is the latest resets_at among the
+# account's spent windows the stop fell in, else the end of the window the
+# message names (only when it agrees with a reset the message dates itself, to
+# the hour: a model's own weekly limit is no window the readings show), else
+# the message's own reset read from the stop's time (a reset never precedes
+# the stop), else 0. The readings count only while the pane's folder (Heph's
+# own for his pane) still holds the account the session recorded: after a
+# /login there, the stop was the new account's, and its text says when.
+# A rate_limit error counts only when its text is a limit message or a window
+# is spent: a passing "API Error: Rate limit reached" parks no pane for hours.
+# Fails when there is none.
+limit_event() { # PANE
+  local sid f at id msg rd spent=0 named_at=0 r now_id text_at=0
+  sid=$(live_session "$1") || return 1
+  f=$KLEPSYDRA_DIR/fleet/$sid.json
+  { read -r at id && IFS= read -r msg; } < <(jq -r 'select(.state == "error" and .reason == "rate limit")
+    | "\(.state_at) \(.account.id // "-")", (.error // "" | tostring | gsub("[\t\r\n]"; " "))' "$f" 2>/dev/null) || return 1
+  [[ $at =~ ^[0-9]+$ ]] || return 1
+  [[ $msg == *"hit your fast limit"* ]] && return 1
+  now_id=$(account_of "$(pane_folder "$1")") && [[ $now_id != "$id" ]] && id=-
+  if [[ $id != - ]] && rd=$(reading_of "$id"); then
+    read -r spent named_at < <(jq -r --argjson at "$at" --arg msg "$msg" '
+      def span: {five_hour: 18000, seven_day: 604800};
+      def holds(k): .windows[k] as $w | $w != null and ($w.resets_at | type) == "number"
+        and $w.resets_at > $at and $w.resets_at - span[k] <= $at;
+      ([("five_hour", "seven_day") as $k | select(holds($k) and (.windows[$k].used_percentage // 0) >= 100)
+        | .windows[$k].resets_at] | max // 0) as $spent
+      | (if ($msg | test("weekly"; "i")) then "seven_day" elif ($msg | test("5-hour|session"; "i")) then "five_hour" else null end) as $k
+      | "\($spent) \(if $k != null and holds($k) then .windows[$k].resets_at else 0 end)"' "$rd" 2>/dev/null)
+  fi
+  [[ $spent =~ ^[0-9]+$ && $named_at =~ ^[0-9]+$ ]] || spent=0 named_at=0
+  (( spent > 0 )) || grep -qE "$LIMIT_RE" <<<"$msg" || return 1
+  text_at=$(reset_epoch "$msg" "$at" 1800) || text_at=0
+  if (( named_at > 0 && text_at > 0 )); then
+    local gap=$(( named_at - text_at ))
+    (( gap < 0 )) && gap=$(( -gap ))
+    (( gap <= 3600 )) || named_at=0
+  fi
+  r=$spent
+  (( r > 0 )) || r=$named_at
+  (( r > 0 )) || r=$text_at
+  printf '%s\t%s\n' "$r" "${msg:-StopFailure rate_limit}"
 }
 
 # Run COMMAND... holding the registry's lock: every writer of panes.tsv does.

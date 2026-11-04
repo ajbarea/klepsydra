@@ -660,6 +660,7 @@ to() { tmux -L "$out4" "$@"; }
 KLEPSYDRA_DEAD_DIR="$work/dead" FLEET_BIN="$work/nobin" ti -f "$KLEPSYDRA_TMUX_CONF" new-session -d -s s -x 80 -y 24 \
   "printf 'last words\n\033[?1004h'; until [ -e $work/die4 ]; do sleep 0.1; done; kill -TERM \$\$"
 spid=$(ti display -p '#{pid}')
+v0=$(ti display -p -t s '#{pane_id}') # the first viewer's pane, whatever window is current later
 to -f /dev/null new-session -d -s o -x 80 -y 24 "TERM=xterm-256color tmux -L $in4 attach -t s"
 sleep 1
 to send-keys -t o -l $'\033[I'; sleep 0.5
@@ -692,9 +693,9 @@ check "#292 review 3: a program started by hand in a viewer's pane dies: shown a
   "$(ti list-panes -a -F '#{pane_id}' | grep -cx -- "$w3") $(ti show -pqv -t "$w3" @klepsydra_dead | cut -d' ' -f2-) $(cat "$work"/dead/*.txt 2>/dev/null | grep -c '^second words$')" \
   "1 its process exited with status 4 1"
 ti kill-pane -t "$w3" 2>/dev/null
-ti send-keys -t s Enter
-for _ in $(seq 50); do [[ -z $(ti list-panes -t s -F '#{pane_id}' 2>/dev/null) ]] && break; sleep 0.1; done
-check "#290: Enter closes a dead pane's viewer" "$(ti list-panes -t s -F '#{pane_id}' 2>/dev/null | wc -l)" "0"
+ti send-keys -t "$v0" Enter
+for _ in $(seq 50); do ti list-panes -a -F '#{pane_id}' 2>/dev/null | grep -qx -- "$v0" || break; sleep 0.1; done
+check "#290: Enter closes a dead pane's viewer" "$(ti list-panes -a -F '#{pane_id}' 2>/dev/null | grep -cx -- "$v0") (left: $(ti list-panes -a -F '#{pane_id}:#{pane_start_command}' 2>/dev/null | tr '\n' ' '))" "0 (left: )"
 ti kill-server 2>/dev/null; to kill-server 2>/dev/null
 rm -f -- "$sockdir/${in4:?}" "$sockdir/${out4:?}"
 
