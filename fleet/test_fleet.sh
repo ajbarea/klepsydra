@@ -898,7 +898,14 @@ echo 44444444-4444-4444-8444-444444444444 >"$work/dboot"
 doctor() { FLEET_PS="$work/bin/ps" FLEET_SYSTEMCTL="$work/bin/systemctl" FLEET_CURL="$work/bin/curl" FLEET_TAILSCALE="$work/bin/tailscale" \
   DOC_ACTIVE="$work/active" DOC_FLEET="$work/fleet.json" FLEET_RETRY_S=0 FLEET_PROC="$work/dproc" FLEET_BOOT_ID="$work/dboot" bash "$here/doctor.sh" 2>/dev/null; }
 sid_of() { case $1 in w1) echo dddddddd-0000-4000-8000-000000000001 ;; w2) echo dddddddd-0000-4000-8000-000000000002 ;; *) echo dddddddd-0000-4000-8000-0000000000"${1#o}"0 ;; esac; }
-w=$(pane wpane '{"above":["idle"]}'); o=$(pane opane '{"above":["idle"]}'); settle
+# The orchestrator's pane starts as launch.sh starts heph's, orch-bin first on
+# PATH, and the default account registers the guard: an install as it should be (#264).
+mkdir -p "$FLEET_STATE/orch-bin"; printf '#!/usr/bin/env bash\nexit 0\n' >"$FLEET_STATE/orch-bin/tmux"; chmod +x "$FLEET_STATE/orch-bin/tmux"
+guard_settings() { jq -n --arg m "$1" '{hooks: {PreToolUse: [{matcher: $m, hooks: [{type: "command", command: "bash ~/.local/state/fleet-orchestrator/orch-guard.sh"}]}]}}' >"$FLEET_DEFAULT_CONFIG/settings.json"; }
+mkdir -p "$FLEET_DEFAULT_CONFIG"; guard_settings "Bash|Edit|Write"
+w=$(pane wpane '{"above":["idle"]}')
+printf '%s' '{"above":["idle"]}' >"$work/opane.json"; : >"$work/opane.log"
+o=$(t new-window -d -P -F '#{pane_id}' -t fleet: "env PATH=$FLEET_STATE/orch-bin:$PATH python3 -I $fake $work/opane.json $work/opane.log"); settle
 printf '%s\tworker\t%s\t%s\n' "$w" "$FLEET_STATE/task-demo.src" "$(sid_of w1)" >"$REGISTRY"
 printf '%s\n' "$o" >"$FLEET_STATE/orchestrator.pane"
 session_file() { # ID PANE [URL]
@@ -936,6 +943,24 @@ check "the default account is logged in; the second, not yet, is a warning" \
 check "with a watcher running, nothing fails and the exit is 0 (the second account and voices warn here)" \
   "$(DOC_WATCH='%2 %5' DOC_UP=http DOC_SERVE=on doctor | notok; echo "rc=${PIPESTATUS[0]}")" "warn account $work/cfg-b|warn voices"$'\nrc=0'
 check "the watcher's panes are named" "$(DOC_WATCH='%2 %5' doctor | grep '^ok   pane watcher')" "ok   pane watcher: watching %2 %5"
+check "#264: the guard registered for Bash, Edit and Write, and the orchestrator's tmux guard ahead on its PATH, are ok" \
+  "$(grep -c '^ok   orchestrator guard: registered' <<<"$out") $(grep -c '^ok   orchestrator tmux guard: its session' <<<"$out")" "1 1"
+guard_settings "Bash"
+check "#264: a guard that misses Edit and Write warns" "$(doctor | grep -c '^warn orchestrator guard: not registered')" "1"
+guard_settings "*"
+check "#264: a \"*\" matcher covers every tool" "$(doctor | grep -c '^ok   orchestrator guard')" "1"
+rm -f -- "$FLEET_DEFAULT_CONFIG/settings.json"
+check "#264: no settings at all warns" "$(doctor | grep -c '^warn orchestrator guard')" "1"
+mkdir -p "$work/realtmux"; printf '#!/usr/bin/env bash\n' >"$work/realtmux/tmux"; chmod +x "$work/realtmux/tmux"
+t kill-pane -t "$o"
+o=$(t new-window -d -P -F '#{pane_id}' -t fleet: "env PATH=$work/realtmux:$FLEET_STATE/orch-bin:$PATH python3 -I $fake $work/opane.json $work/opane.log"); settle
+printf '%s\n' "$o" >"$FLEET_STATE/orchestrator.pane"
+check "#264: a tmux ahead of orch-bin on the orchestrator's PATH warns" "$(doctor | grep -c '^warn orchestrator tmux guard')" "1"
+t kill-pane -t "$o"
+o=$(pane opane '{"above":["idle"]}'); settle
+printf '%s\n' "$o" >"$FLEET_STATE/orchestrator.pane"
+check "#264: an orchestrator started without orch-bin warns" "$(doctor | grep -c '^warn orchestrator tmux guard')" "1"
+session_file o1 "$o" https://claude.ai/code/session_01O
 state wpane '{"above":["  ⎿  You'"'"'ve hit your 5-hour limit · resets 11:30am (America/New_York)","",""]}'
 check "#263: a pane still at its limit well past the reset fails, named with its reset" \
   "$(FLEET_NOW=$noon doctor | grep '^FAIL limits')" "FAIL limits: still at a limit past its reset: $w (the resume service missed it)"

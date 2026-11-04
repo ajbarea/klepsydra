@@ -45,9 +45,12 @@ orch=""
 { read -r orch <"$state/orchestrator.pane"; } 2>/dev/null
 
 # A fleet script on the way up to pid 1 sends with the fleet's own checks; the
-# fleet's test suites are no senders.
+# fleet's test suites are no senders, and heavy.sh runs any command it is given.
+# Every call walks this chain, so a step spawns nothing unless a script's name
+# could be a sender's (the name as given and as resolved must both pass).
+nonsender() { [[ ! ${1##*/} =~ \.(sh|py)$ || ${1##*/} == test_* || ${1##*/} == heavy.sh ]]; } # FILE
 from_fleet_script() {
-  local pid=$PPID n a f cwd j
+  local pid=$PPID n a f j st
   local -a argv
   for (( n = 0; n < 512; n++ )); do
     { [[ $pid =~ ^[0-9]+$ ]] && (( pid > 1 )); } || return 1
@@ -57,14 +60,17 @@ from_fleet_script() {
       for (( j = 1; j < ${#argv[@]} && j < 4; j++ )); do
         f=${argv[j]}
         [[ $f == -* ]] && continue
-        cwd=$(readlink -f "/proc/$pid/cwd" 2>/dev/null)
-        [[ $f == /* ]] || f=$cwd/$f
+        nonsender "$f" && break
+        [[ $f == /* ]] || f=$(readlink -f "/proc/$pid/cwd" 2>/dev/null)/$f
         f=$(readlink -f -- "$f" 2>/dev/null)
-        [[ -n $f && ${f%/*} == "$here" && $f =~ \.(sh|py)$ && ${f##*/} != test_* ]] && return 0
+        [[ -n $f && ${f%/*} == "$here" ]] && ! nonsender "$f" && return 0
         break
       done
     fi
-    pid=$(awk '{ print $4 }' "/proc/$pid/stat" 2>/dev/null)
+    # The parent pid: the field after the state, which follows the last ")"
+    # (a command name can hold spaces and parentheses).
+    { IFS= read -r st <"/proc/$pid/stat"; } 2>/dev/null || return 1
+    st=${st##*) } st=${st#* } pid=${st%% *}
   done
   return 1
 }

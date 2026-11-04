@@ -391,6 +391,9 @@ check "the script outside the fleet folder is checked" "$(in_claude "$orchp" "$w
 printf 'import subprocess\nsubprocess.run(["tmux", "-L", "%s", "send-keys", "-t", "%s", "x"], check=True)\n' "$FLEET_SOCK" "$cold2" >"$work/fleetcopy/note.py"
 check "a python script in the fleet folder passes too" "$(in_claude "$orchp" "$work/state2/orch-bin" "python3 $work/fleetcopy/note.py" 2>&1 && echo ok)" "ok"
 check "the same script in the fleet folder passes" "$(in_claude "$orchp" "$work/state2/orch-bin" "bash $work/fleetcopy/fresh-now.sh" 2>&1 && echo ok)" "ok"
+cp -- "$here/heavy.sh" "$work/fleetcopy/"
+check "heavy.sh in the fleet folder runs any command: what it runs is checked" \
+  "$(FLEET_HEAVY_LOCK="$work/heavy.lock" in_claude "$orchp" "$work/state2/orch-bin" "bash $work/fleetcopy/heavy.sh bash $work/elsewhere/fresh-now.sh" 2>&1 | grep -o 'orch-guard (cold-limit)')" "orch-guard (cold-limit)"
 
 echo "before the call (orch-guard.sh, PreToolUse)"
 OSID=aaaaaaaa-0000-4000-8000-000000000001 WSID=bbbbbbbb-0000-4000-8000-000000000002
