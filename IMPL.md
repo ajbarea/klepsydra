@@ -13,7 +13,6 @@ Prefer deleting or consolidating code over new special cases.
 HELD (no code): #293, #295, #302, #271, #270, #272 (design PR #300), any new feature; also #303 and #301
 (bugs filed today, not yet in review) until Heph says.
 
-<<<<<<< HEAD
 ## Audit cuts (Heph 11-03, fleet-briefing/review/klepsydra-bloat-audit-2026-11-03.md, last section)
 After the bug-fix PRs: 1 (poll guard: claude-prefs #41/PR #42 open, 91/91 + 7 mutants; needs an
 independent reviewer, then merge and `git -C ~/claude-prefs pull`), 3 (hooks/common.sh), 4 (no stale-PR
@@ -21,12 +20,6 @@ SessionStart in workers), 2 (limits from StopFailure + resets_at, staged), 5 (ex
 claude --remote-control NAME "brief"), 6 (--append-system-prompt-file, tail ~260 words), 7 (friction.md
 triage + inject last 10), then the #8 trial. #9 deferred, #10 denied. #304/#305 closed (withdrawn).
 Each cut: a small PR with the proof test the report names.
-=======
-## Next (in order)
-1. Windows build (`flock -o /tmp/fleet-heavy.lock timeout 3600 bash scripts/build-windows.sh`) for #190, #191, #194, #195, #207, #210, #211; reinstall; click a card's GitHub mark once and check the `open github` log line (#195).
-2. #216 launches must not steal focus (new-window -d), #217 needs-you lingering after a permission answer.
-3. #150 (research done: portable-pty + xterm.js, a grouped tmux session), #154 wall Recover button, #158 `--apply`, #157 part 3, #185 part 3, #204 demo mode, #215, #163.
->>>>>>> origin/main
 
 ## Resume here (session 22 moved at Heph's ask, 11-03 late)
 Reviewers were STOPPED by the move: re-dispatch fresh, one change each, opus, with the long-runs rule.
@@ -77,17 +70,10 @@ Reviewers were STOPPED by the move: re-dispatch fresh, one change each, opus, wi
 9. #272 (resume-method experiment, design first).
 
 ## Notes
-<<<<<<< HEAD
 - Rule (#289, 11-03): tmux-spawning tests and multi-file shellcheck run under the heavy lock, timeout inside it.
 - Never nest a heredoc inside a python <<'EOF' edit: write the edit script with Write and run it.
 - `gh pr edit` fails (Projects classic): `gh api -X PATCH repos/ajbarea/klepsydra/pulls/N -F body=@file`;
   phylax wants the body file written in its own call before the PATCH.
-- shellcheck under WSL: `uvx --from shellcheck-py shellcheck -x <file>`; ruff: `uvx ruff@0.17.3`.
+- shellcheck: `make shellcheck` for the tree (takes the heavy lock itself); one file: `uvx --from shellcheck-py shellcheck -x <file>`; ruff: `uvx ruff@0.17.3`.
+- `make test-fleet`, `make test-launch`, `make test-heavy-lock` take the heavy lock themselves: run them bare.
 - App crate needs GTK headers WSL lacks: test `-p klepsydra-fleet` with CARGO_TARGET_DIR=.claude/worktrees/split-182/src-tauri/target.
-=======
-- `gh pr edit` fails on klepsydra (Projects classic): `gh api -X PATCH repos/ajbarea/klepsydra/pulls/N -F body=@file`. Issue Types are not enabled here; labels stand in.
-- `make test-fleet` takes about 19 min (it takes the heavy lock itself).
-- The app crate needs GTK headers WSL lacks: lint/test `-p klepsydra-fleet` with CARGO_TARGET_DIR=.claude/worktrees/split-182/src-tauri/target; CI builds the app.
-- shellcheck: `make shellcheck`. `receiver::bad_paths_bodies_and_sizes_get_their_status` flakes under load (#174).
-- Install before cutover: `make install-fleet`, then `fleet cutover`, then `fleet doctor` (doctor's exit code is lost behind a pipe; read the FAIL lines).
->>>>>>> origin/main
