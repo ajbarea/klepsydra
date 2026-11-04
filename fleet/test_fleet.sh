@@ -219,6 +219,9 @@ stop_file "$E1" %9001 "$evn" ev1 '  ⎿  You'"'"'ve hit your Opus weekly limit �
 win ev1 30 $((evn + 4000)) 61 $((evn + 200000))
 check "#313 review 2: a weekly window that disagrees with the stop's own dated reset does not date it" \
   "$(TZ=America/New_York date -d "@$(ev | cut -f1)" '+%F %H:%M')" "2026-10-30 13:00"
+stop_file "$E1" %9001 "$evn" ev1 '  ⎿  You'"'"'ve hit your Opus weekly limit · resets Nov 2, 1pm (America/New_York)'
+win ev1 30 $((evn + 4000)) 61 $((evn + 172800))
+check "#313 review 3: nor one that ends days before it" "$(TZ=America/New_York date -d "@$(ev | cut -f1)" '+%F %H:%M')" "2026-11-02 13:00"
 # #313 review 2: Heph's pane is no row; its folder is his own (orchestrator.config), not the default.
 had_b=0; [[ -d $work/cfg-b ]] && had_b=1
 login a; login b; printf '{"oauthAccount":{"accountUuid":"ev1"}}\n' >"$work/cfg-b/.claude.json"

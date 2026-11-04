@@ -328,10 +328,12 @@ else
   for p in $panes; do
     fleet_panes | grep -qx -- "$p" || continue
     s=$(screen "$p")
-    # As the limits check holds it: the hook's StopFailure record, else the screen.
-    if ! busy "$s" && { l=$(limit_line "$s") || { ev=$(limit_event "$p") && l=${ev#*$'\t'}; }; }; then
+    # Limited as the limits check holds it: the screen's limit line, else the
+    # hook's StopFailure record, whose reset is then its own epoch.
+    at=""
+    if ! busy "$s" && { l=$(limit_line "$s") || { ev=$(limit_event "$p") && l=${ev#*$'\t'} && at=${ev%%$'\t'*}; }; }; then
       limited+="$p "
-      r=$(grep -oE 'resets [^(]*[ap]m' <<<"$l" | tail -1)
+      if [[ $at =~ ^[1-9][0-9]*$ ]]; then r="resets $(date -d "@$at" '+%-I:%M%P')"; else r=$(grep -oE 'resets [^(]*[ap]m' <<<"$l" | tail -1); fi
       [[ -n $r && ", $resets" != *", ${r#resets }, "* ]] && resets+="${r#resets }, "
     else
       free+="$p "
