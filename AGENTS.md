@@ -7,8 +7,8 @@ klepsydra is an always-on-top desktop gauge (Tauri 2 shell, plain JavaScript fro
 `.claude/skill-context.md` (`## audit`) lists every suite, and every change runs all of them. Before a PR:
 
 - `node --test src/*.test.js`
-- `bash statusline/test_statusline.sh`, `bash hooks/test_fleet.sh`, `bash hooks/test_launch.sh` (needs tmux), `bash scripts/test_measure_memory.sh`, `bash scripts/test_build_windows.sh`
-- `shellcheck hooks/*.sh statusline/*.sh scripts/*.sh` (under WSL: `uvx --from shellcheck-py shellcheck ...`)
+- `bash statusline/test_statusline.sh`, `bash hooks/test_fleet.sh`, `bash scripts/test_measure_memory.sh`, `bash scripts/test_build_windows.sh`
+- `make test-fleet`, `make test-launch`, `make test-heavy-lock`, `make test-orch-guard` (all start tmux servers) and `make shellcheck` (CI's files, `-x`): each takes the fleet's heavy lock itself, so run them bare
 - `npm run lint` (Biome's `noConsole`: pages log through `src/log.js`) and `uvx ruff check` (the Python scripts, with ruff's `G` and `LOG` logging rules)
 - `(cd src-tauri && cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings)`
 - `(cd src-tauri && cargo test -p klepsydra-fleet)`

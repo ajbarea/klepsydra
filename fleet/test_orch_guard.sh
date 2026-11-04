@@ -4,7 +4,7 @@
 # the PreToolUse hook. Against a private tmux server, fake Claude Code panes
 # (tests/fake_pane.py) and a fake /proc, with no real Claude. Each refusal has
 # a case where it fires and a mutant without it that must fail that case.
-# Run: bash fleet/test_orch_guard.sh
+# Run: make test-orch-guard (it takes the heavy lock)
 set -uo pipefail
 
 here=$(cd "$(dirname "$0")" && pwd)

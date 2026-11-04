@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Tests for the fleet scripts against a private tmux server and fake Claude
-# Code panes (tests/fake_pane.py), with no real Claude. Run: bash fleet/test_fleet.sh
+# Code panes (tests/fake_pane.py), with no real Claude. Run: make test-fleet (it takes the heavy lock)
 set -uo pipefail
 
 here=$(cd "$(dirname "$0")" && pwd)
@@ -530,6 +530,37 @@ p=${out%% *}; p=${p#pane=}
 check "a relaunch repoints the same row" "$(wc -l <"$REGISTRY") $(cut -f1 "$REGISTRY")" "1 $p"
 check "the fleet log has the launch" "$(jq -r 'select(.target == "fleet::launch" and .pane == "'"$p"'") | .message' "$FLEET_LOG" | tail -1)" "brief delivered: a turn started"
 
+# #289: the scope's task cap, from the tightest pids.max above the caller's own
+# cgroup, split over the two workers and Heph.
+cgr="$work/cg"; leaf=/user.slice/user-1.slice/user@1.service/app.slice/me.scope
+mkdir -p "$cgr$leaf"
+echo 11926 >"$cgr$leaf/pids.max"; echo max >"$cgr${leaf%/*}/pids.max"; echo 26237 >"$cgr/user.slice/user-1.slice/pids.max"; echo max >"$cgr/user.slice/pids.max"
+tm() { FLEET_CGROUP_ROOT="$cgr" FLEET_CGROUP=$leaf fleet_tasks_max; }
+check "#289: the user slice's cap over three, never the caller's own scope's" "$(tm)" "8745"
+echo 9000 >"$cgr${leaf%/*}/pids.max"
+check "#289: a tighter cap higher up wins" "$(tm)" "3000"
+echo max >"$cgr${leaf%/*}/pids.max"; echo max >"$cgr/user.slice/user-1.slice/pids.max"
+check "#289: no cap readable: fails (the scope then inherits)" "$(tm || echo none)" "none"
+check "#289: FLEET_TASKS_MAX sets it, and a bad one is refused" "$(FLEET_TASKS_MAX=500 tm) $(FLEET_TASKS_MAX=5x tm || echo refused)" "500 refused"
+echo 26237 >"$cgr/user.slice/user-1.slice/pids.max"
+# A systemd-run that records its arguments and runs the command after its options.
+cat >"$work/systemd-run" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >>"$work/sdrun.calls"
+while [[ \$1 == --* || \$1 == -p ]]; do [[ \$1 == -p ]] && shift; shift; done
+exec "\$@"
+EOF
+chmod +x "$work/systemd-run"; : >"$work/sdrun.calls"
+printf '%s' '{"above":["Claude Code"]}' >"$work/scoped.json"; : >"$work/scoped.log"
+out=$(FLEET_SCOPE=1 FLEET_SYSTEMD_RUN="$work/systemd-run" FLEET_CGROUP_ROOT="$cgr" FLEET_CGROUP=$leaf FLEET_MIN_AVAIL_MB=0 \
+  FLEET_LAUNCHER="$work/launcher.sh" FLEET_DIR="$work" FLEET_CLAUDE="python3 -I $fake $work/scoped.json $work/scoped.log" \
+  bash "$here/launch.sh" scoped "$work/task.src" 2>/dev/null | head -1)
+check "#289: the session's scope gets its own task cap beside the memory caps" \
+  "$(grep -o 'MemorySwapMax=[^ ]* -p TasksMax=[0-9]*' "$work/sdrun.calls")" "MemorySwapMax=1G -p TasksMax=8745"
+check "#289: the launch logs the cap it set" "$(jq -r 'select(.message == "window opened" and .name == "scoped") | .tasks_max' "$FLEET_LOG")" "8745"
+check "#289: the scoped launch still delivers" "${out##* }" "brief=started"
+t kill-pane -t "$(sed -E 's/^pane=([^ ]+).*/\1/' <<<"$out")" 2>/dev/null
+
 out=$(launch agent2 '{"above":["Claude Code"],"on_submit":"limit"}')
 check "blocked by a limit" "${out##* }" "brief=blocked-by-limit"
 
@@ -682,12 +713,66 @@ check "the tail puts performance first, above the security floor, and asks for D
 check "the tail carries the team-ceremony rule (AJ 10-29)" "$(grep -c '^Team ceremony in every repo' "$here/brief-tail.md")" "1"
 check "the tail keeps asks for AJ out of public issues and PRs (AJ 10-29)" "$(grep -c '^Asks for AJ stay private' "$here/brief-tail.md")" "1"
 check "#239: the tail has heavy commands take the lock with flock -o, so nothing they leave running keeps it" "$(grep -c 'flock -o /tmp/fleet-heavy.lock' "$here/brief-tail.md")" "1"
+check "#291 review: the tail says the make targets take the lock themselves and run bare" "$(grep -c 'make test-fleet., .make test-launch., .make test-heavy-lock. and .make shellcheck. in klepsydra take the lock themselves: run them bare' "$here/brief-tail.md")" "1"
+check "#291 review 5: the tail's hand form puts a group-wide timeout inside the lock (no --foreground)" "$(grep -c 'flock -o /tmp/fleet-heavy.lock timeout 1800 <command>' "$here/brief-tail.md") $(grep -c -- '--foreground' "$here/brief-tail.md")" "1 0"
+# Every target whose recipe runs $(HEAVY) (#291 review 4): it takes the lock
+# unless the caller says it holds it, a test target runs a file that exists,
+# and the brief tail, the skill context and CI each name it.
+heavy_targets=$(awk '/^[A-Za-z][A-Za-z0-9_-]*:/ { t = $1; sub(/:.*/, "", t) } /^\t@?\$\(HEAVY\)/ { print t }' "$here/../Makefile" | paste -sd ' ' -)
+check "#291 review 4: the Makefile's heavy targets" "$heavy_targets" "test-fleet test-launch test-heavy-lock test-orch-guard shellcheck"
+# What each runs, exactly (review 5: "a file that exists" passed a swapped suite).
+declare -A heavy_runs=([test-fleet]="bash fleet/test_fleet.sh" [test-launch]="bash hooks/test_launch.sh"
+  [test-heavy-lock]="bash fleet/test_heavy_lock.sh" [test-orch-guard]="bash fleet/test_orch_guard.sh" [shellcheck]="sc -x hooks/*.sh statusline/*.sh scripts/*.sh fleet/*.sh fleet/fleet")
+for ht in $heavy_targets; do
+  check "#291 review 4: make $ht takes the lock unless held, runs its own suite, and the tail, skill context and CI name it" \
+    "$(make -s -n -C "$here/.." "$ht" FLEET_HEAVY_HELD= SHELLCHECK=sc | grep -cxF "FLEET_HEAVY_HELD=1 bash fleet/heavy.sh ${heavy_runs[$ht]:-?}") $(make -s -n -C "$here/.." "$ht" FLEET_HEAVY_HELD=0 | grep -c 'fleet/heavy.sh') | $(make -s -n -C "$here/.." "$ht" FLEET_HEAVY_HELD=1 SHELLCHECK=sc) | $(grep -c "make $ht" "$here/brief-tail.md") $(grep -c "make $ht" "$here/../.claude/skill-context.md" | sed 's/^[1-9][0-9]*$/1/') $(grep -c "make $ht .*FLEET_HEAVY_HELD=1" "$here/../.github/workflows/ci.yml")" \
+    "1 1 | ${heavy_runs[$ht]:-?} | 1 1 1"
+done
+# Any doc, anywhere on a line: a heavy suite or the tree's shellcheck run by
+# hand, or the heavy lock taken without -o (#291 reviews 2 to 4). Plans are
+# history, so they are left out. A sweep with no docs to read says so.
+bare_re="((^|[ \`(;&|])(ba)?sh( +-[a-z]+)* +|(^|[ \`(;&|])[.]/)((([^ \`]*/)?fleet/)?test_fleet|([^ \`]*/)?(fleet/)?test_heavy_lock|([^ \`]*/)?(fleet/)?test_orch_guard|([^ \`]*/)?test_launch)[.]sh|shellcheck( +-[-A-Za-z=]+)* +[^ \`]*(hooks|fleet|statusline|scripts)/[^ \`]*[*]"
+docs_bare() { # repo
+  local docs
+  docs=$(git -C "$1" ls-files -- '*.md' ':!docs/superpowers/plans/' 2>/dev/null)
+  [[ -n $docs ]] || { echo "no docs to sweep in $1"; return; }
+  (
+    cd "$1" || exit
+    git ls-files -z -- '*.md' ':!docs/superpowers/plans/' | xargs -0 grep -nE "$bare_re"
+    # Each flock on the lock, not each line: a line may hold a good form and a bad one.
+    git ls-files -z -- '*.md' ':!docs/superpowers/plans/' | xargs -0 grep -noE 'flock( +-[^ `]+( +[0-9.]+)?)* +/tmp/fleet-heavy[.]lock' | grep -vE ':flock( +[^ ]+)* +-o( |$)'
+  ) | sort -u
+}
+check "#291 review 3: no doc runs a heavy suite or the tree's shellcheck by hand; the make targets do" \
+  "$(docs_bare "$here/.." | wc -l) $(grep -c "make shellcheck" "$here/../AGENTS.md") $(grep -c "make test-fleet" "$here/../.claude/skill-context.md") $(grep -c "make test-launch" "$here/../AGENTS.md" "$here/../.claude/skill-context.md" "$here/../README.md" | grep -c ':[1-9]')" "0 1 2 3"
+# The sweep itself, on a scratch repo: each bare form found, plans and the
+# allowed forms left alone, and a repo with no docs is a failure, not a pass.
+sw=$work/sweep291
+mkdir -p "$sw/docs/superpowers/plans"
+git -C "$sw" init -q
+# shellcheck disable=SC2016 # the backticks are the doc's, not a command
+printf '%s\n' 'Run `bash hooks/test_launch.sh` first.' 'then (shellcheck -x fleet/*.sh).' 'Or: flock /tmp/fleet-heavy.lock make x' './fleet/test_fleet.sh' \
+  'cd fleet && bash test_fleet.sh' 'bash -x fleet/test_fleet.sh' 'sh hooks/test_launch.sh' 'shellcheck --external-sources hooks/*.sh' \
+  'flock -w 60 /tmp/fleet-heavy.lock make y' 'flock -w 0.5 /tmp/fleet-heavy.lock make w' 'Good: `flock -o /tmp/fleet-heavy.lock x`, bad: flock /tmp/fleet-heavy.lock y' 'bash fleet/test_heavy_lock.sh' >"$sw/bare.md"
+# shellcheck disable=SC2016
+printf '%s\n' 'Run `make test-fleet` bare; the hook suite runs bare too: `bash hooks/test_fleet.sh`.' 'One file: `uvx --from shellcheck-py shellcheck -x fleet/lib.sh`.' 'See [the suite](../fleet/test_fleet.sh); `fleet/test_fleet.sh` takes 19 min.' \
+  'Hand form: `flock -o /tmp/fleet-heavy.lock timeout 1800 <command>`, or flock -w 60 -o /tmp/fleet-heavy.lock z.' >"$sw/ok.md"
+printf '%s\n' 'bash fleet/test_fleet.sh' >"$sw/docs/superpowers/plans/old.md"
+git -C "$sw" add -A
+check "#291 review 4: the sweep finds each of 12 bare forms, only in bare.md" \
+  "$(docs_bare "$sw" | wc -l) $(docs_bare "$sw" | grep -vc '^bare[.]md:')" "12 0"
+check "#291 review 4: a sweep with no docs to read fails" "$(docs_bare "$work/sweep291-none" | wc -l) $(docs_bare "$work/sweep291-none" | grep -c 'no docs to sweep')" "1 1"
 check "#185: the tail offers the Agora as optional and asks a post to name something real" "$(grep -c '^Agora (AJ 10-29, optional, never a task).*names something real' "$here/brief-tail.md")" "1"
 
 echo "doctor"
 mkdir -p "$KLEPSYDRA_DIR/fleet" "$work/bin"
 cat >"$work/bin/systemctl" <<'EOF'
 #!/usr/bin/env bash
+# DOC_SCOPES (#289): one "UNIT TASKS_CURRENT TASKS_MAX" line per fleet scope.
+case $* in
+  *list-units*) [[ -n ${DOC_SCOPES:-} ]] && awk '{ print $1 " loaded active running x" }' "$DOC_SCOPES"; exit 0 ;;
+  *" show "*) [[ -n ${DOC_SCOPES:-} ]] && awk -v u="${*: -1}" '$1 == u { print "TasksCurrent=" $2; print "TasksMax=" $3 }' "$DOC_SCOPES"; exit 0 ;;
+esac
 [[ $* == *is-active* && -e $DOC_ACTIVE ]]
 EOF
 cat >"$work/bin/curl" <<'EOF'
@@ -731,6 +816,13 @@ check "a resume loop that never ran fails" "$(grep '^FAIL resume loop' <<<"$out"
 check "a worker with Remote Control is ok" "$(grep -c "^ok   remote control $w (worker)" <<<"$out")" "1"
 check "the orchestrator without it fails (Heph's must always be on)" "$(grep -c "^FAIL remote control $o (orchestrator): off" <<<"$out")" "1"
 check "no phone wall fails" "$(grep -c '^FAIL phone wall: no answer' <<<"$out")" "1"
+check "#289: with no fleet scope there is no task caps line" "$(grep -c 'task caps' <<<"$out")" "0"
+printf 'fleet-a-1.scope 7000 8745\nfleet-b-2.scope 100 8745\nnot-fleet.scope 9 10\n' >"$work/scopes"
+check "#289: a scope past 80% of its task cap warns, naming it" "$(DOC_SCOPES="$work/scopes" doctor | grep 'task caps')" \
+  "warn task caps: past 80% of the cap: fleet-a-1 7000/8745 (its next forks fail at the cap)"
+printf 'fleet-a-1.scope 6900 8745\nfleet-b-2.scope 100 8745\nfleet-c-3.scope 50 infinity\n' >"$work/scopes"
+check "#289: under the line: ok, the fullest named, and a scope from before the cap listed" "$(DOC_SCOPES="$work/scopes" doctor | grep 'task caps')" \
+  "ok   task caps: fullest scope: fleet-a-1 6900/8745; no task cap: fleet-c-3"
 check "no Tailscale Serve fails" "$(grep -c '^FAIL phone wall over Tailscale: Tailscale Serve is not set up' <<<"$out")" "1"
 check "and the exit is non-zero" "$code" "1"
 check "#244: hooks and cast never installed fail, named" "$(grep '^FAIL installed copies' <<<"$out" | grep -c 'make install-fleet: differ from .*: klepsydra-fleet.sh .*klepsydra-cast.json$')" "1"
