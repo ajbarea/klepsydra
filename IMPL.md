@@ -23,7 +23,8 @@ Each cut: a small PR with the proof test the report names.
 
 ## Resume here (session 26, replacement on ~/.claude-rit, from 11-04 morning; replaced session 25)
 Reports: /tmp/claude-1001/<round>/report.md. Heavy runs: never wrap a lock-taking make target in an outer timeout.
-Order (Heph 11-04): bug queue #313, #292, #322 (#319), #320, #321; then #323 (AJ-approved freeze exception, one PR
+Order (Heph 11-04): bug queue #313, #292, #322 (#319), #320 (PR #325), #321; then #326 (remove the Agora, a cut;
+also drop the tail's Agora line from #318 and test #185); then #323 (AJ-approved freeze exception, one PR
 per stage: agy sessions from + New session, then wall, gauge, hooks, keryx); then the reader backlog and cuts 7, #8.
 - ✅ #230 merged 09:57 (r5 verify CLEAN), installed, doctor clean.
 - 🔄 #287 head 1ffb001: r13 B1/S1/B2 fixed, ancestry walk forks nothing for a non-sender; CI green; local
