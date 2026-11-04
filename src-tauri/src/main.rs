@@ -817,7 +817,6 @@ fn with_state<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R
         .manage(fleet::NeedsFeed::default())
         .manage(fleet::CiFeed::default())
         .manage(fleet::HealthFeed::default())
-        .manage(fleet::AgoraFeed::default())
         .manage(Moved::default())
         .manage(Sized::default())
         .manage(Requested::default())
@@ -868,8 +867,6 @@ fn main() {
             fleet::needs_subscribe,
             fleet::ci_subscribe,
             fleet::health_subscribe,
-            fleet::agora_subscribe,
-            fleet::agora_react,
             fleet::open_wall,
             launch::open_folder,
             launch::open_github,
@@ -1057,7 +1054,6 @@ fn main() {
             fleet::start_queue(app.handle());
             fleet::start_ci(app.handle(), klepsydra_dir(app.handle()));
             fleet::start_health(app.handle(), klepsydra_dir(app.handle()));
-            fleet::start_agora(app.handle(), klepsydra_dir(app.handle()));
             Ok(())
         })
         .build(tauri::generate_context!())

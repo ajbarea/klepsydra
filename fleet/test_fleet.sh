@@ -946,7 +946,6 @@ git -C "$sw" add -A
 check "#291 review 4: the sweep finds each of 12 bare forms, only in bare.md" \
   "$(docs_bare "$sw" | wc -l) $(docs_bare "$sw" | grep -vc '^bare[.]md:')" "12 0"
 check "#291 review 4: a sweep with no docs to read fails" "$(docs_bare "$work/sweep291-none" | wc -l) $(docs_bare "$work/sweep291-none" | grep -c 'no docs to sweep')" "1 1"
-check "#185: the tail offers the Agora as optional and asks a post to name something real" "$(grep -c '^Agora (AJ 10-29, optional, never a task).*names something real' "$here/brief-tail.md")" "1"
 
 echo "doctor"
 mkdir -p "$KLEPSYDRA_DIR/fleet" "$work/bin"
@@ -1156,8 +1155,15 @@ inst=$work/inst
 mkdir -p "$inst/state" "$inst/claude"
 printf 'old copy\n' >"$inst/state/launch.sh"
 printf 'old hook\n' >"$inst/claude/klepsydra-fleet.sh"
+ln -s "$here/agora.py" "$inst/state/agora.py"
 FLEET_STATE="$inst/state" FLEET_UNITS="$inst/units" FLEET_BIN="$inst/bin" FLEET_HOOK_DIR="$inst/claude" \
   bash "$here/install.sh" --force >/dev/null 2>&1
+check "#326: a retired script's link is removed" "$([[ -L $inst/state/agora.py ]] && echo kept || echo gone)" "gone"
+printf 'mine\n' >"$inst/state/agora.py"
+FLEET_STATE="$inst/state" FLEET_UNITS="$inst/units" FLEET_BIN="$inst/bin" FLEET_HOOK_DIR="$inst/claude" \
+  bash "$here/install.sh" --force >/dev/null 2>&1
+check "#326: a file of that name that is no link stays" "$(cat "$inst/state/agora.py")" "mine"
+rm -f -- "$inst/state/agora.py"
 check "#244: the hooks, status line, launcher, tmux conf, wrap-up and cast are copied in, each matching the checkout" \
   "$(for c in "${HOOK_COPIES[@]}"; do cmp -s "${here%/fleet}/${c%% *}" "$inst/claude/${c#* }" && [[ ! -L $inst/claude/${c#* } ]] && echo same; done | wc -l)" "${#HOOK_COPIES[@]}"
 check "#244: the scripts are executable, the cast is not, and no temp file is left" \
