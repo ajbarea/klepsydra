@@ -3481,6 +3481,7 @@ echo "launch without worker settings"
 cat >"$work/launcher-rec.sh" <<EOF
 #!/usr/bin/env bash
 printf '%s\n' "\$KLEPSYDRA_CLAUDE" >"$work/cmd"
+env | grep -E '^FLEET_(SETTINGS|ACCOUNT|SUCCEEDS)=' >"$work/launcher-env"
 tmux -L "\$KLEPSYDRA_TMUX_SOCKET" new-window -d -t fleet: -c "\$3" "\$KLEPSYDRA_CLAUDE"
 EOF
 printf '%s' '{"above":["Claude Code"]}' >"$work/nosettings.json"; : >"$work/nosettings.log"
@@ -3497,10 +3498,27 @@ check "#226: a move's successor id reaches the session; anything else is dropped
   "$(grep -c 'KLEPSYDRA_SUCCEEDS=11111111-2222-4333-8444-555555555555 ' "$work/cmd")" "1"
 check "#183 review 2: keryx's switch is never inherited from tmux's environment" "$(grep -c '^env -u KERYX_ENABLED ' "$work/cmd")" "1"
 check "#309: the orchestrator's launch (no worker settings) carries no worker mark" "$(grep -c 'KLEPSYDRA_WORKER' "$work/cmd")" "0"
-FLEET_SETTINGS="$work/nosettings.json" FLEET_SCOPE=0 FLEET_MIN_AVAIL_MB=0 FLEET_LAUNCHER="$work/launcher-rec.sh" FLEET_DIR="$work" \
-  FLEET_CLAUDE="python3 -I $fake $work/nosettings.json $work/nosettings.log" bash "$here/launch.sh" nosettings "$work/task.src" >/dev/null 2>&1
-check "#309: a worker's launch is marked, so the stale-PR list skips it" \
-  "$(grep -c 'KLEPSYDRA_WORKER=1 ' "$work/cmd") $(grep -c -- '--settings' "$work/cmd")" "1 1"
+check "#310 review 1: the launcher gets none of the launch's FLEET_* settings, so a server it starts hands them to no later pane" \
+  "$(cat "$work/launcher-env")" ""
+# A real worker launch: FLEET_SETTINGS unset (worker-settings.json), claude's own
+# environment read, an inherited mark dropped on the orchestrator's (#310 review 1).
+cat >"$work/envclaude.sh" <<EOF
+#!/usr/bin/env bash
+{ echo ran; env | grep -E '^KLEPSYDRA_WORKER='; } >"$work/claude-env"
+exec python3 -I $fake $work/nosettings.json $work/nosettings.log
+EOF
+chmod +x "$work/envclaude.sh"
+: >"$work/claude-env"
+( unset FLEET_SETTINGS; FLEET_SCOPE=0 FLEET_MIN_AVAIL_MB=0 FLEET_LAUNCHER="$work/launcher-rec.sh" FLEET_DIR="$work" \
+  FLEET_CLAUDE="$work/envclaude.sh" bash "$here/launch.sh" nosettings "$work/task.src" >/dev/null 2>&1 )
+for _ in $(seq 50); do [[ -s $work/claude-env ]] && break; sleep 0.1; done
+check "#309: a worker's claude runs with the mark in its environment, so the stale-PR list skips it" \
+  "$(tr '\n' ' ' <"$work/claude-env")$(grep -c -- '--settings' "$work/cmd")" "ran KLEPSYDRA_WORKER=1 1"
+: >"$work/claude-env"
+KLEPSYDRA_WORKER=1 FLEET_SETTINGS='' FLEET_SCOPE=0 FLEET_MIN_AVAIL_MB=0 FLEET_LAUNCHER="$work/launcher-rec.sh" FLEET_DIR="$work" \
+  FLEET_CLAUDE="$work/envclaude.sh" bash "$here/launch.sh" nosettings "$work/task.src" >/dev/null 2>&1
+for _ in $(seq 50); do [[ -s $work/claude-env ]] && break; sleep 0.1; done
+check "#310 review 1: the orchestrator's claude drops a mark inherited from its caller" "$(tr '\n' ' ' <"$work/claude-env")" "ran "
 
 echo "fleet voices: keryx follows the tray's mode, live (#273)"
 # Stub keryx installs laid out as the plugin's (bin/ beside src/keryx), keeping
