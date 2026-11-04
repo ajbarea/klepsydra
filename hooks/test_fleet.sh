@@ -1239,7 +1239,7 @@ for s in "${shared[@]}"; do
 done
 # shellcheck disable=SC2016 # a literal $PROC_ROOT, as the scripts spell it
 check "only the shared file parses /proc stat" \
-  "$(cat "${shared[@]/#/$here/}" | grep -cE 'read -r -a stat|<"?(/proc|\$PROC_ROOT)/[^"]*stat')" "0"
+  "$(cat "${shared[@]/#/$here/}" | grep -cE 'read -r -a stat|<"?(/proc|\$\{?PROC_ROOT)[^"]*/stat')" "0"
 check "install copies the shared file beside the hooks" \
   "$(grep -c '"hooks/klepsydra-common.sh klepsydra-common.sh"' "$here/../fleet/lib.sh")" "1"
 lone="$work/lone"; mkdir -p "$lone"; cp "$hook" "$here/klepsydra-launch.sh" "$here/klepsydra-wrapup.sh" "$lone/"

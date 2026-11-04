@@ -1516,7 +1516,7 @@ A release ships only when all three hold:
       another session's name and press Jump again: it says two tabs match and
       does nothing. Move the wall, quit klepsydra from the tray, start it again and
       open the wall: it opens where you left it.
-   7. Starting sessions, with `klepsydra-launch.sh` and `klepsydra-tmux.conf`
+   7. Starting sessions, with `klepsydra-launch.sh`, `klepsydra-common.sh` and `klepsydra-tmux.conf`
       in `~/.claude/`:
       - Press **+ New session** three times: one tab, three windows.
       - Press **Open terminal** on each card: each hops to its own window.

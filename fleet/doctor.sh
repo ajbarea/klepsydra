@@ -282,7 +282,7 @@ if [[ -n $missing ]]; then
 elif [[ -n $differ ]]; then
   report FAIL "installed copies" "make install-fleet: differ from $root: ${differ% }"
 else
-  report ok "installed copies" "the hooks, status line, launcher and cast match $root"
+  report ok "installed copies" "the hooks, their shared file, status line, launcher and cast match $root"
 fi
 if [[ -n $json ]]; then
   tmp=$json.tmp.$$
