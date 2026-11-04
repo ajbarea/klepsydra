@@ -214,6 +214,17 @@ check "a /login in the pane's folder since: the old account's readings date noth
 printf '{"oauthAccount":{"accountUuid":"ev1"}}\n' >"$FLEET_DEFAULT_JSON"
 check "the same account still logged in: its reading dates it" "$(ev | cut -f1)" "$((evn + 4000))"
 logout a; rm -f -- "${FLEET_DEFAULT_JSON:?}" # as before this case: never logged in
+# #313 review 2: a model's own weekly limit dates itself; the all-models week, not spent, is another window.
+stop_file "$E1" %9001 "$evn" ev1 '  ⎿  You'"'"'ve hit your Opus weekly limit · resets Oct 30, 1pm (America/New_York)'
+win ev1 30 $((evn + 4000)) 61 $((evn + 200000))
+check "#313 review 2: a weekly window that disagrees with the stop's own dated reset does not date it" \
+  "$(TZ=America/New_York date -d "@$(ev | cut -f1)" '+%F %H:%M')" "2026-10-30 13:00"
+# #313 review 2: Heph's pane is no row; its folder is his own (orchestrator.config), not the default.
+login a; login b; printf '{"oauthAccount":{"accountUuid":"ev1"}}\n' >"$work/cfg-b/.claude.json"
+printf '%%9001\n' >"$FLEET_STATE/orchestrator.pane"; printf '%s\n' "$work/cfg-b" >"$FLEET_STATE/orchestrator.config"
+stop_file "$E1" %9001 "$evn" ev1 "$L5"; win ev1 100 $((evn + 4000))
+check "#313 review 2: Heph's stop is dated by the account on his own folder" "$(ev | cut -f1)" "$((evn + 4000))"
+logout a; logout b; rm -f -- "${FLEET_DEFAULT_JSON:?}" "$work/cfg-b/.claude.json" "$FLEET_STATE/orchestrator.pane" "$FLEET_STATE/orchestrator.config"
 stop_file "$E1" %9001 "$evn" ev-none "$L5"
 check "no reading: the message's reset" "$(ev | cut -f1)" "$((evn + 4200))"
 stop_file "$E1" %90010 "$evn" ev1 "$L5"
@@ -1040,6 +1051,8 @@ stop_file "$(sid_of w1)" "$w" "$noon" a "$L5"; win a 100 $((noon + 600))
 check "#311: a pane the hook recorded at a limit, past its resets_at, fails though its screen shows none" \
   "$(FLEET_NOW=$((noon + 1300)) doctor | grep '^FAIL limits')" "FAIL limits: still at a limit past its reset: $w (the resume service missed it)"
 check "#311: before then it is ok" "$(FLEET_NOW=$((noon + 900)) doctor | grep -c '^ok   limits')" "1"
+check "#313 review 2: and with no watcher, the watcher check holds it limited too: a warning, no FAIL" \
+  "$(FLEET_NOW=$((noon + 900)) doctor | grep -c '^warn pane watcher: none running while every agent waits out a usage limit')" "1"
 session_file w1 "$w" https://claude.ai/code/session_01W
 rm -f -- "${KLEPSYDRA_DIR:?}/accounts/a/ev.json"
 state wpane '{"above":["idle"]}'

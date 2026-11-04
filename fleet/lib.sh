@@ -367,6 +367,11 @@ REGISTRY=${REGISTRY:-$FLEET_STATE/panes.tsv}
 registered() { awk -F'\t' -v p="$1" '$1 == p { f = 1 } END { exit !f }' "$REGISTRY" 2>/dev/null; }
 reg_field() { awk -F'\t' -v p="$1" -v n="$2" '$1 == p { print $n; exit }' "$REGISTRY" 2>/dev/null; }
 orchestrator() { cat "$FLEET_STATE/orchestrator.pane" 2>/dev/null; }
+# The config folder PANE's session runs on: Heph's own (heph_config) for the
+# orchestrator's pane when no row names it, else its row's (pane_config).
+pane_folder() { # PANE
+  if [[ $1 == "$(orchestrator)" ]] && ! registered "$1"; then heph_config; else pane_config "$1"; fi
+}
 # shellcheck disable=SC2034 # read by recover.sh and resume-at-reset.sh
 HEPH=${FLEET_HEPH:-$FLEET_STATE/HEPH.md}
 fleet_panes() { t list-panes -s -t "$FLEET_SESSION" -F '#{pane_id}' 2>/dev/null; }
@@ -405,22 +410,24 @@ live_session() { # PANE
 # StopFailure record (error rate_limit; a prompt since clears it), as
 # "RESET<TAB>MESSAGE" (#311). RESET is the latest resets_at among the
 # account's spent windows the stop fell in, else the end of the window the
-# message names, else the message's own reset read from the stop's time (a
-# reset never precedes the stop), else 0. The readings count only while the
-# pane's folder still holds the account the session recorded: after a /login
-# there, the stop was the new account's, and its text says when.
+# message names (only when it agrees with a reset the message dates itself, to
+# the hour: a model's own weekly limit is no window the readings show), else
+# the message's own reset read from the stop's time (a reset never precedes
+# the stop), else 0. The readings count only while the pane's folder (Heph's
+# own for his pane) still holds the account the session recorded: after a
+# /login there, the stop was the new account's, and its text says when.
 # A rate_limit error counts only when its text is a limit message or a window
 # is spent: a passing "API Error: Rate limit reached" parks no pane for hours.
 # Fails when there is none.
 limit_event() { # PANE
-  local sid f at id msg rd spent=0 named_at=0 r now_id
+  local sid f at id msg rd spent=0 named_at=0 r now_id text_at=0
   sid=$(live_session "$1") || return 1
   f=$KLEPSYDRA_DIR/fleet/$sid.json
   { read -r at id && IFS= read -r msg; } < <(jq -r 'select(.state == "error" and .reason == "rate limit")
     | "\(.state_at) \(.account.id // "-")", (.error // "" | tostring | gsub("[\t\r\n]"; " "))' "$f" 2>/dev/null) || return 1
   [[ $at =~ ^[0-9]+$ ]] || return 1
   [[ $msg == *"hit your fast limit"* ]] && return 1
-  now_id=$(account_of "$(pane_config "$1")") && [[ $now_id != "$id" ]] && id=-
+  now_id=$(account_of "$(pane_folder "$1")") && [[ $now_id != "$id" ]] && id=-
   if [[ $id != - ]] && rd=$(reading_of "$id"); then
     read -r spent named_at < <(jq -r --argjson at "$at" --arg msg "$msg" '
       def span: {five_hour: 18000, seven_day: 604800};
@@ -433,9 +440,15 @@ limit_event() { # PANE
   fi
   [[ $spent =~ ^[0-9]+$ && $named_at =~ ^[0-9]+$ ]] || spent=0 named_at=0
   (( spent > 0 )) || grep -qE "$LIMIT_RE" <<<"$msg" || return 1
+  text_at=$(reset_epoch "$msg" "$at" 1800) || text_at=0
+  if (( named_at > 0 && text_at > 0 )); then
+    local gap=$(( named_at - text_at ))
+    (( gap < 0 )) && gap=$(( -gap ))
+    (( gap <= 3600 )) || named_at=0
+  fi
   r=$spent
   (( r > 0 )) || r=$named_at
-  (( r > 0 )) || r=$(reset_epoch "$msg" "$at" 1800) || r=0
+  (( r > 0 )) || r=$text_at
   printf '%s\t%s\n' "$r" "${msg:-StopFailure rate_limit}"
 }
 
