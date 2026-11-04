@@ -26,15 +26,17 @@ Reports: /tmp/claude-1001/<round>/report.md. Never wrap a lock-taking make targe
 to a suite before queuing it. PR bodies: Write the file, then PATCH in its own call (phylax reads the written file).
 Order (Heph 11-04): bug queue -> #326 (PR #331) -> #323 stage 1 (PR #332) -> #327 Agora v2 -> #324 -> #323 later
 stages; reader backlog (#318, #316, #314, #308, #310) and cuts 7, #8 between.
-- ✅ merged + installed: #230, #313, #292.
-- 🔄 #322 (room-319): r3 fixed in 26b2cf1 (J1 carry-on when the room goes before the move, why=room; G4b rc 4 no
-  note; G2b marked=none; G4c note an hour after the ask), main merged 7190c60; full suite running; then push, body
-  row names the head, r4 reader.
-- 🔄 #329 (stale-321) 143b259 (r4 fixes): r5 reader -> /tmp/claude-1001/r5b-329/report.md (r5 died at the limit).
-- 🔄 #325 (send-320) 325dddc: r1 reader -> /tmp/claude-1001/r1-325/report.md.
-- 🔄 #287 (guard-264): r15 fix uncommitted + new python -Ic cluster test (kills m7); base + 7 mutants running
-  (scratch mut287/run.sh). Then commit, push, body count, r16 fresh verify.
-- 📋 r1 owed: #330 (b69fcd4), #331 (e6af965), #332 (5cf7473), #318 (behind main).
+- ✅ merged + installed: #230, #313, #292, #329 (r5 clean, 2328e02).
+- 🔄 #322 (room-319) 7190c60: r3 fixed (26b2cf1) + main merged; suite 760/0; body updated; r4 reader ->
+  /tmp/claude-1001/r4-322/report.md.
+- 🔄 #325 (send-320): r1 F1/F2 Blocking fixed in the worktree commit after 325dddc (per-pane flock in
+  inbox_deliver -> deliver_now; msg_in_box before each retry Enter; brief-tail "fleet send" rule + check; N1-N4
+  cases; send.sh +x). Full suite running; then push, body (F8 = known limit: real queued-hint unverified), r2.
+  After merge: `fleet brief --refresh`, tell Heph (HEPH.md + worker-report memory still say raw send-keys).
+- 🔄 #330 (phone-328) b69fcd4: r1 reader -> /tmp/claude-1001/r1-330/report.md.
+- 🔄 #287 (guard-264): r15 committed 41111e9 (7/7 mutants killed, base 238/0), main merged (doctor/install/test_fleet
+  conflicts: both sides kept); suites running (scratch tf-287.log, og-287.log); then push, body count, r16 verify.
+- 📋 r1 owed: #331 (e6af965), #332 (5cf7473), #318 (behind main).
 - 📋 Readers: #316 r1, #314 r1, #308 r2, #310 verify, claude-prefs#42 r2 + #43 r1.
 - 📋 Cut 7 (friction triage + SessionStart last 10 lines), then the #8 trial; #327; #324.
 - Held worktree split-182: kept on purpose (CARGO_TARGET_DIR; src-tauri/gen is Tauri's generated schema).
