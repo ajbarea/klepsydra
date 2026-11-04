@@ -88,8 +88,13 @@ for p in $orch $panes; do
   fleet_panes | grep -qx -- "$p" || continue
   s=$(screen "$p")
   busy "$s" && continue
-  if l=$(limit_line "$s"); then
-    lnow=${FLEET_NOW:-$now} # tests set the clock
+  lnow=${FLEET_NOW:-$now} # tests set the clock
+  # The fleet hook's StopFailure record dates the reset exactly (#311).
+  if ev=$(limit_event "$p") && r=${ev%%$'\t'*} && (( r > 0 )); then
+    if (( lnow - r > ${FLEET_OVERDUE_S:-600} )); then
+      overdue+="$p " resets+="$p:$(date -d "@$r" '+%H:%M') "
+    fi
+  elif l=$(limit_line "$s"); then
     # A dated reset is exact. A time-only one can be up to 24 h ahead, so it is
     # placed only for the 5-hour window, whose reset is at most 5 h ahead: today's
     # is tomorrow's when over 19 h past, yesterday's when over 5.5 h ahead.

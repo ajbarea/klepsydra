@@ -164,6 +164,72 @@ state read '{"above":["x"],"menu":"limit"}'
 check "a menu hides the input box" "$(has_input_box "$(screen "$p")" && echo box || echo none)" "none"
 t kill-window -t "$p"
 
+echo "limits from events (#311)"
+# A session the fleet hook recorded at STATE (default: a StopFailure rate_limit), in pane PANE.
+stop_file() { # SID PANE STATE_AT ACCOUNT MESSAGE [STATE REASON]
+  jq -n --arg p "$2" --argjson at "$3" --arg a "$4" --arg m "$5" --arg st "${6:-error}" --arg r "${7:-rate limit}" \
+    '{session_id: "x", ended: null, tmux: {pane: $p}, state: $st, reason: $r, state_at: $at, error: $m}
+     + (if $a == "" then {} else {account: {id: $a, label: "Ev"}} end)' >"$KLEPSYDRA_DIR/fleet/$1.json"
+}
+# A usage reading for account ID: each window's percentage used and reset.
+win() { # ID FIVE_PCT FIVE_RESET [SEVEN_PCT SEVEN_RESET]
+  mkdir -p "$KLEPSYDRA_DIR/accounts/$1"
+  jq -n --argjson fp "$2" --argjson fr "$3" --arg sp "${4:-}" --arg sr "${5:-}" \
+    '{label: "Ev", windows: ({five_hour: {used_percentage: $fp, resets_at: $fr}}
+      + (if $sp == "" then {} else {seven_day: {used_percentage: ($sp | tonumber), resets_at: ($sr | tonumber)}} end))}' \
+    >"$KLEPSYDRA_DIR/accounts/$1/ev.json"
+}
+evn=$(TZ=America/New_York date -d '2026-10-28 12:00' +%s)
+E1=aaaaaaaa-0000-4000-8000-000000000311
+L5='  ⎿  You'"'"'ve hit your 5-hour limit · resets 1:10pm (America/New_York)'
+LW='  ⎿  You'"'"'ve hit your weekly limit · resets Nov 2, 1pm (America/New_York)'
+ev() { limit_event %9001 || echo none; }
+stop_file "$E1" %9001 "$evn" ev1 "$L5"; win ev1 100 $((evn + 4000))
+check "a spent window's resets_at dates the stop, not the message's text" "$(ev)" "$((evn + 4000))"$'\t'"$L5"
+win ev1 60 $((evn + 4000))
+check "a window not yet shown spent: the one the message names" "$(ev)" "$((evn + 4000))"$'\t'"$L5"
+stop_file "$E1" %9001 "$evn" ev1 "$LW"; win ev1 30 $((evn + 4000)) 100 $((evn + 200000))
+check "a weekly stop: the weekly window's reset" "$(ev | cut -f1)" "$((evn + 200000))"
+win ev1 100 $((evn + 4000)) 100 $((evn + 200000))
+check "both spent: the later reset" "$(ev | cut -f1)" "$((evn + 200000))"
+stop_file "$E1" %9001 "$evn" ev1 "API Error: Rate limit reached"; win ev1 60 $((evn + 4000))
+check "a passing API rate limit with room left parks nothing" "$(ev)" "none"
+win ev1 100 $((evn + 4000))
+check "the same error with the window spent is a limit" "$(ev | cut -f1)" "$((evn + 4000))"
+old=$((evn - 3 * 86400))
+stop_file "$E1" %9001 "$old" ev1 "$L5"
+check "a stop older than the account's window: its own text, read from the stop's day" \
+  "$(TZ=America/New_York date -d "@$(ev | cut -f1)" '+%F %H:%M')" "2026-10-25 13:10"
+stop_file "$E1" %9001 "$evn" ev1 '  ⎿  You'"'"'ve hit your fast limit · resets in 3m'
+check "the /fast limit is no usage limit" "$(ev)" "none"
+stop_file "$E1" %9001 "$evn" ev1 "$L5" working null
+check "a prompt since (working) clears it" "$(ev)" "none"
+stop_file "$E1" %9001 "$evn" ev-none "$L5"
+check "no reading: the message's reset" "$(ev | cut -f1)" "$((evn + 4200))"
+stop_file "$E1" %90010 "$evn" ev1 "$L5"
+check "the prefilter matches the pane id whole (%90010 is not %9001)" "$(ev)" "none"
+stop_file "$E1" %9001 "$evn" ev1 "$L5"
+ln -s "$KLEPSYDRA_DIR/fleet/$E1.json" "$KLEPSYDRA_DIR/fleet/link.json"
+check "a link to a session file is no second session" "$(ev | cut -f1)" "$((evn + 4000))"
+cp "$KLEPSYDRA_DIR/fleet/$E1.json" "$KLEPSYDRA_DIR/fleet/copy.json"
+check "two live files naming the pane are no answer" "$(ev)" "none"
+rm -f -- "$KLEPSYDRA_DIR/fleet/link.json" "$KLEPSYDRA_DIR/fleet/copy.json" "$KLEPSYDRA_DIR/fleet/${E1:?}.json"
+
+: >"$FLEET_LOG"
+p=$(pane evlim '{"above":["work"],"on_submit":"busy"}'); settle
+stop_file "$E1" "$p" "$evn" ev1 "$L5"; win ev1 100 $((evn + 4000))
+resume "$evn"
+check "a limit the screen no longer shows is seen from the hook's record, dated by resets_at" \
+  "$(jq -r 'select(.message == "limit seen") | [.pane, .from, .resets] | join(" ")' "$FLEET_LOG")" \
+  "$p event $(date -d "@$((evn + 4000))" '+%a %F %H:%M')"
+check "nothing is typed before that reset" "$(events evlim)" ""
+resume "$((evn + 4000 + 130))"
+check "and it resumes at the reading's reset, before the message's 1:10pm" "$(has "$(events evlim)" "SUBMIT The usage limit has reset.")" "yes"
+t kill-window -t "$p"
+rm -f -- "$KLEPSYDRA_DIR/fleet/${E1:?}.json"
+rm -rf -- "${KLEPSYDRA_DIR:?}/accounts/ev1"
+: >"$FLEET_LOG"
+
 echo "resume: limits, resets and accounts"
 reading a Personal 40 1000
 LIMIT='  ⎿  You'"'"'ve hit your session limit · resets 1:10pm (America/New_York)'
@@ -857,6 +923,13 @@ for notice in "You've used 90% of your 5-hour limit · resets 3pm" "Approaching 
   state wpane "{\"above\":[\"  ⎿  $notice\",\"\",\"\"]}"
   check "#265 review 3: not a stop, so no unknown-wording warning: $notice" "$(doctor | grep -c '^ok   limits')" "1"
 done
+state wpane '{"above":["idle"]}'
+stop_file w1 "$w" "$noon" ev1 "$L5"; win ev1 100 $((noon + 600))
+check "#311: a pane the hook recorded at a limit, past its resets_at, fails though its screen shows none" \
+  "$(FLEET_NOW=$((noon + 1300)) doctor | grep '^FAIL limits')" "FAIL limits: still at a limit past its reset: $w (the resume service missed it)"
+check "#311: before then it is ok" "$(FLEET_NOW=$((noon + 900)) doctor | grep -c '^ok   limits')" "1"
+session_file w1 "$w" https://claude.ai/code/session_01W
+rm -rf -- "${KLEPSYDRA_DIR:?}/accounts/ev1"
 state wpane '{"above":["idle"]}'
 printf 'panes=3 limited=1 limited_panes=%%9 at=5\n' >"$FLEET_STATE/resume.beat"
 check "#263: the resume loop line says what its last pass saw" "$(doctor | grep '^ok   resume loop' | sed 's/.*: //')" "panes=3 limited=1 limited_panes=%9"

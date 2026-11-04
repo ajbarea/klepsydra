@@ -541,7 +541,13 @@ one() { # PANE
     fi
   fi
 
-  limit=$(limit_line "$s")
+  # The fleet hook's StopFailure record first (#311); the screen until it goes.
+  local ev limit_at=0 limit_from=screen
+  if ev=$(limit_event "$p"); then
+    limit=${ev#*$'\t'} limit_at=${ev%%$'\t'*} limit_from=event
+  else
+    limit=$(limit_line "$s")
+  fi
   [[ -n $limit ]] && PASS_LIMITED+=("$p")
   # Remote Control: a /login disconnects it in every session, and the RIT
   # account never starts it on its own, so once per account each registered
@@ -657,9 +663,11 @@ one() { # PANE
     flog INFO "AJ typed at a limited pane; it goes out at the resume" pane="$p" chars="${#typed}" text="${typed:0:200}"
   fi
   if [[ -z ${due[$p]:-} ]]; then
-    if reset=$(reset_epoch "$limit" "$NOW") || reset=$(reset_epoch "$ps" "$NOW"); then :; else reset=$((NOW + 1800)); fi
+    if (( limit_at > 0 )); then
+      reset=$limit_at
+    elif reset=$(reset_epoch "$limit" "$NOW") || reset=$(reset_epoch "$ps" "$NOW"); then :; else reset=$((NOW + 1800)); fi
     due[$p]=$((reset + 120)) seen_on[$p]=${ACTIVE:-unknown}
-    flog INFO "limit seen" pane="$p" account="${seen_on[$p]}" resets="$(date -d @"$reset" '+%a %F %H:%M')" message="$limit"
+    flog INFO "limit seen" pane="$p" account="${seen_on[$p]}" resets="$(date -d @"$reset" '+%a %F %H:%M')" from="$limit_from" message="$limit"
   fi
   reg=$(awk -F'\t' -v p="$p" '$1 == p { print $2 "\t" $3 }' "$REGISTRY" 2>/dev/null)
   name=${reg%%$'\t'*} brief=${reg#*$'\t'}
