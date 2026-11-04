@@ -167,8 +167,10 @@ is the tested version.
 make install-hooks   # from the main checkout
 ```
 
-It copies the status line, hooks, launcher, tmux settings, wrap-up hook and
-skill, and the cast (as `klepsydra-cast.json`) into `~/.claude`, and archives a
+It copies the status line, hooks, launcher, the code they share
+(`klepsydra-common.sh`, which each sources from its own folder), tmux settings,
+wrap-up hook and skill, and the cast (as `klepsydra-cast.json`) into
+`~/.claude`, and archives a
 copy it replaces. `make install-fleet` (see [Fleet engine](#fleet-engine)) does
 the same on every deploy, so a fleet never runs an old hook, and `fleet doctor`
 fails while a copy differs from the checkout. The list is `HOOK_COPIES` in
