@@ -31,11 +31,14 @@ stages; reader backlog (#318, #316, #314, #308, #310) and cuts 7, #8 between.
   /tmp/claude-1001/r4-322/report.md.
 - 🔄 #325 (send-320): r1 F1/F2 Blocking fixed in the worktree commit after 325dddc (per-pane flock in
   inbox_deliver -> deliver_now; msg_in_box before each retry Enter; brief-tail "fleet send" rule + check; N1-N4
-  cases; send.sh +x). Full suite running; then push, body (F8 = known limit: real queued-hint unverified), r2.
+  cases; send.sh +x). a45f85e pushed, suite 742/0, body updated (F8 known limit). Next: r2 reader.
   After merge: `fleet brief --refresh`, tell Heph (HEPH.md + worker-report memory still say raw send-keys).
-- 🔄 #330 (phone-328) b69fcd4: r1 reader -> /tmp/claude-1001/r1-330/report.md.
-- 🔄 #287 (guard-264): r15 committed 41111e9 (7/7 mutants killed, base 238/0), main merged (doctor/install/test_fleet
-  conflicts: both sides kept); suites running (scratch tf-287.log, og-287.log); then push, body count, r16 verify.
+- 📋 #330 (phone-328) b69fcd4: r1 done (/tmp/claude-1001/r1-330/report.md): code right; fix tests: F2 grep
+  `^[a-zF]*` can't match FAIL (use `-E '^(ok|warn|FAIL) +phone wall'`), F3 drop DOC_PREFS so the default
+  $KLEPSYDRA_DIR/prefs.json path is tested, F4 test the string "true"; minors F1 one shared prefs reader in lib.sh
+  (voices.sh's single-document jq), F5 unreadable prefs warns, F6 no "recovered" on switch-off, F7 header + README row.
+- 📋 #287 (guard-264) 656c642: r15 committed (7/7 mutants killed), main merged; fleet 737/0, guard 238/0; pushed,
+  body counts updated. Next: r16 fresh verify.
 - 📋 r1 owed: #331 (e6af965), #332 (5cf7473), #318 (behind main).
 - 📋 Readers: #316 r1, #314 r1, #308 r2, #310 verify, claude-prefs#42 r2 + #43 r1.
 - 📋 Cut 7 (friction triage + SessionStart last 10 lines), then the #8 trial; #327; #324.
