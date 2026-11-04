@@ -333,7 +333,10 @@ else
     at=""
     if ! busy "$s" && { l=$(limit_line "$s") || { ev=$(limit_event "$p") && l=${ev#*$'\t'} && at=${ev%%$'\t'*}; }; }; then
       limited+="$p "
-      if [[ $at =~ ^[1-9][0-9]*$ ]]; then r="resets $(date -d "@$at" '+%-I:%M%P')"; else r=$(grep -oE 'resets [^(]*[ap]m' <<<"$l" | tail -1); fi
+      if [[ $at =~ ^[1-9][0-9]*$ ]]; then
+        # Its day too, unless it is today: a weekly reset can be days away.
+        if [[ $(date -d "@$at" +%F) == "$(date -d "@${FLEET_NOW:-$now}" +%F)" ]]; then r="resets $(date -d "@$at" '+%-I:%M%P')"; else r="resets $(date -d "@$at" '+%a %-I:%M%P')"; fi
+      else r=$(grep -oE 'resets [^(]*[ap]m' <<<"$l" | tail -1); fi
       [[ -n $r && ", $resets" != *", ${r#resets }, "* ]] && resets+="${r#resets }, "
     else
       free+="$p "

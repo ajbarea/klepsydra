@@ -1061,6 +1061,9 @@ check "#313 review 2: and with no watcher, the watcher check holds it limited to
   "$(FLEET_NOW=$((noon + 900)) doctor | grep -c '^warn pane watcher: none running while every agent waits out a usage limit')" "1"
 check "#313 review 3: the warning gives the account's reset (12:10pm), not the stop's text (1:10pm)" \
   "$(FLEET_NOW=$((noon + 900)) doctor | grep -c '^warn pane watcher: none running while every agent waits out a usage limit (resets 12:10pm)')" "1"
+stop_file "$(sid_of w1)" "$w" "$noon" a "API Error: Rate limit reached"; win a 30 $((noon + 600)) 100 $((noon + 3 * 86400))
+check "#313 review 4: a reset days away names its day" \
+  "$(FLEET_NOW=$((noon + 900)) doctor | grep -c '^warn pane watcher: none running while every agent waits out a usage limit (resets Sat 12:00pm)')" "1"
 session_file w1 "$w" https://claude.ai/code/session_01W
 rm -f -- "${KLEPSYDRA_DIR:?}/accounts/a/ev.json"
 state wpane '{"above":["idle"]}'
