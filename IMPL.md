@@ -1,4 +1,4 @@
-# IMPL: klepsydra fleet-module brief, resume state 2026-11-03 22:50 (EST)
+# IMPL: klepsydra fleet-module brief, resume state 2026-11-04 00:45 (EST)
 
 Session 22 (Chronos) resumed 16:09 after the IAAI-27 park. Resume with the same brief from this file, `git log`,
 open PRs and their comments, and the klepsydra line under "Running now" in /mnt/c/Users/ajbar/fleet-briefing/queue.md.
@@ -21,21 +21,26 @@ claude --remote-control NAME "brief"), 6 (--append-system-prompt-file, tail ~260
 triage + inject last 10), then the #8 trial. #9 deferred, #10 denied. #304/#305 closed (withdrawn).
 Each cut: a small PR with the proof test the report names.
 
-## Resume here (session 24, fresh on RIT 11-03 22:30 after session 23 hit Personal's limit)
+## Resume here (session 24 moved back to RIT at the fleet's ask, 11-04 ~00:45)
 Readers die with their session: re-dispatch fresh (opus, one change each, report under /tmp/claude-1001/<round>/report.md).
-1. #261 (doctor-246) head a284639, CI green. r12b verify reader dispatched 22:35 (report /tmp/claude-1001/r12b-261/report.md;
-   r12's partial data /tmp/claude-1001/r12-261: mutants mb, mc, me survived). Merge on clean + green, make install-fleet,
-   then #288 (dead-288) as a PR against main.
-2. #287 (guard-264) head f2c3499: GitHub never ran CI for that push; workflow_dispatch run started 22:33. r12b reader
-   dispatched (report /tmp/claude-1001/r12b-287/report.md). After merge: install, PreToolUse hook in ~/.claude settings,
-   `fleet accounts sync`.
-3. #308 cut 3 (common-cut3) head cfd7a8b: r1 fixes pushed (r1 report /tmp/claude-1001/r1-308/report.md), r2 owed.
-4. #310 cut 4 (worker-mark) head d9ded61, CI green: r1 owed.
-5. Cut 2: issue #311, worktree limits-311, branch feat/limit-events-311: limit_event (StopFailure record + resets_at)
-   in lib.sh, resume + doctor use it first, screen kept as fallback; live_session grep prefilter (0.42 s -> 0.13 s).
-   Tests in fleet/test_fleet.sh "limits from events (#311)" + doctor #311 cases; section runner fleet/test_s311.sh (untracked).
-6. #230 r4 (r3 report /tmp/claude-1001/r3-230/report.md; r4 dir empty, reader died), #292 r3, claude-prefs#42 r2
-   (r1 report /tmp/claude-1001/r1-prefs42/report.md). Then cuts 5, 6, 7, #8 trial.
+- ✅ #261 merged (fa60ef0) + `make install-fleet` + cutover; doctor: only Heph's watcher FAIL and stale briefs warn.
+  Follow-ups filed as #312 (fixes-only).
+1. #287 (guard-264) head 8421e3f: main merged in (r12 B1), `make test-orch-guard` target + CI + docs + heavy-lock loop
+   (r12 S1). CI on bca3edd failed only the brief-tail check, fixed in 8421e3f; read its CI. Local: make test-heavy-lock
+   35/0. One verify reader on r12 report /tmp/claude-1001/r12b-287/report.md, then merge. Deploy: install-fleet,
+   PreToolUse hook in ~/.claude settings, `fleet accounts sync`, `fleet brief --refresh` (tail line changed).
+2. #313 cut 2 (limits-311) head after b6e21b1 (test rename), CI green on b6e21b1, mutants 4/5 killed (1 equivalent):
+   r1 reader owed.
+3. #310 cut 4 (worker-mark) head fad130d: r1 fixes pushed (S1 test reads claude's env on a real worker launch;
+   S2 launcher env -u FLEET_SETTINGS/ACCOUNT/SUCCEEDS; S3 body "Part of #309"; M4 env -u KLEPSYDRA_WORKER).
+   Mutant run (base, keyed, after, nounset_launcher, inherit_mark) was STOPPED by the move: rerun
+   /tmp/claude-1001/-home-ajbar-ajsoftworks/899189da-c6f3-4e9d-991e-40c2f72d8e6c/scratchpad/m310/run.sh under the
+   heavy lock (rebuild copies with mk.py there first). Then verify reader (r1 report /tmp/claude-1001/r1-310/report.md).
+   claude-prefs#43 (reads the mark) needs its own r1.
+4. #308 cut 3 (common-cut3) head cfd7a8b: r2 reader STOPPED by the move (dir /tmp/claude-1001/r2-308): re-dispatch.
+5. #314 (#288, dead-288) replayed onto main: CI, then r1 reader.
+6. #230 r4 (r3 report /tmp/claude-1001/r3-230/report.md), #292 r3, claude-prefs#42 r2 (r1 report /tmp/claude-1001/r1-prefs42/report.md).
+   Then cuts 5, 6, 7, #8 trial.
 
 ## Next, in order (session 21 list; items 1-3 moved above)
 1. (done) #296 fix/watch-alert-race (watch-race), head 0a10fe1, review-clean r3. CI run 41702648814 was still in
