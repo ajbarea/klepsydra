@@ -24,7 +24,7 @@ fi
 do_() { if (( dry )); then printf 'would: %s\n' "$*"; else "$@"; fi; }
 # A dry run writes nothing, its log included: its events go to stderr only.
 ilog() { if (( dry )); then printf '%s %s %s\n' "$(date '+%F %T')" "$1" "${*:2}" >&2; else flog "$@"; fi; }
-SCRIPTS=(launch.sh fresh-now.sh resume-at-reset.sh watch-panes.sh memfrag-log.sh relaunch-fresh.sh done.sh voices.sh brief.sh doctor.sh cutover.sh accounts-sync.sh recover.sh sync-briefing.sh ci_watch.py agora.py worker-settings.json)
+SCRIPTS=(launch.sh fresh-now.sh resume-at-reset.sh watch-panes.sh memfrag-log.sh relaunch-fresh.sh done.sh voices.sh brief.sh doctor.sh cutover.sh accounts-sync.sh recover.sh pause.sh registry-event.sh sync-briefing.sh ci_watch.py agora.py worker-settings.json)
 UNITS=${FLEET_UNITS:-$HOME/.config/systemd/user}
 BIN=${FLEET_BIN:-$HOME/.local/bin}
 archive=$FLEET_STATE/archive/fleet-scripts-$(date +%Y%m%d)
