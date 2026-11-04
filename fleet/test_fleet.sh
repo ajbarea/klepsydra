@@ -3496,6 +3496,11 @@ FLEET_SUCCEEDS=11111111-2222-4333-8444-555555555555 FLEET_SETTINGS='' FLEET_SCOP
 check "#226: a move's successor id reaches the session; anything else is dropped" \
   "$(grep -c 'KLEPSYDRA_SUCCEEDS=11111111-2222-4333-8444-555555555555 ' "$work/cmd")" "1"
 check "#183 review 2: keryx's switch is never inherited from tmux's environment" "$(grep -c '^env -u KERYX_ENABLED ' "$work/cmd")" "1"
+check "#309: the orchestrator's launch (no worker settings) carries no worker mark" "$(grep -c 'KLEPSYDRA_WORKER' "$work/cmd")" "0"
+FLEET_SETTINGS="$work/nosettings.json" FLEET_SCOPE=0 FLEET_MIN_AVAIL_MB=0 FLEET_LAUNCHER="$work/launcher-rec.sh" FLEET_DIR="$work" \
+  FLEET_CLAUDE="python3 -I $fake $work/nosettings.json $work/nosettings.log" bash "$here/launch.sh" nosettings "$work/task.src" >/dev/null 2>&1
+check "#309: a worker's launch is marked, so the stale-PR list skips it" \
+  "$(grep -c 'KLEPSYDRA_WORKER=1 ' "$work/cmd") $(grep -c -- '--settings' "$work/cmd")" "1 1"
 
 echo "fleet voices: keryx follows the tray's mode, live (#273)"
 # Stub keryx installs laid out as the plugin's (bin/ beside src/keryx), keeping
