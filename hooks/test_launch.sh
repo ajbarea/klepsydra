@@ -130,6 +130,7 @@ EOF
 chmod +x "$work/bin/agy"
 printf '# Global rules\nNo attribution lines.\n' >"$work/CLAUDE.md"
 export KLEPSYDRA_AGY="$work/bin/agy" KLEPSYDRA_RULES_SRC="$work/CLAUDE.md" KLEPSYDRA_AGY_RULES="$work/gemini/config/rules/claude-global.md"
+w0=$(windows)
 check "#323: models lists agy's as one line of JSON, dropping its fetching line and any id that is not one" \
   "$(bash "$launch" models 2>&1)" '[{"id":"gemini-3.8-flash-high","label":"Gemini 3.8 Flash (High)"},{"id":"claude-opus-4-6-thinking","label":"Claude Opus 4.6 (Thinking)"}]'
 before=$(windows)
@@ -147,6 +148,9 @@ check "#323: a model that is no id starts nothing" "$rc $(( $(windows) - before 
 out=$(KLEPSYDRA_RULES_SRC="$work/no-rules.md" bash "$launch" new "$work/repos" agy gemini-3.8-flash-high 2>&1); rc=$?
 check "#323: with AJ's rules unreadable, no agy session starts" "$rc $(( $(windows) - before ))" "1 0"
 check "#323: a launch of anything else is refused" "$(bash "$launch" new "$work/repos" codex x >/dev/null 2>&1; echo $?) $(( $(windows) - before ))" "1 0"
+# The cases after count the fleet's windows: the agy ones this section opened go.
+t list-panes -a -F '#{window_id} #{pane_start_command}' | awk -v a="$work/bin/agy" 'index($0, a) { print $1 }' | xargs -r -n1 tmux -L "$sock" kill-window -t
+check "#323: and its windows are closed again" "$(windows)" "$w0"
 unset KLEPSYDRA_AGY KLEPSYDRA_RULES_SRC KLEPSYDRA_AGY_RULES
 # A fleet launch that starts the server (a cold recover) must not hand the flag
 # to the server's environment, or every later pane, the wall's included, opens behind.
@@ -525,7 +529,7 @@ t kill-pane -t "$p"
 
 out=$(bash "$launch" bogus 2>&1); rc=$?
 check "unknown command: exit 1" "$rc" "1"
-check "unknown command: says so" "$out" "usage: klepsydra-launch.sh new DIR | voices | jump|end|interrupt|wrapup SOCKET PANE PID START"
+check "unknown command: says so" "$out" "usage: klepsydra-launch.sh new DIR [agy MODEL] | models | voices | jump|end|interrupt|wrapup SOCKET PANE PID START"
 check "unknown command: no tab" "$(tabs)" "1"
 
 # #273: the tray's Voices change runs the installed fleet voices at once, with
