@@ -395,8 +395,9 @@ cp -- "$here/heavy.sh" "$work/fleetcopy/"
 ln -s "$work/fleetcopy/heavy.sh" "$work/fleetcopy/sender.sh"
 check "#287 review 14: a link named like a sender to heavy.sh is heavy.sh: what it runs is checked" \
   "$(FLEET_HEAVY_LOCK="$work/heavy.lock" in_claude "$orchp" "$work/state2/orch-bin" "bash $work/fleetcopy/sender.sh bash $work/elsewhere/fresh-now.sh" 2>&1 | grep -o 'orch-guard (cold-limit)')" "orch-guard (cold-limit)"
+# "; true": bash runs a lone command by exec, which would leave no --rcfile process to read.
 check "#287 review 14: an option's value is no script: bash --rcfile <fleet script> -c is checked" \
-  "$(in_claude "$orchp" "$work/state2/orch-bin" "bash --rcfile $work/fleetcopy/fresh-now.sh -c '$T send-keys -t $cold2 /clear'" 2>&1 | grep -o 'orch-guard (cold-limit)')" "orch-guard (cold-limit)"
+  "$(in_claude "$orchp" "$work/state2/orch-bin" "bash --rcfile $work/fleetcopy/fresh-now.sh -c '$T send-keys -t $cold2 /clear; true'" 2>&1 | grep -o 'orch-guard (cold-limit)')" "orch-guard (cold-limit)"
 check "heavy.sh in the fleet folder runs any command: what it runs is checked" \
   "$(FLEET_HEAVY_LOCK="$work/heavy.lock" in_claude "$orchp" "$work/state2/orch-bin" "bash $work/fleetcopy/heavy.sh bash $work/elsewhere/fresh-now.sh" 2>&1 | grep -o 'orch-guard (cold-limit)')" "orch-guard (cold-limit)"
 
