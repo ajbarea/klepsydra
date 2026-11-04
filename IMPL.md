@@ -22,31 +22,25 @@ triage + inject last 10), then the #8 trial. #9 deferred, #10 denied. #304/#305 
 Each cut: a small PR with the proof test the report names.
 
 ## Resume here (session 26, replacement on ~/.claude-rit, from 11-04 morning; replaced session 25)
-Reports: /tmp/claude-1001/<round>/report.md. Heavy runs: never wrap a lock-taking make target in an outer timeout.
-Order (Heph 11-04): bug queue #292, #322 (#319), #320 (PR #325), #321, #328 (doctor's false phone-wall FAIL when
-prefs.json phone_wall=false); then #326 (remove the Agora: branch refactor/remove-agora-326
-pushed, PR after the Rust build; also drops the tail's Agora line, so rebase #318 on it); then #323 STAGE 1 (agy from + New
-session; AJ very keen), then #327 Agora v2, then #324; then the rest of #323's stages (AJ-approved freeze exception, one PR
-per stage: agy sessions from + New session, then wall, gauge, hooks, keryx); then the reader backlog and cuts 7, #8.
-- ✅ #230 merged 09:57 (r5 verify CLEAN), installed, doctor clean.
-- 🔄 #287 head 1ffb001: r13 B1/S1/B2 fixed, ancestry walk forks nothing for a non-sender; CI green; local
-  orch-guard 229/229. r14 verify reader running (/tmp/claude-1001/r14-287). Then merge; deploy: install-fleet,
-  PreToolUse hook in ~/.claude settings, `fleet accounts sync`.
-- ✅ #313 merged (5 rounds; r5 clean in code; two deferred items in its body), installed.
-- 🔄 #292 head 80f34de: r3 all fixed (B1, S1 with 5/5 mutants red, m1-m3, m5-m7; m4 lower bound only, age bound
-  deferred: needs journal epochs). Next: CI green, body results to whole-suite numbers, r4 reader.
-- 🔄 #322 (#319) head 004c3a3: limit mark per account (headroom reads it; a newer reading decides), carry-on note
-  after a failed move back (rc 3, 5), reading_of one-pass. bfa19c7 had 46 CI/local fails (marks outlived sections);
-  rerun local (room-319 logs/s26b) + CI. Then r1 reader.
-- 🔄 #320 = PR #325 (send-320, fleet send; 2 mutants killed; CI green): r1 owed.
-- 🔄 #321 = PR #329 (stale-321, held red on a superseded commit dropped; mutant killed): CI, r1 owed.
-- 🔄 #328 = PR #330 (phone-328, doctor skips the phone wall while prefs.json phone_wall is off): CI, r1 owed.
-- 🔄 Cut 6 = #317 / PR #318 (tail-cut6, head f606054): CI green, body updated. r1 reader owed. Deploy: install,
-  `fleet brief --refresh`.
-- 📋 Readers owed: #318 r1, #316 r1, #314 r1, #308 r2 (head green), #310 verify (+ mutant harness: base never
-  green), claude-prefs#42 r2 + #43 r1.
-- 📋 Cut 7: triage all 77 friction.md lines (reader classifies fixed / issue / delete), then a SessionStart hook in
-  worker-settings.json printing the last 10 lines for the repo; the tail's Friction line changes. Then #8 trial.
+Reports: /tmp/claude-1001/<round>/report.md. Never wrap a lock-taking make target in an outer timeout; finish edits
+to a suite before queuing it. The heavy lock is shared with other agents and queues for long stretches.
+Order (Heph 11-04): bug queue (#292, #322, #325, #329, #330, #287) -> #326 (PR #331) -> #323 stage 1 (PR #332) -> #327
+Agora v2 -> #324 -> #323's later stages; reader backlog (#318, #316, #314, #308, #310) and cuts 7, #8 between.
+- ✅ merged + installed: #230, #313.
+- 🔄 #287 head 1ffb001 (green): r14 found B1 (fixture PATH unquoted: AJ's PATH has spaces), S1 (resolved-name check
+  untested), M1 (newline in comm), M2 (option values read as script); M3 (allowlist) deferred. Fixes UNCOMMITTED in
+  guard-264 (orch-tmux.sh case/options + whole-stat read; test_fleet.sh printf %q PATH; 2 new guard tests); guard
+  suite + 2 mutants queued (scratchpad m287/results.txt). Then commit, r15.
+- 🔄 #292 head 80f34de (green): r4 reader running (/tmp/claude-1001/r4-292).
+- 🔄 #322 head 80abe87 (green): r1 reader running (/tmp/claude-1001/r1-322).
+- 🔄 #325 (#320 fleet send, green), #329 (#321 superseded reds, green), #330 (#328 phone wall off, CI): r1 each owed.
+- 🔄 #331 (#326 Agora removal; fleet crate clippy + 420 tests; JS 475): CI, r1 (elenchus) owed. After merge: install
+  (retires agora.py link), brief --refresh, close #185 #270 #295 with notes, edit #237 (issue notes).
+- 🔄 #332 (#323 stage 1: split button, agy launcher, rules as always-on agy rule; JS 483; image smoke done, shot in
+  briefing): launcher + browser runs queued (agy-323 logs/s323.*). Then body result, r1.
+- 🔄 Cut 6 = PR #318 (green): r1 owed; drop its Agora line once #331 lands.
+- 📋 Readers: #316 r1, #314 r1, #308 r2, #310 verify (+ mutant harness), claude-prefs#42 r2 + #43 r1.
+- 📋 Cut 7 (friction triage + SessionStart last 10 lines), then the #8 trial.
 
 ## Next, in order (session 21 list; items 1-3 moved above)
 1. (done) #296 fix/watch-alert-race (watch-race), head 0a10fe1, review-clean r3. CI run 41702648814 was still in
