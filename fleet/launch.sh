@@ -1,10 +1,9 @@
 #!/usr/bin/env bash
 # launch.sh NAME TEXTFILE [claude args...]: open a fleet tmux window running
 # claude, with a session id of its own, inside a memory- and task-capped systemd
-# scope (a runaway test or build is killed there instead of freezing WSL); turn
-# Remote Control on and wait for it to settle; then paste TEXTFILE, check it
-# reached the prompt, and submit it. A retry never sends Escape, so it cannot
-# cancel a turn that started. Registers the pane, session and folder in
+# scope (a runaway test or build is killed there instead of freezing WSL), with
+# Remote Control on (--remote-control NAME) and TEXTFILE as its first prompt;
+# nothing is typed into the pane. Registers the pane, session and folder in
 # panes.tsv for NAME when NAME is a fleet agent (a row exists, or task-NAME.src).
 # The session runs on FLEET_ACCOUNT's config folder when set, else on the
 # first logged-in account with room in FLEET_ACCOUNTS order (best_account).
@@ -20,7 +19,9 @@ here=$(dirname "$(readlink -f "$0")")
 (( $# >= 2 )) || { err "usage: launch.sh NAME TEXTFILE [claude args...]"; exit 2; }
 name=$1 txt=$2
 shift 2
-[[ -r $txt ]] || { err "no brief at $txt"; exit 2; }
+[[ -r $txt && -s $txt ]] || { err "no brief at $txt"; exit 2; }
+# claude would read a brief that starts with "-" as an option.
+[[ $(head -c1 -- "$txt") != - ]] || { err "a brief cannot start with -: $txt"; exit 2; }
 avail=$(awk '/MemAvailable/{print int($2/1024)}' /proc/meminfo)
 if (( avail < ${FLEET_MIN_AVAIL_MB:-3000} )); then
   flog WARN "launch held: too little memory" name="$name" avail_mb="$avail"
@@ -47,7 +48,7 @@ settings=${FLEET_SETTINGS-$FLEET_STATE/worker-settings.json}
 # FLEET_SUCCEEDS (a session id) names the orchestrator a move replaces (#226).
 succeeds=""
 [[ ${FLEET_SUCCEEDS:-} =~ ^[0-9a-f-]{36}$ ]] && succeeds="KLEPSYDRA_SUCCEEDS=$FLEET_SUCCEEDS "
-cmd="env -u KERYX_ENABLED $(config_env "$account")KLEPSYDRA_AGENT=$(printf '%q' "$name") ${succeeds}CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS=2 ${FLEET_CLAUDE:-claude} --session-id $sid${settings:+ --settings $(printf '%q' "$settings")} $*"
+cmd="env -u KERYX_ENABLED $(config_env "$account")KLEPSYDRA_AGENT=$(printf '%q' "$name") ${succeeds}CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS=2 ${FLEET_CLAUDE:-claude} --session-id $sid${settings:+ --settings $(printf '%q' "$settings")} $* --remote-control $(printf '%q' "$name") \"\$(cat -- $(printf '%q' "$txt"))\""
 tmax=""
 if [[ ${FLEET_SCOPE:-1} != 0 ]]; then
   # A task cap of its own (#289): inherited, it was DefaultTasksMax, and on
@@ -93,26 +94,29 @@ marker=$FLEET_STATE/launching/$pane
 trap 'exit 143' TERM INT
 exec 8>&-
 flog INFO "window opened" name="$name" pane="$pane" account="$account" tasks_max="${tmax:-none}" took_s="$(took)"
-ready() { idle_empty "$1" || limit_line "$1" >/dev/null; }
-if wait_for "$pane" "$(capped "${FLEET_READY_WAIT:-60}")" ready; then
-  flog INFO "prompt showed" name="$name" pane="$pane" took_s="$(took)"
+# The brief went in as claude's first prompt, and Remote Control came up with
+# it (#315). The session's transcript says when the brief was taken (its first
+# prompt record) and whether Remote Control is on; the screen only shows a limit.
+tp=""
+found() { [[ -n $tp ]] || tp=$(FLEET_PROJECTS="$account/projects" transcript "$sid"); [[ -n $tp ]]; }
+taken() { limit_line "$1" >/dev/null || { found && grep '"type":"user"' "$tp" | grep -vq '"isMeta":true'; }; }
+turned() { started "$1" || { found && grep -q '"type":"assistant"' "$tp"; }; }
+if ! wait_for "$pane" "$(capped "${FLEET_READY_WAIT:-60}")" taken; then
+  brief=NOT-DELIVERED
+elif wait_for "$pane" "$(capped "${FLEET_TURN_WAIT:-60}")" turned && limit_line "$(screen "$pane")" >/dev/null; then
+  brief=blocked-by-limit
 else
-  flog WARN "the prompt never showed; trying anyway" name="$name" pane="$pane" took_s="$(took)"
+  brief=started
 fi
-# Remote Control connects at startup, but the transcript records its link only
-# after an explicit /remote-control; without it the phone wall shows no Open in
-# Claude button. The brief waits until the command has settled, so the two
-# never interleave (10-28: "SE/remote-control" typed into the prompt).
-if remote_control "$pane"; then
+if found && grep -q '"subtype":"bridge_status"' "$tp"; then
   flog INFO "remote control on" name="$name" pane="$pane" took_s="$(took)"
 else
-  flog WARN "remote control did not settle before the brief" name="$name" pane="$pane" took_s="$(took)"
+  flog WARN "remote control not in the transcript" name="$name" pane="$pane" took_s="$(took)"
 fi
-brief=$(deliver "$pane" "$txt")
 case $brief in
   started) flog INFO "brief delivered: a turn started" name="$name" pane="$pane" session_id="$sid" account="$account" took_s="$(took)" ;;
   blocked-by-limit) flog WARN "brief delivered, but the account is at its limit; the resume service takes it from here" name="$name" pane="$pane" session_id="$sid" account="$account" took_s="$(took)" ;;
-  *) brief=NOT-DELIVERED; flog ERROR "brief not delivered" name="$name" pane="$pane" session_id="$sid" account="$account" took_s="$(took)" screen="$(screen "$pane" | plain | grep -v '^[[:space:]]*$' | tail -6)" ;;
+  *) flog ERROR "brief not delivered" name="$name" pane="$pane" session_id="$sid" account="$account" took_s="$(took)" screen="$(screen "$pane" | plain | grep -v '^[[:space:]]*$' | tail -6)" ;;
 esac
 
 # The registry row for NAME, repointed at this pane and session; a new row when

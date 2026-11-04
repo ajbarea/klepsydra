@@ -610,9 +610,10 @@ launch() { # NAME STATE-JSON: launch.sh with a fake claude starting from STATE
 }
 cp "$work/task.src" "$FLEET_STATE/task-agent1.src"
 out=$(launch agent1 '{"above":["Claude Code"]}')
-check "delivered: Remote Control settles first, then the brief goes in whole and a turn starts" \
-  "$(events agent1)" $'RC REQUESTED\nRC ON\nPASTE 36\nSUBMIT Do the thing.\\nThen the other thing.\\n'
+check "#315: Remote Control and the whole brief come on claude's command line; nothing is typed or pasted" \
+  "$(events agent1)" $'RC ARG agent1\nRC ON\nSUBMIT Do the thing.\\nThen the other thing.'
 check "reported started" "${out##* }" "brief=started"
+check "#315: Remote Control on, read from the transcript" "$(jq -r 'select(.target == "fleet::launch" and .name == "agent1") | .message' "$FLEET_LOG" | grep -c '^remote control on$')" "1"
 check "#216: it asks the launcher to open behind the window in view" "$(cat "$work/launcher-bg")" "1"
 sid=$(sed -E 's/.*session=([^ ]+).*/\1/' <<<"$out")
 check "registered with its session id and folder" "$(cut -f2,3,4,5 "$REGISTRY")" "agent1	$FLEET_STATE/task-agent1.src	$sid	$work"
@@ -655,35 +656,36 @@ t kill-pane -t "$(sed -E 's/^pane=([^ ]+).*/\1/' <<<"$out")" 2>/dev/null
 out=$(launch agent2 '{"above":["Claude Code"],"on_submit":"limit"}')
 check "blocked by a limit" "${out##* }" "brief=blocked-by-limit"
 
-out=$(launch agent3 '{"above":["Claude Code"],"on_submit":"none"}')
+out=$(FLEET_READY_WAIT=4 launch agent3 '{"above":["Claude Code"],"on_submit":"none"}')
 check "not delivered when no turn ever starts" "${out##* }" "brief=NOT-DELIVERED"
-check "and the retries never sent Escape" "$(grep -cE 'ESC|INTERRUPTED' "$work/agent3.log")" "0"
+check "and no key was sent to the pane" "$(grep -cE 'ESC|INTERRUPTED|^PASTE|RC REQUESTED' "$work/agent3.log")" "0"
 
-out=$(launch agent4 '{"above":["Claude Code"],"rc":"on","rc_delay":6}')
-check "10-28 2c: a slow Remote Control menu is answered before the brief is pasted" "$(events agent4)" \
-  $'RC REQUESTED\nRC CONTINUE\nPASTE 36\nSUBMIT Do the thing.\\nThen the other thing.\\n'
-check "reported started" "${out##* }" "brief=started"
+: >"$FLEET_LOG"
+out=$(launch agent4 '{"above":["Claude Code"],"rc_delay":30}')
+check "#315: a Remote Control slow to come up never holds the brief" "${out##* } $(grep -c '^SUBMIT' "$work/agent4.log")" "brief=started 1"
+check "#315: and its absence is logged" "$(jq -r 'select(.name == "agent4") | .message' "$FLEET_LOG" | grep -c '^remote control not in the transcript$')" "1"
+printf -- '-p do this\n' >"$work/dash.src"
+check "#315: a brief claude would read as an option is refused" \
+  "$(FLEET_SCOPE=0 FLEET_MIN_AVAIL_MB=0 FLEET_LAUNCHER="$work/launcher.sh" bash "$here/launch.sh" dash "$work/dash.src" >/dev/null 2>&1; echo $?)" "2"
+: >"$work/empty.src"
+check "#315: so is an empty one" \
+  "$(FLEET_SCOPE=0 FLEET_MIN_AVAIL_MB=0 FLEET_LAUNCHER="$work/launcher.sh" bash "$here/launch.sh" empty "$work/empty.src" >/dev/null 2>&1; echo $?)" "2"
 
 out=$(FLEET_START_WAIT=1 launch agent5 '{"above":["Claude Code"],"busy_delay":2}')
-check "a turn whose spinner shows late is never interrupted by a retry" "$(grep -cE 'ESC|INTERRUPTED' "$work/agent5.log") ${out##* }" "0 brief=started"
+check "a turn whose spinner shows late is never interrupted" "$(grep -cE 'ESC|INTERRUPTED' "$work/agent5.log") ${out##* }" "0 brief=started"
 check "nor submitted twice" "$(grep -c '^SUBMIT' "$work/agent5.log")" "1"
 
 echo "launch.sh: a slow or stuck start (#187)"
-: >"$FLEET_LOG"
-out=$(launch agent6 '{"above":["Claude Code"],"enter_ignore":1}')
-check "#187: an Enter lost after the paste is pressed again, and the brief starts once" \
-  "${out##* } $(grep -c '^SUBMIT' "$work/agent6.log") $(grep -c 'lost after a paste' "$work/agent6.log")" "brief=started 1 1"
-check "the second press is logged" "$(jq -r 'select(.message | startswith("the brief is still in the prompt")) | .try' "$FLEET_LOG")" "1"
 : >"$FLEET_LOG"
 began=$SECONDS
 out=$(FLEET_LAUNCH_DEADLINE=8 launch agent7 '{"above":["Claude Code"],"stall":120}')
 check "#187: a session that takes no Enter fails within the launch's deadline, not 9 min later" \
   "${out##* } $(( SECONDS - began < 25 ))" "brief=NOT-DELIVERED 1"
-check "with no Escape sent, and Remote Control's unsent command backed out before the paste" \
-  "$(grep -cE 'ESC|INTERRUPTED' "$work/agent7.log") $(grep -c '^PASTE' "$work/agent7.log")" "0 1"
+check "with no key sent to the pane" \
+  "$(grep -cE 'ESC|INTERRUPTED|^PASTE|RC REQUESTED' "$work/agent7.log")" "0"
 check "each step is logged with its time" \
   "$(jq -r 'select(.target == "fleet::launch" and .took_s != null) | .message' "$FLEET_LOG" | tr '\n' '|')" \
-  "window opened|prompt showed|remote control did not settle before the brief|brief not delivered|"
+  "window opened|remote control on|brief not delivered|"
 cat >"$work/launcher-hold.sh" <<EOF
 #!/usr/bin/env bash
 tmux -L "\$KLEPSYDRA_TMUX_SOCKET" new-window -d -t fleet: -c "\$3" "\$KLEPSYDRA_CLAUDE"
