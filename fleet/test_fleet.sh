@@ -1097,6 +1097,10 @@ check "#208: the doctor timer runs every 5 min into the data folder, and a faili
   "$(grep -c 'OnUnitActiveSec=5min' "$inst/units/fleet-doctor.timer") $(grep -E '^(ExecStart|SuccessExitStatus)=' "$inst/units/fleet-doctor.service" | tr '\n' '|')" \
   "1 SuccessExitStatus=1|ExecStart=/usr/bin/bash $inst/state/doctor.sh --json \"$KLEPSYDRA_DIR/fleet-health.json\"|"
 check "#208 review 1: and what it prints stays out of the journal" "$(grep -c '^StandardOutput=null$' "$inst/units/fleet-doctor.service")" "1"
+# #292 review 4: on WSL both the doctor's unit and the watchdog's get the distro's name.
+WSL_DISTRO_NAME=Test FLEET_STATE="$inst/s3" FLEET_UNITS="$inst/u3" FLEET_BIN="$inst/b3" FLEET_HOOK_DIR="$inst/c3" bash "$here/install.sh" --force >/dev/null 2>&1
+check "#292 review 4: an install on WSL passes WSL_DISTRO_NAME to the doctor's and the watchdog's units" \
+  "$(grep -c '^Environment=.*"WSL_DISTRO_NAME=Test"' "$inst/u3/fleet-doctor.service" "$inst/u3/fleet-tmux-watch.service" | cut -d: -f2 | paste -sd' ')" "1 1"
 FLEET_STATE="$inst/s2" FLEET_UNITS="$inst/u2" FLEET_BIN="$inst/b2" FLEET_HOOK_DIR="$inst/c2" bash "$here/install.sh" --dry-run --force >"$work/dry" 2>/dev/null
 check "a dry run says what it would do and changes nothing" "$(grep -c '^would' "$work/dry" | sed 's/^[1-9][0-9]*$/some/') $(find "$inst" -mindepth 1 -maxdepth 1 -printf '%f\n' | sort | tr '\n' ' ')" "some bin claude state units "
 cat >"$work/sc-live" <<'EOF'
@@ -3321,6 +3325,10 @@ W
 check "#290: the answering server is recorded with its pid and this boot" \
   "$(cut -d' ' -f1,3 "$FLEET_STATE/tmux-server")" "$(t display -p '#{pid}') 33333333-3333-4333-8333-333333333333"
 check "#292 review 3: and when it started, as an epoch" "$(awk '{ print NF, ($4 ~ /^[0-9]+$/) }' "$FLEET_STATE/tmux-server")" "4 1"
+# #292 review 4: the epoch's value decides what the next boot's journal is read from.
+sp=$(t display -p '#{pid}'); stt=$(cat "/proc/$sp/stat"); read -ra stf <<<"${stt##*) }"
+check "#292 review 4: the epoch is the boot's btime plus the server's start in seconds" \
+  "$(cut -d' ' -f4 "$FLEET_STATE/tmux-server")" "$(( $(awk '$1 == "btime" { print $2 }' /proc/stat) + stf[19] / $(getconf CLK_TCK) ))"
 cut -d' ' -f1-3 "$FLEET_STATE/tmux-server" >"$work/tsold"; cp "$work/tsold" "$FLEET_STATE/tmux-server"; : >"$FLEET_LOG"
 W
 check "#292 review 3: a record from before the epoch was kept, of the same server: kept again with it, nothing recovered" \
@@ -3432,6 +3440,14 @@ check "#292 review 2: with instanceIdleTimeout=-1 under [general]: ok" \
 printf '[wsl2]\ninstanceIdleTimeout=-1\n' >"$work/wslconfig"
 check "#292 review 2: the setting under [wsl2] does nothing, so still a warning" \
   "$(FLEET_SOCK=$cs FLEET_WSLCONFIG=$work/wslconfig bash "$here/doctor.sh" 2>/dev/null | grep -c '^warn *WSL stays up')" "1"
+# #292 review 4: the real gate and path: on WSL (WSL_DISTRO_NAME) the doctor reads
+# the .wslconfig in the Windows home above klepsydra's AppData folder.
+mkdir -p "$work/Users/x/AppData/Local/k"; printf '[general]\r\ninstanceIdleTimeout=-1\r\n' >"$work/Users/x/.wslconfig"
+wdoc() { FLEET_SOCK=$cs KLEPSYDRA_DIR="$work/Users/x/AppData/Local/k" bash "$here/doctor.sh" 2>/dev/null | awk '/ WSL stays up:/ { print $1 }'; }
+check "#292 review 4: on WSL, with the Windows home's .wslconfig keeping it up (CRLF): ok; off WSL: no check" \
+  "$(WSL_DISTRO_NAME=Test wdoc)|$(wdoc)" "ok|"
+printf '[wsl2]\r\nmemory=8GB\r\n' >"$work/Users/x/.wslconfig"
+check "#292 review 4: and without the setting there: a warning" "$(WSL_DISTRO_NAME=Test wdoc)" "warn"
 tmux -L "$cs" kill-server 2>/dev/null
 check "tmux-conf.sh with no server running does nothing" "$(FLEET_SOCK=$cs bash "$here/tmux-conf.sh" "$cdir" 2>/dev/null; echo $?)" "0"
 
