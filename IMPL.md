@@ -1,4 +1,4 @@
-# IMPL: klepsydra fleet-module brief, resume state 2026-11-04 (session 26)
+# IMPL: klepsydra fleet-module brief, resume state 2026-11-04 (session 27)
 
 Session 22 (Chronos) resumed 16:09 after the IAAI-27 park. Resume with the same brief from this file, `git log`,
 open PRs and their comments, and the klepsydra line under "Running now" in /mnt/c/Users/ajbar/fleet-briefing/queue.md.
@@ -21,25 +21,23 @@ claude --remote-control NAME "brief"), 6 (--append-system-prompt-file, tail ~260
 triage + inject last 10), then the #8 trial. #9 deferred, #10 denied. #304/#305 closed (withdrawn).
 Each cut: a small PR with the proof test the report names.
 
-## Resume here (session 26 moved back to RIT-CS-DQL at the resume service's ask, 11-04 afternoon)
+## Resume here (session 27, fresh on RIT ~/.claude, 11-04 14:08)
 Reports: /tmp/claude-1001/<round>/report.md. Never wrap a lock-taking make target in an outer timeout; finish edits
-to a suite before queuing it. The heavy lock is shared with other agents and queues for long stretches.
+to a suite before queuing it. PR bodies: Write the file, then PATCH in its own call (phylax reads the written file).
 Order (Heph 11-04): bug queue -> #326 (PR #331) -> #323 stage 1 (PR #332) -> #327 Agora v2 -> #324 -> #323 later
 stages; reader backlog (#318, #316, #314, #308, #310) and cuts 7, #8 between.
-All open PRs below are green in CI (11-04 afternoon).
-- ✅ merged + installed: #230, #313, #292 (pane-died hook live on the fleet server; doctor: only #328's phone-wall FAIL,
-  AJ's .wslconfig line, and this session's own move pending).
-- 🔄 #322: r2 fixed (G1 stopped from ready_to_move, G2 log, G4 tests: weekly mark, limit-kind mark, rc 3 note, hour gate,
-  undelivered note; body rewritten); local suite 716/0. r3 reader was stopped by the move to RIT: re-dispatch r3 fresh (brief: verify G1 with
-  /tmp/claude-1001/r2-322/h/head/fleet C5, rerun M7 M14 M17 M18 M20 + a G1-fix mutant, body, CI).
-- 🔄 #287 head 62a0d0d: r14 fixed (option values, whole-stat read, resolved-name test, PATH quoting, rcfile case made
-  non-vacuous: both mutants killed, guard 231/0, 34 ms). r15 verify was stopped by the move: re-dispatch fresh (its partial log is in
-  /tmp/claude-1001/r15-287; base guard run 231/0 already confirmed there).
-- 📋 r1 owed, all green: #325 (#320 fleet send), #329 (#321), #330 (#328), #331 (#326 Agora removal; after merge:
-  install, brief --refresh, close #185 #270 #295 with notes, edit #237), #332 (#323 stage 1; browser 403/0, shots in
-  briefing), #318 (cut 6; UNKNOWN merge state: merge main; drop its Agora line once #331 lands). #325 also UNKNOWN.
-- 📋 Readers: #316 r1, #314 r1, #308 r2, #310 verify (+ mutant harness), claude-prefs#42 r2 + #43 r1.
+- ✅ merged + installed: #230, #313, #292.
+- 🔄 #287 (guard-264): r15 S2 (python -O took a value) + M4 (python -, -m, bash -s, -ec clusters) fixed UNCOMMITTED in the
+  worktree: arms scoped per interpreter; 6 new checks in test_orch_guard.sh; base 236/0 pending a rerun after the -m/-s fix;
+  mutants in <scratch>/mut287/run.sh (base first). Then commit, push, body line 16 count, r16 fresh verify.
+- 🔄 #322 (room-319): r3 reader running (/tmp/claude-1001/r3-322/report.md).
+- 🔄 #329 (stale-321) bf890fe: r1 F1 fixed (withdrawn alert line + ci_wake one jq pass that honours it), F2 tests, F3 cut;
+  57/0, 5/5 mutants killed; body rewritten. r2 reader running (/tmp/claude-1001/r2-329/report.md).
+- 📋 main merged into #325 (325dddc), #330 (b69fcd4), #331 (e6af965), #332 (5cf7473): conflicts resolved (install SCRIPTS
+  union with tmux-watch.sh/send.sh, README doctor row, launch scope with $cmd). r1 owed on each, plus #318 (clean, behind 3).
+- 📋 Readers: #316 r1, #314 r1, #308 r2, #310 verify, claude-prefs#42 r2 + #43 r1.
 - 📋 Cut 7 (friction triage + SessionStart last 10 lines), then the #8 trial; #327; #324.
+- Held worktree split-182: kept on purpose (CARGO_TARGET_DIR; src-tauri/gen is Tauri's generated schema).
 
 ## Next, in order (session 21 list; items 1-3 moved above)
 1. (done) #296 fix/watch-alert-race (watch-race), head 0a10fe1, review-clean r3. CI run 41702648814 was still in
