@@ -656,8 +656,8 @@ t kill-pane -t "$(sed -E 's/^pane=([^ ]+).*/\1/' <<<"$out")" 2>/dev/null
 out=$(launch agent2 '{"above":["Claude Code"],"on_submit":"limit"}')
 check "blocked by a limit" "${out##* }" "brief=blocked-by-limit"
 
-out=$(FLEET_READY_WAIT=4 launch agent3 '{"above":["Claude Code"],"on_submit":"none"}')
-check "not delivered when no turn ever starts" "${out##* }" "brief=NOT-DELIVERED"
+out=$(FLEET_READY_WAIT=4 launch agent3 '{"above":["Claude Code"],"on_submit":"none","meta_first":true}')
+check "not delivered when no turn ever starts (a meta prompt record is not the brief)" "${out##* }" "brief=NOT-DELIVERED"
 check "and no key was sent to the pane" "$(grep -cE 'ESC|INTERRUPTED|^PASTE|RC REQUESTED' "$work/agent3.log")" "0"
 
 : >"$FLEET_LOG"

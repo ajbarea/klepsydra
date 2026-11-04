@@ -24,6 +24,8 @@ A test steers it through a JSON state file, re-read on every tick:
              session showed the pasted brief but took no Enter for 9 min)
   exit_on_exit  /exit ends the process, so its pane closes as Claude Code's does
   exit_delay seconds /exit takes before the process ends (with exit_on_exit)
+  meta_first a meta prompt record (isMeta, as Claude Code writes for a local
+             command's caveat) is in the transcript before anything else
   on_exit    a command /exit runs first, as Claude Code's SessionEnd hook
              (prompt_input_exit) runs the fleet hook on a real /exit
 
@@ -118,6 +120,14 @@ class Pane:
         if sid and config:
             os.makedirs(os.path.join(config, "projects", "fake"), exist_ok=True)
             self.transcript = os.path.join(config, "projects", "fake", sid + ".jsonl")
+        if self.state.get("meta_first"):
+            self.record(
+                {
+                    "type": "user",
+                    "isMeta": True,
+                    "message": {"role": "user", "content": "caveat"},
+                }
+            )
         if self.rc_name is not None:
             self.log("RC ARG " + self.rc_name)
             self.rc_was_on = False
