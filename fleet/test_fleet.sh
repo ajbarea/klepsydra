@@ -3437,10 +3437,15 @@ W
 check "#290: the answering server is recorded with its pid and this boot" \
   "$(cut -d' ' -f1,3 "$FLEET_STATE/tmux-server")" "$(t display -p '#{pid}') 33333333-3333-4333-8333-333333333333"
 check "#292 review 3: and when it started, as an epoch" "$(awk '{ print NF, ($4 ~ /^[0-9]+$/) }' "$FLEET_STATE/tmux-server")" "4 1"
-# #292 review 4: the epoch's value decides what the next boot's journal is read from.
-sp=$(t display -p '#{pid}'); stt=$(cat "/proc/$sp/stat"); read -ra stf <<<"${stt##*) }"
+# #292 review 4: the epoch's value decides what the next boot's journal is read
+# from. A /proc of fixed btime (WSL's own steps forward now and then) holding
+# the answering server's real stat.
+sp=$(t display -p '#{pid}'); mkdir -p "$tw/p2/$sp"; cp "/proc/$sp/stat" "$tw/p2/$sp/stat"; printf 'cpu  1 2 3\nbtime 1793700000\n' >"$tw/p2/stat"
+stt=$(cat "$tw/p2/$sp/stat"); read -ra stf <<<"${stt##*) }"
+rm -f -- "$FLEET_STATE/tmux-server"; WPROC="$tw/p2" W
 check "#292 review 4: the epoch is the boot's btime plus the server's start in seconds" \
-  "$(cut -d' ' -f4 "$FLEET_STATE/tmux-server")" "$(( $(awk '$1 == "btime" { print $2 }' /proc/stat) + stf[19] / $(getconf CLK_TCK) ))"
+  "$(cut -d' ' -f4 "$FLEET_STATE/tmux-server")" "$(( 1793700000 + stf[19] / $(getconf CLK_TCK) ))"
+rm -f -- "$FLEET_STATE/tmux-server"; W
 cut -d' ' -f1-3 "$FLEET_STATE/tmux-server" >"$work/tsold"; cp "$work/tsold" "$FLEET_STATE/tmux-server"; : >"$FLEET_LOG"
 W
 check "#292 review 3: a record from before the epoch was kept, of the same server: kept again with it, nothing recovered" \
