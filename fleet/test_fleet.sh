@@ -1435,6 +1435,22 @@ check "the fresh brief says why, then carries the brief" "$(grep -c 'continue on
 check "logged with both folders and the new pane" \
   "$(jq -r 'select(.message == "moved to the other account at a limit") | [.from, .to, .new_pane] | join(" ")' "$FLEET_LOG")" "$work/cfg-a $work/cfg-b %997"
 t kill-window -t "$p" 2>/dev/null; : >"$REGISTRY"
+# #322 review 2: a weekly limit marks the weekly window; a move at a limit
+# whose brief meets the limit on the other account marks that one too.
+rm -f -- "$FLEET_STATE/resume-state"; rm -rf -- "${FLEET_STATE:?}/limited"
+cat >"$work/launch-lim3.sh" <<EOF
+#!/usr/bin/env bash
+echo "pane=%994 session=x account=\$FLEET_ACCOUNT avail=1MiB brief=blocked-by-limit"
+EOF
+chmod +x "$work/launch-lim3.sh"
+p=$(pane wkly "{\"above\":[\"⏺ Done. done 11:50 AM\",\"  ⎿  You've hit your weekly limit · resets Nov 2, 1pm (America/New_York)\"]}"); settle
+live "$p"
+printf '%s\twkly\t%s\t%s\t/w\t%s\n' "$p" "$work/brief.src" "$SID" "$work/cfg-a" >"$REGISTRY"
+LAUNCH="$work/launch-lim3.sh" FLEET_NOW=$noon bash "$here/resume-at-reset.sh" --once 2>/dev/null
+check "#322 review 2: a weekly limit marks the account's weekly window, and the log names the mark" \
+  "$([[ -e $FLEET_STATE/limited/a.seven ]] && echo seven) $([[ -e $FLEET_STATE/limited/a.five ]] && echo five) $(jq -r 'select(.message == "limit seen") | .marked' "$FLEET_LOG" | tail -1)" "seven  a.seven"
+check "#322 review 2: and the move whose brief met a limit on the other account marks that one" "$([[ -e $FLEET_STATE/limited/b.five ]] && echo marked)" "marked"
+t kill-window -t "$p" 2>/dev/null; : >"$REGISTRY"; rm -rf -- "${FLEET_STATE:?}/limited"; rm -f -- "$FLEET_STATE/resume-state" "$FLEET_STATE/back-hold"
 
 # A background task's notification starts a turn during the launch; at the
 # limit it fails at once, so the move goes on.
@@ -1785,6 +1801,43 @@ done_live "$p" "done" '[]'
 LAUNCH="$work/launch-limited.sh" FLEET_NOW=$((noon + 1500)) bash "$here/resume-at-reset.sh" --once 2>/dev/null
 check "#322 review 1: a worker that declined and later finished a turn gets no carry-on note when the move fails" \
   "$(head -1 "$work/moved") $(grep -c '^SUBMIT The move back' "$work/dec.log")" "$work/cfg-a 0"
+t kill-window -t "$p" 2>/dev/null; : >"$REGISTRY"
+# #322 review 2: a worker that did as asked (stopped its shells, so its turn
+# reads as done, and answered READY-TO-MOVE) gets the note when the new
+# session never starts (3); it is not asked again within the hour; and a note
+# it cannot take (busy) is logged as not delivered.
+rm -rf -- "${FLEET_STATE:?}/limited"; rm -f -- "$FLEET_STATE/back-hold" "$FLEET_STATE/resume-state" "$FLEET_STATE/back-room-since"; : >"$FLEET_LOG"
+reading a Personal 10 5000
+cat >"$work/launch-nd.sh" <<EOF
+#!/usr/bin/env bash
+echo "pane=%993 session=x account=\$FLEET_ACCOUNT avail=1MiB brief=NOT-DELIVERED"
+EOF
+chmod +x "$work/launch-nd.sh"
+p=$(backpane rtm); state rtm '{"above":["⏺ Done. done 11:50 AM"],"on_submit":"none"}'
+reply_live "$p" settled '[{"id": "w1", "kind": "bash"}]' "Watching." "$noon"
+mover "$noon"; mover "$((noon + 300))"
+jq -n --arg p "$p" --argjson at "$((noon + 330))" '{session_id: "x", ended: null, tmux: {pane: $p}, state: "done", reason: null,
+  background: [], reply: {text: "READY-TO-MOVE", at: $at}, prompt: {at: 1}, turn_at: ($at - 5)}' >"$KLEPSYDRA_DIR/fleet/$SID.json"
+LAUNCH="$work/launch-nd.sh" FLEET_NOW=$((noon + 360)) bash "$here/resume-at-reset.sh" --once 2>/dev/null
+check "#322 review 2: a worker that stopped its shells and answered READY-TO-MOVE is told to carry on when the new session never starts" \
+  "$(grep -c '^SUBMIT The move back to Personal did not happen: the new session did not start. Carry on here' "$work/rtm.log")" "1"
+# It carries on, with a shell running again: only the hour's gate keeps the ask away.
+reply_live "$p" settled '[{"id": "w2", "kind": "bash"}]' "Carrying on here." "$((noon + 400))"
+mover "$((noon + 360 + 960))"
+check "#322 review 2: and it is not asked again within the hour" "$(grep -c '^SUBMIT Your preferred account' "$work/rtm.log")" "1"
+jq -n --arg p "$p" --argjson at "$((noon + 3400))" '{session_id: "x", ended: null, tmux: {pane: $p}, state: "done", reason: null,
+  background: [], reply: {text: "READY-TO-MOVE", at: $at}, prompt: {at: 1}, turn_at: ($at - 5)}' >"$KLEPSYDRA_DIR/fleet/$SID.json"
+# The launch leaves the old pane busy (a turn started meanwhile), so the note cannot go in.
+cat >"$work/launch-busy.sh" <<EOF
+#!/usr/bin/env bash
+printf '%s' '{"above":["working"],"busy":true,"on_submit":"none"}' >"$work/rtm.json"; sleep 1
+echo "pane=%992 session=x account=\$FLEET_ACCOUNT avail=1MiB brief=blocked-by-limit"
+EOF
+chmod +x "$work/launch-busy.sh"
+LAUNCH="$work/launch-busy.sh" FLEET_NOW=$((noon + 3500)) bash "$here/resume-at-reset.sh" --once 2>/dev/null
+check "#322 review 2: a carry-on note the worker cannot take is logged as not delivered" \
+  "$(grep -c 'the carry-on note after a failed move back was not delivered' "$FLEET_LOG") $(grep -c 'told the worker to carry on after a failed move back' "$FLEET_LOG")" "1 1"
+t kill-window -t "$p" 2>/dev/null; : >"$REGISTRY"
 # The limit hold and the pass's state go with it, as the cases below expect a fresh start.
 t kill-window -t "$p" 2>/dev/null; : >"$REGISTRY"; rm -rf -- "${FLEET_STATE:?}/limited"; rm -f -- "$FLEET_STATE/back-hold" "$FLEET_STATE/resume-state" "$FLEET_STATE/back-room-since"
 

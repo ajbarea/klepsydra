@@ -610,12 +610,14 @@ one() { # PANE
   fi
   # Heph's pane watcher runs past every turn: a turn that ended with only
   # watchers out counts as finished for him, since his successor restarts them.
-  # A worker that answered READY-TO-MOVE stopped for the move (stopped=1): a
-  # move that fails tells it to carry on (#319); one idle at a finished turn was never stopped.
+  # A worker that answered READY-TO-MOVE stopped for the move (stopped=1), however
+  # its turn reads (one that stopped its shells as asked reads as done): a move
+  # that fails tells it to carry on (#319); one idle at a finished turn was never stopped.
   local stopped=0
   if (( back_ok )) && idle_empty "$s" && { idle_stamp=$(turn_done "$p") ||
     { (( orch )) && idle_stamp=$(watchers_only "$p"); } ||
-    { (( !orch )) && idle_stamp=$(ready_to_move "$p" "${asked[$p]:-}") && stopped=1; }; }; then
+    { (( !orch )) && idle_stamp=$(ready_to_move "$p" "${asked[$p]:-}"); }; }; then
+    (( !orch )) && ready_to_move "$p" "${asked[$p]:-}" >/dev/null && stopped=1
     back_why="moved back to its preferred account, $(account_label "$pref_id"), which has room again"
     if (( orch )); then
       spawn "$p" back "$cfg$US$pref$US$orch$US$pref_id$US$stopped" heph_move "$p" "$pref" "$back_why" "" "$idle_stamp"
@@ -704,8 +706,9 @@ one() { # PANE
     due[$p]=$((reset + 120)) seen_on[$p]=${ACTIVE:-unknown}
     # The account has no room in that window until then, whatever a stale
     # reading says (#319). Only where the folder is known (a row's, or Heph's).
-    [[ -n $PANE_ID ]] && { (( orch )) || registered "$p"; } && mark_limited "$PANE_ID" "$reset" "$(limit_window "$limit")"
-    flog INFO "limit seen" pane="$p" account="${seen_on[$p]}" resets="$(date -d @"$reset" '+%a %F %H:%M')" from="$limit_from" message="$limit" marked="${PANE_ID:+$PANE_ID}"
+    local marked=""
+    [[ -n $PANE_ID ]] && { (( orch )) || registered "$p"; } && mark_limited "$PANE_ID" "$reset" "$(limit_window "$limit")" && marked="$PANE_ID.$(limit_window "$limit")"
+    flog INFO "limit seen" pane="$p" account="${seen_on[$p]}" resets="$(date -d @"$reset" '+%a %F %H:%M')" from="$limit_from" message="$limit" marked="${marked:-none}"
   fi
   reg=$(awk -F'\t' -v p="$p" '$1 == p { print $2 "\t" $3 }' "$REGISTRY" 2>/dev/null)
   name=${reg%%$'\t'*} brief=${reg#*$'\t'}
