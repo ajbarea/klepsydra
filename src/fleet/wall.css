@@ -131,6 +131,19 @@ html, body { background: var(--wall-bg); color: var(--text); font: 14px/1.45 var
 #new-note { order: 1; color: var(--text-dim); font-size: 12.5px; }
 #new-note:empty { display: none; }
 #new-session { order: 3; }
+/* + New session's other kinds (#323): a split button, the menu half joined on. */
+#new-kind { order: 4; margin-left: -6px; padding: 0 var(--space-3); border-top-left-radius: 0; border-bottom-left-radius: 0; border-left: 1px solid var(--wall-bg); }
+#new-session:has(+ #new-kind:not([hidden])) { border-top-right-radius: 0; border-bottom-right-radius: 0; }
+#new-menu {
+  margin: 0; inset: auto; top: 56px; right: 16px; width: min(360px, calc(100vw - 32px));
+  padding: var(--space-5) var(--space-6); display: none;
+  background: var(--card-bg); color: var(--text); border: 1px solid var(--card-line); border-radius: 10px;
+}
+#new-menu:popover-open { display: grid; gap: var(--space-4); }
+#new-menu .new-menu-title { margin: 0; font: 600 14px/1.3 var(--font); }
+#new-menu .new-menu-model { display: grid; gap: var(--space-2); font-size: 12.5px; color: var(--text-dim); }
+#new-menu select { min-height: 32px; }
+#new-menu .new-menu-hint { margin: 0; font-size: 12.5px; color: var(--text-dim); }
 /* Split with terminal: a toggle on the ring key's line, sized as Ledger so a
    half-screen bar grows no taller. Pressed fills its box as well as
    brightening, so the state is not colour alone. */

@@ -822,6 +822,7 @@ fn with_state<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R
         .manage(Requested::default())
         .manage(Layouts::default())
         .manage(launch::InFlight::default())
+        .manage(launch::AgyModels::default())
         .manage(launch::PaneFlight::default())
         .manage(launch::JumpFlight::default())
         .manage(phone::Phone::default())
@@ -886,6 +887,7 @@ fn main() {
             theme::set_theme,
             jump::jump_to_terminal,
             launch::launch_session,
+            launch::agy_models,
             launch::get_launch_dir
         ])
         .setup(|app| {

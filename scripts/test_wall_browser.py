@@ -1141,6 +1141,7 @@ window.__TAURI__ = { core: {
     if (cmd === 'get_wall_density') return Promise.resolve('auto');
     // The front end's log lines, apart from the actions.
     if (cmd === 'plugin:log|log') { (window.__logs ??= []).push(args); return Promise.resolve(); }
+    if (cmd === 'agy_models') { window.__calls.push([cmd, args]); return window.__agy ? Promise.resolve(window.__agy) : Promise.reject('agy (Antigravity CLI) was not found on PATH.'); }
     if (cmd === 'get_launch_dir') { window.__calls.push([cmd, args]); return window.__dirAnswer ? window.__dirAnswer() : Promise.resolve('/home/aj/ajsoftworks'); }
     if (cmd === 'set_theme' && window.__setThemeFails) { window.__calls.push([cmd, args]); return Promise.reject(window.__setThemeFails); }
     if (cmd === 'end_session' && window.__hold) { window.__calls.push([cmd, args]); return window.__hold; }
@@ -1153,7 +1154,7 @@ window.__TAURI__ = { core: {
 """
 ENDS = "window.__calls.filter(([c]) => c === 'end_session')"
 # The wall's read-only queries on load; any other recorded call is an action.
-READS = ["get_launch_dir", "get_split_mode"]
+READS = ["get_launch_dir", "get_split_mode", "agy_models"]
 WORKING_CARD = ".card:has(.pill .label:text-is('working')):has(.menu:not([hidden]))"
 
 
@@ -4511,6 +4512,49 @@ HEALTH = {
 }
 
 
+AGY = [
+    {"id": "claude-opus-4-6-thinking", "label": "Claude Opus 4.6 (Thinking)"},
+    {"id": "gemini-3.8-flash-high", "label": "Gemini 3.8 Flash (High)"},
+    {"id": "gemini-3.8-flash-low", "label": "Gemini 3.8 Flash (Low)"},
+]
+
+
+def agy_menu(wall):
+    """+ New session's other kind (#323): no menu where agy lists no models;
+    with them, a split button whose menu offers Gemini first and starts agy on
+    the model picked, and + New session itself still starts Claude Code."""
+    page = open_app(wall)
+    page.wait_for_timeout(300)
+    wall.check(page.locator("#new-kind").is_hidden(), "no agy: + New session alone, as before", page.locator("#new-kind").is_visible())
+    page.close()
+    page = open_app(wall, init=f"window.__agy = {json.dumps(AGY)};")
+    page.wait_for_timeout(300)
+    kind = page.locator("#new-kind")
+    wall.check(kind.is_visible() and kind.get_attribute("aria-label") == "Start another kind of session", "with agy's models, the split button's menu half shows, named", kind.get_attribute("aria-label"))
+    kind.click()
+    page.wait_for_timeout(150)
+    opts = page.evaluate("[...document.querySelectorAll('#agy-model option')].map((o) => o.value)")
+    wall.check(
+        page.locator("#new-menu").is_visible() and opts == ["gemini-3.8-flash-high", "gemini-3.8-flash-low", "claude-opus-4-6-thinking"],
+        "its menu opens with Gemini first, then the rest in agy's order",
+        opts,
+    )
+    page.select_option("#agy-model", "gemini-3.8-flash-low")
+    page.click("#agy-start")
+    page.wait_for_timeout(200)
+    sent = calls(page, "launch_session")
+    wall.check(
+        sent == [["launch_session", {"agyModel": "gemini-3.8-flash-low"}]] and page.locator("#new-menu").is_hidden(),
+        "Start sends one launch on the model picked and closes the menu",
+        sent,
+    )
+    page.click("#new-session")
+    page.wait_for_timeout(200)
+    sent = calls(page, "launch_session")
+    wall.check(sent[-1] == ["launch_session", None], "+ New session itself still starts Claude Code", sent)
+    page.close()
+
+
 def fleet_health(wall):
     """The bar's Fleet button: hidden with no doctor reading, "Fleet ok" when
     every check is, red with a popover listing each check, failing first, and
@@ -5259,6 +5303,7 @@ def main() -> int:
             one_click_or_key_never_ends_all,
             empty_state,
             fleet_health,
+            agy_menu,
             ended_only,
             long_folder_fits,
             reveal_density,

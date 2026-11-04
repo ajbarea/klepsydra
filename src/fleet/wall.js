@@ -79,6 +79,34 @@ async function startSession(button, note) {
 }
 newButton.hidden = !inTauri;
 newButton.addEventListener("click", () => startSession(newButton, newNote));
+// + New session's other kind, Antigravity (#323): its menu shows once agy
+// has listed its models, Gemini first, since it spends Google's quota, not Claude's.
+const newKind = document.getElementById("new-kind");
+const newMenu = document.getElementById("new-menu");
+const agyModel = document.getElementById("agy-model");
+const agyStart = document.getElementById("agy-start");
+if (inTauri) {
+  window.__TAURI__.core.invoke("agy_models").then(
+    (models) => {
+      if (!Array.isArray(models) || !models.length) return;
+      const gemini = models.filter((m) => m.id.startsWith("gemini"));
+      agyModel.replaceChildren(...[...gemini, ...models.filter((m) => !gemini.includes(m))].map((m) => new Option(m.label, m.id)));
+      newKind.hidden = false;
+    },
+    () => {}, // no agy here: + New session starts Claude Code only, as before
+  );
+}
+agyStart.addEventListener("click", async () => {
+  if (agyStart.getAttribute("aria-disabled") === "true") return;
+  const model = agyModel.value;
+  newMenu.hidePopover();
+  setOff(newButton, true);
+  try {
+    await press(newKind, newNote, () => window.__TAURI__.core.invoke("launch_session", { agyModel: model }), "Starting…");
+  } finally {
+    setOff(newButton, false);
+  }
+});
 startButton.hidden = !inTauri;
 // Its answer goes to the bar's note, which stays in view once the empty state gives way.
 startButton.addEventListener("click", () => startSession(startButton, newNote));
