@@ -482,7 +482,7 @@ FLEET_START_WAIT=2 FLEET_TURN_WAIT=2 bash "$here/fresh-now.sh" "$p" >/dev/null 2
 wait
 check "S-1: after /clear the registry follows the new session id" "$(cut -f4 "$REGISTRY")" "$NEW_SID"
 check "#317: a session started without the rules flag gets them pasted with its fresh brief" \
-  "$(grep '^SUBMIT ' "$work/clr.log" | grep -c 'Resources: ')" "1"
+  "$(cat "$FLEET_STATE"/fresh-clr-*.src 2>/dev/null | grep -c '^Resources: ')" "1"
 rm -f -- "${KLEPSYDRA_DIR:?}/fleet/$NEW_SID.json"
 live "$p"
 printf '%s\tclr\t%s\n' "$p" "$work/brief.src" >"$REGISTRY"
@@ -826,10 +826,12 @@ if [[ $(id -u) != 0 ]]; then
   chmod 755 "$work/ro"
 fi
 rm -rf -- "${hist:?}" "${FLEET_STATE:?}/task-hist.src"
-check "the tail carries the friction-log rule (AJ 11-01)" "$(grep -c '^Friction log (AJ 11-01, every agent): read ~/.local/state/fleet-orchestrator/friction.md' "$here/brief-tail.md")" "1"
-check "the tail puts performance first, above the security floor, and asks for DS&A checks (AJ 11-01, 11-03)" "$(grep -c '^Quality (AJ 11-01, 11-03): performance is AJ.s #1 quality attribute; when it trades off with security, performance wins, above the security floor. In every workflow, check the data structures and algorithms' "$here/brief-tail.md")" "1"
-check "the tail carries the team-ceremony rule (AJ 10-29)" "$(grep -c '^Team ceremony in every repo' "$here/brief-tail.md")" "1"
-check "the tail keeps asks for AJ out of public issues and PRs (AJ 10-29)" "$(grep -c '^Asks for AJ stay private' "$here/brief-tail.md")" "1"
+check "the tail carries the friction-log rule (AJ 11-01)" "$(grep -c '^Friction: read ~/.local/state/fleet-orchestrator/friction.md' "$here/brief-tail.md")" "1"
+check "the tail puts performance first, above the security floor, and fixes found problems unasked (AJ 11-01, 11-03)" \
+  "$(grep -c '^Quality: performance comes first, above the security floor. Fix performance and security problems' "$here/brief-tail.md")" "1"
+# #317: what the global CLAUDE.md already says is not said again here.
+check "#317: team ceremony, private asks, web research, model routing and the review-level ban live in CLAUDE.md, not the tail" \
+  "$(grep -ciE 'team ceremony|asks for AJ stay private|web research|model routing|code-review high|attribution' "$here/brief-tail.md")" "0"
 check "#239: the tail has heavy commands take the lock with flock -o, so nothing they leave running keeps it" "$(grep -c 'flock -o /tmp/fleet-heavy.lock' "$here/brief-tail.md")" "1"
 check "#291 review: the tail says the make targets take the lock themselves and run bare" "$(grep -c 'make test-fleet., .make test-launch., .make test-heavy-lock. and .make shellcheck. in klepsydra take the lock themselves: run them bare' "$here/brief-tail.md")" "1"
 check "#291 review 5: the tail's hand form puts a group-wide timeout inside the lock (no --foreground)" "$(grep -c 'flock -o /tmp/fleet-heavy.lock timeout 1800 <command>' "$here/brief-tail.md") $(grep -c -- '--foreground' "$here/brief-tail.md")" "1 0"
@@ -880,7 +882,7 @@ git -C "$sw" add -A
 check "#291 review 4: the sweep finds each of 12 bare forms, only in bare.md" \
   "$(docs_bare "$sw" | wc -l) $(docs_bare "$sw" | grep -vc '^bare[.]md:')" "12 0"
 check "#291 review 4: a sweep with no docs to read fails" "$(docs_bare "$work/sweep291-none" | wc -l) $(docs_bare "$work/sweep291-none" | grep -c 'no docs to sweep')" "1 1"
-check "#185: the tail offers the Agora as optional and asks a post to name something real" "$(grep -c '^Agora (AJ 10-29, optional, never a task).*names something real' "$here/brief-tail.md")" "1"
+check "#185: the tail offers the Agora as optional and asks a post to name something real" "$(grep -c '^Agora (optional):.*naming something real' "$here/brief-tail.md")" "1"
 
 echo "doctor"
 mkdir -p "$KLEPSYDRA_DIR/fleet" "$work/bin"

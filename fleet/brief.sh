@@ -29,8 +29,6 @@ archive() { # FILE NAME
 }
 # A unique archive stamp: two writes in one second never share a name.
 stamp() { printf '%s-%s' "$(date +%Y%m%d-%H%M%S.%N)" "$$"; }
-# A brief's shared rules: from its "Resources:" line on.
-rules() { sed -n '/^Resources: /,$p' "$1"; }
 # Every line of the current tail and of each committed version of it (from
 # this checkout's history; without one, the current tail alone).
 tail_lines() {
@@ -42,15 +40,18 @@ tail_lines() {
     while read -r h path; do git -C "$root" show "$h:$path" 2>/dev/null; done | grep .
 }
 
-# BRIEF without shared rules: its body, then the lines added after its old
-# rules, less any line that is a rule (tail_lines), word for word or by its label.
+# BRIEF without shared rules: no line that is a rule (tail_lines) word for
+# word, anywhere, so one added to a stripped brief goes too; from a
+# "Resources:" line on, no rule by its label and no blank line either.
 current() { # BRIEF
-  sed '/^Resources: /,$d' "$1"
   # ENVIRON, not -v: awk would read a backslash in a rule as an escape.
-  rules "$1" | LABELS=$tail_labels OLD=$tail_old awk 'BEGIN {
+  LABELS=$tail_labels OLD=$tail_old awk 'BEGIN {
       n = split(ENVIRON["LABELS"], l, "\n"); for (i = 1; i <= n; i++) rule[l[i]] = 1
       n = split(ENVIRON["OLD"], o, "\n"); for (i = 1; i <= n; i++) was[o[i]] = 1 }
-    { label = $0; sub(/:.*/, "", label) } !($0 in was) && !($0 ~ /:/ && label in rule) && NF { print }'
+    /^Resources: / { tail = 1 }
+    $0 in was { next }
+    { label = $0; sub(/:.*/, "", label) }
+    !tail || (!($0 ~ /:/ && label in rule) && NF) { print }' "$1"
 }
 if [[ ${1:-} == --check || ${1:-} == --refresh ]]; then
   tail_old=$(tail_lines | sort -u)
