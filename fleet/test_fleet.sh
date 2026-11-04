@@ -175,6 +175,10 @@ resume "$noon"
 check "a limit is seen and logged with its pane, account and reset" \
   "$(jq -r 'select(.message == "limit seen") | [.pane, .account, .resets] | join(" ")' "$FLEET_LOG")" "$p Personal Wed 2026-10-28 13:10"
 check "#319: a folder with no known login marks no account" "$(ls "$FLEET_STATE/limited" 2>/dev/null)" ""
+p2=$(pane unreg "{\"above\":[\"work\",\"$LIMIT\"]}"); settle; login a
+resume "$noon"
+check "#319: nor does a pane no row names (its folder is a guess)" "$(ls "$FLEET_STATE/limited" 2>/dev/null)" ""
+logout a; rm -f -- "${FLEET_DEFAULT_JSON:?}"; t kill-window -t "$p2"
 check "nothing is typed before the reset" "$(events lim)" ""
 resume "$(( noon + 3600 + 600 + 130 ))"
 check "after the reset, the continue message goes in and starts a turn" "$(has "$(events lim)" "SUBMIT The usage limit has reset.")" "yes"

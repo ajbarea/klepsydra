@@ -677,7 +677,8 @@ one() { # PANE
     if reset=$(reset_epoch "$limit" "$NOW") || reset=$(reset_epoch "$ps" "$NOW"); then :; else reset=$((NOW + 1800)); fi
     due[$p]=$((reset + 120)) seen_on[$p]=${ACTIVE:-unknown}
     # The account has no room until then, whatever a stale reading says (#319).
-    [[ -n $PANE_ID ]] && mark_limited "$PANE_ID" "$reset"
+    # Only where the folder is known (a row's, or Heph's): another pane's is a guess.
+    [[ -n $PANE_ID ]] && { (( orch )) || registered "$p"; } && mark_limited "$PANE_ID" "$reset"
     flog INFO "limit seen" pane="$p" account="${seen_on[$p]}" resets="$(date -d @"$reset" '+%a %F %H:%M')" message="$limit" marked="${PANE_ID:+$PANE_ID}"
   fi
   reg=$(awk -F'\t' -v p="$p" '$1 == p { print $2 "\t" $3 }' "$REGISTRY" 2>/dev/null)
