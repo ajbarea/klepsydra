@@ -3,7 +3,9 @@
 import http.server
 import json
 import os
+import shlex
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -601,6 +603,98 @@ class Route(unittest.TestCase):
         known = {"r:5": {"failing": {}, "triage": {"state": "done"}, "queued": True}}
         ci_watch.poll("o", ["r"], Fake([run(5)]), known)
         self.assertEqual((self.alerts(), self.triaged), ([], []))
+
+    def _kill_watcher_inside(self, stall):
+        """Run a watcher on one waking alert, kill its bash once a jq call whose
+        arguments hold `stall` has started (a shim stalls it 3 s and touches a
+        marker first), and return (what it printed, the seen count left)."""
+        state = TMP / "state"
+        (state / "ci").mkdir(parents=True, exist_ok=True)
+        (state / "ci" / "alerts.seen").write_text("0\n")
+        (state / "ci" / "alerts.jsonl").write_text(
+            '{"wake": true, "kind": "heph", "repo": "r", "branch": "main", "text": "red"}\n'
+        )
+        slow = TMP / "slowbin"
+        slow.mkdir(exist_ok=True)
+        marker = TMP / "stalled"
+        marker.unlink(missing_ok=True)
+        (slow / "jq").write_text(
+            "#!/usr/bin/env bash\n"
+            f'case "$*" in *{shlex.quote(stall)}*) touch {shlex.quote(str(marker))}; sleep 3 ;; esac\n'
+            f'exec {shlex.quote(shutil.which("jq"))} "$@"\n'
+        )
+        (slow / "jq").chmod(0o755)
+        env = os.environ | {"FLEET_SOCK": f"ci-kill-{os.getpid()}", "WATCH_TICK": "0.1"}
+        first = subprocess.Popen(
+            ["bash", str(HERE / "watch-panes.sh")],
+            env=env | {"PATH": f"{slow}:{env['PATH']}"},
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+        try:
+            deadline = time.monotonic() + 30
+            while not marker.exists():
+                self.assertIsNone(first.poll(), "the watcher ended before the stall")
+                self.assertLess(
+                    time.monotonic(), deadline, "the watcher never reached the stall"
+                )
+                time.sleep(0.05)
+            first.kill()  # bash only: a subshell it forked would live on, as in the fleet
+            out = first.communicate()[0].decode().strip()
+            while True:  # until anything it left behind has finished
+                try:
+                    os.killpg(first.pid, 0)
+                except ProcessLookupError:
+                    break
+                self.assertLess(time.monotonic(), deadline, "its leftovers never ended")
+                time.sleep(0.05)
+        finally:
+            try:
+                os.killpg(first.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        self.env = env
+        return out, (state / "ci" / "alerts.seen").read_text().strip()
+
+    def _next_watcher(self):
+        return subprocess.run(
+            ["bash", str(HERE / "watch-panes.sh")],
+            env=self.env,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        ).stdout.strip()
+
+    def test_a_watcher_killed_while_waking_loses_no_alert(self):
+        """A watcher killed anywhere before it exits leaves the alert unread, so
+        the next watcher is woken by it: while it formats the line (main red,
+        11-03: a $(ci_wake) subshell outlived its killed watcher and marked it
+        read) or while it logs, which waits on the fleet log's lock."""
+        for stall in ("ascii_upcase", "CI alert for the orchestrator"):
+            with self.subTest(stall=stall):
+                out, seen = self._kill_watcher_inside(stall)
+                self.assertEqual(
+                    (out, seen), ("", "0"), "nothing printed, and the line stays unread"
+                )
+                self.assertEqual(
+                    self._next_watcher(),
+                    "CI HEPH r main: red",
+                    "the next watcher is woken by it",
+                )
+
+    def test_an_alert_with_no_kind_still_wakes_with_text(self):
+        state = TMP / "state"
+        (state / "ci").mkdir(parents=True, exist_ok=True)
+        (state / "ci" / "alerts.seen").write_text("0\n")
+        (state / "ci" / "alerts.jsonl").write_text(
+            '{"wake": true, "repo": "r", "branch": "b", "text": "red"}\n'
+        )
+        self.env = os.environ | {
+            "FLEET_SOCK": f"ci-nokind-{os.getpid()}",
+            "WATCH_TICK": "0.1",
+        }
+        self.assertEqual(self._next_watcher(), "CI ALERT r b: red")
 
     def test_the_watcher_wakes_on_heph_lines_only_and_never_twice(self):
         state = TMP / "state"

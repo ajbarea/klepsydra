@@ -23,6 +23,9 @@ A test steers it through a JSON state file, re-read on every tick:
   stall      seconds after start in which Enter does nothing (10-29: a new
              session showed the pasted brief but took no Enter for 9 min)
   exit_on_exit  /exit ends the process, so its pane closes as Claude Code's does
+  exit_delay seconds /exit takes before the process ends (with exit_on_exit)
+  on_exit    a command /exit runs first, as Claude Code's SessionEnd hook
+             (prompt_input_exit) runs the fleet hook on a real /exit
 
 Run: python3 -I fake_pane.py STATE LOG
 """
@@ -30,6 +33,7 @@ Run: python3 -I fake_pane.py STATE LOG
 import json
 import os
 import select
+import subprocess
 import sys
 import termios
 import time
@@ -114,7 +118,10 @@ class Pane:
             self.log("RC REQUESTED")
             return
         self.log("SUBMIT " + text.replace("\n", "\\n"))
+        if text.strip() == "/exit" and self.state.get("on_exit"):
+            subprocess.run(self.state["on_exit"], shell=True, check=False)
         if text.strip() == "/exit" and self.state.get("exit_on_exit"):
+            time.sleep(float(self.state.get("exit_delay", 0)))
             raise SystemExit(0)
         self.last_submit = text
         self.state.setdefault("above", []).append(

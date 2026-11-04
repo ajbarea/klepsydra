@@ -29,7 +29,7 @@ fill_ids() {
   while IFS=$'\t' read -r p name _ sid _; do
     [[ -n $p && -z $sid ]] || continue
     if sid=$(live_session "$p"); then
-      set_session_now "$p" "$sid" && flog INFO "registry row given its live session id" pane="$p" name="$name" session_id="$sid"
+      set_session_now "$p" "" "$sid" && flog INFO "registry row given its live session id" pane="$p" name="$name" session_id="$sid"
     else
       flog WARN "registry row has no live session to record" pane="$p" name="$name"
     fi
