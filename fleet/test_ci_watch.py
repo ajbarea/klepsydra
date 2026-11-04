@@ -293,6 +293,15 @@ class Poll2(unittest.TestCase):
     setUp = Poll.setUp
     tearDown = Poll.tearDown
 
+    def test_no_queue_file_writes_no_line_and_says_so(self):
+        (TMP / "q.md").unlink()
+        with self.assertLogs(ci_watch.log, "WARNING") as logs:
+            self.assertFalse(ci_watch.needs_you({"repo": "r", "run_id": 5}))
+        self.assertEqual(
+            [r.getMessage() for r in logs.records],
+            ["queue line not written: no queue file"],
+        )
+
     def test_a_queue_file_that_cannot_be_changed_does_not_hide_the_red_run(self):
         known = {}
         # The temp file is written, then the rename into place fails.
@@ -1028,6 +1037,35 @@ class Held(unittest.TestCase):
             ],
             ["its PR closed or its workflow is gone"],
         )
+
+    def _escalated_paged_out_red(self, known):
+        """Red 5 on the default branch, escalated after it paged out: AJ has its line."""
+        with mock.patch.object(ci_watch, "ESCALATE_S", 1800):
+            ci_watch.poll("o", ["r"], Fake([run(5, workflow=3)]), known)
+            known["r:5"]["routed"]["at"] -= 1801
+            ci_watch.poll("o", ["r"], Fake([run(6, conclusion="success")]), known)
+        self.assertIn("<!-- ci:r:5 -->", (TMP / "q.md").read_text())
+
+    def test_a_red_forgotten_for_its_age_keeps_its_needs_you_line(self):
+        """#329 review 4: a month-old red was never cleared; AJ still needs it."""
+        known = {}
+        self._escalated_paged_out_red(known)
+        known["r:5"]["seen"] = int(time.time()) - 31 * 86400
+        got = ci_watch.poll("o", ["r"], Fake([run(6, conclusion="success")]), known)
+        self.assertEqual(got["red"], [])
+        self.assertIn("<!-- ci:r:5 -->", (TMP / "q.md").read_text())
+
+    def test_a_removal_that_failed_is_not_marked_done(self):
+        known = {}
+        self._escalated_paged_out_red(known)
+        with mock.patch.object(
+            ci_watch.Path, "replace", side_effect=PermissionError("read-only")
+        ):
+            ci_watch.poll(
+                "o", ["r"], Fake([run(7, workflow=3, conclusion="success")]), known
+            )
+        self.assertNotIn("unqueued", known["r:5"])
+        self.assertIn("<!-- ci:r:5 -->", (TMP / "q.md").read_text())
 
     def test_a_held_red_at_its_prs_head_still_escalates(self):
         known = {}

@@ -611,12 +611,13 @@ def drop_inbox(repo: str, run_id: object) -> None:
         )
 
 
-def drop_held(repo: str, k: dict, why: str) -> None:
+def drop_held(repo: str, k: dict, why: str, cleared: bool = True) -> None:
     """Let held red K go and undo what reached people (#321): its undelivered
-    inbox file, its needs-you line (a fork's red has none: nothing is written), and, through a
-    withdrawn line (no wake), any wake line not yet withdrawn, so a red that
-    went stale waiting for Heph is never replayed. Its routing is kept, so a
-    red still listed is not routed again on the next pass."""
+    inbox file, its needs-you line when CLEARED (a red only forgotten for its
+    age still needs AJ; a fork's red has none), and, through a withdrawn line
+    (no wake), any wake line not yet withdrawn, so a red that went stale
+    waiting for Heph is never replayed. Its routing is kept, so a red still
+    listed is not routed again on the next pass."""
     item = k.pop("item")
     drop_inbox(repo, item["run_id"])
     routed = k.get("routed") or {}
@@ -625,7 +626,7 @@ def drop_held(repo: str, k: dict, why: str) -> None:
         k.get("escalated", 0),
     )
     withdraw = woke > k.get("withdrawn", 0)
-    unqueue = k.get("queued") is True and not k.get("unqueued")
+    unqueue = cleared and k.get("queued") is True and not k.get("unqueued")
     event(
         logging.INFO,
         "held red let go",
@@ -870,10 +871,9 @@ def repo_pass(
             (newer and "a newer run took its place")
             or (gone and "its PR closed or its workflow is gone")
             or (superseded and "its PR's head moved past its commit")
-            or (k.get("seen", 0) < month and "a month old")
         )
-        if why:
-            drop_held(repo, k, why)
+        if why or k.get("seen", 0) < month:
+            drop_held(repo, k, why or "a month old", cleared=bool(why))
             continue
         if place not in places:
             retriage(user, repo, held["run_id"], k, save_known)
