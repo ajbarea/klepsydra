@@ -2203,5 +2203,22 @@ now=1792360170 askfire permission-request.json
 now=1792360171 askfire subagent-stop.json '.agent_id = null'
 check "a subagent stop naming no agent leaves the session's own ask" "$(afield '[.state, .needs.by]')" '["needs_you",""]'
 
+echo "the fleet registry follows a session at the event (#261)"
+mkdir -p "$work/fleet-state"
+printf '#!/usr/bin/env bash\nprintf "%%s|" "$@" >>"%s/reg-events"; echo >>"%s/reg-events"\n' "$work" "$work" >"$work/fleet-state/registry-event.sh"
+rm -f "$work/reg-events" "$rfile" "$rfile2" "$rfile3"
+r1fire session-start.json "$rnow"
+check "with no agent registered, the registry is not called" "$(cat "$work/reg-events" 2>/dev/null)" ""
+printf '%%7\tw\t/b.src\t%s\t/w\n' "$R" >"$work/fleet-state/panes.tsv"
+fire session-end.json ".session_id = \"$R\" | .reason = \"clear\"" KLEPSYDRA_NOW=$((rnow + 10)) KLEPSYDRA_PID=1510 "TMUX=$work/sock/klepsydra,1,0" TMUX_PANE=%7 >/dev/null
+c2fire session-start.json $((rnow + 11)) '.source = "clear"' "TMUX=$work/sock/klepsydra,1,0" TMUX_PANE=%7
+c2fire session-start.json $((rnow + 12)) '.source = "compact"'
+c2fire session-end.json $((rnow + 13)) '.reason = "prompt_input_exit"' "TMUX=$work/sock/klepsydra,1,0" TMUX_PANE=%7
+check "an end with its reason, a /clear with the session it cleared, its pane and its server, no compact" "$(cat "$work/reg-events")" \
+"SessionEnd|$R|clear|%7||$work/sock/klepsydra|
+SessionStart|$R2|clear|%7|$R|$work/sock/klepsydra|
+SessionEnd|$R2|prompt_input_exit|%7||$work/sock/klepsydra|"
+rm -f "$work/fleet-state/registry-event.sh" "$work/fleet-state/panes.tsv" "$work/reg-events" "$rfile" "$rfile2"
+
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [[ $fail -eq 0 ]]

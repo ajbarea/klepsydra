@@ -488,20 +488,21 @@ remote_lines() { # transcript
 # active other session of Claude process `pid` started at `start` on this boot
 # and distro; empty for none. Then, after a \x1f, that session's orchestrator
 # face ("?" when it was no orchestrator, empty when none was found), which a
-# /clear keeps (#244). Reads as mark_gone does, from inside the folder.
+# /clear keeps (#244), then after another \x1f its session id, which the fleet
+# registry follows (#261). Reads as mark_gone does, from inside the folder.
 cleared_link() { # fleet pid start self
-  local f pid start boot distro last began url face best=-1 best_began=-1 link="" kept=""
+  local f pid start boot distro last began url face best=-1 best_began=-1 link="" kept="" id=""
   [[ $2 =~ ^[1-9][0-9]*$ && $3 =~ ^[0-9]+$ && -n $host_boot ]] || return 0
   while IFS=$'\t' read -r f pid start boot distro last began url face; do
     [[ $f != "$4.json" && $pid == "$2" && $start == "$3" && $boot == "$host_boot" \
       && $distro == "${host_distro:-?}" && $last =~ ^[0-9]+$ && $began =~ ^[0-9]+$ ]] || continue
     # The later started breaks a tie within one second.
-    (( last > best || (last == best && began > best_began) )) && best=$last best_began=$began link=$url kept=$face
+    (( last > best || (last == best && began > best_began) )) && best=$last best_began=$began link=$url kept=$face id=${f%.json}
   done < <(fleet_rows "$1" '[((.claude.pid | numbers) // 0 | floor), ((.claude.start | numbers) // 0 | floor),
       (.host.boot | or_q), (.host.distro | or_q), last_active, ((.started_at | numbers) // 0 | floor),
       (.remote_url | or_q), (if .orchestrator == true then orch_face else "?" end)]')
   [[ $link == "?" ]] && link=""
-  printf '%s\x1f%s' "$link" "$kept"
+  printf '%s\x1f%s\x1f%s' "$link" "$kept" "$id"
   return 0
 }
 
@@ -1069,8 +1070,23 @@ ask_answered() { # file asked_at now
   return 0
 }
 
+# The fleet registry follows a session at the event (#261), through the
+# installed fleet's registry-event.sh, under the registry lock: a final end
+# records the finish of the agent whose row names it, a start (not a compact)
+# drops that session's recorded finish and unpause, and a /clear repoints the
+# row that named the cleared session in this pane. With no fleet installed or
+# no agent registered, nothing; it never fails the hook.
+fleet_registry_event() { # state event session source input cleared_sid
+  local why=$4
+  [[ $2 == SessionEnd || ($2 == SessionStart && $4 != compact) ]] || return 0
+  [[ -f $1/registry-event.sh && -s $1/panes.tsv ]] || return 0
+  [[ $2 == SessionEnd ]] && why=$(printf '%s' "$5" | jq -r '.reason // "other" | strings' 2>/dev/null)
+  FLEET_STATE=$1 bash "$1/registry-event.sh" "$2" "$3" "${why:-other}" "${tmux_pane:-}" "$6" "${tmux_socket:-}" </dev/null >/dev/null 2>&1
+  return 0
+}
+
 main() {
-  local input fields session event cwd edited transcript source now file old new lock voice="" cwd_repo by=cwd remote="" cleared="" homes='{}' old_git where_gone=false account=null
+  local input fields session event cwd edited transcript source now file old new lock voice="" cwd_repo by=cwd remote="" cleared="" cleared_sid="" homes='{}' old_git where_gone=false account=null
   input=$(cat)
   fields=$(printf '%s' "$input" | jq -r '
     def s: if type == "string" then gsub("[\u001f\n]"; " ") else "" end;
@@ -1148,7 +1164,7 @@ main() {
   { exec {lock}>>"$LOCK"; } 2>/dev/null || return 0
   flock -w 5 "$lock" || return 0
 
-  [[ $event == SessionStart && $source == clear ]] && IFS=$'\x1f' read -r cleared cleared_face < <(cleared_link "$fleet" "$found_pid" "$found_start" "$session")
+  [[ $event == SessionStart && $source == clear ]] && IFS=$'\x1f' read -r cleared cleared_face cleared_sid < <(cleared_link "$fleet" "$found_pid" "$found_start" "$session")
   file=$fleet/$session.json
   old=""
   [[ -f $file ]] && { old=$(<"$file"); } 2>/dev/null
@@ -1189,6 +1205,7 @@ main() {
   [[ $event == SessionStart ]] && prune_hourly "$PRUNE_STAMP" prune_fleet "$KLEPSYDRA_DIR" "$now"
   # tmux can hang for its timeout; no other hook waits on it, so drop the lock first.
   { exec {lock}>&-; } 2>/dev/null
+  fleet_registry_event "$orch_state" "$event" "$session" "$source" "$input" "$cleared_sid"
   # A permission prompt in a tmux pane gets a watcher for its answer (#217),
   # started after the lock is let go: a child holding its fd would keep it.
   if [[ $event == PermissionRequest && -n $tmux_pane && ${KLEPSYDRA_ASK_WATCH:-1} == 1 && ${new:-$old} == *'"state":"needs_you"'* ]]; then
