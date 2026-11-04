@@ -23,25 +23,26 @@ Each cut: a small PR with the proof test the report names.
 
 ## Resume here (session 26, replacement on ~/.claude-rit, from 11-04 morning; replaced session 25)
 Reports: /tmp/claude-1001/<round>/report.md. Heavy runs: never wrap a lock-taking make target in an outer timeout.
-- 🔄 #287 head 1ffb001: r13 B1 (doctor fixture), S1 (guard rows reach ok/warn), B2 (heavy.sh is no fleet sender) fixed;
-  the ancestry walk forks nothing for a non-sender (timing check had read 83 ms). Local orch-guard + fleet suites queued
-  (guard-264 logs/s26c.*). Next: r14 verify reader, merge, deploy (install-fleet, PreToolUse hook, accounts sync).
-- 🔄 #313 head db6cddd (main merged): r1 S1 (/login since the stop: text dates it), S2 (text reset never before the
-  stop), M1 docs fixed; local suite 576/576 before the merge; CI on db6cddd running. M2 left (PLAUSIBLE). Next: r2 reader.
-- 🔄 #230 head e10b5bc: r4 S1 (miss-count reset test) fixed with the reader's p i p i case; M4 listed as deferred in
-  the body. r5 verify reader running (/tmp/claude-1001/r5-230). Then merge (bug fix).
-- 🔄 #292 r3 (/tmp/claude-1001/r3-292): B1 (doctor fixture needs the hook; WSL_DISTRO_NAME unset in the suite), S1
-  (journal stub honours -b/--since; 6 negative cases; mutants M1 M4 M6 M9 red, M7 rerun pending), m1 (doctor unit gets
-  WSL_DISTRO_NAME), m2 (mark holds the viewer pid), m3/m5/m7 wording, m4 lower bound only (age bound deferred), m6
-  (dead panes listed before source-file). UNCOMMITTED in tmux-290 until the mutant rerun and reader's final report.
-  Then whole-suite run, PR body results table to whole-suite numbers, r4.
-- 🔄 Cut 6 = #317 / PR #318 (tail-cut6, head f606054): tail 297 words in the system prompt; CI red 41791557560 fixed
-  (12 wording checks, and a rule added to a stripped brief is now caught). Next: CI green, r1 reader. Deploy: install,
+Order (Heph 11-04): bug queue #313, #292, #322 (#319), #320, #321; then #323 (AJ-approved freeze exception, one PR
+per stage: agy sessions from + New session, then wall, gauge, hooks, keryx); then the reader backlog and cuts 7, #8.
+- ✅ #230 merged 09:57 (r5 verify CLEAN), installed, doctor clean.
+- 🔄 #287 head 1ffb001: r13 B1/S1/B2 fixed, ancestry walk forks nothing for a non-sender; CI green; local
+  orch-guard 229/229. r14 verify reader running (/tmp/claude-1001/r14-287). Then merge; deploy: install-fleet,
+  PreToolUse hook in ~/.claude settings, `fleet accounts sync`.
+- 🔄 #313 head feca856: r1 S1/S2/M1 fixed, main merged (db6cddd), doctor fixture fixed after the merge (two live
+  files named one pane). r2 reader running (/tmp/claude-1001/r2-313). CI on feca856.
+- 🔄 #292 head 80f34de: r3 all fixed (B1, S1 with 5/5 mutants red, m1-m3, m5-m7; m4 lower bound only, age bound
+  deferred: needs journal epochs). Next: CI green, body results to whole-suite numbers, r4 reader.
+- 🔄 #322 (#319) head 004c3a3: limit mark per account (headroom reads it; a newer reading decides), carry-on note
+  after a failed move back (rc 3, 5), reading_of one-pass. bfa19c7 had 46 CI/local fails (marks outlived sections);
+  rerun local (room-319 logs/s26b) + CI. Then r1 reader.
+- 📋 #320 send helper (text, wait for it in the box, Enter, check a turn started); #321 CI watch skips superseded commits.
+- 🔄 Cut 6 = #317 / PR #318 (tail-cut6, head f606054): CI green, body updated. r1 reader owed. Deploy: install,
   `fleet brief --refresh`.
-- 📋 Readers owed: #313 r2, #287 r14, #318 r1, #316 r1, #314 r1, #308 r2, #310 verify (+ its mutant harness: base was
-  never green), claude-prefs#42 r2 + #43 r1.
-- 📋 Cut 7: triage all 77 friction.md lines (a read-only reader classifies: fixed / needs issue / delete), then a
-  SessionStart hook in worker-settings.json printing the last 10 lines for the repo; tail line changes. Then #8 trial.
+- 📋 Readers owed: #318 r1, #316 r1, #314 r1, #308 r2 (head green), #310 verify (+ mutant harness: base never
+  green), claude-prefs#42 r2 + #43 r1.
+- 📋 Cut 7: triage all 77 friction.md lines (reader classifies fixed / issue / delete), then a SessionStart hook in
+  worker-settings.json printing the last 10 lines for the repo; the tail's Friction line changes. Then #8 trial.
 
 ## Next, in order (session 21 list; items 1-3 moved above)
 1. (done) #296 fix/watch-alert-race (watch-race), head 0a10fe1, review-clean r3. CI run 41702648814 was still in
