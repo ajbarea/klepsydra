@@ -411,8 +411,9 @@ fleet_panes() { t list-panes -s -t "$FLEET_SESSION" -F '#{pane_id}' 2>/dev/null;
 # looking at, so a replacement never moves him off the agent he is watching.
 in_view() { [[ $(t display-message -p -t "$1" '#{window_active}' 2>/dev/null) == 1 ]]; }
 
-# Whether the session live in PANE is one `fleet done` marked finished
-# (finished.tsv: the registry's columns, pane first, session fourth).
+# Whether the session live in PANE is one finished.tsv names (`fleet done`,
+# or a finish the doctor or recover recorded; the registry's columns, pane
+# first, session fourth). The resume service asks it of panes with no row.
 finished_here() { # PANE
   local fin=${FLEET_FINISHED:-$FLEET_STATE/finished.tsv} sid
   # The pane alone first: reading every session file costs far more.
@@ -435,17 +436,25 @@ live_session() { # PANE
 }
 
 # Run COMMAND... holding the registry's lock: every writer of panes.tsv does.
-with_registry() {
-  ( flock -w 60 9 || exit 1; "$@" ) 9>>"$FLEET_STATE/.registry.lock"
+with_registry() { # FLEET_REGISTRY_WAIT: seconds to wait for the lock (60)
+  ( flock -w "${FLEET_REGISTRY_WAIT:-60}" 9 || exit 1; "$@" ) 9>>"$FLEET_STATE/.registry.lock"
 }
 
-# Set the registry's session id for pane PANE (column 4) to SID.
+# Set the session id (column 4) of the registry row in pane PANE that names
+# session OLD (empty: a row with none) to NEW. The pane alone is no key: a
+# restarted tmux server hands out %N again, so finished or lost rows can share
+# one with a running agent (#261 review 7). Fails when no row matches.
 set_session() { with_registry set_session_now "$@"; }
-set_session_now() { # PANE SID
+set_session_now() { # PANE OLD NEW
   local tmp
-  [[ -e $REGISTRY ]] || return 1
+  [[ -e $REGISTRY && -n ${3:-} ]] || return 1
+  awk -F'\t' -v p="$1" -v o="$2" '$1 == p && $4 == o { f = 1 } END { exit !f }' "$REGISTRY" || return 1
   tmp=$(mktemp "$REGISTRY.XXXXXX") || return 1
-  awk -F'\t' -v OFS='\t' -v p="$1" -v sid="$2" '$1 == p { $4 = sid } { print }' "$REGISTRY" >"$tmp" && mv -f -- "$tmp" "$REGISTRY"
+  if ! awk -F'\t' -v OFS='\t' -v p="$1" -v o="$2" -v sid="$3" '!done && $1 == p && $4 == o { $4 = sid; done = 1 } { print }' "$REGISTRY" >"$tmp" ||
+    ! mv -f -- "$tmp" "$REGISTRY"; then
+    rm -f -- "${tmp:?}"
+    return 1
+  fi
 }
 
 # Whether pane PANE still runs the session registered for it: a live fleet
@@ -457,7 +466,20 @@ pane_runs() { # PANE SESSION-ID
   [[ $2 =~ ^[0-9a-f-]{36}$ ]] || return 1
   f=$KLEPSYDRA_DIR/fleet/$2.json
   [[ -f $f && ! -L $f ]] || return 1
-  jq -e --arg p "$1" '.tmux.pane == $p and .ended == null' "$f" >/dev/null 2>&1
+  # On the fleet's own server: AJ's own tmux hands out the same pane ids (#261 review 9).
+  jq -e --arg p "$1" --arg s "/$FLEET_SOCK" '.tmux.pane == $p and .ended == null
+    and (.tmux.socket == null or (.tmux.socket | strings | endswith($s)))' "$f" >/dev/null 2>&1
+}
+
+# Whether tmux socket path SOCK is the fleet's own server.
+fleet_socket() { [[ -n $1 && ${1##*/} == "$FLEET_SOCK" ]]; } # SOCK
+
+# The pane session SID runs in, from its fleet file, only when that is on the
+# fleet's own server: a pane id from another tmux server names nothing here.
+fleet_pane_of() { # SID
+  local f=$KLEPSYDRA_DIR/fleet/$1.json
+  [[ $1 =~ ^[0-9a-f-]{36}$ && -f $f && ! -L $f ]] || return 1
+  jq -r --arg s "/$FLEET_SOCK" '.tmux | select((.socket | strings | endswith($s)) and (.pane | strings | test("^%[0-9]+$"))) | .pane' "$f" 2>/dev/null | grep .
 }
 
 # Accounts: Claude Code keeps one login per config folder (CLAUDE_CONFIG_DIR),
@@ -800,8 +822,7 @@ fresh() { # PANE NAME BRIEF [WHY] [ACCOUNT] [NOTE] [STAMP]
   # account said to have room) stopped by a limit, the old pane stays.
   if [[ $got == NOT-DELIVERED || ( -n $account && $got != started ) ]]; then
     flog ERROR "fresh session's brief did not start; the old pane stays and the new one goes" pane="$p" new_pane="$new" name="$name" brief="$got"
-    retire "$new" interrupt
-    with_registry set_pane "$new" "$p" "$sid" "$cfg"
+    rollback_fresh "$new" "$p" "$sid" "$cfg" "$name"
     [[ $got == blocked-by-limit ]] && return 5
     return 3
   fi
@@ -810,11 +831,25 @@ fresh() { # PANE NAME BRIEF [WHY] [ACCOUNT] [NOTE] [STAMP]
   now_s=$(screen "$p")
   if ! pane_runs "$p" "$sid" || busy "$now_s" || ! has_input_box "$now_s" || [[ $(input_text "$now_s") != "$box" || $(prompt_stamp "$p") != "$stamp" ]]; then
     flog ERROR "the old pane changed while its fresh session launched; the old one stays and the new one goes" pane="$p" new_pane="$new" name="$name"
-    retire "$new" interrupt
-    with_registry set_pane "$new" "$p" "$sid" "$cfg"
+    rollback_fresh "$new" "$p" "$sid" "$cfg" "$name"
     return 4
   fi
-  # The note went into the new brief; one C-c clears it from the old box.
+  # The old session ends only once its row names the new one, or its /exit
+  # would record the agent itself as finished (#261 review 10). A launch that
+  # could not register the row (its lock busy) leaves that to this step.
+  if ! awk -F'\t' -v n="$new" -v nm="$name" '$1 == n && $2 == nm { f = 1 } END { exit !f }' "$REGISTRY"; then
+    local nsid
+    nsid=$(grep -o 'session=[^ ]*' <<<"$out" | head -1 | cut -d= -f2)
+    if with_registry repoint_row "$p" "$sid" "$new" "$nsid"; then
+      flog WARN "the launch left its row unregistered; the fresh session's row now names it" pane="$p" new_pane="$new" name="$name" session="$nsid"
+    else
+      flog ERROR "the fresh session's row could not be registered; the old pane stays and the new one goes" pane="$p" new_pane="$new" name="$name"
+      retire "$new" interrupt
+      return 3
+    fi
+  fi
+  # The note went into the new brief; one C-c clears it from the old box, only
+  # now that the old pane is sure to go (#261 review 11).
   if [[ -n $box ]]; then
     t send-keys -t "$p" C-c
     wait_for "$p" 5 idle_empty || true
@@ -824,13 +859,40 @@ fresh() { # PANE NAME BRIEF [WHY] [ACCOUNT] [NOTE] [STAMP]
   printf '%s' "$new"
 }
 
-# Point the registry row launch.sh moved to NEW back at PANE, session SID
-# and config folder CFG (none: the column is left empty, the default).
-set_pane() { # NEW PANE SID CFG
+# Point the row naming PANE and session SID at NEW, and at session NSID when
+# that is a session id (launch.sh prints it), as launch.sh would have; fails
+# when no row names them.
+repoint_row() { # PANE SID NEW NSID
   local tmp
   tmp=$(mktemp "$REGISTRY.XXXXXX") || return 1
-  awk -F'\t' -v OFS='\t' -v n="$1" -v p="$2" -v sid="$3" -v cfg="${4:-}" \
-    '$1 == n { $1 = p; $4 = sid; if (NF >= 6 || cfg != "") $6 = cfg } { print }' "$REGISTRY" >"$tmp" && mv -f -- "$tmp" "$REGISTRY"
+  if awk -F'\t' -v OFS='\t' -v p="$1" -v s="$2" -v n="$3" -v ns="${4:-}" '
+      $1 == p && $4 == s && !f { $1 = n; if (ns ~ /^[0-9a-f-]{36}$/) $4 = ns; f = 1 } { print } END { exit !f }' "$REGISTRY" >"$tmp"; then
+    mv -f -- "$tmp" "$REGISTRY"
+  else
+    rm -f -- "$tmp"; return 1
+  fi
+}
+
+# Point row NAME, which launch.sh moved to NEW, back at PANE, session SID and
+# config folder CFG (none: the column is left empty, the default). A row that
+# never moved (launch.sh could not register it) needs nothing.
+set_pane() { # NEW PANE SID CFG NAME
+  local tmp
+  tmp=$(mktemp "$REGISTRY.XXXXXX") || return 1
+  awk -F'\t' -v OFS='\t' -v n="$1" -v p="$2" -v sid="$3" -v cfg="${4:-}" -v name="$5" \
+    '$1 == n && $2 == name && !done { $1 = p; $4 = sid; if (NF >= 6 || cfg != "") $6 = cfg; done = 1 } { print }' "$REGISTRY" >"$tmp" && mv -f -- "$tmp" "$REGISTRY"
+}
+
+# Undo a fresh start that will not go on: the row back on the old pane first,
+# then the new session ends, since its /exit records a finish for whichever row
+# names it then (#261 reviews 10, 11). If the row cannot be put back (the
+# registry lock stays busy), both panes stay running.
+rollback_fresh() { # NEW PANE SID CFG NAME
+  if with_registry set_pane "$@"; then
+    retire "$1" interrupt
+  else
+    flog ERROR "the row could not be put back on the old pane; both panes stay running" pane="$2" new_pane="$1" name="$5"
+  fi
 }
 
 # The prompt the last limit answered, when the limit is the only reply to it:
@@ -895,6 +957,178 @@ session_alive() { # SID
   read -r pid start boot < <(jq -r 'select(.ended == null) | "\(.claude.pid // 0) \(.claude.start // 0) \(.host.boot // "")"' "$f" 2>/dev/null)
   [[ ${pid:-0} =~ ^[1-9][0-9]*$ && -n ${boot:-} && $boot == "$(cat "${FLEET_BOOT_ID:-/proc/sys/kernel/random/boot_id}" 2>/dev/null)" ]] || return 1
   [[ $(proc_start "$pid") == "$start" ]]
+}
+
+# Whether session SID ended cleanly. While its fleet file exists, the file
+# decides: Claude Code's SessionEnd named a final end, the user's /exit or
+# ctrl-d at the prompt (prompt_input_exit) or a logout (code.claude.com/docs/
+# en/hooks, SessionEnd), so a session resumed under the same id after a
+# recorded finish is no longer finished. Once the file is gone (klepsydra drops
+# it a day after the end; the wall's Clear at once), finished.tsv decides: the
+# finish the fleet hook recorded at the end (registry-event.sh), `fleet done`,
+# or one the doctor or recover recorded on first sight. The fleet hook also marks
+# ended a session it finds dead ("gone", on every SessionStart after a hard
+# shutdown), and SessionEnd says "clear" and "resume" for a session that goes
+# on under a new id; those, "other" and any reason unknown here are no finish.
+session_finished() { # SID
+  local f
+  [[ $1 =~ ^[0-9a-f-]{36}$ ]] || return 1
+  f=$KLEPSYDRA_DIR/fleet/$1.json
+  if [[ ! -e $f ]]; then
+    awk -F'\t' -v s="$1" '$4 == s { f = 1 } END { exit !f }' "${FLEET_FINISHED:-$FLEET_STATE/finished.tsv}" 2>/dev/null
+    return
+  fi
+  [[ -f $f && ! -L $f ]] || return 1
+  jq -e '(.ended | type) == "object" and ((.ended.reason // "") | IN("prompt_input_exit", "logout"))' "$f" >/dev/null 2>&1
+}
+
+# Record a finished row in finished.tsv (the registry's columns, then the
+# time), once: what `fleet done` writes, so the finish holds after the fleet
+# file is gone. The row stays in panes.tsv until `fleet doctor --prune`, but
+# holds no pane (column 1 becomes "-", #261 review 8): a restarted tmux server
+# hands its pane id out again, and every pane-keyed lookup (reg_field, the
+# resume service, fresh, done, relaunch) would then find the finished row
+# beside the live agent's. A start of its session puts the pane back
+# (restore_pane). Under the registry lock.
+record_finished() { # ROW
+  local fin=${FLEET_FINISHED:-$FLEET_STATE/finished.tsv} sid p
+  sid=$(cut -f4 <<<"$1") p=$(cut -f1 <<<"$1")
+  [[ -n $sid ]] || return 0
+  if ! awk -F'\t' -v s="$sid" '$4 == s { f = 1 } END { exit !f }' "$fin" 2>/dev/null; then
+    printf '%s\t%s\n' "$1" "$(date -Is)" >>"$fin" || return 1
+  fi
+  [[ $p =~ ^%[0-9]+$ ]] || return 0
+  set_pane_of "$p" "$sid" -
+}
+
+# Set the pane (column 1) of the registry row that names pane FROM and session
+# SID to TO. Under the registry lock. Fails when no row matches.
+set_pane_of() { # FROM SID TO
+  local tmp
+  [[ -e $REGISTRY && -n $2 ]] || return 1
+  awk -F'\t' -v p="$1" -v s="$2" '$1 == p && $4 == s { f = 1 } END { exit !f }' "$REGISTRY" || return 1
+  tmp=$(mktemp "$REGISTRY.XXXXXX") || return 1
+  if ! awk -F'\t' -v OFS='\t' -v p="$1" -v s="$2" -v to="$3" '!done && $1 == p && $4 == s { $1 = to; done = 1 } { print }' "$REGISTRY" >"$tmp" ||
+    ! mv -f -- "$tmp" "$REGISTRY"; then
+    rm -f -- "${tmp:?}"
+    return 1
+  fi
+}
+
+# A parked row's pane back, once its session SID runs again in PANE (a hand
+# resume of a finished agent). Under the registry lock.
+restore_pane() { # SID PANE
+  [[ $2 =~ ^%[0-9]+$ ]] || return 1
+  set_pane_of - "$1" "$2"
+}
+
+# Drop session SID's recorded finish (under the registry lock): a row still in
+# panes.tsv whose own session runs again was resumed after its finish, so the
+# record must not outlive that run once klepsydra drops the session's file
+# (#261 review 4). `fleet done` rows leave panes.tsv, so they never meet this.
+# Prints how many lines it dropped.
+forget_finished() { # SID
+  local fin=${FLEET_FINISHED:-$FLEET_STATE/finished.tsv} n
+  [[ -n $1 && -e $fin ]] || { echo 0; return 0; }
+  n=$(awk -F'\t' -v s="$1" '$4 == s { n++ } END { print n + 0 }' "$fin")
+  (( n )) || { echo 0; return 0; }
+  if ! { awk -F'\t' -v s="$1" '$4 != s' "$fin" >"$fin.$$" && mv -f -- "$fin.$$" "$fin"; }; then
+    rm -f -- "$fin.$$"
+    return 1
+  fi
+  echo "$n"
+}
+
+# Reconcile a row's side records (SID, NAME) with its own session's fleet
+# file while the file exists: alive drops its finish and its unpause; a file
+# that names no final end drops its finish.
+forget_resumed() { # SID NAME
+  local n why="the session runs again" f=$KLEPSYDRA_DIR/fleet/$1.json
+  [[ $1 =~ ^[0-9a-f-]{36}$ && -f $f && ! -L $f ]] || return 0
+  # Only a file that reads: an empty or broken one says nothing of the session.
+  jq -e 'type == "object"' "$f" >/dev/null 2>&1 || return 0
+  if session_alive "$1"; then
+    unpaused "$1" && { with_registry drop_unpaused "$1" && flog INFO "unpause dropped: the session runs again" session="$1" name="$2"; }
+    local live_pane
+    live_pane=$(fleet_pane_of "$1") || live_pane=""
+    if [[ $live_pane =~ ^%[0-9]+$ ]] && awk -F'\t' -v s="$1" '$1 == "-" && $4 == s { f = 1 } END { exit !f }' "$REGISTRY" 2>/dev/null &&
+      with_registry restore_pane "$1" "$live_pane"; then
+      flog INFO "a finished agent's session runs again; its row takes its pane back" session="$1" name="$2" pane="$live_pane"
+    fi
+  elif session_finished "$1"; then
+    return 0
+  else
+    why="the session's file names no final end"
+  fi
+  n=$(with_registry forget_finished "$1") || { flog WARN "a recorded finish could not be dropped" session="$1" name="$2"; return 0; }
+  (( n > 0 )) && flog INFO "recorded finish dropped: $why" session="$1" name="$2" lines="$n"
+  return 0
+}
+
+# Whether `fleet unpause` put the row with session SID back: it is to be
+# launched again, whatever its old session's end said. unpaused.tsv: name,
+# session, time; written and rewritten under the registry lock.
+unpaused() { # SID
+  [[ -n $1 ]] && awk -F'\t' -v s="$1" '$2 == s { f = 1 } END { exit !f }' "${FLEET_UNPAUSED:-$FLEET_STATE/unpaused.tsv}" 2>/dev/null
+}
+
+# Forget the unpause of session SID once its agent runs again (under the
+# registry lock: with_registry drop_unpaused SID).
+drop_unpaused() { # SID
+  local un=${FLEET_UNPAUSED:-$FLEET_STATE/unpaused.tsv} tmp
+  [[ -e $un ]] || return 0
+  tmp=$(mktemp "$un.XXXXXX") || return 1
+  if awk -F'\t' -v s="$1" '$2 != s' "$un" >"$tmp" && mv -f -- "$tmp" "$un"; then return 0; fi
+  rm -f -- "${tmp:?}"
+  return 1
+}
+
+# The live fleet sessions, one "PANE<tab>SID<tab>ON_FLEET" each: alive by
+# session_alive (this boot, the same process), ON_FLEET 1 when its socket is
+# the fleet's (or not recorded).
+live_fleet_sessions() {
+  local f id row
+  for f in "$KLEPSYDRA_DIR"/fleet/*.json; do
+    [[ -f $f && ! -L $f ]] || continue
+    id=$(basename "$f" .json)
+    row=$(jq -r --arg s "/$FLEET_SOCK" 'select(.ended == null and .tmux.pane != null)
+      | [.tmux.pane, (if .tmux.socket == null or (.tmux.socket | endswith($s)) then 1 else 0 end)] | @tsv' "$f" 2>/dev/null) || continue
+    [[ -n $row ]] && session_alive "$id" && printf '%s\t%s\t%s\n' "${row%%$'\t'*}" "$id" "${row##*$'\t'}"
+  done
+}
+
+# The one live fleet session in PANE that is neither OSID nor in AGENTS (the
+# registry's session ids, one per line), from LIVE (live_fleet_sessions): what
+# a row whose own session is gone may count as its successor (a /clear the row
+# never recorded). recover's repair and row_state both ask this.
+successor_in() { # PANE OSID LIVE AGENTS
+  awk -F'\t' -v p="$1" -v h="$2" 'NR == FNR { if ($0 != "") a[$0] = 1; next } $1 == p && $3 == 1 && $2 != h && !($2 in a) { print $2 }' \
+    <(printf '%s\n' "$4") <(printf '%s\n' "$3") | awk 'END { if (NR == 1) print prev } { prev = $0 }'
+}
+
+# The successor of the row in PANE with session SID: only for a row that names
+# a session that started on the running tmux server (as recover's
+# this_boot_row: a pane id from an earlier server, or a row with no session,
+# means nothing).
+row_successor() { # PANE SID
+  local osid=""
+  [[ -n $2 ]] && on_this_server "$2" || return 1
+  { read -r osid <"$FLEET_STATE/orchestrator.session"; } 2>/dev/null
+  successor_in "$1" "$osid" "$(live_fleet_sessions)" "$(cut -f4 "$REGISTRY" 2>/dev/null | grep .)" | grep .
+}
+
+# A registry row's state (#220): "running" (its session, or its successor
+# after a /clear), "finished" (its session ended cleanly, and no unpause put
+# it back), or "gone" (anything else: a hard shutdown, a killed pane, an end
+# that was no finish, an unpaused agent waiting for fleet recover).
+row_state() { # PANE SID
+  if session_alive "$2" || row_successor "$1" "$2" >/dev/null; then
+    echo running
+  elif ! unpaused "$2" && session_finished "$2"; then
+    echo finished
+  else
+    echo gone
+  fi
 }
 
 # Whether session SID started on the running fleet tmux server: its fleet file
