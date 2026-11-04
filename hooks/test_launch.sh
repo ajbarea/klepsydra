@@ -666,7 +666,8 @@ to send-keys -t o -l $'\033[I'; sleep 0.5
 touch "$work/die4"
 for _ in $(seq 50); do [[ -n $(ti show -pqv -t s @klepsydra_dead 2>/dev/null) ]] && break; sleep 0.1; done
 check "#290: a pane whose process was killed is started again at once, marked with why" \
-  "$(ti display -p -t s '#{pane_dead}') $(ti show -pqv -t s @klepsydra_dead)" "0 its process ended on signal 15"
+  "$(ti display -p -t s '#{pane_dead}') $(ti show -pqv -t s @klepsydra_dead | cut -d' ' -f2-)" "0 its process ended on signal 15"
+check "#292 review 3: the mark names the viewer's own pid" "$(ti show -pqv -t s @klepsydra_dead | cut -d' ' -f1)" "$(ti display -p -t s '#{pane_pid}')"
 check "#290: its last screen is saved" "$(cat "$work"/dead/*.txt 2>/dev/null | grep -c '^last words$')" "1"
 to send-keys -t o -l $'\033[O'; sleep 0.5
 to send-keys -t o -l $'\033[I'; sleep 0.5
@@ -677,10 +678,20 @@ check "#290: the pane shows its saved screen and how to close it" \
 # A viewer killed instead of closed with Enter is closed, never started again.
 w2=$(ti new-window -d -P -F '#{pane_id}' -t s: "sh -c 'sleep 0.3; exit 3'")
 for _ in $(seq 50); do [[ -n $(ti show -pqv -t "$w2" @klepsydra_dead 2>/dev/null) ]] && break; sleep 0.1; done
-check "#290: a non-zero exit is marked with its status" "$(ti show -pqv -t "$w2" @klepsydra_dead)" "its process exited with status 3"
+check "#290: a non-zero exit is marked with its status" "$(ti show -pqv -t "$w2" @klepsydra_dead | cut -d' ' -f2-)" "its process exited with status 3"
 kill -TERM "$(ti display -p -t "$w2" '#{pane_pid}')"; sleep 1
 # (display -t names a gone pane with empty fields and exit 0 in tmux 3.4, so the list decides.)
 check "#290: its viewer killed: the pane is closed" "$(ti list-panes -a -F '#{pane_id}' | grep -cx -- "$w2")" "0"
+# #292 review 3 (m2): a viewer's pane started again by hand keeps the old mark;
+# the program there dying is a new death, saved and shown, never closed unsaved.
+w3=$(ti new-window -d -P -F '#{pane_id}' -t s: "sh -c 'sleep 0.3; exit 3'")
+for _ in $(seq 50); do [[ -n $(ti show -pqv -t "$w3" @klepsydra_dead 2>/dev/null) ]] && break; sleep 0.1; done
+ti respawn-pane -k -t "$w3" "sh -c 'echo second words; sleep 0.3; exit 4'"
+for _ in $(seq 50); do [[ $(ti show -pqv -t "$w3" @klepsydra_dead 2>/dev/null) == *"status 4" ]] && break; sleep 0.1; done
+check "#292 review 3: a program started by hand in a viewer's pane dies: shown again, marked anew, its screen saved" \
+  "$(ti list-panes -a -F '#{pane_id}' | grep -cx -- "$w3") $(ti show -pqv -t "$w3" @klepsydra_dead | cut -d' ' -f2-) $(cat "$work"/dead/*.txt 2>/dev/null | grep -c '^second words$')" \
+  "1 its process exited with status 4 1"
+ti kill-pane -t "$w3" 2>/dev/null
 ti send-keys -t s Enter
 for _ in $(seq 50); do [[ -z $(ti list-panes -t s -F '#{pane_id}' 2>/dev/null) ]] && break; sleep 0.1; done
 check "#290: Enter closes a dead pane's viewer" "$(ti list-panes -t s -F '#{pane_id}' 2>/dev/null | wc -l)" "0"
