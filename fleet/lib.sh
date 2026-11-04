@@ -250,6 +250,7 @@ type_exactly() { # PANE TEXT
 
 not_busy() { has_input_box "$1" && ! busy "$1"; }
 idle_empty() { has_input_box "$1" && [[ -z $(input_text "$1") ]] && ! busy "$1"; }
+box_empty() { has_input_box "$1" && [[ -z $(input_text "$1") ]]; }
 holds_input() { [[ -n $(input_text "$1") ]]; }
 started() { busy "$1" || limit_line "$1" >/dev/null; }
 rc_settled() { # the connect line, or the menu shown when it is already on
@@ -333,9 +334,16 @@ sent_or_started() { started "$1" || { has_input_box "$1" && [[ -z $(input_text "
 # has newlines). Prints sent, not-pasted, mixed (pasted beside a line AJ
 # began: left in the box unsent, since taking it back out by keystrokes could
 # take his characters with it) or held (still in the box after three Enters).
-inbox_deliver() { # PANE FILE
-  local p=$1 file=$2 box want text
-  idle_empty "$(screen "$p")" || { echo not-pasted; return; }
+# With ANY, a running turn is no bar (Claude Code queues a message sent during
+# one), and it is sent once the box has emptied.
+inbox_deliver() { # PANE FILE [any]
+  local p=$1 file=$2 box want text gone=sent_or_started
+  if [[ ${3:-} == any ]]; then
+    box_empty "$(screen "$p")" || { echo not-pasted; return; }
+    gone=box_empty
+  else
+    idle_empty "$(screen "$p")" || { echo not-pasted; return; }
+  fi
   t load-buffer -b "fleet-$$" "$file" && t paste-buffer -p -d -b "fleet-$$" -t "$p"
   wait_for "$p" 5 holds_input || { echo not-pasted; return; }
   box=$(input_text "$(screen "$p")")
@@ -348,7 +356,7 @@ inbox_deliver() { # PANE FILE
   fi
   for _ in 1 2 3; do
     t send-keys -t "$p" Enter
-    if wait_for "$p" "${FLEET_START_WAIT:-10}" sent_or_started; then
+    if wait_for "$p" "${FLEET_START_WAIT:-10}" "$gone"; then
       echo sent
       return
     fi

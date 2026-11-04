@@ -3280,6 +3280,25 @@ mv "$work/brief/claude-morning.md" "$work/brief/morning.md"
 check "#277: a plain mv to the new name commits as one rename and leaves neither name behind" \
   "$(bsync) $(git -C "$work/brief" show -M --name-status --format= HEAD | tr '\t' ' ' | paste -sd' ') $(git -C "$work/brief" status --porcelain -- claude-morning.md morning.md | wc -l)" "0 R100 claude-morning.md morning.md 0"
 
+echo "fleet send: a message is submitted, never left in the box (#320)"
+fsend() { bash "$here/send.sh" "$@" 2>/dev/null; }
+p=$(pane snd '{"above":["idle"],"enter_ignore":1,"on_submit":"none"}'); settle
+msg="Heph: #322 is red on its current head; read the report under ci/ and fix it before #319's follow-ups. This line runs past two hundred characters on purpose, as the 11-04 sends that stayed in the box did."
+out=$(fsend "$p" "$msg"); rc=$?
+check "#320: a long message whose first Enter is lost is still submitted, once" \
+  "$out $rc $(grep -c "^SUBMIT ${msg:0:40}" "$work/snd.log") $(grep -c 'KEY ENTER (lost after a paste)' "$work/snd.log")" "sent 0 1 1"
+check "and it is logged with its pane and length" "$(jq -r 'select(.message == "message sent") | [.pane, .chars] | join(" ")' "$FLEET_LOG" | tail -1)" "$p ${#msg}"
+state snd '{"above":["working"],"busy":true,"on_submit":"none"}'; settle
+check "#320: a running turn is no bar: the message is queued (sent)" "$(fsend "$p" "a note for later")" "sent"
+state snd '{"above":["idle"],"input":"AJ is typing","on_submit":"none"}'; settle
+: >"$work/snd.log"
+check "#320: text already in the box is never touched" \
+  "$(fsend "$p" "x"; echo "rc=$?") $(grep -c . "$work/snd.log") $(input_text "$(screen "$p")")" $'not-pasted\nrc=1 0 AJ is typing'
+check "#320: stdin as the message" "$(state snd '{"above":["idle"],"clear":true,"on_submit":"none"}'; settle; printf 'from stdin\n' | fsend "$p" -)" "sent"
+check "#320: a pane the server does not have, or no text, is refused (2)" \
+  "$(fsend %99999 "x"; echo -n "$? "; fsend "$p" "   "; echo -n "$? "; fsend "$p"; echo $?)" "2 2 2"
+t kill-window -t "$p"
+
 echo "the fleet log"
 check "every line is one JSON object with ts, level, target and message" \
   "$(jq -s 'all(has("ts") and has("level") and has("target") and has("message"))' "$FLEET_LOG")" "true"
