@@ -22,6 +22,7 @@ HOOK_COPIES=(
   "hooks/klepsydra-fleet.sh klepsydra-fleet.sh"
   "hooks/klepsydra-launch.sh klepsydra-launch.sh"
   "hooks/klepsydra-tmux.conf klepsydra-tmux.conf"
+  "hooks/klepsydra-pane-died.sh klepsydra-pane-died.sh"
   "hooks/klepsydra-wrapup.sh klepsydra-wrapup.sh"
   "hooks/klepsydra-wrapup.md skills/klepsydra-wrapup/SKILL.md"
   "statusline/klepsydra-statusline.sh klepsydra-statusline.sh"

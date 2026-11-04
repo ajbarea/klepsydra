@@ -11,7 +11,7 @@ export FLEET_SOCK="fleet-test-$$" FLEET_STATE="$work/state" FLEET_SESSION=fleet
 export FLEET_HOOK_DIR="$work/claude" # never the real ~/.claude
 # Never AJ's keryx: the resume service skips voices, and voices.sh finds no keryx
 # and reads a private keryx config, unless a case hands it a stub (#273).
-export FLEET_VOICES=0 FLEET_KERYX="$work/no-keryx" XDG_CONFIG_HOME="$work/xdg"
+export FLEET_LIVE_CONF=0 FLEET_VOICES=0 FLEET_KERYX="$work/no-keryx" XDG_CONFIG_HOME="$work/xdg"
 real_keryx_config=${HOME}/.config/keryx/config.json
 real_keryx_sum=$(sha256sum "$real_keryx_config" 2>/dev/null | cut -d' ' -f1)
 export KLEPSYDRA_DIR="$work/klepsydra" FLEET_TICK=0.1 FLEET_START_WAIT=4 FLEET_TURN_WAIT=6 FLEET_RC_WAIT=12
@@ -22,6 +22,8 @@ unset CLAUDE_CONFIG_DIR KLEPSYDRA_BACKGROUND
 # Never AJ's user manager (#265 review): a case that wants systemctl passes its
 # own stub; a bare `systemctl` lands on a guard that records the call.
 export FLEET_SYSTEMCTL="$work/no-systemctl"
+# Never the host's WSL: the doctor reads AJ's .wslconfig only on WSL (#292 review 3).
+unset WSL_DISTRO_NAME FLEET_WSLCONFIG
 mkdir -p "$work/guard"
 printf '#!/usr/bin/env bash\necho "$*" >>%q\nexit 1\n' "$work/guard.calls" >"$work/guard/systemctl"
 chmod +x "$work/guard/systemctl"
@@ -1027,6 +1029,8 @@ root=${here%/fleet}
 for c in "${HOOK_COPIES[@]}"; do mkdir -p "$(dirname "$FLEET_HOOK_DIR/${c#* }")"; cp "$root/${c%% *}" "$FLEET_HOOK_DIR/${c#* }"; done
 touch "$work/active" "$FLEET_STATE/resume.beat"
 session_file o1 "$o" https://claude.ai/code/session_01O
+# The fleet's server carries the pane-died hook, as install sets it (#290).
+t set-hook -g pane-died "run-shell ': klepsydra-pane-died.sh'"
 out=$(DOC_UP=http DOC_SERVE="https://desk.tail1.ts.net (tailnet only)" doctor); code=$?
 # Which rows are not ok, not how many are: a new check that passes here breaks no case.
 notok() { grep -v '^ok ' | cut -d: -f1 | paste -sd'|'; }
@@ -1036,6 +1040,7 @@ check "the default account is logged in; the second, not yet, is a warning" \
 check "with a watcher running, nothing fails and the exit is 0 (the second account and voices warn here)" \
   "$(DOC_WATCH='%2 %5' DOC_UP=http DOC_SERVE=on doctor | notok; echo "rc=${PIPESTATUS[0]}")" "warn account $work/cfg-b|warn voices"$'\nrc=0'
 check "the watcher's panes are named" "$(DOC_WATCH='%2 %5' doctor | grep '^ok   pane watcher')" "ok   pane watcher: watching %2 %5"
+t set-hook -gu pane-died
 state wpane '{"above":["  ⎿  You'"'"'ve hit your 5-hour limit · resets 11:30am (America/New_York)","",""]}'
 check "#263: a pane still at its limit well past the reset fails, named with its reset" \
   "$(FLEET_NOW=$noon doctor | grep '^FAIL limits')" "FAIL limits: still at a limit past its reset: $w (the resume service missed it)"
@@ -1209,6 +1214,12 @@ check "#208: the doctor timer runs every 5 min into the data folder, and a faili
   "$(grep -c 'OnUnitActiveSec=5min' "$inst/units/fleet-doctor.timer") $(grep -E '^(ExecStart|SuccessExitStatus)=' "$inst/units/fleet-doctor.service" | tr '\n' '|')" \
   "1 SuccessExitStatus=1|ExecStart=/usr/bin/bash $inst/state/doctor.sh --json \"$KLEPSYDRA_DIR/fleet-health.json\"|"
 check "#208 review 1: and what it prints stays out of the journal" "$(grep -c '^StandardOutput=null$' "$inst/units/fleet-doctor.service")" "1"
+# #292 review 4: on WSL both the doctor's unit and the watchdog's get the distro's name.
+# In a folder of its own: the dry-run case below lists what $inst holds.
+iw=$work/inst-wsl
+WSL_DISTRO_NAME=Test FLEET_STATE="$iw/s" FLEET_UNITS="$iw/u" FLEET_BIN="$iw/b" FLEET_HOOK_DIR="$iw/c" bash "$here/install.sh" --force >/dev/null 2>&1
+check "#292 review 4: an install on WSL passes WSL_DISTRO_NAME to the doctor's and the watchdog's units" \
+  "$(grep -c '^Environment=.*"WSL_DISTRO_NAME=Test"' "$iw/u/fleet-doctor.service" "$iw/u/fleet-tmux-watch.service" | cut -d: -f2 | paste -sd' ')" "1 1"
 FLEET_STATE="$inst/s2" FLEET_UNITS="$inst/u2" FLEET_BIN="$inst/b2" FLEET_HOOK_DIR="$inst/c2" bash "$here/install.sh" --dry-run --force >"$work/dry" 2>/dev/null
 check "a dry run says what it would do and changes nothing" "$(grep -c '^would' "$work/dry" | sed 's/^[1-9][0-9]*$/some/') $(find "$inst" -mindepth 1 -maxdepth 1 -printf '%f\n' | sort | tr '\n' ' ')" "some bin claude state units "
 cat >"$work/sc-live" <<'EOF'
@@ -1288,6 +1299,7 @@ ok   fleet-accounts-sync.timer: enabled and active
 ok   fleet-sync-briefing.timer: enabled and active
 ok   fleet-ci-watch.service: enabled and active
 ok   fleet-doctor.timer: enabled and active
+ok   fleet-tmux-watch.timer: enabled and active
 ok   the resume service logged its start
 rc=0"
 check "no transient unit is left" "$(find "$SC" -name '*.transient' | wc -l)" "0"
@@ -3396,6 +3408,172 @@ check "#277: a file under its old name is still committed" "$(bsync) $(git -C "$
 mv "$work/brief/claude-morning.md" "$work/brief/morning.md"
 check "#277: a plain mv to the new name commits as one rename and leaves neither name behind" \
   "$(bsync) $(git -C "$work/brief" show -M --name-status --format= HEAD | tr '\t' ' ' | paste -sd' ') $(git -C "$work/brief" status --porcelain -- claude-morning.md morning.md | wc -l)" "0 R100 claude-morning.md morning.md 0"
+
+echo "the tmux server watchdog (#290)"
+: >"$FLEET_LOG"
+tw="$work/tw"; mkdir -p "$tw/proc/7001" "$tw/crashes"
+echo 33333333-3333-4333-8333-333333333333 >"$tw/boot"
+# Booted at 1793700000; server 7001 started 555 ticks (5 s) after: a dump counts from 1793700005.
+printf 'cpu  1 2 3\nbtime 1793700000\n' >"$tw/proc/stat"
+printf '#!/usr/bin/env bash\necho recover >>%q\necho "recovered: x -> %%%%9"\n' "$tw/recover.calls" >"$tw/recover"; chmod +x "$tw/recover"
+# The journal as journalctl reads it (#292 review 3): fixture lines are "BOOT
+# EPOCH TEXT"; -b alone is this boot, -b ID another, --since @N drops older lines.
+cat >"$tw/journal" <<EOF
+#!/usr/bin/env bash
+b=\$(tr -d - <"$tw/boot") since=0
+while (( \$# )); do
+  case \$1 in
+    -b) [[ \${2:-} =~ ^[0-9a-f]{32}\$ ]] && { b=\$2; shift; } ;;
+    --since) since=\${2#@}; shift ;;
+  esac
+  shift
+done
+awk -v b="\$b" -v s="\$since" '\$1 == b && \$2 >= s { sub(/^[^ ]+ [^ ]+ /, ""); print }' "$tw/kernel" 2>/dev/null
+EOF
+chmod +x "$tw/journal"
+CUR=33333333-3333-4333-8333-333333333333 PREV=22222222-2222-4222-8222-222222222222
+CAP="WSL (1291 - CaptureCrash): Capturing crash for pid: 7001, executable: !usr!bin!tmux, signal: 11, port: 50005"
+jl() { printf '%s %s Nov 03 06:02:27 host unknown: %s\n' "${1//-/}" "$2" "$3" >>"$tw/kernel"; } # BOOT EPOCH TEXT
+stat7001() { printf '7001 (tmux: server) S 1 1 1 0 -1 0 0 0 0 0 0 0 0 0 20 0 1 0 %s 0 0\n' "$1" >"$tw/proc/7001/stat"; }
+# W: the watchdog against a socket that answers (FLEET_SOCK) or none (WSOCK=gone).
+W() { FLEET_SOCK=${WSOCK:-$FLEET_SOCK} FLEET_PROC=${WPROC:-/proc} FLEET_BOOT_ID="$tw/boot" FLEET_CRASH_DIR="$tw/crashes" \
+  FLEET_JOURNAL="$tw/journal" FLEET_RECOVER="${WREC:-$tw/recover}" WSL_DISTRO_NAME=Test FLEET_INTEROP_PROBE=${WPROBE:-true} \
+  FLEET_INIT_INTEROP="$tw/no-interop" bash "$here/tmux-watch.sh" 2>/dev/null; }
+rm -f -- "$FLEET_STATE/tmux-server"
+W
+check "#290: the answering server is recorded with its pid and this boot" \
+  "$(cut -d' ' -f1,3 "$FLEET_STATE/tmux-server")" "$(t display -p '#{pid}') 33333333-3333-4333-8333-333333333333"
+check "#292 review 3: and when it started, as an epoch" "$(awk '{ print NF, ($4 ~ /^[0-9]+$/) }' "$FLEET_STATE/tmux-server")" "4 1"
+# #292 review 4: the epoch's value decides what the next boot's journal is read
+# from. A /proc of fixed btime (WSL's own steps forward now and then) holding
+# the answering server's real stat.
+sp=$(t display -p '#{pid}'); mkdir -p "$tw/p2/$sp"; cp "/proc/$sp/stat" "$tw/p2/$sp/stat"; printf 'cpu  1 2 3\nbtime 1793700000\n' >"$tw/p2/stat"
+stt=$(cat "$tw/p2/$sp/stat"); read -ra stf <<<"${stt##*) }"
+rm -f -- "$FLEET_STATE/tmux-server"; WPROC="$tw/p2" W
+check "#292 review 4: the epoch is the boot's btime plus the server's start in seconds" \
+  "$(cut -d' ' -f4 "$FLEET_STATE/tmux-server")" "$(( 1793700000 + stf[19] / $(getconf CLK_TCK) ))"
+rm -f -- "$FLEET_STATE/tmux-server"; W
+cut -d' ' -f1-3 "$FLEET_STATE/tmux-server" >"$work/tsold"; cp "$work/tsold" "$FLEET_STATE/tmux-server"; : >"$FLEET_LOG"
+W
+check "#292 review 3: a record from before the epoch was kept, of the same server: kept again with it, nothing recovered" \
+  "$(awk '{ print NF }' "$FLEET_STATE/tmux-server") $(grep -c "watching the fleet's tmux server" "$FLEET_LOG") $(grep -c 'crashed' "$FLEET_LOG")" "4 1 0"
+W
+check "#290: an unchanged server is logged once" "$(grep -c "watching the fleet's tmux server" "$FLEET_LOG")" "1"
+# A recorded server 7001 (start 555) that has since gone.
+gone_server() { echo "7001 555 $(cat "$tw/boot") 1793700005" >"$FLEET_STATE/tmux-server"; rm -f -- "$tw/proc/7001/stat" "$tw/recover.calls" "$tw/kernel" "$tw"/crashes/*; }
+gone_server
+WSOCK=gone-$$ WPROC="$tw/proc" W
+check "#290: gone with no crash record: logged, never recovered" \
+  "$(grep -c 'ended with no crash record' "$FLEET_LOG") $(cat "$tw/recover.calls" 2>/dev/null || echo none) $(test -e "$FLEET_STATE/tmux-server" && echo kept || echo cleared)" "1 none cleared"
+gone_server; : >"$tw/crashes/wsl-crash-1793703747-7001-_usr_bin_tmux-11.dmp"
+WSOCK=gone-$$ WPROC="$tw/proc" W
+check "#290: WSL's crash dump for its pid: fleet recover runs once, logged with the signal" \
+  "$(cat "$tw/recover.calls") $(jq -r 'select(.message | startswith("the fleet'"'"'s tmux server crashed")) | .signal' "$FLEET_LOG")" "recover 11"
+WSOCK=gone-$$ WPROC="$tw/proc" W
+check "#290: the next minute does not recover again" "$(wc -l <"$tw/recover.calls")" "1"
+gone_server; jl "$CUR" 1793703747 "tmux: server[7001]: segfault at 118 ip 00007d65 sp 00007ffd error 4 in libevent_core-2.1.so.7"
+WSOCK=gone-$$ WPROC="$tw/proc" W
+check "#292 review: the kernel's segfault line (another pid namespace's pid) is no crash record" "$(cat "$tw/recover.calls" 2>/dev/null || echo none)" "none"
+gone_server; jl "$CUR" 1793703747 "$CAP"
+WSOCK=gone-$$ WPROC="$tw/proc" W
+check "#292 review: WSL's CaptureCrash line for its pid alone is a crash record" "$(cat "$tw/recover.calls")" "recover"
+gone_server; jl "$CUR" 1793703747 "${CAP/pid: 7001/pid: 7002}"
+WSOCK=gone-$$ WPROC="$tw/proc" W
+check "#292 review 3: a CaptureCrash line for another pid is no crash record" "$(cat "$tw/recover.calls" 2>/dev/null || echo none)" "none"
+gone_server; jl "$CUR" 1793690000 "$CAP"
+WSOCK=gone-$$ WPROC="$tw/proc" W
+check "#292 review 3: one for its pid dated before the server started is none either" "$(cat "$tw/recover.calls" 2>/dev/null || echo none)" "none"
+gone_server; jl "$PREV" 1793703747 "$CAP"
+WSOCK=gone-$$ WPROC="$tw/proc" W
+check "#292 review 3: nor one in another boot's journal" "$(cat "$tw/recover.calls" 2>/dev/null || echo none)" "none"
+gone_server; : >"$tw/crashes/wsl-crash-1793690000-7001-_usr_bin_tmux-11.dmp"; : >"$FLEET_LOG"
+WSOCK=gone-$$ WPROC="$tw/proc" W
+check "#292 review: a dump from before the server started (an earlier boot's, its pid reused) is no crash record" \
+  "$(cat "$tw/recover.calls" 2>/dev/null || echo none) $(grep -c 'ended with no crash record' "$FLEET_LOG")" "none 1"
+gone_server; : >"$tw/crashes/wsl-crash-$(date +%s)-7001-_usr_bin_tmux-11.dmp"
+W
+check "#290: a new server started before the watchdog looked: the old one's crash still recovers, and the new one is recorded" \
+  "$(cat "$tw/recover.calls") $(cut -d' ' -f1 "$FLEET_STATE/tmux-server")" "recover $(t display -p '#{pid}')"
+gone_server; : >"$tw/crashes/wsl-crash-1-7001-_usr_bin_tmux-11.dmp"; stat7001 555
+WSOCK=gone-$$ WPROC="$tw/proc" W
+check "#290: the recorded server still runs (it did not answer once): nothing yet" \
+  "$(cat "$tw/recover.calls" 2>/dev/null || echo none) $(cut -d' ' -f1 "$FLEET_STATE/tmux-server")" "none 7001"
+gone_server; : >"$tw/crashes/wsl-crash-1-7001-_usr_bin_tmux-11.dmp"; echo "7001 555 $PREV 1793600005" >"$FLEET_STATE/tmux-server"
+WSOCK=gone-$$ WPROC="$tw/proc" W
+check "#290: a server from an earlier boot is left to fleet recover by hand" \
+  "$(cat "$tw/recover.calls" 2>/dev/null || echo none) $(grep -c 'from an earlier boot' "$FLEET_LOG")" "none 1"
+# #292 review 2: on 11-03 WSL shut down 17 s after the crash took the fleet's
+# tab, before the watchdog's next minute; the next boot finds the crash in the
+# previous boot's journal and recovers.
+gone_server; echo "7001 555 $PREV 1793600005" >"$FLEET_STATE/tmux-server"; jl "$PREV" 1793603747 "$CAP"
+: >"$FLEET_LOG"; WSOCK=gone-$$ WPROC="$tw/proc" W
+check "#292 review 2: a crash before the last shutdown, in the previous boot's journal: fleet recover runs on this boot" \
+  "$(cat "$tw/recover.calls" 2>/dev/null || echo none) $(grep -c 'crashed before the last shutdown' "$FLEET_LOG")" "recover 1"
+gone_server; echo "7001 555 $PREV 1793600005" >"$FLEET_STATE/tmux-server"; jl "$CUR" 1793603747 "$CAP"
+WSOCK=gone-$$ WPROC="$tw/proc" W
+check "#292 review 3: a record of that pid in this boot's journal, not the previous one's, recovers nothing" "$(cat "$tw/recover.calls" 2>/dev/null || echo none)" "none"
+gone_server; echo "7001 555 $PREV 1793600005" >"$FLEET_STATE/tmux-server"; jl "$PREV" 1793590000 "$CAP"
+WSOCK=gone-$$ WPROC="$tw/proc" W
+check "#292 review 3: nor one from that boot dated before the server started (an earlier tmux with its pid)" "$(cat "$tw/recover.calls" 2>/dev/null || echo none)" "none"
+gone_server; echo "7001 555 $PREV 1793600005" >"$FLEET_STATE/tmux-server"; jl "$PREV" 1793603747 "${CAP/pid: 7001/pid: 7002}"
+WSOCK=gone-$$ WPROC="$tw/proc" W
+check "#292 review 3: nor a crash of another pid in that boot" "$(cat "$tw/recover.calls" 2>/dev/null || echo none)" "none"
+# #292 review: a recover that cannot reach Windows, or leaves an agent NOT
+# STARTED, is tried again each minute, then given up and said so.
+crash() { gone_server; : >"$tw/crashes/wsl-crash-1793703747-7001-_usr_bin_tmux-11.dmp"; rm -f -- "$FLEET_STATE/tmux-recover.pending"; : >"$FLEET_LOG"; }
+crash; WPROBE=false WSOCK=gone-$$ WPROC="$tw/proc" W
+check "#292 review: no Windows interop from the unit: nothing launched, left pending, logged why" \
+  "$(cat "$tw/recover.calls" 2>/dev/null || echo none) $(cat "$FLEET_STATE/tmux-recover.pending") $(jq -r 'select(.message | contains("trying again next minute")) | .why' "$FLEET_LOG" | grep -c 'Windows interop did not answer')" "none 7001 1 1"
+WSOCK=gone-$$ WPROC="$tw/proc" W
+check "#292 review: the next minute, with interop back, it recovers and clears the pending record" \
+  "$(cat "$tw/recover.calls") $(test -e "$FLEET_STATE/tmux-recover.pending" && echo pending || echo cleared)" "recover cleared"
+printf '#!/usr/bin/env bash\necho recover >>%q\necho "recovered: x -> NOT STARTED"\n' "$tw/recover.calls" >"$tw/recover-ns"; chmod +x "$tw/recover-ns"
+crash; for _ in 1 2 3; do FLEET_RECOVER_TRIES=3 WREC="$tw/recover-ns" WSOCK=gone-$$ WPROC="$tw/proc" W; done
+check "#292 review: an agent NOT STARTED is tried again each minute, then given up after the tries and said so" \
+  "$(wc -l <"$tw/recover.calls") $(test -e "$FLEET_STATE/tmux-recover.pending" && echo pending || echo cleared) $(grep -c 'gave up; run fleet recover by hand' "$FLEET_LOG")" "3 cleared 1"
+crash; WSOCK=gone-$$ WPROC="$tw/proc" FLEET_STATE=$FLEET_STATE FLEET_SOCK=gone-$$ FLEET_PROC="$tw/proc" FLEET_BOOT_ID="$tw/boot" FLEET_CRASH_DIR="$tw/crashes" \
+  FLEET_JOURNAL="$tw/journal" FLEET_RECOVER="$tw/recover" FLEET_INTEROP_PROBE=true env -u WSL_DISTRO_NAME bash "$here/tmux-watch.sh" 2>/dev/null
+check "#292 review: a unit with no WSL_DISTRO_NAME says so and launches nothing" \
+  "$(cat "$tw/recover.calls" 2>/dev/null || echo none) $(jq -r '.why // empty' "$FLEET_LOG" | grep -c 'no WSL_DISTRO_NAME')" "none 1"
+rm -f -- "$FLEET_STATE/tmux-server" "$FLEET_STATE/tmux-recover.pending"
+check "#292 review: install passes WSL_DISTRO_NAME into the watchdog's and the doctor's units, the watchdog with an hour to run" \
+  "$(grep -cF 'WSL_DISTRO_NAME:+ \"WSL_DISTRO_NAME=' "$here/install.sh") $(grep -c '^TimeoutStartSec=3600$' "$here/install.sh")" "2 1"
+
+echo "the running server reads the installed conf (#292 review)"
+cs="kl-conf-$$" cdir="$work/confdir"; mkdir -p "$cdir"
+cp "$here/../hooks/klepsydra-tmux.conf" "$here/../hooks/klepsydra-pane-died.sh" "$cdir/"
+tmux -L "$cs" -f /dev/null new-session -d -s fleet "sleep 600"
+tmux -L "$cs" set -g remain-on-exit failed
+dp=$(tmux -L "$cs" new-window -d -P -F '#{pane_id}' -t fleet: "sh -c 'exit 3'")
+for _ in $(seq 30); do [[ $(tmux -L "$cs" display -p -t "$dp" '#{pane_dead}' 2>/dev/null) == 1 ]] && break; sleep 0.1; done
+check "a doctor run before: the server has no pane-died hook: a warning" \
+  "$(FLEET_SOCK=$cs bash "$here/doctor.sh" 2>/dev/null | grep -c '^warn *pane-died hook: not set')" "1"
+FLEET_SOCK=$cs KLEPSYDRA_DEAD_DIR="$work/dead290" bash "$here/tmux-conf.sh" "$cdir" 2>/dev/null; rc=$?
+check "tmux-conf.sh: the running server takes the hook, and a pane already dead there is started again" \
+  "$rc $(tmux -L "$cs" show-hooks -g pane-died | grep -c 'klepsydra-pane-died.sh') $(tmux -L "$cs" display -p -t "$dp" '#{pane_dead}') $(tmux -L "$cs" show -pqv -t "$dp" @klepsydra_dead | cut -d' ' -f2-)" \
+  "0 1 0 its process exited with status 3"
+check "and the doctor sees the hook" "$(FLEET_SOCK=$cs FLEET_HOOK_DIR=$cdir bash "$here/doctor.sh" 2>/dev/null | grep -c '^ok *pane-died hook')" "1"
+check "#292 review 2: the hook set but its script missing: a warning" \
+  "$(FLEET_SOCK=$cs FLEET_HOOK_DIR=$work/nohooks bash "$here/doctor.sh" 2>/dev/null | grep -c '^warn *pane-died hook: set, but .*klepsydra-pane-died.sh is missing')" "1"
+printf '[wsl2]\nmemory=8GB\n' >"$work/wslconfig"
+check "#292 review 2: a .wslconfig that lets WSL shut down when idle: a warning naming the setting" \
+  "$(FLEET_SOCK=$cs FLEET_WSLCONFIG=$work/wslconfig bash "$here/doctor.sh" 2>/dev/null | grep -c '^warn *WSL stays up: add instanceIdleTimeout=-1 under \[general\]')" "1"
+printf '[wsl2]\nmemory=8GB\n[General]\n instanceIdleTimeout = -1\n' >"$work/wslconfig"
+check "#292 review 2: with instanceIdleTimeout=-1 under [general]: ok" \
+  "$(FLEET_SOCK=$cs FLEET_WSLCONFIG=$work/wslconfig bash "$here/doctor.sh" 2>/dev/null | grep -c '^ok *WSL stays up')" "1"
+printf '[wsl2]\ninstanceIdleTimeout=-1\n' >"$work/wslconfig"
+check "#292 review 2: the setting under [wsl2] does nothing, so still a warning" \
+  "$(FLEET_SOCK=$cs FLEET_WSLCONFIG=$work/wslconfig bash "$here/doctor.sh" 2>/dev/null | grep -c '^warn *WSL stays up')" "1"
+# #292 review 4: the real gate and path: on WSL (WSL_DISTRO_NAME) the doctor reads
+# the .wslconfig in the Windows home above klepsydra's AppData folder.
+mkdir -p "$work/Users/x/AppData/Local/k"; printf '[general]\r\ninstanceIdleTimeout=-1\r\n' >"$work/Users/x/.wslconfig"
+wdoc() { FLEET_SOCK=$cs KLEPSYDRA_DIR="$work/Users/x/AppData/Local/k" bash "$here/doctor.sh" 2>/dev/null | awk '/ WSL stays up:/ { print $1 }'; }
+check "#292 review 4: on WSL, with the Windows home's .wslconfig keeping it up (CRLF): ok; off WSL: no check" \
+  "$(WSL_DISTRO_NAME=Test wdoc)|$(wdoc)" "ok|"
+printf '[wsl2]\r\nmemory=8GB\r\n' >"$work/Users/x/.wslconfig"
+check "#292 review 4: and without the setting there: a warning" "$(WSL_DISTRO_NAME=Test wdoc)" "warn"
+tmux -L "$cs" kill-server 2>/dev/null
+check "tmux-conf.sh with no server running does nothing" "$(FLEET_SOCK=$cs bash "$here/tmux-conf.sh" "$cdir" 2>/dev/null; echo $?)" "0"
 
 echo "the fleet log"
 check "every line is one JSON object with ts, level, target and message" \
