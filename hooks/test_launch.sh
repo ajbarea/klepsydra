@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Tests for the launcher against a private tmux server and a stub wt.exe.
-# Run: bash hooks/test_launch.sh
+# Run: make test-launch (it takes the heavy lock)
 set -uo pipefail
 
 here=$(cd "$(dirname "$0")" && pwd)

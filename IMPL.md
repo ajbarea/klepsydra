@@ -13,6 +13,7 @@ Prefer deleting or consolidating code over new special cases.
 HELD (no code): #293, #295, #302, #271, #270, #272 (design PR #300), any new feature; also #303 and #301
 (bugs filed today, not yet in review) until Heph says.
 
+<<<<<<< HEAD
 ## Audit cuts (Heph 11-03, fleet-briefing/review/klepsydra-bloat-audit-2026-11-03.md, last section)
 After the bug-fix PRs: 1 (poll guard: claude-prefs #41/PR #42 open, 91/91 + 7 mutants; needs an
 independent reviewer, then merge and `git -C ~/claude-prefs pull`), 3 (hooks/common.sh), 4 (no stale-PR
@@ -20,24 +21,32 @@ SessionStart in workers), 2 (limits from StopFailure + resets_at, staged), 5 (ex
 claude --remote-control NAME "brief"), 6 (--append-system-prompt-file, tail ~260 words), 7 (friction.md
 triage + inject last 10), then the #8 trial. #9 deferred, #10 denied. #304/#305 closed (withdrawn).
 Each cut: a small PR with the proof test the report names.
+=======
+## Next (in order)
+1. Windows build (`flock -o /tmp/fleet-heavy.lock timeout 3600 bash scripts/build-windows.sh`) for #190, #191, #194, #195, #207, #210, #211; reinstall; click a card's GitHub mark once and check the `open github` log line (#195).
+2. #216 launches must not steal focus (new-window -d), #217 needs-you lingering after a permission answer.
+3. #150 (research done: portable-pty + xterm.js, a grouped tmux session), #154 wall Recover button, #158 `--apply`, #157 part 3, #185 part 3, #204 demo mode, #215, #163.
+>>>>>>> origin/main
 
-## Done (session 22)
-- ✅ Merged + installed: #296 (watcher race, 9c4c79e), #299 (11-03 Quality rule, ce20046).
-- ✅ Filed #298 (done), #301 (doctor scan cost), #303 (panes.tsv loses rows: launch.sh writes no row
-  without task-NAME.src; unlogged rewrites; unlocked hand edits), #304 (wait rule).
-- #291 (tasks-289): r4, r5, r6 fixes; r7 final verify CLEAN; m1 + m4 follow-ups pushed (2cbd85f, all 9
-  heavy.sh mutants killed with FLEET_HEAVY_HELD=1 set). Next: CI green -> squash merge -> make install-fleet.
-- #261 (doctor-246): r10 Blocking fixed (a8bbe24), CI 19-red fixed (5cdd429: fresh() registers a row its
-  launch left unregistered). r11 reviewer running (/tmp/claude-1001/r11-261/report.md).
-- #230 (ask-217): r2 + r3 fixes pushed (7339b19); needs r4 reader.
-- #287 (guard-264): Heph's go-ahead implemented (7bd0020 + main merged c83583c): stop dated by the last
-  good main-chain reply, tail-only read (7 ms vs 727 ms on 48 MB). Suite 222/223 (strict local 60 ms
-  budget on a sends-nothing call read 64 ms under load). Needs a fresh r10 reader (ceiling 5 more).
-- #288 (dead-288): merged #261's branch; CI green on 41725667867. PR against main after #261 merges.
-- Reviewers in flight (reports land in these files; if the session ended first, re-dispatch fresh):
-  #261 r11 -> /tmp/claude-1001/r11-261/report.md ; #287 r10 -> /tmp/claude-1001/r10-287/report.md.
-- #305 (wait-rule): brief-tail long-runs rule + brief.sh --check of a missing brief fails. CI pending.
-- #292 (tmux-290): r3 still owed.
+## Resume here (session 22 moved at Heph's ask, 11-03 late)
+Reviewers were STOPPED by the move: re-dispatch fresh, one change each, opus, with the long-runs rule.
+1. #261 (doctor-246) head a0d379f: r11 fixes pushed, NOT yet run locally (the suite prefix run was
+   stopped). Read its CI first; then one verify reader on r11's report /tmp/claude-1001/r11-261/report.md.
+   Old Minors still listed: r10 Minor 1, 4, 6 (judge again; prefer deletion). Merge on clean + green CI,
+   make install-fleet. Then #288 (dead-288, CI green 41725667867): PR against main after #261 merges.
+2. #287 (guard-264) head 30ef813: r10 fixes pushed (transcript alone dates the stop; tail 2 MB; grep -a);
+   suite 226/227 (strict local 60 ms timing check reads 64-66 ms under load; untouched path). r11 reader
+   was stopped: re-dispatch (brief: verify r10 report /tmp/claude-1001/r10-287/report.md). Deferred: r10 M5
+   (resume-at-reset.sh:689 dates by the screen). After merge: install, PreToolUse hook in ~/.claude
+   settings, `fleet accounts sync`.
+3. #230 (ask-217) head 7339b19, CI green: r3 fixes pushed; verify reader was stopped, re-dispatch
+   (r3 report /tmp/claude-1001/r3-230/report.md; harness /tmp/claude-1001/-home-ajbar-ajsoftworks/41dda5c8-6ff7-44e8-a23c-0db217dc1e2d/scratchpad/mut230.sh).
+4. claude-prefs#42 (worktree /tmp/claude-1001/-home-ajbar-ajsoftworks/41dda5c8-6ff7-44e8-a23c-0db217dc1e2d/scratchpad/prefs-guard,
+   branch fix/poll-guard-teach, head 509d350): r1 fixes pushed (allow-list data, shlex, 136/136, 12 mutants
+   killed). r2 reader next (r1 report /tmp/claude-1001/r1-prefs42/report.md). After merge:
+   git -C ~/claude-prefs pull (the hook runs from that clone).
+5. #292 r3 still owed. Then audit cuts 3, 4, 2, 5, 6, 7, #8 trial (section above).
+- ✅ Merged + installed this session: #296, #299, #291 (21b84af). Filed #298, #301, #303, #304 (closed).
 
 ## Next, in order (session 21 list; items 1-3 moved above)
 1. (done) #296 fix/watch-alert-race (watch-race), head 0a10fe1, review-clean r3. CI run 41702648814 was still in
@@ -68,9 +77,17 @@ Each cut: a small PR with the proof test the report names.
 9. #272 (resume-method experiment, design first).
 
 ## Notes
+<<<<<<< HEAD
 - Rule (#289, 11-03): tmux-spawning tests and multi-file shellcheck run under the heavy lock, timeout inside it.
 - Never nest a heredoc inside a python <<'EOF' edit: write the edit script with Write and run it.
 - `gh pr edit` fails (Projects classic): `gh api -X PATCH repos/ajbarea/klepsydra/pulls/N -F body=@file`;
   phylax wants the body file written in its own call before the PATCH.
 - shellcheck under WSL: `uvx --from shellcheck-py shellcheck -x <file>`; ruff: `uvx ruff@0.17.3`.
 - App crate needs GTK headers WSL lacks: test `-p klepsydra-fleet` with CARGO_TARGET_DIR=.claude/worktrees/split-182/src-tauri/target.
+=======
+- `gh pr edit` fails on klepsydra (Projects classic): `gh api -X PATCH repos/ajbarea/klepsydra/pulls/N -F body=@file`. Issue Types are not enabled here; labels stand in.
+- `make test-fleet` takes about 19 min (it takes the heavy lock itself).
+- The app crate needs GTK headers WSL lacks: lint/test `-p klepsydra-fleet` with CARGO_TARGET_DIR=.claude/worktrees/split-182/src-tauri/target; CI builds the app.
+- shellcheck: `make shellcheck`. `receiver::bad_paths_bodies_and_sizes_get_their_status` flakes under load (#174).
+- Install before cutover: `make install-fleet`, then `fleet cutover`, then `fleet doctor` (doctor's exit code is lost behind a pipe; read the FAIL lines).
+>>>>>>> origin/main

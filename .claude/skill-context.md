@@ -28,8 +28,11 @@ belong here.
   Jump to terminal (UI Automation) also compiles only for Windows, and WSL
   has no WebKitGTK headers, so the app crate is checked with
   `bash scripts/build-windows.sh --check`; the fleet crate tests anywhere.
-- runner: none. There is no `make`, no task runner, and no `logs/dev-<ts>-*.log`
-  archive convention, so the audit's log-reconciliation phase is N/A.
+- runner: a small Makefile: `make test-fleet`, `make test-launch`,
+  `make test-heavy-lock` and `make shellcheck` take the fleet's heavy lock
+  themselves (run them bare),
+  `make install-fleet`. No
+  `logs/dev-<ts>-*.log` archive convention, so the audit's log-reconciliation phase is N/A.
 - data flow: Claude Code pipes a JSON blob to the `statusLine` command on every
   render; `statusline/klepsydra-statusline.sh` prints the compact readout and
   publishes the figures to a small JSON file that the overlay polls. There is no
@@ -47,8 +50,7 @@ belong here.
 
 ### Phase 3 — Lint
 
-- `shellcheck -x hooks/*.sh statusline/*.sh scripts/*.sh fleet/*.sh fleet/fleet` (in WSL:
-  `uvx --from shellcheck-py shellcheck ...`)
+- `make shellcheck` (CI's files and `-x`; it takes the heavy lock)
 - `npm run lint`: Biome with only `noConsole` on (warn and error allowed);
   the pages log through `src/log.js`. `src/vendor/` is not linted.
 - `uvx ruff check`: the Python scripts, with ruff's `G` and `LOG` families
@@ -77,7 +79,7 @@ files belong to: the JS guards scan hooks and scripts too.
 - `bash hooks/test_fleet.sh`: the fleet hook's states, where, identity,
   pruning (every refusal first) and the README settings block.
 - `bash scripts/test_measure_memory.sh`: the release memory rule.
-- `bash fleet/test_fleet.sh`: the fleet engine against fake Claude Code panes
+- `make test-fleet` (it takes the heavy lock): the fleet engine against fake Claude Code panes
   on a private tmux socket (limits, reset parsing, typed lines, launch
   delivery, doctor, install).
 - `python3 -I fleet/test_ci_watch.py`: the CI watch against a fake GitHub.
@@ -86,8 +88,9 @@ files belong to: the JS guards scan hooks and scripts too.
   writes only files it owns and no future times.
 - `bash hooks/test_wrapup.sh`: the wrap-up Stop hook (silent unless a live
   request is unasked, never blocks a stop, fails open) and its reporter.
-- `bash hooks/test_launch.sh`: the tmux launcher against a private tmux server
+- `make test-launch` (takes the heavy lock itself: run it bare): the tmux launcher against a private tmux server
   and a stub `wt.exe` (one tab per fleet, a failed launch starts nothing).
+- `make test-heavy-lock` (takes the heavy lock itself): a stopped suite keeps no lock, and fleet/heavy.sh's waits, refusals and limits.
 - `bash scripts/test_build_windows.sh`: the Windows build's stage-name check.
 - `cd src-tauri && cargo test -p klepsydra-fleet`: the fleet reader, the OTLP
   receiver and the phone wall server (each spawned on a free loopback port)
