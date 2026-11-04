@@ -43,7 +43,11 @@ while IFS=$'\t' read -r -u 3 p name brief sid _ account; do
     continue
   fi
   txt="$FLEET_STATE/fresh-$name-$(date +%Y%m%d-%H%M).src"
-  { fresh_preamble "had grown too large to keep resuming"; printf '\n\n'; cat "$brief"; } >"$txt"
+  {
+    fresh_preamble "had grown too large to keep resuming"; printf '\n\n'; cat "$brief"
+    # A session started before launch.sh passed the rules gets them pasted (#317).
+    if ! rules_in_prompt "$sid"; then printf '\n'; cat "$here/brief-tail.md"; fi
+  } >"$txt"
   if ! type_exactly "$p" "/clear"; then
     flog WARN "fresh session skipped: AJ typed while /clear went in" pane="$p" name="$name"
     continue

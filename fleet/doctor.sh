@@ -378,7 +378,7 @@ mapfile -t briefs < <(awk -F'\t' 'NF >= 3 { print $3 }' "$REGISTRY" 2>/dev/null)
 if (( ! ${#briefs[@]} )); then
   report ok "briefs" "no registered agents"
 elif stale=$(bash "$here/brief.sh" --check "${briefs[@]}" 2>/dev/null); then
-  report ok "briefs" "every registered brief has the shared rules"
+  report ok "briefs" "no registered brief carries shared rules (launch.sh puts them in the system prompt)"
 else
   report warn "briefs" "$(tr '\n' ' ' <<<"$stale")(fleet brief --check)"
 fi
