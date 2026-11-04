@@ -13,8 +13,30 @@ stub="$work/stubbin"
 mkdir -p "$stub"
 # $work/tmux.mode: "fail" exits 1, "hang" sleeps past the hook's timeout; else it succeeds.
 # shellcheck disable=SC2016 # the stub script expands its own variables
-printf '#!/bin/sh\necho "$*" >>"%s/tmux.log"\ncase $(cat "%s/tmux.mode" 2>/dev/null) in fail) exit 1;; hang) exec sleep 30;; esac\n' "$work" "$work" >"$stub/tmux"
-chmod +x "$stub/tmux"
+# capture-pane prints $work/screen, or, while $work/screens lists any, the next
+# of them in turn (the last one stays): each line is a screen file and,
+# optionally, a script run before it is shown; a line GONE fails the capture,
+# as a closed pane does, so a watcher ends after a known number of looks
+# (#230 review 3: a 1 s limit gave it anywhere from 0 to 1 s). setsid only
+# logs, so no test starts a real watcher.
+cat >"$stub/tmux" <<STUB
+#!/bin/sh
+echo "\$*" >>"$work/tmux.log"
+case \$(cat "$work/tmux.mode" 2>/dev/null) in fail) exit 1;; hang) exec sleep 30;; esac
+case "\$*" in *capture-pane*)
+  if [ -s "$work/screens" ]; then
+    set -- \$(head -n 1 "$work/screens")
+    [ "\$(wc -l <"$work/screens")" -gt 1 ] && sed -i 1d "$work/screens"
+    [ "\$1" = GONE ] && exit 1
+    [ -n "\${2:-}" ] && sh "\$2"
+    cat "\$1"
+  else
+    cat "$work/screen" 2>/dev/null
+  fi;;
+esac
+STUB
+printf '#!/bin/sh\necho "$*" >>"%s/setsid.log"\n' "$work" >"$stub/setsid"
+chmod +x "$stub/tmux" "$stub/setsid"
 export PATH="$stub:$PATH"
 tlog="$work/tmux.log"
 
@@ -30,8 +52,10 @@ check() {
 }
 
 cp "$here/../src/fleet/themes/kourai.json" "$work/test-cast.json"
+# Sourced with the suite's runtime folder, so its LOCK and PRUNE_STAMP are the
+# suite's, never the caller's live ones (#230 reviews 2 and 3).
 # shellcheck source=hooks/klepsydra-fleet.sh
-source "$hook"
+XDG_RUNTIME_DIR=$work source "$hook"
 
 echo "where"
 
@@ -170,7 +194,7 @@ fire() { # fixture [filter] [VAR=value...]
     env KLEPSYDRA_DIR="$dir" KLEPSYDRA_NOW="$now" KLEPSYDRA_PROC="$work/proc" KLEPSYDRA_PID=600 \
       KERYX_VOICES="$work/voices.json" XDG_RUNTIME_DIR="$work" KLEPSYDRA_CAST="$work/test-cast.json" \
       KLEPSYDRA_BOOT_ID="$boot_file" TMUX= TMUX_PANE= WSL_DISTRO_NAME= CLAUDE_CONFIG_DIR="$work/nocfg" \
-      FLEET_STATE="$work/fleet-state" KLEPSYDRA_AGENT= "$@" bash "$hook"
+      FLEET_STATE="$work/fleet-state" KLEPSYDRA_AGENT= KLEPSYDRA_ASK_WATCH=0 "$@" bash "$hook"
 }
 field() { jq -c "$1" "$file"; }
 mtime() { stat -c %Y "$file"; }
@@ -2053,6 +2077,132 @@ check "queue clear: the default again" "$rc|$out|$([[ -e $qdir/queue.json ]] && 
 check "queue show: none" "$(queue show)" "No queue.json: the Queue panel reads its default file."
 out=$(KLEPSYDRA_DIR=""; queue_cmd show 2>&1); rc=$? # the sourced hook's: a run would find the real folder
 check "queue: no data folder is an error" "$rc|$out" "1|klepsydra: no data folder (set KLEPSYDRA_DIR)"
+
+echo "#217: an answer no hook reports"
+# Its own per run, so two suites at once never see each other's watcher.
+A=$(printf '21700000-0000-4000-8000-%012d' "$$")
+afile="$dir/fleet/$A.json"
+afield() { jq -c "$1" "$afile"; }
+askfire() { # fixture [filter] [VAR=value...]; in pane %7 of the fleet socket
+  local fx=$1 f=${2:-.}
+  shift; (( $# )) && shift
+  fire "$fx" ".session_id = \"$A\" | $f" TMUX="$work/sock/klepsydra,1,0" TMUX_PANE=%7 "$@"
+}
+watch_ask_run() { # [max seconds]
+  env KLEPSYDRA_DIR="$dir" XDG_RUNTIME_DIR="$work" KLEPSYDRA_NOW="$now" KLEPSYDRA_ASK_TICK=0.05 \
+    KLEPSYDRA_ASK_MAX="${1:-20}" bash "$hook" watch-ask "$A"
+}
+now=1792360000 askfire session-start.json
+now=1792360010 askfire user-prompt.json
+: >"$work/setsid.log"
+now=1792360020 fire permission-request.json ".session_id = \"$A\"" KLEPSYDRA_ASK_WATCH=1
+check "outside tmux: no watcher" "$(cat "$work/setsid.log")" ""
+now=1792360020 askfire permission-request.json . KLEPSYDRA_ASK_WATCH=1
+check "a permission prompt in a pane starts its watcher" "$(cat "$work/setsid.log")" "-f bash $hook watch-ask $A"
+check "the file names the pane the watcher reads" "$(afield .tmux)" "{\"socket\":\"$work/sock/klepsydra\",\"pane\":\"%7\"}"
+# With a real setsid, the watcher runs and the fleet-wide lock is free (#230
+# review: a watcher that kept the hook's lock fd froze every card).
+cp "$stub/setsid" "$work/setsid.stub"
+printf '#!/bin/sh\nexec /usr/bin/setsid "$@"\n' >"$stub/setsid"
+cp "$fixtures/pane-permission-2.1.302.txt" "$work/screen"
+now=1792360025 askfire permission-request.json . KLEPSYDRA_ASK_WATCH=1 KLEPSYDRA_ASK_MAX=2 KLEPSYDRA_ASK_TICK=0.05
+sleep 0.5
+check "a real watcher leaves the fleet lock free" \
+  "$(pgrep -f "watch-ask $A" >/dev/null && echo running) $(flock -w 0 "$work/klepsydra-fleet-$UID.lock" true && echo free)" "running free"
+for _ in $(seq 40); do pgrep -f "watch-ask $A" >/dev/null || break; sleep 0.1; done
+check "and it ends at its time limit" "$(pgrep -f "watch-ask $A" >/dev/null && echo running || echo ended)" "ended"
+mv -f -- "$work/setsid.stub" "$stub/setsid"
+
+cp "$fixtures/pane-permission-2.1.302.txt" "$work/screen"
+now=1792360030
+watch_ask_run & wpid=$!
+sleep 0.5
+check "the dialog on screen: still needs you" "$(afield .state)" '"needs_you"'
+cp "$fixtures/pane-working-tool-2.1.302.txt" "$work/screen"
+timeout 10 tail --pid="$wpid" -f /dev/null
+check "the dialog gone (approved): working, and the watcher ends" \
+  "$(afield '[.state, .reason, .needs, .state_at]')|$(kill -0 "$wpid" 2>/dev/null && echo running || echo ended)" '["working",null,null,1792360030]|ended'
+
+now=1792360040 askfire permission-request.json
+iscreen=$fixtures/pane-idle-2.1.302.txt
+printf '%s\n' "$iscreen" "$iscreen" "$iscreen" GONE >"$work/screens"
+now=1792360045 watch_ask_run 20
+rm -f -- "$work/screens"
+check "a dialog never seen on screen is never cleared" "$(afield '[.state, .reason]')" '["needs_you","approve Bash"]'
+cp "$fixtures/pane-permission-2.1.302.txt" "$work/screen"
+echo fail >"$work/tmux.mode"
+now=1792360046 watch_ask_run 5 & wpid=$!
+timeout 2 tail --pid="$wpid" -f /dev/null
+rm -f "$work/tmux.mode"
+check "the pane gone: the watcher ends at once, the ask stays" \
+  "$(kill -0 "$wpid" 2>/dev/null && echo running || echo ended) $(afield .state)" 'ended "needs_you"'
+wait "$wpid" 2>/dev/null
+before=$(<"$afile")
+ask_answered "$afile" 1792360001 1792360047
+check "an answer to an earlier ask changes nothing" "$(<"$afile")" "$before"
+ask_answered "$afile" 1792360040 1792360047
+check "the answer to this ask" "$(afield '[.state, .needs, .state_at]')" '["working",null,1792360047]'
+check "and its turn count stamped with the write, as the hook stamps it" "$(afield '.turns_at == .written_at')" "true"
+check "#230 review 2: the sourced hook's lock and prune stamp are the suite's own" "$([[ $LOCK == "$work"/* && $PRUNE_STAMP == "$work"/* ]] && echo own)" "own"
+# An ask after the turn ended with nothing left running, its file holding no
+# .background key (the hook deletes an empty one): done, as the hook reads it.
+jq -c '.state = "needs_you" | .state_at = 1792360060 | .needs = {tool: "Bash", turn_over: true} | del(.background)' "$afile" >"$work/a.tmp" && mv -f -- "$work/a.tmp" "$afile"
+ask_answered "$afile" 1792360060 1792360061
+check "#230 review 2: answered after the turn, no background key: done" "$(afield '[.state, .reason]')" '["done",null]'
+# A busy fleet lock when the answer is seen: the watcher tries again and the
+# answer lands once the lock is free, never lost (#230 review 2).
+now=1792360062 askfire permission-request.json
+cp "$fixtures/pane-permission-2.1.302.txt" "$work/screen"
+now=1792360063 watch_ask_run 15 & wpid=$!
+sleep 0.4
+flock "$LOCK" sleep 6.5 & lpid=$!
+sleep 0.2
+cp "$fixtures/pane-working-tool-2.1.302.txt" "$work/screen"
+sleep 2
+check "#230 review 2: while the fleet lock is busy, the ask still waits" "$(afield .state)" '"needs_you"'
+timeout 20 tail --pid="$wpid" -f /dev/null
+kill "$wpid" 2>/dev/null; wait "$wpid" "$lpid" 2>/dev/null # a failed case leaves no watcher to act on later asks
+check "#230 review 2: once it is free, the answer lands" "$(afield '[.state, .needs]')" '["working",null]'
+# The dialog is both lines: the question alone, or the option alone, then gone,
+# was never a dialog, so the ask stays.
+grep -v '1\. Yes' "$fixtures/pane-permission-2.1.302.txt" >"$work/q-only.txt"
+grep -v 'Do you want to proceed' "$fixtures/pane-permission-2.1.302.txt" >"$work/o-only.txt"
+for half in q-only o-only; do
+  now=1792360070 askfire permission-request.json
+  printf '%s\n' "$work/$half.txt" "$iscreen" "$iscreen" "$iscreen" GONE >"$work/screens"
+  now=1792360071 watch_ask_run 20
+  rm -f -- "$work/screens"
+  check "#230 review 2: $half on screen, then gone: never a dialog, the ask stays" "$(afield .state)" '"needs_you"'
+done
+
+pscreen=$fixtures/pane-permission-2.1.302.txt iscreen=$fixtures/pane-idle-2.1.302.txt
+now=1792360048 askfire permission-request.json
+# Two misses with the dialog back between them: each sighting starts the count again (#230 review 4).
+printf '%s\n' "$pscreen" "$iscreen" "$pscreen" "$iscreen" GONE >"$work/screens"
+now=1792360049 watch_ask_run 20
+check "one look without the dialog is not an answer, nor two looks apart" "$(afield '[.state, .reason]')" '["needs_you","approve Bash"]'
+printf 'jq -c ".state_at = 1792360099" "%s" >"%s.new" && mv -f "%s.new" "%s"\n' "$afile" "$afile" "$afile" "$afile" >"$work/new-ask.sh"
+printf '%s\n' "$pscreen $work/new-ask.sh" "$iscreen" "$iscreen" GONE >"$work/screens"
+now=1792360100 watch_ask_run 20
+check "a dialog seen for one ask is not seen for the next" "$(afield '[.state, .state_at]')" '["needs_you",1792360099]'
+rm -f "$work/screens"
+
+now=1792360110 askfire pre-tool-question.json
+printf '%s\n' "$pscreen" "$iscreen" "$iscreen" GONE >"$work/screens"
+now=1792360111 watch_ask_run 20
+check "a question is not a permission: the watcher leaves it" "$(afield '[.state, .reason]')" '["needs_you","question"]'
+rm -f "$work/screens"
+
+echo "#217: a subagent's ask ends with it"
+now=1792360160 askfire subagent-start.json '.agent_id = "agent-217"'
+now=1792360161 askfire permission-request.json '.agent_id = "agent-217"'
+now=1792360162 askfire subagent-stop.json '.agent_id = "agent-other"'
+check "another subagent stopping leaves the ask" "$(afield '[.state, .needs.by]')" '["needs_you","agent-217"]'
+now=1792360163 askfire subagent-stop.json '.agent_id = "agent-217"'
+check "the asker stopping (denied, or done) ends its ask" "$(afield '[.state, .reason, .needs]')" '["working",null,null]'
+now=1792360170 askfire permission-request.json
+now=1792360171 askfire subagent-stop.json '.agent_id = null'
+check "a subagent stop naming no agent leaves the session's own ask" "$(afield '[.state, .needs.by]')" '["needs_you",""]'
 
 echo "the fleet registry follows a session at the event (#261)"
 mkdir -p "$work/fleet-state"
