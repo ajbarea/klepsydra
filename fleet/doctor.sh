@@ -80,8 +80,9 @@ session_of() {
 orch=$(orchestrator)
 panes=$(awk -F'\t' 'NF >= 3 { print $1 }' "$REGISTRY" 2>/dev/null)
 
-# Limits as the panes show them (#263): one still showing OVERDUE_S past the
-# reset it names was missed by the resume service; a reset time beside a limit
+# Limits as the fleet hook's StopFailure record dates them (#311), else as the
+# panes show them (#263): one still at a limit OVERDUE_S past its reset was
+# missed by the resume service; a reset time beside a limit
 # wording LIMIT_RE does not know means Claude Code renamed its message again.
 overdue="" unknown="" resets=""
 for p in $orch $panes; do

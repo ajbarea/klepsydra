@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # resume-at-reset.sh [--once]: every POLL_S seconds, look after the fleet's
-# panes. A pane stopped on a usage limit is resumed after the reset its own
-# message names (+2 min), or at once when AJ has since switched to an account
+# panes. A pane stopped on a usage limit is resumed after its reset (+2 min):
+# the account's resets_at for the hook's StopFailure record, else the time its
+# own message names; or at once when AJ has since switched to an account
 # with room; a registered pane (panes.tsv) idle past FRESH_AFTER_S is replaced
 # by a fresh session from its brief instead, since its prompt cache expired.
 # Each pane's account is its config folder's login (panes.tsv column 6, else

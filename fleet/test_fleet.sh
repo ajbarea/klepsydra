@@ -204,6 +204,16 @@ stop_file "$E1" %9001 "$evn" ev1 '  ⎿  You'"'"'ve hit your fast limit · reset
 check "the /fast limit is no usage limit" "$(ev)" "none"
 stop_file "$E1" %9001 "$evn" ev1 "$L5" working null
 check "a prompt since (working) clears it" "$(ev)" "none"
+eve=$(TZ=America/New_York date -d '2026-10-28 19:00' +%s)
+stop_file "$E1" %9001 "$eve" ev-none '  ⎿  You'"'"'ve hit your weekly limit · resets 3pm (America/New_York)'
+check "a time-only reset 20 h after the stop is the next day's, never before the stop" \
+  "$(TZ=America/New_York date -d "@$(ev | cut -f1)" '+%F %H:%M')" "2026-10-29 15:00"
+login a; printf '{"oauthAccount":{"accountUuid":"ev-new"}}\n' >"$FLEET_DEFAULT_JSON"
+stop_file "$E1" %9001 "$evn" ev1 "$L5"; win ev1 100 $((evn + 4000))
+check "a /login in the pane's folder since: the old account's readings date nothing, the text does" "$(ev | cut -f1)" "$((evn + 4200))"
+printf '{"oauthAccount":{"accountUuid":"ev1"}}\n' >"$FLEET_DEFAULT_JSON"
+check "the same account still logged in: its reading dates it" "$(ev | cut -f1)" "$((evn + 4000))"
+logout a; rm -f -- "${FLEET_DEFAULT_JSON:?}" # as before this case: never logged in
 stop_file "$E1" %9001 "$evn" ev-none "$L5"
 check "no reading: the message's reset" "$(ev | cut -f1)" "$((evn + 4200))"
 stop_file "$E1" %90010 "$evn" ev1 "$L5"
@@ -924,12 +934,14 @@ for notice in "You've used 90% of your 5-hour limit · resets 3pm" "Approaching 
   check "#265 review 3: not a stop, so no unknown-wording warning: $notice" "$(doctor | grep -c '^ok   limits')" "1"
 done
 state wpane '{"above":["idle"]}'
-stop_file w1 "$w" "$noon" ev1 "$L5"; win ev1 100 $((noon + 600))
+# Recorded on the account the pane's folder holds (a): a stop on another one is
+# dated by its own text (the /login case above).
+stop_file w1 "$w" "$noon" a "$L5"; win a 100 $((noon + 600))
 check "#311: a pane the hook recorded at a limit, past its resets_at, fails though its screen shows none" \
   "$(FLEET_NOW=$((noon + 1300)) doctor | grep '^FAIL limits')" "FAIL limits: still at a limit past its reset: $w (the resume service missed it)"
 check "#311: before then it is ok" "$(FLEET_NOW=$((noon + 900)) doctor | grep -c '^ok   limits')" "1"
 session_file w1 "$w" https://claude.ai/code/session_01W
-rm -rf -- "${KLEPSYDRA_DIR:?}/accounts/ev1"
+rm -f -- "${KLEPSYDRA_DIR:?}/accounts/a/ev.json"
 state wpane '{"above":["idle"]}'
 printf 'panes=3 limited=1 limited_panes=%%9 at=5\n' >"$FLEET_STATE/resume.beat"
 check "#263: the resume loop line says what its last pass saw" "$(doctor | grep '^ok   resume loop' | sed 's/.*: //')" "panes=3 limited=1 limited_panes=%9"

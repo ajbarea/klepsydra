@@ -404,18 +404,22 @@ live_session() { # PANE
 # StopFailure record (error rate_limit; a prompt since clears it), as
 # "RESET<TAB>MESSAGE" (#311). RESET is the latest resets_at among the
 # account's spent windows the stop fell in, else the end of the window the
-# message names, else the message's own reset read from the stop's time, else 0.
+# message names, else the message's own reset read from the stop's time (a
+# reset never precedes the stop), else 0. The readings count only while the
+# pane's folder still holds the account the session recorded: after a /login
+# there, the stop was the new account's, and its text says when.
 # A rate_limit error counts only when its text is a limit message or a window
 # is spent: a passing "API Error: Rate limit reached" parks no pane for hours.
 # Fails when there is none.
 limit_event() { # PANE
-  local sid f at id msg rd spent=0 named_at=0 r
+  local sid f at id msg rd spent=0 named_at=0 r now_id
   sid=$(live_session "$1") || return 1
   f=$KLEPSYDRA_DIR/fleet/$sid.json
   { read -r at id && IFS= read -r msg; } < <(jq -r 'select(.state == "error" and .reason == "rate limit")
     | "\(.state_at) \(.account.id // "-")", (.error // "" | tostring | gsub("[\t\r\n]"; " "))' "$f" 2>/dev/null) || return 1
   [[ $at =~ ^[0-9]+$ ]] || return 1
   [[ $msg == *"hit your fast limit"* ]] && return 1
+  now_id=$(account_of "$(pane_config "$1")") && [[ $now_id != "$id" ]] && id=-
   if [[ $id != - ]] && rd=$(reading_of "$id"); then
     read -r spent named_at < <(jq -r --argjson at "$at" --arg msg "$msg" '
       def span: {five_hour: 18000, seven_day: 604800};
@@ -430,7 +434,7 @@ limit_event() { # PANE
   (( spent > 0 )) || grep -qE "$LIMIT_RE" <<<"$msg" || return 1
   r=$spent
   (( r > 0 )) || r=$named_at
-  (( r > 0 )) || r=$(reset_epoch "$msg" "$at") || r=0
+  (( r > 0 )) || r=$(reset_epoch "$msg" "$at" 1800) || r=0
   printf '%s\t%s\n' "$r" "${msg:-StopFailure rate_limit}"
 }
 
