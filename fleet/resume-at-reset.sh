@@ -203,9 +203,13 @@ ask_back() { # PANE FROM TO
 
 # Tell the worker in PANE, which stopped for a move back to folder TO that
 # failed with RC, to carry on where it is; it is asked again when TO has room.
-carry_on() { # PANE TO RC
+carry_on() { # PANE TO RC (3, 5, or room: TO lost its room before the move)
   local p=$1 f got why
-  if [[ $3 == 5 ]]; then why="its brief met the usage limit there"; else why="the new session did not start"; fi
+  case $3 in
+    5) why="its brief met the usage limit there" ;;
+    room) why="it has no room any more" ;;
+    *) why="the new session did not start" ;;
+  esac
   f=$FLEET_STATE/carry-on-${p#%}.txt
   printf 'The move back to %s did not happen: %s. Carry on here, on this account, from your resume state; you are asked again when it has room.' \
     "$(account_label "${ACCT_ID[$2]:-$2}")" "$why" >"$f"
@@ -607,6 +611,14 @@ one() { # PANE
   if [[ -z $limit && -z ${due[$p]:-} && -n $pref_id && -n ${since:-} && $cfg != "$pref" && $pref_id != "${PANE_ID:-}" ]] &&
     { (( orch )) || [[ -n $(reg_field "$p" 2) ]]; } && (( NOW - ${move_failed[$p]:-0} >= 900 )) && ! back_held "$pref_id"; then
     back_ok=1
+  fi
+  # A worker that stopped for the move (READY-TO-MOVE) after its preferred
+  # account lost its room (a limit seen, a hold) waits on nothing either: it
+  # carries on here, once, and that answer no longer counts (carry_on stamps asked).
+  if (( !orch && !back_ok )) && [[ -z $limit && -z ${due[$p]:-} && -n $pref_id && -n ${asked[$p]:-} && $cfg != "$pref" && $pref_id != "${PANE_ID:-}" ]] &&
+    { [[ -z ${since:-} ]] || back_held "$pref_id"; } && idle_empty "$s" && ready_to_move "$p" "${asked[$p]}" >/dev/null; then
+    carry_on "$p" "$pref" room
+    return
   fi
   # Heph's pane watcher runs past every turn: a turn that ended with only
   # watchers out counts as finished for him, since his successor restarts them.
