@@ -273,7 +273,7 @@ check "no HOME/USER: silent stderr" "$(cat "$work/err")" ""
 # one side is otherwise silent: the gauge simply never sees a reading.
 identifier=$(jq -r '.identifier' "$here/../src-tauri/tauri.conf.json")
 # shellcheck disable=SC2016  # sed pattern: the default must stay unexpanded.
-wsl_default=$(sed -n 's/^ *KLEPSYDRA_DIR="\(\/mnt\/c\/.*\)"$/\1/p' "$script")
+wsl_default=$(sed -n 's/^ *KLEPSYDRA_DIR="\(\/mnt\/c\/.*\)"$/\1/p' "$here/../hooks/klepsydra-common.sh")
 # Both halves read out of a file, so both can come back empty -- and two empty
 # strings compare equal, which would pass this test by reading nothing at all.
 check "identifier is readable"  "$([[ -n "$identifier" ]] && echo yes)"  "yes"
@@ -559,9 +559,10 @@ settle
 check "prune: done once its lock is free" "$(there "uuid-team/$(u 2).json")" "gone"
 check "prune: a render returns before it ($took ms)" "$(( took < 1000 ))" "1"
 
-block() { sed -n '/^# --- prune helpers/,/^# --- end prune helpers ---$/p' "$1"; }
-check "prune helpers present" "$([[ -n "$(block "$script")" ]] && echo yes)" "yes"
-check "prune helpers identical in the fleet hook" "$(block "$script")" "$(block "$here/../hooks/klepsydra-fleet.sh")"
+lone="$work/lone"; mkdir -p "$lone"; cp "$script" "$lone/"
+out=$(CLAUDE_CONFIG_DIR="$work/lone" KLEPSYDRA_DIR="$work/lone-out" bash "$lone/klepsydra-statusline.sh" <"$fixtures/full.json" 2>/dev/null); code=$?
+check "without the shared file it still prints its line" "$code:$([[ -n $out ]] && echo printed)" "0:printed"
+check "and publishes nothing" "$([[ -e $work/lone-out ]] && echo published)" ""
 
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [[ $fail -eq 0 ]]

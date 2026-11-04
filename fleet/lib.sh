@@ -19,6 +19,7 @@ export FLEET_RUN_ID
 FLEET_HOOK_DIR=${FLEET_HOOK_DIR:-$HOME/.claude}
 # shellcheck disable=SC2034 # read by install.sh and doctor.sh
 HOOK_COPIES=(
+  "hooks/klepsydra-common.sh klepsydra-common.sh"
   "hooks/klepsydra-fleet.sh klepsydra-fleet.sh"
   "hooks/klepsydra-launch.sh klepsydra-launch.sh"
   "hooks/klepsydra-tmux.conf klepsydra-tmux.conf"
@@ -114,9 +115,9 @@ split_screen() { # SCREEN
 # The last non-empty lines of ABOVE, nearest the input box.
 near() { grep -v '^[[:space:]]*$' <<<"$ABOVE" | tail -"${1:-6}"; }
 
-# A turn is running: the spinner line ("… (" with its timer, or "esc to
-# interrupt") sits just above the input box.
-busy() { split_screen "$1"; near 4 | grep -Eq '… \(|esc to interrupt'; }
+# A turn is running: the spinner line ("… (" with its timer) sits just above
+# the input box.
+busy() { split_screen "$1"; near 4 | grep -q '… ('; }
 
 # Claude Code names the window in its message ("You've hit your 5-hour
 # limit", "... weekly limit", "... Fable limit", "... org's monthly spend
@@ -878,8 +879,8 @@ on_this_server() { # SID
 # read after the last ") " so a name with spaces or parentheses parses); fails
 # when there is no such process.
 proc_start() { # PID
-  local line fields
-  line=$(cat "${FLEET_PROC:-/proc}/$1/stat" 2>/dev/null) || return 1
+  local line="" fields
+  { IFS= read -r line <"${FLEET_PROC:-/proc}/$1/stat" || [[ -n $line ]]; } 2>/dev/null || return 1
   read -ra fields <<<"${line##*) }"
   [[ -n ${fields[19]:-} ]] && printf '%s' "${fields[19]}"
 }

@@ -13,60 +13,15 @@
 
 set -uo pipefail
 
-# --- klepsydra dir: identical in hooks/klepsydra-fleet.sh and statusline/klepsydra-statusline.sh ---
-# The overlay's app-local-data dir, named for the bundle identifier in
-# src-tauri/tauri.conf.json. Not the install dir: the uninstaller's "delete app
-# data" reaches only this one, and a per-machine install cannot be written to.
-# Under WSL the overlay is a Windows app, so the hook writes across to it. On
-# Linux, Tauri honours XDG_DATA_HOME only when it is absolute, and so must we,
-# or the readings land under whatever directory Claude Code is running in.
-if [[ -z "${KLEPSYDRA_DIR:-}" ]]; then
-  osrelease=""
-  { read -r osrelease </proc/sys/kernel/osrelease; } 2>/dev/null  # builtin: no process per run
-  if [[ "$osrelease" == *[Mm]icrosoft* ]]; then
-    if [[ -n "${USER:-}" ]]; then
-      KLEPSYDRA_DIR="/mnt/c/Users/$USER/AppData/Local/dev.ajsoftworks.klepsydra"
-    fi
-  else
-    data_home="${HOME:-}/.local/share"
-    [[ "${XDG_DATA_HOME:-}" == /* ]] && data_home="$XDG_DATA_HOME"
-    [[ "$data_home" == /* ]] && KLEPSYDRA_DIR="$data_home/dev.ajsoftworks.klepsydra"
-  fi
-fi
-# --- end klepsydra dir ---
+# Shared code: installed beside this script; in the checkout, under hooks/.
+case ${BASH_SOURCE[0]} in */*) KL_HERE=${BASH_SOURCE[0]%/*} ;; *) KL_HERE=. ;; esac
+KL_COMMON=$KL_HERE/klepsydra-common.sh
+[[ -f $KL_COMMON ]] || KL_COMMON=$KL_HERE/../hooks/klepsydra-common.sh
+# shellcheck source=hooks/klepsydra-common.sh
+source "$KL_COMMON" 2>/dev/null || KLEPSYDRA_DIR=""
 
 KLEPSYDRA_DIR="${KLEPSYDRA_DIR:-}"  # unresolvable: publish nothing, still echo
 UUID_RE='^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
-
-# --- prune helpers: identical in hooks/klepsydra-fleet.sh and statusline/klepsydra-statusline.sh ---
-# Whether `dir` is the overlay's own data dir, the only place a prune deletes
-# from: absolute, without "..", named for the bundle identifier, and not a
-# symlink. Trailing slashes do not count.
-own_data_dir() { # dir
-  local dir=$1
-  while [[ $dir == */ ]]; do dir=${dir%/}; done
-  [[ -n $dir && $dir == /* ]] || return 1
-  [[ $dir == */../* || $dir == */.. ]] && return 1
-  [[ ${dir##*/} == dev.ajsoftworks.klepsydra ]] || return 1
-  [[ ! -L $dir ]]
-}
-
-# A prune runs at most once an hour, refused or not; `stamp` holds the time of
-# the last run, and a clock that went back runs it again.
-PRUNE_EVERY=3600
-prune_due() { # stamp now
-  local last=""
-  { IFS= read -r last <"$1"; } 2>/dev/null
-  [[ $2 =~ ^[0-9]+$ ]] || return 1
-  ! [[ $last =~ ^[0-9]+$ ]] || (( 10#$2 - 10#$last >= PRUNE_EVERY || 10#$2 < 10#$last ))
-}
-prune_hourly() { # stamp prune dir now
-  prune_due "$1" "$4" || return 0
-  "$2" "$3" "$4"
-  { printf '%s\n' "$4" >"$1"; } 2>/dev/null
-  return 0
-}
-# --- end prune helpers ---
 
 # Readings the gauge can never draw again: a session's file whose every window
 # ended over a day ago, unless it is its account's newest, which goes too once

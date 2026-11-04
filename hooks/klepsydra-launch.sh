@@ -11,6 +11,11 @@
 # still starting. One line out: stdout on success, stderr on failure.
 set -uo pipefail
 
+# Shared code, installed beside this script (hooks/klepsydra-common.sh).
+case ${BASH_SOURCE[0]} in */*) KL_HERE=${BASH_SOURCE[0]%/*} ;; *) KL_HERE=. ;; esac
+# shellcheck source=hooks/klepsydra-common.sh
+source "$KL_HERE/klepsydra-common.sh" 2>/dev/null || { printf '%s\n' "klepsydra-launch.sh: klepsydra-common.sh is missing beside it; run make install-fleet." >&2; exit 1; }
+
 SOCKET_NAME=${KLEPSYDRA_TMUX_SOCKET:-klepsydra} # default is FLEET_SOCKET in launch.rs
 SESSION=fleet
 TAB_TITLE="klepsydra sessions" # also FLEET_TAB in src-tauri/src/launch.rs
@@ -149,27 +154,6 @@ new() { # dir
     printf 'Started a session in %s. The terminal tab has not attached yet.\n' "$dir"
   fi
 }
-
-# --- proc stat: identical in hooks/klepsydra-fleet.sh and hooks/klepsydra-launch.sh ---
-# Fields of $PROC_ROOT/<pid>/stat after the command name, into the caller's
-# `stat`: [0] is the state, [1] the parent pid, [19] the start time (field 22).
-# The name sits in parentheses and may itself contain spaces or ")".
-proc_stat() { # pid
-  local raw=""
-  { IFS= read -r raw <"$PROC_ROOT/$1/stat"; } 2>/dev/null
-  [[ $raw == *") "* ]] || return 1
-  read -r -a stat <<<"${raw##*") "}"
-  (( ${#stat[@]} > 19 ))
-}
-
-# Whether `pid` runs with start time `start`: a zombie has exited, and a pid
-# with another start time is a later process.
-proc_is() { # pid start
-  local -a stat=()
-  [[ $1 =~ ^[0-9]+$ && $2 =~ ^[0-9]+$ ]] || return 1
-  proc_stat "$1" && [[ ${stat[0]} != Z && ${stat[19]} == "$2" ]]
-}
-# --- end proc stat ---
 
 # Whether PID is alive with start time START and `ancestor` is PID or its ancestor.
 owns_process() { # ancestor pid start
