@@ -823,22 +823,54 @@ class Route(unittest.TestCase):
             ci_watch.poll("o", ["r"], Fake([], pulls=[pr(4, "p2")]), known)
         self.assertEqual((TMP / "q.md").read_text(), before)
         self.assertIn("queue line removed", [r.getMessage() for r in logs.records])
-        self.assertNotIn("queued", known["r:5"])
+        self.assertIn("unqueued", known["r:5"])
 
-    def test_a_run_red_again_after_it_was_let_go_is_routed_again(self):
-        """A force-push back to the red's commit: it is routed afresh, so its
-        new wake line comes after the withdrawal."""
+    def test_a_wake_line_is_withdrawn_once(self):
+        """#329 review 3: letting the same red go twice (it was listed again in
+        between) writes one withdrawn line; a wake written after it gets its own."""
         known = {}
-        at_p1 = Fake([run(5, branch="b", sha="p1")], pulls=[pr(4, "p1")])
-        ci_watch.poll("o", ["r"], at_p1, known)
-        known["r:5"]["routed"]["at"] -= 1801
-        ci_watch.poll("o", ["r"], Fake([], pulls=[pr(4, "p1")]), known)
-        ci_watch.poll("o", ["r"], Fake([], pulls=[pr(4, "p2")]), known)
-        ci_watch.poll("o", ["r"], at_p1, known)
+        listed = Fake([run(5, branch="b", sha="p1")], pulls=[pr(4, "p1")])
+        ci_watch.poll("o", ["r"], listed, known)
+        k = known["r:5"]
+        item = dict(k["item"])
+        ci_watch.drop_held("r", k, "test")
+        k["item"] = dict(item)
+        ci_watch.drop_held("r", k, "test")
+        self.assertEqual([a["kind"] for a in self.alerts()], ["heph", "withdrawn"])
+        k["escalated"], k["item"] = k["withdrawn"] + 1, dict(item)
+        ci_watch.drop_held("r", k, "test")
         self.assertEqual(
-            [a["kind"] for a in self.alerts()],
-            ["heph", "escalate", "withdrawn", "heph"],
+            [a["kind"] for a in self.alerts()], ["heph", "withdrawn", "withdrawn"]
         )
+
+    def test_a_red_of_a_workflow_no_longer_active_reaches_nobody(self):
+        """#329 review 3: a deleted or disabled workflow's last red was routed
+        (and let go) on every pass."""
+        known = {}
+        for _ in range(3):
+            ci_watch.poll(
+                "o", ["r"], Fake([run(5, workflow=3)], workflows=(1, 2)), known
+            )
+        self.assertEqual((self.alerts(), known), ([], {}))
+
+    def test_a_forks_red_let_go_and_listed_again_stays_unrouted(self):
+        """#329 review 3: queued is the fork's guard against routing; a let-go
+        keeps it, and with no queue file it warns nobody."""
+        known = {}
+        fork = run(8, branch="patch-1", sha="f") | {
+            "head_repository": {"full_name": "someone/r"}
+        }
+        before = (TMP / "q.md").read_text()
+        ci_watch.poll("o", ["r"], Fake([fork], pulls=[pr(4, "f", "someone")]), known)
+        (TMP / "q.md").unlink()
+        with self.assertNoLogs(ci_watch.log, "WARNING"):
+            ci_watch.poll("o", ["r"], Fake([], pulls=[pr(4, "g", "someone")]), known)
+        (TMP / "q.md").write_text(before)
+        self.assertNotIn("routed", known["r:8"])
+        ci_watch.poll("o", ["r"], Fake([fork], pulls=[pr(4, "f", "someone")]), known)
+        ci_watch.poll("o", ["r"], Fake([], pulls=[pr(4, "g", "someone")]), known)
+        self.assertEqual((self.alerts(), known["r:8"]["queued"]), ([], True))
+        self.assertEqual((TMP / "q.md").read_text(), before)
 
     def _watch_until(self, done, jq=None):
         """Run a watcher until DONE() holds (30 s at most), then stop it; with

@@ -450,6 +450,7 @@ def drop_queue_line(repo: str, run_id: object) -> bool:
         lambda text: "".join(ln for ln in text.splitlines(True) if mark not in ln),
         "removed",
         "queue line removed",
+        missing_ok=True,
         repo=repo,
         run_id=run_id,
     )
@@ -459,11 +460,15 @@ def queue_mark(repo: str, run_id: object) -> str:
     return f"<!-- ci:{repo}:{run_id} -->"
 
 
-def rewrite_queue(change, verb: str, done: str, **fields: object) -> bool:
+def rewrite_queue(
+    change, verb: str, done: str, missing_ok: bool = False, **fields: object
+) -> bool:
     """Apply CHANGE (the queue file's text to its new text; the same text when
-    there is nothing to do, None to give up) through a temp file, read again
+    there is nothing to do, None to give up; MISSING_OK: no file is no change) through a temp file, read again
     when someone saved the file meanwhile. True when the file holds the change."""
     if not QUEUE.exists():
+        if missing_ok:
+            return True
         event(logging.WARNING, f"queue line not {verb}: no queue file", path=str(QUEUE))
         return False
     tmp = QUEUE.with_name(f".{QUEUE.name}.{os.getpid()}.tmp")
@@ -607,25 +612,34 @@ def drop_inbox(repo: str, run_id: object) -> None:
 
 
 def drop_held(repo: str, k: dict, why: str) -> None:
-    """Let held red K go: its undelivered inbox file goes, and once routed, a
-    withdrawn line (no wake) tells the pane watcher to skip the run's unread
-    wake lines, so a red that went stale waiting for Heph is never replayed (#321)."""
+    """Let held red K go and undo what reached people (#321): its undelivered
+    inbox file, its needs-you line (a fork's red has none: nothing is written), and, through a
+    withdrawn line (no wake), any wake line not yet withdrawn, so a red that
+    went stale waiting for Heph is never replayed. Its routing is kept, so a
+    red still listed is not routed again on the next pass."""
     item = k.pop("item")
-    if k.pop("queued", False) is True:
-        drop_queue_line(repo, item["run_id"])
+    drop_inbox(repo, item["run_id"])
+    routed = k.get("routed") or {}
+    woke = max(
+        routed.get("at", 0) if routed.get("to") == "heph" else 0,
+        k.get("escalated", 0),
+    )
+    withdraw = woke > k.get("withdrawn", 0)
+    unqueue = k.get("queued") is True and not k.get("unqueued")
     event(
         logging.INFO,
         "held red let go",
         repo=repo,
         run_id=item["run_id"],
         why=why,
-        withdrawn="routed" in k,
+        withdraw=withdraw,
+        unqueue=unqueue,
     )
-    drop_inbox(repo, item["run_id"])
-    # Routed again from scratch should the run go red again (a force-push back).
-    k.pop("escalated", None)
-    if k.pop("routed", None):
+    if unqueue and drop_queue_line(repo, item["run_id"]):
+        k["unqueued"] = int(time.time())
+    if withdraw:
         alert("withdrawn", False, item | k, text=f"red run withdrawn: {why}")
+        k["withdrawn"] = int(time.time())
 
 
 def retriage(user: str, repo: str, run_id: int, k: dict, save_known) -> None:
@@ -744,6 +758,14 @@ def repo_pass(
                     and (held["workflow_id"], held["place"]) == place
                 ):
                     drop_held(repo, k, "a newer run in its place did not fail")
+            continue
+        if r["workflow_id"] not in workflows:  # deleted or disabled: nobody to fix it
+            event(
+                logging.DEBUG,
+                "red run skipped: its workflow is not active",
+                repo=repo,
+                run_id=r["id"],
+            )
             continue
         pr = r["_pr"]
         item = {
