@@ -1,4 +1,4 @@
-# IMPL: klepsydra fleet-module brief, resume state 2026-11-03 17:00 (EST)
+# IMPL: klepsydra fleet-module brief, resume state 2026-11-03 22:50 (EST)
 
 Session 22 (Chronos) resumed 16:09 after the IAAI-27 park. Resume with the same brief from this file, `git log`,
 open PRs and their comments, and the klepsydra line under "Running now" in /mnt/c/Users/ajbar/fleet-briefing/queue.md.
@@ -21,25 +21,21 @@ claude --remote-control NAME "brief"), 6 (--append-system-prompt-file, tail ~260
 triage + inject last 10), then the #8 trial. #9 deferred, #10 denied. #304/#305 closed (withdrawn).
 Each cut: a small PR with the proof test the report names.
 
-## Resume here (session 22 moved at Heph's ask, 11-03 late)
-Reviewers were STOPPED by the move: re-dispatch fresh, one change each, opus, with the long-runs rule.
-1. #261 (doctor-246) head a0d379f: r11 fixes pushed, NOT yet run locally (the suite prefix run was
-   stopped). Read its CI first; then one verify reader on r11's report /tmp/claude-1001/r11-261/report.md.
-   Old Minors still listed: r10 Minor 1, 4, 6 (judge again; prefer deletion). Merge on clean + green CI,
-   make install-fleet. Then #288 (dead-288, CI green 41725667867): PR against main after #261 merges.
-2. #287 (guard-264) head 30ef813: r10 fixes pushed (transcript alone dates the stop; tail 2 MB; grep -a);
-   suite 226/227 (strict local 60 ms timing check reads 64-66 ms under load; untouched path). r11 reader
-   was stopped: re-dispatch (brief: verify r10 report /tmp/claude-1001/r10-287/report.md). Deferred: r10 M5
-   (resume-at-reset.sh:689 dates by the screen). After merge: install, PreToolUse hook in ~/.claude
-   settings, `fleet accounts sync`.
-3. #230 (ask-217) head 7339b19, CI green: r3 fixes pushed; verify reader was stopped, re-dispatch
-   (r3 report /tmp/claude-1001/r3-230/report.md; harness /tmp/claude-1001/-home-ajbar-ajsoftworks/41dda5c8-6ff7-44e8-a23c-0db217dc1e2d/scratchpad/mut230.sh).
-4. claude-prefs#42 (worktree /tmp/claude-1001/-home-ajbar-ajsoftworks/41dda5c8-6ff7-44e8-a23c-0db217dc1e2d/scratchpad/prefs-guard,
-   branch fix/poll-guard-teach, head 509d350): r1 fixes pushed (allow-list data, shlex, 136/136, 12 mutants
-   killed). r2 reader next (r1 report /tmp/claude-1001/r1-prefs42/report.md). After merge:
-   git -C ~/claude-prefs pull (the hook runs from that clone).
-5. #292 r3 still owed. Then audit cuts 3, 4, 2, 5, 6, 7, #8 trial (section above).
-- ✅ Merged + installed this session: #296, #299, #291 (21b84af). Filed #298, #301, #303, #304 (closed).
+## Resume here (session 24, fresh on RIT 11-03 22:30 after session 23 hit Personal's limit)
+Readers die with their session: re-dispatch fresh (opus, one change each, report under /tmp/claude-1001/<round>/report.md).
+1. #261 (doctor-246) head a284639, CI green. r12b verify reader dispatched 22:35 (report /tmp/claude-1001/r12b-261/report.md;
+   r12's partial data /tmp/claude-1001/r12-261: mutants mb, mc, me survived). Merge on clean + green, make install-fleet,
+   then #288 (dead-288) as a PR against main.
+2. #287 (guard-264) head f2c3499: GitHub never ran CI for that push; workflow_dispatch run started 22:33. r12b reader
+   dispatched (report /tmp/claude-1001/r12b-287/report.md). After merge: install, PreToolUse hook in ~/.claude settings,
+   `fleet accounts sync`.
+3. #308 cut 3 (common-cut3) head cfd7a8b: r1 fixes pushed (r1 report /tmp/claude-1001/r1-308/report.md), r2 owed.
+4. #310 cut 4 (worker-mark) head d9ded61, CI green: r1 owed.
+5. Cut 2: issue #311, worktree limits-311, branch feat/limit-events-311: limit_event (StopFailure record + resets_at)
+   in lib.sh, resume + doctor use it first, screen kept as fallback; live_session grep prefilter (0.42 s -> 0.13 s).
+   Tests in fleet/test_fleet.sh "limits from events (#311)" + doctor #311 cases; section runner fleet/test_s311.sh (untracked).
+6. #230 r4 (r3 report /tmp/claude-1001/r3-230/report.md; r4 dir empty, reader died), #292 r3, claude-prefs#42 r2
+   (r1 report /tmp/claude-1001/r1-prefs42/report.md). Then cuts 5, 6, 7, #8 trial.
 
 ## Next, in order (session 21 list; items 1-3 moved above)
 1. (done) #296 fix/watch-alert-race (watch-race), head 0a10fe1, review-clean r3. CI run 41702648814 was still in
