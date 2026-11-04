@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # launch.sh NAME TEXTFILE [claude args...]: open a fleet tmux window running
-# claude, with a session id of its own, inside a memory-capped systemd scope
-# (a runaway test or build is OOM-killed there instead of freezing WSL); turn
+# claude, with a session id of its own, inside a memory- and task-capped systemd
+# scope (a runaway test or build is killed there instead of freezing WSL); turn
 # Remote Control on and wait for it to settle; then paste TEXTFILE, check it
 # reached the prompt, and submit it. A retry never sends Escape, so it cannot
 # cancel a turn that started. Registers the pane, session and folder in
@@ -48,8 +48,17 @@ settings=${FLEET_SETTINGS-$FLEET_STATE/worker-settings.json}
 succeeds=""
 [[ ${FLEET_SUCCEEDS:-} =~ ^[0-9a-f-]{36}$ ]] && succeeds="KLEPSYDRA_SUCCEEDS=$FLEET_SUCCEEDS "
 cmd="env -u KERYX_ENABLED $(config_env "$account")KLEPSYDRA_AGENT=$(printf '%q' "$name") ${succeeds}CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS=2 ${FLEET_CLAUDE:-claude} --session-id $sid${settings:+ --settings $(printf '%q' "$settings")} $*"
+tmax=""
 if [[ ${FLEET_SCOPE:-1} != 0 ]]; then
-  cmd="systemd-run --user --scope --collect --unit=fleet-$name-$(date +%s) -p MemoryHigh=${MEM_HIGH:-4G} -p MemoryMax=${MEM_MAX:-5G} -p MemorySwapMax=${MEM_SWAP:-1G} $cmd"
+  # A task cap of its own (#289): inherited, it was DefaultTasksMax, and on
+  # 11-03 one worker's scope filled it and its claude aborted.
+  tasks=""
+  if tmax=$(fleet_tasks_max); then
+    tasks="-p TasksMax=$tmax "
+  else
+    flog WARN "no task cap readable; the scope inherits DefaultTasksMax" name="$name"
+  fi
+  cmd="${FLEET_SYSTEMD_RUN:-systemd-run} --user --scope --collect --unit=fleet-$name-$(date +%s) -p MemoryHigh=${MEM_HIGH:-4G} -p MemoryMax=${MEM_MAX:-5G} -p MemorySwapMax=${MEM_SWAP:-1G} ${tasks}$cmd"
 fi
 began=$SECONDS
 DELIVER_DEADLINE=$((SECONDS + ${FLEET_LAUNCH_DEADLINE:-120}))
@@ -83,7 +92,7 @@ marker=$FLEET_STATE/launching/$pane
 [[ ${FLEET_KEEP_MARK:-0} == 1 ]] || trap 'rm -f -- "${marker:?}"' EXIT
 trap 'exit 143' TERM INT
 exec 8>&-
-flog INFO "window opened" name="$name" pane="$pane" account="$account" took_s="$(took)"
+flog INFO "window opened" name="$name" pane="$pane" account="$account" tasks_max="${tmax:-none}" took_s="$(took)"
 ready() { idle_empty "$1" || limit_line "$1" >/dev/null; }
 if wait_for "$pane" "$(capped "${FLEET_READY_WAIT:-60}")" ready; then
   flog INFO "prompt showed" name="$name" pane="$pane" took_s="$(took)"
