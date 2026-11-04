@@ -37,7 +37,9 @@ per stage: agy sessions from + New session, then wall, gauge, hooks, keryx); the
 - 🔄 #322 (#319) head 004c3a3: limit mark per account (headroom reads it; a newer reading decides), carry-on note
   after a failed move back (rc 3, 5), reading_of one-pass. bfa19c7 had 46 CI/local fails (marks outlived sections);
   rerun local (room-319 logs/s26b) + CI. Then r1 reader.
-- 📋 #320 send helper (text, wait for it in the box, Enter, check a turn started); #321 CI watch skips superseded commits.
+- 🔄 #320 = PR #325 (send-320, fleet send; 2 mutants killed; CI green): r1 owed.
+- 🔄 #321 = PR #329 (stale-321, held red on a superseded commit dropped; mutant killed): CI, r1 owed.
+- 🔄 #328 = PR #330 (phone-328, doctor skips the phone wall while prefs.json phone_wall is off): CI, r1 owed.
 - 🔄 Cut 6 = #317 / PR #318 (tail-cut6, head f606054): CI green, body updated. r1 reader owed. Deploy: install,
   `fleet brief --refresh`.
 - 📋 Readers owed: #318 r1, #316 r1, #314 r1, #308 r2 (head green), #310 verify (+ mutant harness: base never
