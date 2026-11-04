@@ -192,12 +192,22 @@ elif [[ -n $unknown ]]; then
 else
   report ok "limits" "no pane waits past its reset"
 fi
+declare -A dead=() # pane -> why its agent is dead though the pane is open (#288)
 for p in $orch $panes; do
   who=$(reg_field "$p" 2)
   [[ $p == "$orch" ]] && who=orchestrator
   if ! fleet_panes | grep -qx "$p"; then
     # A worker's gone pane gets its one verdict from the agents check (#220).
     [[ $p == "$orch" ]] && report FAIL "remote control $p ($who)" "the orchestrator's pane is gone"
+    continue
+  fi
+  # Open with its agent dead (#288): the session file still holds the link, so
+  # the check below would pass. A shell in front gets a second look (a starting
+  # command shows one for a moment). A worker's verdict is the agents check's.
+  if why=$(pane_dead_why "$p") && { [[ $why != *prompt* ]] || { sleep "${FLEET_DEAD_RECHECK_S:-1}"; why=$(pane_dead_why "$p"); }; }; then
+    flog WARN "doctor: pane open with its agent dead" pane="$p" who="$who" reason="$why"
+    dead[$p]=$why
+    [[ $p == "$orch" ]] && report FAIL "remote control $p ($who)" "the pane is open but its agent is dead: $why"
     continue
   fi
   f=$(session_of "$p")
@@ -347,6 +357,8 @@ while IFS= read -r row; do
   # The row's finish and unpause records follow its session's own file first (#261).
   forget_resumed "$sid" "$name"
   state=$(row_state "$p" "$sid")
+  # A pane open with its agent dead is gone, unless that agent had finished.
+  [[ -n ${dead[$p]:-} && $state != finished ]] && state=gone
   # Running as its /clear successor: the row names that session from now on,
   # as recover's repair does, so the successor's own end decides (#261 review 6).
   if [[ $state == running ]] && ! session_alive "$sid" && succ=$(row_successor "$p" "$sid") && [[ -n $succ ]]; then
@@ -360,7 +372,7 @@ while IFS= read -r row; do
       # Recorded on first sight, so the finish outlives the session's file.
       with_registry record_finished "$row" || flog WARN "doctor: could not record a finished row" name="$name"
       ;;
-    gone) gone+="$name " ;;
+    gone) gone+="$name${dead[$p]:+ (pane $p open, ${dead[$p]})} " ;;
   esac
 done < <(cat "$REGISTRY" 2>/dev/null)
 if [[ -n $gone ]]; then

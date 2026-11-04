@@ -375,6 +375,31 @@ fleet_panes() { t list-panes -s -t "$FLEET_SESSION" -F '#{pane_id}' 2>/dev/null;
 # looking at, so a replacement never moves him off the agent he is watching.
 in_view() { [[ $(t display-message -p -t "$1" '#{window_active}' 2>/dev/null) == 1 ]]; }
 
+# Why PANE is open with no agent in it (#288): its process ended and tmux kept
+# the pane (remain-on-exit failed keeps a crash on screen), or a shell is in
+# front where claude ran, or the pane-died hook (#290) marked it. Prints the
+# reason; fails while the pane looks alive or is gone. A shell in front is also
+# what a pane shows for a moment while its command starts, so callers confirm
+# that one on a second look.
+SHELLS=" sh bash dash zsh fish ksh "
+pane_dead_why() { # PANE
+  local dead st sig cmd mark
+  # Tab-separated (tmux prints other control characters as octal), "-" for an
+  # empty field, the command last.
+  IFS=$'\t' read -r dead st sig cmd < <(t display-message -p -t "$1" $'#{pane_dead}\t#{?pane_dead_status,#{pane_dead_status},-}\t#{?pane_dead_signal,#{pane_dead_signal},-}\t#{pane_current_command}' 2>/dev/null) || return 1
+  [[ $st == - ]] && st=""
+  [[ $sig == - ]] && sig=""
+  # Started again on its saved screen by the pane-died hook (#290), which notes why.
+  mark=$(t show -pqv -t "$1" @klepsydra_dead 2>/dev/null)
+  [[ -n $mark ]] && { printf '%s' "$mark"; return 0; }
+  if [[ $dead == 1 ]]; then
+    if [[ -n $sig ]]; then printf 'its process ended on signal %s' "$sig"; else printf 'its process exited with status %s' "${st:-unknown}"; fi
+    return 0
+  fi
+  [[ -n $cmd && $SHELLS == *" ${cmd#-} "* ]] || return 1
+  printf 'a %s prompt is in front where its claude ran' "${cmd#-}"
+}
+
 # Whether the session live in PANE is one finished.tsv names (`fleet done`,
 # or a finish the doctor or recover recorded; the registry's columns, pane
 # first, session fourth). The resume service asks it of panes with no row.
