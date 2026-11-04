@@ -988,7 +988,9 @@ login a
 # The section's sessions are alive by recover's test (this boot, the same process).
 mkdir -p "$work/dproc/4242"; printf '4242 (claude) S %s 777 1 2 3\n' "$(seq -s ' ' 1 18)" >"$work/dproc/4242/stat"
 echo 44444444-4444-4444-8444-444444444444 >"$work/dboot"
-doctor() { FLEET_PS="$work/bin/ps" FLEET_SYSTEMCTL="$work/bin/systemctl" FLEET_CURL="$work/bin/curl" FLEET_TAILSCALE="$work/bin/tailscale" \
+# The phone wall is on in these cases unless one says otherwise (#328).
+printf '{"phone_wall": true}' >"$work/prefs-on.json"
+doctor() { DOC_PREFS=${DOC_PREFS:-$work/prefs-on.json} FLEET_PS="$work/bin/ps" FLEET_SYSTEMCTL="$work/bin/systemctl" FLEET_CURL="$work/bin/curl" FLEET_TAILSCALE="$work/bin/tailscale" \
   DOC_ACTIVE="$work/active" DOC_FLEET="$work/fleet.json" FLEET_RETRY_S=0 FLEET_PROC="$work/dproc" FLEET_BOOT_ID="$work/dboot" bash "$here/doctor.sh" 2>/dev/null; }
 sid_of() { case $1 in w1) echo dddddddd-0000-4000-8000-000000000001 ;; w2) echo dddddddd-0000-4000-8000-000000000002 ;; *) echo dddddddd-0000-4000-8000-0000000000"${1#o}"0 ;; esac; }
 w=$(pane wpane '{"above":["idle"]}'); o=$(pane opane '{"above":["idle"]}'); settle
@@ -1006,6 +1008,11 @@ check "a resume loop that never ran fails" "$(grep '^FAIL resume loop' <<<"$out"
 check "a worker with Remote Control is ok" "$(grep -c "^ok   remote control $w (worker)" <<<"$out")" "1"
 check "the orchestrator without it fails (Heph's must always be on)" "$(grep -c "^FAIL remote control $o (orchestrator): off" <<<"$out")" "1"
 check "no phone wall fails, after a second try" "$(grep -c '^FAIL phone wall: no answer from http://127.0.0.1:8318/fleet.json (tried twice)' <<<"$out")" "1"
+for pw in false '"yes"' none bad; do
+  case $pw in none) rm -f -- "$work/prefs-off.json" ;; bad) printf '{phone' >"$work/prefs-off.json" ;; *) printf '{"phone_wall": %s}' "$pw" >"$work/prefs-off.json" ;; esac
+  check "#328: phone_wall $pw (the wall's own reading: off): ok, and neither phone line is tried" \
+    "$(DOC_PREFS="$work/prefs-off.json" doctor | grep '^[a-zF]* *phone wall' | cut -d: -f1 | paste -sd'|')" "ok   phone wall"
+done
 check "#289: with no fleet scope there is no task caps line" "$(grep -c 'task caps' <<<"$out")" "0"
 printf 'fleet-a-1.scope 7000 8745\nfleet-b-2.scope 100 8745\nnot-fleet.scope 9 10\n' >"$work/scopes"
 check "#289: a scope past 80% of its task cap warns, naming it" "$(DOC_SCOPES="$work/scopes" doctor | grep 'task caps')" \

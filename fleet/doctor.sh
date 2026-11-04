@@ -233,15 +233,22 @@ phone() { # CHECK BASE
   [[ -n $phone_body ]] || phone_body=$body
   report ok "$1" "answers at $2"
 }
-phone "phone wall" "$PHONE"
-dns=$($TAILSCALE status --json 2>/dev/null | jq -r '.Self.DNSName // empty' | sed 's/\.$//')
-serve=$($TAILSCALE serve status 2>/dev/null)
-if [[ -z $dns ]]; then
-  report FAIL "phone wall over Tailscale" "Tailscale is not running or not logged in"
-elif [[ -z $serve || $serve == *"No serve config"* ]]; then
-  report FAIL "phone wall over Tailscale" "Tailscale Serve is not set up (README: Phone wall)"
+# The phone wall is AJ's to switch off (#328): prefs.json's phone_wall, read
+# as the wall reads it (src-tauri/src/phone.rs: a missing or unreadable file is off).
+prefs=${DOC_PREFS:-$KLEPSYDRA_DIR/prefs.json}
+if [[ $(jq -r '.phone_wall == true' "$prefs" 2>/dev/null) != true ]]; then
+  report ok "phone wall" "off (prefs.json phone_wall): not checked, nor over Tailscale" prefs="$prefs"
 else
-  phone "phone wall over Tailscale" "https://$dns"
+  phone "phone wall" "$PHONE"
+  dns=$($TAILSCALE status --json 2>/dev/null | jq -r '.Self.DNSName // empty' | sed 's/\.$//')
+  serve=$($TAILSCALE serve status 2>/dev/null)
+  if [[ -z $dns ]]; then
+    report FAIL "phone wall over Tailscale" "Tailscale is not running or not logged in"
+  elif [[ -z $serve || $serve == *"No serve config"* ]]; then
+    report FAIL "phone wall over Tailscale" "Tailscale Serve is not set up (README: Phone wall)"
+  else
+    phone "phone wall over Tailscale" "https://$dns"
+  fi
 fi
 
 # The usage readings' age (#246). Only a session's status line refreshes them,
