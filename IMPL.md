@@ -1,4 +1,4 @@
-# IMPL: klepsydra fleet-module brief, resume state 2026-11-04 (session 27)
+# IMPL: klepsydra fleet-module brief, resume state 2026-11-04 (session 28)
 
 Session 22 (Chronos) resumed 16:09 after the IAAI-27 park. Resume with the same brief from this file, `git log`,
 open PRs and their comments, and the klepsydra line under "Running now" in /mnt/c/Users/ajbar/fleet-briefing/queue.md.
@@ -21,20 +21,20 @@ claude --remote-control NAME "brief"), 6 (--append-system-prompt-file, tail ~260
 triage + inject last 10), then the #8 trial. #9 deferred, #10 denied. #304/#305 closed (withdrawn).
 Each cut: a small PR with the proof test the report names.
 
-## Resume here (session 27, fresh on RIT ~/.claude, 11-04 14:08)
+## Resume here (session 28, fresh on Personal %26, 11-04 evening)
 Reports: /tmp/claude-1001/<round>/report.md. Never wrap a lock-taking make target in an outer timeout; finish edits
 to a suite before queuing it. PR bodies: Write the file, then PATCH in its own call (phylax reads the written file).
 Order (Heph 11-04): bug queue -> #326 (PR #331) -> #323 stage 1 (PR #332) -> #327 Agora v2 -> #324 -> #323 later
 stages; reader backlog (#318, #316, #314, #308, #310) and cuts 7, #8 between.
 - ✅ merged + installed: #230, #313, #292.
-- 🔄 #287 (guard-264): r15 S2 (python -O took a value) + M4 (python -, -m, bash -s, -ec clusters) fixed UNCOMMITTED in the
-  worktree: arms scoped per interpreter; 6 new checks in test_orch_guard.sh; base 236/0 pending a rerun after the -m/-s fix;
-  mutants in <scratch>/mut287/run.sh (base first). Then commit, push, body line 16 count, r16 fresh verify.
-- 🔄 #322 (room-319): r3 reader running (/tmp/claude-1001/r3-322/report.md).
-- 🔄 #329 (stale-321) bf890fe: r1 F1 fixed (withdrawn alert line + ci_wake one jq pass that honours it), F2 tests, F3 cut;
-  57/0, 5/5 mutants killed; body rewritten. r2 reader running (/tmp/claude-1001/r2-329/report.md).
-- 📋 main merged into #325 (325dddc), #330 (b69fcd4), #331 (e6af965), #332 (5cf7473): conflicts resolved (install SCRIPTS
-  union with tmux-watch.sh/send.sh, README doctor row, launch scope with $cmd). r1 owed on each, plus #318 (clean, behind 3).
+- 🔄 #322 (room-319): r3 fixed in 26b2cf1 (J1 carry-on when the room goes before the move, why=room; G4b rc 4 no
+  note; G2b marked=none; G4c note an hour after the ask), main merged 7190c60; full suite running; then push, body
+  row names the head, r4 reader.
+- 🔄 #329 (stale-321) 143b259 (r4 fixes): r5 reader -> /tmp/claude-1001/r5b-329/report.md (r5 died at the limit).
+- 🔄 #325 (send-320) 325dddc: r1 reader -> /tmp/claude-1001/r1-325/report.md.
+- 🔄 #287 (guard-264): r15 fix uncommitted + new python -Ic cluster test (kills m7); base + 7 mutants running
+  (scratch mut287/run.sh). Then commit, push, body count, r16 fresh verify.
+- 📋 r1 owed: #330 (b69fcd4), #331 (e6af965), #332 (5cf7473), #318 (behind main).
 - 📋 Readers: #316 r1, #314 r1, #308 r2, #310 verify, claude-prefs#42 r2 + #43 r1.
 - 📋 Cut 7 (friction triage + SessionStart last 10 lines), then the #8 trial; #327; #324.
 - Held worktree split-182: kept on purpose (CARGO_TARGET_DIR; src-tauri/gen is Tauri's generated schema).
