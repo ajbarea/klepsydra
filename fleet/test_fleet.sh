@@ -1120,7 +1120,7 @@ check "a resume loop that stopped passing fails" "$(doctor | grep -c '^FAIL resu
 logout a
 out=$(doctor)
 check "a default account not logged in fails" "$(grep -c "^FAIL account $work/cfg-a: not logged in: claude auth login" <<<"$out")" "1"
-djson() { FLEET_PS="$work/bin/ps" FLEET_SYSTEMCTL="$work/bin/systemctl" FLEET_CURL="$work/bin/curl" FLEET_TAILSCALE="$work/bin/tailscale" \
+djson() { DOC_PREFS=${DOC_PREFS:-$work/prefs-on.json} FLEET_PS="$work/bin/ps" FLEET_SYSTEMCTL="$work/bin/systemctl" FLEET_CURL="$work/bin/curl" FLEET_TAILSCALE="$work/bin/tailscale" \
   DOC_ACTIVE="$work/active" DOC_FLEET="$work/fleet.json" bash "$here/doctor.sh" --json "$work/health.json" >/dev/null 2>&1; echo $?; }
 : >"$FLEET_LOG"; rm -f "$work/health.json"
 check "#208: --json writes each check with its status and detail, and exits as doctor does" \
