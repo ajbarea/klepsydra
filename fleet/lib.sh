@@ -511,7 +511,29 @@ account_of() { # DIR
 # klepsydra's newest usage reading of account ID.
 reading_of() { # ID
   [[ $1 =~ ^[0-9A-Za-z][0-9A-Za-z-]*$ ]] || return 1
-  find "$KLEPSYDRA_DIR/accounts/$1" -maxdepth 1 -name '*.json' -printf '%T@ %p\n' 2>/dev/null | sort -rn | head -1 | cut -d' ' -f2- | grep .
+  # One pass for the newest: sort | head closed sort's pipe early, and the
+  # journal logged "sort: write error" several times an hour (#319).
+  find "$KLEPSYDRA_DIR/accounts/$1" -maxdepth 1 -name '*.json' -printf '%T@ %p\n' 2>/dev/null |
+    awk '$1 + 0 > m || f == "" { m = $1 + 0; f = substr($0, index($0, " ") + 1) } END { if (f == "") exit 1; print f }'
+}
+
+# A usage limit seen on account ID that resets at RESET (#319): until then the
+# account has no room, whatever its newest reading says, since a request the
+# limit refuses writes no reading. A later reset for the same account wins.
+LIMITED_DIR=${FLEET_LIMITED_DIR:-$FLEET_STATE/limited}
+mark_limited() { # ID RESET
+  local was=0
+  [[ $1 =~ ^[0-9A-Za-z][0-9A-Za-z-]*$ && $2 =~ ^[0-9]+$ ]] || return 1
+  { read -r was <"$LIMITED_DIR/$1"; } 2>/dev/null
+  [[ $was =~ ^[0-9]+$ ]] && (( was >= $2 )) && return 0
+  mkdir -p -- "$LIMITED_DIR" && printf '%s\n' "$2" >"$LIMITED_DIR/$1.$$" && mv -f -- "$LIMITED_DIR/$1.$$" "$LIMITED_DIR/$1"
+}
+# Whether account ID is still at a limit seen on it, at NOW.
+limited_until() { # ID NOW
+  local at=0
+  [[ $1 =~ ^[0-9A-Za-z][0-9A-Za-z-]*$ ]] || return 1
+  { read -r at <"$LIMITED_DIR/$1"; } 2>/dev/null || return 1
+  [[ $at =~ ^[0-9]+$ ]] && (( at > $2 ))
 }
 
 # Account ID's name as its readings give it (the gauge's), else its id.
@@ -526,6 +548,7 @@ account_label() { # ID
 # not have (a Team seat has no weekly window), or with no reading at all.
 headroom() { # ID NOW
   local f
+  limited_until "$1" "$2" && { echo "0 0"; return; }
   f=$(reading_of "$1") || { echo "100 100"; return; }
   jq -r --argjson now "$2" 'def room(w): if w == null or (w.resets_at // 0) <= $now then 100
       else 100 - (w.used_percentage // 0) end;

@@ -172,6 +172,7 @@ noon=$(TZ=America/New_York date -d '2026-10-28 12:00' +%s)
 resume "$noon"
 check "a limit is seen and logged with its pane, account and reset" \
   "$(jq -r 'select(.message == "limit seen") | [.pane, .account, .resets] | join(" ")' "$FLEET_LOG")" "$p Personal Wed 2026-10-28 13:10"
+check "#319: the limit is marked on the pane's account until its reset" "$(cat "$FLEET_STATE/limited/a" 2>/dev/null)" "$(TZ=America/New_York date -d '2026-10-28 13:10' +%s)"
 check "nothing is typed before the reset" "$(events lim)" ""
 resume "$(( noon + 3600 + 600 + 130 ))"
 check "after the reset, the continue message goes in and starts a turn" "$(has "$(events lim)" "SUBMIT The usage limit has reset.")" "yes"
@@ -1242,6 +1243,20 @@ reading a Personal 60 1000
 check "back room: under FLEET_BACK_ROOM_PCT (50%) free is not enough to move back" "$(back_room a "$now" && echo yes || echo no)" "no"
 reading a Personal 50 1000
 check "at 50% free it is" "$(back_room a "$now" && echo yes || echo no)" "yes"
+# #319: a limit seen on the account outranks a reading the limit kept from refreshing.
+mark_limited a $((now + 3600))
+check "#319: an account at a limit seen on it has no room to move back to, whatever its reading says" \
+  "$(back_room a "$now" && echo yes || echo no) $(headroom a "$now") $(id_has_room a "$now" && echo room || echo full)" "no 0 0 full"
+mark_limited a $((now + 60))
+check "#319: an earlier reset never shortens a later one" "$(cat "$FLEET_STATE/limited/a")" "$((now + 3600))"
+check "#319: past its reset the reading decides again" "$(back_room a $((now + 3601)) && echo yes || echo no)" "yes"
+check "#319: a malformed id or reset marks nothing" "$(mark_limited '../x' 5 || echo refused) $(mark_limited a soon || echo refused)" "refused refused"
+rm -rf -- "${FLEET_STATE:?}/limited"
+mkdir -p "$KLEPSYDRA_DIR/accounts/rd"; printf '{}' >"$KLEPSYDRA_DIR/accounts/rd/old.json"; printf '{}' >"$KLEPSYDRA_DIR/accounts/rd/new.json"
+touch -d '2026-10-01' "$KLEPSYDRA_DIR/accounts/rd/old.json"
+check "#319: reading_of takes the newest reading in one pass" "$(reading_of rd)" "$KLEPSYDRA_DIR/accounts/rd/new.json"
+rm -rf -- "${KLEPSYDRA_DIR:?}/accounts/rd"
+check "#319: and fails with none" "$(reading_of rd || echo none)" "none"
 rm -f "$KLEPSYDRA_DIR/accounts/a/s.json"
 check "and with no reading at all it is not" "$(back_room a "$now" && echo yes || echo no)" "no"
 check "the default folder unsets CLAUDE_CONFIG_DIR; the second sets it" "$(config_env "$work/cfg-a")| $(config_env "$work/cfg-b")" "-u CLAUDE_CONFIG_DIR | CLAUDE_CONFIG_DIR=$work/cfg-b "
@@ -1601,6 +1616,29 @@ check "#198: nor a first line that goes on past it" "$(wc -c <"$work/moved")" "0
 reply_live "$p" settled '[{"id": "w1", "kind": "bash"}]' $'**READY-TO-MOVE**\nSaved IMPL.md and pushed; stopped w1.' "$((noon + 430))"
 mover "$((noon + 480))"
 check "#198: it moves on a first line of READY-TO-MOVE at a finished turn" "$(head -2 "$work/moved" | tr '\n' ' ')" "$work/cfg-a keeper "
+t kill-window -t "$p" 2>/dev/null; : >"$REGISTRY"
+
+# #319 (11-04, site-deslop): the preferred account's reading still showed room
+# 13 min after a weekly limit was seen on it. No ask while the limit stands;
+# and a move that meets the limit anyway tells the worker to carry on.
+: >"$FLEET_LOG"; : >"$work/moved"; rm -f "$FLEET_STATE/resume-state" "$FLEET_STATE/back-room-since"
+p=$(backpane stale); state stale '{"above":["⏺ Done. done 11:50 AM"],"on_submit":"none"}'
+reply_live "$p" settled '[{"id": "w1", "kind": "bash"}]' "Watching." "$noon"
+mark_limited a $((noon + 3600))
+mover "$noon"; mover "$((noon + 300))"
+check "#319: no move-back ask while a limit seen on the preferred account stands" "$(grep -c '^SUBMIT' "$work/stale.log")" "0"
+rm -rf -- "${FLEET_STATE:?}/limited"
+cat >"$work/launch-limited.sh" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' "\$FLEET_ACCOUNT" "\$@" >"$work/moved"
+echo "pane=%995 session=x account=\$FLEET_ACCOUNT avail=1MiB brief=blocked-by-limit"
+EOF
+chmod +x "$work/launch-limited.sh"
+mover "$((noon + 600))"; mover "$((noon + 900))"
+reply_live "$p" settled '[{"id": "w1", "kind": "bash"}]' "READY-TO-MOVE" "$((noon + 930))"
+LAUNCH="$work/launch-limited.sh" FLEET_NOW=$((noon + 960)) bash "$here/resume-at-reset.sh" --once 2>/dev/null
+check "#319: a move back whose brief meets the limit tells the stopped worker to carry on where it is" \
+  "$(grep -c '^SUBMIT The move back to Personal did not happen: its brief met the usage limit there. Carry on here' "$work/stale.log") $(logged "told the worker to carry on after a failed move back")" "1 $p "
 t kill-window -t "$p" 2>/dev/null; : >"$REGISTRY"
 
 # A turn that starts while the fresh session launches (a background task's

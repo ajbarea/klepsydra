@@ -200,6 +200,20 @@ ask_back() { # PANE FROM TO
   esac
 }
 
+# Tell the worker in PANE, which stopped for a move back to folder TO that
+# failed with RC, to carry on where it is; it is asked again when TO has room.
+carry_on() { # PANE TO RC
+  local p=$1 f got why
+  if [[ $3 == 5 ]]; then why="its brief met the usage limit there"; else why="the new session did not start"; fi
+  f=$FLEET_STATE/carry-on-${p#%}.txt
+  printf 'The move back to %s did not happen: %s. Carry on here, on this account, from your resume state; you are asked again when it has room.' \
+    "$(account_label "${ACCT_ID[$2]:-$2}")" "$why" >"$f"
+  got=$(inbox_deliver "$p" "$f")
+  rm -f -- "${f:?}"
+  unset "asked[$p]"
+  flog INFO "told the worker to carry on after a failed move back" pane="$p" to="$2" why="$3" delivery="$got"
+}
+
 # Replace the orchestrator in PANE with a fresh Heph on config folder TO, from
 # a note naming HEPH.md and AJ's messages since (heph_note); WHY ends "the
 # orchestrator (Heph) ..."; NOTE, what AJ typed at the old pane and never sent,
@@ -424,6 +438,9 @@ done_move() { # PANE KIND RC NEW CTX
         (( rc == 4 && move_tries[$p] < 2 )) && move_tries[$p]=2
         if [[ $kind == back ]]; then
           flog WARN "could not move back to the preferred account; trying again later" pane="$p" to="$b" orchestrator="$c" why="$rc" tries="${move_tries[$p]:-0}"
+          # A worker that saved and stopped for the move waits on nothing: it
+          # carries on here (#319), unless AJ typed or resumed it meanwhile (1, 4).
+          if (( !c )) && [[ $rc == 3 || $rc == 5 ]]; then carry_on "$p" "$b" "$rc"; fi
         else
           flog WARN "could not move before the limit; trying again later" pane="$p" to="$b" why="$rc" tries="${move_tries[$p]:-0}"
         fi
@@ -659,7 +676,9 @@ one() { # PANE
   if [[ -z ${due[$p]:-} ]]; then
     if reset=$(reset_epoch "$limit" "$NOW") || reset=$(reset_epoch "$ps" "$NOW"); then :; else reset=$((NOW + 1800)); fi
     due[$p]=$((reset + 120)) seen_on[$p]=${ACTIVE:-unknown}
-    flog INFO "limit seen" pane="$p" account="${seen_on[$p]}" resets="$(date -d @"$reset" '+%a %F %H:%M')" message="$limit"
+    # The account has no room until then, whatever a stale reading says (#319).
+    [[ -n $PANE_ID ]] && mark_limited "$PANE_ID" "$reset"
+    flog INFO "limit seen" pane="$p" account="${seen_on[$p]}" resets="$(date -d @"$reset" '+%a %F %H:%M')" message="$limit" marked="${PANE_ID:+$PANE_ID}"
   fi
   reg=$(awk -F'\t' -v p="$p" '$1 == p { print $2 "\t" $3 }' "$REGISTRY" 2>/dev/null)
   name=${reg%%$'\t'*} brief=${reg#*$'\t'}
