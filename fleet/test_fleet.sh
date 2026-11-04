@@ -1059,6 +1059,8 @@ check "#311: a pane the hook recorded at a limit, past its resets_at, fails thou
 check "#311: before then it is ok" "$(FLEET_NOW=$((noon + 900)) doctor | grep -c '^ok   limits')" "1"
 check "#313 review 2: and with no watcher, the watcher check holds it limited too: a warning, no FAIL" \
   "$(FLEET_NOW=$((noon + 900)) doctor | grep -c '^warn pane watcher: none running while every agent waits out a usage limit')" "1"
+check "#313 review 3: the warning gives the account's reset (12:10pm), not the stop's text (1:10pm)" \
+  "$(FLEET_NOW=$((noon + 900)) doctor | grep -c '^warn pane watcher: none running while every agent waits out a usage limit (resets 12:10pm)')" "1"
 session_file w1 "$w" https://claude.ai/code/session_01W
 rm -f -- "${KLEPSYDRA_DIR:?}/accounts/a/ev.json"
 state wpane '{"above":["idle"]}'
