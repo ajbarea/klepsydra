@@ -334,11 +334,28 @@ sent_or_started() { started "$1" || { has_input_box "$1" && [[ -z $(input_text "
 # with more than two newlines, as "[Pasted text #N]" ("... +M lines]" when it
 # has newlines). Prints sent, not-pasted, mixed (pasted beside a line AJ
 # began: left in the box unsent, since taking it back out by keystrokes could
-# take his characters with it) or held (still in the box after three Enters).
+# take his characters with it) or held (still in the box after three Enters, or no
+# longer the message alone: a dialog stands in its place, or AJ began a line).
 # With ANY, a running turn is no bar (Claude Code queues a message sent during
 # one), and it is sent once the box has emptied.
+# One delivery per pane at a time (fleet send runs beside the resume service and
+# other senders, and two pastes into one box glue together): a second waits its
+# turn, up to FLEET_SEND_WAIT s, then gets not-pasted. Only short-lived tmux
+# clients run under the lock (the pane exists, so no server starts here).
 inbox_deliver() { # PANE FILE [any]
-  local p=$1 file=$2 box want text gone=sent_or_started
+  mkdir -p -- "$FLEET_STATE/locks" 2>/dev/null
+  ( flock -w "${FLEET_SEND_WAIT:-45}" 9 || { echo not-pasted; exit 0; }; deliver_now "$@" ) 9>"$FLEET_STATE/locks/send-${1#%}"
+}
+# The box holds the message (WANT, without whitespace) alone: its text, or a
+# paste's placeholder. Both sides lose their whitespace the same way: a long line wraps.
+msg_in_box() { # SCREEN WANT
+  local box
+  has_input_box "$1" || return 1
+  box=$(input_text "$1")
+  [[ ${box//[[:space:]]/} == "$2" || $box =~ ^\[Pasted\ text\ \#[0-9]+(\ \+[0-9]+\ lines)?\]$ ]]
+}
+deliver_now() { # PANE FILE [any]
+  local p=$1 file=$2 want text gone=sent_or_started
   if [[ ${3:-} == any ]]; then
     box_empty "$(screen "$p")" || { echo not-pasted; return; }
     gone=box_empty
@@ -347,20 +364,15 @@ inbox_deliver() { # PANE FILE [any]
   fi
   t load-buffer -b "fleet-$$" "$file" && t paste-buffer -p -d -b "fleet-$$" -t "$p"
   wait_for "$p" 5 holds_input || { echo not-pasted; return; }
-  box=$(input_text "$(screen "$p")")
-  # Both sides lose their whitespace the same way: a long line wraps in the box.
   text=$(<"$file")
   want=${text//[[:space:]]/}
-  if [[ ${box//[[:space:]]/} != "$want" && ! $box =~ ^\[Pasted\ text\ \#[0-9]+(\ \+[0-9]+\ lines)?\]$ ]]; then
-    echo mixed
-    return
-  fi
+  msg_in_box "$(screen "$p")" "$want" || { echo mixed; return; }
   for _ in 1 2 3; do
     t send-keys -t "$p" Enter
-    if wait_for "$p" "${FLEET_START_WAIT:-10}" "$gone"; then
-      echo sent
-      return
-    fi
+    wait_for "$p" "${FLEET_START_WAIT:-10}" "$gone" && { echo sent; return; }
+    # Enter again only on the message itself: a dialog may stand where the box
+    # was (an Enter would answer it), or AJ may have begun a line.
+    msg_in_box "$(screen "$p")" "$want" || break
   done
   echo held
 }

@@ -898,6 +898,7 @@ check "the tail carries the friction-log rule (AJ 11-01)" "$(grep -c '^Friction 
 check "the tail puts performance first, above the security floor, and asks for DS&A checks (AJ 11-01, 11-03)" "$(grep -c '^Quality (AJ 11-01, 11-03): performance is AJ.s #1 quality attribute; when it trades off with security, performance wins, above the security floor. In every workflow, check the data structures and algorithms' "$here/brief-tail.md")" "1"
 check "the tail carries the team-ceremony rule (AJ 10-29)" "$(grep -c '^Team ceremony in every repo' "$here/brief-tail.md")" "1"
 check "the tail keeps asks for AJ out of public issues and PRs (AJ 10-29)" "$(grep -c '^Asks for AJ stay private' "$here/brief-tail.md")" "1"
+check "#325 review 1: the tail sends messages to panes through fleet send (#320)" "$(grep -c '^Messages to another pane .*`fleet send PANE -`' "$here/brief-tail.md")" "1"
 check "#239: the tail has heavy commands take the lock with flock -o, so nothing they leave running keeps it" "$(grep -c 'flock -o /tmp/fleet-heavy.lock' "$here/brief-tail.md")" "1"
 check "#291 review: the tail says the make targets take the lock themselves and run bare" "$(grep -c 'make test-fleet., .make test-launch., .make test-heavy-lock. and .make shellcheck. in klepsydra take the lock themselves: run them bare' "$here/brief-tail.md")" "1"
 check "#291 review 5: the tail's hand form puts a group-wide timeout inside the lock (no --foreground)" "$(grep -c 'flock -o /tmp/fleet-heavy.lock timeout 1800 <command>' "$here/brief-tail.md") $(grep -c -- '--foreground' "$here/brief-tail.md")" "1 0"
@@ -3419,7 +3420,34 @@ check "#320: text already in the box is never touched" \
 check "#320: stdin as the message" "$(state snd '{"above":["idle"],"clear":true,"on_submit":"none"}'; settle; printf 'from stdin\n' | fsend "$p" -)" "sent"
 check "#320: a pane the server does not have, or no text, is refused (2)" \
   "$(fsend %99999 "x"; echo -n "$? "; fsend "$p" "   "; echo -n "$? "; fsend "$p"; echo $?)" "2 2 2"
+check "#325 review 1: a target that is not a pane id (a window) is refused (2)" "$(fsend fleet:1 "x"; echo $?)" "2"
 t kill-window -t "$p"
+p=$(pane snb '{"above":["working"],"busy":true,"enter_ignore":1,"on_submit":"none"}'); settle
+out=$(fsend "$p" "queued while busy, first Enter lost"); rc=$?
+check "#325 review 1: a busy pane whose first Enter is lost still gets the message, once" \
+  "$out $rc $(grep -c '^SUBMIT queued while busy' "$work/snb.log") $(grep -c 'KEY ENTER (lost after a paste)' "$work/snb.log")" "sent 0 1 1"
+t kill-window -t "$p"
+# A dialog (here the limit menu) takes the box's place while the first Enter is lost.
+p=$(pane snm '{"above":["working"],"busy":true,"enter_ignore":1,"on_submit":"none"}'); settle
+fsend "$p" "message while a dialog comes up" >"$work/snm.out" &
+n2=$!
+sleep 1.5
+state snm '{"above":["working"],"busy":true,"on_submit":"none","menu":"limit"}'
+wait "$n2"
+check "#325 review 1: no Enter lands on a dialog that took the box's place; the send says held" \
+  "$(grep -c 'LIMIT MENU STOP' "$work/snm.log") $(cat "$work/snm.out")" "0 held"
+t kill-window -t "$p"
+# Two senders at once (two workers reporting to Heph): one waits for the other.
+p=$(pane snc '{"above":["idle"],"on_submit":"none"}'); settle
+fsend "$p" "report A from worker one" >"$work/snc.a" &
+a=$!
+fsend "$p" "report B from worker two" >"$work/snc.b" &
+b=$!
+wait "$a" "$b"
+check "#325 review 1: two sends at once to one pane both go, one after the other, never glued in the box" \
+  "$(cat "$work/snc.a") $(cat "$work/snc.b") $(grep -c '^SUBMIT report [AB] from worker' "$work/snc.log") [$(input_text "$(screen "$p")")]" "sent sent 2 []"
+t kill-window -t "$p"
+check "#325 review 1: no message file is left under send/" "$(find "$FLEET_STATE/send" -type f 2>/dev/null | wc -l)" "0"
 
 echo "the tmux server watchdog (#290)"
 : >"$FLEET_LOG"
