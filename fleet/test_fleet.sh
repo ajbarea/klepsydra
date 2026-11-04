@@ -1035,7 +1035,8 @@ done
 state wpane '{"above":["idle"]}'
 # Recorded on the account the pane's folder holds (a): a stop on another one is
 # dated by its own text (the /login case above).
-stop_file w1 "$w" "$noon" a "$L5"; win a 100 $((noon + 600))
+# In the pane's own session file: a second live file naming the pane is no answer.
+stop_file "$(sid_of w1)" "$w" "$noon" a "$L5"; win a 100 $((noon + 600))
 check "#311: a pane the hook recorded at a limit, past its resets_at, fails though its screen shows none" \
   "$(FLEET_NOW=$((noon + 1300)) doctor | grep '^FAIL limits')" "FAIL limits: still at a limit past its reset: $w (the resume service missed it)"
 check "#311: before then it is ok" "$(FLEET_NOW=$((noon + 900)) doctor | grep -c '^ok   limits')" "1"
