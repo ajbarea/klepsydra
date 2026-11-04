@@ -4522,7 +4522,8 @@ AGY = [
 def agy_menu(wall):
     """+ New session's other kind (#323): no menu where agy lists no models;
     with them, a split button whose menu offers Gemini first and starts agy on
-    the model picked, and + New session itself still starts Claude Code."""
+    the model picked, and + New session itself still starts Claude Code. Set
+    $KLEPSYDRA_AGY_SHOT to a path stem for a screenshot of the open menu."""
     page = open_app(wall)
     page.wait_for_timeout(300)
     wall.check(page.locator("#new-kind").is_hidden(), "no agy: + New session alone, as before", page.locator("#new-kind").is_visible())
@@ -4539,6 +4540,9 @@ def agy_menu(wall):
         "its menu opens with Gemini first, then the rest in agy's order",
         opts,
     )
+    shot = os.environ.get("KLEPSYDRA_AGY_SHOT")
+    if shot:
+        page.screenshot(path=f"{shot}-menu.png")
     page.select_option("#agy-model", "gemini-3.8-flash-low")
     page.click("#agy-start")
     page.wait_for_timeout(200)
