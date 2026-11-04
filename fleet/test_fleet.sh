@@ -905,7 +905,7 @@ guard_settings() { jq -n --arg m "$1" '{hooks: {PreToolUse: [{matcher: $m, hooks
 mkdir -p "$FLEET_DEFAULT_CONFIG"; guard_settings "Bash|Edit|Write"
 w=$(pane wpane '{"above":["idle"]}')
 printf '%s' '{"above":["idle"]}' >"$work/opane.json"; : >"$work/opane.log"
-o=$(t new-window -d -P -F '#{pane_id}' -t fleet: "env PATH=$FLEET_STATE/orch-bin:$PATH python3 -I $fake $work/opane.json $work/opane.log"); settle
+o=$(t new-window -d -P -F '#{pane_id}' -t fleet: "env PATH=$(printf %q "$FLEET_STATE/orch-bin:$PATH") python3 -I $fake $work/opane.json $work/opane.log"); settle
 printf '%s\tworker\t%s\t%s\n' "$w" "$FLEET_STATE/task-demo.src" "$(sid_of w1)" >"$REGISTRY"
 printf '%s\n' "$o" >"$FLEET_STATE/orchestrator.pane"
 session_file() { # ID PANE [URL]
@@ -953,7 +953,7 @@ rm -f -- "$FLEET_DEFAULT_CONFIG/settings.json"
 check "#264: no settings at all warns" "$(doctor | grep -c '^warn orchestrator guard')" "1"
 mkdir -p "$work/realtmux"; printf '#!/usr/bin/env bash\n' >"$work/realtmux/tmux"; chmod +x "$work/realtmux/tmux"
 t kill-pane -t "$o"
-o=$(t new-window -d -P -F '#{pane_id}' -t fleet: "env PATH=$work/realtmux:$FLEET_STATE/orch-bin:$PATH python3 -I $fake $work/opane.json $work/opane.log"); settle
+o=$(t new-window -d -P -F '#{pane_id}' -t fleet: "env PATH=$(printf %q "$work/realtmux:$FLEET_STATE/orch-bin:$PATH") python3 -I $fake $work/opane.json $work/opane.log"); settle
 printf '%s\n' "$o" >"$FLEET_STATE/orchestrator.pane"
 check "#264: a tmux ahead of orch-bin on the orchestrator's PATH warns" "$(doctor | grep -c '^warn orchestrator tmux guard')" "1"
 t kill-pane -t "$o"

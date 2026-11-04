@@ -59,6 +59,11 @@ from_fleet_script() {
     if [[ $a =~ ^(bash|sh|python3?(\.[0-9]+)?)$ ]]; then
       for (( j = 1; j < ${#argv[@]} && j < 4; j++ )); do
         f=${argv[j]}
+        # An option's value is no script; -c and -m run no script file at all.
+        case $a:$f in
+          *:-c | python*:-m) break ;;
+          *:--rcfile | *:--init-file | *:-o | *:+o | *:-O | *:+O | python*:-W | python*:-X) (( j++ )); continue ;;
+        esac
         [[ $f == -* ]] && continue
         nonsender "$f" && break
         [[ $f == /* ]] || f=$(readlink -f "/proc/$pid/cwd" 2>/dev/null)/$f
@@ -68,8 +73,10 @@ from_fleet_script() {
       done
     fi
     # The parent pid: the field after the state, which follows the last ")"
-    # (a command name can hold spaces and parentheses).
-    { IFS= read -r st <"/proc/$pid/stat"; } 2>/dev/null || return 1
+    # of the whole file (a command name can hold spaces, parentheses and a newline).
+    st=""
+    { IFS= read -r -d '' st <"/proc/$pid/stat"; } 2>/dev/null
+    [[ -n $st ]] || return 1
     st=${st##*) } st=${st#* } pid=${st%% *}
   done
   return 1
