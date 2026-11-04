@@ -24,8 +24,9 @@ Each cut: a small PR with the proof test the report names.
 ## Resume here (session 26, replacement on ~/.claude-rit, from 11-04 morning; replaced session 25)
 Reports: /tmp/claude-1001/<round>/report.md. Heavy runs: never wrap a lock-taking make target in an outer timeout.
 Order (Heph 11-04): bug queue #292, #322 (#319), #320 (PR #325), #321, #328 (doctor's false phone-wall FAIL when
-prefs.json phone_wall=false); then #326 (remove the Agora, a cut;
-also drop the tail's Agora line from #318 and test #185); then #323 (AJ-approved freeze exception, one PR
+prefs.json phone_wall=false); then #326 (remove the Agora: branch refactor/remove-agora-326
+pushed, PR after the Rust build; also drops the tail's Agora line, so rebase #318 on it); then #323 STAGE 1 (agy from + New
+session; AJ very keen), then #327 Agora v2, then #324; then the rest of #323's stages (AJ-approved freeze exception, one PR
 per stage: agy sessions from + New session, then wall, gauge, hooks, keryx); then the reader backlog and cuts 7, #8.
 - ✅ #230 merged 09:57 (r5 verify CLEAN), installed, doctor clean.
 - 🔄 #287 head 1ffb001: r13 B1/S1/B2 fixed, ancestry walk forks nothing for a non-sender; CI green; local
