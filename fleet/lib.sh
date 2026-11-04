@@ -518,8 +518,9 @@ reading_of() { # ID
 }
 
 # A usage limit seen on account ID that resets at RESET (#319): until then the
-# account has no room, whatever its newest reading says, since a request the
-# limit refuses writes no reading. A later reset for the same account wins.
+# account has no room by any reading taken before it was seen, since a request
+# the limit refuses writes no reading. A reading taken since is news, and
+# decides. A later reset for the same account wins.
 LIMITED_DIR=${FLEET_LIMITED_DIR:-$FLEET_STATE/limited}
 mark_limited() { # ID RESET
   local was=0
@@ -528,12 +529,14 @@ mark_limited() { # ID RESET
   [[ $was =~ ^[0-9]+$ ]] && (( was >= $2 )) && return 0
   mkdir -p -- "$LIMITED_DIR" && printf '%s\n' "$2" >"$LIMITED_DIR/$1.$$" && mv -f -- "$LIMITED_DIR/$1.$$" "$LIMITED_DIR/$1"
 }
-# Whether account ID is still at a limit seen on it, at NOW.
+# Whether account ID is still at a limit seen on it, at NOW, with no reading since.
 limited_until() { # ID NOW
-  local at=0
+  local at=0 mark rd
   [[ $1 =~ ^[0-9A-Za-z][0-9A-Za-z-]*$ ]] || return 1
-  { read -r at <"$LIMITED_DIR/$1"; } 2>/dev/null || return 1
-  [[ $at =~ ^[0-9]+$ ]] && (( at > $2 ))
+  mark=$LIMITED_DIR/$1
+  { read -r at <"$mark"; } 2>/dev/null || return 1
+  [[ $at =~ ^[0-9]+$ ]] && (( at > $2 )) || return 1
+  ! { rd=$(reading_of "$1") && [[ $rd -nt $mark ]]; }
 }
 
 # Account ID's name as its readings give it (the gauge's), else its id.

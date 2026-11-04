@@ -172,7 +172,7 @@ noon=$(TZ=America/New_York date -d '2026-10-28 12:00' +%s)
 resume "$noon"
 check "a limit is seen and logged with its pane, account and reset" \
   "$(jq -r 'select(.message == "limit seen") | [.pane, .account, .resets] | join(" ")' "$FLEET_LOG")" "$p Personal Wed 2026-10-28 13:10"
-check "#319: the limit is marked on the pane's account until its reset" "$(cat "$FLEET_STATE/limited/a" 2>/dev/null)" "$(TZ=America/New_York date -d '2026-10-28 13:10' +%s)"
+check "#319: a folder with no known login marks no account" "$(ls "$FLEET_STATE/limited" 2>/dev/null)" ""
 check "nothing is typed before the reset" "$(events lim)" ""
 resume "$(( noon + 3600 + 600 + 130 ))"
 check "after the reset, the continue message goes in and starts a turn" "$(has "$(events lim)" "SUBMIT The usage limit has reset.")" "yes"
@@ -1250,6 +1250,8 @@ check "#319: an account at a limit seen on it has no room to move back to, whate
 mark_limited a $((now + 60))
 check "#319: an earlier reset never shortens a later one" "$(cat "$FLEET_STATE/limited/a")" "$((now + 3600))"
 check "#319: past its reset the reading decides again" "$(back_room a $((now + 3601)) && echo yes || echo no)" "yes"
+touch -d "@$(( $(date +%s) + 120 ))" "$KLEPSYDRA_DIR/accounts/a/s.json"
+check "#319: and so does a reading taken after the limit was seen" "$(back_room a "$now" && echo yes || echo no)" "yes"
 check "#319: a malformed id or reset marks nothing" "$(mark_limited '../x' 5 || echo refused) $(mark_limited a soon || echo refused)" "refused refused"
 rm -rf -- "${FLEET_STATE:?}/limited"
 mkdir -p "$KLEPSYDRA_DIR/accounts/rd"; printf '{}' >"$KLEPSYDRA_DIR/accounts/rd/old.json"; printf '{}' >"$KLEPSYDRA_DIR/accounts/rd/new.json"
@@ -1300,6 +1302,8 @@ live "$p"
 printf '%s\tmover\t%s\t%s\t/w\t%s\n' "$p" "$work/brief.src" "$SID" "$work/cfg-a" >"$REGISTRY"
 mover "$noon"
 check "a registered pane at a limit moves to the other account at once" "$(head -2 "$work/moved" | tr '\n' ' ')" "$work/cfg-b mover "
+check "#319: and the limit is marked on its account until the reset" "$(cat "$FLEET_STATE/limited/a" 2>/dev/null)" "$(TZ=America/New_York date -d '2026-10-28 13:10' +%s)"
+rm -rf -- "${FLEET_STATE:?}/limited"
 check "its old pane exits" "$(events mover)" "SUBMIT /exit"
 check "the fresh brief says why, then carries the brief" "$(grep -c 'continue on the other, which has room' "$work/moved-brief") $(tail -1 "$work/moved-brief")" "1 the brief body"
 check "logged with both folders and the new pane" \
