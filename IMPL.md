@@ -21,7 +21,7 @@ claude --remote-control NAME "brief"), 6 (--append-system-prompt-file, tail ~260
 triage + inject last 10), then the #8 trial. #9 deferred, #10 denied. #304/#305 closed (withdrawn).
 Each cut: a small PR with the proof test the report names.
 
-## Resume here (session 26, replacement on ~/.claude-rit, from 11-04 morning; replaced session 25)
+## Resume here (session 26 moved back to RIT-CS-DQL at the resume service's ask, 11-04 afternoon)
 Reports: /tmp/claude-1001/<round>/report.md. Never wrap a lock-taking make target in an outer timeout; finish edits
 to a suite before queuing it. The heavy lock is shared with other agents and queues for long stretches.
 Order (Heph 11-04): bug queue -> #326 (PR #331) -> #323 stage 1 (PR #332) -> #327 Agora v2 -> #324 -> #323 later
@@ -30,9 +30,11 @@ All open PRs below are green in CI (11-04 afternoon).
 - ✅ merged + installed: #230, #313, #292 (pane-died hook live on the fleet server; doctor: only #328's phone-wall FAIL,
   AJ's .wslconfig line, and this session's own move pending).
 - 🔄 #322: r2 fixed (G1 stopped from ready_to_move, G2 log, G4 tests: weekly mark, limit-kind mark, rc 3 note, hour gate,
-  undelivered note; body rewritten); local suite 716/0. r3 reader running (/tmp/claude-1001/r3-322).
+  undelivered note; body rewritten); local suite 716/0. r3 reader was stopped by the move to RIT: re-dispatch r3 fresh (brief: verify G1 with
+  /tmp/claude-1001/r2-322/h/head/fleet C5, rerun M7 M14 M17 M18 M20 + a G1-fix mutant, body, CI).
 - 🔄 #287 head 62a0d0d: r14 fixed (option values, whole-stat read, resolved-name test, PATH quoting, rcfile case made
-  non-vacuous: both mutants killed, guard 231/0, 34 ms). r15 verify running (/tmp/claude-1001/r15-287).
+  non-vacuous: both mutants killed, guard 231/0, 34 ms). r15 verify was stopped by the move: re-dispatch fresh (its partial log is in
+  /tmp/claude-1001/r15-287; base guard run 231/0 already confirmed there).
 - 📋 r1 owed, all green: #325 (#320 fleet send), #329 (#321), #330 (#328), #331 (#326 Agora removal; after merge:
   install, brief --refresh, close #185 #270 #295 with notes, edit #237), #332 (#323 stage 1; browser 403/0, shots in
   briefing), #318 (cut 6; UNKNOWN merge state: merge main; drop its Agora line once #331 lands). #325 also UNKNOWN.
