@@ -1,4 +1,4 @@
-# IMPL: klepsydra fleet-module brief, resume state 2026-11-04 00:45 (EST)
+# IMPL: klepsydra fleet-module brief, resume state 2026-11-04 00:40 (EST)
 
 Session 22 (Chronos) resumed 16:09 after the IAAI-27 park. Resume with the same brief from this file, `git log`,
 open PRs and their comments, and the klepsydra line under "Running now" in /mnt/c/Users/ajbar/fleet-briefing/queue.md.
@@ -21,26 +21,25 @@ claude --remote-control NAME "brief"), 6 (--append-system-prompt-file, tail ~260
 triage + inject last 10), then the #8 trial. #9 deferred, #10 denied. #304/#305 closed (withdrawn).
 Each cut: a small PR with the proof test the report names.
 
-## Resume here (session 24 moved back to RIT at the fleet's ask, 11-04 ~00:45)
-Readers die with their session: re-dispatch fresh (opus, one change each, report under /tmp/claude-1001/<round>/report.md).
-- ✅ #261 merged (fa60ef0) + `make install-fleet` + cutover; doctor: only Heph's watcher FAIL and stale briefs warn.
-  Follow-ups filed as #312 (fixes-only).
-1. #287 (guard-264) head 8421e3f: main merged in (r12 B1), `make test-orch-guard` target + CI + docs + heavy-lock loop
-   (r12 S1). CI on bca3edd failed only the brief-tail check, fixed in 8421e3f; read its CI. Local: make test-heavy-lock
-   35/0. One verify reader on r12 report /tmp/claude-1001/r12b-287/report.md, then merge. Deploy: install-fleet,
-   PreToolUse hook in ~/.claude settings, `fleet accounts sync`, `fleet brief --refresh` (tail line changed).
-2. #313 cut 2 (limits-311) head after b6e21b1 (test rename), CI green on b6e21b1, mutants 4/5 killed (1 equivalent):
-   r1 reader owed.
-3. #310 cut 4 (worker-mark) head fad130d: r1 fixes pushed (S1 test reads claude's env on a real worker launch;
-   S2 launcher env -u FLEET_SETTINGS/ACCOUNT/SUCCEEDS; S3 body "Part of #309"; M4 env -u KLEPSYDRA_WORKER).
-   Mutant run (base, keyed, after, nounset_launcher, inherit_mark) was STOPPED by the move: rerun
-   /tmp/claude-1001/-home-ajbar-ajsoftworks/899189da-c6f3-4e9d-991e-40c2f72d8e6c/scratchpad/m310/run.sh under the
-   heavy lock (rebuild copies with mk.py there first). Then verify reader (r1 report /tmp/claude-1001/r1-310/report.md).
-   claude-prefs#43 (reads the mark) needs its own r1.
-4. #308 cut 3 (common-cut3) head cfd7a8b: r2 reader STOPPED by the move (dir /tmp/claude-1001/r2-308): re-dispatch.
-5. #314 (#288, dead-288) replayed onto main: CI, then r1 reader.
-6. #230 r4 (r3 report /tmp/claude-1001/r3-230/report.md), #292 r3, claude-prefs#42 r2 (r1 report /tmp/claude-1001/r1-prefs42/report.md).
-   Then cuts 5, 6, 7, #8 trial.
+## Resume here (session 25 on RIT, from 11-04 00:07; replaced session 24)
+Readers die with their session: re-dispatch fresh (opus, one change each, report under /tmp/claude-1001/<round>/report.md,
+findings appended as confirmed). RIT weekly read 93% at 00:12: keep subagents lean.
+- 📋 #287 head 531e87d: main merged again (install.sh SCRIPTS union). r13 verify reader running
+  (/tmp/claude-1001/r13-287/report.md). Merge on CLEAN + green pull_request run. Deploy: install-fleet,
+  PreToolUse hook in ~/.claude settings, `fleet accounts sync`, `fleet brief --refresh`.
+- 📋 #313 r1 reader running (/tmp/claude-1001/r1-313/report.md).
+- 📋 #310 head fad130d: mutants rerunning (scratchpad of session 899189da, m310/results.txt); then verify reader on
+  /tmp/claude-1001/r1-310/report.md. claude-prefs#43 r1 owed.
+- 📋 #230 (ask-217): main merged locally (union of #217 watcher + #261 registry event; NOT yet committed until the hook
+  suite passes: scratchpad/hooks230-merge.log). Then r4 reader on /tmp/claude-1001/r3-230/report.md.
+- ✅ #292 (tmux-290): main merged (a1fcdce, README doctor row + install.sh union), pushed; r3 owed.
+- 📋 #308 r2 re-dispatch (old dir /tmp/claude-1001/r2-308 partial), #314 r1, claude-prefs#42 r2.
+- 🔄 Cut 5 = issue #315, worktree launch-315 (feat/launch-rc-arg-315): experiment PASSED (bridge_status link + brief as
+  first prompt, see issue). launch.sh passes `--remote-control NAME "$(cat brief)"`, result from the transcript;
+  fake_pane.py parses claude args and writes transcript records; cut harness fleet/test_s315.sh (untracked).
+  deliver/remote_control stay in lib.sh (fresh-now /clear path and the resume service type into live panes).
+- 📋 Cuts 6 (note: --system-prompt-snapshot records an appended prompt per conversation; a resumed session keeps the
+  old tail until compaction), 7, then the #8 trial.
 
 ## Next, in order (session 21 list; items 1-3 moved above)
 1. (done) #296 fix/watch-alert-race (watch-race), head 0a10fe1, review-clean r3. CI run 41702648814 was still in
