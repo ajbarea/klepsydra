@@ -35,24 +35,33 @@ fi
 # there is none. It runs in the watcher's own shell, never a $( ) subshell: a
 # subshell outlives a killed watcher.
 ci_wake() {
-  local seen n line
+  local seen n out
   [[ -e $ALERTS ]] || return 1
   seen=$(cat "$SEEN" 2>/dev/null)
   [[ $seen =~ ^[0-9]+$ ]] || seen=0
   n=$({ wc -l <"$ALERTS"; } 2>/dev/null || echo 0)
   (( n < seen )) && seen=0 # the log started over
-  while IFS= read -r line; do
-    seen=$((seen + 1))
-    if jq -e '.wake == true' <<<"$line" >/dev/null 2>&1; then
-      WAKE=$(jq -r '"CI \(.kind // "alert" | tostring | ascii_upcase) \(.repo) \(.branch): \(.text)"
-        + (if .taken_by then " Taken by \(.taken_by)." else "" end)
-        + (if .ask then " Next: \(.ask)." else "" end)' <<<"$line")
-      WAKE_SEEN=$seen
-      return 0
-    fi
-  done < <(tail -n +"$((seen + 1))" "$ALERTS" 2>/dev/null)
-  put_seen "$seen"
-  return 1
+  (( n > seen )) || return 1
+  # One jq pass over the unread whole lines: the first wake line that no later
+  # "withdrawn" line for its run cancelled (#321: a red let go while it waited
+  # unread is never replayed), as "INDEX<TAB>TEXT"; "-" when there is none.
+  # A line jq cannot read wakes nobody.
+  out=$(tail -n +"$((seen + 1))" "$ALERTS" 2>/dev/null | head -n "$((n - seen))" | jq -nrR '
+    [inputs | (fromjson? // {}) | if type == "object" then . else {} end] as $l
+    | (reduce range(0; $l | length) as $i ({};
+        if $l[$i].kind == "withdrawn" then .["\($l[$i].repo) \($l[$i].run_id)"] = $i else . end)) as $wd
+    | first(range(0; $l | length) as $i | $l[$i]
+        | select(.wake == true and ($wd["\(.repo) \(.run_id)"] // -1) < $i)
+        | "\($i + 1)\t" + "CI \(.kind // "alert" | tostring | ascii_upcase) \(.repo) \(.branch): \(.text)"
+          + (if .taken_by then " Taken by \(.taken_by)." else "" end)
+          + (if .ask then " Next: \(.ask)." else "" end)) // "-"' 2>/dev/null)
+  [[ -n $out ]] || return 1 # jq failed: nothing is marked read
+  if [[ $out == - ]]; then
+    put_seen "$n"
+    return 1
+  fi
+  WAKE=${out#*$'\t'} WAKE_SEEN=$((seen + ${out%%$'\t'*}))
+  return 0
 }
 # Panes already waiting out a usage limit when the watcher starts are held
 # until it clears (#246), so a watcher started during a shared limit does not
