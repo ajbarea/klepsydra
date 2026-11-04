@@ -2177,9 +2177,10 @@ done
 
 pscreen=$fixtures/pane-permission-2.1.302.txt iscreen=$fixtures/pane-idle-2.1.302.txt
 now=1792360048 askfire permission-request.json
-printf '%s\n' "$pscreen" "$iscreen" "$pscreen" GONE >"$work/screens"
+# Two misses with the dialog back between them: each sighting starts the count again (#230 review 4).
+printf '%s\n' "$pscreen" "$iscreen" "$pscreen" "$iscreen" GONE >"$work/screens"
 now=1792360049 watch_ask_run 20
-check "one look without the dialog is not an answer" "$(afield '[.state, .reason]')" '["needs_you","approve Bash"]'
+check "one look without the dialog is not an answer, nor two looks apart" "$(afield '[.state, .reason]')" '["needs_you","approve Bash"]'
 printf 'jq -c ".state_at = 1792360099" "%s" >"%s.new" && mv -f "%s.new" "%s"\n' "$afile" "$afile" "$afile" "$afile" >"$work/new-ask.sh"
 printf '%s\n' "$pscreen $work/new-ask.sh" "$iscreen" "$iscreen" GONE >"$work/screens"
 now=1792360100 watch_ask_run 20
