@@ -183,10 +183,11 @@ def slim_pulls(body: list) -> list[dict]:
 
 def runs_that_count(
     user: str, repo: str, gh: GitHub
-) -> tuple[list[dict], str, set[int]]:
+) -> tuple[list[dict], str, dict[int, str]]:
     """The decisive run (succeeded or failed) newest per workflow and branch, on
-    the default branch or at an open PR's head, and the default branch. Each is
-    asked for by branch or by head, so a busy repo cannot page one out."""
+    the default branch or at an open PR's head, the default branch, and each open
+    PR's head commit by number. Each is asked for by branch or by head, so a busy
+    repo cannot page one out."""
     meta = gh.get(
         f"/repos/{user}/{repo}",
         keep=lambda b: {
@@ -222,7 +223,7 @@ def runs_that_count(
         key = (r["workflow_id"], pr["number"] if pr else default)
         if key not in newest or r["created_at"] > newest[key]["created_at"]:
             newest[key] = r | {"_pr": pr}
-    return list(newest.values()), default, {p["number"] for p in pulls}
+    return list(newest.values()), default, {p["number"]: p["sha"] for p in pulls}
 
 
 def workflow_ids(user: str, repo: str, gh) -> list[int]:
@@ -703,6 +704,7 @@ def repo_pass(
             "branch": r["head_branch"],
             "pr": pr["number"] if pr else None,
             "run_id": r["id"],
+            "sha": r["head_sha"],
             "url": r["html_url"],
             "conclusion": r["conclusion"],
             "at": r["updated_at"],
@@ -763,7 +765,9 @@ def repo_pass(
     # 2. A red run whose workflow ran no newer decisive run stays red even when it has
     # paged out of the newest runs: only a newer run of the same workflow and place clears it.
     # A held red goes when its PR is no longer open, its workflow is gone, a newer
-    # red took its place, or it is a month old.
+    # red took its place, its PR's head has moved past its commit (#321: the new
+    # head's run may still be going, and the old red would be routed and
+    # escalated again), or it is a month old.
     places = {
         (r["workflow_id"], r["_pr"]["number"] if r["_pr"] else "default"): r["id"]
         for r in runs
@@ -778,7 +782,22 @@ def repo_pass(
         gone = (held["place"] != "default" and held["place"] not in open_prs) or held[
             "workflow_id"
         ] not in workflows
-        if newer or gone or k.get("seen", 0) < month:
+        superseded = (
+            held["place"] != "default"
+            and bool(held.get("sha"))
+            and open_prs.get(held["place"]) not in (None, held["sha"])
+        )
+        if superseded:
+            event(
+                logging.INFO,
+                "red run superseded: its PR's head moved on",
+                repo=repo,
+                run_id=held["run_id"],
+                pr=held["place"],
+                sha=held["sha"],
+                head=open_prs.get(held["place"]),
+            )
+        if newer or gone or superseded or k.get("seen", 0) < month:
             drop_inbox(repo, k.pop("item")["run_id"])
             continue
         if place not in places:

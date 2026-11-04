@@ -783,6 +783,43 @@ class Held(unittest.TestCase):
         got = ci_watch.poll("o", ["r"], Fake([run(6, conclusion="success")]), known)
         self.assertEqual(got["red"], [], "PR 4 is no longer open")
 
+    def test_a_red_on_a_commit_its_pr_has_moved_past_goes_and_is_never_escalated(self):
+        """#321 (11-04): the new head's run was still going, and the old red was
+        routed and escalated again, writing a needs-you line each time."""
+        known = {}
+        with mock.patch.object(ci_watch, "ESCALATE_S", 1800):
+            ci_watch.poll(
+                "o",
+                ["r"],
+                Fake([run(5, branch="b", sha="p1")], pulls=[pr(4, "p1")]),
+                known,
+            )
+            k = known["r:5"]
+            self.assertEqual((k["item"]["sha"], "escalated" in k), ("p1", False))
+            k["routed"]["at"] -= 1801
+            queue = (TMP / "q.md").read_text()
+            with self.assertLogs(ci_watch.log, "INFO") as logs:
+                got = ci_watch.poll("o", ["r"], Fake([], pulls=[pr(4, "p2")]), known)
+        self.assertEqual(got["red"], [], "PR 4 moved on to p2")
+        self.assertNotIn("escalated", k)
+        self.assertNotIn("item", k)
+        self.assertEqual((TMP / "q.md").read_text(), queue, "no needs-you line")
+        self.assertTrue(any("red run superseded" in m for m in logs.output))
+
+    def test_a_held_red_at_its_prs_head_still_escalates(self):
+        known = {}
+        with mock.patch.object(ci_watch, "ESCALATE_S", 1800):
+            ci_watch.poll(
+                "o",
+                ["r"],
+                Fake([run(5, branch="b", sha="p1")], pulls=[pr(4, "p1")]),
+                known,
+            )
+            known["r:5"]["routed"]["at"] -= 1801
+            got = ci_watch.poll("o", ["r"], Fake([], pulls=[pr(4, "p1")]), known)
+        self.assertEqual([r["run_id"] for r in got["red"]], [5])
+        self.assertIn("escalated", known["r:5"])
+
     def test_a_deleted_or_renamed_workflow_lets_its_red_go(self):
         known = {}
         ci_watch.poll("o", ["r"], Fake([run(5, workflow=3)]), known)
