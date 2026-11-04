@@ -2613,6 +2613,32 @@ check "--prune drops only the finished row and keeps a backup" \
 check "#261 review 3: --prune records each finish before its row goes" "$(grep -c "$SF" "$FLEET_STATE/finished.tsv" 2>/dev/null)" "1"
 check "#261 review: --prune says where the backup is" "$(grep -c '^backup: .*panes.tsv.bak-' <<<"$out") $(grep -c 'command not found' <<<"$out")" "1 0"
 check "a second --prune finds nothing" "$(bash "$here/doctor.sh" --prune 2>/dev/null)" "nothing to prune: no finished agent's row in panes.tsv"
+# #261 review 11: prune_now reads each row's state again under the lock, so a
+# row whose session started again since the first look stays.
+SR=aaaaaaaa-0000-4000-8000-0000000000ab
+cp -p -- "$REGISTRY" "$work/reg-before-r11"
+printf '%%4\trerun\t/b\t%s\t/w\n' "$SR" >>"$REGISTRY"
+sfile "$SR" 4242 777 "$NOWBOOT" %4
+( eval "$(sed -n '/^prune_now() {/,/^}/p' "$here/doctor.sh")"; with_registry prune_now "%4/$SR" >/dev/null 2>&1 )
+check "#261 review 11: a row named for pruning whose session runs again stays" "$(grep -c "$SR" "$REGISTRY")" "1"
+cp -p -- "$work/reg-before-r11" "$REGISTRY"; rm -f -- "$KLEPSYDRA_DIR/fleet/$SR.json"
+# set_pane puts back only the row of that name, once (a stale row of another
+# agent can carry the same pane id from a past server).
+printf '%%3\tmine\t/b\tNEWSID\t/w\n%%3\tother\t/b\tOTHERSID\t/w\n' >"$work/reg-r11"
+REGISTRY=$work/reg-r11 set_pane %3 %1 OLDSID "" mine
+check "#261 review 11: set_pane moves only the named row back" "$(cut -f1,2,4 "$work/reg-r11" | tr '\t\n' ' |')" "%1 mine OLDSID|%3 other OTHERSID|"
+# A rollback whose row cannot be put back (the registry lock stays busy)
+# retires nothing: both panes stay, and it says so.
+printf '%%7\tw1\t/b\tNEWSID\t/w\n' >"$work/reg-r11"
+: >"$FLEET_LOG"
+flock "$FLEET_STATE/.registry.lock" sleep 3 & lk=$!
+for _ in $(seq 40); do flock -n "$FLEET_STATE/.registry.lock" true || break; sleep 0.05; done
+out=$(retire() { echo "retired $1"; }; REGISTRY=$work/reg-r11 FLEET_REGISTRY_WAIT=1 rollback_fresh %7 %1 OLDSID "" w1)
+wait "$lk"
+check "#261 review 11: a busy lock: nothing is retired, the row is untouched, and an ERROR says both panes stay" \
+  "[$out] $(cut -f1,4 "$work/reg-r11") $(jq -r 'select(.level == "ERROR") | .message' "$FLEET_LOG" | grep -c 'both panes stay running')" "[] %7	NEWSID 1"
+out=$(retire() { echo "retired $1"; }; REGISTRY=$work/reg-r11 rollback_fresh %7 %1 OLDSID "" w1)
+check "#261 review 11: a free lock: the row goes back first, then the new pane is retired" "[$out] $(cut -f1,4 "$work/reg-r11")" "[retired %7] %1	OLDSID"
 check "--prune never touches a lost or running row" "$(diff <(cut -f1-4 "$work/reg-before-220") <(awk -F'\t' '$2 != "g"' "$REGISTRY" | cut -f1-4) && echo same)" "same"
 awk -F'\t' '$2 != "g"' "$REGISTRY" >"$work/reg.tmp" && mv -f -- "$work/reg.tmp" "$REGISTRY"
 find "$FLEET_STATE" -maxdepth 1 -name 'panes.tsv.bak-*' -delete; rm -f "$KLEPSYDRA_DIR/fleet/$SF.json" "$KLEPSYDRA_DIR/fleet/$SG.json"

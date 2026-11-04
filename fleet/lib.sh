@@ -400,8 +400,8 @@ live_session() { # PANE
 }
 
 # Run COMMAND... holding the registry's lock: every writer of panes.tsv does.
-with_registry() {
-  ( flock -w 60 9 || exit 1; "$@" ) 9>>"$FLEET_STATE/.registry.lock"
+with_registry() { # FLEET_REGISTRY_WAIT: seconds to wait for the lock (60)
+  ( flock -w "${FLEET_REGISTRY_WAIT:-60}" 9 || exit 1; "$@" ) 9>>"$FLEET_STATE/.registry.lock"
 }
 
 # Set the session id (column 4) of the registry row in pane PANE that names
@@ -760,10 +760,7 @@ fresh() { # PANE NAME BRIEF [WHY] [ACCOUNT] [NOTE] [STAMP]
   # account said to have room) stopped by a limit, the old pane stays.
   if [[ $got == NOT-DELIVERED || ( -n $account && $got != started ) ]]; then
     flog ERROR "fresh session's brief did not start; the old pane stays and the new one goes" pane="$p" new_pane="$new" name="$name" brief="$got"
-    # The row first: the new session's /exit ends it, and the fleet hook records
-    # a finish for whichever row names it at that moment (#261 review 10).
-    with_registry set_pane "$new" "$p" "$sid" "$cfg"
-    retire "$new" interrupt
+    rollback_fresh "$new" "$p" "$sid" "$cfg" "$name"
     [[ $got == blocked-by-limit ]] && return 5
     return 3
   fi
@@ -772,14 +769,8 @@ fresh() { # PANE NAME BRIEF [WHY] [ACCOUNT] [NOTE] [STAMP]
   now_s=$(screen "$p")
   if ! pane_runs "$p" "$sid" || busy "$now_s" || ! has_input_box "$now_s" || [[ $(input_text "$now_s") != "$box" || $(prompt_stamp "$p") != "$stamp" ]]; then
     flog ERROR "the old pane changed while its fresh session launched; the old one stays and the new one goes" pane="$p" new_pane="$new" name="$name"
-    with_registry set_pane "$new" "$p" "$sid" "$cfg"
-    retire "$new" interrupt
+    rollback_fresh "$new" "$p" "$sid" "$cfg" "$name"
     return 4
-  fi
-  # The note went into the new brief; one C-c clears it from the old box.
-  if [[ -n $box ]]; then
-    t send-keys -t "$p" C-c
-    wait_for "$p" 5 idle_empty || true
   fi
   # The old session ends only once its row names the new one, or its /exit
   # would record the agent itself as finished (#261 review 10). A launch that
@@ -794,6 +785,12 @@ fresh() { # PANE NAME BRIEF [WHY] [ACCOUNT] [NOTE] [STAMP]
       retire "$new" interrupt
       return 3
     fi
+  fi
+  # The note went into the new brief; one C-c clears it from the old box, only
+  # now that the old pane is sure to go (#261 review 11).
+  if [[ -n $box ]]; then
+    t send-keys -t "$p" C-c
+    wait_for "$p" 5 idle_empty || true
   fi
   retire_into "$p" "$new" ||
     flog WARN "the old pane is left running beside its fresh session" pane="$p" new_pane="$new" name="$name"
@@ -814,13 +811,26 @@ repoint_row() { # PANE SID NEW NSID
   fi
 }
 
-# Point the registry row launch.sh moved to NEW back at PANE, session SID
-# and config folder CFG (none: the column is left empty, the default).
-set_pane() { # NEW PANE SID CFG
+# Point row NAME, which launch.sh moved to NEW, back at PANE, session SID and
+# config folder CFG (none: the column is left empty, the default). A row that
+# never moved (launch.sh could not register it) needs nothing.
+set_pane() { # NEW PANE SID CFG NAME
   local tmp
   tmp=$(mktemp "$REGISTRY.XXXXXX") || return 1
-  awk -F'\t' -v OFS='\t' -v n="$1" -v p="$2" -v sid="$3" -v cfg="${4:-}" \
-    '$1 == n { $1 = p; $4 = sid; if (NF >= 6 || cfg != "") $6 = cfg } { print }' "$REGISTRY" >"$tmp" && mv -f -- "$tmp" "$REGISTRY"
+  awk -F'\t' -v OFS='\t' -v n="$1" -v p="$2" -v sid="$3" -v cfg="${4:-}" -v name="$5" \
+    '$1 == n && $2 == name && !done { $1 = p; $4 = sid; if (NF >= 6 || cfg != "") $6 = cfg; done = 1 } { print }' "$REGISTRY" >"$tmp" && mv -f -- "$tmp" "$REGISTRY"
+}
+
+# Undo a fresh start that will not go on: the row back on the old pane first,
+# then the new session ends, since its /exit records a finish for whichever row
+# names it then (#261 reviews 10, 11). If the row cannot be put back (the
+# registry lock stays busy), both panes stay running.
+rollback_fresh() { # NEW PANE SID CFG NAME
+  if with_registry set_pane "$@"; then
+    retire "$1" interrupt
+  else
+    flog ERROR "the row could not be put back on the old pane; both panes stay running" pane="$2" new_pane="$1" name="$5"
+  fi
 }
 
 # The prompt the last limit answered, when the limit is the only reply to it:
