@@ -376,6 +376,28 @@ check "#261 review 10: a row the launch never repointed: fresh repoints it to th
 check "#261 review 10: logged as a warning" "$(jq -r 'select(.level == "WARN") | .message' "$FLEET_LOG" | grep -c "the launch left its row unregistered")" "1"
 t kill-window -t "$new_unp" 2>/dev/null
 t kill-window -t "$p" 2>/dev/null; : >"$REGISTRY"; rm -f -- "$FLEET_STATE/finished.tsv"
+# #261 review 12: the same, with a stale row of another agent on the new pane id
+# (a past server's): only a row of this agent's name counts as registered.
+: >"$FLEET_LOG"
+p=$(pane unstale "{\"above\":[\"⏺ Done. done 9:00 AM\",\"$LIMIT\"],\"exit_on_exit\":true,\"on_exit\":\"bash $here/registry-event.sh SessionEnd $SID prompt_input_exit\"}"); settle
+live "$p"
+printf '%s\tunstale\t%s\t%s\t/w\n' "$p" "$work/brief.src" "$SID" >"$REGISTRY"
+cat >"$work/launch-unstale.sh" <<EOF
+#!/usr/bin/env bash
+: >"$work/unstale-new.log"
+n=\$(tmux -L "$FLEET_SOCK" new-window -d -P -F '#{pane_id}' -t fleet: "python3 -I $fake $work/rolled-new.json $work/unstale-new.log")
+printf '%s\tother\t/b\tOTHERSID\t/w\n' "\$n" >>"$REGISTRY"
+sleep 0.6
+echo "pane=\$n session=$NSID account=x avail=1MiB brief=started"
+EOF
+resume "$(TZ=America/New_York date -d '2026-10-28 09:00' +%s)"
+LAUNCH="$work/launch-unstale.sh" FLEET_NOW=$(( noon + 4330 )) bash "$here/resume-at-reset.sh" --once 2>/dev/null
+new_unp=$(jq -r 'select(.message | startswith("the launch left its row unregistered")) | .new_pane' "$FLEET_LOG")
+check "#261 review 12: a stale row on the new pane id is not this agent's: its row is still repointed, and no finish is recorded" \
+  "$(cut -f1,2,4 "$REGISTRY" | tr '\t\n' ' |') $(cat "$FLEET_STATE/finished.tsv" 2>/dev/null | grep -c .)" \
+  "${new_unp:-none} unstale $NSID|${new_unp:-none} other OTHERSID| 0"
+[[ -n $new_unp ]] && t kill-window -t "$new_unp" 2>/dev/null
+t kill-window -t "$p" 2>/dev/null; : >"$REGISTRY"; rm -f -- "$FLEET_STATE/finished.tsv"
 # The other rollback, AJ typing into the old pane during the launch, in the same order.
 : >"$FLEET_LOG"
 p=$(pane typedin "{\"above\":[\"⏺ Done. done 9:00 AM\",\"$LIMIT\"]}"); settle
@@ -2716,9 +2738,9 @@ check "#261 review 11: a row named for pruning whose session runs again stays" "
 cp -p -- "$work/reg-before-r11" "$REGISTRY"; rm -f -- "$KLEPSYDRA_DIR/fleet/$SR.json"
 # set_pane puts back only the row of that name, once (a stale row of another
 # agent can carry the same pane id from a past server).
-printf '%%3\tmine\t/b\tNEWSID\t/w\n%%3\tother\t/b\tOTHERSID\t/w\n' >"$work/reg-r11"
+printf '%%3\tother\t/b\tOTHERSID\t/w\n%%3\tmine\t/b\tNEWSID\t/w\n' >"$work/reg-r11"
 REGISTRY=$work/reg-r11 set_pane %3 %1 OLDSID "" mine
-check "#261 review 11: set_pane moves only the named row back" "$(cut -f1,2,4 "$work/reg-r11" | tr '\t\n' ' |')" "%1 mine OLDSID|%3 other OTHERSID|"
+check "#261 review 11: set_pane moves only the named row back, the other agent's row listed first" "$(cut -f1,2,4 "$work/reg-r11" | tr '\t\n' ' |')" "%3 other OTHERSID|%1 mine OLDSID|"
 # A rollback whose row cannot be put back (the registry lock stays busy)
 # retires nothing: both panes stay, and it says so.
 printf '%%7\tw1\t/b\tNEWSID\t/w\n' >"$work/reg-r11"

@@ -801,7 +801,7 @@ fresh() { # PANE NAME BRIEF [WHY] [ACCOUNT] [NOTE] [STAMP]
   # The old session ends only once its row names the new one, or its /exit
   # would record the agent itself as finished (#261 review 10). A launch that
   # could not register the row (its lock busy) leaves that to this step.
-  if ! awk -F'\t' -v n="$new" '$1 == n { f = 1 } END { exit !f }' "$REGISTRY"; then
+  if ! awk -F'\t' -v n="$new" -v nm="$name" '$1 == n && $2 == nm { f = 1 } END { exit !f }' "$REGISTRY"; then
     local nsid
     nsid=$(grep -o 'session=[^ ]*' <<<"$out" | head -1 | cut -d= -f2)
     if with_registry repoint_row "$p" "$sid" "$new" "$nsid"; then
