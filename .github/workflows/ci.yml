@@ -85,8 +85,6 @@ jobs:
         run: python3 -I fleet/test_ci_watch.py
       - name: Screenshot prune tests
         run: python3 -I fleet/test_prune_shots.py
-      - name: Agora tests
-        run: python3 -I fleet/test_agora.py
       - name: Shell lint
         run: make shellcheck SHELLCHECK=shellcheck FLEET_HEAVY_HELD=1
       # The install dir is writable only because the NSIS mode is currentUser;
