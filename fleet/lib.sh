@@ -10,6 +10,7 @@ FLEET_LOG=${FLEET_LOG:-$FLEET_STATE/log/fleet.log}
 FLEET_LOG_MAX=${FLEET_LOG_MAX:-1048576} # bytes before the log is renamed and a new one starts
 FLEET_LOG_KEEP=4                        # renamed logs kept
 FLEET_TARGET=${FLEET_TARGET:-fleet::$(basename "${0%.sh}")}
+FRESH_AFTER_S=${FRESH_AFTER_S:-3300} # Claude Code's prompt cache lives an hour
 # A fleet-wide id for the lines of one run (a launch, one resume pass).
 FLEET_RUN_ID=${FLEET_RUN_ID:-$(od -An -N6 -tx1 /dev/urandom | tr -d ' \n')}
 export FLEET_RUN_ID
@@ -118,6 +119,41 @@ near() { grep -v '^[[:space:]]*$' <<<"$ABOVE" | tail -"${1:-6}"; }
 # A turn is running: the spinner line ("… (" with its timer, or "esc to
 # interrupt") sits just above the input box.
 busy() { split_screen "$1"; near 4 | grep -Eq '… \(|esc to interrupt'; }
+
+# The time now: FLEET_NOW when a test sets it.
+clock() { printf '%s' "${FLEET_NOW:-$(date +%s)}"; }
+
+# When the agent in PANE (screen PLAIN) stopped: the last moment, at most 15
+# min past the clock now (a turn can end while a pass runs), whose local time
+# reads the "done 4:21 PM" its last turn printed, at the end of that minute.
+# The moments tried are that time yesterday, today and tomorrow, each also 30,
+# 60 and 120 min either side, so whichever of a repeated hour's (or two hours')
+# two times date returns, the right one is found. Else the window's last activity, which
+# status line redraws keep fresh, so it under-counts. Always a number: when
+# unsure, now.
+stopped_at() { # PANE PLAIN
+  local at day now d c k best="" stopped
+  at=$(grep -o 'done [0-9]\{1,2\}:[0-9][0-9] [AP]M' <<<"$2" | tail -1 | cut -c6-)
+  at=${at#0}
+  now=$(clock)
+  if [[ -n $at ]] && day=$(date -d "@$now" +%F); then
+    for d in -1 0 1; do
+      # Noon is never skipped or repeated, so the day before and after are sure.
+      c=$(date -d "$(date -d "$day 12:00 PM $d day" +%F) $at" +%s 2>/dev/null) || continue
+      for k in -7200 -3600 -1800 0 1800 3600 7200; do
+        (( c + k <= now + 900 && c + k > ${best:-0} )) || continue
+        [[ $(LC_ALL=C date -d "@$((c + k))" '+%-I:%M %p') == "$at" ]] && best=$((c + k))
+      done
+    done
+  fi
+  if [[ -n $best ]]; then
+    stopped=$((best + 59))
+  else
+    stopped=$(t display-message -p -t "$1" '#{window_activity}' 2>/dev/null)
+  fi
+  [[ $stopped =~ ^[0-9]+$ ]] || stopped=$now
+  printf '%s' "$stopped"
+}
 
 # Claude Code names the window in its message ("You've hit your 5-hour
 # limit", "... weekly limit", "... Fable limit", "... org's monthly spend

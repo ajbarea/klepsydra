@@ -75,6 +75,8 @@ jobs:
         run: make test-fleet FLEET_HEAVY_HELD=1
       - name: Heavy lock release tests
         run: make test-heavy-lock FLEET_HEAVY_HELD=1
+      - name: Orchestrator guard tests
+        run: make test-orch-guard FLEET_HEAVY_HELD=1
       - name: Release memory check tests
         run: bash scripts/test_measure_memory.sh
       - name: Windows build stage check tests

@@ -39,7 +39,6 @@ here=$(dirname "$(readlink -f "$0")")
 # shellcheck source=fleet/lib.sh
 . "$here/lib.sh"
 LAUNCH=${LAUNCH:-$here/launch.sh}
-FRESH_AFTER_S=${FRESH_AFTER_S:-3300} # Claude Code's prompt cache lives an hour
 POLL_S=${POLL_S:-60}
 MOVE_MIN_S=${MOVE_MIN_S:-900} # a nearer reset is waited for: a fresh start costs more than the wait
 FLEET_PREMOVE_PCT=${FLEET_PREMOVE_PCT:-95} # a window used this far moves a worker at its next finished turn
@@ -87,8 +86,6 @@ save_state() {
   mv -f -- "$tmp" "$STATE_FILE"
 }
 
-clock() { printf '%s' "${FLEET_NOW:-$(date +%s)}"; }
-
 # The account of klepsydra's newest usage reading: a /login moves every session.
 active_account() {
   local f
@@ -113,37 +110,6 @@ submit() { # PANE
   if wait_for "$1" "${FLEET_START_WAIT:-30}" started; then echo yes; else echo no; fi
 }
 
-# When the agent in PANE (screen PLAIN) stopped: the last moment, at most 15
-# min past the clock now (a turn can end while a pass runs), whose local time
-# reads the "done 4:21 PM" its last turn printed, at the end of that minute.
-# The moments tried are that time yesterday, today and tomorrow, each also 30,
-# 60 and 120 min either side, so whichever of a repeated hour's (or two hours')
-# two times date returns, the right one is found. Else the window's last activity, which
-# status line redraws keep fresh, so it under-counts. Always a number: when
-# unsure, NOW.
-stopped_at() { # PANE PLAIN
-  local at day now d c k best="" stopped
-  at=$(grep -o 'done [0-9]\{1,2\}:[0-9][0-9] [AP]M' <<<"$2" | tail -1 | cut -c6-)
-  at=${at#0}
-  now=$(clock)
-  if [[ -n $at ]] && day=$(date -d "@$now" +%F); then
-    for d in -1 0 1; do
-      # Noon is never skipped or repeated, so the day before and after are sure.
-      c=$(date -d "$(date -d "$day 12:00 PM $d day" +%F) $at" +%s 2>/dev/null) || continue
-      for k in -7200 -3600 -1800 0 1800 3600 7200; do
-        (( c + k <= now + 900 && c + k > ${best:-0} )) || continue
-        [[ $(LC_ALL=C date -d "@$((c + k))" '+%-I:%M %p') == "$at" ]] && best=$((c + k))
-      done
-    done
-  fi
-  if [[ -n $best ]]; then
-    stopped=$((best + 59))
-  else
-    stopped=$(t display-message -p -t "$1" '#{window_activity}' 2>/dev/null)
-  fi
-  [[ $stopped =~ ^[0-9]+$ ]] || stopped=$NOW
-  printf '%s' "$stopped"
-}
 
 # Whether the transcript above the box already shows LINE as sent ("❯ LINE"),
 # compared without whitespace, since a long line wraps there.

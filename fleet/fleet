@@ -18,6 +18,9 @@
 #   fleet shots [--apply] prune the briefing's decided and old screenshots (dry run without --apply)
 #   fleet agora post [--kind K] TEXT  post one line on the Agora, as your character (optional)
 #   fleet agora list [N]  the newest Agora posts
+#   fleet balance [ORG AMOUNT]  log an API balance checked in the Console today (the
+#                         orchestrator guard wants one before a headless API-key job);
+#                         no arguments: the last checks
 #   fleet install         link this checkout's scripts and units into place, copy the hooks, status line, launcher and cast
 #   fleet cutover         restart the resume service on the installed scripts
 set -u
@@ -57,5 +60,15 @@ case $cmd in
     tail -n "${1:-30}" "$FLEET_LOG" | jq -r '[.ts[0:19], .level, .target, .message] + ([to_entries[] | select(.key | IN("ts","level","target","message","run_id") | not) | "\(.key)=\(.value)"]) | join(" ")'
     ;;
   cutover) exec bash "$here/cutover.sh" "$@" ;;
+  balance)
+    # shellcheck source=fleet/lib.sh
+    . "$here/lib.sh"
+    blog=$FLEET_STATE/api-balance.log
+    if (( $# == 0 )); then tail -n 5 "$blog" 2>/dev/null; exit 0; fi
+    (( $# == 2 )) && [[ $1 =~ ^[A-Za-z0-9._-]{1,64}$ && $2 =~ ^\$?[0-9]+(\.[0-9]{1,2})?$ ]] || { err "usage: fleet balance ORG AMOUNT (AMOUNT like 98.50)"; exit 2; }
+    printf '%s org=%s balance=%s by=%s\n' "$(date '+%F %H:%M')" "$1" "${2#\$}" "${KLEPSYDRA_AGENT:-${USER:-?}}" >>"$blog"
+    flog INFO "API balance check logged" org="$1" balance="${2#\$}" 2>/dev/null
+    tail -n 1 "$blog"
+    ;;
   *) sed -n '2,/^set -u/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//'; [[ -z $cmd ]] || exit 2 ;;
 esac

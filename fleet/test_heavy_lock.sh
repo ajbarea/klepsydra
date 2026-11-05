@@ -39,7 +39,7 @@ check() {
   fi
 }
 
-for suite in fleet/test_fleet.sh hooks/test_launch.sh; do
+for suite in fleet/test_fleet.sh hooks/test_launch.sh fleet/test_orch_guard.sh; do
   echo "$suite"
   # A server must be up mid-run, or the stop below proves nothing.
   flock "$lock" timeout -s TERM "$RUN_S" bash "$root/$suite" >/dev/null 2>&1 &

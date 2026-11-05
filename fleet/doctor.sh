@@ -438,6 +438,37 @@ elif [[ -n $differ ]]; then
 else
   report ok "installed copies" "the hooks, status line, launcher and cast match $root"
 fi
+# The orchestrator guard (#264) acts only where settings.json registers it,
+# for Bash, Edit and Write ("*" or no matcher covers every tool).
+if jq -e '[.hooks.PreToolUse[]? | select(.hooks[]?.command | strings | test("orch-guard\\.sh"))
+    | (.matcher // "*") | if . == "*" or . == "" then ["Bash", "Edit", "Write"] else split("|") end] | add // []
+    | (index("Bash") != null and index("Edit") != null and index("Write") != null)' \
+  "$FLEET_DEFAULT_CONFIG/settings.json" >/dev/null 2>&1; then
+  report ok "orchestrator guard" "registered for Bash, Edit and Write in $(tilde "$FLEET_DEFAULT_CONFIG")/settings.json"
+else
+  report warn "orchestrator guard" "not registered for Bash, Edit and Write in $(tilde "$FLEET_DEFAULT_CONFIG")/settings.json: add the PreToolUse entry in README (Orchestrator guard), then fleet accounts sync"
+fi
+# The orchestrator's tmux guard (#264) acts only where its session started with
+# orch-bin on PATH ahead of the real tmux (launch.sh, for heph; the login
+# profile prepends its own folders, none of which holds a tmux).
+orch_path=""
+if op=$(orchestrator) && [[ -n $op ]] && pp=$(t display-message -p -t "$op" '#{pane_pid}' 2>/dev/null); then
+  for q in $pp $(pgrep -P "$pp" 2>/dev/null) $(for c in $(pgrep -P "$pp" 2>/dev/null); do pgrep -P "$c"; done); do
+    orch_path=$(tr '\0' '\n' <"/proc/$q/environ" 2>/dev/null | sed -n 's/^PATH=//p')
+    [[ ":$orch_path:" == *":$FLEET_STATE/orch-bin:"* ]] && break
+  done
+fi
+ahead=0
+if [[ ":$orch_path:" == *":$FLEET_STATE/orch-bin:"* ]]; then
+  ahead=1
+  IFS=: read -ra dirs <<<"${orch_path%%"$FLEET_STATE/orch-bin"*}"
+  for d in "${dirs[@]}"; do [[ -n $d && -x $d/tmux ]] && ahead=0; done
+fi
+if (( ahead )) && [[ -x $FLEET_STATE/orch-bin/tmux ]]; then
+  report ok "orchestrator tmux guard" "its session's tmux is $(tilde "$FLEET_STATE")/orch-bin/tmux, ahead of the real one"
+else
+  report warn "orchestrator tmux guard" "the orchestrator's session did not start with $(tilde "$FLEET_STATE")/orch-bin ahead of tmux on PATH: its next move or recover starts it so"
+fi
 # tmux 3.4 dies on a focus event to a dead pane (#290): the fleet's server must
 # carry the pane-died hook, which a server reads from its conf only at start.
 if t has-session 2>/dev/null; then

@@ -908,16 +908,16 @@ check "the tail puts performance first, above the security floor, and asks for D
 check "the tail carries the team-ceremony rule (AJ 10-29)" "$(grep -c '^Team ceremony in every repo' "$here/brief-tail.md")" "1"
 check "the tail keeps asks for AJ out of public issues and PRs (AJ 10-29)" "$(grep -c '^Asks for AJ stay private' "$here/brief-tail.md")" "1"
 check "#239: the tail has heavy commands take the lock with flock -o, so nothing they leave running keeps it" "$(grep -c 'flock -o /tmp/fleet-heavy.lock' "$here/brief-tail.md")" "1"
-check "#291 review: the tail says the make targets take the lock themselves and run bare" "$(grep -c 'make test-fleet., .make test-launch., .make test-heavy-lock. and .make shellcheck. in klepsydra take the lock themselves: run them bare' "$here/brief-tail.md")" "1"
+check "#291 review: the tail says the make targets take the lock themselves and run bare" "$(grep -c 'make test-fleet., .make test-launch., .make test-heavy-lock., .make test-orch-guard. and .make shellcheck. in klepsydra take the lock themselves: run them bare' "$here/brief-tail.md")" "1"
 check "#291 review 5: the tail's hand form puts a group-wide timeout inside the lock (no --foreground)" "$(grep -c 'flock -o /tmp/fleet-heavy.lock timeout 1800 <command>' "$here/brief-tail.md") $(grep -c -- '--foreground' "$here/brief-tail.md")" "1 0"
 # Every target whose recipe runs $(HEAVY) (#291 review 4): it takes the lock
 # unless the caller says it holds it, a test target runs a file that exists,
 # and the brief tail, the skill context and CI each name it.
 heavy_targets=$(awk '/^[A-Za-z][A-Za-z0-9_-]*:/ { t = $1; sub(/:.*/, "", t) } /^\t@?\$\(HEAVY\)/ { print t }' "$here/../Makefile" | paste -sd ' ' -)
-check "#291 review 4: the Makefile's heavy targets" "$heavy_targets" "test-fleet test-launch test-heavy-lock shellcheck"
+check "#291 review 4: the Makefile's heavy targets" "$heavy_targets" "test-fleet test-launch test-heavy-lock test-orch-guard shellcheck"
 # What each runs, exactly (review 5: "a file that exists" passed a swapped suite).
 declare -A heavy_runs=([test-fleet]="bash fleet/test_fleet.sh" [test-launch]="bash hooks/test_launch.sh"
-  [test-heavy-lock]="bash fleet/test_heavy_lock.sh" [shellcheck]="sc -x hooks/*.sh statusline/*.sh scripts/*.sh fleet/*.sh fleet/fleet")
+  [test-heavy-lock]="bash fleet/test_heavy_lock.sh" [test-orch-guard]="bash fleet/test_orch_guard.sh" [shellcheck]="sc -x hooks/*.sh statusline/*.sh scripts/*.sh fleet/*.sh fleet/fleet")
 for ht in $heavy_targets; do
   check "#291 review 4: make $ht takes the lock unless held, runs its own suite, and the tail, skill context and CI name it" \
     "$(make -s -n -C "$here/.." "$ht" FLEET_HEAVY_HELD= SHELLCHECK=sc | grep -cxF "FLEET_HEAVY_HELD=1 bash fleet/heavy.sh ${heavy_runs[$ht]:-?}") $(make -s -n -C "$here/.." "$ht" FLEET_HEAVY_HELD=0 | grep -c 'fleet/heavy.sh') | $(make -s -n -C "$here/.." "$ht" FLEET_HEAVY_HELD=1 SHELLCHECK=sc) | $(grep -c "make $ht" "$here/brief-tail.md") $(grep -c "make $ht" "$here/../.claude/skill-context.md" | sed 's/^[1-9][0-9]*$/1/') $(grep -c "make $ht .*FLEET_HEAVY_HELD=1" "$here/../.github/workflows/ci.yml")" \
@@ -926,7 +926,7 @@ done
 # Any doc, anywhere on a line: a heavy suite or the tree's shellcheck run by
 # hand, or the heavy lock taken without -o (#291 reviews 2 to 4). Plans are
 # history, so they are left out. A sweep with no docs to read says so.
-bare_re="((^|[ \`(;&|])(ba)?sh( +-[a-z]+)* +|(^|[ \`(;&|])[.]/)((([^ \`]*/)?fleet/)?test_fleet|([^ \`]*/)?(fleet/)?test_heavy_lock|([^ \`]*/)?test_launch)[.]sh|shellcheck( +-[-A-Za-z=]+)* +[^ \`]*(hooks|fleet|statusline|scripts)/[^ \`]*[*]"
+bare_re="((^|[ \`(;&|])(ba)?sh( +-[a-z]+)* +|(^|[ \`(;&|])[.]/)((([^ \`]*/)?fleet/)?test_fleet|([^ \`]*/)?(fleet/)?test_heavy_lock|([^ \`]*/)?(fleet/)?test_orch_guard|([^ \`]*/)?test_launch)[.]sh|shellcheck( +-[-A-Za-z=]+)* +[^ \`]*(hooks|fleet|statusline|scripts)/[^ \`]*[*]"
 docs_bare() { # repo
   local docs
   docs=$(git -C "$1" ls-files -- '*.md' ':!docs/superpowers/plans/' 2>/dev/null)
@@ -1002,7 +1002,14 @@ echo 44444444-4444-4444-8444-444444444444 >"$work/dboot"
 doctor() { FLEET_PS="$work/bin/ps" FLEET_SYSTEMCTL="$work/bin/systemctl" FLEET_CURL="$work/bin/curl" FLEET_TAILSCALE="$work/bin/tailscale" \
   DOC_ACTIVE="$work/active" DOC_FLEET="$work/fleet.json" FLEET_RETRY_S=0 FLEET_PROC="$work/dproc" FLEET_BOOT_ID="$work/dboot" bash "$here/doctor.sh" 2>/dev/null; }
 sid_of() { case $1 in w1) echo dddddddd-0000-4000-8000-000000000001 ;; w2) echo dddddddd-0000-4000-8000-000000000002 ;; *) echo dddddddd-0000-4000-8000-0000000000"${1#o}"0 ;; esac; }
-w=$(pane wpane '{"above":["idle"]}'); o=$(pane opane '{"above":["idle"]}'); settle
+# The orchestrator's pane starts as launch.sh starts heph's, orch-bin first on
+# PATH, and the default account registers the guard: an install as it should be (#264).
+mkdir -p "$FLEET_STATE/orch-bin"; printf '#!/usr/bin/env bash\nexit 0\n' >"$FLEET_STATE/orch-bin/tmux"; chmod +x "$FLEET_STATE/orch-bin/tmux"
+guard_settings() { jq -n --arg m "$1" '{hooks: {PreToolUse: [{matcher: $m, hooks: [{type: "command", command: "bash ~/.local/state/fleet-orchestrator/orch-guard.sh"}]}]}}' >"$FLEET_DEFAULT_CONFIG/settings.json"; }
+mkdir -p "$FLEET_DEFAULT_CONFIG"; guard_settings "Bash|Edit|Write"
+w=$(pane wpane '{"above":["idle"]}')
+printf '%s' '{"above":["idle"]}' >"$work/opane.json"; : >"$work/opane.log"
+o=$(t new-window -d -P -F '#{pane_id}' -t fleet: "env PATH=$(printf %q "$FLEET_STATE/orch-bin:$PATH") python3 -I $fake $work/opane.json $work/opane.log"); settle
 printf '%s\tworker\t%s\t%s\n' "$w" "$FLEET_STATE/task-demo.src" "$(sid_of w1)" >"$REGISTRY"
 printf '%s\n' "$o" >"$FLEET_STATE/orchestrator.pane"
 session_file() { # ID PANE [URL]
@@ -1042,6 +1049,24 @@ check "the default account is logged in; the second, not yet, is a warning" \
 check "with a watcher running, nothing fails and the exit is 0 (the second account and voices warn here)" \
   "$(DOC_WATCH='%2 %5' DOC_UP=http DOC_SERVE=on doctor | notok; echo "rc=${PIPESTATUS[0]}")" "warn account $work/cfg-b|warn voices"$'\nrc=0'
 check "the watcher's panes are named" "$(DOC_WATCH='%2 %5' doctor | grep '^ok   pane watcher')" "ok   pane watcher: watching %2 %5"
+check "#264: the guard registered for Bash, Edit and Write, and the orchestrator's tmux guard ahead on its PATH, are ok" \
+  "$(grep -c '^ok   orchestrator guard: registered' <<<"$out") $(grep -c '^ok   orchestrator tmux guard: its session' <<<"$out")" "1 1"
+guard_settings "Bash"
+check "#264: a guard that misses Edit and Write warns" "$(doctor | grep -c '^warn orchestrator guard: not registered')" "1"
+guard_settings "*"
+check "#264: a \"*\" matcher covers every tool" "$(doctor | grep -c '^ok   orchestrator guard')" "1"
+rm -f -- "$FLEET_DEFAULT_CONFIG/settings.json"
+check "#264: no settings at all warns" "$(doctor | grep -c '^warn orchestrator guard')" "1"
+mkdir -p "$work/realtmux"; printf '#!/usr/bin/env bash\n' >"$work/realtmux/tmux"; chmod +x "$work/realtmux/tmux"
+t kill-pane -t "$o"
+o=$(t new-window -d -P -F '#{pane_id}' -t fleet: "env PATH=$(printf %q "$work/realtmux:$FLEET_STATE/orch-bin:$PATH") python3 -I $fake $work/opane.json $work/opane.log"); settle
+printf '%s\n' "$o" >"$FLEET_STATE/orchestrator.pane"
+check "#264: a tmux ahead of orch-bin on the orchestrator's PATH warns" "$(doctor | grep -c '^warn orchestrator tmux guard')" "1"
+t kill-pane -t "$o"
+o=$(pane opane '{"above":["idle"]}'); settle
+printf '%s\n' "$o" >"$FLEET_STATE/orchestrator.pane"
+check "#264: an orchestrator started without orch-bin warns" "$(doctor | grep -c '^warn orchestrator tmux guard')" "1"
+session_file o1 "$o" https://claude.ai/code/session_01O
 t set-hook -gu pane-died
 state wpane '{"above":["  ⎿  You'"'"'ve hit your 5-hour limit · resets 11:30am (America/New_York)","",""]}'
 check "#263: a pane still at its limit well past the reset fails, named with its reset" \

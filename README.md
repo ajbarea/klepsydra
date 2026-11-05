@@ -1440,6 +1440,7 @@ briefs, logs) stays in the state folder.
 | `fleet done [NAME]` | Marks an agent finished: its row moves from `panes.tsv` to `finished.tsv` with the time, so nothing relaunches it or types into it: the resume service, `fleet recover` and the doctor act only on registered rows, and the service also leaves alone a pane with no row whose live session `finished.tsv` names. A registered agent's own `/exit` is recorded there too: by the fleet hook at the end itself (`fleet/registry-event.sh`, which also drops the record when that session starts again and moves the row to a `/clear`'s new session), and by the doctor and `fleet recover` the first time they see it; that row stays in `panes.tsv` until `fleet doctor --prune`. With no NAME, the row of the fleet pane it runs in, when its registered session runs there; each brief's shared rules end with it. The pane stays open with its final report. |
 | `fleet voices [heph\|everyone\|off]` | Sets keryx to the tray's Voices mode now, for running sessions too; with a mode, saves it to `prefs.json` first. Changes keryx only where it differs and logs the values it decided on. `--if-changed` applies only a mode not yet applied (the resume service); `--check` only says whether it is. |
 | `fleet agora post [--kind gripe\|win\|idea\|wish\|kudos] TEXT` | Posts one line (280 characters) on the Agora, signed with the session's character, agent and repo, from inside a fleet session. Optional for agents, one post an hour each; a post that looks like it holds a secret is refused. Posts are JSON lines in `agora/posts.jsonl` in klepsydra's data folder. `fleet agora list [N]` shows the newest. |
+| `fleet balance ORG AMOUNT` | Logs an API balance you checked in the Console today, which the orchestrator guard wants before a headless job on an API key. With no arguments, the last checks. |
 | `fleet/launch.sh NAME BRIEF` | Starts an agent with its own session id in a scope with memory caps and its own task cap. It turns Remote Control on and waits for it to settle, pastes the brief, checks the brief reached the prompt, then submits it. A retry never sends Escape. It records the pane, session id and folder in `panes.tsv`. Its window opens behind the one in view; a replacement (a fresh session, a move, a relaunch) takes the old window's place in view only when AJ was watching the old one, and a cold `fleet recover` brings Heph forward unless AJ moved meanwhile. |
 | `fleet/resume-at-reset.sh` | The resume service. It resumes a limited pane at its reset (the account's `resets_at` for the hook's StopFailure record, else the time its banner names), or at once after a switch to an account with room; the orchestrator too, who moves to the other account as a fresh session from `HEPH.md` when that one has room. It starts a registered pane fresh from its brief after an hour idle. Whatever AJ typed at a limited pane is sent as typed; a line that left the prompt unsent is typed again. Each pane's state survives a restart of the service. |
 
@@ -1447,6 +1448,39 @@ Every script logs each decision as one JSON line in `log/fleet.log` under the
 state folder, in the app log's shape (`ts`, `level`, `target`, `message`, then
 the event's own fields: pane, account, reason). The file rotates past 1 MiB
 and keeps four old files. `jq 'select(.level == "ERROR")'` lists failures.
+
+**Orchestrator guard.** Two parts refuse, in the orchestrator's session only,
+what `HEPH.md` records as costly. `fleet/orch-tmux.sh` is the session's
+`tmux`: `launch.sh` puts `orch-bin/` (in the state folder) ahead of the real
+one on the orchestrator's PATH only, so whatever reaches it is the
+orchestrator's, a background job included, and each send is checked when it is
+made, on tmux's real arguments. The fleet's own scripts send with their own
+checks. Its state folder, clock and thresholds are its own: nothing in the
+caller's environment moves them. It runs only a listed set of tmux commands and
+flags that run no other command (capture, list, display, select, kill-pane,
+buffers, sends), and refuses keys or a paste into a pane stopped at a usage
+limit 55 minutes or more ago (its cache expired, and `fresh-now.sh` relaunches
+it from its brief; only the session's transcript dates the stop, since `done
+H:MM` has no day), keys into an input line holding anything but the text the
+orchestrator typed there, a format that runs a command (`#()`) or holds an E or
+T modifier, which expands a value again (`#{E:…}`, `#{T:…}`), a send that is not
+the only command of its tmux call (an earlier command can move or hold it back
+past the check), and whatever it cannot work out (a name tmux does not list, a
+target no pane answers to, a limited pane no transcript dates). `fleet/orch-guard.sh`, a PreToolUse hook, refuses before the call a
+tmux called by path or with a new PATH (best effort), an interactive session
+on an API key or a headless one with no `fleet balance` check today, and
+editing `panes.tsv` while a launch or chain loop runs (reading it with `cat`,
+`grep`, `cut` or `column` is fine). `ORCH_GUARD_ALLOW=pending-input` or
+`=registry` passes that guard when AJ asks. Each check logs what it decided
+on. Register the hook in each config folder's `settings.json`; `fleet doctor`
+warns until then, and while the orchestrator's session started without the
+guard's tmux:
+
+```json
+{ "hooks": { "PreToolUse": [{ "matcher": "Bash|Edit|Write", "hooks": [{ "type": "command", "command": "bash ~/.local/state/fleet-orchestrator/orch-guard.sh" }] }] } }
+```
+
+A new rule in `HEPH.md` gets a guard here, or one line there on why it cannot be one.
 
 ## Tests
 
@@ -1458,6 +1492,7 @@ bash statusline/test_statusline.sh       # usage hook and heartbeat, against rec
 bash hooks/test_fleet.sh                 # fleet hook: states, where, identity, pruning, gone, settings, window colours
 make test-launch                         # launcher: new, jump, tab reuse, against a private tmux socket
 make test-fleet                          # fleet engine: limits, resets, typed lines, launch delivery, doctor, against fake panes
+make test-orch-guard                     # orchestrator guard: each refusal fires, look-alikes pass, a mutant of each fails, a differential against tmux and bash
 make test-heavy-lock                     # a stopped suite keeps no lock; heavy.sh waits, refuses and limits
 make shellcheck                          # CI's shell lint, with -x
 bash scripts/test_measure_memory.sh      # the release memory check
