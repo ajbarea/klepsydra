@@ -21,17 +21,19 @@ claude --remote-control NAME "brief"), 6 (--append-system-prompt-file, tail ~260
 triage + inject last 10), then the #8 trial. #9 deferred, #10 denied. #304/#305 closed (withdrawn).
 Each cut: a small PR with the proof test the report names.
 
-## Resume here (session 28, fresh on Personal %26, 11-04 evening)
+## Resume here (session 28 ended at the move back to RIT, 11-04 evening; next session resumes here)
 Reports: /tmp/claude-1001/<round>/report.md. Never wrap a lock-taking make target in an outer timeout; finish edits
 to a suite before queuing it. PR bodies: Write the file, then PATCH in its own call (phylax reads the written file).
 Order (Heph 11-04): bug queue -> #326 (PR #331) -> #323 stage 1 (PR #332) -> #327 Agora v2 -> #324 -> #323 later
 stages; reader backlog (#318, #316, #314, #308, #310) and cuts 7, #8 between.
 - ✅ merged + installed: #230, #313, #292, #329 (r5 clean, 2328e02).
-- 🔄 #322 (room-319) 7190c60: r3 fixed (26b2cf1) + main merged; suite 760/0; body updated; r4 reader ->
-  /tmp/claude-1001/r4-322/report.md.
+- 📋 #322 (room-319) 7190c60: r4 reader STOPPED at the 11-04 move (mid mutant batch). Partial report
+  /tmp/claude-1001/r4-322/report.md: K1 body CI row says running (CI green on 7190c60), K2 room-path note logs as
+  "after a failed move back" (reword the log message per why); J1 verified fixed on the probe. Mutants owed:
+  M14, M26, M27, room block deleted, `-z since` dropped, back_held dropped. Re-dispatch r4 with the partial report.
 - 🔄 #325 (send-320): r1 F1/F2 Blocking fixed in the worktree commit after 325dddc (per-pane flock in
   inbox_deliver -> deliver_now; msg_in_box before each retry Enter; brief-tail "fleet send" rule + check; N1-N4
-  cases; send.sh +x). a45f85e pushed, suite 742/0, body updated (F8 known limit). Next: r2 reader.
+  cases; send.sh +x). a45f85e suite 742/0, body updated (F8 known limit); 9b2a723 fixes CI's SC2016 (CI 41931111714): check CI green. Next: r2 reader.
   After merge: `fleet brief --refresh`, tell Heph (HEPH.md + worker-report memory still say raw send-keys).
 - 📋 #330 (phone-328) b69fcd4: r1 done (/tmp/claude-1001/r1-330/report.md): code right; fix tests: F2 grep
   `^[a-zF]*` can't match FAIL (use `-E '^(ok|warn|FAIL) +phone wall'`), F3 drop DOC_PREFS so the default
