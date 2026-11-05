@@ -594,7 +594,46 @@ account_of() { # DIR
 # klepsydra's newest usage reading of account ID.
 reading_of() { # ID
   [[ $1 =~ ^[0-9A-Za-z][0-9A-Za-z-]*$ ]] || return 1
-  find "$KLEPSYDRA_DIR/accounts/$1" -maxdepth 1 -name '*.json' -printf '%T@ %p\n' 2>/dev/null | sort -rn | head -1 | cut -d' ' -f2- | grep .
+  # One pass for the newest: sort | head closed sort's pipe early, and the
+  # journal logged "sort: write error" several times an hour (#319).
+  find "$KLEPSYDRA_DIR/accounts/$1" -maxdepth 1 -name '*.json' -printf '%T@ %p\n' 2>/dev/null |
+    awk '$1 + 0 > m || f == "" { m = $1 + 0; f = substr($0, index($0, " ") + 1) } END { if (f == "") exit 1; print f }'
+}
+
+# The newest reading's time for account ID (its file's, as Windows stamps it), 0 with none.
+reading_mtime() { local f; f=$(reading_of "$1") && find "$f" -maxdepth 0 -printf '%T@' 2>/dev/null || echo 0; } # ID
+
+# The window a limit message names: seven for a weekly one, else five.
+limit_window() { if [[ $1 =~ [Ww]eekly ]]; then echo seven; else echo five; fi; } # TEXT
+
+# A usage limit seen on account ID's WINDOW (five or seven) that resets at RESET
+# (#319): until then that window has no room by any reading the account had at
+# the sighting, since a request the limit refuses writes no reading. Each
+# sighting keeps the later reset and the newest reading's time then, so only a
+# reading taken after the latest sighting is news (both times Windows').
+LIMITED_DIR=${FLEET_LIMITED_DIR:-$FLEET_STATE/limited}
+mark_limited() { # ID RESET [WINDOW]
+  local w=${3:-five} was="" f
+  [[ $1 =~ ^[0-9A-Za-z][0-9A-Za-z-]*$ && $2 =~ ^[0-9]+$ && $w =~ ^(five|seven)$ ]] || return 1
+  f=$LIMITED_DIR/$1.$w
+  { read -r was _ <"$f"; } 2>/dev/null
+  { [[ $was =~ ^[0-9]+$ ]] && (( was > $2 )); } || was=$2
+  mkdir -p -- "$LIMITED_DIR" && printf '%s %s\n' "$was" "$(reading_mtime "$1")" >"$f.$$" && mv -f -- "$f.$$" "$f"
+}
+# The windows of account ID still at a limit seen on it at NOW, with no reading
+# since, one a line (five, seven); fails with none. No mark costs no process.
+limited_until() { # ID NOW
+  local w reset seen cur="" any=1
+  [[ $1 =~ ^[0-9A-Za-z][0-9A-Za-z-]*$ ]] || return 1
+  for w in five seven; do
+    [[ -e $LIMITED_DIR/$1.$w ]] || continue
+    { read -r reset seen <"$LIMITED_DIR/$1.$w"; } 2>/dev/null || continue
+    { [[ $reset =~ ^[0-9]+$ ]] && (( reset > $2 )); } || continue
+    [[ -n $cur ]] || cur=$(reading_mtime "$1")
+    awk -v c="$cur" -v s="${seen:-0}" 'BEGIN { exit !(c + 0 <= s + 0) }' || continue
+    echo "$w"; any=0
+  done
+  return "$any"
 }
 
 # Account ID's name as its readings give it (the gauge's), else its id.
@@ -607,12 +646,19 @@ account_label() { # ID
 # Account ID's room from its newest reading, as "FIVE SEVEN": 100 less the
 # percentage used, or 100 for a window that has reset, that the account does
 # not have (a Team seat has no weekly window), or with no reading at all.
-headroom() { # ID NOW
-  local f
-  f=$(reading_of "$1") || { echo "100 100"; return; }
-  jq -r --argjson now "$2" 'def room(w): if w == null or (w.resets_at // 0) <= $now then 100
-      else 100 - (w.used_percentage // 0) end;
-    "\(room(.windows.five_hour) | floor) \(room(.windows.seven_day) | floor)"' "$f" 2>/dev/null || echo "100 100"
+headroom() { # ID NOW (a window at a limit seen on it is 0, #319)
+  local f five=100 seven=100 marked
+  if f=$(reading_of "$1"); then
+    read -r five seven < <(jq -r --argjson now "$2" 'def room(w): if w == null or (w.resets_at // 0) <= $now then 100
+        else 100 - (w.used_percentage // 0) end;
+      "\(room(.windows.five_hour) | floor) \(room(.windows.seven_day) | floor)"' "$f" 2>/dev/null)
+    [[ $five =~ ^-?[0-9]+$ && $seven =~ ^-?[0-9]+$ ]] || five=100 seven=100
+  fi
+  if marked=$(limited_until "$1" "$2"); then
+    [[ $marked == *five* ]] && five=0
+    [[ $marked == *seven* ]] && seven=0
+  fi
+  echo "$five $seven"
 }
 
 # Whether account ID has room to work at NOW: its five-hour window under
