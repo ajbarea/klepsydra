@@ -1399,6 +1399,17 @@ touch -d '2026-10-01' "$KLEPSYDRA_DIR/accounts/rd/old.json"
 check "#319: reading_of takes the newest reading in one pass" "$(reading_of rd)" "$KLEPSYDRA_DIR/accounts/rd/new.json"
 rm -rf -- "${KLEPSYDRA_DIR:?}/accounts/rd"
 check "#319: and fails with none" "$(reading_of rd || echo none)" "none"
+# #335: a listing past a pipe buffer (64 KB) made sort | head -1 fail every time
+# under systemd, which ignores SIGPIPE (IgnoreSIGPIPE=yes), as the run here does.
+big=$KLEPSYDRA_DIR/accounts/big; mkdir -p "$big"; pad=$(printf 'r%.0s' {1..200})
+for i in {1..400}; do printf '{}' >"$big/$pad-$i.json"; done
+touch -d '2026-10-01' "$big/$pad-7.json"; touch -d '2030-01-01' "$big/$pad-9.json"
+# shellcheck disable=SC2016 # $1 expands in the inner bash
+check "#335: newest_reading reads a listing past a pipe buffer with no sort error" \
+  "$(env --ignore-signal=PIPE bash -c 'source "$1"; newest_reading' _ "$here/lib.sh" 2>&1)" "$big/$pad-9.json"
+check "#335: pick_file oldest takes the oldest (the inbox's order)" \
+  "$(find "$big" -name '*.json' -printf '%T@ %p\n' | pick_file oldest 2>&1)" "$big/$pad-7.json"
+rm -rf -- "${big:?}"
 rm -f "$KLEPSYDRA_DIR/accounts/a/s.json"
 check "and with no reading at all it is not" "$(back_room a "$now" && echo yes || echo no)" "no"
 check "the default folder unsets CLAUDE_CONFIG_DIR; the second sets it" "$(config_env "$work/cfg-a")| $(config_env "$work/cfg-b")" "-u CLAUDE_CONFIG_DIR | CLAUDE_CONFIG_DIR=$work/cfg-b "

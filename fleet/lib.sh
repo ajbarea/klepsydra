@@ -357,9 +357,18 @@ inbox_deliver() { # PANE FILE
   echo held
 }
 
+# The newest (or oldest) path in a `find -printf '%T@ %p\n'` listing on stdin,
+# read in one pass: sort | head closed sort's pipe early once the listing
+# outgrew a pipe buffer, and the journal logged "sort: write error" (#319, #335).
+pick_file() { # newest|oldest
+  awk -v old="$([[ $1 == oldest ]] && echo 1)" '{ t = $1 + 0 }
+    f == "" || (old ? t < m : t > m) { m = t; f = substr($0, index($0, " ") + 1) }
+    END { if (f == "") exit 1; print f }'
+}
+
 # klepsydra's newest usage reading (one file per session under accounts/<id>/).
 newest_reading() {
-  find "$KLEPSYDRA_DIR/accounts" -mindepth 2 -maxdepth 2 -name '*.json' -printf '%T@ %p\n' 2>/dev/null | sort -rn | head -1 | cut -d' ' -f2-
+  find "$KLEPSYDRA_DIR/accounts" -mindepth 2 -maxdepth 2 -name '*.json' -printf '%T@ %p\n' 2>/dev/null | pick_file newest
 }
 
 # The registry, panes.tsv: pane, name, brief, then (from launch.sh) session id,
@@ -565,10 +574,7 @@ account_of() { # DIR
 # klepsydra's newest usage reading of account ID.
 reading_of() { # ID
   [[ $1 =~ ^[0-9A-Za-z][0-9A-Za-z-]*$ ]] || return 1
-  # One pass for the newest: sort | head closed sort's pipe early, and the
-  # journal logged "sort: write error" several times an hour (#319).
-  find "$KLEPSYDRA_DIR/accounts/$1" -maxdepth 1 -name '*.json' -printf '%T@ %p\n' 2>/dev/null |
-    awk '$1 + 0 > m || f == "" { m = $1 + 0; f = substr($0, index($0, " ") + 1) } END { if (f == "") exit 1; print f }'
+  find "$KLEPSYDRA_DIR/accounts/$1" -maxdepth 1 -name '*.json' -printf '%T@ %p\n' 2>/dev/null | pick_file newest
 }
 
 # The newest reading's time for account ID (its file's, as Windows stamps it), 0 with none.
