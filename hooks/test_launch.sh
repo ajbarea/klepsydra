@@ -89,7 +89,7 @@ stat_fields() { # pid index...: /proc/PID/stat fields after the command name (in
   for i; do vals+=("${st[i]}"); done
   echo "${vals[*]}"
 }
-pstart() { stat_fields "$1" 19; } # pid: field 22, as proc_stat in the launcher's proc stat block reads it
+pstart() { stat_fields "$1" 19; } # pid: field 22, as proc_stat in klepsydra-common.sh reads it
 jmp() { bash "$launch" jump "$socket" "$1" "$2" "$3"; } # pane pid start
 detach_all() {
   for p in "${clients[@]}" $(cat "$WT_PIDS" 2>/dev/null); do kill "$p" 2>/dev/null; done

@@ -136,6 +136,8 @@ check "a pasted block shows as its marker" "$(input_text "$(screen "$p")")" "[Pa
 t send-keys -t "$p" C-u
 state read '{"above":["x"],"busy":true}'
 check "the spinner is a running turn" "$(busy "$(screen "$p")" && echo yes)" "yes"
+state read '{"above":["⏺ Done. The spinner showed esc to interrupt while it ran."]}'
+check "#307: an idle pane whose last reply quotes the esc hint is not busy" "$(busy "$(screen "$p")" && echo yes || echo no)" "no"
 state read '{"above":["  ⎿  You'"'"'ve hit your session limit · resets 1:10pm (America/New_York)","",""]}'
 check "the limit as the last thing printed" "$(limit_line "$(screen "$p")")" "  ⎿  You've hit your session limit · resets 1:10pm (America/New_York)"
 state read '{"above":["  ⎿  You'"'"'ve hit your session limit · resets 1:10pm","a","b","c","d","e","f","g"]}'
@@ -1017,7 +1019,7 @@ check "#289: under the line: ok, the fullest named, and a scope from before the 
   "ok   task caps: fullest scope: fleet-a-1 6900/8745; no task cap: fleet-c-3"
 check "no Tailscale Serve fails" "$(grep -c '^FAIL phone wall over Tailscale: Tailscale Serve is not set up' <<<"$out")" "1"
 check "and the exit is non-zero" "$code" "1"
-check "#244: hooks and cast never installed fail, named" "$(grep '^FAIL installed copies' <<<"$out" | grep -c 'make install-fleet: differ from .*: klepsydra-fleet.sh .*klepsydra-cast.json$')" "1"
+check "#244: hooks and cast never installed fail, named" "$(grep '^FAIL installed copies' <<<"$out" | grep -c 'make install-fleet: differ from .*: klepsydra-common.sh klepsydra-fleet.sh .*klepsydra-cast.json$')" "1"
 root=${here%/fleet}
 for c in "${HOOK_COPIES[@]}"; do mkdir -p "$(dirname "$FLEET_HOOK_DIR/${c#* }")"; cp "$root/${c%% *}" "$FLEET_HOOK_DIR/${c#* }"; done
 touch "$work/active" "$FLEET_STATE/resume.beat"
@@ -1244,7 +1246,7 @@ check "the main checkout installs (10-29: from fleet/ git named its common dir r
 check "a worktree is refused" "$(guard "$work/wt")" "2"
 mkdir -p "$work/onlyfleet" && cp -r "$here" "$work/onlyfleet/fleet"
 check "#244 review: a copy missing from the checkout fails the doctor, never an ok over nothing" \
-  "$(bash "$work/onlyfleet/fleet/doctor.sh" 2>/dev/null | grep -c "^FAIL installed copies: missing from $(tilde "$work/onlyfleet"): hooks/klepsydra-fleet.sh ")" "1"
+  "$(bash "$work/onlyfleet/fleet/doctor.sh" 2>/dev/null | grep -c "^FAIL installed copies: missing from $(tilde "$work/onlyfleet"): hooks/klepsydra-common.sh hooks/klepsydra-fleet.sh ")" "1"
 
 echo "cut-over"
 export SC="$work/sc" FLEET_LOG

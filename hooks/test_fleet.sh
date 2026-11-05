@@ -1251,18 +1251,32 @@ check "settings: every tool after failure" "$(jq -r '.hooks.PostToolUseFailure[0
 check "the hook handles exactly the events registered" \
   "$(tr ' ' '\n' <<<"$EVENTS" | LC_ALL=C sort | paste -sd, -)" "$(jq -r '.hooks | keys | join(",")' <<<"$settings")"
 
-block() { sed -n '/^# --- klepsydra dir/,/^# --- end klepsydra dir ---$/p' "$1"; }
-check "dir block present" "$([[ -n "$(block "$hook")" ]] && echo yes)" "yes"
 check "sourceable from a set -e script" \
   "$(KLEPSYDRA_DIR=/x/dev.ajsoftworks.klepsydra bash -ec 'source "$1"; echo "$KLEPSYDRA_DIR"' _ "$hook")" \
   "/x/dev.ajsoftworks.klepsydra"
-check "dir block identical in the statusline" "$(block "$hook")" "$(block "$here/../statusline/klepsydra-statusline.sh")"
-pblock() { sed -n '/^# --- proc stat/,/^# --- end proc stat ---$/p' "$1"; }
-check "proc stat block present" "$([[ -n "$(pblock "$hook")" ]] && echo yes)" "yes"
-check "proc stat block identical in the launcher" "$(pblock "$hook")" "$(pblock "$here/klepsydra-launch.sh")"
+shared=(klepsydra-fleet.sh klepsydra-launch.sh klepsydra-wrapup.sh ../statusline/klepsydra-statusline.sh)
+for s in "${shared[@]}"; do
+  # shellcheck disable=SC2016 # the scripts' literal text
+  check "${s##*/} sources the shared file" "$(grep -c '^source "$KL_\(HERE/klepsydra-common.sh\|COMMON\)"' "$here/$s")" "1"
+  check "${s##*/} keeps no copy of a shared helper" \
+    "$(grep -cE '^(proc_stat|proc_is|own_data_dir|prune_due|prune_hourly)\(\)|KLEPSYDRA_DIR="/mnt' "$here/$s")" "0"
+done
 # shellcheck disable=SC2016 # a literal $PROC_ROOT, as the scripts spell it
-check "the launcher parses /proc only in the block" \
-  "$(sed '/^# --- proc stat/,/^# --- end proc stat ---$/d' "$here/klepsydra-launch.sh" | grep -cE 'read -r -a stat|<"?(/proc|\$PROC_ROOT)/')" "0"
+check "only the shared file parses /proc stat" \
+  "$(cat "${shared[@]/#/$here/}" | grep -cE 'read -r -a stat|<"?(/proc|\$\{?PROC_ROOT)[^"]*/stat')" "0"
+check "install copies the shared file beside the hooks" \
+  "$(grep -c '"hooks/klepsydra-common.sh klepsydra-common.sh"' "$here/../fleet/lib.sh")" "1"
+lone="$work/lone"; mkdir -p "$lone"; cp "$hook" "$here/klepsydra-launch.sh" "$here/klepsydra-wrapup.sh" "$lone/"
+out=$(bash "$lone/klepsydra-fleet.sh" <<<'{"session_id":"x","hook_event_name":"Stop"}' 2>&1); code=$?
+check "without the shared file the hook stays silent and exits 0" "$code:$out" "0:"
+out=$(bash "$lone/klepsydra-fleet.sh" queue show 2>&1); code=$?
+check "without it the hook's command says what is wrong" "$code:$out" \
+  "1:klepsydra-fleet.sh: klepsydra-common.sh is missing beside it; run make install-fleet."
+out=$(bash "$lone/klepsydra-launch.sh" voices 2>&1); code=$?
+check "without it the launcher fails, naming the fix" "$code:$out" \
+  "1:klepsydra-launch.sh: klepsydra-common.sh is missing beside it; run make install-fleet."
+out=$(bash "$lone/klepsydra-wrapup.sh" </dev/null 2>&1); code=$?
+check "without it the wrap-up hook stays silent and exits 0" "$code:$out" "0:"
 
 # A hook must stay silent and exit 0 even when its environment is bare.
 out=$(env -u USER -u HOME bash "$hook" </dev/null 2>&1); rc=$?

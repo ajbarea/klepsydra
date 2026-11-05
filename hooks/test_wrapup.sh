@@ -263,10 +263,6 @@ check "make install-hooks installs the skill where the script reads it" \
 check "the script's default skill path is that one" \
   "$(grep -cF -- '${CLAUDE_CONFIG_DIR:-${HOME:-}/.claude}/skills/klepsydra-wrapup/SKILL.md}' "$hook")" "1"
 
-echo "shared blocks"
-block() { sed -n '/^# --- klepsydra dir/,/^# --- end klepsydra dir ---$/p' "$1"; }
-check "dir block identical in the fleet hook" "$(block "$hook")" "$(block "$here/klepsydra-fleet.sh")"
-
 echo
 echo "$pass passed, $fail failed"
 (( fail == 0 ))

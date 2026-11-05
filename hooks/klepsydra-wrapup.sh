@@ -15,27 +15,10 @@
 
 set -uo pipefail
 
-# --- klepsydra dir: identical in hooks/klepsydra-fleet.sh and statusline/klepsydra-statusline.sh ---
-# The overlay's app-local-data dir, named for the bundle identifier in
-# src-tauri/tauri.conf.json. Not the install dir: the uninstaller's "delete app
-# data" reaches only this one, and a per-machine install cannot be written to.
-# Under WSL the overlay is a Windows app, so the hook writes across to it. On
-# Linux, Tauri honours XDG_DATA_HOME only when it is absolute, and so must we,
-# or the readings land under whatever directory Claude Code is running in.
-if [[ -z "${KLEPSYDRA_DIR:-}" ]]; then
-  osrelease=""
-  { read -r osrelease </proc/sys/kernel/osrelease; } 2>/dev/null  # builtin: no process per run
-  if [[ "$osrelease" == *[Mm]icrosoft* ]]; then
-    if [[ -n "${USER:-}" ]]; then
-      KLEPSYDRA_DIR="/mnt/c/Users/$USER/AppData/Local/dev.ajsoftworks.klepsydra"
-    fi
-  else
-    data_home="${HOME:-}/.local/share"
-    [[ "${XDG_DATA_HOME:-}" == /* ]] && data_home="$XDG_DATA_HOME"
-    [[ "$data_home" == /* ]] && KLEPSYDRA_DIR="$data_home/dev.ajsoftworks.klepsydra"
-  fi
-fi
-# --- end klepsydra dir ---
+# Shared code, installed beside this script (hooks/klepsydra-common.sh).
+case ${BASH_SOURCE[0]} in */*) KL_HERE=${BASH_SOURCE[0]%/*} ;; *) KL_HERE=. ;; esac
+# shellcheck source=hooks/klepsydra-common.sh
+source "$KL_HERE/klepsydra-common.sh" 2>/dev/null || { (( $# )) && printf '%s\n' "klepsydra-wrapup.sh: klepsydra-common.sh is missing beside it; run make install-fleet." >&2; exit $(( $# > 0 )); }
 
 UUID_RE='^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
 SKILL=${KLEPSYDRA_WRAPUP_SKILL:-${CLAUDE_CONFIG_DIR:-${HOME:-}/.claude}/skills/klepsydra-wrapup/SKILL.md}
