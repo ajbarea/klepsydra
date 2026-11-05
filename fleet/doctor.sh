@@ -148,16 +148,22 @@ session_of() {
 orch=$(orchestrator)
 panes=$(awk -F'\t' 'NF >= 3 { print $1 }' "$REGISTRY" 2>/dev/null)
 
-# Limits as the panes show them (#263): one still showing OVERDUE_S past the
-# reset it names was missed by the resume service; a reset time beside a limit
+# Limits as the fleet hook's StopFailure record dates them (#311), else as the
+# panes show them (#263): one still at a limit OVERDUE_S past its reset was
+# missed by the resume service; a reset time beside a limit
 # wording LIMIT_RE does not know means Claude Code renamed its message again.
 overdue="" unknown="" resets=""
 for p in $orch $panes; do
   fleet_panes | grep -qx -- "$p" || continue
   s=$(screen "$p")
   busy "$s" && continue
-  if l=$(limit_line "$s"); then
-    lnow=${FLEET_NOW:-$now} # tests set the clock
+  lnow=${FLEET_NOW:-$now} # tests set the clock
+  # The fleet hook's StopFailure record dates the reset exactly (#311).
+  if ev=$(limit_event "$p") && r=${ev%%$'\t'*} && (( r > 0 )); then
+    if (( lnow - r > ${FLEET_OVERDUE_S:-600} )); then
+      overdue+="$p " resets+="$p:$(date -d "@$r" '+%H:%M') "
+    fi
+  elif l=$(limit_line "$s"); then
     # A dated reset is exact. A time-only one can be up to 24 h ahead, so it is
     # placed only for the 5-hour window, whose reset is at most 5 h ahead: today's
     # is tomorrow's when over 19 h past, yesterday's when over 5.5 h ahead.
@@ -322,9 +328,15 @@ else
   for p in $panes; do
     fleet_panes | grep -qx -- "$p" || continue
     s=$(screen "$p")
-    if ! busy "$s" && l=$(limit_line "$s"); then
+    # Limited as the limits check holds it: the screen's limit line, else the
+    # hook's StopFailure record, whose reset is then its own epoch.
+    at=""
+    if ! busy "$s" && { l=$(limit_line "$s") || { ev=$(limit_event "$p") && l=${ev#*$'\t'} && at=${ev%%$'\t'*}; }; }; then
       limited+="$p "
-      r=$(grep -oE 'resets [^(]*[ap]m' <<<"$l" | tail -1)
+      if [[ $at =~ ^[1-9][0-9]*$ ]]; then
+        # Its day too, unless it is today: a weekly reset can be days away.
+        if [[ $(date -d "@$at" +%F) == "$(date -d "@${FLEET_NOW:-$now}" +%F)" ]]; then r="resets $(date -d "@$at" '+%-I:%M%P')"; else r="resets $(date -d "@$at" '+%a %-I:%M%P')"; fi
+      else r=$(grep -oE 'resets [^(]*[ap]m' <<<"$l" | tail -1); fi
       [[ -n $r && ", $resets" != *", ${r#resets }, "* ]] && resets+="${r#resets }, "
     else
       free+="$p "
@@ -425,6 +437,30 @@ elif [[ -n $differ ]]; then
   report FAIL "installed copies" "make install-fleet: differ from $root: ${differ% }"
 else
   report ok "installed copies" "the hooks, status line, launcher and cast match $root"
+fi
+# tmux 3.4 dies on a focus event to a dead pane (#290): the fleet's server must
+# carry the pane-died hook, which a server reads from its conf only at start.
+if t has-session 2>/dev/null; then
+  if t show-hooks -g pane-died 2>/dev/null | grep -q 'klepsydra-pane-died\.sh'; then
+    if [[ -f $FLEET_HOOK_DIR/klepsydra-pane-died.sh ]]; then
+      report ok "pane-died hook" "set on the fleet's tmux server"
+    else
+      report warn "pane-died hook" "set, but $(tilde "$FLEET_HOOK_DIR")/klepsydra-pane-died.sh is missing, so a dead pane stays dead: fleet install"
+    fi
+  else
+    report warn "pane-died hook" "not set on the fleet's tmux server, which tmux 3.4 lets a dead pane crash: fleet install sets it" socket="$FLEET_SOCK"
+  fi
+fi
+# A crash ends the fleet's tab, and WSL then shuts down within 15 s unless
+# .wslconfig keeps the distro up ([general] instanceIdleTimeout=-1): the tmux
+# watchdog can only recover after a crash that WSL stays up through (#292).
+wslconfig=${FLEET_WSLCONFIG:-${KLEPSYDRA_DIR%/AppData/*}/.wslconfig}
+if [[ -n ${FLEET_WSLCONFIG:-} || ${WSL_DISTRO_NAME:-} ]]; then
+  if awk 'BEGIN { IGNORECASE = 1 } /^[[:space:]]*\[/ { g = (tolower($0) ~ /^[[:space:]]*\[general\]/) } g && tolower($0) ~ /^[[:space:]]*instanceidletimeout[[:space:]]*=[[:space:]]*-1[[:space:]]*$/ { f = 1 } END { exit !f }' "$wslconfig" 2>/dev/null; then
+    report ok "WSL stays up" "instanceIdleTimeout=-1 in .wslconfig"
+  else
+    report warn "WSL stays up" "add instanceIdleTimeout=-1 under [general] in $wslconfig: without it WSL shuts down 15 s after a crash ends the fleet's tab, and the fleet comes back only when WSL next starts" wslconfig="$wslconfig"
+  fi
 fi
 if [[ -n $json ]]; then
   tmp=$json.tmp.$$

@@ -24,7 +24,7 @@ fi
 do_() { if (( dry )); then printf 'would: %s\n' "$*"; else "$@"; fi; }
 # A dry run writes nothing, its log included: its events go to stderr only.
 ilog() { if (( dry )); then printf '%s %s %s\n' "$(date '+%F %T')" "$1" "${*:2}" >&2; else flog "$@"; fi; }
-SCRIPTS=(launch.sh fresh-now.sh resume-at-reset.sh watch-panes.sh memfrag-log.sh relaunch-fresh.sh done.sh voices.sh brief.sh doctor.sh cutover.sh accounts-sync.sh recover.sh pause.sh registry-event.sh sync-briefing.sh ci_watch.py agora.py worker-settings.json)
+SCRIPTS=(launch.sh fresh-now.sh resume-at-reset.sh watch-panes.sh tmux-watch.sh memfrag-log.sh relaunch-fresh.sh done.sh voices.sh brief.sh doctor.sh cutover.sh accounts-sync.sh recover.sh pause.sh registry-event.sh sync-briefing.sh ci_watch.py agora.py worker-settings.json)
 UNITS=${FLEET_UNITS:-$HOME/.config/systemd/user}
 BIN=${FLEET_BIN:-$HOME/.local/bin}
 archive=$FLEET_STATE/archive/fleet-scripts-$(date +%Y%m%d)
@@ -58,6 +58,12 @@ for c in "${HOOK_COPIES[@]}"; do
     failed=1
   fi
 done
+# A running fleet server read its conf when it started, so it never sees a new
+# hook: tmux-conf.sh has it read the installed conf now (#290). Off in the
+# suite, which tests the script itself (FLEET_LIVE_CONF=0).
+if (( !dry )) && [[ ${FLEET_LIVE_CONF:-1} == 1 ]]; then
+  bash "$here/tmux-conf.sh" "$FLEET_HOOK_DIR" || failed=1
+fi
 if (( hooks_only )); then
   (( failed )) && exit 1
   (( dry )) || echo "hooks installed from $root into $FLEET_HOOK_DIR"
@@ -166,7 +172,7 @@ TimeoutStartSec=120
 SuccessExitStatus=1
 # What it prints is in the report; the journal would keep a Remote Control link each run.
 StandardOutput=null
-Environment=\"PATH=$PATH\" \"HOME=$HOME\"
+Environment=\"PATH=$PATH\" \"HOME=$HOME\"${WSL_DISTRO_NAME:+ \"WSL_DISTRO_NAME=$WSL_DISTRO_NAME\"}
 ExecStart=/usr/bin/bash $FLEET_STATE/doctor.sh --json \"$KLEPSYDRA_DIR/fleet-health.json\""
 unit fleet-doctor.timer "[Unit]
 Description=klepsydra fleet: fleet doctor every 5 min
@@ -174,6 +180,26 @@ Description=klepsydra fleet: fleet doctor every 5 min
 [Timer]
 OnBootSec=2min
 OnUnitActiveSec=5min
+
+[Install]
+WantedBy=timers.target"
+# The tmux server watchdog (#290): fleet recover once a crash ends the server.
+unit fleet-tmux-watch.service "[Unit]
+Description=klepsydra fleet: fleet recover when the fleet's tmux server crashes
+
+[Service]
+Type=oneshot
+# A recover staggers its launches a minute apart, so a fleet takes a while.
+TimeoutStartSec=3600
+Environment=\"PATH=$PATH\" \"HOME=$HOME\"${WSL_DISTRO_NAME:+ \"WSL_DISTRO_NAME=$WSL_DISTRO_NAME\"}
+ExecStart=/usr/bin/bash $FLEET_STATE/tmux-watch.sh"
+unit fleet-tmux-watch.timer "[Unit]
+Description=klepsydra fleet: check the fleet's tmux server every minute
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=1min
+AccuracySec=1s
 
 [Install]
 WantedBy=timers.target"
