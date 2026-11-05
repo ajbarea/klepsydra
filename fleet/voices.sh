@@ -45,7 +45,7 @@ has_speak_only() { # BIN
 # The saved mode: prefs.json's "voices" when it is one of the three, else heph
 # (the tray's default).
 saved_mode() {
-  jq -ser 'if length == 1 then .[0].voices else empty end | select(. == "heph" or . == "everyone" or . == "off")' "$PREFS" 2>/dev/null || echo heph
+  case $(prefs_get voices) in '"everyone"') echo everyone ;; '"off"') echo off ;; *) echo heph ;; esac
 }
 
 run=apply mode=${1:-}

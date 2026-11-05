@@ -47,15 +47,11 @@ mod tests {
     #[test]
     fn the_modes_are_the_ones_fleet_voices_reads() {
         let script = include_str!("../../../fleet/voices.sh");
-        let all: Vec<String> = VOICES
-            .iter()
-            .map(|(id, _)| format!(". == \"{id}\""))
-            .collect();
-        let read = format!(
-            "jq -ser 'if length == 1 then .[0].{KEY} else empty end | select({})' \"$PREFS\" 2>/dev/null || echo {}",
-            all.join(" or "),
-            VOICES[0].0
-        );
+        let mut read = format!("case $(prefs_get {KEY}) in");
+        for (id, _) in &VOICES[1..] {
+            read.push_str(&format!(" '\"{id}\"') echo {id} ;;"));
+        }
+        read.push_str(&format!(" *) echo {} ;; esac", VOICES[0].0));
         assert!(script.contains(&read), "voices.sh reads: {read}");
     }
 }

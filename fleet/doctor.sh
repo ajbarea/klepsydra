@@ -5,7 +5,7 @@
 # registered pane and the orchestrator's has Remote Control on (the link its
 # live session's fleet file holds, which is what the phone wall's Open in
 # Claude uses); the phone wall answers on 127.0.0.1:8318 and through
-# Tailscale Serve; its usage readings are fresh (observed in the last 2
+# Tailscale Serve, unless prefs.json has it off; its usage readings are fresh (observed in the last 2
 # minutes) while some pane is mid-turn, the only time a session refreshes them;
 # a pane watcher is running, unless every live agent waits out a usage limit;
 # paused agents (paused.tsv) are listed; each registered agent gets one verdict
@@ -58,7 +58,12 @@ report() { # ok|warn|FAIL CHECK DETAIL [KEY=VALUE...]: the values are logged wit
     FAIL) flog ERROR "doctor: $check" detail="$detail" "${vals[@]}" ;;
     warn) flog WARN "doctor: $check" detail="$detail" "${vals[@]}" ;;
     # An ok detail can be a Remote Control link, which opens a session: not logged.
-    ok) [[ -n ${was[${check//[$'\t\n']/ }]-} ]] && flog INFO "doctor: $check recovered" "${vals[@]}" ;;
+    # A check AJ switched off (its values hold switched=off) did not recover.
+    ok)
+      local how=recovered v
+      for v in "${vals[@]}"; do [[ $v == switched=off ]] && how="switched off"; done
+      [[ -n ${was[${check//[$'\t\n']/ }]-} ]] && flog INFO "doctor: $check $how" "${vals[@]}"
+      ;;
   esac
 }
 
@@ -233,15 +238,24 @@ phone() { # CHECK BASE
   [[ -n $phone_body ]] || phone_body=$body
   report ok "$1" "answers at $2"
 }
-phone "phone wall" "$PHONE"
-dns=$($TAILSCALE status --json 2>/dev/null | jq -r '.Self.DNSName // empty' | sed 's/\.$//')
-serve=$($TAILSCALE serve status 2>/dev/null)
-if [[ -z $dns ]]; then
-  report FAIL "phone wall over Tailscale" "Tailscale is not running or not logged in"
-elif [[ -z $serve || $serve == *"No serve config"* ]]; then
-  report FAIL "phone wall over Tailscale" "Tailscale Serve is not set up (README: Phone wall)"
-else
-  phone "phone wall over Tailscale" "https://$dns"
+# The phone wall is AJ's to switch off (#328): prefs.json's phone_wall, read
+# as the wall reads it (src-tauri/src/phone.rs: a missing or unreadable file is off).
+pw=$(prefs_get phone_wall)
+case $? in
+  2) report warn "phone wall" "prefs.json does not read as one JSON object, so the wall reads it as off: not checked" prefs="$KLEPSYDRA_DIR/prefs.json" ;;
+  *) [[ $pw == true ]] || report ok "phone wall" "off (prefs.json phone_wall): not checked, nor over Tailscale" phone_wall="${pw:-missing}" switched=off ;;
+esac
+if [[ $pw == true ]]; then
+  phone "phone wall" "$PHONE"
+  dns=$($TAILSCALE status --json 2>/dev/null | jq -r '.Self.DNSName // empty' | sed 's/\.$//')
+  serve=$($TAILSCALE serve status 2>/dev/null)
+  if [[ -z $dns ]]; then
+    report FAIL "phone wall over Tailscale" "Tailscale is not running or not logged in"
+  elif [[ -z $serve || $serve == *"No serve config"* ]]; then
+    report FAIL "phone wall over Tailscale" "Tailscale Serve is not set up (README: Phone wall)"
+  else
+    phone "phone wall over Tailscale" "https://$dns"
+  fi
 fi
 
 # The usage readings' age (#246). Only a session's status line refreshes them,

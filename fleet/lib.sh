@@ -12,7 +12,18 @@ FLEET_LOG_KEEP=4                        # renamed logs kept
 FLEET_TARGET=${FLEET_TARGET:-fleet::$(basename "${0%.sh}")}
 # A fleet-wide id for the lines of one run (a launch, one resume pass).
 FLEET_RUN_ID=${FLEET_RUN_ID:-$(od -An -N6 -tx1 /dev/urandom | tr -d ' \n')}
+
 export FLEET_RUN_ID
+
+# prefs.json's KEY as compact JSON (null when absent), read as the tray reads
+# the file: one JSON object and nothing after it. Fails 1 when the file is
+# missing, 2 when it does not read as one object.
+prefs_get() { # KEY
+  local f=$KLEPSYDRA_DIR/prefs.json
+  [[ -f $f ]] || return 1
+  jq -sc --arg k "$1" 'if length == 1 and (.[0] | type) == "object" then .[0][$k] else error("not one object") end' "$f" 2>/dev/null || return 2
+}
+
 # What every session reads from ~/.claude (both config folders' hooks point
 # there): "repo path, installed name" per entry. install.sh copies them, and
 # doctor checks the copies still match the checkout.

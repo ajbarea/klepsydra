@@ -998,8 +998,14 @@ login a
 # The section's sessions are alive by recover's test (this boot, the same process).
 mkdir -p "$work/dproc/4242"; printf '4242 (claude) S %s 777 1 2 3\n' "$(seq -s ' ' 1 18)" >"$work/dproc/4242/stat"
 echo 44444444-4444-4444-8444-444444444444 >"$work/dboot"
-doctor() { FLEET_PS="$work/bin/ps" FLEET_SYSTEMCTL="$work/bin/systemctl" FLEET_CURL="$work/bin/curl" FLEET_TAILSCALE="$work/bin/tailscale" \
-  DOC_ACTIVE="$work/active" DOC_FLEET="$work/fleet.json" FLEET_RETRY_S=0 FLEET_PROC="$work/dproc" FLEET_BOOT_ID="$work/dboot" bash "$here/doctor.sh" 2>/dev/null; }
+# The phone wall is on in these cases unless DOC_PREFS names other contents (#328):
+# the wrappers write the shipped path, $KLEPSYDRA_DIR/prefs.json, and remove it
+# after, so later sections see no file. DOC_PREFS=none: no file.
+doc_prefs() { local c=${DOC_PREFS-'{"phone_wall": true}'}; rm -f -- "$KLEPSYDRA_DIR/prefs.json"; [[ $c == none ]] || printf '%s' "$c" >"$KLEPSYDRA_DIR/prefs.json"; }
+doctor() { local rc; doc_prefs; FLEET_PS="$work/bin/ps" FLEET_SYSTEMCTL="$work/bin/systemctl" FLEET_CURL="$work/bin/curl" FLEET_TAILSCALE="$work/bin/tailscale" \
+  DOC_ACTIVE="$work/active" DOC_FLEET="$work/fleet.json" FLEET_RETRY_S=0 FLEET_PROC="$work/dproc" FLEET_BOOT_ID="$work/dboot" bash "$here/doctor.sh" 2>/dev/null; rc=$?
+  rm -f -- "$KLEPSYDRA_DIR/prefs.json"; return $rc; }
+phone_lines() { grep -E '^(ok|warn|FAIL) +phone wall' | cut -d: -f1 | paste -sd'|'; }
 sid_of() { case $1 in w1) echo dddddddd-0000-4000-8000-000000000001 ;; w2) echo dddddddd-0000-4000-8000-000000000002 ;; *) echo dddddddd-0000-4000-8000-0000000000"${1#o}"0 ;; esac; }
 w=$(pane wpane '{"above":["idle"]}'); o=$(pane opane '{"above":["idle"]}'); settle
 printf '%s\tworker\t%s\t%s\n' "$w" "$FLEET_STATE/task-demo.src" "$(sid_of w1)" >"$REGISTRY"
@@ -1016,6 +1022,17 @@ check "a resume loop that never ran fails" "$(grep '^FAIL resume loop' <<<"$out"
 check "a worker with Remote Control is ok" "$(grep -c "^ok   remote control $w (worker)" <<<"$out")" "1"
 check "the orchestrator without it fails (Heph's must always be on)" "$(grep -c "^FAIL remote control $o (orchestrator): off" <<<"$out")" "1"
 check "no phone wall fails, after a second try" "$(grep -c '^FAIL phone wall: no answer from http://127.0.0.1:8318/fleet.json (tried twice)' <<<"$out")" "1"
+check "#328 review 1: with the wall on and down, both phone lines fail" "$(phone_lines <<<"$out")" "FAIL phone wall|FAIL phone wall over Tailscale"
+# Each is off as the wall reads it (serde's as_bool: only the boolean true is on).
+for pw in '{"phone_wall": false}' '{"phone_wall": "true"}' '{"phone_wall": 1}' '{"phone_wall": "yes"}' '{}' none; do
+  check "#328: prefs.json $pw (the wall's own reading: off): ok, and neither phone line is tried" \
+    "$(DOC_PREFS=$pw doctor | phone_lines)" "ok   phone wall"
+done
+# A file that is not one JSON object is off for the wall too, but says so.
+for pw in '{phone' '{"phone_wall": true} garbage' '{"phone_wall": true}{}' '[true]' 'null'; do
+  check "#328 review 1: prefs.json $pw does not read: a warning, and neither phone line is tried" \
+    "$(DOC_PREFS=$pw doctor | phone_lines)" "warn phone wall"
+done
 check "#289: with no fleet scope there is no task caps line" "$(grep -c 'task caps' <<<"$out")" "0"
 printf 'fleet-a-1.scope 7000 8745\nfleet-b-2.scope 100 8745\nnot-fleet.scope 9 10\n' >"$work/scopes"
 check "#289: a scope past 80% of its task cap warns, naming it" "$(DOC_SCOPES="$work/scopes" doctor | grep 'task caps')" \
@@ -1032,6 +1049,8 @@ touch "$work/active" "$FLEET_STATE/resume.beat"
 session_file o1 "$o" https://claude.ai/code/session_01O
 # The fleet's server carries the pane-died hook, as install sets it (#290).
 t set-hook -g pane-died "run-shell ': klepsydra-pane-died.sh'"
+# Readings 30 s old as of this run, however long the cases above took.
+jq -n --argjson at "$(( $(date +%s) - 30 ))" '{usage: [{observed_at: $at}]}' >"$work/fleet.json"
 out=$(DOC_UP=http DOC_SERVE="https://desk.tail1.ts.net (tailnet only)" doctor); code=$?
 # Which rows are not ok, not how many are: a new check that passes here breaks no case.
 notok() { grep -v '^ok ' | cut -d: -f1 | paste -sd'|'; }
@@ -1126,8 +1145,8 @@ check "a resume loop that stopped passing fails" "$(doctor | grep -c '^FAIL resu
 logout a
 out=$(doctor)
 check "a default account not logged in fails" "$(grep -c "^FAIL account $work/cfg-a: not logged in: claude auth login" <<<"$out")" "1"
-djson() { FLEET_PS="$work/bin/ps" FLEET_SYSTEMCTL="$work/bin/systemctl" FLEET_CURL="$work/bin/curl" FLEET_TAILSCALE="$work/bin/tailscale" \
-  DOC_ACTIVE="$work/active" DOC_FLEET="$work/fleet.json" bash "$here/doctor.sh" --json "$work/health.json" >/dev/null 2>&1; echo $?; }
+djson() { doc_prefs; FLEET_PS="$work/bin/ps" FLEET_SYSTEMCTL="$work/bin/systemctl" FLEET_CURL="$work/bin/curl" FLEET_TAILSCALE="$work/bin/tailscale" \
+  DOC_ACTIVE="$work/active" DOC_FLEET="$work/fleet.json" bash "$here/doctor.sh" --json "$work/health.json" >/dev/null 2>&1; echo $?; rm -f -- "$KLEPSYDRA_DIR/prefs.json"; }
 : >"$FLEET_LOG"; rm -f "$work/health.json"
 check "#208: --json writes each check with its status and detail, and exits as doctor does" \
   "$(djson) $(jq -r --arg a "account $work/cfg-a" '[.v, .failed, (.checks | length), (.checks[] | select(.check == $a) | .status)] | map(tostring) | join(" ")' "$work/health.json")" \
@@ -1162,6 +1181,11 @@ chmod a-w "$work"; touch "$work/x" 2>/dev/null || {
     "$(djson; jq -r 'select(.message == "doctor: could not write its report") | .level' "$FLEET_LOG"; find "$work" -maxdepth 1 -name 'health.json.tmp.*' | wc -l)" $'1\nERROR\n0'
 }
 chmod u+w "$work"; rm -f "$work/x"
+# A wall AJ switches off while it fails is logged as switched off, not as recovered.
+rm -f "$work/health.json"; djson >/dev/null; : >"$FLEET_LOG"
+DOC_PREFS='{"phone_wall": false}' djson >/dev/null
+check "#328 review 1: a failing phone wall switched off logs that, not a recovery" \
+  "$(jq -r 'select(.message | startswith("doctor: phone wall")) | .message' "$FLEET_LOG" | paste -sd'|')" "doctor: phone wall switched off"
 t kill-window -t "$w"; t kill-window -t "$o"; rm -f "$FLEET_STATE/orchestrator.pane"; : >"$REGISTRY"
 
 echo "install"
@@ -3508,7 +3532,7 @@ check "#273: and --check then says so" "$(fv --check; echo "rc=$?")" $'applied h
 "$work/kx/bin/keryx" off
 check "#273 verify: --check names keryx turned off by hand since, still ok" "$(fv --check; echo "rc=$?")" $'applied heph; keryx is off now (turned off by hand?)\nrc=0'
 "$work/kx/bin/keryx" on
-for odd in 'not json' '{"voices":"loud"}' '{"voices":["off"]}'; do
+for odd in 'not json' '{"voices":"loud"}' '{"voices":["off"]}' '{"voices":"off"}{}' 'null'; do
   printf '%s' "$odd" >"$KLEPSYDRA_DIR/prefs.json"
   check "#273: a prefs file reading $odd is Heph only" "$(fv | cut -d' ' -f2)" "heph"
 done
