@@ -907,6 +907,7 @@ check "the tail carries the friction-log rule (AJ 11-01)" "$(grep -c '^Friction 
 check "the tail puts performance first, above the security floor, and asks for DS&A checks (AJ 11-01, 11-03)" "$(grep -c '^Quality (AJ 11-01, 11-03): performance is AJ.s #1 quality attribute; when it trades off with security, performance wins, above the security floor. In every workflow, check the data structures and algorithms' "$here/brief-tail.md")" "1"
 check "the tail carries the team-ceremony rule (AJ 10-29)" "$(grep -c '^Team ceremony in every repo' "$here/brief-tail.md")" "1"
 check "the tail keeps asks for AJ out of public issues and PRs (AJ 10-29)" "$(grep -c '^Asks for AJ stay private' "$here/brief-tail.md")" "1"
+check "#325 review 1: the tail sends messages to panes through fleet send (#320)" "$(grep -c '^Messages to another pane .*fleet send PANE -' "$here/brief-tail.md")" "1"
 check "#239: the tail has heavy commands take the lock with flock -o, so nothing they leave running keeps it" "$(grep -c 'flock -o /tmp/fleet-heavy.lock' "$here/brief-tail.md")" "1"
 check "#291 review: the tail says the make targets take the lock themselves and run bare" "$(grep -c 'make test-fleet., .make test-launch., .make test-heavy-lock. and .make shellcheck. in klepsydra take the lock themselves: run them bare' "$here/brief-tail.md")" "1"
 check "#291 review 5: the tail's hand form puts a group-wide timeout inside the lock (no --foreground)" "$(grep -c 'flock -o /tmp/fleet-heavy.lock timeout 1800 <command>' "$here/brief-tail.md") $(grep -c -- '--foreground' "$here/brief-tail.md")" "1 0"
@@ -3638,6 +3639,113 @@ check "#277: a file under its old name is still committed" "$(bsync) $(git -C "$
 mv "$work/brief/claude-morning.md" "$work/brief/morning.md"
 check "#277: a plain mv to the new name commits as one rename and leaves neither name behind" \
   "$(bsync) $(git -C "$work/brief" show -M --name-status --format= HEAD | tr '\t' ' ' | paste -sd' ') $(git -C "$work/brief" status --porcelain -- claude-morning.md morning.md | wc -l)" "0 R100 claude-morning.md morning.md 0"
+
+echo "fleet send: a message is submitted, never left in the box (#320)"
+fsend() { bash "$here/send.sh" "$@" 2>/dev/null; }
+p=$(pane snd '{"above":["idle"],"enter_ignore":1,"on_submit":"none"}'); settle
+msg="Heph: #322 is red on its current head; read the report under ci/ and fix it before #319's follow-ups. This line runs past two hundred characters on purpose, as the 11-04 sends that stayed in the box did."
+out=$(fsend "$p" "$msg"); rc=$?
+check "#320: a long message whose first Enter is lost is still submitted, once" \
+  "$out $rc $(grep -c "^SUBMIT ${msg:0:40}" "$work/snd.log") $(grep -c 'KEY ENTER (lost after a paste)' "$work/snd.log")" "sent 0 1 1"
+check "and it is logged with its pane and length" "$(jq -r 'select(.message == "message sent") | [.pane, .chars] | join(" ")' "$FLEET_LOG" | tail -1)" "$p ${#msg}"
+state snd '{"above":["working"],"busy":true,"on_submit":"none"}'; settle
+check "#320: a running turn is no bar: the message is queued (sent)" "$(fsend "$p" "a note for later")" "sent"
+state snd '{"above":["idle"],"input":"AJ is typing","on_submit":"none"}'; settle
+: >"$work/snd.log"
+check "#320: text already in the box is never touched" \
+  "$(fsend "$p" "x"; echo "rc=$?") $(grep -c . "$work/snd.log") $(input_text "$(screen "$p")")" $'not-pasted\nrc=1 0 AJ is typing'
+check "#320: stdin as the message" "$(state snd '{"above":["idle"],"clear":true,"on_submit":"none"}'; settle; printf 'from stdin\n' | fsend "$p" -)" "sent"
+check "#320: a pane the server does not have, or no text, is refused (2)" \
+  "$(fsend %99999 "x"; echo -n "$? "; fsend "$p" "   "; echo -n "$? "; fsend "$p"; echo $?)" "2 2 2"
+check "#325 review 1: a target that is not a pane id (a window) is refused (2)" "$(fsend fleet:1 "x"; echo $?)" "2"
+t kill-window -t "$p"
+p=$(pane snb '{"above":["working"],"busy":true,"enter_ignore":1,"on_submit":"none"}'); settle
+out=$(fsend "$p" "queued while busy, first Enter lost"); rc=$?
+check "#325 review 1: a busy pane whose first Enter is lost still gets the message, once" \
+  "$out $rc $(grep -c '^SUBMIT queued while busy' "$work/snb.log") $(grep -c 'KEY ENTER (lost after a paste)' "$work/snb.log")" "sent 0 1 1"
+t kill-window -t "$p"
+# A dialog (here the limit menu) takes the box's place while the first Enter is lost.
+p=$(pane snm '{"above":["working"],"busy":true,"enter_ignore":1,"on_submit":"none"}'); settle
+fsend "$p" "message while a dialog comes up" >"$work/snm.out" &
+n2=$!
+sleep 1.5
+state snm '{"above":["working"],"busy":true,"on_submit":"none","menu":"limit"}'
+wait "$n2"
+check "#325 review 1: no Enter lands on a dialog that took the box's place; the send says held" \
+  "$(grep -c 'LIMIT MENU STOP' "$work/snm.log") $(cat "$work/snm.out")" "0 held"
+t kill-window -t "$p"
+# Two senders at once (two workers reporting to Heph): one waits for the other.
+p=$(pane snc '{"above":["idle"],"on_submit":"none"}'); settle
+fsend "$p" "report A from worker one" >"$work/snc.a" &
+a=$!
+fsend "$p" "report B from worker two" >"$work/snc.b" &
+b=$!
+wait "$a" "$b"
+check "#325 review 1: two sends at once to one pane both go, one after the other, never glued in the box" \
+  "$(cat "$work/snc.a") $(cat "$work/snc.b") $(grep -c '^SUBMIT report [AB] from worker' "$work/snc.log") [$(input_text "$(screen "$p")")]" "sent sent 2 []"
+t kill-window -t "$p"
+check "#325 review 1: no message file is left under send/" "$(find "$FLEET_STATE/send" -type f 2>/dev/null | wc -l)" "0"
+# A send still waiting for the pane's lock after FLEET_SEND_WAIT gives up untyped.
+p=$(pane snl '{"above":["idle"],"on_submit":"none"}'); settle
+exec 8>"$FLEET_STATE/locks/send-${p#%}"
+flock 8
+: >"$work/snl.log"
+check "#325 review 2: a send that waits past FLEET_SEND_WAIT for another's lock says not-pasted and types nothing" \
+  "$(FLEET_SEND_WAIT=1 fsend "$p" "behind a held lock"; echo "rc=$?") $(grep -c . "$work/snl.log")" $'not-pasted\nrc=1 0'
+exec 8>&-
+mkdir -p -- "$FLEET_STATE/locks/send-${p#%}.d" && mv -f -- "$FLEET_STATE/locks/send-${p#%}" "$FLEET_STATE/locks/send-${p#%}.f" && mv -- "$FLEET_STATE/locks/send-${p#%}.d" "$FLEET_STATE/locks/send-${p#%}"
+check "#325 review 2: a lock file that cannot be opened (a folder in its place) reads as not-pasted" \
+  "$(inbox_deliver "$p" /dev/null 2>/dev/null)" "not-pasted"
+rmdir -- "$FLEET_STATE/locks/send-${p#%}" && mv -- "$FLEET_STATE/locks/send-${p#%}.f" "$FLEET_STATE/locks/send-${p#%}"
+t kill-window -t "$p"
+p=$(pane snt '{"above":["⏺ Done.","You'"'"'ve hit your session limit · resets 1:10pm (America/New_York)"],"on_submit":"none"}'); settle
+: >"$work/snt.log"
+check "#325 review 2: a pane at a usage limit gets nothing; the send says limited" \
+  "$(fsend "$p" "nudge"; echo "rc=$?") $(grep -c . "$work/snt.log")" $'limited\nrc=1 0'
+t kill-window -t "$p"
+# A limit line still on screen above a running turn (Claude Code continued on its own) is past.
+p=$(pane snu '{"above":["You'"'"'ve hit your session limit · resets 1:10pm (America/New_York)","working"],"busy":true,"on_submit":"none"}'); settle
+check "#325 review 3: a busy pane with a limit line still on screen is no limited pane: the message is queued" \
+  "$(fsend "$p" "report after the reset")" "sent"
+t kill-window -t "$p"
+# The hook's StopFailure record is a limit too (#311), though the screen shows only a generic error.
+p=$(pane snh '{"above":["⏺ Done.","API Error: Request failed"],"on_submit":"none"}'); settle
+stop_file aaaaaaaa-0000-4000-8000-000000000325 "$p" "$(date +%s)" "" "$L5"
+: >"$work/snh.log"
+check "#325 review 4: a pane the hook recorded at a usage limit gets nothing; the send says limited" \
+  "$(fsend "$p" "nudge"; echo "rc=$?") $(grep -c . "$work/snh.log")" $'limited\nrc=1 0'
+check "#325 review 4: pane_limited gives the record's reset and its message" \
+  "$(pane_limited "$p" "$(screen "$p")" | cut -f2)" "$L5"
+rm -f -- "${KLEPSYDRA_DIR:?}/fleet/aaaaaaaa-0000-4000-8000-000000000325.json"
+check "#325 review 4: without the record the same pane takes the message" "$(fsend "$p" "nudge")" "sent"
+t kill-window -t "$p"
+# Every typer holds the pane's typing lock: with it held, none types.
+p=$(pane sny '{"above":["idle"],"on_submit":"none"}'); settle
+echo "a brief" >"$work/sny.txt"
+exec 8>"$FLEET_STATE/locks/send-${p#%}"
+flock 8
+: >"$work/sny.log"
+FLEET_SEND_WAIT=1 remote_control "$p"; rc1=$?
+got=$(FLEET_SEND_WAIT=1 deliver "$p" "$work/sny.txt")
+FLEET_SEND_WAIT=1 retire "$p" 2>/dev/null; rc2=$?
+check "#325 review 4: with the pane's lock held, remote_control, deliver and retire type nothing" \
+  "$rc1 $got $rc2 $(grep -c . "$work/sny.log") $(fleet_panes | grep -cx -- "$p")" "75 not-delivered 1 0 1"
+exec 8>&-
+check "#325 review 4: a sequence nested in a held one runs at once" \
+  "$(FLEET_SEND_WAIT=1 pane_locked "$p" pane_locked "$p" echo nested; echo $?)" $'nested\n0'
+# The pane stops at a limit while a send waits for the lock: it is read again under the lock.
+# The sender gets no fd 8: holding the test's lock itself, it would wait out FLEET_SEND_WAIT.
+exec 8>"$FLEET_STATE/locks/send-${p#%}"
+flock 8
+FLEET_SEND_WAIT=20 fsend "$p" "sent into a limit" >"$work/sny.out" 8>&- &
+n2=$!
+sleep 1
+state sny '{"above":["⏺ Done.","You'"'"'ve hit your session limit · resets 1:10pm (America/New_York)"],"on_submit":"none"}'; settle
+: >"$work/sny.log"
+exec 8>&-
+wait "$n2"
+check "#325 review 4: a limit reached during the lock wait gets nothing" "$(cat "$work/sny.out") $(grep -c . "$work/sny.log")" "limited 0"
+t kill-window -t "$p"
 
 echo "the tmux server watchdog (#290)"
 : >"$FLEET_LOG"

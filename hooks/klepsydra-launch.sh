@@ -266,6 +266,14 @@ own_pane() { # socket pane pid start
   local file=${XDG_RUNTIME_DIR:-/tmp}/klepsydra-pane-$UID-${pane#%}.lock
   { exec {PANEFD}>>"$file"; } 2>/dev/null || fail "Could not open $file."
   flock -n "$PANEFD" || fail "$busy"
+  # The fleet's typing lock too (fleet/lib.sh pane_locked, #325), so these keys
+  # never land inside a message a fleet script is typing. Its folder is under
+  # HOME, which every caller shares; XDG_RUNTIME_DIR may differ between them.
+  local typing=${FLEET_STATE:-$HOME/.local/state/fleet-orchestrator}/locks
+  if [[ -d $typing ]]; then
+    { exec {TYPEFD}>>"$typing/send-${pane#%}"; } 2>/dev/null || fail "Could not open $typing/send-${pane#%}."
+    flock -w "${KLEPSYDRA_TYPING_WAIT:-5}" "$TYPEFD" || fail "A fleet script is typing into that session; try again in a moment."
+  fi
   fleet_pane "$@"
 }
 
