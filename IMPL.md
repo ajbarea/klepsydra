@@ -1,4 +1,4 @@
-# IMPL: klepsydra fleet-module brief, resume state 2026-11-04 (session 28)
+# IMPL: klepsydra fleet-module brief, resume state 2026-11-04 (session 29)
 
 Session 22 (Chronos) resumed 16:09 after the IAAI-27 park. Resume with the same brief from this file, `git log`,
 open PRs and their comments, and the klepsydra line under "Running now" in /mnt/c/Users/ajbar/fleet-briefing/queue.md.
@@ -21,29 +21,27 @@ claude --remote-control NAME "brief"), 6 (--append-system-prompt-file, tail ~260
 triage + inject last 10), then the #8 trial. #9 deferred, #10 denied. #304/#305 closed (withdrawn).
 Each cut: a small PR with the proof test the report names.
 
-## Resume here (session 28 ended at the move back to RIT, 11-04 evening; next session resumes here)
+## Resume here (session 29, resumed on RIT 11-04 night)
 Reports: /tmp/claude-1001/<round>/report.md. Never wrap a lock-taking make target in an outer timeout; finish edits
 to a suite before queuing it. PR bodies: Write the file, then PATCH in its own call (phylax reads the written file).
 Order (Heph 11-04): bug queue -> #326 (PR #331) -> #323 stage 1 (PR #332) -> #327 Agora v2 -> #324 -> #323 later
 stages; reader backlog (#318, #316, #314, #308, #310) and cuts 7, #8 between.
-- ✅ merged + installed: #230, #313, #292, #329 (r5 clean, 2328e02).
-- 📋 #322 (room-319) 7190c60: r4 reader STOPPED at the 11-04 move (mid mutant batch). Partial report
-  /tmp/claude-1001/r4-322/report.md: K1 body CI row says running (CI green on 7190c60), K2 room-path note logs as
-  "after a failed move back" (reword the log message per why); J1 verified fixed on the probe. Mutants owed:
-  M14, M26, M27, room block deleted, `-z since` dropped, back_held dropped. Re-dispatch r4 with the partial report.
-- 🔄 #325 (send-320): r1 F1/F2 Blocking fixed in the worktree commit after 325dddc (per-pane flock in
-  inbox_deliver -> deliver_now; msg_in_box before each retry Enter; brief-tail "fleet send" rule + check; N1-N4
-  cases; send.sh +x). a45f85e suite 742/0, body updated (F8 known limit); 9b2a723 fixes CI's SC2016 (CI 41931111714): check CI green. Next: r2 reader.
-  After merge: `fleet brief --refresh`, tell Heph (HEPH.md + worker-report memory still say raw send-keys).
-- 📋 #330 (phone-328) b69fcd4: r1 done (/tmp/claude-1001/r1-330/report.md): code right; fix tests: F2 grep
-  `^[a-zF]*` can't match FAIL (use `-E '^(ok|warn|FAIL) +phone wall'`), F3 drop DOC_PREFS so the default
-  $KLEPSYDRA_DIR/prefs.json path is tested, F4 test the string "true"; minors F1 one shared prefs reader in lib.sh
-  (voices.sh's single-document jq), F5 unreadable prefs warns, F6 no "recovered" on switch-off, F7 header + README row.
-- 📋 #287 (guard-264) 656c642: r15 committed (7/7 mutants killed), main merged; fleet 737/0, guard 238/0; pushed,
-  body counts updated. Next: r16 fresh verify.
-- 📋 r1 owed: #331 (e6af965), #332 (5cf7473), #318 (behind main).
-- 📋 Readers: #316 r1, #314 r1, #308 r2, #310 verify, claude-prefs#42 r2 + #43 r1.
-- 📋 Cut 7 (friction triage + SessionStart last 10 lines), then the #8 trial; #327; #324.
+- ✅ merged + installed: #230, #313, #292, #329.
+- 🔄 #322 (room-319): r4 finished before the move (/tmp/claude-1001/r4-322/report.md + mut/results.txt). Fixes in the
+  worktree, uncommitted: K2 log wording ("told the worker to carry on: the move back did not happen"); suite cases
+  for the four guards only the probe or nothing caught (M33 Heph, M34 preferred account, M35 own limit, M36 busy
+  screen). Mutant check: /tmp/claude-1001/r5-322/mut/run.sh (cut harness /tmp/claude-1001/r5-322/cut.sh). Then
+  commit, push, K1 body CI row, r5 verify reader.
+- 🔄 #330 (phone-328): r1 fixes committed 2600242 (not pushed): prefs_get in lib.sh (voices.sh + doctor.sh), unreadable
+  prefs warns, switched-off logs "switched off", tests see FAIL lines and the shipped path, usage-age stamp moved.
+  make test-fleet running -> push, body, r2.
+- 🔄 #334 (face-333, fixes #333): a claude -p under another claude names no pane and is never the orchestrator.
+  Hook suite 583/0. Next: r1 reader. Deploy: install-fleet + Windows build (installed exe is 10-31, pre-#226: the
+  real cause of the Metis card). Tell Heph: his face stays Hephaestus until his next rotation.
+- 🔄 readers running: #287 r16 (/tmp/claude-1001/r16-287), #331 r1 (/tmp/claude-1001/r1-331).
+- 📋 #325 (send-320) 9b2a723: CI pending at resume -> r2 reader. After merge: `fleet brief --refresh`, tell Heph.
+- 📋 r1 owed: #332 (5cf7473), #318 (behind main). Readers: #316 r1, #314 r1, #308 r2, #310 verify, claude-prefs#42 r2 + #43 r1.
+- 📋 Cut 7, then the #8 trial; #327; #324.
 - Held worktree split-182: kept on purpose (CARGO_TARGET_DIR; src-tauri/gen is Tauri's generated schema).
 
 ## Next, in order (session 21 list; items 1-3 moved above)
