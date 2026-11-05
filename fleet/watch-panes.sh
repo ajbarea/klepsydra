@@ -61,7 +61,7 @@ declare -A held
 resets=""
 for p in "$@"; do
   s=$(screen "$p")
-  if ! busy "$s" && l=$(limit_line "$s"); then
+  if l=$(pane_limited "$s"); then
     held[$p]=1
     r=$(grep -oE 'resets [^(]*[ap]m' <<<"$l" | tail -1)
     [[ -n $r && $resets != *"${r#resets }"* ]] && resets+="${r#resets }, "
@@ -82,13 +82,13 @@ while :; do
     fi
     s=$(screen "$p") ps=$(plain <<<"$s")
     if [[ -n ${held[$p]:-} ]]; then
-      if ! busy "$s" && limit_line "$s" >/dev/null; then continue; fi
+      if pane_limited "$s" >/dev/null; then continue; fi
       unset "held[$p]"
       flog INFO "watched pane's limit cleared: watching it now" pane="$p"
     fi
     # A usage limit wakes the orchestrator too; the resume service restarts the
     # pane, unless its agent ran `fleet done`.
-    if ! busy "$s" && limit=$(limit_line "$s"); then
+    if limit=$(pane_limited "$s"); then
       flog INFO "watched pane limited" pane="$p" message="$limit"
       echo "LIMIT $p $(grep -oE 'resets [^(]*[ap]m' <<<"$limit" | tail -1)"; exit 0
     fi

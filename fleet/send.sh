@@ -27,11 +27,6 @@ shift
 [[ $(t display-message -p -t "$p" '#{pane_id}' 2>/dev/null) == "$p" ]] || { err "no pane $p on the fleet's tmux server ($FLEET_SOCK)"; exit 2; }
 if [[ $1 == - && $# -eq 1 ]]; then text=$(cat); else text="$*"; fi
 [[ -n ${text//[[:space:]]/} ]] || { err "nothing to send"; exit 2; }
-if lim=$(limit_line "$(screen "$p")"); then
-  flog WARN "message not sent: the pane is at a usage limit" pane="$p" chars="${#text}" limit="${lim:0:120}"
-  echo limited
-  exit 1
-fi
 # Not inbox/: the resume service types every file there into its pane.
 mkdir -p -- "$FLEET_STATE/send"
 f=$(mktemp "$FLEET_STATE/send/msg-XXXXXX") || { err "cannot write in $FLEET_STATE/send"; exit 1; }

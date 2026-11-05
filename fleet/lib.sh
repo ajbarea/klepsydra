@@ -254,6 +254,8 @@ idle_empty() { has_input_box "$1" && [[ -z $(input_text "$1") ]] && ! busy "$1";
 box_empty() { has_input_box "$1" && [[ -z $(input_text "$1") ]]; }
 holds_input() { [[ -n $(input_text "$1") ]]; }
 started() { busy "$1" || limit_line "$1" >/dev/null; }
+# Stopped at a usage limit: a limit line on a screen running no turn. Prints the line.
+pane_limited() { ! busy "$1" && limit_line "$1"; } # SCREEN
 rc_settled() { # the connect line, or the menu shown when it is already on
   local p
   p=$(plain <<<"$1")
@@ -337,7 +339,8 @@ sent_or_started() { started "$1" || { has_input_box "$1" && [[ -z $(input_text "
 # take his characters with it) or held (still in the box after three Enters, or no
 # longer the message alone: a dialog stands in its place, or AJ began a line).
 # With ANY, a running turn is no bar (Claude Code queues a message sent during
-# one), and it is sent once the box has emptied.
+# one), and it is sent once the box has emptied; a pane stopped at a usage
+# limit gets nothing (limited).
 # One delivery per pane at a time (fleet send runs beside the resume service and
 # other senders, and two pastes into one box glue together): a second waits its
 # turn, up to FLEET_SEND_WAIT s, then gets not-pasted. Only short-lived tmux
@@ -358,9 +361,12 @@ msg_in_box() { # SCREEN WANT
   [[ ${box//[[:space:]]/} == "$2" || $box =~ ^\[Pasted\ text\ \#[0-9]+(\ \+[0-9]+\ lines)?\]$ ]]
 }
 deliver_now() { # PANE FILE [any]
-  local p=$1 file=$2 want text gone=sent_or_started
+  local p=$1 file=$2 want text gone=sent_or_started s
   if [[ ${3:-} == any ]]; then
-    box_empty "$(screen "$p")" || { echo not-pasted; return; }
+    # Read under the lock: a pane stopped at a limit is the resume service's.
+    s=$(screen "$p")
+    pane_limited "$s" >/dev/null && { echo limited; return; }
+    box_empty "$s" || { echo not-pasted; return; }
     gone=box_empty
   else
     idle_empty "$(screen "$p")" || { echo not-pasted; return; }

@@ -3456,13 +3456,20 @@ flock 8
 check "#325 review 2: a send that waits past FLEET_SEND_WAIT for another's lock says not-pasted and types nothing" \
   "$(FLEET_SEND_WAIT=1 fsend "$p" "behind a held lock"; echo "rc=$?") $(grep -c . "$work/snl.log")" $'not-pasted\nrc=1 0'
 exec 8>&-
-check "#325 review 2: a lock file that cannot be opened reads as not-pasted" \
-  "$(FLEET_STATE=/nonexistent-$$ inbox_deliver "$p" /dev/null 2>/dev/null)" "not-pasted"
+mkdir -p -- "$FLEET_STATE/locks/send-${p#%}.d" && mv -f -- "$FLEET_STATE/locks/send-${p#%}" "$FLEET_STATE/locks/send-${p#%}.f" && mv -- "$FLEET_STATE/locks/send-${p#%}.d" "$FLEET_STATE/locks/send-${p#%}"
+check "#325 review 2: a lock file that cannot be opened (a folder in its place) reads as not-pasted" \
+  "$(inbox_deliver "$p" /dev/null 2>/dev/null)" "not-pasted"
+rmdir -- "$FLEET_STATE/locks/send-${p#%}" && mv -- "$FLEET_STATE/locks/send-${p#%}.f" "$FLEET_STATE/locks/send-${p#%}"
 t kill-window -t "$p"
 p=$(pane snt '{"above":["⏺ Done.","You'"'"'ve hit your session limit · resets 1:10pm (America/New_York)"],"on_submit":"none"}'); settle
 : >"$work/snt.log"
 check "#325 review 2: a pane at a usage limit gets nothing; the send says limited" \
   "$(fsend "$p" "nudge"; echo "rc=$?") $(grep -c . "$work/snt.log")" $'limited\nrc=1 0'
+t kill-window -t "$p"
+# A limit line still on screen above a running turn (Claude Code continued on its own) is past.
+p=$(pane snu '{"above":["You'"'"'ve hit your session limit · resets 1:10pm (America/New_York)","working"],"busy":true,"on_submit":"none"}'); settle
+check "#325 review 3: a busy pane with a limit line still on screen is no limited pane: the message is queued" \
+  "$(fsend "$p" "report after the reset")" "sent"
 t kill-window -t "$p"
 
 echo "the tmux server watchdog (#290)"
