@@ -1168,7 +1168,7 @@ printf 'mine\n' >"$inst/state/agora.py"
 FLEET_STATE="$inst/state" FLEET_UNITS="$inst/units" FLEET_BIN="$inst/bin" FLEET_HOOK_DIR="$inst/claude" \
   bash "$here/install.sh" --force >/dev/null 2>&1
 check "#326: a file of that name that is no link stays" "$(cat "$inst/state/agora.py")" "mine"
-rm -f -- "$inst/state/agora.py"
+rm -f -- "${inst:?}/state/agora.py"
 check "#244: the hooks, status line, launcher, tmux conf, wrap-up and cast are copied in, each matching the checkout" \
   "$(for c in "${HOOK_COPIES[@]}"; do cmp -s "${here%/fleet}/${c%% *}" "$inst/claude/${c#* }" && [[ ! -L $inst/claude/${c#* } ]] && echo same; done | wc -l)" "${#HOOK_COPIES[@]}"
 check "#244: the scripts are executable, the cast is not, and no temp file is left" \
