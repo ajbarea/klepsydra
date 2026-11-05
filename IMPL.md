@@ -21,26 +21,26 @@ claude --remote-control NAME "brief"), 6 (--append-system-prompt-file, tail ~260
 triage + inject last 10), then the #8 trial. #9 deferred, #10 denied. #304/#305 closed (withdrawn).
 Each cut: a small PR with the proof test the report names.
 
-## Resume here (session 32, Personal, 11-05; fresh session replacing Chronos)
+## Resume here (session 32 parked 11-05 for AJ's papers; relaunch from the brief)
 Reports: /tmp/claude-1001/<round>/report.md (subagents cannot write report files: their final message is the report).
 Session-32 scratch: /tmp/claude-1001/s32-*. Never wrap a lock-taking make target in an outer timeout.
 PR bodies: write the file, then GraphQL updatePullRequest (`-f query=...`, `-F b=@file`).
 Order (Heph 11-04): bug queue -> #323 stage 1 (PR #332) -> #327 -> #324 -> #323 later stages;
 reader backlog (#318, #316, #314, #308, #310, claude-prefs #42 #43) and cut 7, #8 between.
-- ✅ #331 (Agora removal) merged a8f7daf, `fleet install` + `fleet brief --refresh` done.
-- 🔄 #325 (send-320): r4 = 0B/3S/2M. Fixes uncommitted in the worktree: merge of main (520659c, committed),
-  pane_limited PANE SCREEN (screen line, else the hook's StopFailure record; prints RESET<TAB>LINE) used by
-  deliver_now, watcher, doctor; reset_label helper; pane_locked (reentrant per-pane typing lock,
-  $FLEET_STATE/locks/send-N) around remote_control, deliver, inbox_deliver, retire's /exit, fresh-now /clear,
-  resume_typed + the typed-line submit; the wall hook's own_pane also takes it. New suite cases "#325 review 4".
-  Cut harness /tmp/claude-1001/s32-325/cut.sh (send section). Next: cut green -> make test-launch ->
-  commit, push, body (CI row, lock covers every typer) -> r5 reader.
-- 🔄 #287 (guard-264): mutants s1-dash, s2-exe killed; s3-e, m2-sh running via /tmp/claude-1001/s32-287/mut.sh
-  (it restores fleet/orch-tmux.sh; check `cmp` against s32-287/orch-tmux.orig before editing). Then r18 reader.
-- 🔄 #330 (phone-328) @ff108e0: CI green, body CI row refreshed; verify reader running -> merge, install-fleet.
-- 🔄 #336 (sort-335) @0f56956: r1 0B/0S/2M, both fixed (tie-break on path; IMPL.md pick uses pick_file);
-  verify reader running -> merge, install.
-- 📋 #334 (face-333) r1; deploy needs install-fleet + Windows build (installed exe is 10-31).
+- ✅ #331 (Agora removal) merged a8f7daf; ✅ #330 (doctor phone off) merged 7c9fb69. Both installed, doctor 0 FAIL.
+- 🔄 #325 (send-320) @a0f0787: r4 (0B/3S/2M) fixes pushed, UNTESTED locally (cut harness queued 28 min on the
+  heavy lock and was stopped at the 11-05 park): pane_limited PANE SCREEN (screen line, else the hook's
+  StopFailure record; prints RESET<TAB>LINE) for deliver_now, the watcher and doctor; reset_label; pane_locked
+  (reentrant per-pane typing lock, $FLEET_STATE/locks/send-N) around remote_control, deliver, inbox_deliver,
+  retire's /exit, fresh-now's /clear, the resume message and typed-line submit; the wall hook's own_pane takes it
+  too. New cases "#325 review 4" (fleet) and "fleet typing" (test_launch). Next: read CI on a0f0787; run
+  /tmp/claude-1001/s32-325/cut.sh (rebuild it from the current suite first) and `make test-launch`; then the body
+  (CI row; the lock now covers every typer, so drop "only inbox_deliver"), then an r5 reader.
+- 🔄 #287 (guard-264): r17 mutants s1-dash, s2-exe, s3-e killed; m2-sh NOT RUN (stopped at the park): run only
+  that line of /tmp/claude-1001/s32-287/mut.sh (S=/tmp/claude-1001/s32-287; it restores the file). Then r18.
+- 🔄 #336 (sort-335) @6df71b0: r1 0B/0S/2M fixed; verify 0B/0S/1M (tie case missed a last-listed-wins
+  mutant) fixed in 6df71b0. Merge once CI on 6df71b0 is green (re-read comments first), then `fleet install`.
+- 📋 #334 (face-333) r1 (a reader was stopped at the park, no findings kept); deploy needs install-fleet + Windows build (installed exe is 10-31).
 - 📋 r1 owed: #332, #318. Readers: #316 r1, #314 r1, #308 r2, #310 verify, claude-prefs#42 r2 + #43 r1.
 - 📋 Cut 7 (after #318: both edit the tail's friction line): triage 98 friction.md lines (fix/issue/delete;
   snapshot /tmp/claude-1001/cut7/friction-snapshot.md), then SessionStart injects the last 10 for the repo.
