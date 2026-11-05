@@ -3710,9 +3710,10 @@ exec 8>&-
 check "#325 review 4: a sequence nested in a held one runs at once" \
   "$(FLEET_SEND_WAIT=1 pane_locked "$p" pane_locked "$p" echo nested; echo $?)" $'nested\n0'
 # The pane stops at a limit while a send waits for the lock: it is read again under the lock.
+# The sender gets no fd 8: holding the test's lock itself, it would wait out FLEET_SEND_WAIT.
 exec 8>"$FLEET_STATE/locks/send-${p#%}"
 flock 8
-FLEET_SEND_WAIT=20 fsend "$p" "sent into a limit" >"$work/sny.out" &
+FLEET_SEND_WAIT=20 fsend "$p" "sent into a limit" >"$work/sny.out" 8>&- &
 n2=$!
 sleep 1
 state sny '{"above":["⏺ Done.","You'"'"'ve hit your session limit · resets 1:10pm (America/New_York)"],"on_submit":"none"}'; settle
