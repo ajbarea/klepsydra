@@ -990,10 +990,10 @@ login a
 # The section's sessions are alive by recover's test (this boot, the same process).
 mkdir -p "$work/dproc/4242"; printf '4242 (claude) S %s 777 1 2 3\n' "$(seq -s ' ' 1 18)" >"$work/dproc/4242/stat"
 echo 44444444-4444-4444-8444-444444444444 >"$work/dboot"
-# The phone wall is on in these cases unless PREFS names other contents (#328):
+# The phone wall is on in these cases unless DOC_PREFS names other contents (#328):
 # the wrappers write the shipped path, $KLEPSYDRA_DIR/prefs.json, and remove it
-# after, so later sections see no file. PREFS=none: no file.
-doc_prefs() { local c=${PREFS-'{"phone_wall": true}'}; rm -f -- "$KLEPSYDRA_DIR/prefs.json"; [[ $c == none ]] || printf '%s' "$c" >"$KLEPSYDRA_DIR/prefs.json"; }
+# after, so later sections see no file. DOC_PREFS=none: no file.
+doc_prefs() { local c=${DOC_PREFS-'{"phone_wall": true}'}; rm -f -- "$KLEPSYDRA_DIR/prefs.json"; [[ $c == none ]] || printf '%s' "$c" >"$KLEPSYDRA_DIR/prefs.json"; }
 doctor() { local rc; doc_prefs; FLEET_PS="$work/bin/ps" FLEET_SYSTEMCTL="$work/bin/systemctl" FLEET_CURL="$work/bin/curl" FLEET_TAILSCALE="$work/bin/tailscale" \
   DOC_ACTIVE="$work/active" DOC_FLEET="$work/fleet.json" FLEET_RETRY_S=0 FLEET_PROC="$work/dproc" FLEET_BOOT_ID="$work/dboot" bash "$here/doctor.sh" 2>/dev/null; rc=$?
   rm -f -- "$KLEPSYDRA_DIR/prefs.json"; return $rc; }
@@ -1018,12 +1018,12 @@ check "#328 review 1: with the wall on and down, both phone lines fail" "$(phone
 # Each is off as the wall reads it (serde's as_bool: only the boolean true is on).
 for pw in '{"phone_wall": false}' '{"phone_wall": "true"}' '{"phone_wall": 1}' '{"phone_wall": "yes"}' '{}' none; do
   check "#328: prefs.json $pw (the wall's own reading: off): ok, and neither phone line is tried" \
-    "$(PREFS=$pw doctor | phone_lines)" "ok   phone wall"
+    "$(DOC_PREFS=$pw doctor | phone_lines)" "ok   phone wall"
 done
 # A file that is not one JSON object is off for the wall too, but says so.
 for pw in '{phone' '{"phone_wall": true} garbage' '{"phone_wall": true}{}' '[true]' 'null'; do
   check "#328 review 1: prefs.json $pw does not read: a warning, and neither phone line is tried" \
-    "$(PREFS=$pw doctor | phone_lines)" "warn phone wall"
+    "$(DOC_PREFS=$pw doctor | phone_lines)" "warn phone wall"
 done
 check "#289: with no fleet scope there is no task caps line" "$(grep -c 'task caps' <<<"$out")" "0"
 printf 'fleet-a-1.scope 7000 8745\nfleet-b-2.scope 100 8745\nnot-fleet.scope 9 10\n' >"$work/scopes"
@@ -1175,7 +1175,7 @@ chmod a-w "$work"; touch "$work/x" 2>/dev/null || {
 chmod u+w "$work"; rm -f "$work/x"
 # A wall AJ switches off while it fails is logged as switched off, not as recovered.
 rm -f "$work/health.json"; djson >/dev/null; : >"$FLEET_LOG"
-PREFS='{"phone_wall": false}' djson >/dev/null
+DOC_PREFS='{"phone_wall": false}' djson >/dev/null
 check "#328 review 1: a failing phone wall switched off logs that, not a recovery" \
   "$(jq -r 'select(.message | startswith("doctor: phone wall")) | .message' "$FLEET_LOG" | paste -sd'|')" "doctor: phone wall switched off"
 t kill-window -t "$w"; t kill-window -t "$o"; rm -f "$FLEET_STATE/orchestrator.pane"; : >"$REGISTRY"

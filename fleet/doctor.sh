@@ -59,7 +59,11 @@ report() { # ok|warn|FAIL CHECK DETAIL [KEY=VALUE...]: the values are logged wit
     warn) flog WARN "doctor: $check" detail="$detail" "${vals[@]}" ;;
     # An ok detail can be a Remote Control link, which opens a session: not logged.
     # A check AJ switched off (its values hold switched=off) did not recover.
-    ok) [[ -n ${was[${check//[$'\t\n']/ }]-} ]] && flog INFO "doctor: $check $([[ " ${vals[*]} " == *" switched=off "* ]] && echo switched off || echo recovered)" "${vals[@]}" ;;
+    ok)
+      local how=recovered v
+      for v in "${vals[@]}"; do [[ $v == switched=off ]] && how="switched off"; done
+      [[ -n ${was[${check//[$'\t\n']/ }]-} ]] && flog INFO "doctor: $check $how" "${vals[@]}"
+      ;;
   esac
 }
 
