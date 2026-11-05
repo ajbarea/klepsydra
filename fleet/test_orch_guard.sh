@@ -421,7 +421,13 @@ check "#287 review 15: a short cluster holding c (python3 -Ic) runs its text: ch
 check "python3 -I <fleet script> passes (ci_watch's shape)" \
   "$(in_claude "$orchp" "$work/state2/orch-bin" "python3 -I $work/fleetcopy/note.py" 2>&1 && echo ok)" "ok"
 # #287 review 16: only `bash FILE` and `python3 [-I] FILE` are fleet runs; any
-# other option before the file is checked, whatever it would run.
+# other option before the file is checked, whatever it would run. Review 17: an
+# option-shaped first word that resolves into the fleet folder (python reads
+# -cCODE as code), a program named bash that is not bash (flock FILE CMD runs
+# CMD), and a name missing from the fleet folder (bash finds it on PATH).
+mkdir -p "$work/elsewhere/-cexec(open(\"x.py\").read())#" "$work/fakebash" "$work/pathdir"
+ln -sf -- "$(command -v flock)" "$work/fakebash/bash"
+cp -- "$work/elsewhere/fresh-now.sh" "$work/pathdir/ghost.sh"
 for run in "bash -O extglob $work/fleetcopy/fresh-now.sh" \
   "bash -ce '$work/evil;/../fleetcopy/fresh-now.sh'" \
   "bash -se $work/fleetcopy/fresh-now.sh <$work/elsewhere/fresh-now.sh" \
@@ -429,7 +435,11 @@ for run in "bash -O extglob $work/fleetcopy/fresh-now.sh" \
   "bash -- $work/fleetcopy/fresh-now.sh" \
   "python3 -i $work/fleetcopy/note.py <$work/elsewhere/x.py" \
   "python3 -IW $work/fleetcopy/note.py $work/elsewhere/x.py" \
-  "cd $work/elsewhere && python3 -mevilmod.py"; do
+  "cd $work/elsewhere && python3 -mevilmod.py" \
+  "cd $work/elsewhere && python3 '-cexec(open(\"x.py\").read())#/../../fleetcopy/note.py'" \
+  "cd $work/elsewhere && python3 -I '-cexec(open(\"x.py\").read())#/../../fleetcopy/note.py'" \
+  "$work/fakebash/bash $work/fleetcopy/fresh-now.sh bash $work/elsewhere/fresh-now.sh" \
+  "cd $work/fleetcopy && PATH=$work/pathdir:\$PATH bash ghost.sh"; do
   check "#287 review 16: $run: checked" \
     "$(in_claude "$orchp" "$work/state2/orch-bin" "$run" 2>&1 | grep -o 'orch-guard (cold-limit)' | head -1)" "orch-guard (cold-limit)"
 done

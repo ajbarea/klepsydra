@@ -51,23 +51,29 @@ orch=""
 # could be a sender's (the name as given and as resolved must both pass).
 nonsender() { [[ ! ${1##*/} =~ \.(sh|py)$ || ${1##*/} == test_* || ${1##*/} == heavy.sh ]]; } # FILE
 from_fleet_script() {
-  local pid=$PPID n a f st
+  local pid=$PPID n a f st exe
   local -a argv
   for (( n = 0; n < 512; n++ )); do
     { [[ $pid =~ ^[0-9]+$ ]] && (( pid > 1 )); } || return 1
     mapfile -d '' -t argv <"/proc/$pid/cmdline" 2>/dev/null || return 1
     a=${argv[0]##*/}
-    if [[ $a =~ ^(bash|sh|python3?(\.[0-9]+)?)$ ]]; then
+    if [[ $a =~ ^(bash|python3(\.[0-9]+)?)$ ]]; then
       # Only the shapes fleet callers use run a fleet script: `bash FILE ...` and
       # `python3 [-I] FILE ...`. Any other option before the file is checked,
       # not modelled: -c, -s, -m, -i, a cluster or a value-taking option can
       # each run code other than FILE.
       f=${argv[1]-}
-      [[ $a == python* && $f == -I ]] && f=${argv[2]-}
+      [[ $a == python3* && $f == -I ]] && f=${argv[2]-}
       if [[ -n $f && $f != [-+]* ]] && ! nonsender "$f"; then
         [[ $f == /* ]] || f=$(readlink -f "/proc/$pid/cwd" 2>/dev/null)/$f
-        f=$(readlink -f -- "$f" 2>/dev/null)
-        [[ -n $f && ${f%/*} == "$here" ]] && ! nonsender "$f" && return 0
+        # -e: the file must be there; for a missing name bash searches PATH.
+        f=$(readlink -e -- "$f" 2>/dev/null)
+        if [[ -n $f && ${f%/*} == "$here" ]] && ! nonsender "$f"; then
+          # argv[0] is the caller's choice: the program must be a root-owned
+          # bash or python3.N (the kernel's own path for it).
+          exe=$(readlink "/proc/$pid/exe" 2>/dev/null)
+          [[ ${exe##*/} =~ ^(bash|python3\.[0-9]+)$ && $(stat -c %u -- "$exe" 2>/dev/null) == 0 ]] && return 0
+        fi
       fi
     fi
     # The parent pid: the field after the state, which follows the last ")"
