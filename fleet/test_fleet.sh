@@ -1411,7 +1411,7 @@ check "#335: pick_file oldest takes the oldest (the inbox's order)" \
   "$(find "$big" -name '*.json' -printf '%T@ %p\n' | pick_file oldest 2>&1)" "$big/$pad-7.json"
 # Equal mtimes (ext4 stamps coarsely) pick as sort did, by path, not by the folder's listing order.
 check "#336 review 1: a tie goes to the last path for newest and the first for oldest" \
-  "$(printf '5 %s\n' b a c | pick_file newest) $(printf '5 %s\n' b a c | pick_file oldest)" "c a"
+  "$(printf '5 %s\n' c a d b | pick_file newest) $(printf '5 %s\n' c a d b | pick_file oldest)" "d a"
 rm -rf -- "${big:?}"
 rm -f "$KLEPSYDRA_DIR/accounts/a/s.json"
 check "and with no reading at all it is not" "$(back_room a "$now" && echo yes || echo no)" "no"
