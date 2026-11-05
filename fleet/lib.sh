@@ -1149,6 +1149,16 @@ row_state() { # PANE SID
   fi
 }
 
+# Whether session SID's Claude Code process started with the shared rules in
+# its system prompt (launch.sh, #317). A /clear keeps the launch's flags, so
+# only a session started before them needs the rules pasted with its brief.
+rules_in_prompt() { # SID
+  local pid
+  session_alive "$1" || return 1
+  pid=$(jq -r '.claude.pid' "$KLEPSYDRA_DIR/fleet/$1.json" 2>/dev/null)
+  tr '\0' '\n' <"${FLEET_PROC:-/proc}/$pid/cmdline" 2>/dev/null | grep -qxF -- --append-system-prompt-file
+}
+
 # Whether session SID started on the running fleet tmux server: its fleet file
 # names this boot and a process start (/proc ticks since boot, so a WSL clock
 # step cannot skew it) no earlier than the server's. A tmux restart reuses pane

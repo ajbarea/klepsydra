@@ -1,23 +1,23 @@
 #!/usr/bin/env bash
 # brief.sh NAME BODY-FILE: write task-NAME.src in the fleet's state folder as
-# BODY-FILE's text followed by the canonical brief tail (brief-tail.md), the
-# rules every brief shares. A brief it replaces is kept in archive/briefs/.
-# brief.sh --check [FILE...]: list the briefs (default: every task-*.src) whose
-# shared rules differ from what --refresh would write; fails when any does.
-# brief.sh --refresh [FILE...]: rewrite those briefs with the current tail.
-# Each keeps its body and any line added after its shared rules. A line that
-# any version of the tail ever held (word for word, or by its label: its text
-# before the first ":") is an old rule and gives way to the current tail, so a
-# rule without a colon or with a renamed label never piles up (#262). The old
-# brief is kept in archive/briefs/.
+# BODY-FILE's text. The rules every brief shares (brief-tail.md) are no longer
+# in it: launch.sh appends them to each worker's system prompt (#317). A brief
+# it replaces is kept in archive/briefs/.
+# brief.sh --check [FILE...]: list the briefs (default: every task-*.src) that
+# still carry shared rules; fails when any does.
+# brief.sh --refresh [FILE...]: strip them. Each keeps its body and any line
+# added after its shared rules. A line that any version of the tail ever held
+# (word for word, or by its label: its text before the first ":") is a rule
+# and goes, so a rule without a colon or with a renamed label never stays
+# (#262). The old brief is kept in archive/briefs/.
 set -u
 FLEET_TARGET=fleet::brief
 here=$(dirname "$(readlink -f "$0")")
 # shellcheck source=fleet/lib.sh
 . "$here/lib.sh"
 TAIL=$here/brief-tail.md
-# Every mode writes the tail: a missing or empty one (a checkout mid-switch, an
-# editor's rewrite) would strip every brief's rules, so nothing runs without it.
+# A missing or empty tail (a checkout mid-switch, an editor's rewrite) means
+# workers would start with no rules, so nothing runs without it.
 if ! grep -q '^Resources: ' "$TAIL" 2>/dev/null; then
   flog ERROR "brief refused: the shared rules file is missing, empty or has no Resources: line" tail="$TAIL"
   err "no shared rules at $TAIL; nothing written"
@@ -29,8 +29,6 @@ archive() { # FILE NAME
 }
 # A unique archive stamp: two writes in one second never share a name.
 stamp() { printf '%s-%s' "$(date +%Y%m%d-%H%M%S.%N)" "$$"; }
-# A brief's shared rules: from its "Resources:" line on.
-rules() { sed -n '/^Resources: /,$p' "$1"; }
 # Every line of the current tail and of each committed version of it (from
 # this checkout's history; without one, the current tail alone).
 tail_lines() {
@@ -42,17 +40,18 @@ tail_lines() {
     while read -r h path; do git -C "$root" show "$h:$path" 2>/dev/null; done | grep .
 }
 
-# BRIEF as the current tail would have it: its body, the tail, then the lines
-# added after its old rules, less any line that is an old rule (tail_lines),
-# word for word or by its label.
+# BRIEF without shared rules: no line that is a rule (tail_lines) word for
+# word, anywhere, so one added to a stripped brief goes too; from a
+# "Resources:" line on, no rule by its label and no blank line either.
 current() { # BRIEF
-  sed '/^Resources: /,$d' "$1"
-  cat -- "$TAIL"
   # ENVIRON, not -v: awk would read a backslash in a rule as an escape.
-  rules "$1" | LABELS=$tail_labels OLD=$tail_old awk 'BEGIN {
+  LABELS=$tail_labels OLD=$tail_old awk 'BEGIN {
       n = split(ENVIRON["LABELS"], l, "\n"); for (i = 1; i <= n; i++) rule[l[i]] = 1
       n = split(ENVIRON["OLD"], o, "\n"); for (i = 1; i <= n; i++) was[o[i]] = 1 }
-    { label = $0; sub(/:.*/, "", label) } !($0 in was) && !($0 ~ /:/ && label in rule) && NF { print }'
+    /^Resources: / { tail = 1 }
+    $0 in was { next }
+    { label = $0; sub(/:.*/, "", label) }
+    !tail || (!($0 ~ /:/ && label in rule) && NF) { print }' "$1"
 }
 if [[ ${1:-} == --check || ${1:-} == --refresh ]]; then
   tail_old=$(tail_lines | sort -u)
@@ -103,7 +102,8 @@ if [[ ${1:-} == --refresh ]]; then
       failed=1
       continue
     fi
-    if ! current "$f" >"$tmp" || ! grep -q '^Resources: ' "$tmp"; then
+    # Stripped, a brief keeps a body: one that was all rules is left as it was.
+    if ! current "$f" >"$tmp" || grep -q '^Resources: ' "$tmp" || ! grep -q '[^[:space:]]' "$tmp"; then
       rm -f -- "${tmp:?}"
       flog ERROR "brief not refreshed: building it failed; the old one stays" path="$f"
       err "could not refresh ${f##*/}; left as it was"
@@ -111,7 +111,7 @@ if [[ ${1:-} == --refresh ]]; then
       continue
     fi
     mv -f -- "$tmp" "$f"
-    flog INFO "brief refreshed with the current shared rules" path="$f" lines="$(wc -l <"$f")"
+    flog INFO "brief refreshed: its shared rules stripped (they ride in the system prompt)" path="$f" lines="$(wc -l <"$f")"
     echo "refreshed: ${f##*/}"
   done
   exit "$failed"
@@ -134,12 +134,7 @@ if [[ -e $out ]] && ! archive "$out" "task-$name.$(stamp).src"; then
   err "could not archive ${out##*/}; nothing written"
   exit 1
 fi
-if ! {
-  cat -- "$body"
-  [[ -n $(tail -c1 -- "$body") ]] && printf '\n'
-  printf '\n'
-  cat -- "$TAIL"
-} >"$tmp" || ! grep -q '^Resources: ' "$tmp"; then
+if ! cat -- "$body" >"$tmp" || ! grep -q '[^[:space:]]' "$tmp"; then
   rm -f -- "${tmp:?}"
   flog ERROR "brief not written: building it failed" name="$name" path="$out"
   err "could not write ${out##*/}; nothing written"

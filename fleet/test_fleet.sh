@@ -548,6 +548,23 @@ rm -f -- "${KLEPSYDRA_DIR:?}/fleet/88888888-2222-4333-8444-555555555555.json"
 check "one is the answer" "$(live_session "$p")" "$SID"
 t kill-window -t "$p"
 
+echo "rules in the system prompt (#317)"
+R1=aaaaaaaa-0000-4000-8000-000000000317
+rules_proc() { # [ARG...]: a stand-in claude whose argv holds ARG; its pid in $rp, its session file at $R1
+  python3 -I -c 'import time; time.sleep(60)' "$@" & rp=$!
+  for _ in $(seq 50); do grep -qa 'time.sleep' "/proc/$rp/cmdline" 2>/dev/null && break; sleep 0.1; done
+  jq -n --argjson pid "$rp" --arg st "$(proc_start "$rp")" --arg b "$(cat "${FLEET_BOOT_ID:-/proc/sys/kernel/random/boot_id}")" \
+    '{ended: null, claude: {pid: $pid, start: $st}, host: {boot: $b}}' >"$KLEPSYDRA_DIR/fleet/$R1.json"
+}
+rules_proc --append-system-prompt-file "$here/brief-tail.md"
+check "a session whose claude has the flag has the rules" "$(rules_in_prompt "$R1" && echo yes)" "yes"
+kill "$rp" 2>/dev/null; wait "$rp" 2>/dev/null
+check "and once that process is gone, it has not" "$(rules_in_prompt "$R1" || echo no)" "no"
+rules_proc --append-system-prompt "x"
+check "a session started without the file flag has not" "$(rules_in_prompt "$R1" || echo no)" "no"
+kill "$rp" 2>/dev/null; wait "$rp" 2>/dev/null
+rm -f -- "${KLEPSYDRA_DIR:?}/fleet/$R1.json"
+
 echo "registry session ids (S-1, S-2)"
 p=$(pane clr '{"above":["idle"]}'); settle
 live "$p"
@@ -559,6 +576,8 @@ NEW_SID=99999999-2222-4333-8444-555555555555
 FLEET_START_WAIT=2 FLEET_TURN_WAIT=2 bash "$here/fresh-now.sh" "$p" >/dev/null 2>&1
 wait
 check "S-1: after /clear the registry follows the new session id" "$(cut -f4 "$REGISTRY")" "$NEW_SID"
+check "#317: a session started without the rules flag gets them pasted with its fresh brief" \
+  "$(cat "$FLEET_STATE"/fresh-clr-*.src 2>/dev/null | grep -c '^Resources: ')" "1"
 rm -f -- "${KLEPSYDRA_DIR:?}/fleet/$NEW_SID.json"
 live "$p"
 printf '%s\tclr\t%s\n' "$p" "$work/brief.src" >"$REGISTRY"
@@ -807,21 +826,29 @@ echo "briefs"
 printf 'Do X.\nThen Y.' >"$work/body"
 out=$(bash "$here/brief.sh" demo "$work/body" 2>/dev/null)
 check "brief.sh writes task-NAME.src in the state folder" "$out" "$FLEET_STATE/task-demo.src"
-check "the body, a blank line, then the shared rules word for word" \
-  "$(head -3 "$out" | tr '\n' '|')$(tail -n +4 "$out" | cmp -s - "$here/brief-tail.md" && echo same)" "Do X.|Then Y.||same"
-check "the tail carries the one-change experiment line (#157)" "$(grep -c '^Subagent use (experiment klepsydra#157' "$out")" "1"
+check "#317: the brief is the body alone; the shared rules ride in the system prompt" "$(cmp -s "$out" "$work/body" && echo same)" "same"
+check "#317: the tail keeps the one-change subagent rule (#157)" "$(grep -c '^Subagents (#157): ' "$here/brief-tail.md")" "1"
+check "#317: the tail stays near its 260-word budget" "$(( $(wc -w <"$here/brief-tail.md") <= 300 ))" "1"
 bash "$here/brief.sh" demo "$work/body" >/dev/null 2>&1
 check "a brief it replaces is archived" "$(find "$FLEET_STATE/archive/briefs" -name 'task-demo.*.src' | wc -l)" "1"
-check "a body that already has the rules is refused" "$(bash "$here/brief.sh" demo "$out" >/dev/null 2>&1; echo $?)" "2"
+{ cat "$work/body"; printf '\n\n'; cat "$here/brief-tail.md"; } >"$work/body-with-rules"
+check "a body that already has the rules is refused" "$(bash "$here/brief.sh" demo "$work/body-with-rules" >/dev/null 2>&1; echo $?)" "2"
 check "a name that is not a plain slug is refused" "$(bash "$here/brief.sh" '../x' "$work/body" >/dev/null 2>&1; echo $?)" "2"
+: >"$work/empty-body"
+check "#317: an empty body is refused and nothing is written" \
+  "$(bash "$here/brief.sh" demo5 "$work/empty-body" >/dev/null 2>&1; echo $?) $([[ -e $FLEET_STATE/task-demo5.src ]] && echo written)" "1 "
 check "--check passes a current brief" "$(bash "$here/brief.sh" --check "$out" 2>/dev/null; echo $?)" "0"
-sed 's/^Usage cap: run at most two/Usage cap: run at most three/' "$out" >"$FLEET_STATE/task-old.src"
-check "--check names a brief whose shared rules drifted" "$(bash "$here/brief.sh" --check "$FLEET_STATE/task-old.src" "$out" 2>/dev/null)" "stale: task-old.src"
+{ cat "$work/body"; printf '\n\n'; sed 's/^Queue: keep/Queue: please keep/' "$here/brief-tail.md"; } >"$FLEET_STATE/task-old.src"
+check "--check names a brief that still carries shared rules" "$(bash "$here/brief.sh" --check "$FLEET_STATE/task-old.src" "$out" 2>/dev/null)" "stale: task-old.src"
 printf 'Last item (AJ 10-28): ship the thing.\n' >>"$FLEET_STATE/task-old.src"
 bash "$here/brief.sh" --refresh "$FLEET_STATE/task-old.src" >/dev/null 2>&1
-check "--refresh brings the rules up to date, keeping the body and a line added after them" \
-  "$(head -2 "$FLEET_STATE/task-old.src" | tr '\n' '|')$(grep -c '^Usage cap: run at most two' "$FLEET_STATE/task-old.src") $(grep -c 'at most three' "$FLEET_STATE/task-old.src") $(grep -c '^Last item (AJ 10-28): ship the thing.$' "$FLEET_STATE/task-old.src") $(bash "$here/brief.sh" --check "$FLEET_STATE/task-old.src" >/dev/null 2>&1; echo $?)" \
-  "Do X.|Then Y.|1 0 1 0"
+check "#317: --refresh strips the rules, a reworded one by its label, keeping the body and a line added after them" \
+  "$(grep . "$FLEET_STATE/task-old.src" | tr '\n' '|') $(bash "$here/brief.sh" --check "$FLEET_STATE/task-old.src" >/dev/null 2>&1; echo $?)" \
+  "Do X.|Then Y.|Last item (AJ 10-28): ship the thing.| 0"
+cp "$here/brief-tail.md" "$FLEET_STATE/task-allrules.src"
+check "#317: a brief that is all rules is never stripped to nothing" \
+  "$(bash "$here/brief.sh" --refresh "$FLEET_STATE/task-allrules.src" >/dev/null 2>&1; echo $?) $(cmp -s "$here/brief-tail.md" "$FLEET_STATE/task-allrules.src" && echo same)" "1 same"
+rm -f -- "$FLEET_STATE/task-allrules.src"
 # #262: a rule without a colon, or under a label the tail has since renamed, is
 # still an old rule. A throwaway repo holds an old tail and the current one, so
 # the history is there however shallow this checkout is.
@@ -839,10 +866,10 @@ git -C "$hist" commit -qam new
   printf 'Engage full auto mode (memory x). Stop when done.\n'; printf 'Engage full auto mode (memory x). Stop when done.\n'
 } >"$FLEET_STATE/task-hist.src"
 bash "$hist/fleet/brief.sh" --refresh "$FLEET_STATE/task-hist.src" >/dev/null 2>&1
-check "#262: a colon-less rule is kept once, a renamed label's old line goes, an added line stays" \
-  "$(grep -c '^Engage full auto' "$FLEET_STATE/task-hist.src") $(grep -c "^Keep AJ's to-do" "$FLEET_STATE/task-hist.src") $(grep -c '^Keep the fleet queue current' "$FLEET_STATE/task-hist.src") $(grep -c '^Also (AJ 10-28): a real added line.$' "$FLEET_STATE/task-hist.src")" "1 0 1 1"
-check "#262: the refreshed brief is the body, the tail, then the added line" \
-  "$(tr '\n' '|' <"$FLEET_STATE/task-hist.src")" "Do Z.||Resources: new wording.|Keep the fleet queue current: the new label.|Engage full auto mode (memory x). Stop when done.|Also (AJ 10-28): a real added line.|"
+check "#262, #317: every rule goes, colon-less, renamed or current; the added line stays" \
+  "$(grep -c '^Engage full auto' "$FLEET_STATE/task-hist.src") $(grep -c "^Keep AJ's to-do" "$FLEET_STATE/task-hist.src") $(grep -c '^Keep the fleet queue current' "$FLEET_STATE/task-hist.src") $(grep -c '^Also (AJ 10-28): a real added line.$' "$FLEET_STATE/task-hist.src")" "0 0 0 1"
+check "#262, #317: the refreshed brief is the body, then the added line" \
+  "$(tr '\n' '|' <"$FLEET_STATE/task-hist.src")" "Do Z.||Also (AJ 10-28): a real added line.|"
 cp "$FLEET_STATE/task-hist.src" "$work/hist.once"
 bash "$hist/fleet/brief.sh" --refresh "$FLEET_STATE/task-hist.src" >/dev/null 2>&1
 check "#262: a second refresh leaves it byte for byte" "$(cmp -s "$work/hist.once" "$FLEET_STATE/task-hist.src" && echo same)" "same"
@@ -894,10 +921,12 @@ if [[ $(id -u) != 0 ]]; then
   chmod 755 "$work/ro"
 fi
 rm -rf -- "${hist:?}" "${FLEET_STATE:?}/task-hist.src"
-check "the tail carries the friction-log rule (AJ 11-01)" "$(grep -c '^Friction log (AJ 11-01, every agent): read ~/.local/state/fleet-orchestrator/friction.md' "$here/brief-tail.md")" "1"
-check "the tail puts performance first, above the security floor, and asks for DS&A checks (AJ 11-01, 11-03)" "$(grep -c '^Quality (AJ 11-01, 11-03): performance is AJ.s #1 quality attribute; when it trades off with security, performance wins, above the security floor. In every workflow, check the data structures and algorithms' "$here/brief-tail.md")" "1"
-check "the tail carries the team-ceremony rule (AJ 10-29)" "$(grep -c '^Team ceremony in every repo' "$here/brief-tail.md")" "1"
-check "the tail keeps asks for AJ out of public issues and PRs (AJ 10-29)" "$(grep -c '^Asks for AJ stay private' "$here/brief-tail.md")" "1"
+check "the tail carries the friction-log rule (AJ 11-01)" "$(grep -c '^Friction: read ~/.local/state/fleet-orchestrator/friction.md' "$here/brief-tail.md")" "1"
+check "the tail puts performance first, above the security floor, and fixes found problems unasked (AJ 11-01, 11-03)" \
+  "$(grep -c '^Quality: performance comes first, above the security floor. Fix performance and security problems' "$here/brief-tail.md")" "1"
+# #317: what the global CLAUDE.md already says is not said again here.
+check "#317: team ceremony, private asks, web research, model routing and the review-level ban live in CLAUDE.md, not the tail" \
+  "$(grep -ciE 'team ceremony|asks for AJ stay private|web research|model routing|code-review high|attribution' "$here/brief-tail.md")" "0"
 check "#239: the tail has heavy commands take the lock with flock -o, so nothing they leave running keeps it" "$(grep -c 'flock -o /tmp/fleet-heavy.lock' "$here/brief-tail.md")" "1"
 check "#291 review: the tail says the make targets take the lock themselves and run bare" "$(grep -c 'make test-fleet., .make test-launch., .make test-heavy-lock. and .make shellcheck. in klepsydra take the lock themselves: run them bare' "$here/brief-tail.md")" "1"
 check "#291 review 5: the tail's hand form puts a group-wide timeout inside the lock (no --foreground)" "$(grep -c 'flock -o /tmp/fleet-heavy.lock timeout 1800 <command>' "$here/brief-tail.md") $(grep -c -- '--foreground' "$here/brief-tail.md")" "1 0"
@@ -948,7 +977,7 @@ git -C "$sw" add -A
 check "#291 review 4: the sweep finds each of 12 bare forms, only in bare.md" \
   "$(docs_bare "$sw" | wc -l) $(docs_bare "$sw" | grep -vc '^bare[.]md:')" "12 0"
 check "#291 review 4: a sweep with no docs to read fails" "$(docs_bare "$work/sweep291-none" | wc -l) $(docs_bare "$work/sweep291-none" | grep -c 'no docs to sweep')" "1 1"
-check "#185: the tail offers the Agora as optional and asks a post to name something real" "$(grep -c '^Agora (AJ 10-29, optional, never a task).*names something real' "$here/brief-tail.md")" "1"
+check "#185: the tail offers the Agora as optional and asks a post to name something real" "$(grep -c '^Agora (optional):.*naming something real' "$here/brief-tail.md")" "1"
 
 echo "doctor"
 mkdir -p "$KLEPSYDRA_DIR/fleet" "$work/bin"
@@ -3244,6 +3273,17 @@ FLEET_SUCCEEDS=11111111-2222-4333-8444-555555555555 FLEET_SETTINGS='' FLEET_SCOP
 check "#226: a move's successor id reaches the session; anything else is dropped" \
   "$(grep -c 'KLEPSYDRA_SUCCEEDS=11111111-2222-4333-8444-555555555555 ' "$work/cmd")" "1"
 check "#183 review 2: keryx's switch is never inherited from tmux's environment" "$(grep -c '^env -u KERYX_ENABLED ' "$work/cmd")" "1"
+check "#317: a worker starts with the shared rules appended to its system prompt" \
+  "$(grep -cF -- "--append-system-prompt-file $here/brief-tail.md" "$work/cmd")" "1"
+: >"$work/cmd"
+FLEET_SETTINGS='' FLEET_SCOPE=0 FLEET_MIN_AVAIL_MB=0 FLEET_LAUNCHER="$work/launcher-rec.sh" FLEET_DIR="$work" \
+  FLEET_CLAUDE="python3 -I $fake $work/nosettings.json $work/nosettings.log" bash "$here/launch.sh" heph "$work/task.src" >/dev/null 2>&1
+check "#317: the orchestrator starts without them (HEPH.md is its brief)" \
+  "$(grep -c -- '--append-system-prompt-file' "$work/cmd") $(grep -c -- '--session-id' "$work/cmd")" "0 1"
+mkdir -p "$work/norules"; cp "$here/launch.sh" "$here/lib.sh" "$work/norules/"; : >"$work/cmd"
+check "#317: with no shared rules file a worker is not launched" \
+  "$(FLEET_SETTINGS='' FLEET_SCOPE=0 FLEET_MIN_AVAIL_MB=0 FLEET_LAUNCHER="$work/launcher-rec.sh" FLEET_DIR="$work" \
+    FLEET_CLAUDE="python3 -I $fake $work/nosettings.json $work/nosettings.log" bash "$work/norules/launch.sh" norules "$work/task.src" >/dev/null 2>&1; echo $?) $(wc -c <"$work/cmd")" "2 0"
 
 echo "fleet voices: keryx follows the tray's mode, live (#273)"
 # Stub keryx installs laid out as the plugin's (bin/ beside src/keryx), keeping

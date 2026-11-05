@@ -40,6 +40,17 @@ account=$(nodir "$account") # "~/.claude/" is the default too, which must not se
 # the tray's Voices mode for running sessions too (#273), so no session is
 # started with KERYX_ENABLED.
 settings=${FLEET_SETTINGS-$FLEET_STATE/worker-settings.json}
+# A worker gets the shared rules (brief-tail.md) in its system prompt, which
+# compaction keeps and a /clear builds again (#317); the orchestrator has HEPH.md.
+rules=""
+if [[ $name != heph ]]; then
+  rules=$here/brief-tail.md
+  if ! grep -q '^Resources: ' "$rules" 2>/dev/null; then
+    flog ERROR "launch refused: the shared rules file is missing, empty or has no Resources: line" name="$name" rules="$rules"
+    err "no shared rules at $rules; nothing launched"
+    exit 2
+  fi
+fi
 # KLEPSYDRA_AGENT names the session's agent to the fleet hook, so its card keeps
 # its face across relaunches (#172).
 # No KERYX_ENABLED from the tmux server's environment either (a server started
@@ -47,7 +58,7 @@ settings=${FLEET_SETTINGS-$FLEET_STATE/worker-settings.json}
 # FLEET_SUCCEEDS (a session id) names the orchestrator a move replaces (#226).
 succeeds=""
 [[ ${FLEET_SUCCEEDS:-} =~ ^[0-9a-f-]{36}$ ]] && succeeds="KLEPSYDRA_SUCCEEDS=$FLEET_SUCCEEDS "
-cmd="env -u KERYX_ENABLED $(config_env "$account")KLEPSYDRA_AGENT=$(printf '%q' "$name") ${succeeds}CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS=2 ${FLEET_CLAUDE:-claude} --session-id $sid${settings:+ --settings $(printf '%q' "$settings")} $*"
+cmd="env -u KERYX_ENABLED $(config_env "$account")KLEPSYDRA_AGENT=$(printf '%q' "$name") ${succeeds}CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS=2 ${FLEET_CLAUDE:-claude} --session-id $sid${settings:+ --settings $(printf '%q' "$settings")}${rules:+ --append-system-prompt-file $(printf '%q' "$rules")} $*"
 tmax=""
 if [[ ${FLEET_SCOPE:-1} != 0 ]]; then
   # A task cap of its own (#289): inherited, it was DefaultTasksMax, and on
