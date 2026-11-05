@@ -1,4 +1,4 @@
-# IMPL: klepsydra fleet-module brief, resume state 2026-11-05 (session 31)
+# IMPL: klepsydra fleet-module brief, resume state 2026-11-05 (session 32)
 
 Session 22 (Chronos) resumed 16:09 after the IAAI-27 park. Resume with the same brief from this file, `git log`,
 open PRs and their comments, and the klepsydra line under "Running now" in /mnt/c/Users/ajbar/fleet-briefing/queue.md.
@@ -21,31 +21,30 @@ claude --remote-control NAME "brief"), 6 (--append-system-prompt-file, tail ~260
 triage + inject last 10), then the #8 trial. #9 deferred, #10 denied. #304/#305 closed (withdrawn).
 Each cut: a small PR with the proof test the report names.
 
-## Resume here (session 31 moved back to RIT 11-05; fresh session from the brief)
-Reports: /tmp/claude-1001/<round>/report.md. Session-31 scratch files: /tmp/claude-1001/carry-s31/.
-Never wrap a lock-taking make target in an outer timeout; finish edits to a suite before queuing it.
-PR bodies: write the file, then GraphQL updatePullRequest (`-f query=...`, not `q=`).
-Order (Heph 11-04): bug queue -> #326 (PR #331) -> #323 stage 1 (PR #332) -> #327 -> #324 -> #323 later stages;
+## Resume here (session 32, Personal, 11-05; fresh session replacing Chronos)
+Reports: /tmp/claude-1001/<round>/report.md (subagents cannot write report files: their final message is the report).
+Session-32 scratch: /tmp/claude-1001/s32-*. Never wrap a lock-taking make target in an outer timeout.
+PR bodies: write the file, then GraphQL updatePullRequest (`-f query=...`, `-F b=@file`).
+Order (Heph 11-04): bug queue -> #323 stage 1 (PR #332) -> #327 -> #324 -> #323 later stages;
 reader backlog (#318, #316, #314, #308, #310, claude-prefs #42 #43) and cut 7, #8 between.
-- 🔄 #287 (guard-264) @cc4e7d4: r17 fixes pushed (S1 dash-named dir, S2 root-owned bash/python3.N exe check,
-  S3 readlink -e, M2 regex bash|python3); suite 250/0; body Deferred line updated (M1). Mutants: s1-dash RED
-  (killed); s2-exe, s3-e, m2-sh NOT RUN (stopped at the move): rerun carry-s31/mut287.sh
-  (export S=<dir holding orch-tmux.orig>; it restores the file). Then r18 reader. Untracked fleet/test_s287.sh
-  in that worktree is a cut harness: never commit it.
-- 🔄 #330 (phone-328) @ff108e0: r3 0 Blocking / 0 Should-fix / 3 Minor (/tmp/claude-1001/r3b-330/report.md);
-  all three fixed (F1 body gap sentence, F2 DOC_PREFS, F3 exact switched=off match; prefs_get moved below the
-  export). Cut harness was stopped unrun: CI on ff108e0 is the check. Then refresh the body status table
-  (still says CI on ddf9d19 running), one verify reader, merge, `make install-fleet` from main.
-- 🔄 #325 (send-320) @b759337: r4 reader STOPPED at the move, no report: re-dispatch r4 (brief: verify r3
-  F1-F4 in /tmp/claude-1001/r3-325/report.md; harness in /tmp/claude-1001/r4b-325/). After merge:
-  `fleet brief --refresh`, tell Heph.
-- 🔄 #336 (sort-335, new bug, filed this session) @bc4f6c0: newest_reading kept #319's sort | head pipe; the
-  journal still logged sort write errors (systemd IgnoreSIGPIPE=yes). One pick_file helper; cut case 4/0,
-  mutant red. CI was in its fleet step; then r1 reader, merge, install.
-- 📋 #331 (agora-326) verify reader, merge, `fleet install`, `fleet brief --refresh`.
+- ✅ #331 (Agora removal) merged a8f7daf, `fleet install` + `fleet brief --refresh` done.
+- 🔄 #325 (send-320): r4 = 0B/3S/2M. Fixes uncommitted in the worktree: merge of main (520659c, committed),
+  pane_limited PANE SCREEN (screen line, else the hook's StopFailure record; prints RESET<TAB>LINE) used by
+  deliver_now, watcher, doctor; reset_label helper; pane_locked (reentrant per-pane typing lock,
+  $FLEET_STATE/locks/send-N) around remote_control, deliver, inbox_deliver, retire's /exit, fresh-now /clear,
+  resume_typed + the typed-line submit; the wall hook's own_pane also takes it. New suite cases "#325 review 4".
+  Cut harness /tmp/claude-1001/s32-325/cut.sh (send section). Next: cut green -> make test-launch ->
+  commit, push, body (CI row, lock covers every typer) -> r5 reader.
+- 🔄 #287 (guard-264): mutants s1-dash, s2-exe killed; s3-e, m2-sh running via /tmp/claude-1001/s32-287/mut.sh
+  (it restores fleet/orch-tmux.sh; check `cmp` against s32-287/orch-tmux.orig before editing). Then r18 reader.
+- 🔄 #330 (phone-328) @ff108e0: CI green, body CI row refreshed; verify reader running -> merge, install-fleet.
+- 🔄 #336 (sort-335) @0f56956: r1 0B/0S/2M, both fixed (tie-break on path; IMPL.md pick uses pick_file);
+  verify reader running -> merge, install.
 - 📋 #334 (face-333) r1; deploy needs install-fleet + Windows build (installed exe is 10-31).
 - 📋 r1 owed: #332, #318. Readers: #316 r1, #314 r1, #308 r2, #310 verify, claude-prefs#42 r2 + #43 r1.
-- 📋 Cut 7, then the #8 trial; #327; #324. Held (freeze): #293, #295, #300/#272.
+- 📋 Cut 7 (after #318: both edit the tail's friction line): triage 98 friction.md lines (fix/issue/delete;
+  snapshot /tmp/claude-1001/cut7/friction-snapshot.md), then SessionStart injects the last 10 for the repo.
+- 📋 Then the #8 trial; #327; #324. Held (freeze): #293, #295, #300/#272.
 - Held worktree split-182: kept on purpose (CARGO_TARGET_DIR; src-tauri/gen is Tauri's generated schema).
 
 ## Notes
