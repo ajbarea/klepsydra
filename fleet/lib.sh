@@ -361,8 +361,8 @@ inbox_deliver() { # PANE FILE
 # read in one pass: sort | head closed sort's pipe early once the listing
 # outgrew a pipe buffer, and the journal logged "sort: write error" (#319, #335).
 pick_file() { # newest|oldest
-  awk -v old="$([[ $1 == oldest ]] && echo 1)" '{ t = $1 + 0 }
-    f == "" || (old ? t < m : t > m) { m = t; f = substr($0, index($0, " ") + 1) }
+  awk -v old="$([[ $1 == oldest ]] && echo 1)" '{ t = $1 + 0; p = substr($0, index($0, " ") + 1) }
+    f == "" || (old ? t < m || (t == m && p < f) : t > m || (t == m && p > f)) { m = t; f = p }
     END { if (f == "") exit 1; print f }'
 }
 
@@ -1012,8 +1012,7 @@ newest_impl() { # TRANSCRIPT
   # Only folders that exist: under pipefail a find over a missing one fails the pick.
   roots=("$dir")
   [[ -d $dir/.claude/worktrees ]] && roots+=("$dir/.claude/worktrees")
-  find "${roots[@]}" -maxdepth 2 -name IMPL.md -type f -printf '%T@ %p\n' 2>/dev/null |
-    sort -rn | sed -n '1s/^[^ ]* //p' | grep .
+  find "${roots[@]}" -maxdepth 2 -name IMPL.md -type f -printf '%T@ %p\n' 2>/dev/null | pick_file newest
 }
 
 # Whether session SID's Claude Code process still runs: its fleet file (the
