@@ -1,4 +1,4 @@
-# IMPL: klepsydra fleet-module brief, resume state 2026-11-05 (session 32)
+# IMPL: klepsydra fleet-module brief, resume state 2026-11-05 (session 32; #325 closed out 15:15)
 
 Session 22 (Chronos) resumed 16:09 after the IAAI-27 park. Resume with the same brief from this file, `git log`,
 open PRs and their comments, and the klepsydra line under "Running now" in /mnt/c/Users/ajbar/fleet-briefing/queue.md.
@@ -28,14 +28,11 @@ PR bodies: write the file, then GraphQL updatePullRequest (`-f query=...`, `-F b
 Order (Heph 11-04): bug queue -> #323 stage 1 (PR #332) -> #327 -> #324 -> #323 later stages;
 reader backlog (#318, #316, #314, #308, #310, claude-prefs #42 #43) and cut 7, #8 between.
 - ✅ #331 (Agora removal) merged a8f7daf; ✅ #330 (doctor phone off) merged 7c9fb69. Both installed, doctor 0 FAIL.
-- 🔄 #325 (send-320) @a0f0787: r4 (0B/3S/2M) fixes pushed, UNTESTED locally (cut harness queued 28 min on the
-  heavy lock and was stopped at the 11-05 park): pane_limited PANE SCREEN (screen line, else the hook's
-  StopFailure record; prints RESET<TAB>LINE) for deliver_now, the watcher and doctor; reset_label; pane_locked
-  (reentrant per-pane typing lock, $FLEET_STATE/locks/send-N) around remote_control, deliver, inbox_deliver,
-  retire's /exit, fresh-now's /clear, the resume message and typed-line submit; the wall hook's own_pane takes it
-  too. New cases "#325 review 4" (fleet) and "fleet typing" (test_launch). Next: read CI on a0f0787; run
-  /tmp/claude-1001/s32-325/cut.sh (rebuild it from the current suite first) and `make test-launch`; then the body
-  (CI row; the lock now covers every typer, so drop "only inbox_deliver"), then an r5 reader.
+- ✅ #325 (send-320) merged a7de690 (11-05 budget-week session), installed from main, cutover, doctor 0 FAIL.
+  CI's last red was the test: the lock-wait case's background `fsend &` inherited fd 8 (the held flock), so it
+  waited on itself; it now gets `8>&-` (61d4e99). Local suite 788/0; CI green incl. test-launch; a fresh Opus
+  reader on 61d4e99 was clean (2 nits left: `sleep 1` does not prove the sender is waiting on the lock).
+  📋 Owed: an r5 reader on the r4 fix commit a0f0787 itself (never read independently before the merge).
 - 🔄 #287 (guard-264): r17 mutants s1-dash, s2-exe, s3-e killed; m2-sh NOT RUN (stopped at the park): run only
   that line of /tmp/claude-1001/s32-287/mut.sh (S=/tmp/claude-1001/s32-287; it restores the file). Then r18.
 - 🔄 #336 (sort-335) @6df71b0: r1 0B/0S/2M fixed; verify 0B/0S/1M (tie case missed a last-listed-wins
