@@ -1604,6 +1604,26 @@ check "review 3: but not once it is in another pane" "$(jq -c .orchestrator "$wf
 rm -f "$wfile"
 fire session-start.json ".session_id = \"$W\"" "TMUX=$work/sock/klepsydra,1,0" TMUX_PANE=%3 KLEPSYDRA_AGENT=heph >/dev/null
 check "review 2: a session launched as heph (a move, a recovery) is Heph at once" "$(jq -c .orchestrator "$wfile")" "true"
+# #333: a `claude -p` that Heph runs from his Bash tool inherits his
+# KLEPSYDRA_AGENT and TMUX_PANE, but it is a helper under his process: never
+# the orchestrator, and it names no pane (so it never stands for his).
+mkproc 1700 500 bash 8718000 S /bin/bash -c "claude -p review"
+mkproc 1710 1700 claude 8718001 S claude -p review
+mkproc 1720 1710 klepsydra-fleet 8718002 S bash "$hook"
+NS=33333333-4444-4555-8666-777777777333
+nsfile="$dir/fleet/$NS.json"
+was_pane=$(cat "$work/fleet-state/orchestrator.pane" 2>/dev/null)
+for on_record in "$W" ""; do
+  if [[ -n $on_record ]]; then printf '%s\n' "$on_record" >"$work/fleet-state/orchestrator.session"; else rm -f "$work/fleet-state/orchestrator.session"; fi
+  printf '%%3\n' >"$work/fleet-state/orchestrator.pane"
+  rm -f "$nsfile"
+  fire session-start.json ".session_id = \"$NS\"" "TMUX=$work/sock/klepsydra,1,0" TMUX_PANE=%3 KLEPSYDRA_AGENT=heph KLEPSYDRA_PID=1720 >/dev/null
+  fire post-tool-bash.json ".session_id = \"$NS\"" "TMUX=$work/sock/klepsydra,1,0" TMUX_PANE=%3 KLEPSYDRA_AGENT=heph KLEPSYDRA_PID=1720 >/dev/null
+  check "#333 ($([[ -n $on_record ]] && echo "session on record" || echo "no session on record")): Heph's claude -p is no orchestrator, wears no face, names no pane" \
+    "$(jq -c '[.orchestrator, has("orchestrator_face"), .tmux, .claude.pid]' "$nsfile")" '[false,false,null,1710]'
+done
+rm -f "$nsfile"
+if [[ -n $was_pane ]]; then printf '%s\n' "$was_pane" >"$work/fleet-state/orchestrator.pane"; else rm -f "$work/fleet-state/orchestrator.pane"; fi
 rm -f "$work/fleet-state/orchestrator.session" "$wfile"
 fire session-start.json ".session_id = \"$W\"" "TMUX=$work/sock/klepsydra,1,0" TMUX_PANE=%7 KLEPSYDRA_AGENT=sphragis >/dev/null
 check "review 2: an agent launched under another name is never Heph, even in the orchestrator's pane" "$(jq -c .orchestrator "$wfile")" "false"
