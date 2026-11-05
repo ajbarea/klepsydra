@@ -21,19 +21,27 @@ claude --remote-control NAME "brief"), 6 (--append-system-prompt-file, tail ~260
 triage + inject last 10), then the #8 trial. #9 deferred, #10 denied. #304/#305 closed (withdrawn).
 Each cut: a small PR with the proof test the report names.
 
-## Resume here (session 31, fresh start 11-05 04:00 on the other account)
-Reports: /tmp/claude-1001/<round>/report.md. Never wrap a lock-taking make target in an outer timeout; finish edits
-to a suite before queuing it. PR bodies: write the file, then GraphQL updatePullRequest (`-f query=...`, not `q=`).
+## Resume here (session 31 moved back to RIT 11-05; fresh session from the brief)
+Reports: /tmp/claude-1001/<round>/report.md. Session-31 scratch files: /tmp/claude-1001/carry-s31/.
+Never wrap a lock-taking make target in an outer timeout; finish edits to a suite before queuing it.
+PR bodies: write the file, then GraphQL updatePullRequest (`-f query=...`, not `q=`).
 Order (Heph 11-04): bug queue -> #326 (PR #331) -> #323 stage 1 (PR #332) -> #327 -> #324 -> #323 later stages;
 reader backlog (#318, #316, #314, #308, #310, claude-prefs #42 #43) and cut 7, #8 between.
-- 🔄 #287 (guard-264): r17 fixes (S1 dash-named dir case, S2 root-owned bash/python3.N exe check, S3 readlink -e,
-  M2 regex narrowed to bash|python3) uncommitted in the worktree; suite 250/0; mutants running
-  (scratchpad mut287.sh). Body: Deferred line rewritten (M1 .pth), staged as scratchpad body287-new.md.
-  Then commit, push, body, r18 reader. fleet/test_s287.sh there is an untracked cut harness: never commit it.
-- 🔄 #330 (phone-328) r3 reader -> /tmp/claude-1001/r3b-330/report.md.
-- 🔄 #325 (send-320) r4 reader -> /tmp/claude-1001/r4b-325/report.md. After merge: `fleet brief --refresh`, tell Heph.
-- 🔄 #336 (sort-335, new bug): newest_reading kept #319's sort | head pipe; journal still logged sort write errors
-  (systemd IgnoreSIGPIPE=yes). One pick_file helper; case + mutant red. CI, then r1 reader.
+- 🔄 #287 (guard-264) @cc4e7d4: r17 fixes pushed (S1 dash-named dir, S2 root-owned bash/python3.N exe check,
+  S3 readlink -e, M2 regex bash|python3); suite 250/0; body Deferred line updated (M1). Mutants: s1-dash RED
+  (killed); s2-exe, s3-e, m2-sh NOT RUN (stopped at the move): rerun carry-s31/mut287.sh
+  (export S=<dir holding orch-tmux.orig>; it restores the file). Then r18 reader. Untracked fleet/test_s287.sh
+  in that worktree is a cut harness: never commit it.
+- 🔄 #330 (phone-328) @ff108e0: r3 0 Blocking / 0 Should-fix / 3 Minor (/tmp/claude-1001/r3b-330/report.md);
+  all three fixed (F1 body gap sentence, F2 DOC_PREFS, F3 exact switched=off match; prefs_get moved below the
+  export). Cut harness was stopped unrun: CI on ff108e0 is the check. Then refresh the body status table
+  (still says CI on ddf9d19 running), one verify reader, merge, `make install-fleet` from main.
+- 🔄 #325 (send-320) @b759337: r4 reader STOPPED at the move, no report: re-dispatch r4 (brief: verify r3
+  F1-F4 in /tmp/claude-1001/r3-325/report.md; harness in /tmp/claude-1001/r4b-325/). After merge:
+  `fleet brief --refresh`, tell Heph.
+- 🔄 #336 (sort-335, new bug, filed this session) @bc4f6c0: newest_reading kept #319's sort | head pipe; the
+  journal still logged sort write errors (systemd IgnoreSIGPIPE=yes). One pick_file helper; cut case 4/0,
+  mutant red. CI was in its fleet step; then r1 reader, merge, install.
 - 📋 #331 (agora-326) verify reader, merge, `fleet install`, `fleet brief --refresh`.
 - 📋 #334 (face-333) r1; deploy needs install-fleet + Windows build (installed exe is 10-31).
 - 📋 r1 owed: #332, #318. Readers: #316 r1, #314 r1, #308 r2, #310 verify, claude-prefs#42 r2 + #43 r1.
