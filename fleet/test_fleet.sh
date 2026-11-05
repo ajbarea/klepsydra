@@ -3448,6 +3448,22 @@ check "#325 review 1: two sends at once to one pane both go, one after the other
   "$(cat "$work/snc.a") $(cat "$work/snc.b") $(grep -c '^SUBMIT report [AB] from worker' "$work/snc.log") [$(input_text "$(screen "$p")")]" "sent sent 2 []"
 t kill-window -t "$p"
 check "#325 review 1: no message file is left under send/" "$(find "$FLEET_STATE/send" -type f 2>/dev/null | wc -l)" "0"
+# A send still waiting for the pane's lock after FLEET_SEND_WAIT gives up untyped.
+p=$(pane snl '{"above":["idle"],"on_submit":"none"}'); settle
+exec 8>"$FLEET_STATE/locks/send-${p#%}"
+flock 8
+: >"$work/snl.log"
+check "#325 review 2: a send that waits past FLEET_SEND_WAIT for another's lock says not-pasted and types nothing" \
+  "$(FLEET_SEND_WAIT=1 fsend "$p" "behind a held lock"; echo "rc=$?") $(grep -c . "$work/snl.log")" $'not-pasted\nrc=1 0'
+exec 8>&-
+check "#325 review 2: a lock file that cannot be opened reads as not-pasted" \
+  "$(FLEET_STATE=/nonexistent-$$ inbox_deliver "$p" /dev/null 2>/dev/null)" "not-pasted"
+t kill-window -t "$p"
+p=$(pane snt '{"above":["⏺ Done.","You'"'"'ve hit your session limit · resets 1:10pm (America/New_York)"],"on_submit":"none"}'); settle
+: >"$work/snt.log"
+check "#325 review 2: a pane at a usage limit gets nothing; the send says limited" \
+  "$(fsend "$p" "nudge"; echo "rc=$?") $(grep -c . "$work/snt.log")" $'limited\nrc=1 0'
+t kill-window -t "$p"
 
 echo "the tmux server watchdog (#290)"
 : >"$FLEET_LOG"

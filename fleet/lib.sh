@@ -342,9 +342,12 @@ sent_or_started() { started "$1" || { has_input_box "$1" && [[ -z $(input_text "
 # other senders, and two pastes into one box glue together): a second waits its
 # turn, up to FLEET_SEND_WAIT s, then gets not-pasted. Only short-lived tmux
 # clients run under the lock (the pane exists, so no server starts here).
+# A lock file that cannot be opened runs nothing and reads as not-pasted.
 inbox_deliver() { # PANE FILE [any]
+  local out
   mkdir -p -- "$FLEET_STATE/locks" 2>/dev/null
-  ( flock -w "${FLEET_SEND_WAIT:-45}" 9 || { echo not-pasted; exit 0; }; deliver_now "$@" ) 9>"$FLEET_STATE/locks/send-${1#%}"
+  out=$( (flock -w "${FLEET_SEND_WAIT:-45}" 9 || { echo not-pasted; exit 0; }; deliver_now "$@") 9>"$FLEET_STATE/locks/send-${1#%}")
+  echo "${out:-not-pasted}"
 }
 # The box holds the message (WANT, without whitespace) alone: its text, or a
 # paste's placeholder. Both sides lose their whitespace the same way: a long line wraps.

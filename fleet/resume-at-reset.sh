@@ -189,7 +189,7 @@ ask_back() { # PANE FROM TO
   got=$(inbox_deliver "$p" "$f")
   rm -f -- "${f:?}"
   case $got in
-    not-pasted) flog WARN "move-back request not delivered: the prompt was no longer idle and empty; trying again next pass" pane="$p" to="$(account_label "$3")" ;;
+    not-pasted) flog WARN "move-back request not delivered: the prompt was not idle and empty, or another send held the pane; trying again next pass" pane="$p" to="$(account_label "$3")" ;;
     mixed | held)
       asked[$p]=$NOW
       flog WARN "move-back request left in the prompt unsent; asked again in an hour" pane="$p" to="$(account_label "$3")" delivery="$got"
@@ -624,7 +624,7 @@ one() { # PANE
     [[ -n $msg ]] && idle_empty "$s"; then
     got=$(inbox_deliver "$p" "$msg")
     case $got in
-      not-pasted) flog WARN "CI alert not delivered: the prompt was no longer idle and empty; trying again next pass" pane="$p" name="$inbox_name" alert="${msg##*/}" ;;
+      not-pasted) flog WARN "CI alert not delivered: the prompt was not idle and empty, or another send held the pane; trying again next pass" pane="$p" name="$inbox_name" alert="${msg##*/}" ;;
       mixed)
         flog WARN "CI alert pasted beside text typed meanwhile; left in the prompt unsent" pane="$p" name="$inbox_name" alert="${msg##*/}"
         rm -f -- "${msg:?}"
