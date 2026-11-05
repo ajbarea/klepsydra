@@ -418,8 +418,21 @@ check "#287 review 15: a short cluster holding c (bash -ec) runs its text: check
 mkdir -p "$work/elsewhere/exec(open(\"x.py\").read())#"
 check "#287 review 15: a short cluster holding c (python3 -Ic) runs its text: checked" \
   "$(in_claude "$orchp" "$work/state2/orch-bin" "cd $work/elsewhere && python3 -Ic 'exec(open(\"x.py\").read())#/../../fleetcopy/note.py'" 2>&1 | grep -o 'orch-guard (cold-limit)')" "orch-guard (cold-limit)"
-check "#287 review 15: bash -O extglob <fleet script> still passes" \
-  "$(in_claude "$orchp" "$work/state2/orch-bin" "bash -O extglob $work/fleetcopy/fresh-now.sh" 2>&1 && echo ok)" "ok"
+check "python3 -I <fleet script> passes (ci_watch's shape)" \
+  "$(in_claude "$orchp" "$work/state2/orch-bin" "python3 -I $work/fleetcopy/note.py" 2>&1 && echo ok)" "ok"
+# #287 review 16: only `bash FILE` and `python3 [-I] FILE` are fleet runs; any
+# other option before the file is checked, whatever it would run.
+for run in "bash -O extglob $work/fleetcopy/fresh-now.sh" \
+  "bash -ce '$work/evil;/../fleetcopy/fresh-now.sh'" \
+  "bash -se $work/fleetcopy/fresh-now.sh <$work/elsewhere/fresh-now.sh" \
+  "exec -a sh bash --rcfile $work/fleetcopy/fresh-now.sh $work/elsewhere/fresh-now.sh" \
+  "bash -- $work/fleetcopy/fresh-now.sh" \
+  "python3 -i $work/fleetcopy/note.py <$work/elsewhere/x.py" \
+  "python3 -IW $work/fleetcopy/note.py $work/elsewhere/x.py" \
+  "cd $work/elsewhere && python3 -mevilmod.py"; do
+  check "#287 review 16: $run: checked" \
+    "$(in_claude "$orchp" "$work/state2/orch-bin" "$run" 2>&1 | grep -o 'orch-guard (cold-limit)' | head -1)" "orch-guard (cold-limit)"
+done
 check "heavy.sh in the fleet folder runs any command: what it runs is checked" \
   "$(FLEET_HEAVY_LOCK="$work/heavy.lock" in_claude "$orchp" "$work/state2/orch-bin" "bash $work/fleetcopy/heavy.sh bash $work/elsewhere/fresh-now.sh" 2>&1 | grep -o 'orch-guard (cold-limit)')" "orch-guard (cold-limit)"
 

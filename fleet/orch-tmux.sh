@@ -3,8 +3,9 @@
 # as $FLEET_STATE/orch-bin/tmux, ahead of the real tmux on PATH in the
 # orchestrator's session only (launch.sh puts it there for heph), so a call
 # that reaches it is the orchestrator's (or a job it started), unless a fleet
-# script makes it: a bash or python running a file in fleet/ (fresh-now.sh,
-# relaunch-fresh.sh, the resume service) sends with the fleet's own checks.
+# script makes it: `bash FILE` or `python3 [-I] FILE` with FILE in fleet/
+# (fresh-now.sh, relaunch-fresh.sh, the resume service) sends with the fleet's
+# own checks. The exemption reads argv only.
 # It reads tmux's real arguments, after the shell expanded them, at the
 # moment of the call, so no shell grammar, wait or script stands between the
 # check and the keys. It runs only listed tmux commands and flags (FLAGS) that
@@ -50,29 +51,24 @@ orch=""
 # could be a sender's (the name as given and as resolved must both pass).
 nonsender() { [[ ! ${1##*/} =~ \.(sh|py)$ || ${1##*/} == test_* || ${1##*/} == heavy.sh ]]; } # FILE
 from_fleet_script() {
-  local pid=$PPID n a f j st
+  local pid=$PPID n a f st
   local -a argv
   for (( n = 0; n < 512; n++ )); do
     { [[ $pid =~ ^[0-9]+$ ]] && (( pid > 1 )); } || return 1
     mapfile -d '' -t argv <"/proc/$pid/cmdline" 2>/dev/null || return 1
     a=${argv[0]##*/}
     if [[ $a =~ ^(bash|sh|python3?(\.[0-9]+)?)$ ]]; then
-      for (( j = 1; j < ${#argv[@]} && j < 4; j++ )); do
-        f=${argv[j]}
-        # -c, -m, -s and python's - run no script file (alone or in a short-option
-        # cluster); a value-taking option's value is no script. Options are per
-        # interpreter: python's -O takes no value.
-        case $a:$f in
-          *:-c | python*:- | python*:-m | python*:-[!-]*[cm]* | bash:-s | sh:-s | bash:-[!-]*[cs]* | sh:-[!-]*[cs]*) break ;;
-          bash:[-+][oO] | sh:[-+][oO] | bash:--rcfile | bash:--init-file | python*:-[WX]) (( j++ )); continue ;;
-        esac
-        [[ $f == -* ]] && continue
-        nonsender "$f" && break
+      # Only the shapes fleet callers use run a fleet script: `bash FILE ...` and
+      # `python3 [-I] FILE ...`. Any other option before the file is checked,
+      # not modelled: -c, -s, -m, -i, a cluster or a value-taking option can
+      # each run code other than FILE.
+      f=${argv[1]-}
+      [[ $a == python* && $f == -I ]] && f=${argv[2]-}
+      if [[ -n $f && $f != [-+]* ]] && ! nonsender "$f"; then
         [[ $f == /* ]] || f=$(readlink -f "/proc/$pid/cwd" 2>/dev/null)/$f
         f=$(readlink -f -- "$f" 2>/dev/null)
         [[ -n $f && ${f%/*} == "$here" ]] && ! nonsender "$f" && return 0
-        break
-      done
+      fi
     fi
     # The parent pid: the field after the state, which follows the last ")"
     # of the whole file (a command name can hold spaces, parentheses and a newline).
