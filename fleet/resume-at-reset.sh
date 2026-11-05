@@ -218,9 +218,9 @@ carry_on() { # PANE TO RC (3, 5, or room: TO lost its room before the move)
   # Asked again in an hour, as the ask itself says, not at the next 15-min try.
   asked[$p]=$NOW
   if [[ $got == sent ]]; then
-    flog INFO "told the worker to carry on after a failed move back" pane="$p" to="$2" why="$3" delivery="$got"
+    flog INFO "told the worker to carry on: the move back did not happen" pane="$p" to="$2" why="$3" delivery="$got"
   else
-    flog WARN "the carry-on note after a failed move back was not delivered" pane="$p" to="$2" why="$3" delivery="$got"
+    flog WARN "the carry-on note did not reach the worker: the move back did not happen" pane="$p" to="$2" why="$3" delivery="$got"
   fi
 }
 

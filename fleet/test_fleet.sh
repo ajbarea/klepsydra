@@ -1798,7 +1798,7 @@ mover "$((noon + 600))"; mover "$((noon + 900))"
 reply_live "$p" settled '[{"id": "w1", "kind": "bash"}]' "READY-TO-MOVE" "$((noon + 930))"
 LAUNCH="$work/launch-limited.sh" FLEET_NOW=$((noon + 960)) bash "$here/resume-at-reset.sh" --once 2>/dev/null
 check "#319: a move back whose brief meets the limit tells the stopped worker to carry on where it is" \
-  "$(grep -c '^SUBMIT The move back to Personal did not happen: its brief met the usage limit there. Carry on here' "$work/stale.log") $(logged "told the worker to carry on after a failed move back")" "1 $p "
+  "$(grep -c '^SUBMIT The move back to Personal did not happen: its brief met the usage limit there. Carry on here' "$work/stale.log") $(logged "told the worker to carry on: the move back did not happen")" "1 $p "
 check "#322 review 1: and the account it met the limit on reads full for new launches too" \
   "$([[ -e $FLEET_STATE/limited/a.five ]] && echo marked) $(best_account "$((noon + 1000))")" "marked $work/cfg-b"
 t kill-window -t "$p" 2>/dev/null; : >"$REGISTRY"
@@ -1854,7 +1854,7 @@ EOF
 chmod +x "$work/launch-busy.sh"
 LAUNCH="$work/launch-busy.sh" FLEET_NOW=$((noon + 5900)) bash "$here/resume-at-reset.sh" --once 2>/dev/null
 check "#322 review 2: a carry-on note the worker cannot take is logged as not delivered" \
-  "$(grep -c 'the carry-on note after a failed move back was not delivered' "$FLEET_LOG") $(grep -c 'told the worker to carry on after a failed move back' "$FLEET_LOG")" "1 1"
+  "$(grep -c 'the carry-on note did not reach the worker' "$FLEET_LOG") $(grep -c 'told the worker to carry on: the move back did not happen' "$FLEET_LOG")" "1 1"
 t kill-window -t "$p" 2>/dev/null; : >"$REGISTRY"
 # #322 review 3: a worker that stopped for the move after its preferred account
 # lost its room (a limit seen there, or a hold from another worker's failed
@@ -1873,6 +1873,11 @@ for room_gone in limit hold; do
   # Its shell is still listed (the hook has not seen it stop), so only the
   # READY-TO-MOVE, never a finished turn, could move it later.
   reply_live "$p" settled '[{"id": "w1", "kind": "bash"}]' "READY-TO-MOVE" "$((noon + 330))"
+  # A note never goes into a busy screen; it waits for the next idle pass.
+  state "gone$room_gone" '{"above":["working"],"busy":true,"on_submit":"none"}'
+  mover "$((noon + 345))"
+  check "#322 review 4 ($room_gone): no carry-on note while its screen is busy" "$(grep -c '^SUBMIT The move back' "$work/gone$room_gone.log")" "0"
+  state "gone$room_gone" '{"above":["⏺ Done. done 11:50 AM"],"on_submit":"none"}'
   mover "$((noon + 360))"
   check "#322 review 3 ($room_gone): a worker that stopped for the move is told to carry on when the account loses its room first" \
     "$(grep -c '^SUBMIT The move back to Personal did not happen: it has no room any more. Carry on here' "$work/gone$room_gone.log") $(jq -r 'select(.message | startswith("told the worker to carry on")) | .why' "$FLEET_LOG")" "1 room"
@@ -1882,6 +1887,46 @@ for room_gone in limit hold; do
     "$(grep -c '^SUBMIT The move back' "$work/gone$room_gone.log") $(wc -c <"$work/moved")" "1 0"
   t kill-window -t "$p" 2>/dev/null; : >"$REGISTRY"
 done
+# #322 review 4: the room path's guards. The asked stamp comes from the
+# service's saved state (fields: pane, rc label, asked), as after a restart.
+asked_on_record() { # PANE ASKED RC_LABEL
+  { printf '#server %s\n' "$(t display-message -p '#{pid}')"; printf '%s\x1f\x1f\x1f%s\x1f\x1f\x1f\x1f\x1f\x1f%s\x1f\n' "$1" "$3" "$2"; } >"$FLEET_STATE/resume-state"
+}
+room_fresh() { rm -rf -- "${FLEET_STATE:?}/limited"; rm -f -- "$FLEET_STATE/back-hold" "$FLEET_STATE/resume-state" "$FLEET_STATE/back-room-since"; : >"$work/moved"; : >"$FLEET_LOG"; }
+# Heph is never told to carry on: his move back has its own path.
+room_fresh; reading a Personal 10 5000; reading b RIT 10 4000
+q=$(pane hephroom '{"above":["⏺ Done. done 11:50 AM"],"on_submit":"none","rc":"on"}'); settle
+printf '%s\n' "$q" >"$FLEET_STATE/orchestrator.pane"; printf '%s\n' "$work/cfg-a" >"$FLEET_STATE/orchestrator.config"
+mark_limited b "$((noon + 86400))" seven
+asked_on_record "$q" "$((noon + 300))" Personal
+reply_live "$q" settled '[{"id": "w1", "kind": "bash"}]' "READY-TO-MOVE" "$((noon + 330))"
+mover "$((noon + 360))"; mover "$((noon + 1300))"
+check "#322 review 4: Heph, asked and READY-TO-MOVE when his preferred account loses its room, gets no carry-on note" \
+  "$(grep -c '^SUBMIT The move back' "$work/hephroom.log")" "0"
+t kill-window -t "$q" 2>/dev/null; rm -f "$FLEET_STATE/orchestrator.pane" "$FLEET_STATE/orchestrator.config"
+# A worker already on its preferred account has nowhere to move back to.
+room_fresh; reading a Personal 10 5000
+q=$(pane onpref '{"above":["⏺ Done. done 11:50 AM"],"on_submit":"none"}'); settle
+printf '%s\tonpref\t%s\t%s\t/w\t%s\n' "$q" "$work/brief.src" "$SID" "$work/cfg-a" >"$REGISTRY"
+mark_limited a "$((noon + 86400))" seven
+asked_on_record "$q" "$((noon + 300))" Personal
+reply_live "$q" settled '[{"id": "w1", "kind": "bash"}]' "READY-TO-MOVE" "$((noon + 330))"
+mover "$((noon + 360))"; mover "$((noon + 1300))"
+check "#322 review 4: a worker on its preferred account gets no carry-on note when that account loses its room" \
+  "$(grep -c '^SUBMIT The move back' "$work/onpref.log")" "0"
+t kill-window -t "$q" 2>/dev/null; : >"$REGISTRY"
+# A worker at a limit of its own waits for its reset, not for a note.
+room_fresh; reading a Personal 10 5000
+p=$(backpane ownlim); state ownlim '{"above":["⏺ Done. done 11:50 AM"],"on_submit":"none"}'
+reply_live "$p" settled '[{"id": "w1", "kind": "bash"}]' "Watching." "$noon"
+mover "$noon"; mover "$((noon + 300))"
+mark_limited a "$((noon + 86400))" seven
+reply_live "$p" settled '[{"id": "w1", "kind": "bash"}]' "READY-TO-MOVE" "$((noon + 330))"
+state ownlim '{"above":["  ⎿  You'"'"'ve hit your session limit · resets 1:10pm (America/New_York)","",""],"on_submit":"none"}'
+mover "$((noon + 360))"; mover "$((noon + 1300))"
+check "#322 review 4: a worker at a limit of its own gets no carry-on note" \
+  "$(grep -c '^SUBMIT The move back' "$work/ownlim.log")" "0"
+t kill-window -t "$p" 2>/dev/null; : >"$REGISTRY"
 # The limit hold and the pass's state go with it, as the cases below expect a fresh start.
 t kill-window -t "$p" 2>/dev/null; : >"$REGISTRY"; rm -rf -- "${FLEET_STATE:?}/limited"; rm -f -- "$FLEET_STATE/back-hold" "$FLEET_STATE/resume-state" "$FLEET_STATE/back-room-since"
 
