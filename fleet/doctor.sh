@@ -58,8 +58,8 @@ report() { # ok|warn|FAIL CHECK DETAIL [KEY=VALUE...]: the values are logged wit
     FAIL) flog ERROR "doctor: $check" detail="$detail" "${vals[@]}" ;;
     warn) flog WARN "doctor: $check" detail="$detail" "${vals[@]}" ;;
     # An ok detail can be a Remote Control link, which opens a session: not logged.
-    # A check AJ switched off ("off ...") did not recover.
-    ok) [[ -n ${was[${check//[$'\t\n']/ }]-} ]] && flog INFO "doctor: $check $([[ $detail == off\ * ]] && echo switched off || echo recovered)" "${vals[@]}" ;;
+    # A check AJ switched off (its values hold switched=off) did not recover.
+    ok) [[ -n ${was[${check//[$'\t\n']/ }]-} ]] && flog INFO "doctor: $check $([[ " ${vals[*]} " == *" switched=off "* ]] && echo switched off || echo recovered)" "${vals[@]}" ;;
   esac
 }
 
@@ -239,7 +239,7 @@ phone() { # CHECK BASE
 pw=$(prefs_get phone_wall)
 case $? in
   2) report warn "phone wall" "prefs.json does not read as one JSON object, so the wall reads it as off: not checked" prefs="$KLEPSYDRA_DIR/prefs.json" ;;
-  *) [[ $pw == true ]] || report ok "phone wall" "off (prefs.json phone_wall): not checked, nor over Tailscale" phone_wall="${pw:-missing}" ;;
+  *) [[ $pw == true ]] || report ok "phone wall" "off (prefs.json phone_wall): not checked, nor over Tailscale" phone_wall="${pw:-missing}" switched=off ;;
 esac
 if [[ $pw == true ]]; then
   phone "phone wall" "$PHONE"

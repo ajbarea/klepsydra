@@ -1021,7 +1021,7 @@ for pw in '{"phone_wall": false}' '{"phone_wall": "true"}' '{"phone_wall": 1}' '
     "$(PREFS=$pw doctor | phone_lines)" "ok   phone wall"
 done
 # A file that is not one JSON object is off for the wall too, but says so.
-for pw in '{phone' '{"phone_wall": true} garbage' '[true]'; do
+for pw in '{phone' '{"phone_wall": true} garbage' '{"phone_wall": true}{}' '[true]' 'null'; do
   check "#328 review 1: prefs.json $pw does not read: a warning, and neither phone line is tried" \
     "$(PREFS=$pw doctor | phone_lines)" "warn phone wall"
 done
@@ -3319,7 +3319,7 @@ check "#273: and --check then says so" "$(fv --check; echo "rc=$?")" $'applied h
 "$work/kx/bin/keryx" off
 check "#273 verify: --check names keryx turned off by hand since, still ok" "$(fv --check; echo "rc=$?")" $'applied heph; keryx is off now (turned off by hand?)\nrc=0'
 "$work/kx/bin/keryx" on
-for odd in 'not json' '{"voices":"loud"}' '{"voices":["off"]}'; do
+for odd in 'not json' '{"voices":"loud"}' '{"voices":["off"]}' '{"voices":"off"}{}' 'null'; do
   printf '%s' "$odd" >"$KLEPSYDRA_DIR/prefs.json"
   check "#273: a prefs file reading $odd is Heph only" "$(fv | cut -d' ' -f2)" "heph"
 done
