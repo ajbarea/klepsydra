@@ -112,6 +112,12 @@ submit() { # PANE
   t send-keys -t "$1" Enter
   if wait_for "$1" "${FLEET_START_WAIT:-30}" started; then echo yes; else echo no; fi
 }
+# Type the continue message into PANE's empty box and submit it. Run it under
+# pane_locked, as every typer is.
+resume_typed() { # PANE
+  type_exactly "$1" "$MSG" || { echo "no: AJ typed meanwhile"; return; }
+  submit "$1"
+}
 
 # When the agent in PANE (screen PLAIN) stopped: the last moment, at most 15
 # min past the clock now (a turn can end while a pass runs), whose local time
@@ -507,7 +513,7 @@ done_move() { # PANE KIND RC NEW CTX
           # its next pass (never fresh again for this wait).
           fresh_failed[$p]=1
           if fleet_panes | grep -qx -- "$p" && idle_empty "$(screen "$p")"; then
-            if type_exactly "$p" "$MSG"; then got=$(submit "$p"); else got="no: AJ typed meanwhile"; fi
+            got=$(pane_locked "$p" resume_typed "$p") || got="no: another typer held the pane"
             flog INFO "resumed with the continue message" pane="$p" account="$c" switched=0 started="$got"
             last[$p]=$NOW
             unset "fresh_failed[$p]"
@@ -764,7 +770,7 @@ one() { # PANE
   (( fresh_typing )) && return
 
   if [[ -n $typed ]]; then
-    got=$(submit "$p")
+    got=$(pane_locked "$p" submit "$p") || got="no: another typer held the pane"
     flog INFO "resumed: sent what AJ typed" pane="$p" account="${ACTIVE:-unknown}" switched="$switched" started="$got" text="${typed:0:200}"
   elif [[ ${note[$p]:-} == "[Pasted text #"* ]] && { split_screen "$s"; ! grep -qF -- "❯ ${note[$p]}" <<<"$ABOVE"; }; then
     flog WARN "a pasted block left the prompt unsent and cannot be typed again; resuming without it" pane="$p" text="${note[$p]}"
@@ -786,7 +792,7 @@ one() { # PANE
       return
     fi
     unset "fresh_failed[$p]"
-    if type_exactly "$p" "$MSG"; then got=$(submit "$p"); else got="no: AJ typed meanwhile"; fi
+    got=$(pane_locked "$p" resume_typed "$p") || got="no: another typer held the pane"
     flog INFO "resumed with the continue message" pane="$p" account="${ACTIVE:-unknown}" switched="$switched" started="$got"
   fi
   last[$p]=$NOW

@@ -329,14 +329,11 @@ else
     fleet_panes | grep -qx -- "$p" || continue
     s=$(screen "$p")
     # Limited as the limits check holds it: the screen's limit line, else the
-    # hook's StopFailure record, whose reset is then its own epoch.
-    at=""
-    if ! busy "$s" && { l=$(limit_line "$s") || { ev=$(limit_event "$p") && l=${ev#*$'\t'} && at=${ev%%$'\t'*}; }; }; then
+    # hook's StopFailure record, whose reset is then its own epoch (a weekly
+    # reset can be days away, so its day shows unless it is today).
+    if l=$(pane_limited "$p" "$s"); then
       limited+="$p "
-      if [[ $at =~ ^[1-9][0-9]*$ ]]; then
-        # Its day too, unless it is today: a weekly reset can be days away.
-        if [[ $(date -d "@$at" +%F) == "$(date -d "@${FLEET_NOW:-$now}" +%F)" ]]; then r="resets $(date -d "@$at" '+%-I:%M%P')"; else r="resets $(date -d "@$at" '+%a %-I:%M%P')"; fi
-      else r=$(grep -oE 'resets [^(]*[ap]m' <<<"$l" | tail -1); fi
+      r=$(reset_label "${l%%$'\t'*}" "${l#*$'\t'}" "${FLEET_NOW:-$now}")
       [[ -n $r && ", $resets" != *", ${r#resets }, "* ]] && resets+="${r#resets }, "
     else
       free+="$p "

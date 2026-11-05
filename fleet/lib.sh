@@ -254,8 +254,40 @@ idle_empty() { has_input_box "$1" && [[ -z $(input_text "$1") ]] && ! busy "$1";
 box_empty() { has_input_box "$1" && [[ -z $(input_text "$1") ]]; }
 holds_input() { [[ -n $(input_text "$1") ]]; }
 started() { busy "$1" || limit_line "$1" >/dev/null; }
-# Stopped at a usage limit: a limit line on a screen running no turn. Prints the line.
-pane_limited() { ! busy "$1" && limit_line "$1"; } # SCREEN
+# PANE (showing SCREEN) stopped at a usage limit: no turn running, and a limit
+# line on the screen, else the fleet hook's StopFailure record (#311). Prints
+# "RESET<TAB>LINE", RESET the record's reset epoch (0 when the screen says).
+pane_limited() { # PANE SCREEN
+  local l
+  busy "$2" && return 1
+  if l=$(limit_line "$2"); then printf '0\t%s\n' "$l"; else limit_event "$1"; fi
+}
+# "resets 4:10am" for a limit from pane_limited: from RESET when known, with its
+# day unless that is today (NOW's), else from LINE's text. Empty when neither says.
+reset_label() { # RESET LINE [NOW]
+  if [[ $1 =~ ^[1-9][0-9]*$ ]]; then
+    if [[ $(date -d "@$1" +%F) == "$(date -d "@${3:-$(date +%s)}" +%F)" ]]; then date -d "@$1" '+resets %-I:%M%P'; else date -d "@$1" '+resets %a %-I:%M%P'; fi
+  else
+    grep -oE 'resets [^(]*[ap]m' <<<"$2" | tail -1
+  fi
+}
+# One typer per pane at a time (#325): two scripts typing into one box glue
+# their text together, or one's Enter submits the other's half. Every sequence
+# that types into a pane's box runs as `pane_locked PANE COMMAND...`; one nested
+# in a held sequence (remote_control inside fresh-now's) runs at once. Waits up
+# to FLEET_SEND_WAIT s; exits 75, running nothing, when the lock cannot be had
+# or its file opened. Only short-lived tmux clients run under it.
+pane_locked() { # PANE COMMAND [ARG...]
+  local p=$1
+  shift
+  if [[ ${FLEET_PANE_HELD:-} == "$p" ]]; then "$@"; return; fi
+  mkdir -p -- "$FLEET_STATE/locks" 2>/dev/null
+  (
+    { exec 9>"$FLEET_STATE/locks/send-${p#%}"; } 2>/dev/null || exit 75
+    flock -w "${FLEET_SEND_WAIT:-45}" 9 || exit 75
+    FLEET_PANE_HELD=$p "$@"
+  )
+}
 rc_settled() { # the connect line, or the menu shown when it is already on
   local p
   p=$(plain <<<"$1")
@@ -264,11 +296,16 @@ rc_settled() { # the connect line, or the menu shown when it is already on
   near 4 | grep -q '/remote-control is active' && idle_empty "$1"
 }
 
+# Type TEXT into PANE's empty box (type_exactly) and press Enter. Run it under
+# pane_locked.
+type_enter() { type_exactly "$1" "$2" && t send-keys -t "$1" Enter; } # PANE TEXT
+
 # Turn Remote Control on in PANE, idle at an empty prompt, and wait for it to
 # settle: the connect line, or (already on) its menu, answered with Continue.
 # Fails, having typed nothing more, when the pane is not idle at an empty
 # prompt or the command never settles.
-remote_control() { # PANE
+remote_control() { pane_locked "$1" remote_control_now "$1"; } # PANE
+remote_control_now() { # PANE
   local p=$1 s
   s=$(screen "$p")
   idle_empty "$s" || return 1
@@ -295,7 +332,8 @@ remote_control() { # PANE
 # can be lost), Enter is pressed again, three times in all. Never sends Escape,
 # which would cancel a turn that started. Every wait stops at DELIVER_DEADLINE.
 # Prints started, blocked-by-limit or not-delivered.
-deliver() { # PANE FILE
+deliver() { pane_locked "$1" deliver_brief "$@" || echo not-delivered; } # PANE FILE
+deliver_brief() { # PANE FILE
   local p=$1 file=$2 s try
   s=$(screen "$p")
   if busy "$s"; then echo started; return 0; fi
@@ -341,15 +379,11 @@ sent_or_started() { started "$1" || { has_input_box "$1" && [[ -z $(input_text "
 # With ANY, a running turn is no bar (Claude Code queues a message sent during
 # one), and it is sent once the box has emptied; a pane stopped at a usage
 # limit gets nothing (limited).
-# One delivery per pane at a time (fleet send runs beside the resume service and
-# other senders, and two pastes into one box glue together): a second waits its
-# turn, up to FLEET_SEND_WAIT s, then gets not-pasted. Only short-lived tmux
-# clients run under the lock (the pane exists, so no server starts here).
-# A lock file that cannot be opened runs nothing and reads as not-pasted.
+# It holds the pane's typing lock (pane_locked): a delivery that cannot have it
+# in FLEET_SEND_WAIT s, or whose lock file cannot be opened, gets not-pasted.
 inbox_deliver() { # PANE FILE [any]
   local out
-  mkdir -p -- "$FLEET_STATE/locks" 2>/dev/null
-  out=$( (flock -w "${FLEET_SEND_WAIT:-45}" 9 || { echo not-pasted; exit 0; }; deliver_now "$@") 9>"$FLEET_STATE/locks/send-${1#%}")
+  out=$(pane_locked "$1" deliver_now "$@")
   echo "${out:-not-pasted}"
 }
 # The box holds the message (WANT, without whitespace) alone: its text, or a
@@ -365,7 +399,7 @@ deliver_now() { # PANE FILE [any]
   if [[ ${3:-} == any ]]; then
     # Read under the lock: a pane stopped at a limit is the resume service's.
     s=$(screen "$p")
-    pane_limited "$s" >/dev/null && { echo limited; return; }
+    pane_limited "$p" "$s" >/dev/null && { echo limited; return; }
     box_empty "$s" || { echo not-pasted; return; }
     gone=box_empty
   else
@@ -826,11 +860,10 @@ retire() { # PANE [INTERRUPT]
     t send-keys -t "$1" C-c
     wait_for "$1" 5 idle_empty || true
   fi
-  if ! type_exactly "$1" "/exit"; then
+  if ! pane_locked "$1" type_enter "$1" "/exit"; then
     flog ERROR "could not type /exit; the pane is left running" pane="$1"
     return 1
   fi
-  t send-keys -t "$1" Enter
   for _ in $(seq 30); do fleet_panes | grep -qx "$1" || return 0; sleep 1; done
   t kill-pane -t "$1" 2>/dev/null
 }

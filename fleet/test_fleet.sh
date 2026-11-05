@@ -3684,6 +3684,43 @@ p=$(pane snu '{"above":["You'"'"'ve hit your session limit · resets 1:10pm (Ame
 check "#325 review 3: a busy pane with a limit line still on screen is no limited pane: the message is queued" \
   "$(fsend "$p" "report after the reset")" "sent"
 t kill-window -t "$p"
+# The hook's StopFailure record is a limit too (#311), though the screen shows only a generic error.
+p=$(pane snh '{"above":["⏺ Done.","API Error: Request failed"],"on_submit":"none"}'); settle
+stop_file aaaaaaaa-0000-4000-8000-000000000325 "$p" "$(date +%s)" "" "$L5"
+: >"$work/snh.log"
+check "#325 review 4: a pane the hook recorded at a usage limit gets nothing; the send says limited" \
+  "$(fsend "$p" "nudge"; echo "rc=$?") $(grep -c . "$work/snh.log")" $'limited\nrc=1 0'
+check "#325 review 4: pane_limited gives the record's reset and its message" \
+  "$(pane_limited "$p" "$(screen "$p")" | cut -f2)" "$L5"
+rm -f -- "${KLEPSYDRA_DIR:?}/fleet/aaaaaaaa-0000-4000-8000-000000000325.json"
+check "#325 review 4: without the record the same pane takes the message" "$(fsend "$p" "nudge")" "sent"
+t kill-window -t "$p"
+# Every typer holds the pane's typing lock: with it held, none types.
+p=$(pane sny '{"above":["idle"],"on_submit":"none"}'); settle
+echo "a brief" >"$work/sny.txt"
+exec 8>"$FLEET_STATE/locks/send-${p#%}"
+flock 8
+: >"$work/sny.log"
+FLEET_SEND_WAIT=1 remote_control "$p"; rc1=$?
+got=$(FLEET_SEND_WAIT=1 deliver "$p" "$work/sny.txt")
+FLEET_SEND_WAIT=1 retire "$p" 2>/dev/null; rc2=$?
+check "#325 review 4: with the pane's lock held, remote_control, deliver and retire type nothing" \
+  "$rc1 $got $rc2 $(grep -c . "$work/sny.log") $(fleet_panes | grep -cx -- "$p")" "75 not-delivered 1 0 1"
+exec 8>&-
+check "#325 review 4: a sequence nested in a held one runs at once" \
+  "$(FLEET_SEND_WAIT=1 pane_locked "$p" pane_locked "$p" echo nested; echo $?)" $'nested\n0'
+# The pane stops at a limit while a send waits for the lock: it is read again under the lock.
+exec 8>"$FLEET_STATE/locks/send-${p#%}"
+flock 8
+FLEET_SEND_WAIT=20 fsend "$p" "sent into a limit" >"$work/sny.out" &
+n2=$!
+sleep 1
+state sny '{"above":["⏺ Done.","You'"'"'ve hit your session limit · resets 1:10pm (America/New_York)"],"on_submit":"none"}'; settle
+: >"$work/sny.log"
+exec 8>&-
+wait "$n2"
+check "#325 review 4: a limit reached during the lock wait gets nothing" "$(cat "$work/sny.out") $(grep -c . "$work/sny.log")" "limited 0"
+t kill-window -t "$p"
 
 echo "the tmux server watchdog (#290)"
 : >"$FLEET_LOG"

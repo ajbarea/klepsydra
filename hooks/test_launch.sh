@@ -389,6 +389,14 @@ for verb in end interrupt wrapup; do
 done
 check "pane locked: no key sent" "$(wc -c <"$work/fake.log")" "0"
 exec {held}>&-
+# A fleet script typing into the pane (#325) holds its typing lock: End waits, then gives up untyped.
+mkdir -p "$HOME/.local/state/fleet-orchestrator/locks"
+exec {held}>>"$HOME/.local/state/fleet-orchestrator/locks/send-${p#%}"; flock -n "$held"
+out=$(KLEPSYDRA_TYPING_WAIT=1 send end "$p" 2>&1); rc=$?
+check "fleet typing: end exits 1 and says why" "$rc $out" "1 A fleet script is typing into that session; try again in a moment."
+check "fleet typing: no key sent" "$(wc -c <"$work/fake.log")" "0"
+exec {held}>&-
+rm -rf -- "${HOME:?}/.local/state/fleet-orchestrator"
 out=$(send interrupt "$p" 2>&1)
 check "pane unlocked: interrupt runs" "$out" "Sent Esc to the session."
 t kill-pane -t "$p"
