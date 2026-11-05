@@ -1,4 +1,4 @@
-# IMPL: klepsydra fleet-module brief, resume state 2026-11-04 (session 29)
+# IMPL: klepsydra fleet-module brief, resume state 2026-11-04 (session 30)
 
 Session 22 (Chronos) resumed 16:09 after the IAAI-27 park. Resume with the same brief from this file, `git log`,
 open PRs and their comments, and the klepsydra line under "Running now" in /mnt/c/Users/ajbar/fleet-briefing/queue.md.
@@ -21,26 +21,24 @@ claude --remote-control NAME "brief"), 6 (--append-system-prompt-file, tail ~260
 triage + inject last 10), then the #8 trial. #9 deferred, #10 denied. #304/#305 closed (withdrawn).
 Each cut: a small PR with the proof test the report names.
 
-## Resume here (session 29, resumed on RIT 11-04 night)
+## Resume here (session 30, fresh start 11-04 23:20 after the limit stop)
 Reports: /tmp/claude-1001/<round>/report.md. Never wrap a lock-taking make target in an outer timeout; finish edits
-to a suite before queuing it. PR bodies: Write the file, then PATCH in its own call (phylax reads the written file).
-Order (Heph 11-04): bug queue -> #326 (PR #331) -> #323 stage 1 (PR #332) -> #327 Agora v2 -> #324 -> #323 later
-stages; reader backlog (#318, #316, #314, #308, #310) and cuts 7, #8 between.
-- ✅ merged + installed: #230, #313, #292, #329.
-- 🔄 #322 (room-319): r4 finished before the move (/tmp/claude-1001/r4-322/report.md + mut/results.txt). Fixes in the
-  worktree, uncommitted: K2 log wording ("told the worker to carry on: the move back did not happen"); suite cases
-  for the four guards only the probe or nothing caught (M33 Heph, M34 preferred account, M35 own limit, M36 busy
-  screen). Mutant check: /tmp/claude-1001/r5-322/mut/run.sh (cut harness /tmp/claude-1001/r5-322/cut.sh). Then
-  commit, push, K1 body CI row, r5 verify reader.
-- 🔄 #330 (phone-328): r1 fixes committed 2600242 (not pushed): prefs_get in lib.sh (voices.sh + doctor.sh), unreadable
-  prefs warns, switched-off logs "switched off", tests see FAIL lines and the shipped path, usage-age stamp moved.
-  make test-fleet running -> push, body, r2.
-- 🔄 #334 (face-333, fixes #333): a claude -p under another claude names no pane and is never the orchestrator.
-  Hook suite 583/0. Next: r1 reader. Deploy: install-fleet + Windows build (installed exe is 10-31, pre-#226: the
-  real cause of the Metis card). Tell Heph: his face stays Hephaestus until his next rotation.
-- 🔄 readers running: #287 r16 (/tmp/claude-1001/r16-287), #331 r1 (/tmp/claude-1001/r1-331).
-- 📋 #325 (send-320) 9b2a723: CI pending at resume -> r2 reader. After merge: `fleet brief --refresh`, tell Heph.
-- 📋 r1 owed: #332 (5cf7473), #318 (behind main). Readers: #316 r1, #314 r1, #308 r2, #310 verify, claude-prefs#42 r2 + #43 r1.
+to a suite before queuing it. PR bodies: write the file, then update via GraphQL updatePullRequest (REST PATCH hits
+the secondary rate limit). Order (Heph 11-04): bug queue -> #326 (PR #331) -> #323 stage 1 (PR #332) -> #327 ->
+#324 -> #323 later stages; reader backlog (#318, #316, #314, #308, #310, claude-prefs #42 #43) and cut 7, #8 between.
+- ✅ merged + installed: #230, #313, #292, #329, #322 (r5 verify clean; Minor L1 left: busy-screen cases
+  don't assert "no carry-on logged", guard still killed by the review-3 cases).
+- 🔄 #330 (phone-328): CI red fixed in 00b2465 (Rust voices drift test pinned the old jq line). r2 reader ->
+  /tmp/claude-1001/r2-330/report.md. Clean + CI green -> merge, install, body CI row.
+- 🔄 #325 (send-320): r2 reader -> /tmp/claude-1001/r2-325/report.md. After merge: `fleet brief --refresh`, tell Heph.
+- 🔄 #287 (guard-264): r16 S1 (option-cluster spellings, 3rd round of the class) -> structural fix, uncommitted
+  in the worktree: from_fleet_script exempts only `bash FILE` and `python3 [-I] FILE`; tests: a loop of 8 checked
+  spellings, extglob flips to checked, python3 -I passes. Body draft /tmp/claude-1001/body287.md (Deferred: argv
+  only, env not read). make test-orch-guard -> commit, push, body, r17 reader.
+- 🔄 #331 (agora-326): r1 Minors fixed a31025e (guarded rm, body grep row); reactions.json archived to
+  fleet-briefing/archive/agora/. Next: verify reader, merge, `fleet install`, `fleet brief --refresh`.
+- 📋 #334 (face-333) r1 reader; deploy needs install-fleet + Windows build (installed exe is 10-31).
+- 📋 r1 owed: #332, #318. Readers: #316 r1, #314 r1, #308 r2, #310 verify, claude-prefs#42 r2 + #43 r1.
 - 📋 Cut 7, then the #8 trial; #327; #324.
 - Held worktree split-182: kept on purpose (CARGO_TARGET_DIR; src-tauri/gen is Tauri's generated schema).
 
