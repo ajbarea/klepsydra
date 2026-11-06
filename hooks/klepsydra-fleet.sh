@@ -200,6 +200,15 @@ claude_ancestor() { # pid
   return 1
 }
 
+# Whether Claude Code process `pid` runs under another one: a `claude -p` that
+# a session starts from its Bash tool. It inherits that session's environment
+# (TMUX_PANE, KLEPSYDRA_AGENT) but has no pane of its own (#333).
+nested_claude() { # pid
+  local -a stat=()
+  proc_stat "$1" || return 1
+  (claude_ancestor "${stat[1]}")
+}
+
 # How many Bash tool calls Claude Code process `pid` runs now: its child
 # shells, one per call however many subshells or pipes the call starts, less
 # the one running this hook (`me` and its parents). Claude Code's footer counts
@@ -1117,6 +1126,10 @@ main() {
 
   host_facts
   tmux_facts
+  # A session under another names no pane, so it never stands for its
+  # parent's (live_session, the registry, the window's colour) and is never
+  # the orchestrator, whose flag and face it would otherwise inherit (#333).
+  [[ -n $tmux_pane && -n $found_pid ]] && nested_claude "$found_pid" && tmux_socket="" tmux_pane=""
   # Who the session is in the fleet (#172): the agent name launch.sh starts it
   # with, and whether it is Heph, whom only Heph's face is ever given. Started
   # as "heph" (a move, a recovery) it is; started as any other agent it is
