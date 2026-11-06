@@ -674,7 +674,7 @@ one() { # PANE
   # empty prompt (never over AJ's line or into a running turn), oldest first.
   local inbox_name msg
   if (( !orch )) && [[ -z $limit && -z ${due[$p]:-} ]] && inbox_name=$(reg_field "$p" 2) && [[ -n $inbox_name ]] &&
-    msg=$(find "$FLEET_STATE/inbox/$inbox_name" -maxdepth 1 -name '*.txt' -type f -printf '%T@ %p\n' 2>/dev/null | sort -n | head -1 | cut -d' ' -f2-) &&
+    msg=$(find "$FLEET_STATE/inbox/$inbox_name" -maxdepth 1 -name '*.txt' -type f -printf '%T@ %p\n' 2>/dev/null | pick_file oldest) &&
     [[ -n $msg ]] && idle_empty "$s"; then
     got=$(inbox_deliver "$p" "$msg")
     case $got in
