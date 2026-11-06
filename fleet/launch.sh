@@ -45,9 +45,11 @@ settings=${FLEET_SETTINGS-$FLEET_STATE/worker-settings.json}
 # No KERYX_ENABLED from the tmux server's environment either (a server started
 # from a session with keryx off would pass it on and outrank keryx's setting).
 # FLEET_SUCCEEDS (a session id) names the orchestrator a move replaces (#226).
+# KLEPSYDRA_WORKER marks a session started with worker settings, so start-up
+# hooks meant for the orchestrator (the stale-PR list) skip it (#309).
 succeeds=""
 [[ ${FLEET_SUCCEEDS:-} =~ ^[0-9a-f-]{36}$ ]] && succeeds="KLEPSYDRA_SUCCEEDS=$FLEET_SUCCEEDS "
-cmd="env -u KERYX_ENABLED $(config_env "$account")KLEPSYDRA_AGENT=$(printf '%q' "$name") ${succeeds}CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS=2 ${FLEET_CLAUDE:-claude} --session-id $sid${settings:+ --settings $(printf '%q' "$settings")} $*"
+cmd="env -u KERYX_ENABLED -u KLEPSYDRA_WORKER $(config_env "$account")KLEPSYDRA_AGENT=$(printf '%q' "$name") ${succeeds}${settings:+KLEPSYDRA_WORKER=1 }CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS=2 ${FLEET_CLAUDE:-claude} --session-id $sid${settings:+ --settings $(printf '%q' "$settings")} $*"
 tmax=""
 if [[ ${FLEET_SCOPE:-1} != 0 ]]; then
   # A task cap of its own (#289): inherited, it was DefaultTasksMax, and on
@@ -73,7 +75,10 @@ before=$(fleet_panes | sort)
 # a replacement forward only where AJ was watching the window it replaces
 # (fresh, heph_move, relaunch-fresh) or nothing has moved since a cold recover.
 # No stdin for the launcher: a caller reading a list on it would lose the rest (#242).
-if ! out=$(cd ~ && KLEPSYDRA_CLAUDE="$cmd" KLEPSYDRA_TMUX_SOCKET="$FLEET_SOCK" KLEPSYDRA_BACKGROUND=1 bash "${FLEET_LAUNCHER:-$HOME/.claude/klepsydra-launch.sh}" new "$dir" </dev/null 2>&1 7>&- 8>&-); then
+# Nor this launch's own FLEET_* settings: a tmux server the launcher starts copies
+# its environment into every later pane, so Heph's FLEET_SETTINGS='' would start
+# each worker after him unmarked, on his account (#310 review 1).
+if ! out=$(cd ~ && env -u FLEET_SETTINGS -u FLEET_ACCOUNT -u FLEET_SUCCEEDS KLEPSYDRA_CLAUDE="$cmd" KLEPSYDRA_TMUX_SOCKET="$FLEET_SOCK" KLEPSYDRA_BACKGROUND=1 bash "${FLEET_LAUNCHER:-$HOME/.claude/klepsydra-launch.sh}" new "$dir" </dev/null 2>&1 7>&- 8>&-); then
   flog ERROR "launch failed: the launcher refused" name="$name" said="$out"
   echo "launch failed: $out" # logcheck: ignore[stderr-for-errors] # the result line
   exit 1
