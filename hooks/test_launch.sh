@@ -116,6 +116,42 @@ check "second: the new window comes forward" "$(t display -p -t =fleet: '#{windo
 t select-window -t =fleet:0
 KLEPSYDRA_BACKGROUND=1 bash "$launch" new "$work/repos" >/dev/null 2>&1
 check "#216: a fleet launch opens behind, the window in view keeps focus" "$(windows) $(t display -p -t =fleet: '#{window_index}')" "3 0"
+
+echo "new: Antigravity (#323)"
+mkdir -p "$work/bin"
+cat >"$work/bin/agy" <<'EOF'
+#!/usr/bin/env bash
+if [[ ${1:-} == models ]]; then
+  printf 'Fetching available models...\ngemini-3.8-flash-high\tGemini 3.8 Flash (High)\nbad;id\tEvil\nclaude-opus-4-6-thinking\tClaude Opus 4.6 (Thinking)\n'
+  exit 0
+fi
+exec sleep 600
+EOF
+chmod +x "$work/bin/agy"
+printf '# Global rules\nNo attribution lines.\n' >"$work/CLAUDE.md"
+export KLEPSYDRA_AGY="$work/bin/agy" KLEPSYDRA_RULES_SRC="$work/CLAUDE.md" KLEPSYDRA_AGY_RULES="$work/gemini/config/rules/claude-global.md"
+w0=$(windows)
+check "#323: models lists agy's as one line of JSON, dropping its fetching line and any id that is not one" \
+  "$(bash "$launch" models 2>&1)" '[{"id":"gemini-3.8-flash-high","label":"Gemini 3.8 Flash (High)"},{"id":"claude-opus-4-6-thinking","label":"Claude Opus 4.6 (Thinking)"}]'
+before=$(windows)
+out=$(bash "$launch" new "$work/repos" agy gemini-3.8-flash-high 2>&1); rc=$?
+check "#323: an agy session starts in a window of its own, said so" "$rc $(( $(windows) - before )) $out" "0 1 Started an Antigravity session (gemini-3.8-flash-high) in $work/repos."
+check "#323: on the model asked for" "$(t list-panes -a -F '#{pane_start_command}' | grep -c -- "$work/bin/agy --model gemini-3.8-flash-high")" "1"
+check "#323: AJ's global rules reach agy as an always-on rule made from the one source" \
+  "$(sed -n 2p "$KLEPSYDRA_AGY_RULES") $(grep -c '^No attribution lines.$' "$KLEPSYDRA_AGY_RULES")" "trigger: always_on 1"
+touch -d '2026-01-01' "$KLEPSYDRA_AGY_RULES"
+bash "$launch" new "$work/repos" agy gemini-3.8-flash-high >/dev/null 2>&1
+check "#323: unchanged rules are not written again" "$(date -r "$KLEPSYDRA_AGY_RULES" +%F)" "2026-01-01"
+before=$(windows)
+out=$(bash "$launch" new "$work/repos" agy 'x;touch /tmp/pwned' 2>&1); rc=$?
+check "#323: a model that is no id starts nothing" "$rc $(( $(windows) - before )) $out" "1 0 That is not an agy model id: x;touch /tmp/pwned"
+out=$(KLEPSYDRA_RULES_SRC="$work/no-rules.md" bash "$launch" new "$work/repos" agy gemini-3.8-flash-high 2>&1); rc=$?
+check "#323: with AJ's rules unreadable, no agy session starts" "$rc $(( $(windows) - before ))" "1 0"
+check "#323: a launch of anything else is refused" "$(bash "$launch" new "$work/repos" codex x >/dev/null 2>&1; echo $?) $(( $(windows) - before ))" "1 0"
+# The cases after count the fleet's windows: the agy ones this section opened go.
+t list-panes -a -F '#{window_id} #{pane_start_command}' | awk -v a="$work/bin/agy" 'index($0, a) { print $1 }' | xargs -r -n1 tmux -L "$sock" kill-window -t
+check "#323: and its windows are closed again" "$(windows)" "$w0"
+unset KLEPSYDRA_AGY KLEPSYDRA_RULES_SRC KLEPSYDRA_AGY_RULES
 # A fleet launch that starts the server (a cold recover) must not hand the flag
 # to the server's environment, or every later pane, the wall's included, opens behind.
 # Its own stub log: the tab it opens is not one of the fleet socket's tabs counted below.
@@ -493,7 +529,7 @@ t kill-pane -t "$p"
 
 out=$(bash "$launch" bogus 2>&1); rc=$?
 check "unknown command: exit 1" "$rc" "1"
-check "unknown command: says so" "$out" "usage: klepsydra-launch.sh new DIR | voices | jump|end|interrupt|wrapup SOCKET PANE PID START"
+check "unknown command: says so" "$out" "usage: klepsydra-launch.sh new DIR [agy MODEL] | models | voices | jump|end|interrupt|wrapup SOCKET PANE PID START"
 check "unknown command: no tab" "$(tabs)" "1"
 
 # #273: the tray's Voices change runs the installed fleet voices at once, with

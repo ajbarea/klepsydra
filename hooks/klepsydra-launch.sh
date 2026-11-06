@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
 # klepsydra's launcher, run by the overlay as
-#   wsl.exe -e bash -l .claude/klepsydra-launch.sh new DIR
+#   wsl.exe -e bash -l .claude/klepsydra-launch.sh new DIR [agy MODEL]
+#   wsl.exe -e bash -l .claude/klepsydra-launch.sh models
 #   wsl.exe -e bash .claude/klepsydra-launch.sh jump|end|interrupt|wrapup SOCKET PANE PID START
 # `new` starts claude in DIR as a window of tmux session "fleet" (socket
-# "klepsydra"); `jump` brings PANE's window to the front of its session, once
+# "klepsydra"), or with `agy MODEL` Antigravity's CLI on MODEL (#323), once
+# AJ's global rules are in agy's rules folder; `models` lists agy's models; `jump` brings PANE's window to the front of its session, once
 # PANE still hosts Claude process PID (START = /proc/PID/stat field 22).
 # `end` types /exit into that Claude Code, `wrapup` types /klepsydra-wrapup
 # and `interrupt` presses Esc there, on klepsydra's own tmux server only. `new` and `jump` open a Windows Terminal tab (window "fleet", titled TAB_TITLE) only when no
@@ -16,6 +18,13 @@ SESSION=fleet
 TAB_TITLE="klepsydra sessions" # also FLEET_TAB in src-tauri/src/launch.rs
 CONF=${KLEPSYDRA_TMUX_CONF:-$HOME/.claude/klepsydra-tmux.conf}
 CLAUDE=${KLEPSYDRA_CLAUDE:-claude}
+AGY=${KLEPSYDRA_AGY:-agy}
+# agy reads AGENTS.md or GEMINI.md, never CLAUDE.md (#323): AJ's global rules
+# reach it as an always-on rule made from the one source. Not ~/.gemini/GEMINI.md,
+# which the Antigravity IDE and Gemini CLI also write.
+RULES_SRC=${KLEPSYDRA_RULES_SRC:-$HOME/.claude/CLAUDE.md}
+RULES_DST=${KLEPSYDRA_AGY_RULES:-$HOME/.gemini/config/rules/claude-global.md}
+MODEL_RE='^[a-z0-9][a-z0-9.-]{0,63}$'
 WT=${KLEPSYDRA_WT:-wt.exe}
 UNDO=()
 LOCK=${XDG_RUNTIME_DIR:-/tmp}/klepsydra-launch-$UID.lock
@@ -103,8 +112,32 @@ open_tab() { # target tmux-socket-args...
   done
 }
 
-new() { # dir
-  local dir=$1
+# AJ's global rules, as agy reads an always-on rule, written only when they
+# changed; fails, starting nothing, when they cannot be put there.
+agy_rules() {
+  local tmp
+  [[ -r $RULES_SRC ]] || fail "AJ's global rules ($RULES_SRC) cannot be read, so agy would start without them."
+  mkdir -p -- "${RULES_DST%/*}" || fail "agy's rules folder (${RULES_DST%/*}) cannot be made."
+  tmp=$(mktemp "$RULES_DST.XXXXXX") || fail "agy's rules cannot be written beside $RULES_DST."
+  { printf -- '---\ntrigger: always_on\ndescription: "AJ'"'"'s global rules, made from %s by klepsydra; edit that file, not this one."\n---\n\n' "$RULES_SRC"
+    cat -- "$RULES_SRC"; } >"$tmp" || { rm -f -- "${tmp:?}"; fail "agy's rules cannot be written."; }
+  if cmp -s -- "$tmp" "$RULES_DST"; then rm -f -- "${tmp:?}"; else mv -f -- "$tmp" "$RULES_DST" || fail "agy's rules cannot be put in place."; fi
+}
+
+# agy's models as one line of JSON, [{"id", "label"}...], since the launcher
+# says one line (`agy models` prints a fetching line, then "ID<TAB>LABEL" lines).
+models() {
+  local out
+  need "$AGY" "agy (Antigravity CLI) was not found on PATH."
+  out=$(timeout 30 "$AGY" models 2>/dev/null) || fail "agy models did not answer."
+  out=$(awk -F'\t' -v re="$MODEL_RE" 'NF == 2 && $1 ~ re && $2 != "" { print $1 "\t" $2 }' <<<"$out")
+  [[ -n $out ]] || fail "agy listed no models."
+  need jq "jq is not installed in this distro."
+  jq -Rnc '[inputs | split("\t") | {id: .[0], label: .[1]}]' <<<"$out"
+}
+
+new() { # dir [agy model]
+  local dir=$1 tool=${2:-claude} model=${3:-} cmd=$CLAUDE what="a session"
   # shellcheck disable=SC2088 # a literal ~/ from the overlay
   case $dir in
     "~") dir=$HOME ;;
@@ -112,7 +145,14 @@ new() { # dir
   esac
   [[ -d $dir ]] || fail "The folder $dir does not exist."
   need tmux "tmux is not installed in this distro."
-  need "${CLAUDE%% *}" "claude was not found on PATH."
+  if [[ $tool == agy ]]; then
+    [[ $model =~ $MODEL_RE ]] || fail "That is not an agy model id: $model"
+    need "$AGY" "agy (Antigravity CLI) was not found on PATH."
+    agy_rules
+    cmd="$AGY --model $model" what="an Antigravity session ($model)"
+  else
+    need "${CLAUDE%% *}" "claude was not found on PATH."
+  fi
   take_lock
   local -a t=(-L "$SOCKET_NAME") conf=()
   [[ -r $CONF ]] && conf=(-f "$CONF")
@@ -128,7 +168,7 @@ new() { # dir
   # Read once: a server this launch starts copies its environment into every pane.
   unset KLEPSYDRA_BACKGROUND
   if (( exists )); then
-    win=$(tmux "${t[@]}" new-window "${behind[@]}" -P -F '#{window_id}' -t "$target:" -c "$dir" "$CLAUDE" {LOCKFD}>&- 2>/dev/null) ||
+    win=$(tmux "${t[@]}" new-window "${behind[@]}" -P -F '#{window_id}' -t "$target:" -c "$dir" "$cmd" {LOCKFD}>&- 2>/dev/null) ||
       fail "tmux could not open a window."
     UNDO=(tmux "${t[@]}" kill-window -t "$win")
   else
@@ -141,9 +181,9 @@ new() { # dir
     fi
     # A unit with no user manager to ask (a CI runner sets INVOCATION_ID too)
     # makes no scope: the server then starts as from a terminal.
-    if ! { (( ${#scope[@]} )) && "${scope[@]}" tmux "${t[@]}" "${conf[@]}" new-session -d -s "$SESSION" -c "$dir" "$CLAUDE" {LOCKFD}>&- 2>/dev/null; } &&
+    if ! { (( ${#scope[@]} )) && "${scope[@]}" tmux "${t[@]}" "${conf[@]}" new-session -d -s "$SESSION" -c "$dir" "$cmd" {LOCKFD}>&- 2>/dev/null; } &&
       ! tmux "${t[@]}" has-session -t "$target" 2>/dev/null; then
-      tmux "${t[@]}" "${conf[@]}" new-session -d -s "$SESSION" -c "$dir" "$CLAUDE" {LOCKFD}>&- 2>/dev/null ||
+      tmux "${t[@]}" "${conf[@]}" new-session -d -s "$SESSION" -c "$dir" "$cmd" {LOCKFD}>&- 2>/dev/null ||
         fail "tmux could not start the fleet session."
     fi
     UNDO=(tmux "${t[@]}" kill-session -t "$target")
@@ -156,9 +196,9 @@ new() { # dir
     open_tab "$target" -S "$path"
   fi
   if (( ATTACHED )); then
-    printf 'Started a session in %s.\n' "$dir"
+    printf 'Started %s in %s.\n' "$what" "$dir"
   else
-    printf 'Started a session in %s. The terminal tab has not attached yet.\n' "$dir"
+    printf 'Started %s in %s. The terminal tab has not attached yet.\n' "$what" "$dir"
   fi
 }
 
@@ -393,11 +433,14 @@ voices() {
 }
 
 case ${1:-} in
-  new) (( $# == 2 )) || fail "usage: klepsydra-launch.sh new DIR"; new "$2" ;;
+  new)
+    if (( $# == 4 )) && [[ $3 == agy ]]; then new "$2" agy "$4"
+    else (( $# == 2 )) || fail "usage: klepsydra-launch.sh new DIR [agy MODEL]"; new "$2"; fi ;;
+  models) (( $# == 1 )) || fail "usage: klepsydra-launch.sh models"; models ;;
   voices) (( $# == 1 )) || fail "usage: klepsydra-launch.sh voices"; voices ;;
   jump) (( $# == 5 )) || fail "usage: klepsydra-launch.sh jump SOCKET PANE PID START"; jump "$2" "$3" "$4" "$5" ;;
   end) (( $# == 5 )) || fail "usage: klepsydra-launch.sh end SOCKET PANE PID START"; end_session "$2" "$3" "$4" "$5" ;;
   wrapup) (( $# == 5 )) || fail "usage: klepsydra-launch.sh wrapup SOCKET PANE PID START"; wrapup "$2" "$3" "$4" "$5" ;;
   interrupt) (( $# == 5 )) || fail "usage: klepsydra-launch.sh interrupt SOCKET PANE PID START"; interrupt "$2" "$3" "$4" "$5" ;;
-  *) fail "usage: klepsydra-launch.sh new DIR | voices | jump|end|interrupt|wrapup SOCKET PANE PID START" ;;
+  *) fail "usage: klepsydra-launch.sh new DIR [agy MODEL] | models | voices | jump|end|interrupt|wrapup SOCKET PANE PID START" ;;
 esac

@@ -37,7 +37,7 @@
       <span id="wrapup-note" role="status"></span>
       <p id="link" role="status" hidden></p>
     </div>
-    <button type="button" id="new-session" class="primary">+ New session</button>
+    <span class="new-split" role="group" aria-label="New session"><button type="button" id="new-session" class="primary">+ New session</button><button type="button" id="new-kind" class="primary" popovertarget="new-menu" aria-label="Start another kind of session" title="Start another kind of session" hidden><span aria-hidden="true">▾</span></button></span>
     <span id="new-note" role="status"></span>
     <span id="split-note" role="status"></span>
     <span id="theme-note" role="status"></span>
@@ -225,6 +225,12 @@
   </template>
 
   <script type="module" src="fleet/wall.js"></script>
+  <section id="new-menu" popover aria-label="Start an Antigravity session">
+    <h2 class="new-menu-title">Antigravity</h2>
+    <label class="new-menu-model">Model <select id="agy-model"></select></label>
+    <p class="new-menu-hint">On Google's quota, not Claude's. The session starts in the launch folder.</p>
+    <button type="button" id="agy-start" class="primary">Start</button>
+  </section>
   <section id="ci" popover aria-label="CI runs">
     <h2 class="ci-title"></h2>
     <ul class="ci-runs"></ul>
