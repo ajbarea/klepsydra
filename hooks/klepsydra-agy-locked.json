@@ -1,0 +1,10 @@
+{
+  "toolPermission": "strict",
+  "allowNonWorkspaceAccess": false,
+  "enableTerminalSandbox": true,
+  "showFeedbackSurvey": false,
+  "permissions": {
+    "allow": ["read_file(*)", "read_url(*)"],
+    "deny": ["write_file(*)", "command(*)", "unsandboxed(*)", "execute_url(*)", "mcp(*)"]
+  }
+}

@@ -32,6 +32,8 @@ FLEET_HOOK_DIR=${FLEET_HOOK_DIR:-$HOME/.claude}
 HOOK_COPIES=(
   "hooks/klepsydra-fleet.sh klepsydra-fleet.sh"
   "hooks/klepsydra-launch.sh klepsydra-launch.sh"
+  "hooks/klepsydra-agy-locked.json klepsydra-agy-locked.json"
+  "hooks/klepsydra-engine-rules.md klepsydra-engine-rules.md"
   "hooks/klepsydra-tmux.conf klepsydra-tmux.conf"
   "hooks/klepsydra-pane-died.sh klepsydra-pane-died.sh"
   "hooks/klepsydra-wrapup.sh klepsydra-wrapup.sh"
