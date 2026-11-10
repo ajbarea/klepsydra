@@ -147,6 +147,8 @@ mkdir -p "$repo/src" && git -C "$repo" init -q . && {
   printf 'x\0 %s\n' "ghp_$(head -c 36 /dev/zero | tr '\0' C)" >"$repo/src/bin.dat"
   printf 'k = %s\n' "ghp_$(head -c 36 /dev/zero | tr '\0' D)" | iconv -f UTF-8 -t UTF-16LE >"$repo/src/u16.txt"
   printf '\0\1\2\3' >"$repo/src/blob.bin"; : >"$repo/src/empty.txt"
+  mkdir -p "$repo/vendor/plug"; echo '{}' >"$repo/vendor/plug/hooks.json"
+  { head -c 240000 /dev/zero | tr '\0' a; printf '\n'; printf 'k = %s' "ghp_$(head -c 36 /dev/zero | tr '\0' E)" | iconv -f UTF-8 -t UTF-16LE; } >"$repo/src/tail16.txt"
   echo p >"$repo/client_secret_123.json"; echo p >"$repo/prod.env"; echo p >"$repo/.PGPASS"; echo p >"$repo/Secrets.yaml"; echo p >"$repo/token.json"
   printf 'TOKEN = "%s"\n' "ghp_$(head -c 36 /dev/zero | tr '\0' B)" >"$repo/src/cfg.py"
   ln -s /etc/hostname "$repo/link-out"
@@ -234,6 +236,7 @@ check "snapshot: every engine-config path the filter lists is gone (each has a f
 check "snapshot: a file with a NUL byte that holds a token is scanned as text and dropped" "$(has "$files" 'src/bin\.dat')" "no"
 check "snapshot: a UTF-16 file holding a token and a binary blob are withheld; an empty file and source stay" \
   "$(has "$files" 'src/u16\.txt')$(has "$files" 'src/blob\.bin')$(has "$files" 'src/empty\.txt')$(has "$files" 'src/a\.py')" "nonoyesyes"
+check "snapshot: a text file whose UTF-16 tail (a NUL far from the first line) holds a token, and a nested hooks.json, are withheld" "$(has "$files" 'src/tail16')$(has "$files" 'vendor/plug/hooks.json')" "nono"
 check "snapshot: what the content scan withheld is logged and the engine is told" "$(( $(grep -c 'files withheld for looking like a credential' "$FLEET_LOG") >= 1 )) $(has "$(cat "$STUB_DIR/$(last)/agents")" 'withheld')" "1 yes"
 check "snapshot: secret directories and odd secret names never arrive (secrets/, credentials/, .env/, .envrc, id_ecdsa, service-account, tfvars)" \
   "$(has "$files" 'secrets/')$(has "$files" 'credentials/')$(has "$files" 'app/\.env/')$(has "$files" '\.envrc')$(has "$files" 'id_ecdsa')$(has "$files" 'service-account')$(has "$files" 'tfvars')" "nonononononono"
@@ -342,7 +345,7 @@ check "fleet delegate read prints it" "$(bash "$delegate" read "$id" 2>/dev/null
 : >"$work/sent.log"
 check "a follow-up goes in once the lane is idle" "$(bash "$delegate" msg "$id" 'second question' 2>/dev/null)" "sent"
 wait_sent 'turn=2'
-check "turn 2 is its own answer (the rule before a prompt did not cut it short)" "$(has "$(cat "$work/state/delegate/$id/answer.md")" 'to: second question')$(has "$(cat "$work/state/delegate/$id/answer-1.md")" 'to: Read TASK')" "yesyes"
+check "turn 2 is its own answer (the rule before a prompt did not cut it short)" "$(has "$(cat "$work/state/delegate/$id/answer.md")" 'second question')$(has "$(cat "$work/state/delegate/$id/answer-1.md")" 'to: Read TASK')" "yesyes"
 check "ls shows the lane" "$(bash "$delegate" ls 2>/dev/null | grep -c "^$id interactive agy")" "1"
 knob busy 20; bash "$delegate" msg "$id" 'slow one' >/dev/null 2>&1; knob busy ""
 check "a message to a lane whose turn is running (its watcher is collecting it) is refused, not queued blind" "$(bash "$delegate" msg "$id" 'again' 2>/dev/null)" "not-idle:turn-pending"
@@ -386,7 +389,7 @@ wait_sent 'turn=1'
 check "copilot turn end: told through fleet send; the answer is captured outside the model" "$(has "$(sent)" "$idc engine=copilot status=ok turn=1")$(has "$(cat "$work/state/delegate/$idc/answer.md")" 'STUB ANSWER copilot to: Read TASK.md')$(has "$(cat "$work/state/delegate/$idc/answer.md")" 'Fusion')" "yesyesno"
 : >"$work/sent.log"
 bash "$delegate" msg "$idc" 'second' >/dev/null 2>&1; wait_sent 'turn=2'
-check "copilot follow-up: turn 2" "$(has "$(cat "$work/state/delegate/$idc/answer.md")" 'to: second')" "yes"
+check "copilot follow-up: turn 2" "$(has "$(cat "$work/state/delegate/$idc/answer.md")" 'second')" "yes"
 bash "$delegate" stop "$idc" >/dev/null 2>&1
 rm -f "$STUB_DIR/trust"
 : >"$work/sent.log"; mode copilot limit
@@ -478,11 +481,11 @@ echo "review round 3: multibyte follow-up, launcher workspaces"
 : >"$work/sent.log"
 out=$(dl --interactive --engine agy --kind research --notify %5 --dir "$repo" "$work/task.md"); idu=$(field "$out" id)
 wait_sent 'turn=1'; sleep 2; : >"$work/sent.log"
-bash "$delegate" msg "$idu" "   $(printf 'a%.0s' $(seq 39))ééé tail" >/dev/null 2>&1
+bash "$delegate" msg "$idu" "   $(printf 'a%.0s' $(seq 29))ééé tail" >/dev/null 2>&1
 check "the prompt kept for anchoring is valid UTF-8 with no replacement character, however the cut fell" \
   "$(jq -r .prompt "$work/state/delegate/$idu/meta.json" | iconv -f UTF-8 -t UTF-8 >/dev/null 2>&1; echo $?) $(jq -r .prompt "$work/state/delegate/$idu/meta.json" | grep -c $'\xef\xbf\xbd')" "0 0"
 wait_sent 'turn=2'
-check "a follow-up with leading spaces whose 40th byte falls inside a UTF-8 character still ends its turn (the answer is saved, not a timeout)" "$(has "$(sent)" 'status=ok turn=2') $(has "$(cat "$work/state/delegate/$idu/answer.md")" 'STUB ANSWER')" "yes yes"
+check "a follow-up with leading spaces, tagged for its turn, whose 40th byte falls inside a UTF-8 character still ends its turn (the answer is saved, not a timeout)" "$(has "$(sent)" 'status=ok turn=2') $(has "$(cat "$work/state/delegate/$idu/answer.md")" 'STUB ANSWER')" "yes yes"
 sleep 3; bash "$delegate" stop "$idu" >/dev/null 2>&1
 
 echo "review round 4: fail-closed secret reads, the echo rule, the anchored limit read"
@@ -516,8 +519,25 @@ out=$(dl --interactive --engine agy --kind research --notify %5 --dir "$repo" "$
 wait_sent 'turn=1'; sleep 3; : >"$work/sent.log"
 bash "$delegate" msg "$idn" 'second prompt' >/dev/null 2>&1
 wait_sent 'turn=2'
-check "a second turn whose echo shows late is not answered with the first turn's text" "$(has "$(cat "$work/state/delegate/$idn/answer-2.md")" 'to: second prompt')$(has "$(cat "$work/state/delegate/$idn/answer-2.md")" 'to: Read TASK')" "yesno"
+check "a second turn whose echo shows late is not answered with the first turn's text" "$(has "$(cat "$work/state/delegate/$idn/answer-2.md")" 'second prompt')$(has "$(cat "$work/state/delegate/$idn/answer-2.md")" 'to: Read TASK')" "yesno"
 sleep 2; bash "$delegate" stop "$idn" >/dev/null 2>&1
+
+echo "review round 5: unique turn tags, short follow-ups, a timeout read"
+knobs_off; knob noecho 1.5; knob busy 0.3; : >"$work/sent.log"
+out=$(dl --interactive --engine agy --kind research --notify %5 --dir "$repo" "$work/task.md"); idt=$(field "$out" id)
+wait_sent 'turn=1'; sleep 3; : >"$work/sent.log"
+bash "$delegate" msg "$idt" $'\n\ncontinue' >/dev/null 2>&1; wait_sent 'turn=2'; sleep 3; : >"$work/sent.log"
+bash "$delegate" msg "$idt" 'continue' >/dev/null 2>&1; wait_sent 'turn=3'
+check "two follow-ups that open alike (one after a blank line) each get their own answer under a late echo: the tag makes them differ" \
+  "$(has "$(cat "$work/state/delegate/$idt/answer-2.md")" '\[fleet:2\] continue')$(has "$(cat "$work/state/delegate/$idt/answer-3.md")" '\[fleet:3\] continue')$(has "$(cat "$work/state/delegate/$idt/answer-3.md")" '\[fleet:2\]')" "yesyesno"
+check "a follow-up too long to echo whole is refused with the way out" "$(bash "$delegate" msg "$idt" "$(head -c 800 /dev/zero | tr '\0' z)" 2>&1 >/dev/null | grep -c 'task file')" "1"
+sleep 3; bash "$delegate" stop "$idt" >/dev/null 2>&1; knobs_off
+: >"$work/sent.log"; mode agy hang
+out=$(FLEET_DELEGATE_TURN_TIMEOUT=3 dl --interactive --engine agy --kind research --notify %5 --dir "$repo" "$work/task.md"); idh=$(field "$out" id)
+wait_sent 'status=timeout'
+check "after a timeout the best-effort reply is saved, named in the notice, and read says so instead of showing a stale answer" \
+  "$([[ -f $work/state/delegate/$idh/answer-unverified.md ]] && echo file) $(has "$(sent)" 'answer-unverified.md') $(has "$(bash "$delegate" read "$idh" 2>/dev/null)" 'timed out')" "file yes yes"
+bash "$delegate" stop "$idh" >/dev/null 2>&1; mode agy ok
 
 knobs_off
 echo "the shared policy"

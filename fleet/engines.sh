@@ -10,9 +10,11 @@
 #   eng_can MODE     print|interactive: whether the engine has that lane
 #   eng_argv MODE MODEL KIND SETTINGS PROMPT   fill ENG_ARGV (the locked command)
 #   eng_settings KIND DIR OUT                  write the engine's locked settings
-#   eng_classify RC TEXT    ok|limit|auth|empty|error for a finished print run
-#   eng_state SCREEN        busy|idle|limit|auth|unknown for an interactive pane
-#   eng_answer SCREEN       the last turn's answer text from an interactive pane
+#   eng_classify RC STDOUT STDERR   ok|limit|auth|empty|error for a finished print run
+#   eng_state SCREEN [PROMPT]       busy|idle|limit|auth|trust|unknown for an interactive pane
+#   eng_answer SCREEN [PROMPT]      the reply under the echo of PROMPT (the last echo without one);
+#                                   no echo of PROMPT on screen gives nothing, never another turn's
+#   eng_trust_key           the key that answers a trust dialog
 # The lock is the point: every lane starts with write tools, the shell, MCP and
 # the browser off, and a failure to build the lock starts nothing.
 

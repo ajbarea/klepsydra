@@ -48,7 +48,7 @@ SECRET_FILES=(-iname '.env' -o -iname '.env.*' -o -iname '*.env' -o -iname '.env
 SECRET_KEEP=(! -iname '.env.example' ! -iname '.env.sample' ! -iname '.env.template')
 # Engine configuration a folder trust would load (hooks run commands, MCP servers reach out):
 # never in the snapshot, or a trusted interactive lane could run what the repo ships.
-ENGINE_CONFIG=(.github/hooks .github/copilot .github/skills .github/agents .github/extensions .github/mcp.json .mcp.json .vscode/mcp.json .copilot .agents .agent .gemini .claude .codex .cursor)
+ENGINE_CONFIG=(.github/hooks .github/copilot .github/skills .github/agents .github/extensions .github/mcp.json .mcp.json .vscode/mcp.json .copilot .agents .agent _agents _agent .gemini .claude .codex .cursor mcp_config.json)
 
 # Text on its way to another vendor's service that looks like a credential (stdin).
 # sk- needs a digit among its first characters, so a kebab-case word (sk-learn-...) is no key.
@@ -115,23 +115,31 @@ snapshot() { # REPO TASK SNAP (sets SNAP_DROPPED)
   find "$snap" -type l -delete 2>/dev/null
   local c
   for c in "${ENGINE_CONFIG[@]}"; do rm -rf -- "${snap:?}/${c:?}"; done
+  # agy reads hooks, plugin and MCP lists from plugin folders too: those files by name, wherever they sit.
+  find "$snap" -type f \( -iname hooks.json -o -iname plugins.json -o -iname skills.json -o -iname mcp_config.json \) -delete 2>/dev/null
   # Whole directories too (secrets/, credentials/, .env/): pruned, not walked, then checked.
   find "$snap" -mindepth 1 \( "${SECRET_FILES[@]}" \) "${SECRET_KEEP[@]}" -prune -exec rm -rf -- {} + || { err "the secret filter failed"; return 1; }
   [[ -z $(find "$snap" -mindepth 1 \( "${SECRET_FILES[@]}" \) "${SECRET_KEEP[@]}" -print -quit) ]] || { err "the secret filter left a file behind"; return 1; }
-  # Then by content: a file that holds what looks like a credential does not go either.
-  local list=$snap.dropped dropped=0 rc
+  # Files with a NUL byte anywhere (UTF-16, compiled, archives) hold what a text scan cannot see and no
+  # text engine reads them: withheld first, grep -l stopping at the first NUL, so a big binary is not read whole.
+  local list=$snap.dropped dropped=0 rc nul
+  LC_ALL=C grep -rlaZP --exclude-dir=.git '\x00' "$snap" >"$list.bin" 2>/dev/null
+  rc=$?
+  (( rc <= 1 )) || { rm -f -- "${list:?}" "${list:?}.bin"; err "the binary scan failed"; return 1; }
+  nul=$(tr -cd '\0' <"$list.bin" | wc -c)
+  xargs -0 -r rm -f -- <"$list.bin"
+  rm -f -- "${list:?}.bin"
+  # Then by content: a text file that holds what looks like a credential does not go either.
   grep -rlaZE --exclude-dir=.git -e "$SECRET_RE" "$snap" >"$list" 2>/dev/null
   rc=$?
   (( rc <= 1 )) || { rm -f -- "${list:?}"; err "the content scan failed"; return 1; }
   dropped=$(tr -cd '\0' <"$list" | wc -c)
   xargs -0 -r rm -f -- <"$list"
+  dropped=$(( dropped + nul ))
   if (( dropped )); then
     flog INFO "snapshot: files withheld for looking like a credential" count="$dropped" files="$(tr '\0' ' ' <"$list" | sed "s|$snap/||g" | cut -c1-300)"
     SNAP_DROPPED=$dropped
   fi
-  # Binary files hold credentials the text scan cannot see (UTF-16, compiled) and no text engine reads them.
-  # shellcheck disable=SC2016 # the loop body is sh -c's, expanded there
-  grep -rILZ --exclude-dir=.git '' "$snap" 2>/dev/null | xargs -0 -r sh -c 'for f; do [ -s "$f" ] && rm -f -- "$f"; done' _
   rm -f -- "${list:?}"
   mb=$(du -sm -- "$snap" | cut -f1)
   (( mb <= SNAP_MAX_MB )) || { err "the snapshot of $top is ${mb} MB, over the ${SNAP_MAX_MB} MB limit"; return 1; }
@@ -404,7 +412,9 @@ cmd_msg() { # ID TEXT
   valid_id "$id" || die "no lane $id"
   if [[ ${1:-} == - && $# -eq 1 ]]; then text=$(cat); else text="$*"; fi
   [[ -n ${text//[[:space:]]/} ]] || die "nothing to send"
-  (( ${#text} <= TASK_MAX )) || die "the message is over $TASK_MAX bytes"
+  # One short line: both engines fold a long or multi-line paste into a placeholder, and the turn end is read from the echo.
+  text=$(tr -s '[:space:]' ' ' <<<"$text" | sed 's/^ //; s/ $//')
+  (( ${#text} <= ${FLEET_DELEGATE_MSG_MAX:-700} )) || die "the message is over ${FLEET_DELEGATE_MSG_MAX:-700} bytes: its echo would fold into a paste marker and the turn could not be read; put long text in a task file and start a lane on it"
   if looks_secret <<<"$text"; then die "the message holds what looks like a secret; nothing was sent"; fi
   # Two follow-ups at once would start two watchers: one holds the lane's lock (the watcher it starts keeps it until it ends).
   local lfd
@@ -415,15 +425,20 @@ cmd_msg() { # ID TEXT
   # The watcher is still collecting the last turn (its poll has not come round): a second
   # one would overwrite that answer and notify twice. Wait for its notice, then send.
   if watcher_pid "$id" >/dev/null; then echo "not-idle:turn-pending"; return 1; fi
+  # A tag unique to this turn leads the message: two follow-ups that open alike, or a blank first line, cannot be told apart by their text.
+  text="[fleet:$(( $(meta_get "$id" turn) + 1 ))] $text"
   got=$(deliver "$engine" "$pane" "$text") || { echo "$got"; return 1; }
-  meta_set "$id" status=working prompt="$(head -n1 <<<"$text" | sed 's/^[[:space:]]*//' | head -c 40 | iconv -f UTF-8 -t UTF-8 -c 2>/dev/null)"
+  meta_set "$id" status=working prompt="$(head -c 40 <<<"$text" | iconv -f UTF-8 -t UTF-8 -c 2>/dev/null)"
   start_watcher "$id"
   echo sent
 }
 
 cmd_read() { # ID
   valid_id "$1" || die "no lane $1"
-  if [[ -f $DEL_ROOT/$1/answer.md ]]; then cat -- "$DEL_ROOT/$1/answer.md"; else echo "no answer yet ($(meta_get "$1" status))"; return 1; fi
+  if [[ $(meta_get "$1" status) == timeout && -f $DEL_ROOT/$1/answer-unverified.md ]]; then
+    echo "[the last turn timed out: its echo never matched. The earlier answer is $DEL_ROOT/$1/answer.md; this is the best-effort reply on screen]"
+    cat -- "$DEL_ROOT/$1/answer-unverified.md"
+  elif [[ -f $DEL_ROOT/$1/answer.md ]]; then cat -- "$DEL_ROOT/$1/answer.md"; else echo "no answer yet ($(meta_get "$1" status))"; return 1; fi
 }
 
 cmd_stop() { # ID

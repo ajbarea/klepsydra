@@ -165,8 +165,19 @@ lb=$(windows)
 for f in hooks plugins skills; do
   mkdir -p "$work/ships-$f/.agents"; echo '{}' >"$work/ships-$f/.agents/$f.json"
   out=$(bash "$launch" new "$work/ships-$f" agy gemini-3.8-flash-high 2>&1); rc=$?
-  check "#323 lock: a folder that ships .agents/$f.json is no locked agy workspace (its trust dialog is the only gate)" "$rc $(( $(windows) - lb )) $(grep -c "ships .agents/$f.json" <<<"$out")" "1 0 1"
+  check "#323 lock: a folder that ships .agents/$f.json is no locked agy workspace (its trust dialog is the only gate)" "$rc $(( $(windows) - lb )) $(grep -c "ships agy workspace configuration" <<<"$out")" "1 0 1"
 done
+git init -q "$work/anc" && mkdir -p "$work/anc/.agents" "$work/anc/sub" && echo '{}' >"$work/anc/.agents/hooks.json"
+out=$(bash "$launch" new "$work/anc/sub" agy gemini-3.8-flash-high 2>&1); rc=$?
+check "#323 lock: a folder whose repo root ships .agents is refused (agy walks up to it)" "$rc $(( $(windows) - lb ))" "1 0"
+for nm in _agents _agent .agent; do
+  mkdir -p "$work/nm$nm/$nm"
+  out=$(bash "$launch" new "$work/nm$nm" agy gemini-3.8-flash-high 2>&1); rc=$?
+  check "#323 lock: $nm is refused too (agy loads workspace configuration from all four folder names)" "$rc $(( $(windows) - lb ))" "1 0"
+done
+mkdir -p "$work/plugfolder/p" && echo '{}' >"$work/plugfolder/p/hooks.json"
+out=$(bash "$launch" new "$work/plugfolder" agy gemini-3.8-flash-high 2>&1); rc=$?
+check "#323 lock: a plugin folder's own hooks.json under the workspace is refused" "$rc $(( $(windows) - lb ))" "1 0"
 mkdir -p "$work/winmnt/c/proj"
 out=$(KLEPSYDRA_WINDOWS_MOUNT="$work/winmnt" bash "$launch" new "$work/winmnt/c/proj" agy gemini-3.8-flash-high 2>&1); rc=$?
 check "#323 lock: a folder on the Windows side is no agy workspace (its user folders hold credentials)" "$rc $(( $(windows) - lb )) $(grep -c 'Windows side' <<<"$out")" "1 0 1"

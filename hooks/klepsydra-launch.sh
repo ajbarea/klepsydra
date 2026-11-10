@@ -178,10 +178,21 @@ new() { # dir [agy model]
     [[ $real != "$WINMNT" && $real != "$WINMNT"/* ]] || fail "agy is not started in $dir: the Windows side ($WINMNT) is no workspace, its user folders hold credentials. Pick a project folder in WSL."
     # A folder that ships agy hooks, plugins or skills runs commands outside the deny rules
     # once trusted (the trust dialog is the only gate): not for a locked session.
-    local f
-    for f in hooks plugins skills; do
-      [[ ! -e $real/.agents/$f.json ]] || fail "agy is not started in $dir: it ships .agents/$f.json, which runs outside the lock once the folder is trusted."
+    # agy reads these from the folder and every folder above it up to the repo root, from four
+    # folder names, and from plugin folders and MCP lists beside them.
+    local d=$real top f
+    top=$(git -C "$real" rev-parse --show-toplevel 2>/dev/null) || top=$real
+    while :; do
+      for f in .agents .agent _agents _agent; do
+        [[ ! -e $d/$f ]] || fail "agy is not started in $dir: $d/$f ships agy workspace configuration (hooks, plugins, skills, MCP), which runs outside the lock once the folder is trusted."
+      done
+      [[ $d != "$top" && $d != / ]] || break
+      d=${d%/*}
+      [[ -n $d ]] || d=/
     done
+    if [[ -n $(find "$real" -maxdepth 3 \( -name hooks.json -o -name plugins.json -o -name skills.json -o -name mcp_config.json \) -not -path '*/node_modules/*' -not -path '*/.git/*' -print -quit 2>/dev/null) ]]; then
+      fail "agy is not started in $dir: it holds a hooks, plugins, skills or MCP list agy would load, which runs outside the lock once the folder is trusted."
+    fi
     need "$AGY" "agy (Antigravity CLI) was not found on PATH."
     agy_rules
     local settings
