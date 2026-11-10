@@ -68,12 +68,12 @@ and a lock that cannot be built starts nothing. The two entry points differ: a
 `fleet delegate` lane runs in a read-only snapshot with a scope and a timeout; a
 `+ New session` agy window is a person's own session in a live folder, so it has the
 deny rules and `--sandbox` only, and the lock policy names no trusted workspace, so
-agy asks before trusting a folder (a repo's `.agents/hooks.json` runs commands outside
-the deny rules once its folder is trusted; the delegate snapshot strips it).
+agy's interactive window asks before trusting a folder, and its hooks do not run before that answer (a headless `agy -p` runs a folder's `.agents/hooks.json` with no
+trust question, outside the deny rules, as tested). Because trust is the only gate, the launcher also refuses a folder that ships `.agents/hooks.json`, `plugins.json` or `skills.json`, the Windows side (`/mnt`), the home folder and any folder holding it. The delegate snapshot strips `.agents`.
 
 | Engine | Lock |
 |---|---|
-| agy | `--settings FILE` (the policy overrides the user's `~/.gemini/antigravity-cli/settings.json` key by key; keys it does not set, such as `model`, still come from there, and nothing is rewritten), `--sandbox`, `toolPermission: request-review` (headless, anything not allowed is auto-denied; a denial ends the print run), `allowNonWorkspaceAccess: false`, deny `write_file(*)`, `command(*)`, `unsandboxed(*)`, `execute_url(*)`, `mcp(*)` and `read_url(*)` (a research task alone gets URL reads back, so `+ New session` has no outbound channel); a `fleet delegate` lane's settings add its snapshot as the one trusted workspace; the launcher refuses the whole home folder and `/` as a workspace |
+| agy | `--settings FILE` (the policy overrides the user's `~/.gemini/antigravity-cli/settings.json` key by key; keys it does not set, such as `model`, still come from there, and nothing is rewritten), `--sandbox`, `toolPermission: request-review` (headless, anything not allowed is auto-denied; a denial ends the print run), `allowNonWorkspaceAccess: false`, deny `write_file(*)`, `command(*)`, `execute_url(*)`, `mcp(*)` and `read_url(*)` (a research task alone gets URL reads back, so `+ New session` has no outbound channel); a `fleet delegate` lane's settings add its snapshot as the one trusted workspace; the launcher refuses the whole home folder and `/` as a workspace |
 | Copilot | `--available-tools view,grep,glob`, `--deny-tool=write`, `--deny-tool=shell`, `--disable-builtin-mcps`, `--disallow-temp-dir` (else it reads every session's scratch files in /tmp), `--no-ask-user`; `--allow-all-tools` only lets a headless run start, the tool list and denies do the locking |
 | both | the engine's folder is a read-only snapshot (see below); a memory- and task-capped systemd scope, for the interactive window too; a timeout; the fleet's memory floor |
 
@@ -89,7 +89,7 @@ Facts found by attack (agy 1.5.3, Copilot 1.0.105; re-check on a CLI upgrade):
 
 `fleet delegate` copies the repo's committed files (`git archive HEAD`) into a
 read-only folder, removes anything secret-looking (`.env*` except `.env.example`
-and `.env.sample`, `.envrc`, keys, `id_*`, `.netrc`, `credentials*`, `secrets*`, `*.tfvars`, service-account files; a matching directory goes whole, and the filter fails closed if anything matching is left), removes every symlink (a read tool would follow one out), drops any file whose content looks like a credential (the same patterns that refuse a task file: AWS, GitHub, GitLab, Slack, Google, Hugging Face, npm, JWT, private-key blocks), matches names without regard to case, removes the repo's own engine configuration (`.github/hooks`, skills, agents, MCP files, `.copilot`, `.gemini`, `.agents`: Copilot's folder trust loads hooks, which run commands outside the tool lock), and adds
+and `.env.sample`, `.envrc`, keys, `id_*`, `.netrc`, `credentials*`, `secrets*`, `*.tfvars`, service-account files; a matching directory goes whole, and the filter fails closed if anything matching is left), removes every symlink (a read tool would follow one out), drops binary files (NUL bytes: UTF-16, compiled; no text engine reads them) and any text file whose content looks like a credential (the same patterns that refuse a task file: AWS, GitHub, GitLab, Slack, Google, Hugging Face, npm, JWT, private-key blocks), matches names without regard to case, removes the repo's own engine configuration (`.github/hooks`, skills, agents, MCP files, `.copilot`, `.gemini`, `.agents`: Copilot's folder trust loads hooks, which run commands outside the tool lock), and adds
 `TASK.md` (the task) and `AGENTS.md` (the repo's own, then the helper rules).
 The prompt is one fixed line pointing at `TASK.md`, so the task is not in `ps`.
 Uncommitted work is not visible: put a diff in the task file when the engine
@@ -116,7 +116,7 @@ trust its own folder; a headless run that hits an un-allowed tool prints
 
 ## Live attack results
 
-`fleet/attack_live.sh`, run 2026-11-09 against agy 1.5.3 and Copilot 1.0.105. Each lane is asked to create a file, run `git commit --allow-empty` and `touch`, in a writable throwaway git folder, so only the lock stands in the way. The control runs the same ask with the lock off.
+`fleet/attack_live.sh`, run 2026-11-09 against agy 1.5.3 and 1.5.4 and Copilot 1.0.105. Each lane is asked to create a file, run `git commit --allow-empty` and `touch`, in a writable throwaway git folder, so only the lock stands in the way. The control runs the same ask with the lock off.
 
 | Lane | Locked | Control (lock off) |
 |---|---|---|

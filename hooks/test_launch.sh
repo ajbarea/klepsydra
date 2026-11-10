@@ -162,6 +162,14 @@ lb=$(windows)
 out=$(KLEPSYDRA_AGY_LOCK="$work/no-lock.json" bash "$launch" new "$work/repos" agy gemini-3.8-flash-high 2>&1); rc=$?
 check "#323 lock: with the lock policy unreadable, no agy session starts (never an unlocked one)" "$rc $(( $(windows) - lb ))" "1 0"
 lb=$(windows)
+for f in hooks plugins skills; do
+  mkdir -p "$work/ships-$f/.agents"; echo '{}' >"$work/ships-$f/.agents/$f.json"
+  out=$(bash "$launch" new "$work/ships-$f" agy gemini-3.8-flash-high 2>&1); rc=$?
+  check "#323 lock: a folder that ships .agents/$f.json is no locked agy workspace (its trust dialog is the only gate)" "$rc $(( $(windows) - lb )) $(grep -c "ships .agents/$f.json" <<<"$out")" "1 0 1"
+done
+mkdir -p "$work/winmnt/c/proj"
+out=$(KLEPSYDRA_WINDOWS_MOUNT="$work/winmnt" bash "$launch" new "$work/winmnt/c/proj" agy gemini-3.8-flash-high 2>&1); rc=$?
+check "#323 lock: a folder on the Windows side is no agy workspace (its user folders hold credentials)" "$rc $(( $(windows) - lb )) $(grep -c 'Windows side' <<<"$out")" "1 0 1"
 out=$(bash "$launch" new / agy gemini-3.8-flash-high 2>&1); rc=$?
 check "#323 lock: / is no agy workspace" "$rc $(( $(windows) - lb ))" "1 0"
 out=$(bash "$launch" new "${HOME%/*}" agy gemini-3.8-flash-high 2>&1); rc=$?

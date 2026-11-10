@@ -139,15 +139,8 @@ eng_trust_key() { echo Enter; } # ENGINE
 # a rule before every prompt too, so a rule ends only the text after the last echo.
 # index() and no multibyte brackets: mawk reads a UTF-8 range or `+` byte by byte.
 eng_answer() { # ENGINE SCREEN [PROMPT: the text sent; only its echo starts the answer]
-  local out
-  out=$(eng_answer_raw "$1" "$2" "${3:-}")
-  # An echo that differs from the prompt as sent (trimmed, wrapped, a collapsed paste) matches
-  # nothing: take the last echo instead of no answer.
-  if [[ -z $out && -n ${3:-} ]]; then out=$(eng_answer_raw "$1" "$2" ""); fi
-  printf '%s' "$out"
-  [[ -z $out ]] || echo
-}
-eng_answer_raw() { # ENGINE SCREEN PROMPT
+  # With a PROMPT only an echo of it starts the answer: a screen that does not show it (the engine
+  # has not drawn it yet, or drew it differently) gives no answer, never another turn's.
   if [[ $1 == copilot ]]; then eng_answer_copilot "$2" "${3:-}"; return; fi
   P=${3:-} awk '
     BEGIN { p = substr(ENVIRON["P"], 1, 40) }

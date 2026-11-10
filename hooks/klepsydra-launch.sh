@@ -27,9 +27,10 @@ RULES_DST=${KLEPSYDRA_AGY_RULES:-$HOME/.gemini/config/rules/klepsydra-fleet.md}
 RULES_MAX=24000 # agy's limit for one rules file, in bytes
 # Every agy session the fleet starts is locked: no file writes, no shell, no
 # MCP, no browser, in a terminal sandbox. The policy is one file the launcher
-# and `fleet delegate` share; the settings go in with --settings, so AJ's own
-# ~/.gemini/antigravity-cli/settings.json is never read for these or rewritten.
+# and `fleet delegate` share; it goes in with --settings, which overrides AJ's own
+# ~/.gemini/antigravity-cli/settings.json key by key (that file is never rewritten).
 AGY_LOCK=${KLEPSYDRA_AGY_LOCK:-$HOME/.claude/klepsydra-agy-locked.json}
+WINMNT=${KLEPSYDRA_WINDOWS_MOUNT:-/mnt} # the Windows drives under WSL
 MODEL_RE='^[a-z0-9][a-z0-9.-]{0,63}$'
 WT=${KLEPSYDRA_WT:-wt.exe}
 UNDO=()
@@ -174,7 +175,13 @@ new() { # dir [agy model]
     real=$(cd -- "$dir" && pwd -P) home=$(cd -- "$HOME" && pwd -P)
     real=${real%/} # "/" becomes "", whose pattern /* holds every path
     case $home/ in "$real"/*) fail "agy is not started in $dir: its workspace would hold the whole home folder. Pick a project folder." ;; esac
-    [[ $real != /mnt/? ]] || fail "agy is not started in $dir: a whole Windows drive is no workspace. Pick a project folder."
+    [[ $real != "$WINMNT" && $real != "$WINMNT"/* ]] || fail "agy is not started in $dir: the Windows side ($WINMNT) is no workspace, its user folders hold credentials. Pick a project folder in WSL."
+    # A folder that ships agy hooks, plugins or skills runs commands outside the deny rules
+    # once trusted (the trust dialog is the only gate): not for a locked session.
+    local f
+    for f in hooks plugins skills; do
+      [[ ! -e $real/.agents/$f.json ]] || fail "agy is not started in $dir: it ships .agents/$f.json, which runs outside the lock once the folder is trusted."
+    done
     need "$AGY" "agy (Antigravity CLI) was not found on PATH."
     agy_rules
     local settings

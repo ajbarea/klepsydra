@@ -98,13 +98,16 @@ draw 0
 while IFS= read -r line; do
   [[ -z $line ]] && continue
   case $mode in die) exit 0 ;; esac
+  noecho=$(cat "$STUB_DIR/knob-noecho" 2>/dev/null); late=$(cat "$STUB_DIR/knob-late" 2>/dev/null); busy=$(cat "$STUB_DIR/knob-busy" 2>/dev/null)
+  if [[ -n $noecho ]]; then draw 0; sleep "$noecho"; fi
   if [[ $name == copilot ]]; then hist+=(" ❯ $line"); else hist+=("$rule" "> $line"); fi
-  if [[ -n ${STUB_LATE:-} ]]; then draw 0; sleep "$STUB_LATE"; fi
+  if [[ -n $late ]]; then draw 0; sleep "$late"; fi
   draw 1
-  sleep "${STUB_BUSY:-1.5}"
+  sleep "${busy:-1.5}"
   case $mode in
     hang) sleep 60 ;;
     limit) hist+=("  You have exhausted your quota for today.") ;;
+    quote429) hist+=("  $(head -c 500 /dev/zero | tr '\0' x)" "> a quoted line" "  429 rate limit") ;;
     *) if [[ $name == copilot ]]; then hist+=(" ● Copilot Fusion selected a model" " ● STUB ANSWER $name to: $line")
        else hist+=("12.0k in | 750 out | 667 thinking" "● Read(TASK.md) (ctrl+o to expand)" "  STUB ANSWER $name to: $line"); fi ;;
   esac
@@ -122,6 +125,8 @@ EOF
 chmod +x "$work/bin/fsend"
 sent() { cat "$work/sent.log" 2>/dev/null; }
 mode() { printf '%s' "$2" >"$STUB_DIR/mode-$1"; } # ENGINE MODE
+knobs_off() { rm -f -- "${STUB_DIR:?}"/knob-*; }
+knob() { printf '%s' "$2" >"$STUB_DIR/knob-$1"; } # busy|late|noecho SECONDS (empty clears): a running stub reads it each turn
 last() { find "$STUB_DIR" -maxdepth 1 -name 'run-*' -printf '%f\n' | sort -t- -k2 -n | tail -1; }
 runs() { find "$STUB_DIR" -maxdepth 1 -name 'run-*' | wc -l; }
 lastargs() { tr '\n' ' ' <"$STUB_DIR/$(last)/argv"; }
@@ -140,6 +145,8 @@ mkdir -p "$repo/src" && git -C "$repo" init -q . && {
     if [[ $c == *.json ]]; then mkdir -p "$repo/${c%/*}"; echo '{}' >"$repo/$c"; else mkdir -p "$repo/$c"; echo x >"$repo/$c/x"; fi
   done
   printf 'x\0 %s\n' "ghp_$(head -c 36 /dev/zero | tr '\0' C)" >"$repo/src/bin.dat"
+  printf 'k = %s\n' "ghp_$(head -c 36 /dev/zero | tr '\0' D)" | iconv -f UTF-8 -t UTF-16LE >"$repo/src/u16.txt"
+  printf '\0\1\2\3' >"$repo/src/blob.bin"; : >"$repo/src/empty.txt"
   echo p >"$repo/client_secret_123.json"; echo p >"$repo/prod.env"; echo p >"$repo/.PGPASS"; echo p >"$repo/Secrets.yaml"; echo p >"$repo/token.json"
   printf 'TOKEN = "%s"\n' "ghp_$(head -c 36 /dev/zero | tr '\0' B)" >"$repo/src/cfg.py"
   ln -s /etc/hostname "$repo/link-out"
@@ -177,7 +184,7 @@ check "agy: a long answer that mentions a rate limit is an answer (idle)" "$(eng
 quotedlim=$(printf '────\n> Read TASK.md in the working folder and go\n  %s\n> a quoted line\n  429 rate limit\n────\n>\n────\n? for shortcuts' "$(head -c 500 /dev/zero | tr '\0' x)")
 check "agy: a long answer ending in a quoted line and a 429 is an answer when the sent prompt is known (idle)" "$(eng_state agy "$quotedlim" 'Read TASK.md in the working folder')" "idle"
 check "copilot's answer, anchored to the sent prompt, keeps a quoted echo-looking line" "$(eng_answer copilot $' ❯ Read TASK\n ● intro\n ❯ a quote\n ● more\n /w [⎇ main%]\n────\n❯ \n────\n ← open sidebar' 'Read TASK')" $'intro\n ❯ a quote\nmore'
-check "an echo that matches no prompt falls back to the last echo, not an empty answer" "$(eng_answer agy $'────\n> trimmed echo\n  the answer\n────\n>\n────\n? for shortcuts' 'Something else entirely')" "  the answer"
+check "an echo that matches no prompt gives no answer (never another turn's)" "$(eng_answer agy $'────\n> trimmed echo\n  the answer\n────\n>\n────\n? for shortcuts' 'Something else entirely')" ""
 check "agy: a running turn is busy even with a limit phrase in view" "$(eng_state agy $'────\n> ask\n  see the quota docs\n────\n>\n────\nesc to cancel')" "busy"
 check "an exit-0 answer over 400 bytes that mentions a 429 is an answer" "$(eng_classify 0 "429 $(head -c 450 /dev/zero | tr '\0' x)" '')" "ok"
 check "agy: an old quota word far above the box is not" "$(eng_state agy "$(printf 'quota\n%.0s' 1; printf 'x\n%.0s' $(seq 20); echo "$idle")")" "idle"
@@ -225,6 +232,8 @@ check "snapshot: a repo's own engine config (hooks, skills, MCP, .copilot, .gemi
   "$(has "$files" 'github/hooks')$(has "$files" 'github/skills')$(has "$files" '\.mcp\.json')$(has "$files" '\.copilot/')$(has "$files" '\.gemini/')$(has "$files" '\.agents/')" "nononononono"
 check "snapshot: every engine-config path the filter lists is gone (each has a fixture)" "$(for c in "${ENGINE_CONFIG[@]}"; do has "$files" "$c"; done | tr -d '\n')" "$(for c in "${ENGINE_CONFIG[@]}"; do printf no; done)"
 check "snapshot: a file with a NUL byte that holds a token is scanned as text and dropped" "$(has "$files" 'src/bin\.dat')" "no"
+check "snapshot: a UTF-16 file holding a token and a binary blob are withheld; an empty file and source stay" \
+  "$(has "$files" 'src/u16\.txt')$(has "$files" 'src/blob\.bin')$(has "$files" 'src/empty\.txt')$(has "$files" 'src/a\.py')" "nonoyesyes"
 check "snapshot: what the content scan withheld is logged and the engine is told" "$(( $(grep -c 'files withheld for looking like a credential' "$FLEET_LOG") >= 1 )) $(has "$(cat "$STUB_DIR/$(last)/agents")" 'withheld')" "1 yes"
 check "snapshot: secret directories and odd secret names never arrive (secrets/, credentials/, .env/, .envrc, id_ecdsa, service-account, tfvars)" \
   "$(has "$files" 'secrets/')$(has "$files" 'credentials/')$(has "$files" 'app/\.env/')$(has "$files" '\.envrc')$(has "$files" 'id_ecdsa')$(has "$files" 'service-account')$(has "$files" 'tfvars')" "nonononononono"
@@ -335,7 +344,7 @@ check "a follow-up goes in once the lane is idle" "$(bash "$delegate" msg "$id" 
 wait_sent 'turn=2'
 check "turn 2 is its own answer (the rule before a prompt did not cut it short)" "$(has "$(cat "$work/state/delegate/$id/answer.md")" 'to: second question')$(has "$(cat "$work/state/delegate/$id/answer-1.md")" 'to: Read TASK')" "yesyes"
 check "ls shows the lane" "$(bash "$delegate" ls 2>/dev/null | grep -c "^$id interactive agy")" "1"
-STUB_BUSY=20 bash "$delegate" msg "$id" 'slow one' >/dev/null 2>&1
+knob busy 20; bash "$delegate" msg "$id" 'slow one' >/dev/null 2>&1; knob busy ""
 check "a message to a lane whose turn is running (its watcher is collecting it) is refused, not queued blind" "$(bash "$delegate" msg "$id" 'again' 2>/dev/null)" "not-idle:turn-pending"
 check "stop: window, watcher and snapshot go; the answer stays" \
   "$(bash "$delegate" stop "$id" 2>/dev/null) $(tmux -L "$sock" list-windows -t =engines -F '#{window_name}' 2>/dev/null | grep -c "$id") $(find "$work/state/delegate/$id" -maxdepth 1 -name work | wc -l) $([[ -f $work/state/delegate/$id/answer.md ]] && echo kept)" "stopped 0 0 kept"
@@ -389,8 +398,9 @@ mode copilot ok
 
 echo "a reply faster than the watcher's first poll"
 : >"$work/sent.log"
-out=$(STUB_BUSY=0.05 FLEET_DELEGATE_POLL=2 dl --interactive --engine agy --kind research --notify %5 --dir "$repo" "$work/task.md"); idf=$(field "$out" id)
-wait_sent 'turn=1'
+knobs_off; knob busy 0.05
+out=$(FLEET_DELEGATE_POLL=2 dl --interactive --engine agy --kind research --notify %5 --dir "$repo" "$work/task.md"); idf=$(field "$out" id)
+wait_sent 'turn=1'; knob busy ""
 check "a turn that ended before the first poll is still a turn end, not a timeout" "$(has "$(sent)" "$idf engine=agy status=ok turn=1")" "yes"
 bash "$delegate" stop "$idf" >/dev/null 2>&1
 check "no window is left on the server" "$(tmux -L "$sock" list-windows -a 2>/dev/null | wc -l)" "0"
@@ -418,7 +428,8 @@ check "stop does not kill a process that merely holds a stale watcher pid" "$(ki
 kill "$victim" 2>/dev/null; wait "$victim" 2>/dev/null
 # F10: a follow-up sent before the watcher's poll is refused, not a second watcher
 : >"$work/sent.log"
-out=$(STUB_BUSY=0.3 FLEET_DELEGATE_POLL=4 dl --interactive --engine agy --kind research --notify %5 --dir "$repo" "$work/task.md"); idr=$(field "$out" id)
+knobs_off; knob busy 0.3
+out=$(FLEET_DELEGATE_POLL=4 dl --interactive --engine agy --kind research --notify %5 --dir "$repo" "$work/task.md"); idr=$(field "$out" id)
 sleep 1.5
 check "a follow-up while the watcher still holds the last turn is refused" "$(bash "$delegate" msg "$idr" 'too early' 2>/dev/null)" "not-idle:turn-pending"
 wait_sent 'turn=1'; sleep 1
@@ -438,7 +449,8 @@ bash "$delegate" stop "$idm" >/dev/null 2>&1
 
 echo "review round 2: late busy footer, pane revived, one follow-up at a time, limit false alarm, unreadable policy"
 : >"$work/sent.log"
-out=$(STUB_LATE=1.5 STUB_BUSY=0.3 dl --interactive --engine agy --kind research --notify %5 --dir "$repo" "$work/task.md"); idl=$(field "$out" id)
+knobs_off; knob late 1.5; knob busy 0.3
+out=$(dl --interactive --engine agy --kind research --notify %5 --dir "$repo" "$work/task.md"); idl=$(field "$out" id)
 wait_sent 'turn=1'; sleep 2
 check "an engine whose busy footer shows late is not a finished turn: the answer saved is the real one, notified once" \
   "$(has "$(cat "$work/state/delegate/$idl/answer-1.md")" 'STUB ANSWER agy to: Read TASK.md') $(grep -c 'turn=1' "$work/sent.log")" "yes 1"
@@ -466,11 +478,47 @@ echo "review round 3: multibyte follow-up, launcher workspaces"
 : >"$work/sent.log"
 out=$(dl --interactive --engine agy --kind research --notify %5 --dir "$repo" "$work/task.md"); idu=$(field "$out" id)
 wait_sent 'turn=1'; sleep 2; : >"$work/sent.log"
-bash "$delegate" msg "$idu" "$(printf 'a%.0s' $(seq 38))ééé tail" >/dev/null 2>&1
+bash "$delegate" msg "$idu" "$(printf 'a%.0s' $(seq 39))ééé tail" >/dev/null 2>&1
+check "the prompt kept for anchoring is valid UTF-8 with no replacement character, however the cut fell" \
+  "$(jq -r .prompt "$work/state/delegate/$idu/meta.json" | iconv -f UTF-8 -t UTF-8 >/dev/null 2>&1; echo $?) $(jq -r .prompt "$work/state/delegate/$idu/meta.json" | grep -c $'\xef\xbf\xbd')" "0 0"
 wait_sent 'turn=2'
 check "a follow-up whose 40th byte falls inside a UTF-8 character still ends its turn (the answer is saved, not a timeout)" "$(has "$(sent)" 'status=ok turn=2') $(has "$(cat "$work/state/delegate/$idu/answer.md")" 'STUB ANSWER')" "yes yes"
 sleep 3; bash "$delegate" stop "$idu" >/dev/null 2>&1
 
+echo "review round 4: fail-closed secret reads, the echo rule, the anchored limit read"
+# looks_secret fails closed on a grep error (an invalid pattern), as the real function is written
+SECRET_RE='('
+eval "$(grep '^looks_secret()' "$delegate")"
+check "looks_secret treats a grep error as a secret, not as clean" "$(echo x | looks_secret && echo secret || echo clean)" "secret"
+SECRET_RE='x{9}' ; check "and a plain non-match as clean" "$(echo y | looks_secret && echo secret || echo clean)" "clean"
+# a failing content scan refuses the snapshot
+mkdir -p "$work/shim"
+cat >"$work/shim/grep" <<EOS
+#!/usr/bin/env bash
+for a in "\$@"; do [[ \$a == -rlaZE ]] && exit 2; done
+exec $(command -v grep) "\$@"
+EOS
+chmod +x "$work/shim/grep"
+n1=$(runs)
+out=$(PATH="$work/shim:$PATH" dl --engine agy --kind research --dir "$repo" "$work/task.md")
+check "a content scan that errors refuses the snapshot: nothing runs" "$(field "$out" status) $(( $(runs) - n1 ))" "refused 0"
+# the watcher reads the limit anchored to the prompt: a long answer ending in a quoted line and a 429 is an answer
+mode agy quote429; : >"$work/sent.log"
+out=$(dl --interactive --engine agy --kind ci --notify %5 --dir "$repo" "$work/task.md"); idv=$(field "$out" id)
+wait_sent 'status='
+check "a long reply ending in a quoted line about a 429 is a finished turn, not a limit (the watcher passes the sent prompt)" "$(has "$(sent)" "$idv engine=agy status=ok turn=1")" "yes"
+bash "$delegate" stop "$idv" >/dev/null 2>&1; mode agy ok
+# a turn is over only when a NEW echo is on screen: the previous answer is never the new turn's
+: >"$work/sent.log"
+knobs_off; knob noecho 2; knob busy 0.3
+out=$(dl --interactive --engine agy --kind research --notify %5 --dir "$repo" "$work/task.md"); idn=$(field "$out" id)
+wait_sent 'turn=1'; sleep 3; : >"$work/sent.log"
+bash "$delegate" msg "$idn" 'second prompt' >/dev/null 2>&1
+wait_sent 'turn=2'
+check "a second turn whose echo shows late is not answered with the first turn's text" "$(has "$(cat "$work/state/delegate/$idn/answer-2.md")" 'to: second prompt')$(has "$(cat "$work/state/delegate/$idn/answer-2.md")" 'to: Read TASK')" "yesno"
+sleep 2; bash "$delegate" stop "$idn" >/dev/null 2>&1
+
+knobs_off
 echo "the shared policy"
 check "the helper rules fit agy's 24000-byte limit" "$([[ $(stat -c %s "$root/hooks/klepsydra-engine-rules.md") -le 24000 ]] && echo fits)" "fits"
 check "a person, course, team or account name appears in no shipped rule or policy" "$(cat "$root/hooks/klepsydra-engine-rules.md" "$root/hooks/klepsydra-agy-locked.json" | grep -cwE 'AJ|ajbar|RIT|CISC|Ben|makesense|Anthropic|Claude')" "0"

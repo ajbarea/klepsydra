@@ -129,6 +129,8 @@ snapshot() { # REPO TASK SNAP (sets SNAP_DROPPED)
     flog INFO "snapshot: files withheld for looking like a credential" count="$dropped" files="$(tr '\0' ' ' <"$list" | sed "s|$snap/||g" | cut -c1-300)"
     SNAP_DROPPED=$dropped
   fi
+  # Binary files hold credentials the text scan cannot see (UTF-16, compiled) and no text engine reads them.
+  grep -rILZ --exclude-dir=.git '' "$snap" 2>/dev/null | xargs -0 -r sh -c 'for f; do [ -s "$f" ] && rm -f -- "$f"; done' _
   rm -f -- "${list:?}"
   mb=$(du -sm -- "$snap" | cut -f1)
   (( mb <= SNAP_MAX_MB )) || { err "the snapshot of $top is ${mb} MB, over the ${SNAP_MAX_MB} MB limit"; return 1; }
@@ -369,7 +371,7 @@ cmd_watch() { # ID
         notify "$id" "[fleet delegate] $id engine=$engine status=$st: the lane stopped (screen: $dir/screen.txt; the reply is in $dir/answer.md in case it is an answer that mentions a limit). Re-run with the other engine."
         return 0 ;;
       idle)
-        # Idle with no reply under the echo is the gap before the engine's busy footer shows: not a turn end.
+        # Idle with no echo of the prompt sent, or no reply under it, is the gap before the engine's busy footer shows: not a turn end.
         if (( seen_busy )) && [[ -n $(eng_answer "$engine" "$screen" "$(meta_get "$id" prompt)") ]]; then
           turn=$((turn + 1))
           ans=$(eng_answer "$engine" "$screen" "$(meta_get "$id" prompt)")
@@ -386,8 +388,10 @@ cmd_watch() { # ID
       t send-keys -t "$pane" Escape 2>/dev/null
       printf '%s\n' "$screen" >"$dir/screen.txt"
       meta_set "$id" status=timeout
+      # The last reply on screen, whatever turn it belongs to, labeled: the prompt's echo never matched.
+      { stamp "$engine" "$(meta_get "$id" model)"; echo "Best effort after a timeout (no echo of the prompt sent was matched): the last reply on screen, perhaps an earlier turn's."; echo; eng_answer "$engine" "$screen"; } >"$dir/answer-unverified.md"
       flog WARN "delegate lane timed out" id="$id" engine="$engine" secs="$((SECONDS - started))"
-      notify "$id" "[fleet delegate] $id engine=$engine status=timeout after ${TURN_TIMEOUT}s (screen: $dir/screen.txt)"
+      notify "$id" "[fleet delegate] $id engine=$engine status=timeout after ${TURN_TIMEOUT}s (screen: $dir/screen.txt; best effort: $dir/answer-unverified.md)"
       return 0
     fi
   done
@@ -411,7 +415,7 @@ cmd_msg() { # ID TEXT
   # one would overwrite that answer and notify twice. Wait for its notice, then send.
   if watcher_pid "$id" >/dev/null; then echo "not-idle:turn-pending"; return 1; fi
   got=$(deliver "$engine" "$pane" "$text") || { echo "$got"; return 1; }
-  meta_set "$id" status=working prompt="$(head -n1 <<<"$text" | head -c 40 | iconv -f UTF-8 -t UTF-8 -c)"
+  meta_set "$id" status=working prompt="$(head -n1 <<<"$text" | sed 's/^[[:space:]]*//' | head -c 40 | iconv -f UTF-8 -t UTF-8 -c 2>/dev/null)"
   start_watcher "$id"
   echo sent
 }
