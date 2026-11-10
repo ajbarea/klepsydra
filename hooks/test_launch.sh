@@ -169,6 +169,7 @@ check "#323: the earlier launcher's whole-CLAUDE.md rule is removed; a rule that
 printf -- 'someone else\n' >"$work/gemini/config/rules/claude-global.md"
 bash "$launch" new "$work/repos" agy gemini-3.8-flash-high >/dev/null 2>&1
 check "#323: and a claude-global.md that is not klepsydra's is left alone" "$(cat "$work/gemini/config/rules/claude-global.md")" "someone else"
+before=$(windows) # the two launches above opened windows
 check "#323 lock: with the lock policy unreadable, no agy session starts (never an unlocked one)" "$rc $(( $(windows) - before ))" "1 0"
 head -c 24100 /dev/zero | tr '\0' x >"$work/big-rules.md"
 out=$(KLEPSYDRA_RULES_SRC="$work/big-rules.md" bash "$launch" new "$work/repos" agy gemini-3.8-flash-high 2>&1); rc=$?
