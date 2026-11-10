@@ -771,6 +771,17 @@ check "reported started" "${out##* }" "brief=started"
 out=$(FLEET_START_WAIT=1 launch agent5 '{"above":["Claude Code"],"busy_delay":2}')
 check "a turn whose spinner shows late is never interrupted by a retry" "$(grep -cE 'ESC|INTERRUPTED' "$work/agent5.log") ${out##* }" "0 brief=started"
 check "nor submitted twice" "$(grep -c '^SUBMIT' "$work/agent5.log")" "1"
+# The cause, with the screen mocked: the wait after Enter ends, the log line after it takes
+# long enough for the box to empty, and the second Enter must not be pressed on the old reading.
+dbcalls="$work/db.calls"; : >"$dbcalls"; rm -f -- "$work/db.gate"
+check "a box that emptied while the retry's log line ran gets no second Enter (the CI red: an empty line submitted)" \
+  "$( ( screen() { :; }; busy() { return 1; }; has_input_box() { return 0; }
+        input_text() { [[ -s $work/db.gate ]] || echo brief; }
+        holds_input() { [[ -n $(input_text) ]]; }
+        wait_for() { [[ $3 == sent_or_started ]] && return 1; return 0; }
+        t() { [[ $1 == send-keys ]] && echo enter >>"$dbcalls"; return 0; }
+        flog() { echo gone >"$work/db.gate"; }
+        deliver_brief %9 /dev/null >/dev/null; grep -c enter "$dbcalls" ) )" "1"
 
 echo "launch.sh: a slow or stuck start (#187)"
 : >"$FLEET_LOG"
@@ -909,15 +920,15 @@ check "the tail carries the team-ceremony rule (AJ 10-29)" "$(grep -c '^Team cer
 check "the tail keeps asks for AJ out of public issues and PRs (AJ 10-29)" "$(grep -c '^Asks for AJ stay private' "$here/brief-tail.md")" "1"
 check "#325 review 1: the tail sends messages to panes through fleet send (#320)" "$(grep -c '^Messages to another pane .*fleet send PANE -' "$here/brief-tail.md")" "1"
 check "#239: the tail has heavy commands take the lock with flock -o, so nothing they leave running keeps it" "$(grep -c 'flock -o /tmp/fleet-heavy.lock' "$here/brief-tail.md")" "1"
-check "#291 review: the tail says the make targets take the lock themselves and run bare" "$(grep -c 'make test-fleet., .make test-launch., .make test-heavy-lock. and .make shellcheck. in klepsydra take the lock themselves: run them bare' "$here/brief-tail.md")" "1"
+check "#291 review: the tail says the make targets take the lock themselves and run bare" "$(grep -c 'make test-fleet., .make test-launch., .make test-delegate., .make test-heavy-lock. and .make shellcheck. in klepsydra take the lock themselves: run them bare' "$here/brief-tail.md")" "1"
 check "#291 review 5: the tail's hand form puts a group-wide timeout inside the lock (no --foreground)" "$(grep -c 'flock -o /tmp/fleet-heavy.lock timeout 1800 <command>' "$here/brief-tail.md") $(grep -c -- '--foreground' "$here/brief-tail.md")" "1 0"
 # Every target whose recipe runs $(HEAVY) (#291 review 4): it takes the lock
 # unless the caller says it holds it, a test target runs a file that exists,
 # and the brief tail, the skill context and CI each name it.
 heavy_targets=$(awk '/^[A-Za-z][A-Za-z0-9_-]*:/ { t = $1; sub(/:.*/, "", t) } /^\t@?\$\(HEAVY\)/ { print t }' "$here/../Makefile" | paste -sd ' ' -)
-check "#291 review 4: the Makefile's heavy targets" "$heavy_targets" "test-fleet test-launch test-heavy-lock shellcheck"
+check "#291 review 4: the Makefile's heavy targets" "$heavy_targets" "test-fleet test-launch test-delegate test-heavy-lock shellcheck"
 # What each runs, exactly (review 5: "a file that exists" passed a swapped suite).
-declare -A heavy_runs=([test-fleet]="bash fleet/test_fleet.sh" [test-launch]="bash hooks/test_launch.sh"
+declare -A heavy_runs=([test-fleet]="bash fleet/test_fleet.sh" [test-launch]="bash hooks/test_launch.sh" [test-delegate]="bash fleet/test_delegate.sh"
   [test-heavy-lock]="bash fleet/test_heavy_lock.sh" [shellcheck]="sc -x hooks/*.sh statusline/*.sh scripts/*.sh fleet/*.sh fleet/fleet")
 for ht in $heavy_targets; do
   check "#291 review 4: make $ht takes the lock unless held, runs its own suite, and the tail, skill context and CI name it" \
@@ -2903,6 +2914,15 @@ doc=$(bash "$here/doctor.sh" 2>/dev/null)
 check "a lost row is one FAIL, a finished one one warn, and neither gets a remote control line" \
   "$(grep '^FAIL agents' <<<"$doc") | $(grep '^warn finished agents' <<<"$doc") | $(grep -c 'remote control %[45] ' <<<"$doc")" \
   "FAIL agents: sessions gone: e: fleet recover | warn finished agents: still in panes.tsv: d: fleet doctor --prune | 0"
+doc=$(FLEET_AGY=/nonexistent FLEET_COPILOT=/nonexistent bash "$here/doctor.sh" 2>/dev/null)
+check "doctor: an engine that is not installed says its lanes are off" "$(grep -c '^ok *engine [a-z]*: not installed: its lanes are off' <<<"$doc")" "2"
+mkdir -p "$work/enghome/.gemini/antigravity-cli"; echo '{}' >"$work/enghome/.gemini/antigravity-cli/antigravity-oauth-token"
+doc=$(HOME="$work/enghome" FLEET_AGY=/bin/true FLEET_COPILOT=/bin/true FLEET_HOOK_DIR="$here/../hooks" bash "$here/doctor.sh" 2>/dev/null)
+check "doctor: an installed engine with the lock policy shows its lanes, locked, and its login" \
+  "$(grep '^ok *engine agy' <<<"$doc" | sed 's/^ok *//') | $(grep '^[a-zA-Z]* *engine copilot' <<<"$doc" | sed 's/^\([a-zA-Z]*\) .*lanes: \(.*\)$/\1 \2/')" \
+  "engine agy: signed in; lanes: print interactive, locked | warn print interactive"
+doc=$(HOME="$work/enghome" FLEET_AGY=/bin/true FLEET_COPILOT=/bin/true FLEET_HOOK_DIR="$work/nohooks" bash "$here/doctor.sh" 2>/dev/null)
+check "doctor: without the lock policy the lanes are OFF, never silently on" "$(grep -c '^warn *engine [a-z]*: .*lanes OFF' <<<"$doc")" "2"
 check "recover leaves a finished agent alone and relaunches the lost one" \
   "$(rec --dry-run --no-orchestrator | grep -E '^(finished|would recover)' | sed 's/ (.*//')" $'finished: d\nwould recover: e'
 # #261 review 4: d's finish is recorded; AJ resumes it in its pane (the same id,

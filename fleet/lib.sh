@@ -32,6 +32,8 @@ FLEET_HOOK_DIR=${FLEET_HOOK_DIR:-$HOME/.claude}
 HOOK_COPIES=(
   "hooks/klepsydra-fleet.sh klepsydra-fleet.sh"
   "hooks/klepsydra-launch.sh klepsydra-launch.sh"
+  "hooks/klepsydra-agy-locked.json klepsydra-agy-locked.json"
+  "hooks/klepsydra-engine-rules.md klepsydra-engine-rules.md"
   "hooks/klepsydra-tmux.conf klepsydra-tmux.conf"
   "hooks/klepsydra-pane-died.sh klepsydra-pane-died.sh"
   "hooks/klepsydra-wrapup.sh klepsydra-wrapup.sh"
@@ -358,6 +360,14 @@ deliver_brief() { # PANE FILE
     holds_input "$(screen "$p")" || { echo not-delivered; return 0; }
   fi
   for try in 1 2 3; do
+    if (( try > 1 )); then
+      # The wait that ended and the log line after it took time, under load a lot:
+      # the turn may have started or the box emptied meanwhile, and Enter pressed
+      # on that stale reading submits an empty line (or lands in a running turn).
+      s=$(screen "$p")
+      busy "$s" && { echo started; return 0; }
+      if has_input_box "$s" && [[ -z $(input_text "$s") ]]; then await_turn "$p"; return 0; fi
+    fi
     t send-keys -t "$p" Enter
     if ! wait_for "$p" "$(capped "${FLEET_START_WAIT:-10}")" sent_or_started; then
       flog WARN "the brief is still in the prompt after Enter; pressing it again" pane="$p" try="$try" box="$(input_text "$(screen "$p")" | cut -c1-60)"
@@ -366,15 +376,22 @@ deliver_brief() { # PANE FILE
     s=$(screen "$p")
     busy "$s" && { echo started; return 0; }
     holds_input "$s" && continue
-    # Sent: wait for its turn, or the limit, without touching the pane.
-    if wait_for "$p" "$(capped "${FLEET_TURN_WAIT:-60}")" started; then
-      if busy "$(screen "$p")"; then echo started; else echo blocked-by-limit; fi
-    else
-      echo not-delivered
-    fi
+    await_turn "$p"
     return 0
   done
+  # The last Enter may have landed while the last wait ran out.
+  s=$(screen "$p")
+  busy "$s" && { echo started; return 0; }
+  if has_input_box "$s" && [[ -z $(input_text "$s") ]]; then await_turn "$p"; return 0; fi
   echo not-delivered
+}
+# The brief is sent: wait for its turn, or the limit, without touching the pane.
+await_turn() { # PANE
+  if wait_for "$1" "$(capped "${FLEET_TURN_WAIT:-60}")" started; then
+    if busy "$(screen "$1")"; then echo started; else echo blocked-by-limit; fi
+  else
+    echo not-delivered
+  fi
 }
 sent_or_started() { started "$1" || { has_input_box "$1" && [[ -z $(input_text "$1") ]]; }; }
 

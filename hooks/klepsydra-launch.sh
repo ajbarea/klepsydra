@@ -4,8 +4,8 @@
 #   wsl.exe -e bash -l .claude/klepsydra-launch.sh models
 #   wsl.exe -e bash .claude/klepsydra-launch.sh jump|end|interrupt|wrapup SOCKET PANE PID START
 # `new` starts claude in DIR as a window of tmux session "fleet" (socket
-# "klepsydra"), or with `agy MODEL` Antigravity's CLI on MODEL (#323), once
-# AJ's global rules are in agy's rules folder; `models` lists agy's models; `jump` brings PANE's window to the front of its session, once
+# "klepsydra"), or with `agy MODEL` Antigravity's CLI on MODEL (#323), locked
+# (read-only, no shell) and once the helper rules are in agy's rules folder; `models` lists agy's models; `jump` brings PANE's window to the front of its session, once
 # PANE still hosts Claude process PID (START = /proc/PID/stat field 22).
 # `end` types /exit into that Claude Code, `wrapup` types /klepsydra-wrapup
 # and `interrupt` presses Esc there, on klepsydra's own tmux server only. `new` and `jump` open a Windows Terminal tab (window "fleet", titled TAB_TITLE) only when no
@@ -19,11 +19,18 @@ TAB_TITLE="klepsydra sessions" # also FLEET_TAB in src-tauri/src/launch.rs
 CONF=${KLEPSYDRA_TMUX_CONF:-$HOME/.claude/klepsydra-tmux.conf}
 CLAUDE=${KLEPSYDRA_CLAUDE:-claude}
 AGY=${KLEPSYDRA_AGY:-agy}
-# agy reads AGENTS.md or GEMINI.md, never CLAUDE.md (#323): AJ's global rules
-# reach it as an always-on rule made from the one source. Not ~/.gemini/GEMINI.md,
+# agy reads AGENTS.md or GEMINI.md, never CLAUDE.md (#323): the short working
+# rules for a fleet helper reach it as an always-on rule. Not ~/.gemini/GEMINI.md,
 # which the Antigravity IDE and Gemini CLI also write.
-RULES_SRC=${KLEPSYDRA_RULES_SRC:-$HOME/.claude/CLAUDE.md}
-RULES_DST=${KLEPSYDRA_AGY_RULES:-$HOME/.gemini/config/rules/claude-global.md}
+RULES_SRC=${KLEPSYDRA_RULES_SRC:-$HOME/.claude/klepsydra-engine-rules.md}
+RULES_DST=${KLEPSYDRA_AGY_RULES:-$HOME/.gemini/config/rules/klepsydra-fleet.md}
+RULES_MAX=24000 # agy's limit for one rules file, in bytes
+# Every agy session the fleet starts is locked: no file writes, no shell, no
+# MCP, no browser, in a terminal sandbox. The policy is one file the launcher
+# and `fleet delegate` share; it goes in with --settings, which overrides AJ's own
+# ~/.gemini/antigravity-cli/settings.json key by key (that file is never rewritten).
+AGY_LOCK=${KLEPSYDRA_AGY_LOCK:-$HOME/.claude/klepsydra-agy-locked.json}
+WINMNT=${KLEPSYDRA_WINDOWS_MOUNT:-/mnt} # the Windows drives under WSL
 MODEL_RE='^[a-z0-9][a-z0-9.-]{0,63}$'
 WT=${KLEPSYDRA_WT:-wt.exe}
 UNDO=()
@@ -112,16 +119,31 @@ open_tab() { # target tmux-socket-args...
   done
 }
 
-# AJ's global rules, as agy reads an always-on rule, written only when they
-# changed; fails, starting nothing, when they cannot be put there.
+# The fleet helper rules, as agy reads an always-on rule, written only when they
+# changed; fails, starting nothing, when they cannot be put there or are over
+# agy's size limit.
 agy_rules() {
-  local tmp
-  [[ -r $RULES_SRC ]] || fail "AJ's global rules ($RULES_SRC) cannot be read, so agy would start without them."
+  local tmp old
+  [[ -r $RULES_SRC ]] || fail "The fleet helper rules ($RULES_SRC) cannot be read, so agy would start without them."
+  (( $(stat -c %s -- "$RULES_SRC") <= RULES_MAX )) || fail "The fleet helper rules ($RULES_SRC) are over agy's $RULES_MAX byte limit."
   mkdir -p -- "${RULES_DST%/*}" || fail "agy's rules folder (${RULES_DST%/*}) cannot be made."
+  # The rule an earlier launcher made from the whole global rules file: gone, or every agy session keeps loading it.
+  old=${RULES_DST%/*}/claude-global.md
+  if [[ -f $old ]] && grep -q 'made from .* by klepsydra' "$old" 2>/dev/null; then rm -f -- "${old:?}"; fi
   tmp=$(mktemp "$RULES_DST.XXXXXX") || fail "agy's rules cannot be written beside $RULES_DST."
-  { printf -- '---\ntrigger: always_on\ndescription: "AJ'"'"'s global rules, made from %s by klepsydra; edit that file, not this one."\n---\n\n' "$RULES_SRC"
+  { printf -- '---\ntrigger: always_on\ndescription: "Working rules for a fleet helper, made from %s by klepsydra; edit that file, not this one."\n---\n\n' "$RULES_SRC"
     cat -- "$RULES_SRC"; } >"$tmp" || { rm -f -- "${tmp:?}"; fail "agy's rules cannot be written."; }
   if cmp -s -- "$tmp" "$RULES_DST"; then rm -f -- "${tmp:?}"; else mv -f -- "$tmp" "$RULES_DST" || fail "agy's rules cannot be put in place."; fi
+}
+
+# The locked settings for an agy session: the lock policy itself, which names no
+# trusted workspace, so agy asks before trusting a folder (a repo's own hooks, plugins
+# and skills load only under trust, and run commands outside the deny rules; AJ answers
+# for his own folders, which his agy settings already list). Prints the file's path.
+# Fails, starting nothing, when the policy cannot be read.
+agy_settings() {
+  [[ -r $AGY_LOCK ]] || fail "agy's lock policy ($AGY_LOCK) cannot be read, so agy would start unlocked."
+  printf '%s' "$AGY_LOCK"
 }
 
 # agy's models as one line of JSON, [{"id", "label"}...], since the launcher
@@ -147,9 +169,33 @@ new() { # dir [agy model]
   need tmux "tmux is not installed in this distro."
   if [[ $tool == agy ]]; then
     [[ $model =~ $MODEL_RE ]] || fail "That is not an agy model id: $model"
+    # Its workspace is the one folder its reads reach: never the home folder, a folder that holds
+    # it (/home, /), or a Windows drive (/mnt/c).
+    local real home
+    real=$(cd -- "$dir" && pwd -P) home=$(cd -- "$HOME" && pwd -P)
+    real=${real%/} # "/" becomes "", whose pattern /* holds every path
+    case $home/ in "$real"/*) fail "agy is not started in $dir: its workspace would hold the whole home folder. Pick a project folder." ;; esac
+    [[ $real != "$WINMNT" && $real != "$WINMNT"/* ]] || fail "agy is not started in $dir: the Windows side ($WINMNT) is no workspace, its user folders hold credentials. Pick a project folder in WSL."
+    # A folder that ships agy hooks, plugins or skills runs commands outside the deny rules
+    # once trusted (the trust dialog is the only gate): not for a locked session.
+    # agy reads workspace configuration from the folder and every folder above it up to the repo root,
+    # from four folder names (a bare hooks.json elsewhere in the tree is loaded by nothing, tested).
+    local d=$real top f
+    top=$(git -C "$real" rev-parse --show-toplevel 2>/dev/null) || top=$real
+    while :; do
+      for f in .agents .agent _agents _agent; do
+        [[ ! -e $d/$f ]] || fail "agy is not started in $dir: $d/$f ships agy workspace configuration (hooks, plugins, skills, MCP), which runs outside the lock once the folder is trusted."
+      done
+      [[ $d != "$top" && $d != / ]] || break
+      d=${d%/*}
+      [[ -n $d ]] || d=/
+    done
     need "$AGY" "agy (Antigravity CLI) was not found on PATH."
     agy_rules
-    cmd="$AGY --model $model" what="an Antigravity session ($model)"
+    local settings
+    settings=$(agy_settings) || exit 1
+    printf -v cmd '%q --model %s --settings %q --sandbox' "$AGY" "$model" "$settings"
+    what="a locked Antigravity session ($model)"
   else
     need "${CLAUDE%% *}" "claude was not found on PATH."
   fi

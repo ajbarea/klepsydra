@@ -29,7 +29,7 @@ belong here.
   has no WebKitGTK headers, so the app crate is checked with
   `bash scripts/build-windows.sh --check`; the fleet crate tests anywhere.
 - runner: a small Makefile: `make test-fleet`, `make test-launch`,
-  `make test-heavy-lock` and `make shellcheck` take the fleet's heavy lock
+  `make test-delegate`, `make test-heavy-lock` and `make shellcheck` take the fleet's heavy lock
   themselves (run them bare),
   `make install-fleet`. No
   `logs/dev-<ts>-*.log` archive convention, so the audit's log-reconciliation phase is N/A.
@@ -89,6 +89,7 @@ files belong to: the JS guards scan hooks and scripts too.
 - `bash hooks/test_wrapup.sh`: the wrap-up Stop hook (silent unless a live
   request is unasked, never blocks a stop, fails open) and its reporter.
 - `make test-launch` (takes the heavy lock itself: run it bare): the tmux launcher against a private tmux server
+- `make test-delegate` (takes the heavy lock itself: run it bare): `fleet delegate` and the engine adapters against stub agy and Copilot and a private tmux server; `fleet/attack_live.sh` is the live attack test against the real engines (run by hand when a lock changes)
   and a stub `wt.exe` (one tab per fleet, a failed launch starts nothing).
 - `make test-heavy-lock` (takes the heavy lock itself): a stopped suite keeps no lock, and fleet/heavy.sh's waits, refusals and limits.
 - `bash scripts/test_build_windows.sh`: the Windows build's stage-name check.

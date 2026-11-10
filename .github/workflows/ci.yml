@@ -73,6 +73,8 @@ jobs:
           make test-launch FLEET_HEAVY_HELD=1
       - name: Fleet engine tests
         run: make test-fleet FLEET_HEAVY_HELD=1
+      - name: Delegate lane tests
+        run: make test-delegate FLEET_HEAVY_HELD=1
       - name: Heavy lock release tests
         run: make test-heavy-lock FLEET_HEAVY_HELD=1
       - name: Release memory check tests
