@@ -121,7 +121,8 @@ snapshot() { # REPO TASK SNAP (sets SNAP_DROPPED)
   find "$snap" -mindepth 1 \( "${SECRET_FILES[@]}" \) "${SECRET_KEEP[@]}" -prune -exec rm -rf -- {} + || { err "the secret filter failed"; return 1; }
   [[ -z $(find "$snap" -mindepth 1 \( "${SECRET_FILES[@]}" \) "${SECRET_KEEP[@]}" -print -quit) ]] || { err "the secret filter left a file behind"; return 1; }
   # Files with a NUL byte anywhere (UTF-16, compiled, archives) hold what a text scan cannot see and no
-  # text engine reads them: withheld first, grep -l stopping at the first NUL, so a big binary is not read whole.
+  # text engine reads them: withheld first (grep -l stops at the first match, but a file with no newline is
+  # held whole while it is read, which is why the size cap below runs before it).
   local list=$snap.dropped dropped=0 rc nul big
   # A file this large is no source a review needs, and the scans would hold it whole in memory.
   big=$(find "$snap" -type f -size +"${FLEET_DELEGATE_FILE_MB:-25}"M -print -delete 2>/dev/null | wc -l)

@@ -100,7 +100,13 @@ while IFS= read -r line; do
   case $mode in die) exit 0 ;; esac
   noecho=$(cat "$STUB_DIR/knob-noecho" 2>/dev/null); late=$(cat "$STUB_DIR/knob-late" 2>/dev/null); busy=$(cat "$STUB_DIR/knob-busy" 2>/dev/null)
   if [[ -n $noecho ]]; then draw 0; sleep "$noecho"; fi
-  if [[ $name == copilot ]]; then hist+=(" ❯ $line"); else hist+=("$rule" "> $line"); fi
+  wrap=$(cat "$STUB_DIR/knob-wrap" 2>/dev/null)
+  if [[ -n $wrap && ${#line} -gt $wrap ]]; then
+    # the echo wraps onto indented lines, as agy's does, and the engine's own newlines keep tmux from re-joining them
+    if [[ $name == copilot ]]; then hist+=(" ❯ ${line:0:wrap}"); else hist+=("$rule" "> ${line:0:wrap}"); fi
+    rest=${line:wrap}
+    until [[ -z $rest ]]; do hist+=("  ${rest:0:wrap}"); rest=${rest:wrap}; done
+  elif [[ $name == copilot ]]; then hist+=(" ❯ $line"); else hist+=("$rule" "> $line"); fi
   if [[ -n $late ]]; then draw 0; sleep "$late"; fi
   draw 1
   sleep "${busy:-1.5}"
@@ -108,8 +114,9 @@ while IFS= read -r line; do
     hang) sleep 60 ;;
     limit) hist+=("  You have exhausted your quota for today.") ;;
     quote429) hist+=("  $(head -c 500 /dev/zero | tr '\0' x)" "> a quoted line" "  429 rate limit") ;;
-    *) if [[ $name == copilot ]]; then hist+=(" ● Copilot Fusion selected a model" " ● STUB ANSWER $name to: $line")
-       else hist+=("12.0k in | 750 out | 667 thinking" "● Read(TASK.md) (ctrl+o to expand)" "  STUB ANSWER $name to: $line"); fi ;;
+    *) said="to: $line"; [[ -n $wrap ]] && said="(wrapped echo case)" # an answer that repeated the sent words would hide the echo
+       if [[ $name == copilot ]]; then hist+=(" ● Copilot Fusion selected a model" " ● STUB ANSWER $name $said")
+       else hist+=("12.0k in | 750 out | 667 thinking" "● Read(TASK.md) (ctrl+o to expand)" "  STUB ANSWER $name $said"); fi ;;
   esac
   draw 0
 done
@@ -149,7 +156,7 @@ mkdir -p "$repo/src" && git -C "$repo" init -q . && {
   printf 'k = %s\n' "ghp_$(head -c 36 /dev/zero | tr '\0' D)" | iconv -f UTF-8 -t UTF-16LE >"$repo/src/u16.txt"
   printf '\0\1\2\3' >"$repo/src/blob.bin"; : >"$repo/src/empty.txt"
   head -c 2000000 /dev/zero | tr '\0' 'a' | fold -w 80 >"$repo/src/big.dat"
-  mkdir -p "$repo/vendor/plug"; echo '{}' >"$repo/vendor/plug/hooks.json"
+  mkdir -p "$repo/vendor/plug"; echo '{}' >"$repo/vendor/plug/hooks.json"; echo '{}' >"$repo/vendor/plug/plugins.json"; echo '{}' >"$repo/vendor/plug/skills.json"; echo '{}' >"$repo/vendor/plug/mcp_config.json"
   { head -c 240000 /dev/zero | tr '\0' a; printf '\n'; printf 'k = %s' "ghp_$(head -c 36 /dev/zero | tr '\0' E)" | iconv -f UTF-8 -t UTF-16LE; } >"$repo/src/tail16.txt"
   echo p >"$repo/client_secret_123.json"; echo p >"$repo/prod.env"; echo p >"$repo/.PGPASS"; echo p >"$repo/Secrets.yaml"; echo p >"$repo/token.json"
   printf 'TOKEN = "%s"\n' "ghp_$(head -c 36 /dev/zero | tr '\0' B)" >"$repo/src/cfg.py"
@@ -243,9 +250,11 @@ check "snapshot: every engine-config path the filter lists is gone (each has a f
 check "snapshot: a file with a NUL byte that holds a token is scanned as text and dropped" "$(has "$files" 'src/bin\.dat')" "no"
 check "snapshot: a UTF-16 file holding a token and a binary blob are withheld; an empty file and source stay" \
   "$(has "$files" 'src/u16\.txt')$(has "$files" 'src/blob\.bin')$(has "$files" 'src/empty\.txt')$(has "$files" 'src/a\.py')" "nonoyesyes"
-check "snapshot: a text file whose UTF-16 tail (a NUL far from the first line) holds a token, and a nested hooks.json, are withheld" "$(has "$files" 'src/tail16')$(has "$files" 'vendor/plug/hooks.json')" "nono"
+check "snapshot: a text file whose UTF-16 tail (a NUL far from the first line) holds a token, and nested hooks, plugins, skills and MCP lists, are withheld" "$(has "$files" 'src/tail16')$(has "$files" 'vendor/plug/hooks.json')$(has "$files" 'vendor/plug/plugins.json')$(has "$files" 'vendor/plug/skills.json')$(has "$files" 'vendor/plug/mcp_config.json')" "nonononono"
 check "snapshot: a file over the size limit is left out before any scan reads it, binaries are counted apart from credentials and the engine is told" \
   "$(has "$files" 'src/big\.dat') $(grep -c 'binary or oversized files withheld' "$FLEET_LOG" | tr -d '\n' | sed 's/^0$/none/;s/.*/logged/') $(has "$(cat "$STUB_DIR/$(last)/agents")" 'binary or very large')" "no logged yes"
+check "snapshot: credential-looking text files and binaries are counted apart, each told to the engine with its own number" \
+  "$(grep -c '^1 file(s) were withheld from this copy because they looked like they hold a credential' "$STUB_DIR/$(last)/agents") $(grep -c '^5 binary or very large file(s) were left out' "$STUB_DIR/$(last)/agents")" "1 1"
 check "snapshot: what the content scan withheld is logged and the engine is told" "$(( $(grep -c 'files withheld for looking like a credential' "$FLEET_LOG") >= 1 )) $(has "$(cat "$STUB_DIR/$(last)/agents")" 'withheld')" "1 yes"
 check "snapshot: secret directories and odd secret names never arrive (secrets/, credentials/, .env/, .envrc, id_ecdsa, service-account, tfvars)" \
   "$(has "$files" 'secrets/')$(has "$files" 'credentials/')$(has "$files" 'app/\.env/')$(has "$files" '\.envrc')$(has "$files" 'id_ecdsa')$(has "$files" 'service-account')$(has "$files" 'tfvars')" "nonononononono"
@@ -558,6 +567,15 @@ check "after a timeout the best-effort reply is saved, named in the notice, and 
 check "and that best-effort file is stamped an unverified lead, with its reason" "$(head -1 "$work/state/delegate/$idh/answer-unverified.md" | cut -c1-22)|$(has "$(cat "$work/state/delegate/$idh/answer-unverified.md")" 'Best effort after a timeout')" "> Unverified lead from|yes"
 bash "$delegate" stop "$idh" >/dev/null 2>&1; mode agy ok
 
+echo "review round 7: a wrapped echo (as agy draws it) is not the answer"
+knobs_off; knob wrap 50; : >"$work/sent.log"
+out=$(dl --interactive --engine agy --kind research --notify %5 --dir "$repo" "$work/task.md"); idw=$(field "$out" id)
+wait_sent 'turn=1'; sleep 3; : >"$work/sent.log"
+bash "$delegate" msg "$idw" "please check whether the service answers HTTP 429 to the second request and report wrapmarker-tail" >/dev/null 2>&1
+wait_sent 'turn=2'
+check "an echo wrapped onto indented lines is not part of the answer, and the HTTP 429 in it is no limit" \
+  "$(has "$(cat "$work/state/delegate/$idw/answer-2.md")" 'STUB ANSWER') $(has "$(cat "$work/state/delegate/$idw/answer-2.md")" 'wrapmarker-tail') $(has "$(sent)" 'status=ok turn=2')" "yes no yes"
+sleep 3; bash "$delegate" stop "$idw" >/dev/null 2>&1; knobs_off
 knobs_off
 echo "the shared policy"
 check "the helper rules fit agy's 24000-byte limit" "$([[ $(stat -c %s "$root/hooks/klepsydra-engine-rules.md") -le 24000 ]] && echo fits)" "fits"
