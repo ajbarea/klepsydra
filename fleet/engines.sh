@@ -90,10 +90,11 @@ eng_argv() { # ENGINE MODE MODEL KIND SETTINGS PROMPT
   esac
 }
 
-eng_classify() { # RC STDOUT STDERR: only a failure or a very short answer is read for a limit
-  local rc=$1 out=$2 err=$3 both
-  both=$out$'\n'$err
-  if [[ $rc != 0 || ${#out} -lt 400 ]]; then
+eng_classify() { # RC STDOUT STDERR: a failure is read with its stderr; an exit 0 only when its stdout is a line or two
+  local rc=$1 out=$2 err=$3 both=""
+  if [[ $rc != 0 ]]; then both=$out$'\n'$err
+  elif (( ${#out} < 200 )); then both=$out; fi
+  if [[ -n $both ]]; then
     if grep -Eqi -- "$ENG_LIMIT_RE" <<<"$both"; then echo limit; return; fi
     if grep -Eqi -- "$ENG_AUTH_RE" <<<"$both"; then echo auth; return; fi
   fi
@@ -137,11 +138,12 @@ eng_trust_key() { echo Enter; } # ENGINE
 # rule (the input box's), without tool-call, token-count and tip lines. agy draws
 # a rule before every prompt too, so a rule ends only the text after the last echo.
 # index() and no multibyte brackets: mawk reads a UTF-8 range or `+` byte by byte.
-eng_answer() { # ENGINE SCREEN
-  if [[ $1 == copilot ]]; then eng_answer_copilot "$2"; return; fi
-  awk '
+eng_answer() { # ENGINE SCREEN [PROMPT: the text sent; only its echo starts the answer]
+  if [[ $1 == copilot ]]; then eng_answer_copilot "$2" "${3:-}"; return; fi
+  P=${3:-} awk '
+    BEGIN { p = substr(ENVIRON["P"], 1, 40) }
     index($0, "────") == 1 { if (seen) ended = 1; next }
-    /^> +[^ ]/ { seen = 1; ended = 0; delete a; n = 0; next }
+    (p == "" ? $0 ~ /^> +[^ ]/ : index($0, "> " p) == 1) { seen = 1; ended = 0; delete a; n = 0; next }
     !seen || ended { next }
     /^[0-9.]+k? in \|/ || index($0, "└ Tip:") == 1 || index($0, "● ") == 1 { next }
     { sub(/[ \t]+$/, ""); a[n++] = $0 }
@@ -150,9 +152,11 @@ eng_answer() { # ENGINE SCREEN
 
 # Copilot's last turn: after the last "❯ text" echo, up to the cwd line or rule
 # under it; its answer lines start with a bullet, and the model-choice notice is dropped.
-eng_answer_copilot() { # SCREEN
-  awk '
-    /^ *❯ +[^ ]/ { seen = 1; ended = 0; delete a; n = 0; next }
+eng_answer_copilot() { # SCREEN [PROMPT]
+  P=${2:-} awk '
+    BEGIN { p = substr(ENVIRON["P"], 1, 40) }
+    { line = $0; sub(/^ *❯ +/, "", line) }
+    ($0 ~ /^ *❯ +[^ ]/) && (p == "" || index(line, p) == 1) { seen = 1; ended = 0; delete a; n = 0; next }
     !seen || ended { next }
     index($0, "────") == 1 || index($0, "[⎇") > 0 { ended = 1; next }
     index($0, "Copilot Fusion selected") > 0 { next }

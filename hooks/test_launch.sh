@@ -130,7 +130,7 @@ EOF
 chmod +x "$work/bin/agy"
 printf '# Helper rules\nRead only.\n' >"$work/rules.md"
 export KLEPSYDRA_AGY="$work/bin/agy" KLEPSYDRA_RULES_SRC="$work/rules.md" KLEPSYDRA_AGY_RULES="$work/gemini/config/rules/klepsydra-fleet.md"
-export KLEPSYDRA_AGY_LOCK="$here/klepsydra-agy-locked.json" KLEPSYDRA_AGY_SETTINGS_DIR="$work/agy-settings"
+export KLEPSYDRA_AGY_LOCK="$here/klepsydra-agy-locked.json"
 w0=$(windows)
 check "#323: models lists agy's as one line of JSON, dropping its fetching line and any id that is not one" \
   "$(bash "$launch" models 2>&1)" '[{"id":"gemini-3.8-flash-high","label":"Gemini 3.8 Flash (High)"},{"id":"claude-opus-4-6-thinking","label":"Claude Opus 4.6 (Thinking)"}]'
@@ -141,11 +141,11 @@ check "#323: on the model asked for" "$(t list-panes -a -F '#{pane_start_command
 # The lock (agy-copilot lanes): every agy session the fleet starts is read-only, no shell, sandboxed.
 sf=$(t list-panes -a -F '#{pane_start_command}' | grep -o -- "--settings [^ ]*" | head -1 | cut -d' ' -f2 | tr -d "'\"")
 check "#323 lock: the session gets --sandbox and a settings file of its own, never AJ's" \
-  "$(t list-panes -a -F '#{pane_start_command}' | grep -c -- "--sandbox") $([[ $sf == "$work/agy-settings/"* ]] && echo own)" "1 own"
+  "$(t list-panes -a -F '#{pane_start_command}' | grep -c -- "--sandbox") $([[ $sf == "$KLEPSYDRA_AGY_LOCK" ]] && echo policy)" "1 policy"
 check "#323 lock: that file denies writes, the shell, MCP, URL reads and the browser, and asks before anything else (headless, that is a denial)" \
   "$(jq -r '[.toolPermission, .allowNonWorkspaceAccess, .enableTerminalSandbox, (.permissions.deny | sort | join(","))] | join(" ")' "$sf")" \
   "request-review false true command(*),execute_url(*),mcp(*),read_url(*),unsandboxed(*),write_file(*)"
-check "#323 lock: the folder it starts in is its one trusted workspace" "$(jq -c .trustedWorkspaces "$sf")" "[\"$work/repos\"]"
+check "#323 lock: it names no trusted workspace, so agy asks before trusting a folder (a repo's hooks load only under trust)" "$(jq -c '.trustedWorkspaces // "none"' "$sf")" '"none"'
 check "#323: the helper rules reach agy as an always-on rule made from the one source" \
   "$(sed -n 2p "$KLEPSYDRA_AGY_RULES") $(grep -c '^Read only.$' "$KLEPSYDRA_AGY_RULES")" "trigger: always_on 1"
 check "#323: the shipped rules fit agy's 24000-byte limit and name no person, course or account" \
@@ -158,7 +158,9 @@ out=$(bash "$launch" new "$work/repos" agy 'x;touch /tmp/pwned' 2>&1); rc=$?
 check "#323: a model that is no id starts nothing" "$rc $(( $(windows) - before )) $out" "1 0 That is not an agy model id: x;touch /tmp/pwned"
 out=$(KLEPSYDRA_RULES_SRC="$work/no-rules.md" bash "$launch" new "$work/repos" agy gemini-3.8-flash-high 2>&1); rc=$?
 check "#323: with the helper rules unreadable, no agy session starts" "$rc $(( $(windows) - before ))" "1 0"
+lb=$(windows)
 out=$(KLEPSYDRA_AGY_LOCK="$work/no-lock.json" bash "$launch" new "$work/repos" agy gemini-3.8-flash-high 2>&1); rc=$?
+check "#323 lock: with the lock policy unreadable, no agy session starts (never an unlocked one)" "$rc $(( $(windows) - lb ))" "1 0"
 out=$(bash "$launch" new "$HOME" agy gemini-3.8-flash-high 2>&1); rc=$?
 check "#323 lock: the whole home folder is never an agy workspace (its reads would reach every secret in it)" "$rc $(( $(windows) - before ))" "1 0"
 mkdir -p "$work/gemini/config/rules"
@@ -170,7 +172,6 @@ printf -- 'someone else\n' >"$work/gemini/config/rules/claude-global.md"
 bash "$launch" new "$work/repos" agy gemini-3.8-flash-high >/dev/null 2>&1
 check "#323: and a claude-global.md that is not klepsydra's is left alone" "$(cat "$work/gemini/config/rules/claude-global.md")" "someone else"
 before=$(windows) # the two launches above opened windows
-check "#323 lock: with the lock policy unreadable, no agy session starts (never an unlocked one)" "$rc $(( $(windows) - before ))" "1 0"
 head -c 24100 /dev/zero | tr '\0' x >"$work/big-rules.md"
 out=$(KLEPSYDRA_RULES_SRC="$work/big-rules.md" bash "$launch" new "$work/repos" agy gemini-3.8-flash-high 2>&1); rc=$?
 check "#323: rules over agy's 24000-byte limit start nothing" "$rc $(( $(windows) - before ))" "1 0"
@@ -178,7 +179,7 @@ check "#323: a launch of anything else is refused" "$(bash "$launch" new "$work/
 # The cases after count the fleet's windows: the agy ones this section opened go.
 t list-panes -a -F '#{window_id} #{pane_start_command}' | awk -v a="$work/bin/agy" 'index($0, a) { print $1 }' | xargs -r -n1 tmux -L "$sock" kill-window -t
 check "#323: and its windows are closed again" "$(windows)" "$w0"
-unset KLEPSYDRA_AGY KLEPSYDRA_RULES_SRC KLEPSYDRA_AGY_RULES KLEPSYDRA_AGY_LOCK KLEPSYDRA_AGY_SETTINGS_DIR
+unset KLEPSYDRA_AGY KLEPSYDRA_RULES_SRC KLEPSYDRA_AGY_RULES KLEPSYDRA_AGY_LOCK
 # A fleet launch that starts the server (a cold recover) must not hand the flag
 # to the server's environment, or every later pane, the wall's included, opens behind.
 # Its own stub log: the tab it opens is not one of the fleet socket's tabs counted below.

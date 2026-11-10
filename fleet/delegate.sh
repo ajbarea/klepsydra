@@ -40,17 +40,20 @@ PRINT_TIMEOUT=${FLEET_DELEGATE_TIMEOUT:-600}
 TURN_TIMEOUT=${FLEET_DELEGATE_TURN_TIMEOUT:-900}
 POLL=${FLEET_DELEGATE_POLL:-2}
 # Files that look like secrets never reach an engine, tracked or not.
-SECRET_FILES=(-name '.env' -o -name '.env.*' -o -name '.envrc' -o -name '*.pem' -o -name '*.key' -o -name '*.p12' -o -name '*.pfx' -o -name '*.jks' -o -name '*.keystore'
-  -o -name 'id_rsa*' -o -name 'id_dsa*' -o -name 'id_ecdsa*' -o -name 'id_ed25519*' -o -name '.netrc' -o -name '.npmrc' -o -name '.pypirc'
-  -o -name 'credentials*' -o -name '*.kdbx' -o -name 'secrets*' -o -name '.git-credentials' -o -name '*.tfvars' -o -name '*.tfstate' -o -name 'service-account*.json')
+SECRET_FILES=(-iname '.env' -o -iname '.env.*' -o -iname '*.env' -o -iname '.envrc' -o -iname '*.pem' -o -iname '*.key' -o -iname '*.p12' -o -iname '*.pfx' -o -iname '*.p8'
+  -o -iname '*.jks' -o -iname '*.keystore' -o -iname '*.ppk' -o -iname 'id_rsa*' -o -iname 'id_dsa*' -o -iname 'id_ecdsa*' -o -iname 'id_ed25519*'
+  -o -iname '.netrc' -o -iname '.npmrc' -o -iname '.pypirc' -o -iname '.pgpass' -o -iname '.htpasswd' -o -iname 'kubeconfig*' -o -iname '.kube' -o -iname '.git-credentials'
+  -o -iname 'credentials*' -o -iname '*.kdbx' -o -iname 'secrets*' -o -iname '*secret*.json' -o -iname 'token.json' -o -iname '*.tfvars' -o -iname '*.tfstate'
+  -o -iname 'service-account*.json' -o -iname '.aws' -o -iname '.ssh' -o -iname '.gnupg')
+SECRET_KEEP=(! -iname '.env.example' ! -iname '.env.sample' ! -iname '.env.template')
 # Engine configuration a folder trust would load (hooks run commands, MCP servers reach out):
 # never in the snapshot, or a trusted interactive lane could run what the repo ships.
 ENGINE_CONFIG=(.github/hooks .github/copilot .github/skills .github/agents .github/extensions .github/mcp.json .mcp.json .vscode/mcp.json .copilot .agents .agent .gemini .claude .codex .cursor)
 
 # Text on its way to another vendor's service that looks like a credential (stdin).
-looks_secret() {
-  grep -Eq -- '(AKIA[0-9A-Z]{16}|gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{40,}|glpat-[A-Za-z0-9_-]{20,}|xox[abpr]-[A-Za-z0-9-]{10,}|AIza[0-9A-Za-z_-]{35}|(^|[^A-Za-z0-9])sk-[A-Za-z0-9_-]{20,}|-----BEGIN [A-Z ]*PRIVATE KEY-----)'
-}
+# sk- needs a digit among its first characters, so a kebab-case word (sk-learn-...) is no key.
+SECRET_RE='(AKIA[0-9A-Z]{16}|gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{40,}|glpat-[A-Za-z0-9_-]{20,}|xox[abpr]-[A-Za-z0-9-]{10,}|AIza[0-9A-Za-z_-]{35}|hf_[A-Za-z0-9]{30,}|npm_[A-Za-z0-9]{30,}|GOCSPX-[A-Za-z0-9_-]{20,}|ya29\.[A-Za-z0-9_-]{20,}|eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.|(^|[^A-Za-z0-9])sk-[A-Za-z0-9_-]{0,12}[0-9][A-Za-z0-9_-]{12,}|-----BEGIN [A-Z ]*PRIVATE KEY( BLOCK)?-----|aws_secret_access_key[[:space:]]*[=:])'
+looks_secret() { grep -Eq -- "$SECRET_RE"; }
 
 usage() { sed -n '2,/^set -u/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//'; }
 die() { err "$*"; exit 2; }
@@ -99,7 +102,7 @@ meta_get() { jq -r --arg k "$2" '.[$k] // empty' "$DEL_ROOT/$1/meta.json" 2>/dev
 # SNAP, with TASK-FILE as TASK.md and the helper rules in AGENTS.md. The working
 # tree is never exposed: .env files are usually untracked, and a tracked one
 # is filtered out anyway.
-snapshot() { # REPO TASK SNAP SUBDIR-OUT
+snapshot() { # REPO TASK SNAP
   local repo=$1 task=$2 snap=$3 top mb
   top=$(git -C "$repo" rev-parse --show-toplevel 2>/dev/null) || { err "$repo is not inside a git repository"; return 1; }
   [[ $top != "$HOME" && $top != / ]] || { err "refusing to snapshot $top"; return 1; }
@@ -110,8 +113,10 @@ snapshot() { # REPO TASK SNAP SUBDIR-OUT
   local c
   for c in "${ENGINE_CONFIG[@]}"; do rm -rf -- "${snap:?}/${c:?}"; done
   # Whole directories too (secrets/, credentials/, .env/): pruned, not walked, then checked.
-  find "$snap" -mindepth 1 \( "${SECRET_FILES[@]}" \) ! -name '.env.example' ! -name '.env.sample' -prune -exec rm -rf -- {} + || { err "the secret filter failed"; return 1; }
-  [[ -z $(find "$snap" -mindepth 1 \( "${SECRET_FILES[@]}" \) ! -name '.env.example' ! -name '.env.sample' -print -quit) ]] || { err "the secret filter left a file behind"; return 1; }
+  find "$snap" -mindepth 1 \( "${SECRET_FILES[@]}" \) "${SECRET_KEEP[@]}" -prune -exec rm -rf -- {} + || { err "the secret filter failed"; return 1; }
+  [[ -z $(find "$snap" -mindepth 1 \( "${SECRET_FILES[@]}" \) "${SECRET_KEEP[@]}" -print -quit) ]] || { err "the secret filter left a file behind"; return 1; }
+  # Then by content: a file that holds what looks like a credential does not go either.
+  grep -rIlZE --exclude-dir=.git -e "$SECRET_RE" "$snap" 2>/dev/null | xargs -0 -r rm -f --
   mb=$(du -sm -- "$snap" | cut -f1)
   (( mb <= SNAP_MAX_MB )) || { err "the snapshot of $top is ${mb} MB, over the ${SNAP_MAX_MB} MB limit"; return 1; }
   if ! { { if [[ -f $snap/AGENTS.md ]]; then cat -- "$snap/AGENTS.md"; printf '\n\n'; fi
@@ -120,8 +125,6 @@ snapshot() { # REPO TASK SNAP SUBDIR-OUT
     err "the helper rules cannot be read"; return 1
   fi
   cp -- "$task" "$snap/TASK.md" || return 1
-  local rel=${repo#"$top"}
-  printf '%s' "${rel#/}" >"$snap/.klepsydra-subdir"
   chmod -R a-w -- "$snap"
 }
 drop_snapshot() { # DIR (a snapshot is read-only; it is made writable only to be removed)
@@ -174,7 +177,7 @@ run_print() { # ID ENGINE MODEL KIND SNAP TIMEOUT  -> sets RUN_STATUS, RUN_TEXT
 }
 
 cmd_print() { # args after option parsing
-  local id dir snap engine model kind order e t0 status="" text="" used="" note=""
+  local id dir snap engine model kind order e t0 status="" text="" used="" note="" prior=""
   id=$(new_id) kind=$KIND
   dir=$DEL_ROOT/$id snap=$DEL_ROOT/$id/work
   mkdir -p -- "$dir" || die "cannot write in $DEL_ROOT"
@@ -189,7 +192,11 @@ cmd_print() { # args after option parsing
     run_print "$id" "$e" "$model" "$kind" "$snap" "$TIMEOUT"
     status=$RUN_STATUS text=$RUN_TEXT used=$e
     note+="$e:$status,"
-    [[ $ENGINE == auto && ( $status == limit || $status == auth ) ]] && continue
+    if [[ $ENGINE == auto && ( $status == limit || $status == auth ) ]]; then
+      # What it said may be an answer that mentions a limit: kept below the next engine's.
+      [[ -n $text ]] && prior+=$'\n'"Earlier output of $e (read as $status):"$'\n```\n'"$(printf '%s' "$text" | head -c 2000)"$'\n```\n'
+      continue
+    fi
     break
   done
   drop_snapshot "$snap"
@@ -200,12 +207,13 @@ cmd_print() { # args after option parsing
   fi
   local out=$dir/answer.md
   if [[ $status == ok ]]; then
-    { stamp "$used" "$model"; printf '%s\n' "$text"; } >"$out"
+    { stamp "$used" "$model"; printf '%s\n' "$text"; printf '%s' "$prior"; } >"$out"
   else
     { stamp "$used" "$model"; printf 'No answer: %s.\n' "$status"
       if [[ -s $dir/$used.err ]]; then printf '\nstderr:\n```\n'; head -c 2000 "$dir/$used.err"; printf '\n```\n'; fi
       # A reply that read as a limit may be an answer that mentions one: keep it.
-      if [[ -n $text ]]; then printf '\nstdout:\n```\n'; printf '%s' "$text" | head -c 2000; printf '\n```\n'; fi; } >"$out"
+      if [[ -n $text ]]; then printf '\nstdout:\n```\n'; printf '%s' "$text" | head -c 2000; printf '\n```\n'; fi
+      printf '%s' "$prior"; } >"$out"
   fi
   # Both engines out: say so, never fall to Claude.
   if [[ $ENGINE == auto && ( $status == limit || $status == auth ) ]]; then status="both-out"; fi
@@ -220,11 +228,12 @@ cmd_print() { # args after option parsing
 
 pane_screen() { t capture-pane -p -J -S -3000 -t "$1" 2>/dev/null; }
 # Lane ID's pane, only while that pane id still names the lane's own window: after a tmux
-# server restart the same %N can be another session's pane, which must get no keys and no kill.
+# server restart the same %N can be another session's pane, which must get no keys and no kill;
+# a pane the fleet's pane-died hook brought back keeps its id and name, so its process counts too.
 lane_pane() { # ID
-  local pane win
-  pane=$(meta_get "$1" pane) win=$(meta_get "$1" window)
-  [[ -n $pane && -n $win && $(t display-message -p -t "$pane" '#{pane_id} #{window_name}' 2>/dev/null) == "$pane $win" ]] || return 1
+  local pane win pid
+  pane=$(meta_get "$1" pane) win=$(meta_get "$1" window) pid=$(meta_get "$1" pid)
+  [[ -n $pane && -n $win && -n $pid && $(t display-message -p -t "$pane" '#{pane_id} #{window_name} #{pane_pid}' 2>/dev/null) == "$pane $win $pid" ]] || return 1
   printf '%s' "$pane"
 }
 
@@ -233,7 +242,7 @@ lane_pane() { # ID
 deliver() { # ENGINE PANE TEXT
   local engine=$1 pane=$2 text=$3 f st
   st=$(eng_state "$engine" "$(pane_screen "$pane")")
-  [[ $st == idle ]] || { echo "not-idle:$st"; return 1; }
+  [[ $st == idle || $st == limit || $st == auth ]] || { echo "not-idle:$st"; return 1; }
   f=$(mktemp "$FLEET_STATE/send/dlg-XXXXXX" 2>/dev/null || mktemp) || return 1
   printf '%s' "$text" >"$f"
   t load-buffer -b "dlg$$" "$f" && t paste-buffer -p -d -b "dlg$$" -t "$pane"
@@ -281,7 +290,7 @@ cmd_interactive() {
   fi
   t resize-window -t "$pane" -x 200 -y 50 2>/dev/null
   [[ $pane =~ ^%[0-9]+$ ]] || { drop_snapshot "$snap"; report "$id" "$engine" "$model" error "$dir" "tmux could not open a window"; return 1; }
-  meta_set "$id" pane="$pane" window="$name"
+  meta_set "$id" pane="$pane" window="$name" pid="$(t display-message -p -t "$pane" '#{pane_pid}')" prompt="Read TASK.md in the working folder"
   # The engine's prompt must show before the task goes in.
   local trusted=0
   for _ in $(seq 60); do
@@ -339,15 +348,16 @@ cmd_watch() { # ID
       busy) seen_busy=1 ;;
       limit | auth)
         printf '%s\n' "$screen" >"$dir/screen.txt"
-        { stamp "$engine" "$(meta_get "$id" model)"; eng_answer "$engine" "$screen"; } >"$dir/answer.md"
+        { stamp "$engine" "$(meta_get "$id" model)"; eng_answer "$engine" "$screen" "$(meta_get "$id" prompt)"; } >"$dir/answer.md"
         meta_set "$id" status="$st"
         flog WARN "delegate lane stopped on a limit" id="$id" engine="$engine" state="$st"
         notify "$id" "[fleet delegate] $id engine=$engine status=$st: the lane stopped (screen: $dir/screen.txt; the reply is in $dir/answer.md in case it is an answer that mentions a limit). Re-run with the other engine."
         return 0 ;;
       idle)
-        if (( seen_busy )); then
+        # Idle with no reply under the echo is the gap before the engine's busy footer shows: not a turn end.
+        if (( seen_busy )) && [[ -n $(eng_answer "$engine" "$screen" "$(meta_get "$id" prompt)") ]]; then
           turn=$((turn + 1))
-          ans=$(eng_answer "$engine" "$screen")
+          ans=$(eng_answer "$engine" "$screen" "$(meta_get "$id" prompt)")
           { stamp "$engine" "$(meta_get "$id" model)"; printf '%s\n' "$ans"; } >"$dir/answer-$turn.md"
           cp -f -- "$dir/answer-$turn.md" "$dir/answer.md"
           printf '%s\n' "$screen" >"$dir/screen.txt"
@@ -376,13 +386,17 @@ cmd_msg() { # ID TEXT
   [[ -n ${text//[[:space:]]/} ]] || die "nothing to send"
   (( ${#text} <= TASK_MAX )) || die "the message is over $TASK_MAX bytes"
   if looks_secret <<<"$text"; then die "the message holds what looks like a secret; nothing was sent"; fi
+  # Two follow-ups at once would start two watchers: one holds the lane's lock (the watcher it starts keeps it until it ends).
+  local lfd
+  exec {lfd}>"$DEL_ROOT/$id/msg.lock"
+  flock -n "$lfd" || { echo "not-idle:turn-pending"; return 1; }
   engine=$(meta_get "$id" engine)
   if ! pane=$(lane_pane "$id"); then echo gone; return 1; fi
   # The watcher is still collecting the last turn (its poll has not come round): a second
   # one would overwrite that answer and notify twice. Wait for its notice, then send.
   if watcher_pid "$id" >/dev/null; then echo "not-idle:turn-pending"; return 1; fi
   got=$(deliver "$engine" "$pane" "$text") || { echo "$got"; return 1; }
-  meta_set "$id" status=working
+  meta_set "$id" status=working prompt="$(head -n1 <<<"$text" | cut -c1-40)"
   start_watcher "$id"
   echo sent
 }

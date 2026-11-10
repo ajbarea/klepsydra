@@ -99,6 +99,7 @@ while IFS= read -r line; do
   [[ -z $line ]] && continue
   case $mode in die) exit 0 ;; esac
   if [[ $name == copilot ]]; then hist+=(" ❯ $line"); else hist+=("$rule" "> $line"); fi
+  if [[ -n ${STUB_LATE:-} ]]; then draw 0; sleep "$STUB_LATE"; fi
   draw 1
   sleep "${STUB_BUSY:-1.5}"
   case $mode in
@@ -134,6 +135,9 @@ mkdir -p "$repo/src" && git -C "$repo" init -q . && {
   echo hook >"$repo/.github/hooks/h.json"; echo s >"$repo/.github/skills/s.md"; echo w >"$repo/.github/workflows/ci.yml"; echo c >"$repo/.copilot/c"; echo g >"$repo/.gemini/g"
   echo '{}' >"$repo/.mcp.json"; echo p >"$repo/secrets/prod.yaml"; echo p >"$repo/credentials/gcp.json"; echo p >"$repo/app/.env/prod"
   echo p >"$repo/.envrc"; echo p >"$repo/id_ecdsa"; echo p >"$repo/config/service-account.json"; echo p >"$repo/terraform.tfvars"
+  mkdir -p "$repo/.agents"; echo '{}' >"$repo/.agents/hooks.json"
+  echo p >"$repo/client_secret_123.json"; echo p >"$repo/prod.env"; echo p >"$repo/.PGPASS"; echo p >"$repo/Secrets.yaml"; echo p >"$repo/token.json"
+  printf 'TOKEN = "%s"\n' "ghp_$(head -c 36 /dev/zero | tr '\0' B)" >"$repo/src/cfg.py"
   ln -s /etc/hostname "$repo/link-out"
   git -C "$repo" add -A && git -C "$repo" -c user.email=t@t -c user.name=t commit -qm init
   echo "TOKEN=2" >"$repo/.env.local"; echo "s" >"$repo/secrets.yaml"; echo "dirty" >>"$repo/README.md"
@@ -154,6 +158,8 @@ check "so is a 429" "$(eng_classify 1 'HTTP 429' '')" "limit"
 check "a login failure is auth" "$(eng_classify 1 '' 'please log in first')" "auth"
 check "an exit 0 with a short limit line is a limit" "$(eng_classify 0 'Rate limit reached' '')" "limit"
 check "a long answer that mentions quota is an answer" "$(eng_classify 0 "quota $(head -c 1200 /dev/zero | tr '\0' x)" '')" "ok"
+check "an exit 0 whose stdout is fine is no limit even when stderr talks of quota" "$(eng_classify 0 'the answer' 'warning: quota 429 retry ok')" "ok"
+check "an exit 1 reads its stderr too" "$(eng_classify 1 '' 'HTTP 401 unauthorized')" "auth"
 check "an exit 0 with nothing on stdout is empty, even with stderr noise" "$(eng_classify 0 '' 'some log line')" "empty"
 check "an unrecognised failure is an error (no fallback)" "$(eng_classify 2 '' 'segfault')" "error"
 idle=$'  stub\n──────────\n>\n──────────\n? for shortcuts'
@@ -176,6 +182,8 @@ check "copilot's answer is the last turn's: no echo, no model notice, bullet str
 two=$'──────\n> first\n\n  one\n\n──────\n> second\n12.0k in | 5 out | 1 thinking\n● Read(x) (ctrl+o to expand)\n  two\n  lines\n──────\n>   \n──────\n? for shortcuts'
 check "the answer is the last turn's, without the token, tool and box lines" "$(eng_answer agy "$two")" $'  two\n  lines'
 check "a rule before the prompt echo does not end the last turn early (turn 1 was returned once)" "$(has "$(eng_answer agy "$two")" one)" "no"
+quoted=$'────\n> Read TASK.md in the working folder and go\n  intro\n> a quoted line in the answer\n  more\n────\n>\n────\n? for shortcuts'
+check "a quoted line in the answer does not restart it when the sent prompt is known" "$(eng_answer agy "$quoted" 'Read TASK.md in the working folder')" $'  intro\n> a quoted line in the answer\n  more'
 check "an empty box prompt is no echo" "$(eng_answer agy $'────\n> ask\n  ans\n────\n>     \n────\n? for shortcuts')" "  ans"
 
 echo "print mode"
@@ -205,14 +213,16 @@ check "lock: the engine's folder is read-only" "$(cat "$STUB_DIR/$(last)/cwdmode
 files=$(cat "$STUB_DIR/$(last)/files")
 check "snapshot: committed files are there, with TASK.md and AGENTS.md" "$(has "$files" 'src/a.py')$(has "$files" 'TASK.md')$(has "$files" 'AGENTS.md')" "yesyesyes"
 check "snapshot: a repo's own engine config (hooks, skills, MCP, .copilot, .gemini) never arrives: a trusted lane would run it" \
-  "$(has "$files" 'github/hooks')$(has "$files" 'github/skills')$(has "$files" '\.mcp\.json')$(has "$files" '\.copilot/')$(has "$files" '\.gemini/')" "nonononono"
+  "$(has "$files" 'github/hooks')$(has "$files" 'github/skills')$(has "$files" '\.mcp\.json')$(has "$files" '\.copilot/')$(has "$files" '\.gemini/')$(has "$files" '\.agents/')" "nononononono"
 check "snapshot: secret directories and odd secret names never arrive (secrets/, credentials/, .env/, .envrc, id_ecdsa, service-account, tfvars)" \
   "$(has "$files" 'secrets/')$(has "$files" 'credentials/')$(has "$files" 'app/\.env/')$(has "$files" '\.envrc')$(has "$files" 'id_ecdsa')$(has "$files" 'service-account')$(has "$files" 'tfvars')" "nonononononono"
+check "snapshot: more credential names, any case (client_secret, prod.env, .PGPASS, Secrets.yaml, token.json), and a file holding a token, never arrive" \
+  "$(has "$files" 'client_secret')$(has "$files" 'prod\.env')$(has "$files" 'PGPASS')$(has "$files" 'Secrets\.yaml')$(has "$files" 'token\.json')$(has "$files" 'src/cfg\.py')$(has "$files" 'src/a\.py')" "nonononononoyes"
 check "snapshot: ordinary dotted folders stay (.github/workflows)" "$(has "$files" 'github/workflows/ci.yml')" "yes"
 check "snapshot: a tracked .env, an untracked .env.local, a key and secrets.yaml never arrive; .env.example does" \
   "$(has "$files" '/\.env$')$(has "$files" '\.env\.local')$(has "$files" 'deploy\.pem')$(has "$files" 'secrets\.yaml')$(has "$files" '\.env\.example')" "nonononoyes"
 check "snapshot: the dirty working-tree change is not in it (committed content only)" "$(grep -c dirty "$STUB_DIR/$(last)/task" "$work/state/delegate"/*/work/README.md 2>/dev/null | grep -vc ':0')" "0"
-check "snapshot: the helper rules are in AGENTS.md" "$(has "$(cat "$STUB_DIR/$(last)/agents")" 'read-only helper')" "yes"
+check "snapshot: the helper rules are in AGENTS.md" "$(has "$(cat "$STUB_DIR/$(last)/agents")" 'cannot write files')" "yes"
 check "snapshot: the task is TASK.md, not an argument visible in ps" "$(cat "$STUB_DIR/$(last)/task")" "$(cat "$work/task.md")"
 check "snapshot: a tracked symlink (which a read tool would follow out of it) is not in it" "$(has "$files" 'link-out')" "no"
 check "snapshot: removed when the call ends" "$(find "$work/state/delegate" -maxdepth 2 -name work 2>/dev/null | wc -l)" "0"
@@ -235,6 +245,7 @@ check "an explicit engine does not fall back" "$(field "$out" engine) $(field "$
 mode agy shortlimit; mode copilot ok
 out=$(dl --kind research --dir "$repo" "$work/task.md")
 check "a short exit-0 limit line falls back too" "$(field "$out" engine)" "copilot"
+check "falling back keeps what the first engine said: it may be an answer that mentions a limit" "$(has "$(cat "$(field "$out" path)")" 'Earlier output of agy')$(has "$(cat "$(field "$out" path)")" 'Rate limit reached')" "yesyes"
 mode agy longquota
 out=$(dl --kind research --dir "$repo" "$work/task.md")
 check "a long exit-0 answer that mentions quota is kept" "$(field "$out" engine) $(field "$out" status)" "agy ok"
@@ -257,7 +268,14 @@ printf 'use key %s now\n' "AK""IAABCDEFGHIJKLMNOP" >"$work/secret.md"
 check "a task holding a secret is refused before anything is sent" "$(bash "$delegate" --dir "$repo" "$work/secret.md" >/dev/null 2>&1; echo $?) $(runs)" "2 $n0"
 printf 'use %s now\n' "github_pat_$(head -c 45 /dev/zero | tr '\0' A)" >"$work/secret2.md"
 check "a fine-grained GitHub token in a task is refused too" "$(bash "$delegate" --dir "$repo" "$work/secret2.md" >/dev/null 2>&1; echo $?) $(runs)" "2 $n0"
-printf 'fix the task-spawning-and-return-path-design-for-agents\n' >"$work/word.md"
+printf 'fix the task-spawning-and-return-path-design-for-agents and sk-learn-based-pipelines-for-review\n' >"$work/word.md"
+miss=""
+for tok in "hf_$(head -c 34 /dev/zero | tr '\0' c)" "npm_$(head -c 34 /dev/zero | tr '\0' d)" "GOCSPX-$(head -c 24 /dev/zero | tr '\0' e)" "ya29.$(head -c 30 /dev/zero | tr '\0' f)" \
+  "eyJ$(head -c 20 /dev/zero | tr '\0' g).eyJ$(head -c 20 /dev/zero | tr '\0' h).sig" "-----BEGIN PGP PRIVATE KEY BLOCK-----" "aws_secret_access_key = abc" "sk-proj-$(head -c 30 /dev/zero | tr '\0' 7)"; do
+  printf 'x %s y\n' "$tok" >"$work/tok.md"
+  bash "$delegate" --dir "$repo" "$work/tok.md" >/dev/null 2>&1; [[ $? == 2 ]] || miss+="${tok:0:6} "
+done
+check "more credential formats are refused (hf_, npm_, GOCSPX, ya29, JWT, PGP block, aws_secret_access_key, sk-proj)" "[$miss]" "[]"
 check "a word that merely ends in sk- is no secret" "$(field "$(dl --dir "$repo" "$work/word.md")" status)" "ok"
 head -c 70000 /dev/zero | tr '\0' a >"$work/big.md"
 check "a task over the size cap is refused" "$(bash "$delegate" --dir "$repo" "$work/big.md" >/dev/null 2>&1; echo $?)" "2"
@@ -405,6 +423,32 @@ out=$(dl --interactive --engine agy --kind research --dir "$repo" "$work/task.md
 wait_sent 'turn=1'
 check "a follow-up holding a token is refused, nothing pasted" "$(bash "$delegate" msg "$idm" "use github_pat_$(head -c 45 /dev/zero | tr '\0' A)" >/dev/null 2>&1; echo $?)" "2"
 bash "$delegate" stop "$idm" >/dev/null 2>&1
+
+echo "review round 2: late busy footer, pane revived, one follow-up at a time, limit false alarm, unreadable policy"
+: >"$work/sent.log"
+out=$(STUB_LATE=1.5 STUB_BUSY=0.3 dl --interactive --engine agy --kind research --notify %5 --dir "$repo" "$work/task.md"); idl=$(field "$out" id)
+wait_sent 'turn=1'; sleep 2
+check "an engine whose busy footer shows late is not a finished turn: the answer saved is the real one, notified once" \
+  "$(has "$(cat "$work/state/delegate/$idl/answer-1.md")" 'STUB ANSWER agy to: Read TASK.md') $(grep -c 'turn=1' "$work/sent.log")" "yes 1"
+pane_l=$(jq -r .pane "$work/state/delegate/$idl/meta.json")
+tmux -L "$sock" respawn-pane -k -t "$pane_l" "sleep 100"
+check "a pane brought back by the pane-died hook (same id and name, new process) is not the lane: gone" "$(bash "$delegate" msg "$idl" 'hello' 2>/dev/null)" "gone"
+tmux -L "$sock" kill-window -t "$pane_l" 2>/dev/null; bash "$delegate" stop "$idl" >/dev/null 2>&1
+: >"$work/sent.log"
+out=$(dl --interactive --engine agy --kind research --notify %5 --dir "$repo" "$work/task.md"); idq=$(field "$out" id)
+wait_sent 'turn=1'; sleep 2
+r=$( { bash "$delegate" msg "$idq" 'first' 2>/dev/null & bash "$delegate" msg "$idq" 'second' 2>/dev/null & wait; } | sort | tr '\n' ' ')
+check "two follow-ups at once: one goes in, the other is told a turn is pending (one watcher)" "$r" "not-idle:turn-pending sent "
+sleep 4; bash "$delegate" stop "$idq" >/dev/null 2>&1
+mode agy limit; : >"$work/sent.log"
+out=$(dl --interactive --engine agy --kind research --notify %5 --dir "$repo" "$work/task.md"); idz=$(field "$out" id)
+wait_sent 'status=limit'; mode agy ok
+check "a lane that read as limited (maybe an answer that mentions one) can still be sent to, and keeps the reply" \
+  "$(bash "$delegate" msg "$idz" 'carry on' 2>/dev/null) $([[ -s $work/state/delegate/$idz/answer.md ]] && echo reply)" "sent reply"
+sleep 4; bash "$delegate" stop "$idz" >/dev/null 2>&1
+n1=$(runs)
+out=$(FLEET_AGY_LOCK="$work/no-lock.json" dl --interactive --engine agy --kind research --dir "$repo" "$work/task.md")
+check "an interactive lane with the lock policy unreadable is refused and nothing starts" "$(field "$out" status) $(( $(runs) - n1 ))" "refused 0"
 
 echo "the shared policy"
 check "the helper rules fit agy's 24000-byte limit" "$([[ $(stat -c %s "$root/hooks/klepsydra-engine-rules.md") -le 24000 ]] && echo fits)" "fits"

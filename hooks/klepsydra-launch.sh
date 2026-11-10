@@ -30,7 +30,6 @@ RULES_MAX=24000 # agy's limit for one rules file, in bytes
 # and `fleet delegate` share; the settings go in with --settings, so AJ's own
 # ~/.gemini/antigravity-cli/settings.json is never read for these or rewritten.
 AGY_LOCK=${KLEPSYDRA_AGY_LOCK:-$HOME/.claude/klepsydra-agy-locked.json}
-AGY_SETTINGS_DIR=${KLEPSYDRA_AGY_SETTINGS_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/klepsydra}
 MODEL_RE='^[a-z0-9][a-z0-9.-]{0,63}$'
 WT=${KLEPSYDRA_WT:-wt.exe}
 UNDO=()
@@ -136,20 +135,14 @@ agy_rules() {
   if cmp -s -- "$tmp" "$RULES_DST"; then rm -f -- "${tmp:?}"; else mv -f -- "$tmp" "$RULES_DST" || fail "agy's rules cannot be put in place."; fi
 }
 
-# The locked settings for an agy session in DIR (the lock policy plus DIR as its
-# one trusted workspace, so the session starts with no trust prompt); prints the
-# file's path. Fails, starting nothing, when the policy cannot be read.
-agy_settings() { # DIR
-  local out key
-  need jq "jq is not installed in this distro."
+# The locked settings for an agy session: the lock policy itself, which names no
+# trusted workspace, so agy asks before trusting a folder (a repo's own hooks, plugins
+# and skills load only under trust, and run commands outside the deny rules; AJ answers
+# for his own folders, which his agy settings already list). Prints the file's path.
+# Fails, starting nothing, when the policy cannot be read.
+agy_settings() {
   [[ -r $AGY_LOCK ]] || fail "agy's lock policy ($AGY_LOCK) cannot be read, so agy would start unlocked."
-  key=$(printf '%s' "$1" | cksum | cut -d' ' -f1)
-  mkdir -p -- "$AGY_SETTINGS_DIR" || fail "agy's settings folder ($AGY_SETTINGS_DIR) cannot be made."
-  out=$AGY_SETTINGS_DIR/agy-locked-$key.json
-  if ! { jq --arg d "$1" '. + {trustedWorkspaces: [$d]}' "$AGY_LOCK" >"$out.tmp" && mv -f -- "$out.tmp" "$out"; }; then
-    fail "agy's locked settings cannot be written."
-  fi
-  printf '%s' "$out"
+  printf '%s' "$AGY_LOCK"
 }
 
 # agy's models as one line of JSON, [{"id", "label"}...], since the launcher
@@ -181,7 +174,7 @@ new() { # dir [agy model]
     need "$AGY" "agy (Antigravity CLI) was not found on PATH."
     agy_rules
     local settings
-    settings=$(agy_settings "$dir") || exit 1
+    settings=$(agy_settings) || exit 1
     printf -v cmd '%q --model %s --settings %q --sandbox' "$AGY" "$model" "$settings"
     what="a locked Antigravity session ($model)"
   else

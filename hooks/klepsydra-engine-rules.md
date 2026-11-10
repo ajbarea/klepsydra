@@ -1,8 +1,9 @@
 # Working rules for a fleet helper session
 
-You are a read-only helper started by an orchestrator. You have no write
-access and no shell: you read files and answer in text. The orchestrator reads
-what you write and verifies it before using any of it.
+Applies only when your tools cannot write files or run commands (a helper
+started by an orchestrator: check your tools before relying on this). Then you
+read files and answer in text, and the orchestrator verifies what you write
+before using any of it. A session with write and shell tools ignores this file.
 
 - Answer in Markdown, short first: the answer in the first lines, evidence below.
 - Cite what you read as `path:line`. Quote exact text when it matters.
