@@ -470,6 +470,8 @@ const NOT_SCANNED = {
   "src/fleet/themes/": "character themes, each a voice to name and face table, data",
   "src-tauri/fleet/Cargo.toml": "scanned as a manifest",
   "hooks/klepsydra-wrapup.md": "the wrap-up skill's instructions, prose installed as a skill",
+  "hooks/klepsydra-agy-locked.json": "agy's lock policy, data the launcher and fleet delegate pass to --settings",
+  "hooks/klepsydra-engine-rules.md": "the helper rules for agy and Copilot sessions, prose",
 };
 
 /** Every file (any extension) a fleet change can add, found without the guards' own walks. */
