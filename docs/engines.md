@@ -31,7 +31,7 @@ engine's stderr, the lane's settings and last screen). Each call writes one
 A locked engine cannot write a report file or run `fleet send`, so it never
 reports back itself. The adapter, outside the model, does:
 
-1. **Detect the turn end.** Print mode: the process exits (or the timeout
+1. **Detect the turn end.** (A turn is over only when the pane is idle and there is a reply under the echo of the prompt that was sent, so the gap before a late busy footer is not a turn; a lane's pane is trusted only while its id, window name and process still match what was launched, so a pane the pane-died hook revived is not the lane.) Print mode: the process exits (or the timeout
    kills it). Interactive: the watcher polls the pane every 2 s; a turn ends
    when the footer goes from `esc to cancel` to `? for shortcuts`. A quota or
    login message near the box, a turn over `FLEET_DELEGATE_TURN_TIMEOUT`, or
@@ -64,11 +64,16 @@ the engine a tool that writes, which the lock removes today.
 ## The lock
 
 Every non-Claude session the fleet starts, `+ New session` included, is locked,
-and a lock that cannot be built starts nothing.
+and a lock that cannot be built starts nothing. The two entry points differ: a
+`fleet delegate` lane runs in a read-only snapshot with a scope and a timeout; a
+`+ New session` agy window is a person's own session in a live folder, so it has the
+deny rules and `--sandbox` only, and the lock policy names no trusted workspace, so
+agy asks before trusting a folder (a repo's `.agents/hooks.json` runs commands outside
+the deny rules once its folder is trusted; the delegate snapshot strips it).
 
 | Engine | Lock |
 |---|---|
-| agy | `--settings FILE` (a file of its own, so `~/.gemini/antigravity-cli/settings.json` is never read for these or rewritten), `--sandbox`, `toolPermission: request-review` (headless, anything not allowed is auto-denied; a denial ends the print run), `allowNonWorkspaceAccess: false`, deny `write_file(*)`, `command(*)`, `unsandboxed(*)`, `execute_url(*)`, `mcp(*)` and `read_url(*)` (a research task alone gets URL reads back, so `+ New session` has no outbound channel); the folder is its one trusted workspace; the launcher refuses the whole home folder and `/` as a workspace |
+| agy | `--settings FILE` (a file of its own, so `~/.gemini/antigravity-cli/settings.json` is never read for these or rewritten), `--sandbox`, `toolPermission: request-review` (headless, anything not allowed is auto-denied; a denial ends the print run), `allowNonWorkspaceAccess: false`, deny `write_file(*)`, `command(*)`, `unsandboxed(*)`, `execute_url(*)`, `mcp(*)` and `read_url(*)` (a research task alone gets URL reads back, so `+ New session` has no outbound channel); a `fleet delegate` lane's settings add its snapshot as the one trusted workspace; the launcher refuses the whole home folder and `/` as a workspace |
 | Copilot | `--available-tools view,grep,glob`, `--deny-tool=write`, `--deny-tool=shell`, `--disable-builtin-mcps`, `--disallow-temp-dir` (else it reads every session's scratch files in /tmp), `--no-ask-user`; `--allow-all-tools` only lets a headless run start, the tool list and denies do the locking |
 | both | the engine's folder is a read-only snapshot (see below); a memory- and task-capped systemd scope, for the interactive window too; a timeout; the fleet's memory floor |
 
@@ -84,7 +89,7 @@ Facts found by attack (agy 1.5.3, Copilot 1.0.105; re-check on a CLI upgrade):
 
 `fleet delegate` copies the repo's committed files (`git archive HEAD`) into a
 read-only folder, removes anything secret-looking (`.env*` except `.env.example`
-and `.env.sample`, `.envrc`, keys, `id_*`, `.netrc`, `credentials*`, `secrets*`, `*.tfvars`, service-account files; a matching directory goes whole, and the filter fails closed if anything matching is left), removes every symlink (a read tool would follow one out), removes the repo's own engine configuration (`.github/hooks`, skills, agents, MCP files, `.copilot`, `.gemini`, `.agents`: Copilot's folder trust loads hooks, which run commands outside the tool lock), and adds
+and `.env.sample`, `.envrc`, keys, `id_*`, `.netrc`, `credentials*`, `secrets*`, `*.tfvars`, service-account files; a matching directory goes whole, and the filter fails closed if anything matching is left), removes every symlink (a read tool would follow one out), drops any file whose content looks like a credential (the same patterns that refuse a task file: AWS, GitHub, GitLab, Slack, Google, Hugging Face, npm, JWT, private-key blocks), matches names without regard to case, removes the repo's own engine configuration (`.github/hooks`, skills, agents, MCP files, `.copilot`, `.gemini`, `.agents`: Copilot's folder trust loads hooks, which run commands outside the tool lock), and adds
 `TASK.md` (the task) and `AGENTS.md` (the repo's own, then the helper rules).
 The prompt is one fixed line pointing at `TASK.md`, so the task is not in `ps`.
 Uncommitted work is not visible: put a diff in the task file when the engine
