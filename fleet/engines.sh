@@ -140,31 +140,45 @@ eng_trust_key() { echo Enter; } # ENGINE
 # rule (the input box's), without tool-call, token-count and tip lines. agy draws
 # a rule before every prompt too, so a rule ends only the text after the last echo.
 # index() and no multibyte brackets: mawk reads a UTF-8 range or `+` byte by byte.
-eng_answer() { # ENGINE SCREEN [PROMPT: the text sent; only its echo starts the answer]
-  # With a PROMPT only an echo of it starts the answer: a screen that does not show it (the engine
+# awk helpers shared by both extractors: the echo of what was sent can wrap onto more lines,
+# indented like an answer, so after an echo the lines that continue the sent text are skipped.
+ECHO_AWK='
+  function norm(x) { gsub(/[ \t]+/, " ", x); sub(/^ /, "", x); sub(/ $/, "", x); return x }
+  function matches(rest) { rest = norm(rest); return rest != "" && (p == "" || index(rest, p) == 1 || index(full, rest) == 1) }
+  function begin_echo(rest) { rest = norm(rest); skip = 0
+    if (full != "" && index(full, rest) == 1) { remain = norm(substr(full, length(rest) + 1)); skip = (remain != "") } }
+  function continues(line,   t) { if (!skip) return 0; t = norm(line); if (t == "") return 1
+    if (index(remain, t) == 1) { remain = norm(substr(remain, length(t) + 1)); if (remain == "") skip = 0; return 1 }
+    skip = 0; return 0 }'
+
+eng_answer() { # ENGINE SCREEN [SENT: the full text sent; only its echo starts the answer]
+  # With SENT only an echo of it starts the answer: a screen that does not show it (the engine
   # has not drawn it yet, or drew it differently) gives no answer, never another turn's.
   if [[ $1 == copilot ]]; then eng_answer_copilot "$2" "${3:-}"; return; fi
-  P=${3:-} awk '
-    BEGIN { p = substr(ENVIRON["P"], 1, 40) }
+  P=${3:-} awk "$ECHO_AWK"'
+    BEGIN { full = norm(ENVIRON["P"]); p = substr(full, 1, 40) }
     index($0, "────") == 1 { if (seen) ended = 1; next }
-    index($0, "> ") == 1 { rest = substr($0, 3); sub(/^[ \t]+/, "", rest)
-      if (rest != "" && (p == "" || index(rest, p) == 1)) { seen = 1; ended = 0; delete a; n = 0; next } }
+    index($0, "> ") == 1 { rest = substr($0, 3)
+      if (matches(rest)) { seen = 1; ended = 0; delete a; n = 0; begin_echo(rest); next } }
     !seen || ended { next }
+    continues($0) { next }
     /^[0-9.]+k? in \|/ || index($0, "└ Tip:") == 1 || index($0, "● ") == 1 { next }
     { sub(/[ \t]+$/, ""); a[n++] = $0 }
     END { for (i = 0; i < n; i++) print a[i] }' <<<"$2" | sed -e :a -e '/^[[:space:]]*$/{$d;N;ba' -e '}' | sed -e '/./,$!d'
 }
-
-# Copilot's last turn: after the last "❯ text" echo, up to the cwd line or rule
-# under it; its answer lines start with a bullet, and the model-choice notice is dropped.
-eng_answer_copilot() { # SCREEN [PROMPT]
-  P=${2:-} awk '
-    BEGIN { p = substr(ENVIRON["P"], 1, 40) }
+eng_answer_copilot() { # SCREEN [SENT]
+  P=${2:-} awk "$ECHO_AWK"'
+    BEGIN { full = norm(ENVIRON["P"]); p = substr(full, 1, 40) }
     { line = $0; sub(/^ *❯ +/, "", line) }
-    ($0 ~ /^ *❯ +[^ ]/) && (p == "" || index(line, p) == 1) { seen = 1; ended = 0; delete a; n = 0; next }
+    ($0 ~ /^ *❯ +[^ ]/) && matches(line) { seen = 1; ended = 0; delete a; n = 0; begin_echo(line); next }
     !seen || ended { next }
     index($0, "────") == 1 || index($0, "[⎇") > 0 { ended = 1; next }
+    continues($0) { next }
     index($0, "Copilot Fusion selected") > 0 { next }
     { sub(/[ \t]+$/, ""); a[n++] = $0 }
     END { for (i = 0; i < n; i++) print a[i] }' <<<"$1" | sed -e 's/^ ● //' | sed -e :a -e '/^[[:space:]]*$/{$d;N;ba' -e '}' | sed -e '/./,$!d'
 }
+
+# The key that answers a "trust this folder" dialog (Copilot's first option is Yes).
+eng_trust_key() { echo Enter; } # ENGINE
+

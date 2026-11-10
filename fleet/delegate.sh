@@ -103,10 +103,10 @@ meta_get() { jq -r --arg k "$2" '.[$k] // empty' "$DEL_ROOT/$1/meta.json" 2>/dev
 # SNAP, with TASK-FILE as TASK.md and the helper rules in AGENTS.md. The working
 # tree is never exposed: .env files are usually untracked, and a tracked one
 # is filtered out anyway.
-SNAP_DROPPED=0
+SNAP_DROPPED=0 SNAP_BINARY=0
 snapshot() { # REPO TASK SNAP (sets SNAP_DROPPED)
   local repo=$1 task=$2 snap=$3 top mb
-  SNAP_DROPPED=0
+  SNAP_DROPPED=0 SNAP_BINARY=0
   top=$(git -C "$repo" rev-parse --show-toplevel 2>/dev/null) || { err "$repo is not inside a git repository"; return 1; }
   [[ $top != "$HOME" && $top != / ]] || { err "refusing to snapshot $top"; return 1; }
   mkdir -p -- "$snap" || return 1
@@ -122,7 +122,9 @@ snapshot() { # REPO TASK SNAP (sets SNAP_DROPPED)
   [[ -z $(find "$snap" -mindepth 1 \( "${SECRET_FILES[@]}" \) "${SECRET_KEEP[@]}" -print -quit) ]] || { err "the secret filter left a file behind"; return 1; }
   # Files with a NUL byte anywhere (UTF-16, compiled, archives) hold what a text scan cannot see and no
   # text engine reads them: withheld first, grep -l stopping at the first NUL, so a big binary is not read whole.
-  local list=$snap.dropped dropped=0 rc nul
+  local list=$snap.dropped dropped=0 rc nul big
+  # A file this large is no source a review needs, and the scans would hold it whole in memory.
+  big=$(find "$snap" -type f -size +"${FLEET_DELEGATE_FILE_MB:-25}"M -print -delete 2>/dev/null | wc -l)
   LC_ALL=C grep -rlaZP --exclude-dir=.git '\x00' "$snap" >"$list.bin" 2>/dev/null
   rc=$?
   (( rc <= 1 )) || { rm -f -- "${list:?}" "${list:?}.bin"; err "the binary scan failed"; return 1; }
@@ -135,11 +137,12 @@ snapshot() { # REPO TASK SNAP (sets SNAP_DROPPED)
   (( rc <= 1 )) || { rm -f -- "${list:?}"; err "the content scan failed"; return 1; }
   dropped=$(tr -cd '\0' <"$list" | wc -c)
   xargs -0 -r rm -f -- <"$list"
-  dropped=$(( dropped + nul ))
+  SNAP_BINARY=$(( nul + big ))
   if (( dropped )); then
     flog INFO "snapshot: files withheld for looking like a credential" count="$dropped" files="$(tr '\0' ' ' <"$list" | sed "s|$snap/||g" | cut -c1-300)"
     SNAP_DROPPED=$dropped
   fi
+  (( SNAP_BINARY )) && flog INFO "snapshot: binary or oversized files withheld" count="$SNAP_BINARY"
   rm -f -- "${list:?}"
   mb=$(du -sm -- "$snap" | cut -f1)
   (( mb <= SNAP_MAX_MB )) || { err "the snapshot of $top is ${mb} MB, over the ${SNAP_MAX_MB} MB limit"; return 1; }
@@ -149,7 +152,8 @@ snapshot() { # REPO TASK SNAP (sets SNAP_DROPPED)
     err "the helper rules cannot be read"; return 1
   fi
   # The engine is told, so a review does not read a missing file as an absent one.
-  if (( ${SNAP_DROPPED:-0} )); then printf '\n\n%s file(s) were withheld from this copy because they looked like they hold a credential.\n' "$SNAP_DROPPED" >>"$snap/AGENTS.md"; fi
+  if (( SNAP_DROPPED )); then printf '\n\n%s file(s) were withheld from this copy because they looked like they hold a credential.\n' "$SNAP_DROPPED" >>"$snap/AGENTS.md"; fi
+  if (( SNAP_BINARY )); then printf '\n\n%s binary or very large file(s) were left out of this copy.\n' "$SNAP_BINARY" >>"$snap/AGENTS.md"; fi
   cp -- "$task" "$snap/TASK.md" || return 1
   chmod -R a-w -- "$snap"
 }
@@ -316,7 +320,7 @@ cmd_interactive() {
   fi
   t resize-window -t "$pane" -x 200 -y 50 2>/dev/null
   [[ $pane =~ ^%[0-9]+$ ]] || { drop_snapshot "$snap"; report "$id" "$engine" "$model" error "$dir" "tmux could not open a window"; return 1; }
-  meta_set "$id" pane="$pane" window="$name" pid="$(t display-message -p -t "$pane" '#{pane_pid}')" prompt="Read TASK.md in the working folder"
+  meta_set "$id" pane="$pane" window="$name" pid="$(t display-message -p -t "$pane" '#{pane_pid}')" prompt="Read TASK.md in the working folder and carry it out. Follow AGENTS.md."
   # The engine's prompt must show before the task goes in.
   local trusted=0
   for _ in $(seq 60); do
@@ -414,7 +418,7 @@ cmd_msg() { # ID TEXT
   [[ -n ${text//[[:space:]]/} ]] || die "nothing to send"
   # One short line: both engines fold a long or multi-line paste into a placeholder, and the turn end is read from the echo.
   text=$(tr -s '[:space:]' ' ' <<<"$text" | sed 's/^ //; s/ $//')
-  (( ${#text} <= ${FLEET_DELEGATE_MSG_MAX:-700} )) || die "the message is over ${FLEET_DELEGATE_MSG_MAX:-700} bytes: its echo would fold into a paste marker and the turn could not be read; put long text in a task file and start a lane on it"
+  (( $(printf '%s' "$text" | wc -c) <= ${FLEET_DELEGATE_MSG_MAX:-700} )) || die "the message is over ${FLEET_DELEGATE_MSG_MAX:-700} bytes: its echo would fold into a paste marker and the turn could not be read; put long text in a task file and start a lane on it"
   if looks_secret <<<"$text"; then die "the message holds what looks like a secret; nothing was sent"; fi
   # Two follow-ups at once would start two watchers: one holds the lane's lock (the watcher it starts keeps it until it ends).
   local lfd
@@ -426,9 +430,14 @@ cmd_msg() { # ID TEXT
   # one would overwrite that answer and notify twice. Wait for its notice, then send.
   if watcher_pid "$id" >/dev/null; then echo "not-idle:turn-pending"; return 1; fi
   # A tag unique to this turn leads the message: two follow-ups that open alike, or a blank first line, cannot be told apart by their text.
-  text="[fleet:$(( $(meta_get "$id" turn) + 1 ))] $text"
+  # The tag counts sends, not answered turns: a timed-out or limited turn does not advance the answer count, and its
+  # follow-up must not reuse the tag.
+  local sends
+  sends=$(( $(meta_get "$id" sends) + 1 ))
+  meta_set "$id" sends="$sends"
+  text="[fleet:$sends] $text"
   got=$(deliver "$engine" "$pane" "$text") || { echo "$got"; return 1; }
-  meta_set "$id" status=working prompt="$(head -c 40 <<<"$text" | iconv -f UTF-8 -t UTF-8 -c 2>/dev/null)"
+  meta_set "$id" status=working prompt="$text"
   start_watcher "$id"
   echo sent
 }
@@ -436,7 +445,7 @@ cmd_msg() { # ID TEXT
 cmd_read() { # ID
   valid_id "$1" || die "no lane $1"
   if [[ $(meta_get "$1" status) == timeout && -f $DEL_ROOT/$1/answer-unverified.md ]]; then
-    echo "[the last turn timed out: its echo never matched. The earlier answer is $DEL_ROOT/$1/answer.md; this is the best-effort reply on screen]"
+    echo "[the last turn timed out: its echo never matched.$([[ -f $DEL_ROOT/$1/answer.md ]] && echo " The earlier answer is $DEL_ROOT/$1/answer.md;") this is the best-effort reply on screen]"
     cat -- "$DEL_ROOT/$1/answer-unverified.md"
   elif [[ -f $DEL_ROOT/$1/answer.md ]]; then cat -- "$DEL_ROOT/$1/answer.md"; else echo "no answer yet ($(meta_get "$1" status))"; return 1; fi
 }

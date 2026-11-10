@@ -33,7 +33,7 @@ has() { grep -q -- "$2" <<<"$1" && echo yes || echo no; } # TEXT PATTERN
 mkdir -p "$work/bin" "$work/state" "$work/rec"
 export FLEET_STATE="$work/state" FLEET_HOOK_DIR="$root/hooks" FLEET_SOCK="$sock" FLEET_SYSTEMD_RUN=none
 export FLEET_MIN_AVAIL_MB=1 FLEET_AGY="$work/bin/agy" FLEET_COPILOT="$work/bin/copilot" FLEET_SEND_CMD="$work/bin/fsend"
-export FLEET_DELEGATE_POLL=0.5 HOME="$work/home"
+export FLEET_DELEGATE_FILE_MB=1 FLEET_DELEGATE_POLL=0.5 HOME="$work/home"
 mkdir -p "$HOME"
 delegate="$here/delegate.sh"
 
@@ -143,11 +143,12 @@ mkdir -p "$repo/src" && git -C "$repo" init -q . && {
   # The names that must never reach an engine, written out here and not read from the code under test.
   ENGINE_CONFIG=(.github/hooks .github/copilot .github/skills .github/agents .github/extensions .github/mcp.json .mcp.json .vscode/mcp.json .copilot .agents .agent _agents _agent .gemini .claude .codex .cursor mcp_config.json)
   for c in "${ENGINE_CONFIG[@]}"; do
-    if [[ $c == *.json ]]; then mkdir -p "$repo/${c%/*}"; echo '{}' >"$repo/$c"; else mkdir -p "$repo/$c"; echo x >"$repo/$c/x"; fi
+    if [[ $c == *.json ]]; then mkdir -p "$(dirname "$repo/$c")"; echo '{}' >"$repo/$c"; else mkdir -p "$repo/$c"; echo x >"$repo/$c/x"; fi
   done
   printf 'x\0 %s\n' "ghp_$(head -c 36 /dev/zero | tr '\0' C)" >"$repo/src/bin.dat"
   printf 'k = %s\n' "ghp_$(head -c 36 /dev/zero | tr '\0' D)" | iconv -f UTF-8 -t UTF-16LE >"$repo/src/u16.txt"
   printf '\0\1\2\3' >"$repo/src/blob.bin"; : >"$repo/src/empty.txt"
+  head -c 2000000 /dev/zero | tr '\0' 'a' | fold -w 80 >"$repo/src/big.dat"
   mkdir -p "$repo/vendor/plug"; echo '{}' >"$repo/vendor/plug/hooks.json"
   { head -c 240000 /dev/zero | tr '\0' a; printf '\n'; printf 'k = %s' "ghp_$(head -c 36 /dev/zero | tr '\0' E)" | iconv -f UTF-8 -t UTF-16LE; } >"$repo/src/tail16.txt"
   echo p >"$repo/client_secret_123.json"; echo p >"$repo/prod.env"; echo p >"$repo/.PGPASS"; echo p >"$repo/Secrets.yaml"; echo p >"$repo/token.json"
@@ -187,6 +188,11 @@ check "agy: a long answer that mentions a rate limit is an answer (idle)" "$(eng
 quotedlim=$(printf '────\n> Read TASK.md in the working folder and go\n  %s\n> a quoted line\n  429 rate limit\n────\n>\n────\n? for shortcuts' "$(head -c 500 /dev/zero | tr '\0' x)")
 check "agy: a long answer ending in a quoted line and a 429 is an answer when the sent prompt is known (idle)" "$(eng_state agy "$quotedlim" 'Read TASK.md in the working folder')" "idle"
 check "copilot's answer, anchored to the sent prompt, keeps a quoted echo-looking line" "$(eng_answer copilot $' ❯ Read TASK\n ● intro\n ❯ a quote\n ● more\n /w [⎇ main%]\n────\n❯ \n────\n ← open sidebar' 'Read TASK')" $'intro\n ❯ a quote\nmore'
+sentw='[fleet:1] please check the thing and report whether the service answers HTTP 429 to the second request'
+wrapped=$'────\n> [fleet:1] please check the thing and\n  report whether the service answers HTTP 429\n  to the second request\n  Real answer here\n────\n>\n────\n? for shortcuts'
+check "agy wraps the echo of a follow-up onto indented lines: they are not the answer, and a 429 in them is no limit" "$(eng_answer agy "$wrapped" "$sentw")|$(eng_state agy "$wrapped" "$sentw")" "  Real answer here|idle"
+cwrapped=$' ❯ [fleet:1] please check the thing and\n   report whether the service answers HTTP 429\n   to the second request\n ● Real answer here\n /w [⎇ main%]\n────\n❯ \n────\n ← open sidebar · Interactive · Manual Approval'
+check "and Copilot's wrapped echo likewise" "$(eng_answer copilot "$cwrapped" "$sentw")|$(eng_state copilot "$cwrapped" "$sentw")" "Real answer here|idle"
 check "an echo that matches no prompt gives no answer (never another turn's)" "$(eng_answer agy $'────\n> trimmed echo\n  the answer\n────\n>\n────\n? for shortcuts' 'Something else entirely')" ""
 check "agy: a running turn is busy even with a limit phrase in view" "$(eng_state agy $'────\n> ask\n  see the quota docs\n────\n>\n────\nesc to cancel')" "busy"
 check "an exit-0 answer over 400 bytes that mentions a 429 is an answer" "$(eng_classify 0 "429 $(head -c 450 /dev/zero | tr '\0' x)" '')" "ok"
@@ -238,6 +244,8 @@ check "snapshot: a file with a NUL byte that holds a token is scanned as text an
 check "snapshot: a UTF-16 file holding a token and a binary blob are withheld; an empty file and source stay" \
   "$(has "$files" 'src/u16\.txt')$(has "$files" 'src/blob\.bin')$(has "$files" 'src/empty\.txt')$(has "$files" 'src/a\.py')" "nonoyesyes"
 check "snapshot: a text file whose UTF-16 tail (a NUL far from the first line) holds a token, and a nested hooks.json, are withheld" "$(has "$files" 'src/tail16')$(has "$files" 'vendor/plug/hooks.json')" "nono"
+check "snapshot: a file over the size limit is left out before any scan reads it, binaries are counted apart from credentials and the engine is told" \
+  "$(has "$files" 'src/big\.dat') $(grep -c 'binary or oversized files withheld' "$FLEET_LOG" | tr -d '\n' | sed 's/^0$/none/;s/.*/logged/') $(has "$(cat "$STUB_DIR/$(last)/agents")" 'binary or very large')" "no logged yes"
 check "snapshot: what the content scan withheld is logged and the engine is told" "$(( $(grep -c 'files withheld for looking like a credential' "$FLEET_LOG") >= 1 )) $(has "$(cat "$STUB_DIR/$(last)/agents")" 'withheld')" "1 yes"
 check "snapshot: secret directories and odd secret names never arrive (secrets/, credentials/, .env/, .envrc, id_ecdsa, service-account, tfvars)" \
   "$(has "$files" 'secrets/')$(has "$files" 'credentials/')$(has "$files" 'app/\.env/')$(has "$files" '\.envrc')$(has "$files" 'id_ecdsa')$(has "$files" 'service-account')$(has "$files" 'tfvars')" "nonononononono"
@@ -500,13 +508,18 @@ SECRET_RE='x{9}' ; check "and a plain non-match as clean" "$(echo y | looks_secr
 mkdir -p "$work/shim"
 cat >"$work/shim/grep" <<EOS
 #!/usr/bin/env bash
-for a in "\$@"; do [[ \$a == -rlaZE ]] && exit 2; done
+m=\$(cat "$work/shimmode" 2>/dev/null)
+for a in "\$@"; do [[ \$a == "\$m" ]] && exit 2; done
 exec $(command -v grep) "\$@"
 EOS
 chmod +x "$work/shim/grep"
 n1=$(runs)
-out=$(PATH="$work/shim:$PATH" dl --engine agy --kind research --dir "$repo" "$work/task.md")
-check "a content scan that errors refuses the snapshot: nothing runs" "$(field "$out" status) $(( $(runs) - n1 ))" "refused 0"
+for flag in -rlaZE -rlaZP; do
+  printf '%s' "$flag" >"$work/shimmode"
+  out=$(PATH="$work/shim:$PATH" dl --engine agy --kind research --dir "$repo" "$work/task.md")
+  check "a scan that errors ($flag) refuses the snapshot: nothing runs" "$(field "$out" status) $(( $(runs) - n1 ))" "refused 0"
+done
+rm -f "$work/shimmode"
 # the watcher reads the limit anchored to the prompt: a long answer ending in a quoted line and a 429 is an answer
 mode agy quote429; : >"$work/sent.log"
 out=$(dl --interactive --engine agy --kind ci --notify %5 --dir "$repo" "$work/task.md"); idv=$(field "$out" id)
@@ -530,7 +543,11 @@ wait_sent 'turn=1'; sleep 3; : >"$work/sent.log"
 bash "$delegate" msg "$idt" $'\n\ncontinue' >/dev/null 2>&1; wait_sent 'turn=2'; sleep 3; : >"$work/sent.log"
 bash "$delegate" msg "$idt" 'continue' >/dev/null 2>&1; wait_sent 'turn=3'
 check "two follow-ups that open alike (one after a blank line) each get their own answer under a late echo: the tag makes them differ" \
-  "$(has "$(cat "$work/state/delegate/$idt/answer-2.md")" '\[fleet:2\] continue')$(has "$(cat "$work/state/delegate/$idt/answer-3.md")" '\[fleet:3\] continue')$(has "$(cat "$work/state/delegate/$idt/answer-3.md")" '\[fleet:2\]')" "yesyesno"
+  "$(has "$(cat "$work/state/delegate/$idt/answer-2.md")" '\[fleet:1\] continue')$(has "$(cat "$work/state/delegate/$idt/answer-3.md")" '\[fleet:2\] continue')$(has "$(cat "$work/state/delegate/$idt/answer-3.md")" '\[fleet:1\]')" "yesyesno"
+jq -c '.turn = "0"' "$work/state/delegate/$idt/meta.json" >"$work/m.json" && cp "$work/m.json" "$work/state/delegate/$idt/meta.json"
+: >"$work/sent.log"; bash "$delegate" msg "$idt" 'after a stall' >/dev/null 2>&1; wait_sent 'turn='
+check "the tag counts sends, not answered turns: after a turn that did not count (a timeout) the next follow-up still gets a fresh tag" "$(jq -r .sends "$work/state/delegate/$idt/meta.json") $(has "$(cat "$work/state/delegate/$idt/answer-1.md")" '\[fleet:3\] after a stall')" "3 yes"
+check "a follow-up over 700 bytes (counted in bytes, not characters) is refused" "$(bash "$delegate" msg "$idt" "$(printf 'é%.0s' $(seq 400))" >/dev/null 2>&1; echo $?)" "2"
 check "a follow-up too long to echo whole is refused with the way out" "$(bash "$delegate" msg "$idt" "$(head -c 800 /dev/zero | tr '\0' z)" 2>&1 >/dev/null | grep -c 'task file')" "1"
 sleep 3; bash "$delegate" stop "$idt" >/dev/null 2>&1; knobs_off
 : >"$work/sent.log"; mode agy hang

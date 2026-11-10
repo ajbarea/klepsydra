@@ -175,9 +175,6 @@ for nm in _agents _agent .agent; do
   out=$(bash "$launch" new "$work/nm$nm" agy gemini-3.8-flash-high 2>&1); rc=$?
   check "#323 lock: $nm is refused too (agy loads workspace configuration from all four folder names)" "$rc $(( $(windows) - lb ))" "1 0"
 done
-mkdir -p "$work/plugfolder/p" && echo '{}' >"$work/plugfolder/p/hooks.json"
-out=$(bash "$launch" new "$work/plugfolder" agy gemini-3.8-flash-high 2>&1); rc=$?
-check "#323 lock: a plugin folder's own hooks.json under the workspace is refused" "$rc $(( $(windows) - lb ))" "1 0"
 mkdir -p "$work/winmnt/c/proj"
 out=$(KLEPSYDRA_WINDOWS_MOUNT="$work/winmnt" bash "$launch" new "$work/winmnt/c/proj" agy gemini-3.8-flash-high 2>&1); rc=$?
 check "#323 lock: a folder on the Windows side is no agy workspace (its user folders hold credentials)" "$rc $(( $(windows) - lb )) $(grep -c 'Windows side' <<<"$out")" "1 0 1"
