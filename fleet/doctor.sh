@@ -473,6 +473,32 @@ if [[ -n ${FLEET_WSLCONFIG:-} || ${WSL_DISTRO_NAME:-} ]]; then
     report warn "WSL stays up" "add instanceIdleTimeout=-1 under [general] in $wslconfig: without it WSL shuts down 15 s after a crash ends the fleet's tab, and the fleet comes back only when WSL next starts" wslconfig="$wslconfig"
   fi
 fi
+# The engine lanes (`fleet delegate`): each engine's binary, its login where a
+# file shows one, and which lanes are on. A lane never starts without the lock
+# policy and rules, so their absence turns the lanes off.
+# shellcheck source=fleet/engines.sh
+. "$here/engines.sh"
+for e in "${ENGINES[@]}"; do
+  lanes=""
+  eng_can "$e" print && lanes+="print "
+  eng_can "$e" interactive && lanes+="interactive "
+  if ! eng_has "$e"; then
+    report ok "engine $e" "not installed: its lanes are off"
+    continue
+  fi
+  login="login not checked"
+  case $e in
+    agy) [[ -s $HOME/.gemini/oauth_creds.json ]] && login="signed in" || login="not signed in (run agy once)" ;;
+    copilot) [[ -s $HOME/.copilot/config.json ]] && login="config present" || login="not signed in (copilot login)" ;;
+  esac
+  if [[ ! -r $ENG_LOCK || ! -r $FLEET_HOOK_DIR/klepsydra-engine-rules.md ]]; then
+    report warn "engine $e" "$login; lanes OFF: the lock policy or helper rules are missing from $FLEET_HOOK_DIR (fleet install)"
+  elif [[ $login == "not signed in"* ]]; then
+    report warn "engine $e" "$login; lanes: ${lanes% }"
+  else
+    report ok "engine $e" "$login; lanes: ${lanes% }, locked"
+  fi
+done
 if [[ -n $json ]]; then
   tmp=$json.tmp.$$
   if printf '%s\n' "${results[@]}" | jq -R -s --argjson at "$now" --argjson failed "$failed" \

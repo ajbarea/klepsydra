@@ -51,11 +51,9 @@ eng_order() { # KIND
   esac
 }
 
-# Copilot's interactive lane is not built: its prompt and idle signals are not
-# learned yet (docs/engines.md).
 eng_can() { # ENGINE MODE
   case $1:$2 in
-    agy:print | agy:interactive | copilot:print) return 0 ;;
+    agy:print | agy:interactive | copilot:print | copilot:interactive) return 0 ;;
     *) return 1 ;;
   esac
 }
@@ -82,6 +80,10 @@ eng_argv() { # ENGINE MODE MODEL KIND SETTINGS PROMPT
       ENG_ARGV=("$bin" -p "$6" -s --model "$3" --allow-all-tools --available-tools view,grep,glob
         --deny-tool=write --deny-tool=shell --disable-builtin-mcps --no-ask-user)
       ;;
+    copilot:interactive)
+      ENG_ARGV=("$bin" --model "$3" --allow-all-tools --available-tools view,grep,glob
+        --deny-tool=write --deny-tool=shell --disable-builtin-mcps)
+      ;;
     *) return 1 ;;
   esac
 }
@@ -97,24 +99,35 @@ eng_classify() { # RC STDOUT STDERR: only a failure or a very short answer is re
   [[ -n ${out//[[:space:]]/} ]] && echo ok || echo empty
 }
 
-# agy's screen: its input box sits between two rules, the footer under it reads
-# "esc to cancel" while a turn runs and "? for shortcuts" when idle.
+# An interactive pane's state from its screen. agy: the input box sits between
+# two rules and the footer under it reads "esc to cancel" while a turn runs and
+# "? for shortcuts" when idle. Copilot: the footer reads "Working ctrl+c
+# interrupt" while a turn runs and "open sidebar ... Manual Approval" when idle,
+# and a folder not yet trusted shows a dialog (state trust; eng_trust_key answers).
 eng_state() { # ENGINE SCREEN
-  local screen=$2 foot recent
+  local engine=$1 screen=$2 foot recent
   recent=$(grep -v '^[[:space:]]*$' <<<"$screen" | tail -12)
   foot=$(grep -v '^[[:space:]]*$' <<<"$screen" | tail -1)
+  # Only the dialog's own footer, last on screen: the answered dialog stays in scrollback.
+  if [[ $engine == copilot && $(grep -v '^[[:space:]]*$' <<<"$screen" | tail -2) == *"enter to select"* ]]; then echo trust; return; fi
   if grep -Eqi -- "$ENG_LIMIT_RE" <<<"$recent"; then echo limit
   elif grep -Eqi -- "$ENG_AUTH_RE" <<<"$recent"; then echo auth
-  elif [[ $foot == *"esc to cancel"* ]]; then echo busy
-  elif [[ $foot == *"? for shortcuts"* ]]; then echo idle
+  elif [[ $engine == agy && $foot == *"esc to cancel"* ]]; then echo busy
+  elif [[ $engine == agy && $foot == *"? for shortcuts"* ]]; then echo idle
+  elif [[ $engine == copilot && $foot == *"ctrl+c interrupt"* ]]; then echo busy
+  elif [[ $engine == copilot && ( $foot == *"open sidebar"* || $foot == *"Manual Approval"* ) ]]; then echo idle
   else echo unknown; fi
 }
+
+# The key that answers a "trust this folder" dialog (Copilot's first option is Yes).
+eng_trust_key() { echo Enter; } # ENGINE
 
 # The last turn: what follows the last non-empty "> prompt" echo, up to the next
 # rule (the input box's), without tool-call, token-count and tip lines. agy draws
 # a rule before every prompt too, so a rule ends only the text after the last echo.
 # index() and no multibyte brackets: mawk reads a UTF-8 range or `+` byte by byte.
 eng_answer() { # ENGINE SCREEN
+  if [[ $1 == copilot ]]; then eng_answer_copilot "$2"; return; fi
   awk '
     index($0, "────") == 1 { if (seen) ended = 1; next }
     /^> +[^ ]/ { seen = 1; ended = 0; delete a; n = 0; next }
@@ -122,4 +135,16 @@ eng_answer() { # ENGINE SCREEN
     /^[0-9.]+k? in \|/ || index($0, "└ Tip:") == 1 || index($0, "● ") == 1 { next }
     { sub(/[ \t]+$/, ""); a[n++] = $0 }
     END { for (i = 0; i < n; i++) print a[i] }' <<<"$2" | sed -e :a -e '/^[[:space:]]*$/{$d;N;ba' -e '}' | sed -e '/./,$!d'
+}
+
+# Copilot's last turn: after the last "❯ text" echo, up to the cwd line or rule
+# under it; its answer lines start with a bullet, and the model-choice notice is dropped.
+eng_answer_copilot() { # SCREEN
+  awk '
+    /^ *❯ +[^ ]/ { seen = 1; ended = 0; delete a; n = 0; next }
+    !seen || ended { next }
+    index($0, "────") == 1 || index($0, "[⎇") > 0 { ended = 1; next }
+    index($0, "Copilot Fusion selected") > 0 { next }
+    { sub(/[ \t]+$/, ""); a[n++] = $0 }
+    END { for (i = 0; i < n; i++) print a[i] }' <<<"$1" | sed -e 's/^ ● //' | sed -e :a -e '/^[[:space:]]*$/{$d;N;ba' -e '}' | sed -e '/./,$!d'
 }

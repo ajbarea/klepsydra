@@ -79,7 +79,9 @@ snapshot() { # REPO TASK SNAP SUBDIR-OUT
   top=$(git -C "$repo" rev-parse --show-toplevel 2>/dev/null) || { err "$repo is not inside a git repository"; return 1; }
   [[ $top != "$HOME" && $top != / ]] || { err "refusing to snapshot $top"; return 1; }
   mkdir -p -- "$snap" || return 1
-  git -C "$top" archive --format=tar HEAD | tar -x -C "$snap" 2>/dev/null || { err "git archive of $top failed"; return 1; }
+  timeout 120 git -C "$top" archive --format=tar HEAD | tar -x -C "$snap" 2>/dev/null || { err "git archive of $top failed"; return 1; }
+  # A tracked symlink can point at a file outside the snapshot, which a read tool follows.
+  find "$snap" -type l -delete 2>/dev/null
   find "$snap" -depth \( "${SECRET_FILES[@]}" \) ! -name '.env.example' ! -name '.env.sample' -delete 2>/dev/null
   mb=$(du -sm -- "$snap" | cut -f1)
   (( mb <= SNAP_MAX_MB )) || { err "the snapshot of $top is ${mb} MB, over the ${SNAP_MAX_MB} MB limit"; return 1; }
@@ -92,7 +94,7 @@ snapshot() { # REPO TASK SNAP SUBDIR-OUT
   chmod -R a-w -- "$snap"
 }
 drop_snapshot() { # DIR (a snapshot is read-only; it is made writable only to be removed)
-  [[ -n ${1:-} && $1 == "$DEL_ROOT"/*/work ]] || return 0
+  [[ -n ${1:-} && $1 == "$DEL_ROOT"/*/work && $1 != *..* ]] || return 0
   chmod -R u+w -- "$1" 2>/dev/null
   rm -rf -- "${1:?}"
 }
@@ -133,8 +135,9 @@ run_print() { # ID ENGINE MODEL KIND SNAP TIMEOUT  -> sets RUN_STATUS, RUN_TEXT
     eng_settings "$kind" "$snap" "$settings" || { RUN_STATUS=error RUN_TEXT="the lock policy ($ENG_LOCK) cannot be read; nothing was started"; return; }
   fi
   eng_argv "$engine" print "$model" "$kind" "$settings" "$prompt" || { RUN_STATUS=error RUN_TEXT="no print lane for $engine"; return; }
-  RUN_TEXT=$(cd "$snap" && scoped "$id" timeout -k 10 "$timeout" "${ENG_ARGV[@]}" </dev/null 2>"$dir/$engine.err")
+  (cd "$snap" && scoped "$id" timeout -k 10 "$timeout" "${ENG_ARGV[@]}" </dev/null >"$dir/$engine.out" 2>"$dir/$engine.err")
   rc=$?
+  RUN_TEXT=$(head -c "${FLEET_DELEGATE_OUT_MAX:-1048576}" "$dir/$engine.out" 2>/dev/null)
   if (( rc == 124 || rc == 137 )); then RUN_STATUS=timeout; return; fi
   RUN_STATUS=$(eng_classify "$rc" "$RUN_TEXT" "$(head -c 4000 "$dir/$engine.err" 2>/dev/null)")
 }
@@ -195,11 +198,16 @@ deliver() { # ENGINE PANE TEXT
   t load-buffer -b "dlg$$" "$f" && t paste-buffer -p -d -b "dlg$$" -t "$pane"
   rm -f -- "${f:?}"
   sleep 0.5
+  local pre now
   for i in 1 2; do
+    pre=$(pane_screen "$pane")
     t send-keys -t "$pane" Enter
     for _ in $(seq 20); do
       sleep 0.5
-      [[ $(eng_state "$engine" "$(pane_screen "$pane")") == busy ]] && { echo sent; return 0; }
+      now=$(pane_screen "$pane")
+      st=$(eng_state "$engine" "$now")
+      # Sent: the turn shows busy, or a reply so quick it never did has changed the screen.
+      if [[ $st == busy ]] || { [[ $st == idle || $st == limit ]] && [[ $now != "$pre" ]]; }; then echo sent; return 0; fi
     done
   done
   echo not-delivered
@@ -233,8 +241,10 @@ cmd_interactive() {
   [[ $pane =~ ^%[0-9]+$ ]] || { drop_snapshot "$snap"; report "$id" "$engine" "$model" error "$dir" "tmux could not open a window"; return 1; }
   meta_set "$id" pane="$pane" window="$name"
   # The engine's prompt must show before the task goes in.
+  local trusted=0
   for _ in $(seq 60); do
     st=$(eng_state "$engine" "$(pane_screen "$pane")")
+    if [[ $st == trust ]] && (( ! trusted )); then t send-keys -t "$pane" "$(eng_trust_key "$engine")"; trusted=1; fi
     [[ $st == idle || $st == limit || $st == auth ]] && break
     sleep 1
   done
@@ -266,7 +276,9 @@ start_watcher() { # ID
 # the engine is idle again after a busy spell; a limit, a timeout or a closed
 # window ends the watch (the lane stays for the orchestrator to read or stop).
 cmd_watch() { # ID
-  local id=$1 pane engine st seen_busy=0 turn started screen ans dir=$DEL_ROOT/$1
+  # Started right after a prompt went in (deliver saw the turn begin), so a reply
+  # that finished before the first poll is still a turn end: seen_busy starts at 1.
+  local id=$1 pane engine st seen_busy=1 turn started screen ans dir=$DEL_ROOT/$1
   pane=$(meta_get "$id" pane) engine=$(meta_get "$id" engine)
   turn=$(meta_get "$id" turn); turn=${turn:-0}
   started=$SECONDS

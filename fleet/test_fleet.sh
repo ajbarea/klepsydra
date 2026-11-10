@@ -771,6 +771,17 @@ check "reported started" "${out##* }" "brief=started"
 out=$(FLEET_START_WAIT=1 launch agent5 '{"above":["Claude Code"],"busy_delay":2}')
 check "a turn whose spinner shows late is never interrupted by a retry" "$(grep -cE 'ESC|INTERRUPTED' "$work/agent5.log") ${out##* }" "0 brief=started"
 check "nor submitted twice" "$(grep -c '^SUBMIT' "$work/agent5.log")" "1"
+# The cause, with the screen mocked: the wait after Enter ends, the log line after it takes
+# long enough for the box to empty, and the second Enter must not be pressed on the old reading.
+dbcalls="$work/db.calls"; : >"$dbcalls"; rm -f -- "$work/db.gate"
+check "a box that emptied while the retry's log line ran gets no second Enter (the CI red: an empty line submitted)" \
+  "$( ( screen() { :; }; busy() { return 1; }; has_input_box() { return 0; }
+        input_text() { [[ -s $work/db.gate ]] || echo brief; }
+        holds_input() { [[ -n $(input_text) ]]; }
+        wait_for() { [[ $3 == sent_or_started ]] && return 1; return 0; }
+        t() { [[ $1 == send-keys ]] && echo enter >>"$dbcalls"; return 0; }
+        flog() { echo gone >"$work/db.gate"; }
+        deliver_brief %9 /dev/null >/dev/null; grep -c enter "$dbcalls" ) )" "1"
 
 echo "launch.sh: a slow or stuck start (#187)"
 : >"$FLEET_LOG"
@@ -2903,6 +2914,15 @@ doc=$(bash "$here/doctor.sh" 2>/dev/null)
 check "a lost row is one FAIL, a finished one one warn, and neither gets a remote control line" \
   "$(grep '^FAIL agents' <<<"$doc") | $(grep '^warn finished agents' <<<"$doc") | $(grep -c 'remote control %[45] ' <<<"$doc")" \
   "FAIL agents: sessions gone: e: fleet recover | warn finished agents: still in panes.tsv: d: fleet doctor --prune | 0"
+doc=$(FLEET_AGY=/nonexistent FLEET_COPILOT=/nonexistent bash "$here/doctor.sh" 2>/dev/null)
+check "doctor: an engine that is not installed says its lanes are off" "$(grep -c '^ok *engine [a-z]*: not installed: its lanes are off' <<<"$doc")" "2"
+mkdir -p "$work/enghome/.gemini"; echo '{}' >"$work/enghome/.gemini/oauth_creds.json"
+doc=$(HOME="$work/enghome" FLEET_AGY=/bin/true FLEET_COPILOT=/bin/true FLEET_HOOK_DIR="$here/../hooks" bash "$here/doctor.sh" 2>/dev/null)
+check "doctor: an installed engine with the lock policy shows its lanes, locked, and its login" \
+  "$(grep '^ok *engine agy' <<<"$doc" | sed 's/^ok *//') | $(grep '^[a-zA-Z]* *engine copilot' <<<"$doc" | sed 's/^\([a-zA-Z]*\) .*lanes: \(.*\)$/\1 \2/')" \
+  "engine agy: signed in; lanes: print interactive, locked | warn print"
+doc=$(HOME="$work/enghome" FLEET_AGY=/bin/true FLEET_COPILOT=/bin/true FLEET_HOOK_DIR="$work/nohooks" bash "$here/doctor.sh" 2>/dev/null)
+check "doctor: without the lock policy the lanes are OFF, never silently on" "$(grep -c '^warn *engine [a-z]*: .*lanes OFF' <<<"$doc")" "2"
 check "recover leaves a finished agent alone and relaunches the lost one" \
   "$(rec --dry-run --no-orchestrator | grep -E '^(finished|would recover)' | sed 's/ (.*//')" $'finished: d\nwould recover: e'
 # #261 review 4: d's finish is recorded; AJ resumes it in its pane (the same id,

@@ -72,25 +72,42 @@ fi
 # interactive: draw a screen, read a line, answer
 hist=()
 rule=$(printf '─%.0s' $(seq 60))
-draw() { # FOOTER
-  printf '\033[2J\033[H'
-  printf '  Antigravity CLI stub\n'
-  printf '%s\n' "${hist[@]}"
-  printf '%s\n>\n%s\n%s\n' "$rule" "$rule" "$1"
-}
-draw "? for shortcuts"
+if [[ $name == copilot ]]; then
+  draw() { # BUSY(0|1)
+    printf '\033[2J\033[H'
+    printf ' ● MCP Servers reloaded: 0 servers connected\n'
+    printf '%s\n' "${hist[@]}"
+    printf ' /work [⎇ main%%]\n%s\n❯ \n%s\n' "$rule" "$rule"
+    if [[ $1 == 1 ]]; then printf ' ◎ Working ctrl+c interrupt\n'; else printf ' ← open sidebar · Interactive · Manual Approval · / commands\n'; fi
+  }
+  if [[ -e $STUB_DIR/trust ]]; then
+    printf 'Do you trust the files in this folder?\n ❯ 1. Yes\n   3. No (Esc)\n ↑/↓ to navigate · enter to select · esc to cancel\n'
+    IFS= read -r _ || exit 0
+    echo trusted >"$STUB_DIR/trusted"
+  fi
+  idle=0
+else
+  draw() { # BUSY(0|1)
+    printf '\033[2J\033[H'
+    printf '  Antigravity CLI stub\n'
+    printf '%s\n' "${hist[@]}"
+    printf '%s\n>\n%s\n%s\n' "$rule" "$rule" "$([[ $1 == 1 ]] && echo 'esc to cancel' || echo '? for shortcuts')"
+  }
+fi
+draw 0
 while IFS= read -r line; do
   [[ -z $line ]] && continue
   case $mode in die) exit 0 ;; esac
-  hist+=("$rule" "> $line")
-  draw "esc to cancel"
+  if [[ $name == copilot ]]; then hist+=(" ❯ $line"); else hist+=("$rule" "> $line"); fi
+  draw 1
   sleep "${STUB_BUSY:-1.5}"
   case $mode in
     hang) sleep 60 ;;
     limit) hist+=("  You have exhausted your quota for today.") ;;
-    *) hist+=("12.0k in | 750 out | 667 thinking" "● Read(TASK.md) (ctrl+o to expand)" "  STUB ANSWER $name to: $line") ;;
+    *) if [[ $name == copilot ]]; then hist+=(" ● Copilot Fusion selected a model" " ● STUB ANSWER $name to: $line")
+       else hist+=("12.0k in | 750 out | 667 thinking" "● Read(TASK.md) (ctrl+o to expand)" "  STUB ANSWER $name to: $line"); fi ;;
   esac
-  draw "? for shortcuts"
+  draw 0
 done
 EOF
 chmod +x "$work/bin/stub"
@@ -113,6 +130,7 @@ repo="$work/repo"
 mkdir -p "$repo/src" && git -C "$repo" init -q . && {
   echo "hello" >"$repo/README.md"; echo "code" >"$repo/src/a.py"
   echo "TOKEN=1" >"$repo/.env"; echo "EXAMPLE=" >"$repo/.env.example"; echo "k" >"$repo/deploy.pem"
+  ln -s /etc/hostname "$repo/link-out"
   git -C "$repo" add -A && git -C "$repo" -c user.email=t@t -c user.name=t commit -qm init
   echo "TOKEN=2" >"$repo/.env.local"; echo "s" >"$repo/secrets.yaml"; echo "dirty" >>"$repo/README.md"
 }
@@ -123,7 +141,7 @@ field() { tr ' ' '\n' <<<"$1" | grep "^$2=" | head -1 | cut -d= -f2-; } # LINE K
 echo "the engine adapters"
 . "$here/lib.sh"; . "$here/engines.sh"
 check "research and drafts go to agy first, review and CI triage to copilot" "$(eng_order research)|$(eng_order draft)|$(eng_order review)|$(eng_order ci)" "agy copilot|agy copilot|copilot agy|copilot agy"
-check "copilot has a print lane and no interactive one; agy has both" "$(eng_can copilot print && echo p)$(eng_can copilot interactive && echo i)$(eng_can agy print && echo p)$(eng_can agy interactive && echo i)" "ppi"
+check "agy and copilot each have a print and an interactive lane" "$(eng_can copilot print && echo p)$(eng_can copilot interactive && echo i)$(eng_can agy print && echo p)$(eng_can agy interactive && echo i)" "pipi"
 check "a failure that names a quota is a limit" "$(eng_classify 1 '' 'Error: quota exceeded')" "limit"
 check "so is a 429" "$(eng_classify 1 'HTTP 429' '')" "limit"
 check "a login failure is auth" "$(eng_classify 1 '' 'please log in first')" "auth"
@@ -136,6 +154,13 @@ check "agy's footer: idle" "$(eng_state agy "$idle")" "idle"
 check "agy's footer: busy" "$(eng_state agy "${idle/\? for shortcuts/esc to cancel}")" "busy"
 check "agy: a quota message near the box is a limit" "$(eng_state agy $'  You have exhausted your quota\n────\n>\n────\n? for shortcuts')" "limit"
 check "agy: an old quota word far above the box is not" "$(eng_state agy "$(printf 'quota\n%.0s' 1; printf 'x\n%.0s' $(seq 20); echo "$idle")")" "idle"
+cidle=$' ● hello\n /w [⎇ main%]\n────\n❯ \n────\n ← open sidebar · Interactive · Manual Approval · / commands'
+check "copilot's footer: idle" "$(eng_state copilot "$cidle")" "idle"
+check "copilot's footer: busy" "$(eng_state copilot "${cidle/← open sidebar · Interactive · Manual Approval · \/ commands/◎ Working ctrl+c interrupt}")" "busy"
+check "copilot: the trust dialog is its own state, answered with Enter; once answered it is not (it stays in scrollback)" "$(eng_state copilot $'Do you trust the files in this folder?\n ❯ 1. Yes\n enter to select')|$(eng_state copilot $'Do you trust the files in this folder?\n enter to select\n'"$cidle")|$(eng_trust_key copilot)" "trust|idle|Enter"
+check "copilot: a quota message near the box is a limit" "$(eng_state copilot $' ● You have hit your rate limit\n────\n❯ \n────\n ← open sidebar · Interactive · Manual Approval')" "limit"
+cscreen=$' ● MCP Servers reloaded\n ❯ first\n ● one\n ❯ second\n ● Copilot Fusion selected GPT\n ● two\n   more\n /w [⎇ main%]\n────\n❯ \n────\n ← open sidebar · Interactive'
+check "copilot's answer is the last turn's: no echo, no model notice, bullet stripped, up to the cwd line" "$(eng_answer copilot "$cscreen")" $'two\n   more'
 two=$'──────\n> first\n\n  one\n\n──────\n> second\n12.0k in | 5 out | 1 thinking\n● Read(x) (ctrl+o to expand)\n  two\n  lines\n──────\n>   \n──────\n? for shortcuts'
 check "the answer is the last turn's, without the token, tool and box lines" "$(eng_answer agy "$two")" $'  two\n  lines'
 check "a rule before the prompt echo does not end the last turn early (turn 1 was returned once)" "$(has "$(eng_answer agy "$two")" one)" "no"
@@ -172,6 +197,7 @@ check "snapshot: a tracked .env, an untracked .env.local, a key and secrets.yaml
 check "snapshot: the dirty working-tree change is not in it (committed content only)" "$(grep -c dirty "$STUB_DIR/$(last)/task" "$work/state/delegate"/*/work/README.md 2>/dev/null | grep -vc ':0')" "0"
 check "snapshot: the helper rules are in AGENTS.md" "$(has "$(cat "$STUB_DIR/$(last)/agents")" 'read-only helper')" "yes"
 check "snapshot: the task is TASK.md, not an argument visible in ps" "$(cat "$STUB_DIR/$(last)/task")" "$(cat "$work/task.md")"
+check "snapshot: a tracked symlink (which a read tool would follow out of it) is not in it" "$(has "$files" 'link-out')" "no"
 check "snapshot: removed when the call ends" "$(ls -d "$work/state/delegate"/*/work 2>/dev/null | wc -l)" "0"
 
 echo "routing and fallback"
@@ -217,6 +243,9 @@ check "a word that merely ends in sk- is no secret" "$(field "$(dl --dir "$repo"
 head -c 70000 /dev/zero | tr '\0' a >"$work/big.md"
 check "a task over the size cap is refused" "$(bash "$delegate" --dir "$repo" "$work/big.md" >/dev/null 2>&1; echo $?)" "2"
 mkdir -p "$work/plain"
+mkdir -p "$work/empty" && git -C "$work/empty" init -q .
+out=$(dl --dir "$work/empty" "$work/task.md"); rc=$?
+check "a repo with no commit is refused, nothing run" "$rc $(field "$out" status)" "1 refused"
 out=$(dl --dir "$work/plain" "$work/task.md"); rc=$?
 check "a folder that is no git repo is refused, nothing run" "$rc $(field "$out" status)" "1 refused"
 check "the home folder is never snapshotted" "$(cd "$HOME" && git init -q . 2>/dev/null; dl --dir "$HOME" "$work/task.md" | tr ' ' '\n' | grep -c 'status=refused')" "1"
@@ -280,11 +309,39 @@ check "a window that closes under the watcher: gone, notified" "$(has "$(sent)" 
 bash "$delegate" stop "$id" >/dev/null 2>&1; bash "$delegate" stop "$id2" >/dev/null 2>&1
 
 mode agy ok
-out=$(dl --interactive --engine copilot --kind review --dir "$repo" "$work/task.md"); rc=$?
-check "copilot has no interactive lane: said so, nothing started, exit 3" "$(field "$out" status) $rc" "unavailable 3"
-out=$(dl --interactive --kind review --dir "$repo" "$work/task.md"); id3=$(field "$out" id)
-check "auto, interactive, review: copilot cannot, so agy takes it" "$(field "$out" engine)" "agy"
+out=$(FLEET_COPILOT=/nonexistent dl --interactive --engine copilot --kind review --dir "$repo" "$work/task.md"); rc=$?
+check "an interactive lane whose engine is not installed: unavailable, nothing started, exit 3" "$(field "$out" status) $rc" "unavailable 3"
+out=$(FLEET_COPILOT=/nonexistent dl --interactive --kind review --dir "$repo" "$work/task.md"); id3=$(field "$out" id)
+check "auto, interactive, review with copilot missing: agy takes it" "$(field "$out" engine)" "agy"
 bash "$delegate" stop "$id3" >/dev/null 2>&1
+
+echo "interactive lane (copilot)"
+: >"$work/sent.log"; mode copilot ok; : >"$STUB_DIR/trust"
+out=$(dl --interactive --kind review --notify %5 --dir "$repo" "$work/task.md"); idc=$(field "$out" id)
+check "auto, interactive, review: copilot, launched" "$(field "$out" engine) $(field "$out" status)" "copilot working"
+a=$(tr '\n' ' ' <"$STUB_DIR/$(last)/argv")
+check "lock copilot interactive: the same tool list and denies as print mode, no MCP" "$(has "$a" '--available-tools view,grep,glob')$(has "$a" '--deny-tool=write')$(has "$a" '--deny-tool=shell')$(has "$a" '--disable-builtin-mcps')$(has "$a" '^-p ')" "yesyesyesyesno"
+check "the trust dialog was answered once, by the adapter" "$(cat "$STUB_DIR/trusted" 2>/dev/null)" "trusted"
+wait_sent 'turn=1'
+check "copilot turn end: told through fleet send; the answer is captured outside the model" "$(has "$(sent)" "$idc engine=copilot status=ok turn=1")$(has "$(cat "$work/state/delegate/$idc/answer.md")" 'STUB ANSWER copilot to: Read TASK.md')$(has "$(cat "$work/state/delegate/$idc/answer.md")" 'Fusion')" "yesyesno"
+: >"$work/sent.log"
+bash "$delegate" msg "$idc" 'second' >/dev/null 2>&1; wait_sent 'turn=2'
+check "copilot follow-up: turn 2" "$(has "$(cat "$work/state/delegate/$idc/answer.md")" 'to: second')" "yes"
+bash "$delegate" stop "$idc" >/dev/null 2>&1
+rm -f "$STUB_DIR/trust"
+: >"$work/sent.log"; mode copilot limit
+out=$(dl --interactive --engine copilot --kind review --notify %5 --dir "$repo" "$work/task.md"); idc=$(field "$out" id)
+wait_sent 'status=limit'
+check "copilot at its quota: told, status limit" "$(has "$(sent)" "$idc engine=copilot status=limit")" "yes"
+bash "$delegate" stop "$idc" >/dev/null 2>&1
+mode copilot ok
+
+echo "a reply faster than the watcher's first poll"
+: >"$work/sent.log"
+out=$(STUB_BUSY=0.05 FLEET_DELEGATE_POLL=2 dl --interactive --engine agy --kind research --notify %5 --dir "$repo" "$work/task.md"); idf=$(field "$out" id)
+wait_sent 'turn=1'
+check "a turn that ended before the first poll is still a turn end, not a timeout" "$(has "$(sent)" "$idf engine=agy status=ok turn=1")" "yes"
+bash "$delegate" stop "$idf" >/dev/null 2>&1
 check "no window is left on the server" "$(tmux -L "$sock" list-windows -a 2>/dev/null | wc -l)" "0"
 
 echo "the shared policy"
