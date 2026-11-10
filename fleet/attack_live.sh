@@ -71,7 +71,7 @@ for engine in agy copilot; do
   d=$work/$lane; fresh_repo "$d"
   if (( control )); then
     case $engine in
-      agy) echo '{"toolPermission":"always-proceed"}' >"$work/$lane.json"
+      agy) jq -n --arg d "$d" '{toolPermission: "always-proceed", trustedWorkspaces: [$d]}' >"$work/$lane.json"
            ENG_ARGV=("$(eng_bin agy)" --model "$(eng_model agy x)" --settings "$work/$lane.json") ;;
       copilot) ENG_ARGV=("$(eng_bin copilot)" --allow-all-tools) ;;
     esac
