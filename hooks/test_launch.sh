@@ -142,9 +142,9 @@ check "#323: on the model asked for" "$(t list-panes -a -F '#{pane_start_command
 sf=$(t list-panes -a -F '#{pane_start_command}' | grep -o -- "--settings [^ ]*" | head -1 | cut -d' ' -f2 | tr -d "'\"")
 check "#323 lock: the session gets --sandbox and a settings file of its own, never AJ's" \
   "$(t list-panes -a -F '#{pane_start_command}' | grep -c -- "--sandbox") $([[ $sf == "$work/agy-settings/"* ]] && echo own)" "1 own"
-check "#323 lock: that file denies writes, the shell, MCP and the browser, and sets strict permissions" \
+check "#323 lock: that file denies writes, the shell, MCP and the browser, and asks before anything else (headless, that is a denial)" \
   "$(jq -r '[.toolPermission, .allowNonWorkspaceAccess, .enableTerminalSandbox, (.permissions.deny | sort | join(","))] | join(" ")' "$sf")" \
-  "strict false true command(*),execute_url(*),mcp(*),unsandboxed(*),write_file(*)"
+  "request-review false true command(*),execute_url(*),mcp(*),unsandboxed(*),write_file(*)"
 check "#323 lock: the folder it starts in is its one trusted workspace" "$(jq -c .trustedWorkspaces "$sf")" "[\"$work/repos\"]"
 check "#323: the helper rules reach agy as an always-on rule made from the one source" \
   "$(sed -n 2p "$KLEPSYDRA_AGY_RULES") $(grep -c '^Read only.$' "$KLEPSYDRA_AGY_RULES")" "trigger: always_on 1"
