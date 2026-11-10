@@ -179,6 +179,3 @@ eng_answer_copilot() { # SCREEN [SENT]
     END { for (i = 0; i < n; i++) print a[i] }' <<<"$1" | sed -e 's/^ ● //' | sed -e :a -e '/^[[:space:]]*$/{$d;N;ba' -e '}' | sed -e '/./,$!d'
 }
 
-# The key that answers a "trust this folder" dialog (Copilot's first option is Yes).
-eng_trust_key() { echo Enter; } # ENGINE
-
