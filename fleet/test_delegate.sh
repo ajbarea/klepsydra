@@ -121,8 +121,8 @@ EOF
 chmod +x "$work/bin/fsend"
 sent() { cat "$work/sent.log" 2>/dev/null; }
 mode() { printf '%s' "$2" >"$STUB_DIR/mode-$1"; } # ENGINE MODE
-last() { ls "$STUB_DIR" | grep '^run-' | sort -t- -k2 -n | tail -1; }
-runs() { ls "$STUB_DIR" | grep -c '^run-'; }
+last() { find "$STUB_DIR" -maxdepth 1 -name 'run-*' -printf '%f\n' | sort -t- -k2 -n | tail -1; }
+runs() { find "$STUB_DIR" -maxdepth 1 -name 'run-*' | wc -l; }
 lastargs() { tr '\n' ' ' <"$STUB_DIR/$(last)/argv"; }
 
 # A repo with committed files, a tracked secret, untracked secrets and a dirty change.
@@ -139,7 +139,10 @@ dl() { bash "$delegate" "$@" 2>/dev/null; } # prints the one result line
 field() { tr ' ' '\n' <<<"$1" | grep "^$2=" | head -1 | cut -d= -f2-; } # LINE KEY
 
 echo "the engine adapters"
-. "$here/lib.sh"; . "$here/engines.sh"
+# shellcheck source=fleet/lib.sh
+. "$here/lib.sh"
+# shellcheck source=fleet/engines.sh
+. "$here/engines.sh"
 check "research and drafts go to agy first, review and CI triage to copilot" "$(eng_order research)|$(eng_order draft)|$(eng_order review)|$(eng_order ci)" "agy copilot|agy copilot|copilot agy|copilot agy"
 check "agy and copilot each have a print and an interactive lane" "$(eng_can copilot print && echo p)$(eng_can copilot interactive && echo i)$(eng_can agy print && echo p)$(eng_can agy interactive && echo i)" "pipi"
 check "a failure that names a quota is a limit" "$(eng_classify 1 '' 'Error: quota exceeded')" "limit"
@@ -198,7 +201,7 @@ check "snapshot: the dirty working-tree change is not in it (committed content o
 check "snapshot: the helper rules are in AGENTS.md" "$(has "$(cat "$STUB_DIR/$(last)/agents")" 'read-only helper')" "yes"
 check "snapshot: the task is TASK.md, not an argument visible in ps" "$(cat "$STUB_DIR/$(last)/task")" "$(cat "$work/task.md")"
 check "snapshot: a tracked symlink (which a read tool would follow out of it) is not in it" "$(has "$files" 'link-out')" "no"
-check "snapshot: removed when the call ends" "$(ls -d "$work/state/delegate"/*/work 2>/dev/null | wc -l)" "0"
+check "snapshot: removed when the call ends" "$(find "$work/state/delegate" -maxdepth 2 -name work 2>/dev/null | wc -l)" "0"
 
 echo "routing and fallback"
 n0=$(runs); dl --kind research --dir "$repo" "$work/task.md" >/dev/null
@@ -249,6 +252,7 @@ check "a repo with no commit is refused, nothing run" "$rc $(field "$out" status
 out=$(dl --dir "$work/plain" "$work/task.md"); rc=$?
 check "a folder that is no git repo is refused, nothing run" "$rc $(field "$out" status)" "1 refused"
 check "the home folder is never snapshotted" "$(cd "$HOME" && git init -q . 2>/dev/null; dl --dir "$HOME" "$work/task.md" | tr ' ' '\n' | grep -c 'status=refused')" "1"
+# shellcheck disable=SC2086 # $o is an option and its value on purpose
 check "a bad kind, engine or model is refused" "$(for o in '--kind x' '--engine codex' '--model a;b'; do bash "$delegate" $o "$work/task.md" >/dev/null 2>&1; echo -n "$? "; done)" "2 2 2 "
 check "no engine installed: unavailable, exit 3" "$(FLEET_AGY=/nonexistent FLEET_COPILOT=/nonexistent bash "$delegate" --dir "$repo" "$work/task.md" 2>/dev/null | grep -c 'status=unavailable') $(FLEET_AGY=/nonexistent FLEET_COPILOT=/nonexistent bash "$delegate" --dir "$repo" "$work/task.md" >/dev/null 2>&1; echo $?)" "1 3"
 n1=$(runs)
@@ -266,7 +270,7 @@ check "and a limit round trip says both-out (the orchestrator decides)" "$(has "
 mode agy ok; mode copilot ok
 
 echo "interactive lane (agy)"
-wait_sent() { local i; for i in $(seq 80); do grep -q -- "$1" "$work/sent.log" 2>/dev/null && return 0; sleep 0.5; done; return 1; } # PATTERN
+wait_sent() { local _; for _ in $(seq 80); do grep -q -- "$1" "$work/sent.log" 2>/dev/null && return 0; sleep 0.5; done; return 1; } # PATTERN
 : >"$work/sent.log"
 out=$(dl --interactive --engine agy --kind research --notify %5 --dir "$repo" "$work/task.md"); rc=$?
 id=$(field "$out" id)
@@ -288,7 +292,7 @@ check "ls shows the lane" "$(bash "$delegate" ls 2>/dev/null | grep -c "^$id int
 STUB_BUSY=20 bash "$delegate" msg "$id" 'slow one' >/dev/null 2>&1
 check "a message to a busy lane is refused, not queued blind" "$(bash "$delegate" msg "$id" 'again' 2>/dev/null)" "not-idle:busy"
 check "stop: window, watcher and snapshot go; the answer stays" \
-  "$(bash "$delegate" stop "$id" 2>/dev/null) $(tmux -L "$sock" list-windows -t =engines -F '#{window_name}' 2>/dev/null | grep -c "$id") $(ls -d "$work/state/delegate/$id/work" 2>/dev/null | wc -l) $([[ -f $work/state/delegate/$id/answer.md ]] && echo kept)" "stopped 0 0 kept"
+  "$(bash "$delegate" stop "$id" 2>/dev/null) $(tmux -L "$sock" list-windows -t =engines -F '#{window_name}' 2>/dev/null | grep -c "$id") $(find "$work/state/delegate/$id" -maxdepth 1 -name work | wc -l) $([[ -f $work/state/delegate/$id/answer.md ]] && echo kept)" "stopped 0 0 kept"
 
 : >"$work/sent.log"; mode agy limit
 out=$(dl --interactive --engine agy --kind research --notify %5 --dir "$repo" "$work/task.md"); id=$(field "$out" id)

@@ -16,6 +16,7 @@
 # The lock is the point: every lane starts with write tools, the shell, MCP and
 # the browser off, and a failure to build the lock starts nothing.
 
+# shellcheck disable=SC2034 # read by doctor.sh and delegate.sh
 ENGINES=(agy copilot)
 ENG_LOCK=${FLEET_AGY_LOCK:-$FLEET_HOOK_DIR/klepsydra-agy-locked.json}
 
@@ -68,6 +69,7 @@ eng_settings() { # KIND DIR OUT
 }
 
 # The locked command for MODE, in ENG_ARGV. PROMPT is the prompt text (print mode).
+# shellcheck disable=SC2034 # ENG_ARGV is read by the caller
 eng_argv() { # ENGINE MODE MODEL KIND SETTINGS PROMPT
   local bin
   bin=$(eng_bin "$1") || return 1
@@ -77,11 +79,11 @@ eng_argv() { # ENGINE MODE MODEL KIND SETTINGS PROMPT
     copilot:print)
       # Deny beats allow, even with every tool allowed: --allow-all-tools only
       # lets a headless run start, the tool list and the denies do the locking.
-      ENG_ARGV=("$bin" -p "$6" -s --model "$3" --allow-all-tools --available-tools view,grep,glob
+      ENG_ARGV=("$bin" -p "$6" -s --model "$3" --allow-all-tools --available-tools "view,grep,glob"
         --deny-tool=write --deny-tool=shell --disable-builtin-mcps --no-ask-user)
       ;;
     copilot:interactive)
-      ENG_ARGV=("$bin" --model "$3" --allow-all-tools --available-tools view,grep,glob
+      ENG_ARGV=("$bin" --model "$3" --allow-all-tools --available-tools "view,grep,glob"
         --deny-tool=write --deny-tool=shell --disable-builtin-mcps)
       ;;
     *) return 1 ;;

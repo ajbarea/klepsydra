@@ -29,7 +29,7 @@ belong here.
   has no WebKitGTK headers, so the app crate is checked with
   `bash scripts/build-windows.sh --check`; the fleet crate tests anywhere.
 - runner: a small Makefile: `make test-fleet`, `make test-launch`,
-  `make test-heavy-lock` and `make shellcheck` take the fleet's heavy lock
+  `make test-delegate`, `make test-heavy-lock` and `make shellcheck` take the fleet's heavy lock
   themselves (run them bare),
   `make install-fleet`. No
   `logs/dev-<ts>-*.log` archive convention, so the audit's log-reconciliation phase is N/A.

@@ -926,9 +926,9 @@ check "#291 review 5: the tail's hand form puts a group-wide timeout inside the 
 # unless the caller says it holds it, a test target runs a file that exists,
 # and the brief tail, the skill context and CI each name it.
 heavy_targets=$(awk '/^[A-Za-z][A-Za-z0-9_-]*:/ { t = $1; sub(/:.*/, "", t) } /^\t@?\$\(HEAVY\)/ { print t }' "$here/../Makefile" | paste -sd ' ' -)
-check "#291 review 4: the Makefile's heavy targets" "$heavy_targets" "test-fleet test-launch test-heavy-lock shellcheck"
+check "#291 review 4: the Makefile's heavy targets" "$heavy_targets" "test-fleet test-launch test-delegate test-heavy-lock shellcheck"
 # What each runs, exactly (review 5: "a file that exists" passed a swapped suite).
-declare -A heavy_runs=([test-fleet]="bash fleet/test_fleet.sh" [test-launch]="bash hooks/test_launch.sh"
+declare -A heavy_runs=([test-fleet]="bash fleet/test_fleet.sh" [test-launch]="bash hooks/test_launch.sh" [test-delegate]="bash fleet/test_delegate.sh"
   [test-heavy-lock]="bash fleet/test_heavy_lock.sh" [shellcheck]="sc -x hooks/*.sh statusline/*.sh scripts/*.sh fleet/*.sh fleet/fleet")
 for ht in $heavy_targets; do
   check "#291 review 4: make $ht takes the lock unless held, runs its own suite, and the tail, skill context and CI name it" \
@@ -2920,7 +2920,7 @@ mkdir -p "$work/enghome/.gemini"; echo '{}' >"$work/enghome/.gemini/oauth_creds.
 doc=$(HOME="$work/enghome" FLEET_AGY=/bin/true FLEET_COPILOT=/bin/true FLEET_HOOK_DIR="$here/../hooks" bash "$here/doctor.sh" 2>/dev/null)
 check "doctor: an installed engine with the lock policy shows its lanes, locked, and its login" \
   "$(grep '^ok *engine agy' <<<"$doc" | sed 's/^ok *//') | $(grep '^[a-zA-Z]* *engine copilot' <<<"$doc" | sed 's/^\([a-zA-Z]*\) .*lanes: \(.*\)$/\1 \2/')" \
-  "engine agy: signed in; lanes: print interactive, locked | warn print"
+  "engine agy: signed in; lanes: print interactive, locked | warn print interactive"
 doc=$(HOME="$work/enghome" FLEET_AGY=/bin/true FLEET_COPILOT=/bin/true FLEET_HOOK_DIR="$work/nohooks" bash "$here/doctor.sh" 2>/dev/null)
 check "doctor: without the lock policy the lanes are OFF, never silently on" "$(grep -c '^warn *engine [a-z]*: .*lanes OFF' <<<"$doc")" "2"
 check "recover leaves a finished agent alone and relaunches the lost one" \

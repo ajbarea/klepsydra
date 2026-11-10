@@ -85,9 +85,11 @@ snapshot() { # REPO TASK SNAP SUBDIR-OUT
   find "$snap" -depth \( "${SECRET_FILES[@]}" \) ! -name '.env.example' ! -name '.env.sample' -delete 2>/dev/null
   mb=$(du -sm -- "$snap" | cut -f1)
   (( mb <= SNAP_MAX_MB )) || { err "the snapshot of $top is ${mb} MB, over the ${SNAP_MAX_MB} MB limit"; return 1; }
-  { [[ -f $snap/AGENTS.md ]] && { cat -- "$snap/AGENTS.md"; printf '\n\n'; }
-    cat -- "${FLEET_ENGINE_RULES:-$FLEET_HOOK_DIR/klepsydra-engine-rules.md}"; } >"$snap/AGENTS.md.new" 2>/dev/null &&
-    mv -f -- "$snap/AGENTS.md.new" "$snap/AGENTS.md" || { err "the helper rules cannot be read"; return 1; }
+  if ! { { if [[ -f $snap/AGENTS.md ]]; then cat -- "$snap/AGENTS.md"; printf '\n\n'; fi
+           cat -- "${FLEET_ENGINE_RULES:-$FLEET_HOOK_DIR/klepsydra-engine-rules.md}"; } >"$snap/AGENTS.md.new" 2>/dev/null &&
+         mv -f -- "$snap/AGENTS.md.new" "$snap/AGENTS.md"; }; then
+    err "the helper rules cannot be read"; return 1
+  fi
   cp -- "$task" "$snap/TASK.md" || return 1
   local rel=${repo#"$top"}
   printf '%s' "${rel#/}" >"$snap/.klepsydra-subdir"
@@ -190,7 +192,7 @@ pane_alive() { [[ $(t display-message -p -t "$1" '#{pane_id}' 2>/dev/null) == "$
 # Paste TEXT into PANE as a bracketed paste, then Enter, and confirm the engine
 # started a turn; one more Enter if it did not. Only into an idle prompt.
 deliver() { # ENGINE PANE TEXT
-  local engine=$1 pane=$2 text=$3 f i st
+  local engine=$1 pane=$2 text=$3 f st
   st=$(eng_state "$engine" "$(pane_screen "$pane")")
   [[ $st == idle ]] || { echo "not-idle:$st"; return 1; }
   f=$(mktemp "$FLEET_STATE/send/dlg-XXXXXX" 2>/dev/null || mktemp) || return 1
@@ -199,7 +201,7 @@ deliver() { # ENGINE PANE TEXT
   rm -f -- "${f:?}"
   sleep 0.5
   local pre now
-  for i in 1 2; do
+  for _ in 1 2; do
     pre=$(pane_screen "$pane")
     t send-keys -t "$pane" Enter
     for _ in $(seq 20); do
@@ -332,7 +334,7 @@ cmd_msg() { # ID TEXT
   if [[ ${1:-} == - && $# -eq 1 ]]; then text=$(cat); else text="$*"; fi
   [[ -n ${text//[[:space:]]/} ]] || die "nothing to send"
   pane=$(meta_get "$id" pane) engine=$(meta_get "$id" engine)
-  [[ -n $pane ]] && pane_alive "$pane" || { echo gone; return 1; }
+  if [[ -z $pane ]] || ! pane_alive "$pane"; then echo gone; return 1; fi
   got=$(deliver "$engine" "$pane" "$text") || { echo "$got"; return 1; }
   meta_set "$id" status=working
   start_watcher "$id"
@@ -341,7 +343,7 @@ cmd_msg() { # ID TEXT
 
 cmd_read() { # ID
   valid_id "$1" || die "no lane $1"
-  [[ -f $DEL_ROOT/$1/answer.md ]] && cat -- "$DEL_ROOT/$1/answer.md" || { echo "no answer yet ($(meta_get "$1" status))"; return 1; }
+  if [[ -f $DEL_ROOT/$1/answer.md ]]; then cat -- "$DEL_ROOT/$1/answer.md"; else echo "no answer yet ($(meta_get "$1" status))"; return 1; fi
 }
 
 cmd_stop() { # ID

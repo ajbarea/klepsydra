@@ -143,8 +143,9 @@ agy_settings() { # DIR
   key=$(printf '%s' "$1" | cksum | cut -d' ' -f1)
   mkdir -p -- "$AGY_SETTINGS_DIR" || fail "agy's settings folder ($AGY_SETTINGS_DIR) cannot be made."
   out=$AGY_SETTINGS_DIR/agy-locked-$key.json
-  jq --arg d "$1" '. + {trustedWorkspaces: [$d]}' "$AGY_LOCK" >"$out.tmp" && mv -f -- "$out.tmp" "$out" ||
+  if ! { jq --arg d "$1" '. + {trustedWorkspaces: [$d]}' "$AGY_LOCK" >"$out.tmp" && mv -f -- "$out.tmp" "$out"; }; then
     fail "agy's locked settings cannot be written."
+  fi
   printf '%s' "$out"
 }
 
