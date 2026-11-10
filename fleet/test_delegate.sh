@@ -140,7 +140,8 @@ mkdir -p "$repo/src" && git -C "$repo" init -q . && {
   echo hook >"$repo/.github/hooks/h.json"; echo s >"$repo/.github/skills/s.md"; echo w >"$repo/.github/workflows/ci.yml"; echo c >"$repo/.copilot/c"; echo g >"$repo/.gemini/g"
   echo '{}' >"$repo/.mcp.json"; echo p >"$repo/secrets/prod.yaml"; echo p >"$repo/credentials/gcp.json"; echo p >"$repo/app/.env/prod"
   echo p >"$repo/.envrc"; echo p >"$repo/id_ecdsa"; echo p >"$repo/config/service-account.json"; echo p >"$repo/terraform.tfvars"
-  eval "$(grep '^ENGINE_CONFIG=' "$delegate")"
+  # The names that must never reach an engine, written out here and not read from the code under test.
+  ENGINE_CONFIG=(.github/hooks .github/copilot .github/skills .github/agents .github/extensions .github/mcp.json .mcp.json .vscode/mcp.json .copilot .agents .agent _agents _agent .gemini .claude .codex .cursor mcp_config.json)
   for c in "${ENGINE_CONFIG[@]}"; do
     if [[ $c == *.json ]]; then mkdir -p "$repo/${c%/*}"; echo '{}' >"$repo/$c"; else mkdir -p "$repo/$c"; echo x >"$repo/$c/x"; fi
   done
@@ -537,6 +538,7 @@ out=$(FLEET_DELEGATE_TURN_TIMEOUT=3 dl --interactive --engine agy --kind researc
 wait_sent 'status=timeout'
 check "after a timeout the best-effort reply is saved, named in the notice, and read says so instead of showing a stale answer" \
   "$([[ -f $work/state/delegate/$idh/answer-unverified.md ]] && echo file) $(has "$(sent)" 'answer-unverified.md') $(has "$(bash "$delegate" read "$idh" 2>/dev/null)" 'timed out')" "file yes yes"
+check "and that best-effort file is stamped an unverified lead, with its reason" "$(head -1 "$work/state/delegate/$idh/answer-unverified.md" | cut -c1-22)|$(has "$(cat "$work/state/delegate/$idh/answer-unverified.md")" 'Best effort after a timeout')" "> Unverified lead from|yes"
 bash "$delegate" stop "$idh" >/dev/null 2>&1; mode agy ok
 
 knobs_off
