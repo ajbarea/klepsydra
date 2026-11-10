@@ -31,7 +31,7 @@ engine's stderr, the lane's settings and last screen). Each call writes one
 A locked engine cannot write a report file or run `fleet send`, so it never
 reports back itself. The adapter, outside the model, does:
 
-1. **Detect the turn end.** (A turn is over only when the pane is idle and there is a reply under the echo of the prompt that was sent, so the gap before a late busy footer is not a turn; a lane's pane is trusted only while its id, window name and process still match what was launched, so a pane the pane-died hook revived is not the lane.) Print mode: the process exits (or the timeout
+1. **Detect the turn end.** (A turn is over only when the pane is idle and there is a reply under the echo of the prompt that was sent (matched ignoring leading spaces; no echo matched means no answer, never another turn's, and a turn that times out saves the last reply on screen to `answer-unverified.md`, labeled), so the gap before a late busy footer is not a turn; a lane's pane is trusted only while its id, window name and process still match what was launched, so a pane the pane-died hook revived is not the lane.) Print mode: the process exits (or the timeout
    kills it). Interactive: the watcher polls the pane every 2 s; a turn ends
    when the footer goes from `esc to cancel` to `? for shortcuts`. A quota or
    login message near the box, a turn over `FLEET_DELEGATE_TURN_TIMEOUT`, or

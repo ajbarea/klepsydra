@@ -478,11 +478,11 @@ echo "review round 3: multibyte follow-up, launcher workspaces"
 : >"$work/sent.log"
 out=$(dl --interactive --engine agy --kind research --notify %5 --dir "$repo" "$work/task.md"); idu=$(field "$out" id)
 wait_sent 'turn=1'; sleep 2; : >"$work/sent.log"
-bash "$delegate" msg "$idu" "$(printf 'a%.0s' $(seq 39))ééé tail" >/dev/null 2>&1
+bash "$delegate" msg "$idu" "   $(printf 'a%.0s' $(seq 39))ééé tail" >/dev/null 2>&1
 check "the prompt kept for anchoring is valid UTF-8 with no replacement character, however the cut fell" \
   "$(jq -r .prompt "$work/state/delegate/$idu/meta.json" | iconv -f UTF-8 -t UTF-8 >/dev/null 2>&1; echo $?) $(jq -r .prompt "$work/state/delegate/$idu/meta.json" | grep -c $'\xef\xbf\xbd')" "0 0"
 wait_sent 'turn=2'
-check "a follow-up whose 40th byte falls inside a UTF-8 character still ends its turn (the answer is saved, not a timeout)" "$(has "$(sent)" 'status=ok turn=2') $(has "$(cat "$work/state/delegate/$idu/answer.md")" 'STUB ANSWER')" "yes yes"
+check "a follow-up with leading spaces whose 40th byte falls inside a UTF-8 character still ends its turn (the answer is saved, not a timeout)" "$(has "$(sent)" 'status=ok turn=2') $(has "$(cat "$work/state/delegate/$idu/answer.md")" 'STUB ANSWER')" "yes yes"
 sleep 3; bash "$delegate" stop "$idu" >/dev/null 2>&1
 
 echo "review round 4: fail-closed secret reads, the echo rule, the anchored limit read"

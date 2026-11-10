@@ -145,7 +145,8 @@ eng_answer() { # ENGINE SCREEN [PROMPT: the text sent; only its echo starts the 
   P=${3:-} awk '
     BEGIN { p = substr(ENVIRON["P"], 1, 40) }
     index($0, "────") == 1 { if (seen) ended = 1; next }
-    (p == "" ? $0 ~ /^> +[^ ]/ : index($0, "> " p) == 1) { seen = 1; ended = 0; delete a; n = 0; next }
+    index($0, "> ") == 1 { rest = substr($0, 3); sub(/^[ \t]+/, "", rest)
+      if (rest != "" && (p == "" || index(rest, p) == 1)) { seen = 1; ended = 0; delete a; n = 0; next } }
     !seen || ended { next }
     /^[0-9.]+k? in \|/ || index($0, "└ Tip:") == 1 || index($0, "● ") == 1 { next }
     { sub(/[ \t]+$/, ""); a[n++] = $0 }
