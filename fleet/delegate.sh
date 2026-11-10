@@ -130,6 +130,7 @@ snapshot() { # REPO TASK SNAP (sets SNAP_DROPPED)
     SNAP_DROPPED=$dropped
   fi
   # Binary files hold credentials the text scan cannot see (UTF-16, compiled) and no text engine reads them.
+  # shellcheck disable=SC2016 # the loop body is sh -c's, expanded there
   grep -rILZ --exclude-dir=.git '' "$snap" 2>/dev/null | xargs -0 -r sh -c 'for f; do [ -s "$f" ] && rm -f -- "$f"; done' _
   rm -f -- "${list:?}"
   mb=$(du -sm -- "$snap" | cut -f1)

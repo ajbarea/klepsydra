@@ -490,6 +490,7 @@ echo "review round 4: fail-closed secret reads, the echo rule, the anchored limi
 SECRET_RE='('
 eval "$(grep '^looks_secret()' "$delegate")"
 check "looks_secret treats a grep error as a secret, not as clean" "$(echo x | looks_secret && echo secret || echo clean)" "secret"
+# shellcheck disable=SC2034 # read by the looks_secret function eval-ed from delegate.sh
 SECRET_RE='x{9}' ; check "and a plain non-match as clean" "$(echo y | looks_secret && echo secret || echo clean)" "clean"
 # a failing content scan refuses the snapshot
 mkdir -p "$work/shim"
