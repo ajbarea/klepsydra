@@ -168,9 +168,13 @@ new() { # dir [agy model]
   need tmux "tmux is not installed in this distro."
   if [[ $tool == agy ]]; then
     [[ $model =~ $MODEL_RE ]] || fail "That is not an agy model id: $model"
-    # Its workspace is the one folder its reads reach: never the whole home folder or /.
-    [[ $(cd -- "$dir" && pwd -P) != "$(cd -- "$HOME" && pwd -P)" && $(cd -- "$dir" && pwd -P) != / ]] ||
-      fail "agy is not started in $dir: its workspace would be the whole home folder (or /). Pick a project folder."
+    # Its workspace is the one folder its reads reach: never the home folder, a folder that holds
+    # it (/home, /), or a Windows drive (/mnt/c).
+    local real home
+    real=$(cd -- "$dir" && pwd -P) home=$(cd -- "$HOME" && pwd -P)
+    real=${real%/} # "/" becomes "", whose pattern /* holds every path
+    case $home/ in "$real"/*) fail "agy is not started in $dir: its workspace would hold the whole home folder. Pick a project folder." ;; esac
+    [[ $real != /mnt/? ]] || fail "agy is not started in $dir: a whole Windows drive is no workspace. Pick a project folder."
     need "$AGY" "agy (Antigravity CLI) was not found on PATH."
     agy_rules
     local settings

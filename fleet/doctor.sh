@@ -488,7 +488,7 @@ for e in "${ENGINES[@]}"; do
   fi
   login="login not checked"
   case $e in
-    agy) [[ -s $HOME/.gemini/oauth_creds.json ]] && login="signed in" || login="not signed in (run agy once)" ;;
+    agy) [[ -s $HOME/.gemini/antigravity-cli/antigravity-oauth-token ]] && login="signed in" || login="not signed in (run agy once)" ;;
     copilot) [[ -s $HOME/.copilot/config.json ]] && login="config present" || login="not signed in (copilot login)" ;;
   esac
   if [[ ! -r $ENG_LOCK || ! -r $FLEET_HOOK_DIR/klepsydra-engine-rules.md ]]; then

@@ -2916,7 +2916,7 @@ check "a lost row is one FAIL, a finished one one warn, and neither gets a remot
   "FAIL agents: sessions gone: e: fleet recover | warn finished agents: still in panes.tsv: d: fleet doctor --prune | 0"
 doc=$(FLEET_AGY=/nonexistent FLEET_COPILOT=/nonexistent bash "$here/doctor.sh" 2>/dev/null)
 check "doctor: an engine that is not installed says its lanes are off" "$(grep -c '^ok *engine [a-z]*: not installed: its lanes are off' <<<"$doc")" "2"
-mkdir -p "$work/enghome/.gemini"; echo '{}' >"$work/enghome/.gemini/oauth_creds.json"
+mkdir -p "$work/enghome/.gemini/antigravity-cli"; echo '{}' >"$work/enghome/.gemini/antigravity-cli/antigravity-oauth-token"
 doc=$(HOME="$work/enghome" FLEET_AGY=/bin/true FLEET_COPILOT=/bin/true FLEET_HOOK_DIR="$here/../hooks" bash "$here/doctor.sh" 2>/dev/null)
 check "doctor: an installed engine with the lock policy shows its lanes, locked, and its login" \
   "$(grep '^ok *engine agy' <<<"$doc" | sed 's/^ok *//') | $(grep '^[a-zA-Z]* *engine copilot' <<<"$doc" | sed 's/^\([a-zA-Z]*\) .*lanes: \(.*\)$/\1 \2/')" \

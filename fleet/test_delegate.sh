@@ -135,7 +135,11 @@ mkdir -p "$repo/src" && git -C "$repo" init -q . && {
   echo hook >"$repo/.github/hooks/h.json"; echo s >"$repo/.github/skills/s.md"; echo w >"$repo/.github/workflows/ci.yml"; echo c >"$repo/.copilot/c"; echo g >"$repo/.gemini/g"
   echo '{}' >"$repo/.mcp.json"; echo p >"$repo/secrets/prod.yaml"; echo p >"$repo/credentials/gcp.json"; echo p >"$repo/app/.env/prod"
   echo p >"$repo/.envrc"; echo p >"$repo/id_ecdsa"; echo p >"$repo/config/service-account.json"; echo p >"$repo/terraform.tfvars"
-  mkdir -p "$repo/.agents"; echo '{}' >"$repo/.agents/hooks.json"
+  eval "$(grep '^ENGINE_CONFIG=' "$delegate")"
+  for c in "${ENGINE_CONFIG[@]}"; do
+    if [[ $c == *.json ]]; then mkdir -p "$repo/${c%/*}"; echo '{}' >"$repo/$c"; else mkdir -p "$repo/$c"; echo x >"$repo/$c/x"; fi
+  done
+  printf 'x\0 %s\n' "ghp_$(head -c 36 /dev/zero | tr '\0' C)" >"$repo/src/bin.dat"
   echo p >"$repo/client_secret_123.json"; echo p >"$repo/prod.env"; echo p >"$repo/.PGPASS"; echo p >"$repo/Secrets.yaml"; echo p >"$repo/token.json"
   printf 'TOKEN = "%s"\n' "ghp_$(head -c 36 /dev/zero | tr '\0' B)" >"$repo/src/cfg.py"
   ln -s /etc/hostname "$repo/link-out"
@@ -158,6 +162,7 @@ check "so is a 429" "$(eng_classify 1 'HTTP 429' '')" "limit"
 check "a login failure is auth" "$(eng_classify 1 '' 'please log in first')" "auth"
 check "an exit 0 with a short limit line is a limit" "$(eng_classify 0 'Rate limit reached' '')" "limit"
 check "a long answer that mentions quota is an answer" "$(eng_classify 0 "quota $(head -c 1200 /dev/zero | tr '\0' x)" '')" "ok"
+check "an exit 0 under 200 bytes that reads as a limit is a limit; at 299 bytes it is an answer" "$(eng_classify 0 "Rate limit reached $(head -c 130 /dev/zero | tr '\0' x)" '')|$(eng_classify 0 "Rate limit reached $(head -c 280 /dev/zero | tr '\0' x)" '')" "limit|ok"
 check "an exit 0 whose stdout is fine is no limit even when stderr talks of quota" "$(eng_classify 0 'the answer' 'warning: quota 429 retry ok')" "ok"
 check "an exit 1 reads its stderr too" "$(eng_classify 1 '' 'HTTP 401 unauthorized')" "auth"
 check "an exit 0 with nothing on stdout is empty, even with stderr noise" "$(eng_classify 0 '' 'some log line')" "empty"
@@ -169,6 +174,10 @@ check "agy: a short reply that is a quota message is a limit" "$(eng_state agy $
 check "agy: a short answer about a 429 is a limit too (kept in answer.md and said to be maybe an answer)" "$(eng_state agy $'────\n> ask\n  GitHub returned HTTP 429\n────\n>\n────\n? for shortcuts')" "limit"
 longans=$(printf '  The API returns 429 when the rate limit is hit; details follow.\n'; printf '  %s\n' "$(head -c 500 /dev/zero | tr '\0' x)")
 check "agy: a long answer that mentions a rate limit is an answer (idle)" "$(eng_state agy "$(printf '────\n> ask\n%s\n────\n>\n────\n? for shortcuts' "$longans")")" "idle"
+quotedlim=$(printf '────\n> Read TASK.md in the working folder and go\n  %s\n> a quoted line\n  429 rate limit\n────\n>\n────\n? for shortcuts' "$(head -c 500 /dev/zero | tr '\0' x)")
+check "agy: a long answer ending in a quoted line and a 429 is an answer when the sent prompt is known (idle)" "$(eng_state agy "$quotedlim" 'Read TASK.md in the working folder')" "idle"
+check "copilot's answer, anchored to the sent prompt, keeps a quoted echo-looking line" "$(eng_answer copilot $' ❯ Read TASK\n ● intro\n ❯ a quote\n ● more\n /w [⎇ main%]\n────\n❯ \n────\n ← open sidebar' 'Read TASK')" $'intro\n ❯ a quote\nmore'
+check "an echo that matches no prompt falls back to the last echo, not an empty answer" "$(eng_answer agy $'────\n> trimmed echo\n  the answer\n────\n>\n────\n? for shortcuts' 'Something else entirely')" "  the answer"
 check "agy: a running turn is busy even with a limit phrase in view" "$(eng_state agy $'────\n> ask\n  see the quota docs\n────\n>\n────\nesc to cancel')" "busy"
 check "an exit-0 answer over 400 bytes that mentions a 429 is an answer" "$(eng_classify 0 "429 $(head -c 450 /dev/zero | tr '\0' x)" '')" "ok"
 check "agy: an old quota word far above the box is not" "$(eng_state agy "$(printf 'quota\n%.0s' 1; printf 'x\n%.0s' $(seq 20); echo "$idle")")" "idle"
@@ -198,7 +207,7 @@ check "lock agy: print mode, the model, a settings file and --sandbox" "$(has "$
 s="$STUB_DIR/$(last)/settings.json"
 check "lock agy: writes, the shell, MCP and the browser are denied, and nothing outside the workspace" \
   "$(jq -r '[.allowNonWorkspaceAccess, .enableTerminalSandbox, (.permissions.deny | sort | join(","))] | join(" ")' "$s")" \
-  "false true command(*),execute_url(*),mcp(*),unsandboxed(*),write_file(*)"
+  "false true command(*),execute_url(*),mcp(*),write_file(*)"
 check "lock agy: its settings are its own: AJ's agy settings file is not named anywhere" "$(has "$a" '\.gemini/')" "no"
 check "lock agy: research may read URLs (the deny list has no read_url)" "$(jq -r '.permissions.deny | index("read_url(*)") // "none"' "$s")" "none"
 dl --engine agy --kind draft --dir "$repo" "$work/task.md" >/dev/null
@@ -214,6 +223,9 @@ files=$(cat "$STUB_DIR/$(last)/files")
 check "snapshot: committed files are there, with TASK.md and AGENTS.md" "$(has "$files" 'src/a.py')$(has "$files" 'TASK.md')$(has "$files" 'AGENTS.md')" "yesyesyes"
 check "snapshot: a repo's own engine config (hooks, skills, MCP, .copilot, .gemini) never arrives: a trusted lane would run it" \
   "$(has "$files" 'github/hooks')$(has "$files" 'github/skills')$(has "$files" '\.mcp\.json')$(has "$files" '\.copilot/')$(has "$files" '\.gemini/')$(has "$files" '\.agents/')" "nononononono"
+check "snapshot: every engine-config path the filter lists is gone (each has a fixture)" "$(for c in "${ENGINE_CONFIG[@]}"; do has "$files" "$c"; done | tr -d '\n')" "$(for c in "${ENGINE_CONFIG[@]}"; do printf no; done)"
+check "snapshot: a file with a NUL byte that holds a token is scanned as text and dropped" "$(has "$files" 'src/bin\.dat')" "no"
+check "snapshot: what the content scan withheld is logged and the engine is told" "$(( $(grep -c 'files withheld for looking like a credential' "$FLEET_LOG") >= 1 )) $(has "$(cat "$STUB_DIR/$(last)/agents")" 'withheld')" "1 yes"
 check "snapshot: secret directories and odd secret names never arrive (secrets/, credentials/, .env/, .envrc, id_ecdsa, service-account, tfvars)" \
   "$(has "$files" 'secrets/')$(has "$files" 'credentials/')$(has "$files" 'app/\.env/')$(has "$files" '\.envrc')$(has "$files" 'id_ecdsa')$(has "$files" 'service-account')$(has "$files" 'tfvars')" "nonononononono"
 check "snapshot: more credential names, any case (client_secret, prod.env, .PGPASS, Secrets.yaml, token.json), and a file holding a token, never arrive" \
@@ -449,6 +461,15 @@ sleep 4; bash "$delegate" stop "$idz" >/dev/null 2>&1
 n1=$(runs)
 out=$(FLEET_AGY_LOCK="$work/no-lock.json" dl --interactive --engine agy --kind research --dir "$repo" "$work/task.md")
 check "an interactive lane with the lock policy unreadable is refused and nothing starts" "$(field "$out" status) $(( $(runs) - n1 ))" "refused 0"
+
+echo "review round 3: multibyte follow-up, launcher workspaces"
+: >"$work/sent.log"
+out=$(dl --interactive --engine agy --kind research --notify %5 --dir "$repo" "$work/task.md"); idu=$(field "$out" id)
+wait_sent 'turn=1'; sleep 2; : >"$work/sent.log"
+bash "$delegate" msg "$idu" "$(printf 'a%.0s' $(seq 38))ééé tail" >/dev/null 2>&1
+wait_sent 'turn=2'
+check "a follow-up whose 40th byte falls inside a UTF-8 character still ends its turn (the answer is saved, not a timeout)" "$(has "$(sent)" 'status=ok turn=2') $(has "$(cat "$work/state/delegate/$idu/answer.md")" 'STUB ANSWER')" "yes yes"
+sleep 3; bash "$delegate" stop "$idu" >/dev/null 2>&1
 
 echo "the shared policy"
 check "the helper rules fit agy's 24000-byte limit" "$([[ $(stat -c %s "$root/hooks/klepsydra-engine-rules.md") -le 24000 ]] && echo fits)" "fits"

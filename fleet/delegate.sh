@@ -53,7 +53,8 @@ ENGINE_CONFIG=(.github/hooks .github/copilot .github/skills .github/agents .gith
 # Text on its way to another vendor's service that looks like a credential (stdin).
 # sk- needs a digit among its first characters, so a kebab-case word (sk-learn-...) is no key.
 SECRET_RE='(AKIA[0-9A-Z]{16}|gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{40,}|glpat-[A-Za-z0-9_-]{20,}|xox[abpr]-[A-Za-z0-9-]{10,}|AIza[0-9A-Za-z_-]{35}|hf_[A-Za-z0-9]{30,}|npm_[A-Za-z0-9]{30,}|GOCSPX-[A-Za-z0-9_-]{20,}|ya29\.[A-Za-z0-9_-]{20,}|eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.|(^|[^A-Za-z0-9])sk-[A-Za-z0-9_-]{0,12}[0-9][A-Za-z0-9_-]{12,}|-----BEGIN [A-Z ]*PRIVATE KEY( BLOCK)?-----|aws_secret_access_key[[:space:]]*[=:])'
-looks_secret() { grep -Eq -- "$SECRET_RE"; }
+# grep's 1 is "no match"; its 2 (an error) counts as a match: fail closed.
+looks_secret() { grep -Eq -- "$SECRET_RE"; (( $? != 1 )); }
 
 usage() { sed -n '2,/^set -u/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//'; }
 die() { err "$*"; exit 2; }
@@ -93,7 +94,7 @@ watcher_pid() { # ID
   local p
   p=$(cat "$DEL_ROOT/$1/watch.pid" 2>/dev/null)
   [[ $p =~ ^[0-9]+$ ]] || return 1
-  tr '\0' ' ' <"/proc/$p/cmdline" 2>/dev/null | grep -q -- "__watch $1 " || return 1
+  { tr '\0' ' ' <"/proc/$p/cmdline"; } 2>/dev/null | grep -q -- "__watch $1 " || return 1
   printf '%s' "$p"
 }
 meta_get() { jq -r --arg k "$2" '.[$k] // empty' "$DEL_ROOT/$1/meta.json" 2>/dev/null; } # ID KEY
@@ -102,8 +103,10 @@ meta_get() { jq -r --arg k "$2" '.[$k] // empty' "$DEL_ROOT/$1/meta.json" 2>/dev
 # SNAP, with TASK-FILE as TASK.md and the helper rules in AGENTS.md. The working
 # tree is never exposed: .env files are usually untracked, and a tracked one
 # is filtered out anyway.
-snapshot() { # REPO TASK SNAP
+SNAP_DROPPED=0
+snapshot() { # REPO TASK SNAP (sets SNAP_DROPPED)
   local repo=$1 task=$2 snap=$3 top mb
+  SNAP_DROPPED=0
   top=$(git -C "$repo" rev-parse --show-toplevel 2>/dev/null) || { err "$repo is not inside a git repository"; return 1; }
   [[ $top != "$HOME" && $top != / ]] || { err "refusing to snapshot $top"; return 1; }
   mkdir -p -- "$snap" || return 1
@@ -116,7 +119,17 @@ snapshot() { # REPO TASK SNAP
   find "$snap" -mindepth 1 \( "${SECRET_FILES[@]}" \) "${SECRET_KEEP[@]}" -prune -exec rm -rf -- {} + || { err "the secret filter failed"; return 1; }
   [[ -z $(find "$snap" -mindepth 1 \( "${SECRET_FILES[@]}" \) "${SECRET_KEEP[@]}" -print -quit) ]] || { err "the secret filter left a file behind"; return 1; }
   # Then by content: a file that holds what looks like a credential does not go either.
-  grep -rIlZE --exclude-dir=.git -e "$SECRET_RE" "$snap" 2>/dev/null | xargs -0 -r rm -f --
+  local list=$snap.dropped dropped=0 rc
+  grep -rlaZE --exclude-dir=.git -e "$SECRET_RE" "$snap" >"$list" 2>/dev/null
+  rc=$?
+  (( rc <= 1 )) || { rm -f -- "${list:?}"; err "the content scan failed"; return 1; }
+  dropped=$(tr -cd '\0' <"$list" | wc -c)
+  xargs -0 -r rm -f -- <"$list"
+  if (( dropped )); then
+    flog INFO "snapshot: files withheld for looking like a credential" count="$dropped" files="$(tr '\0' ' ' <"$list" | sed "s|$snap/||g" | cut -c1-300)"
+    SNAP_DROPPED=$dropped
+  fi
+  rm -f -- "${list:?}"
   mb=$(du -sm -- "$snap" | cut -f1)
   (( mb <= SNAP_MAX_MB )) || { err "the snapshot of $top is ${mb} MB, over the ${SNAP_MAX_MB} MB limit"; return 1; }
   if ! { { if [[ -f $snap/AGENTS.md ]]; then cat -- "$snap/AGENTS.md"; printf '\n\n'; fi
@@ -124,6 +137,8 @@ snapshot() { # REPO TASK SNAP
          mv -f -- "$snap/AGENTS.md.new" "$snap/AGENTS.md"; }; then
     err "the helper rules cannot be read"; return 1
   fi
+  # The engine is told, so a review does not read a missing file as an absent one.
+  if (( ${SNAP_DROPPED:-0} )); then printf '\n\n%s file(s) were withheld from this copy because they looked like they hold a credential.\n' "$SNAP_DROPPED" >>"$snap/AGENTS.md"; fi
   cp -- "$task" "$snap/TASK.md" || return 1
   chmod -R a-w -- "$snap"
 }
@@ -318,7 +333,7 @@ cmd_interactive() {
 
 start_watcher() { # ID
   local id=$1
-  # The watcher outlives this call: its own session, no inherited descriptor but stderr.
+  # The watcher outlives this call: its own session. It inherits the lane's lock fd on purpose (a second follow-up is refused until it ends).
   setsid nohup bash "$here/delegate.sh" __watch "$id" </dev/null >>"$DEL_ROOT/$id/watch.log" 2>&1 &
   echo $! >"$DEL_ROOT/$id/watch.pid"
 }
@@ -343,7 +358,7 @@ cmd_watch() { # ID
       return 0
     fi
     screen=$(pane_screen "$pane")
-    st=$(eng_state "$engine" "$screen")
+    st=$(eng_state "$engine" "$screen" "$(meta_get "$id" prompt)")
     case $st in
       busy) seen_busy=1 ;;
       limit | auth)
@@ -396,7 +411,7 @@ cmd_msg() { # ID TEXT
   # one would overwrite that answer and notify twice. Wait for its notice, then send.
   if watcher_pid "$id" >/dev/null; then echo "not-idle:turn-pending"; return 1; fi
   got=$(deliver "$engine" "$pane" "$text") || { echo "$got"; return 1; }
-  meta_set "$id" status=working prompt="$(head -n1 <<<"$text" | cut -c1-40)"
+  meta_set "$id" status=working prompt="$(head -n1 <<<"$text" | head -c 40 | iconv -f UTF-8 -t UTF-8 -c)"
   start_watcher "$id"
   echo sent
 }

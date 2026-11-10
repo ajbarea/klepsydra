@@ -144,7 +144,7 @@ check "#323 lock: the session gets --sandbox and a settings file of its own, nev
   "$(t list-panes -a -F '#{pane_start_command}' | grep -c -- "--sandbox") $([[ $sf == "$KLEPSYDRA_AGY_LOCK" ]] && echo policy)" "1 policy"
 check "#323 lock: that file denies writes, the shell, MCP, URL reads and the browser, and asks before anything else (headless, that is a denial)" \
   "$(jq -r '[.toolPermission, .allowNonWorkspaceAccess, .enableTerminalSandbox, (.permissions.deny | sort | join(","))] | join(" ")' "$sf")" \
-  "request-review false true command(*),execute_url(*),mcp(*),read_url(*),unsandboxed(*),write_file(*)"
+  "request-review false true command(*),execute_url(*),mcp(*),read_url(*),write_file(*)"
 check "#323 lock: it names no trusted workspace, so agy asks before trusting a folder (a repo's hooks load only under trust)" "$(jq -c '.trustedWorkspaces // "none"' "$sf")" '"none"'
 check "#323: the helper rules reach agy as an always-on rule made from the one source" \
   "$(sed -n 2p "$KLEPSYDRA_AGY_RULES") $(grep -c '^Read only.$' "$KLEPSYDRA_AGY_RULES")" "trigger: always_on 1"
@@ -161,6 +161,11 @@ check "#323: with the helper rules unreadable, no agy session starts" "$rc $(( $
 lb=$(windows)
 out=$(KLEPSYDRA_AGY_LOCK="$work/no-lock.json" bash "$launch" new "$work/repos" agy gemini-3.8-flash-high 2>&1); rc=$?
 check "#323 lock: with the lock policy unreadable, no agy session starts (never an unlocked one)" "$rc $(( $(windows) - lb ))" "1 0"
+lb=$(windows)
+out=$(bash "$launch" new / agy gemini-3.8-flash-high 2>&1); rc=$?
+check "#323 lock: / is no agy workspace" "$rc $(( $(windows) - lb ))" "1 0"
+out=$(bash "$launch" new "${HOME%/*}" agy gemini-3.8-flash-high 2>&1); rc=$?
+check "#323 lock: neither is a folder that holds the home folder (the parent of it)" "$rc $(( $(windows) - lb ))" "1 0"
 out=$(bash "$launch" new "$HOME" agy gemini-3.8-flash-high 2>&1); rc=$?
 check "#323 lock: the whole home folder is never an agy workspace (its reads would reach every secret in it)" "$rc $(( $(windows) - before ))" "1 0"
 mkdir -p "$work/gemini/config/rules"

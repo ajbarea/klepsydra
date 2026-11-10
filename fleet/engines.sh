@@ -107,7 +107,7 @@ eng_classify() { # RC STDOUT STDERR: a failure is read with its stderr; an exit 
 # "? for shortcuts" when idle. Copilot: the footer reads "Working ctrl+c
 # interrupt" while a turn runs and "open sidebar ... Manual Approval" when idle,
 # and a folder not yet trusted shows a dialog (state trust; eng_trust_key answers).
-eng_state() { # ENGINE SCREEN
+eng_state() { # ENGINE SCREEN [PROMPT: the text last sent]
   local engine=$1 screen=$2 foot recent
   recent=$(grep -v '^[[:space:]]*$' <<<"$screen" | tail -12)
   foot=$(grep -v '^[[:space:]]*$' <<<"$screen" | tail -1)
@@ -123,7 +123,7 @@ eng_state() { # ENGINE SCREEN
   # merely mentions a rate limit (CI triage, API research) is an answer.
   if [[ $footer == busy ]]; then echo busy; return; fi
   local reply
-  if [[ $footer == idle ]]; then reply=$(eng_answer "$engine" "$screen"); else reply=$recent; fi
+  if [[ $footer == idle ]]; then reply=$(eng_answer "$engine" "$screen" "${3:-}"); else reply=$recent; fi
   if (( ${#reply} < 400 )); then
     if grep -Eqi -- "$ENG_LIMIT_RE" <<<"$reply"; then echo limit; return; fi
     if grep -Eqi -- "$ENG_AUTH_RE" <<<"$reply"; then echo auth; return; fi
@@ -139,6 +139,15 @@ eng_trust_key() { echo Enter; } # ENGINE
 # a rule before every prompt too, so a rule ends only the text after the last echo.
 # index() and no multibyte brackets: mawk reads a UTF-8 range or `+` byte by byte.
 eng_answer() { # ENGINE SCREEN [PROMPT: the text sent; only its echo starts the answer]
+  local out
+  out=$(eng_answer_raw "$1" "$2" "${3:-}")
+  # An echo that differs from the prompt as sent (trimmed, wrapped, a collapsed paste) matches
+  # nothing: take the last echo instead of no answer.
+  if [[ -z $out && -n ${3:-} ]]; then out=$(eng_answer_raw "$1" "$2" ""); fi
+  printf '%s' "$out"
+  [[ -z $out ]] || echo
+}
+eng_answer_raw() { # ENGINE SCREEN PROMPT
   if [[ $1 == copilot ]]; then eng_answer_copilot "$2" "${3:-}"; return; fi
   P=${3:-} awk '
     BEGIN { p = substr(ENVIRON["P"], 1, 40) }

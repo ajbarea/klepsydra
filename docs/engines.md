@@ -53,8 +53,8 @@ reports back itself. The adapter, outside the model, does:
 
 Limit and auth phrases (`ENG_LIMIT_RE`, `ENG_AUTH_RE` in `engines.sh`) are the
 vendors' wording and can change. A failure that matches neither is reported as
-`error` and does not fall back. Only a failure, or an exit-0 answer under 400
-bytes, is read for those phrases (an interactive pane: only an idle one whose last reply is under 400 bytes), so a long answer that mentions quotas is kept; a short one that reads as a limit is also saved to `answer.md` and the notice says so.
+`error` and does not fall back. A failure is read for those phrases with its stderr; an exit-0 answer only when its stdout is under 200
+bytes (an interactive pane: only an idle one whose last reply, under the echo of the prompt sent, is under 400 bytes), so a long answer that mentions quotas is kept; a short one that reads as a limit is also saved to `answer.md` and the notice says so.
 No real limit message has been seen live yet; add the exact text here when one is.
 
 A narrow, single-purpose report tool over MCP (the engine calls `report(text)`
@@ -73,7 +73,7 @@ the deny rules once its folder is trusted; the delegate snapshot strips it).
 
 | Engine | Lock |
 |---|---|
-| agy | `--settings FILE` (a file of its own, so `~/.gemini/antigravity-cli/settings.json` is never read for these or rewritten), `--sandbox`, `toolPermission: request-review` (headless, anything not allowed is auto-denied; a denial ends the print run), `allowNonWorkspaceAccess: false`, deny `write_file(*)`, `command(*)`, `unsandboxed(*)`, `execute_url(*)`, `mcp(*)` and `read_url(*)` (a research task alone gets URL reads back, so `+ New session` has no outbound channel); a `fleet delegate` lane's settings add its snapshot as the one trusted workspace; the launcher refuses the whole home folder and `/` as a workspace |
+| agy | `--settings FILE` (the policy overrides the user's `~/.gemini/antigravity-cli/settings.json` key by key; keys it does not set, such as `model`, still come from there, and nothing is rewritten), `--sandbox`, `toolPermission: request-review` (headless, anything not allowed is auto-denied; a denial ends the print run), `allowNonWorkspaceAccess: false`, deny `write_file(*)`, `command(*)`, `unsandboxed(*)`, `execute_url(*)`, `mcp(*)` and `read_url(*)` (a research task alone gets URL reads back, so `+ New session` has no outbound channel); a `fleet delegate` lane's settings add its snapshot as the one trusted workspace; the launcher refuses the whole home folder and `/` as a workspace |
 | Copilot | `--available-tools view,grep,glob`, `--deny-tool=write`, `--deny-tool=shell`, `--disable-builtin-mcps`, `--disallow-temp-dir` (else it reads every session's scratch files in /tmp), `--no-ask-user`; `--allow-all-tools` only lets a headless run start, the tool list and denies do the locking |
 | both | the engine's folder is a read-only snapshot (see below); a memory- and task-capped systemd scope, for the interactive window too; a timeout; the fleet's memory floor |
 
@@ -106,7 +106,7 @@ reads `AGENTS.md`. Then add the functions to `engines.sh` (`eng_model`,
 `eng_order`, `eng_can`, `eng_argv`, `eng_settings` if it needs a file) and a
 stub case to `test_delegate.sh`.
 
-agy still starts the MCP servers set in the user's own agy settings (its log shows them connecting); their tools are denied by `mcp(*)`. A task worded as a question about web access once sent agy into a loop of generations until the timeout: the timeout path reports it.
+agy still loads the user's own plugin hooks and starts the MCP servers set in the user's own agy settings (its log shows them connecting); their tools are denied by `mcp(*)`. A task worded as a question about web access once sent agy into a loop of generations until the timeout: the timeout path reports it.
 
 agy quirks seen: the first screen can show a banner above the prompt; each
 prompt is preceded by a rule line (so a rule alone does not end an answer);
@@ -125,4 +125,4 @@ trust its own folder; a headless run that hits an un-allowed tool prints
 | agy interactive | clean | file, touch, commit |
 | Copilot interactive | clean | file, touch, commit |
 
-Guard mutants (`test_delegate.sh`, 16 hand mutants: each Copilot flag, agy `--sandbox` in both modes, each policy deny, the snapshot's read-only mode and secret filter, the non-research URL deny, the memory floor, both secret refusals, the quota and both-out handling, the answer's rule handling, the idle-only send): 15 killed. The survivor, an explicit `--engine` falling through the fallback branch, is equivalent: an explicit engine has a one-engine list.
+Guard mutants, first sweep (`test_delegate.sh`, 16 hand mutants: each Copilot flag, agy `--sandbox` in both modes, each policy deny, the snapshot's read-only mode and secret filter, the non-research URL deny, the memory floor, both secret refusals, the quota and both-out handling, the answer's rule handling, the idle-only send): 15 killed. The survivor, an explicit `--engine` falling through the fallback branch, is equivalent: an explicit engine has a one-engine list.
