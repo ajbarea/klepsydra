@@ -60,11 +60,11 @@ eng_can() { # ENGINE MODE
 }
 
 # agy's locked settings: the shared policy, DIR as the one trusted workspace
-# (no trust prompt), and no URL reads unless the task is research.
+# (no trust prompt); the policy denies URL reads, which a research task alone gets back.
 eng_settings() { # KIND DIR OUT
   [[ -r $ENG_LOCK ]] || return 1
   jq --arg d "$2" --arg kind "$1" \
-    '. + {trustedWorkspaces: [$d]} | if $kind == "research" then . else .permissions.deny += ["read_url(*)"] end' \
+    '. + {trustedWorkspaces: [$d]} | if $kind == "research" then .permissions.deny -= ["read_url(*)"] else . end' \
     "$ENG_LOCK" >"$3.tmp" && mv -f -- "$3.tmp" "$3"
 }
 
@@ -80,11 +80,11 @@ eng_argv() { # ENGINE MODE MODEL KIND SETTINGS PROMPT
       # Deny beats allow, even with every tool allowed: --allow-all-tools only
       # lets a headless run start, the tool list and the denies do the locking.
       ENG_ARGV=("$bin" -p "$6" -s --model "$3" --allow-all-tools --available-tools "view,grep,glob"
-        --deny-tool=write --deny-tool=shell --disable-builtin-mcps --no-ask-user)
+        --deny-tool=write --deny-tool=shell --disable-builtin-mcps --disallow-temp-dir --no-ask-user)
       ;;
     copilot:interactive)
       ENG_ARGV=("$bin" --model "$3" --allow-all-tools --available-tools "view,grep,glob"
-        --deny-tool=write --deny-tool=shell --disable-builtin-mcps)
+        --deny-tool=write --deny-tool=shell --disable-builtin-mcps --disallow-temp-dir)
       ;;
     *) return 1 ;;
   esac
@@ -93,7 +93,7 @@ eng_argv() { # ENGINE MODE MODEL KIND SETTINGS PROMPT
 eng_classify() { # RC STDOUT STDERR: only a failure or a very short answer is read for a limit
   local rc=$1 out=$2 err=$3 both
   both=$out$'\n'$err
-  if [[ $rc != 0 || ${#out} -lt 1000 ]]; then
+  if [[ $rc != 0 || ${#out} -lt 400 ]]; then
     if grep -Eqi -- "$ENG_LIMIT_RE" <<<"$both"; then echo limit; return; fi
     if grep -Eqi -- "$ENG_AUTH_RE" <<<"$both"; then echo auth; return; fi
   fi
@@ -112,13 +112,22 @@ eng_state() { # ENGINE SCREEN
   foot=$(grep -v '^[[:space:]]*$' <<<"$screen" | tail -1)
   # Only the dialog's own footer, last on screen: the answered dialog stays in scrollback.
   if [[ $engine == copilot && $(grep -v '^[[:space:]]*$' <<<"$screen" | tail -2) == *"enter to select"* ]]; then echo trust; return; fi
-  if grep -Eqi -- "$ENG_LIMIT_RE" <<<"$recent"; then echo limit
-  elif grep -Eqi -- "$ENG_AUTH_RE" <<<"$recent"; then echo auth
-  elif [[ $engine == agy && $foot == *"esc to cancel"* ]]; then echo busy
-  elif [[ $engine == agy && $foot == *"? for shortcuts"* ]]; then echo idle
-  elif [[ $engine == copilot && $foot == *"ctrl+c interrupt"* ]]; then echo busy
-  elif [[ $engine == copilot && ( $foot == *"open sidebar"* || $foot == *"Manual Approval"* ) ]]; then echo idle
-  else echo unknown; fi
+  local footer=unknown
+  if [[ $engine == agy && $foot == *"esc to cancel"* ]]; then footer=busy
+  elif [[ $engine == agy && $foot == *"? for shortcuts"* ]]; then footer=idle
+  elif [[ $engine == copilot && $foot == *"ctrl+c interrupt"* ]]; then footer=busy
+  elif [[ $engine == copilot && ( $foot == *"open sidebar"* || $foot == *"Manual Approval"* ) ]]; then footer=idle; fi
+  # A running turn is busy whatever the screen says. A quota or login message is the
+  # engine's whole reply: short, and what the box last answered. A long answer that
+  # merely mentions a rate limit (CI triage, API research) is an answer.
+  if [[ $footer == busy ]]; then echo busy; return; fi
+  local reply
+  if [[ $footer == idle ]]; then reply=$(eng_answer "$engine" "$screen"); else reply=$recent; fi
+  if (( ${#reply} < 400 )); then
+    if grep -Eqi -- "$ENG_LIMIT_RE" <<<"$reply"; then echo limit; return; fi
+    if grep -Eqi -- "$ENG_AUTH_RE" <<<"$reply"; then echo auth; return; fi
+  fi
+  echo "$footer"
 }
 
 # The key that answers a "trust this folder" dialog (Copilot's first option is Yes).

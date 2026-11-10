@@ -5,6 +5,6 @@
   "showFeedbackSurvey": false,
   "permissions": {
     "allow": [],
-    "deny": ["write_file(*)", "command(*)", "unsandboxed(*)", "execute_url(*)", "mcp(*)"]
+    "deny": ["write_file(*)", "command(*)", "unsandboxed(*)", "execute_url(*)", "mcp(*)", "read_url(*)"]
   }
 }

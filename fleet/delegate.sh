@@ -40,20 +40,35 @@ PRINT_TIMEOUT=${FLEET_DELEGATE_TIMEOUT:-600}
 TURN_TIMEOUT=${FLEET_DELEGATE_TURN_TIMEOUT:-900}
 POLL=${FLEET_DELEGATE_POLL:-2}
 # Files that look like secrets never reach an engine, tracked or not.
-SECRET_FILES=(-name '.env' -o -name '.env.*' -o -name '*.pem' -o -name '*.key' -o -name '*.p12' -o -name '*.pfx' -o -name 'id_rsa*' -o -name 'id_ed25519*'
-  -o -name '.netrc' -o -name '.npmrc' -o -name '.pypirc' -o -name 'credentials*' -o -name '*.kdbx' -o -name 'secrets*' -o -name '.git-credentials')
+SECRET_FILES=(-name '.env' -o -name '.env.*' -o -name '.envrc' -o -name '*.pem' -o -name '*.key' -o -name '*.p12' -o -name '*.pfx' -o -name '*.jks' -o -name '*.keystore'
+  -o -name 'id_rsa*' -o -name 'id_dsa*' -o -name 'id_ecdsa*' -o -name 'id_ed25519*' -o -name '.netrc' -o -name '.npmrc' -o -name '.pypirc'
+  -o -name 'credentials*' -o -name '*.kdbx' -o -name 'secrets*' -o -name '.git-credentials' -o -name '*.tfvars' -o -name '*.tfstate' -o -name 'service-account*.json')
+# Engine configuration a folder trust would load (hooks run commands, MCP servers reach out):
+# never in the snapshot, or a trusted interactive lane could run what the repo ships.
+ENGINE_CONFIG=(.github/hooks .github/copilot .github/skills .github/agents .github/extensions .github/mcp.json .mcp.json .vscode/mcp.json .copilot .agents .agent .gemini .claude .codex .cursor)
+
+# Text on its way to another vendor's service that looks like a credential (stdin).
+looks_secret() {
+  grep -Eq -- '(AKIA[0-9A-Z]{16}|gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{40,}|glpat-[A-Za-z0-9_-]{20,}|xox[abpr]-[A-Za-z0-9-]{10,}|AIza[0-9A-Za-z_-]{35}|(^|[^A-Za-z0-9])sk-[A-Za-z0-9_-]{20,}|-----BEGIN [A-Z ]*PRIVATE KEY-----)'
+}
 
 usage() { sed -n '2,/^set -u/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//'; }
 die() { err "$*"; exit 2; }
 
 # A scope with a memory and task cap around a command, as launch.sh gives a
 # worker; FLEET_SYSTEMD_RUN=none runs it bare (the suite, a box with no user manager).
+# SCOPE_ARGV is the prefix (empty when bare), so the interactive window's command takes the same caps.
+scope_prefix() { # NAME
+  local run=${FLEET_SYSTEMD_RUN:-systemd-run}
+  SCOPE_ARGV=()
+  if [[ $run == none ]] || ! command -v "$run" >/dev/null 2>&1; then return; fi
+  SCOPE_ARGV=("$run" --user --scope --collect -q --unit="fleet-delegate-$1-$(date +%s)"
+    -p MemoryHigh="${FLEET_DELEGATE_MEM_HIGH:-2G}" -p MemoryMax="${FLEET_DELEGATE_MEM_MAX:-3G}" -p MemorySwapMax=0 -p TasksMax=256)
+}
 scoped() { # NAME CMD...
-  local name=$1 run=${FLEET_SYSTEMD_RUN:-systemd-run}
+  scope_prefix "$1"
   shift
-  if [[ $run == none ]] || ! command -v "$run" >/dev/null 2>&1; then "$@"; return; fi
-  "$run" --user --scope --collect -q --unit="fleet-delegate-$name-$(date +%s)" \
-    -p MemoryHigh="${FLEET_DELEGATE_MEM_HIGH:-2G}" -p MemoryMax="${FLEET_DELEGATE_MEM_MAX:-3G}" -p MemorySwapMax=0 -p TasksMax=256 "$@"
+  "${SCOPE_ARGV[@]}" "$@"
 }
 
 new_id() { printf '%s-%s' "$(date +%m%d-%H%M%S)" "$(od -An -N2 -tx1 /dev/urandom | tr -d ' \n')"; }
@@ -67,6 +82,16 @@ meta_set() { # ID KEY=VALUE...: merge string fields into meta.json
   for kv in "$@"; do a+=(--arg "${kv%%=*}" "${kv#*=}"); done
   [[ -f $f ]] || echo '{}' >"$f"
   jq -c "${a[@]}" '. + $ARGS.named' "$f" >"$f.tmp" && mv -f -- "$f.tmp" "$f"
+}
+# The pid of lane ID's live watcher, or fails. A watcher exits after each turn, so
+# the recorded pid may be stale and reused: it counts only while its command line
+# still is this lane's `__watch`.
+watcher_pid() { # ID
+  local p
+  p=$(cat "$DEL_ROOT/$1/watch.pid" 2>/dev/null)
+  [[ $p =~ ^[0-9]+$ ]] || return 1
+  tr '\0' ' ' <"/proc/$p/cmdline" 2>/dev/null | grep -q -- "__watch $1 " || return 1
+  printf '%s' "$p"
 }
 meta_get() { jq -r --arg k "$2" '.[$k] // empty' "$DEL_ROOT/$1/meta.json" 2>/dev/null; } # ID KEY
 
@@ -82,7 +107,11 @@ snapshot() { # REPO TASK SNAP SUBDIR-OUT
   timeout 120 git -C "$top" archive --format=tar HEAD | tar -x -C "$snap" 2>/dev/null || { err "git archive of $top failed"; return 1; }
   # A tracked symlink can point at a file outside the snapshot, which a read tool follows.
   find "$snap" -type l -delete 2>/dev/null
-  find "$snap" -depth \( "${SECRET_FILES[@]}" \) ! -name '.env.example' ! -name '.env.sample' -delete 2>/dev/null
+  local c
+  for c in "${ENGINE_CONFIG[@]}"; do rm -rf -- "${snap:?}/${c:?}"; done
+  # Whole directories too (secrets/, credentials/, .env/): pruned, not walked, then checked.
+  find "$snap" -mindepth 1 \( "${SECRET_FILES[@]}" \) ! -name '.env.example' ! -name '.env.sample' -prune -exec rm -rf -- {} + || { err "the secret filter failed"; return 1; }
+  [[ -z $(find "$snap" -mindepth 1 \( "${SECRET_FILES[@]}" \) ! -name '.env.example' ! -name '.env.sample' -print -quit) ]] || { err "the secret filter left a file behind"; return 1; }
   mb=$(du -sm -- "$snap" | cut -f1)
   (( mb <= SNAP_MAX_MB )) || { err "the snapshot of $top is ${mb} MB, over the ${SNAP_MAX_MB} MB limit"; return 1; }
   if ! { { if [[ -f $snap/AGENTS.md ]]; then cat -- "$snap/AGENTS.md"; printf '\n\n'; fi
@@ -173,7 +202,10 @@ cmd_print() { # args after option parsing
   if [[ $status == ok ]]; then
     { stamp "$used" "$model"; printf '%s\n' "$text"; } >"$out"
   else
-    { stamp "$used" "$model"; printf 'No answer: %s.\n' "$status"; [[ -s $dir/$used.err ]] && { printf '\n```\n'; head -c 2000 "$dir/$used.err"; printf '\n```\n'; }; } >"$out"
+    { stamp "$used" "$model"; printf 'No answer: %s.\n' "$status"
+      if [[ -s $dir/$used.err ]]; then printf '\nstderr:\n```\n'; head -c 2000 "$dir/$used.err"; printf '\n```\n'; fi
+      # A reply that read as a limit may be an answer that mentions one: keep it.
+      if [[ -n $text ]]; then printf '\nstdout:\n```\n'; printf '%s' "$text" | head -c 2000; printf '\n```\n'; fi; } >"$out"
   fi
   # Both engines out: say so, never fall to Claude.
   if [[ $ENGINE == auto && ( $status == limit || $status == auth ) ]]; then status="both-out"; fi
@@ -187,7 +219,14 @@ cmd_print() { # args after option parsing
 # ---- interactive lanes ----------------------------------------------------
 
 pane_screen() { t capture-pane -p -J -S -3000 -t "$1" 2>/dev/null; }
-pane_alive() { [[ $(t display-message -p -t "$1" '#{pane_id}' 2>/dev/null) == "$1" ]]; }
+# Lane ID's pane, only while that pane id still names the lane's own window: after a tmux
+# server restart the same %N can be another session's pane, which must get no keys and no kill.
+lane_pane() { # ID
+  local pane win
+  pane=$(meta_get "$1" pane) win=$(meta_get "$1" window)
+  [[ -n $pane && -n $win && $(t display-message -p -t "$pane" '#{pane_id} #{window_name}' 2>/dev/null) == "$pane $win" ]] || return 1
+  printf '%s' "$pane"
+}
 
 # Paste TEXT into PANE as a bracketed paste, then Enter, and confirm the engine
 # started a turn; one more Enter if it did not. Only into an idle prompt.
@@ -233,7 +272,8 @@ cmd_interactive() {
   eng_argv "$engine" interactive "$model" "$kind" "$settings" "" || { drop_snapshot "$snap"; return 1; }
   name=eng-$engine-$id
   local cmd
-  printf -v cmd '%q ' "${ENG_ARGV[@]}"
+  scope_prefix "$id"
+  printf -v cmd '%q ' "${SCOPE_ARGV[@]}" "${ENG_ARGV[@]}"
   if t has-session -t "=$ENG_SESSION" 2>/dev/null; then
     pane=$(t new-window -d -P -F '#{pane_id}' -t "=$ENG_SESSION:" -n "$name" -c "$snap" "$cmd")
   else
@@ -287,7 +327,7 @@ cmd_watch() { # ID
   FLEET_TARGET=fleet::delegate-watch
   while :; do
     sleep "$POLL"
-    if ! pane_alive "$pane"; then
+    if ! lane_pane "$id" >/dev/null; then
       meta_set "$id" status=gone
       flog WARN "delegate lane gone" id="$id" engine="$engine"
       notify "$id" "[fleet delegate] $id engine=$engine status=gone: the window closed (answer so far: $dir/answer.md)"
@@ -299,9 +339,10 @@ cmd_watch() { # ID
       busy) seen_busy=1 ;;
       limit | auth)
         printf '%s\n' "$screen" >"$dir/screen.txt"
+        { stamp "$engine" "$(meta_get "$id" model)"; eng_answer "$engine" "$screen"; } >"$dir/answer.md"
         meta_set "$id" status="$st"
         flog WARN "delegate lane stopped on a limit" id="$id" engine="$engine" state="$st"
-        notify "$id" "[fleet delegate] $id engine=$engine status=$st: the lane stopped (screen: $dir/screen.txt). Re-run with the other engine."
+        notify "$id" "[fleet delegate] $id engine=$engine status=$st: the lane stopped (screen: $dir/screen.txt; the reply is in $dir/answer.md in case it is an answer that mentions a limit). Re-run with the other engine."
         return 0 ;;
       idle)
         if (( seen_busy )); then
@@ -333,8 +374,13 @@ cmd_msg() { # ID TEXT
   valid_id "$id" || die "no lane $id"
   if [[ ${1:-} == - && $# -eq 1 ]]; then text=$(cat); else text="$*"; fi
   [[ -n ${text//[[:space:]]/} ]] || die "nothing to send"
-  pane=$(meta_get "$id" pane) engine=$(meta_get "$id" engine)
-  if [[ -z $pane ]] || ! pane_alive "$pane"; then echo gone; return 1; fi
+  (( ${#text} <= TASK_MAX )) || die "the message is over $TASK_MAX bytes"
+  if looks_secret <<<"$text"; then die "the message holds what looks like a secret; nothing was sent"; fi
+  engine=$(meta_get "$id" engine)
+  if ! pane=$(lane_pane "$id"); then echo gone; return 1; fi
+  # The watcher is still collecting the last turn (its poll has not come round): a second
+  # one would overwrite that answer and notify twice. Wait for its notice, then send.
+  if watcher_pid "$id" >/dev/null; then echo "not-idle:turn-pending"; return 1; fi
   got=$(deliver "$engine" "$pane" "$text") || { echo "$got"; return 1; }
   meta_set "$id" status=working
   start_watcher "$id"
@@ -349,10 +395,9 @@ cmd_read() { # ID
 cmd_stop() { # ID
   local id=$1 pane wpid
   valid_id "$id" || die "no lane $id"
-  wpid=$(cat "$DEL_ROOT/$id/watch.pid" 2>/dev/null)
-  [[ $wpid =~ ^[0-9]+$ ]] && kill "$wpid" 2>/dev/null
-  pane=$(meta_get "$id" pane)
-  [[ -n $pane ]] && pane_alive "$pane" && t kill-window -t "$pane" 2>/dev/null
+  wpid=$(watcher_pid "$id") && kill "$wpid" 2>/dev/null
+  rm -f -- "${DEL_ROOT:?}/${id:?}/watch.pid"
+  if pane=$(lane_pane "$id"); then t kill-window -t "$pane" 2>/dev/null; fi
   drop_snapshot "$DEL_ROOT/$id/work"
   meta_set "$id" status=stopped
   flog INFO "delegate lane stopped by request" id="$id"
@@ -405,7 +450,7 @@ done
 [[ -d $REPO ]] || die "no folder $REPO"
 REPO=$(cd "$REPO" && pwd -P)
 # The task goes to another vendor's service: a file that looks like a secret is refused.
-if grep -Eq -- '(AKIA[0-9A-Z]{16}|gh[pousr]_[A-Za-z0-9]{30,}|(^|[^A-Za-z0-9])sk-[A-Za-z0-9_-]{20,}|-----BEGIN [A-Z ]*PRIVATE KEY-----)' "$TASK"; then
+if looks_secret <"$TASK"; then
   die "the task file holds what looks like a secret; nothing was sent"
 fi
 

@@ -920,7 +920,7 @@ check "the tail carries the team-ceremony rule (AJ 10-29)" "$(grep -c '^Team cer
 check "the tail keeps asks for AJ out of public issues and PRs (AJ 10-29)" "$(grep -c '^Asks for AJ stay private' "$here/brief-tail.md")" "1"
 check "#325 review 1: the tail sends messages to panes through fleet send (#320)" "$(grep -c '^Messages to another pane .*fleet send PANE -' "$here/brief-tail.md")" "1"
 check "#239: the tail has heavy commands take the lock with flock -o, so nothing they leave running keeps it" "$(grep -c 'flock -o /tmp/fleet-heavy.lock' "$here/brief-tail.md")" "1"
-check "#291 review: the tail says the make targets take the lock themselves and run bare" "$(grep -c 'make test-fleet., .make test-launch., .make test-heavy-lock. and .make shellcheck. in klepsydra take the lock themselves: run them bare' "$here/brief-tail.md")" "1"
+check "#291 review: the tail says the make targets take the lock themselves and run bare" "$(grep -c 'make test-fleet., .make test-launch., .make test-delegate., .make test-heavy-lock. and .make shellcheck. in klepsydra take the lock themselves: run them bare' "$here/brief-tail.md")" "1"
 check "#291 review 5: the tail's hand form puts a group-wide timeout inside the lock (no --foreground)" "$(grep -c 'flock -o /tmp/fleet-heavy.lock timeout 1800 <command>' "$here/brief-tail.md") $(grep -c -- '--foreground' "$here/brief-tail.md")" "1 0"
 # Every target whose recipe runs $(HEAVY) (#291 review 4): it takes the lock
 # unless the caller says it holds it, a test target runs a file that exists,

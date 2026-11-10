@@ -123,10 +123,13 @@ open_tab() { # target tmux-socket-args...
 # changed; fails, starting nothing, when they cannot be put there or are over
 # agy's size limit.
 agy_rules() {
-  local tmp
+  local tmp old
   [[ -r $RULES_SRC ]] || fail "The fleet helper rules ($RULES_SRC) cannot be read, so agy would start without them."
   (( $(stat -c %s -- "$RULES_SRC") <= RULES_MAX )) || fail "The fleet helper rules ($RULES_SRC) are over agy's $RULES_MAX byte limit."
   mkdir -p -- "${RULES_DST%/*}" || fail "agy's rules folder (${RULES_DST%/*}) cannot be made."
+  # The rule an earlier launcher made from the whole global rules file: gone, or every agy session keeps loading it.
+  old=${RULES_DST%/*}/claude-global.md
+  if [[ -f $old ]] && grep -q 'made from .* by klepsydra' "$old" 2>/dev/null; then rm -f -- "${old:?}"; fi
   tmp=$(mktemp "$RULES_DST.XXXXXX") || fail "agy's rules cannot be written beside $RULES_DST."
   { printf -- '---\ntrigger: always_on\ndescription: "Working rules for a fleet helper, made from %s by klepsydra; edit that file, not this one."\n---\n\n' "$RULES_SRC"
     cat -- "$RULES_SRC"; } >"$tmp" || { rm -f -- "${tmp:?}"; fail "agy's rules cannot be written."; }
@@ -172,6 +175,9 @@ new() { # dir [agy model]
   need tmux "tmux is not installed in this distro."
   if [[ $tool == agy ]]; then
     [[ $model =~ $MODEL_RE ]] || fail "That is not an agy model id: $model"
+    # Its workspace is the one folder its reads reach: never the whole home folder or /.
+    [[ $(cd -- "$dir" && pwd -P) != "$(cd -- "$HOME" && pwd -P)" && $(cd -- "$dir" && pwd -P) != / ]] ||
+      fail "agy is not started in $dir: its workspace would be the whole home folder (or /). Pick a project folder."
     need "$AGY" "agy (Antigravity CLI) was not found on PATH."
     agy_rules
     local settings

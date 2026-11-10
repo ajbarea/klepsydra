@@ -142,9 +142,9 @@ check "#323: on the model asked for" "$(t list-panes -a -F '#{pane_start_command
 sf=$(t list-panes -a -F '#{pane_start_command}' | grep -o -- "--settings [^ ]*" | head -1 | cut -d' ' -f2 | tr -d "'\"")
 check "#323 lock: the session gets --sandbox and a settings file of its own, never AJ's" \
   "$(t list-panes -a -F '#{pane_start_command}' | grep -c -- "--sandbox") $([[ $sf == "$work/agy-settings/"* ]] && echo own)" "1 own"
-check "#323 lock: that file denies writes, the shell, MCP and the browser, and asks before anything else (headless, that is a denial)" \
+check "#323 lock: that file denies writes, the shell, MCP, URL reads and the browser, and asks before anything else (headless, that is a denial)" \
   "$(jq -r '[.toolPermission, .allowNonWorkspaceAccess, .enableTerminalSandbox, (.permissions.deny | sort | join(","))] | join(" ")' "$sf")" \
-  "request-review false true command(*),execute_url(*),mcp(*),unsandboxed(*),write_file(*)"
+  "request-review false true command(*),execute_url(*),mcp(*),read_url(*),unsandboxed(*),write_file(*)"
 check "#323 lock: the folder it starts in is its one trusted workspace" "$(jq -c .trustedWorkspaces "$sf")" "[\"$work/repos\"]"
 check "#323: the helper rules reach agy as an always-on rule made from the one source" \
   "$(sed -n 2p "$KLEPSYDRA_AGY_RULES") $(grep -c '^Read only.$' "$KLEPSYDRA_AGY_RULES")" "trigger: always_on 1"
@@ -159,6 +159,16 @@ check "#323: a model that is no id starts nothing" "$rc $(( $(windows) - before 
 out=$(KLEPSYDRA_RULES_SRC="$work/no-rules.md" bash "$launch" new "$work/repos" agy gemini-3.8-flash-high 2>&1); rc=$?
 check "#323: with the helper rules unreadable, no agy session starts" "$rc $(( $(windows) - before ))" "1 0"
 out=$(KLEPSYDRA_AGY_LOCK="$work/no-lock.json" bash "$launch" new "$work/repos" agy gemini-3.8-flash-high 2>&1); rc=$?
+out=$(bash "$launch" new "$HOME" agy gemini-3.8-flash-high 2>&1); rc=$?
+check "#323 lock: the whole home folder is never an agy workspace (its reads would reach every secret in it)" "$rc $(( $(windows) - before ))" "1 0"
+mkdir -p "$work/gemini/config/rules"
+printf -- '---\ntrigger: always_on\ndescription: "AJ'"'"'s global rules, made from /x/CLAUDE.md by klepsydra; edit that file, not this one."\n---\nold\n' >"$work/gemini/config/rules/claude-global.md"
+printf -- 'my own rule\n' >"$work/gemini/config/rules/mine.md"
+bash "$launch" new "$work/repos" agy gemini-3.8-flash-high >/dev/null 2>&1
+check "#323: the earlier launcher's whole-CLAUDE.md rule is removed; a rule that is not klepsydra's stays" "$([[ -e $work/gemini/config/rules/claude-global.md ]] && echo old-kept || echo gone) $(cat "$work/gemini/config/rules/mine.md")" "gone my own rule"
+printf -- 'someone else\n' >"$work/gemini/config/rules/claude-global.md"
+bash "$launch" new "$work/repos" agy gemini-3.8-flash-high >/dev/null 2>&1
+check "#323: and a claude-global.md that is not klepsydra's is left alone" "$(cat "$work/gemini/config/rules/claude-global.md")" "someone else"
 check "#323 lock: with the lock policy unreadable, no agy session starts (never an unlocked one)" "$rc $(( $(windows) - before ))" "1 0"
 head -c 24100 /dev/zero | tr '\0' x >"$work/big-rules.md"
 out=$(KLEPSYDRA_RULES_SRC="$work/big-rules.md" bash "$launch" new "$work/repos" agy gemini-3.8-flash-high 2>&1); rc=$?
