@@ -1146,6 +1146,12 @@ w2=$(pane wpane2 '{"above":["idle"]}'); settle
 printf '%s\tworker2\t%s\t%s\n' "$w2" "$FLEET_STATE/task-demo.src" "$(sid_of w2)" >>"$REGISTRY"; session_file w2 "$w2" https://claude.ai/code/session_01X
 check "#246: with one agent free, no watcher still fails" "$(doctor | grep -c '^FAIL pane watcher: none running')" "1"
 t kill-window -t "$w2"; rm -f "$KLEPSYDRA_DIR/fleet/w2.json"
+# A registry whose panes are all gone leaves nothing to watch (#348).
+printf '%%998\tworker\t%s\tgone\n' "$FLEET_STATE/task-demo.src" >"$REGISTRY"
+check "#348: no watcher and no live agent pane is ok, not a FAIL" \
+  "$(doctor | grep '^[a-zA-Z]* *pane watcher')" "ok   pane watcher: no agents to watch"
+: >"$REGISTRY"
+check "#348: an empty registry is the same" "$(doctor | grep -c '^ok   pane watcher: no agents to watch')" "1"
 printf '%s\tworker\t%s\t%s\n' "$w" "$FLEET_STATE/task-demo.src" "$(sid_of w1)" >"$REGISTRY"
 state wpane '{"above":["idle"]}'
 printf 'parked\tPAUSED 11-01 07:16: no room\n' >"$FLEET_STATE/paused.tsv"
