@@ -7,7 +7,7 @@
 # Claude uses); the phone wall answers on 127.0.0.1:8318 and through
 # Tailscale Serve, unless prefs.json has it off; its usage readings are fresh (observed in the last 2
 # minutes) while some pane is mid-turn, the only time a session refreshes them;
-# a pane watcher is running, unless every live agent waits out a usage limit;
+# a pane watcher is running, unless no agent runs (ok) or every live agent waits out a usage limit;
 # paused agents (paused.tsv) are listed; each registered agent gets one verdict
 # (running, finished, gone), and a finish is recorded in finished.tsv the first
 # time it is seen, while the row stays until --prune; each config folder in FLEET_ACCOUNTS
@@ -333,7 +333,7 @@ fi
 
 # Processes running watch-panes.sh itself (bash, then the script), not a shell that names it.
 watchers=$($PS -eo args= 2>/dev/null | awk '$1 ~ /(^|\/)bash$/ && $2 ~ /(^|\/)watch-panes\.sh$/ { $1 = $2 = ""; sub(/^ +/, ""); printf "%s;", $0 }')
-# None running is expected while every live agent waits out a usage limit
+# None running is expected while no agent runs, and while every live agent waits out a usage limit
 # (#246): a watcher would wake at once on each limited pane.
 if [[ -n $watchers ]]; then
   report ok "pane watcher" "watching ${watchers%;}"
@@ -354,7 +354,9 @@ else
     fi
   done
   limited=${limited% } resets=${resets%, } free=${free% }
-  if [[ -n $limited && -z $free ]]; then
+  if [[ -z $limited && -z $free ]]; then
+    report ok "pane watcher" "no agents to watch"
+  elif [[ -n $limited && -z $free ]]; then
     report warn "pane watcher" "none running while every agent waits out a usage limit (resets ${resets:-at an unknown time}): start one after the reset" limited="$limited" resets="$resets"
   else
     report FAIL "pane watcher" "none running: the orchestrator is not woken when an agent finishes" limited="$limited" not_limited="$free"
