@@ -32,9 +32,9 @@ of committed files, so uncommitted work reaches them only inside the task file.
 
 Both engines state a wrong claim in the same confident voice as a true one.
 Known misses: agy's "token-pooled" estimand, where the code averages over
-examples (HEPH 11-10 21:5x, friction 11-10 p4-sheet); two wrong lexicon claims
-about VADER (friction 11-11 act7); "goldfish about 2 weeks old", repeated
-though the repo was created 09-13, and a claim that techne lacks
+examples (HEPH 11-10 21:5x, friction 11-10 p4-sheet); agy's two wrong lexicon
+claims about VADER (friction 11-11 act7); "goldfish about 2 weeks old", repeated
+though the repo was created 09-13, and agy's claim that techne lacks
 anti-rationalization tables, which it has (both HEPH 11-11 06:37). Copilot
 called "past the crossover every seed was ambiguous" false by reading a
 4-column outcome row as the wrong column (friction 11-11 qml-paper). Check each
@@ -53,8 +53,8 @@ claim against the code, the lexicon or the row before you edit anything.
   (1111-060904-b67e). For a visual review, hand it text: `pdftotext` per slide
   or a shape and position dump.
 - **Task size.** A task file over 65,536 bytes is refused at the start, before
-  any snapshot (friction 11-11 coverflow; `delegate.sh` checks it with the
-  arguments). Point the engine at the snapshot's files
+  any snapshot (friction 11-11 coverflow; `delegate.sh` checks the size
+  while parsing arguments). Point the engine at the snapshot's files
   and inline only small diffs.
 - **Large repos.** A snapshot over 300 MB is refused; sphragis was 966 MB
   (friction 11-11 s253). Build a slim git repo of code, tests and docs with
@@ -87,7 +87,8 @@ claim against the code, the lexicon or the row before you edit anything.
 
 - **Registered-report text.** Never sent to an engine (AJ's 11-11 scope,
   klepsydra#346). Registered-report review stays with Opus (HEPH 11-11 06:24
-  budget rule). The sphragis runs cited above predate this scope.
+  budget rule). The sphragis runs cited above predate this scope (set 11-11 13:48 on
+  klepsydra#346).
 - **Team repos.** Never snapshotted for an engine, and nothing an engine
   writes is posted to a teammate or a team repo (AJ's 11-11 scope,
   klepsydra#346; HEPH overnight rules 11-09). Engines are a second reader on
