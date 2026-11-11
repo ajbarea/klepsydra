@@ -10,6 +10,95 @@ Tests: `make test-delegate` (stubs), `fleet/attack_live.sh` (the real engines).
 
 Everything an engine writes is an unverified lead. Claude checks what it uses.
 
+## Playbook: using agy and Copilot as agents
+
+<!-- budget: 1200 words for this section -->
+
+Evidence is from 2026-11-10 and 11-11. Run ids (`1110-...`, `1111-...`) are
+folders under `$FLEET_STATE/delegate/`; "friction" and "HEPH" are the dated
+lines in `friction.md` and `HEPH.md` there. The per-engine scorecard stays in
+klepsydra#346 and grows as runs accrue. Both engines run read-only in a snapshot
+of committed files, so uncommitted work reaches them only inside the task file.
+
+### Which engine for what
+
+| Job | Engine | Evidence |
+|---|---|---|
+| Web research with sources | agy | Cover-flow practice: high quality, cited (1110-194814-0588). LinkedIn research: all 6 projects real (1111-063103-4c91). |
+| Qualifier sweep over long rule text | agy | Found 2 real qualifiers an Opus reader missed in a paper explainer (HEPH 11-10 21:5x); 4 real gaps in the sphragis code, 2 wrong (HEPH 11-11 08:09); more real issues than Copilot on the QML paper (friction 11-11 qml-paper). |
+| Consistency check of a deck against a paper | Copilot | Line-cited stale slides in the big FA deck (1110-195107-d35b). |
+| Second reader on a code PR | Copilot | 1 real finding per PR on sphragis (HEPH 11-11 08:09), 5 real leads on the next one (HEPH 11-11 11:49); nothing new on a talks diff already reviewed (HEPH 11-10 22:4x) or on klepsydra#350 (HEPH 11-11 15:07). |
+| Rubric grading, word counts, time grades | neither | agy said 870 words, the script said 947; Copilot said 1,200 (friction 11-11 c810). Run the gate. |
+
+Both engines state a wrong claim in the same confident voice as a true one.
+Four known misses: agy's "token-pooled" estimand, where the code averages over
+examples (HEPH 11-10 21:5x); two lexicon claims about VADER (friction 11-11
+act7); "goldfish about 2 weeks old", repeated though the repo was created 09-13
+(HEPH 11-11 06:37); and a claim that techne lacks anti-rationalization tables,
+which it has. Copilot called "every seed ambiguous" false by reading a
+4-column outcome row as another column (friction 11-11 qml-paper). Check each
+claim against the code, the lexicon or the row before you edit anything.
+
+### Briefing a lane
+
+- **Prompt shape.** Put the answer first in the task and ask for `path:line`
+  citations; `hooks/klepsydra-engine-rules.md` already tells the engine to do
+  both, so the task only has to say what to check and against what. Name the
+  columns of every table next to the table: Copilot misread an unlabeled row
+  (friction 11-11 qml-paper).
+- **File set.** The engine sees committed text files only. Binary files (PDF,
+  PNG) are withheld and the lane still runs: a review of a slide bundle
+  returned "Waiting for the research subagent..." with status `ok`
+  (1111-060904-b67e). For a visual review, hand it text: `pdftotext` per slide
+  or a shape and position dump.
+- **Task size.** A task file over 65,536 bytes is refused after the call is
+  queued (friction 11-11 coverflow). Point the engine at the snapshot's files
+  and inline only small diffs.
+- **Large repos.** A snapshot over 300 MB is refused; sphragis was 966 MB
+  (friction 11-11 s253). Build a slim git repo of code, tests and docs with
+  `git archive HEAD <paths>` and pass it as `--dir`.
+- **Timeouts.** Print mode stops at 600 s (`FLEET_DELEGATE_TIMEOUT`) and a
+  timeout returns no partial answer. A 51 KB agy review timed out at 619 s
+  (1111-083732-5125, friction 11-11 s253b). Pass `--timeout 1500` to an agy
+  review over about 30 KB, or split the input into one lane per section.
+- **Read the answer, not the status.** `status=ok` held for a one-line
+  non-answer (1111-060904-b67e). A denied `read_file` gave `status=empty` in
+  78 s (1111-061256-71ed); friction 11-11 aware-mid suggests inlining the
+  material in the task file (under 64 KB). Treat an answer of a few lines as a
+  failed run.
+- **Cost.** A Copilot call bills AI Credits: 0.54 for a one-line test, because
+  its built-in prompt is about 37k tokens (HEPH 11-10 20:0x). Batch questions
+  into one task rather than many small calls.
+
+### Quirks and workarounds
+
+| Quirk | Workaround | Source |
+|---|---|---|
+| Copilot refuses every explicit `--model` on this plan (gpt-5.6-sol, gpt-5.6, gpt-5, gpt-6-luna, gpt-5.3-codex): "Model ... is not available" | Use `auto`, the default in `engines.sh`; its session log shows gpt-5.6-luna | 1110-194855-9122, HEPH 11-10 20:0x |
+| agy has no partial answer on a timeout | `--timeout`, or split the input | 1111-083732-5125 |
+| agy denies `read_file` in headless mode and returns empty | Inline the material in the task (the friction line's suggestion; not yet re-tested) | 1111-061256-71ed, friction 11-11 aware-mid |
+| agy permission rules are not what the docs imply: `strict` blocks even in-workspace reads, an allow on a directory matches nothing below it, `allowNonWorkspaceAccess:false` did not stop `/etc/hostname` | Test each permission claim with a real attempt; the lock rows above hold the tested form | friction 11-09 agy-copilot |
+| Both engines fold a long paste into a placeholder | A follow-up is one short tagged line; long text goes in a task file | the return-path section |
+| A model's own plan mode is not a read-only boundary | The deny rules, the sandbox and the snapshot do the locking | HEPH 11-09 17:1x |
+
+### What never goes to an engine
+
+- **Registered-report text.** The registered rules and analyses of a
+  registered report are read and reviewed by Opus only; the 11-11 sphragis
+  runs gave engines the code and diff as a second reader while Opus reviewed
+  the rules (HEPH 11-11 06:24 budget rule: "Opus for registered-report reviews
+  and final verifies only").
+- **Team repos.** No snapshot of a teammate's repo (InteFL is one) and nothing
+  posted to one (HEPH overnight rules 11-09: never touch InteFL or post to
+  teammates or team repos unasked). An engine is a second reader on our own repos.
+- **Merges, pushes, comments, email.** Locked lanes cannot write, and an
+  engine's answer is never the approval for any of these.
+- **Secrets.** The snapshot filter and the task scan refuse them, so a refusal
+  here means remove the secret, not rerun.
+- **Final verification.** A lane's answer feeds the next worker's brief and
+  that worker checks it; the verify pass before a merge stays with Opus
+  (HEPH 11-11 06:24 budget rule).
+
 ## Two modes, one interface
 
 | | Print mode (default) | Interactive lane (`--interactive`) |
