@@ -31,12 +31,13 @@ of committed files, so uncommitted work reaches them only inside the task file.
 | Word counts and time grades | neither | agy said 870 words, the script said 947; Copilot said 1,200 (friction 11-11 c810). Run the gate. |
 
 Both engines state a wrong claim in the same confident voice as a true one.
-Four known misses: agy's "token-pooled" estimand, where the code averages over
-examples (HEPH 11-10 21:5x); two lexicon claims about VADER (friction 11-11
-act7); "goldfish about 2 weeks old", repeated though the repo was created 09-13
-(HEPH 11-11 06:37); and a claim that techne lacks anti-rationalization tables,
-which it has. Copilot called "every seed ambiguous" false by reading a
-4-column outcome row as another column (friction 11-11 qml-paper). Check each
+Known misses: agy's "token-pooled" estimand, where the code averages over
+examples (HEPH 11-10 21:5x, friction 11-10 p4-sheet); two wrong lexicon claims
+about VADER (friction 11-11 act7); "goldfish about 2 weeks old", repeated
+though the repo was created 09-13, and a claim that techne lacks
+anti-rationalization tables, which it has (both HEPH 11-11 06:37). Copilot
+called "past the crossover every seed was ambiguous" false by reading a
+4-column outcome row as the wrong column (friction 11-11 qml-paper). Check each
 claim against the code, the lexicon or the row before you edit anything.
 
 ### Briefing a lane
@@ -44,21 +45,22 @@ claim against the code, the lexicon or the row before you edit anything.
 - **Prompt shape.** Put the answer first in the task and ask for `path:line`
   citations; `hooks/klepsydra-engine-rules.md` already tells the engine to do
   both, so the task only has to say what to check and against what. Name the
-  columns of every table next to the table: Copilot misread an unlabeled row
-  (friction 11-11 qml-paper).
+  columns of every table next to the table: Copilot misread a row whose column
+  order the brief did not give (friction 11-11 qml-paper).
 - **File set.** The engine sees committed text files only. Binary files (PDF,
   PNG) are withheld and the lane still runs: a review of a slide bundle
   returned "Waiting for the research subagent..." with status `ok`
   (1111-060904-b67e). For a visual review, hand it text: `pdftotext` per slide
   or a shape and position dump.
-- **Task size.** A task file over 65,536 bytes is refused after the call is
-  queued (friction 11-11 coverflow). Point the engine at the snapshot's files
+- **Task size.** A task file over 65,536 bytes is refused at the start, before
+  any snapshot (friction 11-11 coverflow; `delegate.sh` checks it with the
+  arguments). Point the engine at the snapshot's files
   and inline only small diffs.
 - **Large repos.** A snapshot over 300 MB is refused; sphragis was 966 MB
   (friction 11-11 s253). Build a slim git repo of code, tests and docs with
   `git archive HEAD <paths>` and pass it as `--dir`.
-- **Timeouts.** Print mode stops at 600 s (`FLEET_DELEGATE_TIMEOUT`) and a
-  timeout returns no partial answer. A 51 KB agy review timed out at 619 s
+- **Timeouts.** Print mode stops at 600 s (`FLEET_DELEGATE_TIMEOUT`) and an
+  agy timeout returns no partial answer. A 51 KB agy review timed out at 619 s
   (1111-083732-5125, friction 11-11 s253b). Pass `--timeout 1500` to an agy
   review over about 30 KB, or split the input into one lane per section.
 - **Read the answer, not the status.** `status=ok` held for a one-line
@@ -76,7 +78,7 @@ claim against the code, the lexicon or the row before you edit anything.
 |---|---|---|
 | Copilot refuses every explicit `--model` on this plan (gpt-5.6-sol, gpt-5.6, gpt-5, gpt-6-luna, gpt-5.3-codex): "Model ... is not available" | Use `auto`, the default in `engines.sh`; its session log shows gpt-5.6-luna | 1110-194855-9122, HEPH 11-10 20:0x |
 | agy has no partial answer on a print-mode timeout | `--timeout`, or split the input | 1111-083732-5125 |
-| agy denies `read_file` in headless mode and returns empty | Inline the material in the task file; it worked on the retry (1111-061432-6004, a 220 s `ok` with a full answer) | 1111-061256-71ed, friction 11-11 aware-mid |
+| agy once auto-denied `read_file` on a `--dir` bundle snapshot and returned empty | Inline the material in the task file; it worked on the retry (1111-061432-6004, a 220 s `ok` with a full answer) | 1111-061256-71ed, friction 11-11 aware-mid |
 | agy permission rules are not what the docs imply: `strict` blocks even in-workspace reads, an allow on a directory matches nothing below it, `allowNonWorkspaceAccess:false` did not stop `/etc/hostname` | Test each permission claim with a real attempt; the lock section below holds the tested form | friction 11-09 agy-copilot |
 | Both engines fold a long paste into a placeholder | A follow-up is one short tagged line; long text goes in a task file | the return-path section |
 | agy's plan mode is not a read-only boundary | The deny rules, the sandbox and the snapshot do the locking | HEPH 11-09 17:1x |
@@ -85,7 +87,7 @@ claim against the code, the lexicon or the row before you edit anything.
 
 - **Registered-report text.** Never sent to an engine (AJ's 11-11 scope,
   klepsydra#346). Registered-report review stays with Opus (HEPH 11-11 06:24
-  budget rule).
+  budget rule). The sphragis runs cited above predate this scope.
 - **Team repos.** Never snapshotted for an engine, and nothing an engine
   writes is posted to a teammate or a team repo (AJ's 11-11 scope,
   klepsydra#346; HEPH overnight rules 11-09). Engines are a second reader on
