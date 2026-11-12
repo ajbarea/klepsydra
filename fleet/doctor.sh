@@ -12,7 +12,10 @@
 # (running, finished, gone), and a finish is recorded in finished.tsv the first
 # time it is seen, while the row stays until --prune; each config folder in FLEET_ACCOUNTS
 # is logged in and the second ones match the first; the copies in ~/.claude
-# (hooks, status line, launcher, cast) match the checkout. Briefs whose shared rules
+# (hooks, status line, launcher, cast) match the checkout; both memory slices
+# have a MemoryMax and every fleet scope sits in its slice (a FAIL), and the
+# orchestrator's peak fits the room the workers' slice leaves it (a warning).
+# Briefs whose shared rules
 # are out of date, and a second folder not logged in, are warnings.
 # With `--json FILE` (the fleet-doctor timer) it also writes the checks to FILE
 # for the wall, and logs a check only when its status changed since FILE's run.
@@ -415,28 +418,69 @@ if v=$(bash "$here/voices.sh" --check 2>/dev/null); then
 else
   report warn "voices" "${v:-could not compare}"
 fi
+# Every fleet scope and both memory slices, read in one call (#289, #353): each
+# unit's tasks, slice and memory cap, in the blocks systemctl separates with a
+# blank line (a property's place within a block is systemctl's, so Id is read
+# wherever it falls).
+declare -A tasks_now=() tasks_cap=() in_slice=() mem_cap=()
+mapfile -t scopes < <($SYSTEMCTL --user list-units --type=scope --no-legend --plain 'fleet-*' 2>/dev/null | awk '$1 ~ /^fleet-.*[.]scope$/ { print $1 }')
+u="" tn="" tc="" sl="" mc=""
+while IFS= read -r line; do
+  if [[ -z $line ]]; then
+    [[ -n $u ]] && tasks_now[$u]=$tn tasks_cap[$u]=$tc in_slice[$u]=$sl mem_cap[$u]=$mc
+    u="" tn="" tc="" sl="" mc=""
+    continue
+  fi
+  case ${line%%=*} in
+    Id) u=${line#*=} ;; TasksCurrent) tn=${line#*=} ;; TasksMax) tc=${line#*=} ;; Slice) sl=${line#*=} ;; MemoryMax) mc=${line#*=} ;;
+  esac
+done < <($SYSTEMCTL --user show -p Id -p TasksCurrent -p TasksMax -p Slice -p MemoryMax "$FLEET_SLICE" "$FLEET_WORKER_SLICE" "${scopes[@]}" 2>/dev/null; echo)
 # Each fleet session's scope against its task cap (#289): past TASKS_WARN_PCT
 # its next forks fail and its claude aborts, as on 11-03.
 TASKS_WARN_PCT=${TASKS_WARN_PCT:-80}
 near="" fullest="" fullest_pct=-1 uncapped=""
-while read -r unit; do
-  [[ $unit == fleet-*.scope ]] || continue
-  cur="" max=""
-  while IFS='=' read -r k v; do
-    case $k in TasksCurrent) cur=$v ;; TasksMax) max=$v ;; esac
-  done < <($SYSTEMCTL --user show -p TasksCurrent -p TasksMax "$unit" 2>/dev/null)
+for unit in "${scopes[@]}"; do
+  cur=${tasks_now[$unit]-} max=${tasks_cap[$unit]-}
   [[ $cur =~ ^[0-9]+$ ]] || continue
   if ! [[ $max =~ ^[1-9][0-9]*$ ]]; then uncapped+="${unit%.scope} "; continue; fi
   pct=$((cur * 100 / max))
   (( pct > fullest_pct )) && fullest_pct=$pct fullest="${unit%.scope} $cur/$max"
   (( pct >= TASKS_WARN_PCT )) && near+="${unit%.scope} $cur/$max, "
-done < <($SYSTEMCTL --user list-units --type=scope --no-legend --plain 'fleet-*' 2>/dev/null | awk '{ print $1 }')
+done
 if [[ -n $near ]]; then
   report warn "task caps" "past ${TASKS_WARN_PCT}% of the cap: ${near%, } (its next forks fail at the cap)" scopes="${near%, }"
 elif [[ -n $fullest ]]; then
   report ok "task caps" "fullest scope: $fullest${uncapped:+; no task cap: ${uncapped% }}" fullest="$fullest" uncapped="${uncapped% }"
 elif [[ -n $uncapped ]]; then
   report ok "task caps" "no task cap: ${uncapped% }" uncapped="${uncapped% }"
+fi
+# The fleet's memory slices (#353): both capped, and each fleet scope in its own
+# (the orchestrator's in FLEET_SLICE, every other in FLEET_WORKER_SLICE). A scope
+# started before the slices existed keeps its place until its next fresh start.
+# The orchestrator's peak is recorded here, every 5 minutes, for fleet install.
+heph_peak=$(orch_mem_peak record) heph_scope=""
+hp=$(heph_pid) && hcg=$(proc_cgroup "$hp") && heph_scope=${hcg##*/}
+bytes_mib() { [[ $1 =~ ^[0-9]+$ ]] && printf '%s' "$(($1 / 1048576))"; }
+fleet_cap=$(bytes_mib "${mem_cap[$FLEET_SLICE]-}") worker_cap=$(bytes_mib "${mem_cap[$FLEET_WORKER_SLICE]-}")
+nocap="" astray=""
+[[ -n $fleet_cap ]] || nocap+="$FLEET_SLICE "
+[[ -n $worker_cap ]] || nocap+="$FLEET_WORKER_SLICE "
+for unit in "${scopes[@]}"; do
+  want=$FLEET_WORKER_SLICE
+  [[ $unit == "$heph_scope" ]] && want=$FLEET_SLICE
+  [[ ${in_slice[$unit]-} == "$want" ]] || astray+="${unit%.scope} in ${in_slice[$unit]:-no slice}, "
+done
+if [[ -n $nocap || -n $astray ]]; then
+  report FAIL "memory cap" "${nocap:+no MemoryMax on ${nocap% } (fleet install writes it)}${nocap:+${astray:+; }}${astray:+outside their slice: ${astray%, } (each moves at its next fresh start)}" \
+    no_cap="${nocap% }" astray="${astray%, }"
+elif [[ -n $heph_peak ]] && (( heph_peak > fleet_cap - worker_cap )); then
+  report warn "memory cap" "the orchestrator's peak, $heph_peak MiB, passed the $((fleet_cap - worker_cap)) MiB $FLEET_WORKER_SLICE leaves it: fleet install resizes the slices" \
+    peak_mb="$heph_peak" fleet_mb="$fleet_cap" workers_mb="$worker_cap"
+else
+  of_heph=""
+  [[ -n $heph_peak ]] && of_heph=", the orchestrator's peak $heph_peak MiB"
+  report ok "memory cap" "$FLEET_SLICE $fleet_cap MiB, $FLEET_WORKER_SLICE $worker_cap MiB$of_heph" \
+    fleet_mb="$fleet_cap" workers_mb="$worker_cap" peak_mb="${heph_peak:-}"
 fi
 # A hook or cast copy older than the checkout gives every session old behaviour (#244).
 root=${here%/fleet} differ="" missing=""

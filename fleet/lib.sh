@@ -650,6 +650,120 @@ fleet_tasks_max() {
   printf '%s' "$((min / FLEET_TASK_SHARES))"
 }
 
+# The fleet's memory slices (#353). FLEET_SLICE holds every fleet scope and caps
+# their total, the orchestrator's included, so no run can take WSL down;
+# FLEET_WORKER_SLICE inside it (systemd nests a slice by its dashed name) caps
+# the workers and their delegates below that, leaving the orchestrator room.
+# Each has MemoryMax only: past memory.high the kernel throttles every process
+# in the cgroup and never OOM-kills (cgroup-v2.rst: it is for a monitor such as
+# systemd-oomd, which WSL does not run), so a hungry job froze the whole slice
+# in the live test instead of being killed.
+FLEET_SLICE=${FLEET_SLICE:-fleet.slice}
+FLEET_WORKER_SLICE=${FLEET_WORKER_SLICE:-${FLEET_SLICE%.slice}-workers.slice}
+# MiB of WSL's memory the slices leave outside them. Measured 2026-11-11 on AJ's
+# PC: WSL's used memory less every fleet scope's kept memory (cgroup_kept_mib)
+# was 847 MiB (kernel, WSL's init, system services, the tmux server), and
+# earlyoom (-m 5) acts at 5% of MemTotal, 497 MiB; their 1344 rounded up to a
+# whole 512 MiB, so a fleet at its cap still leaves earlyoom's line clear.
+FLEET_SLICE_MARGIN_MB=1536
+# Sourced as BASH_ENV by every shell a fleet claude starts (#353).
+FLEET_OOM_TOOL=${FLEET_OOM_TOOL:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/oom-tool.sh}
+
+# MiB in a systemd memory size (4G, 512M, 1024K or bytes); fails on any other.
+to_mib() { # SIZE
+  [[ $1 =~ ^([0-9]+)([KMGT]?)$ ]] || return 1
+  local n=${BASH_REMATCH[1]}
+  case ${BASH_REMATCH[2]} in K) n=$((n / 1024)) ;; G) n=$((n * 1024)) ;; T) n=$((n * 1048576)) ;; '') n=$((n / 1048576)) ;; esac
+  printf '%s' "$n"
+}
+
+# The systemd-run options that put a fleet scope in its slice (#353): the
+# orchestrator's in FLEET_SLICE, any other in FLEET_WORKER_SLICE.
+# OOMPolicy=continue: under the default (stop), systemd stops the whole scope,
+# its claude included, once the kernel kills any one process in it.
+fleet_slice_opts() { # orchestrator|worker
+  local s=$FLEET_WORKER_SLICE
+  [[ $1 == orchestrator ]] && s=$FLEET_SLICE
+  printf -- '--slice=%s -p OOMPolicy=continue' "$s"
+}
+
+# The words a fleet claude's command starts with (#353): a shell that sets its
+# OOM rank to 0 and execs the rest, so claude runs at the lowest rank a user may
+# set (a tmux server started from a ranked shell would hand it 1000; going
+# below 0 needs CAP_SYS_RESOURCE, so 0 is the floor).
+fleet_oom_floor() {
+  # shellcheck disable=SC2016 # $@ is the inner shell's
+  printf '%s ' bash -c "'{ echo 0 >/proc/self/oom_score_adj; } 2>/dev/null; exec \"\$@\"'" fleet-oom
+}
+# BASH_ENV for a fleet claude's environment (#353), so every shell it starts
+# ranks first (oom-tool.sh); nothing when the file is missing, since bash would
+# then print an error at the start of every shell.
+fleet_oom_env() {
+  [[ -r $FLEET_OOM_TOOL ]] && printf 'BASH_ENV=%q ' "$FLEET_OOM_TOOL"
+  return 0
+}
+
+# MiB of cgroup CG (a path under the cgroup root) the kernel cannot drop under
+# pressure: anon, shmem and kernel memory from its memory.stat. Page cache is
+# left out, since reclaim takes it first: on 2026-11-11 the orchestrator's scope
+# peaked at 4.1 GB (memory.peak) while this was 0.8 GB.
+cgroup_kept_mib() { # CG
+  awk '$1 == "anon" || $1 == "shmem" || $1 == "kernel" { s += $2; n++ } END { if (!n) exit 1; printf "%d", s / 1048576 }' \
+    "${FLEET_CGROUP_ROOT:-/sys/fs/cgroup}$1/memory.stat" 2>/dev/null
+}
+
+# The cgroup of process PID, as a path under the cgroup root.
+proc_cgroup() { # PID
+  awk -F: '$1 == "0" { print $3; f = 1 } END { exit !f }' "${FLEET_PROC:-/proc}/$1/cgroup" 2>/dev/null
+}
+
+# The claude process of live session SID (its fleet file's pid, alive by session_alive).
+session_pid() { # SID
+  local pid
+  session_alive "$1" && pid=$(jq -r '.claude.pid' "$KLEPSYDRA_DIR/fleet/$1.json" 2>/dev/null) &&
+    [[ $pid =~ ^[1-9][0-9]*$ ]] && printf '%s' "$pid"
+}
+# The orchestrator's claude process.
+heph_pid() { local sid; sid=$(live_session "$(orchestrator)") && session_pid "$sid"; }
+
+# The orchestrator's peak kept memory in MiB (#353): the higher of its scope's
+# reading now and the peak orchestrator.mem holds; with `record` (fleet doctor,
+# every 5 minutes) a higher reading is kept there. Read only from a fleet scope,
+# so a claude started bare is never sized by the tmux server's whole cgroup.
+# Fails with neither.
+orch_mem_peak() { # [record]
+  local f=$FLEET_STATE/orchestrator.mem pid cg now was=""
+  { read -r was <"$f"; } 2>/dev/null
+  [[ $was =~ ^[0-9]+$ ]] || was=""
+  if pid=$(heph_pid) && cg=$(proc_cgroup "$pid") && [[ $cg == */fleet-*.scope ]] && now=$(cgroup_kept_mib "$cg"); then
+    if [[ -z $was ]] || (( now > was )); then
+      [[ ${1:-} == record ]] && { printf '%s\n' "$now" >"$f.$$" && mv -f -- "$f.$$" "$f"; } 2>/dev/null
+      was=$now
+    fi
+  fi
+  [[ -n $was ]] && printf '%s' "$was"
+}
+
+# The fleet's memory caps in MiB (#353), "FLEET_MAX WORKERS_MAX":
+# MemTotal (/proc/meminfo, which follows .wslconfig's memory=) less the margin
+# caps every fleet scope together, and that less the orchestrator's peak caps
+# the workers. With no reading of the orchestrator, its scope's own cap
+# (MEM_MAX) stands in. Fails when the workers would get nothing.
+fleet_slice_caps() {
+  local total peak all workers
+  total=$(awk '$1 == "MemTotal:" { printf "%d", $2 / 1024 }' "${FLEET_MEMINFO:-/proc/meminfo}" 2>/dev/null)
+  [[ $total =~ ^[1-9][0-9]*$ ]] || return 1
+  peak=$(orch_mem_peak) || peak=$(to_mib "${MEM_MAX:-5G}") || return 1
+  all=$((total - FLEET_SLICE_MARGIN_MB)) workers=$((total - FLEET_SLICE_MARGIN_MB - peak))
+  (( workers > 0 )) || return 1
+  printf '%s %s' "$all" "$workers"
+}
+
+# A slice's unit file (#353), capped at MAX MiB.
+fleet_slice_unit() { # DESCRIPTION MAX
+  printf '[Unit]\nDescription=%s\n\n[Slice]\nMemoryAccounting=yes\nMemoryMax=%sM\n' "$1" "$2"
+}
+
 # The global config file of config folder DIR.
 config_json() { # DIR
   if [[ $1 == "$FLEET_DEFAULT_CONFIG" ]]; then printf '%s' "${FLEET_DEFAULT_JSON:-$HOME/.claude.json}"; else printf '%s' "$1/.claude.json"; fi
@@ -786,10 +900,8 @@ back_room() { # ID NOW
 # CLAUDE_CONFIG_DIR (unset: the default), else orchestrator.config (written when
 # fleet recover starts him or the resume service moves him), else the default.
 heph_config() {
-  local sid pid c env
-  if sid=$(live_session "$(orchestrator)") && session_alive "$sid" &&
-    pid=$(jq -r '.claude.pid' "$KLEPSYDRA_DIR/fleet/$sid.json" 2>/dev/null) &&
-    env=${FLEET_PROC:-/proc}/$pid/environ && [[ -r $env ]]; then
+  local pid c env
+  if pid=$(heph_pid) && env=${FLEET_PROC:-/proc}/$pid/environ && [[ -r $env ]]; then
     c=$(tr '\0' '\n' <"$env" | sed -n 's/^CLAUDE_CONFIG_DIR=//p' | tail -1)
   else
     c=$(cat "$FLEET_STATE/orchestrator.config" 2>/dev/null)
