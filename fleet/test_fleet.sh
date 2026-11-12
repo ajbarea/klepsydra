@@ -1152,23 +1152,32 @@ printf '0::/user.slice/user-1.slice/user@1.service/fleet.slice/fleet-workers.sli
 printf 'fleet-w-5.scope 10 8745\nfleet-heph-12.scope 10 8745 fleet.slice\n' >"$work/scopes"
 check "#353 review 3: a worker's scope that a stale orchestrator.pane names is still a worker's" "$(DOC_SLICES="$work/slices" DOC_SCOPES="$work/scopes" doctor | grep -c '^ok   memory cap')" "1"
 rm -f "$work/dproc/4242/cgroup"
-# Scopes whose names date them before the slices' units were written warn; one since fails.
-mkdir -p "$work/dunits"; touch -d @1794400000 "$work/dunits/fleet.slice"
-printf 'fleet-a-1794399999.scope 1 8745 app.slice\nfleet-b-1794400001.scope 1 8745\n' >"$work/scopes"
+# Scopes whose names date them before the slices' units were first written warn; one since fails.
+mkdir -p "$work/dunits"; printf 'old\n' >"$work/dunits/fleet.slice"
+born=$(stat -c %W "$work/dunits/fleet.slice"); [[ $born =~ ^[1-9][0-9]*$ ]] || born=$(stat -c %Y "$work/dunits/fleet.slice")
+printf 'fleet-a-%s.scope 1 8745 app.slice\nfleet-b-%s.scope 1 8745\n' "$((born - 1))" "$((born + 1))" >"$work/scopes"
 check "#353 review 2: a scope started before the slices, outside them, warns (it moves at its next fresh start)" \
   "$(DOC_SLICES="$work/slices" DOC_SCOPES="$work/scopes" doctor | grep 'memory cap')" \
-  "warn memory cap: started before the slices, outside them: fleet-a-1794399999 in app.slice (each moves at its next fresh start)"
-printf 'fleet-a-1794400001.scope 1 8745 app.slice\n' >"$work/scopes"
+  "warn memory cap: started before the slices, outside them: fleet-a-$((born - 1)) in app.slice (each moves at its next fresh start)"
+printf 'fleet-a-%s.scope 1 8745 app.slice\n' "$((born + 1))" >"$work/scopes"
 check "#353 review 2: one started since fails" "$(DOC_SLICES="$work/slices" DOC_SCOPES="$work/scopes" doctor | grep 'memory cap')" \
-  "FAIL memory cap: outside their slice: fleet-a-1794400001 in app.slice"
+  "FAIL memory cap: outside their slice: fleet-a-$((born + 1)) in app.slice"
+# A resize rewrites the unit in place (install's unit()): the slices keep their first date.
+if [[ $(stat -c %W "$work/dunits/fleet.slice") =~ ^[1-9][0-9]*$ ]]; then
+  printf 'resized\n' >"$work/dunits/fleet.slice"; touch -d "@$((born + 100))" "$work/dunits/fleet.slice"
+  check "#353 review 5: after a resize, a scope astray since the first install still fails" "$(DOC_SLICES="$work/slices" DOC_SCOPES="$work/scopes" doctor | grep 'memory cap')" \
+    "FAIL memory cap: outside their slice: fleet-a-$((born + 1)) in app.slice"
+fi
 rm -rf -- "${work:?}/dunits"
+# A MemTotal fixture as a file: doctor reads MemTotal more than once.
+memfile() { printf 'MemTotal: %s kB\n' "$1" >"$work/meminfo-$1"; printf '%s' "$work/meminfo-$1"; }
 check "#353 review 2: caps sized for another machine warn (the fixture's 9948 MiB gives 8412)" \
-  "$(FLEET_MEMINFO=<(printf 'MemTotal: 8388608 kB\n') DOC_SLICES="$work/slices" doctor | grep 'memory cap')" \
+  "$(FLEET_MEMINFO=$(memfile 8388608) DOC_SLICES="$work/slices" doctor | grep 'memory cap')" \
   "warn memory cap: fleet.slice's 8412 MiB was sized for another MemTotal or earlyoom line; this machine's is 6656 MiB: fleet install resizes the slices"
 check "#353 review 4: a memory= 300 MiB smaller warns (its old cap would let earlyoom act first)" \
-  "$(FLEET_MEMINFO=<(printf 'MemTotal: 9879552 kB\n') DOC_SLICES="$work/slices" doctor | grep -c '^warn memory cap: fleet.slice.s 8412 MiB was sized')" "1"
+  "$(FLEET_MEMINFO=$(memfile 9879552) DOC_SLICES="$work/slices" doctor | grep -c '^warn memory cap: fleet.slice.s 8412 MiB was sized')" "1"
 check "#353 review 3: a kernel update's few MiB pass" \
-  "$(FLEET_MEMINFO=<(printf 'MemTotal: 10180000 kB\n') DOC_SLICES="$work/slices" doctor | grep -c '^ok   memory cap')" "1"
+  "$(FLEET_MEMINFO=$(memfile 10180000) DOC_SLICES="$work/slices" doctor | grep -c '^ok   memory cap')" "1"
 check "#353 review 2: a systemctl that does not answer is said so, not called a missing cap" \
   "$(DOC_SLICES="$work/slices" DOC_SHOW_FAILS=1 doctor | grep 'memory cap')" \
   "warn memory cap: could not read the slices: systemctl --user did not answer"

@@ -11,8 +11,8 @@ The kernel, not the heavy lock, keeps one run from taking WSL down. `fleet.slice
 - Copilot + agy lanes read and checked (6 leads fixed, 2 rejected); Opus round 1 (1 Blocking, 6 Should-fix, 6 Nits) fixed in 04a4d38; mutation-checked the live test (5 guards).
 
 ## Next
-1. Rounds 2 to 4 fixed (round 4: one test-only Should-fix); suites rerun, then a verify read of the round-3 and round-4 fixes.
-2. PR (assignee ajbarea, closes #353; body draft in the session scratchpad), merge on clean + green, `make install-fleet` from main, `fleet cutover`, then `systemctl --user show fleet.slice fleet-workers.slice -p MemoryMax,MemoryCurrent` and `fleet doctor`. Running agents stay in app.slice until their next fresh start (doctor warns). Then in a fresh fleet session: the Bash tool's `cat /proc/self/oom_score_adj` prints 1000 and its claude's is 0.
+1. Round 5 (2 S, 4 N) fixed in the round-5 commit: live test runs with per-scope swap; machine-wide rank accepted (brief + PR); doctor dates slices by unit birth; orch_mem_peak writes only under its lock and drops 0 / past-MemTotal rows; mem_total_mib needs a positive number. Each guard mutation-checked. Next: one fresh Opus verify read of that commit.
+2. Merge on clean + green, `make install-fleet` from main, `fleet cutover`, then `systemctl --user show fleet.slice fleet-workers.slice -p MemoryMax,MemoryCurrent` and `fleet doctor`. Running agents stay in app.slice until their next fresh start (doctor warns). Then in a fresh fleet session: the Bash tool's `cat /proc/self/oom_score_adj` prints 1000 and its claude's is 0.
 
 ## Verify
 `make test-slice`, `make test-fleet`, `make test-launch`, `make test-delegate`, `make shellcheck`. Never run doctor or install from this worktree against the live state.

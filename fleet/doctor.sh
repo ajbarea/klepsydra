@@ -458,7 +458,7 @@ fi
 # and below it, and each fleet scope in its own: the orchestrator's (any scope
 # named for it, as launch.sh places it by the same launch; never by its pane,
 # which a stale orchestrator.pane can hand to a worker) in FLEET_SLICE, every
-# other in FLEET_WORKER_SLICE. A scope started before the slices' units were last
+# other in FLEET_WORKER_SLICE. A scope started before the slices' units were first
 # written (its name ends in its start time) keeps its place until its next
 # fresh start, so it warns; one started since fails. The orchestrator's daily
 # peak is recorded here, every 5 minutes, for fleet install.
@@ -468,7 +468,10 @@ heph_peak=$(orch_mem_peak record "$hcg")
 # A cap under 1 MiB reads as none: systemd takes MemoryMax=0 as it is written.
 bytes_mib() { [[ $1 =~ ^[0-9]+$ ]] && (( $1 >= 1048576 )) && printf '%s' "$(($1 / 1048576))"; }
 fleet_cap=$(bytes_mib "${mem_cap[$FLEET_SLICE]-}") worker_cap=$(bytes_mib "${mem_cap[$FLEET_WORKER_SLICE]-}")
-sliced=$(stat -c %Y -- "$FLEET_UNIT_DIR/$FLEET_SLICE" 2>/dev/null) || sliced=0
+# Dated by the unit's birth (install rewrites it in place, so a resize keeps
+# it); a filesystem without birth times gives 0, and its last change stands in.
+sliced=$(stat -c %W -- "$FLEET_UNIT_DIR/$FLEET_SLICE" 2>/dev/null) || sliced=0
+[[ $sliced =~ ^[1-9][0-9]*$ ]] || sliced=$(stat -c %Y -- "$FLEET_UNIT_DIR/$FLEET_SLICE" 2>/dev/null) || sliced=0
 nocap="" astray="" before="" shape="" sized=""
 [[ -n $fleet_cap ]] || nocap+="$FLEET_SLICE "
 [[ -n $worker_cap ]] || nocap+="$FLEET_WORKER_SLICE "

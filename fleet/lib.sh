@@ -745,27 +745,30 @@ FLEET_ORCH_PEAK_DAYS=7
 # orchestrator's own scope, so neither a claude started bare (the tmux
 # server's whole cgroup) nor a worker's pane named by a stale orchestrator.pane
 # sizes it. With CG (doctor, which has it already; empty: no live orchestrator)
-# it skips the lookup. Fails with no reading at all.
+# it skips the lookup. A reading of 0, or past this machine's MemTotal (a
+# hand edit), is dropped. Fails with no reading at all. A record that cannot
+# take the lock in 5 s writes nothing: the next doctor run records.
 orch_mem_peak() { # [record|-] [CG]
-  local f=$FLEET_STATE/orchestrator.mem pid cg now="" today since days peak lk=""
+  local f=$FLEET_STATE/orchestrator.mem pid cg now="" today since days peak lk="" locked=0 total
+  total=$(mem_total_mib) || total=""
   if (( $# > 1 )); then cg=$2; else cg=""; pid=$(heph_pid) && cg=$(proc_cgroup "$pid"); fi
   [[ $cg =~ /fleet-${FLEET_ORCH_NAME}-[0-9]+[.]scope$ ]] && now=$(cgroup_kept_mib "$cg")
   printf -v today '%(%F)T' -1
   # By calendar day, so a DST change never makes the window a day longer.
   # At noon: where DST starts at midnight, that midnight does not exist.
   since=$(date -d "$today 12:00 $((FLEET_ORCH_PEAK_DAYS - 1)) days ago" +%F)
-  [[ ${1:-} == record ]] && { exec {lk}>>"$f.lock" && flock -w 5 "$lk"; } 2>/dev/null
+  [[ ${1:-} == record ]] && { exec {lk}>>"$f.lock" && flock -w 5 "$lk"; } 2>/dev/null && locked=1
   # A bare number (the first format) counts as today's.
-  days=$({ cat -- "$f" 2>/dev/null; } | awk -v today="$today" -v since="$since" -v now="$now" '
+  days=$({ cat -- "$f" 2>/dev/null; } | awk -v today="$today" -v since="$since" -v now="$now" -v total="$total" '
     NF == 1 && $1 ~ /^[0-9]+$/ { d = today; v = $1 }
     NF == 2 && $1 ~ /^[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]$/ && $2 ~ /^[0-9]+$/ { d = $1; v = $2 }
-    d != "" && d >= since && d <= today && (!(d in m) || v + 0 > m[d]) { m[d] = v + 0 }
+    d != "" && v + 0 > 0 && (total == "" || v + 0 <= total) && d >= since && d <= today && (!(d in m) || v + 0 > m[d]) { m[d] = v + 0 }
     { d = "" }
     END {
-      if (now != "" && (!(today in m) || now + 0 > m[today])) m[today] = now + 0
+      if (now + 0 > 0 && (!(today in m) || now + 0 > m[today])) m[today] = now + 0
       for (d in m) print d, m[d]
     }' | sort)
-  if [[ ${1:-} == record && -n $days ]]; then
+  if (( locked )) && [[ -n $days ]]; then
     { printf '%s\n' "$days" >"$f.$$" && mv -f -- "$f.$$" "$f"; } 2>/dev/null
   fi
   [[ -n $lk ]] && exec {lk}>&-
@@ -799,7 +802,7 @@ fleet_slice_margin() { # TOTAL
 }
 
 # MiB of this machine's memory (MemTotal, which follows .wslconfig's memory=).
-mem_total_mib() { awk '$1 == "MemTotal:" { printf "%d", $2 / 1024; f = 1 } END { exit !f }' "${FLEET_MEMINFO:-/proc/meminfo}" 2>/dev/null; }
+mem_total_mib() { awk '$1 == "MemTotal:" && $2 ~ /^[0-9]+$/ && $2 >= 1024 { printf "%d", $2 / 1024; f = 1 } END { exit !f }' "${FLEET_MEMINFO:-/proc/meminfo}" 2>/dev/null; }
 
 # The fleet's memory caps in MiB (#353), "FLEET_MAX WORKERS_MAX MARGIN":
 # MemTotal less the margin caps every fleet scope together, and that less the

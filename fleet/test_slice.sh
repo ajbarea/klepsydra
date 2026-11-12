@@ -82,6 +82,12 @@ check "a bare number (the first format) counts as today's" "$(orch_mem_peak reco
 rm -f "$FLEET_STATE/orchestrator.mem"
 heph=4242; printf '0::%s\n' "$scope" >"$work/proc/4242/cgroup"
 check "a cgroup given is read without the lookup" "$(heph=""; orch_mem_peak - "$scope")" "1024"
+# A record that cannot take the lock (another doctor holds it past 5 s) writes nothing.
+printf '%s 1024\n' "$(date +%F)" >"$FLEET_STATE/orchestrator.mem"
+stat_was=$(<"$cgr$scope/memory.stat"); printf 'anon %s\n' $((2000 << 20)) >"$cgr$scope/memory.stat"
+check "#353 review 5: a record that cannot take the lock writes nothing" \
+  "$(flock "$FLEET_STATE/orchestrator.mem.lock" sleep 7 & sleep 0.5; orch_mem_peak record "$scope") | $(cat "$FLEET_STATE/orchestrator.mem")" "2000 | $(date +%F) 1024"
+printf '%s\n' "$stat_was" >"$cgr$scope/memory.stat"; rm -f "$FLEET_STATE/orchestrator.mem"
 check "an empty one means no live orchestrator" "$(orch_mem_peak - '' || echo none)" "none"
 heph=""
 
@@ -113,10 +119,16 @@ check "no reading of the orchestrator: its scope's own cap stands in" "$(fleet_s
 printf 'MemTotal:       1572864 kB\n' >"$work/meminfo"
 check "nothing left for the workers: fails" "$(fleet_slice_caps || echo none)" "none"
 printf 'MemTotal:       10186856 kB\n' >"$work/meminfo"; printf '0\n' >"$FLEET_STATE/orchestrator.mem"
-check "a peak of 0 (all to the workers, no room for the orchestrator): fails" "$(fleet_slice_caps || echo none)" "none"
+check "#353 review 5: a kept 0 (a hand edit) is dropped, and the scope's own cap stands in" "$(fleet_slice_caps || echo none)" "8412 3292 1536"
+printf '%s 99999999999999999999\n' "$(date +%F)" >"$FLEET_STATE/orchestrator.mem"
+check "#353 review 5: so is a reading past MemTotal" "$(fleet_slice_caps || echo none)" "8412 3292 1536"
+rm -f "$FLEET_STATE/orchestrator.mem"
+check "a peak of 0 (all to the workers, no room for the orchestrator): fails" "$(MEM_MAX=0 fleet_slice_caps || echo none)" "none"
 rm -f "$FLEET_STATE/orchestrator.mem"; printf 'MemTotal:       1572864 kB\n' >"$work/meminfo"
 printf 'nothing\n' >"$work/meminfo"
 check "no MemTotal: fails" "$(fleet_slice_caps || echo none)" "none"
+check "#353 review 5: a MemTotal that is not a number, or under 1 MiB, fails" \
+  "$(FLEET_MEMINFO=<(echo 'MemTotal: abc kB') mem_total_mib || echo none) $(FLEET_MEMINFO=<(echo 'MemTotal: 0 kB') mem_total_mib || echo none)" "none none"
 unset FLEET_MEMINFO
 check "a slice's unit holds only the hard cap (memory.high would freeze it, not kill)" "$(fleet_slice_unit 'w' 7601 | grep -E '^Memory')" $'MemoryAccounting=yes\nMemoryMax=7601M'
 
@@ -201,9 +213,11 @@ EOF
   # Each scope's own cap (400M) is above what one scope can hold (110M + 250M),
   # so only the slice's cap can kill: with it removed, both children finish.
   # Started from a shell at rank 1000, as a tmux server started from a ranked shell would start them.
+  # Each scope may swap a fifth of its cap, the shipped ratio (MEM_SWAP 1G to MEM_MAX 5G):
+  # the slice's cap still kills before the deadline rather than swapping on.
   local i pids=() cmd
   for i in 1 2; do
-    cmd="systemd-run --user --scope --quiet --collect --unit=k353test$$-$i $(FLEET_SLICE=$top FLEET_WORKER_SLICE=$sub fleet_slice_opts worker) -p MemoryMax=400M -p MemorySwapMax=0 $(fleet_oom_floor)env $(fleet_oom_env)python3 $work/standin.py $work/standin$i.log $work/hungry.py $work/stop"
+    cmd="systemd-run --user --scope --quiet --collect --unit=k353test$$-$i $(FLEET_SLICE=$top FLEET_WORKER_SLICE=$sub fleet_slice_opts worker) -p MemoryMax=400M -p MemorySwapMax=80M $(fleet_oom_floor)env $(fleet_oom_env)python3 $work/standin.py $work/standin$i.log $work/hungry.py $work/stop"
     bash -c "echo 1000 >/proc/self/oom_score_adj; exec $cmd" >"$work/scope$i.out" 2>&1 &
     pids+=($!)
   done
