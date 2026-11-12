@@ -93,8 +93,8 @@ do_ ln -sfn -- "$here/fleet" "$BIN/fleet"
 
 # The PATH the services run with: this shell's, as `systemd-run -E PATH` gave them.
 # A unit already as written is left alone, and one that changed is rewritten in
-# place, so its birth says when it was first written (doctor dates the slices
-# by it, #353).
+# place (never a temp file and mv), so its birth says when it was first written:
+# doctor dates the slices by it (#353), and a test holds it.
 unit() { # NAME BODY
   if (( dry )); then printf 'would write %s/%s\n' "$UNITS" "$1"
   elif [[ ! -f $UNITS/$1 || "$(<"$UNITS/$1")" != "$2" ]]; then printf '%s\n' "$2" >"$UNITS/$1"; fi

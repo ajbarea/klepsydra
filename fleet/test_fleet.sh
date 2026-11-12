@@ -1167,6 +1167,8 @@ if [[ $(stat -c %W "$work/dunits/fleet.slice") =~ ^[1-9][0-9]*$ ]]; then
   printf 'resized\n' >"$work/dunits/fleet.slice"; touch -d "@$((born + 100))" "$work/dunits/fleet.slice"
   check "#353 review 5: after a resize, a scope astray since the first install still fails" "$(DOC_SLICES="$work/slices" DOC_SCOPES="$work/scopes" doctor | grep 'memory cap')" \
     "FAIL memory cap: outside their slice: fleet-a-$((born + 1)) in app.slice"
+else
+  echo "  skip #353 review 5: this filesystem keeps no birth times"
 fi
 rm -rf -- "${work:?}/dunits"
 # A MemTotal fixture as a file: doctor reads MemTotal more than once.
@@ -1414,8 +1416,13 @@ check "#353: install writes both slices, sized from MemTotal, the margin and the
   "rc=0 MemoryAccounting=yes MemoryMax=8412M MemoryAccounting=yes MemoryMax=7601M"
 check "#353: and logs the sizes" "$(jq -r 'select(.message == "memory slices sized") | "\(.fleet_mb) \(.workers_mb) \(.orchestrator_mb) \(.margin_mb)"' "$inst/sl.log")" "8412 7601 811 1536"
 touch -d @1794400000 "$inst/slu/fleet.slice"
-check "#353 review 2: an install that changes no unit leaves its time (doctor dates the slices by it)" \
+check "#353 review 2: an install that changes no unit leaves its time" \
   "$(slice_inst) $(stat -c %Y "$inst/slu/fleet.slice")" "rc=0 1794400000"
+# Doctor dates the slices by the unit's birth, so a resize must rewrite it in place.
+ino=$(stat -c %i "$inst/slu/fleet.slice")
+printf 'MemTotal:       12000000 kB\n' >"$work/meminfo-big"
+check "#353 review 5: a resize rewrites the unit in place (same file, new cap: doctor keeps its first date)" \
+  "$(FLEET_MEMINFO="$work/meminfo-big" slice_inst) $(stat -c %i "$inst/slu/fleet.slice") $(grep -c '^MemoryMax=8412M' "$inst/slu/fleet.slice")" "rc=0 $ino 0"
 printf 'MemTotal:       1572864 kB\n' >"$work/meminfo-small"
 check "#353: a machine too small for the orchestrator's peak fails the install, saying so" \
   "$(FLEET_MEMINFO="$work/meminfo-small" slice_inst) $(jq -r 'select(.level == "ERROR") | .message' "$inst/sl.log" | grep -c '^memory slices not sized')" "rc=1 1"
