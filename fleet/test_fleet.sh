@@ -1422,7 +1422,7 @@ check "#353 review 2: an install that changes no unit leaves its time" \
 ino=$(stat -c %i "$inst/slu/fleet.slice")
 printf 'MemTotal:       12000000 kB\n' >"$work/meminfo-big"
 check "#353 review 5: a resize rewrites the unit in place (same file, new cap: doctor keeps its first date)" \
-  "$(FLEET_MEMINFO="$work/meminfo-big" slice_inst) $(stat -c %i "$inst/slu/fleet.slice") $(grep -c '^MemoryMax=8412M' "$inst/slu/fleet.slice")" "rc=0 $ino 0"
+  "$(FLEET_MEMINFO="$work/meminfo-big" slice_inst) $(stat -c %i "$inst/slu/fleet.slice") $(grep '^MemoryMax=' "$inst/slu/fleet.slice")" "rc=0 $ino MemoryMax=10182M"
 printf 'MemTotal:       1572864 kB\n' >"$work/meminfo-small"
 check "#353: a machine too small for the orchestrator's peak fails the install, saying so" \
   "$(FLEET_MEMINFO="$work/meminfo-small" slice_inst) $(jq -r 'select(.level == "ERROR") | .message' "$inst/sl.log" | grep -c '^memory slices not sized')" "rc=1 1"

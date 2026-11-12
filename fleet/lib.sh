@@ -747,8 +747,9 @@ FLEET_ORCH_PEAK_DAYS=7
 # sizes it. With CG (doctor, which has it already; empty: no live orchestrator)
 # it skips the lookup. A reading of 0, or past this machine's MemTotal (a hand
 # edit), is dropped; one below MemTotal stands, and install fails on it, saying
-# so (MEM_MAX is a launch-time override, so it cannot bound a reading here). Fails with no reading at all. A record that cannot
-# take the lock in 5 s writes nothing: the next doctor run records.
+# so (MEM_MAX is a launch-time override, so it cannot bound a reading here).
+# Fails with no reading at all. A record that cannot take the lock in 5 s
+# writes nothing: the next doctor run records.
 orch_mem_peak() { # [record|-] [CG]
   local f=$FLEET_STATE/orchestrator.mem pid cg now="" today since days peak lk="" locked=0 total
   total=$(mem_total_mib) || total=""
