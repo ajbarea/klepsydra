@@ -475,13 +475,16 @@ nocap="" astray="" before="" shape="" sized=""
 if [[ -z $nocap ]]; then
   [[ ${in_slice[$FLEET_WORKER_SLICE]-} == "$FLEET_SLICE" ]] || shape="$FLEET_WORKER_SLICE sits in ${in_slice[$FLEET_WORKER_SLICE]:-no slice}, not $FLEET_SLICE"
   (( worker_cap < fleet_cap )) || shape+="${shape:+; }$FLEET_WORKER_SLICE's $worker_cap MiB is not below $FLEET_SLICE's $fleet_cap MiB"
-  # Sized for this machine: a smaller memory= in .wslconfig, or a higher earlyoom
-  # line, leaves an old cap above what WSL can give, and a larger one leaves room
-  # unused; a gap under the margin's rounding step (a kernel update's few MiB) passes.
+  # Sized for this machine: a cap that no longer clears WSL's own memory and
+  # earlyoom's line (a smaller memory= in .wslconfig, a higher earlyoom line)
+  # lets earlyoom act before the kernel's cap, so any such cap warns; a cap a
+  # whole rounding step below this machine's leaves room unused. A kernel
+  # update's few MiB fall inside the margin's rounding and pass.
   if total=$(mem_total_mib); then
     fits=$((total - $(fleet_slice_margin "$total")))
-    (( fleet_cap - fits >= FLEET_SLICE_STEP_MB || fits - fleet_cap >= FLEET_SLICE_STEP_MB )) &&
+    if (( fleet_cap + FLEET_SLICE_BASE_MB + $(earlyoom_line_mib "$total") > total || fits - fleet_cap >= FLEET_SLICE_STEP_MB )); then
       sized="$FLEET_SLICE's $fleet_cap MiB was sized for another MemTotal or earlyoom line; this machine's is $fits MiB"
+    fi
   fi
 fi
 for unit in "${scopes[@]}"; do

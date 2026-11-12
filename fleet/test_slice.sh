@@ -94,6 +94,7 @@ check "earlyoom's own default, 10%, with no -m" "$(FLEET_EARLYOOM_CONF=<(echo 'E
 check "-m with no space, and a kill percent after it" "$(FLEET_EARLYOOM_CONF=<(echo 'EARLYOOM_ARGS="-s 1 -m3,2"') fleet_slice_margin 9948)" "1536"
 check "a commented line is not read" "$(FLEET_EARLYOOM_CONF=<(echo '#EARLYOOM_ARGS="-m 50"') fleet_slice_margin 9948)" "2048"
 check "no earlyoom config: WSL's own only" "$(FLEET_EARLYOOM_CONF=$work/none fleet_slice_margin 9948)" "1024"
+check "earlyoom's own line, unrounded" "$(earlyoom_line_mib 9948) $(FLEET_EARLYOOM_CONF=$work/none earlyoom_line_mib 9948)" "497 0"
 # earlyoom(1): -M is KiB, and with -m too the lower line is used.
 check "-M alone: its KiB" "$(FLEET_EARLYOOM_CONF=<(echo 'EARLYOOM_ARGS="-M 1048576"') fleet_slice_margin 32000)" "2048"
 check "-m and -M: the lower (-M here)" "$(FLEET_EARLYOOM_CONF=<(echo 'EARLYOOM_ARGS="-m 50 -M 1048576"') fleet_slice_margin 32000)" "2048"

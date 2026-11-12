@@ -62,11 +62,12 @@ if [[ ${FLEET_SCOPE:-1} != 0 ]]; then
   else
     flog WARN "no task cap readable; the scope inherits DefaultTasksMax" name="$name"
   fi
-  # The orchestrator (started with no worker settings) sits in the fleet's slice
-  # beside the workers' (#353). No MemoryHigh: past it the kernel throttles the
-  # scope, claude too, and never kills (11-11: a worker froze there, load 110).
+  # The orchestrator (launched under FLEET_ORCH_NAME, as doctor and the fleet
+  # hook know it) sits in the fleet's slice beside the workers' (#353). No
+  # MemoryHigh: past it the kernel throttles the scope, claude too, and never
+  # kills (11-11: a worker froze there, load 110).
   role=worker
-  [[ -z $settings ]] && role=orchestrator
+  [[ $name == "$FLEET_ORCH_NAME" ]] && role=orchestrator
   cmd="${FLEET_SYSTEMD_RUN:-systemd-run} --user --scope --collect --unit=fleet-$name-$(date +%s) $(fleet_slice_opts "$role") -p MemoryMax=${MEM_MAX:-5G} -p MemorySwapMax=${MEM_SWAP:-1G} ${tasks}$cmd"
 fi
 began=$SECONDS

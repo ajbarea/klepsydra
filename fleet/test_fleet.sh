@@ -773,10 +773,10 @@ check "#353: claude starts at OOM rank 0, its shells ranked first by BASH_ENV" \
 : >"$work/sdrun.calls"
 out=$(FLEET_SETTINGS='' FLEET_SCOPE=1 FLEET_SYSTEMD_RUN="$work/systemd-run" FLEET_CGROUP_ROOT="$cgr" FLEET_CGROUP=$leaf FLEET_MIN_AVAIL_MB=0 \
   FLEET_LAUNCHER="$work/launcher.sh" FLEET_DIR="$work" FLEET_CLAUDE="python3 -I $fake $work/scoped.json $work/scoped.log" \
-  bash "$here/launch.sh" scoped-orch "$work/task.src" 2>/dev/null | head -1)
+  bash "$here/launch.sh" heph "$work/task.src" 2>/dev/null | head -1)
 check "#353: the orchestrator's scope sits in the fleet's slice, beside the workers'" \
   "$(grep -o -- '--slice=[^ ]* -p OOMPolicy=[^ ]*' "$work/sdrun.calls")" "--slice=fleet.slice -p OOMPolicy=continue"
-check "#353: and the launch logs which" "$(jq -r 'select(.message == "window opened" and .name == "scoped-orch") | .slice' "$FLEET_LOG")" "orchestrator"
+check "#353: and the launch logs which" "$(jq -r 'select(.message == "window opened" and .name == "heph") | .slice' "$FLEET_LOG")" "orchestrator"
 t kill-pane -t "$(sed -E 's/^pane=([^ ]+).*/\1/' <<<"$out")" 2>/dev/null
 
 out=$(launch agent2 '{"above":["Claude Code"],"on_submit":"limit"}')
@@ -1157,6 +1157,8 @@ rm -rf -- "${work:?}/dunits"
 check "#353 review 2: caps sized for another machine warn (the fixture's 9948 MiB gives 8412)" \
   "$(FLEET_MEMINFO=<(printf 'MemTotal: 8388608 kB\n') DOC_SLICES="$work/slices" doctor | grep 'memory cap')" \
   "warn memory cap: fleet.slice's 8412 MiB was sized for another MemTotal or earlyoom line; this machine's is 6656 MiB: fleet install resizes the slices"
+check "#353 review 4: a memory= 300 MiB smaller warns (its old cap would let earlyoom act first)" \
+  "$(FLEET_MEMINFO=<(printf 'MemTotal: 9879552 kB\n') DOC_SLICES="$work/slices" doctor | grep -c '^warn memory cap: fleet.slice.s 8412 MiB was sized')" "1"
 check "#353 review 3: a kernel update's few MiB pass" \
   "$(FLEET_MEMINFO=<(printf 'MemTotal: 10180000 kB\n') DOC_SLICES="$work/slices" doctor | grep -c '^ok   memory cap')" "1"
 check "#353 review 2: a systemctl that does not answer is said so, not called a missing cap" \

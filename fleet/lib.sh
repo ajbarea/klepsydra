@@ -752,7 +752,8 @@ orch_mem_peak() { # [record|-] [CG]
   [[ $cg =~ /fleet-${FLEET_ORCH_NAME}-[0-9]+[.]scope$ ]] && now=$(cgroup_kept_mib "$cg")
   printf -v today '%(%F)T' -1
   # By calendar day, so a DST change never makes the window a day longer.
-  since=$(date -d "$today -$((FLEET_ORCH_PEAK_DAYS - 1)) days" +%F)
+  # At noon: where DST starts at midnight, that midnight does not exist.
+  since=$(date -d "$today 12:00 $((FLEET_ORCH_PEAK_DAYS - 1)) days ago" +%F)
   [[ ${1:-} == record ]] && { exec {lk}>>"$f.lock" && flock -w 5 "$lk"; } 2>/dev/null
   # A bare number (the first format) counts as today's.
   days=$({ cat -- "$f" 2>/dev/null; } | awk -v today="$today" -v since="$since" -v now="$now" '
@@ -773,23 +774,28 @@ orch_mem_peak() { # [record|-] [CG]
   printf '%s' "$peak"
 }
 
-# MiB of TOTAL the slices leave outside them (#353): what WSL keeps outside the
-# fleet plus earlyoom's line, rounded up to a whole FLEET_SLICE_STEP_MB, so a fleet at its
-# cap leaves earlyoom's line clear and the kernel's cap acts first. earlyoom's
-# line (earlyoom(1)): -m PERCENT of MemTotal, -M KiB, the lower of the two when
-# both are given, 10% with neither; none when earlyoom has no config. As the
-# config is a shell file, its last EARLYOOM_ARGS line counts (indented or exported too).
-fleet_slice_margin() { # TOTAL
-  local line args="" pct="" kib="" line_mb=0 m
+# MiB of free memory under which earlyoom kills, on a machine of TOTAL MiB
+# (earlyoom(1)): -m PERCENT of MemTotal, -M KiB, the lower of the two when both
+# are given, 10% with neither; 0 when earlyoom has no config. As the config is a
+# shell file, its last EARLYOOM_ARGS line counts (indented or exported too).
+earlyoom_line_mib() { # TOTAL
+  local line args="" pct="" kib="" mib=0 m
   if [[ -r $FLEET_EARLYOOM_CONF ]]; then
     while IFS= read -r line; do [[ $line =~ ^[[:space:]]*(export[[:space:]]+)?EARLYOOM_ARGS= ]] && args=$line; done <"$FLEET_EARLYOOM_CONF"
     [[ $args =~ (^|[^[:alnum:]-])-m\ *([0-9]+) ]] && pct=${BASH_REMATCH[2]}
     [[ $args =~ (^|[^[:alnum:]-])-M\ *([0-9]+) ]] && kib=${BASH_REMATCH[2]}
     [[ -z $pct && -z $kib ]] && pct=10
-    line_mb=$(( $1 * ${pct:-100} / 100 ))
-    [[ -n $kib ]] && m=$((kib / 1024)) && (( m < line_mb )) && line_mb=$m
+    mib=$(( $1 * ${pct:-100} / 100 ))
+    [[ -n $kib ]] && m=$((kib / 1024)) && (( m < mib )) && mib=$m
   fi
-  printf '%s' "$(( (FLEET_SLICE_BASE_MB + line_mb + FLEET_SLICE_STEP_MB - 1) / FLEET_SLICE_STEP_MB * FLEET_SLICE_STEP_MB ))"
+  printf '%s' "$mib"
+}
+
+# MiB of TOTAL the slices leave outside them (#353): what WSL keeps outside the
+# fleet plus earlyoom's line, rounded up to a whole FLEET_SLICE_STEP_MB, so a
+# fleet at its cap leaves earlyoom's line clear and the kernel's cap acts first.
+fleet_slice_margin() { # TOTAL
+  printf '%s' "$(( (FLEET_SLICE_BASE_MB + $(earlyoom_line_mib "$1") + FLEET_SLICE_STEP_MB - 1) / FLEET_SLICE_STEP_MB * FLEET_SLICE_STEP_MB ))"
 }
 
 # MiB of this machine's memory (MemTotal, which follows .wslconfig's memory=).
