@@ -479,7 +479,7 @@ if [[ -z $nocap ]]; then
   # earlyoom's line (a smaller memory= in .wslconfig, a higher earlyoom line)
   # lets earlyoom act before the kernel's cap, so any such cap warns; a cap a
   # whole rounding step below this machine's leaves room unused. A kernel
-  # update's few MiB fall inside the margin's rounding and pass.
+  # update's few MiB usually fall within the rounding's slack and pass.
   if total=$(mem_total_mib); then
     fits=$((total - $(fleet_slice_margin "$total")))
     if (( fleet_cap + FLEET_SLICE_BASE_MB + $(earlyoom_line_mib "$total") > total || fits - fleet_cap >= FLEET_SLICE_STEP_MB )); then

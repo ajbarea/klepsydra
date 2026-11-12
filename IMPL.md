@@ -11,7 +11,7 @@ The kernel, not the heavy lock, keeps one run from taking WSL down. `fleet.slice
 - Copilot + agy lanes read and checked (6 leads fixed, 2 rejected); Opus round 1 (1 Blocking, 6 Should-fix, 6 Nits) fixed in 04a4d38; mutation-checked the live test (5 guards).
 
 ## Next
-1. Round 2 (2 Should-fix, nits) fixed; suites and Opus round 3 running; repeat until a round is clean, then one verify read.
+1. Rounds 2 to 4 fixed (round 4: one test-only Should-fix); suites rerun, then a verify read of the round-3 and round-4 fixes.
 2. PR (assignee ajbarea, closes #353; body draft in the session scratchpad), merge on clean + green, `make install-fleet` from main, `fleet cutover`, then `systemctl --user show fleet.slice fleet-workers.slice -p MemoryMax,MemoryCurrent` and `fleet doctor`. Running agents stay in app.slice until their next fresh start (doctor warns). Then in a fresh fleet session: the Bash tool's `cat /proc/self/oom_score_adj` prints 1000 and its claude's is 0.
 
 ## Verify
