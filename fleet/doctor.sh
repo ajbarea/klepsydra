@@ -421,20 +421,20 @@ fi
 # Every fleet scope and both memory slices, read in one call (#289, #353): each
 # unit's tasks, slice and memory cap, in the blocks systemctl separates with a
 # blank line (a property's place within a block is systemctl's, so Id is read
-# wherever it falls).
-declare -A tasks_now=() tasks_cap=() in_slice=() mem_cap=()
+# wherever it falls). A scope gone since list-units shows as inactive, with no slice.
+declare -A tasks_now=() tasks_cap=() in_slice=() mem_cap=() active=()
 mapfile -t scopes < <($SYSTEMCTL --user list-units --type=scope --no-legend --plain 'fleet-*' 2>/dev/null | awk '$1 ~ /^fleet-.*[.]scope$/ { print $1 }')
-u="" tn="" tc="" sl="" mc=""
+u="" tn="" tc="" sl="" mc="" st=""
 while IFS= read -r line; do
   if [[ -z $line ]]; then
-    [[ -n $u ]] && tasks_now[$u]=$tn tasks_cap[$u]=$tc in_slice[$u]=$sl mem_cap[$u]=$mc
-    u="" tn="" tc="" sl="" mc=""
+    [[ -n $u ]] && tasks_now[$u]=$tn tasks_cap[$u]=$tc in_slice[$u]=$sl mem_cap[$u]=$mc active[$u]=$st
+    u="" tn="" tc="" sl="" mc="" st=""
     continue
   fi
   case ${line%%=*} in
-    Id) u=${line#*=} ;; TasksCurrent) tn=${line#*=} ;; TasksMax) tc=${line#*=} ;; Slice) sl=${line#*=} ;; MemoryMax) mc=${line#*=} ;;
+    Id) u=${line#*=} ;; TasksCurrent) tn=${line#*=} ;; TasksMax) tc=${line#*=} ;; Slice) sl=${line#*=} ;; MemoryMax) mc=${line#*=} ;; ActiveState) st=${line#*=} ;;
   esac
-done < <($SYSTEMCTL --user show -p Id -p TasksCurrent -p TasksMax -p Slice -p MemoryMax "$FLEET_SLICE" "$FLEET_WORKER_SLICE" "${scopes[@]}" 2>/dev/null; echo)
+done < <($SYSTEMCTL --user show -p Id -p TasksCurrent -p TasksMax -p Slice -p MemoryMax -p ActiveState "$FLEET_SLICE" "$FLEET_WORKER_SLICE" "${scopes[@]}" 2>/dev/null; echo)
 # Each fleet session's scope against its task cap (#289): past TASKS_WARN_PCT
 # its next forks fail and its claude aborts, as on 11-03.
 TASKS_WARN_PCT=${TASKS_WARN_PCT:-80}
@@ -466,6 +466,7 @@ nocap="" astray=""
 [[ -n $fleet_cap ]] || nocap+="$FLEET_SLICE "
 [[ -n $worker_cap ]] || nocap+="$FLEET_WORKER_SLICE "
 for unit in "${scopes[@]}"; do
+  [[ ${active[$unit]-} == active ]] || continue
   want=$FLEET_WORKER_SLICE
   [[ $unit == "$heph_scope" ]] && want=$FLEET_SLICE
   [[ ${in_slice[$unit]-} == "$want" ]] || astray+="${unit%.scope} in ${in_slice[$unit]:-no slice}, "

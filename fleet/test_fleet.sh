@@ -995,7 +995,7 @@ mkdir -p "$KLEPSYDRA_DIR/fleet" "$work/bin"
 cat >"$work/bin/systemctl" <<'EOF'
 #!/usr/bin/env bash
 # DOC_SCOPES (#289, #353): one "UNIT TASKS_CURRENT TASKS_MAX [SLICE]" line per
-# fleet scope (no slice: the workers'); DOC_SLICES: "UNIT MEMORY_MAX" per slice.
+# fleet scope (no slice: the workers'; gone: ended since list-units); DOC_SLICES: "UNIT MEMORY_MAX" per slice.
 # show prints one block per unit asked for, as systemctl does, with Id last.
 case $* in
   *list-units*) [[ -n ${DOC_SCOPES:-} ]] && awk '{ print $1 " loaded active running x" }' "$DOC_SCOPES"; exit 0 ;;
@@ -1005,7 +1005,7 @@ case $* in
       [[ $u == *.scope || $u == *.slice ]] || continue
       (( first )) || echo
       first=0
-      [[ -n ${DOC_SCOPES:-} ]] && awk -v u="$u" '$1 == u { print "TasksCurrent=" $2; print "TasksMax=" $3; print "Slice=" ($4 == "" ? "fleet-workers.slice" : $4); print "MemoryMax=infinity" }' "$DOC_SCOPES"
+      [[ -n ${DOC_SCOPES:-} ]] && awk -v u="$u" '$1 == u { print "TasksCurrent=" $2; print "TasksMax=" $3; g = ($4 == "gone"); print "Slice=" (g ? "" : $4 == "" ? "fleet-workers.slice" : $4); print "MemoryMax=infinity"; print "ActiveState=" (g ? "inactive" : "active") }' "$DOC_SCOPES"
       if [[ $u == *.slice ]]; then
         m=$( [[ -n ${DOC_SLICES:-} ]] && awk -v u="$u" '$1 == u { print $2 }' "$DOC_SLICES")
         printf 'MemoryMax=%s\n' "${m:-infinity}"
@@ -1097,6 +1097,10 @@ printf 'fleet-a-1.scope 6900 8745 app.slice\nfleet-b-2.scope 100 8745\nfleet-c-3
 check "#353: a scope started before the slices, or a worker's beside the workers' cap, fails, named" \
   "$(DOC_SLICES="$work/slices" DOC_SCOPES="$work/scopes" doctor | grep 'memory cap')" \
   "FAIL memory cap: outside their slice: fleet-a-1 in app.slice, fleet-c-3 in fleet.slice (each moves at its next fresh start)"
+printf 'fleet-a-1.scope 6900 8745 gone\nfleet-b-2.scope 100 8745\n' >"$work/scopes"
+check "#353: a scope that ended between the listing and the read is not called astray" \
+  "$(DOC_SLICES="$work/slices" DOC_SCOPES="$work/scopes" doctor | grep 'memory cap')" \
+  "ok   memory cap: fleet.slice 8412 MiB, fleet-workers.slice 7601 MiB"
 # The orchestrator's claude (pid 4242 in the section's /proc) in its scope.
 printf '0::/user.slice/user-1.slice/user@1.service/fleet.slice/fleet-heph-9.scope\n' >"$work/dproc/4242/cgroup"
 printf 'fleet-heph-9.scope 10 8745 fleet.slice\nfleet-b-2.scope 100 8745\n' >"$work/scopes"
