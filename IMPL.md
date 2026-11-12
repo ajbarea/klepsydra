@@ -1,26 +1,19 @@
-# IMPL: agy and Copilot lanes (#323), branch feat/agy-copilot-lanes, PR #340
+# IMPL: one memory cap for the whole fleet (#353), branch fix/fleet-slice-353
 
-Resume from this file, `git log`, the PR and its comments. Adapter notes: docs/engines.md.
+Resume from this file, `git log`, the PR and its comments. Brief: the k353 task file in the fleet state folder.
 
 ## Slice
-`fleet delegate` hands read-only work to agy and Copilot before spending Claude: print mode, plus locked interactive windows (agy and Copilot) the orchestrator can message, watch, read and stop. `+ New session` for agy is locked. Guards first, proven by attack.
+The kernel, not the heavy lock, keeps one run from taking WSL down. `fleet.slice` caps every fleet scope's total (MemTotal less `FLEET_SLICE_MARGIN_MB`), the orchestrator's included; `fleet-workers.slice` inside it caps the workers at that less the orchestrator's recorded peak of kept memory. Claude runs at OOM rank 0, every shell it starts at 1000 (`fleet/oom-tool.sh` as BASH_ENV), scopes keep `OOMPolicy=continue`, so a cap kills the job, not the agent.
 
 ## Done
-- Lock policy shared by launcher and delegate (`hooks/klepsydra-agy-locked.json`, short `klepsydra-engine-rules.md`); the launcher refuses home, parents of home, the Windows side and folders that ship agy workspace config.
-- `fleet/engines.sh` (adapters), `fleet/delegate.sh` (command, snapshot, fallback, lanes, watcher, msg/read/stop/ls), `fleet/test_delegate.sh` (143 cases, `make test-delegate`), `fleet/attack_live.sh` (real engines, by hand; `--control` shows the check can fail).
-- Live attack 2026-11-09: all four lanes clean locked, all four controls attacked.
-- Five independent review rounds and a verify pass, all findings fixed with tests; five mutation sweeps. Full suites green at the last push (test-fleet 815, test-launch 240, node, shellcheck).
-- `deliver_brief` re-reads the box before a second Enter (mock test fails on old code). Doctor engine lines. Delegation line in the brief tail and HEPH.md.
+- lib.sh helpers (sizes, caps, slice options, OOM floor and BASH_ENV, the orchestrator's peak), launch.sh, delegate.sh, install.sh (writes both slice units), doctor.sh (one `systemctl show` for all scopes and slices; FAIL on no cap or a scope outside its slice; warn when the orchestrator outgrows its room), brief tail, docs, `make test-slice`, CI step.
+- Measured live: an unprivileged process cannot lower oom_score_adj below 0 (EACCES); scopes reject OOMScoreAdjust=; OOMPolicy=stop stopped the whole scope after one OOM kill; MemoryHigh (slice 80%, or per scope) throttled for 5+ min with no kill, so slices and scopes carry MemoryMax only; a real `claude -p` gives its Bash child rank 1000 under BASH_ENV.
+- `fleet/test_slice.sh`: 37 cases, live part 3 s; five mutations each fail it (no --slice, no OOMPolicy=continue, no tool rank, no floor, MemoryHigh back).
 
-## Open
-1. Review ceiling reached (5 rounds): the verify pass came back with 4 Should-fix, all fixed since, but nothing independent has read those fixes. Merge needs a reader's decision or one more fresh round.
-2. After merge: `make install-fleet`, `fleet cutover`, `fleet doctor`, one real `fleet delegate` per engine (both were run live from the worktree before the last rounds).
-3. Not built, listed on #323: wall cards, `+ New session` for Copilot, agy Stop hook as a second signal, narrow MCP report tool.
+## Next
+1. Held until the suites end (bash reads a running script as it goes): doctor's astray check only for ActiveState=active scopes (a scope gone between list-units and show), and the brief tail's "never an agent" softened to "first".
+2. Suites green, Copilot and agy lanes read and checked, fresh Opus rounds until clean, then a verify read.
+3. PR (assignee ajbarea, closes #353), merge on clean + green, `make install-fleet`, `fleet cutover`, then `systemctl --user show fleet.slice fleet-workers.slice -p MemoryMax` and `fleet doctor` on the live fleet. Running agents stay in app.slice until their next fresh start.
 
 ## Verify
-`make test-delegate`, `make test-launch`, `make test-fleet` (about 20 min), `make shellcheck`, `node --test src/*.test.js`; `bash fleet/attack_live.sh` and `--control` by hand when a lock changes.
-
-## Notes
-- agy: `read_file(<dir>)` allow rules did not match below the dir and `strict` blocks workspace reads, so the policy is `request-review` plus denies; a URL fetch is stopped only by a `read_url(*)` deny; a headless `agy -p` runs a folder's hooks with no trust question.
-- Test stubs read file knobs under `$STUB_DIR`: a tmux window inherits the server's environment, not the caller's.
-- The ECHO the engines draw for a follow-up can wrap; the extractor skips the wrapped lines using the sent text.
+`make test-slice` (or `SLICE_LIVE=0 bash fleet/test_slice.sh` bare), `make test-fleet`, `make test-launch`, `make test-delegate`, `make shellcheck`.

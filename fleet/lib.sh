@@ -770,7 +770,7 @@ fleet_slice_caps() {
   local total peak margin all workers
   total=$(awk '$1 == "MemTotal:" { printf "%d", $2 / 1024 }' "${FLEET_MEMINFO:-/proc/meminfo}" 2>/dev/null)
   [[ $total =~ ^[1-9][0-9]*$ ]] || return 1
-  peak=$(orch_mem_peak) || peak=$(to_mib "${MEM_MAX:-5G}") || return 1
+  peak=$(orch_mem_peak -) || peak=$(to_mib "${MEM_MAX:-5G}") || return 1
   margin=$(fleet_slice_margin "$total")
   all=$((total - margin)) workers=$((total - margin - peak))
   (( workers > 0 )) || return 1
