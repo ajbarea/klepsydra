@@ -167,8 +167,10 @@ is the tested version.
 make install-hooks   # from the main checkout
 ```
 
-It copies the status line, hooks, launcher, tmux settings, wrap-up hook and
-skill, and the cast (as `klepsydra-cast.json`) into `~/.claude`, and archives a
+It copies the status line, hooks, launcher, the code they share
+(`klepsydra-common.sh`, which each sources from its own folder), tmux settings,
+wrap-up hook and skill, and the cast (as `klepsydra-cast.json`) into
+`~/.claude`, and archives a
 copy it replaces. `make install-fleet` (see [Fleet engine](#fleet-engine)) does
 the same on every deploy, so a fleet never runs an old hook, and `fleet doctor`
 fails while a copy differs from the checkout. The list is `HOOK_COPIES` in
@@ -1530,7 +1532,7 @@ A release ships only when all three hold:
       another session's name and press Jump again: it says two tabs match and
       does nothing. Move the wall, quit klepsydra from the tray, start it again and
       open the wall: it opens where you left it.
-   7. Starting sessions, with `klepsydra-launch.sh` and `klepsydra-tmux.conf`
+   7. Starting sessions, with `klepsydra-launch.sh`, `klepsydra-common.sh` and `klepsydra-tmux.conf`
       in `~/.claude/`:
       - Press **+ New session** three times: one tab, three windows.
       - Press **Open terminal** on each card: each hops to its own window.

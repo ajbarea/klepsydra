@@ -529,7 +529,7 @@ if [[ -n $missing ]]; then
 elif [[ -n $differ ]]; then
   report FAIL "installed copies" "make install-fleet: differ from $root: ${differ% }"
 else
-  report ok "installed copies" "the hooks, status line, launcher and cast match $root"
+  report ok "installed copies" "the hooks, their shared file, status line, launcher and cast match $root"
 fi
 # tmux 3.4 dies on a focus event to a dead pane (#290): the fleet's server must
 # carry the pane-died hook, which a server reads from its conf only at start.
