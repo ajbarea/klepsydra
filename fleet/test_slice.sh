@@ -14,6 +14,8 @@ export FLEET_STATE="$work/state" KLEPSYDRA_DIR="$work/klepsydra" FLEET_LOG="$wor
 mkdir -p "$FLEET_STATE" "$KLEPSYDRA_DIR/fleet"
 # shellcheck source=fleet/lib.sh
 . "$here/lib.sh"
+# This machine's margin, from its own MemTotal and earlyoom config, for the live part.
+live_margin=$(fleet_slice_margin "$(awk '$1 == "MemTotal:" { printf "%d", $2 / 1024 }' /proc/meminfo)")
 
 pass=0 fail=0
 check() {
@@ -68,15 +70,29 @@ printf 'anon 9663676416\n' >"$cgr/user.slice/user-1.slice/user@1.service/app.sli
 check "a claude outside a fleet scope is never read (that cgroup holds the whole tmux server)" "$(orch_mem_peak record) $(cat "$FLEET_STATE/orchestrator.mem")" "1024 1024"
 rm -f "$FLEET_STATE/orchestrator.mem"; heph=""
 check "neither: fails" "$(orch_mem_peak || echo none)" "none"
+heph=4242; printf '0::%s\n' "$scope" >"$work/proc/4242/cgroup"
+check "a cgroup given is read without the lookup" "$(heph=""; orch_mem_peak - "$scope")" "1024"
+check "an empty one means no live orchestrator" "$(orch_mem_peak - '' || echo none)" "none"
+heph=""
+
+echo "margin"
+printf 'EARLYOOM_ARGS="-m 5 -s 100,100 -r 3600"\n' >"$work/earlyoom"
+export FLEET_EARLYOOM_CONF="$work/earlyoom"
+# 847 + 5% of 9948 (497) = 1344, up to 1536; 847 + 1600 = 2447, up to 2560.
+check "WSL's own plus earlyoom's -m line, up to a whole 512 MiB" "$(fleet_slice_margin 9948) $(fleet_slice_margin 32000)" "1536 2560"
+check "earlyoom's own default, 10%, with no -m" "$(FLEET_EARLYOOM_CONF=<(echo 'EARLYOOM_ARGS="-r 60"') fleet_slice_margin 9948)" "2048"
+check "-m with no space, and a kill percent after it" "$(FLEET_EARLYOOM_CONF=<(echo 'EARLYOOM_ARGS="-s 1 -m3,2"') fleet_slice_margin 9948)" "1536"
+check "a commented line is not read" "$(FLEET_EARLYOOM_CONF=<(echo '#EARLYOOM_ARGS="-m 50"') fleet_slice_margin 9948)" "2048"
+check "no earlyoom config: WSL's own only" "$(FLEET_EARLYOOM_CONF=$work/none fleet_slice_margin 9948)" "1024"
 
 echo "caps"
 printf 'MemTotal:       10186856 kB\nMemAvailable:    5151140 kB\n' >"$work/meminfo"
 export FLEET_MEMINFO="$work/meminfo"
 printf '811\n' >"$FLEET_STATE/orchestrator.mem"
 # 9948 MiB less the 1536 margin; less the orchestrator's 811 for the workers.
-check "the fleet's cap and the workers', from MemTotal, the margin and the orchestrator's peak" "$(fleet_slice_caps)" "8412 7601"
+check "the fleet's cap and the workers', from MemTotal, the margin and the orchestrator's peak" "$(fleet_slice_caps)" "8412 7601 1536"
 rm -f "$FLEET_STATE/orchestrator.mem"
-check "no reading of the orchestrator: its scope's own cap stands in" "$(fleet_slice_caps) | $(MEM_MAX=3G fleet_slice_caps)" "8412 3292 | 8412 5340"
+check "no reading of the orchestrator: its scope's own cap stands in" "$(fleet_slice_caps) | $(MEM_MAX=3G fleet_slice_caps)" "8412 3292 1536 | 8412 5340 1536"
 printf 'MemTotal:       1572864 kB\n' >"$work/meminfo"
 check "nothing left for the workers: fails" "$(fleet_slice_caps || echo none)" "none"
 printf 'nothing\n' >"$work/meminfo"
@@ -114,8 +130,8 @@ live() {
     why="no XDG_RUNTIME_DIR for a runtime unit"
   elif ! command -v python3 >/dev/null; then
     why="no python3"
-  elif (( $(awk '/^MemAvailable:/ { printf "%d", $2 / 1024 }' /proc/meminfo) < FLEET_SLICE_MARGIN_MB + 1024 )); then
-    why="under $((FLEET_SLICE_MARGIN_MB + 1024)) MiB available"
+  elif (( $(awk '/^MemAvailable:/ { printf "%d", $2 / 1024 }' /proc/meminfo) < live_margin + 1024 )); then
+    why="under $((live_margin + 1024)) MiB available"
   fi
   if [[ -n ${why:-} ]]; then
     echo "  skip the live part: $why"
@@ -161,10 +177,12 @@ for _ in range(25):
     blocks.append(b)
     time.sleep(0.05)
 EOF
+  # Each scope's own cap (400M) is above what one scope can hold (110M + 250M),
+  # so only the slice's cap can kill: with it removed, both children finish.
   # Started from a shell at rank 1000, as a tmux server started from a ranked shell would start them.
   local i pids=() cmd
   for i in 1 2; do
-    cmd="systemd-run --user --scope --quiet --collect --unit=k353test$$-$i $(FLEET_SLICE=$top FLEET_WORKER_SLICE=$sub fleet_slice_opts worker) -p MemoryMax=250M -p MemorySwapMax=0 $(fleet_oom_floor)env $(fleet_oom_env)python3 $work/standin.py $work/standin$i.log $work/hungry.py $work/stop"
+    cmd="systemd-run --user --scope --quiet --collect --unit=k353test$$-$i $(FLEET_SLICE=$top FLEET_WORKER_SLICE=$sub fleet_slice_opts worker) -p MemoryMax=400M -p MemorySwapMax=0 $(fleet_oom_floor)env $(fleet_oom_env)python3 $work/standin.py $work/standin$i.log $work/hungry.py $work/stop"
     bash -c "echo 1000 >/proc/self/oom_score_adj; exec $cmd" >"$work/scope$i.out" 2>&1 &
     pids+=($!)
   done
@@ -191,14 +209,18 @@ EOF
     check "stand-in $i ran in the workers' slice, inside the fleet's" "$(sed -n 's/^ready //p' "$work/standin$i.log" 2>/dev/null)" "${cg:-(no cgroup for $sub)}/k353test$$-$i.scope"
   done
   # Never the root's memory.events, which an empty ControlGroup would name.
+  # memory.events.local counts only the slice's own limit and OOM, not a scope's
+  # below it; memory.events counts kills anywhere in the slice.
+  local own=""
   events=""
-  [[ $cg == */${top}/${sub} ]] && events=$(cat "/sys/fs/cgroup$cg/memory.events" 2>/dev/null)
-  check "the workers' cap was reached (memory.events max)" "$(awk '$1 == "max" { print ($2 > 0) ? "yes" : "no" }' <<<"$events")" "yes"
-  check "and its OOM killed in the slice (memory.events oom_kill)" "$(awk '$1 == "oom_kill" { print ($2 > 0) ? "yes" : "no" }' <<<"$events")" "yes"
+  [[ $cg == */${top}/${sub} ]] && events=$(cat "/sys/fs/cgroup$cg/memory.events" 2>/dev/null) own=$(cat "/sys/fs/cgroup$cg/memory.events.local" 2>/dev/null)
+  check "the workers' slice hit its own cap (memory.events.local max)" "$(awk '$1 == "max" { print ($2 > 0) ? "yes" : "no" }' <<<"$own")" "yes"
+  check "and went OOM itself (memory.events.local oom)" "$(awk '$1 == "oom" { print ($2 > 0) ? "yes" : "no" }' <<<"$own")" "yes"
+  check "which killed in the slice (memory.events oom_kill)" "$(awk '$1 == "oom_kill" { print ($2 > 0) ? "yes" : "no" }' <<<"$events")" "yes"
   for i in 1 2; do
     check "stand-in $i outlived its child, which the cap killed (SIGKILL: -9)" "$(sed 's/^ready .*/ready/' "$work/standin$i.log" 2>/dev/null | paste -sd' ')" "ready child -9"
   done
-  check "WSL's MemAvailable stayed above the margin (lowest ${low} MiB)" "$(( low > FLEET_SLICE_MARGIN_MB ))" "1"
+  check "WSL's MemAvailable stayed above the margin (lowest ${low} MiB)" "$(( low > live_margin ))" "1"
 }
 live
 

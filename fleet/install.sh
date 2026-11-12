@@ -241,12 +241,12 @@ fi
 # hands new caps to a slice already running. A scope finds its slice by name, so
 # neither is enabled.
 if caps=$(fleet_slice_caps); then
-  read -r all workers <<<"$caps"
+  read -r all workers margin <<<"$caps"
   unit "$FLEET_SLICE" "$(fleet_slice_unit "klepsydra fleet: every fleet scope's memory together, the orchestrator's included" "$all")"
   unit "$FLEET_WORKER_SLICE" "$(fleet_slice_unit "klepsydra fleet: the workers' memory, leaving the orchestrator its peak" "$workers")"
-  ilog INFO "memory slices sized" fleet_mb="$all" workers_mb="$workers" orchestrator_mb="$((all - workers))" margin_mb="$FLEET_SLICE_MARGIN_MB"
+  ilog INFO "memory slices sized" fleet_mb="$all" workers_mb="$workers" orchestrator_mb="$((all - workers))" margin_mb="$margin"
 else
-  ilog ERROR "memory slices not sized: no MemTotal in /proc/meminfo, or the orchestrator's peak leaves the workers nothing" margin_mb="$FLEET_SLICE_MARGIN_MB"
+  ilog ERROR "memory slices not sized: no MemTotal in /proc/meminfo, or the orchestrator's peak leaves the workers nothing"
   failed=1
 fi
 # Enabling and starting is the cut-over's: a transient unit of the same name

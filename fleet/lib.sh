@@ -660,12 +660,12 @@ fleet_tasks_max() {
 # in the live test instead of being killed.
 FLEET_SLICE=${FLEET_SLICE:-fleet.slice}
 FLEET_WORKER_SLICE=${FLEET_WORKER_SLICE:-${FLEET_SLICE%.slice}-workers.slice}
-# MiB of WSL's memory the slices leave outside them. Measured 2026-11-11 on AJ's
-# PC: WSL's used memory less every fleet scope's kept memory (cgroup_kept_mib)
-# was 847 MiB (kernel, WSL's init, system services, the tmux server), and
-# earlyoom (-m 5) acts at 5% of MemTotal, 497 MiB; their 1344 rounded up to a
-# whole 512 MiB, so a fleet at its cap still leaves earlyoom's line clear.
-FLEET_SLICE_MARGIN_MB=1536
+# MiB WSL keeps outside every fleet scope. Measured 2026-11-11 on AJ's PC: WSL's
+# used memory less every fleet scope's kept memory (cgroup_kept_mib) was 847 MiB
+# (kernel, WSL's init, system services, the tmux server).
+FLEET_SLICE_BASE_MB=847
+# earlyoom's config, whose -m PERCENT is the free-memory line it kills at.
+FLEET_EARLYOOM_CONF=${FLEET_EARLYOOM_CONF:-/etc/default/earlyoom}
 # Sourced as BASH_ENV by every shell a fleet claude starts (#353).
 FLEET_OOM_TOOL=${FLEET_OOM_TOOL:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/oom-tool.sh}
 
@@ -673,7 +673,7 @@ FLEET_OOM_TOOL=${FLEET_OOM_TOOL:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/o
 to_mib() { # SIZE
   [[ $1 =~ ^([0-9]+)([KMGT]?)$ ]] || return 1
   local n=${BASH_REMATCH[1]}
-  case ${BASH_REMATCH[2]} in K) n=$((n / 1024)) ;; G) n=$((n * 1024)) ;; T) n=$((n * 1048576)) ;; '') n=$((n / 1048576)) ;; esac
+  case ${BASH_REMATCH[2]} in K) n=$((n / 1024)) ;; M) ;; G) n=$((n * 1024)) ;; T) n=$((n * 1048576)) ;; '') n=$((n / 1048576)) ;; esac
   printf '%s' "$n"
 }
 
@@ -731,11 +731,13 @@ heph_pid() { local sid; sid=$(live_session "$(orchestrator)") && session_pid "$s
 # every 5 minutes) a higher reading is kept there. Read only from a fleet scope,
 # so a claude started bare is never sized by the tmux server's whole cgroup.
 # Fails with neither.
-orch_mem_peak() { # [record]
+# With CG (doctor, which has it already; empty: no live orchestrator) it skips the lookup.
+orch_mem_peak() { # [record|-] [CG]
   local f=$FLEET_STATE/orchestrator.mem pid cg now was=""
   { read -r was <"$f"; } 2>/dev/null
   [[ $was =~ ^[0-9]+$ ]] || was=""
-  if pid=$(heph_pid) && cg=$(proc_cgroup "$pid") && [[ $cg == */fleet-*.scope ]] && now=$(cgroup_kept_mib "$cg"); then
+  if (( $# > 1 )); then cg=$2; else cg=""; pid=$(heph_pid) && cg=$(proc_cgroup "$pid"); fi
+  if [[ $cg == */fleet-*.scope ]] && now=$(cgroup_kept_mib "$cg"); then
     if [[ -z $was ]] || (( now > was )); then
       [[ ${1:-} == record ]] && { printf '%s\n' "$now" >"$f.$$" && mv -f -- "$f.$$" "$f"; } 2>/dev/null
       was=$now
@@ -744,19 +746,35 @@ orch_mem_peak() { # [record]
   [[ -n $was ]] && printf '%s' "$was"
 }
 
-# The fleet's memory caps in MiB (#353), "FLEET_MAX WORKERS_MAX":
+# MiB of TOTAL the slices leave outside them (#353): what WSL keeps outside the
+# fleet plus earlyoom's line (-m PERCENT of MemTotal; 10, its default, with no
+# -m; none when earlyoom has no config), rounded up to a whole 512 MiB, so a
+# fleet at its cap leaves earlyoom's line clear and the kernel's cap acts first.
+fleet_slice_margin() { # TOTAL
+  local pct=0 line re='(^|[^[:alnum:]-])-m *([0-9]+)'
+  if [[ -r $FLEET_EARLYOOM_CONF ]]; then
+    pct=10
+    while IFS= read -r line; do
+      [[ $line == EARLYOOM_ARGS=* && $line =~ $re ]] && pct=${BASH_REMATCH[2]}
+    done <"$FLEET_EARLYOOM_CONF"
+  fi
+  printf '%s' "$(( (FLEET_SLICE_BASE_MB + $1 * pct / 100 + 511) / 512 * 512 ))"
+}
+
+# The fleet's memory caps in MiB (#353), "FLEET_MAX WORKERS_MAX MARGIN":
 # MemTotal (/proc/meminfo, which follows .wslconfig's memory=) less the margin
 # caps every fleet scope together, and that less the orchestrator's peak caps
 # the workers. With no reading of the orchestrator, its scope's own cap
 # (MEM_MAX) stands in. Fails when the workers would get nothing.
 fleet_slice_caps() {
-  local total peak all workers
+  local total peak margin all workers
   total=$(awk '$1 == "MemTotal:" { printf "%d", $2 / 1024 }' "${FLEET_MEMINFO:-/proc/meminfo}" 2>/dev/null)
   [[ $total =~ ^[1-9][0-9]*$ ]] || return 1
   peak=$(orch_mem_peak) || peak=$(to_mib "${MEM_MAX:-5G}") || return 1
-  all=$((total - FLEET_SLICE_MARGIN_MB)) workers=$((total - FLEET_SLICE_MARGIN_MB - peak))
+  margin=$(fleet_slice_margin "$total")
+  all=$((total - margin)) workers=$((total - margin - peak))
   (( workers > 0 )) || return 1
-  printf '%s %s' "$all" "$workers"
+  printf '%s %s %s' "$all" "$workers" "$margin"
 }
 
 # A slice's unit file (#353), capped at MAX MiB.

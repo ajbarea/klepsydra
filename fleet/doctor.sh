@@ -454,26 +454,37 @@ elif [[ -n $fullest ]]; then
 elif [[ -n $uncapped ]]; then
   report ok "task caps" "no task cap: ${uncapped% }" uncapped="${uncapped% }"
 fi
-# The fleet's memory slices (#353): both capped, and each fleet scope in its own
-# (the orchestrator's in FLEET_SLICE, every other in FLEET_WORKER_SLICE). A scope
-# started before the slices existed keeps its place until its next fresh start.
-# The orchestrator's peak is recorded here, every 5 minutes, for fleet install.
-heph_peak=$(orch_mem_peak record) heph_scope=""
+# The fleet's memory slices (#353): both capped, the workers' inside the fleet's
+# and below it, and each fleet scope in its own (the orchestrator's in
+# FLEET_SLICE, every other in FLEET_WORKER_SLICE). The orchestrator's scope is
+# its claude's; with no pid on record (a restart), the one named for it
+# (recover.sh and resume-at-reset.sh launch it as heph). A scope started
+# before the slices existed keeps its place until its next fresh start. The
+# orchestrator's peak is recorded here, every 5 minutes, for fleet install.
+hcg="" heph_scope=""
 hp=$(heph_pid) && hcg=$(proc_cgroup "$hp") && heph_scope=${hcg##*/}
-bytes_mib() { [[ $1 =~ ^[0-9]+$ ]] && printf '%s' "$(($1 / 1048576))"; }
+heph_peak=$(orch_mem_peak record "$hcg")
+# A cap under 1 MiB reads as none: systemd takes MemoryMax=0 as it is written.
+bytes_mib() { [[ $1 =~ ^[0-9]+$ ]] && (( $1 >= 1048576 )) && printf '%s' "$(($1 / 1048576))"; }
 fleet_cap=$(bytes_mib "${mem_cap[$FLEET_SLICE]-}") worker_cap=$(bytes_mib "${mem_cap[$FLEET_WORKER_SLICE]-}")
-nocap="" astray=""
+nocap="" astray="" shape=""
 [[ -n $fleet_cap ]] || nocap+="$FLEET_SLICE "
 [[ -n $worker_cap ]] || nocap+="$FLEET_WORKER_SLICE "
+if [[ -z $nocap ]]; then
+  [[ ${in_slice[$FLEET_WORKER_SLICE]-} == "$FLEET_SLICE" ]] || shape="$FLEET_WORKER_SLICE sits in ${in_slice[$FLEET_WORKER_SLICE]:-no slice}, not $FLEET_SLICE"
+  (( worker_cap < fleet_cap )) || shape+="${shape:+; }$FLEET_WORKER_SLICE's $worker_cap MiB is not below $FLEET_SLICE's $fleet_cap MiB"
+fi
 for unit in "${scopes[@]}"; do
   [[ ${active[$unit]-} == active ]] || continue
   want=$FLEET_WORKER_SLICE
-  [[ $unit == "$heph_scope" ]] && want=$FLEET_SLICE
+  if [[ $unit == "$heph_scope" ]] || { [[ -z $heph_scope ]] && [[ $unit =~ ^fleet-heph-[0-9]+[.]scope$ ]]; }; then want=$FLEET_SLICE; fi
   [[ ${in_slice[$unit]-} == "$want" ]] || astray+="${unit%.scope} in ${in_slice[$unit]:-no slice}, "
 done
-if [[ -n $nocap || -n $astray ]]; then
-  report FAIL "memory cap" "${nocap:+no MemoryMax on ${nocap% } (fleet install writes it)}${nocap:+${astray:+; }}${astray:+outside their slice: ${astray%, } (each moves at its next fresh start)}" \
-    no_cap="${nocap% }" astray="${astray%, }"
+if [[ -n $nocap || -n $shape || -n $astray ]]; then
+  why="${nocap:+no MemoryMax on ${nocap% } (fleet install writes it)}"
+  [[ -n $shape ]] && why+="${why:+; }$shape (fleet install writes both)"
+  [[ -n $astray ]] && why+="${why:+; }outside their slice: ${astray%, } (each moves at its next fresh start)"
+  report FAIL "memory cap" "$why" no_cap="${nocap% }" shape="$shape" astray="${astray%, }"
 elif [[ -n $heph_peak ]] && (( heph_peak > fleet_cap - worker_cap )); then
   report warn "memory cap" "the orchestrator's peak, $heph_peak MiB, passed the $((fleet_cap - worker_cap)) MiB $FLEET_WORKER_SLICE leaves it: fleet install resizes the slices" \
     peak_mb="$heph_peak" fleet_mb="$fleet_cap" workers_mb="$worker_cap"
