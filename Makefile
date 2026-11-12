@@ -1,4 +1,4 @@
-.PHONY: install-hooks install-fleet test-fleet test-launch test-delegate test-heavy-lock shellcheck
+.PHONY: install-hooks install-fleet test-fleet test-launch test-delegate test-heavy-lock test-slice shellcheck
 
 # Copy the hooks, status line, launcher and cast into ~/.claude (fleet/install.sh --hooks).
 install-hooks:
@@ -31,6 +31,11 @@ test-delegate:
 
 test-heavy-lock:
 	$(HEAVY) bash fleet/test_heavy_lock.sh
+
+# The memory slices and OOM ranks (#353); its live part needs a user manager and
+# skips without one (CI), and reads WSL's free memory, so it takes the lock.
+test-slice:
+	$(HEAVY) bash fleet/test_slice.sh
 
 shellcheck:
 	$(HEAVY) $(SHELLCHECK) -x $(SHELL_FILES)

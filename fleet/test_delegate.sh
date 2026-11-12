@@ -436,6 +436,12 @@ EOS
 chmod +x "$work/bin/sdrun"; : >"$work/sdrun.log"
 FLEET_SYSTEMD_RUN="$work/bin/sdrun" dl --engine agy --kind research --dir "$repo" "$work/task.md" >/dev/null
 check "print mode runs inside the capped scope" "$(grep -c 'MemoryMax=3G.*TasksMax=256' "$work/sdrun.log")" "1"
+check "#353: in the workers' slice, outliving an OOM kill, the engine ranked first by oom-tool.sh" \
+  "$(grep -c -- "--slice=fleet-workers.slice -p OOMPolicy=continue .*TasksMax=256 bash $here/oom-tool.sh " "$work/sdrun.log")" "1"
+: >"$work/sdrun.log"
+out=$(FLEET_OOM_TOOL="$work/no-oom-tool.sh" FLEET_SYSTEMD_RUN="$work/bin/sdrun" dl --engine agy --kind research --dir "$repo" "$work/task.md")
+check "#353 review: with oom-tool.sh missing the engine still runs, unranked (not exit 127)" \
+  "$(grep -c 'TasksMax=256 bash ' "$work/sdrun.log") $(grep -c 'TasksMax=256' "$work/sdrun.log") $(field "$out" status)" "0 1 ok"
 : >"$work/sdrun.log"; : >"$work/sent.log"
 out=$(FLEET_SYSTEMD_RUN="$work/bin/sdrun" dl --interactive --engine agy --kind research --notify %5 --dir "$repo" "$work/task.md"); ids=$(field "$out" id)
 check "the interactive lane's window command runs inside the same capped scope (memory and tasks), not bare" \

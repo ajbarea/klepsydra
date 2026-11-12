@@ -59,15 +59,21 @@ looks_secret() { grep -Eq -- "$SECRET_RE"; (( $? != 1 )); }
 usage() { sed -n '2,/^set -u/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//'; }
 die() { err "$*"; exit 2; }
 
-# A scope with a memory and task cap around a command, as launch.sh gives a
-# worker; FLEET_SYSTEMD_RUN=none runs it bare (the suite, a box with no user manager).
+# A scope with a memory and task cap around a command, in the workers' slice as
+# launch.sh gives a worker, with the command ranked first for the OOM killer
+# (oom-tool.sh), so a cap kills the engine, not an agent (#353);
+# FLEET_SYSTEMD_RUN=none runs it bare (the suite, a box with no user manager).
 # SCOPE_ARGV is the prefix (empty when bare), so the interactive window's command takes the same caps.
 scope_prefix() { # NAME
   local run=${FLEET_SYSTEMD_RUN:-systemd-run}
   SCOPE_ARGV=()
   if [[ $run == none ]] || ! command -v "$run" >/dev/null 2>&1; then return; fi
-  SCOPE_ARGV=("$run" --user --scope --collect -q --unit="fleet-delegate-$1-$(date +%s)"
-    -p MemoryHigh="${FLEET_DELEGATE_MEM_HIGH:-2G}" -p MemoryMax="${FLEET_DELEGATE_MEM_MAX:-3G}" -p MemorySwapMax=0 -p TasksMax=256)
+  local -a slice rank=()
+  read -ra slice <<<"$(fleet_slice_opts worker)"
+  # Without the file (a checkout mid-switch) the engine runs unranked, not at all.
+  [[ -r $FLEET_OOM_TOOL ]] && rank=(bash "$FLEET_OOM_TOOL")
+  SCOPE_ARGV=("$run" --user --scope --collect -q --unit="fleet-delegate-$1-$(date +%s)" "${slice[@]}"
+    -p MemoryMax="${FLEET_DELEGATE_MEM_MAX:-3G}" -p MemorySwapMax=0 -p TasksMax=256 "${rank[@]}")
 }
 scoped() { # NAME CMD...
   scope_prefix "$1"

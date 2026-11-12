@@ -77,6 +77,8 @@ jobs:
         run: make test-delegate FLEET_HEAVY_HELD=1
       - name: Heavy lock release tests
         run: make test-heavy-lock FLEET_HEAVY_HELD=1
+      - name: Memory slice tests
+        run: make test-slice FLEET_HEAVY_HELD=1
       - name: Release memory check tests
         run: bash scripts/test_measure_memory.sh
       - name: Windows build stage check tests

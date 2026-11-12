@@ -12,7 +12,10 @@
 # (running, finished, gone), and a finish is recorded in finished.tsv the first
 # time it is seen, while the row stays until --prune; each config folder in FLEET_ACCOUNTS
 # is logged in and the second ones match the first; the copies in ~/.claude
-# (hooks, status line, launcher, cast) match the checkout. Briefs whose shared rules
+# (hooks, status line, launcher, cast) match the checkout; both memory slices
+# have a MemoryMax, nest, and every fleet scope started since sits in its slice
+# (a FAIL), and the caps fit this machine and the orchestrator's peak (a warning).
+# Briefs whose shared rules
 # are out of date, and a second folder not logged in, are warnings.
 # With `--json FILE` (the fleet-doctor timer) it also writes the checks to FILE
 # for the wall, and logs a check only when its status changed since FILE's run.
@@ -415,28 +418,105 @@ if v=$(bash "$here/voices.sh" --check 2>/dev/null); then
 else
   report warn "voices" "${v:-could not compare}"
 fi
+# Every fleet scope and both memory slices, read in one call (#289, #353): each
+# unit's tasks, slice and memory cap, in the blocks systemctl separates with a
+# blank line (a property's place within a block is systemctl's, so Id is read
+# wherever it falls). A scope gone since list-units shows as inactive, with no slice.
+declare -A tasks_now=() tasks_cap=() in_slice=() mem_cap=() active=()
+mapfile -t scopes < <($SYSTEMCTL --user list-units --type=scope --no-legend --plain 'fleet-*' 2>/dev/null | awk '$1 ~ /^fleet-.*[.]scope$/ { print $1 }')
+u="" tn="" tc="" sl="" mc="" st=""
+while IFS= read -r line; do
+  if [[ -z $line ]]; then
+    [[ -n $u ]] && tasks_now[$u]=$tn tasks_cap[$u]=$tc in_slice[$u]=$sl mem_cap[$u]=$mc active[$u]=$st
+    u="" tn="" tc="" sl="" mc="" st=""
+    continue
+  fi
+  case ${line%%=*} in
+    Id) u=${line#*=} ;; TasksCurrent) tn=${line#*=} ;; TasksMax) tc=${line#*=} ;; Slice) sl=${line#*=} ;; MemoryMax) mc=${line#*=} ;; ActiveState) st=${line#*=} ;;
+  esac
+done < <($SYSTEMCTL --user show -p Id -p TasksCurrent -p TasksMax -p Slice -p MemoryMax -p ActiveState "$FLEET_SLICE" "$FLEET_WORKER_SLICE" "${scopes[@]}" 2>/dev/null; echo)
 # Each fleet session's scope against its task cap (#289): past TASKS_WARN_PCT
 # its next forks fail and its claude aborts, as on 11-03.
 TASKS_WARN_PCT=${TASKS_WARN_PCT:-80}
 near="" fullest="" fullest_pct=-1 uncapped=""
-while read -r unit; do
-  [[ $unit == fleet-*.scope ]] || continue
-  cur="" max=""
-  while IFS='=' read -r k v; do
-    case $k in TasksCurrent) cur=$v ;; TasksMax) max=$v ;; esac
-  done < <($SYSTEMCTL --user show -p TasksCurrent -p TasksMax "$unit" 2>/dev/null)
+for unit in "${scopes[@]}"; do
+  cur=${tasks_now[$unit]-} max=${tasks_cap[$unit]-}
   [[ $cur =~ ^[0-9]+$ ]] || continue
   if ! [[ $max =~ ^[1-9][0-9]*$ ]]; then uncapped+="${unit%.scope} "; continue; fi
   pct=$((cur * 100 / max))
   (( pct > fullest_pct )) && fullest_pct=$pct fullest="${unit%.scope} $cur/$max"
   (( pct >= TASKS_WARN_PCT )) && near+="${unit%.scope} $cur/$max, "
-done < <($SYSTEMCTL --user list-units --type=scope --no-legend --plain 'fleet-*' 2>/dev/null | awk '{ print $1 }')
+done
 if [[ -n $near ]]; then
   report warn "task caps" "past ${TASKS_WARN_PCT}% of the cap: ${near%, } (its next forks fail at the cap)" scopes="${near%, }"
 elif [[ -n $fullest ]]; then
   report ok "task caps" "fullest scope: $fullest${uncapped:+; no task cap: ${uncapped% }}" fullest="$fullest" uncapped="${uncapped% }"
 elif [[ -n $uncapped ]]; then
   report ok "task caps" "no task cap: ${uncapped% }" uncapped="${uncapped% }"
+fi
+# The fleet's memory slices (#353): both capped, the workers' inside the fleet's
+# and below it, and each fleet scope in its own: the orchestrator's (any scope
+# named for it, as launch.sh places it by the same launch; never by its pane,
+# which a stale orchestrator.pane can hand to a worker) in FLEET_SLICE, every
+# other in FLEET_WORKER_SLICE. A scope started before the slices' units were first
+# written (its name ends in its start time) keeps its place until its next
+# fresh start, so it warns; one started since fails. The orchestrator's daily
+# peak is recorded here, every 5 minutes, for fleet install.
+hcg=""
+hp=$(heph_pid) && hcg=$(proc_cgroup "$hp")
+heph_peak=$(orch_mem_peak record "$hcg")
+# A cap under 1 MiB reads as none: systemd takes MemoryMax=0 as it is written.
+bytes_mib() { [[ $1 =~ ^[0-9]+$ ]] && (( $1 >= 1048576 )) && printf '%s' "$(($1 / 1048576))"; }
+fleet_cap=$(bytes_mib "${mem_cap[$FLEET_SLICE]-}") worker_cap=$(bytes_mib "${mem_cap[$FLEET_WORKER_SLICE]-}")
+# Dated by the unit's birth (install rewrites it in place, so a resize keeps
+# it); a filesystem without birth times gives 0, and its last change stands in.
+sliced=$(stat -c %W -- "$FLEET_UNIT_DIR/$FLEET_SLICE" 2>/dev/null) || sliced=0
+[[ $sliced =~ ^[1-9][0-9]*$ ]] || sliced=$(stat -c %Y -- "$FLEET_UNIT_DIR/$FLEET_SLICE" 2>/dev/null) || sliced=0
+nocap="" astray="" before="" shape="" sized=""
+[[ -n $fleet_cap ]] || nocap+="$FLEET_SLICE "
+[[ -n $worker_cap ]] || nocap+="$FLEET_WORKER_SLICE "
+if [[ -z $nocap ]]; then
+  [[ ${in_slice[$FLEET_WORKER_SLICE]-} == "$FLEET_SLICE" ]] || shape="$FLEET_WORKER_SLICE sits in ${in_slice[$FLEET_WORKER_SLICE]:-no slice}, not $FLEET_SLICE"
+  (( worker_cap < fleet_cap )) || shape+="${shape:+; }$FLEET_WORKER_SLICE's $worker_cap MiB is not below $FLEET_SLICE's $fleet_cap MiB"
+  # Sized for this machine: a cap that no longer clears WSL's own memory and
+  # earlyoom's line (a smaller memory= in .wslconfig, a higher earlyoom line)
+  # lets earlyoom act before the kernel's cap, so any such cap warns; a cap a
+  # whole rounding step below this machine's leaves room unused. A kernel
+  # update's few MiB usually fall within the rounding's slack and pass.
+  if total=$(mem_total_mib); then
+    fits=$((total - $(fleet_slice_margin "$total")))
+    if (( fleet_cap + FLEET_SLICE_BASE_MB + $(earlyoom_line_mib "$total") > total || fits - fleet_cap >= FLEET_SLICE_STEP_MB )); then
+      sized="$FLEET_SLICE's $fleet_cap MiB was sized for another MemTotal or earlyoom line; this machine's is $fits MiB"
+    fi
+  fi
+fi
+for unit in "${scopes[@]}"; do
+  [[ ${active[$unit]-} == active ]] || continue
+  want=$FLEET_WORKER_SLICE
+  [[ $unit =~ ^fleet-${FLEET_ORCH_NAME}-[0-9]+[.]scope$ ]] && want=$FLEET_SLICE
+  [[ ${in_slice[$unit]-} == "$want" ]] && continue
+  began=${unit%.scope} began=${began##*-}
+  if [[ $began =~ ^[0-9]+$ ]] && (( began < sliced )); then before+="${unit%.scope} in ${in_slice[$unit]:-no slice}, "
+  else astray+="${unit%.scope} in ${in_slice[$unit]:-no slice}, "; fi
+done
+if [[ -z ${mem_cap[$FLEET_SLICE]+x} && -z ${mem_cap[$FLEET_WORKER_SLICE]+x} ]]; then
+  report warn "memory cap" "could not read the slices: systemctl --user did not answer"
+elif [[ -n $nocap || -n $shape || -n $astray ]]; then
+  why="${nocap:+no MemoryMax on ${nocap% } (fleet install writes it)}"
+  [[ -n $shape ]] && why+="${why:+; }$shape (fleet install writes both)"
+  [[ -n $astray ]] && why+="${why:+; }outside their slice: ${astray%, }"
+  report FAIL "memory cap" "$why" no_cap="${nocap% }" shape="$shape" astray="${astray%, }"
+elif [[ -n $sized || -n $before ]] || { [[ -n $heph_peak ]] && (( heph_peak > fleet_cap - worker_cap )); }; then
+  why="$sized${sized:+: fleet install resizes the slices}"
+  [[ -n $heph_peak ]] && (( heph_peak > fleet_cap - worker_cap )) &&
+    why+="${why:+; }the orchestrator's peak, $heph_peak MiB, passed the $((fleet_cap - worker_cap)) MiB $FLEET_WORKER_SLICE leaves it: fleet install resizes the slices"
+  [[ -n $before ]] && why+="${why:+; }started before the slices, outside them: ${before%, } (each moves at its next fresh start)"
+  report warn "memory cap" "$why" peak_mb="${heph_peak:-}" fleet_mb="$fleet_cap" workers_mb="$worker_cap" before="${before%, }"
+else
+  of_heph=""
+  [[ -n $heph_peak ]] && of_heph=", the orchestrator's peak $heph_peak MiB"
+  report ok "memory cap" "$FLEET_SLICE $fleet_cap MiB, $FLEET_WORKER_SLICE $worker_cap MiB$of_heph" \
+    fleet_mb="$fleet_cap" workers_mb="$worker_cap" peak_mb="${heph_peak:-}"
 fi
 # A hook or cast copy older than the checkout gives every session old behaviour (#244).
 root=${here%/fleet} differ="" missing=""

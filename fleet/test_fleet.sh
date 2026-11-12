@@ -22,6 +22,12 @@ unset CLAUDE_CONFIG_DIR KLEPSYDRA_BACKGROUND
 # Never AJ's user manager (#265 review): a case that wants systemctl passes its
 # own stub; a bare `systemctl` lands on a guard that records the call.
 export FLEET_SYSTEMCTL="$work/no-systemctl"
+# The memory slices are sized from a fixed MemTotal (#353), never the runner's.
+printf 'MemTotal:       10186856 kB\nMemAvailable:    5151140 kB\n' >"$work/meminfo"
+export FLEET_MEMINFO="$work/meminfo"
+# and earlyoom's line, as AJ's PC sets it, never the runner's (none on CI).
+printf 'EARLYOOM_ARGS="-m 5 -s 100,100 -r 3600"\n' >"$work/earlyoom"
+export FLEET_EARLYOOM_CONF="$work/earlyoom"
 # Never the host's WSL: the doctor reads AJ's .wslconfig only on WSL (#292 review 3).
 unset WSL_DISTRO_NAME FLEET_WSLCONFIG
 mkdir -p "$work/guard"
@@ -755,6 +761,31 @@ check "#289: the session's scope gets its own task cap beside the memory caps" \
 check "#289: the launch logs the cap it set" "$(jq -r 'select(.message == "window opened" and .name == "scoped") | .tasks_max' "$FLEET_LOG")" "8745"
 check "#289: the scoped launch still delivers" "${out##* }" "brief=started"
 t kill-pane -t "$(sed -E 's/^pane=([^ ]+).*/\1/' <<<"$out")" 2>/dev/null
+# #353: the scope in the workers' slice, kept when the kernel kills a job in it,
+# capped hard (no MemoryHigh: it freezes rather than kills); claude at OOM rank
+# 0, and every shell it starts ranked first through BASH_ENV.
+call=$(tail -1 "$work/sdrun.calls")
+check "#353: a worker's scope sits in the workers' slice and outlives an OOM kill in it" \
+  "$(grep -o -- '--slice=[^ ]* -p OOMPolicy=[^ ]* -p MemoryMax=[^ ]* -p MemorySwapMax=[^ ]*' <<<"$call")" "--slice=fleet-workers.slice -p OOMPolicy=continue -p MemoryMax=5G -p MemorySwapMax=1G"
+check "#353: no MemoryHigh on the scope" "$(grep -c MemoryHigh <<<"$call")" "0"
+check "#353: claude starts at OOM rank 0, its shells ranked first by BASH_ENV" \
+  "$(grep -c "fleet-oom env .*BASH_ENV=$here/oom-tool.sh KLEPSYDRA_AGENT=scoped" <<<"$call") $(grep -c 'echo 0 >/proc/self/oom_score_adj' <<<"$call")" "1 1"
+: >"$work/sdrun.calls"
+out=$(FLEET_SETTINGS='' FLEET_SCOPE=1 FLEET_SYSTEMD_RUN="$work/systemd-run" FLEET_CGROUP_ROOT="$cgr" FLEET_CGROUP=$leaf FLEET_MIN_AVAIL_MB=0 \
+  FLEET_LAUNCHER="$work/launcher.sh" FLEET_DIR="$work" FLEET_CLAUDE="python3 -I $fake $work/scoped.json $work/scoped.log" \
+  bash "$here/launch.sh" heph "$work/task.src" 2>/dev/null | head -1)
+check "#353: the orchestrator's scope sits in the fleet's slice, beside the workers'" \
+  "$(grep -o -- '--slice=[^ ]* -p OOMPolicy=[^ ]*' "$work/sdrun.calls")" "--slice=fleet.slice -p OOMPolicy=continue"
+check "#353: and the launch logs which" "$(jq -r 'select(.message == "window opened" and .name == "heph") | .slice' "$FLEET_LOG")" "orchestrator"
+t kill-pane -t "$(sed -E 's/^pane=([^ ]+).*/\1/' <<<"$out")" 2>/dev/null
+# Placed by name, not by missing settings: a bare launch under another name is a worker.
+: >"$work/sdrun.calls"
+out=$(FLEET_SETTINGS='' FLEET_SCOPE=1 FLEET_SYSTEMD_RUN="$work/systemd-run" FLEET_CGROUP_ROOT="$cgr" FLEET_CGROUP=$leaf FLEET_MIN_AVAIL_MB=0 \
+  FLEET_LAUNCHER="$work/launcher.sh" FLEET_DIR="$work" FLEET_CLAUDE="python3 -I $fake $work/scoped.json $work/scoped.log" \
+  bash "$here/launch.sh" scoped-bare "$work/task.src" 2>/dev/null | head -1)
+check "#353 review 4: a launch with no worker settings under another name sits in the workers' slice" \
+  "$(grep -o -- '--slice=[^ ]* -p OOMPolicy=[^ ]*' "$work/sdrun.calls")" "--slice=fleet-workers.slice -p OOMPolicy=continue"
+t kill-pane -t "$(sed -E 's/^pane=([^ ]+).*/\1/' <<<"$out")" 2>/dev/null
 
 out=$(launch agent2 '{"above":["Claude Code"],"on_submit":"limit"}')
 check "blocked by a limit" "${out##* }" "brief=blocked-by-limit"
@@ -920,16 +951,16 @@ check "the tail carries the team-ceremony rule (AJ 10-29)" "$(grep -c '^Team cer
 check "the tail keeps asks for AJ out of public issues and PRs (AJ 10-29)" "$(grep -c '^Asks for AJ stay private' "$here/brief-tail.md")" "1"
 check "#325 review 1: the tail sends messages to panes through fleet send (#320)" "$(grep -c '^Messages to another pane .*fleet send PANE -' "$here/brief-tail.md")" "1"
 check "#239: the tail has heavy commands take the lock with flock -o, so nothing they leave running keeps it" "$(grep -c 'flock -o /tmp/fleet-heavy.lock' "$here/brief-tail.md")" "1"
-check "#291 review: the tail says the make targets take the lock themselves and run bare" "$(grep -c 'make test-fleet., .make test-launch., .make test-delegate., .make test-heavy-lock. and .make shellcheck. in klepsydra take the lock themselves: run them bare' "$here/brief-tail.md")" "1"
+check "#291 review: the tail says the make targets take the lock themselves and run bare" "$(grep -c 'make test-fleet., .make test-launch., .make test-delegate., .make test-heavy-lock., .make test-slice. and .make shellcheck. in klepsydra take the lock themselves: run them bare' "$here/brief-tail.md")" "1"
 check "#291 review 5: the tail's hand form puts a group-wide timeout inside the lock (no --foreground)" "$(grep -c 'flock -o /tmp/fleet-heavy.lock timeout 1800 <command>' "$here/brief-tail.md") $(grep -c -- '--foreground' "$here/brief-tail.md")" "1 0"
 # Every target whose recipe runs $(HEAVY) (#291 review 4): it takes the lock
 # unless the caller says it holds it, a test target runs a file that exists,
 # and the brief tail, the skill context and CI each name it.
 heavy_targets=$(awk '/^[A-Za-z][A-Za-z0-9_-]*:/ { t = $1; sub(/:.*/, "", t) } /^\t@?\$\(HEAVY\)/ { print t }' "$here/../Makefile" | paste -sd ' ' -)
-check "#291 review 4: the Makefile's heavy targets" "$heavy_targets" "test-fleet test-launch test-delegate test-heavy-lock shellcheck"
+check "#291 review 4: the Makefile's heavy targets" "$heavy_targets" "test-fleet test-launch test-delegate test-heavy-lock test-slice shellcheck"
 # What each runs, exactly (review 5: "a file that exists" passed a swapped suite).
 declare -A heavy_runs=([test-fleet]="bash fleet/test_fleet.sh" [test-launch]="bash hooks/test_launch.sh" [test-delegate]="bash fleet/test_delegate.sh"
-  [test-heavy-lock]="bash fleet/test_heavy_lock.sh" [shellcheck]="sc -x hooks/*.sh statusline/*.sh scripts/*.sh fleet/*.sh fleet/fleet")
+  [test-heavy-lock]="bash fleet/test_heavy_lock.sh" [test-slice]="bash fleet/test_slice.sh" [shellcheck]="sc -x hooks/*.sh statusline/*.sh scripts/*.sh fleet/*.sh fleet/fleet")
 for ht in $heavy_targets; do
   check "#291 review 4: make $ht takes the lock unless held, runs its own suite, and the tail, skill context and CI name it" \
     "$(make -s -n -C "$here/.." "$ht" FLEET_HEAVY_HELD= SHELLCHECK=sc | grep -cxF "FLEET_HEAVY_HELD=1 bash fleet/heavy.sh ${heavy_runs[$ht]:-?}") $(make -s -n -C "$here/.." "$ht" FLEET_HEAVY_HELD=0 | grep -c 'fleet/heavy.sh') | $(make -s -n -C "$here/.." "$ht" FLEET_HEAVY_HELD=1 SHELLCHECK=sc) | $(grep -c "make $ht" "$here/brief-tail.md") $(grep -c "make $ht" "$here/../.claude/skill-context.md" | sed 's/^[1-9][0-9]*$/1/') $(grep -c "make $ht .*FLEET_HEAVY_HELD=1" "$here/../.github/workflows/ci.yml")" \
@@ -974,10 +1005,30 @@ echo "doctor"
 mkdir -p "$KLEPSYDRA_DIR/fleet" "$work/bin"
 cat >"$work/bin/systemctl" <<'EOF'
 #!/usr/bin/env bash
-# DOC_SCOPES (#289): one "UNIT TASKS_CURRENT TASKS_MAX" line per fleet scope.
+# DOC_SCOPES (#289, #353): one "UNIT TASKS_CURRENT TASKS_MAX [SLICE]" line per
+# fleet scope (no slice: the workers'; gone: ended since list-units); DOC_SLICES: "UNIT MEMORY_MAX [PARENT]" per slice.
+# DOC_SHOW_FAILS: show answers nothing (a user manager that does not answer).
+# show prints one block per unit asked for, as systemctl does, with Id last.
 case $* in
   *list-units*) [[ -n ${DOC_SCOPES:-} ]] && awk '{ print $1 " loaded active running x" }' "$DOC_SCOPES"; exit 0 ;;
-  *" show "*) [[ -n ${DOC_SCOPES:-} ]] && awk -v u="${*: -1}" '$1 == u { print "TasksCurrent=" $2; print "TasksMax=" $3 }' "$DOC_SCOPES"; exit 0 ;;
+  *" show "*)
+    [[ -n ${DOC_SHOW_FAILS:-} ]] && exit 1
+    first=1
+    for u; do
+      [[ $u == *.scope || $u == *.slice ]] || continue
+      (( first )) || echo
+      first=0
+      [[ -n ${DOC_SCOPES:-} ]] && awk -v u="$u" '$1 == u { print "TasksCurrent=" $2; print "TasksMax=" $3; g = ($4 == "gone"); print "Slice=" (g ? "" : $4 == "" ? "fleet-workers.slice" : $4); print "MemoryMax=infinity"; print "ActiveState=" (g ? "inactive" : "active") }' "$DOC_SCOPES"
+      if [[ $u == *.slice ]]; then
+        m=$( [[ -n ${DOC_SLICES:-} ]] && awk -v u="$u" '$1 == u { print $2 }' "$DOC_SLICES")
+        printf 'MemoryMax=%s\n' "${m:-infinity}"
+        par=$( [[ -n ${DOC_SLICES:-} ]] && awk -v u="$u" '$1 == u { print $3 }' "$DOC_SLICES")
+        [[ -z $par && $u == fleet-workers.slice ]] && par=fleet.slice
+        printf 'Slice=%s\n' "${par:-user.slice}"
+      fi
+      echo "Id=$u"
+    done
+    exit 0 ;;
 esac
 [[ $* == *is-active* && -e $DOC_ACTIVE ]]
 EOF
@@ -1015,7 +1066,7 @@ echo 44444444-4444-4444-8444-444444444444 >"$work/dboot"
 # after, so later sections see no file. DOC_PREFS=none: no file.
 doc_prefs() { local c=${DOC_PREFS-'{"phone_wall": true}'}; rm -f -- "$KLEPSYDRA_DIR/prefs.json"; [[ $c == none ]] || printf '%s' "$c" >"$KLEPSYDRA_DIR/prefs.json"; }
 doctor() { local rc; doc_prefs; FLEET_PS="$work/bin/ps" FLEET_SYSTEMCTL="$work/bin/systemctl" FLEET_CURL="$work/bin/curl" FLEET_TAILSCALE="$work/bin/tailscale" \
-  DOC_ACTIVE="$work/active" DOC_FLEET="$work/fleet.json" FLEET_RETRY_S=0 FLEET_PROC="$work/dproc" FLEET_BOOT_ID="$work/dboot" bash "$here/doctor.sh" 2>/dev/null; rc=$?
+  DOC_ACTIVE="$work/active" DOC_FLEET="$work/fleet.json" FLEET_RETRY_S=0 FLEET_PROC="$work/dproc" FLEET_BOOT_ID="$work/dboot" FLEET_UNITS="$work/dunits" bash "$here/doctor.sh" 2>/dev/null; rc=$?
   rm -f -- "$KLEPSYDRA_DIR/prefs.json"; return $rc; }
 phone_lines() { grep -E '^(ok|warn|FAIL) +phone wall' | cut -d: -f1 | paste -sd'|'; }
 sid_of() { case $1 in w1) echo dddddddd-0000-4000-8000-000000000001 ;; w2) echo dddddddd-0000-4000-8000-000000000002 ;; *) echo dddddddd-0000-4000-8000-0000000000"${1#o}"0 ;; esac; }
@@ -1052,6 +1103,86 @@ check "#289: a scope past 80% of its task cap warns, naming it" "$(DOC_SCOPES="$
 printf 'fleet-a-1.scope 6900 8745\nfleet-b-2.scope 100 8745\nfleet-c-3.scope 50 infinity\n' >"$work/scopes"
 check "#289: under the line: ok, the fullest named, and a scope from before the cap listed" "$(DOC_SCOPES="$work/scopes" doctor | grep 'task caps')" \
   "ok   task caps: fullest scope: fleet-a-1 6900/8745; no task cap: fleet-c-3"
+check "#353: slices with no cap fail, both named" "$(grep 'memory cap' <<<"$out")" \
+  "FAIL memory cap: no MemoryMax on fleet.slice fleet-workers.slice (fleet install writes it)"
+printf 'fleet.slice 8820621312\nfleet-workers.slice 7970226176\n' >"$work/slices"
+printf 'fleet-a-1.scope 6900 8745\nfleet-b-2.scope 100 8745 fleet-workers.slice\n' >"$work/scopes"
+check "#353: both capped, every scope in its slice: ok, with the sizes" "$(DOC_SLICES="$work/slices" DOC_SCOPES="$work/scopes" doctor | grep 'memory cap')" \
+  "ok   memory cap: fleet.slice 8412 MiB, fleet-workers.slice 7601 MiB"
+printf 'fleet-a-1.scope 6900 8745 app.slice\nfleet-b-2.scope 100 8745\nfleet-c-3.scope 1 8745 fleet.slice\n' >"$work/scopes"
+check "#353: a scope started before the slices, or a worker's beside the workers' cap, fails, named" \
+  "$(DOC_SLICES="$work/slices" DOC_SCOPES="$work/scopes" doctor | grep 'memory cap')" \
+  "FAIL memory cap: outside their slice: fleet-a-1 in app.slice, fleet-c-3 in fleet.slice"
+printf 'fleet-a-1.scope 6900 8745 gone\nfleet-b-2.scope 100 8745\n' >"$work/scopes"
+check "#353: a scope that ended between the listing and the read is not called astray" \
+  "$(DOC_SLICES="$work/slices" DOC_SCOPES="$work/scopes" doctor | grep 'memory cap')" \
+  "ok   memory cap: fleet.slice 8412 MiB, fleet-workers.slice 7601 MiB"
+# The orchestrator's claude (pid 4242 in the section's /proc) in its scope.
+printf '0::/user.slice/user-1.slice/user@1.service/fleet.slice/fleet-heph-9.scope\n' >"$work/dproc/4242/cgroup"
+printf 'fleet-heph-9.scope 10 8745 fleet.slice\nfleet-b-2.scope 100 8745\n' >"$work/scopes"
+check "#353: the orchestrator's scope belongs in the fleet's slice" "$(DOC_SLICES="$work/slices" DOC_SCOPES="$work/scopes" doctor | grep -c '^ok   memory cap')" "1"
+printf 'fleet-heph-9.scope 10 8745 fleet-workers.slice\n' >"$work/scopes"
+check "#353: and fails in the workers'" "$(DOC_SLICES="$work/slices" DOC_SCOPES="$work/scopes" doctor | grep 'memory cap')" \
+  "FAIL memory cap: outside their slice: fleet-heph-9 in fleet-workers.slice"
+printf '900\n' >"$FLEET_STATE/orchestrator.mem"
+check "#353: an orchestrator's peak past the room the workers' slice leaves it warns" "$(DOC_SLICES="$work/slices" doctor | grep 'memory cap')" \
+  "warn memory cap: the orchestrator's peak, 900 MiB, passed the 811 MiB fleet-workers.slice leaves it: fleet install resizes the slices"
+rm -f "$FLEET_STATE/orchestrator.mem" "$work/dproc/4242/cgroup"
+# With no pid on record (a restart), the orchestrator's scope is the one named for it.
+printf 'fleet-heph-9.scope 10 8745 fleet.slice\nfleet-b-2.scope 100 8745\n' >"$work/scopes"
+check "#353 review: no orchestrator pid: its named scope in the fleet's slice is ok" "$(DOC_SLICES="$work/slices" DOC_SCOPES="$work/scopes" doctor | grep -c '^ok   memory cap')" "1"
+printf 'fleet-heph-9.scope 10 8745 fleet-workers.slice\n' >"$work/scopes"
+check "#353 review: and in the workers' it fails" "$(DOC_SLICES="$work/slices" DOC_SCOPES="$work/scopes" doctor | grep 'memory cap')" \
+  "FAIL memory cap: outside their slice: fleet-heph-9 in fleet-workers.slice"
+printf 'fleet.slice 8820621312\nfleet-workers.slice 7970226176 user.slice\n' >"$work/slices2"
+check "#353 review: a workers' slice outside the fleet's fails (its workers escape the total)" "$(DOC_SLICES="$work/slices2" doctor | grep 'memory cap')" \
+  "FAIL memory cap: fleet-workers.slice sits in user.slice, not fleet.slice (fleet install writes both)"
+printf 'fleet.slice 7970226176\nfleet-workers.slice 7970226176\n' >"$work/slices2"
+check "#353 review: a workers' cap not below the fleet's fails (the orchestrator has no room)" "$(DOC_SLICES="$work/slices2" doctor | grep 'memory cap')" \
+  "FAIL memory cap: fleet-workers.slice's 7601 MiB is not below fleet.slice's 7601 MiB (fleet install writes both)"
+printf 'fleet.slice 0\nfleet-workers.slice 1048575\n' >"$work/slices2"
+check "#353 review: a cap of 0, or under 1 MiB, reads as none" "$(DOC_SLICES="$work/slices2" doctor | grep 'memory cap')" \
+  "FAIL memory cap: no MemoryMax on fleet.slice fleet-workers.slice (fleet install writes it)"
+# A move: the new orchestrator's scope starts before orchestrator.pane names its pane.
+printf '0::/user.slice/user-1.slice/user@1.service/fleet.slice/fleet-heph-9.scope\n' >"$work/dproc/4242/cgroup"
+printf 'fleet-heph-9.scope 10 8745 fleet.slice\nfleet-heph-12.scope 10 8745 fleet.slice\n' >"$work/scopes"
+check "#353 review 2: during a move both orchestrator scopes belong in the fleet's slice" "$(DOC_SLICES="$work/slices" DOC_SCOPES="$work/scopes" doctor | grep -c '^ok   memory cap')" "1"
+# A stale orchestrator.pane naming a worker's pane: its scope stays a worker's.
+printf '0::/user.slice/user-1.slice/user@1.service/fleet.slice/fleet-workers.slice/fleet-w-5.scope\n' >"$work/dproc/4242/cgroup"
+printf 'fleet-w-5.scope 10 8745\nfleet-heph-12.scope 10 8745 fleet.slice\n' >"$work/scopes"
+check "#353 review 3: a worker's scope that a stale orchestrator.pane names is still a worker's" "$(DOC_SLICES="$work/slices" DOC_SCOPES="$work/scopes" doctor | grep -c '^ok   memory cap')" "1"
+rm -f "$work/dproc/4242/cgroup"
+# Scopes whose names date them before the slices' units were first written warn; one since fails.
+mkdir -p "$work/dunits"; printf 'old\n' >"$work/dunits/fleet.slice"
+born=$(stat -c %W "$work/dunits/fleet.slice"); [[ $born =~ ^[1-9][0-9]*$ ]] || born=$(stat -c %Y "$work/dunits/fleet.slice")
+printf 'fleet-a-%s.scope 1 8745 app.slice\nfleet-b-%s.scope 1 8745\n' "$((born - 1))" "$((born + 1))" >"$work/scopes"
+check "#353 review 2: a scope started before the slices, outside them, warns (it moves at its next fresh start)" \
+  "$(DOC_SLICES="$work/slices" DOC_SCOPES="$work/scopes" doctor | grep 'memory cap')" \
+  "warn memory cap: started before the slices, outside them: fleet-a-$((born - 1)) in app.slice (each moves at its next fresh start)"
+printf 'fleet-a-%s.scope 1 8745 app.slice\n' "$((born + 1))" >"$work/scopes"
+check "#353 review 2: one started since fails" "$(DOC_SLICES="$work/slices" DOC_SCOPES="$work/scopes" doctor | grep 'memory cap')" \
+  "FAIL memory cap: outside their slice: fleet-a-$((born + 1)) in app.slice"
+# A resize rewrites the unit in place (install's unit()): the slices keep their first date.
+if [[ $(stat -c %W "$work/dunits/fleet.slice") =~ ^[1-9][0-9]*$ ]]; then
+  printf 'resized\n' >"$work/dunits/fleet.slice"; touch -d "@$((born + 100))" "$work/dunits/fleet.slice"
+  check "#353 review 5: after a resize, a scope astray since the first install still fails" "$(DOC_SLICES="$work/slices" DOC_SCOPES="$work/scopes" doctor | grep 'memory cap')" \
+    "FAIL memory cap: outside their slice: fleet-a-$((born + 1)) in app.slice"
+else
+  echo "  skip #353 review 5: this filesystem keeps no birth times"
+fi
+rm -rf -- "${work:?}/dunits"
+# A MemTotal fixture as a file: doctor reads MemTotal more than once.
+memfile() { printf 'MemTotal: %s kB\n' "$1" >"$work/meminfo-$1"; printf '%s' "$work/meminfo-$1"; }
+check "#353 review 2: caps sized for another machine warn (the fixture's 9948 MiB gives 8412)" \
+  "$(FLEET_MEMINFO=$(memfile 8388608) DOC_SLICES="$work/slices" doctor | grep 'memory cap')" \
+  "warn memory cap: fleet.slice's 8412 MiB was sized for another MemTotal or earlyoom line; this machine's is 6656 MiB: fleet install resizes the slices"
+check "#353 review 4: a memory= 300 MiB smaller warns (its old cap would let earlyoom act first)" \
+  "$(FLEET_MEMINFO=$(memfile 9879552) DOC_SLICES="$work/slices" doctor | grep -c '^warn memory cap: fleet.slice.s 8412 MiB was sized')" "1"
+check "#353 review 3: a kernel update's few MiB pass" \
+  "$(FLEET_MEMINFO=$(memfile 10180000) DOC_SLICES="$work/slices" doctor | grep -c '^ok   memory cap')" "1"
+check "#353 review 2: a systemctl that does not answer is said so, not called a missing cap" \
+  "$(DOC_SLICES="$work/slices" DOC_SHOW_FAILS=1 doctor | grep 'memory cap')" \
+  "warn memory cap: could not read the slices: systemctl --user did not answer"
 check "no Tailscale Serve fails" "$(grep -c '^FAIL phone wall over Tailscale: Tailscale Serve is not set up' <<<"$out")" "1"
 check "and the exit is non-zero" "$code" "1"
 check "#244: hooks and cast never installed fail, named" "$(grep '^FAIL installed copies' <<<"$out" | grep -c 'make install-fleet: differ from .*: klepsydra-fleet.sh .*klepsydra-cast.json$')" "1"
@@ -1063,6 +1194,8 @@ session_file o1 "$o" https://claude.ai/code/session_01O
 t set-hook -g pane-died "run-shell ': klepsydra-pane-died.sh'"
 # Readings 30 s old as of this run, however long the cases above took.
 jq -n --argjson at "$(( $(date +%s) - 30 ))" '{usage: [{observed_at: $at}]}' >"$work/fleet.json"
+# Both memory slices capped, as fleet install leaves them (#353).
+export DOC_SLICES="$work/slices"
 out=$(DOC_UP=http DOC_SERVE="https://desk.tail1.ts.net (tailnet only)" doctor); code=$?
 # Which rows are not ok, not how many are: a new check that passes here breaks no case.
 notok() { grep -v '^ok ' | cut -d: -f1 | paste -sd'|'; }
@@ -1272,6 +1405,27 @@ check "#292 review 4: an install on WSL passes WSL_DISTRO_NAME to the doctor's a
   "$(grep -c '^Environment=.*"WSL_DISTRO_NAME=Test"' "$iw/u/fleet-doctor.service" "$iw/u/fleet-tmux-watch.service" | cut -d: -f2 | paste -sd' ')" "1 1"
 FLEET_STATE="$inst/s2" FLEET_UNITS="$inst/u2" FLEET_BIN="$inst/b2" FLEET_HOOK_DIR="$inst/c2" bash "$here/install.sh" --dry-run --force >"$work/dry" 2>/dev/null
 check "a dry run says what it would do and changes nothing" "$(grep -c '^would' "$work/dry" | sed 's/^[1-9][0-9]*$/some/') $(find "$inst" -mindepth 1 -maxdepth 1 -printf '%f\n' | sort | tr '\n' ' ')" "some bin claude state units "
+# #353: the fleet's slice and the workers' inside it, sized from MemTotal (the
+# fixture's 9948 MiB) less the 1536 MiB margin, and that less the orchestrator's
+# peak for the workers; MemoryMax only.
+mkdir -p "$inst/sl"; printf '811\n' >"$inst/sl/orchestrator.mem"
+slice_inst() { FLEET_STATE="$inst/sl" FLEET_UNITS="$inst/slu" FLEET_BIN="$inst/slb" FLEET_HOOK_DIR="$inst/slc" FLEET_LOG="$inst/sl.log" \
+  bash "$here/install.sh" --force --no-cutover >/dev/null 2>&1; echo "rc=$?"; }
+check "#353: install writes both slices, sized from MemTotal, the margin and the orchestrator's peak" \
+  "$(slice_inst) $(grep -h '^Memory' "$inst/slu/fleet.slice" "$inst/slu/fleet-workers.slice" | paste -sd' ')" \
+  "rc=0 MemoryAccounting=yes MemoryMax=8412M MemoryAccounting=yes MemoryMax=7601M"
+check "#353: and logs the sizes" "$(jq -r 'select(.message == "memory slices sized") | "\(.fleet_mb) \(.workers_mb) \(.orchestrator_mb) \(.margin_mb)"' "$inst/sl.log")" "8412 7601 811 1536"
+touch -d @1794400000 "$inst/slu/fleet.slice"
+check "#353 review 2: an install that changes no unit leaves its time" \
+  "$(slice_inst) $(stat -c %Y "$inst/slu/fleet.slice")" "rc=0 1794400000"
+# Doctor dates the slices by the unit's birth, so a resize must rewrite it in place.
+ino=$(stat -c %i "$inst/slu/fleet.slice")
+printf 'MemTotal:       12000000 kB\n' >"$work/meminfo-big"
+check "#353 review 5: a resize rewrites the unit in place (same file, new cap: doctor keeps its first date)" \
+  "$(FLEET_MEMINFO="$work/meminfo-big" slice_inst) $(stat -c %i "$inst/slu/fleet.slice") $(grep '^MemoryMax=' "$inst/slu/fleet.slice")" "rc=0 $ino MemoryMax=10182M"
+printf 'MemTotal:       1572864 kB\n' >"$work/meminfo-small"
+check "#353: a machine too small for the orchestrator's peak fails the install, saying so" \
+  "$(FLEET_MEMINFO="$work/meminfo-small" slice_inst) $(jq -r 'select(.level == "ERROR") | .message' "$inst/sl.log" | grep -c '^memory slices not sized')" "rc=1 1"
 cat >"$work/sc-live" <<'EOF'
 #!/usr/bin/env bash
 # systemctl with the resume service running: logs each call.
@@ -3522,7 +3676,7 @@ FLEET_SUCCEEDS=11111111-2222-4333-8444-555555555555 FLEET_SETTINGS='' FLEET_SCOP
   FLEET_CLAUDE="python3 -I $fake $work/nosettings.json $work/nosettings.log" bash "$here/launch.sh" nosettings "$work/task.src" >/dev/null 2>&1
 check "#226: a move's successor id reaches the session; anything else is dropped" \
   "$(grep -c 'KLEPSYDRA_SUCCEEDS=11111111-2222-4333-8444-555555555555 ' "$work/cmd")" "1"
-check "#183 review 2: keryx's switch is never inherited from tmux's environment" "$(grep -c '^env -u KERYX_ENABLED ' "$work/cmd")" "1"
+check "#183 review 2: keryx's switch is never inherited from tmux's environment" "$(grep -c "^bash -c '.*' fleet-oom env -u KERYX_ENABLED " "$work/cmd")" "1"
 check "#309: the orchestrator's launch (no worker settings) sets no worker mark, and drops an inherited one" "$(grep -c 'KLEPSYDRA_WORKER=' "$work/cmd") $(grep -c -- '-u KLEPSYDRA_WORKER ' "$work/cmd")" "0 1"
 check "#310 review 1: the launcher gets none of the launch's FLEET_* settings, so a server it starts hands them to no later pane" \
   "$(cat "$work/launcher-env")" ""
