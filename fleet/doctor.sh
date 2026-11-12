@@ -455,15 +455,15 @@ elif [[ -n $uncapped ]]; then
   report ok "task caps" "no task cap: ${uncapped% }" uncapped="${uncapped% }"
 fi
 # The fleet's memory slices (#353): both capped, the workers' inside the fleet's
-# and below it, and each fleet scope in its own: the orchestrator's (its
-# claude's scope, or any named for it, as during a move when a new one starts
-# before orchestrator.pane changes) in FLEET_SLICE, every other in
-# FLEET_WORKER_SLICE. A scope started before the slices' units were last
+# and below it, and each fleet scope in its own: the orchestrator's (any scope
+# named for it, as launch.sh places it by the same launch; never by its pane,
+# which a stale orchestrator.pane can hand to a worker) in FLEET_SLICE, every
+# other in FLEET_WORKER_SLICE. A scope started before the slices' units were last
 # written (its name ends in its start time) keeps its place until its next
 # fresh start, so it warns; one started since fails. The orchestrator's daily
 # peak is recorded here, every 5 minutes, for fleet install.
-hcg="" heph_scope=""
-hp=$(heph_pid) && hcg=$(proc_cgroup "$hp") && heph_scope=${hcg##*/}
+hcg=""
+hp=$(heph_pid) && hcg=$(proc_cgroup "$hp")
 heph_peak=$(orch_mem_peak record "$hcg")
 # A cap under 1 MiB reads as none: systemd takes MemoryMax=0 as it is written.
 bytes_mib() { [[ $1 =~ ^[0-9]+$ ]] && (( $1 >= 1048576 )) && printf '%s' "$(($1 / 1048576))"; }
@@ -476,16 +476,18 @@ if [[ -z $nocap ]]; then
   [[ ${in_slice[$FLEET_WORKER_SLICE]-} == "$FLEET_SLICE" ]] || shape="$FLEET_WORKER_SLICE sits in ${in_slice[$FLEET_WORKER_SLICE]:-no slice}, not $FLEET_SLICE"
   (( worker_cap < fleet_cap )) || shape+="${shape:+; }$FLEET_WORKER_SLICE's $worker_cap MiB is not below $FLEET_SLICE's $fleet_cap MiB"
   # Sized for this machine: a smaller memory= in .wslconfig, or a higher earlyoom
-  # line, leaves an old cap above what WSL can give.
+  # line, leaves an old cap above what WSL can give, and a larger one leaves room
+  # unused; a gap under the margin's rounding step (a kernel update's few MiB) passes.
   if total=$(mem_total_mib); then
     fits=$((total - $(fleet_slice_margin "$total")))
-    (( fleet_cap == fits )) || sized="$FLEET_SLICE's $fleet_cap MiB was sized for another machine; this one's is $fits MiB"
+    (( fleet_cap - fits >= FLEET_SLICE_STEP_MB || fits - fleet_cap >= FLEET_SLICE_STEP_MB )) &&
+      sized="$FLEET_SLICE's $fleet_cap MiB was sized for another MemTotal or earlyoom line; this machine's is $fits MiB"
   fi
 fi
 for unit in "${scopes[@]}"; do
   [[ ${active[$unit]-} == active ]] || continue
   want=$FLEET_WORKER_SLICE
-  if [[ $unit == "$heph_scope" || $unit =~ ^fleet-${FLEET_ORCH_NAME}-[0-9]+[.]scope$ ]]; then want=$FLEET_SLICE; fi
+  [[ $unit =~ ^fleet-${FLEET_ORCH_NAME}-[0-9]+[.]scope$ ]] && want=$FLEET_SLICE
   [[ ${in_slice[$unit]-} == "$want" ]] && continue
   began=${unit%.scope} began=${began##*-}
   if [[ $began =~ ^[0-9]+$ ]] && (( began < sliced )); then before+="${unit%.scope} in ${in_slice[$unit]:-no slice}, "

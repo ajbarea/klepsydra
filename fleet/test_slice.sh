@@ -94,6 +94,12 @@ check "earlyoom's own default, 10%, with no -m" "$(FLEET_EARLYOOM_CONF=<(echo 'E
 check "-m with no space, and a kill percent after it" "$(FLEET_EARLYOOM_CONF=<(echo 'EARLYOOM_ARGS="-s 1 -m3,2"') fleet_slice_margin 9948)" "1536"
 check "a commented line is not read" "$(FLEET_EARLYOOM_CONF=<(echo '#EARLYOOM_ARGS="-m 50"') fleet_slice_margin 9948)" "2048"
 check "no earlyoom config: WSL's own only" "$(FLEET_EARLYOOM_CONF=$work/none fleet_slice_margin 9948)" "1024"
+# earlyoom(1): -M is KiB, and with -m too the lower line is used.
+check "-M alone: its KiB" "$(FLEET_EARLYOOM_CONF=<(echo 'EARLYOOM_ARGS="-M 1048576"') fleet_slice_margin 32000)" "2048"
+check "-m and -M: the lower (-M here)" "$(FLEET_EARLYOOM_CONF=<(echo 'EARLYOOM_ARGS="-m 50 -M 1048576"') fleet_slice_margin 32000)" "2048"
+check "-m and -M: the lower (-m here)" "$(FLEET_EARLYOOM_CONF=<(echo 'EARLYOOM_ARGS="-m 5 -M 2097152"') fleet_slice_margin 9948)" "1536"
+check "the last EARLYOOM_ARGS line counts, as the shell reads it" "$(FLEET_EARLYOOM_CONF=<(printf 'EARLYOOM_ARGS="-m 50"\nEARLYOOM_ARGS="-m 2"\n') fleet_slice_margin 9948)" "1536"
+check "an indented or exported line counts too" "$(FLEET_EARLYOOM_CONF=<(printf '  export EARLYOOM_ARGS="-m 2"\n') fleet_slice_margin 9948)" "1536"
 
 echo "caps"
 printf 'MemTotal:       10186856 kB\nMemAvailable:    5151140 kB\n' >"$work/meminfo"
@@ -105,6 +111,9 @@ rm -f "$FLEET_STATE/orchestrator.mem"
 check "no reading of the orchestrator: its scope's own cap stands in" "$(fleet_slice_caps) | $(MEM_MAX=3G fleet_slice_caps)" "8412 3292 1536 | 8412 5340 1536"
 printf 'MemTotal:       1572864 kB\n' >"$work/meminfo"
 check "nothing left for the workers: fails" "$(fleet_slice_caps || echo none)" "none"
+printf 'MemTotal:       10186856 kB\n' >"$work/meminfo"; printf '0\n' >"$FLEET_STATE/orchestrator.mem"
+check "a peak of 0 (all to the workers, no room for the orchestrator): fails" "$(fleet_slice_caps || echo none)" "none"
+rm -f "$FLEET_STATE/orchestrator.mem"; printf 'MemTotal:       1572864 kB\n' >"$work/meminfo"
 printf 'nothing\n' >"$work/meminfo"
 check "no MemTotal: fails" "$(fleet_slice_caps || echo none)" "none"
 unset FLEET_MEMINFO

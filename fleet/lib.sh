@@ -667,6 +667,9 @@ FLEET_WORKER_SLICE=${FLEET_WORKER_SLICE:-${FLEET_SLICE%.slice}-workers.slice}
 # used memory less every fleet scope's kept memory (cgroup_kept_mib) was 847 MiB
 # (kernel, WSL's init, system services, the tmux server).
 FLEET_SLICE_BASE_MB=847
+# The margin's rounding step in MiB: a whole 512 keeps the caps steady while
+# MemTotal moves by a kernel update's few MiB.
+FLEET_SLICE_STEP_MB=512
 # earlyoom's config, whose -m PERCENT is the free-memory line it kills at.
 FLEET_EARLYOOM_CONF=${FLEET_EARLYOOM_CONF:-/etc/default/earlyoom}
 # Sourced as BASH_ENV by every shell a fleet claude starts (#353).
@@ -748,7 +751,8 @@ orch_mem_peak() { # [record|-] [CG]
   if (( $# > 1 )); then cg=$2; else cg=""; pid=$(heph_pid) && cg=$(proc_cgroup "$pid"); fi
   [[ $cg =~ /fleet-${FLEET_ORCH_NAME}-[0-9]+[.]scope$ ]] && now=$(cgroup_kept_mib "$cg")
   printf -v today '%(%F)T' -1
-  printf -v since '%(%F)T' "$((EPOCHSECONDS - (FLEET_ORCH_PEAK_DAYS - 1) * 86400))"
+  # By calendar day, so a DST change never makes the window a day longer.
+  since=$(date -d "$today -$((FLEET_ORCH_PEAK_DAYS - 1)) days" +%F)
   [[ ${1:-} == record ]] && { exec {lk}>>"$f.lock" && flock -w 5 "$lk"; } 2>/dev/null
   # A bare number (the first format) counts as today's.
   days=$({ cat -- "$f" 2>/dev/null; } | awk -v today="$today" -v since="$since" -v now="$now" '
@@ -770,22 +774,22 @@ orch_mem_peak() { # [record|-] [CG]
 }
 
 # MiB of TOTAL the slices leave outside them (#353): what WSL keeps outside the
-# fleet plus earlyoom's line, rounded up to a whole 512 MiB, so a fleet at its
+# fleet plus earlyoom's line, rounded up to a whole FLEET_SLICE_STEP_MB, so a fleet at its
 # cap leaves earlyoom's line clear and the kernel's cap acts first. earlyoom's
 # line (earlyoom(1)): -m PERCENT of MemTotal, -M KiB, the lower of the two when
 # both are given, 10% with neither; none when earlyoom has no config. As the
-# config is a shell file, its last EARLYOOM_ARGS line counts.
+# config is a shell file, its last EARLYOOM_ARGS line counts (indented or exported too).
 fleet_slice_margin() { # TOTAL
   local line args="" pct="" kib="" line_mb=0 m
   if [[ -r $FLEET_EARLYOOM_CONF ]]; then
-    while IFS= read -r line; do [[ $line == EARLYOOM_ARGS=* ]] && args=$line; done <"$FLEET_EARLYOOM_CONF"
+    while IFS= read -r line; do [[ $line =~ ^[[:space:]]*(export[[:space:]]+)?EARLYOOM_ARGS= ]] && args=$line; done <"$FLEET_EARLYOOM_CONF"
     [[ $args =~ (^|[^[:alnum:]-])-m\ *([0-9]+) ]] && pct=${BASH_REMATCH[2]}
     [[ $args =~ (^|[^[:alnum:]-])-M\ *([0-9]+) ]] && kib=${BASH_REMATCH[2]}
     [[ -z $pct && -z $kib ]] && pct=10
     line_mb=$(( $1 * ${pct:-100} / 100 ))
     [[ -n $kib ]] && m=$((kib / 1024)) && (( m < line_mb )) && line_mb=$m
   fi
-  printf '%s' "$(( (FLEET_SLICE_BASE_MB + line_mb + 511) / 512 * 512 ))"
+  printf '%s' "$(( (FLEET_SLICE_BASE_MB + line_mb + FLEET_SLICE_STEP_MB - 1) / FLEET_SLICE_STEP_MB * FLEET_SLICE_STEP_MB ))"
 }
 
 # MiB of this machine's memory (MemTotal, which follows .wslconfig's memory=).

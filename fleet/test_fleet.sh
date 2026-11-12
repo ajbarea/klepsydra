@@ -1139,6 +1139,10 @@ check "#353 review: a cap of 0, or under 1 MiB, reads as none" "$(DOC_SLICES="$w
 printf '0::/user.slice/user-1.slice/user@1.service/fleet.slice/fleet-heph-9.scope\n' >"$work/dproc/4242/cgroup"
 printf 'fleet-heph-9.scope 10 8745 fleet.slice\nfleet-heph-12.scope 10 8745 fleet.slice\n' >"$work/scopes"
 check "#353 review 2: during a move both orchestrator scopes belong in the fleet's slice" "$(DOC_SLICES="$work/slices" DOC_SCOPES="$work/scopes" doctor | grep -c '^ok   memory cap')" "1"
+# A stale orchestrator.pane naming a worker's pane: its scope stays a worker's.
+printf '0::/user.slice/user-1.slice/user@1.service/fleet.slice/fleet-workers.slice/fleet-w-5.scope\n' >"$work/dproc/4242/cgroup"
+printf 'fleet-w-5.scope 10 8745\nfleet-heph-12.scope 10 8745 fleet.slice\n' >"$work/scopes"
+check "#353 review 3: a worker's scope that a stale orchestrator.pane names is still a worker's" "$(DOC_SLICES="$work/slices" DOC_SCOPES="$work/scopes" doctor | grep -c '^ok   memory cap')" "1"
 rm -f "$work/dproc/4242/cgroup"
 # Scopes whose names date them before the slices' units were written warn; one since fails.
 mkdir -p "$work/dunits"; touch -d @1794400000 "$work/dunits/fleet.slice"
@@ -1152,7 +1156,9 @@ check "#353 review 2: one started since fails" "$(DOC_SLICES="$work/slices" DOC_
 rm -rf -- "${work:?}/dunits"
 check "#353 review 2: caps sized for another machine warn (the fixture's 9948 MiB gives 8412)" \
   "$(FLEET_MEMINFO=<(printf 'MemTotal: 8388608 kB\n') DOC_SLICES="$work/slices" doctor | grep 'memory cap')" \
-  "warn memory cap: fleet.slice's 8412 MiB was sized for another machine; this one's is 6656 MiB: fleet install resizes the slices"
+  "warn memory cap: fleet.slice's 8412 MiB was sized for another MemTotal or earlyoom line; this machine's is 6656 MiB: fleet install resizes the slices"
+check "#353 review 3: a kernel update's few MiB pass" \
+  "$(FLEET_MEMINFO=<(printf 'MemTotal: 10180000 kB\n') DOC_SLICES="$work/slices" doctor | grep -c '^ok   memory cap')" "1"
 check "#353 review 2: a systemctl that does not answer is said so, not called a missing cap" \
   "$(DOC_SLICES="$work/slices" DOC_SHOW_FAILS=1 doctor | grep 'memory cap')" \
   "warn memory cap: could not read the slices: systemctl --user did not answer"
