@@ -57,19 +57,29 @@ check "a process's cgroup, from its /proc entry" "$(proc_cgroup 4242)" "$scope"
 heph=4242
 heph_pid() { [[ -n $heph ]] && printf '%s' "$heph"; }
 check "the live reading, not kept without record" "$(orch_mem_peak) $(cat "$FLEET_STATE/orchestrator.mem" 2>/dev/null || echo unkept)" "560 unkept"
-check "and kept with it" "$(orch_mem_peak record) $(cat "$FLEET_STATE/orchestrator.mem")" "560 560"
+today=$(date +%F)
+check "and kept with it, as today's" "$(orch_mem_peak record) $(cat "$FLEET_STATE/orchestrator.mem")" "560 $today 560"
 printf 'anon 104857600\nkernel 0\nshmem 0\n' >"$cgr$scope/memory.stat"
-check "a lower reading keeps the peak" "$(orch_mem_peak record) $(cat "$FLEET_STATE/orchestrator.mem")" "560 560"
+check "a lower reading keeps the peak" "$(orch_mem_peak record) $(cat "$FLEET_STATE/orchestrator.mem")" "560 $today 560"
 printf 'anon 1073741824\nkernel 0\nshmem 0\n' >"$cgr$scope/memory.stat"
-check "a higher one raises it" "$(orch_mem_peak record) $(cat "$FLEET_STATE/orchestrator.mem")" "1024 1024"
+check "a higher one raises it" "$(orch_mem_peak record) $(cat "$FLEET_STATE/orchestrator.mem")" "1024 $today 1024"
 heph=""
 check "no live orchestrator: the kept peak" "$(orch_mem_peak)" "1024"
 heph=4242; printf '0::/user.slice/user-1.slice/user@1.service/app.slice/app-tmux.slice/tmux-1.scope\n' >"$work/proc/4242/cgroup"
 mkdir -p "$cgr/user.slice/user-1.slice/user@1.service/app.slice/app-tmux.slice/tmux-1.scope"
 printf 'anon 9663676416\n' >"$cgr/user.slice/user-1.slice/user@1.service/app.slice/app-tmux.slice/tmux-1.scope/memory.stat"
-check "a claude outside a fleet scope is never read (that cgroup holds the whole tmux server)" "$(orch_mem_peak record) $(cat "$FLEET_STATE/orchestrator.mem")" "1024 1024"
+check "a claude outside a fleet scope is never read (that cgroup holds the whole tmux server)" "$(orch_mem_peak record) $(cat "$FLEET_STATE/orchestrator.mem")" "1024 $today 1024"
 rm -f "$FLEET_STATE/orchestrator.mem"; heph=""
 check "neither: fails" "$(orch_mem_peak || echo none)" "none"
+# The review's cases: a worker's scope (a stale orchestrator.pane), old days, the first format.
+wscope=/user.slice/user-1.slice/user@1.service/fleet.slice/fleet-workers.slice/fleet-w-3.scope
+mkdir -p "$cgr$wscope"; printf 'anon 9663676416\n' >"$cgr$wscope/memory.stat"
+check "a worker's scope is never read as the orchestrator's" "$(orch_mem_peak record "$wscope" || echo none) $(cat "$FLEET_STATE/orchestrator.mem" 2>/dev/null || echo unkept)" "none unkept"
+printf '2026-01-01 9000\n%s 300\n%s 200\n' "$(date -d '-6 days' +%F)" "$(date -d '-7 days' +%F)" >"$FLEET_STATE/orchestrator.mem"
+check "days older than the window drop out, at the read and from the file" "$(orch_mem_peak record '') | $(cat "$FLEET_STATE/orchestrator.mem")" "300 | $(date -d '-6 days' +%F) 300"
+printf '750\n' >"$FLEET_STATE/orchestrator.mem"
+check "a bare number (the first format) counts as today's" "$(orch_mem_peak record '') $(cat "$FLEET_STATE/orchestrator.mem")" "750 $today 750"
+rm -f "$FLEET_STATE/orchestrator.mem"
 heph=4242; printf '0::%s\n' "$scope" >"$work/proc/4242/cgroup"
 check "a cgroup given is read without the lookup" "$(heph=""; orch_mem_peak - "$scope")" "1024"
 check "an empty one means no live orchestrator" "$(orch_mem_peak - '' || echo none)" "none"
@@ -106,7 +116,8 @@ check "the orchestrator's in the fleet's" "$(fleet_slice_opts orchestrator)" "--
 # shellcheck disable=SC2016 # $1 and the name are the inner shell's
 check "the workers' slice nests in the fleet's by name" "$(env -u FLEET_WORKER_SLICE FLEET_SLICE=x.slice bash -c '. "$1"; echo "$FLEET_WORKER_SLICE"' _ "$here/lib.sh")" "x-workers.slice"
 check "BASH_ENV names oom-tool.sh" "$(fleet_oom_env)" "BASH_ENV=$here/oom-tool.sh "
-check "no BASH_ENV when the file is missing (bash would complain in every shell)" "$(FLEET_OOM_TOOL=$work/none fleet_oom_env)" ""
+check "BASH_ENV even while the file is missing: bash skips it silently and ranks again once it is back" \
+  "$(FLEET_OOM_TOOL=$work/none fleet_oom_env)| $(BASH_ENV=$work/none bash -c 'echo ran' 2>&1)" "BASH_ENV=$work/none | ran"
 rank() { # the OOM rank of a shell started under BASH_ENV, from a caller at rank $1
   bash -c "echo $1 >/proc/self/oom_score_adj; $(fleet_oom_env)bash -c 'cat /proc/self/oom_score_adj'"
 }

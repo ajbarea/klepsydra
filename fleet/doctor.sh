@@ -13,8 +13,8 @@
 # time it is seen, while the row stays until --prune; each config folder in FLEET_ACCOUNTS
 # is logged in and the second ones match the first; the copies in ~/.claude
 # (hooks, status line, launcher, cast) match the checkout; both memory slices
-# have a MemoryMax and every fleet scope sits in its slice (a FAIL), and the
-# orchestrator's peak fits the room the workers' slice leaves it (a warning).
+# have a MemoryMax, nest, and every fleet scope started since sits in its slice
+# (a FAIL), and the caps fit this machine and the orchestrator's peak (a warning).
 # Briefs whose shared rules
 # are out of date, and a second folder not logged in, are warnings.
 # With `--json FILE` (the fleet-doctor timer) it also writes the checks to FILE
@@ -455,39 +455,55 @@ elif [[ -n $uncapped ]]; then
   report ok "task caps" "no task cap: ${uncapped% }" uncapped="${uncapped% }"
 fi
 # The fleet's memory slices (#353): both capped, the workers' inside the fleet's
-# and below it, and each fleet scope in its own (the orchestrator's in
-# FLEET_SLICE, every other in FLEET_WORKER_SLICE). The orchestrator's scope is
-# its claude's; with no pid on record (a restart), the one named for it
-# (recover.sh and resume-at-reset.sh launch it as heph). A scope started
-# before the slices existed keeps its place until its next fresh start. The
-# orchestrator's peak is recorded here, every 5 minutes, for fleet install.
+# and below it, and each fleet scope in its own: the orchestrator's (its
+# claude's scope, or any named for it, as during a move when a new one starts
+# before orchestrator.pane changes) in FLEET_SLICE, every other in
+# FLEET_WORKER_SLICE. A scope started before the slices' units were last
+# written (its name ends in its start time) keeps its place until its next
+# fresh start, so it warns; one started since fails. The orchestrator's daily
+# peak is recorded here, every 5 minutes, for fleet install.
 hcg="" heph_scope=""
 hp=$(heph_pid) && hcg=$(proc_cgroup "$hp") && heph_scope=${hcg##*/}
 heph_peak=$(orch_mem_peak record "$hcg")
 # A cap under 1 MiB reads as none: systemd takes MemoryMax=0 as it is written.
 bytes_mib() { [[ $1 =~ ^[0-9]+$ ]] && (( $1 >= 1048576 )) && printf '%s' "$(($1 / 1048576))"; }
 fleet_cap=$(bytes_mib "${mem_cap[$FLEET_SLICE]-}") worker_cap=$(bytes_mib "${mem_cap[$FLEET_WORKER_SLICE]-}")
-nocap="" astray="" shape=""
+sliced=$(stat -c %Y -- "$FLEET_UNIT_DIR/$FLEET_SLICE" 2>/dev/null) || sliced=0
+nocap="" astray="" before="" shape="" sized=""
 [[ -n $fleet_cap ]] || nocap+="$FLEET_SLICE "
 [[ -n $worker_cap ]] || nocap+="$FLEET_WORKER_SLICE "
 if [[ -z $nocap ]]; then
   [[ ${in_slice[$FLEET_WORKER_SLICE]-} == "$FLEET_SLICE" ]] || shape="$FLEET_WORKER_SLICE sits in ${in_slice[$FLEET_WORKER_SLICE]:-no slice}, not $FLEET_SLICE"
   (( worker_cap < fleet_cap )) || shape+="${shape:+; }$FLEET_WORKER_SLICE's $worker_cap MiB is not below $FLEET_SLICE's $fleet_cap MiB"
+  # Sized for this machine: a smaller memory= in .wslconfig, or a higher earlyoom
+  # line, leaves an old cap above what WSL can give.
+  if total=$(mem_total_mib); then
+    fits=$((total - $(fleet_slice_margin "$total")))
+    (( fleet_cap == fits )) || sized="$FLEET_SLICE's $fleet_cap MiB was sized for another machine; this one's is $fits MiB"
+  fi
 fi
 for unit in "${scopes[@]}"; do
   [[ ${active[$unit]-} == active ]] || continue
   want=$FLEET_WORKER_SLICE
-  if [[ $unit == "$heph_scope" ]] || { [[ -z $heph_scope ]] && [[ $unit =~ ^fleet-heph-[0-9]+[.]scope$ ]]; }; then want=$FLEET_SLICE; fi
-  [[ ${in_slice[$unit]-} == "$want" ]] || astray+="${unit%.scope} in ${in_slice[$unit]:-no slice}, "
+  if [[ $unit == "$heph_scope" || $unit =~ ^fleet-${FLEET_ORCH_NAME}-[0-9]+[.]scope$ ]]; then want=$FLEET_SLICE; fi
+  [[ ${in_slice[$unit]-} == "$want" ]] && continue
+  began=${unit%.scope} began=${began##*-}
+  if [[ $began =~ ^[0-9]+$ ]] && (( began < sliced )); then before+="${unit%.scope} in ${in_slice[$unit]:-no slice}, "
+  else astray+="${unit%.scope} in ${in_slice[$unit]:-no slice}, "; fi
 done
-if [[ -n $nocap || -n $shape || -n $astray ]]; then
+if [[ -z ${mem_cap[$FLEET_SLICE]+x} && -z ${mem_cap[$FLEET_WORKER_SLICE]+x} ]]; then
+  report warn "memory cap" "could not read the slices: systemctl --user did not answer"
+elif [[ -n $nocap || -n $shape || -n $astray ]]; then
   why="${nocap:+no MemoryMax on ${nocap% } (fleet install writes it)}"
   [[ -n $shape ]] && why+="${why:+; }$shape (fleet install writes both)"
-  [[ -n $astray ]] && why+="${why:+; }outside their slice: ${astray%, } (each moves at its next fresh start)"
+  [[ -n $astray ]] && why+="${why:+; }outside their slice: ${astray%, }"
   report FAIL "memory cap" "$why" no_cap="${nocap% }" shape="$shape" astray="${astray%, }"
-elif [[ -n $heph_peak ]] && (( heph_peak > fleet_cap - worker_cap )); then
-  report warn "memory cap" "the orchestrator's peak, $heph_peak MiB, passed the $((fleet_cap - worker_cap)) MiB $FLEET_WORKER_SLICE leaves it: fleet install resizes the slices" \
-    peak_mb="$heph_peak" fleet_mb="$fleet_cap" workers_mb="$worker_cap"
+elif [[ -n $sized || -n $before ]] || { [[ -n $heph_peak ]] && (( heph_peak > fleet_cap - worker_cap )); }; then
+  why="$sized${sized:+: fleet install resizes the slices}"
+  [[ -n $heph_peak ]] && (( heph_peak > fleet_cap - worker_cap )) &&
+    why+="${why:+; }the orchestrator's peak, $heph_peak MiB, passed the $((fleet_cap - worker_cap)) MiB $FLEET_WORKER_SLICE leaves it: fleet install resizes the slices"
+  [[ -n $before ]] && why+="${why:+; }started before the slices, outside them: ${before%, } (each moves at its next fresh start)"
+  report warn "memory cap" "$why" peak_mb="${heph_peak:-}" fleet_mb="$fleet_cap" workers_mb="$worker_cap" before="${before%, }"
 else
   of_heph=""
   [[ -n $heph_peak ]] && of_heph=", the orchestrator's peak $heph_peak MiB"

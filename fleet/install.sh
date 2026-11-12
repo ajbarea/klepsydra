@@ -27,7 +27,7 @@ ilog() { if (( dry )); then printf '%s %s %s\n' "$(date '+%F %T')" "$1" "${*:2}"
 SCRIPTS=(launch.sh delegate.sh engines.sh fresh-now.sh resume-at-reset.sh watch-panes.sh tmux-watch.sh memfrag-log.sh relaunch-fresh.sh done.sh send.sh voices.sh brief.sh doctor.sh cutover.sh accounts-sync.sh recover.sh pause.sh registry-event.sh sync-briefing.sh ci_watch.py worker-settings.json)
 # Scripts the checkout no longer has: their links in the state folder go (#326).
 RETIRED=(agora.py)
-UNITS=${FLEET_UNITS:-$HOME/.config/systemd/user}
+UNITS=$FLEET_UNIT_DIR
 BIN=${FLEET_BIN:-$HOME/.local/bin}
 archive=$FLEET_STATE/archive/fleet-scripts-$(date +%Y%m%d)
 
@@ -92,8 +92,11 @@ do_ ln -sfn -- "$here/fleet" "$BIN/fleet"
 
 
 # The PATH the services run with: this shell's, as `systemd-run -E PATH` gave them.
+# A unit already as written is left alone, so its time says when it last
+# changed (doctor dates the slices by it, #353).
 unit() { # NAME BODY
-  if (( dry )); then printf 'would write %s/%s\n' "$UNITS" "$1"; else printf '%s\n' "$2" >"$UNITS/$1"; fi
+  if (( dry )); then printf 'would write %s/%s\n' "$UNITS" "$1"
+  elif [[ ! -f $UNITS/$1 || "$(<"$UNITS/$1")" != "$2" ]]; then printf '%s\n' "$2" >"$UNITS/$1"; fi
 }
 unit fleet-resume-at-reset.service "[Unit]
 Description=klepsydra fleet: resume panes stopped on a usage limit
@@ -246,7 +249,7 @@ if caps=$(fleet_slice_caps); then
   unit "$FLEET_WORKER_SLICE" "$(fleet_slice_unit "klepsydra fleet: the workers' memory, leaving the orchestrator its peak" "$workers")"
   ilog INFO "memory slices sized" fleet_mb="$all" workers_mb="$workers" orchestrator_mb="$((all - workers))" margin_mb="$margin"
 else
-  ilog ERROR "memory slices not sized: no MemTotal in /proc/meminfo, or the orchestrator's peak leaves the workers nothing"
+  ilog ERROR "memory slices not sized: no MemTotal in /proc/meminfo, no orchestrator reading and no MEM_MAX size, or the orchestrator's peak leaves the workers nothing or all" mem_max="${MEM_MAX:-5G}"
   failed=1
 fi
 # Enabling and starting is the cut-over's: a transient unit of the same name

@@ -214,7 +214,7 @@ elif (( orch_too )) && [[ -n $orch$osid ]]; then
       heph_note "was stopped by a hard shutdown of the PC" "$osid" "$HEPH" '`fleet recover` has relaunched the agents in panes.tsv.' >"$txt"
       stagger
       heph_on=$(FLEET_ACCOUNTS=$FLEET_HEPH_ACCOUNTS best_account "$(date +%s)")
-      new=$(launch heph "$txt" FLEET_SETTINGS= FLEET_ACCOUNT="${heph_on:-$FLEET_DEFAULT_CONFIG}")
+      new=$(launch "$FLEET_ORCH_NAME" "$txt" FLEET_SETTINGS= FLEET_ACCOUNT="${heph_on:-$FLEET_DEFAULT_CONFIG}")
       if [[ -n $new ]]; then
         printf '%s\n' "${new%% *}" >"$FLEET_STATE/orchestrator.pane"
         [[ $new == *" "?* ]] && printf '%s\n' "${new#* }" >"$FLEET_STATE/orchestrator.session"

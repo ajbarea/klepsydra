@@ -659,6 +659,9 @@ fleet_tasks_max() {
 # systemd-oomd, which WSL does not run), so a hungry job froze the whole slice
 # in the live test instead of being killed.
 FLEET_SLICE=${FLEET_SLICE:-fleet.slice}
+# The user units' folder fleet install writes to.
+# shellcheck disable=SC2034 # read by install.sh and doctor.sh
+FLEET_UNIT_DIR=${FLEET_UNITS:-$HOME/.config/systemd/user}
 FLEET_WORKER_SLICE=${FLEET_WORKER_SLICE:-${FLEET_SLICE%.slice}-workers.slice}
 # MiB WSL keeps outside every fleet scope. Measured 2026-11-11 on AJ's PC: WSL's
 # used memory less every fleet scope's kept memory (cgroup_kept_mib) was 847 MiB
@@ -696,12 +699,10 @@ fleet_oom_floor() {
   printf '%s ' bash -c "'{ echo 0 >/proc/self/oom_score_adj; } 2>/dev/null; exec \"\$@\"'" fleet-oom
 }
 # BASH_ENV for a fleet claude's environment (#353), so every shell it starts
-# ranks first (oom-tool.sh); nothing when the file is missing, since bash would
-# then print an error at the start of every shell.
-fleet_oom_env() {
-  [[ -r $FLEET_OOM_TOOL ]] && printf 'BASH_ENV=%q ' "$FLEET_OOM_TOOL"
-  return 0
-}
+# ranks first (oom-tool.sh). Set even while the file is missing (a checkout
+# mid-switch): bash skips a BASH_ENV it cannot read, silently, and ranks again
+# from the next shell once the file is back.
+fleet_oom_env() { printf 'BASH_ENV=%q ' "$FLEET_OOM_TOOL"; }
 
 # MiB of cgroup CG (a path under the cgroup root) the kernel cannot drop under
 # pressure: anon, shmem and kernel memory from its memory.stat. Page cache is
@@ -726,54 +727,83 @@ session_pid() { # SID
 # The orchestrator's claude process.
 heph_pid() { local sid; sid=$(live_session "$(orchestrator)") && session_pid "$sid"; }
 
-# The orchestrator's peak kept memory in MiB (#353): the higher of its scope's
-# reading now and the peak orchestrator.mem holds; with `record` (fleet doctor,
-# every 5 minutes) a higher reading is kept there. Read only from a fleet scope,
-# so a claude started bare is never sized by the tmux server's whole cgroup.
-# Fails with neither.
-# With CG (doctor, which has it already; empty: no live orchestrator) it skips the lookup.
+# The name recover.sh and resume-at-reset.sh launch the orchestrator under, so
+# its scope is fleet-heph-<time>.scope (#353).
+FLEET_ORCH_NAME=heph
+# Days of the orchestrator's daily peaks kept (#353): a week holds one whole
+# cycle of the weekly usage limits, and one spike stops counting after it.
+FLEET_ORCH_PEAK_DAYS=7
+
+# The orchestrator's peak kept memory in MiB (#353): the highest of its scope's
+# reading now and the daily peaks orchestrator.mem holds ("YYYY-MM-DD MiB" per
+# line) for the last FLEET_ORCH_PEAK_DAYS days. With `record` (fleet doctor,
+# every 5 minutes) today's line is raised and older days dropped, under a lock
+# so two doctors never write a lower value last. Read only from the
+# orchestrator's own scope, so neither a claude started bare (the tmux
+# server's whole cgroup) nor a worker's pane named by a stale orchestrator.pane
+# sizes it. With CG (doctor, which has it already; empty: no live orchestrator)
+# it skips the lookup. Fails with no reading at all.
 orch_mem_peak() { # [record|-] [CG]
-  local f=$FLEET_STATE/orchestrator.mem pid cg now was=""
-  { read -r was <"$f"; } 2>/dev/null
-  [[ $was =~ ^[0-9]+$ ]] || was=""
+  local f=$FLEET_STATE/orchestrator.mem pid cg now="" today since days peak lk=""
   if (( $# > 1 )); then cg=$2; else cg=""; pid=$(heph_pid) && cg=$(proc_cgroup "$pid"); fi
-  if [[ $cg == */fleet-*.scope ]] && now=$(cgroup_kept_mib "$cg"); then
-    if [[ -z $was ]] || (( now > was )); then
-      [[ ${1:-} == record ]] && { printf '%s\n' "$now" >"$f.$$" && mv -f -- "$f.$$" "$f"; } 2>/dev/null
-      was=$now
-    fi
+  [[ $cg =~ /fleet-${FLEET_ORCH_NAME}-[0-9]+[.]scope$ ]] && now=$(cgroup_kept_mib "$cg")
+  printf -v today '%(%F)T' -1
+  printf -v since '%(%F)T' "$((EPOCHSECONDS - (FLEET_ORCH_PEAK_DAYS - 1) * 86400))"
+  [[ ${1:-} == record ]] && { exec {lk}>>"$f.lock" && flock -w 5 "$lk"; } 2>/dev/null
+  # A bare number (the first format) counts as today's.
+  days=$({ cat -- "$f" 2>/dev/null; } | awk -v today="$today" -v since="$since" -v now="$now" '
+    NF == 1 && $1 ~ /^[0-9]+$/ { d = today; v = $1 }
+    NF == 2 && $1 ~ /^[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]$/ && $2 ~ /^[0-9]+$/ { d = $1; v = $2 }
+    d != "" && d >= since && d <= today && (!(d in m) || v + 0 > m[d]) { m[d] = v + 0 }
+    { d = "" }
+    END {
+      if (now != "" && (!(today in m) || now + 0 > m[today])) m[today] = now + 0
+      for (d in m) print d, m[d]
+    }' | sort)
+  if [[ ${1:-} == record && -n $days ]]; then
+    { printf '%s\n' "$days" >"$f.$$" && mv -f -- "$f.$$" "$f"; } 2>/dev/null
   fi
-  [[ -n $was ]] && printf '%s' "$was"
+  [[ -n $lk ]] && exec {lk}>&-
+  [[ -n $days ]] || return 1
+  peak=$(awk '$2 > m { m = $2 } END { print m + 0 }' <<<"$days")
+  printf '%s' "$peak"
 }
 
 # MiB of TOTAL the slices leave outside them (#353): what WSL keeps outside the
-# fleet plus earlyoom's line (-m PERCENT of MemTotal; 10, its default, with no
-# -m; none when earlyoom has no config), rounded up to a whole 512 MiB, so a
-# fleet at its cap leaves earlyoom's line clear and the kernel's cap acts first.
+# fleet plus earlyoom's line, rounded up to a whole 512 MiB, so a fleet at its
+# cap leaves earlyoom's line clear and the kernel's cap acts first. earlyoom's
+# line (earlyoom(1)): -m PERCENT of MemTotal, -M KiB, the lower of the two when
+# both are given, 10% with neither; none when earlyoom has no config. As the
+# config is a shell file, its last EARLYOOM_ARGS line counts.
 fleet_slice_margin() { # TOTAL
-  local pct=0 line re='(^|[^[:alnum:]-])-m *([0-9]+)'
+  local line args="" pct="" kib="" line_mb=0 m
   if [[ -r $FLEET_EARLYOOM_CONF ]]; then
-    pct=10
-    while IFS= read -r line; do
-      [[ $line == EARLYOOM_ARGS=* && $line =~ $re ]] && pct=${BASH_REMATCH[2]}
-    done <"$FLEET_EARLYOOM_CONF"
+    while IFS= read -r line; do [[ $line == EARLYOOM_ARGS=* ]] && args=$line; done <"$FLEET_EARLYOOM_CONF"
+    [[ $args =~ (^|[^[:alnum:]-])-m\ *([0-9]+) ]] && pct=${BASH_REMATCH[2]}
+    [[ $args =~ (^|[^[:alnum:]-])-M\ *([0-9]+) ]] && kib=${BASH_REMATCH[2]}
+    [[ -z $pct && -z $kib ]] && pct=10
+    line_mb=$(( $1 * ${pct:-100} / 100 ))
+    [[ -n $kib ]] && m=$((kib / 1024)) && (( m < line_mb )) && line_mb=$m
   fi
-  printf '%s' "$(( (FLEET_SLICE_BASE_MB + $1 * pct / 100 + 511) / 512 * 512 ))"
+  printf '%s' "$(( (FLEET_SLICE_BASE_MB + line_mb + 511) / 512 * 512 ))"
 }
 
+# MiB of this machine's memory (MemTotal, which follows .wslconfig's memory=).
+mem_total_mib() { awk '$1 == "MemTotal:" { printf "%d", $2 / 1024; f = 1 } END { exit !f }' "${FLEET_MEMINFO:-/proc/meminfo}" 2>/dev/null; }
+
 # The fleet's memory caps in MiB (#353), "FLEET_MAX WORKERS_MAX MARGIN":
-# MemTotal (/proc/meminfo, which follows .wslconfig's memory=) less the margin
-# caps every fleet scope together, and that less the orchestrator's peak caps
-# the workers. With no reading of the orchestrator, its scope's own cap
-# (MEM_MAX) stands in. Fails when the workers would get nothing.
+# MemTotal less the margin caps every fleet scope together, and that less the
+# orchestrator's peak caps the workers. With no reading of the orchestrator,
+# its scope's own cap (MEM_MAX) stands in. Fails when the workers would get
+# nothing, or all of it (the orchestrator would have no room).
 fleet_slice_caps() {
   local total peak margin all workers
-  total=$(awk '$1 == "MemTotal:" { printf "%d", $2 / 1024 }' "${FLEET_MEMINFO:-/proc/meminfo}" 2>/dev/null)
+  total=$(mem_total_mib)
   [[ $total =~ ^[1-9][0-9]*$ ]] || return 1
   peak=$(orch_mem_peak -) || peak=$(to_mib "${MEM_MAX:-5G}") || return 1
   margin=$(fleet_slice_margin "$total")
   all=$((total - margin)) workers=$((total - margin - peak))
-  (( workers > 0 )) || return 1
+  (( workers > 0 && workers < all )) || return 1
   printf '%s %s %s' "$all" "$workers" "$margin"
 }
 

@@ -68,10 +68,12 @@ scope_prefix() { # NAME
   local run=${FLEET_SYSTEMD_RUN:-systemd-run}
   SCOPE_ARGV=()
   if [[ $run == none ]] || ! command -v "$run" >/dev/null 2>&1; then return; fi
-  local -a slice
+  local -a slice rank=()
   read -ra slice <<<"$(fleet_slice_opts worker)"
+  # Without the file (a checkout mid-switch) the engine runs unranked, not at all.
+  [[ -r $FLEET_OOM_TOOL ]] && rank=(bash "$FLEET_OOM_TOOL")
   SCOPE_ARGV=("$run" --user --scope --collect -q --unit="fleet-delegate-$1-$(date +%s)" "${slice[@]}"
-    -p MemoryMax="${FLEET_DELEGATE_MEM_MAX:-3G}" -p MemorySwapMax=0 -p TasksMax=256 bash "$FLEET_OOM_TOOL")
+    -p MemoryMax="${FLEET_DELEGATE_MEM_MAX:-3G}" -p MemorySwapMax=0 -p TasksMax=256 "${rank[@]}")
 }
 scoped() { # NAME CMD...
   scope_prefix "$1"
