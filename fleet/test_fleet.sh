@@ -9,9 +9,10 @@ work=$(mktemp -d)
 export TZ=America/New_York # the fixtures' times are AJ's
 export FLEET_SOCK="fleet-test-$$" FLEET_STATE="$work/state" FLEET_SESSION=fleet
 export FLEET_HOOK_DIR="$work/claude" # never the real ~/.claude
+# Never the host's browsers: the resume service reaps none unless a case asks (#379).
 # Never AJ's keryx: the resume service skips voices, and voices.sh finds no keryx
 # and reads a private keryx config, unless a case hands it a stub (#273).
-export FLEET_LIVE_CONF=0 FLEET_VOICES=0 FLEET_KERYX="$work/no-keryx" XDG_CONFIG_HOME="$work/xdg"
+export FLEET_LIVE_CONF=0 FLEET_VOICES=0 FLEET_BROWSERS=0 FLEET_KERYX="$work/no-keryx" XDG_CONFIG_HOME="$work/xdg"
 real_keryx_config=${HOME}/.config/keryx/config.json
 real_keryx_sum=$(sha256sum "$real_keryx_config" 2>/dev/null | cut -d' ' -f1)
 export KLEPSYDRA_DIR="$work/klepsydra" FLEET_TICK=0.1 FLEET_START_WAIT=4 FLEET_TURN_WAIT=6 FLEET_RC_WAIT=12
@@ -949,6 +950,8 @@ rm -rf -- "${hist:?}" "${FLEET_STATE:?}/task-hist.src"
 check "the tail carries the friction-log rule (AJ 11-01)" "$(grep -c '^Friction log (AJ 11-01, every agent): read ~/.local/state/fleet-orchestrator/friction.md' "$here/brief-tail.md")" "1"
 check "the tail puts performance first, above the security floor, and asks for DS&A checks (AJ 11-01, 11-03)" "$(grep -c '^Quality (AJ 11-01, 11-03): performance is AJ.s #1 quality attribute; when it trades off with security, performance wins, above the security floor. In every workflow, check the data structures and algorithms' "$here/brief-tail.md")" "1"
 check "the tail carries the team-ceremony rule (AJ 10-29)" "$(grep -c '^Team ceremony in every repo' "$here/brief-tail.md")" "1"
+check "the tail and the headless rules close the Playwright browser after its last action (#379)" \
+  "$(grep -c '^Browser (AJ 11-14, #379): after the last browser action of a task, call the Playwright MCP.s .browser_close. in the same turn' "$here/brief-tail.md") $(grep -c '^4. Browser: after the last browser action' "$here/headless-rules.md")" "1 1"
 check "the tail keeps asks for AJ out of public issues and PRs (AJ 10-29)" "$(grep -c '^Asks for AJ stay private' "$here/brief-tail.md")" "1"
 check "#325 review 1: the tail sends messages to panes through fleet send (#320)" "$(grep -c '^Messages to another pane .*fleet send PANE -' "$here/brief-tail.md")" "1"
 check "#239: the tail has heavy commands take the lock with flock -o, so nothing they leave running keeps it" "$(grep -c 'flock -o /tmp/fleet-heavy.lock' "$here/brief-tail.md")" "1"
@@ -1297,6 +1300,28 @@ check "a resume loop that stopped passing fails" "$(doctor | grep -c '^FAIL resu
 logout a
 out=$(doctor)
 check "a default account not logged in fails" "$(grep -c "^FAIL account $work/cfg-a: not logged in: claude auth login" <<<"$out")" "1"
+# Open Playwright MCP browsers (#379), in the doctor's fake /proc: a live one
+# under claude 4242 (session w1) and an orphan reparented to init.
+bproc() { # PID PPID COMM ARG...
+  local pid=$1 ppid=$2 comm=$3; shift 3
+  mkdir -p "$work/dproc/$pid"
+  printf '%s (%s) S %s %s %s\n' "$pid" "$comm" "$ppid" "$(seq -s ' ' 2 18)" "$((pid * 10))" >"$work/dproc/$pid/stat"
+  printf '%s\n' "$comm" >"$work/dproc/$pid/comm"; printf '%s\0' "$@" >"$work/dproc/$pid/cmdline"
+}
+bc=$work/bcache/ms-playwright-mcp
+check "#379: no MCP browser: ok" "$(doctor | grep 'MCP browsers')" "ok   MCP browsers: none open"
+printf 'claude\n' >"$work/dproc/4242/comm"
+bproc 4300 4242 node node "$work/npx/.bin/playwright-mcp"
+bproc 4301 4300 chrome /opt/google/chrome/chrome "--user-data-dir=$bc/mcp-chrome-aa"
+bproc 4302 1 chrome /opt/google/chrome/chrome "--user-data-dir=$work/home/.config/google-chrome"
+mkdir -p "$bc/mcp-chrome-aa/Default"; touch -d "@$(( $(date +%s) - 330 ))" "$bc/mcp-chrome-aa" "$bc/mcp-chrome-aa/Default"
+check "#379: a live one: its pid, owning session and idle time; AJ's Chrome is not listed" "$(doctor | grep 'MCP browsers')" \
+  "ok   MCP browsers: pid 4301 (session dddddddd, idle 5 min)"
+check "#379: idle past FLEET_BROWSER_IDLE_MIN warns" \
+  "$(FLEET_BROWSER_IDLE_MIN=5 doctor | grep -c '^warn MCP browsers: pid 4301 (session dddddddd, idle 5 min, past 5 min)')" "1"
+bproc 4310 1 chrome /opt/google/chrome/chrome "--user-data-dir=$bc/mcp-chrome-bb"
+check "#379: one whose MCP server is gone warns" \
+  "$(doctor | grep -c '^warn MCP browsers: pid 4301 (session dddddddd, idle 5 min); pid 4310 (no session, idle ?, its MCP server is gone)')" "1"
 djson() { doc_prefs; FLEET_PS="$work/bin/ps" FLEET_SYSTEMCTL="$work/bin/systemctl" FLEET_CURL="$work/bin/curl" FLEET_TAILSCALE="$work/bin/tailscale" \
   DOC_ACTIVE="$work/active" DOC_FLEET="$work/fleet.json" bash "$here/doctor.sh" --json "$work/health.json" >/dev/null 2>&1; echo $?; rm -f -- "$KLEPSYDRA_DIR/prefs.json"; }
 : >"$FLEET_LOG"; rm -f "$work/health.json"
@@ -1339,6 +1364,22 @@ DOC_PREFS='{"phone_wall": false}' djson >/dev/null
 check "#328 review 1: a failing phone wall switched off logs that, not a recovery" \
   "$(jq -r 'select(.message | startswith("doctor: phone wall")) | .message' "$FLEET_LOG" | paste -sd'|')" "doctor: phone wall switched off"
 t kill-window -t "$w"; t kill-window -t "$o"; rm -f "$FLEET_STATE/orchestrator.pane"; : >"$REGISTRY"
+# With no pane left to act on, the resume pass closes the orphan only, each step logged (#379).
+printf '#!/usr/bin/env bash\necho "$*" >>%q\n' "$work/bkills" >"$work/bkill"
+chmod +x "$work/bkill"; : >"$FLEET_LOG"; rm -f "$work/bkills"
+bpass() { FLEET_BROWSERS=1 FLEET_PROC="$work/dproc" KLEPSYDRA_KILL="$work/bkill" FLEET_BROWSER_GRACE_S=10 resume "$1"; }
+bnow=$(date +%s)
+bpass "$bnow"
+check "#379: a pass sends the orphan TERM and logs it; nothing else is signalled" \
+  "$(paste -sd, "$work/bkills") $(jq -r 'select(.message | contains("MCP browser")) | "\(.level) \(.pid)"' "$FLEET_LOG")" "-TERM 4310 INFO 4310"
+bpass $((bnow + 60))
+check "#379: still up at a pass past the grace: KILL, logged as a warning" \
+  "$(paste -sd, "$work/bkills") $(jq -r 'select(.message | contains("KILL")) | "\(.level) \(.pid) \(.after_s)"' "$FLEET_LOG")" "-TERM 4310,-KILL 4310 WARN 4310 60"
+rm -rf -- "${work:?}/dproc/4310"
+bpass $((bnow + 120))
+check "#379: once gone, its close is logged and the record cleared" \
+  "$(jq -r 'select(.message == "an orphaned MCP browser closed") | .pid' "$FLEET_LOG") $([[ -e $FLEET_STATE/browsers-reaped ]] && echo kept || echo cleared)" "4310 cleared"
+rm -rf -- "${work:?}/dproc/4300" "${work:?}/dproc/4301" "${work:?}/dproc/4302" "${work:?}/bcache"
 
 echo "install"
 inst=$work/inst

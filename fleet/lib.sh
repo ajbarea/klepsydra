@@ -37,6 +37,7 @@ HOOK_COPIES=(
   "hooks/klepsydra-tmux.conf klepsydra-tmux.conf"
   "hooks/klepsydra-pane-died.sh klepsydra-pane-died.sh"
   "hooks/klepsydra-wrapup.sh klepsydra-wrapup.sh"
+  "hooks/klepsydra-browser.sh klepsydra-browser.sh"
   "hooks/klepsydra-wrapup.md skills/klepsydra-wrapup/SKILL.md"
   "statusline/klepsydra-statusline.sh klepsydra-statusline.sh"
   "src/fleet/themes/kourai.json klepsydra-cast.json"

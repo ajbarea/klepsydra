@@ -20,6 +20,8 @@
 # The heavy lock's holders (pid, command, age, scope, headless job) and the
 # runs queued on it, with a warning when a holder is a bare sleep or outlived
 # its headless job (#260).
+# Open Playwright MCP browsers (pid, owning session, idle time), with a warning
+# past FLEET_BROWSER_IDLE_MIN or for one whose MCP server is gone (#379).
 # Briefs whose shared rules
 # are out of date, and a second folder not logged in, are warnings.
 # With `--json FILE` (the fleet-doctor timer) it also writes the checks to FILE
@@ -487,6 +489,34 @@ heavy_lock_check() {
   fi
 }
 heavy_lock_check
+
+# Open Playwright MCP browsers (#379): pid, owning session (its fleet file's
+# session id by the claude pid, else that pid) and idle time (since its profile
+# last changed). One idle past FLEET_BROWSER_IDLE_MIN minutes (30) warns, as
+# does one whose MCP server is gone (the resume service closes it).
+browser_check() {
+  local min=${FLEET_BROWSER_IDLE_MIN:-30} idle_max pid server claude idle dir who f list="" warned=0
+  [[ $min =~ ^[0-9]+$ ]] || min=30
+  idle_max=$((min * 60))
+  while IFS=$'\t' read -r pid server claude idle dir; do
+    [[ -n $pid ]] || continue
+    who="claude $claude"
+    if [[ $claude == - ]]; then who="no session"
+    else
+      while IFS= read -r f; do
+        jq -e --argjson p "$claude" '.claude.pid == $p and .ended == null' "$f" >/dev/null 2>&1 && { who="session $(basename "$f" .json | cut -c1-8)"; break; }
+      done < <(grep -lE -- "\"pid\": *${claude}[,} ]" "$KLEPSYDRA_DIR"/fleet/*.json 2>/dev/null)
+    fi
+    list+="pid $pid ($who, idle $( [[ $idle == - ]] && echo '?' || echo "$((idle / 60)) min")"
+    if [[ $server == - ]]; then list+=", its MCP server is gone"; warned=1
+    elif [[ $idle != - ]] && (( idle >= idle_max )); then list+=", past $min min"; warned=1; fi
+    list+="); "
+  done < <(KLEPSYDRA_PROC="${FLEET_PROC:-/proc}" bash "${FLEET_BROWSER_SCRIPT:-${here%/fleet}/hooks/klepsydra-browser.sh}" --list 2>/dev/null </dev/null)
+  if [[ -z $list ]]; then report ok "MCP browsers" "none open"
+  elif (( warned )); then report warn "MCP browsers" "${list%; } (the resume service closes one whose server is gone; an idle one closes with browser_close in its session, or a kill of its pid)"
+  else report ok "MCP browsers" "${list%; }"; fi
+}
+browser_check
 
 # Voices (#273): the tray's mode has been applied to keryx (the resume service
 # applies a change within a pass; a mode left unapplied says why).
