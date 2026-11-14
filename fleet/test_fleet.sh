@@ -31,10 +31,15 @@ printf 'EARLYOOM_ARGS="-m 5 -s 100,100 -r 3600"\n' >"$work/earlyoom"
 export FLEET_EARLYOOM_CONF="$work/earlyoom"
 # Never the host's WSL: the doctor reads AJ's .wslconfig only on WSL (#292 review 3).
 unset WSL_DISTRO_NAME FLEET_WSLCONFIG
+# Never AJ's Drive (#380 review 2): no briefing sync here mirrors unless a case sets both,
+# and a bare rclone lands on a stub that refuses.
+unset FLEET_BRIEFING_DRIVE
+export FLEET_RCLONE="$work/no-rclone"
 mkdir -p "$work/guard"
 # shellcheck disable=SC2016 # the stub's $* and $1 are its own, written literally
 printf '#!/usr/bin/env bash\necho "$*" >>%q\nexit 1\n' "$work/guard.calls" >"$work/guard/systemctl"
 chmod +x "$work/guard/systemctl"
+printf '#!/usr/bin/env bash\necho "never AJ\x27s Drive" >&2\nexit 1\n' >"$work/no-rclone"; chmod +x "$work/no-rclone"
 export PATH="$work/guard:$PATH"
 login() { # a|b
   local d=$work/cfg-$1 j=$work/cfg-$1/.claude.json
@@ -3895,7 +3900,8 @@ fi
 exit 0
 STUB
 chmod +x "$work/bin/rclone-stub"
-msync() { MLOG="$mlog" RFAIL="$work/rclone-fail" BRIEFING_DIR="${MDIR:-$work/brief}" FLEET_GITLEAKS="$work/bin/gitleaks" FLEET_RCLONE="$work/bin/rclone-stub" GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t bash "$here/sync-briefing.sh" 2>/dev/null; echo $?; }
+mkdir -p "$work/mtmp"
+msync() { TMPDIR="$work/mtmp" MLOG="$mlog" RFAIL="$work/rclone-fail" BRIEFING_DIR="${MDIR:-$work/brief}" FLEET_GITLEAKS="$work/bin/gitleaks" FLEET_RCLONE="$work/bin/rclone-stub" GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t bash "$here/sync-briefing.sh" 2>/dev/null; echo $?; }
 nsync() { grep -c '^sync' "$mlog"; }
 lastlog() { jq -r --arg m "$1" 'select(.message | contains($m)) | .level' "$FLEET_LOG" | tail -1; }
 D=gdrive:fleet-briefing
@@ -3932,6 +3938,17 @@ git init -q --bare "$work/empty-remote.git"; git clone -q "$work/empty-remote.gi
 git -C "$work/empty" -c user.name=t -c user.email=t@t commit -q --allow-empty -m init && git -C "$work/empty" push -q origin HEAD 2>/dev/null
 check "#380: a commit with no files is refused, so it cannot empty the Drive folder" \
   "$(MDIR="$work/empty" FLEET_BRIEFING_DRIVE=$D msync) $(nsync) $(lastlog "no files to mirror")" "0 4 ERROR"
+check "#380 review 2: a space anywhere in the Drive path is refused" \
+  "$(FLEET_BRIEFING_DRIVE='gdrive:fleet briefing' msync) $(nsync)" "0 4"
+check "#380 review 2: no copy of the commit is left behind in the temp folder" "$(find "$work/mtmp" -mindepth 1 | wc -l)" "0"
+mkdir -p "$work/gitcut"
+# shellcheck disable=SC2016 # the wrapper's $1 and $@ are its own, written literally
+printf '#!/usr/bin/env bash\nif [[ $1 == archive ]]; then %q "$@" | head -c 2048; exit 1; fi\nexec %q "$@"\n' "$(command -v git)" "$(command -v git)" >"$work/gitcut/git"; chmod +x "$work/gitcut/git"
+printf 'q9\n' >"$work/brief/queue.md"
+check "#380 review 2: a git archive that fails partway is no copy: nothing is uploaded" \
+  "$(PATH="$work/gitcut:$PATH" FLEET_BRIEFING_DRIVE=$D msync) $(nsync) $(lastlog "could not copy the commit")" "0 4 WARN"
+check "#380 review 2: a new Drive target mirrors the same commit again" \
+  "$(FLEET_BRIEFING_DRIVE=$D msync) $(FLEET_BRIEFING_DRIVE=gdrive:other msync) $(nsync)" "0 0 6"
 
 echo "fleet send: a message is submitted, never left in the box (#320)"
 fsend() { bash "$here/send.sh" "$@" 2>/dev/null; }
