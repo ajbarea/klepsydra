@@ -865,6 +865,25 @@ def arrival_once(wall):
     page.close()
 
 
+def slim_portrait_fits(wall):
+    """A slim card (done, not started, silent, ended) in a theme with no
+    figures keeps its portrait inside the 72 px band, clear of the repo line
+    and the task."""
+    probe = """() => [...document.querySelectorAll('.card:is(.tone-done,.dim):not(.has-figure)')].map((c) => {
+      const R = (s) => c.querySelector(s).getBoundingClientRect();
+      const p = R('.portrait'), h = R('header'), repo = R('.where'), task = R('header .task');
+      return { name: c.querySelector('.name').textContent, below: Math.round(p.bottom - h.bottom), overRepo: p.bottom > repo.top, intoTask: Math.round(p.right - task.left) };
+    })"""
+    for theme in ("professions", "dicebear"):
+        page = open_app(wall, 1920, 1000, theme=theme)
+        pick(page, ".density label:has([value=comfortable])")
+        page.wait_for_timeout(SETTLE_MS)
+        got = page.evaluate(probe)
+        wall.check(got and all(g["below"] <= 0 and not g["overRepo"] and g["intoTask"] <= 0 for g in got),
+                   f"{theme}: each slim card's portrait stays in its band, off the repo line and the task", got)
+        page.close()
+
+
 def dialog_backdrop_only(wall):
     """In a short window only the backdrop closes the portrait, never a click
     inside the dialog beside the image."""
@@ -5373,6 +5392,7 @@ def main() -> int:
             band_clear,
             comfortable_fits,
             arrival_once,
+            slim_portrait_fits,
             dialog_backdrop_only,
             compact_look_on_face,
             ask_keeps_the_tool_name,

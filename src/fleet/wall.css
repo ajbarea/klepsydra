@@ -560,6 +560,9 @@ button.menu svg { width: 16px; height: 16px; fill: currentColor; }
 .has-figure .portrait .face { display: none; }
 .card:not(.has-figure) .portrait { position: absolute; left: 29px; top: 20px; }
 .card:not(.has-figure) .look { position: absolute; z-index: 1; left: 29px; top: 20px; width: var(--wall-face); height: var(--wall-face); border-radius: 50%; }
+/* A slim band (72 px) has no room for the full portrait: a theme with no
+   figures shows it at three quarters, inside the band and clear of the repo line. */
+.wall:not([data-density="compact"]) .card:not(.has-figure):is(.tone-done, .dim) :is(.portrait, .look) { left: 20px; top: 6px; transform: scale(0.75); transform-origin: 0 0; }
 .marks { display: none; }
 /* A small gilded plaque at the figure's foot. */
 .has-figure .marks:not(:empty) {
@@ -1513,6 +1516,8 @@ a.remote:focus-visible { outline: 2px solid var(--card-focus); outline-offset: 2
     --pill-mix: white;
     --working-ink: #000000;
   }
+  /* The band's "+N" badge keeps the dark card under the band's light text. */
+  :root:not(.served) .wall:not([data-density="compact"]) .card header .portrait .more { background: #1f1912; border-color: #3b3125; }
   :root:not(.served) :is(.empty h2, [data-density="compact"] :is(.name, button.menu)) { color: var(--text); }
   :root:not(.served) .ledger .fill { background: var(--accent-light, var(--accent, var(--text-quiet))); }
 }

@@ -94,6 +94,12 @@ test("light: the band and the portrait keep the dark stage's tokens", () => {
   }
 });
 
+test("light: the band's +N badge keeps the dark card under the band's text", () => {
+  const more = lightBlock.match(/\.card header \.portrait \.more \{ background: (#[0-9a-f]{6}); border-color: (#[0-9a-f]{6}); \}/);
+  assert.deepEqual([more[1], more[2]], [token("--card-bg"), token("--card-line")]);
+  check("light band", "+N on its badge", bandScope.match(/--text:\s*(#[0-9a-fA-F]{6})/)[1], more[1], 4.5);
+});
+
 test("#247: the closest call for each tone", (t) => {
   const worst = new Map();
   for (const r of rows) if (!worst.has(r.what) || r.r < worst.get(r.what).r) worst.set(r.what, r);
