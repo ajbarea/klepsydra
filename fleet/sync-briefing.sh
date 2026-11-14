@@ -14,24 +14,42 @@ here=$(dirname "$(readlink -f "$0")")
 R=${BRIEFING_DIR:-/mnt/c/Users/ajbar/fleet-briefing}
 GITLEAKS=${FLEET_GITLEAKS:-gitleaks}
 # Google Drive mirror (#380): AJ's phone swipes screenshots and plays video in Drive, which the
-# GitHub app cannot. Off unless FLEET_BRIEFING_DRIVE names an rclone remote (the timer's unit
-# sets it), so tests and ad-hoc runs never touch AJ's Drive. One way, local to Drive, and only
-# the files git tracks, so only what gitleaks has passed leaves this PC.
+# GitHub app cannot. Off unless FLEET_BRIEFING_DRIVE names an rclone remote and a folder in it
+# (the timer's unit sets it), so tests and ad-hoc runs never touch AJ's Drive. One way, local to
+# Drive, from a copy of the commit at HEAD: only committed files, as gitleaks passed them, never
+# an edit still in the working tree. The sync deletes what the folder holds beyond that copy, so
+# a bare remote, its root, a . or .. step, or a commit with no files is refused.
 DRIVE=${FLEET_BRIEFING_DRIVE:-}
 RCLONE=${FLEET_RCLONE:-rclone}
 mirror() {
   [[ -n $DRIVE ]] || return 0
-  local head last out rc
-  head=$(git rev-parse HEAD 2>/dev/null) || return 0
+  if [[ ! $DRIVE =~ ^[A-Za-z0-9_-][A-Za-z0-9_.-]*:[^/[:space:]] || $DRIVE =~ (^|[:/])\.\.?(/|$) ]]; then
+    flog ERROR "briefing mirror: FLEET_BRIEFING_DRIVE must be remote:folder (no root, no . or ..); not mirrored" remote="$DRIVE"
+    return 0
+  fi
+  local head last out rc snap n
+  head=$(git rev-parse -q --verify HEAD) || return 0
   last=$(cat "$gd/fleet-drive-mirror.head" 2>/dev/null)
   [[ $head == "$last" ]] && return 0
   command -v "$RCLONE" >/dev/null 2>&1 || { flog WARN "briefing mirror: rclone not installed" remote="$DRIVE"; return 0; }
   "$RCLONE" listremotes 2>/dev/null | grep -qxF "${DRIVE%%:*}:" || { flog WARN "briefing mirror: no such rclone remote; run rclone config create" remote="$DRIVE"; return 0; }
-  out=$(git -c core.quotePath=false ls-files | timeout 300 "$RCLONE" sync . "$DRIVE" --files-from-raw - --delete-excluded --transfers 4 --max-duration 240s -q 2>&1); rc=$?
+  snap=$(mktemp -d) || { flog WARN "briefing mirror: no temp folder; retried next pass"; return 0; }
+  if ! (set -o pipefail; git archive --format=tar "$head" | tar -x -C "$snap"); then
+    flog WARN "briefing mirror: could not copy the commit; retried next pass" commit="${head:0:7}"
+    rm -rf "$snap"; return 0
+  fi
+  n=$(find "$snap" -type f | wc -l)
+  if (( n == 0 )); then
+    flog ERROR "briefing mirror: the commit has no files to mirror; refused, so the Drive folder is not emptied" commit="${head:0:7}"
+    rm -rf "$snap"; return 0
+  fi
+  # --checksum: the copy's files are new on disk each time, so compare content, not times.
+  out=$(timeout 300 "$RCLONE" sync "$snap" "$DRIVE" --checksum --transfers 4 --max-duration 240s -q 2>&1); rc=$?
+  rm -rf "$snap"
   out=$(grep -v 'shared Google Drive client_id' <<<"$out")
   if (( rc == 0 )); then
     printf '%s\n' "$head" >"$gd/fleet-drive-mirror.head"
-    flog INFO "briefing mirrored to Drive" remote="$DRIVE" commit="${head:0:7}"
+    flog INFO "briefing mirrored to Drive" remote="$DRIVE" commit="${head:0:7}" files="$n"
   else
     flog WARN "briefing mirror failed; retried next pass" remote="$DRIVE" rc="$rc" said="$(tail -2 <<<"$out")"
   fi
