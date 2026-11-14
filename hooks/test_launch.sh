@@ -7,6 +7,9 @@ here=$(cd "$(dirname "$0")" && pwd)
 launch="$here/klepsydra-launch.sh"
 work=$(mktemp -d)
 unset KLEPSYDRA_BACKGROUND # a fleet pane's own, never this suite's
+# A headless job's own config folder sets an API key helper, which the
+# launcher refuses (#260): the suite runs on none of its caller's.
+unset CLAUDE_CONFIG_DIR
 sock="kl-test-$$" sock2="kl-test2-$$" sock3="kl-test3-$$" sock4="kl-test4-$$" sock5="kl-test5-$$"
 sockdir="${TMUX_TMPDIR:-/tmp}/tmux-$(id -u)" # where tmux puts a -L socket
 clients=()
