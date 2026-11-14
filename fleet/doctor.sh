@@ -15,6 +15,8 @@
 # (hooks, status line, launcher, cast) match the checkout; both memory slices
 # have a MemoryMax, nest, and every fleet scope started since sits in its slice
 # (a FAIL), and the caps fit this machine and the orchestrator's peak (a warning).
+# The auth mode: subscription only, or subscription + headless credit (#260),
+# and a FAIL when an interactive config folder sets an API key or helper.
 # Briefs whose shared rules
 # are out of date, and a second folder not logged in, are warnings.
 # With `--json FILE` (the fleet-doctor timer) it also writes the checks to FILE
@@ -554,6 +556,22 @@ if [[ -n ${FLEET_WSLCONFIG:-} || ${WSL_DISTRO_NAME:-} ]]; then
   else
     report warn "WSL stays up" "add instanceIdleTimeout=-1 under [general] in $wslconfig: without it WSL shuts down 15 s after a crash ends the fleet's tab, and the fleet comes back only when WSL next starts" wslconfig="$wslconfig"
   fi
+fi
+# The auth mode (#260): interactive sessions on the subscription only, and
+# whether one-shot jobs also have the API credit (`fleet headless`). A config
+# folder an interactive session starts on that sets a key or helper is a FAIL.
+keyed=""
+for dir in $FLEET_ACCOUNTS; do f=$(keyed_settings "$dir" "${FLEET_DIR:-$HOME/ajsoftworks}") && keyed+="$f "; done
+wsettings=${FLEET_SETTINGS-$FLEET_STATE/worker-settings.json}
+[[ -n $wsettings && -f $wsettings ]] && key_settings "$wsettings" && keyed+="$wsettings "
+if [[ -n $keyed ]]; then
+  report FAIL "auth mode" "${keyed% } sets an API key or helper, so interactive launches are refused; interactive sessions run on the subscription only (keys belong in $FLEET_HEADLESS_CONFIG)"
+elif ! key_config "$FLEET_HEADLESS_CONFIG"; then
+  report ok "auth mode" "subscription only (no headless credit configured in $FLEET_HEADLESS_CONFIG)"
+elif ! command -v "${FLEET_ANT:-ant}" >/dev/null || ! headless_login; then
+  report warn "auth mode" "subscription only: the headless credit has no ant login (ant --profile $FLEET_HEADLESS_PROFILE auth login)"
+else
+  report ok "auth mode" "subscription + headless credit: interactive sessions on the subscription, fleet headless jobs on ant profile $FLEET_HEADLESS_PROFILE ($FLEET_HEADLESS_CONFIG)"
 fi
 # The engine lanes (`fleet delegate`): each engine's binary, its login where a
 # file shows one, and which lanes are on. A lane never starts without the lock

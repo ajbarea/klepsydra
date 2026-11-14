@@ -18,6 +18,7 @@ export KLEPSYDRA_DIR="$work/klepsydra" FLEET_TICK=0.1 FLEET_START_WAIT=4 FLEET_T
 mkdir -p "$FLEET_STATE" "$KLEPSYDRA_DIR/accounts/a" "$KLEPSYDRA_DIR/accounts/b"
 # Two config folders, logged out until a case logs one in (accounts a and b).
 export FLEET_DEFAULT_CONFIG="$work/cfg-a" FLEET_DEFAULT_JSON="$work/cfg-a.json" FLEET_ACCOUNTS="$work/cfg-a $work/cfg-b"
+export FLEET_HEADLESS_CONFIG="$work/no-api" # never the real ~/.claude-api (#260)
 unset CLAUDE_CONFIG_DIR KLEPSYDRA_BACKGROUND
 # Never AJ's user manager (#265 review): a case that wants systemctl passes its
 # own stub; a bare `systemctl` lands on a guard that records the call.

@@ -1053,6 +1053,50 @@ config_env() { # DIR
   if [[ $1 == "$FLEET_DEFAULT_CONFIG" ]]; then printf -- '-u CLAUDE_CONFIG_DIR '; else printf 'CLAUDE_CONFIG_DIR=%q ' "$1"; fi
 }
 
+# Subscription first (#260). Interactive sessions run only on a claude.ai login;
+# an API credential runs only one-shot `claude -p` jobs (`fleet headless`).
+# Claude Code picks ANTHROPIC_AUTH_TOKEN, then ANTHROPIC_API_KEY, then the
+# settings' apiKeyHelper, then a profile named in ANTHROPIC_PROFILE, all above
+# the /login subscription (code.claude.com/docs/en/authentication, "Authentication
+# precedence"), so each of them must stay out of an interactive session's start.
+# The env(1) arguments that drop every such variable.
+# shellcheck disable=SC2034 # read by launch.sh
+NO_KEY_ENV='-u ANTHROPIC_API_KEY -u ANTHROPIC_AUTH_TOKEN -u ANTHROPIC_PROFILE '
+# The config folder headless jobs run on: its settings.json holds an apiKeyHelper
+# that prints the ant profile's short-lived access token.
+FLEET_HEADLESS_CONFIG=$(nodir "${FLEET_HEADLESS_CONFIG:-$HOME/.claude-api}")
+FLEET_HEADLESS_PROFILE=${FLEET_HEADLESS_PROFILE:-ldqis}
+# Whether settings (a file, or inline JSON as --settings takes it) set an API
+# credential: an apiKeyHelper, or one of the variables above in its env block.
+# The tray's launcher (hooks/klepsydra-launch.sh) holds the same filter.
+KEY_JQ='(.apiKeyHelper // "" | tostring | length > 0) or ((.env // {}) | has("ANTHROPIC_API_KEY") or has("ANTHROPIC_AUTH_TOKEN") or has("ANTHROPIC_PROFILE"))'
+key_settings() { # FILE-OR-JSON
+  local s=$1
+  [[ -f $s ]] && s=$(cat -- "$s" 2>/dev/null)
+  jq -e "$KEY_JQ" <<<"$s" >/dev/null 2>&1
+}
+# Whether config folder DIR's user settings set an API credential.
+key_config() { key_settings "$1/settings.json"; } # DIR
+# Every settings file an interactive session started on config folder DIR in
+# folder FOLDER reads, besides --settings: user, project, local project and
+# managed (code.claude.com/docs/en/settings, "Settings files").
+session_settings() { # DIR FOLDER
+  printf '%s\n' "$1/settings.json" "$2/.claude/settings.json" "$2/.claude/settings.local.json" \
+    "${KLEPSYDRA_MANAGED_SETTINGS:-/etc/claude-code/managed-settings.json}"
+}
+# The first of those files that sets an API credential; fails when none does.
+keyed_settings() { # DIR FOLDER
+  local f
+  while IFS= read -r f; do [[ -f $f ]] && key_settings "$f" && { printf '%s' "$f"; return 0; }; done < <(session_settings "$1" "$2")
+  return 1
+}
+# Whether the ant CLI holds a login for FLEET_HEADLESS_PROFILE. `ant auth status`
+# exits 0 either way (2.9.0), so its "Logged in to" line is the answer; its
+# output also shows part of the token, so none of it is ever printed.
+headless_login() {
+  timeout 15 "${FLEET_ANT:-ant}" --profile "$FLEET_HEADLESS_PROFILE" auth status 2>/dev/null | grep -q '^[[:space:]]*Logged in to '
+}
+
 # /exit the claude in PANE and close the pane once it has gone, or after 30 s.
 # With INTERRUPT (a pane this pass just launched, busy on its brief), its turn
 # is stopped first. A pane it cannot type /exit into is left running.

@@ -1,19 +1,18 @@
-# IMPL: tray Voices tick follows what keryx does (#337), branch fix/voices-337
+# IMPL: headless jobs on the API credit (#260), branch feat/headless-260
 
-Resume from this file, `git log`, the PR and its comments. Brief: issue #337 and its 11-13 comment.
+Resume from this file, `git log`, PR #375 and its comments.
 
 ## Slice
-The tray's Voices tick shows keryx's real state, not the saved mode. `fleet voices` (every run but `--check`) keeps `keryx-paths.json` in the data folder: keryx's config as Windows opens it (`wslpath -w`) and the orchestrator's session file. When the pointer enters the tray icon or presses it, the app reads that file and keryx's `config.json` on a thread it waits on for at most 250 ms (`voices::Reader`), ticks the mode the config matches (Off / Everyone / Heph only) or none, and sets a status line above the modes (`keryx now: Off; saved: Heph only`). A late read shows itself when it lands; nothing is cached between opens. A click still saves through `fleet voices`.
+`fleet headless NAME BRIEF` runs one `claude -p` job in a fresh worktree on `~/.claude-api` (apiKeyHelper over `ant --profile ldqis`), under a required `--max-budget-usd` (default 10, at most 50) and the workers' capped scope; each end goes to the fleet log and `headless/ledger.jsonl`; `--status` lists jobs. Interactive sessions never get a key: `launch.sh` and the tray's launcher drop `ANTHROPIC_API_KEY/AUTH_TOKEN/PROFILE` and refuse keyed settings; doctor reports the auth mode. Design and sources: `docs/headless.md`, the PR's Decisions.
 
 ## Done
-- Pure logic + tests in `src-tauri/fleet/src/voices.rs` (keryx's parsing rules, tick/status, Reader with timeout and late answer); app glue in `src-tauri/src/voices.rs` and `main.rs` (`on_tray_icon_event`); `publish_paths` in `fleet/voices.sh` + `test_fleet.sh` #337 cases; README Voices section and `fleet voices` row.
-- Mutation-checked: a cached tick, an ignored timeout, a dropped late answer, no busy guard are each caught.
-- Opus review: round 1 (4 S) and round 2 (1 B: late answer ticking off the main thread could hang the tray; 2 S) fixed; round 3 clean, its panic nit fixed (035eeba). Late answers post to the main thread and apply only if newest (`Reader.stamp`).
-- PR #376 open (bug, ajbarea), not merged.
+- Code, tests (`fleet/test_headless.sh`, `make test-headless`, CI step), docs, README rows.
+- Live on the LDQIS credit 11-13: two haiku jobs (foreground and background), `apiKeySource: apiKeyHelper`, $0.0047 total, scope in `fleet-workers.slice`.
+- Opus review round 1 (5 Should-fix, 5 nits) fixed in 9b469e6; verify round 2 (2 Should-fix, 3 nits) fixed in 2e0a9de; verify round 3 (2 Should-fix, 2 nits) fixed in 51060f5; round 4 (1 Should-fix: the hook read the server env only with a fleet session) fixed after it; guard mutations 19 of 20 killed, 1 equivalent.
 
 ## Next
-1. Confirm the full suites on HEAD (test-fleet, launch, delegate, heavy-lock, slice, shellcheck, build-windows --check, browser suites) and CI; PR stays open for AJ's merge.
-2. After merge: `make install-fleet` so the installed `fleet voices` writes `keryx-paths.json`; until it runs once the tray says "unknown (fleet voices has not run yet)".
+1. Heavy suites on the final tree (test-fleet, test-launch, test-delegate, shellcheck).
+2. Heph verifies and merges; then `make install-fleet` from main, and `fleet doctor` shows `auth mode: subscription + headless credit`.
 
 ## Verify
-`cargo test -p klepsydra-fleet voices`, `make test-fleet`, `bash scripts/build-windows.sh --check` (KLEPSYDRA_STAGE=klepsydra-build-voices_337), `node --test src/*.test.js`.
+`make test-headless`, `make test-fleet`, `make test-launch`, `make test-delegate`, `make shellcheck`. A live check costs cents: `fleet headless NAME brief.md --model claude-haiku-5-5 --budget 0.5 --wait`, then remove its worktree and branch.
