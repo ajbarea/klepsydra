@@ -13,6 +13,52 @@ here=$(dirname "$(readlink -f "$0")")
 . "$here/lib.sh"
 R=${BRIEFING_DIR:-/mnt/c/Users/ajbar/fleet-briefing}
 GITLEAKS=${FLEET_GITLEAKS:-gitleaks}
+# Google Drive mirror (#380): AJ's phone swipes screenshots and plays video in Drive, which the
+# GitHub app cannot. Off unless FLEET_BRIEFING_DRIVE names an rclone remote and a folder in it;
+# only the timer's unit sets it, and the tests unset it. One way, local to
+# Drive, from a copy of the commit at HEAD: only committed files, never an edit still in the
+# working tree (git archive drops a path marked export-ignore, so keep none). The sync deletes
+# what the folder holds beyond that copy, so a bare remote, its root, a . or .. step, any space,
+# or a commit with no files is refused.
+DRIVE=${FLEET_BRIEFING_DRIVE:-}
+RCLONE=${FLEET_RCLONE:-rclone}
+snap=""
+# The copy goes however the run ends, a stop from systemd included.
+trap 'if [[ -n $snap ]]; then rm -rf -- "$snap"; fi' EXIT
+trap 'exit 143' TERM; trap 'exit 130' INT; trap 'exit 129' HUP
+mirror() {
+  [[ -n $DRIVE ]] || return 0
+  if [[ ! $DRIVE =~ ^[A-Za-z0-9_-][A-Za-z0-9_.-]*:[^/] || $DRIVE =~ [[:space:]] || $DRIVE =~ (^|[:/])\.\.?(/|$) ]]; then
+    flog ERROR "briefing mirror: FLEET_BRIEFING_DRIVE must be remote:folder (no root, no . or .., no spaces); not mirrored" remote="$DRIVE"
+    return 0
+  fi
+  local head last out rc n
+  head=$(git rev-parse -q --verify HEAD) || return 0
+  last=$(cat "$gd/fleet-drive-mirror.head" 2>/dev/null)
+  [[ "$head $DRIVE" == "$last" ]] && return 0
+  command -v "$RCLONE" >/dev/null 2>&1 || { flog WARN "briefing mirror: rclone not installed" remote="$DRIVE"; return 0; }
+  "$RCLONE" listremotes 2>/dev/null | grep -qxF "${DRIVE%%:*}:" || { flog WARN "briefing mirror: no such rclone remote; run rclone config create" remote="$DRIVE"; return 0; }
+  snap=$(mktemp -d) || { flog WARN "briefing mirror: no temp folder; retried next pass"; return 0; }
+  if ! (set -o pipefail; git archive --format=tar "$head" | tar -x -C "$snap"); then
+    flog WARN "briefing mirror: could not copy the commit; retried next pass" commit="${head:0:7}"
+    rm -rf -- "$snap"; snap=""; return 0
+  fi
+  n=$(find "$snap" -type f | wc -l)
+  if (( n == 0 )); then
+    flog ERROR "briefing mirror: the commit has no files to mirror; refused, so the Drive folder is not emptied" commit="${head:0:7}"
+    rm -rf -- "$snap"; snap=""; return 0
+  fi
+  # --checksum: the copy's files are new on disk each time, so compare content, not times.
+  out=$(timeout 300 "$RCLONE" sync "$snap" "$DRIVE" --checksum --transfers 4 --max-duration 240s -q 2>&1); rc=$?
+  rm -rf -- "$snap"; snap=""
+  out=$(grep -v 'shared Google Drive client_id' <<<"$out")
+  if (( rc == 0 )); then
+    printf '%s\n' "$head $DRIVE" >"$gd/fleet-drive-mirror.head"
+    flog INFO "briefing mirrored to Drive" remote="$DRIVE" commit="${head:0:7}" files="$n"
+  else
+    flog WARN "briefing mirror failed; retried next pass" remote="$DRIVE" rc="$rc" said="$(tail -2 <<<"$out")"
+  fi
+}
 export GIT_TERMINAL_PROMPT=0
 cd "$R" 2>/dev/null || { flog ERROR "briefing sync: no repo" dir="$R"; exit 1; }
 exec 9>"$(git rev-parse --git-dir)/fleet-sync.lock"
@@ -49,7 +95,7 @@ if [[ -n $(git status --porcelain -- "${paths[@]}") ]]; then
 fi
 
 ahead=$(git rev-list --count '@{u}..HEAD' 2>/dev/null || echo 1)
-(( ahead > 0 )) || exit 0
+(( ahead > 0 )) || { mirror; exit 0; }
 # Every commit about to leave is scanned, the prune's and any made by hand included.
 range='@{u}..HEAD'
 git rev-parse -q --verify '@{u}' >/dev/null || range='HEAD --not --remotes'
@@ -59,6 +105,7 @@ if ! out=$("$GITLEAKS" git --log-opts="$range --" --no-banner --redact --exit-co
 fi
 if out=$(git push -q origin HEAD 2>&1); then
   flog INFO "briefing synced" commit="$(git rev-parse --short HEAD)" pushed="$ahead"
+  mirror
   exit 0
 fi
 # Rejected (the remote moved, e.g. AJ ticked a box on the phone): rebase once and retry,
@@ -69,6 +116,7 @@ if ! git diff --quiet || ! git diff --cached --quiet; then
 fi
 if git pull -q --rebase origin "$(git rev-parse --abbrev-ref HEAD)" >/dev/null 2>&1 && [[ -z $(git ls-files -u) ]] && out=$(git push -q origin HEAD 2>&1); then
   flog INFO "briefing synced after a rebase" commit="$(git rev-parse --short HEAD)"
+  mirror
   exit 0
 fi
 git rebase --abort >/dev/null 2>&1
