@@ -7,7 +7,10 @@ here=$(cd "$(dirname "$0")" && pwd)
 launch="$here/klepsydra-launch.sh"
 work=$(mktemp -d)
 unset KLEPSYDRA_BACKGROUND # a fleet pane's own, never this suite's
-sock="kl-test-$$" sock2="kl-test2-$$" sock3="kl-test3-$$" sock4="kl-test4-$$"
+# A headless job's own config folder sets an API key helper, which the
+# launcher refuses (#260): the suite runs on none of its caller's.
+unset CLAUDE_CONFIG_DIR
+sock="kl-test-$$" sock2="kl-test2-$$" sock3="kl-test3-$$" sock4="kl-test4-$$" sock5="kl-test5-$$"
 sockdir="${TMUX_TMPDIR:-/tmp}/tmux-$(id -u)" # where tmux puts a -L socket
 clients=()
 cleanup() {
@@ -16,7 +19,8 @@ cleanup() {
   tmux -L "$sock2" kill-server 2>/dev/null
   tmux -L "$sock3" kill-server 2>/dev/null
   tmux -L "$sock4" kill-server 2>/dev/null
-  rm -f -- "$sockdir/$sock" "$sockdir/$sock2" "$sockdir/$sock3" "$sockdir/$sock4"
+  tmux -L "$sock5" kill-server 2>/dev/null
+  rm -f -- "$sockdir/$sock" "$sockdir/$sock2" "$sockdir/$sock3" "$sockdir/$sock4" "$sockdir/$sock5"
   rm -rf "$work"
 }
 trap cleanup EXIT
@@ -792,10 +796,22 @@ check "#290: Enter closes a dead pane's viewer" "$(ti list-panes -a -F '#{pane_i
 ti kill-server 2>/dev/null; to kill-server 2>/dev/null
 rm -f -- "$sockdir/${in4:?}" "$sockdir/${out4:?}"
 
-echo "cleanup"
-cleanup; trap - EXIT
-check "no socket files left" "$(find "$sockdir" -maxdepth 1 \( -name "$sock" -o -name "$sock2" -o -name "$sock3" \) 2>/dev/null)" ""
+# #260: a session runs on the tmux server's config folder whenever the server is
+# up, even with no fleet session (fleet delegate's engines session shares the
+# socket); a server started on a keyed folder refuses a clean caller's launch.
+mkdir -p "$work/keyed-cfg"
+printf '{"apiKeyHelper": "x"}\n' >"$work/keyed-cfg/settings.json"
+CLAUDE_CONFIG_DIR="$work/keyed-cfg" tmux -L "$sock5" new-session -d -s other "sleep 600"
+out=$(env -u CLAUDE_CONFIG_DIR KLEPSYDRA_TMUX_SOCKET="$sock5" bash "$launch" new "$work/repos" 2>&1); rc=$?
+check "#260: a server on a keyed config folder: refused" "$rc $(grep -c "^Not started: $work/keyed-cfg/settings.json" <<<"$out")" "1 1"
+check "#260: and no fleet session was made" "$(tmux -L "$sock5" has-session -t =fleet 2>/dev/null && echo made || echo none)" "none"
+tmux -L "$sock5" kill-server 2>/dev/null
 
 check "#292 review 2: no case reached the host's systemd-run" "$(cat "$work/systemd-run-guard.calls" 2>/dev/null)" ""
+
+echo "cleanup"
+cleanup; trap - EXIT
+check "no socket files left" "$(find "$sockdir" -maxdepth 1 \( -name "$sock" -o -name "$sock2" -o -name "$sock3" -o -name "$sock4" -o -name "$sock5" \) 2>/dev/null)" ""
+
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [[ $fail -eq 0 ]]

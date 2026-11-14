@@ -1,0 +1,6 @@
+Rules for this headless job (`fleet headless`, klepsydra#260). They outrank any other rule in this brief.
+
+1. You run as one `claude -p`: the job ends when your turn ends, and nothing wakes you when something finishes later. Do every step in the foreground, to the end.
+2. Never start a background job, watcher, monitor or scheduled wakeup, and never end a turn to wait for one.
+3. Keep each command under 8 minutes (`timeout 480`) and any wait for the heavy lock under 7 (`-w 420`): each tool call gets 16 minutes, and nothing outlives it. Take the heavy lock per command, never across commands: `flock -o -E 75 -w 420 /tmp/fleet-heavy.lock timeout 480 <one command>`. Exit 75 means the lock was busy for 7 minutes: issue the same call again. A make target that takes the lock itself runs inside it with `FLEET_HEAVY_HELD=1` (`flock -o -E 75 -w 420 /tmp/fleet-heavy.lock timeout 480 env FLEET_HEAVY_HELD=1 make <target>`). Never wrap the lock around `sleep` or anything else that outlives the command. Split a suite longer than 8 minutes into parts.
+4. When the whole job is done, your final message starts with `FINAL REPORT:`. A last message without it, or one that says you are waiting, is resumed with a request to continue.

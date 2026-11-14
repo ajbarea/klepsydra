@@ -18,6 +18,7 @@ export KLEPSYDRA_DIR="$work/klepsydra" FLEET_TICK=0.1 FLEET_START_WAIT=4 FLEET_T
 mkdir -p "$FLEET_STATE" "$KLEPSYDRA_DIR/accounts/a" "$KLEPSYDRA_DIR/accounts/b"
 # Two config folders, logged out until a case logs one in (accounts a and b).
 export FLEET_DEFAULT_CONFIG="$work/cfg-a" FLEET_DEFAULT_JSON="$work/cfg-a.json" FLEET_ACCOUNTS="$work/cfg-a $work/cfg-b"
+export FLEET_HEADLESS_CONFIG="$work/no-api" # never the real ~/.claude-api (#260)
 unset CLAUDE_CONFIG_DIR KLEPSYDRA_BACKGROUND
 # Never AJ's user manager (#265 review): a case that wants systemctl passes its
 # own stub; a bare `systemctl` lands on a guard that records the call.
@@ -1065,7 +1066,7 @@ echo 44444444-4444-4444-8444-444444444444 >"$work/dboot"
 # the wrappers write the shipped path, $KLEPSYDRA_DIR/prefs.json, and remove it
 # after, so later sections see no file. DOC_PREFS=none: no file.
 doc_prefs() { local c=${DOC_PREFS-'{"phone_wall": true}'}; rm -f -- "$KLEPSYDRA_DIR/prefs.json"; [[ $c == none ]] || printf '%s' "$c" >"$KLEPSYDRA_DIR/prefs.json"; }
-doctor() { local rc; doc_prefs; FLEET_PS="$work/bin/ps" FLEET_SYSTEMCTL="$work/bin/systemctl" FLEET_CURL="$work/bin/curl" FLEET_TAILSCALE="$work/bin/tailscale" \
+doctor() { local rc; doc_prefs; FLEET_HEAVY_LOCK="$work/heavy.lock" FLEET_PS="$work/bin/ps" FLEET_SYSTEMCTL="$work/bin/systemctl" FLEET_CURL="$work/bin/curl" FLEET_TAILSCALE="$work/bin/tailscale" \
   DOC_ACTIVE="$work/active" DOC_FLEET="$work/fleet.json" FLEET_RETRY_S=0 FLEET_PROC="$work/dproc" FLEET_BOOT_ID="$work/dboot" FLEET_UNITS="$work/dunits" bash "$here/doctor.sh" 2>/dev/null; rc=$?
   rm -f -- "$KLEPSYDRA_DIR/prefs.json"; return $rc; }
 phone_lines() { grep -E '^(ok|warn|FAIL) +phone wall' | cut -d: -f1 | paste -sd'|'; }
@@ -3755,6 +3756,28 @@ for odd in 'not json' '{"voices":"loud"}' '{"voices":["off"]}' '{"voices":"off"}
   check "#273: a prefs file reading $odd is Heph only" "$(fv | cut -d' ' -f2)" "heph"
 done
 check "#273: an unknown mode is refused" "$(fv loud >/dev/null 2>&1; echo $?)" "2"
+# #337: the tray reads keryx's own config on each menu open, found through
+# keryx-paths.json, which every run but --check keeps current.
+kp="$KLEPSYDRA_DIR/keryx-paths.json"
+kc_win=$(wslpath -w -- "$kc" 2>/dev/null) || kc_win=$kc
+rm -f "$kp"
+fv --check >/dev/null
+check "#337: --check writes no keryx-paths.json" "$([[ -e $kp ]] && echo written || echo none)" "none"
+fv --if-changed >/dev/null
+check "#337: a run names keryx's config (as Windows opens it) and the orchestrator's session file" \
+  "$(jq -c '[.config == $c, .heph]' --arg c "$kc_win" "$kp")" "[true,\"$orch_rec\"]"
+ino=$(stat -c %i "$kp")
+fv >/dev/null
+check "#337: an unchanged keryx-paths.json is not rewritten" "$(stat -c %i "$kp")" "$ino"
+printf '{"config":"stale","heph":""}\n' >"$kp"
+fv --if-changed >/dev/null
+check "#337: a stale one is put right at the service's next pass" "$(jq -r .heph "$kp")" "$orch_rec"
+"$work/kx/bin/keryx" off
+kc_read=$(jq -r .config "$kp"); [[ $kc_read == \\* ]] && kc_read=$(wslpath -u -- "$kc_read")
+check "#337: the file it names is the one keryx writes: a keryx off outside the tray shows there" \
+  "$(jq -c .enabled "$kc_read")" "false"
+"$work/kx/bin/keryx" on
+check "#337: no stray temp files beside it" "$(find "$KLEPSYDRA_DIR" -maxdepth 1 -name 'keryx-paths.json.*' | wc -l)" "0"
 vreset
 check "#273: no keryx installed: said, and nothing fails" "$(FLEET_KERYX="$work/no-keryx" bash "$here/fleet" voices 2>/dev/null; echo "rc=$?")" $'keryx is not installed\nrc=0'
 FLEET_KERYX="$work/no-keryx" bash "$here/fleet" voices --if-changed >/dev/null 2>&1; FLEET_KERYX="$work/no-keryx" bash "$here/fleet" voices --if-changed >/dev/null 2>&1

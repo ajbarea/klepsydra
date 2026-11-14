@@ -75,6 +75,8 @@ jobs:
         run: make test-fleet FLEET_HEAVY_HELD=1
       - name: Delegate lane tests
         run: make test-delegate FLEET_HEAVY_HELD=1
+      - name: Headless runner tests
+        run: make test-headless
       - name: Heavy lock release tests
         run: make test-heavy-lock FLEET_HEAVY_HELD=1
       - name: Memory slice tests

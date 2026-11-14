@@ -10,7 +10,8 @@
 # A plain run (the tray's, AJ's) always applies the mode. --if-changed (the
 # resume service, every pass) applies it only when it differs from the mode
 # last applied, so a deliberate `keryx off` between changes is left alone.
-# --check says whether the saved mode has been applied (exit 1 when not).
+# --check says whether the saved mode has been applied (exit 1 when not); it
+# writes nothing. The others first name keryx's config for the tray (#337).
 # keryx is changed only where it differs; each change logs the values decided on.
 set -u
 FLEET_TARGET=fleet::voices
@@ -65,11 +66,26 @@ wait_after_failure() {
   [[ -f $FAILED ]] && read -r f_mode f_at f_kind f_bin <"$FAILED" && [[ $f_mode == "$mode" && $f_bin == "$(keryx_bin)" ]] &&
     { [[ $f_kind == old || $f_kind == missing ]] || (( $(date +%s) - ${f_at:-0} < 900 )); }
 }
+# Name keryx's config and the orchestrator's session file in klepsydra's data
+# folder (keryx-paths.json, #337), so the tray reads keryx's own state on each
+# menu open with no process of its own: the config as a path Windows opens
+# (wslpath -w), else as it is. Rewritten only when it changes.
+publish_paths() {
+  local f=$KLEPSYDRA_DIR/keryx-paths.json cfg want tmp
+  [[ -d $KLEPSYDRA_DIR ]] || return 0
+  cfg=$(wslpath -w -- "$KERYX_CONFIG" 2>/dev/null) || cfg=$KERYX_CONFIG
+  [[ -n $cfg ]] || cfg=$KERYX_CONFIG
+  want=$(jq -cn --arg c "$cfg" --arg h "$ORCH_SESSION" '{config: $c, heph: $h}') || return 0
+  [[ $(cat -- "$f" 2>/dev/null) == "$want" ]] && return 0
+  tmp=$(mktemp "$f.XXXXXX") || return 0
+  if printf '%s\n' "$want" >"$tmp"; then mv -f -- "$tmp" "$f"; else rm -f -- "${tmp:?}"; fi
+}
 # Record MODE as applied in one step (a lock-free --check never reads it half-written).
 record_applied() { printf '%s\n' "$1" >"$APPLIED.tmp" && mv -f -- "$APPLIED.tmp" "$APPLIED"; }
 # Read-only first, without the lock (voices.applied changes only under it, and
 # prefs.json, the tray's too, by an atomic rename): --check, and the service's
 # pass when nothing is to be done, never wait behind an apply.
+[[ $run == check ]] || publish_paths
 if [[ -z $mode ]]; then
   mode=$(saved_mode) applied=$(cat "$APPLIED" 2>/dev/null)
   if [[ $run == check ]]; then
