@@ -167,7 +167,7 @@ test("the theme ids and names are the fleet crate's (theme.rs THEMES), the defau
 });
 
 /** A card's fields that may differ between two themes: who the session is, never what it does. */
-const LOOK = new Set(["name", "face", "face2x", "full", "epithet", "figure", "accent", "accentInk", "ringColor", "jumpMark", "label", "remoteLabel", "playLabel", "stopLabel", "menuLabel", "jumpLabel"]);
+const LOOK = new Set(["name", "face", "face2x", "full", "epithet", "figure", "accent", "accentInk", "accentLight", "ringColor", "jumpMark", "label", "remoteLabel", "playLabel", "stopLabel", "menuLabel", "jumpLabel"]);
 
 test("switching themes changes only each card's look (name, face, epithet, accent); rings, tone, actions and order stay", () => {
   const cards = (id) => shifted.map((s) => card(s, THEMES[id], NOW));
@@ -275,7 +275,7 @@ test("one loader: only theme.js names a theme's file, and no frontend code branc
   const theme = read("src/fleet/theme.js");
   // Only the default is part of the page; the others are fetched by id when first worn.
   assert.deepEqual([...theme.matchAll(/from "\.\/themes\/([a-z]+)\.json"/g)].map((m) => m[1]), ["kourai"]);
-  assert.match(theme, /import\(`\.\/themes\/\$\{key\}\.json`, \{ with: \{ type: "json" \} \}\)/);
+  assert.match(theme, /import\(`\.\/themes\/\$\{key\}\.json\$\{retryQuery\(key\)\}`, \{ with: \{ type: "json" \} \}\)/);
 });
 
 test("the wall, the strip and the drawer read the theme now worn, not a fixed cast", () => {
@@ -306,7 +306,7 @@ test("the wall, the strip and the drawer read the theme now worn, not a fixed ca
   assert.match(drawer, /repaint: \(\) => paint\(\),/);
   assert.match(read("src/fleet/queuepanel.js"), /const name = keeperName\(keptBy, keptVoice, cast\(\)\);/);
   assert.match(wall, /if \(said\.length\) announce\(said\.join\("\. "\)\);\n    refillPortrait\(\);/, "and so does a snapshot, the phone's theme with it");
-  assert.match(read("src/fleet/wall.css"), /\.served \.theme-pick,/, "no picker on the phone");
+  assert.match(read("src/fleet/wall.css"), /\.served \.gear,/, "no picker on the phone");
 });
 
 test("each profession's glyph carries its own licence: Feather's MIT where Lucide's LICENSE says it derives from Feather", () => {

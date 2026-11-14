@@ -6,22 +6,22 @@
   --bar-radius: 999px;
 
   /* Fill ramp: the colour at 0%, at the midpoint, and at 100%. */
-  --ramp-low: #3b82f6;   /* blue   */
+  --ramp-low: #d9c6a5;   /* parchment: calm (#247: klepsydra is warm bronze, never blue) */
   --ramp-mid: #eab308;   /* yellow */
   --ramp-high: #ef4444;  /* red    */
   --ramp-mid-at: 60;     /* blend: where --ramp-mid sits; bands: yellow starts */
   --ramp-high-at: 85;    /* bands only: where red takes over */
   --ramp-mode: bands;    /* blend | bands */
 
-  --track: #2f2f2f;
-  --panel-bg: rgba(20, 20, 20, 0.82);
+  --track: #322a1f;
+  --panel-bg: rgba(20, 16, 11, 0.82);
   --panel-radius: 10px;
   --panel-pad-y: 10px;
   --panel-pad-x: 14px;
   --panel-width-base: 420px;
 
-  --text: #ededed;
-  --text-dim: #8a8a8a;
+  --text: #f2eadf;
+  --text-dim: #a09079;
   --font: ui-sans-serif, "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif;
   --size-label: 13px;
   --size-pct: 13px;
@@ -30,8 +30,8 @@
   --waiting-opacity: 0.38;
 
   --grip-width: 12px;
-  --grip-dot: #6f6f6f;
-  --grip-dot-hover: #d0d0d0;
+  --grip-dot: #74624c;
+  --grip-dot-hover: #d9c6a5;
 
   /* Fleet strip: a portrait per Claude Code session, right of the gauge. */
   --strip-gap: 8px;     /* between the gauge and the strip */

@@ -214,18 +214,54 @@ export const shouldSlide = (was, next, snapshot) => Boolean(snapshot) && was.len
 /** The card's view-transition name, or "" unless the id is uuid-shaped. */
 export const transitionName = (id) => (/^[0-9a-f-]{36}$/i.test(id) ? `card-${id}` : "");
 
+/** A status as the live region says it: its label and, unless silent, its reason. */
+const statusWords = (s) => [statusOf(s.status).label, s.status === "silent" ? null : reasonText(s)];
+
 /** What the wall's live region says about changes since `before`; nothing on the first look. */
 export function announcements(before, sessions, cast, nowMs = Date.now()) {
   if (!before) return [];
   const key = statuses(sessions);
   return sessions
     .filter((s) => before.get(s.session_id) !== key.get(s.session_id))
-    .map((s) => {
-      if (isQuiet(s)) return accessibleName(s, cast, nowMs);
-      return [identity(s, cast).name, statusOf(s.status).label, s.status === "silent" ? null : reasonText(s)]
-        .filter(Boolean)
-        .join(", ");
-    });
+    .map((s) => (isQuiet(s) ? accessibleName(s, cast, nowMs) : [identity(s, cast).name, ...statusWords(s)].filter(Boolean).join(", ")));
+}
+
+/** How many session ids a page remembers as already arrived; past it, the longest unseen go first. */
+export const ARRIVALS_KEPT = 500;
+/**
+ * A session's first appearance is an event (#373), once per session and never
+ * on a reload: the first snapshot a page takes only seeds `seen` (null until
+ * then). Returns the ids new since, in snapshot order, and the set to keep.
+ * An ended or quiet session is remembered but never arrives: a focus request
+ * that brings sixteen ended cards back is not sixteen arrivals.
+ */
+export function arrivals(seen, sessions, keep = ARRIVALS_KEPT) {
+  const ids = sessions.map((s) => s.session_id);
+  if (!seen) return { seen: new Set(ids.slice(-keep)), arrived: [] };
+  const arrived = [];
+  for (const s of sessions) {
+    // Re-added, so an id still on the wall stays the newest and is never the one let go.
+    const known = seen.delete(s.session_id);
+    seen.add(s.session_id);
+    if (!known && s.status !== "ended" && !isQuiet(s)) arrived.push(s.session_id);
+  }
+  for (const id of seen) {
+    if (seen.size <= keep) break;
+    seen.delete(id);
+  }
+  return { seen, arrived };
+}
+
+/**
+ * What the live region says when a session arrives: "Hephaestus has arrived,
+ * Master of the Forge". One that arrives in any state but working or not
+ * started says that state too, as a status change would: "…, needs you,
+ * approve Bash(rm -rf build)".
+ */
+export function arrivalLine(s, cast) {
+  const who = identity(s, cast);
+  const usual = !s.status || s.status === "working" || s.status === "new";
+  return [`${who.name} has arrived`, who.epithet, ...(usual ? [] : statusWords(s))].filter(Boolean).join(", ");
 }
 
 /** The compact card's "+2" for the repos a session touched besides its own, named in full for hover and its accessible name; null with none. */
@@ -304,7 +340,9 @@ function jumpable(s) {
 }
 
 /** The Open terminal button's resting and hover backgrounds (wall.css --button-bg, --button-hover); a style test keeps them equal. */
-export const BUTTON_BGS = ["#252d39", "#2e3846"];
+export const BUTTON_BGS = ["#2c241a", "#372d21"];
+/** The light scheme's card, wall and button surfaces (wall.css, prefers-color-scheme: light); a style test keeps them equal. */
+export const LIGHT_SURFACES = ["#fbf6ec", "#f5eee1", "#efe6d6", "#f1e6d3", "#e8dac2"];
 /**
  * The comfortable card's header band (wall.css): its plate, its light (a glow
  * and rays, each at most this strong), the mask that lets only `underText` of
@@ -312,7 +350,7 @@ export const BUTTON_BGS = ["#252d39", "#2e3846"];
  * character's light, and a quiet card's dim light. A style test keeps these
  * equal to the stylesheet's.
  */
-export const BAND = { plate: "#141820", glow: 0.62, rays: 0.16, underText: 0.15, needs: "#e69f00", dimWith: "#3a414c", dimShare: 0.3 };
+export const BAND = { plate: "#1a140d", glow: 0.62, rays: 0.16, underText: 0.15, needs: "#e69f00", dimWith: "#4a4034", dimShare: 0.3 };
 const LIGHT_AT_TEXT = (1 - (1 - BAND.glow) * (1 - BAND.rays)) * BAND.underText;
 
 /** The brightest the band gets under its text, in each light a character's card can wear: its own, needs-you, quiet. */
@@ -324,6 +362,12 @@ const inks = new Map();
 const accentInk = (accent) => {
   if (!inks.has(accent)) inks.set(accent, readableOn(accent, bandGrounds(accent)));
   return inks.get(accent);
+};
+// On parchment the same character keeps its hue, deepened just until its edge, chips and marker hold 3:1.
+const lightEdges = new Map();
+export const accentLight = (accent) => {
+  if (!lightEdges.has(accent)) lightEdges.set(accent, readableOn(accent, LIGHT_SURFACES, 3));
+  return lightEdges.get(accent);
 };
 
 /**
@@ -414,8 +458,6 @@ export function crewRing(crew, g = RINGS.comfortable, marks = crewMarks(crew)) {
 export const crewRings = (crew, marks = crewMarks(crew)) =>
   Object.fromEntries(Object.entries(RINGS).map(([density, g]) => [density, crewRing(crew, g, marks)]));
 
-/** Whether the wall's ring key shows: while any card has background work out. */
-export const showsRingKey = (cards) => cards.some((c) => c.rings.comfortable.segments.length > 0);
 
 /**
  * The needs-you line as [lead, keep]: `keep` is the end a card holds in view
@@ -556,6 +598,7 @@ export function card(s, cast, nowMs, request = null) {
     full: who.full,
     accent: who.accent,
     accentInk: who.accent ? accentInk(who.accent) : null,
+    accentLight: who.accent ? accentLight(who.accent) : null,
     epithet: who.epithet,
     figure: who.figure,
     ...jumpStyle(s, who.accent),

@@ -3,7 +3,9 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-<meta name="theme-color" content="#11151b" />
+<meta name="theme-color" content="#14100b" media="(prefers-color-scheme: dark)" />
+<meta name="theme-color" content="#efe6d6" media="(prefers-color-scheme: light)" />
+<script src="fleet/scheme.js"></script>
 <meta name="apple-mobile-web-app-title" content="klepsydra" />
 <title>klepsydra fleet</title>
 <link rel="manifest" href="manifest.webmanifest" />
@@ -17,17 +19,6 @@
       <div class="tally" role="group" aria-label="Session counts"></div>
       <button type="button" id="ci-open" popovertarget="ci" data-phone hidden>CI</button>
       <button type="button" id="health-open" popovertarget="health" data-phone hidden>Fleet</button>
-      <p class="ring-key" hidden>
-        <span class="visually-hidden">Ring key: thick arc, subagent; thin arc, background shell.</span>
-        <span class="key" aria-hidden="true"><svg viewBox="0 0 32 18"><path class="agent" d="M 4.5 16 A 11.5 11.5 0 0 1 27.5 16"/></svg>agent</span>
-        <span class="key" aria-hidden="true"><svg viewBox="0 0 32 18"><path class="shell" d="M 4.5 16 A 11.5 11.5 0 0 1 27.5 16"/></svg>shell</span>
-      </p>
-      <div class="tools">
-        <button type="button" id="split" aria-pressed="false" title="The wall on the left half of this screen, the fleet terminal on the right" hidden>Split<span class="visually-hidden"> with terminal</span></button>
-        <button type="button" id="ledger-open" aria-controls="ledger" aria-expanded="false">Ledger</button>
-        <button type="button" id="queue-open" aria-controls="queue" aria-expanded="false" aria-keyshortcuts="Control+Alt+B" title="Queue (Ctrl+Alt+B)">Queue</button>
-        <button type="button" id="wrapup-open" aria-haspopup="dialog">Wrap up…</button>
-      </div>
       <p class="wrapup-bar" hidden>
         <span class="wrapup-count"></span>
         <span class="wrapup-safe" hidden>Safe to restart</span>
@@ -37,18 +28,29 @@
       <span id="wrapup-note" role="status"></span>
       <p id="link" role="status" hidden></p>
     </div>
-    <span class="new-split" role="group" aria-label="New session"><button type="button" id="new-session" class="primary">+ New session</button><button type="button" id="new-kind" class="primary" popovertarget="new-menu" aria-label="Start another kind of session" title="Start another kind of session" hidden><span aria-hidden="true">▾</span></button></span>
     <span id="new-note" role="status"></span>
     <span id="split-note" role="status"></span>
     <span id="theme-note" role="status"></span>
-    <div class="view">
-      <fieldset class="density">
-        <legend class="visually-hidden">Card density</legend>
-        <label><input type="radio" name="density" value="auto" checked /><span>Auto</span></label>
-        <label><input type="radio" name="density" value="comfortable" /><span>Comfortable</span></label>
-        <label><input type="radio" name="density" value="compact" /><span>Compact</span></label>
-      </fieldset>
-      <label class="theme-pick" title="How each session looks"><span>Characters</span><select id="theme"></select></label>
+    <div class="bar-right">
+      <div class="tools">
+        <button type="button" id="split" aria-pressed="false" title="The wall on the left half of this screen, the fleet terminal on the right" hidden>Split<span class="visually-hidden"> with terminal</span></button>
+        <button type="button" id="ledger-open" aria-controls="ledger" aria-expanded="false">Ledger</button>
+        <button type="button" id="queue-open" aria-controls="queue" aria-expanded="false" aria-keyshortcuts="Control+Alt+B" title="Queue (Ctrl+Alt+B)">Queue</button>
+        <button type="button" id="wrapup-open" aria-haspopup="dialog">Wrap up…</button>
+      </div>
+      <span class="new-split" role="group" aria-label="New session"><button type="button" id="new-session" class="primary">+ New session</button><button type="button" id="new-kind" class="primary" popovertarget="new-menu" aria-label="Start another kind of session" title="Start another kind of session" hidden><span aria-hidden="true">▾</span></button></span>
+      <details class="gear">
+        <summary title="View settings"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3.2"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1Z"/></svg><span class="visually-hidden">View</span></summary>
+        <div class="view">
+          <fieldset class="density">
+            <legend class="visually-hidden">Card density</legend>
+            <label><input type="radio" name="density" value="auto" checked /><span>Auto</span></label>
+            <label><input type="radio" name="density" value="comfortable" /><span>Comfortable</span></label>
+            <label><input type="radio" name="density" value="compact" /><span>Compact</span></label>
+          </fieldset>
+          <label class="theme-pick" title="How each session looks"><span>Characters</span><select id="theme"></select></label>
+        </div>
+      </details>
     </div>
   </header>
   <main id="main">
@@ -163,8 +165,10 @@
 
   <template id="card-tpl">
     <article class="card" tabindex="-1">
+      <span class="flare" aria-hidden="true"></span>
       <header>
         <span class="stage" aria-hidden="true"></span>
+        <span class="burst" aria-hidden="true"></span>
         <button type="button" class="look" data-phone hidden><img class="figure" alt="" /></button>
         <span class="marks" aria-hidden="true"></span>
         <span class="aura">
@@ -179,6 +183,7 @@
           </span>
         </span>
         <div class="who"><h2 class="name"></h2><p class="epithet" hidden><svg class="laurel" viewBox="0 0 44 22" aria-hidden="true"><path d="M2.5 20.5C13 18 27 12 40 4" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/><g fill="currentColor"><ellipse cx="7.8" cy="13.8" rx="3.6" ry="1.45" transform="rotate(-56 7.8 13.8)"/><ellipse cx="10.4" cy="19.8" rx="3.6" ry="1.45" transform="rotate(-16 10.4 19.8)"/><ellipse cx="15.3" cy="11.2" rx="3.6" ry="1.45" transform="rotate(-54 15.3 11.2)"/><ellipse cx="17.9" cy="17.2" rx="3.6" ry="1.45" transform="rotate(-14 17.9 17.2)"/><ellipse cx="22.8" cy="8.0" rx="3.6" ry="1.45" transform="rotate(-58 22.8 8.0)"/><ellipse cx="25.4" cy="14.0" rx="3.6" ry="1.45" transform="rotate(-18 25.4 14.0)"/><ellipse cx="30.3" cy="4.4" rx="3.6" ry="1.45" transform="rotate(-62 30.3 4.4)"/><ellipse cx="32.9" cy="10.4" rx="3.6" ry="1.45" transform="rotate(-22 32.9 10.4)"/><ellipse cx="38.6" cy="4.6" rx="3.4" ry="1.4" transform="rotate(-38 38.6 4.6)"/></g></svg><span></span></p><p class="task"></p></div>
+        <p class="herald" aria-hidden="true"><span class="herald-name"></span> <span class="herald-cry">has arrived!</span><span class="herald-epithet"></span></p>
         <p class="pill"><span class="mark"></span><span class="label"></span> <span class="age"></span><span class="when"></span></p>
         <button type="button" class="menu" aria-haspopup="menu" aria-expanded="false" hidden><svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="3" cy="8" r="1.5"/><circle cx="8" cy="8" r="1.5"/><circle cx="13" cy="8" r="1.5"/></svg></button>
       </header>

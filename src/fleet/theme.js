@@ -21,6 +21,11 @@ export const themeId = (id) => (ownValue(THEME_LABELS, id) ? id : DEFAULT_THEME)
 
 const loaded = new Map([[DEFAULT_THEME, kourai]]);
 const loading = new Map();
+// Theme id -> how many loads of its file failed. Chromium before 156 keeps a
+// failed import() in its module map and never fetches that URL again
+// (whatwg/html#10327 lifted it in 2026), so a retry asks for a new URL.
+const failures = new Map();
+const retryQuery = (key) => (failures.has(key) ? `?retry=${failures.get(key)}` : "");
 
 /** Theme `id`'s file, as the page fetches it, for a message that names it. */
 export const themeFile = (id) => `fleet/themes/${themeId(id)}.json`;
@@ -35,13 +40,14 @@ export function loadTheme(id) {
   if (!loading.has(key)) {
     loading.set(
       key,
-      import(`./themes/${key}.json`, { with: { type: "json" } }).then(
+      import(`./themes/${key}.json${retryQuery(key)}`, { with: { type: "json" } }).then(
         (m) => {
           loaded.set(key, m.default);
           return m.default;
         },
         (err) => {
-          loading.delete(key); // a later switch may try again
+          loading.delete(key); // a later switch may try again, at a new URL
+          failures.set(key, (failures.get(key) ?? 0) + 1);
           throw err;
         },
       ),

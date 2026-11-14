@@ -3,8 +3,7 @@
 Maximised on a 1920x1080 screen the wall's content is about 1920x1000, and
 snapped to half the screen about 945x1000 (the taskbar, title bar and frame
 take the rest). In Auto, sixteen demo cards fit the first and eight the
-second, compact, in four and two columns, with no vertical scrollbar and the
-ring key in view. An MCP ask cut short loses its middle, never the tool's
+second, compact, in four and two columns, with no vertical scrollbar. An MCP ask cut short loses its middle, never the tool's
 own name. Comfortable holds four full cards at half the screen
 and eight maximised, and Auto keeps it there. Auto never leaves a comfortable wall scrolling: not when a
 card grows, not at an exact fit, not where the comfortable bar is taller than
@@ -53,15 +52,12 @@ FIT = [  # (width, height, cards, columns)
 
 STATE = """() => {
   const wall = document.getElementById('wall');
-  const key = document.querySelector('.ring-key');
-  const k = key.getBoundingClientRect();
   return {
     cards: wall.children.length,
     density: wall.dataset.density,
     columns: getComputedStyle(wall).gridTemplateColumns.split(' ').length,
     scrolls: document.documentElement.scrollHeight > innerHeight,
     bottom: Math.max(...[...wall.children].map((c) => c.getBoundingClientRect().bottom)),
-    key: !key.hidden && k.height > 0 && k.bottom <= wall.getBoundingClientRect().top,
   };
 }"""
 
@@ -69,6 +65,18 @@ STATE = """() => {
 class Quiet(http.server.SimpleHTTPRequestHandler):
     def log_message(self, *args):
         pass
+
+
+def open_gear(page):
+    """The density and theme pickers sit in the bar's gear menu (#248): open it, as a user would."""
+    page.evaluate("document.querySelector('.gear').open = true")
+
+
+def pick(page, selector):
+    """Pick a density from the gear menu, then close the menu again."""
+    open_gear(page)
+    page.click(selector)
+    page.evaluate("document.querySelector('.gear').open = false")
 
 
 def watch(page):
@@ -145,7 +153,7 @@ class Wall:
 def comfortable_height(wall, width, cards):
     """The height the comfortable wall needs at `width`, bar included."""
     page = wall.open(width, 2000, cards)
-    page.click(".density label:has([value=comfortable])")
+    pick(page, ".density label:has([value=comfortable])")
     page.wait_for_timeout(SETTLE_MS)
     need = page.evaluate(
         "Math.ceil(document.getElementById('wall').getBoundingClientRect().bottom)"
@@ -163,7 +171,6 @@ def fit(wall):
             "density": "compact",
             "columns": columns,
             "scrolls": False,
-            "key": True,
         }
         ok = {k: got[k] for k in want} == want and got["bottom"] <= height
         wall.check(ok, f"fit {width}x{height}", got)
@@ -237,16 +244,14 @@ def bar_of_comfortable(wall):
     be a line taller than the compact one it is looking at."""
     cards, body = 5, same_cards(5)
     page = wall.open(1400, 2000, cards, body)
+    # Since the view settings went behind the gear (#248) the bar wraps only
+    # below the two-column widths, so the case runs on one column there.
     width = next(
         (
             w
             for w in range(800, 1500, 5)
             if page.set_viewport_size({"width": w, "height": 2000}) is None
             and (h := page.evaluate(BARS))["comfortable"] > h["compact"] + 10
-            and page.evaluate(
-                "getComputedStyle(document.getElementById('wall')).gridTemplateColumns.split(' ').length"
-            )
-            == 2
         ),
         None,
     )
@@ -255,12 +260,12 @@ def bar_of_comfortable(wall):
         wall.check(False, "a width where the comfortable bar is taller", None)
         return
     page = wall.open(width, 2000, cards, body)
-    page.click(".density label:has([value=comfortable])")
+    pick(page, ".density label:has([value=comfortable])")
     page.wait_for_timeout(SETTLE_MS)
     need = page.evaluate(
         "Math.ceil(document.getElementById('wall').getBoundingClientRect().bottom)"
     )
-    page.click(".density label:has([value=auto])")
+    pick(page, ".density label:has([value=auto])")
     bad = []
     for h in range(need - 40, need + 10, 2):  # up from compact
         got = wall.resize(page, width, h)
@@ -324,16 +329,18 @@ def open_drawer(page):
 
 
 def ledger_line_clear_of_text(wall):
-    """A compact card's ledger line sits in the foot slot: clear of every
-    text, inside the card, and gone while a note shows."""
+    """A compact card's ledger line shows only for an exception mark (a
+    guardrail chip or missed telemetry, #248), sits in the foot slot clear of
+    every text and inside the card, and is gone while a note shows."""
     page = wall.open(1920, 1000, 16)
     got = page.evaluate(
         """() => {
       const hit = (a, b) => a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
-      const out = { lines: 0, overlaps: [], tall: new Set(), long: 0, chips: 0 };
+      const out = { lines: 0, marked: 0, overlaps: [], tall: new Set(), long: 0, chips: 0 };
       for (const card of document.querySelectorAll('.card')) {
         const line = card.querySelector('.ledger-line');
         out.tall.add(card.getBoundingClientRect().height.toFixed(1));
+        if (line.querySelector('.chip:not([hidden]), .partial:not([hidden])')) out.marked++;
         if (getComputedStyle(line).display === 'none' || line.hidden) continue;
         out.lines++;
         const l = line.getBoundingClientRect();
@@ -355,7 +362,7 @@ def ledger_line_clear_of_text(wall):
     }"""
     )
     ok = (
-        got["lines"] >= 8
+        got["lines"] == got["marked"] >= 4
         and not got["overlaps"]
         and got["long"] == 0
         and got["chips"] >= 3
@@ -369,7 +376,7 @@ def receipt_text(wall):
     """Comfortable cards say the whole receipt; compact ones the top three;
     an all-zero session has no line."""
     page = wall.open(1920, 2000, 16)
-    page.click(".density label:has([value=comfortable])")
+    pick(page, ".density label:has([value=comfortable])")
     page.wait_for_timeout(SETTLE_MS)
     got = page.evaluate(
         """() => {
@@ -421,7 +428,7 @@ def partial_mark(wall):
     inside its ledger line in both densities; the rest wear none."""
     page = wall.open(1920, 2000, 16)
     for density in ("compact", "comfortable"):
-        page.click(f".density label:has([value={density}])")
+        pick(page, f".density label:has([value={density}])")
         page.wait_for_timeout(SETTLE_MS)
         got = page.evaluate(PARTIAL_STATE)
         one = len(got) == 1
@@ -788,7 +795,7 @@ def drawer_follows_snapshots(wall):
 def comfortable(wall, width, cards):
     page = wall.open(width, 2400, cards)
     page.set_default_timeout(5000)
-    page.click(".density label:has([value=comfortable])")
+    pick(page, ".density label:has([value=comfortable])")
     page.wait_for_timeout(SETTLE_MS)
     return page
 
@@ -841,21 +848,54 @@ def portrait_dialog(wall):
 
 
 def arrival_once(wall):
-    """A card arrives once: built while Compact shows, it does not replay its
-    arrival when the wall turns Comfortable."""
-    page = wall.open(945, 1000, 8)
-    page.click(".density label:has([value=comfortable])")
+    """A card arrives once: one that arrived while Compact showed does not
+    replay its arrival when the wall turns Comfortable."""
+    page = open_app(wall, keep=lambda s: s["status"] == "working" and s["voice"] != "am_michael")
+    pick(page, ".density label:has([value=compact])")
+    page.wait_for_timeout(SETTLE_MS)
+    heph = next(s for s in page.snapshot_all if s["voice"] == "am_michael")
+    send(page, {"sessions": [heph] + page.snapshot["sessions"], "speaking": None})
+    page.wait_for_timeout(400)
+    came = page.evaluate("document.querySelectorAll('.card.arriving').length")
+    page.wait_for_timeout(4200)
+    pick(page, ".density label:has([value=comfortable])")
     page.wait_for_timeout(SETTLE_MS)
     left = page.evaluate("document.querySelectorAll('.card.arriving').length")
-    wall.check(left == 0, "no arrival replays on a density switch", left)
+    wall.check(came == 1 and left == 0, "an arrival seen in Compact does not replay on a switch to Comfortable", [came, left])
     page.close()
+
+
+def slim_portrait_fits(wall):
+    """A slim card (done, not started, silent, ended) in a theme with no
+    figures keeps its portrait inside the 72 px band, clear of the repo line
+    and the task."""
+    probe = """() => [...document.querySelectorAll('.card:is(.tone-done,.dim):not(.has-figure)')].map((c) => {
+      const R = (s) => c.querySelector(s).getBoundingClientRect();
+      const p = R('.portrait'), h = R('header'), repo = R('.where'), task = R('header .task');
+      return { name: c.querySelector('.name').textContent, below: Math.round(p.bottom - h.bottom), overRepo: p.bottom > repo.top, intoTask: Math.round(p.right - task.left) };
+    })"""
+    for theme in ("professions", "dicebear"):
+        page = open_app(wall, 1920, 1000, theme=theme)
+        pick(page, ".density label:has([value=comfortable])")
+        page.wait_for_timeout(SETTLE_MS)
+        got = page.evaluate(probe)
+        wall.check(got and all(g["below"] <= 0 and not g["overRepo"] and g["intoTask"] <= 0 for g in got),
+                   f"{theme}: each slim card's portrait stays in its band, off the repo line and the task", got)
+        # An arrival animates the portrait's transform: the slim scale must hold through it.
+        page.evaluate("document.querySelector('.card:is(.tone-done,.dim):not(.has-figure)').classList.add('arriving')")
+        mid = []
+        for wait in (300, 600, 1100):
+            page.wait_for_timeout(wait)
+            mid.append(page.evaluate(probe)[0])
+        wall.check(all(g["below"] <= 0 and not g["overRepo"] for g in mid), f"{theme}: it stays in the band while it arrives", mid)
+        page.close()
 
 
 def dialog_backdrop_only(wall):
     """In a short window only the backdrop closes the portrait, never a click
     inside the dialog beside the image."""
     page = wall.open(1280, 360, 4)
-    page.click(".density label:has([value=comfortable])")
+    pick(page, ".density label:has([value=comfortable])")
     page.wait_for_timeout(SETTLE_MS)
     page.locator(".card .look:not([hidden])").first.click()
     box = page.evaluate(
@@ -907,7 +947,7 @@ def ask_keeps_the_tool_name(wall):
     for width, cards in ((1920, 8), (945, 4)):
         for density in ("comfortable", "compact"):
             page = wall.open(width, 1000, cards, busy(cards))
-            page.click(f".density label:has([value={density}])")
+            pick(page, f".density label:has([value={density}])")
             page.wait_for_timeout(SETTLE_MS)
             asks = page.evaluate(ASKS)
             ok = len(asks) == cards and all(
@@ -925,7 +965,7 @@ def long_tool_stays_in_card(wall):
     reason = "approve mcp__claude_ai_Gmail__apply_sensitive_message_label_and_then_some_more_words_without_breaks"
     for density in ("comfortable", "compact"):
         page = wall.open(945, 1000, 4, busy(4, reason=reason))
-        page.click(f".density label:has([value={density}])")
+        pick(page, f".density label:has([value={density}])")
         page.wait_for_timeout(SETTLE_MS)
         asks = page.evaluate(ASKS)
         ok = len(asks) == 4 and all(a["inside"] and not a["keepWhole"] and a["leadCut"] and a["ellipsis"] and a["leadWidth"] >= 20 for a in asks)
@@ -936,7 +976,7 @@ def long_tool_stays_in_card(wall):
 def dialog_caption_fits(wall):
     """In a short window the dialog's caption is never cut off: it fits or scrolls."""
     page = wall.open(1280, 300, 4)
-    page.click(".density label:has([value=comfortable])")
+    pick(page, ".density label:has([value=comfortable])")
     page.wait_for_timeout(SETTLE_MS)
     cut = []
     for i in range(page.locator(".card .look:not([hidden])").count()):
@@ -961,7 +1001,8 @@ def dialog_caption_fits(wall):
 
 def band_clear(wall):
     """On the band nothing covers the nameplate or the pill, and nothing but
-    the figure (and its clipped aura) leaves the card's top edge."""
+    the figure (and its clipped aura) leaves the card's top edge, by no more
+    than the figure's overshoot."""
     for width in (1920, 945):
         page = comfortable(wall, width, 16)
         bad = page.evaluate(
@@ -982,7 +1023,10 @@ def band_clear(wall):
               const r = el === '.portrait' ? grow(box, box.width * 12 / 80) : box;
               for (const t of text) if (hit(r, t.getBoundingClientRect())) out.push(`${name}: ${el} covers ${t.className}`);
               const top = el === '.portrait' && card.classList.contains('has-figure') ? card.querySelector('.aura').getBoundingClientRect().top : r.top;
-              if (top < c.top - 14.5) out.push(`${name}: ${el} ${(c.top - top).toFixed(1)} px over the top`);
+              // The figure breaks the frame by its overshoot (#247): --fig less the band's height.
+              const head = card.querySelector('header');
+              const allow = Math.max(14.5, parseFloat(getComputedStyle(head).getPropertyValue('--fig')) - head.getBoundingClientRect().height + 2.5);
+              if (top < c.top - allow) out.push(`${name}: ${el} ${(c.top - top).toFixed(1)} px over the top`);
             }
             const [n, pill] = [card.querySelector('.name'), card.querySelector('.pill')].map((e) => e.getBoundingClientRect());
             if (hit(n, pill)) out.push(`${name}: name under the pill`);
@@ -1081,7 +1125,7 @@ def comfortable_fits(wall):
         for fleet, body in (("demo", None), ("asking", busy(cards)), ("error", busy(cards, "error"))):
             for density in ("comfortable", "auto"):
                 page = wall.open(width, height, cards, body)
-                page.click(f".density label:has([value={density}])")
+                pick(page, f".density label:has([value={density}])")
                 page.wait_for_timeout(SETTLE_MS)
                 got = page.evaluate(FITS)
                 over, clear = got["breakout"] or (0, 0)
@@ -1424,6 +1468,38 @@ def reveal_race(wall):
             "[document.getElementById('empty').checkVisibility(), document.getElementById('wall').children.length, document.activeElement.dataset.key ?? document.activeElement.id]"
         )
         wall.check(got == [False, len(now_ended), target], f"a reordering snapshot and a focus request {'in one message' if same else 'back to back'}: the ended cards show, that one focused", got)
+        page.close()
+
+
+def arrival_is_an_event(wall):
+    """#373: a session's first appearance is an event, once. Its card wears
+    .arriving with a banner naming it, the live region says it arrived, and
+    nothing replays on a reload; reduced motion keeps the banner as a
+    crossfade, and Compact arrives too."""
+    for motion, density in (("no-preference", "comfortable"), ("reduce", "comfortable"), ("no-preference", "compact")):
+        page = open_app(wall, keep=lambda s: s["status"] == "working" and s["voice"] != "am_michael", motion=motion)
+        pick(page, f".density label:has([value={density}])")
+        page.wait_for_timeout(SETTLE_MS)
+        quiet = page.evaluate("document.querySelectorAll('#wall .arriving').length")
+        heph = next(s for s in page.snapshot_all if s["voice"] == "am_michael")
+        send(page, {"sessions": [heph] + page.snapshot["sessions"], "speaking": None})
+        page.wait_for_timeout(400)
+        got = page.evaluate("""(id) => { const c = document.querySelector(`#wall .card[data-key="${id}"]`); const h = c.querySelector('.herald');
+          return { arriving: c.classList.contains('arriving'), shown: h.checkVisibility(), name: h.querySelector('.herald-name').textContent,
+            anim: getComputedStyle(h).animationName, live: document.getElementById('live').textContent,
+            others: document.querySelectorAll('#wall .arriving').length }; }""", heph["session_id"])
+        calm = "herald-calm" if motion == "reduce" else "herald"
+        wall.check(
+            quiet == 0 and got["arriving"] and got["shown"] and got["name"] == "Hephaestus" and got["anim"] == calm and got["others"] == 1
+            and "Hephaestus has arrived, Master of the Forge" in got["live"],
+            f"{density}, motion {motion}: the new session arrives once, named and announced",
+            [quiet, got],
+        )
+        page.wait_for_timeout(4200)
+        done = page.evaluate("document.querySelectorAll('#wall .arriving').length")
+        send(page, {"sessions": [heph] + page.snapshot["sessions"], "speaking": None})
+        again = page.evaluate("document.querySelectorAll('#wall .arriving').length")
+        wall.check(done == 0 and again == 0, f"{density}, motion {motion}: it settles and a later snapshot does not replay it", [done, again])
         page.close()
 
 
@@ -1843,7 +1919,7 @@ def end_sits_away(wall):
     for r in fleet_rows[:2]:
         r["status"] = "silent"  # Clear shows beside the menu
     for density in ("compact", "comfortable"):
-        page.click(f".density label:has([value={density}])")
+        pick(page, f".density label:has([value={density}])")
         for label, snap in (("demo", page.snapshot), ("two silent", silent)):
             page.evaluate("(s) => window.__channel.onmessage(s)", snap)
             page.wait_for_timeout(SETTLE_MS)
@@ -2189,7 +2265,7 @@ def wrapup_cards_and_bar(wall):
     bar = page.evaluate(BAR)
     wall.check(bar == {"bar": True, "count": "1 of 15 ready", "safe": False, "stop": True, "endAll": False}, "the bar counts only settled, idle sessions and offers Stop wrap-up only", bar)
     for density in ("compact", "comfortable"):
-        page.check(f".density input[value='{density}']", force=True)
+        pick(page, f".density label:has([value={density}])")
         page.wait_for_timeout(SETTLE_MS)
         got = page.evaluate(
             """() => {
@@ -3419,7 +3495,7 @@ def queue_full_beside_a_classic_scrollbar(wall):
     page = browser.new_page(viewport={"width": 1920, "height": 1000})
     page.goto(f"http://127.0.0.1:{wall.port}/src/wall.html?demo=16")
     page.wait_for_function("document.getElementById('wall').children.length === 16")
-    page.click(".density label:has([value=comfortable])")
+    pick(page, ".density label:has([value=comfortable])")
     page.wait_for_timeout(SETTLE_MS)
     page.click("#queue-tab")
     page.wait_for_selector("#queue[open] .queue-content details")
@@ -4391,9 +4467,12 @@ def split_toggle(wall):
     )
     page.wait_for_timeout(SETTLE_MS)
     got = page.evaluate(STATE)
-    want = {"cards": cards, "density": "compact", "columns": columns, "scrolls": False, "key": True}
-    ok = {k: got[k] for k in want} == want and got["bottom"] <= height
+    want = {"cards": cards, "density": "compact", "columns": columns, "scrolls": False}
+    ok = {k: got.get(k) for k in want} == want and got["bottom"] <= height
     wall.check(ok, f"fit {width}x{height} with the split toggle", got)
+    # #248: Split sits in the bar's right group, beside New session.
+    grouped = page.evaluate("!!document.querySelector('.bar-right #split')")
+    wall.check(grouped, "the split toggle sits in the bar's right group", grouped)
     page.close()
 
     page = open_app(wall, width, height)
@@ -4493,6 +4572,11 @@ def ci_watch(wall):
     page.evaluate("(v) => window.__ci.onmessage(v)", {**CI_RED, "stale": True})
     got = page.evaluate(state)
     wall.check([got["label"], got["tone"]] == ["CI ?", "stale"], "a watch that stopped reporting says so", got)
+    page.evaluate("(v) => window.__ci.onmessage(v)", CI_RED)
+    page.click("#ci-open")
+    page.evaluate("(v) => window.__ci.onmessage(v)", {**CI_RED, "red": [], "dependabot": 0})
+    got = page.evaluate(state)
+    wall.check(got["hidden"] and not got["open"], "all green while the list is open hides the button and closes the list with it", got)
     page.evaluate("() => window.__ci.onmessage(null)")
     wall.check(page.evaluate(state)["hidden"], "the file gone hides the button again", None)
     calls = page.evaluate("window.__calls.filter(([c]) => c === 'ci_subscribe')")
@@ -4559,9 +4643,26 @@ def agy_menu(wall):
     page.close()
 
 
+def gear_closes(wall):
+    """The gear's view menu (#248) closes on Escape, giving focus back to the
+    gear, and on a press outside it; a press inside it keeps it open."""
+    page = open_app(wall, 1920, 1000)
+    is_open = "document.querySelector('.gear').open"
+    page.click(".gear summary")
+    page.click(".gear label:has(input[value=compact])")
+    wall.check(page.evaluate(is_open), "a choice inside the menu leaves it open", None)
+    page.keyboard.press("Escape")
+    got = page.evaluate("[document.querySelector('.gear').open, document.activeElement === document.querySelector('.gear summary')]")
+    wall.check(got == [False, True], "Escape closes the menu and focus goes back to the gear", got)
+    page.click(".gear summary")
+    page.mouse.click(400, 600)
+    wall.check(not page.evaluate(is_open), "a press outside closes the menu", None)
+    page.close()
+
+
 def fleet_health(wall):
-    """The bar's Fleet button: hidden with no doctor reading, "Fleet ok" when
-    every check is, red with a popover listing each check, failing first, and
+    """The bar's Fleet button: hidden with no doctor reading and while every
+    check is ok (#248: healthy is quiet), red with a popover listing each check, failing first, and
     "Fleet ?" once the reading is stale. Set $KLEPSYDRA_HEALTH_SHOT to a path
     stem for a screenshot of the open list."""
     page = open_app(wall, 1920, 1000)
@@ -4572,7 +4673,8 @@ def fleet_health(wall):
     ok = {**HEALTH, "failed": 0, "warned": 0, "checks": [c for c in HEALTH["checks"] if c["status"] == "ok"]}
     page.evaluate("(v) => window.__health.onmessage(v)", ok)
     got = page.evaluate(state)
-    wall.check([got["hidden"], got["label"], got["tone"]] == [False, "Fleet ok", "ok"], "all ok reads Fleet ok", got)
+    # #248: healthy is quiet, so the bar hides the button while every check is ok.
+    wall.check(got["hidden"], "all ok hides the button (healthy is quiet)", got)
     page.evaluate("(v) => window.__health.onmessage(v)", HEALTH)
     page.click("#health-open")
     page.wait_for_timeout(150)
@@ -4590,6 +4692,11 @@ def fleet_health(wall):
     page.evaluate("(v) => window.__health.onmessage(v)", {**HEALTH, "stale": True})
     got = page.evaluate(state)
     wall.check([got["label"], got["tone"]] == ["Fleet ?", "stale"], "a doctor that stopped running says so", got)
+    page.evaluate("(v) => window.__health.onmessage(v)", HEALTH)
+    page.click("#health-open")
+    page.evaluate("(v) => window.__health.onmessage(v)", ok)
+    got = page.evaluate(state)
+    wall.check(got["hidden"] and not got["open"], "all ok while the list is open hides the button and closes the list with it", got)
     calls = page.evaluate("window.__calls.filter(([c]) => c === 'health_subscribe')")
     wall.check(calls == [], "subscribing is a read, not an action", calls)
     page.close()
@@ -4656,6 +4763,7 @@ def themes_switch_live(wall):
         wall.check(keys == [c["key"] for c in base["cards"]] and got["focus"] == "jump" and got["theme"] == theme,
                    f"{theme}: the same cards in the same order, focus kept, html[data-theme] set", [keys, got["focus"], got["theme"]])
     before = len(page.evaluate("window.__calls"))
+    open_gear(page)
     page.select_option("#theme", "dicebear")
     page.wait_for_timeout(SETTLE_MS)
     worn(wall, page, "dicebear", page.evaluate(LOOKS), "the picker, at once")
@@ -4685,7 +4793,7 @@ def themes_switch_live(wall):
         page.wait_for_timeout(100)
         got = page.evaluate(LOOKS)
         worn(wall, page, "kourai", got, f"an unknown theme {bad!r} is Kourai")
-    page.click(".density label:has([value=compact])")
+    pick(page, ".density label:has([value=compact])")
     page.wait_for_timeout(SETTLE_MS)
     page.evaluate("window.__theme.onmessage('professions')")
     page.wait_for_timeout(SETTLE_MS)
@@ -4708,7 +4816,7 @@ def themes_keeper_and_portrait(wall):
         page = open_app(wall, 1920, 1000, theme=theme)
         voices = {s["session_id"]: s.get("voice") for s in page.snapshot_all}
         for density in ("comfortable", "compact"):
-            page.click(f".density label:has([value={density}])")
+            pick(page, f".density label:has([value={density}])")
             page.wait_for_timeout(SETTLE_MS)
             bad = []
             keys = [k for k in page.evaluate("[...document.querySelectorAll('#wall .card')].map((c) => c.dataset.key)") if voices.get(k) in cast]
@@ -4731,7 +4839,7 @@ def themes_fit(wall):
     for theme in THEMES:
         for width, height, cards, columns in COMFORTABLE_FIT:
             page = wall.open(width, height, cards, query=f"&theme={theme}")
-            page.click(".density label:has([value=comfortable])")
+            pick(page, ".density label:has([value=comfortable])")
             page.wait_for_timeout(SETTLE_MS)
             got = page.evaluate(STATE)
             faces = page.evaluate("[...document.querySelectorAll('#wall .face')].map((f) => f.getAttribute('src'))")
@@ -4766,7 +4874,7 @@ def theme_everywhere(wall):
     Tokens by character and in the empty wall's keeper, and the Ledger is
     not read again for it."""
     page = wall.open(1920, 1000, 16)
-    page.click(".density label:has([value=comfortable])")
+    pick(page, ".density label:has([value=comfortable])")
     page.click("#ledger-open")
     page.wait_for_selector("#ledger section[aria-labelledby=ledger-characters]")
     page.wait_for_timeout(SETTLE_MS)
@@ -4780,7 +4888,7 @@ def theme_everywhere(wall):
         if density == "compact":
             page.keyboard.press("Escape")
             page.wait_for_function("!document.getElementById('portrait').open")
-            page.click(".density label:has([value=compact])")
+            pick(page, ".density label:has([value=compact])")
             page.wait_for_timeout(SETTLE_MS)
         for theme in ("professions", "dicebear", "kourai"):
             # The portrait is modal, so the picker behind it is set as a script would.
@@ -4835,6 +4943,7 @@ def theme_save_flushes_and_says_when_refused(wall):
     sends back is worn again."""
     page = open_app(wall, 1920, 1000)
     before = len(page.evaluate("window.__calls"))
+    open_gear(page)
     page.focus("#theme")
     page.select_option("#theme", "professions")
     page.evaluate("document.getElementById('theme').blur()")
@@ -4844,6 +4953,7 @@ def theme_save_flushes_and_says_when_refused(wall):
     late = page.evaluate("window.__calls")[before:]
     wall.check(early == [["set_theme", {"theme": "professions"}]] and late == early, "a blur saves the waiting choice at once, and once", [early, late])
     page.evaluate("window.__setThemeFails = 'prefs.json could not be saved, so the theme is still kourai, not dicebear.'")
+    open_gear(page)
     page.select_option("#theme", "dicebear")
     page.wait_for_timeout(SAVE_MS + 200)
     page.evaluate("window.__theme.onmessage('kourai')")
@@ -4860,6 +4970,7 @@ def theme_save_flushes_and_says_when_refused(wall):
     wall.check([{k: entry.get(k) for k in want} for entry in logs] == [want],
                "the refusal reaches the app's log once, at error, naming the theme and why", logs)
     page.evaluate("window.__setThemeFails = null")
+    open_gear(page)
     page.select_option("#theme", "professions")
     page.wait_for_timeout(SAVE_MS + 200)
     note = page.evaluate("document.getElementById('theme-note').textContent")
@@ -4967,6 +5078,7 @@ def theme_stale_load_leaves_the_choice(wall):
         for theme in ("professions", "dicebear"):
             page.route(f"**/fleet/themes/{theme}.json", keep(theme))
         before = len(page.evaluate("window.__calls"))
+        open_gear(page)
         page.select_option("#theme", "professions")
         page.select_option("#theme", "dicebear")
         page.wait_for_timeout(200)
@@ -5036,6 +5148,7 @@ def theme_file_that_never_answers(wall):
     page.route("**/fleet/themes/dicebear.json", lambda r: held.append(r))
     page.goto(f"http://127.0.0.1:{wall.port}/src/wall.html")
     page.wait_for_function("document.getElementById('theme').options.length === 3")
+    open_gear(page)
     page.select_option("#theme", "dicebear")
     page.wait_for_timeout(900)
     for r in held:
@@ -5058,6 +5171,7 @@ def theme_file_that_never_answers(wall):
     page.route("**/fleet/themes/dicebear.json", lambda r: held.append(r))
     page.goto(f"http://127.0.0.1:{wall.port}/src/wall.html")
     page.wait_for_function("document.getElementById('theme').options.length === 3")
+    open_gear(page)
     page.select_option("#theme", "dicebear")
     try:
         page.wait_for_function("document.getElementById('wall').children.length > 0", timeout=int((THEME_WAIT_MS / 1000 + slack) * 1000))
@@ -5104,6 +5218,7 @@ def theme_switch_commits_only_what_it_wore(wall):
     page = open_app(wall, 1920, 1000)
     page.route("**/fleet/themes/dicebear.json", lambda r: r.abort())
     before = len(page.evaluate("window.__calls"))
+    open_gear(page)
     page.select_option("#theme", "dicebear")
     page.wait_for_timeout(SAVE_MS + 300)
     got = page.evaluate("[document.documentElement.dataset.theme, document.getElementById('theme').value, document.getElementById('theme-note').textContent, document.querySelector('#wall .card .face').getAttribute('src')]")
@@ -5116,6 +5231,7 @@ def theme_switch_commits_only_what_it_wore(wall):
         held = []
         page.route("**/fleet/themes/professions.json", lambda r: held.append(r))
         before = len(page.evaluate("window.__calls"))
+        open_gear(page)
         for theme in path:
             page.select_option("#theme", theme)
             page.wait_for_timeout(150)
@@ -5148,11 +5264,13 @@ def theme_retry_waits_before_loading(wall):
                     r.abort()
             return route
 
-        page.route("**/fleet/themes/dicebear.json", fail_first(tries))
+        page.route("**/fleet/themes/dicebear.json*", fail_first(tries))  # a retry asks with ?retry=N
+        open_gear(page)
         page.select_option("#theme", "dicebear")
         page.wait_for_function("document.getElementById('theme-note').textContent.startsWith('Not switched')")
         page.wait_for_timeout(gap)
         t0 = time.monotonic()
+        open_gear(page)
         page.select_option("#theme", "dicebear")
         early = []
         while time.monotonic() - t0 < THEME_WAIT_MS / 1000 - 0.5:  # the note, sampled until just before the retry's own wait ends
@@ -5172,35 +5290,32 @@ def theme_retry_waits_before_loading(wall):
 
 PICKER = """() => {
   const bar = document.querySelector('.bar');
+  const gear = document.querySelector('.gear');
   const box = (e) => e.getBoundingClientRect();
-  const pick = document.querySelector('.theme-pick');
-  const with_ = Math.round(box(bar).height * 100);
-  pick.style.display = 'none';
+  const was = Math.round(box(bar).height * 100);
+  gear.style.display = 'none';
   const without = Math.round(box(bar).height * 100);
-  pick.style.display = '';
-  const p = box(pick);
-  const cx = (p.left + p.right) / 2, cy = (p.top + p.bottom) / 2;
-  // The spacing exception to the 24 px target (WCAG 2.2, 2.5.8): no other target within 12 px of an undersized one's centre.
-  const near = (r) => Math.hypot(Math.max(r.left - cx, 0, cx - r.right), Math.max(r.top - cy, 0, cy - r.bottom)) < 12;
-  const others = [...bar.querySelectorAll('button, label, a, input, select, .tally, .ring-key')]
-    .filter((e) => !pick.contains(e) && !e.contains(pick) && e.checkVisibility() && box(e).width > 0)
-    .map((e) => [e.id || e.className || e.tagName, box(e)]);
-  const hits = (r) => r.left < p.right && p.left < r.right && r.top < p.bottom && p.top < r.bottom;
-  return {
-    with: with_ / 100, without: without / 100,
-    inside: p.left >= 0 && p.right <= innerWidth && p.top >= box(bar).top && p.bottom <= box(bar).bottom,
-    overlaps: others.filter(([, r]) => hits(r)).map(([n]) => n),
-    crowded: p.height < 24 ? others.filter(([, r]) => near(r)).map(([n]) => n) : [],
-    height: p.height,
+  gear.style.display = '';
+  gear.open = true;
+  const opened = Math.round(box(bar).height * 100);
+  const menu = box(document.querySelector('.view'));
+  const pick = box(document.getElementById('theme'));
+  const labels = [...document.querySelectorAll('.density label')].map((l) => box(l).height);
+  const out = {
+    with: was / 100, without: without / 100, opened: opened / 100,
+    inside: menu.left >= 0 && menu.right <= innerWidth && menu.top >= box(bar).bottom - 8,
+    select: pick.height, labels,
   };
+  gear.open = false;
+  return out;
 }"""
 
 
 def picker_costs_no_height(wall):
-    """The Characters picker never makes the bar taller or wrap: at each
-    width, with the app's buttons shown or not, the bar is as tall as
-    without the picker, and the picker sits inside the bar, over no other
-    control and 12 px clear of each (the spacing exception to 24 px)."""
+    """The view settings sit behind the bar's gear (#248): at each width, with
+    the app's buttons shown or not, the gear makes the bar no taller, opening
+    it makes the bar no taller either, the menu stays on screen under the bar,
+    and its controls meet the 24 px target (WCAG 2.2, 2.5.8)."""
     for width in (420, 945, 958, 1100, 1279, 1280, 1366, 1500, 1920):
         for app in (True, False):
             page = wall.open(width, 1000, 8, query="&theme=professions")
@@ -5208,8 +5323,8 @@ def picker_costs_no_height(wall):
                 page.evaluate("document.getElementById('new-session').hidden = true; document.getElementById('wrapup-open').hidden = true; dispatchEvent(new Event('resize'))")
                 page.wait_for_timeout(SETTLE_MS)
             got = page.evaluate(PICKER)
-            ok = got["with"] == got["without"] and got["inside"] and not got["overlaps"] and not got["crowded"]
-            wall.check(ok, f"{width} px{' with the app buttons' if app else ''}: the picker costs the bar no height and crowds nothing", got)
+            ok = got["with"] == got["without"] == got["opened"] and got["inside"] and got["select"] >= 24 and min(got["labels"]) >= 24
+            wall.check(ok, f"{width} px{' with the app buttons' if app else ''}: the gear costs the bar no height and its menu fits", got)
             page.close()
 
 
@@ -5225,29 +5340,32 @@ LIST_COLOURS = """() => {
 
 
 def theme_list_is_dark(wall):
-    """The Characters list opens dark (#151). Windows draws the native list
-    from the select's and the options' own colours, so the select is the
-    bar's colour, never transparent, every other option the wall's card
-    colour and the chosen one the hover colour, each with its text at 4.5:1
-    or more."""
+    """The Characters list opens in the page's scheme (#151, #247). Windows
+    draws the native list from the select's and the options' own colours, so
+    the select is the bar's colour, never transparent, every other option the
+    wall's card colour and the chosen one the hover colour, each with its text
+    at 4.5:1 or more: a dark list in the dark scheme, a light one in the light."""
     page = wall.open(1920, 1000, 8)
-    got = page.evaluate(LIST_COLOURS)
-    tokens = page.evaluate("""() => {
-      const probe = document.createElement('div');
-      document.body.append(probe);
-      const of = (v) => { probe.style.background = `var(${v})`; return getComputedStyle(probe).backgroundColor; };
-      const out = { card: of('--card-bg'), hover: of('--button-hover'), wall: of('--wall-bg'), select: getComputedStyle(document.getElementById('theme')).backgroundColor };
-      probe.remove();
-      return out;
-    }""")
-    dark = all(
-        o["bg"] == tokens["hover" if o["chosen"] else "card"] and not o["light"] and o["ratio"] >= 4.5
-        for o in got["options"]
-    )
-    chosen = sum(o["chosen"] for o in got["options"])
-    wall.check(len(got["options"]) == 3 and chosen == 1 and dark and tokens["select"] == tokens["wall"],
-               "the select wears the bar's colour, the chosen option the hover colour and the rest the card's, light text at 4.5:1 or more",
-               [got["options"], tokens])
+    for scheme in ("dark", "light"):
+        page.emulate_media(color_scheme=scheme)
+        page.wait_for_timeout(100)
+        got = page.evaluate(LIST_COLOURS)
+        tokens = page.evaluate("""() => {
+          const probe = document.createElement('div');
+          document.body.append(probe);
+          const of = (v) => { probe.style.background = `var(${v})`; return getComputedStyle(probe).backgroundColor; };
+          const out = { card: of('--card-bg'), hover: of('--button-hover'), wall: of('--wall-bg'), select: getComputedStyle(document.getElementById('theme')).backgroundColor };
+          probe.remove();
+          return out;
+        }""")
+        fits = all(
+            o["bg"] == tokens["hover" if o["chosen"] else "card"] and o["light"] == (scheme == "light") and o["ratio"] >= 4.5
+            for o in got["options"]
+        )
+        chosen = sum(o["chosen"] for o in got["options"])
+        wall.check(len(got["options"]) == 3 and chosen == 1 and fits and tokens["select"] == tokens["card"],
+                   f"{scheme}: the select wears its menu's colour, the chosen option the hover colour and the rest the card's, text at 4.5:1 or more",
+                   [got["options"], tokens])
     page.close()
 
 
@@ -5281,6 +5399,7 @@ def main() -> int:
             band_clear,
             comfortable_fits,
             arrival_once,
+            slim_portrait_fits,
             dialog_backdrop_only,
             compact_look_on_face,
             ask_keeps_the_tool_name,
@@ -5307,6 +5426,7 @@ def main() -> int:
             one_click_or_key_never_ends_all,
             empty_state,
             fleet_health,
+            gear_closes,
             agy_menu,
             ended_only,
             long_folder_fits,
@@ -5317,6 +5437,7 @@ def main() -> int:
             cleared_link_waits,
             stale_focus_never_reveals,
             reveal_race,
+            arrival_is_an_event,
             reveal_does_not_arrive,
             bar_follows_empty_state,
             launch_dir_follows_prefs,

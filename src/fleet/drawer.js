@@ -2,7 +2,7 @@
 // guardrail log and errors, on the shared side panel (sidepanel.js: shut to
 // a tab, docked, or full). Every figure is set as text; the only markup is
 // built here from constants.
-import { identity } from "./model.js";
+import { accentLight, identity } from "./model.js";
 import { createSidePanel } from "./sidepanel.js";
 import {
   activeTime, cacheShare, characterOf, costLine, costText, fullNumber, modelName, plural, rowLabels, sumTotals, todaySessions, tokensByCharacter,
@@ -218,7 +218,10 @@ export function createDrawer({ dialog, button, tab, edge, sessions, cast, fetchT
     const bar = (row) => {
       const track = el("span", "track", null, { "aria-hidden": "true" });
       const fill = el("span", "fill");
-      if (row.accent) fill.style.setProperty("--accent", row.accent);
+      if (row.accent) {
+        fill.style.setProperty("--accent", row.accent);
+        fill.style.setProperty("--accent-light", accentLight(row.accent));
+      }
       fill.style.width = `max(${MIN_BAR_PX}px, ${((row.tokens / max) * 100).toFixed(1)}%)`;
       track.append(fill);
       return track;
