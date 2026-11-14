@@ -21,14 +21,21 @@ Design C (AJ's pick, fleet-briefing #4) with A's Open terminal slice. Palette ru
 - Decision: README shots in the dark scheme (klepsydra's own); the hero catches Hephaestus's arrival 1.3 s in (scripts/readme-shots.py `arrival()`).
 - Note: the previous headless process was still alive in this worktree and editing; it was stopped (friction log).
 
+## Done since (11-13 23:xx to 11-14 00:1x)
+- ✅ Phone wall stays dark in either scheme (light block scoped to `:root:not(.served)`, served page drops the light theme-color): f5bc0a8. Phone suite: 88 ok, 4 FAIL, the same 4 as main (gh/branch links under 44 px x3, Play again flaky).
+- ✅ Perf (`docs/perf/2026-11-13/cards-247/measure.json`, headless Chromium, relative): refresh task 3 cards 5.40 -> 5.46 ms, 16 cards 14.38 -> 14.09 ms; idle 0.79 -> 0.73 and 1.90 -> 1.49 ms/s.
+- ✅ Shots in fleet-briefing `shots/2026-11-13/klepsydra-247-373-*` (wall 1920 x density x scheme, app mode; arrival frames + webm) with README line; needs-you line for AJ's look.
+- ✅ README screenshots retaken (dark, hero = Hephaestus arriving); bar's gauge ramp/panel warm (style.css, badge ring #14100b): c003b87.
+
 ## Next (in order)
-1. Phone suite (`scripts/test_phone_browser.py`).
-2. Measure: `flock -o /tmp/fleet-heavy.lock uv run -q --no-project --with playwright==1.63.0 python scripts/perf/measure_ba.py ../main-measure . docs/perf/2026-11-13/cards-247` (main-measure = detached origin/main worktree, already added) + a trace of one arrival.
-3. Shots 1920 (Comfortable + Compact, dark + light) + arrival frames/clip into fleet-briefing `shots/2026-11-13/klepsydra-247-373-*` + README line, and the 10 README screenshots (`scripts/readme-shots.py`, needs pillow + pyoxipng); push, then STOP for AJ's look before PR and review rounds.
-4. PR (closes #247 #248 #373, assignee ajbarea, short top + details), `/code-review medium` + one independent Opus reader until clean, merge, `fleet install`, report. Windows WebView2 perf run needs AJ's build: needs-you line, not the PR.
-5. After merge: remove worktrees main-measure and design-247 (branch design/cards-247).
+1. STOP: AJ judges the look (needs-you line). Open call: the strip's working badge is Okabe-Ito blue #0072b2 (a test pins Okabe-Ito).
+2. Before the PR: rerun wall-suite chunk 4 (strip/theme cases) once, since style.css changed after the last full run (node style tests pass).
+3. PR (closes #247 #248 #373, assignee ajbarea, short top + details; mention the theme-retry fix and the phone-dark decision), `/code-review medium` + one independent Opus reader until clean, merge, `fleet install`. Windows WebView2 perf needs AJ's build: needs-you line, not the PR.
+4. After merge: remove worktrees main-measure and design-247 (branch design/cards-247).
 
 ## Notes
+- Browser suite in chunks: case names as args (`sed` the `cases` tuple in main()); each chunk under 300 s. Heavy lock: hold it with `setsid nohup flock /tmp/fleet-heavy.lock -c "touch FLAG; exec sleep N"` and poll the flag in foreground calls (headless runs end when a turn ends).
+- App-mode shots: /tmp/cards247-probe/shots.py pattern (test_wall_browser.open_app + emulate_media); shoot.py serves at / (phone mode), which is now always dark.
 - Scratch harnesses (copy them into scripts/perf if kept): `shoot.py` (serve a worktree at `/` over /events, density x scheme, `--probe`) and `arrive.py` (load without the first fixture session, push it, stepped frames, `--motion=reduce`, `--video=DIR`, `--probe=1` logs animation events) copied to `~/.local/state/fleet-orchestrator/cards-247-harness/` with the arrival fixture `arrive4.json`.
 - Pin `playwright==1.63.0` (its browsers are installed).
 - Searches behind the palette: Chrome dark-mode guidance (system scheme default, CSS branching), warm near-black surfaces and surface-lightness depth (atmos.style dark-mode practices); #373's sources are in the issue.
