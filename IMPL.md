@@ -1,18 +1,16 @@
-# IMPL: headless jobs on the API credit (#260), branch feat/headless-260
+# IMPL: harden `fleet headless` (#260, the 11-13 failures), branch headless-headless-guards
 
-Resume from this file, `git log`, PR #375 and its comments.
+Resume from this file, `git log`, the PR and the comments on #260.
 
 ## Slice
-`fleet headless NAME BRIEF` runs one `claude -p` job in a fresh worktree on `~/.claude-api` (apiKeyHelper over `ant --profile ldqis`), under a required `--max-budget-usd` (default 10, at most 50) and the workers' capped scope; each end goes to the fleet log and `headless/ledger.jsonl`; `--status` lists jobs. Interactive sessions never get a key: `launch.sh` and the tray's launcher drop `ANTHROPIC_API_KEY/AUTH_TOKEN/PROFILE` and refuse keyed settings; doctor reports the auth mode. Design and sources: `docs/headless.md`, the PR's Decisions.
+Three failures of 11-13 (comments on #260): a job's turn ended on a background wait; a call moved to the background at the 10-minute tool limit; a `sleep` a job wrapped the heavy lock around outlived it. Guards: `fleet/headless-rules.md` put before every brief; `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1` and a 16-minute tool timeout in the job's env; a resume loop until `FINAL REPORT:` (FLEET_HEADLESS_RESUMES, 4, within the budget), then `stalled`; a reaper after every run (the job's own scope, matched by the unit name in job.json; every process with the job's variables; claude's session; only processes newer than the runner); `fleet doctor` names the heavy lock's holders and warns on a bare sleep or a holder whose job ended. Docs: `docs/headless.md`, "Seeing a job to its end".
 
 ## Done
-- Code, tests (`fleet/test_headless.sh`, `make test-headless`, CI step), docs, README rows.
-- Live on the LDQIS credit 11-13: two haiku jobs (foreground and background), `apiKeySource: apiKeyHelper`, $0.0047 total, scope in `fleet-workers.slice`.
-- Opus review round 1 (5 Should-fix, 5 nits) fixed in 9b469e6; verify round 2 (2 Should-fix, 3 nits) fixed in 2e0a9de; verify round 3 (2 Should-fix, 2 nits) fixed in 51060f5; round 4 (1 Should-fix: the hook read the server env only with a fleet session) fixed after it; guard mutations 19 of 20 killed, 1 equivalent.
+- Code, tests in `fleet/test_headless.sh` (116 checks), docs, README rows; `hooks/test_launch.sh` no longer inherits a headless job's keyed `CLAUDE_CONFIG_DIR`; `fleet/test_fleet.sh`'s doctor uses a private heavy lock.
+- Mutation check by hand: 29 guards, 29 caught (the unit-name guard run inside a throwaway scope, since its mutation kills the caller's cgroup).
+- One independent Opus review: 0 Blocking, 5 Should-fix, all fixed (reaper misses Bash's own sessions without a scope; waiting check too broad; zeroed crash cost; claude < 2.1.277; Monitor not enforced), and the nits that change behavior.
+- Suites: test-headless 116/116, test-launch 241/241, test-heavy-lock 30/30, shellcheck clean, node 475/475, statusline, hooks/test_fleet, measure_memory, build_windows, Biome, ruff green. test-fleet: 377 checks, 0 failed, then cut at the 8-minute rule.
 
 ## Next
-1. Heavy suites on the final tree (test-fleet, test-launch, test-delegate, shellcheck).
-2. Heph verifies and merges; then `make install-fleet` from main, and `fleet doctor` shows `auth mode: subscription + headless credit`.
-
-## Verify
-`make test-headless`, `make test-fleet`, `make test-launch`, `make test-delegate`, `make shellcheck`. A live check costs cents: `fleet headless NAME brief.md --model claude-haiku-5-5 --budget 0.5 --wait`, then remove its worktree and branch.
+1. Run test-fleet in full, test-delegate, test-slice and the cargo checks outside a headless job (they were not run, or not to the end, here).
+2. Heph verifies and merges. No `make install-fleet` needed: headless.sh reads headless-rules.md beside itself in the checkout.

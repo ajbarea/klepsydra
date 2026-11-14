@@ -17,6 +17,9 @@
 # (a FAIL), and the caps fit this machine and the orchestrator's peak (a warning).
 # The auth mode: subscription only, or subscription + headless credit (#260),
 # and a FAIL when an interactive config folder sets an API key or helper.
+# The heavy lock's holders (pid, command, age, scope, headless job) and the
+# runs queued on it, with a warning when a holder is a bare sleep or outlived
+# its headless job (#260).
 # Briefs whose shared rules
 # are out of date, and a second folder not logged in, are warnings.
 # With `--json FILE` (the fleet-doctor timer) it also writes the checks to FILE
@@ -412,6 +415,78 @@ elif stale=$(bash "$here/brief.sh" --check "${briefs[@]}" 2>/dev/null); then
 else
   report warn "briefs" "$(tr '\n' ' ' <<<"$stale")(fleet brief --check)"
 fi
+
+# The heavy lock (#289, #260): who holds it, since when, and from which scope
+# or headless job. A flock belongs to an open file, so its holders are the
+# processes with the lock file open that are not queued on it. /proc/locks
+# cannot say: it hides a lock whose taker has exited, which is how heavy.sh
+# takes it (a flock(1) on its open file). So a non-blocking try says whether it
+# is held (it takes a free lock for an instant), and a process blocked in the
+# kernel's lock wait, or the parent of one (heavy.sh waiting through its flock),
+# is queued. A holder that is a bare sleep, or whose headless job has ended,
+# holds it for nobody: a warning naming the pid to stop (11-13: a job's
+# orphaned sleep held it for 30 minutes and four jobs queued behind it).
+heavy_lock_check() {
+  local lock=${FLEET_HEAVY_LOCK:-/tmp/fleet-heavy.lock} real p q rc comm args age cg job st jpid wchan what=() bad=() waiting=0
+  local -a open=() stat=()
+  local -A waiter=()
+  local up hz
+  read -r up _ </proc/uptime; up=${up%.*}; hz=$(getconf CLK_TCK 2>/dev/null || echo 100)
+  real=$(readlink -f -- "$lock" 2>/dev/null) && [[ -f $real ]] || { report ok "heavy lock" "free"; return; }
+  # flock exits 1 only when another holds it; other codes are its own failures.
+  flock -n "$real" true 2>/dev/null; rc=$?
+  (( rc == 0 )) && { report ok "heavy lock" "free"; return; }
+  (( rc == 1 )) || { report warn "heavy lock" "could not try $lock (flock exit $rc)" lock="$lock"; return; }
+  mapfile -t open < <(find /proc/[0-9]*/fd -maxdepth 1 -lname "$real" -printf '%h\n' 2>/dev/null | cut -d/ -f3 | sort -un)
+  for p in "${open[@]}"; do
+    wchan=$(cat "/proc/$p/wchan" 2>/dev/null)
+    if [[ $wchan == *lock_inode_wait* ]]; then
+      waiter[$p]=1 waiting=$((waiting + 1))
+      p=$(awk '$1 == "PPid:" { print $2 }' "/proc/$p/status" 2>/dev/null) && [[ -n $p ]] && waiter[$p]=1
+    fi
+  done
+  for p in "${open[@]}"; do
+    [[ -n ${waiter[$p]-} || ! -d /proc/$p ]] && continue
+    comm=$(cat "/proc/$p/comm" 2>/dev/null) || continue
+    args=$(tr '\0[:cntrl:]' '  ' <"/proc/$p/cmdline" 2>/dev/null | cut -c1-80) args=${args% }
+    # Its age from its start (the 20th field after the name), in clock ticks.
+    age="" stat=()
+    { read -r st <"/proc/$p/stat"; } 2>/dev/null && read -r -a stat <<<"${st##*) }"
+    [[ ${stat[19]-} =~ ^[0-9]+$ ]] && age=$(( up - stat[19] / hz ))
+    cg=$(proc_cgroup "$p") cg=${cg##*/}
+    # Its headless job: the job's variables, which every process the job
+    # starts inherits, else the scope headless.sh named for it.
+    job=""
+    if tr '\0' '\n' <"/proc/$p/environ" 2>/dev/null | grep -qx 'KLEPSYDRA_HEADLESS=1'; then
+      job=$(tr '\0' '\n' <"/proc/$p/environ" 2>/dev/null | sed -n 's/^KLEPSYDRA_AGENT=//p' | head -n 1)
+    fi
+    [[ -z $job && $cg =~ ^fleet-headless-(.+)-[0-9]+\.scope$ ]] && job=${BASH_REMATCH[1]}
+    q="pid $p ($args), ${age:-?} s, ${cg:-no scope}${job:+, job $job}"
+    what+=("$q")
+    if [[ $comm == sleep ]]; then
+      bad+=("pid $p is a bare sleep ($args, ${age:-?} s${job:+, job $job}): kill $p")
+    elif [[ -n $job && $job =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$ && -f $FLEET_STATE/headless/$job/job.json ]]; then
+      # Ended only on its record's word: a job this state folder does not hold is not judged.
+      st=$(jq -r '.state // ""' "$FLEET_STATE/headless/$job/job.json" 2>/dev/null)
+      jpid=$(cat "$FLEET_STATE/headless/$job/pid" 2>/dev/null)
+      if [[ $st != running ]] || { [[ $jpid =~ ^[0-9]+$ ]] && ! kill -0 "$jpid" 2>/dev/null; }; then
+        bad+=("pid $p outlived its job $job (${st:-no state}; $args, ${age:-?} s): kill $p")
+      fi
+    fi
+  done
+  local queued="" list
+  (( waiting )) && queued="; $waiting queued"
+  if (( ${#bad[@]} )); then
+    list=$(printf '%s; ' "${bad[@]}")
+    report warn "heavy lock" "held for nobody: ${list%; }$queued" lock="$lock"
+  elif (( ${#what[@]} )); then
+    list=$(printf '%s; ' "${what[@]}")
+    report ok "heavy lock" "held by ${list%; }$queued" lock="$lock"
+  else
+    report ok "heavy lock" "held by a process this user cannot see${queued}" lock="$lock"
+  fi
+}
+heavy_lock_check
 
 # Voices (#273): the tray's mode has been applied to keryx (the resume service
 # applies a change within a pass; a mode left unapplied says why).
