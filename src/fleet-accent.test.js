@@ -76,6 +76,13 @@ test("light: text holds 4.5:1 and the status frames 3:1 on every surface", () =>
   check("light", "ink on the amber pill", token("--needs-ink"), lt("--tone-needs"), 4.5);
 });
 
+test("the primary button's label holds 4.5:1 at rest and on hover, in both schemes", () => {
+  for (const bg of ["--text", "--primary-hover"]) {
+    check("dark", `primary label on ${bg}`, token("--wall-bg"), token(bg), 4.5);
+    check("light", `primary label on ${bg}`, lt("--wall-bg"), lt(bg), 4.5);
+  }
+});
+
 test("light: each character keeps its hue, deepened to 3:1 for its edge, chips and marker", () => {
   for (const c of characters) for (const bg of LIGHT_SURFACES) check(`${c.theme}/${c.name}`, "light edge", accentLight(c.accent), bg, 3);
   assert.equal(accentLight("#2b2118"), "#2b2118", "a tone that already reads is kept");

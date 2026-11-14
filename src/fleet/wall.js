@@ -28,7 +28,7 @@ const TICK_MS = 15_000; // ages re-render between snapshots, as on the gauge
 const FACE_PX = 62; // the comfortable --wall-face less twice its --face-inset
 const SVG_NS = "http://www.w3.org/2000/svg";
 const SEGMENT_FADE_MS = 200; // wall.css .seg.leave
-const MARK_ARC = "M 4.5 16 A 11.5 11.5 0 0 1 27.5 16"; // the ring key's arc (wall.html)
+const MARK_ARC = "M 4.5 16 A 11.5 11.5 0 0 1 27.5 16"; // a background-work mark's arc, in a 32 x 18 viewBox
 const RESIZE_SETTLE_MS = 100; // Auto measures once a drag pauses, not every frame of it
 // GitHub's mark (octicon mark-github, 16 px).
 const GITHUB_ICON =
@@ -527,12 +527,14 @@ function paintTally() {
 
 const reducedMotion = () => matchMedia("(prefers-reduced-motion: reduce)").matches;
 
-// The slide needs the browser's view transitions and a reader who allows motion.
-// Arrivals waiting on the window: ids announced but not yet seen (#373).
+// Arrivals (#373): the ids seen so far (null until the first snapshot seeds
+// them), those announced whose card is not built yet, and those built while
+// the window was hidden, played once it is shown.
 const ARRIVE_STAGGER_MS = 450;
 let seenIds = null;
 const arriving = new Set();
 const heldArrivals = new Set();
+// The slide needs the browser's view transitions and a reader who allows motion.
 const canSlide = () =>
   typeof document.startViewTransition === "function" && !reducedMotion();
 

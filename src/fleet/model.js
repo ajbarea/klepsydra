@@ -214,18 +214,16 @@ export const shouldSlide = (was, next, snapshot) => Boolean(snapshot) && was.len
 /** The card's view-transition name, or "" unless the id is uuid-shaped. */
 export const transitionName = (id) => (/^[0-9a-f-]{36}$/i.test(id) ? `card-${id}` : "");
 
+/** A status as the live region says it: its label and, unless silent, its reason. */
+const statusWords = (s) => [statusOf(s.status).label, s.status === "silent" ? null : reasonText(s)];
+
 /** What the wall's live region says about changes since `before`; nothing on the first look. */
 export function announcements(before, sessions, cast, nowMs = Date.now()) {
   if (!before) return [];
   const key = statuses(sessions);
   return sessions
     .filter((s) => before.get(s.session_id) !== key.get(s.session_id))
-    .map((s) => {
-      if (isQuiet(s)) return accessibleName(s, cast, nowMs);
-      return [identity(s, cast).name, statusOf(s.status).label, s.status === "silent" ? null : reasonText(s)]
-        .filter(Boolean)
-        .join(", ");
-    });
+    .map((s) => (isQuiet(s) ? accessibleName(s, cast, nowMs) : [identity(s, cast).name, ...statusWords(s)].filter(Boolean).join(", ")));
 }
 
 /** How many session ids a page remembers as already arrived; past it, the longest unseen go first. */
@@ -254,10 +252,16 @@ export function arrivals(seen, sessions, keep = ARRIVALS_KEPT) {
   return { seen, arrived };
 }
 
-/** What the live region says when a session arrives: "Hephaestus has arrived, Master of the Forge". */
+/**
+ * What the live region says when a session arrives: "Hephaestus has arrived,
+ * Master of the Forge". One that arrives in any state but working or not
+ * started says that state too, as a status change would: "…, needs you,
+ * approve Bash(rm -rf build)".
+ */
 export function arrivalLine(s, cast) {
   const who = identity(s, cast);
-  return [`${who.name} has arrived`, who.epithet].filter(Boolean).join(", ");
+  const usual = !s.status || s.status === "working" || s.status === "new";
+  return [`${who.name} has arrived`, who.epithet, ...(usual ? [] : statusWords(s))].filter(Boolean).join(", ");
 }
 
 /** The compact card's "+2" for the repos a session touched besides its own, named in full for hover and its accessible name; null with none. */

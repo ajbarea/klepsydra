@@ -3,8 +3,7 @@
 Maximised on a 1920x1080 screen the wall's content is about 1920x1000, and
 snapped to half the screen about 945x1000 (the taskbar, title bar and frame
 take the rest). In Auto, sixteen demo cards fit the first and eight the
-second, compact, in four and two columns, with no vertical scrollbar and the
-ring key in view. An MCP ask cut short loses its middle, never the tool's
+second, compact, in four and two columns, with no vertical scrollbar. An MCP ask cut short loses its middle, never the tool's
 own name. Comfortable holds four full cards at half the screen
 and eight maximised, and Auto keeps it there. Auto never leaves a comfortable wall scrolling: not when a
 card grows, not at an exact fit, not where the comfortable bar is taller than
@@ -849,13 +848,20 @@ def portrait_dialog(wall):
 
 
 def arrival_once(wall):
-    """A card arrives once: built while Compact shows, it does not replay its
-    arrival when the wall turns Comfortable."""
-    page = wall.open(945, 1000, 8)
+    """A card arrives once: one that arrived while Compact showed does not
+    replay its arrival when the wall turns Comfortable."""
+    page = open_app(wall, keep=lambda s: s["status"] == "working" and s["voice"] != "am_michael")
+    pick(page, ".density label:has([value=compact])")
+    page.wait_for_timeout(SETTLE_MS)
+    heph = next(s for s in page.snapshot_all if s["voice"] == "am_michael")
+    send(page, {"sessions": [heph] + page.snapshot["sessions"], "speaking": None})
+    page.wait_for_timeout(400)
+    came = page.evaluate("document.querySelectorAll('.card.arriving').length")
+    page.wait_for_timeout(4200)
     pick(page, ".density label:has([value=comfortable])")
     page.wait_for_timeout(SETTLE_MS)
     left = page.evaluate("document.querySelectorAll('.card.arriving').length")
-    wall.check(left == 0, "no arrival replays on a density switch", left)
+    wall.check(came == 1 and left == 0, "an arrival seen in Compact does not replay on a switch to Comfortable", [came, left])
     page.close()
 
 

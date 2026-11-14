@@ -952,4 +952,8 @@ test("#373: the live region says who arrived, with the epithet when the cast has
   const cast = JSON.parse(readFileSync(new URL("./fleet/themes/kourai.json", import.meta.url), "utf8"));
   assert.equal(arrivalLine({ session_id: "x", voice: "am_michael" }, cast), "Hephaestus has arrived, Master of the Forge");
   assert.match(arrivalLine({ session_id: "abcdef123456", name: "notes", launch_dir: "/home/aj/notes" }, null), /^\S.* has arrived$/);
+  assert.equal(arrivalLine({ session_id: "x", voice: "am_michael", status: "working", reason: "editing" }, cast), "Hephaestus has arrived, Master of the Forge");
+  const needs = { session_id: "x", voice: "am_michael", status: "needs_you", reason: "approve Bash(rm -rf build)" };
+  assert.equal(arrivalLine(needs, cast), `Hephaestus has arrived, Master of the Forge, ${announcements(new Map(), [needs], cast)[0].replace(/^Hephaestus, /, "")}`, "a loud state is said as a status change would say it");
+  assert.match(arrivalLine({ ...needs, status: "error" }, cast), /, error/);
 });
