@@ -27,11 +27,17 @@ Design C (AJ's pick, fleet-briefing #4) with A's Open terminal slice. Palette ru
 - ✅ Shots in fleet-briefing `shots/2026-11-13/klepsydra-247-373-*` (wall 1920 x density x scheme, app mode; arrival frames + webm) with README line; needs-you line for AJ's look.
 - ✅ README screenshots retaken (dark, hero = Hephaestus arriving); bar's gauge ramp/panel warm (style.css, badge ring #14100b): c003b87.
 
+## Headless ship run 11-14 (AJ 11-13: "ship it")
+- ✅ Wall-suite strip/theme chunk (split_toggle to the end) rerun: 112 passed.
+- ✅ Merged origin/main (#375, #376, #378): only IMPL.md conflicted (kept this branch's); main touched no src/ or scripts/. Light suites green.
+- ✅ PR #387 opened (closes #247 #248 #373, enhancement, ajbarea); shots linked to fleet-briefing.
+- ✅ Review: /code-review medium + 3 fresh Opus rounds + verify pass, clean. Commits 760c088, dbe4d09, e19411f, 1f389d2; the PR's Review fold lists each round. New: src/fleet/scheme.js (phone .served before first paint), gear closes on Escape/outside, CI/Fleet popovers close with their button, arrival line names loud states, --primary-hover, slim figureless portrait at scale 0.75 (the `scale` property, composes with the arrival).
+- Node 493/493, Biome + ruff clean, phone suite 88/4 (the same 4 as main).
+
 ## Next (in order)
-1. STOP: AJ judges the look (needs-you line). Open call: the strip's working badge is Okabe-Ito blue #0072b2 (a test pins Okabe-Ito).
-2. Before the PR: rerun wall-suite chunk 4 (strip/theme cases) once, since style.css changed after the last full run (node style tests pass).
-3. PR (closes #247 #248 #373, assignee ajbarea, short top + details; mention the theme-retry fix and the phone-dark decision), `/code-review medium` + one independent Opus reader until clean, merge, `fleet install`. Windows WebView2 perf needs AJ's build: needs-you line, not the PR.
-4. After merge: remove worktrees main-measure and design-247 (branch design/cards-247).
+1. Heph checks CI and merges #387 (not this session). Open call for AJ: the strip's blue working badge (Okabe-Ito #0072b2), noted in the PR.
+2. Open nits (in the PR): gear stays open when focus tabs out; density switch mid-arrival restarts the burst.
+3. After merge: `fleet install`; remove worktrees main-measure and design-247 (branch design/cards-247). Windows WebView2 perf needs AJ's build: needs-you line, not the PR.
 
 ## Notes
 - Browser suite in chunks: case names as args (`sed` the `cases` tuple in main()); each chunk under 300 s. Heavy lock: hold it with `setsid nohup flock /tmp/fleet-heavy.lock -c "touch FLAG; exec sleep N"` and poll the flag in foreground calls (headless runs end when a turn ends).
