@@ -23,7 +23,7 @@ use geometry::{Display, Home, Rect};
 use tauri::{
     ipc::Channel,
     menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem},
-    tray::TrayIconBuilder,
+    tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     Manager, PhysicalPosition,
 };
 use tauri_plugin_autostart::ManagerExt;
@@ -999,6 +999,22 @@ fn main() {
                 .tooltip("klepsydra")
                 .menu(&menu)
                 .show_menu_on_left_click(true)
+                // The Voices tick follows keryx's state as it is when the menu
+                // opens (#337): read on entering the icon and on the press
+                // that comes before the release opening the menu.
+                .on_tray_icon_event(|tray, event| {
+                    if matches!(
+                        event,
+                        TrayIconEvent::Enter { .. }
+                            | TrayIconEvent::Click {
+                                button: MouseButton::Left | MouseButton::Right,
+                                button_state: MouseButtonState::Down,
+                                ..
+                            }
+                    ) {
+                        voices::on_open(tray.app_handle());
+                    }
+                })
                 .on_menu_event(move |app, event| match event.id.as_ref() {
                     "autostart" => {
                         if autostart_held() {

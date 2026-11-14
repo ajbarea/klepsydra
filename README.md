@@ -853,8 +853,20 @@ which stops its daemon and frees the GPU. The resume service applies a changed
 mode within a pass (`fleet voices --if-changed`), so a `keryx off` of your own
 between changes stays, and `fleet doctor` warns while the saved mode is not
 applied, naming why (a keryx without `speak_only` on either account).
-Sessions are started with no `KERYX_ENABLED`, which would outrank keryx's own
-setting; a worker launched before 11-02 still carries `KERYX_ENABLED=false`
+The tick shows what keryx does, not only what was saved: when the pointer
+enters the tray icon and when it presses it, the tray reads keryx's own
+`config.json` (`enabled`, `speak_only`), found through `keryx-paths.json`, which
+`fleet voices` keeps in the data folder, and ticks the mode that config
+matches. A line above the modes says what keryx does and, when it differs, the
+saved mode (`keryx now: Off; saved: Heph only` after a `/keryx off`). A state no
+mode matches (a bare `keryx speak-only` for other sessions, a malformed
+`speak_only`, an unreadable config) ticks nothing and is named there; no config
+file is keryx's defaults, Everyone. The read waits at most 250 ms (a warm read
+across WSL's file share takes about 4 ms); a slower one ticks nothing, says
+keryx's config did not answer in time, and shows its answer when it lands
+unless a newer read or click came first. A click still saves through `fleet
+voices`. Sessions are started with no `KERYX_ENABLED`, which would outrank
+keryx's own setting; a worker launched before 11-02 still carries `KERYX_ENABLED=false`
 until its next launch.
 
 ### Character themes
@@ -1441,7 +1453,7 @@ briefs, logs) stays in the state folder.
 | `fleet done [NAME]` | Marks an agent finished: its row moves from `panes.tsv` to `finished.tsv` with the time, so nothing relaunches it or types into it: the resume service, `fleet recover` and the doctor act only on registered rows, and the service also leaves alone a pane with no row whose live session `finished.tsv` names. A registered agent's own `/exit` is recorded there too: by the fleet hook at the end itself (`fleet/registry-event.sh`, which also drops the record when that session starts again and moves the row to a `/clear`'s new session), and by the doctor and `fleet recover` the first time they see it; that row stays in `panes.tsv` until `fleet doctor --prune`. With no NAME, the row of the fleet pane it runs in, when its registered session runs there; each brief's shared rules end with it. The pane stays open with its final report. |
 | `fleet delegate [--engine auto\|agy\|copilot] [--kind research\|draft\|review\|ci] [--interactive] TASK-FILE` | Hands read-only work to Antigravity's agy or GitHub's Copilot, on their quota instead of Claude's. The engine gets a read-only snapshot of the repo's committed files (secret-looking files removed) and runs locked: no file writes, no shell, no MCP. Prints one line (engine, model, status, answer path); the answer is stamped an unverified lead. With `auto`, a quota or login failure falls back to the other engine, never to Claude. `--interactive` opens a locked agy window and a watcher tells the orchestrator through `fleet send` when each turn ends; `fleet delegate msg\|read\|stop\|ls ID` follow it. See [docs/engines.md](docs/engines.md). |
 | `fleet headless NAME BRIEF [--budget USD] [--model MODEL] [--repo DIR] [--wait]` | Runs one job as `claude -p` on the API credit instead of the subscription, in a fresh worktree, under a hard `--max-budget-usd` (default 10) and the workers' memory cap. `--status` lists running and finished jobs with their cost. Interactive sessions never get a key. See [docs/headless.md](docs/headless.md). |
-| `fleet voices [heph\|everyone\|off]` | Sets keryx to the tray's Voices mode now, for running sessions too; with a mode, saves it to `prefs.json` first. Changes keryx only where it differs and logs the values it decided on. `--if-changed` applies only a mode not yet applied (the resume service); `--check` only says whether it is. |
+| `fleet voices [heph\|everyone\|off]` | Sets keryx to the tray's Voices mode now, for running sessions too; with a mode, saves it to `prefs.json` first. Changes keryx only where it differs and logs the values it decided on. `--if-changed` applies only a mode not yet applied (the resume service); `--check` only says whether it is, and writes nothing. Every other run first keeps `keryx-paths.json` in the data folder current (keryx's config as Windows opens it, and the orchestrator's session file), which the tray reads to tick what keryx does. |
 | `fleet/launch.sh NAME BRIEF` | Starts an agent with its own session id in a scope with a memory cap and its own task cap, inside `fleet.slice` (the orchestrator) or `fleet-workers.slice` (a worker); `fleet install` sizes both from MemTotal, so the kernel caps the fleet's total. Claude runs at OOM rank 0 and every shell it starts at 1000 (`fleet/oom-tool.sh` as `BASH_ENV`), so a cap kills a job a shell started before the agent; programs claude starts without a shell (MCP servers, hooks run by `sh`) keep its rank (#354). It turns Remote Control on and waits for it to settle, pastes the brief, checks the brief reached the prompt, then submits it. A retry never sends Escape. It records the pane, session id and folder in `panes.tsv`. Its window opens behind the one in view; a replacement (a fresh session, a move, a relaunch) takes the old window's place in view only when AJ was watching the old one, and a cold `fleet recover` brings Heph forward unless AJ moved meanwhile. |
 | `fleet/resume-at-reset.sh` | The resume service. It resumes a limited pane at its reset (the account's `resets_at` for the hook's StopFailure record, else the time its banner names), or at once after a switch to an account with room; the orchestrator too, who moves to the other account as a fresh session from `HEPH.md` when that one has room. It starts a registered pane fresh from its brief after an hour idle. Whatever AJ typed at a limited pane is sent as typed; a line that left the prompt unsent is typed again. Each pane's state survives a restart of the service. |
 

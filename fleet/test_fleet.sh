@@ -3756,6 +3756,28 @@ for odd in 'not json' '{"voices":"loud"}' '{"voices":["off"]}' '{"voices":"off"}
   check "#273: a prefs file reading $odd is Heph only" "$(fv | cut -d' ' -f2)" "heph"
 done
 check "#273: an unknown mode is refused" "$(fv loud >/dev/null 2>&1; echo $?)" "2"
+# #337: the tray reads keryx's own config on each menu open, found through
+# keryx-paths.json, which every run but --check keeps current.
+kp="$KLEPSYDRA_DIR/keryx-paths.json"
+kc_win=$(wslpath -w -- "$kc" 2>/dev/null) || kc_win=$kc
+rm -f "$kp"
+fv --check >/dev/null
+check "#337: --check writes no keryx-paths.json" "$([[ -e $kp ]] && echo written || echo none)" "none"
+fv --if-changed >/dev/null
+check "#337: a run names keryx's config (as Windows opens it) and the orchestrator's session file" \
+  "$(jq -c '[.config == $c, .heph]' --arg c "$kc_win" "$kp")" "[true,\"$orch_rec\"]"
+ino=$(stat -c %i "$kp")
+fv >/dev/null
+check "#337: an unchanged keryx-paths.json is not rewritten" "$(stat -c %i "$kp")" "$ino"
+printf '{"config":"stale","heph":""}\n' >"$kp"
+fv --if-changed >/dev/null
+check "#337: a stale one is put right at the service's next pass" "$(jq -r .heph "$kp")" "$orch_rec"
+"$work/kx/bin/keryx" off
+kc_read=$(jq -r .config "$kp"); [[ $kc_read == \\* ]] && kc_read=$(wslpath -u -- "$kc_read")
+check "#337: the file it names is the one keryx writes: a keryx off outside the tray shows there" \
+  "$(jq -c .enabled "$kc_read")" "false"
+"$work/kx/bin/keryx" on
+check "#337: no stray temp files beside it" "$(find "$KLEPSYDRA_DIR" -maxdepth 1 -name 'keryx-paths.json.*' | wc -l)" "0"
 vreset
 check "#273: no keryx installed: said, and nothing fails" "$(FLEET_KERYX="$work/no-keryx" bash "$here/fleet" voices 2>/dev/null; echo "rc=$?")" $'keryx is not installed\nrc=0'
 FLEET_KERYX="$work/no-keryx" bash "$here/fleet" voices --if-changed >/dev/null 2>&1; FLEET_KERYX="$work/no-keryx" bash "$here/fleet" voices --if-changed >/dev/null 2>&1
