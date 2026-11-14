@@ -13,6 +13,29 @@ here=$(dirname "$(readlink -f "$0")")
 . "$here/lib.sh"
 R=${BRIEFING_DIR:-/mnt/c/Users/ajbar/fleet-briefing}
 GITLEAKS=${FLEET_GITLEAKS:-gitleaks}
+# Google Drive mirror (#380): AJ's phone swipes screenshots and plays video in Drive, which the
+# GitHub app cannot. Off unless FLEET_BRIEFING_DRIVE names an rclone remote (the timer's unit
+# sets it), so tests and ad-hoc runs never touch AJ's Drive. One way, local to Drive, and only
+# the files git tracks, so only what gitleaks has passed leaves this PC.
+DRIVE=${FLEET_BRIEFING_DRIVE:-}
+RCLONE=${FLEET_RCLONE:-rclone}
+mirror() {
+  [[ -n $DRIVE ]] || return 0
+  local head last out rc
+  head=$(git rev-parse HEAD 2>/dev/null) || return 0
+  last=$(cat "$gd/fleet-drive-mirror.head" 2>/dev/null)
+  [[ $head == "$last" ]] && return 0
+  command -v "$RCLONE" >/dev/null 2>&1 || { flog WARN "briefing mirror: rclone not installed" remote="$DRIVE"; return 0; }
+  "$RCLONE" listremotes 2>/dev/null | grep -qxF "${DRIVE%%:*}:" || { flog WARN "briefing mirror: no such rclone remote; run rclone config create" remote="$DRIVE"; return 0; }
+  out=$(git -c core.quotePath=false ls-files | timeout 300 "$RCLONE" sync . "$DRIVE" --files-from-raw - --delete-excluded --transfers 4 --max-duration 240s -q 2>&1); rc=$?
+  out=$(grep -v 'shared Google Drive client_id' <<<"$out")
+  if (( rc == 0 )); then
+    printf '%s\n' "$head" >"$gd/fleet-drive-mirror.head"
+    flog INFO "briefing mirrored to Drive" remote="$DRIVE" commit="${head:0:7}"
+  else
+    flog WARN "briefing mirror failed; retried next pass" remote="$DRIVE" rc="$rc" said="$(tail -2 <<<"$out")"
+  fi
+}
 export GIT_TERMINAL_PROMPT=0
 cd "$R" 2>/dev/null || { flog ERROR "briefing sync: no repo" dir="$R"; exit 1; }
 exec 9>"$(git rev-parse --git-dir)/fleet-sync.lock"
@@ -49,7 +72,7 @@ if [[ -n $(git status --porcelain -- "${paths[@]}") ]]; then
 fi
 
 ahead=$(git rev-list --count '@{u}..HEAD' 2>/dev/null || echo 1)
-(( ahead > 0 )) || exit 0
+(( ahead > 0 )) || { mirror; exit 0; }
 # Every commit about to leave is scanned, the prune's and any made by hand included.
 range='@{u}..HEAD'
 git rev-parse -q --verify '@{u}' >/dev/null || range='HEAD --not --remotes'
@@ -59,6 +82,7 @@ if ! out=$("$GITLEAKS" git --log-opts="$range --" --no-banner --redact --exit-co
 fi
 if out=$(git push -q origin HEAD 2>&1); then
   flog INFO "briefing synced" commit="$(git rev-parse --short HEAD)" pushed="$ahead"
+  mirror
   exit 0
 fi
 # Rejected (the remote moved, e.g. AJ ticked a box on the phone): rebase once and retry,
@@ -69,6 +93,7 @@ if ! git diff --quiet || ! git diff --cached --quiet; then
 fi
 if git pull -q --rebase origin "$(git rev-parse --abbrev-ref HEAD)" >/dev/null 2>&1 && [[ -z $(git ls-files -u) ]] && out=$(git push -q origin HEAD 2>&1); then
   flog INFO "briefing synced after a rebase" commit="$(git rev-parse --short HEAD)"
+  mirror
   exit 0
 fi
 git rebase --abort >/dev/null 2>&1

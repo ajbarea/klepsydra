@@ -3873,6 +3873,27 @@ printf 'o\nan edit in progress\n' >"$work/brief/other.md"; printf 'q3\n' >"$work
 check "a rejected push with edits in the tree waits rather than rebasing over them" \
   "$(bsync) $(tail -1 "$work/brief/other.md") $(git -C "$work/brief" ls-files -u | wc -l)" "1 an edit in progress 0"
 git -C "$work/brief" checkout -q -- other.md
+echo "briefing mirror to Drive (#380)"
+mlog="$work/rclone.log"; : >"$mlog"
+printf '#!/usr/bin/env bash\necho "$*" >>%q\n[[ $1 == listremotes ]] && { echo gdrive:; exit 0; }\n[[ $1 == sync ]] && cat >>%q.files\n[[ -e %q ]] && exit 7\nexit 0\n' "$mlog" "$mlog" "$work/rclone-fail" >"$work/bin/rclone-stub"; chmod +x "$work/bin/rclone-stub"
+msync() { BRIEFING_DIR="$work/brief" FLEET_GITLEAKS="$work/bin/gitleaks" FLEET_RCLONE="$work/bin/rclone-stub" GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t bash "$here/sync-briefing.sh" 2>/dev/null; echo $?; }
+check "#380: with no remote set, a sync never calls rclone (tests and ad-hoc runs leave AJ's Drive alone)" "$(msync) $(grep -c '^sync' "$mlog")" "0 0"
+printf 'q4\n' >"$work/brief/queue.md"
+check "#380: after a clean push, the tracked files mirror one way to the set remote" \
+  "$(FLEET_BRIEFING_DRIVE=gdrive:fleet-briefing msync) $(grep -c '^sync \. gdrive:fleet-briefing --files-from-raw - --delete-excluded' "$mlog")" "0 1"
+check "#380: only files git tracks are listed (never an untracked or ignored file)" \
+  "$(grep -c 'notes.txt' "$mlog.files") $(grep -cx 'queue.md' "$mlog.files")" "0 1"
+check "#380: an unchanged commit is not mirrored again" "$(FLEET_BRIEFING_DRIVE=gdrive:fleet-briefing msync) $(grep -c '^sync' "$mlog")" "0 1"
+printf 'q5\n' >"$work/brief/queue.md"; touch "$work/leak"
+check "#380: a gitleaks finding blocks the mirror too" "$(FLEET_BRIEFING_DRIVE=gdrive:fleet-briefing msync) $(grep -c '^sync' "$mlog")" "1 1"
+rm -f "$work/leak"; touch "$work/rclone-fail"
+check "#380: a failed upload is logged, keeps the sync green, and retries next pass" \
+  "$(FLEET_BRIEFING_DRIVE=gdrive:fleet-briefing msync) $(jq -r 'select(.message | contains("briefing mirror failed")) | .level' "$FLEET_LOG" | tail -1)" "0 WARN"
+rm -f "$work/rclone-fail"
+check "#380: and the next pass mirrors it" "$(FLEET_BRIEFING_DRIVE=gdrive:fleet-briefing msync) $(grep -c '^sync' "$mlog")" "0 3"
+printf 'q6\n' >"$work/brief/queue.md"
+check "#380: a remote that rclone does not know is a warning, not an upload" \
+  "$(FLEET_BRIEFING_DRIVE=nodrive:x msync) $(jq -r 'select(.message | contains("no such rclone remote")) | .level' "$FLEET_LOG" | tail -1)" "0 WARN"
 check "once the tree is clean it rebases and pushes" "$(bsync) $(git -C "$work/brief" rev-list --count '@{u}..HEAD')" "0 0"
 printf 'm\n' >"$work/brief/claude-morning.md"
 check "#277: a file under its old name is still committed" "$(bsync) $(git -C "$work/brief" show --name-only --format= HEAD)" "0 claude-morning.md"
