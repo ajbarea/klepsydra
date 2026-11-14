@@ -40,7 +40,7 @@ Design C (AJ's pick, fleet-briefing #4) with A's Open terminal slice. Palette ru
 3. After merge: `fleet install`; remove worktrees main-measure and design-247 (branch design/cards-247). Windows WebView2 perf needs AJ's build: needs-you line, not the PR.
 
 ## Notes
-- Browser suite in chunks: case names as args (`sed` the `cases` tuple in main()); each chunk under 300 s. Heavy lock: hold it with `setsid nohup flock /tmp/fleet-heavy.lock -c "touch FLAG; exec sleep N"` and poll the flag in foreground calls (headless runs end when a turn ends).
+- Browser suite in chunks: case names as args (`sed` the `cases` tuple in main()); each chunk under 300 s. The make targets take the heavy lock themselves; never hold it across commands.
 - App-mode shots: ~/.local/state/fleet-orchestrator/cards-247-harness/shots-app.py (test_wall_browser.open_app + emulate_media); shoot.py serves at / (phone mode), which is now always dark.
 - Scratch harnesses (copy them into scripts/perf if kept): `shoot.py` (serve a worktree at `/` over /events, density x scheme, `--probe`) and `arrive.py` (load without the first fixture session, push it, stepped frames, `--motion=reduce`, `--video=DIR`, `--probe=1` logs animation events) copied to `~/.local/state/fleet-orchestrator/cards-247-harness/` with the arrival fixture `arrive4.json`.
 - Pin `playwright==1.63.0` (its browsers are installed).
