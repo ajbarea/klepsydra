@@ -32,6 +32,7 @@ export FLEET_EARLYOOM_CONF="$work/earlyoom"
 # Never the host's WSL: the doctor reads AJ's .wslconfig only on WSL (#292 review 3).
 unset WSL_DISTRO_NAME FLEET_WSLCONFIG
 mkdir -p "$work/guard"
+# shellcheck disable=SC2016 # the stub's $* and $1 are its own, written literally
 printf '#!/usr/bin/env bash\necho "$*" >>%q\nexit 1\n' "$work/guard.calls" >"$work/guard/systemctl"
 chmod +x "$work/guard/systemctl"
 export PATH="$work/guard:$PATH"
@@ -3875,6 +3876,7 @@ check "a rejected push with edits in the tree waits rather than rebasing over th
 git -C "$work/brief" checkout -q -- other.md
 echo "briefing mirror to Drive (#380)"
 mlog="$work/rclone.log"; : >"$mlog"
+# shellcheck disable=SC2016 # the stub's $* and $1 are its own, written literally
 printf '#!/usr/bin/env bash\necho "$*" >>%q\n[[ $1 == listremotes ]] && { echo gdrive:; exit 0; }\n[[ $1 == sync ]] && cat >>%q.files\n[[ -e %q ]] && exit 7\nexit 0\n' "$mlog" "$mlog" "$work/rclone-fail" >"$work/bin/rclone-stub"; chmod +x "$work/bin/rclone-stub"
 msync() { BRIEFING_DIR="$work/brief" FLEET_GITLEAKS="$work/bin/gitleaks" FLEET_RCLONE="$work/bin/rclone-stub" GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t bash "$here/sync-briefing.sh" 2>/dev/null; echo $?; }
 check "#380: with no remote set, a sync never calls rclone (tests and ad-hoc runs leave AJ's Drive alone)" "$(msync) $(grep -c '^sync' "$mlog")" "0 0"
