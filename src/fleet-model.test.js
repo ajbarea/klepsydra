@@ -939,6 +939,15 @@ test("#373: what a page remembers is bounded, the oldest dropped first", () => {
   assert.equal(arrivals(null, ss(ARRIVALS_KEPT + 10)).seen.size, ARRIVALS_KEPT);
 });
 
+test("#373: a session still on the wall is never the one let go, so it never arrives twice", () => {
+  const ss = (...ids) => ids.map((session_id) => ({ session_id }));
+  const { seen } = arrivals(null, ss("long"));
+  const came = [];
+  for (const id of ["a", "b", "c", "d"]) came.push(...arrivals(seen, ss("long", id), 3).arrived);
+  assert.deepEqual(came, ["a", "b", "c", "d"]);
+  assert.ok(seen.has("long"));
+});
+
 test("#373: the live region says who arrived, with the epithet when the cast has one", () => {
   const cast = JSON.parse(readFileSync(new URL("./fleet/themes/kourai.json", import.meta.url), "utf8"));
   assert.equal(arrivalLine({ session_id: "x", voice: "am_michael" }, cast), "Hephaestus has arrived, Master of the Forge");

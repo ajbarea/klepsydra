@@ -228,7 +228,7 @@ export function announcements(before, sessions, cast, nowMs = Date.now()) {
     });
 }
 
-/** How many session ids a page remembers as already arrived; the oldest go first past it. */
+/** How many session ids a page remembers as already arrived; past it, the longest unseen go first. */
 export const ARRIVALS_KEPT = 500;
 /**
  * A session's first appearance is an event (#373), once per session and never
@@ -242,9 +242,10 @@ export function arrivals(seen, sessions, keep = ARRIVALS_KEPT) {
   if (!seen) return { seen: new Set(ids.slice(-keep)), arrived: [] };
   const arrived = [];
   for (const s of sessions) {
-    if (seen.has(s.session_id)) continue;
+    // Re-added, so an id still on the wall stays the newest and is never the one let go.
+    const known = seen.delete(s.session_id);
     seen.add(s.session_id);
-    if (s.status !== "ended" && !isQuiet(s)) arrived.push(s.session_id);
+    if (!known && s.status !== "ended" && !isQuiet(s)) arrived.push(s.session_id);
   }
   for (const id of seen) {
     if (seen.size <= keep) break;

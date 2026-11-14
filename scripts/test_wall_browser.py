@@ -4540,6 +4540,11 @@ def ci_watch(wall):
     page.evaluate("(v) => window.__ci.onmessage(v)", {**CI_RED, "stale": True})
     got = page.evaluate(state)
     wall.check([got["label"], got["tone"]] == ["CI ?", "stale"], "a watch that stopped reporting says so", got)
+    page.evaluate("(v) => window.__ci.onmessage(v)", CI_RED)
+    page.click("#ci-open")
+    page.evaluate("(v) => window.__ci.onmessage(v)", {**CI_RED, "red": [], "dependabot": 0})
+    got = page.evaluate(state)
+    wall.check(got["hidden"] and not got["open"], "all green while the list is open hides the button and closes the list with it", got)
     page.evaluate("() => window.__ci.onmessage(null)")
     wall.check(page.evaluate(state)["hidden"], "the file gone hides the button again", None)
     calls = page.evaluate("window.__calls.filter(([c]) => c === 'ci_subscribe')")
@@ -4606,6 +4611,23 @@ def agy_menu(wall):
     page.close()
 
 
+def gear_closes(wall):
+    """The gear's view menu (#248) closes on Escape, giving focus back to the
+    gear, and on a press outside it; a press inside it keeps it open."""
+    page = open_app(wall, 1920, 1000)
+    is_open = "document.querySelector('.gear').open"
+    page.click(".gear summary")
+    page.click(".gear label:has(input[value=compact])")
+    wall.check(page.evaluate(is_open), "a choice inside the menu leaves it open", None)
+    page.keyboard.press("Escape")
+    got = page.evaluate("[document.querySelector('.gear').open, document.activeElement === document.querySelector('.gear summary')]")
+    wall.check(got == [False, True], "Escape closes the menu and focus goes back to the gear", got)
+    page.click(".gear summary")
+    page.mouse.click(400, 600)
+    wall.check(not page.evaluate(is_open), "a press outside closes the menu", None)
+    page.close()
+
+
 def fleet_health(wall):
     """The bar's Fleet button: hidden with no doctor reading and while every
     check is ok (#248: healthy is quiet), red with a popover listing each check, failing first, and
@@ -4638,6 +4660,11 @@ def fleet_health(wall):
     page.evaluate("(v) => window.__health.onmessage(v)", {**HEALTH, "stale": True})
     got = page.evaluate(state)
     wall.check([got["label"], got["tone"]] == ["Fleet ?", "stale"], "a doctor that stopped running says so", got)
+    page.evaluate("(v) => window.__health.onmessage(v)", HEALTH)
+    page.click("#health-open")
+    page.evaluate("(v) => window.__health.onmessage(v)", ok)
+    got = page.evaluate(state)
+    wall.check(got["hidden"] and not got["open"], "all ok while the list is open hides the button and closes the list with it", got)
     calls = page.evaluate("window.__calls.filter(([c]) => c === 'health_subscribe')")
     wall.check(calls == [], "subscribing is a read, not an action", calls)
     page.close()
@@ -5366,6 +5393,7 @@ def main() -> int:
             one_click_or_key_never_ends_all,
             empty_state,
             fleet_health,
+            gear_closes,
             agy_menu,
             ended_only,
             long_folder_fits,

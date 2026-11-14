@@ -63,6 +63,20 @@ const clearEnded = document.getElementById("clear-ended");
 const emptyTitle = document.getElementById("empty-title");
 const limits = document.querySelector(".limits");
 const limitRows = limits.querySelector(".limit-rows");
+
+// The gear's view menu is a disclosure over the wall's corner: Escape closes it
+// and gives focus back to the gear, and so does a press anywhere outside it.
+const gear = document.querySelector(".gear");
+gear.addEventListener("keydown", (e) => {
+  if (e.key !== "Escape" || !gear.open) return;
+  e.preventDefault();
+  e.stopPropagation();
+  gear.open = false;
+  gear.querySelector("summary").focus();
+});
+document.addEventListener("pointerdown", (e) => {
+  if (gear.open && !gear.contains(e.target)) gear.open = false;
+});
 const limitWait = limits.querySelector(".limit-wait");
 // + New session and the empty state's button start a session the same way,
 // and while one runs the other is off too.
@@ -121,9 +135,7 @@ clearEnded.addEventListener("click", () => {
 });
 // On the phone (the page came from the phone wall server) only the look and
 // the Remote Control link act: wall.css hides every other button there.
-document.documentElement.classList.toggle("served", served);
-// The phone wall stays dark in either scheme (#247): its browser bar too.
-if (served) for (const m of document.querySelectorAll('meta[name="theme-color"]')) m.media.includes("light") ? m.remove() : m.removeAttribute("media");
+// scheme.js, in the head, marks the page `.served` before the first paint.
 if (served) navigator.serviceWorker?.register("/sw.js").catch(() => {});
 const linkNote = document.getElementById("link");
 // The phone's stream is down: what the wall shows may be old, so it says so.
@@ -570,6 +582,8 @@ function render(snapshot) {
     paintEmpty(!showsCards());
     syncChildren(wall, visible, (c) => c.id, make, paint);
     for (const id of arriving) if (!cardOf.has(id)) arriving.delete(id); // left before it was ever shown
+    const shown = new Set([...wall.children].map((el) => el.dataset.key));
+    for (const id of heldArrivals) if (!shown.has(id)) heldArrivals.delete(id); // its card left while the window was hidden
     for (const el of wall.children) if (started.has(el.dataset.key) && !reducedMotion()) el.classList.add("pulse");
     // Moving a card in the DOM drops focus; give it back to what had it.
     if (focused !== document.body && focused?.isConnected && document.activeElement !== focused) focused.focus({ preventScroll: true });
@@ -743,13 +757,20 @@ function notShown(message, err) {
   log.errorRepeat("snapshot", `a fleet snapshot (${n} sessions, theme ${message?.theme}) could not be shown`, err);
 }
 
+// A bar button hidden while its popover is open takes the popover with it (#248
+// hides CI and Fleet while all is well): nothing stays open with no way back.
+function showButton(button, panel, hidden) {
+  button.hidden = hidden;
+  if (hidden && panel.matches(":popover-open")) panel.hidePopover();
+}
+
 // CI watch: the bar's CI button and its popover (ci.js). The phone's view
 // comes with each snapshot; the app's through ci_subscribe.
 const ciButton = document.getElementById("ci-open");
 const ciPanel = document.getElementById("ci");
 function showCi(view) {
   const v = ciView(view);
-  ciButton.hidden = v.hidden;
+  showButton(ciButton, ciPanel, v.hidden);
   ciButton.textContent = v.label;
   ciButton.title = v.title;
   ciButton.dataset.tone = v.tone;
@@ -780,7 +801,7 @@ const healthButton = document.getElementById("health-open");
 const healthPanel = document.getElementById("health");
 function showHealth(view) {
   const v = healthView(view);
-  healthButton.hidden = v.hidden;
+  showButton(healthButton, healthPanel, v.hidden);
   healthButton.textContent = v.label;
   healthButton.title = v.title;
   healthButton.dataset.tone = v.tone;

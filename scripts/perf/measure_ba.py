@@ -65,7 +65,9 @@ def snapshot(fixture, mark=None):
     d = shifted(d, int(time.time()) - at)
     d["speaking"] = None
     if mark:
-        s = next(s for s in d["sessions"] if s.get("status") == "working")
+        s = next((s for s in d["sessions"] if s.get("status") == "working"), None)
+        if s is None:
+            raise SystemExit(f"{fixture}: no working session to mark a redraw on")
         s["reply"] = {
             "text": f"{mark}: the wall redraws this card.",
             "at": int(time.time()),
@@ -117,6 +119,13 @@ class H(http.server.SimpleHTTPRequestHandler):
 def push(data):
     for q in list(streams):
         q.put(data)
+
+
+def end_streams():
+    """Let every open /events handler return, so a closed page's stream never
+    takes the next variant's snapshots during its measured windows."""
+    for q in list(streams):
+        q.put(None)
 
 
 srv = http.server.ThreadingHTTPServer(
@@ -195,8 +204,8 @@ with sync_playwright() as p:
             print(json.dumps(row), flush=True)
             results.append(row)
             page.close()
+            end_streams()
     browser.close()
-for q in list(streams):
-    q.put(None)
+end_streams()
 (OUT / "measure.json").write_text(json.dumps(results, indent=1) + "\n")
 srv.shutdown()
