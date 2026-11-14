@@ -159,7 +159,7 @@ models() {
 }
 
 new() { # dir [agy model]
-  local dir=$1 tool=${2:-claude} model=${3:-} cmd=$CLAUDE what="a session"
+  local dir=$1 tool=${2:-claude} model=${3:-} cmd=$CLAUDE what="a session" keycheck=0
   # shellcheck disable=SC2088 # a literal ~/ from the overlay
   case $dir in
     "~") dir=$HOME ;;
@@ -198,12 +198,33 @@ new() { # dir [agy model]
     what="a locked Antigravity session ($model)"
   else
     need "${CLAUDE%% *}" "claude was not found on PATH."
+    # Subscription only (#260): no API key, token or named profile from this
+    # shell or the tmux server reaches an interactive session. The same list
+    # as NO_KEY_ENV in fleet/lib.sh (test_headless.sh pins the two together).
+    cmd="env -u ANTHROPIC_API_KEY -u ANTHROPIC_AUTH_TOKEN -u ANTHROPIC_PROFILE $cmd"
+    keycheck=1
   fi
   take_lock
   local -a t=(-L "$SOCKET_NAME") conf=()
   [[ -r $CONF ]] && conf=(-f "$CONF")
   local target="=$SESSION" exists=0 shown=0 win path
   tmux "${t[@]}" has-session -t "$target" 2>/dev/null && exists=1
+  # Nor does a settings file the session would read set one (KEY_JQ, as in
+  # fleet/lib.sh). A fleet launch (KLEPSYDRA_BACKGROUND=1) checked the folder
+  # its command names already; any other session runs on the tmux server's
+  # CLAUDE_CONFIG_DIR when the server is up (with any session, such as fleet
+  # delegate's), else on this environment's.
+  if (( keycheck )) && [[ ${KLEPSYDRA_BACKGROUND:-} != 1 ]]; then
+    local key_jq f cfg=${CLAUDE_CONFIG_DIR:-}
+    if tmux "${t[@]}" list-sessions >/dev/null 2>&1; then
+      cfg=$(tmux "${t[@]}" show-environment -g CLAUDE_CONFIG_DIR 2>/dev/null) && [[ $cfg == CLAUDE_CONFIG_DIR=* ]] && cfg=${cfg#*=} || cfg=""
+    fi
+    key_jq='(.apiKeyHelper // "" | tostring | length > 0) or ((.env // {}) | has("ANTHROPIC_API_KEY") or has("ANTHROPIC_AUTH_TOKEN") or has("ANTHROPIC_PROFILE"))'
+    for f in "${cfg:-$HOME/.claude}/settings.json" "$dir/.claude/settings.json" "$dir/.claude/settings.local.json" "${KLEPSYDRA_MANAGED_SETTINGS:-/etc/claude-code/managed-settings.json}"; do
+      [[ -f $f ]] && jq -e "$key_jq" "$f" >/dev/null 2>&1 &&
+        fail "Not started: $f sets an API key or key helper, and an interactive session runs on your Claude subscription only. Remove it there (keys are for fleet headless jobs)."
+    done
+  fi
   (( exists )) && has_client "$target" "${t[@]}" && shown=1
   (( shown )) || tab_preflight
   # The tmux server must not inherit the lock fd, or it holds the lock for good.

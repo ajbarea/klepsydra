@@ -1,18 +1,18 @@
-# IMPL: one memory cap for the whole fleet (#353), branch fix/fleet-slice-353
+# IMPL: headless jobs on the API credit (#260), branch feat/headless-260
 
-Resume from this file, `git log`, the PR and its comments. Brief: the k353 task file in the fleet state folder.
+Resume from this file, `git log`, PR #375 and its comments.
 
 ## Slice
-The kernel, not the heavy lock, keeps one run from taking WSL down. `fleet.slice` caps every fleet scope's total (MemTotal less `fleet_slice_margin`: 847 MiB measured WSL base plus earlyoom's line, up to 512), the orchestrator's included; `fleet-workers.slice` inside it caps workers and delegates at that less the orchestrator's 7-day peak (orchestrator.mem, dated lines). Claude runs at OOM rank 0, every bash it starts at 1000 (`fleet/oom-tool.sh` as BASH_ENV), scopes keep `OOMPolicy=continue`. Programs claude starts without bash keep rank 0: #354.
+`fleet headless NAME BRIEF` runs one `claude -p` job in a fresh worktree on `~/.claude-api` (apiKeyHelper over `ant --profile ldqis`), under a required `--max-budget-usd` (default 10, at most 50) and the workers' capped scope; each end goes to the fleet log and `headless/ledger.jsonl`; `--status` lists jobs. Interactive sessions never get a key: `launch.sh` and the tray's launcher drop `ANTHROPIC_API_KEY/AUTH_TOKEN/PROFILE` and refuse keyed settings; doctor reports the auth mode. Design and sources: `docs/headless.md`, the PR's Decisions.
 
 ## Done
-- lib.sh helpers, launch.sh, delegate.sh, install.sh (both slice units, rewritten only on change), doctor.sh (cap, nesting, sized-for-this-machine, scopes astray: FAIL if started since the slices, warn if before), brief tail, README, `make test-slice`, CI step.
-- Measured live: no unprivileged lowering below 0 (EACCES); scopes reject OOMScoreAdjust=; OOMPolicy=stop stops the whole scope; MemoryHigh throttles without killing, so MemoryMax only.
-- Copilot + agy lanes read and checked (6 leads fixed, 2 rejected); Opus round 1 (1 Blocking, 6 Should-fix, 6 Nits) fixed in 04a4d38; mutation-checked the live test (5 guards).
+- Code, tests (`fleet/test_headless.sh`, `make test-headless`, CI step), docs, README rows.
+- Live on the LDQIS credit 11-13: two haiku jobs (foreground and background), `apiKeySource: apiKeyHelper`, $0.0047 total, scope in `fleet-workers.slice`.
+- Opus review round 1 (5 Should-fix, 5 nits) fixed in 9b469e6; verify round 2 (2 Should-fix, 3 nits) fixed in 2e0a9de; verify round 3 (2 Should-fix, 2 nits) fixed in 51060f5; round 4 (1 Should-fix: the hook read the server env only with a fleet session) fixed after it; guard mutations 19 of 20 killed, 1 equivalent.
 
 ## Next
-1. Round 5 (2 S, 4 N) fixed in the round-5 commit: live test runs with per-scope swap; machine-wide rank accepted (brief + PR); doctor dates slices by unit birth; orch_mem_peak writes only under its lock and drops 0 / past-MemTotal rows; mem_total_mib needs a positive number. Each guard mutation-checked. Next: one fresh Opus verify read of that commit.
-2. Merge on clean + green, `make install-fleet` from main, `fleet cutover`, then `systemctl --user show fleet.slice fleet-workers.slice -p MemoryMax,MemoryCurrent` and `fleet doctor`. Running agents stay in app.slice until their next fresh start (doctor warns). Then in a fresh fleet session: the Bash tool's `cat /proc/self/oom_score_adj` prints 1000 and its claude's is 0.
+1. Heavy suites on the final tree (test-fleet, test-launch, test-delegate, shellcheck).
+2. Heph verifies and merges; then `make install-fleet` from main, and `fleet doctor` shows `auth mode: subscription + headless credit`.
 
 ## Verify
-`make test-slice`, `make test-fleet`, `make test-launch`, `make test-delegate`, `make shellcheck`. Never run doctor or install from this worktree against the live state.
+`make test-headless`, `make test-fleet`, `make test-launch`, `make test-delegate`, `make shellcheck`. A live check costs cents: `fleet headless NAME brief.md --model claude-haiku-5-5 --budget 0.5 --wait`, then remove its worktree and branch.
