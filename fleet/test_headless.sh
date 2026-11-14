@@ -19,6 +19,7 @@ check() { # NAME GOT WANT
 has() { grep -q -- "$2" <<<"$1" && echo yes || echo no; } # TEXT PATTERN
 
 mkdir -p "$work/bin" "$work/state" "$work/rec" "$work/home" "$work/api" "$work/sub"
+unset CLAUDE_CONFIG_DIR ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN ANTHROPIC_PROFILE
 export HOME="$work/home" FLEET_STATE="$work/state" FLEET_SOCK="hl-test-$$" FLEET_SCOPE=0
 export FLEET_ANT="$work/bin/ant" FLEET_CLAUDE="$work/bin/claude" FLEET_HEADLESS_CONFIG="$work/api"
 export FLEET_DEFAULT_CONFIG="$work/sub" FLEET_ACCOUNTS="$work/sub" REC="$work/rec"
@@ -135,9 +136,14 @@ check "status lists it running" "$(grep -c '^  job5 .*running' <<<"$st")" "1"
 for _ in $(seq 50); do [[ $(jq -r .state "$work/state/headless/job5/job.json") == finished ]] && break; sleep 0.2; done
 st=$(bash "$here/headless.sh" --status)
 check "then finished, with its cost" "$(grep -cF "job5  claude-opus-5-5  \$0.01 of \$10" <<<"$st")" "1"
-check "status sums the spend" "$(grep '^Total' <<<"$st")" "Total: \$3.3626 over 5 jobs"
+check "status sums the spend" "$(grep '^Total' <<<"$st")" "Total: \$3.3626 over 6 jobs"
 echo '{"name":"ghost","model":"m","budget_usd":1,"state":"running","started_epoch":1}' >"$work/state/headless/job3/job.json"
 check "a runner gone without a record reads DIED" "$(bash "$here/headless.sh" --status | grep -c 'ghost .*DIED')" "1"
+
+mkdir -p "$work/state/headless/job8"
+jq -n --arg wt "$repo" '{name: "job8", model: "m", budget_usd: 1, worktree: $wt, state: "running", started_epoch: 1}' >"$work/state/headless/job8/job.json"
+: >"$work/state/headless/job8/brief.md"; echo gave-up >"$work/state/headless/job8/pid"; rm -f -- "$work/rec/argv"
+check "a runner that finds the start claimed leaves the job alone" "$(hl --run job8 >/dev/null 2>&1; echo $?) $([[ -e $work/rec/argv ]] && echo ran || echo never)" "1 never"
 
 echo "launch: interactive sessions never get a key (#260)"
 cat >"$work/bin/launcher" <<'EOF'
@@ -185,6 +191,23 @@ check "a keyed worker settings file fails" "$(FLEET_SETTINGS="$work/keyed.json" 
 echo "the tray's launcher drops the same variables as launch.sh"
 list=$(bash -c ". '$here/lib.sh' && printf %s \"\$NO_KEY_ENV\"")
 check "klepsydra-launch.sh starts claude without them" "$(grep -cF "cmd=\"env ${list}\$cmd\"" "$here/../hooks/klepsydra-launch.sh")" "1"
+
+check "both hold the same settings filter" "$(grep -cF "key_jq='$(bash -c ". '$here/lib.sh' && printf %s \"\$KEY_JQ\"")'" "$here/../hooks/klepsydra-launch.sh")" "1"
+mkdir -p "$work/tray/.claude"
+printf '{"apiKeyHelper": "x"}\n' >"$work/tray/.claude/settings.local.json"
+out=$(KLEPSYDRA_CLAUDE=true KLEPSYDRA_TMUX_SOCKET="hl-tray-$$" bash "$here/../hooks/klepsydra-launch.sh" new "$work/tray" 2>&1); rc=$?
+check "the tray refuses a folder whose settings set a key" "$rc $(has "$out" 'Not started: .*settings.local.json')" "1 yes"
+check "and started no tmux server" "$(tmux -L "hl-tray-$$" ls >/dev/null 2>&1 && echo started || echo none)" "none"
+
+echo "headless: a slow runner loses the start to a starter that gave up"
+# shellcheck disable=SC2016 # the stub's own code
+printf '%s\n' '#!/usr/bin/env bash' 'sleep 2' 'while (( $# )) && [[ $1 != bash ]]; do shift; done' 'exec "$@"' >"$work/bin/sdslow"
+chmod +x "$work/bin/sdslow"
+echo ok >"$work/rec/mode"; rm -f -- "$work/rec/argv" "$work/rec/ant-out"
+out=$(FLEET_SCOPE=1 FLEET_SYSTEMD_RUN="$work/bin/sdslow" FLEET_HEADLESS_START_WAIT=1 hl job7 "$work/brief.md" --repo "$repo" 2>&1); rc=$?
+sleep 3
+check "the starter says it failed, and claude never ran" "$rc $([[ -e $work/rec/argv ]] && echo ran || echo never)" "1 never"
+check "the record stays failed, and status lists it" "$(jq -r .state "$work/state/headless/job7/job.json") $(bash "$here/headless.sh" --status | grep -c 'job7 .*runner did not start')" "failed 1"
 
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 (( fail == 0 ))

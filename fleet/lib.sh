@@ -1068,12 +1068,12 @@ FLEET_HEADLESS_CONFIG=$(nodir "${FLEET_HEADLESS_CONFIG:-$HOME/.claude-api}")
 FLEET_HEADLESS_PROFILE=${FLEET_HEADLESS_PROFILE:-ldqis}
 # Whether settings (a file, or inline JSON as --settings takes it) set an API
 # credential: an apiKeyHelper, or one of the variables above in its env block.
+# The tray's launcher (hooks/klepsydra-launch.sh) holds the same filter.
+KEY_JQ='(.apiKeyHelper // "" | tostring | length > 0) or ((.env // {}) | has("ANTHROPIC_API_KEY") or has("ANTHROPIC_AUTH_TOKEN") or has("ANTHROPIC_PROFILE"))'
 key_settings() { # FILE-OR-JSON
   local s=$1
   [[ -f $s ]] && s=$(cat -- "$s" 2>/dev/null)
-  jq -e '(.apiKeyHelper // "" | tostring | length > 0)
-         or ((.env // {}) | has("ANTHROPIC_API_KEY") or has("ANTHROPIC_AUTH_TOKEN") or has("ANTHROPIC_PROFILE"))' \
-    <<<"$s" >/dev/null 2>&1
+  jq -e "$KEY_JQ" <<<"$s" >/dev/null 2>&1
 }
 # Whether config folder DIR's user settings set an API credential.
 key_config() { key_settings "$1/settings.json"; } # DIR

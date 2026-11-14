@@ -198,6 +198,13 @@ new() { # dir [agy model]
     what="a locked Antigravity session ($model)"
   else
     need "${CLAUDE%% *}" "claude was not found on PATH."
+    # Nor does a settings file it would read set one (KEY_JQ, as in fleet/lib.sh).
+    local key_jq f
+    key_jq='(.apiKeyHelper // "" | tostring | length > 0) or ((.env // {}) | has("ANTHROPIC_API_KEY") or has("ANTHROPIC_AUTH_TOKEN") or has("ANTHROPIC_PROFILE"))'
+    for f in "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json" "$dir/.claude/settings.json" "$dir/.claude/settings.local.json" "${KLEPSYDRA_MANAGED_SETTINGS:-/etc/claude-code/managed-settings.json}"; do
+      [[ -f $f ]] && jq -e "$key_jq" "$f" >/dev/null 2>&1 &&
+        fail "Not started: $f sets an API key or key helper, and an interactive session runs on your Claude subscription only. Remove it there (keys are for fleet headless jobs)."
+    done
     # Subscription only (#260): no API key, token or named profile from this
     # shell or the tmux server reaches an interactive session. The same list
     # as NO_KEY_ENV in fleet/lib.sh (test_headless.sh pins the two together).

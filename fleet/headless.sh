@@ -38,7 +38,9 @@ run_job() { # NAME
   local job model budget wt
   job=$(cat "$dir/job.json") || exit 1
   model=$(jq -r .model <<<"$job") budget=$(jq -r .budget_usd <<<"$job") wt=$(jq -r .worktree <<<"$job")
-  printf '%s\n' "$$" >"$dir/pid"
+  # The pid file is the start's one owner (noclobber): a starter that gave up
+  # waiting claims it first, and then this runner leaves the job alone.
+  ( set -C; printf '%s\n' "$$" >"$dir/pid" ) 2>/dev/null || { err "the job $name was given up before its runner started"; exit 1; }
   # The child's environment: no credential that outranks the helper, nothing a
   # calling claude session hands its children (CLAUDE_CODE_*: its session id,
   # messaging socket, entrypoint), and the telemetry settings of the default
@@ -99,6 +101,7 @@ status() {
     [[ -f $d/job.json ]] || continue
     d=${d%/}
     [[ $(jq -r .state "$d/job.json" 2>/dev/null) == running ]] || continue
+    [[ $(cat "$d/pid" 2>/dev/null) == gave-up ]] && continue
     any=1
     if job_alive "$d" || { [[ ! -e $d/pid ]] && (( now - $(jq -r '.started_epoch // 0' "$d/job.json") < 60 )); }; then
       jq -r --argjson now "$now" '"  \(.name)  \(.model)  budget $\(.budget_usd)  running \((($now - .started_epoch) / 60) | floor) min  \(.worktree)"' "$d/job.json"
@@ -119,8 +122,9 @@ status() {
 case ${1:-} in
   --status) status; exit 0 ;;
   --run)
-    # Only a job this command just set up: a valid name, still running, no runner yet.
-    [[ ${2:-} =~ $NAME_RE && -f $HDIR/$2/job.json && ! -e $HDIR/$2/pid ]] &&
+    # Only a job this command just set up: a valid name, still running. Its pid
+    # file (claimed in run_job) admits one runner, never after a starter gave up.
+    [[ ${2:-} =~ $NAME_RE && -f $HDIR/$2/job.json ]] &&
       [[ $(jq -r .state "$HDIR/$2/job.json" 2>/dev/null) == running ]] || { err "--run takes a job fleet headless has just set up"; exit 2; }
     run_job "$2"; exit ;;
   ''|-h|--help) usage ;;
@@ -177,16 +181,20 @@ mkdir -- "$dir" 2>/dev/null || { err "a job named $name exists ($(tilde "$dir"))
 release() { rm -rf -- "${dir:?}"; }
 wt=$repo/.claude/worktrees/headless-$name
 branch=headless-$name
-! git -C "$repo" remote get-url origin >/dev/null 2>&1 || timeout 60 git -C "$repo" fetch -q origin 2>/dev/null || flog WARN "headless: fetch failed; the worktree starts from the last fetched default branch" name="$name"
+fetched=1
+if git -C "$repo" remote get-url origin >/dev/null 2>&1 && ! timeout 60 git -C "$repo" fetch -q origin 2>/dev/null; then
+  fetched=0
+  flog WARN "headless: fetch failed; the worktree starts from the last fetched default branch" name="$name"
+fi
 # The default branch: origin's HEAD, set from the remote when unset, else
 # origin/main or origin/master; with no origin at all, the local main. Never
 # the main checkout's current branch.
 base=$(git -C "$repo" symbolic-ref -q --short refs/remotes/origin/HEAD 2>/dev/null) ||
-  { timeout 30 git -C "$repo" remote set-head origin -a >/dev/null 2>&1 && base=$(git -C "$repo" symbolic-ref -q --short refs/remotes/origin/HEAD 2>/dev/null); } ||
+  { (( fetched )) && git -C "$repo" remote get-url origin >/dev/null 2>&1 && timeout 30 git -C "$repo" remote set-head origin -a >/dev/null 2>&1 && base=$(git -C "$repo" symbolic-ref -q --short refs/remotes/origin/HEAD 2>/dev/null); } ||
   { git -C "$repo" rev-parse -q --verify origin/main >/dev/null && base=origin/main; } ||
   { git -C "$repo" rev-parse -q --verify origin/master >/dev/null && base=origin/master; } ||
   { ! git -C "$repo" remote get-url origin >/dev/null 2>&1 && git -C "$repo" rev-parse -q --verify refs/heads/main >/dev/null && base=main; } ||
-  { release; err "$(tilde "$repo") has no default branch on origin to start the job from"; exit 1; }
+  { release; err "$(tilde "$repo") has no default branch to start the job from (origin's HEAD, origin/main or origin/master; with no origin, a local main)"; exit 1; }
 if ! out=$(git -C "$repo" worktree add -q -b "$branch" "$wt" "$base" 2>&1); then
   release
   err "could not make the worktree $(tilde "$wt"): $out"
@@ -208,9 +216,10 @@ if [[ ${FLEET_SCOPE:-1} != 0 ]]; then
 fi
 flog INFO "headless job started" name="$name" model="$model" budget_usd="$budget" worktree="$wt"
 # A runner that never wrote its record: the job reads failed, with the reason.
-failed_start() { # RC
+failed_start() { # RC [REASON]
   jq -c --argjson rc "$1" '. + {state: "failed", exit: $rc, result: "runner did not start"}' "$dir/job.json" >"$dir/job.json.tmp" &&
     mv -f -- "$dir/job.json.tmp" "$dir/job.json"
+  ( flock 9; jq -c '{name, model, budget_usd, total_cost_usd: 0, secs: 0, exit, result, started_at, ended_at: (now | todate), worktree}' "$dir/job.json" >>"$LEDGER" ) 9>>"$HDIR/.lock"
   flog ERROR "headless job did not start" name="$name" said="$(head -c 300 "$dir/runner.log" 2>/dev/null)"
   err "the job's runner did not start (exit $1)${2:+: $2}; its log: $(tilde "$dir")/runner.log"
 }
@@ -228,7 +237,9 @@ for _ in $(seq "$(( ${FLEET_HEADLESS_START_WAIT:-15} * 5 ))"); do
   [[ -e $dir/pid || $(jq -r .state "$dir/job.json") != running ]] && break
   sleep 0.2
 done
-if [[ ! -e $dir/pid && $(jq -r .state "$dir/job.json") == running ]]; then
+# Still no runner: claim the start so a late one cannot run after this says it
+# failed. A runner that claimed it first has started after all.
+if [[ $(jq -r .state "$dir/job.json") == running ]] && ( set -C; echo gave-up >"$dir/pid" ) 2>/dev/null; then
   failed_start 1 "$(head -n 1 "$dir/runner.log" 2>/dev/null)"
   exit 1
 fi
