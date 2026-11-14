@@ -12,16 +12,19 @@ Design C (AJ's pick, fleet-briefing #4) with A's Open terminal slice. Palette ru
 - ✅ Node 488/488, Biome + ruff clean, mutation checks 7/7 killed (arrivals seed + bound, compositor-only keyframes, calm !important, calm opacity-only, accentLight, a light text token).
 - ✅ Step 3 (black block) dropped: not a render bug (Heph 11-13).
 
-## Full browser suite, 11-13 (289 ok, 2 FAIL, crashed at split_toggle; the rest never ran)
-1. FAIL `sixteen ended cards shown by a focus request: ... none arriving` (arriving: 16). Cause: the first snapshot held no sessions, so the 16 ended ones counted as new. Fix: an ended (or quiet) session never arrives; still add it to `seen`. Add that cell to the model test.
-2. FAIL `all ok reads Fleet ok` (hidden: True). Likely #248's "healthy hidden" vs the merged test's expectation from main (#328/#330 doctor work): read the case, then decide which side is right.
-3. CRASH `split_toggle` (scripts/test_wall_browser.py ~4441, KeyError 'key'): main's case measures the Split toggle on the ring key's line; this branch moved Split into `.bar-right .tools` and removed the ring key. Adapt the case to the new group.
-Then rerun the whole suite and `test_phone_browser.py`.
+## Headless run 11-13 21:2x (LDQIS credit)
+- ✅ Ended or quiet sessions never arrive (still remembered), model test added.
+- ✅ Fleet ok: #248's rule (healthy is quiet) wins; the case now expects the button hidden while all ok.
+- ✅ split_toggle reads `.bar-right #split`; the gear bar (never run before) fixed at every width: gear lays out 18 px (32 px target), < 1200 px narrower gaps + panels give way, 420 px right group on its own line with the gear at its right foot, tools rows 8 px apart (24 px hit areas stay apart).
+- ✅ theme.js retry: Chromium < 156 caches a failed import(); retry asks ?retry=N (case failed on main too).
+- ✅ Wall browser suite green, run in 6 chunks (case names as args); node 489/489, Biome + ruff clean. Commit 226f5f2.
+- Decision: README shots in the dark scheme (klepsydra's own); the hero catches Hephaestus's arrival 1.3 s in (scripts/readme-shots.py `arrival()`).
+- Note: the previous headless process was still alive in this worktree and editing; it was stopped (friction log).
 
 ## Next (in order)
-1. Fix the three above; rerun suites (node, browser, phone, shellcheck/cargo per AGENTS.md as touched).
+1. Phone suite (`scripts/test_phone_browser.py`).
 2. Measure: `flock -o /tmp/fleet-heavy.lock uv run -q --no-project --with playwright==1.63.0 python scripts/perf/measure_ba.py ../main-measure . docs/perf/2026-11-13/cards-247` (main-measure = detached origin/main worktree, already added) + a trace of one arrival.
-3. Shots 1920 (Comfortable + Compact, dark + light) + arrival frames/clip into fleet-briefing `shots/2026-11-13/klepsydra-247-373-*` + README line; tell Heph BEFORE review rounds (AJ's look first).
+3. Shots 1920 (Comfortable + Compact, dark + light) + arrival frames/clip into fleet-briefing `shots/2026-11-13/klepsydra-247-373-*` + README line, and the 10 README screenshots (`scripts/readme-shots.py`, needs pillow + pyoxipng); push, then STOP for AJ's look before PR and review rounds.
 4. PR (closes #247 #248 #373, assignee ajbarea, short top + details), `/code-review medium` + one independent Opus reader until clean, merge, `fleet install`, report. Windows WebView2 perf run needs AJ's build: needs-you line, not the PR.
 5. After merge: remove worktrees main-measure and design-247 (branch design/cards-247).
 
