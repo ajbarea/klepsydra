@@ -100,7 +100,7 @@ def wall(browser, port, width, height, query, density=None):
         " dispatchEvent(new Event('resize'))"
     )
     if density:
-        page.click(f".density label:has([value={density}])")
+        suite.pick(page, f".density label:has([value={density}])")
     page.wait_for_timeout(SETTLE_MS)
     return page
 
@@ -136,7 +136,7 @@ def arrival(browser, port, width, height, n):
     page.add_init_script(suite.TAURI_STUB % json.dumps(before))
     page.goto(f"http://127.0.0.1:{port}/src/wall.html")
     page.wait_for_function("document.getElementById('wall').children.length > 0")
-    page.click(".density label:has([value=comfortable])")
+    suite.pick(page, ".density label:has([value=comfortable])")
     page.wait_for_timeout(SETTLE_MS)
     page.evaluate("(s) => window.__channel.onmessage(s)", {**snapshot, "sessions": every})
     page.wait_for_timeout(ARRIVAL_SHOT_MS)

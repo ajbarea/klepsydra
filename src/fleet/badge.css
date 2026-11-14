@@ -2,7 +2,7 @@
    inside a ring of the panel colour, so a badge keeps its contrast on any
    backdrop. Sizes come from the element that holds the badge. */
 :root {
-  --badge-ring: #141414;
+  --badge-ring: #14100b;
   --badge-needs: #e69f00;
   --badge-error: #d55e00;
   --badge-working: #0072b2;

@@ -407,7 +407,7 @@ def main() -> int:
                 arcs = [round(float(r["dash"].replace(",", " ").split()[0]) + cap) if r["dash"] else None for r in g["rows"][:2]]
                 run.check(arcs == [57, 27], "each ring's arc is its percent, on a gauge drawn fresh", [r["dash"] for r in g["rows"]])
                 run.check(all(0 <= r["box"][0] and r["box"][1] <= g["width"] for r in g["rows"]), "every gauge inside the screen", [r["box"] for r in g["rows"]])
-                run.check(g["rows"][0]["stroke"] == "rgb(59, 130, 246)", "the ramp's low stop under 60%", g["rows"][0]["stroke"])
+                run.check(g["rows"][0]["stroke"] == "rgb(217, 198, 165)", "the ramp's low stop under 60%", g["rows"][0]["stroke"])
                 for scheme in ("light", "dark"):
                     check_gauges(run, page, scheme)
                     page.screenshot(path=str(shot.with_name(f"{shot.stem}-{scheme}{shot.suffix}")))
