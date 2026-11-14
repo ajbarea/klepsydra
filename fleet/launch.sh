@@ -54,8 +54,8 @@ settings=${FLEET_SETTINGS-$FLEET_STATE/worker-settings.json}
 # (NO_KEY_ENV), and a config folder or settings that set one are refused, since
 # a session on a key loses the claude.ai login, its connectors and Remote
 # Control, and the promotional credit does not cover interactive use (#241).
-for s in "$account/settings.json" ${settings:+"$settings"}; do
-  if key_settings "$s"; then
+for s in "$(keyed_settings "$account" "$dir")" ${settings:+"$settings"}; do
+  if [[ -n $s ]] && key_settings "$s"; then
     flog ERROR "launch refused: its settings hold an API key helper or key; interactive sessions run on the subscription only (fleet headless runs key jobs)" name="$name" settings="$s"
     echo "launch refused: $s sets an API credential" # logcheck: ignore[stderr-for-errors] # the result line
     exit 2
@@ -66,7 +66,8 @@ for a in "$@"; do
   v=""
   [[ $prev == --settings ]] && v=$a
   [[ $a == --settings=* ]] && v=${a#--settings=}
-  if [[ -n $v ]] && key_settings "$v"; then
+  # A relative file is read from the session's folder, not this one.
+  if [[ -n $v ]] && { key_settings "$v" || { [[ $v != /* ]] && key_settings "$dir/$v"; }; }; then
     flog ERROR "launch refused: --settings holds an API key helper or key" name="$name"
     echo "launch refused: --settings sets an API credential" # logcheck: ignore[stderr-for-errors] # the result line
     exit 2

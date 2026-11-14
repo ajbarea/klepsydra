@@ -1077,6 +1077,19 @@ key_settings() { # FILE-OR-JSON
 }
 # Whether config folder DIR's user settings set an API credential.
 key_config() { key_settings "$1/settings.json"; } # DIR
+# Every settings file an interactive session started on config folder DIR in
+# folder FOLDER reads, besides --settings: user, project, local project and
+# managed (code.claude.com/docs/en/settings, "Settings files").
+session_settings() { # DIR FOLDER
+  printf '%s\n' "$1/settings.json" "$2/.claude/settings.json" "$2/.claude/settings.local.json" \
+    "${FLEET_MANAGED_SETTINGS:-/etc/claude-code/managed-settings.json}"
+}
+# The first of those files that sets an API credential; fails when none does.
+keyed_settings() { # DIR FOLDER
+  local f
+  while IFS= read -r f; do [[ -f $f ]] && key_settings "$f" && { printf '%s' "$f"; return 0; }; done < <(session_settings "$1" "$2")
+  return 1
+}
 # Whether the ant CLI holds a login for FLEET_HEADLESS_PROFILE. `ant auth status`
 # exits 0 either way (2.9.0), so its "Logged in to" line is the answer; its
 # output also shows part of the token, so none of it is ever printed.

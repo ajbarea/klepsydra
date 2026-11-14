@@ -198,6 +198,10 @@ new() { # dir [agy model]
     what="a locked Antigravity session ($model)"
   else
     need "${CLAUDE%% *}" "claude was not found on PATH."
+    # Subscription only (#260): no API key, token or named profile from this
+    # shell or the tmux server reaches an interactive session. The same list
+    # as NO_KEY_ENV in fleet/lib.sh (test_headless.sh pins the two together).
+    cmd="env -u ANTHROPIC_API_KEY -u ANTHROPIC_AUTH_TOKEN -u ANTHROPIC_PROFILE $cmd"
   fi
   take_lock
   local -a t=(-L "$SOCKET_NAME") conf=()

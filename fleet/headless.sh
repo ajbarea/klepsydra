@@ -26,6 +26,8 @@ here=$(dirname "$(readlink -f "$0")")
 HDIR=$FLEET_STATE/headless
 LEDGER=$HDIR/ledger.jsonl
 MAX_USD=${FLEET_HEADLESS_MAX_USD:-50}
+USD_RE='^(0|[1-9][0-9]{0,5})(\.[0-9]{1,2})?$' # dollars: no sign, exponent or leading zero
+NAME_RE='^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$'
 # Dollars as the status shows them: four places, or ? when the run left none.
 USD_JQ='def usd: if type == "number" then (. * 10000 | round / 10000 | tostring) else "?" end;'
 usage() { sed -n '3,4p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
@@ -44,7 +46,9 @@ run_job() { # NAME
   local -a envargs=(-u ANTHROPIC_API_KEY -u ANTHROPIC_AUTH_TOKEN -u ANTHROPIC_PROFILE -u CLAUDE_CODE_OAUTH_TOKEN
     -u CLAUDECODE -u KERYX_ENABLED -u KLEPSYDRA_WORKER)
   local v
-  while IFS= read -r v; do [[ $v == CLAUDE_CODE_* ]] && envargs+=(-u "$v"); done < <(compgen -e)
+  # Every other ANTHROPIC_* too: a base URL from the caller would send the
+  # helper's token to another host.
+  while IFS= read -r v; do [[ $v == CLAUDE_CODE_* || $v == ANTHROPIC_* ]] && envargs+=(-u "$v"); done < <(compgen -e)
   while IFS= read -r v; do [[ -n $v ]] && envargs+=("$v"); done < <(jq -r '(.env // {}) | to_entries[]
       | select(.key == "CLAUDE_CODE_ENABLE_TELEMETRY" or (.key | startswith("OTEL_"))) | "\(.key)=\(.value)"' \
       "$FLEET_DEFAULT_CONFIG/settings.json" 2>/dev/null)
@@ -84,7 +88,7 @@ run_job() { # NAME
 job_alive() { # DIR
   local p
   p=$(cat "$1/pid" 2>/dev/null) && [[ $p =~ ^[0-9]+$ ]] && kill -0 "$p" 2>/dev/null &&
-    tr '\0' ' ' <"/proc/$p/cmdline" 2>/dev/null | grep -q 'headless.sh --run '
+    tr '\0' ' ' <"/proc/$p/cmdline" 2>/dev/null | grep -qF "headless.sh --run ${1##*/} "
 }
 
 status() {
@@ -114,7 +118,11 @@ status() {
 
 case ${1:-} in
   --status) status; exit 0 ;;
-  --run) [[ -n ${2:-} ]] || usage; run_job "$2"; exit ;;
+  --run)
+    # Only a job this command just set up: a valid name, still running, no runner yet.
+    [[ ${2:-} =~ $NAME_RE && -f $HDIR/$2/job.json && ! -e $HDIR/$2/pid ]] &&
+      [[ $(jq -r .state "$HDIR/$2/job.json" 2>/dev/null) == running ]] || { err "--run takes a job fleet headless has just set up"; exit 2; }
+    run_job "$2"; exit ;;
   ''|-h|--help) usage ;;
 esac
 
@@ -130,10 +138,12 @@ while (( $# )); do
     *) err "unknown option: $1"; usage ;;
   esac
 done
-[[ $name =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$ ]] || { err "NAME takes letters, digits, . _ and - (at most 64)"; exit 2; }
-# The budget is required: a positive amount in dollars, at most MAX_USD, so a
-# job always runs under a hard cap and a typo cannot lift it.
-if ! [[ $budget =~ ^(0|[1-9][0-9]{0,5})(\.[0-9]{1,2})?$ ]] || awk -v b="$budget" -v m="$MAX_USD" 'BEGIN { exit !(b <= 0 || b > m) }'; then
+[[ $name =~ $NAME_RE ]] || { err "NAME takes letters, digits, . _ and - (at most 64)"; exit 2; }
+# Every job runs under a hard cap (default 10): a positive amount in dollars, at
+# most MAX_USD, so a typo cannot lift it. A MAX_USD that is no amount refuses
+# every job rather than comparing as text.
+[[ $MAX_USD =~ $USD_RE ]] || { err "FLEET_HEADLESS_MAX_USD is not an amount in dollars: $MAX_USD"; exit 2; }
+if ! [[ $budget =~ $USD_RE ]] || awk -v b="$budget" -v m="$MAX_USD" 'BEGIN { exit !(b <= 0 || b > m) }'; then
   err "--budget takes dollars above 0 and at most $MAX_USD (FLEET_HEADLESS_MAX_USD), such as 10 or 2.50"
   exit 2
 fi
@@ -167,8 +177,16 @@ mkdir -- "$dir" 2>/dev/null || { err "a job named $name exists ($(tilde "$dir"))
 release() { rm -rf -- "${dir:?}"; }
 wt=$repo/.claude/worktrees/headless-$name
 branch=headless-$name
-timeout 60 git -C "$repo" fetch -q origin 2>/dev/null || flog WARN "headless: fetch failed; the worktree starts from the last fetched main" name="$name"
-base=$(git -C "$repo" symbolic-ref -q --short refs/remotes/origin/HEAD 2>/dev/null) || base=HEAD
+! git -C "$repo" remote get-url origin >/dev/null 2>&1 || timeout 60 git -C "$repo" fetch -q origin 2>/dev/null || flog WARN "headless: fetch failed; the worktree starts from the last fetched default branch" name="$name"
+# The default branch: origin's HEAD, set from the remote when unset, else
+# origin/main or origin/master; with no origin at all, the local main. Never
+# the main checkout's current branch.
+base=$(git -C "$repo" symbolic-ref -q --short refs/remotes/origin/HEAD 2>/dev/null) ||
+  { timeout 30 git -C "$repo" remote set-head origin -a >/dev/null 2>&1 && base=$(git -C "$repo" symbolic-ref -q --short refs/remotes/origin/HEAD 2>/dev/null); } ||
+  { git -C "$repo" rev-parse -q --verify origin/main >/dev/null && base=origin/main; } ||
+  { git -C "$repo" rev-parse -q --verify origin/master >/dev/null && base=origin/master; } ||
+  { ! git -C "$repo" remote get-url origin >/dev/null 2>&1 && git -C "$repo" rev-parse -q --verify refs/heads/main >/dev/null && base=main; } ||
+  { release; err "$(tilde "$repo") has no default branch on origin to start the job from"; exit 1; }
 if ! out=$(git -C "$repo" worktree add -q -b "$branch" "$wt" "$base" 2>&1); then
   release
   err "could not make the worktree $(tilde "$wt"): $out"
@@ -189,12 +207,29 @@ if [[ ${FLEET_SCOPE:-1} != 0 ]]; then
     $(fleet_slice_opts worker) -p "MemoryMax=${MEM_MAX:-5G}" -p "MemorySwapMax=${MEM_SWAP:-1G}" $tasks "${runner[@]}")
 fi
 flog INFO "headless job started" name="$name" model="$model" budget_usd="$budget" worktree="$wt"
+# A runner that never wrote its record: the job reads failed, with the reason.
+failed_start() { # RC
+  jq -c --argjson rc "$1" '. + {state: "failed", exit: $rc, result: "runner did not start"}' "$dir/job.json" >"$dir/job.json.tmp" &&
+    mv -f -- "$dir/job.json.tmp" "$dir/job.json"
+  flog ERROR "headless job did not start" name="$name" said="$(head -c 300 "$dir/runner.log" 2>/dev/null)"
+  err "the job's runner did not start (exit $1)${2:+: $2}; its log: $(tilde "$dir")/runner.log"
+}
 if (( wait )); then
-  "${runner[@]}" </dev/null
+  "${runner[@]}" </dev/null 2> >(tee -a "$dir/runner.log" >&2)
   rc=$?
-  [[ $(jq -r .state "$dir/job.json") == finished ]] || { err "the job's runner did not finish its record (exit $rc)"; exit "$(( rc ? rc : 1 ))"; }
+  [[ $(jq -r .state "$dir/job.json") == finished ]] || { failed_start "$rc"; exit "$(( rc ? rc : 1 ))"; }
   jq -r "$USD_JQ"'"\(.name): exit \(.exit), $\(.total_cost_usd | usd) of $\(.budget_usd), \(.secs)s, \(.result)"' "$dir/job.json"
   exit "$rc"
 fi
 setsid -f "${runner[@]}" </dev/null >>"$dir/runner.log" 2>&1
+# The runner writes its pid once claude is about to start; a scope that could
+# not be made never does.
+for _ in $(seq "$(( ${FLEET_HEADLESS_START_WAIT:-15} * 5 ))"); do
+  [[ -e $dir/pid || $(jq -r .state "$dir/job.json") != running ]] && break
+  sleep 0.2
+done
+if [[ ! -e $dir/pid && $(jq -r .state "$dir/job.json") == running ]]; then
+  failed_start 1 "$(head -n 1 "$dir/runner.log" 2>/dev/null)"
+  exit 1
+fi
 echo "started $name: $(tilde "$wt"), budget \$$budget, model $model; fleet headless --status shows it"

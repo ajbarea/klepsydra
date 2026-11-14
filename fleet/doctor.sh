@@ -561,9 +561,11 @@ fi
 # whether one-shot jobs also have the API credit (`fleet headless`). A config
 # folder an interactive session starts on that sets a key or helper is a FAIL.
 keyed=""
-for dir in $FLEET_ACCOUNTS; do key_config "$dir" && keyed+="$dir "; done
+for dir in $FLEET_ACCOUNTS; do f=$(keyed_settings "$dir" "${FLEET_DIR:-$HOME/ajsoftworks}") && keyed+="$f "; done
+wsettings=${FLEET_SETTINGS-$FLEET_STATE/worker-settings.json}
+[[ -n $wsettings && -f $wsettings ]] && key_settings "$wsettings" && keyed+="$wsettings "
 if [[ -n $keyed ]]; then
-  report FAIL "auth mode" "interactive config folder ${keyed% } sets an API key or helper; interactive sessions run on the subscription only (move it to $FLEET_HEADLESS_CONFIG)"
+  report FAIL "auth mode" "${keyed% } sets an API key or helper, so interactive launches are refused; interactive sessions run on the subscription only (keys belong in $FLEET_HEADLESS_CONFIG)"
 elif ! key_config "$FLEET_HEADLESS_CONFIG"; then
   report ok "auth mode" "subscription only (no headless credit configured in $FLEET_HEADLESS_CONFIG)"
 elif ! command -v "${FLEET_ANT:-ant}" >/dev/null || ! headless_login; then

@@ -67,6 +67,7 @@ for b in 0 0.00 -1 50.01 1e3 010 ''; do
   hl "b$RANDOM" "$work/brief.md" --repo "$repo" --budget "$b" >/dev/null 2>&1
   check "budget '$b' is refused" "$?" "2"
 done
+check "a ceiling that is no amount refuses every job" "$(FLEET_HEADLESS_MAX_USD=abc hl m1 "$work/brief.md" --repo "$repo" --budget 999999.99 >/dev/null 2>&1; echo $?)" "2"
 check "no job was claimed by a refused budget" "$(find "$work/state" -name job.json | wc -l)" "0"
 check "a bad name is refused" "$(hl '../x' "$work/brief.md" --repo "$repo" >/dev/null 2>&1; echo $?)" "2"
 check "an empty brief is refused" "$(: >"$work/empty"; hl e1 "$work/empty" --repo "$repo" >/dev/null 2>&1; echo $?)" "2"
@@ -83,15 +84,18 @@ mv "$work/api/s.bak" "$work/api/settings.json"
 
 echo "headless: a job (--wait)"
 rm -rf -- "${work:?}/state/headless"
-out=$(ANTHROPIC_API_KEY=sk-bad ANTHROPIC_AUTH_TOKEN=tok ANTHROPIC_PROFILE=p CLAUDE_CODE_OAUTH_TOKEN=o CLAUDE_CODE_SESSION_ID=parent \
+# The main checkout sits on another branch: the job still starts from main.
+git -C "$repo" checkout -q -b elsewhere && git -C "$repo" -c user.name=t -c user.email=t@t commit -q --allow-empty -m elsewhere
+out=$(ANTHROPIC_BASE_URL=https://elsewhere.example ANTHROPIC_API_KEY=sk-bad ANTHROPIC_AUTH_TOKEN=tok ANTHROPIC_PROFILE=p CLAUDE_CODE_OAUTH_TOKEN=o CLAUDE_CODE_SESSION_ID=parent \
   hl job1 "$work/brief.md" --repo "$repo" --wait 2>&1); rc=$?
 check "the job exits as claude did" "$rc" "0"
 check "it ran in a fresh worktree on its own branch" "$(cat "$work/rec/cwd") $(git -C "$repo" rev-parse --abbrev-ref headless-job1)" "$repo/.claude/worktrees/headless-job1 headless-job1"
 argv=$(tr '\n' ' ' <"$work/rec/argv")
 check "claude -p with the default budget and model" "$argv" "-p --model claude-opus-5-5 --max-budget-usd 10 --permission-mode bypassPermissions --permission-prompts none --output-format stream-json --verbose "
+check "it starts from main, not the checkout's branch" "$(git -C "$repo" rev-parse headless-job1)" "$(git -C "$repo" rev-parse main)"
 check "the brief is its prompt" "$(cat "$work/rec/stdin")" "$(cat "$work/brief.md")"
 env=$(cat "$work/rec/env")
-check "no key, token or profile reaches the child" "$(grep -cE '^(ANTHROPIC_API_KEY|ANTHROPIC_AUTH_TOKEN|ANTHROPIC_PROFILE|CLAUDE_CODE_OAUTH_TOKEN|CLAUDE_CODE_SESSION_ID)=' <<<"$env")" "0"
+check "no key, token or profile reaches the child" "$(grep -cE '^(ANTHROPIC_API_KEY|ANTHROPIC_AUTH_TOKEN|ANTHROPIC_PROFILE|CLAUDE_CODE_OAUTH_TOKEN|CLAUDE_CODE_SESSION_ID|ANTHROPIC_BASE_URL)=' <<<"$env")" "0"
 check "it runs on the credit's config folder" "$(grep '^CLAUDE_CONFIG_DIR=' <<<"$env")" "CLAUDE_CONFIG_DIR=$work/api"
 check "the default folder's telemetry, and only that, is passed on" "$(grep -cE '^(OTEL_METRICS_EXPORTER=otlp|CLAUDE_CODE_ENABLE_TELEMETRY=1)$' <<<"$env") $(grep -c '^UNRELATED=' <<<"$env")" "2 0"
 check "the subagent cap is set" "$(grep -c '^CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS=2$' <<<"$env")" "1"
@@ -100,6 +104,8 @@ job=$work/state/headless/job1/job.json
 check "the record: finished, cost, exit, result" "$(jq -r '[.state, .total_cost_usd, .exit, .result] | join(" ")' "$job")" "finished 0.4213 0 success"
 check "the ledger has one line" "$(jq -r '[.name, .model, .total_cost_usd, .exit] | join(" ")' "$work/state/headless/ledger.jsonl")" "job1 claude-opus-5-5 0.4213 0"
 check "the fleet log has the end line" "$(jq -r 'select(.message == "headless job ended") | [.name, .model, .cost_usd, .exit] | join(" ")' "$work/state/log/fleet.log")" "job1 claude-opus-5-5 0.4213 0"
+check "--run will not rerun a finished job" "$(hl --run job1 >/dev/null 2>&1; echo $?) $(wc -l <"$work/state/headless/ledger.jsonl")" "2 1"
+check "--run takes no path" "$(hl --run ../../x >/dev/null 2>&1; echo $?)" "2"
 check "the name is used once" "$(hl job1 "$work/brief.md" --repo "$repo" >/dev/null 2>&1; echo $?)" "2"
 
 echo "headless: budget, failure, scope"
@@ -114,6 +120,11 @@ echo ok >"$work/rec/mode"
 FLEET_SCOPE=1 FLEET_SYSTEMD_RUN="$work/bin/sdrun" FLEET_TASKS_MAX=99 hl job4 "$work/brief.md" --repo "$repo" --wait >/dev/null 2>&1
 sd=$(tr '\n' ' ' <"$work/rec/sdrun")
 check "the job runs in a capped scope in the workers' slice" "$(has "$sd" '--slice=fleet-workers.slice')$(has "$sd" 'MemoryMax=5G')$(has "$sd" 'TasksMax=99')$(has "$sd" 'OOMPolicy=continue')" "yesyesyesyes"
+
+out=$(FLEET_SCOPE=1 FLEET_SYSTEMD_RUN=false FLEET_HEADLESS_START_WAIT=1 hl job6 "$work/brief.md" --repo "$repo" 2>&1); rc=$?
+check "a runner that cannot start is an error, not 'started'" "$rc $(has "$out" 'did not start') $(has "$out" started\ job6)" "1 yes no"
+check "and its job reads failed" "$(jq -r '[.state, .result] | join(" ")' "$work/state/headless/job6/job.json")" "failed runner did not start"
+rm -rf -- "${work:?}/state/headless/job6"
 
 echo "headless: in the background, and --status"
 echo slow >"$work/rec/mode"
@@ -153,6 +164,12 @@ printf '{"env": {"ANTHROPIC_API_KEY": "sk"}}\n' >"$work/keyed.json"
 check "worker settings with a key are refused" "$(FLEET_SETTINGS="$work/keyed.json" launch w3 >/dev/null; echo $?)" "2"
 check "--settings FILE with a key is refused" "$(FLEET_MIN_AVAIL_MB=0 FLEET_LAUNCHER="$work/bin/launcher" bash "$here/launch.sh" w4 "$work/brief.md" --settings "$work/api/settings.json" >/dev/null 2>&1; echo $?)" "2"
 check "--settings=JSON with a helper is refused" "$(FLEET_MIN_AVAIL_MB=0 FLEET_LAUNCHER="$work/bin/launcher" bash "$here/launch.sh" w5 "$work/brief.md" '--settings={"apiKeyHelper":"x"}' >/dev/null 2>&1; echo $?)" "2"
+mkdir -p "$work/.claude"
+printf '{"apiKeyHelper": "x"}\n' >"$work/.claude/settings.local.json"
+check "a keyed project setting in the session's folder is refused" "$(launch w6 >/dev/null; echo $?)" "2"
+rm -f -- "$work/.claude/settings.local.json"
+cp "$work/keyed.json" "$work/.claude/rel.json"
+check "a relative --settings is read from the session's folder" "$(cd "$work/home" && FLEET_MIN_AVAIL_MB=0 FLEET_LAUNCHER="$work/bin/launcher" FLEET_DIR="$work" bash "$here/launch.sh" w7 "$work/brief.md" --settings .claude/rel.json >/dev/null 2>&1; echo $?)" "2"
 check "and none of them launched" "$([[ -e $work/rec/launch-cmd ]] && echo launched || echo none)" "none"
 
 echo "doctor: the auth mode"
@@ -162,6 +179,12 @@ touch "$work/rec/ant-out"
 check "no ant login: subscription only, with the fix" "$(doc | grep -c '^warn auth mode: subscription only: .*ant --profile ldqis auth login')" "1"
 check "no helper configured: subscription only" "$(FLEET_HEADLESS_CONFIG="$work/none" doc)" "ok   auth mode: subscription only (no headless credit configured in $work/none)"
 check "a keyed interactive folder fails" "$(FLEET_ACCOUNTS="$work/sub $work/api" doc | cut -c1-15)" "FAIL auth mode:"
+
+check "a keyed worker settings file fails" "$(FLEET_SETTINGS="$work/keyed.json" doc | cut -c1-15)" "FAIL auth mode:"
+
+echo "the tray's launcher drops the same variables as launch.sh"
+list=$(bash -c ". '$here/lib.sh' && printf %s \"\$NO_KEY_ENV\"")
+check "klepsydra-launch.sh starts claude without them" "$(grep -cF "cmd=\"env ${list}\$cmd\"" "$here/../hooks/klepsydra-launch.sh")" "1"
 
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 (( fail == 0 ))
