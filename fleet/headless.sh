@@ -80,7 +80,8 @@ run_job() { # NAME
          num_turns: ($res.num_turns // null), result: ($res.subtype // (if $exit == 124 then "timeout" else "no result" end))}' <<<"$job")
   printf '%s\n' "$rec" >"$dir/job.json.tmp" && mv -f -- "$dir/job.json.tmp" "$dir/job.json"
   ( flock 9; printf '%s\n' "$(jq -c '{name, model, budget_usd, total_cost_usd, secs, exit, result, started_at, ended_at, worktree}' <<<"$rec")" >>"$LEDGER" ) 9>>"$HDIR/.lock"
-  rm -f -- "$dir/pid"
+  # The pid file stays: the claim is the runner's for good, so a starter that
+  # gave up waiting can never claim it after the job ran.
   flog INFO "headless job ended" name="$name" model="$model" cost_usd="$(jq -r '.total_cost_usd // "unknown"' <<<"$rec")" \
     budget_usd="$budget" secs="$secs" exit="$rc" result="$(jq -r .result <<<"$rec")"
   return "$rc"
@@ -217,11 +218,15 @@ fi
 flog INFO "headless job started" name="$name" model="$model" budget_usd="$budget" worktree="$wt"
 # A runner that never wrote its record: the job reads failed, with the reason.
 failed_start() { # RC [REASON]
-  jq -c --argjson rc "$1" '. + {state: "failed", exit: $rc, result: "runner did not start"}' "$dir/job.json" >"$dir/job.json.tmp" &&
+  # A number in the pid file: the runner started and died before its record,
+  # so what it spent is unknown; otherwise it never started.
+  local what="runner did not start"
+  [[ $(cat "$dir/pid" 2>/dev/null) =~ ^[0-9]+$ ]] && what="runner died before its record"
+  jq -c --argjson rc "$1" --arg what "$what" '. + {state: "failed", exit: $rc, result: $what, total_cost_usd: null}' "$dir/job.json" >"$dir/job.json.tmp" &&
     mv -f -- "$dir/job.json.tmp" "$dir/job.json"
-  ( flock 9; jq -c '{name, model, budget_usd, total_cost_usd: 0, secs: 0, exit, result, started_at, ended_at: (now | todate), worktree}' "$dir/job.json" >>"$LEDGER" ) 9>>"$HDIR/.lock"
+  ( flock 9; jq -c '{name, model, budget_usd, total_cost_usd, secs: 0, exit, result, started_at, ended_at: (now | todate), worktree}' "$dir/job.json" >>"$LEDGER" ) 9>>"$HDIR/.lock"
   flog ERROR "headless job did not start" name="$name" said="$(head -c 300 "$dir/runner.log" 2>/dev/null)"
-  err "the job's runner did not start (exit $1)${2:+: $2}; its log: $(tilde "$dir")/runner.log"
+  err "the job failed: $what (exit $1)${2:+: $2}; its log: $(tilde "$dir")/runner.log"
 }
 if (( wait )); then
   "${runner[@]}" </dev/null 2> >(tee -a "$dir/runner.log" >&2)
@@ -238,8 +243,9 @@ for _ in $(seq "$(( ${FLEET_HEADLESS_START_WAIT:-15} * 5 ))"); do
   sleep 0.2
 done
 # Still no runner: claim the start so a late one cannot run after this says it
-# failed. A runner that claimed it first has started after all.
-if [[ $(jq -r .state "$dir/job.json") == running ]] && ( set -C; echo gave-up >"$dir/pid" ) 2>/dev/null; then
+# failed. A runner that claimed it first has started after all (it never gives
+# its claim back).
+if ( set -C; echo gave-up >"$dir/pid" ) 2>/dev/null; then
   failed_start 1 "$(head -n 1 "$dir/runner.log" 2>/dev/null)"
   exit 1
 fi

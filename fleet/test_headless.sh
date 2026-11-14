@@ -105,6 +105,7 @@ job=$work/state/headless/job1/job.json
 check "the record: finished, cost, exit, result" "$(jq -r '[.state, .total_cost_usd, .exit, .result] | join(" ")' "$job")" "finished 0.4213 0 success"
 check "the ledger has one line" "$(jq -r '[.name, .model, .total_cost_usd, .exit] | join(" ")' "$work/state/headless/ledger.jsonl")" "job1 claude-opus-5-5 0.4213 0"
 check "the fleet log has the end line" "$(jq -r 'select(.message == "headless job ended") | [.name, .model, .cost_usd, .exit] | join(" ")' "$work/state/log/fleet.log")" "job1 claude-opus-5-5 0.4213 0"
+check "a finished runner keeps its claim on the start" "$(grep -cE '^[0-9]+$' "$work/state/headless/job1/pid")" "1"
 check "--run will not rerun a finished job" "$(hl --run job1 >/dev/null 2>&1; echo $?) $(wc -l <"$work/state/headless/ledger.jsonl")" "2 1"
 check "--run takes no path" "$(hl --run ../../x >/dev/null 2>&1; echo $?)" "2"
 check "the name is used once" "$(hl job1 "$work/brief.md" --repo "$repo" >/dev/null 2>&1; echo $?)" "2"
@@ -195,9 +196,13 @@ check "klepsydra-launch.sh starts claude without them" "$(grep -cF "cmd=\"env ${
 check "both hold the same settings filter" "$(grep -cF "key_jq='$(bash -c ". '$here/lib.sh' && printf %s \"\$KEY_JQ\"")'" "$here/../hooks/klepsydra-launch.sh")" "1"
 mkdir -p "$work/tray/.claude"
 printf '{"apiKeyHelper": "x"}\n' >"$work/tray/.claude/settings.local.json"
-out=$(KLEPSYDRA_CLAUDE=true KLEPSYDRA_TMUX_SOCKET="hl-tray-$$" bash "$here/../hooks/klepsydra-launch.sh" new "$work/tray" 2>&1); rc=$?
+out=$(KLEPSYDRA_WT="$work/no-wt" KLEPSYDRA_CLAUDE=true KLEPSYDRA_TMUX_SOCKET="hl-tray-$$" bash "$here/../hooks/klepsydra-launch.sh" new "$work/tray" 2>&1); rc=$?
 check "the tray refuses a folder whose settings set a key" "$rc $(has "$out" 'Not started: .*settings.local.json')" "1 yes"
 check "and started no tmux server" "$(tmux -L "hl-tray-$$" ls >/dev/null 2>&1 && echo started || echo none)" "none"
+out=$(KLEPSYDRA_WT="$work/no-wt" CLAUDE_CONFIG_DIR="$work/api" KLEPSYDRA_CLAUDE=true KLEPSYDRA_TMUX_SOCKET="hl-tray-$$" bash "$here/../hooks/klepsydra-launch.sh" new "$work/home" 2>&1)
+check "the tray refuses a session on a keyed config folder" "$(has "$out" "Not started: $work/api/settings.json")" "yes"
+out=$(KLEPSYDRA_BACKGROUND=1 KLEPSYDRA_WT="$work/no-wt" CLAUDE_CONFIG_DIR="$work/api" KLEPSYDRA_CLAUDE=true KLEPSYDRA_TMUX_SOCKET="hl-tray-$$" bash "$here/../hooks/klepsydra-launch.sh" new "$work/home" 2>&1)
+check "a fleet launch from a keyed caller is not judged by the caller's folder" "$(has "$out" 'Not started') $(has "$out" 'wt.exe was not found')" "no yes"
 
 echo "headless: a slow runner loses the start to a starter that gave up"
 # shellcheck disable=SC2016 # the stub's own code

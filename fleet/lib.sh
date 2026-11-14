@@ -1082,7 +1082,7 @@ key_config() { key_settings "$1/settings.json"; } # DIR
 # managed (code.claude.com/docs/en/settings, "Settings files").
 session_settings() { # DIR FOLDER
   printf '%s\n' "$1/settings.json" "$2/.claude/settings.json" "$2/.claude/settings.local.json" \
-    "${FLEET_MANAGED_SETTINGS:-/etc/claude-code/managed-settings.json}"
+    "${KLEPSYDRA_MANAGED_SETTINGS:-/etc/claude-code/managed-settings.json}"
 }
 # The first of those files that sets an API credential; fails when none does.
 keyed_settings() { # DIR FOLDER
