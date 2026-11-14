@@ -8,7 +8,7 @@ Resume from this file, `git log`, PR #375 and its comments.
 ## Done
 - Code, tests (`fleet/test_headless.sh`, `make test-headless`, CI step), docs, README rows.
 - Live on the LDQIS credit 11-13: two haiku jobs (foreground and background), `apiKeySource: apiKeyHelper`, $0.0047 total, scope in `fleet-workers.slice`.
-- Opus review round 1 (5 Should-fix, 5 nits) fixed in 9b469e6; verify round 2 (2 Should-fix, 3 nits) fixed in 2e0a9de; verify round 3 (2 Should-fix, 2 nits) fixed in the next commit; guard mutations 19 of 20 killed, 1 equivalent.
+- Opus review round 1 (5 Should-fix, 5 nits) fixed in 9b469e6; verify round 2 (2 Should-fix, 3 nits) fixed in 2e0a9de; verify round 3 (2 Should-fix, 2 nits) fixed in 51060f5; round 4 (1 Should-fix: the hook read the server env only with a fleet session) fixed after it; guard mutations 19 of 20 killed, 1 equivalent.
 
 ## Next
 1. Heavy suites on the final tree (test-fleet, test-launch, test-delegate, shellcheck).

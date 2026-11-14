@@ -212,10 +212,11 @@ new() { # dir [agy model]
   # Nor does a settings file the session would read set one (KEY_JQ, as in
   # fleet/lib.sh). A fleet launch (KLEPSYDRA_BACKGROUND=1) checked the folder
   # its command names already; any other session runs on the tmux server's
-  # CLAUDE_CONFIG_DIR when the server is up, else on this environment's.
+  # CLAUDE_CONFIG_DIR when the server is up (with any session, such as fleet
+  # delegate's), else on this environment's.
   if (( keycheck )) && [[ ${KLEPSYDRA_BACKGROUND:-} != 1 ]]; then
     local key_jq f cfg=${CLAUDE_CONFIG_DIR:-}
-    if (( exists )); then
+    if tmux "${t[@]}" list-sessions >/dev/null 2>&1; then
       cfg=$(tmux "${t[@]}" show-environment -g CLAUDE_CONFIG_DIR 2>/dev/null) && [[ $cfg == CLAUDE_CONFIG_DIR=* ]] && cfg=${cfg#*=} || cfg=""
     fi
     key_jq='(.apiKeyHelper // "" | tostring | length > 0) or ((.env // {}) | has("ANTHROPIC_API_KEY") or has("ANTHROPIC_AUTH_TOKEN") or has("ANTHROPIC_PROFILE"))'
