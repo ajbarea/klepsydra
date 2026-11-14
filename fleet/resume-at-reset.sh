@@ -33,6 +33,7 @@
 # first. --once runs one pass (and waits for the moves it started). Each
 # decision is one line in the fleet log; each pass writes what it saw (panes,
 # limited panes) to resume.beat for `fleet doctor`, and logs it when it changes.
+# Each pass also closes Playwright MCP browsers left without their server (#379).
 set -u
 FLEET_TARGET=fleet::resume
 here=$(dirname "$(readlink -f "$0")")
@@ -829,6 +830,23 @@ doctor_after_switch() {
     fi
   fi
 }
+# Playwright MCP browsers whose MCP server is gone (#379): TERM, then KILL at a
+# pass FLEET_BROWSER_GRACE_S or more later, each logged; never AJ's own Chrome
+# or Edge (hooks/klepsydra-browser.sh matches only the MCP profile folders).
+# FLEET_BROWSERS=0 (the suite) leaves the host's browsers alone.
+BROWSER=${FLEET_BROWSER_SCRIPT:-${here%/fleet}/hooks/klepsydra-browser.sh}
+reap_browsers() {
+  [[ ${FLEET_BROWSERS:-1} == 0 ]] && return 0
+  local what pid dir after
+  while IFS=$'\t' read -r what pid dir after; do
+    case $what in
+      term) flog INFO "an orphaned MCP browser (its MCP server is gone) was sent TERM" pid="$pid" profile="$dir" ;;
+      kill) flog WARN "an orphaned MCP browser outlived TERM and was sent KILL" pid="$pid" profile="$dir" after_s="$after" ;;
+      closed) flog INFO "an orphaned MCP browser closed" pid="$pid" after_s="$after" ;;
+    esac
+  done < <(KLEPSYDRA_PROC="${FLEET_PROC:-/proc}" KLEPSYDRA_NOW="$NOW" KLEPSYDRA_BROWSER_GRACE_S="${FLEET_BROWSER_GRACE_S:-10}" \
+    bash "$BROWSER" --reap "$FLEET_STATE/browsers-reaped" 2>/dev/null </dev/null)
+}
 PREV_ACCT="" DOCTOR_DUE=0 HEPH_DOUBT=""
 # The last pass's summary, from resume.beat: a --once run or a restart logs
 # only a change.
@@ -846,6 +864,7 @@ pass() {
   PASS_LIMITED=()
   panes=$(fleet_panes)
   for p in $panes; do one "$p"; done
+  reap_browsers
   doctor_after_switch
   save_state
   # What the pass saw, written whole each pass for `fleet doctor`, and logged

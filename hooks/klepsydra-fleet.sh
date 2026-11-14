@@ -144,7 +144,7 @@ branch_of() { # gitdir
   esac
 }
 
-# --- proc stat: identical in hooks/klepsydra-fleet.sh and hooks/klepsydra-launch.sh ---
+# --- proc stat: identical in hooks/klepsydra-fleet.sh, hooks/klepsydra-launch.sh and hooks/klepsydra-browser.sh ---
 # Fields of $PROC_ROOT/<pid>/stat after the command name, into the caller's
 # `stat`: [0] is the state, [1] the parent pid, [19] the start time (field 22).
 # The name sits in parentheses and may itself contain spaces or ")".
