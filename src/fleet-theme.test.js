@@ -275,7 +275,7 @@ test("one loader: only theme.js names a theme's file, and no frontend code branc
   const theme = read("src/fleet/theme.js");
   // Only the default is part of the page; the others are fetched by id when first worn.
   assert.deepEqual([...theme.matchAll(/from "\.\/themes\/([a-z]+)\.json"/g)].map((m) => m[1]), ["kourai"]);
-  assert.match(theme, /import\(`\.\/themes\/\$\{key\}\.json`, \{ with: \{ type: "json" \} \}\)/);
+  assert.match(theme, /import\(`\.\/themes\/\$\{key\}\.json\$\{retryQuery\(key\)\}`, \{ with: \{ type: "json" \} \}\)/);
 });
 
 test("the wall, the strip and the drawer read the theme now worn, not a fixed cast", () => {

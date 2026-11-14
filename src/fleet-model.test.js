@@ -920,6 +920,17 @@ test("#373: the first snapshot only seeds; a later one names each new session on
   assert.deepEqual(arrivals(second.seen, ss("a", "c", "d")).arrived, []);
 });
 
+test("#373: an ended or quiet session is remembered but never arrives", () => {
+  const { seen } = arrivals(null, []);
+  const got = arrivals(seen, [
+    { session_id: "e", status: "ended" },
+    { session_id: "q", status: "working", quiet_since: "2026-11-13T20:00:00Z" },
+    { session_id: "w", status: "working" },
+  ]);
+  assert.deepEqual(got.arrived, ["w"]);
+  assert.deepEqual(arrivals(seen, [{ session_id: "e", status: "working" }]).arrived, [], "seen, so a revival is not new");
+});
+
 test("#373: what a page remembers is bounded, the oldest dropped first", () => {
   const ss = (n, from = 0) => Array.from({ length: n }, (_, i) => ({ session_id: `s${from + i}` }));
   const { seen } = arrivals(null, ss(3));

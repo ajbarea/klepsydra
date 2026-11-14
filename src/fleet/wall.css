@@ -113,13 +113,21 @@ html, body { background: var(--wall-bg); color: var(--text); font: 14px/1.45 var
 /* Summary bar: who needs AJ, and how many are up. */
 .bar { display: flex; align-items: center; gap: 28px; padding: 20px var(--wall-pad) 8px; }
 /* At the window's narrowest (420 px) the density choice and + New session take a line of their own. */
-@media (max-width: 480px) { .bar { flex-wrap: wrap; } }
+@media (max-width: 480px) {
+  .bar { flex-wrap: wrap; }
+  /* Two rows of panels whether the gear is there or not, so it costs the bar no height. */
+  .tools { max-width: 220px; }
+  /* The right group takes its own line and the gear its foot and right end,
+     so the menu opens below the bar and on screen. */
+  .bar-right { flex: 1 1 100%; }
+  .gear { align-self: flex-end; margin-left: auto; }
+}
 /* The tally and what needs a look: CI or Fleet when not ok, a wrap-up in progress. */
 .lead { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 20px; margin-right: auto; min-width: 0; }
 /* The bar's right: the panels, + New session and the view settings behind one gear (#248). */
 .bar-right { order: 2; display: flex; align-items: center; gap: var(--space-5); }
 /* Split, Ledger, Queue and Wrap up… sit close together, so the half-screen bar keeps them on one line. */
-.tools { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; }
+.tools { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; } /* 8 px rows: each button's 24 px hit area (4 px past it) stays its own */
 .tally { display: flex; flex-wrap: wrap; gap: 8px 22px; align-items: baseline; color: var(--text-dim); }
 .tally b { font: 600 28px/1 var(--display); font-variant-numeric: tabular-nums; margin-right: 2px; color: var(--text-faint); }
 .tally .t-needs b { color: var(--tone-needs); }
@@ -176,6 +184,8 @@ html, body { background: var(--wall-bg); color: var(--text); font: 14px/1.45 var
   place-items: center;
   width: 32px;
   height: 32px;
+  /* A 32 px target that lays out as 18, a bar button's height, so the gear never makes the bar taller (#248). */
+  margin-block: -7px;
   border-radius: 8px;
   color: var(--text-dim);
   cursor: pointer;
@@ -188,7 +198,7 @@ html, body { background: var(--wall-bg); color: var(--text); font: 14px/1.45 var
 .view {
   position: absolute;
   z-index: 20;
-  top: calc(100% + 6px);
+  top: calc(100% + 13px); /* 6 px under the summary, which hangs 7 px past the gear's box */
   right: 0;
   display: flex;
   flex-direction: column;
@@ -1158,6 +1168,14 @@ button.link:hover:not([aria-disabled="true"]) { background: none; }
 /* Below the dock breakpoint (DOCK_MIN_PX) the half-screen bar fits "Queue · N" only; the name keeps "for you". */
 @media (width < 1200px) {
   #queue-open .for-you { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+}
+/* At half a screen the gaps and the panel buttons narrow, and the panels give
+   way before the tally, so the gear fits beside a one-row tally (#248). */
+@media (width < 1200px) {
+  .bar { gap: var(--space-5); }
+  .bar-right { gap: var(--space-2); flex-shrink: 8; }
+  .tools { column-gap: var(--space-2); }
+  #ledger-open, #queue-open, #wrapup-open { padding-inline: var(--space-4); }
 }
 /* --panel-w is each panel's docked width (on its dialog), --dock-w the docked one's. */
 body:is(.queue-docked, .ledger-docked) { padding-right: var(--dock-w); }

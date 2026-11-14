@@ -234,12 +234,18 @@ export const ARRIVALS_KEPT = 500;
  * A session's first appearance is an event (#373), once per session and never
  * on a reload: the first snapshot a page takes only seeds `seen` (null until
  * then). Returns the ids new since, in snapshot order, and the set to keep.
+ * An ended or quiet session is remembered but never arrives: a focus request
+ * that brings sixteen ended cards back is not sixteen arrivals.
  */
 export function arrivals(seen, sessions, keep = ARRIVALS_KEPT) {
   const ids = sessions.map((s) => s.session_id);
   if (!seen) return { seen: new Set(ids.slice(-keep)), arrived: [] };
-  const arrived = ids.filter((id) => !seen.has(id));
-  for (const id of arrived) seen.add(id);
+  const arrived = [];
+  for (const s of sessions) {
+    if (seen.has(s.session_id)) continue;
+    seen.add(s.session_id);
+    if (s.status !== "ended" && !isQuiet(s)) arrived.push(s.session_id);
+  }
   for (const id of seen) {
     if (seen.size <= keep) break;
     seen.delete(id);

@@ -245,16 +245,14 @@ def bar_of_comfortable(wall):
     be a line taller than the compact one it is looking at."""
     cards, body = 5, same_cards(5)
     page = wall.open(1400, 2000, cards, body)
+    # Since the view settings went behind the gear (#248) the bar wraps only
+    # below the two-column widths, so the case runs on one column there.
     width = next(
         (
             w
             for w in range(800, 1500, 5)
             if page.set_viewport_size({"width": w, "height": 2000}) is None
             and (h := page.evaluate(BARS))["comfortable"] > h["compact"] + 10
-            and page.evaluate(
-                "getComputedStyle(document.getElementById('wall')).gridTemplateColumns.split(' ').length"
-            )
-            == 2
         ),
         None,
     )
@@ -4437,9 +4435,12 @@ def split_toggle(wall):
     )
     page.wait_for_timeout(SETTLE_MS)
     got = page.evaluate(STATE)
-    want = {"cards": cards, "density": "compact", "columns": columns, "scrolls": False, "key": True}
-    ok = {k: got[k] for k in want} == want and got["bottom"] <= height
+    want = {"cards": cards, "density": "compact", "columns": columns, "scrolls": False}
+    ok = {k: got.get(k) for k in want} == want and got["bottom"] <= height
     wall.check(ok, f"fit {width}x{height} with the split toggle", got)
+    # #248: Split sits in the bar's right group, beside New session.
+    grouped = page.evaluate("!!document.querySelector('.bar-right #split')")
+    wall.check(grouped, "the split toggle sits in the bar's right group", grouped)
     page.close()
 
     page = open_app(wall, width, height)
@@ -4606,8 +4607,8 @@ def agy_menu(wall):
 
 
 def fleet_health(wall):
-    """The bar's Fleet button: hidden with no doctor reading, "Fleet ok" when
-    every check is, red with a popover listing each check, failing first, and
+    """The bar's Fleet button: hidden with no doctor reading and while every
+    check is ok (#248: healthy is quiet), red with a popover listing each check, failing first, and
     "Fleet ?" once the reading is stale. Set $KLEPSYDRA_HEALTH_SHOT to a path
     stem for a screenshot of the open list."""
     page = open_app(wall, 1920, 1000)
@@ -4618,7 +4619,8 @@ def fleet_health(wall):
     ok = {**HEALTH, "failed": 0, "warned": 0, "checks": [c for c in HEALTH["checks"] if c["status"] == "ok"]}
     page.evaluate("(v) => window.__health.onmessage(v)", ok)
     got = page.evaluate(state)
-    wall.check([got["hidden"], got["label"], got["tone"]] == [False, "Fleet ok", "ok"], "all ok reads Fleet ok", got)
+    # #248: healthy is quiet, so the bar hides the button while every check is ok.
+    wall.check(got["hidden"], "all ok hides the button (healthy is quiet)", got)
     page.evaluate("(v) => window.__health.onmessage(v)", HEALTH)
     page.click("#health-open")
     page.wait_for_timeout(150)
@@ -5203,7 +5205,7 @@ def theme_retry_waits_before_loading(wall):
                     r.abort()
             return route
 
-        page.route("**/fleet/themes/dicebear.json", fail_first(tries))
+        page.route("**/fleet/themes/dicebear.json*", fail_first(tries))  # a retry asks with ?retry=N
         open_gear(page)
         page.select_option("#theme", "dicebear")
         page.wait_for_function("document.getElementById('theme-note').textContent.startsWith('Not switched')")
@@ -5279,29 +5281,32 @@ LIST_COLOURS = """() => {
 
 
 def theme_list_is_dark(wall):
-    """The Characters list opens dark (#151). Windows draws the native list
-    from the select's and the options' own colours, so the select is the
-    bar's colour, never transparent, every other option the wall's card
-    colour and the chosen one the hover colour, each with its text at 4.5:1
-    or more."""
+    """The Characters list opens in the page's scheme (#151, #247). Windows
+    draws the native list from the select's and the options' own colours, so
+    the select is the bar's colour, never transparent, every other option the
+    wall's card colour and the chosen one the hover colour, each with its text
+    at 4.5:1 or more: a dark list in the dark scheme, a light one in the light."""
     page = wall.open(1920, 1000, 8)
-    got = page.evaluate(LIST_COLOURS)
-    tokens = page.evaluate("""() => {
-      const probe = document.createElement('div');
-      document.body.append(probe);
-      const of = (v) => { probe.style.background = `var(${v})`; return getComputedStyle(probe).backgroundColor; };
-      const out = { card: of('--card-bg'), hover: of('--button-hover'), wall: of('--wall-bg'), select: getComputedStyle(document.getElementById('theme')).backgroundColor };
-      probe.remove();
-      return out;
-    }""")
-    dark = all(
-        o["bg"] == tokens["hover" if o["chosen"] else "card"] and not o["light"] and o["ratio"] >= 4.5
-        for o in got["options"]
-    )
-    chosen = sum(o["chosen"] for o in got["options"])
-    wall.check(len(got["options"]) == 3 and chosen == 1 and dark and tokens["select"] == tokens["card"],
-               "the select wears its menu's colour, the chosen option the hover colour and the rest the card's, light text at 4.5:1 or more",
-               [got["options"], tokens])
+    for scheme in ("dark", "light"):
+        page.emulate_media(color_scheme=scheme)
+        page.wait_for_timeout(100)
+        got = page.evaluate(LIST_COLOURS)
+        tokens = page.evaluate("""() => {
+          const probe = document.createElement('div');
+          document.body.append(probe);
+          const of = (v) => { probe.style.background = `var(${v})`; return getComputedStyle(probe).backgroundColor; };
+          const out = { card: of('--card-bg'), hover: of('--button-hover'), wall: of('--wall-bg'), select: getComputedStyle(document.getElementById('theme')).backgroundColor };
+          probe.remove();
+          return out;
+        }""")
+        fits = all(
+            o["bg"] == tokens["hover" if o["chosen"] else "card"] and o["light"] == (scheme == "light") and o["ratio"] >= 4.5
+            for o in got["options"]
+        )
+        chosen = sum(o["chosen"] for o in got["options"])
+        wall.check(len(got["options"]) == 3 and chosen == 1 and fits and tokens["select"] == tokens["card"],
+                   f"{scheme}: the select wears its menu's colour, the chosen option the hover colour and the rest the card's, text at 4.5:1 or more",
+                   [got["options"], tokens])
     page.close()
 
 
