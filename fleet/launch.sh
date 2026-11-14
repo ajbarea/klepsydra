@@ -49,9 +49,33 @@ settings=${FLEET_SETTINGS-$FLEET_STATE/worker-settings.json}
 # FLEET_SUCCEEDS (a session id) names the orchestrator a move replaces (#226).
 # KLEPSYDRA_WORKER marks a session started with worker settings, so start-up
 # hooks meant for the orchestrator (the stale-PR list) skip it (#309).
+# Subscription only (#260): an interactive session never starts on an API
+# credential. A key, token or named profile in this environment is dropped
+# (NO_KEY_ENV), and a config folder or settings that set one are refused, since
+# a session on a key loses the claude.ai login, its connectors and Remote
+# Control, and the promotional credit does not cover interactive use (#241).
+for s in "$account/settings.json" ${settings:+"$settings"}; do
+  if key_settings "$s"; then
+    flog ERROR "launch refused: its settings hold an API key helper or key; interactive sessions run on the subscription only (fleet headless runs key jobs)" name="$name" settings="$s"
+    echo "launch refused: $s sets an API credential" # logcheck: ignore[stderr-for-errors] # the result line
+    exit 2
+  fi
+done
+prev=""
+for a in "$@"; do
+  v=""
+  [[ $prev == --settings ]] && v=$a
+  [[ $a == --settings=* ]] && v=${a#--settings=}
+  if [[ -n $v ]] && key_settings "$v"; then
+    flog ERROR "launch refused: --settings holds an API key helper or key" name="$name"
+    echo "launch refused: --settings sets an API credential" # logcheck: ignore[stderr-for-errors] # the result line
+    exit 2
+  fi
+  prev=$a
+done
 succeeds=""
 [[ ${FLEET_SUCCEEDS:-} =~ ^[0-9a-f-]{36}$ ]] && succeeds="KLEPSYDRA_SUCCEEDS=$FLEET_SUCCEEDS "
-cmd="$(fleet_oom_floor)env -u KERYX_ENABLED -u KLEPSYDRA_WORKER $(config_env "$account")$(fleet_oom_env)KLEPSYDRA_AGENT=$(printf '%q' "$name") ${succeeds}${settings:+KLEPSYDRA_WORKER=1 }CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS=2 ${FLEET_CLAUDE:-claude} --session-id $sid${settings:+ --settings $(printf '%q' "$settings")} $*"
+cmd="$(fleet_oom_floor)env ${NO_KEY_ENV}-u KERYX_ENABLED -u KLEPSYDRA_WORKER $(config_env "$account")$(fleet_oom_env)KLEPSYDRA_AGENT=$(printf '%q' "$name") ${succeeds}${settings:+KLEPSYDRA_WORKER=1 }CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS=2 ${FLEET_CLAUDE:-claude} --session-id $sid${settings:+ --settings $(printf '%q' "$settings")} $*"
 tmax="" role=""
 if [[ ${FLEET_SCOPE:-1} != 0 ]]; then
   # A task cap of its own (#289): inherited, it was DefaultTasksMax, and on
