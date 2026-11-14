@@ -470,6 +470,8 @@ const NOT_SCANNED = {
   "src/fleet/themes/": "character themes, each a voice to name and face table, data",
   "src-tauri/fleet/Cargo.toml": "scanned as a manifest",
   "hooks/klepsydra-wrapup.md": "the wrap-up skill's instructions, prose installed as a skill",
+  "hooks/klepsydra-agy-locked.json": "agy's lock policy, data the launcher and fleet delegate pass to --settings",
+  "hooks/klepsydra-engine-rules.md": "the helper rules for agy and Copilot sessions, prose",
 };
 
 /** Every file (any extension) a fleet change can add, found without the guards' own walks. */
@@ -958,7 +960,10 @@ test("the queue renderer never writes markup, follows an address or uses markdow
   assert.deepEqual(writesMarkup('b.setAttribute("aria-label", name); el.textContent = t; doc.createElement("pre")'), []);
   const html = read("src/wall.html");
   const dialog = html.slice(html.indexOf('<dialog id="queue"'), html.indexOf("</dialog>", html.indexOf('<dialog id="queue"')));
-  assert.match(dialog, /^<dialog id="queue" class="queue" aria-labelledby="queue-title">/);
+  assert.match(dialog, /^<dialog id="queue" class="queue" aria-label="Needs you and Queue">/);
+  assert.match(dialog, /role="separator" aria-orientation="horizontal" aria-label="Split between Needs you and Queue" aria-controls="needs-list queue-list" tabindex="0"/);
+  assert.ok(dialog.indexOf('id="needs-list"') < dialog.indexOf('id="queue-list"'), "Needs you over Queue");
+  assert.equal(dialog.match(/class="queue-content"/g).length, 2, "one content per list");
   assert.match(dialog, /role="separator" aria-orientation="vertical" aria-label="Queue panel width"/);
   assert.doesNotMatch(dialog, /<a\b|href|\u2014/);
   assert.match(html, /id="ledger-open"[^>]*>Ledger<\/button>\s*<button type="button" id="queue-open" aria-controls="queue" aria-expanded="false"[^>]*>Queue<\/button>/, "beside Ledger");
@@ -972,14 +977,22 @@ test("the queue sample is never reachable inside the app, and the panel reads th
   for (const search of ["?demo", "?demo=1", ""]) assert.equal(demoQueueUrl(true, search), null, search);
   assert.equal(demoQueueUrl(false, "?demo"), "../scripts/fixtures/queue-demo.md");
   assert.equal(demoQueueUrl(false, "?focus=x"), null, "only with ?demo");
+  const { LISTS } = await import("./fleet/queuepanel.js");
+  assert.equal(LISTS.needs.sample(false, "?demo"), "../scripts/fixtures/needs-demo.md");
+  for (const [app, search] of [[true, "?demo"], [false, ""]]) assert.equal(LISTS.needs.sample(app, search), null, `${app} ${search}`);
   const src = read("src/fleet/queuepanel.js");
-  assert.match(src, /const url = demoQueueUrl\(inTauri, location\.search\);/);
+  assert.match(src, /const url = sample\(inTauri, location\.search\);/);
   assert.equal(src.match(/queue-demo\.md/g).length, 1, "one way to the sample");
-  assert.match(src, /follow\("queue_subscribe", onMessage\)/);
-  const hits = FRONTEND.filter((f) => /queue_subscribe/.test(read(f)));
-  assert.deepEqual(hits, ["src/fleet/queuepanel.js"]);
+  assert.equal(src.match(/needs-demo\.md/g).length, 1, "one way to the Needs you sample");
+  assert.match(src, /follow\(command, onMessage\)/);
+  for (const cmd of ["queue_subscribe", "needs_subscribe"]) {
+    const hits = FRONTEND.filter((f) => new RegExp(cmd).test(read(f)));
+    assert.deepEqual(hits, ["src/fleet/queuepanel.js"], cmd);
+  }
   const dist = join(ROOT, "src-tauri", JSON.parse(read("src-tauri/tauri.conf.json")).build.frontendDist);
-  assert.ok(relative(dist, join(ROOT, "scripts/fixtures/queue-demo.md")).startsWith(".."), "outside the bundle");
+  for (const f of ["queue-demo.md", "needs-demo.md"]) {
+    assert.ok(relative(dist, join(ROOT, "scripts/fixtures", f)).startsWith(".."), `${f} outside the bundle`);
+  }
 });
 
 /** Files under a vendor dir that differ from its VENDOR.json: unlisted, missing, or a hash that drifted. */

@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
 # klepsydra's launcher, run by the overlay as
-#   wsl.exe -e bash -l .claude/klepsydra-launch.sh new DIR
+#   wsl.exe -e bash -l .claude/klepsydra-launch.sh new DIR [agy MODEL]
+#   wsl.exe -e bash -l .claude/klepsydra-launch.sh models
 #   wsl.exe -e bash .claude/klepsydra-launch.sh jump|end|interrupt|wrapup SOCKET PANE PID START
 # `new` starts claude in DIR as a window of tmux session "fleet" (socket
-# "klepsydra"); `jump` brings PANE's window to the front of its session, once
+# "klepsydra"), or with `agy MODEL` Antigravity's CLI on MODEL (#323), locked
+# (read-only, no shell) and once the helper rules are in agy's rules folder; `models` lists agy's models; `jump` brings PANE's window to the front of its session, once
 # PANE still hosts Claude process PID (START = /proc/PID/stat field 22).
 # `end` types /exit into that Claude Code, `wrapup` types /klepsydra-wrapup
 # and `interrupt` presses Esc there, on klepsydra's own tmux server only. `new` and `jump` open a Windows Terminal tab (window "fleet", titled TAB_TITLE) only when no
@@ -16,6 +18,20 @@ SESSION=fleet
 TAB_TITLE="klepsydra sessions" # also FLEET_TAB in src-tauri/src/launch.rs
 CONF=${KLEPSYDRA_TMUX_CONF:-$HOME/.claude/klepsydra-tmux.conf}
 CLAUDE=${KLEPSYDRA_CLAUDE:-claude}
+AGY=${KLEPSYDRA_AGY:-agy}
+# agy reads AGENTS.md or GEMINI.md, never CLAUDE.md (#323): the short working
+# rules for a fleet helper reach it as an always-on rule. Not ~/.gemini/GEMINI.md,
+# which the Antigravity IDE and Gemini CLI also write.
+RULES_SRC=${KLEPSYDRA_RULES_SRC:-$HOME/.claude/klepsydra-engine-rules.md}
+RULES_DST=${KLEPSYDRA_AGY_RULES:-$HOME/.gemini/config/rules/klepsydra-fleet.md}
+RULES_MAX=24000 # agy's limit for one rules file, in bytes
+# Every agy session the fleet starts is locked: no file writes, no shell, no
+# MCP, no browser, in a terminal sandbox. The policy is one file the launcher
+# and `fleet delegate` share; it goes in with --settings, which overrides AJ's own
+# ~/.gemini/antigravity-cli/settings.json key by key (that file is never rewritten).
+AGY_LOCK=${KLEPSYDRA_AGY_LOCK:-$HOME/.claude/klepsydra-agy-locked.json}
+WINMNT=${KLEPSYDRA_WINDOWS_MOUNT:-/mnt} # the Windows drives under WSL
+MODEL_RE='^[a-z0-9][a-z0-9.-]{0,63}$'
 WT=${KLEPSYDRA_WT:-wt.exe}
 UNDO=()
 LOCK=${XDG_RUNTIME_DIR:-/tmp}/klepsydra-launch-$UID.lock
@@ -103,8 +119,47 @@ open_tab() { # target tmux-socket-args...
   done
 }
 
-new() { # dir
-  local dir=$1
+# The fleet helper rules, as agy reads an always-on rule, written only when they
+# changed; fails, starting nothing, when they cannot be put there or are over
+# agy's size limit.
+agy_rules() {
+  local tmp old
+  [[ -r $RULES_SRC ]] || fail "The fleet helper rules ($RULES_SRC) cannot be read, so agy would start without them."
+  (( $(stat -c %s -- "$RULES_SRC") <= RULES_MAX )) || fail "The fleet helper rules ($RULES_SRC) are over agy's $RULES_MAX byte limit."
+  mkdir -p -- "${RULES_DST%/*}" || fail "agy's rules folder (${RULES_DST%/*}) cannot be made."
+  # The rule an earlier launcher made from the whole global rules file: gone, or every agy session keeps loading it.
+  old=${RULES_DST%/*}/claude-global.md
+  if [[ -f $old ]] && grep -q 'made from .* by klepsydra' "$old" 2>/dev/null; then rm -f -- "${old:?}"; fi
+  tmp=$(mktemp "$RULES_DST.XXXXXX") || fail "agy's rules cannot be written beside $RULES_DST."
+  { printf -- '---\ntrigger: always_on\ndescription: "Working rules for a fleet helper, made from %s by klepsydra; edit that file, not this one."\n---\n\n' "$RULES_SRC"
+    cat -- "$RULES_SRC"; } >"$tmp" || { rm -f -- "${tmp:?}"; fail "agy's rules cannot be written."; }
+  if cmp -s -- "$tmp" "$RULES_DST"; then rm -f -- "${tmp:?}"; else mv -f -- "$tmp" "$RULES_DST" || fail "agy's rules cannot be put in place."; fi
+}
+
+# The locked settings for an agy session: the lock policy itself, which names no
+# trusted workspace, so agy asks before trusting a folder (a repo's own hooks, plugins
+# and skills load only under trust, and run commands outside the deny rules; AJ answers
+# for his own folders, which his agy settings already list). Prints the file's path.
+# Fails, starting nothing, when the policy cannot be read.
+agy_settings() {
+  [[ -r $AGY_LOCK ]] || fail "agy's lock policy ($AGY_LOCK) cannot be read, so agy would start unlocked."
+  printf '%s' "$AGY_LOCK"
+}
+
+# agy's models as one line of JSON, [{"id", "label"}...], since the launcher
+# says one line (`agy models` prints a fetching line, then "ID<TAB>LABEL" lines).
+models() {
+  local out
+  need "$AGY" "agy (Antigravity CLI) was not found on PATH."
+  out=$(timeout 30 "$AGY" models 2>/dev/null) || fail "agy models did not answer."
+  out=$(awk -F'\t' -v re="$MODEL_RE" 'NF == 2 && $1 ~ re && $2 != "" { print $1 "\t" $2 }' <<<"$out")
+  [[ -n $out ]] || fail "agy listed no models."
+  need jq "jq is not installed in this distro."
+  jq -Rnc '[inputs | split("\t") | {id: .[0], label: .[1]}]' <<<"$out"
+}
+
+new() { # dir [agy model]
+  local dir=$1 tool=${2:-claude} model=${3:-} cmd=$CLAUDE what="a session"
   # shellcheck disable=SC2088 # a literal ~/ from the overlay
   case $dir in
     "~") dir=$HOME ;;
@@ -112,7 +167,38 @@ new() { # dir
   esac
   [[ -d $dir ]] || fail "The folder $dir does not exist."
   need tmux "tmux is not installed in this distro."
-  need "${CLAUDE%% *}" "claude was not found on PATH."
+  if [[ $tool == agy ]]; then
+    [[ $model =~ $MODEL_RE ]] || fail "That is not an agy model id: $model"
+    # Its workspace is the one folder its reads reach: never the home folder, a folder that holds
+    # it (/home, /), or a Windows drive (/mnt/c).
+    local real home
+    real=$(cd -- "$dir" && pwd -P) home=$(cd -- "$HOME" && pwd -P)
+    real=${real%/} # "/" becomes "", whose pattern /* holds every path
+    case $home/ in "$real"/*) fail "agy is not started in $dir: its workspace would hold the whole home folder. Pick a project folder." ;; esac
+    [[ $real != "$WINMNT" && $real != "$WINMNT"/* ]] || fail "agy is not started in $dir: the Windows side ($WINMNT) is no workspace, its user folders hold credentials. Pick a project folder in WSL."
+    # A folder that ships agy hooks, plugins or skills runs commands outside the deny rules
+    # once trusted (the trust dialog is the only gate): not for a locked session.
+    # agy reads workspace configuration from the folder and every folder above it up to the repo root,
+    # from four folder names (a bare hooks.json elsewhere in the tree is loaded by nothing, tested).
+    local d=$real top f
+    top=$(git -C "$real" rev-parse --show-toplevel 2>/dev/null) || top=$real
+    while :; do
+      for f in .agents .agent _agents _agent; do
+        [[ ! -e $d/$f ]] || fail "agy is not started in $dir: $d/$f ships agy workspace configuration (hooks, plugins, skills, MCP), which runs outside the lock once the folder is trusted."
+      done
+      [[ $d != "$top" && $d != / ]] || break
+      d=${d%/*}
+      [[ -n $d ]] || d=/
+    done
+    need "$AGY" "agy (Antigravity CLI) was not found on PATH."
+    agy_rules
+    local settings
+    settings=$(agy_settings) || exit 1
+    printf -v cmd '%q --model %s --settings %q --sandbox' "$AGY" "$model" "$settings"
+    what="a locked Antigravity session ($model)"
+  else
+    need "${CLAUDE%% *}" "claude was not found on PATH."
+  fi
   take_lock
   local -a t=(-L "$SOCKET_NAME") conf=()
   [[ -r $CONF ]] && conf=(-f "$CONF")
@@ -121,13 +207,31 @@ new() { # dir
   (( exists )) && has_client "$target" "${t[@]}" && shown=1
   (( shown )) || tab_preflight
   # The tmux server must not inherit the lock fd, or it holds the lock for good.
+  # A fleet launch (KLEPSYDRA_BACKGROUND=1) opens behind the window in view,
+  # so AJ keeps typing where he was (#216); the wall's New session comes forward.
+  local -a behind=()
+  [[ ${KLEPSYDRA_BACKGROUND:-} == 1 ]] && behind=(-d)
+  # Read once: a server this launch starts copies its environment into every pane.
+  unset KLEPSYDRA_BACKGROUND
   if (( exists )); then
-    win=$(tmux "${t[@]}" new-window -P -F '#{window_id}' -t "$target:" -c "$dir" "$CLAUDE" {LOCKFD}>&- 2>/dev/null) ||
+    win=$(tmux "${t[@]}" new-window "${behind[@]}" -P -F '#{window_id}' -t "$target:" -c "$dir" "$cmd" {LOCKFD}>&- 2>/dev/null) ||
       fail "tmux could not open a window."
     UNDO=(tmux "${t[@]}" kill-window -t "$win")
   else
-    tmux "${t[@]}" "${conf[@]}" new-session -d -s "$SESSION" -c "$dir" "$CLAUDE" {LOCKFD}>&- 2>/dev/null ||
-      fail "tmux could not start the fleet session."
+    # Started from inside any systemd unit or scope (the tmux watchdog's recover,
+    # the resume service, an agent's own scope), the server gets a scope of its
+    # own: a oneshot unit's end kills what it leaves in its cgroup.
+    local -a scope=()
+    if [[ -n ${INVOCATION_ID:-} ]] && command -v "${KLEPSYDRA_SYSTEMD_RUN:-systemd-run}" >/dev/null 2>&1; then
+      scope=("${KLEPSYDRA_SYSTEMD_RUN:-systemd-run}" --user --scope --quiet --collect --unit="klepsydra-tmux-$$" --)
+    fi
+    # A unit with no user manager to ask (a CI runner sets INVOCATION_ID too)
+    # makes no scope: the server then starts as from a terminal.
+    if ! { (( ${#scope[@]} )) && "${scope[@]}" tmux "${t[@]}" "${conf[@]}" new-session -d -s "$SESSION" -c "$dir" "$cmd" {LOCKFD}>&- 2>/dev/null; } &&
+      ! tmux "${t[@]}" has-session -t "$target" 2>/dev/null; then
+      tmux "${t[@]}" "${conf[@]}" new-session -d -s "$SESSION" -c "$dir" "$cmd" {LOCKFD}>&- 2>/dev/null ||
+        fail "tmux could not start the fleet session."
+    fi
     UNDO=(tmux "${t[@]}" kill-session -t "$target")
   fi
   if (( ! shown )); then
@@ -138,9 +242,9 @@ new() { # dir
     open_tab "$target" -S "$path"
   fi
   if (( ATTACHED )); then
-    printf 'Started a session in %s.\n' "$dir"
+    printf 'Started %s in %s.\n' "$what" "$dir"
   else
-    printf 'Started a session in %s. The terminal tab has not attached yet.\n' "$dir"
+    printf 'Started %s in %s. The terminal tab has not attached yet.\n' "$what" "$dir"
   fi
 }
 
@@ -248,6 +352,14 @@ own_pane() { # socket pane pid start
   local file=${XDG_RUNTIME_DIR:-/tmp}/klepsydra-pane-$UID-${pane#%}.lock
   { exec {PANEFD}>>"$file"; } 2>/dev/null || fail "Could not open $file."
   flock -n "$PANEFD" || fail "$busy"
+  # The fleet's typing lock too (fleet/lib.sh pane_locked, #325), so these keys
+  # never land inside a message a fleet script is typing. Its folder is under
+  # HOME, which every caller shares; XDG_RUNTIME_DIR may differ between them.
+  local typing=${FLEET_STATE:-$HOME/.local/state/fleet-orchestrator}/locks
+  if [[ -d $typing ]]; then
+    { exec {TYPEFD}>>"$typing/send-${pane#%}"; } 2>/dev/null || fail "Could not open $typing/send-${pane#%}."
+    flock -w "${KLEPSYDRA_TYPING_WAIT:-5}" "$TYPEFD" || fail "A fleet script is typing into that session; try again in a moment."
+  fi
   fleet_pane "$@"
 }
 
@@ -357,11 +469,24 @@ interrupt() { # socket pane pid start
   printf 'Sent Esc to the session.\n'
 }
 
+# The tray's Voices change (#273): keryx follows the mode the tray just saved,
+# at once, through the installed `fleet voices` (no mode: it reads prefs.json,
+# so two quick clicks never race on saving it).
+voices() {
+  local fleet=${FLEET_BIN:-$HOME/.local/bin}/fleet
+  [[ -x $fleet ]] || fail "The fleet commands are not installed (make install-fleet)."
+  "$fleet" voices || fail "fleet voices failed; see fleet log."
+}
+
 case ${1:-} in
-  new) (( $# == 2 )) || fail "usage: klepsydra-launch.sh new DIR"; new "$2" ;;
+  new)
+    if (( $# == 4 )) && [[ $3 == agy ]]; then new "$2" agy "$4"
+    else (( $# == 2 )) || fail "usage: klepsydra-launch.sh new DIR [agy MODEL]"; new "$2"; fi ;;
+  models) (( $# == 1 )) || fail "usage: klepsydra-launch.sh models"; models ;;
+  voices) (( $# == 1 )) || fail "usage: klepsydra-launch.sh voices"; voices ;;
   jump) (( $# == 5 )) || fail "usage: klepsydra-launch.sh jump SOCKET PANE PID START"; jump "$2" "$3" "$4" "$5" ;;
   end) (( $# == 5 )) || fail "usage: klepsydra-launch.sh end SOCKET PANE PID START"; end_session "$2" "$3" "$4" "$5" ;;
   wrapup) (( $# == 5 )) || fail "usage: klepsydra-launch.sh wrapup SOCKET PANE PID START"; wrapup "$2" "$3" "$4" "$5" ;;
   interrupt) (( $# == 5 )) || fail "usage: klepsydra-launch.sh interrupt SOCKET PANE PID START"; interrupt "$2" "$3" "$4" "$5" ;;
-  *) fail "usage: klepsydra-launch.sh new DIR | jump|end|interrupt|wrapup SOCKET PANE PID START" ;;
+  *) fail "usage: klepsydra-launch.sh new DIR [agy MODEL] | models | voices | jump|end|interrupt|wrapup SOCKET PANE PID START" ;;
 esac

@@ -103,7 +103,10 @@ test("the empty state fades in, and not under reduced motion", () => {
 
 test("the app registers the read-only launch folder command", () => {
   const main = read("../src-tauri/src/main.rs");
-  assert.match(main, /launch::launch_session,\s*launch::get_launch_dir\s*\]/);
+  const handler = main.match(/generate_handler!\[([\s\S]*?)\]/)?.[1] ?? "";
+  for (const cmd of ["launch::launch_session", "launch::get_launch_dir", "launch::agy_models"]) {
+    assert.match(handler, new RegExp(`(^|[\\s,])${cmd}\\s*(,|$)`), cmd);
+  }
   const launch = read("../src-tauri/src/launch.rs");
   assert.match(launch, /pub async fn get_launch_dir\(app: tauri::AppHandle\) -> Option<String>/);
 });

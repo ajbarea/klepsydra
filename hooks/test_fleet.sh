@@ -13,8 +13,30 @@ stub="$work/stubbin"
 mkdir -p "$stub"
 # $work/tmux.mode: "fail" exits 1, "hang" sleeps past the hook's timeout; else it succeeds.
 # shellcheck disable=SC2016 # the stub script expands its own variables
-printf '#!/bin/sh\necho "$*" >>"%s/tmux.log"\ncase $(cat "%s/tmux.mode" 2>/dev/null) in fail) exit 1;; hang) exec sleep 30;; esac\n' "$work" "$work" >"$stub/tmux"
-chmod +x "$stub/tmux"
+# capture-pane prints $work/screen, or, while $work/screens lists any, the next
+# of them in turn (the last one stays): each line is a screen file and,
+# optionally, a script run before it is shown; a line GONE fails the capture,
+# as a closed pane does, so a watcher ends after a known number of looks
+# (#230 review 3: a 1 s limit gave it anywhere from 0 to 1 s). setsid only
+# logs, so no test starts a real watcher.
+cat >"$stub/tmux" <<STUB
+#!/bin/sh
+echo "\$*" >>"$work/tmux.log"
+case \$(cat "$work/tmux.mode" 2>/dev/null) in fail) exit 1;; hang) exec sleep 30;; esac
+case "\$*" in *capture-pane*)
+  if [ -s "$work/screens" ]; then
+    set -- \$(head -n 1 "$work/screens")
+    [ "\$(wc -l <"$work/screens")" -gt 1 ] && sed -i 1d "$work/screens"
+    [ "\$1" = GONE ] && exit 1
+    [ -n "\${2:-}" ] && sh "\$2"
+    cat "\$1"
+  else
+    cat "$work/screen" 2>/dev/null
+  fi;;
+esac
+STUB
+printf '#!/bin/sh\necho "$*" >>"%s/setsid.log"\n' "$work" >"$stub/setsid"
+chmod +x "$stub/tmux" "$stub/setsid"
 export PATH="$stub:$PATH"
 tlog="$work/tmux.log"
 
@@ -30,8 +52,10 @@ check() {
 }
 
 cp "$here/../src/fleet/themes/kourai.json" "$work/test-cast.json"
+# Sourced with the suite's runtime folder, so its LOCK and PRUNE_STAMP are the
+# suite's, never the caller's live ones (#230 reviews 2 and 3).
 # shellcheck source=hooks/klepsydra-fleet.sh
-source "$hook"
+XDG_RUNTIME_DIR=$work source "$hook"
 
 echo "where"
 
@@ -170,7 +194,7 @@ fire() { # fixture [filter] [VAR=value...]
     env KLEPSYDRA_DIR="$dir" KLEPSYDRA_NOW="$now" KLEPSYDRA_PROC="$work/proc" KLEPSYDRA_PID=600 \
       KERYX_VOICES="$work/voices.json" XDG_RUNTIME_DIR="$work" KLEPSYDRA_CAST="$work/test-cast.json" \
       KLEPSYDRA_BOOT_ID="$boot_file" TMUX= TMUX_PANE= WSL_DISTRO_NAME= CLAUDE_CONFIG_DIR="$work/nocfg" \
-      FLEET_STATE="$work/fleet-state" KLEPSYDRA_AGENT= "$@" bash "$hook"
+      FLEET_STATE="$work/fleet-state" KLEPSYDRA_AGENT= KLEPSYDRA_ASK_WATCH=0 "$@" bash "$hook"
 }
 field() { jq -c "$1" "$file"; }
 mtime() { stat -c %Y "$file"; }
@@ -884,6 +908,40 @@ fire user-prompt.json
 fire stop-background.json '.background_tasks[0].status = "completed" | .background_tasks[1].status = "killed"'
 check "finished tasks in the list do not count" "$(field '[has("background"), .state]')" '[false,"done"]'
 
+# #215: a background shell that is the fleet's pane watcher alone is marked, so
+# the orchestrator's move back is not held by it; anything else is other work.
+wflag() { field '[(.background // [])[] | "\(.id):\(.watcher // false)"] | join(",")'; }
+fire stop.json; fire user-prompt.json
+fire post-tool-bash-background.json '.tool_input.command = "IDLE_S=300 bash /home/aj/.local/state/fleet-orchestrator/watch-panes.sh %3 %4"'
+check "#215: a background watch-panes.sh is a watcher" "$(wflag)" '"biwpk3ab6:true"'
+check "#215 review: with the panes it watches" "$(field '[.background[].watch]')" '[["%3","%4"]]'
+fire stop.json; fire user-prompt.json
+fire post-tool-bash-background.json '.tool_input.command = "watch-panes.sh %1\nnpm test"'
+check "#215 review: a second command on a new line is other work" "$(wflag)" '"biwpk3ab6:false"'
+fire stop.json; fire user-prompt.json
+# shellcheck disable=SC2016 # the command text holds a literal $( ), unexpanded on purpose
+fire post-tool-bash-background.json '.tool_input.command = "watch-panes.sh $(make test)"'
+check "#215 review: so is a command substitution in its arguments" "$(wflag)" '"biwpk3ab6:false"'
+fire stop.json; fire user-prompt.json
+fire post-tool-bash-background.json '.tool_input.command = "BASH_ENV=/tmp/e.sh bash /x/watch-panes.sh %1"'
+check "#215 verify: so is one whose prefix runs a file first" "$(wflag)" '"biwpk3ab6:false"'
+fire stop.json; fire user-prompt.json
+fire post-tool-bash-background.json '.tool_input.command = "FLEET_SOCK=%5 IDLE_S=300 bash /x/watch-panes.sh %1"'
+check "#215 verify: the panes come from its arguments, not its prefixes" "$(wflag) $(field '[.background[].watch]')" '"biwpk3ab6:true" [["%1"]]'
+fire stop.json; fire user-prompt.json
+fire post-tool-bash-background.json '.tool_input.command = "grep watch-panes.sh notes.md"'
+check "#215: a command that only names it is not" "$(wflag)" '"biwpk3ab6:false"'
+fire stop.json; fire user-prompt.json
+fire post-tool-bash-background.json '.tool_input.command = "/x/watch-panes.sh %1; rm -rf /tmp/y"'
+check "#215: nor one that runs more after it" "$(wflag)" '"biwpk3ab6:false"'
+fire stop.json; fire user-prompt.json
+fire stop-background.json '.background_tasks[0].command = "/home/aj/.local/state/fleet-orchestrator/watch-panes.sh %20 %21" | .background_tasks[1].command = "watch-panes.sh"'
+check "#215: Stop's list marks a watcher shell, never a subagent" "$(wflag)" "\"$B:true,$A:false\""
+check "#215 verify: and records the panes it watches" "$(field '[.background[].watch]')" '[["%20","%21"],null]'
+fire stop.json; fire user-prompt.json
+fire stop-background.json '.background_tasks[0].command = null'
+check "#215: a shell with no command is other work" "$(wflag)" "\"$B:false,$A:false\""
+
 # Malformed and absent fields change nothing and never abort.
 fire user-prompt.json
 fire subagent-start.json '.agent_id = null'
@@ -1494,15 +1552,17 @@ got=""
 while read -r v acc ink; do
   : >"$tlog"
   printf '{"holders":{"500:8717628":{"voice":"%s","seen":1}}}\n' "$v" >"$work/ink-voices.json"
-  # Heph's colour is worn only by the orchestrator's window (#172).
+  # Heph's and Athena's colours are worn only by the orchestrator's window (#172, #222).
   mkdir -p "$work/fleet-state"
-  if [[ $v == am_michael ]]; then printf '%s\n' "$C4" >"$work/fleet-state/orchestrator.session"; else rm -f "$work/fleet-state/orchestrator.session"; fi
+  rm -f "$work/fleet-state/orchestrator.session" "$work/fleet-state/orchestrator.face" "$dir/fleet/$C4.json"
+  if [[ $v == am_michael || $v == bf_emma ]]; then printf '%s\n' "$C4" >"$work/fleet-state/orchestrator.session"; fi
+  if [[ $v == bf_emma ]]; then printf 'athena\n' >"$work/fleet-state/orchestrator.face"; fi
   fire session-start.json ".session_id = \"$C4\"" KLEPSYDRA_CAST="$work/parity-cast.json" TMUX="$fsock,1,0" TMUX_PANE=%3 KERYX_VOICES="$work/ink-voices.json" >/dev/null
   got+="$v $acc $(sed -n 's/.*current-style bg=#[0-9A-Fa-f]*,fg=\(#[0-9a-f]*\),bold/\1/p' "$tlog")"$'\n'
 done <<<"$want"
-check "the hook's ink matches contrast.js for all seventeen" "$got" "$want"$'\n'
-rm -f "$work/fleet-state/orchestrator.session"
-check "all seventeen were compared" "$(wc -l <<<"$want")" "17"
+check "the hook's ink matches contrast.js for all eighteen" "$got" "$want"$'\n'
+rm -f "$work/fleet-state/orchestrator.session" "$work/fleet-state/orchestrator.face"
+check "all eighteen were compared" "$(wc -l <<<"$want")" "18"
 
 echo "fleet identity (#172)"
 mkdir -p "$work/fleet-state" "$work/sock"
@@ -1528,8 +1588,11 @@ wfile="$dir/fleet/$W.json"
 fire session-start.json ".session_id = \"$W\"" "TMUX=$work/sock/klepsydra,1,0" TMUX_PANE=%7 KLEPSYDRA_AGENT=sphragis >/dev/null
 check "review 1: a worker relaunched into the old orchestrator pane after a tmux restart is not Heph" "$(jq -c .orchestrator "$wfile")" "false"
 check "review 1: a worker's window never wears Heph's colour; Heph's always does" \
-  "[$(window_face '{"voice":"am_michael","orchestrator":false}')] [$(window_face '{"voice":"am_puck","orchestrator":true}')] [$(window_face '{"voice":"bf_emma"}')]" \
-  "[] [am_michael] [bf_emma]"
+  "[$(window_face '{"voice":"am_michael","orchestrator":false}')] [$(window_face '{"voice":"am_puck","orchestrator":true}')] [$(window_face '{"voice":"bf_isabella"}')]" \
+  "[] [am_michael] [bf_isabella]"
+check "#222: Athena's colour is the orchestrator's alone too, and only when its session chose her" \
+  "[$(window_face '{"voice":"bf_emma","orchestrator":false}')] [$(window_face '{"voice":"am_puck","orchestrator":true,"orchestrator_face":"bf_emma"}')] [$(window_face '{"voice":"bf_emma","orchestrator":true,"orchestrator_face":"am_michael"}')]" \
+  "[] [bf_emma] [am_michael]"
 fire session-start.json ".session_id = \"$W\" | .source = \"clear\"" "TMUX=$work/sock/klepsydra,1,0" TMUX_PANE=%7 >/dev/null
 check "review 2: a /clear in the orchestrator's pane is Heph before the new session is recorded" "$(jq -c .orchestrator "$wfile")" "true"
 fire post-tool-bash.json ".session_id = \"$W\"" "TMUX=$work/sock/klepsydra,1,0" TMUX_PANE=%7 >/dev/null
@@ -1541,10 +1604,149 @@ check "review 3: but not once it is in another pane" "$(jq -c .orchestrator "$wf
 rm -f "$wfile"
 fire session-start.json ".session_id = \"$W\"" "TMUX=$work/sock/klepsydra,1,0" TMUX_PANE=%3 KLEPSYDRA_AGENT=heph >/dev/null
 check "review 2: a session launched as heph (a move, a recovery) is Heph at once" "$(jq -c .orchestrator "$wfile")" "true"
+# #333: a `claude -p` that Heph runs from his Bash tool inherits his
+# KLEPSYDRA_AGENT and TMUX_PANE, but it is a helper under his process: never
+# the orchestrator, and it names no pane (so it never stands for his).
+mkproc 1700 500 bash 8718000 S /bin/bash -c "claude -p review"
+mkproc 1710 1700 claude 8718001 S claude -p review
+mkproc 1720 1710 klepsydra-fleet 8718002 S bash "$hook"
+NS=33333333-4444-4555-8666-777777777333
+nsfile="$dir/fleet/$NS.json"
+was_pane=$(cat "$work/fleet-state/orchestrator.pane" 2>/dev/null)
+for on_record in "$W" ""; do
+  if [[ -n $on_record ]]; then printf '%s\n' "$on_record" >"$work/fleet-state/orchestrator.session"; else rm -f "$work/fleet-state/orchestrator.session"; fi
+  printf '%%3\n' >"$work/fleet-state/orchestrator.pane"
+  rm -f "$nsfile"
+  fire session-start.json ".session_id = \"$NS\"" "TMUX=$work/sock/klepsydra,1,0" TMUX_PANE=%3 KLEPSYDRA_AGENT=heph KLEPSYDRA_PID=1720 >/dev/null
+  fire post-tool-bash.json ".session_id = \"$NS\"" "TMUX=$work/sock/klepsydra,1,0" TMUX_PANE=%3 KLEPSYDRA_AGENT=heph KLEPSYDRA_PID=1720 >/dev/null
+  check "#333 ($([[ -n $on_record ]] && echo "session on record" || echo "no session on record")): Heph's claude -p is no orchestrator, wears no face, names no pane" \
+    "$(jq -c '[.orchestrator, has("orchestrator_face"), .tmux, .claude.pid]' "$nsfile")" '[false,false,null,1710]'
+done
+rm -f "$nsfile"
+if [[ -n $was_pane ]]; then printf '%s\n' "$was_pane" >"$work/fleet-state/orchestrator.pane"; else rm -f "$work/fleet-state/orchestrator.pane"; fi
 rm -f "$work/fleet-state/orchestrator.session" "$wfile"
 fire session-start.json ".session_id = \"$W\"" "TMUX=$work/sock/klepsydra,1,0" TMUX_PANE=%7 KLEPSYDRA_AGENT=sphragis >/dev/null
 check "review 2: an agent launched under another name is never Heph, even in the orchestrator's pane" "$(jq -c .orchestrator "$wfile")" "false"
+check "#222: a worker's file names no orchestrator face" "$(jq -c 'has("orchestrator_face")' "$wfile")" "false"
 rm -f "$wfile"
+
+echo "the orchestrator's face (#222)"
+rm -f "$hfile"; hfire session-start.json "TMUX=$work/sock/klepsydra,1,0" TMUX_PANE=%7
+check "no orchestrator.face: the orchestrator wears Hephaestus" "$(jq -r .orchestrator_face "$hfile")" "am_michael"
+printf 'athena\n' >"$work/fleet-state/orchestrator.face"
+hfire post-tool-bash.json "TMUX=$work/sock/klepsydra,1,0" TMUX_PANE=%7
+check "a session keeps the face it started with when the file changes" "$(jq -r .orchestrator_face "$hfile")" "am_michael"
+rm -f "$hfile"; hfire session-start.json "TMUX=$work/sock/klepsydra,1,0" TMUX_PANE=%7
+check "a new session reads athena: Athena" "$(jq -r .orchestrator_face "$hfile")" "bf_emma"
+printf 'hephaestus\n' >"$work/fleet-state/orchestrator.face"
+hfire post-tool-bash.json "TMUX=$work/sock/klepsydra,1,0" TMUX_PANE=%7
+check "and stays Athena through its later events" "$(jq -r .orchestrator_face "$hfile")" "bf_emma"
+jq '.orchestrator_face = "bf_alice"' "$hfile" >"$hfile.tmp" && mv -- "$hfile.tmp" "$hfile"
+hfire post-tool-bash.json "TMUX=$work/sock/klepsydra,1,0" TMUX_PANE=%7
+check "AJ 11-02: a file from when Athena wore bf_alice keeps her, on bf_emma now" "$(jq -r .orchestrator_face "$hfile")" "bf_emma"
+printf 'zeus\n' >"$work/fleet-state/orchestrator.face"
+rm -f "$hfile"; hfire session-start.json "TMUX=$work/sock/klepsydra,1,0" TMUX_PANE=%7
+check "an unknown name is Hephaestus" "$(jq -r .orchestrator_face "$hfile")" "am_michael"
+printf 'athena\n' >"$work/fleet-state/orchestrator.face"
+rm -f "$hfile"; hfire session-start.json "TMUX=$work/sock/klepsydra,1,0" TMUX_PANE=%7
+jq -c 'del(.orchestrator_face)' "$hfile" >"$work/n" && mv "$work/n" "$hfile"
+hfire post-tool-bash.json "TMUX=$work/sock/klepsydra,1,0" TMUX_PANE=%7
+check "a running orchestrator from before faces stays Hephaestus" "$(jq -r .orchestrator_face "$hfile")" "am_michael"
+rm -f "$hfile" "$work/fleet-state/orchestrator.face"
+
+echo "equal orchestrators (#244)"
+B1=0b6e1c5a-1111-4222-8333-444455556666 B0=0b6e1c5a-0000-4222-8333-444455556666
+O1=77777777-4444-4555-8666-777777777771 O2=77777777-4444-4555-8666-777777777772
+# Its Claude process is pid PID (500, the fixtures' running claude, by default; 0 for none) in tmux pane PANE.
+card() { # ID FACE open|ended BOOT LAST [PID] [PANE]: another orchestrator's card ("pre": written before faces, "worker": a worker in that voice)
+  jq -nc --arg f "$2" --arg e "$3" --arg b "$4" --argjson last "$5" --argjson pid "${6:-500}" --arg pane "${7:-%1}" '{v: 1, session_id: "x", orchestrator: ($f != "worker"),
+    started_at: $last, state_at: $last, host: {boot: $b, distro: null}, claude: {pid: $pid, start: 8717628}, tmux: {socket: "s", pane: $pane},
+    ended: (if $e == "ended" then {reason: "other", at: $last} else null end)}
+    + (if $f == "pre" then {} elif $f == "worker" then {voice: "am_michael"} else {orchestrator_face: $f} end)' >"$dir/fleet/$1.json"
+}
+newface() { rm -f "$hfile"; hfire session-start.json "TMUX=$work/sock/klepsydra,1,0" TMUX_PANE=%7; jq -r .orchestrator_face "$hfile"; rm -f "$hfile" "$dir/fleet/$O1.json" "$dir/fleet/$O2.json"; }
+card "$O1" am_michael open "$B1" $((now - 60))
+check "a live Hephaestus on the wall: the new orchestrator is Athena" "$(newface)" "bf_emma"
+printf 'athena\n' >"$work/fleet-state/orchestrator.face"; card "$O1" bf_emma open "$B1" $((now - 60))
+check "a live Athena: Hephaestus, whatever orchestrator.face says" "$(newface)" "am_michael"
+card "$O1" bf_alice open "$B1" $((now - 60))
+check "#226 review 5: a live Athena whose file still says bf_alice (before 11-02) is Athena: Hephaestus" "$(newface)" "am_michael"
+rm -f "$work/fleet-state/orchestrator.face"
+card "$O1" am_michael open "$B0" $((now - 600))
+check "after a reboot, Hephaestus's card from the last boot still shown: Athena" "$(newface)" "bf_emma"
+card "$O1" pre open "$B1" $((now - 60))
+check "a card from before faces is Hephaestus's" "$(newface)" "bf_emma"
+card "$O1" bf_emma open "$B1" $((now - 60)); card "$O2" am_michael ended "$B1" $((now - 10))
+check "a live one counts before an ended one" "$(newface)" "am_michael"
+card "$O1" bf_emma ended "$B1" $((now - 500)); card "$O2" am_michael ended "$B1" $((now - 50))
+check "both shown, neither live: the face seen least recently" "$(newface)" "bf_emma"
+card "$O1" worker open "$B1" $((now - 60))
+check "a worker in Hephaestus's voice never counts" "$(newface)" "am_michael"
+card "$O1" am_michael open "$B1" $((now - 900)) 4242; card "$O2" bf_emma ended "$B1" $((now - 30))
+check "review: an open card whose Claude process is gone (a crash) is shown, not live" "$(newface)" "am_michael"
+card "$O1" bf_emma open "$B0" $((now - 900)); card "$O2" am_michael ended "$B1" $((now - 60))
+check "review: an open card from the last boot is shown, not live" "$(newface)" "bf_emma"
+card "$O1" bf_emma ended "$B1" $((now - 300)); card "$O2" am_michael ended "$B1" $((now - 300))
+check "review: seen at the same time: orchestrator.face's, Hephaestus with none" "$(newface)" "am_michael"
+printf 'athena\n' >"$work/fleet-state/orchestrator.face"
+card "$O1" bf_emma ended "$B1" $((now - 300)); card "$O2" am_michael ended "$B1" $((now - 300))
+check "review 2: seen at the same time, orchestrator.face says athena: Athena" "$(newface)" "bf_emma"
+rm -f "$work/fleet-state/orchestrator.face"
+card "$O1" af_heart open "$B1" $((now - 60))
+check "review 2: a face it cannot read is Hephaestus's, as the crate reads it" "$(newface)" "bf_emma"
+# A move (heph_move): the new session starts while the old active one and the warm backup both run.
+mv_face() { # SUCCEEDS-SID: a new "heph" session's face, the move naming the session it replaces
+  rm -f "$hfile"; hfire session-start.json "TMUX=$work/sock/klepsydra,1,0" TMUX_PANE=%7 KLEPSYDRA_AGENT=heph ${1:+KLEPSYDRA_SUCCEEDS=$1}
+  jq -r .orchestrator_face "$hfile"; rm -f "$hfile"
+}
+card "$O1" am_michael open "$B1" $((now - 5)); card "$O2" bf_emma open "$B1" $((now - 600))
+check "review 3: a move from a busy Hephaestus, Athena the idle backup: the new one is Hephaestus" "$(mv_face "$O1")" "am_michael"
+card "$O1" am_michael open "$B1" $((now - 600)); card "$O2" bf_emma open "$B1" $((now - 5))
+check "review 3: and from a busy Athena, Hephaestus the backup: Athena" "$(mv_face "$O2")" "bf_emma"
+card "$O1" am_michael open "$B1" $((now - 5)); card "$O2" bf_emma open "$B1" $((now - 600))
+printf '%s\n' "$O1" >"$work/fleet-state/orchestrator.session"
+check "review 4: a new backup started while both run (no move) is no successor: the face seen least recently" "$(mv_face "")" "bf_emma"
+rm -f "$work/fleet-state/orchestrator.session"
+rm -f "$dir/fleet/$O2.json"; card "$O1" am_michael open "$B1" $((now - 60))
+check "review 3: with no backup, a move still takes the face that is free" "$(mv_face "$O1")" "bf_emma"
+rm -f "$dir/fleet/$O1.json" "$dir/fleet/$O2.json"
+printf 'Athena\r\n' >"$work/fleet-state/orchestrator.face"
+check "none shown: orchestrator.face, read in any case and with a Windows line end" "$(newface)" "bf_emma"
+rm -f "$work/fleet-state/orchestrator.face"
+X1=88888888-4444-4555-8666-777777777771 X2=88888888-4444-4555-8666-777777777772
+# fleet recover after a power cut: last boot's Hephaestus card still shows; Heph comes back as "heph", a worker as itself.
+card "$O1" am_michael open "$B0" $((now - 900))
+fire session-start.json ".session_id = \"$X1\"" "TMUX=$work/sock/klepsydra,1,0" TMUX_PANE=%3 KLEPSYDRA_AGENT=heph >/dev/null
+fire session-start.json ".session_id = \"$X2\"" "TMUX=$work/sock/klepsydra,1,0" TMUX_PANE=%4 KLEPSYDRA_AGENT=sphragis >/dev/null
+check "a recovery: the orchestrator wears the face that is free, the worker neither" \
+  "$(jq -c '[.orchestrator, .orchestrator_face]' "$dir/fleet/$X1.json") $(jq -c '[.orchestrator, has("orchestrator_face")]' "$dir/fleet/$X2.json") [$(window_face "$(jq -c '.voice = "am_michael"' "$dir/fleet/$X2.json")")]" \
+  '[true,"bf_emma"] [false,false] []'
+rm -f "$dir/fleet/$X1.json" "$dir/fleet/$X2.json" "$dir/fleet/$O1.json"
+# A /clear: the same Claude process (its own, as the remote-link fixtures do) starts another id.
+mkproc 1600 1 claude 9300000 S claude
+mkproc 1610 1600 klepsydra-fleet 9300001 S bash "$hook"
+card "$O1" am_michael open "$B1" $((now - 60))
+fire session-start.json ".session_id = \"$X1\"" "TMUX=$work/sock/klepsydra,1,0" TMUX_PANE=%7 KLEPSYDRA_PID=1610 >/dev/null
+fire session-end.json ".session_id = \"$X1\" | .reason = \"clear\"" "TMUX=$work/sock/klepsydra,1,0" TMUX_PANE=%7 KLEPSYDRA_PID=1610 >/dev/null
+rm -f "$dir/fleet/$O1.json"
+fire session-start.json ".session_id = \"$X2\" | .source = \"clear\"" "TMUX=$work/sock/klepsydra,1,0" TMUX_PANE=%7 KLEPSYDRA_PID=1610 >/dev/null
+check "a /clear keeps the cleared session's face, though that card still shows it" \
+  "$(jq -r .orchestrator_face "$dir/fleet/$X1.json") $(jq -r .orchestrator_face "$dir/fleet/$X2.json")" "bf_emma bf_emma"
+rm -f "$dir/fleet/$X1.json" "$dir/fleet/$X2.json"
+card "$O1" bf_emma ended "$B1" $((now - 30)) 0 %7
+fire session-start.json ".session_id = \"$X2\" | .source = \"clear\"" "TMUX=$work/sock/klepsydra,1,0" TMUX_PANE=%7 KLEPSYDRA_PID=810 >/dev/null
+check "review: a /clear whose cleared session is not found keeps the face of its pane's newest orchestrator card" \
+  "$(jq -r .orchestrator_face "$dir/fleet/$X2.json")" "bf_emma"
+rm -f "$dir/fleet/$X2.json"
+fire session-start.json ".session_id = \"$X2\" | .source = \"clear\"" "TMUX=$work/sock/klepsydra,1,0" TMUX_PANE=%7 KLEPSYDRA_PID=1610 >/dev/null
+check "review 2: and so does one whose Claude process is known but matches no card" \
+  "$(jq -r .orchestrator_face "$dir/fleet/$X2.json")" "bf_emma"
+rm -f "$dir/fleet/$X2.json"
+card "$O1" am_michael ended "$B0" $((now - 30)) 0 %7; card "$O2" am_michael open "$B1" $((now - 60))
+fire session-start.json ".session_id = \"$X2\" | .source = \"clear\"" "TMUX=$work/sock/klepsydra,1,0" TMUX_PANE=%7 KLEPSYDRA_PID=1610 >/dev/null
+check "review 2: a card from the last boot in that pane is not its face; the free one is" \
+  "$(jq -r .orchestrator_face "$dir/fleet/$X2.json")" "bf_emma"
+rm -f "$dir/fleet/$X2.json" "$dir/fleet/$O1.json" "$dir/fleet/$O2.json"
 
 echo "account"
 mkdir -p "$work/cfg-team" "$work/cfg-me" "$work/cfg-bad"
@@ -1827,6 +2029,15 @@ check "queue set in a session: the hook names the keeper" "$(jq -c '[.by, .voice
 check "queue set in a session: and says so" "$out" "The Queue panel now reads /home/aj/q.md, kept by Hephaestus."
 out=$(THEME=professions insession /home/aj/q.md)
 check "queue set in a session: named in the theme worn" "$(jq -c '[.by, .voice]' "$qdir/queue.json")|$out" '["Foreman","am_michael"]|The Queue panel now reads /home/aj/q.md, kept by Foreman.'
+mkdir -p "$qdir/fleet"; QO="$qdir/fleet/99999999-4444-4555-8666-777777777779.json"
+jq -nc '{v: 1, session_id: "x", orchestrator: true, orchestrator_face: "bf_emma", ended: null, claude: {pid: 500, start: 8717628}}' >"$QO"
+out=$(insession /home/aj/q.md)
+check "#226 review: the orchestrator is named by its face, whatever voice keryx holds for it" "$(jq -c '[.by, .voice]' "$qdir/queue.json")|$out" \
+  '["Athena","bf_emma"]|The Queue panel now reads /home/aj/q.md, kept by Athena.'
+jq -c '.ended = {reason: "clear", at: 5}' "$QO" >"$QO.n" && mv "$QO.n" "$QO"
+insession /home/aj/q.md >/dev/null
+check "#226 review: an ended orchestrator file of the same process names no one" "$(jq -r .by "$qdir/queue.json")" "Hephaestus"
+rm -f "$QO"
 out=$(PID=810 insession /home/aj/q.md)
 check "queue set outside any session: no keeper" "$(jq -c '[.by, .voice]' "$qdir/queue.json")|$out" '[null,null]|The Queue panel now reads /home/aj/q.md.'
 ( cd "$work" && queue set rel.md >/dev/null )
@@ -1853,6 +2064,23 @@ check "queue set: a folder is refused" "$rc|${out##* is }" "2|a folder; name the
 mkdir -p "$work/qblock/queue.json"
 out=$(KLEPSYDRA_DIR=$work/qblock KLEPSYDRA_PROC=$qproc bash "$hook" queue set /home/aj/q.md 2>&1); rc=$?
 check "queue set: an unwritable queue.json says so, and leaves nothing" "$rc|${out%%:*}|$(find "$work/qblock" -mindepth 1 | wc -l)" "1|klepsydra|1"
+# The Needs you panel's file goes in needs.json the same way (#276), and never
+# touches queue.json.
+needs() { KLEPSYDRA_DIR=$qdir KLEPSYDRA_PROC=$qproc bash "$hook" needs "$@"; }
+qbefore=$(cat "$qdir/queue.json")
+out=$(needs show)
+check "#276 needs show: none yet, says where the panel reads" "$out" "No needs.json: the Needs you panel reads needs-you.md beside the queue file."
+out=$(needs set /home/aj/asks.md --by "Athena"); rc=$?
+check "#276 needs set: says so" "$rc|$out" "0|The Needs you panel now reads /home/aj/asks.md, kept by Athena."
+check "#276 needs set: path and keeper in needs.json" "$(jq -c . "$qdir/needs.json")" '{"path":"/home/aj/asks.md","by":"Athena","voice":null}'
+check "#276 needs set: queue.json untouched" "$(cat "$qdir/queue.json")" "$qbefore"
+out=$(needs set "$work" 2>&1); rc=$?
+check "#276 needs set: a folder is refused" "$rc|${out##* is }" "2|a folder; name the Needs you file"
+out=$(needs set 2>&1); rc=$?
+check "#276 needs: its own usage" "$rc|$out" "2|usage: klepsydra-fleet.sh needs set PATH [--by NAME] | clear | show"
+out=$(needs clear)
+check "#276 needs clear: back to the default, queue.json kept" "$out|$([[ -e $qdir/needs.json ]] && echo kept || echo gone)|$(cat "$qdir/queue.json")" \
+  "The Needs you panel reads needs-you.md beside the queue file again.|gone|$qbefore"
 # shellcheck disable=SC2016 # the stub script expands its own arguments
 printf '#!/bin/sh\n[ "$1" = -w ] && [ "$2" = -- ] && printf "C:%%s\\n" "$3"\n' >"$work/wslbin/wslpath"
 chmod +x "$work/wslbin/wslpath"
@@ -1869,6 +2097,149 @@ check "queue clear: the default again" "$rc|$out|$([[ -e $qdir/queue.json ]] && 
 check "queue show: none" "$(queue show)" "No queue.json: the Queue panel reads its default file."
 out=$(KLEPSYDRA_DIR=""; queue_cmd show 2>&1); rc=$? # the sourced hook's: a run would find the real folder
 check "queue: no data folder is an error" "$rc|$out" "1|klepsydra: no data folder (set KLEPSYDRA_DIR)"
+
+echo "#217: an answer no hook reports"
+# Its own per run, so two suites at once never see each other's watcher.
+A=$(printf '21700000-0000-4000-8000-%012d' "$$")
+afile="$dir/fleet/$A.json"
+afield() { jq -c "$1" "$afile"; }
+askfire() { # fixture [filter] [VAR=value...]; in pane %7 of the fleet socket
+  local fx=$1 f=${2:-.}
+  shift; (( $# )) && shift
+  fire "$fx" ".session_id = \"$A\" | $f" TMUX="$work/sock/klepsydra,1,0" TMUX_PANE=%7 "$@"
+}
+watch_ask_run() { # [max seconds]
+  env KLEPSYDRA_DIR="$dir" XDG_RUNTIME_DIR="$work" KLEPSYDRA_NOW="$now" KLEPSYDRA_ASK_TICK=0.05 \
+    KLEPSYDRA_ASK_MAX="${1:-20}" bash "$hook" watch-ask "$A"
+}
+now=1792360000 askfire session-start.json
+now=1792360010 askfire user-prompt.json
+: >"$work/setsid.log"
+now=1792360020 fire permission-request.json ".session_id = \"$A\"" KLEPSYDRA_ASK_WATCH=1
+check "outside tmux: no watcher" "$(cat "$work/setsid.log")" ""
+now=1792360020 askfire permission-request.json . KLEPSYDRA_ASK_WATCH=1
+check "a permission prompt in a pane starts its watcher" "$(cat "$work/setsid.log")" "-f bash $hook watch-ask $A"
+check "the file names the pane the watcher reads" "$(afield .tmux)" "{\"socket\":\"$work/sock/klepsydra\",\"pane\":\"%7\"}"
+# With a real setsid, the watcher runs and the fleet-wide lock is free (#230
+# review: a watcher that kept the hook's lock fd froze every card).
+cp "$stub/setsid" "$work/setsid.stub"
+printf '#!/bin/sh\nexec /usr/bin/setsid "$@"\n' >"$stub/setsid"
+cp "$fixtures/pane-permission-2.1.302.txt" "$work/screen"
+now=1792360025 askfire permission-request.json . KLEPSYDRA_ASK_WATCH=1 KLEPSYDRA_ASK_MAX=2 KLEPSYDRA_ASK_TICK=0.05
+sleep 0.5
+check "a real watcher leaves the fleet lock free" \
+  "$(pgrep -f "watch-ask $A" >/dev/null && echo running) $(flock -w 0 "$work/klepsydra-fleet-$UID.lock" true && echo free)" "running free"
+for _ in $(seq 40); do pgrep -f "watch-ask $A" >/dev/null || break; sleep 0.1; done
+check "and it ends at its time limit" "$(pgrep -f "watch-ask $A" >/dev/null && echo running || echo ended)" "ended"
+mv -f -- "$work/setsid.stub" "$stub/setsid"
+
+cp "$fixtures/pane-permission-2.1.302.txt" "$work/screen"
+now=1792360030
+watch_ask_run & wpid=$!
+sleep 0.5
+check "the dialog on screen: still needs you" "$(afield .state)" '"needs_you"'
+cp "$fixtures/pane-working-tool-2.1.302.txt" "$work/screen"
+timeout 10 tail --pid="$wpid" -f /dev/null
+check "the dialog gone (approved): working, and the watcher ends" \
+  "$(afield '[.state, .reason, .needs, .state_at]')|$(kill -0 "$wpid" 2>/dev/null && echo running || echo ended)" '["working",null,null,1792360030]|ended'
+
+now=1792360040 askfire permission-request.json
+iscreen=$fixtures/pane-idle-2.1.302.txt
+printf '%s\n' "$iscreen" "$iscreen" "$iscreen" GONE >"$work/screens"
+now=1792360045 watch_ask_run 20
+rm -f -- "$work/screens"
+check "a dialog never seen on screen is never cleared" "$(afield '[.state, .reason]')" '["needs_you","approve Bash"]'
+cp "$fixtures/pane-permission-2.1.302.txt" "$work/screen"
+echo fail >"$work/tmux.mode"
+now=1792360046 watch_ask_run 5 & wpid=$!
+timeout 2 tail --pid="$wpid" -f /dev/null
+rm -f "$work/tmux.mode"
+check "the pane gone: the watcher ends at once, the ask stays" \
+  "$(kill -0 "$wpid" 2>/dev/null && echo running || echo ended) $(afield .state)" 'ended "needs_you"'
+wait "$wpid" 2>/dev/null
+before=$(<"$afile")
+ask_answered "$afile" 1792360001 1792360047
+check "an answer to an earlier ask changes nothing" "$(<"$afile")" "$before"
+ask_answered "$afile" 1792360040 1792360047
+check "the answer to this ask" "$(afield '[.state, .needs, .state_at]')" '["working",null,1792360047]'
+check "and its turn count stamped with the write, as the hook stamps it" "$(afield '.turns_at == .written_at')" "true"
+check "#230 review 2: the sourced hook's lock and prune stamp are the suite's own" "$([[ $LOCK == "$work"/* && $PRUNE_STAMP == "$work"/* ]] && echo own)" "own"
+# An ask after the turn ended with nothing left running, its file holding no
+# .background key (the hook deletes an empty one): done, as the hook reads it.
+jq -c '.state = "needs_you" | .state_at = 1792360060 | .needs = {tool: "Bash", turn_over: true} | del(.background)' "$afile" >"$work/a.tmp" && mv -f -- "$work/a.tmp" "$afile"
+ask_answered "$afile" 1792360060 1792360061
+check "#230 review 2: answered after the turn, no background key: done" "$(afield '[.state, .reason]')" '["done",null]'
+# A busy fleet lock when the answer is seen: the watcher tries again and the
+# answer lands once the lock is free, never lost (#230 review 2).
+now=1792360062 askfire permission-request.json
+cp "$fixtures/pane-permission-2.1.302.txt" "$work/screen"
+now=1792360063 watch_ask_run 15 & wpid=$!
+sleep 0.4
+flock "$LOCK" sleep 6.5 & lpid=$!
+sleep 0.2
+cp "$fixtures/pane-working-tool-2.1.302.txt" "$work/screen"
+sleep 2
+check "#230 review 2: while the fleet lock is busy, the ask still waits" "$(afield .state)" '"needs_you"'
+timeout 20 tail --pid="$wpid" -f /dev/null
+kill "$wpid" 2>/dev/null; wait "$wpid" "$lpid" 2>/dev/null # a failed case leaves no watcher to act on later asks
+check "#230 review 2: once it is free, the answer lands" "$(afield '[.state, .needs]')" '["working",null]'
+# The dialog is both lines: the question alone, or the option alone, then gone,
+# was never a dialog, so the ask stays.
+grep -v '1\. Yes' "$fixtures/pane-permission-2.1.302.txt" >"$work/q-only.txt"
+grep -v 'Do you want to proceed' "$fixtures/pane-permission-2.1.302.txt" >"$work/o-only.txt"
+for half in q-only o-only; do
+  now=1792360070 askfire permission-request.json
+  printf '%s\n' "$work/$half.txt" "$iscreen" "$iscreen" "$iscreen" GONE >"$work/screens"
+  now=1792360071 watch_ask_run 20
+  rm -f -- "$work/screens"
+  check "#230 review 2: $half on screen, then gone: never a dialog, the ask stays" "$(afield .state)" '"needs_you"'
+done
+
+pscreen=$fixtures/pane-permission-2.1.302.txt iscreen=$fixtures/pane-idle-2.1.302.txt
+now=1792360048 askfire permission-request.json
+# Two misses with the dialog back between them: each sighting starts the count again (#230 review 4).
+printf '%s\n' "$pscreen" "$iscreen" "$pscreen" "$iscreen" GONE >"$work/screens"
+now=1792360049 watch_ask_run 20
+check "one look without the dialog is not an answer, nor two looks apart" "$(afield '[.state, .reason]')" '["needs_you","approve Bash"]'
+printf 'jq -c ".state_at = 1792360099" "%s" >"%s.new" && mv -f "%s.new" "%s"\n' "$afile" "$afile" "$afile" "$afile" >"$work/new-ask.sh"
+printf '%s\n' "$pscreen $work/new-ask.sh" "$iscreen" "$iscreen" GONE >"$work/screens"
+now=1792360100 watch_ask_run 20
+check "a dialog seen for one ask is not seen for the next" "$(afield '[.state, .state_at]')" '["needs_you",1792360099]'
+rm -f "$work/screens"
+
+now=1792360110 askfire pre-tool-question.json
+printf '%s\n' "$pscreen" "$iscreen" "$iscreen" GONE >"$work/screens"
+now=1792360111 watch_ask_run 20
+check "a question is not a permission: the watcher leaves it" "$(afield '[.state, .reason]')" '["needs_you","question"]'
+rm -f "$work/screens"
+
+echo "#217: a subagent's ask ends with it"
+now=1792360160 askfire subagent-start.json '.agent_id = "agent-217"'
+now=1792360161 askfire permission-request.json '.agent_id = "agent-217"'
+now=1792360162 askfire subagent-stop.json '.agent_id = "agent-other"'
+check "another subagent stopping leaves the ask" "$(afield '[.state, .needs.by]')" '["needs_you","agent-217"]'
+now=1792360163 askfire subagent-stop.json '.agent_id = "agent-217"'
+check "the asker stopping (denied, or done) ends its ask" "$(afield '[.state, .reason, .needs]')" '["working",null,null]'
+now=1792360170 askfire permission-request.json
+now=1792360171 askfire subagent-stop.json '.agent_id = null'
+check "a subagent stop naming no agent leaves the session's own ask" "$(afield '[.state, .needs.by]')" '["needs_you",""]'
+
+echo "the fleet registry follows a session at the event (#261)"
+mkdir -p "$work/fleet-state"
+printf '#!/usr/bin/env bash\nprintf "%%s|" "$@" >>"%s/reg-events"; echo >>"%s/reg-events"\n' "$work" "$work" >"$work/fleet-state/registry-event.sh"
+rm -f "$work/reg-events" "$rfile" "$rfile2" "$rfile3"
+r1fire session-start.json "$rnow"
+check "with no agent registered, the registry is not called" "$(cat "$work/reg-events" 2>/dev/null)" ""
+printf '%%7\tw\t/b.src\t%s\t/w\n' "$R" >"$work/fleet-state/panes.tsv"
+fire session-end.json ".session_id = \"$R\" | .reason = \"clear\"" KLEPSYDRA_NOW=$((rnow + 10)) KLEPSYDRA_PID=1510 "TMUX=$work/sock/klepsydra,1,0" TMUX_PANE=%7 >/dev/null
+c2fire session-start.json $((rnow + 11)) '.source = "clear"' "TMUX=$work/sock/klepsydra,1,0" TMUX_PANE=%7
+c2fire session-start.json $((rnow + 12)) '.source = "compact"'
+c2fire session-end.json $((rnow + 13)) '.reason = "prompt_input_exit"' "TMUX=$work/sock/klepsydra,1,0" TMUX_PANE=%7
+check "an end with its reason, a /clear with the session it cleared, its pane and its server, no compact" "$(cat "$work/reg-events")" \
+"SessionEnd|$R|clear|%7||$work/sock/klepsydra|
+SessionStart|$R2|clear|%7|$R|$work/sock/klepsydra|
+SessionEnd|$R2|prompt_input_exit|%7||$work/sock/klepsydra|"
+rm -f "$work/fleet-state/registry-event.sh" "$work/fleet-state/panes.tsv" "$work/reg-events" "$rfile" "$rfile2"
 
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [[ $fail -eq 0 ]]

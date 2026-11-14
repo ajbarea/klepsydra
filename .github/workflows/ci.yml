@@ -70,9 +70,15 @@ jobs:
       - name: Launcher tests
         run: |
           command -v tmux >/dev/null || { sudo apt-get update && sudo apt-get install -y tmux; }
-          bash hooks/test_launch.sh
+          make test-launch FLEET_HEAVY_HELD=1
       - name: Fleet engine tests
-        run: bash fleet/test_fleet.sh
+        run: make test-fleet FLEET_HEAVY_HELD=1
+      - name: Delegate lane tests
+        run: make test-delegate FLEET_HEAVY_HELD=1
+      - name: Heavy lock release tests
+        run: make test-heavy-lock FLEET_HEAVY_HELD=1
+      - name: Memory slice tests
+        run: make test-slice FLEET_HEAVY_HELD=1
       - name: Release memory check tests
         run: bash scripts/test_measure_memory.sh
       - name: Windows build stage check tests
@@ -83,10 +89,8 @@ jobs:
         run: python3 -I fleet/test_ci_watch.py
       - name: Screenshot prune tests
         run: python3 -I fleet/test_prune_shots.py
-      - name: Agora tests
-        run: python3 -I fleet/test_agora.py
       - name: Shell lint
-        run: shellcheck -x hooks/*.sh statusline/*.sh scripts/*.sh fleet/*.sh fleet/fleet
+        run: make shellcheck SHELLCHECK=shellcheck FLEET_HEAVY_HELD=1
       # The install dir is writable only because the NSIS mode is currentUser;
       # a perMachine build puts it under Program Files. Readings and harness
       # output go to the app data dir and to temp respectively.
@@ -140,7 +144,7 @@ jobs:
       - name: Add toolchain components
         run: rustup component add clippy rustfmt
       - name: Cache cargo registry and build output
-        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           workspaces: src-tauri -> target
           save-if: ${{ github.ref == 'refs/heads/main' }}

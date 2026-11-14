@@ -29,13 +29,7 @@ fi
 # lines: what recover decides from, so a launch never changes who is who.
 # In-fleet: on the fleet's tmux server (a file without a socket counts, so a
 # live Heph is never missed).
-live_now=$(for f in "$KLEPSYDRA_DIR"/fleet/*.json; do
-  [[ -f $f && ! -L $f ]] || continue
-  id=$(basename "$f" .json)
-  row=$(jq -r --arg s "/$FLEET_SOCK" 'select(.ended == null and .tmux.pane != null)
-    | [.tmux.pane, (if .tmux.socket == null or (.tmux.socket | endswith($s)) then 1 else 0 end)] | @tsv' "$f" 2>/dev/null) || continue
-  [[ -n $row ]] && session_alive "$id" && printf '%s\t%s\t%s\n' "${row%%$'\t'*}" "$id" "${row##*$'\t'}"
-done)
+live_now=$(live_fleet_sessions)
 agents=$(cut -f4 "$REGISTRY" 2>/dev/null | grep .)
 # A row whose own session's process started after the running fleet tmux
 # server did: a live session in its pane is its successor (a /clear). A row
@@ -55,8 +49,17 @@ this_boot_row() { on_this_server "$1"; } # SID
 # worst outcome.
 orch=$(orchestrator) rec=$(cat "$FLEET_STATE/orchestrator.session" 2>/dev/null)
 grep -qxF -- "${rec:-x}" <<<"$agents" && rec="" # a record naming an agent is no Heph's
+# Nor is one finished.tsv names (`fleet done`, #269, or a finish the doctor recorded).
+fin=${FLEET_FINISHED:-$FLEET_STATE/finished.tsv}
+[[ -n $rec ]] && awk -F'\t' -v r="$rec" '$4 == r { f = 1 } END { exit !f }' "$fin" 2>/dev/null && rec=""
 heph_pane="" osid="" heph_unsure=0
 unreg=$(awk -F'\t' 'NR == FNR { if ($0 != "") a[$0] = 1; next } $3 == 1 && !($2 in a)' <(printf '%s\n' "$agents") <(printf '%s\n' "$live_now"))
+# A finished agent's pane stays open with its session (`fleet done`, #269): it
+# is no stranger, so it never leaves Heph unsure.
+# (Only when it has rows: an empty first file would make awk read the second as it.)
+if [[ -s $fin ]]; then
+  unreg=$(awk -F'\t' 'NR == FNR { f[$1 "\t" $4] = 1; next } $0 != "" && !(($1 "\t" $2) in f)' "$fin" <(printf '%s\n' "$unreg"))
+fi
 # A worker's new session after a /clear sits in its this-boot row's pane: no Heph.
 rows=$(while IFS=$'\t' read -r rp _ _ rsid _; do [[ -n $rp ]] && this_boot_row "$rsid" && printf '%s\n' "$rp"; done <"$REGISTRY" 2>/dev/null)
 loose=$(awk -F'\t' 'NR == FNR { if ($0 != "") r[$0] = 1; next } $0 != "" && !($1 in r)' <(printf '%s\n' "$rows") <(printf '%s\n' "$unreg"))
@@ -67,7 +70,10 @@ if [[ -z $onrec && -n $orch ]] && ! grep -qxF -- "$orch" <<<"$rows" && { [[ -z $
 fi
 [[ $(grep -c . <<<"$onrec") == 1 ]] || onrec=""
 caller=""
-if [[ -n ${CLAUDECODE:-} && -n ${TMUX_PANE:-} && ${TMUX:-} == *"/$FLEET_SOCK,"* ]] && ! grep -qxF -- "$TMUX_PANE" <<<"$rows"; then
+# The caller is Heph only when its pane is no agent's: neither a row's nor a
+# finished agent's (whose row `fleet done` took out, #269).
+if [[ -n ${CLAUDECODE:-} && -n ${TMUX_PANE:-} && ${TMUX:-} == *"/$FLEET_SOCK,"* ]] && ! grep -qxF -- "$TMUX_PANE" <<<"$rows" &&
+  ! finished_here "$TMUX_PANE"; then
   caller=$TMUX_PANE
 fi
 if [[ -n $onrec ]]; then
@@ -89,10 +95,7 @@ fi
 
 # The one session that was alive in PANE before any launch, is not Heph's and
 # no other row's: what a row whose own session is gone may be repaired to.
-repair_to() { # PANE
-  awk -F'\t' -v p="$1" -v h="$osid" 'NR == FNR { if ($0 != "") a[$0] = 1; next } $1 == p && $3 == 1 && $2 != h && !($2 in a) { print $2 }' \
-    <(printf '%s\n' "$agents") <(printf '%s\n' "$live_now") | awk 'END { if (NR == 1) print prev } { prev = $0 }'
-}
+repair_to() { successor_in "$1" "$osid" "$live_now" "$agents"; } # PANE
 
 # Its last two replies, each cut to 500 characters, as quoted lines.
 last_replies() { # TRANSCRIPT
@@ -103,6 +106,13 @@ last_replies() { # TRANSCRIPT
 launched=0
 # Wait out the stagger before every launch but the first.
 stagger() { (( launched++ )) && sleep "$STAGGER"; return 0; }
+# The recovered Heph comes forward (#216) only when recover started the fleet's
+# session itself and the window in view is still the one its first launch
+# opened: a session already running, or a move since, means AJ is working in
+# another agent, and launches never take him away from it (#229 review).
+in_view_pane() { t display-message -p -t "$FLEET_SESSION:" '#{pane_id}' 2>/dev/null; }
+cold=1 first_view=""
+t has-session -t "$FLEET_SESSION" 2>/dev/null && cold=0
 launch() { # NAME TEXTFILE [env...]: one launch; prints "PANE SESSION"
   local name=$1 txt=$2 out
   shift 2
@@ -119,6 +129,8 @@ lost=0
 # The registry comes in on fd 3, so nothing in the loop can read its rows away (#242).
 while IFS=$'\t' read -r -u 3 p name brief sid _; do
   [[ -n $p && -n $name && -n $brief ]] || continue
+  # The row's finish and unpause records follow its session's own file (#261).
+  (( dry )) || forget_resumed "$sid" "$name"
   if session_alive "$sid"; then
     echo "running: $name ($p)"
     continue
@@ -127,7 +139,22 @@ while IFS=$'\t' read -r -u 3 p name brief sid _; do
   # new id was never recorded): repair the row, never start a second agent.
   if this_boot_row "$sid" && now=$(repair_to "$p") && [[ -n $now ]]; then
     echo "running: $name ($p, now session $now)"
-    (( dry )) || { set_session "$p" "$now"; flog INFO "registry repaired" pane="$p" name="$name" session="$now"; }
+    if (( !dry )); then
+      if set_session "$p" "$sid" "$now"; then
+        flog INFO "registry repaired" pane="$p" name="$name" session="$now"
+      else
+        flog INFO "registry already names another session for the row; left as it is" pane="$p" name="$name" session="$now"
+      fi
+    fi
+    continue
+  fi
+  # It ended cleanly before the shutdown: its work is done, not lost (#220).
+  # An unpaused agent is launched again, whatever its old session's end said.
+  was_paused=0
+  unpaused "$sid" && was_paused=1
+  if (( ! was_paused )) && session_finished "$sid"; then
+    echo "finished: $name ($p): not relaunched (fleet doctor --prune drops its row)"
+    (( dry )) || with_registry record_finished "$(awk -F'\t' -v p="$p" -v s="$sid" '$1 == p && $4 == s { print; exit }' "$REGISTRY")"
     continue
   fi
   if [[ ! -r $brief ]]; then
@@ -145,17 +172,25 @@ while IFS=$'\t' read -r -u 3 p name brief sid _; do
   fi
   txt="$FLEET_STATE/fresh-$name-$(date +%Y%m%d-%H%M)-recover.src"
   {
-    fresh_preamble "was stopped by a hard shutdown of the PC"
+    if (( was_paused )); then fresh_preamble "was set aside with fleet pause and is now back"
+    else fresh_preamble "was stopped by a hard shutdown of the PC"; fi
     printf '\n\nWhere it was, its last replies:\n%s\n' "${replies:-> (no transcript found)}"
     [[ -n $impl ]] && printf '\nIts newest IMPL.md: %s\n' "$impl"
     printf '\n'
     cat "$brief"
   } >"$txt"
   stagger
-  new=$(launch "$name" "$txt")
-  new=${new%% *}
+  got=$(launch "$name" "$txt")
+  new=${got%% *}
+  (( cold )) && [[ -z $first_view ]] && first_view=$(in_view_pane)
   echo "recovered: $name -> ${new:-NOT STARTED}"
   [[ -n $new ]] || flog ERROR "recovery launch failed" name="$name" brief="$txt"
+  # The unpause is done once panes.tsv names the new session for the agent
+  # (a launch that could not update the row leaves it to be recovered again).
+  if (( was_paused )) && [[ -n $new && $got == *" "?* ]] &&
+    awk -F'\t' -v n="$name" -v s="${got#* }" '$2 "" == n "" && $4 == s { f = 1 } END { exit !f }' "$REGISTRY" 2>/dev/null; then
+    with_registry drop_unpaused "$sid" || flog WARN "recover: could not clear the unpause record" name="$name" session="$sid"
+  fi
 done 3< <(cat "$REGISTRY" 2>/dev/null)
 
 # The orchestrator, by what was alive before the launches.
@@ -179,11 +214,14 @@ elif (( orch_too )) && [[ -n $orch$osid ]]; then
       heph_note "was stopped by a hard shutdown of the PC" "$osid" "$HEPH" '`fleet recover` has relaunched the agents in panes.tsv.' >"$txt"
       stagger
       heph_on=$(FLEET_ACCOUNTS=$FLEET_HEPH_ACCOUNTS best_account "$(date +%s)")
-      new=$(launch heph "$txt" FLEET_SETTINGS= FLEET_ACCOUNT="${heph_on:-$FLEET_DEFAULT_CONFIG}")
+      new=$(launch "$FLEET_ORCH_NAME" "$txt" FLEET_SETTINGS= FLEET_ACCOUNT="${heph_on:-$FLEET_DEFAULT_CONFIG}")
       if [[ -n $new ]]; then
         printf '%s\n' "${new%% *}" >"$FLEET_STATE/orchestrator.pane"
         [[ $new == *" "?* ]] && printf '%s\n' "${new#* }" >"$FLEET_STATE/orchestrator.session"
         printf '%s\n' "${heph_on:-$FLEET_DEFAULT_CONFIG}" >"$FLEET_STATE/orchestrator.config"
+        if (( cold )) && [[ -n $first_view && $(in_view_pane) == "$first_view" ]]; then
+          t select-window -t "${new%% *}" 2>/dev/null # he opened behind (#216)
+        fi
         echo "recovered: orchestrator -> ${new%% *}"
       else
         flog ERROR "recovery launch failed" name=orchestrator brief="$txt"

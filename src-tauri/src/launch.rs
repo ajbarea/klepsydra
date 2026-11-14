@@ -18,6 +18,10 @@ pub const WSL_EXE: &str = r"C:\Windows\System32\wsl.exe";
 const SCRIPT: &str = ".claude/klepsydra-launch.sh";
 /// Longest wait for wsl.exe to finish: a cold WSL start alone can take 20 s.
 const TIMEOUT: Duration = Duration::from_secs(45);
+/// Longest wait for `fleet voices`: two keryx calls of up to 120 s each (a new
+/// keryx's first run syncs its environment). Behind another run's lock it can
+/// take longer; the run goes on, and the next resume pass applies what it misses.
+const VOICES_TIMEOUT: Duration = Duration::from_secs(300);
 /// Longest wait for a Jump, whose session already runs in a started WSL: long
 /// enough for a refused interop connection to report its own error.
 const JUMP_TIMEOUT: Duration = Duration::from_secs(15);
@@ -69,6 +73,15 @@ fn distro_ok(d: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || "._-".contains(c))
 }
 
+/// An agy model id as `agy models` names them (#323): the launcher checks it
+/// again before it reaches a shell.
+fn model_ok(m: &str) -> bool {
+    (1..=64).contains(&m.len())
+        && m.starts_with(|c: char| c.is_ascii_lowercase() || c.is_ascii_digit())
+        && m.chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || ".-".contains(c))
+}
+
 fn dir_ok(d: &str) -> bool {
     (d == "~" || d.starts_with("~/") || d.starts_with('/'))
         && d.len() <= 1024
@@ -100,6 +113,23 @@ pub fn new_args(dir: &str, distro: Option<&str>) -> Result<Vec<String>, String> 
     }
     a.extend(["--cd", "~", "-e", "bash", "-l", SCRIPT, "new", dir].map(String::from));
     Ok(a)
+}
+
+/// wsl.exe's arguments to make keryx follow the Voices mode just saved (#273):
+/// the launcher runs the installed `fleet voices`, which reads prefs.json.
+pub fn voices_args() -> Vec<String> {
+    ["--cd", "~", "-e", "bash", "-l", SCRIPT, "voices"]
+        .map(String::from)
+        .to_vec()
+}
+
+/// Make keryx follow the saved Voices mode now, off the tray's thread, logged
+/// like every call. The resume service applies a changed mode as well.
+pub fn apply_voices() {
+    let args = voices_args();
+    tauri::async_runtime::spawn_blocking(move || {
+        let _ = logged("voices", None, || run(&args, VOICES_TIMEOUT, timed_out));
+    });
 }
 
 /// What the launcher does to a session's tmux pane.
@@ -725,12 +755,29 @@ pub async fn get_launch_dir(app: tauri::AppHandle) -> Option<String> {
     launch_dir_of(crate::read_prefs(&app).as_ref())
 }
 
-/// Start `claude` in the `launch_dir` pref as a window of the fleet session.
+/// wsl.exe's arguments for a launch: `claude`, or with `agy_model` Antigravity's
+/// CLI on that model (#323).
+fn session_args(prefs: &Prefs, agy_model: Option<&str>) -> Result<Vec<String>, String> {
+    let (_, mut args) = launch_plan(prefs)?;
+    if let Some(m) = agy_model {
+        if !model_ok(m) {
+            return Err(format!("That is not an agy model id: {m}"));
+        }
+        args.extend(["agy".to_owned(), m.to_owned()]);
+    }
+    Ok(args)
+}
+
+/// Start `claude`, or `agy` on `agy_model`, in the `launch_dir` pref as a
+/// window of the fleet session.
 #[tauri::command]
-pub async fn launch_session(app: tauri::AppHandle) -> Result<String, String> {
+pub async fn launch_session(
+    app: tauri::AppHandle,
+    agy_model: Option<String>,
+) -> Result<String, String> {
     let prefs = crate::read_prefs(&app)
         .ok_or("prefs.json could not be read, so the launch folder is unknown.")?;
-    let (_, args) = launch_plan(&prefs)?;
+    let args = session_args(&prefs, agy_model.as_deref())?;
     tauri::async_runtime::spawn_blocking(move || {
         gated(&app.state::<InFlight>(), || {
             logged("launch", None, || run(&args, TIMEOUT, timed_out))
@@ -738,6 +785,68 @@ pub async fn launch_session(app: tauri::AppHandle) -> Result<String, String> {
     })
     .await
     .map_err(|e| format!("Could not run the launch: {e}"))?
+}
+
+/// agy's models, asked of the launcher once and kept for the app's run: the
+/// wall's New session menu offers them (#323).
+#[derive(Default)]
+pub struct AgyModels(Mutex<Option<Vec<AgyModel>>>);
+
+#[derive(Clone, serde::Serialize, serde::Deserialize, PartialEq, Debug)]
+pub struct AgyModel {
+    pub id: String,
+    pub label: String,
+}
+
+/// The models in the launcher's one line of JSON, the ones that are ids.
+fn parse_models(line: &str) -> Result<Vec<AgyModel>, String> {
+    let all: Vec<AgyModel> =
+        serde_json::from_str(line).map_err(|e| format!("agy's models could not be read: {e}"))?;
+    let ok: Vec<AgyModel> = all.into_iter().filter(|m| model_ok(&m.id)).collect();
+    if ok.is_empty() {
+        return Err("agy listed no models.".into());
+    }
+    Ok(ok)
+}
+
+/// wsl.exe's arguments to list agy's models, in the launch's distro.
+fn models_args(prefs: Option<&Prefs>) -> Vec<String> {
+    let mut a: Vec<String> = Vec::new();
+    if let Some(d) = prefs
+        .and_then(|p| p.get("launch_distro"))
+        .and_then(Value::as_str)
+        .filter(|d| distro_ok(d))
+    {
+        a.extend(["-d".into(), d.into()]);
+    }
+    a.extend(["--cd", "~", "-e", "bash", "-l", SCRIPT, "models"].map(String::from));
+    a
+}
+
+/// agy's models (a failure is not kept, so the next ask tries again).
+#[tauri::command]
+pub async fn agy_models(app: tauri::AppHandle) -> Result<Vec<AgyModel>, String> {
+    if let Some(kept) = app
+        .state::<AgyModels>()
+        .0
+        .lock()
+        .ok()
+        .and_then(|k| k.clone())
+    {
+        return Ok(kept);
+    }
+    let args = models_args(crate::read_prefs(&app).as_ref());
+    let got = tauri::async_runtime::spawn_blocking(move || {
+        logged("agy models", None, || {
+            run(&args, TIMEOUT, timed_out).and_then(|l| parse_models(&l))
+        })
+    })
+    .await
+    .map_err(|e| format!("Could not ask agy for its models: {e}"))??;
+    if let Ok(mut k) = app.state::<AgyModels>().0.lock() {
+        *k = Some(got.clone());
+    }
+    Ok(got)
 }
 
 #[cfg(test)]
@@ -805,6 +914,44 @@ mod tests {
         );
         let good = prefs(json!({"launch_dir": "/home/aj", "launch_distro": "Ubuntu-24.04"}));
         assert_eq!(launch_dir_of(Some(&good)).as_deref(), Some("/home/aj"));
+    }
+
+    #[test]
+    fn an_agy_launch_names_its_model_and_refuses_one_that_is_no_id() {
+        let prefs = json!({"launch_dir": "/home/aj"})
+            .as_object()
+            .cloned()
+            .unwrap();
+        let a = session_args(&prefs, Some("gemini-3.8-flash-high")).unwrap();
+        assert_eq!(
+            &a[a.len() - 4..],
+            ["new", "/home/aj", "agy", "gemini-3.8-flash-high"]
+        );
+        assert_eq!(
+            session_args(&prefs, None)
+                .unwrap()
+                .last()
+                .map(String::as_str),
+            Some("/home/aj")
+        );
+        for bad in ["", "Gemini", "x;rm", "-x", "a b", &"a".repeat(65)] {
+            assert!(session_args(&prefs, Some(bad)).is_err(), "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn agys_models_keep_only_ids_and_an_empty_list_is_an_error() {
+        let got = parse_models(r#"[{"id":"gemini-3.8-flash-high","label":"Gemini 3.8 Flash (High)"},{"id":"bad;id","label":"x"}]"#).unwrap();
+        assert_eq!(
+            got,
+            [AgyModel {
+                id: "gemini-3.8-flash-high".into(),
+                label: "Gemini 3.8 Flash (High)".into()
+            }]
+        );
+        assert!(parse_models("[]").is_err());
+        assert!(parse_models("not json").is_err());
+        assert_eq!(models_args(None).last().map(String::as_str), Some("models"));
     }
 
     #[test]
@@ -945,6 +1092,14 @@ mod tests {
         assert!(explorer_opened(Err("Could not start wsl.exe".into())).is_err());
         assert!(folder_args("/home/aj/../x", "Ubuntu").is_err());
         assert!(folder_args("/home/aj", "Ubuntu;rm").is_err());
+    }
+
+    #[test]
+    fn voices_runs_the_launcher_with_no_mode() {
+        assert_eq!(
+            voices_args(),
+            ["--cd", "~", "-e", "bash", "-l", SCRIPT, "voices"]
+        );
     }
 
     #[test]

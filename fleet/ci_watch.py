@@ -16,8 +16,8 @@ and is tried again every RETRIAGE_S for a day), then routed to whoever can fix i
 working on, that agent's inbox (the resume service types it in at its next
 idle prompt); otherwise Heph, whose pane watcher wakes on it. Every routed red
 is one line in ci/alerts.jsonl. A red still red ESCALATE_S after it was routed
-wakes Heph to push AJ once, and gets one line under "Needs you" in the queue
-file. Dependabot's reds are listed for the morning instead. Once a day the
+wakes Heph to push AJ once, and gets one line under "Needs you" in AJ's to-do
+file (needs-you.md). Dependabot's reds are listed for the morning instead. Once a day the
 latest green run on each default branch is read for warnings. Nothing is
 pushed, merged or re-run.
 
@@ -57,7 +57,7 @@ KLEPSYDRA_DIR = Path(
 )
 TECHNE_TOML = Path(os.environ.get("TECHNE_TOML", HOME / ".claude/techne.toml"))
 QUEUE = Path(
-    os.environ.get("FLEET_QUEUE", "/mnt/c/Users/ajbar/fleet-briefing/claude-queue.md")
+    os.environ.get("FLEET_QUEUE", "/mnt/c/Users/ajbar/fleet-briefing/needs-you.md")
 )
 SWEEP_HOUR = int(os.environ.get("CI_SWEEP_HOUR", "6"))
 ESCALATE_S = int(os.environ.get("CI_ESCALATE_S", "1800"))
@@ -183,10 +183,11 @@ def slim_pulls(body: list) -> list[dict]:
 
 def runs_that_count(
     user: str, repo: str, gh: GitHub
-) -> tuple[list[dict], str, set[int]]:
+) -> tuple[list[dict], str, dict[int, str]]:
     """The decisive run (succeeded or failed) newest per workflow and branch, on
-    the default branch or at an open PR's head, and the default branch. Each is
-    asked for by branch or by head, so a busy repo cannot page one out."""
+    the default branch or at an open PR's head, the default branch, and each open
+    PR's head commit by number. Each is asked for by branch or by head, so a busy
+    repo cannot page one out."""
     meta = gh.get(
         f"/repos/{user}/{repo}",
         keep=lambda b: {
@@ -222,7 +223,7 @@ def runs_that_count(
         key = (r["workflow_id"], pr["number"] if pr else default)
         if key not in newest or r["created_at"] > newest[key]["created_at"]:
             newest[key] = r | {"_pr": pr}
-    return list(newest.values()), default, {p["number"] for p in pulls}
+    return list(newest.values()), default, {p["number"]: p["sha"] for p in pulls}
 
 
 def workflow_ids(user: str, repo: str, gh) -> list[int]:
@@ -416,29 +417,11 @@ def one_line(text: str, cap: int = 200) -> str:
 def needs_you(run: dict) -> bool:
     """One line under the queue file's "Needs you" for a new red run, once.
     True when the line is there (written now or before)."""
-    if not QUEUE.exists():
-        event(logging.WARNING, "queue line not written: no queue file", path=str(QUEUE))
-        return False
-    mark = f"<!-- ci:{run['repo']}:{run['run_id']} -->"
-    tmp = QUEUE.with_name(f".{QUEUE.name}.{os.getpid()}.tmp")
-    try:
-        return add_queue_line(run, mark, tmp)
-    except (OSError, ValueError) as e:
-        tmp.unlink(missing_ok=True)
-        event(
-            logging.WARNING,
-            "queue line not written: the file could not be changed",
-            error=str(e)[:200],
-        )
-        return False
+    mark = queue_mark(run["repo"], run["run_id"])
 
-
-def add_queue_line(run: dict, mark: str, tmp: Path) -> bool:
-    for _ in range(3):
-        before = QUEUE.stat().st_mtime_ns
-        text = QUEUE.read_text(encoding="utf-8")
+    def add(text: str) -> str | None:
         if mark in text:
-            return True
+            return text
         m = re.search(r"^## Needs you[^\n]*\n", text, re.M)
         if not m:
             event(
@@ -446,26 +429,75 @@ def add_queue_line(run: dict, mark: str, tmp: Path) -> bool:
                 "queue line not written: no Needs you heading",
                 path=str(QUEUE),
             )
-            return False
+            return None
         t = run.get("triage", {})
         cause = one_line(t.get("cause") or "triage pending")
         where = f" ({one_line(t['location'], 120)})" if t.get("location") else ""
         what = one_line(f"{run['workflow']} failed on {run['branch']}", 160)
         line = f"- 🔴 **CI {one_line(run['repo'], 60)}**: {what}: {cause}{where}. {run['url']} {mark}\n"
-        tmp.write_text(text[: m.end()] + line + text[m.end() :], encoding="utf-8")
-        if (
-            QUEUE.stat().st_mtime_ns != before
-        ):  # someone saved it meanwhile: read it again
-            tmp.unlink(missing_ok=True)
-            continue
-        tmp.replace(QUEUE)
-        event(logging.INFO, "queue line added", repo=run["repo"], run_id=run["run_id"])
-        return True
-    event(
-        logging.WARNING,
-        "queue line not written: the file kept changing",
-        repo=run["repo"],
+        return text[: m.end()] + line + text[m.end() :]
+
+    return rewrite_queue(
+        add, "written", "queue line added", repo=run["repo"], run_id=run["run_id"]
     )
+
+
+def drop_queue_line(repo: str, run_id: object) -> bool:
+    """Remove red run RUN_ID's line from the queue file once it no longer needs
+    AJ (#321). True when no such line is left."""
+    mark = queue_mark(repo, run_id)
+    return rewrite_queue(
+        lambda text: "".join(ln for ln in text.splitlines(True) if mark not in ln),
+        "removed",
+        "queue line removed",
+        missing_ok=True,
+        repo=repo,
+        run_id=run_id,
+    )
+
+
+def queue_mark(repo: str, run_id: object) -> str:
+    return f"<!-- ci:{repo}:{run_id} -->"
+
+
+def rewrite_queue(
+    change, verb: str, done: str, missing_ok: bool = False, **fields: object
+) -> bool:
+    """Apply CHANGE (the queue file's text to its new text; the same text when
+    there is nothing to do, None to give up; MISSING_OK: no file is no change) through a temp file, read again
+    when someone saved the file meanwhile. True when the file holds the change."""
+    if not QUEUE.exists():
+        if missing_ok:
+            return True
+        event(logging.WARNING, f"queue line not {verb}: no queue file", path=str(QUEUE))
+        return False
+    tmp = QUEUE.with_name(f".{QUEUE.name}.{os.getpid()}.tmp")
+    try:
+        for _ in range(3):
+            before = QUEUE.stat().st_mtime_ns
+            text = QUEUE.read_text(encoding="utf-8")
+            new = change(text)
+            if new is None:
+                return False
+            if new == text:
+                return True
+            tmp.write_text(new, encoding="utf-8")
+            if QUEUE.stat().st_mtime_ns != before:  # saved meanwhile: read it again
+                tmp.unlink(missing_ok=True)
+                continue
+            tmp.replace(QUEUE)
+            event(logging.INFO, done, **fields)
+            return True
+        event(
+            logging.WARNING, f"queue line not {verb}: the file kept changing", **fields
+        )
+    except (OSError, ValueError) as e:
+        tmp.unlink(missing_ok=True)
+        event(
+            logging.WARNING,
+            f"queue line not {verb}: the file could not be changed",
+            error=str(e)[:200],
+        )
     return False
 
 
@@ -577,6 +609,38 @@ def drop_inbox(repo: str, run_id: object) -> None:
             run_id=run_id,
             agent=f.parent.name,
         )
+
+
+def drop_held(repo: str, k: dict, why: str, cleared: bool = True) -> None:
+    """Let held red K go and undo what reached people (#321): its undelivered
+    inbox file, its needs-you line when CLEARED (a red only forgotten for its
+    age still needs AJ; a fork's red has none), and, through a withdrawn line
+    (no wake), any wake line not yet withdrawn, so a red that went stale
+    waiting for Heph is never replayed. Its routing is kept, so a red still
+    listed is not routed again on the next pass."""
+    item = k.pop("item")
+    drop_inbox(repo, item["run_id"])
+    routed = k.get("routed") or {}
+    woke = max(
+        routed.get("at", 0) if routed.get("to") == "heph" else 0,
+        k.get("escalated", 0),
+    )
+    withdraw = woke > k.get("withdrawn", 0)
+    unqueue = cleared and k.get("queued") is True and not k.get("unqueued")
+    event(
+        logging.INFO,
+        "held red let go",
+        repo=repo,
+        run_id=item["run_id"],
+        why=why,
+        withdraw=withdraw,
+        unqueue=unqueue,
+    )
+    if unqueue and drop_queue_line(repo, item["run_id"]):
+        k["unqueued"] = int(time.time())
+    if withdraw:
+        alert("withdrawn", False, item | k, text=f"red run withdrawn: {why}")
+        k["withdrawn"] = int(time.time())
 
 
 def retriage(user: str, repo: str, run_id: int, k: dict, save_known) -> None:
@@ -694,7 +758,15 @@ def repo_pass(
                     and held["repo"] == repo
                     and (held["workflow_id"], held["place"]) == place
                 ):
-                    drop_inbox(repo, k.pop("item")["run_id"])
+                    drop_held(repo, k, "a newer run in its place did not fail")
+            continue
+        if r["workflow_id"] not in workflows:  # deleted or disabled: nobody to fix it
+            event(
+                logging.DEBUG,
+                "red run skipped: its workflow is not active",
+                repo=repo,
+                run_id=r["id"],
+            )
             continue
         pr = r["_pr"]
         item = {
@@ -703,6 +775,7 @@ def repo_pass(
             "branch": r["head_branch"],
             "pr": pr["number"] if pr else None,
             "run_id": r["id"],
+            "sha": r["head_sha"],
             "url": r["html_url"],
             "conclusion": r["conclusion"],
             "at": r["updated_at"],
@@ -763,7 +836,9 @@ def repo_pass(
     # 2. A red run whose workflow ran no newer decisive run stays red even when it has
     # paged out of the newest runs: only a newer run of the same workflow and place clears it.
     # A held red goes when its PR is no longer open, its workflow is gone, a newer
-    # red took its place, or it is a month old.
+    # red took its place, its PR's head has moved past its commit (#321: the new
+    # head's run may still be going, and the old red would be routed and
+    # escalated again), or it is a month old.
     places = {
         (r["workflow_id"], r["_pr"]["number"] if r["_pr"] else "default"): r["id"]
         for r in runs
@@ -778,8 +853,27 @@ def repo_pass(
         gone = (held["place"] != "default" and held["place"] not in open_prs) or held[
             "workflow_id"
         ] not in workflows
-        if newer or gone or k.get("seen", 0) < month:
-            drop_inbox(repo, k.pop("item")["run_id"])
+        superseded = bool(held.get("sha")) and open_prs.get(held["place"]) not in (
+            None,
+            held["sha"],
+        )
+        if superseded:
+            event(
+                logging.INFO,
+                "red run superseded: its PR's head moved on",
+                repo=repo,
+                run_id=held["run_id"],
+                pr=held["place"],
+                sha=held["sha"],
+                head=open_prs.get(held["place"]),
+            )
+        why = (
+            (newer and "a newer run took its place")
+            or (gone and "its PR closed or its workflow is gone")
+            or (superseded and "its PR's head moved past its commit")
+        )
+        if why or k.get("seen", 0) < month:
+            drop_held(repo, k, why or "a month old", cleared=bool(why))
             continue
         if place not in places:
             retriage(user, repo, held["run_id"], k, save_known)

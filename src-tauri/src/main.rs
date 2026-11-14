@@ -814,14 +814,15 @@ fn with_state<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R
         .manage(fleet::Strip::default())
         .manage(fleet::Fleet::default())
         .manage(fleet::QueueFeed::default())
+        .manage(fleet::NeedsFeed::default())
         .manage(fleet::CiFeed::default())
         .manage(fleet::HealthFeed::default())
-        .manage(fleet::AgoraFeed::default())
         .manage(Moved::default())
         .manage(Sized::default())
         .manage(Requested::default())
         .manage(Layouts::default())
         .manage(launch::InFlight::default())
+        .manage(launch::AgyModels::default())
         .manage(launch::PaneFlight::default())
         .manage(launch::JumpFlight::default())
         .manage(phone::Phone::default())
@@ -864,10 +865,9 @@ fn main() {
             set_tray_level,
             fleet::fleet_subscribe,
             fleet::queue_subscribe,
+            fleet::needs_subscribe,
             fleet::ci_subscribe,
             fleet::health_subscribe,
-            fleet::agora_subscribe,
-            fleet::agora_react,
             fleet::open_wall,
             launch::open_folder,
             launch::open_github,
@@ -887,6 +887,7 @@ fn main() {
             theme::set_theme,
             jump::jump_to_terminal,
             launch::launch_session,
+            launch::agy_models,
             launch::get_launch_dir
         ])
         .setup(|app| {
@@ -964,6 +965,8 @@ fn main() {
             let voices_menu = voices::menu(app.handle())?;
             let queue_item =
                 MenuItem::with_id(app, "queue", "Choose queue file...", true, None::<&str>)?;
+            let needs_item =
+                MenuItem::with_id(app, "needs", "Choose Needs you file...", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
             let menu = Menu::with_items(
                 app,
@@ -977,6 +980,7 @@ fn main() {
                     &characters,
                     &voices_menu,
                     &queue_item,
+                    &needs_item,
                     &PredefinedMenuItem::separator(app)?,
                     &quit,
                 ],
@@ -1036,6 +1040,7 @@ fn main() {
                         }
                     }
                     "queue" => fleet::choose_queue(app),
+                    "needs" => fleet::choose_needs(app),
                     "quit" => app.exit(0),
                     other => {
                         if !theme::on_menu(app, other) {
@@ -1051,7 +1056,6 @@ fn main() {
             fleet::start_queue(app.handle());
             fleet::start_ci(app.handle(), klepsydra_dir(app.handle()));
             fleet::start_health(app.handle(), klepsydra_dir(app.handle()));
-            fleet::start_agora(app.handle(), klepsydra_dir(app.handle()));
             Ok(())
         })
         .build(tauri::generate_context!())

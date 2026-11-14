@@ -17,7 +17,6 @@ import { wireSplit } from "./split.js";
 import { follow } from "../ipc.js";
 import { ciView } from "./ci.js";
 import { healthView } from "./health.js";
-import { agoraView, reactLabel, reactedLabel } from "./agora.js";
 import { createReplayer } from "./replay.js";
 import { cutsText } from "./fulltext.js";
 import { WAITING, usageRows } from "../gauge.js";
@@ -79,6 +78,34 @@ async function startSession(button, note) {
 }
 newButton.hidden = !inTauri;
 newButton.addEventListener("click", () => startSession(newButton, newNote));
+// + New session's other kind, Antigravity (#323): its menu shows once agy
+// has listed its models, Gemini first, since it spends Google's quota, not Claude's.
+const newKind = document.getElementById("new-kind");
+const newMenu = document.getElementById("new-menu");
+const agyModel = document.getElementById("agy-model");
+const agyStart = document.getElementById("agy-start");
+if (inTauri) {
+  window.__TAURI__.core.invoke("agy_models").then(
+    (models) => {
+      if (!Array.isArray(models) || !models.length) return;
+      const gemini = models.filter((m) => m.id.startsWith("gemini"));
+      agyModel.replaceChildren(...[...gemini, ...models.filter((m) => !gemini.includes(m))].map((m) => new Option(m.label, m.id)));
+      newKind.hidden = false;
+    },
+    () => {}, // no agy here: + New session starts Claude Code only, as before
+  );
+}
+agyStart.addEventListener("click", async () => {
+  if (agyStart.getAttribute("aria-disabled") === "true") return;
+  const model = agyModel.value;
+  newMenu.hidePopover();
+  setOff(newButton, true);
+  try {
+    await press(newKind, newNote, () => window.__TAURI__.core.invoke("launch_session", { agyModel: model }), "Starting…");
+  } finally {
+    setOff(newButton, false);
+  }
+});
 startButton.hidden = !inTauri;
 // Its answer goes to the bar's note, which stays in view once the empty state gives way.
 startButton.addEventListener("click", () => startSession(startButton, newNote));
@@ -751,93 +778,8 @@ function showHealth(view) {
 }
 if (inTauri) follow("health_subscribe", showHealth).catch(() => {});
 
-// The Agora: the bar's Agora button and its feed of posts (agora.js). The
-// phone's view comes with each snapshot and is read-only; the app's comes
-// through agora_subscribe, and AJ reacts there.
-const agoraButton = document.getElementById("agora-open");
-const agoraPanel = document.getElementById("agora");
-const agoraNote = agoraPanel.querySelector(".agora-note");
-const reactTpl = document.getElementById("agora-react-tpl");
-let agoraLatest = null;
-function showAgora(view) {
-  agoraLatest = view;
-  const v = agoraView(view, cast, Date.now());
-  agoraButton.hidden = v.hidden;
-  agoraButton.textContent = v.label;
-  agoraButton.title = v.title;
-  agoraPanel.querySelector(".agora-title").textContent = v.title;
-  // A redraw replaces the buttons: the focused reaction keeps the focus.
-  const had = document.activeElement?.closest?.(".agora-react");
-  const list = agoraPanel.querySelector(".agora-posts");
-  list.replaceChildren(...v.rows.map((r) => agoraPost(r, v.emoji)));
-  if (had) {
-    for (const b of list.querySelectorAll(".agora-react")) {
-      if (b.dataset.id === had.dataset.id && b.dataset.emoji === had.dataset.emoji) b.focus();
-    }
-  }
-}
-function agoraPost(r, emoji) {
-  const li = Object.assign(document.createElement("li"), { className: "agora-post" });
-  li.dataset.kind = r.kind;
-  const face = Object.assign(document.createElement("img"), { className: "agora-face", alt: "", width: 32, height: 32, decoding: "async" });
-  showFace(face, r.face, r.face2x, 32);
-  const head = Object.assign(document.createElement("p"), { className: "agora-head" });
-  const meta = Object.assign(document.createElement("span"), { className: "agora-meta", textContent: [r.repo, r.when].filter(Boolean).join(" \u00b7 "), title: r.whenLong });
-  head.append(
-    Object.assign(document.createElement("span"), { className: "agora-name", textContent: r.name }),
-    Object.assign(document.createElement("span"), { className: "agora-kind", textContent: r.kindLabel }),
-    meta,
-  );
-  li.append(face, head, Object.assign(document.createElement("p"), { className: "agora-text", textContent: r.text }));
-  if (r.link) {
-    // A link on the phone; on the desktop the address is its tooltip, as the CI popover's.
-    const link = document.createElement(served ? "a" : "span");
-    link.className = "agora-link";
-    link.textContent = r.linkLabel;
-    if (served) Object.assign(link, { href: r.link, target: "_blank", rel: "noopener noreferrer" });
-    else link.title = r.link;
-    li.append(link);
-  }
-  if (inTauri && emoji.length) {
-    const group = Object.assign(document.createElement("div"), { className: "agora-reacts" });
-    group.setAttribute("role", "group");
-    group.setAttribute("aria-label", `Reactions to ${r.name}'s post`);
-    for (const e of emoji) {
-      const b = reactTpl.content.firstElementChild.cloneNode(true);
-      Object.assign(b.dataset, { id: r.id, emoji: e });
-      b.setAttribute("aria-pressed", String(r.reaction === e));
-      b.setAttribute("aria-label", reactLabel(e, r.name));
-      b.firstElementChild.textContent = e;
-      group.append(b);
-    }
-    li.append(group);
-  } else if (r.reaction) {
-    const shown = Object.assign(document.createElement("span"), { className: "agora-reacted", textContent: r.reaction });
-    shown.setAttribute("role", "img");
-    shown.setAttribute("aria-label", reactedLabel(r.reaction));
-    li.append(shown);
-  }
-  return li;
-}
-agoraPanel.addEventListener("click", (e) => {
-  const b = e.target.closest(".agora-react");
-  if (!b) return;
-  window.__TAURI__.core.invoke("agora_react", { id: b.dataset.id, emoji: b.dataset.emoji }).then(
-    (now) => {
-      for (const other of b.parentElement.querySelectorAll(".agora-react")) other.setAttribute("aria-pressed", String(other.dataset.emoji === now));
-    },
-    (why) => say(agoraNote, String(why)),
-  );
-});
-// Ages move on while the feed is shut: it is drawn again each time it opens.
-agoraPanel.addEventListener("toggle", (e) => {
-  if (e.newState === "open" && agoraLatest) showAgora(agoraLatest);
-});
-if (inTauri) follow("agora_subscribe", showAgora).catch(() => {});
-
 function take(message) {
   if (served && "ci" in (message ?? {})) showCi(message.ci);
-  if (served && "agora" in (message ?? {})) showAgora(message.agora);
   if (served && "health" in (message ?? {})) showHealth(message.health);
   if (Array.isArray(message?.sessions)) {
     const fresh = castPicks(message.sessions, cast);
@@ -1494,7 +1436,6 @@ function repaintTheme() {
   refillPortrait();
   drawer.repaint();
   queue.retheme();
-  if (agoraLatest) showAgora(agoraLatest);
 }
 put(DEFAULT_THEME, loadedTheme(DEFAULT_THEME), false);
 // The picker wears each step once its file is in, and only then is the step

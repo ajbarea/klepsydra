@@ -59,7 +59,7 @@ test("the wall wires the button to the app and the phone, and the app registers 
   const html = read("./wall.html");
   assert.match(html, /<button type="button" id="ci-open" popovertarget="ci" data-phone hidden>CI<\/button>/, "shown on the phone too");
   assert.ok(html.indexOf('id="ci-open"') < html.indexOf('class="tools"'), "outside the desktop tool group, which the phone hides");
-  assert.match(read("../src-tauri/src/main.rs"), /fleet::queue_subscribe,\s*fleet::ci_subscribe,/);
+  assert.match(read("../src-tauri/src/main.rs"), /fleet::queue_subscribe,\s*fleet::needs_subscribe,\s*fleet::ci_subscribe,/);
   assert.match(read("../src-tauri/src/main.rs"), /fleet::start_ci\(app\.handle\(\), klepsydra_dir\(app\.handle\(\)\)\);/);
 });
 

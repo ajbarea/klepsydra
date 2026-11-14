@@ -45,6 +45,10 @@ pub type Fleet = Hub<Webview>;
 #[derive(Default)]
 pub struct QueueFeed(pub Hub<Webview>);
 
+/// Who follows the Needs you file, managed as app state.
+#[derive(Default)]
+pub struct NeedsFeed(pub Hub<Webview>);
+
 /// Who follows the CI watch's view (`ci.json`), managed as app state.
 #[derive(Default)]
 pub struct CiFeed(pub Hub<Webview>);
@@ -117,76 +121,6 @@ pub fn start_health(app: &AppHandle, dir: Option<PathBuf>) {
     });
 }
 
-/// Who follows the Agora (`agora/` in the data folder), managed as app state.
-#[derive(Default)]
-pub struct AgoraFeed(pub Hub<Webview>);
-
-/// A window follows the Agora from now on, starting with its latest view.
-#[tauri::command]
-pub fn agora_subscribe(
-    window: tauri::WebviewWindow,
-    feed: tauri::State<'_, AgoraFeed>,
-    on_message: Channel<Value>,
-) {
-    feed.0.subscribe(window.label(), Webview(on_message));
-}
-
-/// Follow the Agora's posts and reactions for as long as the app runs,
-/// sending each change to the wall and the phone.
-pub fn start_agora(app: &AppHandle, dir: Option<PathBuf>) {
-    let Some(dir) = dir else {
-        return;
-    };
-    let app = app.clone();
-    std::thread::spawn(move || {
-        let mut follower = klepsydra_fleet::agora::Follower::default();
-        loop {
-            if let Some(view) = follower.step(&dir, unix_now()) {
-                app.state::<AgoraFeed>().0.publish(view.clone());
-                crate::phone::set_agora(&app, &view);
-            }
-            std::thread::sleep(AGORA_POLL);
-        }
-    });
-}
-
-/// How often the Agora's files are looked at: an agent posts once an hour at most.
-const AGORA_POLL: Duration = Duration::from_secs(5);
-
-/// AJ's reaction on Agora post `id`: set to `emoji`, or cleared when it is
-/// that one already. Returns the reaction the post now has.
-#[tauri::command]
-pub async fn agora_react(
-    app: AppHandle,
-    id: String,
-    emoji: String,
-) -> Result<Option<String>, String> {
-    use klepsydra_fleet::agora::{react, Refused};
-    let dir = crate::klepsydra_dir(&app).ok_or("klepsydra has no data folder.")?;
-    let (post, picked) = (id.clone(), emoji.clone());
-    let saved = tauri::async_runtime::spawn_blocking(move || react(&dir, &post, &picked))
-        .await
-        .map_err(|e| format!("Could not save the reaction: {e}"))?;
-    match saved {
-        Ok(now) => {
-            log::info!(post = id.as_str(), reaction = now.as_deref().unwrap_or(""); "agora: reaction saved");
-            Ok(now)
-        }
-        Err(why) => {
-            let message = match why {
-                Refused::NotAPost => "That is not an Agora post.".to_string(),
-                Refused::NotOffered => "That reaction is not offered.".to_string(),
-                Refused::Unreadable(e) => {
-                    format!("Could not read the saved reactions, so none were changed: {e}")
-                }
-                Refused::Unwritable(e) => format!("Could not save the reaction: {e}"),
-            };
-            log::warn!(post = id.as_str(), emoji = emoji.as_str(); "agora: reaction not saved: {message}");
-            Err(message)
-        }
-    }
-}
-
 /// A webview asks for snapshots: the latest at once, then each new one.
 #[tauri::command]
 pub fn fleet_subscribe(
@@ -202,6 +136,16 @@ pub fn fleet_subscribe(
 pub fn queue_subscribe(
     window: tauri::WebviewWindow,
     feed: tauri::State<'_, QueueFeed>,
+    on_message: Channel<Value>,
+) {
+    feed.0.subscribe(window.label(), Webview(on_message));
+}
+
+/// A webview asks for the Needs you file: the latest read at once, then each change.
+#[tauri::command]
+pub fn needs_subscribe(
+    window: tauri::WebviewWindow,
+    feed: tauri::State<'_, NeedsFeed>,
     on_message: Channel<Value>,
 ) {
     feed.0.subscribe(window.label(), Webview(on_message));
@@ -225,9 +169,31 @@ fn queue_source(app: &AppHandle) -> (Result<PathBuf, String>, Option<String>, Op
     }
 }
 
+/// The Needs you file, who keeps it and their voice: `needs.json`'s in the
+/// data folder, else `needs-you.md` beside the queue file, kept by no one;
+/// never the queue file itself.
+fn needs_source(app: &AppHandle) -> (Result<PathBuf, String>, Option<String>, Option<String>) {
+    let queue = queue_source(app).0;
+    let (path, by, voice) =
+        match queue::kept_in(crate::klepsydra_dir(app).as_deref(), queue::List::Needs) {
+            Some(kept) => (kept.path, kept.by, kept.voice),
+            None => (queue::needs_beside(&queue), None, None),
+        };
+    (queue::not_the_queue(path, &queue), by, voice)
+}
+
 /// The tray's "Choose queue file...": the file picked goes to `queue.json`,
 /// kept by no session, starting in the current file's folder.
 pub fn choose_queue(app: &AppHandle) {
+    choose_list(app, queue::List::Queue);
+}
+
+/// The tray's "Choose Needs you file...": the same, to `needs.json`.
+pub fn choose_needs(app: &AppHandle) {
+    choose_list(app, queue::List::Needs);
+}
+
+fn choose_list(app: &AppHandle, list: queue::List) {
     use tauri_plugin_dialog::DialogExt;
     let Some(dir) = crate::klepsydra_dir(app) else {
         return;
@@ -235,43 +201,58 @@ pub fn choose_queue(app: &AppHandle) {
     let mut pick = app
         .dialog()
         .file()
-        .set_title("Choose the queue file")
+        .set_title(match list {
+            queue::List::Queue => "Choose the queue file",
+            queue::List::Needs => "Choose the Needs you file",
+        })
         .add_filter("Markdown", &["md", "markdown"]);
-    if let Some(folder) = queue_source(app)
-        .0
-        .ok()
-        .and_then(|p| Some(p.parent()?.to_path_buf()))
-    {
+    let source = match list {
+        queue::List::Queue => queue_source(app),
+        queue::List::Needs => needs_source(app),
+    };
+    if let Some(folder) = source.0.ok().and_then(|p| Some(p.parent()?.to_path_buf())) {
         pick = pick.set_directory(folder);
     }
     pick.pick_file(move |file| {
         if let Some(path) = file.and_then(|f| f.into_path().ok()) {
-            if let Err(e) = queue::keep(&dir, &path, None) {
+            if let Err(e) = queue::keep_in(&dir, &path, None, list) {
                 // The user's own file, by name only: it may sit under their home.
                 let name = path
                     .file_name()
                     .map_or_else(Default::default, |n| n.to_string_lossy());
                 log::error!(
-                    "the queue file choice {name} was not saved to {}: {e}",
-                    queue::KEEPER
+                    "the list file choice {name} was not saved to {}: {e}",
+                    list.keeper()
                 );
             }
         }
     });
 }
 
-/// Follow the queue file for as long as the app runs, sending each change.
+/// Follow the queue file and the Needs you file for as long as the app runs,
+/// one thread and one watcher each, sending each change.
 pub fn start_queue(app: &AppHandle) {
+    follow_list(app, queue::List::Queue);
+    follow_list(app, queue::List::Needs);
+}
+
+fn follow_list(app: &AppHandle, list: queue::List) {
     let app = app.clone();
     std::thread::spawn(move || {
-        let mut follower = queue::Follower::default();
+        let mut follower = queue::Follower::new(list);
         let mut wait = Duration::ZERO;
         loop {
-            let (path, by, voice) = queue_source(&app);
+            let (path, by, voice) = match list {
+                queue::List::Queue => queue_source(&app),
+                queue::List::Needs => needs_source(&app),
+            };
             follower.keep(by, voice);
             if let Some(view) = follower.step(&path, wait) {
                 if let Ok(v) = serde_json::to_value(view) {
-                    app.state::<QueueFeed>().0.publish(v);
+                    match list {
+                        queue::List::Queue => app.state::<QueueFeed>().0.publish(v),
+                        queue::List::Needs => app.state::<NeedsFeed>().0.publish(v),
+                    }
                 }
             }
             wait = POLL;

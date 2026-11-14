@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # fleet COMMAND: the klepsydra fleet's own commands.
 #   fleet doctor [--json FILE]  check the fleet's health, one line per check (and a report)
+#   fleet doctor --prune        drop finished agents' rows from panes.tsv (a backup beside it)
 #   fleet log [N]         the last N decisions (default 30), as plain lines
 #   fleet brief NAME BODY write task-NAME.src: BODY plus the shared rules
 #   fleet brief --check   list briefs whose shared rules are out of date
@@ -9,10 +10,15 @@
 #                         new worker starts; workers prefer the first, Heph the last)
 #   fleet accounts sync   make the second config folder behave like ~/.claude
 #   fleet recover         after a hard shutdown, relaunch every agent whose session is gone
+#   fleet send PANE TEXT  send a message to the session in PANE so it is submitted (TEXT - reads stdin)
+#   fleet delegate [OPTIONS] TASK-FILE  hand read-only research, drafts, PR review or CI triage to agy or Copilot (fleet delegate --help)
+#   fleet done [NAME]     mark an agent finished (default: this pane's), so nothing relaunches it
+#   fleet voices [MODE]   make keryx follow the tray's Voices mode (heph, everyone, off) now;
+#                         --if-changed only a mode not yet applied, --check only report
+#   fleet pause NAME WHY  set aside an agent whose session is gone (paused.tsv keeps its row)
+#   fleet unpause NAME    put it back; the next fleet recover launches it
 #   fleet shots [--apply] prune the briefing's decided and old screenshots (dry run without --apply)
-#   fleet agora post [--kind K] TEXT  post one line on the Agora, as your character (optional)
-#   fleet agora list [N]  the newest Agora posts
-#   fleet install         link this checkout's scripts and units into place
+#   fleet install         link this checkout's scripts and units into place, copy the hooks, status line, launcher and cast
 #   fleet cutover         restart the resume service on the installed scripts
 set -u
 here=$(dirname "$(readlink -f "$0")")
@@ -20,11 +26,15 @@ cmd=${1:-}
 shift || true
 case $cmd in
   doctor) exec bash "$here/doctor.sh" "$@" ;;
+  delegate) exec bash "$here/delegate.sh" "$@" ;;
   brief) exec bash "$here/brief.sh" "$@" ;;
   install) exec bash "$here/install.sh" "$@" ;;
   recover) exec bash "$here/recover.sh" "$@" ;;
+  done) exec bash "$here/done.sh" "$@" ;;
+  send) exec bash "$here/send.sh" "$@" ;;
+  voices) exec bash "$here/voices.sh" "$@" ;;
+  pause | unpause) exec bash "$here/pause.sh" "$cmd" "$@" ;;
   shots) exec python3 -I "$here/prune_shots.py" "$@" ;;
-  agora) exec python3 -I "$here/agora.py" "$@" ;;
   accounts)
     if [[ ${1:-} == sync ]]; then shift; exec bash "$here/accounts-sync.sh" "$@"; fi
     # shellcheck source=fleet/lib.sh

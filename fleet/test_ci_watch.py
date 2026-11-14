@@ -3,7 +3,9 @@
 import http.server
 import json
 import os
+import shlex
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -291,10 +293,20 @@ class Poll2(unittest.TestCase):
     setUp = Poll.setUp
     tearDown = Poll.tearDown
 
+    def test_no_queue_file_writes_no_line_and_says_so(self):
+        (TMP / "q.md").unlink()
+        with self.assertLogs(ci_watch.log, "WARNING") as logs:
+            self.assertFalse(ci_watch.needs_you({"repo": "r", "run_id": 5}))
+        self.assertEqual(
+            [r.getMessage() for r in logs.records],
+            ["queue line not written: no queue file"],
+        )
+
     def test_a_queue_file_that_cannot_be_changed_does_not_hide_the_red_run(self):
         known = {}
+        # The temp file is written, then the rename into place fails.
         with mock.patch.object(
-            ci_watch, "add_queue_line", side_effect=PermissionError("read-only")
+            ci_watch.Path, "replace", side_effect=PermissionError("read-only")
         ):
             got = ci_watch.poll("o", ["r"], Fake([run(5)]), known)
         self.assertEqual(
@@ -379,6 +391,7 @@ class Route(unittest.TestCase):
         self.escalate = mock.patch.object(ci_watch, "ESCALATE_S", 1800)
         self.escalate.start()
         state = TMP / "state"
+        state.mkdir(parents=True, exist_ok=True)
         for f in (state / "ci" / "alerts.jsonl", state / "orchestrator.pane"):
             f.unlink(missing_ok=True)
         shutil.rmtree(state / "inbox", ignore_errors=True)
@@ -593,13 +606,109 @@ class Route(unittest.TestCase):
             Fake([run(5), run(6, conclusion="success", at="2026-10-28T11:00:00Z")]),
             known,
         )
-        self.assertEqual([a["kind"] for a in self.alerts()], ["heph"])
+        self.assertEqual(
+            [(a["kind"], a["wake"]) for a in self.alerts()],
+            [("heph", True), ("withdrawn", False)],
+            "no escalation; the unread heph line is withdrawn (#321)",
+        )
         self.assertNotIn("ci:r:5", (TMP / "q.md").read_text())
 
     def test_a_red_queued_before_routing_existed_is_not_routed_again(self):
         known = {"r:5": {"failing": {}, "triage": {"state": "done"}, "queued": True}}
         ci_watch.poll("o", ["r"], Fake([run(5)]), known)
         self.assertEqual((self.alerts(), self.triaged), ([], []))
+
+    def _kill_watcher_inside(self, stall):
+        """Run a watcher on one waking alert, kill its bash once a jq call whose
+        arguments hold `stall` has started (a shim stalls it 3 s and touches a
+        marker first), and return (what it printed, the seen count left)."""
+        state = TMP / "state"
+        (state / "ci").mkdir(parents=True, exist_ok=True)
+        (state / "ci" / "alerts.seen").write_text("0\n")
+        (state / "ci" / "alerts.jsonl").write_text(
+            '{"wake": true, "kind": "heph", "repo": "r", "branch": "main", "text": "red"}\n'
+        )
+        slow = TMP / "slowbin"
+        slow.mkdir(exist_ok=True)
+        marker = TMP / "stalled"
+        marker.unlink(missing_ok=True)
+        (slow / "jq").write_text(
+            "#!/usr/bin/env bash\n"
+            f'case "$*" in *{shlex.quote(stall)}*) touch {shlex.quote(str(marker))}; sleep 3 ;; esac\n'
+            f'exec {shlex.quote(shutil.which("jq"))} "$@"\n'
+        )
+        (slow / "jq").chmod(0o755)
+        env = os.environ | {"FLEET_SOCK": f"ci-kill-{os.getpid()}", "WATCH_TICK": "0.1"}
+        first = subprocess.Popen(
+            ["bash", str(HERE / "watch-panes.sh")],
+            env=env | {"PATH": f"{slow}:{env['PATH']}"},
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+        try:
+            deadline = time.monotonic() + 30
+            while not marker.exists():
+                self.assertIsNone(first.poll(), "the watcher ended before the stall")
+                self.assertLess(
+                    time.monotonic(), deadline, "the watcher never reached the stall"
+                )
+                time.sleep(0.05)
+            first.kill()  # bash only: a subshell it forked would live on, as in the fleet
+            out = first.communicate()[0].decode().strip()
+            while True:  # until anything it left behind has finished
+                try:
+                    os.killpg(first.pid, 0)
+                except ProcessLookupError:
+                    break
+                self.assertLess(time.monotonic(), deadline, "its leftovers never ended")
+                time.sleep(0.05)
+        finally:
+            try:
+                os.killpg(first.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        self.env = env
+        return out, (state / "ci" / "alerts.seen").read_text().strip()
+
+    def _next_watcher(self):
+        return subprocess.run(
+            ["bash", str(HERE / "watch-panes.sh")],
+            env=self.env,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        ).stdout.strip()
+
+    def test_a_watcher_killed_while_waking_loses_no_alert(self):
+        """A watcher killed anywhere before it exits leaves the alert unread, so
+        the next watcher is woken by it: while it formats the line (main red,
+        11-03: a $(ci_wake) subshell outlived its killed watcher and marked it
+        read) or while it logs, which waits on the fleet log's lock."""
+        for stall in ("ascii_upcase", "CI alert for the orchestrator"):
+            with self.subTest(stall=stall):
+                out, seen = self._kill_watcher_inside(stall)
+                self.assertEqual(
+                    (out, seen), ("", "0"), "nothing printed, and the line stays unread"
+                )
+                self.assertEqual(
+                    self._next_watcher(),
+                    "CI HEPH r main: red",
+                    "the next watcher is woken by it",
+                )
+
+    def test_an_alert_with_no_kind_still_wakes_with_text(self):
+        state = TMP / "state"
+        (state / "ci").mkdir(parents=True, exist_ok=True)
+        (state / "ci" / "alerts.seen").write_text("0\n")
+        (state / "ci" / "alerts.jsonl").write_text(
+            '{"wake": true, "repo": "r", "branch": "b", "text": "red"}\n'
+        )
+        self.env = os.environ | {
+            "FLEET_SOCK": f"ci-nokind-{os.getpid()}",
+            "WATCH_TICK": "0.1",
+        }
+        self.assertEqual(self._next_watcher(), "CI ALERT r b: red")
 
     def test_the_watcher_wakes_on_heph_lines_only_and_never_twice(self):
         state = TMP / "state"
@@ -614,21 +723,37 @@ class Route(unittest.TestCase):
         )
 
         def watch():
-            return subprocess.run(
-                ["bash", str(HERE / "watch-panes.sh")],
-                env=env,
-                capture_output=True,
-                text=True,
-                timeout=10,
-            ).stdout.strip()
+            try:
+                return subprocess.run(
+                    ["bash", str(HERE / "watch-panes.sh")],
+                    env=env,
+                    capture_output=True,
+                    text=True,
+                    timeout=60,
+                ).stdout.strip()
+            except subprocess.TimeoutExpired as e:
+                self.fail(f"the watcher never woke: stderr {e.stderr!r}")
 
-        with self.assertRaises(subprocess.TimeoutExpired):
-            subprocess.run(
-                ["bash", str(HERE / "watch-panes.sh")],
-                env=env,
-                capture_output=True,
-                timeout=1.5,
-            )
+        # The first watcher marks the old line read and wakes on nothing; it is
+        # stopped once alerts.seen exists, not after a fixed wait.
+        seen = state / "ci" / "alerts.seen"
+        first = subprocess.Popen(
+            ["bash", str(HERE / "watch-panes.sh")],
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+        )
+        try:
+            deadline = time.monotonic() + 60
+            while not seen.exists() and time.monotonic() < deadline:
+                self.assertIsNone(first.poll(), "the first watcher woke")
+                time.sleep(0.05)
+            time.sleep(0.5)  # a few ticks past the old line
+            self.assertIsNone(first.poll(), "the first watcher woke on the old line")
+        finally:
+            first.kill()
+            out, _ = first.communicate()
+        self.assertEqual((seen.read_text().strip(), out), ("1", b""))
         self.session("s1", "%4", "feat/x")
         known = {}
         ci_watch.poll(
@@ -637,7 +762,7 @@ class Route(unittest.TestCase):
             Fake([run(5, branch="feat/x", sha="p")], pulls=[pr(7, "p")]),
             known,
         )
-        ci_watch.poll("o", ["r"], Fake([run(6, workflow=2)]), known)
+        ci_watch.poll("o", ["r"], Fake([run(6, workflow=2)], pulls=[pr(7, "p")]), known)
         self.assertEqual(
             watch(),
             "CI HEPH r main: CI red in r: wf2 failed on main: test_x fails (a.py:3). "
@@ -657,6 +782,195 @@ class Route(unittest.TestCase):
             out,
         )
 
+    def test_a_red_let_go_after_routing_withdraws_its_unread_wake_lines(self):
+        """#321 (PR #308, 11-04): a red was routed and escalated on its PR's
+        head, the PR moved on minutes later, and both wake lines reached Heph
+        7.5 h after, when a watcher next read the backlog. Letting the red go
+        writes a withdrawn line; the watcher skips the lines it cancels and
+        still wakes on a later red."""
+        known = {}
+        head = Fake([run(5, branch="b", sha="p1")], pulls=[pr(4, "p1")])
+        ci_watch.poll("o", ["r"], head, known)
+        known["r:5"]["routed"]["at"] -= 1801
+        ci_watch.poll("o", ["r"], Fake([], pulls=[pr(4, "p1")]), known)
+        ci_watch.poll("o", ["r"], Fake([], pulls=[pr(4, "p2")]), known)
+        self.assertEqual(
+            [(a["kind"], a["wake"], a["run_id"]) for a in self.alerts()],
+            [("heph", True, 5), ("escalate", True, 5), ("withdrawn", False, 5)],
+        )
+        self.assertEqual(
+            self.alerts()[-1]["text"],
+            "red run withdrawn: its PR's head moved past its commit",
+        )
+        ci_watch.poll(
+            "o", ["r"], Fake([run(6, workflow=2)], pulls=[pr(4, "p2")]), known
+        )
+        seen = TMP / "state" / "ci" / "alerts.seen"
+        seen.write_text("0\n")
+        self.env = os.environ | {
+            "FLEET_SOCK": f"ci-withdrawn-{os.getpid()}",
+            "WATCH_TICK": "0.1",
+        }
+        self.assertTrue(
+            self._next_watcher().startswith("CI HEPH r main: CI red in r: wf2"),
+            "run 5's two wake lines wake nobody; run 6's does",
+        )
+        self.assertEqual(seen.read_text().strip(), "4")
+
+    def test_a_red_let_go_after_escalating_leaves_needs_you(self):
+        """#329 review 2: the line AJ got at escalation goes with the red; the
+        rest of the file stays as it was."""
+        known = {}
+        ci_watch.poll(
+            "o", ["r"], Fake([run(5, branch="b", sha="p1")], pulls=[pr(4, "p1")]), known
+        )
+        before = (TMP / "q.md").read_text()
+        known["r:5"]["routed"]["at"] -= 1801
+        ci_watch.poll("o", ["r"], Fake([], pulls=[pr(4, "p1")]), known)
+        self.assertIn("<!-- ci:r:5 -->", (TMP / "q.md").read_text())
+        with self.assertLogs(ci_watch.log, "INFO") as logs:
+            ci_watch.poll("o", ["r"], Fake([], pulls=[pr(4, "p2")]), known)
+        self.assertEqual((TMP / "q.md").read_text(), before)
+        self.assertIn("queue line removed", [r.getMessage() for r in logs.records])
+        self.assertIn("unqueued", known["r:5"])
+
+    def test_a_wake_line_is_withdrawn_once(self):
+        """#329 review 3: letting the same red go twice (it was listed again in
+        between) writes one withdrawn line; a wake written after it gets its own."""
+        known = {}
+        listed = Fake([run(5, branch="b", sha="p1")], pulls=[pr(4, "p1")])
+        ci_watch.poll("o", ["r"], listed, known)
+        k = known["r:5"]
+        item = dict(k["item"])
+        ci_watch.drop_held("r", k, "test")
+        k["item"] = dict(item)
+        ci_watch.drop_held("r", k, "test")
+        self.assertEqual([a["kind"] for a in self.alerts()], ["heph", "withdrawn"])
+        k["escalated"], k["item"] = k["withdrawn"] + 1, dict(item)
+        ci_watch.drop_held("r", k, "test")
+        self.assertEqual(
+            [a["kind"] for a in self.alerts()], ["heph", "withdrawn", "withdrawn"]
+        )
+
+    def test_a_red_of_a_workflow_no_longer_active_reaches_nobody(self):
+        """#329 review 3: a deleted or disabled workflow's last red was routed
+        (and let go) on every pass."""
+        known = {}
+        for _ in range(3):
+            ci_watch.poll(
+                "o", ["r"], Fake([run(5, workflow=3)], workflows=(1, 2)), known
+            )
+        self.assertEqual((self.alerts(), known), ([], {}))
+
+    def test_a_forks_red_let_go_and_listed_again_stays_unrouted(self):
+        """#329 review 3: queued is the fork's guard against routing; a let-go
+        keeps it, and with no queue file it warns nobody."""
+        known = {}
+        fork = run(8, branch="patch-1", sha="f") | {
+            "head_repository": {"full_name": "someone/r"}
+        }
+        before = (TMP / "q.md").read_text()
+        ci_watch.poll("o", ["r"], Fake([fork], pulls=[pr(4, "f", "someone")]), known)
+        (TMP / "q.md").unlink()
+        with self.assertNoLogs(ci_watch.log, "WARNING"):
+            ci_watch.poll("o", ["r"], Fake([], pulls=[pr(4, "g", "someone")]), known)
+        (TMP / "q.md").write_text(before)
+        self.assertNotIn("routed", known["r:8"])
+        ci_watch.poll("o", ["r"], Fake([fork], pulls=[pr(4, "f", "someone")]), known)
+        ci_watch.poll("o", ["r"], Fake([], pulls=[pr(4, "g", "someone")]), known)
+        self.assertEqual((self.alerts(), known["r:8"]["queued"]), ([], True))
+        self.assertEqual((TMP / "q.md").read_text(), before)
+
+    def _watch_until(self, done, jq=None):
+        """Run a watcher until DONE() holds (30 s at most), then stop it; with
+        JQ, a jq shim's body put first on its PATH. Returns what it printed."""
+        env = os.environ | {
+            "FLEET_SOCK": f"ci-until-{os.getpid()}",
+            "WATCH_TICK": "0.1",
+        }
+        if jq:
+            shim = TMP / "jqshim"
+            shim.mkdir(exist_ok=True)
+            (shim / "jq").write_text("#!/usr/bin/env bash\n" + jq)
+            (shim / "jq").chmod(0o755)
+            env["PATH"] = f"{shim}:{env['PATH']}"
+        w = subprocess.Popen(
+            ["bash", str(HERE / "watch-panes.sh")],
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+        )
+        try:
+            deadline = time.monotonic() + 30
+            while not done():
+                self.assertIsNone(w.poll(), "the watcher woke")
+                self.assertLess(time.monotonic(), deadline, "never reached")
+                time.sleep(0.05)
+        finally:
+            w.kill()
+            out = w.communicate()[0].decode().strip()
+        return out
+
+    def test_lines_that_wake_nobody_are_marked_read(self):
+        state = TMP / "state" / "ci"
+        state.mkdir(parents=True, exist_ok=True)
+        (state / "alerts.seen").write_text("0\n")
+        line = {"repo": "r", "branch": "b", "run_id": 5, "text": "x"}
+        (state / "alerts.jsonl").write_text(
+            json.dumps(line | {"wake": False, "kind": "agent"})
+            + "\n"
+            + json.dumps(line | {"wake": False, "kind": "withdrawn"})
+            + "\n"
+        )
+        seen = state / "alerts.seen"
+        self.assertEqual(self._watch_until(lambda: seen.read_text().strip() == "2"), "")
+
+    def test_a_failed_jq_pass_marks_nothing_read(self):
+        state = TMP / "state" / "ci"
+        state.mkdir(parents=True, exist_ok=True)
+        (state / "alerts.seen").write_text("0\n")
+        (state / "alerts.jsonl").write_text(
+            '{"wake": true, "kind": "heph", "repo": "r", "branch": "b", "run_id": 5, "text": "red"}\n'
+        )
+        calls = TMP / "jq.calls"
+        calls.unlink(missing_ok=True)
+        out = self._watch_until(
+            lambda: calls.exists() and len(calls.read_text()) >= 3,
+            jq=f"printf . >>{shlex.quote(str(calls))}\nexit 5\n",
+        )
+        self.assertEqual((out, (state / "alerts.seen").read_text().strip()), ("", "0"))
+        self.env = os.environ | {
+            "FLEET_SOCK": f"ci-jqok-{os.getpid()}",
+            "WATCH_TICK": "0.1",
+        }
+        self.assertEqual(
+            self._next_watcher(), "CI HEPH r b: red", "the next watcher wakes"
+        )
+
+    def test_a_withdrawal_cancels_only_the_lines_before_it(self):
+        """A run that goes red again after it was let go (a force-push back to
+        its commit) wakes the watcher with its new line."""
+        state = TMP / "state" / "ci"
+        state.mkdir(parents=True, exist_ok=True)
+        (state / "alerts.seen").write_text("0\n")
+        line = {"repo": "r", "branch": "b", "run_id": 5}
+        (state / "alerts.jsonl").write_text(
+            "".join(
+                json.dumps(line | x) + "\n"
+                for x in (
+                    {"wake": True, "kind": "heph", "text": "first"},
+                    {"wake": False, "kind": "withdrawn", "text": "let go"},
+                    {"wake": True, "kind": "escalate", "text": "again"},
+                )
+            )
+        )
+        self.env = os.environ | {
+            "FLEET_SOCK": f"ci-rewake-{os.getpid()}",
+            "WATCH_TICK": "0.1",
+        }
+        self.assertEqual(self._next_watcher(), "CI ESCALATE r b: again")
+        self.assertEqual((state / "alerts.seen").read_text().strip(), "3")
+
 
 class Held(unittest.TestCase):
     """A red run held after it paged out, and what lets it go."""
@@ -671,6 +985,101 @@ class Held(unittest.TestCase):
         )
         got = ci_watch.poll("o", ["r"], Fake([run(6, conclusion="success")]), known)
         self.assertEqual(got["red"], [], "PR 4 is no longer open")
+
+    def test_a_red_on_a_commit_its_pr_has_moved_past_goes_and_is_never_escalated(self):
+        """#321 (11-04): the new head's run was still going, and the old red was
+        routed and escalated again, writing a needs-you line each time."""
+        known = {}
+        with mock.patch.object(ci_watch, "ESCALATE_S", 1800):
+            ci_watch.poll(
+                "o",
+                ["r"],
+                Fake([run(5, branch="b", sha="p1")], pulls=[pr(4, "p1")]),
+                known,
+            )
+            k = known["r:5"]
+            self.assertEqual((k["item"]["sha"], "escalated" in k), ("p1", False))
+            k["routed"]["at"] -= 1801
+            queue = (TMP / "q.md").read_text()
+            with self.assertLogs(ci_watch.log, "INFO") as logs:
+                got = ci_watch.poll("o", ["r"], Fake([], pulls=[pr(4, "p2")]), known)
+        self.assertEqual(got["red"], [], "PR 4 moved on to p2")
+        self.assertNotIn("escalated", k)
+        self.assertNotIn("item", k)
+        self.assertEqual((TMP / "q.md").read_text(), queue, "no needs-you line")
+        self.assertTrue(any("red run superseded" in m for m in logs.output))
+
+    def test_a_red_held_before_its_commit_was_recorded_keeps_the_old_rule(self):
+        """A red held from before #321 has no commit: a moved head does not let
+        it go (a newer run, a closed PR or its age still do)."""
+        known = {}
+        ci_watch.poll(
+            "o", ["r"], Fake([run(5, branch="b", sha="p1")], pulls=[pr(4, "p1")]), known
+        )
+        del known["r:5"]["item"]["sha"]
+        got = ci_watch.poll("o", ["r"], Fake([], pulls=[pr(4, "p2")]), known)
+        self.assertEqual([r["run_id"] for r in got["red"]], [5])
+
+    def test_a_pr_closed_while_red_is_let_go_as_closed_not_superseded(self):
+        known = {}
+        ci_watch.poll(
+            "o", ["r"], Fake([run(5, branch="b", sha="p1")], pulls=[pr(4, "p1")]), known
+        )
+        with self.assertLogs(ci_watch.log, "INFO") as logs:
+            got = ci_watch.poll("o", ["r"], Fake([], pulls=[]), known)
+        self.assertEqual(got["red"], [])
+        self.assertFalse(any("superseded" in m for m in logs.output), logs.output)
+        self.assertEqual(
+            [
+                r.fields["why"]
+                for r in logs.records
+                if r.getMessage() == "held red let go"
+            ],
+            ["its PR closed or its workflow is gone"],
+        )
+
+    def _escalated_paged_out_red(self, known):
+        """Red 5 on the default branch, escalated after it paged out: AJ has its line."""
+        with mock.patch.object(ci_watch, "ESCALATE_S", 1800):
+            ci_watch.poll("o", ["r"], Fake([run(5, workflow=3)]), known)
+            known["r:5"]["routed"]["at"] -= 1801
+            ci_watch.poll("o", ["r"], Fake([run(6, conclusion="success")]), known)
+        self.assertIn("<!-- ci:r:5 -->", (TMP / "q.md").read_text())
+
+    def test_a_red_forgotten_for_its_age_keeps_its_needs_you_line(self):
+        """#329 review 4: a month-old red was never cleared; AJ still needs it."""
+        known = {}
+        self._escalated_paged_out_red(known)
+        known["r:5"]["seen"] = int(time.time()) - 31 * 86400
+        got = ci_watch.poll("o", ["r"], Fake([run(6, conclusion="success")]), known)
+        self.assertEqual(got["red"], [])
+        self.assertIn("<!-- ci:r:5 -->", (TMP / "q.md").read_text())
+
+    def test_a_removal_that_failed_is_not_marked_done(self):
+        known = {}
+        self._escalated_paged_out_red(known)
+        with mock.patch.object(
+            ci_watch.Path, "replace", side_effect=PermissionError("read-only")
+        ):
+            ci_watch.poll(
+                "o", ["r"], Fake([run(7, workflow=3, conclusion="success")]), known
+            )
+        self.assertNotIn("unqueued", known["r:5"])
+        self.assertIn("<!-- ci:r:5 -->", (TMP / "q.md").read_text())
+
+    def test_a_held_red_at_its_prs_head_still_escalates(self):
+        known = {}
+        with mock.patch.object(ci_watch, "ESCALATE_S", 1800):
+            ci_watch.poll(
+                "o",
+                ["r"],
+                Fake([run(5, branch="b", sha="p1")], pulls=[pr(4, "p1")]),
+                known,
+            )
+            known["r:5"]["routed"]["at"] -= 1801
+            got = ci_watch.poll("o", ["r"], Fake([], pulls=[pr(4, "p1")]), known)
+        self.assertEqual([r["run_id"] for r in got["red"]], [5])
+        self.assertIn("escalated", known["r:5"])
 
     def test_a_deleted_or_renamed_workflow_lets_its_red_go(self):
         known = {}

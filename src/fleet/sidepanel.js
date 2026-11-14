@@ -143,10 +143,93 @@ const store = (key, value) => {
 };
 
 /**
+ * The split between the two lists: the Needs you list's share of the height,
+ * in percent. Either list keeps room for its title and a line or two.
+ */
+export const SPLIT = { min: 15, max: 85, start: 40, step: 5, page: 20 };
+export const clampShare = (n) => (Number.isFinite(n) ? Math.min(SPLIT.max, Math.max(SPLIT.min, Math.round(n))) : SPLIT.start);
+
+/** The share a key on the focused split moves to, or null for a key it ignores (APG window splitter). */
+export function splitKey(key, share) {
+  const by = { ArrowUp: -SPLIT.step, ArrowDown: SPLIT.step, PageUp: -SPLIT.page, PageDown: SPLIT.page }[key];
+  if (by !== undefined) return clampShare(share + by);
+  if (key === "Home") return SPLIT.min;
+  if (key === "End") return SPLIT.max;
+  return null;
+}
+
+const storedShare = (key) => {
+  try {
+    const v = localStorage.getItem(key);
+    return v === null ? SPLIT.start : clampShare(Number(v));
+  } catch {
+    return SPLIT.start;
+  }
+};
+const storeShare = (key, n) => {
+  try {
+    localStorage.setItem(key, String(n));
+  } catch {
+    // Kept for this page only.
+  }
+};
+
+/**
+ * Wire `split`, a horizontal separator between two stacked lists in `lists`:
+ * drag it, or use the APG window splitter keys, to set the upper list's share
+ * of the height (`--needs-share`), kept under `key`; a double click resets it.
+ */
+export function wireListSplit(lists, split, key = "klepsydra.queue.split") {
+  let share = storedShare(key);
+  const showShare = () => {
+    lists.style.setProperty("--needs-share", `${share}%`);
+    split.setAttribute("aria-valuenow", String(share));
+    split.setAttribute("aria-valuetext", `Needs you ${share}%, Queue ${100 - share}%`);
+  };
+  const setShare = (n, keep = true) => {
+    share = clampShare(n);
+    showShare();
+    if (keep) storeShare(key, share);
+  };
+  split.setAttribute("aria-valuemin", String(SPLIT.min));
+  split.setAttribute("aria-valuemax", String(SPLIT.max));
+  showShare();
+  split.addEventListener("keydown", (e) => {
+    const next = splitKey(e.key, share);
+    if (next === null) return;
+    e.preventDefault();
+    setShare(next);
+  });
+  // A double click puts the split back, as VS Code's sashes do.
+  split.addEventListener("dblclick", () => setShare(SPLIT.start));
+  split.addEventListener("pointerdown", (e) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    split.setPointerCapture(e.pointerId);
+    split.classList.add("dragging");
+    const move = (m) => {
+      if (m.pointerId !== e.pointerId) return; // only the pointer that took the split steers it
+      const box = lists.getBoundingClientRect(); // measured each move: the window may resize mid-drag
+      if (box.height > 0) setShare(((m.clientY - box.top) / box.height) * 100, false);
+    };
+    const end = () => {
+      split.classList.remove("dragging");
+      for (const [type, fn] of [["pointermove", move], ["pointerup", end], ["pointercancel", end], ["lostpointercapture", end]]) {
+        split.removeEventListener(type, fn);
+      }
+      storeShare(key, share);
+    };
+    split.addEventListener("pointermove", move);
+    for (const type of ["pointerup", "pointercancel", "lostpointercapture"]) split.addEventListener(type, end);
+  });
+}
+
+/**
  * Wire the panel `name` to its `dialog`, toggled by `button` and reopened
  * from `tab`. The dialog holds `#<name>-title` and the elements classed
- * `<name>-body`, `-content`, `-resize`, `-smaller`, `-reset`, `-larger`,
- * `-full`, `-close` and `-live`. `returnTo()` is where focus goes when the
+ * `<name>-body`, `-content` (one or more: the text size zooms each, and a
+ * `.list-scroll` around one keeps its place), `-resize`, `-smaller`,
+ * `-reset`, `-larger`, `-full`, `-close` and `-live`. `returnTo()` is where focus goes when the
  * panel is closed (Close, Esc, the button); `onOpen()` runs as it opens and
  * `onShut()` once it has shut; `onLayout()` on every layout; `onResized()`
  * once at the end of a drag of the separator.
@@ -159,6 +242,9 @@ export function createSidePanel({
   const part = (role) => dialog.querySelector(`.${name}-${role}`);
   const body = part("body");
   const content = part("content");
+  // A panel of several lists zooms each, and keeps each one's scroll place.
+  const contents = [...dialog.querySelectorAll(`.${name}-content`)];
+  const scrollers = () => [body, ...contents.map((c) => c.closest(".list-scroll")).filter(Boolean)];
   const live = part("live");
   const grip = part("resize");
   const smaller = part("smaller");
@@ -363,7 +449,7 @@ export function createSidePanel({
   // Text size: the content only, by CSS zoom, so tables and buttons grow with the words.
   let size = textSize(stored(STORE.text));
   function showText() {
-    content.style.zoom = String(size);
+    for (const c of contents) c.style.zoom = String(size);
     const pct = `${Math.round(size * 100)}%`;
     reset.textContent = pct;
     reset.setAttribute("aria-label", `Reset text size, now ${pct}`);
@@ -373,12 +459,14 @@ export function createSidePanel({
   function setText(next) {
     if (next === size) return;
     // Keep the reader's place: the same share of the way down.
-    const range = body.scrollHeight - body.clientHeight;
-    const share = range > 0 ? body.scrollTop / range : 0;
+    const places = scrollers().map((el) => {
+      const range = el.scrollHeight - el.clientHeight;
+      return [el, range > 0 ? el.scrollTop / range : 0];
+    });
     size = next;
     store(STORE.text, String(size));
     showText();
-    body.scrollTop = share * (body.scrollHeight - body.clientHeight);
+    for (const [el, share] of places) el.scrollTop = share * (el.scrollHeight - el.clientHeight);
     announce(`Text ${Math.round(size * 100)}%`);
   }
   smaller.addEventListener("click", () => setText(stepText(size, -1)));

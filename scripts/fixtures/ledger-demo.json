@@ -85,7 +85,7 @@
     "user_rejects": 0,
     "updated_at": 1792499880
    },
-   "demo-4-bf_emma": {
+   "demo-4-bf_alice": {
     "tokens": {
      "input": 126000,
      "output": 57600,
@@ -358,7 +358,7 @@
   },
   "guardrails": [],
   "attribution": {
-   "demo-4-bf_emma": {
+   "demo-4-bf_alice": {
     "skills": {
      "techne:elenchus": 2900000,
      "graphe:latex": 1100000,
@@ -498,7 +498,7 @@
     "cost_usd_estimate_micros": 1260
    }
   },
-  "demo-4-bf_emma": {
+  "demo-4-bf_alice": {
    "claude-opus-5-5": {
     "tokens": {
      "input": 100800,
@@ -793,7 +793,7 @@
   "demo-1-am_michael": "am_michael",
   "demo-2-af_bella": "af_bella",
   "demo-3-af_sarah": "af_sarah",
-  "demo-4-bf_emma": "bf_emma",
+  "demo-4-bf_alice": "bf_alice",
   "demo-9-bm_fable": "bm_fable",
   "demo-5-bf_isabella": "bf_isabella",
   "demo-6-af_nova": "af_nova",
@@ -831,7 +831,7 @@
   },
   {
    "at": 1792497540,
-   "session_id": "demo-4-bf_emma",
+   "session_id": "demo-4-bf_alice",
    "tool_name": "WebFetch",
    "source": "config"
   },

@@ -5,13 +5,22 @@
 # registered pane and the orchestrator's has Remote Control on (the link its
 # live session's fleet file holds, which is what the phone wall's Open in
 # Claude uses); the phone wall answers on 127.0.0.1:8318 and through
-# Tailscale Serve with a fresh fleet.json (a usage reading observed in the last
-# 2 minutes); a pane watcher is running; each config folder in FLEET_ACCOUNTS
+# Tailscale Serve, unless prefs.json has it off; its usage readings are fresh (observed in the last 2
+# minutes) while some pane is mid-turn, the only time a session refreshes them;
+# a pane watcher is running, unless no agent runs (ok) or every live agent waits out a usage limit;
+# paused agents (paused.tsv) are listed; each registered agent gets one verdict
+# (running, finished, gone), and a finish is recorded in finished.tsv the first
+# time it is seen, while the row stays until --prune; each config folder in FLEET_ACCOUNTS
 # is logged in and the second ones match the first; the copies in ~/.claude
-# (hooks, status line, launcher, cast) match the checkout. Briefs whose shared rules
+# (hooks, status line, launcher, cast) match the checkout; both memory slices
+# have a MemoryMax, nest, and every fleet scope started since sits in its slice
+# (a FAIL), and the caps fit this machine and the orchestrator's peak (a warning).
+# Briefs whose shared rules
 # are out of date, and a second folder not logged in, are warnings.
 # With `--json FILE` (the fleet-doctor timer) it also writes the checks to FILE
 # for the wall, and logs a check only when its status changed since FILE's run.
+# `--prune` instead removes finished agents' rows from panes.tsv (#220), with a
+# backup beside it, and runs no checks.
 set -u
 FLEET_TARGET=fleet::doctor
 here=$(dirname "$(readlink -f "$0")")
@@ -31,6 +40,7 @@ json=""
 if [[ ${1:-} == --json ]]; then
   json=${2:?--json takes a file}
 fi
+
 # Each check's status at the last --json run.
 declare -A was=()
 if [[ -n $json && -f $json ]]; then
@@ -39,20 +49,86 @@ fi
 results=()
 
 
-report() { # ok|warn|FAIL CHECK DETAIL
+report() { # ok|warn|FAIL CHECK DETAIL [KEY=VALUE...]: the values are logged with it
   local check detail
   check=$(tilde "$2") detail=$(tilde "$3")
+  local -a vals=("${@:4}")
   printf '%-4s %s: %s\n' "$1" "$check" "$detail"
   results+=("$1"$'\t'"${check//[$'\t\n']/ }"$'\t'"${detail//[$'\t\n']/ }")
   [[ $1 == FAIL ]] && failed=1
   [[ -n $json && ${was[${check//[$'\t\n']/ }]-} == "$1" ]] && return
   case $1 in
-    FAIL) flog ERROR "doctor: $check" detail="$detail" ;;
-    warn) flog WARN "doctor: $check" detail="$detail" ;;
+    FAIL) flog ERROR "doctor: $check" detail="$detail" "${vals[@]}" ;;
+    warn) flog WARN "doctor: $check" detail="$detail" "${vals[@]}" ;;
     # An ok detail can be a Remote Control link, which opens a session: not logged.
-    ok) [[ -n ${was[${check//[$'\t\n']/ }]-} ]] && flog INFO "doctor: $check recovered" ;;
+    # A check AJ switched off (its values hold switched=off) did not recover.
+    ok)
+      local how=recovered v
+      for v in "${vals[@]}"; do [[ $v == switched=off ]] && how="switched off"; done
+      [[ -n ${was[${check//[$'\t\n']/ }]-} ]] && flog INFO "doctor: $check $how" "${vals[@]}"
+      ;;
   esac
 }
+
+# Rows whose agent finished, as "PANE/SID<TAB>NAME" lines. A pane id alone is
+# not a key: a restarted tmux server hands out %N again.
+finished_rows() {
+  local p name sid
+  while IFS=$'\t' read -r p name _ sid _; do
+    [[ -n $p && -n $name ]] || continue
+    forget_resumed "$sid" "$name"
+    [[ $(row_state "$p" "$sid") == finished ]] && printf '%s/%s\t%s\n' "$p" "$sid" "$name"
+  done < <(cat "$REGISTRY" 2>/dev/null)
+}
+# Drop the rows finished_rows named from panes.tsv, keeping a backup.
+# shellcheck disable=SC2329 # run through with_registry
+prune_now() { # PANE/SID...
+  local tmp bak key row
+  local -a sure=()
+  # Each finish is recorded before its row goes, as on a plain run; a row is
+  # read again under the lock, so one resumed since finished_rows stays.
+  for key in "$@"; do
+    row=$(awk -F'\t' -v p="${key%%/*}" -v s="${key#*/}" '$1 == p && $4 == s { print; exit }' "$REGISTRY")
+    [[ -n $row && $(row_state "${key%%/*}" "${key#*/}") == finished ]] || continue
+    record_finished "$row" || return 1
+    # Recorded, the row holds no pane ("-").
+    sure+=("-/${key#*/}")
+  done
+  (( ${#sure[@]} )) || { echo none; return 0; }
+  set -- "${sure[@]}"
+  bak=$REGISTRY.bak-$(date +%Y%m%d-%H%M%S)
+  cp -p -- "$REGISTRY" "$bak" || return 1
+  tmp=$(mktemp "$REGISTRY.XXXXXX") || return 1
+  awk -F'\t' -v drop="$*" 'BEGIN { n = split(drop, d, " "); for (i = 1; i <= n; i++) gone[d[i]] = 1 } !(($1 "/" $4) in gone)' "$REGISTRY" >"$tmp" &&
+    mv -f -- "$tmp" "$REGISTRY" && printf '%s\n' "$bak" "$@"
+}
+if [[ ${1:-} == --prune ]]; then
+  mapfile -t rows < <(finished_rows)
+  if (( ! ${#rows[@]} )); then
+    echo "nothing to prune: no finished agent's row in panes.tsv"
+    exit 0
+  fi
+  if ! out=$(with_registry prune_now "${rows[@]%%$'\t'*}"); then
+    flog ERROR "doctor: prune failed" registry="$REGISTRY"
+    echo "could not prune $REGISTRY" >&2
+    exit 1
+  fi
+  mapfile -t done_keys <<<"$out"
+  bak=${done_keys[0]}
+  for r in "${rows[@]}"; do
+    key=${r%%$'\t'*}
+    where=" (${key%%/*})"; [[ ${key%%/*} == - ]] && where=""
+    if printf '%s\n' "${done_keys[@]:1}" | grep -qxF -- "-/${key#*/}"; then
+      echo "pruned: ${r#*$'\t'}$where"
+      flog INFO "doctor: pruned a finished agent's row" pane="${key%%/*}" session="${key#*/}" name="${r#*$'\t'}"
+    else
+      echo "kept: ${r#*$'\t'}$where: it runs again"
+      flog INFO "doctor: a row to prune runs again; kept" pane="${key%%/*}" session="${key#*/}" name="${r#*$'\t'}"
+    fi
+  done
+  [[ $bak == none ]] || echo "backup: $(tilde "$bak")"
+  exit 0
+fi
 
 if $SYSTEMCTL --user is-active --quiet fleet-resume-at-reset.service 2>/dev/null; then
   report ok "resume service" "active"
@@ -60,8 +136,9 @@ else
   report FAIL "resume service" "not active: systemctl --user start fleet-resume-at-reset"
 fi
 beat=$(stat -c %Y -- "$FLEET_STATE/resume.beat" 2>/dev/null || echo 0)
+saw=$(head -1 "$FLEET_STATE/resume.beat" 2>/dev/null | sed 's/ at=.*//')
 if (( now - beat <= BEAT_MAX_S )); then
-  report ok "resume loop" "last pass $((now - beat)) s ago"
+  report ok "resume loop" "last pass $((now - beat)) s ago${saw:+: $saw}"
 else
   report FAIL "resume loop" "$( ((beat)) && echo "last pass $((now - beat)) s ago" || echo "no pass recorded")"
 fi
@@ -78,15 +155,63 @@ session_of() {
 }
 orch=$(orchestrator)
 panes=$(awk -F'\t' 'NF >= 3 { print $1 }' "$REGISTRY" 2>/dev/null)
+
+# Limits as the fleet hook's StopFailure record dates them (#311), else as the
+# panes show them (#263): one still at a limit OVERDUE_S past its reset was
+# missed by the resume service; a reset time beside a limit
+# wording LIMIT_RE does not know means Claude Code renamed its message again.
+overdue="" unknown="" resets=""
+for p in $orch $panes; do
+  fleet_panes | grep -qx -- "$p" || continue
+  s=$(screen "$p")
+  busy "$s" && continue
+  lnow=${FLEET_NOW:-$now} # tests set the clock
+  # The fleet hook's StopFailure record dates the reset exactly (#311).
+  if ev=$(limit_event "$p") && r=${ev%%$'\t'*} && (( r > 0 )); then
+    if (( lnow - r > ${FLEET_OVERDUE_S:-600} )); then
+      overdue+="$p " resets+="$p:$(date -d "@$r" '+%H:%M') "
+    fi
+  elif l=$(limit_line "$s"); then
+    # A dated reset is exact. A time-only one can be up to 24 h ahead, so it is
+    # placed only for the 5-hour window, whose reset is at most 5 h ahead: today's
+    # is tomorrow's when over 19 h past, yesterday's when over 5.5 h ahead.
+    # Any other time-only reset cannot tell a missed reset from a later one.
+    if grep -qE 'resets [A-Z][a-z]{2} [0-9]' <<<"$l"; then
+      r=$(reset_epoch "$l" "$lnow") || continue
+    elif grep -qE "hit your (5-hour|session) limit" <<<"$l"; then
+      r=$(reset_epoch "$l" "$lnow" 68400) || continue
+      if (( r - lnow > 19800 )); then
+        r=$(reset_epoch "$l" "$(date -d "$(date -d "@$lnow" +%F) 12:00 yesterday" +%s)" 86400) || continue
+      fi
+    else
+      continue
+    fi
+    if (( lnow - r > ${FLEET_OVERDUE_S:-600} )); then
+      overdue+="$p " resets+="$p:$(date -d "@$r" '+%H:%M') "
+    fi
+  else
+    # Only what came after the last prompt sent: an answered limit is past.
+    # A stop's shape only ("hit ... limit", "limit reached"): Claude Code's
+    # near-limit notices and the /fast dialog's limit also print a reset.
+    split_screen "$s"
+    { near 6 | awk '/^❯ / && !/^❯ \// { b = ""; next } { b = b $0 "\n" } END { printf "%s", b }'; printf '%s\n' "$BELOW"; } |
+      grep -iE '(hit|reached)[^·]*limit|limit (hit|reached)' |
+      grep -viE 'fast limit|used [0-9]+% of|approaching|now using' | grep -qE 'resets [A-Za-z0-9]' && unknown+="$p "
+  fi
+done
+if [[ -n $overdue ]]; then
+  report FAIL "limits" "still at a limit past its reset: ${overdue% } (the resume service missed it)" panes="${overdue% }" resets="${resets% }" overdue_s="${FLEET_OVERDUE_S:-600}"
+elif [[ -n $unknown ]]; then
+  report warn "limits" "a reset time shows beside a limit message the fleet does not recognise: ${unknown% } (LIMIT_RE in fleet/lib.sh)" panes="${unknown% }"
+else
+  report ok "limits" "no pane waits past its reset"
+fi
 for p in $orch $panes; do
   who=$(reg_field "$p" 2)
   [[ $p == "$orch" ]] && who=orchestrator
   if ! fleet_panes | grep -qx "$p"; then
-    if [[ $p == "$orch" ]]; then
-      report FAIL "remote control $p ($who)" "the orchestrator's pane is gone"
-    else
-      report warn "remote control $p ($who)" "the pane is gone: a finished agent's row in panes.tsv"
-    fi
+    # A worker's gone pane gets its one verdict from the agents check (#220).
+    [[ $p == "$orch" ]] && report FAIL "remote control $p ($who)" "the orchestrator's pane is gone"
     continue
   fi
   f=$(session_of "$p")
@@ -99,31 +224,70 @@ for p in $orch $panes; do
   fi
 done
 
-# fleet.json at BASE: whether it answers and its newest usage reading's age.
+# Whether the wall at BASE answers (#246): the pass or fail. A Windows program
+# run from WSL now and then fails once at start, so a miss is tried again.
+phone_body=""
 phone() { # CHECK BASE
-  local body newest
+  local body
   if ! body=$($CURL -fsS --max-time 5 "$2/fleet.json" 2>/dev/null); then
-    report FAIL "$1" "no answer from $2/fleet.json"
-    return
+    sleep "${FLEET_RETRY_S:-2}"
+    if ! body=$($CURL -fsS --max-time 5 "$2/fleet.json" 2>/dev/null); then
+      report FAIL "$1" "no answer from $2/fleet.json (tried twice)" url="$2/fleet.json"
+      return
+    fi
+    # A miss the FAIL above does not cover: logged each time, to show how often.
+    flog WARN "doctor: $1 answered only on the second try" url="$2/fleet.json" curl="$CURL"
   fi
-  newest=$(jq -r '[.usage[]?.observed_at // empty] | max // empty' <<<"$body" 2>/dev/null)
-  if [[ -z $newest ]]; then
-    report FAIL "$1" "answers, but fleet.json holds no usage reading"
-  elif (( now - ${newest%.*} <= FRESH_MAX_S )); then
-    report ok "$1" "fleet.json observed $((now - ${newest%.*})) s ago"
-  else
-    report FAIL "$1" "fleet.json is stale: observed $((now - ${newest%.*})) s ago"
-  fi
+  [[ -n $phone_body ]] || phone_body=$body
+  report ok "$1" "answers at $2"
 }
-phone "phone wall" "$PHONE"
-dns=$($TAILSCALE status --json 2>/dev/null | jq -r '.Self.DNSName // empty' | sed 's/\.$//')
-serve=$($TAILSCALE serve status 2>/dev/null)
-if [[ -z $dns ]]; then
-  report FAIL "phone wall over Tailscale" "Tailscale is not running or not logged in"
-elif [[ -z $serve || $serve == *"No serve config"* ]]; then
-  report FAIL "phone wall over Tailscale" "Tailscale Serve is not set up (README: Phone wall)"
-else
-  phone "phone wall over Tailscale" "https://$dns"
+# The phone wall is AJ's to switch off (#328): prefs.json's phone_wall, read
+# as the wall reads it (src-tauri/src/phone.rs: a missing or unreadable file is off).
+pw=$(prefs_get phone_wall)
+case $? in
+  2) report warn "phone wall" "prefs.json does not read as one JSON object, so the wall reads it as off: not checked" prefs="$KLEPSYDRA_DIR/prefs.json" ;;
+  *) [[ $pw == true ]] || report ok "phone wall" "off (prefs.json phone_wall): not checked, nor over Tailscale" phone_wall="${pw:-missing}" switched=off ;;
+esac
+if [[ $pw == true ]]; then
+  phone "phone wall" "$PHONE"
+  dns=$($TAILSCALE status --json 2>/dev/null | jq -r '.Self.DNSName // empty' | sed 's/\.$//')
+  serve=$($TAILSCALE serve status 2>/dev/null)
+  if [[ -z $dns ]]; then
+    report FAIL "phone wall over Tailscale" "Tailscale is not running or not logged in"
+  elif [[ -z $serve || $serve == *"No serve config"* ]]; then
+    report FAIL "phone wall over Tailscale" "Tailscale Serve is not set up (README: Phone wall)"
+  else
+    phone "phone wall over Tailscale" "https://$dns"
+  fi
+fi
+
+# The usage readings' age (#246). Only a session's status line refreshes them,
+# so they age while no turn runs (every agent limited, Heph between turns) and
+# nothing is broken: stale is a warning only while some pane is mid-turn.
+# Missing readings are unknown, never fresh.
+if [[ -n $phone_body ]]; then
+  newest=$(jq -r '[.usage[]?.observed_at // empty] | max // empty' <<<"$phone_body" 2>/dev/null)
+  by=$(jq -r '[.usage[]? | select(.observed_at != null)] | max_by(.observed_at) | .label // .account // "" ' <<<"$phone_body" 2>/dev/null)
+  mid=""
+  for p in $orch $panes; do
+    fleet_panes | grep -qx -- "$p" && busy "$(screen "$p")" && mid+="$p "
+  done
+  mid=${mid% }
+  if [[ -z $newest ]]; then
+    report warn "usage readings" "fleet.json holds none: their age is unknown" now="$now" mid_turn="$mid"
+  else
+    age=$((now - ${newest%.*}))
+    vals=(observed_at="${newest%.*}" now="$now" max_s="$FRESH_MAX_S" account="$by" mid_turn="$mid")
+    if (( age < -FRESH_MAX_S )); then
+      report warn "usage readings" "observed $((-age)) s in the future: a clock is off" "${vals[@]}"
+    elif (( age <= FRESH_MAX_S )); then
+      report ok "usage readings" "observed $age s ago ($by)" "${vals[@]}"
+    elif [[ -n $mid ]]; then
+      report warn "usage readings" "stale: observed $age s ago while $mid runs a turn" "${vals[@]}"
+    else
+      report ok "usage readings" "observed $age s ago; no pane runs a turn, so none refreshes them" "${vals[@]}"
+    fi
+  fi
 fi
 
 # Two accounts: each config folder logged in, the second ones in step with the first.
@@ -172,20 +336,72 @@ fi
 
 # Processes running watch-panes.sh itself (bash, then the script), not a shell that names it.
 watchers=$($PS -eo args= 2>/dev/null | awk '$1 ~ /(^|\/)bash$/ && $2 ~ /(^|\/)watch-panes\.sh$/ { $1 = $2 = ""; sub(/^ +/, ""); printf "%s;", $0 }')
+# None running is expected while no agent runs, and while every live agent waits out a usage limit
+# (#246): a watcher would wake at once on each limited pane.
 if [[ -n $watchers ]]; then
   report ok "pane watcher" "watching ${watchers%;}"
 else
-  report FAIL "pane watcher" "none running: the orchestrator is not woken when an agent finishes"
+  limited="" resets="" free=""
+  for p in $panes; do
+    fleet_panes | grep -qx -- "$p" || continue
+    s=$(screen "$p")
+    # Limited as the limits check holds it: the screen's limit line, else the
+    # hook's StopFailure record, whose reset is then its own epoch (a weekly
+    # reset can be days away, so its day shows unless it is today).
+    if l=$(pane_limited "$p" "$s"); then
+      limited+="$p "
+      r=$(reset_label "${l%%$'\t'*}" "${l#*$'\t'}" "${FLEET_NOW:-$now}")
+      [[ -n $r && ", $resets" != *", ${r#resets }, "* ]] && resets+="${r#resets }, "
+    else
+      free+="$p "
+    fi
+  done
+  limited=${limited% } resets=${resets%, } free=${free% }
+  if [[ -z $limited && -z $free ]]; then
+    report ok "pane watcher" "no agents to watch"
+  elif [[ -n $limited && -z $free ]]; then
+    report warn "pane watcher" "none running while every agent waits out a usage limit (resets ${resets:-at an unknown time}): start one after the reset" limited="$limited" resets="$resets"
+  else
+    report FAIL "pane watcher" "none running: the orchestrator is not woken when an agent finishes" limited="$limited" not_limited="$free"
+  fi
 fi
-# Registered agents whose session no longer runs: after a hard shutdown, all of them.
-gone=$(while IFS=$'\t' read -r _ name _ sid _; do
-  [[ $sid =~ ^[0-9a-f-]{36}$ ]] && ! session_alive "$sid" && printf '%s ' "$name"
-done < <(cat "$REGISTRY" 2>/dev/null))
+# Registered agents, one verdict per row (#220): a session gone without an end
+# (after a hard shutdown, all of them) is a FAIL for `fleet recover`; one that
+# finished cleanly is a warn until its row is pruned.
+gone="" done_=""
+while IFS= read -r row; do
+  IFS=$'\t' read -r p name _ sid _ <<<"$row"
+  [[ -n $p && -n $name ]] || continue
+  # The row's finish and unpause records follow its session's own file first (#261).
+  forget_resumed "$sid" "$name"
+  state=$(row_state "$p" "$sid")
+  # Running as its /clear successor: the row names that session from now on,
+  # as recover's repair does, so the successor's own end decides (#261 review 6).
+  if [[ $state == running ]] && ! session_alive "$sid" && succ=$(row_successor "$p" "$sid") && [[ -n $succ ]]; then
+    if set_session "$p" "$sid" "$succ"; then
+      flog INFO "registry repaired" pane="$p" name="$name" session="$succ" by=doctor
+    fi
+  fi
+  case $state in
+    finished)
+      done_+="$name "
+      # Recorded on first sight, so the finish outlives the session's file.
+      with_registry record_finished "$row" || flog WARN "doctor: could not record a finished row" name="$name"
+      ;;
+    gone) gone+="$name " ;;
+  esac
+done < <(cat "$REGISTRY" 2>/dev/null)
 if [[ -n $gone ]]; then
   report FAIL "agents" "sessions gone: ${gone% }: fleet recover"
+elif [[ -n $done_ ]]; then
+  report warn "agents" "finished, still in panes.tsv: ${done_% }: fleet doctor --prune"
 else
   report ok "agents" "every registered session runs"
 fi
+[[ -n $gone && -n $done_ ]] && report warn "finished agents" "still in panes.tsv: ${done_% }: fleet doctor --prune"
+# Agents set aside (paused.tsv, `fleet pause`): listed, never a failure (#246).
+paused=$(awk -F'\t' '$1 != "" && $1 !~ /^#/ { printf "%s, ", $1 }' "${FLEET_PAUSED:-$FLEET_STATE/paused.tsv}" 2>/dev/null)
+[[ -n $paused ]] && report ok "paused agents" "${paused%, }: fleet unpause NAME brings one back" paused="${paused%, }"
 mapfile -t briefs < <(awk -F'\t' 'NF >= 3 { print $3 }' "$REGISTRY" 2>/dev/null)
 if (( ! ${#briefs[@]} )); then
   report ok "briefs" "no registered agents"
@@ -193,6 +409,114 @@ elif stale=$(bash "$here/brief.sh" --check "${briefs[@]}" 2>/dev/null); then
   report ok "briefs" "every registered brief has the shared rules"
 else
   report warn "briefs" "$(tr '\n' ' ' <<<"$stale")(fleet brief --check)"
+fi
+
+# Voices (#273): the tray's mode has been applied to keryx (the resume service
+# applies a change within a pass; a mode left unapplied says why).
+if v=$(bash "$here/voices.sh" --check 2>/dev/null); then
+  report ok "voices" "$v"
+else
+  report warn "voices" "${v:-could not compare}"
+fi
+# Every fleet scope and both memory slices, read in one call (#289, #353): each
+# unit's tasks, slice and memory cap, in the blocks systemctl separates with a
+# blank line (a property's place within a block is systemctl's, so Id is read
+# wherever it falls). A scope gone since list-units shows as inactive, with no slice.
+declare -A tasks_now=() tasks_cap=() in_slice=() mem_cap=() active=()
+mapfile -t scopes < <($SYSTEMCTL --user list-units --type=scope --no-legend --plain 'fleet-*' 2>/dev/null | awk '$1 ~ /^fleet-.*[.]scope$/ { print $1 }')
+u="" tn="" tc="" sl="" mc="" st=""
+while IFS= read -r line; do
+  if [[ -z $line ]]; then
+    [[ -n $u ]] && tasks_now[$u]=$tn tasks_cap[$u]=$tc in_slice[$u]=$sl mem_cap[$u]=$mc active[$u]=$st
+    u="" tn="" tc="" sl="" mc="" st=""
+    continue
+  fi
+  case ${line%%=*} in
+    Id) u=${line#*=} ;; TasksCurrent) tn=${line#*=} ;; TasksMax) tc=${line#*=} ;; Slice) sl=${line#*=} ;; MemoryMax) mc=${line#*=} ;; ActiveState) st=${line#*=} ;;
+  esac
+done < <($SYSTEMCTL --user show -p Id -p TasksCurrent -p TasksMax -p Slice -p MemoryMax -p ActiveState "$FLEET_SLICE" "$FLEET_WORKER_SLICE" "${scopes[@]}" 2>/dev/null; echo)
+# Each fleet session's scope against its task cap (#289): past TASKS_WARN_PCT
+# its next forks fail and its claude aborts, as on 11-03.
+TASKS_WARN_PCT=${TASKS_WARN_PCT:-80}
+near="" fullest="" fullest_pct=-1 uncapped=""
+for unit in "${scopes[@]}"; do
+  cur=${tasks_now[$unit]-} max=${tasks_cap[$unit]-}
+  [[ $cur =~ ^[0-9]+$ ]] || continue
+  if ! [[ $max =~ ^[1-9][0-9]*$ ]]; then uncapped+="${unit%.scope} "; continue; fi
+  pct=$((cur * 100 / max))
+  (( pct > fullest_pct )) && fullest_pct=$pct fullest="${unit%.scope} $cur/$max"
+  (( pct >= TASKS_WARN_PCT )) && near+="${unit%.scope} $cur/$max, "
+done
+if [[ -n $near ]]; then
+  report warn "task caps" "past ${TASKS_WARN_PCT}% of the cap: ${near%, } (its next forks fail at the cap)" scopes="${near%, }"
+elif [[ -n $fullest ]]; then
+  report ok "task caps" "fullest scope: $fullest${uncapped:+; no task cap: ${uncapped% }}" fullest="$fullest" uncapped="${uncapped% }"
+elif [[ -n $uncapped ]]; then
+  report ok "task caps" "no task cap: ${uncapped% }" uncapped="${uncapped% }"
+fi
+# The fleet's memory slices (#353): both capped, the workers' inside the fleet's
+# and below it, and each fleet scope in its own: the orchestrator's (any scope
+# named for it, as launch.sh places it by the same launch; never by its pane,
+# which a stale orchestrator.pane can hand to a worker) in FLEET_SLICE, every
+# other in FLEET_WORKER_SLICE. A scope started before the slices' units were first
+# written (its name ends in its start time) keeps its place until its next
+# fresh start, so it warns; one started since fails. The orchestrator's daily
+# peak is recorded here, every 5 minutes, for fleet install.
+hcg=""
+hp=$(heph_pid) && hcg=$(proc_cgroup "$hp")
+heph_peak=$(orch_mem_peak record "$hcg")
+# A cap under 1 MiB reads as none: systemd takes MemoryMax=0 as it is written.
+bytes_mib() { [[ $1 =~ ^[0-9]+$ ]] && (( $1 >= 1048576 )) && printf '%s' "$(($1 / 1048576))"; }
+fleet_cap=$(bytes_mib "${mem_cap[$FLEET_SLICE]-}") worker_cap=$(bytes_mib "${mem_cap[$FLEET_WORKER_SLICE]-}")
+# Dated by the unit's birth (install rewrites it in place, so a resize keeps
+# it); a filesystem without birth times gives 0, and its last change stands in.
+sliced=$(stat -c %W -- "$FLEET_UNIT_DIR/$FLEET_SLICE" 2>/dev/null) || sliced=0
+[[ $sliced =~ ^[1-9][0-9]*$ ]] || sliced=$(stat -c %Y -- "$FLEET_UNIT_DIR/$FLEET_SLICE" 2>/dev/null) || sliced=0
+nocap="" astray="" before="" shape="" sized=""
+[[ -n $fleet_cap ]] || nocap+="$FLEET_SLICE "
+[[ -n $worker_cap ]] || nocap+="$FLEET_WORKER_SLICE "
+if [[ -z $nocap ]]; then
+  [[ ${in_slice[$FLEET_WORKER_SLICE]-} == "$FLEET_SLICE" ]] || shape="$FLEET_WORKER_SLICE sits in ${in_slice[$FLEET_WORKER_SLICE]:-no slice}, not $FLEET_SLICE"
+  (( worker_cap < fleet_cap )) || shape+="${shape:+; }$FLEET_WORKER_SLICE's $worker_cap MiB is not below $FLEET_SLICE's $fleet_cap MiB"
+  # Sized for this machine: a cap that no longer clears WSL's own memory and
+  # earlyoom's line (a smaller memory= in .wslconfig, a higher earlyoom line)
+  # lets earlyoom act before the kernel's cap, so any such cap warns; a cap a
+  # whole rounding step below this machine's leaves room unused. A kernel
+  # update's few MiB usually fall within the rounding's slack and pass.
+  if total=$(mem_total_mib); then
+    fits=$((total - $(fleet_slice_margin "$total")))
+    if (( fleet_cap + FLEET_SLICE_BASE_MB + $(earlyoom_line_mib "$total") > total || fits - fleet_cap >= FLEET_SLICE_STEP_MB )); then
+      sized="$FLEET_SLICE's $fleet_cap MiB was sized for another MemTotal or earlyoom line; this machine's is $fits MiB"
+    fi
+  fi
+fi
+for unit in "${scopes[@]}"; do
+  [[ ${active[$unit]-} == active ]] || continue
+  want=$FLEET_WORKER_SLICE
+  [[ $unit =~ ^fleet-${FLEET_ORCH_NAME}-[0-9]+[.]scope$ ]] && want=$FLEET_SLICE
+  [[ ${in_slice[$unit]-} == "$want" ]] && continue
+  began=${unit%.scope} began=${began##*-}
+  if [[ $began =~ ^[0-9]+$ ]] && (( began < sliced )); then before+="${unit%.scope} in ${in_slice[$unit]:-no slice}, "
+  else astray+="${unit%.scope} in ${in_slice[$unit]:-no slice}, "; fi
+done
+if [[ -z ${mem_cap[$FLEET_SLICE]+x} && -z ${mem_cap[$FLEET_WORKER_SLICE]+x} ]]; then
+  report warn "memory cap" "could not read the slices: systemctl --user did not answer"
+elif [[ -n $nocap || -n $shape || -n $astray ]]; then
+  why="${nocap:+no MemoryMax on ${nocap% } (fleet install writes it)}"
+  [[ -n $shape ]] && why+="${why:+; }$shape (fleet install writes both)"
+  [[ -n $astray ]] && why+="${why:+; }outside their slice: ${astray%, }"
+  report FAIL "memory cap" "$why" no_cap="${nocap% }" shape="$shape" astray="${astray%, }"
+elif [[ -n $sized || -n $before ]] || { [[ -n $heph_peak ]] && (( heph_peak > fleet_cap - worker_cap )); }; then
+  why="$sized${sized:+: fleet install resizes the slices}"
+  [[ -n $heph_peak ]] && (( heph_peak > fleet_cap - worker_cap )) &&
+    why+="${why:+; }the orchestrator's peak, $heph_peak MiB, passed the $((fleet_cap - worker_cap)) MiB $FLEET_WORKER_SLICE leaves it: fleet install resizes the slices"
+  [[ -n $before ]] && why+="${why:+; }started before the slices, outside them: ${before%, } (each moves at its next fresh start)"
+  report warn "memory cap" "$why" peak_mb="${heph_peak:-}" fleet_mb="$fleet_cap" workers_mb="$worker_cap" before="${before%, }"
+else
+  of_heph=""
+  [[ -n $heph_peak ]] && of_heph=", the orchestrator's peak $heph_peak MiB"
+  report ok "memory cap" "$FLEET_SLICE $fleet_cap MiB, $FLEET_WORKER_SLICE $worker_cap MiB$of_heph" \
+    fleet_mb="$fleet_cap" workers_mb="$worker_cap" peak_mb="${heph_peak:-}"
 fi
 # A hook or cast copy older than the checkout gives every session old behaviour (#244).
 root=${here%/fleet} differ="" missing=""
@@ -207,6 +531,56 @@ elif [[ -n $differ ]]; then
 else
   report ok "installed copies" "the hooks, status line, launcher and cast match $root"
 fi
+# tmux 3.4 dies on a focus event to a dead pane (#290): the fleet's server must
+# carry the pane-died hook, which a server reads from its conf only at start.
+if t has-session 2>/dev/null; then
+  if t show-hooks -g pane-died 2>/dev/null | grep -q 'klepsydra-pane-died\.sh'; then
+    if [[ -f $FLEET_HOOK_DIR/klepsydra-pane-died.sh ]]; then
+      report ok "pane-died hook" "set on the fleet's tmux server"
+    else
+      report warn "pane-died hook" "set, but $(tilde "$FLEET_HOOK_DIR")/klepsydra-pane-died.sh is missing, so a dead pane stays dead: fleet install"
+    fi
+  else
+    report warn "pane-died hook" "not set on the fleet's tmux server, which tmux 3.4 lets a dead pane crash: fleet install sets it" socket="$FLEET_SOCK"
+  fi
+fi
+# A crash ends the fleet's tab, and WSL then shuts down within 15 s unless
+# .wslconfig keeps the distro up ([general] instanceIdleTimeout=-1): the tmux
+# watchdog can only recover after a crash that WSL stays up through (#292).
+wslconfig=${FLEET_WSLCONFIG:-${KLEPSYDRA_DIR%/AppData/*}/.wslconfig}
+if [[ -n ${FLEET_WSLCONFIG:-} || ${WSL_DISTRO_NAME:-} ]]; then
+  if awk 'BEGIN { IGNORECASE = 1 } /^[[:space:]]*\[/ { g = (tolower($0) ~ /^[[:space:]]*\[general\]/) } g && tolower($0) ~ /^[[:space:]]*instanceidletimeout[[:space:]]*=[[:space:]]*-1[[:space:]]*$/ { f = 1 } END { exit !f }' "$wslconfig" 2>/dev/null; then
+    report ok "WSL stays up" "instanceIdleTimeout=-1 in .wslconfig"
+  else
+    report warn "WSL stays up" "add instanceIdleTimeout=-1 under [general] in $wslconfig: without it WSL shuts down 15 s after a crash ends the fleet's tab, and the fleet comes back only when WSL next starts" wslconfig="$wslconfig"
+  fi
+fi
+# The engine lanes (`fleet delegate`): each engine's binary, its login where a
+# file shows one, and which lanes are on. A lane never starts without the lock
+# policy and rules, so their absence turns the lanes off.
+# shellcheck source=fleet/engines.sh
+. "$here/engines.sh"
+for e in "${ENGINES[@]}"; do
+  lanes=""
+  eng_can "$e" print && lanes+="print "
+  eng_can "$e" interactive && lanes+="interactive "
+  if ! eng_has "$e"; then
+    report ok "engine $e" "not installed: its lanes are off"
+    continue
+  fi
+  login="login not checked"
+  case $e in
+    agy) [[ -s $HOME/.gemini/antigravity-cli/antigravity-oauth-token ]] && login="signed in" || login="not signed in (run agy once)" ;;
+    copilot) [[ -s $HOME/.copilot/config.json ]] && login="config present" || login="not signed in (copilot login)" ;;
+  esac
+  if [[ ! -r $ENG_LOCK || ! -r $FLEET_HOOK_DIR/klepsydra-engine-rules.md ]]; then
+    report warn "engine $e" "$login; lanes OFF: the lock policy or helper rules are missing from $FLEET_HOOK_DIR (fleet install)"
+  elif [[ $login == "not signed in"* ]]; then
+    report warn "engine $e" "$login; lanes: ${lanes% }"
+  else
+    report ok "engine $e" "$login; lanes: ${lanes% }, locked"
+  fi
+done
 if [[ -n $json ]]; then
   tmp=$json.tmp.$$
   if printf '%s\n' "${results[@]}" | jq -R -s --argjson at "$now" --argjson failed "$failed" \

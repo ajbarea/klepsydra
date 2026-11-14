@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # launch.sh NAME TEXTFILE [claude args...]: open a fleet tmux window running
-# claude, with a session id of its own, inside a memory-capped systemd scope
-# (a runaway test or build is OOM-killed there instead of freezing WSL); turn
+# claude, with a session id of its own, inside a memory- and task-capped systemd
+# scope in the fleet's slice, whose cap holds every scope's total (#353): a
+# runaway test or build is killed there instead of freezing WSL, and claude,
+# ranked last for the OOM killer, outlives it (lib.sh, oom-tool.sh); turn
 # Remote Control on and wait for it to settle; then paste TEXTFILE, check it
 # reached the prompt, and submit it. A retry never sends Escape, so it cannot
 # cancel a turn that started. Registers the pane, session and folder in
@@ -34,28 +36,39 @@ account=${account:-$FLEET_DEFAULT_CONFIG}
 account=$(nodir "$account") # "~/.claude/" is the default too, which must not set CLAUDE_CONFIG_DIR
 # Workers bypass permissions and Heph does not, so Heph's SendMessage would wait
 # for AJ's approval; worker-settings.json accepts it (AJ approved 2026-10-27).
-# The subagent cap enforces the briefs' rule of at most two at a time. Its env
-# turns keryx off, so only Heph speaks and no worker loads a voice model (#183).
+# The subagent cap enforces the briefs' rule of at most two at a time.
 # FLEET_SETTINGS="" starts it without them (the orchestrator, fleet recover).
+# Who speaks is keryx's own setting, which `fleet voices` keeps in line with
+# the tray's Voices mode for running sessions too (#273), so no session is
+# started with KERYX_ENABLED.
 settings=${FLEET_SETTINGS-$FLEET_STATE/worker-settings.json}
-# The tray's Voices setting (#183), from klepsydra's prefs.json: "heph" (the
-# default, and anything else) keeps the worker settings' keryx off, "everyone"
-# drops that line, and "off" gives a session started without them (Heph) keryx
-# off too. --settings takes a JSON string as well as a file, and outranks the
-# user's and the project's settings.
-voices=$(jq -ser 'if length == 1 then .[0].voices else empty end | select(. == "everyone" or . == "off")' "$KLEPSYDRA_DIR/prefs.json" 2>/dev/null) || voices=heph
-if [[ -n $settings && $voices == everyone ]]; then
-  settings=$(jq -c 'del(.env.KERYX_ENABLED) | if .env == {} then del(.env) else . end' "$settings" 2>/dev/null) || settings=${FLEET_SETTINGS-$FLEET_STATE/worker-settings.json}
-elif [[ -z $settings && $voices == off ]]; then
-  settings='{"env":{"KERYX_ENABLED":"false"}}'
-fi
 # KLEPSYDRA_AGENT names the session's agent to the fleet hook, so its card keeps
 # its face across relaunches (#172).
-# keryx's switch comes from --settings alone, never from the tmux server's
-# environment (a server started from a session with keryx off would pass it on).
-cmd="env -u KERYX_ENABLED $(config_env "$account")KLEPSYDRA_AGENT=$(printf '%q' "$name") CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS=2 ${FLEET_CLAUDE:-claude} --session-id $sid${settings:+ --settings $(printf '%q' "$settings")} $*"
+# No KERYX_ENABLED from the tmux server's environment either (a server started
+# from a session with keryx off would pass it on and outrank keryx's setting).
+# FLEET_SUCCEEDS (a session id) names the orchestrator a move replaces (#226).
+# KLEPSYDRA_WORKER marks a session started with worker settings, so start-up
+# hooks meant for the orchestrator (the stale-PR list) skip it (#309).
+succeeds=""
+[[ ${FLEET_SUCCEEDS:-} =~ ^[0-9a-f-]{36}$ ]] && succeeds="KLEPSYDRA_SUCCEEDS=$FLEET_SUCCEEDS "
+cmd="$(fleet_oom_floor)env -u KERYX_ENABLED -u KLEPSYDRA_WORKER $(config_env "$account")$(fleet_oom_env)KLEPSYDRA_AGENT=$(printf '%q' "$name") ${succeeds}${settings:+KLEPSYDRA_WORKER=1 }CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS=2 ${FLEET_CLAUDE:-claude} --session-id $sid${settings:+ --settings $(printf '%q' "$settings")} $*"
+tmax="" role=""
 if [[ ${FLEET_SCOPE:-1} != 0 ]]; then
-  cmd="systemd-run --user --scope --collect --unit=fleet-$name-$(date +%s) -p MemoryHigh=${MEM_HIGH:-4G} -p MemoryMax=${MEM_MAX:-5G} -p MemorySwapMax=${MEM_SWAP:-1G} $cmd"
+  # A task cap of its own (#289): inherited, it was DefaultTasksMax, and on
+  # 11-03 one worker's scope filled it and its claude aborted.
+  tasks=""
+  if tmax=$(fleet_tasks_max); then
+    tasks="-p TasksMax=$tmax "
+  else
+    flog WARN "no task cap readable; the scope inherits DefaultTasksMax" name="$name"
+  fi
+  # The orchestrator (launched under FLEET_ORCH_NAME, as doctor and the fleet
+  # hook know it) sits in the fleet's slice beside the workers' (#353). No
+  # MemoryHigh: past it the kernel throttles the scope, claude too, and never
+  # kills (11-11: a worker froze there, load 110).
+  role=worker
+  [[ $name == "$FLEET_ORCH_NAME" ]] && role=orchestrator
+  cmd="${FLEET_SYSTEMD_RUN:-systemd-run} --user --scope --collect --unit=fleet-$name-$(date +%s) $(fleet_slice_opts "$role") -p MemoryMax=${MEM_MAX:-5G} -p MemorySwapMax=${MEM_SWAP:-1G} ${tasks}$cmd"
 fi
 began=$SECONDS
 DELIVER_DEADLINE=$((SECONDS + ${FLEET_LAUNCH_DEADLINE:-120}))
@@ -66,8 +79,14 @@ took() { printf '%s' "$((SECONDS - began))"; }
 exec 8>>"$FLEET_STATE/.launch.lock"
 flock -w 120 8 || { flog ERROR "launch held: another launch kept the lock for 2 min" name="$name"; exit 1; }
 before=$(fleet_panes | sort)
+# Every fleet launch opens behind the window in view (#216). Its caller brings
+# a replacement forward only where AJ was watching the window it replaces
+# (fresh, heph_move, relaunch-fresh) or nothing has moved since a cold recover.
 # No stdin for the launcher: a caller reading a list on it would lose the rest (#242).
-if ! out=$(cd ~ && KLEPSYDRA_CLAUDE="$cmd" KLEPSYDRA_TMUX_SOCKET="$FLEET_SOCK" bash "${FLEET_LAUNCHER:-$HOME/.claude/klepsydra-launch.sh}" new "$dir" </dev/null 2>&1 7>&- 8>&-); then
+# Nor this launch's own FLEET_* settings: a tmux server the launcher starts copies
+# its environment into every later pane, so Heph's FLEET_SETTINGS='' would start
+# each worker after him unmarked, on his account (#310 review 1).
+if ! out=$(cd ~ && env -u FLEET_SETTINGS -u FLEET_ACCOUNT -u FLEET_SUCCEEDS KLEPSYDRA_CLAUDE="$cmd" KLEPSYDRA_TMUX_SOCKET="$FLEET_SOCK" KLEPSYDRA_BACKGROUND=1 bash "${FLEET_LAUNCHER:-$HOME/.claude/klepsydra-launch.sh}" new "$dir" </dev/null 2>&1 7>&- 8>&-); then
   flog ERROR "launch failed: the launcher refused" name="$name" said="$out"
   echo "launch failed: $out" # logcheck: ignore[stderr-for-errors] # the result line
   exit 1
@@ -86,7 +105,7 @@ marker=$FLEET_STATE/launching/$pane
 [[ ${FLEET_KEEP_MARK:-0} == 1 ]] || trap 'rm -f -- "${marker:?}"' EXIT
 trap 'exit 143' TERM INT
 exec 8>&-
-flog INFO "window opened" name="$name" pane="$pane" account="$account" voices="$voices" took_s="$(took)"
+flog INFO "window opened" name="$name" pane="$pane" account="$account" tasks_max="${tmax:-none}" slice="${role:-none}" took_s="$(took)"
 ready() { idle_empty "$1" || limit_line "$1" >/dev/null; }
 if wait_for "$pane" "$(capped "${FLEET_READY_WAIT:-60}")" ready; then
   flog INFO "prompt showed" name="$name" pane="$pane" took_s="$(took)"

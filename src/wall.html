@@ -17,7 +17,6 @@
       <div class="tally" role="group" aria-label="Session counts"></div>
       <button type="button" id="ci-open" popovertarget="ci" data-phone hidden>CI</button>
       <button type="button" id="health-open" popovertarget="health" data-phone hidden>Fleet</button>
-      <button type="button" id="agora-open" popovertarget="agora" data-phone hidden>Agora</button>
       <p class="wrapup-bar" hidden>
         <span class="wrapup-count"></span>
         <span class="wrapup-safe" hidden>Safe to restart</span>
@@ -37,7 +36,7 @@
         <button type="button" id="queue-open" aria-controls="queue" aria-expanded="false" aria-keyshortcuts="Control+Alt+B" title="Queue (Ctrl+Alt+B)">Queue</button>
         <button type="button" id="wrapup-open" aria-haspopup="dialog">Wrap up…</button>
       </div>
-      <button type="button" id="new-session" class="primary">+ New session</button>
+      <span class="new-split" role="group" aria-label="New session"><button type="button" id="new-session" class="primary">+ New session</button><button type="button" id="new-kind" class="primary" popovertarget="new-menu" aria-label="Start another kind of session" title="Start another kind of session" hidden><span aria-hidden="true">▾</span></button></span>
       <details class="gear">
         <summary title="View settings"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3.2"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1Z"/></svg><span class="visually-hidden">View</span></summary>
         <div class="view">
@@ -103,14 +102,14 @@
   </dialog>
   <button type="button" id="ledger-tab" class="ledger-tab" aria-label="Open Ledger" aria-controls="ledger" aria-expanded="false" title="Open Ledger" hidden>Ledger</button>
 
-  <dialog id="queue" class="queue" aria-labelledby="queue-title">
+  <dialog id="queue" class="queue" aria-label="Needs you and Queue">
     <div class="queue-resize" role="separator" aria-orientation="vertical" aria-label="Queue panel width" aria-controls="queue" tabindex="0"></div>
     <div class="queue-body">
       <header class="queue-head">
         <div>
-          <h2 id="queue-title" tabindex="-1">Queue</h2>
-          <p class="queue-path"></p>
-          <p class="queue-kept" hidden></p>
+          <h2 id="queue-title" tabindex="-1">Needs you</h2>
+          <p class="list-path"></p>
+          <p class="list-kept" hidden></p>
         </div>
         <div class="queue-tools">
           <div class="queue-text" role="group" aria-label="Text size">
@@ -122,8 +121,22 @@
           <button type="button" class="queue-close">Close</button>
         </div>
       </header>
-      <p class="queue-problem" role="status" hidden></p>
-      <div class="queue-content"></div>
+      <div class="lists">
+        <section id="needs-list" class="list list-needs" aria-labelledby="queue-title">
+          <p class="list-problem" role="status" hidden></p>
+          <div class="list-scroll"><div class="queue-content"></div></div>
+        </section>
+        <div class="lists-split" role="separator" aria-orientation="horizontal" aria-label="Split between Needs you and Queue" aria-controls="needs-list queue-list" tabindex="0" title="Drag, or use the arrow keys; double-click to reset"></div>
+        <section id="queue-list" class="list list-queue" aria-labelledby="queue-list-title">
+          <header class="list-head">
+            <h2 id="queue-list-title" tabindex="-1">Queue</h2>
+            <p class="list-path"></p>
+            <p class="list-kept" hidden></p>
+          </header>
+          <p class="list-problem" role="status" hidden></p>
+          <div class="list-scroll"><div class="queue-content"></div></div>
+        </section>
+      </div>
       <p class="queue-live visually-hidden" role="status"></p>
     </div>
   </dialog>
@@ -212,6 +225,12 @@
   </template>
 
   <script type="module" src="fleet/wall.js"></script>
+  <section id="new-menu" popover aria-label="Start an Antigravity session">
+    <h2 class="new-menu-title">Antigravity</h2>
+    <label class="new-menu-model">Model <select id="agy-model"></select></label>
+    <p class="new-menu-hint">On Google's quota, not Claude's. The session starts in the launch folder.</p>
+    <button type="button" id="agy-start" class="primary">Start</button>
+  </section>
   <section id="ci" popover aria-label="CI runs">
     <h2 class="ci-title"></h2>
     <ul class="ci-runs"></ul>
@@ -222,11 +241,5 @@
     <ul class="health-checks"></ul>
     <p class="health-note"></p>
   </section>
-  <section id="agora" popover aria-label="Agora posts">
-    <h2 class="agora-title"></h2>
-    <ol class="agora-posts"></ol>
-    <p class="agora-note" role="status"></p>
-  </section>
-  <template id="agora-react-tpl"><button type="button" class="agora-react" aria-pressed="false"><span aria-hidden="true"></span></button></template>
 </body>
 </html>

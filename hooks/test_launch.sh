@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 # Tests for the launcher against a private tmux server and a stub wt.exe.
-# Run: bash hooks/test_launch.sh
+# Run: make test-launch (it takes the heavy lock)
 set -uo pipefail
 
 here=$(cd "$(dirname "$0")" && pwd)
 launch="$here/klepsydra-launch.sh"
 work=$(mktemp -d)
-sock="kl-test-$$" sock2="kl-test2-$$" sock3="kl-test3-$$"
+unset KLEPSYDRA_BACKGROUND # a fleet pane's own, never this suite's
+sock="kl-test-$$" sock2="kl-test2-$$" sock3="kl-test3-$$" sock4="kl-test4-$$"
 sockdir="${TMUX_TMPDIR:-/tmp}/tmux-$(id -u)" # where tmux puts a -L socket
 clients=()
 cleanup() {
@@ -14,10 +15,16 @@ cleanup() {
   tmux -L "$sock" kill-server 2>/dev/null
   tmux -L "$sock2" kill-server 2>/dev/null
   tmux -L "$sock3" kill-server 2>/dev/null
-  rm -f -- "$sockdir/$sock" "$sockdir/$sock2" "$sockdir/$sock3"
+  tmux -L "$sock4" kill-server 2>/dev/null
+  rm -f -- "$sockdir/$sock" "$sockdir/$sock2" "$sockdir/$sock3" "$sockdir/$sock4"
   rm -rf "$work"
 }
 trap cleanup EXIT
+# A signal ends the run through exit, so the EXIT trap still stops the server (#239).
+trap 'exit 129' HUP; trap 'exit 130' INT; trap 'exit 143' TERM
+# No inherited descriptor past stderr: a tmux server started here would keep a
+# caller's lock, such as flock's /tmp/fleet-heavy.lock, after the run (#193).
+for fd in "/proc/$$/fd"/*; do n=${fd##*/}; (( n > 2 && n < 255 )) && eval "exec $n>&-"; done
 
 pass=0 fail=0
 check() {
@@ -51,6 +58,12 @@ chmod +x "$work/bin/wt.exe"
 export WT_LOG="$work/wt.log" WT_PIDS="$work/stub-pids" HOME="$work/home" XDG_RUNTIME_DIR="$work" WSL_DISTRO_NAME=Test
 export KLEPSYDRA_TMUX_SOCKET="$sock" KLEPSYDRA_TMUX_CONF="$here/klepsydra-tmux.conf"
 export KLEPSYDRA_CLAUDE="sleep 600" KLEPSYDRA_WT="$work/bin/wt.exe"
+# Never the host's systemd: an agent's own scope sets INVOCATION_ID, which
+# would put every test server in a real scope (#292 review 2). Cases that want
+# the scope path pass their own stub; any other call is recorded and fails.
+unset INVOCATION_ID
+printf '#!/usr/bin/env bash\necho "$*" >>%q\nexit 1\n' "$work/systemd-run-guard.calls" >"$work/bin/systemd-run-guard"; chmod +x "$work/bin/systemd-run-guard"
+export KLEPSYDRA_SYSTEMD_RUN="$work/bin/systemd-run-guard"
 : >"$WT_LOG"
 
 t() { tmux -L "$sock" "$@"; }
@@ -99,6 +112,103 @@ attach
 bash "$launch" new "$work/repos" >/dev/null 2>&1
 check "second: two windows" "$(windows)" "2"
 check "second: no new tab" "$(tabs)" "1"
+check "second: the new window comes forward" "$(t display -p -t =fleet: '#{window_index}')" "1"
+t select-window -t =fleet:0
+KLEPSYDRA_BACKGROUND=1 bash "$launch" new "$work/repos" >/dev/null 2>&1
+check "#216: a fleet launch opens behind, the window in view keeps focus" "$(windows) $(t display -p -t =fleet: '#{window_index}')" "3 0"
+
+echo "new: Antigravity (#323)"
+mkdir -p "$work/bin"
+cat >"$work/bin/agy" <<'EOF'
+#!/usr/bin/env bash
+if [[ ${1:-} == models ]]; then
+  printf 'Fetching available models...\ngemini-3.8-flash-high\tGemini 3.8 Flash (High)\nbad;id\tEvil\nclaude-opus-4-6-thinking\tClaude Opus 4.6 (Thinking)\n'
+  exit 0
+fi
+exec sleep 600
+EOF
+chmod +x "$work/bin/agy"
+printf '# Helper rules\nRead only.\n' >"$work/rules.md"
+export KLEPSYDRA_AGY="$work/bin/agy" KLEPSYDRA_RULES_SRC="$work/rules.md" KLEPSYDRA_AGY_RULES="$work/gemini/config/rules/klepsydra-fleet.md"
+export KLEPSYDRA_AGY_LOCK="$here/klepsydra-agy-locked.json"
+w0=$(windows)
+check "#323: models lists agy's as one line of JSON, dropping its fetching line and any id that is not one" \
+  "$(bash "$launch" models 2>&1)" '[{"id":"gemini-3.8-flash-high","label":"Gemini 3.8 Flash (High)"},{"id":"claude-opus-4-6-thinking","label":"Claude Opus 4.6 (Thinking)"}]'
+before=$(windows)
+out=$(bash "$launch" new "$work/repos" agy gemini-3.8-flash-high 2>&1); rc=$?
+check "#323: an agy session starts in a window of its own, said so" "$rc $(( $(windows) - before )) $out" "0 1 Started a locked Antigravity session (gemini-3.8-flash-high) in $work/repos."
+check "#323: on the model asked for" "$(t list-panes -a -F '#{pane_start_command}' | grep -c -- "$work/bin/agy --model gemini-3.8-flash-high")" "1"
+# The lock (agy-copilot lanes): every agy session the fleet starts is read-only, no shell, sandboxed.
+sf=$(t list-panes -a -F '#{pane_start_command}' | grep -o -- "--settings [^ ]*" | head -1 | cut -d' ' -f2 | tr -d "'\"")
+check "#323 lock: the session gets --sandbox and a settings file of its own, never AJ's" \
+  "$(t list-panes -a -F '#{pane_start_command}' | grep -c -- "--sandbox") $([[ $sf == "$KLEPSYDRA_AGY_LOCK" ]] && echo policy)" "1 policy"
+check "#323 lock: that file denies writes, the shell, MCP, URL reads and the browser, and asks before anything else (headless, that is a denial)" \
+  "$(jq -r '[.toolPermission, .allowNonWorkspaceAccess, .enableTerminalSandbox, (.permissions.deny | sort | join(","))] | join(" ")' "$sf")" \
+  "request-review false true command(*),execute_url(*),mcp(*),read_url(*),write_file(*)"
+check "#323 lock: it names no trusted workspace, so agy asks before trusting a folder (a repo's hooks load only under trust)" "$(jq -c '.trustedWorkspaces // "none"' "$sf")" '"none"'
+check "#323: the helper rules reach agy as an always-on rule made from the one source" \
+  "$(sed -n 2p "$KLEPSYDRA_AGY_RULES") $(grep -c '^Read only.$' "$KLEPSYDRA_AGY_RULES")" "trigger: always_on 1"
+check "#323: the shipped rules fit agy's 24000-byte limit and name no person, course or account" \
+  "$([[ $(stat -c %s "$here/klepsydra-engine-rules.md") -le 24000 ]] && echo fits) $(grep -cwE 'AJ|ajbar|RIT|CISC|Ben|makesense|Anthropic|Claude' "$here/klepsydra-engine-rules.md")" "fits 0"
+touch -d '2026-01-01' "$KLEPSYDRA_AGY_RULES"
+bash "$launch" new "$work/repos" agy gemini-3.8-flash-high >/dev/null 2>&1
+check "#323: unchanged rules are not written again" "$(date -r "$KLEPSYDRA_AGY_RULES" +%F)" "2026-01-01"
+before=$(windows)
+out=$(bash "$launch" new "$work/repos" agy 'x;touch /tmp/pwned' 2>&1); rc=$?
+check "#323: a model that is no id starts nothing" "$rc $(( $(windows) - before )) $out" "1 0 That is not an agy model id: x;touch /tmp/pwned"
+out=$(KLEPSYDRA_RULES_SRC="$work/no-rules.md" bash "$launch" new "$work/repos" agy gemini-3.8-flash-high 2>&1); rc=$?
+check "#323: with the helper rules unreadable, no agy session starts" "$rc $(( $(windows) - before ))" "1 0"
+lb=$(windows)
+out=$(KLEPSYDRA_AGY_LOCK="$work/no-lock.json" bash "$launch" new "$work/repos" agy gemini-3.8-flash-high 2>&1); rc=$?
+check "#323 lock: with the lock policy unreadable, no agy session starts (never an unlocked one)" "$rc $(( $(windows) - lb ))" "1 0"
+lb=$(windows)
+for f in hooks plugins skills; do
+  mkdir -p "$work/ships-$f/.agents"; echo '{}' >"$work/ships-$f/.agents/$f.json"
+  out=$(bash "$launch" new "$work/ships-$f" agy gemini-3.8-flash-high 2>&1); rc=$?
+  check "#323 lock: a folder that ships .agents/$f.json is no locked agy workspace (its trust dialog is the only gate)" "$rc $(( $(windows) - lb )) $(grep -c "ships agy workspace configuration" <<<"$out")" "1 0 1"
+done
+git init -q "$work/anc" && mkdir -p "$work/anc/.agents" "$work/anc/sub" && echo '{}' >"$work/anc/.agents/hooks.json"
+out=$(bash "$launch" new "$work/anc/sub" agy gemini-3.8-flash-high 2>&1); rc=$?
+check "#323 lock: a folder whose repo root ships .agents is refused (agy walks up to it)" "$rc $(( $(windows) - lb ))" "1 0"
+for nm in _agents _agent .agent; do
+  mkdir -p "$work/nm$nm/$nm"
+  out=$(bash "$launch" new "$work/nm$nm" agy gemini-3.8-flash-high 2>&1); rc=$?
+  check "#323 lock: $nm is refused too (agy loads workspace configuration from all four folder names)" "$rc $(( $(windows) - lb ))" "1 0"
+done
+mkdir -p "$work/winmnt/c/proj"
+out=$(KLEPSYDRA_WINDOWS_MOUNT="$work/winmnt" bash "$launch" new "$work/winmnt/c/proj" agy gemini-3.8-flash-high 2>&1); rc=$?
+check "#323 lock: a folder on the Windows side is no agy workspace (its user folders hold credentials)" "$rc $(( $(windows) - lb )) $(grep -c 'Windows side' <<<"$out")" "1 0 1"
+out=$(bash "$launch" new / agy gemini-3.8-flash-high 2>&1); rc=$?
+check "#323 lock: / is no agy workspace" "$rc $(( $(windows) - lb ))" "1 0"
+out=$(bash "$launch" new "${HOME%/*}" agy gemini-3.8-flash-high 2>&1); rc=$?
+check "#323 lock: neither is a folder that holds the home folder (the parent of it)" "$rc $(( $(windows) - lb ))" "1 0"
+out=$(bash "$launch" new "$HOME" agy gemini-3.8-flash-high 2>&1); rc=$?
+check "#323 lock: the whole home folder is never an agy workspace (its reads would reach every secret in it)" "$rc $(( $(windows) - before ))" "1 0"
+mkdir -p "$work/gemini/config/rules"
+printf -- '---\ntrigger: always_on\ndescription: "AJ'"'"'s global rules, made from /x/CLAUDE.md by klepsydra; edit that file, not this one."\n---\nold\n' >"$work/gemini/config/rules/claude-global.md"
+printf -- 'my own rule\n' >"$work/gemini/config/rules/mine.md"
+bash "$launch" new "$work/repos" agy gemini-3.8-flash-high >/dev/null 2>&1
+check "#323: the earlier launcher's whole-CLAUDE.md rule is removed; a rule that is not klepsydra's stays" "$([[ -e $work/gemini/config/rules/claude-global.md ]] && echo old-kept || echo gone) $(cat "$work/gemini/config/rules/mine.md")" "gone my own rule"
+printf -- 'someone else\n' >"$work/gemini/config/rules/claude-global.md"
+bash "$launch" new "$work/repos" agy gemini-3.8-flash-high >/dev/null 2>&1
+check "#323: and a claude-global.md that is not klepsydra's is left alone" "$(cat "$work/gemini/config/rules/claude-global.md")" "someone else"
+before=$(windows) # the two launches above opened windows
+head -c 24100 /dev/zero | tr '\0' x >"$work/big-rules.md"
+out=$(KLEPSYDRA_RULES_SRC="$work/big-rules.md" bash "$launch" new "$work/repos" agy gemini-3.8-flash-high 2>&1); rc=$?
+check "#323: rules over agy's 24000-byte limit start nothing" "$rc $(( $(windows) - before ))" "1 0"
+check "#323: a launch of anything else is refused" "$(bash "$launch" new "$work/repos" codex x >/dev/null 2>&1; echo $?) $(( $(windows) - before ))" "1 0"
+# The cases after count the fleet's windows: the agy ones this section opened go.
+t list-panes -a -F '#{window_id} #{pane_start_command}' | awk -v a="$work/bin/agy" 'index($0, a) { print $1 }' | xargs -r -n1 tmux -L "$sock" kill-window -t
+check "#323: and its windows are closed again" "$(windows)" "$w0"
+unset KLEPSYDRA_AGY KLEPSYDRA_RULES_SRC KLEPSYDRA_AGY_RULES KLEPSYDRA_AGY_LOCK
+# A fleet launch that starts the server (a cold recover) must not hand the flag
+# to the server's environment, or every later pane, the wall's included, opens behind.
+# Its own stub log: the tab it opens is not one of the fleet socket's tabs counted below.
+WT_LOG="$work/wt4.log" KLEPSYDRA_TMUX_SOCKET="$sock4" KLEPSYDRA_BACKGROUND=1 bash "$launch" new "$work/repos" >/dev/null 2>&1
+check "#229 review: a flagged launch that starts the server keeps the flag out of its environment" \
+  "$(tmux -L "$sock4" has-session -t =fleet 2>/dev/null && echo up) $(tmux -L "$sock4" show-environment -g 2>/dev/null | grep -c '^KLEPSYDRA_BACKGROUND=')" "up 0"
+tmux -L "$sock4" kill-server 2>/dev/null
+t kill-window -t "=fleet:$(t list-windows -t =fleet -F '#{window_index}' | tail -1)"
 detach_all
 check "closed tab: sessions survive" "$(windows)" "2"
 bash "$launch" new "$work/repos" >/dev/null 2>&1
@@ -364,6 +474,14 @@ for verb in end interrupt wrapup; do
 done
 check "pane locked: no key sent" "$(wc -c <"$work/fake.log")" "0"
 exec {held}>&-
+# A fleet script typing into the pane (#325) holds its typing lock: End waits, then gives up untyped.
+mkdir -p "$HOME/.local/state/fleet-orchestrator/locks"
+exec {held}>>"$HOME/.local/state/fleet-orchestrator/locks/send-${p#%}"; flock -n "$held"
+out=$(KLEPSYDRA_TYPING_WAIT=1 send end "$p" 2>&1); rc=$?
+check "fleet typing: end exits 1 and says why" "$rc $out" "1 A fleet script is typing into that session; try again in a moment."
+check "fleet typing: no key sent" "$(wc -c <"$work/fake.log")" "0"
+exec {held}>&-
+rm -rf -- "${HOME:?}/.local/state/fleet-orchestrator"
 out=$(send interrupt "$p" 2>&1)
 check "pane unlocked: interrupt runs" "$out" "Sent Esc to the session."
 t kill-pane -t "$p"
@@ -460,8 +578,19 @@ t kill-pane -t "$p"
 
 out=$(bash "$launch" bogus 2>&1); rc=$?
 check "unknown command: exit 1" "$rc" "1"
-check "unknown command: says so" "$out" "usage: klepsydra-launch.sh new DIR | jump|end|interrupt|wrapup SOCKET PANE PID START"
+check "unknown command: says so" "$out" "usage: klepsydra-launch.sh new DIR [agy MODEL] | models | voices | jump|end|interrupt|wrapup SOCKET PANE PID START"
 check "unknown command: no tab" "$(tabs)" "1"
+
+# #273: the tray's Voices change runs the installed fleet voices at once, with
+# no mode: the tray has saved it, and fleet voices reads it.
+mkdir -p "$work/fbin"
+printf '#!/usr/bin/env bash\nprintf "[%%s]\\n" "$*" >>"%s/fleet.calls"\n' "$work" >"$work/fbin/fleet"; chmod +x "$work/fbin/fleet"
+out=$(FLEET_BIN="$work/fbin" bash "$launch" voices 2>&1); rc=$?
+check "#273: voices runs fleet voices with no mode, and opens no tab" "$rc $(cat "$work/fleet.calls") $(tabs)" "0 [voices] 1"
+out=$(FLEET_BIN="$work/fbin" bash "$launch" voices everyone 2>&1); rc=$?
+check "#273: a mode argument is refused before anything runs" "$rc $(wc -l <"$work/fleet.calls")" "1 1"
+out=$(FLEET_BIN="$work/nofleet" bash "$launch" voices 2>&1); rc=$?
+check "#273: without the fleet installed it says so" "$rc $out" "1 The fleet commands are not installed (make install-fleet)."
 
 # Another click holding the lock past its 10 s: the window is selected anyway.
 detach_all; : >"$WT_LOG"
@@ -586,9 +715,87 @@ check "a socket path wt.exe would split: says so" "$out" \
 check "a socket path wt.exe would split: nothing running, no tab" \
   "$(TMUX_TMPDIR="$odd" tmux -L "$sock" list-sessions 2>/dev/null | wc -l)|$(tabs)" "0|0"
 
+echo "a server started from a systemd unit gets its own scope (#292 review)"
+# A oneshot unit's end kills what it leaves in its cgroup: the tmux watchdog's
+# recover starts the fleet's server from one, so the launcher wraps it.
+cat >"$work/bin/systemd-run" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >>"$work/systemd-run.calls"
+while [[ \$# -gt 0 && \$1 != -- ]]; do shift; done
+shift
+exec "\$@"
+EOF
+chmod +x "$work/bin/systemd-run"
+ss="kl-scope-$$"
+out=$(INVOCATION_ID=abc KLEPSYDRA_SYSTEMD_RUN="$work/bin/systemd-run" KLEPSYDRA_TMUX_SOCKET="$ss" bash "$launch" new "$work/repos" 2>&1); rc=$?
+check "#292 review: from a unit, the new server starts inside systemd-run --user --scope" \
+  "$rc $(grep -c -- '--user --scope --quiet --collect --unit=klepsydra-tmux-[0-9]* -- tmux -L '"$ss" "$work/systemd-run.calls") $(tmux -L "$ss" list-sessions -F '#{session_name}' 2>/dev/null)" "0 1 fleet"
+tmux -L "$ss" kill-server 2>/dev/null; : >"$work/systemd-run.calls"
+out=$(env -u INVOCATION_ID KLEPSYDRA_SYSTEMD_RUN="$work/bin/systemd-run" KLEPSYDRA_TMUX_SOCKET="$ss" bash "$launch" new "$work/repos" 2>&1); rc=$?
+check "#292 review: from a terminal, as before: no scope" "$rc $(wc -l <"$work/systemd-run.calls")" "0 0"
+tmux -L "$ss" kill-server 2>/dev/null
+# A CI runner is a systemd service with no user manager: systemd-run fails.
+printf '#!/usr/bin/env bash\necho "Failed to connect to bus" >&2\nexit 1\n' >"$work/bin/systemd-run-nobus"; chmod +x "$work/bin/systemd-run-nobus"
+out=$(INVOCATION_ID=abc KLEPSYDRA_SYSTEMD_RUN="$work/bin/systemd-run-nobus" KLEPSYDRA_TMUX_SOCKET="$ss" bash "$launch" new "$work/repos" 2>&1); rc=$?
+check "#292 review: with no user manager to make a scope, the server starts as from a terminal" \
+  "$rc $(tmux -L "$ss" list-sessions -F '#{session_name}' 2>/dev/null)" "0 fleet"
+tmux -L "$ss" kill-server 2>/dev/null
+
+echo "the pane-died hook (#290)"
+# The 11-03 crash: tmux 3.4 sent focus-out to a pane whose process had ended
+# (kept by remain-on-exit failed) and died. The hook starts such a pane again.
+# The client runs in an outer server's pane, so send-keys there types focus
+# reports into it the way a terminal does.
+mkdir -p "$HOME/.claude"; cp "$here/klepsydra-pane-died.sh" "$HOME/.claude/"
+in4="kl-test4-$$" out4="kl-test5-$$"
+ti() { tmux -L "$in4" "$@"; }
+to() { tmux -L "$out4" "$@"; }
+KLEPSYDRA_DEAD_DIR="$work/dead" FLEET_BIN="$work/nobin" ti -f "$KLEPSYDRA_TMUX_CONF" new-session -d -s s -x 80 -y 24 \
+  "printf 'last words\n\033[?1004h'; until [ -e $work/die4 ]; do sleep 0.1; done; kill -TERM \$\$"
+spid=$(ti display -p '#{pid}')
+v0=$(ti display -p -t s '#{pane_id}') # the first viewer's pane, whatever window is current later
+to -f /dev/null new-session -d -s o -x 80 -y 24 "TERM=xterm-256color tmux -L $in4 attach -t s"
+sleep 1
+to send-keys -t o -l $'\033[I'; sleep 0.5
+touch "$work/die4"
+for _ in $(seq 50); do [[ -n $(ti show -pqv -t s @klepsydra_dead 2>/dev/null) ]] && break; sleep 0.1; done
+check "#290: a pane whose process was killed is started again at once, marked with why" \
+  "$(ti display -p -t s '#{pane_dead}') $(ti show -pqv -t s @klepsydra_dead | cut -d' ' -f2-)" "0 its process ended on signal 15"
+check "#292 review 3: the mark names the viewer's own pid" "$(ti show -pqv -t s @klepsydra_dead | cut -d' ' -f1)" "$(ti display -p -t s '#{pane_pid}')"
+check "#290: its last screen is saved" "$(cat "$work"/dead/*.txt 2>/dev/null | grep -c '^last words$')" "1"
+to send-keys -t o -l $'\033[O'; sleep 0.5
+to send-keys -t o -l $'\033[I'; sleep 0.5
+check "#290: focus moving off it and back leaves the server running (tmux 3.4 died here)" "$(kill -0 "$spid" 2>/dev/null && echo alive || echo died)" "alive"
+shown=$(ti capture-pane -p -J -S - -t s)
+check "#290: the pane shows its saved screen and how to close it" \
+  "$(grep -q '^last words *$' <<<"$shown" && echo screen) $(grep -q 'process ended on signal 15\. .*Press Enter to close\.' <<<"$shown" && echo note)" "screen note"
+# A viewer killed instead of closed with Enter is closed, never started again.
+w2=$(ti new-window -d -P -F '#{pane_id}' -t s: "sh -c 'sleep 0.3; exit 3'")
+for _ in $(seq 50); do [[ -n $(ti show -pqv -t "$w2" @klepsydra_dead 2>/dev/null) ]] && break; sleep 0.1; done
+check "#290: a non-zero exit is marked with its status" "$(ti show -pqv -t "$w2" @klepsydra_dead | cut -d' ' -f2-)" "its process exited with status 3"
+kill -TERM "$(ti display -p -t "$w2" '#{pane_pid}')"; sleep 1
+# (display -t names a gone pane with empty fields and exit 0 in tmux 3.4, so the list decides.)
+check "#290: its viewer killed: the pane is closed" "$(ti list-panes -a -F '#{pane_id}' | grep -cx -- "$w2")" "0"
+# #292 review 3 (m2): a viewer's pane started again by hand keeps the old mark;
+# the program there dying is a new death, saved and shown, never closed unsaved.
+w3=$(ti new-window -d -P -F '#{pane_id}' -t s: "sh -c 'sleep 0.3; exit 3'")
+for _ in $(seq 50); do [[ -n $(ti show -pqv -t "$w3" @klepsydra_dead 2>/dev/null) ]] && break; sleep 0.1; done
+ti respawn-pane -k -t "$w3" "sh -c 'echo second words; sleep 0.3; exit 4'"
+for _ in $(seq 50); do [[ $(ti show -pqv -t "$w3" @klepsydra_dead 2>/dev/null) == *"status 4" ]] && break; sleep 0.1; done
+check "#292 review 3: a program started by hand in a viewer's pane dies: shown again, marked anew, its screen saved" \
+  "$(ti list-panes -a -F '#{pane_id}' | grep -cx -- "$w3") $(ti show -pqv -t "$w3" @klepsydra_dead | cut -d' ' -f2-) $(cat "$work"/dead/*.txt 2>/dev/null | grep -c '^second words$')" \
+  "1 its process exited with status 4 1"
+ti kill-pane -t "$w3" 2>/dev/null
+ti send-keys -t "$v0" Enter
+for _ in $(seq 50); do ti list-panes -a -F '#{pane_id}' 2>/dev/null | grep -qx -- "$v0" || break; sleep 0.1; done
+check "#290: Enter closes a dead pane's viewer" "$(ti list-panes -a -F '#{pane_id}' 2>/dev/null | grep -cx -- "$v0") (left: $(ti list-panes -a -F '#{pane_id}:#{pane_start_command}' 2>/dev/null | tr '\n' ' '))" "0 (left: )"
+ti kill-server 2>/dev/null; to kill-server 2>/dev/null
+rm -f -- "$sockdir/${in4:?}" "$sockdir/${out4:?}"
+
 echo "cleanup"
 cleanup; trap - EXIT
 check "no socket files left" "$(find "$sockdir" -maxdepth 1 \( -name "$sock" -o -name "$sock2" -o -name "$sock3" \) 2>/dev/null)" ""
 
+check "#292 review 2: no case reached the host's systemd-run" "$(cat "$work/systemd-run-guard.calls" 2>/dev/null)" ""
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [[ $fail -eq 0 ]]

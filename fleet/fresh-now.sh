@@ -31,24 +31,29 @@ while IFS=$'\t' read -r -u 3 p name brief sid _ account; do
   best=$(best_account "$(date +%s)")
   if [[ -n $best && $best != "$account" && $(account_of "$best") != "$(account_of "$account")" ]]; then
     out=$(FLEET_ACCOUNT=$best FLEET_WHY="had grown too large to keep resuming, and starts again on the preferred account with room" \
-      bash "$here/relaunch-fresh.sh" "$p" "$name" "$brief" "none: carry on from the brief" </dev/null 3<&- 2>/dev/null | head -1)
-    flog INFO "fresh session on the preferred account with room" pane="$p" name="$name" from="$account" to="$best" result="$out"
-    echo "fresh: $name moved to $best: $out"
+      bash "$here/relaunch-fresh.sh" "$p" "$name" "$brief" "none: carry on from the brief" </dev/null 3<&- 2>/dev/null)
+    rc=$?
+    if (( rc == 0 )); then
+      flog INFO "fresh session on the preferred account with room" pane="$p" name="$name" from="$account" to="$best" result="$out"
+      echo "fresh: $name moved to $best: $out"
+    else
+      flog WARN "fresh session not moved to the preferred account; the pane is kept" pane="$p" name="$name" from="$account" to="$best" rc="$rc"
+      echo "skipped: $name in $p (relaunch on $best refused or failed; see fleet log)"
+    fi
     continue
   fi
   txt="$FLEET_STATE/fresh-$name-$(date +%Y%m%d-%H%M).src"
   { fresh_preamble "had grown too large to keep resuming"; printf '\n\n'; cat "$brief"; } >"$txt"
-  if ! type_exactly "$p" "/clear"; then
-    flog WARN "fresh session skipped: AJ typed while /clear went in" pane="$p" name="$name"
+  if ! pane_locked "$p" type_enter "$p" "/clear"; then
+    flog WARN "fresh session skipped: /clear did not go in (AJ typed meanwhile, or another typer held the pane)" pane="$p" name="$name"
     continue
   fi
-  t send-keys -t "$p" Enter
   wait_for "$p" 30 idle_empty || flog WARN "/clear did not come back to an empty prompt" pane="$p" name="$name"
   # /clear starts a new session id in the same pane: the registry follows it.
   new_sid=""
   for _ in $(seq 20); do
     if new_sid=$(live_session "$p") && [[ $new_sid != "$sid" ]]; then
-      set_session "$p" "$new_sid" && break
+      set_session "$p" "$sid" "$new_sid" && break
       flog WARN "the new session id could not be recorded in the registry" pane="$p" session_id="$new_sid"
       break
     fi

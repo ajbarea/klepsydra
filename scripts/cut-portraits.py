@@ -1,7 +1,7 @@
-"""Cut the fifteen kourai portraits to the fleet's faces, as 96 px and 192 px
+"""Cut the sixteen kourai portraits to the fleet's faces, as 96 px and 192 px
 WebP, with a LICENSES.json entry for each file. Ten come from the head of the
-kourai-khryseai 640 px neutral portraits; five (chronos, argos, hermes, elpis, hesychia)
-come from this repo's assets/portraits/<name>.jpg.
+kourai-khryseai 640 px neutral portraits; six (chronos, argos, hermes, elpis, hesychia,
+athena) come from this repo's assets/portraits/<name>.jpg.
 
 Each character also gets a half-figure cut-out for the card's header band
 (<name>-figure.webp, 384 px with alpha: kourai's transparent portraits, or
@@ -20,20 +20,20 @@ from PIL import Image
 
 ROOT = Path(__file__).resolve().parent.parent
 KOURAI = ("aidos", "aletheia", "cupid", "dokimasia", "hephaestus", "kallos", "metis", "mneme", "puck", "techne")
-NEW = ("argos", "chronos", "elpis", "hermes", "hesychia")
+NEW = ("argos", "athena", "chronos", "elpis", "hermes", "hesychia")
 NAMES = tuple(sorted(KOURAI + NEW))
 # (left, top, right, bottom) of the head in the source portrait. Hephaestus
 # stands right of centre at his anvil. The five new boxes are in the 1024 px
 # JPEGs, framed like Hephaestus: head and beard in the upper middle, one
-# shoulder entering the circle. Hermes's hat wings clip; his face and brim stay.
+# shoulder entering the circle; Athena's owl peeks in at her far shoulder. Hermes's hat wings clip; his face and brim stay.
 HEAD = (
     {name: (180, 20, 460, 300) for name in KOURAI}
     | {"hephaestus": (250, 20, 530, 300)}
-    | {"chronos": (330, 20, 970, 660), "argos": (200, 20, 700, 520), "hermes": (330, 30, 850, 550), "elpis": (300, 20, 780, 500), "hesychia": (250, 40, 810, 600)}
+    | {"chronos": (242, 20, 842, 620), "argos": (268, 20, 768, 520), "hermes": (266, 30, 786, 550), "elpis": (270, 20, 750, 500), "hesychia": (212, 20, 772, 580), "athena": (290, 10, 870, 590)}
 )
 SIZES = (96, 192)
 # (left, top, right, bottom) of the square half-figure: the head in the upper
-# middle, cut at the waist. The five newer portraits are already half-figures.
+# middle, cut at the waist. The six newer portraits are already half-figures.
 # Cupid's wings reach her portrait's edges, so she is cut whole: the figure breaks the card's frame (#247).
 FIGURE = {
     "aidos": (110, 13, 558, 461), "aletheia": (90, 17, 538, 465), "cupid": (0, 0, 640, 640),
@@ -49,7 +49,7 @@ SOURCE = (
 )
 LICENSE = "MIT (kourai-khryseai LICENSE, Copyright (c) 2026 AJ Barea)"
 NEW_SOURCE = (
-    "AJ Barea, generated from the briefs in docs/characters/portrait-briefs.md "
+    "AJ Barea, generated from the prompts in kourai-khryseai assets/avatars/originals/portrait-prompts.md "
     "(assets/portraits/{name}.jpg), head cropped and scaled to {size} px"
 )
 NEW_LICENSE = "MIT (Copyright (c) 2026 AJ Barea)"
@@ -58,12 +58,12 @@ FIGURE_SOURCE = (
     "half-figure cropped and scaled to {size} px"
 )
 NEW_FIGURE_SOURCE = (
-    "AJ Barea, generated from the briefs in docs/characters/portrait-briefs.md; cut out of its backdrop "
+    "AJ Barea, generated from the prompts in kourai-khryseai assets/avatars/originals/portrait-prompts.md; cut out of its backdrop "
     "by scripts/cutout-portraits.py (rembg isnet-anime, Apache-2.0) as assets/portraits/{name}-cutout.webp, "
     "scaled to {size} px"
 )
 FULL_SOURCE = "kourai-khryseai assets/avatars/vn/{name}_neutral.png (https://github.com/ajbarea/kourai-khryseai), whole, {size} px"
-NEW_FULL_SOURCE = "AJ Barea, generated from the briefs in docs/characters/portrait-briefs.md (assets/portraits/{name}.jpg), whole, {size} px"
+NEW_FULL_SOURCE = "AJ Barea, generated from the prompts in kourai-khryseai assets/avatars/originals/portrait-prompts.md (assets/portraits/{name}.jpg), whole, {size} px"
 
 
 def main(kourai: Path, faces: Path) -> None:

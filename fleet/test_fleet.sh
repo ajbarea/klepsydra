@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Tests for the fleet scripts against a private tmux server and fake Claude
-# Code panes (tests/fake_pane.py), with no real Claude. Run: bash fleet/test_fleet.sh
+# Code panes (tests/fake_pane.py), with no real Claude. Run: make test-fleet (it takes the heavy lock)
 set -uo pipefail
 
 here=$(cd "$(dirname "$0")" && pwd)
@@ -9,11 +9,31 @@ work=$(mktemp -d)
 export TZ=America/New_York # the fixtures' times are AJ's
 export FLEET_SOCK="fleet-test-$$" FLEET_STATE="$work/state" FLEET_SESSION=fleet
 export FLEET_HOOK_DIR="$work/claude" # never the real ~/.claude
+# Never AJ's keryx: the resume service skips voices, and voices.sh finds no keryx
+# and reads a private keryx config, unless a case hands it a stub (#273).
+export FLEET_LIVE_CONF=0 FLEET_VOICES=0 FLEET_KERYX="$work/no-keryx" XDG_CONFIG_HOME="$work/xdg"
+real_keryx_config=${HOME}/.config/keryx/config.json
+real_keryx_sum=$(sha256sum "$real_keryx_config" 2>/dev/null | cut -d' ' -f1)
 export KLEPSYDRA_DIR="$work/klepsydra" FLEET_TICK=0.1 FLEET_START_WAIT=4 FLEET_TURN_WAIT=6 FLEET_RC_WAIT=12
 mkdir -p "$FLEET_STATE" "$KLEPSYDRA_DIR/accounts/a" "$KLEPSYDRA_DIR/accounts/b"
 # Two config folders, logged out until a case logs one in (accounts a and b).
 export FLEET_DEFAULT_CONFIG="$work/cfg-a" FLEET_DEFAULT_JSON="$work/cfg-a.json" FLEET_ACCOUNTS="$work/cfg-a $work/cfg-b"
-unset CLAUDE_CONFIG_DIR
+unset CLAUDE_CONFIG_DIR KLEPSYDRA_BACKGROUND
+# Never AJ's user manager (#265 review): a case that wants systemctl passes its
+# own stub; a bare `systemctl` lands on a guard that records the call.
+export FLEET_SYSTEMCTL="$work/no-systemctl"
+# The memory slices are sized from a fixed MemTotal (#353), never the runner's.
+printf 'MemTotal:       10186856 kB\nMemAvailable:    5151140 kB\n' >"$work/meminfo"
+export FLEET_MEMINFO="$work/meminfo"
+# and earlyoom's line, as AJ's PC sets it, never the runner's (none on CI).
+printf 'EARLYOOM_ARGS="-m 5 -s 100,100 -r 3600"\n' >"$work/earlyoom"
+export FLEET_EARLYOOM_CONF="$work/earlyoom"
+# Never the host's WSL: the doctor reads AJ's .wslconfig only on WSL (#292 review 3).
+unset WSL_DISTRO_NAME FLEET_WSLCONFIG
+mkdir -p "$work/guard"
+printf '#!/usr/bin/env bash\necho "$*" >>%q\nexit 1\n' "$work/guard.calls" >"$work/guard/systemctl"
+chmod +x "$work/guard/systemctl"
+export PATH="$work/guard:$PATH"
 login() { # a|b
   local d=$work/cfg-$1 j=$work/cfg-$1/.claude.json
   [[ $1 == a ]] && j=$FLEET_DEFAULT_JSON
@@ -23,9 +43,15 @@ login() { # a|b
 logout() { rm -f -- "$work/cfg-${1:?}/.credentials.json"; }
 cleanup() {
   tmux -L "$FLEET_SOCK" kill-server 2>/dev/null
+  chmod -R u+w -- "${work:?}" 2>/dev/null
   rm -rf -- "${work:?}"
 }
 trap cleanup EXIT
+# A signal ends the run through exit, so the EXIT trap still stops the server (#239).
+trap 'exit 129' HUP; trap 'exit 130' INT; trap 'exit 143' TERM
+# No inherited descriptor past stderr: a tmux server started here would keep a
+# caller's lock, such as flock's /tmp/fleet-heavy.lock, after the run (#193).
+for fd in "/proc/$$/fd"/*; do n=${fd##*/}; (( n > 2 && n < 255 )) && eval "exec $n>&-"; done
 
 pass=0 fail=0
 check() {
@@ -34,6 +60,12 @@ check() {
     pass=$((pass + 1)); printf '  ok   %s\n' "$name"
   else
     fail=$((fail + 1)); printf '  FAIL %s\n       want: %s\n       got:  %s\n' "$name" "$want" "$got"
+    # On GitHub Actions, an annotation names the failing case on the run's page.
+    if [[ -n ${GITHUB_ACTIONS:-} ]]; then
+      local msg=${name//%/%25}
+      msg=${msg//$'\r'/%0D}
+      printf '::error file=fleet/test_fleet.sh,line=%s,title=fleet test failed::%s\n' "${BASH_LINENO[0]}" "${msg//$'\n'/%0A}"
+    fi
   fi
 }
 has() { grep -qF -- "$2" <<<"$1" && echo yes || echo no; } # TEXT NEEDLE
@@ -54,6 +86,8 @@ state() { printf '%s' "$2" >"$work/$1.json"; sleep 0.4; } # NAME STATE-JSON
 events() { cat "$work/$1.log"; }
 settle() { sleep 0.6; }
 reading() { # DIR LABEL FIVE_HOUR_PCT MTIME: a usage reading for account DIR
+  # A case that sets an account's reading starts with no limit seen on it (#319).
+  rm -f -- "$FLEET_STATE/limited/${1:?}".five "$FLEET_STATE/limited/${1:?}".seven
   jq -n --arg l "$2" --argjson u "$3" --argjson r "$(( $(date +%s) + 3600 ))" \
     '{label: $l, windows: {five_hour: {used_percentage: $u, resets_at: $r}}}' >"$KLEPSYDRA_DIR/accounts/$1/s.json"
   touch -d "@$4" "$KLEPSYDRA_DIR/accounts/$1/s.json"
@@ -77,6 +111,24 @@ check "another zone (London is GMT again on Nov 2; New York is EST)" "$(at 'rese
 now=$(TZ=America/New_York date -d '2026-12-30 10:00' +%s)
 check "a date past the new year" "$(at 'resets Jan 3, 9am (America/New_York)')" "2027-01-03 09:00"
 check "no reset named" "$(reset_epoch 'nothing here' "$now" || echo none)" "none"
+now=$(TZ=America/New_York date -d '2027-01-01 00:30' +%s)
+check "#265 review: a dated reset just before the new year, read after it, is last year's" "$(at 'resets Dec 31, 11pm (America/New_York)')" "2026-12-31 23:00"
+now=$(TZ=America/New_York date -d '2026-10-31 22:00' +%s)
+check "#265 review: tomorrow across the clock change keeps the wall-clock time" "$(TZ=America/New_York at 'resets 2am')" "2026-11-01 02:00"
+now=$(TZ=America/New_York date -d '2026-11-03 01:00' +%s)
+check "#265 review 2: a time-only reset up to a day ahead stays ahead (a weekly one is dated only past 24 h)" "$(TZ=America/New_York at 'resets 11pm')" "2026-11-03 23:00"
+now=$(TZ=America/New_York date -d '2026-03-07 21:00' +%s)
+check "#265 review 3: tomorrow's 2:30am, which the spring-forward skips, fails rather than reading as now" \
+  "$(TZ=America/New_York reset_epoch 'resets 2:30am' "$now"; echo "rc=$?")" "rc=1"
+check "#265 review 4: a dated reset at a skipped time fails too" \
+  "$(TZ=America/New_York reset_epoch 'resets Mar 8, 2:30am (America/New_York)' "$now"; echo "rc=$?")" "rc=1"
+now=$(TZ=America/New_York date -d '2026-03-08 00:30' +%s)
+check "#265 review 4: and so does today's, read before the clock change" \
+  "$(TZ=America/New_York reset_epoch 'resets 2am' "$now"; echo "rc=$?")" "rc=1"
+now=$(TZ=America/New_York date -d '2026-11-02 18:50' +%s)
+check "#265 review: with a 19 h roll (the doctor's), a reset 6 h past is today's" \
+  "$(TZ=America/New_York date -d "@$(reset_epoch 'resets 12:40pm' "$now" 68400)" '+%F %H:%M')" "2026-11-02 12:40"
+now=$(TZ=America/New_York date -d '2026-12-30 10:00' +%s)
 check "the last reset on screen wins" "$(TZ=America/New_York date -d "@$(reset_epoch $'resets 1pm\nresets 3pm' "$now")" +%H:%M)" "15:00"
 
 echo "reading the screen"
@@ -98,9 +150,122 @@ state read '{"above":["  ⎿  You'"'"'ve hit your session limit · resets 1:10pm
 check "an old limit far above the prompt is not one" "$(limit_line "$(screen "$p")" || echo none)" "none"
 state read '{"above":["x"],"below":["  ⚠ Usage limit reached · limit resets 4:10am"]}'
 check "the status line banner" "$(limit_line "$(screen "$p")")" "  ⚠ Usage limit reached · limit resets 4:10am"
+# Claude Code 2.1.316 names the window (#263): each name in its label map, and near misses.
+for w in "5-hour limit" "weekly limit" "Opus limit" "Sonnet limit" "Fable limit" "usage credit limit" "limit"; do
+  state read "{\"above\":[\"  ⎿  You've hit your $w · resets 12:40pm\",\"\",\"\"]}"
+  check "#263: \"You've hit your $w\" is a limit" "$(limit_line "$(screen "$p")" | grep -c "hit your $w")" "1"
+done
+state read '{"above":["  ⎿  You'"'"'ve hit your 5-hour limit · resets 12:40pm","❯ The usage limit has reset. Please continue.","● Queue is empty"]}'
+check "#265 review: a limit followed by a prompt sent after it is past" "$(limit_line "$(screen "$p")" || echo none)" "none"
+state read '{"above":["❯ a note","  ⎿  You'"'"'ve hit your 5-hour limit · resets 12:40pm"]}'
+check "#265 review: a limit that answered the last prompt is current" "$(limit_line "$(screen "$p")" | grep -c '5-hour limit')" "1"
+state read '{"above":["  ⎿  You'"'"'ve hit your session limit · resets 1:10pm (America/New_York)","❯ /rate-limit-options","  ⎿  Claude Code will continue automatically at 1:10pm"]}'
+check "#265 review 2: Claude Code's own /rate-limit-options after the limit leaves it current" "$(limit_line "$(screen "$p")" | grep -c 'session limit')" "1"
+state read '{"above":["  ⎿  You'"'"'ve hit your fast limit · resets in 3m","",""]}'
+check "#265 review: the /fast dialog's limit is no usage limit" "$(limit_line "$(screen "$p")" || echo none)" "none"
+state read '{"above":["  ⎿  You'"'"'ve hit your org'"'"'s monthly spend limit · your 5-hour limit resets 1pm","",""]}'
+check "#265 review: a three-word name with an apostrophe is a limit" "$(limit_line "$(screen "$p")" | grep -c 'spend limit')" "1"
+check "#265 review: LIMIT_RE has no {m,n} interval (mawk ignores one)" "$(grep -c '[{][0-9]' <<<"$LIMIT_RE")" "0"
+for w in "I think you hit your stride on the limits" "You've hit your limits page" "Then you've hit your weekly limits"; do
+  state read "{\"above\":[\"$w\",\"\",\"\"]}"
+  check "#263: \"$w\" is no limit" "$(limit_line "$(screen "$p")" || echo none)" "none"
+done
 state read '{"above":["x"],"menu":"limit"}'
 check "a menu hides the input box" "$(has_input_box "$(screen "$p")" && echo box || echo none)" "none"
 t kill-window -t "$p"
+
+echo "limits from events (#311)"
+# A session the fleet hook recorded at STATE (default: a StopFailure rate_limit), in pane PANE.
+stop_file() { # SID PANE STATE_AT ACCOUNT MESSAGE [STATE REASON]
+  jq -n --arg p "$2" --argjson at "$3" --arg a "$4" --arg m "$5" --arg st "${6:-error}" --arg r "${7:-rate limit}" \
+    '{session_id: "x", ended: null, tmux: {pane: $p}, state: $st, reason: $r, state_at: $at, error: $m}
+     + (if $a == "" then {} else {account: {id: $a, label: "Ev"}} end)' >"$KLEPSYDRA_DIR/fleet/$1.json"
+}
+# A usage reading for account ID: each window's percentage used and reset.
+win() { # ID FIVE_PCT FIVE_RESET [SEVEN_PCT SEVEN_RESET]
+  mkdir -p "$KLEPSYDRA_DIR/accounts/$1"
+  jq -n --argjson fp "$2" --argjson fr "$3" --arg sp "${4:-}" --arg sr "${5:-}" \
+    '{label: "Ev", windows: ({five_hour: {used_percentage: $fp, resets_at: $fr}}
+      + (if $sp == "" then {} else {seven_day: {used_percentage: ($sp | tonumber), resets_at: ($sr | tonumber)}} end))}' \
+    >"$KLEPSYDRA_DIR/accounts/$1/ev.json"
+}
+evn=$(TZ=America/New_York date -d '2026-10-28 12:00' +%s)
+E1=aaaaaaaa-0000-4000-8000-000000000311
+L5='  ⎿  You'"'"'ve hit your 5-hour limit · resets 1:10pm (America/New_York)'
+LW='  ⎿  You'"'"'ve hit your weekly limit · resets Nov 2, 1pm (America/New_York)'
+ev() { limit_event %9001 || echo none; }
+stop_file "$E1" %9001 "$evn" ev1 "$L5"; win ev1 100 $((evn + 4000))
+check "a spent window's resets_at dates the stop, not the message's text" "$(ev)" "$((evn + 4000))"$'\t'"$L5"
+win ev1 60 $((evn + 4000))
+check "a window not yet shown spent: the one the message names" "$(ev)" "$((evn + 4000))"$'\t'"$L5"
+stop_file "$E1" %9001 "$evn" ev1 "$LW"; win ev1 30 $((evn + 4000)) 100 $((evn + 200000))
+check "a weekly stop: the weekly window's reset" "$(ev | cut -f1)" "$((evn + 200000))"
+win ev1 100 $((evn + 4000)) 100 $((evn + 200000))
+check "both spent: the later reset" "$(ev | cut -f1)" "$((evn + 200000))"
+stop_file "$E1" %9001 "$evn" ev1 "API Error: Rate limit reached"; win ev1 60 $((evn + 4000))
+check "a passing API rate limit with room left parks nothing" "$(ev)" "none"
+win ev1 100 $((evn + 4000))
+check "the same error with the window spent is a limit" "$(ev | cut -f1)" "$((evn + 4000))"
+old=$((evn - 3 * 86400))
+stop_file "$E1" %9001 "$old" ev1 "$L5"
+check "a stop older than the account's window: its own text, read from the stop's day" \
+  "$(TZ=America/New_York date -d "@$(ev | cut -f1)" '+%F %H:%M')" "2026-10-25 13:10"
+stop_file "$E1" %9001 "$evn" ev1 '  ⎿  You'"'"'ve hit your fast limit · resets in 3m'
+check "the /fast limit is no usage limit" "$(ev)" "none"
+stop_file "$E1" %9001 "$evn" ev1 "$L5" working null
+check "a prompt since (working) clears it" "$(ev)" "none"
+eve=$(TZ=America/New_York date -d '2026-10-28 19:00' +%s)
+stop_file "$E1" %9001 "$eve" ev-none '  ⎿  You'"'"'ve hit your weekly limit · resets 3pm (America/New_York)'
+check "a time-only reset 20 h after the stop is the next day's, never before the stop" \
+  "$(TZ=America/New_York date -d "@$(ev | cut -f1)" '+%F %H:%M')" "2026-10-29 15:00"
+login a; printf '{"oauthAccount":{"accountUuid":"ev-new"}}\n' >"$FLEET_DEFAULT_JSON"
+stop_file "$E1" %9001 "$evn" ev1 "$L5"; win ev1 100 $((evn + 4000))
+check "a /login in the pane's folder since: the old account's readings date nothing, the text does" "$(ev | cut -f1)" "$((evn + 4200))"
+printf '{"oauthAccount":{"accountUuid":"ev1"}}\n' >"$FLEET_DEFAULT_JSON"
+check "the same account still logged in: its reading dates it" "$(ev | cut -f1)" "$((evn + 4000))"
+logout a; rm -f -- "${FLEET_DEFAULT_JSON:?}" # as before this case: never logged in
+# #313 review 2: a model's own weekly limit dates itself; the all-models week, not spent, is another window.
+stop_file "$E1" %9001 "$evn" ev1 '  ⎿  You'"'"'ve hit your Opus weekly limit · resets Oct 30, 1pm (America/New_York)'
+win ev1 30 $((evn + 4000)) 61 $((evn + 200000))
+check "#313 review 2: a weekly window that disagrees with the stop's own dated reset does not date it" \
+  "$(TZ=America/New_York date -d "@$(ev | cut -f1)" '+%F %H:%M')" "2026-10-30 13:00"
+stop_file "$E1" %9001 "$evn" ev1 '  ⎿  You'"'"'ve hit your Opus weekly limit · resets Nov 2, 1pm (America/New_York)'
+win ev1 30 $((evn + 4000)) 61 $((evn + 172800))
+check "#313 review 3: nor one that ends days before it" "$(TZ=America/New_York date -d "@$(ev | cut -f1)" '+%F %H:%M')" "2026-11-02 13:00"
+# #313 review 2: Heph's pane is no row; its folder is his own (orchestrator.config), not the default.
+had_b=0; [[ -d $work/cfg-b ]] && had_b=1
+login a; login b; printf '{"oauthAccount":{"accountUuid":"ev1"}}\n' >"$work/cfg-b/.claude.json"
+printf '%%9001\n' >"$FLEET_STATE/orchestrator.pane"; printf '%s\n' "$work/cfg-b" >"$FLEET_STATE/orchestrator.config"
+stop_file "$E1" %9001 "$evn" ev1 "$L5"; win ev1 100 $((evn + 4000))
+check "#313 review 2: Heph's stop is dated by the account on his own folder" "$(ev | cut -f1)" "$((evn + 4000))"
+logout a; logout b; rm -f -- "${FLEET_DEFAULT_JSON:?}" "$work/cfg-b/.claude.json" "$FLEET_STATE/orchestrator.pane" "$FLEET_STATE/orchestrator.config"
+# The second folder as it was: a folder login made would be one the doctor checks.
+(( had_b )) || rm -rf -- "${work:?}/cfg-b"
+stop_file "$E1" %9001 "$evn" ev-none "$L5"
+check "no reading: the message's reset" "$(ev | cut -f1)" "$((evn + 4200))"
+stop_file "$E1" %90010 "$evn" ev1 "$L5"
+check "a file naming pane %90010 is no session of pane %9001" "$(ev)" "none"
+stop_file "$E1" %9001 "$evn" ev1 "$L5"
+ln -s "$KLEPSYDRA_DIR/fleet/$E1.json" "$KLEPSYDRA_DIR/fleet/link.json"
+check "a link to a session file is no second session" "$(ev | cut -f1)" "$((evn + 4000))"
+cp "$KLEPSYDRA_DIR/fleet/$E1.json" "$KLEPSYDRA_DIR/fleet/copy.json"
+check "two live files naming the pane are no answer" "$(ev)" "none"
+rm -f -- "$KLEPSYDRA_DIR/fleet/link.json" "$KLEPSYDRA_DIR/fleet/copy.json" "$KLEPSYDRA_DIR/fleet/${E1:?}.json"
+
+: >"$FLEET_LOG"
+p=$(pane evlim '{"above":["work"],"on_submit":"busy"}'); settle
+stop_file "$E1" "$p" "$evn" ev1 "$L5"; win ev1 100 $((evn + 4000))
+resume "$evn"
+check "a limit the screen no longer shows is seen from the hook's record, dated by resets_at" \
+  "$(jq -r 'select(.message == "limit seen") | [.pane, .from, .resets] | join(" ")' "$FLEET_LOG")" \
+  "$p event $(date -d "@$((evn + 4000))" '+%a %F %H:%M')"
+check "nothing is typed before that reset" "$(events evlim)" ""
+resume "$((evn + 4000 + 130))"
+check "and it resumes at the reading's reset, before the message's 1:10pm" "$(has "$(events evlim)" "SUBMIT The usage limit has reset.")" "yes"
+t kill-window -t "$p"
+rm -f -- "$KLEPSYDRA_DIR/fleet/${E1:?}.json"
+rm -rf -- "${KLEPSYDRA_DIR:?}/accounts/ev1"
+: >"$FLEET_LOG"
 
 echo "resume: limits, resets and accounts"
 reading a Personal 40 1000
@@ -110,10 +275,30 @@ noon=$(TZ=America/New_York date -d '2026-10-28 12:00' +%s)
 resume "$noon"
 check "a limit is seen and logged with its pane, account and reset" \
   "$(jq -r 'select(.message == "limit seen") | [.pane, .account, .resets] | join(" ")' "$FLEET_LOG")" "$p Personal Wed 2026-10-28 13:10"
+check "#319: a folder with no known login marks no account" "$(ls "$FLEET_STATE/limited" 2>/dev/null)" ""
+p2=$(pane unreg "{\"above\":[\"work\",\"$LIMIT\"]}"); settle; login a
+resume "$noon"
+check "#319: nor does a pane no row names (its folder is a guess)" "$(ls "$FLEET_STATE/limited" 2>/dev/null)" ""
+check "#322 review 3: and its limit-seen line names no mark" \
+  "$(jq -r --arg p "$p2" 'select(.message == "limit seen" and .pane == $p) | .marked' "$FLEET_LOG")" "none"
+logout a; rm -f -- "${FLEET_DEFAULT_JSON:?}"; t kill-window -t "$p2"
 check "nothing is typed before the reset" "$(events lim)" ""
 resume "$(( noon + 3600 + 600 + 130 ))"
 check "after the reset, the continue message goes in and starts a turn" "$(has "$(events lim)" "SUBMIT The usage limit has reset.")" "yes"
 check "logged as resumed, with the turn started" "$(jq -r 'select(.message == "resumed with the continue message") | .started' "$FLEET_LOG")" "yes"
+t kill-window -t "$p"
+: >"$FLEET_LOG"
+LIMIT5='  ⎿  You'"'"'ve hit your 5-hour limit · resets 1:10pm (America/New_York)'
+p=$(pane lim5 "{\"above\":[\"work\",\"$LIMIT5\"],\"on_submit\":\"busy\"}"); settle
+resume "$noon"
+check "#263: the 2.1.316 wording is seen as a limit, with its reset" \
+  "$(jq -r 'select(.message == "limit seen") | [.pane, .resets] | join(" ")' "$FLEET_LOG")" "$p Wed 2026-10-28 13:10"
+check "#263: each pass says what it saw, in resume.beat for the doctor" "$(sed 's/ at=.*//' "$FLEET_STATE/resume.beat")" "panes=2 limited=1 limited_panes=$p"
+check "#263: and logs it when it changes" "$(jq -r 'select(.message == "pass") | [.limited_count, .limited] | join(" ")' "$FLEET_LOG" | tail -1)" "1 $p"
+resume "$noon"
+check "#263: an unchanged pass is not logged again" "$(jq -c 'select(.message == "pass")' "$FLEET_LOG" | wc -l)" "1"
+resume "$(( noon + 3600 + 600 + 130 ))"
+check "#263: and it is resumed after the reset" "$(has "$(events lim5)" "SUBMIT The usage limit has reset.")" "yes"
 t kill-window -t "$p"
 
 : >"$FLEET_LOG"
@@ -251,6 +436,97 @@ check "and the registry points at it again" "$(cut -f1,4 "$REGISTRY")" "$p	$SID"
 check "round 3: nothing is typed into the pane AJ took back" "$(grep -c '^SUBMIT' "$work/changed.log")" "0"
 check "logged as an error" "$(jq -r 'select(.level == "ERROR") | .message' "$FLEET_LOG" | grep -c 'the old pane changed while its fresh session launched')" "1"
 t kill-window -t "$p"; : >"$REGISTRY"
+
+# #261 review 10: the new session's /exit runs the fleet hook's SessionEnd,
+# which records a finish for the row naming that session. The rollback points
+# the row back first, so the agent itself is never recorded finished.
+: >"$FLEET_LOG"; rm -f -- "$FLEET_STATE/finished.tsv"
+p=$(pane rolled "{\"above\":[\"⏺ Done. done 9:00 AM\",\"$LIMIT\"]}"); settle
+live "$p"
+printf '%s\trolled\t%s\t%s\t/w\n' "$p" "$work/brief.src" "$SID" >"$REGISTRY"
+NSID=bbbbbbbb-0000-4000-8000-0000000000e1
+cat >"$work/launch-undelivered.sh" <<EOF
+#!/usr/bin/env bash
+# A launch whose brief never starts a turn: a new pane, the row repointed at it
+# and its session as launch.sh does, then NOT-DELIVERED.
+printf '%s' '{"exit_on_exit": true, "on_exit": "bash $here/registry-event.sh SessionEnd $NSID prompt_input_exit"}' >"$work/rolled-new.json"
+: >"$work/rolled-new.log"
+n=\$(tmux -L "$FLEET_SOCK" new-window -d -P -F '#{pane_id}' -t fleet: "python3 -I $fake $work/rolled-new.json $work/rolled-new.log")
+sleep 0.6
+sed -i "s|^$p\t\([^\t]*\)\t\([^\t]*\)\t$SID|\$n\t\1\t\2\t$NSID|" "$REGISTRY"
+echo "pane=\$n session=$NSID account=x avail=1MiB brief=NOT-DELIVERED"
+EOF
+resume "$(TZ=America/New_York date -d '2026-10-28 09:00' +%s)"
+LAUNCH="$work/launch-undelivered.sh" FLEET_NOW=$(( noon + 4330 )) bash "$here/resume-at-reset.sh" --once 2>/dev/null
+check "#261 review 10: an undelivered brief's rollback: the new pane got /exit, and its end ran the hook" \
+  "$(grep -c 'SUBMIT /exit' "$work/rolled-new.log") $(jq -r 'select(.message == "fresh session'"'"'s brief did not start; the old pane stays and the new one goes") | .name' "$FLEET_LOG")" "1 rolled"
+check "#261 review 10: the row names the old pane and session again, and no finish is recorded" \
+  "$(cut -f1,4 "$REGISTRY") | $(cat "$FLEET_STATE/finished.tsv" 2>/dev/null | grep -c .) | $(session_finished "$SID" && echo finished || echo not-finished)" "$p	$SID | 0 | not-finished"
+t kill-window -t "$p" 2>/dev/null; : >"$REGISTRY"; rm -f -- "$FLEET_STATE/finished.tsv"
+# A launch that started its session but never repointed the row (it could not
+# take the registry lock): the old session must not be retired, or its own
+# /exit would record the agent finished.
+: >"$FLEET_LOG"
+p=$(pane unpointed "{\"above\":[\"⏺ Done. done 9:00 AM\",\"$LIMIT\"],\"exit_on_exit\":true,\"on_exit\":\"bash $here/registry-event.sh SessionEnd $SID prompt_input_exit\"}"); settle
+live "$p"
+printf '%s\tunpointed\t%s\t%s\t/w\n' "$p" "$work/brief.src" "$SID" >"$REGISTRY"
+cat >"$work/launch-unpointed.sh" <<EOF
+#!/usr/bin/env bash
+: >"$work/unpointed-new.log"
+n=\$(tmux -L "$FLEET_SOCK" new-window -d -P -F '#{pane_id}' -t fleet: "python3 -I $fake $work/rolled-new.json $work/unpointed-new.log")
+sleep 0.6
+echo "pane=\$n session=$NSID account=x avail=1MiB brief=started"
+EOF
+resume "$(TZ=America/New_York date -d '2026-10-28 09:00' +%s)"
+LAUNCH="$work/launch-unpointed.sh" FLEET_NOW=$(( noon + 4330 )) bash "$here/resume-at-reset.sh" --once 2>/dev/null
+new_unp=$(jq -r 'select(.message | startswith("the launch left its row unregistered")) | .new_pane' "$FLEET_LOG")
+check "#261 review 10: a row the launch never repointed: fresh repoints it to the new session, then retires the old, and no finish is recorded" \
+  "$(grep -c 'SUBMIT /exit' "$work/unpointed.log") $(grep -c 'SUBMIT /exit' "$work/unpointed-new.log") | $(cut -f1,4 "$REGISTRY") | $(cat "$FLEET_STATE/finished.tsv" 2>/dev/null | grep -c .)" \
+  "1 0 | $new_unp	$NSID | 0"
+check "#261 review 10: logged as a warning" "$(jq -r 'select(.level == "WARN") | .message' "$FLEET_LOG" | grep -c "the launch left its row unregistered")" "1"
+t kill-window -t "$new_unp" 2>/dev/null
+t kill-window -t "$p" 2>/dev/null; : >"$REGISTRY"; rm -f -- "$FLEET_STATE/finished.tsv"
+# #261 review 12: the same, with a stale row of another agent on the new pane id
+# (a past server's): only a row of this agent's name counts as registered.
+: >"$FLEET_LOG"
+p=$(pane unstale "{\"above\":[\"⏺ Done. done 9:00 AM\",\"$LIMIT\"],\"exit_on_exit\":true,\"on_exit\":\"bash $here/registry-event.sh SessionEnd $SID prompt_input_exit\"}"); settle
+live "$p"
+printf '%s\tunstale\t%s\t%s\t/w\n' "$p" "$work/brief.src" "$SID" >"$REGISTRY"
+cat >"$work/launch-unstale.sh" <<EOF
+#!/usr/bin/env bash
+: >"$work/unstale-new.log"
+n=\$(tmux -L "$FLEET_SOCK" new-window -d -P -F '#{pane_id}' -t fleet: "python3 -I $fake $work/rolled-new.json $work/unstale-new.log")
+printf '%s\tother\t/b\tOTHERSID\t/w\n' "\$n" >>"$REGISTRY"
+sleep 0.6
+echo "pane=\$n session=$NSID account=x avail=1MiB brief=started"
+EOF
+resume "$(TZ=America/New_York date -d '2026-10-28 09:00' +%s)"
+LAUNCH="$work/launch-unstale.sh" FLEET_NOW=$(( noon + 4330 )) bash "$here/resume-at-reset.sh" --once 2>/dev/null
+new_unp=$(jq -r 'select(.message | startswith("the launch left its row unregistered")) | .new_pane' "$FLEET_LOG")
+check "#261 review 12: a stale row on the new pane id is not this agent's: its row is still repointed, and no finish is recorded" \
+  "$(cut -f1,2,4 "$REGISTRY" | tr '\t\n' ' |') $(cat "$FLEET_STATE/finished.tsv" 2>/dev/null | grep -c .)" \
+  "${new_unp:-none} unstale $NSID|${new_unp:-none} other OTHERSID| 0"
+[[ -n $new_unp ]] && t kill-window -t "$new_unp" 2>/dev/null
+t kill-window -t "$p" 2>/dev/null; : >"$REGISTRY"; rm -f -- "$FLEET_STATE/finished.tsv"
+# The other rollback, AJ typing into the old pane during the launch, in the same order.
+: >"$FLEET_LOG"
+p=$(pane typedin "{\"above\":[\"⏺ Done. done 9:00 AM\",\"$LIMIT\"]}"); settle
+live "$p"
+printf '%s\ttypedin\t%s\t%s\t/w\n' "$p" "$work/brief.src" "$SID" >"$REGISTRY"
+cat >"$work/launch-typedin.sh" <<EOF
+#!/usr/bin/env bash
+: >"$work/typedin-new.log"
+n=\$(tmux -L "$FLEET_SOCK" new-window -d -P -F '#{pane_id}' -t fleet: "python3 -I $fake $work/rolled-new.json $work/typedin-new.log")
+tmux -L "$FLEET_SOCK" send-keys -t "$p" -l "AJ: hold on"
+sleep 1
+sed -i "s|^$p\t\([^\t]*\)\t\([^\t]*\)\t$SID|\$n\t\1\t\2\t$NSID|" "$REGISTRY"
+echo "pane=\$n session=$NSID account=x avail=1MiB brief=started"
+EOF
+resume "$(TZ=America/New_York date -d '2026-10-28 09:00' +%s)"
+LAUNCH="$work/launch-typedin.sh" FLEET_NOW=$(( noon + 4330 )) bash "$here/resume-at-reset.sh" --once 2>/dev/null
+check "#261 review 10: AJ typed during the launch: the new session's end leaves the restored row alone" \
+  "$(grep -c 'SUBMIT /exit' "$work/typedin-new.log") | $(cut -f1,4 "$REGISTRY") | $(cat "$FLEET_STATE/finished.tsv" 2>/dev/null | grep -c .)" "1 | $p	$SID | 0"
+t kill-window -t "$p" 2>/dev/null; : >"$REGISTRY"; rm -f -- "$FLEET_STATE/finished.tsv"
 
 echo "round 4: AJ resumed the old pane during the launch"
 : >"$FLEET_LOG"
@@ -432,8 +708,10 @@ echo "launch.sh"
 cat >"$work/launcher.sh" <<EOF
 #!/usr/bin/env bash
 # The launcher's "new": one more fleet window running KLEPSYDRA_CLAUDE.
+printf '%s\n' "\${KLEPSYDRA_BACKGROUND-unset}" >>"$work/launcher-bg"
 tmux -L "\$KLEPSYDRA_TMUX_SOCKET" new-window -d -t fleet: -c "\$3" "\$KLEPSYDRA_CLAUDE"
 EOF
+: >"$work/launcher-bg"
 printf 'Do the thing.\nThen the other thing.\n' >"$work/task.src"
 launch() { # NAME STATE-JSON: launch.sh with a fake claude starting from STATE
   printf '%s' "$2" >"$work/$1.json"; : >"$work/$1.log"
@@ -445,12 +723,69 @@ out=$(launch agent1 '{"above":["Claude Code"]}')
 check "delivered: Remote Control settles first, then the brief goes in whole and a turn starts" \
   "$(events agent1)" $'RC REQUESTED\nRC ON\nPASTE 36\nSUBMIT Do the thing.\\nThen the other thing.\\n'
 check "reported started" "${out##* }" "brief=started"
+check "#216: it asks the launcher to open behind the window in view" "$(cat "$work/launcher-bg")" "1"
 sid=$(sed -E 's/.*session=([^ ]+).*/\1/' <<<"$out")
 check "registered with its session id and folder" "$(cut -f2,3,4,5 "$REGISTRY")" "agent1	$FLEET_STATE/task-agent1.src	$sid	$work"
 out=$(launch agent1 '{"above":["Claude Code"]}')
 p=${out%% *}; p=${p#pane=}
 check "a relaunch repoints the same row" "$(wc -l <"$REGISTRY") $(cut -f1 "$REGISTRY")" "1 $p"
 check "the fleet log has the launch" "$(jq -r 'select(.target == "fleet::launch" and .pane == "'"$p"'") | .message' "$FLEET_LOG" | tail -1)" "brief delivered: a turn started"
+
+# #289: the scope's task cap, from the tightest pids.max above the caller's own
+# cgroup, split over the two workers and Heph.
+cgr="$work/cg"; leaf=/user.slice/user-1.slice/user@1.service/app.slice/me.scope
+mkdir -p "$cgr$leaf"
+echo 11926 >"$cgr$leaf/pids.max"; echo max >"$cgr${leaf%/*}/pids.max"; echo 26237 >"$cgr/user.slice/user-1.slice/pids.max"; echo max >"$cgr/user.slice/pids.max"
+tm() { FLEET_CGROUP_ROOT="$cgr" FLEET_CGROUP=$leaf fleet_tasks_max; }
+check "#289: the user slice's cap over three, never the caller's own scope's" "$(tm)" "8745"
+echo 9000 >"$cgr${leaf%/*}/pids.max"
+check "#289: a tighter cap higher up wins" "$(tm)" "3000"
+echo max >"$cgr${leaf%/*}/pids.max"; echo max >"$cgr/user.slice/user-1.slice/pids.max"
+check "#289: no cap readable: fails (the scope then inherits)" "$(tm || echo none)" "none"
+check "#289: FLEET_TASKS_MAX sets it, and a bad one is refused" "$(FLEET_TASKS_MAX=500 tm) $(FLEET_TASKS_MAX=5x tm || echo refused)" "500 refused"
+echo 26237 >"$cgr/user.slice/user-1.slice/pids.max"
+# A systemd-run that records its arguments and runs the command after its options.
+cat >"$work/systemd-run" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >>"$work/sdrun.calls"
+while [[ \$1 == --* || \$1 == -p ]]; do [[ \$1 == -p ]] && shift; shift; done
+exec "\$@"
+EOF
+chmod +x "$work/systemd-run"; : >"$work/sdrun.calls"
+printf '%s' '{"above":["Claude Code"]}' >"$work/scoped.json"; : >"$work/scoped.log"
+out=$(FLEET_SCOPE=1 FLEET_SYSTEMD_RUN="$work/systemd-run" FLEET_CGROUP_ROOT="$cgr" FLEET_CGROUP=$leaf FLEET_MIN_AVAIL_MB=0 \
+  FLEET_LAUNCHER="$work/launcher.sh" FLEET_DIR="$work" FLEET_CLAUDE="python3 -I $fake $work/scoped.json $work/scoped.log" \
+  bash "$here/launch.sh" scoped "$work/task.src" 2>/dev/null | head -1)
+check "#289: the session's scope gets its own task cap beside the memory caps" \
+  "$(grep -o 'MemorySwapMax=[^ ]* -p TasksMax=[0-9]*' "$work/sdrun.calls")" "MemorySwapMax=1G -p TasksMax=8745"
+check "#289: the launch logs the cap it set" "$(jq -r 'select(.message == "window opened" and .name == "scoped") | .tasks_max' "$FLEET_LOG")" "8745"
+check "#289: the scoped launch still delivers" "${out##* }" "brief=started"
+t kill-pane -t "$(sed -E 's/^pane=([^ ]+).*/\1/' <<<"$out")" 2>/dev/null
+# #353: the scope in the workers' slice, kept when the kernel kills a job in it,
+# capped hard (no MemoryHigh: it freezes rather than kills); claude at OOM rank
+# 0, and every shell it starts ranked first through BASH_ENV.
+call=$(tail -1 "$work/sdrun.calls")
+check "#353: a worker's scope sits in the workers' slice and outlives an OOM kill in it" \
+  "$(grep -o -- '--slice=[^ ]* -p OOMPolicy=[^ ]* -p MemoryMax=[^ ]* -p MemorySwapMax=[^ ]*' <<<"$call")" "--slice=fleet-workers.slice -p OOMPolicy=continue -p MemoryMax=5G -p MemorySwapMax=1G"
+check "#353: no MemoryHigh on the scope" "$(grep -c MemoryHigh <<<"$call")" "0"
+check "#353: claude starts at OOM rank 0, its shells ranked first by BASH_ENV" \
+  "$(grep -c "fleet-oom env .*BASH_ENV=$here/oom-tool.sh KLEPSYDRA_AGENT=scoped" <<<"$call") $(grep -c 'echo 0 >/proc/self/oom_score_adj' <<<"$call")" "1 1"
+: >"$work/sdrun.calls"
+out=$(FLEET_SETTINGS='' FLEET_SCOPE=1 FLEET_SYSTEMD_RUN="$work/systemd-run" FLEET_CGROUP_ROOT="$cgr" FLEET_CGROUP=$leaf FLEET_MIN_AVAIL_MB=0 \
+  FLEET_LAUNCHER="$work/launcher.sh" FLEET_DIR="$work" FLEET_CLAUDE="python3 -I $fake $work/scoped.json $work/scoped.log" \
+  bash "$here/launch.sh" heph "$work/task.src" 2>/dev/null | head -1)
+check "#353: the orchestrator's scope sits in the fleet's slice, beside the workers'" \
+  "$(grep -o -- '--slice=[^ ]* -p OOMPolicy=[^ ]*' "$work/sdrun.calls")" "--slice=fleet.slice -p OOMPolicy=continue"
+check "#353: and the launch logs which" "$(jq -r 'select(.message == "window opened" and .name == "heph") | .slice' "$FLEET_LOG")" "orchestrator"
+t kill-pane -t "$(sed -E 's/^pane=([^ ]+).*/\1/' <<<"$out")" 2>/dev/null
+# Placed by name, not by missing settings: a bare launch under another name is a worker.
+: >"$work/sdrun.calls"
+out=$(FLEET_SETTINGS='' FLEET_SCOPE=1 FLEET_SYSTEMD_RUN="$work/systemd-run" FLEET_CGROUP_ROOT="$cgr" FLEET_CGROUP=$leaf FLEET_MIN_AVAIL_MB=0 \
+  FLEET_LAUNCHER="$work/launcher.sh" FLEET_DIR="$work" FLEET_CLAUDE="python3 -I $fake $work/scoped.json $work/scoped.log" \
+  bash "$here/launch.sh" scoped-bare "$work/task.src" 2>/dev/null | head -1)
+check "#353 review 4: a launch with no worker settings under another name sits in the workers' slice" \
+  "$(grep -o -- '--slice=[^ ]* -p OOMPolicy=[^ ]*' "$work/sdrun.calls")" "--slice=fleet-workers.slice -p OOMPolicy=continue"
+t kill-pane -t "$(sed -E 's/^pane=([^ ]+).*/\1/' <<<"$out")" 2>/dev/null
 
 out=$(launch agent2 '{"above":["Claude Code"],"on_submit":"limit"}')
 check "blocked by a limit" "${out##* }" "brief=blocked-by-limit"
@@ -467,6 +802,17 @@ check "reported started" "${out##* }" "brief=started"
 out=$(FLEET_START_WAIT=1 launch agent5 '{"above":["Claude Code"],"busy_delay":2}')
 check "a turn whose spinner shows late is never interrupted by a retry" "$(grep -cE 'ESC|INTERRUPTED' "$work/agent5.log") ${out##* }" "0 brief=started"
 check "nor submitted twice" "$(grep -c '^SUBMIT' "$work/agent5.log")" "1"
+# The cause, with the screen mocked: the wait after Enter ends, the log line after it takes
+# long enough for the box to empty, and the second Enter must not be pressed on the old reading.
+dbcalls="$work/db.calls"; : >"$dbcalls"; rm -f -- "$work/db.gate"
+check "a box that emptied while the retry's log line ran gets no second Enter (the CI red: an empty line submitted)" \
+  "$( ( screen() { :; }; busy() { return 1; }; has_input_box() { return 0; }
+        input_text() { [[ -s $work/db.gate ]] || echo brief; }
+        holds_input() { [[ -n $(input_text) ]]; }
+        wait_for() { [[ $3 == sent_or_started ]] && return 1; return 0; }
+        t() { [[ $1 == send-keys ]] && echo enter >>"$dbcalls"; return 0; }
+        flog() { echo gone >"$work/db.gate"; }
+        deliver_brief %9 /dev/null >/dev/null; grep -c enter "$dbcalls" ) )" "1"
 
 echo "launch.sh: a slow or stuck start (#187)"
 : >"$FLEET_LOG"
@@ -527,20 +873,171 @@ bash "$here/brief.sh" --refresh "$FLEET_STATE/task-old.src" >/dev/null 2>&1
 check "--refresh brings the rules up to date, keeping the body and a line added after them" \
   "$(head -2 "$FLEET_STATE/task-old.src" | tr '\n' '|')$(grep -c '^Usage cap: run at most two' "$FLEET_STATE/task-old.src") $(grep -c 'at most three' "$FLEET_STATE/task-old.src") $(grep -c '^Last item (AJ 10-28): ship the thing.$' "$FLEET_STATE/task-old.src") $(bash "$here/brief.sh" --check "$FLEET_STATE/task-old.src" >/dev/null 2>&1; echo $?)" \
   "Do X.|Then Y.|1 0 1 0"
+# #262: a rule without a colon, or under a label the tail has since renamed, is
+# still an old rule. A throwaway repo holds an old tail and the current one, so
+# the history is there however shallow this checkout is.
+hist=$work/briefhist
+mkdir -p "$hist/fleet"
+cp "$here/brief.sh" "$here/lib.sh" "$hist/fleet/"
+git -C "$hist" init -q && git -C "$hist" config user.email t@t && git -C "$hist" config user.name t
+{ printf 'Resources: old wording.\n'; printf 'Keep AJ'"'"'s to-do list current: the old label.\n'; printf 'Engage full auto mode (memory x). Stop when done.\n'; } >"$hist/fleet/brief-tail.md"
+git -C "$hist" add fleet && git -C "$hist" commit -qm old
+{ printf 'Resources: new wording.\n'; printf 'Keep the fleet queue current: the new label.\n'; printf 'Engage full auto mode (memory x). Stop when done.\n'; } >"$hist/fleet/brief-tail.md"
+git -C "$hist" commit -qam new
+{ printf 'Do Z.\n\n'
+  printf 'Resources: old wording.\n'; printf 'Keep AJ'"'"'s to-do list current: the old label.\n'
+  printf 'Engage full auto mode (memory x). Stop when done.\n'; printf 'Also (AJ 10-28): a real added line.\n'
+  printf 'Engage full auto mode (memory x). Stop when done.\n'; printf 'Engage full auto mode (memory x). Stop when done.\n'
+} >"$FLEET_STATE/task-hist.src"
+bash "$hist/fleet/brief.sh" --refresh "$FLEET_STATE/task-hist.src" >/dev/null 2>&1
+check "#262: a colon-less rule is kept once, a renamed label's old line goes, an added line stays" \
+  "$(grep -c '^Engage full auto' "$FLEET_STATE/task-hist.src") $(grep -c "^Keep AJ's to-do" "$FLEET_STATE/task-hist.src") $(grep -c '^Keep the fleet queue current' "$FLEET_STATE/task-hist.src") $(grep -c '^Also (AJ 10-28): a real added line.$' "$FLEET_STATE/task-hist.src")" "1 0 1 1"
+check "#262: the refreshed brief is the body, the tail, then the added line" \
+  "$(tr '\n' '|' <"$FLEET_STATE/task-hist.src")" "Do Z.||Resources: new wording.|Keep the fleet queue current: the new label.|Engage full auto mode (memory x). Stop when done.|Also (AJ 10-28): a real added line.|"
+cp "$FLEET_STATE/task-hist.src" "$work/hist.once"
+bash "$hist/fleet/brief.sh" --refresh "$FLEET_STATE/task-hist.src" >/dev/null 2>&1
+check "#262: a second refresh leaves it byte for byte" "$(cmp -s "$work/hist.once" "$FLEET_STATE/task-hist.src" && echo same)" "same"
+printf 'Engage full auto mode (memory x). Stop when done.\n' >>"$FLEET_STATE/task-hist.src"
+check "#262: --check names a brief that has every rule but carries one twice" \
+  "$(bash "$hist/fleet/brief.sh" --check "$FLEET_STATE/task-hist.src" 2>/dev/null; echo "rc=$?")" $'stale: task-hist.src\nrc=1'
+bash "$hist/fleet/brief.sh" --refresh "$FLEET_STATE/task-hist.src" >/dev/null 2>&1
+check "#262: and --refresh drops the second copy" "$(cmp -s "$work/hist.once" "$FLEET_STATE/task-hist.src" && echo same)" "same"
+# #275 review: with the tail missing or empty, old rules still come from the
+# history, so a refresh would strip every rule: every mode refuses instead.
+printf 'Usage cap: stale.\n' >>"$FLEET_STATE/task-hist.src"
+cp "$FLEET_STATE/task-hist.src" "$work/hist.stale"
+: >"$hist/fleet/brief-tail.md"
+check "#275: an empty tail: --refresh refuses (2) and the brief is left as it was" \
+  "$(bash "$hist/fleet/brief.sh" --refresh "$FLEET_STATE/task-hist.src" >/dev/null 2>&1; echo $?) $(cmp -s "$work/hist.stale" "$FLEET_STATE/task-hist.src" && echo same)" "2 same"
+rm -f -- "$hist/fleet/brief-tail.md"
+check "#275: a missing tail: --refresh, --check and a new brief all refuse" \
+  "$(for a in --refresh --check; do bash "$hist/fleet/brief.sh" "$a" "$FLEET_STATE/task-hist.src" >/dev/null 2>&1; printf '%s ' $?; done; bash "$hist/fleet/brief.sh" demo2 "$work/body" >/dev/null 2>&1; echo $?) $(cmp -s "$work/hist.stale" "$FLEET_STATE/task-hist.src" && echo same) $([[ -e $FLEET_STATE/task-demo2.src ]] && echo written)" "2 2 2 same "
+# #275 review: an unreadable brief is never rebuilt as the tail alone.
+git -C "$hist" checkout -q -- fleet/brief-tail.md
+cp "$work/hist.stale" "$FLEET_STATE/task-hist.src"; chmod 000 "$FLEET_STATE/task-hist.src"
+if [[ -r $FLEET_STATE/task-hist.src ]]; then
+  check "#275: an unreadable brief (skipped: running as root)" "skip" "skip"
+else
+  check "#275: an unreadable brief is left as it was and the refresh exits 1" \
+    "$(bash "$hist/fleet/brief.sh" --refresh "$FLEET_STATE/task-hist.src" >/dev/null 2>&1; echo $?) $(chmod 600 "$FLEET_STATE/task-hist.src"; cmp -s "$work/hist.stale" "$FLEET_STATE/task-hist.src" && echo same)" "1 same"
+fi
+chmod 600 "$FLEET_STATE/task-hist.src"
+# Each guard alone: a stale, readable brief whose archive folder, or own folder, is read-only.
+printf 'Do Z.\n\nResources: old wording.\n' >"$work/hist.old"
+if [[ $(id -u) != 0 ]]; then
+  cp "$work/hist.old" "$FLEET_STATE/task-hist.src"
+  mkdir -p "$FLEET_STATE/archive/briefs"; chmod 555 "$FLEET_STATE/archive/briefs"
+  check "#275: no archive copy, no rewrite: the brief stays and the refresh exits 1" \
+    "$(bash "$hist/fleet/brief.sh" --refresh "$FLEET_STATE/task-hist.src" >/dev/null 2>&1; echo $?) $(cmp -s "$work/hist.old" "$FLEET_STATE/task-hist.src" && echo same) $(find "$FLEET_STATE" -maxdepth 1 -name 'task-hist.src.*' | wc -l)" "1 same 0"
+  printf 'old brief\n' >"$FLEET_STATE/task-demo3.src"
+  check "#275 review 4: a new brief over one it cannot archive is refused and the old one stays" \
+    "$(bash "$hist/fleet/brief.sh" demo3 "$work/body" >/dev/null 2>&1; echo $?) $(cat "$FLEET_STATE/task-demo3.src")" "1 old brief"
+  chmod 755 "$FLEET_STATE/archive/briefs"
+  rm -f -- "$FLEET_STATE/task-demo3.src"
+  # Its archive folder stays writable, so only the temp-file guard can stop it.
+  mkdir -p "$work/rostate/archive/briefs"; printf 'old brief\n' >"$work/rostate/task-demo4.src"; chmod 555 "$work/rostate"
+  check "#275 review 5: a new brief with no room for its temp file is refused, archives nothing, and the old one stays" \
+    "$(FLEET_STATE=$work/rostate bash "$hist/fleet/brief.sh" demo4 "$work/body" >/dev/null 2>&1; echo $?) $(cat "$work/rostate/task-demo4.src") $(find "$work/rostate/archive/briefs" -type f | wc -l)" "1 old brief 0"
+  chmod 755 "$work/rostate"
+  mkdir -p "$work/ro"; cp "$work/hist.old" "$work/ro/task-ro.src"; chmod 555 "$work/ro"
+  check "#275: no temp file beside it: the brief stays, nothing is archived, and the refresh exits 1" \
+    "$(n=$(find "$FLEET_STATE/archive/briefs" -name 'task-ro.src.*' | wc -l); bash "$hist/fleet/brief.sh" --refresh "$work/ro/task-ro.src" >/dev/null 2>&1; echo "$? $n $(find "$FLEET_STATE/archive/briefs" -name 'task-ro.src.*' | wc -l)") $(cmp -s "$work/hist.old" "$work/ro/task-ro.src" && echo same)" "1 0 0 same"
+  chmod 755 "$work/ro"
+fi
+rm -rf -- "${hist:?}" "${FLEET_STATE:?}/task-hist.src"
+check "the tail carries the friction-log rule (AJ 11-01)" "$(grep -c '^Friction log (AJ 11-01, every agent): read ~/.local/state/fleet-orchestrator/friction.md' "$here/brief-tail.md")" "1"
+check "the tail puts performance first, above the security floor, and asks for DS&A checks (AJ 11-01, 11-03)" "$(grep -c '^Quality (AJ 11-01, 11-03): performance is AJ.s #1 quality attribute; when it trades off with security, performance wins, above the security floor. In every workflow, check the data structures and algorithms' "$here/brief-tail.md")" "1"
 check "the tail carries the team-ceremony rule (AJ 10-29)" "$(grep -c '^Team ceremony in every repo' "$here/brief-tail.md")" "1"
 check "the tail keeps asks for AJ out of public issues and PRs (AJ 10-29)" "$(grep -c '^Asks for AJ stay private' "$here/brief-tail.md")" "1"
-check "#185: the tail offers the Agora as optional and asks a post to name something real" "$(grep -c '^Agora (AJ 10-29, optional, never a task).*names something real' "$here/brief-tail.md")" "1"
+check "#325 review 1: the tail sends messages to panes through fleet send (#320)" "$(grep -c '^Messages to another pane .*fleet send PANE -' "$here/brief-tail.md")" "1"
+check "#239: the tail has heavy commands take the lock with flock -o, so nothing they leave running keeps it" "$(grep -c 'flock -o /tmp/fleet-heavy.lock' "$here/brief-tail.md")" "1"
+check "#291 review: the tail says the make targets take the lock themselves and run bare" "$(grep -c 'make test-fleet., .make test-launch., .make test-delegate., .make test-heavy-lock., .make test-slice. and .make shellcheck. in klepsydra take the lock themselves: run them bare' "$here/brief-tail.md")" "1"
+check "#291 review 5: the tail's hand form puts a group-wide timeout inside the lock (no --foreground)" "$(grep -c 'flock -o /tmp/fleet-heavy.lock timeout 1800 <command>' "$here/brief-tail.md") $(grep -c -- '--foreground' "$here/brief-tail.md")" "1 0"
+# Every target whose recipe runs $(HEAVY) (#291 review 4): it takes the lock
+# unless the caller says it holds it, a test target runs a file that exists,
+# and the brief tail, the skill context and CI each name it.
+heavy_targets=$(awk '/^[A-Za-z][A-Za-z0-9_-]*:/ { t = $1; sub(/:.*/, "", t) } /^\t@?\$\(HEAVY\)/ { print t }' "$here/../Makefile" | paste -sd ' ' -)
+check "#291 review 4: the Makefile's heavy targets" "$heavy_targets" "test-fleet test-launch test-delegate test-heavy-lock test-slice shellcheck"
+# What each runs, exactly (review 5: "a file that exists" passed a swapped suite).
+declare -A heavy_runs=([test-fleet]="bash fleet/test_fleet.sh" [test-launch]="bash hooks/test_launch.sh" [test-delegate]="bash fleet/test_delegate.sh"
+  [test-heavy-lock]="bash fleet/test_heavy_lock.sh" [test-slice]="bash fleet/test_slice.sh" [shellcheck]="sc -x hooks/*.sh statusline/*.sh scripts/*.sh fleet/*.sh fleet/fleet")
+for ht in $heavy_targets; do
+  check "#291 review 4: make $ht takes the lock unless held, runs its own suite, and the tail, skill context and CI name it" \
+    "$(make -s -n -C "$here/.." "$ht" FLEET_HEAVY_HELD= SHELLCHECK=sc | grep -cxF "FLEET_HEAVY_HELD=1 bash fleet/heavy.sh ${heavy_runs[$ht]:-?}") $(make -s -n -C "$here/.." "$ht" FLEET_HEAVY_HELD=0 | grep -c 'fleet/heavy.sh') | $(make -s -n -C "$here/.." "$ht" FLEET_HEAVY_HELD=1 SHELLCHECK=sc) | $(grep -c "make $ht" "$here/brief-tail.md") $(grep -c "make $ht" "$here/../.claude/skill-context.md" | sed 's/^[1-9][0-9]*$/1/') $(grep -c "make $ht .*FLEET_HEAVY_HELD=1" "$here/../.github/workflows/ci.yml")" \
+    "1 1 | ${heavy_runs[$ht]:-?} | 1 1 1"
+done
+# Any doc, anywhere on a line: a heavy suite or the tree's shellcheck run by
+# hand, or the heavy lock taken without -o (#291 reviews 2 to 4). Plans are
+# history, so they are left out. A sweep with no docs to read says so.
+bare_re="((^|[ \`(;&|])(ba)?sh( +-[a-z]+)* +|(^|[ \`(;&|])[.]/)((([^ \`]*/)?fleet/)?test_fleet|([^ \`]*/)?(fleet/)?test_heavy_lock|([^ \`]*/)?test_launch)[.]sh|shellcheck( +-[-A-Za-z=]+)* +[^ \`]*(hooks|fleet|statusline|scripts)/[^ \`]*[*]"
+docs_bare() { # repo
+  local docs
+  docs=$(git -C "$1" ls-files -- '*.md' ':!docs/superpowers/plans/' 2>/dev/null)
+  [[ -n $docs ]] || { echo "no docs to sweep in $1"; return; }
+  (
+    cd "$1" || exit
+    git ls-files -z -- '*.md' ':!docs/superpowers/plans/' | xargs -0 grep -nE "$bare_re"
+    # Each flock on the lock, not each line: a line may hold a good form and a bad one.
+    git ls-files -z -- '*.md' ':!docs/superpowers/plans/' | xargs -0 grep -noE 'flock( +-[^ `]+( +[0-9.]+)?)* +/tmp/fleet-heavy[.]lock' | grep -vE ':flock( +[^ ]+)* +-o( |$)'
+  ) | sort -u
+}
+check "#291 review 3: no doc runs a heavy suite or the tree's shellcheck by hand; the make targets do" \
+  "$(docs_bare "$here/.." | wc -l) $(grep -c "make shellcheck" "$here/../AGENTS.md") $(grep -c "make test-fleet" "$here/../.claude/skill-context.md") $(grep -c "make test-launch" "$here/../AGENTS.md" "$here/../.claude/skill-context.md" "$here/../README.md" | grep -c ':[1-9]')" "0 1 2 3"
+# The sweep itself, on a scratch repo: each bare form found, plans and the
+# allowed forms left alone, and a repo with no docs is a failure, not a pass.
+sw=$work/sweep291
+mkdir -p "$sw/docs/superpowers/plans"
+git -C "$sw" init -q
+# shellcheck disable=SC2016 # the backticks are the doc's, not a command
+printf '%s\n' 'Run `bash hooks/test_launch.sh` first.' 'then (shellcheck -x fleet/*.sh).' 'Or: flock /tmp/fleet-heavy.lock make x' './fleet/test_fleet.sh' \
+  'cd fleet && bash test_fleet.sh' 'bash -x fleet/test_fleet.sh' 'sh hooks/test_launch.sh' 'shellcheck --external-sources hooks/*.sh' \
+  'flock -w 60 /tmp/fleet-heavy.lock make y' 'flock -w 0.5 /tmp/fleet-heavy.lock make w' 'Good: `flock -o /tmp/fleet-heavy.lock x`, bad: flock /tmp/fleet-heavy.lock y' 'bash fleet/test_heavy_lock.sh' >"$sw/bare.md"
+# shellcheck disable=SC2016
+printf '%s\n' 'Run `make test-fleet` bare; the hook suite runs bare too: `bash hooks/test_fleet.sh`.' 'One file: `uvx --from shellcheck-py shellcheck -x fleet/lib.sh`.' 'See [the suite](../fleet/test_fleet.sh); `fleet/test_fleet.sh` takes 19 min.' \
+  'Hand form: `flock -o /tmp/fleet-heavy.lock timeout 1800 <command>`, or flock -w 60 -o /tmp/fleet-heavy.lock z.' >"$sw/ok.md"
+printf '%s\n' 'bash fleet/test_fleet.sh' >"$sw/docs/superpowers/plans/old.md"
+git -C "$sw" add -A
+check "#291 review 4: the sweep finds each of 12 bare forms, only in bare.md" \
+  "$(docs_bare "$sw" | wc -l) $(docs_bare "$sw" | grep -vc '^bare[.]md:')" "12 0"
+check "#291 review 4: a sweep with no docs to read fails" "$(docs_bare "$work/sweep291-none" | wc -l) $(docs_bare "$work/sweep291-none" | grep -c 'no docs to sweep')" "1 1"
 
 echo "doctor"
 mkdir -p "$KLEPSYDRA_DIR/fleet" "$work/bin"
 cat >"$work/bin/systemctl" <<'EOF'
 #!/usr/bin/env bash
+# DOC_SCOPES (#289, #353): one "UNIT TASKS_CURRENT TASKS_MAX [SLICE]" line per
+# fleet scope (no slice: the workers'; gone: ended since list-units); DOC_SLICES: "UNIT MEMORY_MAX [PARENT]" per slice.
+# DOC_SHOW_FAILS: show answers nothing (a user manager that does not answer).
+# show prints one block per unit asked for, as systemctl does, with Id last.
+case $* in
+  *list-units*) [[ -n ${DOC_SCOPES:-} ]] && awk '{ print $1 " loaded active running x" }' "$DOC_SCOPES"; exit 0 ;;
+  *" show "*)
+    [[ -n ${DOC_SHOW_FAILS:-} ]] && exit 1
+    first=1
+    for u; do
+      [[ $u == *.scope || $u == *.slice ]] || continue
+      (( first )) || echo
+      first=0
+      [[ -n ${DOC_SCOPES:-} ]] && awk -v u="$u" '$1 == u { print "TasksCurrent=" $2; print "TasksMax=" $3; g = ($4 == "gone"); print "Slice=" (g ? "" : $4 == "" ? "fleet-workers.slice" : $4); print "MemoryMax=infinity"; print "ActiveState=" (g ? "inactive" : "active") }' "$DOC_SCOPES"
+      if [[ $u == *.slice ]]; then
+        m=$( [[ -n ${DOC_SLICES:-} ]] && awk -v u="$u" '$1 == u { print $2 }' "$DOC_SLICES")
+        printf 'MemoryMax=%s\n' "${m:-infinity}"
+        par=$( [[ -n ${DOC_SLICES:-} ]] && awk -v u="$u" '$1 == u { print $3 }' "$DOC_SLICES")
+        [[ -z $par && $u == fleet-workers.slice ]] && par=fleet.slice
+        printf 'Slice=%s\n' "${par:-user.slice}"
+      fi
+      echo "Id=$u"
+    done
+    exit 0 ;;
+esac
 [[ $* == *is-active* && -e $DOC_ACTIVE ]]
 EOF
 cat >"$work/bin/curl" <<'EOF'
 #!/usr/bin/env bash
 # The phone wall: answers with $DOC_FLEET for the URL named in $DOC_UP.
 for a; do url=$a; done
+# DOC_FLAKY: a file whose presence fails one call, as Windows interop now and then does.
+[[ -n ${DOC_FLAKY:-} && -e $DOC_FLAKY ]] && { rm -f -- "$DOC_FLAKY"; exit 7; }
 [[ -n ${DOC_UP:-} && $url == "$DOC_UP"* ]] || exit 7
 cat "$DOC_FLEET"
 EOF
@@ -561,14 +1058,24 @@ PS
 chmod +x "$work/bin/"*
 rm -f "$FLEET_STATE/resume.beat"
 login a
-doctor() { FLEET_PS="$work/bin/ps" FLEET_SYSTEMCTL="$work/bin/systemctl" FLEET_CURL="$work/bin/curl" FLEET_TAILSCALE="$work/bin/tailscale" \
-  DOC_ACTIVE="$work/active" DOC_FLEET="$work/fleet.json" bash "$here/doctor.sh" 2>/dev/null; }
+# The section's sessions are alive by recover's test (this boot, the same process).
+mkdir -p "$work/dproc/4242"; printf '4242 (claude) S %s 777 1 2 3\n' "$(seq -s ' ' 1 18)" >"$work/dproc/4242/stat"
+echo 44444444-4444-4444-8444-444444444444 >"$work/dboot"
+# The phone wall is on in these cases unless DOC_PREFS names other contents (#328):
+# the wrappers write the shipped path, $KLEPSYDRA_DIR/prefs.json, and remove it
+# after, so later sections see no file. DOC_PREFS=none: no file.
+doc_prefs() { local c=${DOC_PREFS-'{"phone_wall": true}'}; rm -f -- "$KLEPSYDRA_DIR/prefs.json"; [[ $c == none ]] || printf '%s' "$c" >"$KLEPSYDRA_DIR/prefs.json"; }
+doctor() { local rc; doc_prefs; FLEET_PS="$work/bin/ps" FLEET_SYSTEMCTL="$work/bin/systemctl" FLEET_CURL="$work/bin/curl" FLEET_TAILSCALE="$work/bin/tailscale" \
+  DOC_ACTIVE="$work/active" DOC_FLEET="$work/fleet.json" FLEET_RETRY_S=0 FLEET_PROC="$work/dproc" FLEET_BOOT_ID="$work/dboot" FLEET_UNITS="$work/dunits" bash "$here/doctor.sh" 2>/dev/null; rc=$?
+  rm -f -- "$KLEPSYDRA_DIR/prefs.json"; return $rc; }
+phone_lines() { grep -E '^(ok|warn|FAIL) +phone wall' | cut -d: -f1 | paste -sd'|'; }
+sid_of() { case $1 in w1) echo dddddddd-0000-4000-8000-000000000001 ;; w2) echo dddddddd-0000-4000-8000-000000000002 ;; *) echo dddddddd-0000-4000-8000-0000000000"${1#o}"0 ;; esac; }
 w=$(pane wpane '{"above":["idle"]}'); o=$(pane opane '{"above":["idle"]}'); settle
-printf '%s\tworker\t%s\n' "$w" "$FLEET_STATE/task-demo.src" >"$REGISTRY"
+printf '%s\tworker\t%s\t%s\n' "$w" "$FLEET_STATE/task-demo.src" "$(sid_of w1)" >"$REGISTRY"
 printf '%s\n' "$o" >"$FLEET_STATE/orchestrator.pane"
 session_file() { # ID PANE [URL]
-  jq -n --arg p "$2" --arg u "${3:-}" '{session_id: "x", started_at: 5, ended: null, tmux: {pane: $p}} + (if $u == "" then {} else {remote_url: $u} end)' \
-    >"$KLEPSYDRA_DIR/fleet/$1.json"
+  jq -n --arg p "$2" --arg u "${3:-}" '{session_id: "x", started_at: 5, ended: null, claude: {pid: 4242, start: 777}, host: {boot: "44444444-4444-4444-8444-444444444444"}, tmux: {pane: $p}} + (if $u == "" then {} else {remote_url: $u} end)' \
+    >"$KLEPSYDRA_DIR/fleet/$(sid_of "$1").json"
 }
 session_file w1 "$w" https://claude.ai/code/session_01W; session_file o1 "$o"
 jq -n --argjson at "$(( $(date +%s) - 30 ))" '{usage: [{observed_at: $at}]}' >"$work/fleet.json"
@@ -577,7 +1084,105 @@ check "a stopped resume service fails" "$(grep -c '^FAIL resume service' <<<"$ou
 check "a resume loop that never ran fails" "$(grep '^FAIL resume loop' <<<"$out")" "FAIL resume loop: no pass recorded"
 check "a worker with Remote Control is ok" "$(grep -c "^ok   remote control $w (worker)" <<<"$out")" "1"
 check "the orchestrator without it fails (Heph's must always be on)" "$(grep -c "^FAIL remote control $o (orchestrator): off" <<<"$out")" "1"
-check "no phone wall fails" "$(grep -c '^FAIL phone wall: no answer' <<<"$out")" "1"
+check "no phone wall fails, after a second try" "$(grep -c '^FAIL phone wall: no answer from http://127.0.0.1:8318/fleet.json (tried twice)' <<<"$out")" "1"
+check "#328 review 1: with the wall on and down, both phone lines fail" "$(phone_lines <<<"$out")" "FAIL phone wall|FAIL phone wall over Tailscale"
+# Each is off as the wall reads it (serde's as_bool: only the boolean true is on).
+for pw in '{"phone_wall": false}' '{"phone_wall": "true"}' '{"phone_wall": 1}' '{"phone_wall": "yes"}' '{}' none; do
+  check "#328: prefs.json $pw (the wall's own reading: off): ok, and neither phone line is tried" \
+    "$(DOC_PREFS=$pw doctor | phone_lines)" "ok   phone wall"
+done
+# A file that is not one JSON object is off for the wall too, but says so.
+for pw in '{phone' '{"phone_wall": true} garbage' '{"phone_wall": true}{}' '[true]' 'null'; do
+  check "#328 review 1: prefs.json $pw does not read: a warning, and neither phone line is tried" \
+    "$(DOC_PREFS=$pw doctor | phone_lines)" "warn phone wall"
+done
+check "#289: with no fleet scope there is no task caps line" "$(grep -c 'task caps' <<<"$out")" "0"
+printf 'fleet-a-1.scope 7000 8745\nfleet-b-2.scope 100 8745\nnot-fleet.scope 9 10\n' >"$work/scopes"
+check "#289: a scope past 80% of its task cap warns, naming it" "$(DOC_SCOPES="$work/scopes" doctor | grep 'task caps')" \
+  "warn task caps: past 80% of the cap: fleet-a-1 7000/8745 (its next forks fail at the cap)"
+printf 'fleet-a-1.scope 6900 8745\nfleet-b-2.scope 100 8745\nfleet-c-3.scope 50 infinity\n' >"$work/scopes"
+check "#289: under the line: ok, the fullest named, and a scope from before the cap listed" "$(DOC_SCOPES="$work/scopes" doctor | grep 'task caps')" \
+  "ok   task caps: fullest scope: fleet-a-1 6900/8745; no task cap: fleet-c-3"
+check "#353: slices with no cap fail, both named" "$(grep 'memory cap' <<<"$out")" \
+  "FAIL memory cap: no MemoryMax on fleet.slice fleet-workers.slice (fleet install writes it)"
+printf 'fleet.slice 8820621312\nfleet-workers.slice 7970226176\n' >"$work/slices"
+printf 'fleet-a-1.scope 6900 8745\nfleet-b-2.scope 100 8745 fleet-workers.slice\n' >"$work/scopes"
+check "#353: both capped, every scope in its slice: ok, with the sizes" "$(DOC_SLICES="$work/slices" DOC_SCOPES="$work/scopes" doctor | grep 'memory cap')" \
+  "ok   memory cap: fleet.slice 8412 MiB, fleet-workers.slice 7601 MiB"
+printf 'fleet-a-1.scope 6900 8745 app.slice\nfleet-b-2.scope 100 8745\nfleet-c-3.scope 1 8745 fleet.slice\n' >"$work/scopes"
+check "#353: a scope started before the slices, or a worker's beside the workers' cap, fails, named" \
+  "$(DOC_SLICES="$work/slices" DOC_SCOPES="$work/scopes" doctor | grep 'memory cap')" \
+  "FAIL memory cap: outside their slice: fleet-a-1 in app.slice, fleet-c-3 in fleet.slice"
+printf 'fleet-a-1.scope 6900 8745 gone\nfleet-b-2.scope 100 8745\n' >"$work/scopes"
+check "#353: a scope that ended between the listing and the read is not called astray" \
+  "$(DOC_SLICES="$work/slices" DOC_SCOPES="$work/scopes" doctor | grep 'memory cap')" \
+  "ok   memory cap: fleet.slice 8412 MiB, fleet-workers.slice 7601 MiB"
+# The orchestrator's claude (pid 4242 in the section's /proc) in its scope.
+printf '0::/user.slice/user-1.slice/user@1.service/fleet.slice/fleet-heph-9.scope\n' >"$work/dproc/4242/cgroup"
+printf 'fleet-heph-9.scope 10 8745 fleet.slice\nfleet-b-2.scope 100 8745\n' >"$work/scopes"
+check "#353: the orchestrator's scope belongs in the fleet's slice" "$(DOC_SLICES="$work/slices" DOC_SCOPES="$work/scopes" doctor | grep -c '^ok   memory cap')" "1"
+printf 'fleet-heph-9.scope 10 8745 fleet-workers.slice\n' >"$work/scopes"
+check "#353: and fails in the workers'" "$(DOC_SLICES="$work/slices" DOC_SCOPES="$work/scopes" doctor | grep 'memory cap')" \
+  "FAIL memory cap: outside their slice: fleet-heph-9 in fleet-workers.slice"
+printf '900\n' >"$FLEET_STATE/orchestrator.mem"
+check "#353: an orchestrator's peak past the room the workers' slice leaves it warns" "$(DOC_SLICES="$work/slices" doctor | grep 'memory cap')" \
+  "warn memory cap: the orchestrator's peak, 900 MiB, passed the 811 MiB fleet-workers.slice leaves it: fleet install resizes the slices"
+rm -f "$FLEET_STATE/orchestrator.mem" "$work/dproc/4242/cgroup"
+# With no pid on record (a restart), the orchestrator's scope is the one named for it.
+printf 'fleet-heph-9.scope 10 8745 fleet.slice\nfleet-b-2.scope 100 8745\n' >"$work/scopes"
+check "#353 review: no orchestrator pid: its named scope in the fleet's slice is ok" "$(DOC_SLICES="$work/slices" DOC_SCOPES="$work/scopes" doctor | grep -c '^ok   memory cap')" "1"
+printf 'fleet-heph-9.scope 10 8745 fleet-workers.slice\n' >"$work/scopes"
+check "#353 review: and in the workers' it fails" "$(DOC_SLICES="$work/slices" DOC_SCOPES="$work/scopes" doctor | grep 'memory cap')" \
+  "FAIL memory cap: outside their slice: fleet-heph-9 in fleet-workers.slice"
+printf 'fleet.slice 8820621312\nfleet-workers.slice 7970226176 user.slice\n' >"$work/slices2"
+check "#353 review: a workers' slice outside the fleet's fails (its workers escape the total)" "$(DOC_SLICES="$work/slices2" doctor | grep 'memory cap')" \
+  "FAIL memory cap: fleet-workers.slice sits in user.slice, not fleet.slice (fleet install writes both)"
+printf 'fleet.slice 7970226176\nfleet-workers.slice 7970226176\n' >"$work/slices2"
+check "#353 review: a workers' cap not below the fleet's fails (the orchestrator has no room)" "$(DOC_SLICES="$work/slices2" doctor | grep 'memory cap')" \
+  "FAIL memory cap: fleet-workers.slice's 7601 MiB is not below fleet.slice's 7601 MiB (fleet install writes both)"
+printf 'fleet.slice 0\nfleet-workers.slice 1048575\n' >"$work/slices2"
+check "#353 review: a cap of 0, or under 1 MiB, reads as none" "$(DOC_SLICES="$work/slices2" doctor | grep 'memory cap')" \
+  "FAIL memory cap: no MemoryMax on fleet.slice fleet-workers.slice (fleet install writes it)"
+# A move: the new orchestrator's scope starts before orchestrator.pane names its pane.
+printf '0::/user.slice/user-1.slice/user@1.service/fleet.slice/fleet-heph-9.scope\n' >"$work/dproc/4242/cgroup"
+printf 'fleet-heph-9.scope 10 8745 fleet.slice\nfleet-heph-12.scope 10 8745 fleet.slice\n' >"$work/scopes"
+check "#353 review 2: during a move both orchestrator scopes belong in the fleet's slice" "$(DOC_SLICES="$work/slices" DOC_SCOPES="$work/scopes" doctor | grep -c '^ok   memory cap')" "1"
+# A stale orchestrator.pane naming a worker's pane: its scope stays a worker's.
+printf '0::/user.slice/user-1.slice/user@1.service/fleet.slice/fleet-workers.slice/fleet-w-5.scope\n' >"$work/dproc/4242/cgroup"
+printf 'fleet-w-5.scope 10 8745\nfleet-heph-12.scope 10 8745 fleet.slice\n' >"$work/scopes"
+check "#353 review 3: a worker's scope that a stale orchestrator.pane names is still a worker's" "$(DOC_SLICES="$work/slices" DOC_SCOPES="$work/scopes" doctor | grep -c '^ok   memory cap')" "1"
+rm -f "$work/dproc/4242/cgroup"
+# Scopes whose names date them before the slices' units were first written warn; one since fails.
+mkdir -p "$work/dunits"; printf 'old\n' >"$work/dunits/fleet.slice"
+born=$(stat -c %W "$work/dunits/fleet.slice"); [[ $born =~ ^[1-9][0-9]*$ ]] || born=$(stat -c %Y "$work/dunits/fleet.slice")
+printf 'fleet-a-%s.scope 1 8745 app.slice\nfleet-b-%s.scope 1 8745\n' "$((born - 1))" "$((born + 1))" >"$work/scopes"
+check "#353 review 2: a scope started before the slices, outside them, warns (it moves at its next fresh start)" \
+  "$(DOC_SLICES="$work/slices" DOC_SCOPES="$work/scopes" doctor | grep 'memory cap')" \
+  "warn memory cap: started before the slices, outside them: fleet-a-$((born - 1)) in app.slice (each moves at its next fresh start)"
+printf 'fleet-a-%s.scope 1 8745 app.slice\n' "$((born + 1))" >"$work/scopes"
+check "#353 review 2: one started since fails" "$(DOC_SLICES="$work/slices" DOC_SCOPES="$work/scopes" doctor | grep 'memory cap')" \
+  "FAIL memory cap: outside their slice: fleet-a-$((born + 1)) in app.slice"
+# A resize rewrites the unit in place (install's unit()): the slices keep their first date.
+if [[ $(stat -c %W "$work/dunits/fleet.slice") =~ ^[1-9][0-9]*$ ]]; then
+  printf 'resized\n' >"$work/dunits/fleet.slice"; touch -d "@$((born + 100))" "$work/dunits/fleet.slice"
+  check "#353 review 5: after a resize, a scope astray since the first install still fails" "$(DOC_SLICES="$work/slices" DOC_SCOPES="$work/scopes" doctor | grep 'memory cap')" \
+    "FAIL memory cap: outside their slice: fleet-a-$((born + 1)) in app.slice"
+else
+  echo "  skip #353 review 5: this filesystem keeps no birth times"
+fi
+rm -rf -- "${work:?}/dunits"
+# A MemTotal fixture as a file: doctor reads MemTotal more than once.
+memfile() { printf 'MemTotal: %s kB\n' "$1" >"$work/meminfo-$1"; printf '%s' "$work/meminfo-$1"; }
+check "#353 review 2: caps sized for another machine warn (the fixture's 9948 MiB gives 8412)" \
+  "$(FLEET_MEMINFO=$(memfile 8388608) DOC_SLICES="$work/slices" doctor | grep 'memory cap')" \
+  "warn memory cap: fleet.slice's 8412 MiB was sized for another MemTotal or earlyoom line; this machine's is 6656 MiB: fleet install resizes the slices"
+check "#353 review 4: a memory= 300 MiB smaller warns (its old cap would let earlyoom act first)" \
+  "$(FLEET_MEMINFO=$(memfile 9879552) DOC_SLICES="$work/slices" doctor | grep -c '^warn memory cap: fleet.slice.s 8412 MiB was sized')" "1"
+check "#353 review 3: a kernel update's few MiB pass" \
+  "$(FLEET_MEMINFO=$(memfile 10180000) DOC_SLICES="$work/slices" doctor | grep -c '^ok   memory cap')" "1"
+check "#353 review 2: a systemctl that does not answer is said so, not called a missing cap" \
+  "$(DOC_SLICES="$work/slices" DOC_SHOW_FAILS=1 doctor | grep 'memory cap')" \
+  "warn memory cap: could not read the slices: systemctl --user did not answer"
 check "no Tailscale Serve fails" "$(grep -c '^FAIL phone wall over Tailscale: Tailscale Serve is not set up' <<<"$out")" "1"
 check "and the exit is non-zero" "$code" "1"
 check "#244: hooks and cast never installed fail, named" "$(grep '^FAIL installed copies' <<<"$out" | grep -c 'make install-fleet: differ from .*: klepsydra-fleet.sh .*klepsydra-cast.json$')" "1"
@@ -585,27 +1190,114 @@ root=${here%/fleet}
 for c in "${HOOK_COPIES[@]}"; do mkdir -p "$(dirname "$FLEET_HOOK_DIR/${c#* }")"; cp "$root/${c%% *}" "$FLEET_HOOK_DIR/${c#* }"; done
 touch "$work/active" "$FLEET_STATE/resume.beat"
 session_file o1 "$o" https://claude.ai/code/session_01O
+# The fleet's server carries the pane-died hook, as install sets it (#290).
+t set-hook -g pane-died "run-shell ': klepsydra-pane-died.sh'"
+# Readings 30 s old as of this run, however long the cases above took.
+jq -n --argjson at "$(( $(date +%s) - 30 ))" '{usage: [{observed_at: $at}]}' >"$work/fleet.json"
+# Both memory slices capped, as fleet install leaves them (#353).
+export DOC_SLICES="$work/slices"
 out=$(DOC_UP=http DOC_SERVE="https://desk.tail1.ts.net (tailnet only)" doctor); code=$?
-check "all well but the watcher: a shell that names the script is not one" "$(grep -c '^ok ' <<<"$out") $(grep '^FAIL' <<<"$out" | cut -d: -f1)" "12 FAIL pane watcher"
+# Which rows are not ok, not how many are: a new check that passes here breaks no case.
+notok() { grep -v '^ok ' | cut -d: -f1 | paste -sd'|'; }
+check "all well but the watcher: a shell that names the script is not one" "$(notok <<<"$out")" "warn account $work/cfg-b|FAIL pane watcher|warn voices"
 check "the default account is logged in; the second, not yet, is a warning" \
   "$(grep '^ok   account' <<<"$out" | cut -d: -f1) | $(grep '^warn account' <<<"$out" | cut -d: -f1)" "ok   account $work/cfg-a | warn account $work/cfg-b"
-check "with a watcher running, every check is ok and the exit is 0" \
-  "$(DOC_WATCH='%2 %5' DOC_UP=http DOC_SERVE=on doctor | grep -c '^ok '; echo "rc=${PIPESTATUS[0]}")" $'13\nrc=0'
+check "with a watcher running, nothing fails and the exit is 0 (the second account and voices warn here)" \
+  "$(DOC_WATCH='%2 %5' DOC_UP=http DOC_SERVE=on doctor | notok; echo "rc=${PIPESTATUS[0]}")" "warn account $work/cfg-b|warn voices"$'\nrc=0'
 check "the watcher's panes are named" "$(DOC_WATCH='%2 %5' doctor | grep '^ok   pane watcher')" "ok   pane watcher: watching %2 %5"
+t set-hook -gu pane-died
+state wpane '{"above":["  ⎿  You'"'"'ve hit your 5-hour limit · resets 11:30am (America/New_York)","",""]}'
+check "#263: a pane still at its limit well past the reset fails, named with its reset" \
+  "$(FLEET_NOW=$noon doctor | grep '^FAIL limits')" "FAIL limits: still at a limit past its reset: $w (the resume service missed it)"
+check "#263: one whose reset is near is not" "$(FLEET_NOW=$((noon - 2400)) doctor | grep -c '^ok   limits')" "1"
+check "#265 review: still failing 7 h past the reset (time-only resets once rolled to tomorrow at 6 h)" \
+  "$(FLEET_NOW=$((noon + 25200)) doctor | grep -c '^FAIL limits')" "1"
+state wpane '{"above":["  ⎿  You'"'"'ve hit your 5-hour limit · resets 11:30am (America/New_York)","❯ The usage limit has reset. Please continue.","● Queue is empty"]}'
+check "#265 review: a limit the resume service answered is not missed" "$(FLEET_NOW=$noon doctor | grep -c '^ok   limits')" "1"
+state wpane '{"above":["  ⎿  You'"'"'ve hit your weekly limit · resets 8pm (America/New_York)","",""]}'
+check "#265 review 2: a time-only weekly reset 10 h ahead is not read as yesterday's, so no false FAIL" "$(FLEET_NOW=$((noon - 7200)) doctor | grep -c '^ok   limits')" "1"
+state wpane '{"above":["  ⎿  You'"'"'ve hit your 5-hour limit · resets 11pm (America/New_York)","",""]}'
+check "#265 review 2: a 5-hour reset just before midnight, still shown after it, fails" "$(FLEET_NOW=$((noon + 46800)) doctor | grep -c '^FAIL limits')" "1"
+state wpane '{"above":["  ⎿  Limit hit for this window · resets 11:30am","",""]}'
+check "#263: a reset beside a limit wording the fleet does not know is a warning" \
+  "$(doctor | grep '^warn limits')" "warn limits: a reset time shows beside a limit message the fleet does not recognise: $w (LIMIT_RE in fleet/lib.sh)"
+for notice in "You've used 90% of your 5-hour limit · resets 3pm" "Approaching weekly limit · resets Nov 9, 1pm" \
+  "Now using usage credits for Opus · Your Opus limit resets 3pm" "You've hit your fast limit · resets in 3m"; do
+  state wpane "{\"above\":[\"  ⎿  $notice\",\"\",\"\"]}"
+  check "#265 review 3: not a stop, so no unknown-wording warning: $notice" "$(doctor | grep -c '^ok   limits')" "1"
+done
+state wpane '{"above":["idle"]}'
+# Recorded on the account the pane's folder holds (a): a stop on another one is
+# dated by its own text (the /login case above).
+# In the pane's own session file: a second live file naming the pane is no answer.
+stop_file "$(sid_of w1)" "$w" "$noon" a "$L5"; win a 100 $((noon + 600))
+check "#311: a pane the hook recorded at a limit, past its resets_at, fails though its screen shows none" \
+  "$(FLEET_NOW=$((noon + 1300)) doctor | grep '^FAIL limits')" "FAIL limits: still at a limit past its reset: $w (the resume service missed it)"
+check "#311: before then it is ok" "$(FLEET_NOW=$((noon + 900)) doctor | grep -c '^ok   limits')" "1"
+check "#313 review 2: and with no watcher, the watcher check holds it limited too: a warning, no FAIL" \
+  "$(FLEET_NOW=$((noon + 900)) doctor | grep -c '^warn pane watcher: none running while every agent waits out a usage limit')" "1"
+check "#313 review 3: the warning gives the account's reset (12:10pm), not the stop's text (1:10pm)" \
+  "$(FLEET_NOW=$((noon + 900)) doctor | grep -c '^warn pane watcher: none running while every agent waits out a usage limit (resets 12:10pm)')" "1"
+stop_file "$(sid_of w1)" "$w" "$noon" a "API Error: Rate limit reached"; win a 30 $((noon + 600)) 100 $((noon + 3 * 86400))
+check "#313 review 4: a reset days away names its day" \
+  "$(FLEET_NOW=$((noon + 900)) doctor | grep -c '^warn pane watcher: none running while every agent waits out a usage limit (resets Sat 12:00pm)')" "1"
+session_file w1 "$w" https://claude.ai/code/session_01W
+rm -f -- "${KLEPSYDRA_DIR:?}/accounts/a/ev.json"
+state wpane '{"above":["idle"]}'
+printf 'panes=3 limited=1 limited_panes=%%9 at=5\n' >"$FLEET_STATE/resume.beat"
+check "#263: the resume loop line says what its last pass saw" "$(doctor | grep '^ok   resume loop' | sed 's/.*: //')" "panes=3 limited=1 limited_panes=%9"
 printf '# 10-29 copy\n' >>"$FLEET_HOOK_DIR/klepsydra-fleet.sh"
 check "#244: a hook copy older than the checkout fails, and only it is named" \
   "$(doctor | grep '^FAIL installed copies')" "FAIL installed copies: make install-fleet: differ from $(tilde "$root"): klepsydra-fleet.sh"
 cp "$root/hooks/klepsydra-fleet.sh" "$FLEET_HOOK_DIR/klepsydra-fleet.sh"
-check "the phone wall and its Tailscale twin answer fresh" "$(grep -c 'fleet.json observed 3[0-9] s ago' <<<"$out")" "2"
+check "the phone wall and its Tailscale twin answer" "$(grep -c '^ok   phone wall.*: answers at ' <<<"$out")" "2"
+check "#246: and the usage readings are fresh" "$(grep -c '^ok   usage readings: observed 3[0-9] s ago' <<<"$out")" "1"
+: >"$work/flaky"
+check "#246: a wall that misses once and then answers is ok" "$(DOC_FLAKY="$work/flaky" DOC_UP=http doctor | grep -c '^ok   phone wall: answers')" "1"
+jq -n '{usage: [{observed_at: 1000, label: "RIT"}]}' >"$work/fleet.json"
+: >"$FLEET_LOG"
+out=$(DOC_UP=http doctor)
+check "#246: old readings with no turn running are not a failure: the wall answers" \
+  "$(grep -c '^ok   phone wall: answers' <<<"$out") $(grep '^ok   usage readings' <<<"$out" | grep -c 'no pane runs a turn')" "1 1"
+state wpane '{"above":["⏺ working"],"busy":true}'
+out=$(DOC_UP=http doctor)
+check "#246: while a pane runs a turn, old readings are a warning naming it" "$(grep '^warn usage readings' <<<"$out" | grep -c "while $w runs a turn")" "1"
+check "#246: logged with the values it was decided on" \
+  "$(jq -r 'select(.message == "doctor: usage readings") | [.observed_at, .max_s, .account, .mid_turn] | join(" ")' "$FLEET_LOG" | tail -1)" "1000 120 RIT $w"
+state wpane '{"above":["idle"]}'
+jq -n '{usage: []}' >"$work/fleet.json"
+check "#246: no readings at all are unknown, a warning" "$(DOC_UP=http doctor | grep -c '^warn usage readings: fleet.json holds none')" "1"
+jq -n --argjson at "$(( $(date +%s) - 30 ))" '{usage: [{observed_at: $at}]}' >"$work/fleet.json"
+state wpane '{"above":["  ⎿  You'"'"'ve hit your session limit · resets 1:10pm (America/New_York)","",""]}'
+: >"$FLEET_LOG"
+out=$(doctor)
+check "#246: no watcher while every agent waits out a limit is a warning with the reset" \
+  "$(grep '^warn pane watcher' <<<"$out")" "warn pane watcher: none running while every agent waits out a usage limit (resets 1:10pm): start one after the reset"
+check "#246: logged with the limited panes and the reset" \
+  "$(jq -r 'select(.message == "doctor: pane watcher") | [.limited, .resets] | join(" | ")' "$FLEET_LOG")" "$w | 1:10pm"
+w2=$(pane wpane2 '{"above":["idle"]}'); settle
+printf '%s\tworker2\t%s\t%s\n' "$w2" "$FLEET_STATE/task-demo.src" "$(sid_of w2)" >>"$REGISTRY"; session_file w2 "$w2" https://claude.ai/code/session_01X
+check "#246: with one agent free, no watcher still fails" "$(doctor | grep -c '^FAIL pane watcher: none running')" "1"
+t kill-window -t "$w2"; rm -f "$KLEPSYDRA_DIR/fleet/w2.json"
+# A registry whose panes are all gone leaves nothing to watch (#348).
+printf '%%998\tworker\t%s\tgone\n' "$FLEET_STATE/task-demo.src" >"$REGISTRY"
+check "#348: no watcher and no live agent pane is ok, not a FAIL" \
+  "$(doctor | grep '^[a-zA-Z]* *pane watcher')" "ok   pane watcher: no agents to watch"
+: >"$REGISTRY"
+check "#348: an empty registry is the same" "$(doctor | grep -c '^ok   pane watcher: no agents to watch')" "1"
+printf '%s\tworker\t%s\t%s\n' "$w" "$FLEET_STATE/task-demo.src" "$(sid_of w1)" >"$REGISTRY"
+state wpane '{"above":["idle"]}'
+printf 'parked\tPAUSED 11-01 07:16: no room\n' >"$FLEET_STATE/paused.tsv"
+check "#246: paused agents are listed, never a failure" "$(doctor | grep '^ok   paused agents')" "ok   paused agents: parked: fleet unpause NAME brings one back"
+rm -f "$FLEET_STATE/paused.tsv"
 jq -n '{usage: [{observed_at: 1000}]}' >"$work/fleet.json"
-check "a stale fleet.json fails" "$(DOC_UP=http doctor | grep -c 'fleet.json is stale')" "1"
 touch -d '@1000' "$FLEET_STATE/resume.beat"
 check "a resume loop that stopped passing fails" "$(doctor | grep -c '^FAIL resume loop: last pass')" "1"
 logout a
 out=$(doctor)
 check "a default account not logged in fails" "$(grep -c "^FAIL account $work/cfg-a: not logged in: claude auth login" <<<"$out")" "1"
-djson() { FLEET_PS="$work/bin/ps" FLEET_SYSTEMCTL="$work/bin/systemctl" FLEET_CURL="$work/bin/curl" FLEET_TAILSCALE="$work/bin/tailscale" \
-  DOC_ACTIVE="$work/active" DOC_FLEET="$work/fleet.json" bash "$here/doctor.sh" --json "$work/health.json" >/dev/null 2>&1; echo $?; }
+djson() { doc_prefs; FLEET_PS="$work/bin/ps" FLEET_SYSTEMCTL="$work/bin/systemctl" FLEET_CURL="$work/bin/curl" FLEET_TAILSCALE="$work/bin/tailscale" \
+  DOC_ACTIVE="$work/active" DOC_FLEET="$work/fleet.json" bash "$here/doctor.sh" --json "$work/health.json" >/dev/null 2>&1; echo $?; rm -f -- "$KLEPSYDRA_DIR/prefs.json"; }
 : >"$FLEET_LOG"; rm -f "$work/health.json"
 check "#208: --json writes each check with its status and detail, and exits as doctor does" \
   "$(djson) $(jq -r --arg a "account $work/cfg-a" '[.v, .failed, (.checks | length), (.checks[] | select(.check == $a) | .status)] | map(tostring) | join(" ")' "$work/health.json")" \
@@ -640,6 +1332,11 @@ chmod a-w "$work"; touch "$work/x" 2>/dev/null || {
     "$(djson; jq -r 'select(.message == "doctor: could not write its report") | .level' "$FLEET_LOG"; find "$work" -maxdepth 1 -name 'health.json.tmp.*' | wc -l)" $'1\nERROR\n0'
 }
 chmod u+w "$work"; rm -f "$work/x"
+# A wall AJ switches off while it fails is logged as switched off, not as recovered.
+rm -f "$work/health.json"; djson >/dev/null; : >"$FLEET_LOG"
+DOC_PREFS='{"phone_wall": false}' djson >/dev/null
+check "#328 review 1: a failing phone wall switched off logs that, not a recovery" \
+  "$(jq -r 'select(.message | startswith("doctor: phone wall")) | .message' "$FLEET_LOG" | paste -sd'|')" "doctor: phone wall switched off"
 t kill-window -t "$w"; t kill-window -t "$o"; rm -f "$FLEET_STATE/orchestrator.pane"; : >"$REGISTRY"
 
 echo "install"
@@ -647,8 +1344,15 @@ inst=$work/inst
 mkdir -p "$inst/state" "$inst/claude"
 printf 'old copy\n' >"$inst/state/launch.sh"
 printf 'old hook\n' >"$inst/claude/klepsydra-fleet.sh"
-FLEET_STATE="$inst/state" FLEET_UNITS="$inst/units" FLEET_BIN="$inst/bin" FLEET_HOOK_DIR="$inst/claude" PATH="$work/nosystemctl:/usr/bin:/bin" \
+ln -s "$here/agora.py" "$inst/state/agora.py"
+FLEET_STATE="$inst/state" FLEET_UNITS="$inst/units" FLEET_BIN="$inst/bin" FLEET_HOOK_DIR="$inst/claude" \
   bash "$here/install.sh" --force >/dev/null 2>&1
+check "#326: a retired script's link is removed" "$([[ -L $inst/state/agora.py ]] && echo kept || echo gone)" "gone"
+printf 'mine\n' >"$inst/state/agora.py"
+FLEET_STATE="$inst/state" FLEET_UNITS="$inst/units" FLEET_BIN="$inst/bin" FLEET_HOOK_DIR="$inst/claude" \
+  bash "$here/install.sh" --force >/dev/null 2>&1
+check "#326: a file of that name that is no link stays" "$(cat "$inst/state/agora.py")" "mine"
+rm -f -- "${inst:?}/state/agora.py"
 check "#244: the hooks, status line, launcher, tmux conf, wrap-up and cast are copied in, each matching the checkout" \
   "$(for c in "${HOOK_COPIES[@]}"; do cmp -s "${here%/fleet}/${c%% *}" "$inst/claude/${c#* }" && [[ ! -L $inst/claude/${c#* } ]] && echo same; done | wc -l)" "${#HOOK_COPIES[@]}"
 check "#244: the scripts are executable, the cast is not, and no temp file is left" \
@@ -665,7 +1369,7 @@ check "#244 review 2: a copy cut short leaves the old one whole, and the install
   "1 the old hook 0 1"
 chmod a-w "$inst/claude"
 check "#244 review 2: a full install with a copy it cannot write fails too" \
-  "$(FLEET_STATE="$inst/state" FLEET_UNITS="$inst/units" FLEET_BIN="$inst/bin" FLEET_HOOK_DIR="$inst/claude" PATH="$work/nosystemctl:/usr/bin:/bin" bash "$here/install.sh" --force >/dev/null 2>&1; echo $?) $(cat "$inst/claude/klepsydra-fleet.sh")" "1 the old hook"
+  "$(FLEET_STATE="$inst/state" FLEET_UNITS="$inst/units" FLEET_BIN="$inst/bin" FLEET_HOOK_DIR="$inst/claude" bash "$here/install.sh" --force >/dev/null 2>&1; echo $?) $(cat "$inst/claude/klepsydra-fleet.sh")" "1 the old hook"
 chmod u+w "$inst/claude"; rm -f "$inst/claude/klepsydra-tmux.conf"; mkdir "$inst/claude/klepsydra-tmux.conf"
 check "#244 review: a folder where a copy goes is left alone, said so, and the install fails" \
   "$(FLEET_LOG="$work/instlog/dir.log" hinst) $(find "$inst/claude/klepsydra-tmux.conf" -mindepth 1 | wc -l) $(grep -c "is not a file" "$work/instlog/dir.log")" "1 0 1"
@@ -674,6 +1378,14 @@ check "#244: --hooks installs only the copies: no scripts, units or command" \
   "$(FLEET_STATE="$inst/h" FLEET_UNITS="$inst/hu" FLEET_BIN="$inst/hb" FLEET_HOOK_DIR="$inst/hc" bash "$here/install.sh" --hooks --force >/dev/null 2>&1; echo $?) $(find "$inst/hc" -type f | wc -l) $(find "$inst" -mindepth 1 -maxdepth 1 \( -name hu -o -name hb \) | wc -l) $(find "$inst/h" -mindepth 1 -not -path "$inst/h/log*" 2>/dev/null | wc -l)" "0 ${#HOOK_COPIES[@]} 0 0"
 rm -rf -- "${inst:?}/hc" "${inst:?}/h"
 check "#244: the wrap-up skill lands in its skill folder" "$(cmp -s "${here%/fleet}/hooks/klepsydra-wrapup.md" "$inst/claude/skills/klepsydra-wrapup/SKILL.md" && echo same)" "same"
+hinst >/dev/null # the tmux conf the folder case removed comes back first
+before=$(find "$inst/state/archive" -type f | wc -l)
+check "#244 nit: an install with nothing changed copies and archives nothing" \
+  "$(FLEET_LOG="$work/instlog/same.log" hinst) $(( $(find "$inst/state/archive" -type f | wc -l) - before )) $(cat "$work/instlog/same.log" 2>/dev/null | grep -c 'installed a copy')" "0 0 0"
+mkdir -p "$work/dryfail" && cp -r "$here" "$work/dryfail/fleet"
+check "#244 nit: a dry run that meets an error writes no log, and says it on stderr" \
+  "$(FLEET_STATE="$inst/dl" FLEET_HOOK_DIR="$inst/dc" bash "$work/dryfail/fleet/install.sh" --dry-run --hooks --force 2>&1 >/dev/null | grep -c "ERROR a copy's source is missing") $(find "$inst/dl" "$inst/dc" -mindepth 1 2>/dev/null | wc -l)" "${#HOOK_COPIES[@]} 0"
+rm -rf -- "${work:?}/dryfail" "${inst:?}/dl" "${inst:?}/dc"
 check "each script is linked from the checkout" "$(readlink "$inst/state/resume-at-reset.sh")" "$here/resume-at-reset.sh"
 check "the copy a link replaced is archived" "$(cat "$inst/state/archive/fleet-scripts-$(date +%Y%m%d)/launch.sh")" "old copy"
 check "the fleet command is linked" "$(readlink "$inst/bin/fleet")" "$here/fleet"
@@ -685,8 +1397,53 @@ check "#208: the doctor timer runs every 5 min into the data folder, and a faili
   "$(grep -c 'OnUnitActiveSec=5min' "$inst/units/fleet-doctor.timer") $(grep -E '^(ExecStart|SuccessExitStatus)=' "$inst/units/fleet-doctor.service" | tr '\n' '|')" \
   "1 SuccessExitStatus=1|ExecStart=/usr/bin/bash $inst/state/doctor.sh --json \"$KLEPSYDRA_DIR/fleet-health.json\"|"
 check "#208 review 1: and what it prints stays out of the journal" "$(grep -c '^StandardOutput=null$' "$inst/units/fleet-doctor.service")" "1"
+# #292 review 4: on WSL both the doctor's unit and the watchdog's get the distro's name.
+# In a folder of its own: the dry-run case below lists what $inst holds.
+iw=$work/inst-wsl
+WSL_DISTRO_NAME=Test FLEET_STATE="$iw/s" FLEET_UNITS="$iw/u" FLEET_BIN="$iw/b" FLEET_HOOK_DIR="$iw/c" bash "$here/install.sh" --force >/dev/null 2>&1
+check "#292 review 4: an install on WSL passes WSL_DISTRO_NAME to the doctor's and the watchdog's units" \
+  "$(grep -c '^Environment=.*"WSL_DISTRO_NAME=Test"' "$iw/u/fleet-doctor.service" "$iw/u/fleet-tmux-watch.service" | cut -d: -f2 | paste -sd' ')" "1 1"
 FLEET_STATE="$inst/s2" FLEET_UNITS="$inst/u2" FLEET_BIN="$inst/b2" FLEET_HOOK_DIR="$inst/c2" bash "$here/install.sh" --dry-run --force >"$work/dry" 2>/dev/null
 check "a dry run says what it would do and changes nothing" "$(grep -c '^would' "$work/dry" | sed 's/^[1-9][0-9]*$/some/') $(find "$inst" -mindepth 1 -maxdepth 1 -printf '%f\n' | sort | tr '\n' ' ')" "some bin claude state units "
+# #353: the fleet's slice and the workers' inside it, sized from MemTotal (the
+# fixture's 9948 MiB) less the 1536 MiB margin, and that less the orchestrator's
+# peak for the workers; MemoryMax only.
+mkdir -p "$inst/sl"; printf '811\n' >"$inst/sl/orchestrator.mem"
+slice_inst() { FLEET_STATE="$inst/sl" FLEET_UNITS="$inst/slu" FLEET_BIN="$inst/slb" FLEET_HOOK_DIR="$inst/slc" FLEET_LOG="$inst/sl.log" \
+  bash "$here/install.sh" --force --no-cutover >/dev/null 2>&1; echo "rc=$?"; }
+check "#353: install writes both slices, sized from MemTotal, the margin and the orchestrator's peak" \
+  "$(slice_inst) $(grep -h '^Memory' "$inst/slu/fleet.slice" "$inst/slu/fleet-workers.slice" | paste -sd' ')" \
+  "rc=0 MemoryAccounting=yes MemoryMax=8412M MemoryAccounting=yes MemoryMax=7601M"
+check "#353: and logs the sizes" "$(jq -r 'select(.message == "memory slices sized") | "\(.fleet_mb) \(.workers_mb) \(.orchestrator_mb) \(.margin_mb)"' "$inst/sl.log")" "8412 7601 811 1536"
+touch -d @1794400000 "$inst/slu/fleet.slice"
+check "#353 review 2: an install that changes no unit leaves its time" \
+  "$(slice_inst) $(stat -c %Y "$inst/slu/fleet.slice")" "rc=0 1794400000"
+# Doctor dates the slices by the unit's birth, so a resize must rewrite it in place.
+ino=$(stat -c %i "$inst/slu/fleet.slice")
+printf 'MemTotal:       12000000 kB\n' >"$work/meminfo-big"
+check "#353 review 5: a resize rewrites the unit in place (same file, new cap: doctor keeps its first date)" \
+  "$(FLEET_MEMINFO="$work/meminfo-big" slice_inst) $(stat -c %i "$inst/slu/fleet.slice") $(grep '^MemoryMax=' "$inst/slu/fleet.slice")" "rc=0 $ino MemoryMax=10182M"
+printf 'MemTotal:       1572864 kB\n' >"$work/meminfo-small"
+check "#353: a machine too small for the orchestrator's peak fails the install, saying so" \
+  "$(FLEET_MEMINFO="$work/meminfo-small" slice_inst) $(jq -r 'select(.level == "ERROR") | .message' "$inst/sl.log" | grep -c '^memory slices not sized')" "rc=1 1"
+cat >"$work/sc-live" <<'EOF'
+#!/usr/bin/env bash
+# systemctl with the resume service running: logs each call.
+printf '%s\n' "$*" >>"$SC_CALLS"
+[[ $* == *"is-active --quiet fleet-resume-at-reset.service"* ]] && exit 0
+[[ $* == *"show -p Transient"* ]] && { echo no; exit 0; }
+exit 0
+EOF
+chmod +x "$work/sc-live"
+inst2() { FLEET_STATE="$inst/state" FLEET_UNITS="$inst/units" FLEET_BIN="$inst/bin" FLEET_HOOK_DIR="$inst/claude" FLEET_SYSTEMCTL="$work/sc-live" SC_CALLS="$work/sc.calls" \
+  FLEET_LOG="$work/instlog/cut.log" bash "$here/install.sh" --force "$@" 2>/dev/null; echo "rc=$?"; }
+: >"$work/sc.calls"
+out=$(inst2)
+check "#263: an install onto a running fleet cuts over, so the new scripts run" \
+  "$(grep -c 'enable --now fleet-resume-at-reset.service' "$work/sc.calls") $(grep -c 'install cuts the running fleet over' "$work/instlog/cut.log")" "1 1"
+check "#263: and a cut-over that cannot confirm the service's start fails the install, saying so" "$(tail -1 <<<"$out")" "rc=1"
+: >"$work/sc.calls"
+check "#263: --no-cutover installs only" "$(inst2 --no-cutover | tail -1) $(grep -c 'enable --now' "$work/sc.calls")" "rc=0 0"
 
 repo=$work/repo
 git init -q "$repo" && cp -r "$here" "$repo/fleet"
@@ -746,6 +1503,7 @@ ok   fleet-accounts-sync.timer: enabled and active
 ok   fleet-sync-briefing.timer: enabled and active
 ok   fleet-ci-watch.service: enabled and active
 ok   fleet-doctor.timer: enabled and active
+ok   fleet-tmux-watch.timer: enabled and active
 ok   the resume service logged its start
 rc=0"
 check "no transient unit is left" "$(find "$SC" -name '*.transient' | wc -l)" "0"
@@ -817,6 +1575,46 @@ reading a Personal 60 1000
 check "back room: under FLEET_BACK_ROOM_PCT (50%) free is not enough to move back" "$(back_room a "$now" && echo yes || echo no)" "no"
 reading a Personal 50 1000
 check "at 50% free it is" "$(back_room a "$now" && echo yes || echo no)" "yes"
+# #319: a limit seen on the account outranks a reading the limit kept from refreshing.
+mark_limited a $((now + 3600))
+check "#319: an account at a limit seen on it has no room to move back to, whatever its reading says" \
+  "$(back_room a "$now" && echo yes || echo no) $(headroom a "$now") $(id_has_room a "$now" && echo room || echo full)" "no 0 100 full"
+mark_limited a $((now + 60))
+check "#319: an earlier reset never shortens a later one" "$(cut -d' ' -f1 "$FLEET_STATE/limited/a.five")" "$((now + 3600))"
+mark_limited a $((now + 3600)) seven
+check "#322 review 1: a weekly limit zeroes the weekly window, a 5-hour one the 5-hour window" "$(headroom a "$now")" "0 0"
+rm -f -- "$FLEET_STATE/limited/a.five"
+check "#322 review 1: the weekly mark alone leaves the 5-hour window to the reading" "$(headroom a "$now")" "50 0"
+rm -f -- "$FLEET_STATE/limited/a.seven"; mark_limited a $((now + 3600))
+check "#319: past its reset the reading decides again" "$(back_room a $((now + 3601)) && echo yes || echo no)" "yes"
+touch -d "@$(( $(date +%s) + 120 ))" "$KLEPSYDRA_DIR/accounts/a/s.json"
+check "#319: and so does a reading taken after the limit was seen" "$(back_room a "$now" && echo yes || echo no)" "yes"
+mark_limited a $((now + 3600))
+check "#322 review 1: the same limit seen again after that reading holds again, its newest reading no news" "$(back_room a "$now" && echo yes || echo no)" "no"
+mark_limited a $((now + 60))
+check "#322 review 1: so does a sighting with an earlier reset, keeping the later one" \
+  "$(back_room a "$now" && echo yes || echo no) $(cut -d' ' -f1 "$FLEET_STATE/limited/a.five")" "no $((now + 3600))"
+check "#319: a malformed id or reset marks nothing" "$(mark_limited '../x' 5 || echo refused) $(mark_limited a soon || echo refused)" "refused refused"
+rm -rf -- "${FLEET_STATE:?}/limited"
+mkdir -p "$KLEPSYDRA_DIR/accounts/rd"; printf '{}' >"$KLEPSYDRA_DIR/accounts/rd/old.json"; printf '{}' >"$KLEPSYDRA_DIR/accounts/rd/new.json"
+touch -d '2026-10-01' "$KLEPSYDRA_DIR/accounts/rd/old.json"
+check "#319: reading_of takes the newest reading in one pass" "$(reading_of rd)" "$KLEPSYDRA_DIR/accounts/rd/new.json"
+rm -rf -- "${KLEPSYDRA_DIR:?}/accounts/rd"
+check "#319: and fails with none" "$(reading_of rd || echo none)" "none"
+# #335: a listing past a pipe buffer (64 KB) made sort | head -1 fail every time
+# under systemd, which ignores SIGPIPE (IgnoreSIGPIPE=yes), as the run here does.
+big=$KLEPSYDRA_DIR/accounts/big; mkdir -p "$big"; pad=$(printf 'r%.0s' {1..200})
+for i in {1..400}; do printf '{}' >"$big/$pad-$i.json"; done
+touch -d '2026-10-01' "$big/$pad-7.json"; touch -d '2030-01-01' "$big/$pad-9.json"
+# shellcheck disable=SC2016 # $1 expands in the inner bash
+check "#335: newest_reading reads a listing past a pipe buffer with no sort error" \
+  "$(env --ignore-signal=PIPE bash -c 'source "$1"; newest_reading' _ "$here/lib.sh" 2>&1)" "$big/$pad-9.json"
+check "#335: pick_file oldest takes the oldest (the inbox's order)" \
+  "$(find "$big" -name '*.json' -printf '%T@ %p\n' | pick_file oldest 2>&1)" "$big/$pad-7.json"
+# Equal mtimes (ext4 stamps coarsely) pick as sort did, by path, not by the folder's listing order.
+check "#336 review 1: a tie goes to the last path for newest and the first for oldest" \
+  "$(printf '5 %s\n' c a d b | pick_file newest) $(printf '5 %s\n' c a d b | pick_file oldest)" "d a"
+rm -rf -- "${big:?}"
 rm -f "$KLEPSYDRA_DIR/accounts/a/s.json"
 check "and with no reading at all it is not" "$(back_room a "$now" && echo yes || echo no)" "no"
 check "the default folder unsets CLAUDE_CONFIG_DIR; the second sets it" "$(config_env "$work/cfg-a")| $(config_env "$work/cfg-b")" "-u CLAUDE_CONFIG_DIR | CLAUDE_CONFIG_DIR=$work/cfg-b "
@@ -860,11 +1658,29 @@ live "$p"
 printf '%s\tmover\t%s\t%s\t/w\t%s\n' "$p" "$work/brief.src" "$SID" "$work/cfg-a" >"$REGISTRY"
 mover "$noon"
 check "a registered pane at a limit moves to the other account at once" "$(head -2 "$work/moved" | tr '\n' ' ')" "$work/cfg-b mover "
+check "#319: and the limit is marked on its account's 5-hour window until the reset" "$(cut -d' ' -f1 "$FLEET_STATE/limited/a.five" 2>/dev/null)" "$(TZ=America/New_York date -d '2026-10-28 13:10' +%s)"
+rm -rf -- "${FLEET_STATE:?}/limited"
 check "its old pane exits" "$(events mover)" "SUBMIT /exit"
 check "the fresh brief says why, then carries the brief" "$(grep -c 'continue on the other, which has room' "$work/moved-brief") $(tail -1 "$work/moved-brief")" "1 the brief body"
 check "logged with both folders and the new pane" \
   "$(jq -r 'select(.message == "moved to the other account at a limit") | [.from, .to, .new_pane] | join(" ")' "$FLEET_LOG")" "$work/cfg-a $work/cfg-b %997"
 t kill-window -t "$p" 2>/dev/null; : >"$REGISTRY"
+# #322 review 2: a weekly limit marks the weekly window; a move at a limit
+# whose brief meets the limit on the other account marks that one too.
+rm -f -- "$FLEET_STATE/resume-state"; rm -rf -- "${FLEET_STATE:?}/limited"
+cat >"$work/launch-lim3.sh" <<EOF
+#!/usr/bin/env bash
+echo "pane=%994 session=x account=\$FLEET_ACCOUNT avail=1MiB brief=blocked-by-limit"
+EOF
+chmod +x "$work/launch-lim3.sh"
+p=$(pane wkly "{\"above\":[\"⏺ Done. done 11:50 AM\",\"  ⎿  You've hit your weekly limit · resets Nov 2, 1pm (America/New_York)\"]}"); settle
+live "$p"
+printf '%s\twkly\t%s\t%s\t/w\t%s\n' "$p" "$work/brief.src" "$SID" "$work/cfg-a" >"$REGISTRY"
+LAUNCH="$work/launch-lim3.sh" FLEET_NOW=$noon bash "$here/resume-at-reset.sh" --once 2>/dev/null
+check "#322 review 2: a weekly limit marks the account's weekly window, and the log names the mark" \
+  "$([[ -e $FLEET_STATE/limited/a.seven ]] && echo seven) $([[ -e $FLEET_STATE/limited/a.five ]] && echo five) $(jq -r 'select(.message == "limit seen") | .marked' "$FLEET_LOG" | tail -1)" "seven  a.seven"
+check "#322 review 2: and the move whose brief met a limit on the other account marks that one" "$([[ -e $FLEET_STATE/limited/b.five ]] && echo marked)" "marked"
+t kill-window -t "$p" 2>/dev/null; : >"$REGISTRY"; rm -rf -- "${FLEET_STATE:?}/limited"; rm -f -- "$FLEET_STATE/resume-state" "$FLEET_STATE/back-hold"
 
 # A background task's notification starts a turn during the launch; at the
 # limit it fails at once, so the move goes on.
@@ -937,11 +1753,58 @@ check "the old pane exits" "$(events heph)" "SUBMIT /exit"
 check "logged as the orchestrator's move" "$(jq -r 'select(.message == "moved to the other account at a limit") | [.orchestrator, .from, .to] | join(" ")' "$FLEET_LOG")" "1 $work/cfg-a $work/cfg-b"
 t kill-window -t "$h" 2>/dev/null
 
+# #216: the new Heph opens behind, and comes forward once the old one has gone.
+cat >"$work/launch-hfwd.sh" <<EOF
+#!/usr/bin/env bash
+np=\$(tmux -L "$FLEET_SOCK" new-window -d -P -F '#{pane_id}' -t fleet: 'sleep 600')
+echo "pane=\$np session=aaaaaaaa-0000-4000-8000-0000000000ce account=\$FLEET_ACCOUNT avail=1MiB brief=started"
+EOF
+chmod +x "$work/launch-hfwd.sh"
+: >"$work/moved"; rm -f "$FLEET_STATE/orchestrator.config" "$FLEET_STATE/orchestrator.session" "$FLEET_STATE/resume-state"
+h=$(pane hfwd "{\"above\":[\"⏺ ok\",\"$LIMIT\"]}"); settle
+printf '%s\n' "$h" >"$FLEET_STATE/orchestrator.pane"
+t select-window -t "$h"
+LAUNCH="$work/launch-hfwd.sh" FLEET_HEPH="$work/HEPH.md" FLEET_NOW=$noon bash "$here/resume-at-reset.sh" --once 2>/dev/null
+nh=$(cat "$FLEET_STATE/orchestrator.pane")
+check "#216: after the move the new Heph is the window in view" "$(events hfwd) $(t display -p -t fleet: '#{pane_id}')" "SUBMIT /exit $nh"
+t kill-window -t "$nh" 2>/dev/null; t kill-window -t "$h" 2>/dev/null
+# AJ watching a worker while Heph moves stays on the worker.
+: >"$work/moved"; rm -f "$FLEET_STATE/orchestrator.config" "$FLEET_STATE/orchestrator.session" "$FLEET_STATE/resume-state"
+h=$(pane hfwd "{\"above\":[\"⏺ ok\",\"$LIMIT\"]}"); wv=$(pane watched '{"above":["idle"]}'); settle
+printf '%s\n' "$h" >"$FLEET_STATE/orchestrator.pane"
+t select-window -t "$wv"
+LAUNCH="$work/launch-hfwd.sh" FLEET_HEPH="$work/HEPH.md" FLEET_NOW=$noon bash "$here/resume-at-reset.sh" --once 2>/dev/null
+nh=$(cat "$FLEET_STATE/orchestrator.pane")
+check "#229 review: a move while AJ watches another window leaves him there" "$(events hfwd) $([[ $nh != "$h" ]] && echo moved) $(t display -p -t fleet: '#{pane_id}')" "SUBMIT /exit moved $wv"
+t kill-window -t "$nh" 2>/dev/null; t kill-window -t "$h" 2>/dev/null; t kill-window -t "$wv" 2>/dev/null
+# A worker replaced at a limit: its successor takes its place in view only if it was in view.
+cat >"$work/launch-wfwd.sh" <<EOF
+#!/usr/bin/env bash
+np=\$(tmux -L "$FLEET_SOCK" new-window -d -P -F '#{pane_id}' -t fleet: 'sleep 600')
+echo "\$np" >"$work/wfwd.new"
+echo "pane=\$np session=x account=\$FLEET_ACCOUNT avail=1MiB brief=started"
+EOF
+chmod +x "$work/launch-wfwd.sh"
+for view in self other; do
+  : >"$FLEET_LOG"; rm -f "$FLEET_STATE/resume-state"
+  p=$(pane wfwd "{\"above\":[\"⏺ Done. done 11:50 AM\",\"$LIMIT\"]}"); wv=$(pane wother '{"above":["idle"]}'); settle
+  live "$p"
+  printf '%s\twfwd\t%s\t%s\t/w\t%s\n' "$p" "$work/brief.src" "$SID" "$work/cfg-a" >"$REGISTRY"
+  if [[ $view == self ]]; then t select-window -t "$p"; else t select-window -t "$wv"; fi
+  LAUNCH="$work/launch-wfwd.sh" FLEET_NOW=$noon bash "$here/resume-at-reset.sh" --once 2>/dev/null
+  np=$(cat "$work/wfwd.new" 2>/dev/null)
+  want=$np; [[ $view == other ]] && want=$wv
+  check "#229 review: a worker moved while $([[ $view == self ]] && echo "AJ watched it: its successor is in view" || echo "AJ watched another: he stays there")" \
+    "$(events wfwd) $(t display -p -t fleet: '#{pane_id}')" "SUBMIT /exit $want"
+  t kill-window -t "$np" 2>/dev/null; t kill-window -t "$p" 2>/dev/null; t kill-window -t "$wv" 2>/dev/null; : >"$REGISTRY"
+done
+
 # A background task's notification starts a turn during his launch; at the
 # limit it fails at once, so he still moves.
 cat >"$work/launch-hturn.sh" <<EOF
 #!/usr/bin/env bash
 printf '%s\n' "\$FLEET_ACCOUNT" "\$1" >"$work/moved"
+printf '%s\n' "\${FLEET_SUCCEEDS-unset}" >"$work/succeeds"
 jq '.turn_at = 999999999999' "$KLEPSYDRA_DIR/fleet/$SID.json" >"$work/st.json" && mv "$work/st.json" "$KLEPSYDRA_DIR/fleet/$SID.json"
 echo "pane=%993 session=aaaaaaaa-0000-4000-8000-0000000000cd account=\$FLEET_ACCOUNT avail=1MiB brief=started"
 EOF
@@ -952,6 +1815,7 @@ printf '%s\n' "$h" >"$FLEET_STATE/orchestrator.pane"; live "$h"
 LAUNCH="$work/launch-hturn.sh" FLEET_HEPH="$work/HEPH.md" FLEET_NOW=$noon bash "$here/resume-at-reset.sh" --once 2>/dev/null
 check "#198 review 4: a notification's turn during Heph's move at a limit does not keep him" \
   "$(events hturn) $(cat "$FLEET_STATE/orchestrator.pane")" "SUBMIT /exit %993"
+check "#226: the move names the session it replaces, so the new one takes its face" "$(cat "$work/succeeds")" "$SID"
 t kill-window -t "$h" 2>/dev/null; rm -f "$KLEPSYDRA_DIR/fleet/$SID.json" "$FLEET_STATE/resume-state"
 
 : >"$work/moved"; rm -f "$FLEET_STATE/orchestrator.config" "$FLEET_STATE/orchestrator.session"
@@ -1017,6 +1881,62 @@ check "its fresh brief says why" "$(grep -c 'moved back to its preferred account
 check "logged with both folders" "$(jq -r 'select(.message == "moved back to the preferred account") | [.from, .to, .new_pane] | join(" ")' "$FLEET_LOG")" "$work/cfg-b $work/cfg-a %997"
 t kill-window -t "$p" 2>/dev/null; : >"$REGISTRY"
 
+echo "a finished agent is never relaunched (#269)"
+: >"$FLEET_LOG"; : >"$work/moved"; rm -f "$FLEET_STATE/resume-state" "$FLEET_STATE/finished.tsv"
+p=$(backpane finished)
+printf '%s\tother\t%s\tsid-o\t/w\t%s\n' "%9999" "$work/brief.src" "$work/cfg-a" >>"$REGISTRY"
+check "#269: fleet done outside a pane, with no name, is refused" "$(TMUX_PANE='' bash "$here/fleet" "done" >/dev/null 2>&1; echo $?) $(wc -l <"$REGISTRY")" "2 2"
+check "#269: an unknown name is refused and changes nothing" "$(bash "$here/fleet" "done" nobody >/dev/null 2>&1; echo $?) $(wc -l <"$REGISTRY")" "1 2"
+check "#269 review: a pane id from another tmux server (AJ's terminal) is refused, and nothing moves" \
+  "$(TMUX=/tmp/tmux-1/default,1,0 TMUX_PANE="$p" bash "$here/fleet" "done" >/dev/null 2>&1; echo $?) $(wc -l <"$REGISTRY")" "2 2"
+fsock="TMUX=/tmp/tmux-1/$FLEET_SOCK,1,0"
+jq --arg p "%9998" '.tmux.pane = $p' "$KLEPSYDRA_DIR/fleet/$SID.json" >"$work/st.json" && mv "$work/st.json" "$KLEPSYDRA_DIR/fleet/$SID.json"
+check "#269 review: a stale row whose session runs in another pane is refused" \
+  "$(env "$fsock" TMUX_PANE="$p" bash "$here/fleet" "done" >/dev/null 2>&1; echo $?) $(wc -l <"$REGISTRY")" "1 2"
+done_live "$p"
+out=$(env "$fsock" TMUX_PANE="$p" bash "$here/fleet" "done" 2>/dev/null); rc=$?
+check "#269: fleet done in the agent's own pane moves its row, and only its row, to finished.tsv" \
+  "$rc $(cut -f1,2 "$REGISTRY") | $(cut -f1,2 "$FLEET_STATE/finished.tsv")" "0 %9999	other | $p	finished"
+check "#269: with the time it finished, and says so" "$(awk -F'\t' '{ print ($7 ~ /^20[0-9][0-9]-/) }' "$FLEET_STATE/finished.tsv") $out" "1 finished: $p (1 row); it will not be relaunched"
+check "#269: logged" "$(jq -r 'select(.message | startswith("agent marked finished")) | .pane' "$FLEET_LOG")" "$p"
+mover "$noon"; mover "$((noon + 60))"
+check "#269: the resume service never moves a finished agent back, nor types into it" \
+  "$(wc -c <"$work/moved") $(grep -c '^SUBMIT' "$work/finished.log")" "0 0"
+printf '%s\tfinished\t%s\t%s\t/w\t%s\n' "$p" "$work/brief.src" "$SID" "$work/cfg-b" >>"$REGISTRY"
+check "#269: fleet done NAME works from any pane, for Heph" "$(TMUX_PANE=%1 bash "$here/fleet" "done" finished >/dev/null 2>&1; echo $?) $(cut -f2 "$REGISTRY" | tr '\n' ' ')$(wc -l <"$FLEET_STATE/finished.tsv")" "0 other 2"
+check "#269 review: a second fleet done NAME says it already finished" "$(bash "$here/fleet" "done" finished 2>/dev/null; echo "rc=$?")" $'already finished: finished\nrc=0'
+printf '%s\t01\t%s\tsid-1\t/w\t%s\n' "%9997" "$work/brief.src" "$work/cfg-a" >>"$REGISTRY"
+check "#269 review: names compare as text: fleet done 1 leaves the agent named 01" "$(bash "$here/fleet" "done" 1 >/dev/null 2>&1; echo $?) $(cut -f2 "$REGISTRY" | tr '\n' ' ')" "1 other 01 "
+# #269 verify: finished.tsv that cannot be written keeps the row in panes.tsv.
+printf '%s\tkeep\t%s\t%s\t/w\t%s\n' "$p" "$work/brief.src" "$SID" "$work/cfg-b" >"$REGISTRY"
+mkdir -p "$work/rofin"; chmod 555 "$work/rofin"
+check "#269 verify: a finished.tsv that cannot be written fails the run and the row stays" \
+  "$(FLEET_FINISHED=$work/rofin/finished.tsv bash "$here/fleet" "done" keep >/dev/null 2>&1; echo $?) $(cut -f2 "$REGISTRY")" "1 keep"
+cp "$REGISTRY" "$work/reg.before"
+check "#269 verify: an append that fails after the probe (a full disk) puts the row back (one row: unchanged)" \
+  "$(FLEET_FINISHED=/dev/full bash "$here/fleet" "done" keep >/dev/null 2>&1; echo $?) $(cmp -s "$work/reg.before" "$REGISTRY" && echo same)" "1 same"
+chmod 755 "$work/rofin"
+t kill-window -t "$p" 2>/dev/null; : >"$REGISTRY"; rm -f "$FLEET_STATE/finished.tsv" "$FLEET_STATE/resume-state"
+# #269 verify: a finished agent whose pane sits at a limit is not told to carry on.
+: >"$FLEET_LOG"
+p=$(pane finlim "{\"above\":[\"work\",\"$LIMIT\"],\"on_submit\":\"busy\"}"); settle
+live "$p"
+printf '%s\tfinlim\t%s\t%s\t/w\t%s\t2026-11-02T20:00:00-05:00\n' "$p" "$work/brief.src" "$SID" "$work/cfg-a" >"$FLEET_STATE/finished.tsv"
+resume "$noon"; resume "$(( noon + 3600 + 600 + 130 ))"
+check "#269 verify: a finished agent at a limit gets no continue message, nor is its limit logged" \
+  "$(grep -c '^SUBMIT' "$work/finlim.log") $(jq -r --arg p "$p" 'select(.pane == $p) | .message' "$FLEET_LOG" | wc -l)" "0 0"
+rm -f "$FLEET_STATE/finished.tsv" "$FLEET_STATE/resume-state"
+resume "$noon"; resume "$(( noon + 3600 + 600 + 130 ))"
+check "#269 verify: the same pane not in finished.tsv is resumed (the control)" "$(has "$(events finlim)" "SUBMIT The usage limit has reset.")" "yes"
+t kill-window -t "$p" 2>/dev/null; rm -f "$FLEET_STATE/resume-state"; : >"$FLEET_LOG"
+p=$(pane finlim2 "{\"above\":[\"work\",\"$LIMIT\"],\"on_submit\":\"busy\"}"); settle
+live "$p"
+printf '%s\tfinlim\t%s\t%s\t/w\t%s\t2026-11-02T20:00:00-05:00\n' "$p" "$work/brief.src" "99999999-0000-4000-8000-000000000000" "$work/cfg-a" >"$FLEET_STATE/finished.tsv"
+resume "$noon"; resume "$(( noon + 3600 + 600 + 130 ))"
+check "#269 verify 3: a new session in a finished agent's reused pane is looked after as usual" "$(has "$(events finlim2)" "SUBMIT The usage limit has reset.")" "yes"
+rm -f "$FLEET_STATE/finished.tsv"
+t kill-window -t "$p" 2>/dev/null; rm -f "$KLEPSYDRA_DIR/fleet/$SID.json"
+
 : >"$work/moved"
 p=$(backpane bgwork); done_live "$p" working '[{"id": "t1", "kind": "agent"}]'
 mover "$noon"; mover "$((noon + 60))"
@@ -1074,6 +1994,158 @@ mover "$((noon + 480))"
 check "#198: it moves on a first line of READY-TO-MOVE at a finished turn" "$(head -2 "$work/moved" | tr '\n' ' ')" "$work/cfg-a keeper "
 t kill-window -t "$p" 2>/dev/null; : >"$REGISTRY"
 
+# #319 (11-04, site-deslop): the preferred account's reading still showed room
+# 13 min after a weekly limit was seen on it. No ask while the limit stands;
+# and a move that meets the limit anyway tells the worker to carry on.
+: >"$FLEET_LOG"; : >"$work/moved"; rm -f "$FLEET_STATE/resume-state" "$FLEET_STATE/back-room-since"
+p=$(backpane stale); state stale '{"above":["⏺ Done. done 11:50 AM"],"on_submit":"none"}'
+reply_live "$p" settled '[{"id": "w1", "kind": "bash"}]' "Watching." "$noon"
+mark_limited a $((noon + 3600))
+mover "$noon"; mover "$((noon + 300))"
+check "#319: no move-back ask while a limit seen on the preferred account stands" "$(grep -c '^SUBMIT' "$work/stale.log")" "0"
+rm -rf -- "${FLEET_STATE:?}/limited"
+cat >"$work/launch-limited.sh" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' "\$FLEET_ACCOUNT" "\$@" >"$work/moved"
+echo "pane=%995 session=x account=\$FLEET_ACCOUNT avail=1MiB brief=blocked-by-limit"
+EOF
+chmod +x "$work/launch-limited.sh"
+mover "$((noon + 600))"; mover "$((noon + 900))"
+reply_live "$p" settled '[{"id": "w1", "kind": "bash"}]' "READY-TO-MOVE" "$((noon + 930))"
+LAUNCH="$work/launch-limited.sh" FLEET_NOW=$((noon + 960)) bash "$here/resume-at-reset.sh" --once 2>/dev/null
+check "#319: a move back whose brief meets the limit tells the stopped worker to carry on where it is" \
+  "$(grep -c '^SUBMIT The move back to Personal did not happen: its brief met the usage limit there. Carry on here' "$work/stale.log") $(logged "told the worker to carry on: the move back did not happen")" "1 $p "
+check "#322 review 1: and the account it met the limit on reads full for new launches too" \
+  "$([[ -e $FLEET_STATE/limited/a.five ]] && echo marked) $(best_account "$((noon + 1000))")" "marked $work/cfg-b"
+t kill-window -t "$p" 2>/dev/null; : >"$REGISTRY"
+# #322 review 1: a worker asked, that declined, then finished a turn of its own,
+# was never stopped for the move: a failed move back sends it no note.
+rm -rf -- "${FLEET_STATE:?}/limited"; rm -f -- "$FLEET_STATE/back-hold" "$FLEET_STATE/resume-state" "$FLEET_STATE/back-room-since"; : >"$work/moved"
+reading a Personal 10 5000
+p=$(backpane dec); state dec '{"above":["⏺ Done. done 11:50 AM"],"on_submit":"none"}'
+reply_live "$p" settled '[{"id": "w1", "kind": "bash"}]' "Watching." "$noon"
+mover "$noon"; mover "$((noon + 300))"
+reply_live "$p" settled '[{"id": "w1", "kind": "bash"}]' "Not yet: the TIGRIS job still runs." "$((noon + 310))"
+mover "$((noon + 320))"
+done_live "$p" "done" '[]'
+LAUNCH="$work/launch-limited.sh" FLEET_NOW=$((noon + 1500)) bash "$here/resume-at-reset.sh" --once 2>/dev/null
+check "#322 review 1: a worker that declined and later finished a turn gets no carry-on note when the move fails" \
+  "$(head -1 "$work/moved") $(grep -c '^SUBMIT The move back' "$work/dec.log")" "$work/cfg-a 0"
+t kill-window -t "$p" 2>/dev/null; : >"$REGISTRY"
+# #322 review 2: a worker that did as asked (stopped its shells, so its turn
+# reads as done, and answered READY-TO-MOVE) gets the note when the new
+# session never starts (3); it is not asked again within the hour; and a note
+# it cannot take (busy) is logged as not delivered.
+rm -rf -- "${FLEET_STATE:?}/limited"; rm -f -- "$FLEET_STATE/back-hold" "$FLEET_STATE/resume-state" "$FLEET_STATE/back-room-since"; : >"$FLEET_LOG"
+reading a Personal 10 5000
+cat >"$work/launch-nd.sh" <<EOF
+#!/usr/bin/env bash
+echo "pane=%993 session=x account=\$FLEET_ACCOUNT avail=1MiB brief=NOT-DELIVERED"
+EOF
+chmod +x "$work/launch-nd.sh"
+p=$(backpane rtm); state rtm '{"above":["⏺ Done. done 11:50 AM"],"on_submit":"none"}'
+reply_live "$p" settled '[{"id": "w1", "kind": "bash"}]' "Watching." "$noon"
+mover "$noon"; mover "$((noon + 300))"
+# It answers half an hour after the ask (it saved and pushed first), so the
+# note's hour and the ask's differ.
+jq -n --arg p "$p" --argjson at "$((noon + 2100))" '{session_id: "x", ended: null, tmux: {pane: $p}, state: "done", reason: null,
+  background: [], reply: {text: "READY-TO-MOVE", at: $at}, prompt: {at: 1}, turn_at: ($at - 5)}' >"$KLEPSYDRA_DIR/fleet/$SID.json"
+LAUNCH="$work/launch-nd.sh" FLEET_NOW=$((noon + 2130)) bash "$here/resume-at-reset.sh" --once 2>/dev/null
+check "#322 review 2: a worker that stopped its shells and answered READY-TO-MOVE is told to carry on when the new session never starts" \
+  "$(grep -c '^SUBMIT The move back to Personal did not happen: the new session did not start. Carry on here' "$work/rtm.log")" "1"
+# It carries on, with a shell running again: only the hour's gate keeps the ask away.
+reply_live "$p" settled '[{"id": "w2", "kind": "bash"}]' "Carrying on here." "$((noon + 2200))"
+mover "$((noon + 300 + 3600 + 60))"
+check "#322 review 3: and it is not asked again within the hour of the note, though the ask's hour has passed" "$(grep -c '^SUBMIT Your preferred account' "$work/rtm.log")" "1"
+mover "$((noon + 2130 + 3600 + 10))"
+check "#322 review 3: an hour after the note it is asked again" "$(grep -c '^SUBMIT Your preferred account' "$work/rtm.log")" "2"
+jq -n --arg p "$p" --argjson at "$((noon + 5800))" '{session_id: "x", ended: null, tmux: {pane: $p}, state: "done", reason: null,
+  background: [], reply: {text: "READY-TO-MOVE", at: $at}, prompt: {at: 1}, turn_at: ($at - 5)}' >"$KLEPSYDRA_DIR/fleet/$SID.json"
+# The launch leaves the old pane busy (a turn started meanwhile), so the note cannot go in.
+cat >"$work/launch-busy.sh" <<EOF
+#!/usr/bin/env bash
+printf '%s' '{"above":["working"],"busy":true,"on_submit":"none"}' >"$work/rtm.json"; sleep 1
+echo "pane=%992 session=x account=\$FLEET_ACCOUNT avail=1MiB brief=blocked-by-limit"
+EOF
+chmod +x "$work/launch-busy.sh"
+LAUNCH="$work/launch-busy.sh" FLEET_NOW=$((noon + 5900)) bash "$here/resume-at-reset.sh" --once 2>/dev/null
+check "#322 review 2: a carry-on note the worker cannot take is logged as not delivered" \
+  "$(grep -c 'the carry-on note did not reach the worker' "$FLEET_LOG") $(grep -c 'told the worker to carry on: the move back did not happen' "$FLEET_LOG")" "1 1"
+t kill-window -t "$p" 2>/dev/null; : >"$REGISTRY"
+# #322 review 3: a worker that stopped for the move after its preferred account
+# lost its room (a limit seen there, or a hold from another worker's failed
+# move) is told to carry on once, and that READY-TO-MOVE no longer moves it.
+for room_gone in limit hold; do
+  rm -rf -- "${FLEET_STATE:?}/limited"; rm -f -- "$FLEET_STATE/back-hold" "$FLEET_STATE/resume-state" "$FLEET_STATE/back-room-since"; : >"$FLEET_LOG"; : >"$work/moved"
+  reading a Personal 10 5000
+  p=$(backpane "gone$room_gone"); state "gone$room_gone" '{"above":["⏺ Done. done 11:50 AM"],"on_submit":"none"}'
+  reply_live "$p" settled '[{"id": "w1", "kind": "bash"}]' "Watching." "$noon"
+  mover "$noon"; mover "$((noon + 300))"
+  if [[ $room_gone == limit ]]; then
+    mark_limited a "$((noon + 86400))" seven
+  else
+    printf 'a %s %s\n' "$(reading_mtime a)" "$((noon + 320))" >"$FLEET_STATE/back-hold"
+  fi
+  # Its shell is still listed (the hook has not seen it stop), so only the
+  # READY-TO-MOVE, never a finished turn, could move it later.
+  reply_live "$p" settled '[{"id": "w1", "kind": "bash"}]' "READY-TO-MOVE" "$((noon + 330))"
+  # A note never goes into a busy screen; it waits for the next idle pass.
+  state "gone$room_gone" '{"above":["working"],"busy":true,"on_submit":"none"}'
+  mover "$((noon + 345))"
+  check "#322 review 4 ($room_gone): no carry-on note while its screen is busy" "$(grep -c '^SUBMIT The move back' "$work/gone$room_gone.log")" "0"
+  state "gone$room_gone" '{"above":["⏺ Done. done 11:50 AM"],"on_submit":"none"}'
+  mover "$((noon + 360))"
+  check "#322 review 3 ($room_gone): a worker that stopped for the move is told to carry on when the account loses its room first" \
+    "$(grep -c '^SUBMIT The move back to Personal did not happen: it has no room any more. Carry on here' "$work/gone$room_gone.log") $(jq -r 'select(.message | startswith("told the worker to carry on")) | .why' "$FLEET_LOG")" "1 room"
+  rm -rf -- "${FLEET_STATE:?}/limited"; rm -f -- "$FLEET_STATE/back-hold"
+  mover "$((noon + 1300))"
+  check "#322 review 3 ($room_gone): told once, and its old READY-TO-MOVE moves nothing once the room is back" \
+    "$(grep -c '^SUBMIT The move back' "$work/gone$room_gone.log") $(wc -c <"$work/moved")" "1 0"
+  t kill-window -t "$p" 2>/dev/null; : >"$REGISTRY"
+done
+# #322 review 4: the room path's guards. The asked stamp comes from the
+# service's saved state (fields: pane, rc label, asked), as after a restart.
+asked_on_record() { # PANE ASKED RC_LABEL
+  { printf '#server %s\n' "$(t display-message -p '#{pid}')"; printf '%s\x1f\x1f\x1f%s\x1f\x1f\x1f\x1f\x1f\x1f%s\x1f\n' "$1" "$3" "$2"; } >"$FLEET_STATE/resume-state"
+}
+room_fresh() { rm -rf -- "${FLEET_STATE:?}/limited"; rm -f -- "$FLEET_STATE/back-hold" "$FLEET_STATE/resume-state" "$FLEET_STATE/back-room-since"; : >"$work/moved"; : >"$FLEET_LOG"; }
+# Heph is never told to carry on: his move back has its own path.
+room_fresh; reading a Personal 10 5000; reading b RIT 10 4000
+q=$(pane hephroom '{"above":["⏺ Done. done 11:50 AM"],"on_submit":"none","rc":"on"}'); settle
+printf '%s\n' "$q" >"$FLEET_STATE/orchestrator.pane"; printf '%s\n' "$work/cfg-a" >"$FLEET_STATE/orchestrator.config"
+mark_limited b "$((noon + 86400))" seven
+asked_on_record "$q" "$((noon + 300))" Personal
+reply_live "$q" settled '[{"id": "w1", "kind": "bash"}]' "READY-TO-MOVE" "$((noon + 330))"
+mover "$((noon + 360))"; mover "$((noon + 1300))"
+check "#322 review 4: Heph, asked and READY-TO-MOVE when his preferred account loses its room, gets no carry-on note" \
+  "$(grep -c '^SUBMIT The move back' "$work/hephroom.log")" "0"
+t kill-window -t "$q" 2>/dev/null; rm -f "$FLEET_STATE/orchestrator.pane" "$FLEET_STATE/orchestrator.config"
+# A worker already on its preferred account has nowhere to move back to.
+room_fresh; reading a Personal 10 5000
+q=$(pane onpref '{"above":["⏺ Done. done 11:50 AM"],"on_submit":"none"}'); settle
+printf '%s\tonpref\t%s\t%s\t/w\t%s\n' "$q" "$work/brief.src" "$SID" "$work/cfg-a" >"$REGISTRY"
+mark_limited a "$((noon + 86400))" seven
+asked_on_record "$q" "$((noon + 300))" Personal
+reply_live "$q" settled '[{"id": "w1", "kind": "bash"}]' "READY-TO-MOVE" "$((noon + 330))"
+mover "$((noon + 360))"; mover "$((noon + 1300))"
+check "#322 review 4: a worker on its preferred account gets no carry-on note when that account loses its room" \
+  "$(grep -c '^SUBMIT The move back' "$work/onpref.log")" "0"
+t kill-window -t "$q" 2>/dev/null; : >"$REGISTRY"
+# A worker at a limit of its own waits for its reset, not for a note.
+room_fresh; reading a Personal 10 5000
+p=$(backpane ownlim); state ownlim '{"above":["⏺ Done. done 11:50 AM"],"on_submit":"none"}'
+reply_live "$p" settled '[{"id": "w1", "kind": "bash"}]' "Watching." "$noon"
+mover "$noon"; mover "$((noon + 300))"
+mark_limited a "$((noon + 86400))" seven
+reply_live "$p" settled '[{"id": "w1", "kind": "bash"}]' "READY-TO-MOVE" "$((noon + 330))"
+state ownlim '{"above":["  ⎿  You'"'"'ve hit your session limit · resets 1:10pm (America/New_York)","",""],"on_submit":"none"}'
+mover "$((noon + 360))"; mover "$((noon + 1300))"
+check "#322 review 4: a worker at a limit of its own gets no carry-on note" \
+  "$(grep -c '^SUBMIT The move back' "$work/ownlim.log")" "0"
+t kill-window -t "$p" 2>/dev/null; : >"$REGISTRY"
+# The limit hold and the pass's state go with it, as the cases below expect a fresh start.
+t kill-window -t "$p" 2>/dev/null; : >"$REGISTRY"; rm -rf -- "${FLEET_STATE:?}/limited"; rm -f -- "$FLEET_STATE/back-hold" "$FLEET_STATE/resume-state" "$FLEET_STATE/back-room-since"
+
 # A turn that starts while the fresh session launches (a background task's
 # notification) keeps the old pane.
 cat >"$work/launch-turn.sh" <<EOF
@@ -1091,6 +2163,8 @@ reply_live "$p" settled '[{"id": "w1", "kind": "bash"}]' "READY-TO-MOVE" "$((noo
 LAUNCH="$work/launch-turn.sh" FLEET_NOW=$((noon + 360)) bash "$here/resume-at-reset.sh" --once 2>/dev/null
 check "#198 review 1: a turn begun during the launch keeps the old pane" \
   "$(logged "the old pane changed while its fresh session launched")$(grep -c 'SUBMIT /exit' "$work/notified.log")" "$p 0"
+check "#322 review 3: and the stopped worker, now in a turn of its own, gets no carry-on note (4)" \
+  "$(grep -c '^SUBMIT The move back' "$work/notified.log")" "0"
 t kill-window -t "$p" 2>/dev/null; : >"$REGISTRY"
 
 # Room that goes away while the worker waits starts its 5 min again.
@@ -1236,6 +2310,45 @@ printf '%s\n' "$h" >"$FLEET_STATE/orchestrator.pane"; done_live "$h"
 hmove "$noon"; hmove "$((noon + 60))"
 check "Heph already on his own account stays" "$(wc -c <"$work/moved")" "0"
 t kill-window -t "$h" 2>/dev/null
+
+echo "two accounts: Heph's pane watcher never holds his move back (#215)"
+heph_away() { # BACKGROUND-JSON: Heph on the workers' account, his turn over with that background work
+  : >"$work/moved"; : >"$FLEET_LOG"; rm -f "$FLEET_STATE/orchestrator.session" "$FLEET_STATE/resume-state"
+  printf '%s\n' "$work/cfg-a" >"$FLEET_STATE/orchestrator.config"
+  h=$(pane hephwatch '{"above":["⏺ Done. done 11:50 AM"]}'); settle
+  printf '%s\n' "$h" >"$FLEET_STATE/orchestrator.pane"; done_live "$h" working "$1"
+  jq '.reason = "background"' "$KLEPSYDRA_DIR/fleet/$SID.json" >"$work/st.json" && mv "$work/st.json" "$KLEPSYDRA_DIR/fleet/$SID.json"
+}
+w=$(pane watched '{"above":["⏺ ok"]}'); settle
+w2=$(pane watched2 '{"above":["⏺ ok"]}'); settle
+printf '%s\tw\t%s\tsid-w\t/w\t%s\n%s\tw2\t%s\tsid-w2\t/w\t%s\n' "$w" "$work/brief.src" "$work/cfg-b" "$w2" "$work/brief.src" "$work/cfg-b" >"$REGISTRY"
+heph_away "[{\"id\":\"b1\",\"kind\":\"shell\",\"at\":1,\"watcher\":true,\"watch\":[\"$w2\",\"%9999\"]}]"
+hmove "$noon"; hmove "$((noon + 60))"
+check "Heph whose only background work is his pane watcher moves back at a finished turn" \
+  "$(head -2 "$work/moved" | tr '\n' ' ')$(cat "$FLEET_STATE/orchestrator.config")" "$work/cfg-b heph $work/cfg-b"
+check "and his successor is told to start the watcher again on the panes it watched that are still live" \
+  "$(grep -c "^The last orchestrator's pane watcher stopped with its session. Start it again in the background now: bash $FLEET_STATE/watch-panes.sh $w2\$" "$work/moved-brief")" "1"
+check "the note's watcher line is logged with its panes and where they came from" \
+  "$(jq -r 'select(.message == "orchestrator move note written") | "\(.watchers) \(.watch_panes) \(.panes_from)"' "$FLEET_LOG" | head -1)" "1 $w2 watched"
+t kill-window -t "$h" 2>/dev/null
+heph_away '[{"id":"b1","kind":"shell","at":1,"watcher":true}]'
+hmove "$noon"; hmove "$((noon + 60))"
+check "#215 review: a watcher recorded before its panes were: every live registered pane" \
+  "$(jq -r 'select(.message == "orchestrator move note written") | "\(.watch_panes) \(.panes_from)"' "$FLEET_LOG" | head -1)" "$w $w2 registered"
+t kill-window -t "$h" 2>/dev/null
+heph_away '[{"id":"b1","kind":"shell","at":1,"watcher":true},{"id":"b2","kind":"shell","at":2}]'
+hmove "$noon"; hmove "$((noon + 60))"; hmove "$((noon + 120))"
+check "a watcher beside other background work keeps Heph where he is" "$(wc -c <"$work/moved") $(cat "$FLEET_STATE/orchestrator.config")" "0 $work/cfg-a"
+check "logged once an hour, with what held him" \
+  "$(jq -r 'select(.message == "orchestrator stays: background work other than pane watchers is running") | "\(.watchers) \(.to)"' "$FLEET_LOG")" "1 RIT"
+hmove "$((noon + 3700))"
+check "#215 review: and again once the hour has passed" \
+  "$(jq -r 'select(.message == "orchestrator stays: background work other than pane watchers is running") | .pane' "$FLEET_LOG" | wc -l)" "2"
+t kill-window -t "$h" 2>/dev/null
+heph_away '[{"id":"a1","kind":"agent","at":1,"async":true,"watcher":true}]'
+hmove "$noon"; hmove "$((noon + 60))"
+check "a background agent is never taken for a watcher" "$(wc -c <"$work/moved")" "0"
+t kill-window -t "$h" 2>/dev/null; t kill-window -t "$w" 2>/dev/null; t kill-window -t "$w2" 2>/dev/null; : >"$REGISTRY"
 rm -f "$FLEET_STATE/orchestrator."* "$FLEET_STATE/resume-state" "$KLEPSYDRA_DIR/fleet/$SID.json"
 logout a; logout b; reading a Personal 40 1000; rm -f "$KLEPSYDRA_DIR/accounts/b/s.json"
 
@@ -1512,6 +2625,11 @@ check "review 3: not the service's own continue message" \
   "[$(answered_by_limit "$(st "[\"⏺ ok\",\"❯ The usage limit has reset. Continue from where you stopped\",\"$LIMIT\"]")")]" "[]"
 check "review 3: not a brief that hit the limit; a paste comes back as its placeholder, so the pane waits" \
   "[$(answered_by_limit "$(st "[\"❯ Fresh start: a previous agent with the brief below\",\"$LIMIT\"]")")][$(answered_by_limit "$(st "[\"❯ [Pasted text #1 +40 lines]\",\"$LIMIT\"]")")]" "[][[Pasted text #1 +40 lines]]"
+if command -v mawk >/dev/null; then
+  mkdir -p "$work/mawk"; ln -sf "$(command -v mawk)" "$work/mawk/awk"
+  check "#265 review: under mawk too, the line the 5-hour limit answered" \
+    "$(PATH="$work/mawk:$PATH" answered_by_limit "$(st '["❯ please fix the bug","  ⎿  You'"'"'ve hit your 5-hour limit · resets 12:40pm"]')")" "please fix the bug"
+fi
 t kill-window -t "$abl"
 
 : >"$FLEET_LOG"
@@ -1528,6 +2646,119 @@ EOF
 LAUNCH="$work/launch-rel.sh" bash "$here/relaunch-fresh.sh" "$p" rel "$work/brief.src" "hint" >/dev/null 2>&1; rc=$?
 check "review 3: a relaunch whose brief never started keeps the old pane, points the row back and exits the new one" \
   "$rc $(cut -f1,4,6 "$REGISTRY") $(grep -c 'SUBMIT /exit' "$work/relnew.log") $(grep -c '^SUBMIT' "$work/relold.log")" "1 $p	$SID	$work/cfg-a 1 0"
+t kill-window -t "$p"; : >"$REGISTRY"
+# #229 review: a relaunch whose old pane AJ was watching puts the new one in view.
+p=$(pane relview '{"above":["idle"],"exit_on_exit":true}'); settle
+live "$p"
+printf '%s\trelv\t%s\t%s\t/w\t%s\n' "$p" "$work/brief.src" "$SID" "$work/cfg-a" >"$REGISTRY"
+cat >"$work/launch-relv.sh" <<EOF
+#!/usr/bin/env bash
+new=\$(tmux -L "$FLEET_SOCK" new-window -d -P -F '#{pane_id}' -t fleet: 'sleep 600')
+echo "\$new" >"$work/relv.new"
+echo "pane=\$new session=x account=$work/cfg-a avail=1MiB brief=started"
+EOF
+t select-window -t "$p"
+LAUNCH="$work/launch-relv.sh" bash "$here/relaunch-fresh.sh" "$p" relv "$work/brief.src" "hint" >/dev/null 2>&1
+check "#229 review: a relaunch of the window AJ watched leaves its successor in view" \
+  "$(fleet_panes | grep -cx -- "$p") $(t display -p -t fleet: '#{pane_id}')" "0 $(cat "$work/relv.new")"
+t kill-window -t "$(cat "$work/relv.new")" 2>/dev/null; rm -f -- "${KLEPSYDRA_DIR:?}/fleet/$SID.json"; : >"$REGISTRY"
+# ...and one while AJ watched another window leaves him there.
+p=$(pane relview2 '{"above":["idle"],"exit_on_exit":true}'); settle
+live "$p"
+printf '%s\trelv\t%s\t%s\t/w\t%s\n' "$p" "$work/brief.src" "$SID" "$work/cfg-a" >"$REGISTRY"
+other=$(t new-window -P -F '#{pane_id}' -t fleet: 'sleep 600')
+LAUNCH="$work/launch-relv.sh" bash "$here/relaunch-fresh.sh" "$p" relv "$work/brief.src" "hint" >/dev/null 2>&1
+check "#229 review: a relaunch while AJ watched another window leaves him there" \
+  "$(fleet_panes | grep -cx -- "$p") $(fleet_panes | grep -cx -- "$(cat "$work/relv.new")") $(t display -p -t fleet: '#{pane_id}')" "0 1 $other"
+t kill-window -t "$(cat "$work/relv.new")" 2>/dev/null; t kill-window -t "$other" 2>/dev/null
+rm -f -- "${KLEPSYDRA_DIR:?}/fleet/$SID.json"; : >"$REGISTRY"
+
+# #229 review 2: the successor is in view before the old window closes, so a
+# sibling replacement never reads the window tmux falls back to as watched.
+p=$(pane relview3 '{"above":["idle"],"exit_on_exit":true,"exit_delay":3}'); settle
+live "$p"
+printf '%s\trelv\t%s\t%s\t/w\t%s\n' "$p" "$work/brief.src" "$SID" "$work/cfg-a" >"$REGISTRY"
+t select-window -t "$p"
+rm -f -- "$work/relv.new"
+( LAUNCH="$work/launch-relv.sh" bash "$here/relaunch-fresh.sh" "$p" relv "$work/brief.src" "hint" >/dev/null 2>&1 ) &
+relpid=$!
+for _ in $(seq 100); do grep -q 'SUBMIT /exit' "$work/relview3.log" 2>/dev/null && break; sleep 0.1; done
+check "#229 review 2: while the old pane is still exiting, its successor is already in view" \
+  "$(fleet_panes | grep -cx -- "$p") $(t display -p -t fleet: '#{pane_id}')" "1 $(cat "$work/relv.new" 2>/dev/null)"
+wait "$relpid"
+t kill-window -t "$(cat "$work/relv.new")" 2>/dev/null
+rm -f -- "${KLEPSYDRA_DIR:?}/fleet/$SID.json"; : >"$REGISTRY"
+
+# #229 review 3: an OLD that will not exit comes back into view only while its
+# successor still is: AJ who moved on meanwhile stays where he went.
+stuck() { # MOVE(0|1): retire_into a pane that never takes /exit, AJ moving away after 1 s or not
+  local o n c rp
+  o=$(t new-window -d -P -F '#{pane_id}' -t fleet: 'sleep 600')
+  n=$(t new-window -d -P -F '#{pane_id}' -t fleet: 'sleep 600')
+  c=$(t new-window -d -P -F '#{pane_id}' -t fleet: 'sleep 600')
+  t select-window -t "$o"
+  ( retire_into "$o" "$n"; echo "$?" >"$work/stuck.rc" ) & rp=$!
+  if (( $1 )); then sleep 1; t select-window -t "$c"; fi
+  wait "$rp"
+  printf '%s %s' "$(cat "$work/stuck.rc")" "$(t display -p -t fleet: '#{pane_id}')"
+  printf ' %s %s %s' "$o" "$n" "$c" >"$work/stuck.ids"
+  t kill-window -t "$o"; t kill-window -t "$n"; t kill-window -t "$c"
+}
+got=$(stuck 1); read -r _ _ c <"$work/stuck.ids"
+check "#229 review 3: AJ who moved on while the old pane would not exit stays where he went" "$got" "1 $c"
+got=$(stuck 0); read -r o _ _ <"$work/stuck.ids"
+check "#229 review 3: AJ who stayed gets the old pane back when it will not exit" "$got" "1 $o"
+
+echo "relaunch never leaves two agents on one row (#274)"
+relpane() { # STATE-JSON: a registered pane rb2 on cfg-a; prints its id
+  local q
+  q=$(pane rb2 "$1"); settle
+  live "$q"
+  printf '%s\trb2\t%s\t%s\t/w\t%s\n' "$q" "$work/brief.src" "$SID" "$work/cfg-a" >"$REGISTRY"
+  printf '%s' "$q"
+}
+# A launch that starts a pane whose brief started, repointing the row as launch.sh
+# does; BEFORE runs first (to change the old pane mid-launch).
+cat >"$work/launch-rb2.sh" <<EOF
+#!/usr/bin/env bash
+date +%s.%N >>"$work/rb2-launched"
+[[ -n \${BEFORE:-} ]] && eval "\$BEFORE"
+printf '%s' '{"above":["⏺ on it"]}' >"$work/rb2new.json"; : >"$work/rb2new.log"
+new=\$(tmux -L "$FLEET_SOCK" new-window -d -P -F '#{pane_id}' -t fleet: "python3 -I $fake $work/rb2new.json $work/rb2new.log")
+sed -i "s|^\$OLD\t\(.*\)\t$work/cfg-a\$|\$new\t\1\t$work/cfg-a|" "$REGISTRY"
+echo "pane=\$new session=x account=$work/cfg-a avail=1MiB brief=started"
+EOF
+: >"$FLEET_LOG"; rm -f "$work/rb2-launched"
+p=$(relpane '{"above":["⏺ working"],"busy":true}')
+RELAUNCH_WAIT_S=2 OLD=$p LAUNCH="$work/launch-rb2.sh" bash "$here/relaunch-fresh.sh" "$p" rb2 "$work/brief.src" "hint" >/dev/null 2>&1; rc=$?
+check "#274: a pane still in a turn after the wait is refused and nothing launches" \
+  "$rc $([[ -e $work/rb2-launched ]] && echo launched) $(cut -f1 "$REGISTRY") $(grep -c 'SUBMIT /exit' "$work/rb2.log")" "1  $p 0"
+check "#274: logged with how long it waited" "$(jq -r 'select(.message == "relaunch refused: the old pane was still busy; nothing launched") | "\(.pane) \(.waited_s)"' "$FLEET_LOG")" "$p 2"
+t kill-window -t "$p"
+: >"$FLEET_LOG"; rm -f "$work/rb2-launched"
+p=$(relpane '{"above":["⏺ working"],"busy":true}')
+( sleep 1.5; printf '%s' '{"above":["⏺ Done. done 11:50 AM"]}' >"$work/rb2.json" ) &
+RELAUNCH_WAIT_S=20 OLD=$p LAUNCH="$work/launch-rb2.sh" bash "$here/relaunch-fresh.sh" "$p" rb2 "$work/brief.src" "carry on" >"$work/rb2.out" 2>/dev/null; rc=$?
+wait
+newp=$(cut -f1 "$REGISTRY")
+check "#274: a turn that ends within the wait: one launch, the old pane exits, the row moves" \
+  "$rc $(wc -l <"$work/rb2-launched") $(grep -c 'SUBMIT /exit' "$work/rb2.log") $([[ $newp != "$p" ]] && echo moved) $(cat "$work/rb2.out")" "0 1 1 moved pane=$newp name=rb2"
+check "#274: the new brief carries the resume hint" "$(grep -c '^Resume hint: carry on$' "$(find "$FLEET_STATE" -maxdepth 1 -name 'fresh-rb2-*.src' -printf '%T@ %p\n' | sort -n | tail -1 | cut -d' ' -f2-)")" "1"
+t kill-window -t "$newp" 2>/dev/null; t kill-window -t "$p" 2>/dev/null
+: >"$FLEET_LOG"; rm -f "$work/rb2-launched"
+p=$(relpane '{"above":["⏺ Done. done 11:50 AM"]}')
+BEFORE="printf '%s' '{\"above\":[\"⏺ working\"],\"busy\":true}' >$work/rb2.json; sleep 0.6" \
+  OLD=$p LAUNCH="$work/launch-rb2.sh" bash "$here/relaunch-fresh.sh" "$p" rb2 "$work/brief.src" "hint" >/dev/null 2>&1; rc=$?
+check "#274: the old pane starts a turn while the new one launches: the new one goes, the old one stays, the row points back" \
+  "$rc $(cut -f1,4 "$REGISTRY") $(grep -c 'SUBMIT /exit' "$work/rb2new.log") $(grep -c 'SUBMIT /exit' "$work/rb2.log") $(t list-panes -a -F '#{pane_id}' | grep -cx "$p")" "1 $p	$SID 1 0 1"
+check "#274: never logged as both left running" "$(grep -c 'both are left running' "$FLEET_LOG")" "0"
+t kill-window -t "$p" 2>/dev/null
+# #274 review: with no account named, a new pane whose brief met a limit is not kept.
+p=$(relpane '{"above":["⏺ Done. done 11:50 AM"]}')
+sed 's/brief=started/brief=blocked-by-limit/' "$work/launch-rb2.sh" >"$work/launch-rb2-lim.sh"; chmod +x "$work/launch-rb2-lim.sh"
+env -u FLEET_ACCOUNT OLD="$p" LAUNCH="$work/launch-rb2-lim.sh" bash "$here/relaunch-fresh.sh" "$p" rb2 "$work/brief.src" "hint" >/dev/null 2>&1; rc=$?
+check "#274 review: a relaunch whose new brief met a limit is refused, the old pane kept and never sent /exit" \
+  "$rc $(cut -f1 "$REGISTRY") $(grep -c 'SUBMIT /exit' "$work/rb2.log")" "1 $p 0"
 t kill-window -t "$p"; : >"$REGISTRY"
 
 echo "CI reds typed into the agent on the branch (#180)"
@@ -1567,6 +2798,66 @@ state cil '{"above":["⏺ Done. done 11:50 AM"],"paste_prefix":"AJ: ","clear":tr
 check "review 4: pasted as AJ began a line, nothing is sent and none of his line is taken" \
   "$(inbox_deliver "$p" "$work/alert3.txt") [$(input_text "$(screen "$p")")] $(grep -c '^SUBMIT' "$work/cil.log")" "mixed [AJ: $(<"$work/alert3.txt")] 1"
 t kill-window -t "$p"
+echo "the watcher holds panes limited when it starts (#246)"
+: >"$FLEET_LOG"
+lp=$(pane wlim '{"above":["  ⎿  You'"'"'ve hit your session limit · resets 1:10pm (America/New_York)","",""]}'); settle
+IDLE_S=0 WATCH_TICK=0.1 timeout 60 bash "$here/watch-panes.sh" "$lp" >"$work/wlim.out" 2>/dev/null &
+wjob=$!
+sleep 1.5
+check "#246: a pane limited at start wakes nobody" "$(kill -0 "$wjob" 2>/dev/null && echo watching || echo "woke: $(cat "$work/wlim.out")")" "watching"
+check "#246: logged as limited at start, with the reset" \
+  "$(jq -r 'select(.message == "watching") | [.limited_at_start, .resets] | join(" | ")' "$FLEET_LOG")" "$lp | 1:10pm"
+state wlim '{"above":["⏺ Done. done 11:50 AM"]}'
+wait "$wjob"
+check "#246: once its limit clears it is watched again, and wakes on its finish" "$(cut -d' ' -f1,2 "$work/wlim.out")" "IDLE $lp"
+state wlim '{"above":["  ⎿  You'"'"'ve hit your session limit · resets 1:10pm (America/New_York)","",""]}'
+IDLE_S=0 WATCH_TICK=0.1 timeout 60 bash "$here/watch-panes.sh" "$lp" >"$work/wlim.out" 2>/dev/null &
+wjob=$!; sleep 1; state wlim '{"above":["⏺ working"],"busy":true}'; sleep 1
+state wlim '{"above":["  ⎿  You'"'"'ve hit your session limit · resets 6:10pm (America/New_York)","",""]}'
+wait "$wjob"
+check "#246: a limit hit after it cleared still wakes" "$(cut -d' ' -f1,2 "$work/wlim.out")" "LIMIT $lp"
+t kill-window -t "$lp"
+
+echo "fleet pause and unpause (#246)"
+: >"$FLEET_LOG"; rm -f "$FLEET_STATE/paused.tsv"
+SG=33333333-2222-4333-8444-555555555555
+printf '%%41\tgone1\t%s\t%s\t/w\t%s\n%%42\tother\t/b.src\n' "$work/brief.src" "$SG" "$work/cfg-a" >"$REGISTRY"
+row1=$(head -1 "$REGISTRY")
+fp() { # what fleet pause says: its result, then any error line (not its log lines)
+  local rc
+  bash "$here/pause.sh" "$@" 2>"$work/fp.err"; rc=$?
+  grep '^error:' "$work/fp.err"
+  return "$rc"
+}
+check "#246: pause sets a gone agent aside, keeping its row" \
+  "$(fp pause gone1 no room yet) | $(cut -f2- "$REGISTRY") | $(cut -f1 "$FLEET_STATE/paused.tsv") $(cut -f3- "$FLEET_STATE/paused.tsv")" \
+  "paused: gone1 (%41): fleet unpause gone1 brings it back | other	/b.src | gone1 $row1"
+check "#246: and the note says why" "$(cut -f2 "$FLEET_STATE/paused.tsv" | grep -c 'PAUSED .*: no room yet$')" "1"
+check "#246: pausing it twice is refused" "$(fp pause gone1 again; echo "rc=$?")" $'error: fleet pause: no agent named gone1 in panes.tsv\nrc=1'
+check "#246: a pause needs a reason" "$(fp pause other; echo "rc=$?")" $'error: usage: fleet pause NAME WHY...\nrc=2'
+check "#246: unpause puts the row back, its past pane id parked, and records the unpause (#261 review 10)" \
+  "$(fp unpause gone1) | $(grep -c . "$FLEET_STATE/paused.tsv") | $(grep -c -xF -- "-${row1#%41}" "$REGISTRY") $(grep -c '^%41' "$REGISTRY") | $(cut -f1,2 "$FLEET_STATE/unpaused.tsv")" \
+  "unpaused: gone1: fleet recover launches it fresh from its brief | 0 | 1 0 | gone1	$SG"
+rm -f -- "$FLEET_STATE/unpaused.tsv"
+printf '%%43\t01\t/b.src\t%s\n%%44\t1\t/c.src\t%s\n' 33333333-2222-4333-8444-000000000043 33333333-2222-4333-8444-000000000044 >>"$REGISTRY"
+check "#261 review: a name is matched as text, so 1 is not 01" \
+  "$(fp pause 1 numbers; cut -f2 "$REGISTRY" | grep -cx 01; cut -f1 "$FLEET_STATE/paused.tsv")" $'paused: 1 (%44): fleet unpause 1 brings it back\n1\n1'
+fp unpause 1 >/dev/null; awk -F'\t' '$2 "" != "01" && $2 "" != "1"' "$REGISTRY" >"$work/reg.tmp" && mv -f -- "$work/reg.tmp" "$REGISTRY"
+rm -f -- "$FLEET_STATE/unpaused.tsv"
+printf 'byhand\tPAUSED 10-28 by Heph\n' >"$FLEET_STATE/paused.tsv"
+check "#246: a row paused by hand, with nothing saved, is refused, not invented" \
+  "$(fp unpause byhand | grep -c 'paused by hand, with no saved row'; grep -c . "$FLEET_STATE/paused.tsv")" $'1\n1'
+lv=$(pane plive '{"above":["idle"]}'); settle
+printf '%s\tlive1\t%s\t%s\t/w\n' "$lv" "$work/brief.src" "$SID" >"$REGISTRY"
+# A session alive by the same test as recover's: this boot, the same process.
+mkdir -p "$work/pproc/4242"; printf '4242 (claude) S %s 777 1 2 3\n' "$(seq -s ' ' 1 18)" >"$work/pproc/4242/stat"
+echo 33333333-3333-4333-8333-333333333333 >"$work/pboot"
+jq -n --arg p "$lv" '{session_id: "x", ended: null, claude: {pid: 4242, start: 777}, host: {boot: "33333333-3333-4333-8333-333333333333"}, tmux: {pane: $p}}' >"$KLEPSYDRA_DIR/fleet/$SID.json"
+check "#246: an agent whose session still runs is never paused" \
+  "$(FLEET_PROC=$work/pproc FLEET_BOOT_ID=$work/pboot fp pause live1 because | grep -c "live1 still runs in $lv"; grep -c . "$REGISTRY")" $'1\n1'
+rm -f -- "$KLEPSYDRA_DIR/fleet/$SID.json"
+check "#246: each refusal is logged with its reason" "$(jq -r 'select(.message | startswith("fleet pause refused")) | .reason' "$FLEET_LOG" | grep -c .)" "2"
+t kill-window -t "$lv"; rm -f -- "${KLEPSYDRA_DIR:?}/fleet/$SID.json" "$FLEET_STATE/paused.tsv"; : >"$REGISTRY"
 check "review 1: the pane watcher is quiet while no alert has ever been written" \
   "$(FLEET_STATE="$work/noalerts" IDLE_S=1 timeout 2 bash "$here/watch-panes.sh" %999 2>&1 | grep -c 'No such file')" "0"
 
@@ -1749,6 +3040,339 @@ check "launches are staggered" "$(awk 'NR == 1 { a = $1 } NR == 2 { print ($1 - 
 sfile "$SB" 4242 777 "$NOWBOOT" %2; sfile "$SC" 4242 777 "$NOWBOOT" %3
 check "once they run, a second run recovers nothing" "$(rec --no-orchestrator | tail -1) $(wc -l <"$work/rec.log")" "nothing to recover 0"
 
+echo "finished agents: one verdict per row, and --prune (#220)"
+SF=aaaaaaaa-0000-4000-8000-0000000000f1 SL=aaaaaaaa-0000-4000-8000-0000000000f2 SR=aaaaaaaa-0000-4000-8000-0000000000f3
+# The hook's own shape: SessionEnd's reason (prompt_input_exit, a /exit), or "gone".
+ended() { jq --arg r "${2:-prompt_input_exit}" '.ended = {reason: $r, at: 1792520221}' "$KLEPSYDRA_DIR/fleet/$1.json" >"$work/ended.tmp" && mv -f -- "$work/ended.tmp" "$KLEPSYDRA_DIR/fleet/$1.json"; }
+sfile "$SF" 4242 777 "$NOWBOOT" %4; ended "$SF"   # finished cleanly
+cp -p -- "$REGISTRY" "$work/reg-before-220"
+printf '%s\td\t%s\t%s\t/w\n%s\te\t%s\t%s\t/w\n' %4 "$work/bc.src" "$SF" %5 "$work/bc.src" "$SL" >>"$REGISTRY"
+check "row states: running, finished, gone (no end recorded)" "$(row_state %1 "$SA") $(row_state %4 "$SF") $(row_state %5 "$SL")" "running finished gone"
+# #261 review: only a final end is a finish. The hook marks a dead session
+# "gone" on the next SessionStart (as after a hard shutdown), and /clear and
+# /resume end a session that goes on under a new id.
+for r in gone clear resume other logout prompt_input_exit; do
+  sfile "$SL" 4242 777 "$NOWBOOT" %5; ended "$SL" "$r"
+  printf '%s=%s ' "$r" "$(row_state %5 "$SL")"
+done >"$work/reasons"
+check "#261 review: the end reasons that are a finish" "$(cat "$work/reasons")" \
+  "gone=gone clear=gone resume=gone other=gone logout=finished prompt_input_exit=finished "
+sfile "$SL" 4242 777 "$NOWBOOT" %5; ended "$SL" gone
+check "#261 review: a row the hook marked gone is recovered, not called finished" \
+  "$(rec --dry-run --no-orchestrator | grep -E '^(finished|would recover): e' | sed 's/ (.*//')" "would recover: e"
+rm -f "$KLEPSYDRA_DIR/fleet/$SL.json"
+sfile "$SR" 4242 777 "$NOWBOOT" %6; sfile "$SL" 4242 777 "$NOWBOOT" %9; ended "$SL"
+check "a /clear: the row's session ended but its pane runs a new one, so it is running" "$(row_state %6 "$SL")" "running"
+printf '%s\n' "$SR" >"$FLEET_STATE/orchestrator.session"
+check "#261 review: the orchestrator in a row's pane is never its successor" "$(row_state %6 "$SL")" "finished"
+rm -f "$FLEET_STATE/orchestrator.session"
+sfile "$SL" 4242 777 "$OLDBOOT" %9; ended "$SL" gone
+check "#261 review: a row from an earlier server is not running in its reused pane id" "$(row_state %6 "$SL")" "gone"
+sfile "$SL" 4242 777 "$NOWBOOT" %9; ended "$SL"
+rm -f "$KLEPSYDRA_DIR/fleet/$SL.json" "$KLEPSYDRA_DIR/fleet/$SR.json"
+doc=$(bash "$here/doctor.sh" 2>/dev/null)
+check "a lost row is one FAIL, a finished one one warn, and neither gets a remote control line" \
+  "$(grep '^FAIL agents' <<<"$doc") | $(grep '^warn finished agents' <<<"$doc") | $(grep -c 'remote control %[45] ' <<<"$doc")" \
+  "FAIL agents: sessions gone: e: fleet recover | warn finished agents: still in panes.tsv: d: fleet doctor --prune | 0"
+doc=$(FLEET_AGY=/nonexistent FLEET_COPILOT=/nonexistent bash "$here/doctor.sh" 2>/dev/null)
+check "doctor: an engine that is not installed says its lanes are off" "$(grep -c '^ok *engine [a-z]*: not installed: its lanes are off' <<<"$doc")" "2"
+mkdir -p "$work/enghome/.gemini/antigravity-cli"; echo '{}' >"$work/enghome/.gemini/antigravity-cli/antigravity-oauth-token"
+doc=$(HOME="$work/enghome" FLEET_AGY=/bin/true FLEET_COPILOT=/bin/true FLEET_HOOK_DIR="$here/../hooks" bash "$here/doctor.sh" 2>/dev/null)
+check "doctor: an installed engine with the lock policy shows its lanes, locked, and its login" \
+  "$(grep '^ok *engine agy' <<<"$doc" | sed 's/^ok *//') | $(grep '^[a-zA-Z]* *engine copilot' <<<"$doc" | sed 's/^\([a-zA-Z]*\) .*lanes: \(.*\)$/\1 \2/')" \
+  "engine agy: signed in; lanes: print interactive, locked | warn print interactive"
+doc=$(HOME="$work/enghome" FLEET_AGY=/bin/true FLEET_COPILOT=/bin/true FLEET_HOOK_DIR="$work/nohooks" bash "$here/doctor.sh" 2>/dev/null)
+check "doctor: without the lock policy the lanes are OFF, never silently on" "$(grep -c '^warn *engine [a-z]*: .*lanes OFF' <<<"$doc")" "2"
+check "recover leaves a finished agent alone and relaunches the lost one" \
+  "$(rec --dry-run --no-orchestrator | grep -E '^(finished|would recover)' | sed 's/ (.*//')" $'finished: d\nwould recover: e'
+# #261 review 4: d's finish is recorded; AJ resumes it in its pane (the same id,
+# a new process), then a shutdown and the hook's prune drop its file. The record
+# must not outlive the resume, or recover skips a lost agent.
+fin_d() { awk -F'\t' -v s="$SF" '$4 == s' "$FLEET_STATE/finished.tsv" 2>/dev/null | wc -l; }
+check "#261 review 4: the doctor recorded d's finish" "$(fin_d)" "1"
+sfile "$SF" 4242 777 "$NOWBOOT" %4
+: >"$FLEET_LOG"
+bash "$here/doctor.sh" >/dev/null 2>&1
+check "#261 review 4: the doctor drops a recorded finish whose own session runs again, and logs it" \
+  "$(fin_d) $(jq -r 'select(.message == "recorded finish dropped: the session runs again") | .name' "$FLEET_LOG")" "0 d"
+rm -f -- "$KLEPSYDRA_DIR/fleet/$SF.json"
+check "#261 review 4: after the shutdown and the prune, d is lost, not finished" \
+  "$(row_state %4 "$SF") $(rec --dry-run --no-orchestrator | grep -E '^(finished|would recover): d' | sed 's/ (.*//')" "gone would recover: d"
+# recover's running branch drops it too (a recover run while the resumed session runs).
+cp -p -- "$REGISTRY" "$work/reg-before-261r4"
+printf '%s\t%s\n' "$(awk -F'\t' -v s="$SF" '$4 == s { print; exit }' "$REGISTRY")" "$(date -Is)" >>"$FLEET_STATE/finished.tsv"
+sfile "$SF" 4242 777 "$NOWBOOT" %4
+awk -F'\t' '$2 == "d"' "$REGISTRY" >"$work/reg.tmp" && mv -f -- "$work/reg.tmp" "$REGISTRY"
+check "#261 review 4: recover, seeing the resumed session run, drops its recorded finish" \
+  "$(rec --no-orchestrator | grep -c '^running: d') $(fin_d)" "1 0"
+cp -p -- "$work/reg-before-261r4" "$REGISTRY"
+# #261 review 5: a resume never seen alive. d's finish is recorded; AJ resumes
+# it (the same id), and a shutdown loses it before any doctor tick, so the hook
+# marks it gone on a later boot. Its file names no final end: the record goes
+# on the next read, before the file does.
+sfile "$SF" 4242 777 "$NOWBOOT" %4; ended "$SF"
+bash "$here/doctor.sh" >/dev/null 2>&1
+check "#261 review 5: d's finish is recorded again" "$(fin_d)" "1"
+sfile "$SF" 4242 777 "$OLDBOOT" %4; ended "$SF" gone
+: >"$FLEET_LOG"
+bash "$here/doctor.sh" >/dev/null 2>&1
+check "#261 review 5: a file that names no final end drops the recorded finish, logged" \
+  "$(fin_d) $(jq -r 'select(.message == "recorded finish dropped: the session'\''s file names no final end") | .name' "$FLEET_LOG")" "0 d"
+rm -f -- "$KLEPSYDRA_DIR/fleet/$SF.json"
+check "#261 review 5: once its file is gone too, d is lost and recover relaunches it" \
+  "$(row_state %4 "$SF") $(rec --dry-run --no-orchestrator | grep -E '^(finished|would recover): d' | sed 's/ (.*//')" "gone would recover: d"
+rm -f -- "$KLEPSYDRA_DIR/fleet/$SF.json"; sfile "$SF" 4242 777 "$NOWBOOT" %4; ended "$SF"
+# #261 review 5: an unpaused agent AJ resumed by hand rather than by recover:
+# the unpause goes once its session is seen running, so a later /exit is a finish.
+printf 'e\t%s\t%s\n' "$SL" "$(date -Is)" >>"$FLEET_STATE/unpaused.tsv"
+sfile "$SL" 4242 777 "$NOWBOOT" %5
+check "#261 review 5: recover sees the unpaused agent run and drops its unpause" \
+  "$(rec --no-orchestrator | grep -c '^running: e') $(grep -c -- "$SL" "$FLEET_STATE/unpaused.tsv")" "1 0"
+ended "$SL"
+check "#261 review 5: its later /exit is a finish, never relaunched" \
+  "$(row_state %5 "$SL") $(rec --dry-run --no-orchestrator | grep -E '^(finished|would recover): e' | sed 's/ (.*//')" "finished finished: e"
+printf 'e\t%s\t%s\n' "$SL" "$(date -Is)" >>"$FLEET_STATE/unpaused.tsv"
+sfile "$SL" 4242 777 "$NOWBOOT" %5
+bash "$here/doctor.sh" >/dev/null 2>&1
+check "#261 review 5: the doctor drops it too, seeing the session run" "$(grep -c -- "$SL" "$FLEET_STATE/unpaused.tsv")" "0"
+rm -f -- "$KLEPSYDRA_DIR/fleet/$SL.json" "$FLEET_STATE/unpaused.tsv"
+# #261 review 5: a row with no session id cannot be followed back, so it is never paused.
+printf '%s\tnosid\t%s\t\t/w\n' %7 "$work/bc.src" >>"$REGISTRY"
+check "#261 review 5: pause refuses a row that names no session" \
+  "$(bash "$here/pause.sh" pause nosid because 2>&1 | grep -c '^error: .*names no session') $(grep -c $'\tnosid\t' "$REGISTRY")" "1 1"
+awk -F'\t' '$2 != "nosid"' "$REGISTRY" >"$work/reg.tmp" && mv -f -- "$work/reg.tmp" "$REGISTRY"
+awk -F'\t' '$2 != "e"' "$REGISTRY" >"$work/reg.tmp" && mv -f -- "$work/reg.tmp" "$REGISTRY"
+# #261 review 6: the registry follows a session at the event (registry-event.sh,
+# called by the fleet hook), so neither order of a poll and a delete loses it.
+rev() { bash "$here/registry-event.sh" "$@" 2>/dev/null; }
+with_registry forget_finished "$SF" >/dev/null; rm -f -- "$FLEET_STATE/unpaused.tsv"; : >"$FLEET_LOG"
+rev SessionEnd "$SF" clear
+check "#261 review 6: an end that is no finish records nothing" "$(fin_d)" "0"
+rev SessionEnd "$SF" prompt_input_exit
+check "#261 review 6: a final end records the finish of the row naming it, at once, logged" \
+  "$(fin_d) $(jq -r 'select(.message == "finish recorded at the session'\''s end") | .name' "$FLEET_LOG")" "1 d"
+rm -f -- "$KLEPSYDRA_DIR/fleet/$SF.json"
+check "#261 review 6: the wall's Clear before any poll leaves it finished, never relaunched" \
+  "$(row_state %4 "$SF") $(rec --dry-run --no-orchestrator | grep -E '^(finished|would recover): d' | sed 's/ (.*//')" "finished finished: d"
+rev SessionStart "$SF" compact
+check "#261 review 6: a compact is no new start" "$(fin_d)" "1"
+printf 'd\t%s\t%s\n' "$SF" "$(date -Is)" >>"$FLEET_STATE/unpaused.tsv"
+rev SessionStart "$SF" resume
+check "#261 review 6: a start of the same id drops its finish and its unpause at once" "$(fin_d) $(grep -c -- "$SF" "$FLEET_STATE/unpaused.tsv")" "0 0"
+rev SessionEnd "$SF" prompt_input_exit
+check "#261 review 6: resumed by hand and /exited between polls: finished, never relaunched" \
+  "$(row_state %4 "$SF") $(rec --dry-run --no-orchestrator | grep -E '^(finished|would recover): d' | sed 's/ (.*//')" "finished finished: d"
+# #261 review 8: a recorded finish parks the row's pane; its session starting again takes it back.
+check "#261 review 8: a finished row holds no pane" "$(awk -F'\t' '$2 == "d" { print $1 }' "$REGISTRY")" "-"
+rev SessionStart "$SF" resume %4 "" "/tmp/tmux-1/$FLEET_SOCK"
+check "#261 review 8: a hand resume in its pane gives the row its pane back, logged" \
+  "$(awk -F'\t' '$2 == "d" { print $1 }' "$REGISTRY") $(jq -r 'select(.message | contains("takes its pane back")) | .pane' "$FLEET_LOG" | tail -1)" "%4 %4"
+SN=aaaaaaaa-0000-4000-8000-0000000000f9
+rev SessionStart "$SN" clear %4 "$SF" "/tmp/tmux-1/default"
+check "#261 review 9: a /clear in another tmux server's pane of the same id leaves the row alone" "$(awk -F'\t' '$2 == "d" { print $1, $4 }' "$REGISTRY")" "%4 $SF"
+rev SessionStart "$SN" clear %5 "$SF" "/tmp/tmux-1/$FLEET_SOCK"
+check "#261 review 6: a /clear in another pane leaves the row alone" "$(awk -F'\t' '$2 == "d" { print $1, $4 }' "$REGISTRY")" "%4 $SF"
+rev SessionStart "$SN" clear %4 "$SF" "/tmp/tmux-1/$FLEET_SOCK"
+check "#261 review 6: a /clear repoints the row that named the cleared session in its pane, logged" \
+  "$(awk -F'\t' '$2 == "d" { print $1, $4 }' "$REGISTRY") $(jq -r 'select(.message == "registry follows a /clear") | .name' "$FLEET_LOG")" "%4 $SN d"
+with_registry set_session_now %4 "$SN" "$SF"
+# The doctor repairs a row to its /clear successor as recover does, so the
+# successor's own /exit is a finish, not a loss.
+with_registry forget_finished "$SF" >/dev/null
+sfile "$SF" 4242 777 "$NOWBOOT" %4; ended "$SF" clear; sfile "$SN" 4242 777 "$NOWBOOT" %4
+: >"$FLEET_LOG"
+bash "$here/doctor.sh" >/dev/null 2>&1
+check "#261 review 6: the doctor repoints a row running as its /clear successor, logged" \
+  "$(awk -F'\t' '$2 == "d" { print $4 }' "$REGISTRY") $(jq -r 'select(.message == "registry repaired") | .by' "$FLEET_LOG")" "$SN doctor"
+ended "$SN"
+check "#261 review 6: then the successor's /exit is a finish" "$(row_state %4 "$SN")" "finished"
+rm -f -- "$KLEPSYDRA_DIR/fleet/$SN.json"; with_registry set_session_now %4 "$SN" "$SF"; with_registry forget_finished "$SN" >/dev/null
+rm -f -- "$KLEPSYDRA_DIR/fleet/$SF.json"; sfile "$SF" 4242 777 "$NOWBOOT" %4; ended "$SF"
+# Pause after a reboot: a lost agent's old pane id now holds another agent
+# that recover started there; pause sets the lost one aside, never naming it.
+SX=aaaaaaaa-0000-4000-8000-0000000000fa SY=aaaaaaaa-0000-4000-8000-0000000000fb
+sfile "$SX" 4242 777 "$OLDBOOT" %8; ended "$SX" gone; sfile "$SY" 4242 777 "$NOWBOOT" %8
+printf '%s\tlostx\t%s\t%s\t/w\n%s\tnewy\t%s\t%s\t/w\n' %8 "$work/bc.src" "$SX" %8 "$work/bc.src" "$SY" >>"$REGISTRY"
+check "#261 review 6: pause sets aside a lost row whose reused pane id runs another row's agent" \
+  "$(FLEET_PAUSED=$work/p6.tsv bash "$here/pause.sh" pause lostx because 2>&1 | grep -c '^paused: lostx') $(cut -f1 "$work/p6.tsv" 2>/dev/null)" "1 lostx"
+awk -F'\t' '$2 != "newy"' "$REGISTRY" >"$work/reg.tmp" && mv -f -- "$work/reg.tmp" "$REGISTRY"
+rm -f -- "$work/p6.tsv" "$KLEPSYDRA_DIR/fleet/$SX.json" "$KLEPSYDRA_DIR/fleet/$SY.json" "$FLEET_STATE/unpaused.tsv"
+# #261 review 7: a pane id alone is no key. Rows from an earlier tmux server
+# keep pane ids the running server hands out again; a repoint names the row by
+# its pane and its old session, and leaves every other row alone.
+cp -p -- "$REGISTRY" "$work/reg-before-261r7"
+S1=aaaaaaaa-0000-4000-8000-0000000000c1 S2=aaaaaaaa-0000-4000-8000-0000000000c2 SC2=aaaaaaaa-0000-4000-8000-0000000000c3
+printf '%s\tfin1\t%s\t%s\t/w\n%s\tlost1\t%s\t%s\t/w\n%s\twork1\t%s\t%s\t/w\n' %3 "$work/bc.src" "$S1" %3 "$work/bc.src" "" %3 "$work/bc.src" "$S2" >"$REGISTRY"
+rev SessionStart "$SC2" clear %3 "$S2" "/tmp/tmux-1/$FLEET_SOCK"
+check "#261 review 7: a /clear repoints only the row naming the cleared session, never others on its pane id" \
+  "$(cut -f2,4 "$REGISTRY" | tr '\t\n' ': ')" "fin1:$S1 lost1: work1:$SC2 "
+check "#261 review 7: a repoint naming a session no row on that pane names changes nothing" \
+  "$(set_session %3 "$S2" "$S1"; echo "rc=$?") $(cut -f4 "$REGISTRY" | tr '\n' ' ')" "rc=1 $S1  $SC2 "
+check "#261 review 7: a row with no session gets one only by its own empty key" \
+  "$(set_session %3 "" "$S2"; cut -f2,4 "$REGISTRY" | tr '\t\n' ': ')" "fin1:$S1 lost1:$S2 work1:$SC2 "
+cp -p -- "$work/reg-before-261r7" "$REGISTRY"
+# #261 review 8: a pane id the running server hands out again never finds a
+# finished row: recorded, it is parked ("-"), so every pane-keyed lookup finds
+# the live agent alone, in either row order.
+cp -p -- "$REGISTRY" "$work/reg-before-261r8"
+for order in fin-first live-first; do
+  if [[ $order == fin-first ]]; then
+    printf '%s\tfinx\t%s\t%s\t/w\n%s\tlivey\t%s\t%s\t/w\n' %2 "$work/bc.src" "$S1" %2 "$work/bc.src" "$S2" >"$REGISTRY"
+  else
+    printf '%s\tlivey\t%s\t%s\t/w\n%s\tfinx\t%s\t%s\t/w\n' %2 "$work/bc.src" "$S2" %2 "$work/bc.src" "$S1" >"$REGISTRY"
+  fi
+  with_registry record_finished "$(awk -F'\t' '$2 == "finx"' "$REGISTRY")"
+  check "#261 review 8 ($order): reg_field and registered find only the live agent on the reused pane id" \
+    "$(reg_field %2 2) $(reg_field %2 4) $(awk -F'\t' '$1 == "%2"' "$REGISTRY" | wc -l)" "livey $S2 1"
+  with_registry set_pane %2 %7 "$S2" "" livey
+  check "#261 review 8 ($order): a rollback's set_pane moves only the live row" \
+    "$(awk -F'\t' '{ print $2 ":" $1 ":" $4 }' "$REGISTRY" | sort | tr '\n' ' ')" "finx:-:$S1 livey:%7:$S2 "
+done
+cp -p -- "$work/reg-before-261r8" "$REGISTRY"; with_registry forget_finished "$S1" >/dev/null
+# #261 review 9: a pane id names something only on the fleet's own server. A
+# parked finished row resumed by hand in another tmux, in a pane with the same
+# id as a live agent's, never takes that pane, by either restore path.
+fsock="/tmp/tmux-1/$FLEET_SOCK"
+for path in hook poll; do
+  for sock in fleet foreign none; do
+    for order in parked-first live-first; do
+      if [[ $order == parked-first ]]; then
+        printf '%s\tfinx\t%s\t%s\t/w\n%s\tlivey\t%s\t%s\t/w\n' - "$work/bc.src" "$S1" %2 "$work/bc.src" "$S2" >"$REGISTRY"
+      else
+        printf '%s\tlivey\t%s\t%s\t/w\n%s\tfinx\t%s\t%s\t/w\n' %2 "$work/bc.src" "$S2" - "$work/bc.src" "$S1" >"$REGISTRY"
+      fi
+      case $sock in fleet) sp=$fsock ;; foreign) sp=/tmp/tmux-1/default ;; none) sp="" ;; esac
+      jq -n --arg s "$sp" '{session_id: "x", ended: null, claude: {pid: 4242, start: 777}, host: {boot: "'"$NOWBOOT"'"}, tmux: ({pane: "%2"} + (if $s == "" then {} else {socket: $s} end))}' >"$KLEPSYDRA_DIR/fleet/$S1.json"
+      if [[ $path == hook ]]; then rev SessionStart "$S1" resume %2 "" "$sp"; else forget_resumed "$S1" finx; fi
+      want="-"; [[ $sock == fleet ]] && want="%2"
+      check "#261 review 9 ($path, $sock server, $order): the finished row takes the pane only on the fleet's server" \
+        "$(awk -F'\t' '$2 == "finx" { print $1 }' "$REGISTRY")" "$want"
+      [[ $sock == fleet ]] || check "#261 review 9 ($path, $sock server, $order): the live pane still names the live agent" "$(reg_field %2 2)" "livey"
+    done
+  done
+done
+sfile "$S1" 4242 777 "$NOWBOOT" %2; jq '.tmux.socket = "/tmp/tmux-1/default"' "$KLEPSYDRA_DIR/fleet/$S1.json" >"$work/s1.tmp" && mv -f -- "$work/s1.tmp" "$KLEPSYDRA_DIR/fleet/$S1.json"
+check "#261 review 9: pane_runs refuses a session in another tmux server's pane of the same id" "$(pane_runs %2 "$S1" && echo runs || echo refused)" "refused"
+jq ".tmux.socket = \"$fsock\"" "$KLEPSYDRA_DIR/fleet/$S1.json" >"$work/s1.tmp" && mv -f -- "$work/s1.tmp" "$KLEPSYDRA_DIR/fleet/$S1.json"
+check "#261 review 9: and accepts it on the fleet's own server" "$(pane_runs %2 "$S1" && echo runs || echo refused)" "runs"
+rm -f -- "$KLEPSYDRA_DIR/fleet/$S1.json"
+cp -p -- "$work/reg-before-261r8" "$REGISTRY"; with_registry forget_finished "$S1" >/dev/null
+# A `fleet done` record has no row; a hand resume of that session keeps it.
+SDN=aaaaaaaa-0000-4000-8000-0000000000c4
+printf '%s\tdonex\t%s\t%s\t/w\t%s\n' %9 "$work/bc.src" "$SDN" "$(date -Is)" >>"$FLEET_STATE/finished.tsv"
+rev SessionStart "$SDN" resume
+check "#261 review 7: a resumed session no row names keeps its fleet done record" "$(grep -c -- "$SDN" "$FLEET_STATE/finished.tsv")" "1"
+awk -F'\t' -v s="$SDN" '$4 != s' "$FLEET_STATE/finished.tsv" >"$work/fin.tmp" && mv -f -- "$work/fin.tmp" "$FLEET_STATE/finished.tsv"
+# A fleet file that will not read says nothing: the recorded finish stays.
+with_registry record_finished "$(awk -F'\t' -v s="$SF" '$4 == s { print; exit }' "$REGISTRY")"
+cp -p -- "$KLEPSYDRA_DIR/fleet/$SF.json" "$work/sf.bak"; : >"$KLEPSYDRA_DIR/fleet/$SF.json"
+forget_resumed "$SF" d
+check "#261 review 6: an empty fleet file never drops a recorded finish" "$(fin_d)" "1"
+mv -f -- "$work/sf.bak" "$KLEPSYDRA_DIR/fleet/$SF.json"
+# A restarted tmux server hands out %4 again: a running agent's row on the finished row's pane id.
+SG=aaaaaaaa-0000-4000-8000-0000000000f4
+sfile "$SG" 4242 777 "$NOWBOOT" %4
+printf '%s\tg\t%s\t%s\t/w\n' %4 "$work/bc.src" "$SG" >>"$REGISTRY"
+check "with only finished rows: a warn, no FAIL" "$(bash "$here/doctor.sh" 2>/dev/null | grep -E '^(FAIL|warn) (finished )?agents')" "warn agents: finished, still in panes.tsv: d: fleet doctor --prune"
+out=$(bash "$here/doctor.sh" --prune 2>/dev/null); rc=$?
+check "--prune drops only the finished row and keeps a backup" \
+  "$rc|$(head -1 <<<"$out")|$(cut -f2 "$REGISTRY" | tr '\n' ' ')|$(find "$FLEET_STATE" -maxdepth 1 -name 'panes.tsv.bak-*' | wc -l)|$(grep -c $'\td\t' "$(find "$FLEET_STATE" -maxdepth 1 -name 'panes.tsv.bak-*' | head -1)")" \
+  "0|pruned: d|a b c g |1|1"
+check "#261 review 3: --prune records each finish before its row goes" "$(grep -c "$SF" "$FLEET_STATE/finished.tsv" 2>/dev/null)" "1"
+check "#261 review: --prune says where the backup is" "$(grep -c '^backup: .*panes.tsv.bak-' <<<"$out") $(grep -c 'command not found' <<<"$out")" "1 0"
+check "a second --prune finds nothing" "$(bash "$here/doctor.sh" --prune 2>/dev/null)" "nothing to prune: no finished agent's row in panes.tsv"
+# #261 review 11: prune_now reads each row's state again under the lock, so a
+# row whose session started again since the first look stays.
+SR=aaaaaaaa-0000-4000-8000-0000000000ab
+cp -p -- "$REGISTRY" "$work/reg-before-r11"
+printf '%%4\trerun\t/b\t%s\t/w\n' "$SR" >>"$REGISTRY"
+sfile "$SR" 4242 777 "$NOWBOOT" %4
+( eval "$(sed -n '/^prune_now() {/,/^}/p' "$here/doctor.sh")"; with_registry prune_now "%4/$SR" >/dev/null 2>&1 )
+check "#261 review 11: a row named for pruning whose session runs again stays" "$(grep -c "$SR" "$REGISTRY")" "1"
+cp -p -- "$work/reg-before-r11" "$REGISTRY"; rm -f -- "$KLEPSYDRA_DIR/fleet/$SR.json"
+# set_pane puts back only the row of that name, once (a stale row of another
+# agent can carry the same pane id from a past server).
+printf '%%3\tother\t/b\tOTHERSID\t/w\n%%3\tmine\t/b\tNEWSID\t/w\n' >"$work/reg-r11"
+REGISTRY=$work/reg-r11 set_pane %3 %1 OLDSID "" mine
+check "#261 review 11: set_pane moves only the named row back, the other agent's row listed first" "$(cut -f1,2,4 "$work/reg-r11" | tr '\t\n' ' |')" "%3 other OTHERSID|%1 mine OLDSID|"
+# A rollback whose row cannot be put back (the registry lock stays busy)
+# retires nothing: both panes stay, and it says so.
+printf '%%7\tw1\t/b\tNEWSID\t/w\n' >"$work/reg-r11"
+: >"$FLEET_LOG"
+flock "$FLEET_STATE/.registry.lock" sleep 3 & lk=$!
+for _ in $(seq 40); do flock -n "$FLEET_STATE/.registry.lock" true || break; sleep 0.05; done
+out=$(retire() { echo "retired $1"; }; REGISTRY=$work/reg-r11 FLEET_REGISTRY_WAIT=1 rollback_fresh %7 %1 OLDSID "" w1)
+wait "$lk"
+check "#261 review 11: a busy lock: nothing is retired, the row is untouched, and an ERROR says both panes stay" \
+  "[$out] $(cut -f1,4 "$work/reg-r11") $(jq -r 'select(.level == "ERROR") | .message' "$FLEET_LOG" | grep -c 'both panes stay running')" "[] %7	NEWSID 1"
+out=$(retire() { echo "retired $1"; }; REGISTRY=$work/reg-r11 rollback_fresh %7 %1 OLDSID "" w1)
+check "#261 review 11: a free lock: the row goes back first, then the new pane is retired" "[$out] $(cut -f1,4 "$work/reg-r11")" "[retired %7] %1	OLDSID"
+check "--prune never touches a lost or running row" "$(diff <(cut -f1-4 "$work/reg-before-220") <(awk -F'\t' '$2 != "g"' "$REGISTRY" | cut -f1-4) && echo same)" "same"
+awk -F'\t' '$2 != "g"' "$REGISTRY" >"$work/reg.tmp" && mv -f -- "$work/reg.tmp" "$REGISTRY"
+find "$FLEET_STATE" -maxdepth 1 -name 'panes.tsv.bak-*' -delete; rm -f "$KLEPSYDRA_DIR/fleet/$SF.json" "$KLEPSYDRA_DIR/fleet/$SG.json"
+# #261 review 2: a finish is recorded on first sight, so it holds after the
+# session's file is gone (klepsydra keeps an ended file a day).
+SD=aaaaaaaa-0000-4000-8000-0000000000f5
+sfile "$SD" 4242 777 "$NOWBOOT" %7; ended "$SD"
+printf '%s\tfin\t%s\t%s\t/w\n' %7 "$work/bc.src" "$SD" >>"$REGISTRY"
+bash "$here/doctor.sh" >/dev/null 2>&1
+rm -f -- "$KLEPSYDRA_DIR/fleet/$SD.json"
+check "#261 review 2: a finished row stays finished once its session's file is gone" \
+  "$(row_state %7 "$SD") | $(rec --dry-run --no-orchestrator | grep -E '^(finished|would recover): fin' | sed 's/ (.*//')" "finished | finished: fin"
+# A recorded finish gives way to the session's own file while it exists: one
+# resumed under the same id, then stopped by a shutdown, is gone, not finished.
+SRS=aaaaaaaa-0000-4000-8000-0000000000e8
+sfile "$SRS" 4242 777 "$NOWBOOT" %6; ended "$SRS"
+printf '%s\tres\t%s\t%s\t/w\n' %6 "$work/bc.src" "$SRS" >>"$REGISTRY"
+bash "$here/doctor.sh" >/dev/null 2>&1
+sfile "$SRS" 4242 777 "$NOWBOOT" %6; ended "$SRS" gone
+check "#261 review 3: a resumed session that a shutdown stopped is gone, though its finish was recorded" \
+  "$(grep -c "$SRS" "$FLEET_STATE/finished.tsv") $(row_state %6 "$SRS") | $(rec --dry-run --no-orchestrator | grep -E '^(finished|would recover): res' | sed 's/ (.*//')" "1 gone | would recover: res"
+awk -F'\t' '$2 != "res"' "$REGISTRY" >"$work/reg.tmp" && mv -f -- "$work/reg.tmp" "$REGISTRY"
+rm -f -- "$KLEPSYDRA_DIR/fleet/$SRS.json"
+# Paused when its session had ended with /exit, then unpaused: recover launches it.
+FLEET_PAUSED=$work/p2.tsv bash "$here/pause.sh" pause fin because >/dev/null 2>&1
+FLEET_PAUSED=$work/p2.tsv bash "$here/pause.sh" unpause fin >/dev/null 2>&1
+check "#261 review 2: a paused, then unpaused, finished agent is relaunched by recover" \
+  "$(row_state %7 "$SD") | $(rec --dry-run --no-orchestrator | grep -E '^(finished|would recover): fin' | sed 's/ (.*//')" "gone | would recover: fin"
+# The real recover of that unpaused agent, with a stub launch: a launch that
+# fails keeps the unpause, one that starts the agent (and repoints its row, as
+# launch.sh does) clears it, and its brief says it was paused.
+NEWS=aaaaaaaa-0000-4000-8000-0000000000e9
+cat >"$work/launch-up.sh" <<EOF
+#!/usr/bin/env bash
+cp -- "\$2" "$work/up-brief"
+[[ -e "$work/up-fail" ]] && exit 1
+awk -F'\t' -v OFS='\t' '\$2 == "fin" { \$1 = "%95"; \$4 = "$NEWS" } 1' "$REGISTRY" >"$work/up.tmp" && mv -f -- "$work/up.tmp" "$REGISTRY"
+echo "pane=%95 session=$NEWS account=x avail=1MiB brief=started"
+EOF
+chmod +x "$work/launch-up.sh"
+touch "$work/up-fail"
+LAUNCH="$work/launch-up.sh" FLEET_STAGGER_S=0 bash "$here/recover.sh" --no-orchestrator >/dev/null 2>&1
+check "#261 review 3: a failed relaunch of an unpaused agent keeps its unpause" "$(cut -f1 "$FLEET_STATE/unpaused.tsv")" "fin"
+rm -f -- "$work/up-fail"
+LAUNCH="$work/launch-up.sh" FLEET_STAGGER_S=0 bash "$here/recover.sh" --no-orchestrator >/dev/null 2>&1
+check "#261 review 3: a relaunch that starts it clears the unpause, and its brief says it was paused" \
+  "$(grep -c . "$FLEET_STATE/unpaused.tsv") $(grep -c 'set aside with fleet pause' "$work/up-brief") $(awk -F'\t' '$2 == "fin" { print $4 }' "$REGISTRY")" "0 1 $NEWS"
+awk -F'\t' '$2 != "fin"' "$REGISTRY" >"$work/reg.tmp" && mv -f -- "$work/reg.tmp" "$REGISTRY"
+rm -f -- "$FLEET_STATE/finished.tsv" "$FLEET_STATE/unpaused.tsv" "$work/p2.tsv"
+# The successor is read from the fleet's own sessions: one with the same pane
+# id on another tmux server neither hides it nor stands in for it.
+SX=aaaaaaaa-0000-4000-8000-0000000000f6 SY=aaaaaaaa-0000-4000-8000-0000000000f7 SZ=aaaaaaaa-0000-4000-8000-0000000000f8
+sfile "$SX" 4242 777 "$NOWBOOT" %8; ended "$SX" clear
+sfile "$SY" 4242 777 "$NOWBOOT" %8
+jq -n '{session_id: "x", ended: null, claude: {pid: 4242, start: 777}, host: {boot: "11111111-1111-4111-8111-111111111111"}, tmux: {pane: "%8", socket: "/tmp/tmux-1/default"}}' >"$KLEPSYDRA_DIR/fleet/$SZ.json"
+printf '%s\tcl\t%s\t%s\t/w\n' %8 "$work/bc.src" "$SX" >>"$REGISTRY"
+check "#261 review 2: a /clear's successor is found beside a same-id pane on another server" "$(row_state %8 "$SX")" "running"
+check "#261 review 2: and the row is never paused while it runs" "$(bash "$here/pause.sh" pause cl x 2>&1 | grep -c '^error:.*still runs')" "1"
+rm -f -- "$KLEPSYDRA_DIR/fleet/$SY.json"
+check "#261 review 2: the other server's session alone is no successor" "$(row_state %8 "$SX")" "gone"
+printf '%s\tnosid\t%s\n' %8 "$work/bc.src" >>"$REGISTRY"
+sfile "$SY" 4242 777 "$NOWBOOT" %8
+check "#261 review 2: a row with no session id has no successor" "$(row_state %8 "")" "gone"
+awk -F'\t' '$2 != "cl" && $2 != "nosid"' "$REGISTRY" >"$work/reg.tmp" && mv -f -- "$work/reg.tmp" "$REGISTRY"
+rm -f -- "$KLEPSYDRA_DIR/fleet/$SX.json" "$KLEPSYDRA_DIR/fleet/$SY.json" "$KLEPSYDRA_DIR/fleet/$SZ.json"
+
 echo "recover: the orchestrator"
 # After a power cut nothing runs: the earlier checks' live sessions go.
 rm -f "$KLEPSYDRA_DIR/fleet/$SA.json" "$KLEPSYDRA_DIR/fleet/$SB.json" "$KLEPSYDRA_DIR/fleet/$SC.json"
@@ -1772,6 +3396,46 @@ check "its note names HEPH.md and holds AJ's messages since it was written, noth
   "$(grep -c "Read $work/HEPH.md first" "$work/rec-heph.txt") $(grep '^- ' "$work/rec-heph.txt" | tr '\n' '|')" "1 - AJ: move InteFL to Friday|- AJ: and ping Dima|"
 check "and orchestrator.pane follows it" "$(cat "$FLEET_STATE/orchestrator.pane")" "$(tail -1 <<<"$out" | grep -o '%[0-9]*')"
 check "and orchestrator.session records its session" "$(cat "$FLEET_STATE/orchestrator.session")" "x"
+# #216, #229 review: with the fleet's session already running, the relaunched
+# Heph opens behind and AJ stays where he is.
+cat >"$work/launch-recfwd.sh" <<EOF
+#!/usr/bin/env bash
+np=\$(tmux -L "$FLEET_SOCK" new-window -d -P -F '#{pane_id}' -t fleet: 'sleep 600')
+echo "pane=\$np session=x account=x avail=1MiB brief=started"
+EOF
+chmod +x "$work/launch-recfwd.sh"
+printf '%%0\n' >"$FLEET_STATE/orchestrator.pane"; rm -f "$FLEET_STATE/orchestrator.session"
+seen=$(t display -p -t fleet: '#{pane_id}')
+LAUNCH="$work/launch-recfwd.sh" FLEET_STAGGER_S=0 FLEET_HEPH="$work/HEPH.md" bash "$here/recover.sh" >/dev/null 2>&1
+nh=$(cat "$FLEET_STATE/orchestrator.pane")
+check "#229 review: a recover into a running session leaves AJ's window in view" "$(t display -p -t fleet: '#{pane_id}')" "$seen"
+t kill-window -t "$nh" 2>/dev/null
+# From a cold start (no fleet session) Heph comes forward, unless AJ moved meanwhile.
+cat >"$work/launch-cold.sh" <<EOF
+#!/usr/bin/env bash
+if tmux -L "$FLEET_SOCK" has-session -t coldrec 2>/dev/null; then
+  [[ -e "$work/cold.move" ]] && tmux -L "$FLEET_SOCK" new-window -t coldrec: 'sleep 600' # AJ opens another
+  np=\$(tmux -L "$FLEET_SOCK" new-window -d -P -F '#{pane_id}' -t coldrec: 'sleep 600')
+else
+  np=\$(tmux -L "$FLEET_SOCK" new-session -d -s coldrec -P -F '#{pane_id}' 'sleep 600')
+fi
+echo "pane=\$np session=x account=x avail=1MiB brief=started"
+EOF
+chmod +x "$work/launch-cold.sh"
+for moved in 0 1; do
+  (( moved )) && touch "$work/cold.move"
+  printf '%s\tcw\t%s\t%s\t/w\n' %990 "$work/ba.src" "$SB" >"$REGISTRY"
+  printf '%%989\n' >"$FLEET_STATE/orchestrator.pane"; rm -f "$FLEET_STATE/orchestrator.session"
+  FLEET_SESSION=coldrec LAUNCH="$work/launch-cold.sh" FLEET_STAGGER_S=0 FLEET_HEPH="$work/HEPH.md" bash "$here/recover.sh" >/dev/null 2>&1
+  nh=$(cat "$FLEET_STATE/orchestrator.pane")
+  if (( moved )); then
+    check "#229 review: from a cold start, a move during recover keeps Heph behind" "$(t display -p -t coldrec: '#{pane_id}' | grep -cx -- "$nh") $(t list-windows -t coldrec | wc -l)" "0 3"
+  else
+    check "#229 review: from a cold start, nothing moved: the recovered Heph is the window in view" "$(t display -p -t coldrec: '#{pane_id}')" "$nh"
+  fi
+  t kill-session -t coldrec 2>/dev/null
+done
+rm -f "$work/cold.move"; : >"$REGISTRY"
 
 echo "recover: a relaunched worker that takes the old orchestrator pane is not Heph"
 SW=aaaaaaaa-0000-4000-8000-0000000000c1 SNEW=aaaaaaaa-0000-4000-8000-0000000000c2
@@ -1843,7 +3507,26 @@ out=$(rec)
 check "two live sessions that are no agent's: Heph is not launched" \
   "$(head -1 <<<"$out") $(wc -l <"$work/rec.log")" \
   "not recovered: orchestrator (2 live sessions in the fleet belong to no agent and none is on record as Heph; write Heph's pane to orchestrator.pane) 0"
+# #269 verify: a finished agent's open pane is no stranger: with Heph gone, he is relaunched.
+rm -f "$KLEPSYDRA_DIR/fleet/$SHEPH.json"
+check "#269 verify: without finished.tsv, the finished agent's live session leaves Heph unsure (the control)" \
+  "$(rec --dry-run | grep -c '^not recovered: orchestrator')" "1"
+: >"$FLEET_STATE/finished.tsv"
+check "#269 verify 3: an empty finished.tsv (the probe makes one) changes nothing" \
+  "$(rec --dry-run | grep -c '^not recovered: orchestrator')" "1"
+printf '%%5\tdone-agent\t%s\t%s\t/w\t\t2026-11-02T20:00:00-05:00\n' "$work/brief.src" "$SOTHER" >"$FLEET_STATE/finished.tsv"
+check "#269 verify: listed in finished.tsv, it no longer does, and Heph would be recovered" \
+  "$(rec --dry-run | grep -c '^not recovered: orchestrator') $(rec --dry-run | grep -c 'orchestrator')" "0 1"
+printf '%%3\n' >"$FLEET_STATE/orchestrator.pane"; printf '%s\n' "$SH" >"$FLEET_STATE/orchestrator.session"
+check "#269 verify 3: the finished agent running fleet recover in its own pane is not taken for Heph" \
+  "$(CLAUDECODE=1 TMUX_PANE=%5 TMUX="/tmp/tmux-1/$FLEET_SOCK,1,0" rec --dry-run | grep -c 'running: orchestrator (%5)') $(cat "$FLEET_STATE/orchestrator.session")" "0 $SH"
+printf '%s\n' "$SOTHER" >"$FLEET_STATE/orchestrator.session"
+check "#269 verify 3: nor is a record naming the finished agent's session" \
+  "$(rec --dry-run | grep -c "session $SOTHER")" "0"
+printf '%s\n' "$SH" >"$FLEET_STATE/orchestrator.session"
+rm -f "$FLEET_STATE/finished.tsv"
 rm -f "$KLEPSYDRA_DIR/fleet/$SOTHER.json"
+sfile "$SHEPH" 4242 777 "$NOWBOOT" %0 # live again, as the cases below expect
 
 echo "recover: a row is repaired only to a session alive before any launch"
 SA1=aaaaaaaa-0000-4000-8000-0000000000d3 SB1=aaaaaaaa-0000-4000-8000-0000000000d4 SNEWA=aaaaaaaa-0000-4000-8000-0000000000d5
@@ -1978,47 +3661,158 @@ echo "launch without worker settings"
 cat >"$work/launcher-rec.sh" <<EOF
 #!/usr/bin/env bash
 printf '%s\n' "\$KLEPSYDRA_CLAUDE" >"$work/cmd"
+env | grep -E '^FLEET_(SETTINGS|ACCOUNT|SUCCEEDS)=' >"$work/launcher-env"
 tmux -L "\$KLEPSYDRA_TMUX_SOCKET" new-window -d -t fleet: -c "\$3" "\$KLEPSYDRA_CLAUDE"
 EOF
 printf '%s' '{"above":["Claude Code"]}' >"$work/nosettings.json"; : >"$work/nosettings.log"
 FLEET_SETTINGS='' FLEET_SCOPE=0 FLEET_MIN_AVAIL_MB=0 FLEET_LAUNCHER="$work/launcher-rec.sh" FLEET_DIR="$work" \
   FLEET_CLAUDE="python3 -I $fake $work/nosettings.json $work/nosettings.log" bash "$here/launch.sh" nosettings "$work/task.src" >/dev/null 2>&1
 check "FLEET_SETTINGS= starts claude with no --settings" "$(grep -c -- '--settings' "$work/cmd") $(grep -c -- '--session-id' "$work/cmd")" "0 1"
-check "#183: workers run keryx off (only Heph speaks), from the installed worker settings" \
-  "$(jq -r '.env.KERYX_ENABLED' "$here/worker-settings.json")" "false"
+check "#273: no session starts with KERYX_ENABLED: keryx's own setting decides, live" \
+  "$(jq -r '.env.KERYX_ENABLED // "unset"' "$here/worker-settings.json") $(grep -c 'KERYX_ENABLED=' "$work/cmd")" "unset 0"
 check "#172: the session is told its agent's name, so its card keeps its face across a move" "$(grep -c 'KLEPSYDRA_AGENT=nosettings ' "$work/cmd")" "1"
-voiced() { # VOICES SETTINGS: the command launch.sh builds with the wall's Voices set to VOICES ("-": prefs as they are)
-  [[ $1 == - ]] || jq -n --arg v "$1" 'if $v == "" then {} else {voices: $v} end' >"$KLEPSYDRA_DIR/prefs.json"
-  : >"$work/nosettings.log"
-  FLEET_SETTINGS=$2 FLEET_SCOPE=0 FLEET_MIN_AVAIL_MB=0 FLEET_LAUNCHER="$work/launcher-rec.sh" FLEET_DIR="$work" \
-    FLEET_CLAUDE="python3 -I $fake $work/nosettings.json $work/nosettings.log" bash "$here/launch.sh" nosettings "$work/task.src" >/dev/null 2>&1
-  cat "$work/cmd"
+check "#226: and no successor unless a move names one" "$(grep -c 'KLEPSYDRA_SUCCEEDS' "$work/cmd")" "0"
+FLEET_SUCCEEDS=11111111-2222-4333-8444-555555555555 FLEET_SETTINGS='' FLEET_SCOPE=0 FLEET_MIN_AVAIL_MB=0 FLEET_LAUNCHER="$work/launcher-rec.sh" FLEET_DIR="$work" \
+  FLEET_CLAUDE="python3 -I $fake $work/nosettings.json $work/nosettings.log" bash "$here/launch.sh" nosettings "$work/task.src" >/dev/null 2>&1
+check "#226: a move's successor id reaches the session; anything else is dropped" \
+  "$(grep -c 'KLEPSYDRA_SUCCEEDS=11111111-2222-4333-8444-555555555555 ' "$work/cmd")" "1"
+check "#183 review 2: keryx's switch is never inherited from tmux's environment" "$(grep -c "^bash -c '.*' fleet-oom env -u KERYX_ENABLED " "$work/cmd")" "1"
+check "#309: the orchestrator's launch (no worker settings) sets no worker mark, and drops an inherited one" "$(grep -c 'KLEPSYDRA_WORKER=' "$work/cmd") $(grep -c -- '-u KLEPSYDRA_WORKER ' "$work/cmd")" "0 1"
+check "#310 review 1: the launcher gets none of the launch's FLEET_* settings, so a server it starts hands them to no later pane" \
+  "$(cat "$work/launcher-env")" ""
+# A real worker launch: FLEET_SETTINGS unset (worker-settings.json), claude's own
+# environment read, an inherited mark dropped on the orchestrator's (#310 review 1).
+cat >"$work/envclaude.sh" <<EOF
+#!/usr/bin/env bash
+{ echo ran; env | grep -E '^KLEPSYDRA_WORKER='; } >"$work/claude-env"
+exec python3 -I $fake $work/nosettings.json $work/nosettings.log
+EOF
+chmod +x "$work/envclaude.sh"
+: >"$work/claude-env"
+( unset FLEET_SETTINGS; FLEET_SCOPE=0 FLEET_MIN_AVAIL_MB=0 FLEET_LAUNCHER="$work/launcher-rec.sh" FLEET_DIR="$work" \
+  FLEET_CLAUDE="$work/envclaude.sh" bash "$here/launch.sh" nosettings "$work/task.src" >/dev/null 2>&1 )
+for _ in $(seq 50); do [[ -s $work/claude-env ]] && break; sleep 0.1; done
+check "#309: a worker's claude runs with the mark in its environment, so the stale-PR list skips it" \
+  "$(tr '\n' ' ' <"$work/claude-env")$(grep -c -- '--settings' "$work/cmd")" "ran KLEPSYDRA_WORKER=1 1"
+: >"$work/claude-env"
+KLEPSYDRA_WORKER=1 FLEET_SETTINGS='' FLEET_SCOPE=0 FLEET_MIN_AVAIL_MB=0 FLEET_LAUNCHER="$work/launcher-rec.sh" FLEET_DIR="$work" \
+  FLEET_CLAUDE="$work/envclaude.sh" bash "$here/launch.sh" nosettings "$work/task.src" >/dev/null 2>&1
+for _ in $(seq 50); do [[ -s $work/claude-env ]] && break; sleep 0.1; done
+check "#310 review 1: the orchestrator's claude drops a mark inherited from its caller" "$(tr '\n' ' ' <"$work/claude-env")" "ran "
+
+echo "fleet voices: keryx follows the tray's mode, live (#273)"
+# Stub keryx installs laid out as the plugin's (bin/ beside src/keryx), keeping
+# their settings where keryx does and recording each call; keryx-old predates
+# speak_only (0.11.0), keryx-flaky refuses speak-only once.
+mkdir -p "$work/xdg/keryx"
+stub_keryx() { # DIR [old|flaky]
+  mkdir -p "$1/bin" "$1/src/keryx"
+  if [[ ${2:-} == old ]]; then echo 'COMMANDS = ("on", "off")' >"$1/src/keryx/__main__.py"; else echo 'COMMANDS = ("on", "off", "speak-only")' >"$1/src/keryx/__main__.py"; fi
+  cat >"$1/bin/keryx" <<EOF
+#!/usr/bin/env bash
+c=\${XDG_CONFIG_HOME}/keryx/config.json
+[[ -s \$c ]] || echo '{}' >"\$c"
+printf '%s\\n' "\$*" >>"\${XDG_CONFIG_HOME}/keryx/calls"
+mode=${2:-}
+if [[ \$1 == speak-only && \$mode == flaky && ! -e $1/failed-once ]]; then : >"$1/failed-once"; exit 1; fi
+case \$1 in
+  on) jq '.enabled = true' "\$c" >"\$c.t" && mv "\$c.t" "\$c" ;;
+  off) jq '.enabled = false' "\$c" >"\$c.t" && mv "\$c.t" "\$c" ;;
+  speak-only) shift; if [[ \$1 == --everyone ]]; then jq '.speak_only = []' "\$c" >"\$c.t"; else jq --args '.speak_only = \$ARGS.positional' "\$@" <"\$c" >"\$c.t"; fi && mv "\$c.t" "\$c" ;;
+esac
+EOF
+  chmod +x "$1/bin/keryx"
 }
-cmd=$(voiced "" "$here/worker-settings.json")
-check "#183: by default a worker starts with the worker settings, keryx off" "$(grep -c -- "--settings $here/worker-settings.json" <<<"$cmd")" "1"
-# The --settings argument as launch.sh quoted it (printf %q: a space is "\ ").
-settings_of() { local a; a=$(sed -nE 's/.*--settings ((\\.|[^ \\])+).*/\1/p' <<<"$1"); [[ -n $a ]] && eval "printf '%s' $a"; }
-cmd=$(voiced everyone "$here/worker-settings.json")
-check "#183: Everyone starts it with the same settings less keryx's line" \
-  "$(settings_of "$cmd" | jq -c '[.env, .crossSessionInbound]')" '[null,"accept"]'
-check "#183: and the launch log names the mode" "$(jq -r 'select(.message == "window opened") | .voices' "$FLEET_LOG" | tail -1)" "everyone"
-cmd=$(voiced everyone "")
-check "#183 review 1: Everyone leaves a session without worker settings (Heph) as it is" "$(grep -c -- '--settings\|KERYX_ENABLED=' <<<"$cmd")" "0"
-cmd=$(voiced everyone "$work/no-such-settings.json")
-check "#183 review 1: worker settings it cannot read are passed on as they are" "$(settings_of "$cmd")" "$work/no-such-settings.json"
-cmd=$(voiced off "")
-check "#183: Off gives a session started without worker settings (Heph) keryx off, through --settings" \
-  "$(settings_of "$cmd" | jq -c .)" '{"env":{"KERYX_ENABLED":"false"}}'
-cmd=$(voiced off "$here/worker-settings.json")
-check "#183 review 1: Off keeps a worker's own settings, keryx off in them" "$(settings_of "$cmd")" "$here/worker-settings.json"
-cmd=$(voiced heph "")
-check "#183: Heph only leaves Heph's keryx alone" "$(grep -c 'KERYX_ENABLED=\|--settings' <<<"$cmd")" "0"
-check "#183 review 2: and keryx's switch is never inherited from tmux's environment" "$(grep -c '^env -u KERYX_ENABLED ' <<<"$cmd")" "1"
-for odd in 'not json' '{"voices":"everyone"} x' '{"voices":"everyone\n"}' '{"voices":["off"]}' '{"voices":"heph"} {"voices":"off"}' '{"voices":"off"}{"voices":"everyone"}'; do
+stub_keryx "$work/kx"; stub_keryx "$work/kxold" old; stub_keryx "$work/kxflaky" flaky
+kc="$work/xdg/keryx/config.json"; kcalls="$work/xdg/keryx/calls"; orch_rec=$(realpath -m "$FLEET_STATE/orchestrator.session")
+fvk() { local k=$1; shift; : >"$kcalls"; FLEET_KERYX="$k/bin/keryx" bash "$here/fleet" voices "$@" 2>/dev/null; } # KERYX-DIR [ARGS]
+fv() { fvk "$work/kx" "$@"; }
+vreset() { rm -f "$kc" "$KLEPSYDRA_DIR/prefs.json" "$FLEET_STATE/voices.applied" "$FLEET_STATE/voices.failed"; }
+vreset
+check "#273: with no saved mode, Heph only: keryx speaks only for the orchestrator's session" \
+  "$(fv) | $(jq -c '[.enabled // true, .speak_only]' "$kc") $(cat "$FLEET_STATE/voices.applied")" "voices: heph (changed: speak_only) | [true,[\"$orch_rec\"]] heph"
+check "#273: run again, nothing changes and keryx is not called" "$(fv) $(wc -l <"$kcalls")" "voices: heph (keryx already matches) 0"
+check "#273: fleet voices off saves the mode and turns keryx off" \
+  "$(fv off) | $(jq -r .voices "$KLEPSYDRA_DIR/prefs.json") $(jq -c .enabled "$kc")" "voices: off (changed: enabled) | off false"
+check "#273: Everyone turns it on, first, for every session" \
+  "$(fv everyone) | $(jq -c '[.enabled, .speak_only]' "$kc") $(head -1 "$kcalls")" "voices: everyone (changed: enabled speak_only) | [true,[]] on"
+check "#273: each change is logged with the values decided on" \
+  "$(jq -r 'select(.message == "voices: keryx set to the tray'"'"'s mode") | "\(.mode) \(.enabled) \(.was_enabled)"' "$FLEET_LOG" | tail -1)" "everyone true false"
+# The service's pass: a mode applies once; AJ's own keryx off between changes stays.
+"$work/kx/bin/keryx" off
+check "#273 review: --if-changed leaves a manual keryx off alone while the mode is unchanged" \
+  "$(fv --if-changed; jq -c .enabled "$kc") $(wc -l <"$kcalls")" "false 0"
+printf '{"voices":"heph","theme":"kourai"}' >"$KLEPSYDRA_DIR/prefs.json"
+check "#273 review: --check names a saved mode not yet applied" "$(fv --check; echo "rc=$?")" $'heph not applied (last applied: everyone): fleet voices applies it\nrc=1'
+check "#273: a changed mode the tray saved applies at the next pass, other prefs kept" \
+  "$(fv --if-changed) | $(jq -c '[.enabled, .speak_only]' "$kc") $(jq -r .theme "$KLEPSYDRA_DIR/prefs.json")" "voices: heph (changed: enabled speak_only) | [true,[\"$orch_rec\"]] kourai"
+check "#273: and --check then says so" "$(fv --check; echo "rc=$?")" $'applied heph\nrc=0'
+"$work/kx/bin/keryx" off
+check "#273 verify: --check names keryx turned off by hand since, still ok" "$(fv --check; echo "rc=$?")" $'applied heph; keryx is off now (turned off by hand?)\nrc=0'
+"$work/kx/bin/keryx" on
+for odd in 'not json' '{"voices":"loud"}' '{"voices":["off"]}' '{"voices":"off"}{}' 'null'; do
   printf '%s' "$odd" >"$KLEPSYDRA_DIR/prefs.json"
-  check "#183: a prefs file reading $odd is the default" "$(voiced - "$here/worker-settings.json" >/dev/null; jq -r 'select(.message == "window opened") | .voices' "$FLEET_LOG" | tail -1)" "heph"
+  check "#273: a prefs file reading $odd is Heph only" "$(fv | cut -d' ' -f2)" "heph"
 done
-rm -f "$KLEPSYDRA_DIR/prefs.json"
+check "#273: an unknown mode is refused" "$(fv loud >/dev/null 2>&1; echo $?)" "2"
+vreset
+check "#273: no keryx installed: said, and nothing fails" "$(FLEET_KERYX="$work/no-keryx" bash "$here/fleet" voices 2>/dev/null; echo "rc=$?")" $'keryx is not installed\nrc=0'
+FLEET_KERYX="$work/no-keryx" bash "$here/fleet" voices --if-changed >/dev/null 2>&1; FLEET_KERYX="$work/no-keryx" bash "$here/fleet" voices --if-changed >/dev/null 2>&1
+check "#273 verify: and the service says it once, and --check names it" \
+  "$(jq -r 'select(.message | startswith("voices: keryx is not installed")) | .mode' "$FLEET_LOG" | wc -l) $(FLEET_KERYX="$work/no-keryx" bash "$here/fleet" voices --check 2>/dev/null | grep -c 'keryx is not installed')" "1 1"
+# Two runs at once never interleave: a slow keryx (uv's start) holds the first.
+vreset; echo '{"speak_only":[]}' >"$kc"
+cat >"$work/kxslow-wrap" <<EOF
+#!/usr/bin/env bash
+sleep 1; exec "$work/kx/bin/keryx" "\$@"
+EOF
+chmod +x "$work/kxslow-wrap"; mkdir -p "$work/kxslow/bin" "$work/kxslow/src/keryx"; cp "$work/kx/src/keryx/__main__.py" "$work/kxslow/src/keryx/"; cp "$work/kxslow-wrap" "$work/kxslow/bin/keryx"
+FLEET_KERYX="$work/kxslow/bin/keryx" bash "$here/fleet" voices off >/dev/null 2>&1 &
+sleep 0.3
+FLEET_KERYX="$work/kxslow/bin/keryx" bash "$here/fleet" voices heph >/dev/null 2>&1
+wait
+check "#273 verify: Off then Heph clicked together ends as Heph, keryx on, as recorded" \
+  "$(jq -r .voices "$KLEPSYDRA_DIR/prefs.json") $(cat "$FLEET_STATE/voices.applied") $(jq -c '[.enabled, (.speak_only | length)]' "$kc")" "heph heph [true,1]"
+flock "$FLEET_STATE/voices.lock" sleep 4 &
+sleep 0.3
+t0=$(date +%s)
+fv --check >/dev/null; fv --if-changed >/dev/null
+check "#273 verify 2: --check and an idle service pass never wait behind a running apply" "$(( $(date +%s) - t0 < 2 ))" "1"
+wait
+# A service pass that waited behind a failing run does not try keryx again.
+vreset; echo '{"speak_only":[]}' >"$kc"; : >"$kcalls"; : >"$FLEET_LOG"
+mkdir -p "$work/kxfail/bin" "$work/kxfail/src/keryx"; cp "$work/kx/src/keryx/__main__.py" "$work/kxfail/src/keryx/"
+printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >>"%s"\nsleep 1; exit 1\n' "$kcalls" >"$work/kxfail/bin/keryx"; chmod +x "$work/kxfail/bin/keryx"
+FLEET_KERYX="$work/kxfail/bin/keryx" bash "$here/fleet" voices >/dev/null 2>&1 &
+sleep 0.3
+FLEET_KERYX="$work/kxfail/bin/keryx" bash "$here/fleet" voices --if-changed >/dev/null 2>&1
+wait
+check "#273 verify 3: a pass that waited behind a failing run does not try keryx again, nor log it twice" \
+  "$(grep -c speak-only "$kcalls") $(jq -r 'select(.message == "voices: keryx could not be set to the tray'"'"'s mode") | .mode' "$FLEET_LOG" | wc -l)" "1 1"
+# A keryx without speak_only (0.11.0): keryx is still turned on, the rest is said once.
+vreset; echo '{"enabled": false}' >"$kc"
+check "#273 review: a keryx without speak_only still turns keryx on, never runs speak-only, and fails" \
+  "$(fvk "$work/kxold" heph >/dev/null; echo $?) $(jq -c .enabled "$kc") $(grep -c speak-only "$kcalls")" "1 true 0"
+fvk "$work/kxold" --if-changed >/dev/null; fvk "$work/kxold" --if-changed >/dev/null
+check "#273 review: and the service does not retry it, nor log it again, until another keryx is installed" \
+  "$(jq -r 'select(.message == "voices: keryx could not be set to the tray'"'"'s mode") | .failed' "$FLEET_LOG" | grep -c 'keryx<0.12.0')" "1"
+check "#273 review: --check says to update keryx" "$(fvk "$work/kxold" --check | grep -c 'update the keryx plugin to 0.12.0')" "1"
+check "#273 review: a newer keryx is tried at once" "$(fv --if-changed)" "voices: heph (changed: speak_only)"
+# A failure that is not a missing feature (a timeout, a failed sync) is retried after 15 min.
+vreset
+fvk "$work/kxflaky" >/dev/null
+check "#273 review: a passing failure is not taken for an old keryx, and is not recorded as applied" \
+  "$(cut -d' ' -f3 "$FLEET_STATE/voices.failed") [$(cat "$FLEET_STATE/voices.applied" 2>/dev/null)]" "other []"
+check "#273 review: the service waits before trying again" "$(fvk "$work/kxflaky" --if-changed; wc -l <"$kcalls")" "0"
+sed -i 's/^heph [0-9]* other /heph 1000 other /' "$FLEET_STATE/voices.failed"
+check "#273 review: then tries again, and succeeds" "$(fvk "$work/kxflaky" --if-changed)" "voices: heph (changed: speak_only)"
+# Which keryx: the newest version across both accounts' plugin caches.
+vreset
+stub_keryx "$work/home/.claude/plugins/cache/techne/keryx/0.11.0" old
+stub_keryx "$work/home/.claude-rit/plugins/cache/techne/keryx/0.12.0"
+check "#273 review: the newest keryx across both accounts' caches is used (0.12.0 under .claude-rit, not 0.11.0)" \
+  "$(env -u FLEET_KERYX HOME="$work/home" bash "$here/fleet" voices 2>/dev/null)" "voices: heph (changed: speak_only)"
+vreset; rm -f "$kcalls"
 
 echo "briefing sync"
 git init -q --bare "$work/brief-remote.git"
@@ -2027,7 +3821,7 @@ git -C "$work/brief" -c user.name=t -c user.email=t@t commit -q --allow-empty -m
 printf '#!/usr/bin/env bash\n[[ -e %s ]] && { echo "leak: token"; exit 1; }\nexit 0\n' "$work/leak" >"$work/bin/gitleaks"; chmod +x "$work/bin/gitleaks"
 bsync() { BRIEFING_DIR="$work/brief" FLEET_GITLEAKS="$work/bin/gitleaks" GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t bash "$here/sync-briefing.sh" 2>/dev/null; echo $?; }
 check "nothing changed: no commit" "$(bsync) $(git -C "$work/brief" rev-list --count HEAD)" "0 1"
-printf 'q\n' >"$work/brief/claude-queue.md"; printf 'x\n' >"$work/brief/notes.txt"
+printf 'q\n' >"$work/brief/queue.md"; printf 'n\n' >"$work/brief/needs-you.md"; printf 'x\n' >"$work/brief/notes.txt"
 touch "$work/leak"
 check "a gitleaks finding blocks the commit, and is logged" "$(bsync) $(git -C "$work/brief" rev-list --count HEAD) $(jq -r 'select(.message | contains("gitleaks found")) | .level' "$FLEET_LOG")" "1 1 ERROR"
 check "and leaves nothing staged" "$(git -C "$work/brief" diff --cached --name-only | wc -l)" "0"
@@ -2036,7 +3830,7 @@ printf '#!/usr/bin/env bash\necho "ERR [git] fatal: bad object" >&2\nexit 0\n' >
 check "a scanner that exits 0 with an error is no verdict" \
   "$(BRIEFING_DIR="$work/brief" FLEET_GITLEAKS="$work/bin/gitleaks-err" bash "$here/sync-briefing.sh" 2>/dev/null; echo $?) $(git -C "$work/brief" rev-list --count HEAD)" "1 1"
 check "a change is committed and pushed" "$(bsync) $(git -C "$work/brief-remote.git" rev-list --count HEAD)" "0 2"
-check "only the briefing's own files go in" "$(git -C "$work/brief" show --name-only --format= HEAD)" "claude-queue.md"
+check "only the briefing's own files go in, AJ's needs-you.md included" "$(git -C "$work/brief" show --name-only --format= HEAD | paste -sd' ')" "needs-you.md queue.md"
 git -C "$work/brief" -c user.name=t -c user.email=t@t commit -q --allow-empty -m "a prune commit"
 touch "$work/leak"
 check "a commit about to be pushed is scanned first" "$(bsync) $(git -C "$work/brief-remote.git" rev-list --count HEAD)" "1 2"
@@ -2047,16 +3841,294 @@ check "a commit made while the tree is clean is still pushed" "$(bsync) $(git -C
 git clone -q "$work/brief-remote.git" "$work/brief-phone" 2>/dev/null
 printf 'ticked\n' >"$work/brief-phone/README.md"
 git -C "$work/brief-phone" add README.md && git -C "$work/brief-phone" -c user.name=t -c user.email=t@t commit -q -m phone && git -C "$work/brief-phone" push -q origin HEAD 2>/dev/null
-printf 'q2\n' >"$work/brief/claude-queue.md"
+printf 'q2\n' >"$work/brief/queue.md"
 check "a push the remote rejects rebases once and lands both" "$(bsync) $(git -C "$work/brief-remote.git" rev-list --count HEAD)" "0 5"
 printf 'o\n' >"$work/brief/other.md"; git -C "$work/brief" add other.md && git -C "$work/brief" -c user.name=t -c user.email=t@t commit -q -m other && git -C "$work/brief" push -q origin HEAD 2>/dev/null
 git -C "$work/brief-phone" pull -q 2>/dev/null; printf 'ticked again\n' >"$work/brief-phone/README.md"
 git -C "$work/brief-phone" -c user.name=t -c user.email=t@t commit -qam phone2 && git -C "$work/brief-phone" push -q origin HEAD 2>/dev/null
-printf 'o\nan edit in progress\n' >"$work/brief/other.md"; printf 'q3\n' >"$work/brief/claude-queue.md"
+printf 'o\nan edit in progress\n' >"$work/brief/other.md"; printf 'q3\n' >"$work/brief/queue.md"
 check "a rejected push with edits in the tree waits rather than rebasing over them" \
   "$(bsync) $(tail -1 "$work/brief/other.md") $(git -C "$work/brief" ls-files -u | wc -l)" "1 an edit in progress 0"
 git -C "$work/brief" checkout -q -- other.md
 check "once the tree is clean it rebases and pushes" "$(bsync) $(git -C "$work/brief" rev-list --count '@{u}..HEAD')" "0 0"
+printf 'm\n' >"$work/brief/claude-morning.md"
+check "#277: a file under its old name is still committed" "$(bsync) $(git -C "$work/brief" show --name-only --format= HEAD)" "0 claude-morning.md"
+mv "$work/brief/claude-morning.md" "$work/brief/morning.md"
+check "#277: a plain mv to the new name commits as one rename and leaves neither name behind" \
+  "$(bsync) $(git -C "$work/brief" show -M --name-status --format= HEAD | tr '\t' ' ' | paste -sd' ') $(git -C "$work/brief" status --porcelain -- claude-morning.md morning.md | wc -l)" "0 R100 claude-morning.md morning.md 0"
+
+echo "fleet send: a message is submitted, never left in the box (#320)"
+fsend() { bash "$here/send.sh" "$@" 2>/dev/null; }
+p=$(pane snd '{"above":["idle"],"enter_ignore":1,"on_submit":"none"}'); settle
+msg="Heph: #322 is red on its current head; read the report under ci/ and fix it before #319's follow-ups. This line runs past two hundred characters on purpose, as the 11-04 sends that stayed in the box did."
+out=$(fsend "$p" "$msg"); rc=$?
+check "#320: a long message whose first Enter is lost is still submitted, once" \
+  "$out $rc $(grep -c "^SUBMIT ${msg:0:40}" "$work/snd.log") $(grep -c 'KEY ENTER (lost after a paste)' "$work/snd.log")" "sent 0 1 1"
+check "and it is logged with its pane and length" "$(jq -r 'select(.message == "message sent") | [.pane, .chars] | join(" ")' "$FLEET_LOG" | tail -1)" "$p ${#msg}"
+state snd '{"above":["working"],"busy":true,"on_submit":"none"}'; settle
+check "#320: a running turn is no bar: the message is queued (sent)" "$(fsend "$p" "a note for later")" "sent"
+state snd '{"above":["idle"],"input":"AJ is typing","on_submit":"none"}'; settle
+: >"$work/snd.log"
+check "#320: text already in the box is never touched" \
+  "$(fsend "$p" "x"; echo "rc=$?") $(grep -c . "$work/snd.log") $(input_text "$(screen "$p")")" $'not-pasted\nrc=1 0 AJ is typing'
+check "#320: stdin as the message" "$(state snd '{"above":["idle"],"clear":true,"on_submit":"none"}'; settle; printf 'from stdin\n' | fsend "$p" -)" "sent"
+check "#320: a pane the server does not have, or no text, is refused (2)" \
+  "$(fsend %99999 "x"; echo -n "$? "; fsend "$p" "   "; echo -n "$? "; fsend "$p"; echo $?)" "2 2 2"
+check "#325 review 1: a target that is not a pane id (a window) is refused (2)" "$(fsend fleet:1 "x"; echo $?)" "2"
+t kill-window -t "$p"
+p=$(pane snb '{"above":["working"],"busy":true,"enter_ignore":1,"on_submit":"none"}'); settle
+out=$(fsend "$p" "queued while busy, first Enter lost"); rc=$?
+check "#325 review 1: a busy pane whose first Enter is lost still gets the message, once" \
+  "$out $rc $(grep -c '^SUBMIT queued while busy' "$work/snb.log") $(grep -c 'KEY ENTER (lost after a paste)' "$work/snb.log")" "sent 0 1 1"
+t kill-window -t "$p"
+# A dialog (here the limit menu) takes the box's place while the first Enter is lost.
+p=$(pane snm '{"above":["working"],"busy":true,"enter_ignore":1,"on_submit":"none"}'); settle
+fsend "$p" "message while a dialog comes up" >"$work/snm.out" &
+n2=$!
+sleep 1.5
+state snm '{"above":["working"],"busy":true,"on_submit":"none","menu":"limit"}'
+wait "$n2"
+check "#325 review 1: no Enter lands on a dialog that took the box's place; the send says held" \
+  "$(grep -c 'LIMIT MENU STOP' "$work/snm.log") $(cat "$work/snm.out")" "0 held"
+t kill-window -t "$p"
+# Two senders at once (two workers reporting to Heph): one waits for the other.
+p=$(pane snc '{"above":["idle"],"on_submit":"none"}'); settle
+fsend "$p" "report A from worker one" >"$work/snc.a" &
+a=$!
+fsend "$p" "report B from worker two" >"$work/snc.b" &
+b=$!
+wait "$a" "$b"
+check "#325 review 1: two sends at once to one pane both go, one after the other, never glued in the box" \
+  "$(cat "$work/snc.a") $(cat "$work/snc.b") $(grep -c '^SUBMIT report [AB] from worker' "$work/snc.log") [$(input_text "$(screen "$p")")]" "sent sent 2 []"
+t kill-window -t "$p"
+check "#325 review 1: no message file is left under send/" "$(find "$FLEET_STATE/send" -type f 2>/dev/null | wc -l)" "0"
+# A send still waiting for the pane's lock after FLEET_SEND_WAIT gives up untyped.
+p=$(pane snl '{"above":["idle"],"on_submit":"none"}'); settle
+exec 8>"$FLEET_STATE/locks/send-${p#%}"
+flock 8
+: >"$work/snl.log"
+check "#325 review 2: a send that waits past FLEET_SEND_WAIT for another's lock says not-pasted and types nothing" \
+  "$(FLEET_SEND_WAIT=1 fsend "$p" "behind a held lock"; echo "rc=$?") $(grep -c . "$work/snl.log")" $'not-pasted\nrc=1 0'
+exec 8>&-
+mkdir -p -- "$FLEET_STATE/locks/send-${p#%}.d" && mv -f -- "$FLEET_STATE/locks/send-${p#%}" "$FLEET_STATE/locks/send-${p#%}.f" && mv -- "$FLEET_STATE/locks/send-${p#%}.d" "$FLEET_STATE/locks/send-${p#%}"
+check "#325 review 2: a lock file that cannot be opened (a folder in its place) reads as not-pasted" \
+  "$(inbox_deliver "$p" /dev/null 2>/dev/null)" "not-pasted"
+rmdir -- "$FLEET_STATE/locks/send-${p#%}" && mv -- "$FLEET_STATE/locks/send-${p#%}.f" "$FLEET_STATE/locks/send-${p#%}"
+t kill-window -t "$p"
+p=$(pane snt '{"above":["⏺ Done.","You'"'"'ve hit your session limit · resets 1:10pm (America/New_York)"],"on_submit":"none"}'); settle
+: >"$work/snt.log"
+check "#325 review 2: a pane at a usage limit gets nothing; the send says limited" \
+  "$(fsend "$p" "nudge"; echo "rc=$?") $(grep -c . "$work/snt.log")" $'limited\nrc=1 0'
+t kill-window -t "$p"
+# A limit line still on screen above a running turn (Claude Code continued on its own) is past.
+p=$(pane snu '{"above":["You'"'"'ve hit your session limit · resets 1:10pm (America/New_York)","working"],"busy":true,"on_submit":"none"}'); settle
+check "#325 review 3: a busy pane with a limit line still on screen is no limited pane: the message is queued" \
+  "$(fsend "$p" "report after the reset")" "sent"
+t kill-window -t "$p"
+# The hook's StopFailure record is a limit too (#311), though the screen shows only a generic error.
+p=$(pane snh '{"above":["⏺ Done.","API Error: Request failed"],"on_submit":"none"}'); settle
+stop_file aaaaaaaa-0000-4000-8000-000000000325 "$p" "$(date +%s)" "" "$L5"
+: >"$work/snh.log"
+check "#325 review 4: a pane the hook recorded at a usage limit gets nothing; the send says limited" \
+  "$(fsend "$p" "nudge"; echo "rc=$?") $(grep -c . "$work/snh.log")" $'limited\nrc=1 0'
+check "#325 review 4: pane_limited gives the record's reset and its message" \
+  "$(pane_limited "$p" "$(screen "$p")" | cut -f2)" "$L5"
+rm -f -- "${KLEPSYDRA_DIR:?}/fleet/aaaaaaaa-0000-4000-8000-000000000325.json"
+check "#325 review 4: without the record the same pane takes the message" "$(fsend "$p" "nudge")" "sent"
+t kill-window -t "$p"
+# Every typer holds the pane's typing lock: with it held, none types.
+p=$(pane sny '{"above":["idle"],"on_submit":"none"}'); settle
+echo "a brief" >"$work/sny.txt"
+exec 8>"$FLEET_STATE/locks/send-${p#%}"
+flock 8
+: >"$work/sny.log"
+FLEET_SEND_WAIT=1 remote_control "$p"; rc1=$?
+got=$(FLEET_SEND_WAIT=1 deliver "$p" "$work/sny.txt")
+FLEET_SEND_WAIT=1 retire "$p" 2>/dev/null; rc2=$?
+check "#325 review 4: with the pane's lock held, remote_control, deliver and retire type nothing" \
+  "$rc1 $got $rc2 $(grep -c . "$work/sny.log") $(fleet_panes | grep -cx -- "$p")" "75 not-delivered 1 0 1"
+exec 8>&-
+check "#325 review 4: a sequence nested in a held one runs at once" \
+  "$(FLEET_SEND_WAIT=1 pane_locked "$p" pane_locked "$p" echo nested; echo $?)" $'nested\n0'
+# The pane stops at a limit while a send waits for the lock: it is read again under the lock.
+# The sender gets no fd 8: holding the test's lock itself, it would wait out FLEET_SEND_WAIT.
+exec 8>"$FLEET_STATE/locks/send-${p#%}"
+flock 8
+FLEET_SEND_WAIT=20 fsend "$p" "sent into a limit" >"$work/sny.out" 8>&- &
+n2=$!
+sleep 1
+state sny '{"above":["⏺ Done.","You'"'"'ve hit your session limit · resets 1:10pm (America/New_York)"],"on_submit":"none"}'; settle
+: >"$work/sny.log"
+exec 8>&-
+wait "$n2"
+check "#325 review 4: a limit reached during the lock wait gets nothing" "$(cat "$work/sny.out") $(grep -c . "$work/sny.log")" "limited 0"
+t kill-window -t "$p"
+
+echo "the tmux server watchdog (#290)"
+: >"$FLEET_LOG"
+tw="$work/tw"; mkdir -p "$tw/proc/7001" "$tw/crashes"
+echo 33333333-3333-4333-8333-333333333333 >"$tw/boot"
+# Booted at 1793700000; server 7001 started 555 ticks (5 s) after: a dump counts from 1793700005.
+printf 'cpu  1 2 3\nbtime 1793700000\n' >"$tw/proc/stat"
+printf '#!/usr/bin/env bash\necho recover >>%q\necho "recovered: x -> %%%%9"\n' "$tw/recover.calls" >"$tw/recover"; chmod +x "$tw/recover"
+# The journal as journalctl reads it (#292 review 3): fixture lines are "BOOT
+# EPOCH TEXT"; -b alone is this boot, -b ID another, --since @N drops older lines.
+cat >"$tw/journal" <<EOF
+#!/usr/bin/env bash
+b=\$(tr -d - <"$tw/boot") since=0
+while (( \$# )); do
+  case \$1 in
+    -b) [[ \${2:-} =~ ^[0-9a-f]{32}\$ ]] && { b=\$2; shift; } ;;
+    --since) since=\${2#@}; shift ;;
+  esac
+  shift
+done
+awk -v b="\$b" -v s="\$since" '\$1 == b && \$2 >= s { sub(/^[^ ]+ [^ ]+ /, ""); print }' "$tw/kernel" 2>/dev/null
+EOF
+chmod +x "$tw/journal"
+CUR=33333333-3333-4333-8333-333333333333 PREV=22222222-2222-4222-8222-222222222222
+CAP="WSL (1291 - CaptureCrash): Capturing crash for pid: 7001, executable: !usr!bin!tmux, signal: 11, port: 50005"
+jl() { printf '%s %s Nov 03 06:02:27 host unknown: %s\n' "${1//-/}" "$2" "$3" >>"$tw/kernel"; } # BOOT EPOCH TEXT
+stat7001() { printf '7001 (tmux: server) S 1 1 1 0 -1 0 0 0 0 0 0 0 0 0 20 0 1 0 %s 0 0\n' "$1" >"$tw/proc/7001/stat"; }
+# W: the watchdog against a socket that answers (FLEET_SOCK) or none (WSOCK=gone).
+W() { FLEET_SOCK=${WSOCK:-$FLEET_SOCK} FLEET_PROC=${WPROC:-/proc} FLEET_BOOT_ID="$tw/boot" FLEET_CRASH_DIR="$tw/crashes" \
+  FLEET_JOURNAL="$tw/journal" FLEET_RECOVER="${WREC:-$tw/recover}" WSL_DISTRO_NAME=Test FLEET_INTEROP_PROBE=${WPROBE:-true} \
+  FLEET_INIT_INTEROP="$tw/no-interop" bash "$here/tmux-watch.sh" 2>/dev/null; }
+rm -f -- "$FLEET_STATE/tmux-server"
+W
+check "#290: the answering server is recorded with its pid and this boot" \
+  "$(cut -d' ' -f1,3 "$FLEET_STATE/tmux-server")" "$(t display -p '#{pid}') 33333333-3333-4333-8333-333333333333"
+check "#292 review 3: and when it started, as an epoch" "$(awk '{ print NF, ($4 ~ /^[0-9]+$/) }' "$FLEET_STATE/tmux-server")" "4 1"
+# #292 review 4: the epoch's value decides what the next boot's journal is read
+# from. A /proc of fixed btime (WSL's own steps forward now and then) holding
+# the answering server's real stat.
+sp=$(t display -p '#{pid}'); mkdir -p "$tw/p2/$sp"; cp "/proc/$sp/stat" "$tw/p2/$sp/stat"; printf 'cpu  1 2 3\nbtime 1793700000\n' >"$tw/p2/stat"
+stt=$(cat "$tw/p2/$sp/stat"); read -ra stf <<<"${stt##*) }"
+rm -f -- "$FLEET_STATE/tmux-server"; WPROC="$tw/p2" W
+check "#292 review 4: the epoch is the boot's btime plus the server's start in seconds" \
+  "$(cut -d' ' -f4 "$FLEET_STATE/tmux-server")" "$(( 1793700000 + stf[19] / $(getconf CLK_TCK) ))"
+rm -f -- "$FLEET_STATE/tmux-server"; W
+cut -d' ' -f1-3 "$FLEET_STATE/tmux-server" >"$work/tsold"; cp "$work/tsold" "$FLEET_STATE/tmux-server"; : >"$FLEET_LOG"
+W
+check "#292 review 3: a record from before the epoch was kept, of the same server: kept again with it, nothing recovered" \
+  "$(awk '{ print NF }' "$FLEET_STATE/tmux-server") $(grep -c "watching the fleet's tmux server" "$FLEET_LOG") $(grep -c 'crashed' "$FLEET_LOG")" "4 1 0"
+W
+check "#290: an unchanged server is logged once" "$(grep -c "watching the fleet's tmux server" "$FLEET_LOG")" "1"
+# A recorded server 7001 (start 555) that has since gone.
+gone_server() { echo "7001 555 $(cat "$tw/boot") 1793700005" >"$FLEET_STATE/tmux-server"; rm -f -- "$tw/proc/7001/stat" "$tw/recover.calls" "$tw/kernel" "$tw"/crashes/*; }
+gone_server
+WSOCK=gone-$$ WPROC="$tw/proc" W
+check "#290: gone with no crash record: logged, never recovered" \
+  "$(grep -c 'ended with no crash record' "$FLEET_LOG") $(cat "$tw/recover.calls" 2>/dev/null || echo none) $(test -e "$FLEET_STATE/tmux-server" && echo kept || echo cleared)" "1 none cleared"
+gone_server; : >"$tw/crashes/wsl-crash-1793703747-7001-_usr_bin_tmux-11.dmp"
+WSOCK=gone-$$ WPROC="$tw/proc" W
+check "#290: WSL's crash dump for its pid: fleet recover runs once, logged with the signal" \
+  "$(cat "$tw/recover.calls") $(jq -r 'select(.message | startswith("the fleet'"'"'s tmux server crashed")) | .signal' "$FLEET_LOG")" "recover 11"
+WSOCK=gone-$$ WPROC="$tw/proc" W
+check "#290: the next minute does not recover again" "$(wc -l <"$tw/recover.calls")" "1"
+gone_server; jl "$CUR" 1793703747 "tmux: server[7001]: segfault at 118 ip 00007d65 sp 00007ffd error 4 in libevent_core-2.1.so.7"
+WSOCK=gone-$$ WPROC="$tw/proc" W
+check "#292 review: the kernel's segfault line (another pid namespace's pid) is no crash record" "$(cat "$tw/recover.calls" 2>/dev/null || echo none)" "none"
+gone_server; jl "$CUR" 1793703747 "$CAP"
+WSOCK=gone-$$ WPROC="$tw/proc" W
+check "#292 review: WSL's CaptureCrash line for its pid alone is a crash record" "$(cat "$tw/recover.calls")" "recover"
+gone_server; jl "$CUR" 1793703747 "${CAP/pid: 7001/pid: 7002}"
+WSOCK=gone-$$ WPROC="$tw/proc" W
+check "#292 review 3: a CaptureCrash line for another pid is no crash record" "$(cat "$tw/recover.calls" 2>/dev/null || echo none)" "none"
+gone_server; jl "$CUR" 1793690000 "$CAP"
+WSOCK=gone-$$ WPROC="$tw/proc" W
+check "#292 review 3: one for its pid dated before the server started is none either" "$(cat "$tw/recover.calls" 2>/dev/null || echo none)" "none"
+gone_server; jl "$PREV" 1793703747 "$CAP"
+WSOCK=gone-$$ WPROC="$tw/proc" W
+check "#292 review 3: nor one in another boot's journal" "$(cat "$tw/recover.calls" 2>/dev/null || echo none)" "none"
+gone_server; : >"$tw/crashes/wsl-crash-1793690000-7001-_usr_bin_tmux-11.dmp"; : >"$FLEET_LOG"
+WSOCK=gone-$$ WPROC="$tw/proc" W
+check "#292 review: a dump from before the server started (an earlier boot's, its pid reused) is no crash record" \
+  "$(cat "$tw/recover.calls" 2>/dev/null || echo none) $(grep -c 'ended with no crash record' "$FLEET_LOG")" "none 1"
+gone_server; : >"$tw/crashes/wsl-crash-$(date +%s)-7001-_usr_bin_tmux-11.dmp"
+W
+check "#290: a new server started before the watchdog looked: the old one's crash still recovers, and the new one is recorded" \
+  "$(cat "$tw/recover.calls") $(cut -d' ' -f1 "$FLEET_STATE/tmux-server")" "recover $(t display -p '#{pid}')"
+gone_server; : >"$tw/crashes/wsl-crash-1-7001-_usr_bin_tmux-11.dmp"; stat7001 555
+WSOCK=gone-$$ WPROC="$tw/proc" W
+check "#290: the recorded server still runs (it did not answer once): nothing yet" \
+  "$(cat "$tw/recover.calls" 2>/dev/null || echo none) $(cut -d' ' -f1 "$FLEET_STATE/tmux-server")" "none 7001"
+gone_server; : >"$tw/crashes/wsl-crash-1-7001-_usr_bin_tmux-11.dmp"; echo "7001 555 $PREV 1793600005" >"$FLEET_STATE/tmux-server"
+WSOCK=gone-$$ WPROC="$tw/proc" W
+check "#290: a server from an earlier boot is left to fleet recover by hand" \
+  "$(cat "$tw/recover.calls" 2>/dev/null || echo none) $(grep -c 'from an earlier boot' "$FLEET_LOG")" "none 1"
+# #292 review 2: on 11-03 WSL shut down 17 s after the crash took the fleet's
+# tab, before the watchdog's next minute; the next boot finds the crash in the
+# previous boot's journal and recovers.
+gone_server; echo "7001 555 $PREV 1793600005" >"$FLEET_STATE/tmux-server"; jl "$PREV" 1793603747 "$CAP"
+: >"$FLEET_LOG"; WSOCK=gone-$$ WPROC="$tw/proc" W
+check "#292 review 2: a crash before the last shutdown, in the previous boot's journal: fleet recover runs on this boot" \
+  "$(cat "$tw/recover.calls" 2>/dev/null || echo none) $(grep -c 'crashed before the last shutdown' "$FLEET_LOG")" "recover 1"
+gone_server; echo "7001 555 $PREV 1793600005" >"$FLEET_STATE/tmux-server"; jl "$CUR" 1793603747 "$CAP"
+WSOCK=gone-$$ WPROC="$tw/proc" W
+check "#292 review 3: a record of that pid in this boot's journal, not the previous one's, recovers nothing" "$(cat "$tw/recover.calls" 2>/dev/null || echo none)" "none"
+gone_server; echo "7001 555 $PREV 1793600005" >"$FLEET_STATE/tmux-server"; jl "$PREV" 1793590000 "$CAP"
+WSOCK=gone-$$ WPROC="$tw/proc" W
+check "#292 review 3: nor one from that boot dated before the server started (an earlier tmux with its pid)" "$(cat "$tw/recover.calls" 2>/dev/null || echo none)" "none"
+gone_server; echo "7001 555 $PREV 1793600005" >"$FLEET_STATE/tmux-server"; jl "$PREV" 1793603747 "${CAP/pid: 7001/pid: 7002}"
+WSOCK=gone-$$ WPROC="$tw/proc" W
+check "#292 review 3: nor a crash of another pid in that boot" "$(cat "$tw/recover.calls" 2>/dev/null || echo none)" "none"
+# #292 review: a recover that cannot reach Windows, or leaves an agent NOT
+# STARTED, is tried again each minute, then given up and said so.
+crash() { gone_server; : >"$tw/crashes/wsl-crash-1793703747-7001-_usr_bin_tmux-11.dmp"; rm -f -- "$FLEET_STATE/tmux-recover.pending"; : >"$FLEET_LOG"; }
+crash; WPROBE=false WSOCK=gone-$$ WPROC="$tw/proc" W
+check "#292 review: no Windows interop from the unit: nothing launched, left pending, logged why" \
+  "$(cat "$tw/recover.calls" 2>/dev/null || echo none) $(cat "$FLEET_STATE/tmux-recover.pending") $(jq -r 'select(.message | contains("trying again next minute")) | .why' "$FLEET_LOG" | grep -c 'Windows interop did not answer')" "none 7001 1 1"
+WSOCK=gone-$$ WPROC="$tw/proc" W
+check "#292 review: the next minute, with interop back, it recovers and clears the pending record" \
+  "$(cat "$tw/recover.calls") $(test -e "$FLEET_STATE/tmux-recover.pending" && echo pending || echo cleared)" "recover cleared"
+printf '#!/usr/bin/env bash\necho recover >>%q\necho "recovered: x -> NOT STARTED"\n' "$tw/recover.calls" >"$tw/recover-ns"; chmod +x "$tw/recover-ns"
+crash; for _ in 1 2 3; do FLEET_RECOVER_TRIES=3 WREC="$tw/recover-ns" WSOCK=gone-$$ WPROC="$tw/proc" W; done
+check "#292 review: an agent NOT STARTED is tried again each minute, then given up after the tries and said so" \
+  "$(wc -l <"$tw/recover.calls") $(test -e "$FLEET_STATE/tmux-recover.pending" && echo pending || echo cleared) $(grep -c 'gave up; run fleet recover by hand' "$FLEET_LOG")" "3 cleared 1"
+crash; WSOCK=gone-$$ WPROC="$tw/proc" FLEET_STATE=$FLEET_STATE FLEET_SOCK=gone-$$ FLEET_PROC="$tw/proc" FLEET_BOOT_ID="$tw/boot" FLEET_CRASH_DIR="$tw/crashes" \
+  FLEET_JOURNAL="$tw/journal" FLEET_RECOVER="$tw/recover" FLEET_INTEROP_PROBE=true env -u WSL_DISTRO_NAME bash "$here/tmux-watch.sh" 2>/dev/null
+check "#292 review: a unit with no WSL_DISTRO_NAME says so and launches nothing" \
+  "$(cat "$tw/recover.calls" 2>/dev/null || echo none) $(jq -r '.why // empty' "$FLEET_LOG" | grep -c 'no WSL_DISTRO_NAME')" "none 1"
+rm -f -- "$FLEET_STATE/tmux-server" "$FLEET_STATE/tmux-recover.pending"
+check "#292 review: install passes WSL_DISTRO_NAME into the watchdog's and the doctor's units, the watchdog with an hour to run" \
+  "$(grep -cF 'WSL_DISTRO_NAME:+ \"WSL_DISTRO_NAME=' "$here/install.sh") $(grep -c '^TimeoutStartSec=3600$' "$here/install.sh")" "2 1"
+
+echo "the running server reads the installed conf (#292 review)"
+cs="kl-conf-$$" cdir="$work/confdir"; mkdir -p "$cdir"
+cp "$here/../hooks/klepsydra-tmux.conf" "$here/../hooks/klepsydra-pane-died.sh" "$cdir/"
+tmux -L "$cs" -f /dev/null new-session -d -s fleet "sleep 600"
+tmux -L "$cs" set -g remain-on-exit failed
+dp=$(tmux -L "$cs" new-window -d -P -F '#{pane_id}' -t fleet: "sh -c 'exit 3'")
+for _ in $(seq 30); do [[ $(tmux -L "$cs" display -p -t "$dp" '#{pane_dead}' 2>/dev/null) == 1 ]] && break; sleep 0.1; done
+check "a doctor run before: the server has no pane-died hook: a warning" \
+  "$(FLEET_SOCK=$cs bash "$here/doctor.sh" 2>/dev/null | grep -c '^warn *pane-died hook: not set')" "1"
+FLEET_SOCK=$cs KLEPSYDRA_DEAD_DIR="$work/dead290" bash "$here/tmux-conf.sh" "$cdir" 2>/dev/null; rc=$?
+check "tmux-conf.sh: the running server takes the hook, and a pane already dead there is started again" \
+  "$rc $(tmux -L "$cs" show-hooks -g pane-died | grep -c 'klepsydra-pane-died.sh') $(tmux -L "$cs" display -p -t "$dp" '#{pane_dead}') $(tmux -L "$cs" show -pqv -t "$dp" @klepsydra_dead | cut -d' ' -f2-)" \
+  "0 1 0 its process exited with status 3"
+check "and the doctor sees the hook" "$(FLEET_SOCK=$cs FLEET_HOOK_DIR=$cdir bash "$here/doctor.sh" 2>/dev/null | grep -c '^ok *pane-died hook')" "1"
+check "#292 review 2: the hook set but its script missing: a warning" \
+  "$(FLEET_SOCK=$cs FLEET_HOOK_DIR=$work/nohooks bash "$here/doctor.sh" 2>/dev/null | grep -c '^warn *pane-died hook: set, but .*klepsydra-pane-died.sh is missing')" "1"
+printf '[wsl2]\nmemory=8GB\n' >"$work/wslconfig"
+check "#292 review 2: a .wslconfig that lets WSL shut down when idle: a warning naming the setting" \
+  "$(FLEET_SOCK=$cs FLEET_WSLCONFIG=$work/wslconfig bash "$here/doctor.sh" 2>/dev/null | grep -c '^warn *WSL stays up: add instanceIdleTimeout=-1 under \[general\]')" "1"
+printf '[wsl2]\nmemory=8GB\n[General]\n instanceIdleTimeout = -1\n' >"$work/wslconfig"
+check "#292 review 2: with instanceIdleTimeout=-1 under [general]: ok" \
+  "$(FLEET_SOCK=$cs FLEET_WSLCONFIG=$work/wslconfig bash "$here/doctor.sh" 2>/dev/null | grep -c '^ok *WSL stays up')" "1"
+printf '[wsl2]\ninstanceIdleTimeout=-1\n' >"$work/wslconfig"
+check "#292 review 2: the setting under [wsl2] does nothing, so still a warning" \
+  "$(FLEET_SOCK=$cs FLEET_WSLCONFIG=$work/wslconfig bash "$here/doctor.sh" 2>/dev/null | grep -c '^warn *WSL stays up')" "1"
+# #292 review 4: the real gate and path: on WSL (WSL_DISTRO_NAME) the doctor reads
+# the .wslconfig in the Windows home above klepsydra's AppData folder.
+mkdir -p "$work/Users/x/AppData/Local/k"; printf '[general]\r\ninstanceIdleTimeout=-1\r\n' >"$work/Users/x/.wslconfig"
+wdoc() { FLEET_SOCK=$cs KLEPSYDRA_DIR="$work/Users/x/AppData/Local/k" bash "$here/doctor.sh" 2>/dev/null | awk '/ WSL stays up:/ { print $1 }'; }
+check "#292 review 4: on WSL, with the Windows home's .wslconfig keeping it up (CRLF): ok; off WSL: no check" \
+  "$(WSL_DISTRO_NAME=Test wdoc)|$(wdoc)" "ok|"
+printf '[wsl2]\r\nmemory=8GB\r\n' >"$work/Users/x/.wslconfig"
+check "#292 review 4: and without the setting there: a warning" "$(WSL_DISTRO_NAME=Test wdoc)" "warn"
+tmux -L "$cs" kill-server 2>/dev/null
+check "tmux-conf.sh with no server running does nothing" "$(FLEET_SOCK=$cs bash "$here/tmux-conf.sh" "$cdir" 2>/dev/null; echo $?)" "0"
 
 echo "the fleet log"
 check "every line is one JSON object with ts, level, target and message" \
@@ -2064,6 +4136,10 @@ check "every line is one JSON object with ts, level, target and message" \
 FLEET_LOG_MAX=200 FLEET_TARGET=fleet::test bash -c ". '$here/lib.sh'; for i in 1 2 3 4 5 6 7 8; do flog INFO line\$i; done"
 check "past its cap the log is renamed, and only the newest four are kept" \
   "$(find "${FLEET_LOG%/*}" -name 'fleet_*.log' | wc -l)" "4"
+
+echo "the suite's own isolation"
+check "#265 review: no case reached a systemctl it did not stub" "$(cat "$work/guard.calls" 2>/dev/null)" ""
+check "#273: no case touched AJ's own keryx config" "$(sha256sum "$real_keryx_config" 2>/dev/null | cut -d' ' -f1)" "$real_keryx_sum"
 
 echo
 echo "$pass passed, $fail failed"

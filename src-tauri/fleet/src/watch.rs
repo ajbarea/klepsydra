@@ -991,7 +991,7 @@ mod tests {
         std::fs::create_dir_all(root.0.join("fleet")).unwrap();
         let t = unix_now();
         for id in [A, B] {
-            root.write(&format!("fleet/{id}.json"), &homed(id, "bf_emma"));
+            root.write(&format!("fleet/{id}.json"), &homed(id, "bf_isabella"));
         }
         let ledger = Arc::new(Mutex::new(Ledger::in_memory(t)));
         for id in [A, B] {
