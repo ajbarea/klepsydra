@@ -37,7 +37,17 @@ fn read(app: &AppHandle) -> Option<Shown> {
     let late_app = app.clone();
     app.state::<VoicesMenu>()
         .reader
-        .read(&dir, saved, voices::WAIT, move |s| show(&late_app, &s))
+        .read(&dir, saved, voices::WAIT, move |late| {
+            // The menu changes only on the main thread, where opens and clicks
+            // run too: a late answer waits its turn there and applies only if
+            // nothing newer was shown meanwhile.
+            let app = late_app.clone();
+            let _ = late_app.run_on_main_thread(move || {
+                if app.state::<VoicesMenu>().reader.current(&late) {
+                    show(&app, &late.shown);
+                }
+            });
+        })
 }
 
 /// Show `s`: tick its mode (or none) and set the status line.
@@ -95,6 +105,8 @@ pub fn on_menu(app: &AppHandle, menu_id: &str) -> bool {
     } else {
         log::warn!(voices = id, saved = now; "voices: not saved; the mode is still the saved one");
     }
-    app.state::<VoicesMenu>().items.tick(now);
+    let m = app.state::<VoicesMenu>();
+    m.reader.supersede();
+    m.items.tick(now);
     true
 }

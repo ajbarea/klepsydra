@@ -1,18 +1,18 @@
-# IMPL: one memory cap for the whole fleet (#353), branch fix/fleet-slice-353
+# IMPL: tray Voices tick follows what keryx does (#337), branch fix/voices-337
 
-Resume from this file, `git log`, the PR and its comments. Brief: the k353 task file in the fleet state folder.
+Resume from this file, `git log`, the PR and its comments. Brief: issue #337 and its 11-13 comment.
 
 ## Slice
-The kernel, not the heavy lock, keeps one run from taking WSL down. `fleet.slice` caps every fleet scope's total (MemTotal less `fleet_slice_margin`: 847 MiB measured WSL base plus earlyoom's line, up to 512), the orchestrator's included; `fleet-workers.slice` inside it caps workers and delegates at that less the orchestrator's 7-day peak (orchestrator.mem, dated lines). Claude runs at OOM rank 0, every bash it starts at 1000 (`fleet/oom-tool.sh` as BASH_ENV), scopes keep `OOMPolicy=continue`. Programs claude starts without bash keep rank 0: #354.
+The tray's Voices tick shows keryx's real state, not the saved mode. `fleet voices` (every run but `--check`) keeps `keryx-paths.json` in the data folder: keryx's config as Windows opens it (`wslpath -w`) and the orchestrator's session file. When the pointer enters the tray icon or presses it, the app reads that file and keryx's `config.json` on a thread it waits on for at most 250 ms (`voices::Reader`), ticks the mode the config matches (Off / Everyone / Heph only) or none, and sets a status line above the modes (`keryx now: Off; saved: Heph only`). A late read shows itself when it lands; nothing is cached between opens. A click still saves through `fleet voices`.
 
 ## Done
-- lib.sh helpers, launch.sh, delegate.sh, install.sh (both slice units, rewritten only on change), doctor.sh (cap, nesting, sized-for-this-machine, scopes astray: FAIL if started since the slices, warn if before), brief tail, README, `make test-slice`, CI step.
-- Measured live: no unprivileged lowering below 0 (EACCES); scopes reject OOMScoreAdjust=; OOMPolicy=stop stops the whole scope; MemoryHigh throttles without killing, so MemoryMax only.
-- Copilot + agy lanes read and checked (6 leads fixed, 2 rejected); Opus round 1 (1 Blocking, 6 Should-fix, 6 Nits) fixed in 04a4d38; mutation-checked the live test (5 guards).
+- Pure logic + tests in `src-tauri/fleet/src/voices.rs` (keryx's parsing rules, tick/status, Reader with timeout and late answer); app glue in `src-tauri/src/voices.rs` and `main.rs` (`on_tray_icon_event`); `publish_paths` in `fleet/voices.sh` + `test_fleet.sh` #337 cases; README Voices section and `fleet voices` row.
+- Mutation-checked: a cached tick, an ignored timeout, a dropped late answer, no busy guard are each caught.
+- Opus review round 1 (0 B, 4 S, nits) fixed.
 
 ## Next
-1. Round 5 (2 S, 4 N) fixed in the round-5 commit: live test runs with per-scope swap; machine-wide rank accepted (brief + PR); doctor dates slices by unit birth; orch_mem_peak writes only under its lock and drops 0 / past-MemTotal rows; mem_total_mib needs a positive number. Each guard mutation-checked. Next: one fresh Opus verify read of that commit.
-2. Merge on clean + green, `make install-fleet` from main, `fleet cutover`, then `systemctl --user show fleet.slice fleet-workers.slice -p MemoryMax,MemoryCurrent` and `fleet doctor`. Running agents stay in app.slice until their next fresh start (doctor warns). Then in a fresh fleet session: the Bash tool's `cat /proc/self/oom_score_adj` prints 1000 and its claude's is 0.
+1. Finish review rounds until clean; PR stays open for AJ (do not merge).
+2. After merge: `make install-fleet` so the installed `fleet voices` writes `keryx-paths.json`; until it runs once the tray says "unknown (fleet voices has not run yet)".
 
 ## Verify
-`make test-slice`, `make test-fleet`, `make test-launch`, `make test-delegate`, `make shellcheck`. Never run doctor or install from this worktree against the live state.
+`cargo test -p klepsydra-fleet voices`, `make test-fleet`, `bash scripts/build-windows.sh --check` (KLEPSYDRA_STAGE=klepsydra-build-voices_337), `node --test src/*.test.js`.

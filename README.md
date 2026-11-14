@@ -863,10 +863,10 @@ mode matches (a bare `keryx speak-only` for other sessions, a malformed
 `speak_only`, an unreadable config) ticks nothing and is named there; no config
 file is keryx's defaults, Everyone. The read waits at most 250 ms (a warm read
 across WSL's file share takes about 4 ms); a slower one ticks nothing, says
-keryx's config did not answer in time, and shows its answer when it lands. A
-click still saves through `fleet
-voices`. Sessions are started with no `KERYX_ENABLED`, which would outrank keryx's own
-setting; a worker launched before 11-02 still carries `KERYX_ENABLED=false`
+keryx's config did not answer in time, and shows its answer when it lands
+unless a newer read or click came first. A click still saves through `fleet
+voices`. Sessions are started with no `KERYX_ENABLED`, which would outrank
+keryx's own setting; a worker launched before 11-02 still carries `KERYX_ENABLED=false`
 until its next launch.
 
 ### Character themes

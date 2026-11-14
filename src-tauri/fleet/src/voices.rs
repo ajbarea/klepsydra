@@ -10,7 +10,7 @@
 //! `keryx off` or a `fleet voices heph` done elsewhere shows on the next open.
 
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
 use std::time::Duration;
 
@@ -170,12 +170,23 @@ pub fn now(dir: &Path, saved: &str) -> Shown {
 
 /// Reads keryx's state when the tray menu is about to open, on a thread the
 /// open waits on for at most a bound, so a slow file share never holds the
-/// tray. A read that outlasts the bound shows "unknown" at once and, when it
-/// lands, its own answer through `late`: never a tick from before. While one
-/// is still out, another open starts none: one stuck read, not one per click.
+/// tray. A read that outlasts the bound shows "unknown" at once and hands its
+/// own answer, stamped, to `late` when it lands: never a tick from before.
+/// While one is still out, another open starts none: one stuck read, not one
+/// per click.
 #[derive(Default)]
 pub struct Reader {
     busy: Arc<AtomicBool>,
+    /// Bumped by each read and each change of mode: a late answer applies
+    /// only while nothing newer has been shown.
+    stamp: Arc<AtomicU64>,
+}
+
+/// A read's answer that came after its open stopped waiting.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Late {
+    pub shown: Shown,
+    stamp: u64,
 }
 
 impl Reader {
@@ -185,38 +196,55 @@ impl Reader {
         dir: &Path,
         saved: &'static str,
         wait: Duration,
-        late: impl FnOnce(Shown) + Send + 'static,
+        late: impl FnOnce(Late) + Send + 'static,
     ) -> Option<Shown> {
         let dir = dir.to_path_buf();
         self.read_with(move || now(&dir, saved), wait, late)
     }
 
+    /// Something newer than any read still out has been shown (a click
+    /// saved a mode): that read's late answer no longer applies.
+    pub fn supersede(&self) {
+        self.stamp.fetch_add(1, Ordering::AcqRel);
+    }
+
+    /// Whether late answer `l` may still be shown: no read or change came
+    /// after its own. Check it where it is shown (the tray's main thread,
+    /// where reads and changes happen too), so none can come between.
+    pub fn current(&self, l: &Late) -> bool {
+        self.stamp.load(Ordering::Acquire) == l.stamp
+    }
+
     /// What `read` returns, within `wait`, to show now; "unknown" past it,
-    /// with `read`'s answer handed to `late` (on the read's thread) when it
-    /// lands. `None` while an earlier read is still out: what shows stays,
-    /// and that read's `late` replaces it.
+    /// with `read`'s answer handed to `late` (on the read's thread: post it
+    /// to where the menu is changed) when it lands. `None` while an earlier
+    /// read is still out: what shows stays, and that read's `late` follows.
     pub fn read_with(
         &self,
         read: impl FnOnce() -> Shown + Send + 'static,
         wait: Duration,
-        late: impl FnOnce(Shown) + Send + 'static,
+        late: impl FnOnce(Late) + Send + 'static,
     ) -> Option<Shown> {
         if self.busy.swap(true, Ordering::AcqRel) {
             return None;
         }
+        let stamp = self.stamp.fetch_add(1, Ordering::AcqRel) + 1;
         let (tx, rx) = mpsc::channel();
-        // Set by the open once it stops waiting: the read then shows itself.
+        // Set by the open once it stops waiting: the read then hands itself to `late`.
         let gave_up = Arc::new(Mutex::new(false));
         let (busy, gave_up_t) = (Arc::clone(&self.busy), Arc::clone(&gave_up));
         let spawned = std::thread::Builder::new()
             .name("voices-read".into())
             .spawn(move || {
                 let shown = read();
-                let gave_up = gave_up_t.lock().map_or(true, |g| *g);
+                // Held until the answer is sent, so the open, under the same
+                // lock, either finds it sent or has given up before the check.
+                let g = gave_up_t.lock().unwrap_or_else(|e| e.into_inner());
                 // Free before answering, so the next open never finds it busy.
                 busy.store(false, Ordering::Release);
-                if gave_up {
-                    late(shown);
+                if *g {
+                    drop(g);
+                    late(Late { shown, stamp });
                 } else {
                     let _ = tx.send(shown);
                 }
@@ -427,18 +455,41 @@ mod tests {
             std::thread::sleep(Duration::from_millis(300));
             heph()
         };
-        let s = r.read_with(slow, Duration::from_millis(20), move |s| {
-            let _ = tx.send(s);
+        let s = r.read_with(slow, Duration::from_millis(20), move |l| {
+            let _ = tx.send(l);
         });
         assert_eq!(s.as_ref().map(|s| s.tick), Some(None), "{s:?}");
         assert!(s.unwrap().says.contains("did not answer in time"));
         // A second open while it is out starts no read and leaves what shows.
         let again = r.read_with(|| panic!("a second read"), TEST_WAIT, |_| {});
         assert_eq!(again, None);
-        // The late answer is the real state, shown when it lands.
-        assert_eq!(late.recv_timeout(TEST_WAIT).unwrap(), heph());
-        // And the reader is free again.
+        // The late answer is the real state, and nothing newer came first.
+        let l = late.recv_timeout(TEST_WAIT).unwrap();
+        assert_eq!(l.shown, heph());
+        assert!(r.current(&l));
+        // And the reader is free again; a newer read makes the late one stale.
         let next = r.read_with(heph, TEST_WAIT, |_| panic!("answered late"));
         assert_eq!(next, Some(heph()));
+        assert!(
+            !r.current(&l),
+            "an older late answer would overwrite a newer read"
+        );
+    }
+
+    #[test]
+    fn a_mode_clicked_while_a_read_is_out_outranks_its_late_answer() {
+        let r = Reader::default();
+        let (tx, late) = mpsc::channel();
+        let slow = || {
+            std::thread::sleep(Duration::from_millis(200));
+            shown(&Keryx::Off, ORCH, "heph")
+        };
+        r.read_with(slow, Duration::from_millis(10), move |l| {
+            let _ = tx.send(l);
+        });
+        // The click on a mode comes while the read is out.
+        r.supersede();
+        let l = late.recv_timeout(TEST_WAIT).unwrap();
+        assert!(!r.current(&l), "{l:?}");
     }
 }
