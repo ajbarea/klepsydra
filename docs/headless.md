@@ -18,9 +18,11 @@ Promotional API credit does not cover interactive Claude Code: on 11-01 an
 interactive session on a lab key failed with "Credit balance too low", while
 `claude -p` on the same key worked (#241). A session started with a key also
 loses the claude.ai login, its connectors and Remote Control. So `launch.sh`
-drops `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN` and `ANTHROPIC_PROFILE` from
-every session it starts, and refuses a config folder or `--settings` that sets
-an `apiKeyHelper` or a key. Claude Code ranks each of those above the
+and the tray's launcher drop `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN` and
+`ANTHROPIC_PROFILE` from every session they start. `launch.sh` also refuses to
+start when a settings file the session would read (user, project, local,
+managed, the worker settings or `--settings`) sets an `apiKeyHelper` or a key,
+and `fleet doctor` fails on it. Claude Code ranks each of those above the
 subscription login ([Authentication
 precedence](https://code.claude.com/docs/en/authentication#authentication-precedence)).
 
