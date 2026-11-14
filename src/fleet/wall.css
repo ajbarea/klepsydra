@@ -1468,9 +1468,9 @@ a.remote:focus-visible { outline: 2px solid var(--card-focus); outline-offset: 2
 /* Light: parchment surfaces, the same bronze family. The header band stays a
    dark stage in both schemes, like a card's art box, so a figure keeps its
    light and the band's text its contrast (fleet-accent.test.js reads both). */
-:root { color-scheme: dark light; }
+:root:not(.served) { color-scheme: dark light; } /* the phone wall stays dark (.served) */
 @media (prefers-color-scheme: light) {
-  :root {
+  :root:not(.served) {
     --wall-bg: #efe6d6;
     --card-bg: #fbf6ec;
     --card-quiet: #f5eee1;
@@ -1494,9 +1494,9 @@ a.remote:focus-visible { outline: 2px solid var(--card-focus); outline-offset: 2
     --pill-mix: black;
     --working-ink: #ffffff;
   }
-  .card { --on-card: var(--accent-light, var(--accent)); }
+  :root:not(.served) .card { --on-card: var(--accent-light, var(--accent)); }
   /* The band and the portrait stay the dark stage: their text and pills keep the dark scheme's tones. */
-  .wall:not([data-density="compact"]) .card header, #portrait {
+  :root:not(.served) .wall:not([data-density="compact"]) .card header, :root:not(.served) #portrait {
     --text: #f2eadf;
     --text-dim: #b9a993;
     --text-quiet: #a09079;
@@ -1512,6 +1512,6 @@ a.remote:focus-visible { outline: 2px solid var(--card-focus); outline-offset: 2
     --pill-mix: white;
     --working-ink: #000000;
   }
-  .empty h2, [data-density="compact"] :is(.name, button.menu) { color: var(--text); }
-  .ledger .fill { background: var(--accent-light, var(--accent, var(--text-quiet))); }
+  :root:not(.served) :is(.empty h2, [data-density="compact"] :is(.name, button.menu)) { color: var(--text); }
+  :root:not(.served) .ledger .fill { background: var(--accent-light, var(--accent, var(--text-quiet))); }
 }

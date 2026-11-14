@@ -31,9 +31,15 @@ from playwright.sync_api import sync_playwright
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
 import test_phone_browser as phone  # noqa: E402  the phone suite's server and demo data
+import test_wall_browser as suite  # noqa: E402  the wall suite's app stub, to feed snapshots as the app does
 OUT = ROOT / "assets"
 DEMO = ROOT / "scripts/fixtures/fleet-demo.json"
 SETTLE_MS = 600  # past the wall's resize settle, arrivals and a frame
+# The README shows the dark scheme, klepsydra's own (#247); the light one follows the system.
+SCHEME = "dark"
+# How long after Hephaestus's snapshot the hero is taken: the figure has sprung
+# over the frame and the banner "HEPHAESTUS HAS ARRIVED!" holds (#373).
+ARRIVAL_SHOT_MS = 1300
 
 
 class Quiet(http.server.SimpleHTTPRequestHandler):
@@ -80,7 +86,7 @@ def json_route(body):
 def wall(browser, port, width, height, query, density=None):
     """The wall at `width` x `height` on ?QUERY, the sample's first ?demo=N
     sessions (the page's slice) in the app's order."""
-    page = browser.new_page(viewport={"width": width, "height": height})
+    page = browser.new_page(viewport={"width": width, "height": height}, color_scheme=SCHEME)
     fleet = json.loads(DEMO.read_text())
     n = int(m.group(1)) if (m := re.search(r"\bdemo=(\d+)", query)) else len(fleet["sessions"])
     fleet["sessions"][:n] = app_order({"sessions": fleet["sessions"][:n]})["sessions"]
@@ -116,8 +122,29 @@ def save(shot, name):
     print(f"{path.relative_to(ROOT)}: {im.width}x{im.height}, {path.stat().st_size // 1024} KiB")
 
 
+def arrival(browser, port, width, height, n):
+    """The wall as the app feeds it, the first N demo sessions in the app's
+    order, caught while Hephaestus arrives: the page first sees the others,
+    then a snapshot with him (#373)."""
+    fixture = json.loads(DEMO.read_text())
+    at = fixture.pop("at")
+    snapshot = suite.shifted(app_order(fixture), int(time.time()) - at)
+    every = snapshot["sessions"][:n]
+    snapshot["speaking"] = None
+    before = {**snapshot, "sessions": [s for s in every if s["voice"] != "am_michael"]}
+    page = browser.new_page(viewport={"width": width, "height": height}, color_scheme=SCHEME)
+    page.add_init_script(suite.TAURI_STUB % json.dumps(before))
+    page.goto(f"http://127.0.0.1:{port}/src/wall.html")
+    page.wait_for_function("document.getElementById('wall').children.length > 0")
+    page.click(".density label:has([value=comfortable])")
+    page.wait_for_timeout(SETTLE_MS)
+    page.evaluate("(s) => window.__channel.onmessage(s)", {**snapshot, "sessions": every})
+    page.wait_for_timeout(ARRIVAL_SHOT_MS)
+    return page
+
+
 def bar(browser, port, width, height, query, fleet):
-    page = browser.new_page(viewport={"width": width, "height": height})
+    page = browser.new_page(viewport={"width": width, "height": height}, color_scheme=SCHEME)
     page.route("**/dev-fixture.json", json_route(accounts()))
     page.route("**/dev-fleet.json", json_route(fleet))
     page.goto(f"http://127.0.0.1:{port}/src/index.html?still=1{query}")
@@ -154,8 +181,8 @@ def main():
         # Two accounts and no sessions.
         save(bar(browser, port, 450, 160, "", json.dumps({"sessions": []})), "two-accounts")
 
-        # The wall maximised at 1920: eight cards, Comfortable.
-        page = wall(browser, port, 1920, 1000, "demo=8", "comfortable")
+        # The wall maximised at 1920: eight cards, Comfortable, as Hephaestus arrives.
+        page = arrival(browser, port, 1920, 1000, 8)
         save(page.screenshot(clip=page.evaluate(CARDS)), "wall-comfortable")
         page.close()
 
@@ -199,7 +226,7 @@ def main():
             try:
                 # After the build, so the countdowns read as written.
                 phone.demo_usage(pathlib.Path(tmp) / "klepsydra")
-                ctx = browser.new_context(viewport={"width": 390, "height": 844}, device_scale_factor=2,
+                ctx = browser.new_context(viewport={"width": 390, "height": 844}, device_scale_factor=2, color_scheme=SCHEME,
                                           is_mobile=True, has_touch=True)
                 page = ctx.new_page()
                 page.goto(f"http://{addr}/")

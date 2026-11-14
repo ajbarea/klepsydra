@@ -122,6 +122,8 @@ clearEnded.addEventListener("click", () => {
 // On the phone (the page came from the phone wall server) only the look and
 // the Remote Control link act: wall.css hides every other button there.
 document.documentElement.classList.toggle("served", served);
+// The phone wall stays dark in either scheme (#247): its browser bar too.
+if (served) for (const m of document.querySelectorAll('meta[name="theme-color"]')) m.media.includes("light") ? m.remove() : m.removeAttribute("media");
 if (served) navigator.serviceWorker?.register("/sw.js").catch(() => {});
 const linkNote = document.getElementById("link");
 // The phone's stream is down: what the wall shows may be old, so it says so.

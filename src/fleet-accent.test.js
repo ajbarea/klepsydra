@@ -60,9 +60,9 @@ test("#247/#248: the exceptions stay loud: amber and error frames at 3:1, ink on
 
 // The light scheme (AJ 11-12: both themes): parchment surfaces, the band kept as the dark stage.
 const lightBlock = css.slice(css.indexOf("@media (prefers-color-scheme: light)"));
-const lightRoot = lightBlock.match(/:root \{([^}]*)\}/)[1];
+const lightRoot = lightBlock.match(/:root:not\(\.served\) \{([^}]*)\}/)[1];
 const lt = (name) => lightRoot.match(new RegExp(`${name}:\\s*(#[0-9a-fA-F]{6})`))[1].toLowerCase();
-const bandScope = lightBlock.match(/\.card header, #portrait \{([^}]*)\}/)[1];
+const bandScope = lightBlock.match(/\.card header, :root:not\(\.served\) #portrait \{([^}]*)\}/)[1];
 
 test("light: the model's surfaces are the stylesheet's", () => {
   assert.deepEqual(LIGHT_SURFACES, ["--card-bg", "--card-quiet", "--wall-bg", "--button-bg", "--button-hover"].map(lt));
