@@ -167,7 +167,7 @@ test("the theme ids and names are the fleet crate's (theme.rs THEMES), the defau
 });
 
 /** A card's fields that may differ between two themes: who the session is, never what it does. */
-const LOOK = new Set(["name", "face", "face2x", "full", "epithet", "figure", "accent", "accentInk", "ringColor", "jumpMark", "label", "remoteLabel", "playLabel", "stopLabel", "menuLabel", "jumpLabel"]);
+const LOOK = new Set(["name", "face", "face2x", "full", "epithet", "figure", "accent", "accentInk", "accentLight", "ringColor", "jumpMark", "label", "remoteLabel", "playLabel", "stopLabel", "menuLabel", "jumpLabel"]);
 
 test("switching themes changes only each card's look (name, face, epithet, accent); rings, tone, actions and order stay", () => {
   const cards = (id) => shifted.map((s) => card(s, THEMES[id], NOW));

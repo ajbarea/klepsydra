@@ -304,7 +304,9 @@ function jumpable(s) {
 }
 
 /** The Open terminal button's resting and hover backgrounds (wall.css --button-bg, --button-hover); a style test keeps them equal. */
-export const BUTTON_BGS = ["#252d39", "#2e3846"];
+export const BUTTON_BGS = ["#2c241a", "#372d21"];
+/** The light scheme's card, wall and button surfaces (wall.css, prefers-color-scheme: light); a style test keeps them equal. */
+export const LIGHT_SURFACES = ["#fbf6ec", "#f5eee1", "#efe6d6", "#f1e6d3", "#e8dac2"];
 /**
  * The comfortable card's header band (wall.css): its plate, its light (a glow
  * and rays, each at most this strong), the mask that lets only `underText` of
@@ -312,7 +314,7 @@ export const BUTTON_BGS = ["#252d39", "#2e3846"];
  * character's light, and a quiet card's dim light. A style test keeps these
  * equal to the stylesheet's.
  */
-export const BAND = { plate: "#141820", glow: 0.62, rays: 0.16, underText: 0.15, needs: "#e69f00", dimWith: "#3a414c", dimShare: 0.3 };
+export const BAND = { plate: "#1a140d", glow: 0.62, rays: 0.16, underText: 0.15, needs: "#e69f00", dimWith: "#4a4034", dimShare: 0.3 };
 const LIGHT_AT_TEXT = (1 - (1 - BAND.glow) * (1 - BAND.rays)) * BAND.underText;
 
 /** The brightest the band gets under its text, in each light a character's card can wear: its own, needs-you, quiet. */
@@ -324,6 +326,12 @@ const inks = new Map();
 const accentInk = (accent) => {
   if (!inks.has(accent)) inks.set(accent, readableOn(accent, bandGrounds(accent)));
   return inks.get(accent);
+};
+// On parchment the same character keeps its hue, deepened just until its edge, chips and marker hold 3:1.
+const lightEdges = new Map();
+export const accentLight = (accent) => {
+  if (!lightEdges.has(accent)) lightEdges.set(accent, readableOn(accent, LIGHT_SURFACES, 3));
+  return lightEdges.get(accent);
 };
 
 /**
@@ -554,6 +562,7 @@ export function card(s, cast, nowMs, request = null) {
     full: who.full,
     accent: who.accent,
     accentInk: who.accent ? accentInk(who.accent) : null,
+    accentLight: who.accent ? accentLight(who.accent) : null,
     epithet: who.epithet,
     figure: who.figure,
     ...jumpStyle(s, who.accent),

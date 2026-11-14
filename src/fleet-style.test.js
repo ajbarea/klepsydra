@@ -385,7 +385,7 @@ test("the edge stripe wears the character (#247) and follows the card's rounded 
   const css = wallCss();
   const stripe = css.match(/\n\.card::before \{([^}]*)\}/)?.[1] ?? "";
   assert.match(stripe, /border-left: 3px solid var\(--edge\)/, "a border on the card-shaped box curves with the corner");
-  assert.match(css, /\n\.card \{[^}]*--edge: var\(--accent, var\(--card-line\)\)/, "the character's colour, else the card's line");
+  assert.match(css, /\n\.card \{[^}]*--on-card: var\(--accent\);[^}]*--edge: var\(--on-card, var\(--card-line\)\)/, "the character's colour, else the card's line");
   assert.match(css, /\.card\.tone-needs \{[^}]*--edge: var\(--tone-needs\)/, "needs you takes the edge");
   assert.match(css, /\.card\.tone-error \{[^}]*--edge: var\(--tone-error\)/, "and so does an error");
   assert.match(stripe, /border-radius: 0 0 13px 13px/);

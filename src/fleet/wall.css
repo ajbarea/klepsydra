@@ -20,27 +20,27 @@
   --head-gap: var(--space-6);
   --wall-face: 80px;
   --face-inset: 9px; /* inside the thick arc (7 px at the edge), with a hairline of card between */
-  --wall-bg: #11151b;
-  --card-bg: #1a2029;
-  --card-quiet: #161b22;
-  --card-line: #2a323e;
-  --card-focus: #e9edf2; /* neutral: amber means needs you */
-  --text: #e9edf2;
-  --text-dim: #98a2b0;
-  --text-quiet: #7f8896;
-  --text-faint: #6b7584;
+  --wall-bg: #14100b; /* warm bronze near-black: klepsydra's own, never slate or blue (AJ 11-12) */
+  --card-bg: #1f1912;
+  --card-quiet: #19140e;
+  --card-line: #3b3125;
+  --card-focus: #f2eadf; /* neutral: amber means needs you */
+  --text: #f2eadf;
+  --text-dim: #b9a993;
+  --text-quiet: #a09079;
+  --text-faint: #8c7d68;
   --text-error: #e8743b;
-  --pill-age: #aab3bf; /* 4.5:1 on every tone's pill, on the card and the band */
+  --pill-age: #c4b6a0; /* 4.5:1 on every tone's pill, on the card and the band */
   --tone-needs: var(--badge-needs);
   --tone-error: var(--badge-error);
-  --tone-working: #56b4e9;
+  --tone-working: #d9c6a5; /* healthy stays quiet (#248): parchment, not a loud hue */
   --tone-done: var(--badge-done);
-  --tone-quiet: #8a93a0;
-  --ring-track: #263040;
+  --tone-quiet: #9a8d7b;
+  --ring-track: #322a1f;
   --crew-gold: #f0e442; /* Okabe-Ito yellow: an agent's segment with no character; amber means needs you */
-  --button-bg: #252d39;
-  --button-line: #344052;
-  --button-hover: #2e3846;
+  --button-bg: #2c241a;
+  --button-line: #4a3d2d;
+  --button-hover: #372d21;
   --needs-ink: #000000; /* on --tone-needs */
   --danger-bg: #b3261e; /* End <Character>: filled, so it reads as the weighty choice; never the default */
   --danger-hover: #9c1f18;
@@ -58,15 +58,17 @@
   /* The comfortable card's header band (#62); model.js BAND holds the same numbers. */
   --band-h: 120px;
   --fig-over: 60px; /* the figure's 52 px over the card's top edge, and 8 px clear */
-  --plate-bg: #141820;
-  --plinth-bg: #0d1016;
+  --plate-bg: #1a140d;
+  --plinth-bg: #0f0c08;
   --band-line: #6f5a2c; /* the band's gilded rule */
   --band-gold: #c9a24a; /* a medallion's light */
   --ivory: #f3ead7;
+  --working-ink: #000000; /* on --tone-working */
+  --pill-mix: white; /* a pill's word: its tone lifted toward the ground's opposite */
   --glow-alpha: 62%;
   --rays-alpha: 16%;
   --under-text: 15%; /* of the light that reaches past the figure to the text */
-  --dim-light-with: #3a414c;
+  --dim-light-with: #4a4034;
   --dim-light-share: 30%;
   --grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 .05 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
 }
@@ -261,7 +263,7 @@ button.clear:hover:not([aria-disabled="true"]) { background: var(--button-bg); c
 /* Off reads as off: no fill, a faint border, a dim label (still 4.5:1 on the card). */
 button[aria-disabled="true"] { color: var(--text-dim); background: transparent; border-color: var(--card-line); cursor: default; }
 /* Open terminal. A character's colour is a left marker on the neutral button (it matches the tmux window); the label names the action. */
-.jump[data-kind="accent"] { box-shadow: inset var(--mark-w) 0 0 var(--accent); }
+.jump[data-kind="accent"] { box-shadow: inset var(--mark-w) 0 0 var(--on-card, var(--accent)); }
 /* The one filled button: the card needs you. Amber means needs you only, so no marker there. */
 .jump[data-kind="needs"] { background: var(--tone-needs); color: var(--needs-ink); border-color: var(--tone-needs); }
 /* Hover keeps the fill (the base hover rule would otherwise grey it), so the 4.5:1 ink holds. */
@@ -305,7 +307,8 @@ button:focus-visible { outline: 2px solid var(--card-focus); outline-offset: 2px
 .card {
   --tone: var(--tone-quiet);
   --light: var(--accent, var(--band-gold));
-  --edge: var(--accent, var(--card-line)); /* the character's colour; an exception's takes over (#247) */
+  --on-card: var(--accent); /* the character on the card's own surface; the light scheme deepens it (model.js accentLight) */
+  --edge: var(--on-card, var(--card-line)); /* the character's colour; an exception's takes over (#247) */
   --badge-ring: var(--card-bg);
   position: relative;
   isolation: isolate; /* the waves sit behind the card's text, above its fill */
@@ -436,6 +439,12 @@ button.menu svg { width: 16px; height: 16px; fill: currentColor; }
     linear-gradient(90deg, color-mix(in oklab, var(--accent, var(--band-gold)) 24%, transparent), color-mix(in oklab, var(--accent, var(--band-gold)) 6%, transparent) 150px, color-mix(in oklab, var(--accent, var(--band-gold)) 3%, transparent)),
     var(--plate-bg);
 }
+/* The header takes its tone again from its own tokens: in the light scheme the band keeps the dark stage's. */
+.card header { --tone: var(--tone-quiet); }
+.card.tone-needs header { --tone: var(--tone-needs); }
+.card.tone-error header { --tone: var(--tone-error); }
+.card.tone-working header { --tone: var(--tone-working); }
+.card.tone-done header { --tone: var(--tone-done); }
 .stage {
   position: absolute;
   z-index: -1;
@@ -582,13 +591,16 @@ button.menu svg { width: 16px; height: 16px; fill: currentColor; }
   font-size: 12.5px;
   line-height: 1.2;
   background: color-mix(in oklab, var(--tone) 16%, transparent);
-  color: color-mix(in oklab, var(--tone) 70%, white);
+  color: color-mix(in oklab, var(--tone) 70%, var(--pill-mix));
   white-space: nowrap;
 }
 .pill .age, .pill .when { color: var(--pill-age); font-weight: 500; font-variant-numeric: tabular-nums; }
 .pill .when { display: none; } /* the compact card's merged time */
 .mark { display: inline-flex; flex: none; }
 .pill .badge { width: 16px; height: 16px; }
+/* Working is healthy, so quiet: its badge wears the parchment tone, never the strip's blue (#248). */
+.card .badge.tone-working .shape, .card .tone-working .badge .shape { fill: var(--tone-working); }
+.card .badge.tone-working .ink, .card .tone-working .badge .ink { fill: var(--working-ink); }
 
 /* One line in either density; a long place cuts short and its title holds all of it. */
 .where { display: flex; align-items: center; gap: 6px 10px; min-width: 0; overflow: hidden; white-space: nowrap; }
@@ -613,7 +625,7 @@ a.branch[href]:hover, a.branch[href]:focus-visible { color: var(--text); }
   color: var(--text-dim);
   font-size: 12.5px;
   padding: 2px 8px;
-  border: 1px solid color-mix(in oklab, var(--accent, var(--card-line)) 50%, var(--card-line));
+  border: 1px solid color-mix(in oklab, var(--on-card, var(--card-line)) 50%, var(--card-line));
   border-radius: 6px;
 }
 .branch svg, .acct svg { width: 12px; height: 12px; flex: none; }
@@ -649,7 +661,7 @@ a.branch[href]:hover, a.branch[href]:focus-visible { color: var(--text); }
   border-radius: 8px;
   font-weight: 600;
   background: color-mix(in oklab, var(--tone-needs) 14%, transparent);
-  color: color-mix(in oklab, var(--tone-needs) 75%, white);
+  color: color-mix(in oklab, var(--tone-needs) 75%, var(--pill-mix));
 }
 /* One line in either density. Cut short, it loses its middle: the lead takes
    the ellipsis and the tool's own name (.ask-keep) stays whole, cut itself only
@@ -729,7 +741,7 @@ a.branch[href]:hover, a.branch[href]:focus-visible { color: var(--text); }
 }
 .chip::after { content: ""; position: absolute; inset: -4px 0; }
 
-.actions { display: flex; align-items: center; gap: 8px; border-top: 1px solid color-mix(in oklab, var(--accent, var(--card-line)) 30%, var(--card-line)); padding-top: var(--space-3); }
+.actions { display: flex; align-items: center; gap: 8px; border-top: 1px solid color-mix(in oklab, var(--on-card, var(--card-line)) 30%, var(--card-line)); padding-top: var(--space-3); }
 /* 28 px tall, over the 24x24 minimum (WCAG 2.2, 2.5.8); compact sets its own. */
 .actions .jump, .actions .clear, .actions .undo { min-height: 28px; padding: 0 var(--space-5); }
 .actions .note { color: var(--text-dim); font-size: 12.5px; margin-right: auto; overflow-wrap: anywhere; }
@@ -1315,3 +1327,54 @@ a.remote:focus-visible { outline: 2px solid var(--card-focus); outline-offset: 2
 #health .health-check { font-weight: 600; overflow-wrap: anywhere; }
 #health .health-detail, #health .health-note { color: var(--text-dim); font-size: 12.5px; overflow-wrap: anywhere; }
 #health .health-detail:empty, #health .health-note:empty { display: none; }
+
+/* Light: parchment surfaces, the same bronze family. The header band stays a
+   dark stage in both schemes, like a card's art box, so a figure keeps its
+   light and the band's text its contrast (fleet-accent.test.js reads both). */
+:root { color-scheme: dark light; }
+@media (prefers-color-scheme: light) {
+  :root {
+    --wall-bg: #efe6d6;
+    --card-bg: #fbf6ec;
+    --card-quiet: #f5eee1;
+    --card-line: #d9cbb3;
+    --card-focus: #2b2118;
+    --text: #2b2118;
+    --text-dim: #64533f;
+    --text-quiet: #6f5e49;
+    --text-faint: #74624c;
+    --text-error: #a83a08;
+    --pill-age: #5e4e3b;
+    --tone-needs: #ac6700;
+    --tone-done: #00805c;
+    --tone-working: #6a5640;
+    --tone-quiet: #7d6f5e;
+    --ring-track: #e8dcc8;
+    --crew-gold: #8a6a00;
+    --button-bg: #f1e6d3;
+    --button-line: #ccb998;
+    --button-hover: #e8dac2;
+    --pill-mix: black;
+    --working-ink: #ffffff;
+  }
+  .card { --on-card: var(--accent-light, var(--accent)); }
+  /* The band and the portrait stay the dark stage: their text and pills keep the dark scheme's tones. */
+  .wall:not([data-density="compact"]) .card header, #portrait {
+    --text: #f2eadf;
+    --text-dim: #b9a993;
+    --text-quiet: #a09079;
+    --pill-age: #c4b6a0;
+    --tone-needs: var(--badge-needs);
+    --tone-done: var(--badge-done);
+    --tone-working: #d9c6a5;
+    --tone-quiet: #9a8d7b;
+    --button-bg: #2c241a;
+    --button-line: #4a3d2d;
+    --button-hover: #372d21;
+    --card-focus: #f2eadf;
+    --pill-mix: white;
+    --working-ink: #000000;
+  }
+  .empty h2, [data-density="compact"] :is(.name, button.menu) { color: var(--text); }
+  .ledger .fill { background: var(--accent-light, var(--accent, var(--text-quiet))); }
+}

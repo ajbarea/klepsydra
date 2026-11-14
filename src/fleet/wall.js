@@ -413,7 +413,7 @@ function paintLedger(el, c) {
 // The header band: the character's light and figure, epithet, and the crew
 // marks on the figure's plinth. Colours ride on the card as custom properties.
 function paintBand(el, c) {
-  for (const [prop, value] of [["--accent", c.accent], ["--accent-ink", c.accentInk]]) {
+  for (const [prop, value] of [["--accent", c.accent], ["--accent-ink", c.accentInk], ["--accent-light", c.accentLight]]) {
     if (value) el.style.setProperty(prop, value);
     else el.style.removeProperty(prop);
   }
