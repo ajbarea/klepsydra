@@ -793,10 +793,6 @@ check "#290: Enter closes a dead pane's viewer" "$(ti list-panes -a -F '#{pane_i
 ti kill-server 2>/dev/null; to kill-server 2>/dev/null
 rm -f -- "$sockdir/${in4:?}" "$sockdir/${out4:?}"
 
-echo "cleanup"
-cleanup; trap - EXIT
-check "no socket files left" "$(find "$sockdir" -maxdepth 1 \( -name "$sock" -o -name "$sock2" -o -name "$sock3" \) 2>/dev/null)" ""
-
 # #260: a session runs on the tmux server's config folder whenever the server is
 # up, even with no fleet session (fleet delegate's engines session shares the
 # socket); a server started on a keyed folder refuses a clean caller's launch.
@@ -809,5 +805,10 @@ check "#260: and no fleet session was made" "$(tmux -L "$sock5" has-session -t =
 tmux -L "$sock5" kill-server 2>/dev/null
 
 check "#292 review 2: no case reached the host's systemd-run" "$(cat "$work/systemd-run-guard.calls" 2>/dev/null)" ""
+
+echo "cleanup"
+cleanup; trap - EXIT
+check "no socket files left" "$(find "$sockdir" -maxdepth 1 \( -name "$sock" -o -name "$sock2" -o -name "$sock3" -o -name "$sock4" -o -name "$sock5" \) 2>/dev/null)" ""
+
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [[ $fail -eq 0 ]]
