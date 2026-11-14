@@ -457,6 +457,54 @@ button.menu svg { width: 16px; height: 16px; fill: currentColor; }
   -webkit-mask-image: linear-gradient(90deg, #000 var(--fade-from), rgb(0 0 0 / var(--under-text)) var(--fade-to));
   mask-image: linear-gradient(90deg, #000 var(--fade-from), rgb(0 0 0 / var(--under-text)) var(--fade-to));
 }
+/* The arrival's parts (#373), shown only while a card is .arriving. */
+.flare, .burst, .herald { display: none; pointer-events: none; }
+.flare {
+  position: absolute;
+  z-index: -1;
+  inset: -1px;
+  border-radius: 15px;
+  box-shadow: 0 0 0 2px var(--on-card, var(--light)), 0 0 40px 10px color-mix(in oklab, var(--light) 50%, transparent);
+}
+.burst {
+  position: absolute;
+  z-index: 0;
+  left: calc(var(--fig-left) + var(--fig) / 2 - 190px);
+  bottom: calc(var(--fig) * 0.42 - 190px);
+  width: 380px;
+  height: 380px;
+  border-radius: 50%;
+  background: repeating-conic-gradient(from 0deg, color-mix(in oklab, var(--light) 90%, white) 0deg 4deg, transparent 4deg 13deg);
+  -webkit-mask-image: radial-gradient(closest-side, #000 25%, transparent 78%);
+  mask-image: radial-gradient(closest-side, #000 25%, transparent 78%);
+}
+.burst::after {
+  content: "";
+  position: absolute;
+  inset: 25%;
+  border-radius: 50%;
+  border: 3px solid color-mix(in oklab, var(--light) 85%, white);
+}
+.herald {
+  position: absolute;
+  z-index: 2;
+  left: 176px; /* the nameplate's own start: header's padding-left */
+  right: var(--space-8);
+  bottom: var(--space-4);
+  flex-direction: column;
+  align-items: flex-start;
+  overflow: hidden;
+  font-family: var(--title);
+  text-transform: uppercase;
+  line-height: 1.05;
+  white-space: nowrap;
+}
+.herald-name { max-width: 100%; overflow: hidden; text-overflow: ellipsis; font-size: 30px; font-weight: 800; letter-spacing: 0.05em; color: var(--accent-ink, var(--ivory)); text-shadow: 0 2px 12px rgb(0 0 0 / 0.6); }
+.herald-cry { font-size: 15px; font-weight: 700; letter-spacing: 0.22em; color: var(--ivory); }
+.herald-epithet { max-width: 100%; overflow: hidden; text-overflow: ellipsis; margin-top: 4px; font: 600 11.5px/1.2 var(--font); letter-spacing: 0.08em; color: var(--text-dim); }
+.herald-epithet:empty { display: none; }
+.wall:not([data-density="compact"]) .card:is(.tone-done, .dim) .herald { left: 104px; }
+.wall:not([data-density="compact"]) .card:is(.tone-done, .dim) .herald-name { font-size: 22px; }
 /* The figure is the button that opens the full portrait (#44). */
 .look {
   display: block;
@@ -828,6 +876,12 @@ a.branch[href]:hover, a.branch[href]:focus-visible { color: var(--text); }
 [data-density="compact"] .has-figure .portrait .face { display: block; }
 [data-density="compact"] .card .look { grid-area: face; position: relative; inset: auto; z-index: 1; width: var(--wall-face); height: var(--wall-face); border-radius: 50%; }
 [data-density="compact"] .task { margin: 0 0 0 var(--head-gap); font-size: 13px; }
+/* The compact banner takes the name and task rows; there is no band to light. */
+[data-density="compact"] .burst { display: none !important; }
+[data-density="compact"] .herald { position: relative; left: auto; right: auto; bottom: auto; grid-column: 2 / 3; grid-row: 1 / 3; align-self: center; margin-left: var(--head-gap); flex-flow: row wrap; align-items: baseline; column-gap: 0.4em; }
+[data-density="compact"] .herald-name { font-size: 19px; /* large text (WCAG: 14 pt bold), so the character's 3:1 tone reads */ color: var(--on-card, var(--text)); text-shadow: none; }
+[data-density="compact"] .herald-cry { font-size: 12px; color: var(--text); }
+[data-density="compact"] .herald-epithet { flex-basis: 100%; margin-top: 2px; }
 [data-density="compact"] .pill { position: static; grid-area: pill; align-self: center; margin-left: var(--space-3); gap: 6px; padding: 3px 8px 3px 6px; font-size: 12px; }
 [data-density="compact"] .pill .badge { width: 14px; height: 14px; }
 [data-density="compact"] .pill .age { display: none; }
@@ -1001,15 +1055,62 @@ button.link:hover:not([aria-disabled="true"]) { background: none; }
 /* One pulse when a card starts needing AJ: an amber ring leaves the edge and fades.
    A new card arrives once: its figure steps in and its light rises (wall.js .arriving). */
 @media (prefers-reduced-motion: no-preference) {
+  /* The arrival (#373): transform and opacity only, so the compositor runs it.
+     The figure springs up over the frame and settles; rays and a ring burst
+     behind it once; the banner slides in, holds, and gives the header back. */
   @keyframes figure-arrive {
-    from { translate: -24px 0; clip-path: inset(0 100% 0 0); }
-    to { translate: 0 0; clip-path: inset(0 0 0 0); }
+    0% { opacity: 0; transform: translate(-18px, 46px) scale(0.55); }
+    55% { opacity: 1; transform: translate(0, -12px) scale(1.16); }
+    78% { transform: translate(0, 3px) scale(0.98); }
+    100% { opacity: 1; transform: none; }
+  }
+  @keyframes face-arrive {
+    0% { opacity: 0; transform: scale(0.4); }
+    60% { opacity: 1; transform: scale(1.18); }
+    100% { opacity: 1; transform: none; }
   }
   @keyframes light-rise {
-    from { filter: brightness(0.15); }
+    from { opacity: 0.1; }
   }
-  .card.arriving .figure { animation: figure-arrive 650ms cubic-bezier(0.2, 0.7, 0.2, 1) both; }
-  .card.arriving .stage { animation: light-rise 700ms ease-out both; }
+  @keyframes burst {
+    0% { opacity: 0; transform: scale(0.3) rotate(0deg); }
+    25% { opacity: 1; transform: scale(1) rotate(12deg); }
+    100% { opacity: 0; transform: scale(1.3) rotate(48deg); }
+  }
+  @keyframes ring-out {
+    0% { opacity: 0.9; transform: scale(0.2); }
+    100% { opacity: 0; transform: scale(1.5); }
+  }
+  @keyframes slam {
+    0% { transform: scale(1.5); }
+    60% { transform: scale(0.97); }
+    100% { transform: none; }
+  }
+  @keyframes herald {
+    0% { opacity: 0; transform: translateX(-28px); }
+    14% { opacity: 1; transform: none; }
+    84% { opacity: 1; transform: none; }
+    100% { opacity: 0; transform: translateY(-8px) scale(0.96); }
+  }
+  @keyframes who-wait {
+    0%, 84% { opacity: 0; }
+    100% { opacity: 1; }
+  }
+  @keyframes flare {
+    0% { opacity: 0; }
+    10% { opacity: 1; }
+    60% { opacity: 1; }
+    100% { opacity: 0; }
+  }
+  .card.arriving .figure { transform-origin: 50% 100%; animation: figure-arrive 720ms cubic-bezier(0.2, 0.8, 0.25, 1) var(--arrive-at, 0ms) both; }
+  .card.arriving .portrait { animation: face-arrive 600ms cubic-bezier(0.2, 0.8, 0.25, 1) var(--arrive-at, 0ms) both; }
+  .card.arriving .stage { animation: light-rise 700ms ease-out var(--arrive-at, 0ms) both; }
+  .card.arriving .burst { display: block; animation: burst 1400ms ease-out var(--arrive-at, 0ms) both; }
+  .card.arriving .burst::after { animation: ring-out 800ms ease-out calc(var(--arrive-at, 0ms) + 120ms) both; }
+  .card.arriving .herald { display: flex; animation: herald 3300ms cubic-bezier(0.2, 0.8, 0.25, 1) calc(var(--arrive-at, 0ms) + 250ms) both; }
+  .card.arriving .herald-name { transform-origin: 0 100%; animation: slam 420ms cubic-bezier(0.3, 0.7, 0.3, 1) calc(var(--arrive-at, 0ms) + 250ms) both; }
+  .card.arriving :is(.name, .epithet, .task) { animation: who-wait 3550ms linear var(--arrive-at, 0ms) both; }
+  .card.arriving .flare { display: block; animation: flare 3300ms ease-out var(--arrive-at, 0ms) both; }
   @keyframes card-pulse {
     from { box-shadow: 0 0 0 0 color-mix(in oklab, var(--tone-needs) 70%, transparent); }
     to { box-shadow: 0 0 0 14px transparent; }
@@ -1027,6 +1128,24 @@ button.link:hover:not([aria-disabled="true"]) { background: none; }
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; animation: none !important; }
   ::view-transition-group(*) { animation-duration: 0s; }
+  /* The arrival without movement (#373): the banner shows in place and crossfades out. */
+  @keyframes herald-calm {
+    0% { opacity: 0; }
+    8%, 84% { opacity: 1; }
+    100% { opacity: 0; }
+  }
+  @keyframes who-calm {
+    0%, 84% { opacity: 0; }
+    100% { opacity: 1; }
+  }
+  @keyframes flare-calm {
+    0% { opacity: 0; }
+    8%, 60% { opacity: 1; }
+    100% { opacity: 0; }
+  }
+  .card.arriving .herald { display: flex; animation: herald-calm 3300ms linear var(--arrive-at, 0ms) both !important; }
+  .card.arriving :is(.name, .epithet, .task) { animation: who-calm 3300ms linear var(--arrive-at, 0ms) both !important; }
+  .card.arriving .flare { display: block; animation: flare-calm 3300ms linear var(--arrive-at, 0ms) both !important; }
 }
 
 /* The side panels, Queue and Ledger (sidepanel.js), one open at a time.

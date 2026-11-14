@@ -1441,6 +1441,38 @@ def reveal_race(wall):
         page.close()
 
 
+def arrival_is_an_event(wall):
+    """#373: a session's first appearance is an event, once. Its card wears
+    .arriving with a banner naming it, the live region says it arrived, and
+    nothing replays on a reload; reduced motion keeps the banner as a
+    crossfade, and Compact arrives too."""
+    for motion, density in (("no-preference", "comfortable"), ("reduce", "comfortable"), ("no-preference", "compact")):
+        page = open_app(wall, keep=lambda s: s["status"] == "working" and s["voice"] != "am_michael", motion=motion)
+        pick(page, f".density label:has([value={density}])")
+        page.wait_for_timeout(SETTLE_MS)
+        quiet = page.evaluate("document.querySelectorAll('#wall .arriving').length")
+        heph = next(s for s in page.snapshot_all if s["voice"] == "am_michael")
+        send(page, {"sessions": [heph] + page.snapshot["sessions"], "speaking": None})
+        page.wait_for_timeout(400)
+        got = page.evaluate("""(id) => { const c = document.querySelector(`#wall .card[data-key="${id}"]`); const h = c.querySelector('.herald');
+          return { arriving: c.classList.contains('arriving'), shown: h.checkVisibility(), name: h.querySelector('.herald-name').textContent,
+            anim: getComputedStyle(h).animationName, live: document.getElementById('live').textContent,
+            others: document.querySelectorAll('#wall .arriving').length }; }""", heph["session_id"])
+        calm = "herald-calm" if motion == "reduce" else "herald"
+        wall.check(
+            quiet == 0 and got["arriving"] and got["shown"] and got["name"] == "Hephaestus" and got["anim"] == calm and got["others"] == 1
+            and "Hephaestus has arrived, Master of the Forge" in got["live"],
+            f"{density}, motion {motion}: the new session arrives once, named and announced",
+            [quiet, got],
+        )
+        page.wait_for_timeout(4200)
+        done = page.evaluate("document.querySelectorAll('#wall .arriving').length")
+        send(page, {"sessions": [heph] + page.snapshot["sessions"], "speaking": None})
+        again = page.evaluate("document.querySelectorAll('#wall .arriving').length")
+        wall.check(done == 0 and again == 0, f"{density}, motion {motion}: it settles and a later snapshot does not replay it", [done, again])
+        page.close()
+
+
 def reveal_does_not_arrive(wall):
     """Cards shown again are not new: an ended card a focus request shows, or
     one shown again when a live session starts, does not play the arrival; the
@@ -5339,6 +5371,7 @@ def main() -> int:
             cleared_link_waits,
             stale_focus_never_reveals,
             reveal_race,
+            arrival_is_an_event,
             reveal_does_not_arrive,
             bar_follows_empty_state,
             launch_dir_follows_prefs,

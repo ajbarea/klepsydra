@@ -128,8 +128,8 @@ test("the wall's text meets 4.5:1 on live and quiet cards", () => {
     }
   }
   assert.ok(contrast(token(css, "--tone-working"), token(css, "--card-bg")) >= 3, "working edge");
-  // The empty state's entrance is the one fade; it ends at full opacity.
-  const settled = css.replace(/\/\*[\s\S]*?\*\//g, "").replace(/@keyframes empty-fade \{\s*from \{ opacity: 0; \}\s*\}/, "");
+  // Fades are entrances (the empty state, an arrival's banner, #373) that end at full opacity; nothing settles dimmed.
+  const settled = css.replace(/\/\*[\s\S]*?\*\//g, "").replace(/@keyframes [\w-]+ \{[\s\S]*?\}\s*\}/g, "");
   assert.doesNotMatch(settled, /opacity:/, "dimming is by colour, so dimmed text keeps its contrast");
 });
 
@@ -365,14 +365,27 @@ test("on a figure the crew rides the plinth and the ring steps aside; the waves 
   assert.ok(Number(figure.match(/z-index: (-?\d+)/)[1]) > Number(portrait.match(/z-index: (-?\d+)/)[1]), "waves behind the figure");
 });
 
-test("the arrival plays only where motion is allowed, and dims nothing by opacity", () => {
+test("#373: the arrival moves only where motion is allowed, crossfades where it is not, and animates nothing but transform and opacity", () => {
   const css = wallCss().replace(/\/\*[\s\S]*?\*\//g, "");
-  const block = css.match(/@media \(prefers-reduced-motion: no-preference\) \{[\s\S]*?\n\}/g).join("\n");
-  for (const name of ["figure-arrive", "light-rise"]) {
-    assert.match(block, new RegExp(`@keyframes ${name}`));
-    assert.equal(css.split(`@keyframes ${name}`).length, 2, `${name} is defined once`);
+  const moving = css.match(/@media \(prefers-reduced-motion: no-preference\) \{[\s\S]*?\n\}/g).join("\n");
+  const calm = css.match(/@media \(prefers-reduced-motion: reduce\) \{[\s\S]*?\n\}/g).join("\n");
+  const frames = (block) => Object.fromEntries([...block.matchAll(/@keyframes ([\w-]+) \{([\s\S]*?\})\s*\}/g)].map((m) => [m[1], m[2]]));
+  const props = (body) => [...body.matchAll(/([a-z-]+):/g)].map((m) => m[1]);
+  const move = frames(moving);
+  for (const name of ["figure-arrive", "face-arrive", "light-rise", "burst", "ring-out", "slam", "herald", "who-wait", "flare"]) {
+    assert.ok(move[name], `${name} plays where motion is allowed`);
+    assert.equal(css.split(`@keyframes ${name} `).length, 2, `${name} is defined once`);
+    for (const p of props(move[name])) assert.ok(["transform", "opacity"].includes(p), `${name} animates ${p}: compositor properties only`);
   }
-  assert.equal((css.match(/\.arriving/g) ?? []).length, (block.match(/\.arriving/g) ?? []).length, "no arrival outside it");
+  const still = frames(calm);
+  for (const name of ["herald-calm", "who-calm", "flare-calm"]) {
+    assert.ok(still[name], `${name} plays under reduced motion`);
+    assert.deepEqual([...new Set(props(still[name]))], ["opacity"], `${name} only fades`);
+  }
+  assert.match(calm, /\.card\.arriving \.herald \{[^}]*herald-calm[^}]*!important/, "the calm banner beats the blanket animation: none");
+  assert.doesNotMatch(calm, /figure-arrive|burst|slam/, "nothing moves under reduced motion");
+  const outside = css.replace(moving, "").replace(calm, "");
+  assert.doesNotMatch(outside, /\.arriving[^{]*\{[^}]*animation/, "no arrival animation outside the two motion blocks");
 });
 
 test("the nameplate's face is bundled, with its licence", () => {

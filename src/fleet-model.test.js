@@ -5,7 +5,7 @@ import {
   STATUS, shortAge, longAge, statusParts, voiceName, identity, accessibleName,
   statuses, startedNeeding, orderChanged, shouldSlide, transitionName, announcements, updatedText, badgeSvg, stripItems, card,
   askText, askParts, plainText, tally, crewOf, crewText, crewRing, crewRings, crewMarks, RINGS, RING_MAX, alsoChip, ALSO_NAMED, pillWhen,
-  BAND, ORCHESTRATOR_VOICES, accountsDiffer, castPicks,
+  BAND, ORCHESTRATOR_VOICES, accountsDiffer, castPicks, arrivals, arrivalLine, ARRIVALS_KEPT,
   branchPage,
   githubPage,
   plainDir,
@@ -908,4 +908,28 @@ test("#222: the page's fallback pick never gives a session Hephaestus or Athena,
   const picked = castPicks(many, cast).map((s) => s.pick);
   assert.equal(picked.filter(Boolean).length, 60, "everyone got a character");
   assert.deepEqual(picked.filter((p) => ORCHESTRATOR_VOICES.includes(p)), []);
+});
+
+test("#373: the first snapshot only seeds; a later one names each new session once, in order", () => {
+  const ss = (...ids) => ids.map((session_id) => ({ session_id }));
+  const first = arrivals(null, ss("a", "b"));
+  assert.deepEqual(first.arrived, [], "a reload replays nothing");
+  const second = arrivals(first.seen, ss("a", "c", "b", "d"));
+  assert.deepEqual(second.arrived, ["c", "d"]);
+  assert.deepEqual(arrivals(second.seen, ss("a", "c")).arrived, [], "gone and back is not new");
+  assert.deepEqual(arrivals(second.seen, ss("a", "c", "d")).arrived, []);
+});
+
+test("#373: what a page remembers is bounded, the oldest dropped first", () => {
+  const ss = (n, from = 0) => Array.from({ length: n }, (_, i) => ({ session_id: `s${from + i}` }));
+  const { seen } = arrivals(null, ss(3));
+  arrivals(seen, ss(4, 3), 5);
+  assert.deepEqual([...seen], ["s2", "s3", "s4", "s5", "s6"]);
+  assert.equal(arrivals(null, ss(ARRIVALS_KEPT + 10)).seen.size, ARRIVALS_KEPT);
+});
+
+test("#373: the live region says who arrived, with the epithet when the cast has one", () => {
+  const cast = JSON.parse(readFileSync(new URL("./fleet/themes/kourai.json", import.meta.url), "utf8"));
+  assert.equal(arrivalLine({ session_id: "x", voice: "am_michael" }, cast), "Hephaestus has arrived, Master of the Forge");
+  assert.match(arrivalLine({ session_id: "abcdef123456", name: "notes", launch_dir: "/home/aj/notes" }, null), /^\S.* has arrived$/);
 });

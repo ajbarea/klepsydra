@@ -1,6 +1,6 @@
 // The card wall: a card per Claude Code session, in the reader's order, with
 // a way back to its terminal.
-import { RINGS, accountsDiffer, branchPage, announcements, card, castPicks, identity, needsFirst, shouldSlide, startedNeeding, transitionName, statuses, tally } from "./model.js";
+import { RINGS, accountsDiffer, arrivalLine, arrivals, branchPage, announcements, card, castPicks, identity, needsFirst, shouldSlide, startedNeeding, transitionName, statuses, tally } from "./model.js";
 import { announcer, press, say, setOff, syncChildren } from "./dom.js";
 import { ARM_MS, confirmCopy, createEnder, endAllCopy, endingAnnouncement, endingText, withdrawnText } from "./end.js";
 import { askedNote, asking, isReady, readiness, wrapupAnnouncements, wrapupCopy, wrapupLines } from "./wrapup.js";
@@ -420,6 +420,8 @@ function paintBand(el, c) {
   const epithet = el.querySelector(".epithet");
   epithet.hidden = !c.epithet;
   setText(epithet.lastElementChild, c.epithet);
+  setText(el.querySelector(".herald-name"), c.name);
+  setText(el.querySelector(".herald-epithet"), c.epithet);
   const look = el.querySelector(".look");
   look.hidden = !c.full;
   look.dataset.id = c.id;
@@ -512,6 +514,11 @@ function paintTally() {
 const reducedMotion = () => matchMedia("(prefers-reduced-motion: reduce)").matches;
 
 // The slide needs the browser's view transitions and a reader who allows motion.
+// Arrivals waiting on the window: ids announced but not yet seen (#373).
+const ARRIVE_STAGGER_MS = 450;
+let seenIds = null;
+const arriving = new Set();
+const heldArrivals = new Set();
 const canSlide = () =>
   typeof document.startViewTransition === "function" && !reducedMotion();
 
@@ -529,7 +536,6 @@ function render(snapshot) {
   const cards = sessions.map((s) => card(s, cast, now, request));
   const twoAccounts = accountsDiffer(cards);
   for (const c of cards) c.showAccount = twoAccounts && Boolean(c.account);
-  const prior = new Set(cardOf.keys()); // a card for one of these is not new
   cardOf = new Map(cards.map((c) => [c.id, c]));
   replayer.keep(new Set(cardOf.keys()));
   latest = { state, cards };
@@ -545,16 +551,23 @@ function render(snapshot) {
     const focused = document.activeElement;
     const inside = wall.contains(focused) || empty.contains(focused);
     const visible = visibleCards();
-    // A new session's card arrives once: its figure steps in and its light rises
-    // (wall.css .arriving). Only on the comfortable band; a compact card has no
-    // stage to run it. An ended card shown again is not new.
+    // A session's first appearance is an event (#373, wall.css .arriving): its
+    // figure steps in over the frame and its banner settles into the header.
+    // Several at once arrive in turn; a hidden window keeps theirs until shown.
+    let turn = 0;
     const make = (c) => {
       const el = tpl.content.firstElementChild.cloneNode(true);
-      if (!prior.has(c.id) && shown === "comfortable" && !reducedMotion()) el.classList.add("arriving");
+      if (arriving.has(c.id)) {
+        arriving.delete(c.id);
+        el.style.setProperty("--arrive-at", `${ARRIVE_STAGGER_MS * turn++}ms`);
+        if (document.hidden) heldArrivals.add(c.id);
+        else el.classList.add("arriving");
+      }
       return el;
     };
     paintEmpty(!showsCards());
     syncChildren(wall, visible, (c) => c.id, make, paint);
+    for (const id of arriving) if (!cardOf.has(id)) arriving.delete(id); // left before it was ever shown
     for (const el of wall.children) if (started.has(el.dataset.key) && !reducedMotion()) el.classList.add("pulse");
     // Moving a card in the DOM drops focus; give it back to what had it.
     if (focused !== document.body && focused?.isConnected && document.activeElement !== focused) focused.focus({ preventScroll: true });
@@ -580,8 +593,16 @@ function render(snapshot) {
 
 // The pulse and the arrival play once; a later repaint must not replay them.
 const arrived = (e) => {
-  if (e.animationName === "light-rise") e.target.closest(".card")?.classList.remove("arriving");
+  if (e.animationName !== "herald" && e.animationName !== "herald-calm") return;
+  const el = e.target.closest(".card");
+  el?.classList.remove("arriving");
+  el?.style.removeProperty("--arrive-at");
 };
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden || !heldArrivals.size) return;
+  for (const el of wall.children) if (heldArrivals.has(el.dataset.key)) el.classList.add("arriving");
+  heldArrivals.clear();
+});
 wall.addEventListener("animationend", (e) => {
   e.target.classList?.remove("pulse");
   arrived(e);
@@ -783,7 +804,14 @@ function take(message) {
   if (served && "health" in (message ?? {})) showHealth(message.health);
   if (Array.isArray(message?.sessions)) {
     const fresh = castPicks(message.sessions, cast);
-    const said = announcements(before, fresh, cast, Date.now());
+    const got = arrivals(seenIds, fresh);
+    seenIds = got.seen;
+    const came = new Set(got.arrived);
+    for (const id of came) arriving.add(id);
+    const said = [
+      ...fresh.filter((s) => came.has(s.session_id)).map((s) => arrivalLine(s, cast)),
+      ...announcements(before, fresh.filter((s) => !came.has(s.session_id)), cast, Date.now()),
+    ];
     const speaking = speaker.update(message.speaking ?? null, Date.now());
     const who = speaking && fresh.find((s) => s.session_id === speaking);
     if (who) said.push(`${identity(who, cast).name} speaking`);
@@ -1284,8 +1312,6 @@ function showDensity() {
   if (shown !== was) for (const el of wall.children) if (cardOf.has(el.dataset.key)) paintRing(el, cardOf.get(el.dataset.key));
   wall.dataset.density = shown;
   bar.dataset.density = shown;
-  // Cards that arrived while the wall was compact do not arrive again when it turns comfortable.
-  if (shown !== "comfortable") for (const el of wall.querySelectorAll(".arriving")) el.classList.remove("arriving");
   densityPicker.querySelector('label:has([value="auto"])').title =
     `Compact while the comfortable cards would scroll; ${shown} now`;
   syncFullText();

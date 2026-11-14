@@ -228,6 +228,31 @@ export function announcements(before, sessions, cast, nowMs = Date.now()) {
     });
 }
 
+/** How many session ids a page remembers as already arrived; the oldest go first past it. */
+export const ARRIVALS_KEPT = 500;
+/**
+ * A session's first appearance is an event (#373), once per session and never
+ * on a reload: the first snapshot a page takes only seeds `seen` (null until
+ * then). Returns the ids new since, in snapshot order, and the set to keep.
+ */
+export function arrivals(seen, sessions, keep = ARRIVALS_KEPT) {
+  const ids = sessions.map((s) => s.session_id);
+  if (!seen) return { seen: new Set(ids.slice(-keep)), arrived: [] };
+  const arrived = ids.filter((id) => !seen.has(id));
+  for (const id of arrived) seen.add(id);
+  for (const id of seen) {
+    if (seen.size <= keep) break;
+    seen.delete(id);
+  }
+  return { seen, arrived };
+}
+
+/** What the live region says when a session arrives: "Hephaestus has arrived, Master of the Forge". */
+export function arrivalLine(s, cast) {
+  const who = identity(s, cast);
+  return [`${who.name} has arrived`, who.epithet].filter(Boolean).join(", ");
+}
+
 /** The compact card's "+2" for the repos a session touched besides its own, named in full for hover and its accessible name; null with none. */
 export function alsoChip(repos) {
   if (!repos.length) return null;
