@@ -562,7 +562,8 @@ button.menu svg { width: 16px; height: 16px; fill: currentColor; }
 .card:not(.has-figure) .look { position: absolute; z-index: 1; left: 29px; top: 20px; width: var(--wall-face); height: var(--wall-face); border-radius: 50%; }
 /* A slim band (72 px) has no room for the full portrait: a theme with no
    figures shows it at three quarters, inside the band and clear of the repo line. */
-.wall:not([data-density="compact"]) .card:not(.has-figure):is(.tone-done, .dim) :is(.portrait, .look) { left: 20px; top: 6px; transform: scale(0.75); transform-origin: 0 0; }
+/* `scale`, not `transform`: an arrival animates transform, and the two compose. Drawn at 20, 6 (scaled about its centre). */
+.wall:not([data-density="compact"]) .card:not(.has-figure):is(.tone-done, .dim) :is(.portrait, .look) { left: 10px; top: -4px; scale: 0.75; }
 .marks { display: none; }
 /* A small gilded plaque at the figure's foot. */
 .has-figure .marks:not(:empty) {

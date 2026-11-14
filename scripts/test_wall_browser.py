@@ -881,6 +881,13 @@ def slim_portrait_fits(wall):
         got = page.evaluate(probe)
         wall.check(got and all(g["below"] <= 0 and not g["overRepo"] and g["intoTask"] <= 0 for g in got),
                    f"{theme}: each slim card's portrait stays in its band, off the repo line and the task", got)
+        # An arrival animates the portrait's transform: the slim scale must hold through it.
+        page.evaluate("document.querySelector('.card:is(.tone-done,.dim):not(.has-figure)').classList.add('arriving')")
+        mid = []
+        for wait in (300, 600, 1100):
+            page.wait_for_timeout(wait)
+            mid.append(page.evaluate(probe)[0])
+        wall.check(all(g["below"] <= 0 and not g["overRepo"] for g in mid), f"{theme}: it stays in the band while it arrives", mid)
         page.close()
 
 
