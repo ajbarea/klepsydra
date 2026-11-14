@@ -182,6 +182,15 @@ pub struct Reader {
     stamp: Arc<AtomicU64>,
 }
 
+/// Marks the reader free when dropped.
+struct Free(Arc<AtomicBool>);
+
+impl Drop for Free {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::Release);
+    }
+}
+
 /// A read's answer that came after its open stopped waiting.
 #[derive(Debug, PartialEq, Eq)]
 pub struct Late {
@@ -236,6 +245,8 @@ impl Reader {
         let spawned = std::thread::Builder::new()
             .name("voices-read".into())
             .spawn(move || {
+                // Frees the reader even if `read` panics, so opens read again.
+                let _free = Free(Arc::clone(&busy));
                 let shown = read();
                 // Held until the answer is sent, so the open, under the same
                 // lock, either finds it sent or has given up before the check.
@@ -474,6 +485,23 @@ mod tests {
             !r.current(&l),
             "an older late answer would overwrite a newer read"
         );
+    }
+
+    #[test]
+    fn a_read_that_panics_does_not_leave_the_reader_busy() {
+        let r = Reader::default();
+        let s = r.read_with(|| panic!("a read fails"), Duration::from_millis(50), |_| {});
+        assert_eq!(s.map(|s| s.tick), Some(None));
+        let ok = || shown(&Keryx::Off, ORCH, "off");
+        let start = std::time::Instant::now();
+        loop {
+            if let Some(s) = r.read_with(ok, TEST_WAIT, |_| {}) {
+                assert_eq!(s, ok());
+                break;
+            }
+            assert!(start.elapsed() < TEST_WAIT, "the reader stayed busy");
+            std::thread::sleep(Duration::from_millis(5));
+        }
     }
 
     #[test]
