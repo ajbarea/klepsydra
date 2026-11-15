@@ -549,6 +549,61 @@ export function accountsDiffer(cards) {
   return new Set(cards.filter((c) => c.accountId && c.status !== "ended").map((c) => c.accountId)).size > 1;
 }
 
+/**
+ * Deduce the model maker, harness display label, and badge tooltip.
+ * Returns { engine, harness, model, maker, makerLabel, tooltip, ariaLabel } or null if neither engine nor model is known.
+ */
+export function engineInfo(engine, model) {
+  if (!engine && !model) return null;
+  const eng = (engine || "claude").trim().toLowerCase();
+  const m = typeof model === "object" && model !== null
+    ? (model.display_name || model.id || "")
+    : (typeof model === "string" ? model : "");
+
+  const lowerM = m.toLowerCase();
+  let maker = null;
+  let makerLabel = null;
+  if (lowerM.includes("gemini") || lowerM.includes("google")) {
+    maker = "gemini";
+    makerLabel = "Google Gemini";
+  } else if (lowerM.includes("claude") || lowerM.includes("opus") || lowerM.includes("sonnet") || lowerM.includes("haiku") || lowerM.includes("anthropic")) {
+    maker = "anthropic";
+    makerLabel = "Anthropic";
+  } else if (lowerM.includes("gpt") || lowerM.includes("openai") || lowerM.includes("o1") || lowerM.includes("o3") || lowerM.includes("o4")) {
+    maker = "openai";
+    makerLabel = "OpenAI";
+  } else if (lowerM.includes("llama") || lowerM.includes("meta")) {
+    maker = "meta";
+    makerLabel = "Meta";
+  } else if (lowerM.includes("copilot")) {
+    maker = "copilot";
+    makerLabel = "GitHub Copilot";
+  } else if (eng === "claude") {
+    maker = "anthropic";
+    makerLabel = "Anthropic";
+  } else if (eng === "agy") {
+    maker = "gemini";
+    makerLabel = "Google Gemini";
+  } else if (eng === "copilot") {
+    maker = "copilot";
+    makerLabel = "GitHub Copilot";
+  }
+
+  const harness = eng === "agy" ? "agy" : (eng === "copilot" ? "Copilot" : (eng === "claude" ? "Claude" : eng));
+  const tooltip = m ? `${harness} \u00b7 ${m}` : harness;
+  const ariaLabel = m ? `${harness} running ${m}` : harness;
+
+  return {
+    engine: eng,
+    harness,
+    model: m || null,
+    maker,
+    makerLabel,
+    tooltip,
+    ariaLabel,
+  };
+}
+
 /** One card on the wall; `request` is the snapshot's wrap-up, when one is shown. */
 export function card(s, cast, nowMs, request = null) {
   const who = identity(s, cast);
@@ -558,6 +613,10 @@ export function card(s, cast, nowMs, request = null) {
   const also = [...new Set((s.touched ?? []).map((t) => t.repo))].filter((r) => r && r !== s.where?.repo);
   const jump = jumpable(s);
   const marks = crewMarks(crew);
+  const eng = s.engine ? s.engine.trim().toLowerCase() : (s.session_id ? "claude" : null);
+  const rawModel = s.model?.display_name || s.model?.id || (typeof s.model === "string" ? s.model : null) || s.statusline?.model?.display_name || s.statusline?.model?.id || null;
+  const engInfo = engineInfo(eng, rawModel);
+  const delegate = s.delegate?.engine || s.delegate || s.background?.delegate?.engine || s.background?.delegate || null;
   return {
     id: s.session_id,
     task: s.name || "No session name yet",
@@ -627,6 +686,11 @@ export function card(s, cast, nowMs, request = null) {
     menuLabel: `Session actions for ${who.name}`,
     // An off button says why in its name too, not only in its tooltip.
     jumpLabel: `Open terminal, ${who.name}${jump.why ? `, unavailable: ${jump.why}` : ""}`,
+    engine: engInfo ? engInfo.engine : null,
+    model: engInfo ? engInfo.model : null,
+    maker: engInfo ? engInfo.maker : null,
+    engineInfo: engInfo,
+    delegate: typeof delegate === "string" ? delegate : null,
     label: [accessibleName(s, cast, nowMs), wrapup?.text].filter(Boolean).join(", "),
   };
 }
