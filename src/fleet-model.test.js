@@ -197,6 +197,7 @@ test("identity: a cast voice is its character", () => {
     accent: null, // CAST here has no accent
     epithet: null,
     figure: null, // nor a head to place the figure by
+    motif: "burst",
   });
 });
 

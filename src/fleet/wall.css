@@ -71,6 +71,8 @@
   --under-text: 15%; /* of the light that reaches past the figure to the text */
   --dim-light-with: #4a4034;
   --dim-light-share: 30%;
+  --bg-orb1-alpha: 13%;
+  --bg-orb2-alpha: 11%;
   --grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 .05 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
 }
 @font-face {
@@ -111,8 +113,69 @@ html, body { background: var(--wall-bg); color: var(--text); font: 14px/1.45 var
   white-space: nowrap;
 }
 
+/* Living wall background (#385): subtle atmospheric drift that follows the chosen character theme.
+   Only compositor properties (transform and opacity) are animated; blur is static on the element.
+   Paused when the window is hidden, or on prefers-reduced-motion. */
+.wall-backdrop {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  overflow: hidden;
+  contain: strict;
+}
+.wall-backdrop .glow-orb {
+  position: absolute;
+  border-radius: 50%;
+  pointer-events: none;
+  will-change: transform;
+}
+.wall-backdrop .orb-1 {
+  width: 720px;
+  height: 720px;
+  left: -120px;
+  top: -100px;
+  background: radial-gradient(circle, color-mix(in oklab, var(--bg-glow, #DA8C20) var(--bg-orb1-alpha), transparent) 0%, transparent 70%);
+  filter: blur(95px);
+}
+.wall-backdrop .orb-2 {
+  width: 860px;
+  height: 860px;
+  right: -140px;
+  bottom: -120px;
+  background: radial-gradient(circle, color-mix(in oklab, var(--bg-secondary, #7A8B3C) var(--bg-orb2-alpha), transparent) 0%, transparent 70%);
+  filter: blur(115px);
+}
+.wall-backdrop .ambient-drift {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+.wall-backdrop[data-motif="studio"] .ambient-drift {
+  background-image:
+    linear-gradient(to right, color-mix(in oklab, var(--bg-secondary, #00A3DC) 3.5%, transparent) 1px, transparent 1px),
+    linear-gradient(to bottom, color-mix(in oklab, var(--bg-glow, #FF8D70) 3.5%, transparent) 1px, transparent 1px);
+  background-size: 52px 52px;
+}
+.wall-backdrop[data-motif="geometric"] .ambient-drift {
+  background: radial-gradient(circle at 75% 20%, color-mix(in oklab, var(--bg-glow, #00D7CE) 6%, transparent) 0%, transparent 40%),
+              radial-gradient(circle at 25% 80%, color-mix(in oklab, var(--bg-secondary, #B073DA) 6%, transparent) 0%, transparent 45%);
+}
+.wall-backdrop.paused .glow-orb,
+.wall-backdrop.paused .ambient-drift {
+  animation-play-state: paused !important;
+}
+.served .wall-backdrop,
+@media (max-width: 600px) {
+  .wall-backdrop .orb-1,
+  .wall-backdrop .orb-2 {
+    filter: blur(60px);
+    animation: none;
+  }
+}
+
 /* Summary bar: who needs AJ, and how many are up. */
-.bar { display: flex; align-items: center; gap: 28px; padding: 20px var(--wall-pad) 8px; }
+.bar { position: relative; z-index: 2; display: flex; align-items: center; gap: 28px; padding: 20px var(--wall-pad) 8px; }
 /* At the window's narrowest (420 px) the density choice and + New session take a line of their own. */
 @media (max-width: 480px) {
   .bar { flex-wrap: wrap; }
@@ -281,6 +344,8 @@ button[aria-disabled="true"] { color: var(--text-dim); background: transparent; 
 /* The ring sits 2px off the button, on the card's own colour, so it never touches an accent. */
 button:focus-visible { outline: 2px solid var(--card-focus); outline-offset: 2px; }
 
+#main { position: relative; z-index: 1; }
+.wall, .empty, .limits { position: relative; z-index: 1; }
 .wall {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(var(--card-min), 1fr));
@@ -1119,11 +1184,83 @@ button.link:hover:not([aria-disabled="true"]) { background: none; }
     60% { opacity: 1; }
     100% { opacity: 0; }
   }
+  /* Arrival signature motifs (#385, #224) */
+  @keyframes sparks-scatter {
+    0% { opacity: 0; transform: scale(0.2) rotate(-15deg); }
+    20% { opacity: 1; transform: scale(1.05) rotate(8deg); }
+    65% { opacity: 0.85; transform: scale(1.22) rotate(28deg); }
+    100% { opacity: 0; transform: scale(1.45) rotate(45deg); }
+  }
+  @keyframes shimmer-burst {
+    0% { opacity: 0; transform: scale(0.35) rotate(-25deg); }
+    28% { opacity: 1; transform: scale(1.04) rotate(4deg); }
+    100% { opacity: 0; transform: scale(1.28) rotate(35deg); }
+  }
+  @keyframes aperture-dilate {
+    0% { opacity: 0; transform: scale(0.2); }
+    25% { opacity: 1; transform: scale(0.85); }
+    65% { opacity: 0.9; transform: scale(1.15); }
+    100% { opacity: 0; transform: scale(1.4); }
+  }
+  @keyframes sand-wave {
+    0% { opacity: 0; transform: scale(0.3) rotate(0deg); }
+    22% { opacity: 1; transform: scale(0.92) rotate(80deg); }
+    100% { opacity: 0; transform: scale(1.38) rotate(240deg); }
+  }
+  @keyframes mist-fade {
+    0% { opacity: 0; transform: scale(0.5); }
+    30% { opacity: 0.95; transform: scale(1.05); }
+    100% { opacity: 0; transform: scale(1.35); }
+  }
   .card.arriving .figure { transform-origin: 50% 100%; animation: figure-arrive 720ms cubic-bezier(0.2, 0.8, 0.25, 1) var(--arrive-at, 0ms) both; }
   .card.arriving .portrait { animation: face-arrive 600ms cubic-bezier(0.2, 0.8, 0.25, 1) var(--arrive-at, 0ms) both; }
   .card.arriving .stage { animation: light-rise 700ms ease-out var(--arrive-at, 0ms) both; }
-  .card.arriving .burst { display: block; animation: burst 1400ms ease-out var(--arrive-at, 0ms) both; }
-  .card.arriving .burst::after { animation: ring-out 800ms ease-out calc(var(--arrive-at, 0ms) + 120ms) both; }
+  .card.arriving:is([data-motif="burst"], :not([data-motif])) .burst { display: block; animation: burst 1400ms ease-out var(--arrive-at, 0ms) both; }
+  .card.arriving:is([data-motif="burst"], :not([data-motif])) .burst::after { animation: ring-out 800ms ease-out calc(var(--arrive-at, 0ms) + 120ms) both; }
+  .card.arriving[data-motif="sparks"] .burst {
+    display: block;
+    background:
+      repeating-conic-gradient(from 0deg, color-mix(in oklab, var(--light) 95%, white) 0deg 2deg, transparent 2deg 14deg),
+      repeating-conic-gradient(from 7deg, color-mix(in oklab, var(--light) 80%, #ff8800) 0deg 1.5deg, transparent 1.5deg 22deg);
+    animation: sparks-scatter 1300ms cubic-bezier(0.15, 0.85, 0.25, 1) var(--arrive-at, 0ms) both;
+  }
+  .card.arriving[data-motif="sparks"] .burst::after {
+    animation: ring-out 750ms ease-out calc(var(--arrive-at, 0ms) + 100ms) both;
+  }
+  .card.arriving[data-motif="shimmer"] .burst {
+    display: block;
+    background:
+      linear-gradient(125deg, transparent 25%, color-mix(in oklab, var(--light) 90%, white) 48%, color-mix(in oklab, var(--light) 65%, cyan) 52%, transparent 75%),
+      repeating-conic-gradient(from 30deg, transparent 0deg 22deg, color-mix(in oklab, var(--light) 75%, white) 22deg 25deg, transparent 25deg 45deg);
+    animation: shimmer-burst 1400ms ease-out var(--arrive-at, 0ms) both;
+  }
+  .card.arriving[data-motif="shimmer"] .burst::after {
+    animation: ring-out 900ms ease-out calc(var(--arrive-at, 0ms) + 140ms) both;
+  }
+  .card.arriving[data-motif="eyes"] .burst {
+    display: block;
+    background: repeating-radial-gradient(circle at 50% 50%, transparent 0 13px, color-mix(in oklab, var(--light) 85%, white) 14px 18px, transparent 19px 28px);
+    animation: aperture-dilate 1300ms cubic-bezier(0.2, 0.8, 0.25, 1) var(--arrive-at, 0ms) both;
+  }
+  .card.arriving[data-motif="eyes"] .burst::after {
+    animation: ring-out 800ms ease-out calc(var(--arrive-at, 0ms) + 160ms) both;
+  }
+  .card.arriving[data-motif="sand"] .burst {
+    display: block;
+    background: conic-gradient(from 0deg at 50% 50%, transparent 0deg, color-mix(in oklab, var(--light) 85%, #f0e442) 40deg, transparent 80deg, color-mix(in oklab, var(--light) 85%, #f0e442) 220deg, transparent 260deg);
+    animation: sand-wave 1500ms ease-out var(--arrive-at, 0ms) both;
+  }
+  .card.arriving[data-motif="sand"] .burst::after {
+    animation: ring-out 850ms ease-out calc(var(--arrive-at, 0ms) + 120ms) both;
+  }
+  .card.arriving[data-motif="fade"] .burst {
+    display: block;
+    background: radial-gradient(circle at 50% 50%, color-mix(in oklab, var(--light) 80%, white) 0%, color-mix(in oklab, var(--light) 35%, transparent) 45%, transparent 70%);
+    animation: mist-fade 1600ms ease-out var(--arrive-at, 0ms) both;
+  }
+  .card.arriving[data-motif="fade"] .burst::after {
+    display: none;
+  }
   .card.arriving .herald { display: flex; animation: herald 3300ms cubic-bezier(0.2, 0.8, 0.25, 1) calc(var(--arrive-at, 0ms) + 250ms) both; }
   .card.arriving .herald-name { transform-origin: 0 100%; animation: slam 420ms cubic-bezier(0.3, 0.7, 0.3, 1) calc(var(--arrive-at, 0ms) + 250ms) both; }
   .card.arriving :is(.name, .epithet, .task) { animation: who-wait 3550ms linear var(--arrive-at, 0ms) both; }
@@ -1138,6 +1275,22 @@ button.link:hover:not([aria-disabled="true"]) { background: none; }
     from { opacity: 0; }
   }
   .empty:not([hidden]) { animation: empty-fade 400ms ease-out; }
+  @keyframes orb-drift-1 {
+    0% { transform: translate3d(0, 0, 0) scale(1); }
+    50% { transform: translate3d(45px, 35px, 0) scale(1.08); }
+    100% { transform: translate3d(-30px, 50px, 0) scale(0.96); }
+  }
+  @keyframes orb-drift-2 {
+    0% { transform: translate3d(0, 0, 0) scale(1); }
+    50% { transform: translate3d(-50px, -40px, 0) scale(1.06); }
+    100% { transform: translate3d(35px, -30px, 0) scale(0.95); }
+  }
+  .wall-backdrop .orb-1 {
+    animation: orb-drift-1 48s ease-in-out 1 both;
+  }
+  .wall-backdrop .orb-2 {
+    animation: orb-drift-2 56s ease-in-out 1 both;
+  }
 }
 /* Reordered cards slide to their new places. */
 ::view-transition-group(*) { animation-duration: 300ms; animation-timing-function: ease-out; }
@@ -1501,6 +1654,8 @@ a.remote:focus-visible { outline: 2px solid var(--card-focus); outline-offset: 2
     --primary-hover: #0d0a07;
     --pill-mix: black;
     --working-ink: #ffffff;
+    --bg-orb1-alpha: 8%;
+    --bg-orb2-alpha: 7%;
   }
   :root:not(.served) .card { --on-card: var(--accent-light, var(--accent)); }
   /* The band and the portrait stay the dark stage: their text and pills keep the dark scheme's tones. */

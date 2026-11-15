@@ -131,11 +131,12 @@ export function identity(s, cast) {
       accent,
       epithet: typeof character.epithet === "string" ? character.epithet : null,
       figure: placed ? { src: `${base}-figure.webp`, head } : null,
+      motif: typeof character.motif === "string" ? character.motif : (ORCHESTRATOR_VOICES.includes(voice) ? "burst" : "fade"),
     };
   }
   const name = own ? voiceName(own) : s.name || basename(s.launch_dir) || s.session_id.slice(0, 8);
   const face = medallion(name, own ?? s.session_id);
-  return { name, voice: null, face, face2x: face, full: null, accent: null, epithet: null, figure: null };
+  return { name, voice: null, face, face2x: face, full: null, accent: null, epithet: null, figure: null, motif: "burst" };
 }
 
 /** The voice keys of the orchestrator's faces, Hephaestus and Athena (src-tauri/fleet/src/picks.rs ORCHESTRATORS). */
@@ -660,6 +661,7 @@ export function card(s, cast, nowMs, request = null) {
     accentLight: who.accent ? accentLight(who.accent) : null,
     epithet: who.epithet,
     figure: who.figure,
+    motif: who.motif || "burst",
     ...jumpStyle(s, who.accent),
     status: s.status,
     quiet: isQuiet(s),

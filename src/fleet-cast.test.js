@@ -44,7 +44,7 @@ test("kourai's named Kokoro seeds are kept", () => {
 });
 
 test("every character has both portrait files, and the cast holds nothing else", () => {
-  assert.deepEqual(Object.keys(cast).sort(), ["characters", "faces", "keeper", "label", "v"]);
+  assert.deepEqual(Object.keys(cast).sort(), ["backdrop", "characters", "faces", "keeper", "label", "v"]);
   assert.deepEqual([cast.label, cast.faces, cast.keeper], ["Kourai", "kourai", "af_nicole"], "Hesychia keeps the quiet wall");
   for (const c of Object.values(cast.characters)) {
     for (const size of [96, 192]) assert.ok(exists(`kourai/${c.face}-${size}.webp`), `${c.face} ${size}`);
@@ -66,7 +66,7 @@ test("every character has its accent, and nothing else is in an entry", () => {
   for (const c of Object.values(cast.characters)) {
     assert.match(c.accent, /^#[0-9A-Fa-f]{6}$/, `${c.name} accent`);
     assert.equal(c.accent, CANON[c.face] ?? ADDED[c.face], `${c.name} accent`);
-    assert.deepEqual(Object.keys(c).sort(), ["accent", "epithet", "face", "gender", "head", "name"]);
+    assert.deepEqual(Object.keys(c).sort(), ["accent", "epithet", "face", "gender", "head", "motif", "name"]);
   }
 });
 

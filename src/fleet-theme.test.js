@@ -41,9 +41,9 @@ test("a page loads the default theme with itself and any other once, the first t
 });
 
 test("every theme has cast.json's shape and covers every voice in the cast, and no other", () => {
-  const ALLOWED = ["accent", "epithet", "face", "gender", "head", "name"];
+  const ALLOWED = ["accent", "epithet", "face", "gender", "head", "motif", "name"];
   for (const [id, t] of Object.entries(THEMES)) {
-    assert.deepEqual(Object.keys(t).sort(), ["characters", "faces", "keeper", "label", "v"], id);
+    assert.deepEqual(Object.keys(t).sort(), ["backdrop", "characters", "faces", "keeper", "label", "v"], id);
     assert.equal(t.v, 1, id);
     assert.equal(t.faces, id, `${id}: its faces folder is its id`);
     assert.deepEqual(Object.keys(t.characters).sort(), VOICES, `${id} covers every voice`);
@@ -54,6 +54,20 @@ test("every theme has cast.json's shape and covers every voice in the cast, and 
       for (const k of ["name", "face", "accent", "gender"]) assert.ok(typeof c[k] === "string" && c[k], `${id} ${voice} ${k}`);
       assert.deepEqual(Object.keys(c).filter((k) => !ALLOWED.includes(k)), [], `${id} ${voice}`);
       assert.ok(castFiles(c, t), `${id} ${voice}: its face is a plain path segment`);
+    }
+  }
+});
+
+test("every theme declares its living backdrop and every character has a valid arrival motif", () => {
+  const MOTIFS = ["burst", "sparks", "shimmer", "eyes", "sand", "fade"];
+  const BACKDROPS = ["forge", "studio", "geometric"];
+  for (const [id, t] of Object.entries(THEMES)) {
+    assert.ok(t.backdrop, `${id} has backdrop`);
+    assert.ok(BACKDROPS.includes(t.backdrop.motif), `${id} backdrop motif`);
+    assert.match(t.backdrop.glow, /^#[0-9A-Fa-f]{6}$/, `${id} glow hex`);
+    assert.match(t.backdrop.secondary, /^#[0-9A-Fa-f]{6}$/, `${id} secondary hex`);
+    for (const [voice, c] of Object.entries(t.characters)) {
+      assert.ok(typeof c.motif === "string" && MOTIFS.includes(c.motif), `${id} ${voice} motif ${c.motif}`);
     }
   }
 });

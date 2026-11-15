@@ -5288,6 +5288,72 @@ def theme_retry_waits_before_loading(wall):
         page.close()
 
 
+def living_backdrop_and_arrival_motifs(wall):
+    """#385: living backdrop reflects the theme worn (motif and ambient glow);
+    arriving cards carry their character signature arrival motif."""
+    page = open_app(wall, 1920, 1000, keep=lambda s: s["voice"] in ("af_heart", "am_michael", "bf_alice"))
+    pick(page, ".density label:has([value=comfortable])")
+    bd = page.evaluate("""() => {
+        const el = document.getElementById('wall-backdrop');
+        return {
+            exists: Boolean(el),
+            motif: el.dataset.motif,
+            glow: el.style.getPropertyValue('--bg-glow'),
+            secondary: el.style.getPropertyValue('--bg-secondary')
+        };
+    }""")
+    wall.check(bd["exists"] and bd["motif"] == "forge" and bd["glow"] == "#DA8C20" and bd["secondary"] == "#7A8B3C",
+               "Kourai wears the forge living backdrop with forge amber glow", bd)
+
+    open_gear(page)
+    page.select_option("#theme", "professions")
+    page.wait_for_function("document.documentElement.dataset.theme === 'professions'")
+    bd_prof = page.evaluate("""() => {
+        const el = document.getElementById('wall-backdrop');
+        return {
+            motif: el.dataset.motif,
+            glow: el.style.getPropertyValue('--bg-glow'),
+            secondary: el.style.getPropertyValue('--bg-secondary')
+        };
+    }""")
+    wall.check(bd_prof["motif"] == "studio" and bd_prof["glow"] == "#FF8D70" and bd_prof["secondary"] == "#00A3DC",
+               "switching to Professions swaps backdrop to studio motif with coral glow", bd_prof)
+
+    page.select_option("#theme", "dicebear")
+    page.wait_for_function("document.documentElement.dataset.theme === 'dicebear'")
+    bd_dice = page.evaluate("""() => {
+        const el = document.getElementById('wall-backdrop');
+        return {
+            motif: el.dataset.motif,
+            glow: el.style.getPropertyValue('--bg-glow'),
+            secondary: el.style.getPropertyValue('--bg-secondary')
+        };
+    }""")
+    wall.check(bd_dice["motif"] == "geometric" and bd_dice["glow"] == "#00D7CE" and bd_dice["secondary"] == "#B073DA",
+               "switching to DiceBear swaps backdrop to geometric motif with cyan/violet glow", bd_dice)
+
+    puck = dict(next(s for s in page.snapshot_all if s["voice"] == "am_puck"), status="working")
+    hermes = dict(next(s for s in page.snapshot_all if s["voice"] == "bm_fable"), status="working")
+    send(page, {"sessions": [puck, hermes] + page.snapshot["sessions"], "speaking": None})
+    page.wait_for_timeout(350)
+    motifs = page.evaluate("""([puckId, hermesId]) => {
+        const pCard = document.querySelector(`.card[data-key="${puckId}"]`);
+        const hCard = document.querySelector(`.card[data-key="${hermesId}"]`);
+        const pBurst = pCard ? pCard.querySelector('.burst') : null;
+        const hBurst = hCard ? hCard.querySelector('.burst') : null;
+        return {
+            puckMotif: pCard ? pCard.dataset.motif : null,
+            puckBurst: pBurst ? getComputedStyle(pBurst).display : null,
+            hermesMotif: hCard ? hCard.dataset.motif : null,
+            hermesBurst: hBurst ? getComputedStyle(hBurst).display : null,
+        };
+    }""", [puck["session_id"], hermes["session_id"]])
+    wall.check(motifs["puckMotif"] == "sparks" and motifs["puckBurst"] == "block" and
+               motifs["hermesMotif"] == "sand" and motifs["hermesBurst"] == "block",
+               "arriving cards carry signature motifs (Puck: sparks, Hermes: sand)", motifs)
+    page.close()
+
+
 PICKER = """() => {
   const bar = document.querySelector('.bar');
   const gear = document.querySelector('.gear');
@@ -5493,6 +5559,7 @@ def main() -> int:
             theme_stale_load_leaves_the_choice,
             theme_file_that_never_answers,
             theme_retry_waits_before_loading,
+            living_backdrop_and_arrival_motifs,
         )
         for case in cases:
             if not only or case.__name__ in only:
