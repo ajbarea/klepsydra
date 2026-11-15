@@ -28,6 +28,9 @@ ENG_LOCK=${FLEET_AGY_LOCK:-$FLEET_HOOK_DIR/klepsydra-agy-locked.json}
 ENG_LIMIT_RE='quota|rate.?limit|resource.?exhausted|too many requests|usage limit|limit (reached|exceeded|hit)|out of (credits|requests)|ai credits|premium request|try again (later|in )|\b429\b'
 ENG_AUTH_RE='not (logged|signed) in|log ?in required|(please|must) (log ?in|sign in|authenticate)|unauthori[sz]ed|authentication (failed|required)|invalid (token|credentials)|copilot login|\b401\b'
 
+# A headless run auto-denied a tool: the engine had no chance to answer.
+ENG_DENIED_RE='auto-denied|headless mode cannot prompt'
+
 eng_bin() {
   case $1 in
     agy) printf '%s' "${FLEET_AGY:-agy}" ;;
@@ -96,6 +99,11 @@ eng_classify() { # RC STDOUT STDERR: a failure is read with its stderr; an exit 
   local rc=$1 out=$2 err=$3 both=""
   if [[ $rc != 0 ]]; then both=$out$'\n'$err
   elif (( ${#out} < 200 )); then both=$out; fi
+  # A headless engine that auto-denied a tool it could not prompt for: not the
+  # engine's fault, so the caller may try the next one.
+  if [[ $rc != 0 ]] && grep -Eqi -- "$ENG_DENIED_RE" <<<"$err"; then
+    echo denied; return
+  fi
   if [[ -n $both ]]; then
     if grep -Eqi -- "$ENG_LIMIT_RE" <<<"$both"; then echo limit; return; fi
     if grep -Eqi -- "$ENG_AUTH_RE" <<<"$both"; then echo auth; return; fi

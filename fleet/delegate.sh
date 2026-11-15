@@ -56,6 +56,10 @@ SECRET_RE='(AKIA[0-9A-Z]{16}|gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{
 # grep's 1 is "no match"; its 2 (an error) counts as a match: fail closed.
 looks_secret() { grep -Eq -- "$SECRET_RE"; (( $? != 1 )); }
 
+# An absolute path outside every snapshot: /home, /mnt, /tmp, /root, ~.
+# A path under the repo root is rewritten before this runs, so it never matches.
+OUTSIDE_PATH_RE='(^|[[:space:]"'\''`])(/home/|/mnt/|/tmp/|/root/|~/)'
+
 usage() { sed -n '2,/^set -u/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//'; }
 die() { err "$*"; exit 2; }
 
@@ -161,7 +165,13 @@ snapshot() { # REPO TASK SNAP (sets SNAP_DROPPED)
   # The engine is told, so a review does not read a missing file as an absent one.
   if (( SNAP_DROPPED )); then printf '\n\n%s file(s) were withheld from this copy because they looked like they hold a credential.\n' "$SNAP_DROPPED" >>"$snap/AGENTS.md"; fi
   if (( SNAP_BINARY )); then printf '\n\n%s binary or very large file(s) were left out of this copy.\n' "$SNAP_BINARY" >>"$snap/AGENTS.md"; fi
-  cp -- "$task" "$snap/TASK.md" || return 1
+  sed "s|${top}/||g" "$task" >"$snap/TASK.md" || return 1
+  local outside
+  outside=$(grep -Eom1 -- "$OUTSIDE_PATH_RE" "$snap/TASK.md" 2>/dev/null || true)
+  if [[ -n $outside ]]; then
+    err "TASK.md names an absolute path outside the snapshot (${outside//[[:space:]\"\'\`]/}): inline the file or use a repo-relative path"
+    return 1
+  fi
   chmod -R a-w -- "$snap"
 }
 drop_snapshot() { # DIR (a snapshot is read-only; it is made writable only to be removed)
@@ -229,7 +239,7 @@ cmd_print() { # args after option parsing
     run_print "$id" "$e" "$model" "$kind" "$snap" "$TIMEOUT"
     status=$RUN_STATUS text=$RUN_TEXT used=$e
     note+="$e:$status,"
-    if [[ $ENGINE == auto && ( $status == limit || $status == auth ) ]]; then
+    if [[ $ENGINE == auto && ( $status == limit || $status == auth || $status == denied ) ]]; then
       # What it said may be an answer that mentions a limit: kept below the next engine's.
       [[ -n $text ]] && prior+=$'\n'"Earlier output of $e (read as $status):"$'\n```\n'"$(printf '%s' "$text" | head -c 2000)"$'\n```\n'
       continue
@@ -253,7 +263,7 @@ cmd_print() { # args after option parsing
       printf '%s' "$prior"; } >"$out"
   fi
   # Both engines out: say so, never fall to Claude.
-  if [[ $ENGINE == auto && ( $status == limit || $status == auth ) ]]; then status="both-out"; fi
+  if [[ $ENGINE == auto && ( $status == limit || $status == auth || $status == denied ) ]]; then status="both-out"; fi
   meta_set "$id" engine="$used" model="$model" status="$status" secs="$((SECONDS - t0))" tried="${note%,}"
   flog INFO "delegate call" id="$id" engine="$used" model="$model" kind="$kind" mode=print status="$status" secs="$((SECONDS - t0))" path="$out"
   report "$id" "$used" "$model" "$status" "$out" "${note%,}"

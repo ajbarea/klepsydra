@@ -638,6 +638,7 @@ def notified: if type == "string" then [scan("<task-notification>[\\s\\S]*?</tas
             where: null, touched: [], prompt: null, reply: null, error: null,
             ended: null, turns: 0, written_at: $now}) as $s
   | $s
+  | .engine = (($ev.engine | strings | select(test("^[A-Za-z0-9._-]{1,32}$"))) // .engine // "claude")
   | .name = (($ev.session_title | text) // .name)
   | .fleet_name = (($fleet_agent | text) // .fleet_name)
   | .orchestrator = $orchestrator

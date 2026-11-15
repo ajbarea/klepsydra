@@ -217,3 +217,13 @@ trust its own folder; a headless run that hits an un-allowed tool prints
 | Copilot interactive | clean | file, touch, commit |
 
 Guard mutants, first sweep (`test_delegate.sh`, 16 hand mutants: each Copilot flag, agy `--sandbox` in both modes, each policy deny, the snapshot's read-only mode and secret filter, the non-research URL deny, the memory floor, both secret refusals, the quota and both-out handling, the answer's rule handling, the idle-only send): 15 killed. The survivor, an explicit `--engine` falling through the fallback branch, is equivalent: an explicit engine has a one-engine list.
+
+## Hook adapters
+
+`hooks/klepsydra-engine.sh` converts agy and Copilot hook payloads to the Claude Code event shape consumed by `hooks/klepsydra-fleet.sh`: session-file creation, state transitions and lifecycle handling therefore remain shared across harnesses. It also stamps `engine: "agy"` or `engine: "copilot"` into the session file so the wall cards display the engine badge.
+
+The agy configuration in `hooks/klepsydra-agy.json` registers `SessionStart`, `PreInvocation`, `PreToolUse`, `PostToolUse`, and `Stop` to feed `klepsydra-engine.sh`.
+
+## Snapshot path rewriting and auto-deny handling
+
+When `TASK.md` names absolute paths under the repository root, `fleet/delegate.sh` rewrites them to repo-relative paths in the snapshot. This ensures headless agy lanes access files within the workspace without hitting sandbox permission prompts. If a task points outside the snapshot, it is refused before execution. If a headless run is auto-denied by the tool sandbox, `eng_classify` marks it as `denied` and `--engine auto` falls back to the next available engine.

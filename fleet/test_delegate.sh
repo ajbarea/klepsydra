@@ -61,6 +61,7 @@ if (( ! interactive )); then
     ok) echo "ANSWER from $name" ;;
     limit) echo "Error: you have exhausted your quota for today" >&2; exit 1 ;;
     auth) echo "Error: not logged in, run login" >&2; exit 1 ;;
+    denied) echo "Error: a tool required the read_file permission that headless mode cannot prompt for, so it was auto-denied" >&2; exit 1 ;;
     shortlimit) echo "Rate limit reached, try again later" ;;
     longquota) { echo "The doc says quota and rate limit apply:"; head -c 1500 /dev/zero | tr '\0' x; } ;;
     empty) : ;;
@@ -184,6 +185,8 @@ check "an exit 0 under 200 bytes that reads as a limit is a limit; at 299 bytes 
 check "an exit 0 whose stdout is fine is no limit even when stderr talks of quota" "$(eng_classify 0 'the answer' 'warning: quota 429 retry ok')" "ok"
 check "an exit 1 reads its stderr too" "$(eng_classify 1 '' 'HTTP 401 unauthorized')" "auth"
 check "an exit 0 with nothing on stdout is empty, even with stderr noise" "$(eng_classify 0 '' 'some log line')" "empty"
+check "agy auto-deny stderr is classified as denied" "$(eng_classify 1 '' 'a tool required the read_file permission that headless mode cannot prompt for, so it was auto-denied')" "denied"
+check "a long ok answer mentioning auto-denied is still ok" "$(eng_classify 0 "auto-denied $(head -c 300 /dev/zero | tr '\0' x)" '')" "ok"
 check "an unrecognised failure is an error (no fallback)" "$(eng_classify 2 '' 'segfault')" "error"
 idle=$'  stub\n──────────\n>\n──────────\n? for shortcuts'
 check "agy's footer: idle" "$(eng_state agy "$idle")" "idle"
@@ -266,6 +269,12 @@ check "snapshot: a tracked .env, an untracked .env.local, a key and secrets.yaml
 check "snapshot: the dirty working-tree change is not in it (committed content only)" "$(grep -c dirty "$STUB_DIR/$(last)/task" "$work/state/delegate"/*/work/README.md 2>/dev/null | grep -vc ':0')" "0"
 check "snapshot: the helper rules are in AGENTS.md" "$(has "$(cat "$STUB_DIR/$(last)/agents")" 'cannot write files')" "yes"
 check "snapshot: the task is TASK.md, not an argument visible in ps" "$(cat "$STUB_DIR/$(last)/task")" "$(cat "$work/task.md")"
+echo "Read $repo/src/a.py and summarise." >"$work/task_repo_abs.md"
+out=$(dl --engine agy --kind research --dir "$repo" "$work/task_repo_abs.md")
+check "snapshot: repo absolute path is rewritten to repo-relative" "$(cat "$STUB_DIR/$(last)/task")" "Read src/a.py and summarise."
+echo "Read /home/other/file" >"$work/task_outside.md"
+out=$(dl --engine agy --kind research --dir "$repo" "$work/task_outside.md")
+check "snapshot: outside path is refused" "$(field "$out" status)" "refused"
 check "snapshot: a tracked symlink (which a read tool would follow out of it) is not in it" "$(has "$files" 'link-out')" "no"
 check "snapshot: removed when the call ends" "$(find "$work/state/delegate" -maxdepth 2 -name work 2>/dev/null | wc -l)" "0"
 
@@ -343,6 +352,12 @@ check "a notified call tells the pane engine, status and path, through fleet sen
 : >"$work/sent.log"; mode agy limit; mode copilot limit
 dl --kind research --notify %7 --dir "$repo" "$work/task.md" >/dev/null
 check "and a limit round trip says both-out (the orchestrator decides)" "$(has "$(sent)" 'status=both-out')" "yes"
+: >"$work/sent.log"; mode agy denied; mode copilot ok
+out=$(dl --engine auto --kind research --dir "$repo" "$work/task.md")
+check "auto falls back on denied as it does on limit" "$(field "$out" engine) $(field "$out" status)" "copilot ok"
+: >"$work/sent.log"; mode agy denied; mode copilot denied
+dl --kind research --notify %7 --dir "$repo" "$work/task.md" >/dev/null
+check "and a denied round trip says both-out" "$(has "$(sent)" 'status=both-out')" "yes"
 mode agy ok; mode copilot ok
 
 echo "interactive lane (agy)"

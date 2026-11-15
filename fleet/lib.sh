@@ -31,7 +31,9 @@ FLEET_HOOK_DIR=${FLEET_HOOK_DIR:-$HOME/.claude}
 # shellcheck disable=SC2034 # read by install.sh and doctor.sh
 HOOK_COPIES=(
   "hooks/klepsydra-fleet.sh klepsydra-fleet.sh"
+  "hooks/klepsydra-engine.sh klepsydra-engine.sh"
   "hooks/klepsydra-launch.sh klepsydra-launch.sh"
+  "hooks/klepsydra-agy.json klepsydra-agy.json"
   "hooks/klepsydra-agy-locked.json klepsydra-agy-locked.json"
   "hooks/klepsydra-engine-rules.md klepsydra-engine-rules.md"
   "hooks/klepsydra-tmux.conf klepsydra-tmux.conf"

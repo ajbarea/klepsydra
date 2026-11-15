@@ -1,4 +1,4 @@
-.PHONY: install-hooks install-fleet test-fleet test-launch test-delegate test-headless test-heavy-lock test-slice shellcheck
+.PHONY: install-hooks install-fleet test-fleet test-launch test-delegate test-engine test-headless test-heavy-lock test-slice shellcheck
 
 # Copy the hooks, status line, launcher and cast into ~/.claude (fleet/install.sh --hooks).
 install-hooks:
@@ -28,6 +28,9 @@ test-launch:
 
 test-delegate:
 	$(HEAVY) bash fleet/test_delegate.sh
+
+test-engine:
+	bash hooks/test_engine.sh
 
 # fleet headless (#260): starts no tmux server, so it runs without the lock.
 test-headless:
