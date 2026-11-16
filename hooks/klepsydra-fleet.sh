@@ -1134,8 +1134,10 @@ main() {
   fi
   local live=""
   if claude_ancestor "${KLEPSYDRA_PID:-$$}"; then
-    [[ ${KERYX_VOICE:-} =~ ^[a-z0-9_+().-]+$ ]] && voice=$KERYX_VOICE
-    [[ -n $voice ]] || voice=$(holder_voice "$found_pid" "$found_start") || voice=""
+    # What keryx speaks (a `keryx voice` pick outranks the launch's voice), else
+    # the voice the session was launched to ask for.
+    voice=$(holder_voice "$found_pid" "$found_start") || voice=""
+    [[ -z $voice && ${KERYX_VOICE:-} =~ ^[a-z0-9_+().-]+$ ]] && voice=$KERYX_VOICE
     live=$(live_shells "$found_pid" "${KLEPSYDRA_PID:-$$}")
   fi
   [[ -n $voice ]] || homes=$(home_voices "$now")
@@ -1220,7 +1222,11 @@ main() {
     [[ $event == SessionStart && $source == clear && -z $cleared_face ]] && clear_pane=$tmux_pane
     local succeeds=""
     [[ $agent == heph && ${KLEPSYDRA_SUCCEEDS:-} =~ ^[0-9a-f-]{36}$ ]] && succeeds=$KLEPSYDRA_SUCCEEDS
-    orch_face=$(free_face "$fleet" "$session" "$cleared_face" "$orch_face" "$clear_pane" "$succeeds")
+    if [[ $agent == heph && -z $cleared_face && ( ${KERYX_VOICE:-} == "$HEPH_VOICE" || ${KERYX_VOICE:-} == "$ATHENA_VOICE" ) ]]; then
+      orch_face=$KERYX_VOICE
+    else
+      orch_face=$(free_face "$fleet" "$session" "$cleared_face" "$orch_face" "$clear_pane" "$succeeds")
+    fi
   fi
   # The git dir the file last named (an escaped path is not read): gone means the checkout was removed.
   old_git=""

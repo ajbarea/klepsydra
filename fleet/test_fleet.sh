@@ -4395,6 +4395,14 @@ check "#389: doctor warns when card and terminal voices differ" \
   "warn voice 91002: card has af_bella but terminal has am_puck"
 check "#389: doctor does not warn when card and terminal voices match" \
   "$(KLEPSYDRA_PROC="$work/dproc" bash "$here/doctor.sh" 2>/dev/null | grep -c '^warn voice 91001:')" "0"
+# #417 review: a card with no voice keeps its fields in place (a merged empty
+# field read the start time as the pid and checked another process).
+cat >"$KLEPSYDRA_DIR/fleet/s3.json" <<EOF
+{"v":1,"session_id":"s3","orchestrator":false,"claude":{"pid":91003,"start":91002}}
+EOF
+check "#417 review: a card with no voice is not checked, and no other pid is" \
+  "$(KLEPSYDRA_PROC="$work/dproc" bash "$here/doctor.sh" 2>/dev/null | grep -c '^warn voice 9100[23]:')" "1"
+rm -f "$KLEPSYDRA_DIR/fleet/s3.json"
 # The real wiring: the card's voice came from KERYX_VOICE, so the environment
 # always agrees; keryx's hold is what it speaks (a fallback or a pick).
 printf 'KERYX_VOICE=af_bella\0' >"$work/dproc/91002/environ"

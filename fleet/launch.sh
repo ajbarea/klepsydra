@@ -49,7 +49,7 @@ if [[ -z $voice && $name == "$FLEET_ORCH_NAME" ]]; then
   # The face the fleet hook will give this session's card (its free_face), so
   # the voice keryx speaks in matches the card; the hint file alone can differ.
   if [[ -r $FLEET_HOOK_DIR/klepsydra-fleet.sh ]]; then
-    voice=$(bash "$FLEET_HOOK_DIR/klepsydra-fleet.sh" face "$sid" "${FLEET_SUCCEEDS:-}" 2>/dev/null)
+    voice=$(bash "$FLEET_HOOK_DIR/klepsydra-fleet.sh" face "$sid" "${FLEET_SUCCEEDS:-}" </dev/null 2>/dev/null)
     [[ $voice == am_michael || $voice == bf_emma ]] || voice=""
   fi
   if [[ -z $voice ]]; then

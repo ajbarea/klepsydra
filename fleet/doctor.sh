@@ -384,10 +384,10 @@ proc_root=${KLEPSYDRA_PROC:-/proc}
 # session's KERYX_VOICE); the session's KERYX_VOICE stands in when it holds none.
 for f in "$KLEPSYDRA_DIR"/fleet/*.json; do
   [[ -f $f ]] || continue
-  IFS=$'\t' read -r expected pid start ended < <(jq -r '[
+  IFS=$'\x1f' read -r expected pid start ended < <(jq -r '[
     (if .orchestrator == true then (if .orchestrator_face == "bf_emma" or .orchestrator_face == "bf_alice" then "bf_emma" else "am_michael" end)
      else (.voice // "") end),
-    (.claude.pid // "" | tostring), (.claude.start // "" | tostring), (if .ended then "ended" else "" end)] | @tsv' "$f" 2>/dev/null)
+    (.claude.pid // "" | tostring), (.claude.start // "" | tostring), (if .ended then "ended" else "" end)] | join("\u001f")' "$f" 2>/dev/null)
   [[ -z $ended && -n $expected && $pid =~ ^[1-9][0-9]*$ ]] || continue
   actual=""
   [[ -r $voice_voices ]] &&

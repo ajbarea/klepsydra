@@ -208,6 +208,8 @@ new() { # dir [agy model]
   # server this launch may start, whose environment every later pane copies.
   if [[ ${KERYX_VOICE:-} =~ ^[a-z0-9_+().-]+$ ]]; then
     cmd="env KERYX_VOICE=$(printf '%q' "$KERYX_VOICE") $cmd"
+  else
+    cmd="env -u KERYX_VOICE $cmd"
   fi
   unset KERYX_VOICE
   take_lock

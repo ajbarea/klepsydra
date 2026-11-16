@@ -57,8 +57,8 @@ check "$(run agy "{\"conversationId\":\"11111111-2222-4333-8444-555555555555\",\
 
 # The newest reply wins, past an empty one and a line still being written.
 mkdir -p "$work/logs2"
-printf '%s\n' '{"type":"PLANNER_RESPONSE","content":"older"}' '{"type":"PLANNER_RESPONSE","content":"newest"}' \
-  '{"type":"PLANNER_RESPONSE","content":""}' >"$work/logs2/transcript.jsonl"
+printf '%s\n' '{"type":"PLANNER_RESPONSE","content":"older"}' '{"type":"PLANNER_RESPONSE","content":""}' \
+  '{"type":"PLANNER_RESPONSE","content":"newest"}' >"$work/logs2/transcript.jsonl"
 printf '{"type":"PLANNER_RESP' >>"$work/logs2/transcript.jsonl"
 check "$(run agy "{\"conversationId\":\"11111111-2222-4333-8444-555555555555\",\"transcriptPath\":\"$work/logs2/transcript.jsonl\"}" Stop | jq -r .last_assistant_message)" "newest"
 # Only the last MiB is read: a reply further back is not looked for.
