@@ -27,6 +27,34 @@ check() {
 check "$(run agy '{"conversationId":"11111111-2222-4333-8444-555555555555","workspacePaths":["/repo"],"lastUserInput":"hello"}' PreInvocation)" \
   '{"session_id":"11111111-2222-4333-8444-555555555555","hook_event_name":"UserPromptSubmit","cwd":"/repo","transcript_path":"","prompt":"hello","last_assistant_message":"","tool_name":"","tool_input":{},"tool_response":null,"agent_id":"","engine":"agy","source":""}'
 
+# AGY tool mapping & input normalization
+check "$(run agy '{"conversationId":"11111111-2222-4333-8444-555555555555","toolCall":{"name":"run_command","args":{"CommandLine":"make test"}}}' PreToolUse)" \
+  '{"session_id":"11111111-2222-4333-8444-555555555555","hook_event_name":"PreToolUse","cwd":"","transcript_path":"","prompt":"","last_assistant_message":"","tool_name":"Bash","tool_input":{"CommandLine":"make test","command":"make test"},"tool_response":null,"agent_id":"","engine":"agy","source":""}'
+
+check "$(run agy '{"conversationId":"11111111-2222-4333-8444-555555555555","toolCall":{"name":"edit_file","args":{"Path":"/repo/file.txt"}}}' PostToolUse)" \
+  '{"session_id":"11111111-2222-4333-8444-555555555555","hook_event_name":"PostToolUse","cwd":"","transcript_path":"","prompt":"","last_assistant_message":"","tool_name":"Edit","tool_input":{"Path":"/repo/file.txt","file_path":"/repo/file.txt"},"tool_response":null,"agent_id":"","engine":"agy","source":""}'
+
+check "$(run agy '{"conversationId":"11111111-2222-4333-8444-555555555555","toolCall":{"name":"write_file","args":{"Path":"/repo/file.txt"}}}' PostToolUse)" \
+  '{"session_id":"11111111-2222-4333-8444-555555555555","hook_event_name":"PostToolUse","cwd":"","transcript_path":"","prompt":"","last_assistant_message":"","tool_name":"Write","tool_input":{"Path":"/repo/file.txt","file_path":"/repo/file.txt"},"tool_response":null,"agent_id":"","engine":"agy","source":""}'
+
+check "$(run agy '{"conversationId":"11111111-2222-4333-8444-555555555555","toolCall":{"name":"invoke_subagent","args":{"Prompt":"do task","TypeName":"general"}}}' PreToolUse)" \
+  '{"session_id":"11111111-2222-4333-8444-555555555555","hook_event_name":"PreToolUse","cwd":"","transcript_path":"","prompt":"","last_assistant_message":"","tool_name":"Agent","tool_input":{"Prompt":"do task","TypeName":"general","prompt":"do task","subagent_type":"general"},"tool_response":null,"agent_id":"","engine":"agy","source":""}'
+
+check "$(run agy '{"conversationId":"11111111-2222-4333-8444-555555555555","toolCall":{"name":"ask_question","args":{"questions":[{"question":"choice?"}]}}}' PreToolUse)" \
+  '{"session_id":"11111111-2222-4333-8444-555555555555","hook_event_name":"PreToolUse","cwd":"","transcript_path":"","prompt":"","last_assistant_message":"","tool_name":"AskUserQuestion","tool_input":{"questions":[{"question":"choice?"}]},"tool_response":null,"agent_id":"","engine":"agy","source":""}'
+
+check "$(run agy '{"conversationId":"11111111-2222-4333-8444-555555555555","toolCall":{"name":"manage_task","args":{"Action":"kill","TaskId":"task-1"}}}' PostToolUse)" \
+  '{"session_id":"11111111-2222-4333-8444-555555555555","hook_event_name":"PostToolUse","cwd":"","transcript_path":"","prompt":"","last_assistant_message":"","tool_name":"TaskStop","tool_input":{"Action":"kill","TaskId":"task-1","task_id":"task-1"},"tool_response":null,"agent_id":"","engine":"agy","source":""}'
+
+# AGY Stop hook harvests assistant reply from transcript
+mkdir -p "$work/logs"
+cat >"$work/logs/transcript.jsonl" <<'EOF'
+{"type":"USER_INPUT","content":"hello"}
+{"type":"PLANNER_RESPONSE","content":"Hello! I can help you with that."}
+EOF
+check "$(run agy "{\"conversationId\":\"11111111-2222-4333-8444-555555555555\",\"transcriptPath\":\"$work/logs/transcript.jsonl\"}" Stop)" \
+  "{\"session_id\":\"11111111-2222-4333-8444-555555555555\",\"hook_event_name\":\"Stop\",\"cwd\":\"\",\"transcript_path\":\"$work/logs/transcript.jsonl\",\"prompt\":\"\",\"last_assistant_message\":\"Hello! I can help you with that.\",\"tool_name\":\"\",\"tool_input\":{},\"tool_response\":null,\"agent_id\":\"\",\"engine\":\"agy\",\"source\":\"\"}"
+
 check "$(run copilot '{"sessionId":"11111111-2222-4333-8444-555555555555","cwd":"/repo","toolName":"Read","toolInput":{"path":"x"}}' preToolUse)" \
   '{"session_id":"11111111-2222-4333-8444-555555555555","hook_event_name":"PreToolUse","cwd":"/repo","transcript_path":"","prompt":"","last_assistant_message":"","tool_name":"Read","tool_input":{"path":"x"},"tool_response":null,"agent_id":"","engine":"copilot","source":""}'
 
