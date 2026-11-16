@@ -1,25 +1,17 @@
 {
-  "hooks": {
+  "klepsydra": {
     "SessionStart": [
       {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "~/.claude/klepsydra-engine.sh agy SessionStart",
-            "async": true
-          }
-        ]
+        "type": "command",
+        "command": "bash ~/.claude/klepsydra-engine.sh agy SessionStart",
+        "timeout": 10
       }
     ],
     "PreInvocation": [
       {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "~/.claude/klepsydra-engine.sh agy PreInvocation",
-            "async": true
-          }
-        ]
+        "type": "command",
+        "command": "bash ~/.claude/klepsydra-engine.sh agy PreInvocation",
+        "timeout": 10
       }
     ],
     "PreToolUse": [
@@ -28,8 +20,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "~/.claude/klepsydra-engine.sh agy PreToolUse",
-            "async": true
+            "command": "bash ~/.claude/klepsydra-engine.sh agy PreToolUse",
+            "timeout": 10
           }
         ]
       }
@@ -40,21 +32,17 @@
         "hooks": [
           {
             "type": "command",
-            "command": "~/.claude/klepsydra-engine.sh agy PostToolUse",
-            "async": true
+            "command": "bash ~/.claude/klepsydra-engine.sh agy PostToolUse",
+            "timeout": 10
           }
         ]
       }
     ],
     "Stop": [
       {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "~/.claude/klepsydra-engine.sh agy Stop",
-            "async": true
-          }
-        ]
+        "type": "command",
+        "command": "bash ~/.claude/klepsydra-engine.sh agy Stop",
+        "timeout": 10
       }
     ]
   }

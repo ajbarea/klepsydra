@@ -60,6 +60,32 @@ for c in "${HOOK_COPIES[@]}"; do
     failed=1
   fi
 done
+
+# Antigravity (AGY) discovers lifecycle hooks in ~/.gemini/config/hooks.json.
+gemini_config=${GEMINI_CONFIG_DIR:-${HOME:-}/.gemini/config}
+if [[ -d ${gemini_config%/*} || -d $gemini_config ]]; then
+  agy_src=$root/hooks/klepsydra-agy.json
+  agy_dest=$gemini_config/hooks.json
+  if [[ -f $agy_src ]]; then
+    if (( dry )); then
+      printf 'would: configure agy hooks in %s\n' "$agy_dest"
+    else
+      if mkdir -p "$gemini_config"; then
+        if [[ -f $agy_dest ]]; then
+          merged=$(jq -s '.[0] + .[1]' "$agy_dest" "$agy_src" 2>/dev/null) &&
+            printf '%s\n' "$merged" >"$agy_dest.tmp.$$" &&
+            mv -f "$agy_dest.tmp.$$" "$agy_dest" &&
+            ilog INFO "updated agy hooks" file="$agy_dest" || failed=1
+        else
+          cp -p "$agy_src" "$agy_dest" && ilog INFO "installed agy hooks" file="$agy_dest" || failed=1
+        fi
+      else
+        failed=1
+      fi
+    fi
+  fi
+fi
+
 # A running fleet server read its conf when it started, so it never sees a new
 # hook: tmux-conf.sh has it read the installed conf now (#290). Off in the
 # suite, which tests the script itself (FLEET_LIVE_CONF=0).
