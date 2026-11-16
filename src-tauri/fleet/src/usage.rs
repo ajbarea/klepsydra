@@ -139,6 +139,9 @@ pub fn phone_view(readings: &[Value]) -> Value {
             if let Some(label) = r.get("label").filter(|v| v.is_string()) {
                 o.insert("label".into(), label.clone());
             }
+            if let Some(harness) = r.get("harness").filter(|v| v.is_string()) {
+                o.insert("harness".into(), harness.clone());
+            }
             for k in STAMPS {
                 if let Some(t) = r.get(k).filter(|v| v.is_number()) {
                     o.insert(k.into(), t.clone());
@@ -178,7 +181,7 @@ mod tests {
 
     fn reading(account: &str, label: &str, session: &str, pct: u32) -> Value {
         json!({
-            "account": account, "label": label, "session": session,
+            "account": account, "label": label, "harness": "claude", "session": session,
             "written_at": 1_800_000_000, "observed_at": 1_800_000_000, "api_ms": 41_234,
             "windows": {
                 "five_hour": {"used_percentage": pct, "resets_at": 1_800_003_600, "extra": "x"},
@@ -236,7 +239,7 @@ mod tests {
         assert_eq!(
             v,
             json!([{
-                "account": "a1", "label": "Personal",
+                "account": "a1", "label": "Personal", "harness": "claude",
                 "observed_at": 1_800_000_000, "written_at": 1_800_000_000,
                 "windows": {
                     "five_hour": {"used_percentage": 57, "resets_at": 1_800_003_600},

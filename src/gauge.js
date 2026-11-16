@@ -41,7 +41,7 @@ export const HARNESS_LABELS = {
   api: "API Keys",
 };
 
-export const ROUTE_ORDER = ["agy_gemini", "copilot", "api_credit", "claude_subscription"];
+export const ROUTE_ORDER = ["agy_gemini", "agy_claude_gpt", "copilot", "api_credit", "claude_subscription"];
 
 /**
  * The lane the fleet should try next. A model group is a lane of its own:
@@ -50,11 +50,27 @@ export const ROUTE_ORDER = ["agy_gemini", "copilot", "api_credit", "claude_subsc
 export function routeLane(row) {
   const harness = row?.harness;
   const window = row?.window;
-  if (harness === "agy" && window === "gemini") return "agy_gemini";
+  if (harness === "agy" && ["five_hour", "seven_day"].includes(window)) return "agy_gemini";
+  if (harness === "agy" && window === "claude_gpt") return "agy_claude_gpt";
   if (harness === "copilot") return "copilot";
   if (harness === "api" || ["ai_credits", "personal", "ldqis", "claude_gpt"].includes(window)) return "api_credit";
   return "claude_subscription";
 }
+
+const routeGroup = (row) => {
+  const lane = routeLane(row);
+  // API credit and Copilot windows are separate model pools; Claude and AGY
+  // Gemini windows are coupled limits for one account.
+  const model = ["api_credit", "copilot"].includes(lane) ? row.window : lane;
+  return `${row.account}\u0000${model}`;
+};
+
+const hasRoom = (row) => {
+  if (!Number.isFinite(row.pct)) return false;
+  if (row.window === "five_hour") return row.pct < 90;
+  if (row.window === "seven_day") return row.pct < 95;
+  return row.pct < 100;
+};
 
 const WINDOW_LABELS = {
   five_hour: "Current session",
@@ -441,17 +457,27 @@ export function toRows(payload, nowMs = Date.now()) {
     }
   }
 
-  // Route recommendation follows the same free-first order as the fleet:
-  // choose one uncapped row from the first lane with room, preferring the
-  // lowest usage within that lane.
-  const bestByLane = new Map();
+  // Route recommendation follows the same free-first order as the fleet.
+  // Windows that constrain the same account/model group must all have room;
+  // otherwise a low row can recommend a route that cannot actually run.
+  const groups = new Map();
   for (const row of rows) {
     row.isBestRoute = false;
-    if (row.isCapped) continue;
-    const lane = routeLane(row);
-    const best = bestByLane.get(lane);
-    if (!best || row.pct < best.pct) bestByLane.set(lane, row);
+    const key = routeGroup(row);
+    if (!groups.has(key)) groups.set(key, { lane: routeLane(row), rows: [] });
+    groups.get(key).rows.push(row);
   }
+
+  const bestByLane = new Map();
+  for (const group of groups.values()) {
+    const required = group.lane === "agy_gemini" ? ["five_hour", "seven_day"] : [];
+    const keys = new Set(group.rows.map((row) => row.window));
+    if (required.some((key) => !keys.has(key)) || !group.rows.every(hasRoom)) continue;
+    const best = group.rows.reduce((a, b) => (b.pct < a.pct ? b : a));
+    const current = bestByLane.get(group.lane);
+    if (!current || best.pct < current.pct) bestByLane.set(group.lane, best);
+  }
+
   for (const lane of ROUTE_ORDER) {
     const best = bestByLane.get(lane);
     if (best) {
