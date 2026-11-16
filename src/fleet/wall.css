@@ -1550,6 +1550,20 @@ a.remote:focus-visible { outline: 2px solid var(--card-focus); outline-offset: 2
 .limits .pct { grid-area: pct; font: 600 17px/1.2 var(--display); font-variant-numeric: tabular-nums; color: var(--text); }
 .limits .sub { grid-area: sub; min-width: 0; color: var(--text-dim); font-size: 13px; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
 .limits .label { grid-area: label; min-width: 0; color: var(--text-dim); font-size: 12.5px; overflow-wrap: anywhere; }
+.limits .entry[data-capped="true"] { filter: grayscale(0.85); color: var(--text-dim); }
+.limits .route-badge {
+  display: inline-block;
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 1px 4px;
+  border-radius: 3px;
+  background: var(--ramp-mid, #eab308);
+  color: #111;
+  line-height: 1;
+  vertical-align: middle;
+}
 .limit-wait { color: var(--text-dim); font-size: 12.5px; }
 /* The wall is dark in either scheme; Safari's own parts follow it. */
 .served { color-scheme: dark; }

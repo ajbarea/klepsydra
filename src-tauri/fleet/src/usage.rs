@@ -102,7 +102,16 @@ fn account_key(reading: &Object) -> String {
 }
 
 /// The windows the gauge draws (gauge.js WINDOW_ORDER); no other reaches the phone.
-pub const WINDOWS: [&str; 3] = ["five_hour", "seven_day", "spend_limit"];
+pub const WINDOWS: [&str; 8] = [
+    "five_hour",
+    "seven_day",
+    "spend_limit",
+    "gemini",
+    "claude_gpt",
+    "ai_credits",
+    "personal",
+    "ldqis",
+];
 
 /// The readings as the phone gets them, one per session, unmerged (gauge.js
 /// reconciles them): each cut to its label, its times and each of `WINDOWS`'

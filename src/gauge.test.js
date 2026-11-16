@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { WINDOW_ORDER, rampColor, rampPosition, formatCountdown, formatCountdownShort, formatAge, formatAgeShort, evaluate, formatPct, formatPctShort, ringDash, ringCap, ringStyle, entryText, usageRows, toRows, SHOW_AGE_AFTER_MS, DROP_AFTER_MS, WAITING } from "./gauge.js";
+import { WINDOW_ORDER, rampColor, rampPosition, formatCountdown, formatCountdownShort, formatAge, formatAgeShort, evaluate, formatPct, formatPctShort, ringDash, ringCap, ringStyle, entryText, usageRows, toRows, SHOW_AGE_AFTER_MS, DROP_AFTER_MS, WAITING, harnessOf, windowNote, harnessGroups } from "./gauge.js";
 
 const STOPS = { low: "#3b82f6", mid: "#eab308", high: "#ef4444", midAt: 60, highAt: 85 };
 const NOW = 1_800_000_000_000; // fixed clock
@@ -520,4 +520,70 @@ test("the phone server sends exactly the windows the gauge draws", async () => {
   const rs = readFileSync(new URL("../src-tauri/fleet/src/usage.rs", import.meta.url), "utf8");
   const list = rs.match(/pub const WINDOWS: \[&str; \d+\] = \[([^\]]*)\];/)[1];
   assert.deepEqual([...list.matchAll(/"(\w+)"/g)].map((m) => m[1]), WINDOW_ORDER);
+});
+
+test("harnessOf classifies harness from account prefix or engine", () => {
+  assert.equal(harnessOf({ account: "agy-primary" }), "agy");
+  assert.equal(harnessOf({ engine: "agy" }), "agy");
+  assert.equal(harnessOf({ account: "copilot-work" }), "copilot");
+  assert.equal(harnessOf({ engine: "copilot" }), "copilot");
+  assert.equal(harnessOf({ account: "api-anthropic" }), "api");
+  assert.equal(harnessOf({ account: "6f5fe38b" }), "claude");
+  assert.equal(harnessOf({ harness: "custom" }), "custom");
+});
+
+test("windowNote provides expiry advisory for claude_gpt", () => {
+  assert.equal(windowNote("claude_gpt"), "ends Nov 18");
+  assert.equal(windowNote("five_hour"), null);
+  assert.equal(windowNote("gemini"), null);
+});
+
+test("multi-harness toRows tags rows with harness, advisory notes, and route recommendation", () => {
+  const claudeAcct = {
+    account: "6f5fe38b",
+    label: "Personal",
+    written_at: secs(NOW),
+    observed_at: secs(NOW),
+    windows: {
+      five_hour: { used_percentage: 100, resets_at: secs(NOW + 3600e3) },
+      seven_day: { used_percentage: 45, resets_at: secs(NOW + 86400e3) },
+    },
+  };
+  const agyAcct = {
+    account: "agy-account",
+    label: "Antigravity",
+    written_at: secs(NOW),
+    observed_at: secs(NOW),
+    windows: {
+      gemini: { used_percentage: 20, resets_at: secs(NOW + 7200e3) },
+      claude_gpt: { used_percentage: 60, resets_at: secs(NOW + 7200e3) },
+    },
+  };
+
+  const rows = toRows([claudeAcct, agyAcct], NOW);
+  assert.equal(rows.length, 4);
+
+  // Claude rows
+  const claude5h = rows.find((r) => r.key === "6f5fe38b:five_hour");
+  assert.equal(claude5h.harness, "claude");
+  assert.equal(claude5h.isCapped, true);
+  assert.equal(claude5h.isBestRoute, false);
+
+  // AGY rows
+  const agyGemini = rows.find((r) => r.key === "agy-account:gemini");
+  assert.equal(agyGemini.harness, "agy");
+  assert.equal(agyGemini.isCapped, false);
+  assert.equal(agyGemini.isBestRoute, true, "AGY is uncapped and recommended route when Claude is capped");
+
+  const agyClaudeGpt = rows.find((r) => r.key === "agy-account:claude_gpt");
+  assert.equal(agyClaudeGpt.note, "ends Nov 18");
+  assert.equal(agyClaudeGpt.isBestRoute, true);
+
+  // Groups
+  const groups = harnessGroups(rows);
+  assert.equal(groups.length, 2);
+  assert.equal(groups[0].harness, "claude");
+  assert.equal(groups[0].isCapped, false); // seven_day is 45% so not all capped, but Claude's bottleneck is 100%
+  assert.equal(groups[1].harness, "agy");
+  assert.equal(groups[1].isBestRoute, true);
 });

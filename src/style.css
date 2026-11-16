@@ -169,6 +169,20 @@ html, body {
 #rows { display: flex; flex-direction: column; gap: calc(7px * var(--scale)); }
 
 .entry { display: flex; flex-direction: column; gap: calc(4px * var(--scale)); }
+.entry[data-capped="true"] { filter: grayscale(0.85); color: var(--text-dim, #888); }
+.route-badge {
+  display: inline-block;
+  font-size: calc(9px * var(--scale));
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: calc(1px * var(--scale)) calc(4px * var(--scale));
+  border-radius: calc(3px * var(--scale));
+  background: var(--ramp-mid, #eab308);
+  color: #111;
+  line-height: 1;
+  vertical-align: middle;
+}
 
 /* The new size, shown briefly while scrolling on the grip. */
 #zoom {

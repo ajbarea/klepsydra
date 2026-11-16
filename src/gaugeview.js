@@ -56,12 +56,20 @@ export function makeEntry(key, spoken = false) {
 /** Draw `row` on `entry`: its words, the bar's and the ring's fill, the ramp's colour. */
 export function paintEntry(entry, row, { compact, stops, mode }) {
   const text = entryText(row, compact);
-  entry.querySelector(".label").textContent = text.label;
+  const label = entry.querySelector(".label");
+  label.textContent = text.label;
+  if (row.isBestRoute) {
+    const route = Object.assign(document.createElement("span"), { className: "route-badge", textContent: "Route" });
+    label.append(" ", route);
+  }
   entry.querySelector(".pct").textContent = text.pct;
   entry.querySelector(".sub").textContent = text.sub;
   const spoken = entry.querySelector(".spoken");
   if (spoken) spoken.textContent = text.spoken;
   entry.dataset.state = row.state;
+  if (row.harness) entry.dataset.harness = row.harness;
+  if (row.isCapped) entry.dataset.capped = "true";
+  else delete entry.dataset.capped;
 
   const colour = rampColor(row.pct ?? 0, stops, mode);
   const fill = entry.querySelector(".fill");

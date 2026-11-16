@@ -21,19 +21,61 @@ export const WINDOW_MATCH_SECONDS = 90;
 const num = (x) => (typeof x === "number" && Number.isFinite(x) ? x : Number.NaN);
 
 // Fixed display order, so rows never reshuffle between polls.
-export const WINDOW_ORDER = ["five_hour", "seven_day", "spend_limit"];
+export const WINDOW_ORDER = [
+  "five_hour",
+  "seven_day",
+  "spend_limit",
+  "gemini",
+  "claude_gpt",
+  "ai_credits",
+  "personal",
+  "ldqis",
+];
+
+export const HARNESS_ORDER = ["claude", "agy", "copilot", "api"];
+
+export const HARNESS_LABELS = {
+  claude: "Claude Code",
+  agy: "Antigravity",
+  copilot: "Copilot",
+  api: "API Keys",
+};
 
 const WINDOW_LABELS = {
   five_hour: "Current session",
   seven_day: "This week",
   spend_limit: "Spend limit",
+  gemini: "Gemini models",
+  claude_gpt: "Claude & GPT",
+  ai_credits: "AI Credits",
+  personal: "Personal API",
+  ldqis: "LDQIS API",
 };
 // Shorter forms, used once an account name is already carrying context.
 const WINDOW_SHORT = {
   five_hour: "session",
   seven_day: "week",
   spend_limit: "spend",
+  gemini: "gemini",
+  claude_gpt: "claude/gpt",
+  ai_credits: "credits",
+  personal: "personal",
+  ldqis: "ldqis",
 };
+
+export function harnessOf(entry) {
+  if (entry?.harness) return entry.harness;
+  const acct = String(entry?.account ?? "");
+  if (acct.startsWith("agy") || entry?.engine === "agy") return "agy";
+  if (acct.startsWith("copilot") || entry?.engine === "copilot") return "copilot";
+  if (acct.startsWith("api")) return "api";
+  return "claude";
+}
+
+export function windowNote(key) {
+  if (key === "claude_gpt") return "ends Nov 18";
+  return null;
+}
 
 export function windowLabel(key) {
   return WINDOW_LABELS[key] ?? key;
@@ -219,10 +261,14 @@ export function ringStyle(pct, cap) {
  * and one sentence for a screen reader, which reads the full forms.
  */
 export function entryText(row, compact) {
+  let sub = compact ? row.short : row.sub;
+  if (row.note && !sub.includes(row.note)) {
+    sub = `${sub} \u00b7 ${row.note}`;
+  }
   return {
     label: row.label,
     pct: compact ? formatPctShort(row.pct) : formatPct(row.pct),
-    sub: compact ? row.short : row.sub,
+    sub,
     spoken: `${row.label}: ${formatPct(row.pct)}. ${row.sub}`,
   };
 }
@@ -335,6 +381,7 @@ export function toRows(payload, nowMs = Date.now()) {
       // The newest reading names the account: an organisation renamed shows
       // its new name, and dropping older readings never changes it.
       label: (newest.find((s) => s.label) ?? sessions.find((s) => s.label))?.label ?? "Claude",
+      harness: harnessOf(newest[0] ?? sessions[0]),
       written_at: writtenAt,
       windows,
     });
@@ -359,16 +406,71 @@ export function toRows(payload, nowMs = Date.now()) {
   const multi = fresh.length > 1;
   const rows = [];
   for (const p of fresh) {
+    const h = p.harness ?? "claude";
     for (const key of WINDOW_ORDER) {
       if (!p.windows[key]) continue;
       const r = evaluate(p, key, nowMs);
       if (r.state === "waiting") continue;
+      const note = windowNote(key) ?? p.note ?? null;
       rows.push({
         ...r,
         key: `${p.account}:${key}`,
+        account: p.account,
+        harness: h,
+        harnessLabel: HARNESS_LABELS[h] ?? h,
+        note,
+        isCapped: r.pct >= 100 || r.state === "waiting",
         label: multi ? `${p.label} \u00b7 ${WINDOW_SHORT[key] ?? key}` : r.label,
       });
     }
   }
+
+  // Route recommendation across harnesses (#393):
+  // Identify the uncapped account/harness with the lowest bottleneck usage.
+  const maxUsageByAccount = new Map();
+  for (const row of rows) {
+    const prev = maxUsageByAccount.get(row.account) ?? 0;
+    maxUsageByAccount.set(row.account, Math.max(prev, row.pct));
+  }
+
+  let bestAccount = null;
+  let lowestUsage = Number.POSITIVE_INFINITY;
+  for (const [acct, maxPct] of maxUsageByAccount) {
+    if (maxPct < 100 && maxPct < lowestUsage) {
+      lowestUsage = maxPct;
+      bestAccount = acct;
+    }
+  }
+
+  for (const row of rows) {
+    row.isBestRoute = Boolean(bestAccount && row.account === bestAccount);
+  }
+
   return rows;
+}
+
+/**
+ * Group evaluated usage rows by harness for dashboard grouping (#393).
+ * Returns array of { harness, label, isCapped, isBestRoute, rows }.
+ */
+export function harnessGroups(rows) {
+  if (!Array.isArray(rows) || rows.length === 0) return [];
+  const groups = new Map();
+  for (const row of rows) {
+    const h = row.harness ?? "claude";
+    if (!groups.has(h)) {
+      groups.set(h, {
+        harness: h,
+        label: HARNESS_LABELS[h] ?? h,
+        isCapped: true,
+        isBestRoute: false,
+        rows: [],
+      });
+    }
+    const g = groups.get(h);
+    g.rows.push(row);
+    if (!row.isCapped) g.isCapped = false;
+    if (row.isBestRoute) g.isBestRoute = true;
+  }
+  return HARNESS_ORDER.filter((h) => groups.has(h)).map((h) => groups.get(h));
 }

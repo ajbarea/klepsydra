@@ -53,6 +53,23 @@ case $cmd in
         printf '  %s: not logged in (%s)\n' "$dir" "$hint"
       fi
     done
+    for acct_dir in "$KLEPSYDRA_DIR"/accounts/*; do
+      [[ -d "$acct_dir" ]] || continue
+      acct=$(basename "$acct_dir")
+      skip=0
+      for dir in $FLEET_ACCOUNTS; do
+        if id=$(account_of "$dir") && [[ "$id" == "$acct" ]]; then skip=1; break; fi
+      done
+      (( skip )) && continue
+      f=$(reading_of "$acct") || continue
+      lbl=$(account_label "$acct")
+      windows_info=$(jq -r --argjson now "$now" '
+        def room(w): if w == null or (w.resets_at // 0) <= $now then 100
+          else 100 - (w.used_percentage // 0) end;
+        .windows | to_entries[] | "\(.key) room \((room(.value) | floor))%"
+      ' "$f" 2>/dev/null | tr '\n' ', ' | sed 's/, $//')
+      [[ -n $windows_info ]] && printf '  %s: %s, %s\n' "$acct" "$lbl" "$windows_info"
+    done
     ;;
   log)
     # shellcheck source=fleet/lib.sh
