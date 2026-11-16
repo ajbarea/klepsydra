@@ -569,6 +569,20 @@ free_face() { # fleet self cleared hint [clear_pane] [succeeds]
   printf '%s' "$4"
 }
 
+# The face free_face gives a new orchestrator session SID now, with SUCCEEDS
+# the session a move replaces: launch.sh starts it with this voice, so the
+# voice it speaks in is the face its card wears.
+face_now() { # sid [succeeds]
+  local name="" hint=$HEPH_VOICE succeeds=""
+  [[ $1 =~ $UUID_RE ]] || return 0
+  [[ ${2:-} =~ $UUID_RE ]] && succeeds=$2
+  { read -r name <"${FLEET_STATE:-${HOME:-}/.local/state/fleet-orchestrator}/orchestrator.face"; } 2>/dev/null
+  name=${name//[$'\r\t ']/}
+  [[ ${name,,} == athena ]] && hint=$ATHENA_VOICE
+  host_facts
+  free_face "$KLEPSYDRA_DIR/fleet" "$1" "" "$hint" "" "$succeeds"
+}
+
 # The session file after one event, as compact JSON, or nothing when no field
 # changed. `$old` is the current file's text (empty for none).
 read -r -d '' APPLY <<'JQ' || true
@@ -1149,6 +1163,8 @@ main() {
   orch_name=${orch_name//[$'\r\t ']/}
   local orch_face=$HEPH_VOICE cleared_face=""
   [[ ${orch_name,,} == athena ]] && orch_face=$ATHENA_VOICE
+  # A launch names the face it asked free_face for (face_now): on a tie it wins.
+  case ${KERYX_VOICE:-} in "$HEPH_VOICE" | "$ATHENA_VOICE") orch_face=$KERYX_VOICE ;; esac
   [[ $agent =~ ^[A-Za-z0-9._-]{1,64}$ ]] || agent=""
   { read -r orch_sid <"$orch_state/orchestrator.session"; } 2>/dev/null
   { read -r orch_pane <"$orch_state/orchestrator.pane"; } 2>/dev/null
@@ -1246,6 +1262,10 @@ if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
   if [[ ${1:-} == queue || ${1:-} == needs ]]; then
     queue_cmd "$@"
     exit
+  fi
+  if [[ ${1:-} == face ]]; then
+    face_now "${2:-}" "${3:-}"
+    exit 0
   fi
   if [[ ${1:-} == watch-ask ]]; then
     (watch_ask "${2:-}") >/dev/null 2>&1

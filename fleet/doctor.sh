@@ -254,8 +254,8 @@ phone() { # CHECK BASE
   body=$(timeout "$((wait_s + 2))" $CURL -fsS --max-time "$wait_s" "$2/fleet.json" 2>/dev/null)
   rc=$?
   if (( rc != 0 )); then
-    if (( rc == 124 || rc == 28 || rc == 126 || rc == 127 )); then
-      report warn "$1" "could not probe (Windows interop slow or unavailable)" url="$2/fleet.json"
+    if (( rc == 127 )); then
+      report FAIL "$1" "cannot run the probe: ${CURL%% *} is not installed" url="$2/fleet.json"
       return
     fi
     sleep "${FLEET_RETRY_S:-2}"
@@ -263,11 +263,14 @@ phone() { # CHECK BASE
     body=$(timeout "$((wait_s + 2))" $CURL -fsS --max-time "$wait_s" "$2/fleet.json" 2>/dev/null)
     rc=$?
     if (( rc != 0 )); then
-      if (( rc == 124 || rc == 28 || rc == 126 || rc == 127 )); then
-        report warn "$1" "could not probe (Windows interop slow or unavailable)" url="$2/fleet.json"
-        return
+      # A stall twice running is as red as a refusal; only a missing program is at once.
+      if (( rc == 127 )); then
+        report FAIL "$1" "cannot run the probe: ${CURL%% *} is not installed" url="$2/fleet.json"
+      elif (( rc == 124 || rc == 28 || rc == 126 )); then
+        report_debounced "$1" "no answer from $2/fleet.json within ${wait_s} s (tried twice)" url="$2/fleet.json"
+      else
+        report_debounced "$1" "no answer from $2/fleet.json (tried twice)" url="$2/fleet.json"
       fi
-      report_debounced "$1" "no answer from $2/fleet.json (tried twice)" url="$2/fleet.json"
       return
     fi
     # A miss the FAIL above does not cover: logged each time, to show how often.
@@ -288,15 +291,17 @@ if [[ $pw == true ]]; then
   # shellcheck disable=SC2086
   dns_out=$(timeout 5 $TAILSCALE status --json 2>/dev/null)
   ts_rc=$?
-  if (( ts_rc == 124 || ts_rc == 126 || ts_rc == 127 )); then
-    report warn "phone wall over Tailscale" "could not probe (Windows interop slow or unavailable)"
+  if (( ts_rc == 127 )); then
+    report FAIL "phone wall over Tailscale" "Tailscale is not installed"
+  elif (( ts_rc == 124 || ts_rc == 126 )); then
+    report_debounced "phone wall over Tailscale" "Tailscale did not answer within 5 s"
   else
     dns=$(jq -r '.Self.DNSName // empty' <<<"$dns_out" 2>/dev/null | sed 's/\.$//')
     # shellcheck disable=SC2086
     serve_out=$(timeout 5 $TAILSCALE serve status 2>/dev/null)
     serve_rc=$?
     if (( serve_rc == 124 || serve_rc == 126 || serve_rc == 127 )); then
-      report warn "phone wall over Tailscale" "could not probe (Windows interop slow or unavailable)"
+      report_debounced "phone wall over Tailscale" "Tailscale Serve did not answer within 5 s"
     elif [[ -z $dns ]]; then
       report_debounced "phone wall over Tailscale" "Tailscale is not running or not logged in"
     elif [[ -z $serve_out || $serve_out == *"No serve config"* ]]; then
@@ -375,21 +380,20 @@ fi
 # Each live card's character and its terminal's voice (#389): the card decides the session's voice.
 voice_voices=${KERYX_VOICES:-${XDG_CACHE_HOME:-$HOME/.cache}/keryx/voices.json}
 proc_root=${KLEPSYDRA_PROC:-/proc}
+# What keryx speaks is its hold in voices.json (a `keryx voice` pick outranks the
+# session's KERYX_VOICE); the session's KERYX_VOICE stands in when it holds none.
 for f in "$KLEPSYDRA_DIR"/fleet/*.json; do
   [[ -f $f ]] || continue
-  expected=$(jq -r '
-    if .orchestrator == true then (if .orchestrator_face == "bf_emma" or .orchestrator_face == "bf_alice" then "bf_emma" else "am_michael" end)
-    else (.voice // .pick // empty)
-    end' "$f" 2>/dev/null)
-  pid=$(jq -r '.claude.pid // empty' "$f" 2>/dev/null)
-  start=$(jq -r '.claude.start // empty' "$f" 2>/dev/null)
-  ended=$(jq -r '.ended // empty' "$f" 2>/dev/null)
+  IFS=$'\t' read -r expected pid start ended < <(jq -r '[
+    (if .orchestrator == true then (if .orchestrator_face == "bf_emma" or .orchestrator_face == "bf_alice" then "bf_emma" else "am_michael" end)
+     else (.voice // "") end),
+    (.claude.pid // "" | tostring), (.claude.start // "" | tostring), (if .ended then "ended" else "" end)] | @tsv' "$f" 2>/dev/null)
   [[ -z $ended && -n $expected && $pid =~ ^[1-9][0-9]*$ ]] || continue
-  actual=$(tr '\0' '\n' <"$proc_root/$pid/environ" 2>/dev/null |
-    sed -n 's/^KERYX_VOICE=//p' | head -n 1)
-  if [[ -z $actual && -r $voice_voices ]]; then
+  actual=""
+  [[ -r $voice_voices ]] &&
     actual=$(jq -r --arg h "$pid:$start" '.holders[$h].voice // empty | strings' "$voice_voices" 2>/dev/null)
-  fi
+  [[ -n $actual ]] || actual=$(tr '\0' '\n' <"$proc_root/$pid/environ" 2>/dev/null |
+    sed -n 's/^KERYX_VOICE=//p' | head -n 1)
   [[ -n $actual && $actual != "$expected" ]] || continue
   report warn "voice $pid" "card has $expected but terminal has $actual" \
     pid="$pid" expected="$expected" actual="$actual"

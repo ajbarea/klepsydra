@@ -69,58 +69,37 @@ if [[ -d $gd/rebase-merge || -d $gd/rebase-apply || -f $gd/MERGE_HEAD || -n $(gi
   exit 1
 fi
 
+# Up to five items GitHub's search finds for QUERY, one line each.
+done_list() { # query
+  "$FLEET_GH" api -X GET search/issues -f q="$1" -f per_page=5 -f sort=updated \
+    --jq '.items[] | "- [#\(.number)] \(.title | gsub("[\r\n]"; " ")) (\(.repository_url | sub("^.*/repos/"; "")))"' || {
+    flog ERROR "briefing today: GitHub search failed" query="$1"
+    return 1
+  }
+}
+
 write_today() {
-  local today since repos repo raw tmp live pane name state snap
+  local today since owner tmp live pane name state screen_text
   today=$(date +%F)
-  since=$(date -u -d "$today 00:00" '+%Y-%m-%dT%H:%M:%SZ') ||
+  # Local midnight, in the UTC form GitHub's search takes.
+  since=$(date -u -d "@$(date -d "$today 00:00" +%s)" '+%Y-%m-%dT%H:%M:%SZ') ||
     { flog ERROR "briefing today: could not calculate today's start"; return 1; }
+  owner=$("$FLEET_GH" api user --jq .login) && [[ $owner =~ ^[A-Za-z0-9-]{1,39}$ ]] ||
+    { flog ERROR "briefing today: GitHub user lookup failed"; return 1; }
 
   tmp=$(mktemp "$R/today.md.XXXXXX") || {
     flog ERROR "briefing today: could not create temporary file"
     return 1
   }
-  repos=""
-  trap 'rm -f -- "${tmp:-}" "${repos:-}"' RETURN
+  trap 'rm -f -- "${tmp:-}"' RETURN
 
   {
     printf '# Today: %s\n\n' "$today"
+    # One search per list across every repo the owner has, not a call per repo.
     printf '## Done today\n\n### Merged PRs\n'
-    repos=$(mktemp) || return 1
-    if ! "$FLEET_GH" api --paginate 'user/repos?affiliation=owner&per_page=100' --jq '.[].full_name' >"$repos"; then
-      flog ERROR "briefing today: GitHub repository list failed"
-      return 1
-    fi
-    while IFS= read -r repo; do
-      [[ -n $repo ]] || continue
-      if ! raw=$("$FLEET_GH" api --paginate --slurp \
-          "repos/$repo/issues?state=closed&since=$since&per_page=100"); then
-        flog ERROR "briefing today: GitHub repository query failed" repo="$repo"
-        return 1
-      fi
-      jq -r --arg repo "$repo" --arg since "$since" '
-        (if .[0] | type == "array" then flatten else . end)[]
-        | select(.pull_request and .pull_request.merged_at != null)
-        | select(.closed_at >= $since)
-        | "- [#\(.number)] \(.title | gsub("[\r\n]"; " ")) (\($repo))"
-      ' <<<"$raw"
-    done <"$repos" | head -5
-
+    done_list "user:$owner is:pr is:merged merged:>=$since" || return 1
     printf '\n### Closed issues\n'
-    while IFS= read -r repo; do
-      [[ -n $repo ]] || continue
-      if ! raw=$("$FLEET_GH" api --paginate --slurp \
-          "repos/$repo/issues?state=closed&since=$since&per_page=100"); then
-        flog ERROR "briefing today: GitHub repository query failed" repo="$repo"
-        return 1
-      fi
-      jq -r --arg repo "$repo" --arg since "$since" '
-        (if .[0] | type == "array" then flatten else . end)[]
-        | select((.pull_request | not) and .closed_at >= $since)
-        | "- [#\(.number)] \(.title | gsub("[\r\n]"; " ")) (\($repo))"
-      ' <<<"$raw"
-    done <"$repos" | head -5
-    rm -f -- "$repos"
-    repos=""
+    done_list "user:$owner is:issue is:closed closed:>=$since" || return 1
 
     printf '\n## Running now\n\n'
     live=$(fleet_panes 2>/dev/null || true)
@@ -134,9 +113,9 @@ write_today() {
           name=orchestrator
         fi
         state=waiting
-        snap=$(screen "$pane" 2>/dev/null || true)
-        busy "$snap" && state=working
-        [[ $state == waiting ]] && has_input_box "$snap" && state=idle
+        screen_text=$(screen "$pane" 2>/dev/null || true)
+        busy "$screen_text" && state=working
+        [[ $state == waiting ]] && has_input_box "$screen_text" && state=idle
         printf -- '- **%s**: %s\n' "${name:-$pane}" "$state"
       done <<<"$live"
     fi
@@ -166,8 +145,9 @@ write_today() {
   tmp=
 }
 
+# A digest GitHub cannot fill keeps the last one; needs-you.md still syncs.
 if [[ -n ${FLEET_GH:-} ]]; then
-  write_today || exit 1
+  write_today || flog WARN "briefing today: kept the previous digest"
 fi
 
 # Only paths that exist or are tracked: git add stops at the first pathspec that matches nothing.

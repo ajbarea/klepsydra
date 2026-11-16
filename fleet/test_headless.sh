@@ -4,6 +4,8 @@
 # scratch git repo. Starts no tmux server, so it runs without the heavy lock.
 # Run: bash fleet/test_headless.sh
 set -uo pipefail
+# A fleet session runs with its own KERYX_VOICE; no test may inherit it.
+unset KERYX_VOICE
 
 here=$(cd "$(dirname "$0")" && pwd)
 work=$(mktemp -d)

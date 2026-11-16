@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Fixture-driven tests for the fleet hook. Run: bash hooks/test_fleet.sh
 set -uo pipefail
+# A fleet session runs with its own KERYX_VOICE; no test may inherit it.
+unset KERYX_VOICE
 
 here=$(cd "$(dirname "$0")" && pwd)
 hook="$here/klepsydra-fleet.sh"
@@ -1652,6 +1654,10 @@ check "AJ 11-02: a file from when Athena wore bf_alice keeps her, on bf_emma now
 printf 'zeus\n' >"$work/fleet-state/orchestrator.face"
 rm -f "$hfile"; hfire session-start.json "TMUX=$work/sock/klepsydra,1,0" TMUX_PANE=%7
 check "an unknown name is Hephaestus" "$(jq -r .orchestrator_face "$hfile")" "am_michael"
+rm -f "$hfile"; hfire session-start.json "TMUX=$work/sock/klepsydra,1,0" TMUX_PANE=%7 KERYX_VOICE=bf_emma
+check "#395 review: a launch's face voice outranks the file on a tie" "$(jq -r .orchestrator_face "$hfile")" "bf_emma"
+rm -f "$hfile"; hfire session-start.json "TMUX=$work/sock/klepsydra,1,0" TMUX_PANE=%7 KERYX_VOICE=af_bella
+check "#395 review: a launch voice that is no orchestrator face is ignored" "$(jq -r .orchestrator_face "$hfile")" "am_michael"
 printf 'athena\n' >"$work/fleet-state/orchestrator.face"
 rm -f "$hfile"; hfire session-start.json "TMUX=$work/sock/klepsydra,1,0" TMUX_PANE=%7
 jq -c 'del(.orchestrator_face)' "$hfile" >"$work/n" && mv "$work/n" "$hfile"

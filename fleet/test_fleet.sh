@@ -2,6 +2,8 @@
 # Tests for the fleet scripts against a private tmux server and fake Claude
 # Code panes (tests/fake_pane.py), with no real Claude. Run: make test-fleet (it takes the heavy lock)
 set -uo pipefail
+# A fleet session runs with its own KERYX_VOICE; no test may inherit it.
+unset KERYX_VOICE
 
 here=$(cd "$(dirname "$0")" && pwd)
 fake="$here/tests/fake_pane.py"
@@ -804,6 +806,35 @@ check "#389: launch.sh launches the orchestrator with KERYX_VOICE=am_michael" \
   "$(grep -o 'KERYX_VOICE=[^ ]*' "$work/sdrun.calls")" "KERYX_VOICE=am_michael"
 t kill-pane -t "$(sed -E 's/^pane=([^ ]+).*/\1/' <<<"$out")" 2>/dev/null
 
+# #395 review: one rule decides face and voice. The hint says athena, but an
+# Athena card is on the wall, so the hook gives the new Heph Hephaestus
+# (free_face); launch.sh must start it with that voice, not the hint's.
+mkdir -p "$KLEPSYDRA_DIR/fleet" "$work/face-hooks"
+cp "${here%/fleet}/hooks/klepsydra-fleet.sh" "$work/face-hooks/klepsydra-fleet.sh"
+printf '%s\n' '{"v":1,"session_id":"aaaaaaaa-1111-4222-8333-444444444444","orchestrator":true,"orchestrator_face":"bf_emma","ended":{"at":1},"last_active":5}' \
+  >"$KLEPSYDRA_DIR/fleet/aaaaaaaa-1111-4222-8333-444444444444.json"
+printf 'athena\n' >"$FLEET_STATE/orchestrator.face"
+check "#395 review: the hook's face for a new orchestrator is Hephaestus while Athena's card shows" \
+  "$(bash "$work/face-hooks/klepsydra-fleet.sh" face 12345678-1234-4234-8234-123456789012)" "am_michael"
+: >"$work/sdrun.calls"
+out=$(FLEET_HOOK_DIR="$work/face-hooks" FLEET_SETTINGS='' FLEET_SCOPE=1 FLEET_SYSTEMD_RUN="$work/systemd-run" FLEET_CGROUP_ROOT="$cgr" FLEET_CGROUP=$leaf FLEET_MIN_AVAIL_MB=0 \
+  FLEET_LAUNCHER="$work/launcher.sh" FLEET_DIR="$work" FLEET_CLAUDE="python3 -I $fake $work/voice-orch2.json $work/voice-orch2.log" \
+  bash "$here/launch.sh" heph "$work/task.src" 2>/dev/null | head -1)
+check "#395 review: launch.sh starts that orchestrator with the card's voice, not the hint's" \
+  "$(grep -o 'KERYX_VOICE=[^ ]*' "$work/sdrun.calls")" "KERYX_VOICE=am_michael"
+t kill-pane -t "$(sed -E 's/^pane=([^ ]+).*/\1/' <<<"$out")" 2>/dev/null
+rm -f "$FLEET_STATE/orchestrator.face" "$KLEPSYDRA_DIR/fleet/aaaaaaaa-1111-4222-8333-444444444444.json"
+
+# A session that launches another never hands it its own voice: Heph with
+# KERYX_VOICE=bf_emma launching a worker with no pick.
+: >"$work/sdrun.calls"
+out=$(KERYX_VOICE=bf_emma FLEET_SETTINGS='' FLEET_SCOPE=1 FLEET_SYSTEMD_RUN="$work/systemd-run" FLEET_CGROUP_ROOT="$cgr" FLEET_CGROUP=$leaf FLEET_MIN_AVAIL_MB=0 \
+  FLEET_LAUNCHER="$work/launcher.sh" FLEET_DIR="$work" FLEET_CLAUDE="python3 -I $fake $work/voice-inh.json $work/voice-inh.log" \
+  bash "$here/launch.sh" vplain "$work/task.src" 2>/dev/null | head -1)
+check "#395 review: a worker launched from a session with KERYX_VOICE gets none, and the variable is cleared" \
+  "$(grep -c 'KERYX_VOICE=' "$work/sdrun.calls") $(grep -c -- '-u KERYX_VOICE' "$work/sdrun.calls")" "0 1"
+t kill-pane -t "$(sed -E 's/^pane=([^ ]+).*/\1/' <<<"$out")" 2>/dev/null
+
 mkdir -p "$KLEPSYDRA_DIR"
 echo '{"agent:vworker": "af_bella"}' >"$KLEPSYDRA_DIR/picks.json"
 : >"$work/sdrun.calls"
@@ -1348,7 +1379,7 @@ check "#379: idle past FLEET_BROWSER_IDLE_MIN warns" \
 bproc 4310 1 chrome /opt/google/chrome/chrome "--user-data-dir=$bc/mcp-chrome-bb"
 check "#379: one whose MCP server is gone warns" \
   "$(doctor | grep -c '^warn MCP browsers: pid 4301 (session dddddddd, idle 5 min); pid 4310 (no session, idle ?, its MCP server is gone)')" "1"
-djson() { doc_prefs; FLEET_PS="$work/bin/ps" FLEET_SYSTEMCTL="$work/bin/systemctl" FLEET_CURL="$work/bin/curl" FLEET_TAILSCALE="$work/bin/tailscale" \
+djson() { doc_prefs; FLEET_PS="$work/bin/ps" FLEET_SYSTEMCTL="$work/bin/systemctl" FLEET_CURL="${FLEET_CURL:-$work/bin/curl}" FLEET_TAILSCALE="${FLEET_TAILSCALE:-$work/bin/tailscale}" \
   DOC_ACTIVE="$work/active" DOC_FLEET="$work/fleet.json" bash "$here/doctor.sh" --json "$work/health.json" >/dev/null 2>&1; echo $?; rm -f -- "$KLEPSYDRA_DIR/prefs.json"; }
 : >"$FLEET_LOG"; rm -f "$work/health.json"
 check "#208: --json writes each check with its status and detail, and exits as doctor does" \
@@ -1390,23 +1421,28 @@ DOC_PREFS='{"phone_wall": false}' djson >/dev/null
 check "#328 review 1: a failing phone wall switched off logs that, not a recovery" \
   "$(jq -r 'select(.message | startswith("doctor: phone wall")) | .message' "$FLEET_LOG" | paste -sd'|')" "doctor: phone wall switched off"
 
-# #392: Windows probe timeout / interop stall warns, never fails; refusal on two runs fails (debounced).
+# #392: a Windows probe stall is debounced in --json like a refusal: a warning
+# the first time, FAIL on two runs in a row (#398 review: never a warning forever).
 rm -f "$work/health.json"
-cat >"$work/bin/curl-timeout" <<'EOF'
-#!/usr/bin/env bash
-exit 124
-EOF
+printf '#!/usr/bin/env bash\nexit 124\n' >"$work/bin/curl-timeout"
 chmod +x "$work/bin/curl-timeout"
-check "#392: a stalled curl probe warns, never fails" \
-  "$(FLEET_CURL="$work/bin/curl-timeout" doctor | grep -E '^(ok|warn|FAIL) +phone wall:' | awk '{print $1}')" "warn"
-
-cat >"$work/bin/tailscale-timeout" <<'EOF'
-#!/usr/bin/env bash
-exit 124
-EOF
+FLEET_CURL="$work/bin/curl-timeout" djson >/dev/null
+check "#392: a stalled curl probe on run 1 warns in --json" \
+  "$(jq -r '.checks[] | select(.check == "phone wall") | .status' "$work/health.json")" "warn"
+FLEET_CURL="$work/bin/curl-timeout" djson >/dev/null
+check "#398 review: and stalled on the next run too, it fails" \
+  "$(jq -r '.checks[] | select(.check == "phone wall") | .status' "$work/health.json")" "FAIL"
+rm -f "$work/health.json"
+check "#398 review: curl not installed fails at once" \
+  "$(FLEET_CURL="$work/bin/no-such-curl" doctor | grep -E '^(ok|warn|FAIL) +phone wall:' | awk '{print $1}')" "FAIL"
+printf '#!/usr/bin/env bash\nexit 124\n' >"$work/bin/tailscale-timeout"
 chmod +x "$work/bin/tailscale-timeout"
-check "#392: a stalled tailscale probe warns, never fails" \
-  "$(FLEET_TAILSCALE="$work/bin/tailscale-timeout" doctor | grep -E '^(ok|warn|FAIL) +phone wall over Tailscale:' | awk '{print $1}')" "warn"
+FLEET_TAILSCALE="$work/bin/tailscale-timeout" djson >/dev/null
+check "#392: a stalled tailscale probe on run 1 warns in --json" \
+  "$(jq -r '.checks[] | select(.check == "phone wall over Tailscale") | .status' "$work/health.json")" "warn"
+check "#398 review: tailscale not installed fails at once" \
+  "$(FLEET_TAILSCALE="$work/bin/no-such-tailscale" doctor | grep -E '^(ok|warn|FAIL) +phone wall over Tailscale:' | awk '{print $1}')" "FAIL"
+rm -f "$work/health.json"
 
 # Real refusal on two runs debounces from warn to FAIL
 rm -f "$work/health.json"
@@ -3975,19 +4011,20 @@ check "#277: a plain mv to the new name commits as one rename and leaves neither
   "$(bsync) $(git -C "$work/brief" show -M --name-status --format= HEAD | tr '\t' ' ' | paste -sd' ') $(git -C "$work/brief" status --porcelain -- claude-morning.md morning.md | wc -l)" "0 R100 claude-morning.md morning.md 0"
 
 echo "briefing today digest (#391)"
-tday=$(date +%F)
 cat >"$work/bin/gh-today" <<STUB
 #!/usr/bin/env bash
-if [[ \$1 == api && \$2 == --paginate && \$3 == user/repos* ]]; then
-  printf '%s\n' owner/one owner/two
-  exit 0
-fi
-repo=\${4#repos/*/}; repo=\${repo%%/*}
-[[ \$repo == one ]] && { printf '%s\n' \
-  '[{"number":1,"title":"merged","closed_at":"${tday}T12:00:00Z","html_url":"https://github.com/owner/one/pull/1","pull_request":{"merged_at":"${tday}T12:01:00Z"}}]'; exit 0; }
-[[ \$repo == two ]] && { printf '%s\n' \
-  '[{"number":2,"title":"closed","closed_at":"${tday}T13:00:00Z","html_url":"https://github.com/owner/two/issues/2"}]'; exit 0; }
-exit 0
+# Like gh 2.45: no --slurp, and --jq applied to the response.
+for a; do [[ \$a == --slurp ]] && { echo "unknown flag: --slurp" >&2; exit 1; }; done
+printf '%s\n' "\$*" >>"$work/gh-today.calls"
+jqx=""; q=""; prev=""
+for a; do [[ \$prev == --jq ]] && jqx=\$a; [[ \$prev == -f && \$a == q=* ]] && q=\${a#q=}; prev=\$a; done
+if [[ \$1 == api && \$2 == user ]]; then printf '{"login":"owner"}' | jq -r "\$jqx"; exit 0; fi
+case \$q in
+  *"is:pr is:merged"*) body='{"items":[{"number":1,"title":"merged","repository_url":"https://api.github.com/repos/owner/one"}]}' ;;
+  *"is:issue is:closed"*) body='{"items":[{"number":2,"title":"closed","repository_url":"https://api.github.com/repos/owner/two"}]}' ;;
+  *) exit 1 ;;
+esac
+printf '%s' "\$body" | jq -r "\$jqx"
 STUB
 chmod +x "$work/bin/gh-today"
 printf '## Needs you\n- first ask\n- second ask\n- third ask\n- fourth ask\n- fifth ask\n- sixth ask\n' >"$work/brief/needs-you.md"
@@ -4001,8 +4038,10 @@ check "#391: sync writes and commits the daily digest" \
 check "#391: digest includes merged PRs, closed issues, and only the top five asks" \
   "$(grep -c 'merged' "$work/brief/today.md") $(grep -c 'closed' "$work/brief/today.md") $(grep -c 'ask' "$work/brief/today.md")" "1 1 5"
 printf '#!/usr/bin/env bash\nexit 1\n' >"$work/bin/gh-today-fails"; chmod +x "$work/bin/gh-today-fails"
-check "#391: GitHub failure leaves the previous digest intact" \
-  "$(FLEET_GH="$work/bin/gh-today-fails" BRIEFING_DIR="$work/brief" bash "$here/sync-briefing.sh" 2>/dev/null; printf '%s %s' "$?" "$(grep -c '^# Today' "$work/brief/today.md")")" "1 1"
+check "#391: GitHub failure leaves the previous digest intact, and the sync still runs" \
+  "$(FLEET_GH="$work/bin/gh-today-fails" BRIEFING_DIR="$work/brief" bash "$here/sync-briefing.sh" 2>/dev/null; printf '%s %s' "$?" "$(grep -c '^# Today' "$work/brief/today.md")")" "0 1"
+check "#399 review: three GitHub calls a run, whatever the number of repos, and the lines name each repo" \
+  "$(grep -c . "$work/gh-today.calls") $(grep -c '(owner/one)$' "$work/brief/today.md") $(grep -c '(owner/two)$' "$work/brief/today.md")" "3 1 1"
 
 echo "briefing mirror to Drive (#380)"
 mlog="$work/rclone.log"; : >"$mlog"; : >"$mlog.files"; : >"$mlog.other"
@@ -4356,6 +4395,13 @@ check "#389: doctor warns when card and terminal voices differ" \
   "warn voice 91002: card has af_bella but terminal has am_puck"
 check "#389: doctor does not warn when card and terminal voices match" \
   "$(KLEPSYDRA_PROC="$work/dproc" bash "$here/doctor.sh" 2>/dev/null | grep -c '^warn voice 91001:')" "0"
+# The real wiring: the card's voice came from KERYX_VOICE, so the environment
+# always agrees; keryx's hold is what it speaks (a fallback or a pick).
+printf 'KERYX_VOICE=af_bella\0' >"$work/dproc/91002/environ"
+printf '{"holders":{"91002:1":{"voice":"am_puck","seen":1}}}' >"$work/dvoices.json"
+check "#395 review: doctor reads keryx's hold before the environment" \
+  "$(KERYX_VOICES="$work/dvoices.json" KLEPSYDRA_PROC="$work/dproc" bash "$here/doctor.sh" 2>/dev/null | grep '^warn voice 91002:' | tr -s ' ')" \
+  "warn voice 91002: card has af_bella but terminal has am_puck"
 rm -f "$KLEPSYDRA_DIR/fleet/s1.json" "$KLEPSYDRA_DIR/fleet/s2.json"
 rm -rf "$work/dproc/91001" "$work/dproc/91002"
 

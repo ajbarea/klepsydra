@@ -55,6 +55,16 @@ EOF
 check "$(run agy "{\"conversationId\":\"11111111-2222-4333-8444-555555555555\",\"transcriptPath\":\"$work/logs/transcript.jsonl\"}" Stop)" \
   "{\"session_id\":\"11111111-2222-4333-8444-555555555555\",\"hook_event_name\":\"Stop\",\"cwd\":\"\",\"transcript_path\":\"$work/logs/transcript.jsonl\",\"prompt\":\"\",\"last_assistant_message\":\"Hello! I can help you with that.\",\"tool_name\":\"\",\"tool_input\":{},\"tool_response\":null,\"agent_id\":\"\",\"engine\":\"agy\",\"source\":\"\"}"
 
+# The newest reply wins, past an empty one and a line still being written.
+mkdir -p "$work/logs2"
+printf '%s\n' '{"type":"PLANNER_RESPONSE","content":"older"}' '{"type":"PLANNER_RESPONSE","content":"newest"}' \
+  '{"type":"PLANNER_RESPONSE","content":""}' >"$work/logs2/transcript.jsonl"
+printf '{"type":"PLANNER_RESP' >>"$work/logs2/transcript.jsonl"
+check "$(run agy "{\"conversationId\":\"11111111-2222-4333-8444-555555555555\",\"transcriptPath\":\"$work/logs2/transcript.jsonl\"}" Stop | jq -r .last_assistant_message)" "newest"
+# Only the last MiB is read: a reply further back is not looked for.
+{ printf '%s\n' '{"type":"PLANNER_RESPONSE","content":"far back"}'; head -c 1100000 /dev/zero | tr '\0' x; echo; } >"$work/logs2/transcript.jsonl"
+check "$(run agy "{\"conversationId\":\"11111111-2222-4333-8444-555555555555\",\"transcriptPath\":\"$work/logs2/transcript.jsonl\"}" Stop | jq -r .last_assistant_message)" ""
+
 check "$(run copilot '{"sessionId":"11111111-2222-4333-8444-555555555555","cwd":"/repo","toolName":"Read","toolInput":{"path":"x"}}' preToolUse)" \
   '{"session_id":"11111111-2222-4333-8444-555555555555","hook_event_name":"PreToolUse","cwd":"/repo","transcript_path":"","prompt":"","last_assistant_message":"","tool_name":"Read","tool_input":{"path":"x"},"tool_response":null,"agent_id":"","engine":"copilot","source":""}'
 
