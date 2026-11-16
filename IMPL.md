@@ -1,24 +1,47 @@
-# IMPL: klepsydra living wall backgrounds & character arrival motifs (#385), resume state 2026-11-15
+# IMPL: klepsydra#393 multi-harness usage dashboard
 
-Brief: `https://github.com/ajbarea/klepsydra/issues/385` (design with #224, research in `fleet-briefing/review/klepsydra-224-character-research-2026-11-13.md`).
+Brief: `https://github.com/ajbarea/klepsydra/issues/393`
 
 ## Slice
-Living wall backgrounds behind cards reflecting active theme (Kourai: forge glow & drift; Professions: studio grid; DiceBear: floating geometric dual-tone), swapping live with theme switch. Compositor-only, zero infinite loops, paused on hidden, disabled under reduced motion.
-Worker arrival motion with per-character signature motifs (sparks, shimmer, aperture eyes, sand vortex, mist fade) while orchestrator retains full conic burst.
+Transform the gauge bar into a multi-harness usage dashboard showing quota rings grouped by harness (Claude Code, Antigravity, Copilot CLI, API keys), with status thresholds (ready, warning, capped), route recommendation badge, and matching `fleet accounts` CLI table.
 
-## Done (branch feat/living-wall-385)
-- Theme declarations: `backdrop` property in `src/fleet/themes/kourai.json`, `professions.json`, `dicebear.json` with theme glow and secondary accents; `motif` declared across all 16 cast members per theme.
-- Living Backdrop element: `#wall-backdrop` in `src/wall.html` with `.orb-1`, `.orb-2`, `.ambient-drift`. Dynamic styling in `src/fleet/wall.css` and live theme switching via `updateBackdrop(theme)` in `src/fleet/wall.js`.
-- Paused on hidden: `visibilitychange` handler toggles `.paused` on `#wall-backdrop`.
-- Battery and contrast compliance: compositor-only (`transform`, `opacity`), zero `infinite` loops (finite `1 both`), zero static `opacity:` outside `@keyframes` (alpha via `color-mix` with `--bg-orb1-alpha` / `--bg-orb2-alpha`).
-- Per-character arrival motifs: `card()` passes `c.motif`; `.card.arriving[data-motif="..."] .burst` styles all 6 motifs with keyframes `sparks-scatter`, `shimmer-burst`, `aperture-dilate`, `sand-wave`, `mist-fade`.
-- Tests: `node --test src/*.test.js` 497 passed (including `fleet-theme.test.js`, `fleet-cast.test.js`, `fleet-model.test.js`, `guards.test.js`, `fleet-style.test.js`, `fleet-accent.test.js`).
-- Toolchain: `npm run lint` Biome clean (65 files checked). Cargo unit + integration tests clean (429 + 7 passed), clippy clean.
-- Browser tests: `living_backdrop_and_arrival_motifs`, `arrival_is_an_event`, `reveal_does_not_arrive`, `themes_switch_live` all passed via `scripts/test_wall_browser.py`.
-- Review shots: 1920 single card A/B shots in dark & light themes committed to fleet-briefing `shots/2026-11-15/` with `shots/README.md` entry.
+## Planned Architecture
+1. **Harness Quota Model (`src/gauge.js`)**:
+   - Parse multi-harness quota records:
+     - Claude Code (Personal, RIT): `five_hour`, `seven_day`, `spend_limit`.
+     - Antigravity: `gemini` (Flash/Pro), `claude_gpt` (Sonnet/GPT-4o with "ends Nov 18" notice).
+     - Copilot: `ai_credits` (monthly AI credits & renewal).
+     - API keys: Personal & LDQIS spend limits.
+   - Calculate `state` (`ready`, `warning` >= 75%, `capped` at 100% / rate limited).
+   - Tag the lowest-utilized uncapped harness as `route: true`.
+2. **Bar & Dashboard Rendering (`src/fleet/wall.js`, `src/fleet/wall.css`, `src/wall.html`)**:
+   - Group rings by harness.
+   - Dim capped harness groups.
+   - Render "Route" pill on the recommended harness.
+   - Respect compact/comfortable density and mobile responsive layout.
+3. **CLI Dashboard (`fleet/fleet accounts`)**:
+   - Output formatted multi-harness table with harness, window, used%, left%, resets in, and route status.
+4. **Tests**:
+   - Unit tests in `src/gauge.test.js` and `src/fleet-model.test.js`.
+   - CLI verification in `fleet/test_fleet.sh`.
+
+## Done
+- Initialized worktree on branch `feat/usage-dashboard-393`.
+- Rust quota synchronization: updated `WINDOWS` in `src-tauri/fleet/src/usage.rs` to declare all 8 windows (`five_hour`, `seven_day`, `spend_limit`, `gemini`, `claude_gpt`, `ai_credits`, `personal`, `ldqis`).
+- Pure gauge logic: implemented `WINDOW_ORDER`, `HARNESS_ORDER`, `HARNESS_LABELS`, `WINDOW_LABELS`, `WINDOW_SHORT`, `harnessOf`, `windowNote`, and bottleneck-aware `isBestRoute` tag in `src/gauge.js`.
+- Grouping: implemented `harnessGroups()` in `src/gauge.js` for grouping rows by harness.
+- Advisory notices: integrated `windowNote()` ("ends Nov 18" for `claude_gpt`) into `entryText()`.
+- DOM & UI: implemented `route-badge` rendering and dataset tagging (`harness`, `capped`, `route`) in `src/gaugeview.js`.
+- Responsive styling: added contrast-safe dimming (`filter: grayscale(0.85); color: var(--text-dim)`) and `.route-badge` pills to `src/style.css` and `src/fleet/wall.css`.
+- CLI dashboard: updated `fleet/fleet accounts` to discover and format multi-harness account readings under `$KLEPSYDRA_DIR/accounts/`.
+- Test verification:
+  - 59 gauge unit tests passed in `src/gauge.test.js`.
+  - 501 Node unit tests passed across `src/*.test.js`.
+  - 429 Rust unit tests + 7 integration tests passed in `src-tauri/`.
+  - Shellcheck clean on `fleet/fleet`.
 
 ## Next
-1. Commit changes on `feat/living-wall-385` with zero attribution lines and zero em-dashes.
-2. Push branch to `origin/feat/living-wall-385`.
-3. Open PR with short visible top (<= 150 words) and depth folded.
-4. Shepherd CI checks and merge.
+1. Rebase onto latest `origin/main` after PR #396 lands.
+2. Commit changes with conventional message (zero attribution trailers, zero em-dashes).
+3. Push branch and open PR linking #393 with short visible top (<= 150 words).
+4. Monitor CI and shepherd to merge.
