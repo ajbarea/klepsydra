@@ -795,6 +795,26 @@ check "#353 review 4: a launch with no worker settings under another name sits i
   "$(grep -o -- '--slice=[^ ]* -p OOMPolicy=[^ ]*' "$work/sdrun.calls")" "--slice=fleet-workers.slice -p OOMPolicy=continue"
 t kill-pane -t "$(sed -E 's/^pane=([^ ]+).*/\1/' <<<"$out")" 2>/dev/null
 
+# #389: the card decides session voice on launch: orchestrator and workers
+: >"$work/sdrun.calls"
+out=$(FLEET_SETTINGS='' FLEET_SCOPE=1 FLEET_SYSTEMD_RUN="$work/systemd-run" FLEET_CGROUP_ROOT="$cgr" FLEET_CGROUP=$leaf FLEET_MIN_AVAIL_MB=0 \
+  FLEET_LAUNCHER="$work/launcher.sh" FLEET_DIR="$work" FLEET_CLAUDE="python3 -I $fake $work/voice-orch.json $work/voice-orch.log" \
+  bash "$here/launch.sh" heph "$work/task.src" 2>/dev/null | head -1)
+check "#389: launch.sh launches the orchestrator with KERYX_VOICE=am_michael" \
+  "$(grep -o 'KERYX_VOICE=[^ ]*' "$work/sdrun.calls")" "KERYX_VOICE=am_michael"
+t kill-pane -t "$(sed -E 's/^pane=([^ ]+).*/\1/' <<<"$out")" 2>/dev/null
+
+mkdir -p "$KLEPSYDRA_DIR"
+echo '{"agent:vworker": "af_bella"}' >"$KLEPSYDRA_DIR/picks.json"
+: >"$work/sdrun.calls"
+out=$(FLEET_SETTINGS='' FLEET_SCOPE=1 FLEET_SYSTEMD_RUN="$work/systemd-run" FLEET_CGROUP_ROOT="$cgr" FLEET_CGROUP=$leaf FLEET_MIN_AVAIL_MB=0 \
+  FLEET_LAUNCHER="$work/launcher.sh" FLEET_DIR="$work" FLEET_CLAUDE="python3 -I $fake $work/voice-worker.json $work/voice-worker.log" \
+  bash "$here/launch.sh" vworker "$work/task.src" 2>/dev/null | head -1)
+check "#389: launch.sh launches a worker with its character voice from picks.json" \
+  "$(grep -o 'KERYX_VOICE=[^ ]*' "$work/sdrun.calls")" "KERYX_VOICE=af_bella"
+t kill-pane -t "$(sed -E 's/^pane=([^ ]+).*/\1/' <<<"$out")" 2>/dev/null
+rm -f "$KLEPSYDRA_DIR/picks.json"
+
 out=$(launch agent2 '{"above":["Claude Code"],"on_submit":"limit"}')
 check "blocked by a limit" "${out##* }" "brief=blocked-by-limit"
 
@@ -4263,6 +4283,24 @@ printf '[wsl2]\r\nmemory=8GB\r\n' >"$work/Users/x/.wslconfig"
 check "#292 review 4: and without the setting there: a warning" "$(WSL_DISTRO_NAME=Test wdoc)" "warn"
 tmux -L "$cs" kill-server 2>/dev/null
 check "tmux-conf.sh with no server running does nothing" "$(FLEET_SOCK=$cs bash "$here/tmux-conf.sh" "$cdir" 2>/dev/null; echo $?)" "0"
+
+# #389: doctor checks that card character and terminal voice match
+mkdir -p "$work/dproc/91001" "$work/dproc/91002" "$KLEPSYDRA_DIR/fleet"
+printf 'KERYX_VOICE=am_michael\0' >"$work/dproc/91001/environ"
+printf 'KERYX_VOICE=am_puck\0' >"$work/dproc/91002/environ"
+cat >"$KLEPSYDRA_DIR/fleet/s1.json" <<EOF
+{"v":1,"session_id":"s1","orchestrator":true,"orchestrator_face":"am_michael","claude":{"pid":91001,"start":1}}
+EOF
+cat >"$KLEPSYDRA_DIR/fleet/s2.json" <<EOF
+{"v":1,"session_id":"s2","orchestrator":false,"voice":"af_bella","claude":{"pid":91002,"start":1}}
+EOF
+check "#389: doctor warns when card and terminal voices differ" \
+  "$(KLEPSYDRA_PROC="$work/dproc" bash "$here/doctor.sh" 2>/dev/null | grep '^warn voice 91002:' | tr -s ' ')" \
+  "warn voice 91002: card has af_bella but terminal has am_puck"
+check "#389: doctor does not warn when card and terminal voices match" \
+  "$(KLEPSYDRA_PROC="$work/dproc" bash "$here/doctor.sh" 2>/dev/null | grep -c '^warn voice 91001:')" "0"
+rm -f "$KLEPSYDRA_DIR/fleet/s1.json" "$KLEPSYDRA_DIR/fleet/s2.json"
+rm -rf "$work/dproc/91001" "$work/dproc/91002"
 
 echo "the fleet log"
 check "every line is one JSON object with ts, level, target and message" \

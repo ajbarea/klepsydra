@@ -553,7 +553,7 @@ test("the wall's Jump passes the session id along with its name", () => {
 test("the wall has a New session button that calls the launcher", () => {
   assert.match(read("src/wall.html"), /<button type="button" id="new-session" class="primary">\+ New session<\/button>/);
   assert.match(read("src/wall.html"), /<span id="new-note" role="status"><\/span>/);
-  assert.match(read("src/fleet/wall.js"), /invoke\("launch_session"\)/);
+  assert.match(read("src/fleet/wall.js"), /invoke\("launch_session"/);
   assert.match(read("src/fleet/wall.js"), /newButton\.hidden = !inTauri/);
   const html = read("src/wall.html");
   assert.ok(html.indexOf("</header>", html.indexOf('<header class="bar"')) < html.indexOf('<section id="wall"'));

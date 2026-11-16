@@ -42,6 +42,24 @@ account=$(nodir "$account") # "~/.claude/" is the default too, which must not se
 # the tray's Voices mode for running sessions too (#273), so no session is
 # started with KERYX_ENABLED.
 settings=${FLEET_SETTINGS-$FLEET_STATE/worker-settings.json}
+voice=${FLEET_VOICE:-${KERYX_VOICE:-}}
+if [[ -z $voice && $name == "$FLEET_ORCH_NAME" ]]; then
+  if [[ -n ${FLEET_SUCCEEDS:-} ]]; then
+    voice=$(jq -r --arg id "$FLEET_SUCCEEDS" \
+      'select(.session_id == $id) | .orchestrator_face // empty' \
+      "$KLEPSYDRA_DIR/fleet/$FLEET_SUCCEEDS.json" 2>/dev/null)
+  fi
+  if [[ -z $voice ]]; then
+    case $(tr -d '\r\n ' <"$FLEET_STATE/orchestrator.face" 2>/dev/null) in
+      athena|Athena) voice=bf_emma ;;
+      *) voice=am_michael ;;
+    esac
+  fi
+  [[ $voice == bf_alice ]] && voice=bf_emma
+fi
+if [[ -z $voice && -r $KLEPSYDRA_DIR/picks.json ]]; then
+  voice=$(jq -r --arg key "agent:$name" '.[$key] // empty' "$KLEPSYDRA_DIR/picks.json" 2>/dev/null)
+fi
 # KLEPSYDRA_AGENT names the session's agent to the fleet hook, so its card keeps
 # its face across relaunches (#172).
 # No KERYX_ENABLED from the tmux server's environment either (a server started
@@ -76,7 +94,9 @@ for a in "$@"; do
 done
 succeeds=""
 [[ ${FLEET_SUCCEEDS:-} =~ ^[0-9a-f-]{36}$ ]] && succeeds="KLEPSYDRA_SUCCEEDS=$FLEET_SUCCEEDS "
-cmd="$(fleet_oom_floor)env -u KERYX_ENABLED -u KLEPSYDRA_WORKER ${NO_KEY_ENV}$(config_env "$account")$(fleet_oom_env)KLEPSYDRA_AGENT=$(printf '%q' "$name") ${succeeds}${settings:+KLEPSYDRA_WORKER=1 }CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS=2 ${FLEET_CLAUDE:-claude} --session-id $sid${settings:+ --settings $(printf '%q' "$settings")} $*"
+pin=""
+[[ $voice =~ ^[a-z0-9_+().-]+$ ]] && pin="KERYX_VOICE=$(printf '%q' "$voice") "
+cmd="$(fleet_oom_floor)env -u KERYX_ENABLED -u KLEPSYDRA_WORKER ${NO_KEY_ENV}$(config_env "$account")$(fleet_oom_env)${pin}KLEPSYDRA_AGENT=$(printf '%q' "$name") ${succeeds}${settings:+KLEPSYDRA_WORKER=1 }CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS=2 ${FLEET_CLAUDE:-claude} --session-id $sid${settings:+ --settings $(printf '%q' "$settings")} $*"
 tmax="" role=""
 if [[ ${FLEET_SCOPE:-1} != 0 ]]; then
   # A task cap of its own (#289): inherited, it was DefaultTasksMax, and on

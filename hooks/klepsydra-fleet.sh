@@ -1120,7 +1120,8 @@ main() {
   fi
   local live=""
   if claude_ancestor "${KLEPSYDRA_PID:-$$}"; then
-    voice=$(holder_voice "$found_pid" "$found_start") || voice=""
+    [[ ${KERYX_VOICE:-} =~ ^[a-z0-9_+().-]+$ ]] && voice=$KERYX_VOICE
+    [[ -n $voice ]] || voice=$(holder_voice "$found_pid" "$found_start") || voice=""
     live=$(live_shells "$found_pid" "${KLEPSYDRA_PID:-$$}")
   fi
   [[ -n $voice ]] || homes=$(home_voices "$now")
