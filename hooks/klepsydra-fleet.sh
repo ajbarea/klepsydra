@@ -569,6 +569,20 @@ free_face() { # fleet self cleared hint [clear_pane] [succeeds]
   printf '%s' "$4"
 }
 
+# The face free_face gives a new orchestrator session SID now, with SUCCEEDS
+# the session a move replaces: launch.sh starts it with this voice, so the
+# voice it speaks in is the face its card wears.
+face_now() { # sid [succeeds]
+  local name="" hint=$HEPH_VOICE succeeds=""
+  [[ $1 =~ $UUID_RE ]] || return 0
+  [[ ${2:-} =~ $UUID_RE ]] && succeeds=$2
+  { read -r name <"${FLEET_STATE:-${HOME:-}/.local/state/fleet-orchestrator}/orchestrator.face"; } 2>/dev/null
+  name=${name//[$'\r\t ']/}
+  [[ ${name,,} == athena ]] && hint=$ATHENA_VOICE
+  host_facts
+  free_face "$KLEPSYDRA_DIR/fleet" "$1" "" "$hint" "" "$succeeds"
+}
+
 # The session file after one event, as compact JSON, or nothing when no field
 # changed. `$old` is the current file's text (empty for none).
 read -r -d '' APPLY <<'JQ' || true
@@ -1120,8 +1134,10 @@ main() {
   fi
   local live=""
   if claude_ancestor "${KLEPSYDRA_PID:-$$}"; then
-    [[ ${KERYX_VOICE:-} =~ ^[a-z0-9_+().-]+$ ]] && voice=$KERYX_VOICE
-    [[ -n $voice ]] || voice=$(holder_voice "$found_pid" "$found_start") || voice=""
+    # What keryx speaks (a `keryx voice` pick outranks the launch's voice), else
+    # the voice the session was launched to ask for.
+    voice=$(holder_voice "$found_pid" "$found_start") || voice=""
+    [[ -z $voice && ${KERYX_VOICE:-} =~ ^[a-z0-9_+().-]+$ ]] && voice=$KERYX_VOICE
     live=$(live_shells "$found_pid" "${KLEPSYDRA_PID:-$$}")
   fi
   [[ -n $voice ]] || homes=$(home_voices "$now")
@@ -1149,6 +1165,8 @@ main() {
   orch_name=${orch_name//[$'\r\t ']/}
   local orch_face=$HEPH_VOICE cleared_face=""
   [[ ${orch_name,,} == athena ]] && orch_face=$ATHENA_VOICE
+  # A launch names the face it asked free_face for (face_now): on a tie it wins.
+  case ${KERYX_VOICE:-} in "$HEPH_VOICE" | "$ATHENA_VOICE") orch_face=$KERYX_VOICE ;; esac
   [[ $agent =~ ^[A-Za-z0-9._-]{1,64}$ ]] || agent=""
   { read -r orch_sid <"$orch_state/orchestrator.session"; } 2>/dev/null
   { read -r orch_pane <"$orch_state/orchestrator.pane"; } 2>/dev/null
@@ -1204,7 +1222,11 @@ main() {
     [[ $event == SessionStart && $source == clear && -z $cleared_face ]] && clear_pane=$tmux_pane
     local succeeds=""
     [[ $agent == heph && ${KLEPSYDRA_SUCCEEDS:-} =~ ^[0-9a-f-]{36}$ ]] && succeeds=$KLEPSYDRA_SUCCEEDS
-    orch_face=$(free_face "$fleet" "$session" "$cleared_face" "$orch_face" "$clear_pane" "$succeeds")
+    if [[ $agent == heph && -z $cleared_face && ( ${KERYX_VOICE:-} == "$HEPH_VOICE" || ${KERYX_VOICE:-} == "$ATHENA_VOICE" ) ]]; then
+      orch_face=$KERYX_VOICE
+    else
+      orch_face=$(free_face "$fleet" "$session" "$cleared_face" "$orch_face" "$clear_pane" "$succeeds")
+    fi
   fi
   # The git dir the file last named (an escaped path is not read): gone means the checkout was removed.
   old_git=""
@@ -1246,6 +1268,10 @@ if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
   if [[ ${1:-} == queue || ${1:-} == needs ]]; then
     queue_cmd "$@"
     exit
+  fi
+  if [[ ${1:-} == face ]]; then
+    face_now "${2:-}" "${3:-}"
+    exit 0
   fi
   if [[ ${1:-} == watch-ask ]]; then
     (watch_ask "${2:-}") >/dev/null 2>&1

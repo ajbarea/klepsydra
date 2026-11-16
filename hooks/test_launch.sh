@@ -2,6 +2,8 @@
 # Tests for the launcher against a private tmux server and a stub wt.exe.
 # Run: make test-launch (it takes the heavy lock)
 set -uo pipefail
+# A fleet session runs with its own KERYX_VOICE; no test may inherit it.
+unset KERYX_VOICE
 
 here=$(cd "$(dirname "$0")" && pwd)
 launch="$here/klepsydra-launch.sh"
@@ -211,6 +213,11 @@ unset KLEPSYDRA_AGY KLEPSYDRA_RULES_SRC KLEPSYDRA_AGY_RULES KLEPSYDRA_AGY_LOCK
 WT_LOG="$work/wt4.log" KLEPSYDRA_TMUX_SOCKET="$sock4" KLEPSYDRA_BACKGROUND=1 bash "$launch" new "$work/repos" >/dev/null 2>&1
 check "#229 review: a flagged launch that starts the server keeps the flag out of its environment" \
   "$(tmux -L "$sock4" has-session -t =fleet 2>/dev/null && echo up) $(tmux -L "$sock4" show-environment -g 2>/dev/null | grep -c '^KLEPSYDRA_BACKGROUND=')" "up 0"
+tmux -L "$sock4" kill-server 2>/dev/null
+# Nor a session's voice (#395 review): it goes into the session's command alone.
+WT_LOG="$work/wt5.log" KLEPSYDRA_TMUX_SOCKET="$sock4" KERYX_VOICE=bf_emma bash "$launch" new "$work/repos" >/dev/null 2>&1
+check "#395 review: a launch with a voice that starts the server keeps it out of the server's environment" \
+  "$(tmux -L "$sock4" show-environment -g 2>/dev/null | grep -c '^KERYX_VOICE=') $(tmux -L "$sock4" list-panes -a -F '#{pane_start_command}' 2>/dev/null | grep -c 'KERYX_VOICE=bf_emma')" "0 1"
 tmux -L "$sock4" kill-server 2>/dev/null
 t kill-window -t "=fleet:$(t list-windows -t =fleet -F '#{window_index}' | tail -1)"
 detach_all
