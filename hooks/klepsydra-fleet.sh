@@ -1096,16 +1096,16 @@ fleet_registry_event() { # state event session source input cleared_sid
 }
 
 main() {
-  local input fields session event cwd edited transcript source now file old new lock voice="" cwd_repo by=cwd remote="" cleared="" cleared_sid="" homes='{}' old_git where_gone=false account=null
+  local input fields session event cwd edited transcript source now file old new lock voice="" cwd_repo by=cwd remote="" cleared="" cleared_sid="" homes='{}' old_git where_gone=false account=null engine=""
   input=$(cat)
   fields=$(printf '%s' "$input" | jq -r '
     def s: if type == "string" then gsub("[\u001f\n]"; " ") else "" end;
     [ (.session_id | s), (.hook_event_name | s), (.cwd | s),
       (if .hook_event_name == "PostToolUse" and (.tool_name | IN("Edit", "Write", "NotebookEdit"))
        then ((.tool_input.file_path // .tool_input.notebook_path) | s) else "" end),
-      (.transcript_path | s), (.source | s)
+      (.transcript_path | s), (.source | s), (.engine | s)
     ] | join("\u001f")' 2>/dev/null) || return 0
-  IFS=$'\x1f' read -r session event cwd edited transcript source <<<"$fields"
+  IFS=$'\x1f' read -r session event cwd edited transcript source engine <<<"$fields"
   [[ $session =~ $UUID_RE && " $EVENTS " == *" $event "* ]] || return 0
 
   now=${KLEPSYDRA_NOW:-}
@@ -1175,12 +1175,18 @@ main() {
   # The account the session runs on, named as the statusLine names it, from
   # the global config CLAUDE_CONFIG_DIR picks: at its start and each prompt.
   if [[ $event == SessionStart || $event == UserPromptSubmit ]]; then
-    account=$(jq -cn 'first(inputs) | (.oauthAccount | objects) // {}
-      | select(.accountUuid | strings | test("^[0-9A-Za-z-]{1,64}$"))
-      | {id: .accountUuid, label: (if .organizationType == "claude_team"
-          then ((.organizationName | strings | gsub("[\u0001-\u001f\u007f-\u009f]"; "") | select(length > 0) | .[0:80]) // "Team") else "Personal" end)}' \
-      "${CLAUDE_CONFIG_DIR:-${HOME:-}}/.claude.json" 2>/dev/null) || account=""
-    [[ -n $account ]] || account=null
+    if [[ $engine == "agy" ]]; then
+      account='{"id":"agy-primary","label":"Google AI Pro"}'
+    elif [[ $engine == "copilot" ]]; then
+      account='{"id":"copilot-primary","label":"GitHub Copilot"}'
+    else
+      account=$(jq -cn 'first(inputs) | (.oauthAccount | objects) // {}
+        | select(.accountUuid | strings | test("^[0-9A-Za-z-]{1,64}$"))
+        | {id: .accountUuid, label: (if .organizationType == "claude_team"
+            then ((.organizationName | strings | gsub("[\u0001-\u001f\u007f-\u009f]"; "") | select(length > 0) | .[0:80]) // "Team") else "Personal" end)}' \
+        "${CLAUDE_CONFIG_DIR:-${HOME:-}}/.claude.json" 2>/dev/null) || account=""
+      [[ -n $account ]] || account=null
+    fi
   fi
   { exec {lock}>>"$LOCK"; } 2>/dev/null || return 0
   flock -w 5 "$lock" || return 0
