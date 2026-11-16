@@ -202,28 +202,65 @@ fi
 parsed=$(printf '%s' "$input" | jq -r \
   --argjson now "$now" --argjson acct "$account" '
   def pct: (.used_percentage // empty) | floor;
+  def parse_reset:
+    if .reset_time != null then
+      (try (.reset_time | fromdateiso8601) catch ($now + (.reset_in_seconds // 0)))
+    else
+      ($now + (.reset_in_seconds // 0))
+    end;
 
   . as $root
-  | ( $root.session_id // "unknown" ) as $session
-  | ( $root.rate_limits // {} ) | with_entries(select(.value.used_percentage != null)) as $w
+  | ( $root.session_id // $root.conversation_id // "unknown" ) as $session
+  | ( if ($root.quota != null) then {
+        id: "agy-primary",
+        label: ($root.plan_tier // "Google AI Pro"),
+        harness: "agy"
+      } else $acct end ) as $effective_acct
+  | ( if ($root.rate_limits != null) then
+        ($root.rate_limits | with_entries(select(.value.used_percentage != null)))
+      elif ($root.quota != null) then
+        ( {}
+          | if $root.quota["gemini-5h"] and ($root.quota["gemini-5h"].disabled | not) then
+              .five_hour = {
+                used_percentage: (((1 - $root.quota["gemini-5h"].remaining_fraction) * 10000 | round) / 100),
+                resets_at: ($root.quota["gemini-5h"] | parse_reset)
+              }
+            else . end
+          | if $root.quota["gemini-weekly"] and ($root.quota["gemini-weekly"].disabled | not) then
+              .seven_day = {
+                used_percentage: (((1 - $root.quota["gemini-weekly"].remaining_fraction) * 10000 | round) / 100),
+                resets_at: ($root.quota["gemini-weekly"] | parse_reset)
+              }
+            else . end
+          | if $root.quota["3p-5h"] and ($root.quota["3p-5h"].disabled | not) then
+              .claude_gpt = {
+                used_percentage: (((1 - $root.quota["3p-5h"].remaining_fraction) * 10000 | round) / 100),
+                resets_at: ($root.quota["3p-5h"] | parse_reset)
+              }
+            else . end
+        )
+      else {} end ) as $w
   |
   # A reading with no live window says nothing about now; a real response
   # always reports the window it counts against. Skipping it also keeps a
   # session whose file was pruned from republishing its last response as new.
   ( if ($w | length) == 0 then "SKIP"
     elif ($w | all(.[]; (.resets_at | type) == "number" and .resets_at <= $now)) then "SKIP"
-    else { account: $acct.id, label: $acct.label, session: $session,
-           written_at: $now, observed_at: $now,
-           api_ms: ($root.cost.total_api_duration_ms // null), windows: $w } | tojson
+    else { account: $effective_acct.id, label: $effective_acct.label,
+           harness: ($effective_acct.harness // null),
+           session: $session, written_at: $now, observed_at: $now,
+           api_ms: ($root.cost.total_api_duration_ms // null), windows: $w }
+         | if .harness == null then del(.harness) else . end
+         | tojson
     end ),
   ( [ ( $w.five_hour   | if . then "5h \(pct)%"    else empty end ),
       ( $w.seven_day   | if . then "7d \(pct)%"    else empty end ),
       ( $w.spend_limit | if . then "spend \(pct)%" else empty end ) ] | join(" · ") ),
-  ( [ ( $root.model.display_name // empty ),
+  ( [ ( $root.model.display_name // $root.model.id // empty ),
       ( $root.context_window.used_percentage | if . then "ctx \(floor)%" else empty end ) ] | join(" · ") ),
-  $acct.id,
+  $effective_acct.id,
   $session,
-  ( $root.session_name // "" | tostring | gsub("[\t\r\n]"; " ") )
+  ( ($root.session_name // $root.title // "") | tostring | gsub("[\t\r\n]"; " ") )
 ' 2>/dev/null) || parsed=""
 
 # Malformed stdin: say nothing, write nothing, exit clean. A statusLine that
@@ -238,6 +275,7 @@ parsed=$(printf '%s' "$input" | jq -r \
   IFS= read -r session
   IFS= read -r name
 } <<<"$parsed"
+[[ $id == agy-* ]] && torn=false
 
 # The fleet strip's heartbeat: the session's name (its terminal tab title) and
 # the 10 s bucket it was written in. Rewritten only when either changes, so a

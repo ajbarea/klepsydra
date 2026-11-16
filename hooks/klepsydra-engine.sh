@@ -26,9 +26,24 @@ esac
 command -v jq >/dev/null 2>&1 || fail "jq is not installed"
 [[ -f "$fleet" ]] || fail "fleet hook is missing"
 
-jq -c \
+input=$(cat)
+
+last_msg=""
+if [[ "$engine" == "agy" && "$target_event" == "Stop" ]]; then
+  t_path=$(printf '%s' "$input" | jq -r '. as $root | ($root.lastAssistantMessage // $root.last_assistant_message // $root.response // "") | if type == "string" and . != "" then "" else (($root.transcriptPath // $root.transcript_path // "") | if type == "string" then . else "" end) end' 2>/dev/null || true)
+  if [[ -n "$t_path" ]]; then
+    target_t="$t_path"
+    [[ -f "${t_path%/*}/transcript_full.jsonl" ]] && target_t="${t_path%/*}/transcript_full.jsonl"
+    if [[ -f "$target_t" ]]; then
+      last_msg=$(jq -r -s 'map(select(.type == "PLANNER_RESPONSE" and (.content | type == "string") and (.content != ""))) | last // empty | .content' "$target_t" 2>/dev/null || true)
+    fi
+  fi
+fi
+
+printf '%s' "$input" | jq -c \
   --arg engine "$engine" \
-  --arg event "$target_event" '
+  --arg event "$target_event" \
+  --arg last_msg "$last_msg" '
   def text: if type == "string" then . else "" end;
   {
     session_id: ((.conversationId // .sessionId // .session_id) | text),
@@ -37,9 +52,31 @@ jq -c \
     transcript_path: ((.transcriptPath // .transcript_path) | text),
     prompt: ((.lastUserInput // .prompt) | text),
     last_assistant_message:
-      ((.lastAssistantMessage // .last_assistant_message // .response) | text),
-    tool_name: ((.toolName // .tool_name // .toolCall.name) | text),
-    tool_input: (.toolInput // .tool_input // .toolCall.args // {}),
+      (if $last_msg != "" then $last_msg else ((.lastAssistantMessage // .last_assistant_message // .response) | text) end),
+    tool_name: (
+      ((.toolName // .tool_name // .toolCall.name) | text) as $raw
+      | if $engine == "agy" then
+          if $raw == "run_command" then "Bash"
+          elif $raw == "edit_file" then "Edit"
+          elif $raw == "write_file" then "Write"
+          elif $raw == "read_file" then "View"
+          elif $raw == "invoke_subagent" then "Agent"
+          elif $raw == "ask_question" then "AskUserQuestion"
+          elif $raw == "manage_task" and ((.toolInput // .tool_input // .toolCall.args // {}).Action == "kill") then "TaskStop"
+          else $raw end
+        else $raw end
+    ),
+    tool_input: (
+      ((.toolInput // .tool_input // .toolCall.args // {}) | if type == "object" then . else {} end) as $in
+      | if $engine == "agy" then
+          $in
+          | if .CommandLine != null and .command == null then .command = .CommandLine else . end
+          | if .Path != null and .file_path == null then .file_path = .Path else . end
+          | if .Prompt != null and .prompt == null then .prompt = .Prompt else . end
+          | if .TypeName != null and .subagent_type == null then .subagent_type = .TypeName else . end
+          | if .TaskId != null and .task_id == null then .task_id = .TaskId else . end
+        else $in end
+    ),
     tool_response: (.toolResponse // .tool_response // null),
     agent_id: ((.agentId // .agent_id) | text),
     engine: $engine,
