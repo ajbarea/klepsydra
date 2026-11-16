@@ -100,8 +100,9 @@ eng_classify() { # RC STDOUT STDERR: a failure is read with its stderr; an exit 
   if [[ $rc != 0 ]]; then both=$out$'\n'$err
   elif (( ${#out} < 200 )); then both=$out; fi
   # A headless engine that auto-denied a tool it could not prompt for: not the
-  # engine's fault, so the caller may try the next one.
-  if [[ $rc != 0 ]] && grep -Eqi -- "$ENG_DENIED_RE" <<<"$err"; then
+  # engine's fault, so the caller may try the next one. agy exits 0 with nothing
+  # on stdout then (#358), so an empty answer counts as much as a failure.
+  if [[ $rc != 0 || -z ${out//[[:space:]]/} ]] && grep -Eqi -- "$ENG_DENIED_RE" <<<"$err"; then
     echo denied; return
   fi
   if [[ -n $both ]]; then

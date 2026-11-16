@@ -82,7 +82,7 @@ test("the empty state: the theme keeper's portrait as decoration, the title, wha
 
 test("the start button runs the same launch as + New session, in the app only", () => {
   const src = read("fleet/wall.js");
-  assert.equal((src.match(/invoke\("launch_session", \{ keryxVoice: launchVoice\(\) \}\)/g) ?? []).length, 1, "one launch call, shared by both buttons");
+  assert.equal((src.match(/invoke\("launch_session"\)/g) ?? []).length, 1, "one launch call, shared by both buttons");
   assert.match(src, /newButton\.addEventListener\("click", \(\) => startSession\(newButton, newNote\)\)/);
   assert.match(src, /startButton\.addEventListener\("click", \(\) => startSession\(startButton, newNote\)\)/, "its answer shows in the bar, where it outlives the empty state");
   assert.match(src, /startButton\.hidden = !inTauri/);

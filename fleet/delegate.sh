@@ -165,7 +165,8 @@ snapshot() { # REPO TASK SNAP (sets SNAP_DROPPED)
   # The engine is told, so a review does not read a missing file as an absent one.
   if (( SNAP_DROPPED )); then printf '\n\n%s file(s) were withheld from this copy because they looked like they hold a credential.\n' "$SNAP_DROPPED" >>"$snap/AGENTS.md"; fi
   if (( SNAP_BINARY )); then printf '\n\n%s binary or very large file(s) were left out of this copy.\n' "$SNAP_BINARY" >>"$snap/AGENTS.md"; fi
-  sed "s|${top}/||g" "$task" >"$snap/TASK.md" || return 1
+  # The repo root as a literal: a dot or bar in a folder name is no pattern.
+  TOP="$top/" awk '{ out = ""; while ((i = index($0, ENVIRON["TOP"])) > 0) { out = out substr($0, 1, i - 1); $0 = substr($0, i + length(ENVIRON["TOP"])) } print out $0 }' "$task" >"$snap/TASK.md" || return 1
   local outside
   outside=$(grep -Eom1 -- "$OUTSIDE_PATH_RE" "$snap/TASK.md" 2>/dev/null || true)
   if [[ -n $outside ]]; then

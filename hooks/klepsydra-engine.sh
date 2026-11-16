@@ -35,7 +35,10 @@ if [[ "$engine" == "agy" && ( "$target_event" == "Stop" || "$target_event" == "P
     target_t="$t_path"
     [[ -f "${t_path%/*}/transcript_full.jsonl" ]] && target_t="${t_path%/*}/transcript_full.jsonl"
     if [[ -f "$target_t" ]]; then
-      last_msg=$(tail -n 100 "$target_t" 2>/dev/null | jq -r -s 'map(select(.type == "PLANNER_RESPONSE" and (.content | type == "string") and (.content != ""))) | last // empty | .content' 2>/dev/null || true)
+      # The transcript grows all session: its last MiB, newest line first, up to the
+      # first reply or the turn boundary. The echo keeps a line still being written apart
+      # from the one before.
+      last_msg=$({ tail -c 1048576 -- "$target_t"; echo; } 2>/dev/null | tac | jq -nrR 'label $done | first(foreach (inputs | fromjson? | objects) as $x (null; if $x.type == "USER_INPUT" then break $done elif $x.type == "PLANNER_RESPONSE" and ($x.content | type == "string") and ($x.content != "") then $x.content else null end; select(. != null))) // empty' 2>/dev/null || true)
     fi
   fi
 fi
