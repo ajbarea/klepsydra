@@ -311,15 +311,20 @@ fn decode(b: &[u8]) -> String {
     }
 }
 
-/// The last non-blank line, at most 200 characters.
+/// The last non-blank line of `text`.
 #[cfg(any(windows, test))]
 fn last_line(text: &str) -> String {
-    let line = text
-        .lines()
+    text.lines()
         .map(str::trim)
         .rfind(|l| !l.is_empty())
-        .unwrap_or("");
-    line.chars().take(200).collect()
+        .unwrap_or("")
+        .to_string()
+}
+
+/// The last non-blank line, capped at 200 characters for error messages.
+#[cfg(any(windows, test))]
+fn error_line(text: &str) -> String {
+    last_line(text).chars().take(200).collect()
 }
 
 /// Most output kept from each stream.
@@ -479,17 +484,16 @@ fn run(args: &[String], wait: Duration, timed_out: fn() -> String) -> Result<Str
         }
     };
     let until = Instant::now() + DRAIN_GRACE;
-    let (stdout, stderr) = (
-        last_line(&decode(&out.wait(until))),
-        last_line(&decode(&err.wait(until))),
-    );
+    let (stdout_raw, stderr_raw) = (decode(&out.wait(until)), decode(&err.wait(until)));
+    let (stdout, stderr) = (last_line(&stdout_raw), error_line(&stderr_raw));
     if status.success() {
         Ok(stdout)
     } else if stderr.is_empty() {
-        Err(if stdout.is_empty() {
+        let err = error_line(&stdout_raw);
+        Err(if err.is_empty() {
             format!("wsl.exe exited with {status}.")
         } else {
-            stdout
+            err
         })
     } else {
         Err(stderr)
@@ -1004,6 +1008,16 @@ mod tests {
     }
 
     #[test]
+    fn agy_models_parses_real_fleet_models_longer_than_200_chars() {
+        let json = r#"[{"id":"gemini-3.8-flash-high","label":"Gemini 3.8 Flash (High)"},{"id":"gemini-3.8-flash-medium","label":"Gemini 3.8 Flash (Medium)"},{"id":"gemini-3.8-flash-low","label":"Gemini 3.8 Flash (Low)"},{"id":"claude-sonnet-4-6","label":"Claude Sonnet 4.6 (Thinking)"},{"id":"claude-opus-4-6-thinking","label":"Claude Opus 4.6 (Thinking)"},{"id":"gpt-oss-120b-medium","label":"GPT-OSS 120B (Medium)"}]"#;
+        assert!(json.len() > 200);
+        let got = parse_models(&last_line(json)).unwrap();
+        assert_eq!(got.len(), 6);
+        assert_eq!(got[0].id, "gemini-3.8-flash-high");
+        assert_eq!(got[5].id, "gpt-oss-120b-medium");
+    }
+
+    #[test]
     fn new_args_refuse_a_relative_folder_or_a_bad_distro() {
         assert!(new_args("repos", None).is_err());
         assert!(new_args("~/a\nb", None).is_err());
@@ -1367,7 +1381,8 @@ mod tests {
             .collect();
         assert_eq!(last_line(&decode(&utf16)), "Error: no distro");
         assert_eq!(last_line("a\n\n  b  \n\n"), "b");
-        assert_eq!(last_line(&"x".repeat(300)).len(), 200);
+        assert_eq!(last_line(&"x".repeat(300)).len(), 300);
+        assert_eq!(error_line(&"x".repeat(300)).len(), 200);
     }
 
     #[test]
