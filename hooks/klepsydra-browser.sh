@@ -58,12 +58,12 @@ is_claude() { # pid
   local comm="" arg part
   local -a argv=() parts=()
   { IFS= read -r comm <"$PROC_ROOT/$1/comm"; } 2>/dev/null
-  [[ $comm == claude || $comm == claude-code ]] && return 0
+  [[ $comm == claude || $comm == claude-code || $comm == agy || $comm == antigravity || $comm == antigravity-cli ]] && return 0
   { mapfile -d '' -t -n 2 argv <"$PROC_ROOT/$1/cmdline"; } 2>/dev/null || return 1
   for arg in "${argv[@]}"; do
     IFS=/ read -r -a parts <<<"$arg"
     for part in "${parts[@]}"; do
-      [[ $part == claude || $part == claude-code ]] && return 0
+      [[ $part == claude || $part == claude-code || $part == agy || $part == antigravity || $part == antigravity-cli ]] && return 0
     done
   done
   return 1
