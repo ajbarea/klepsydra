@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { WINDOW_ORDER, rampColor, rampPosition, formatCountdown, formatCountdownShort, formatAge, formatAgeShort, evaluate, formatPct, formatPctShort, ringDash, ringCap, ringStyle, entryText, usageRows, toRows, SHOW_AGE_AFTER_MS, DROP_AFTER_MS, WAITING, harnessOf, windowNote, harnessGroups } from "./gauge.js";
+import { WINDOW_ORDER, ROUTE_ORDER, rampColor, rampPosition, formatCountdown, formatCountdownShort, formatAge, formatAgeShort, evaluate, formatPct, formatPctShort, ringDash, ringCap, ringStyle, entryText, usageRows, toRows, SHOW_AGE_AFTER_MS, DROP_AFTER_MS, WAITING, harnessOf, windowNote, harnessGroups, routeLane } from "./gauge.js";
 
 const STOPS = { low: "#3b82f6", mid: "#eab308", high: "#ef4444", midAt: 60, highAt: 85 };
 const NOW = 1_800_000_000_000; // fixed clock
@@ -577,7 +577,8 @@ test("multi-harness toRows tags rows with harness, advisory notes, and route rec
 
   const agyClaudeGpt = rows.find((r) => r.key === "agy-account:claude_gpt");
   assert.equal(agyClaudeGpt.note, "ends Nov 18");
-  assert.equal(agyClaudeGpt.isBestRoute, true);
+  assert.equal(agyClaudeGpt.isBestRoute, false, "only the selected row gets the badge");
+  assert.equal(rows.filter((r) => r.isBestRoute).length, 1);
 
   // Groups
   const groups = harnessGroups(rows);
@@ -586,4 +587,37 @@ test("multi-harness toRows tags rows with harness, advisory notes, and route rec
   assert.equal(groups[0].isCapped, false); // seven_day is 45% so not all capped, but Claude's bottleneck is 100%
   assert.equal(groups[1].harness, "agy");
   assert.equal(groups[1].isBestRoute, true);
+});
+
+test("routing is free-first, judges model groups independently, and marks one row", () => {
+  assert.deepEqual(ROUTE_ORDER, ["agy_gemini", "copilot", "api_credit", "claude_subscription"]);
+  assert.equal(routeLane({ harness: "agy", window: "gemini" }), "agy_gemini");
+  assert.equal(routeLane({ harness: "copilot", window: "ai_credits" }), "copilot");
+  assert.equal(routeLane({ harness: "api", window: "ai_credits" }), "api_credit");
+  assert.equal(routeLane({ harness: "claude", window: "five_hour" }), "claude_subscription");
+
+  const account = (id, harness, window, pct) => ({
+    account: id,
+    harness,
+    label: id,
+    written_at: secs(NOW),
+    observed_at: secs(NOW),
+    windows: { [window]: { used_percentage: pct, resets_at: secs(NOW + 3600e3) } },
+  });
+  const rows = toRows([
+    account("agy", "agy", "gemini", 0),
+    account("agy", "agy", "claude_gpt", 100),
+    account("copilot", "copilot", "ai_credits", 1),
+    account("api", "api", "ai_credits", 2),
+    account("claude", "claude", "five_hour", 3),
+  ], NOW);
+  assert.deepEqual(rows.filter((r) => r.isBestRoute).map((r) => r.key), ["agy:gemini"]);
+
+  const noGemini = toRows([
+    account("agy", "agy", "gemini", 100),
+    account("copilot", "copilot", "ai_credits", 1),
+    account("api", "api", "ai_credits", 2),
+    account("claude", "claude", "five_hour", 3),
+  ], NOW);
+  assert.deepEqual(noGemini.filter((r) => r.isBestRoute).map((r) => r.key), ["copilot:ai_credits"]);
 });

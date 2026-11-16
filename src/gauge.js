@@ -41,6 +41,21 @@ export const HARNESS_LABELS = {
   api: "API Keys",
 };
 
+export const ROUTE_ORDER = ["agy_gemini", "copilot", "api_credit", "claude_subscription"];
+
+/**
+ * The lane the fleet should try next. A model group is a lane of its own:
+ * one spent group must not disqualify another group on the same account.
+ */
+export function routeLane(row) {
+  const harness = row?.harness;
+  const window = row?.window;
+  if (harness === "agy" && window === "gemini") return "agy_gemini";
+  if (harness === "copilot") return "copilot";
+  if (harness === "api" || ["ai_credits", "personal", "ldqis", "claude_gpt"].includes(window)) return "api_credit";
+  return "claude_subscription";
+}
+
 const WINDOW_LABELS = {
   five_hour: "Current session",
   seven_day: "This week",
@@ -417,6 +432,7 @@ export function toRows(payload, nowMs = Date.now()) {
         key: `${p.account}:${key}`,
         account: p.account,
         harness: h,
+        window: key,
         harnessLabel: HARNESS_LABELS[h] ?? h,
         note,
         isCapped: r.pct >= 100 || r.state === "waiting",
@@ -425,25 +441,23 @@ export function toRows(payload, nowMs = Date.now()) {
     }
   }
 
-  // Route recommendation across harnesses (#393):
-  // Identify the uncapped account/harness with the lowest bottleneck usage.
-  const maxUsageByAccount = new Map();
+  // Route recommendation follows the same free-first order as the fleet:
+  // choose one uncapped row from the first lane with room, preferring the
+  // lowest usage within that lane.
+  const bestByLane = new Map();
   for (const row of rows) {
-    const prev = maxUsageByAccount.get(row.account) ?? 0;
-    maxUsageByAccount.set(row.account, Math.max(prev, row.pct));
+    row.isBestRoute = false;
+    if (row.isCapped) continue;
+    const lane = routeLane(row);
+    const best = bestByLane.get(lane);
+    if (!best || row.pct < best.pct) bestByLane.set(lane, row);
   }
-
-  let bestAccount = null;
-  let lowestUsage = Number.POSITIVE_INFINITY;
-  for (const [acct, maxPct] of maxUsageByAccount) {
-    if (maxPct < 100 && maxPct < lowestUsage) {
-      lowestUsage = maxPct;
-      bestAccount = acct;
+  for (const lane of ROUTE_ORDER) {
+    const best = bestByLane.get(lane);
+    if (best) {
+      best.isBestRoute = true;
+      break;
     }
-  }
-
-  for (const row of rows) {
-    row.isBestRoute = Boolean(bestAccount && row.account === bestAccount);
   }
 
   return rows;
