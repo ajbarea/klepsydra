@@ -673,7 +673,11 @@ mod tests {
 
     #[test]
     fn engine_and_model_round_trip_from_session_file() {
-        let f = parse(&file(r#","engine":"agy","model":{"id":"gemini-3.8-flash"}"#), ID).unwrap();
+        let f = parse(
+            &file(r#","engine":"agy","model":{"id":"gemini-3.8-flash"}"#),
+            ID,
+        )
+        .unwrap();
         assert_eq!(f.engine.as_deref(), Some("agy"));
         assert_eq!(f.model.as_ref().unwrap()["id"], "gemini-3.8-flash");
     }
