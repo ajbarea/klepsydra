@@ -132,6 +132,12 @@ pub struct View {
     /// a relaunch (crate::picks). Left out when none.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub fleet_name: Option<String>,
+    /// The engine running this session (e.g. "agy", "copilot", "claude").
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub engine: Option<String>,
+    /// The model running this session if recorded.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model: Option<serde_json::Value>,
     /// Heph, the orchestrator: the only session wearing Heph's face. Left
     /// out when false.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
@@ -330,6 +336,8 @@ pub fn view(entry: &Entry, now: i64) -> Option<View> {
         pick: None,
         account: f.account.clone(),
         fleet_name: f.fleet_name.clone(),
+        engine: f.engine.clone(),
+        model: f.model.clone(),
         orchestrator: f.orchestrator,
         orchestrator_face: f.orchestrator_face.clone(),
         reply_at: None,
@@ -493,6 +501,8 @@ mod tests {
             fleet_name: None,
             orchestrator: false,
             orchestrator_face: None,
+            engine: None,
+            model: None,
         }
     }
 
@@ -507,6 +517,22 @@ mod tests {
 
     fn ids(s: &Snapshot) -> Vec<&str> {
         s.sessions.iter().map(|v| v.session_id.as_str()).collect()
+    }
+
+    #[test]
+    fn a_view_carries_its_engine_and_model() {
+        let mut e = entry("a", State::Working, NOW - 5, NOW - 5);
+        e.file.engine = Some("agy".into());
+        e.file.model = Some(serde_json::json!({
+            "id": "gemini-3.8-pro",
+            "display_name": "Gemini 3.8 Pro"
+        }));
+        let v = view(&e, NOW).unwrap();
+        assert_eq!(v.engine.as_deref(), Some("agy"));
+        assert_eq!(v.model.as_ref().unwrap()["id"], "gemini-3.8-pro");
+        let json = serde_json::to_value(&v).unwrap();
+        assert_eq!(json["engine"], "agy");
+        assert_eq!(json["model"]["display_name"], "Gemini 3.8 Pro");
     }
 
     #[test]

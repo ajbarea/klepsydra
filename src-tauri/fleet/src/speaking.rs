@@ -227,6 +227,8 @@ mod tests {
             pick: None,
             account: None,
             fleet_name: None,
+            engine: None,
+            model: None,
             orchestrator: false,
             orchestrator_face: None,
             reply_at: None,

@@ -289,6 +289,12 @@ pub struct SessionFile {
     /// crate::picks keeps it only when it is one of `picks::ORCHESTRATORS`.
     #[serde(default, deserialize_with = "lenient_face")]
     pub orchestrator_face: Option<String>,
+    /// The engine running this session (e.g. "agy", "copilot", "claude"); none from older hooks.
+    #[serde(default)]
+    pub engine: Option<String>,
+    /// The model running this session if recorded.
+    #[serde(default)]
+    pub model: Option<serde_json::Value>,
 }
 
 /// `orchestrator_face` when it is a short plain voice key; anything else is
@@ -663,6 +669,13 @@ mod tests {
             f.background.iter().map(|b| b.kind).collect::<Vec<_>>(),
             vec![Kind::Task]
         );
+    }
+
+    #[test]
+    fn engine_and_model_round_trip_from_session_file() {
+        let f = parse(&file(r#","engine":"agy","model":{"id":"gemini-3.8-flash"}"#), ID).unwrap();
+        assert_eq!(f.engine.as_deref(), Some("agy"));
+        assert_eq!(f.model.as_ref().unwrap()["id"], "gemini-3.8-flash");
     }
 
     #[test]
