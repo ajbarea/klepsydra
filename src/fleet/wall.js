@@ -174,6 +174,16 @@ const phoneNarrow = () => served && matchMedia("(max-width: 600px)").matches;
 // The character theme the wall wears: who each voice is and how they look.
 let worn = DEFAULT_THEME;
 let cast = loadedTheme(worn);
+const wallBackdrop = document.getElementById("wall-backdrop");
+function updateBackdrop(theme) {
+  if (!wallBackdrop) return;
+  const bd = theme?.backdrop;
+  const motif = bd?.motif || "forge";
+  wallBackdrop.dataset.motif = motif;
+  if (bd?.glow) wallBackdrop.style.setProperty("--bg-glow", bd.glow);
+  if (bd?.secondary) wallBackdrop.style.setProperty("--bg-secondary", bd.secondary);
+}
+updateBackdrop(cast);
 let sessions = [];
 let request = null; // the snapshot's wrap-up, while one is shown
 let latestSnapshot = null; // its usage readings draw the limit gauges
@@ -268,6 +278,7 @@ function paint(el, c) {
   // A repaint must not cut the pulse or the arrival short.
   const playing = ["pulse", "arriving"].filter((cls) => el.classList.contains(cls)).map((cls) => ` ${cls}`).join("");
   el.className = `card ${c.dim ? "dim" : ""} tone-${c.tone}${c.ask ? " asking" : ""}${c.figure ? " has-figure" : ""}${c.actions.menu ? " has-menu" : ""}${openText.has(c.id) ? " open-text" : ""}${playing}`;
+  el.dataset.motif = c.motif || "burst";
   el.style.viewTransitionName = transitionName(c.id);
   el.setAttribute("aria-label", c.label);
   el.querySelector(".portrait").title = c.voiceTitle ?? "";
@@ -620,6 +631,7 @@ function render(snapshot) {
     let turn = 0;
     const make = (c) => {
       const el = tpl.content.firstElementChild.cloneNode(true);
+      el.dataset.motif = c.motif || "burst";
       if (arriving.has(c.id)) {
         arriving.delete(c.id);
         el.style.setProperty("--arrive-at", `${ARRIVE_STAGGER_MS * turn++}ms`);
@@ -664,6 +676,7 @@ const arrived = (e) => {
   el?.style.removeProperty("--arrive-at");
 };
 document.addEventListener("visibilitychange", () => {
+  wallBackdrop?.classList.toggle("paused", document.hidden);
   if (document.hidden || !heldArrivals.size) return;
   for (const el of wall.children) if (heldArrivals.has(el.dataset.key)) el.classList.add("arriving");
   heldArrivals.clear();
@@ -1519,6 +1532,7 @@ function put(next, theme, paint) {
   cast = theme;
   document.documentElement.dataset.theme = next;
   themePicker.value = next;
+  updateBackdrop(theme);
   const src = keeperOf(cast);
   if (src && keeper.getAttribute("src") !== src) keeper.src = src;
   if (!paint || next === was) return;
