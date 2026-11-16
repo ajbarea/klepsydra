@@ -3974,6 +3974,36 @@ mv "$work/brief/claude-morning.md" "$work/brief/morning.md"
 check "#277: a plain mv to the new name commits as one rename and leaves neither name behind" \
   "$(bsync) $(git -C "$work/brief" show -M --name-status --format= HEAD | tr '\t' ' ' | paste -sd' ') $(git -C "$work/brief" status --porcelain -- claude-morning.md morning.md | wc -l)" "0 R100 claude-morning.md morning.md 0"
 
+echo "briefing today digest (#391)"
+tday=$(date +%F)
+cat >"$work/bin/gh-today" <<STUB
+#!/usr/bin/env bash
+if [[ \$1 == api && \$2 == --paginate && \$3 == user/repos* ]]; then
+  printf '%s\n' owner/one owner/two
+  exit 0
+fi
+repo=\${4#repos/*/}; repo=\${repo%%/*}
+[[ \$repo == one ]] && { printf '%s\n' \
+  '[{"number":1,"title":"merged","closed_at":"${tday}T12:00:00Z","html_url":"https://github.com/owner/one/pull/1","pull_request":{"merged_at":"${tday}T12:01:00Z"}}]'; exit 0; }
+[[ \$repo == two ]] && { printf '%s\n' \
+  '[{"number":2,"title":"closed","closed_at":"${tday}T13:00:00Z","html_url":"https://github.com/owner/two/issues/2"}]'; exit 0; }
+exit 0
+STUB
+chmod +x "$work/bin/gh-today"
+printf '## Needs you\n- first ask\n- second ask\n- third ask\n- fourth ask\n- fifth ask\n- sixth ask\n' >"$work/brief/needs-you.md"
+printf 'pane\tworker\tbrief\tsid\tworktree\tconfig\n' >"$FLEET_STATE/panes.tsv"
+FLEET_GH="$work/bin/gh-today" BRIEFING_DIR="$work/brief" \
+  FLEET_GITLEAKS="$work/bin/gitleaks" FLEET_STATE="$FLEET_STATE" \
+  GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t \
+  bash "$here/sync-briefing.sh" 2>/dev/null
+check "#391: sync writes and commits the daily digest" \
+  "$(git -C "$work/brief" show --format= --name-only HEAD | grep -cxF today.md) $(grep -c '^# Today' "$work/brief/today.md")" "1 1"
+check "#391: digest includes merged PRs, closed issues, and only the top five asks" \
+  "$(grep -c 'merged' "$work/brief/today.md") $(grep -c 'closed' "$work/brief/today.md") $(grep -c 'ask' "$work/brief/today.md")" "1 1 5"
+printf '#!/usr/bin/env bash\nexit 1\n' >"$work/bin/gh-today-fails"; chmod +x "$work/bin/gh-today-fails"
+check "#391: GitHub failure leaves the previous digest intact" \
+  "$(FLEET_GH="$work/bin/gh-today-fails" BRIEFING_DIR="$work/brief" bash "$here/sync-briefing.sh" 2>/dev/null; printf '%s %s' "$?" "$(grep -c '^# Today' "$work/brief/today.md")")" "1 1"
+
 echo "briefing mirror to Drive (#380)"
 mlog="$work/rclone.log"; : >"$mlog"; : >"$mlog.files"; : >"$mlog.other"
 cat >"$work/bin/rclone-stub" <<'STUB'

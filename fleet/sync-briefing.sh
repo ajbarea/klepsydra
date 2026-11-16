@@ -69,10 +69,111 @@ if [[ -d $gd/rebase-merge || -d $gd/rebase-apply || -f $gd/MERGE_HEAD || -n $(gi
   exit 1
 fi
 
+write_today() {
+  local today since repos repo raw tmp live pane name state snap
+  today=$(date +%F)
+  since=$(date -u -d "$today 00:00" '+%Y-%m-%dT%H:%M:%SZ') ||
+    { flog ERROR "briefing today: could not calculate today's start"; return 1; }
+
+  tmp=$(mktemp "$R/today.md.XXXXXX") || {
+    flog ERROR "briefing today: could not create temporary file"
+    return 1
+  }
+  repos=""
+  trap 'rm -f -- "${tmp:-}" "${repos:-}"' RETURN
+
+  {
+    printf '# Today: %s\n\n' "$today"
+    printf '## Done today\n\n### Merged PRs\n'
+    repos=$(mktemp) || return 1
+    if ! "$FLEET_GH" api --paginate 'user/repos?affiliation=owner&per_page=100' --jq '.[].full_name' >"$repos"; then
+      flog ERROR "briefing today: GitHub repository list failed"
+      return 1
+    fi
+    while IFS= read -r repo; do
+      [[ -n $repo ]] || continue
+      if ! raw=$("$FLEET_GH" api --paginate --slurp \
+          "repos/$repo/issues?state=closed&since=$since&per_page=100"); then
+        flog ERROR "briefing today: GitHub repository query failed" repo="$repo"
+        return 1
+      fi
+      jq -r --arg repo "$repo" --arg since "$since" '
+        (if .[0] | type == "array" then flatten else . end)[]
+        | select(.pull_request and .pull_request.merged_at != null)
+        | select(.closed_at >= $since)
+        | "- [#\(.number)] \(.title | gsub("[\r\n]"; " ")) (\($repo))"
+      ' <<<"$raw"
+    done <"$repos" | head -5
+
+    printf '\n### Closed issues\n'
+    while IFS= read -r repo; do
+      [[ -n $repo ]] || continue
+      if ! raw=$("$FLEET_GH" api --paginate --slurp \
+          "repos/$repo/issues?state=closed&since=$since&per_page=100"); then
+        flog ERROR "briefing today: GitHub repository query failed" repo="$repo"
+        return 1
+      fi
+      jq -r --arg repo "$repo" --arg since "$since" '
+        (if .[0] | type == "array" then flatten else . end)[]
+        | select((.pull_request | not) and .closed_at >= $since)
+        | "- [#\(.number)] \(.title | gsub("[\r\n]"; " ")) (\($repo))"
+      ' <<<"$raw"
+    done <"$repos" | head -5
+    rm -f -- "$repos"
+    repos=""
+
+    printf '\n## Running now\n\n'
+    live=$(fleet_panes 2>/dev/null || true)
+    if [[ -z $live ]]; then
+      printf '_None._\n'
+    else
+      while IFS= read -r pane; do
+        [[ -n $pane ]] || continue
+        name=$(reg_field "$pane" 2 2>/dev/null || true)
+        if [[ -z $name && $pane == "$(orchestrator 2>/dev/null || true)" ]]; then
+          name=orchestrator
+        fi
+        state=waiting
+        snap=$(screen "$pane" 2>/dev/null || true)
+        busy "$snap" && state=working
+        [[ $state == waiting ]] && has_input_box "$snap" && state=idle
+        printf -- '- **%s**: %s\n' "${name:-$pane}" "$state"
+      done <<<"$live"
+    fi
+
+    printf '\n## Needs you\n\n'
+    if ! awk '
+      /^## Needs you$/ { in_section=1; next }
+      /^## / { in_section=0 }
+      in_section && /^- / { print; count++; if (count == 5) exit }
+    ' needs-you.md 2>/dev/null | grep -q .; then
+      printf '_None._\n'
+    else
+      awk '
+        /^## Needs you$/ { in_section=1; next }
+        /^## / { in_section=0 }
+        in_section && /^- / { print; count++; if (count == 5) exit }
+      ' needs-you.md
+    fi
+  } >"$tmp" || {
+    flog ERROR "briefing today: digest generation failed"
+    return 1
+  }
+  mv -f -- "$tmp" "$R/today.md" || {
+    flog ERROR "briefing today: could not replace today.md"
+    return 1
+  }
+  tmp=
+}
+
+if [[ -n ${FLEET_GH:-} ]]; then
+  write_today || exit 1
+fi
+
 # Only paths that exist or are tracked: git add stops at the first pathspec that matches nothing.
 paths=()
 # The old names stay until #276 so a rename commits both sides (#277).
-for f in morning.md queue.md claude-morning.md claude-queue.md needs-you.md README.md shots review; do
+for f in morning.md queue.md claude-morning.md claude-queue.md needs-you.md today.md README.md shots review; do
   if [[ -e $f ]] || git ls-files --error-unmatch -- "$f" >/dev/null 2>&1; then paths+=("$f"); fi
 done
 if [[ -n $(git status --porcelain -- "${paths[@]}") ]]; then

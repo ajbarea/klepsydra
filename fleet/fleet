@@ -18,6 +18,7 @@
 #                         --if-changed only a mode not yet applied, --check only report
 #   fleet pause NAME WHY  set aside an agent whose session is gone (paused.tsv keeps its row)
 #   fleet unpause NAME    put it back; the next fleet recover launches it
+#   fleet digest [--out FILE] [--stdout]  generate today.md digest for Claude Duet
 #   fleet shots [--apply] prune the briefing's decided and old screenshots (dry run without --apply)
 #   fleet install         link this checkout's scripts and units into place, copy the hooks, status line, launcher and cast
 #   fleet cutover         restart the resume service on the installed scripts
@@ -36,6 +37,7 @@ case $cmd in
   send) exec bash "$here/send.sh" "$@" ;;
   voices) exec bash "$here/voices.sh" "$@" ;;
   pause | unpause) exec bash "$here/pause.sh" "$cmd" "$@" ;;
+  digest) exec python3 -I "$here/digest.py" "$@" ;;
   shots) exec python3 -I "$here/prune_shots.py" "$@" ;;
   accounts)
     if [[ ${1:-} == sync ]]; then shift; exec bash "$here/accounts-sync.sh" "$@"; fi
