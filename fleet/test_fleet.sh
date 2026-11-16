@@ -1389,6 +1389,33 @@ rm -f "$work/health.json"; djson >/dev/null; : >"$FLEET_LOG"
 DOC_PREFS='{"phone_wall": false}' djson >/dev/null
 check "#328 review 1: a failing phone wall switched off logs that, not a recovery" \
   "$(jq -r 'select(.message | startswith("doctor: phone wall")) | .message' "$FLEET_LOG" | paste -sd'|')" "doctor: phone wall switched off"
+
+# #392: Windows probe timeout / interop stall warns, never fails; refusal on two runs fails (debounced).
+rm -f "$work/health.json"
+cat >"$work/bin/curl-timeout" <<'EOF'
+#!/usr/bin/env bash
+exit 124
+EOF
+chmod +x "$work/bin/curl-timeout"
+check "#392: a stalled curl probe warns, never fails" \
+  "$(FLEET_CURL="$work/bin/curl-timeout" doctor | grep -E '^(ok|warn|FAIL) +phone wall:' | cut -d: -f1)" "warn"
+
+cat >"$work/bin/tailscale-timeout" <<'EOF'
+#!/usr/bin/env bash
+exit 124
+EOF
+chmod +x "$work/bin/tailscale-timeout"
+check "#392: a stalled tailscale probe warns, never fails" \
+  "$(FLEET_TAILSCALE="$work/bin/tailscale-timeout" doctor | grep -E '^(ok|warn|FAIL) +phone wall over Tailscale:' | cut -d: -f1)" "warn"
+
+# Real refusal on two runs debounces from warn to FAIL
+rm -f "$work/health.json"
+djson >/dev/null
+check "#392: a real refusal on run 1 debounces to a warning in --json" \
+  "$(jq -r '.checks[] | select(.check == "phone wall") | .status' "$work/health.json")" "warn"
+djson >/dev/null
+check "#392: a real refusal on two runs in a row yields FAIL in --json" \
+  "$(jq -r '.checks[] | select(.check == "phone wall") | .status' "$work/health.json")" "FAIL"
 t kill-window -t "$w"; t kill-window -t "$o"; rm -f "$FLEET_STATE/orchestrator.pane"; : >"$REGISTRY"
 # With no pane left to act on, the resume pass closes the orphan only, each step logged (#379).
 printf '#!/usr/bin/env bash\necho "$*" >>%q\n' "$work/bkills" >"$work/bkill"
