@@ -3975,7 +3975,7 @@ check "#391: digest includes merged PRs, closed issues, and only the top five as
   "$(grep -c 'merged' "$work/brief/today.md") $(grep -c 'closed' "$work/brief/today.md") $(grep -c 'ask' "$work/brief/today.md")" "1 1 5"
 printf '#!/usr/bin/env bash\nexit 1\n' >"$work/bin/gh-today-fails"; chmod +x "$work/bin/gh-today-fails"
 check "#391: GitHub failure leaves the previous digest intact" \
-  "$(FLEET_GH="$work/bin/gh-today-fails" BRIEFING_DIR="$work/brief" bash "$here/sync-briefing.sh" 2>/dev/null; echo $?; grep -c '^# Today' "$work/brief/today.md")" "1 1"
+  "$(FLEET_GH="$work/bin/gh-today-fails" BRIEFING_DIR="$work/brief" bash "$here/sync-briefing.sh" 2>/dev/null; printf '%s %s' "$?" "$(grep -c '^# Today' "$work/brief/today.md")")" "1 1"
 
 echo "briefing mirror to Drive (#380)"
 mlog="$work/rclone.log"; : >"$mlog"; : >"$mlog.files"; : >"$mlog.other"
