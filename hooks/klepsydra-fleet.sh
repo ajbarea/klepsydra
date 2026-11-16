@@ -476,9 +476,15 @@ prune_hourly() { # stamp prune dir now
 # which Claude Code re-appends every few lines with the bridge's id: it has no
 # timestamp, so it is given the one of the line before it. A tail and one awk,
 # never a full read; nothing for a path that is not an absolute, readable .jsonl file.
+# The tail also harvests the newest assistant narration in the current turn,
+# separated from the Remote Control lines by a record separator (\x1e).
 remote_lines() { # transcript
   [[ $1 == /*.jsonl && -f $1 && -r $1 ]] || return 0
   tail -c "$REMOTE_TAIL" -- "$1" 2>/dev/null | LC_ALL=C awk -v keep="$REMOTE_LINES" -v max="$REMOTE_LINE_MAX" '
+    (index($0, "\"type\":\"user\"") && !index($0, "\"tool_result\"")) || index($0, "\"type\":\"USER_INPUT\"") { said = "" }
+    (index($0, "\"type\":\"assistant\"") && (index($0, "\"type\":\"text\"") || index($0, "\"content\":\""))) || index($0, "\"type\":\"PLANNER_RESPONSE\"") {
+      if (length($0) <= 32768) said = $0
+    }
     length($0) > max { next }
     index($0, "\"subtype\":\"bridge_status\"") || index($0, "\"type\":\"remote_session_change\"") \
       || (index($0, "\"type\":\"system\"") && index($0, "\"content\":\"Remote Control disconnected")) { seen[n++ % keep] = $0 }
@@ -487,6 +493,7 @@ remote_lines() { # transcript
     END {
       for (i = (n > keep ? n - keep : 0); i < n; i++) print seen[i % keep]
       if (bridge != "" && bridge_at != "") { sub(/}[[:space:]]*$/, ",\"timestamp\":\"" bridge_at "\"}", bridge); print bridge }
+      if (said != "") printf "\x1e%s\n", said
     }'
   return 0
 }
@@ -622,6 +629,26 @@ def rc_word:
 # The task and tool-use ids of every <task-notification> block in a prompt.
 def notified: if type == "string" then [scan("<task-notification>[\\s\\S]*?</task-notification>")
   | scan("<(?:task-id|tool-use-id)>\\s*([^<\\s]+)\\s*</(?:task-id|tool-use-id)>") | .[0]] else [] end;
+# The latest text an assistant or planner line says.
+def assistant_text($line):
+  if ($line | type) != "string" or ($line | length) == 0 then null
+  else
+    ($line | try fromjson catch null) as $j
+    | if $j != null then
+        if $j.type == "assistant" then
+          ($j.message.content // $j.content) as $c
+          | if ($c | type) == "string" then $c
+            elif ($c | type) == "array" then
+              ([$c[] | select(.type == "text" and (.text | type) == "string") | .text] | last)
+            else null end
+        elif $j.type == "PLANNER_RESPONSE" then
+          if ($j.content | type) == "string" then $j.content
+          elif ($j.content | type) == "array" then
+            ([$j.content[] | select(.type == "text" and (.text | type) == "string") | .text] | last)
+          else null end
+        else null end
+      else null end
+  end;
 
 . as $ev
 | $ev.hook_event_name as $event
@@ -635,7 +662,7 @@ def notified: if type == "string" then [scan("<task-notification>[\\s\\S]*?</tas
             launch_dir: ($ev.cwd | text), claude: null, tmux: null, host: null, voice: null, voice_from: null,
             state: (if $event | IN("PreToolUse", "PostToolUse", "PostToolUseFailure", "SubagentStart", "SubagentStop") then "working" else "new" end),
             reason: null, needs: null, state_at: $now,
-            where: null, touched: [], prompt: null, reply: null, error: null,
+            where: null, touched: [], prompt: null, reply: null, said: null, error: null,
             ended: null, turns: 0, written_at: $now}) as $s
   | $s
   | .engine = (($ev.engine | strings | select(test("^[A-Za-z0-9._-]{1,32}$"))) // .engine // "claude")
@@ -658,9 +685,12 @@ def notified: if type == "string" then [scan("<task-notification>[\\s\\S]*?</tas
   # Remote Control: the newest word on it since this process started wins; a
   # tail with none keeps what the file knew. A new process starts with none,
   # and its transcript's older lines (a resumed session's) are the last one's.
+  | ($remote | split("\u001e")) as $r_parts
+  | ($r_parts[0] // "") as $rc_remote
+  | ($r_parts[1] // "") as $said_line
   | (if $fresh then $now - 30 else (.remote_since | numbers) // 0 end) as $rc_since
   | (if $fresh then .remote_since = $rc_since else . end)
-  | [$remote | split("\n")[] | try fromjson catch empty | objects
+  | [$rc_remote | split("\n")[] | try fromjson catch empty | objects
       | select((rc_time // 0) >= $rc_since) | (rc_time // 0) as $at | rc_word + {at: $at}] as $words
   # Remote Control on from startup and /remote-control answered at its menu
   # write no link of their own; the bridge record then names it, until this
@@ -852,9 +882,12 @@ def notified: if type == "string" then [scan("<task-notification>[\\s\\S]*?</tas
   # as a prompt starting <task-notification>; it is not AJ's.
   | if $event == "UserPromptSubmit" then
       # Every prompt starts a turn, a background task's notification too.
-      .error = null | .turn_at = $now
+      .error = null | .turn_at = $now | del(.said)
       | if ($ev.prompt // "" | test("^\\s*<task-notification>")) then .
         else .prompt = (($ev.prompt | clip) as $p | if $p then {text: $p, at: $now} else .prompt end) end
+    elif ($event | IN("PostToolUse", "PostToolUseFailure")) and $agent == "" then
+      ((assistant_text($said_line) // $ev.last_assistant_message) | clip) as $narration
+      | if $narration then .said = {text: $narration, at: $now} else . end
     elif $event == "Stop" then
       (($ev.last_assistant_message | clip) as $r | if $r then .reply = {text: $r, at: $now} else . end)
       # Turns ended so far; Stop is the only event that ends one.

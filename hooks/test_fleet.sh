@@ -319,6 +319,56 @@ check "failure: error" "$(field '[.state, .reason, .error]')" '["error","rate li
 fire user-prompt.json
 check "the next prompt clears the error" "$(field '[.state, .error]')" '["working",null]'
 
+echo "mid-turn narration: said vs reply (#410)"
+narrate_transcript="$work/narrate-transcript.jsonl"
+cat >"$narrate_transcript" <<'EOF'
+{"type":"user","message":{"role":"user","content":"do something"}}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"I will now inspect the files"},{"type":"tool_use","name":"Bash"}]}}
+EOF
+now=1792353070
+fire post-tool-bash.json ".transcript_path = \"$narrate_transcript\""
+check "PostToolUse harvests narration from transcript into .said" \
+  "$(field '[.said.text, .said.at]')" '["I will now inspect the files",1792353070]'
+check "PostToolUse does not overwrite .reply" "$(field .reply.text)" \
+  '"That works with no model calls: the hook writes one file per session and the overlay reads them."'
+
+now=1792353075
+empty_transcript="$work/empty-transcript.jsonl"
+cat >"$empty_transcript" <<'EOF'
+{"type":"user","message":{"role":"user","content":"hello"}}
+EOF
+fire post-tool-bash.json ".transcript_path = \"$empty_transcript\""
+check "empty tail leaves existing .said alone" \
+  "$(field '[.said.text, .said.at]')" '["I will now inspect the files",1792353070]'
+
+now=1792353080
+sub_transcript="$work/sub-transcript.jsonl"
+cat >"$sub_transcript" <<'EOF'
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Subagent chatter"}]}}
+EOF
+fire post-tool-bash.json ".agent_id = \"subagent-1\" | .transcript_path = \"$sub_transcript\""
+check "subagent PostToolUse does not overwrite main session .said" \
+  "$(field '[.said.text, .said.at]')" '["I will now inspect the files",1792353070]'
+
+now=1792353085
+agy_transcript="$work/agy-transcript.jsonl"
+cat >"$agy_transcript" <<'EOF'
+{"type":"USER_INPUT","content":"agy prompt"}
+{"type":"PLANNER_RESPONSE","content":"I am planning the changes now"}
+EOF
+fire post-tool-bash.json ".transcript_path = \"$agy_transcript\""
+check "PostToolUse harvests AGY PLANNER_RESPONSE narration into .said" \
+  "$(field '[.said.text, .said.at]')" '["I am planning the changes now",1792353085]'
+
+now=1792353090
+fire stop.json '.last_assistant_message = "All tasks finished successfully"'
+check "Stop writes .reply" "$(field '[.reply.text, .reply.at]')" '["All tasks finished successfully",1792353090]'
+check "Stop keeps .said distinct" "$(field '[.said.text, .said.at]')" '["I am planning the changes now",1792353085]'
+
+now=1792353095
+fire user-prompt.json
+check "UserPromptSubmit clears .said" "$(field .said)" "null"
+
 echo "where moves, identity stays"
 now=1792353100
 fire post-tool-edit.json ".tool_input.file_path = \"$repos/ideas/README.md\""

@@ -77,6 +77,8 @@ pub struct View {
     pub place: Option<Place>,
     pub touched: Vec<Touched>,
     pub prompt: Option<Said>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub said: Option<Said>,
     pub reply: Option<Said>,
     pub error: Option<String>,
     pub updated_at: i64,
@@ -264,11 +266,13 @@ pub fn view(entry: &Entry, now: i64) -> Option<View> {
         ..p.clone()
     });
     let prompt = shift_said(&f.prompt);
+    let said = shift_said(&f.said);
     let reply = shift_said(&f.reply);
     let updated_at = [
         Some(state_at),
         place.as_ref().map(|p| p.at),
         prompt.as_ref().map(|s| s.at),
+        said.as_ref().map(|s| s.at),
         reply.as_ref().map(|s| s.at),
         f.ended.as_ref().map(|e| at(e.at)),
     ]
@@ -308,6 +312,7 @@ pub fn view(entry: &Entry, now: i64) -> Option<View> {
             })
             .collect(),
         prompt,
+        said,
         reply,
         error: f.error.clone(),
         updated_at,
@@ -483,6 +488,7 @@ mod tests {
             place: None,
             touched: vec![],
             prompt: None,
+            said: None,
             reply: None,
             error: None,
             ended: None,
@@ -1511,5 +1517,17 @@ mod tests {
         );
         assert_eq!(voice_of(&s, "a"), Some("bf_isabella"));
         assert_eq!(voice_of(&s, "b"), None);
+    }
+
+    #[test]
+    fn view_carries_said() {
+        let mut e = entry("a", State::Working, NOW - 400, NOW - 5);
+        e.file.said = Some(Said {
+            text: "narrating".into(),
+            at: NOW - 350,
+        });
+        let v = view(&e, NOW).unwrap();
+        assert_eq!(v.said.as_ref().unwrap().text, "narrating");
+        assert_eq!(v.said.as_ref().unwrap().at, NOW - 350);
     }
 }

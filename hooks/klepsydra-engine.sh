@@ -29,13 +29,13 @@ command -v jq >/dev/null 2>&1 || fail "jq is not installed"
 input=$(cat)
 
 last_msg=""
-if [[ "$engine" == "agy" && "$target_event" == "Stop" ]]; then
+if [[ "$engine" == "agy" && ( "$target_event" == "Stop" || "$target_event" == "PostToolUse" ) ]]; then
   t_path=$(printf '%s' "$input" | jq -r '. as $root | ($root.lastAssistantMessage // $root.last_assistant_message // $root.response // "") | if type == "string" and . != "" then "" else (($root.transcriptPath // $root.transcript_path // "") | if type == "string" then . else "" end) end' 2>/dev/null || true)
   if [[ -n "$t_path" ]]; then
     target_t="$t_path"
     [[ -f "${t_path%/*}/transcript_full.jsonl" ]] && target_t="${t_path%/*}/transcript_full.jsonl"
     if [[ -f "$target_t" ]]; then
-      last_msg=$(jq -r -s 'map(select(.type == "PLANNER_RESPONSE" and (.content | type == "string") and (.content != ""))) | last // empty | .content' "$target_t" 2>/dev/null || true)
+      last_msg=$(tail -n 100 "$target_t" 2>/dev/null | jq -r -s 'map(select(.type == "PLANNER_RESPONSE" and (.content | type == "string") and (.content != ""))) | last // empty | .content' 2>/dev/null || true)
     fi
   fi
 fi
