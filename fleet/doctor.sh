@@ -77,6 +77,19 @@ report() { # ok|warn|FAIL CHECK DETAIL [KEY=VALUE...]: the values are logged wit
   esac
 }
 
+# In --json, debounces the wall's red: warns on the first failure and fails on two in a row (#392).
+report_debounced() { # CHECK DETAIL [KEY=VALUE...]
+  local check detail
+  check=$(tilde "$1") detail=$(tilde "$2")
+  local key=${check//[$'\t\n']/ }
+  local -a vals=("${@:3}")
+  if [[ -n $json && ${was[$key]-} != FAIL && ${was[$key]-} != warn ]]; then
+    report warn "$check" "$detail" "${vals[@]}"
+  else
+    report FAIL "$check" "$detail" "${vals[@]}"
+  fi
+}
+
 # Rows whose agent finished, as "PANE/SID<TAB>NAME" lines. A pane id alone is
 # not a key: a restarted tmux server hands out %N again.
 finished_rows() {
@@ -233,13 +246,28 @@ done
 
 # Whether the wall at BASE answers (#246): the pass or fail. A Windows program
 # run from WSL now and then fails once at start, so a miss is tried again.
+# A stalled probe (timeout or interop failure) is a warning, never a failure (#392).
 phone_body=""
 phone() { # CHECK BASE
-  local body
-  if ! body=$($CURL -fsS --max-time 5 "$2/fleet.json" 2>/dev/null); then
+  local body rc wait_s=${FLEET_CURL_WAIT_S:-5}
+  # shellcheck disable=SC2086
+  body=$(timeout "$((wait_s + 2))" $CURL -fsS --max-time "$wait_s" "$2/fleet.json" 2>/dev/null)
+  rc=$?
+  if (( rc != 0 )); then
+    if (( rc == 124 || rc == 28 || rc == 126 || rc == 127 )); then
+      report warn "$1" "could not probe (Windows interop slow or unavailable)" url="$2/fleet.json"
+      return
+    fi
     sleep "${FLEET_RETRY_S:-2}"
-    if ! body=$($CURL -fsS --max-time 5 "$2/fleet.json" 2>/dev/null); then
-      report FAIL "$1" "no answer from $2/fleet.json (tried twice)" url="$2/fleet.json"
+    # shellcheck disable=SC2086
+    body=$(timeout "$((wait_s + 2))" $CURL -fsS --max-time "$wait_s" "$2/fleet.json" 2>/dev/null)
+    rc=$?
+    if (( rc != 0 )); then
+      if (( rc == 124 || rc == 28 || rc == 126 || rc == 127 )); then
+        report warn "$1" "could not probe (Windows interop slow or unavailable)" url="$2/fleet.json"
+        return
+      fi
+      report_debounced "$1" "no answer from $2/fleet.json (tried twice)" url="$2/fleet.json"
       return
     fi
     # A miss the FAIL above does not cover: logged each time, to show how often.
@@ -257,14 +285,25 @@ case $? in
 esac
 if [[ $pw == true ]]; then
   phone "phone wall" "$PHONE"
-  dns=$($TAILSCALE status --json 2>/dev/null | jq -r '.Self.DNSName // empty' | sed 's/\.$//')
-  serve=$($TAILSCALE serve status 2>/dev/null)
-  if [[ -z $dns ]]; then
-    report FAIL "phone wall over Tailscale" "Tailscale is not running or not logged in"
-  elif [[ -z $serve || $serve == *"No serve config"* ]]; then
-    report FAIL "phone wall over Tailscale" "Tailscale Serve is not set up (README: Phone wall)"
+  # shellcheck disable=SC2086
+  dns_out=$(timeout 5 $TAILSCALE status --json 2>/dev/null)
+  ts_rc=$?
+  if (( ts_rc == 124 || ts_rc == 126 || ts_rc == 127 )); then
+    report warn "phone wall over Tailscale" "could not probe (Windows interop slow or unavailable)"
   else
-    phone "phone wall over Tailscale" "https://$dns"
+    dns=$(jq -r '.Self.DNSName // empty' <<<"$dns_out" 2>/dev/null | sed 's/\.$//')
+    # shellcheck disable=SC2086
+    serve_out=$(timeout 5 $TAILSCALE serve status 2>/dev/null)
+    serve_rc=$?
+    if (( serve_rc == 124 || serve_rc == 126 || serve_rc == 127 )); then
+      report warn "phone wall over Tailscale" "could not probe (Windows interop slow or unavailable)"
+    elif [[ -z $dns ]]; then
+      report_debounced "phone wall over Tailscale" "Tailscale is not running or not logged in"
+    elif [[ -z $serve_out || $serve_out == *"No serve config"* ]]; then
+      report_debounced "phone wall over Tailscale" "Tailscale Serve is not set up (README: Phone wall)"
+    else
+      phone "phone wall over Tailscale" "https://$dns"
+    fi
   fi
 fi
 
