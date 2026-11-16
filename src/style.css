@@ -169,7 +169,8 @@ html, body {
 #rows { display: flex; flex-direction: column; gap: calc(7px * var(--scale)); }
 
 .entry { display: flex; flex-direction: column; gap: calc(4px * var(--scale)); }
-.entry[data-capped="true"] { filter: grayscale(0.85); color: var(--text-dim, #888); }
+.entry[data-capped="true"] .label,
+.entry[data-capped="true"] .sub { color: var(--text-dim, #888); }
 .route-badge {
   display: inline-block;
   font-size: calc(9px * var(--scale));
