@@ -1583,6 +1583,8 @@ check "an agent name that is not a plain name is not written" "$(jq -c .fleet_na
 printf '%s\n' "$H" >"$work/fleet-state/orchestrator.session"
 rm -f "$hfile"; hfire session-start.json "TMUX=$work/sock/klepsydra,1,0" TMUX_PANE=%9
 check "review 1: with a session on record, that session is Heph wherever its pane" "$(jq -c .orchestrator "$hfile")" "true"
+rm -f "$hfile"; hfire session-start.json
+check "an orchestrator session on record outside tmux is Heph" "$(jq -c .orchestrator "$hfile")" "true"
 W=66666666-4444-4555-8666-777777777777
 wfile="$dir/fleet/$W.json"
 fire session-start.json ".session_id = \"$W\"" "TMUX=$work/sock/klepsydra,1,0" TMUX_PANE=%7 KLEPSYDRA_AGENT=sphragis >/dev/null
@@ -1604,6 +1606,9 @@ check "review 3: but not once it is in another pane" "$(jq -c .orchestrator "$wf
 rm -f "$wfile"
 fire session-start.json ".session_id = \"$W\"" "TMUX=$work/sock/klepsydra,1,0" TMUX_PANE=%3 KLEPSYDRA_AGENT=heph >/dev/null
 check "review 2: a session launched as heph (a move, a recovery) is Heph at once" "$(jq -c .orchestrator "$wfile")" "true"
+rm -f "$wfile"
+fire session-start.json ".session_id = \"$W\"" KLEPSYDRA_AGENT=heph >/dev/null
+check "a session launched as heph outside tmux is Heph" "$(jq -c .orchestrator "$wfile")" "true"
 # #333: a `claude -p` that Heph runs from his Bash tool inherits his
 # KLEPSYDRA_AGENT and TMUX_PANE, but it is a helper under his process: never
 # the orchestrator, and it names no pane (so it never stands for his).
