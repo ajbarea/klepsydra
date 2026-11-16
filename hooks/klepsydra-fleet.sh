@@ -1131,7 +1131,9 @@ main() {
   # A session under another names no pane, so it never stands for its
   # parent's (live_session, the registry, the window's colour) and is never
   # the orchestrator, whose flag and face it would otherwise inherit (#333).
-  [[ -n $tmux_pane && -n $found_pid ]] && nested_claude "$found_pid" && tmux_socket="" tmux_pane=""
+  local is_nested=0
+  [[ -n $found_pid ]] && nested_claude "$found_pid" && is_nested=1
+  (( is_nested )) && tmux_socket="" tmux_pane=""
   # Who the session is in the fleet (#172): the agent name launch.sh starts it
   # with, and whether it is Heph, whom only Heph's face is ever given. Started
   # as "heph" (a move, a recovery) it is; started as any other agent it is
@@ -1148,15 +1150,19 @@ main() {
   local orch_face=$HEPH_VOICE cleared_face=""
   [[ ${orch_name,,} == athena ]] && orch_face=$ATHENA_VOICE
   [[ $agent =~ ^[A-Za-z0-9._-]{1,64}$ ]] || agent=""
-  if [[ ${tmux_socket##*/} == "${KLEPSYDRA_TMUX_SOCKET:-klepsydra}" && -n $tmux_pane ]]; then
-    { read -r orch_sid <"$orch_state/orchestrator.session"; } 2>/dev/null
-    { read -r orch_pane <"$orch_state/orchestrator.pane"; } 2>/dev/null
-    if [[ $agent == heph ]]; then
-      orchestrator=true
-    elif [[ -n $agent ]]; then
-      orchestrator=false
-    elif [[ -n $orch_sid ]]; then
-      [[ $orch_sid == "$session" || ($event == SessionStart && $source == clear && $orch_pane == "$tmux_pane") ]] && orchestrator=true
+  { read -r orch_sid <"$orch_state/orchestrator.session"; } 2>/dev/null
+  { read -r orch_pane <"$orch_state/orchestrator.pane"; } 2>/dev/null
+  if (( is_nested )); then
+    orchestrator=false
+  elif [[ $agent == heph ]]; then
+    orchestrator=true
+  elif [[ -n $agent ]]; then
+    orchestrator=false
+  elif [[ -n $orch_sid && $orch_sid == "$session" ]]; then
+    orchestrator=true
+  elif [[ ${tmux_socket##*/} == "${KLEPSYDRA_TMUX_SOCKET:-klepsydra}" && -n $tmux_pane ]]; then
+    if [[ -n $orch_sid ]]; then
+      [[ $event == SessionStart && $source == clear && $orch_pane == "$tmux_pane" ]] && orchestrator=true
     else
       [[ $orch_pane == "$tmux_pane" ]] && orchestrator=true
     fi
@@ -1185,7 +1191,7 @@ main() {
   [[ -f $file ]] && { old=$(<"$file"); } 2>/dev/null
   # Heph by a /clear stays Heph on later events in the orchestrator's pane,
   # before orchestrator.session names the new session.
-  [[ $orchestrator == false && -z $agent && -n $orch_sid && $orch_pane == "$tmux_pane" && $old == *'"orchestrator":true'* ]] && orchestrator=true
+  [[ $orchestrator == false && -z $agent && -n $orch_sid && ($orch_pane == "$tmux_pane" || $orch_sid == "$session") && $old == *'"orchestrator":true'* ]] && orchestrator=true
   # Under the lock, so two orchestrators starting together never take one face.
   if [[ $orchestrator == true && $old != *'"orchestrator_face"'* ]]; then
     local clear_pane=""
