@@ -333,6 +333,29 @@ else
   report ok "preferred accounts" "every pane on its role's preferred account, or that one is short of room"
 fi
 
+# Each live card's character and its terminal's voice (#389): the card decides the session's voice.
+voice_voices=${KERYX_VOICES:-${XDG_CACHE_HOME:-$HOME/.cache}/keryx/voices.json}
+proc_root=${KLEPSYDRA_PROC:-/proc}
+for f in "$KLEPSYDRA_DIR"/fleet/*.json; do
+  [[ -f $f ]] || continue
+  expected=$(jq -r '
+    if .orchestrator == true then (if .orchestrator_face == "bf_emma" or .orchestrator_face == "bf_alice" then "bf_emma" else "am_michael" end)
+    else (.voice // .pick // empty)
+    end' "$f" 2>/dev/null)
+  pid=$(jq -r '.claude.pid // empty' "$f" 2>/dev/null)
+  start=$(jq -r '.claude.start // empty' "$f" 2>/dev/null)
+  ended=$(jq -r '.ended // empty' "$f" 2>/dev/null)
+  [[ -z $ended && -n $expected && $pid =~ ^[1-9][0-9]*$ ]] || continue
+  actual=$(tr '\0' '\n' <"$proc_root/$pid/environ" 2>/dev/null |
+    sed -n 's/^KERYX_VOICE=//p' | head -n 1)
+  if [[ -z $actual && -r $voice_voices ]]; then
+    actual=$(jq -r --arg h "$pid:$start" '.holders[$h].voice // empty | strings' "$voice_voices" 2>/dev/null)
+  fi
+  [[ -n $actual && $actual != "$expected" ]] || continue
+  report warn "voice $pid" "card has $expected but terminal has $actual" \
+    pid="$pid" expected="$expected" actual="$actual"
+done
+
 # CI reds routed to an agent (#180) wait in its inbox for an idle prompt; an hour is too long.
 stale_inbox=$(find "$FLEET_STATE/inbox" -mindepth 2 -maxdepth 2 -name '*.txt' -type f -mmin +60 -printf '%P ' 2>/dev/null)
 if [[ -n $stale_inbox ]]; then

@@ -204,6 +204,9 @@ new() { # dir [agy model]
     cmd="env -u ANTHROPIC_API_KEY -u ANTHROPIC_AUTH_TOKEN -u ANTHROPIC_PROFILE $cmd"
     keycheck=1
   fi
+  if [[ ${KERYX_VOICE:-} =~ ^[a-z0-9_+().-]+$ ]]; then
+    cmd="env KERYX_VOICE=$(printf '%q' "$KERYX_VOICE") $cmd"
+  fi
   take_lock
   local -a t=(-L "$SOCKET_NAME") conf=()
   [[ -r $CONF ]] && conf=(-f "$CONF")

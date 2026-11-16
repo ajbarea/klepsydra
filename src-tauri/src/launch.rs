@@ -82,6 +82,19 @@ fn model_ok(m: &str) -> bool {
             .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || ".-".contains(c))
 }
 
+fn voice_ok(v: &str) -> bool {
+    (1..=128).contains(&v.len())
+        && v.chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || "+()._".contains(c))
+        && v.split('+').all(|part| {
+            let name = part.split('(').next().unwrap_or("");
+            !name.is_empty()
+                && name
+                    .chars()
+                    .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
+        })
+}
+
 fn dir_ok(d: &str) -> bool {
     (d == "~" || d.starts_with("~/") || d.starts_with('/'))
         && d.len() <= 1024
@@ -756,9 +769,21 @@ pub async fn get_launch_dir(app: tauri::AppHandle) -> Option<String> {
 }
 
 /// wsl.exe's arguments for a launch: `claude`, or with `agy_model` Antigravity's
-/// CLI on that model (#323).
-fn session_args(prefs: &Prefs, agy_model: Option<&str>) -> Result<Vec<String>, String> {
+/// CLI on that model (#323), with `keryx_voice` session-named voice (#389).
+fn session_args(
+    prefs: &Prefs,
+    agy_model: Option<&str>,
+    keryx_voice: Option<&str>,
+) -> Result<Vec<String>, String> {
     let (_, mut args) = launch_plan(prefs)?;
+    if let Some(v) = keryx_voice {
+        if !voice_ok(v) {
+            return Err(format!("That is not a keryx voice id: {v}"));
+        }
+        if let Some(pos) = args.iter().position(|x| x == "-e") {
+            args.splice(pos + 1..pos + 1, ["env".into(), format!("KERYX_VOICE={v}")]);
+        }
+    }
     if let Some(m) = agy_model {
         if !model_ok(m) {
             return Err(format!("That is not an agy model id: {m}"));
@@ -774,10 +799,11 @@ fn session_args(prefs: &Prefs, agy_model: Option<&str>) -> Result<Vec<String>, S
 pub async fn launch_session(
     app: tauri::AppHandle,
     agy_model: Option<String>,
+    keryx_voice: Option<String>,
 ) -> Result<String, String> {
     let prefs = crate::read_prefs(&app)
         .ok_or("prefs.json could not be read, so the launch folder is unknown.")?;
-    let args = session_args(&prefs, agy_model.as_deref())?;
+    let args = session_args(&prefs, agy_model.as_deref(), keryx_voice.as_deref())?;
     tauri::async_runtime::spawn_blocking(move || {
         gated(&app.state::<InFlight>(), || {
             logged("launch", None, || run(&args, TIMEOUT, timed_out))
@@ -922,20 +948,43 @@ mod tests {
             .as_object()
             .cloned()
             .unwrap();
-        let a = session_args(&prefs, Some("gemini-3.8-flash-high")).unwrap();
+        let a = session_args(&prefs, Some("gemini-3.8-flash-high"), None).unwrap();
         assert_eq!(
             &a[a.len() - 4..],
             ["new", "/home/aj", "agy", "gemini-3.8-flash-high"]
         );
         assert_eq!(
-            session_args(&prefs, None)
+            session_args(&prefs, None, None)
                 .unwrap()
                 .last()
                 .map(String::as_str),
             Some("/home/aj")
         );
         for bad in ["", "Gemini", "x;rm", "-x", "a b", &"a".repeat(65)] {
-            assert!(session_args(&prefs, Some(bad)).is_err(), "{bad:?}");
+            assert!(session_args(&prefs, Some(bad), None).is_err(), "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn a_launch_with_a_voice_sets_keryx_voice_and_refuses_a_bad_voice_id() {
+        let prefs = json!({"launch_dir": "/home/aj"})
+            .as_object()
+            .cloned()
+            .unwrap();
+        let a = session_args(&prefs, None, Some("am_michael")).unwrap();
+        let pos = a.iter().position(|x| x == "-e").unwrap();
+        assert_eq!(
+            &a[pos..pos + 5],
+            ["-e", "env", "KERYX_VOICE=am_michael", "bash", "-l"]
+        );
+        let blend = session_args(&prefs, None, Some("af_bella(0.7)+af_heart(0.3)")).unwrap();
+        let bpos = blend.iter().position(|x| x == "-e").unwrap();
+        assert_eq!(
+            &blend[bpos..bpos + 3],
+            ["-e", "env", "KERYX_VOICE=af_bella(0.7)+af_heart(0.3)"]
+        );
+        for bad in ["", "Michael", "am_michael;rm", "x\n", &"a".repeat(129)] {
+            assert!(session_args(&prefs, None, Some(bad)).is_err(), "{bad:?}");
         }
     }
 

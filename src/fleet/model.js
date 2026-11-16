@@ -124,7 +124,8 @@ export function identity(s, cast) {
     const placed = Array.isArray(head) && head.length === 3 && head.every((v) => typeof v === "number" && v > 0 && v < 1);
     return {
       name: character.name,
-      voice: picked ? null : voiceName(voice),
+      voice: voiceName(voice),
+      voiceKey: voice,
       face: `${base}-96.webp`,
       face2x: `${base}-192.webp`,
       full: `${base}-full.webp`,
@@ -136,7 +137,7 @@ export function identity(s, cast) {
   }
   const name = own ? voiceName(own) : s.name || basename(s.launch_dir) || s.session_id.slice(0, 8);
   const face = medallion(name, own ?? s.session_id);
-  return { name, voice: null, face, face2x: face, full: null, accent: null, epithet: null, figure: null, motif: "burst" };
+  return { name, voice: null, voiceKey: null, face, face2x: face, full: null, accent: null, epithet: null, figure: null, motif: "burst" };
 }
 
 /** The voice keys of the orchestrator's faces, Hephaestus and Athena (src-tauri/fleet/src/picks.rs ORCHESTRATORS). */
@@ -651,6 +652,7 @@ export function card(s, cast, nowMs, request = null) {
     alsoPast: also.slice(ALSO_NAMED).map((r) => `also in ${r}`), // named only while a phone card shows its full text
     alsoChip: alsoChip(also),
     voiceTitle: who.voice ? `Voice: ${who.voice}` : null,
+    voiceKey: who.voiceKey,
     name: who.name,
     session: s.name ?? null,
     face: who.face,

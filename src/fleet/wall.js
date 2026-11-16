@@ -103,6 +103,10 @@ document.addEventListener("pointerdown", (e) => {
   if (gear.open && !gear.contains(e.target)) gear.open = false;
 });
 const limitWait = limits.querySelector(".limit-wait");
+const launchVoice = () => {
+  const orchestrator = sessions.find((session) => session.orchestrator);
+  return orchestrator ? identity(orchestrator, cast).voiceKey : "am_michael";
+};
 // + New session and the empty state's button start a session the same way,
 // and while one runs the other is off too.
 async function startSession(button, note) {
@@ -110,7 +114,7 @@ async function startSession(button, note) {
   const other = button === newButton ? startButton : newButton;
   setOff(other, true);
   try {
-    await press(button, note, () => window.__TAURI__.core.invoke("launch_session"), "Starting…");
+    await press(button, note, () => window.__TAURI__.core.invoke("launch_session", { keryxVoice: launchVoice() }), "Starting…");
   } finally {
     setOff(other, false);
   }
@@ -140,7 +144,12 @@ agyStart.addEventListener("click", async () => {
   newMenu.hidePopover();
   setOff(newButton, true);
   try {
-    await press(newKind, newNote, () => window.__TAURI__.core.invoke("launch_session", { agyModel: model }), "Starting…");
+    await press(
+      newKind,
+      newNote,
+      () => window.__TAURI__.core.invoke("launch_session", { agyModel: model, keryxVoice: launchVoice() }),
+      "Starting…",
+    );
   } finally {
     setOff(newButton, false);
   }

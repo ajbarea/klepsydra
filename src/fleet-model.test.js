@@ -191,6 +191,7 @@ test("identity: a cast voice is its character", () => {
   assert.deepEqual(identity(session(), CAST), {
     name: "Hephaestus",
     voice: "Michael",
+    voiceKey: "am_michael",
     face: "fleet/faces/kourai/hephaestus-96.webp",
     face2x: "fleet/faces/kourai/hephaestus-192.webp",
     full: "fleet/faces/kourai/hephaestus-full.webp",
@@ -803,11 +804,12 @@ test("#148: a session with no character of its own gets one no live card shows, 
   const at = (id, voice, started, over = {}) => session({ session_id: id, voice, started_at: started, ...over });
   const faces = (list) => Object.fromEntries(castPicks(list, cast).map((s) => [s.session_id, identity(s, cast).name]));
 
-  // keryx muted, no home voice: a free character, and no keryx voice to name.
+  // keryx muted, no home voice: a free character, whose voice follows the pick (#389).
   const muted = castPicks([at("held", "v1", 1), at("cv", null, 2)], cast);
   assert.notEqual(identity(muted[1], cast).name, "One");
   assert.ok(["Two", "Three"].includes(identity(muted[1], cast).name));
-  assert.equal(identity(muted[1], cast).voice, null);
+  assert.equal(identity(muted[1], cast).voice, voiceName(muted[1].pick), "a pick gets that character's voice (#389)");
+  assert.equal(identity(muted[1], cast).voiceKey, muted[1].pick);
   assert.equal(identity(muted[0], cast).voice, voiceName("v1"), "an own voice is still named");
 
   // Free characters go first; a second voiceless session takes the other one.
@@ -877,6 +879,27 @@ test("#148: the medallion is only for a theme that did not load", () => {
     assert.equal(identity(picked, none).face, identity(s, null).face);
     assert.match(identity(picked, none).face, /^data:image\/svg\+xml/);
   }
+});
+
+test("#389: a picked card exposes both voice and voiceKey, and voiceTitle names it", () => {
+  const cast = JSON.parse(readFileSync(new URL("./fleet/themes/kourai.json", import.meta.url), "utf8"));
+  const s = session({ session_id: "s1", voice: null, pick: "af_nicole" });
+  const who = identity(s, cast);
+  assert.equal(who.name, "Hesychia");
+  assert.equal(who.voice, "Nicole");
+  assert.equal(who.voiceKey, "af_nicole");
+  const c = card(s, cast, NOW);
+  assert.equal(c.voiceTitle, "Voice: Nicole");
+  assert.equal(c.voiceKey, "af_nicole");
+
+  // A medallion session with no theme or voice has no voice or voiceKey
+  const med = session({ session_id: "s2", voice: null, pick: null });
+  const medWho = identity(med, null);
+  assert.equal(medWho.voice, null);
+  assert.equal(medWho.voiceKey, null);
+  const medCard = card(med, null, NOW);
+  assert.equal(medCard.voiceTitle, null);
+  assert.equal(medCard.voiceKey, null);
 });
 
 test("#149: a card's folder opens when the hook named it, and only a plain GitHub repo page is linked", () => {
