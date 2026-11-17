@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { WINDOW_ORDER, ROUTE_ORDER, rampColor, rampPosition, formatCountdown, formatCountdownShort, formatAge, formatAgeShort, evaluate, formatPct, formatPctShort, ringDash, ringCap, ringStyle, entryText, usageRows, toRows, SHOW_AGE_AFTER_MS, DROP_AFTER_MS, WAITING, harnessOf, windowNote, harnessGroups, routeLane } from "./gauge.js";
+import { WINDOW_ORDER, ROUTE_ORDER, FLEET_ROOM_PCT, rampColor, rampPosition, formatCountdown, formatCountdownShort, formatAge, formatAgeShort, evaluate, formatPct, formatPctShort, ringDash, ringCap, ringStyle, entryText, usageRows, toRows, SHOW_AGE_AFTER_MS, DROP_AFTER_MS, WAITING, harnessOf, windowNote, harnessGroups, routeLane } from "./gauge.js";
 
 const STOPS = { low: "#3b82f6", mid: "#eab308", high: "#ef4444", midAt: 60, highAt: 85 };
 const NOW = 1_800_000_000_000; // fixed clock
@@ -522,6 +522,12 @@ test("the phone server sends exactly the windows the gauge draws", async () => {
   assert.deepEqual([...list.matchAll(/"(\w+)"/g)].map((m) => m[1]), WINDOW_ORDER);
 });
 
+test("the gauge mirrors the fleet's room threshold", async () => {
+  const { readFileSync } = await import("node:fs");
+  const lib = readFileSync(new URL("../fleet/lib.sh", import.meta.url), "utf8");
+  assert.equal(Number(lib.match(/^FLEET_ROOM_PCT=\$\{FLEET_ROOM_PCT:-([0-9]+)\}/m)[1]), FLEET_ROOM_PCT);
+});
+
 test("harnessOf classifies harness from account prefix or engine", () => {
   assert.equal(harnessOf({ account: "agy-primary" }), "agy");
   assert.equal(harnessOf({ engine: "agy" }), "agy");
@@ -530,6 +536,10 @@ test("harnessOf classifies harness from account prefix or engine", () => {
   assert.equal(harnessOf({ account: "api-anthropic" }), "api");
   assert.equal(harnessOf({ account: "6f5fe38b" }), "claude");
   assert.equal(harnessOf({ harness: "custom" }), "custom");
+});
+
+test("legacy AGY Gemini windows stay in the AGY Gemini lane", () => {
+  assert.equal(routeLane({ harness: "agy", window: "gemini" }), "agy_gemini");
 });
 
 test("windowNote provides expiry advisory for claude_gpt", () => {
@@ -574,7 +584,7 @@ test("multi-harness toRows tags rows with harness, advisory notes, and route rec
   const agyGemini = rows.find((r) => r.key === "agy-account:five_hour");
   assert.equal(agyGemini.harness, "agy");
   assert.equal(agyGemini.isCapped, false);
-  assert.equal(agyGemini.isBestRoute, true, "AGY is uncapped and recommended route when Claude is capped");
+  assert.equal(rows.find((r) => r.key === "agy-account:seven_day").isBestRoute, true, "AGY is uncapped and recommended route when Claude is capped");
 
   const agyClaudeGpt = rows.find((r) => r.key === "agy-account:claude_gpt");
   assert.equal(agyClaudeGpt.note, "ends Nov 18");
@@ -620,7 +630,7 @@ test("routing is free-first, judges model groups independently, and marks one ro
     account("api", "api", "ai_credits", 2),
     account("claude", "claude", "five_hour", 3),
   ], NOW);
-  assert.deepEqual(rows.filter((r) => r.isBestRoute).map((r) => r.key), ["agy:five_hour"]);
+  assert.deepEqual(rows.filter((r) => r.isBestRoute).map((r) => r.key), ["agy:seven_day"]);
 
   const noGemini = toRows([
     {
@@ -655,14 +665,36 @@ test("routing rejects a spent coupled window and follows real AGY windows", () =
   assert.deepEqual(rows.filter((r) => r.isBestRoute).map((r) => r.key), ["agy:claude_gpt"]);
 });
 
-test("fleet thresholds treat a 90% session or 95% week as spent", () => {
+test("routing ranks a group by its tightest window", () => {
+  const account = (id, five, seven) => ({
+    account: id, harness: "claude", label: id, written_at: secs(NOW), observed_at: secs(NOW),
+    windows: { five_hour: win(five), seven_day: win(seven) },
+  });
+  const rows = toRows([account("tight-week", 0, 94), account("balanced", 10, 10)], NOW);
+  assert.deepEqual(rows.filter((r) => r.isBestRoute).map((r) => r.key), ["balanced:five_hour"]);
+});
+
+test("fleet thresholds floor remaining room at the five-hour and weekly boundaries", () => {
   const account = (id, windows) => ({
     account: id, harness: "claude", label: id, written_at: secs(NOW), observed_at: secs(NOW), windows,
   });
-  const rows = toRows([
-    account("spent-session", { five_hour: win(90), seven_day: win(20) }),
-    account("spent-week", { five_hour: win(20), seven_day: win(95) }),
-    account("room", { five_hour: win(21), seven_day: win(21) }),
-  ], NOW);
+  for (const [id, windows] of [
+    ["session-89.5", { five_hour: win(89.5), seven_day: win(10) }],
+    ["session-90", { five_hour: win(90), seven_day: win(10) }],
+    ["week-94.5", { five_hour: win(10), seven_day: win(94.5) }],
+    ["week-95", { five_hour: win(10), seven_day: win(95) }],
+  ]) {
+    assert.deepEqual(toRows([account(id, windows)], NOW).filter((r) => r.isBestRoute), [], `${id} is spent`);
+  }
+  const rows = toRows([account("room", { five_hour: win(10), seven_day: win(10) })], NOW);
   assert.deepEqual(rows.filter((r) => r.isBestRoute).map((r) => r.key), ["room:five_hour"]);
+});
+
+test("desktop and phone classify a harness-less Copilot reading alike", () => {
+  const reading = { ...acct("copilot-primary", "Copilot", { ai_credits: win(10) }) };
+  delete reading.harness;
+  const desktop = toRows([reading], NOW);
+  const phone = usageRows({ usage: [{ ...reading, account: "a1", harness: "copilot" }] }, NOW);
+  assert.equal(desktop[0].harness, phone[0].harness);
+  assert.equal(desktop[0].isBestRoute, phone[0].isBestRoute);
 });
