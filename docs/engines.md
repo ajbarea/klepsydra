@@ -82,6 +82,14 @@ claim against the code, the lexicon or the row before you edit anything.
 | agy permission rules are not what the docs imply: `strict` blocks even in-workspace reads, an allow on a directory matches nothing below it, `allowNonWorkspaceAccess:false` did not stop `/etc/hostname` | Test each permission claim with a real attempt; the lock section below holds the tested form | friction 11-09 agy-copilot |
 | Both engines fold a long paste into a placeholder | A follow-up is one short tagged line; long text goes in a task file | the return-path section |
 | agy's plan mode is not a read-only boundary | The deny rules, the sandbox and the snapshot do the locking | HEPH 11-09 17:1x |
+| agy's `run_command` waits at most 10 s (`WaitMsBeforeAsync` up to 10000, from its system prompt), then backgrounds the command, so the model polls it with `manage_task` status calls; "run it in the foreground" cannot be followed. Polls were 7% of turns but 12% of tokens in one session | Brief long commands as `cmd > run.log 2>&1; echo $? > run.exit`, checked once; leave full suites to CI on the pushed branch; Opus runs heavy local suites at review | #420, friction 11-16 |
+| An agy background task stays "running" after its process is gone when a child it started still holds the output pipe (a leftover `fleet-test-*` tmux server from `test_fleet.sh`) | Redirect output to a file as above; the tmux suites kill their servers in an EXIT trap | #420, HEPH 11-16 20:1x |
+| agy ignores `statusLine.refreshInterval`: it runs the status line only on its own activity, so an agy session waiting on a task reads **silent** after 90 s | A heartbeat that does not depend on agy's refresh (from its hooks, or the process being alive) | #416 |
+| agy passes no `CLAUDE_PLUGIN_OPTION_*` values, so every phylax guard reads off in an agy session | Source the options for agy from the same place Claude Code uses | techne#359 |
+| Claude Code ignores a hook verdict with a top-level `"decision"` key (agy's shape); a hooks.json written for both runtimes silently stopped blocking in Claude Code | One verdict shape per runtime (`hookSpecificOutput.permissionDecision` for Claude Code) | techne#358 |
+| `fleet send` cannot paste into an agy pane (returns `not-pasted`); text typed into a busy agy pane queues until its turn ends | `tmux send-keys -l TEXT` then Enter; Alt+M (`send-keys M-m`) delivers a queued message now | friction 11-16 |
+| agy's status line pointed at a scratch script, so its sessions never reached the wall | `statusLine.command` = `~/.claude/klepsydra-statusline.sh`, which parses agy's quota schema | #403, #404 |
+| agy's plan loses third-party models (Claude, GPT) from 11-18; Gemini 3.8 Flash remains | Route Claude-quality free work to Copilot; agy for Gemini work | HEPH 11-14 |
 
 ### What never goes to an engine
 
