@@ -1459,8 +1459,11 @@ printf '{"ts":"%s","level":"INFO","target":"klepsydra","message":"klepsydra quit
 djson >/dev/null
 first=$(jq -r '.checks[] | select(.check == "phone wall") | .status' "$work/health.json")
 printf '{"ts":"%s","level":"INFO","target":"klepsydra::phone","message":"starting"}\n' "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)" >>"$KLEPSYDRA_DIR/logs/klepsydra.log"
+: >"$FLEET_LOG"
 djson >/dev/null
 second=$(jq -r '.checks[] | select(.check == "phone wall") | .status' "$work/health.json")
+check "#441 verify: the miss after a quit is logged when it starts" \
+  "$(jq -r 'select(.message == "doctor: phone wall") | .level + " " + .detail' "$FLEET_LOG" | cut -c1-30)" "WARN no answer from http://127"
 djson >/dev/null
 check "#441 review: quit, then a miss, then another: warn, warn, FAIL" \
   "$first $second $(jq -r '.checks[] | select(.check == "phone wall") | .status' "$work/health.json")" "warn warn FAIL"

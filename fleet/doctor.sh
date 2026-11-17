@@ -68,7 +68,10 @@ report() { # ok|warn|FAIL CHECK DETAIL [KEY=VALUE...]: the values are logged wit
   printf '%-4s %s: %s\n' "$1" "$check" "$detail"
   results+=("$1"$'\t'"${check//[$'\t\n']/ }"$'\t'"${detail//[$'\t\n']/ }")
   [[ $1 == FAIL ]] && failed=1
-  [[ -n $json && ${was[${check//[$'\t\n']/ }]-} == "$1" ]] && return
+  # Unchanged since the last run is not logged again; a quit that turns into a miss is a change.
+  local key=${check//[$'\t\n']/ } quit=""
+  [[ $detail == "klepsydra is not running"* ]] && quit=1
+  [[ -n $json && ${was[$key]-} == "$1" && ${was_quit[$key]-} == "$quit" ]] && return
   case $1 in
     FAIL) flog ERROR "doctor: $check" detail="$detail" "${vals[@]}" ;;
     warn) flog WARN "doctor: $check" detail="$detail" "${vals[@]}" ;;
