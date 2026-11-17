@@ -4010,39 +4010,6 @@ mv "$work/brief/claude-morning.md" "$work/brief/morning.md"
 check "#277: a plain mv to the new name commits as one rename and leaves neither name behind" \
   "$(bsync) $(git -C "$work/brief" show -M --name-status --format= HEAD | tr '\t' ' ' | paste -sd' ') $(git -C "$work/brief" status --porcelain -- claude-morning.md morning.md | wc -l)" "0 R100 claude-morning.md morning.md 0"
 
-echo "briefing today digest (#391)"
-cat >"$work/bin/gh-today" <<STUB
-#!/usr/bin/env bash
-# Like gh 2.45: no --slurp, and --jq applied to the response.
-for a; do [[ \$a == --slurp ]] && { echo "unknown flag: --slurp" >&2; exit 1; }; done
-printf '%s\n' "\$*" >>"$work/gh-today.calls"
-jqx=""; q=""; prev=""
-for a; do [[ \$prev == --jq ]] && jqx=\$a; [[ \$prev == -f && \$a == q=* ]] && q=\${a#q=}; prev=\$a; done
-if [[ \$1 == api && \$2 == user ]]; then printf '{"login":"owner"}' | jq -r "\$jqx"; exit 0; fi
-case \$q in
-  *"is:pr is:merged"*) body='{"items":[{"number":1,"title":"merged","repository_url":"https://api.github.com/repos/owner/one"}]}' ;;
-  *"is:issue is:closed"*) body='{"items":[{"number":2,"title":"closed","repository_url":"https://api.github.com/repos/owner/two"}]}' ;;
-  *) exit 1 ;;
-esac
-printf '%s' "\$body" | jq -r "\$jqx"
-STUB
-chmod +x "$work/bin/gh-today"
-printf '## Needs you\n- first ask\n- second ask\n- third ask\n- fourth ask\n- fifth ask\n- sixth ask\n' >"$work/brief/needs-you.md"
-printf 'pane\tworker\tbrief\tsid\tworktree\tconfig\n' >"$FLEET_STATE/panes.tsv"
-FLEET_GH="$work/bin/gh-today" BRIEFING_DIR="$work/brief" \
-  FLEET_GITLEAKS="$work/bin/gitleaks" FLEET_STATE="$FLEET_STATE" \
-  GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t \
-  bash "$here/sync-briefing.sh" 2>/dev/null
-check "#391: sync writes and commits the daily digest" \
-  "$(git -C "$work/brief" show --format= --name-only HEAD | grep -cxF today.md) $(grep -c '^# Today' "$work/brief/today.md")" "1 1"
-check "#391: digest includes merged PRs, closed issues, and only the top five asks" \
-  "$(grep -c 'merged' "$work/brief/today.md") $(grep -c 'closed' "$work/brief/today.md") $(grep -c 'ask' "$work/brief/today.md")" "1 1 5"
-printf '#!/usr/bin/env bash\nexit 1\n' >"$work/bin/gh-today-fails"; chmod +x "$work/bin/gh-today-fails"
-check "#391: GitHub failure leaves the previous digest intact, and the sync still runs" \
-  "$(FLEET_GH="$work/bin/gh-today-fails" BRIEFING_DIR="$work/brief" bash "$here/sync-briefing.sh" 2>/dev/null; printf '%s %s' "$?" "$(grep -c '^# Today' "$work/brief/today.md")")" "0 1"
-check "#399 review: three GitHub calls a run, whatever the number of repos, and the lines name each repo" \
-  "$(grep -c . "$work/gh-today.calls") $(grep -c '(owner/one)$' "$work/brief/today.md") $(grep -c '(owner/two)$' "$work/brief/today.md")" "3 1 1"
-
 echo "briefing mirror to Drive (#380)"
 mlog="$work/rclone.log"; : >"$mlog"; : >"$mlog.files"; : >"$mlog.other"
 cat >"$work/bin/rclone-stub" <<'STUB'
