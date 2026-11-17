@@ -248,6 +248,15 @@ done
 # run from WSL now and then fails once at start, so a miss is tried again.
 # A stalled probe (timeout or interop failure) is a warning, never a failure (#392).
 phone_body=""
+# When the app's log ends on its quit line (src-tauri/src/main.rs), the wall is
+# down because AJ quit klepsydra, not broken: prints that time, local.
+app_quit_at() {
+  local ts
+  ts=$(tail -n 1 -- "$KLEPSYDRA_DIR/logs/klepsydra.log" 2>/dev/null \
+    | jq -r 'select(.message | startswith("klepsydra quitting")) | .ts' 2>/dev/null)
+  [[ -n $ts ]] || return 1
+  if [[ $(date -d "$ts" +%F 2>/dev/null) == $(date +%F) ]]; then date -d "$ts" '+%-I:%M %p'; else date -d "$ts" '+%a %-I:%M %p'; fi
+}
 phone() { # CHECK BASE
   local body rc wait_s=${FLEET_CURL_WAIT_S:-5}
   # shellcheck disable=SC2086
@@ -263,6 +272,11 @@ phone() { # CHECK BASE
     body=$(timeout "$((wait_s + 2))" $CURL -fsS --max-time "$wait_s" "$2/fleet.json" 2>/dev/null)
     rc=$?
     if (( rc != 0 )); then
+      local quit
+      if (( rc != 127 )) && quit=$(app_quit_at); then
+        report warn "$1" "klepsydra is not running: it was quit at $quit, and the wall returns when it starts" url="$2/fleet.json" quit="$quit"
+        return
+      fi
       # A stall twice running is as red as a refusal; only a missing program is at once.
       if (( rc == 127 )); then
         report FAIL "$1" "cannot run the probe: ${CURL%% *} is not installed" url="$2/fleet.json"
