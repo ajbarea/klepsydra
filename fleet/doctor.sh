@@ -49,9 +49,14 @@ if [[ ${1:-} == --json ]]; then
 fi
 
 # Each check's status at the last --json run.
-declare -A was=()
+declare -A was=() was_quit=()
 if [[ -n $json && -f $json ]]; then
-  while IFS=$'\t' read -r c s; do [[ -n $c ]] && was[$c]=$s; done < <(jq -r '.checks[]? | [.check, .status] | @tsv' "$json" 2>/dev/null)
+  while IFS=$'\t' read -r c s d; do
+    [[ -n $c ]] || continue
+    was[$c]=$s
+    # A wall down because klepsydra was quit is no strike against it (#392's debounce).
+    [[ $d == "klepsydra is not running"* ]] && was_quit[$c]=1
+  done < <(jq -r '.checks[]? | [.check, .status, (.detail // "")] | @tsv' "$json" 2>/dev/null)
 fi
 results=()
 
@@ -83,7 +88,7 @@ report_debounced() { # CHECK DETAIL [KEY=VALUE...]
   check=$(tilde "$1") detail=$(tilde "$2")
   local key=${check//[$'\t\n']/ }
   local -a vals=("${@:3}")
-  if [[ -n $json && ${was[$key]-} != FAIL && ${was[$key]-} != warn ]]; then
+  if [[ -n $json && ( -n ${was_quit[$key]-} || ( ${was[$key]-} != FAIL && ${was[$key]-} != warn ) ) ]]; then
     report warn "$check" "$detail" "${vals[@]}"
   else
     report FAIL "$check" "$detail" "${vals[@]}"
@@ -248,14 +253,20 @@ done
 # run from WSL now and then fails once at start, so a miss is tried again.
 # A stalled probe (timeout or interop failure) is a warning, never a failure (#392).
 phone_body=""
-# When the app's log ends on its quit line (src-tauri/src/main.rs), the wall is
-# down because AJ quit klepsydra, not broken: prints that time, local.
+# When the app's log ends on its quit line (src-tauri/src/main.rs) and no
+# klepsydra.exe runs, the wall is down because AJ quit it, not broken: prints
+# that time, local. A tasklist that cannot answer leaves it a failure.
+TASKLIST=${FLEET_TASKLIST:-tasklist.exe}
 app_quit_at() {
-  local ts
+  local ts day procs
   ts=$(tail -n 1 -- "$KLEPSYDRA_DIR/logs/klepsydra.log" 2>/dev/null \
-    | jq -r 'select(.message | startswith("klepsydra quitting")) | .ts' 2>/dev/null)
+    | jq -r 'select(.target == "klepsydra" and (.message | startswith("klepsydra quitting"))) | .ts' 2>/dev/null)
+  day=$(date -d "$ts" +%F 2>/dev/null) || return 1
   [[ -n $ts ]] || return 1
-  if [[ $(date -d "$ts" +%F 2>/dev/null) == $(date +%F) ]]; then date -d "$ts" '+%-I:%M %p'; else date -d "$ts" '+%a %-I:%M %p'; fi
+  # shellcheck disable=SC2086
+  procs=$(timeout 10 $TASKLIST /FI "IMAGENAME eq klepsydra.exe" /NH 2>/dev/null) || return 1
+  [[ ${procs,,} == *klepsydra.exe* ]] && return 1
+  if [[ $day == $(date +%F) ]]; then date -d "$ts" '+%-I:%M %p'; else date -d "$ts" '+%b %-d, %-I:%M %p'; fi
 }
 phone() { # CHECK BASE
   local body rc wait_s=${FLEET_CURL_WAIT_S:-5}
@@ -273,7 +284,7 @@ phone() { # CHECK BASE
     rc=$?
     if (( rc != 0 )); then
       local quit
-      if (( rc != 127 )) && quit=$(app_quit_at); then
+      if quit=$(app_quit_at); then
         report warn "$1" "klepsydra is not running: it was quit at $quit, and the wall returns when it starts" url="$2/fleet.json" quit="$quit"
         return
       fi
