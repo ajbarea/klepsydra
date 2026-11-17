@@ -24,9 +24,9 @@ fi
 do_() { if (( dry )); then printf 'would: %s\n' "$*"; else "$@"; fi; }
 # A dry run writes nothing, its log included: its events go to stderr only.
 ilog() { if (( dry )); then printf '%s %s %s\n' "$(date '+%F %T')" "$1" "${*:2}" >&2; else flog "$@"; fi; }
-SCRIPTS=(launch.sh delegate.sh headless.sh engines.sh fresh-now.sh resume-at-reset.sh watch-panes.sh tmux-watch.sh memfrag-log.sh relaunch-fresh.sh done.sh send.sh voices.sh brief.sh doctor.sh cutover.sh accounts-sync.sh recover.sh pause.sh registry-event.sh sync-briefing.sh ci_watch.py prune_shots.py digest.py worker-settings.json)
+SCRIPTS=(launch.sh delegate.sh headless.sh engines.sh fresh-now.sh resume-at-reset.sh watch-panes.sh tmux-watch.sh memfrag-log.sh relaunch-fresh.sh done.sh send.sh voices.sh brief.sh doctor.sh cutover.sh accounts-sync.sh recover.sh pause.sh registry-event.sh sync-briefing.sh ci_watch.py prune_shots.py worker-settings.json)
 # Scripts the checkout no longer has: their links in the state folder go (#326).
-RETIRED=(agora.py)
+RETIRED=(agora.py digest.py)
 UNITS=$FLEET_UNIT_DIR
 BIN=${FLEET_BIN:-$HOME/.local/bin}
 archive=$FLEET_STATE/archive/fleet-scripts-$(date +%Y%m%d)
@@ -188,7 +188,7 @@ Description=klepsydra fleet: commit and push the fleet-briefing repo
 [Service]
 Type=oneshot
 TimeoutStartSec=420
-Environment=\"PATH=$PATH\" \"HOME=$HOME\" \"FLEET_BRIEFING_DRIVE=gdrive:fleet-briefing\" \"FLEET_GH=gh\"
+Environment=\"PATH=$PATH\" \"HOME=$HOME\" \"FLEET_BRIEFING_DRIVE=gdrive:fleet-briefing\"
 ExecStart=/usr/bin/bash $FLEET_STATE/sync-briefing.sh"
 unit fleet-sync-briefing.timer "[Unit]
 Description=klepsydra fleet: sync the fleet-briefing repo every 5 min

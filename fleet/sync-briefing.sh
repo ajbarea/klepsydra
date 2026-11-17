@@ -69,90 +69,10 @@ if [[ -d $gd/rebase-merge || -d $gd/rebase-apply || -f $gd/MERGE_HEAD || -n $(gi
   exit 1
 fi
 
-# Up to five items GitHub's search finds for QUERY, one line each.
-done_list() { # query
-  "$FLEET_GH" api -X GET search/issues -f q="$1" -f per_page=5 -f sort=updated \
-    --jq '.items[] | "- [#\(.number)] \(.title | gsub("[\r\n]"; " ")) (\(.repository_url | sub("^.*/repos/"; "")))"' || {
-    flog ERROR "briefing today: GitHub search failed" query="$1"
-    return 1
-  }
-}
-
-write_today() {
-  local today since owner tmp live pane name state screen_text
-  today=$(date +%F)
-  # Local midnight, in the UTC form GitHub's search takes.
-  since=$(date -u -d "@$(date -d "$today 00:00" +%s)" '+%Y-%m-%dT%H:%M:%SZ') ||
-    { flog ERROR "briefing today: could not calculate today's start"; return 1; }
-  owner=$("$FLEET_GH" api user --jq .login) && [[ $owner =~ ^[A-Za-z0-9-]{1,39}$ ]] ||
-    { flog ERROR "briefing today: GitHub user lookup failed"; return 1; }
-
-  tmp=$(mktemp "$R/today.md.XXXXXX") || {
-    flog ERROR "briefing today: could not create temporary file"
-    return 1
-  }
-  trap 'rm -f -- "${tmp:-}"' RETURN
-
-  {
-    printf '# Today: %s\n\n' "$today"
-    # One search per list across every repo the owner has, not a call per repo.
-    printf '## Done today\n\n### Merged PRs\n'
-    done_list "user:$owner is:pr is:merged merged:>=$since" || return 1
-    printf '\n### Closed issues\n'
-    done_list "user:$owner is:issue is:closed closed:>=$since" || return 1
-
-    printf '\n## Running now\n\n'
-    live=$(fleet_panes 2>/dev/null || true)
-    if [[ -z $live ]]; then
-      printf '_None._\n'
-    else
-      while IFS= read -r pane; do
-        [[ -n $pane ]] || continue
-        name=$(reg_field "$pane" 2 2>/dev/null || true)
-        if [[ -z $name && $pane == "$(orchestrator 2>/dev/null || true)" ]]; then
-          name=orchestrator
-        fi
-        state=waiting
-        screen_text=$(screen "$pane" 2>/dev/null || true)
-        busy "$screen_text" && state=working
-        [[ $state == waiting ]] && has_input_box "$screen_text" && state=idle
-        printf -- '- **%s**: %s\n' "${name:-$pane}" "$state"
-      done <<<"$live"
-    fi
-
-    printf '\n## Needs you\n\n'
-    if ! awk '
-      /^## Needs you$/ { in_section=1; next }
-      /^## / { in_section=0 }
-      in_section && /^- / { print; count++; if (count == 5) exit }
-    ' needs-you.md 2>/dev/null | grep -q .; then
-      printf '_None._\n'
-    else
-      awk '
-        /^## Needs you$/ { in_section=1; next }
-        /^## / { in_section=0 }
-        in_section && /^- / { print; count++; if (count == 5) exit }
-      ' needs-you.md
-    fi
-  } >"$tmp" || {
-    flog ERROR "briefing today: digest generation failed"
-    return 1
-  }
-  mv -f -- "$tmp" "$R/today.md" || {
-    flog ERROR "briefing today: could not replace today.md"
-    return 1
-  }
-  tmp=
-}
-
-# A digest GitHub cannot fill keeps the last one; needs-you.md still syncs.
-if [[ -n ${FLEET_GH:-} ]]; then
-  write_today || flog WARN "briefing today: kept the previous digest"
-fi
-
 # Only paths that exist or are tracked: git add stops at the first pathspec that matches nothing.
 paths=()
-# The old names stay until #276 so a rename commits both sides (#277).
+# The old names stay until #276 so a rename commits both sides (#277); today.md
+# stays so its removal commits.
 for f in morning.md queue.md claude-morning.md claude-queue.md needs-you.md today.md README.md shots review; do
   if [[ -e $f ]] || git ls-files --error-unmatch -- "$f" >/dev/null 2>&1; then paths+=("$f"); fi
 done
