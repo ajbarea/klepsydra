@@ -1476,9 +1476,10 @@ mkdir -p "$inst/state" "$inst/claude"
 printf 'old copy\n' >"$inst/state/launch.sh"
 printf 'old hook\n' >"$inst/claude/klepsydra-fleet.sh"
 ln -s "$here/agora.py" "$inst/state/agora.py"
+ln -s "$here/digest.py" "$inst/state/digest.py"
 FLEET_STATE="$inst/state" FLEET_UNITS="$inst/units" FLEET_BIN="$inst/bin" FLEET_HOOK_DIR="$inst/claude" \
   bash "$here/install.sh" --force >/dev/null 2>&1
-check "#326: a retired script's link is removed" "$([[ -L $inst/state/agora.py ]] && echo kept || echo gone)" "gone"
+check "#326: a retired script's link is removed (agora.py, digest.py)" "$(for r in agora.py digest.py; do [[ -L $inst/state/$r ]] && echo "kept $r"; done)" ""
 printf 'mine\n' >"$inst/state/agora.py"
 FLEET_STATE="$inst/state" FLEET_UNITS="$inst/units" FLEET_BIN="$inst/bin" FLEET_HOOK_DIR="$inst/claude" \
   bash "$here/install.sh" --force >/dev/null 2>&1
@@ -4009,6 +4010,9 @@ check "#277: a file under its old name is still committed" "$(bsync) $(git -C "$
 mv "$work/brief/claude-morning.md" "$work/brief/morning.md"
 check "#277: a plain mv to the new name commits as one rename and leaves neither name behind" \
   "$(bsync) $(git -C "$work/brief" show -M --name-status --format= HEAD | tr '\t' ' ' | paste -sd' ') $(git -C "$work/brief" status --porcelain -- claude-morning.md morning.md | wc -l)" "0 R100 claude-morning.md morning.md 0"
+printf 'old digest\n' >"$work/brief/today.md"
+check "a retired today.md that is still tracked: its deletion commits" \
+  "$(bsync) $(rm -f "$work/brief/today.md"; bsync) $(git -C "$work/brief" show --name-status --format= HEAD | tr '\t' ' ') $(git -C "$work/brief" ls-files today.md | wc -l)" "0 0 D today.md 0"
 
 echo "briefing mirror to Drive (#380)"
 mlog="$work/rclone.log"; : >"$mlog"; : >"$mlog.files"; : >"$mlog.other"
