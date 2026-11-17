@@ -619,10 +619,9 @@ export function card(s, cast, nowMs, request = null) {
   const rawModel = s.model?.display_name || s.model?.id || (typeof s.model === "string" ? s.model : null) || s.statusline?.model?.display_name || s.statusline?.model?.id || null;
   const engInfo = engineInfo(eng, rawModel);
   const delegate = s.delegate?.engine || s.delegate || s.background?.delegate?.engine || s.background?.delegate || null;
-  const turnOver = s.status === "done" || s.status === "ended" || (s.status === "working" && s.reason === "background");
-  const nowReply = turnOver
-    ? (s.reply?.text ?? null)
-    : (s.said?.text ?? (s.status === "working" ? null : (s.reply?.text ?? null)));
+  const saidAt = typeof s.said?.at === "number" ? s.said.at : -Infinity;
+  const replyAt = typeof s.reply?.at === "number" ? s.reply.at : -Infinity;
+  const nowReply = s.said?.text && saidAt > replyAt ? s.said.text : (s.reply?.text ?? s.said?.text ?? null);
   return {
     id: s.session_id,
     task: s.name || "No session name yet",

@@ -481,8 +481,9 @@ prune_hourly() { # stamp prune dir now
 remote_lines() { # transcript
   [[ $1 == /*.jsonl && -f $1 && -r $1 ]] || return 0
   tail -c "$REMOTE_TAIL" -- "$1" 2>/dev/null | LC_ALL=C awk -v keep="$REMOTE_LINES" -v max="$REMOTE_LINE_MAX" '
-    (index($0, "\"type\":\"user\"") && !index($0, "\"tool_result\"")) || index($0, "\"type\":\"USER_INPUT\"") { said = "" }
-    (index($0, "\"type\":\"assistant\"") && (index($0, "\"type\":\"text\"") || index($0, "\"content\":\""))) || index($0, "\"type\":\"PLANNER_RESPONSE\"") {
+    ((index($0, "\"type\":\"user\"") && !index($0, "\"tool_result\"") && !index($0, "\"isMeta\":true") && !index($0, "\"isMeta\": true")) || index($0, "\"type\":\"USER_INPUT\"")) { said = "" }
+    (index($0, "\"type\":\"assistant\"") && index($0, "\"type\":\"text\"")) \
+      || (index($0, "\"type\":\"PLANNER_RESPONSE\"") && (index($0, "\"type\":\"text\"") || (index($0, "\"content\":\"") && !index($0, "\"content\":\"\"") && !index($0, "\"content\":null") && !index($0, "\"content\": null")))) {
       if (length($0) <= 32768) said = $0
     }
     length($0) > max { next }
@@ -645,24 +646,26 @@ def notified: if type == "string" then [scan("<task-notification>[\\s\\S]*?</tas
   | scan("<(?:task-id|tool-use-id)>\\s*([^<\\s]+)\\s*</(?:task-id|tool-use-id)>") | .[0]] else [] end;
 # The latest text an assistant or planner line says.
 def assistant_text($line):
-  if ($line | type) != "string" or ($line | length) == 0 then null
-  else
-    ($line | try fromjson catch null) as $j
-    | if $j != null then
-        if $j.type == "assistant" then
-          ($j.message.content // $j.content) as $c
-          | if ($c | type) == "string" then $c
-            elif ($c | type) == "array" then
-              ([$c[] | select(.type == "text" and (.text | type) == "string") | .text] | last)
+  try (
+    if ($line | type) != "string" or ($line | length) == 0 then null
+    else
+      ($line | try fromjson catch null) as $j
+      | if $j != null then
+          if $j.type == "assistant" then
+            ($j.message.content // $j.content) as $c
+            | if ($c | type) == "string" then $c
+              elif ($c | type) == "array" then
+                ([$c[] | select((objects | .type) == "text" and (.text | type) == "string") | .text] | last)
+              else null end
+          elif $j.type == "PLANNER_RESPONSE" then
+            if ($j.content | type) == "string" then $j.content
+            elif ($j.content | type) == "array" then
+              ([$j.content[] | select((objects | .type) == "text" and (.text | type) == "string") | .text] | last)
             else null end
-        elif $j.type == "PLANNER_RESPONSE" then
-          if ($j.content | type) == "string" then $j.content
-          elif ($j.content | type) == "array" then
-            ([$j.content[] | select(.type == "text" and (.text | type) == "string") | .text] | last)
           else null end
         else null end
-      else null end
-  end;
+    end
+  ) catch null;
 
 . as $ev
 | $ev.hook_event_name as $event
@@ -901,7 +904,10 @@ def assistant_text($line):
         else .prompt = (($ev.prompt | clip) as $p | if $p then {text: $p, at: $now} else .prompt end) end
     elif ($event | IN("PostToolUse", "PostToolUseFailure")) and $agent == "" then
       ((assistant_text($said_line) // $ev.last_assistant_message) | clip) as $narration
-      | if $narration then .said = {text: $narration, at: $now} else . end
+      | if $narration then
+          if .said.text == $narration then .
+          else .said = {text: $narration, at: $now} end
+        else . end
     elif $event == "Stop" then
       (($ev.last_assistant_message | clip) as $r | if $r then .reply = {text: $r, at: $now} else . end)
       # Turns ended so far; Stop is the only event that ends one.

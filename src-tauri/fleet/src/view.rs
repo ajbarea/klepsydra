@@ -77,7 +77,6 @@ pub struct View {
     pub place: Option<Place>,
     pub touched: Vec<Touched>,
     pub prompt: Option<Said>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub said: Option<Said>,
     pub reply: Option<Said>,
     pub error: Option<String>,

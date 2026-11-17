@@ -738,14 +738,30 @@ test("card: mid-turn narration (.said) shows in .reply while working and finishe
   assert.equal(workingWithSaid.reply, "now editing src/model.js");
   assert.equal(workingWithSaid.said, "now editing src/model.js");
 
-  // Working session without narration: reply is null (fresh turn)
+  // Working session without narration yet: shows prior reply (not blank)
   const workingNoSaid = card(session({
     status: "working",
     said: null,
     reply: { text: "prior finished reply", at: NOW - 60 },
   }), CAST, NOW);
-  assert.equal(workingNoSaid.reply, null);
+  assert.equal(workingNoSaid.reply, "prior finished reply");
   assert.equal(workingNoSaid.said, null);
+
+  // Finished session that went silent: final reply outranks older mid-turn narration
+  const silentFinished = card(session({
+    status: "silent",
+    said: { text: "old mid-turn narration", at: NOW - 30 },
+    reply: { text: "Final finished reply", at: NOW - 10 },
+  }), CAST, NOW);
+  assert.equal(silentFinished.reply, "Final finished reply");
+
+  // Tie: reply wins
+  const tie = card(session({
+    status: "working",
+    said: { text: "narration at same second", at: NOW },
+    reply: { text: "reply at same second", at: NOW },
+  }), CAST, NOW);
+  assert.equal(tie.reply, "reply at same second");
 
   // Turn over (status done): finished reply replaces narration
   const doneWithSaid = card(session({
