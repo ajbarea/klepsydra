@@ -1094,26 +1094,30 @@ keyed_settings() { # DIR FOLDER
   return 1
 }
 # Appends to ARRAY an `env -u NAME` pair for every exported ANTHROPIC_* and
-# CLAUDE_CODE_* variable: a caller's base URL would send the credit's token to
-# another host, and its key or session id would outrank or confuse the helper.
+# CLAUDE_CODE_* variable, so the jobs and the login check see the same ant
+# config folder and profile, and no caller's key, base URL or session id
+# outranks or confuses the helper.
 credential_unsets() { # ARRAY
   local -n _unsets=$1
   local v
   while IFS= read -r v; do [[ $v == CLAUDE_CODE_* || $v == ANTHROPIC_* ]] && _unsets+=(-u "$v"); done < <(compgen -e)
 }
 # Whether ant can hand a job a token for FLEET_HEADLESS_PROFILE, by running the
-# jobs' apiKeyHelper command (ant 2.9.0): exit 1 without a login. It refreshes a
-# token near expiry, so it runs in the jobs' stripped environment, and a failed
-# refresh (a warning, the expired token and exit 0) counts as no login. 124: ant
-# did not answer within FLEET_ANT_TIMEOUT seconds. The token is never printed.
+# jobs' apiKeyHelper command in their environment (ant 2.9.0): exit 1 without a
+# login. With an expired token it cannot refresh (refresh failed, or no refresh
+# token stored), ant warns "expired at", prints the dead token and exits 0, so
+# that warning counts as no login; a failed early refresh ("expires at") still
+# hands out a valid token. 124: no answer within FLEET_ANT_TIMEOUT seconds
+# (default 15). The token is never printed.
 headless_login() {
   local -a unsets=()
-  local e rc=0
+  local e rc=0 secs=${FLEET_ANT_TIMEOUT:-15}
+  [[ $secs =~ ^[1-9][0-9]{0,3}$ ]] || secs=15
   credential_unsets unsets
-  e=$(timeout "${FLEET_ANT_TIMEOUT:-15}" env "${unsets[@]}" "${FLEET_ANT:-ant}" --profile "$FLEET_HEADLESS_PROFILE" \
+  e=$(timeout "$secs" env "${unsets[@]}" "${FLEET_ANT:-ant}" --profile "$FLEET_HEADLESS_PROFILE" \
     auth print-credentials --access-token 2>&1 >/dev/null) || rc=$?
   (( rc )) && return "$rc"
-  [[ ${e,,} != *"refresh failed"* ]]
+  [[ ${e,,} != *" expired at "* ]]
 }
 
 # /exit the claude in PANE and close the pane once it has gone, or after 30 s.

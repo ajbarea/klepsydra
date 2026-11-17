@@ -39,7 +39,9 @@ if [[ " $* " == *" print-credentials "* ]]; then
   echo "${ANTHROPIC_BASE_URL-unset}" >"$REC/ant-base"
   [[ -f $REC/ant-out ]] && { echo 'error: profile "ldqis" not configured' >&2; exit 1; }
   case $(cat "$REC/ant-mode" 2>/dev/null) in
-    refail) echo 'warning: token refresh failed: invalid_grant; using the stored token' >&2 ;;
+    refail) echo 'warning: token for profile "ldqis" expired at 2026-11-17T03:00:00Z and refresh failed: invalid_grant' >&2 ;;
+    norefresh) echo 'warning: token for profile "ldqis" expired at 2026-11-17T03:00:00Z and no refresh_token is stored; run `ant auth login`' >&2 ;;
+    early) echo 'warning: token for profile "ldqis" expires at 2026-11-17T03:01:00Z and refresh failed: 500' >&2 ;;
     hang) sleep 5 ;;
   esac
   echo sk-ant-oat01-SECRETSECRET; exit 0
@@ -140,10 +142,16 @@ rm -f "$work/rec/ant-out"
 echo refail >"$work/rec/ant-mode"
 out=$(hl refail "$work/brief.md" --repo "$repo" --wait 2>&1); rc=$?
 check "a failed token refresh: refused as no login" "$rc $(has "$out" 'run: ant --profile ldqis auth login')" "2 yes"
+echo norefresh >"$work/rec/ant-mode"
+out=$(hl norefresh "$work/brief.md" --repo "$repo" --wait 2>&1); rc=$?
+check "an expired token with no refresh token: refused as no login" "$rc $(has "$out" 'run: ant --profile ldqis auth login')" "2 yes"
 echo hang >"$work/rec/ant-mode"
 out=$(FLEET_ANT_TIMEOUT=1 hl hang "$work/brief.md" --repo "$repo" --wait 2>&1); rc=$?
 check "ant that does not answer: refused, and says so" "$rc $(has "$out" 'did not answer within 1 s')" "2 yes"
-check "neither made a job" "$([[ -e $work/state/headless/refail || -e $work/state/headless/hang ]] && echo job || echo none)" "none"
+rm -f "$work/rec/ant-mode"
+# shellcheck source=fleet/lib.sh
+check "a bad timeout falls back to the default" "$(for t in abc 0 -1 99999; do (. "$here/lib.sh"; FLEET_HEADLESS_PROFILE=ldqis FLEET_ANT_TIMEOUT=$t headless_login; printf '%s ' "$?"); done)" "0 0 0 0 "
+check "none of them made a job" "$(for j in refail norefresh hang; do [[ -e $work/state/headless/$j ]] && echo "$j"; done)" ""
 rm -f "$work/rec/ant-mode"
 mv "$work/api/settings.json" "$work/api/s.bak"
 check "no apiKeyHelper: refused" "$(hl nohelper "$work/brief.md" --repo "$repo" >/dev/null 2>&1; echo $?)" "2"
@@ -341,6 +349,8 @@ check "subscription + headless credit" "$(doc | cut -c1-46)" "ok   auth mode: su
 check "doctor prints no token" "$(FLEET_SYSTEMCTL=false FLEET_CURL=false FLEET_TAILSCALE=false bash "$here/doctor.sh" 2>&1 | grep -c SECRET)" "0"
 echo hang >"$work/rec/ant-mode"
 check "doctor: ant that does not answer is a timeout, not a missing login" "$(FLEET_ANT_TIMEOUT=1 doc | grep -c '^warn auth mode: subscription only for now: ant did not answer')" "1"
+echo early >"$work/rec/ant-mode"
+check "doctor: a failed early refresh still has a valid token" "$(doc | cut -c1-46)" "ok   auth mode: subscription + headless credit"
 rm -f "$work/rec/ant-mode"
 touch "$work/rec/ant-out"
 check "no ant login: subscription only, with the fix" "$(doc | grep -c '^warn auth mode: subscription only: .*ant --profile ldqis auth login')" "1"
