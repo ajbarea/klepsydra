@@ -147,9 +147,7 @@ run_job() { # NAME
   local -a envargs=(-u ANTHROPIC_API_KEY -u ANTHROPIC_AUTH_TOKEN -u ANTHROPIC_PROFILE -u CLAUDE_CODE_OAUTH_TOKEN
     -u CLAUDECODE -u KERYX_ENABLED -u KLEPSYDRA_WORKER -u BASH_DEFAULT_TIMEOUT_MS -u BASH_MAX_TIMEOUT_MS)
   local v
-  # Every other ANTHROPIC_* too: a base URL from the caller would send the
-  # helper's token to another host.
-  while IFS= read -r v; do [[ $v == CLAUDE_CODE_* || $v == ANTHROPIC_* ]] && envargs+=(-u "$v"); done < <(compgen -e)
+  credential_unsets envargs
   while IFS= read -r v; do [[ -n $v ]] && envargs+=("$v"); done < <(jq -r '(.env // {}) | to_entries[]
       | select(.key == "CLAUDE_CODE_ENABLE_TELEMETRY" or (.key | startswith("OTEL_"))) | "\(.key)=\(.value)"' \
       "$FLEET_DEFAULT_CONFIG/settings.json" 2>/dev/null)
@@ -349,7 +347,12 @@ if ! command -v "${FLEET_ANT:-ant}" >/dev/null; then
   err "the ant CLI is not installed (github.com/anthropics/anthropic-cli); headless jobs need it"
   exit 2
 fi
-if ! headless_login; then
+login=0; headless_login || login=$?
+if (( login == 124 )); then
+  err "ant did not answer within ${FLEET_ANT_TIMEOUT:-15} s for profile $FLEET_HEADLESS_PROFILE; check the network, then start the job again"
+  flog WARN "headless job refused: ant timed out" name="$name" profile="$FLEET_HEADLESS_PROFILE"
+  exit 2
+elif (( login )); then
   err "no ant login for profile $FLEET_HEADLESS_PROFILE; run: ant --profile $FLEET_HEADLESS_PROFILE auth login"
   flog WARN "headless job refused: no ant login" name="$name" profile="$FLEET_HEADLESS_PROFILE"
   exit 2

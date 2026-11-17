@@ -29,12 +29,25 @@ export FLEET_DEFAULT_CONFIG="$work/sub" FLEET_ACCOUNTS="$work/sub" REC="$work/re
 printf '{"apiKeyHelper": "ant --profile ldqis auth print-credentials --access-token"}\n' >"$work/api/settings.json"
 printf '{"env": {"OTEL_METRICS_EXPORTER": "otlp", "CLAUDE_CODE_ENABLE_TELEMETRY": "1", "UNRELATED": "x"}}\n' >"$work/sub/settings.json"
 
-# ant: logged in unless $REC/ant-out says otherwise. Its status also prints a
-# token-like string, which must never reach the runner's output.
+# ant: logged in unless $REC/ant-out says otherwise. print-credentials prints
+# the token and exits 1 without a login; status exits 0 either way and, after a
+# token refresh (2.9.0), has no "Logged in to" line. No token may reach the
+# runner's output.
 cat >"$work/bin/ant" <<'EOF'
 #!/usr/bin/env bash
+if [[ " $* " == *" print-credentials "* ]]; then
+  echo "${ANTHROPIC_BASE_URL-unset}" >"$REC/ant-base"
+  [[ -f $REC/ant-out ]] && { echo 'error: profile "ldqis" not configured' >&2; exit 1; }
+  case $(cat "$REC/ant-mode" 2>/dev/null) in
+    refail) echo 'warning: token for profile "ldqis" expired at 2026-11-17T03:00:00Z and refresh failed: invalid_grant' >&2 ;;
+    norefresh) echo 'warning: token for profile "ldqis" expired at 2026-11-17T03:00:00Z and no refresh_token is stored; run `ant auth login`' >&2 ;;
+    early) echo 'warning: token for profile "ldqis" expires at 2026-11-17T03:01:00Z and refresh failed: 500' >&2 ;;
+    hang) sleep 5 ;;
+  esac
+  echo sk-ant-oat01-SECRETSECRET; exit 0
+fi
 if [[ -f $REC/ant-out ]]; then echo '  (profile "ldqis" not configured — run `ant auth login` to set it up)'; exit 0; fi
-printf 'Credentials\n  Logged in to LDQIS as someone@example.org\n  (active) * Profile (user_oauth) sk-ant-oat01-SECRETSECRET\n'
+printf 'Credentials\n  (active) * Profile (user_oauth) sk-ant-oat01-SECRETSECRET\n'
 EOF
 # claude: records how it was started (each start's argv also appended to
 # $REC/calls, one line); $REC/mode says how it ends.
@@ -126,6 +139,20 @@ check "no ant login: refused" "$rc" "2"
 check "no ant login: says the one command" "$(has "$out" 'run: ant --profile ldqis auth login')" "yes"
 check "no ant login: no worktree, no job" "$(git -C "$repo" worktree list | wc -l) $([[ -e $work/state/headless/nologin ]] && echo job || echo none)" "1 none"
 rm -f "$work/rec/ant-out"
+echo refail >"$work/rec/ant-mode"
+out=$(hl refail "$work/brief.md" --repo "$repo" --wait 2>&1); rc=$?
+check "a failed token refresh: refused as no login" "$rc $(has "$out" 'run: ant --profile ldqis auth login')" "2 yes"
+echo norefresh >"$work/rec/ant-mode"
+out=$(hl norefresh "$work/brief.md" --repo "$repo" --wait 2>&1); rc=$?
+check "an expired token with no refresh token: refused as no login" "$rc $(has "$out" 'run: ant --profile ldqis auth login')" "2 yes"
+echo hang >"$work/rec/ant-mode"
+out=$(FLEET_ANT_TIMEOUT=1 hl hang "$work/brief.md" --repo "$repo" --wait 2>&1); rc=$?
+check "ant that does not answer: refused, and says so" "$rc $(has "$out" 'did not answer within 1 s')" "2 yes"
+rm -f "$work/rec/ant-mode"
+# shellcheck source=fleet/lib.sh
+check "a bad timeout falls back to the default" "$(for t in abc 0 -1 99999; do (. "$here/lib.sh"; FLEET_HEADLESS_PROFILE=ldqis FLEET_ANT_TIMEOUT=$t headless_login; printf '%s ' "$?"); done)" "0 0 0 0 "
+check "none of them made a job" "$(for j in refail norefresh hang; do [[ -e $work/state/headless/$j ]] && echo "$j"; done)" ""
+rm -f "$work/rec/ant-mode"
 mv "$work/api/settings.json" "$work/api/s.bak"
 check "no apiKeyHelper: refused" "$(hl nohelper "$work/brief.md" --repo "$repo" >/dev/null 2>&1; echo $?)" "2"
 mv "$work/api/s.bak" "$work/api/settings.json"
@@ -151,6 +178,7 @@ check "the default folder's telemetry, and only that, is passed on" "$(grep -cE 
 check "the subagent cap is set" "$(grep -c '^CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS=2$' <<<"$env")" "1"
 check "no background tasks or sessions, and a 16-minute tool timeout" "$(grep -cE '^(CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1|CLAUDE_CODE_DISABLE_AGENT_VIEW=1|BASH_DEFAULT_TIMEOUT_MS=960000|BASH_MAX_TIMEOUT_MS=960000)$' <<<"$env")" "4"
 check "no token reaches the output" "$(has "$out" SECRET)" "no"
+check "the login check does not get the caller's base URL" "$(cat "$work/rec/ant-base")" "unset"
 job=$work/state/headless/job1/job.json
 check "the record: finished, cost, exit, result, no resume" "$(jq -r '[.state, .total_cost_usd, .exit, .result, .resumes] | join(" ")' "$job")" "finished 0.4213 0 success 0"
 check "a job that reports at once runs claude once" "$(wc -l <"$work/rec/calls")" "1"
@@ -318,6 +346,12 @@ check "and none of them launched" "$([[ -e $work/rec/launch-cmd ]] && echo launc
 echo "doctor: the auth mode"
 doc() { FLEET_SYSTEMCTL=false FLEET_CURL=false FLEET_TAILSCALE=false bash "$here/doctor.sh" 2>/dev/null | grep '^[a-zA-Z]* *auth mode:'; }
 check "subscription + headless credit" "$(doc | cut -c1-46)" "ok   auth mode: subscription + headless credit"
+check "doctor prints no token" "$(FLEET_SYSTEMCTL=false FLEET_CURL=false FLEET_TAILSCALE=false bash "$here/doctor.sh" 2>&1 | grep -c SECRET)" "0"
+echo hang >"$work/rec/ant-mode"
+check "doctor: ant that does not answer is a timeout, not a missing login" "$(FLEET_ANT_TIMEOUT=1 doc | grep -c '^warn auth mode: subscription only for now: ant did not answer')" "1"
+echo early >"$work/rec/ant-mode"
+check "doctor: a failed early refresh still has a valid token" "$(doc | cut -c1-46)" "ok   auth mode: subscription + headless credit"
+rm -f "$work/rec/ant-mode"
 touch "$work/rec/ant-out"
 check "no ant login: subscription only, with the fix" "$(doc | grep -c '^warn auth mode: subscription only: .*ant --profile ldqis auth login')" "1"
 check "no helper configured: subscription only" "$(FLEET_HEADLESS_CONFIG="$work/none" doc)" "ok   auth mode: subscription only (no headless credit configured in $work/none)"
