@@ -29,12 +29,18 @@ export FLEET_DEFAULT_CONFIG="$work/sub" FLEET_ACCOUNTS="$work/sub" REC="$work/re
 printf '{"apiKeyHelper": "ant --profile ldqis auth print-credentials --access-token"}\n' >"$work/api/settings.json"
 printf '{"env": {"OTEL_METRICS_EXPORTER": "otlp", "CLAUDE_CODE_ENABLE_TELEMETRY": "1", "UNRELATED": "x"}}\n' >"$work/sub/settings.json"
 
-# ant: logged in unless $REC/ant-out says otherwise. Its status also prints a
-# token-like string, which must never reach the runner's output.
+# ant: logged in unless $REC/ant-out says otherwise. print-credentials prints
+# the token and exits 1 without a login; status exits 0 either way and, after a
+# token refresh (2.9.0), has no "Logged in to" line. No token may reach the
+# runner's output.
 cat >"$work/bin/ant" <<'EOF'
 #!/usr/bin/env bash
+if [[ " $* " == *" print-credentials "* ]]; then
+  [[ -f $REC/ant-out ]] && { echo 'error: profile "ldqis" not configured' >&2; exit 1; }
+  echo sk-ant-oat01-SECRETSECRET; exit 0
+fi
 if [[ -f $REC/ant-out ]]; then echo '  (profile "ldqis" not configured — run `ant auth login` to set it up)'; exit 0; fi
-printf 'Credentials\n  Logged in to LDQIS as someone@example.org\n  (active) * Profile (user_oauth) sk-ant-oat01-SECRETSECRET\n'
+printf 'Credentials\n  (active) * Profile (user_oauth) sk-ant-oat01-SECRETSECRET\n'
 EOF
 # claude: records how it was started (each start's argv also appended to
 # $REC/calls, one line); $REC/mode says how it ends.

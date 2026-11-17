@@ -1093,11 +1093,12 @@ keyed_settings() { # DIR FOLDER
   while IFS= read -r f; do [[ -f $f ]] && key_settings "$f" && { printf '%s' "$f"; return 0; }; done < <(session_settings "$1" "$2")
   return 1
 }
-# Whether the ant CLI holds a login for FLEET_HEADLESS_PROFILE. `ant auth status`
-# exits 0 either way (2.9.0), so its "Logged in to" line is the answer; its
-# output also shows part of the token, so none of it is ever printed.
+# Whether the ant CLI can hand a job a token for FLEET_HEADLESS_PROFILE: the
+# same command the jobs' apiKeyHelper runs, which refreshes an expired token and
+# exits 1 without a login (2.9.0). `auth status` exits 0 either way and drops its
+# "Logged in to" line after a refresh. The token is never printed.
 headless_login() {
-  timeout 15 "${FLEET_ANT:-ant}" --profile "$FLEET_HEADLESS_PROFILE" auth status 2>/dev/null | grep -q '^[[:space:]]*Logged in to '
+  timeout 15 "${FLEET_ANT:-ant}" --profile "$FLEET_HEADLESS_PROFILE" auth print-credentials --access-token >/dev/null 2>&1
 }
 
 # /exit the claude in PANE and close the pane once it has gone, or after 30 s.
