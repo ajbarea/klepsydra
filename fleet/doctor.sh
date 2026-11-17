@@ -739,10 +739,16 @@ if [[ -n $keyed ]]; then
   report FAIL "auth mode" "${keyed% } sets an API key or helper, so interactive launches are refused; interactive sessions run on the subscription only (keys belong in $FLEET_HEADLESS_CONFIG)"
 elif ! key_config "$FLEET_HEADLESS_CONFIG"; then
   report ok "auth mode" "subscription only (no headless credit configured in $FLEET_HEADLESS_CONFIG)"
-elif ! command -v "${FLEET_ANT:-ant}" >/dev/null || ! headless_login; then
-  report warn "auth mode" "subscription only: the headless credit has no ant login (ant --profile $FLEET_HEADLESS_PROFILE auth login)"
 else
-  report ok "auth mode" "subscription + headless credit: interactive sessions on the subscription, fleet headless jobs on ant profile $FLEET_HEADLESS_PROFILE ($FLEET_HEADLESS_CONFIG)"
+  credit_login=1
+  command -v "${FLEET_ANT:-ant}" >/dev/null && { credit_login=0; headless_login || credit_login=$?; }
+  if (( credit_login == 124 )); then
+    report warn "auth mode" "subscription only for now: ant did not answer within ${FLEET_ANT_TIMEOUT:-15} s for profile $FLEET_HEADLESS_PROFILE (network?)"
+  elif (( credit_login )); then
+    report warn "auth mode" "subscription only: the headless credit has no ant login (ant --profile $FLEET_HEADLESS_PROFILE auth login)"
+  else
+    report ok "auth mode" "subscription + headless credit: interactive sessions on the subscription, fleet headless jobs on ant profile $FLEET_HEADLESS_PROFILE ($FLEET_HEADLESS_CONFIG)"
+  fi
 fi
 # The engine lanes (`fleet delegate`): each engine's binary, its login where a
 # file shows one, and which lanes are on. A lane never starts without the lock

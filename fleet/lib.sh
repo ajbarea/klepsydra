@@ -1093,12 +1093,27 @@ keyed_settings() { # DIR FOLDER
   while IFS= read -r f; do [[ -f $f ]] && key_settings "$f" && { printf '%s' "$f"; return 0; }; done < <(session_settings "$1" "$2")
   return 1
 }
-# Whether the ant CLI can hand a job a token for FLEET_HEADLESS_PROFILE: the
-# same command the jobs' apiKeyHelper runs, which refreshes an expired token and
-# exits 1 without a login (2.9.0). `auth status` exits 0 either way and drops its
-# "Logged in to" line after a refresh. The token is never printed.
+# Appends to ARRAY an `env -u NAME` pair for every exported ANTHROPIC_* and
+# CLAUDE_CODE_* variable: a caller's base URL would send the credit's token to
+# another host, and its key or session id would outrank or confuse the helper.
+credential_unsets() { # ARRAY
+  local -n _unsets=$1
+  local v
+  while IFS= read -r v; do [[ $v == CLAUDE_CODE_* || $v == ANTHROPIC_* ]] && _unsets+=(-u "$v"); done < <(compgen -e)
+}
+# Whether ant can hand a job a token for FLEET_HEADLESS_PROFILE, by running the
+# jobs' apiKeyHelper command (ant 2.9.0): exit 1 without a login. It refreshes a
+# token near expiry, so it runs in the jobs' stripped environment, and a failed
+# refresh (a warning, the expired token and exit 0) counts as no login. 124: ant
+# did not answer within FLEET_ANT_TIMEOUT seconds. The token is never printed.
 headless_login() {
-  timeout 15 "${FLEET_ANT:-ant}" --profile "$FLEET_HEADLESS_PROFILE" auth print-credentials --access-token >/dev/null 2>&1
+  local -a unsets=()
+  local e rc=0
+  credential_unsets unsets
+  e=$(timeout "${FLEET_ANT_TIMEOUT:-15}" env "${unsets[@]}" "${FLEET_ANT:-ant}" --profile "$FLEET_HEADLESS_PROFILE" \
+    auth print-credentials --access-token 2>&1 >/dev/null) || rc=$?
+  (( rc )) && return "$rc"
+  [[ ${e,,} != *"refresh failed"* ]]
 }
 
 # /exit the claude in PANE and close the pane once it has gone, or after 30 s.
