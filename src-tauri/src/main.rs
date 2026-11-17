@@ -1079,6 +1079,9 @@ fn main() {
         .run(|_, event| {
             // Before Tauri hides every window on its way out.
             if let tauri::RunEvent::Exit = event {
+                // Logged, so the doctor's "phone wall: no answer" reads as a quit, not a mystery.
+                log::info!("klepsydra quitting: the phone wall and the gauge stop with it");
+                log::logger().flush();
                 split::quitting();
             }
         });

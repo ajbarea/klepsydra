@@ -1109,6 +1109,13 @@ case $1 in
   serve) echo "${DOC_SERVE:-No serve config}" ;;
 esac
 EOF
+cat >"$work/bin/tasklist" <<'TASKS'
+#!/usr/bin/env bash
+# Windows' process list: klepsydra.exe while $DOC_APP_RUNS is set.
+if [[ -n ${DOC_APP_RUNS:-} ]]; then echo "klepsydra.exe                12345 Console    1    210,000 K"
+else echo "INFO: No tasks are running which match the specified criteria."; fi
+TASKS
+chmod +x "$work/bin/tasklist"
 cat >"$work/bin/ps" <<'PS'
 #!/usr/bin/env bash
 # The host's processes: a watcher when $DOC_WATCH names its panes.
@@ -1126,7 +1133,7 @@ echo 44444444-4444-4444-8444-444444444444 >"$work/dboot"
 # the wrappers write the shipped path, $KLEPSYDRA_DIR/prefs.json, and remove it
 # after, so later sections see no file. DOC_PREFS=none: no file.
 doc_prefs() { local c=${DOC_PREFS-'{"phone_wall": true}'}; rm -f -- "$KLEPSYDRA_DIR/prefs.json"; [[ $c == none ]] || printf '%s' "$c" >"$KLEPSYDRA_DIR/prefs.json"; }
-doctor() { local rc; doc_prefs; FLEET_HEAVY_LOCK="$work/heavy.lock" FLEET_PS="$work/bin/ps" FLEET_SYSTEMCTL="$work/bin/systemctl" FLEET_CURL="${FLEET_CURL:-$work/bin/curl}" FLEET_TAILSCALE="${FLEET_TAILSCALE:-$work/bin/tailscale}" \
+doctor() { local rc; doc_prefs; FLEET_HEAVY_LOCK="$work/heavy.lock" FLEET_PS="$work/bin/ps" FLEET_SYSTEMCTL="$work/bin/systemctl" FLEET_CURL="${FLEET_CURL:-$work/bin/curl}" FLEET_TAILSCALE="${FLEET_TAILSCALE:-$work/bin/tailscale}" FLEET_TASKLIST="${FLEET_TASKLIST:-$work/bin/tasklist}" \
   DOC_ACTIVE="$work/active" DOC_FLEET="$work/fleet.json" FLEET_RETRY_S=0 FLEET_PROC="$work/dproc" FLEET_BOOT_ID="$work/dboot" FLEET_UNITS="$work/dunits" bash "$here/doctor.sh" 2>/dev/null; rc=$?
   rm -f -- "$KLEPSYDRA_DIR/prefs.json"; return $rc; }
 phone_lines() { grep -E '^(ok|warn|FAIL) +phone wall' | cut -d: -f1 | paste -sd'|'; }
@@ -1147,6 +1154,20 @@ check "a worker with Remote Control is ok" "$(grep -c "^ok   remote control $w (
 check "the orchestrator without it fails (Heph's must always be on)" "$(grep -c "^FAIL remote control $o (orchestrator): off" <<<"$out")" "1"
 check "no phone wall fails, after a second try" "$(grep -c '^FAIL phone wall: no answer from http://127.0.0.1:8318/fleet.json (tried twice)' <<<"$out")" "1"
 check "#328 review 1: with the wall on and down, both phone lines fail" "$(phone_lines <<<"$out")" "FAIL phone wall|FAIL phone wall over Tailscale"
+# A wall that is down because the app was quit says so, as a warning (AJ 11-17).
+mkdir -p "$KLEPSYDRA_DIR/logs"
+printf '{"ts":"%s","level":"INFO","target":"klepsydra","message":"klepsydra quitting: the phone wall and the gauge stop with it"}\n' \
+  "$(date -u -d '-20 min' +%Y-%m-%dT%H:%M:%S.000Z)" >"$KLEPSYDRA_DIR/logs/klepsydra.log"
+serve_on="https://desk.tail1.ts.net (tailnet only)"
+quit_out=$(DOC_SERVE=$serve_on doctor)
+check "a quit app turns both phone lines into warnings" "$(phone_lines <<<"$quit_out")" "warn phone wall|warn phone wall over Tailscale"
+check "the warning names the quit time" "$(grep -c '^warn phone wall: klepsydra is not running: it was quit at [0-9]*:[0-9][0-9] [AP]M' <<<"$quit_out")" "1"
+printf '{"ts":"%s","level":"INFO","target":"klepsydra::phone","message":"phone: wall serving on 127.0.0.1:8318"}\n' \
+  "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)" >>"$KLEPSYDRA_DIR/logs/klepsydra.log"
+check "#441 review: a quit line while klepsydra.exe still runs fails" "$(DOC_APP_RUNS=1 DOC_SERVE=$serve_on doctor | phone_lines)" "FAIL phone wall|FAIL phone wall over Tailscale"
+check "#441 review: no tasklist to ask fails" "$(FLEET_TASKLIST="$work/bin/no-such-tasklist" DOC_SERVE=$serve_on doctor | phone_lines)" "FAIL phone wall|FAIL phone wall over Tailscale"
+check "an app that started again after its quit and is down fails as before" "$(DOC_SERVE=$serve_on doctor | phone_lines)" "FAIL phone wall|FAIL phone wall over Tailscale"
+rm -rf -- "$KLEPSYDRA_DIR/logs"
 # Each is off as the wall reads it (serde's as_bool: only the boolean true is on).
 for pw in '{"phone_wall": false}' '{"phone_wall": "true"}' '{"phone_wall": 1}' '{"phone_wall": "yes"}' '{}' none; do
   check "#328: prefs.json $pw (the wall's own reading: off): ok, and neither phone line is tried" \
@@ -1379,7 +1400,7 @@ check "#379: idle past FLEET_BROWSER_IDLE_MIN warns" \
 bproc 4310 1 chrome /opt/google/chrome/chrome "--user-data-dir=$bc/mcp-chrome-bb"
 check "#379: one whose MCP server is gone warns" \
   "$(doctor | grep -c '^warn MCP browsers: pid 4301 (session dddddddd, idle 5 min); pid 4310 (no session, idle ?, its MCP server is gone)')" "1"
-djson() { doc_prefs; FLEET_PS="$work/bin/ps" FLEET_SYSTEMCTL="$work/bin/systemctl" FLEET_CURL="${FLEET_CURL:-$work/bin/curl}" FLEET_TAILSCALE="${FLEET_TAILSCALE:-$work/bin/tailscale}" \
+djson() { doc_prefs; FLEET_PS="$work/bin/ps" FLEET_SYSTEMCTL="$work/bin/systemctl" FLEET_CURL="${FLEET_CURL:-$work/bin/curl}" FLEET_TAILSCALE="${FLEET_TAILSCALE:-$work/bin/tailscale}" FLEET_TASKLIST="${FLEET_TASKLIST:-$work/bin/tasklist}" \
   DOC_ACTIVE="$work/active" DOC_FLEET="$work/fleet.json" bash "$here/doctor.sh" --json "$work/health.json" >/dev/null 2>&1; echo $?; rm -f -- "$KLEPSYDRA_DIR/prefs.json"; }
 : >"$FLEET_LOG"; rm -f "$work/health.json"
 check "#208: --json writes each check with its status and detail, and exits as doctor does" \
@@ -1432,6 +1453,21 @@ check "#392: a stalled curl probe on run 1 warns in --json" \
 FLEET_CURL="$work/bin/curl-timeout" djson >/dev/null
 check "#398 review: and stalled on the next run too, it fails" \
   "$(jq -r '.checks[] | select(.check == "phone wall") | .status' "$work/health.json")" "FAIL"
+# #441 review: a wall down after a quit is no strike, so the next miss is a first miss.
+rm -f "$work/health.json"; mkdir -p "$KLEPSYDRA_DIR/logs"
+printf '{"ts":"%s","level":"INFO","target":"klepsydra","message":"klepsydra quitting: x"}\n' "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)" >"$KLEPSYDRA_DIR/logs/klepsydra.log"
+djson >/dev/null
+first=$(jq -r '.checks[] | select(.check == "phone wall") | .status' "$work/health.json")
+printf '{"ts":"%s","level":"INFO","target":"klepsydra::phone","message":"starting"}\n' "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)" >>"$KLEPSYDRA_DIR/logs/klepsydra.log"
+: >"$FLEET_LOG"
+djson >/dev/null
+second=$(jq -r '.checks[] | select(.check == "phone wall") | .status' "$work/health.json")
+check "#441 verify: the miss after a quit is logged when it starts" \
+  "$(jq -r 'select(.message == "doctor: phone wall") | .level + " " + .detail' "$FLEET_LOG" | cut -c1-30)" "WARN no answer from http://127"
+djson >/dev/null
+check "#441 review: quit, then a miss, then another: warn, warn, FAIL" \
+  "$first $second $(jq -r '.checks[] | select(.check == "phone wall") | .status' "$work/health.json")" "warn warn FAIL"
+rm -rf -- "$KLEPSYDRA_DIR/logs"
 rm -f "$work/health.json"
 check "#398 review: curl not installed fails at once" \
   "$(FLEET_CURL="$work/bin/no-such-curl" doctor | grep -E '^(ok|warn|FAIL) +phone wall:' | awk '{print $1}')" "FAIL"
