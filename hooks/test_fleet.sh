@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Fixture-driven tests for the fleet hook. Run: bash hooks/test_fleet.sh
 set -uo pipefail
+# A fleet session runs with its own KERYX_VOICE; no test may inherit it.
+unset KERYX_VOICE
 
 here=$(cd "$(dirname "$0")" && pwd)
 hook="$here/klepsydra-fleet.sh"
@@ -350,6 +352,14 @@ check "a voice keryx changes is copied" "$(field .voice)" '"bf_emma"'
 rm "$work/voices.json"
 fire user-prompt.json
 check "keryx gone keeps the voice" "$(field .voice)" '"bf_emma"'
+# #417 review: a launch's voice stands in only while keryx holds none; a
+# `keryx voice` pick (the hold) is what keryx speaks, so the card follows it.
+printf '{"holders":{"500:8717628":{"voice":"am_puck","seen":3}}}\n' >"$work/voices.json"
+fire post-tool-bash.json . KERYX_VOICE=af_bella
+check "#417 review: keryx's hold outranks the launch's KERYX_VOICE" "$(field .voice)" '"am_puck"'
+rm "$work/voices.json"
+fire post-tool-bash.json . KERYX_VOICE=af_bella
+check "#417 review: with no hold, the launch's KERYX_VOICE is the voice" "$(field .voice)" '"af_bella"'
 
 echo "home voice"
 # While keryx is muted no terminal is held, so a session takes the voice keryx
@@ -1652,6 +1662,19 @@ check "AJ 11-02: a file from when Athena wore bf_alice keeps her, on bf_emma now
 printf 'zeus\n' >"$work/fleet-state/orchestrator.face"
 rm -f "$hfile"; hfire session-start.json "TMUX=$work/sock/klepsydra,1,0" TMUX_PANE=%7
 check "an unknown name is Hephaestus" "$(jq -r .orchestrator_face "$hfile")" "am_michael"
+rm -f "$hfile"; hfire session-start.json "TMUX=$work/sock/klepsydra,1,0" TMUX_PANE=%7 KERYX_VOICE=bf_emma
+check "#395 review: a launch's face voice outranks the file on a tie" "$(jq -r .orchestrator_face "$hfile")" "bf_emma"
+rm -f "$hfile"; hfire session-start.json "TMUX=$work/sock/klepsydra,1,0" TMUX_PANE=%7 KERYX_VOICE=af_bella
+check "#395 review: a launch voice that is no orchestrator face is ignored" "$(jq -r .orchestrator_face "$hfile")" "am_michael"
+# #417 review: Heph launched with a face voice wears it outright, so a card that
+# shows up between launch.sh's face_now and this first event cannot flip it.
+A=99999999-8888-4777-8666-555555555555
+printf '%s\n' "{\"v\":1,\"session_id\":\"$A\",\"orchestrator\":true,\"orchestrator_face\":\"bf_emma\",\"ended\":{\"at\":1},\"last_active\":5}" >"$dir/fleet/$A.json"
+rm -f "$hfile"; hfire session-start.json "TMUX=$work/sock/klepsydra,1,0" TMUX_PANE=%7 KLEPSYDRA_AGENT=heph
+check "#417 review: with Athena's card shown, a new Heph would wear Hephaestus" "$(jq -r .orchestrator_face "$hfile")" "am_michael"
+rm -f "$hfile"; hfire session-start.json "TMUX=$work/sock/klepsydra,1,0" TMUX_PANE=%7 KLEPSYDRA_AGENT=heph KERYX_VOICE=bf_emma
+check "#417 review: launched with Athena's voice, Heph wears Athena" "$(jq -r .orchestrator_face "$hfile")" "bf_emma"
+rm -f "$hfile" "$dir/fleet/$A.json"
 printf 'athena\n' >"$work/fleet-state/orchestrator.face"
 rm -f "$hfile"; hfire session-start.json "TMUX=$work/sock/klepsydra,1,0" TMUX_PANE=%7
 jq -c 'del(.orchestrator_face)' "$hfile" >"$work/n" && mv "$work/n" "$hfile"

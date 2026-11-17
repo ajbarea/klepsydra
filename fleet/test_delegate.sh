@@ -62,6 +62,7 @@ if (( ! interactive )); then
     limit) echo "Error: you have exhausted your quota for today" >&2; exit 1 ;;
     auth) echo "Error: not logged in, run login" >&2; exit 1 ;;
     denied) echo "Error: a tool required the read_file permission that headless mode cannot prompt for, so it was auto-denied" >&2; exit 1 ;;
+    denied0) echo 'jetski: no output produced — a tool required the "read_file" permission that headless mode cannot prompt for, so it was auto-denied.' >&2 ;;
     shortlimit) echo "Rate limit reached, try again later" ;;
     longquota) { echo "The doc says quota and rate limit apply:"; head -c 1500 /dev/zero | tr '\0' x; } ;;
     empty) : ;;
@@ -186,6 +187,8 @@ check "an exit 0 whose stdout is fine is no limit even when stderr talks of quot
 check "an exit 1 reads its stderr too" "$(eng_classify 1 '' 'HTTP 401 unauthorized')" "auth"
 check "an exit 0 with nothing on stdout is empty, even with stderr noise" "$(eng_classify 0 '' 'some log line')" "empty"
 check "agy auto-deny stderr is classified as denied" "$(eng_classify 1 '' 'a tool required the read_file permission that headless mode cannot prompt for, so it was auto-denied')" "denied"
+check "#358 live shape: agy exits 0 with no answer and its auto-deny on stderr: denied" "$(eng_classify 0 '' 'jetski: no output produced — a tool required the "read_file" permission that headless mode cannot prompt for, so it was auto-denied.')" "denied"
+check "an exit 0 answer with an auto-deny note on stderr is still ok" "$(eng_classify 0 'the answer' 'a read was auto-denied')" "ok"
 check "a long ok answer mentioning auto-denied is still ok" "$(eng_classify 0 "auto-denied $(head -c 300 /dev/zero | tr '\0' x)" '')" "ok"
 check "an unrecognised failure is an error (no fallback)" "$(eng_classify 2 '' 'segfault')" "error"
 idle=$'  stub\n──────────\n>\n──────────\n? for shortcuts'
@@ -275,6 +278,12 @@ check "snapshot: repo absolute path is rewritten to repo-relative" "$(cat "$STUB
 echo "Read /home/other/file" >"$work/task_outside.md"
 out=$(dl --engine agy --kind research --dir "$repo" "$work/task_outside.md")
 check "snapshot: outside path is refused" "$(field "$out" status)" "refused"
+# The repo root is matched as text: the same path with its dot swapped is another folder.
+if [[ $repo == *.* ]]; then
+  echo "Read ${repo%%.*}X${repo#*.}/src/a.py" >"$work/task_lookalike.md"
+  out=$(dl --engine agy --kind research --dir "$repo" "$work/task_lookalike.md")
+  check "snapshot: a look-alike of the repo root is not rewritten, so it is refused" "$(field "$out" status)" "refused"
+fi
 check "snapshot: a tracked symlink (which a read tool would follow out of it) is not in it" "$(has "$files" 'link-out')" "no"
 check "snapshot: removed when the call ends" "$(find "$work/state/delegate" -maxdepth 2 -name work 2>/dev/null | wc -l)" "0"
 
@@ -358,6 +367,9 @@ check "auto falls back on denied as it does on limit" "$(field "$out" engine) $(
 : >"$work/sent.log"; mode agy denied; mode copilot denied
 dl --kind research --notify %7 --dir "$repo" "$work/task.md" >/dev/null
 check "and a denied round trip says both-out" "$(has "$(sent)" 'status=both-out')" "yes"
+mode agy denied0; mode copilot ok
+out=$(dl --engine auto --kind research --dir "$repo" "$work/task.md")
+check "#358: auto falls back when agy exits 0 with its auto-deny and no answer" "$(field "$out" engine) $(field "$out" status)" "copilot ok"
 mode agy ok; mode copilot ok
 
 echo "interactive lane (agy)"
