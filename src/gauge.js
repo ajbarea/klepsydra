@@ -13,6 +13,8 @@ export const DROP_AFTER_MS = 30 * 24 * 60 * 60 * 1000;
 // Two sessions can timestamp the same window a moment apart; within this many
 // seconds they are the same window, not a newer one.
 export const WINDOW_MATCH_SECONDS = 90;
+// Keep this mirror of fleet/lib.sh's default FLEET_ROOM_PCT in sync.
+export const FLEET_ROOM_PCT = 90;
 
 /**
  * A reading's number: a JSON number only, as the phone server sends it
@@ -39,6 +41,38 @@ export const HARNESS_LABELS = {
   agy: "Antigravity",
   copilot: "Copilot",
   api: "API Keys",
+};
+
+export const ROUTE_ORDER = ["agy_gemini", "agy_claude_gpt", "copilot", "api_credit", "claude_subscription"];
+
+/**
+ * The lane the fleet should try next. A model group is a lane of its own:
+ * one spent group must not disqualify another group on the same account.
+ */
+export function routeLane(row) {
+  const harness = row?.harness;
+  const window = row?.window;
+  if (harness === "agy" && ["five_hour", "seven_day", "gemini"].includes(window)) return "agy_gemini";
+  if (harness === "agy" && window === "claude_gpt") return "agy_claude_gpt";
+  if (harness === "copilot") return "copilot";
+  if (harness === "api" || ["ai_credits", "personal", "ldqis", "claude_gpt"].includes(window)) return "api_credit";
+  return "claude_subscription";
+}
+
+const routeGroup = (row) => {
+  const lane = routeLane(row);
+  // API credit and Copilot windows are separate model pools; Claude and AGY
+  // Gemini windows are coupled limits for one account.
+  const model = ["api_credit", "copilot"].includes(lane) ? row.window : lane;
+  return `${row.account}\u0000${model}`;
+};
+
+const hasRoom = (row) => {
+  if (!Number.isFinite(row.pct)) return false;
+  const remaining = Math.floor(100 - row.pct);
+  if (row.window === "five_hour") return remaining > 100 - FLEET_ROOM_PCT;
+  if (row.window === "seven_day") return remaining > 5;
+  return remaining > 0;
 };
 
 const WINDOW_LABELS = {
@@ -417,6 +451,7 @@ export function toRows(payload, nowMs = Date.now()) {
         key: `${p.account}:${key}`,
         account: p.account,
         harness: h,
+        window: key,
         harnessLabel: HARNESS_LABELS[h] ?? h,
         note,
         isCapped: r.pct >= 100 || r.state === "waiting",
@@ -425,25 +460,35 @@ export function toRows(payload, nowMs = Date.now()) {
     }
   }
 
-  // Route recommendation across harnesses (#393):
-  // Identify the uncapped account/harness with the lowest bottleneck usage.
-  const maxUsageByAccount = new Map();
+  // Route recommendation follows the same free-first order as the fleet.
+  // Windows that constrain the same account/model group must all have room;
+  // otherwise a low row can recommend a route that cannot actually run.
+  const groups = new Map();
   for (const row of rows) {
-    const prev = maxUsageByAccount.get(row.account) ?? 0;
-    maxUsageByAccount.set(row.account, Math.max(prev, row.pct));
+    row.isBestRoute = false;
+    const key = routeGroup(row);
+    if (!groups.has(key)) groups.set(key, { lane: routeLane(row), rows: [] });
+    groups.get(key).rows.push(row);
   }
 
-  let bestAccount = null;
-  let lowestUsage = Number.POSITIVE_INFINITY;
-  for (const [acct, maxPct] of maxUsageByAccount) {
-    if (maxPct < 100 && maxPct < lowestUsage) {
-      lowestUsage = maxPct;
-      bestAccount = acct;
+  const bestByLane = new Map();
+  for (const group of groups.values()) {
+    const required = group.lane === "agy_gemini" && !group.rows.some((row) => row.window === "gemini")
+      ? ["five_hour", "seven_day"]
+      : [];
+    const keys = new Set(group.rows.map((row) => row.window));
+    if (required.some((key) => !keys.has(key)) || !group.rows.every(hasRoom)) continue;
+    const best = group.rows.reduce((a, b) => (b.pct > a.pct ? b : a));
+    const current = bestByLane.get(group.lane);
+    if (!current || best.pct < current.pct) bestByLane.set(group.lane, best);
+  }
+
+  for (const lane of ROUTE_ORDER) {
+    const best = bestByLane.get(lane);
+    if (best) {
+      best.isBestRoute = true;
+      break;
     }
-  }
-
-  for (const row of rows) {
-    row.isBestRoute = Boolean(bestAccount && row.account === bestAccount);
   }
 
   return rows;

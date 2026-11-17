@@ -139,6 +139,9 @@ pub fn phone_view(readings: &[Value]) -> Value {
             if let Some(label) = r.get("label").filter(|v| v.is_string()) {
                 o.insert("label".into(), label.clone());
             }
+            if let Some(harness) = harness_of(r) {
+                o.insert("harness".into(), Value::from(harness));
+            }
             for k in STAMPS {
                 if let Some(t) = r.get(k).filter(|v| v.is_number()) {
                     o.insert(k.into(), t.clone());
@@ -167,6 +170,25 @@ pub fn phone_view(readings: &[Value]) -> Value {
     Value::Array(out)
 }
 
+fn harness_of(reading: &Object) -> Option<String> {
+    if let Some(harness) = reading.get("harness").and_then(Value::as_str) {
+        return Some(harness.to_string());
+    }
+    if let Some(engine) = reading.get("engine").and_then(Value::as_str) {
+        return Some(engine.to_string());
+    }
+    let account = account_key(reading);
+    if account.starts_with("agy") {
+        Some("agy".to_string())
+    } else if account.starts_with("copilot") {
+        Some("copilot".to_string())
+    } else if account.starts_with("api") {
+        Some("api".to_string())
+    } else {
+        None
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -178,7 +200,7 @@ mod tests {
 
     fn reading(account: &str, label: &str, session: &str, pct: u32) -> Value {
         json!({
-            "account": account, "label": label, "session": session,
+            "account": account, "label": label, "harness": "claude", "session": session,
             "written_at": 1_800_000_000, "observed_at": 1_800_000_000, "api_ms": 41_234,
             "windows": {
                 "five_hour": {"used_percentage": pct, "resets_at": 1_800_003_600, "extra": "x"},
@@ -236,7 +258,7 @@ mod tests {
         assert_eq!(
             v,
             json!([{
-                "account": "a1", "label": "Personal",
+                "account": "a1", "label": "Personal", "harness": "claude",
                 "observed_at": 1_800_000_000, "written_at": 1_800_000_000,
                 "windows": {
                     "five_hour": {"used_percentage": 57, "resets_at": 1_800_003_600},
@@ -248,6 +270,18 @@ mod tests {
         for secret in [PERSONAL, "s1", "api_ms", "session", "extra"] {
             assert!(!text.contains(secret), "{secret} reached the phone: {text}");
         }
+    }
+
+    #[test]
+    fn the_phone_keeps_a_harness_inferred_from_an_old_reading() {
+        let v = phone_view(&[json!({
+            "account": "copilot-primary",
+            "label": "Copilot",
+            "windows": {
+                "ai_credits": {"used_percentage": 10, "resets_at": 1_800_003_600}
+            }
+        })]);
+        assert_eq!(v[0]["harness"], "copilot");
     }
 
     #[test]
