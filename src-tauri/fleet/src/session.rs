@@ -235,6 +235,8 @@ pub struct SessionFile {
     #[serde(default)]
     pub prompt: Option<Said>,
     #[serde(default)]
+    pub said: Option<Said>,
+    #[serde(default)]
     pub reply: Option<Said>,
     #[serde(default)]
     pub error: Option<String>,
@@ -818,5 +820,13 @@ mod tests {
         ] {
             assert_eq!(face(bad).unwrap(), None, "{bad}");
         }
+    }
+
+    #[test]
+    fn session_file_reads_said() {
+        let json = r#"{"session_id":"s1","state":"working","state_at":100,"said":{"text":"narrating mid-turn","at":105}}"#;
+        let s: SessionFile = serde_json::from_str(json).unwrap();
+        assert_eq!(s.said.as_ref().unwrap().text, "narrating mid-turn");
+        assert_eq!(s.said.as_ref().unwrap().at, 105);
     }
 }

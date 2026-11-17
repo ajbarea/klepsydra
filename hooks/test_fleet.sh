@@ -321,6 +321,124 @@ check "failure: error" "$(field '[.state, .reason, .error]')" '["error","rate li
 fire user-prompt.json
 check "the next prompt clears the error" "$(field '[.state, .error]')" '["working",null]'
 
+echo "mid-turn narration: said vs reply (#410)"
+narrate_transcript="$work/narrate-transcript.jsonl"
+cat >"$narrate_transcript" <<'EOF'
+{"type":"user","message":{"role":"user","content":"do something"}}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"I will now inspect the files"},{"type":"tool_use","name":"Bash"}]}}
+EOF
+now=1792353070
+fire post-tool-bash.json ".transcript_path = \"$narrate_transcript\""
+check "PostToolUse harvests narration from transcript into .said" \
+  "$(field '[.said.text, .said.at]')" '["I will now inspect the files",1792353070]'
+check "PostToolUse does not overwrite .reply" "$(field .reply.text)" \
+  '"That works with no model calls: the hook writes one file per session and the overlay reads them."'
+
+# Assistant text followed by a Write tool call (contains "content": in input) does not overwrite .said
+write_transcript="$work/write-transcript.jsonl"
+cat >"$write_transcript" <<'EOF'
+{"type":"user","message":{"role":"user","content":"write the code"}}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Writing the shared policy module, then wiring it into sisters and heuresis:"}]}}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"toolu_01","name":"Write","input":{"file_path":"/tmp/foo.py","content":"def batch_ssh(): pass\n"}}]}}
+{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_01","content":"File created"}]}}
+EOF
+now=1792353072
+fire post-tool-bash.json ".transcript_path = \"$write_transcript\""
+check "PostToolUse text followed by Write keeps assistant text in .said" \
+  "$(field '[.said.text, .said.at]')" '["Writing the shared policy module, then wiring it into sisters and heuresis:",1792353072]'
+
+# Meta user line after a Skill call does not clear narration
+meta_transcript="$work/meta-transcript.jsonl"
+cat >"$meta_transcript" <<'EOF'
+{"type":"user","message":{"role":"user","content":"run skill"}}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Invoking the skill now"}]}}
+{"type":"user","isMeta":true,"message":{"role":"user","content":[{"type":"text","text":"<system-reminder>Skill directions</system-reminder>"}]}}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"toolu_02","name":"Bash","input":{"command":"ls"}}]}}
+EOF
+now=1792353074
+fire post-tool-bash.json ".transcript_path = \"$meta_transcript\""
+check "meta user line does not clear .said" \
+  "$(field '[.said.text, .said.at]')" '["Invoking the skill now",1792353074]'
+
+# Malformed transcript line shapes do not crash jq or block session write
+malformed_transcript1="$work/malformed1.jsonl"
+cat >"$malformed_transcript1" <<'EOF'
+{"type":"user","message":{"role":"user","content":"hi"}}
+{"type":"assistant","message":"not an object with content"}
+EOF
+now=1792353076
+fire post-tool-bash.json ".transcript_path = \"$malformed_transcript1\""
+check "malformed assistant string message does not crash jq or abort write" "$(field .session_id)" '"11111111-2222-4333-8444-555555555555"'
+
+malformed_transcript2="$work/malformed2.jsonl"
+cat >"$malformed_transcript2" <<'EOF'
+{"type":"USER_INPUT","content":"hi"}
+{"type":"PLANNER_RESPONSE","content":["malformed string in content array"]}
+EOF
+now=1792353078
+fire post-tool-bash.json ".transcript_path = \"$malformed_transcript2\""
+check "malformed planner content array does not crash jq or abort write" "$(field .session_id)" '"11111111-2222-4333-8444-555555555555"'
+
+# Unchanged narration event keeps said.at and does not rewrite file
+unchanged_transcript="$work/unchanged-transcript.jsonl"
+cat >"$unchanged_transcript" <<'EOF'
+{"type":"user","message":{"role":"user","content":"do work"}}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Narration constant"}]}}
+EOF
+now=1792353080
+fire post-tool-bash.json ".transcript_path = \"$unchanged_transcript\""
+check "PostToolUse writes .said and stamps written_at" "$(field '[.said.text, .said.at, .written_at]')" '["Narration constant",1792353080,1792353080]'
+
+now=1792353082
+fire post-tool-bash.json ".transcript_path = \"$unchanged_transcript\""
+check "unchanged PostToolUse does not rewrite file: written_at and said.at kept" \
+  "$(field '[.said.text, .said.at, .written_at]')" '["Narration constant",1792353080,1792353080]'
+
+cat >>"$unchanged_transcript" <<'EOF'
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Narration updated"}]}}
+EOF
+now=1792353084
+fire post-tool-bash.json ".transcript_path = \"$unchanged_transcript\""
+check "changed PostToolUse rewrites file with new said and updated at" \
+  "$(field '[.said.text, .said.at, .written_at]')" '["Narration updated",1792353084,1792353084]'
+
+now=1792353086
+empty_transcript="$work/empty-transcript.jsonl"
+cat >"$empty_transcript" <<'EOF'
+{"type":"user","message":{"role":"user","content":"hello"}}
+EOF
+fire post-tool-bash.json ".transcript_path = \"$empty_transcript\""
+check "empty tail leaves existing .said alone" \
+  "$(field '[.said.text, .said.at]')" '["Narration updated",1792353084]'
+
+now=1792353088
+sub_transcript="$work/sub-transcript.jsonl"
+cat >"$sub_transcript" <<'EOF'
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Subagent chatter"}]}}
+EOF
+fire post-tool-bash.json ".agent_id = \"subagent-1\" | .transcript_path = \"$sub_transcript\""
+check "subagent PostToolUse does not overwrite main session .said" \
+  "$(field '[.said.text, .said.at]')" '["Narration updated",1792353084]'
+
+now=1792353090
+agy_transcript="$work/agy-transcript.jsonl"
+cat >"$agy_transcript" <<'EOF'
+{"type":"USER_INPUT","content":"agy prompt"}
+{"type":"PLANNER_RESPONSE","content":"I am planning the changes now"}
+EOF
+fire post-tool-bash.json ".transcript_path = \"$agy_transcript\""
+check "PostToolUse harvests AGY PLANNER_RESPONSE narration into .said" \
+  "$(field '[.said.text, .said.at]')" '["I am planning the changes now",1792353090]'
+
+now=1792353092
+fire stop.json '.last_assistant_message = "All tasks finished successfully"'
+check "Stop writes .reply" "$(field '[.reply.text, .reply.at]')" '["All tasks finished successfully",1792353092]'
+check "Stop keeps .said distinct" "$(field '[.said.text, .said.at]')" '["I am planning the changes now",1792353090]'
+
+now=1792353095
+fire user-prompt.json
+check "UserPromptSubmit clears .said" "$(field .said)" "null"
+
 echo "where moves, identity stays"
 now=1792353100
 fire post-tool-edit.json ".tool_input.file_path = \"$repos/ideas/README.md\""

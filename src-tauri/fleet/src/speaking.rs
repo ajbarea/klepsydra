@@ -208,6 +208,7 @@ mod tests {
             place: None,
             touched: vec![],
             prompt: None,
+            said: None,
             reply: None,
             error: None,
             updated_at: NOW,

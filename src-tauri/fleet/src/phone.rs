@@ -93,7 +93,7 @@ pub fn exact_assets<K: AsRef<str>>(
 /// (shown, never acted on: the phone has no wrap-up buttons). The rest (its
 /// tmux pane, Claude process, distro, full launch folder) serve the
 /// desktop's actions alone.
-const SESSION_FIELDS: [&str; 26] = [
+const SESSION_FIELDS: [&str; 27] = [
     "session_id",
     "name",
     "voice",
@@ -104,6 +104,7 @@ const SESSION_FIELDS: [&str; 26] = [
     "where",
     "touched",
     "prompt",
+    "said",
     "reply",
     "error",
     "updated_at",
@@ -1101,7 +1102,7 @@ mod tests {
                 "session_id": "s1", "name": "n", "launch_dir": "/home/aj/repos/klepsydra/",
                 "voice": "v", "status": "working", "reason": null, "status_at": 1, "active_at": 2,
                 "where": {"repo": "r", "worktree": null, "branch": "b", "at": 1},
-                "touched": [], "prompt": {"text": "p", "at": 1}, "reply": null, "error": null,
+                "touched": [], "prompt": {"text": "p", "at": 1}, "said": null, "reply": null, "error": null,
                 "updated_at": 3, "quiet_since": null,
                 "tmux": {"socket": "/tmp/tmux-1000/klepsydra", "pane": "%1"},
                 "distro": "Ubuntu", "claude": {"pid": 42, "start": 7},

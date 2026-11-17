@@ -728,6 +728,84 @@ test("card: prompt and reply are plain text", () => {
   assert.equal(c.reply, "a");
 });
 
+test("card: mid-turn narration (.said) shows in .reply while working and finished .reply replaces at Stop (#410)", () => {
+  // Working session with mid-turn narration: shows said in reply
+  const workingWithSaid = card(session({
+    status: "working",
+    said: { text: "now editing *src/model.js*", at: NOW },
+    reply: { text: "prior finished reply", at: NOW - 60 },
+  }), CAST, NOW);
+  assert.equal(workingWithSaid.reply, "now editing src/model.js");
+  assert.equal(workingWithSaid.said, "now editing src/model.js");
+
+  // Working session without narration yet: shows prior reply (not blank)
+  const workingNoSaid = card(session({
+    status: "working",
+    said: null,
+    reply: { text: "prior finished reply", at: NOW - 60 },
+  }), CAST, NOW);
+  assert.equal(workingNoSaid.reply, "prior finished reply");
+  assert.equal(workingNoSaid.said, null);
+
+  // Finished session that went silent: final reply outranks older mid-turn narration
+  const silentFinished = card(session({
+    status: "silent",
+    said: { text: "old mid-turn narration", at: NOW - 30 },
+    reply: { text: "Final finished reply", at: NOW - 10 },
+  }), CAST, NOW);
+  assert.equal(silentFinished.reply, "Final finished reply");
+
+  // Tie: reply wins
+  const tie = card(session({
+    status: "working",
+    said: { text: "narration at same second", at: NOW },
+    reply: { text: "reply at same second", at: NOW },
+  }), CAST, NOW);
+  assert.equal(tie.reply, "reply at same second");
+
+  // Turn over (status done): finished reply replaces narration
+  const doneWithSaid = card(session({
+    status: "done",
+    said: { text: "now editing src/model.js", at: NOW - 10 },
+    reply: { text: "Finished all edits cleanly", at: NOW },
+  }), CAST, NOW);
+  assert.equal(doneWithSaid.reply, "Finished all edits cleanly");
+  assert.equal(doneWithSaid.said, "now editing src/model.js");
+
+  // Turn over (status ended): finished reply replaces narration
+  const endedWithSaid = card(session({
+    status: "ended",
+    said: { text: "now editing src/model.js", at: NOW - 10 },
+    reply: { text: "Finished session", at: NOW },
+  }), CAST, NOW);
+  assert.equal(endedWithSaid.reply, "Finished session");
+
+  // Working in background: turnOver is true, finished reply shown
+  const bgWithSaid = card(session({
+    status: "working",
+    reason: "background",
+    said: { text: "subagent running", at: NOW - 10 },
+    reply: { text: "Turn ended with 1 subagent out", at: NOW },
+  }), CAST, NOW);
+  assert.equal(bgWithSaid.reply, "Turn ended with 1 subagent out");
+
+  // Needs you with said: shows said
+  const needsWithSaid = card(session({
+    status: "needs_you",
+    said: { text: "Asking: approve Bash?", at: NOW },
+    reply: { text: "prior reply", at: NOW - 60 },
+  }), CAST, NOW);
+  assert.equal(needsWithSaid.reply, "Asking: approve Bash?");
+
+  // Needs you without said: falls back to reply
+  const needsNoSaid = card(session({
+    status: "needs_you",
+    said: null,
+    reply: { text: "Should I proceed?", at: NOW },
+  }), CAST, NOW);
+  assert.equal(needsNoSaid.reply, "Should I proceed?");
+});
+
 test("the compact card folds the also-in list into a +N chip that names every repo", () => {
   assert.equal(alsoChip([]), null);
   assert.deepEqual(alsoChip(["ideas"]), { text: "+1", label: "Also in ideas" });

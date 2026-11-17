@@ -619,6 +619,9 @@ export function card(s, cast, nowMs, request = null) {
   const rawModel = s.model?.display_name || s.model?.id || (typeof s.model === "string" ? s.model : null) || s.statusline?.model?.display_name || s.statusline?.model?.id || null;
   const engInfo = engineInfo(eng, rawModel);
   const delegate = s.delegate?.engine || s.delegate || s.background?.delegate?.engine || s.background?.delegate || null;
+  const saidAt = typeof s.said?.at === "number" ? s.said.at : -Infinity;
+  const replyAt = typeof s.reply?.at === "number" ? s.reply.at : -Infinity;
+  const nowReply = s.said?.text && saidAt > replyAt ? s.said.text : (s.reply?.text ?? s.said?.text ?? null);
   return {
     id: s.session_id,
     task: s.name || "No session name yet",
@@ -669,7 +672,8 @@ export function card(s, cast, nowMs, request = null) {
     quiet: isQuiet(s),
     badge: badgeSvg(s.status, isQuiet(s)),
     prompt: plainText(s.prompt?.text ?? null),
-    reply: plainText(s.reply?.text ?? null),
+    reply: plainText(nowReply),
+    said: plainText(s.said?.text ?? null),
     error: s.status === "error" ? s.error ?? null : null,
     ledger: ledgerLine(s.ledger, s.ledger_partial === true),
     updated: s.status === "ended" ? null : updatedText(s, nowMs), // the pill's age says it

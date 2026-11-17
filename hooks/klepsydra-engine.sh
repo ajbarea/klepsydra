@@ -29,15 +29,16 @@ command -v jq >/dev/null 2>&1 || fail "jq is not installed"
 input=$(cat)
 
 last_msg=""
-if [[ "$engine" == "agy" && "$target_event" == "Stop" ]]; then
+if [[ "$engine" == "agy" && ( "$target_event" == "Stop" || "$target_event" == "PostToolUse" ) ]]; then
   t_path=$(printf '%s' "$input" | jq -r '. as $root | ($root.lastAssistantMessage // $root.last_assistant_message // $root.response // "") | if type == "string" and . != "" then "" else (($root.transcriptPath // $root.transcript_path // "") | if type == "string" then . else "" end) end' 2>/dev/null || true)
   if [[ -n "$t_path" ]]; then
     target_t="$t_path"
     [[ -f "${t_path%/*}/transcript_full.jsonl" ]] && target_t="${t_path%/*}/transcript_full.jsonl"
     if [[ -f "$target_t" ]]; then
       # The transcript grows all session: its last MiB, newest line first, up to the
-      # first reply. The echo keeps a line still being written apart from the one before.
-      last_msg=$({ tail -c 1048576 -- "$target_t"; echo; } 2>/dev/null | tac | jq -nrR 'first(inputs | fromjson? | objects | select(.type == "PLANNER_RESPONSE" and (.content | type == "string") and (.content != "")) | .content) // empty' 2>/dev/null || true)
+      # first reply or the turn boundary. The echo keeps a line still being written apart
+      # from the one before.
+      last_msg=$({ tail -c 1048576 -- "$target_t"; echo; } 2>/dev/null | tac | jq -nrR 'label $done | first(foreach (inputs | fromjson? | objects) as $x (null; if $x.type == "USER_INPUT" then break $done elif $x.type == "PLANNER_RESPONSE" and ($x.content | type == "string") and ($x.content != "") then $x.content else null end; select(. != null))) // empty' 2>/dev/null || true)
     fi
   fi
 fi

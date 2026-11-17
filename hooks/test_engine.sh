@@ -46,12 +46,15 @@ check "$(run agy '{"conversationId":"11111111-2222-4333-8444-555555555555","tool
 check "$(run agy '{"conversationId":"11111111-2222-4333-8444-555555555555","toolCall":{"name":"manage_task","args":{"Action":"kill","TaskId":"task-1"}}}' PostToolUse)" \
   '{"session_id":"11111111-2222-4333-8444-555555555555","hook_event_name":"PostToolUse","cwd":"","transcript_path":"","prompt":"","last_assistant_message":"","tool_name":"TaskStop","tool_input":{"Action":"kill","TaskId":"task-1","task_id":"task-1"},"tool_response":null,"agent_id":"","engine":"agy","source":""}'
 
-# AGY Stop hook harvests assistant reply from transcript
+# AGY Stop and PostToolUse harvest assistant reply from transcript
 mkdir -p "$work/logs"
 cat >"$work/logs/transcript.jsonl" <<'EOF'
 {"type":"USER_INPUT","content":"hello"}
 {"type":"PLANNER_RESPONSE","content":"Hello! I can help you with that."}
 EOF
+check "$(run agy "{\"conversationId\":\"11111111-2222-4333-8444-555555555555\",\"transcriptPath\":\"$work/logs/transcript.jsonl\",\"toolCall\":{\"name\":\"run_command\",\"args\":{\"CommandLine\":\"ls\"}}}" PostToolUse)" \
+  "{\"session_id\":\"11111111-2222-4333-8444-555555555555\",\"hook_event_name\":\"PostToolUse\",\"cwd\":\"\",\"transcript_path\":\"$work/logs/transcript.jsonl\",\"prompt\":\"\",\"last_assistant_message\":\"Hello! I can help you with that.\",\"tool_name\":\"Bash\",\"tool_input\":{\"CommandLine\":\"ls\",\"command\":\"ls\"},\"tool_response\":null,\"agent_id\":\"\",\"engine\":\"agy\",\"source\":\"\"}"
+
 check "$(run agy "{\"conversationId\":\"11111111-2222-4333-8444-555555555555\",\"transcriptPath\":\"$work/logs/transcript.jsonl\"}" Stop)" \
   "{\"session_id\":\"11111111-2222-4333-8444-555555555555\",\"hook_event_name\":\"Stop\",\"cwd\":\"\",\"transcript_path\":\"$work/logs/transcript.jsonl\",\"prompt\":\"\",\"last_assistant_message\":\"Hello! I can help you with that.\",\"tool_name\":\"\",\"tool_input\":{},\"tool_response\":null,\"agent_id\":\"\",\"engine\":\"agy\",\"source\":\"\"}"
 
@@ -64,6 +67,16 @@ check "$(run agy "{\"conversationId\":\"11111111-2222-4333-8444-555555555555\",\
 # Only the last MiB is read: a reply further back is not looked for.
 { printf '%s\n' '{"type":"PLANNER_RESPONSE","content":"far back"}'; head -c 1100000 /dev/zero | tr '\0' x; echo; } >"$work/logs2/transcript.jsonl"
 check "$(run agy "{\"conversationId\":\"11111111-2222-4333-8444-555555555555\",\"transcriptPath\":\"$work/logs2/transcript.jsonl\"}" Stop | jq -r .last_assistant_message)" ""
+
+# Turn boundary stops the search: turn one reply does not leak into turn two narration
+mkdir -p "$work/logs3"
+cat >"$work/logs3/transcript.jsonl" <<'EOF'
+{"type":"USER_INPUT","content":"turn one"}
+{"type":"PLANNER_RESPONSE","content":"Turn one is finished: all green."}
+{"type":"USER_INPUT","content":"turn two"}
+{"type":"PLANNER_RESPONSE","content":null,"tool_calls":[{"name":"run_command"}]}
+EOF
+check "$(run agy "{\"conversationId\":\"11111111-2222-4333-8444-555555555555\",\"transcriptPath\":\"$work/logs3/transcript.jsonl\",\"toolCall\":{\"name\":\"run_command\",\"args\":{\"CommandLine\":\"ls\"}}}" PostToolUse | jq -r .last_assistant_message)" ""
 
 check "$(run copilot '{"sessionId":"11111111-2222-4333-8444-555555555555","cwd":"/repo","toolName":"Read","toolInput":{"path":"x"}}' preToolUse)" \
   '{"session_id":"11111111-2222-4333-8444-555555555555","hook_event_name":"PreToolUse","cwd":"/repo","transcript_path":"","prompt":"","last_assistant_message":"","tool_name":"Read","tool_input":{"path":"x"},"tool_response":null,"agent_id":"","engine":"copilot","source":""}'
