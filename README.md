@@ -18,7 +18,7 @@ much of your Claude Code session and weekly limits you have used, so you see
 it without running `/usage` in whichever terminal is in front. The bar fills
 blue to yellow to red as a window is used up.
 
-Beside the bar sits a portrait for each Claude Code session, the ones waiting
+Beside the bar sits a portrait for each Claude Code or Antigravity session, the ones waiting
 on you first. Click one to open the fleet wall: a card per session with its
 status, where it works and its last exchange, and buttons to jump to its
 terminal or end it. From the wall you can open the
@@ -99,6 +99,11 @@ stays too, and one rewritten in the instant before the delete comes back on
 its session's next render. An account takes its name from its newest
 reading.
 
+The gauge groups its rows by engine: Claude Code, Antigravity, Copilot and API
+keys. An Antigravity reading comes from the status line's `quota` input, as the
+account `agy-primary`. A **Route** badge marks the lane to try next, in the
+fleet's free-first order (`ROUTE_ORDER` in `src/gauge.js`).
+
 ## Two accounts at once
 
 The statusLine payload carries no account identity, so the hook reads it from
@@ -121,9 +126,11 @@ week". A separate config dir is a separate *everything* though: settings,
 plugins, skills and session history. `fleet accounts sync` makes the second
 folder behave like `~/.claude` and never touches either login; the installed
 fleet (`make install-fleet`) re-runs it whenever `~/.claude`'s settings or
-plugin lists change, and hourly. It copies `settings.json` and the plugin
-lists, links `CLAUDE.md`, agents, commands, hooks, skills and `projects/` (so a
-session resumes on either account), and copies only the shared keys of
+plugin lists change, and hourly. It copies `settings.json` (all but its model) and the plugin
+lists, links `CLAUDE.md`, agents, commands, rules, output-styles,
+`keybindings.json`, `techne.toml`, hooks, `plugins/data`, `projects/` (so a
+session resumes on either account) and each skill folder except the ones synced
+from claude.ai, and copies only the shared keys of
 `.claude.json` (MCP servers, folder trust, onboarding), never its account.
 
 Log the second account in once, from a shell:
@@ -167,9 +174,12 @@ is the tested version.
 make install-hooks   # from the main checkout
 ```
 
-It copies the status line, hooks, launcher, tmux settings, wrap-up hook and
-skill, and the cast (as `klepsydra-cast.json`) into `~/.claude`, and archives a
-copy it replaces. `make install-fleet` (see [Fleet engine](#fleet-engine)) does
+It copies 13 files into `~/.claude`: the status line, the fleet, engine,
+wrap-up, pane-died and browser hooks, the launcher and its tmux settings, the
+agy settings and rules, the wrap-up skill and the cast (as
+`klepsydra-cast.json`), and archives a copy it replaces. When `~/.gemini`
+exists, it also merges `klepsydra-agy.json` into `~/.gemini/config/hooks.json`,
+so agy sessions reach the wall. `make install-fleet` (see [Fleet engine](#fleet-engine)) does
 the same on every deploy, so a fleet never runs an old hook, and `fleet doctor`
 fails while a copy differs from the checkout. The list is `HOOK_COPIES` in
 `fleet/lib.sh`.
@@ -224,7 +234,7 @@ asked.
 A second Claude Code config folder (another `CLAUDE_CONFIG_DIR`) needs the
 skill too, at `skills/klepsydra-wrapup/SKILL.md` inside it: a typed
 `/klepsydra-wrapup` and the Stop hook both read it from the session's own
-config folder. The script stays in `~/.claude`.
+config folder. `fleet accounts sync` links it there. The script stays in `~/.claude`.
 
 <!-- wrapup-settings:start -->
 ```json
@@ -292,7 +302,9 @@ the XDG data dir; under WSL, the Windows side, since the overlay there is a
 Windows app.
 
 Set `KLEPSYDRA_DIR` if your Windows user differs from your WSL user. It
-configures both hook scripts, which want a WSL path (`/mnt/c/...`); the overlay
+configures the status line, the fleet hook and the wrap-up hook, and the scripts
+in `fleet/` need it whenever your Windows user is not `ajbar`. These want a WSL
+path (`/mnt/c/...`); the overlay
 reads the same setting as a Windows path (`C:\...`), so exporting one value
 to both sides gives the overlay a path it cannot resolve. The hooks prune
 their old files only when the last folder of that path is
@@ -322,8 +334,8 @@ bash scripts/build-windows.sh
 `KLEPSYDRA_STAGE=klepsydra-build-<name>` builds in a staging folder of its own,
 so a branch can build beside the main one.
 
-**3. Start it with Windows.** Put a shortcut to `klepsydra.exe` in
-`shell:startup`.
+**3. Start it with Windows.** Run `klepsydra.exe` once. It registers itself to
+start at login; the tray's "Start with Windows" turns that off.
 
 Published readings live in `%LOCALAPPDATA%\dev.ajsoftworks.klepsydra`, so
 uninstalling with *Delete application data* ticked takes them with it. Leaving
@@ -407,8 +419,10 @@ on the taskbar returns to the taskbar at any size. Its monitor is found by
 position, then by name, then by nearness, and a changed resolution moves
 home to the same relative spot. With no home saved, it goes over the primary
 monitor's taskbar, 220px in from the right. The menu also toggles "Compact"
-(below), "Ping" (Windows only; see the fleet strip) and "Start with Windows"
-("Start at login" on Linux), and quits.
+(below), "Ping" (Windows only; see Ping), "Start with Windows" ("Start at login"
+on Linux) and "Phone wall" (see Fleet on your phone). It holds the Characters
+and Voices submenus, "Choose queue file..." and "Choose Needs you file..." (see
+Queue panel), and Quit.
 Autostart is on by default; the icon may start in the notification-area
 overflow.
 
@@ -451,7 +465,8 @@ is revealed.
 </p>
 
 With several Claude Code sessions open, klepsydra shows a portrait for each to
-the right of the gauge, with a badge for its status. Each badge has its own
+the right of the gauge, with a badge for its status. Antigravity sessions get a portrait and a card too.
+Each badge has its own
 shape, symbol and colour, from the Okabe-Ito palette:
 
 | Badge | Status | Means |
@@ -496,8 +511,9 @@ window, made on the first click and only hidden after that. The bar keeps
 status on the left: the counts of sessions that need you, work, are done, and
 are idle or ended (an error count only when one exists), then **CI** and
 **Fleet** only while something there needs a look. The panels (Split, Ledger,
-Queue, Wrap up), **+ New session** and a gear for the view settings sit on the
-right. Each card shows:
+Queue, Wrap up), **+ New session** with its ▾ menu for a locked Antigravity
+session (shown once agy lists its models) and a gear for the view settings sit on
+the right. Each card shows:
 
 - the session's face in a ring showing its background crew: one solid arc per
   piece of work, agents first, clockwise from 12 o'clock, in the character's
@@ -516,11 +532,13 @@ right. Each card shows:
   repo of its last edit, else its folder's, and its folder's again once that
   worktree is removed; one line, cut short with all of it on hover, wrapped
   instead on the phone wall), and under **Full text** the other repos it
-  touched: up to four by name, then a "+N" chip naming the rest on hover;
+  touched: up to four by name, then a "+N" chip naming the rest on hover. The repo
+  name opens its folder; a GitHub icon and the branch chip open them on GitHub;
 - for a session that needs you, a line saying what it waits for, on one
   line with all of it on hover; cut short, it loses its middle, so the tool's
   own name stays in view ("approve mcp__plugin_pl…browser_navigate");
-- one line of what it is doing: the reply on two lines, one while the card
+- one line of what it is doing: while a turn runs, the latest thing the session
+  said (#410); once it ends, the reply on two lines, one while the card
   asks or shows an error (hover for all of it), with the last prompt above it
   in a quoted block under **Full text**; an error takes two lines, with all of
   it on hover; a play
@@ -528,6 +546,9 @@ right. Each card shows:
   `reply_clips`, on by default). It plays the session's latest spoken reply on
   this machine, one card at a time; press it again to stop. keryx writes the
   clip to `replies/<session id>.wav` beside the fleet folder;
+- an icon for the model's maker, with the engine and model on hover, a chip naming
+  the engine a task was delegated to with `fleet delegate`, and an account chip
+  while live cards run on more than one account;
 - a chip counting the tool calls a guardrail turned down, when there are any.
 
 Each card wears its character's colour: its edge, the line under its header,
@@ -618,7 +639,7 @@ pane that is gone or now hosts another process), and in these cases too. The
 session is outside klepsydra's tmux, so its pane is not ours to type into.
 Another End or Interrupt of it is still running. The prompt did not read
 exactly `/exit`, so Enter was not pressed and the line was cleared. Or the
-session is still running a few seconds after `/exit` was sent.
+session is still running 10 seconds after `/exit` was sent.
 
 ### Wrapping up
 
@@ -627,11 +648,11 @@ session is still running a few seconds after `/exit` was sent.
   <img src="assets/wrap-up.png" alt="The wall during a wrap-up: the bar says 1 of 8 ready, and each card has a line for where its session stands, such as Wrapping up, Ready, Answer it first or Ask by hand" width="900">
 </p>
 
-**Wrap up…**, beside Ledger, asks the live sessions to checkpoint, record
+**Wrap up…**, beside Queue, asks the live sessions to checkpoint, record
 what still runs, commit their handoff and report whether stopping is safe. A dialog lists who
 is asked and how, with Cancel focused, and only those sessions are asked.
 Idle sessions in klepsydra's tmux, including one idle with background work
-out, are marked asked, then have `/klepsydra-wrapup` typed together. A
+out, are marked asked, then have `/klepsydra-wrapup` typed, at most 8 at once. A
 working one is asked by the Stop hook when its turn ends; one that needs
 you, once you answer and its turn ends. Ask any other by hand: type
 `/klepsydra-wrapup` in its terminal. A failed typing is named in its card's note.
@@ -659,8 +680,8 @@ klepsydra's tmux, which you end yourself.
 
 ### Card density
 
-The gear at the bar's right end picks the card density: **Auto** (the
-default), **Comfortable** or **Compact**. Comfortable is the wall at the top of this page:
+The gear at the bar's right end picks the card density and the Characters
+theme. The densities are **Auto** (the default), **Comfortable** and **Compact**. Comfortable is the wall at the top of this page:
 four fit the wall in split mode (2x2, about 945 to 958x1000 of content) and
 eight fit it maximised (4x2, about 1920x1000) with no scrollbar, as the
 browser test measures them: every card waiting on you to approve a long
@@ -669,7 +690,7 @@ name, place and branch, twelve other repos, a crew, a long prompt and reply,
 and a guardrail chip. A wrap-up line or a long note under a
 button can still make a forced Comfortable wall scroll; Auto turns compact
 then.
-Compact keeps three short rows: the header, with a 56 px portrait (crew ring
+Compact keeps three short rows: the header, with a 64 px portrait (crew ring
 and speaking waves included), the name and session name, the pill and a
 smaller **Open terminal**; one line for where it works, the crew and a "+N" chip
 for the other repos it touched (hover it for their names); and the exchange,
@@ -747,6 +768,12 @@ click adds a tmux window to that tab. Closing the tab leaves the sessions
 running, and the next **+** or Jump reattaches. The tab attaches to the tmux
 server by its socket path.
 
+The ▾ beside **+ New session** starts a locked Antigravity (agy) session on the
+model you pick: read-only, no shell, in a sandbox, in `launch_dir`. It shows once
+agy lists its models. A wall launch runs on your subscription only: it drops
+`ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN` and `ANTHROPIC_PROFILE`, and refuses
+to start when a settings file sets an API key or key helper.
+
 On a cold WSL the tab can take longer than the 5 seconds the launcher waits
 for it. The note then says "Started a session in DIR. The terminal tab has not
 attached yet.", and for 30 seconds another **+** or Jump opens no second tab.
@@ -772,8 +799,9 @@ Enter closes it, since tmux 3.4 crashes on a focus event to a dead pane (#290);
 once. The `fleet-tmux-watch.timer` runs `fleet recover` when the fleet's server
 dies with a crash record (WSL's crash dump or journal line), also on the next
 boot when WSL shut down after the crash (the watchdog is a systemd timer, not
-the overlay). The overlay itself starts a process only as `wsl.exe`, from a
-click, one call at a time.
+the overlay). The overlay itself starts a process only as `wsl.exe`: one launch at a
+time, and one Jump, End or Interrupt per card at a time. Each comes from a
+click, except one call that lists agy's models when the wall first opens.
 
 Each kourai character's canon colour marks its session twice: its window in
 the tmux status bar and a 4 px left marker on its card's **Open terminal**
@@ -852,7 +880,7 @@ cross the face, so its arcs ride a plinth at the figure's foot instead, the
 same thick and thin arcs in the same order, and the speaking waves rise behind
 the head. A medallion keeps its round portrait and ring on the band. A new
 card's figure steps in and its light rises, once, unless the system asks for
-reduced motion. Compact keeps the round portrait (64 px) and its ring.
+reduced motion, and a line ("NAME has arrived!") announces it once. Compact keeps the round portrait (64 px) and its ring.
 
 Click a character's figure (in Compact, their face), or press Enter or Space
 on it, to open their whole portrait with their name, epithet and voice.
