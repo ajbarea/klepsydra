@@ -6,7 +6,7 @@
 # finished there: panes ids are reused by a restarted tmux server. The pane gets
 # /exit and is killed when it does not go (retire, lib.sh). The agent's record in
 # done-reports.tsv is dropped, which also clears the doctor's flag. Exits 1 when
-# NAME has not finished, the pane is the orchestrator's or mid-turn, or 2 on bad usage.
+# NAME has not finished, the pane is the orchestrator's, mid-turn or has background work, or 2 on bad usage.
 set -u
 FLEET_TARGET=fleet::close
 here=$(dirname "$(readlink -f "$0")")
@@ -23,31 +23,50 @@ if [[ -z ${pane:-} ]]; then
   err "no finished agent named $name (fleet done marks one finished first)"
   exit 1
 fi
+# The checks and the /exit hold one pane lock (retire's own lock is then the held one), so a
+# `fleet send` that is mid-paste cannot start a turn between them. A finished agent may work
+# again (a follow-up message, a hand resume), and may keep a shell or watcher running: /exit
+# would end the turn or kill them with the pane.
+close_now() { # PANE NAME
+  if busy "$(screen "$1")"; then
+    flog WARN "close: the pane is mid-turn; left open" name="$2" pane="$1"
+    err "refused: $2 is working again ($1 is mid-turn); close it once the turn ends"
+    return 10
+  fi
+  if turn_settled "$1"; then
+    flog WARN "close: background work is running; left open" name="$2" pane="$1"
+    err "refused: $2 still has background work running (a shell or watcher dies with its pane); close it once that ends"
+    return 11
+  fi
+  retire "$1"
+}
 if ! fleet_panes | grep -qx -- "$pane"; then
   flog INFO "close: the pane is gone; nothing to close" name="$name" pane="$pane"
   echo "already closed: $name"
-elif pane_runs "$pane" "$sid"; then
-  # A finished agent may work again (a follow-up message, a hand resume), and /exit would end its turn.
-  if [[ $pane == "$(orchestrator)" ]]; then
-    err "refused: $pane is the orchestrator's pane"
-    exit 1
-  fi
-  if busy "$(screen "$pane")"; then
-    flog WARN "close: the pane is mid-turn; left open" name="$name" pane="$pane"
-    err "refused: $name is working again ($pane is mid-turn); close it once the turn ends"
-    exit 1
-  fi
-  if retire "$pane"; then
-    flog INFO "close: finished agent's pane closed" name="$name" pane="$pane"
-    echo "closed: $name ($pane)"
+elif ! pane_runs "$pane" "$sid"; then
+  other=$(live_session "$pane") || other=""
+  if [[ -n $other && $other != "$sid" ]]; then
+    # A pane id a restarted tmux server gave to another session: never ours to close, and the
+    # record is cleared, since no one can read that pane as this agent's any more.
+    flog WARN "close: the pane now runs another session; left open, record cleared" name="$name" pane="$pane" other="$other"
+    echo "left open: $pane now runs another session; $name's record is cleared"
   else
-    err "could not close $pane (/exit would not go in); it is left open"
+    # Its fleet file is gone or unreadable: not ours to close, and the record stays.
+    flog WARN "close: the pane does not run the finished session; left open" name="$name" pane="$pane"
+    err "left open: $pane no longer runs $name's session (or its fleet file is gone)"
     exit 1
   fi
-else
-  # Another session took the pane id, or its fleet file is gone: not ours to close, and the record stays.
-  flog WARN "close: the pane does not run the finished session; left open" name="$name" pane="$pane"
-  err "left open: $pane no longer runs $name's session (or its fleet file is gone)"
+elif [[ $pane == "$(orchestrator)" ]]; then
+  err "refused: $pane is the orchestrator's pane"
   exit 1
+else
+  pane_locked "$pane" close_now "$pane" "$name"
+  rc=$?
+  case $rc in
+    0) flog INFO "close: finished agent's pane closed" name="$name" pane="$pane"; echo "closed: $name ($pane)" ;;
+    10 | 11) exit 1 ;;
+    75) err "could not take $pane's lock (a send is using it); try again"; exit 1 ;;
+    *) err "could not close $pane (/exit would not go in); it is left open"; exit 1 ;;
+  esac
 fi
 with_registry dr_drop "$name" || { err "done-reports.tsv could not be updated"; exit 1; }
