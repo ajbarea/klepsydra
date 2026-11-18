@@ -32,7 +32,7 @@ named=("$REGISTRY")
 [[ -f $FINISHED ]] && named+=("$FINISHED")
 report=${!#}
 [[ $report == - ]] && report=$(cat)
-report=$(tr '\n' ' ' <<<"$report" | sed -E 's/^ +//; s/ +$//')
+report=$(tr '\r\n' '  ' <<<"$report" | sed -E 's/^ +//; s/ +$//')
 [[ -n $report ]] || { err "$usage"; exit 2; }
 # The old one-argument form named an agent. A lone word that is one is refused, not sent as a report,
 # and a worker names only itself (an unquoted two-word report must not finish another agent).
@@ -59,7 +59,7 @@ if [[ -z $name ]]; then
   # earlier tmux server that reused the pane id.
   if [[ -z $sid ]] || ! pane_runs "$pane" "$sid"; then
     flog WARN "done: this pane does not run a registered agent's session" pane="$pane" session="${sid:-none}"
-    err "$pane does not run a registered agent's session"
+    err "$pane does not run a registered agent's session (a fleet done retried after a timeout lands here: its report may already be delivered; see done-reports.tsv and the queue file's Running now)"
     exit 1
   fi
 fi

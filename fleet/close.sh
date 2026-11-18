@@ -6,7 +6,7 @@
 # finished there: panes ids are reused by a restarted tmux server. The pane gets
 # /exit and is killed when it does not go (retire, lib.sh). The agent's record in
 # done-reports.tsv is dropped, which also clears the doctor's flag. Exits 1 when
-# NAME has not finished, 2 on bad usage.
+# NAME has not finished, the pane is the orchestrator's or mid-turn, or 2 on bad usage.
 set -u
 FLEET_TARGET=fleet::close
 here=$(dirname "$(readlink -f "$0")")
@@ -27,6 +27,16 @@ if ! fleet_panes | grep -qx -- "$pane"; then
   flog INFO "close: the pane is gone; nothing to close" name="$name" pane="$pane"
   echo "already closed: $name"
 elif pane_runs "$pane" "$sid"; then
+  # A finished agent may work again (a follow-up message, a hand resume), and /exit would end its turn.
+  if [[ $pane == "$(orchestrator)" ]]; then
+    err "refused: $pane is the orchestrator's pane"
+    exit 1
+  fi
+  if busy "$(screen "$pane")"; then
+    flog WARN "close: the pane is mid-turn; left open" name="$name" pane="$pane"
+    err "refused: $name is working again ($pane is mid-turn); close it once the turn ends"
+    exit 1
+  fi
   if retire "$pane"; then
     flog INFO "close: finished agent's pane closed" name="$name" pane="$pane"
     echo "closed: $name ($pane)"

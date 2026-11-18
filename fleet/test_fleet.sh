@@ -2190,6 +2190,25 @@ check "#445: the doctor flags the undelivered reports" \
 done_live "$w"
 check "#445: fleet close NAME runs retire: /exit goes in, the pane goes, the record goes" \
   "$(bash "$here/fleet" close wrk1 2>/dev/null) $(grep -c '^SUBMIT /exit' "$work/wrk1.log") $(fleet_panes | grep -cx -- "$w") $(cut -f2 "$DONE_REPORTS" | grep -c '^wrk1$')" "closed: wrk1 ($w) 1 0 0"
+# Athena's review: a finished agent that works again, and the orchestrator's pane, are never closed.
+b=$(pane wrk7 '{"above":["working"],"busy":true,"exit_on_exit":true,"on_submit":"none"}'); settle
+done_live "$b"
+printf '%s\twrk7\t%s\t%s\t/w\t%s\t2026-11-02T20:00:00-05:00\n' "$b" "$work/brief.src" "$SID" "$work/cfg-a" >>"$FLEET_STATE/finished.tsv"
+check "#445 review: fleet close refuses a finished agent that is mid-turn again (1), says why, and types nothing" \
+  "$(bash "$here/fleet" close wrk7 2>&1 | grep -c 'is working again') $(bash "$here/fleet" close wrk7 >/dev/null 2>&1; echo $?) $(grep -c '^SUBMIT' "$work/wrk7.log") $(fleet_panes | grep -cx -- "$b")" "1 1 0 1"
+printf '%s\n' "$b" >"$FLEET_STATE/orchestrator.pane"
+check "#445 review: fleet close refuses the orchestrator's own pane (1)" \
+  "$(bash "$here/fleet" close wrk7 2>&1 | grep -c "the orchestrator's pane") $(grep -c '^SUBMIT' "$work/wrk7.log")" "1 0"
+rm -f "$FLEET_STATE/orchestrator.pane"
+state wrk7 '{"above":["done"],"busy":false,"exit_on_exit":true,"on_submit":"none"}'; settle
+check "#445 review: once the turn has ended the same close goes through" "$(bash "$here/fleet" close wrk7 2>/dev/null) $(grep -c '^SUBMIT /exit' "$work/wrk7.log")" "closed: wrk7 ($b) 1"
+# A CR in the report is folded to a space; a retried fleet done after the agent finished says the report may be delivered.
+w8=$(dpane wrk8); printf '%s\n' "$h" >"$FLEET_STATE/orchestrator.pane"; : >"$work/hph.log"
+fdone "$w8" $'a\rb' >/dev/null 2>&1
+check "#445 review: a CR in the report is folded to a space" "$(grep -c '^SUBMIT wrk8 finished: a b$' "$work/hph.log")" "1"
+check "#445 review: a fleet done retried after the agent finished says its report may already be delivered" \
+  "$(fdone "$w8" "again" 2>&1 >/dev/null | grep -c 'may already be delivered')" "1"
+rm -f "$FLEET_STATE/orchestrator.pane"; t kill-window -t "$w8" 2>/dev/null; dr_drop wrk8
 check "#445: a name that has not finished is refused (1), and a running agent's pane stays" \
   "$(printf '%s\tlive\t%s\t%s\t/w\t%s\n' "%9990" "$work/brief.src" "$SID" "$work/cfg-b" >>"$REGISTRY"; bash "$here/fleet" close live >/dev/null 2>&1; echo $?) $(bash "$here/fleet" close nobody >/dev/null 2>&1; echo $?) $(bash "$here/fleet" close >/dev/null 2>&1; echo $?)" "1 1 2"
 # A pane id a restarted server gave to another session is left alone.

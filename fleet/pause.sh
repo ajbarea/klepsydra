@@ -46,7 +46,7 @@ pause_now() {
   (( $(grep -c . <<<"$rows") == 1 )) || { refuse "more than one row is named $name"; return 1; }
   row=$rows p=$(cut -f1 <<<"$row") sid=$(cut -f4 <<<"$row")
   # Unpause and recover follow an agent by its session id.
-  [[ -n $sid ]] || { refuse "$name's row names no session, so it could not be followed back; fleet done ends it"; return 1; }
+  [[ -n $sid ]] || { refuse "$name's row names no session, so it could not be followed back; fleet done NAME REPORT ends it"; return 1; }
   # A live fleet session in its pane may be the agent under a new id, but only
   # while the row is from this tmux server and the session is no other row's
   # nor the orchestrator's (after a reboot the pane id is another agent's).
