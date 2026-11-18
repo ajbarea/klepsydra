@@ -14,5 +14,9 @@ README.md, AGENTS.md, ROADMAP.md, docs/engines.md, docs/headless.md, docs/charac
 - headless.md, portrait-briefs.md, fleet and hooks md files: checked, no drift.
 - node lint, link check, hooks/test_fleet.sh (606 pass), shellcheck on fleet/doctor.sh pass. Whole-tree `make shellcheck` was killed (137) twice under the memory cap; CI runs it.
 
+## Verify (state at wrap-up)
+PR #465 (closes #464): Rust x2 and GitGuardian pass; `Gauge logic + statusLine hook` was still pending. Check with `gh pr checks 465`.
+
 ## Next
+When CI is green: report to Heph and run `fleet done`. Do not merge.
 Review the PR; unresolved items are listed in the PR details. `make test-engine` is not run by CI.
