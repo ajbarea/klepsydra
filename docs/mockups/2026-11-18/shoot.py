@@ -19,6 +19,7 @@ PAGES = [
     "settings-a",
     "settings-b",
     "wall-cards",
+    "wall-header",
 ]
 SIZES = [(1920, 1080), (390, 844)]
 THEMES = ["dark", "light"]

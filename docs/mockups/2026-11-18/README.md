@@ -12,6 +12,7 @@ They cover #421 (the gauge strip, plus the optional System chip and per-card RAM
 | `settings-a.html` | Settings | A: one column (Spotify) |
 | `settings-b.html` | Settings | B: section rail and cards (Windows 11) |
 | `wall-cards.html` | Wall cards | Option: each agent's RAM and CPU (AJ 11-18, #421) |
+| `wall-header.html` | Gauges | Docked in the wall header, and the pinned floating strip (AJ 11-18) |
 
 Open any page in a browser. Add `?theme=light` or `?theme=dark` to force a theme; otherwise the page follows the system.
 `review.md` compares the variants and gives a recommendation. `shots/` holds the screenshots.

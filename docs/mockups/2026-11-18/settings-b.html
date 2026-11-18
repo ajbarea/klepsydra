@@ -18,7 +18,7 @@
   <p class="stamp">Values: today's settings · sisters from ~/.claude/techne.toml, 11-18</p>
 </header>
 <div class="window"><div class="set-b" id="b1"></div></div>
-<p class="cap">Appearance, the page the gear opens first.</p>
+<p class="cap">Gauges: both homes, docked and floating (11-18).</p>
 <div class="window" style="margin-top:24px"><div class="set-b" id="b3"></div></div>
 <p class="cap">Engines: a switch per harness (11-18).</p>
 <div class="window" style="margin-top:24px"><div class="set-b" id="b2"></div></div>
@@ -32,7 +32,7 @@
     const pane = `<div class="pane"><h1>${cur.title}</h1>${cur.lead ? `<p class="section-lead">${cur.lead}</p>` : ""}<div class="cards">${cur.rows.join("")}</div></div>`;
     return rail + pane;
   };
-  document.getElementById("b1").innerHTML = win("appearance");
+  document.getElementById("b1").innerHTML = win("gauges");
   document.getElementById("b2").innerHTML = win("sisters");
   document.getElementById("b3").innerHTML = win("engines");
 </script>

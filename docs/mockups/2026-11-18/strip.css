@@ -156,3 +156,6 @@ figure { min-width: 0; }
 .sys-detail-wrap { justify-self: end; }
 @media (max-width: 640px) { .sys-detail-wrap { justify-self: stretch; } .ra.sys { flex-wrap: wrap; row-gap: 4px; } }
 .rb.sys .sk { white-space: nowrap; }
+.ra.sys .pair { display: inline-flex; gap: 10px; white-space: nowrap; }
+.rb.sys .sk .of { font-variant-caps: normal; letter-spacing: 0; font-size: 12px; color: var(--panel-ink); opacity: 0.86; }
+.sb-row.sys .line .t { white-space: nowrap; }

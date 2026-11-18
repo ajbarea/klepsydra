@@ -69,12 +69,24 @@
     {
       id: "appearance", icon: "palette", title: "Appearance",
       rows: [
-        row("Show gauge strip", "Hidden, it stops sampling too. The tray menu or Ctrl+Alt+G (proposed) brings it back; the wall and the phone keep their own usage view.", toggle(true, "Show gauge strip")),
         row("Card density", "How much each session card shows on the wall.", seg(["Auto", "Comfortable", "Compact"], "Compact", "Card density")),
-        row("Gauge layout", "Linear fits a taskbar; double suits a screen corner; stacked shows every window.", seg(["Linear", "Double", "Stacked"], "Linear", "Gauge layout")),
-        row("Gauge background opacity", "Below 60% (50% in the light theme) the text gets a dark halo so it reads over the wallpaper.", slider(80)),
-        row("Text-only gauge", "Logo, value and reset only: no rings or bars (#438).", toggle(false, "Text-only gauge")),
+        row("Agent RAM and CPU on cards", "Each card shows its session's process tree: memory and CPU.", toggle(false, "Agent RAM and CPU on cards")),
         row("Light or dark", "The wall and the gauge follow Windows unless you pick one.", select("Match Windows", "Light or dark")),
+      ],
+    },
+    {
+      id: "gauges", icon: "gauge", title: "Gauges",
+      lead: "One gauge in two places: docked in the wall header while the wall is open, and the floating strip, pinned on the desktop, while it is closed. The floating strip hides while the wall has focus.",
+      rows: [
+        row("Gauges in the wall header", "Shown between the tally and the tools whenever the wall is open.", toggle(true, "Gauges in the wall header")),
+        row("Floating strip", "Stays on top of the desktop. Off, it stops sampling; the tray menu or Ctrl+Alt+G (proposed) brings it back.", toggle(true, "Floating strip")),
+        row("Layout", "Linear fits a taskbar; double suits a screen corner; stacked shows every window.", seg(["Linear", "Double", "Stacked"], "Linear", "Gauge layout")),
+        row("Floating strip opacity", "When pinned. Below 60% (50% in the light theme) the text gets a dark halo so it reads over the wallpaper.", slider(80)),
+        row("Click-through", "When pinned, clicks pass to the window underneath. Turn it off to drag the strip or hover for detail.", toggle(false, "Click-through")),
+        row("Text only", "Logo, value and reset only: no rings or bars (#438).", toggle(false, "Text only")),
+        row("Floating strip position", "Put the strip back where it started, or make where it is now its home.", `${btn("Reset position", "small")} ${btn("Set home here", "small")}`),
+        row("System chip", "WSL memory, CPU, and GPU load with VRAM, sampled once a second while shown.", toggle(false, "System chip")),
+        row("System chip shows", "A tap on the chip switches too.", seg(["Percent", "GB"], "Percent", "System chip shows")),
       ],
     },
     {
@@ -105,7 +117,7 @@
       ],
     },
     {
-      id: "accounts", icon: "person", title: "Accounts",
+      id: "accounts", icon: "idcard", title: "Accounts",
       rows: [
         row("Account icons", "Each account's mark on the gauge and the wall. A local file stays on this PC.", `<div class="accts">${acctRows}</div>`, "tall stack"),
       ],
@@ -125,12 +137,8 @@
     {
       id: "system", icon: "monitor", title: "System",
       rows: [
-        row("Start with Windows", "Open the gauge when you sign in to Windows.", toggle(true, "Start with Windows")),
+        row("Start with Windows", "Open klepsydra when you sign in to Windows.", toggle(true, "Start with Windows")),
         row("Phone wall", "Serve the wall to your phone over Tailscale.", toggle(true, "Phone wall")),
-        row("System chip on the gauge", "WSL memory, CPU, and GPU load with VRAM, sampled once a second while shown.", toggle(false, "System chip on the gauge")),
-        row("System chip shows", "A tap on the chip switches too.", seg(["Percent", "GB"], "Percent", "System chip shows")),
-        row("Agent RAM and CPU on cards", "Each card shows its session's process tree: memory and CPU.", toggle(false, "Agent RAM and CPU on cards")),
-        row("Gauge position", "Put the gauge back where it started, or make where it is now its home.", `${btn("Reset position", "small")} ${btn("Set home here", "small")}`),
       ],
     },
   ];

@@ -48,11 +48,11 @@
 <script>
   const T = TREES, Y = SYS;
   const totalMb = T.reduce((n, t) => n + t.mb, 0);
-  const capMb = Y.fleet.cap * 1024;
+  const capMb = Y.fleet.capMb;
   const repo = { "docsync-1118": "klepsydra", "design-pass": "klepsydra", "linux-458": "klepsydra", "phylax-378": "techne", "fleet-done-445": "klepsydra", Athena: "ajsoftworks" };
   const branch = { "design-pass": "design/mockups-1118" };
   const sysLine = (t) =>
-    `<span class="sysl" title="${t.name}'s process tree: ${t.procs} processes" aria-label="Memory ${t.mb} megabytes, CPU ${t.cpu} percent"><span class="ico">${ICON.chip}</span><b>${t.mb} MB</b>· CPU <b>${t.cpu}%</b><span class="share" style="--p:${((t.mb / capMb) * 100).toFixed(1)}" aria-hidden="true"><i></i></span></span>`;
+    `<span class="sysl" title="${t.name}'s process tree: ${t.procs} processes. CPU is % of one core, as top shows it." aria-label="Memory ${t.mb} megabytes, CPU ${t.cpu} percent of one core"><span class="ico">${ICON.chip}</span><b>${t.mb} MB</b>· CPU <b>${t.cpu}%</b><span class="share" style="--p:${((t.mb / capMb) * 100).toFixed(1)}" aria-hidden="true"><i></i></span></span>`;
   const card = (t, on) => `
     <article class="card" aria-label="${t.name}, working">
       <div class="head">
@@ -66,7 +66,7 @@
   document.getElementById("sheet").innerHTML = `
 <header><h1>Wall cards: RAM and CPU per agent</h1><p class="trade">An option, off by default: each card's footer shows its session's process tree, memory and CPU, with a thin bar for its share of the fleet's memory cap. The tally adds the fleet's total. The trade: one more number per card.</p><p class="stamp">Process trees: ${Y.takenAt}</p></header>
 <h2>Option on</h2>
-<p>All six live sessions, heaviest first. The bar is each tree's share of the fleet slice's ${Y.fleet.cap} GB cap.</p>
+<p>All six live sessions, heaviest first. The bar is each tree's share of the fleet slice's ${Y.fleet.cap} GB cap; CPU is per core, as top shows it.</p>
 <div class="tallyb"><span><b>${T.length}</b>working</span><span><b>0</b>needs you</span><span class="mem"><span class="ico">${ICON.chip}</span>agents <b>${(totalMb / 1024).toFixed(1)} GB</b> of the ${Y.fleet.cap} GB cap · WSL ${Y.ram.used} of ${Y.ram.total} GB</span></div>
 <div class="wall">${[...T].sort((a, b) => b.mb - a.mb).map((t) => card(t, true)).join("")}</div>
 <h2>Off and on, side by side</h2>

@@ -122,14 +122,16 @@ window.FACE = (who) =>
 window.SYS = {
   takenAt: "Wed 18 Nov, 4:00 PM EST",
   ram: { used: 5.9, total: 9.7, pct: 61, label: "WSL memory" },
-  fleet: { used: 5.1, cap: 8.2, pct: 62, label: "fleet slice" },
+  fleet: { used: 5.1, cap: 8.2, capMb: 8412, pct: 62, label: "fleet slice" }, // capMb: 8820621312 B / 2^20
   cpu: { pct: 45, cores: 6 },
   gpu: { name: "RTX 3060 Ti", pct: 12 },
   vram: { used: 6.0, total: 8.0, pct: 75 },
 };
 
 // Each session's process tree from its pid (/proc/<pid>/stat RSS and CPU
-// ticks over 1 s, 4:00 PM). Names are the fleet's pane names.
+// ticks over 1 s, 4:00 PM). Names are the fleet's pane names. cpu is % of one
+// core, as top shows it (the System chip's CPU is of all 6 cores). mb sums RSS,
+// which counts shared pages once per process; a build should use PSS (smaps_rollup).
 window.TREES = [
   { name: "Athena", role: "orchestrator", task: "Heph to Athena orchestrator handover", face: "athena", mb: 715, cpu: 3, procs: 32 },
   { name: "docsync-1118", task: "klepsydra docsync", mb: 909, cpu: 12, procs: 9 },

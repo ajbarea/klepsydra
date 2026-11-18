@@ -96,7 +96,7 @@
     const item = v === "a" ? itemA : itemB;
     const row = v === "a" ? rowA : rowB;
     const body =
-      layout === "stacked" ? accts.map((a) => row(a, opt)).join("") : accts.map((a) => item(a, opt)).join("") + (opt.sys ? (v === "a" ? sysA(opt.sys) : sysB(opt.sys)) : "");
+      layout === "stacked" ? accts.map((a) => row(a, opt)).join("") + (opt.sys ? (v === "a" ? sysRowA() : sysRowB()) : "") : accts.map((a) => item(a, opt)).join("") + (opt.sys ? (v === "a" ? sysA(opt.sys) : sysB(opt.sys)) : "");
     return `<div class="panel strip v${v} ${layout}${halo}" data-op="${op}" style="--op:${op}" role="group" aria-label="Usage, ${layout} layout">${layout === "stacked" ? "" : grip}<div class="items">${body}</div></div>`;
   };
 
@@ -114,17 +114,35 @@
   const sysA = (mode = "pct") =>
     `<div class="ra sys" role="button" tabindex="0" aria-label="${sysSpoken}. Activate to show ${mode === "gb" ? "percent" : "gigabytes"}."><span class="ico">${ICON.chip}</span>${metrics(mode)
       .map((m) => `<span class="sm"><span class="k">${m.k}</span><b class="val">${m.v}</b>${m.of ? `<span class="of">${m.of}</span>` : ""}${pip({ pct: m.pct, label: m.k }, false)}</span>`)
+      .reduce((out, h, i) => (i === 2 ? [...out, `<span class="pair">${h}`] : i === 3 ? [...out, `${h}</span>`] : [...out, h]), [])
       .join("")}</div>`;
   const sysB = (mode = "pct") => {
     const [ram, ...rest] = metrics(mode);
     return `<div class="rb sys" role="button" tabindex="0" aria-label="${sysSpoken}. Activate to show ${mode === "gb" ? "percent" : "gigabytes"}.">${ring({ icon: "chip" }, { pct: ram.pct }, 28)}<span class="txt"><span class="l1"><b class="val">${ram.v}</b><span class="when">${ram.of ? `of ${ram.of.slice(1)} ` : ""}ram</span></span><span class="l2">${rest
-      .map((m) => `<span class="sk">${m.k} <b>${m.v}</b>${m.of}</span>`)
+      .map((m) => `<span class="sk">${m.k} <b>${m.v}</b>${m.of ? `<span class="of">${m.of}</span>` : ""}</span>`)
       .join("")}</span></span></div>`;
   };
+  const sysRowA = () =>
+    `<div class="sa-row sys" role="group" aria-label="${sysSpoken}"><span class="ico">${ICON.chip}</span><span class="nm">System</span>${[
+      ["ram", `${Y.ram.pct}%`, `${Y.ram.used.toFixed(1)}/${Y.ram.total.toFixed(1)} GB`, Y.ram.pct],
+      ["cpu", `${Y.cpu.pct}%`, `${Y.cpu.cores} cores`, Y.cpu.pct],
+      ["gpu", `${Y.gpu.pct}%`, `vram ${Y.vram.pct}%`, Math.max(Y.gpu.pct, Y.vram.pct)],
+    ]
+      .map(([k, v, t, p]) => `<span class="cell"><span class="k">${k}</span><b>${v}</b><span class="t">${t}</span>${pip({ pct: p, label: k }, false)}</span>`)
+      .join("")}</div>`;
+  const sysRowB = () =>
+    `<div class="sb-row sys" role="group" aria-label="${sysSpoken}">${ring({ icon: "chip" }, { pct: Y.ram.pct }, 36)}<span class="body"><span class="nm">System</span>${[
+      ["WSL memory", Y.ram.pct, `${Y.ram.used.toFixed(1)}/${Y.ram.total.toFixed(1)} GB`],
+      ["CPU", Y.cpu.pct, `${Y.cpu.cores} cores`],
+      ["GPU", Y.gpu.pct, Y.gpu.name],
+      ["VRAM", Y.vram.pct, `${Y.vram.used.toFixed(1)}/${Y.vram.total.toFixed(1)} GB`],
+    ]
+      .map(([l, p, t]) => `<span class="line"><span class="lbl">${l}</span><span class="track"><span class="fill b-${window.band(p)}" style="--p:${p}"></span></span><b>${p}%</b><span class="t">${t}</span></span>`)
+      .join("")}</span></div>`;
   const sysDetail = () => {
     const row = (label, pct, text) =>
       `<tr><th scope="row">${label}</th><td><span class="track"><span class="fill b-${window.band(pct)}" style="--p:${pct}"></span></span></td><td class="n">${pct}%</td><td>${text}</td></tr>`;
-    return `<div class="detail panel" data-op="100" style="--op:100" role="tooltip"><div class="dh"><span class="ico">${ICON.chip}</span><b>System</b><span class="age">${Y.takenAt}</span></div><table>${row("WSL memory", Y.ram.pct, `${Y.ram.used.toFixed(1)} of ${Y.ram.total.toFixed(1)} GB · ${(Y.ram.total - Y.ram.used).toFixed(1)} GB free`)}${row("Fleet slice", Y.fleet.pct, `${Y.fleet.used.toFixed(1)} of its ${Y.fleet.cap.toFixed(1)} GB cap`)}${row("CPU", Y.cpu.pct, `${Y.cpu.cores} cores`)}${row("GPU", Y.gpu.pct, Y.gpu.name)}${row("VRAM", Y.vram.pct, `${Y.vram.used.toFixed(1)} of ${Y.vram.total.toFixed(1)} GB`)}<tr class="note"><td colspan="4">Sampled once a second while on screen. Tap the chip to switch % and GB.</td></tr></table></div>`;
+    return `<div class="detail panel" data-op="100" style="--op:100" role="tooltip"><div class="dh"><span class="ico">${ICON.chip}</span><b>System</b><span class="age">${Y.takenAt}</span></div><table>${row("WSL memory", Y.ram.pct, `${Y.ram.used.toFixed(1)} of ${Y.ram.total.toFixed(1)} GB · ${(Y.ram.total - Y.ram.used).toFixed(1)} GB available`)}${row("Fleet slice", Y.fleet.pct, `${Y.fleet.used.toFixed(1)} of its ${Y.fleet.cap.toFixed(1)} GB cap`)}${row("CPU", Y.cpu.pct, `${Y.cpu.cores} cores`)}${row("GPU", Y.gpu.pct, Y.gpu.name)}${row("VRAM", Y.vram.pct, `${Y.vram.used.toFixed(1)} of ${Y.vram.total.toFixed(1)} GB`)}<tr class="note"><td colspan="4">Sampled once a second while on screen. Tap the chip to switch % and GB.</td></tr></table></div>`;
   };
 
   const detail = (a) => {
@@ -157,6 +175,8 @@
   };
 
   window.STRIP = {
+    // The same component the docked wall header uses (wall-header.html).
+    strip: (v, layout, accts, opt) => strip(v, layout, accts, opt),
     page(v) {
       const A = S.accounts;
       const me = document.getElementById("sheet");
@@ -193,6 +213,7 @@
 <h2>System chip (optional, off by default)</h2>
 <p>Switched on in Settings, one chip joins the end of the strip: WSL memory, CPU, and GPU load paired with VRAM. A tap switches percent and GB. Real numbers from ${Y.takenAt}. No FPS.</p>
 <figure class="wide">${tile(wp, strip(v, "linear", A, { sys: "pct" }))}<figcaption class="cap">Linear with the System chip on</figcaption></figure>
+<div class="layouts" style="margin-top:18px"><figure>${tile(wp, strip(v, "double", A, { sys: "pct" }))}<figcaption class="cap">Double: the chip takes the next cell</figcaption></figure><figure>${tile(wp, strip(v, "stacked", A, { sys: "pct" }))}<figcaption class="cap">Stacked: the chip becomes the last row</figcaption></figure></div>
 <div class="layouts" style="margin-top:18px">
   <figure>${tile(wp, `<div class="panel strip v${v} linear" data-op="100" style="--op:100"><div class="items">${v === "a" ? sysA("pct") : sysB("pct")}</div></div>`)}<figcaption class="cap">Percent (default)</figcaption></figure>
   <figure>${tile(wp, `<div class="panel strip v${v} linear" data-op="100" style="--op:100"><div class="items">${v === "a" ? sysA("gb") : sysB("gb")}</div></div>`)}<figcaption class="cap">GB, after a tap</figcaption></figure>
