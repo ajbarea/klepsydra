@@ -1005,6 +1005,7 @@ if [[ $(id -u) != 0 ]]; then
 fi
 rm -rf -- "${hist:?}" "${FLEET_STATE:?}/task-hist.src"
 check "the tail carries the friction-log rule: grep, fix in scope, name the issue, delete when fixed (AJ 11-01, 11-17)" "$(grep -c '^Friction log (AJ 11-01, every agent): friction is logged so it gets fixed (AJ 11-17).*grep ~/.local/state/fleet-orchestrator/friction.md.*do not read the whole file.*fix it there.*search the owning repo.s issues.*naming the issue.*delete its line.*Heph turns the remaining lines into issues and PRs' "$here/brief-tail.md")" "1"
+check "the tail asks every agent to fix the skills it used, by PR (AJ 11-18)" "$(grep -c '^Skills (AJ 11-18): improve every skill you use as you learn.*put the fix in the skill itself (techne plugins/<plugin>/skills/<name>/.*one PR assigned ajbarea.*named in your report' "$here/brief-tail.md")" "1"
 check "the tail puts performance first, above the security floor, and asks for DS&A checks (AJ 11-01, 11-03)" "$(grep -c '^Quality (AJ 11-01, 11-03): performance is AJ.s #1 quality attribute; when it trades off with security, performance wins, above the security floor. In every workflow, check the data structures and algorithms' "$here/brief-tail.md")" "1"
 check "the tail carries the team-ceremony rule (AJ 10-29)" "$(grep -c '^Team ceremony in every repo' "$here/brief-tail.md")" "1"
 check "the tail and the headless rules close the Playwright browser after its last action (#379)" \
