@@ -242,6 +242,10 @@ html, body {
   outline: calc(2px * var(--scale)) solid var(--text);
   outline-offset: calc(2px * var(--scale));
 }
+/* No session: the keeper at rest, or the wall's mark on the track where the theme has none. */
+.face.rest { display: grid; place-items: center; color: var(--text); }
+.face.rest > span { display: contents; }
+.face.rest .glyph { width: 50%; height: 50%; }
 .face .badge {
   position: absolute;
   right: calc(-3px * var(--scale));

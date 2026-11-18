@@ -1,20 +1,19 @@
-# IMPL: docsync 11-18 (branch docs/docsync-1118)
+# IMPL: klepsydra#461 gauge strip shows the resting keeper with no sessions
 
-Full docsync of klepsydra against main (7a5c161). PRs #454, #457, #458 are not described.
+Issue: https://github.com/ajbarea/klepsydra/issues/461 (branch `fix/strip-keeper-461`)
 
 ## Slice
-README.md, AGENTS.md, ROADMAP.md, docs/*.md, docs/characters, fleet/*.md, hooks/*.md,
-.claude/skill-context.md, CITATION.cff, GitHub About. No docs site (no zensical.toml).
+- `src/fleet/cast.js`: `keeperBase(cast)`, the one keeper lookup; `theme.js` `keeperOf` (the wall's empty state) uses it.
+- `src/fleet/strip.js`: with no sessions, once the reader has spoken (`heard`), draw one `.face.rest` button: the keeper's 96/192 face, label "Open the fleet wall", no badge or pulse; a theme with no keeper gets a plain four-card glyph button. Click calls `open()` with no id. Before the first snapshot the strip stays hidden (no flash of the keeper).
+- `src/main.js`: `open_wall` gets `focus: ""` when no id (the wall ignores an empty focus).
+- `src/style.css`: `.face.rest` layout. `stripRect` already reads the strip's rect, so the window sizing needs no change.
+- Tests: `src/fleet-strip.test.js` (keeper button, click, sessions replace it, no keeper, pre-snapshot hidden).
 
 ## Done
-- Docsync of every file (commits a497e72, b819f2e); PR #465 closes #464.
-- README Fleet engine and CI watch detail moved to docs/fleet.md and docs/ci-watch.md; both sections under budget.
-- Heph review round 1 (not clean, no Blocking): all 7 items fixed in one commit. Dead delegate chip reader filed as #469.
-- Rebased on origin/main 7a5c161.
-
-## Verify
-lint, link check (21 files), shellcheck on fleet/fleet, fleet/install.sh pass. Whole-tree `make shellcheck`
-OOM-killed (137) again; CI runs it. CI on the pushed head: `gh pr checks 465`.
+Code, unit tests.
 
 ## Next
-Round 2 verify CLEAN; three optional nits folded in one commit. When CI is green: report to Heph, `fleet done`. Heph merges. Do not merge. Docs cap: 3 review rounds.
+Full `node --test src/*.test.js`, `npm run lint`, screenshots in `fleet-briefing/shots/2026-11-18/keeper-strip-*.png`, PR (label bug, assignee ajbarea, Closes #461), CI wait, report to Heph, `fleet done`. Do not merge.
+
+## Verify
+`node --test src/fleet-strip.test.js`; `npm run lint`; render with the real themes at 1920 (scratch script `shoot.py`).
