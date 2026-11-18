@@ -29,7 +29,8 @@
   @media (max-width: 640px) {
     .wbar.docked .dock { order: 3; flex: 1 1 100%; margin-right: 0; }
     .wbar.docked .tally { margin-right: auto; }
-    .dock .strip.double .items { grid-template-columns: auto auto; }
+    .dock .strip { flex: 1 1 auto; min-width: 0; }
+    .dock { align-items: flex-start; }
     .stage.short { padding-bottom: 120px; }
   }
 </style>
@@ -54,7 +55,7 @@
 <header><h1>Gauges: docked and pinned</h1><p class="trade">One gauge component in two homes, like Xbox Game Bar: docked in the wall header while the wall is open, and the floating strip, pinned on the desktop, while it is closed. While the wall has focus the floating strip hides, so the readings never show twice. The trade: the header gets busier.</p><p class="stamp">Readings: ${SNAP.takenAt}</p></header>
 
 <h2>Wall open: docked in the header</h2>
-<p>Strip A's linear layout between the tally and the tools (two rows on a phone). The chevron hides it; Settings › Gauges turns it back on.</p>
+<p>Strip A's linear layout between the tally and the tools (one chip per row on a phone). The chevron hides it; Settings › Gauges turns it back on.</p>
 <div class="stage short">${header(docked)}</div>
 
 <h2>Wall closed, or the wall in the background: the pinned strip</h2>

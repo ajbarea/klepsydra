@@ -31,6 +31,7 @@ figure { min-width: 0; }
   content: ""; position: absolute; left: 0; top: 22%; height: 56%; width: 1.5px; background: var(--panel-dim); opacity: 0.55;
 }
 .ra .ico, .ra .mono { font-size: 15px; }
+.ra :is(.val, .when) { white-space: nowrap; }
 .ra .ico { width: 17px; height: 17px; }
 .pips { display: inline-flex; align-items: flex-end; gap: 2px; height: 15px; margin-left: 1px; }
 .pip { position: relative; width: 4px; height: 11px; border-radius: 1px; background: var(--track); overflow: hidden; }
