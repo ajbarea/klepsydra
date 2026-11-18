@@ -1081,13 +1081,31 @@ heph_config() {
 # notification's too), so a turn begun since the stamp was read shows.
 STAMP_JQ='"\(.prompt.at // "")/\(.turn_at // "")"'
 
+# Whether session SID owes the wall's wrap-up an answer, printing its state:
+# its answer file names the request on file (the app drops request.json an
+# hour past the window) as asked, or as answered by a turn that has not
+# stopped yet (no settled stamp), or cannot be read. The Stop hook asks by
+# additionalContext, so the turn runs on while the fleet file says done (#454).
+wrapup_pending() { # SID
+  local w=$KLEPSYDRA_DIR/wrapup r
+  [[ -f $w/request.json && ! -L $w/request.json && -f $w/$1.json && ! -L $w/$1.json ]] || return 1
+  r=$(jq -r '.id | strings' "$w/request.json" 2>/dev/null) && [[ -n $r ]] || return 1
+  jq -er --arg r "$r" 'if .request != $r then empty
+    elif .state == "asked" or ((.state == "ready" or .state == "blocked") and .settled == null) then .state
+    else empty end' "$w/$1.json" 2>/dev/null && return 0
+  # Ours but unreadable counts as owed: the hook writes it whole, so this is no state it left.
+  jq -e . "$w/$1.json" >/dev/null 2>&1 || { echo unreadable; return 0; }
+  return 1
+}
+
 # Whether the agent in PANE has finished its turn: its live fleet file
 # (klepsydra's) says done, or stopped with only background work, and lists no
-# background work still running. Prints the session's stamp from the same
+# background work still running, and no wrap-up answer is owed. Prints the session's stamp from the same
 # read, for prompt_stamp comparisons.
 turn_done() { # PANE
   local sid
   sid=$(live_session "$1") || return 1
+  ! wrapup_pending "$sid" >/dev/null || return 1
   jq -er 'select((.state == "done" or (.state == "working" and .reason == "background"))
     and ((.background // []) | length) == 0) | '"$STAMP_JQ" "$KLEPSYDRA_DIR/fleet/$sid.json" 2>/dev/null
 }
@@ -1187,6 +1205,7 @@ pane_background_summary() { # PANE [NOW]
 watchers_only() { # PANE
   local sid
   sid=$(live_session "$1") || return 1
+  ! wrapup_pending "$sid" >/dev/null || return 1
   jq -er 'select((.state == "done" or (.state == "working" and .reason == "background"))
     and ((.background // []) | length) > 0
     and all(.background[]; .kind == "shell" and .watcher == true)) | '"$STAMP_JQ" "$KLEPSYDRA_DIR/fleet/$sid.json" 2>/dev/null
@@ -1217,6 +1236,7 @@ ready_to_move() { # PANE ASKED
   local sid
   [[ $2 =~ ^[0-9]+$ ]] || return 1
   sid=$(live_session "$1") || return 1
+  ! wrapup_pending "$sid" >/dev/null || return 1
   jq -er --argjson asked "$2" 'select((.state == "done" or (.state == "working" and .reason == "background"))
     and (.reply.at // 0) >= $asked and (.reply.at // 0) >= (.turn_at // 0)
     and ((.reply.text // "") | split("\n") | map(select(test("\\S"))) | (.[0] // "")

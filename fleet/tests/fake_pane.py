@@ -27,6 +27,12 @@ A test steers it through a JSON state file, re-read on every tick:
   exit_on_exit  /exit ends the process, so its pane closes as Claude Code's does
   die_on_submit  any submitted line ends the process (a pane killed mid-send)
   exit_delay seconds /exit takes before the process ends (with exit_on_exit)
+  slash_menu  text typed starting with "/" opens Claude Code's command menu
+             just above the box, over the transcript's last rows (2.1.316)
+  slash_adds  a transcript line that shows as the menu opens (a phone
+             prompt arriving as /exit goes in)
+  exit_dialog  /exit opens Claude Code's "Background work is running" dialog
+             (2.1.316, captured 2026-11-18): Enter exits, Esc cancels it
   on_exit    a command /exit runs first, as Claude Code's SessionEnd hook
              (prompt_input_exit) runs the fleet hook on a real /exit
 
@@ -57,6 +63,21 @@ RC_MENU = [
     "    Show QR code   Scan with your phone to open this session",
     "  ❯ Continue",
     "  Enter to select · Esc to continue",
+]
+SLASH_MENU = [
+    "  ❯ /exit                                                Exit the CLI",
+    "    /context                                             Visualize current context usage",
+    "    /usage-credits                                       Configure usage credits",
+]
+EXIT_DIALOG = [
+    "▔" * 60,
+    "   Background work is running",
+    "   The following will stop when you exit:",
+    "   shell · sleep 300",
+    "   ❯ 1. Exit and stop tasks",
+    "     2. Move to background and exit",
+    "     3. Stay",
+    "   Enter to confirm · Esc to cancel",
 ]
 LIMIT_MENU = [
     "  You've hit your session limit · resets 1:10pm (America/New_York)",
@@ -123,6 +144,9 @@ class Pane:
         self.log("SUBMIT " + text.replace("\n", "\\n"))
         if self.state.get("die_on_submit"):
             raise SystemExit(0)
+        if text.strip() == "/exit" and self.state.get("exit_dialog"):
+            self.menu = "exit"
+            return
         if text.strip() == "/exit" and self.state.get("on_exit"):
             subprocess.run(self.state["on_exit"], shell=True, check=False)
         if text.strip() == "/exit" and self.state.get("exit_on_exit"):
@@ -197,6 +221,9 @@ class Pane:
                 ):
                     self.lost_enters += 1
                     self.log("KEY ENTER (lost after a paste)")
+                elif self.menu == "exit":
+                    self.log("EXIT AND STOP TASKS")
+                    raise SystemExit(0)
                 elif self.menu == "rc":
                     self.log("RC CONTINUE")
                     self.menu = None
@@ -249,6 +276,8 @@ class Pane:
             return above + [RULE] + LIMIT_MENU
         if self.menu == "rc":
             return above + [RULE] + RC_MENU
+        if self.menu == "exit":
+            return above + EXIT_DIALOG
         at, n = self.pasted
         pasted = self.input[at : at + n] if self.pastes else ""
         if pasted and ("\n" in pasted or len(pasted) > 800):
@@ -267,6 +296,11 @@ class Pane:
             box = [PROMPT + first] + ["  " + m for m in more]
         else:
             box = [PROMPT + PLACEHOLDER]
+        if self.state.get("slash_menu") and self.input.startswith("/"):
+            # Drawn over the transcript's last rows, a blank row above it.
+            above = above[: max(0, len(above) - len(SLASH_MENU) - 1)]
+            above += [self.state["slash_adds"]] if self.state.get("slash_adds") else []
+            above += [""] + SLASH_MENU
         below = self.state.get("below", ["  ⏵⏵ bypass permissions on · 1 shell"])
         return above + [RULE] + box + [RULE] + below
 

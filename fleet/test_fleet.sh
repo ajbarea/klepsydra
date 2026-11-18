@@ -2111,6 +2111,7 @@ rm -f "$FLEET_STATE/finished.tsv"
 t kill-window -t "$p" 2>/dev/null; rm -f "$KLEPSYDRA_DIR/fleet/$SID.json"
 
 echo "fleet done reports the finish; fleet close closes the pane (#445)"
+export FLEET_CLOSE_QUIET=1 FLEET_CLOSE_EXIT_WAIT=5
 printf '# Fleet queue\n\n## Running now\nChecked: Tue.\n\n- ✅ **other:** unchanged.\n\n## Next\n1. 📋 later\n' >"$FLEET_QUEUE_MD"
 : >"$FLEET_LOG"; rm -f "$FLEET_STATE/finished.tsv" "$DONE_REPORTS"
 h=$(pane hph '{"above":["idle"],"on_submit":"none"}')
@@ -2188,7 +2189,7 @@ check "#445: the doctor flags the undelivered reports" \
   "$(doctor | grep '^warn  *done reports' | sed -E 's/.*not delivered to the orchestrator: ([^:]*):.*/\1/')" "wrk3 (limited), wrk4 (no-orchestrator-pane), wrk5 (no-orchestrator-pane)"
 # fleet close: the orchestrator has read the report.
 done_live "$w"
-check "#445: fleet close NAME runs retire: /exit goes in, the pane goes, the record goes" \
+check "#445: fleet close NAME at rest: /exit goes in, the pane goes, the record goes" \
   "$(bash "$here/fleet" close wrk1 2>/dev/null) $(grep -c '^SUBMIT /exit' "$work/wrk1.log") $(fleet_panes | grep -cx -- "$w") $(cut -f2 "$DONE_REPORTS" | grep -c '^wrk1$')" "closed: wrk1 ($w) 1 0 0"
 # Athena's review: a finished agent that works again, one with background work, and the orchestrator's pane are never closed.
 b=$(pane wrk7 '{"above":["working"],"busy":true,"exit_on_exit":true,"on_submit":"none"}'); settle
@@ -2226,7 +2227,62 @@ exec 8>&-
 check "#445 review: a turn that starts while close waits for the pane lock is seen: the check and the /exit hold one lock (refused, no /exit)" \
   "$clrc $(grep -c 'is working again' "$work/clr.out") $(grep -c '^SUBMIT' "$work/wrk7.log")" "1 1 0"
 state wrk7 '{"above":["done"],"busy":false,"exit_on_exit":true,"on_submit":"none"}'; settle
-check "#445 review: once the turn has ended the same close goes through (AJ's tmux file beside it is no bar)" "$(bash "$here/fleet" close wrk7 2>/dev/null) $(grep -c '^SUBMIT /exit' "$work/wrk7.log")" "closed: wrk7 ($b) 1"
+# Round 4 verify (#454): a wrap-up checkpoint, a turn that prints, a file the hook writes late,
+# Claude Code's stop-tasks dialog, a pane that will not go, and a reused pane.
+mkdir -p "$KLEPSYDRA_DIR/wrapup"; : >"$work/wrk7.log"
+printf '%s\twrk7\t%s\tsent\n' "$(date +%s)" "$b" >>"$DONE_REPORTS"
+printf '{"id":"1795000000000","at":1,"until":2,"ids":["%s"]}' "$SID" >"$KLEPSYDRA_DIR/wrapup/request.json"
+printf '{"request":"1795000000000","state":"asked","at":1}' >"$KLEPSYDRA_DIR/wrapup/$SID.json"
+check "#454 B1: a session the wrap-up asked (its checkpoint turn runs on while the file says done) is refused (1), nothing typed" \
+  "$(bash "$here/fleet" close wrk7 2>&1 | grep -c "owes the wall's wrap-up an answer (asked)") $(bash "$here/fleet" close wrk7 >/dev/null 2>&1; echo $?) $(grep -c '^SUBMIT' "$work/wrk7.log")" "1 1 0"
+printf '{"request":"1795000000000","state":"ready","at":1}' >"$KLEPSYDRA_DIR/wrapup/$SID.json"
+check "#454 B1: answered by a turn that has not stopped yet (no settled stamp) is still refused" \
+  "$(bash "$here/fleet" close wrk7 2>&1 | grep -c 'wrap-up an answer (ready)') $(grep -c '^SUBMIT' "$work/wrk7.log")" "1 0"
+printf '{"request":"1795000000000","sta' >"$KLEPSYDRA_DIR/wrapup/$SID.json"
+check "#454 B1: an answer file it cannot read is owed, not free" "$(wrapup_pending "$SID")" "unreadable"
+# The mirror: the resume service's move gates (turn_done, watchers_only, ready_to_move) hold on it too.
+mv "$KLEPSYDRA_DIR/fleet/aaaaaaaa-0000-4000-8000-0000000000a1.json" "$work/a1.off"
+wq() { printf '{"request":"%s","state":"%s","at":1%s}' "$1" "$2" "${3:+,\"settled\":$3}" >"$KLEPSYDRA_DIR/wrapup/$SID.json"; turn_done "$b" >/dev/null && echo free || echo held; }
+check "#454 B1 mirror: turn_done holds a move while asked or answered unsettled; an older request's ask, a settled answer or no request is free" \
+  "$(wq 1795000000000 asked) $(wq 1795000000000 blocked) $(wq 1700000000000 asked) $(wq 1795000000000 ready 3) $(rm -f "$KLEPSYDRA_DIR/wrapup/request.json"; wq 1795000000000 asked)" "held held free free free"
+mv "$work/a1.off" "$KLEPSYDRA_DIR/fleet/aaaaaaaa-0000-4000-8000-0000000000a1.json"
+rm -f "$KLEPSYDRA_DIR/wrapup/$SID.json"
+# A turn that prints text, its spinner unread: the lines above the box change while close watches.
+( for i in $(seq 40); do printf '{"above":["done","⏺ Writing line %s"],"busy":false,"exit_on_exit":true,"on_submit":"none"}' "$i" >"$work/wrk7.json.t"
+    mv -f "$work/wrk7.json.t" "$work/wrk7.json"; sleep 0.2; done ) & wrp=$!
+check "#454 B1: a turn printing text with no spinner busy can read is refused (1): its screen changed in the quiet window" \
+  "$(bash "$here/fleet" close wrk7 2>&1 | grep -c '^error: .*its screen changed within') $(grep -c '^SUBMIT' "$work/wrk7.log") $(fleet_panes | grep -cx -- "$b")" "1 0 1"
+kill "$wrp" 2>/dev/null; wait "$wrp" 2>/dev/null
+state wrk7 '{"above":["done"],"busy":false,"exit_on_exit":true,"on_submit":"none"}'; settle
+# The hook writes the file async, up to a second after the prompt the screen showed: a write in the window refuses.
+( for i in $(seq 40); do jq -n --arg p "$b" --argjson i "$i" '{session_id: "x", ended: null, tmux: {pane: $p}, state: "done", reason: null, background: [], turn_at: $i}' >"$work/sf.t"
+    mv -f "$work/sf.t" "$KLEPSYDRA_DIR/fleet/$SID.json"; sleep 0.2; done ) & wrp=$!
+check "#454 S1: a session file written within the quiet window is refused (1), nothing typed" \
+  "$(bash "$here/fleet" close wrk7 2>&1 | grep -c '^error: .*its session file was written') $(grep -c '^SUBMIT' "$work/wrk7.log")" "1 0"
+kill "$wrp" 2>/dev/null; wait "$wrp" 2>/dev/null
+done_live "$b" "done" '[]'
+# /exit with a tool still running opens Claude Code's dialog, "Exit and stop tasks" first: Esc, and left open.
+state wrk7 '{"above":["done"],"busy":false,"exit_dialog":true,"on_submit":"none"}'; settle
+check "#454 S1: /exit that opens the stop-tasks dialog is cancelled with Esc, never confirmed, and the pane left open (1)" \
+  "$(bash "$here/fleet" close wrk7 2>&1 | grep -c 'still runs background work (/exit asked') $(grep -c '^SUBMIT /exit' "$work/wrk7.log") $(grep -c '^MENU ESC exit' "$work/wrk7.log") $(grep -c 'EXIT AND STOP' "$work/wrk7.log") $(fleet_panes | grep -cx -- "$b")" "1 1 1 0 1"
+# A pane /exit does not close is never killed.
+state wrk7 '{"above":["done"],"busy":false,"on_submit":"none"}'; settle; : >"$work/wrk7.log"
+check "#454 S1: a pane still there after /exit is left open, never killed (1), and its record stays" \
+  "$(FLEET_CLOSE_EXIT_WAIT=2 bash "$here/fleet" close wrk7 2>&1 | grep -c "left open: $b is still there after /exit") $(grep -c '^SUBMIT /exit' "$work/wrk7.log") $(fleet_panes | grep -cx -- "$b") $(cut -f2 "$DONE_REPORTS" | grep -c '^wrk7$')" "1 1 1 1"
+state wrk7 '{"above":["done"],"busy":false,"exit_on_exit":true,"on_submit":"none"}'; settle; : >"$work/wrk7.log"
+# Typing /exit opens Claude Code's command menu above the box; in a full screen it scrolls the transcript up.
+long=$(jq -nc '[range(60) | "⏺ line \(.)"]')
+state wrk7 "{\"above\":$long,\"busy\":false,\"slash_menu\":true,\"slash_adds\":\"❯ a phone prompt\",\"on_submit\":\"none\"}"; settle
+check "#454 S1: a transcript line that shows as /exit goes in refuses the close (1); our /exit is backed out, nothing submitted" \
+  "$(bash "$here/fleet" close wrk7 2>&1 | grep -c '^error: .*changed as /exit went in') $(grep -c '^SUBMIT' "$work/wrk7.log") $(sleep 0.5; input_text "$(screen "$b")" | grep -c .)" "1 0 0"
+# A reused pane whose new occupant writes no file: the only file predates the pane's process.
+jq -n --arg p "$b" '{session_id: "x", ended: null, tmux: {pane: $p}, state: "done", reason: null, background: [], started_at: 900, written_at: 1000}' >"$KLEPSYDRA_DIR/fleet/$SID.json"
+touch -d @1000 "$KLEPSYDRA_DIR/fleet/$SID.json"
+check "#454 nit: a session file last written before the pane's process started (a reused pane) is refused (1), nothing typed" \
+  "$(bash "$here/fleet" close wrk7 2>&1 | grep -c "^error: .*last written before $b's process started") $(grep -c '^SUBMIT' "$work/wrk7.log")" "1 0"
+done_live "$b" "done" '[]'
+state wrk7 "{\"above\":$long,\"busy\":false,\"slash_menu\":true,\"exit_on_exit\":true,\"on_submit\":\"none\"}"; settle; : >"$work/wrk7.log"
+check "#445 review: once the turn has ended the same close goes through (AJ's tmux file beside it is no bar; the menu /exit opens covers a full screen's last rows), and its record goes" "$(bash "$here/fleet" close wrk7 2>/dev/null) $(grep -c '^SUBMIT /exit' "$work/wrk7.log") $(cut -f2 "$DONE_REPORTS" | grep -c '^wrk7$')" "closed: wrk7 ($b) 1 0"
 # A pane id another live session now holds: left open, and the finished agent's record is cleared.
 x=$(pane wrk10 '{"above":["idle"],"on_submit":"none"}'); settle
 done_live "$x"
