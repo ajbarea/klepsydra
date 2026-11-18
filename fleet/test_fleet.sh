@@ -3030,6 +3030,24 @@ t kill-window -t "$lv"; rm -f -- "${KLEPSYDRA_DIR:?}/fleet/$SID.json" "$FLEET_ST
 check "review 1: the pane watcher is quiet while no alert has ever been written" \
   "$(FLEET_STATE="$work/noalerts" IDLE_S=1 timeout 2 bash "$here/watch-panes.sh" %999 2>&1 | grep -c 'No such file')" "0"
 
+echo "the watcher does not wake a pane whose background shell still runs (#453)"
+: >"$FLEET_LOG"
+wp=$(pane w453 '{"above":["⏺ Done. done 11:50 AM"]}'); settle
+jq -n --arg p "$wp" '{session_id: "x", ended: null, tmux: {pane: $p},
+  state: "working", reason: "background",
+  background: [{id: "s1", kind: "shell"}]}' >"$KLEPSYDRA_DIR/fleet/$SID.json"
+IDLE_S=0 WATCH_TICK=0.1 timeout 60 bash "$here/watch-panes.sh" "$wp" >"$work/w453.out" 2>/dev/null &
+w453job=$!
+sleep 1.5
+check "#453: a pane idle at done with a background shell does not wake" \
+  "$(kill -0 "$w453job" 2>/dev/null && echo watching || echo "woke: $(cat "$work/w453.out")")" "watching"
+# Remove the background shell: now it should wake.
+jq -n --arg p "$wp" '{session_id: "x", ended: null, tmux: {pane: $p},
+  state: "done", reason: null, background: []}' >"$KLEPSYDRA_DIR/fleet/$SID.json"
+wait "$w453job"
+check "#453: once the shell ends it wakes after IDLE_S" "$(cut -d' ' -f1,2 "$work/w453.out")" "IDLE $wp"
+t kill-window -t "$wp"; rm -f "$KLEPSYDRA_DIR/fleet/$SID.json"
+
 echo "two accounts: the second folder follows the first"
 src=$work/sync-src dst=$work/sync-dst
 mkdir -p "$src/plugins/data" "$src/skills/one" "$src/skills/synced" "$src/projects/p" "$src/agents" "$dst"

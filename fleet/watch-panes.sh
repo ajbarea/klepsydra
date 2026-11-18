@@ -101,7 +101,7 @@ while :; do
       flog INFO "watched pane limited" pane="$p" message="${limit#*$'\t'}" reset_at="${limit%%$'\t'*}"
       echo "LIMIT $p $(reset_label "${limit%%$'\t'*}" "${limit#*$'\t'}")"; exit 0
     fi
-    if busy "$s" || grep -qE 'still running|Waiting for [0-9]+ background' <<<"$ps" || ! grep -q 'done [0-9]\{1,2\}:[0-9][0-9] [AP]M' <<<"$ps"; then
+    if busy "$s" || turn_settled "$p" || ! grep -q 'done [0-9]\{1,2\}:[0-9][0-9] [AP]M' <<<"$ps"; then
       unset "since[$p]"; continue
     fi
     : "${since[$p]:=$now}"

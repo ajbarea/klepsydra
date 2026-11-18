@@ -1,17 +1,19 @@
-# IMPL: klepsydra#461 gauge strip shows the resting keeper with no sessions
+# IMPL: klepsydra#453 watcher wakes the orchestrator while a worker waits on its own background shell
 
-Issue: https://github.com/ajbarea/klepsydra/issues/461 · PR #463 · branch `fix/strip-keeper-461`
+Brief: https://github.com/ajbarea/klepsydra/issues/453
 
 ## Slice
-- `src/fleet/cast.js` `keeperBase` (one keeper lookup); `strip.js` draws one `.face.rest` button with no sessions (after the reader's first snapshot): keeper face, or a plain wall-mark button; click calls `open()` with no id.
-- Review fix (Opus, 11-18): `.face img { display:block }` beat `[hidden]`, so the plain button drew a broken-image sliver and a keeper switch left the old face. Fixed with `.face img[hidden] { display:none }` in `src/fleet/badge.css`, and `strip.js` clears the img `src`/`srcset` when no keeper.
+1. In `fleet/watch-panes.sh`, replace the fragile screen-text grep for "still running" with `turn_settled "$p"` from `fleet/lib.sh`, which reads the session JSON's `.background` entries.
+2. Add two tests to `fleet/test_fleet.sh`: an idle pane with a running background shell (no wake), and the same pane after the shell ends (wakes after IDLE_S).
 
 ## Done
-- Code, unit tests (15 pass), lint clean; full `node --test` 514 pass.
-- Browser case `strip_keeper_states`: 3 pass with the fix, 2 fail with the CSS rule removed. Shots in fleet-briefing/shots/2026-11-18/keeper-strip-browser-*.png.
+- Replaced screen-text grep (`'still running|Waiting for [0-9]+ background'`) with `turn_settled "$p"` on line 104 of `watch-panes.sh`. DRY: reuses the existing function that checks `.background | length > 0` in the session JSON.
+- Added two test cases after the #246 watcher section in `test_fleet.sh`: one verifying the watcher stays watching while a background shell runs, one verifying it wakes once the shell ends.
 
 ## Next
-One CI round on #463, then report to Heph (inbox/hermes-463.md if `fleet send` says not-pasted). Do not merge.
+- Run `make test-fleet` and `make shellcheck` to confirm.
+- Commit, push, open PR.
 
 ## Verify
-`node --test src/fleet-strip.test.js`; `npm run lint`; `uv run -q --no-project --with playwright python -I scripts/test_wall_browser.py strip_keeper_states`.
+- `make test-fleet` passes (including the new #453 checks).
+- `make shellcheck` clean.
