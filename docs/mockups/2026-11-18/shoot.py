@@ -57,12 +57,35 @@ def main() -> None:
                         overflow = page.evaluate(
                             "document.documentElement.scrollWidth - innerWidth"
                         )
-                        # Clipped content: an element past the right edge, other than inside a scroller.
+                        # Clipped: past the sheet's content edge or a clipping ancestor (scrollers excepted).
+                        # Wrapped: a gauge value or time broken onto a second line.
                         clipped = page.evaluate(
-                            """[...document.querySelectorAll('main *')].filter(e => {
-                                 const r = e.getBoundingClientRect();
-                                 return r.width && r.right > innerWidth + 1 && !e.closest('.rail');
-                               }).slice(0, 4).map(e => e.getAttribute('class') || e.tagName)"""
+                            """(() => {
+                                 const sheet = document.querySelector('main');
+                                 const cs = getComputedStyle(sheet);
+                                 const edge = sheet.getBoundingClientRect().right - parseFloat(cs.paddingRight);
+                                 const clipEdge = (e) => {
+                                   for (let a = e.parentElement; a && a !== sheet; a = a.parentElement) {
+                                     const o = getComputedStyle(a).overflowX;
+                                     if (o === 'hidden' || o === 'clip') return a.getBoundingClientRect().right;
+                                   }
+                                   return edge;
+                                 };
+                                 const name = (e) => e.getAttribute('class') || e.tagName;
+                                 const past = [...sheet.querySelectorAll('*')].filter(e => {
+                                   if (e.closest('.rail, .sr')) return false;
+                                   const r = e.getBoundingClientRect();
+                                   return r.width && r.right > Math.min(innerWidth, clipEdge(e)) + 1;
+                                 }).map(name);
+                                 const wrapped = [...sheet.querySelectorAll('.strip :is(.val, .when, .t)')]
+                                   .filter(e => {
+                                     const rg = document.createRange();
+                                     rg.selectNodeContents(e);
+                                     return new Set([...rg.getClientRects()].map(r => Math.round(r.top))).size > 1;
+                                   })
+                                   .map(e => 'wrapped:' + name(e));
+                                 return [...past, ...wrapped].slice(0, 4);
+                               })()"""
                         )
                         path = out / f"design-{name}-{w}-{theme}.png"
                         page.screenshot(path=str(path), full_page=True)

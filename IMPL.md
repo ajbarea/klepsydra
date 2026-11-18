@@ -18,4 +18,4 @@ Static HTML/CSS mockups for AJ to pick from, in `docs/mockups/2026-11-18/`: two 
 
 ## Verify
 `cd docs/mockups/2026-11-18 && flock -o /tmp/fleet-heavy.lock timeout 900 uv run --no-project --with playwright python shoot.py OUT`
-prints each shot's overflow, clipped elements and console errors. Its clip check misses content pushed past a rounded container's edge: look at the 390 shots too.
+prints each shot's overflow, clipped elements (past the sheet's content edge or a clipping ancestor; gauge values wrapped onto a second line) and console errors; all read none. Mutation-checked against 26f158e's wall-header, where it flags the clipped chevron and three wrapped times.
