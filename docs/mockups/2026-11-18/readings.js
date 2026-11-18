@@ -1,6 +1,6 @@
 // The readings every mockup shows: klepsydra's newest reading per account,
 // taken Wed 18 Nov 2026 at 1:23 PM EST from
-// %LOCALAPPDATA%\dev.ajsoftworks.klepsydra\accounts\<id>\*.json.
+// the app data folder (accounts/<id>/*.json).
 // Percentages are the readings' used_percentage, rounded; reset times are
 // their resets_at in local time; "in" is resets_at minus 1:23 PM.
 // klepsydra rewrites a session's file in place, so the files on disk move on;
@@ -113,3 +113,28 @@ window.FACE = (who) =>
   who === "worker"
     ? `<span class="face-dot" title="1 agent" aria-hidden="true"></span>`
     : `<img class="face" src="../../../src/fleet/faces/kourai/${who}-96.webp" alt="" title="${who[0].toUpperCase() + who.slice(1)}">`;
+
+// System snapshot, Wed 18 Nov 4:00 PM EST (#421, AJ 11-18): /proc/meminfo
+// (MemTotal 10186852 kB, MemAvailable 3981872 kB), the fleet slice's cgroup
+// (memory.current 5496434688, memory.max 8820621312), /proc/stat over 1 s
+// (276 of 612 jiffies busy), nvidia-smi (RTX 3060 Ti, 12 %, 6179 of 8192 MiB).
+// GB here are GiB, as Windows Task Manager shows them. No FPS (AJ 11-18).
+window.SYS = {
+  takenAt: "Wed 18 Nov, 4:00 PM EST",
+  ram: { used: 5.9, total: 9.7, pct: 61, label: "WSL memory" },
+  fleet: { used: 5.1, cap: 8.2, pct: 62, label: "fleet slice" },
+  cpu: { pct: 45, cores: 6 },
+  gpu: { name: "RTX 3060 Ti", pct: 12 },
+  vram: { used: 6.0, total: 8.0, pct: 75 },
+};
+
+// Each session's process tree from its pid (/proc/<pid>/stat RSS and CPU
+// ticks over 1 s, 4:00 PM). Names are the fleet's pane names.
+window.TREES = [
+  { name: "Athena", role: "orchestrator", task: "Heph to Athena orchestrator handover", face: "athena", mb: 715, cpu: 3, procs: 32 },
+  { name: "docsync-1118", task: "klepsydra docsync", mb: 909, cpu: 12, procs: 9 },
+  { name: "design-pass", task: "klepsydra gauge strip mockups", mb: 603, cpu: 5, procs: 15 },
+  { name: "phylax-378", task: "Phylax fail-closed hooks (techne #378)", mb: 567, cpu: 4, procs: 13 },
+  { name: "linux-458", task: "klepsydra PR 458 Debian launch parity", mb: 498, cpu: 4, procs: 9 },
+  { name: "fleet-done-445", task: "Fleet done report for klepsydra #445 and #446", mb: 470, cpu: 1, procs: 15 },
+];

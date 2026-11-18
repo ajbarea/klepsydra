@@ -91,13 +91,40 @@
     // The halo threshold follows the panel: at 50% a dark panel over a light desktop
     // drops body text to 3.3:1, while a light panel at 50% keeps its dark ink crisp.
     const light = document.documentElement.dataset.theme === "light";
-    const haloAt = light ? 40 : 60;
+    const haloAt = light ? 50 : 60;
     const halo = op < haloAt ? " halo" : op < 70 ? " thin" : "";
     const item = v === "a" ? itemA : itemB;
     const row = v === "a" ? rowA : rowB;
     const body =
-      layout === "stacked" ? accts.map((a) => row(a, opt)).join("") : accts.map((a) => item(a, opt)).join("");
+      layout === "stacked" ? accts.map((a) => row(a, opt)).join("") : accts.map((a) => item(a, opt)).join("") + (opt.sys ? (v === "a" ? sysA(opt.sys) : sysB(opt.sys)) : "");
     return `<div class="panel strip v${v} ${layout}${halo}" data-op="${op}" style="--op:${op}" role="group" aria-label="Usage, ${layout} layout">${layout === "stacked" ? "" : grip}<div class="items">${body}</div></div>`;
+  };
+
+
+  /* ── System chip (#421, AJ 11-18): optional, off by default. WSL RAM, CPU,
+        GPU load with VRAM; a tap toggles % and GB. Same grammar per variant. ── */
+  const Y = window.SYS;
+  const sysSpoken = `System: WSL memory ${Y.ram.used.toFixed(1)} of ${Y.ram.total.toFixed(1)} GB, ${Y.ram.pct}%; CPU ${Y.cpu.pct}%; GPU ${Y.gpu.pct}%, VRAM ${Y.vram.used.toFixed(1)} of ${Y.vram.total.toFixed(1)} GB`;
+  const metrics = (mode) => [
+    { k: "ram", pct: Y.ram.pct, v: mode === "gb" ? `${Y.ram.used.toFixed(1)}` : `${Y.ram.pct}%`, of: mode === "gb" ? `/${Y.ram.total.toFixed(1)} GB` : "" },
+    { k: "cpu", pct: Y.cpu.pct, v: `${Y.cpu.pct}%`, of: "" },
+    { k: "gpu", pct: Y.gpu.pct, v: `${Y.gpu.pct}%`, of: "" },
+    { k: "vram", pct: Y.vram.pct, v: mode === "gb" ? `${Y.vram.used.toFixed(1)}` : `${Y.vram.pct}%`, of: mode === "gb" ? `/${Y.vram.total.toFixed(1)} GB` : "" },
+  ];
+  const sysA = (mode = "pct") =>
+    `<div class="ra sys" role="button" tabindex="0" aria-label="${sysSpoken}. Activate to show ${mode === "gb" ? "percent" : "gigabytes"}."><span class="ico">${ICON.chip}</span>${metrics(mode)
+      .map((m) => `<span class="sm"><span class="k">${m.k}</span><b class="val">${m.v}</b>${m.of ? `<span class="of">${m.of}</span>` : ""}${pip({ pct: m.pct, label: m.k }, false)}</span>`)
+      .join("")}</div>`;
+  const sysB = (mode = "pct") => {
+    const [ram, ...rest] = metrics(mode);
+    return `<div class="rb sys" role="button" tabindex="0" aria-label="${sysSpoken}. Activate to show ${mode === "gb" ? "percent" : "gigabytes"}.">${ring({ icon: "chip" }, { pct: ram.pct }, 28)}<span class="txt"><span class="l1"><b class="val">${ram.v}</b><span class="when">${ram.of ? `of ${ram.of.slice(1)} ` : ""}ram</span></span><span class="l2">${rest
+      .map((m) => `<span class="sk">${m.k} <b>${m.v}</b>${m.of}</span>`)
+      .join("")}</span></span></div>`;
+  };
+  const sysDetail = () => {
+    const row = (label, pct, text) =>
+      `<tr><th scope="row">${label}</th><td><span class="track"><span class="fill b-${window.band(pct)}" style="--p:${pct}"></span></span></td><td class="n">${pct}%</td><td>${text}</td></tr>`;
+    return `<div class="detail panel" data-op="100" style="--op:100" role="tooltip"><div class="dh"><span class="ico">${ICON.chip}</span><b>System</b><span class="age">${Y.takenAt}</span></div><table>${row("WSL memory", Y.ram.pct, `${Y.ram.used.toFixed(1)} of ${Y.ram.total.toFixed(1)} GB · ${(Y.ram.total - Y.ram.used).toFixed(1)} GB free`)}${row("Fleet slice", Y.fleet.pct, `${Y.fleet.used.toFixed(1)} of its ${Y.fleet.cap.toFixed(1)} GB cap`)}${row("CPU", Y.cpu.pct, `${Y.cpu.cores} cores`)}${row("GPU", Y.gpu.pct, Y.gpu.name)}${row("VRAM", Y.vram.pct, `${Y.vram.used.toFixed(1)} of ${Y.vram.total.toFixed(1)} GB`)}<tr class="note"><td colspan="4">Sampled once a second while on screen. Tap the chip to switch % and GB.</td></tr></table></div>`;
   };
 
   const detail = (a) => {
@@ -147,7 +174,7 @@
 </div>
 
 <h2>Background opacity: 100, 50 and 0%</h2>
-<p>Below 60% (dark theme) or 40% (light theme) the text switches to light ink with a dark halo; between that and 70%, faint text turns full ink. A dark panel at 50% over a light desktop would otherwise leave body text near 3:1.</p>
+<p>Below 60% (dark theme) or 50% (light theme) the text switches to light ink with a dark halo; between that and 70%, faint text turns full ink. A dark panel at 50% over a light desktop would otherwise leave body text near 3:1.</p>
 <div class="opgrid">
   ${["wp-dark", "wp-light", "wp-busy"].map((w) => [100, 50, 0].map((op) => `<figure>${tile(w, strip(v, "double", A, { op }))}<figcaption class="cap">${op}% · ${wpName[w]}</figcaption></figure>`).join("")).join("")}
 </div>
@@ -162,6 +189,16 @@
   <figure>${tile(wp, strip(v, "linear", [A[0]]))}<figcaption class="cap"><b>One route.</b> agy Gemini, by the free-first order (#411). The spent claude/gpt pool stays a full pip and never leads the chip.</figcaption></figure>
 </div>
 <figure class="hover">${tile(wp, `<div class="hover-demo">${strip(v, "linear", A)}${detail(A[0])}</div>`)}<figcaption class="cap">Hover or tap a chip: every window, with its reset and the age of its reading.</figcaption></figure>
+
+<h2>System chip (optional, off by default)</h2>
+<p>Switched on in Settings, one chip joins the end of the strip: WSL memory, CPU, and GPU load paired with VRAM. A tap switches percent and GB. Real numbers from ${Y.takenAt}. No FPS.</p>
+<figure class="wide">${tile(wp, strip(v, "linear", A, { sys: "pct" }))}<figcaption class="cap">Linear with the System chip on</figcaption></figure>
+<div class="layouts" style="margin-top:18px">
+  <figure>${tile(wp, `<div class="panel strip v${v} linear" data-op="100" style="--op:100"><div class="items">${v === "a" ? sysA("pct") : sysB("pct")}</div></div>`)}<figcaption class="cap">Percent (default)</figcaption></figure>
+  <figure>${tile(wp, `<div class="panel strip v${v} linear" data-op="100" style="--op:100"><div class="items">${v === "a" ? sysA("gb") : sysB("gb")}</div></div>`)}<figcaption class="cap">GB, after a tap</figcaption></figure>
+</div>
+<figure class="hover">${tile(wp, `<div class="hover-demo">${strip(v, "linear", A, { sys: "pct" })}<div class="sys-detail-wrap">${sysDetail()}</div></div>`)}<figcaption class="cap">Hover the System chip: the fleet slice's own cap (the limit the fleet hits first) beside WSL's total.</figcaption></figure>
+
 `;
     },
   };

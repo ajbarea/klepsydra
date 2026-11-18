@@ -136,10 +136,23 @@ figure { min-width: 0; }
   .sa-row .cell { grid-column: 2; justify-content: start; }
   .sa-row .cell:empty { display: none; }
   .sb-row { min-width: 0; }
-  .sb-row .line { grid-template-columns: 70px 1fr 34px auto; }
-  .sb-row .line .t { white-space: nowrap; }
+  .sb-row .line { grid-template-columns: auto minmax(24px, 1fr) auto auto; }
+  .sb-row .line :is(.lbl, .t) { white-space: nowrap; }
   .detail { min-width: 0; width: 100%; }
   .detail td:nth-child(2) { width: 50px; }
   .strip.double .items { grid-template-columns: auto; }
   .va.double .ra:nth-child(even)::before { display: none; }
 }
+
+/* ── System chip (#421, AJ 11-18) ── */
+.ra.sys { gap: 10px; }
+.ra.sys .sm { display: inline-flex; align-items: baseline; gap: 4px; }
+.ra.sys .k, .rb.sys .sk { font-variant-caps: all-small-caps; letter-spacing: 0.05em; font-size: 13px; color: var(--panel-dim); }
+.ra.sys .of { font-size: 12px; opacity: 0.86; }
+.ra.sys .pip { align-self: center; height: 12px; }
+.rb.sys .l2 { gap: 8px; height: auto; }
+.rb.sys .sk b { color: var(--panel-ink); font-size: 12.5px; letter-spacing: 0; font-variant-caps: normal; }
+.va.linear .ra.sys::before, .vb.linear .rb.sys::before { opacity: 0.9; }
+.sys-detail-wrap { justify-self: end; }
+@media (max-width: 640px) { .sys-detail-wrap { justify-self: stretch; } .ra.sys { flex-wrap: wrap; row-gap: 4px; } }
+.rb.sys .sk { white-space: nowrap; }

@@ -18,6 +18,7 @@ PAGES = [
     "new-session-b",
     "settings-a",
     "settings-b",
+    "wall-cards",
 ]
 SIZES = [(1920, 1080), (390, 844)]
 THEMES = ["dark", "light"]

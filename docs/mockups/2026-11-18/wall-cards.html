@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Card system line</title>
+<link rel="stylesheet" href="mock.css">
+<script src="icons.js"></script>
+<script src="readings.js"></script>
+<style>
+  /* Compact wall cards, simplified from src/fleet/wall.css (Compact density):
+     the figure, header, place and now line are reduced to what the option needs. */
+  .wall { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+  .tallyb { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 22px; color: var(--ink-dim); margin-bottom: 14px; font-size: 14px; }
+  .tallyb b { font: 600 28px/1 var(--font); font-variant-numeric: tabular-nums; color: var(--ink); margin-right: 4px; }
+  .tallyb .mem { margin-left: auto; display: inline-flex; gap: 8px; align-items: center; font-size: 13px; }
+  .tallyb .mem b { font-size: 15px; }
+  .tallyb .mem .ico { width: 16px; height: 16px; color: var(--ink-dim); }
+  .card { position: relative; background: var(--page-2); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px 8px; display: grid; gap: 8px; min-width: 0; box-shadow: inset 4px 0 0 var(--edge, var(--line)); }
+  .head { display: grid; grid-template-columns: 64px minmax(0, 1fr) auto; gap: 4px 12px; align-items: start; }
+  .face64 { width: 64px; height: 64px; border-radius: 50%; grid-row: span 2; display: grid; place-items: center; box-shadow: 0 0 0 3px var(--page-2), 0 0 0 5.5px #d9c6a5; overflow: hidden; background: var(--page-3); }
+  .face64 img { width: 100%; height: 100%; object-fit: cover; }
+  .face64 .mono { font-size: 15px; color: var(--ink-dim); }
+  .nm { font-weight: 650; font-size: 15px; }
+  .pill { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; padding: 3px 9px; border-radius: 999px; background: var(--page-3); box-shadow: inset 0 0 0 1px var(--line); color: var(--ink-dim); white-space: nowrap; }
+  .pill::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: #d9c6a5; }
+  .task { grid-column: 2 / -1; color: var(--ink-dim); font-size: 13.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .place { font-size: 13px; color: var(--ink-dim); }
+  .place b { color: var(--ink); }
+  .foot { display: flex; align-items: center; gap: 12px; min-height: 22px; color: var(--ink-quiet); font-size: 13px; }
+  .foot .more { letter-spacing: 2px; }
+  /* The option: one quiet line, the session's process tree. */
+  .sysl { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--ink-dim); font-variant-numeric: tabular-nums; }
+  .sysl .ico { width: 14px; height: 14px; }
+  .sysl b { color: var(--ink); font-weight: 650; }
+  .sysl .share { width: 44px; height: 4px; border-radius: 999px; background: var(--track); position: relative; overflow: hidden; }
+  .sysl .share i { position: absolute; inset: 0 auto 0 0; width: calc(var(--p) * 1%); background: var(--low); }
+  .ab { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 18px; }
+  .ab .cap { margin-top: 6px; }
+  :root[data-theme="light"] .face64 { box-shadow: 0 0 0 3px var(--page-2), 0 0 0 5.5px #6a5640; }
+  :root[data-theme="light"] .pill::before { background: #6a5640; }
+  @media (max-width: 1100px) { .wall { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  @media (max-width: 640px) { .wall, .ab { grid-template-columns: 1fr; } .tallyb .mem { margin-left: 0; } }
+</style>
+</head>
+<body>
+<main class="sheet" id="sheet"></main>
+<script>
+  const T = TREES, Y = SYS;
+  const totalMb = T.reduce((n, t) => n + t.mb, 0);
+  const capMb = Y.fleet.cap * 1024;
+  const repo = { "docsync-1118": "klepsydra", "design-pass": "klepsydra", "linux-458": "klepsydra", "phylax-378": "techne", "fleet-done-445": "klepsydra", Athena: "ajsoftworks" };
+  const branch = { "design-pass": "design/mockups-1118" };
+  const sysLine = (t) =>
+    `<span class="sysl" title="${t.name}'s process tree: ${t.procs} processes" aria-label="Memory ${t.mb} megabytes, CPU ${t.cpu} percent"><span class="ico">${ICON.chip}</span><b>${t.mb} MB</b>· CPU <b>${t.cpu}%</b><span class="share" style="--p:${((t.mb / capMb) * 100).toFixed(1)}" aria-hidden="true"><i></i></span></span>`;
+  const card = (t, on) => `
+    <article class="card" aria-label="${t.name}, working">
+      <div class="head">
+        <span class="face64">${t.face ? `<img src="../../../src/fleet/faces/kourai/${t.face}-96.webp" alt="">` : `<span class="mono">${t.name.slice(0, 2).toUpperCase()}</span>`}</span>
+        <span class="nm">${t.name}</span><span class="pill">working</span>
+        <span class="task">${t.task}</span>
+      </div>
+      <div class="place"><b>${repo[t.name]}</b>${branch[t.name] ? ` / ${branch[t.name]}` : ""}</div>
+      <div class="foot"><span class="more" aria-hidden="true">…</span>${on ? sysLine(t) : ""}</div>
+    </article>`;
+  document.getElementById("sheet").innerHTML = `
+<header><h1>Wall cards: RAM and CPU per agent</h1><p class="trade">An option, off by default: each card's footer shows its session's process tree, memory and CPU, with a thin bar for its share of the fleet's memory cap. The tally adds the fleet's total. The trade: one more number per card.</p><p class="stamp">Process trees: ${Y.takenAt}</p></header>
+<h2>Option on</h2>
+<p>All six live sessions, heaviest first. The bar is each tree's share of the fleet slice's ${Y.fleet.cap} GB cap.</p>
+<div class="tallyb"><span><b>${T.length}</b>working</span><span><b>0</b>needs you</span><span class="mem"><span class="ico">${ICON.chip}</span>agents <b>${(totalMb / 1024).toFixed(1)} GB</b> of the ${Y.fleet.cap} GB cap · WSL ${Y.ram.used} of ${Y.ram.total} GB</span></div>
+<div class="wall">${[...T].sort((a, b) => b.mb - a.mb).map((t) => card(t, true)).join("")}</div>
+<h2>Off and on, side by side</h2>
+<p>Off (the default) leaves the footer as it is today.</p>
+<div class="ab">
+  <figure><div class="wall" style="grid-template-columns:1fr">${card(T[0], false)}</div><figcaption class="cap">Off</figcaption></figure>
+  <figure><div class="wall" style="grid-template-columns:1fr">${card(T[0], true)}</div><figcaption class="cap">On: Athena's tree, 32 processes</figcaption></figure>
+</div>
+<p class="cap" style="margin-top:18px">Faces are simplified: only Athena's is drawn; the other sessions show their pane names. The phone wall would get the same line once the phone page's field list allows it (AGENTS.md: the phone sees only the fields the wall reads).</p>`;
+</script>
+</body>
+</html>

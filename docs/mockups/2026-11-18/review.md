@@ -11,9 +11,20 @@ Mockups for the gauge strip (#421, #438), + New session (#440) and the settings 
 | [light](shots/design-gauge-a-1920-light.webp) · [phone dark](shots/design-gauge-a-390-dark.webp) · [phone light](shots/design-gauge-a-390-light.webp) | [light](shots/design-gauge-b-1920-light.webp) · [phone dark](shots/design-gauge-b-390-dark.webp) · [phone light](shots/design-gauge-b-390-light.webp) |
 | Text first, like NVIDIA's HUD: logo, bold value, reset, one small pip per window. It reads at 0% opacity over the dark and light desktops; over a busy wallpaper the small reset times thin out. The trade: a pip is a smaller status cue than a ring. | Today's ring, one per account, with the logo inside it and each account's agents docked beside it. Strongest at a glance. The trade: its hairline bars fade once the panel goes, and at 56 px it overhangs a 48 px taskbar (A is 47 px). |
 
-Both have the three NVIDIA layouts on one switch (linear, double, stacked), and the 100/50/0% opacity grid over dark, light and busy wallpaper. Below 60% (dark theme) or 40% (light theme) the text switches to light ink with a dark halo; between that and 70%, faint text turns full ink. Without it, a dark panel at 50% over a light desktop leaves body text near 3:1. Both also show the states: out until reset (session hidden), an old reading dimmed with its age, the Copilot placeholder, and one route mark (agy Gemini). Linear width with 4 chips: **671 px (A), 634 px (B)**, against about 1,700 px for today's 7 meters. Neither layout changes width between 1920 and 1366.
+Both have the three NVIDIA layouts on one switch (linear, double, stacked), and the 100/50/0% opacity grid over dark, light and busy wallpaper. Below 60% (dark theme) or 50% (light theme) the text switches to light ink with a dark halo; between that and 70%, faint text turns full ink. Without it, a dark panel at 50% over a light desktop leaves body text near 3:1. Both also show the states: out until reset (session hidden), an old reading dimmed with its age, the Copilot placeholder, and one route mark (agy Gemini). Linear width with 4 chips: **671 px (A), 634 px (B)**, against about 1,700 px for today's 7 meters. Neither layout changes width between 1920 and 1366.
 
 **Recommendation: A, with B's docked faces.** #438 makes 0% a real setting, and A reads best there. A is also the less wordy one you asked for (logo, value, time). The faces docked to their account fix the "separate avatars" problem in #421 and move over to A unchanged.
+
+## System monitor (optional, AJ 11-18)
+
+| On the strip (both variants) | On the wall cards |
+|---|---|
+| [![A](shots/design-gauge-a-1920-dark.webp)](shots/design-gauge-a-1920-dark.webp) (bottom of each gauge page) | [![cards](shots/design-wall-cards-1920-dark.webp)](shots/design-wall-cards-1920-dark.webp) |
+| One System chip, off by default: WSL memory, CPU, GPU load with VRAM; a tap switches % and GB; the hover adds the fleet slice's own cap. | Each card's footer shows its process tree's memory and CPU, with a thin bar for its share of the fleet cap; the tally adds the total. [light](shots/design-wall-cards-1920-light.webp) · [phone](shots/design-wall-cards-390-dark.webp) |
+
+Real numbers from 4:00 PM: WSL 5.9 of 9.7 GB (61%), fleet slice 5.1 of its 8.2 GB cap, CPU 45%, RTX 3060 Ti at 12% with 6.0 of 8.0 GB VRAM. The six agents' trees add up to 3.7 GB, the largest 909 MB (docsync). No FPS. Both settings rows (chip, and RAM/CPU on cards) sit in Settings › System, off.
+
+**Recommendation:** ship the chip in A's grammar, in percent, with the hover as the place for GB and the fleet cap. The card line is cheap and answers "who is eating the 9.7 GB", so it is worth having as an option.
 
 ## + New session
 
@@ -35,7 +46,7 @@ Both show agy's real `agy models` list, with the spent Claude & GPT group disabl
 | [light](shots/design-settings-a-1920-light.webp) · [phone dark](shots/design-settings-a-390-dark.webp) · [phone light](shots/design-settings-a-390-light.webp) | [light](shots/design-settings-b-1920-light.webp) · [phone dark](shots/design-settings-b-390-dark.webp) · [phone light](shots/design-settings-b-390-light.webp) |
 | Spotify's pattern: one page, bold section headings, the control at the right, search at the top. The trade: the 16-row sisters list makes it long. | Windows 11's pattern: a section rail with search, one card per setting. The trade: a second navigation system inside a small app. |
 
-Both hold every setting from the tray and the gear (#384's inventory), plus gauge layout, opacity and text-only mode, account icons, route order, the new-session default and the sisters editor. The editor shows the real 16 projects from `~/.claude/techne.toml` (read only), each with its status and kind; all 16 have a clone. The tray shrinks to Open wall, Settings and Quit.
+Both hold every setting from the tray and the gear (#384's inventory), plus Show gauge strip (on; hidden, it stops sampling, and the tray brings it back), gauge layout, opacity and text-only mode, an Engines section with a switch per harness (off hides it from + New session and the strip and routing skips it; a missing binary shows Unavailable with its install hint), account icons, route order, the new-session default, the System chip and card RAM/CPU switches, and the sisters editor. The editor shows the real 16 projects from `~/.claude/techne.toml` (read only), each with its status and kind; all 16 have a clone. The tray shrinks to Open wall, Settings, Show gauge strip and Quit.
 
 **Recommendation: A**, the Spotify page you named, with the sisters list folded under a "16 projects" expander (not drawn here) so the page stays short. Seven sections fit one scroll; a rail pays off only with many more.
 

@@ -35,6 +35,9 @@
     .map(([i, m, n, d]) => `<div class="acct">${i ? I(i) : `<span class="mono">${m}</span>`}<span class="an">${n}</span><span class="ad">${d}</span>${btn("Choose icon…", "small")}</div>`)
     .join("");
 
+  // Engines (#384, AJ 11-18): one switch per harness; all three binaries are on this PC.
+  const engineRow = (icon, mono, name, desc, on) =>
+    row(`${icon ? I(icon) : `<span class="mono">${mono}</span>`} ${name}`, desc, toggle(on, `${name} on`), "eng-row");
   const order = ["agy · Gemini", "Copilot", "API credit", "Claude subscription"];
   const orderList = `<ol class="order" aria-label="Route order">${order.map((o) => `<li><span class="handle" aria-hidden="true">${window.ICON.grip}</span>${o}</li>`).join("")}</ol>`;
 
@@ -66,9 +69,10 @@
     {
       id: "appearance", icon: "palette", title: "Appearance",
       rows: [
+        row("Show gauge strip", "Hidden, it stops sampling too. The tray menu or Ctrl+Alt+G (proposed) brings it back; the wall and the phone keep their own usage view.", toggle(true, "Show gauge strip")),
         row("Card density", "How much each session card shows on the wall.", seg(["Auto", "Comfortable", "Compact"], "Compact", "Card density")),
         row("Gauge layout", "Linear fits a taskbar; double suits a screen corner; stacked shows every window.", seg(["Linear", "Double", "Stacked"], "Linear", "Gauge layout")),
-        row("Gauge background opacity", "Below 60% (40% in the light theme) the text gets a dark halo so it reads over the wallpaper.", slider(80)),
+        row("Gauge background opacity", "Below 60% (50% in the light theme) the text gets a dark halo so it reads over the wallpaper.", slider(80)),
         row("Text-only gauge", "Logo, value and reset only: no rings or bars (#438).", toggle(false, "Text-only gauge")),
         row("Light or dark", "The wall and the gauge follow Windows unless you pick one.", select("Match Windows", "Light or dark")),
       ],
@@ -88,12 +92,22 @@
       ],
     },
     {
-      id: "engines", icon: "plug", title: "Accounts and engines",
+      id: "engines", icon: "plug", title: "Engines",
+      lead: "Off hides an engine from + New session and the gauge, and routing skips it. Sessions already running keep going. At least one stays on.",
+      rows: [
+        engineRow("claude", "", "Claude", "Installed · 2 accounts (Personal, RIT)", true),
+        engineRow("agy", "", "Antigravity", "Installed · Google AI Pro", true),
+        engineRow("copilot", "", "Copilot", "Installed · GitHub", true),
+        `<div class="row eng-missing" aria-label="State example"><div class="rl"><span class="lab">${I("copilot")} Copilot <span class="ex">state example</span></span><span class="desc">On a PC without it: <code>copilot</code> not found. Install it with <code>npm install -g @github/copilot</code>, then reopen Settings.</span></div><div class="rc"><span class="unavail">Unavailable</span></div></div>`,
+        row("New session starts", "The engine behind the main button.", select("Last used (Claude on RIT)", "New session default")),
+        row("Route order", "Free first: the gauge marks the first engine here with room. Engines that are off are skipped.", orderList, "tall"),
+        row("Antigravity Remote Control", "Connect each new agy session to Remote Control when it starts.", toggle(false, "Antigravity Remote Control")),
+      ],
+    },
+    {
+      id: "accounts", icon: "person", title: "Accounts",
       rows: [
         row("Account icons", "Each account's mark on the gauge and the wall. A local file stays on this PC.", `<div class="accts">${acctRows}</div>`, "tall stack"),
-        row("New session starts", "The engine behind the main button.", select("Last used (Claude on RIT)", "New session default")),
-        row("Route order", "Free first: the gauge marks the first engine here with room.", orderList, "tall"),
-        row("Antigravity Remote Control", "Connect each new agy session to Remote Control when it starts.", toggle(false, "Antigravity Remote Control")),
       ],
     },
     {
@@ -113,6 +127,9 @@
       rows: [
         row("Start with Windows", "Open the gauge when you sign in to Windows.", toggle(true, "Start with Windows")),
         row("Phone wall", "Serve the wall to your phone over Tailscale.", toggle(true, "Phone wall")),
+        row("System chip on the gauge", "WSL memory, CPU, and GPU load with VRAM, sampled once a second while shown.", toggle(false, "System chip on the gauge")),
+        row("System chip shows", "A tap on the chip switches too.", seg(["Percent", "GB"], "Percent", "System chip shows")),
+        row("Agent RAM and CPU on cards", "Each card shows its session's process tree: memory and CPU.", toggle(false, "Agent RAM and CPU on cards")),
         row("Gauge position", "Put the gauge back where it started, or make where it is now its home.", `${btn("Reset position", "small")} ${btn("Set home here", "small")}`),
       ],
     },
