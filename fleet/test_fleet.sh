@@ -3032,7 +3032,7 @@ check "review 1: the pane watcher is quiet while no alert has ever been written"
 
 echo "the watcher does not wake a pane whose background shell still runs (#453)"
 : >"$FLEET_LOG"
-wp=$(pane w453 '{"above":["⏺ Done. done 11:50 AM"]}'); settle
+wp=$(pane w453 '{"above":["⏺ Done. done 11:50 AM"],"below":["  ⏵⏵ bypass permissions on · 1 shell"]}'); settle
 jq -n --arg p "$wp" '{session_id: "x", ended: null, tmux: {pane: $p},
   state: "working", reason: "background",
   background: [{id: "s1", kind: "shell"}]}' >"$KLEPSYDRA_DIR/fleet/$SID.json"
@@ -3046,7 +3046,32 @@ jq -n --arg p "$wp" '{session_id: "x", ended: null, tmux: {pane: $p},
   state: "done", reason: null, background: []}' >"$KLEPSYDRA_DIR/fleet/$SID.json"
 wait "$w453job"
 check "#453: once the shell ends it wakes after IDLE_S" "$(cut -d' ' -f1,2 "$work/w453.out")" "IDLE $wp"
+check "#453: idle wake logged with reason, pane, and screen" \
+  "$(jq -r 'select(.message == "watched pane idle") | [.reason, .pane, (.screen | contains("bypass permissions"))] | join(" ")' "$FLEET_LOG" | tail -1)" "idle $wp true"
 t kill-window -t "$wp"; rm -f "$KLEPSYDRA_DIR/fleet/$SID.json"
+
+echo "cell A: stale entry (2h old), screen says done with no shell"
+wa=$(pane cA '{"above":["✻ Baked for 2s · done 11:50 AM"],"below":["  ⏵⏵ bypass permissions on"]}'); settle
+jq -n --arg p "$wa" --argjson at "$(( $(date +%s) - 7200 ))" '{session_id: "x", ended: null, tmux: {pane: $p}, state: "working", reason: "background", background: [{id: "s1", kind: "shell", at: $at}], shells_live: 0}' >"$KLEPSYDRA_DIR/fleet/$SID.json"
+check "#453 cell A: stale 2-hour entry with shells_live 0 wakes" "$(IDLE_S=0 WATCH_TICK=0.1 timeout 5 bash "$here/watch-panes.sh" "$wa" 2>/dev/null | cut -d' ' -f1)" "IDLE"
+t kill-window -t "$wa"; rm -f "$KLEPSYDRA_DIR/fleet/$SID.json"
+
+echo "cell B: two live files name the pane (reused id), screen says shell still running"
+wb=$(pane cB '{"above":["✻ Baked for 2s · done 11:50 AM · 1 shell still running"],"below":["  ⏵⏵ bypass permissions on · 1 shell"]}'); settle
+for s in $SID 22222222-2222-4333-8444-555555555555; do jq -n --arg p "$wb" '{session_id: "x", ended: null, tmux: {pane: $p}, state: "working", reason: "background", background: [{id: "s1", kind: "shell"}]}' >"$KLEPSYDRA_DIR/fleet/$s.json"; done
+check "#453 cell B: two live files falls back to the grep" "$(IDLE_S=0 WATCH_TICK=0.1 timeout 3 bash "$here/watch-panes.sh" "$wb" 2>/dev/null | cut -d' ' -f1)" ""
+t kill-window -t "$wb"; rm -f "$KLEPSYDRA_DIR"/fleet/*.json
+
+echo "cell C: no session JSON, screen says shell still running"
+wc_=$(pane cC '{"above":["✻ Baked for 2s · done 11:50 AM · 1 shell still running"],"below":["  ⏵⏵ bypass permissions on · 1 shell"]}'); settle
+check "#453 cell C: no file falls back to the grep" "$(IDLE_S=0 WATCH_TICK=0.1 timeout 3 bash "$here/watch-panes.sh" "$wc_" 2>/dev/null | cut -d' ' -f1)" ""
+t kill-window -t "$wc_"
+
+echo "cell D: JSON with no background key, screen says shell still running"
+wd=$(pane cD '{"above":["✻ Baked for 2s · done 11:50 AM · 1 shell still running"],"below":["  ⏵⏵ bypass permissions on · 1 shell"]}'); settle
+jq -n --arg p "$wd" '{session_id: "x", ended: null, tmux: {pane: $p}, state: "done", reason: null}' >"$KLEPSYDRA_DIR/fleet/$SID.json"
+check "#453 cell D: no .background falls back to the grep" "$(IDLE_S=0 WATCH_TICK=0.1 timeout 3 bash "$here/watch-panes.sh" "$wd" 2>/dev/null | cut -d' ' -f1)" ""
+t kill-window -t "$wd"; rm -f "$KLEPSYDRA_DIR/fleet/$SID.json"
 
 echo "two accounts: the second folder follows the first"
 src=$work/sync-src dst=$work/sync-dst

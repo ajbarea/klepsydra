@@ -3,17 +3,22 @@
 Brief: https://github.com/ajbarea/klepsydra/issues/453
 
 ## Slice
-1. In `fleet/watch-panes.sh`, replace the fragile screen-text grep for "still running" with `turn_settled "$p"` from `fleet/lib.sh`, which reads the session JSON's `.background` entries.
-2. Add two tests to `fleet/test_fleet.sh`: an idle pane with a running background shell (no wake), and the same pane after the shell ends (wakes after IDLE_S).
+1. In `fleet/lib.sh`, add `pane_background` helper mirroring `view.rs`: ignore entries older than `BACKGROUND_STALE_AFTER` (3600s), cap shells by `shells_live`. With no file, two files for the pane, or no `.background` key, fail so caller falls back to screen grep.
+2. In `fleet/watch-panes.sh`, place the done-line check before scanning session files on `/mnt/c`, and keep the screen grep OR'd with `pane_background`.
+3. Make watcher wakes diagnosable: on wake, log reason, pane, and last 3 non-empty screen lines (joined by `~`).
+4. Add tests covering all 5 cells in `fleet/test_fleet.sh`: (A) stale 2-hour entry with `shells_live: 0` wakes; (B) two live files falls back to grep; (C) no file falls back to grep; (D) no `.background` falls back to grep; plus the shell-running case (holds while shell running, wakes after exit). Verify diagnosable wake log.
 
 ## Done
-- Replaced screen-text grep (`'still running|Waiting for [0-9]+ background'`) with `turn_settled "$p"` on line 104 of `watch-panes.sh`. DRY: reuses the existing function that checks `.background | length > 0` in the session JSON.
-- Added two test cases after the #246 watcher section in `test_fleet.sh`: one verifying the watcher stays watching while a background shell runs, one verifying it wakes once the shell ends.
+- Added `pane_background` in `fleet/lib.sh` without altering `turn_settled`.
+- Updated `fleet/watch-panes.sh`: fast done-line check runs before session file lookup; screen grep is kept and OR'd with `pane_background`; on wake, logs reason, pane, and last 3 screen lines.
+- Added test cases in `fleet/test_fleet.sh` with footer text in fixtures for all cells (A, B, C, D, and shell-running), each verified to fail under its respective reversion.
+- Verified shellcheck clean on `fleet/watch-panes.sh`, `fleet/lib.sh`, `fleet/test_fleet.sh`.
 
 ## Next
-- Run `make test-fleet` and `make shellcheck` to confirm.
-- Commit, push, open PR.
+- Commit and push to `fix/watcher-busy-shell-453`.
+- Update PR #457 description to use `Refs #453` and describe the exact changes without guessing root causes.
+- Wait for CI green with one background wait.
+- Send one-line report to orchestrator pane with `fleet send` and stop.
 
 ## Verify
-- `make test-fleet` passes (including the new #453 checks).
-- `make shellcheck` clean.
+- GitHub Actions CI pipeline passes all checks.

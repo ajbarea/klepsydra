@@ -1000,6 +1000,34 @@ turn_settled() { # PANE
     and ((.background // []) | length) > 0' "$KLEPSYDRA_DIR/fleet/$sid.json" >/dev/null 2>&1
 }
 
+# Whether PANE runs active background work (view.rs: Crew), bounded by
+# BACKGROUND_STALE_AFTER (3600 s) and capped by shells_live. Fails when the
+# pane has no unique live session file or the file has no .background key, so
+# callers fall back to screen grep.
+pane_background() { # PANE [NOW]
+  local sid f now=${2:-$(date +%s)}
+  sid=$(live_session "$1") || return 1
+  f=$KLEPSYDRA_DIR/fleet/$sid.json
+  [[ -f $f && ! -L $f ]] || return 1
+  jq -e --argjson now "$now" '
+    select(has("background") and (.background | type == "array"))
+    | . as $root
+    | (reduce .background[] as $b ({agents: 0, shells: 0, tasks: 0};
+        ($b.at // $now) as $at
+        | if ($now - $at >= -60 and $now - $at <= 3600) then
+            if $b.kind == "agent" then .agents += 1
+            elif $b.kind == "shell" then .shells += 1
+            else .tasks += 1
+            end
+          else .
+          end
+      )) as $crew
+    | ($root.shells_live) as $live
+    | (if ($live | type == "number") then ([$crew.shells, $live] | min) else $crew.shells end) as $shells
+    | select(($crew.agents + $shells + $crew.tasks) > 0)
+  ' "$f" >/dev/null 2>&1
+}
+
 # Whether the orchestrator in PANE has finished its turn with only pane
 # watchers (watch-panes.sh) in the background: a successor starts them again,
 # so they never hold a move back (#215). Prints its stamp, as turn_done does.
