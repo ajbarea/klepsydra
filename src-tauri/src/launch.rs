@@ -5,15 +5,17 @@
 use std::collections::HashSet;
 use std::sync::Mutex;
 use std::time::Duration;
-#[cfg(any(windows, test))]
 use std::time::Instant;
 
 use serde_json::Value;
 use tauri::Manager;
 
-/// The only program klepsydra starts.
+/// The only program klepsydra starts on Windows.
 #[cfg_attr(not(windows), allow(dead_code))]
 pub const WSL_EXE: &str = r"C:\Windows\System32\wsl.exe";
+/// The shell used on Linux to run scripts.
+#[cfg_attr(windows, allow(dead_code))]
+pub const LINUX_EXE: &str = "/bin/bash";
 /// The launcher, relative to the WSL home (`--cd ~`).
 const SCRIPT: &str = ".claude/klepsydra-launch.sh";
 /// Longest wait for wsl.exe to finish: a cold WSL start alone can take 20 s.
@@ -27,7 +29,6 @@ const VOICES_TIMEOUT: Duration = Duration::from_secs(300);
 const JUMP_TIMEOUT: Duration = Duration::from_secs(15);
 /// How long the output is still read once wsl.exe exits; a process it left
 /// behind holding the pipe open cannot keep the call running past this.
-#[cfg(windows)]
 const DRAIN_GRACE: Duration = Duration::from_secs(2);
 
 /// Set while a New session runs; another meanwhile is refused.
@@ -294,7 +295,6 @@ const PANE_BUSY: &str = "That session is already being ended or interrupted.";
 pub const JUMP_BUSY: &str = "That session is already being brought forward.";
 
 /// wsl.exe writes its own messages as UTF-16LE and the Linux side's as UTF-8.
-#[cfg(any(windows, test))]
 fn decode(b: &[u8]) -> String {
     let utf16 =
         b.len() >= 2 && b.len().is_multiple_of(2) && b.iter().skip(1).step_by(2).all(|&x| x == 0);
@@ -312,7 +312,6 @@ fn decode(b: &[u8]) -> String {
 }
 
 /// The last non-blank line of `text`.
-#[cfg(any(windows, test))]
 fn last_line(text: &str) -> String {
     text.lines()
         .map(str::trim)
@@ -322,23 +321,19 @@ fn last_line(text: &str) -> String {
 }
 
 /// The last non-blank line, capped at 200 characters for error messages.
-#[cfg(any(windows, test))]
 fn error_line(text: &str) -> String {
     last_line(text).chars().take(200).collect()
 }
 
 /// Most output kept from each stream.
-#[cfg(any(windows, test))]
 const KEEP: usize = 64 * 1024;
 
 /// A stream being read on its own thread.
-#[cfg(any(windows, test))]
 struct Drain {
     kept: std::sync::Arc<Mutex<Vec<u8>>>,
     done: std::sync::mpsc::Receiver<()>,
 }
 
-#[cfg(any(windows, test))]
 impl Drain {
     /// What was read, once the stream ends or at `deadline`, whichever is
     /// first; a stream still open then is left to its thread.
@@ -353,7 +348,6 @@ impl Drain {
 
 /// Read `r` to its end on a thread, keeping the last `KEEP` bytes, so a full
 /// pipe never stalls the child.
-#[cfg(any(windows, test))]
 fn drain<R: std::io::Read + Send + 'static>(mut r: R) -> Drain {
     let kept = std::sync::Arc::new(Mutex::new(Vec::new()));
     let (tx, done) = std::sync::mpsc::channel();
@@ -501,8 +495,70 @@ fn run(args: &[String], wait: Duration, timed_out: fn() -> String) -> Result<Str
 }
 
 #[cfg(not(windows))]
-fn run(_args: &[String], _wait: Duration, _timed_out: fn() -> String) -> Result<String, String> {
-    Err("Starting a session works on Windows only.".into())
+fn run(args: &[String], wait: Duration, timed_out: fn() -> String) -> Result<String, String> {
+    use std::process::{Command, Stdio};
+
+    let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
+    let script_path = format!("{home}/{SCRIPT}");
+
+    let mut cmd = Command::new(LINUX_EXE);
+
+    if let Some(exp_pos) = args.iter().position(|a| a == "explorer.exe") {
+        if let Some(cd_pos) = args.iter().position(|a| a == "-C") {
+            let dir = args.get(cd_pos + 1).map(String::as_str).unwrap_or(".");
+            cmd.arg(&script_path).args(["folder", dir]);
+        } else {
+            let url = args.get(exp_pos + 1).map(String::as_str).unwrap_or("");
+            cmd.arg(&script_path).args(["github", url]);
+        }
+    } else if let Some(pos) = args.iter().position(|a| a == SCRIPT) {
+        if args[..pos].iter().any(|a| a == "-l") {
+            cmd.arg("-l");
+        }
+        cmd.arg(&script_path);
+        cmd.args(&args[pos + 1..]);
+    } else {
+        cmd.arg(&script_path);
+        cmd.args(args);
+    }
+
+    cmd.stdin(Stdio::null());
+    cmd.stdout(Stdio::piped());
+    cmd.stderr(Stdio::piped());
+
+    let mut child = cmd
+        .spawn()
+        .map_err(|e| format!("Could not start {LINUX_EXE}: {e}"))?;
+
+    let out = drain(child.stdout.take().ok_or("Process gave no stdout.")?);
+    let err = drain(child.stderr.take().ok_or("Process gave no stderr.")?);
+    let deadline = Instant::now() + wait;
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(50)),
+            Ok(None) => {
+                let _ = child.kill();
+                return Err(timed_out());
+            }
+            Err(e) => return Err(e.to_string()),
+        }
+    };
+    let until = Instant::now() + DRAIN_GRACE;
+    let (stdout_raw, stderr_raw) = (decode(&out.wait(until)), decode(&err.wait(until)));
+    let (stdout, stderr) = (last_line(&stdout_raw), error_line(&stderr_raw));
+    if status.success() {
+        Ok(stdout)
+    } else if stderr.is_empty() {
+        let err = error_line(&stdout_raw);
+        Err(if err.is_empty() {
+            format!("Process exited with {status}.")
+        } else {
+            err
+        })
+    } else {
+        Err(stderr)
+    }
 }
 
 /// Bring session `id`'s tmux window, `t`, to the front of its tmux session.

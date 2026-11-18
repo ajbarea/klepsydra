@@ -61,11 +61,30 @@ take_lock() { # [what to say when another holds it for 10 s]
   flock -w 10 "$LOCKFD" || fail "${1:-Another launch is still running.}"
 }
 
+is_wsl() {
+  [[ -n "${WSL_DISTRO_NAME:-}" ]] && return 0
+  local osrelease=""
+  { read -r osrelease </proc/sys/kernel/osrelease; } 2>/dev/null
+  [[ "$osrelease" == *[Mm]icrosoft* ]]
+}
+
+find_linux_terminal() {
+  local term
+  for term in "${KLEPSYDRA_TERMINAL:-}" xfce4-terminal gnome-terminal konsole kitty alacritty x-terminal-emulator xterm; do
+    [[ -n $term ]] && command -v "$term" >/dev/null 2>&1 && { printf '%s' "$term"; return 0; }
+  done
+  return 1
+}
+
 # Check a tab can be opened, before anything is created.
 tab_preflight() {
-  need "$WT" "wt.exe was not found, so no terminal tab could be opened."
-  [[ ${WSL_DISTRO_NAME:-} =~ ^[A-Za-z0-9._-]{1,64}$ ]] ||
-    fail "WSL_DISTRO_NAME is missing or not usable, so no tab could be opened."
+  if is_wsl; then
+    need "$WT" "wt.exe was not found, so no terminal tab could be opened."
+    [[ ${WSL_DISTRO_NAME:-} =~ ^[A-Za-z0-9._-]{1,64}$ ]] ||
+      fail "WSL_DISTRO_NAME is missing or not usable, so no tab could be opened."
+  else
+    find_linux_terminal >/dev/null || fail "No terminal emulator found (e.g. xfce4-terminal, gnome-terminal, x-terminal-emulator, xterm)."
+  fi
 }
 
 # Set for the fleet's own tab: its title is fixed, so Jump can find it.
@@ -98,13 +117,41 @@ open_tab() { # target tmux-socket-args...
   key="$* $target"
   ATTACHED=0
   tab_pending "$key" && return 0
-  # The lock fd is closed for wt.exe so a tab never outlives the lock; its
-  # stdin is /dev/null, since WSL interop hands stdin to wt.exe, which drains it (#242).
-  "$WT" -w fleet new-tab "${TITLE_ARGS[@]}" wsl.exe -d "$WSL_DISTRO_NAME" -e tmux "$@" attach -t "$target" \
-    </dev/null >/dev/null 2>&1 {LOCKFD}>&- || {
-    undo
-    fail "Windows Terminal did not open a tab."
-  }
+  if is_wsl; then
+    # The lock fd is closed for wt.exe so a tab never outlives the lock; its
+    # stdin is /dev/null, since WSL interop hands stdin to wt.exe, which drains it (#242).
+    "$WT" -w fleet new-tab "${TITLE_ARGS[@]}" wsl.exe -d "$WSL_DISTRO_NAME" -e tmux "$@" attach -t "$target" \
+      </dev/null >/dev/null 2>&1 {LOCKFD}>&- || {
+      undo
+      fail "Windows Terminal did not open a tab."
+    }
+  else
+    local term title="${TITLE_ARGS[1]:-$TAB_TITLE}"
+    term=$(find_linux_terminal) || { undo; fail "No terminal emulator found."; }
+    case "$term" in
+      *xfce4-terminal*)
+        "$term" --disable-server -T "$title" -x tmux "$@" attach -t "$target" </dev/null >/dev/null 2>&1 {LOCKFD}>&- &
+        ;;
+      *gnome-terminal*)
+        "$term" --tab --title="$title" -- tmux "$@" attach -t "$target" </dev/null >/dev/null 2>&1 {LOCKFD}>&- &
+        ;;
+      *konsole*)
+        "$term" --new-tab -p tabtitle="$title" -e tmux "$@" attach -t "$target" </dev/null >/dev/null 2>&1 {LOCKFD}>&- &
+        ;;
+      *kitty*)
+        "$term" -T "$title" tmux "$@" attach -t "$target" </dev/null >/dev/null 2>&1 {LOCKFD}>&- &
+        ;;
+      *alacritty*)
+        "$term" -T "$title" -e tmux "$@" attach -t "$target" </dev/null >/dev/null 2>&1 {LOCKFD}>&- &
+        ;;
+      *)
+        "$term" -T "$title" -e tmux "$@" attach -t "$target" </dev/null >/dev/null 2>&1 {LOCKFD}>&- &
+        ;;
+    esac || {
+      undo
+      fail "$term did not open a tab."
+    }
+  fi
   if [[ ! -e $PENDING && ! -L $PENDING ]] || stamp_usable; then
     { printf '%(%s)T %s\n' -1 "$key" >"$PENDING"; } 2>/dev/null
   fi
@@ -340,7 +387,15 @@ jump() { # socket pane pid start
   { tmux "${t[@]}" select-window -t "$pane" && tmux "${t[@]}" select-pane -t "$pane"; } 2>/dev/null ||
     fail "tmux could not select the window."
   # An attached tab needs no lock; one missing is checked again under it.
-  has_client "=$session" "${t[@]}" && { printf "Selected the session's tmux window.\n"; return 0; }
+  if has_client "=$session" "${t[@]}"; then
+    if ! is_wsl && command -v xdotool >/dev/null 2>&1; then
+      local wid
+      wid=$(xdotool search --name "$TAB_TITLE" 2>/dev/null | head -n1)
+      [[ -n $wid ]] && xdotool windowactivate "$wid" 2>/dev/null || true
+    fi
+    printf "Selected the session's tmux window.\n"
+    return 0
+  fi
   take_lock "Selected the session's tmux window, but another click is still opening a terminal tab. Try again."
   if ! has_client "=$session" "${t[@]}"; then
     tab_preflight
@@ -507,12 +562,39 @@ voices() {
   "$fleet" voices || fail "fleet voices failed; see fleet log."
 }
 
+folder() { # dir
+  local dir=$1
+  # shellcheck disable=SC2088 # a literal ~/ from the overlay
+  case $dir in
+    "~") dir=$HOME ;;
+    "~/"*) dir=$HOME/${dir#"~/"} ;;
+  esac
+  [[ -d $dir ]] || fail "The folder $dir does not exist."
+  if is_wsl; then
+    explorer.exe "$dir" 2>/dev/null || true
+  elif command -v xdg-open >/dev/null 2>&1; then
+    xdg-open "$dir" </dev/null >/dev/null 2>&1 &
+  fi
+}
+
+github() { # url
+  local url=$1
+  [[ $url == https://github.com/* ]] || fail "That is not a GitHub URL."
+  if is_wsl; then
+    explorer.exe "$url" 2>/dev/null || true
+  elif command -v xdg-open >/dev/null 2>&1; then
+    xdg-open "$url" </dev/null >/dev/null 2>&1 &
+  fi
+}
+
 case ${1:-} in
   new)
     if (( $# == 4 )) && [[ $3 == agy ]]; then new "$2" agy "$4"
     else (( $# == 2 )) || fail "usage: klepsydra-launch.sh new DIR [agy MODEL]"; new "$2"; fi ;;
   models) (( $# == 1 )) || fail "usage: klepsydra-launch.sh models"; models ;;
   voices) (( $# == 1 )) || fail "usage: klepsydra-launch.sh voices"; voices ;;
+  folder) (( $# == 2 )) || fail "usage: klepsydra-launch.sh folder DIR"; folder "$2" ;;
+  github) (( $# == 2 )) || fail "usage: klepsydra-launch.sh github URL"; github "$2" ;;
   jump) (( $# == 5 )) || fail "usage: klepsydra-launch.sh jump SOCKET PANE PID START"; jump "$2" "$3" "$4" "$5" ;;
   end) (( $# == 5 )) || fail "usage: klepsydra-launch.sh end SOCKET PANE PID START"; end_session "$2" "$3" "$4" "$5" ;;
   wrapup) (( $# == 5 )) || fail "usage: klepsydra-launch.sh wrapup SOCKET PANE PID START"; wrapup "$2" "$3" "$4" "$5" ;;

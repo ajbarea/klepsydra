@@ -10,9 +10,10 @@ const FIXTURE = readFileSync(new URL("../scripts/fixtures/queue-demo.md", import
  * nor the GC helper threads count.
  */
 function cpuMs(f) {
-  const start = process.threadCpuUsage();
+  const usage = process.threadCpuUsage ? (arg) => process.threadCpuUsage(arg) : (arg) => process.cpuUsage(arg);
+  const start = usage();
   f();
-  const { user, system } = process.threadCpuUsage(start);
+  const { user, system } = usage(start);
   return (user + system) / 1000;
 }
 
