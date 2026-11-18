@@ -98,9 +98,9 @@ while :; do
     # A usage limit wakes the orchestrator too; the resume service restarts the
     # pane, unless its agent ran `fleet done`.
     if limit=$(pane_limited "$p" "$s"); then
-      screen3=$(grep -v '^[[:space:]]*$' <<<"$ps" | tail -3 | paste -sd '~' -)
-      flog INFO "watched pane limited" pane="$p" reason="limit" message="${limit#*$'\t'}" reset_at="${limit%%$'\t'*}" screen="$screen3"
-      echo "LIMIT $p $(reset_label "${limit%%$'\t'*}" "${limit#*$'\t'}")"; exit 0
+      limit_line=${limit#*$'\t'}
+      flog INFO "watched pane limited" pane="$p" reason="limit" message="$limit_line" reset_at="${limit%%$'\t'*}" screen="$limit_line"
+      echo "LIMIT $p $(reset_label "${limit%%$'\t'*}" "$limit_line")"; exit 0
     fi
     if busy "$s" || ! grep -q 'done [0-9]\{1,2\}:[0-9][0-9] [AP]M' <<<"$ps"; then
       unset "since[$p]"; continue
@@ -111,8 +111,8 @@ while :; do
     : "${since[$p]:=$now}"
     if (( now - since[$p] >= IDLE_S )); then
       done_at=$(grep -o 'done [0-9:]* [AP]M' <<<"$ps" | tail -1)
-      screen3=$(grep -v '^[[:space:]]*$' <<<"$ps" | tail -3 | paste -sd '~' -)
-      flog INFO "watched pane idle" pane="$p" reason="idle" since="$done_at" screen="$screen3"
+      decided=$( { grep 'done [0-9]\{1,2\}:[0-9][0-9] [AP]M' <<<"$ps" | tail -1; grep -E 'still running|Waiting for [0-9]+ background' <<<"$ps"; } | paste -sd '~' - )
+      flog INFO "watched pane idle" pane="$p" reason="idle" since="$done_at" screen="$decided"
       echo "IDLE $p $done_at"; exit 0
     fi
   done
