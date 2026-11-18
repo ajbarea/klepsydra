@@ -546,9 +546,8 @@ the right. Each card shows:
   `reply_clips`, on by default). It plays the session's latest spoken reply on
   this machine, one card at a time; press it again to stop. keryx writes the
   clip to `replies/<session id>.wav` beside the fleet folder;
-- an icon for the model's maker, with the engine and model on hover, a chip naming
-  the engine a task was delegated to with `fleet delegate`, and an account chip
-  while live cards run on more than one account;
+- an icon for the model's maker, with the engine and model on hover, and an
+  account chip while live cards run on more than one account;
 - a chip counting the tool calls a guardrail turned down, when there are any.
 
 Each card wears its character's colour: its edge, the line under its header,
@@ -1415,13 +1414,13 @@ routed once it has its cause or has waited 30 minutes. A live fleet agent on
 that PR's branch gets it in its inbox; otherwise Heph gets a line in
 `ci/alerts.jsonl`. A run still red 30 minutes later gets one line under "Needs
 you" in the file `FLEET_QUEUE` names. The watcher pushes, merges and re-runs
-nothing, and a repo it cannot read is skipped for the pass and logged.
+nothing.
 
 It writes `ci.json` to the app data folder. The wall and the phone show it as
 a **CI** button in the bar: hidden while every repo is green, `CI ok` with
 Dependabot runs kept for the morning, red with a count when a run is red, and
-`CI ?` after 15 minutes without a report. The button opens the red runs: repo,
-workflow, branch or PR, failing step, triaged cause and the run on GitHub. The
+`CI ?` after 15 minutes without a report. The button lists each red run with its
+failing step, triaged cause and GitHub link. The
 app reads the file capped, cuts each text to 300 characters and keeps a link
 only when it is a GitHub Actions run, so a local path never reaches the phone.
 

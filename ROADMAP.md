@@ -38,8 +38,9 @@ session that stops answering reads as silent, never as working.
   #378); the tray's Voices tick follows keryx (#376); the Playwright MCP browser
   is closed when an agent is done (#381); the briefing mirrors to Google Drive
   (#382).
+- 2026-11-11: the engines playbook records what each engine is good for (#352).
 - 2026-11-10: `fleet delegate` hands read-only work to locked agy and Copilot
-  lanes (#323, #340); the engines playbook records what each is good for (#352).
+  lanes (#323, #340).
 - 2026-11-06: `+ New session` starts Antigravity (agy) sessions too (#332).
 - 2026-11-03: `fleet doctor` gives one verdict per agent (#261); every scope
   gets its own task cap and heavy runs take the heavy lock (#291).

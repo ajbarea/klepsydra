@@ -41,7 +41,7 @@ briefs, logs) stays in the state folder.
 | `fleet/resume-at-reset.sh` | The resume service. It resumes a limited pane at its reset (the account's `resets_at` for the hook's StopFailure record, else the time its banner names), or at once after a switch to an account with room; the orchestrator too, who moves to the other account as a fresh session from `HEPH.md` when that one has room. It starts a registered pane fresh from its brief after 55 minutes idle (`FRESH_AFTER_S`, 3300), before its prompt cache expires. A worker on another account moves back to its preferred one once that has 50% room. A worker whose account has used 95% of a window moves to one with room at its next finished turn. Idle panes get `/remote-control`, and a CI alert in an agent's inbox is typed in at its next idle, empty prompt. Whatever AJ typed at a limited pane is sent as typed; a line that left the prompt unsent is typed again. Each pane's state survives a restart of the service. Each pass also closes a Playwright MCP browser whose MCP server is gone (`klepsydra-browser.sh --reap`): TERM, then KILL at a pass at least `FLEET_BROWSER_GRACE_S` (10) later, each logged. |
 
 Every shell script logs each decision as one JSON line in `log/fleet.log` under the
-state folder (the CI watch writes `log/ci.log` and `fleet shots` writes `shots.log`), in the app log's shape (`ts`, `level`, `target`, `message`, then
+state folder (the CI watch writes `log/ci.log` and `fleet shots` writes `log/shots.log`), in the app log's shape (`ts`, `level`, `target`, `message`, then
 the event's own fields: pane, account, reason). The file rotates past 1 MiB
 and keeps four old files. `jq 'select(.level == "ERROR")'` lists failures.
 
