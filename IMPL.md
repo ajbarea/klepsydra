@@ -1,22 +1,20 @@
 # IMPL: docsync 11-18 (branch docs/docsync-1118)
 
-Full docsync of klepsydra against main (f77deb4). PRs #454, #457, #458 are not described.
+Full docsync of klepsydra against main (7a5c161). PRs #454, #457, #458 are not described.
 
 ## Slice
-README.md, AGENTS.md, ROADMAP.md, docs/engines.md, docs/headless.md, docs/characters, fleet/*.md, hooks/*.md,
-.claude/skill-context.md, CITATION.cff, GitHub About. No docs site (no zensical.toml): docs-site checks N/A.
+README.md, AGENTS.md, ROADMAP.md, docs/*.md, docs/characters, fleet/*.md, hooks/*.md,
+.claude/skill-context.md, CITATION.cff, GitHub About. No docs site (no zensical.toml).
 
 ## Done
-- README: both halves audited and fixed (Install, tray menu, wall bar, card density, CI watch, Fleet engine table, Tests).
-- Silent surfaces added: agy sessions and menu, subscription-only launch, engine badge, gauge groups and Route badge, timers.
-- AGENTS.md, skill-context.md, CITATION.cff, engines.md, ROADMAP Completed log updated.
-- doctor.sh hint now names the real README section. GitHub description and topics updated.
-- headless.md, portrait-briefs.md, fleet and hooks md files: checked, no drift.
-- node lint, link check, hooks/test_fleet.sh (606 pass), shellcheck on fleet/doctor.sh pass. Whole-tree `make shellcheck` was killed (137) twice under the memory cap; CI runs it.
+- Docsync of every file (commits a497e72, b819f2e); PR #465 closes #464.
+- README Fleet engine and CI watch detail moved to docs/fleet.md and docs/ci-watch.md; both sections under budget.
+- Heph review round 1 (not clean, no Blocking): all 7 items fixed in one commit. Dead delegate chip reader filed as #469.
+- Rebased on origin/main 7a5c161.
 
-## Verify (state at wrap-up)
-PR #465 (closes #464): Rust x2 and GitGuardian pass; `Gauge logic + statusLine hook` was still pending. Check with `gh pr checks 465`.
+## Verify
+lint, link check (21 files), shellcheck on fleet/fleet, fleet/install.sh pass. Whole-tree `make shellcheck`
+OOM-killed (137) again; CI runs it. CI on the pushed head: `gh pr checks 465`.
 
 ## Next
-When CI is green: report to Heph and run `fleet done`. Do not merge.
-Review the PR; unresolved items are listed in the PR details. `make test-engine` is not run by CI.
+CI green: report round 1 to Heph (`fleet send`), then `fleet done`. Do not merge. Docs cap: 3 review rounds.
