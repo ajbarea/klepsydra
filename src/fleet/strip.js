@@ -62,6 +62,11 @@ export function mountStrip(el, { open, cast }) {
       b.title = item.label;
       b.firstChild.hidden = !item.face;
       if (item.face) showFace(b.firstChild, item.face, item.face2x, px);
+      else {
+        // The keeper's face leaves with the keeper.
+        b.firstChild.removeAttribute("src");
+        b.firstChild.srcset = "";
+      }
       b.classList.toggle("rest", item.status.startsWith("rest"));
       if (b.dataset.status !== item.status || b.dataset.quiet !== String(item.quiet)) {
         b.dataset.status = item.status;

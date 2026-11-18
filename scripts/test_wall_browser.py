@@ -5209,6 +5209,58 @@ def theme_file_that_never_answers(wall):
     page.close()
 
 
+STRIP_KEEPER = """
+async () => {
+  const { mountStrip } = await import('/src/fleet/strip.js');
+  const { loadTheme } = await import('/src/fleet/theme.js');
+  const old = document.getElementById('strip');
+  const el = old.cloneNode(false);
+  el.hidden = true;
+  old.replaceWith(el);
+  let cast = await loadTheme('professions');
+  const render = mountStrip(el, { open() {}, cast: () => cast });
+  window.__strip = { el, render, set: (c) => { cast = c; render([], Date.now()); }, bare: { ...cast, keeper: null } };
+  render([], Date.now());
+}
+"""
+STRIP_BOX = """() => {
+  const b = document.querySelector('#strip .face.rest'), i = b.querySelector('img'), g = b.querySelector('.glyph');
+  const box = (e) => { const r = e.getBoundingClientRect(), c = getComputedStyle(e); return { w: r.width, h: r.height, display: c.display, cx: r.left + r.width / 2, cy: r.top + r.height / 2 }; };
+  return { button: box(b), img: box(i), src: i.getAttribute('src'), glyph: g && box(g) };
+}"""
+
+
+def strip_keeper_states(wall):
+    """With no sessions the gauge strip is one button: the keeper's face, and for
+    a theme with no keeper a plain wall mark that sits centred with no image
+    sliver (badge.css's `.face img { display: block }` once beat [hidden]), also
+    after a switch from a keeper, whose face must be gone."""
+    page = wall.browser.new_page(viewport={"width": 1200, "height": 400})
+    page.goto(f"http://127.0.0.1:{wall.port}/src/index.html?still=1&zoom=3&theme=professions")
+    page.wait_for_selector("#rows > *")
+    page.evaluate(STRIP_KEEPER)
+    page.wait_for_selector("#strip .face.rest img[src]")
+    got = page.evaluate(STRIP_BOX)
+    wall.check(got["img"]["display"] == "block" and got["img"]["w"] > 20 and not got["glyph"], "the keeper's face fills its button", got)
+    shot = pathlib.Path(os.environ["STRIP_SHOTS"]) if os.environ.get("STRIP_SHOTS") else None
+    if shot:
+        page.locator("#strip").screenshot(path=str(shot / "keeper-strip-browser-keeper.png"))
+    page.evaluate("window.__strip.set(window.__strip.bare)")
+    got = page.evaluate(STRIP_BOX)
+    centred = abs(got["glyph"]["cx"] - got["button"]["cx"]) < 1 and abs(got["glyph"]["cy"] - got["button"]["cy"]) < 1 if got["glyph"] else False
+    ok = got["img"]["display"] == "none" and got["src"] is None and got["glyph"] and abs(got["glyph"]["w"] - got["glyph"]["h"]) < 1 and centred
+    wall.check(ok, "switching to a theme with no keeper leaves a centred wall mark, no face and no image", got)
+    if shot:
+        page.locator("#strip").screenshot(path=str(shot / "keeper-strip-browser-switched-plain.png"))
+    page.evaluate("window.__strip.el.replaceChildren(); window.__strip.render([], Date.now())")
+    got = page.evaluate(STRIP_BOX)
+    centred = abs(got["glyph"]["cx"] - got["button"]["cx"]) < 1 and abs(got["glyph"]["cy"] - got["button"]["cy"]) < 1 if got["glyph"] else False
+    wall.check(got["img"]["display"] == "none" and got["glyph"] and centred, "a fresh plain button draws the same", got)
+    if shot:
+        page.locator("#strip").screenshot(path=str(shot / "keeper-strip-browser-fresh-plain.png"))
+    page.close()
+
+
 def theme_switch_commits_only_what_it_wore(wall):
     """A theme whose file fails to load is never worn, saved or sent: the
     wall keeps its theme, the picker goes back and the note says why. The
@@ -5555,6 +5607,7 @@ def main() -> int:
             theme_save_flushes_and_says_when_refused,
             theme_first_paint,
             strip_first_paint,
+            strip_keeper_states,
             theme_switch_commits_only_what_it_wore,
             theme_stale_load_leaves_the_choice,
             theme_file_that_never_answers,

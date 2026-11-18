@@ -20,6 +20,7 @@ class El {
       toggle: (c, on) => (on ? this.classes.add(c) : this.classes.delete(c)),
     };
   }
+  removeAttribute(k) { delete this.attrs[k]; delete this.src; }
   get firstChild() { return this.children[0]; }
   get lastChild() { return this.children.at(-1); }
   append(...kids) { kids.forEach((k) => this.insertBefore(k, null)); }
@@ -227,6 +228,7 @@ test("a theme switch turns the keeper's face and the plain button into each othe
   render([], NOW);
   assert.equal(el.children[0], b);
   assert.equal(b.firstChild.hidden, true);
+  assert.equal(b.firstChild.src, undefined, "the keeper's face is gone, not just hidden");
   assert.match(b.lastChild.innerHTML, /glyph/);
   cast = KEEPER;
   render([], NOW);
