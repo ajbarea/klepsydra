@@ -86,6 +86,8 @@ files belong to: the JS guards scan hooks and scripts too.
 - `python3 -I fleet/test_prune_shots.py`: the briefing's screenshot prune against a fake gh.
 - `python3 -I scripts/perf/test_fixture.py`: the perf harness's demo fleet
   writes only files it owns and no future times.
+- `make test-engine` (no tmux, no lock): the agy and Copilot hook adapters in `hooks/klepsydra-engine.sh`; CI does not run it.
+- `bash hooks/test_browser.sh`: the SessionEnd hook that closes the Playwright MCP browsers a session left open (#379).
 - `bash hooks/test_wrapup.sh`: the wrap-up Stop hook (silent unless a live
   request is unasked, never blocks a stop, fails open) and its reporter.
 - `make test-launch` (takes the heavy lock itself: run it bare): the tmux launcher against a private tmux server
@@ -215,6 +217,7 @@ files belong to: the JS guards scan hooks and scripts too.
 
 ## docs_site
 
-- none. Documentation is `README.md`, `ROADMAP.md`, and `IMPL.md` at the root;
-  there is no Zensical site, no `docs/` tree, and no Pages deploy. The docs-site
-  dimension of any audit is N/A here.
+- none. Documentation is `README.md`, `ROADMAP.md` and `IMPL.md` at the root,
+  plus `docs/` (`engines.md`, `headless.md`, `characters/`, `perf/`,
+  `superpowers/`). There is no Zensical site, no `zensical.toml` and no Pages
+  deploy, so the docs-site dimension of any audit is N/A here.

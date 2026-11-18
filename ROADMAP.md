@@ -29,6 +29,25 @@ session that stops answering reads as silent, never as working.
   as an atomic replace refused when the file changed since it was read.
 
 ## Completed
+- 2026-11-16: Working cards show the latest thing the agent said mid-turn
+  (#410); agy sessions reach the wall with full parity and a usage dashboard
+  (#396, #397, #404); a card's character sets the session's voice at launch
+  (#395); the wall gets living backdrops (#394).
+- 2026-11-14: `fleet headless` runs queue jobs on API credit and sees each job
+  to its end, while interactive sessions stay on the subscription (#260, #375,
+  #378); the tray's Voices tick follows keryx (#376); the Playwright MCP browser
+  is closed when an agent is done (#381); the briefing mirrors to Google Drive
+  (#382).
+- 2026-11-10: `fleet delegate` hands read-only work to locked agy and Copilot
+  lanes (#323, #340); the engines playbook records what each is good for (#352).
+- 2026-11-06: `+ New session` starts Antigravity (agy) sessions too (#332).
+- 2026-11-03: `fleet doctor` gives one verdict per agent (#261); every scope
+  gets its own task cap and heavy runs take the heavy lock (#291).
+- 2026-10-29: The fleet engine lives here: tested scripts, typed lines never
+  lost, doctor, briefs (#161); two accounts at once, moves at a limit (#165);
+  CI watch triages red runs onto the wall and phone (#164).
+- 2026-10-28: Character themes (Kourai, Professions, DiceBear) as data (#137);
+  one JSON-lines log for the shell and the pages (#145).
 - 2026-10-26: Slop audit of everything merged since 10-23 (#96): comments,
   docstrings and docs prose in 79 files checked against the code, behaviour
   unchanged; claims about mark_asked, failed typings and End ready corrected.

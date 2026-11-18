@@ -121,8 +121,10 @@ claim against the code, the lexicon or the row before you edit anything.
 | Follow-up | none (start another call) | `fleet delegate msg ID TEXT` |
 | Stop | timeout, or it ends | `fleet delegate stop ID` |
 
-State lives in `$FLEET_STATE/delegate/<id>/` (`meta.json`, `answer.md`, the
-engine's stderr, the lane's settings and last screen). Each call writes one
+`fleet delegate ls` lists the lanes and their state, and `fleet delegate read ID`
+prints a lane's latest answer. State lives in `$FLEET_STATE/delegate/<id>/`
+(`meta.json`, `answer.md`, the engine's stderr, the lane's settings and last
+screen). Each call writes one
 `delegate call` line to the fleet log (`fleet log`).
 
 ## The return path: the model never needs write or shell access
@@ -230,7 +232,9 @@ Guard mutants, first sweep (`test_delegate.sh`, 16 hand mutants: each Copilot fl
 
 `hooks/klepsydra-engine.sh` converts agy and Copilot hook payloads to the Claude Code event shape consumed by `hooks/klepsydra-fleet.sh`: session-file creation, state transitions and lifecycle handling therefore remain shared across harnesses. It also stamps `engine: "agy"` or `engine: "copilot"` into the session file so the wall cards display the engine badge.
 
-The agy configuration in `hooks/klepsydra-agy.json` registers `SessionStart`, `PreInvocation`, `PreToolUse`, `PostToolUse`, and `Stop` to feed `klepsydra-engine.sh`.
+The agy configuration in `hooks/klepsydra-agy.json` registers `SessionStart`, `PreInvocation`, `PreToolUse`, `PostToolUse`, and `Stop` to feed `klepsydra-engine.sh`. `fleet install` merges it into `~/.gemini/config/hooks.json`. The adapter also maps Copilot's `sessionStart`, `userPromptSubmitted`, `preToolUse`, `postToolUse`, `agentStop` and `sessionEnd`. Nothing in this repo registers those.
+
+On `PostToolUse`, the fleet hook (and, for agy, the adapter) also keeps the newest thing the agent said as `said`, so a working card shows it until the turn's reply replaces it (#410).
 
 ## Snapshot path rewriting and auto-deny handling
 
