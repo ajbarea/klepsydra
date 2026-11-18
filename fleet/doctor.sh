@@ -508,7 +508,9 @@ paused=$(awk -F'\t' '$1 != "" && $1 !~ /^#/ { printf "%s, ", $1 }' "${FLEET_PAUS
 undelivered="" unread="" panes_now=$(fleet_panes)
 while IFS=$'\t' read -r at rname rpane rresult; do
   [[ $at =~ ^[0-9]+$ ]] || continue
-  if [[ $rresult != sent && $rresult != queued ]]; then
+  if [[ $rresult == pending ]] && (( now - at <= 300 )); then
+    : # its send is still running
+  elif [[ $rresult != sent && $rresult != queued ]]; then
     undelivered+="$rname ($rresult), "
   elif (( now - at > ${FLEET_UNREAD_S:-1800} )) && grep -qx -- "$rpane" <<<"$panes_now"; then
     unread+="$rname ($rpane, $(( (now - at) / 60 )) min), "

@@ -19,7 +19,7 @@ real_keryx_config=${HOME}/.config/keryx/config.json
 real_keryx_sum=$(sha256sum "$real_keryx_config" 2>/dev/null | cut -d' ' -f1)
 export KLEPSYDRA_DIR="$work/klepsydra" FLEET_TICK=0.1 FLEET_START_WAIT=4 FLEET_TURN_WAIT=6 FLEET_RC_WAIT=12
 # Never AJ's briefing: `fleet done` writes an undelivered report into this queue file (#445).
-export FLEET_QUEUE="$work/queue.md"
+export FLEET_QUEUE_MD="$work/queue.md"
 mkdir -p "$FLEET_STATE" "$KLEPSYDRA_DIR/accounts/a" "$KLEPSYDRA_DIR/accounts/b"
 # Two config folders, logged out until a case logs one in (accounts a and b).
 export FLEET_DEFAULT_CONFIG="$work/cfg-a" FLEET_DEFAULT_JSON="$work/cfg-a.json" FLEET_ACCOUNTS="$work/cfg-a $work/cfg-b"
@@ -2109,7 +2109,7 @@ rm -f "$FLEET_STATE/finished.tsv"
 t kill-window -t "$p" 2>/dev/null; rm -f "$KLEPSYDRA_DIR/fleet/$SID.json"
 
 echo "fleet done reports the finish; fleet close closes the pane (#445)"
-printf '# Fleet queue\n\n## Running now\nChecked: Tue.\n\n- ✅ **other:** unchanged.\n\n## Next\n1. 📋 later\n' >"$FLEET_QUEUE"
+printf '# Fleet queue\n\n## Running now\nChecked: Tue.\n\n- ✅ **other:** unchanged.\n\n## Next\n1. 📋 later\n' >"$FLEET_QUEUE_MD"
 : >"$FLEET_LOG"; rm -f "$FLEET_STATE/finished.tsv" "$DONE_REPORTS"
 h=$(pane hph '{"above":["idle"],"on_submit":"none"}')
 printf '%s\n' "$h" >"$FLEET_STATE/orchestrator.pane"
@@ -2130,7 +2130,7 @@ out=$(fdone "$w" "PR #7 open, CI green; nothing left" 2>/dev/null); rc=$?
 check "#445: fleet done sends the report to the pane in orchestrator.pane, as fleet send does" \
   "$rc $(grep -c '^SUBMIT wrk1 finished: PR #7 open, CI green; nothing left$' "$work/hph.log") $(tail -1 <<<"$out")" "0 1 report: sent"
 check "#445: the report is kept, unread, until fleet close" "$(cut -f2,3,4 "$DONE_REPORTS")" "wrk1	$w	sent"
-check "#445: a delivered report leaves the queue file alone" "$(grep -c 'report not delivered' "$FLEET_QUEUE")" "0"
+check "#445: a delivered report leaves the queue file alone" "$(grep -c 'report not delivered' "$FLEET_QUEUE_MD")" "0"
 check "#445: the pane stays open for its final report" "$(fleet_panes | grep -cx -- "$w")" "1"
 # A multi-line report goes as one line; "-" reads stdin; NAME form works from any pane.
 w2=$(dpane wrk2)
@@ -2141,20 +2141,47 @@ w3=$(dpane wrk3)
 state hph "{\"above\":[\"work\",\"$LIMIT\"],\"on_submit\":\"none\"}"; settle
 out=$(fdone "$w3" "PR #9 open" 2>&1); rc=$?
 check "#445: a report the orchestrator's pane cannot take (usage limit) is written to the queue file's Running now line" \
-  "$rc $(tail -1 <<<"$out" | cut -c1-40) $(sed -n '/^## Running now/,/^## Next/p' "$FLEET_QUEUE" | grep -c 'wrk3 (fleet done, report not delivered: limited):\*\* PR #9 open (the orchestrator.s pane is at a usage limit')" \
+  "$rc $(tail -1 <<<"$out" | cut -c1-40) $(sed -n '/^## Running now/,/^## Next/p' "$FLEET_QUEUE_MD" | grep -c 'wrk3 (fleet done, report not delivered: limited):\*\* PR #9 open (the orchestrator.s pane is at a usage limit')" \
   "0 report: limited; written to the queue fi 1"
 check "#445: the line sits inside Running now, before its trailing blank line, and nothing else moved" \
-  "$(awk '/^## Running now/ { r = 1 } r' "$FLEET_QUEUE" | sed -n '4,8p' | cut -c1-24 | paste -sd'|')" "- ✅ **other:** unchang|- 📋 **wrk3 (fleet don||## Next|1. 📋 later"
+  "$(awk '/^## Running now/ { r = 1 } r' "$FLEET_QUEUE_MD" | sed -n '4,8p' | sed -E 's/^(- [^*]*\*\*[^ :(]*).*/\1/' | paste -sd'|')" "- ✅ **other|- 📋 **wrk3||## Next|1. 📋 later"
 w4=$(dpane wrk4)
 rm -f "$FLEET_STATE/orchestrator.pane"
 check "#445: with no orchestrator pane the report is written to the queue file" \
-  "$(fdone "$w4" "PR #10 open" 2>&1 | tail -1 | cut -c1-48) $(grep -c 'wrk4 (fleet done, report not delivered: no-orchestrator-pane)' "$FLEET_QUEUE")" "report: no-orchestrator-pane; written to the que 1"
+  "$(fdone "$w4" "PR #10 open" 2>&1 | tail -1 | cut -c1-48) $(grep -c 'wrk4 (fleet done, report not delivered: no-orchestrator-pane)' "$FLEET_QUEUE_MD")" "report: no-orchestrator-pane; written to the que 1"
 w5=$(dpane wrk5)
 printf '%s\n' "$h" >"$FLEET_STATE/orchestrator.pane"; state hph '{"above":["idle"],"on_submit":"none"}'; settle
-chmod 444 "$FLEET_QUEUE"; rm -f "$FLEET_STATE/orchestrator.pane"
+chmod 444 "$FLEET_QUEUE_MD"; rm -f "$FLEET_STATE/orchestrator.pane"
 check "#445: a queue file that cannot be written puts the report on stderr, so it is not lost" \
   "$(fdone "$w5" "PR #11 open" 2>&1 >/dev/null | grep -c 'wrk5 finished: PR #11 open')" "1"
-chmod 644 "$FLEET_QUEUE"
+chmod 644 "$FLEET_QUEUE_MD"
+# Review: the queue file survives concurrent notes and a heading it cannot use.
+cp "$FLEET_QUEUE_MD" "$work/queue.before"
+for n in 1 2 3 4 5 6; do queue_note "cc$n" limited "rep$n" & done; wait
+check "#445 review: six reports at once all land in Running now, and the rest of the file is as it was" \
+  "$(grep -c 'cc[1-6] (fleet done' "$FLEET_QUEUE_MD") $(grep -vc 'cc[1-6] (fleet done' "$FLEET_QUEUE_MD") $(wc -l <"$work/queue.before") $(find "$(dirname "$FLEET_QUEUE_MD")" -name 'queue.md.*' | wc -l)" "6 $(( $(wc -l <"$work/queue.before") )) $(wc -l <"$work/queue.before") 0"
+printf '# Q\n## Next\n1. x\n' >"$work/q2.md"; cp "$work/q2.md" "$work/q2.before"
+check "#445 review: a queue file with no Running now heading is left byte for byte as it was (the note fails)" \
+  "$(FLEET_QUEUE_MD="$work/q2.md" queue_note a limited b; echo $?) $(cmp -s "$work/q2.md" "$work/q2.before" && echo same)" "1 same"
+printf '## Running now  \r\n- x\r\n\r\n## Next\r\n' >"$work/q3.md"
+check "#445 review: a heading with trailing spaces still takes the note" "$(FLEET_QUEUE_MD="$work/q3.md" queue_note a limited b; echo $?) $(grep -c 'a (fleet done' "$work/q3.md")" "0 1"
+chmod 640 "$work/q3.md"; FLEET_QUEUE_MD="$work/q3.md" queue_note c limited d
+check "#445 review: the file keeps its mode" "$(stat -c %a "$work/q3.md")" "640"
+# Review: a worker marks itself done; the old one-argument form is refused, not read as a report.
+w6=$(dpane wrk6); done_live "$w6"; printf 'wrk6x\n' >/dev/null
+check "#445 review: a worker's NAME form for another agent is refused (2): an unquoted two-word report must not finish a neighbour" \
+  "$(fdone "$w6" wrk5 landed >/dev/null 2>&1; echo $?) $(cut -f2 "$REGISTRY" | grep -c '^wrk6$')" "2 1"
+check "#445 review: a lone word that names an agent is refused (2), not sent as a report" "$(fdone "$w6" wrk6 >/dev/null 2>&1; echo $?) $(cut -f2 "$REGISTRY" | grep -c '^wrk6$')" "2 1"
+printf '%s\n' "$h" >"$FLEET_STATE/orchestrator.pane"; : >"$work/hph.log"
+check "#445 review: the orchestrator closing an agent from its own pane sends itself nothing" \
+  "$(env "TMUX=/tmp/tmux-1/$FLEET_SOCK,1,0" TMUX_PANE="$h" bash "$here/fleet" "done" wrk6 "r" 2>/dev/null | tail -1) $(grep -c '^SUBMIT' "$work/hph.log")" "report: not sent; you are the orchestrator 0"
+check "#445 review: the row is written before the send (pending) and settles to the result" "$(cut -f2,4 "$DONE_REPORTS" | grep -c '^wrk6	sent$')" "1"
+t kill-window -t "$w6" 2>/dev/null
+rm -f "$FLEET_STATE/orchestrator.pane"
+printf '%s\told1\t%%9993\tpending\n%s\tnow1\t%%9993\tpending\n' "$(( $(date +%s) - 900 ))" "$(date +%s)" >>"$DONE_REPORTS"
+check "#445 review: a send that never finished (pending for over 5 min) is flagged; a fresh pending one is not" \
+  "$(doctor | grep '^warn  *done reports' | sed -E 's/.*orchestrator: ([^:]*):.*/\1/' | grep -c 'old1 (pending)') $(doctor | grep -c 'now1 (pending)')" "1 0"
+dr_drop old1; dr_drop now1; dr_drop wrk6
 check "#445: the doctor flags the undelivered reports" \
   "$(doctor | grep '^warn  *done reports' | sed -E 's/.*not delivered to the orchestrator: ([^:]*):.*/\1/')" "wrk3 (limited), wrk4 (no-orchestrator-pane), wrk5 (no-orchestrator-pane)"
 # fleet close: the orchestrator has read the report.
@@ -2165,8 +2192,11 @@ check "#445: a name that has not finished is refused (1), and a running agent's 
   "$(printf '%s\tlive\t%s\t%s\t/w\t%s\n' "%9990" "$work/brief.src" "$SID" "$work/cfg-b" >>"$REGISTRY"; bash "$here/fleet" close live >/dev/null 2>&1; echo $?) $(bash "$here/fleet" close nobody >/dev/null 2>&1; echo $?) $(bash "$here/fleet" close >/dev/null 2>&1; echo $?)" "1 1 2"
 # A pane id a restarted server gave to another session is left alone.
 printf '%s\tstale\t%s\t%s\t/w\t%s\t2026-11-02T20:00:00-05:00\n' "$h" "$work/brief.src" "99999999-0000-4000-8000-000000000000" "$work/cfg-a" >>"$FLEET_STATE/finished.tsv"
-check "#445: a finished row whose pane now runs another session is not closed" \
-  "$(bash "$here/fleet" close stale 2>/dev/null) $(fleet_panes | grep -cx -- "$h")" "already closed: stale 1"
+check "#445 review: a finished row whose pane now runs another session is left open, says so (1), and keeps its record" \
+  "$(bash "$here/fleet" close stale 2>&1 | grep -c 'left open: ') $(fleet_panes | grep -cx -- "$h") $(bash "$here/fleet" close stale >/dev/null 2>&1; echo $?)" "1 1 1"
+printf '%s\tgone2\t%s\t%s\t/w\t%s\t2026-11-02T20:00:00-05:00\n' "%9992" "$work/brief.src" "$SID" "$work/cfg-a" >>"$FLEET_STATE/finished.tsv"
+check "#445 review: a pane that is gone is already closed, and its record goes" \
+  "$(printf '1\tgone2\t%%9992\tsent\n' >>"$DONE_REPORTS"; bash "$here/fleet" close gone2 2>/dev/null) $(cut -f2 "$DONE_REPORTS" | grep -c '^gone2$')" "already closed: gone2 0"
 # The doctor: unread for over 30 min while the pane is still open.
 rm -f "$DONE_REPORTS"
 now=$(date +%s)
@@ -4372,10 +4402,14 @@ check "#320: a pane the server does not have, or no text, is refused (2)" \
 check "#325 review 1: a target that is not a pane id (a window) is refused (2)" "$(fsend fleet:1 "x"; echo $?)" "2"
 t kill-window -t "$p"
 # #446: Claude Code's queue line reads as delivered; a pane that /exit closes reads as sent.
-p=$(pane snq '{"above":["working"],"busy":true,"on_submit":"queue","queue_box":"1 message queued"}'); settle
+p=$(pane snq '{"above":["working"],"busy":true,"on_submit":"queue","queue_box":"Press up to edit queued messages"}'); settle
 out=$(fsend "$p" "a note while the turn runs"); rc=$?
 check "#446: Claude Code's \"Press up to edit queued messages\" line, with the message out of the box, is delivered: queued, exit 0" "$out $rc" "queued 0"
 check "#446: it is logged as sent, with the result" "$(jq -r 'select(.message == "message sent") | .result' "$FLEET_LOG" | tail -1)" "queued"
+t kill-window -t "$p"
+# The quoted note in the transcript, with AJ's typing in the box, is no queue (review: held, as before).
+p=$(pane snq3 '{"above":["working","  Press up to edit queued messages"],"busy":true,"on_submit":"queue","queue_box":"AJ typing"}'); settle
+check "#446 review: the note quoted in the transcript beside AJ's typing is not a delivery (held)" "$(fsend "$p" "a note while the turn runs")" "held"
 t kill-window -t "$p"
 p=$(pane snq2 '{"above":["idle"],"on_submit":"queue","queue_box":"1 message queued"}'); settle
 printf 'a note' >"$work/q446.txt"
@@ -4385,6 +4419,9 @@ t kill-window -t "$p"
 p=$(pane snx '{"above":["idle"],"on_submit":"none","exit_on_exit":true,"exit_delay":2}'); settle
 check "#446: a pane that closes after /exit is sent, not held" "$(fsend "$p" "/exit"; echo "rc=$?")" $'sent\nrc=0'
 check "#446: and the pane is gone" "$(fleet_panes | grep -cx -- "$p")" "0"
+# A pane that vanishes after any other message is no delivery: held, not sent.
+p=$(pane snv '{"above":["idle"],"on_submit":"none","die_on_submit":true}'); settle
+check "#446 review: only an /exit may end its own pane: another message to a pane that goes is held" "$(fsend "$p" "hello")" "held"
 p=$(pane snh '{"above":["idle"],"on_submit":"none","enter_ignore":3}'); settle
 check "#446: an Enter that never takes, with no queue line and the pane still open, is still held" "$(fsend "$p" "stuck")" "held"
 t kill-window -t "$p"

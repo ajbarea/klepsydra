@@ -428,14 +428,25 @@ msg_in_box() { # SCREEN WANT
   box=$(input_text "$1")
   [[ ${box//[[:space:]]/} == "$2" || $box =~ ^\[Pasted\ text\ \#[0-9]+(\ \+[0-9]+\ lines)?\]$ ]]
 }
-# Claude Code's note that it queued a message sent during a turn.
-queued_line() { plain <<<"$1" | grep -q 'Press up to edit queued messages'; }
-# What PANE shows after the Enter on WANT: sent when the pane has closed (an
-# /exit) or GONE holds, queued (with ANY) when Claude Code's queue line shows
-# and the box no longer holds WANT; else nothing.
+# Claude Code's note that it queued a message sent during a turn: among the
+# last lines of the screen, with the box empty or holding the note itself (a
+# transcript that quotes it, or AJ's typing beside it, is no queue).
+queued_line() {
+  local box
+  plain <<<"$1" | grep -v '^[[:space:]]*$' | tail -10 | grep -q 'Press up to edit queued messages' || return 1
+  box=$(input_text "$1")
+  [[ -z $box || $box == *'Press up to edit queued messages'* ]]
+}
+# What PANE shows after the Enter on WANT: sent when GONE holds, or the pane has
+# closed after an /exit (the only message whose delivery ends the pane); queued
+# (with ANY) when Claude Code's queue line shows and the box no longer holds
+# WANT; else nothing.
 took_enter() { # PANE WANT GONE ANY
   local s
-  [[ $(t display-message -p -t "$1" '#{pane_id}' 2>/dev/null) == "$1" ]] || { echo sent; return; }
+  if [[ $(t display-message -p -t "$1" '#{pane_id}' 2>/dev/null) != "$1" ]]; then
+    [[ $2 == /exit ]] && { echo sent; return; }
+    return 1
+  fi
   s=$(screen "$1")
   "$3" "$s" && { echo sent; return; }
   if [[ $4 == any ]] && queued_line "$s" && ! msg_in_box "$s" "$2"; then echo queued; return; fi
@@ -496,37 +507,70 @@ REGISTRY=${REGISTRY:-$FLEET_STATE/panes.tsv}
 registered() { awk -F'\t' -v p="$1" '$1 == p { f = 1 } END { exit !f }' "$REGISTRY" 2>/dev/null; }
 reg_field() { awk -F'\t' -v p="$1" -v n="$2" '$1 == p { print $n; exit }' "$REGISTRY" 2>/dev/null; }
 orchestrator() { cat "$FLEET_STATE/orchestrator.pane" 2>/dev/null; }
-# Reports `fleet done` sent: time, name, pane, send result; `fleet close` removes them.
+# Reports `fleet done` sent: time, name, pane, send result (pending while the
+# send runs, then sent, queued or why not); `fleet close` removes them. Every
+# write goes through the registry lock (with_registry).
 # shellcheck disable=SC2034 # read by done.sh, close.sh and doctor.sh
 DONE_REPORTS=${FLEET_DONE_REPORTS:-$FLEET_STATE/done-reports.tsv}
-FLEET_QUEUE=${FLEET_QUEUE:-/mnt/c/Users/ajbar/fleet-briefing/queue.md}
+dr_append() { printf '%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4" >>"$DONE_REPORTS"; } # AT NAME PANE RESULT
+dr_set() { # AT NAME RESULT: the result of the row AT and NAME name
+  local tmp
+  tmp=$(mktemp "$DONE_REPORTS.XXXXXX") || return 1
+  if awk -F'\t' -v OFS='\t' -v a="$1" -v n="$2" -v r="$3" '$1 == a && $2 "" == n "" && !d { $4 = r; d = 1 } { print }' "$DONE_REPORTS" >"$tmp"; then
+    mv -f -- "$tmp" "$DONE_REPORTS"
+  else
+    rm -f -- "${tmp:?}"
+    return 1
+  fi
+}
+dr_drop() { # NAME: forget its reports
+  local tmp
+  [[ -e $DONE_REPORTS ]] || return 0
+  tmp=$(mktemp "$DONE_REPORTS.XXXXXX") || return 1
+  if awk -F'\t' -v n="$1" '$2 "" != n ""' "$DONE_REPORTS" >"$tmp"; then
+    mv -f -- "$tmp" "$DONE_REPORTS"
+  else
+    rm -f -- "${tmp:?}"
+    return 1
+  fi
+}
+# The briefing's queue file (not FLEET_QUEUE: ci_watch.py reads that name as needs-you.md).
+FLEET_QUEUE_MD=${FLEET_QUEUE_MD:-/mnt/c/Users/ajbar/fleet-briefing/queue.md}
 # Put a line for an agent's undelivered report in the queue file, at the end of
 # its Running now section. RESULT says where the text stands: on mixed or held
-# it still sits in the orchestrator's box, so it is not sent again.
+# it still sits in the orchestrator's box, so it is not sent again. The file is
+# read, changed and put back whole under a lock (workers finish together when
+# the orchestrator's pane is at a limit), by renaming a finished copy over it,
+# so a failure leaves the file as it was. Fails, touching nothing, when there is
+# no Running now heading.
 queue_note() { # NAME RESULT REPORT
+  [[ -w $FLEET_QUEUE_MD ]] || return 1
+  ( flock -w 30 9 || exit 1; queue_note_now "$@" ) 9>>"$FLEET_STATE/.queue.lock"
+}
+queue_note_now() {
   local line tmp
-  [[ -w $FLEET_QUEUE ]] || return 1
   case $2 in
     mixed | held) line="its text is still in the orchestrator's box; do not send it again" ;;
     limited) line="the orchestrator's pane is at a usage limit; send it after the reset" ;;
     *) line="the orchestrator did not get it" ;;
   esac
   line="- 📋 **$1 (fleet done, report not delivered: $2):** $3 ($line.) $(date '+%a %m-%d %H:%M')"
-  tmp=$(mktemp "$FLEET_QUEUE.XXXXXX") || return 1
+  tmp=$(mktemp "$FLEET_QUEUE_MD.XXXXXX") || return 1
   # Before the section's trailing blank lines.
   QLINE=$line awk 'BEGIN { line = ENVIRON["QLINE"] }
     /^## / {
       if (run && !put) { print line; put = 1 }
       printf "%s", blank; blank = ""
-      run = ($0 == "## Running now"); print; next
+      run = ($0 ~ /^## Running now[[:space:]]*$/); print; next
     }
     run && /^[[:space:]]*$/ { blank = blank $0 "\n"; next }
     { printf "%s", blank; blank = ""; print }
-    END { if (run && !put) { print line; put = 1 } printf "%s", blank }' "$FLEET_QUEUE" >"$tmp"
-  grep -qF -- "$line" "$tmp" && cat -- "$tmp" >"$FLEET_QUEUE"
-  local rc=$?
+    END { if (run && !put) { print line; put = 1 } printf "%s", blank }' "$FLEET_QUEUE_MD" >"$tmp"
+  if grep -qF -- "$line" "$tmp" && chmod --reference="$FLEET_QUEUE_MD" "$tmp" 2>/dev/null; then
+    mv -f -- "$tmp" "$FLEET_QUEUE_MD" && return 0
+  fi
   rm -f -- "${tmp:?}"
-  return $rc
+  return 1
 }
 # The config folder PANE's session runs on: Heph's own (heph_config) for the
 # orchestrator's pane when no row names it, else its row's (pane_config).

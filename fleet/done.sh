@@ -31,6 +31,19 @@ report=${!#}
 [[ $report == - ]] && report=$(cat)
 report=$(tr '\n' ' ' <<<"$report" | sed -E 's/^ +//; s/ +$//')
 [[ -n $report ]] || { err "$usage"; exit 2; }
+# The old one-argument form named an agent. A lone word that is one is refused, not sent as a report,
+# and a worker names only itself (an unquoted two-word report must not finish another agent).
+if (( $# == 1 )) && awk -F'\t' -v n="$report" '$2 "" == n "" { f = 1 } END { exit !f }' "$REGISTRY" "$FINISHED" 2>/dev/null; then
+  err "$report is an agent's name; fleet done takes the report: $usage"
+  exit 2
+fi
+if [[ -n $name && ${TMUX:-} == *"/$FLEET_SOCK,"* && ${TMUX_PANE:-} =~ ^%[0-9]+$ ]]; then
+  me=$(reg_field "$TMUX_PANE" 2)
+  if [[ -n $me && $me != "$name" ]] && pane_runs "$TMUX_PANE" "$(reg_field "$TMUX_PANE" 4)"; then
+    err "this pane is $me's; a worker marks itself done: fleet done \"REPORT\" (quote the report)"
+    exit 2
+  fi
+fi
 if [[ -z $name ]]; then
   pane=${TMUX_PANE:-}
   # Only a pane of the fleet's own server: AJ's terminals reuse pane ids.
@@ -51,7 +64,7 @@ fi
 label=$name
 [[ -n $label ]] || label=$(reg_field "$pane" 2)
 rpane=$pane
-[[ -n $name ]] && rpane=$(awk -F'\t' -v n="$name" '$2 "" == n "" { print $1; exit }' "$REGISTRY" 2>/dev/null)
+[[ -n $name ]] && rpane=$(awk -F'\t' -v n="$name" '$2 "" == n "" { p = $1 } END { print p }' "$REGISTRY" "$FINISHED" 2>/dev/null)
 
 # Move the matching rows; prints how many moved. finished.tsv gets them only
 # once panes.tsv is replaced, and a row finished.tsv refuses goes back.
@@ -92,21 +105,28 @@ finish_now() { # NAME PANE SID
 }
 # Sends the report and keeps its record (done-reports.tsv: time, name, pane, result).
 deliver_report() {
-  local orch got msg
+  local orch got msg at
   msg="$label finished: $report"
   orch=$(orchestrator)
-  if [[ $orch =~ ^%[0-9]+$ && $orch != "$rpane" ]]; then
+  at=$(date +%s)
+  # Recorded before the send: a call the tool's timeout kills mid-send still leaves a row the doctor flags.
+  with_registry dr_append "$at" "$label" "$rpane" pending ||
+    flog ERROR "done: done-reports.tsv cannot be written" file="$DONE_REPORTS"
+  if [[ $orch =~ ^%[0-9]+$ && $orch == "${TMUX_PANE:-}" && ${TMUX:-} == *"/$FLEET_SOCK,"* ]]; then
+    # The orchestrator closing an agent itself needs no message to itself.
+    got=sent
+    echo "report: not sent; you are the orchestrator"
+  elif [[ $orch =~ ^%[0-9]+$ && $orch != "$rpane" ]]; then
     got=$(bash "$here/send.sh" "$orch" - <<<"$msg" 2>/dev/null) || true
     got=${got##*$'\n'}
     [[ -n $got ]] || got=not-sent
   else
     got=no-orchestrator-pane
   fi
-  printf '%s\t%s\t%s\t%s\n' "$(date +%s)" "$label" "$rpane" "$got" >>"$DONE_REPORTS" ||
-    flog ERROR "done: done-reports.tsv cannot be written" file="$DONE_REPORTS"
+  with_registry dr_set "$at" "$label" "$got" || flog ERROR "done: the report's result could not be recorded" result="$got"
   if [[ $got == sent || $got == queued ]]; then
     flog INFO "done: report delivered to the orchestrator" name="$label" result="$got"
-    echo "report: $got"
+    [[ $orch == "${TMUX_PANE:-}" ]] || echo "report: $got"
     return 0
   fi
   flog WARN "done: report not delivered; written to the queue file" name="$label" result="$got"
@@ -121,6 +141,7 @@ moved=$(with_registry finish_now "$name" "$pane" "$sid") || { err "panes.tsv or 
 if (( moved == 0 )); then
   if [[ -n $name ]] && awk -F'\t' -v n="$name" '$2 "" == n "" { f = 1 } END { exit !f }' "$FINISHED" 2>/dev/null; then
     echo "already finished: $name"
+    deliver_report
     exit 0
   fi
   flog WARN "done: no registered agent matched" name="${name:-}" pane="${pane:-}"

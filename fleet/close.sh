@@ -23,18 +23,10 @@ if [[ -z ${pane:-} ]]; then
   err "no finished agent named $name (fleet done marks one finished first)"
   exit 1
 fi
-drop_report() { # NAME: forget its reports, under the registry lock
-  local tmp
-  [[ -e $DONE_REPORTS ]] || return 0
-  tmp=$(mktemp "$DONE_REPORTS.XXXXXX") || return 1
-  if awk -F'\t' -v n="$1" '$2 "" != n ""' "$DONE_REPORTS" >"$tmp"; then
-    mv -f -- "$tmp" "$DONE_REPORTS"
-  else
-    rm -f -- "${tmp:?}"
-    return 1
-  fi
-}
-if fleet_panes | grep -qx -- "$pane" && pane_runs "$pane" "$sid"; then
+if ! fleet_panes | grep -qx -- "$pane"; then
+  flog INFO "close: the pane is gone; nothing to close" name="$name" pane="$pane"
+  echo "already closed: $name"
+elif pane_runs "$pane" "$sid"; then
   if retire "$pane"; then
     flog INFO "close: finished agent's pane closed" name="$name" pane="$pane"
     echo "closed: $name ($pane)"
@@ -43,7 +35,9 @@ if fleet_panes | grep -qx -- "$pane" && pane_runs "$pane" "$sid"; then
     exit 1
   fi
 else
-  flog INFO "close: the pane no longer runs that session; nothing to close" name="$name" pane="$pane"
-  echo "already closed: $name"
+  # Another session took the pane id, or its fleet file is gone: not ours to close, and the record stays.
+  flog WARN "close: the pane does not run the finished session; left open" name="$name" pane="$pane"
+  err "left open: $pane no longer runs $name's session (or its fleet file is gone)"
+  exit 1
 fi
-with_registry drop_report "$name" || { err "done-reports.tsv could not be updated"; exit 1; }
+with_registry dr_drop "$name" || { err "done-reports.tsv could not be updated"; exit 1; }

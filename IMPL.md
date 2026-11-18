@@ -8,12 +8,14 @@ Branch feat/fleet-done-report-445. Issues: #445 (and its comment), #446.
 3. `deliver_now` (lib.sh; the issue calls it wait_sent) prints `queued` on Claude Code's queue line and `sent` for a pane that closed after Enter.
 
 ## Done
-- Steps 1-3 written (done.sh, close.sh, lib.sh queue_note/took_enter, doctor.sh, send.sh, brief-tail.md, README).
-- Tests added in fleet/test_fleet.sh (two new sections), fake_pane.py `queue` mode.
+- Steps 1-3 written and tested; PR #454 open (label enhancement, assignee ajbarea).
+- Opus review round 1 fixed: queue file rewritten under a lock by atomic rename, queue note read only near the box, pane-gone `sent` only for /exit, no self-send, arity guards, pending row before the send, close says "left open" for a reused pane.
+- CI fix: locale-independent excerpt in the queue-line test.
+- `make test-fleet` 940 passed (LC_ALL=C), `make shellcheck` clean, live scratch-socket run done.
 
 ## Next
-- Green `make test-fleet`, `make shellcheck`, `make test-launch`, repo lint; `fleet brief --check`.
-- Live run on `tmux -L scratch445`; PR (label enhancement, assignee ajbarea); CI; report to Heph.
+- Wait for CI on the pushed head; send the report to Heph; `fleet done "REPORT"`.
+- Open: the queued screen shape is from the issue text, not a real capture.
 
 ## Verify
-`make test-fleet` (takes the heavy lock itself), `make shellcheck`, live scratch-socket run.
+`make test-fleet`, `make shellcheck`, scratchpad live445.sh.
