@@ -726,6 +726,192 @@ check "a socket path wt.exe would split: says so" "$out" \
 check "a socket path wt.exe would split: nothing running, no tab" \
   "$(TMUX_TMPDIR="$odd" tmux -L "$sock" list-sessions 2>/dev/null | wc -l)|$(tabs)" "0|0"
 
+echo "native Linux (Debian): no WSL, stub terminals and xdotool"
+# The suite runs on WSL, so the launcher is told it is not there: no
+# WSL_DISTRO_NAME and a fake /proc whose kernel release has no "microsoft".
+# PATH holds only the tools the launcher needs, so no terminal on the host can
+# be found by accident.
+lbin="$work/lx-bin" lbase="$work/lx-base" lproc="$work/lx-proc"
+mkdir -p "$lbin" "$lbase" "$lproc/sys/kernel"
+for c in awk tail sort find xargs uniq tee printenv realpath tmux flock seq sleep head cat rm mktemp stat cmp mkdir date env bash sh grep sed tr wc cut dirname basename readlink ln id uname touch chmod mv cp script jq timeout; do
+  p=$(command -v "$c") && ln -sf "$p" "$lbase/$c"
+done
+printf '6.12.0-amd64\n' >"$lproc/sys/kernel/osrelease"
+mkproc() { # a fake /proc that reads every live process as the real one does
+  local d; for d in /proc/[0-9]*; do ln -sfn "$d" "$lproc/${d##*/}"; done
+}
+cat >"$lbin/.term" <<'EOF'
+#!/usr/bin/env bash
+# A stub terminal emulator: logs its name and arguments, then by TERM_MODE
+#   attach (default): stays up as the tab, running the tmux command (from the
+#     first "tmux" argument) on a pty
+#   fail: exits 1 at once
+#   handoff: exits 0 at once; a detached child carries the tab, as a terminal server does
+printf '%s %s\n' "${0##*/}" "$*" >>"$TERM_LOG"
+[[ ${TERM_MODE:-attach} == fail ]] && exit 1
+args=("$@")
+for i in "${!args[@]}"; do [[ ${args[i]} == tmux ]] && { cmd=("${args[@]:i}"); break; }; done
+tab() { TERM=xterm-256color exec script -qfc "$(printf '%q ' "${cmd[@]}")" /dev/null; }
+if [[ ${TERM_MODE:-attach} == handoff ]]; then
+  ( tab ) >/dev/null 2>&1 </dev/null &
+  echo $! >>"$WT_PIDS"
+  exit 0
+fi
+echo $$ >>"$WT_PIDS"
+tab
+EOF
+chmod +x "$lbin/.term"
+mkterm() { for n in "$@"; do cp "$lbin/.term" "$lbin/$n"; done; }
+rmterm() { for n in "$@"; do rm -f -- "${lbin:?}/$n"; done; }
+cat >"$lbin/.xdg" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$XDG_LOG"
+exit "${XDG_RC:-0}"
+EOF
+cat >"$lbin/.xdotool" <<'EOF'
+#!/usr/bin/env bash
+# search --onlyvisible --pid PID answers 4242 for XDO_PID alone; windowactivate is logged.
+printf '%s\n' "$*" >>"$XDO_LOG"
+[[ $1 == search && $4 == "$XDO_PID" ]] && echo 4242
+exit 0
+EOF
+chmod +x "$lbin/.xdg" "$lbin/.xdotool"
+export TERM_LOG="$work/term.log" XDG_LOG="$work/xdg.log" XDO_LOG="$work/xdo.log"
+lx() { env -u WSL_DISTRO_NAME KLEPSYDRA_PROC="$lproc" PATH="$lbin:$lbase" "$@"; }
+pending="$work/klepsydra-tab-pending-$UID"
+stop_server; detach_all; : >"$TERM_LOG"; rm -f "$pending"
+
+out=$(lx bash "$launch" new "$work/repos" 2>&1); rc=$?
+check "linux: no terminal found: exit 1" "$rc" "1"
+check "linux: no terminal found: says so" "$out" "No terminal emulator found (e.g. xfce4-terminal, gnome-terminal, x-terminal-emulator, xterm)."
+check "linux: no terminal found: nothing was created" "$(t list-sessions 2>/dev/null | wc -l)" "0"
+out=$(lx env KLEPSYDRA_TERMINAL=no-such-term bash "$launch" new "$work/repos" 2>&1); rc=$?
+check "linux: KLEPSYDRA_TERMINAL that is missing fails, never another terminal" "$rc $(t list-sessions 2>/dev/null | wc -l)" "1 0"
+
+# The order: xfce4-terminal, gnome-terminal, konsole, kitty, alacritty, x-terminal-emulator, xterm.
+order=(xfce4-terminal gnome-terminal konsole kitty alacritty x-terminal-emulator xterm)
+for n in "${order[@]}"; do mkterm "$n"; done
+got=()
+for n in "${order[@]}"; do
+  stop_server; detach_all; : >"$TERM_LOG"; rm -f "$pending"
+  lx bash "$launch" new "$work/repos" >/dev/null 2>&1
+  got+=("$(head -1 "$TERM_LOG" | cut -d' ' -f1)")
+  rmterm "$n"
+done
+check "linux: the first emulator on PATH in the documented order is the one started" "${got[*]}" "${order[*]}"
+mkterm xterm gnome-terminal
+stop_server; detach_all; : >"$TERM_LOG"; rm -f "$pending"
+lx env KLEPSYDRA_TERMINAL=xterm bash "$launch" new "$work/repos" >/dev/null 2>&1
+check "linux: KLEPSYDRA_TERMINAL picks its own" "$(head -1 "$TERM_LOG" | cut -d' ' -f1)" "xterm"
+
+# What each emulator is asked to run: a titled tab attached by the socket's path.
+sp=$(t display -p '#{socket_path}')
+want_tail="tmux -S $sp attach -t =fleet"
+check "linux: xterm gets title, -e and the attach" "$(head -1 "$TERM_LOG")" "xterm -T klepsydra sessions -e $want_tail"
+check "linux: an attached tab: windows 1, pending stamp gone" "$(windows) $([[ -e $pending ]] && echo left)" "1 "
+stop_server; detach_all; : >"$TERM_LOG"; rm -f "$pending"
+lx bash "$launch" new "$work/repos" >/dev/null 2>&1
+check "linux: gnome-terminal gets a titled tab" "$(head -1 "$TERM_LOG")" "gnome-terminal --tab --title=klepsydra sessions -- $want_tail"
+mkterm xfce4-terminal konsole kitty alacritty
+for n in xfce4-terminal:"--disable-server -T klepsydra sessions -x" konsole:"--new-tab -p tabtitle=klepsydra sessions -e" kitty:"-T klepsydra sessions" alacritty:"-T klepsydra sessions -e"; do
+  stop_server; detach_all; : >"$TERM_LOG"; rm -f "$pending"
+  lx env KLEPSYDRA_TERMINAL="${n%%:*}" bash "$launch" new "$work/repos" >/dev/null 2>&1
+  check "linux: ${n%%:*} command line" "$(head -1 "$TERM_LOG")" "${n%%:*} ${n#*:} $want_tail"
+done
+
+# A launch that fails: the terminal exits non-zero, nothing is left behind.
+stop_server; detach_all; : >"$TERM_LOG"; rm -f "$pending"
+out=$(lx env TERM_MODE=fail KLEPSYDRA_TERMINAL=xterm bash "$launch" new "$work/repos" 2>&1); rc=$?
+check "linux: a terminal that fails: exit 1" "$rc" "1"
+check "linux: a terminal that fails: says so" "$out" "xterm did not open a tab."
+check "linux: a terminal that fails: the session made for it is undone" "$(t list-sessions 2>/dev/null | wc -l)" "0"
+check "linux: a terminal that fails: no pending stamp" "$([[ -e $pending ]] && echo left)" ""
+# With a session already there, a failed launch leaves it and its windows.
+lx bash "$launch" new "$work/repos" >/dev/null 2>&1; detach_all; rm -f "$pending"
+out=$(lx env TERM_MODE=fail KLEPSYDRA_TERMINAL=xterm bash "$launch" new "$work/repos" 2>&1); rc=$?
+check "linux: a failed terminal over a live session: exit 1, windows unchanged" "$rc $(windows)" "1 1"
+# gnome-terminal's server model: the command returns 0 and the tab arrives from elsewhere.
+stop_server; detach_all; : >"$TERM_LOG"; rm -f "$pending"
+out=$(lx env TERM_MODE=handoff KLEPSYDRA_TERMINAL=xterm bash "$launch" new "$work/repos" 2>&1); rc=$?
+check "linux: a terminal that hands off and exits 0 is not a failure, its tab attaches" "$rc $(windows) $([[ -n $(t list-clients -t =fleet 2>/dev/null) ]] && echo attached)" "0 1 attached"
+
+# Jump: raise the terminal window that owns the tmux client, found by walking
+# up from the client's pid; the fleet's own tab and a hand-started tmux alike.
+echo "native Linux: jump raises the session's own window"
+cp "$lbin/.xdotool" "$lbin/xdotool"
+mkproc
+detach_all
+attach
+cpid=$(t list-clients -t =fleet -F '#{client_pid}' | head -1)
+cparent=$(stat_fields "$cpid" 1)
+lpane=$(t list-panes -s -t =fleet -F '#{pane_id}' | head -1); lpid=$(pane_pid "$lpane"); lstart=$(pstart "$lpid")
+mkproc; : >"$XDO_LOG"
+out=$(lx env XDO_PID="$cparent" bash "$launch" jump "$sp" "$lpane" "$lpid" "$lstart" 2>&1); rc=$?
+check "linux jump: exit 0, says so" "$rc $out" "0 Selected the session's tmux window."
+check "linux jump: asks about the client, then its parent, and activates the parent's window" \
+  "$(tr '\n' '|' <"$XDO_LOG")" "search --onlyvisible --pid $cpid|search --onlyvisible --pid $cparent|windowactivate 4242|"
+: >"$XDO_LOG"
+out=$(lx env XDO_PID=1999999 bash "$launch" jump "$sp" "$lpane" "$lpid" "$lstart" 2>&1); rc=$?
+check "linux jump: no window found: still selects the window, activates nothing" "$rc $(grep -c windowactivate "$XDO_LOG")" "0 0"
+rm -f "$lbin/xdotool"
+out=$(lx bash "$launch" jump "$sp" "$lpane" "$lpid" "$lstart" 2>&1); rc=$?
+check "linux jump: no xdotool: still exit 0" "$rc $out" "0 Selected the session's tmux window."
+# A hand-started tmux (another socket): its own client's window, never the fleet's title.
+hand="kl-test2-$$"
+tmux -L "$hand" new-session -d -s hand "sleep 600"
+hsock=$(tmux -L "$hand" display -p '#{socket_path}')
+TERM=xterm-256color script -qfc "tmux -L $hand attach -t =hand" /dev/null >/dev/null 2>&1 </dev/null &
+clients+=($!)
+for _ in $(seq 50); do [[ -n $(tmux -L "$hand" list-clients -t =hand 2>/dev/null) ]] && break; sleep 0.1; done
+hcpid=$(tmux -L "$hand" list-clients -t =hand -F '#{client_pid}' | head -1)
+hpane=$(tmux -L "$hand" display -p '#{pane_id}'); hpid=$(tmux -L "$hand" display -p '#{pane_pid}'); hstart=$(pstart "$hpid")
+cp "$lbin/.xdotool" "$lbin/xdotool"; mkproc; : >"$XDO_LOG"
+out=$(lx env XDO_PID="$hcpid" bash "$launch" jump "$hsock" "$hpane" "$hpid" "$hstart" 2>&1); rc=$?
+check "linux jump: a hand-started tmux raises its own client's window, not the fleet's title" \
+  "$rc $(tr '\n' '|' <"$XDO_LOG")" "0 search --onlyvisible --pid $hcpid|windowactivate 4242|"
+check "linux jump: the fleet's title is never searched" "$(grep -c -- '--name' "$XDO_LOG")" "0"
+tmux -L "$hand" kill-server 2>/dev/null
+rm -f -- "$sockdir/${hand:?}" "$lbin/xdotool"
+
+# The folder and github verbs: xdg-open, which must exist and must not fail at once.
+echo "native Linux: folder and github verbs"
+cp "$lbin/.xdg" "$lbin/xdg-open"; : >"$XDG_LOG"
+out=$(lx bash "$launch" folder "$work/repos" 2>&1); rc=$?
+check "linux folder: opens the folder with xdg-open" "$rc [$out] $(cat "$XDG_LOG")" "0 [] $work/repos"
+: >"$XDG_LOG"
+out=$(lx bash "$launch" folder '~/' 2>&1); rc=$?
+check "linux folder: ~/ is the home folder" "$rc $(cat "$XDG_LOG")" "0 $HOME/"
+out=$(lx bash "$launch" folder "$work/gone" 2>&1); rc=$?
+check "linux folder: a folder that is gone is said" "$rc $out" "1 The folder $work/gone does not exist."
+: >"$XDG_LOG"
+out=$(lx bash "$launch" github "https://github.com/ajbarea/klepsydra/pull/458" 2>&1); rc=$?
+check "linux github: opens the page with xdg-open" "$rc [$out] $(cat "$XDG_LOG")" "0 [] https://github.com/ajbarea/klepsydra/pull/458"
+out=$(lx bash "$launch" github "https://evil.example/x" 2>&1); rc=$?
+check "linux github: only github.com" "$rc $out" "1 That is not a GitHub URL."
+out=$(lx env XDG_RC=3 bash "$launch" folder "$work/repos" 2>&1); rc=$?
+check "linux folder: xdg-open that fails is a failure, not a success" "$rc $out" "1 xdg-open could not open it."
+out=$(lx env XDG_RC=3 bash "$launch" github "https://github.com/a/b" 2>&1); rc=$?
+check "linux github: xdg-open that fails is a failure" "$rc $out" "1 xdg-open could not open it."
+rm -f "$lbin/xdg-open"
+out=$(lx bash "$launch" folder "$work/repos" 2>&1); rc=$?
+check "linux folder: no xdg-open is said, not reported as success" "$rc $out" "1 xdg-open was not found, so nothing could be opened."
+out=$(lx bash "$launch" github "https://github.com/a/b" 2>&1); rc=$?
+check "linux github: no xdg-open is said" "$rc $out" "1 xdg-open was not found, so nothing could be opened."
+# On WSL (WSL_DISTRO_NAME, or "microsoft" in the kernel release) the same verbs go to explorer.exe, unchanged.
+printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >>"$XDG_LOG"\nexit 1\n' >"$lbin/explorer.exe"; chmod +x "$lbin/explorer.exe"
+: >"$XDG_LOG"
+out=$(WSL_DISTRO_NAME=Test KLEPSYDRA_PROC="$lproc" PATH="$lbin:$lbase" bash "$launch" folder "$work/repos" 2>&1); rc=$?
+check "wsl folder: explorer.exe, its exit 1 is success" "$rc [$out] $(cat "$XDG_LOG")" "0 [] $work/repos"
+printf '5.15.153.1-microsoft-standard-WSL2\n' >"$lproc/sys/kernel/osrelease"
+: >"$XDG_LOG"
+out=$(lx bash "$launch" github "https://github.com/a/b" 2>&1); rc=$?
+check "wsl by kernel release alone (no WSL_DISTRO_NAME): explorer.exe" "$rc [$out] $(cat "$XDG_LOG")" "0 [] https://github.com/a/b"
+stop_server; detach_all; rm -f "$pending" # no live tab: a new session needs one
+out=$(lx bash "$launch" new "$work/repos" 2>&1); rc=$?
+check "wsl by kernel release alone: takes the Windows Terminal path, which needs WSL_DISTRO_NAME" "$rc $out" "1 WSL_DISTRO_NAME is missing or not usable, so no tab could be opened."
+rm -f "$lbin/explorer.exe"
+stop_server; detach_all; rm -f "$pending"
+
 echo "a server started from a systemd unit gets its own scope (#292 review)"
 # A oneshot unit's end kills what it leaves in its cgroup: the tmux watchdog's
 # recover starts the fleet's server from one, so the launcher wraps it.
@@ -802,6 +988,28 @@ for _ in $(seq 50); do ti list-panes -a -F '#{pane_id}' 2>/dev/null | grep -qx -
 check "#290: Enter closes a dead pane's viewer" "$(ti list-panes -a -F '#{pane_id}' 2>/dev/null | grep -cx -- "$v0") (left: $(ti list-panes -a -F '#{pane_id}:#{pane_start_command}' 2>/dev/null | tr '\n' ' '))" "0 (left: )"
 ti kill-server 2>/dev/null; to kill-server 2>/dev/null
 rm -f -- "$sockdir/${in4:?}" "$sockdir/${out4:?}"
+
+# tmux 3.8 prints an empty #{pane_pid} for a dead pane (3.4 and 3.5a print the
+# pid): a stub tmux answers as 3.8 does, so the hook's no-pid branch runs here.
+fakebin="$work/pane-died-bin"; mkdir -p "$fakebin"
+cat >"$fakebin/tmux" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case $3 in
+  display-message) printf '1\t-\t-\t15\t%s\n' "$STUB_CMD" ;;
+  show) printf '%s\n' "$STUB_MARK" ;;
+esac
+exit 0
+EOF
+chmod +x "$fakebin/tmux"
+nopid() { # start command, mark: the hook's tmux calls
+  : >"$work/stub.log"
+  STUB_LOG="$work/stub.log" STUB_CMD="$1" STUB_MARK="$2" PATH="$fakebin:$PATH" FLEET_BIN="$work/nobin" \
+    KLEPSYDRA_DEAD_DIR="$work/dead38" bash "$here/klepsydra-pane-died.sh" /s %9 >/dev/null 2>&1
+  grep -c 'kill-pane' "$work/stub.log"
+}
+check "3.8: a dead viewer (empty pane_pid) is closed by its command" "$(nopid "cat /x/saved.txt; read -r _" "4242 its process ended on signal 15")" "1"
+check "3.8: a dead program that is not the viewer is not closed" "$(nopid "claude" "4242 its process ended on signal 15")" "0"
 
 # #260: a session runs on the tmux server's config folder whenever the server is
 # up, even with no fleet session (fleet delegate's engines session shares the

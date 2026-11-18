@@ -10,7 +10,7 @@ use klepsydra_fleet::tabs::{Lookup, TabError};
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum JumpError {
     Tab(TabError),
-    #[allow(dead_code)]
+    #[cfg_attr(not(windows), allow(dead_code))]
     Failed(String),
 }
 

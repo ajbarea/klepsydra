@@ -5,15 +5,17 @@ import { asksCount, build, EMPTY, EMPTY_NEEDS, headerCount, parse, present, queu
 
 const FIXTURE = readFileSync(new URL("../scripts/fixtures/queue-demo.md", import.meta.url), "utf8");
 
+// process.threadCpuUsage needs Node 23.9; process.cpuUsage would count the GC helper threads.
+const NO_THREAD_CPU = process.threadCpuUsage ? false : "needs process.threadCpuUsage (Node 23.9+)";
+
 /**
  * This thread's CPU time for `f()`, in ms: neither a loaded machine's waits
  * nor the GC helper threads count.
  */
 function cpuMs(f) {
-  const usage = process.threadCpuUsage ? (arg) => process.threadCpuUsage(arg) : (arg) => process.cpuUsage(arg);
-  const start = usage();
+  const start = process.threadCpuUsage();
   f();
-  const { user, system } = usage(start);
+  const { user, system } = process.threadCpuUsage(start);
   return (user + system) / 1000;
 }
 
@@ -220,7 +222,7 @@ test("textOf reads a node's whole text", () => {
   assert.equal(textOf(h.kids[0]), "A b c");
 });
 
-test("a file at the size cap parses and renders quickly, and its cost grows linearly", () => {
+test("a file at the size cap parses and renders quickly, and its cost grows linearly", { skip: NO_THREAD_CPU }, () => {
   const show = (bytes) => {
     const root = new El("div");
     for (const n of build(render(FIXTURE.repeat(Math.ceil(bytes / FIXTURE.length)).slice(0, bytes)).nodes, doc, { copy() {} })) root.append(n);
@@ -268,7 +270,7 @@ test("the Needs you count agrees with the panel, whatever the markup", () => {
   }
 });
 
-test("a long Needs you list counts in linear time", () => {
+test("a long Needs you list counts in linear time", { skip: NO_THREAD_CPU }, () => {
   assert.equal(render("## Needs you\n\n" + "- a\n".repeat(65000)).count, 65000);
   assertLinear((n) => assert.equal(render("## Needs you\n\n" + "- a\n".repeat(n)).count, n), 1000);
 });
@@ -302,8 +304,11 @@ test("comments are left out wherever they sit, and the text between them stays",
   assert.equal(dom("<!-- a -->\n").root.kids.length, 0);
   assert.equal(dom("a <!-- x --> b\n").root.textContent, "a  b");
   assert.equal(dom("<div><!-- x --></div>\n").root.textContent, "<div></div>");
-  // An unclosed comment shows as written, and many of them stay linear.
+  // An unclosed comment shows as written.
   assert.equal(dom("<!-- open\n").root.textContent, "<!-- open");
+});
+
+test("many unclosed comments stay linear", { skip: NO_THREAD_CPU }, () => {
   assertLinear((n) => dom("<!--".repeat(n)), 4096);
 });
 

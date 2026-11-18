@@ -35,7 +35,7 @@ MODEL_RE='^[a-z0-9][a-z0-9.-]{0,63}$'
 WT=${KLEPSYDRA_WT:-wt.exe}
 UNDO=()
 LOCK=${XDG_RUNTIME_DIR:-/tmp}/klepsydra-launch-$UID.lock
-PROC_ROOT=/proc
+PROC_ROOT=${KLEPSYDRA_PROC:-/proc} # tests point this at a fake /proc
 # A tab opened but not yet attached: "EPOCH KEY", KEY its socket args and target.
 PENDING=${XDG_RUNTIME_DIR:-/tmp}/klepsydra-tab-pending-$UID
 PENDING_FOR=30
@@ -61,17 +61,31 @@ take_lock() { # [what to say when another holds it for 10 s]
   flock -w 10 "$LOCKFD" || fail "${1:-Another launch is still running.}"
 }
 
+# Whether this is WSL (a Windows Terminal tab) rather than a native Linux desktop.
+# Decided once: WSL_DISTRO_NAME, or "microsoft" in the kernel release.
+IS_WSL=""
 is_wsl() {
-  [[ -n "${WSL_DISTRO_NAME:-}" ]] && return 0
-  local osrelease=""
-  { read -r osrelease </proc/sys/kernel/osrelease; } 2>/dev/null
-  [[ "$osrelease" == *[Mm]icrosoft* ]]
+  if [[ -z $IS_WSL ]]; then
+    local osrelease=""
+    if [[ -n ${WSL_DISTRO_NAME:-} ]]; then IS_WSL=1
+    elif proc_osrelease && [[ $osrelease == *[Mm]icrosoft* ]]; then IS_WSL=1
+    else IS_WSL=0; fi
+  fi
+  [[ $IS_WSL == 1 ]]
 }
 
+# The terminal for a native Linux tab: KLEPSYDRA_TERMINAL when set (and then
+# only it, so a typo is an error, not a silent other terminal), else the first
+# of the usual emulators on PATH.
 find_linux_terminal() {
   local term
-  for term in "${KLEPSYDRA_TERMINAL:-}" xfce4-terminal gnome-terminal konsole kitty alacritty x-terminal-emulator xterm; do
-    [[ -n $term ]] && command -v "$term" >/dev/null 2>&1 && { printf '%s' "$term"; return 0; }
+  if [[ -n ${KLEPSYDRA_TERMINAL:-} ]]; then
+    command -v "$KLEPSYDRA_TERMINAL" >/dev/null 2>&1 || return 1
+    printf '%s' "$KLEPSYDRA_TERMINAL"
+    return 0
+  fi
+  for term in xfce4-terminal gnome-terminal konsole kitty alacritty x-terminal-emulator xterm; do
+    command -v "$term" >/dev/null 2>&1 && { printf '%s' "$term"; return 0; }
   done
   return 1
 }
@@ -113,7 +127,7 @@ tab_pending() { # key
 # its client so the next launch sees it; ATTACHED says whether it came. If
 # wt.exe fails, run undo.
 open_tab() { # target tmux-socket-args...
-  local target=$1 key; shift
+  local target=$1 key termpid="" term=""; shift
   key="$* $target"
   ATTACHED=0
   tab_pending "$key" && return 0
@@ -126,31 +140,21 @@ open_tab() { # target tmux-socket-args...
       fail "Windows Terminal did not open a tab."
     }
   else
-    local term title="${TITLE_ARGS[1]:-$TAB_TITLE}"
+    # The terminal is started in the background (it stays up as the tab), so a
+    # failed start shows only as its exit: the wait below reads it. Its lock fd is
+    # closed so a tab never outlives the lock.
+    local title="${TITLE_ARGS[1]:-$TAB_TITLE}"
+    local -a cmd
     term=$(find_linux_terminal) || { undo; fail "No terminal emulator found."; }
-    case "$term" in
-      *xfce4-terminal*)
-        "$term" --disable-server -T "$title" -x tmux "$@" attach -t "$target" </dev/null >/dev/null 2>&1 {LOCKFD}>&- &
-        ;;
-      *gnome-terminal*)
-        "$term" --tab --title="$title" -- tmux "$@" attach -t "$target" </dev/null >/dev/null 2>&1 {LOCKFD}>&- &
-        ;;
-      *konsole*)
-        "$term" --new-tab -p tabtitle="$title" -e tmux "$@" attach -t "$target" </dev/null >/dev/null 2>&1 {LOCKFD}>&- &
-        ;;
-      *kitty*)
-        "$term" -T "$title" tmux "$@" attach -t "$target" </dev/null >/dev/null 2>&1 {LOCKFD}>&- &
-        ;;
-      *alacritty*)
-        "$term" -T "$title" -e tmux "$@" attach -t "$target" </dev/null >/dev/null 2>&1 {LOCKFD}>&- &
-        ;;
-      *)
-        "$term" -T "$title" -e tmux "$@" attach -t "$target" </dev/null >/dev/null 2>&1 {LOCKFD}>&- &
-        ;;
-    esac || {
-      undo
-      fail "$term did not open a tab."
-    }
+    case ${term##*/} in
+      xfce4-terminal) cmd=("$term" --disable-server -T "$title" -x) ;;
+      gnome-terminal) cmd=("$term" --tab --title="$title" --) ;;
+      konsole) cmd=("$term" --new-tab -p tabtitle="$title" -e) ;;
+      kitty) cmd=("$term" -T "$title") ;;
+      *) cmd=("$term" -T "$title" -e) ;; # alacritty, x-terminal-emulator, xterm
+    esac
+    "${cmd[@]}" tmux "$@" attach -t "$target" </dev/null >/dev/null 2>&1 {LOCKFD}>&- &
+    termpid=$!
   fi
   if [[ ! -e $PENDING && ! -L $PENDING ]] || stamp_usable; then
     { printf '%(%s)T %s\n' -1 "$key" >"$PENDING"; } 2>/dev/null
@@ -161,6 +165,13 @@ open_tab() { # target tmux-socket-args...
       ATTACHED=1
       rm -f -- "$PENDING"
       return 0
+    fi
+    # A terminal that exited non-zero never opened a tab; one that exited 0 handed
+    # the tab to its server (gnome-terminal) and may still attach.
+    if [[ -n $termpid ]] && ! kill -0 "$termpid" 2>/dev/null && ! wait "$termpid"; then
+      rm -f -- "$PENDING"
+      undo
+      fail "$term did not open a tab."
     fi
     sleep 0.1
   done
@@ -343,6 +354,14 @@ proc_is() { # pid start
   [[ $1 =~ ^[0-9]+$ && $2 =~ ^[0-9]+$ ]] || return 1
   proc_stat "$1" && [[ ${stat[0]} != Z && ${stat[19]} == "$2" ]]
 }
+
+# The kernel's release string ("...microsoft-standard-WSL2" under WSL), into the
+# caller's `osrelease`; fails when it cannot be read.
+proc_osrelease() {
+  osrelease=""
+  { IFS= read -r osrelease <"$PROC_ROOT/sys/kernel/osrelease"; } 2>/dev/null
+  [[ -n $osrelease ]]
+}
 # --- end proc stat ---
 
 # Whether PID is alive with start time START and `ancestor` is PID or its ancestor.
@@ -380,6 +399,28 @@ check_pane() { # socket pane pid start
     fail "That session's tmux pane now belongs to another session."
 }
 
+# On a native Linux desktop, raise the terminal window that shows `session`: the
+# window of the first ancestor of its tmux client that owns one (the fleet's
+# tab and a hand-started tmux alike). Best effort: Wayland and a missing
+# xdotool leave the window where it is, as WSL does.
+raise_window() { # session tmux-socket-args...
+  is_wsl && return 0
+  command -v xdotool >/dev/null 2>&1 || return 0
+  local session=$1 cpid pid wid _; shift
+  local -a stat=()
+  while read -r cpid; do
+    pid=$cpid
+    for _ in $(seq 10); do
+      [[ $pid =~ ^[1-9][0-9]*$ ]] || break
+      wid=$(xdotool search --onlyvisible --pid "$pid" 2>/dev/null | head -n1)
+      if [[ -n $wid ]]; then xdotool windowactivate "$wid" >/dev/null 2>&1; return 0; fi
+      proc_stat "$pid" || break
+      pid=${stat[1]}
+    done
+  done < <(tmux "$@" list-clients -t "=$session" -F '#{client_pid}' 2>/dev/null)
+  return 0
+}
+
 jump() { # socket pane pid start
   local socket=$1 pane=$2 session
   local -a t=()
@@ -388,11 +429,7 @@ jump() { # socket pane pid start
     fail "tmux could not select the window."
   # An attached tab needs no lock; one missing is checked again under it.
   if has_client "=$session" "${t[@]}"; then
-    if ! is_wsl && command -v xdotool >/dev/null 2>&1; then
-      local wid
-      wid=$(xdotool search --name "$TAB_TITLE" 2>/dev/null | head -n1)
-      [[ -n $wid ]] && xdotool windowactivate "$wid" 2>/dev/null || true
-    fi
+    raise_window "$session" "${t[@]}"
     printf "Selected the session's tmux window.\n"
     return 0
   fi
@@ -562,6 +599,25 @@ voices() {
   "$fleet" voices || fail "fleet voices failed; see fleet log."
 }
 
+# Hand `target` (a folder or an https GitHub URL) to the desktop. On WSL that is
+# Explorer (it exits 1 even when it opened the target); natively xdg-open, which
+# must exist and, if it fails at once, fails the call. One still running after
+# 2 s is a handler that stays up (a browser) and counts as opened.
+open_on_desktop() { # target
+  if is_wsl; then
+    explorer.exe "$1" 2>/dev/null || true
+    return 0
+  fi
+  need xdg-open "xdg-open was not found, so nothing could be opened."
+  local pid _
+  xdg-open "$1" </dev/null >/dev/null 2>&1 &
+  pid=$!
+  for _ in $(seq 20); do
+    kill -0 "$pid" 2>/dev/null || { wait "$pid" || fail "xdg-open could not open it."; return 0; }
+    sleep 0.1
+  done
+}
+
 folder() { # dir
   local dir=$1
   # shellcheck disable=SC2088 # a literal ~/ from the overlay
@@ -570,21 +626,12 @@ folder() { # dir
     "~/"*) dir=$HOME/${dir#"~/"} ;;
   esac
   [[ -d $dir ]] || fail "The folder $dir does not exist."
-  if is_wsl; then
-    explorer.exe "$dir" 2>/dev/null || true
-  elif command -v xdg-open >/dev/null 2>&1; then
-    xdg-open "$dir" </dev/null >/dev/null 2>&1 &
-  fi
+  open_on_desktop "$dir"
 }
 
 github() { # url
-  local url=$1
-  [[ $url == https://github.com/* ]] || fail "That is not a GitHub URL."
-  if is_wsl; then
-    explorer.exe "$url" 2>/dev/null || true
-  elif command -v xdg-open >/dev/null 2>&1; then
-    xdg-open "$url" </dev/null >/dev/null 2>&1 &
-  fi
+  [[ $1 == https://github.com/* ]] || fail "That is not a GitHub URL."
+  open_on_desktop "$1"
 }
 
 case ${1:-} in
