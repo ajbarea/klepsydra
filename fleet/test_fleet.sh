@@ -3059,58 +3059,89 @@ check "#453: idle wake logged with reason, pane, and screen" \
   "$(jq -r 'select(.message == "watched pane idle") | [.reason, .pane, (.screen | contains("done 11:50 AM"))] | join(" ")' "$FLEET_LOG" | tail -1)" "idle $wp true"
 t kill-window -t "$wp"; rm -f "$KLEPSYDRA_DIR/fleet/$SID.json"
 
+watch_held() { # PANE [WAIT_S]
+  local p=$1 s=${2:-1.5} out=$work/held-$1.out job
+  IDLE_S=0 WATCH_TICK=0.1 bash "$here/watch-panes.sh" "$p" >"$out" 2>/dev/null &
+  job=$!
+  sleep "$s"
+  if kill -0 "$job" 2>/dev/null; then
+    kill "$job" 2>/dev/null; wait "$job" 2>/dev/null || true
+    echo "held"
+  else
+    cut -d' ' -f1 "$out"
+  fi
+}
+
+watch_wake() { # PANE [WAIT_S]
+  local p=$1 s=${2:-5} out=$work/wake-$1.out job
+  IDLE_S=0 WATCH_TICK=0.1 bash "$here/watch-panes.sh" "$p" >"$out" 2>/dev/null &
+  job=$!
+  local i=0
+  while kill -0 "$job" 2>/dev/null && (( i < s * 10 )); do
+    sleep 0.1
+    i=$((i + 1))
+  done
+  if kill -0 "$job" 2>/dev/null; then
+    kill "$job" 2>/dev/null; wait "$job" 2>/dev/null || true
+    echo "timeout"
+  else
+    wait "$job" 2>/dev/null || true
+    cut -d' ' -f1 "$out"
+  fi
+}
+
 echo "cell A1: fresh shell entry with shells_live 0, screen says done with no shell"
 wa1=$(pane cA1 '{"above":["✻ Baked for 2s · done 11:50 AM"],"below":["  ⏵⏵ bypass permissions on"]}'); settle
 jq -n --arg p "$wa1" --argjson at "$(date +%s)" '{session_id: "x", ended: null, tmux: {pane: $p}, state: "working", reason: "background", background: [{id: "s1", kind: "shell", at: $at}], shells_live: 0}' >"$KLEPSYDRA_DIR/fleet/$SID.json"
-check "#453 cell A1: fresh entry with shells_live 0 wakes" "$(IDLE_S=0 WATCH_TICK=0.1 timeout 5 bash "$here/watch-panes.sh" "$wa1" 2>/dev/null | cut -d' ' -f1)" "IDLE"
+check "#453 cell A1: fresh entry with shells_live 0 wakes" "$(watch_wake "$wa1")" "IDLE"
 t kill-window -t "$wa1"; rm -f "$KLEPSYDRA_DIR/fleet/$SID.json"
 
 echo "cell A2: stale entry (3602s old), screen says done with no shell"
 wa2=$(pane cA2 '{"above":["✻ Baked for 2s · done 11:50 AM"],"below":["  ⏵⏵ bypass permissions on"]}'); settle
 jq -n --arg p "$wa2" --argjson at "$(( $(date +%s) - 3602 ))" '{session_id: "x", ended: null, tmux: {pane: $p}, state: "working", reason: "background", background: [{id: "s1", kind: "shell", at: $at}]}' >"$KLEPSYDRA_DIR/fleet/$SID.json"
-check "#453 cell A2: stale 3602s entry wakes" "$(IDLE_S=0 WATCH_TICK=0.1 timeout 5 bash "$here/watch-panes.sh" "$wa2" 2>/dev/null | cut -d' ' -f1)" "IDLE"
+check "#453 cell A2: stale 3602s entry wakes" "$(watch_wake "$wa2")" "IDLE"
 t kill-window -t "$wa2"; rm -f "$KLEPSYDRA_DIR/fleet/$SID.json"
 
 echo "cell B: two live files name the pane (reused id), screen says shell still running"
 wb=$(pane cB '{"above":["✻ Baked for 2s · done 11:50 AM · 1 shell still running"],"below":["  ⏵⏵ bypass permissions on · 1 shell"]}'); settle
 for s in $SID 22222222-2222-4333-8444-555555555555; do jq -n --arg p "$wb" --argjson at "$(date +%s)" '{session_id: "x", ended: null, tmux: {pane: $p}, state: "working", reason: "background", background: [{id: "s1", kind: "shell", at: $at}]}' >"$KLEPSYDRA_DIR/fleet/$s.json"; done
-check "#453 cell B: two live files falls back to the grep" "$(IDLE_S=0 WATCH_TICK=0.1 timeout 3 bash "$here/watch-panes.sh" "$wb" 2>/dev/null | cut -d' ' -f1)" ""
+check "#453 cell B: two live files falls back to the grep" "$(watch_held "$wb")" "held"
 t kill-window -t "$wb"; rm -f "$KLEPSYDRA_DIR"/fleet/*.json
 
 echo "cell C: no session JSON, screen says shell still running"
 wc_=$(pane cC '{"above":["✻ Baked for 2s · done 11:50 AM · 1 shell still running"],"below":["  ⏵⏵ bypass permissions on · 1 shell"]}'); settle
-check "#453 cell C: no file falls back to the grep" "$(IDLE_S=0 WATCH_TICK=0.1 timeout 3 bash "$here/watch-panes.sh" "$wc_" 2>/dev/null | cut -d' ' -f1)" ""
+check "#453 cell C: no file falls back to the grep" "$(watch_held "$wc_")" "held"
 t kill-window -t "$wc_"
 
 echo "cell D: JSON with no background key, screen says shell still running"
 wd=$(pane cD '{"above":["✻ Baked for 2s · done 11:50 AM · 1 shell still running"],"below":["  ⏵⏵ bypass permissions on · 1 shell"]}'); settle
 jq -n --arg p "$wd" '{session_id: "x", ended: null, tmux: {pane: $p}, state: "done", reason: null}' >"$KLEPSYDRA_DIR/fleet/$SID.json"
-check "#453 cell D: no .background falls back to the grep" "$(IDLE_S=0 WATCH_TICK=0.1 timeout 3 bash "$here/watch-panes.sh" "$wd" 2>/dev/null | cut -d' ' -f1)" ""
+check "#453 cell D: no .background falls back to the grep" "$(watch_held "$wd")" "held"
 t kill-window -t "$wd"; rm -f "$KLEPSYDRA_DIR/fleet/$SID.json"
 
 echo "cell G: entry without at, screen says done with no shell (view.rs drops it)"
 wg=$(pane cG '{"above":["✻ Baked for 2s · done 11:50 AM"],"below":["  ⏵⏵ bypass permissions on · 1 shell"]}'); settle
 jq -n --arg p "$wg" '{session_id: "x", ended: null, tmux: {pane: $p}, state: "working", reason: "background", background: [{id: "s1", kind: "shell"}]}' >"$KLEPSYDRA_DIR/fleet/$SID.json"
-check "#453 cell G: no-at entry wakes" "$(IDLE_S=0 WATCH_TICK=0.1 timeout 3 bash "$here/watch-panes.sh" "$wg" 2>/dev/null | cut -d' ' -f1)" "IDLE"
+check "#453 cell G: no-at entry wakes" "$(watch_wake "$wg")" "IDLE"
 t kill-window -t "$wg"; rm -f "$KLEPSYDRA_DIR/fleet/$SID.json"
 
 echo "cell X: state error with fresh entry, screen says done with no shell (view.rs counts no crew)"
 wx=$(pane cX '{"above":["✻ Baked for 2s · done 11:50 AM"],"below":["  ⏵⏵ bypass permissions on · 1 shell"]}'); settle
 jq -n --arg p "$wx" --argjson at "$(date +%s)" '{session_id: "x", ended: null, tmux: {pane: $p}, state: "error", reason: null, background: [{id: "s1", kind: "shell", at: $at}]}' >"$KLEPSYDRA_DIR/fleet/$SID.json"
-check "#453 cell X: state error wakes" "$(IDLE_S=0 WATCH_TICK=0.1 timeout 3 bash "$here/watch-panes.sh" "$wx" 2>/dev/null | cut -d' ' -f1)" "IDLE"
+check "#453 cell X: state error wakes" "$(watch_wake "$wx")" "IDLE"
 t kill-window -t "$wx"; rm -f "$KLEPSYDRA_DIR/fleet/$SID.json"
 
 echo "cell M: one malformed entry beside a good one"
 wm=$(pane cM '{"above":["✻ Baked for 2s · done 11:50 AM"],"below":["  ⏵⏵ bypass permissions on · 1 shell"]}'); settle
 jq -n --arg p "$wm" --argjson at "$(date +%s)" '{session_id: "x", ended: null, tmux: {pane: $p}, state: "working", reason: "background", background: [{id: "bad", kind: "shell", at: "x"}, {id: "a1", kind: "agent", at: $at}]}' >"$KLEPSYDRA_DIR/fleet/$SID.json"
-check "#453 cell M: good entry still holds" "$(IDLE_S=0 WATCH_TICK=0.1 timeout 3 bash "$here/watch-panes.sh" "$wm" 2>/dev/null | cut -d' ' -f1)" ""
+check "#453 cell M: good entry still holds" "$(watch_held "$wm")" "held"
 t kill-window -t "$wm"; rm -f "$KLEPSYDRA_DIR/fleet/$SID.json"
 
 echo "hostile screen text in wake log"
 : >"$FLEET_LOG"
 # shellcheck disable=SC2016 # literal $(...) and `id` in screen text
 wq=$(pane cQ '{"above":["⏺ say \"hi\" \\ $(touch /tmp/PWNED_453) `id` %s done 11:50 AM","line2 = a=b","x"]}'); settle
-check "#453: hostile screen text wakes" "$(IDLE_S=0 WATCH_TICK=0.1 timeout 3 bash "$here/watch-panes.sh" "$wq" 2>/dev/null | cut -d' ' -f1)" "IDLE"
+check "#453: hostile screen text wakes" "$(watch_wake "$wq")" "IDLE"
 # shellcheck disable=SC2016 # matching literal $(...) in log output
 check "#453: wake log is valid JSON and screen verbatim" "$(jq -r 'select(.message == "watched pane idle") | .screen' "$FLEET_LOG" | grep -cF '$(touch /tmp/PWNED_453)')" "1"
 check "#453: no command ran from hostile screen text" "$([[ -e /tmp/PWNED_453 ]] && echo ran || echo no)" "no"
