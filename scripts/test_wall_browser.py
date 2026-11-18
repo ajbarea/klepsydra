@@ -5237,7 +5237,7 @@ def strip_keeper_states(wall):
     after a switch from a keeper, whose face must be gone."""
     page = wall.browser.new_page(viewport={"width": 1200, "height": 400})
     page.goto(f"http://127.0.0.1:{wall.port}/src/index.html?still=1&zoom=3&theme=professions")
-    page.wait_for_selector("#rows > *")
+    page.wait_for_selector("#strip", state="attached")
     page.evaluate(STRIP_KEEPER)
     page.wait_for_selector("#strip .face.rest img[src]")
     got = page.evaluate(STRIP_BOX)
