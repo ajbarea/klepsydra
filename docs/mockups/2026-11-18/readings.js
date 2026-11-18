@@ -6,9 +6,9 @@
 // klepsydra rewrites a session's file in place, so the files on disk move on;
 // SOURCE freezes what each one held when it was read (accounts/<id>/<session>.json).
 window.SOURCE = {
-  personal: { session: "d1561ead", written_at: 1795026200, five_hour: [9, 1795036800], seven_day: [45, 1795456800] },
-  rit: { session: "b02de147", written_at: 1795026210, five_hour: [2, 1795044000], seven_day: [0, 1795629600] },
-  agy: { session: "0e65e748", written_at: 1795023195, five_hour: [7.2, 1795032916], seven_day: [4.06, 1795619716], claude_gpt: [100, 1795033968] },
+  personal: { account: "6f5fe38b", session: "d1561ead", written_at: 1795026200, five_hour: [9, 1795036800], seven_day: [45, 1795456800] },
+  rit: { account: "96130a18", session: "b02de147", written_at: 1795026210, five_hour: [2, 1795044000], seven_day: [0, 1795629600] },
+  agy: { account: "agy-primary", session: "0e65e748", written_at: 1795023195, five_hour: [7.2, 1795032916], seven_day: [4.06, 1795619716], claude_gpt: [100, 1795033968] },
 };
 // Copilot has no reading yet (#323); its chip is a labelled placeholder.
 // Order is the route order (gauge.js ROUTE_ORDER): agy, Copilot, API credit
@@ -31,7 +31,7 @@ window.SNAP = {
       ageMin: 50, // its reading was written at 12:33 PM
       windows: [
         { key: "five_hour", label: "Gemini session", short: "5h", pct: 7, in: "1h 52m", at: "3:15 PM" },
-        { key: "seven_day", label: "Gemini week", short: "wk", pct: 4, in: "6d 21h", at: "Wed Nov 25, 10:15 AM" },
+        { key: "seven_day", label: "Gemini week", short: "wk", pct: 4, in: "6d 20h", at: "Wed Nov 25, 10:15 AM" },
         {
           key: "claude_gpt", label: "Claude & GPT", short: "c/g", pct: 100, in: "2h 9m", at: "3:32 PM", group: true,
           note: "Antigravity removes these models on Nov 18 (antigravity.google/docs/models)",

@@ -68,7 +68,7 @@
       rows: [
         row("Card density", "How much each session card shows on the wall.", seg(["Auto", "Comfortable", "Compact"], "Compact", "Card density")),
         row("Gauge layout", "Linear fits a taskbar; double suits a screen corner; stacked shows every window.", seg(["Linear", "Double", "Stacked"], "Linear", "Gauge layout")),
-        row("Gauge background opacity", "Below 60% the text gets a dark halo so it reads over the wallpaper.", slider(80)),
+        row("Gauge background opacity", "Below 60% (40% in the light theme) the text gets a dark halo so it reads over the wallpaper.", slider(80)),
         row("Text-only gauge", "Logo, value and reset only: no rings or bars (#438).", toggle(false, "Text-only gauge")),
         row("Light or dark", "The wall and the gauge follow Windows unless you pick one.", select("Match Windows", "Light or dark")),
       ],

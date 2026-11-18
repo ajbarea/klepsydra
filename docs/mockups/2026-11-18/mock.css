@@ -123,8 +123,10 @@ body {
   font-variant-numeric: tabular-nums lining-nums;
 }
 .panel[data-op]:not([data-op="0"]) { -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px); }
-/* Below 40% the panel no longer carries the text: HUD ink (light, with a
+/* Below the halo threshold (strip.js: 60% dark, 40% light) the panel no longer carries the text: HUD ink (light, with a
    dark halo, never a light one) takes over in either theme. */
+/* Part see-through: faint text would fall under 4.5:1, so it takes the full ink. */
+.panel.thin { --panel-dim: var(--panel-ink); }
 .panel.halo {
   --panel-ink: #f7f1e6;
   --panel-dim: #efe6d6;

@@ -136,7 +136,8 @@ figure { min-width: 0; }
   .sa-row .cell { grid-column: 2; justify-content: start; }
   .sa-row .cell:empty { display: none; }
   .sb-row { min-width: 0; }
-  .sb-row .line { grid-template-columns: 78px 1fr 38px 64px; }
+  .sb-row .line { grid-template-columns: 70px 1fr 34px auto; }
+  .sb-row .line .t { white-space: nowrap; }
   .detail { min-width: 0; width: 100%; }
   .detail td:nth-child(2) { width: 50px; }
   .strip.double .items { grid-template-columns: auto; }

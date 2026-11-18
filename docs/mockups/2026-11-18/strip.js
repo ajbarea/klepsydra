@@ -88,7 +88,11 @@
   const grip = `<span class="grip" aria-hidden="true">${ICON.grip}</span>`;
   const strip = (v, layout, accts, opt = {}) => {
     const op = opt.op ?? 100;
-    const halo = op < 60 ? " halo" : ""; // at 50% a dark panel over a light desktop drops body text to 3.3:1
+    // The halo threshold follows the panel: at 50% a dark panel over a light desktop
+    // drops body text to 3.3:1, while a light panel at 50% keeps its dark ink crisp.
+    const light = document.documentElement.dataset.theme === "light";
+    const haloAt = light ? 40 : 60;
+    const halo = op < haloAt ? " halo" : op < 70 ? " thin" : "";
     const item = v === "a" ? itemA : itemB;
     const row = v === "a" ? rowA : rowB;
     const body =
@@ -143,7 +147,7 @@
 </div>
 
 <h2>Background opacity: 100, 50 and 0%</h2>
-<p>Below 60% the panel stops carrying the text: light ink with a dark halo takes over in both themes. At 50% a dark panel over a light desktop would otherwise leave body text near 3:1.</p>
+<p>Below 60% (dark theme) or 40% (light theme) the text switches to light ink with a dark halo; between that and 70%, faint text turns full ink. A dark panel at 50% over a light desktop would otherwise leave body text near 3:1.</p>
 <div class="opgrid">
   ${["wp-dark", "wp-light", "wp-busy"].map((w) => [100, 50, 0].map((op) => `<figure>${tile(w, strip(v, "double", A, { op }))}<figcaption class="cap">${op}% · ${wpName[w]}</figcaption></figure>`).join("")).join("")}
 </div>
