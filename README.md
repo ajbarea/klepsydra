@@ -1403,57 +1403,32 @@ previous file alone rather than overwriting it with blanks.
 
 <!-- budget: 300 words -->
 `fleet/ci_watch.py` watches GitHub Actions on every active repo in
-`~/.claude/techne.toml`. It polls every 2 minutes, or longer when GitHub's
-`x-poll-interval` asks, with conditional requests: an unchanged answer is a
-304, which costs no rate limit. A run counts when it is on the repo's default
-branch or at the head of an open pull request. The newest completed run per
-workflow and branch that succeeded or failed decides (a cancelled, skipped or
-neutral run decides nothing): `failure`, `timed_out` or `startup_failure` is
-red, and a later green run clears it. The default branch and each open PR's
-head are asked for on their own. A red run that pages out of the newest runs
-stays red until a newer run of its workflow in the same place decides, its PR
-closes, its workflow is deleted, or a month passes.
+`~/.claude/techne.toml`. It polls every 2 minutes with conditional requests,
+so an unchanged answer is a 304 that costs no rate limit. A run counts when it
+is on the repo's default branch or at the head of an open pull request. The
+newest completed run per workflow and branch decides: `failure`, `timed_out`
+or `startup_failure` is red, and a later green run clears it.
 
 Each new red run gets one unattended, read-only triage by techne ci-audit's
-report mode (`report.sh`, from the installed techne plugin or
-`TECHNE_CI_REPORT`): the failing step, its cause and its file:line. The triage
-runs on the first account with room, in the fleet's order, then on each other logged-in account
-when one is at its usage limit. If any account was at its limit, the triage
-waits and is tried again every 10 minutes, for up to a day, and the red is
-routed once it has its cause or has waited 30 minutes. If a live fleet
-agent works on that PR's branch, the red goes to that agent's inbox
-(`inbox/NAME/` in the state folder), and the resume service types it in at the
-agent's next idle prompt. Otherwise it goes to Heph as a line in
-`ci/alerts.jsonl`, which wakes his pane watcher. A run still red 30 minutes
-after routing (`CI_ESCALATE_S`, 1800) wakes Heph once more and gets one line
-under "Needs you" in the file `FLEET_QUEUE` names (default
-`/mnt/c/Users/ajbar/fleet-briefing/needs-you.md`). Dependabot's reds are kept
-for the morning instead. Once a day (after `CI_SWEEP_HOUR`) the
-latest green run on each default branch is read for warnings. The script's
-default is 6; the installed unit sets 99, which turns the sweep off, unless
-`CI_SWEEP_HOUR` is set when you run `make install-fleet`. The watcher
-pushes, merges and re-runs nothing. No error stops it: a repo that cannot be
-read is skipped for the pass and logged, and each triage is saved as soon as it
-is done, so a restart triages nothing twice. Its triage folders are removed after
-two weeks.
+report mode: the failing step, its cause and its file:line. The red is then
+routed once it has its cause or has waited 30 minutes. A live fleet agent on
+that PR's branch gets it in its inbox; otherwise Heph gets a line in
+`ci/alerts.jsonl`. A run still red 30 minutes later gets one line under "Needs
+you" in the file `FLEET_QUEUE` names. The watcher pushes, merges and re-runs
+nothing, and a repo it cannot read is skipped for the pass and logged.
 
-It writes `ci.json` to the app data folder, which the wall and the phone show
-as a **CI** button in the bar: hidden without a CI watch and while every
-repo is green with nothing to note, `CI ok` when green with Dependabot runs
-kept for the morning or repos not read, red with a count when a run is red, and `CI ?` when the watch
-has not reported for 15 minutes. It opens a list of the red runs: repo,
-workflow, branch or PR, the failing step, the triaged cause with its
-file:line, and the run on GitHub: a link on the phone, its address as a
-tooltip on the desktop until the app can open links (#149). On the phone the
-button is a full 44 px touch target. The app reads the file capped, cuts each text to 300
-characters and keeps a link only when it is a GitHub Actions run, so a
-local path never reaches the phone.
+It writes `ci.json` to the app data folder. The wall and the phone show it as
+a **CI** button in the bar: hidden while every repo is green, `CI ok` with
+Dependabot runs kept for the morning, red with a count when a run is red, and
+`CI ?` after 15 minutes without a report. The button opens the red runs: repo,
+workflow, branch or PR, failing step, triaged cause and the run on GitHub. The
+app reads the file capped, cuts each text to 300 characters and keeps a link
+only when it is a GitHub Actions run, so a local path never reaches the phone.
 
-The watcher logs
-one JSON line per decision to `log/ci.log` in the fleet's state folder (rotated
-past 1 MiB, four kept). `make install-fleet` installs it as the
-`fleet-ci-watch.service` user unit, and `fleet cutover` starts it. Run
-`python3 -I fleet/ci_watch.py --once` for one pass by hand.
+`make install-fleet` installs the watcher as the `fleet-ci-watch.service` user
+unit, and `fleet cutover` starts it. It logs one JSON line per decision to
+`log/ci.log`. Triage order, retries, the daily sweep and the inbox route are in
+[docs/ci-watch.md](docs/ci-watch.md).
 
 ## Logs
 
@@ -1495,57 +1470,37 @@ before the log moved wrote `fleet.log` in the app data dir; it can be deleted.
 `fleet/` holds the scripts that run an orchestrated fleet of Claude Code
 sessions in the `fleet` tmux session: they start agents, resume them after a
 usage limit, and check the fleet's health. `make install-fleet` links each one
-from this checkout into the fleet's state folder (`~/.local/state/fleet-orchestrator`,
-or `FLEET_STATE`), so pulling main updates the fleet. It also links the `fleet`
-command into `~/.local/bin` and writes the services as user units in
-`~/.config/systemd/user`, which start again after a reboot, and makes step 1's
-copies into `~/.claude`. A copy a link
-replaces goes to `archive/fleet-scripts-<date>/`. When the resume service is
-running, the install then runs `fleet cutover`, since a running service keeps
-the code it started with (`fleet install --no-cutover` skips it). Run it from
-the main checkout: from a git worktree it refuses, since its links would break
-when the worktree goes (`--force` overrides). `fleet install` takes `--dry-run`,
-`--hooks` (only the copies in `~/.claude`), `--force` and `--no-cutover`. It also
-merges Antigravity's hooks into `~/.gemini/config/hooks.json`. Runtime state (`panes.tsv`,
-briefs, logs) stays in the state folder.
+from the main checkout into the fleet's state folder
+(`~/.local/state/fleet-orchestrator`, or `FLEET_STATE`), links the `fleet`
+command into `~/.local/bin`, writes the services as user units in
+`~/.config/systemd/user`, and copies the hooks into `~/.claude`. From a git
+worktree it refuses unless given `--force`. Runtime state (`panes.tsv`, briefs,
+logs) stays in the state folder. Every shell script logs each decision as one
+JSON line in `log/fleet.log`, in the app log's shape.
 
 | Command | What it does |
 |---|---|
-| `fleet doctor` | One line per check: the resume service, its last pass and what that pass saw (panes, limited panes), limits from the fleet hook's StopFailure record dated by the account's `resets_at`, else as the panes show them (a pane still at a limit 10 min past its reset, with nothing sent since, fails; a reset time beside a limit message the fleet does not recognise warns), Remote Control on every registered pane and the orchestrator's, the phone wall locally and over Tailscale Serve (it passes when it answers; a miss is tried once more), skipped (ok) while prefs.json's `phone_wall` is not `true` (a prefs.json that does not read as one JSON object warns), the usage readings' age (a warning only while some pane runs a turn, since only a turn refreshes them), a pane watcher (none running is ok while no agent runs, and a warning, with the reset time, while every agent waits out a usage limit), the pane-died hook on the fleet's tmux server (and its script), whether `.wslconfig` keeps WSL up after a crash (`instanceIdleTimeout=-1` under `[general]`), paused agents, each fleet scope's tasks against its task cap (warns past 80%), the memory slices (fails when `fleet.slice` or `fleet-workers.slice` has no `MemoryMax`, the workers' slice is not inside the fleet's and below its cap, or a fleet scope started since the slices sits outside its slice; warns when the caps were sized for another MemTotal or earlyoom line, the orchestrator's peak over the last 7 days outgrows the room the workers' slice leaves it, or a scope started before the slices' units were last written still sits outside them until its next fresh start), briefs' shared rules, whether keryx holds the tray's Voices mode, and the open Playwright MCP browsers (pid, owning session, idle time as the time since their profile last changed; warns on one idle past `FLEET_BROWSER_IDLE_MIN`, 30, or one whose MCP server is gone). It also checks the auth mode (a failure when an interactive config folder sets an API key), the heavy lock's holders, each engine's login and locked lanes, each account folder's login and settings, whether each pane is on its role's preferred account, whether the installed copies match the checkout, whether each card's voice matches its terminal's, and CI alerts left in an inbox over an hour. With `--json`, a phone wall that does not answer warns the first time and fails on the second run in a row. A wall that is down because klepsydra was quit warns with the time it was quit. Each check logs the values it decided on. Each registered agent gets one verdict: running, finished (its session ended cleanly: a warning until `fleet doctor --prune` drops its row, keeping a backup beside `panes.tsv`), or gone with no end recorded, as after a hard shutdown (a failure for `fleet recover`, which leaves finished agents alone). Exits non-zero on any failure. `--json FILE` also writes the checks as a report, and logs only a check that changed status (a recovery without its detail). The `fleet-doctor.timer` runs it every 5 min into the data folder's `fleet-health.json`, which the wall and the phone show as a **Fleet** button beside **CI** while any check warns or fails: failing checks first, `Fleet ?` when the report is over 15 minutes old, no links and `~` for the home folder. |
-| `fleet log [N]` | The last N decisions (default 30) as plain lines. |
-| `fleet accounts` | Each config folder in `FLEET_ACCOUNTS` with its account and its five-hour and weekly room. `*` marks where a new worker starts. Workers prefer the first folder and Heph the last. |
-| `fleet accounts sync [--check]` | Makes the second config folder behave like `~/.claude` (settings, plugin lists) and keeps its own login. |
-| `fleet recover [--dry-run] [--no-orchestrator]` | After a hard shutdown, launches every registered agent whose session is gone, fresh from its brief with a resume hint, one at a time. Heph is launched from `HEPH.md`. Running agents are left alone. |
-| `fleet shots [--apply]` | Prunes the briefing's screenshots that are decided or older than its age limit, and closes answered Review issues. Without `--apply` it only prints what it would do. |
-| `fleet install [--dry-run] [--hooks] [--force] [--no-cutover]` | What `make install-fleet` runs. |
-| `fleet pause NAME WHY` / `fleet unpause NAME` | Sets aside an agent whose session is gone: its row moves from `panes.tsv` to `paused.tsv` with the reason, so `fleet recover` and the doctor leave it alone. Unpause puts the row back as it was and names it in `unpaused.tsv`, so the next `fleet recover` launches it from its brief (with its old session's last replies, as "set aside with fleet pause") and then clears that line. An agent is never paused while a live session in its pane may be it (on the running tmux server, no other row's, not Heph's), nor when its row names no session. |
-| `fleet brief NAME BODY-FILE` | Writes `task-NAME.src`: the text of BODY-FILE, then the shared rules in `fleet/brief-tail.md`. The brief it replaces goes to `archive/briefs/`. `--check` lists briefs whose rules drifted; `--refresh` rewrites them with the current rules, dropping any rule an earlier tail held (word for word or by its label) and keeping lines added after them. |
-| `fleet cutover` | Moves the eight fleet services onto the installed unit files: it stops any transient unit with the same name, then enables and starts each one. It checks each is enabled and active and that the resume service logged its start. It waits up to 15 minutes while a fresh start holds the lock. |
-| `fleet send PANE TEXT` | (`TEXT` of `-` reads the message from stdin.) Sends a message to the Claude Code session in a fleet pane (Heph to a worker, a worker to Heph) so it is submitted: a bracketed paste checked in the input box, then Enter until the box empties, three times at most. Raw `tmux send-keys TEXT Enter` can leave a long message in the box, since Claude Code reads the burst as a paste and drops the Enter after it. A running turn is no bar (Claude Code queues the message); text already in the box is never touched. A pane stopped at a usage limit gets nothing. Prints `sent`, `limited`, `not-pasted`, `mixed` or `held`, and exits 0 only for `sent` (2 on bad arguments). |
-| `fleet done [NAME]` | Marks an agent finished: its row moves from `panes.tsv` to `finished.tsv` with the time, so nothing relaunches it or types into it: the resume service, `fleet recover` and the doctor act only on registered rows, and the service also leaves alone a pane with no row whose live session `finished.tsv` names. A registered agent's own `/exit` is recorded there too: by the fleet hook at the end itself (`fleet/registry-event.sh`, which also drops the record when that session starts again and moves the row to a `/clear`'s new session), and by the doctor and `fleet recover` the first time they see it; that row stays in `panes.tsv` until `fleet doctor --prune`. With no NAME, the row of the fleet pane it runs in, when its registered session runs there; each brief's shared rules end with it. The pane stays open with its final report. |
-| `fleet delegate [--engine auto\|agy\|copilot] [--kind research\|draft\|review\|ci] [--model M] [--dir REPO] [--timeout S] [--notify PANE] [--interactive] TASK-FILE` | Hands read-only work to Antigravity's agy or GitHub's Copilot, on their quota instead of Claude's. The engine gets a read-only snapshot of the repo's committed files (secret-looking files removed) and runs locked: no file writes, no shell, no MCP, no browser. Prints one line (engine, model, status, answer path); the answer is stamped an unverified lead. With `auto`, a quota or login failure falls back to the other engine, never to Claude. `--interactive` opens a locked agy or Copilot window in the tmux session `engines` and a watcher tells the orchestrator through `fleet send` when each turn ends; `fleet delegate msg ID TEXT`, `read ID`, `stop ID` and `ls` follow it. See [docs/engines.md](docs/engines.md). |
-| `fleet headless NAME BRIEF [--budget USD] [--model MODEL] [--repo DIR] [--wait]` | Runs one job as `claude -p` on the API credit instead of the subscription, in a fresh worktree, under a hard `--max-budget-usd` (default 10, at most 50) and a 6-hour limit, in the workers' memory cap. It refuses to start without an `ant` login for the headless profile. `--status` lists running and finished jobs with their cost. A run that ends without its `FINAL REPORT:` is resumed, up to 4 times, then reads stalled; what a job leaves running is stopped when it ends. Interactive sessions never get a key. See [docs/headless.md](docs/headless.md). |
-| `fleet voices [heph\|everyone\|off]` | Sets keryx to the tray's Voices mode now, for running sessions too; with a mode, saves it to `prefs.json` first. Changes keryx only where it differs and logs the values it decided on. `--if-changed` applies only a mode not yet applied (the resume service); `--check` only says whether it is, and writes nothing. Every other run first keeps `keryx-paths.json` in the data folder current (keryx's config as Windows opens it, and the orchestrator's session file), which the tray reads to tick what keryx does. |
-| `fleet/launch.sh NAME BRIEF [claude args...]` | Starts an agent with its own session id in a scope with a memory cap and its own task cap, inside `fleet.slice` (the orchestrator) or `fleet-workers.slice` (a worker); `fleet install` sizes both from MemTotal, so the kernel caps the fleet's total. Claude runs at OOM rank 0 and every shell it starts at 1000 (`fleet/oom-tool.sh` as `BASH_ENV`), so a cap kills a job a shell started before the agent; programs claude starts without a shell (MCP servers, hooks run by `sh`) keep its rank (#354). It turns Remote Control on and waits for it to settle, pastes the brief, checks the brief reached the prompt, then submits it. It runs on `FLEET_ACCOUNT`'s config folder, else on the first logged-in account with room, and prints one line: pane, session, account, free memory and whether the brief started. A retry never sends Escape. It records the pane, session id and folder in `panes.tsv`. Its window opens behind the one in view; a replacement (a fresh session, a move, a relaunch) takes the old window's place in view only when AJ was watching the old one, and a cold `fleet recover` brings Heph forward unless AJ moved meanwhile. |
-| `fleet/resume-at-reset.sh` | The resume service. It resumes a limited pane at its reset (the account's `resets_at` for the hook's StopFailure record, else the time its banner names), or at once after a switch to an account with room; the orchestrator too, who moves to the other account as a fresh session from `HEPH.md` when that one has room. It starts a registered pane fresh from its brief after 55 minutes idle (`FRESH_AFTER_S`, 3300), before its prompt cache expires. A worker on another account moves back to its preferred one once that has 50% room. A worker whose account has used 95% of a window moves to one with room at its next finished turn. Idle panes get `/remote-control`, and a CI alert in an agent's inbox is typed in at its next idle, empty prompt. Whatever AJ typed at a limited pane is sent as typed; a line that left the prompt unsent is typed again. Each pane's state survives a restart of the service. Each pass also closes a Playwright MCP browser whose MCP server is gone (`klepsydra-browser.sh --reap`): TERM, then KILL at a pass at least `FLEET_BROWSER_GRACE_S` (10) later, each logged. |
+| `fleet doctor` | One line per check, one verdict per agent; exits non-zero on a failure. `--json FILE` writes a report, which the wall and phone show as a **Fleet** button. `--prune` drops finished agents' rows. |
+| `fleet log [N]` | The last N decisions (default 30). |
+| `fleet accounts` | Each config folder with its account and room. `accounts sync` makes the second folder behave like `~/.claude`. |
+| `fleet recover` | After a hard shutdown, relaunches every agent whose session is gone. |
+| `fleet pause NAME WHY` / `unpause NAME` | Sets an agent aside, or puts it back. |
+| `fleet brief NAME BODY-FILE` | Writes `task-NAME.src`: the text of BODY-FILE, then the shared rules. `--check` and `--refresh` keep old briefs current. |
+| `fleet send PANE TEXT` | Sends a message so it is submitted (`-` reads stdin). Prints `sent`, `limited`, `not-pasted`, `mixed` or `held`. |
+| `fleet done [NAME]` | Marks an agent finished, so nothing relaunches it. |
+| `fleet delegate TASK-FILE` | Hands read-only work to a locked agy or Copilot lane. See [docs/engines.md](docs/engines.md). |
+| `fleet headless NAME BRIEF` | Runs a job as `claude -p` on the API credit, capped. See [docs/headless.md](docs/headless.md). |
+| `fleet voices [MODE]` | Sets keryx to the tray's Voices mode now. |
+| `fleet shots [--apply]` | Prunes the briefing's decided and old screenshots; a dry run without `--apply`. |
+| `fleet install` / `fleet cutover` | Install the scripts and units; move the nine units (eight, plus `wsl-mem-watch.service` when installed) onto the installed files. |
 
-Every shell script logs each decision as one JSON line in `log/fleet.log` under the
-state folder (the CI watch writes `log/ci.log` and `fleet shots` writes `shots.log`), in the app log's shape (`ts`, `level`, `target`, `message`, then
-the event's own fields: pane, account, reason). The file rotates past 1 MiB
-and keeps four old files. `jq 'select(.level == "ERROR")'` lists failures.
-
-More timers run beside the resume service. `fleet-sync-briefing` commits and
-pushes the private fleet-briefing repo every 5 minutes after a gitleaks scan, and
-mirrors it to Drive when `FLEET_BRIEFING_DRIVE` names an rclone remote.
-`fleet-tmux-watch` checks the fleet's tmux server every minute. `fleet-memfrag-log`
-logs WSL memory fragmentation every 30 minutes to `memfrag.log`. `fleet-doctor`
-is described above. `fleet/fresh-now.sh [PANE...]` gives each registered pane a
-fresh conversation in place (`/clear`, `/remote-control`, then its brief), or
-relaunches it on another account when that one has room. `bash fleet/heavy.sh
-COMMAND` runs any other heavy command under the heavy lock. `FLEET_VOICES=0`
-stops the resume service from applying the Voices mode. `bash fleet/attack_live.sh`
-asks each real engine, locked, to write a file and commit; it spends engine
-quota, so run it by hand when a lock changes.
+`fleet/launch.sh NAME BRIEF` starts an agent in a memory-capped scope, and
+`fleet/resume-at-reset.sh` is the resume service: it resumes a limited pane at
+its reset, moves workers between accounts, and starts an idle registered pane
+fresh after 55 minutes. Each command's flags, the timers (`fleet-doctor`,
+`fleet-sync-briefing`, `fleet-tmux-watch`, `fleet-memfrag-log`,
+`fleet-accounts-sync`) and the log files
+are in [docs/fleet.md](docs/fleet.md).
 
 ## Tests
 
