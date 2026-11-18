@@ -33,6 +33,7 @@ button .ico { width: 15px; height: 15px; }
 .split > button:first-child { border-top-right-radius: 0; border-bottom-right-radius: 0; }
 .split > button.caret { border-top-left-radius: 0; border-bottom-left-radius: 0; border-left: 1px solid var(--page); padding: 0 9px; }
 .split > button.caret .ico { width: 14px; height: 14px; }
+.split .mono { font-size: 10px; border-width: 1.2px; padding: 0.25em 0.3em; }
 .split > button.caret[aria-expanded="true"] { box-shadow: inset 0 0 0 2px var(--page), 0 0 0 2px var(--ink); }
 
 /* ── Variant A: split button + engine menu ── */
@@ -100,7 +101,7 @@ button .ico { width: 15px; height: 15px; }
 .sheet-foot .note { margin-right: auto; font-size: 12.5px; color: var(--ink-dim); }
 
 /* ── State examples under each mock ── */
-.legend { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-top: 18px; }
+.legend { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-top: 18px; }
 .legend > div { background: var(--page-2); border: 1px solid var(--line); border-radius: 10px; padding: 10px; }
 .legend .cap { margin: 6px 4px 0; }
 
@@ -140,3 +141,4 @@ button .ico { width: 15px; height: 15px; }
   .room { grid-row: auto; grid-column: 2 / -1; text-align: left; }
   .room b { display: inline; margin-right: 6px; }
 }
+@media (max-width: 1100px) and (min-width: 641px) { .legend { grid-template-columns: 1fr 1fr; } }

@@ -1,7 +1,7 @@
 <!-- budget: 700 words -->
 # klepsydra design pass, 2026-11-18
 
-Mockups for the gauge strip (#421, #438), + New session (#440) and the settings page (#384), for you to pick from before anything is built. Every reading is the real one from 1:23 PM today. Each shot is the full page at 1920 wide; phone (390) shots sit beside them in the same folder. PR: (draft PR link).
+Mockups for the gauge strip (#421, #438), + New session (#440) and the settings page (#384), for you to pick from before anything is built. Every reading is the real one from 1:23 PM today. Each shot is the full page at 1920 wide; phone (390) shots sit beside them in the same folder. PR: [klepsydra#459](https://github.com/ajbarea/klepsydra/pull/459).
 
 ## Gauge strip
 
@@ -9,11 +9,11 @@ Mockups for the gauge strip (#421, #438), + New session (#440) and the settings 
 |---|---|
 | [![A dark](shots/design-gauge-a-1920-dark.webp)](shots/design-gauge-a-1920-dark.webp) | [![B dark](shots/design-gauge-b-1920-dark.webp)](shots/design-gauge-b-1920-dark.webp) |
 | [light](shots/design-gauge-a-1920-light.webp) · [phone dark](shots/design-gauge-a-390-dark.webp) · [phone light](shots/design-gauge-a-390-light.webp) | [light](shots/design-gauge-b-1920-light.webp) · [phone dark](shots/design-gauge-b-390-dark.webp) · [phone light](shots/design-gauge-b-390-light.webp) |
-| Text first, like NVIDIA's HUD: logo, bold value, reset, one small pip per window. It reads at 0% opacity over any wallpaper. The trade: a pip is a smaller status cue than a ring. | Today's ring, one per account, with the logo inside it and each account's agents docked beside it. Strongest at a glance. The trade: its hairline bars fade below 40% opacity, so it wants a panel. |
+| Text first, like NVIDIA's HUD: logo, bold value, reset, one small pip per window. It reads at 0% opacity over the dark and light desktops; over a busy wallpaper the small reset times thin out. The trade: a pip is a smaller status cue than a ring. | Today's ring, one per account, with the logo inside it and each account's agents docked beside it. Strongest at a glance. The trade: its hairline bars fade once the panel goes, and at 56 px it overhangs a 48 px taskbar (A is 47 px). |
 
-Both have the three NVIDIA layouts on one switch (linear, double, stacked), the 100/50/0% opacity grid over dark, light and busy wallpaper, and the states: out until reset (session hidden), an old reading dimmed with its age, the Copilot placeholder, and one route mark (agy Gemini). Linear width with 4 chips: **671 px (A), 634 px (B)**, against about 1,700 px for today's 7 meters. Neither layout changes width between 1920 and 1366.
+Both have the three NVIDIA layouts on one switch (linear, double, stacked), and the 100/50/0% opacity grid over dark, light and busy wallpaper. Below 60% the text switches to light ink with a dark halo, because at 50% a dark panel over a light desktop leaves body text near 3:1. Both also show the states: out until reset (session hidden), an old reading dimmed with its age, the Copilot placeholder, and one route mark (agy Gemini). Linear width with 4 chips: **671 px (A), 634 px (B)**, against about 1,700 px for today's 7 meters. Neither layout changes width between 1920 and 1366.
 
-**Recommendation: A, with B's docked faces.** #438 makes 0% a real setting, and only A still reads there. A is also the less wordy one you asked for (logo, value, time). The faces docked to their account fix the "separate avatars" problem in #421 and move over to A unchanged.
+**Recommendation: A, with B's docked faces.** #438 makes 0% a real setting, and A reads best there. A is also the less wordy one you asked for (logo, value, time). The faces docked to their account fix the "separate avatars" problem in #421 and move over to A unchanged.
 
 ## + New session
 
@@ -21,9 +21,9 @@ Both have the three NVIDIA layouts on one switch (linear, double, stacked), the 
 |---|---|
 | [![A dark](shots/design-new-session-a-1920-dark.webp)](shots/design-new-session-a-1920-dark.webp) | [![B dark](shots/design-new-session-b-1920-dark.webp)](shots/design-new-session-b-1920-dark.webp) |
 | [light](shots/design-new-session-a-1920-light.webp) · [phone dark](shots/design-new-session-a-390-dark.webp) · [phone light](shots/design-new-session-a-390-light.webp) | [light](shots/design-new-session-b-1920-light.webp) · [phone dark](shots/design-new-session-b-390-dark.webp) · [phone light](shots/design-new-session-b-390-light.webp) |
-| "New Claude session" plus a menu row per other engine, with its account, room left, models and Recommended mark. The trade: the menu grows with each engine. | The button names engine and account; the caret opens tiles to compare engines and model chips. The trade: one more click, and the picker is 720 px wide. |
+| "New Claude session" plus a menu row per other engine, with its account, room left, models and Recommended mark. The trade: the menu grows with each engine. | The button names engine and account; the caret opens tiles to compare engines and model chips. The trade: one more click, a 720 px picker, and the default reappears as a tile, which split-button guidance advises against. |
 
-Both show agy's real `agy models` list, with the spent Claude & GPT group disabled and saying when it returns. Both also show the signed-out, not-installed and spent-account rows.
+Both show agy's real `agy models` list, with the spent Claude & GPT group disabled and saying when it returns. Both also show the signed-out, not-installed and spent-account rows, and Claude's models with Fable's own allowance spent (Fable off, Opus and Sonnet usable).
 
 **Recommendation: A.** It follows every split-button rule in #440: it names the default action, does not repeat the default in the menu, and keeps the button and caret separately reachable. It is also the smallest change from today.
 
@@ -35,9 +35,9 @@ Both show agy's real `agy models` list, with the spent Claude & GPT group disabl
 | [light](shots/design-settings-a-1920-light.webp) · [phone dark](shots/design-settings-a-390-dark.webp) · [phone light](shots/design-settings-a-390-light.webp) | [light](shots/design-settings-b-1920-light.webp) · [phone dark](shots/design-settings-b-390-dark.webp) · [phone light](shots/design-settings-b-390-light.webp) |
 | Spotify's pattern: one page, bold section headings, the control at the right, search at the top. The trade: the 16-row sisters list makes it long. | Windows 11's pattern: a section rail with search, one card per setting. The trade: a second navigation system inside a small app. |
 
-Both hold every setting from the tray and the gear (#384's inventory), plus gauge layout and opacity, account icons, route order, the new-session default and the sisters editor. The editor shows the real 16 projects from `~/.claude/techne.toml` (read only), each with its status and kind; all 16 have a clone. The tray shrinks to Open wall, Settings and Quit.
+Both hold every setting from the tray and the gear (#384's inventory), plus gauge layout, opacity and text-only mode, account icons, route order, the new-session default and the sisters editor. The editor shows the real 16 projects from `~/.claude/techne.toml` (read only), each with its status and kind; all 16 have a clone. The tray shrinks to Open wall, Settings and Quit.
 
-**Recommendation: A**, the Spotify page you named, with the sisters list folded under a "16 projects" expander so the page stays short. Seven sections fit one scroll; a rail pays off only with many more.
+**Recommendation: A**, the Spotify page you named, with the sisters list folded under a "16 projects" expander (not drawn here) so the page stays short. Seven sections fit one scroll; a rail pays off only with many more.
 
 <details><summary>Sources and fidelity</summary>
 

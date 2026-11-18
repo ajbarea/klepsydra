@@ -3,6 +3,13 @@
 // %LOCALAPPDATA%\dev.ajsoftworks.klepsydra\accounts\<id>\*.json.
 // Percentages are the readings' used_percentage, rounded; reset times are
 // their resets_at in local time; "in" is resets_at minus 1:23 PM.
+// klepsydra rewrites a session's file in place, so the files on disk move on;
+// SOURCE freezes what each one held when it was read (accounts/<id>/<session>.json).
+window.SOURCE = {
+  personal: { session: "d1561ead", written_at: 1795026200, five_hour: [9, 1795036800], seven_day: [45, 1795456800] },
+  rit: { session: "b02de147", written_at: 1795026210, five_hour: [2, 1795044000], seven_day: [0, 1795629600] },
+  agy: { session: "0e65e748", written_at: 1795023195, five_hour: [7.2, 1795032916], seven_day: [4.06, 1795619716], claude_gpt: [100, 1795033968] },
+};
 // Copilot has no reading yet (#323); its chip is a labelled placeholder.
 // Order is the route order (gauge.js ROUTE_ORDER): agy, Copilot, API credit
 // (no reading on this PC), Claude subscription.
@@ -97,7 +104,7 @@ window.lead = (acct) => {
 };
 
 window.ageText = (min) => (min >= 120 ? `${Math.round(min / 60)}h old` : min >= 30 ? `${min}m old` : "");
-window.staleAt = 180; // minutes: past this a reading dims; between 30 and 180 it shows its age
+window.staleAt = 180; // minutes: past this a reading dims and its chip shows its age; younger ages show only in stacked and hover
 
 window.iconHTML = (acct) =>
   acct.mono ? `<span class="mono" aria-hidden="true">${acct.mono}</span>` : `<span class="ico">${window.ICON[acct.icon]}</span>`;

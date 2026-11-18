@@ -103,7 +103,7 @@ figure { min-width: 0; }
 .sb-row .body { display: grid; gap: 3px; }
 .sb-row .nm { display: inline-flex; gap: 8px; align-items: center; font-size: 13px; font-weight: 600; }
 .sb-row .faces { margin-left: auto; }
-.sb-row .line { display: grid; grid-template-columns: 96px 1fr 40px 74px; gap: 8px; align-items: center; font-size: 12.5px; }
+.sb-row .line { display: grid; grid-template-columns: 96px 1fr 40px 92px; gap: 8px; align-items: center; font-size: 12.5px; }
 .sb-row .lbl { color: var(--panel-dim); }
 .sb-row .line b { font-size: 14px; text-align: right; }
 .sb-row .line .t { opacity: 0.86; }

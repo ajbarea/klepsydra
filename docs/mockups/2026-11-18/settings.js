@@ -23,7 +23,7 @@
   const faces = ["hephaestus", "athena", "hermes", "chronos"];
   const facePick = `<span class="faces-pick" role="radiogroup" aria-label="Default orchestrator">${faces
     .map((f, i) => `<button role="radio" aria-checked="${i === 0}" title="${f[0].toUpperCase() + f.slice(1)}"><img src="../../../src/fleet/faces/kourai/${f}-96.webp" alt=""><span>${f[0].toUpperCase() + f.slice(1)}</span></button>`)
-    .join("")}<button class="more" aria-label="All characters">+10</button></span>`;
+    .join("")}<button class="more" aria-label="All characters">+12</button></span>`;
 
   const accountIcons = [
     ["claude", "", "Claude · Personal", "Claude mark (built in)"],
@@ -68,7 +68,8 @@
       rows: [
         row("Card density", "How much each session card shows on the wall.", seg(["Auto", "Comfortable", "Compact"], "Compact", "Card density")),
         row("Gauge layout", "Linear fits a taskbar; double suits a screen corner; stacked shows every window.", seg(["Linear", "Double", "Stacked"], "Linear", "Gauge layout")),
-        row("Gauge background opacity", "Below 40% the text gets a dark halo so it reads over any wallpaper.", slider(80)),
+        row("Gauge background opacity", "Below 60% the text gets a dark halo so it reads over the wallpaper.", slider(80)),
+        row("Text-only gauge", "Logo, value and reset only: no rings or bars (#438).", toggle(false, "Text-only gauge")),
         row("Light or dark", "The wall and the gauge follow Windows unless you pick one.", select("Match Windows", "Light or dark")),
       ],
     },
@@ -110,7 +111,7 @@
     {
       id: "system", icon: "monitor", title: "System",
       rows: [
-        row("Start with Windows", "", toggle(true, "Start with Windows")),
+        row("Start with Windows", "Open the gauge when you sign in to Windows.", toggle(true, "Start with Windows")),
         row("Phone wall", "Serve the wall to your phone over Tailscale.", toggle(true, "Phone wall")),
         row("Gauge position", "Put the gauge back where it started, or make where it is now its home.", `${btn("Reset position", "small")} ${btn("Set home here", "small")}`),
       ],

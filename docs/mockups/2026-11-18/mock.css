@@ -31,7 +31,7 @@
   --button-hover: #372d21;
   --gold: #c9a24a;
 
-  /* style.css, the gauge bar */
+  /* style.css, the gauge bar (--panel-dim and --route are wall.css's: the gauge's own dim, #a09079, is too faint once see-through) */
   --panel: #14100b; /* --panel-bg's colour; its alpha is the opacity setting (#438) */
   --panel-ink: #f2eadf;
   --panel-dim: #b9a993;

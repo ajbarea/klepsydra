@@ -10,7 +10,7 @@
   const spoken = (a) => {
     if (a.placeholder) return `${a.name}: no reading yet`;
     const L = window.lead(a);
-    const parts = (a.windows || []).map((w) => `${w.label} ${pctOf(w)}${w.pct >= 100 && w.at ? `, out until ${w.at}` : w.at ? `, resets ${w.at}` : ""}`);
+    const parts = (a.windows || []).filter((w) => !(L.out && w.key === "five_hour")).map((w) => `${w.label} ${pctOf(w)}${w.pct >= 100 && w.at ? `, out until ${w.at}` : w.at ? `, resets ${w.at}` : ""}`);
     return `${a.name}${L.out ? `, out until ${L.w.at}` : ""}: ${parts.join("; ")}`;
   };
   const isRoute = (a, opt) => opt.route !== false && a.route;
@@ -88,7 +88,7 @@
   const grip = `<span class="grip" aria-hidden="true">${ICON.grip}</span>`;
   const strip = (v, layout, accts, opt = {}) => {
     const op = opt.op ?? 100;
-    const halo = op < 40 ? " halo" : "";
+    const halo = op < 60 ? " halo" : ""; // at 50% a dark panel over a light desktop drops body text to 3.3:1
     const item = v === "a" ? itemA : itemB;
     const row = v === "a" ? rowA : rowB;
     const body =
@@ -113,11 +113,13 @@
   const COPY = {
     a: {
       name: "Strip A: Readout",
+      linear: "Linear: one row, 47 px tall, fits a 48 px taskbar",
       trade:
         "Text first, like NVIDIA's HUD: logo, bold value, reset, a pip per window. It needs no background, so it still reads at 0% opacity. A pip is a smaller cue than today's ring.",
     },
     b: {
       name: "Strip B: Dial",
+      linear: "Linear: one row, 56 px tall, so it overhangs a 48 px taskbar",
       trade:
         "Today's ring, now one per account with the logo inside it, a hairline bar per window, and each account's agents docked beside it. Strongest at a glance, but it needs a panel or a heavy halo.",
     },
@@ -135,13 +137,13 @@
 <h2>Three layouts, one switch</h2>
 <p>NVIDIA's HUD offers the same three. Linear replaces Compact, stacked replaces Comfortable, and double is new, for a screen corner.</p>
 <div class="layouts">
-  <figure class="ly-linear">${tile(wp, strip(v, "linear", A), "measure")}<figcaption class="cap">Linear: one row, fits a 48 px taskbar</figcaption></figure>
+  <figure class="ly-linear">${tile(wp, strip(v, "linear", A), "measure")}<figcaption class="cap">${c.linear}</figcaption></figure>
   <figure>${tile(wp, strip(v, "double", A))}<figcaption class="cap">Double: two rows, for a corner</figcaption></figure>
   <figure>${tile(wp, strip(v, "stacked", A))}<figcaption class="cap">Stacked: one account per line, every window shown</figcaption></figure>
 </div>
 
 <h2>Background opacity: 100, 50 and 0%</h2>
-<p>Below 40% the panel stops carrying the text. Light ink with a dark halo takes over in both themes, so the strip reads over any wallpaper.</p>
+<p>Below 60% the panel stops carrying the text: light ink with a dark halo takes over in both themes. At 50% a dark panel over a light desktop would otherwise leave body text near 3:1.</p>
 <div class="opgrid">
   ${["wp-dark", "wp-light", "wp-busy"].map((w) => [100, 50, 0].map((op) => `<figure>${tile(w, strip(v, "double", A, { op }))}<figcaption class="cap">${op}% · ${wpName[w]}</figcaption></figure>`).join("")).join("")}
 </div>
