@@ -405,8 +405,11 @@ sent_or_started() { started "$1" || { has_input_box "$1" && [[ -z $(input_text "
 # with more than two newlines, as "[Pasted text #N]" ("... +M lines]" when it
 # has newlines). Prints sent, not-pasted, mixed (pasted beside a line AJ
 # began: left in the box unsent, since taking it back out by keystrokes could
-# take his characters with it) or held (still in the box after three Enters, or no
+# take his characters with it), queued (with ANY: Claude Code's "Press up to edit
+# queued messages" line shows and the box no longer holds the message: it took
+# it into its queue, #446) or held (still in the box after three Enters, or no
 # longer the message alone: a dialog stands in its place, or AJ began a line).
+# A pane that closes after the Enter (/exit) counts as sent (#446).
 # With ANY, a running turn is no bar (Claude Code queues a message sent during
 # one), and it is sent once the box has emptied; a pane stopped at a usage
 # limit gets nothing (limited).
@@ -425,8 +428,21 @@ msg_in_box() { # SCREEN WANT
   box=$(input_text "$1")
   [[ ${box//[[:space:]]/} == "$2" || $box =~ ^\[Pasted\ text\ \#[0-9]+(\ \+[0-9]+\ lines)?\]$ ]]
 }
+# Claude Code's note that it queued a message sent during a turn.
+queued_line() { plain <<<"$1" | grep -q 'Press up to edit queued messages'; }
+# What PANE shows after the Enter on WANT: sent when the pane has closed (an
+# /exit) or GONE holds, queued (with ANY) when Claude Code's queue line shows
+# and the box no longer holds WANT; else nothing.
+took_enter() { # PANE WANT GONE ANY
+  local s
+  [[ $(t display-message -p -t "$1" '#{pane_id}' 2>/dev/null) == "$1" ]] || { echo sent; return; }
+  s=$(screen "$1")
+  "$3" "$s" && { echo sent; return; }
+  if [[ $4 == any ]] && queued_line "$s" && ! msg_in_box "$s" "$2"; then echo queued; return; fi
+  return 1
+}
 deliver_now() { # PANE FILE [any]
-  local p=$1 file=$2 want text gone=sent_or_started s
+  local p=$1 file=$2 want text gone=sent_or_started s r
   if [[ ${3:-} == any ]]; then
     # Read under the lock: a pane stopped at a limit is the resume service's.
     s=$(screen "$p")
@@ -443,12 +459,21 @@ deliver_now() { # PANE FILE [any]
   msg_in_box "$(screen "$p")" "$want" || { echo mixed; return; }
   for _ in 1 2 3; do
     t send-keys -t "$p" Enter
-    wait_for "$p" "${FLEET_START_WAIT:-10}" "$gone" && { echo sent; return; }
+    r=$(wait_took "$p" "${FLEET_START_WAIT:-10}" "$want" "$gone" "${3:-}") && { echo "$r"; return; }
     # Enter again only on the message itself: a dialog may stand where the box
     # was (an Enter would answer it), or AJ may have begun a line.
     msg_in_box "$(screen "$p")" "$want" || break
   done
   echo held
+}
+# took_enter, polled up to SECONDS.
+wait_took() { # PANE SECONDS WANT GONE ANY
+  local end=$((SECONDS + $2)) r
+  while :; do
+    r=$(took_enter "$1" "$3" "$4" "$5") && { echo "$r"; return 0; }
+    (( SECONDS >= end )) && return 1
+    sleep "${FLEET_TICK:-0.5}"
+  done
 }
 
 # The newest (or oldest) path in a `find -printf '%T@ %p\n'` listing on stdin,
@@ -471,6 +496,38 @@ REGISTRY=${REGISTRY:-$FLEET_STATE/panes.tsv}
 registered() { awk -F'\t' -v p="$1" '$1 == p { f = 1 } END { exit !f }' "$REGISTRY" 2>/dev/null; }
 reg_field() { awk -F'\t' -v p="$1" -v n="$2" '$1 == p { print $n; exit }' "$REGISTRY" 2>/dev/null; }
 orchestrator() { cat "$FLEET_STATE/orchestrator.pane" 2>/dev/null; }
+# Reports `fleet done` sent: time, name, pane, send result; `fleet close` removes them.
+# shellcheck disable=SC2034 # read by done.sh, close.sh and doctor.sh
+DONE_REPORTS=${FLEET_DONE_REPORTS:-$FLEET_STATE/done-reports.tsv}
+FLEET_QUEUE=${FLEET_QUEUE:-/mnt/c/Users/ajbar/fleet-briefing/queue.md}
+# Put a line for an agent's undelivered report in the queue file, at the end of
+# its Running now section. RESULT says where the text stands: on mixed or held
+# it still sits in the orchestrator's box, so it is not sent again.
+queue_note() { # NAME RESULT REPORT
+  local line tmp
+  [[ -w $FLEET_QUEUE ]] || return 1
+  case $2 in
+    mixed | held) line="its text is still in the orchestrator's box; do not send it again" ;;
+    limited) line="the orchestrator's pane is at a usage limit; send it after the reset" ;;
+    *) line="the orchestrator did not get it" ;;
+  esac
+  line="- 📋 **$1 (fleet done, report not delivered: $2):** $3 ($line.) $(date '+%a %m-%d %H:%M')"
+  tmp=$(mktemp "$FLEET_QUEUE.XXXXXX") || return 1
+  # Before the section's trailing blank lines.
+  QLINE=$line awk 'BEGIN { line = ENVIRON["QLINE"] }
+    /^## / {
+      if (run && !put) { print line; put = 1 }
+      printf "%s", blank; blank = ""
+      run = ($0 == "## Running now"); print; next
+    }
+    run && /^[[:space:]]*$/ { blank = blank $0 "\n"; next }
+    { printf "%s", blank; blank = ""; print }
+    END { if (run && !put) { print line; put = 1 } printf "%s", blank }' "$FLEET_QUEUE" >"$tmp"
+  grep -qF -- "$line" "$tmp" && cat -- "$tmp" >"$FLEET_QUEUE"
+  local rc=$?
+  rm -f -- "${tmp:?}"
+  return $rc
+}
 # The config folder PANE's session runs on: Heph's own (heph_config) for the
 # orchestrator's pane when no row names it, else its row's (pane_config).
 pane_folder() { # PANE

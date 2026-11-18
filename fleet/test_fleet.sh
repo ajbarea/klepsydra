@@ -18,6 +18,8 @@ export FLEET_LIVE_CONF=0 FLEET_VOICES=0 FLEET_BROWSERS=0 FLEET_KERYX="$work/no-k
 real_keryx_config=${HOME}/.config/keryx/config.json
 real_keryx_sum=$(sha256sum "$real_keryx_config" 2>/dev/null | cut -d' ' -f1)
 export KLEPSYDRA_DIR="$work/klepsydra" FLEET_TICK=0.1 FLEET_START_WAIT=4 FLEET_TURN_WAIT=6 FLEET_RC_WAIT=12
+# Never AJ's briefing: `fleet done` writes an undelivered report into this queue file (#445).
+export FLEET_QUEUE="$work/queue.md"
 mkdir -p "$FLEET_STATE" "$KLEPSYDRA_DIR/accounts/a" "$KLEPSYDRA_DIR/accounts/b"
 # Two config folders, logged out until a case logs one in (accounts a and b).
 export FLEET_DEFAULT_CONFIG="$work/cfg-a" FLEET_DEFAULT_JSON="$work/cfg-a.json" FLEET_ACCOUNTS="$work/cfg-a $work/cfg-b"
@@ -2055,15 +2057,15 @@ echo "a finished agent is never relaunched (#269)"
 p=$(backpane finished)
 printf '%s\tother\t%s\tsid-o\t/w\t%s\n' "%9999" "$work/brief.src" "$work/cfg-a" >>"$REGISTRY"
 check "#269: fleet done outside a pane, with no name, is refused" "$(TMUX_PANE='' bash "$here/fleet" "done" >/dev/null 2>&1; echo $?) $(wc -l <"$REGISTRY")" "2 2"
-check "#269: an unknown name is refused and changes nothing" "$(bash "$here/fleet" "done" nobody >/dev/null 2>&1; echo $?) $(wc -l <"$REGISTRY")" "1 2"
+check "#269: an unknown name is refused and changes nothing" "$(bash "$here/fleet" "done" nobody "r" >/dev/null 2>&1; echo $?) $(wc -l <"$REGISTRY")" "1 2"
 check "#269 review: a pane id from another tmux server (AJ's terminal) is refused, and nothing moves" \
-  "$(TMUX=/tmp/tmux-1/default,1,0 TMUX_PANE="$p" bash "$here/fleet" "done" >/dev/null 2>&1; echo $?) $(wc -l <"$REGISTRY")" "2 2"
+  "$(TMUX=/tmp/tmux-1/default,1,0 TMUX_PANE="$p" bash "$here/fleet" "done" "r" >/dev/null 2>&1; echo $?) $(wc -l <"$REGISTRY")" "2 2"
 fsock="TMUX=/tmp/tmux-1/$FLEET_SOCK,1,0"
 jq --arg p "%9998" '.tmux.pane = $p' "$KLEPSYDRA_DIR/fleet/$SID.json" >"$work/st.json" && mv "$work/st.json" "$KLEPSYDRA_DIR/fleet/$SID.json"
 check "#269 review: a stale row whose session runs in another pane is refused" \
-  "$(env "$fsock" TMUX_PANE="$p" bash "$here/fleet" "done" >/dev/null 2>&1; echo $?) $(wc -l <"$REGISTRY")" "1 2"
+  "$(env "$fsock" TMUX_PANE="$p" bash "$here/fleet" "done" "r" >/dev/null 2>&1; echo $?) $(wc -l <"$REGISTRY")" "1 2"
 done_live "$p"
-out=$(env "$fsock" TMUX_PANE="$p" bash "$here/fleet" "done" 2>/dev/null); rc=$?
+out=$(env "$fsock" TMUX_PANE="$p" bash "$here/fleet" "done" "the report" 2>/dev/null | head -1); rc=${PIPESTATUS[0]}
 check "#269: fleet done in the agent's own pane moves its row, and only its row, to finished.tsv" \
   "$rc $(cut -f1,2 "$REGISTRY") | $(cut -f1,2 "$FLEET_STATE/finished.tsv")" "0 %9999	other | $p	finished"
 check "#269: with the time it finished, and says so" "$(awk -F'\t' '{ print ($7 ~ /^20[0-9][0-9]-/) }' "$FLEET_STATE/finished.tsv") $out" "1 finished: $p (1 row); it will not be relaunched"
@@ -2072,18 +2074,18 @@ mover "$noon"; mover "$((noon + 60))"
 check "#269: the resume service never moves a finished agent back, nor types into it" \
   "$(wc -c <"$work/moved") $(grep -c '^SUBMIT' "$work/finished.log")" "0 0"
 printf '%s\tfinished\t%s\t%s\t/w\t%s\n' "$p" "$work/brief.src" "$SID" "$work/cfg-b" >>"$REGISTRY"
-check "#269: fleet done NAME works from any pane, for Heph" "$(TMUX_PANE=%1 bash "$here/fleet" "done" finished >/dev/null 2>&1; echo $?) $(cut -f2 "$REGISTRY" | tr '\n' ' ')$(wc -l <"$FLEET_STATE/finished.tsv")" "0 other 2"
-check "#269 review: a second fleet done NAME says it already finished" "$(bash "$here/fleet" "done" finished 2>/dev/null; echo "rc=$?")" $'already finished: finished\nrc=0'
+check "#269: fleet done NAME works from any pane, for Heph" "$(TMUX_PANE=%1 bash "$here/fleet" "done" finished "r" >/dev/null 2>&1; echo $?) $(cut -f2 "$REGISTRY" | tr '\n' ' ')$(wc -l <"$FLEET_STATE/finished.tsv")" "0 other 2"
+check "#269 review: a second fleet done NAME says it already finished" "$(bash "$here/fleet" "done" finished "r" 2>/dev/null | head -1; echo "rc=${PIPESTATUS[0]}")" $'already finished: finished\nrc=0'
 printf '%s\t01\t%s\tsid-1\t/w\t%s\n' "%9997" "$work/brief.src" "$work/cfg-a" >>"$REGISTRY"
-check "#269 review: names compare as text: fleet done 1 leaves the agent named 01" "$(bash "$here/fleet" "done" 1 >/dev/null 2>&1; echo $?) $(cut -f2 "$REGISTRY" | tr '\n' ' ')" "1 other 01 "
+check "#269 review: names compare as text: fleet done 1 leaves the agent named 01" "$(bash "$here/fleet" "done" 1 "r" >/dev/null 2>&1; echo $?) $(cut -f2 "$REGISTRY" | tr '\n' ' ')" "1 other 01 "
 # #269 verify: finished.tsv that cannot be written keeps the row in panes.tsv.
 printf '%s\tkeep\t%s\t%s\t/w\t%s\n' "$p" "$work/brief.src" "$SID" "$work/cfg-b" >"$REGISTRY"
 mkdir -p "$work/rofin"; chmod 555 "$work/rofin"
 check "#269 verify: a finished.tsv that cannot be written fails the run and the row stays" \
-  "$(FLEET_FINISHED=$work/rofin/finished.tsv bash "$here/fleet" "done" keep >/dev/null 2>&1; echo $?) $(cut -f2 "$REGISTRY")" "1 keep"
+  "$(FLEET_FINISHED=$work/rofin/finished.tsv bash "$here/fleet" "done" keep "r" >/dev/null 2>&1; echo $?) $(cut -f2 "$REGISTRY")" "1 keep"
 cp "$REGISTRY" "$work/reg.before"
 check "#269 verify: an append that fails after the probe (a full disk) puts the row back (one row: unchanged)" \
-  "$(FLEET_FINISHED=/dev/full bash "$here/fleet" "done" keep >/dev/null 2>&1; echo $?) $(cmp -s "$work/reg.before" "$REGISTRY" && echo same)" "1 same"
+  "$(FLEET_FINISHED=/dev/full bash "$here/fleet" "done" keep "r" >/dev/null 2>&1; echo $?) $(cmp -s "$work/reg.before" "$REGISTRY" && echo same)" "1 same"
 chmod 755 "$work/rofin"
 t kill-window -t "$p" 2>/dev/null; : >"$REGISTRY"; rm -f "$FLEET_STATE/finished.tsv" "$FLEET_STATE/resume-state"
 # #269 verify: a finished agent whose pane sits at a limit is not told to carry on.
@@ -2105,6 +2107,77 @@ resume "$noon"; resume "$(( noon + 3600 + 600 + 130 ))"
 check "#269 verify 3: a new session in a finished agent's reused pane is looked after as usual" "$(has "$(events finlim2)" "SUBMIT The usage limit has reset.")" "yes"
 rm -f "$FLEET_STATE/finished.tsv"
 t kill-window -t "$p" 2>/dev/null; rm -f "$KLEPSYDRA_DIR/fleet/$SID.json"
+
+echo "fleet done reports the finish; fleet close closes the pane (#445)"
+printf '# Fleet queue\n\n## Running now\nChecked: Tue.\n\n- ✅ **other:** unchanged.\n\n## Next\n1. 📋 later\n' >"$FLEET_QUEUE"
+: >"$FLEET_LOG"; rm -f "$FLEET_STATE/finished.tsv" "$DONE_REPORTS"
+h=$(pane hph '{"above":["idle"],"on_submit":"none"}')
+printf '%s\n' "$h" >"$FLEET_STATE/orchestrator.pane"
+dpane() { # NAME: a registered worker pane that exits on /exit
+  local q
+  q=$(pane "$1" '{"above":["⏺ Done."],"exit_on_exit":true,"on_submit":"none"}'); settle
+  done_live "$q"
+  printf '%s\t%s\t%s\t%s\t/w\t%s\n' "$q" "$1" "$work/brief.src" "$SID" "$work/cfg-b" >>"$REGISTRY"
+  printf '%s' "$q"
+}
+fdone() { env "TMUX=/tmp/tmux-1/$FLEET_SOCK,1,0" TMUX_PANE="$1" bash "$here/fleet" "done" "${@:2}"; }
+: >"$REGISTRY"
+w=$(dpane wrk1)
+check "#445: with no report, fleet done refuses (2), names the form that works, and marks nothing" \
+  "$(fdone "$w" 2>&1 >/dev/null | grep -c 'fleet done \[NAME\] "REPORT"') $(fdone "$w" 2>/dev/null; echo $?) $(wc -l <"$REGISTRY")" "1 2 1"
+check "#445: a blank report is refused too" "$(fdone "$w" "   " >/dev/null 2>&1; echo $?) $(wc -l <"$REGISTRY")" "2 1"
+out=$(fdone "$w" "PR #7 open, CI green; nothing left" 2>/dev/null); rc=$?
+check "#445: fleet done sends the report to the pane in orchestrator.pane, as fleet send does" \
+  "$rc $(grep -c '^SUBMIT wrk1 finished: PR #7 open, CI green; nothing left$' "$work/hph.log") $(tail -1 <<<"$out")" "0 1 report: sent"
+check "#445: the report is kept, unread, until fleet close" "$(cut -f2,3,4 "$DONE_REPORTS")" "wrk1	$w	sent"
+check "#445: a delivered report leaves the queue file alone" "$(grep -c 'report not delivered' "$FLEET_QUEUE")" "0"
+check "#445: the pane stays open for its final report" "$(fleet_panes | grep -cx -- "$w")" "1"
+# A multi-line report goes as one line; "-" reads stdin; NAME form works from any pane.
+w2=$(dpane wrk2)
+check "#445: a report on stdin (-), newlines folded to one line, goes by NAME from another pane" \
+  "$(printf 'line one\nline two\n' | TMUX_PANE=%1 bash "$here/fleet" "done" wrk2 - 2>/dev/null | tail -1) $(grep -c '^SUBMIT wrk2 finished: line one line two$' "$work/hph.log")" "report: sent 1"
+# Undelivered: the orchestrator's pane at a usage limit, then no orchestrator pane at all.
+w3=$(dpane wrk3)
+state hph "{\"above\":[\"work\",\"$LIMIT\"],\"on_submit\":\"none\"}"; settle
+out=$(fdone "$w3" "PR #9 open" 2>&1); rc=$?
+check "#445: a report the orchestrator's pane cannot take (usage limit) is written to the queue file's Running now line" \
+  "$rc $(tail -1 <<<"$out" | cut -c1-40) $(sed -n '/^## Running now/,/^## Next/p' "$FLEET_QUEUE" | grep -c 'wrk3 (fleet done, report not delivered: limited):\*\* PR #9 open (the orchestrator.s pane is at a usage limit')" \
+  "0 report: limited; written to the queue fi 1"
+check "#445: the line sits inside Running now, before its trailing blank line, and nothing else moved" \
+  "$(awk '/^## Running now/ { r = 1 } r' "$FLEET_QUEUE" | sed -n '4,8p' | cut -c1-24 | paste -sd'|')" "- ✅ **other:** unchang|- 📋 **wrk3 (fleet don||## Next|1. 📋 later"
+w4=$(dpane wrk4)
+rm -f "$FLEET_STATE/orchestrator.pane"
+check "#445: with no orchestrator pane the report is written to the queue file" \
+  "$(fdone "$w4" "PR #10 open" 2>&1 | tail -1 | cut -c1-48) $(grep -c 'wrk4 (fleet done, report not delivered: no-orchestrator-pane)' "$FLEET_QUEUE")" "report: no-orchestrator-pane; written to the que 1"
+w5=$(dpane wrk5)
+printf '%s\n' "$h" >"$FLEET_STATE/orchestrator.pane"; state hph '{"above":["idle"],"on_submit":"none"}'; settle
+chmod 444 "$FLEET_QUEUE"; rm -f "$FLEET_STATE/orchestrator.pane"
+check "#445: a queue file that cannot be written puts the report on stderr, so it is not lost" \
+  "$(fdone "$w5" "PR #11 open" 2>&1 >/dev/null | grep -c 'wrk5 finished: PR #11 open')" "1"
+chmod 644 "$FLEET_QUEUE"
+check "#445: the doctor flags the undelivered reports" \
+  "$(doctor | grep '^warn  *done reports' | sed -E 's/.*not delivered to the orchestrator: ([^:]*):.*/\1/')" "wrk3 (limited), wrk4 (no-orchestrator-pane), wrk5 (no-orchestrator-pane)"
+# fleet close: the orchestrator has read the report.
+done_live "$w"
+check "#445: fleet close NAME runs retire: /exit goes in, the pane goes, the record goes" \
+  "$(bash "$here/fleet" close wrk1 2>/dev/null) $(grep -c '^SUBMIT /exit' "$work/wrk1.log") $(fleet_panes | grep -cx -- "$w") $(cut -f2 "$DONE_REPORTS" | grep -c '^wrk1$')" "closed: wrk1 ($w) 1 0 0"
+check "#445: a name that has not finished is refused (1), and a running agent's pane stays" \
+  "$(printf '%s\tlive\t%s\t%s\t/w\t%s\n' "%9990" "$work/brief.src" "$SID" "$work/cfg-b" >>"$REGISTRY"; bash "$here/fleet" close live >/dev/null 2>&1; echo $?) $(bash "$here/fleet" close nobody >/dev/null 2>&1; echo $?) $(bash "$here/fleet" close >/dev/null 2>&1; echo $?)" "1 1 2"
+# A pane id a restarted server gave to another session is left alone.
+printf '%s\tstale\t%s\t%s\t/w\t%s\t2026-11-02T20:00:00-05:00\n' "$h" "$work/brief.src" "99999999-0000-4000-8000-000000000000" "$work/cfg-a" >>"$FLEET_STATE/finished.tsv"
+check "#445: a finished row whose pane now runs another session is not closed" \
+  "$(bash "$here/fleet" close stale 2>/dev/null) $(fleet_panes | grep -cx -- "$h")" "already closed: stale 1"
+# The doctor: unread for over 30 min while the pane is still open.
+rm -f "$DONE_REPORTS"
+now=$(date +%s)
+printf '%s\told\t%s\tsent\n%s\tfresh\t%s\tqueued\n%s\tgone\t%%9991\tsent\n' "$((now - 3600))" "$w2" "$((now - 60))" "$w2" "$((now - 7200))" >"$DONE_REPORTS"
+check "#445: the doctor flags a finished pane left open and unread for over 30 min (not a fresh report, not a closed pane)" \
+  "$(doctor | grep '^warn  *done reports' | sed -E 's/.*unread for over 30 min: ([^:]*):.*/\1/' | sed -E 's/[0-9]+ min/N min/')" "old ($w2, N min)"
+: >"$DONE_REPORTS"
+check "#445: with nothing waiting it is ok" "$(doctor | grep -c '^ok  *done reports')" "1"
+t kill-window -t "$h" 2>/dev/null; t kill-window -t "$w2" 2>/dev/null; t kill-window -t "$w3" 2>/dev/null
+t kill-window -t "$w4" 2>/dev/null; t kill-window -t "$w5" 2>/dev/null
+: >"$REGISTRY"; rm -f "$FLEET_STATE/finished.tsv" "$FLEET_STATE/orchestrator.pane" "$DONE_REPORTS" "$KLEPSYDRA_DIR/fleet/$SID.json"
 
 : >"$work/moved"
 p=$(backpane bgwork); done_live "$p" working '[{"id": "t1", "kind": "agent"}]'
@@ -4297,6 +4370,23 @@ check "#320: stdin as the message" "$(state snd '{"above":["idle"],"clear":true,
 check "#320: a pane the server does not have, or no text, is refused (2)" \
   "$(fsend %99999 "x"; echo -n "$? "; fsend "$p" "   "; echo -n "$? "; fsend "$p"; echo $?)" "2 2 2"
 check "#325 review 1: a target that is not a pane id (a window) is refused (2)" "$(fsend fleet:1 "x"; echo $?)" "2"
+t kill-window -t "$p"
+# #446: Claude Code's queue line reads as delivered; a pane that /exit closes reads as sent.
+p=$(pane snq '{"above":["working"],"busy":true,"on_submit":"queue","queue_box":"1 message queued"}'); settle
+out=$(fsend "$p" "a note while the turn runs"); rc=$?
+check "#446: Claude Code's \"Press up to edit queued messages\" line, with the message out of the box, is delivered: queued, exit 0" "$out $rc" "queued 0"
+check "#446: it is logged as sent, with the result" "$(jq -r 'select(.message == "message sent") | .result' "$FLEET_LOG" | tail -1)" "queued"
+t kill-window -t "$p"
+p=$(pane snq2 '{"above":["idle"],"on_submit":"queue","queue_box":"1 message queued"}'); settle
+printf 'a note' >"$work/q446.txt"
+check "#446: the queue line is read only on a send that allows a running turn (the idle-pane paths still say held)" \
+  "$(inbox_deliver "$p" "$work/q446.txt") $(input_text "$(screen "$p")")" "held 1 message queued"
+t kill-window -t "$p"
+p=$(pane snx '{"above":["idle"],"on_submit":"none","exit_on_exit":true,"exit_delay":2}'); settle
+check "#446: a pane that closes after /exit is sent, not held" "$(fsend "$p" "/exit"; echo "rc=$?")" $'sent\nrc=0'
+check "#446: and the pane is gone" "$(fleet_panes | grep -cx -- "$p")" "0"
+p=$(pane snh '{"above":["idle"],"on_submit":"none","enter_ignore":3}'); settle
+check "#446: an Enter that never takes, with no queue line and the pane still open, is still held" "$(fsend "$p" "stuck")" "held"
 t kill-window -t "$p"
 p=$(pane snb '{"above":["working"],"busy":true,"enter_ignore":1,"on_submit":"none"}'); settle
 out=$(fsend "$p" "queued while busy, first Enter lost"); rc=$?

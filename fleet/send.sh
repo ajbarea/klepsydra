@@ -9,10 +9,10 @@
 # (AJ typing) is never touched. A pane stopped at a usage limit gets nothing:
 # the resume service brings it back, and a nudge after a long limit refills a
 # cold cache (#287). TEXT "-" reads the message from stdin.
-# Prints sent, limited, not-pasted (the box held text, the paste never showed,
+# Prints sent, queued (Claude Code took it into its queue: delivered), limited, not-pasted (the box held text, the paste never showed,
 # or another send held the pane past FLEET_SEND_WAIT), mixed (pasted beside
 # text typed meanwhile: left unsent) or held (still in the box after three
-# Enters, or a dialog or AJ's typing took its place); exits 0 only for sent, 2
+# Enters, or a dialog or AJ's typing took its place); exits 0 only for sent and queued, 2
 # for bad arguments.
 set -u
 FLEET_TARGET=fleet::send
@@ -33,10 +33,10 @@ f=$(mktemp "$FLEET_STATE/send/msg-XXXXXX") || { err "cannot write in $FLEET_STAT
 printf '%s' "$text" >"$f"
 got=$(inbox_deliver "$p" "$f" any)
 rm -f -- "${f:?}"
-if [[ $got == sent ]]; then
+if [[ $got == sent || $got == queued ]]; then
   flog INFO "message sent" pane="$p" chars="${#text}" result="$got"
 else
   flog WARN "message not sent" pane="$p" chars="${#text}" result="$got" text="${text:0:120}"
 fi
 echo "$got"
-[[ $got == sent ]]
+[[ $got == sent || $got == queued ]]

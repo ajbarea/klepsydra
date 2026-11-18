@@ -12,7 +12,9 @@ A test steers it through a JSON state file, re-read on every tick:
   busy       a turn is running (the spinner shows)
   input      text to put in the input box now (then removed from the file)
   clear      empty the input box now (then removed from the file)
-  on_submit  what a submitted line starts: "busy" (default), "limit" or "none"
+  on_submit  what a submitted line starts: "busy" (default), "limit", "none" or
+             "queue" (Claude Code queued it: its line shows above the box,
+             and queue_box, when set, is what the box holds after)
   rc         "off" (default) or "on": Remote Control already connected
   rc_delay   seconds before /remote-control's answer shows
   busy_delay seconds before a submitted turn's spinner shows
@@ -130,6 +132,9 @@ class Pane:
         then = self.state.get("on_submit", "busy")
         if then == "busy":
             self.busy_at = time.time() + float(self.state.get("busy_delay", 0))
+        elif then == "queue":
+            self.state["above"].append("  Press up to edit queued messages")
+            self.input = self.state.get("queue_box", "")
         elif then == "limit":
             self.state["above"].append(
                 "  ⎿  You've hit your session limit · resets 1:10pm (America/New_York)"
