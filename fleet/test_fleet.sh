@@ -2086,6 +2086,8 @@ check "#269 verify: a finished.tsv that cannot be written fails the run and the 
 cp "$REGISTRY" "$work/reg.before"
 check "#269 verify: an append that fails after the probe (a full disk) puts the row back (one row: unchanged)" \
   "$(FLEET_FINISHED=/dev/full bash "$here/fleet" "done" keep "r" >/dev/null 2>&1; echo $?) $(cmp -s "$work/reg.before" "$REGISTRY" && echo same)" "1 same"
+check "#445 review: a FLEET_FINISHED that is a device, which reads forever, is never read whole (capped memory: exit 1, not a kill)" \
+  "$( (ulimit -v 1000000; FLEET_FINISHED=/dev/full bash "$here/fleet" "done" keep "r" >/dev/null 2>&1; echo $?) )" "1"
 chmod 755 "$work/rofin"
 t kill-window -t "$p" 2>/dev/null; : >"$REGISTRY"; rm -f "$FLEET_STATE/finished.tsv" "$FLEET_STATE/resume-state"
 # #269 verify: a finished agent whose pane sits at a limit is not told to carry on.

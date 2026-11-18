@@ -27,13 +27,16 @@ usage='usage: fleet done [NAME] "REPORT" (a one-line report; - reads stdin), e.g
 (( $# >= 1 && $# <= 2 )) || { err "$usage"; exit 2; }
 name="" pane="" sid=""
 (( $# == 2 )) && name=$1
+# The files that name agents; only regular files (FLEET_FINISHED may be a device in a test, which reads forever).
+named=("$REGISTRY")
+[[ -f $FINISHED ]] && named+=("$FINISHED")
 report=${!#}
 [[ $report == - ]] && report=$(cat)
 report=$(tr '\n' ' ' <<<"$report" | sed -E 's/^ +//; s/ +$//')
 [[ -n $report ]] || { err "$usage"; exit 2; }
 # The old one-argument form named an agent. A lone word that is one is refused, not sent as a report,
 # and a worker names only itself (an unquoted two-word report must not finish another agent).
-if (( $# == 1 )) && awk -F'\t' -v n="$report" '$2 "" == n "" { f = 1 } END { exit !f }' "$REGISTRY" "$FINISHED" 2>/dev/null; then
+if (( $# == 1 )) && awk -F'\t' -v n="$report" '$2 "" == n "" { f = 1 } END { exit !f }' "${named[@]}" 2>/dev/null; then
   err "$report is an agent's name; fleet done takes the report: $usage"
   exit 2
 fi
@@ -64,7 +67,7 @@ fi
 label=$name
 [[ -n $label ]] || label=$(reg_field "$pane" 2)
 rpane=$pane
-[[ -n $name ]] && rpane=$(awk -F'\t' -v n="$name" '$2 "" == n "" { p = $1 } END { print p }' "$REGISTRY" "$FINISHED" 2>/dev/null)
+[[ -n $name ]] && rpane=$(awk -F'\t' -v n="$name" '$2 "" == n "" { p = $1 } END { print p }' "${named[@]}" 2>/dev/null)
 
 # Move the matching rows; prints how many moved. finished.tsv gets them only
 # once panes.tsv is replaced, and a row finished.tsv refuses goes back.
