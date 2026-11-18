@@ -1,0 +1,157 @@
+/* Design pass 2026-11-18: shared tokens and page chrome for the mockups.
+   Token values are the app's own: src/style.css (gauge) and
+   src/fleet/wall.css (wall, light scheme). Mockups only; nothing here ships. */
+
+@font-face {
+  font-family: "Klepsydra UI";
+  src: local("Segoe UI Variable Text"), local("Segoe UI Variable"),
+    url("file:///mnt/c/Windows/Fonts/SegUIVar.ttf") format("truetype"), local("Inter");
+  font-weight: 300 700;
+}
+@font-face {
+  font-family: "Cinzel";
+  src: url("../../../src/fleet/fonts/cinzel-latin-wght-normal.woff2") format("woff2");
+  font-weight: 400 900;
+}
+
+:root {
+  --font: "Klepsydra UI", "Segoe UI Variable Text", "Segoe UI", "Inter", system-ui, sans-serif;
+  --title: "Cinzel", "Trajan Pro", Georgia, serif;
+
+  /* wall.css, dark */
+  --page: #14100b;
+  --page-2: #1f1912;
+  --page-3: #19140e;
+  --line: #3b3125;
+  --ink: #f2eadf;
+  --ink-dim: #b9a993;
+  --ink-quiet: #a09079;
+  --button-bg: #2c241a;
+  --button-line: #4a3d2d;
+  --button-hover: #372d21;
+  --gold: #c9a24a;
+
+  /* style.css, the gauge bar */
+  --panel: #14100b; /* --panel-bg's colour; its alpha is the opacity setting (#438) */
+  --panel-ink: #f2eadf;
+  --panel-dim: #b9a993;
+  --track: #322a1f;
+  --low: #d9c6a5; /* --ramp-low, parchment */
+  --mid: #eab308; /* --ramp-mid */
+  --high: #ef4444; /* --ramp-high */
+  --route: #f3ead7; /* ivory: the one route highlight, never a status hue */
+  --halo: none;
+  --op: 100;
+
+  color-scheme: dark;
+}
+
+/* wall.css light scheme, carried to the gauge (the gauge has no light scheme today). */
+:root[data-theme="light"] {
+  --page: #efe6d6;
+  --page-2: #fbf6ec;
+  --page-3: #f5eee1;
+  --line: #d9cbb3;
+  --ink: #2b2118;
+  --ink-dim: #64533f;
+  --ink-quiet: #6f5e49;
+  --button-bg: #f1e6d3;
+  --button-line: #ccb998;
+  --button-hover: #e8dac2;
+  --gold: #8a6a00;
+
+  --panel: #fbf6ec;
+  --panel-ink: #2b2118;
+  --panel-dim: #64533f;
+  --track: #e8dcc8;
+  --low: #6a5640;
+  --mid: #9a6b00;
+  --high: #b3261e;
+  --route: #2b2118;
+  color-scheme: light;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html { background: var(--page); }
+body {
+  font-family: var(--font);
+  color: var(--ink);
+  background: var(--page);
+  font-size: 15px;
+  line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ── Page chrome: a spec sheet, so AJ can compare at a glance ─────────── */
+.sheet { max-width: 1840px; margin: 0 auto; padding: 36px 40px 64px; }
+.sheet > header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 28px; margin-bottom: 28px; }
+.sheet h1 { font-family: var(--title); font-weight: 600; font-size: 30px; letter-spacing: 0.02em; }
+.sheet .trade { color: var(--ink-dim); max-width: 70ch; }
+.sheet .stamp { color: var(--ink-quiet); font-size: 13px; margin-left: auto; }
+.sheet h2 { font-size: 17px; font-weight: 650; margin: 36px 0 12px; }
+.sheet h2 + p { color: var(--ink-dim); margin: -6px 0 14px; max-width: 80ch; font-size: 14px; }
+.cap { color: var(--ink-quiet); font-size: 12.5px; margin-top: 8px; }
+
+/* ── Wallpapers: dark desktop, light desktop, a busy photo-like one ───── */
+.wp { position: relative; border-radius: 10px; overflow: hidden; padding: 22px; min-height: 96px; display: flex; align-items: center; justify-content: center; border: 1px solid var(--line); }
+.wp-dark {
+  background:
+    radial-gradient(60% 120% at 15% 20%, #2a3a3f 0%, transparent 60%),
+    radial-gradient(50% 90% at 85% 80%, #3b2a22 0%, transparent 65%),
+    linear-gradient(160deg, #0d1114, #1a1d1f 60%, #121212);
+}
+.wp-light {
+  background:
+    radial-gradient(40% 60% at 25% 35%, #ffffff 0%, transparent 70%),
+    radial-gradient(50% 70% at 80% 60%, #f6efe2 0%, transparent 70%),
+    linear-gradient(180deg, #cfe3ef, #eef3f1 55%, #f4ead8);
+}
+.wp-busy {
+  background:
+    radial-gradient(18% 40% at 12% 30%, #ffd166 0 40%, transparent 41%),
+    radial-gradient(14% 30% at 70% 70%, #ffffff 0 35%, transparent 36%),
+    radial-gradient(20% 50% at 40% 80%, #1b4332 0 50%, transparent 51%),
+    repeating-linear-gradient(115deg, #e63946 0 18px, #f1faee 18px 30px, #457b9d 30px 52px, #1d3557 52px 70px, #ffb703 70px 84px);
+}
+.wp .wp-name { position: absolute; left: 10px; top: 6px; font-size: 11px; color: #fff; background: rgb(0 0 0 / 0.55); padding: 1px 6px; border-radius: 4px; }
+
+/* ── The bar panel and its opacity (#438) ─────────────────────────────── */
+.panel {
+  color: var(--panel-ink);
+  background: color-mix(in srgb, var(--panel) calc(var(--op) * 1%), transparent);
+  border-radius: 10px;
+  font-variant-numeric: tabular-nums lining-nums;
+}
+.panel[data-op]:not([data-op="0"]) { -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px); }
+/* Below 40% the panel no longer carries the text: HUD ink (light, with a
+   dark halo, never a light one) takes over in either theme. */
+.panel.halo {
+  --panel-ink: #f7f1e6;
+  --panel-dim: #efe6d6;
+  --track: rgb(0 0 0 / 0.45);
+  --low: #f3e6cc;
+  --mid: #ffc21a;
+  --high: #ff5b4d;
+  --route: #ffffff;
+  --halo: 0 0 1px #000, 0 0 2px #000, 0 0 4px #000, 0 0 8px rgb(0 0 0 / 0.75);
+  text-shadow: var(--halo);
+}
+.panel.halo :is(.ico, .mono, .pip, .hb, .ring, .face, .face-dot) { filter: drop-shadow(0 0 1px #000) drop-shadow(0 0 3px rgb(0 0 0 / 0.85)); }
+
+/* ── Account identity: logo, or a text monogram when no icon file is set ── */
+.ico { display: inline-grid; place-items: center; flex: none; width: 1.15em; height: 1.15em; }
+.ico svg { width: 100%; height: 100%; }
+.mono { display: inline-grid; place-items: center; flex: none; font-weight: 750; font-size: 0.62em; letter-spacing: 0.02em; line-height: 1; padding: 0.28em 0.32em; border-radius: 4px; border: 1.5px solid currentColor; }
+
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+:focus-visible { outline: 2px solid var(--route); outline-offset: 2px; }
+
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+
+@media (max-width: 640px) {
+  .sheet { padding: 20px 16px 48px; }
+  .sheet h1 { font-size: 24px; }
+  .sheet .stamp { margin-left: 0; }
+  .wp { padding: 16px 10px; }
+}

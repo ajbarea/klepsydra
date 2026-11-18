@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>New session A</title>
+<link rel="stylesheet" href="mock.css">
+<link rel="stylesheet" href="ns.css">
+<script src="icons.js"></script>
+<script src="readings.js"></script>
+</head>
+<body>
+<main class="sheet">
+<header>
+  <h1>New session A: split button and engine menu</h1>
+  <p class="trade">The button names its engine; the caret opens one row per other engine with its account, room left and models. It is the smallest change from today, but the menu grows with every engine.</p>
+  <p class="stamp">Readings: Wed 18 Nov, 1:23 PM EST · <code>agy models</code> at 1:25 PM</p>
+</header>
+
+<div class="stage">
+  <div class="wbar">
+    <div class="tally"><span class="w"><b>2</b>working</span><span><b>0</b>needs you</span><span><b>1</b>done</span></div>
+    <div class="wbar-right">
+      <div class="tools"><button>Ledger</button><button>Queue</button><button>Wrap up…</button></div>
+      <span class="split" role="group" aria-label="New session">
+        <button class="primary" title="Claude on RIT: 98% of the session left"><span class="ico" data-i="claude"></span>New Claude session</button>
+        <button class="primary caret" aria-haspopup="menu" aria-expanded="true" aria-label="Start another kind of session"><span class="ico" data-i="chev"></span></button>
+      </span>
+      <button class="gearb" aria-label="Settings"><span class="ico" data-i="gear"></span></button>
+
+      <div class="menu" role="menu" aria-label="Start another kind of session">
+        <div class="mhead"><span>Other engines</span><span>room left now</span></div>
+
+        <div class="eng open" role="group" aria-label="Antigravity">
+          <div class="eng-h">
+            <span class="ico" data-i="agy"></span>
+            <span class="eng-name">Antigravity <span class="rec" title="First in the free-first route">Recommended</span></span>
+            <span class="room"><b>93%</b>session · back to full 3:15 PM</span>
+            <span class="eng-acct">Google AI Pro</span>
+          </div>
+          <div class="models" role="radiogroup" aria-label="Antigravity model">
+            <div class="mgrp">Gemini · 93% of the session, 96% of the week</div>
+            <div class="model on" role="radio" aria-checked="true"><span class="dot"></span>Gemini 3.8 Flash (High)<span></span></div>
+            <div class="model" role="radio" aria-checked="false"><span class="dot"></span>Gemini 3.8 Flash (Medium)<span></span></div>
+            <div class="model" role="radio" aria-checked="false"><span class="dot"></span>Gemini 3.8 Flash (Low)<span></span></div>
+            <div class="mgrp">Claude &amp; GPT · spent, back 3:32 PM · leaving agy today</div>
+            <div class="model" role="radio" aria-checked="false" aria-disabled="true"><span class="dot"></span>Claude Sonnet 4.6 (Thinking)<span class="why">spent</span></div>
+            <div class="model" role="radio" aria-checked="false" aria-disabled="true"><span class="dot"></span>Claude Opus 4.6 (Thinking)<span class="why">spent</span></div>
+            <div class="model" role="radio" aria-checked="false" aria-disabled="true"><span class="dot"></span>GPT-OSS 120B (Medium)<span class="why">spent</span></div>
+          </div>
+          <div class="eng-actions"><button class="primary">Start Antigravity session</button><button>Set as default</button></div>
+        </div>
+
+        <div class="eng" role="menuitem" aria-label="Copilot">
+          <div class="eng-h">
+            <span class="ico" data-i="copilot"></span>
+            <span class="eng-name">Copilot</span>
+            <span class="room"><b>–</b>no reading yet</span>
+            <span class="eng-acct">GitHub · one pool of AI credits</span>
+          </div>
+        </div>
+
+        <div class="eng" role="menuitem" aria-label="Claude on Personal">
+          <div class="eng-h">
+            <span class="ico" data-i="claude"></span>
+            <span class="eng-name">Claude on Personal</span>
+            <span class="room"><b>55%</b>week · resets Mon 1:00 PM</span>
+            <span class="eng-acct">Personal account</span>
+          </div>
+        </div>
+
+        <div class="mfoot"><span>Default: Claude on RIT, the engine you used last.</span><a href="settings-a.html#engines">Change in Settings</a></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<h2>Other rows a user can meet</h2>
+<p>State examples, not today's readings.</p>
+<div class="legend">
+  <div><div class="eng" aria-disabled="true"><div class="eng-h"><span class="ico" data-i="copilot"></span><span class="eng-name">Copilot</span><span class="room"><button>Sign in</button></span><span class="eng-acct">Installed, not signed in</span></div></div><p class="cap">Signed out: the row stays, greyed, with the one step that fixes it.</p></div>
+  <div><div class="eng" aria-disabled="true"><div class="eng-h"><span class="ico" data-i="agy"></span><span class="eng-name">Antigravity</span><span class="room"><button>How to install</button></span><span class="eng-acct">Not installed on this PC</span></div></div><p class="cap">Not installed: listed anyway, so a new user learns it exists.</p></div>
+  <div><div class="eng"><div class="eng-h"><span class="ico" data-i="claude"></span><span class="eng-name">Claude on Personal</span><span class="room"><b>out</b>until Mon 1:00 PM</span><span class="eng-acct">Week spent: the row stays, Start is off</span></div></div><p class="cap">A spent account says when it returns; the launcher refuses it even from a stale menu.</p></div>
+</div>
+</main>
+</body>
+</html>

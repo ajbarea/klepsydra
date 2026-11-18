@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Settings A</title>
+<link rel="stylesheet" href="mock.css">
+<link rel="stylesheet" href="settings.css">
+<script src="icons.js"></script>
+<script src="readings.js"></script>
+<script src="settings.js"></script>
+</head>
+<body>
+<main class="sheet">
+<header>
+  <h1>Settings A: one column</h1>
+  <p class="trade">Spotify's pattern: one scrolling page, bold section headings, a control at the right of each row, search at the top. Simple to scan, but the sisters list makes the page long.</p>
+  <p class="stamp">Values: today's settings · sisters from ~/.claude/techne.toml, 11-18</p>
+</header>
+<div class="window"><div class="set-a" id="a"></div></div>
+<div class="tray">
+  <div class="traymenu" aria-label="Tray menu after"><span>Open wall</span><span>Settings…</span><hr><span>Quit</span></div>
+  <p class="cap" style="max-width:52ch">The tray keeps three items. Every setting has one home, the page, so the tray and the page cannot disagree. Quit stays in the tray.</p>
+</div>
+</main>
+<script>
+  const { SECTIONS, I } = SETTINGS;
+  document.getElementById("a").innerHTML =
+    `<div class="top"><button class="back" aria-label="Back to the wall">${I("back")}</button><h1>Settings</h1><button class="search-btn" aria-label="Search settings">${I("search")}</button></div>` +
+    SECTIONS.map((s) => `<section id="${s.id}" aria-labelledby="h-${s.id}"><h2 id="h-${s.id}">${s.title}</h2>${s.lead ? `<p class="section-lead">${s.lead}</p>` : ""}${s.rows.join("")}</section>`).join("");
+</script>
+</body>
+</html>

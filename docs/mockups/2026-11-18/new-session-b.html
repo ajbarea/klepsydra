@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>New session B</title>
+<link rel="stylesheet" href="mock.css">
+<link rel="stylesheet" href="ns.css">
+<script src="icons.js"></script>
+<script src="readings.js"></script>
+</head>
+<body>
+<main class="sheet">
+<header>
+  <h1>New session B: engine picker</h1>
+  <p class="trade">The button shows the engine and account on two lines. The caret opens a picker with a tile per engine and the chosen engine's models as chips. Engines compare side by side, but it costs one more click and more width.</p>
+  <p class="stamp">Readings: Wed 18 Nov, 1:23 PM EST · <code>agy models</code> at 1:25 PM</p>
+</header>
+
+<div class="stage">
+  <div class="wbar">
+    <div class="tally"><span class="w"><b>2</b>working</span><span><b>0</b>needs you</span><span><b>1</b>done</span></div>
+    <div class="wbar-right">
+      <div class="tools"><button>Ledger</button><button>Queue</button><button>Wrap up…</button></div>
+      <span class="split" role="group" aria-label="New session">
+        <button class="primary newb"><span class="ico" data-i="claude"></span><span class="two">New Claude session<small>on RIT · 98% left</small></span></button>
+        <button class="primary caret" aria-haspopup="dialog" aria-expanded="true" aria-label="Choose another engine"><span class="ico" data-i="chev"></span></button>
+      </span>
+      <button class="gearb" aria-label="Settings"><span class="ico" data-i="gear"></span></button>
+
+      <div class="sheetb" role="dialog" aria-label="Choose an engine">
+        <div>
+          <div class="sec-l">Engine<span>· room left now</span></div>
+          <div class="tiles" role="radiogroup" aria-label="Engine">
+            <button class="tile" role="radio" aria-checked="true"><span class="rec">Recommended</span><span class="bigico" data-i="agy"></span><span class="tn">Antigravity</span>Google AI Pro<span class="roomline"><b>93%</b><span class="tbar" style="--p:93"><i></i></span></span>session · full 3:15 PM</button>
+            <button class="tile" role="radio" aria-checked="false"><span class="bigico" data-i="copilot"></span><span class="tn">Copilot</span>GitHub<span class="roomline"><b>–</b><span class="tbar" style="--p:0"><i></i></span></span>no reading yet</button>
+            <button class="tile" role="radio" aria-checked="false"><span class="bigico" data-i="claude"></span><span class="tn">Claude</span>Personal<span class="roomline"><b>55%</b><span class="tbar" style="--p:55"><i></i></span></span>week · Mon 1:00 PM</button>
+            <button class="tile" role="radio" aria-checked="false"><span class="mono">RIT</span><span class="tn">Claude</span>RIT · default<span class="roomline"><b>98%</b><span class="tbar" style="--p:98"><i></i></span></span>session · 6:20 PM</button>
+          </div>
+        </div>
+        <div>
+          <div class="sec-l">Antigravity model</div>
+          <div class="chips" role="radiogroup" aria-label="Antigravity model">
+            <span class="chip" role="radio" aria-checked="true"><span class="ico" data-i="check" style="width:13px;height:13px"></span>Gemini 3.8 Flash (High)</span>
+            <span class="chip" role="radio" aria-checked="false">Gemini 3.8 Flash (Medium)</span>
+            <span class="chip" role="radio" aria-checked="false">Gemini 3.8 Flash (Low)</span>
+            <span class="chip" role="radio" aria-checked="false" aria-disabled="true" title="Claude &amp; GPT spent, back 3:32 PM">Claude Sonnet 4.6 · back 3:32 PM</span>
+            <span class="chip" role="radio" aria-checked="false" aria-disabled="true">Claude Opus 4.6 · back 3:32 PM</span>
+            <span class="chip" role="radio" aria-checked="false" aria-disabled="true">GPT-OSS 120B · back 3:32 PM</span>
+          </div>
+          <p class="cap">Claude &amp; GPT models leave agy today (Antigravity's models page); they disappear here once <code>agy models</code> drops them.</p>
+        </div>
+        <div class="sheet-foot"><span class="note">Default: Claude on RIT, the engine you used last.</span><button>Set Antigravity as default</button><button class="primary">Start Antigravity session</button></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<h2>Other tiles a user can meet</h2>
+<p>State examples, not today's readings.</p>
+<div class="legend">
+  <div><div class="tiles" style="grid-template-columns:1fr"><span class="tile" aria-disabled="true"><span class="bigico" data-i="copilot"></span><span class="tn">Copilot</span>Installed, not signed in<button>Sign in</button></span></div><p class="cap">Signed out: the tile stays, with the one step that fixes it.</p></div>
+  <div><div class="tiles" style="grid-template-columns:1fr"><span class="tile" aria-disabled="true"><span class="bigico" data-i="agy"></span><span class="tn">Antigravity</span>Not installed on this PC<button>How to install</button></span></div><p class="cap">Not installed: listed anyway, so a new user learns it exists.</p></div>
+  <div><div class="tiles" style="grid-template-columns:1fr"><span class="tile" aria-disabled="true"><span class="bigico" data-i="claude"></span><span class="tn">Claude</span>Personal<span class="roomline"><b>out</b><span class="tbar" style="--p:0"><i></i></span></span>week spent · until Mon 1:00 PM</span></div><p class="cap">A spent account says when it returns.</p></div>
+</div>
+</main>
+</body>
+</html>
