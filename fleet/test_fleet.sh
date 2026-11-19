@@ -1167,7 +1167,9 @@ quit_line() {
 # #475: a quit on an earlier day names the date; checked on its own so the
 # same-day case below can accept either form when -20 min crosses midnight.
 quit_line '-2 days'
-check "a quit on an earlier day names its date and time" "$(DOC_SERVE=$serve_on doctor | grep -c '^warn phone wall: klepsydra is not running: it was quit at [A-Z][a-z][a-z] [0-9]*, [0-9]*:[0-9][0-9] [AP]M')" "1"
+check "a quit on an earlier day names its date and time" "$(DOC_SERVE=$serve_on doctor | grep -c '^warn phone wall: klepsydra is not running: it was quit at [A-Z][a-z][a-z] [0-9]\{1,\}, [0-9]\{1,\}:[0-9][0-9] [AP]M')" "1"
+quit_line now
+check "a quit earlier today names only its time" "$(DOC_SERVE=$serve_on doctor | grep -c '^warn phone wall: klepsydra is not running: it was quit at [0-9]\{1,\}:[0-9][0-9] [AP]M')" "1"
 quit_line '-20 min'
 quit_out=$(DOC_SERVE=$serve_on doctor)
 check "a quit app turns both phone lines into warnings" "$(phone_lines <<<"$quit_out")" "warn phone wall|warn phone wall over Tailscale"
