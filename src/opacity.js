@@ -9,7 +9,8 @@ export const STEP = 5;
 // Set by measured contrast (WCAG 1.4.3, 4.5:1 for small text), the worst
 // desktop behind each scheme: white behind the dark panel, near-black behind
 // the light one. Below FULL_INK_BELOW the faint words (labels, resets) fall
-// under 4.5:1, so they take the full ink; below HALO_BELOW the full ink does
+// under 4.5:1 on the light panel (4.27 at 80%; the dark one holds to 80), so
+// they take the full ink; below HALO_BELOW the full ink does
 // too, and light ink with a dark halo takes over, in either scheme. A light
 // panel holds dark ink longer than a dark panel holds light ink.
 export const HALO_BELOW = { dark: 65, light: 50 };
@@ -29,9 +30,14 @@ export function inkFor(opacity, scheme) {
   return null;
 }
 
-/** Wear `opacity` on `root`: the panel's alpha, its ink, and whether it is clear. Returns the ink. */
-export function applyOpacity(root, opacity, scheme) {
-  const o = snap(opacity);
+/**
+ * Wear `opacity` on `root`: the panel's alpha, its ink, and whether it is
+ * clear. `solid`: the system asks for less transparency (Windows'
+ * Transparency effects off, or High Contrast), so the panel is opaque
+ * whatever the slider says. Returns the ink.
+ */
+export function applyOpacity(root, opacity, scheme, solid = false) {
+  const o = solid ? 100 : snap(opacity);
   root.style.setProperty("--panel-alpha", String(o / 100));
   const ink = inkFor(o, scheme);
   if (ink) root.dataset.ink = ink;
@@ -41,6 +47,11 @@ export function applyOpacity(root, opacity, scheme) {
   else delete root.dataset.clear;
   return ink;
 }
+
+export const REDUCED_TRANSPARENCY = "(prefers-reduced-transparency: reduce)";
+
+/** Whether the system asks for less transparency (Chromium 118+, so WebView2). */
+export const wantsSolid = (win = globalThis) => Boolean(win.matchMedia?.(REDUCED_TRANSPARENCY).matches);
 
 /** The page's colour scheme, as the gauge's CSS reads it. */
 export const schemeOf = (win = globalThis) => (win.matchMedia?.("(prefers-color-scheme: light)").matches ? "light" : "dark");
@@ -55,5 +66,5 @@ export function subscribeOpacity(onValue, { inTauri, follow, search = "" }) {
     return;
   }
   const asked = new URLSearchParams(search).get("opacity");
-  onValue(asked === null ? DEFAULT_OPACITY : snap(Number(asked)));
+  onValue(asked ? snap(Number(asked)) : DEFAULT_OPACITY); // absent or empty: the default
 }

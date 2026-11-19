@@ -477,7 +477,9 @@ panel thins, its text takes stronger ink, so small text keeps 4.5:1 contrast
 | below 65% (dark scheme) or 50% (light) | light ink with a dark halo, in either scheme |
 
 At 0% the panel is clear: the text, the pips and the portraits stand on the
-desktop with their halo. The tray icon keeps the theme's own colours.
+desktop with their halo. The tray icon keeps the theme's own colours. With
+Windows' Transparency effects off (or High Contrast on) the panel is solid,
+whatever the slider says.
 
 ### Staying in front of the taskbar
 

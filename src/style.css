@@ -74,7 +74,7 @@
 :root[data-ink="full"] #panel { --text-dim: var(--text); }
 @media (prefers-color-scheme: light) {
   /* A light panel half see-through over a dark desktop needs its darkest ink. */
-  :root[data-ink="full"] #panel { --text: #120c07; --text-dim: #120c07; }
+  :root[data-ink="full"] #panel { --text: #120c07; --text-dim: #120c07; --route: #120c07; }
 }
 /* Halo: the panel no longer carries the text, in either scheme. Light ink
    with a dark halo, never a light one, and a ramp bright enough over it. A
@@ -93,6 +93,8 @@
 }
 :root[data-ink="halo"] #panel { text-shadow: 0 0 1px #000, 0 0 2px #000, 0 0 4px #000, 0 0 8px rgb(0 0 0 / 0.75); }
 :root[data-ink="halo"] #panel :is(.mark, .pip, .face) { filter: drop-shadow(0 0 1px #000) drop-shadow(0 0 3px rgb(0 0 0 / 0.85)); }
+/* Any stronger ink reaches the resets too: their 0.86 fade would undo it. */
+:root[data-ink] #panel :is(.when, .cell .t) { opacity: 1; }
 /* Fully clear: no frosted glass behind nothing. */
 :root[data-clear] #panel { backdrop-filter: none; }
 

@@ -38,12 +38,18 @@ pub fn set_gauge_opacity(app: AppHandle, opacity: f64) -> Result<(), String> {
     let v = opacity::value(opacity)?;
     let asked = opacity::snap(opacity);
     crate::write_pref(&app, opacity::KEY, v);
-    publish(&app);
-    opacity::confirm(asked, saved(&app))
+    // Read back once: what the windows get and what the reply says agree.
+    let prefs = crate::read_prefs(&app);
+    send(&app, opacity::of(prefs.as_ref()));
+    opacity::confirm(asked, prefs.as_ref())
 }
 
 /// Send the opacity now saved to every subscribed window, so they and the
 /// next start agree even if the save failed.
 pub fn publish(app: &AppHandle) {
-    app.state::<Opacities>().0.publish(Value::from(saved(app)));
+    send(app, saved(app));
+}
+
+fn send(app: &AppHandle, v: u8) {
+    app.state::<Opacities>().0.publish(Value::from(v));
 }

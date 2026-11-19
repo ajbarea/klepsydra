@@ -47,10 +47,15 @@ pub fn value(asked: f64) -> Result<Value, String> {
 
 /// Ok when prefs.json now holds what was asked; otherwise the reason the
 /// gauge still wears the saved opacity.
-pub fn confirm(asked: u8, saved: u8) -> Result<(), String> {
-    if asked == saved {
+pub fn confirm(asked: u8, prefs: Option<&Map<String, Value>>) -> Result<(), String> {
+    let stored = prefs
+        .and_then(|p| p.get(KEY))
+        .and_then(Value::as_f64)
+        .map(snap);
+    if stored == Some(asked) {
         Ok(())
     } else {
+        let saved = of(prefs);
         Err(format!(
             "prefs.json could not be saved, so the opacity is still {saved}%, not {asked}%."
         ))
@@ -118,7 +123,16 @@ mod tests {
 
     #[test]
     fn confirm_names_the_saved_value() {
-        assert_eq!(confirm(40, 40), Ok(()));
-        assert!(confirm(40, 80).unwrap_err().contains("still 80%"));
+        assert_eq!(confirm(40, Some(&prefs(json!(40)))), Ok(()));
+        assert!(confirm(40, Some(&prefs(json!(80))))
+            .unwrap_err()
+            .contains("still 80%"));
+        // A corrupt or missing file reads as the default: asking for the
+        // default is still not a save.
+        assert!(confirm(DEFAULT, None).is_err(), "prefs.json unreadable");
+        assert!(
+            confirm(DEFAULT, Some(&Map::new())).is_err(),
+            "key not written"
+        );
     }
 }
