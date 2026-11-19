@@ -23,22 +23,20 @@ Brief: ~/.local/state/fleet-orchestrator/briefs (ns477). PR #477, branch feat/ne
   either), Claude & GPT weekly bucket in readings.
 
 ## Done
-- ae4e66a launcher: claude ACCOUNT [MODEL] by login, copilot locked + config guard, agy spent-group
-  refusal, models with groups, engines. test_launch 271/271.
-- d6ba8b1 app + wall: launch_session engine/account/model, spent-account refusal, prefs keys,
-  engines_status; newsession.js on toRows; focus kept; no data innerHTML. Windows clippy+tests ok
-  (app crate 114, fleet 423); node 527/527; browser case new_session_menu 35/35.
-- e7ec82c docs (README Starting sessions, docs/engines.md lock).
-- Follow-up issue #478 (Fable allowance, Copilot models + sign-in state, 3p weekly bucket).
-- Live (scratch bridge, scratchpad/live_wall.py): real snapshot, readings, launcher; shots taken.
+- ae4e66a launcher; d6ba8b1 app + wall; e7ec82c docs; 3d33f60 review round 1; 55e9029 verify round
+  (ready gate through dom.js refresh, spent_until per window, KLEPSYDRA_CLAUDE kept out of a new
+  tmux server). Verify pass on 55e9029: clean (3 unreachable nits, listed in the PR).
+- Follow-up issue #478. Live: four throwaway launches (Claude Personal, Claude RIT Sonnet, agy
+  Gemini Low, Copilot), each on the right account and model, each ended at rest.
+- Shots: fleet-briefing/shots/2026-11-19/klepsydra-477-live-*.png, README line added.
 
 ## Next
-1. Full browser suite after the narrow-label + harness changes; fold in the reviewer's findings.
-2. Live launches: one throwaway per engine (Claude Personal, Claude RIT, agy, Copilot), confirm the
-   account, close each; final live shots 1920/390 dark/light closed/open.
-3. Push, PR body (Refs #440, #478), shots to fleet-briefing, report to Heph, fleet done.
+- Heph's fresh Opus review; fix what it finds. Do not merge.
+- The running fleet tmux server still holds KLEPSYDRA_CLAUDE (Heph's 11-16 command) in its global
+  environment until it restarts (`tmux -L klepsydra set-environment -gu KLEPSYDRA_CLAUDE` clears it).
 
 ## Verify
-- node --test src/*.test.js; make test-launch; cargo test -p klepsydra-fleet;
+- node --test src/*.test.js 529; make test-launch 278; cargo test -p klepsydra-fleet 435;
   KLEPSYDRA_STAGE=klepsydra-build-ns477 scripts/build-windows.sh --check;
-  scripts/test_wall_browser.py (drawer_tables, cast_pick_outlives_its_card also fail on main).
+  scripts/test_wall_browser.py: 444 pass; drawer_tables, cast_pick_outlives_its_card and
+  reply_buttons fail on main too (reply_buttons raises and stops the run: run the rest by name).
