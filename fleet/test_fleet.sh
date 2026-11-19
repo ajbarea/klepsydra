@@ -2225,9 +2225,12 @@ jq -n --arg p "$b" '{session_id: "z", ended: null, tmux: {pane: $p}, state: "don
 check "#445 review: a second live session on the fleet's server naming the pane is not confirmed idle: refused (1), nothing typed" \
   "$(bash "$here/fleet" close wrk7 2>&1 | grep -c 'cannot confirm wrk7 is idle') $(grep -c '^SUBMIT' "$work/wrk7.log")" "1 0"
 rm -f "$KLEPSYDRA_DIR/fleet/aaaaaaaa-0000-4000-8000-0000000000a2.json"
+# The last close record for NAME in the fleet log, read through JQ (#483).
+lastclose() { grep -a -F '"fleet::close"' "$FLEET_LOG" | jq -r --arg n "$1" "select(.name == \$n) | $2" | tail -1; } # NAME JQ
 printf '%s\n' "$b" >"$FLEET_STATE/orchestrator.pane"
 check "#445 review: fleet close refuses the orchestrator's own pane even when idle, where that check is the only guard (1)" \
-  "$(bash "$here/fleet" close wrk7 2>&1 | grep -c "the orchestrator's pane") $(bash "$here/fleet" close wrk7 >/dev/null 2>&1; echo $?) $(grep -c '^SUBMIT' "$work/wrk7.log")" "1 1 0"
+  "$(bash "$here/fleet" close wrk7 2>&1 | grep -c "refused: .* is the orchestrator's pane") $(bash "$here/fleet" close wrk7 >/dev/null 2>&1; echo $?) $(grep -c '^SUBMIT' "$work/wrk7.log")" "1 1 0"
+check "#483: that refusal logs check orchestrator" "$(lastclose wrk7 .check)" "orchestrator"
 rm -f "$FLEET_STATE/orchestrator.pane"
 # The race: the pane goes busy while close waits for the pane lock (a send mid-paste); the check runs under the lock.
 exec 8>"$FLEET_STATE/locks/send-${b#%}"; flock 8
@@ -2264,7 +2267,6 @@ check "#454 B1: a turn printing text with no spinner busy can read is refused (1
   "$(bash "$here/fleet" close wrk7 2>&1 | grep -c '^error: .*its screen changed within') $(grep -c '^SUBMIT' "$work/wrk7.log") $(fleet_panes | grep -cx -- "$b")" "1 0 1"
 kill "$wrp" 2>/dev/null; wait "$wrp" 2>/dev/null
 # The log names the check that failed and quotes what differed (#483).
-lastclose() { grep -a -F '"fleet::close"' "$FLEET_LOG" | jq -r --arg n "$1" "select(.name == \$n) | $2" | tail -1; } # NAME JQ
 check "#483: a refusal in the quiet window logs check quiet_screen and the line that changed" \
   "$(lastclose wrk7 .check) $(lastclose wrk7 .differs | grep -c '> ⏺ Writing line [0-9]')" "quiet_screen 1"
 state wrk7 '{"above":["done"],"busy":false,"exit_on_exit":true,"on_submit":"none","log_typed":true}'; settle; : >"$work/wrk7.log"
