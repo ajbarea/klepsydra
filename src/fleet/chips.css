@@ -90,7 +90,6 @@
   font-size: calc(var(--size-sub) * var(--scale));
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
-  opacity: 0.86;
 }
 .chips .age {
   font-size: calc(var(--size-small) * var(--scale));
@@ -144,9 +143,10 @@
 .chips .chip[data-route] { box-shadow: inset 0 calc(-2px * var(--scale)) 0 var(--route); }
 .chips .chip[data-placeholder] :is(.val, .when) { color: var(--text-dim); }
 .chips .chip[data-placeholder] .mark { opacity: 0.7; }
-/* An old reading says its age, and its pips and mark dim; its words keep
-   their ink, so they hold 4.5:1 at every opacity (#486). */
-.chips .chip[data-stale] :is(.pips, .mark) { opacity: 0.5; }
+/* An old reading says its age, and its pips and icon dim; its words and its
+   monogram (the account's name) keep their ink, so they hold 4.5:1 at every
+   opacity (#486). No word fades: the resets read in the same ink as the value. */
+.chips .chip[data-stale] :is(.pips, .mark svg) { opacity: 0.5; }
 .chips .chip[data-stale] .pip i, .chips .pip.old i { background-color: var(--text-dim) !important; }
 
 /* Stacked ("Full" in the tray): a line per account, every window shown, the
@@ -178,7 +178,7 @@
 }
 .chips .cell .k { font-variant-caps: all-small-caps; letter-spacing: 0.05em; color: var(--text-dim); font-size: calc(var(--size-label) * var(--scale)); }
 .chips .cell b { font-size: calc(var(--size-pct) * var(--scale)); min-width: 3.1ch; text-align: right; font-variant-numeric: tabular-nums; }
-.chips .cell .t { font-size: calc(12.5px * var(--scale)); opacity: 0.86; min-width: 6.4ch; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.chips .cell .t { font-size: calc(12.5px * var(--scale)); min-width: 6.4ch; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .chips .cell .pip { align-self: center; height: calc(13px * var(--scale)); }
 .chips .cell.wide { grid-column: 3 / -2; justify-content: start; color: var(--text-dim); font-size: calc(var(--size-label) * var(--scale)); }
 .chips .cell.hidden-win .t { color: var(--text-dim); font-style: italic; }

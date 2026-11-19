@@ -117,6 +117,7 @@ test("no text colour carries alpha and no filter fades: words keep their ink by 
 test("no word fades: every opacity under 1 in the stylesheet dims a part that is not text", () => {
   // The strip's sheet and the chips' (shared with the wall's header).
   const sheets = ["./style.css", "./fleet/chips.css"].map((f) => readFileSync(new URL(f, import.meta.url), "utf8"));
+  const css = sheets[0];
   // Every rule that sets an opacity below 1, by its selector, whatever form it takes.
   const fades = sheets.flatMap((sheet) => [...sheet.replace(/\/\*[\s\S]*?\*\//g, "").matchAll(/([^{}]+)\{([^}]*)\}/g)])
     .filter(([, , body]) => [...body.matchAll(/(?:^|[;\s])opacity:\s*([^;]+)(?:;|$)/g)].some(([, v]) => v.trim() !== "1"))
