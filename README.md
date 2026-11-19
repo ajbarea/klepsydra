@@ -1491,7 +1491,7 @@ JSON line in `log/fleet.log`, in the app log's shape.
 | `fleet headless NAME BRIEF` | Runs a job as `claude -p` on the API credit, capped. See [docs/headless.md](docs/headless.md). |
 | `fleet voices [MODE]` | Sets keryx to the tray's Voices mode now. |
 | `fleet shots [--apply]` | Prunes the briefing's decided and old screenshots; a dry run without `--apply`. |
-| `fleet install` / `fleet cutover` | Install the scripts and units; move the nine units (eight, plus `wsl-mem-watch.service` when installed) onto the installed files. |
+| `fleet install` / `fleet cutover` | Install the scripts and units; move the eight units (nine with `wsl-mem-watch.service` when installed) onto the installed files. |
 
 `fleet/launch.sh NAME BRIEF` starts an agent in a memory-capped scope, and
 `fleet/resume-at-reset.sh` is the resume service: it resumes a limited pane at

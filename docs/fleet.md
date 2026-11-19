@@ -9,8 +9,8 @@ usage limit, and check the fleet's health. `make install-fleet` links each one
 from this checkout into the fleet's state folder (`~/.local/state/fleet-orchestrator`,
 or `FLEET_STATE`), so pulling main updates the fleet. It also links the `fleet`
 command into `~/.local/bin` and writes the services as user units in
-`~/.config/systemd/user`, which start again after a reboot, and makes step 1's
-copies into `~/.claude`. A copy a link
+`~/.config/systemd/user`, which start again after a reboot, and makes the copies
+into `~/.claude` that step 1 of the [README's Install](../README.md#install) makes. A copy a link
 replaces goes to `archive/fleet-scripts-<date>/`. When the resume service is
 running, the install then runs `fleet cutover`, since a running service keeps
 the code it started with (`fleet install --no-cutover` skips it). Run it from

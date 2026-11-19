@@ -218,6 +218,6 @@ files belong to: the JS guards scan hooks and scripts too.
 ## docs_site
 
 - none. Documentation is `README.md`, `ROADMAP.md` and `IMPL.md` at the root,
-  plus `docs/` (`engines.md`, `headless.md`, `characters/`, `perf/`,
-  `superpowers/`). There is no Zensical site, no `zensical.toml` and no Pages
-  deploy, so the docs-site dimension of any audit is N/A here.
+  plus `docs/` (`engines.md`, `headless.md`, `fleet.md`, `ci-watch.md`,
+  `characters/`, `perf/`, `superpowers/`). There is no Zensical site, no
+  `zensical.toml` and no Pages deploy, so the docs-site dimension of any audit is N/A here.
