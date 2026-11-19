@@ -2263,6 +2263,10 @@ rm -f "$KLEPSYDRA_DIR/wrapup/$SID.json"
 check "#454 B1: a turn printing text with no spinner busy can read is refused (1): its screen changed in the quiet window" \
   "$(bash "$here/fleet" close wrk7 2>&1 | grep -c '^error: .*its screen changed within') $(grep -c '^SUBMIT' "$work/wrk7.log") $(fleet_panes | grep -cx -- "$b")" "1 0 1"
 kill "$wrp" 2>/dev/null; wait "$wrp" 2>/dev/null
+# The log names the check that failed and quotes what differed (#483).
+lastclose() { grep -a -F '"fleet::close"' "$FLEET_LOG" | jq -r --arg n "$1" "select(.name == \$n) | $2" | tail -1; } # NAME JQ
+check "#483: a refusal in the quiet window logs check quiet_screen and the line that changed" \
+  "$(lastclose wrk7 .check) $(lastclose wrk7 .differs | grep -c '> ⏺ Writing line [0-9]')" "quiet_screen 1"
 state wrk7 '{"above":["done"],"busy":false,"exit_on_exit":true,"on_submit":"none","log_typed":true}'; settle; : >"$work/wrk7.log"
 # The hook writes the file async, up to a second after the prompt the screen showed: a write in the window refuses.
 ( for i in $(seq 40); do jq -n --arg p "$b" --argjson i "$i" '{session_id: "x", ended: null, tmux: {pane: $p}, state: "done", reason: null, background: [], turn_at: $i}' >"$work/sf.t"
@@ -2270,11 +2274,14 @@ state wrk7 '{"above":["done"],"busy":false,"exit_on_exit":true,"on_submit":"none
 check "#454 S1: a session file written within the quiet window is refused (1) before /exit is typed at all" \
   "$(bash "$here/fleet" close wrk7 2>&1 | grep -c '^error: .*its session file was written within') $(grep -c '^TYPED' "$work/wrk7.log") $(grep -c '^SUBMIT' "$work/wrk7.log")" "1 0 0"
 kill "$wrp" 2>/dev/null; wait "$wrp" 2>/dev/null
+check "#483: a session file written in the quiet window logs check fingerprint with both fingerprints, which differ, and the file's state" \
+  "$(lastclose wrk7 .check) $(lastclose wrk7 '(.fp_before != .fp_after and (.fp_before | test("^[0-9]+ [0-9]+$")))') $(lastclose wrk7 .session | jq -r .state)" "fingerprint true done"
 done_live "$b" "done" '[]'
 # Settled and quiet, but the box holds text (AJ typing a reply) or a menu stands where it was.
 state wrk7 '{"above":["done"],"busy":false,"exit_on_exit":true,"on_submit":"none","log_typed":true,"input":"a draft reply"}'; settle; : >"$work/wrk7.log"
 check "#454 verify: a quiet, settled pane whose input box holds text is refused (1), nothing typed, the text kept" \
   "$(bash "$here/fleet" close wrk7 2>&1 | grep -c '^error: .*its input box is not showing, or holds text') $(grep -c '^TYPED\|^SUBMIT' "$work/wrk7.log") $(input_text "$(screen "$b")")" "1 0 a draft reply"
+check "#483: a box holding text logs check input_box and the text" "$(lastclose wrk7 .check) $(lastclose wrk7 .text)" "input_box a draft reply"
 state wrk7 '{"above":["done"],"busy":false,"exit_on_exit":true,"on_submit":"none","log_typed":true,"clear":true,"menu":"limit"}'; settle; : >"$work/wrk7.log"
 check "#454 verify: a quiet, settled pane with a menu where its input box was is refused (1), nothing typed" \
   "$(bash "$here/fleet" close wrk7 2>&1 | grep -c '^error: .*its input box is not showing, or holds text') $(grep -c '^TYPED\|^SUBMIT' "$work/wrk7.log") $(fleet_panes | grep -cx -- "$b")" "1 0 1"
@@ -2299,8 +2306,28 @@ touch -d @1000 "$KLEPSYDRA_DIR/fleet/$SID.json"
 check "#454 nit: a session file last written before the pane's process started (a reused pane) is refused (1), nothing typed" \
   "$(bash "$here/fleet" close wrk7 2>&1 | grep -c "^error: .*last written before $b's process started") $(grep -c '^SUBMIT' "$work/wrk7.log")" "1 0"
 done_live "$b" "done" '[]'
+# Only the menu's own block is dropped (#483): a line between it and the box keeps the whole block, so the close is refused.
+stray="⏺ $(printf 'x%.0s' $(seq 200))"
+state wrk7 "{\"above\":$long,\"busy\":false,\"slash_menu\":true,\"slash_after\":\"$stray\",\"exit_on_exit\":true,\"on_submit\":\"none\"}"; settle; : >"$work/wrk7.log"
+out=$(bash "$here/fleet" close wrk7 2>&1)
+check "#483: a line the menu does not explain refuses the close (1) at check transcript, says so in one line, nothing submitted, /exit backed out" \
+  "$(grep -c '^error: refused: .*its screen changed as /exit went in.*\[check: transcript; fleet close --why wrk7\]$' <<<"$out") $(grep -c '^SUBMIT' "$work/wrk7.log") $(sleep 0.5; input_text "$(screen "$b")" | grep -c .) $(fleet_panes | grep -cx -- "$b")" "1 0 0 1"
+check "#483: its log quotes at most 5 differing lines, each cut to 120 characters, and counts the lines" \
+  "$(lastclose wrk7 .differs | sed 's/^.*; differs: //' | awk -F' [|] ' '{ m = 0; for (i = 1; i <= NF; i++) if (length($i) > m) m = length($i); print NF <= 5, m <= 122 }') $(lastclose wrk7 .differs | grep -c '^menu lines dropped 0, transcript lines before [0-9]*, after [0-9]*; differs: ')" "1 1 1"
+check "#483: fleet close --why NAME prints the last refusal's check and reason, and -h the usage (0)" \
+  "$(bash "$here/fleet" close --why wrk7 | grep -c '^  check: transcript$') $(bash "$here/fleet" close --why wrk7 | grep -c '^  why: working (its screen changed as /exit went in)$') $(bash "$here/fleet" close --help; echo $?)" "1 1 usage: fleet close NAME | fleet close --why NAME
+0"
+check "#483: --why for a name with no close fails (1); --why with no name is bad usage (2)" \
+  "$(bash "$here/fleet" close --why nobody >/dev/null 2>&1; echo $?) $(bash "$here/fleet" close --why >/dev/null 2>&1; echo $?)" "1 2"
+# The real menu as an 84-column pane draws it, two descriptions wrapped (the 11-19 ns477 refusals): it closes.
 state wrk7 "{\"above\":$long,\"busy\":false,\"slash_menu\":true,\"exit_on_exit\":true,\"on_submit\":\"none\"}"; settle; : >"$work/wrk7.log"
-check "#445 review: once the turn has ended the same close goes through (AJ's tmux file beside it is no bar; the menu /exit opens covers a full screen's last rows), and its record goes" "$(bash "$here/fleet" close wrk7 2>/dev/null) $(grep -c '^SUBMIT /exit' "$work/wrk7.log") $(cut -f2 "$DONE_REPORTS" | grep -c '^wrk7$')" "closed: wrk7 ($b) 1 0"
+check "#445 review: once the turn has ended the same close goes through (AJ's tmux file beside it is no bar; the menu /exit opens covers a full screen's last rows, wrapped as in an 84-column pane, #483), and its record goes" "$(bash "$here/fleet" close wrk7 2>/dev/null) $(grep -c '^SUBMIT /exit' "$work/wrk7.log") $(cut -f2 "$DONE_REPORTS" | grep -c '^wrk7$')" "closed: wrk7 ($b) 1 0"
+check "#483: a close that went through logs it, and --why shows it" "$(bash "$here/fleet" close --why wrk7 | head -1 | grep -c "INFO close: finished agent's pane closed$")" "1"
+# The same menu in a wide pane, one line per entry (the 11-19 close-454 close).
+v=$(pane wrk12 "{\"above\":$long,\"busy\":false,\"slash_menu\":\"wide\",\"exit_on_exit\":true,\"on_submit\":\"none\"}"); settle
+done_live "$v" "done" '[]'
+printf '%s\twrk12\t%s\t%s\t/w\t%s\t2026-11-02T20:00:00-05:00\n' "$v" "$work/brief.src" "$SID" "$work/cfg-a" >>"$FLEET_STATE/finished.tsv"
+check "#483: the menu as a wide pane draws it, one line per entry, closes too" "$(bash "$here/fleet" close wrk12 2>/dev/null) $(grep -c '^SUBMIT /exit' "$work/wrk12.log")" "closed: wrk12 ($v) 1"
 # A pane id another live session now holds: left open, and the finished agent's record is cleared.
 x=$(pane wrk10 '{"above":["idle"],"on_submit":"none"}'); settle
 done_live "$x"

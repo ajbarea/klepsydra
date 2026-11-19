@@ -7,14 +7,34 @@
 # /exit once it is confirmed at rest (close_now), and is never killed. The
 # agent's record in done-reports.tsv is dropped, which also clears the doctor's
 # flag. Exits 1 when NAME has not finished, the pane is the orchestrator's, is
-# not confirmed at rest, or is still there after /exit; 2 on bad usage.
+# not confirmed at rest, or is still there after /exit; 2 on bad usage. Each
+# refusal is logged with the check that failed and what differed;
+# `close.sh --why NAME` prints NAME's last close record from the fleet log.
 set -u
 FLEET_TARGET=fleet::close
 here=$(dirname "$(readlink -f "$0")")
 # shellcheck source=fleet/lib.sh
 . "$here/lib.sh"
 FINISHED=${FLEET_FINISHED:-$FLEET_STATE/finished.tsv}
-(( $# == 1 )) && [[ -n $1 ]] || { err "usage: fleet close NAME"; exit 2; }
+usage="usage: fleet close NAME | fleet close --why NAME"
+# NAME's last close record in the fleet log (the current one, then the renamed ones, newest first):
+# its time and message, then each field (the check that failed, why, what differed) on its own line.
+why_report() { # NAME
+  local f rec=
+  while IFS= read -r f; do
+    rec=$(grep -a -F '"target":"fleet::close"' -- "$f" 2>/dev/null \
+      | jq -R -c --arg n "$1" 'fromjson? | select(type == "object" and .name == $n)' 2>/dev/null | tail -1)
+    [[ -n $rec ]] && break
+  done < <(printf '%s\n' "$FLEET_LOG"; find "${FLEET_LOG%/*}" -maxdepth 1 -name "$(basename "${FLEET_LOG%.log}")_*.log" -printf '%T@ %p\n' 2>/dev/null | sort -rn | cut -d' ' -f2-)
+  [[ -n $rec ]] || { err "no close of $1 in the fleet log"; return 1; }
+  jq -r '"\(.ts) \(.level) \(.message)",
+    (to_entries[] | select(.key | IN("ts", "level", "target", "message", "run_id", "name") | not) | "  \(.key): \(.value)")' <<<"$rec"
+}
+case ${1:-} in
+  -h | --help) echo "$usage"; exit 0 ;;
+  --why) (( $# == 2 )) && [[ -n $2 ]] || { err "$usage"; exit 2; }; why_report "$2"; exit ;;
+esac
+(( $# == 1 )) && [[ -n $1 ]] || { err "$usage"; exit 2; }
 name=$1
 # The newest finished row of that name (names compare as text).
 mapfile -t row < <(awk -F'\t' -v n="$name" '$2 "" == n "" { p = $1; s = $4 } END { if (p != "") { print p; print s } }' "$FINISHED" 2>/dev/null)
@@ -76,33 +96,72 @@ above_raw() { # SCREEN
   n=$(plain <<<"$1" | awk 'index($0, "────") == 1 { r[++k] = NR } END { print (k >= 2) ? r[k - 1] - 1 : NR }')
   head -n "$n" <<<"$1"
 }
-# ABOVE (above_raw's) as plain lines, blank ones and a trailing slash-command menu dropped. Typing
-# /exit opens that menu just above the box: Claude Code 2.1.316 draws it over the transcript's last
-# rows (a full screen might scroll up instead). Prints how many menu lines went, then the rest.
+# ABOVE (above_raw's) as plain lines, blank ones and the slash-command menu that typing /exit opens
+# dropped. Claude Code 2.1.316 draws that menu just above the box, over the transcript's last rows:
+# "  ❯ /exit" and its description, then "    /name" rows whose descriptions start in the same column,
+# a description too long for the pane wrapping onto lines indented to exactly that column (an
+# 84-column pane wraps two of the three). Only such a block, running from the "❯ /exit" row to the
+# last line, is dropped; anything else in it keeps the whole block. Prints how many lines went, then
+# the rest.
 screen_lines() { # ABOVE
   plain <<<"$1" | grep -v '^[[:space:]]*$' | awk '{ l[++n] = $0 } END {
-    k = 0; while (n > 0 && l[n] ~ /^ {2,4}(❯ )?\/[^ ]+( |$)/) { n--; k++ }
+    k = 0
+    for (h = n; h >= 1; h--) if (l[h] ~ /^  ❯ \/exit( |$)/) break
+    if (h >= 1) {
+      t = l[h]; gsub(/❯/, "*", t)   # one column, whether awk counts bytes or characters
+      d = match(t, /^  \* \/exit +[^ ]/) ? RLENGTH - 1 : 0
+      ok = 1
+      for (i = h + 1; i <= n && ok; i++) {
+        if (match(l[i], /^    \/[^ ]+ +[^ ]/)) ok = d > 0 && RLENGTH - 1 == d
+        else if (l[i] ~ /^    \/[^ ]+ *$/) ok = 1
+        else ok = d > 0 && match(l[i], /^ +[^ ]/) && RLENGTH - 1 == d
+      }
+      if (ok) { k = n - h + 1; n = h - 1 }
+    }
     print k; for (i = 1; i <= n; i++) print l[i] }'
 }
 # Whether AFTER (a screen with /exit typed) shows REF's transcript (above_raw's) unchanged: its
-# first lines or its last ones, less at most the rows the menu covers, and no line it lacks.
+# first lines or its last ones, less at most the rows the menu covers, and no line it lacks. Fails
+# with SAME_WHY set to the counts and the first lines that differ, for the refusal's log.
 same_transcript() { # REF AFTER
   local r a k n m
   r=$(screen_lines "$1" | tail -n +2)
   a=$(screen_lines "$(above_raw "$2")")
   k=$(head -1 <<<"$a"); a=$(tail -n +2 <<<"$a")
   n=$(grep -c . <<<"$r") m=$(grep -c . <<<"$a")
-  (( m >= 1 && m <= n && n - m <= k + 1 )) || return 1
-  [[ $(head -n "$m" <<<"$r") == "$a" || $(tail -n "$m" <<<"$r") == "$a" ]]
+  if (( m >= 1 && m <= n && n - m <= k + 1 )) && [[ $(head -n "$m" <<<"$r") == "$a" || $(tail -n "$m" <<<"$r") == "$a" ]]; then
+    return 0
+  fi
+  SAME_WHY="menu lines dropped $k, transcript lines before $n, after $m; differs: $(excerpt "$r" "$a")"
+  return 1
 }
-# Whether PANE's screen above the box stays as REF (above_raw) and not busy for SECONDS.
+# The first lines that differ between OLD and NEW (plain text), at most 5, each cut to 120
+# characters and joined by " | ": what a refusal's log shows of a screen that changed.
+excerpt() { # OLD NEW
+  local LC_ALL=C.UTF-8 l out=
+  while IFS= read -r l; do
+    l=${l%"${l##*[![:space:]]}"}
+    out+="${out:+ | }${l:0:120}"
+  done < <(diff -- <(printf '%s\n' "$1") <(printf '%s\n' "$2") | grep -E '^[<>] ' | head -5)
+  printf '%s' "${out:-(none)}"
+}
+# The first line of stdin, cut to 120 characters.
+clip() { local LC_ALL=C.UTF-8 l; IFS= read -r l; printf '%s' "${l:0:120}"; }
+# SID's session file in brief, for a refusal's log: its state, reason, background count, and when
+# it was last written.
+session_brief() { # SID
+  jq -c '{state, reason, background: ((.background // []) | if type == "array" then length else . end), written_at}' \
+    -- "$KLEPSYDRA_DIR/fleet/$1.json" 2>/dev/null || echo unreadable
+}
+# Whether PANE's screen above the box stays as REF (above_raw) and not busy for SECONDS. Fails with
+# STEADY_SCREEN set to the screen that broke it.
 steady() { # PANE SECONDS REF
   local i n s
   n=$(awk -v s="$2" -v t="${FLEET_TICK:-0.5}" 'BEGIN { n = int(s / t + 0.999); print (n < 1) ? 1 : n }')
   for (( i = 0; i < n; i++ )); do
     sleep "${FLEET_TICK:-0.5}"
     s=$(screen "$1")
-    ! busy "$s" && [[ $(above_raw "$s") == "$3" ]] || return 1
+    ! busy "$s" && [[ $(above_raw "$s") == "$3" ]] || { STEADY_SCREEN=$s; return 1; }
   done
 }
 # Claude Code's dialog on /exit while background work runs ("Exit and stop tasks" first), standing
@@ -114,15 +173,19 @@ exit_dialog() {
   grep -q '^ *Background work is running' <<<"$tail" && grep -q 'Esc to cancel' <<<"$tail"
 }
 no_exit_dialog() { ! exit_dialog "$1"; }
-# Refuse the close for WHY (at_rest's or the screen's), saying so; returns 10 to 12.
-refuse() { # NAME PANE WHY
-  flog WARN "close: not confirmed at rest; left open" name="$1" pane="$2" why="$3"
-  case $3 in
-    working) err "refused: $1 is working again (its session file says so); close it once the turn ends"; return 10 ;;
-    working*) err "refused: $1 is working again (${3#working (}; close it once the turn ends"; return 10 ;;
-    background*) err "refused: $1 still has background work running (a shell or watcher dies with its pane); close it once that ends"; return 11 ;;
-    wrapup*) err "refused: $1 owes the wall's wrap-up an answer (${3#wrapup }): its checkpoint turn may still run; close it once it answers or the request closes"; return 12 ;;
-    *) err "refused: cannot confirm $1 is idle (${3#* }); left open"; return 12 ;;
+# Refuse the close for WHY (at_rest's or the screen's), found by CHECK (busy, input_box,
+# session_file, quiet_screen, fingerprint, transcript, input_text), saying so in one line that names
+# the check; the log line adds what differed (KEY=VALUE...). Returns 10 to 12.
+refuse() { # NAME PANE CHECK WHY [KEY=VALUE...]
+  local c=$3 w=$4 more
+  flog WARN "close: not confirmed at rest; left open" name="$1" pane="$2" check="$c" why="$w" "${@:5}"
+  more="[check: $c; fleet close --why $1]"
+  case $w in
+    working) err "refused: $1 is working again (its session file says so); close it once the turn ends $more"; return 10 ;;
+    working*) err "refused: $1 is working again (${w#working (}; close it once the turn ends $more"; return 10 ;;
+    background*) err "refused: $1 still has background work running (a shell or watcher dies with its pane); close it once that ends $more"; return 11 ;;
+    wrapup*) err "refused: $1 owes the wall's wrap-up an answer (${w#wrapup }): its checkpoint turn may still run; close it once it answers or the request closes $more"; return 12 ;;
+    *) err "refused: cannot confirm $1 is idle (${w#* }); left open $more"; return 12 ;;
   esac
 }
 # The checks and the /exit hold one pane lock, so a `fleet send` that is mid-paste cannot start a
@@ -133,25 +196,47 @@ refuse() { # NAME PANE WHY
 # typed, both are read once more, and only then is Enter pressed. The pane is never killed: one that
 # does not go is left open and said so.
 close_now() { # PANE NAME SID
-  local s ref fp why q=${FLEET_CLOSE_QUIET:-6}
+  local s ref fp why box q=${FLEET_CLOSE_QUIET:-6}
   [[ $q =~ ^[0-9]+([.][0-9]+)?$ ]] || q=6
   s=$(screen "$1")
-  busy "$s" && { refuse "$2" "$1" "working ($1 is mid-turn)"; return; }
-  idle_empty "$s" || { refuse "$2" "$1" "unconfirmed its input box is not showing, or holds text"; return; }
-  fp=$(at_rest "$1" "$3") || { refuse "$2" "$1" "$fp"; return; }
+  busy "$s" && { refuse "$2" "$1" busy "working ($1 is mid-turn)" spinner="$(near 1 | clip)"; return; }
+  if ! idle_empty "$s"; then
+    box=$(input_text "$s")
+    refuse "$2" "$1" input_box "unconfirmed its input box is not showing, or holds text" \
+      box="$(has_input_box "$s" && echo shown || echo missing)" text="${box:0:80}"
+    return
+  fi
+  fp=$(at_rest "$1" "$3") || { refuse "$2" "$1" session_file "$fp" session="$(session_brief "$3")"; return; }
   ref=$(above_raw "$s")
-  steady "$1" "$q" "$ref" || { refuse "$2" "$1" "working (its screen changed within ${q} s)"; return; }
-  why=$(at_rest "$1" "$3") || { refuse "$2" "$1" "$why"; return; }
-  [[ $why == "$fp" ]] || { refuse "$2" "$1" "working (its session file was written within ${q} s)"; return; }
+  steady "$1" "$q" "$ref" || { refuse "$2" "$1" quiet_screen "working (its screen changed within ${q} s)" \
+    busy="$(busy "$STEADY_SCREEN" && echo yes || echo no)" differs="$(excerpt "$(plain <<<"$ref")" "$(above_raw "$STEADY_SCREEN" | plain)")"; return; }
+  why=$(at_rest "$1" "$3") || { refuse "$2" "$1" session_file "$why" session="$(session_brief "$3")"; return; }
+  [[ $why == "$fp" ]] || { refuse "$2" "$1" fingerprint "working (its session file was written within ${q} s)" \
+    fp_before="$fp" fp_after="$why" session="$(session_brief "$3")"; return; }
   type_exactly "$1" "/exit" || return 13
   why=$(at_rest "$1" "$3")
   s=$(screen "$1")
-  if [[ $why != "$fp" ]] || busy "$s" || ! same_transcript "$ref" "$s" || [[ $(input_text "$s") != /exit ]]; then
+  box=$(input_text "$s")
+  # Each check in turn, the first that fails named: the file, a turn, the transcript, the box.
+  local check='' more=()
+  if [[ $why != "$fp" ]]; then
+    if [[ $why =~ ^[0-9]+\ [0-9]+$ ]]; then
+      check=fingerprint more=(fp_before="$fp" fp_after="$why" session="$(session_brief "$3")")
+      why="working (its session file was written as /exit went in)"
+    else
+      check=session_file more=(session="$(session_brief "$3")")
+    fi
+  elif busy "$s"; then
+    check=busy why="working (a turn started as /exit went in)" more=(spinner="$(near 1 | clip)")
+  elif ! same_transcript "$ref" "$s"; then
+    check=transcript why="working (its screen changed as /exit went in)" more=(differs="$SAME_WHY")
+  elif [[ $box != /exit ]]; then
+    check=input_text why="working (its box changed as /exit went in)" more=(text="${box:0:80}")
+  fi
+  if [[ -n $check ]]; then
     # Back out only our own /exit: text typed after it stays, and so does the close's refusal.
-    [[ $(input_text "$s") == /exit ]] && t send-keys -t "$1" -N 5 BSpace
-    if [[ $why == "$fp" ]]; then why="working (its screen or box changed as /exit went in)"
-    elif [[ $why =~ ^[0-9]+\ [0-9]+$ ]]; then why="working (its session file was written as /exit went in)"; fi
-    refuse "$2" "$1" "$why"
+    [[ $box == /exit ]] && t send-keys -t "$1" -N 5 BSpace
+    refuse "$2" "$1" "$check" "$why" "${more[@]}"
     return
   fi
   t send-keys -t "$1" Enter

@@ -28,9 +28,12 @@ A test steers it through a JSON state file, re-read on every tick:
   die_on_submit  any submitted line ends the process (a pane killed mid-send)
   exit_delay seconds /exit takes before the process ends (with exit_on_exit)
   slash_menu  text typed starting with "/" opens Claude Code's command menu
-             just above the box, over the transcript's last rows (2.1.316)
+             just above the box, over the transcript's last rows (2.1.316),
+             wrapped as in an 84-column pane ("wide": as at 160 columns)
   slash_adds  a transcript line that shows as the menu opens (a phone
              prompt arriving as /exit goes in)
+  slash_after  a line drawn between the menu and the box (output the menu
+             does not explain)
   exit_dialog  /exit opens Claude Code's "Background work is running" dialog
              (2.1.316, captured 2026-11-18): Enter exits, Esc cancels it
   log_typed  log each run of typed keys (TYPED <text>), so a test can tell
@@ -66,10 +69,19 @@ RC_MENU = [
     "  ❯ Continue",
     "  Enter to select · Esc to continue",
 ]
+# The menu typing /exit opens, as Claude Code 2.1.316 draws it (captured 2026-11-19): in an
+# 84-column pane two descriptions wrap onto lines indented to their column; at 160 none do.
 SLASH_MENU = [
+    "  ❯ /exit                            Exit the CLI",
+    "    /context                         Visualize current context usage as a colored",
+    "                                     grid",
+    "    /usage-credits                   Configure usage credits or request them from",
+    "                                     your admin when you hit a limit",
+]
+SLASH_MENU_WIDE = [
     "  ❯ /exit                                                Exit the CLI",
-    "    /context                                             Visualize current context usage",
-    "    /usage-credits                                       Configure usage credits",
+    "    /context                                             Visualize current context usage as a colored grid",
+    "    /usage-credits                                       Configure usage credits or request them from your admin when you hit a limit",
 ]
 EXIT_DIALOG = [
     "▔" * 60,
@@ -303,9 +315,13 @@ class Pane:
             box = [PROMPT + PLACEHOLDER]
         if self.state.get("slash_menu") and self.input.startswith("/"):
             # Drawn over the transcript's last rows, a blank row above it.
-            above = above[: max(0, len(above) - len(SLASH_MENU) - 1)]
+            menu = SLASH_MENU_WIDE if self.state["slash_menu"] == "wide" else SLASH_MENU
+            menu = menu + (
+                [self.state["slash_after"]] if self.state.get("slash_after") else []
+            )
+            above = above[: max(0, len(above) - len(menu) - 1)]
             above += [self.state["slash_adds"]] if self.state.get("slash_adds") else []
-            above += [""] + SLASH_MENU
+            above += [""] + menu
         below = self.state.get("below", ["  ⏵⏵ bypass permissions on · 1 shell"])
         return above + [RULE] + box + [RULE] + below
 
