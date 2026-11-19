@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { ROUTE_ORDER, toRows } from "./gauge.js";
-import { AGE_TEXT_AFTER_MS, CHIP_ORDER, LANE_HARNESS, STALE_AFTER_MS, ageText, cellWhen, chipName, clockAt, dockKey, hiddenRows, leadOf, markOf, primaryChip, toChips } from "./fleet/chips.js";
+import { ROUTE_ORDER, routeLane, toRows } from "./gauge.js";
+import { AGE_TEXT_AFTER_MS, STALE_AFTER_MS, ageText, cellWhen, chipName, clockAt, dockKey, hiddenRows, leadOf, markOf, primaryChip, toChips } from "./fleet/chips.js";
 
 const NOW = Date.UTC(2026, 10, 18, 18, 23); // Wed 18 Nov, 1:23 PM EST
 const S = NOW / 1000;
@@ -18,9 +18,10 @@ const LIVE = [
 ];
 const chips = (payload, now = NOW) => toChips(toRows(payload, now), now);
 
-test("every route lane names an engine, so chips follow the fleet's order", () => {
-  for (const lane of ROUTE_ORDER) assert.ok(LANE_HARNESS[lane], lane);
-  assert.deepEqual(CHIP_ORDER, ["agy", "copilot", "api", "claude"]);
+test("every route lane is reached by some engine's windows", () => {
+  const lanes = [["agy", "five_hour"], ["agy", "claude_gpt"], ["copilot", "ai_credits"], ["api", "ai_credits"], ["claude", "five_hour"]]
+    .map(([harness, window]) => routeLane({ harness, window }));
+  assert.deepEqual(lanes, ROUTE_ORDER);
 });
 
 test("one chip per account, in route order, with Copilot's placeholder", () => {
@@ -64,10 +65,11 @@ test("a spent session (week not spent) leads and reads out", () => {
   assert.deepEqual(c.hidden, []);
 });
 
-test("an account with only group windows leads with one of them", () => {
+test("an account with only pools leads with the route's pool, the one with most room", () => {
   const api = chips([reading("api-1", "Personal API", { personal: win(30, 9000), ldqis: win(70, 9000) }, { harness: "api" })]);
   const c = api.find((x) => x.harness === "api");
-  assert.equal(c.lead.window, "ldqis");
+  assert.equal(c.route?.window, "personal");
+  assert.equal(c.lead.window, "personal");
 });
 
 test("a window that has reset shows the reset, not a countdown", () => {
@@ -201,7 +203,7 @@ test("a spent week hides only its own account's session, on every surface", () =
 
 test("boundary inputs: no rows, a spent window with no reset time, a label that names no organisation", () => {
   assert.deepEqual(leadOf([]), { lead: null, out: false, hidden: [] });
-  assert.equal(cellWhen({ state: "live", pct: 100, resetsAt: Number.NaN }, NOW), "until it resets");
+  assert.equal(cellWhen({ state: "live", pct: 100, isCapped: true, resetsAt: Number.NaN }, NOW), "until it resets");
   assert.equal(chipName("claude", "Claude"), "Claude");
   assert.deepEqual(markOf("claude", "Claude"), { icon: "claude" });
   assert.deepEqual(markOf("claude", "RIT-CS-DQL"), { mono: "RIT" });
@@ -225,4 +227,80 @@ test("a reset time past Date's range draws instead of stopping the redraw", () =
   const bad = reading("me", "Personal", { five_hour: win(100, 3600), seven_day: { used_percentage: 40, resets_at: 1e13 } });
   const me = chips([bad]).find((c) => c.account === "me");
   assert.ok(me.detail.includes("This week 40% · resets at a time the reading does not give"), me.detail.join(" | "));
+});
+
+// Heph's review of #482: the chip classifies windows as routing does (routeGroup), not by a list of its own.
+test("a spent agy week closes only the Gemini lane: Claude & GPT leads, with the route, not 'out'", () => {
+  const rows = toRows([reading("agy", "Google AI Pro", { five_hour: win(0, 3600), seven_day: win(100, 86_400), claude_gpt: win(10, 7200) }, { harness: "agy" })], NOW);
+  assert.deepEqual(rows.filter((r) => r.isBestRoute).map((r) => r.key), ["agy:claude_gpt"], "gauge.test.js's real AGY windows case");
+  const [agy] = toChips(rows, NOW);
+  assert.equal(agy.out, false);
+  assert.equal(agy.lead.window, "claude_gpt");
+  assert.equal(agy.value, "10%");
+  assert.ok(agy.route, "the chip carries the route");
+  assert.deepEqual(agy.hidden.map((r) => r.window), ["five_hour"], "the Gemini lane's session waits for its week");
+  assert.ok(agy.pips.some((r) => r.window === "seven_day"), "the spent week still shows as a full pip");
+});
+
+test("a spent pool never leads while another lane is open: Gemini leads over a spent Claude & GPT", () => {
+  const rows = toRows([reading("agy", "Google AI Pro", { gemini: win(20, 3600), claude_gpt: win(100, 7200) }, { harness: "agy" })], NOW);
+  assert.deepEqual(rows.filter((r) => r.isBestRoute).map((r) => r.window), ["gemini"]);
+  const [agy] = toChips(rows, NOW);
+  assert.equal(agy.out, false);
+  assert.equal(agy.lead.window, "gemini");
+  assert.equal(agy.value, "20%");
+  assert.deepEqual(agy.hidden, [], "a spent pool hides nothing in another lane");
+});
+
+test("every lane spent: the chip is out until the lane that comes back first", () => {
+  const rows = toRows([reading("agy", "Google AI Pro", { five_hour: win(10, 3600), seven_day: win(100, 3 * 86_400), claude_gpt: win(100, 7200) }, { harness: "agy" })], NOW);
+  const [agy] = toChips(rows, NOW);
+  assert.equal(agy.out, true);
+  assert.equal(agy.lead.window, "claude_gpt", "back in 2 h, before the week");
+});
+
+test("an API key's pools: the one with most room leads, a spent one never does", () => {
+  const rows = toRows([reading("api", "LDQIS", { ai_credits: win(100, 3600), personal: win(70, 3600), ldqis: win(30, 3600) }, { harness: "api" })], NOW);
+  const [api] = toChips(rows, NOW, []);
+  assert.equal(api.out, false);
+  assert.equal(api.lead.window, "ldqis");
+});
+
+test("spent is the row's own isCapped, the one routing reads", () => {
+  const rows = toRows([reading("me", "Personal", { five_hour: win(40, 3600), seven_day: win(50, 86_400) })], NOW);
+  for (const r of rows) r.isCapped = true; // routing's verdict, whatever the percent
+  const me = toChips(rows, NOW, []).find((c) => c.account === "me");
+  assert.equal(me.out, true);
+});
+
+test("chips follow the route order by their windows' lanes (agy, Copilot, API, Claude)", () => {
+  const c = toChips(toRows([
+    reading("me", "Personal", { five_hour: win(1, 3600) }),
+    reading("api", "Key", { ai_credits: win(1, 3600) }, { harness: "api" }),
+    reading("agy", "Google AI Pro", { five_hour: win(1, 3600) }, { harness: "agy" }),
+  ], NOW), NOW);
+  assert.deepEqual(c.map((x) => x.harness), ["agy", "copilot", "api", "claude"]);
+});
+
+test("the route's group leads even when an earlier lane is open but has no room to route", () => {
+  // agy's session at 92% is not spent, but routing needs more room than that.
+  const rows = toRows([reading("agy", "Google AI Pro", { five_hour: win(92, 3600), seven_day: win(10, 86_400), claude_gpt: win(10, 7200) }, { harness: "agy" })], NOW);
+  assert.deepEqual(rows.filter((r) => r.isBestRoute).map((r) => r.window), ["claude_gpt"]);
+  const [agy] = toChips(rows, NOW);
+  assert.equal(agy.lead.window, "claude_gpt");
+});
+
+test("with the route on another chip: the open groups in route order, the one with most room first", () => {
+  const agyFree = reading("agy", "Google AI Pro", { five_hour: win(5, 3600), seven_day: win(5, 86_400) }, { harness: "agy" });
+  // personal comes first in window order; ldqis has more room, so it leads.
+  const pools = reading("api", "Key", { personal: win(70, 3600), ldqis: win(30, 3600) }, { harness: "api" });
+  const api = toChips(toRows([agyFree, pools], NOW), NOW).find((c) => c.harness === "api");
+  assert.equal(api.route, null);
+  assert.equal(api.lead.window, "ldqis");
+  // Neither agy lane can route (Gemini's session and the pool are nearly full), so the route is Claude's;
+  // the agy chip still leads with its first lane in route order, not the emptier one.
+  const tight = reading("agy", "Google AI Pro", { five_hour: win(99.8, 3600), seven_day: win(10, 86_400), claude_gpt: win(99.2, 7200) }, { harness: "agy" });
+  const [agy] = toChips(toRows([tight, reading("me", "Personal", { five_hour: win(5, 3600) })], NOW), NOW);
+  assert.equal(agy.route, null);
+  assert.equal(agy.lead.window, "five_hour");
 });

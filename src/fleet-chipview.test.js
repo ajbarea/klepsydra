@@ -73,6 +73,7 @@ test("a window kept from an older reading: its pip greys, its stacked cell says 
   const old = reading("agy", "Google AI Pro", { claude_gpt: win(100, 4 * 86_400) }, { harness: "agy", written_at: S - 2 * 86_400, observed_at: S - 2 * 86_400 });
   const linear = draw([fresh, old], "linear").box.children.find((c) => c.dataset.key === "agy");
   assert.deepEqual(pips(linear).map((p) => p.has("old")), [false, true]);
+  assert.deepEqual(pips(linear).map((p) => p.has("full")), [false, true], "the spent pool's pip is notched");
   assert.equal("stale" in linear.dataset, false, "the chip itself is fresh");
   const stacked = draw([fresh, old], "stacked").box.children.find((c) => c.dataset.key === "agy");
   const cells = stacked.all().filter((e) => e.has("cell"));

@@ -26,7 +26,7 @@ const CELL_KIND = (row) =>
  */
 function pip(row, lead, opts, big = lead) {
   const old = rowAge(row, opts.now) > STALE_AFTER_MS;
-  const p = el("span", `pip${big ? " big" : ""}${row.pct >= 100 ? " full" : ""}${old ? " old" : ""}`);
+  const p = el("span", `pip${big ? " big" : ""}${row.isCapped ? " full" : ""}${old ? " old" : ""}`);
   if (lead) p.dataset.lead = "";
   const fill = el("i");
   const pct = Math.max(0, Math.min(100, row.pct ?? 0));
@@ -86,7 +86,7 @@ function stackedBody(chip, opts) {
     const own = !lead && !(age <= chip.ageMs) ? ageText(age) : null;
     const when = lead ? chip.when : cellWhen(r, opts.now);
     cell.append(
-      el("b", "", lead ? chip.value : r.pct >= 100 ? "out" : `${Math.floor(r.pct ?? 0)}%`),
+      el("b", "", lead ? chip.value : r.isCapped ? "out" : `${Math.floor(r.pct ?? 0)}%`),
       el("span", "t", own ? `${when} · ${own}` : when),
       pip(r, lead, opts, false),
     );

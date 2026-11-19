@@ -2,7 +2,7 @@
 // built from toRows' rows so the readings and the route have one source.
 // Pure: no DOM, no Tauri, so the floating strip, the wall header and the
 // tests all share it.
-import { ROUTE_ORDER, formatAgeShort, formatCountdownShort, windowLabel } from "../gauge.js";
+import { ROUTE_ORDER, formatAgeShort, formatCountdownShort, routeGroup, routeLane, windowLabel } from "../gauge.js";
 
 // Past this age a chip dims and names its age instead of looking live.
 export const STALE_AFTER_MS = 3 * 60 * 60 * 1000;
@@ -15,21 +15,32 @@ export function ageText(ms) {
   return Number.isFinite(ms) && ms >= AGE_TEXT_AFTER_MS ? `${formatAgeShort(ms)} old` : null;
 }
 
-// The windows that limit a whole account. Any other window is one model
-// group's pool (agy's Claude & GPT, an API key's credit): it shows as a pip
-// and never decides the chip, unless the account has nothing else.
-const ACCOUNT_WINDOWS = new Set(["five_hour", "seven_day", "spend_limit"]);
+// A window's place in the fleet's free-first order (gauge.js ROUTE_ORDER, #411).
+const laneRank = (row) => ROUTE_ORDER.indexOf(routeLane(row));
+// An unknown reset time sorts last: such a window may not be back soon.
+const resetOf = (row) => (Number.isFinite(row.resetsAt) ? row.resetsAt : Number.POSITIVE_INFINITY);
+const tightest = (rows) => rows.reduce((a, b) => ((b.pct ?? 0) > (a.pct ?? 0) ? b : a));
 
-// Which engine each route lane runs on, so chips follow the fleet's
-// free-first order (gauge.js ROUTE_ORDER, #411) without a second list.
-export const LANE_HARNESS = {
-  agy_gemini: "agy",
-  agy_claude_gpt: "agy",
-  copilot: "copilot",
-  api_credit: "api",
-  claude_subscription: "claude",
-};
-export const CHIP_ORDER = [...new Set(ROUTE_ORDER.map((lane) => LANE_HARNESS[lane]))];
+/**
+ * An account's windows in routing's groups (gauge.js routeGroup): the
+ * windows that must all have room for one lane to run, such as a Claude
+ * account's session and week, agy's Gemini session and week, or one API
+ * pool. A group with a spent window (routing's isCapped) is closed until the
+ * spent window that resets last comes back (`back`).
+ */
+function groupsOf(rows) {
+  const byGroup = new Map();
+  for (const r of rows) {
+    const key = routeGroup(r);
+    if (!byGroup.has(key)) byGroup.set(key, []);
+    byGroup.get(key).push(r);
+  }
+  return [...byGroup.values()].map((group) => {
+    const capped = group.filter((r) => r.isCapped);
+    const back = capped.length ? capped.reduce((a, b) => (resetOf(b) > resetOf(a) ? b : a)) : null;
+    return { rows: group, back, lead: back ?? tightest(group), rank: laneRank(group[0]) };
+  });
+}
 
 const HARNESS_ICON = { claude: "claude", agy: "agy", copilot: "copilot", api: "anthropic" };
 const HARNESS_NAME = { claude: "Claude", agy: "Antigravity", copilot: "Copilot", api: "API" };
@@ -87,44 +98,54 @@ const untilReset = (row, nowMs) => {
   return at ? `until ${at}` : "until it resets";
 };
 
-const spent = (row) => row.state === "live" && row.pct >= 100;
-
 /**
- * What a chip leads with. A spent week hides the session (it cannot be used
- * until the week resets) and reads "out"; otherwise the account window with
- * the least room. Ties keep window order (session first).
+ * What a chip leads with, by routing's groups. While a group is open the
+ * chip shows it: the route's group when it is on this chip, else the first
+ * open group in route order, the one with most room first, led by its
+ * tightest window. A spent pool or week closes only its own group. With
+ * every group closed the chip reads "out" until the group back first.
+ * `hidden`: the windows a closed group cannot use until it is back.
  */
 export function leadOf(rows) {
   if (!rows.length) return { lead: null, out: false, hidden: [] };
-  const week = rows.find((r) => r.window === "seven_day" && spent(r));
-  if (week) {
-    return { lead: week, out: true, hidden: [...hiddenRows(rows)] };
+  const groups = groupsOf(rows);
+  const hidden = [...hiddenRows(rows)];
+  const open = groups.filter((g) => !g.back).sort((a, b) => a.rank - b.rank || (a.lead.pct ?? 0) - (b.lead.pct ?? 0));
+  if (open.length) {
+    const route = open.find((g) => g.rows.some((r) => r.isBestRoute));
+    return { lead: (route ?? open[0]).lead, out: false, hidden };
   }
-  const own = rows.filter((r) => ACCOUNT_WINDOWS.has(r.window));
-  const pool = own.length ? own : rows;
-  const lead = pool.reduce((a, b) => ((b.pct ?? 0) > (a.pct ?? 0) ? b : a));
-  return { lead, out: spent(lead), hidden: [] };
+  const first = groups.reduce((a, b) => (resetOf(b.back) < resetOf(a.back) ? b : a));
+  return { lead: first.back, out: true, hidden };
 }
 
 /** A window's time in a stacked cell: the countdown, or what its reset says. */
 export function cellWhen(row, nowMs = Date.now()) {
   if (row.state !== "live") return row.short;
-  return spent(row) ? untilReset(row, nowMs) : (formatCountdownShort(row.resetsAt, nowMs) ?? row.short);
+  return row.isCapped ? untilReset(row, nowMs) : (formatCountdownShort(row.resetsAt, nowMs) ?? row.short);
 }
 
 /** How old a window's own number is (ms); NaN when its reading names no time. */
 export const rowAge = (row, nowMs) => nowMs - (row.readAt ?? row.observedAt) * 1000;
 
 /**
- * The rows a spent week hides, by account: its session windows, which
- * cannot be used until the week resets (#421). Shared by the chips and by
- * the wall's and phone's limit rows, so every surface hides the same ones.
+ * The rows a closed group hides (#421): its windows with room that reset
+ * before the group is back, since they cannot be used until then, such as a
+ * session under a spent week. Keyed to the window the group waits on.
+ * Shared by the chips and the phone's limit rows, so both hide the same ones.
  */
-export function hiddenRows(rows) {
-  const out = new Set();
-  const spentWeek = new Set(rows.filter((r) => r.window === "seven_day" && spent(r)).map((r) => r.account));
-  for (const r of rows) if (r.window === "five_hour" && spentWeek.has(r.account)) out.add(r);
+function hiddenBy(rows) {
+  const out = new Map();
+  for (const g of groupsOf(rows)) {
+    if (!g.back) continue;
+    for (const r of g.rows) if (!r.isCapped && resetOf(r) < resetOf(g.back)) out.set(r, g.back);
+  }
   return out;
+}
+
+/** The rows a closed group hides, as a Set (see hiddenBy). */
+export function hiddenRows(rows) {
+  return new Set(hiddenBy(rows).keys());
 }
 
 /**
@@ -136,7 +157,7 @@ function windowLine(row, chip, nowMs) {
   if (row.state !== "live") return `${name}: ${row.short}`;
   const pct = `${Math.floor(row.pct)}%`;
   const at = clockAt(row.resetsAt, nowMs);
-  const when = spent(row)
+  const when = row.isCapped
     ? `out ${untilReset(row, nowMs)}`
     : at
       ? `resets ${at} (in ${formatCountdownShort(row.resetsAt, nowMs)})`
@@ -146,12 +167,16 @@ function windowLine(row, chip, nowMs) {
   return `${name} ${pct} · ${when}${own}`;
 }
 
+// What a hidden window waits for, as the hover says it.
+const WAITS_ON = { seven_day: "the week", five_hour: "the session" };
+
 /** The chip's hover lines: its name, every window, the lead reading's age and the route. */
 function detailLines(chip, nowMs) {
   const age = Number.isFinite(chip.ageMs) ? formatAgeShort(chip.ageMs) : null;
+  const waits = hiddenBy(chip.windows);
   const lines = [chip.name, ...chip.windows.map((r) => {
-    const hidden = chip.hidden.includes(r);
-    return hidden ? `${windowLabel(r.window)}: hidden until the week resets` : windowLine(r, chip, nowMs);
+    const on = waits.get(r);
+    return on ? `${windowLabel(r.window)}: hidden until ${WAITS_ON[on.window] ?? windowLabel(on.window)} resets` : windowLine(r, chip, nowMs);
   })];
   lines.push(age === null ? "read at an unknown time" : age === "now" ? "read just now" : `read ${age} ago`);
   if (chip.route) lines.push(`Route: the fleet's next pick (${windowLabel(chip.route.window)})`);
@@ -218,13 +243,9 @@ export function toChips(rows, nowMs = Date.now(), placeholders = ["copilot"]) {
     });
   }
 
-  const rank = (h) => {
-    const i = CHIP_ORDER.indexOf(h);
-    return i < 0 ? CHIP_ORDER.length : i;
-  };
-  return chips.sort(
-    (a, b) => rank(a.harness) - rank(b.harness) || a.name.localeCompare(b.name) || String(a.key).localeCompare(String(b.key)),
-  );
+  // Route order by the chip's first lane; a placeholder ranks by its engine's.
+  const rank = (c) => Math.min(...(c.windows.length ? c.windows : [{ harness: c.harness }]).map(laneRank));
+  return chips.sort((a, b) => rank(a) - rank(b) || a.name.localeCompare(b.name) || String(a.key).localeCompare(String(b.key)));
 }
 
 /**

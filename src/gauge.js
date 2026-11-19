@@ -59,7 +59,8 @@ export function routeLane(row) {
   return "claude_subscription";
 }
 
-const routeGroup = (row) => {
+/** The windows that must all have room for one lane to run, as one key per account and model. */
+export const routeGroup = (row) => {
   const lane = routeLane(row);
   // API credit and Copilot windows are separate model pools; Claude and AGY
   // Gemini windows are coupled limits for one account.

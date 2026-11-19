@@ -107,18 +107,22 @@ comes from the status line's `quota` input, as the account `agy-primary`.
 
 | A chip shows | When |
 |---|---|
-| its tightest window's percent and countdown, the rest as pips | always |
+| the percent and countdown of its usable lane's tightest window, the rest as pips | while any lane has room |
 | an underline and **route** | the account the fleet would use next |
-| **out** until the reset, the session hidden | its week is at 100% |
+| **out** until the first lane comes back | every lane has a window at 100% |
 | dimmed, with its age ("10h old") | the reading behind its number is over 3 hours old |
 | its age ("50m old") beside its name | stacked, from 30 minutes |
 
-A model group's pool, such as Antigravity's Claude & GPT, is a pip and never
-decides the chip. A Claude account named for an organisation wears a monogram
+A chip reads its windows the way routing does (`routeGroup` in `src/gauge.js`):
+the windows that must all have room for one lane go together, such as a Claude
+account's session and week, Antigravity's Gemini session and week, or one pool
+like Claude & GPT. A spent window closes only its own lane, so with Antigravity's
+week at 100% the chip still shows Claude & GPT, and the Gemini session hides until
+the week resets. A Claude account named for an organisation wears a monogram
 of it ("RIT"); a personal one wears the Claude mark. Hover a chip for every
 window with its reset time and the reading's age; a window kept from an older
 reading names its own age there, and its pip greys once that age passes 3 hours.
-On the phone page, a spent week hides that account's session ring too.
+On the phone page, the same rule hides those rings (a session under a spent week).
 
 ## Two accounts at once
 
