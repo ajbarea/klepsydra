@@ -78,7 +78,7 @@ for p in "$@"; do
 done
 flog INFO "watching" panes="$*" idle_s="$IDLE_S" limited_at_start="${!held[*]}" resets="${resets%, }"
 while :; do
-  now=$(date +%s)
+  now=${FLEET_NOW:-$(date +%s)}
   if ci_wake; then
     flog INFO "CI alert for the orchestrator" alert="$WAKE"
     echo "$WAKE"

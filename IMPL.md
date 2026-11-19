@@ -12,10 +12,10 @@ Brief: https://github.com/ajbarea/klepsydra/issues/453
 ## Done
 - Defined `BACKGROUND_STALE_AFTER` and `BACKGROUND_AHEAD` in `fleet/lib.sh` and added drift tests matching `view.rs`.
 - Updated `pane_background` in `fleet/lib.sh` to mirror `view.rs` lenient parsing and state gating.
-- Added `pane_background_summary` in `fleet/lib.sh` and updated `fleet/watch-panes.sh` to log `done_line~session=$bg_summary` on wake.
-- Added `kill_watch` bounded kill in `fleet/test_fleet.sh` to prevent lost-TERM hangs under heavy lock.
-- Added boundary tests for future `at` (cell F61), unknown kind (cell K_unk), and empty id (cell ID_empty); verified each fails under reversion.
-- Verified all 924 tests pass in `fleet/test_fleet.sh`.
+- Added `pane_background_summary` in `fleet/lib.sh` with valid jq negation filter, logging `done_line~session=$bg_summary` on wake; tested done and working summaries.
+- Moved `kill_watch` helper above first call in `fleet/test_fleet.sh` to eliminate undefined command warning.
+- Made cell F61 deterministic with fixed NOW argument across 25 repetitions; added boundary tests for unknown kind (K_unk) and empty id (ID_empty).
+- Verified all isolated tests pass and proven against reversion.
 - Verified shellcheck clean across `fleet/watch-panes.sh`, `fleet/lib.sh`, `fleet/test_fleet.sh`.
 
 ## Next

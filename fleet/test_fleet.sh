@@ -3039,6 +3039,19 @@ sh_ahead=$(sed -n 's/^BACKGROUND_AHEAD=\([0-9]*\).*/\1/p' "$here/lib.sh")
 check "#453: background stale constant matches view.rs" "$sh_stale" "$rust_stale"
 check "#453: background ahead constant matches view.rs" "$sh_ahead" "$rust_ahead"
 
+kill_watch() { # JOB [TIMEOUT_S]
+  local job=$1 max_s=${2:-2} i=0
+  kill "$job" 2>/dev/null || return 0
+  while kill -0 "$job" 2>/dev/null && (( i < max_s * 10 )); do
+    sleep 0.1
+    i=$((i + 1))
+  done
+  if kill -0 "$job" 2>/dev/null; then
+    kill -KILL "$job" 2>/dev/null || true
+  fi
+  wait "$job" 2>/dev/null || true
+}
+
 echo "the watcher does not wake a pane whose background shell still runs (#453)"
 : >"$FLEET_LOG"
 wp=$(pane w453 '{"above":["⏺ Done. done 11:50 AM"],"below":["  ⏵⏵ bypass permissions on · 1 shell"]}'); settle
@@ -3062,20 +3075,9 @@ kill_watch "$w453job"
 check "#453: once the shell ends it wakes after IDLE_S" "$(cut -d' ' -f1,2 "$work/w453.out")" "IDLE $wp"
 check "#453: idle wake logged with reason, pane, and screen" \
   "$(jq -r 'select(.message == "watched pane idle") | [.reason, .pane, (.screen | contains("done 11:50 AM"))] | join(" ")' "$FLEET_LOG" | tail -1)" "idle $wp true"
+check "#453: done file logs valid summary, not corrupt" \
+  "$(jq -r 'select(.message == "watched pane idle") | .session' "$FLEET_LOG" | tail -1)" "state=done"
 t kill-window -t "$wp"; rm -f "$KLEPSYDRA_DIR/fleet/$SID.json"
-
-kill_watch() { # JOB [TIMEOUT_S]
-  local job=$1 max_s=${2:-2} i=0
-  kill "$job" 2>/dev/null || return 0
-  while kill -0 "$job" 2>/dev/null && (( i < max_s * 10 )); do
-    sleep 0.1
-    i=$((i + 1))
-  done
-  if kill -0 "$job" 2>/dev/null; then
-    kill -KILL "$job" 2>/dev/null || true
-  fi
-  wait "$job" 2>/dev/null || true
-}
 
 watch_held() { # PANE [WAIT_S]
   local p=$1 s=${2:-1.5} out=$work/held-$1.out job
@@ -3112,6 +3114,8 @@ echo "cell A1: fresh shell entry with shells_live 0, screen says done with no sh
 wa1=$(pane cA1 '{"above":["✻ Baked for 2s · done 11:50 AM"],"below":["  ⏵⏵ bypass permissions on"]}'); settle
 jq -n --arg p "$wa1" --argjson at "$(date +%s)" '{session_id: "x", ended: null, tmux: {pane: $p}, state: "working", reason: "background", background: [{id: "s1", kind: "shell", at: $at}], shells_live: 0}' >"$KLEPSYDRA_DIR/fleet/$SID.json"
 check "#453 cell A1: fresh entry with shells_live 0 wakes" "$(watch_wake "$wa1")" "IDLE"
+check "#453: working file logs valid summary, not corrupt" \
+  "$(jq -r 'select(.message == "watched pane idle") | .session' "$FLEET_LOG" | tail -1)" "state=working:crew=0:bg=1:live=0"
 t kill-window -t "$wa1"; rm -f "$KLEPSYDRA_DIR/fleet/$SID.json"
 
 echo "cell A2: stale entry (3602s old), screen says done with no shell"
@@ -3155,10 +3159,17 @@ jq -n --arg p "$wm" --argjson at "$(date +%s)" '{session_id: "x", ended: null, t
 check "#453 cell M: good entry still holds" "$(watch_held "$wm")" "held"
 t kill-window -t "$wm"; rm -f "$KLEPSYDRA_DIR/fleet/$SID.json"
 
-echo "cell F61: at 61s in future, screen says done with no shell (view.rs drops future beyond ahead)"
+echo "cell F61: at 61s in future (view.rs drops future beyond ahead)"
 wf=$(pane cF '{"above":["✻ Baked for 2s · done 11:50 AM"],"below":["  ⏵⏵ bypass permissions on · 1 shell"]}'); settle
-jq -n --arg p "$wf" --argjson at "$(( $(date +%s) + 61 ))" '{session_id: "x", ended: null, tmux: {pane: $p}, state: "working", reason: "background", background: [{id: "s1", kind: "shell", at: $at}]}' >"$KLEPSYDRA_DIR/fleet/$SID.json"
-check "#453 cell F61: future entry beyond ahead wakes" "$(watch_wake "$wf")" "IDLE"
+now=1000000000
+jq -n --arg p "$wf" --argjson at "$(( now + 61 ))" '{session_id: "x", ended: null, tmux: {pane: $p}, state: "working", reason: "background", background: [{id: "s1", kind: "shell", at: $at}]}' >"$KLEPSYDRA_DIR/fleet/$SID.json"
+f61_passes=0
+for _ in $(seq 1 25); do
+  if ! pane_background "$wf" "$now"; then
+    f61_passes=$((f61_passes + 1))
+  fi
+done
+check "#453 cell F61: future entry beyond ahead does not count (25 passes)" "$f61_passes" "25"
 t kill-window -t "$wf"; rm -f "$KLEPSYDRA_DIR/fleet/$SID.json"
 
 echo "cell K_unk: unknown background kind, screen says done with no shell (view.rs counts only agent/shell/task)"

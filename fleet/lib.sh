@@ -1010,7 +1010,7 @@ BACKGROUND_AHEAD=60
 # pane has no unique live session file or the file has no .background key, so
 # callers fall back to screen grep.
 pane_background() { # PANE [NOW]
-  local sid f now=${2:-$(date +%s)}
+  local sid f now=${2:-${FLEET_NOW:-$(date +%s)}}
   sid=$(live_session "$1") || return 1
   f=$KLEPSYDRA_DIR/fleet/$sid.json
   [[ -f $f && ! -L $f ]] || return 1
@@ -1043,7 +1043,7 @@ pane_background() { # PANE [NOW]
 
 # Return a short string describing the session file state for PANE, for wake diagnostics.
 pane_background_summary() { # PANE [NOW]
-  local sid f now=${2:-$(date +%s)}
+  local sid f now=${2:-${FLEET_NOW:-$(date +%s)}}
   if ! sid=$(live_session "$1"); then
     echo "no-live-session"
     return 0
@@ -1056,7 +1056,7 @@ pane_background_summary() { # PANE [NOW]
   jq -r --argjson now "$now" \
         --argjson stale "$BACKGROUND_STALE_AFTER" \
         --argjson ahead "$BACKGROUND_AHEAD" '
-    if not(has("background") and (.background | type == "array")) then
+    if (has("background") and (.background | type == "array")) | not then
       "state=\(.state // "none"):no-background"
     elif .state != "working" and .state != "needs_you" then
       "state=\(.state // "none")"
