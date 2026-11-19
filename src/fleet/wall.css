@@ -204,6 +204,8 @@ html, body { background: var(--wall-bg); color: var(--text); font: 14px/1.45 var
 .new-split { display: inline-flex; align-items: stretch; flex: none; }
 #new-session { display: inline-flex; align-items: center; gap: 8px; white-space: nowrap; }
 #new-session .ico:empty { display: none; }
+/* Under 1200 px "session" goes: the logo, the engine and the account stay, so the half-screen bar keeps its height. */
+@media (width < 1200px) { #new-session .ns-word { display: none; } }
 #new-session .ico, #new-kind .ico { width: 15px; height: 15px; display: inline-flex; }
 #new-session .ico svg, #new-kind .ico svg { width: 100%; height: 100%; display: block; }
 .mono { font: 600 10px/1 var(--font); letter-spacing: 0.04em; padding: 2px 4px; border: 1px solid currentColor; border-radius: 4px; }
@@ -256,7 +258,8 @@ html, body { background: var(--wall-bg); color: var(--text); font: 14px/1.45 var
 /* At the window's narrowest the panels take a line, the split button and the gear the next, never wrapped. */
 @media (max-width: 480px) {
   .bar-right { flex-wrap: wrap; row-gap: var(--space-3); }
-  .tools { flex: 1 1 100%; max-width: none; }
+  .bar-right:has(#new-session:not([hidden])) .tools { flex: 1 1 100%; max-width: none; }
+  .gear { align-self: center; }
   #new-menu { left: 8px; right: 8px; width: auto; }
   #new-menu .eng-fixrow, #new-menu .models, #new-menu .eng-actions { margin-left: 0; }
   #new-menu .room { grid-column: 2 / -1; grid-row: auto; text-align: left; }
@@ -1381,7 +1384,8 @@ button.link:hover:not([aria-disabled="true"]) { background: none; }
    way before the tally, so the gear fits beside a one-row tally (#248). */
 @media (width < 1200px) {
   .bar { gap: var(--space-5); }
-  .bar-right { gap: var(--space-2); flex-shrink: 8; }
+  /* On the bar's bottom edge: once the tally wraps to two lines, the gear's menu still opens under the bar. */
+  .bar-right { gap: var(--space-2); flex-shrink: 8; align-self: flex-end; }
   .tools { column-gap: var(--space-2); }
   #ledger-open, #queue-open, #wrapup-open { padding-inline: var(--space-4); }
 }

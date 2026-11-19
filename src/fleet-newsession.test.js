@@ -159,6 +159,22 @@ test("agy that is installed but fails to list says so and offers a retry, never 
   assert.equal(agy.fix, "retry");
   assert.equal(agy.signedIn, true);
   assert.equal(agy.failed, "agy models did not answer.");
+  assert.equal(agy.recommended, false, "the free-first route only where a session can start");
+  const ok = buildEntries({ rows: toRows(REAL, NOW), engines: ENGINES, agy: { state: "ok", models: AGY_MODELS }, nowMs: NOW });
+  assert.equal(byId(ok, "agy").recommended, true);
+});
+
+test("before the launcher answers, Copilot is being checked, and a failed ask is an error to retry, never 'not installed'", () => {
+  const waiting = byId(buildEntries({ rows: [], engines: null, nowMs: NOW }), "copilot");
+  assert.ok(waiting.waiting && !waiting.usable && waiting.fix === null);
+  const failed = byId(buildEntries({ rows: [], engines: null, enginesError: "no wsl", nowMs: NOW }), "copilot");
+  assert.ok(failed.installed && failed.fix === "retry" && failed.failed === "no wsl");
+});
+
+test("a spent account is marked spent, so its Start is off", () => {
+  const spent = [{ ...REAL[2], windows: { ...REAL[2].windows, five_hour: { used_percentage: 100, resets_at: S + 3_600 } } }];
+  const e = byId(entriesOf(spent), `claude:${RIT}`);
+  assert.ok(e.spent && e.usable, "still listed and startable once it returns");
 });
 
 test("Start sends the engine, account and model the launcher takes", () => {

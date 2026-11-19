@@ -106,11 +106,12 @@ export function agyGroups(models, agyRows, nowMs = Date.now()) {
  * Every engine + New session can start, one entry per Claude account.
  *
  * `rows`: toRows over read_usage. `engines`: the launcher's list
- * ({ claude: [account ids], agy, copilot }) or null before it answers.
+ * ({ claude: [account ids], agy, copilot }) or null before it answers;
+ * `enginesError` why it did not.
  * `agy`: { state: "ok" | "missing" | "signedout" | "error" | "waiting",
  * models, error }.
  */
-export function buildEntries({ rows = [], engines = null, agy = { state: "waiting", models: [] }, nowMs = Date.now() } = {}) {
+export function buildEntries({ rows = [], engines = null, enginesError = null, agy = { state: "waiting", models: [] }, nowMs = Date.now() } = {}) {
   const byHarness = (h) => rows.filter((r) => r.harness === h);
   const entries = [];
 
@@ -184,8 +185,11 @@ export function buildEntries({ rows = [], engines = null, agy = { state: "waitin
     accountLabel: "GitHub · one pool of AI credits",
     room: limitingRoom(copilotRows, nowMs),
     recommended: copilotRows.some((r) => r.isBestRoute),
-    installed: Boolean(engines?.copilot),
+    // Unknown until the launcher's list answers: never "not installed" on a failed ask.
+    installed: engines ? engines.copilot : true,
     signedIn: true,
+    failed: engines ? null : enginesError,
+    waiting: !engines && !enginesError,
     models: [],
     groups: null,
   });
@@ -193,6 +197,7 @@ export function buildEntries({ rows = [], engines = null, agy = { state: "waitin
   for (const e of entries) {
     e.usable = e.installed && e.signedIn && !e.failed && !e.waiting;
     e.fix = !e.installed ? "install" : !e.signedIn ? "signin" : e.failed ? "retry" : null;
+    e.spent = Boolean(e.room?.spent); // listed with when it returns; Start is off and the launch refuses it
     e.recommended &&= e.usable; // the route the gauge picks, only where a session can start
   }
   return entries;

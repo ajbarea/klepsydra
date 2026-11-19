@@ -130,9 +130,12 @@ class Wall:
             )
         page.goto(f"http://127.0.0.1:{self.port}/src/wall.html?demo={cards}{query}")
         painted(page, f"document.getElementById('wall').children.length === {cards}")
-        # In the app the bar shows + New session and Wrap up…; the fit must hold with them.
+        # In the app the bar shows + New session with its caret and an account badge, and
+        # Wrap up…; the fit must hold with them.
         page.evaluate(
             "document.getElementById('new-session').hidden = false;"
+            " document.getElementById('new-kind').hidden = false;"
+            " Object.assign(document.querySelector('#new-session .mono'), { hidden: false, textContent: 'RIT' });"
             " document.getElementById('wrapup-open').hidden = false;"
             " dispatchEvent(new Event('resize'))"
         )
@@ -1187,7 +1190,7 @@ window.__TAURI__ = { core: {
     if (cmd === 'plugin:log|log') { (window.__logs ??= []).push(args); return Promise.resolve(); }
     if (cmd === 'agy_models') { window.__calls.push([cmd, args]); return window.__agy ? Promise.resolve(window.__agy) : Promise.reject(window.__agyError ?? 'agy (Antigravity CLI) was not found on PATH.'); }
     if (cmd === 'read_usage') { window.__calls.push([cmd, args]); return Promise.resolve(window.__usage ?? []); }
-    if (cmd === 'engines_status') { window.__calls.push([cmd, args]); return window.__engines ? Promise.resolve(window.__engines) : Promise.reject('no launcher'); }
+    if (cmd === 'engines_status') { window.__calls.push([cmd, args]); return Promise.resolve(window.__engines ?? { claude: [], agy: false, copilot: false }); }
     if (cmd === 'new_session_prefs') { window.__calls.push([cmd, args]); return Promise.resolve(window.__nsprefs ?? { default: null, last: null }); }
     if (cmd === 'get_launch_dir') { window.__calls.push([cmd, args]); return window.__dirAnswer ? window.__dirAnswer() : Promise.resolve('/home/aj/ajsoftworks'); }
     if (cmd === 'set_theme' && window.__setThemeFails) { window.__calls.push([cmd, args]); return Promise.reject(window.__setThemeFails); }
@@ -1303,7 +1306,7 @@ def empty_state(wall):
             sent = calls(page, "launch_session")
             note = page.locator("#new-note").inner_text()
             wall.check(
-                sent == [["launch_session", None], ["launch_session", None]] and note == "ok",
+                sent == [["launch_session", {}], ["launch_session", {}]] and note == "ok",
                 "Start a session and + New session send the same launch, and its note shows the answer",
                 [sent, note],
             )
@@ -5581,7 +5584,7 @@ def picker_costs_no_height(wall):
         for app in (True, False):
             page = wall.open(width, 1000, 8, query="&theme=professions")
             if not app:
-                page.evaluate("document.getElementById('new-session').hidden = true; document.getElementById('wrapup-open').hidden = true; dispatchEvent(new Event('resize'))")
+                page.evaluate("document.getElementById('new-session').hidden = true; document.getElementById('new-kind').hidden = true; document.getElementById('wrapup-open').hidden = true; dispatchEvent(new Event('resize'))")
                 page.wait_for_timeout(SETTLE_MS)
             got = page.evaluate(PICKER)
             ok = got["with"] == got["without"] == got["opened"] and got["inside"] and got["select"] >= 24 and min(got["labels"]) >= 24

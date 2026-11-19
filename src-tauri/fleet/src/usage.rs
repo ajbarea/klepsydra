@@ -101,33 +101,65 @@ fn account_key(reading: &Object) -> String {
     }
 }
 
-/// When account `account`'s spent window comes back, if its newest reading
-/// (the latest `observed_at`, else `written_at`, as gauge.js trusts it) has a
-/// window at 100% that has not reset by `now` (unix seconds): the latest such
-/// reset. `None` when the account has room or no reading. A launch on a spent
-/// account is refused with it, even from a menu drawn before it ran out.
+/// When account `account`'s spent window comes back, read as gauge.js
+/// reconciles an account's sessions (`reconcilable` and `pickWindow`): the
+/// readings observed last, unless an older hook's file is newer than all of
+/// them (then every reading, since no time is trusted); per window the newest
+/// `resets_at` (within `WINDOW_MATCH_SECONDS`) and the highest reading of it.
+/// A window at 100% that has not reset by `now` (unix seconds) is spent; the
+/// latest such reset is returned. `None` when the account has room or no
+/// reading. A launch on a spent account is refused with it, even from a menu
+/// drawn before it ran out.
 pub fn spent_until(readings: &[Value], account: &str, now: i64) -> Option<i64> {
-    let stamp = |r: &Value| {
-        r.get("observed_at")
-            .and_then(Value::as_f64)
-            .or_else(|| r.get("written_at").and_then(Value::as_f64))
-    };
+    const WINDOW_MATCH_SECONDS: f64 = 90.0; // gauge.js WINDOW_MATCH_SECONDS
+    let num = |r: &Value, k: &str| r.get(k).and_then(Value::as_f64);
     let mine: Vec<&Value> = readings
         .iter()
         .filter(|r| r.get("account").and_then(Value::as_str) == Some(account))
         .collect();
-    let newest = mine
+    let newest_observed = mine
         .iter()
-        .filter_map(|r| stamp(r))
-        .fold(None, |m: Option<f64>, s| Some(m.map_or(s, |m| m.max(s))))?;
-    mine.iter()
-        .filter(|r| stamp(r) == Some(newest))
+        .filter_map(|r| num(r, "observed_at"))
+        .fold(None, |m: Option<f64>, s| Some(m.map_or(s, |m| m.max(s))));
+    let old_hook_newer = |newest: f64| {
+        mine.iter().any(|r| {
+            num(r, "observed_at").is_none() && num(r, "written_at").is_some_and(|w| w > newest)
+        })
+    };
+    let current: Vec<&Value> = match newest_observed {
+        Some(newest) if !old_hook_newer(newest) => mine
+            .iter()
+            .copied()
+            .filter(|r| num(r, "observed_at") == Some(newest))
+            .collect(),
+        _ => mine,
+    };
+    let mut keys: Vec<&String> = current
+        .iter()
         .filter_map(|r| r.get("windows")?.as_object())
-        .flat_map(|w| w.values())
-        .filter_map(|w| {
-            let pct = w.get("used_percentage")?.as_f64()?;
+        .flat_map(|w| w.keys())
+        .collect();
+    keys.sort();
+    keys.dedup();
+    keys.into_iter()
+        .filter_map(|key| {
+            let all: Vec<(f64, f64)> = current
+                .iter()
+                .filter_map(|r| {
+                    let w = r.get("windows")?.get(key)?;
+                    Some((
+                        w.get("used_percentage")?.as_f64()?,
+                        w.get("resets_at")?.as_f64()?,
+                    ))
+                })
+                .collect();
+            let latest = all.iter().map(|&(_, at)| at).fold(f64::NAN, f64::max);
+            let (pct, at) = all
+                .into_iter()
+                .filter(|&(_, at)| latest - at <= WINDOW_MATCH_SECONDS)
+                .fold((f64::NAN, latest), |(p, a), (q, _)| (p.max(q), a));
             #[allow(clippy::cast_possible_truncation)]
-            let at = w.get("resets_at")?.as_f64()? as i64;
+            let at = at as i64;
             (pct >= 100.0 && at > now).then_some(at)
         })
         .max()
@@ -322,6 +354,26 @@ mod tests {
             spent_until(&[old_hook], PERSONAL, 1_000),
             Some(2_000),
             "written_at when no observed_at"
+        );
+        // An older hook's file newer than every observed reading: no time is
+        // trusted, so the highest reading of the newest window counts (gauge.js).
+        let mixed = [
+            json!({"account": PERSONAL, "observed_at": 100, "windows": {"five_hour": {"used_percentage": 100, "resets_at": 2_000}}}),
+            json!({"account": PERSONAL, "written_at": 200, "windows": {"five_hour": {"used_percentage": 40, "resets_at": 2_000}}}),
+        ];
+        assert_eq!(
+            spent_until(&mixed, PERSONAL, 1_000),
+            Some(2_000),
+            "an old hook's newer file"
+        );
+        let next = [
+            json!({"account": TEAM, "written_at": 100, "windows": {"five_hour": {"used_percentage": 100, "resets_at": 2_000}}}),
+            json!({"account": TEAM, "written_at": 90, "windows": {"five_hour": {"used_percentage": 5, "resets_at": 20_000}}}),
+        ];
+        assert_eq!(
+            spent_until(&next, TEAM, 1_000),
+            None,
+            "the newer window wins over an older spent one"
         );
         let junk = json!({"account": PERSONAL, "observed_at": 1, "windows": {"five_hour": {"used_percentage": "100", "resets_at": 2_000}}});
         assert_eq!(spent_until(&[junk], PERSONAL, 1_000), None, "a number only");

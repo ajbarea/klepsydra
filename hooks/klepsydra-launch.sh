@@ -42,10 +42,13 @@ AGY_LOCK=${KLEPSYDRA_AGY_LOCK:-$HOME/.claude/klepsydra-agy-locked.json}
 WINMNT=${KLEPSYDRA_WINDOWS_MOUNT:-/mnt} # the Windows drives under WSL
 MODEL_RE='^[a-z0-9][a-z0-9.-]{0,63}$'
 # What a folder may ship that an engine loads once the folder is trusted and that
-# runs outside its tool lock (hooks, plugins, skills, MCP): fleet/delegate.sh
-# ENGINE_CONFIG lists the same names. agy walks up to the repo root for its four.
+# runs outside its tool lock (hooks, plugins, skills, MCP), each engine's own
+# names (fleet/delegate.sh ENGINE_CONFIG strips all of them from a snapshot).
+# Copilot's are GitHub's hooks reference and skills docs (11-19); it also reads
+# hooks from .claude/settings.json and .claude/settings.local.json (no_copilot_hooks).
 AGY_CONFIG=(.agents .agent _agents _agent)
-COPILOT_CONFIG=(.github/hooks .github/copilot .github/skills .github/agents .github/extensions .github/mcp.json .mcp.json .vscode/mcp.json .copilot)
+COPILOT_CONFIG=(.github/hooks .github/copilot .github/skills .github/agents .github/extensions .github/mcp.json .mcp.json .vscode/mcp.json .copilot .claude/skills .agents/skills)
+AGY_ASK=${KLEPSYDRA_AGY_ASK:-30} # seconds for one agy listing; a launch asks with less
 WT=${KLEPSYDRA_WT:-wt.exe}
 UNDO=()
 LOCK=${XDG_RUNTIME_DIR:-/tmp}/klepsydra-launch-$UID.lock
@@ -163,7 +166,7 @@ agy_settings() {
 # agy's quota as `agy -p /quota --output-format json` reports it (no turn, no
 # quota spent), into QUOTA; empty when it does not answer.
 agy_quota() {
-  QUOTA=$(cd -- "$HOME" && timeout 30 "$AGY" -p /quota --output-format json 2>/dev/null) || QUOTA=""
+  QUOTA=$(cd -- "$HOME" && timeout "$AGY_ASK" "$AGY" -p /quota --output-format json 2>/dev/null) || QUOTA=""
   jq -e '.command.data.groups | arrays' >/dev/null 2>&1 <<<"$QUOTA" || QUOTA=""
 }
 
@@ -187,7 +190,7 @@ GROUP_JQ='
 # agy's models, "ID<TAB>LABEL" lines, into LIST (`agy models` prints a fetching
 # line first, and nothing else is an id).
 agy_list() {
-  LIST=$(timeout 30 "$AGY" models 2>/dev/null) || fail "agy models did not answer."
+  LIST=$(timeout "$AGY_ASK" "$AGY" models 2>/dev/null) || fail "agy models did not answer."
   LIST=$(awk -F'\t' -v re="$MODEL_RE" 'NF == 2 && $1 ~ re && $2 != "" { print $1 "\t" $2 }' <<<"$LIST")
   [[ -n $LIST ]] || fail "agy listed no models."
 }
@@ -259,21 +262,43 @@ folder_of() { # ACCOUNT
   return 1
 }
 
-# Refuse a folder that ships an engine's workspace configuration, from DIR up to
-# its repo root: once the folder is trusted (its trust dialog is the only gate),
-# that configuration runs commands outside the lock.
-no_engine_config() { # real-dir engine-name names...
-  local real=$1 what=$2 d top f; shift 2
-  d=$real
-  top=$(git -C "$real" rev-parse --show-toplevel 2>/dev/null) || top=$real
+# DIR and every folder above it up to its repo root, one per line: where an
+# engine looks for workspace configuration.
+up_to_root() { # real-dir
+  local d=$1 top
+  top=$(git -C "$1" rev-parse --show-toplevel 2>/dev/null) || top=$1
   while :; do
-    for f in "$@"; do
-      [[ ! -e $d/$f ]] || fail "$what is not started in $real: $d/$f ships $what workspace configuration (hooks, plugins, skills, MCP), which runs outside the lock once the folder is trusted."
-    done
+    printf '%s\n' "$d"
     [[ $d != "$top" && $d != / ]] || break
     d=${d%/*}
     [[ -n $d ]] || d=/
   done
+}
+
+# Refuse a folder that ships an engine's workspace configuration, from DIR up to
+# its repo root: once the folder is trusted (its trust dialog is the only gate),
+# that configuration runs commands outside the lock.
+no_engine_config() { # real-dir engine-name names...
+  local real=$1 what=$2 d f; shift 2
+  while IFS= read -r d; do
+    for f in "$@"; do
+      [[ ! -e $d/$f ]] || fail "$what is not started in $real: $d/$f ships $what workspace configuration (hooks, plugins, skills, MCP), which runs outside the lock once the folder is trusted."
+    done
+  done < <(up_to_root "$real")
+}
+
+# Copilot also runs the hooks of Claude Code's project settings: refuse a folder
+# whose .claude/settings.json or settings.local.json sets them, or does not read
+# as a JSON object (fail closed).
+no_copilot_hooks() { # real-dir
+  local d f
+  while IFS= read -r d; do
+    for f in "$d/.claude/settings.json" "$d/.claude/settings.local.json"; do
+      [[ -e $f ]] || continue
+      jq -e 'type == "object" and (has("hooks") | not)' "$f" >/dev/null 2>&1 ||
+        fail "Copilot is not started in $1: $f sets hooks (or does not read as JSON), which Copilot runs outside the lock once the folder is trusted."
+    done
+  done < <(up_to_root "$1")
 }
 
 # A locked engine's workspace is the one folder its reads reach: never the home
@@ -294,7 +319,8 @@ locked_workspace() { # dir engine-name: prints the real path
 agy_spent() { # model
   local got back
   need jq "jq is not installed in this distro."
-  got=$(agy_models_json 2>/dev/null) || return 0
+  # Short asks, so the launch stays inside the app's 45 s wait.
+  got=$(AGY_ASK=10 agy_models_json 2>/dev/null) || return 0
   back=$(jq -r --arg m "$1" '.[] | select(.id == $m) | .spent // empty' <<<"$got" 2>/dev/null)
   [[ -z $back ]] || fail "Not started: Antigravity's quota for $1 is spent until $back."
 }
@@ -327,6 +353,8 @@ new() { # dir [agy model | claude account [model] | copilot [model]]
     [[ $model =~ $MODEL_RE ]] || fail "That is not a Copilot model id: $model"
     real=$(locked_workspace "$dir" Copilot) || exit 1
     no_engine_config "$real" Copilot "${COPILOT_CONFIG[@]}"
+    need jq "jq is not installed in this distro."
+    no_copilot_hooks "$real"
     need "$COPILOT" "copilot (GitHub Copilot CLI) was not found on PATH."
     # fleet/engines.sh copilot:interactive: reads only, no writes, no shell, no built-in MCP.
     printf -v cmd '%q --model %s --allow-all-tools --available-tools view,grep,glob --deny-tool=write --deny-tool=shell --disable-builtin-mcps --disallow-temp-dir' "$COPILOT" "$model"

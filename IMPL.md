@@ -22,16 +22,22 @@ Brief: ~/.local/state/fleet-orchestrator/briefs (ns477). PR #477, branch feat/ne
   either), Claude & GPT weekly bucket in readings.
 
 ## Done
-- (nothing committed yet this round)
+- ae4e66a launcher: claude ACCOUNT [MODEL] by login, copilot locked + config guard, agy spent-group
+  refusal, models with groups, engines. test_launch 271/271.
+- d6ba8b1 app + wall: launch_session engine/account/model, spent-account refusal, prefs keys,
+  engines_status; newsession.js on toRows; focus kept; no data innerHTML. Windows clippy+tests ok
+  (app crate 114, fleet 423); node 527/527; browser case new_session_menu 35/35.
+- e7ec82c docs (README Starting sessions, docs/engines.md lock).
+- Follow-up issue #478 (Fable allowance, Copilot models + sign-in state, 3p weekly bucket).
+- Live (scratch bridge, scratchpad/live_wall.py): real snapshot, readings, launcher; shots taken.
 
 ## Next
-1. Launcher + test_launch.sh cases.
-2. fleet crate spent_until + tests; launch.rs args + prefs commands + tests.
-3. newsession.js rewrite + unit tests on the real reading shape.
-4. wall.js/html/css; browser test (shots under shots/<date>/).
-5. Live: serve wall with a bridge to the real snapshot, readings and launcher; shots 1920/390
-   dark/light; launch one throwaway session per engine and close it.
+1. Full browser suite after the narrow-label + harness changes; fold in the reviewer's findings.
+2. Live launches: one throwaway per engine (Claude Personal, Claude RIT, agy, Copilot), confirm the
+   account, close each; final live shots 1920/390 dark/light closed/open.
+3. Push, PR body (Refs #440, #478), shots to fleet-briefing, report to Heph, fleet done.
 
 ## Verify
 - node --test src/*.test.js; make test-launch; cargo test -p klepsydra-fleet;
-  scripts/test_wall_browser.py agy_menu; npm run lint; CI for the app crate.
+  KLEPSYDRA_STAGE=klepsydra-build-ns477 scripts/build-windows.sh --check;
+  scripts/test_wall_browser.py (drawer_tables, cast_pick_outlives_its_card also fail on main).

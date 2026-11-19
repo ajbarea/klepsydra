@@ -777,11 +777,12 @@ is called) with Opus, Sonnet or Fable; Antigravity (agy) with its models under
 their quota groups, as agy's `/quota` names them, a spent group's models off;
 and Copilot. Each row shows the room left from the gauge's readings: the
 window with the least room, or when a spent one comes back. Start opens the row's
-engine on its account; Set as default keeps it. An engine not installed or not
-signed in stays listed, off, with the one command that fixes it. agy and
-Copilot start locked: read-only, no shell, in `launch_dir`. The launcher
-refuses a spent Claude account or agy quota group even from a menu drawn before
-it ran out. A wall launch of Claude runs on your subscription only: it drops
+engine on its account (off while it is spent); Set as default keeps it. An
+engine not installed or not signed in stays listed, off, with the one command
+that fixes it. agy and Copilot start locked: read-only, no shell, in
+`launch_dir`. A spent Claude account (the app, from its readings) or agy quota
+group (the launcher, from agy's `/quota`) is refused even from a menu drawn
+before it ran out. A wall launch of Claude runs on your subscription only: it drops
 `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN` and `ANTHROPIC_PROFILE`, and refuses
 to start when a settings file sets an API key or key helper.
 

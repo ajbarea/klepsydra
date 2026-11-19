@@ -12,6 +12,8 @@ unset KLEPSYDRA_BACKGROUND # a fleet pane's own, never this suite's
 # A headless job's own config folder sets an API key helper, which the
 # launcher refuses (#260): the suite runs on none of its caller's.
 unset CLAUDE_CONFIG_DIR
+# The launcher reads the fleet's account list when set; the suite builds its own.
+unset FLEET_ACCOUNTS FLEET_DEFAULT_CONFIG FLEET_DEFAULT_JSON
 sock="kl-test-$$" sock2="kl-test2-$$" sock3="kl-test3-$$" sock4="kl-test4-$$" sock5="kl-test5-$$"
 sockdir="${TMUX_TMPDIR:-/tmp}/tmux-$(id -u)" # where tmux puts a -L socket
 clients=()
@@ -241,11 +243,24 @@ check "#440: on the model asked for" "$rc $(t list-panes -a -F '#{pane_start_com
 before=$(windows)
 out=$(bash "$launch" new "$work/repos" copilot 'x;id' 2>&1); rc=$?
 check "#440: a Copilot model that is no id starts nothing" "$rc $(( $(windows) - before )) $out" "1 0 That is not a Copilot model id: x;id"
-for f in .github/hooks .github/mcp.json .mcp.json .vscode/mcp.json .copilot; do
+for f in .github/hooks .github/mcp.json .mcp.json .vscode/mcp.json .copilot .claude/skills .agents/skills; do
   d="$work/cp-${f//\//_}"; mkdir -p "$d/$f"
   out=$(bash "$launch" new "$d" copilot 2>&1); rc=$?
   check "#440 lock: a folder that ships $f is no locked Copilot workspace (folder trust loads it)" "$rc $(( $(windows) - before )) $(grep -c 'ships Copilot workspace configuration' <<<"$out")" "1 0 1"
 done
+mkdir -p "$work/cphk/.claude"
+printf '{"permissions": {}}\n' >"$work/cphk/.claude/settings.json"
+out=$(bash "$launch" new "$work/cphk" copilot 2>&1); rc=$?
+check "#440 lock: Claude Code project settings without hooks are no bar to Copilot" "$rc $(( $(windows) - before ))" "0 1"
+before=$(windows)
+for f in settings.json settings.local.json; do
+  d="$work/cphk-$f"; mkdir -p "$d/.claude"; printf '{"hooks": {"Stop": []}}\n' >"$d/.claude/$f"
+  out=$(bash "$launch" new "$d" copilot 2>&1); rc=$?
+  check "#440 lock: .claude/$f with hooks is refused (Copilot runs them)" "$rc $(( $(windows) - before )) $(grep -c 'sets hooks' <<<"$out")" "1 0 1"
+done
+d="$work/cphk-bad"; mkdir -p "$d/.claude"; printf 'not json' >"$d/.claude/settings.json"
+out=$(bash "$launch" new "$d" copilot 2>&1); rc=$?
+check "#440 lock: a settings file that does not read is refused (fail closed)" "$rc $(( $(windows) - before ))" "1 0"
 git init -q "$work/cpanc" && mkdir -p "$work/cpanc/.github/hooks" "$work/cpanc/sub"
 out=$(bash "$launch" new "$work/cpanc/sub" copilot 2>&1); rc=$?
 check "#440 lock: a folder whose repo root ships Copilot hooks is refused" "$rc $(( $(windows) - before ))" "1 0"

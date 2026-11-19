@@ -125,6 +125,8 @@ const ns = {
   engines: null,
   agy: { state: inTauri ? "waiting" : "missing", models: [] },
   prefs: { default: null, last: null },
+  enginesError: null,
+  ready: !inTauri, // the saved default can be judged: prefs, engines and (when it names agy) agy answered
   open: null, // the menu row shown open
   picked: new Map(), // entry id -> model id the user picked
   fixShown: new Set(), // entry ids whose fix step is shown
@@ -143,7 +145,7 @@ function iconNode(key) {
 }
 
 function nsState() {
-  const entries = buildEntries({ rows: ns.rows, engines: ns.engines, agy: ns.agy, nowMs: Date.now() });
+  const entries = buildEntries({ rows: ns.rows, engines: ns.engines, enginesError: ns.enginesError, agy: ns.agy, nowMs: Date.now() });
   const pick = pickDefault(entries, { userDefault: ns.prefs.default, lastUsed: ns.prefs.last });
   return { entries, pick };
 }
@@ -162,6 +164,7 @@ async function startSession(button, note, args) {
   }
 }
 const startDefault = (button) => {
+  if (!ns.ready) return; // a click before the saved default is known would start the wrong engine
   const { entry } = nsState().pick;
   startSession(button, newNote, launchArgs(entry, modelOf(entry)));
 };
@@ -171,11 +174,14 @@ newButton.addEventListener("click", () => startDefault(newButton));
 function paintButton() {
   const { entry, reason } = nsState().pick;
   newButton.querySelector(".ico").replaceChildren(iconNode(entry.engine));
-  newButton.querySelector(".new-label").textContent = `New ${entry.shortName} session`;
+  const label = newButton.querySelector(".new-label");
+  label.replaceChildren(`New ${entry.shortName}`, Object.assign(document.createElement("span"), { className: "ns-word", textContent: " session" }));
   const mono = newButton.querySelector(".mono");
   mono.hidden = !entry.badge;
   mono.textContent = entry.badge;
   newButton.title = buttonTitle(entry);
+  if (ns.ready) newButton.removeAttribute("aria-disabled");
+  else newButton.setAttribute("aria-disabled", "true");
   newButton.setAttribute("aria-label", `New ${entry.name} session`);
   newKind.hidden = !inTauri;
   footWhy.textContent = `Default: ${entry.name}, ${reason}.`;
@@ -201,7 +207,7 @@ function engRow(e, openId) {
       ? "Not installed on this PC"
       : e.fix === "signin"
         ? "Installed, not signed in"
-        : e.failed ?? "Asking Antigravity for its models…";
+        : e.failed ?? (e.engine === "copilot" ? "Checking whether Copilot is installed…" : "Asking Antigravity for its models…");
   if (!e.usable) {
     row.classList.add("off");
     head.setAttribute("aria-disabled", "true");
@@ -218,7 +224,7 @@ function engRow(e, openId) {
       fix.setAttribute("aria-expanded", String(shown));
       const p = row.querySelector(".eng-step");
       p.hidden = !shown;
-      p.id = `step-${e.engine}`;
+      p.id = `step-${e.id.replace(/[^A-Za-z0-9-]/g, "-")}`;
       fix.setAttribute("aria-controls", p.id);
       p.querySelector("code").textContent = step;
     } else fix.removeAttribute("aria-expanded");
@@ -254,7 +260,7 @@ function engRow(e, openId) {
   const start = row.querySelector(".eng-start");
   start.textContent = `Start ${e.shortName} session`;
   start.dataset.fk = `s:${e.id}`;
-  if (e.engine === "agy" && !picked) start.setAttribute("aria-disabled", "true");
+  if ((e.engine === "agy" && !picked) || e.spent) start.setAttribute("aria-disabled", "true");
   row.querySelector(".eng-default").dataset.fk = `d:${e.id}`;
   return row;
 }
@@ -295,8 +301,10 @@ async function readEngines(force = false) {
   ns.enginesAt = Date.now();
   try {
     ns.engines = await window.__TAURI__.core.invoke("engines_status");
+    ns.enginesError = null;
   } catch (err) {
     ns.enginesAt = 0;
+    if (!ns.engines) ns.enginesError = `klepsydra could not ask which engines are here: ${err}`;
     log.warnRepeat("engines_status", "engines_status failed, so + New session lists every engine as it last knew", err);
   }
 }
@@ -355,7 +363,8 @@ newMenu.addEventListener("click", async (e) => {
   if (fix) {
     const id = fix.closest(".eng").dataset.id;
     if (fix.dataset.fix === "retry") {
-      await readAgy();
+      if (id === "copilot") await readEngines(true);
+      else await readAgy();
     } else if (ns.fixShown.has(id)) ns.fixShown.delete(id);
     else ns.fixShown.add(id);
     paintNewSession();
@@ -396,8 +405,14 @@ async function saveDefault(id) {
 }
 
 if (inTauri) {
-  Promise.all([readRows(), readEngines(true), loadPrefs()]).then(paintNewSession);
-  readAgy().then(paintNewSession);
+  const agyRead = readAgy();
+  agyRead.then(paintNewSession);
+  Promise.all([readRows(), readEngines(true), loadPrefs()])
+    .then(() => ([ns.prefs.default, ns.prefs.last].includes("agy") ? agyRead : null))
+    .finally(() => {
+      ns.ready = true;
+      paintNewSession();
+    });
   setInterval(() => readRows().then(paintNewSession), USAGE_MS);
 }
 paintNewSession();
