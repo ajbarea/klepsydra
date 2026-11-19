@@ -481,6 +481,16 @@ desktop with their halo. The tray icon keeps the theme's own colours. With
 Windows' Transparency effects off (or High Contrast on) the panel is solid,
 whatever the slider says.
 
+### Gauges in the wall header
+
+While the wall is open, the same chips sit in its header bar, between the
+tally and the tools: drawn by the strip's code from the same readings, with
+the route mark, the pips and the hover detail, but no portraits (the cards
+carry them). The wall reads usage every 5 seconds while it is in view with
+the gauges shown, and once a minute otherwise. The chevron beside them hides
+them; **Gauges in wall header** in the gear brings them back. The choice is
+saved in `prefs.json` (`gauges_in_header`, on to start).
+
 ### Staying in front of the taskbar
 
 The taskbar is itself a topmost window, and within that band z-order goes to
@@ -1118,12 +1128,13 @@ the session's next hook event after Remote Control connects, survives
 drops, the wall says the cards may be out of date until it reconnects, and
 keeps trying while klepsydra restarts.
 
-The usage-limit gauges open the page: a ring per account and window with
-its percent, time to reset and label (`57% 8m Personal · session`), except a
-session whose week is spent, which waits for the week to reset; drawn by
-the gauge's own code from the same readings, read every 5 seconds. They
-scroll away under the tally, and say so while no reading exists. The wall
-stays dark when the phone is in light mode.
+The usage gauges sit in the sticky bar under the tally: the strip's chips,
+one per account in route order, two to a line, with the tightest window's
+percent and reset (`57% 8m`) and the other windows as pips. A spent week
+reads `out` and hides its session window until the week resets. They are
+drawn by the strip's own code from the same readings, read every 5 seconds,
+and say so while no reading exists. The phone is read-only, so they always
+show there. The wall stays dark when the phone is in light mode.
 
 <p align="center">
   <img src="assets/phone-wall.png" alt="The phone wall at iPhone width: rings for the Personal and Team accounts' usage, the tally (3 needs you, 8 working, 2 done, 1 error, 2 idle or ended), then the needs-you cards, each with its portrait, task, repo and branch, the ask, the last exchange and a play button" width="300">
@@ -1418,18 +1429,18 @@ tray icon follows the same order, and so tracks the account you are on.
 
 ## Restyling
 
-Every visual token lives at the top of `src/style.css`: bar height (10px, read
-from across a desk) and radius, the three ramp colours and their thresholds,
-panel background, padding and width, fonts and sizes. Each size is multiplied
-by the zoom set from the handle. `--ramp-mode` picks between `blend` (continuous
-interpolation) and `bands` (flat colours that switch at thresholds). Edit,
+The chips' tokens open `src/fleet/chips.css`, which the floating strip and
+the wall's header both load: the three ramp colours and their thresholds,
+the track, the route mark, and the chips' text, mark and pip sizes.
+`--ramp-mode` picks between `blend` (continuous interpolation) and `bands`
+(flat colours that switch at thresholds). The floating strip's own tokens open
+`src/style.css`: the panel's background, padding and radius, fonts, and the
+fleet strip's portrait sizes, followed by the few the compact layout changes.
+On the strip each size is multiplied by the zoom set from the handle. Edit,
 rebuild, done.
 
-The fleet strip's sizes and the compact layout's ring sit in the same block,
-followed by the few tokens the compact layout changes. The strip's badge colours are in
-`src/fleet/badge.css`, where a test holds each to 3:1 contrast, and the card
-wall's tokens open `src/fleet/wall.css`, with a copy of the ramp for the
-phone's gauges that a test holds equal to this one.
+The strip's badge colours are in `src/fleet/badge.css`, where a test holds
+each to 3:1 contrast, and the card wall's tokens open `src/fleet/wall.css`.
 
 ## When it does not know
 
