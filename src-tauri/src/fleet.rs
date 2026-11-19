@@ -420,11 +420,15 @@ pub fn start(app: &AppHandle, dir: Option<PathBuf>) {
 /// Show the card wall with session `focus`'s card in view. The wall is made
 /// on the first call, from an async command since a window made in a sync one
 /// deadlocks on Windows, and after that only hidden and shown, never closed.
+/// Its webview is hidden and shown with it: a hidden window alone leaves
+/// WebView2 visible, so the page's `document.hidden` never turns true, its
+/// timers run at full pace and its backdrop keeps animating.
 #[tauri::command]
 pub async fn open_wall(app: AppHandle, focus: String) -> Result<(), String> {
     app.state::<Fleet>().focus(WALL, &focus);
     if let Some(wall) = app.get_webview_window(WALL) {
         wall.show().map_err(|e| e.to_string())?;
+        let _ = AsRef::<tauri::Webview>::as_ref(&wall).show();
         let _ = wall.unminimize();
         let _ = wall.set_focus();
         return Ok(());
@@ -439,6 +443,7 @@ pub async fn open_wall(app: AppHandle, focus: String) -> Result<(), String> {
     wall.on_window_event(move |event| {
         if let tauri::WindowEvent::CloseRequested { api, .. } = event {
             api.prevent_close();
+            let _ = AsRef::<tauri::Webview>::as_ref(&handle).hide();
             let _ = handle.hide();
         }
     });
