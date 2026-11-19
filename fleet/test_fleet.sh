@@ -2326,6 +2326,18 @@ check "#483: fleet close --why NAME prints the last refusal's check and reason, 
 0"
 check "#483: --why for a name with no close fails (1); --why with no name is bad usage (2)" \
   "$(bash "$here/fleet" close --why nobody >/dev/null 2>&1; echo $?) $(bash "$here/fleet" close --why >/dev/null 2>&1; echo $?)" "1 2"
+# Real screens (Claude Code 2.1.316, captured 11-19) replayed through close.sh's own comparison, no tmux
+# (#483 review 2): the menu over an idle transcript reads the same at 84 and 160 columns, and every
+# transcript that scrolled up under it differs, blank top rows included.
+replay() { # BEFORE AFTER: same or differs
+  ( eval "$(awk '/^above_raw\(\)/,/^steady\(\)/' "$here/close.sh" | sed '$d')"
+    same_transcript "$(above_raw "$(cat "$1")")" "$(cat "$2")" && echo same || echo differs )
+}
+cs=$here/tests/close-screens
+check "#483 review 2: the /exit menu over a resting transcript reads the same (ns477 and a background shell at 84, 160, blank top rows)" \
+  "$(for p in ns477-84 bg-84 bg-160 blanktop-84; do replay "$cs/$p-before.txt" "$cs/$p-after.txt"; done | tr '\n' ' ')" "same same same same "
+check "#483 review 2: every transcript that scrolled up under the menu differs (10 screens, 3 of them scrolling off blank rows)" \
+  "$(for f in "$cs"/*-scroll*.txt; do b=${f##*/}; replay "$cs/${b%-scroll*}-before.txt" "$f"; done | sort | uniq -c | tr -s ' ')" " 10 differs"
 # A wrapped line one column left or right of the descriptions' column is no part of the menu (#483 review).
 for ind in 36 38; do
   state wrk7 "{\"above\":$long,\"busy\":false,\"slash_menu\":true,\"slash_after\":\"$(printf '%*s' "$ind" '')grid\",\"exit_on_exit\":true,\"on_submit\":\"none\"}"; settle; : >"$work/wrk7.log"
@@ -2345,6 +2357,24 @@ check "#483 review: a session file written within the settle window after /exit 
   "$(FLEET_CLOSE_SETTLE=3 bash "$here/fleet" close wrk7 >/dev/null 2>&1; echo $?) $(lastclose wrk7 .check) $(grep -c '^SUBMIT' "$work/wrk7.log") $(sleep 0.5; input_text "$(screen "$b")" | grep -c .)" "1 session_file 0 0"
 wait "$wrp" 2>/dev/null
 done_live "$b" "done" '[]'
+# STATE-JSON for wrk7 once /exit has gone in and a second has passed (while close settles).
+after_typed() { # STATE-JSON
+  ( for i in $(seq 100); do grep -q '^TYPED' "$work/wrk7.log" && break; sleep 0.1; done; sleep 1.2
+    printf '%s' "$1" >"$work/wrk7.json.t"; mv -f "$work/wrk7.json.t" "$work/wrk7.json" ) & wrp=$!
+}
+# A line arriving under the menu within the settle window moves the rows above it: seen by the screen re-read alone (#483 review 2).
+state wrk7 "{\"above\":$long,\"busy\":false,\"slash_menu\":true,\"exit_on_exit\":true,\"on_submit\":\"none\",\"log_typed\":true}"; settle; : >"$work/wrk7.log"
+after_typed "{\"above\":$long,\"busy\":false,\"slash_menu\":true,\"slash_hidden\":[\"❯ a phone prompt\"],\"exit_on_exit\":true,\"on_submit\":\"none\",\"log_typed\":true}"
+check "#483 review 2: a transcript that moves within the settle window after /exit went in refuses the close (1) at check quiet_screen, nothing submitted, /exit backed out" \
+  "$(FLEET_CLOSE_SETTLE=3 bash "$here/fleet" close wrk7 >/dev/null 2>&1; echo $?) $(lastclose wrk7 .check) $(grep -c '^SUBMIT' "$work/wrk7.log") $(sleep 0.5; input_text "$(screen "$b")" | grep -c .)" "1 quiet_screen 0 0"
+wait "$wrp" 2>/dev/null
+# The box is read once more just before Enter: text added to it within the settle window refuses the close and stays (#483 review 2).
+state wrk7 "{\"above\":$long,\"busy\":false,\"slash_menu\":true,\"exit_on_exit\":true,\"on_submit\":\"none\",\"log_typed\":true}"; settle; : >"$work/wrk7.log"
+after_typed "{\"above\":$long,\"busy\":false,\"slash_menu\":true,\"exit_on_exit\":true,\"on_submit\":\"none\",\"log_typed\":true,\"input\":\"/exit now\"}"
+check "#483 review 2: text typed into the box within the settle window refuses the close (1) at check input_text, nothing submitted, the text kept" \
+  "$(FLEET_CLOSE_SETTLE=3 bash "$here/fleet" close wrk7 >/dev/null 2>&1; echo $?) $(lastclose wrk7 .check) $(grep -c '^SUBMIT' "$work/wrk7.log") $(sleep 0.5; input_text "$(screen "$b")")" "1 input_text 0 /exit now"
+wait "$wrp" 2>/dev/null
+state wrk7 "{\"above\":$long,\"busy\":false,\"exit_on_exit\":true,\"on_submit\":\"none\",\"clear\":true}"; settle
 # The real menu as an 84-column pane draws it, two descriptions wrapped (the 11-19 ns477 refusals): it closes.
 state wrk7 "{\"above\":$long,\"busy\":false,\"slash_menu\":true,\"exit_on_exit\":true,\"on_submit\":\"none\"}"; settle; : >"$work/wrk7.log"
 check "#445 review: once the turn has ended the same close goes through (AJ's tmux file beside it is no bar; the menu /exit opens covers a full screen's last rows, wrapped as in an 84-column pane, #483), and its record goes" "$(bash "$here/fleet" close wrk7 2>/dev/null) $(grep -c '^SUBMIT /exit' "$work/wrk7.log") $(cut -f2 "$DONE_REPORTS" | grep -c '^wrk7$')" "closed: wrk7 ($b) 1 0"

@@ -96,15 +96,17 @@ above_raw() { # SCREEN
   n=$(plain <<<"$1" | awk 'index($0, "────") == 1 { r[++k] = NR } END { print (k >= 2) ? r[k - 1] - 1 : NR }')
   head -n "$n" <<<"$1"
 }
-# ABOVE (above_raw's) as plain lines, blank ones and the slash-command menu that typing /exit opens
-# dropped. Claude Code 2.1.316 draws that menu just above the box, over the transcript's last rows:
-# "  ❯ /exit" and its description, then "    /name" rows whose descriptions start in the same column,
+# ABOVE (above_raw's) as plain lines, trailing spaces trimmed and the slash-command menu that typing
+# /exit opens dropped. Blank rows stay: each is a row the menu can cover, so a transcript that
+# scrolls up under the menu cannot hide behind blank rows that scrolled off its top. Claude Code
+# 2.1.316 draws that menu just above the box, over the transcript's last rows: "  ❯ /exit" and its
+# description, then "    /name" rows whose descriptions start in the same column,
 # a description too long for the pane wrapping onto lines indented to exactly that column (an
 # 84-column pane wraps two of the three). Only such a block, running from the "❯ /exit" row to the
 # last line, is dropped; anything else in it keeps the whole block. Prints how many lines went, then
 # the rest.
 screen_lines() { # ABOVE
-  plain <<<"$1" | grep -v '^[[:space:]]*$' | awk '{ l[++n] = $0 } END {
+  plain <<<"$1" | sed 's/[[:space:]]*$//' | awk '{ l[++n] = $0 } END {
     k = 0
     for (h = n; h >= 1; h--) if (l[h] ~ /^  ❯ \/exit( |$)/) break
     if (h >= 1) {
@@ -130,13 +132,15 @@ same_transcript() { # REF AFTER
   r=$(screen_lines "$1" | tail -n +2)
   a=$(screen_lines "$(above_raw "$2")")
   k=$(head -1 <<<"$a"); a=$(tail -n +2 <<<"$a")
-  n=$(grep -c . <<<"$r") m=$(grep -c . <<<"$a")
+  n=$(rows "$r") m=$(rows "$a")
   if (( m >= 1 && m <= n && n - m <= k )) && [[ $(head -n "$m" <<<"$r") == "$a" ]]; then
     return 0
   fi
   SAME_WHY="menu lines dropped $k, transcript lines before $n, after $m; differs: $(excerpt "$r" "$a")"
   return 1
 }
+# How many lines TEXT has, blank ones included; none when it is empty.
+rows() { if [[ -n $1 ]]; then wc -l <<<"$1"; else echo 0; fi; } # TEXT
 # The first lines that differ between OLD and NEW (plain text), at most 5, each cut to 120
 # characters and joined by " | ", then how many blank lines differ: what a refusal's log shows of a
 # screen that changed. Blank lines are counted, not quoted, so they cannot hide the line that moved.
@@ -251,6 +255,11 @@ close_now() { # PANE NAME SID
       check=session_file more=(session="$(session_brief "$3")")
     fi
     box=$(input_text "$(screen "$1")")
+  # The last look before Enter: the box still holds just our /exit, and no turn has started.
+  elif s=$(screen "$1"); box=$(input_text "$s"); busy "$s"; then
+    check=busy why="working (a turn started within ${g} s of /exit going in)" more=(spinner="$(near 4 | grep -E '… \(|esc to interrupt' | clip)")
+  elif [[ $box != /exit ]]; then
+    check=input_text why="working (its box changed within ${g} s of /exit going in)" more=(text="$(clip 80 <<<"$box")")
   fi
   if [[ -n $check ]]; then
     # Back out only our own /exit: text typed after it stays, and so does the close's refusal.
