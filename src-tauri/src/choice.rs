@@ -13,6 +13,7 @@ pub struct ChoiceItems(Mutex<Vec<(&'static str, CheckMenuItem<Wry>)>>);
 
 impl ChoiceItems {
     /// The submenu TITLE, one item per choice in TABLE (ids PREFIX + id), NOW ticked.
+    #[allow(dead_code)]
     pub fn build(
         &self,
         app: &AppHandle,
@@ -55,6 +56,7 @@ impl ChoiceItems {
 }
 
 /// The choice a tray click picked, when MENU_ID is one of TABLE's items.
+#[allow(dead_code)]
 pub fn picked(menu_id: &str, prefix: &str, table: &'static Table) -> Option<&'static str> {
     let w = menu_id.strip_prefix(prefix)?;
     table.iter().map(|(id, _)| *id).find(|id| *id == w)

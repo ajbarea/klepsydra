@@ -11,6 +11,7 @@ use tauri::menu::{MenuItem, PredefinedMenuItem, Submenu};
 use tauri::{AppHandle, Manager, Wry};
 
 /// The tray's id for each mode's item.
+#[allow(dead_code)]
 const MENU_PREFIX: &str = "voices:";
 
 /// The tray's Voices items, the status line above them, and the reader that
@@ -18,6 +19,7 @@ const MENU_PREFIX: &str = "voices:";
 #[derive(Default)]
 pub struct VoicesMenu {
     items: crate::choice::ChoiceItems,
+    #[allow(dead_code)]
     status: std::sync::Mutex<Option<MenuItem<Wry>>>,
     reader: Reader,
 }
@@ -29,6 +31,7 @@ pub fn saved(app: &AppHandle) -> &'static str {
 
 /// keryx's state now: the tick and status line to show, or `None` while an
 /// earlier read is still out (it shows its own answer when it lands).
+#[allow(dead_code)]
 fn read(app: &AppHandle) -> Option<Shown> {
     let saved = saved(app);
     let Some(dir) = crate::klepsydra_dir(app) else {
@@ -51,6 +54,7 @@ fn read(app: &AppHandle) -> Option<Shown> {
 }
 
 /// Show `s`: tick its mode (or none) and set the status line.
+#[allow(dead_code)]
 fn show(app: &AppHandle, s: &Shown) {
     let m = app.state::<VoicesMenu>();
     m.items.tick(s.tick.unwrap_or(""));
@@ -62,6 +66,7 @@ fn show(app: &AppHandle, s: &Shown) {
 
 /// The tray's Voices submenu: a disabled status line, then one item per
 /// mode, ticked to match keryx.
+#[allow(dead_code)]
 pub fn menu(app: &AppHandle) -> tauri::Result<Submenu<Wry>> {
     let s = read(app).unwrap_or_else(|| voices::unknown("reading keryx's config"));
     let m = app.state::<VoicesMenu>();
@@ -80,6 +85,7 @@ pub fn menu(app: &AppHandle) -> tauri::Result<Submenu<Wry>> {
 /// pressed it): read keryx afresh and show it. The press comes before the
 /// release that opens the menu; entering gives the read a head start when a
 /// busy main thread handles the press late.
+#[allow(dead_code)]
 pub fn on_open(app: &AppHandle) {
     if let Some(s) = read(app) {
         log::debug!(tick = s.tick.unwrap_or("none"); "voices: {}", s.says);
@@ -90,6 +96,7 @@ pub fn on_open(app: &AppHandle) {
 /// A tray click: when it was on a mode's item, save that mode (a click on the
 /// ticked item unticks it; the tick follows the saved mode until the next
 /// open reads keryx again). False for any other item.
+#[allow(dead_code)]
 pub fn on_menu(app: &AppHandle, menu_id: &str) -> bool {
     let Some(id) = crate::choice::picked(menu_id, MENU_PREFIX, &VOICES) else {
         return false;

@@ -10,6 +10,7 @@ use tauri::menu::Submenu;
 use tauri::{AppHandle, Manager, Wry};
 
 /// The tray's id for each theme's item.
+#[allow(dead_code)]
 const MENU_PREFIX: &str = "theme:";
 
 /// Who follows the theme: the gauge's strip and the wall, each sent the saved
@@ -83,6 +84,7 @@ pub fn publish(app: &AppHandle) {
 }
 
 /// The tray's Characters submenu, one ticked item per theme.
+#[allow(dead_code)]
 pub fn menu(app: &AppHandle) -> tauri::Result<Submenu<Wry>> {
     let now = saved(app);
     let submenu = app
@@ -97,6 +99,7 @@ pub fn menu(app: &AppHandle) -> tauri::Result<Submenu<Wry>> {
 /// A tray click: when it was on a theme's item, save that theme and apply it
 /// everywhere (a click on the ticked item unticks it; `publish` ticks it
 /// again). False for any other item.
+#[allow(dead_code)]
 pub fn on_menu(app: &AppHandle, menu_id: &str) -> bool {
     let Some(id) = crate::choice::picked(menu_id, MENU_PREFIX, &THEMES) else {
         return false;
