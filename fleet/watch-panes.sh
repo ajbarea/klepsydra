@@ -111,8 +111,10 @@ while :; do
     : "${since[$p]:=$now}"
     if (( now - since[$p] >= IDLE_S )); then
       done_at=$(grep -o 'done [0-9:]* [AP]M' <<<"$ps" | tail -1)
-      decided=$( { grep 'done [0-9]\{1,2\}:[0-9][0-9] [AP]M' <<<"$ps" | tail -1; grep -E 'still running|Waiting for [0-9]+ background' <<<"$ps"; } | paste -sd '~' - )
-      flog INFO "watched pane idle" pane="$p" reason="idle" since="$done_at" screen="$decided"
+      done_line=$(grep 'done [0-9]\{1,2\}:[0-9][0-9] [AP]M' <<<"$ps" | tail -1)
+      bg_summary=$(pane_background_summary "$p" "$now")
+      decided=$(printf '%s\n%s' "$done_line" "session=$bg_summary" | paste -sd '~' -)
+      flog INFO "watched pane idle" pane="$p" reason="idle" since="$done_at" screen="$decided" session="$bg_summary"
       echo "IDLE $p $done_at"; exit 0
     fi
   done

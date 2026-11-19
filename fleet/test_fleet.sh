@@ -3053,11 +3053,29 @@ check "#453: a pane idle at done with a background shell does not wake" \
 # Remove the background shell: now it should wake.
 jq -n --arg p "$wp" '{session_id: "x", ended: null, tmux: {pane: $p},
   state: "done", reason: null, background: []}' >"$KLEPSYDRA_DIR/fleet/$SID.json"
-wait "$w453job"
+local_i=0
+while kill -0 "$w453job" 2>/dev/null && (( local_i < 50 )); do
+  sleep 0.1
+  local_i=$((local_i + 1))
+done
+kill_watch "$w453job"
 check "#453: once the shell ends it wakes after IDLE_S" "$(cut -d' ' -f1,2 "$work/w453.out")" "IDLE $wp"
 check "#453: idle wake logged with reason, pane, and screen" \
   "$(jq -r 'select(.message == "watched pane idle") | [.reason, .pane, (.screen | contains("done 11:50 AM"))] | join(" ")' "$FLEET_LOG" | tail -1)" "idle $wp true"
 t kill-window -t "$wp"; rm -f "$KLEPSYDRA_DIR/fleet/$SID.json"
+
+kill_watch() { # JOB [TIMEOUT_S]
+  local job=$1 max_s=${2:-2} i=0
+  kill "$job" 2>/dev/null || return 0
+  while kill -0 "$job" 2>/dev/null && (( i < max_s * 10 )); do
+    sleep 0.1
+    i=$((i + 1))
+  done
+  if kill -0 "$job" 2>/dev/null; then
+    kill -KILL "$job" 2>/dev/null || true
+  fi
+  wait "$job" 2>/dev/null || true
+}
 
 watch_held() { # PANE [WAIT_S]
   local p=$1 s=${2:-1.5} out=$work/held-$1.out job
@@ -3065,7 +3083,7 @@ watch_held() { # PANE [WAIT_S]
   job=$!
   sleep "$s"
   if kill -0 "$job" 2>/dev/null; then
-    kill "$job" 2>/dev/null; wait "$job" 2>/dev/null || true
+    kill_watch "$job"
     echo "held"
   else
     cut -d' ' -f1 "$out"
@@ -3082,7 +3100,7 @@ watch_wake() { # PANE [WAIT_S]
     i=$((i + 1))
   done
   if kill -0 "$job" 2>/dev/null; then
-    kill "$job" 2>/dev/null; wait "$job" 2>/dev/null || true
+    kill_watch "$job"
     echo "timeout"
   else
     wait "$job" 2>/dev/null || true
@@ -3136,6 +3154,24 @@ wm=$(pane cM '{"above":["✻ Baked for 2s · done 11:50 AM"],"below":["  ⏵⏵ 
 jq -n --arg p "$wm" --argjson at "$(date +%s)" '{session_id: "x", ended: null, tmux: {pane: $p}, state: "working", reason: "background", background: [{id: "bad", kind: "shell", at: "x"}, {id: "a1", kind: "agent", at: $at}]}' >"$KLEPSYDRA_DIR/fleet/$SID.json"
 check "#453 cell M: good entry still holds" "$(watch_held "$wm")" "held"
 t kill-window -t "$wm"; rm -f "$KLEPSYDRA_DIR/fleet/$SID.json"
+
+echo "cell F61: at 61s in future, screen says done with no shell (view.rs drops future beyond ahead)"
+wf=$(pane cF '{"above":["✻ Baked for 2s · done 11:50 AM"],"below":["  ⏵⏵ bypass permissions on · 1 shell"]}'); settle
+jq -n --arg p "$wf" --argjson at "$(( $(date +%s) + 61 ))" '{session_id: "x", ended: null, tmux: {pane: $p}, state: "working", reason: "background", background: [{id: "s1", kind: "shell", at: $at}]}' >"$KLEPSYDRA_DIR/fleet/$SID.json"
+check "#453 cell F61: future entry beyond ahead wakes" "$(watch_wake "$wf")" "IDLE"
+t kill-window -t "$wf"; rm -f "$KLEPSYDRA_DIR/fleet/$SID.json"
+
+echo "cell K_unk: unknown background kind, screen says done with no shell (view.rs counts only agent/shell/task)"
+wk=$(pane cK '{"above":["✻ Baked for 2s · done 11:50 AM"],"below":["  ⏵⏵ bypass permissions on · 1 shell"]}'); settle
+jq -n --arg p "$wk" --argjson at "$(date +%s)" '{session_id: "x", ended: null, tmux: {pane: $p}, state: "working", reason: "background", background: [{id: "s1", kind: "alien", at: $at}]}' >"$KLEPSYDRA_DIR/fleet/$SID.json"
+check "#453 cell K_unk: unknown background kind wakes" "$(watch_wake "$wk")" "IDLE"
+t kill-window -t "$wk"; rm -f "$KLEPSYDRA_DIR/fleet/$SID.json"
+
+echo "cell ID_empty: empty id, screen says done with no shell (view.rs requires non-empty string id)"
+wi=$(pane cI '{"above":["✻ Baked for 2s · done 11:50 AM"],"below":["  ⏵⏵ bypass permissions on · 1 shell"]}'); settle
+jq -n --arg p "$wi" --argjson at "$(date +%s)" '{session_id: "x", ended: null, tmux: {pane: $p}, state: "working", reason: "background", background: [{id: "", kind: "shell", at: $at}]}' >"$KLEPSYDRA_DIR/fleet/$SID.json"
+check "#453 cell ID_empty: empty id wakes" "$(watch_wake "$wi")" "IDLE"
+t kill-window -t "$wi"; rm -f "$KLEPSYDRA_DIR/fleet/$SID.json"
 
 echo "hostile screen text in wake log"
 : >"$FLEET_LOG"
