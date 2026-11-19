@@ -114,7 +114,6 @@ html, body {
 /* With nothing to show yet, the gauge dims rather than look like a reading.
    The portraits beside it keep full strength: a session may still need you.
    Named, not :not(#strip), so #zoom keeps its own opacity. */
-#content { transition: opacity 240ms ease; } /* #grip's is with its own rule */
 #panel[data-state="waiting"] > :is(#grip, #content) { opacity: var(--waiting-opacity); }
 
 .sub {
@@ -125,6 +124,7 @@ html, body {
 
 #content {
   flex: 1 1 auto;
+  transition: opacity 240ms ease; /* the waiting fade */
   min-width: 0;
   display: flex;
   flex-direction: column;

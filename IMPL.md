@@ -39,7 +39,7 @@ real data for perf). Fix SP= in live_app.sh to the session's scratchpad before r
   A toggletip card needs the window to grow from its docked edge: #481, planned with PR 3.
 
 ## Next
-1. Round 4: a fresh Opus verify of the round-3 commit (stop at the first clean round; ceiling 5).
+1. Round 4 (fresh Opus) CLEAN on 8016ef6; its nits: #content transition folded in, body round count. Known limit: the fade test reads CSS text, not the cascade.
 2. CI green, then report to Heph (`fleet send`), queue line; do not merge. Then PR 2 (#438) on a new branch.
 
 ## Verify
