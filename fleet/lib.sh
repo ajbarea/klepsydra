@@ -1000,6 +1000,86 @@ turn_settled() { # PANE
     and ((.background // []) | length) > 0' "$KLEPSYDRA_DIR/fleet/$sid.json" >/dev/null 2>&1
 }
 
+# How long a forgotten shell keeps a finished session working (view.rs: BACKGROUND_STALE_AFTER).
+BACKGROUND_STALE_AFTER=3600
+# An entry stamped this far ahead of the clock still counts (view.rs: BACKGROUND_AHEAD).
+BACKGROUND_AHEAD=60
+
+# Whether PANE runs active background work (view.rs: Crew), bounded by
+# BACKGROUND_STALE_AFTER (3600 s) and capped by shells_live. Fails when the
+# pane has no unique live session file or the file has no .background key, so
+# callers fall back to screen grep.
+pane_background() { # PANE [NOW]
+  local sid f now=${2:-${FLEET_NOW:-$(date +%s)}}
+  sid=$(live_session "$1") || return 1
+  f=$KLEPSYDRA_DIR/fleet/$sid.json
+  [[ -f $f && ! -L $f ]] || return 1
+  jq -e --argjson now "$now" \
+        --argjson stale "$BACKGROUND_STALE_AFTER" \
+        --argjson ahead "$BACKGROUND_AHEAD" '
+    select(has("background") and (.background | type == "array"))
+    | . as $root
+    | (if ($root.state == "working" or $root.state == "needs_you") then
+        (reduce .background[] as $b ({agents: 0, shells: 0, tasks: 0};
+          if ($b | type == "object")
+             and ($b.id | type == "string" and length > 0)
+             and ($b.at | type == "number")
+             and (($now - $b.at) >= -$ahead and ($now - $b.at) <= $stale) then
+            if $b.kind == "agent" then .agents += 1
+            elif $b.kind == "shell" then .shells += 1
+            elif $b.kind == "task" then .tasks += 1
+            else .
+            end
+          else .
+          end
+        )) as $crew
+        | ($root.shells_live) as $live
+        | (if ($live | type == "number") then ([$crew.shells, $live] | min) else $crew.shells end) as $shells
+        | select(($crew.agents + $shells + $crew.tasks) > 0)
+      else empty
+      end)
+  ' "$f" >/dev/null 2>&1
+}
+
+# Return a short string describing the session file state for PANE, for wake diagnostics.
+pane_background_summary() { # PANE [NOW]
+  local sid f now=${2:-${FLEET_NOW:-$(date +%s)}}
+  if ! sid=$(live_session "$1"); then
+    echo "no-live-session"
+    return 0
+  fi
+  f=$KLEPSYDRA_DIR/fleet/$sid.json
+  if [[ ! -f $f || -L $f ]]; then
+    echo "no-session-file"
+    return 0
+  fi
+  jq -r --argjson now "$now" \
+        --argjson stale "$BACKGROUND_STALE_AFTER" \
+        --argjson ahead "$BACKGROUND_AHEAD" '
+    if (has("background") and (.background | type == "array")) | not then
+      "state=\(.state // "none"):no-background"
+    elif .state != "working" and .state != "needs_you" then
+      "state=\(.state // "none")"
+    else
+      (reduce .background[] as $b ({agents: 0, shells: 0, tasks: 0};
+        if ($b | type == "object")
+           and ($b.id | type == "string" and length > 0)
+           and ($b.at | type == "number")
+           and (($now - $b.at) >= -$ahead and ($now - $b.at) <= $stale) then
+          if $b.kind == "agent" then .agents += 1
+          elif $b.kind == "shell" then .shells += 1
+          elif $b.kind == "task" then .tasks += 1
+          else .
+          end
+        else .
+        end
+      )) as $crew
+      | (.shells_live) as $live
+      | (if ($live | type == "number") then ([$crew.shells, $live] | min) else $crew.shells end) as $shells
+      | "state=\(.state):crew=\($crew.agents + $shells + $crew.tasks):bg=\(.background | length):live=\($live // "none")"
+    end' "$f" 2>/dev/null || echo "corrupt-session-file"
+}
+
 # Whether the orchestrator in PANE has finished its turn with only pane
 # watchers (watch-panes.sh) in the background: a successor starts them again,
 # so they never hold a move back (#215). Prints its stamp, as turn_done does.
