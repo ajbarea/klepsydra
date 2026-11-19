@@ -15,11 +15,12 @@
 <!-- budget: 160 words -->
 klepsydra is a thin always-on-top bar for Windows and Linux that shows how
 much of your Claude Code session and weekly limits you have used, so you see
-it without running `/usage` in whichever terminal is in front. The bar fills
-blue to yellow to red as a window is used up.
+it without running `/usage` in whichever terminal is in front. Each account
+gets one chip: its logo, the tightest window's percent and reset, and a small
+pip per window that turns yellow, then red, as it fills.
 
-Beside the bar sits a portrait for each Claude Code or Antigravity session, the ones waiting
-on you first. Click one to open the fleet wall: a card per session with its
+Beside each chip sit the portraits of the sessions running on that account,
+one per Claude Code or Antigravity session. Click one to open the fleet wall: a card per session with its
 status, where it works and its last exchange, and buttons to jump to its
 terminal or end it. From the wall you can open the
 [ledger](#the-ledger) of tokens and blocked calls, read your to-do file in the
@@ -99,10 +100,22 @@ stays too, and one rewritten in the instant before the delete comes back on
 its session's next render. An account takes its name from its newest
 reading.
 
-The gauge groups its rows by engine: Claude Code, Antigravity, Copilot and API
-keys. An Antigravity reading comes from the status line's `quota` input, as the
-account `agy-primary`. A **Route** badge marks the lane to try next, in the
-fleet's free-first order (`ROUTE_ORDER` in `src/gauge.js`).
+The gauge shows one chip per account, in the fleet's free-first order
+(`ROUTE_ORDER` in `src/gauge.js`): Antigravity, Copilot (a labelled placeholder
+until its readings land), API keys, then Claude Code. An Antigravity reading
+comes from the status line's `quota` input, as the account `agy-primary`.
+
+| A chip shows | When |
+|---|---|
+| its tightest window's percent and countdown, the rest as pips | always |
+| an underline and **route** | the account the fleet would use next |
+| **out** until the reset, the session hidden | its week is at 100% |
+| dimmed, with its age ("10h old") | its newest reading is over 3 hours old |
+
+A model group's pool, such as Antigravity's Claude & GPT, is a pip and never
+decides the chip. A Claude account named for an organisation wears a monogram
+of it ("RIT"); a personal one wears the Claude mark. Hover a chip for every
+window with its reset time and the reading's age.
 
 ## Two accounts at once
 
@@ -407,7 +420,7 @@ press that starts on the handle.
 Neither Windows nor Tauri's X11 backend offers per-region hit testing for a
 click-through window -- ignoring cursor events is all or nothing. So a
 background thread watches the pointer and makes the window interactive only
-while it is over the handle or the fleet strip. The frontend reports both
+while it is over the handle or the chips and portraits. The frontend reports both
 rectangles rather than the backend hard-coding them, so restyling cannot
 desync the two.
 
@@ -428,20 +441,18 @@ overflow.
 
 ### Compact
 
-"Compact" in the tray menu redraws the gauge to fit inside the taskbar. Each
-window becomes a ring, filled clockwise from 12 o'clock in the bar's colours,
-beside its percentage and countdown over its label, all in one row with the
-fleet strip beside it. Countdowns shorten ("4h 58m", "3d 11h"), and a
-reading more than 15 minutes old still says how old it is ("2h · 20m old").
+"Compact" in the tray menu puts the chips in one row, each a logo, a bold
+percent, a countdown ("4h 58m", "3d 11h") and its pips, with a thin bar between
+accounts. Unchecked, the gauge stacks them: a line per account with every
+window's percent and countdown.
 
 <p align="center">
   <img src="assets/compact-taskbar.png" alt="The compact gauge at taskbar height: rings for 57% of the personal session with 7m to reset, 27% of the personal week with 6d 6h, 12% of the team session with 2h 29m, then sixteen session portraits with status badges" width="720">
 </p>
 
 Each layout keeps its own size from the handle, since compact is sized to the
-taskbar and the bars to the desk. Compact opens at 100%, where three windows
-stand 42px tall against 142px for the bars, and it fits inside a 48px taskbar
-up to 110%. The choice is remembered, and switching keeps the gauge on the
+taskbar and the stack to the desk. Compact opens at 100%, where four chips stand
+42px tall, and it fits inside a 48px taskbar up to 110%. The choice is remembered, and switching keeps the gauge on the
 screen edges it sits nearest, so a gauge on the taskbar stays there.
 
 ### Staying in front of the taskbar
@@ -464,8 +475,9 @@ is revealed.
   <img src="assets/fleet-strip.png" alt="The gauge's three account rows (57%, 27% and 12% used, each with its reset time), and beside them sixteen session portraits, each with a badge for its status" width="760">
 </p>
 
-With several Claude Code sessions open, klepsydra shows a portrait for each to
-the right of the gauge, with a badge for its status. Antigravity sessions get a portrait and a card too.
+With several Claude Code sessions open, klepsydra shows a portrait for each
+beside its account's chip, with a badge for its status; a session whose
+account has no reading sits after the last chip. Antigravity sessions get a portrait and a card too.
 Each badge has its own
 shape, symbol and colour, from the Okabe-Ito palette:
 

@@ -106,10 +106,6 @@ export function harnessOf(entry) {
   return "claude";
 }
 
-export function windowNote(key) {
-  if (key === "claude_gpt") return "ends Nov 18";
-  return null;
-}
 
 export function windowLabel(key) {
   return WINDOW_LABELS[key] ?? key;
@@ -295,10 +291,7 @@ export function ringStyle(pct, cap) {
  * and one sentence for a screen reader, which reads the full forms.
  */
 export function entryText(row, compact) {
-  let sub = compact ? row.short : row.sub;
-  if (row.note && !sub.includes(row.note)) {
-    sub = `${sub} \u00b7 ${row.note}`;
-  }
+  const sub = compact ? row.short : row.sub;
   return {
     label: row.label,
     pct: compact ? formatPctShort(row.pct) : formatPct(row.pct),
@@ -445,7 +438,6 @@ export function toRows(payload, nowMs = Date.now()) {
       if (!p.windows[key]) continue;
       const r = evaluate(p, key, nowMs);
       if (r.state === "waiting") continue;
-      const note = windowNote(key) ?? p.note ?? null;
       rows.push({
         ...r,
         key: `${p.account}:${key}`,
@@ -453,7 +445,10 @@ export function toRows(payload, nowMs = Date.now()) {
         harness: h,
         window: key,
         harnessLabel: HARNESS_LABELS[h] ?? h,
-        note,
+        accountLabel: p.label,
+        // When the account's newest reading arrived (s), and when this window resets (s).
+        observedAt: Number(p.written_at),
+        resetsAt: num(p.windows[key].resets_at),
         isCapped: r.pct >= 100 || r.state === "waiting",
         label: multi ? `${p.label} \u00b7 ${WINDOW_SHORT[key] ?? key}` : r.label,
       });
