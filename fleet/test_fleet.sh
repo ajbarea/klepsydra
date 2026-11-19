@@ -2135,10 +2135,11 @@ check "#445: fleet done sends the report to the pane in orchestrator.pane, as fl
 check "#445: the report is kept, unread, until fleet close" "$(cut -f2,3,4 "$DONE_REPORTS")" "wrk1	$w	sent"
 check "#445: a delivered report leaves the queue file alone" "$(grep -c 'report not delivered' "$FLEET_QUEUE_MD")" "0"
 check "#445: the pane stays open for its final report" "$(fleet_panes | grep -cx -- "$w")" "1"
-# A multi-line report goes as one line; "-" reads stdin; NAME form works from any pane.
+# A multi-line report goes as one line; "-" reads stdin; NAME form works from any pane (%99999: none
+# of the test server's, so never the orchestrator's).
 w2=$(dpane wrk2)
 check "#445: a report on stdin (-), newlines folded to one line, goes by NAME from another pane" \
-  "$(printf 'line one\nline two\n' | TMUX_PANE=%1 bash "$here/fleet" "done" wrk2 - 2>/dev/null | tail -1) $(grep -c '^SUBMIT wrk2 finished: line one line two$' "$work/hph.log")" "report: sent 1"
+  "$(printf 'line one\nline two\n' | TMUX_PANE=%99999 bash "$here/fleet" "done" wrk2 - 2>/dev/null | tail -1) $(grep -c '^SUBMIT wrk2 finished: line one line two$' "$work/hph.log")" "report: sent 1"
 # Undelivered: the orchestrator's pane at a usage limit, then no orchestrator pane at all.
 w3=$(dpane wrk3)
 state hph "{\"above\":[\"work\",\"$LIMIT\"],\"on_submit\":\"none\"}"; settle
