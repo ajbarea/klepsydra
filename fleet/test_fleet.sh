@@ -2253,14 +2253,22 @@ rm -f "$KLEPSYDRA_DIR/wrapup/$SID.json"
 check "#454 B1: a turn printing text with no spinner busy can read is refused (1): its screen changed in the quiet window" \
   "$(bash "$here/fleet" close wrk7 2>&1 | grep -c '^error: .*its screen changed within') $(grep -c '^SUBMIT' "$work/wrk7.log") $(fleet_panes | grep -cx -- "$b")" "1 0 1"
 kill "$wrp" 2>/dev/null; wait "$wrp" 2>/dev/null
-state wrk7 '{"above":["done"],"busy":false,"exit_on_exit":true,"on_submit":"none"}'; settle
+state wrk7 '{"above":["done"],"busy":false,"exit_on_exit":true,"on_submit":"none","log_typed":true}'; settle; : >"$work/wrk7.log"
 # The hook writes the file async, up to a second after the prompt the screen showed: a write in the window refuses.
 ( for i in $(seq 40); do jq -n --arg p "$b" --argjson i "$i" '{session_id: "x", ended: null, tmux: {pane: $p}, state: "done", reason: null, background: [], turn_at: $i}' >"$work/sf.t"
     mv -f "$work/sf.t" "$KLEPSYDRA_DIR/fleet/$SID.json"; sleep 0.2; done ) & wrp=$!
-check "#454 S1: a session file written within the quiet window is refused (1), nothing typed" \
-  "$(bash "$here/fleet" close wrk7 2>&1 | grep -c '^error: .*its session file was written') $(grep -c '^SUBMIT' "$work/wrk7.log")" "1 0"
+check "#454 S1: a session file written within the quiet window is refused (1) before /exit is typed at all" \
+  "$(bash "$here/fleet" close wrk7 2>&1 | grep -c '^error: .*its session file was written within') $(grep -c '^TYPED' "$work/wrk7.log") $(grep -c '^SUBMIT' "$work/wrk7.log")" "1 0 0"
 kill "$wrp" 2>/dev/null; wait "$wrp" 2>/dev/null
 done_live "$b" "done" '[]'
+# Settled and quiet, but the box holds text (AJ typing a reply) or a menu stands where it was.
+state wrk7 '{"above":["done"],"busy":false,"exit_on_exit":true,"on_submit":"none","log_typed":true,"input":"a draft reply"}'; settle; : >"$work/wrk7.log"
+check "#454 verify: a quiet, settled pane whose input box holds text is refused (1), nothing typed, the text kept" \
+  "$(bash "$here/fleet" close wrk7 2>&1 | grep -c '^error: .*its input box is not showing, or holds text') $(grep -c '^TYPED\|^SUBMIT' "$work/wrk7.log") $(input_text "$(screen "$b")")" "1 0 a draft reply"
+state wrk7 '{"above":["done"],"busy":false,"exit_on_exit":true,"on_submit":"none","log_typed":true,"clear":true,"menu":"limit"}'; settle; : >"$work/wrk7.log"
+check "#454 verify: a quiet, settled pane with a menu where its input box was is refused (1), nothing typed" \
+  "$(bash "$here/fleet" close wrk7 2>&1 | grep -c '^error: .*its input box is not showing, or holds text') $(grep -c '^TYPED\|^SUBMIT' "$work/wrk7.log") $(fleet_panes | grep -cx -- "$b")" "1 0 1"
+state wrk7 '{"above":["done"],"busy":false,"exit_on_exit":true,"on_submit":"none"}'; t send-keys -t "$b" Escape; settle; : >"$work/wrk7.log"
 # /exit with a tool still running opens Claude Code's dialog, "Exit and stop tasks" first: Esc, and left open.
 state wrk7 '{"above":["done"],"busy":false,"exit_dialog":true,"on_submit":"none"}'; settle
 check "#454 S1: /exit that opens the stop-tasks dialog is cancelled with Esc, never confirmed, and the pane left open (1)" \

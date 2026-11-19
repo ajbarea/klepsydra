@@ -18,11 +18,15 @@ Branch feat/fleet-done-report-445, PR #454. Issues: #445 (and its comment), #446
 - Mutation checked: each #454 test fails on a5ec5fc's close.sh/lib.sh; `steady` and `same_transcript` stubbed true each fail their test.
 - Live, private socket close454-live, haiku 2.1.316: (a) printing turn refused 33/33; (b) wrap-up continuation refused throughout (5 reads with file done + asked); (c) dialog cancelled, shell kept; (d) closed at rest (twice, short and full screen).
 
+- Round 5 verify (Heph, fresh Opus): clean on Blocking; two vacuous guards fixed in tests:
+  the S1 file-write test now greps `written within` and asserts /exit was never typed (fake_pane
+  `log_typed` logs TYPED runs); new cases: settled + quiet with text in the box, and with a menu where
+  the box was, both refused. Mutation: deleting close.sh's fingerprint line (145) or idle_empty line
+  (140) turns its test red. #468 gained the other-Stop-hooks line.
+
 ## Next
-- Final verify done on 1a32196: CI green; `make test-fleet` 962 passed, 1 failed (#273 keryx-config
-  isolation: a live session's keryx off at 00:11:21Z wrote AJ's config mid-run; the suite's stubs never
-  reach the daemon; friction.md line logged); section run 44/49, the 5 FAILs standalone-only (pass in the full suite).
-- Reported to Heph; Heph runs a fresh Opus verify. Do not merge. Section runner fleet/.sec445.sh is untracked.
+- Push, CI green, report to Heph (fleet send %36), fleet done. Heph verifies again; do not merge.
+- Section runner fleet/.sec445.sh is untracked (rebuilt for this round's line numbers).
 
 ## Known residual
 - A prompt that lands in the last ~0.1-0.3 s before Enter is not seen: spinner 60-104 ms, fleet file 140-255 ms, transcript 190-280 ms after submit (measured). /exit mid-turn ends the session at once.

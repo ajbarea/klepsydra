@@ -33,6 +33,8 @@ A test steers it through a JSON state file, re-read on every tick:
              prompt arriving as /exit goes in)
   exit_dialog  /exit opens Claude Code's "Background work is running" dialog
              (2.1.316, captured 2026-11-18): Enter exits, Esc cancels it
+  log_typed  log each run of typed keys (TYPED <text>), so a test can tell
+             text was typed even when it was erased before any Enter
   on_exit    a command /exit runs first, as Claude Code's SessionEnd hook
              (prompt_input_exit) runs the fleet hook on a real /exit
 
@@ -251,7 +253,10 @@ class Pane:
                 while self.buf and self.buf[:1] >= b" " and self.buf[:1] != b"\x7f":
                     rest += self.buf[:1]
                     self.buf = self.buf[1:]
-                self.input += rest.decode("utf-8", "replace")
+                rest = rest.decode("utf-8", "replace")
+                self.input += rest
+                if self.state.get("log_typed"):
+                    self.log("TYPED " + rest)
 
     def tick(self):
         if self.busy_at is not None and time.time() >= self.busy_at:
