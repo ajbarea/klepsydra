@@ -110,12 +110,15 @@ comes from the status line's `quota` input, as the account `agy-primary`.
 | its tightest window's percent and countdown, the rest as pips | always |
 | an underline and **route** | the account the fleet would use next |
 | **out** until the reset, the session hidden | its week is at 100% |
-| dimmed, with its age ("10h old") | its newest reading is over 3 hours old |
+| dimmed, with its age ("10h old") | the reading behind its number is over 3 hours old |
+| its age ("50m old") beside its name | stacked, from 30 minutes |
 
 A model group's pool, such as Antigravity's Claude & GPT, is a pip and never
 decides the chip. A Claude account named for an organisation wears a monogram
 of it ("RIT"); a personal one wears the Claude mark. Hover a chip for every
-window with its reset time and the reading's age.
+window with its reset time and the reading's age; a window kept from an older
+reading names its own age there, and its pip greys once that age passes 3 hours.
+On the wall and the phone, a spent week hides that account's session row too.
 
 ## Two accounts at once
 
