@@ -48,7 +48,7 @@ REMOTE = "https://claude.ai/code/session_01PLACEHOLDERphone"
 # The one card keryx kept a clip for that the server can serve: a real session id.
 CLIP_ID = "3f1c0a52-7b1e-4c0e-9a55-2f6f0d1d7a10"
 DESKTOP = ", ".join([
-    ".jump", ".clear", ".menu", "#new-session", "#ledger-open", ".chip", ".density", ".undo", ".end-confirm", "[data-act]",
+    ".jump", ".clear", ".menu", "#new-session", "#ledger-open", "button.chip", ".density", ".undo", ".end-confirm", "[data-act]",
     "#wrapup-open", "#wrapup-stop", "#end-ready", "#start-session", "#clear-ended", "#theme",
 ])
 THEMES = {t: json.loads((ROOT / f"src/fleet/themes/{t}.json").read_text()) for t in ("kourai", "professions", "dicebear")}
@@ -414,7 +414,7 @@ def main() -> int:
                 run.check([c["harness"] for c in g["chips"]] == ["copilot", "claude", "claude"] and g["chips"][0]["placeholder"],
                           "Copilot's placeholder, then each Claude account, in route order", [c["harness"] for c in g["chips"]])
                 run.check(re.fullmatch(r"57% [78]m( route)?", texts[1]) is not None, "the account in use shows its tightest window and its reset", texts)
-                run.check(g["chips"][1]["pips"] == 2 and g["chips"][1]["said"].startswith("Personal"), "its other window is a pip, and a screen reader hears its detail", g["chips"][1])
+                run.check(g["chips"][1]["pips"] == 2 and g["chips"][1]["said"].startswith("Claude · Personal"), "its other window is a pip, and a screen reader hears its detail", g["chips"][1])
                 run.check(all(0 <= c["box"][0] and c["box"][1] <= g["width"] for c in g["chips"]), "every chip inside the screen", [c["box"] for c in g["chips"]])
                 run.check(g["chips"][1]["fill"] == "rgb(217, 198, 165)", "the ramp's low stop under 60%", g["chips"][1]["fill"])
                 for scheme in ("light", "dark"):
@@ -640,8 +640,8 @@ def main() -> int:
                 g = page.evaluate(GAUGES)
                 texts = [c["text"] for c in g["chips"]]
                 print(f"  chips {texts}")
-                personal = next(c for c in g["chips"] if c["said"].startswith("Personal"))
-                team = next(c for c in g["chips"] if c["said"].startswith("Team"))
+                personal = next(c for c in g["chips"] if c["said"].startswith("Claude · Personal"))
+                team = next(c for c in g["chips"] if c["said"].startswith("Claude · Team"))
                 run.check(re.match(r"91% [78]m", personal["text"]) and personal["fill"] == "rgb(239, 68, 68)", "a new reading arrives over the stream, red past 85%", [personal["text"], personal["fill"]])
                 run.check(team["stale"] and re.search(r"\b3h old\b", team["text"]), "a reading hours old says how old", team["text"])
                 run.check(g["barHeight"] == bar_height, "four chips leave the sticky bar as tall as three did", [bar_height, g["barHeight"]])
@@ -650,8 +650,8 @@ def main() -> int:
 
                 # A spent week hides its account's session window until the week resets (#421).
                 write_reading(klepsydra, TEAM, "Team", {"five_hour": (12, 2 * 3600 + 600), "seven_day": (100, 2 * 86400)}, session="00000000-0000-4000-8000-000000000002")
-                wait_until(page, "[...document.querySelectorAll('#dock-chips > .chip')].some((c) => /^Team/.test(c.getAttribute('aria-label')) && c.querySelector('.val').textContent === 'out')", 15)
-                team = next(c for c in page.evaluate(GAUGES)["chips"] if c["said"].startswith("Team"))
+                wait_until(page, "[...document.querySelectorAll('#dock-chips > .chip')].some((c) => /^Claude · Team/.test(c.getAttribute('aria-label')) && c.querySelector('.val').textContent === 'out')", 15)
+                team = next(c for c in page.evaluate(GAUGES)["chips"] if c["said"].startswith("Claude · Team"))
                 run.check(team["text"].startswith("out ") and team["pips"] == 1 and "hidden until" in team["said"], "a spent week reads out, its session window hidden", team)
 
                 # No reading left: the gauges wait, as the strip does.

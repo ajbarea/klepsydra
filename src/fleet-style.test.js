@@ -269,7 +269,12 @@ test("the compact ledger line takes the foot slot without growing it, and its ch
     assert.equal(of(line), of(slot), `${prop} matches the slot a note uses`);
   }
   // The chip is 17 px tall in the slot; its hit area reaches 4 px past each side, 25 px in all.
-  assert.match(rule(".chip::after"), /inset:\s*-4px 0/);
+  assert.match(rule("button.chip::after"), /inset:\s*-4px 0/);
+  // Scoped to the card's button, so the header's usage chips (chips.css) take none of it.
+  const loose = css.replace(/\/\*[\s\S]*?\*\//g, "").match(/[^{}]+(?=\{)/g)
+    .flatMap((list) => list.split(/,(?![^(]*\))/).map((x) => x.trim()))
+    .filter((sel) => /\.chip\b(?!s)/.test(sel) && !/button\.chip|\.dock\b/.test(sel));
+  assert.deepEqual(loose, [], "every .chip rule is the card's button or the dock's");
   assert.match(css, /\.card:has\(\.note:not\(:empty\)\) \.ledger-line/, "a note takes the slot");
   assert.match(css, /\.card:has\(\.why:not\(\[hidden\]\)\) \.ledger-line/, "so does Open terminal's reason");
 });

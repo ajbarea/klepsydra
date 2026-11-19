@@ -512,7 +512,7 @@ button:focus-visible { outline: 2px solid var(--card-focus); outline-offset: 2px
 .card:not(.open-text) .also-more,
 .ledger-line .receipt,
 .updated { display: none !important; }
-.ledger-line:not(:has(.chip:not([hidden]), .partial:not([hidden]))) { display: none; }
+.ledger-line:not(:has(button.chip:not([hidden]), .partial:not([hidden]))) { display: none; }
 .card:not(.open-text) .crew-line { position: absolute; top: 0; left: 0; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 /* A done, not started, silent or ended card is a slim row: who, where, its
    latest reply on one line (with its play button) and its actions. */
@@ -925,7 +925,8 @@ a.branch[href]:hover, a.branch[href]:focus-visible { color: var(--text); }
   font-size: 12px;
   cursor: default;
 }
-.chip {
+/* A card's Ledger chip (a button); the header's usage chips are chips.css's. */
+button.chip {
   position: relative; /* its hit area reaches past the compact line */
   flex: none;
   padding: 2px var(--space-3);
@@ -935,7 +936,7 @@ a.branch[href]:hover, a.branch[href]:focus-visible { color: var(--text); }
   border-color: var(--text-quiet);
   border-radius: 999px;
 }
-.chip::after { content: ""; position: absolute; inset: -4px 0; }
+button.chip::after { content: ""; position: absolute; inset: -4px 0; }
 
 .actions { display: flex; align-items: center; gap: 8px; border-top: 1px solid color-mix(in oklab, var(--on-card, var(--card-line)) 30%, var(--card-line)); padding-top: var(--space-3); }
 /* 28 px tall, over the 24x24 minimum (WCAG 2.2, 2.5.8); compact sets its own. */
@@ -1119,7 +1120,7 @@ a.branch[href]:hover, a.branch[href]:focus-visible { color: var(--text); }
 }
 [data-density="compact"] .receipt { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 [data-density="compact"] .r-short { display: inline; }
-[data-density="compact"] .chip { padding: 0 var(--space-3); line-height: 15px; }
+[data-density="compact"] button.chip { padding: 0 var(--space-3); line-height: 15px; }
 [data-density="compact"] .partial { line-height: 15px; }
 [data-density="compact"] .card:has(.note:not(:empty)) .ledger-line,
 [data-density="compact"] .card:has(.ending:not([hidden])) .ledger-line,
@@ -1613,10 +1614,13 @@ a.remote:focus-visible { outline: 2px solid var(--card-focus); outline-offset: 2
   .served .lead { gap: var(--space-2) var(--space-7); }
   .served .tally { gap: var(--space-1) var(--space-6); }
   .served .tally b { font-size: 22px; }
-  /* The docked gauges take a line of their own, two chips a row, so the bar stays short. */
+  /* The docked gauges take a line of their own, two chips a row, so the bar stays
+     short; a long chip wraps inside its cell. The phone has no chevron (read-only). */
   .served .dock { flex: 1 1 100%; }
-  .served .dock .chip { padding: 4px 8px; }
-  .served button.dock-hide { min-width: 44px; min-height: 44px; }
+  .served .dock .chips { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); flex: 1 1 auto; }
+  .served .dock .chip { padding: 4px 6px; min-width: 0; }
+  .served .dock .chip .body { flex-wrap: wrap; row-gap: 0; }
+  .served .dock .chips[data-layout="linear"] .chip + .chip::before { display: none; }
   .served .wall { padding-bottom: calc(var(--wall-pad) + env(safe-area-inset-bottom)); }
   .served a.remote { min-height: 44px; min-width: 44px; }
   .served .card .look { min-width: 44px; min-height: 44px; }

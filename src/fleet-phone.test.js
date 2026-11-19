@@ -279,7 +279,7 @@ test("the gauges dock in the bar after the tally; on a phone they take a line of
   const css = read("src/fleet/wall.css");
   const phone = css.slice(css.indexOf("/* On a phone: one column"));
   assert.match(phone, /\.served \.dock \{ flex: 1 1 100%; \}/);
-  assert.match(phone, /\.served button\.dock-hide \{ min-width: 44px; min-height: 44px; \}/, "a 44 px target on the phone");
+  assert.match(phone, /\.served \.dock \.chips \{ display: grid; grid-template-columns: repeat\(2, minmax\(0, 1fr\)\);/, "two chips a row");
 });
 
 test("#247: scheme.js marks the phone page .served before the first paint, by feedKind's rule", () => {

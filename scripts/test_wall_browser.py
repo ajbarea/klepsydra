@@ -1190,6 +1190,11 @@ window.__TAURI__ = { core: {
       setTimeout(() => args.onMessage.onmessage(window.__savedOpacity ?? 80), 0);
       return Promise.resolve();
     }
+    if (cmd === 'toggles_subscribe') {
+      window.__toggles = args.onMessage;
+      setTimeout(() => args.onMessage.onmessage(window.__savedToggles ?? { gauges_in_header: true }), 0);
+      return Promise.resolve();
+    }
     if (cmd === 'get_wall_density') return Promise.resolve('auto');
     // The front end's log lines, apart from the actions.
     if (cmd === 'plugin:log|log') { (window.__logs ??= []).push(args); return Promise.resolve(); }
