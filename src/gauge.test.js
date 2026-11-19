@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { WINDOW_ORDER, ROUTE_ORDER, FLEET_ROOM_PCT, rampColor, rampPosition, formatCountdown, formatCountdownShort, formatAge, formatAgeShort, evaluate, formatPct, formatPctShort, ringDash, ringCap, ringStyle, entryText, usageRows, toRows, SHOW_AGE_AFTER_MS, DROP_AFTER_MS, WAITING, harnessOf, harnessGroups, routeLane } from "./gauge.js";
+import { WINDOW_ORDER, ROUTE_ORDER, FLEET_ROOM_PCT, rampColor, rampPosition, formatCountdown, formatCountdownShort, formatAge, formatAgeShort, evaluate, formatPct, usageRows, toRows, SHOW_AGE_AFTER_MS, DROP_AFTER_MS, WAITING, harnessOf, harnessGroups, routeLane } from "./gauge.js";
 
 const STOPS = { low: "#3b82f6", mid: "#eab308", high: "#ef4444", midAt: 60, highAt: 85 };
 const NOW = 1_800_000_000_000; // fixed clock
@@ -132,15 +132,12 @@ test("a window whose reset has passed reads as an empty window", () => {
 test("every reading carries a short form that keeps its warnings", () => {
   const fresh = evaluate(live(73.2), "five_hour", NOW);
   assert.equal(fresh.short, "2h");
-  assert.equal(formatPctShort(fresh.pct), "73%");
   const old = evaluate(live(50, 2 * 3600e3, SHOW_AGE_AFTER_MS + 1000), "five_hour", NOW);
   assert.equal(old.short, "2h · 15m old");
   const unknown = evaluate({ windows: { five_hour: { used_percentage: 5, resets_at: secs(NOW + 3600e3) } } }, "five_hour", NOW);
   assert.equal(unknown.short, "1h · age unknown");
   assert.equal(evaluate(live(73, -1000), "five_hour", NOW).short, "just reset");
   assert.equal(evaluate(live(73, -2 * 3600e3), "five_hour", NOW).short, "reset 2h ago");
-  assert.equal(formatPctShort(null), "--");
-  assert.equal(formatPctShort(118.7), "118%");
 });
 
 test("ages read in the largest whole unit", () => {
@@ -439,48 +436,6 @@ test("a session with no usable time reads as age unknown, not decades old", () =
 });
 
 
-test("the ring's drawn arc, caps included, is the percentage", () => {
-  const cap = 5;
-  assert.equal(ringDash(97, cap) + cap, 97, "97% leaves a gap, not a closed ring");
-  assert.equal(ringDash(50, cap) + cap, 50);
-  assert.equal(ringDash(100, cap), 100, "a full window closes the ring");
-  assert.equal(ringDash(118, cap), 100, "over the limit is still one full ring");
-  assert.equal(ringDash(0, cap), 0);
-  assert.equal(ringDash(null, cap), 0);
-  assert.ok(ringDash(1, cap) > 0 && ringDash(1, cap) < 0.1, "1% is a dot, the caps alone");
-});
-
-// ── what an entry shows, on the desktop gauge and the phone wall alike ─────
-
-test("an entry's text is the compact layout's in compact, the full layout's otherwise", () => {
-  const row = { ...evaluate(live(57.9, 8 * 60e3), "five_hour", NOW), label: "Personal \u00b7 session" };
-  assert.deepEqual(entryText(row, true), {
-    label: "Personal \u00b7 session",
-    pct: "57%",
-    sub: "8m",
-    spoken: "Personal \u00b7 session: 57% used. Resets in 8 min",
-  });
-  const full = entryText(row, false);
-  assert.equal(full.pct, "57% used");
-  assert.equal(full.sub, "Resets in 8 min");
-  assert.equal(full.spoken, entryText(row, true).spoken, "one spoken form for both layouts");
-});
-
-test("a reset entry says when it reset, in both forms", () => {
-  const row = evaluate(live(73, -7 * 3600e3), "five_hour", NOW);
-  assert.deepEqual(entryText(row, true), { label: "Current session", pct: "0%", sub: "reset 7h ago", spoken: "Current session: 0% used. Reset 7 hr ago" });
-});
-
-test("the ring's style draws the percentage from 12 o'clock and hides an empty one", () => {
-  const cap = ringCap(3, 9.5);
-  assert.ok(Math.abs(cap - (3 / (2 * Math.PI * 9.5)) * 100) < 1e-12);
-  assert.deepEqual(ringStyle(57, cap), { dasharray: `${ringDash(57, cap)} 100`, dashoffset: `${-cap / 2}`, visible: true });
-  assert.equal(ringStyle(0, cap).visible, false, "0% draws no dot");
-  assert.equal(ringStyle(null, cap).visible, false);
-  assert.equal(ringStyle(0.4, cap).visible, true, "under 1% is still a dot");
-  assert.equal(ringStyle(140, cap).dasharray, "100 100", "over the limit closes the ring");
-});
-
 test("waiting is one phrase, the gauge's and the phone's", () => {
   assert.equal(WAITING, "waiting for Claude Code");
   assert.equal(evaluate(null, "five_hour", NOW).sub, WAITING);
@@ -492,7 +447,7 @@ test("the phone's rows are the gauge's rows of the snapshot's readings", () => {
     acct("a1", "Personal", { five_hour: win(57, 8 * 60e3), seven_day: win(27, (6 * 24 + 6) * 3600e3) }),
   ];
   assert.deepEqual(usageRows({ sessions: [], usage }, NOW), toRows(usage, NOW));
-  assert.deepEqual(usageRows({ sessions: [], usage }, NOW).map((r) => entryText(r, true)).map((t) => `${t.pct} ${t.sub} ${t.label}`), [
+  assert.deepEqual(usageRows({ sessions: [], usage }, NOW).map((r) => `${Math.floor(r.pct)}% ${r.short} ${r.label}`), [
     "57% 8m Personal \u00b7 session",
     "27% 6d 6h Personal \u00b7 week",
     "0% reset 7h ago Team \u00b7 session",

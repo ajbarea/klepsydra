@@ -21,10 +21,10 @@ import { healthView } from "./health.js";
 import { createReplayer } from "./replay.js";
 import { cutsText } from "./fulltext.js";
 import { WAITING, toRows, usageRows } from "../gauge.js";
-import { hiddenRows } from "./chips.js";
+import { DOCK_USAGE_MS, wireDock } from "./dock.js";
 import { wireOpacityPick } from "./opacitypick.js";
 import { subscribeOpacity } from "../opacity.js";
-import { readMode, readStops, syncEntries } from "../gaugeview.js";
+import { readMode, readStops } from "../gaugeview.js";
 import { createLog } from "../log.js";
 import { FIX_STEPS, buildEntries, buttonTitle, firstModel, launchArgs, menuEntries, pickDefault, roomWords } from "./newsession.js";
 
@@ -67,8 +67,6 @@ const startButton = document.getElementById("start-session");
 const clearNote = document.getElementById("clear-note");
 const clearEnded = document.getElementById("clear-ended");
 const emptyTitle = document.getElementById("empty-title");
-const limits = document.querySelector(".limits");
-const limitRows = limits.querySelector(".limit-rows");
 
 // The gear's view menu is a disclosure over the wall's corner: Escape closes it
 // and gives focus back to the gear, and so does a press anywhere outside it.
@@ -83,14 +81,13 @@ gear.addEventListener("keydown", (e) => {
 document.addEventListener("pointerdown", (e) => {
   if (gear.open && !gear.contains(e.target)) gear.open = false;
 });
-const limitWait = limits.querySelector(".limit-wait");
 // + New session (#440, Variant A): the split button names the engine it
 // starts; its caret opens one row per other engine with its account, room and
 // models. Room comes from read_usage through the gauge's own toRows (the
 // desktop snapshot carries no readings), engines and accounts from the
 // launcher, the default and the last used from prefs.json.
 let sessions = [];
-let latestSnapshot = null; // its usage readings draw the limit gauges
+let latestSnapshot = null; // the phone's carries usage readings for the docked gauges
 const newKind = document.getElementById("new-kind");
 const newMenu = document.getElementById("new-menu");
 const engList = newMenu.querySelector(".eng-list");
@@ -102,6 +99,7 @@ const USAGE_MS = 60_000; // readings change only as sessions reply; the menu rea
 const ENGINES_MS = 60_000; // a newly installed engine shows by the next opening after this
 const ns = {
   rows: [],
+  read: false, // a read_usage has answered, so the dock has rows to draw
   engines: null,
   agy: { state: inTauri ? "waiting" : "missing", models: [] },
   prefs: { default: null, last: null },
@@ -112,6 +110,42 @@ const ns = {
   fixShown: new Set(), // entry ids whose fix step is shown
   enginesAt: 0,
 };
+
+// The header's gauges (#421): one read_usage feeds them and + New session,
+// every DOCK_USAGE_MS while the wall shows them, else every USAGE_MS.
+const dockEl = document.querySelector(".dock");
+const dock = wireDock({
+  els: {
+    dock: dockEl,
+    chips: document.getElementById("dock-chips"),
+    wait: dockEl.querySelector(".dock-wait"),
+    hide: dockEl.querySelector(".dock-hide"),
+    pick: document.getElementById("gauges-in-header"),
+    gear: gear.querySelector("summary"),
+  },
+  inTauri,
+  invoke: (command, args) => window.__TAURI__.core.invoke(command, args),
+  follow,
+  log,
+  look: () => ({ stops: readStops(), mode: readMode() }),
+  onChange: () => readUsageNow(),
+});
+let usageTimer = 0;
+const usagePace = () => (dock.isOn() && !document.hidden ? DOCK_USAGE_MS : USAGE_MS);
+function scheduleUsage() {
+  clearTimeout(usageTimer);
+  if (inTauri) usageTimer = setTimeout(readUsageNow, usagePace());
+}
+async function readUsageNow() {
+  if (!inTauri) return;
+  clearTimeout(usageTimer);
+  await readRows();
+  paintNewSession();
+  paintDock(Date.now());
+  scheduleUsage();
+}
+// Back in view: fresh readings at once; out of view: the slow pace.
+document.addEventListener("visibilitychange", () => (document.hidden ? scheduleUsage() : readUsageNow()));
 
 // The engine icons as nodes, parsed once from their constant markup.
 const iconCache = new Map();
@@ -272,6 +306,7 @@ function paintNewSession() {
 async function readRows() {
   try {
     ns.rows = toRows(await window.__TAURI__.core.invoke("read_usage"), Date.now());
+    ns.read = true;
   } catch (err) {
     log.warnRepeat("read_usage", "read_usage failed, so + New session shows no room", err);
   }
@@ -316,7 +351,7 @@ async function loadPrefs() {
 newKind.addEventListener("click", () => {
   // Fresh room and engines for the opening menu; the open menu redraws as they land.
   if (!inTauri) return;
-  readRows().then(paintNewSession);
+  readUsageNow();
   readEngines().then(paintNewSession);
 });
 newMenu.addEventListener("toggle", (e) => {
@@ -392,8 +427,9 @@ if (inTauri) {
     .finally(() => {
       ns.ready = true;
       paintNewSession();
+      paintDock(Date.now());
     });
-  setInterval(() => readRows().then(paintNewSession), USAGE_MS);
+  scheduleUsage();
 }
 paintNewSession();
 startButton.hidden = !inTauri;
@@ -810,18 +846,10 @@ function paintRing(el, c) {
   show(el.querySelector(".more"), ring.more > 0 ? `+${ring.more}` : null);
 }
 
-// The usage-limit gauges: the desktop gauge's rows, drawn by its own code,
-// for a snapshot that carries readings (the phone server's).
-function paintLimits(now) {
-  const all = usageRows(latestSnapshot, now);
-  limits.hidden = all === null;
-  if (all === null) return;
-  // A spent week hides its account's session row, as on the gauge strip (#421).
-  const hidden = hiddenRows(all);
-  const rows = all.filter((r) => !hidden.has(r));
-  limitWait.hidden = rows.length > 0;
-  limitWait.textContent = WAITING;
-  syncEntries(limitRows, rows, { compact: true, stops: readStops(), mode: readMode() }, true);
+// The gauges docked in the header: the app's rows from read_usage, the
+// phone's from its snapshot (null without a usage source: the dock hides).
+function paintDock(now) {
+  dock.paint(inTauri ? (ns.read ? ns.rows : null) : usageRows(latestSnapshot, now), now);
 }
 
 function paintTally() {
@@ -858,7 +886,7 @@ function render(snapshot) {
   if (state !== wasState && state !== "cards") readLaunchDir();
   wasState = state;
   paintTally();
-  paintLimits(now);
+  paintDock(now);
   const cards = sessions.map((s) => card(s, cast, now, request));
   const twoAccounts = accountsDiffer(cards);
   for (const c of cards) c.showAccount = twoAccounts && Boolean(c.account);

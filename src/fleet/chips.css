@@ -1,0 +1,185 @@
+/* The usage chips (#421): one per account and engine, drawn by chipview.js
+   for the floating strip (index.html) and the wall's header (wall.html).
+   Each page sets --text, --text-dim, --panel-solid and --scale; the strip's
+   #panel overrides the ink and the ramp as its background thins (#438). */
+:root {
+  /* Fill ramp: the colour at 0%, at the midpoint, and at 100%. */
+  --ramp-low: #d9c6a5;   /* parchment: calm (#247: klepsydra is warm bronze, never blue) */
+  --ramp-mid: #eab308;   /* yellow */
+  --ramp-high: #ef4444;  /* red    */
+  --ramp-mid-at: 60;     /* blend: where --ramp-mid sits; bands: yellow starts */
+  --ramp-high-at: 85;    /* bands only: where red takes over */
+  --ramp-mode: bands;    /* blend | bands */
+
+  --track: #322a1f;
+  --route: #f3ead7;     /* ivory: the one route mark, never a status hue (#421) */
+
+  /* A chip's words, its mark and its pips: the lead window's pip, and every other window's. */
+  --size-label: 13px;
+  --size-pct: 15px;     /* a chip's bold value */
+  --size-sub: 13px;     /* its reset */
+  --size-small: 11.5px; /* a reading's age, a monogram */
+  --mark-size: 17px;
+  --pip-w: 4px;
+  --pip-h: 11px;
+  --pip-lead-w: 5px;
+  --pip-lead-h: 15px;
+}
+
+/* The light scheme: the wall's parchment tokens. The phone wall stays dark (.served). */
+@media (prefers-color-scheme: light) {
+  :root:not(.served) {
+    --track: #e8dcc8;
+    --route: #2b2118;
+    --ramp-low: #6a5640;
+    --ramp-mid: #9a6b00;
+    --ramp-high: #b3261e;
+  }
+}
+/* ─────────────────────────────────────────────────────────────────────────── */
+
+/* ── Chips (#421, variant A): text first, like NVIDIA's HUD. Neutral ink and
+   bold tabular values; colour is status only, on the pips. ── */
+.chips { display: flex; align-items: center; }
+.chips:empty { display: none; }
+.chips .chip {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(7px * var(--scale));
+  padding: calc(5px * var(--scale)) calc(12px * var(--scale));
+  position: relative;
+  color: var(--text);
+  font-size: calc(var(--size-pct) * var(--scale));
+  line-height: 1.2;
+}
+.chips .chip .body { display: inline-flex; align-items: center; gap: calc(7px * var(--scale)); }
+/* A thin bar between accounts, not boxes or pills. */
+.chips[data-layout="linear"] .chip + .chip::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 22%;
+  height: 56%;
+  width: calc(1.5px * var(--scale));
+  background: var(--text-dim);
+  opacity: 0.55;
+}
+.chips .mark {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  min-width: calc(var(--mark-size) * var(--scale));
+  height: calc(var(--mark-size) * var(--scale));
+}
+.chips .mark svg { width: calc(var(--mark-size) * var(--scale)); height: calc(var(--mark-size) * var(--scale)); }
+.chips .mono {
+  font-weight: 750;
+  font-size: calc(var(--size-small) * var(--scale));
+  letter-spacing: 0.02em;
+  line-height: 1;
+  padding: 0.22em 0.3em;
+  border-radius: calc(4px * var(--scale));
+  border: calc(1.5px * var(--scale)) solid currentColor;
+}
+.chips .val {
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.chips .when {
+  font-size: calc(var(--size-sub) * var(--scale));
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  opacity: 0.86;
+}
+.chips .age {
+  font-size: calc(var(--size-small) * var(--scale));
+  font-style: italic;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+.chips .rt {
+  font-variant-caps: all-small-caps;
+  font-size: calc(var(--size-label) * var(--scale));
+  font-weight: 650;
+  letter-spacing: 0.06em;
+  color: var(--route);
+  white-space: nowrap;
+}
+.chips .pips {
+  display: inline-flex;
+  align-items: flex-end;
+  gap: calc(2px * var(--scale));
+  height: calc(var(--pip-lead-h) * var(--scale));
+}
+.chips .pip {
+  position: relative;
+  display: inline-block;
+  width: calc(var(--pip-w) * var(--scale));
+  height: calc(var(--pip-h) * var(--scale));
+  border-radius: calc(1px * var(--scale));
+  background: var(--track);
+  overflow: hidden;
+}
+.chips .pip.big { width: calc(var(--pip-lead-w) * var(--scale)); height: calc(var(--pip-lead-h) * var(--scale)); }
+.chips .pip i {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  min-height: calc(1.5px * var(--scale));
+}
+/* A spent window: a notch across the full pip, so 100% is a shape too. */
+.chips .pip.full::before {
+  content: "";
+  position: absolute;
+  left: calc(-1px * var(--scale));
+  right: calc(-1px * var(--scale));
+  top: calc(3px * var(--scale));
+  height: calc(1.5px * var(--scale));
+  background: var(--panel-solid);
+  z-index: 1;
+}
+/* The one route mark: an ivory underline and the word. */
+.chips .chip[data-route] { box-shadow: inset 0 calc(-2px * var(--scale)) 0 var(--route); }
+.chips .chip[data-placeholder] :is(.val, .when) { color: var(--text-dim); }
+.chips .chip[data-placeholder] .mark { opacity: 0.7; }
+/* An old reading says its age, and its pips and mark dim; its words keep
+   their ink, so they hold 4.5:1 at every opacity (#486). */
+.chips .chip[data-stale] :is(.pips, .mark) { opacity: 0.5; }
+.chips .chip[data-stale] .pip i, .chips .pip.old i { background-color: var(--text-dim) !important; }
+
+/* Stacked ("Full" in the tray): a line per account, every window shown, the
+   values right-aligned like NVIDIA's stacked HUD. */
+.chips[data-layout="stacked"] {
+  display: grid;
+  grid-template-columns: auto minmax(calc(130px * var(--scale)), auto) repeat(var(--cells, 3), auto) auto;
+  column-gap: calc(14px * var(--scale));
+}
+.chips[data-layout="stacked"] .chip {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: subgrid;
+  padding: calc(5px * var(--scale)) calc(2px * var(--scale));
+  font-size: calc(14px * var(--scale));
+}
+.chips[data-layout="stacked"] .chip + .chip { border-top: calc(1px * var(--scale)) solid color-mix(in srgb, var(--text-dim) 25%, transparent); }
+.chips[data-layout="stacked"] .chip .body { display: contents; }
+.chips[data-layout="stacked"] .faces { grid-column: -2; }
+.chips .nm { display: inline-flex; gap: calc(8px * var(--scale)); align-items: baseline; font-size: calc(var(--size-label) * var(--scale)); white-space: nowrap; }
+.chips .chip[data-route] .nm { font-weight: 600; }
+.chips[data-layout="stacked"] .chip[data-route] { box-shadow: none; }
+.chips .cell {
+  display: inline-grid;
+  grid-template-columns: auto auto auto auto;
+  align-items: baseline;
+  justify-content: end;
+  gap: calc(6px * var(--scale));
+}
+.chips .cell .k { font-variant-caps: all-small-caps; letter-spacing: 0.05em; color: var(--text-dim); font-size: calc(var(--size-label) * var(--scale)); }
+.chips .cell b { font-size: calc(var(--size-pct) * var(--scale)); min-width: 3.1ch; text-align: right; font-variant-numeric: tabular-nums; }
+.chips .cell .t { font-size: calc(12.5px * var(--scale)); opacity: 0.86; min-width: 6.4ch; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.chips .cell .pip { align-self: center; height: calc(13px * var(--scale)); }
+.chips .cell.wide { grid-column: 3 / -2; justify-content: start; color: var(--text-dim); font-size: calc(var(--size-label) * var(--scale)); }
+.chips .cell.hidden-win .t { color: var(--text-dim); font-style: italic; }
+.chips[data-layout="stacked"] .chip[data-stale] .cell .pip { opacity: 0.5; }

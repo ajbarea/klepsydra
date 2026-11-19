@@ -257,55 +257,6 @@ export function formatPct(pct) {
   return `${Math.floor(pct)}% used`;
 }
 
-/** "73%": formatPct for the compact layout, where the ring says "used". */
-export function formatPctShort(pct) {
-  if (pct === null) return "--";
-  return `${Math.floor(pct)}%`;
-}
-
-/**
- * The ring's dash for `pct`, on a circle whose path is 100 long. A round cap
- * adds half the stroke at each end, `cap` along the path in all, so the dash
- * leaves it out and the drawn arc is `pct`. Under `cap` it is a dot; a full
- * window closes the ring.
- */
-export function ringDash(pct, cap) {
-  const p = Math.max(0, Math.min(100, pct ?? 0));
-  if (p === 0 || p === 100) return p;
-  return Math.max(MIN_DASH, p - cap);
-}
-// A zero-length dash may draw no cap at all, so the dot keeps a hair of length.
-const MIN_DASH = 0.01;
-
-/** The round caps' length along the 100-long path of a ring of radius `r` drawn `stroke` wide. */
-export function ringCap(stroke, r) {
-  return (stroke / (2 * Math.PI * r)) * 100;
-}
-
-/**
- * The ring's stroke for `pct`: the dash less its caps, moved half a cap
- * forward so the drawn arc starts at 12 o'clock. Hidden at zero, where the
- * caps alone would draw a dot.
- */
-export function ringStyle(pct, cap) {
-  const p = Math.max(0, Math.min(100, pct ?? 0));
-  return { dasharray: `${ringDash(pct, cap)} 100`, dashoffset: `${-cap / 2}`, visible: p > 0 };
-}
-
-/**
- * A row's words: the compact layout's short forms or the full layout's,
- * and one sentence for a screen reader, which reads the full forms.
- */
-export function entryText(row, compact) {
-  const sub = compact ? row.short : row.sub;
-  return {
-    label: row.label,
-    pct: compact ? formatPctShort(row.pct) : formatPct(row.pct),
-    sub,
-    spoken: `${row.label}: ${formatPct(row.pct)}. ${row.sub}`,
-  };
-}
-
 /**
  * The phone wall's rows from a snapshot's `usage` readings, as toRows draws
  * the gauge's; null when the snapshot carries none (an older server, or a

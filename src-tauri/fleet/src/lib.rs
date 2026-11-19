@@ -24,6 +24,7 @@ pub mod session;
 pub mod speaking;
 pub mod tabs;
 pub mod theme;
+pub mod toggles;
 pub mod usage;
 pub mod view;
 pub mod voices;

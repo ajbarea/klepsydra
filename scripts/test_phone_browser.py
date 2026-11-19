@@ -11,11 +11,11 @@ service worker and manifest installing, fleet.json cut to the wall's fields, a
 write refused, a wrap-up request and the empty state shown with none of their
 buttons, /wall.html sent to the root, and a stream refused at the cap opened
 again. The character theme saved in the server's prefs.json, and a switch
-followed live. The usage-limit gauges, from readings in the server's accounts folder:
-one per account and window in the gauge's order and words, opening the page
-and scrolling away under a sticky bar that six leave no taller than three, a
-new reading over /events, a stale one saying its age, none at all reading as
-waiting, and AA contrast with the system in light and in dark. A card's
+followed live. The usage gauges docked in the sticky bar (#421), from
+readings in the server's accounts folder: one chip per account in route order,
+the strip's words, on a line of their own two chips wide, a new reading over
+/events, a stale one saying its age, none at all reading as waiting, and AA
+contrast with the system in light and in dark. A card's
 Full text: shown on each card that cuts text short and no other, unfolding
 every cut line in place, opening nothing and asking the server nothing,
 open across a new snapshot; at 700x1000 with touch, full cards with it at
@@ -257,41 +257,54 @@ LAYOUT = """() => {
   };
 }""" % json.dumps(DESKTOP)
 
-# What the gauges show: each row's words, its ring, and the colours to judge.
+# What the docked gauges show: each chip's words, its lead pip, and the
+# colours to judge, each word's composited over the chips' ground.
 GAUGES = """() => {
-  const limits = document.querySelector('.limits');
+  const dock = document.querySelector('.dock');
+  const box = document.getElementById('dock-chips');
   const css = (el, p) => el && getComputedStyle(el)[p];
-  const rows = [...limits.querySelectorAll('.limit-rows > li')].map((li) => {
-    const fill = li.querySelector('.ring-fill');
-    const r = li.getBoundingClientRect();
+  const ground = css(box, 'backgroundColor');
+  const nums = (c) => c.match(/[\\d.]+/g).map(Number);
+  // A word's colour as seen: its alpha and every opacity up to the chips, over the ground.
+  const seen = (el) => {
+    if (!el) return null;
+    const [r, g, b, a = 1] = nums(css(el, 'color'));
+    let op = a;
+    for (let n = el; n && n !== box; n = n.parentElement) op *= Number(css(n, 'opacity'));
+    const [R, G, B] = nums(ground);
+    return `rgb(${[r * op + R * (1 - op), g * op + G * (1 - op), b * op + B * (1 - op)].map(Math.round).join(', ')})`;
+  };
+  const chips = [...box.children].map((c) => {
+    const r = c.getBoundingClientRect();
+    const lead = c.querySelector('.pip[data-lead]');
     return {
-      text: ['pct', 'sub', 'label'].map((k) => li.querySelector('.' + k).textContent).join(' '),
-      said: li.querySelector('.spoken').textContent,
-      hidden: li.querySelector('.row').getAttribute('aria-hidden'),
-      ring: fill.style.visibility !== 'hidden' && li.querySelector('.ring').checkVisibility(),
-      dash: fill.style.strokeDasharray,
-      stroke: css(fill, 'stroke'),
-      track: css(li.querySelector('.ring-track'), 'stroke'),
-      pct: css(li.querySelector('.pct'), 'color'),
-      sub: css(li.querySelector('.sub'), 'color'),
-      label: css(li.querySelector('.label'), 'color'),
+      harness: c.dataset.harness,
+      text: [...c.querySelectorAll('.body > :is(.val, .when, .age, .rt)')].map((e) => e.textContent).join(' '),
+      said: c.getAttribute('aria-label'),
+      placeholder: 'placeholder' in c.dataset,
+      stale: 'stale' in c.dataset,
+      pips: c.querySelectorAll('.pip').length,
+      fill: lead && css(lead.querySelector('i'), 'backgroundColor'),
+      track: lead && css(lead, 'backgroundColor'),
+      words: [...c.querySelectorAll('.body > :is(.val, .when, .age, .rt)')].map((e) => [e.className, seen(e)]),
       box: [r.left, r.right, r.top, r.bottom].map(Math.round),
     };
   });
   const bar = document.querySelector('.bar');
+  const wait = dock.querySelector('.dock-wait');
   return {
-    shown: limits.checkVisibility(),
-    inBar: bar.contains(limits),
-    region: [limits.tagName, limits.getAttribute('aria-label')],
-    wait: limits.querySelector('.limit-wait').checkVisibility() ? limits.querySelector('.limit-wait').textContent : null,
-    rows,
-    ground: css(document.body, 'backgroundColor'),
+    shown: dock.checkVisibility(),
+    inBar: bar.contains(dock),
+    region: [box.getAttribute('role'), box.getAttribute('aria-label')],
+    wait: wait.checkVisibility() ? wait.textContent : null,
+    chips,
+    ground,
+    rows: Math.round(box.getBoundingClientRect().height),
     barHeight: Math.round(bar.getBoundingClientRect().height),
     scheme: css(document.documentElement, 'colorScheme'),
     width: innerWidth,
   };
 }"""
-
 
 def rgb(c):
     return [int(x) for x in c[c.index("(") + 1:c.index(")")].split(",")[:3]]
@@ -307,21 +320,23 @@ def contrast(a, b):
 
 
 def check_gauges(run, page, scheme):
-    """The demo gauges in `scheme`: words at 4.5:1, the ring's fill at 3:1 on the page and its track."""
+    """The demo chips in `scheme`: words at 4.5:1 (a stale chip's dim aside, #486), a pip's fill at 3:1 on the ground and its track."""
     page.emulate_media(color_scheme=scheme)
     page.wait_for_timeout(100)
     g = page.evaluate(GAUGES)
     run.check(g["scheme"] == "dark", f"{scheme}: the wall stays dark, and says so to the browser", g["scheme"])
     low = []
-    for row in g["rows"]:
-        for k in ("pct", "sub", "label"):
-            if contrast(row[k], g["ground"]) < 4.5:
-                low.append((row["text"], k, round(contrast(row[k], g["ground"]), 2)))
-        for k in ("ground", "track"):
-            against = g["ground"] if k == "ground" else row["track"]
-            if row["ring"] and contrast(row["stroke"], against) < 3:
-                low.append((row["text"], f"ring on {k}", round(contrast(row["stroke"], against), 2)))
-    run.check(g["rows"] and low == [], f"{scheme}: every gauge reads at AA", low or g)
+    for chip in g["chips"]:
+        if not chip["stale"]:
+            for cls, colour in chip["words"]:
+                if contrast(colour, g["ground"]) < 4.5:
+                    low.append((chip["text"], cls, round(contrast(colour, g["ground"]), 2)))
+        if chip["fill"]:
+            for k in ("ground", "track"):
+                against = g["ground"] if k == "ground" else chip["track"]
+                if contrast(chip["fill"], against) < 3:
+                    low.append((chip["text"], f"pip on {k}", round(contrast(chip["fill"], against), 2)))
+    run.check(g["chips"] and low == [], f"{scheme}: every chip reads at AA", low or g)
     return g
 
 
@@ -389,25 +404,19 @@ def main() -> int:
                 gone = wait_until(page, "document.getElementById('ci-open').hidden", 15)
                 run.check(gone, "once ci.json is gone the phone hides the button", gone)
 
-                # The usage-limit gauges: every account and window, in the gauge's words and order.
-                wait_until(page, "document.querySelectorAll('.limit-rows > li').length === 3", 10)
+                # The docked gauges: a chip per account in route order, in the strip's words.
+                wait_until(page, "document.querySelectorAll('#dock-chips > .chip').length === 3", 10)
                 g = page.evaluate(GAUGES)
-                run.check(g["shown"] and not g["inBar"] and g["region"] == ["SECTION", "Usage limits"], "the gauges open the page, a named region outside the sticky bar", g)
+                run.check(g["shown"] and g["inBar"] and g["region"] == ["group", "Usage by account"], "the gauges dock in the sticky bar, a named group", g)
                 bar_height = g["barHeight"]
-                texts = [r["text"] for r in g["rows"]]
-                want = [r"57% [78]m Personal \u00b7 session", r"27% 6d 6h Personal \u00b7 week", r"0% reset 7h ago Team \u00b7 session"]
-                run.check(len(texts) == 3 and all(re.fullmatch(w, t) for w, t in zip(want, texts)),
-                          "one gauge per account and window, as the strip reads them", texts)
-                said = [r["said"] for r in g["rows"]]
-                run.check(re.fullmatch(r"Personal \u00b7 session: 57% used\. Resets in [78] min", said[0]) and all(r["hidden"] == "true" for r in g["rows"]),
-                          "a screen reader hears one sentence per gauge, not its short forms", said)
-                run.check([r["ring"] for r in g["rows"]] == [True, True, False], "a ring per window, none drawn on a reset one", [r["ring"] for r in g["rows"]])
-                # The drawn arc is the percent: the dash plus its round caps (3 wide on r 9.5).
-                cap = 3 / (2 * 3.141592653589793 * 9.5) * 100
-                arcs = [round(float(r["dash"].replace(",", " ").split()[0]) + cap) if r["dash"] else None for r in g["rows"][:2]]
-                run.check(arcs == [57, 27], "each ring's arc is its percent, on a gauge drawn fresh", [r["dash"] for r in g["rows"]])
-                run.check(all(0 <= r["box"][0] and r["box"][1] <= g["width"] for r in g["rows"]), "every gauge inside the screen", [r["box"] for r in g["rows"]])
-                run.check(g["rows"][0]["stroke"] == "rgb(217, 198, 165)", "the ramp's low stop under 60%", g["rows"][0]["stroke"])
+                texts = [c["text"] for c in g["chips"]]
+                print(f"  chips {texts}")
+                run.check([c["harness"] for c in g["chips"]] == ["copilot", "claude", "claude"] and g["chips"][0]["placeholder"],
+                          "Copilot's placeholder, then each Claude account, in route order", [c["harness"] for c in g["chips"]])
+                run.check(re.fullmatch(r"57% [78]m( route)?", texts[1]) is not None, "the account in use shows its tightest window and its reset", texts)
+                run.check(g["chips"][1]["pips"] == 2 and g["chips"][1]["said"].startswith("Personal"), "its other window is a pip, and a screen reader hears its detail", g["chips"][1])
+                run.check(all(0 <= c["box"][0] and c["box"][1] <= g["width"] for c in g["chips"]), "every chip inside the screen", [c["box"] for c in g["chips"]])
+                run.check(g["chips"][1]["fill"] == "rgb(217, 198, 165)", "the ramp's low stop under 60%", g["chips"][1]["fill"])
                 for scheme in ("light", "dark"):
                     check_gauges(run, page, scheme)
                     page.screenshot(path=str(shot.with_name(f"{shot.stem}-{scheme}{shot.suffix}")))
@@ -440,8 +449,8 @@ def main() -> int:
                 page.wait_for_timeout(200)
                 bar = page.evaluate("(() => { const b = document.querySelector('.bar').getBoundingClientRect(); return [Math.round(b.top), scrollY > 0]; })()")
                 run.check(bar == [0, True], "the tally is sticky", bar)
-                gone = page.evaluate("(() => { const l = document.querySelector('.limits').getBoundingClientRect(); return Math.round(l.bottom) <= Math.round(document.querySelector('.bar').getBoundingClientRect().bottom); })()")
-                run.check(gone, "the gauges scroll away under the tally", gone)
+                kept = page.evaluate("(() => { const d = document.querySelector('.dock').getBoundingClientRect(); return d.top >= 0 && d.bottom <= document.querySelector('.bar').getBoundingClientRect().bottom; })()")
+                run.check(kept, "the gauges stay in view with the tally", kept)
                 page.evaluate("window.scrollTo(0, 0)")
 
                 # A tap on the card, off its controls, opens its Remote Control link.
@@ -627,30 +636,32 @@ def main() -> int:
                 write_reading(klepsydra, PERSONAL, "Personal", {"five_hour": (91, 8 * 60 + 50), "seven_day": (27, (6 * 24 + 6) * 3600 + 1800)})
                 write_reading(klepsydra, TEAM, "Team", {"five_hour": (12, 2 * 3600 + 600)}, ago=3 * 3600, session="00000000-0000-4000-8000-000000000002")
                 write_reading(klepsydra, LAB, "Lab", {"five_hour": (5, 3600), "seven_day": (40, 86400), "spend_limit": (10, 86400)}, ago=4 * 3600, session="00000000-0000-4000-8000-000000000003")
-                wait_until(page, "document.querySelector('.limit-rows > li .pct').textContent === '91%' && document.querySelectorAll('.limit-rows > li .ring-fill')[2].style.visibility !== 'hidden' && document.querySelectorAll('.limit-rows > li').length === 6", 15)
+                wait_until(page, "document.querySelectorAll('#dock-chips > .chip').length === 4 && [...document.querySelectorAll('#dock-chips .val')].some((v) => v.textContent === '91%')", 15)
                 g = page.evaluate(GAUGES)
-                texts = [r["text"] for r in g["rows"]]
-                run.check(re.fullmatch(r"91% [78]m Personal \u00b7 session", texts[0]) and g["rows"][0]["stroke"] == "rgb(239, 68, 68)", "a new reading arrives over the stream, red past 85%", [texts[0], g["rows"][0]["stroke"]])
-                run.check(re.fullmatch(r"12% 2h (10|9)m \u00b7 3h old Team \u00b7 session", texts[2]), "a reading hours old says how old", texts[2])
-                run.check(g["barHeight"] == bar_height, "six gauges leave the sticky bar as tall as three did", [bar_height, g["barHeight"]])
+                texts = [c["text"] for c in g["chips"]]
+                print(f"  chips {texts}")
+                personal = next(c for c in g["chips"] if c["said"].startswith("Personal"))
+                team = next(c for c in g["chips"] if c["said"].startswith("Team"))
+                run.check(re.match(r"91% [78]m", personal["text"]) and personal["fill"] == "rgb(239, 68, 68)", "a new reading arrives over the stream, red past 85%", [personal["text"], personal["fill"]])
+                run.check(team["stale"] and re.search(r"\b3h old\b", team["text"]), "a reading hours old says how old", team["text"])
+                run.check(g["barHeight"] == bar_height, "four chips leave the sticky bar as tall as three did", [bar_height, g["barHeight"]])
                 s = page.evaluate(LAYOUT)
                 run.check(s["hscroll"] <= 0 and s["small"] == [], "no horizontal scroll, every control 44 px, with the gauges", [s["hscroll"], s["small"]])
 
-                # A spent week hides its account's session ring until the week resets (#421).
+                # A spent week hides its account's session window until the week resets (#421).
                 write_reading(klepsydra, TEAM, "Team", {"five_hour": (12, 2 * 3600 + 600), "seven_day": (100, 2 * 86400)}, session="00000000-0000-4000-8000-000000000002")
-                wait_until(page, "[...document.querySelectorAll('.limit-rows > li')].some((li) => /Team \u00b7 week/.test(li.textContent))", 15)
-                texts = [r["text"] for r in page.evaluate(GAUGES)["rows"]]
-                team = [t for t in texts if "Team" in t]
-                run.check(len(team) == 1 and re.match(r"100% ", team[0]) and "week" in team[0], "a spent week hides its session ring", texts)
+                wait_until(page, "[...document.querySelectorAll('#dock-chips > .chip')].some((c) => /^Team/.test(c.getAttribute('aria-label')) && c.querySelector('.val').textContent === 'out')", 15)
+                team = next(c for c in page.evaluate(GAUGES)["chips"] if c["said"].startswith("Team"))
+                run.check(team["text"].startswith("out ") and team["pips"] == 1 and "hidden until" in team["said"], "a spent week reads out, its session window hidden", team)
 
                 # No reading left: the gauges wait, as the strip does.
                 for f in (klepsydra / "accounts").glob("*/*.json"):
                     f.unlink()
-                wait_until(page, "document.querySelectorAll('.limit-rows > li').length === 0", 15)
+                wait_until(page, "document.querySelectorAll('#dock-chips > .chip').length === 0", 15)
                 g = page.evaluate(GAUGES)
-                run.check(g["shown"] and g["rows"] == [] and g["wait"] == "waiting for Claude Code", "with no reading the gauges wait", g)
+                run.check(g["shown"] and g["chips"] == [] and g["wait"] == "waiting for Claude Code", "with no reading the gauges wait", g)
                 demo_usage(klepsydra)
-                wait_until(page, "document.querySelectorAll('.limit-rows > li').length === 3", 15)
+                wait_until(page, "document.querySelectorAll('#dock-chips > .chip').length === 3", 15)
 
                 # Install: the service worker controls the page's scope, the manifest loads.
                 scope = page.evaluate("navigator.serviceWorker.ready.then((r) => r.scope)")

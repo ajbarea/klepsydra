@@ -25,16 +25,26 @@ export function unscaledSizes(css) {
     });
 }
 
-const css = readFileSync(new URL("./style.css", import.meta.url), "utf8");
+// The strip's own rules, and the chips' (shared with the wall's header).
+const SHEETS = { "style.css": "./style.css", "fleet/chips.css": "./fleet/chips.css" };
+const sheets = Object.fromEntries(Object.entries(SHEETS).map(([name, path]) => [name, readFileSync(new URL(path, import.meta.url), "utf8")]));
+const css = sheets["style.css"];
+const chips = sheets["fleet/chips.css"];
 
-test("every pixel size outside the tokens follows the zoom", () => {
-  assert.deepEqual(unscaledSizes(css), []);
+test("every pixel size outside the tokens follows the zoom, in the strip's rules and the chips'", () => {
+  for (const [name, text] of Object.entries(sheets)) assert.deepEqual(unscaledSizes(text), [], name);
 });
 
 test("the check catches a size added without the zoom", () => {
-  assert.deepEqual(unscaledSizes(`${css}\n.new { margin-top: 6px; }\n`), ["margin-top: 6px"]);
+  for (const text of [css, chips]) assert.deepEqual(unscaledSizes(`${text}\n.new { margin-top: 6px; }\n`), ["margin-top: 6px"]);
 });
 
 test("the check catches a size token used without the zoom", () => {
-  assert.deepEqual(unscaledSizes(`${css}\n.new { font-size: var(--size-sub); }\n`), ["font-size: var(--size-sub)"]);
+  assert.deepEqual(unscaledSizes(`${chips}\n.new { font-size: var(--size-sub); }\n`), ["font-size: var(--size-sub)"]);
+  assert.deepEqual(unscaledSizes(`${css}\n.new { width: var(--face-size); }\n`), ["width: var(--face-size)"]);
+});
+
+test("the wall's header gives the chips a scale of 1: it has no zoom", () => {
+  const wall = readFileSync(new URL("./fleet/wall.css", import.meta.url), "utf8");
+  assert.match(wall, /\.dock \{ --scale: 1;/);
 });

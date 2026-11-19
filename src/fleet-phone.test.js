@@ -207,69 +207,79 @@ test("every module the wall imports is a file the phone server serves", () => {
   assert.deepEqual([...seen].filter((p) => !served(p)), []);
 });
 
-// ── the usage-limit gauges ──────────────────────────────────────────────────
+// ── the gauges docked in the header (#421) ─────────────────────────────────
 const { contrast } = await import("./fleet/contrast.js");
 const token = (css, name) => css.match(new RegExp(`${name}:\\s*([^;]+);`))?.[1].trim();
 const RAMP = ["--ramp-low", "--ramp-mid", "--ramp-high", "--ramp-mid-at", "--ramp-high-at", "--ramp-mode"];
+const lightBlock = (css) => css.slice(css.indexOf("@media (prefers-color-scheme: light)"));
 
-test("the phone draws the gauge's rows with the gauge's own code: one model, no second formatter", () => {
+test("the header draws the strip's chips with the strip's own code: one model, no second formatter", () => {
   const wall = read("src/fleet/wall.js");
+  const dock = read("src/fleet/dock.js");
   const main = read("src/main.js");
-  assert.match(wall, /import \{ WAITING, toRows, usageRows \} from "\.\.\/gauge\.js";/);
-  assert.match(wall, /import \{ readMode, readStops, syncEntries \} from "\.\.\/gaugeview\.js";/);
-  assert.match(wall, /syncEntries\(limitRows, rows, \{ compact: true, stops: readStops\(\), mode: readMode\(\) \}, true\);/);
-  // The desktop strip draws chips (#421) from the same rows: toRows, then toChips.
+  assert.match(dock, /import \{ toChips \} from "\.\/chips\.js";/);
+  assert.match(dock, /import \{ syncChips \} from "\.\/chipview\.js";/);
+  assert.match(dock, /const chips = rows\.length \? toChips\(rows, now\) : \[\];/, "as the strip: the placeholder alone is not a reading");
+  assert.match(dock, /syncChips\(els\.chips, chips, \{ now, layout: "linear", \.\.\.look\(\) \}\);/);
+  // The app's rows from read_usage, the phone's from its snapshot: both through toRows.
+  assert.match(wall, /ns\.rows = toRows\(await window\.__TAURI__\.core\.invoke\("read_usage"\), Date\.now\(\)\);/);
+  assert.match(wall, /dock\.paint\(inTauri \? \(ns\.read \? ns\.rows : null\) : usageRows\(latestSnapshot, now\), now\);/);
+  // The desktop strip draws the same chips from the same rows.
   assert.match(main, /import \{ readMode, readStops \} from "\.\/gaugeview\.js";/);
   assert.match(main, /const rows = toRows\(lastPayload, now\);/);
   assert.match(main, /chips = rows\.length \? toChips\(rows, now\) : \[\];/);
   assert.match(main, /syncChips\(chipsEl, chips, \{/);
-  // The words and the ring's arithmetic live in gauge.js alone.
-  const others = ["src/main.js", "src/gaugeview.js", ...["wall.js", "model.js", "strip.js", "drawer.js", "newsession.js", "chips.js", "chipview.js"].map((f) => `src/fleet/${f}`)];
+  // The words live in gauge.js and chips.js alone.
+  const others = ["src/main.js", "src/gaugeview.js", ...["wall.js", "dock.js", "model.js", "strip.js", "drawer.js", "newsession.js", "chipview.js"].map((f) => `src/fleet/${f}`)];
   for (const f of others) {
     const src = read(f);
     assert.doesNotMatch(src, /function format|% used|Resets in|resets_at|used_percentage|2 \* Math\.PI|strokeDasharray = `/, f);
   }
-  assert.doesNotMatch(read("src/index.html"), /<template id="row-tpl">/, "the row's markup is gaugeview.js's");
 });
 
-test("the wall's ramp is the gauge's", () => {
-  const style = read("src/style.css");
-  const wall = read("src/fleet/wall.css");
+test("one ramp: chips.css holds it and both pages load it, so neither can drift", () => {
+  const chips = read("src/fleet/chips.css");
   for (const t of RAMP) {
-    assert.ok(token(style, t), `${t} in style.css`);
-    assert.equal(token(wall, t), token(style, t), t);
+    assert.ok(token(chips, t), `${t} in chips.css`);
+    // A page's own tokens (its first :root block); the strip's halo may still override on #panel.
+    for (const f of ["src/style.css", "src/fleet/wall.css"]) assert.equal(token(read(f).match(/:root \{([^}]*)\}/)[1], t), undefined, `${t} redefined in ${f}`);
   }
+  for (const page of ["src/index.html", "src/wall.html"]) assert.match(read(page), /<link rel="stylesheet" href="fleet\/chips\.css" \/>/, page);
+  assert.match(lightBlock(chips), /:root:not\(\.served\) \{/, "the phone wall stays dark, so its chips keep the dark ramp");
 });
 
-test("the gauges read at AA on the phone's page: words 4.5:1, the ring's fill 3:1 on the page and its track", () => {
+test("the docked gauges read at AA on their ground: words 4.5:1, a pip's fill 3:1 on the ground and its track", () => {
   const wall = read("src/fleet/wall.css");
-  const bar = token(wall, "--wall-bg"); // the page the gauges sit on
-  const track = token(wall, "--ring-track");
-  for (const t of ["--ramp-low", "--ramp-mid", "--ramp-high"]) {
-    const c = token(wall, t);
-    assert.ok(contrast(c, bar) >= 3, `${t} on the page: ${contrast(c, bar).toFixed(2)}`);
-    assert.ok(contrast(c, track) >= 3, `${t} on the track: ${contrast(c, track).toFixed(2)}`);
+  const chips = read("src/fleet/chips.css");
+  assert.match(wall, /\.dock \.chips \{[^}]*background: var\(--card-bg\);/, "the chips' ground is --card-bg");
+  assert.match(wall, /\.dock \{[^}]*--panel-solid: var\(--card-bg\);/, "a spent pip's notch is the ground's colour");
+  for (const [scheme, w, c] of [["dark", wall, chips], ["light", lightBlock(wall), lightBlock(chips)]]) {
+    const ground = token(w, "--card-bg");
+    const track = token(c, "--track");
+    for (const t of ["--ramp-low", "--ramp-mid", "--ramp-high"]) {
+      const fill = token(c, t);
+      assert.ok(contrast(fill, ground) >= 3, `${scheme} ${t} on the ground: ${contrast(fill, ground).toFixed(2)}`);
+      assert.ok(contrast(fill, track) >= 3, `${scheme} ${t} on the track: ${contrast(fill, track).toFixed(2)}`);
+    }
+    for (const t of ["--text", "--text-dim"]) assert.ok(contrast(token(w, t), ground) >= 4.5, `${scheme} ${t}`);
   }
-  for (const t of ["--text", "--text-dim"]) {
-    assert.ok(contrast(token(wall, t), bar) >= 4.5, t);
-  }
-  const rule = (sel) => wall.match(new RegExp(`${sel.replace(/[.*]/g, "\\$&")} \\{([^}]*)\\}`))?.[1] ?? "";
-  assert.match(rule(".limits .pct"), /color: var\(--text\)/);
-  for (const sel of [".limits .sub", ".limits .label", ".limit-wait"]) assert.match(rule(sel), /color: var\(--text-dim\)/, sel);
-  assert.match(rule(".limits .ring-track"), /stroke: var\(--ring-track\)/);
-  assert.match(wall, /html, body \{ background: var\(--wall-bg\);/, "the page the gauges sit on is --wall-bg");
-  assert.doesNotMatch(rule(".limits"), /background/, "the gauges draw no ground of their own");
+  assert.match(wall, /\.dock-wait \{ color: var\(--text-dim\);/);
 });
 
-test("the gauges open the page, outside the sticky bar, shown only for a snapshot with readings", () => {
+test("the gauges dock in the bar after the tally; on a phone they take a line of their own", () => {
   const html = read("src/wall.html");
-  const bar = html.slice(html.indexOf('<header class="bar">'), html.indexOf("</header>"));
-  assert.doesNotMatch(bar, /limits/, "the sticky bar stays one tally high");
-  assert.match(html, /<main id="main">\s*<section class="limits" aria-label="Usage limits" hidden>\s*<ul class="limit-rows"><\/ul>\s*<p class="limit-wait" hidden><\/p>\s*<\/section>\s*<h1 id="wall-title"[^>]*>[^<]*<\/h1>\s*<section id="wall"/, "the sessions heading sits right before the wall it names");
+  const lead = html.slice(html.indexOf('<div class="lead">'), html.indexOf('<button type="button" id="ci-open"'));
+  assert.match(lead, /<div class="tally"[^>]*><\/div>\s*<div class="dock" hidden><div id="dock-chips" class="chips" role="group" aria-label="Usage by account"><\/div>/);
+  assert.match(lead, /<button type="button" class="clear dock-hide" aria-label="Hide gauges from the header"/);
+  assert.match(html, /<label class="dock-pick"><input id="gauges-in-header" type="checkbox" checked \/><span>Gauges in wall header<\/span><\/label>/);
+  assert.doesNotMatch(html, /class="limits"|limit-rows/, "one home for the gauges on the wall");
+  assert.match(html, /<main id="main">\s*<h1 id="wall-title"[^>]*>[^<]*<\/h1>\s*<section id="wall"/, "the sessions heading sits right before the wall it names");
   const wall = read("src/fleet/wall.js");
-  assert.match(wall, /const all = usageRows\(latestSnapshot, now\);\s*limits\.hidden = all === null;/);
-  assert.match(wall, /const hidden = hiddenRows\(all\);\s*const rows = all\.filter\(\(r\) => !hidden\.has\(r\)\);/, "a spent week hides its session row here too (#421)");
-  assert.match(wall, /paintTally\(\);\s*paintLimits\(now\);/, "drawn on every snapshot and every tick");
+  assert.match(wall, /paintTally\(\);\s*paintDock\(now\);/, "drawn on every snapshot and every tick");
+  const css = read("src/fleet/wall.css");
+  const phone = css.slice(css.indexOf("/* On a phone: one column"));
+  assert.match(phone, /\.served \.dock \{ flex: 1 1 100%; \}/);
+  assert.match(phone, /\.served button\.dock-hide \{ min-width: 44px; min-height: 44px; \}/, "a 44 px target on the phone");
 });
 
 test("#247: scheme.js marks the phone page .served before the first paint, by feedKind's rule", () => {
