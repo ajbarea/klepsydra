@@ -1,40 +1,38 @@
-# IMPL: klepsydra#445 + #446: `fleet done "REPORT"`, `fleet close`, queued sends
+# IMPL: klepsydra#471 test_slice start barrier for capped slice OOM race
 
-Branch feat/fleet-done-report-445, PR #454. Issues: #445 (and its comment), #446. Follow-up: #468.
+Issue: https://github.com/ajbarea/klepsydra/issues/471
+PR: https://github.com/ajbarea/klepsydra/pull/474
 
 ## Slice
-1. `fleet done [NAME] "REPORT"` sends REPORT to orchestrator.pane; undelivered = queue-file line + done-reports.tsv row + doctor warn.
-2. `fleet close NAME` (close.sh) closes a finished agent's pane only once it is confirmed at rest; doctor flags a pane done and unread > 30 min.
-3. `deliver_now` (lib.sh) prints `queued` on Claude Code's queue line and `sent` for a pane that closed after /exit.
+1. In `fleet/test_slice.sh`, synchronize stand-ins and children with start barriers (`$work/ready$i`, `$work/ready$(( 3 - i ))`, `$work/ready$i.child`, and `$work/ready$(( 3 - i )).child`). Both stand-ins allocate 110 MiB, signal ready, and wait for peer before launching `hungry.py`. Both hungry children set rank 1000 and wait for peer before allocating memory, preventing the start-up race where one scope exceeded the 300 MiB slice cap before the peer spawned its rank-1000 child.
+2. Drop wrapper-rank change and `SLICE_WRAPPER_RANK` knob (wrapper, systemd-run, floor, and stand-in share one PID through exec, and `fleet_oom_floor` at `lib.sh:705` resets `oom_score_adj` to 0 before stand-in starts). Keep wrapper at standard 1000 matching tmux caller.
+3. In `fleet/test_slice.sh`, update skip handling so `SLICE_LIVE=0` prints `live runs: skipped` instead of `N/N passed`.
+4. In `.github/workflows/ci.yml`, pass `slice_live_repeat` through `env:`, sanitize with `^[1-9][0-9]*$` regex check, and fail if invalid (preventing script injection). Drop `slice_wrapper_rank`.
+5. Run 50-repeat BEFORE soak on CI and 50-repeat AFTER soak on branch, updating PR #474 description with counts.
 
 ## Done
-- Rounds 1-4 (Sonnet author): see git log.
-- Round 5 (Opus author), round-4 verify findings:
-  - B1: `wrapup_pending` (lib.sh) refuses while the wall's wrap-up is asked or answered-unsettled for the request on file; close also waits FLEET_CLOSE_QUIET (6 s) with the raw screen above the box and the session file both unchanged.
-  - S1: /exit is typed, file + screen + box re-checked (the slash menu Claude Code draws over the transcript's last rows is allowed for), then Enter. close never kills: Claude Code's "Background work is running" dialog is cancelled with Esc; a pane still there after 30 s is reported, left open, record kept.
-  - Nit: refused when the session file was last written before the pane's process started.
-  - Mirror: `turn_done`, `watchers_only`, `ready_to_move` also hold on `wrapup_pending`; the quiet window and no-kill retire for those paths are #468.
-- fake_pane.py: `exit_dialog`, `slash_menu`, `slash_adds`.
-- Mutation checked: each #454 test fails on a5ec5fc's close.sh/lib.sh; `steady` and `same_transcript` stubbed true each fail their test.
-- Live, private socket close454-live, haiku 2.1.316: (a) printing turn refused 33/33; (b) wrap-up continuation refused throughout (5 reads with file done + asked); (c) dialog cancelled, shell kept; (d) closed at rest (twice, short and full screen).
-
-- Round 5 verify (Heph, fresh Opus): clean on Blocking; two vacuous guards fixed in tests:
-  the S1 file-write test now greps `written within` and asserts /exit was never typed (fake_pane
-  `log_typed` logs TYPED runs); new cases: settled + quiet with text in the box, and with a menu where
-  the box was, both refused. Mutation: deleting close.sh's fingerprint line (145) or idle_empty line
-  (140) turns its test red. #468 gained the other-Stop-hooks line.
-
-- Heph's final verify at 6011263: CLEAN. Rebased on origin/main (b361220: #463, #465, #466); README
-  and docs/fleet.md conflicts resolved to main's structure (README rows short, depth in docs/fleet.md,
-  close row corrected to never-kill); IMPL kept. fleet/ vs 6011263 = main's lines only (close.sh,
-  done.sh, lib.sh identical). Nit: stdin case uses TMUX_PANE=%99999, never the orchestrator's.
+- Rebased branch on `origin/main` (commit `2507029`).
+- Diagnosed root cause: floor resets OOM score to 0; race occurred because stand-in 1 launched child which allocated up to the slice cap while stand-in 2 was starting, causing OOM kill on stand-in 2 at rank 0 before it could spawn its rank-1000 child.
+- Added start barrier to `standin.py` and `hungry.py` in `fleet/test_slice.sh`: stand-ins sync before spawning children, and children sync via `sys.argv` ready files before either allocates beyond baseline memory.
+- Removed explicit `echo 1000` from child invocation in `standin.py`, preserving `BASH_ENV=oom-tool.sh` test coverage: mutation test `FLEET_OOM_TOOL=/nonexistent SLICE_LIVE_ONLY=1 make test-slice` fails (0/1 passed, 3 fail) while normal run passes (1/1 passed, 0 fail).
+- Added in-script validation for `SLICE_LIVE_REPEAT` in `test_slice.sh` (rejects 0 or non-numeric with exit 2).
+- Cleaned `$work/ready*` in iteration teardown.
+- Restored wrapper invocation `bash -c "echo 1000 >/proc/self/oom_score_adj; exec $cmd"`.
+- Fixed skip reporting: `live()` returns 2 on skip; outer loop reports `live runs: skipped`.
+- Sanitized `ci.yml` `workflow_dispatch` input via `INPUT_REPEAT` env var with regex validation `^[1-9][0-9]*$`.
+- Completed 50-repeat AFTER soak on CI run 44483716058: 50/50 passed. Note that soak testing cannot tell fixed from unfixed code since soak passes both before and after (flake rate on CI was ~2 in 4 runs on 11-18 under specific runner conditions); the fix rests on the barrier's logic.
+- Verified local live runs with barrier: 5/5 passed (`pass=50 fail=0`), full suite passed (`pass=59 fail=0`).
+- Verified `SLICE_LIVE=0` output: prints `live runs: skipped`.
 
 ## Next
-- CI green on the rebased head, report to Heph (fleet send %36), fleet done. Heph merges; do not merge.
-- Section runner fleet/.sec445.sh is untracked (rebuilt for the rebased line numbers).
-
-## Known residual
-- A prompt that lands in the last ~0.1-0.3 s before Enter is not seen: spinner 60-104 ms, fleet file 140-255 ms, transcript 190-280 ms after submit (measured). /exit mid-turn ends the session at once.
+- Commit barrier fix, CI sanitization, skip fix, SLICE_LIVE_REPEAT validation, and updated IMPL.md with hooks on.
+- Push branch `fix/slice-oom-wrapper-471` to origin (`--force-with-lease`).
+- Monitor PR #474 CI pipeline on head commit until green.
+- Update PR #474 body with mutation results, soak clarification, and barrier logic.
+- Write report to `~/.local/state/fleet-orchestrator/reports/slice-471.md` and notify orchestrator via `fleet send`.
 
 ## Verify
-`make test-fleet`, `make shellcheck`; section run: lines 1-113 + 284 + done_live + the #445 section of fleet/test_fleet.sh.
+- `env -u BASH_ENV SLICE_LIVE=0 bash fleet/test_slice.sh`: prints `live runs: skipped`.
+- `env -u BASH_ENV SLICE_LIVE_REPEAT=3 SLICE_LIVE_ONLY=1 bash fleet/test_slice.sh`: 3/3 passed.
+- `env -u BASH_ENV make test-slice`: 59/59 passed.
+- `grep -c "make test-slice .*FLEET_HEAVY_HELD=1" .github/workflows/ci.yml`: exactly 1.
