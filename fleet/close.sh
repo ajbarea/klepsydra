@@ -125,9 +125,9 @@ screen_lines() { # ABOVE
 }
 # Whether AFTER (a screen with /exit typed) shows the transcript of REF (the screen read before
 # the quiet window) unchanged, row for row from the top: the menu is drawn over the transcript's
-# last rows (2.1.316, at 84 and 160 columns), so at most the rows it covers are missing, and only from the end. A
-# transcript that scrolled up under the menu (a prompt and its spinner arriving as /exit went in)
-# fails. One that fills a blank gap under the menu without moving a visible row passes here; the
+# last rows (2.1.316, at 84 and 160 columns), so at most the rows it covers are missing, and only
+# from the end. A transcript that scrolled up under the menu (a prompt and its spinner arriving as
+# /exit went in) fails. One that fills a blank gap under the menu without moving a visible row passes here; the
 # session file's fingerprint, read again before Enter, is what sees that turn. Rows are counted from
 # the box's position, blank ones included. Fails with SAME_WHY set to the counts and the first lines
 # that differ, for the refusal's log.
