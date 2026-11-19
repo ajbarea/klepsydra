@@ -139,9 +139,10 @@ class GitHub:
                 self.poll_s = max(POLL_S, int(r.headers.get("X-Poll-Interval") or 0))
                 return body
         except urllib.error.HTTPError as e:
-            if e.code == 304 and held:
-                return held["body"]
-            raise
+            with e:  # its body is never read: close the response it holds
+                if e.code == 304 and held:
+                    return held["body"]
+                raise
 
     def save(self) -> None:
         tmp = self.cache_path.with_suffix(".tmp")
