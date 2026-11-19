@@ -636,6 +636,13 @@ def main() -> int:
                 s = page.evaluate(LAYOUT)
                 run.check(s["hscroll"] <= 0 and s["small"] == [], "no horizontal scroll, every control 44 px, with the gauges", [s["hscroll"], s["small"]])
 
+                # A spent week hides its account's session ring until the week resets (#421).
+                write_reading(klepsydra, TEAM, "Team", {"five_hour": (12, 2 * 3600 + 600), "seven_day": (100, 2 * 86400)}, session="00000000-0000-4000-8000-000000000002")
+                wait_until(page, "[...document.querySelectorAll('.limit-rows > li')].some((li) => /Team \u00b7 week/.test(li.textContent))", 15)
+                texts = [r["text"] for r in page.evaluate(GAUGES)["rows"]]
+                team = [t for t in texts if "Team" in t]
+                run.check(len(team) == 1 and re.match(r"100% ", team[0]) and "week" in team[0], "a spent week hides its session ring", texts)
+
                 # No reading left: the gauges wait, as the strip does.
                 for f in (klepsydra / "accounts").glob("*/*.json"):
                     f.unlink()

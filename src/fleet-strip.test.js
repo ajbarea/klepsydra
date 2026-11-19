@@ -235,3 +235,54 @@ test("a theme switch turns the keeper's face and the plain button into each othe
   assert.equal(b.firstChild.hidden, false);
   assert.equal(b.lastChild.innerHTML, "");
 });
+
+// ── #421: portraits dock beside their account's chip ──
+const docked = () => {
+  const root = new El("div");
+  const el = new El("div");
+  const slots = new Map([["acct-p", new El("span")], ["agy-primary", new El("span")]]);
+  const dockOf = { "acct-p": "acct-p", "agy-primary": "agy-primary" };
+  const opened = [];
+  const render = mountStrip(el, {
+    open: (id) => opened.push(id),
+    cast: () => ({ characters: {} }),
+    dock: { slots: () => slots, of: (item) => dockOf[item.account?.id] ?? null },
+    root,
+  });
+  return { root, el, slots, opened, render };
+};
+const ids = (e) => e.children.map((b) => b.dataset.id);
+
+test("a portrait docks in its account's slot; one with no slot stays in the strip", () => {
+  const { el, slots, render } = docked();
+  render([
+    session("a", "working", { account: { id: "acct-p", label: "Personal" } }),
+    session("b", "done", { account: { id: "agy-primary", label: "Google AI Pro" } }),
+    session("c", "working", { account: { id: "gone", label: "Old" } }),
+    session("d", "working"),
+  ], NOW);
+  assert.deepEqual(ids(slots.get("acct-p")), ["a"]);
+  assert.deepEqual(ids(slots.get("agy-primary")), ["b"]);
+  assert.deepEqual(ids(el), ["c", "d"]);
+  assert.equal(el.hidden, false);
+});
+
+test("a portrait that changes account leaves its old slot; an emptied strip hides", () => {
+  const { el, slots, render } = docked();
+  render([session("a", "working", { account: { id: "acct-p", label: "Personal" } }), session("d", "working")], NOW);
+  render([session("a", "working", { account: { id: "agy-primary", label: "Google AI Pro" } })], NOW);
+  assert.deepEqual(ids(slots.get("acct-p")), []);
+  assert.deepEqual(ids(slots.get("agy-primary")), ["a"]);
+  assert.deepEqual(ids(el), []);
+  assert.equal(el.hidden, true, "nothing loose: the strip beside the chips hides");
+});
+
+test("the resting keeper never docks, and a click on a docked portrait reaches the root", () => {
+  const { root, el, slots, opened, render } = docked();
+  render([], NOW);
+  assert.equal(el.children.length, 1, "the keeper");
+  assert.equal(el.hidden, false);
+  render([session("a", "working", { account: { id: "acct-p", label: "Personal" } })], NOW);
+  root.fire("click", slots.get("acct-p").children[0].firstChild);
+  assert.deepEqual(opened, ["a"]);
+});

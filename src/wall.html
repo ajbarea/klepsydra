@@ -31,6 +31,7 @@
     <span id="new-note" role="status"></span>
     <span id="split-note" role="status"></span>
     <span id="theme-note" role="status"></span>
+    <span id="opacity-note" role="status"></span>
     <div class="bar-right">
       <div class="tools">
         <button type="button" id="split" aria-pressed="false" title="The wall on the left half of this screen, the fleet terminal on the right" hidden>Split<span class="visually-hidden"> with terminal</span></button>
@@ -49,6 +50,7 @@
             <label><input type="radio" name="density" value="compact" /><span>Compact</span></label>
           </fieldset>
           <label class="theme-pick" title="How each session looks"><span>Characters</span><select id="theme"></select></label>
+          <label class="opacity-pick" title="The floating gauge's background: 0% shows only its text" hidden><span>Gauge background</span><input id="gauge-opacity" type="range" min="0" max="100" step="5" value="85" aria-valuetext="85%" /><span class="opacity-value" aria-hidden="true">85%</span></label>
         </div>
       </details>
     </div>
