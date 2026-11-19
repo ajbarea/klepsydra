@@ -5660,6 +5660,103 @@ def theme_list_is_dark(wall):
     page.close()
 
 
+def settings_view(wall):
+    """The settings page shell following Design A (#384): header with Back,
+    sticky section nav, live search filtering by label/desc ('/' focuses, Esc
+    clears/closes), and instant apply for the 13 wired settings. Captured at
+    1920 and 390 in dark and light schemes when KLEPSYDRA_SETTINGS_SHOTS is set."""
+    for width in (1920, 390):
+        for scheme in ("dark", "light"):
+            page = open_app(wall, width=width, height=1000 if width == 1920 else 844)
+            if scheme == "light":
+                page.evaluate("document.documentElement.dataset.theme = 'light'")
+            open_gear(page)
+            page.wait_for_selector("#gear-settings-open")
+            page.click("#gear-settings-open")
+            page.wait_for_selector("#settings:not([hidden])")
+            page.wait_for_selector(".settings-row")
+
+            st = page.evaluate("""() => {
+              const s = document.getElementById('settings');
+              const rows = [...s.querySelectorAll('.settings-row')];
+              const nav = [...s.querySelectorAll('.settings-nav .nav-item')].map((a) => a.textContent.trim());
+              const secs = [...s.querySelectorAll('.settings-section')].map((sec) => sec.id);
+              const search = document.getElementById('settings-search-input');
+              return {
+                visible: !s.hidden,
+                rowCount: rows.length,
+                nav,
+                secs,
+                searchPlaceholder: search ? search.placeholder : null,
+                mainHidden: document.getElementById('main').hidden,
+                barHidden: document.querySelector('.bar').hidden,
+              };
+            }""")
+            wall.check(
+                st["visible"] and st["mainHidden"] and st["barHidden"],
+                f"{width} {scheme}: settings view opens and hides wall main and bar",
+                st,
+            )
+            wall.check(
+                st["rowCount"] == 13,
+                f"{width} {scheme}: settings view renders exactly 13 rows",
+                st["rowCount"],
+            )
+            wall.check(
+                len(st["nav"]) == 7,
+                f"{width} {scheme}: sticky section nav has 7 section pills",
+                st["nav"],
+            )
+
+            if os.environ.get("KLEPSYDRA_SETTINGS_SHOTS") or os.environ.get("KLEPSYDRA_SHOTS"):
+                out = ROOT / "shots" / time.strftime("%Y-%m-%d")
+                out.mkdir(parents=True, exist_ok=True)
+                page.screenshot(path=str(out / f"settings-{width}-{scheme}.png"))
+
+            if width == 1920 and scheme == "dark":
+                # Test live search filtering
+                page.fill("#settings-search-input", "ping")
+                page.wait_for_timeout(100)
+                matched = page.evaluate("""() => {
+                  const visibleRows = [...document.querySelectorAll('#settings .settings-row:not([hidden])')].map((r) => r.dataset.rowId);
+                  const visibleSecs = [...document.querySelectorAll('#settings .settings-section:not([hidden])')].map((s) => s.id);
+                  return { visibleRows, visibleSecs };
+                }""")
+                wall.check(
+                    matched["visibleRows"] == ["ping"] and matched["visibleSecs"] == ["sec-voices"],
+                    "search for 'ping' matches only the ping row in voices section",
+                    matched,
+                )
+
+                # Test Esc clears search
+                page.keyboard.press("Escape")
+                page.wait_for_timeout(100)
+                restored = page.evaluate("document.querySelectorAll('#settings .settings-row:not([hidden])').length")
+                wall.check(restored == 13, "Escape clears search and restores all 13 rows", restored)
+
+                # Test '/' focuses search
+                page.evaluate("document.getElementById('settings-search-input').blur()")
+                page.keyboard.press("/")
+                focused = page.evaluate("document.activeElement.id === 'settings-search-input'")
+                wall.check(focused, "'/' focuses search input when blurred", focused)
+
+                # Test Back button returns to wall
+                page.click("#settings-back")
+                page.wait_for_timeout(100)
+                closed = page.evaluate("""() => ({
+                  settingsHidden: document.getElementById('settings').hidden,
+                  mainVisible: !document.getElementById('main').hidden,
+                  barVisible: !document.querySelector('.bar').hidden,
+                })""")
+                wall.check(
+                    closed["settingsHidden"] and closed["mainVisible"] and closed["barVisible"],
+                    "Back button returns to wall view and restores bar and main",
+                    closed,
+                )
+
+            page.close()
+
+
 def main() -> int:
     handler = functools.partial(Quiet, directory=str(ROOT))
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)  # a free port
@@ -5786,6 +5883,7 @@ def main() -> int:
             theme_file_that_never_answers,
             theme_retry_waits_before_loading,
             living_backdrop_and_arrival_motifs,
+            settings_view,
         )
         for case in cases:
             if not only or case.__name__ in only:

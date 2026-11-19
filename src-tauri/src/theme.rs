@@ -107,3 +107,9 @@ pub fn on_menu(app: &AppHandle, menu_id: &str) -> bool {
     publish(app);
     true
 }
+
+/// The currently saved character theme.
+#[tauri::command]
+pub fn get_theme(app: AppHandle) -> String {
+    saved(&app).to_string()
+}

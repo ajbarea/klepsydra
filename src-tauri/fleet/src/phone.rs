@@ -248,7 +248,8 @@ pub fn asset_type(path: &str) -> Option<&'static str> {
             | "sw.js"
             | "vendor/markdown-it/markdown-it.esm.min.mjs"
     );
-    let folder = path.starts_with("fleet/") || path.starts_with("phone/");
+    let folder =
+        path.starts_with("fleet/") || path.starts_with("phone/") || path.starts_with("settings/");
     let clean = !path.is_empty()
         && path.len() <= 200
         && path

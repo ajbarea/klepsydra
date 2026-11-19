@@ -1,46 +1,67 @@
-# IMPL: klepsydra#421 + #438: gauge strip, variant A with docked faces
+# IMPL: klepsydra#384 PR 1: Settings page shell with search and existing settings wiring
 
-Branch feat/gauge-strip-a-421-v2 (worktree .claude/worktrees/gauge-421-v2), cut with `--no-track` from 797336e.
-It replaces feat/gauge-strip-a-421, whose two commits reached main by accident and were reverted (#480).
-Push only with an explicit refspec: `git push -u origin HEAD:refs/heads/feat/gauge-strip-a-421-v2`. Never push to main.
-Decision: PR #459 last comment (AJ 11-18). Mockups: branch design/mockups-1118, docs/mockups/2026-11-18.
-Untracked helpers in `.live/` (excluded): live_strip.py (browser shots from real readings + live fleet at
-127.0.0.1:8318), live_app.sh (test copy of a branch klepsydra.exe beside AJ's, own KLEPSYDRA_DIR, backs up and
-restores the shared %APPDATA% .window-state.json, stops only its own PID), readings.json + fleet.json (frozen
-real data for perf). Fix SP= in live_app.sh to the session's scratchpad before running.
+Branch `feat/settings-page-384` (worktree `.claude/worktrees/settings-384`), cut with `--no-track` from `origin/main` (`958dbb2`).
+Push only with an explicit refspec: `git push -u origin feat/settings-page-384:feat/settings-page-384`. Never push to main.
+Decision: Issue #384, Brief `~/.local/state/fleet-orchestrator/briefs-free/settings-384-step2.md`.
+Design reference: Design A (`docs/mockups/2026-11-18/settings-a.html` on PR #459 branch `mock-459`).
 
-## Plan: one PR per step
-1. **PR 1 (this branch): floating strip as variant A.** Code + review fixes committed; PR not yet open.
-2. **PR 2: #438 opacity** 0-100 step 5 in prefs.json, live. Copy the theme pattern (`set_theme` + Hub publish +
-   `theme_subscribe`, src-tauri/src/theme.rs) as `set_gauge_opacity` / `gauge_subscribe`; slider in the wall's gear.
-   Halo below 60% (dark) / 50% (light), full ink below 70% (mockup mock.css `.panel.halo/.thin`).
-3. **PR 3: docked gauges in the wall header** + floating strip hidden while the wall has focus + Settings › Gauges
-   rows (+ #479 double). Phone: usage ids are anonymised (a1..) by usage.rs but sessions keep real account ids,
-   so dockKey needs a mapping there. Also the tap/keyboard detail card (see Open).
-4. **PR 4: System chip** (off by default), only after 1-3.
+## Scope & Constraints (PR 1)
+- Settings page view following Design A inside wall window (`#settings.settings-view`):
+  - Header with Back button, title, and search input (`/` to focus, `Esc` to clear search or return).
+  - Sticky section navigation.
+  - Rows are data, not markup: defined in `src/settings/registry.js` with `{ id, section, label, description, control, read, write }`.
+  - Instant apply (no Save button).
+  - Dark and light color schemes; responsive at 1920 and 390 viewport widths; full ARIA markup.
+- Wire exactly the 13 settings that exist on `main` today:
+  1. Start with Windows (Autostart toggle)
+  2. Compact layout (Segmented / toggle: Compact vs Full)
+  3. Ping chime (Toggle)
+  4. Phone wall (Toggle)
+  5. Character set (Theme select: Kourai / Professions / Dicebear)
+  6. Voices mode (Segmented: Off / Orchestrator only / Everyone)
+  7. Choose queue file (Button / path display)
+  8. Choose Needs you file (Button / path display)
+  9. Reset position (Button)
+  10. Set home here (Button)
+  11. Split with terminal (Toggle)
+  12. Card density (Segmented: Auto / Comfortable / Compact)
+  13. New session default (Select: Last used / Claude / agy / Copilot)
+- Tray menu keeps ONLY 3 items:
+  - `Open wall`
+  - `Settings...`
+  - `Quit`
+- Banned files: DO NOT touch `src/style.css`, `src/main.js`, `src/gauge.js`, or `src/gaugeview.js`.
 
 ## Done (PR 1)
-- Chips model/view, dock, icons, README (845969e). Opus review round 1: 1 blocking, 3 should-fix, nits; all
-  fixed in 21d2dc8 (per-window age, stacked tray colour, waiting fade, 30-min age text, stacked columns,
-  Intl formatters, boundary guards, phone/wall spent-week rule). 15 mutations on the new guards: all killed.
-- Unit tests and lint clean (see Verify). Live in Chromium on real readings + live fleet: no errors, faces docked.
-- CPU (headless Chromium, 3 x 120 s, median): 797336e 0.086 % vs 845969e 0.097 %; after 21d2dc8,
-  797336e 0.081 % vs 0.075 %. Live exe (stage klepsydra-build-gauge421): chips on the taskbar beside AJ's
-  main build, faces docked, native title hover shows in the unfocused window.
-- Round 2 (fresh Opus): 1-11 fixed; new N1 (waiting fade un-hid #zoom), N2 (Intl throws past Date range),
-  N3 (phone spent-week only source-tested), N4-N5 wording; all fixed (af75c1d).
-- Round 3 (fresh Opus): N1-N5 confirmed; new: #grip's own transition cancelled its fade, "resets null" for a
-  live window past Date's range, clockAt(null) read as 1970, no committed guard for the fade; all fixed + guarded.
-- PR #482 open. Browser suites vs main (ab00893): phone 88 pass / the same 5 reds as main (#266; "Play again"
-  intermittent); wall: 4 Ledger reds on the branch, main's run hit the same 2 then timed out before the other 2.
-
-## Open
-- Hover detail is the native `title` tooltip: shown live in the unfocused window, but no tap or keyboard.
-  A toggletip card needs the window to grow from its docked edge: #481, planned with PR 3.
+- Step 1: Research, inventory of existing settings, and Design A plan completed and approved by Athena.
+- Step 2:
+  - `src/settings/registry.js`: Data-driven registry with `SECTIONS`, `ROWS` (13 wired items), and `filterRows(rows, query)`.
+  - `src/fleet/settings.css`: Design A styles with sticky section nav, responsive layouts (1920 & 390px), dark/light theme support, accessibility indicators.
+  - `src/fleet/settings.js`: Controller mounting the view, instant apply on inputs, live search filtering (`/` focus, `Esc` clear), bidirectional sync with wall state.
+  - `src/wall.html`: Added `#settings` container and `Settings…` button in gear dropdown.
+  - `src/fleet/wall.js`: Wired view switching (`openSettings`/`closeSettings`), hash `#settings`, IPC `open-settings` event, two-way sync for density and character theme.
+  - `src-tauri/src/main.rs`: Slimmed tray menu down to exactly 3 items (`open_wall`, `settings`, `quit`), added Rust test `tray_menu_has_exactly_three_items`, exposed required commands.
+  - `src-tauri/src/fleet.rs`, `src-tauri/src/voices.rs`, `src-tauri/src/theme.rs`: Exposed Tauri commands for reading/writing prefs.
+  - `src-tauri/fleet/src/phone.rs`: Updated asset serving to include `settings/` modules.
+  - `src/settings.test.js`: Added unit tests for schema, filtering, read/write wiring, and mutation verification.
+  - `scripts/test_wall_browser.py`: Added browser test capturing 4 screenshots at 1920 and 390 in dark and light modes.
+- Verified:
+  - `node --test src/*.test.js`: 574 passed, 0 failed.
+  - `npm run lint`: Biome checked 75 files, 0 errors.
+  - `uvx ruff check`: 0 errors.
+  - `cargo fmt --all --check` & `cargo clippy -p klepsydra-fleet -- -D warnings`: clean.
+  - `cargo test -p klepsydra-fleet`: 442 passed, 0 failed.
+  - `test_wall_browser.py settings_view`: 16 passed, 0 failed.
+  - `bash statusline/test_statusline.sh`: passed.
+  - `bash hooks/test_fleet.sh`: 606 passed, 0 failed.
+  - `bash scripts/test_measure_memory.sh`: 28 passed, 0 failed.
+  - `bash scripts/test_build_windows.sh`: 14 passed, 0 failed.
+  - `make test-headless`: 125 passed, 0 failed.
+  - `make test-engine`: passed.
 
 ## Next
-1. Round 4 (fresh Opus) CLEAN on 8016ef6. Heph review of 0221a28: chips now read windows by routeGroup (ACCOUNT_WINDOWS, LANE_HARNESS, spent() gone; isCapped reused); fixed with failing-first tests.
-2. CI green, then report to Heph (`fleet send`), queue line; do not merge. Then PR 2 (#438) on a new branch.
-
-## Verify
-- `node --test src/*.test.js`; `npm run lint`.
+1. Commit changes with title `feat(wall): settings page with search, tray keeps Open, Settings, Quit (#384)`.
+2. Push with explicit refspec: `git push -u origin feat/settings-page-384:feat/settings-page-384`.
+3. Open PR with `gh pr create` (label `enhancement`, assignee `ajbarea`, short top, live vs tested declaration).
+4. Watch CI until green (`gh pr checks <pr> --watch --interval 60`).
+5. Write report to `~/.local/state/fleet-orchestrator/reports/settings-384.md` and notify Athena (`fleet send`).

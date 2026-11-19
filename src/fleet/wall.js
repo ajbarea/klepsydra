@@ -25,6 +25,7 @@ import { hiddenRows } from "./chips.js";
 import { readMode, readStops, syncEntries } from "../gaugeview.js";
 import { createLog } from "../log.js";
 import { FIX_STEPS, buildEntries, buttonTitle, firstModel, launchArgs, menuEntries, pickDefault, roomWords } from "./newsession.js";
+import { mountSettings } from "./settings.js";
 
 const FIRST_THEME_MS = 1500; // the longest the first paint waits for the app to name the theme
 const TICK_MS = 15_000; // ages re-render between snapshots, as on the gauge
@@ -1670,6 +1671,7 @@ function choose(value) {
   choice = parseDensity(value);
   for (const input of densityPicker.querySelectorAll("input")) input.checked = input.value === choice;
   showDensity();
+  settingsController?.sync("card_density", choice);
 }
 
 densityPicker.addEventListener("change", (e) => {
@@ -1885,4 +1887,60 @@ setInterval(() => {
 }, TICK_MS);
 document.addEventListener("visibilitychange", () => {
   if (!document.hidden) drawer.checkDay();
+});
+
+// Settings page view (#384)
+const mainEl = document.getElementById("main");
+const settingsEl = document.getElementById("settings");
+const gearSettingsBtn = document.getElementById("gear-settings-open");
+
+function openSettings() {
+  gear.open = false;
+  bar.hidden = true;
+  if (mainEl) mainEl.hidden = true;
+  if (settingsEl) {
+    settingsEl.hidden = false;
+    settingsController?.refresh();
+    settingsEl.querySelector("#settings-search-input")?.focus();
+  }
+}
+
+function closeSettings() {
+  if (settingsEl) settingsEl.hidden = true;
+  if (mainEl) mainEl.hidden = false;
+  bar.hidden = false;
+  gear.querySelector("summary")?.focus();
+}
+
+let settingsController = null;
+if (settingsEl) {
+  settingsController = mountSettings({
+    container: settingsEl,
+    invoke: tauri,
+    onBack: closeSettings,
+    onSettingChanged: (id, val) => {
+      if (id === "card_density") {
+        choose(val);
+      } else if (id === "character_theme") {
+        themePicker.value = val;
+        wearTheme(val);
+      }
+    },
+  });
+}
+
+gearSettingsBtn?.addEventListener("click", () => {
+  openSettings();
+});
+
+if (inTauri && window.__TAURI__?.event) {
+  window.__TAURI__.event.listen("open-settings", openSettings);
+}
+
+if (location.hash === "#settings") {
+  openSettings();
+}
+window.addEventListener("hashchange", () => {
+  if (location.hash === "#settings") openSettings();
+  else if (settingsEl && !settingsEl.hidden) closeSettings();
 });

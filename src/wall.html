@@ -12,6 +12,7 @@
 <link rel="apple-touch-icon" href="phone/apple-touch-icon.png" />
 <link rel="stylesheet" href="fleet/badge.css" />
 <link rel="stylesheet" href="fleet/wall.css" />
+<link rel="stylesheet" href="fleet/settings.css" />
 </head>
 <body>
   <header class="bar">
@@ -49,6 +50,7 @@
             <label><input type="radio" name="density" value="compact" /><span>Compact</span></label>
           </fieldset>
           <label class="theme-pick" title="How each session looks"><span>Characters</span><select id="theme"></select></label>
+          <button type="button" id="gear-settings-open" class="gear-settings">Settings…</button>
         </div>
       </details>
     </div>
@@ -76,6 +78,7 @@
     <span id="clear-note" role="status"></span>
   </section>
   </main>
+  <div id="settings" class="settings-view" hidden aria-label="Settings"></div>
   <p id="live" class="visually-hidden" aria-live="polite"></p>
   <dialog id="portrait" aria-labelledby="portrait-name">
     <img class="full" alt="" />

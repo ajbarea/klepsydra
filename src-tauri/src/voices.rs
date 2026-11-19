@@ -110,3 +110,25 @@ pub fn on_menu(app: &AppHandle, menu_id: &str) -> bool {
     m.items.tick(now);
     true
 }
+
+/// Get the saved voices mode.
+#[tauri::command]
+pub fn get_voices_mode(app: AppHandle) -> String {
+    saved(&app).to_string()
+}
+
+/// Set and save voices mode, applying it to running sessions via `fleet voices`.
+#[tauri::command]
+pub fn set_voices_mode(app: AppHandle, mode: String) -> String {
+    if let Ok(v) = voices::value(&mode) {
+        crate::write_pref(&app, voices::KEY, v);
+    }
+    let now = saved(&app);
+    if now == mode {
+        crate::launch::apply_voices();
+    }
+    let m = app.state::<VoicesMenu>();
+    m.reader.supersede();
+    m.items.tick(now);
+    now.to_string()
+}

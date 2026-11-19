@@ -162,7 +162,7 @@ fn queue_path(app: &AppHandle) -> Result<PathBuf, String> {
 
 /// The queue file, who keeps it and their voice: `queue.json`'s in the data
 /// folder, else the pref's or the Desktop's, kept by no one.
-fn queue_source(app: &AppHandle) -> (Result<PathBuf, String>, Option<String>, Option<String>) {
+pub fn queue_source(app: &AppHandle) -> (Result<PathBuf, String>, Option<String>, Option<String>) {
     match queue::kept(crate::klepsydra_dir(app).as_deref()) {
         Some(kept) => (kept.path, kept.by, kept.voice),
         None => (queue_path(app), None, None),
@@ -172,7 +172,7 @@ fn queue_source(app: &AppHandle) -> (Result<PathBuf, String>, Option<String>, Op
 /// The Needs you file, who keeps it and their voice: `needs.json`'s in the
 /// data folder, else `needs-you.md` beside the queue file, kept by no one;
 /// never the queue file itself.
-fn needs_source(app: &AppHandle) -> (Result<PathBuf, String>, Option<String>, Option<String>) {
+pub fn needs_source(app: &AppHandle) -> (Result<PathBuf, String>, Option<String>, Option<String>) {
     let queue = queue_source(app).0;
     let (path, by, voice) =
         match queue::kept_in(crate::klepsydra_dir(app).as_deref(), queue::List::Needs) {
@@ -442,6 +442,16 @@ pub async fn open_wall(app: AppHandle, focus: String) -> Result<(), String> {
             let _ = handle.hide();
         }
     });
+    Ok(())
+}
+
+/// Open the settings view on the wall window.
+#[tauri::command]
+pub async fn open_settings(app: AppHandle) -> Result<(), String> {
+    open_wall(app.clone(), String::new()).await?;
+    if let Some(wall) = app.get_webview_window(WALL) {
+        let _ = wall.emit("open-settings", ());
+    }
     Ok(())
 }
 
