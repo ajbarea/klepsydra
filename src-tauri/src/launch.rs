@@ -5,15 +5,17 @@
 use std::collections::HashSet;
 use std::sync::Mutex;
 use std::time::Duration;
-#[cfg(any(windows, test))]
 use std::time::Instant;
 
 use serde_json::Value;
 use tauri::Manager;
 
-/// The only program klepsydra starts.
+/// The only program klepsydra starts on Windows.
 #[cfg_attr(not(windows), allow(dead_code))]
 pub const WSL_EXE: &str = r"C:\Windows\System32\wsl.exe";
+/// The shell used on Linux to run scripts.
+#[cfg_attr(windows, allow(dead_code))]
+pub const LINUX_EXE: &str = "/bin/bash";
 /// The launcher, relative to the WSL home (`--cd ~`).
 const SCRIPT: &str = ".claude/klepsydra-launch.sh";
 /// Longest wait for wsl.exe to finish: a cold WSL start alone can take 20 s.
@@ -27,7 +29,6 @@ const VOICES_TIMEOUT: Duration = Duration::from_secs(300);
 const JUMP_TIMEOUT: Duration = Duration::from_secs(15);
 /// How long the output is still read once wsl.exe exits; a process it left
 /// behind holding the pipe open cannot keep the call running past this.
-#[cfg(windows)]
 const DRAIN_GRACE: Duration = Duration::from_secs(2);
 
 /// Set while a New session runs; another meanwhile is refused.
@@ -294,7 +295,6 @@ const PANE_BUSY: &str = "That session is already being ended or interrupted.";
 pub const JUMP_BUSY: &str = "That session is already being brought forward.";
 
 /// wsl.exe writes its own messages as UTF-16LE and the Linux side's as UTF-8.
-#[cfg(any(windows, test))]
 fn decode(b: &[u8]) -> String {
     let utf16 =
         b.len() >= 2 && b.len().is_multiple_of(2) && b.iter().skip(1).step_by(2).all(|&x| x == 0);
@@ -312,7 +312,6 @@ fn decode(b: &[u8]) -> String {
 }
 
 /// The last non-blank line of `text`.
-#[cfg(any(windows, test))]
 fn last_line(text: &str) -> String {
     text.lines()
         .map(str::trim)
@@ -322,23 +321,19 @@ fn last_line(text: &str) -> String {
 }
 
 /// The last non-blank line, capped at 200 characters for error messages.
-#[cfg(any(windows, test))]
 fn error_line(text: &str) -> String {
     last_line(text).chars().take(200).collect()
 }
 
 /// Most output kept from each stream.
-#[cfg(any(windows, test))]
 const KEEP: usize = 64 * 1024;
 
 /// A stream being read on its own thread.
-#[cfg(any(windows, test))]
 struct Drain {
     kept: std::sync::Arc<Mutex<Vec<u8>>>,
     done: std::sync::mpsc::Receiver<()>,
 }
 
-#[cfg(any(windows, test))]
 impl Drain {
     /// What was read, once the stream ends or at `deadline`, whichever is
     /// first; a stream still open then is left to its thread.
@@ -353,7 +348,6 @@ impl Drain {
 
 /// Read `r` to its end on a thread, keeping the last `KEEP` bytes, so a full
 /// pipe never stalls the child.
-#[cfg(any(windows, test))]
 fn drain<R: std::io::Read + Send + 'static>(mut r: R) -> Drain {
     let kept = std::sync::Arc::new(Mutex::new(Vec::new()));
     let (tx, done) = std::sync::mpsc::channel();
@@ -460,7 +454,7 @@ fn run(args: &[String], wait: Duration, timed_out: fn() -> String) -> Result<Str
     use std::os::windows::process::CommandExt;
     use std::process::{Command, Stdio};
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-    let mut child = Command::new(WSL_EXE)
+    let child = Command::new(WSL_EXE)
         .args(args)
         .env("WSL_UTF8", "1")
         .creation_flags(CREATE_NO_WINDOW)
@@ -469,8 +463,29 @@ fn run(args: &[String], wait: Duration, timed_out: fn() -> String) -> Result<Str
         .stderr(Stdio::piped())
         .spawn()
         .map_err(|e| format!("Could not start {WSL_EXE}: {e}"))?;
-    let out = drain(child.stdout.take().ok_or("wsl.exe gave no stdout.")?);
-    let err = drain(child.stderr.take().ok_or("wsl.exe gave no stderr.")?);
+    wait_child(child, "wsl.exe", wait, timed_out)
+}
+
+/// Wait for `child`, started with piped output, at most `wait`; its last
+/// stdout line, or on failure its last stderr line, in the card's words.
+fn wait_child(
+    mut child: std::process::Child,
+    name: &str,
+    wait: Duration,
+    timed_out: fn() -> String,
+) -> Result<String, String> {
+    let out = drain(
+        child
+            .stdout
+            .take()
+            .ok_or_else(|| format!("{name} gave no stdout."))?,
+    );
+    let err = drain(
+        child
+            .stderr
+            .take()
+            .ok_or_else(|| format!("{name} gave no stderr."))?,
+    );
     let deadline = Instant::now() + wait;
     let status = loop {
         match child.try_wait() {
@@ -491,7 +506,7 @@ fn run(args: &[String], wait: Duration, timed_out: fn() -> String) -> Result<Str
     } else if stderr.is_empty() {
         let err = error_line(&stdout_raw);
         Err(if err.is_empty() {
-            format!("wsl.exe exited with {status}.")
+            format!("{name} exited with {status}.")
         } else {
             err
         })
@@ -500,9 +515,83 @@ fn run(args: &[String], wait: Duration, timed_out: fn() -> String) -> Result<Str
     }
 }
 
+/// The launcher's path on Linux: `$HOME/.claude/klepsydra-launch.sh`. An unset,
+/// empty or relative HOME is refused, so the script is never looked up from
+/// the working directory.
+#[cfg(any(not(windows), test))]
+fn linux_script(home: Option<&str>) -> Result<String, String> {
+    match home {
+        Some(h) if h.starts_with('/') => Ok(format!("{}/{SCRIPT}", h.trim_end_matches('/'))),
+        _ => Err("HOME is not set to a folder, so the launcher cannot be found.".into()),
+    }
+}
+
+/// bash's arguments on Linux for a launcher call given as wsl.exe's: the
+/// words after the script are the launcher's own (`new DIR`, `jump ...`), and
+/// `-l` stays where wsl.exe's `bash -l` had it.
+#[cfg(any(not(windows), test))]
+fn linux_argv(home: Option<&str>, args: &[String]) -> Result<Vec<String>, String> {
+    let script = linux_script(home)?;
+    let at = args
+        .iter()
+        .position(|a| a == SCRIPT)
+        .ok_or("That is not a launcher call.")?;
+    let mut argv: Vec<String> = Vec::new();
+    if at > 0 && args[at - 1] == "-l" {
+        argv.push("-l".into());
+    }
+    argv.push(script);
+    argv.extend(args[at + 1..].iter().cloned());
+    Ok(argv)
+}
+
+/// bash's arguments on Linux to hand `target` (a folder or a GitHub URL) to
+/// the desktop through the launcher's `folder` or `github` verb.
+#[cfg(any(not(windows), test))]
+fn linux_open_argv(home: Option<&str>, verb: &str, target: &str) -> Result<Vec<String>, String> {
+    Ok(vec![linux_script(home)?, verb.into(), target.into()])
+}
+
 #[cfg(not(windows))]
-fn run(_args: &[String], _wait: Duration, _timed_out: fn() -> String) -> Result<String, String> {
-    Err("Starting a session works on Windows only.".into())
+fn run_linux(argv: &[String], wait: Duration, timed_out: fn() -> String) -> Result<String, String> {
+    use std::process::{Command, Stdio};
+    let child = Command::new(LINUX_EXE)
+        .args(argv)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("Could not start {LINUX_EXE}: {e}"))?;
+    wait_child(child, "The launcher", wait, timed_out)
+}
+
+#[cfg(not(windows))]
+fn run(args: &[String], wait: Duration, timed_out: fn() -> String) -> Result<String, String> {
+    let argv = linux_argv(std::env::var("HOME").ok().as_deref(), args)?;
+    run_linux(&argv, wait, timed_out)
+}
+
+/// Show `target` on the desktop: a folder (`verb` "folder") or a GitHub page
+/// ("github"). `wsl` is the same call as wsl.exe's arguments, which end in
+/// explorer.exe; that exits 1 even when it opened the target.
+fn run_open(
+    verb: &str,
+    target: &str,
+    wsl: &[String],
+    wait: Duration,
+    timed_out: fn() -> String,
+) -> Result<String, String> {
+    #[cfg(windows)]
+    {
+        let _ = (verb, target);
+        explorer_opened(run(wsl, wait, timed_out))
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = wsl;
+        let argv = linux_open_argv(std::env::var("HOME").ok().as_deref(), verb, target)?;
+        run_linux(&argv, wait, timed_out)
+    }
 }
 
 /// Bring session `id`'s tmux window, `t`, to the front of its tmux session.
@@ -569,6 +658,7 @@ pub fn folder_args(dir: &str, distro: &str) -> Result<Vec<String>, String> {
 
 /// explorer.exe exits 1 even when it opened the folder: that status, with
 /// nothing on stderr, is its success.
+#[cfg_attr(not(windows), allow(dead_code))]
 fn explorer_opened(said: Result<String, String>) -> Result<String, String> {
     match said {
         Err(e) if e == "wsl.exe exited with exit code: 1." => Ok(String::new()),
@@ -588,7 +678,7 @@ pub async fn open_folder(app: tauri::AppHandle, id: String) -> Result<String, St
     let shown = dir.rsplit('/').next().unwrap_or(&dir).to_string();
     tauri::async_runtime::spawn_blocking(move || {
         logged("open folder", Some(&id), || {
-            explorer_opened(run(&args, JUMP_TIMEOUT, jump_timed_out))
+            run_open("folder", &dir, &args, JUMP_TIMEOUT, jump_timed_out)
         })
     })
     .await
@@ -633,7 +723,7 @@ pub async fn open_github(
     let args = github_args(&url, &distro)?;
     tauri::async_runtime::spawn_blocking(move || {
         logged("open github", Some(&id), || {
-            explorer_opened(run(&args, JUMP_TIMEOUT, jump_timed_out))
+            run_open("github", &url, &args, JUMP_TIMEOUT, jump_timed_out)
         })
     })
     .await
@@ -884,6 +974,101 @@ mod tests {
     use super::*;
     use serde_json::json;
     use std::time::Instant;
+
+    fn s(v: &[&str]) -> Vec<String> {
+        v.iter().map(|x| x.to_string()).collect()
+    }
+
+    #[test]
+    fn linux_runs_the_launcher_by_the_home_path_with_its_own_words() {
+        let home = Some("/home/aj");
+        let new = new_args("~/my repos;x", Some("Ubuntu")).unwrap();
+        assert_eq!(
+            linux_argv(home, &new).unwrap(),
+            s(&[
+                "-l",
+                "/home/aj/.claude/klepsydra-launch.sh",
+                "new",
+                "~/my repos;x"
+            ])
+        );
+        assert_eq!(
+            linux_argv(home, &voices_args()).unwrap(),
+            s(&["-l", "/home/aj/.claude/klepsydra-launch.sh", "voices"])
+        );
+        let ok = Target {
+            distro: "Ubuntu".into(),
+            socket: "/tmp/tmux-1001/klepsydra".into(),
+            pane: "%3".into(),
+            pid: 42,
+            start: 7,
+        };
+        assert_eq!(
+            linux_argv(home, &pane_args(&ok, PaneVerb::Jump).unwrap()).unwrap(),
+            s(&[
+                "/home/aj/.claude/klepsydra-launch.sh",
+                "jump",
+                "/tmp/tmux-1001/klepsydra",
+                "%3",
+                "42",
+                "7"
+            ])
+        );
+        assert_eq!(
+            linux_argv(Some("/home/aj/"), &models_args(None)).unwrap(),
+            s(&["-l", "/home/aj/.claude/klepsydra-launch.sh", "models"])
+        );
+    }
+
+    #[test]
+    fn linux_refuses_a_home_it_cannot_trust_and_a_call_that_is_not_the_launcher() {
+        let args = voices_args();
+        for home in [None, Some(""), Some("."), Some("home/aj")] {
+            assert!(linux_argv(home, &args).is_err(), "{home:?}");
+            assert!(linux_open_argv(home, "folder", "/x").is_err(), "{home:?}");
+        }
+        assert!(linux_argv(Some("/home/aj"), &s(&["-e", "explorer.exe", "."])).is_err());
+    }
+
+    #[test]
+    fn linux_hands_a_folder_or_a_page_to_the_launcher_as_one_argument() {
+        assert_eq!(
+            linux_open_argv(Some("/home/aj"), "folder", "/home/aj/my repos").unwrap(),
+            s(&[
+                "/home/aj/.claude/klepsydra-launch.sh",
+                "folder",
+                "/home/aj/my repos"
+            ])
+        );
+        assert_eq!(
+            linux_open_argv(Some("/home/aj"), "github", "https://github.com/a/b").unwrap(),
+            s(&[
+                "/home/aj/.claude/klepsydra-launch.sh",
+                "github",
+                "https://github.com/a/b"
+            ])
+        );
+    }
+
+    /// The Linux spawn itself (wait_child under /bin/bash): its last stdout
+    /// line on success, its stderr on failure, the timeout line past `wait`.
+    #[cfg(unix)]
+    #[test]
+    fn linux_run_reports_the_launchers_line_its_failure_and_a_timeout() {
+        let dir = std::env::temp_dir().join(format!("klepsydra-run-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let script = dir.join("l.sh");
+        let body = "case $1 in ok) echo noise; echo fine;; bad) echo why >&2; exit 1;; slow) sleep 5;; esac\n";
+        std::fs::write(&script, body).unwrap();
+        let go = |word: &str, wait: u64| {
+            let argv = [script.display().to_string(), word.to_string()];
+            run_linux(&argv, Duration::from_secs(wait), timed_out)
+        };
+        assert_eq!(go("ok", 5), Ok("fine".to_string()));
+        assert_eq!(go("bad", 5), Err("why".to_string()));
+        assert_eq!(go("slow", 1), Err(timed_out()));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 
     #[test]
     fn new_args_pass_the_folder_as_one_argument() {

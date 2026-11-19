@@ -212,10 +212,11 @@ test("the exit-code allowance covers nothing else that starts a process", () => 
   }
 });
 
-test("the launcher starts only wsl.exe, from its fixed path, without a window", () => {
+test("the launcher starts only wsl.exe or linux bash, from fixed paths, without a window", () => {
   const src = read(LAUNCHER);
-  assert.deepEqual([...src.matchAll(/Command::new\(([^)]*)\)/g)].map((m) => m[1].trim()), ["WSL_EXE"]);
+  assert.deepEqual([...src.matchAll(/Command::new\(([^)]*)\)/g)].map((m) => m[1].trim()), ["WSL_EXE", "LINUX_EXE"]);
   assert.match(src, /pub const WSL_EXE: &str = r"C:\\Windows\\System32\\wsl\.exe";/);
+  assert.match(src, /pub const LINUX_EXE: &str = "\/bin\/bash";/);
   assert.match(src, /creation_flags\(CREATE_NO_WINDOW\)/);
   assert.deepEqual(launcherHazards(src), []);
 });

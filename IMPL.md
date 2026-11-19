@@ -1,23 +1,27 @@
-# IMPL: klepsydra#410 cards go silent through a long turn: show latest agent narration
+# IMPL: #460 Debian Linux launch parity (PR #458, branch feat/linux-launch-parity)
 
-Brief: https://github.com/ajbarea/klepsydra/issues/410
+Issue: https://github.com/ajbarea/klepsydra/issues/460. The Windows/WSL path must not change.
 
 ## Slice
-1. In `hooks/klepsydra-fleet.sh`, harvest the newest assistant text narration from a bounded transcript tail on `PostToolUse` (and from `last_assistant_message` if supplied by engine/hook), storing it as `.said = {text: ..., at: ...}` apart from `.reply`.
-2. In `hooks/klepsydra-engine.sh`, harvest agy's latest `PLANNER_RESPONSE` mid-turn on `PostToolUse` from a bounded tail (matching `Stop`).
-3. In `src-tauri/fleet/src/session.rs`, `src-tauri/fleet/src/view.rs`, and `src-tauri/fleet/src/phone.rs`, support `pub said: Option<Said>` so Rust deserialization / serialization passes `.said` to views and snapshots.
-4. In `src/fleet/model.js`, ensure the "now" line displays `said` while working, replaced by `reply` once the turn ends.
-5. In `hooks/test_fleet.sh`, `hooks/test_engine.sh`, and `src/*.test.js`, add regression tests for narration mid-turn, Stop replacing with reply, and empty tail changing nothing.
-6. Benchmark hook latency before and after (baseline 59.94ms, after 63.12ms).
-7. Capture 1920x1080 screenshots before and after in dark and light themes, and record in `shots/README.md`.
+Take PR #458 from "not clean" to clean: fix every finding of the Opus review, each with a test.
 
 ## Done
-- Assigned issue #410 to `ajbarea`.
-- Bounded transcript tail harvesting implemented in `hooks/klepsydra-fleet.sh` (shared single `remote_lines` pass with record-separator split, zero additional transcript reads) and `hooks/klepsydra-engine.sh`.
-- Rust backend updated with `pub said: Option<Said>` in `SessionFile` and `View`, `phone.rs` schema updated to 27 fields with `"said"`, unit tests added (`session_file_reads_said`, `view_carries_said`). All 433 backend unit tests and 7 integration tests pass.
-- Frontend `card()` in `src/fleet/model.js` updated to display `said` mid-turn on `.reply` while working, replaced by `reply` at `Stop` / `done` / `ended` / `background`.
-- Added regression tests in `hooks/test_fleet.sh`, `hooks/test_engine.sh`, and `src/fleet-model.test.js`.
-- Performed mutation checks in `hooks/klepsydra-fleet.sh`, `hooks/klepsydra-engine.sh`, and `src/fleet/model.js` - all caught by tests.
-- Measured hook call latency: baseline 59.94ms/call (100 runs), after 63.12ms/call (100 runs), well within the 100ms budget (+3.18ms delta).
-- Captured 1920x1080 screenshots in dark and light themes before and after (`klepsydra-410-narrate-{before,after}-{dark,light}.png`), recorded under `## 2026-11-16: cards narration mid-turn (#410)` in `/mnt/c/Users/ajbar/fleet-briefing/shots/README.md`.
-- All linters and test suites pass cleanly: `cargo test -p klepsydra-fleet`, `cargo clippy`, `cargo fmt`, `node --test`, `test_fleet.sh`, `test_engine.sh`, `npm run lint`, `uvx ruff check`.
+- `is_wsl` reads the kernel release through `proc_osrelease`, inside the shared "proc stat" block (identical in the fleet, launch and browser hooks); the launcher's `PROC_ROOT` is `KLEPSYDRA_PROC` like the fleet hook's.
+- Linux cases in `hooks/test_launch.sh`: terminal order and none-found, `KLEPSYDRA_TERMINAL`, per-emulator command lines, failed and handed-off terminals, `xdotool` jump, folder and github verbs, WSL detected by kernel release.
+- A terminal that exits non-zero fails the launch, undoes what it made and drops the pending stamp.
+- Jump raises the window found by walking up from the session's own tmux client (hand-started tmux included).
+- `folder` and `github` fail when `xdg-open` is missing or fails at once.
+- `launch.rs`: Linux argv built by `linux_argv` / `linux_open_argv` (HOME unset or relative is refused); one `wait_child` shared with the Windows `run`; `run_open` for folder and github.
+- `klepsydra-pane-died.sh`: tmux 3.8 prints an empty `#{pane_pid}` for a dead pane (format.c: `wp->fd != -1`, 3.8 only; 3.7c and Debian 13's 3.5a print the old pid). Comment fixed, fixture test with a stub tmux.
+- `jump.rs`: `cfg_attr(not(windows), allow(dead_code))`; `fleet-queue.test.js`: the three linear-time tests skip without `process.threadCpuUsage` (no GC-thread fallback).
+
+## Verified so far
+`make test-launch` 281 passed, 0 failed (one #290 case failed once, then passed: flaky, not yet checked on main); `node --test src/*.test.js` and `statusline` pass. The remaining suites were running in the background (log: the session scratchpad suites.log) when RIT's window ran out: re-run any not yet green.
+
+## Next
+1. Re-run what is not green: hooks/test_fleet.sh (block parity tests), test_browser.sh, make test-fleet, shellcheck, clippy/cargo -p klepsydra-fleet, `KLEPSYDRA_STAGE=klepsydra-build-linux_458 bash scripts/build-windows.sh --check` (the only run that compiles launch.rs and its new tests; nothing has compiled it yet).
+2. Rewrite the PR #458 body (short top, link #460, every suite run, Linux paths checked only in tests on WSL; AJ checks live on the Debian PC); push; one bounded wait for CI green. Do not merge.
+3. Report to Heph, `fleet done`.
+
+## Verify
+As listed under Next 1, plus `make test-launch`.

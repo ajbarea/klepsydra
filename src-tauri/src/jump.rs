@@ -10,6 +10,7 @@ use klepsydra_fleet::tabs::{Lookup, TabError};
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum JumpError {
     Tab(TabError),
+    #[cfg_attr(not(windows), allow(dead_code))]
     Failed(String),
 }
 
@@ -113,10 +114,12 @@ fn settle(tmux_ok: bool, title_result: Result<String, JumpError>) -> Result<Stri
 }
 
 #[cfg(not(windows))]
-fn jump(_lookup: Lookup<'_>) -> Result<String, JumpError> {
-    Err(JumpError::Failed(
-        "Jump to terminal works on Windows only.".into(),
-    ))
+fn jump(lookup: Lookup<'_>) -> Result<String, JumpError> {
+    let name = match lookup {
+        Lookup::Exact(s) => s,
+        Lookup::Session(s) => s,
+    };
+    Err(JumpError::Tab(TabError::NoMatch(name.to_string())))
 }
 
 #[cfg(windows)]
