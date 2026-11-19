@@ -1,42 +1,30 @@
-# IMPL: PR #477 round 2 (ns477): + New session wired to the real app (#440)
+# IMPL: klepsydra#421 + #438: gauge strip, variant A with docked faces
 
-Brief: ~/.local/state/fleet-orchestrator/briefs (ns477). PR #477, branch feat/new-session-split-440
-(local branch `ns477` in .claude/worktrees/ns477 pushes there). Decision: Variant A (PR #459).
+Branch feat/gauge-strip-a-421 (worktree .claude/worktrees/gauge-421). Decision: PR #459 last comment (AJ 11-18).
+Mockups: branch design/mockups-1118, docs/mockups/2026-11-18 (gauge-a.html, strip.js/css, readings.js, wall-header.html, settings-a.html).
 
-## Design (decided 11-19)
-- Launcher (`hooks/klepsydra-launch.sh`): `new DIR claude ACCOUNT [MODEL]` finds the config folder
-  whose login is ACCOUNT (never by folder name: on AJ's PC ~/.claude is RIT, ~/.claude-rit is
-  Personal); `new DIR copilot [MODEL]` starts Copilot locked like `fleet delegate`;
-  `new DIR agy MODEL` refuses a model whose quota group is spent (fresh `agy -p /quota`);
-  `models` adds each model's quota group from `/quota`; `engines` prints what is installed and
-  which Claude accounts have a login here.
-- Rust (`launch.rs`): launch_session takes engine, account, model; refuses an account whose
-  readings, reconciled per window as gauge.js does, have a live window at 100%
-  (`usage::spent_until`, fleet crate); writes
-  `new_session_last` to prefs.json on a launch that started. New commands: `engines_status`,
-  `new_session_prefs`, `set_new_session_default`.
-- Wall: usage from `read_usage` through `toRows` (desktop snapshot has none); menu built only on
-  open and on user actions, focus kept by stable key; Escape returns to the caret; no data
-  through innerHTML; native radios; Recommended first; install/sign-in step shown inline.
-- Follow-up issue (PR says Refs #440): Fable's own allowance (not in statusLine JSON,
-  anthropics/claude-code#73770), Copilot model list and sign-in state (no CLI command for
-  either), Claude & GPT weekly bucket in readings.
+## Plan: one PR per step
+1. **PR 1 (this branch): floating strip as variant A.**
+   - `src/icons.js`: MAKER_ICONS moved out of wall.js, shared by wall and gauge.
+   - `src/chips.js` (pure, tested): `toChips(rows, nowMs)` groups toRows' rows into one chip per account;
+     lead = tightest non-group window; week at 100% = "out until", session hidden; group windows (agy claude/gpt) never lead;
+     stale (> 3 h) dims and names its age; route chip from toRows' isBestRoute (#411 rule, no second source);
+     Copilot placeholder until #323; order = route order (agy, copilot, api, claude), then label.
+   - `src/chipview.js`: DOM for linear (tray Compact) and stacked (tray Full). Hover detail = native title tooltip
+     (escapes the small window); aria-label carries every window.
+   - Faces dock to their account's chip (session account.id = usage account id; agy/copilot by engine); the rest after the last chip.
+   - Hit area: the whole strip (grip + chips), as the mockup's click-through default is off; the setting comes in PR 3.
+   - Double layout: in PR 3 with Settings' layout row (issue filed).
+2. **PR 2: #438 opacity** 0-100 step 5 in prefs.json, live; halo below 60% (dark) / 50% (light), full ink below 70%.
+3. **PR 3: docked gauges in the wall header** + floating strip hidden while the wall has focus + Settings › Gauges rows.
+4. **PR 4: System chip** (off by default), only after 1-3.
 
 ## Done
-- ae4e66a launcher; d6ba8b1 app + wall; e7ec82c docs; 3d33f60 review round 1; 55e9029 verify round
-  (ready gate through dom.js refresh, spent_until per window, KLEPSYDRA_CLAUDE kept out of a new
-  tmux server). Verify pass on 55e9029: clean (3 unreachable nits, listed in the PR).
-- Follow-up issue #478. Live: four throwaway launches (Claude Personal, Claude RIT Sonnet, agy
-  Gemini Low, Copilot), each on the right account and model, each ended at rest.
-- Shots: fleet-briefing/shots/2026-11-19/klepsydra-477-live-*.png, README line added.
+- (nothing pushed yet)
 
 ## Next
-- Heph's fresh Opus review; fix what it finds. Do not merge.
-- The running fleet tmux server still holds KLEPSYDRA_CLAUDE (Heph's 11-16 command) in its global
-  environment until it restarts (`tmux -L klepsydra set-environment -gu KLEPSYDRA_CLAUDE` clears it).
+- Write chips.js + tests, icons.js, chipview.js, main.js/index.html/style.css; strip.js `place` option.
 
 ## Verify
-- node --test src/*.test.js 529; make test-launch 278; cargo test -p klepsydra-fleet 435;
-  KLEPSYDRA_STAGE=klepsydra-build-ns477 scripts/build-windows.sh --check;
-  scripts/test_wall_browser.py: 444 pass; drawer_tables, cast_pick_outlives_its_card and
-  reply_buttons fail on main too (reply_buttons raises and stops the run: run the rest by name).
+- `node --test src/*.test.js`; `npm run lint`; live: serve src/ with real readings (phone server usage), Playwright 1920/390 dark/light.
+- CPU: CDP Performance TaskDuration delta / wall time over 120 s, main vs branch, same fixture.
