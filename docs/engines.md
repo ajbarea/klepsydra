@@ -165,7 +165,12 @@ the engine a tool that writes, which the lock removes today.
 ## The lock
 
 Every non-Claude session the fleet starts, `+ New session` included, is locked,
-and a lock that cannot be built starts nothing. The two entry points differ: a
+and a lock that cannot be built starts nothing. A `+ New session` Copilot window
+runs with the same flags as a `fleet delegate` interactive lane (below), and the
+launcher refuses a folder that ships Copilot workspace configuration
+(`.github/hooks`, `.github/copilot`, `.github/skills`, `.github/agents`,
+`.github/extensions`, `.github/mcp.json`, `.mcp.json`, `.vscode/mcp.json`,
+`.copilot`, up to the repo root), since Copilot's folder trust loads it. The two entry points differ: a
 `fleet delegate` lane runs in a read-only snapshot with a scope and a timeout; a
 `+ New session` agy window is a person's own session in a live folder, so it has the
 deny rules and `--sandbox` only, and the lock policy names no trusted workspace, so
