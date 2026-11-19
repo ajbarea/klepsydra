@@ -91,10 +91,11 @@ at_rest() { # PANE SID
 }
 # SCREEN above the input box's top rule, escapes kept: a turn printing text or a spinner with no
 # timer changes it (the glyph and its colours move), where busy reads nothing.
-above_raw() { # SCREEN
-  local n
-  n=$(plain <<<"$1" | awk 'index($0, "────") == 1 { r[++k] = NR } END { print (k >= 2) ? r[k - 1] - 1 : NR }')
-  head -n "$n" <<<"$1"
+above_raw() { head -n "$(above_rows "$1")" <<<"$1"; } # SCREEN
+# How many rows SCREEN has above the input box's top rule, blank ones included: counted from the
+# rule's position, since a command substitution drops a text's trailing blank rows.
+above_rows() { # SCREEN
+  plain <<<"$1" | awk 'index($0, "────") == 1 { r[++k] = NR } END { print (k >= 2) ? r[k - 1] - 1 : NR }'
 }
 # ABOVE (above_raw's) as plain lines, trailing spaces trimmed and the slash-command menu that typing
 # /exit opens dropped. Blank rows stay: each is a row the menu can cover, so a transcript that
@@ -122,25 +123,27 @@ screen_lines() { # ABOVE
     }
     print k; for (i = 1; i <= n; i++) print l[i] }'
 }
-# Whether AFTER (a screen with /exit typed) shows REF's transcript (above_raw's) unchanged, row for
-# row from the top: the menu is drawn over the transcript's last rows (2.1.316, at 84 and 160
-# columns), so at most the rows it covers are missing, and only from the end. A transcript that
-# scrolled up under the menu (a prompt and its spinner arriving as /exit went in) fails. Fails with
-# SAME_WHY set to the counts and the first lines that differ, for the refusal's log.
+# Whether AFTER (a screen with /exit typed) shows the transcript of REF (the screen before)
+# unchanged, row for row from the top: the menu is drawn over the transcript's last rows (2.1.316,
+# at 84 and 160 columns), so at most the rows it covers are missing, and only from the end. A
+# transcript that scrolled up under the menu (a prompt and its spinner arriving as /exit went in)
+# fails. One that fills a blank gap under the menu without moving a visible row passes here; the
+# session file's fingerprint, read again before Enter, is what sees that turn. Rows are counted from
+# the box's position, blank ones included. Fails with SAME_WHY set to the counts and the first lines
+# that differ, for the refusal's log.
 same_transcript() { # REF AFTER
   local r a k n m
-  r=$(screen_lines "$1" | tail -n +2)
+  n=$(above_rows "$1")
+  r=$(screen_lines "$(above_raw "$1")" | tail -n +2)
   a=$(screen_lines "$(above_raw "$2")")
   k=$(head -1 <<<"$a"); a=$(tail -n +2 <<<"$a")
-  n=$(rows "$r") m=$(rows "$a")
-  if (( m >= 1 && m <= n && n - m <= k )) && [[ $(head -n "$m" <<<"$r") == "$a" ]]; then
+  m=$(( $(above_rows "$2") - k ))
+  if (( m >= 1 && m <= n && n - m <= k )) && [[ $(head -n "$m" <<<"$r") == "$(head -n "$m" <<<"$a")" ]]; then
     return 0
   fi
   SAME_WHY="menu lines dropped $k, transcript lines before $n, after $m; differs: $(excerpt "$r" "$a")"
   return 1
 }
-# How many lines TEXT has, blank ones included; none when it is empty.
-rows() { if [[ -n $1 ]]; then wc -l <<<"$1"; else echo 0; fi; } # TEXT
 # The first lines that differ between OLD and NEW (plain text), at most 5, each cut to 120
 # characters and joined by " | ", then how many blank lines differ: what a refusal's log shows of a
 # screen that changed. Blank lines are counted, not quoted, so they cannot hide the line that moved.
@@ -207,7 +210,7 @@ refuse() { # NAME PANE CHECK WHY [KEY=VALUE...]
 # since the menu /exit opens covers the rows a new turn's spinner would show in), and only then is
 # Enter pressed. The pane is never killed: one that does not go is left open and said so.
 close_now() { # PANE NAME SID
-  local s ref fp why box q=${FLEET_CLOSE_QUIET:-6} g=${FLEET_CLOSE_SETTLE:-2}
+  local s s0 ref fp why box q=${FLEET_CLOSE_QUIET:-6} g=${FLEET_CLOSE_SETTLE:-2}
   [[ $q =~ ^[0-9]+([.][0-9]+)?$ ]] || q=6
   [[ $g =~ ^[0-9]+([.][0-9]+)?$ ]] || g=2
   s=$(screen "$1")
@@ -219,7 +222,7 @@ close_now() { # PANE NAME SID
     return
   fi
   fp=$(at_rest "$1" "$3") || { refuse "$2" "$1" session_file "$fp" session="$(session_brief "$3")"; return; }
-  ref=$(above_raw "$s")
+  ref=$(above_raw "$s") s0=$s
   steady "$1" "$q" "$ref" || { refuse "$2" "$1" quiet_screen "working (its screen changed within ${q} s)" \
     busy="$(busy "$STEADY_SCREEN" && echo yes || echo no)" differs="$(excerpt "$(plain <<<"$ref")" "$(above_raw "$STEADY_SCREEN" | plain)")"; return; }
   why=$(at_rest "$1" "$3") || { refuse "$2" "$1" session_file "$why" session="$(session_brief "$3")"; return; }
@@ -240,7 +243,7 @@ close_now() { # PANE NAME SID
     fi
   elif busy "$s"; then
     check=busy why="working (a turn started as /exit went in)" more=(spinner="$(near 4 | grep -E '… \(|esc to interrupt' | clip)")
-  elif ! same_transcript "$ref" "$s"; then
+  elif ! same_transcript "$s0" "$s"; then
     check=transcript why="working (its screen changed as /exit went in)" more=(differs="$SAME_WHY")
   elif [[ $box != /exit ]]; then
     check=input_text why="working (its box changed as /exit went in)" more=(text="$(clip 80 <<<"$box")")
@@ -255,7 +258,8 @@ close_now() { # PANE NAME SID
       check=session_file more=(session="$(session_brief "$3")")
     fi
     box=$(input_text "$(screen "$1")")
-  # The last look before Enter: the box still holds just our /exit, and no turn has started.
+  # The last look before Enter: the box still holds just our /exit, and no spinner shows (where the
+  # menu leaves its row in view; at 84 columns it covers it, and the fingerprint is the guard).
   elif s=$(screen "$1"); box=$(input_text "$s"); busy "$s"; then
     check=busy why="working (a turn started within ${g} s of /exit going in)" more=(spinner="$(near 4 | grep -E '… \(|esc to interrupt' | clip)")
   elif [[ $box != /exit ]]; then

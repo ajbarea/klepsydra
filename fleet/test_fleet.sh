@@ -2331,11 +2331,11 @@ check "#483: --why for a name with no close fails (1); --why with no name is bad
 # transcript that scrolled up under it differs, blank top rows included.
 replay() { # BEFORE AFTER: same or differs
   ( eval "$(awk '/^above_raw\(\)/,/^steady\(\)/' "$here/close.sh" | sed '$d')"
-    same_transcript "$(above_raw "$(cat "$1")")" "$(cat "$2")" && echo same || echo differs )
+    same_transcript "$(cat "$1")" "$(cat "$2")" && echo same || echo differs )
 }
 cs=$here/tests/close-screens
-check "#483 review 2: the /exit menu over a resting transcript reads the same (ns477 and a background shell at 84, 160, blank top rows)" \
-  "$(for p in ns477-84 bg-84 bg-160 blanktop-84; do replay "$cs/$p-before.txt" "$cs/$p-after.txt"; done | tr '\n' ' ')" "same same same same "
+check "#483 review 2: the /exit menu over a resting transcript reads the same (ns477 and a background shell at 84, 160, blank top rows, a blank row just above the menu)" \
+  "$(for p in ns477-84 bg-84 bg-160 blanktop-84 blankabove-84; do replay "$cs/$p-before.txt" "$cs/$p-after.txt"; done | tr '\n' ' ')" "same same same same same "
 check "#483 review 2: every transcript that scrolled up under the menu differs (10 screens, 3 of them scrolling off blank rows)" \
   "$(for f in "$cs"/*-scroll*.txt; do b=${f##*/}; replay "$cs/${b%-scroll*}-before.txt" "$f"; done | sort | uniq -c | tr -s ' ')" " 10 differs"
 # A wrapped line one column left or right of the descriptions' column is no part of the menu (#483 review).

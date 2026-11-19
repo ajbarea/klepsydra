@@ -39,7 +39,17 @@ Do not merge: Heph reviews and merges.
   blank lines and quotes the changed line first (test added).
 - Real ns477 (%48) closed with this branch at 13:35.
 
+## Review rounds 2 and 3 (fresh Opus each)
+- Round 2: blank rows were dropped before the row compare, so a scroll under the menu could hide behind
+  blank top rows (S1); no test pinned the row-position compare (S2); nothing isolated the settle re-read
+  (N1); the box was not read again before Enter (N2). All fixed in cb1042c, with real captures in
+  fleet/tests/close-screens/ replayed by the suite (no tmux).
+- Round 3: S1's fix counted rows from strings that `$( )` had stripped of trailing blanks, so a resting
+  pane with a blank row just above the menu was refused every time. Rows now come from the rule's
+  position (above_rows); blankabove-84 fixture added. Comments on the 84-column busy check and the
+  fingerprint's role corrected.
+
 ## Next
-1. Review round 2 (fresh Opus) verdict; fix and verify-pass if it finds anything.
+1. Suite + shellcheck on close.sh, live rest at 84/160, then a fresh Opus verify pass (round 4).
 2. Open the PR (draft /tmp/claude-1001/close-menu-handoff/pr.md), assigned ajbarea, label bug, Fixes #483;
    CI green; report to Heph via `fleet send`; `fleet done`. Do not merge.
