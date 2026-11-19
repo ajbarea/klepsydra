@@ -24,9 +24,14 @@ Branch feat/fleet-done-report-445, PR #454. Issues: #445 (and its comment), #446
   the box was, both refused. Mutation: deleting close.sh's fingerprint line (145) or idle_empty line
   (140) turns its test red. #468 gained the other-Stop-hooks line.
 
+- Heph's final verify at 6011263: CLEAN. Rebased on origin/main (b361220: #463, #465, #466); README
+  and docs/fleet.md conflicts resolved to main's structure (README rows short, depth in docs/fleet.md,
+  close row corrected to never-kill); IMPL kept. fleet/ vs 6011263 = main's lines only (close.sh,
+  done.sh, lib.sh identical). Nit: stdin case uses TMUX_PANE=%99999, never the orchestrator's.
+
 ## Next
-- Push, CI green, report to Heph (fleet send %36), fleet done. Heph verifies again; do not merge.
-- Section runner fleet/.sec445.sh is untracked (rebuilt for this round's line numbers).
+- CI green on the rebased head, report to Heph (fleet send %36), fleet done. Heph merges; do not merge.
+- Section runner fleet/.sec445.sh is untracked (rebuilt for the rebased line numbers).
 
 ## Known residual
 - A prompt that lands in the last ~0.1-0.3 s before Enter is not seen: spinner 60-104 ms, fleet file 140-255 ms, transcript 190-280 ms after submit (measured). /exit mid-turn ends the session at once.
