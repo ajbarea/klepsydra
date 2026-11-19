@@ -203,7 +203,10 @@ differential() { # AWK-NAME [reverse]
     check "$1 #$i limit_menu" "$got" "$want"
     screen_parse "$s"; armed_at
     check "$1 #$i armed" "$ARMED" "$(old_armed "$s")"
+    # Each with another screen cached first, so a helper that reads the cache
+    # before parsing its own screen is caught.
     for n in idle_empty box_empty holds_input rc_settled; do
+      screen_parse "${corpus[(k + 1) % ${#corpus[@]}]}"
       "$n" "$s"; got=$?; "old_$n" "$s"; want=$?
       check "$1 #$i $n" "$got" "$want"
     done
