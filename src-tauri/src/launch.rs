@@ -772,11 +772,111 @@ pub async fn get_launch_dir(app: tauri::AppHandle) -> Option<String> {
     launch_dir_of(crate::read_prefs(&app).as_ref())
 }
 
-/// wsl.exe's arguments for a launch: `claude`, or with `agy_model` Antigravity's
-/// CLI on that model (#323), with `keryx_voice` session-named voice (#389).
+/// What + New session starts (#440): Claude on an account (on a model, or its
+/// own default), agy on a model, or Copilot (on a model, or auto).
+#[derive(Clone, Debug, PartialEq)]
+pub enum Engine {
+    Claude {
+        account: String,
+        model: Option<String>,
+    },
+    Agy(String),
+    Copilot(Option<String>),
+}
+
+/// A Claude account id as the statusLine hook files it, or an engine's pref id
+/// part: letters, digits and dashes, a letter or digit first.
+fn account_ok(a: &str) -> bool {
+    (1..=64).contains(&a.len())
+        && a.starts_with(|c: char| c.is_ascii_alphanumeric())
+        && a.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+}
+
+impl Engine {
+    /// The wall's id for it, as prefs.json keeps the default and the last used:
+    /// `claude:ACCOUNT`, `agy` or `copilot`.
+    pub fn pref_id(&self) -> String {
+        match self {
+            Engine::Claude { account, .. } => format!("claude:{account}"),
+            Engine::Agy(_) => "agy".into(),
+            Engine::Copilot(_) => "copilot".into(),
+        }
+    }
+
+    /// The launcher's arguments after `new DIR`.
+    fn args(&self) -> Vec<String> {
+        match self {
+            Engine::Claude { account, model } => {
+                let mut a = vec!["claude".to_owned(), account.clone()];
+                a.extend(model.clone());
+                a
+            }
+            Engine::Agy(m) => vec!["agy".into(), m.clone()],
+            Engine::Copilot(m) => {
+                let mut a = vec!["copilot".to_owned()];
+                a.extend(m.clone());
+                a
+            }
+        }
+    }
+}
+
+/// Whether `id` names an engine as the wall saves it.
+pub fn pref_id_ok(id: &str) -> bool {
+    matches!(id, "agy" | "copilot") || id.strip_prefix("claude:").is_some_and(account_ok)
+}
+
+/// The engine a launch names, checked: `engine` with its `account` and `model`,
+/// or the older call's `agy_model` alone; `None` is plain `claude` on the
+/// server's account, as before.
+fn engine_of(
+    engine: Option<&str>,
+    agy_model: Option<&str>,
+    account: Option<&str>,
+    model: Option<&str>,
+) -> Result<Option<Engine>, String> {
+    let checked = |m: &str, what: &str| {
+        if model_ok(m) {
+            Ok(m.to_owned())
+        } else {
+            Err(format!("That is not {what}: {m}"))
+        }
+    };
+    let Some(name) = engine.or(agy_model.map(|_| "agy")) else {
+        return Ok(None);
+    };
+    if agy_model.is_some() && name != "agy" {
+        return Err(format!("An agy model does not start {name}."));
+    }
+    match name {
+        "agy" => {
+            let m = agy_model.or(model).ok_or("Antigravity needs a model.")?;
+            Ok(Some(Engine::Agy(checked(m, "an agy model id")?)))
+        }
+        "claude" => {
+            let a = account.ok_or("Claude needs an account.")?;
+            if !account_ok(a) {
+                return Err(format!("That is not a Claude account id: {a}"));
+            }
+            Ok(Some(Engine::Claude {
+                account: a.to_owned(),
+                model: model.map(|m| checked(m, "a Claude model")).transpose()?,
+            }))
+        }
+        "copilot" => Ok(Some(Engine::Copilot(
+            model
+                .map(|m| checked(m, "a Copilot model id"))
+                .transpose()?,
+        ))),
+        e => Err(format!("klepsydra does not start {e}.")),
+    }
+}
+
+/// wsl.exe's arguments for a launch: `claude`, or `engine` (#323, #440), with
+/// `keryx_voice` session-named voice (#389).
 fn session_args(
     prefs: &Prefs,
-    agy_model: Option<&str>,
+    engine: Option<&Engine>,
     keryx_voice: Option<&str>,
 ) -> Result<Vec<String>, String> {
     let (_, mut args) = launch_plan(prefs)?;
@@ -788,33 +888,161 @@ fn session_args(
             args.splice(pos + 1..pos + 1, ["env".into(), format!("KERYX_VOICE={v}")]);
         }
     }
-    if let Some(m) = agy_model {
-        if !model_ok(m) {
-            return Err(format!("That is not an agy model id: {m}"));
-        }
-        args.extend(["agy".to_owned(), m.to_owned()]);
+    if let Some(e) = engine {
+        args.extend(e.args());
     }
     Ok(args)
 }
 
-/// Start `claude`, or `agy` on `agy_model`, in the `launch_dir` pref as a
-/// window of the fleet session.
+/// "in 2 h 14 min" / "in 9 min" until `at`, from `now` (unix seconds).
+fn wait_words(at: i64, now: i64) -> String {
+    let mins = (at - now + 59) / 60;
+    if mins >= 60 {
+        format!("in {} h {} min", mins / 60, mins % 60)
+    } else {
+        format!("in {} min", mins.max(1))
+    }
+}
+
+/// The refusal for a Claude account whose newest reading is spent, so a menu
+/// drawn before it ran out starts nothing.
+fn refuse_spent(readings: &[Value], engine: Option<&Engine>, now: i64) -> Result<(), String> {
+    if let Some(Engine::Claude { account, .. }) = engine {
+        if let Some(at) = klepsydra_fleet::usage::spent_until(readings, account, now) {
+            return Err(format!(
+                "Not started: that Claude account is out of its limit; it comes back {}.",
+                wait_words(at, now)
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// prefs.json's key for the engine + New session last started (#440).
+pub const LAST_ENGINE: &str = "new_session_last";
+/// prefs.json's key for the engine the user set as + New session's default.
+pub const DEFAULT_ENGINE: &str = "new_session_default";
+
+/// Start `claude`, or `engine` (Claude on `account` and `model`, agy on
+/// `model` or the older `agy_model`, Copilot on `model`), in the `launch_dir`
+/// pref as a window of the fleet session. A launch the wall names its engine
+/// for is remembered as the last used.
 #[tauri::command]
 pub async fn launch_session(
     app: tauri::AppHandle,
     agy_model: Option<String>,
     keryx_voice: Option<String>,
+    engine: Option<String>,
+    account: Option<String>,
+    model: Option<String>,
 ) -> Result<String, String> {
     let prefs = crate::read_prefs(&app)
         .ok_or("prefs.json could not be read, so the launch folder is unknown.")?;
-    let args = session_args(&prefs, agy_model.as_deref(), keryx_voice.as_deref())?;
+    let engine = engine_of(
+        engine.as_deref(),
+        agy_model.as_deref(),
+        account.as_deref(),
+        model.as_deref(),
+    )?;
+    let args = session_args(&prefs, engine.as_ref(), keryx_voice.as_deref())?;
+    if matches!(engine, Some(Engine::Claude { .. })) {
+        let readings = klepsydra_fleet::usage::read(crate::usage_dirs(&app));
+        refuse_spent(
+            &readings,
+            engine.as_ref(),
+            klepsydra_fleet::watch::unix_now(),
+        )?;
+    }
+    let started = tauri::async_runtime::spawn_blocking({
+        let app = app.clone();
+        move || {
+            gated(&app.state::<InFlight>(), || {
+                logged("launch", None, || run(&args, TIMEOUT, timed_out))
+            })
+        }
+    })
+    .await
+    .map_err(|e| format!("Could not run the launch: {e}"))??;
+    if let Some(e) = &engine {
+        crate::write_pref(&app, LAST_ENGINE, Value::String(e.pref_id()));
+    }
+    Ok(started)
+}
+
+/// + New session's saved choices: the user's default and the engine last
+/// started from the wall, each an engine id or null.
+#[tauri::command]
+pub fn new_session_prefs(app: tauri::AppHandle) -> Value {
+    let prefs = crate::read_prefs(&app).unwrap_or_default();
+    let id = |k: &str| {
+        prefs
+            .get(k)
+            .and_then(Value::as_str)
+            .filter(|id| pref_id_ok(id))
+            .map(|id| Value::String(id.to_owned()))
+            .unwrap_or(Value::Null)
+    };
+    serde_json::json!({ "default": id(DEFAULT_ENGINE), "last": id(LAST_ENGINE) })
+}
+
+/// Save `id` as + New session's default, or with none go back to the last used.
+#[tauri::command]
+pub fn set_new_session_default(app: tauri::AppHandle, id: Option<String>) -> Result<(), String> {
+    match id {
+        Some(id) if !pref_id_ok(&id) => Err(format!("That is not an engine: {id}")),
+        Some(id) => {
+            crate::write_pref(&app, DEFAULT_ENGINE, Value::String(id));
+            Ok(())
+        }
+        None => {
+            crate::write_pref(&app, DEFAULT_ENGINE, Value::Null);
+            Ok(())
+        }
+    }
+}
+
+/// Which engines can start here (#440): the Claude accounts with a login in a
+/// config folder, and whether agy and Copilot are on PATH.
+#[derive(Clone, serde::Serialize, serde::Deserialize, PartialEq, Debug, Default)]
+pub struct Engines {
+    pub claude: Vec<String>,
+    pub agy: bool,
+    pub copilot: bool,
+}
+
+fn parse_engines(line: &str) -> Result<Engines, String> {
+    let mut e: Engines = serde_json::from_str(line)
+        .map_err(|e| format!("The launcher's engine list could not be read: {e}"))?;
+    e.claude.retain(|a| account_ok(a));
+    Ok(e)
+}
+
+/// wsl.exe's arguments for one of the launcher's own lists, in the launch's distro.
+fn list_args(prefs: Option<&Prefs>, what: &str) -> Vec<String> {
+    let mut a: Vec<String> = Vec::new();
+    if let Some(d) = prefs
+        .and_then(|p| p.get("launch_distro"))
+        .and_then(Value::as_str)
+        .filter(|d| distro_ok(d))
+    {
+        a.extend(["-d".into(), d.into()]);
+    }
+    a.extend(["--cd", "~", "-e", "bash", "-l", SCRIPT, what].map(String::from));
+    a
+}
+
+/// Which engines can start here, asked each time (an engine installed or
+/// signed in since shows at once); the wall asks on load and on opening its menu.
+#[tauri::command]
+pub async fn engines_status(app: tauri::AppHandle) -> Result<Engines, String> {
+    let args = list_args(crate::read_prefs(&app).as_ref(), "engines");
     tauri::async_runtime::spawn_blocking(move || {
-        gated(&app.state::<InFlight>(), || {
-            logged("launch", None, || run(&args, TIMEOUT, timed_out))
+        logged("engines", None, || {
+            run(&args, TIMEOUT, timed_out).and_then(|l| parse_engines(&l))
         })
     })
     .await
-    .map_err(|e| format!("Could not run the launch: {e}"))?
+    .map_err(|e| format!("Could not ask which engines are here: {e}"))?
 }
 
 /// agy's models, asked of the launcher once and kept for the app's run: the
@@ -826,6 +1054,10 @@ pub struct AgyModels(Mutex<Option<Vec<AgyModel>>>);
 pub struct AgyModel {
     pub id: String,
     pub label: String,
+    /// Its quota group as agy's /quota names it (`gemini`, `3p`), which says
+    /// which usage windows bind it; none when agy did not say.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group: Option<String>,
 }
 
 /// The models in the launcher's one line of JSON, the ones that are ids.
@@ -841,16 +1073,7 @@ fn parse_models(line: &str) -> Result<Vec<AgyModel>, String> {
 
 /// wsl.exe's arguments to list agy's models, in the launch's distro.
 fn models_args(prefs: Option<&Prefs>) -> Vec<String> {
-    let mut a: Vec<String> = Vec::new();
-    if let Some(d) = prefs
-        .and_then(|p| p.get("launch_distro"))
-        .and_then(Value::as_str)
-        .filter(|d| distro_ok(d))
-    {
-        a.extend(["-d".into(), d.into()]);
-    }
-    a.extend(["--cd", "~", "-e", "bash", "-l", SCRIPT, "models"].map(String::from));
-    a
+    list_args(prefs, "models")
 }
 
 /// agy's models (a failure is not kept, so the next ask tries again).
@@ -952,7 +1175,8 @@ mod tests {
             .as_object()
             .cloned()
             .unwrap();
-        let a = session_args(&prefs, Some("gemini-3.8-flash-high"), None).unwrap();
+        let agy = engine_of(None, Some("gemini-3.8-flash-high"), None, None).unwrap();
+        let a = session_args(&prefs, agy.as_ref(), None).unwrap();
         assert_eq!(
             &a[a.len() - 4..],
             ["new", "/home/aj", "agy", "gemini-3.8-flash-high"]
@@ -965,7 +1189,7 @@ mod tests {
             Some("/home/aj")
         );
         for bad in ["", "Gemini", "x;rm", "-x", "a b", &"a".repeat(65)] {
-            assert!(session_args(&prefs, Some(bad), None).is_err(), "{bad:?}");
+            assert!(engine_of(None, Some(bad), None, None).is_err(), "{bad:?}");
         }
     }
 
@@ -999,7 +1223,8 @@ mod tests {
             got,
             [AgyModel {
                 id: "gemini-3.8-flash-high".into(),
-                label: "Gemini 3.8 Flash (High)".into()
+                label: "Gemini 3.8 Flash (High)".into(),
+                group: None,
             }]
         );
         assert!(parse_models("[]").is_err());
@@ -1015,6 +1240,137 @@ mod tests {
         assert_eq!(got.len(), 6);
         assert_eq!(got[0].id, "gemini-3.8-flash-high");
         assert_eq!(got[5].id, "gpt-oss-120b-medium");
+    }
+
+    #[test]
+    fn agys_models_keep_their_quota_group() {
+        let got = parse_models(r#"[{"id":"claude-sonnet-4-6","label":"Claude Sonnet 4.6 (Thinking)","group":"3p","spent":"2026-11-19T13:24:14Z"}]"#).unwrap();
+        assert_eq!(got[0].group.as_deref(), Some("3p"));
+        let back = serde_json::to_value(&got).unwrap();
+        assert_eq!(
+            back[0].get("spent"),
+            None,
+            "a spent time is not kept: the readings say it"
+        );
+    }
+
+    #[test]
+    fn each_engine_reaches_the_launcher_as_its_own_arguments() {
+        let prefs = json!({"launch_dir": "/home/aj"})
+            .as_object()
+            .cloned()
+            .unwrap();
+        let tail = |e: Option<Engine>| {
+            let a = session_args(&prefs, e.as_ref(), None).unwrap();
+            let at = a.iter().position(|x| x == "new").unwrap();
+            a[at + 2..].to_vec()
+        };
+        let acct = "96130a18-106b-49a2-9b8e-a0b4d52aa214";
+        assert_eq!(
+            tail(engine_of(Some("claude"), None, Some(acct), Some("opus")).unwrap()),
+            ["claude", acct, "opus"]
+        );
+        assert_eq!(
+            tail(engine_of(Some("claude"), None, Some(acct), None).unwrap()),
+            ["claude", acct]
+        );
+        assert_eq!(
+            tail(engine_of(Some("copilot"), None, None, None).unwrap()),
+            ["copilot"]
+        );
+        assert_eq!(
+            tail(engine_of(Some("copilot"), None, None, Some("gpt-5.6-sol")).unwrap()),
+            ["copilot", "gpt-5.6-sol"]
+        );
+        assert_eq!(
+            tail(engine_of(Some("agy"), None, None, Some("gemini-3.8-flash-low")).unwrap()),
+            ["agy", "gemini-3.8-flash-low"]
+        );
+        assert!(
+            tail(engine_of(None, None, None, None).unwrap()).is_empty(),
+            "plain claude, as before"
+        );
+        for (engine, agy, account, model) in [
+            (Some("claude"), None, None, None),
+            (Some("claude"), None, Some("../x"), None),
+            (Some("claude"), None, Some("-a"), None),
+            (Some("claude"), None, Some(acct), Some("opus;id")),
+            (Some("copilot"), None, None, Some("A B")),
+            (Some("agy"), None, None, None),
+            (Some("codex"), None, None, None),
+            (
+                Some("claude"),
+                Some("gemini-3.8-flash-low"),
+                Some(acct),
+                None,
+            ),
+        ] {
+            assert!(
+                engine_of(engine, agy, account, model).is_err(),
+                "{engine:?} {agy:?} {account:?} {model:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_wall_saves_only_an_engine_id() {
+        let e = engine_of(Some("claude"), None, Some("6f5fe38b-9f23"), None)
+            .unwrap()
+            .unwrap();
+        assert_eq!(e.pref_id(), "claude:6f5fe38b-9f23");
+        assert!(pref_id_ok(&e.pref_id()));
+        for ok in ["agy", "copilot", "claude:abc-1"] {
+            assert!(pref_id_ok(ok), "{ok}");
+        }
+        for bad in [
+            "",
+            "claude",
+            "claude:",
+            "claude:../x",
+            "codex",
+            "agy ",
+            "claude:a;b",
+        ] {
+            assert!(!pref_id_ok(bad), "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn the_engine_list_keeps_only_account_ids() {
+        let e = parse_engines(r#"{"claude":["6f5fe38b-9f23-4588-b57a-6efd1225cadd","bad;id"],"agy":true,"copilot":false}"#).unwrap();
+        assert_eq!(e.claude, ["6f5fe38b-9f23-4588-b57a-6efd1225cadd"]);
+        assert!(e.agy && !e.copilot);
+        assert!(parse_engines("not json").is_err());
+        assert_eq!(
+            list_args(None, "engines").last().map(String::as_str),
+            Some("engines")
+        );
+    }
+
+    #[test]
+    fn a_spent_claude_account_is_refused_with_when_it_comes_back() {
+        let acct = "96130a18";
+        let readings = [json!({"account": acct, "observed_at": 100, "windows": {
+            "five_hour": {"used_percentage": 100, "resets_at": 1_000 + 2 * 3600 + 14 * 60}}})];
+        let claude = engine_of(Some("claude"), None, Some(acct), None).unwrap();
+        assert_eq!(
+            refuse_spent(&readings, claude.as_ref(), 1_000),
+            Err("Not started: that Claude account is out of its limit; it comes back in 2 h 14 min.".into())
+        );
+        assert_eq!(
+            refuse_spent(&readings, claude.as_ref(), 1_000 + 3 * 3600),
+            Ok(()),
+            "reset since"
+        );
+        let other = engine_of(Some("claude"), None, Some("6f5fe38b"), None).unwrap();
+        assert_eq!(refuse_spent(&readings, other.as_ref(), 1_000), Ok(()));
+        let agy = engine_of(Some("agy"), None, None, Some("gemini-3.8-flash-low")).unwrap();
+        assert_eq!(
+            refuse_spent(&readings, agy.as_ref(), 1_000),
+            Ok(()),
+            "agy's own launcher check"
+        );
+        assert_eq!(wait_words(1_030, 1_000), "in 1 min");
     }
 
     #[test]

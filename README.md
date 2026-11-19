@@ -511,9 +511,8 @@ window, made on the first click and only hidden after that. The bar keeps
 status on the left: the counts of sessions that need you, work, are done, and
 are idle or ended (an error count only when one exists), then **CI** and
 **Fleet** only while something there needs a look. The panels (Split, Ledger,
-Queue, Wrap up), **+ New session** with its ▾ menu for a locked Antigravity
-session (shown once agy lists its models) and a gear for the view settings sit on
-the right. Each card shows:
+Queue, Wrap up), **+ New session** with its ▾ menu of the other engines and a
+gear for the view settings sit on the right. Each card shows:
 
 - the session's face in a ring showing its background crew: one solid arc per
   piece of work, agents first, clockwise from 12 o'clock, in the character's
@@ -760,16 +759,30 @@ off does not set it again.
 
 ### Starting sessions
 
-**+ New session**, in the wall's summary bar, starts `claude` in `launch_dir`
-as a window of the tmux session `fleet` on the socket `klepsydra`. The first
+**+ New session**, in the wall's summary bar, names the engine it starts, with
+its logo and, when you have more than one Claude account, the account's short
+name ("New Claude session RIT"); its tooltip gives the room left. That default
+is the one you set, else the engine you last started from the wall, else the
+first one set up here (Claude, then Antigravity, then Copilot). prefs.json
+keeps both (`new_session_default`, `new_session_last`). It starts in
+`launch_dir` as a window of the tmux session `fleet` on the socket `klepsydra`. The first
 click opens a Windows Terminal window named `fleet` with one tab. Each later
 click adds a tmux window to that tab. Closing the tab leaves the sessions
 running, and the next **+** or Jump reattaches. The tab attaches to the tmux
 server by its socket path.
 
-The ▾ beside **+ New session** starts a locked Antigravity (agy) session on the
-model you pick: read-only, no shell, in a sandbox, in `launch_dir`. It shows once
-agy lists its models. A wall launch runs on your subscription only: it drops
+The ▾ beside it lists every other engine, the one the free-first route
+recommends first: each Claude account (found by its login, whatever its folder
+is called) with Opus, Sonnet or Fable; Antigravity (agy) with its models under
+their quota groups, as agy's `/quota` names them, a spent group's models off;
+and Copilot. Each row shows the room left from the gauge's readings: the
+window with the least room, or when a spent one comes back. Start opens the row's
+engine on its account (off while it is spent); Set as default keeps it. An
+engine not installed or not signed in stays listed, off, with the one command
+that fixes it. agy and Copilot start locked: read-only, no shell, in
+`launch_dir`. A spent Claude account (the app, from its readings) or agy quota
+group (the launcher, from agy's `/quota`) is refused even from a menu drawn
+before it ran out. A wall launch of Claude runs on your subscription only: it drops
 `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN` and `ANTHROPIC_PROFILE`, and refuses
 to start when a settings file sets an API key or key helper.
 
