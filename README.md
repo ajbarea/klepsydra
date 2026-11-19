@@ -1485,8 +1485,9 @@ JSON line in `log/fleet.log`, in the app log's shape.
 | `fleet recover` | After a hard shutdown, relaunches every agent whose session is gone. |
 | `fleet pause NAME WHY` / `unpause NAME` | Sets an agent aside, or puts it back. |
 | `fleet brief NAME BODY-FILE` | Writes `task-NAME.src`: the text of BODY-FILE, then the shared rules. `--check` and `--refresh` keep old briefs current. |
-| `fleet send PANE TEXT` | Sends a message so it is submitted (`-` reads stdin). Prints `sent`, `limited`, `not-pasted`, `mixed` or `held`. |
-| `fleet done [NAME]` | Marks an agent finished, so nothing relaunches it. |
+| `fleet send PANE TEXT` | Sends a message so it is submitted (`-` reads stdin). Prints `sent`, `queued`, `limited`, `not-pasted`, `mixed` or `held`. |
+| `fleet done [NAME] "REPORT"` | Marks an agent finished; reports to the orchestrator. |
+| `fleet close NAME` | Closes a finished agent's pane at rest; never kills it. |
 | `fleet delegate TASK-FILE` | Hands read-only work to a locked agy or Copilot lane. See [docs/engines.md](docs/engines.md). |
 | `fleet headless NAME BRIEF` | Runs a job as `claude -p` on the API credit, capped. See [docs/headless.md](docs/headless.md). |
 | `fleet voices [MODE]` | Sets keryx to the tray's Voices mode now. |

@@ -1,31 +1,40 @@
-# IMPL: klepsydra#453 watcher wakes the orchestrator while a worker waits on its own background shell
+# IMPL: klepsydra#445 + #446: `fleet done "REPORT"`, `fleet close`, queued sends
 
-Brief: https://github.com/ajbarea/klepsydra/issues/453
+Branch feat/fleet-done-report-445, PR #454. Issues: #445 (and its comment), #446. Follow-up: #468.
 
 ## Slice
-1. Define `BACKGROUND_STALE_AFTER=3600` and `BACKGROUND_AHEAD=60` in `fleet/lib.sh` and add drift tests reading both values from `src-tauri/fleet/src/view.rs` and `fleet/lib.sh`.
-2. Update `pane_background` in `fleet/lib.sh` to strictly mirror `view.rs`: drop entries without `at`, count crew only when state is `working` or `needs_you`, ignore unknown kinds, drop individual malformed entries without failing the check, and cap shells by `shells_live`.
-3. Add `pane_background_summary` to `fleet/lib.sh` and update `fleet/watch-panes.sh` to log deciding lines (`done_line~session=$bg_summary`) and session state on idle wake.
-4. In `fleet/test_fleet.sh`, bound watcher kills with `kill_watch` (2s SIGTERM poll + SIGKILL fallback) to prevent hangs; add boundary tests for future entry beyond ahead (F61), unknown kind (K_unk), and empty id (ID_empty).
-5. Update PR #457 description to "Closes #453" and record self-review, wait for CI green, report via `fleet send`.
+1. `fleet done [NAME] "REPORT"` sends REPORT to orchestrator.pane; undelivered = queue-file line + done-reports.tsv row + doctor warn.
+2. `fleet close NAME` (close.sh) closes a finished agent's pane only once it is confirmed at rest; doctor flags a pane done and unread > 30 min.
+3. `deliver_now` (lib.sh) prints `queued` on Claude Code's queue line and `sent` for a pane that closed after /exit.
 
 ## Done
-- Defined `BACKGROUND_STALE_AFTER` and `BACKGROUND_AHEAD` in `fleet/lib.sh` and added drift tests matching `view.rs`.
-- Updated `pane_background` in `fleet/lib.sh` to mirror `view.rs` lenient parsing and state gating.
-- Added `pane_background_summary` in `fleet/lib.sh` with valid jq negation filter, logging `done_line~session=$bg_summary` on wake; tested done and working summaries.
-- Moved `kill_watch` helper above first call in `fleet/test_fleet.sh` to eliminate undefined command warning.
-- Made cell F61 deterministic with fixed NOW argument across 25 repetitions; added boundary tests for unknown kind (K_unk) and empty id (ID_empty).
-- Verified all isolated tests pass and proven against reversion.
-- Verified shellcheck clean across `fleet/watch-panes.sh`, `fleet/lib.sh`, `fleet/test_fleet.sh`.
+- Rounds 1-4 (Sonnet author): see git log.
+- Round 5 (Opus author), round-4 verify findings:
+  - B1: `wrapup_pending` (lib.sh) refuses while the wall's wrap-up is asked or answered-unsettled for the request on file; close also waits FLEET_CLOSE_QUIET (6 s) with the raw screen above the box and the session file both unchanged.
+  - S1: /exit is typed, file + screen + box re-checked (the slash menu Claude Code draws over the transcript's last rows is allowed for), then Enter. close never kills: Claude Code's "Background work is running" dialog is cancelled with Esc; a pane still there after 30 s is reported, left open, record kept.
+  - Nit: refused when the session file was last written before the pane's process started.
+  - Mirror: `turn_done`, `watchers_only`, `ready_to_move` also hold on `wrapup_pending`; the quiet window and no-kill retire for those paths are #468.
+- fake_pane.py: `exit_dialog`, `slash_menu`, `slash_adds`.
+- Mutation checked: each #454 test fails on a5ec5fc's close.sh/lib.sh; `steady` and `same_transcript` stubbed true each fail their test.
+- Live, private socket close454-live, haiku 2.1.316: (a) printing turn refused 33/33; (b) wrap-up continuation refused throughout (5 reads with file done + asked); (c) dialog cancelled, shell kept; (d) closed at rest (twice, short and full screen).
+
+- Round 5 verify (Heph, fresh Opus): clean on Blocking; two vacuous guards fixed in tests:
+  the S1 file-write test now greps `written within` and asserts /exit was never typed (fake_pane
+  `log_typed` logs TYPED runs); new cases: settled + quiet with text in the box, and with a menu where
+  the box was, both refused. Mutation: deleting close.sh's fingerprint line (145) or idle_empty line
+  (140) turns its test red. #468 gained the other-Stop-hooks line.
+
+- Heph's final verify at 6011263: CLEAN. Rebased on origin/main (b361220: #463, #465, #466); README
+  and docs/fleet.md conflicts resolved to main's structure (README rows short, depth in docs/fleet.md,
+  close row corrected to never-kill); IMPL kept. fleet/ vs 6011263 = main's lines only (close.sh,
+  done.sh, lib.sh identical). Nit: stdin case uses TMUX_PANE=%99999, never the orchestrator's.
 
 ## Next
-- Commit changes and push to `fix/watcher-busy-shell-453`.
-- Update PR #457 description ("Closes #453") and record self-review comment on PR #457.
-- Wait for GitHub Actions CI run to complete cleanly with one bounded wait.
-- Send one-line report to orchestrator pane with `fleet send` and stop.
+- CI green on the rebased head, report to Heph (fleet send %36), fleet done. Heph merges; do not merge.
+- Section runner fleet/.sec445.sh is untracked (rebuilt for the rebased line numbers).
+
+## Known residual
+- A prompt that lands in the last ~0.1-0.3 s before Enter is not seen: spinner 60-104 ms, fleet file 140-255 ms, transcript 190-280 ms after submit (measured). /exit mid-turn ends the session at once.
 
 ## Verify
-- Local test suite passes 924/924 tests.
-- Reversions for cells A1, A2, F61, K_unk, ID_empty proven.
-- Shellcheck passes with code 0.
-- GitHub Actions CI pipeline passes all checks.
+`make test-fleet`, `make shellcheck`; section run: lines 1-113 + 284 + done_live + the #445 section of fleet/test_fleet.sh.
