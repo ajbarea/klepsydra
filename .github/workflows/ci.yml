@@ -70,6 +70,10 @@ jobs:
         env:
           KERYX_SRC: ${{ github.workspace }}/keryx/src
         run: bash hooks/test_fleet.sh
+      - name: Fork budget tests
+        run: |
+          command -v strace >/dev/null || { sudo apt-get update && sudo apt-get install -y strace; }
+          make test-forks
       - name: Wrap-up hook tests
         run: bash hooks/test_wrapup.sh
       - name: Browser closer tests

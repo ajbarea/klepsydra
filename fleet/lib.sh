@@ -580,6 +580,59 @@ pane_folder() { # PANE
 # shellcheck disable=SC2034 # read by recover.sh and resume-at-reset.sh
 HEPH=${FLEET_HEPH:-$FLEET_STATE/HEPH.md}
 fleet_panes() { t list-panes -s -t "$FLEET_SESSION" -F '#{pane_id}' 2>/dev/null; }
+UUID_RE='^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+# --- session rows: identical in hooks/klepsydra-fleet.sh and fleet/lib.sh ---
+# One tab-separated row per named session file whose first line is a v1
+# object: its name, then what the jq array `fields` picks from the object
+# (`last_active` is its newest time field, `or_q` a string or "?"). One jq
+# reads every file; a file without a final newline cannot run into the next,
+# and a line that does not parse yields nothing. Callers pass only names they
+# checked, from inside the fleet folder.
+session_rows() { # fields file...
+  local fields=$1 f line
+  shift
+  (( $# )) || return 0
+  for f in "$@"; do
+    line=""
+    { IFS= read -r line <"$f"; } 2>/dev/null
+    printf '%s\t%s\n' "$f" "$line"
+  done | jq -Rr '
+    def last_active: [.started_at, .state_at, .where.at, .prompt.at, .reply.at, .ended.at, .written_at]
+      | map(numbers) | max // 0 | floor;
+    def or_q: if type == "string" and length > 0 then . else "?" end;
+    # The face of an orchestrator file, as the crate reads it: Athena (bf_alice
+    # was her key before 11-02), else Hephaestus.
+    def orch_face: if (.orchestrator_face | IN("bf_emma", "bf_alice")) then "bf_emma" else "am_michael" end;
+    (index("\t")) as $i | .[:$i] as $f
+    | (try (.[$i + 1:] | fromjson) catch empty) | select(type == "object" and .v == 1)
+    | try ([$f] + ('"$fields"')) catch empty
+    | @tsv' 2>/dev/null
+}
+
+# session_rows FIELDS over every session file in FOLDER (<uuid>.json, a file,
+# never a link), read from inside it, where every name is short.
+fleet_rows() { # folder fields
+  ( cd -- "$1" 2>/dev/null || exit 0
+    local f names=()
+    for f in *.json; do
+      [[ ${f%.json} =~ $UUID_RE && -f $f && ! -L $f ]] && names+=("$f")
+    done
+    session_rows "$2" "${names[@]}" )
+}
+# --- end session rows ---
+
+# Every session file as one row: NAME (<uuid>.json), PANE, SOCKET ("-" when
+# none), ENDED (0 or 1), STARTED_AT (0 when none), PID and START ("-" when
+# none); "?" for an empty or non-string value. One jq for the whole folder.
+# A caller that reads them many times in one run sets SESSION_ROWS to this
+# output first (doctor.sh does); the rows then come from it.
+SESSION_FIELDS='[(.tmux.pane | or_q), (if .tmux.socket == null then "-" else (.tmux.socket | or_q) end),
+  (if .ended == null then 0 else 1 end), ((.started_at | numbers) // 0), ((.claude.pid | numbers) // "-"),
+  ((.claude.start | numbers) // "-")]'
+fleet_sessions_tsv() {
+  if [[ -n ${SESSION_ROWS+set} ]]; then [[ -z $SESSION_ROWS ]] || printf '%s\n' "$SESSION_ROWS"; return 0; fi
+  fleet_rows "$KLEPSYDRA_DIR/fleet" "$SESSION_FIELDS"
+}
 # Whether PANE's window is the one its tmux session shows (#216). A pane's
 # successor opens behind and comes forward only in place of a window AJ was
 # looking at, so a replacement never moves him off the agent he is watching.
@@ -600,13 +653,10 @@ finished_here() { # PANE
 # Two live files naming one pane (a killed pane never writes "ended", and
 # tmux reuses its id) is no answer at all.
 live_session() { # PANE
-  local f found=()
-  # Only files that name the pane at all: one grep over the folder costs a
-  # third of a stat and a jq per file on the Windows mount (#311).
-  while IFS= read -r f; do
-    [[ -f $f && ! -L $f ]] || continue
-    jq -e --arg p "$1" '.tmux.pane == $p and .ended == null' "$f" >/dev/null 2>&1 && found+=("$(basename "$f" .json)")
-  done < <(grep -l -F -- "\"$1\"" "$KLEPSYDRA_DIR"/fleet/*.json 2>/dev/null)
+  local f pane ended found=()
+  while IFS=$'\t' read -r f pane _ ended _; do
+    [[ $pane == "$1" && $ended == 0 ]] && found+=("${f%.json}")
+  done < <(fleet_sessions_tsv)
   (( ${#found[@]} == 1 )) || return 1
   printf '%s' "${found[0]}"
 }
@@ -1557,7 +1607,8 @@ session_alive() { # SID
   f=$KLEPSYDRA_DIR/fleet/$1.json
   [[ -f $f && ! -L $f ]] || return 1
   read -r pid start boot < <(jq -r 'select(.ended == null) | "\(.claude.pid // 0) \(.claude.start // 0) \(.host.boot // "")"' "$f" 2>/dev/null)
-  [[ ${pid:-0} =~ ^[1-9][0-9]*$ && -n ${boot:-} && $boot == "$(cat "${FLEET_BOOT_ID:-/proc/sys/kernel/random/boot_id}" 2>/dev/null)" ]] || return 1
+  local now_boot=""; { read -r now_boot <"${FLEET_BOOT_ID:-/proc/sys/kernel/random/boot_id}"; } 2>/dev/null
+  [[ ${pid:-0} =~ ^[1-9][0-9]*$ && -n ${boot:-} && $boot == "$now_boot" ]] || return 1
   [[ $(proc_start "$pid") == "$start" ]]
 }
 
@@ -1689,14 +1740,13 @@ drop_unpaused() { # SID
 # session_alive (this boot, the same process), ON_FLEET 1 when its socket is
 # the fleet's (or not recorded).
 live_fleet_sessions() {
-  local f id row
-  for f in "$KLEPSYDRA_DIR"/fleet/*.json; do
-    [[ -f $f && ! -L $f ]] || continue
-    id=$(basename "$f" .json)
-    row=$(jq -r --arg s "/$FLEET_SOCK" 'select(.ended == null and .tmux.pane != null)
-      | [.tmux.pane, (if .tmux.socket == null or (.tmux.socket | endswith($s)) then 1 else 0 end)] | @tsv' "$f" 2>/dev/null) || continue
-    [[ -n $row ]] && session_alive "$id" && printf '%s\t%s\t%s\n' "${row%%$'\t'*}" "$id" "${row##*$'\t'}"
-  done
+  local f pane sock ended id
+  while IFS=$'\t' read -r f pane sock ended _; do
+    [[ $ended == 0 && $pane != '?' ]] || continue
+    id=${f%.json}
+    session_alive "$id" || continue
+    if [[ $sock == - || $sock == */"$FLEET_SOCK" ]]; then printf '%s\t%s\t1\n' "$pane" "$id"; else printf '%s\t%s\t0\n' "$pane" "$id"; fi
+  done < <(fleet_sessions_tsv)
 }
 
 # The one live fleet session in PANE that is neither OSID nor in AGENTS (the

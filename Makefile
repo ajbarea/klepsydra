@@ -1,4 +1,4 @@
-.PHONY: install-hooks install-fleet test-fleet test-launch test-delegate test-engine test-headless test-heavy-lock test-slice shellcheck
+.PHONY: install-hooks install-fleet test-fleet test-launch test-delegate test-engine test-headless test-heavy-lock test-slice test-forks shellcheck
 
 # Copy the hooks, status line, launcher and cast into ~/.claude (fleet/install.sh --hooks).
 install-hooks:
@@ -43,6 +43,9 @@ test-heavy-lock:
 # skips without one (CI), and reads WSL's free memory, so it takes the lock.
 test-slice:
 	$(HEAVY) bash fleet/test_slice.sh
+
+test-forks:
+	for t in fleet/test_forks_*.sh; do bash "$$t" || exit 1; done
 
 shellcheck:
 	$(HEAVY) $(SHELLCHECK) -x $(SHELL_FILES)
