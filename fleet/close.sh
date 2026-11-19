@@ -138,13 +138,17 @@ same_transcript() { # REF AFTER
   return 1
 }
 # The first lines that differ between OLD and NEW (plain text), at most 5, each cut to 120
-# characters and joined by " | ": what a refusal's log shows of a screen that changed.
+# characters and joined by " | ", then how many blank lines differ: what a refusal's log shows of a
+# screen that changed. Blank lines are counted, not quoted, so they cannot hide the line that moved.
 excerpt() { # OLD NEW
-  local LC_ALL=C.UTF-8 l out=
+  local LC_ALL=C.UTF-8 l out= d b
+  d=$(diff -- <(printf '%s\n' "$1") <(printf '%s\n' "$2") | grep -E '^[<>] ')
   while IFS= read -r l; do
     l=${l%"${l##*[![:space:]]}"}
     out+="${out:+ | }${l:0:120}"
-  done < <(diff -- <(printf '%s\n' "$1") <(printf '%s\n' "$2") | grep -E '^[<>] ' | head -5)
+  done < <(grep -E '^[<>] +[^[:space:]]' <<<"$d" | head -5)
+  b=$(grep -cE '^[<>][[:space:]]*$' <<<"$d")
+  (( b > 0 )) && out+="${out:+ | }($b blank lines)"
   printf '%s' "${out:-(none)}"
 }
 # The first line of stdin, cut to N characters (120).

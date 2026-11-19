@@ -2269,6 +2269,11 @@ kill "$wrp" 2>/dev/null; wait "$wrp" 2>/dev/null
 # The log names the check that failed and quotes what differed (#483).
 check "#483: a refusal in the quiet window logs check quiet_screen and the line that changed" \
   "$(lastclose wrk7 .check) $(lastclose wrk7 .differs | grep -c '> ⏺ Writing line [0-9]')" "quiet_screen 1"
+# Live 11-19: the hint row Claude Code shows for a few seconds after a turn went with 5 blank rows,
+# and the excerpt quoted only the blanks. Blank lines are counted, so the changed line is quoted.
+check "#483 live: the excerpt quotes the changed line before blank ones, and counts the blanks" \
+  "$( eval "$(sed -n '/^excerpt() {/,/^}/p' "$here/close.sh")"; excerpt $'done\n\n\n\n\n\n                ◐ medium · /effort' 'done')" \
+  "<                 ◐ medium · /effort | (5 blank lines)"
 state wrk7 '{"above":["done"],"busy":false,"exit_on_exit":true,"on_submit":"none","log_typed":true}'; settle; : >"$work/wrk7.log"
 # The hook writes the file async, up to a second after the prompt the screen showed: a write in the window refuses.
 ( for i in $(seq 40); do jq -n --arg p "$b" --argjson i "$i" '{session_id: "x", ended: null, tmux: {pane: $p}, state: "done", reason: null, background: [], turn_at: $i}' >"$work/sf.t"
