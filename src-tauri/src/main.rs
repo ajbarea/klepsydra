@@ -888,6 +888,9 @@ fn main() {
             jump::jump_to_terminal,
             launch::launch_session,
             launch::agy_models,
+            launch::engines_status,
+            launch::new_session_prefs,
+            launch::set_new_session_default,
             launch::get_launch_dir
         ])
         .setup(|app| {

@@ -1185,7 +1185,10 @@ window.__TAURI__ = { core: {
     if (cmd === 'get_wall_density') return Promise.resolve('auto');
     // The front end's log lines, apart from the actions.
     if (cmd === 'plugin:log|log') { (window.__logs ??= []).push(args); return Promise.resolve(); }
-    if (cmd === 'agy_models') { window.__calls.push([cmd, args]); return window.__agy ? Promise.resolve(window.__agy) : Promise.reject('agy (Antigravity CLI) was not found on PATH.'); }
+    if (cmd === 'agy_models') { window.__calls.push([cmd, args]); return window.__agy ? Promise.resolve(window.__agy) : Promise.reject(window.__agyError ?? 'agy (Antigravity CLI) was not found on PATH.'); }
+    if (cmd === 'read_usage') { window.__calls.push([cmd, args]); return Promise.resolve(window.__usage ?? []); }
+    if (cmd === 'engines_status') { window.__calls.push([cmd, args]); return window.__engines ? Promise.resolve(window.__engines) : Promise.reject('no launcher'); }
+    if (cmd === 'new_session_prefs') { window.__calls.push([cmd, args]); return Promise.resolve(window.__nsprefs ?? { default: null, last: null }); }
     if (cmd === 'get_launch_dir') { window.__calls.push([cmd, args]); return window.__dirAnswer ? window.__dirAnswer() : Promise.resolve('/home/aj/ajsoftworks'); }
     if (cmd === 'set_theme' && window.__setThemeFails) { window.__calls.push([cmd, args]); return Promise.reject(window.__setThemeFails); }
     if (cmd === 'end_session' && window.__hold) { window.__calls.push([cmd, args]); return window.__hold; }
@@ -1198,7 +1201,7 @@ window.__TAURI__ = { core: {
 """
 ENDS = "window.__calls.filter(([c]) => c === 'end_session')"
 # The wall's read-only queries on load; any other recorded call is an action.
-READS = ["get_launch_dir", "get_split_mode", "agy_models"]
+READS = ["get_launch_dir", "get_split_mode", "agy_models", "read_usage", "engines_status", "new_session_prefs"]
 WORKING_CARD = ".card:has(.pill .label:text-is('working')):has(.menu:not([hidden]))"
 
 
@@ -4597,166 +4600,190 @@ HEALTH = {
 
 
 AGY = [
-    {"id": "gemini-3.8-flash-high", "label": "Gemini 3.8 Flash (High)"},
-    {"id": "gemini-3.8-flash-med", "label": "Gemini 3.8 Flash (Medium)"},
-    {"id": "gemini-3.8-flash-low", "label": "Gemini 3.8 Flash (Low)"},
-    {"id": "claude-sonnet-4-6-thinking", "label": "Claude Sonnet 4.6 (Thinking)"},
-    {"id": "claude-opus-4-6-thinking", "label": "Claude Opus 4.6 (Thinking)"},
-    {"id": "gpt-oss-120b-med", "label": "GPT-OSS 120B (Medium)"},
+    {"id": "gemini-3.8-flash-high", "label": "Gemini 3.8 Flash (High)", "group": "gemini"},
+    {"id": "gemini-3.8-flash-medium", "label": "Gemini 3.8 Flash (Medium)", "group": "gemini"},
+    {"id": "gemini-3.8-flash-low", "label": "Gemini 3.8 Flash (Low)", "group": "gemini"},
+    {"id": "claude-sonnet-4-6", "label": "Claude Sonnet 4.6 (Thinking)", "group": "3p"},
+    {"id": "claude-opus-4-6-thinking", "label": "Claude Opus 4.6 (Thinking)", "group": "3p"},
+    {"id": "gpt-oss-120b-medium", "label": "GPT-OSS 120B (Medium)", "group": "3p"},
 ]
-
-USAGE_MOCK = [
-    {
-        "account": "96130a18",
-        "label": "RIT",
-        "harness": "claude",
-        "written_at": 1795026210,
-        "windows": {
-            "five_hour": {"used_percentage": 2, "resets_at": 1795044000},
-            "seven_day": {"used_percentage": 0, "resets_at": 1795629600},
-        },
-    },
-    {
-        "account": "6f5fe38b",
-        "label": "Personal",
-        "harness": "claude",
-        "written_at": 1795026200,
-        "windows": {
-            "five_hour": {"used_percentage": 9, "resets_at": 1795036800},
-            "seven_day": {"used_percentage": 45, "resets_at": 1795456800},
-        },
-    },
-    {
-        "account": "agy-primary",
-        "label": "Google AI Pro",
-        "harness": "agy",
-        "written_at": 1795023195,
-        "windows": {
-            "five_hour": {"used_percentage": 7.2, "resets_at": 1795032916},
-            "seven_day": {"used_percentage": 4.06, "resets_at": 1795619716},
-            "claude_gpt": {"used_percentage": 100, "resets_at": 1795033968},
-        },
-    },
-    {
-        "account": "copilot-primary",
-        "label": "GitHub · one pool of AI credits",
-        "harness": "copilot",
-        "windows": {},
-    },
-]
+PERSONAL = "6f5fe38b-9f23-4588-b57a-6efd1225cadd"
+RIT = "96130a18-106b-49a2-9b8e-a0b4d52aa214"
 
 
-def agy_menu(wall):
-    """+ New session: split button and engine menu (#440, Variant A).
-    The main button names the engine with its logo ("New Claude session RIT");
-    the caret opens a menu listing the other engines (never the default again),
-    each with logo, account, quota room, its models (Gemini usable, spent Claude/GPT
-    disabled), Recommended mark from free-first route, and Set as default.
-    Renders at 1920 and 390 in dark and light schemes, checks labels and menu
-    engines, and saves comparison shots to shots/<today>/new-session-build-*.png.
-    """
-    shots_dir = ROOT / "shots" / "2026-11-18"
-    shots_dir.mkdir(parents=True, exist_ok=True)
-    briefing_dir = pathlib.Path("/mnt/c/Users/ajbar/fleet-briefing/shots/2026-11-18")
+def readings(claude_gpt=0):
+    """read_usage's answer as on AJ's PC (11-19): a file per session, the
+    account's uuid and organisation label, agy under agy-primary; times from now."""
+    now = int(time.time())
 
-    viewports = [
-        (1920, 1000, "dark"),
-        (1920, 1000, "light"),
-        (390, 844, "dark"),
-        (390, 844, "light"),
+    def r(account, label, session, ago, windows, **extra):
+        return {"account": account, "label": label, "session": session, "written_at": now - ago,
+                "observed_at": now - ago, "api_ms": 1000, "windows": windows, **extra}
+
+    return [
+        r(PERSONAL, "Personal", "537f9cf4", 15, {"five_hour": {"used_percentage": 3, "resets_at": now + 15400},
+                                                 "seven_day": {"used_percentage": 57, "resets_at": now + 380200}}),
+        r(PERSONAL, "Personal", "1111aaaa", 900, {"five_hour": {"used_percentage": 1, "resets_at": now + 15400},
+                                                  "seven_day": {"used_percentage": 55, "resets_at": now + 380200}}),
+        r(RIT, "RIT-CS-DQL", "14887126", 13, {"five_hour": {"used_percentage": 7, "resets_at": now + 4600},
+                                              "seven_day": {"used_percentage": 28, "resets_at": now + 553000}}),
+        r("agy-primary", "Google AI Pro", "0e9aa7fa", 95,
+          {"five_hour": {"used_percentage": 25.95, "resets_at": now + 10316},
+           "seven_day": {"used_percentage": 31.81, "resets_at": now + 543116},
+           "claude_gpt": {"used_percentage": claude_gpt, "resets_at": now + 17905}}, harness="agy"),
     ]
 
-    for w, h, theme in viewports:
-        page = open_app(wall, width=w, height=h, init=f"window.__agy = {json.dumps(AGY)};")
-        page.emulate_media(color_scheme=theme)
-        snap = dict(page.snapshot)
-        snap["usage"] = USAGE_MOCK
-        send(page, snap)
-        page.wait_for_timeout(250)
 
-        # Check main split button
-        btn = page.locator("#new-session")
-        wall.check(
-            "New Claude session" in btn.inner_text() and "RIT" in btn.inner_text(),
-            f"{w} {theme}: split button names default engine Claude on RIT",
-            btn.inner_text(),
-        )
+ENGINES = {"claude": [PERSONAL, RIT], "agy": True, "copilot": True}
 
-        # Open caret menu
-        kind = page.locator("#new-kind")
-        wall.check(
-            kind.is_visible() and kind.get_attribute("aria-label") == "Start another kind of session",
-            f"{w} {theme}: caret button is visible and accessible",
-            kind.get_attribute("aria-label"),
-        )
-        kind.click()
-        page.wait_for_timeout(200)
 
-        menu = page.locator("#new-menu")
-        wall.check(menu.is_visible(), f"{w} {theme}: engine menu opens on caret click", menu.is_visible())
+def ns_open(wall, width=1920, height=1000, agy=AGY, engines=ENGINES, prefs=None, usage=None, scheme="dark"):
+    init = (
+        f"window.__agy = {json.dumps(agy)}; window.__engines = {json.dumps(engines)};"
+        f"window.__usage = {json.dumps(usage if usage is not None else readings())};"
+        f"window.__nsprefs = {json.dumps(prefs or {'default': None, 'last': None})};"
+    )
+    page = open_app(wall, width=width, height=height, init=init)
+    page.emulate_media(color_scheme=scheme)
+    page.wait_for_timeout(300)
+    return page
 
-        # Check menu contents: other engines listed, default not repeated
-        eng_names = page.evaluate("[...document.querySelectorAll('#new-menu .eng-name')].map((el) => el.innerText.trim())")
-        wall.check(
-            any("Antigravity" in n for n in eng_names) and any("Copilot" in n for n in eng_names) and any("Claude on Personal" in n for n in eng_names),
-            f"{w} {theme}: menu lists Antigravity, Copilot, and Claude on Personal",
-            eng_names,
-        )
-        wall.check(
-            not any("Claude on RIT" in n for n in eng_names),
-            f"{w} {theme}: default engine Claude on RIT is NOT repeated in menu",
-            eng_names,
-        )
 
-        # Check recommended mark on Antigravity
-        rec = page.locator("#new-menu .rec")
-        wall.check(rec.is_visible() and "Recommended" in rec.inner_text(), f"{w} {theme}: Antigravity has Recommended badge", rec.inner_text())
+MENU_ROWS = "[...document.querySelectorAll('#new-menu .eng')].map((e) => e.querySelector('.eng-name').textContent)"
+FOCUS_KEY = "document.activeElement === document.body ? 'body' : (document.activeElement.dataset.fk || document.activeElement.id)"
 
-        # Save shot
-        shot_path = shots_dir / f"new-session-build-{w}-{theme}.png"
-        page.screenshot(path=str(shot_path))
-        if briefing_dir.exists():
-            try:
-                page.screenshot(path=str(briefing_dir / f"new-session-build-{w}-{theme}.png"))
-            except Exception:
-                pass
 
-        if w == 1920 and theme == "dark":
-            # Test model selection
-            page.locator("#new-menu .model[data-model='gemini-3.8-flash-low']").click()
-            page.wait_for_timeout(100)
-            low_checked = page.evaluate("document.querySelector('#new-menu .model[data-model=\"gemini-3.8-flash-low\"]').getAttribute('aria-checked')")
-            wall.check(low_checked == "true", "clicking model selects it", low_checked)
+def new_session_menu(wall):
+    """+ New session (#440, Variant A) on the desktop snapshot, which carries no
+    readings: room comes from read_usage, accounts from the launcher's engine
+    list, the default and last used from prefs.json. The main button names the
+    default engine; the caret lists the others, Recommended first; focus stays
+    on what the keyboard pressed through every redraw, and Escape returns it to
+    the caret. Set $KLEPSYDRA_NS_SHOTS=1 for shots under shots/<date>/."""
+    # The desktop snapshot has no usage; the menu's room is read_usage's.
+    page = ns_open(wall, prefs={"default": None, "last": f"claude:{RIT}"})
+    wall.check("usage" not in page.snapshot, "the desktop snapshot carries no readings", list(page.snapshot))
+    btn = page.locator("#new-session")
+    wall.check(btn.inner_text().split() == ["New", "Claude", "session", "RIT"] and btn.get_attribute("title") == "Claude on RIT: 72% of the week left",
+               "the button names the engine last started and its account, its room in the title (the week binds)", [btn.inner_text(), btn.get_attribute("title")])
+    btn.click()
+    page.wait_for_timeout(200)
+    icons = page.evaluate("[...document.querySelectorAll('#new-session .ico svg, #new-menu .ico svg')].map((s) => s.namespaceURI === 'http://www.w3.org/2000/svg' && s.getBoundingClientRect().width > 0)")
+    wall.check(len(icons) >= 1 and all(icons), "the engine's logo draws on the button", icons)
+    wall.check(calls(page, "launch_session") == [["launch_session", {"engine": "claude", "account": RIT}]],
+               "the main button launches the default engine on its account", calls(page, "launch_session"))
 
-            # Test Start button in Antigravity row
-            page.locator("#new-menu .eng-start[data-engine='agy']").click()
-            page.wait_for_timeout(200)
-            sent = calls(page, "launch_session")
-            wall.check(
-                sent == [["launch_session", {"agyModel": "gemini-3.8-flash-low"}]] and menu.is_hidden(),
-                "Start Antigravity session launches agy with chosen model and closes menu",
-                sent,
-            )
+    # Keyboard: Enter on the caret opens the menu with focus on its first row.
+    page.focus("#new-kind")
+    page.keyboard.press("Enter")
+    page.wait_for_timeout(300)
+    rows = page.evaluate(MENU_ROWS)
+    wall.check(rows == ["Antigravity", "Claude on Personal", "Copilot"],
+               "the menu lists the other engines, the free-first Recommended one first, never the default", rows)
+    wall.check(page.evaluate(FOCUS_KEY) == "h:agy", "opening puts focus on the first row", page.evaluate(FOCUS_KEY))
+    personal = page.locator("#new-menu .eng", has_text="Claude on Personal")
+    wall.check(personal.locator(".room b").inner_text() == "43%" and personal.locator(".room-detail").inner_text().startswith("week · resets "),
+               "an account's room is the reconciled reading's binding window, one row however many sessions", personal.locator(".room").inner_text())
+    page.focus(f"#new-menu [data-fk='h:claude:{PERSONAL}']")
+    page.keyboard.press("Enter")
+    page.wait_for_timeout(200)
+    wall.check(page.evaluate(FOCUS_KEY) == f"h:claude:{PERSONAL}" and personal.locator(".eng-h").get_attribute("aria-expanded") == "true",
+               "Enter on a row opens it and focus stays on it through the redraw", page.evaluate(FOCUS_KEY))
+    send(page, page.snapshot)
+    wall.check(page.evaluate(FOCUS_KEY) == f"h:claude:{PERSONAL}", "a snapshot arriving while the menu is open keeps focus", page.evaluate(FOCUS_KEY))
+    models = page.evaluate("[...document.querySelectorAll('#new-menu .eng.open .model-name')].map((e) => e.textContent)")
+    wall.check(models == ["Opus", "Sonnet", "Fable"], "Claude's row offers its models", models)
+    page.focus(f"#new-menu [data-fk='m:claude:{PERSONAL}:sonnet']")
+    page.keyboard.press("Space")
+    page.wait_for_timeout(150)
+    wall.check(page.evaluate(FOCUS_KEY) == f"m:claude:{PERSONAL}:sonnet", "picking a model keeps focus on it", page.evaluate(FOCUS_KEY))
+    page.keyboard.press("Escape")
+    page.wait_for_timeout(150)
+    wall.check(page.locator("#new-menu").is_hidden() and page.evaluate(FOCUS_KEY) == "new-kind", "Escape closes the menu and returns focus to the caret",
+               page.evaluate(FOCUS_KEY))
+    page.close()
 
-            # Re-open menu and test Set as default
-            kind.click()
-            page.wait_for_timeout(200)
-            page.locator("#new-menu .eng-default[data-engine='agy']").click()
-            page.wait_for_timeout(200)
+    # agy: models in their quota groups; a spent group's models are off; Start sends the model.
+    page = ns_open(wall, usage=readings(claude_gpt=100))
+    page.click("#new-kind")
+    page.wait_for_timeout(250)
+    groups = page.evaluate("[...document.querySelectorAll('#new-menu .eng.open .mgrp')].map((e) => e.textContent)")
+    wall.check(len(groups) == 2 and groups[0] == "Gemini · 74% of the session, 68% of the week" and groups[1].startswith("Claude & GPT · spent, back "),
+               "agy's models sit under their quota groups, each with its room", groups)
+    off = page.evaluate("[...document.querySelectorAll('#new-menu .eng.open .model input')].map((i) => i.disabled)")
+    wall.check(off == [False, False, False, True, True, True], "only the spent group's models are off", off)
+    wall.check("leaving agy" not in page.locator("#new-menu").inner_text(), "no stale 'leaving agy today' note", None)
+    page.click("#new-menu .model:has(input[value='gemini-3.8-flash-low'])")
+    page.click("#new-menu .eng.open .eng-start")
+    page.wait_for_timeout(200)
+    wall.check(calls(page, "launch_session") == [["launch_session", {"engine": "agy", "model": "gemini-3.8-flash-low"}]] and page.locator("#new-menu").is_hidden(),
+               "Start sends one launch of agy on the model picked and closes the menu", calls(page, "launch_session"))
+    # Set as default: saved through the app, the button follows, focus lands on the caret, not the page.
+    page.click("#new-kind")
+    page.wait_for_timeout(250)
+    page.click("#new-menu .eng:has-text('Copilot') .eng-h")
+    page.click("#new-menu .eng.open .eng-default")
+    page.wait_for_timeout(200)
+    wall.check(calls(page, "set_new_session_default") == [["set_new_session_default", {"id": "copilot"}]] and "New Copilot session" in page.inner_text("#new-session"),
+               "Set as default saves it in the app's prefs and the button names it", [calls(page, "set_new_session_default"), page.inner_text("#new-session")])
+    wall.check(page.evaluate(FOCUS_KEY) != "body", "focus never drops to the page when the default leaves the menu", page.evaluate(FOCUS_KEY))
+    wall.check(page.locator("#new-menu .eng-reset").is_visible(), "a chosen default can be cleared from the menu", None)
+    page.close()
 
-            # Main button is now Antigravity
-            btn_text = btn.inner_text()
-            wall.check("New Antigravity session" in btn_text, "Set as default updates main button to New Antigravity session", btn_text)
+    # Missing engines stay listed, off, with the step that fixes them; agy failing is an error, not a sign-in.
+    page = ns_open(wall, agy=None, engines={"claude": [RIT], "agy": False, "copilot": False})
+    page.click("#new-kind")
+    page.wait_for_timeout(250)
+    copilot = page.locator("#new-menu .eng", has_text="Copilot")
+    wall.check(copilot.locator(".eng-acct").inner_text() == "Not installed on this PC" and copilot.locator(".eng-start:visible").count() == 0,
+               "no agy or Copilot: each is listed off, nothing to start", copilot.inner_text())
+    copilot.locator(".eng-fix").click()
+    page.wait_for_timeout(150)
+    wall.check(copilot.locator(".eng-step code").inner_text() == "npm install -g @github/copilot" and copilot.locator(".eng-fix").get_attribute("aria-expanded") == "true",
+               "How to install shows the one command", copilot.locator(".eng-step").inner_text())
+    personal = page.locator("#new-menu .eng", has_text="Claude on Personal")
+    wall.check(personal.locator(".eng-acct").inner_text() == "Installed, not signed in" and personal.locator(".eng-fix").inner_text() == "Sign in",
+               "an account with readings but no login here offers Sign in", personal.inner_text())
+    page.close()
+    page = open_app(wall, init=(f"window.__engines = {json.dumps(ENGINES)}; window.__usage = {json.dumps(readings())};"
+                                "window.__agyError = 'agy models did not answer.';"))
+    page.wait_for_timeout(300)
+    page.click("#new-kind")
+    page.wait_for_timeout(250)
+    agy = page.locator("#new-menu .eng", has_text="Antigravity")
+    wall.check(agy.locator(".eng-acct").inner_text() == "agy models did not answer." and agy.locator(".eng-fix").inner_text() == "Try again"
+               and agy.locator(".rec").is_hidden(),
+               "agy installed but failing says why and offers a retry, never 'not signed in', and is not Recommended", agy.inner_text())
+    page.close()
 
-            # Menu now has Claude on RIT and no Antigravity
-            new_eng_names = page.evaluate("[...document.querySelectorAll('#new-menu .eng-name')].map((el) => el.innerText.trim())")
-            wall.check(
-                not any("Antigravity" in n for n in new_eng_names) and any("Claude on RIT" in n for n in new_eng_names),
-                "Set as default moves Antigravity to main button and Claude on RIT to menu",
-                new_eng_names,
-            )
-
-        page.close()
+    # Narrow: the button stays one line and clear of the gear, the bar inside the window. The
+    # app's window is 420 at its narrowest (fleet.rs); 390 is the mockup's phone width.
+    for width, height in ((1920, 1000), (420, 844), (390, 844)):
+        for scheme in ("dark", "light"):
+            page = ns_open(wall, width=width, height=height, prefs={"default": None, "last": f"claude:{RIT}"}, scheme=scheme)
+            box = page.evaluate("""() => {
+              const r = (s) => document.querySelector(s).getBoundingClientRect();
+              const b = r('#new-session'), k = r('#new-kind'), g = r('.gear summary');
+              const hit = (a, c) => a.left < c.right && c.left < a.right && a.top < c.bottom && c.top < a.bottom;
+              const out = [...document.querySelectorAll('.bar *')].some((e) => e.checkVisibility() && e.getBoundingClientRect().right > innerWidth + 0.5);
+              return { h: Math.round(b.height), gearHitsCaret: hit(k, g), wide: out };
+            }""")
+            wall.check(box["h"] <= 40 and not box["gearHitsCaret"] and not box["wide"],
+                       f"{width} {scheme}: the split button is one line, the gear clear of the caret, the bar inside the window", box)
+            if os.environ.get("KLEPSYDRA_NS_SHOTS"):
+                out = ROOT / "shots" / time.strftime("%Y-%m-%d")
+                out.mkdir(parents=True, exist_ok=True)
+                page.screenshot(path=str(out / f"new-session-{width}-{scheme}-closed.png"))
+            page.click("#new-kind")
+            page.wait_for_timeout(250)
+            menu = page.evaluate("""() => { const m = document.getElementById('new-menu').getBoundingClientRect();
+              const k = document.getElementById('new-kind').getBoundingClientRect();
+              return { top: Math.round(m.top - k.bottom), left: Math.round(m.left), right: Math.round(innerWidth - m.right) }; }""")
+            wall.check(0 <= menu["top"] <= 12 and menu["left"] >= 0 and menu["right"] >= 0,
+                       f"{width} {scheme}: the menu opens just under the caret, on screen", menu)
+            if os.environ.get("KLEPSYDRA_NS_SHOTS"):
+                page.screenshot(path=str(out / f"new-session-{width}-{scheme}-open.png"))
+            page.close()
 
 
 def gear_closes(wall):
@@ -5661,7 +5688,7 @@ def main() -> int:
             empty_state,
             fleet_health,
             gear_closes,
-            agy_menu,
+            new_session_menu,
             ended_only,
             long_folder_fits,
             reveal_density,

@@ -1,392 +1,247 @@
-// + New session: split button, engine menu, and sensible default (#440).
-// Variant A: split button names the default engine with its logo; the caret
-// opens a menu listing the other engines (never the default again), with logo,
-// account, quota room from existing gauge readings, models, recommended badge,
-// and "Set as default".
+// + New session (#440, Variant A): what the split button starts and what its
+// menu lists, from the gauge's own rows (toRows over read_usage), the
+// launcher's engine list and agy's models. Pure: wall.js draws it.
 
-import { HARNESS_ORDER, HARNESS_LABELS, toRows, formatCountdown } from "../gauge.js";
+import { HARNESS_ORDER } from "../gauge.js";
 
-export const DEFAULT_ENGINE_KEY = "klepsydra.default_engine";
-export const LAST_ENGINE_KEY = "klepsydra.last_engine";
-
-export const CHEV_ICON =
-  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>';
-
-export const STAR_ICON =
-  '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="m12 2 3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>';
+/** Claude Code's model aliases (`claude --model`), latest of each. */
+export const CLAUDE_MODELS = [
+  { id: "opus", label: "Opus" },
+  { id: "sonnet", label: "Sonnet" },
+  { id: "fable", label: "Fable" },
+];
 
 /**
- * Format a timestamp into clock time or weekday + time.
+ * agy's quota groups (the launcher's `models`, from agy's /quota) and the
+ * windows the statusLine hook files each under: gemini-5h and gemini-weekly
+ * as five_hour and seven_day, 3p-5h as claude_gpt.
  */
-export function formatResetTime(sec, nowMs = Date.now()) {
+export const AGY_GROUPS = {
+  gemini: { label: "Gemini", windows: ["five_hour", "seven_day"] },
+  "3p": { label: "Claude & GPT", windows: ["claude_gpt"] },
+};
+
+const WINDOW_WORDS = { five_hour: "session", seven_day: "week", claude_gpt: "session", spend_limit: "spend", ai_credits: "credits" };
+
+/** The one step that makes a missing engine usable, shown in its row. */
+export const FIX_STEPS = {
+  claude: { signin: "claude, then /login" },
+  agy: { install: "curl -fsSL https://antigravity.google/cli/install.sh | bash", signin: "agy, then sign in with Google" },
+  copilot: { install: "npm install -g @github/copilot", signin: "copilot login" },
+};
+
+/** A short name for an account from its label: "RIT-CS-DQL" gives "RIT". */
+export function accountBadge(label) {
+  const first = String(label ?? "").split(/[^A-Za-z0-9]+/).find(Boolean) ?? "";
+  return first.slice(0, 10);
+}
+
+/** "3:15 PM" today, else "Mon 1:00 PM"; "" without a time. */
+export function clockAt(sec, nowMs = Date.now()) {
   if (!Number.isFinite(sec) || sec <= 0) return "";
   const d = new Date(sec * 1000);
   const now = new Date(nowMs);
-  const sameDay =
-    d.getFullYear() === now.getFullYear() &&
-    d.getMonth() === now.getMonth() &&
-    d.getDate() === now.getDate();
-  const timeStr = d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-  if (sameDay) return timeStr;
-  const dayStr = d.toLocaleDateString([], { weekday: "short" });
-  return `${dayStr} ${timeStr}`;
+  const time = d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  return d.toDateString() === now.toDateString() ? time : `${d.toLocaleDateString([], { weekday: "short" })} ${time}`;
 }
 
+/** Room left in a row, a whole percent. */
+const roomOf = (row) => Math.max(0, Math.floor(100 - row.pct));
+
+/** The live rows of a window list: an ended window (state reset) binds nothing. */
+const live = (rows) => rows.filter((r) => r.state === "live" && Number.isFinite(r.pct));
+
 /**
- * Decide the default engine:
- * 1. The user's choice (if installed and signed in),
- * 2. else the last engine used (if installed and signed in),
- * 3. else the first installed and signed-in engine.
- *
- * @param {Object} opts
- * @param {string|null} [opts.userChoice]
- * @param {string|null} [opts.lastEngineUsed]
- * @param {Array<Object>} opts.engines - List of engine entries
- * @returns {{ id: string, reason: string }}
+ * What a set of rows leaves: the window with the least room binds (the week
+ * when it is lower than the session), spent when any is at 100%.
+ * `{ pct, word, back, spent }` or null with no live row.
  */
-export function pickDefaultEngine({ userChoice, lastEngineUsed, engines }) {
-  const isAvailable = (id) => {
-    const e = engines.find((eng) => eng.id === id);
-    return e && e.installed !== false && e.signedIn !== false;
-  };
-
-  if (userChoice && isAvailable(userChoice)) {
-    return { id: userChoice, reason: "your chosen default" };
+export function limitingRoom(rows, nowMs = Date.now()) {
+  const ls = live(rows);
+  if (ls.length === 0) return null;
+  const spentRows = ls.filter((r) => r.pct >= 100);
+  if (spentRows.length) {
+    const at = Math.max(...spentRows.map((r) => r.resetsAt).filter(Number.isFinite));
+    return { pct: 0, word: WINDOW_WORDS[spentRows[0].window] ?? spentRows[0].window, back: clockAt(at, nowMs), spent: true };
   }
-
-  if (lastEngineUsed && isAvailable(lastEngineUsed)) {
-    return { id: lastEngineUsed, reason: "the engine you used last" };
-  }
-
-  const firstAvailable = engines.find((e) => e.installed !== false && e.signedIn !== false);
-  if (firstAvailable) {
-    return { id: firstAvailable.id, reason: "the first installed and signed-in engine" };
-  }
-
-  return { id: engines[0]?.id || "claude", reason: "first available engine" };
+  const bind = ls.reduce((a, b) => (roomOf(b) < roomOf(a) || (roomOf(b) === roomOf(a) && b.resetsAt > a.resetsAt) ? b : a));
+  return { pct: roomOf(bind), word: WINDOW_WORDS[bind.window] ?? bind.window, back: clockAt(bind.resetsAt, nowMs), spent: false };
 }
 
-/**
- * Find the last engine used from active/past sessions.
- * @param {Array<Object>} sessions
- * @param {string|null} [defaultLast=null]
- * @returns {string|null}
- */
-export function extractLastEngineUsed(sessions, defaultLast = null) {
-  if (!Array.isArray(sessions) || sessions.length === 0) return defaultLast;
-  // Sort sessions newest first by status_at, active_at, or prompt.at
-  const sorted = [...sessions].sort((a, b) => {
-    const atA = a.status_at || a.active_at || a.prompt?.at || 0;
-    const atB = b.status_at || b.active_at || b.prompt?.at || 0;
-    return atB - atA;
-  });
-
-  for (const s of sorted) {
-    const eng = s.engine ? s.engine.trim().toLowerCase() : (s.session_id ? "claude" : null);
-    if (eng) return eng;
-  }
-  return defaultLast;
+/** A room as the menu's row says it: { bold, detail }. */
+export function roomWords(room) {
+  if (!room) return { bold: "–", detail: "no reading yet" };
+  if (room.spent) return { bold: "out", detail: room.back ? `until ${room.back}` : `${room.word} spent` };
+  const when = room.word === "session" ? "back to full" : "resets";
+  return { bold: `${room.pct}%`, detail: room.back ? `${room.word} · ${when} ${room.back}` : room.word };
 }
 
-/**
- * Calculate quota room display for an engine/account.
- * @param {Object} account
- * @param {number} nowMs
- * @returns {{ bold: string, detail: string, spent: boolean }}
- */
-export function computeAccountRoom(account, nowMs = Date.now()) {
-  const ws = account?.windows || {};
-  const week = ws.seven_day;
-  const session = ws.five_hour;
-  const aiCredits = ws.ai_credits;
-
-  if (week && Number.isFinite(week.used_percentage) && week.used_percentage >= 100) {
-    const at = formatResetTime(week.resets_at, nowMs);
-    return {
-      bold: "out",
-      detail: at ? `until ${at}` : "week spent",
-      spent: true,
-    };
-  }
-
-  if (session && Number.isFinite(session.used_percentage)) {
-    const remaining = Math.max(0, Math.round(100 - session.used_percentage));
-    const at = formatResetTime(session.resets_at, nowMs);
-    const detail = at ? `session · back to full ${at}` : "session";
-    return {
-      bold: `${remaining}%`,
-      detail,
-      spent: remaining <= 0,
-    };
-  }
-
-  if (week && Number.isFinite(week.used_percentage)) {
-    const remaining = Math.max(0, Math.round(100 - week.used_percentage));
-    const at = formatResetTime(week.resets_at, nowMs);
-    const detail = at ? `week · resets ${at}` : "week";
-    return {
-      bold: `${remaining}%`,
-      detail,
-      spent: remaining <= 0,
-    };
-  }
-
-  if (aiCredits && Number.isFinite(aiCredits.used_percentage)) {
-    const remaining = Math.max(0, Math.round(100 - aiCredits.used_percentage));
-    return {
-      bold: `${remaining}%`,
-      detail: "credits",
-      spent: remaining <= 0,
-    };
-  }
-
-  return {
-    bold: "–",
-    detail: "no reading yet",
-    spent: false,
-  };
-}
-
-/**
- * Group Antigravity models into Gemini and Claude & GPT groups with quota details.
- *
- * @param {Array<Object>} models - Model list from `agy_models`
- * @param {Object|null} agyUsage - Usage reading object for agy
- * @param {number} nowMs
- * @returns {Array<Object>} Array of model groups
- */
-export function groupAgyModels(models, agyUsage, nowMs = Date.now()) {
-  if (!Array.isArray(models) || models.length === 0) return [];
-
-  const ws = agyUsage?.windows || {};
-  const session = ws.five_hour;
-  const week = ws.seven_day;
-  const claudeGpt = ws.claude_gpt;
-
-  // Gemini quota summary
-  let geminiRoomStr = "Gemini";
-  if (session && Number.isFinite(session.used_percentage)) {
-    const sRem = Math.max(0, Math.round(100 - session.used_percentage));
-    if (week && Number.isFinite(week.used_percentage)) {
-      const wRem = Math.max(0, Math.round(100 - week.used_percentage));
-      geminiRoomStr = `Gemini · ${sRem}% of the session, ${wRem}% of the week`;
-    } else {
-      geminiRoomStr = `Gemini · ${sRem}% of the session`;
-    }
-  }
-
-  const geminiModels = [];
-  const otherModels = [];
-
-  for (const m of models) {
-    const isGemini = m.id.toLowerCase().startsWith("gemini");
-    if (isGemini) {
-      geminiModels.push({
-        id: m.id,
-        label: m.label,
-        disabled: false,
-        why: "",
-      });
-    } else {
-      otherModels.push(m);
-    }
-  }
-
+/** agy's models in their quota groups, Gemini first, each group's room from its windows' rows. */
+export function agyGroups(models, agyRows, nowMs = Date.now()) {
+  const keys = [...Object.keys(AGY_GROUPS), ""];
   const groups = [];
-
-  if (geminiModels.length > 0) {
-    groups.push({
-      key: "gemini",
-      label: geminiRoomStr,
-      models: geminiModels,
-    });
-  }
-
-  // Claude & GPT models: only shown if the plan has such a group (#440)
-  if (otherModels.length > 0 && claudeGpt) {
-    const isSpent = claudeGpt.used_percentage >= 100;
-    const at = formatResetTime(claudeGpt.resets_at, nowMs);
-    let label = "Claude & GPT";
-    if (isSpent) {
-      label = `Claude & GPT · spent${at ? `, back ${at}` : ""} · leaving agy today`;
-    } else {
-      const rem = Math.max(0, Math.round(100 - claudeGpt.used_percentage));
-      label = `Claude & GPT · ${rem}% remaining`;
+  for (const key of keys) {
+    const ms = models.filter((m) => (AGY_GROUPS[key] ? m.group === key : !AGY_GROUPS[m.group]));
+    if (ms.length === 0) continue;
+    const def = AGY_GROUPS[key];
+    const rows = def ? agyRows.filter((r) => def.windows.includes(r.window)) : [];
+    const room = def ? limitingRoom(rows, nowMs) : null;
+    let label = def?.label ?? "Other models";
+    if (room?.spent) label += ` · spent${room.back ? `, back ${room.back}` : ""}`;
+    else if (def) {
+      const parts = live(rows).map((r) => `${roomOf(r)}% of the ${WINDOW_WORDS[r.window] ?? r.window}`);
+      if (parts.length) label += ` · ${parts.join(", ")}`;
     }
-
     groups.push({
-      key: "claude_gpt",
+      key: key || "other",
       label,
-      models: otherModels.map((m) => ({
-        id: m.id,
-        label: m.label,
-        disabled: isSpent,
-        why: isSpent ? "spent" : "",
-      })),
+      spent: Boolean(room?.spent),
+      models: ms.map((m) => ({ id: m.id, label: m.label, disabled: Boolean(room?.spent), why: room?.spent ? "spent" : "" })),
     });
   }
-
   return groups;
 }
 
 /**
- * Build the full list of available engines with their accounts, room, models,
- * recommended status, and install/sign-in status.
+ * Every engine + New session can start, one entry per Claude account.
  *
- * @param {Object} opts
- * @param {Array<Object>|Object|null} opts.usage - Snapshot usage readings
- * @param {Array<Object>} [opts.agyModels=[]]
- * @param {Object} [opts.installedStatus={}] - Map of harness -> { installed, signedIn }
- * @param {number} [opts.nowMs=Date.now()]
- * @returns {Array<Object>}
+ * `rows`: toRows over read_usage. `engines`: the launcher's list
+ * ({ claude: [account ids], agy, copilot }) or null before it answers.
+ * `agy`: { state: "ok" | "missing" | "signedout" | "error" | "waiting",
+ * models, error }.
  */
-export function buildEngineEntries({
-  usage = null,
-  agyModels = [],
-  installedStatus = {},
-  nowMs = Date.now(),
-} = {}) {
-  const rows = toRows(usage, nowMs);
-  const byHarness = new Map();
-  for (const r of rows) {
-    const h = r.harness || "claude";
-    if (!byHarness.has(h)) byHarness.set(h, []);
-    byHarness.get(h).push(r);
-  }
-
-  const usageList = (Array.isArray(usage) ? usage : Object.values(usage ?? {})).filter(
-    (p) => p && typeof p === "object",
-  );
-
+export function buildEntries({ rows = [], engines = null, agy = { state: "waiting", models: [] }, nowMs = Date.now() } = {}) {
+  const byHarness = (h) => rows.filter((r) => r.harness === h);
   const entries = [];
 
-  // 1. Claude entries (can be multiple accounts e.g. RIT, Personal)
-  const claudeAccounts = usageList.filter(
-    (p) => !p.account?.startsWith?.("agy") && !p.account?.startsWith?.("copilot") && p.harness !== "agy" && p.harness !== "copilot",
-  );
-
-  const claudeStatus = installedStatus.claude ?? { installed: true, signedIn: true };
-
-  if (claudeAccounts.length > 0) {
-    for (const acct of claudeAccounts) {
-      const isRit = String(acct.label || "").toUpperCase().includes("RIT") || String(acct.account || "").includes("96130a18");
-      const mono = isRit ? "RIT" : (acct.mono || null);
-      const name = acct.label ? (acct.label === "Claude" ? "Claude" : `Claude on ${acct.label}`) : "Claude";
-      const room = computeAccountRoom(acct, nowMs);
-      const isRecommended = (byHarness.get("claude") ?? []).some((r) => r.account === acct.account && r.isBestRoute);
-
-      entries.push({
-        id: `claude:${acct.account || acct.label}`,
-        engineId: "claude",
-        harness: "claude",
-        shortName: "Claude",
-        name,
-        mono,
-        accountLabel: acct.label ? `${acct.label} account` : "Personal account",
-        icon: "claude",
-        room,
-        isRecommended,
-        installed: claudeStatus.installed !== false,
-        signedIn: claudeStatus.signedIn !== false,
-        models: [],
-      });
-    }
-  } else {
-    // Single Claude fallback
+  // Claude: an account per reading, and any login with no reading yet.
+  const claudeRows = byHarness("claude");
+  const accounts = new Map();
+  for (const r of claudeRows) if (!accounts.has(r.account)) accounts.set(r.account, r.accountLabel ?? "Claude");
+  for (const id of engines?.claude ?? []) if (!accounts.has(id)) accounts.set(id, "Claude");
+  const multi = accounts.size > 1;
+  // By label, then id: the gauge lists the account used last first, which would move the default.
+  const sorted = [...accounts].sort(([a, la], [b, lb]) => la.localeCompare(lb) || a.localeCompare(b));
+  for (const [account, label] of sorted) {
+    const mine = claudeRows.filter((r) => r.account === account);
+    const badge = multi ? accountBadge(label) : "";
+    const signedIn = engines === null || engines.claude.includes(account);
     entries.push({
-      id: "claude",
-      engineId: "claude",
-      harness: "claude",
+      id: `claude:${account}`,
+      engine: "claude",
+      account,
       shortName: "Claude",
-      name: "Claude",
-      mono: null,
-      accountLabel: "Default account",
-      icon: "claude",
-      room: { bold: "–", detail: "no reading yet", spent: false },
-      isRecommended: (byHarness.get("claude") ?? []).some((r) => r.isBestRoute),
-      installed: claudeStatus.installed !== false,
-      signedIn: claudeStatus.signedIn !== false,
-      models: [],
+      name: badge ? `Claude on ${badge}` : "Claude",
+      badge,
+      accountLabel: `${label} account`,
+      room: limitingRoom(mine, nowMs),
+      recommended: mine.some((r) => r.isBestRoute),
+      installed: true,
+      signedIn,
+      models: CLAUDE_MODELS.map((m) => ({ ...m, disabled: false, why: "" })),
+      groups: null,
+    });
+  }
+  if (accounts.size === 0) {
+    entries.push({
+      id: "claude", engine: "claude", account: null, shortName: "Claude", name: "Claude", badge: "",
+      accountLabel: "Claude Code's own account", room: null, recommended: false, installed: true, signedIn: true,
+      models: CLAUDE_MODELS.map((m) => ({ ...m, disabled: false, why: "" })), groups: null,
     });
   }
 
-  // 2. Antigravity entry
-  const agyAccount = usageList.find((p) => p.account?.startsWith?.("agy") || p.harness === "agy");
-  const agyStatus = installedStatus.agy ?? {
-    installed: agyModels.length > 0,
-    signedIn: agyModels.length > 0,
-  };
-  const agyRoom = computeAccountRoom(agyAccount, nowMs);
-  const agyGroups = groupAgyModels(agyModels, agyAccount, nowMs);
-  const agyRecommended = (byHarness.get("agy") ?? []).some((r) => r.isBestRoute);
-
+  // Antigravity: one Google account; its models in quota groups.
+  const agyRows = byHarness("agy");
+  const groups = agy.state === "ok" ? agyGroups(agy.models ?? [], agyRows, nowMs) : [];
+  const gemini = agyRows.filter((r) => AGY_GROUPS.gemini.windows.includes(r.window));
   entries.push({
     id: "agy",
-    engineId: "agy",
-    harness: "agy",
+    engine: "agy",
+    account: null,
     shortName: "Antigravity",
     name: "Antigravity",
-    mono: null,
-    accountLabel: agyAccount?.label || "Google AI Pro",
-    icon: "agy",
-    room: agyRoom,
-    isRecommended: agyRecommended,
-    installed: agyStatus.installed !== false,
-    signedIn: agyStatus.signedIn !== false,
-    modelGroups: agyGroups,
-    models: agyModels,
+    badge: "",
+    accountLabel: agyRows[0]?.accountLabel ?? "Google AI Pro",
+    room: limitingRoom(gemini.length ? gemini : agyRows, nowMs),
+    recommended: agyRows.some((r) => r.isBestRoute),
+    installed: engines ? engines.agy : agy.state !== "missing",
+    signedIn: agy.state !== "signedout",
+    failed: agy.state === "error" ? agy.error || "Antigravity did not list its models." : null,
+    waiting: agy.state === "waiting",
+    models: groups.flatMap((g) => g.models),
+    groups,
   });
 
-  // 3. Copilot entry
-  const copilotAccount = usageList.find((p) => p.account?.startsWith?.("copilot") || p.harness === "copilot");
-  const copilotStatus = installedStatus.copilot ?? {
-    installed: false,
-    signedIn: false,
-  };
-  const copilotRoom = computeAccountRoom(copilotAccount, nowMs);
-  const copilotRecommended = (byHarness.get("copilot") ?? []).some((r) => r.isBestRoute);
-
+  // Copilot: one GitHub account, one pool of AI credits.
+  const copilotRows = byHarness("copilot");
   entries.push({
     id: "copilot",
-    engineId: "copilot",
-    harness: "copilot",
+    engine: "copilot",
+    account: null,
     shortName: "Copilot",
     name: "Copilot",
-    mono: null,
-    accountLabel: copilotAccount?.label || "GitHub · one pool of AI credits",
-    icon: "copilot",
-    room: copilotRoom,
-    isRecommended: copilotRecommended,
-    installed: copilotStatus.installed !== false,
-    signedIn: copilotStatus.signedIn !== false,
+    badge: "",
+    accountLabel: "GitHub · one pool of AI credits",
+    room: limitingRoom(copilotRows, nowMs),
+    recommended: copilotRows.some((r) => r.isBestRoute),
+    installed: Boolean(engines?.copilot),
+    signedIn: true,
     models: [],
+    groups: null,
   });
 
+  for (const e of entries) {
+    e.usable = e.installed && e.signedIn && !e.failed && !e.waiting;
+    e.fix = !e.installed ? "install" : !e.signedIn ? "signin" : e.failed ? "retry" : null;
+    e.recommended &&= e.usable; // the route the gauge picks, only where a session can start
+  }
   return entries;
 }
 
-/**
- * Filter and prepare the engine menu list:
- * - Default engine is omitted ("never the default again")
- * - Missing engines are disabled with "Sign in" or "Not installed"
- *
- * @param {Array<Object>} entries
- * @param {string} defaultEngineId
- * @returns {Array<Object>}
- */
-export function buildMenuList(entries, defaultEngineId) {
-  return entries
-    .filter((e) => e.id !== defaultEngineId && e.engineId !== defaultEngineId)
-    .map((e) => {
-      const isMissing = !e.installed || !e.signedIn;
-      const missingReason = !e.installed ? "Not installed on this PC" : (!e.signedIn ? "Installed, not signed in" : null);
-      const missingAction = !e.installed ? "How to install" : (!e.signedIn ? "Sign in" : null);
+const ORDER = (e) => HARNESS_ORDER.indexOf(e.engine);
 
-      return {
-        ...e,
-        disabled: isMissing,
-        missingReason,
-        missingAction,
-      };
-    });
+/**
+ * The default: the user's choice, else the engine last started from the
+ * wall, else the first usable one in the gauge's engine order. A saved id
+ * that names nothing usable now is passed over.
+ */
+export function pickDefault(entries, { userDefault = null, lastUsed = null } = {}) {
+  const usable = (id) => entries.find((e) => e.id === id && e.usable);
+  const chosen = usable(userDefault);
+  if (chosen) return { entry: chosen, reason: "your choice" };
+  const last = usable(lastUsed);
+  if (last) return { entry: last, reason: "the engine you used last" };
+  const first = [...entries].sort((a, b) => ORDER(a) - ORDER(b)).find((e) => e.usable);
+  if (first) return { entry: first, reason: "the first engine set up here" };
+  return { entry: entries[0], reason: "the only engine klepsydra knows" };
+}
+
+/** The menu: every entry but the default, the free-first Recommended one first, then the gauge's engine order. */
+export function menuEntries(entries, defaultId) {
+  return entries
+    .filter((e) => e.id !== defaultId)
+    .sort((a, b) => Number(b.recommended) - Number(a.recommended) || ORDER(a) - ORDER(b));
+}
+
+/** launch_session's arguments for an entry and its picked model; null is plain `claude`. */
+export function launchArgs(entry, model = null) {
+  if (entry.engine === "claude") {
+    if (!entry.account) return null;
+    return model ? { engine: "claude", account: entry.account, model } : { engine: "claude", account: entry.account };
+  }
+  if (entry.engine === "agy") return { engine: "agy", model };
+  return model ? { engine: "copilot", model } : { engine: "copilot" };
+}
+
+/** The first model an entry would start on: agy's first usable, Gemini first; Claude and Copilot their own default. */
+export function firstModel(entry) {
+  if (entry.engine !== "agy") return null;
+  return entry.models.find((m) => !m.disabled)?.id ?? null;
+}
+
+/** The split button's tooltip: the engine and its room. */
+export function buttonTitle(entry) {
+  const w = roomWords(entry.room);
+  if (!entry.room) return `Start a ${entry.name} session`;
+  return entry.room.spent ? `${entry.name}: out ${w.detail}` : `${entry.name}: ${entry.room.pct}% of the ${entry.room.word} left`;
 }

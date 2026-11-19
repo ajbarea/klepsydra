@@ -452,6 +452,9 @@ export function toRows(payload, nowMs = Date.now()) {
         account: p.account,
         harness: h,
         window: key,
+        // The reconciled window's reset, unix seconds: + New session says when room comes back.
+        resetsAt: num(p.windows[key].resets_at),
+        accountLabel: p.label,
         harnessLabel: HARNESS_LABELS[h] ?? h,
         note,
         isCapped: r.pct >= 100 || r.state === "waiting",

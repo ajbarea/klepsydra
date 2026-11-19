@@ -19,10 +19,10 @@ import { ciView } from "./ci.js";
 import { healthView } from "./health.js";
 import { createReplayer } from "./replay.js";
 import { cutsText } from "./fulltext.js";
-import { WAITING, usageRows } from "../gauge.js";
+import { WAITING, toRows, usageRows } from "../gauge.js";
 import { readMode, readStops, syncEntries } from "../gaugeview.js";
 import { createLog } from "../log.js";
-import { DEFAULT_ENGINE_KEY, pickDefaultEngine, extractLastEngineUsed, buildEngineEntries, buildMenuList } from "./newsession.js";
+import { FIX_STEPS, buildEntries, buttonTitle, firstModel, launchArgs, menuEntries, pickDefault, roomWords } from "./newsession.js";
 
 const FIRST_THEME_MS = 1500; // the longest the first paint waits for the app to name the theme
 const TICK_MS = 15_000; // ages re-render between snapshots, as on the gauge
@@ -104,308 +104,306 @@ document.addEventListener("pointerdown", (e) => {
   if (gear.open && !gear.contains(e.target)) gear.open = false;
 });
 const limitWait = limits.querySelector(".limit-wait");
-// + New session and the empty state's button start a session the same way,
-// and while one runs the other is off too.
-async function startSession(button, note, explicitArgs = null) {
-  if (button.getAttribute("aria-disabled") === "true") return;
-  const other = button === newButton ? startButton : newButton;
-  setOff(other, true);
-  const launchArgs = explicitArgs || (button === newButton ? defaultLaunchArgs() : null);
-  try {
-    await press(
-      button,
-      note,
-      () => (launchArgs ? window.__TAURI__.core.invoke("launch_session", launchArgs) : window.__TAURI__.core.invoke("launch_session")),
-      "Starting…",
-    );
-  } finally {
-    setOff(other, false);
-  }
-}
-newButton.hidden = !inTauri;
-newButton.addEventListener("click", () => startSession(newButton, newNote));
-
-// + New session split button and engine menu (#440, Variant A)
+// + New session (#440, Variant A): the split button names the engine it
+// starts; its caret opens one row per other engine with its account, room and
+// models. Room comes from read_usage through the gauge's own toRows (the
+// desktop snapshot carries no readings), engines and accounts from the
+// launcher, the default and the last used from prefs.json.
 let sessions = [];
 let latestSnapshot = null; // its usage readings draw the limit gauges
 const newKind = document.getElementById("new-kind");
 const newMenu = document.getElementById("new-menu");
-
-let userDefaultEngine = null;
-try {
-  userDefaultEngine = localStorage?.getItem(DEFAULT_ENGINE_KEY) || null;
-} catch {}
-
-let agyModels = [];
-let installedStatus = {
-  claude: { installed: true, signedIn: true },
-  agy: { installed: false, signedIn: false },
-  copilot: { installed: false, signedIn: false },
+const engList = newMenu.querySelector(".eng-list");
+const footWhy = newMenu.querySelector(".mfoot-why");
+const footReset = newMenu.querySelector(".eng-reset");
+const engTpl = document.getElementById("eng-tpl");
+const modelTpl = document.getElementById("model-tpl");
+const USAGE_MS = 60_000; // readings change only as sessions reply; the menu reads again on opening
+const ENGINES_MS = 60_000; // a newly installed engine shows by the next opening after this
+const ns = {
+  rows: [],
+  engines: null,
+  agy: { state: inTauri ? "waiting" : "missing", models: [] },
+  prefs: { default: null, last: null },
+  open: null, // the menu row shown open
+  picked: new Map(), // entry id -> model id the user picked
+  fixShown: new Set(), // entry ids whose fix step is shown
+  enginesAt: 0,
 };
-let selectedAgyModel = null;
-let openMenuEngine = null;
 
-function getCurrentDefault() {
-  const entries = buildEngineEntries({
-    usage: latestSnapshot?.usage,
-    agyModels,
-    installedStatus,
-    nowMs: Date.now(),
-  });
-  const lastUsed = extractLastEngineUsed(sessions);
-  const choice = pickDefaultEngine({
-    userChoice: userDefaultEngine,
-    lastEngineUsed: lastUsed,
-    engines: entries,
-  });
-  const defaultEntry = entries.find((e) => e.id === choice.id || e.engineId === choice.id) || entries[0];
-  return { choice, defaultEntry, entries };
+// The engine icons as nodes, parsed once from their constant markup.
+const iconCache = new Map();
+function iconNode(key) {
+  if (!iconCache.has(key)) {
+    // The HTML parser puts <svg> in the SVG namespace; the markup carries no xmlns for an XML parse.
+    const doc = new DOMParser().parseFromString(MAKER_ICONS[key] ?? MAKER_ICONS.claude, "text/html");
+    iconCache.set(key, doc.body.firstElementChild);
+  }
+  return document.importNode(iconCache.get(key), true);
 }
 
-function defaultLaunchArgs() {
-  const { defaultEntry } = getCurrentDefault();
-  if (defaultEntry.engineId === "agy") {
-    return selectedAgyModel ? { agyModel: selectedAgyModel } : null;
+function nsState() {
+  const entries = buildEntries({ rows: ns.rows, engines: ns.engines, agy: ns.agy, nowMs: Date.now() });
+  const pick = pickDefault(entries, { userDefault: ns.prefs.default, lastUsed: ns.prefs.last });
+  return { entries, pick };
+}
+
+const modelOf = (entry) => (ns.picked.has(entry.id) ? ns.picked.get(entry.id) : firstModel(entry));
+
+async function startSession(button, note, args) {
+  if (button.getAttribute("aria-disabled") === "true") return;
+  const others = [newButton, startButton, newKind].filter((b) => b !== button);
+  for (const b of others) setOff(b, true);
+  try {
+    await press(button, note, () => window.__TAURI__.core.invoke("launch_session", args ?? {}), "Starting…");
+  } finally {
+    for (const b of others) setOff(b, false);
+    loadPrefs(); // a launch that started is now the last used
   }
-  if (defaultEntry.engineId === "copilot") {
-    return { copilot: true };
+}
+const startDefault = (button) => {
+  const { entry } = nsState().pick;
+  startSession(button, newNote, launchArgs(entry, modelOf(entry)));
+};
+newButton.hidden = !inTauri;
+newButton.addEventListener("click", () => startDefault(newButton));
+
+function paintButton() {
+  const { entry, reason } = nsState().pick;
+  newButton.querySelector(".ico").replaceChildren(iconNode(entry.engine));
+  newButton.querySelector(".new-label").textContent = `New ${entry.shortName} session`;
+  const mono = newButton.querySelector(".mono");
+  mono.hidden = !entry.badge;
+  mono.textContent = entry.badge;
+  newButton.title = buttonTitle(entry);
+  newButton.setAttribute("aria-label", `New ${entry.name} session`);
+  newKind.hidden = !inTauri;
+  footWhy.textContent = `Default: ${entry.name}, ${reason}.`;
+  footReset.hidden = !ns.prefs.default;
+}
+
+/** One menu row. Keys in data-fk let a redraw put focus back where it was. */
+function engRow(e, openId) {
+  const row = engTpl.content.firstElementChild.cloneNode(true);
+  const head = row.querySelector(".eng-h");
+  row.dataset.id = e.id;
+  row.setAttribute("aria-label", e.name);
+  head.dataset.fk = `h:${e.id}`;
+  row.querySelector(".ico").append(iconNode(e.engine));
+  row.querySelector(".eng-name").textContent = e.name;
+  row.querySelector(".rec").hidden = !e.recommended;
+  const words = roomWords(e.room);
+  row.querySelector(".room b").textContent = e.usable ? words.bold : "";
+  row.querySelector(".room-detail").textContent = e.usable ? words.detail : "";
+  row.querySelector(".eng-acct").textContent = e.usable
+    ? e.accountLabel
+    : e.fix === "install"
+      ? "Not installed on this PC"
+      : e.fix === "signin"
+        ? "Installed, not signed in"
+        : e.failed ?? "Asking Antigravity for its models…";
+  if (!e.usable) {
+    row.classList.add("off");
+    head.setAttribute("aria-disabled", "true");
+    head.removeAttribute("aria-expanded");
+    const fixRow = row.querySelector(".eng-fixrow");
+    const fix = row.querySelector(".eng-fix");
+    const step = FIX_STEPS[e.engine]?.[e.fix];
+    fixRow.hidden = !e.fix || (e.fix !== "retry" && !step);
+    fix.dataset.fk = `f:${e.id}`;
+    fix.dataset.fix = e.fix ?? "";
+    fix.textContent = e.fix === "install" ? "How to install" : e.fix === "signin" ? "Sign in" : "Try again";
+    if (step && e.fix !== "retry") {
+      const shown = ns.fixShown.has(e.id);
+      fix.setAttribute("aria-expanded", String(shown));
+      const p = row.querySelector(".eng-step");
+      p.hidden = !shown;
+      p.id = `step-${e.engine}`;
+      fix.setAttribute("aria-controls", p.id);
+      p.querySelector("code").textContent = step;
+    } else fix.removeAttribute("aria-expanded");
+    return row;
   }
-  return null;
+  const open = e.id === openId;
+  head.setAttribute("aria-expanded", String(open));
+  if (!open) return row;
+  row.classList.add("open");
+  const models = row.querySelector(".models");
+  const picked = modelOf(e);
+  if (e.models.length) {
+    models.hidden = false;
+    models.querySelector("legend").textContent = `${e.name} model`;
+    const groups = e.groups ?? [{ key: "all", label: e.engine === "claude" ? "Model · Claude Code's default unless you pick one" : "", models: e.models }];
+    for (const g of groups) {
+      if (g.label) models.append(Object.assign(document.createElement("div"), { className: "mgrp", textContent: g.label }));
+      for (const m of g.models) {
+        const lab = modelTpl.content.firstElementChild.cloneNode(true);
+        const input = lab.querySelector("input");
+        input.name = `model-${e.id}`;
+        input.value = m.id;
+        input.checked = m.id === picked;
+        input.disabled = m.disabled; // a spent model: arrow keys pass over it
+        input.dataset.fk = `m:${e.id}:${m.id}`;
+        lab.querySelector(".model-name").textContent = m.label;
+        lab.querySelector(".why").textContent = m.why;
+        models.append(lab);
+      }
+    }
+  }
+  row.querySelector(".eng-actions").hidden = false;
+  const start = row.querySelector(".eng-start");
+  start.textContent = `Start ${e.shortName} session`;
+  start.dataset.fk = `s:${e.id}`;
+  if (e.engine === "agy" && !picked) start.setAttribute("aria-disabled", "true");
+  row.querySelector(".eng-default").dataset.fk = `d:${e.id}`;
+  return row;
+}
+
+/** Draw the menu, keeping focus on the control that had it. Only while it is open. */
+function paintMenu() {
+  if (!newMenu.matches(":popover-open")) return;
+  const { entries, pick } = nsState();
+  const menu = menuEntries(entries, pick.entry.id);
+  if (!menu.some((e) => e.id === ns.open && e.usable)) ns.open = menu.find((e) => e.usable)?.id ?? null;
+  const active = newMenu.contains(document.activeElement) ? document.activeElement : null;
+  const had = active?.dataset.fk;
+  const hadRow = active?.closest(".eng")?.dataset.id;
+  engList.replaceChildren(...menu.map((e) => engRow(e, ns.open)));
+  if (active) {
+    // The same control, else its row's header, else the footer's button, else the caret: never the page.
+    const same = had && engList.querySelector(`[data-fk="${CSS.escape(had)}"]`);
+    const head = hadRow && engList.querySelector(`.eng[data-id="${CSS.escape(hadRow)}"] .eng-h:not([aria-disabled="true"])`);
+    const keep = active === footReset && !footReset.hidden ? footReset : null;
+    (same && same.getAttribute("aria-disabled") !== "true" && !same.disabled ? same : head || keep || newKind).focus();
+  }
 }
 
 function paintNewSession() {
-  if (!newButton || !newKind || !newMenu) return;
-  const { choice, defaultEntry, entries } = getCurrentDefault();
-
-  // Update split main button
-  const iconSvg = MAKER_ICONS[defaultEntry.icon] || MAKER_ICONS.claude;
-  const monoHtml = defaultEntry.mono
-    ? ` <span class="mono" title="on ${defaultEntry.mono}">${defaultEntry.mono}</span>`
-    : "";
-  newButton.innerHTML = `<span class="ico">${iconSvg}</span>New ${defaultEntry.shortName} session${monoHtml}`;
-  const roomWord = defaultEntry.room?.detail?.split?.(" ")?.[0] || "session";
-  const titleRoom =
-    defaultEntry.room?.bold && defaultEntry.room.bold !== "–"
-      ? `: ${defaultEntry.room.bold} of the ${roomWord} left`
-      : defaultEntry.room?.detail
-        ? `: ${defaultEntry.room.detail}`
-        : "";
-  newButton.title = `${defaultEntry.name}${titleRoom}`;
-
-  newKind.hidden = !inTauri;
-
-  // Render caret menu (#new-menu)
-  const menuEntries = buildMenuList(entries, defaultEntry.id);
-  if (openMenuEngine === null || openMenuEngine === defaultEntry.engineId) {
-    const firstOpenable = menuEntries.find((e) => !e.disabled);
-    openMenuEngine = firstOpenable?.engineId || menuEntries[0]?.engineId || null;
-  }
-
-  const engTpl = document.getElementById("eng-tpl");
-  const fragment = document.createDocumentFragment();
-
-  for (const e of menuEntries) {
-    const clone = engTpl.content.cloneNode(true);
-    const engEl = clone.querySelector(".eng");
-    const engHEl = clone.querySelector(".eng-h");
-    const icoEl = clone.querySelector(".ico");
-    const nameEl = clone.querySelector(".eng-name");
-    const roomBoldEl = clone.querySelector(".room b");
-    const roomDetailEl = clone.querySelector(".room-detail");
-    const fixBtn = clone.querySelector(".eng-fix");
-    const acctEl = clone.querySelector(".eng-acct");
-    const modelsEl = clone.querySelector(".models");
-    const actionsEl = clone.querySelector(".eng-actions");
-    const startBtn = clone.querySelector(".eng-start");
-    const defBtn = clone.querySelector(".eng-default");
-
-    engEl.setAttribute("aria-label", e.name);
-    icoEl.innerHTML = MAKER_ICONS[e.icon] || MAKER_ICONS.claude;
-    acctEl.textContent = e.missingReason || e.accountLabel;
-
-    if (e.disabled) {
-      engEl.setAttribute("aria-disabled", "true");
-      engEl.setAttribute("role", "menuitem");
-      nameEl.textContent = e.name;
-      roomBoldEl.remove();
-      roomDetailEl.remove();
-      fixBtn.hidden = false;
-      fixBtn.textContent = e.missingAction || "Sign in";
-      fixBtn.dataset.engine = e.engineId;
-      modelsEl.remove();
-      actionsEl.remove();
-    } else {
-      const recHtml = e.isRecommended
-        ? ' <span class="rec" title="First in the free-first route">Recommended</span>'
-        : "";
-      nameEl.innerHTML = `${e.name}${recHtml}`;
-      roomBoldEl.textContent = e.room.bold;
-      roomDetailEl.textContent = e.room.detail;
-      fixBtn.remove();
-
-      const isOpen = e.engineId === openMenuEngine;
-      if (isOpen) {
-        engEl.classList.add("open");
-        engEl.setAttribute("role", "group");
-        engHEl.setAttribute("aria-expanded", "true");
-        engHEl.dataset.toggle = e.engineId;
-
-        if (e.modelGroups?.length) {
-          modelsEl.hidden = false;
-          modelsEl.setAttribute("aria-label", `${e.name} model`);
-          modelsEl.innerHTML = e.modelGroups
-            .map(
-              (grp) => `
-            <div class="mgrp">${grp.label}</div>
-            ${grp.models
-              .map(
-                (m) => `
-              <div class="model${m.id === selectedAgyModel ? " on" : ""}" role="radio" aria-checked="${m.id === selectedAgyModel ? "true" : "false"}" ${m.disabled ? 'aria-disabled="true"' : ""} data-model="${m.id}" tabindex="${m.disabled ? -1 : 0}">
-                <span class="dot"></span>${m.label}${m.why ? `<span class="why">${m.why}</span>` : "<span></span>"}
-              </div>`,
-              )
-              .join("")}`,
-            )
-            .join("");
-        } else {
-          modelsEl.remove();
-        }
-
-        actionsEl.hidden = false;
-        startBtn.textContent = `Start ${e.shortName} session`;
-        startBtn.dataset.engine = e.engineId;
-        defBtn.dataset.engine = e.id;
-      } else {
-        engEl.setAttribute("role", "menuitem");
-        engHEl.setAttribute("aria-expanded", "false");
-        engHEl.dataset.toggle = e.engineId;
-        modelsEl.remove();
-        actionsEl.remove();
-      }
-    }
-    fragment.appendChild(engEl);
-  }
-
-  newMenu.replaceChildren();
-  const mhead = document.createElement("div");
-  mhead.className = "mhead";
-  mhead.innerHTML = "<span>Other engines</span><span>room left now</span>";
-  newMenu.appendChild(mhead);
-
-  newMenu.appendChild(fragment);
-
-  const mfoot = document.createElement("div");
-  mfoot.className = "mfoot";
-  mfoot.innerHTML = `<span>Default: ${defaultEntry.name}, ${choice.reason}.</span><a href="#settings" class="menu-settings">Change in Settings</a>`;
-  newMenu.appendChild(mfoot);
+  paintButton();
+  paintMenu();
 }
 
-newMenu.addEventListener("click", (e) => {
-  const toggle = e.target.closest("[data-toggle]");
-  if (toggle) {
-    const eng = toggle.dataset.toggle;
-    openMenuEngine = openMenuEngine === eng ? null : eng;
-    paintNewSession();
-    return;
+async function readRows() {
+  try {
+    ns.rows = toRows(await window.__TAURI__.core.invoke("read_usage"), Date.now());
+  } catch (err) {
+    log.warnRepeat("read_usage", "read_usage failed, so + New session shows no room", err);
   }
+}
+async function readEngines(force = false) {
+  if (!force && Date.now() - ns.enginesAt < ENGINES_MS) return;
+  ns.enginesAt = Date.now();
+  try {
+    ns.engines = await window.__TAURI__.core.invoke("engines_status");
+  } catch (err) {
+    ns.enginesAt = 0;
+    log.warnRepeat("engines_status", "engines_status failed, so + New session lists every engine as it last knew", err);
+  }
+}
+// agy's models: "not found" alone means not installed; any other failure is
+// an error to show, with a retry, never a sign-in.
+async function readAgy() {
+  ns.agy = { state: "waiting", models: [] };
+  try {
+    const models = await window.__TAURI__.core.invoke("agy_models");
+    ns.agy = Array.isArray(models) && models.length ? { state: "ok", models } : { state: "error", models: [], error: "Antigravity listed no models." };
+  } catch (err) {
+    const msg = String(err ?? "");
+    ns.agy = /not found/i.test(msg)
+      ? { state: "missing", models: [] }
+      : /not (logged|signed) in|log ?in required|unauthori[sz]ed/i.test(msg)
+        ? { state: "signedout", models: [] }
+        : { state: "error", models: [], error: msg || "Antigravity did not list its models." };
+  }
+}
+async function loadPrefs() {
+  try {
+    ns.prefs = await window.__TAURI__.core.invoke("new_session_prefs");
+  } catch (err) {
+    log.warnRepeat("new_session_prefs", "new_session_prefs failed, so + New session uses the first engine set up", err);
+  }
+  paintNewSession();
+}
 
-  const modelEl = e.target.closest(".model:not([aria-disabled='true'])");
-  if (modelEl) {
-    selectedAgyModel = modelEl.dataset.model;
-    paintNewSession();
-    return;
-  }
-
-  const startBtn = e.target.closest(".eng-start");
-  if (startBtn) {
-    const eng = startBtn.dataset.engine;
-    newMenu.hidePopover();
-    if (eng === "agy") {
-      startSession(newKind, newNote, { agyModel: selectedAgyModel });
-    } else if (eng === "copilot") {
-      startSession(newKind, newNote, { copilot: true });
-    } else {
-      startSession(newKind, newNote, null);
-    }
-    return;
-  }
-
-  const defBtn = e.target.closest(".eng-default");
-  if (defBtn) {
-    userDefaultEngine = defBtn.dataset.engine;
-    try {
-      localStorage?.setItem(DEFAULT_ENGINE_KEY, userDefaultEngine);
-    } catch {}
-    paintNewSession();
-    return;
-  }
-
-  const settingsLink = e.target.closest(".menu-settings");
-  if (settingsLink) {
-    e.preventDefault();
-    newMenu.hidePopover();
-    gear.open = true;
-  }
+newKind.addEventListener("click", () => {
+  // Fresh room and engines for the opening menu; the open menu redraws as they land.
+  if (!inTauri) return;
+  readRows().then(paintNewSession);
+  readEngines().then(paintNewSession);
 });
-
-newMenu.addEventListener("keydown", (e) => {
-  if (e.key === "Enter" || e.key === " ") {
-    const toggle = e.target.closest("[data-toggle]");
-    if (toggle) {
-      e.preventDefault();
-      const eng = toggle.dataset.toggle;
-      openMenuEngine = openMenuEngine === eng ? null : eng;
-      paintNewSession();
-      return;
-    }
-    const modelEl = e.target.closest(".model:not([aria-disabled='true'])");
-    if (modelEl) {
-      e.preventDefault();
-      selectedAgyModel = modelEl.dataset.model;
-      paintNewSession();
-    }
-  }
-});
-
 newMenu.addEventListener("toggle", (e) => {
-  newKind.setAttribute("aria-expanded", e.newState === "open" ? "true" : "false");
+  const open = e.newState === "open";
+  newKind.setAttribute("aria-expanded", String(open));
+  if (open) {
+    paintMenu();
+    engList.querySelector('.eng-h:not([aria-disabled="true"]), .eng-fix')?.focus();
+  } else if (newMenu.contains(document.activeElement) || document.activeElement === document.body) {
+    newKind.focus(); // Escape or a click outside: back to the caret, never the page
+  }
 });
+
+newMenu.addEventListener("click", async (e) => {
+  const head = e.target.closest(".eng-h");
+  if (head?.getAttribute("aria-disabled") === "true") return;
+  if (head) {
+    const id = head.closest(".eng").dataset.id;
+    ns.open = ns.open === id ? null : id;
+    paintMenu();
+    return;
+  }
+  const fix = e.target.closest(".eng-fix");
+  if (fix) {
+    const id = fix.closest(".eng").dataset.id;
+    if (fix.dataset.fix === "retry") {
+      await readAgy();
+    } else if (ns.fixShown.has(id)) ns.fixShown.delete(id);
+    else ns.fixShown.add(id);
+    paintNewSession();
+    return;
+  }
+  const start = e.target.closest(".eng-start");
+  if (start?.getAttribute("aria-disabled") === "true") return;
+  if (start) {
+    const entry = nsState().entries.find((x) => x.id === start.closest(".eng").dataset.id);
+    newMenu.hidePopover();
+    if (entry) startSession(newKind, newNote, launchArgs(entry, modelOf(entry)));
+    return;
+  }
+  const def = e.target.closest(".eng-default");
+  if (def) {
+    await saveDefault(def.closest(".eng").dataset.id);
+    return;
+  }
+  if (e.target.closest(".eng-reset")) await saveDefault(null);
+});
+newMenu.addEventListener("change", (e) => {
+  const input = e.target.closest(".model input");
+  if (!input) return;
+  ns.picked.set(input.closest(".eng").dataset.id, input.value);
+  paintMenu();
+});
+
+async function saveDefault(id) {
+  try {
+    await window.__TAURI__.core.invoke("set_new_session_default", { id });
+    ns.prefs = { ...ns.prefs, default: id };
+  } catch (err) {
+    say(newNote, String(err));
+  }
+  // The new default leaves the menu: focus goes to the caret, not the page.
+  paintNewSession();
+  if (!newMenu.contains(document.activeElement)) newKind.focus();
+}
 
 if (inTauri) {
-  window.__TAURI__.core.invoke("agy_models").then(
-    (models) => {
-      if (Array.isArray(models) && models.length) {
-        agyModels = models;
-        installedStatus.agy = { installed: true, signedIn: true };
-        const gemini = models.find((m) => m.id.startsWith("gemini"));
-        selectedAgyModel = gemini ? gemini.id : models[0]?.id;
-      } else {
-        installedStatus.agy = { installed: false, signedIn: false };
-      }
-      paintNewSession();
-    },
-    (err) => {
-      const msg = String(err || "");
-      if (msg.includes("not found")) {
-        installedStatus.agy = { installed: false, signedIn: false };
-      } else {
-        installedStatus.agy = { installed: true, signedIn: false };
-      }
-      paintNewSession();
-    },
-  );
-} else {
-  if (Array.isArray(window.__agy) && window.__agy.length) {
-    agyModels = window.__agy;
-    installedStatus.agy = { installed: true, signedIn: true };
-    const gemini = agyModels.find((m) => m.id.startsWith("gemini"));
-    selectedAgyModel = gemini ? gemini.id : agyModels[0]?.id;
-  }
+  Promise.all([readRows(), readEngines(true), loadPrefs()]).then(paintNewSession);
+  readAgy().then(paintNewSession);
+  setInterval(() => readRows().then(paintNewSession), USAGE_MS);
 }
 paintNewSession();
 startButton.hidden = !inTauri;
 // Its answer goes to the bar's note, which stays in view once the empty state gives way.
-startButton.addEventListener("click", () => startSession(startButton, newNote));
+startButton.addEventListener("click", () => startDefault(startButton));
 // A cleared id stays off the link until the snapshot that drops its card.
 let cleared = new Set();
 // The phone cards whose Full text is open, by id; a card that leaves drops out.
@@ -1165,7 +1163,6 @@ function take(message) {
     if (said.length) announce(said.join(". "));
     refillPortrait();
     drawer.refresh();
-    paintNewSession();
     if (!frameId) drawSpeaking();
     if (pending) focusCard(pending, true);
   }

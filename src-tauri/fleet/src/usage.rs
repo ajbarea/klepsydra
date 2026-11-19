@@ -101,6 +101,38 @@ fn account_key(reading: &Object) -> String {
     }
 }
 
+/// When account `account`'s spent window comes back, if its newest reading
+/// (the latest `observed_at`, else `written_at`, as gauge.js trusts it) has a
+/// window at 100% that has not reset by `now` (unix seconds): the latest such
+/// reset. `None` when the account has room or no reading. A launch on a spent
+/// account is refused with it, even from a menu drawn before it ran out.
+pub fn spent_until(readings: &[Value], account: &str, now: i64) -> Option<i64> {
+    let stamp = |r: &Value| {
+        r.get("observed_at")
+            .and_then(Value::as_f64)
+            .or_else(|| r.get("written_at").and_then(Value::as_f64))
+    };
+    let mine: Vec<&Value> = readings
+        .iter()
+        .filter(|r| r.get("account").and_then(Value::as_str) == Some(account))
+        .collect();
+    let newest = mine
+        .iter()
+        .filter_map(|r| stamp(r))
+        .fold(None, |m: Option<f64>, s| Some(m.map_or(s, |m| m.max(s))))?;
+    mine.iter()
+        .filter(|r| stamp(r) == Some(newest))
+        .filter_map(|r| r.get("windows")?.as_object())
+        .flat_map(|w| w.values())
+        .filter_map(|w| {
+            let pct = w.get("used_percentage")?.as_f64()?;
+            #[allow(clippy::cast_possible_truncation)]
+            let at = w.get("resets_at")?.as_f64()? as i64;
+            (pct >= 100.0 && at > now).then_some(at)
+        })
+        .max()
+}
+
 /// The windows the gauge draws (gauge.js WINDOW_ORDER); no other reaches the phone.
 pub const WINDOWS: [&str; 8] = [
     "five_hour",
@@ -250,6 +282,49 @@ mod tests {
         got.sort();
         assert_eq!(got, ["s1", "s2", "s3"]);
         assert!(read([&missing]).is_empty());
+    }
+
+    #[test]
+    fn an_account_is_spent_only_by_its_newest_reading_and_only_until_the_reset() {
+        let r = |account: &str, at: i64, five: f64, week: f64| {
+            json!({"account": account, "observed_at": at, "windows": {
+                "five_hour": {"used_percentage": five, "resets_at": 2_000},
+                "seven_day": {"used_percentage": week, "resets_at": 9_000}}})
+        };
+        let all = [r(PERSONAL, 100, 100.0, 40.0), r(TEAM, 100, 10.0, 100.0)];
+        assert_eq!(
+            spent_until(&all, PERSONAL, 1_000),
+            Some(2_000),
+            "its session is spent"
+        );
+        assert_eq!(
+            spent_until(&all, TEAM, 1_000),
+            Some(9_000),
+            "the week binds"
+        );
+        assert_eq!(spent_until(&all, PERSONAL, 2_000), None, "reset by now");
+        assert_eq!(spent_until(&all, "other", 1_000), None, "no reading");
+        let later = [r(PERSONAL, 100, 100.0, 40.0), r(PERSONAL, 200, 3.0, 40.0)];
+        assert_eq!(
+            spent_until(&later, PERSONAL, 1_000),
+            None,
+            "a newer reading has room"
+        );
+        let both = [r(TEAM, 100, 100.0, 100.0)];
+        assert_eq!(
+            spent_until(&both, TEAM, 1_000),
+            Some(9_000),
+            "the later return"
+        );
+        let old_hook = json!({"account": PERSONAL, "written_at": 50, "windows": {
+            "five_hour": {"used_percentage": 100, "resets_at": 2_000}}});
+        assert_eq!(
+            spent_until(&[old_hook], PERSONAL, 1_000),
+            Some(2_000),
+            "written_at when no observed_at"
+        );
+        let junk = json!({"account": PERSONAL, "observed_at": 1, "windows": {"five_hour": {"used_percentage": "100", "resets_at": 2_000}}});
+        assert_eq!(spent_until(&[junk], PERSONAL, 1_000), None, "a number only");
     }
 
     #[test]

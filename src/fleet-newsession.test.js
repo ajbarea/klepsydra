@@ -1,194 +1,178 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { toRows } from "./gauge.js";
 import {
-  pickDefaultEngine,
-  extractLastEngineUsed,
-  computeAccountRoom,
-  groupAgyModels,
-  buildEngineEntries,
-  buildMenuList,
+  accountBadge,
+  agyGroups,
+  buildEntries,
+  buttonTitle,
+  firstModel,
+  launchArgs,
+  limitingRoom,
+  menuEntries,
+  pickDefault,
+  roomWords,
 } from "./fleet/newsession.js";
 
-const NOW = 1_795_026_210_000; // Wed Nov 18 2026 ~1:23 PM EST
-const secs = (ms) => Math.round(ms / 1000);
+// Readings as read_usage returns them on AJ's PC (11-19): one file per
+// session, the account's uuid and its organisation's label, agy's quota under
+// agy-primary with its Claude & GPT group as claude_gpt.
+const NOW = 1_795_076_600_000;
+const S = NOW / 1000;
+const PERSONAL = "6f5fe38b-9f23-4588-b57a-6efd1225cadd";
+const RIT = "96130a18-106b-49a2-9b8e-a0b4d52aa214";
+const reading = (account, label, session, at, windows, extra = {}) => ({
+  account, label, session, written_at: at, observed_at: at, api_ms: 1000, windows, ...extra,
+});
+const REAL = [
+  reading(PERSONAL, "Personal", "537f9cf4", S - 15, {
+    five_hour: { used_percentage: 3, resets_at: S + 15_400 },
+    seven_day: { used_percentage: 57, resets_at: S + 380_200 },
+  }),
+  // A second session of the same account, older: the gauge reconciles it away.
+  reading(PERSONAL, "Personal", "1111aaaa", S - 900, {
+    five_hour: { used_percentage: 1, resets_at: S + 15_400 },
+    seven_day: { used_percentage: 55, resets_at: S + 380_200 },
+  }),
+  reading(RIT, "RIT-CS-DQL", "14887126", S - 13, {
+    five_hour: { used_percentage: 7, resets_at: S + 4_600 },
+    seven_day: { used_percentage: 28, resets_at: S + 553_000 },
+  }),
+  reading("agy-primary", "Google AI Pro", "0e9aa7fa", S - 95, {
+    five_hour: { used_percentage: 25.95, resets_at: S + 10_316 },
+    seven_day: { used_percentage: 31.81, resets_at: S + 543_116 },
+    claude_gpt: { used_percentage: 0, resets_at: S + 17_905 },
+  }, { harness: "agy" }),
+];
+const AGY_MODELS = [
+  { id: "gemini-3.8-flash-high", label: "Gemini 3.8 Flash (High)", group: "gemini" },
+  { id: "gemini-3.8-flash-low", label: "Gemini 3.8 Flash (Low)", group: "gemini" },
+  { id: "claude-opus-4-6-thinking", label: "Claude Opus 4.6 (Thinking)", group: "3p" },
+  { id: "gpt-oss-120b-medium", label: "GPT-OSS 120B (Medium)", group: "3p" },
+];
+const ENGINES = { claude: [PERSONAL, RIT], agy: true, copilot: true };
+const entriesOf = (readings = REAL, opts = {}) =>
+  buildEntries({ rows: toRows(readings, NOW), engines: ENGINES, agy: { state: "ok", models: AGY_MODELS }, nowMs: NOW, ...opts });
+const byId = (es, id) => es.find((e) => e.id === id);
 
-test("pickDefaultEngine: user choice takes precedence when installed and signed in", () => {
-  const engines = [
-    { id: "claude", installed: true, signedIn: true },
-    { id: "agy", installed: true, signedIn: true },
-    { id: "copilot", installed: false, signedIn: false },
-  ];
-  const pick = pickDefaultEngine({
-    userChoice: "agy",
-    lastEngineUsed: "claude",
-    engines,
+test("the real readings give one Claude entry per account, named by the account's own label", () => {
+  const es = entriesOf();
+  assert.deepEqual(es.map((e) => e.id), [`claude:${PERSONAL}`, `claude:${RIT}`, "agy", "copilot"]);
+  assert.deepEqual(es.map((e) => e.name), ["Claude on Personal", "Claude on RIT", "Antigravity", "Copilot"]);
+  assert.equal(byId(es, `claude:${RIT}`).badge, "RIT");
+  assert.equal(byId(es, `claude:${RIT}`).accountLabel, "RIT-CS-DQL account");
+});
+
+test("a badge comes from any account's label, not from a known name or id", () => {
+  assert.equal(accountBadge("Acme-Team Org"), "Acme");
+  assert.equal(accountBadge("ajbareaa@gmail.com's Organization"), "ajbareaa");
+  assert.equal(accountBadge(""), "");
+  const one = entriesOf([REAL[2]], { engines: { ...ENGINES, claude: [RIT] } });
+  assert.equal(byId(one, `claude:${RIT}`).name, "Claude", "one account needs no badge");
+});
+
+test("room is the reconciled reading: an extra session adds no row and an older one does not win", () => {
+  const p = byId(entriesOf(), `claude:${PERSONAL}`);
+  assert.equal(p.room.pct, 43, "the newest session's week, 57% used");
+  assert.equal(p.room.word, "week", "the week binds when it has less room than the session");
+});
+
+test("an ended window binds nothing: a spent session that has reset leaves the week", () => {
+  const ended = [reading(RIT, "RIT-CS-DQL", "x", S - 20_000, {
+    five_hour: { used_percentage: 100, resets_at: S - 60 },
+    seven_day: { used_percentage: 28, resets_at: S + 553_000 },
+  })];
+  const e = byId(entriesOf(ended), `claude:${RIT}`);
+  assert.equal(e.room.spent, false);
+  assert.equal(e.room.pct, 72);
+});
+
+test("a spent window says out and when it comes back", () => {
+  const rows = toRows([reading(RIT, "RIT-CS-DQL", "x", S, {
+    five_hour: { used_percentage: 100, resets_at: S + 3_600 },
+    seven_day: { used_percentage: 40, resets_at: S + 553_000 },
+  })], NOW);
+  const r = limitingRoom(rows, NOW);
+  assert.equal(r.spent, true);
+  assert.equal(roomWords(r).bold, "out");
+  assert.match(roomWords(r).detail, /^until \d/);
+  assert.equal(limitingRoom([], NOW), null);
+  assert.deepEqual(roomWords(null), { bold: "–", detail: "no reading yet" });
+});
+
+test("agy's models sit in their quota group by agy's own grouping, never by id", () => {
+  const odd = [...AGY_MODELS, { id: "gemini-lookalike", label: "Lookalike", group: "3p" }, { id: "mystery-1", label: "Mystery" }];
+  const groups = agyGroups(odd, toRows(REAL, NOW).filter((r) => r.harness === "agy"), NOW);
+  assert.deepEqual(groups.map((g) => g.key), ["gemini", "3p", "other"]);
+  assert.ok(groups[1].models.some((m) => m.id === "gemini-lookalike"), "a gemini- id in the 3p group stays there");
+  assert.equal(groups[0].label, "Gemini · 74% of the session, 68% of the week");
+  assert.equal(groups[1].label, "Claude & GPT · 100% of the session");
+});
+
+test("a spent Claude & GPT group turns off only its own models", () => {
+  const spent = REAL.map((r) => (r.account === "agy-primary"
+    ? { ...r, windows: { ...r.windows, claude_gpt: { used_percentage: 100, resets_at: S + 3_000 } } }
+    : r));
+  const agy = byId(entriesOf(spent), "agy");
+  const g3p = agy.groups.find((g) => g.key === "3p");
+  assert.ok(g3p.spent && g3p.models.every((m) => m.disabled && m.why === "spent"));
+  assert.match(g3p.label, /^Claude & GPT · spent, back \d/);
+  assert.ok(agy.groups.find((g) => g.key === "gemini").models.every((m) => !m.disabled));
+  assert.equal(firstModel(agy), "gemini-3.8-flash-high", "Gemini first");
+  assert.equal(agy.room.spent, false, "agy's own room is Gemini's");
+});
+
+test("the default: your choice, else the last engine you started, else the first set up", () => {
+  const es = entriesOf();
+  assert.equal(pickDefault(es, { userDefault: "agy", lastUsed: "copilot" }).entry.id, "agy");
+  assert.equal(pickDefault(es, { userDefault: null, lastUsed: "copilot" }).reason, "the engine you used last");
+  assert.equal(pickDefault(es, {}).entry.id, `claude:${PERSONAL}`);
+  const noCopilot = entriesOf(REAL, { engines: { ...ENGINES, copilot: false } });
+  assert.equal(pickDefault(noCopilot, { userDefault: "copilot", lastUsed: "agy" }).entry.id, "agy", "a choice not set up now is passed over");
+  assert.equal(pickDefault(es, { userDefault: "claude:gone" }).reason, "the first engine set up here");
+});
+
+test("the menu never repeats the default and puts the free-first Recommended engine first", () => {
+  const es = entriesOf();
+  const rec = es.filter((e) => e.recommended).map((e) => e.id);
+  assert.deepEqual(rec, ["agy"], "the gauge's free-first route picks agy's Gemini");
+  const menu = menuEntries(es, `claude:${RIT}`);
+  assert.deepEqual(menu.map((e) => e.id), ["agy", `claude:${PERSONAL}`, "copilot"]);
+});
+
+test("a missing engine stays listed, off, with the one step that fixes it", () => {
+  const es = buildEntries({
+    rows: toRows(REAL, NOW),
+    engines: { claude: [RIT], agy: false, copilot: false },
+    agy: { state: "missing", models: [] },
+    nowMs: NOW,
   });
-  assert.equal(pick.id, "agy");
-  assert.equal(pick.reason, "your chosen default");
+  assert.equal(byId(es, "agy").fix, "install");
+  assert.equal(byId(es, "copilot").fix, "install");
+  assert.equal(byId(es, `claude:${PERSONAL}`).fix, "signin", "a reading with no login here");
+  assert.ok(!byId(es, `claude:${PERSONAL}`).usable && byId(es, `claude:${RIT}`).usable);
 });
 
-test("pickDefaultEngine: falls through to lastEngineUsed if user choice is missing or not installed", () => {
-  const engines = [
-    { id: "claude", installed: true, signedIn: true },
-    { id: "agy", installed: false, signedIn: false },
-    { id: "copilot", installed: false, signedIn: false },
-  ];
-  const pick = pickDefaultEngine({
-    userChoice: "agy", // not installed
-    lastEngineUsed: "claude",
-    engines,
-  });
-  assert.equal(pick.id, "claude");
-  assert.equal(pick.reason, "the engine you used last");
+test("agy that is installed but fails to list says so and offers a retry, never 'not signed in'", () => {
+  const es = buildEntries({ rows: [], engines: ENGINES, agy: { state: "error", models: [], error: "agy models did not answer." }, nowMs: NOW });
+  const agy = byId(es, "agy");
+  assert.equal(agy.fix, "retry");
+  assert.equal(agy.signedIn, true);
+  assert.equal(agy.failed, "agy models did not answer.");
 });
 
-test("pickDefaultEngine: picks lastEngineUsed when no user choice is set", () => {
-  const engines = [
-    { id: "claude", installed: true, signedIn: true },
-    { id: "agy", installed: true, signedIn: true },
-    { id: "copilot", installed: true, signedIn: true },
-  ];
-  const pick = pickDefaultEngine({
-    userChoice: null,
-    lastEngineUsed: "agy",
-    engines,
-  });
-  assert.equal(pick.id, "agy");
-  assert.equal(pick.reason, "the engine you used last");
+test("Start sends the engine, account and model the launcher takes", () => {
+  const es = entriesOf();
+  assert.deepEqual(launchArgs(byId(es, `claude:${RIT}`), "opus"), { engine: "claude", account: RIT, model: "opus" });
+  assert.deepEqual(launchArgs(byId(es, `claude:${RIT}`)), { engine: "claude", account: RIT });
+  assert.deepEqual(launchArgs(byId(es, "agy"), "gemini-3.8-flash-low"), { engine: "agy", model: "gemini-3.8-flash-low" });
+  assert.deepEqual(launchArgs(byId(es, "copilot")), { engine: "copilot" });
+  const none = buildEntries({ rows: [], engines: null, nowMs: NOW });
+  assert.equal(launchArgs(byId(none, "claude")), null, "no account known: plain claude, as before");
 });
 
-test("pickDefaultEngine: falls through to first installed and signed in engine when no lastEngineUsed", () => {
-  const engines = [
-    { id: "claude", installed: false, signedIn: false },
-    { id: "agy", installed: true, signedIn: true },
-    { id: "copilot", installed: true, signedIn: true },
-  ];
-  const pick = pickDefaultEngine({
-    userChoice: null,
-    lastEngineUsed: null,
-    engines,
-  });
-  assert.equal(pick.id, "agy");
-  assert.equal(pick.reason, "the first installed and signed-in engine");
-});
-
-test("extractLastEngineUsed: gets engine from newest session", () => {
-  const sessions = [
-    { session_id: "s1", status_at: 1000, engine: "claude" },
-    { session_id: "s2", status_at: 2000, engine: "agy" },
-    { session_id: "s3", status_at: 1500, engine: "claude" },
-  ];
-  assert.equal(extractLastEngineUsed(sessions), "agy");
-});
-
-test("extractLastEngineUsed: falls back when sessions list is empty", () => {
-  assert.equal(extractLastEngineUsed([], "claude"), "claude");
-  assert.equal(extractLastEngineUsed(null, "claude"), "claude");
-});
-
-test("computeAccountRoom: formats room remaining from session or week", () => {
-  const acct = {
-    account: "a1",
-    windows: {
-      five_hour: { used_percentage: 7.2, resets_at: secs(NOW + 3600e3 * 2) },
-      seven_day: { used_percentage: 4.0, resets_at: secs(NOW + 3600e3 * 24 * 6) },
-    },
-  };
-  const room = computeAccountRoom(acct, NOW);
-  assert.equal(room.bold, "93%");
-  assert.match(room.detail, /session · back to full/);
-  assert.equal(room.spent, false);
-});
-
-test("computeAccountRoom: formats spent account as out until reset", () => {
-  const acct = {
-    account: "a2",
-    windows: {
-      seven_day: { used_percentage: 100, resets_at: secs(NOW + 3600e3 * 4) },
-    },
-  };
-  const room = computeAccountRoom(acct, NOW);
-  assert.equal(room.bold, "out");
-  assert.match(room.detail, /until/);
-  assert.equal(room.spent, true);
-});
-
-test("computeAccountRoom: placeholder when no readings exist", () => {
-  const room = computeAccountRoom({}, NOW);
-  assert.equal(room.bold, "–");
-  assert.equal(room.detail, "no reading yet");
-  assert.equal(room.spent, false);
-});
-
-test("groupAgyModels: groups models into Gemini and Claude & GPT", () => {
-  const models = [
-    { id: "gemini-3.8-flash-high", label: "Gemini 3.8 Flash (High)" },
-    { id: "gemini-3.8-flash-low", label: "Gemini 3.8 Flash (Low)" },
-    { id: "claude-sonnet-4-6", label: "Claude Sonnet 4.6 (Thinking)" },
-  ];
-  const agyUsage = {
-    windows: {
-      five_hour: { used_percentage: 7, resets_at: secs(NOW + 3600e3 * 2) },
-      seven_day: { used_percentage: 4, resets_at: secs(NOW + 3600e3 * 24 * 6) },
-      claude_gpt: { used_percentage: 100, resets_at: secs(NOW + 3600e3 * 2.5) },
-    },
-  };
-  const groups = groupAgyModels(models, agyUsage, NOW);
-  assert.equal(groups.length, 2);
-  assert.equal(groups[0].key, "gemini");
-  assert.match(groups[0].label, /Gemini · 93% of the session, 96% of the week/);
-  assert.equal(groups[0].models[0].disabled, false);
-
-  assert.equal(groups[1].key, "claude_gpt");
-  assert.match(groups[1].label, /Claude & GPT · spent/);
-  assert.equal(groups[1].models[0].disabled, true);
-  assert.equal(groups[1].models[0].why, "spent");
-});
-
-test("groupAgyModels: hides Claude & GPT models when plan has no such group", () => {
-  const models = [
-    { id: "gemini-3.8-flash-high", label: "Gemini 3.8 Flash (High)" },
-    { id: "claude-sonnet-4-6", label: "Claude Sonnet 4.6 (Thinking)" },
-  ];
-  const agyUsage = {
-    windows: {
-      five_hour: { used_percentage: 7, resets_at: secs(NOW + 3600e3 * 2) },
-      seven_day: { used_percentage: 4, resets_at: secs(NOW + 3600e3 * 24 * 6) },
-    },
-  };
-  const groups = groupAgyModels(models, agyUsage, NOW);
-  assert.equal(groups.length, 1);
-  assert.equal(groups[0].key, "gemini");
-});
-
-test("buildMenuList: default engine is NEVER repeated in the menu list", () => {
-  const entries = [
-    { id: "claude", engineId: "claude", name: "Claude", installed: true, signedIn: true },
-    { id: "agy", engineId: "agy", name: "Antigravity", installed: true, signedIn: true },
-    { id: "copilot", engineId: "copilot", name: "Copilot", installed: false, signedIn: false },
-  ];
-  const menu = buildMenuList(entries, "claude");
-  assert.equal(menu.length, 2);
-  assert.ok(!menu.some((e) => e.engineId === "claude"), "default engine omitted from menu");
-  assert.equal(menu[0].engineId, "agy");
-  assert.equal(menu[1].engineId, "copilot");
-});
-
-test("buildMenuList: missing engines are marked disabled with reason and action", () => {
-  const entries = [
-    { id: "claude", engineId: "claude", name: "Claude", installed: true, signedIn: true },
-    { id: "agy", engineId: "agy", name: "Antigravity", installed: false, signedIn: false },
-    { id: "copilot", engineId: "copilot", name: "Copilot", installed: true, signedIn: false },
-  ];
-  const menu = buildMenuList(entries, "claude");
-  const agy = menu.find((e) => e.engineId === "agy");
-  const copilot = menu.find((e) => e.engineId === "copilot");
-
-  assert.equal(agy.disabled, true);
-  assert.equal(agy.missingReason, "Not installed on this PC");
-  assert.equal(agy.missingAction, "How to install");
-
-  assert.equal(copilot.disabled, true);
-  assert.equal(copilot.missingReason, "Installed, not signed in");
-  assert.equal(copilot.missingAction, "Sign in");
+test("the button's title names the engine and its room", () => {
+  const es = entriesOf();
+  assert.equal(buttonTitle(byId(es, `claude:${RIT}`)), "Claude on RIT: 72% of the week left", "its week has less room than its session");
+  assert.equal(buttonTitle(byId(es, "copilot")), "Start a Copilot session");
 });
