@@ -5,7 +5,8 @@
 // picker does. The app's pushes (opacity_subscribe) are held while a value is
 // unsaved or a save is in flight, and Tauri does not order a channel push
 // before a command's reply: after a save the slider keeps what was asked, and
-// only a refused save puts it back to the value the app last pushed.
+// only a refused save puts it back to the value the app last pushed, saying
+// why in the bar's note, as the theme picker does.
 import { snap } from "../opacity.js";
 
 export const OPACITY_SAVE_MS = 250;
@@ -13,9 +14,10 @@ export const OPACITY_SAVE_MS = 250;
 /**
  * `input`: the range; `value`: its visible "80%"; `invoke(command, args)`;
  * `subscribe(onValue)`: the saved opacity, now and after each change;
- * `log`: where a refused save is reported; `win`: for pagehide.
+ * `note(text)`: the bar's status line ("" clears it); `log`: where a refused
+ * save is reported; `win`: for pagehide.
  */
-export function wireOpacityPick({ input, value, invoke, subscribe, log, win = globalThis, wait = OPACITY_SAVE_MS }) {
+export function wireOpacityPick({ input, value, invoke, subscribe, note, log, win = globalThis, wait = OPACITY_SAVE_MS }) {
   let heard = null; // the saved value, as the app last pushed it
   let asked = null; // shown on the slider, not saved yet
   let pending = 0; // saves not yet answered
@@ -43,11 +45,13 @@ export function wireOpacityPick({ input, value, invoke, subscribe, log, win = gl
     invoke("set_gauge_opacity", { opacity: v }).then(
       () => {
         pending -= 1;
+        note("");
         if (settled()) show(v);
       },
       (err) => {
         pending -= 1;
-        log.warn(`the gauge background could not be saved at ${v}%, so it keeps the saved value`, err);
+        log.error(`set_gauge_opacity refused ${v}%, so the gauge keeps the saved value`, err);
+        note(`Not saved: ${err}`);
         if (settled() && heard !== null) show(heard);
       },
     );

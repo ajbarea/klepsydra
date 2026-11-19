@@ -20,6 +20,7 @@ function setup({ fail = false } = {}) {
   const calls = [];
   const answers = [];
   const warned = [];
+  const notes = [];
   let push;
   const invoke = (command, args) => {
     calls.push([command, args]);
@@ -28,7 +29,8 @@ function setup({ fail = false } = {}) {
   wireOpacityPick({
     input, value, invoke, wait: WAIT,
     subscribe: (fn) => (push = fn),
-    log: { warn: (m) => warned.push(m) },
+    note: (t) => notes.push(t),
+    log: { error: (m) => warned.push(m) },
     win: { addEventListener: (type, fn) => (winListeners[type] = fn) },
   });
   const step = (v) => {
@@ -39,7 +41,7 @@ function setup({ fail = false } = {}) {
     answers.shift()();
     await rest(0);
   };
-  return { input, value, calls, warned, step, answer, push: (v) => push(v), fire: (t) => listeners[t](), hide: () => winListeners.pagehide() };
+  return { input, value, calls, warned, notes, step, answer, push: (v) => push(v), fire: (t) => listeners[t](), hide: () => winListeners.pagehide() };
 }
 
 test("the saved value shows on the slider, its label and its spoken value", () => {
@@ -110,5 +112,6 @@ test("a refused save says why and puts the slider back to the saved value", asyn
   s.push(80); // the app republishes what prefs.json still holds
   await s.answer();
   assert.deepEqual([s.input.value, s.value.textContent], ["80", "80%"]);
-  assert.match(s.warned[0], /could not be saved at 40%/);
+  assert.match(s.warned[0], /set_gauge_opacity refused 40%/);
+  assert.match(s.notes.at(-1), /^Not saved: Error: prefs\.json/, "the bar says why, as the theme picker does");
 });

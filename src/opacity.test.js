@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { DEFAULT_OPACITY, FULL_INK_BELOW, HALO_BELOW, REDUCED_TRANSPARENCY, applyOpacity, inkFor, snap, subscribeOpacity, wantsSolid } from "./opacity.js";
+import { DEFAULT_OPACITY, FULL_INK_BELOW, HALO_BELOW, REDUCED_TRANSPARENCY, STEP, applyOpacity, inkFor, snap, subscribeOpacity, wantsSolid } from "./opacity.js";
 
 const root = () => {
   const props = {};
@@ -17,11 +17,12 @@ test("snap: the slider's grid, 0 to 100 in steps of 5", () => {
 test("the default matches the app's (klepsydra_fleet::opacity::DEFAULT)", () => {
   const rust = readFileSync(new URL("../src-tauri/fleet/src/opacity.rs", import.meta.url), "utf8");
   assert.equal(Number(rust.match(/pub const DEFAULT: u8 = (\d+);/)[1]), DEFAULT_OPACITY);
-  assert.equal(Number(rust.match(/pub const STEP: u8 = (\d+);/)[1]), 5);
+  assert.equal(Number(rust.match(/pub const STEP: u8 = (\d+);/)[1]), STEP, "the app snaps to the slider's step");
   const css = readFileSync(new URL("./style.css", import.meta.url), "utf8");
   assert.equal(Number(css.match(/--panel-alpha: ([\d.]+);/)[1]), DEFAULT_OPACITY / 100, "the panel before the first message wears the default");
   const wall = readFileSync(new URL("./wall.html", import.meta.url), "utf8");
   assert.equal(Number(wall.match(/id="gauge-opacity"[^>]*value="(\d+)"/)[1]), DEFAULT_OPACITY, "the slider before the first message");
+  assert.equal(Number(wall.match(/id="gauge-opacity"[^>]*step="(\d+)"/)[1]), STEP, "the slider steps as the app snaps");
 });
 
 test("ink: the theme's own at 85% and up, full ink below, a dark halo below 65% (dark) or 50% (light)", () => {
@@ -69,6 +70,8 @@ test("solid: the system's reduced transparency draws the panel opaque, in the th
   assert.equal("ink" in r.dataset, false);
   assert.equal("clear" in r.dataset, false);
   assert.equal(wantsSolid({ matchMedia: (q) => ({ matches: q === REDUCED_TRANSPARENCY }) }), true);
+  // High Contrast keeps a forced background's alpha (CSS Color Adjust), so it asks for solid too.
+  assert.match(REDUCED_TRANSPARENCY, /^\(prefers-reduced-transparency: reduce\), \(forced-colors: active\)$/);
   assert.equal(wantsSolid({}), false, "no matchMedia: the slider decides");
 });
 
@@ -82,7 +85,11 @@ test("an empty ?opacity= is the default, not 0%", () => {
 // Round 2: every small word the ink is meant to reach (WCAG 1.4.3).
 test("stronger ink reaches the resets and the route word", () => {
   const css = readFileSync(new URL("./style.css", import.meta.url), "utf8");
-  assert.match(css, /:root\[data-ink\] #panel :is\(\.chip:not\(\[data-stale\]\) \.when, \.cell \.t\) \{ opacity: 1; \}/, "the resets' 0.86 fade is lifted under any ink, but not a stale chip's dim");
+  assert.match(css, /:root\[data-ink\] #panel :is\(\.chip \.when, \.cell \.t\) \{ opacity: 1; \}/, "the resets' 0.86 fade is lifted under any ink");
+  // A stale chip's words keep their ink (#486); its pips and mark carry the dim.
+  assert.match(css, /\.chip\[data-stale\] :is\(\.pips, \.mark\) \{ opacity: 0\.5; \}/);
+  assert.doesNotMatch(css, /\[data-stale\][^{]*\.(val|when)\b[^{]*\{[^}]*opacity/, "no rule fades a stale chip's words");
+  assert.doesNotMatch(css, /\[data-stale\] \.cell \{[^}]*opacity/, "nor a stacked stale chip's cells");
   const lightFull = css.match(/@media \(prefers-color-scheme: light\) \{\s*\/\*[^*]*\*\/\s*:root\[data-ink="full"\] #panel \{([^}]*)\}/);
   assert.ok(lightFull, "the light full-ink rule");
   for (const token of ["--text", "--text-dim", "--route"]) assert.match(lightFull[1], new RegExp(`${token}: #120c07`), token);

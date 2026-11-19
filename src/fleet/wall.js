@@ -1694,23 +1694,26 @@ new ResizeObserver(() => {
 }).observe(wall);
 if (inTauri) window.__TAURI__.core.invoke("get_wall_density").then(choose, () => {});
 
-// Characters (#135): the theme picker, the tray's Characters menu and the
-// phone all wear one theme. html[data-theme] names it, as a CSS colour theme
-// does, and a switch repaints every name, face, epithet and accent from the
-// data already held: the wall and its compact cards, the empty wall's keeper,
-// an open portrait, the Ledger and the Queue's keeper, with nothing read again.
 // The floating gauge's background opacity (#438), in the app only.
 if (inTauri) {
   const input = document.getElementById("gauge-opacity");
+  const opacityNote = document.getElementById("opacity-note");
   input.closest("label").hidden = false;
   wireOpacityPick({
     input,
     value: input.nextElementSibling,
     invoke: tauri,
     subscribe: (fn) => subscribeOpacity(fn, { inTauri, follow }),
+    note: (text) => setText(opacityNote, text),
     log,
   });
 }
+
+// Characters (#135): the theme picker, the tray's Characters menu and the
+// phone all wear one theme. html[data-theme] names it, as a CSS colour theme
+// does, and a switch repaints every name, face, epithet and accent from the
+// data already held: the wall and its compact cards, the empty wall's keeper,
+// an open portrait, the Ledger and the Queue's keeper, with nothing read again.
 const themePicker = document.getElementById("theme");
 themePicker.replaceChildren(
   ...Object.entries(THEME_LABELS).map(([id, label]) => Object.assign(document.createElement("option"), { value: id, textContent: label })),

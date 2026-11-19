@@ -33,8 +33,9 @@ export function inkFor(opacity, scheme) {
 /**
  * Wear `opacity` on `root`: the panel's alpha, its ink, and whether it is
  * clear. `solid`: the system asks for less transparency (Windows'
- * Transparency effects off, or High Contrast), so the panel is opaque
- * whatever the slider says. Returns the ink.
+ * Transparency effects off) or forces its colours (High Contrast, which
+ * keeps a background's alpha), so the panel is opaque whatever the slider
+ * says. Returns the ink.
  */
 export function applyOpacity(root, opacity, scheme, solid = false) {
   const o = solid ? 100 : snap(opacity);
@@ -48,9 +49,10 @@ export function applyOpacity(root, opacity, scheme, solid = false) {
   return ink;
 }
 
-export const REDUCED_TRANSPARENCY = "(prefers-reduced-transparency: reduce)";
+/** Less transparency (Chromium 118+, so WebView2), or forced colours. */
+export const REDUCED_TRANSPARENCY = "(prefers-reduced-transparency: reduce), (forced-colors: active)";
 
-/** Whether the system asks for less transparency (Chromium 118+, so WebView2). */
+/** Whether the system asks for a solid panel (REDUCED_TRANSPARENCY). */
 export const wantsSolid = (win = globalThis) => Boolean(win.matchMedia?.(REDUCED_TRANSPARENCY).matches);
 
 /** The page's colour scheme, as the gauge's CSS reads it. */

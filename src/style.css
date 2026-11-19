@@ -91,11 +91,18 @@
   --grip-dot: #d9c6a5;
   --grip-dot-hover: #ffffff;
 }
-:root[data-ink="halo"] #panel { text-shadow: 0 0 1px #000, 0 0 2px #000, 0 0 4px #000, 0 0 8px rgb(0 0 0 / 0.75); }
+:root[data-ink="halo"] #panel {
+  /* Hard-edged: a 1 px outline in eight directions, then a short soft edge.
+     Soft blurs alone leave a mid-grey ring that a white desktop shows through. */
+  --h: calc(1px * var(--scale));
+  text-shadow:
+    var(--h) 0 0 #000, calc(-1 * var(--h)) 0 0 #000, 0 var(--h) 0 #000, 0 calc(-1 * var(--h)) 0 #000,
+    var(--h) var(--h) 0 #000, calc(-1 * var(--h)) calc(-1 * var(--h)) 0 #000, var(--h) calc(-1 * var(--h)) 0 #000, calc(-1 * var(--h)) var(--h) 0 #000,
+    0 0 calc(3px * var(--scale)) #000;
+}
 :root[data-ink="halo"] #panel :is(.mark, .pip, .face) { filter: drop-shadow(0 0 1px #000) drop-shadow(0 0 3px rgb(0 0 0 / 0.85)); }
-/* Any stronger ink reaches the resets too: their 0.86 fade would undo it.
-   A stale chip's reset keeps its 0.5 dim with the rest of the chip. */
-:root[data-ink] #panel :is(.chip:not([data-stale]) .when, .cell .t) { opacity: 1; }
+/* Any stronger ink reaches the resets too: their 0.86 fade would undo it. */
+:root[data-ink] #panel :is(.chip .when, .cell .t) { opacity: 1; }
 /* Fully clear: no frosted glass behind nothing. */
 :root[data-clear] #panel { backdrop-filter: none; }
 
@@ -288,8 +295,9 @@ html, body {
 .chip[data-route] { box-shadow: inset 0 calc(-2px * var(--scale)) 0 var(--route); }
 .chip[data-placeholder] :is(.val, .when) { color: var(--text-dim); }
 .chip[data-placeholder] .mark { opacity: 0.7; }
-/* An old reading dims and says its age instead of looking live. */
-.chip[data-stale] :is(.val, .when, .pips, .mark) { opacity: 0.5; }
+/* An old reading says its age, and its pips and mark dim; its words keep
+   their ink, so they hold 4.5:1 at every opacity (#486). */
+.chip[data-stale] :is(.pips, .mark) { opacity: 0.5; }
 .chip[data-stale] .pip i, .pip.old i { background-color: var(--text-dim) !important; }
 
 /* Stacked ("Full" in the tray): a line per account, every window shown, the
@@ -325,7 +333,7 @@ html, body {
 .cell .pip { align-self: center; height: calc(13px * var(--scale)); }
 .cell.wide { grid-column: 3 / -2; justify-content: start; color: var(--text-dim); font-size: calc(var(--size-label) * var(--scale)); }
 .cell.hidden-win .t { color: var(--text-dim); font-style: italic; }
-#chips[data-layout="stacked"] .chip[data-stale] .cell { opacity: 0.5; }
+#chips[data-layout="stacked"] .chip[data-stale] .cell .pip { opacity: 0.5; }
 
 /* The new size, shown briefly while scrolling on the grip. */
 #zoom {
@@ -375,9 +383,10 @@ html, body {
   background: var(--track);
   cursor: pointer;
 }
-/* The session keryx is speaking for: a gold ring, a panel-coloured gap inside it. */
+/* The session keryx is speaking for: a gold ring, a gap of the panel's solid
+   colour inside it, so it still shows when the panel is see-through. */
 .face.speaking {
-  box-shadow: 0 0 0 calc(1.5px * var(--scale)) var(--panel-bg), 0 0 0 calc(3.5px * var(--scale)) var(--speak-gold);
+  box-shadow: 0 0 0 calc(1.5px * var(--scale)) var(--panel-solid), 0 0 0 calc(3.5px * var(--scale)) var(--speak-gold);
 }
 .face:focus-visible {
   outline: calc(2px * var(--scale)) solid var(--text);
