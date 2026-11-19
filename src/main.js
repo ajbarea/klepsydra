@@ -1,4 +1,4 @@
-import { toRows, formatPct, WAITING } from "./gauge.js";
+import { toRows, formatPct, rampColor, WAITING } from "./gauge.js";
 import { readMode, readStops } from "./gaugeview.js";
 import { dockKey, primaryChip, toChips } from "./fleet/chips.js";
 import { dockSlots, syncChips } from "./fleet/chipview.js";
@@ -154,13 +154,23 @@ function syncSize(pin = false) {
  * The ramp lives in CSS, so rather than reimplement it, read back the colour
  * the browser actually computed -- that resolves `color-mix` for free.
  */
+// Outside #panel, so the tray wears the theme's own ramp whatever the
+// gauge's opacity does to the ink inside it (#438).
+const trayProbe = document.createElement("i");
+trayProbe.style.display = "none";
+document.body.append(trayProbe);
+
 function syncTray(primary) {
   if (!inTauri) return;
   const pct = primary?.lead?.pct ?? 0;
   let rgb = [110, 110, 110];
-  const probe = primary && [...chipsEl.children].find((c) => c.dataset.key === primary.key)?.querySelector(".pip[data-lead] i");
-  if (probe) {
-    const m = getComputedStyle(probe).backgroundColor.match(/\d+/g);
+  if (primary) {
+    const root = document.documentElement;
+    // A stale reading greys, as its pips do.
+    trayProbe.style.backgroundColor = primary.stale
+      ? getComputedStyle(root).getPropertyValue("--text-dim")
+      : rampColor(pct, readStops(root), readMode(root, new URLSearchParams(location.search).get("mode")));
+    const m = getComputedStyle(trayProbe).backgroundColor.match(/\d+/g);
     if (m && m.length >= 3) rgb = m.slice(0, 3).map(Number);
   }
   const signature = `${Math.round(pct)}|${rgb.join(",")}`;
@@ -201,7 +211,7 @@ function render(pin = false) {
   syncChips(chipsEl, chips, {
     now,
     layout: chipLayout(),
-    stops: readStops(),
+    stops: readStops(panel), // the halo's brighter ramp lives on #panel (#438)
     mode: readMode(document.documentElement, new URLSearchParams(location.search).get("mode")),
   });
 
@@ -349,10 +359,12 @@ window.__klepsydra = {
 // The background opacity (#438): live from the app, and again when the
 // colour scheme flips, since the halo starts lower on a light panel.
 let opacity = null;
+let ink; // the ink last worn, so a step that keeps it costs no redraw
 function wearOpacity() {
   if (opacity === null) return;
-  applyOpacity(document.documentElement, opacity, schemeOf(window));
-  if (started) render(); // the pips' colours follow the ink's ramp
+  const next = applyOpacity(document.documentElement, opacity, schemeOf(window));
+  if (next !== ink && started) render(); // the pips' colours follow the ink's ramp
+  ink = next;
 }
 subscribeOpacity((v) => {
   opacity = v;

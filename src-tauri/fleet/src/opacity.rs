@@ -7,20 +7,21 @@ use serde_json::{Map, Value};
 /// prefs.json's key for the opacity.
 pub const KEY: &str = "gauge_opacity";
 
-/// The opacity before anyone picks one: the step nearest the 82% the panel
-/// wore before the setting existed.
-pub const DEFAULT: u8 = 80;
+/// The opacity before anyone picks one: the first step at or above the 82%
+/// the panel wore before the setting existed, and the lowest at which its
+/// faint words keep 4.5:1 over any desktop (opacity.js FULL_INK_BELOW).
+pub const DEFAULT: u8 = 85;
 
 /// The slider's step.
 pub const STEP: u8 = 5;
 
-/// `v` on the slider's grid: clamped to 0..=100, rounded to the nearest step.
-/// A value that is not a number is the default.
+/// `v` on the slider's grid, rounded to the nearest step. A value that is
+/// not a number from 0 to 100 (a hand edit) is the default, not an extreme.
 pub fn snap(v: f64) -> u8 {
-    if !v.is_finite() {
+    if !(0.0..=100.0).contains(&v) {
         return DEFAULT;
     }
-    let steps = (v.clamp(0.0, 100.0) / f64::from(STEP)).round();
+    let steps = (v / f64::from(STEP)).round();
     steps as u8 * STEP
 }
 
@@ -76,8 +77,8 @@ mod tests {
             (82.0, 80),
             (83.0, 85),
             (100.0, 100),
-            (140.0, 100),
-            (-3.0, 0),
+            (140.0, DEFAULT),
+            (-3.0, DEFAULT),
             (f64::NAN, DEFAULT),
             (f64::INFINITY, DEFAULT),
         ] {

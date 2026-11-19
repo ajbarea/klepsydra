@@ -9,7 +9,7 @@ const root = () => {
 };
 
 test("snap: the slider's grid, 0 to 100 in steps of 5", () => {
-  for (const [v, want] of [[0, 0], [2.4, 0], [2.5, 5], [82, 80], [83, 85], [100, 100], [140, 100], [-3, 0], [Number.NaN, DEFAULT_OPACITY], ["50", DEFAULT_OPACITY], [null, DEFAULT_OPACITY]]) {
+  for (const [v, want] of [[0, 0], [2.4, 0], [2.5, 5], [82, 80], [83, 85], [100, 100], [140, DEFAULT_OPACITY], [-3, DEFAULT_OPACITY], [Number.NaN, DEFAULT_OPACITY], ["50", DEFAULT_OPACITY], [null, DEFAULT_OPACITY]]) {
     assert.equal(snap(v), want, String(v));
   }
 });
@@ -18,16 +18,19 @@ test("the default matches the app's (klepsydra_fleet::opacity::DEFAULT)", () => 
   const rust = readFileSync(new URL("../src-tauri/fleet/src/opacity.rs", import.meta.url), "utf8");
   assert.equal(Number(rust.match(/pub const DEFAULT: u8 = (\d+);/)[1]), DEFAULT_OPACITY);
   assert.equal(Number(rust.match(/pub const STEP: u8 = (\d+);/)[1]), 5);
+  const css = readFileSync(new URL("./style.css", import.meta.url), "utf8");
+  assert.equal(Number(css.match(/--panel-alpha: ([\d.]+);/)[1]), DEFAULT_OPACITY / 100, "the panel before the first message wears the default");
 });
 
-test("ink: the theme's own at 70% and up, full ink below, a dark halo below 60% (dark) or 50% (light)", () => {
-  assert.equal(FULL_INK_BELOW, 70);
-  assert.deepEqual(HALO_BELOW, { dark: 60, light: 50 });
-  const dark = [[100, null], [70, null], [65, "full"], [60, "full"], [55, "halo"], [0, "halo"]];
-  const light = [[100, null], [70, null], [65, "full"], [50, "full"], [45, "halo"], [0, "halo"]];
+test("ink: the theme's own at 85% and up, full ink below, a dark halo below 65% (dark) or 50% (light)", () => {
+  assert.equal(FULL_INK_BELOW, 85);
+  assert.deepEqual(HALO_BELOW, { dark: 65, light: 50 });
+  const dark = [[100, null], [85, null], [80, "full"], [65, "full"], [60, "halo"], [0, "halo"]];
+  const light = [[100, null], [85, null], [80, "full"], [50, "full"], [45, "halo"], [0, "halo"]];
   for (const [o, want] of dark) assert.equal(inkFor(o, "dark"), want, `dark ${o}`);
   for (const [o, want] of light) assert.equal(inkFor(o, "light"), want, `light ${o}`);
-  assert.equal(inkFor(55, "unknown"), "halo", "an unknown scheme reads as dark");
+  assert.equal(inkFor(60, "unknown"), "halo", "an unknown scheme reads as dark");
+  assert.equal(inkFor(DEFAULT_OPACITY, "dark"), null, "the default keeps the theme's own ink");
 });
 
 test("applyOpacity sets the alpha, the ink and the clear flag, and clears them again", () => {

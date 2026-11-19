@@ -465,17 +465,19 @@ screen edges it sits nearest, so a gauge on the taskbar stays there.
 ### Background opacity
 
 The wall's gear menu has a **Gauge background** slider, 0 to 100% in steps of
-5 (80% to start). Each step is saved in `prefs.json` (`gauge_opacity`) and the
-gauge wears it at once. As the panel thins, its text takes stronger ink so it
-stays readable over any desktop:
+5 (85% to start). The gauge wears it once the slider rests (a quarter second,
+or at once on release) and it is saved in `prefs.json` (`gauge_opacity`). As the
+panel thins, its text takes stronger ink, so small text keeps 4.5:1 contrast
+(WCAG 1.4.3) over the lightest or darkest desktop:
 
 | Opacity | Text |
 |---|---|
-| 70% and up | the theme's own |
-| below 70% | the faint words (resets, labels) take the full ink |
-| below 60% (dark scheme) or 50% (light) | light ink with a dark halo, in either scheme |
+| 85% and up | the theme's own |
+| below 85% | the faint words (resets, labels) take the full ink |
+| below 65% (dark scheme) or 50% (light) | light ink with a dark halo, in either scheme |
 
-At 0% only the text, the pips and the portraits show.
+At 0% the panel is clear: the text, the pips and the portraits stand on the
+desktop with their halo. The tray icon keeps the theme's own colours.
 
 ### Staying in front of the taskbar
 

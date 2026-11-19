@@ -14,7 +14,7 @@
   --ramp-mode: bands;    /* blend | bands */
 
   --track: #322a1f;
-  --panel-alpha: 0.8;   /* the background opacity setting (#438, opacity.js) sets it */
+  --panel-alpha: 0.85;  /* the background opacity setting (#438, opacity.js) sets it */
   --panel-bg: rgb(20 16 11 / var(--panel-alpha));
   --panel-solid: #14100b; /* --panel-bg's colour, opaque: a spent pip's notch */
   --panel-radius: 10px;
@@ -69,15 +69,18 @@
 }
 
 /* As the panel thins (#438, opacity.js inkFor), the text takes stronger ink.
-   Full ink: the faint words take the main ink (below 70%). */
-:root[data-ink="full"] { --text-dim: var(--text); }
+   Scoped to #panel: the tray icon reads the theme's own ramp from :root.
+   Full ink: the faint words take the main ink. */
+:root[data-ink="full"] #panel { --text-dim: var(--text); }
 @media (prefers-color-scheme: light) {
   /* A light panel half see-through over a dark desktop needs its darkest ink. */
-  :root[data-ink="full"] { --text: #120c07; --text-dim: #120c07; }
+  :root[data-ink="full"] #panel { --text: #120c07; --text-dim: #120c07; }
 }
 /* Halo: the panel no longer carries the text, in either scheme. Light ink
-   with a dark halo, never a light one, and a ramp bright enough over it. */
-:root[data-ink="halo"] {
+   with a dark halo, never a light one, and a ramp bright enough over it. A
+   spent pip's notch is the halo's black, not the missing panel's colour. */
+:root[data-ink="halo"] #panel {
+  --panel-solid: #000;
   --text: #f7f1e6;
   --text-dim: #efe6d6;
   --route: #ffffff;
