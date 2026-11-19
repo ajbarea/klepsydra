@@ -267,7 +267,8 @@ test("the gauges open the page, outside the sticky bar, shown only for a snapsho
   assert.doesNotMatch(bar, /limits/, "the sticky bar stays one tally high");
   assert.match(html, /<main id="main">\s*<section class="limits" aria-label="Usage limits" hidden>\s*<ul class="limit-rows"><\/ul>\s*<p class="limit-wait" hidden><\/p>\s*<\/section>\s*<h1 id="wall-title"[^>]*>[^<]*<\/h1>\s*<section id="wall"/, "the sessions heading sits right before the wall it names");
   const wall = read("src/fleet/wall.js");
-  assert.match(wall, /const rows = usageRows\(latestSnapshot, now\);\s*limits\.hidden = rows === null;/);
+  assert.match(wall, /const all = usageRows\(latestSnapshot, now\);\s*limits\.hidden = all === null;/);
+  assert.match(wall, /const hidden = hiddenRows\(all\);\s*const rows = all\.filter\(\(r\) => !hidden\.has\(r\)\);/, "a spent week hides its session row here too (#421)");
   assert.match(wall, /paintTally\(\);\s*paintLimits\(now\);/, "drawn on every snapshot and every tick");
 });
 

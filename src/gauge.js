@@ -203,6 +203,11 @@ export function formatAgeShort(ms) {
   return a === null ? "now" : `${a[0]}${a[1][0]}`;
 }
 
+/** When a window's number was read (s): its own stamp, else its reading's. */
+export function readAtOf(payload, win) {
+  return num(win?.observed_at ?? payload?.observed_at ?? payload?.written_at);
+}
+
 /**
  * Decide what to draw from a parsed usage.json (or null when it is missing
  * or unreadable). Never throws; an unusable payload degrades to "waiting".
@@ -226,7 +231,7 @@ export function evaluate(payload, key, nowMs = Date.now()) {
     return { state: "reset", label: windowLabel(key), pct: 0, sub, short };
   }
 
-  const age = nowMs - num(win.observed_at ?? payload.observed_at ?? payload.written_at) * 1000;
+  const age = nowMs - readAtOf(payload, win) * 1000;
   let sub = countdown;
   let short = formatCountdownShort(resetsAt, nowMs);
   if (!Number.isFinite(age)) {
@@ -451,6 +456,9 @@ export function toRows(payload, nowMs = Date.now()) {
         accountLabel: p.label,
         // When the account's newest reading arrived (s), and when this window resets (s).
         observedAt: Number(p.written_at),
+        // When this window's own number was read (s): older than observedAt
+        // when a live window survives from an earlier reading.
+        readAt: readAtOf(p, p.windows[key]),
         resetsAt: num(p.windows[key].resets_at),
         isCapped: r.pct >= 100 || r.state === "waiting",
         label: multi ? `${p.label} \u00b7 ${WINDOW_SHORT[key] ?? key}` : r.label,

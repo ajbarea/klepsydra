@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { ROUTE_ORDER, toRows } from "./gauge.js";
-import { CHIP_ORDER, LANE_HARNESS, STALE_AFTER_MS, chipName, dockKey, leadOf, markOf, primaryChip, toChips } from "./fleet/chips.js";
+import { AGE_TEXT_AFTER_MS, CHIP_ORDER, LANE_HARNESS, STALE_AFTER_MS, ageText, cellWhen, chipName, clockAt, dockKey, hiddenRows, leadOf, markOf, primaryChip, toChips } from "./fleet/chips.js";
 
 const NOW = Date.UTC(2026, 10, 18, 18, 23); // Wed 18 Nov, 1:23 PM EST
 const S = NOW / 1000;
@@ -148,4 +148,73 @@ test("the chip view's imports resolve (a missing export fails here, not in the s
   const view = await import("./fleet/chipview.js");
   assert.equal(typeof view.syncChips, "function");
   assert.equal(typeof view.dockSlots, "function");
+});
+
+// Review of #421 PR 1: each window keeps its own reading's age.
+const agyFresh = reading("agy", "Google AI Pro", { five_hour: win(7, 6720), seven_day: win(4, 590_000) }, { harness: "agy" });
+const agyOld = (pct, age) => reading("agy", "Google AI Pro", { claude_gpt: win(pct, 4 * 86_400) }, { harness: "agy", written_at: S - age, observed_at: S - age });
+
+test("a window kept from an older reading names its own age in the hover", () => {
+  const [agy] = chips([agyFresh, agyOld(100, 2 * 86_400)]);
+  assert.equal(agy.lead.window, "five_hour");
+  assert.equal(agy.stale, false, "the lead's own reading is fresh");
+  assert.ok(agy.detail.some((l) => /^Claude & GPT 100% · out until \w{3} \d{1,2}:\d\d [AP]M · read 2d ago$/.test(l)), agy.detail.join(" | "));
+  assert.ok(agy.detail.some((l) => /^Current session 7% · resets [^·]+\)$/.test(l)), "a fresh window carries no age");
+});
+
+test("a chip whose lead window is old is stale and says its age", () => {
+  const old = reading("agy", "Google AI Pro", { five_hour: win(70, 6720) }, { harness: "agy", written_at: S - 4 * 3600, observed_at: S - 4 * 3600 });
+  const [agy] = chips([old]);
+  assert.equal(agy.stale, true);
+  assert.equal(agy.age, "4h old");
+  // Only the lead decides: a fresh lead beside an old window is not stale.
+  assert.equal(chips([agyFresh, agyOld(10, 4 * 3600)])[0].stale, false);
+  // And an old lead under a fresh reading of another window is.
+  const weekOld = reading("me", "Personal", { seven_day: win(90, 86_400) }, { written_at: S - 4 * 3600, observed_at: S - 4 * 3600 });
+  const me = chips([reading("me", "Personal", { five_hour: win(5, 3600) }), weekOld]).find((c) => c.account === "me");
+  assert.equal(me.lead.window, "seven_day");
+  assert.equal(me.stale, true);
+  assert.equal(me.age, "4h old");
+});
+
+test("ages are written from 30 minutes; the linear row only once stale", () => {
+  assert.equal(ageText(AGE_TEXT_AFTER_MS - 60_000), null);
+  assert.equal(ageText(AGE_TEXT_AFTER_MS), "30m old");
+  assert.equal(ageText(Number.NaN), null);
+  const at = (min) => chips([reading("p", "Personal", { five_hour: win(9, 9000) }, { written_at: S - min * 60, observed_at: S - min * 60 })])
+    .find((c) => c.account === "p");
+  assert.equal(at(20).ageText, null);
+  assert.equal(at(50).ageText, "50m old");
+  assert.equal(at(50).age, null, "the linear row stays quiet until stale");
+  assert.equal(at(200).age, "3h old");
+});
+
+test("a spent week hides only its own account's session, on every surface", () => {
+  const rows = toRows([
+    reading("rit", "RIT", { five_hour: win(0, 3600), seven_day: win(100, 33_120) }),
+    reading("me", "Personal", { five_hour: win(5, 3600), seven_day: win(40, 33_120) }),
+  ], NOW);
+  const hidden = [...hiddenRows(rows)];
+  assert.deepEqual(hidden.map((r) => r.key), ["rit:five_hour"]);
+  assert.deepEqual(leadOf(rows.filter((r) => r.account === "rit")).hidden, hidden);
+});
+
+test("boundary inputs: no rows, a spent window with no reset time, a label that names no organisation", () => {
+  assert.deepEqual(leadOf([]), { lead: null, out: false, hidden: [] });
+  assert.equal(cellWhen({ state: "live", pct: 100, resetsAt: Number.NaN }, NOW), "until it resets");
+  assert.equal(chipName("claude", "Claude"), "Claude");
+  assert.deepEqual(markOf("claude", "Claude"), { icon: "claude" });
+  assert.deepEqual(markOf("claude", "RIT-CS-DQL"), { mono: "RIT" });
+});
+
+test("clockAt: today's time alone, another day's with its weekday, as toLocale* wrote them", () => {
+  // Local noon, so an hour either way stays on the same day in any time zone.
+  const noon = new Date(2026, 10, 18, 12, 0).getTime();
+  const sec = (ms) => ms / 1000;
+  const time = (ms) => new Date(ms).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+  assert.equal(clockAt(sec(noon + 3_600_000), noon), time(noon + 3_600_000));
+  const later = noon + 2 * 86_400_000;
+  assert.equal(clockAt(sec(later), noon), `${new Date(later).toLocaleDateString("en-US", { weekday: "short" })} ${time(later)}`);
+  assert.equal(clockAt(sec(later), noon), "Fri 12:00 PM");
+  assert.equal(clockAt(Number.NaN, noon), null);
 });

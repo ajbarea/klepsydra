@@ -4,7 +4,7 @@
 // account with every window (the tray's Full). Shared by the floating strip
 // and, later, the wall header, so both draw the same chip the same way.
 import { rampColor, windowLabel } from "../gauge.js";
-import { cellWhen } from "./chips.js";
+import { STALE_AFTER_MS, ageText, cellWhen, rowAge } from "./chips.js";
 import { syncChildren } from "./dom.js";
 import { MAKER_ICONS } from "./icons.js";
 
@@ -19,9 +19,15 @@ const el = (tag, cls, text) => {
 const CELL_KIND = (row) =>
   row.window === "five_hour" ? "session" : row.window === "seven_day" ? "week" : windowLabel(row.window).toLowerCase();
 
-/** One pip: a short bar filled to the window's percent, notched when spent. */
-function pip(row, lead, opts) {
-  const p = el("span", `pip${lead ? " lead" : ""}${row.pct >= 100 ? " full" : ""}`);
+/**
+ * One pip: a short bar filled to the window's percent, notched when spent,
+ * greyed when its own reading is stale. `lead` marks the chip's lead window
+ * (the tray icon reads its colour); `big` draws it larger (linear only).
+ */
+function pip(row, lead, opts, big = lead) {
+  const old = rowAge(row, opts.now) > STALE_AFTER_MS;
+  const p = el("span", `pip${big ? " big" : ""}${row.pct >= 100 ? " full" : ""}${old ? " old" : ""}`);
+  if (lead) p.dataset.lead = "";
   const fill = el("i");
   const pct = Math.max(0, Math.min(100, row.pct ?? 0));
   fill.style.height = `${pct}%`;
@@ -63,7 +69,7 @@ function linearBody(chip, opts) {
 
 function stackedBody(chip, opts) {
   const name = el("span", "nm", chip.name);
-  if (chip.age) name.append(" ", el("span", "age", chip.age));
+  if (chip.ageText) name.append(" ", el("span", "age", chip.ageText));
   if (chip.route) name.append(" ", el("span", "rt", `route · ${windowLabel(chip.route.window).toLowerCase()}`));
   if (chip.placeholder) return [mark(chip), name, el("span", "cell wide", chip.when)];
   const cells = chip.windows.map((r) => {
@@ -75,7 +81,15 @@ function stackedBody(chip, opts) {
       return cell;
     }
     const lead = r === chip.lead;
-    cell.append(el("b", "", lead ? chip.value : r.pct >= 100 ? "out" : `${Math.floor(r.pct ?? 0)}%`), el("span", "t", lead ? chip.when : cellWhen(r, opts.now)), pip(r, false, opts));
+    // A window read longer ago than the lead says so in its own cell.
+    const age = rowAge(r, opts.now);
+    const own = !lead && !(age <= chip.ageMs) ? ageText(age) : null;
+    const when = lead ? chip.when : cellWhen(r, opts.now);
+    cell.append(
+      el("b", "", lead ? chip.value : r.pct >= 100 ? "out" : `${Math.floor(r.pct ?? 0)}%`),
+      el("span", "t", own ? `${when} · ${own}` : when),
+      pip(r, lead, opts, false),
+    );
     return cell;
   });
   return [mark(chip), name, ...cells];
@@ -88,8 +102,8 @@ function paint(c, chip, opts) {
   // Redrawn only when what it shows changed: the strip redraws every few
   // seconds, and a chip's words move once a minute at most.
   const look = [opts.layout, opts.mode, opts.stops.low, opts.stops.mid, opts.stops.high, opts.stops.midAt, opts.stops.highAt,
-    chip.value, chip.when, chip.age, chip.route?.window, chip.stale, chip.out, chip.detail.join("\n"),
-    chip.pips.map((r) => `${r.window}:${r.state}:${r.pct}`).join(",")].join("|");
+    chip.value, chip.when, chip.age, chip.ageText, chip.route?.window, chip.stale, chip.detail.join("\n"),
+    chip.pips.map((r) => `${r.window}:${r.state}:${r.pct}:${rowAge(r, opts.now) > STALE_AFTER_MS}`).join(",")].join("|");
   if (looks.get(c) === look) return;
   looks.set(c, look);
   const body = c.firstChild;
@@ -97,7 +111,7 @@ function paint(c, chip, opts) {
   c.title = chip.detail.join("\n");
   c.setAttribute("aria-label", chip.spoken);
   c.dataset.harness = chip.harness;
-  for (const [flag, on] of [["route", chip.route], ["stale", chip.stale], ["out", chip.out], ["placeholder", chip.placeholder]]) {
+  for (const [flag, on] of [["route", chip.route], ["stale", chip.stale], ["placeholder", chip.placeholder]]) {
     if (on) c.dataset[flag] = "";
     else delete c.dataset[flag];
   }
@@ -110,6 +124,13 @@ function paint(c, chip, opts) {
  */
 export function syncChips(container, chips, opts) {
   container.dataset.layout = opts.layout;
+  // Stacked: a column per window of the account with the most, so a fourth
+  // window (agy's Gemini, an API key's pools) never wraps its line.
+  const cells = String(Math.max(1, ...chips.map((c) => c.windows.length)));
+  if (container.dataset.cells !== cells) {
+    container.dataset.cells = cells;
+    container.style.setProperty("--cells", cells);
+  }
   syncChildren(container, chips, (chip) => chip.key, make, (c, chip) => paint(c, chip, opts));
 }
 

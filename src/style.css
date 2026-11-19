@@ -113,7 +113,8 @@ html, body {
 }
 
 /* With nothing to show yet, the panel dims rather than look like a reading. */
-#panel[data-state="waiting"] { opacity: var(--waiting-opacity); }
+/* Waiting fades the gauge, not the portraits beside it: a session still needs you. */
+#panel[data-state="waiting"] > :not(#strip) { opacity: var(--waiting-opacity); }
 
 .sub {
   font-size: calc(var(--size-sub) * var(--scale));
@@ -231,14 +232,13 @@ html, body {
   background: var(--track);
   overflow: hidden;
 }
-.pip.lead { width: calc(var(--pip-lead-w) * var(--scale)); height: calc(var(--pip-lead-h) * var(--scale)); }
+.pip.big { width: calc(var(--pip-lead-w) * var(--scale)); height: calc(var(--pip-lead-h) * var(--scale)); }
 .pip i {
   position: absolute;
   left: 0;
   right: 0;
   bottom: 0;
   min-height: calc(1.5px * var(--scale));
-  transition: height 420ms ease, background-color 420ms ease;
 }
 /* A spent window: a notch across the full pip, so 100% is a shape too. */
 .pip.full::before {
@@ -257,13 +257,13 @@ html, body {
 .chip[data-placeholder] .mark { opacity: 0.7; }
 /* An old reading dims and says its age instead of looking live. */
 .chip[data-stale] :is(.val, .when, .pips, .mark) { opacity: 0.5; }
-.chip[data-stale] .pip i { background-color: var(--text-dim) !important; }
+.chip[data-stale] .pip i, .pip.old i { background-color: var(--text-dim) !important; }
 
 /* Stacked ("Full" in the tray): a line per account, every window shown, the
    values right-aligned like NVIDIA's stacked HUD. */
 #chips[data-layout="stacked"] {
   display: grid;
-  grid-template-columns: auto minmax(calc(130px * var(--scale)), auto) repeat(3, auto) auto;
+  grid-template-columns: auto minmax(calc(130px * var(--scale)), auto) repeat(var(--cells, 3), auto) auto;
   column-gap: calc(14px * var(--scale));
 }
 #chips[data-layout="stacked"] .chip {

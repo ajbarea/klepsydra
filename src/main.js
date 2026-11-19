@@ -157,7 +157,7 @@ function syncTray(primary) {
   if (!inTauri) return;
   const pct = primary?.lead?.pct ?? 0;
   let rgb = [110, 110, 110];
-  const probe = primary && [...chipsEl.children].find((c) => c.dataset.key === primary.key)?.querySelector(".pip.lead i");
+  const probe = primary && [...chipsEl.children].find((c) => c.dataset.key === primary.key)?.querySelector(".pip[data-lead] i");
   if (probe) {
     const m = getComputedStyle(probe).backgroundColor.match(/\d+/g);
     if (m && m.length >= 3) rgb = m.slice(0, 3).map(Number);

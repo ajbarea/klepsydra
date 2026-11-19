@@ -6,6 +6,14 @@ import { ROUTE_ORDER, formatAgeShort, formatCountdownShort, windowLabel } from "
 
 // Past this age a chip dims and names its age instead of looking live.
 export const STALE_AFTER_MS = 3 * 60 * 60 * 1000;
+// From this age a reading's age is written out where there is room: the
+// stacked layout and the hover. The linear row names it only once stale.
+export const AGE_TEXT_AFTER_MS = 30 * 60 * 1000;
+
+/** "50m old", "2h old" from AGE_TEXT_AFTER_MS on, else null (also for an unknown age). */
+export function ageText(ms) {
+  return Number.isFinite(ms) && ms >= AGE_TEXT_AFTER_MS ? `${formatAgeShort(ms)} old` : null;
+}
 
 // The windows that limit a whole account. Any other window is one model
 // group's pool (agy's Claude & GPT, an API key's credit): it shows as a pip
@@ -26,15 +34,20 @@ export const CHIP_ORDER = [...new Set(ROUTE_ORDER.map((lane) => LANE_HARNESS[lan
 const HARNESS_ICON = { claude: "claude", agy: "agy", copilot: "copilot", api: "anthropic" };
 const HARNESS_NAME = { claude: "Claude", agy: "Antigravity", copilot: "Copilot", api: "API" };
 
+// A Claude account's label that names no organisation: its own logo fits.
+const PLAIN_CLAUDE = /^(personal|claude)$/i;
+
 /**
  * An account's mark: its engine's logo, or for a Claude account that belongs
  * to an organisation, a short monogram of the organisation's name ("RIT"),
- * so two Claude accounts never wear the same mark. A real logo for such an
- * account is a local file (Settings, #421), never committed.
+ * so it does not wear the same logo as the personal account. Two
+ * organisations whose names start with the same word share a monogram; the
+ * chip's name tells them apart. A real logo for such an account is a local
+ * file (Settings, #421), never committed.
  */
 export function markOf(harness, label) {
   const text = String(label ?? "").trim();
-  if (harness === "claude" && text && !/^personal$/i.test(text)) {
+  if (harness === "claude" && text && !PLAIN_CLAUDE.test(text)) {
     const mono = text.split(/[\s\-_·/.]+/).find(Boolean)?.slice(0, 4).toUpperCase();
     if (mono) return { mono };
   }
@@ -44,7 +57,7 @@ export function markOf(harness, label) {
 /** The name a chip is read by: "Claude · Personal", "Google AI Pro". */
 export function chipName(harness, label) {
   const text = String(label ?? "").trim();
-  if (harness === "claude") return text ? `Claude · ${text}` : "Claude";
+  if (harness === "claude") return text && !/^claude$/i.test(text) ? `Claude · ${text}` : "Claude";
   return text || HARNESS_NAME[harness] || harness;
 }
 
@@ -52,13 +65,25 @@ export function chipName(harness, label) {
  * A reset time on the clock: "3:32 PM" today, else with its day,
  * "Wed 10:15 AM". Null without a time.
  */
+// Built once: a formatter per call costs ~30x the format itself, and the
+// strip formats every window's reset on every redraw.
+const TIME = new Intl.DateTimeFormat("en-US", { hour: "numeric", minute: "2-digit" });
+const WEEKDAY = new Intl.DateTimeFormat("en-US", { weekday: "short" });
+const sameDay = (a, b) => a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+
 export function clockAt(sec, nowMs = Date.now()) {
   if (!Number.isFinite(sec)) return null;
   const at = new Date(sec * 1000);
-  const time = at.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
-  if (at.toDateString() === new Date(nowMs).toDateString()) return time;
-  return `${at.toLocaleDateString("en-US", { weekday: "short" })} ${time}`;
+  const time = TIME.format(at);
+  if (sameDay(at, new Date(nowMs))) return time;
+  return `${WEEKDAY.format(at)} ${time}`;
 }
+
+/** "until 3:32 PM", or "until it resets" when the reading names no reset time. */
+const untilReset = (row, nowMs) => {
+  const at = clockAt(row.resetsAt, nowMs);
+  return at ? `until ${at}` : "until it resets";
+};
 
 const spent = (row) => row.state === "live" && row.pct >= 100;
 
@@ -68,9 +93,10 @@ const spent = (row) => row.state === "live" && row.pct >= 100;
  * the least room. Ties keep window order (session first).
  */
 export function leadOf(rows) {
+  if (!rows.length) return { lead: null, out: false, hidden: [] };
   const week = rows.find((r) => r.window === "seven_day" && spent(r));
   if (week) {
-    return { lead: week, out: true, hidden: rows.filter((r) => r.window === "five_hour") };
+    return { lead: week, out: true, hidden: [...hiddenRows(rows)] };
   }
   const own = rows.filter((r) => ACCOUNT_WINDOWS.has(r.window));
   const pool = own.length ? own : rows;
@@ -81,25 +107,46 @@ export function leadOf(rows) {
 /** A window's time in a stacked cell: the countdown, or what its reset says. */
 export function cellWhen(row, nowMs = Date.now()) {
   if (row.state !== "live") return row.short;
-  return spent(row) ? `until ${clockAt(row.resetsAt, nowMs)}` : (formatCountdownShort(row.resetsAt, nowMs) ?? row.short);
+  return spent(row) ? untilReset(row, nowMs) : (formatCountdownShort(row.resetsAt, nowMs) ?? row.short);
 }
 
-/** One window as the hover reads it: "This week 45% · resets Mon 1:00 PM". */
-function windowLine(row, nowMs) {
+/** How old a window's own number is (ms); NaN when its reading names no time. */
+export const rowAge = (row, nowMs) => nowMs - (row.readAt ?? row.observedAt) * 1000;
+
+/**
+ * The rows a spent week hides, by account: its session windows, which
+ * cannot be used until the week resets (#421). Shared by the chips and by
+ * the wall's and phone's limit rows, so every surface hides the same ones.
+ */
+export function hiddenRows(rows) {
+  const out = new Set();
+  const spentWeek = new Set(rows.filter((r) => r.window === "seven_day" && spent(r)).map((r) => r.account));
+  for (const r of rows) if (r.window === "five_hour" && spentWeek.has(r.account)) out.add(r);
+  return out;
+}
+
+/**
+ * One window as the hover reads it: "This week 45% · resets Mon 1:00 PM",
+ * with its own age when it is older than the chip's lead ("· read 2d ago").
+ */
+function windowLine(row, chip, nowMs) {
   const name = windowLabel(row.window);
   if (row.state !== "live") return `${name}: ${row.short}`;
-  const at = clockAt(row.resetsAt, nowMs);
   const pct = `${Math.floor(row.pct)}%`;
-  const when = spent(row) ? `out until ${at}` : `resets ${at} (in ${formatCountdownShort(row.resetsAt, nowMs)})`;
-  return `${name} ${pct} · ${when}`;
+  const when = spent(row)
+    ? `out ${untilReset(row, nowMs)}`
+    : `resets ${clockAt(row.resetsAt, nowMs)} (in ${formatCountdownShort(row.resetsAt, nowMs)})`;
+  const age = rowAge(row, nowMs);
+  const own = row !== chip.lead && ageText(age) && !(age <= chip.ageMs) ? ` · read ${formatAgeShort(age)} ago` : "";
+  return `${name} ${pct} · ${when}${own}`;
 }
 
-/** The chip's hover lines: its name, every window, the reading's age and the route. */
+/** The chip's hover lines: its name, every window, the lead reading's age and the route. */
 function detailLines(chip, nowMs) {
   const age = Number.isFinite(chip.ageMs) ? formatAgeShort(chip.ageMs) : null;
   const lines = [chip.name, ...chip.windows.map((r) => {
     const hidden = chip.hidden.includes(r);
-    return hidden ? `${windowLabel(r.window)}: hidden until the week resets` : windowLine(r, nowMs);
+    return hidden ? `${windowLabel(r.window)}: hidden until the week resets` : windowLine(r, chip, nowMs);
   })];
   lines.push(age === null ? "read at an unknown time" : age === "now" ? "read just now" : `read ${age} ago`);
   if (chip.route) lines.push(`Route: the fleet's next pick (${windowLabel(chip.route.window)})`);
@@ -124,7 +171,8 @@ export function toChips(rows, nowMs = Date.now(), placeholders = ["copilot"]) {
     const first = windows[0];
     const harness = first.harness ?? "claude";
     const { lead, out, hidden } = leadOf(windows);
-    const ageMs = nowMs - first.observedAt * 1000;
+    // The chip's number is its lead's, so its age is the lead's own reading.
+    const ageMs = rowAge(lead, nowMs);
     const chip = {
       key: account,
       account,
@@ -145,7 +193,10 @@ export function toChips(rows, nowMs = Date.now(), placeholders = ["copilot"]) {
       observedAt: first.observedAt,
       placeholder: false,
     };
-    chip.age = chip.stale && Number.isFinite(ageMs) ? `${formatAgeShort(ageMs)} old` : null;
+    // The linear row names the age once stale; stacked from AGE_TEXT_AFTER_MS.
+    const named = Number.isFinite(ageMs) ? ageText(ageMs) : "age unknown";
+    chip.age = chip.stale ? named : null;
+    chip.ageText = named;
     chip.detail = detailLines(chip, nowMs);
     chip.spoken = chip.detail.join(". ");
     chips.push(chip);
@@ -157,7 +208,7 @@ export function toChips(rows, nowMs = Date.now(), placeholders = ["copilot"]) {
     chips.push({
       key: `${harness}:placeholder`, account: null, harness, name, mark: markOf(harness, null),
       windows: [], pips: [], hidden: [], lead: null, out: false, value: "–", when: "no reading yet",
-      route: null, ageMs: Number.NaN, stale: false, age: null, observedAt: Number.NaN, placeholder: true,
+      route: null, ageMs: Number.NaN, stale: false, age: null, ageText: null, observedAt: Number.NaN, placeholder: true,
       detail: [name, "No reading yet"], spoken: `${name}: no reading yet`,
     });
   }

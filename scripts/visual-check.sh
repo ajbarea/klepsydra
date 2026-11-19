@@ -48,7 +48,6 @@ shot() { # name, query, window-size, page
   local name=$1 query=${2:-} size=${3:-450,120} page=${4:-index.html}
   wanted=$((wanted + 1))
   # Deterministic capture: no transitions, and enough budget to finish the fetch.
-  # Pin the panel width; Chrome's --window-size is not the viewport width.
   if [[ "$query" == *"?"* ]]; then query="$query&still=1"; else query="?still=1"; fi
   # A cold Chrome start can exit without writing the file; one more try.
   for _ in 1 2; do

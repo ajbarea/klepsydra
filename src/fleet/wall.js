@@ -21,6 +21,7 @@ import { healthView } from "./health.js";
 import { createReplayer } from "./replay.js";
 import { cutsText } from "./fulltext.js";
 import { WAITING, toRows, usageRows } from "../gauge.js";
+import { hiddenRows } from "./chips.js";
 import { readMode, readStops, syncEntries } from "../gaugeview.js";
 import { createLog } from "../log.js";
 import { FIX_STEPS, buildEntries, buttonTitle, firstModel, launchArgs, menuEntries, pickDefault, roomWords } from "./newsession.js";
@@ -810,9 +811,12 @@ function paintRing(el, c) {
 // The usage-limit gauges: the desktop gauge's rows, drawn by its own code,
 // for a snapshot that carries readings (the phone server's).
 function paintLimits(now) {
-  const rows = usageRows(latestSnapshot, now);
-  limits.hidden = rows === null;
-  if (rows === null) return;
+  const all = usageRows(latestSnapshot, now);
+  limits.hidden = all === null;
+  if (all === null) return;
+  // A spent week hides its account's session row, as on the gauge strip (#421).
+  const hidden = hiddenRows(all);
+  const rows = all.filter((r) => !hidden.has(r));
   limitWait.hidden = rows.length > 0;
   limitWait.textContent = WAITING;
   syncEntries(limitRows, rows, { compact: true, stops: readStops(), mode: readMode() }, true);
