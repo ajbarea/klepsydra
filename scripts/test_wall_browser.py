@@ -1190,7 +1190,8 @@ window.__TAURI__ = { core: {
     if (cmd === 'plugin:log|log') { (window.__logs ??= []).push(args); return Promise.resolve(); }
     if (cmd === 'agy_models') { window.__calls.push([cmd, args]); return window.__agy ? Promise.resolve(window.__agy) : Promise.reject(window.__agyError ?? 'agy (Antigravity CLI) was not found on PATH.'); }
     if (cmd === 'read_usage') { window.__calls.push([cmd, args]); return Promise.resolve(window.__usage ?? []); }
-    if (cmd === 'engines_status') { window.__calls.push([cmd, args]); return Promise.resolve(window.__engines ?? { claude: [], agy: false, copilot: false }); }
+    if (cmd === 'engines_status') { window.__calls.push([cmd, args]); return new Promise((r) => setTimeout(() => r(window.__engines ?? { claude: [], agy: false, copilot: false }), window.__enginesDelay ?? 0)); }
+    if (cmd === 'launch_session' && window.__launchHold) { window.__calls.push([cmd, args]); return window.__launchHold; }
     if (cmd === 'new_session_prefs') { window.__calls.push([cmd, args]); return Promise.resolve(window.__nsprefs ?? { default: null, last: null }); }
     if (cmd === 'get_launch_dir') { window.__calls.push([cmd, args]); return window.__dirAnswer ? window.__dirAnswer() : Promise.resolve('/home/aj/ajsoftworks'); }
     if (cmd === 'set_theme' && window.__setThemeFails) { window.__calls.push([cmd, args]); return Promise.reject(window.__setThemeFails); }
@@ -4731,6 +4732,32 @@ def new_session_menu(wall):
                "Set as default saves it in the app's prefs and the button names it", [calls(page, "set_new_session_default"), page.inner_text("#new-session")])
     wall.check(page.evaluate(FOCUS_KEY) != "body", "focus never drops to the page when the default leaves the menu", page.evaluate(FOCUS_KEY))
     wall.check(page.locator("#new-menu .eng-reset").is_visible(), "a chosen default can be cleared from the menu", None)
+    page.close()
+
+    # The saved default is judged before the button acts: a click while the engine list is
+    # still on its way starts nothing, then the button names the saved engine.
+    page = open_app(wall, init=(f"window.__agy = {json.dumps(AGY)}; window.__engines = {json.dumps(ENGINES)};"
+                                f"window.__usage = {json.dumps(readings())}; window.__enginesDelay = 1500;"
+                                "window.__nsprefs = { default: 'copilot', last: null };"))
+    page.wait_for_timeout(200)
+    early = page.get_attribute("#new-session", "aria-disabled")
+    page.click("#new-session", force=True)  # Playwright waits on an aria-disabled button
+    page.wait_for_timeout(1800)
+    wall.check(early == "true" and calls(page, "launch_session") == [] and "New Copilot session" in page.inner_text("#new-session")
+               and page.get_attribute("#new-session", "aria-disabled") is None,
+               "until the saved default can be judged the button is off and a click starts nothing; then it names it",
+               [early, calls(page, "launch_session"), page.inner_text("#new-session")])
+    # One launch at a time, through any repaint: a launch still running keeps the button off.
+    page.evaluate("() => { window.__launchHold = new Promise(() => {}); }")  # returning the promise would wait on it
+    page.click("#new-session")
+    page.wait_for_timeout(150)
+    page.click("#new-kind", force=True)  # off while the launch runs; the menu still opens, and repaints the button
+    page.wait_for_timeout(250)
+    page.keyboard.press("Escape")
+    page.click("#new-session", force=True)
+    page.wait_for_timeout(150)
+    wall.check(len(calls(page, "launch_session")) == 1 and page.get_attribute("#new-session", "aria-disabled") == "true",
+               "a repaint while a launch runs never turns the button back on", calls(page, "launch_session"))
     page.close()
 
     # Missing engines stay listed, off, with the step that fixes them; agy failing is an error, not a sign-in.

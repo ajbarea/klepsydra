@@ -319,6 +319,12 @@ WT_LOG="$work/wt4.log" KLEPSYDRA_TMUX_SOCKET="$sock4" KLEPSYDRA_BACKGROUND=1 bas
 check "#229 review: a flagged launch that starts the server keeps the flag out of its environment" \
   "$(tmux -L "$sock4" has-session -t =fleet 2>/dev/null && echo up) $(tmux -L "$sock4" show-environment -g 2>/dev/null | grep -c '^KLEPSYDRA_BACKGROUND=')" "up 0"
 tmux -L "$sock4" kill-server 2>/dev/null
+# Nor the command a fleet launch passes (#440 live check): the 11-16 server kept Heph's,
+# session id and all, and a launch from one of its panes ran that instead of claude.
+WT_LOG="$work/wt6.log" KLEPSYDRA_TMUX_SOCKET="$sock4" KLEPSYDRA_BACKGROUND=1 KLEPSYDRA_CLAUDE="sleep 601" bash "$launch" new "$work/repos" >/dev/null 2>&1
+check "#440: a fleet launch that starts the server keeps its command out of the server's environment" \
+  "$(tmux -L "$sock4" show-environment -g 2>/dev/null | grep -c '^KLEPSYDRA_CLAUDE=') $(tmux -L "$sock4" list-panes -a -F '#{pane_start_command}' 2>/dev/null | grep -c 'sleep 601')" "0 1"
+tmux -L "$sock4" kill-server 2>/dev/null
 # Nor a session's voice (#395 review): it goes into the session's command alone.
 WT_LOG="$work/wt5.log" KLEPSYDRA_TMUX_SOCKET="$sock4" KERYX_VOICE=bf_emma bash "$launch" new "$work/repos" >/dev/null 2>&1
 check "#395 review: a launch with a voice that starts the server keeps it out of the server's environment" \

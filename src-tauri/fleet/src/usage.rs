@@ -103,8 +103,9 @@ fn account_key(reading: &Object) -> String {
 
 /// When account `account`'s spent window comes back, read as gauge.js
 /// reconciles an account's sessions (`reconcilable` and `pickWindow`): the
-/// readings observed last, unless an older hook's file is newer than all of
-/// them (then every reading, since no time is trusted); per window the newest
+/// observed readings, unless an older hook's file is newer than all of them
+/// (then every reading, since no time is trusted). Per window, from the readings
+/// that carry it as numbers: by time, those observed last; then the newest
 /// `resets_at` (within `WINDOW_MATCH_SECONDS`) and the highest reading of it.
 /// A window at 100% that has not reset by `now` (unix seconds) is spent; the
 /// latest such reset is returned. `None` when the account has room or no
@@ -113,27 +114,25 @@ fn account_key(reading: &Object) -> String {
 pub fn spent_until(readings: &[Value], account: &str, now: i64) -> Option<i64> {
     const WINDOW_MATCH_SECONDS: f64 = 90.0; // gauge.js WINDOW_MATCH_SECONDS
     let num = |r: &Value, k: &str| r.get(k).and_then(Value::as_f64);
+    let max = |xs: &mut dyn Iterator<Item = f64>| {
+        xs.fold(None, |m: Option<f64>, x| Some(m.map_or(x, |m| m.max(x))))
+    };
     let mine: Vec<&Value> = readings
         .iter()
         .filter(|r| r.get("account").and_then(Value::as_str) == Some(account))
         .collect();
-    let newest_observed = mine
+    let observed: Vec<&Value> = mine
         .iter()
-        .filter_map(|r| num(r, "observed_at"))
-        .fold(None, |m: Option<f64>, s| Some(m.map_or(s, |m| m.max(s))));
-    let old_hook_newer = |newest: f64| {
-        mine.iter().any(|r| {
-            num(r, "observed_at").is_none() && num(r, "written_at").is_some_and(|w| w > newest)
-        })
-    };
-    let current: Vec<&Value> = match newest_observed {
-        Some(newest) if !old_hook_newer(newest) => mine
+        .copied()
+        .filter(|r| num(r, "observed_at").is_some())
+        .collect();
+    let newest = max(&mut observed.iter().filter_map(|r| num(r, "observed_at")));
+    let by_time = newest.is_some_and(|n| {
+        !mine
             .iter()
-            .copied()
-            .filter(|r| num(r, "observed_at") == Some(newest))
-            .collect(),
-        _ => mine,
-    };
+            .any(|r| num(r, "observed_at").is_none() && num(r, "written_at").is_some_and(|w| w > n))
+    });
+    let current = if by_time { observed } else { mine };
     let mut keys: Vec<&String> = current
         .iter()
         .filter_map(|r| r.get("windows")?.as_object())
@@ -143,23 +142,29 @@ pub fn spent_until(readings: &[Value], account: &str, now: i64) -> Option<i64> {
     keys.dedup();
     keys.into_iter()
         .filter_map(|key| {
-            let all: Vec<(f64, f64)> = current
+            // (observed time, percent, reset) of each reading that carries this window as numbers.
+            let all: Vec<(Option<f64>, f64, f64)> = current
                 .iter()
                 .filter_map(|r| {
                     let w = r.get("windows")?.get(key)?;
-                    Some((
-                        w.get("used_percentage")?.as_f64()?,
-                        w.get("resets_at")?.as_f64()?,
-                    ))
+                    let pct = w.get("used_percentage")?.as_f64()?;
+                    let at = w.get("resets_at")?.as_f64()?;
+                    Some((num(r, "observed_at"), pct, at))
                 })
                 .collect();
-            let latest = all.iter().map(|&(_, at)| at).fold(f64::NAN, f64::max);
-            let (pct, at) = all
+            let latest = max(&mut all.iter().filter_map(|c| c.0));
+            let cands: Vec<(f64, f64)> = all
                 .into_iter()
-                .filter(|&(_, at)| latest - at <= WINDOW_MATCH_SECONDS)
-                .fold((f64::NAN, latest), |(p, a), (q, _)| (p.max(q), a));
+                .filter(|c| !by_time || c.0 == latest)
+                .map(|(_, p, a)| (p, a))
+                .collect();
+            let reset = max(&mut cands.iter().map(|c| c.1))?;
+            let pct = max(&mut cands
+                .iter()
+                .filter(|c| reset - c.1 <= WINDOW_MATCH_SECONDS)
+                .map(|c| c.0))?;
             #[allow(clippy::cast_possible_truncation)]
-            let at = at as i64;
+            let at = reset as i64;
             (pct >= 100.0 && at > now).then_some(at)
         })
         .max()
@@ -374,6 +379,26 @@ mod tests {
             spent_until(&next, TEAM, 1_000),
             None,
             "the newer window wins over an older spent one"
+        );
+        // Per window, not per file (gauge.js pickWindow): the newest reading lacks the
+        // week, or carries it as no number, so the older reading's week counts.
+        let week_older = [
+            json!({"account": TEAM, "observed_at": 200, "windows": {"five_hour": {"used_percentage": 3, "resets_at": 2_000}}}),
+            json!({"account": TEAM, "observed_at": 100, "windows": {"seven_day": {"used_percentage": 100, "resets_at": 9_000}}}),
+        ];
+        assert_eq!(
+            spent_until(&week_older, TEAM, 1_000),
+            Some(9_000),
+            "a window only an older reading carries"
+        );
+        let not_a_number = [
+            json!({"account": TEAM, "observed_at": 200, "windows": {"five_hour": {"used_percentage": "3", "resets_at": 2_000}}}),
+            json!({"account": TEAM, "observed_at": 100, "windows": {"five_hour": {"used_percentage": 100, "resets_at": 2_000}}}),
+        ];
+        assert_eq!(
+            spent_until(&not_a_number, TEAM, 1_000),
+            Some(2_000),
+            "a newer reading that carries no number"
         );
         let junk = json!({"account": PERSONAL, "observed_at": 1, "windows": {"five_hour": {"used_percentage": "100", "resets_at": 2_000}}});
         assert_eq!(spent_until(&[junk], PERSONAL, 1_000), None, "a number only");

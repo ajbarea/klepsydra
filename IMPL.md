@@ -11,7 +11,8 @@ Brief: ~/.local/state/fleet-orchestrator/briefs (ns477). PR #477, branch feat/ne
   `models` adds each model's quota group from `/quota`; `engines` prints what is installed and
   which Claude accounts have a login here.
 - Rust (`launch.rs`): launch_session takes engine, account, model; refuses an account whose
-  newest reading has a live window at 100% (`usage::spent_until`, fleet crate); writes
+  readings, reconciled per window as gauge.js does, have a live window at 100%
+  (`usage::spent_until`, fleet crate); writes
   `new_session_last` to prefs.json on a launch that started. New commands: `engines_status`,
   `new_session_prefs`, `set_new_session_default`.
 - Wall: usage from `read_usage` through `toRows` (desktop snapshot has none); menu built only on

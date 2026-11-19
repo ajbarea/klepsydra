@@ -1,7 +1,7 @@
 // The card wall: a card per Claude Code session, in the reader's order, with
 // a way back to its terminal.
 import { RINGS, accountsDiffer, arrivalLine, arrivals, branchPage, announcements, card, castPicks, identity, needsFirst, shouldSlide, startedNeeding, transitionName, statuses, tally } from "./model.js";
-import { announcer, press, say, setOff, syncChildren } from "./dom.js";
+import { announcer, press, say, setOff, setWaiting, syncChildren } from "./dom.js";
 import { ARM_MS, confirmCopy, createEnder, endAllCopy, endingAnnouncement, endingText, withdrawnText } from "./end.js";
 import { askedNote, asking, isReady, readiness, wrapupAnnouncements, wrapupCopy, wrapupLines } from "./wrapup.js";
 import { inTauri, served, subscribe, subscribeTheme, todayLedger } from "./feed.js";
@@ -180,8 +180,8 @@ function paintButton() {
   mono.hidden = !entry.badge;
   mono.textContent = entry.badge;
   newButton.title = buttonTitle(entry);
-  if (ns.ready) newButton.removeAttribute("aria-disabled");
-  else newButton.setAttribute("aria-disabled", "true");
+  setWaiting(newButton, !ns.ready);
+  setWaiting(startButton, !ns.ready);
   newButton.setAttribute("aria-label", `New ${entry.name} session`);
   newKind.hidden = !inTauri;
   footWhy.textContent = `Default: ${entry.name}, ${reason}.`;
