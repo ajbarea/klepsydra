@@ -217,4 +217,11 @@ test("clockAt: today's time alone, another day's with its weekday, as toLocale* 
   assert.equal(clockAt(sec(later), noon), `${new Date(later).toLocaleDateString("en-US", { weekday: "short" })} ${time(later)}`);
   assert.equal(clockAt(sec(later), noon), "Fri 12:00 PM");
   assert.equal(clockAt(Number.NaN, noon), null);
+  assert.equal(clockAt(1e13, noon), null, "past Date's range: no time, no throw");
+});
+
+test("a reset time past Date's range draws instead of stopping the redraw", () => {
+  const bad = reading("me", "Personal", { five_hour: win(100, 3600), seven_day: { used_percentage: 40, resets_at: 1e13 } });
+  const me = chips([bad]).find((c) => c.account === "me");
+  assert.ok(me.detail.length > 2);
 });

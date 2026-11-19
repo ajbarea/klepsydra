@@ -23,18 +23,19 @@ real data for perf). Fix SP= in live_app.sh to the session's scratchpad before r
 - Chips model/view, dock, icons, README (845969e). Opus review round 1: 1 blocking, 3 should-fix, nits; all
   fixed in 21d2dc8 (per-window age, stacked tray colour, waiting fade, 30-min age text, stacked columns,
   Intl formatters, boundary guards, phone/wall spent-week rule). 15 mutations on the new guards: all killed.
-- Unit 543 pass, lint clean. Live in Chromium on real readings + live fleet: no errors, faces docked.
-- CPU (headless Chromium, 3 x 120 s, median): 797336e 0.086 %, 845969e 0.097 %; rerun after 21d2dc8 pending.
+- Unit tests and lint clean (see Verify). Live in Chromium on real readings + live fleet: no errors, faces docked.
+- CPU (headless Chromium, 3 x 120 s, median): 797336e 0.086 % vs 845969e 0.097 %; after 21d2dc8,
+  797336e 0.081 % vs 0.075 %. Live exe (stage klepsydra-build-gauge421): chips on the taskbar beside AJ's
+  main build, faces docked, native title hover shows in the unfocused window.
+- Round 2 (fresh Opus): 1-11 fixed; new N1 (waiting fade un-hid #zoom), N2 (Intl throws past Date range),
+  N3 (phone spent-week only source-tested), N4-N5 wording; all fixed in the next commit.
 
 ## Open
-- Hover detail is the native `title` tooltip: no tap or keyboard. Whether it shows in the unfocused
-  always-on-top WebView2 window is the live exe check. A toggletip card needs the window to grow from its
-  docked edge; plan it with PR 3.
+- Hover detail is the native `title` tooltip: shown live in the unfocused window, but no tap or keyboard.
+  A toggletip card needs the window to grow from its docked edge: #481, planned with PR 3.
 
 ## Next
-1. Perf rerun result -> PR body. Windows build in stage klepsydra-build-gauge421, then
-   `.live/live_app.sh start 'C:\Users\ajbar\klepsydra-build-gauge421\src-tauri\target\release\klepsydra.exe' compact`,
-   `shot name`, `shot name X Y` (hover), `stop`.
+1. Browser suites (phone + wall) on the round-2 fixes; a fresh Opus verify of that commit.
 2. After #480 merges: `git rebase origin/main`, push (explicit refspec), PR (assignee ajbarea, label enhancement,
    "Part of #421"), fresh Opus verify of 21d2dc8, shots to fleet-briefing, report to Heph, delete the old remote branch.
 

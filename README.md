@@ -118,7 +118,7 @@ decides the chip. A Claude account named for an organisation wears a monogram
 of it ("RIT"); a personal one wears the Claude mark. Hover a chip for every
 window with its reset time and the reading's age; a window kept from an older
 reading names its own age there, and its pip greys once that age passes 3 hours.
-On the wall and the phone, a spent week hides that account's session row too.
+On the phone page, a spent week hides that account's session ring too.
 
 ## Two accounts at once
 
@@ -1096,7 +1096,8 @@ drops, the wall says the cards may be out of date until it reconnects, and
 keeps trying while klepsydra restarts.
 
 The usage-limit gauges open the page: a ring per account and window with
-its percent, time to reset and label (`57% 8m Personal · session`), drawn by
+its percent, time to reset and label (`57% 8m Personal · session`), except a
+session whose week is spent, which waits for the week to reset; drawn by
 the gauge's own code from the same readings, read every 5 seconds. They
 scroll away under the tally, and say so while no reading exists. The wall
 stays dark when the phone is in light mode.

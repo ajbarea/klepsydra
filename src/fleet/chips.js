@@ -72,8 +72,9 @@ const WEEKDAY = new Intl.DateTimeFormat("en-US", { weekday: "short" });
 const sameDay = (a, b) => a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
 
 export function clockAt(sec, nowMs = Date.now()) {
-  if (!Number.isFinite(sec)) return null;
   const at = new Date(sec * 1000);
+  // Intl throws on a time past Date's range (a reset in microseconds, 1e13 s).
+  if (!Number.isFinite(at.getTime())) return null;
   const time = TIME.format(at);
   if (sameDay(at, new Date(nowMs))) return time;
   return `${WEEKDAY.format(at)} ${time}`;

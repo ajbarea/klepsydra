@@ -109,12 +109,13 @@ html, body {
   border-radius: calc(var(--panel-radius) * var(--scale));
   position: relative;
   backdrop-filter: blur(12px);
-  transition: opacity 240ms ease;
 }
 
-/* With nothing to show yet, the panel dims rather than look like a reading. */
-/* Waiting fades the gauge, not the portraits beside it: a session still needs you. */
-#panel[data-state="waiting"] > :not(#strip) { opacity: var(--waiting-opacity); }
+/* With nothing to show yet, the gauge dims rather than look like a reading.
+   The portraits beside it keep full strength: a session may still need you.
+   Named, not :not(#strip), so #zoom keeps its own opacity. */
+#grip, #content { transition: opacity 240ms ease; }
+#panel[data-state="waiting"] > :is(#grip, #content) { opacity: var(--waiting-opacity); }
 
 .sub {
   font-size: calc(var(--size-sub) * var(--scale));
