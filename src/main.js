@@ -5,6 +5,7 @@ import { dockSlots, syncChips } from "./fleet/chipview.js";
 import { follow } from "./ipc.js";
 import { wheelPixels, wheelStep, clampLevel, scaleAt } from "./zoom.js";
 import { createLog } from "./log.js";
+import { applyOpacity, schemeOf, subscribeOpacity } from "./opacity.js";
 
 const log = createLog("main.js");
 
@@ -344,6 +345,20 @@ window.__klepsydra = {
   set(p) { lastPayload = p; render(); },
   fleet: receiveFleet,
 };
+
+// The background opacity (#438): live from the app, and again when the
+// colour scheme flips, since the halo starts lower on a light panel.
+let opacity = null;
+function wearOpacity() {
+  if (opacity === null) return;
+  applyOpacity(document.documentElement, opacity, schemeOf(window));
+  if (started) render(); // the pips' colours follow the ink's ramp
+}
+subscribeOpacity((v) => {
+  opacity = v;
+  wearOpacity();
+}, { inTauri, follow, search: location.search });
+window.matchMedia("(prefers-color-scheme: light)").addEventListener("change", wearOpacity);
 
 await followLayout();
 // No word from the app in time: draw the full layout; a late word still applies.

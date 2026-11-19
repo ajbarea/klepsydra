@@ -243,6 +243,7 @@ pub fn asset_type(path: &str) -> Option<&'static str> {
             | "zoom.js"
             | "gauge.js"
             | "gaugeview.js"
+            | "opacity.js"
             | "log.js"
             | "manifest.webmanifest"
             | "sw.js"
@@ -1051,6 +1052,7 @@ mod tests {
             ("/zoom.js", Some(Route::Asset("zoom.js".into()))),
             ("/gauge.js", Some(Route::Asset("gauge.js".into()))),
             ("/gaugeview.js", Some(Route::Asset("gaugeview.js".into()))),
+            ("/opacity.js", Some(Route::Asset("opacity.js".into()))),
             ("/log.js", Some(Route::Asset("log.js".into()))),
             (
                 "/manifest.webmanifest",

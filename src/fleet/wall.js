@@ -22,6 +22,8 @@ import { createReplayer } from "./replay.js";
 import { cutsText } from "./fulltext.js";
 import { WAITING, toRows, usageRows } from "../gauge.js";
 import { hiddenRows } from "./chips.js";
+import { wireOpacityPick } from "./opacitypick.js";
+import { subscribeOpacity } from "../opacity.js";
 import { readMode, readStops, syncEntries } from "../gaugeview.js";
 import { createLog } from "../log.js";
 import { FIX_STEPS, buildEntries, buttonTitle, firstModel, launchArgs, menuEntries, pickDefault, roomWords } from "./newsession.js";
@@ -1697,6 +1699,18 @@ if (inTauri) window.__TAURI__.core.invoke("get_wall_density").then(choose, () =>
 // does, and a switch repaints every name, face, epithet and accent from the
 // data already held: the wall and its compact cards, the empty wall's keeper,
 // an open portrait, the Ledger and the Queue's keeper, with nothing read again.
+// The floating gauge's background opacity (#438), in the app only.
+if (inTauri) {
+  const input = document.getElementById("gauge-opacity");
+  input.closest("label").hidden = false;
+  wireOpacityPick({
+    input,
+    value: input.nextElementSibling,
+    invoke: tauri,
+    subscribe: (fn) => subscribeOpacity(fn, { inTauri, follow }),
+    log,
+  });
+}
 const themePicker = document.getElementById("theme");
 themePicker.replaceChildren(
   ...Object.entries(THEME_LABELS).map(([id, label]) => Object.assign(document.createElement("option"), { value: id, textContent: label })),

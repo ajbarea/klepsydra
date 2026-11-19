@@ -368,6 +368,19 @@ html, body { background: var(--wall-bg); color: var(--text); font: 14px/1.45 var
    at once. */
 .theme-pick option { background: var(--card-bg); color: var(--text); }
 .theme-pick option:checked { background: var(--button-hover); color: var(--text); }
+/* The gauge's background opacity (#438): saved and applied on each step. */
+.opacity-pick {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3);
+  color: var(--text-dim);
+  font: 600 12.5px/1 var(--font);
+  white-space: nowrap;
+}
+.opacity-pick[hidden] { display: none; }
+.opacity-pick input { width: 120px; height: 28px; accent-color: var(--card-focus); } /* neutral: amber means needs you */
+.opacity-pick input:focus-visible { outline: 2px solid var(--card-focus); outline-offset: 2px; }
+.opacity-value { min-width: 4ch; text-align: right; color: var(--text); font-variant-numeric: tabular-nums; }
 
 button {
   font: 600 13px/1 var(--font);
