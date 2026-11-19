@@ -1,5 +1,7 @@
 import { toRows, formatPct, WAITING } from "./gauge.js";
-import { readMode, readStops, syncEntries } from "./gaugeview.js";
+import { readMode, readStops } from "./gaugeview.js";
+import { dockKey, primaryChip, toChips } from "./fleet/chips.js";
+import { dockSlots, syncChips } from "./fleet/chipview.js";
 import { follow } from "./ipc.js";
 import { wheelPixels, wheelStep, clampLevel, scaleAt } from "./zoom.js";
 import { createLog } from "./log.js";
@@ -19,13 +21,6 @@ if (new URLSearchParams(location.search).has("still")) {
   document.documentElement.dataset.still = "";
 }
 
-// Harness only: pin the panel width so captures do not depend on how the
-// headless browser interprets --window-size.
-const forcedWidth = new URLSearchParams(location.search).get("w");
-if (forcedWidth) {
-  document.documentElement.style.setProperty("--panel-width-base", `${parseInt(forcedWidth, 10)}px`);
-}
-
 /** Reading the files is the only thing that differs between app and browser. */
 async function readUsage() {
   try {
@@ -43,7 +38,7 @@ async function readUsage() {
 const frame = document.getElementById("frame");
 const panel = document.getElementById("panel");
 const stripEl = document.getElementById("strip");
-const rowsEl = document.getElementById("rows");
+const chipsEl = document.getElementById("chips");
 const emptyEl = document.getElementById("empty");
 emptyEl.textContent = WAITING;
 const grip = document.getElementById("grip");
@@ -62,14 +57,18 @@ let fleetSessions = [];
 let fleetSpeaking = null; // keryx's line, from the same snapshot
 let drawStrip = null;
 let fleetFresh = false; // a snapshot the strip has not drawn yet
+let chips = []; // the chips last drawn, which the portraits dock beside
 let layout = null; // "compact" or "full" once known
 let layoutSeq = 0; // the latest layout change; an older one still loading gives way
 let started = false; // the first draw waits for the layout
 
 const compact = () => layout === "compact";
 
+/** The chips' layout for the tray's choice: Compact is linear, Full is stacked (#421). */
+const chipLayout = () => (compact() ? "linear" : "stacked");
+
 /**
- * "compact" draws rings in one row; anything else is the full layout. Each
+ * "compact" draws the chips in one row; anything else is the full layout. Each
  * layout keeps its own zoom, read before the switch so it draws once.
  */
 async function applyLayout(next) {
@@ -109,8 +108,18 @@ const rectOf = (el) => {
 };
 /** The grab handle's rectangle, in CSS pixels from the window's top-left. */
 const gripRect = () => rectOf(grip);
-/** The fleet strip's rectangle, or null while it is hidden. */
-const stripRect = () => (stripEl.hidden ? null : rectOf(stripEl));
+/**
+ * The part of the gauge that takes the mouse besides the grip: the chips
+ * (their hover detail and docked portraits) and the loose portraits beside
+ * them, as one rectangle; null when neither shows.
+ */
+function stripRect() {
+  const parts = [chipsEl, stripEl].filter((e) => !e.hidden && e.childElementCount > 0).map((e) => e.getBoundingClientRect());
+  if (parts.length === 0) return null;
+  const left = Math.min(...parts.map((r) => r.left));
+  const top = Math.min(...parts.map((r) => r.top));
+  return [left, top, Math.max(...parts.map((r) => r.right)) - left, Math.max(...parts.map((r) => r.bottom)) - top];
+}
 
 /**
  * Tell the window how big the gauge and strip are, so it never clips or gaps.
@@ -144,11 +153,11 @@ function syncSize(pin = false) {
  * The ramp lives in CSS, so rather than reimplement it, read back the colour
  * the browser actually computed -- that resolves `color-mix` for free.
  */
-function syncTray(rows) {
+function syncTray(primary) {
   if (!inTauri) return;
-  const pct = rows[0]?.pct ?? 0;
+  const pct = primary?.lead?.pct ?? 0;
   let rgb = [110, 110, 110];
-  const probe = rowsEl.querySelector(".fill");
+  const probe = primary && [...chipsEl.children].find((c) => c.dataset.key === primary.key)?.querySelector(".pip[data-lead] i");
   if (probe) {
     const m = getComputedStyle(probe).backgroundColor.match(/\d+/g);
     if (m && m.length >= 3) rgb = m.slice(0, 3).map(Number);
@@ -180,18 +189,23 @@ function syncGrip() {
 }
 
 function render(pin = false) {
-  const rows = toRows(lastPayload, Date.now());
+  const now = Date.now();
+  const rows = toRows(lastPayload, now);
+  // With no reading at all the panel waits; the Copilot placeholder alone is not a reading.
+  chips = rows.length ? toChips(rows, now) : [];
 
-  emptyEl.hidden = rows.length > 0;
-  panel.dataset.state = rows.length === 0 ? "waiting" : "live";
+  emptyEl.hidden = chips.length > 0;
+  panel.dataset.state = chips.length === 0 ? "waiting" : "live";
 
-  syncEntries(rowsEl, rows, {
-    compact: compact(),
+  syncChips(chipsEl, chips, {
+    now,
+    layout: chipLayout(),
     stops: readStops(),
     mode: readMode(document.documentElement, new URLSearchParams(location.search).get("mode")),
   });
 
-  document.title = rows.length ? `klepsydra ${formatPct(rows[0].pct)}` : "klepsydra";
+  const primary = primaryChip(chips);
+  document.title = primary ? `klepsydra ${formatPct(primary.lead.pct)}` : "klepsydra";
   try {
     drawStrip?.(fleetSessions, Date.now(), fleetFresh, fleetSpeaking);
   } catch (err) {
@@ -200,7 +214,7 @@ function render(pin = false) {
     log.error(`the fleet strip could not draw ${fleetSessions.length} sessions, so it is hidden`, err);
   }
   fleetFresh = false;
-  syncTray(rows);
+  syncTray(primary);
   syncSize(pin);
   syncGrip();
 }
@@ -313,6 +327,9 @@ async function startFleet() {
       open: (id) =>
         inTauri && window.__TAURI__.core.invoke("open_wall", { focus: id ?? "" }).catch((err) => log.error(`open_wall for ${id ? `session ${id}` : "the keeper"} failed`, err, { session_id: id ?? null })),
       cast: () => theme,
+      // Each portrait docks beside its account's chip (#421); the clicks reach them there.
+      dock: { slots: () => dockSlots(chipsEl), of: (item) => dockKey(item, chips) },
+      root: panel,
     });
     subscribe(receiveFleet);
   } catch (err) {

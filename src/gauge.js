@@ -59,7 +59,8 @@ export function routeLane(row) {
   return "claude_subscription";
 }
 
-const routeGroup = (row) => {
+/** The windows that must all have room for one lane to run, as one key per account and model. */
+export const routeGroup = (row) => {
   const lane = routeLane(row);
   // API credit and Copilot windows are separate model pools; Claude and AGY
   // Gemini windows are coupled limits for one account.
@@ -106,10 +107,6 @@ export function harnessOf(entry) {
   return "claude";
 }
 
-export function windowNote(key) {
-  if (key === "claude_gpt") return "ends Nov 18";
-  return null;
-}
 
 export function windowLabel(key) {
   return WINDOW_LABELS[key] ?? key;
@@ -207,6 +204,11 @@ export function formatAgeShort(ms) {
   return a === null ? "now" : `${a[0]}${a[1][0]}`;
 }
 
+/** When a window's number was read (s): its own stamp, else its reading's. */
+export function readAtOf(payload, win) {
+  return num(win?.observed_at ?? payload?.observed_at ?? payload?.written_at);
+}
+
 /**
  * Decide what to draw from a parsed usage.json (or null when it is missing
  * or unreadable). Never throws; an unusable payload degrades to "waiting".
@@ -230,7 +232,7 @@ export function evaluate(payload, key, nowMs = Date.now()) {
     return { state: "reset", label: windowLabel(key), pct: 0, sub, short };
   }
 
-  const age = nowMs - num(win.observed_at ?? payload.observed_at ?? payload.written_at) * 1000;
+  const age = nowMs - readAtOf(payload, win) * 1000;
   let sub = countdown;
   let short = formatCountdownShort(resetsAt, nowMs);
   if (!Number.isFinite(age)) {
@@ -295,10 +297,7 @@ export function ringStyle(pct, cap) {
  * and one sentence for a screen reader, which reads the full forms.
  */
 export function entryText(row, compact) {
-  let sub = compact ? row.short : row.sub;
-  if (row.note && !sub.includes(row.note)) {
-    sub = `${sub} \u00b7 ${row.note}`;
-  }
+  const sub = compact ? row.short : row.sub;
   return {
     label: row.label,
     pct: compact ? formatPctShort(row.pct) : formatPct(row.pct),
@@ -445,7 +444,6 @@ export function toRows(payload, nowMs = Date.now()) {
       if (!p.windows[key]) continue;
       const r = evaluate(p, key, nowMs);
       if (r.state === "waiting") continue;
-      const note = windowNote(key) ?? p.note ?? null;
       rows.push({
         ...r,
         key: `${p.account}:${key}`,
@@ -456,7 +454,13 @@ export function toRows(payload, nowMs = Date.now()) {
         resetsAt: num(p.windows[key].resets_at),
         accountLabel: p.label,
         harnessLabel: HARNESS_LABELS[h] ?? h,
-        note,
+        accountLabel: p.label,
+        // When the account's newest reading arrived (s), and when this window resets (s).
+        observedAt: Number(p.written_at),
+        // When this window's own number was read (s): older than observedAt
+        // when a live window survives from an earlier reading.
+        readAt: readAtOf(p, p.windows[key]),
+        resetsAt: num(p.windows[key].resets_at),
         isCapped: r.pct >= 100 || r.state === "waiting",
         label: multi ? `${p.label} \u00b7 ${WINDOW_SHORT[key] ?? key}` : r.label,
       });

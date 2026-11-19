@@ -1,42 +1,46 @@
-# IMPL: PR #477 round 2 (ns477): + New session wired to the real app (#440)
+# IMPL: klepsydra#421 + #438: gauge strip, variant A with docked faces
 
-Brief: ~/.local/state/fleet-orchestrator/briefs (ns477). PR #477, branch feat/new-session-split-440
-(local branch `ns477` in .claude/worktrees/ns477 pushes there). Decision: Variant A (PR #459).
+Branch feat/gauge-strip-a-421-v2 (worktree .claude/worktrees/gauge-421-v2), cut with `--no-track` from 797336e.
+It replaces feat/gauge-strip-a-421, whose two commits reached main by accident and were reverted (#480).
+Push only with an explicit refspec: `git push -u origin HEAD:refs/heads/feat/gauge-strip-a-421-v2`. Never push to main.
+Decision: PR #459 last comment (AJ 11-18). Mockups: branch design/mockups-1118, docs/mockups/2026-11-18.
+Untracked helpers in `.live/` (excluded): live_strip.py (browser shots from real readings + live fleet at
+127.0.0.1:8318), live_app.sh (test copy of a branch klepsydra.exe beside AJ's, own KLEPSYDRA_DIR, backs up and
+restores the shared %APPDATA% .window-state.json, stops only its own PID), readings.json + fleet.json (frozen
+real data for perf). Fix SP= in live_app.sh to the session's scratchpad before running.
 
-## Design (decided 11-19)
-- Launcher (`hooks/klepsydra-launch.sh`): `new DIR claude ACCOUNT [MODEL]` finds the config folder
-  whose login is ACCOUNT (never by folder name: on AJ's PC ~/.claude is RIT, ~/.claude-rit is
-  Personal); `new DIR copilot [MODEL]` starts Copilot locked like `fleet delegate`;
-  `new DIR agy MODEL` refuses a model whose quota group is spent (fresh `agy -p /quota`);
-  `models` adds each model's quota group from `/quota`; `engines` prints what is installed and
-  which Claude accounts have a login here.
-- Rust (`launch.rs`): launch_session takes engine, account, model; refuses an account whose
-  readings, reconciled per window as gauge.js does, have a live window at 100%
-  (`usage::spent_until`, fleet crate); writes
-  `new_session_last` to prefs.json on a launch that started. New commands: `engines_status`,
-  `new_session_prefs`, `set_new_session_default`.
-- Wall: usage from `read_usage` through `toRows` (desktop snapshot has none); menu built only on
-  open and on user actions, focus kept by stable key; Escape returns to the caret; no data
-  through innerHTML; native radios; Recommended first; install/sign-in step shown inline.
-- Follow-up issue (PR says Refs #440): Fable's own allowance (not in statusLine JSON,
-  anthropics/claude-code#73770), Copilot model list and sign-in state (no CLI command for
-  either), Claude & GPT weekly bucket in readings.
+## Plan: one PR per step
+1. **PR 1 (this branch): floating strip as variant A.** Code + review fixes committed; PR not yet open.
+2. **PR 2: #438 opacity** 0-100 step 5 in prefs.json, live. Copy the theme pattern (`set_theme` + Hub publish +
+   `theme_subscribe`, src-tauri/src/theme.rs) as `set_gauge_opacity` / `gauge_subscribe`; slider in the wall's gear.
+   Halo below 60% (dark) / 50% (light), full ink below 70% (mockup mock.css `.panel.halo/.thin`).
+3. **PR 3: docked gauges in the wall header** + floating strip hidden while the wall has focus + Settings › Gauges
+   rows (+ #479 double). Phone: usage ids are anonymised (a1..) by usage.rs but sessions keep real account ids,
+   so dockKey needs a mapping there. Also the tap/keyboard detail card (see Open).
+4. **PR 4: System chip** (off by default), only after 1-3.
 
-## Done
-- ae4e66a launcher; d6ba8b1 app + wall; e7ec82c docs; 3d33f60 review round 1; 55e9029 verify round
-  (ready gate through dom.js refresh, spent_until per window, KLEPSYDRA_CLAUDE kept out of a new
-  tmux server). Verify pass on 55e9029: clean (3 unreachable nits, listed in the PR).
-- Follow-up issue #478. Live: four throwaway launches (Claude Personal, Claude RIT Sonnet, agy
-  Gemini Low, Copilot), each on the right account and model, each ended at rest.
-- Shots: fleet-briefing/shots/2026-11-19/klepsydra-477-live-*.png, README line added.
+## Done (PR 1)
+- Chips model/view, dock, icons, README (845969e). Opus review round 1: 1 blocking, 3 should-fix, nits; all
+  fixed in 21d2dc8 (per-window age, stacked tray colour, waiting fade, 30-min age text, stacked columns,
+  Intl formatters, boundary guards, phone/wall spent-week rule). 15 mutations on the new guards: all killed.
+- Unit tests and lint clean (see Verify). Live in Chromium on real readings + live fleet: no errors, faces docked.
+- CPU (headless Chromium, 3 x 120 s, median): 797336e 0.086 % vs 845969e 0.097 %; after 21d2dc8,
+  797336e 0.081 % vs 0.075 %. Live exe (stage klepsydra-build-gauge421): chips on the taskbar beside AJ's
+  main build, faces docked, native title hover shows in the unfocused window.
+- Round 2 (fresh Opus): 1-11 fixed; new N1 (waiting fade un-hid #zoom), N2 (Intl throws past Date range),
+  N3 (phone spent-week only source-tested), N4-N5 wording; all fixed (af75c1d).
+- Round 3 (fresh Opus): N1-N5 confirmed; new: #grip's own transition cancelled its fade, "resets null" for a
+  live window past Date's range, clockAt(null) read as 1970, no committed guard for the fade; all fixed + guarded.
+- PR #482 open. Browser suites vs main (ab00893): phone 88 pass / the same 5 reds as main (#266; "Play again"
+  intermittent); wall: 4 Ledger reds on the branch, main's run hit the same 2 then timed out before the other 2.
+
+## Open
+- Hover detail is the native `title` tooltip: shown live in the unfocused window, but no tap or keyboard.
+  A toggletip card needs the window to grow from its docked edge: #481, planned with PR 3.
 
 ## Next
-- Heph's fresh Opus review; fix what it finds. Do not merge.
-- The running fleet tmux server still holds KLEPSYDRA_CLAUDE (Heph's 11-16 command) in its global
-  environment until it restarts (`tmux -L klepsydra set-environment -gu KLEPSYDRA_CLAUDE` clears it).
+1. Round 4 (fresh Opus) CLEAN on 8016ef6. Heph review of 0221a28: chips now read windows by routeGroup (ACCOUNT_WINDOWS, LANE_HARNESS, spent() gone; isCapped reused); fixed with failing-first tests.
+2. CI green, then report to Heph (`fleet send`), queue line; do not merge. Then PR 2 (#438) on a new branch.
 
 ## Verify
-- node --test src/*.test.js 529; make test-launch 278; cargo test -p klepsydra-fleet 435;
-  KLEPSYDRA_STAGE=klepsydra-build-ns477 scripts/build-windows.sh --check;
-  scripts/test_wall_browser.py: 444 pass; drawer_tables, cast_pick_outlives_its_card and
-  reply_buttons fail on main too (reply_buttons raises and stops the run: run the rest by name).
+- `node --test src/*.test.js`; `npm run lint`.

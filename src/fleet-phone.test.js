@@ -217,11 +217,14 @@ test("the phone draws the gauge's rows with the gauge's own code: one model, no 
   const main = read("src/main.js");
   assert.match(wall, /import \{ WAITING, toRows, usageRows \} from "\.\.\/gauge\.js";/);
   assert.match(wall, /import \{ readMode, readStops, syncEntries \} from "\.\.\/gaugeview\.js";/);
-  assert.match(main, /import \{ readMode, readStops, syncEntries \} from "\.\/gaugeview\.js";/);
   assert.match(wall, /syncEntries\(limitRows, rows, \{ compact: true, stops: readStops\(\), mode: readMode\(\) \}, true\);/);
-  assert.match(main, /syncEntries\(rowsEl, rows, \{/);
+  // The desktop strip draws chips (#421) from the same rows: toRows, then toChips.
+  assert.match(main, /import \{ readMode, readStops \} from "\.\/gaugeview\.js";/);
+  assert.match(main, /const rows = toRows\(lastPayload, now\);/);
+  assert.match(main, /chips = rows\.length \? toChips\(rows, now\) : \[\];/);
+  assert.match(main, /syncChips\(chipsEl, chips, \{/);
   // The words and the ring's arithmetic live in gauge.js alone.
-  const others = ["src/main.js", "src/gaugeview.js", ...["wall.js", "model.js", "strip.js", "drawer.js", "newsession.js"].map((f) => `src/fleet/${f}`)];
+  const others = ["src/main.js", "src/gaugeview.js", ...["wall.js", "model.js", "strip.js", "drawer.js", "newsession.js", "chips.js", "chipview.js"].map((f) => `src/fleet/${f}`)];
   for (const f of others) {
     const src = read(f);
     assert.doesNotMatch(src, /function format|% used|Resets in|resets_at|used_percentage|2 \* Math\.PI|strokeDasharray = `/, f);
@@ -264,7 +267,8 @@ test("the gauges open the page, outside the sticky bar, shown only for a snapsho
   assert.doesNotMatch(bar, /limits/, "the sticky bar stays one tally high");
   assert.match(html, /<main id="main">\s*<section class="limits" aria-label="Usage limits" hidden>\s*<ul class="limit-rows"><\/ul>\s*<p class="limit-wait" hidden><\/p>\s*<\/section>\s*<h1 id="wall-title"[^>]*>[^<]*<\/h1>\s*<section id="wall"/, "the sessions heading sits right before the wall it names");
   const wall = read("src/fleet/wall.js");
-  assert.match(wall, /const rows = usageRows\(latestSnapshot, now\);\s*limits\.hidden = rows === null;/);
+  assert.match(wall, /const all = usageRows\(latestSnapshot, now\);\s*limits\.hidden = all === null;/);
+  assert.match(wall, /const hidden = hiddenRows\(all\);\s*const rows = all\.filter\(\(r\) => !hidden\.has\(r\)\);/, "a spent week hides its session row here too (#421)");
   assert.match(wall, /paintTally\(\);\s*paintLimits\(now\);/, "drawn on every snapshot and every tick");
 });
 
