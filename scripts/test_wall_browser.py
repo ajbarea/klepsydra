@@ -5690,7 +5690,7 @@ def theme_list_is_dark(wall):
 
 
 # Every word on the floating strip, as the browser renders it: its own and its
-# ancestors' opacity, any filter: opacity(), and its colour's alpha (rgb(... /
+# ancestors' opacity, any filter: opacity(), and its fill colour's alpha (rgb(... /
 # a), rgba, color-mix with transparent), multiplied. Text that is drawn reads
 # at full alpha; #zoom (opacity 0 until a scroll) is not drawn.
 STRIP_INK = """() => {
@@ -5709,7 +5709,8 @@ STRIP_INK = """() => {
   const faded = [];
   for (const e of els) {
     if (!e.checkVisibility({ opacityProperty: true, visibilityProperty: true })) continue;
-    let a = alphaOf(getComputedStyle(e).color);
+    // The fill colour paints the glyphs; it computes to `color` unless set.
+    let a = alphaOf(getComputedStyle(e).webkitTextFillColor);
     for (let n = e; n; n = n.parentElement) {
       const cs = getComputedStyle(n);
       a *= Number(cs.opacity) * filterOf(cs.filter);
@@ -5763,9 +5764,9 @@ def strip_words_keep_their_ink(wall):
                 page.wait_for_selector("#strip .face.speaking", timeout=5000)
                 page.wait_for_timeout(300)
                 ink = page.evaluate(STRIP_INK)
-                states = page.evaluate("[...document.querySelectorAll('#chips > .chip')].map((c) => Object.keys(c.dataset).filter((k) => k !== 'harness').join('+') || 'fresh')")
+                states = page.evaluate("[...document.querySelectorAll('#chips > .chip')].map((c) => Object.keys(c.dataset).filter((k) => !['harness', 'key'].includes(k)).join('+') || 'fresh')")
                 at_ = f"{layout}, {scheme}, {op}%"
-                wall.check(ink["words"] > 8 and not ink["faded"] and "stale" in states and "placeholder" in states,
+                wall.check(ink["words"] > 8 and not ink["faded"] and any("stale" in x for x in states) and any("placeholder" in x for x in states),
                            f"every word on the strip at full alpha ({at_})", {"states": states, **ink})
                 ring = page.evaluate(SPEAKING_RING)
                 wall.check(ring and ring["gap"] == ring["solid"], f"the speaking ring's gap is the panel's solid colour ({at_})", ring)
