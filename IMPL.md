@@ -53,5 +53,7 @@ Do not merge: Heph reviews and merges.
   closes at 84 and 160, mid-turn refused.
 
 ## Next
-1. Open the PR (draft /tmp/claude-1001/close-menu-handoff/pr.md), assigned ajbarea, label bug, Fixes #483;
-   CI green; report to Heph via `fleet send`; `fleet done`. Do not merge.
+1. ✅ PR #496 open (Fixes #483). 11-19 evening: CI went red on shellcheck SC2030/SC2031 after the main merge
+   (the scroll replay loop's `b` shadowed the pane's `b`); renamed to `fn` in 3de0833, both replay checks
+   re-run standalone (5 same, 10 differs).
+2. 📋 CI green, then report to Heph via `fleet send` and `fleet done`. Do not merge.
