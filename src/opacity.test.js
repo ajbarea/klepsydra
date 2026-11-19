@@ -82,7 +82,7 @@ test("an empty ?opacity= is the default, not 0%", () => {
 // Round 2: every small word the ink is meant to reach (WCAG 1.4.3).
 test("stronger ink reaches the resets and the route word", () => {
   const css = readFileSync(new URL("./style.css", import.meta.url), "utf8");
-  assert.match(css, /:root\[data-ink\] #panel :is\(\.when, \.cell \.t\) \{ opacity: 1; \}/, "the resets' 0.86 fade is lifted under any ink");
+  assert.match(css, /:root\[data-ink\] #panel :is\(\.chip:not\(\[data-stale\]\) \.when, \.cell \.t\) \{ opacity: 1; \}/, "the resets' 0.86 fade is lifted under any ink, but not a stale chip's dim");
   const lightFull = css.match(/@media \(prefers-color-scheme: light\) \{\s*\/\*[^*]*\*\/\s*:root\[data-ink="full"\] #panel \{([^}]*)\}/);
   assert.ok(lightFull, "the light full-ink rule");
   for (const token of ["--text", "--text-dim", "--route"]) assert.match(lightFull[1], new RegExp(`${token}: #120c07`), token);

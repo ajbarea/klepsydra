@@ -93,8 +93,9 @@
 }
 :root[data-ink="halo"] #panel { text-shadow: 0 0 1px #000, 0 0 2px #000, 0 0 4px #000, 0 0 8px rgb(0 0 0 / 0.75); }
 :root[data-ink="halo"] #panel :is(.mark, .pip, .face) { filter: drop-shadow(0 0 1px #000) drop-shadow(0 0 3px rgb(0 0 0 / 0.85)); }
-/* Any stronger ink reaches the resets too: their 0.86 fade would undo it. */
-:root[data-ink] #panel :is(.when, .cell .t) { opacity: 1; }
+/* Any stronger ink reaches the resets too: their 0.86 fade would undo it.
+   A stale chip's reset keeps its 0.5 dim with the rest of the chip. */
+:root[data-ink] #panel :is(.chip:not([data-stale]) .when, .cell .t) { opacity: 1; }
 /* Fully clear: no frosted glass behind nothing. */
 :root[data-clear] #panel { backdrop-filter: none; }
 

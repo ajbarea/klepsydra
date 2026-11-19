@@ -165,7 +165,10 @@ document.body.append(trayProbe);
 let trayLook = null;
 let trayColour = "";
 let trayRgb = [110, 110, 110];
-window.matchMedia("(prefers-color-scheme: light)").addEventListener("change", () => (trayLook = null));
+window.matchMedia("(prefers-color-scheme: light)").addEventListener("change", () => {
+  trayLook = null;
+  if (started) render(); // the pips and the tray take the new scheme's ramp now, not at the next tick
+});
 
 function syncTray(primary) {
   if (!inTauri) return;
